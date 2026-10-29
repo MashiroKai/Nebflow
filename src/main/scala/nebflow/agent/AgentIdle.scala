@@ -398,6 +398,13 @@ private[agent] object AgentIdle:
         forwardBackgroundTaskNotification(n)(IO.pure(idle(agentDef, resources, depth, parentRef, state)))
 
       case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, _) =>
+        val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
+        // 不过时批 intake 闸（投递可靠性批 2026-10-29 · 作者令「消息按 (sessionId,
+        // kind, 幂等键) 去重」）——idle 直投面的单飞判重：事件身份（raw
+        // correlationId ∪ delegate 终态回执归位 id）已投递（DeliveredReceiptLedger）
+        // 或已在 pendingEvents ⇒ 丢弃 + 审计（与 AgentProcessing 忙面闸同判据）。
+        // 无身份键事件恒放行（既有纪律零回退）。
+        def acceptedBody: IO[Behavior[AgentCommand]] = {
         logAgentEvent(
           agentDef,
           depth,
@@ -481,8 +488,9 @@ private[agent] object AgentIdle:
             _ <- receiveVisibility(waiting = false)
             _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, held.size)
             _ <- ackDelegateDelivery(event)
-            // #886：注入即标记（持久投递标记面，与 ack 同点）。
-            _ <- DeliveredReceiptLedger.markDelivered(state.sessionId.getOrElse(""), event.correlationId.toList)
+            // #886：注入即标记（持久投递标记面，与 ack 同点）。不过时批：按身份键
+            // 标记（重投件的原件 id 随行——重启重放闸/intake 闸按身份命中）。
+            _ <- DeliveredReceiptLedger.markDelivered(state.sessionId.getOrElse(""), DeliveredReceiptLedger.identityKeys(event))
             result <- pipeLlmCall(
               agentDef,
               resources,
@@ -523,10 +531,10 @@ private[agent] object AgentIdle:
             _ <- persistQueues(state.sessionId, cleanedExec)
             // 诊断修复批 2026-10-24：批次腿同认 delegate 终态交付（任一腿注入即确认）。
             _ <- ackDelegateDelivery(event)
-            // #886：注入即标记（批次全量——held 件 + 本件）。
+            // #886：注入即标记（批次全量——held 件 + 本件；不过时批按身份键）。
             _ <- DeliveredReceiptLedger.markDelivered(
               state.sessionId.getOrElse(""),
-              (held :+ event).flatMap(_.correlationId)
+              DeliveredReceiptLedger.identityKeysOf(held :+ event)
             )
             // 台账对账（平台修复批 fix 1）：held 全量投递 ⇒ 台账清空 + 徽标帧归零。
             _ <- syncHeldReceipts(resources, state.sessionId, Nil).flatMap((h, u) => emitHeldReceiptsBadge(state, h, u))
@@ -606,8 +614,8 @@ private[agent] object AgentIdle:
                 else touchBarrierSnapshot(resources, state.sessionId, newOutstanding, 0)
               // 诊断修复批 2026-10-24：直投腿同认 delegate 终态交付。
               _ <- ackDelegateDelivery(event)
-              // #886：注入即标记（持久投递标记面，与 ack 同点）。
-              _ <- DeliveredReceiptLedger.markDelivered(state.sessionId.getOrElse(""), event.correlationId.toList)
+              // #886：注入即标记（持久投递标记面，与 ack 同点）。不过时批：按身份键。
+              _ <- DeliveredReceiptLedger.markDelivered(state.sessionId.getOrElse(""), DeliveredReceiptLedger.identityKeys(event))
               result <- pipeLlmCall(
                 agentDef,
                 resources,
@@ -642,7 +650,23 @@ private[agent] object AgentIdle:
             yield result
             end for
           }
-        end if
+        }
+        DeliveredReceiptLedger
+          .intakeAccepts(state.sessionId.getOrElse(""), state.execution.pendingEvents, event)
+          .flatMap {
+            case false =>
+              IO(
+                logAgentEvent(
+                  agentDef,
+                  depth,
+                  state.sessionId,
+                  state.sessionName,
+                  "external-event-duplicate-suppressed",
+                  s"source=$source type=$eventType corr=${correlationId.getOrElse("-")} — identity already delivered/queued, exactly-once intake"
+                )
+              ) *> IO.pure(idle(agentDef, resources, depth, parentRef, state))
+            case true => acceptedBody
+          }
 
       case AgentCommand.UpdateGitBranch(branch) =>
         updateGitBranchStay(state, branch)(s => IO.pure(idle(agentDef, resources, depth, parentRef, s)))
@@ -784,10 +808,10 @@ private[agent] object AgentIdle:
                 else IO.unit
               _ <- touchBarrierSnapshot(resources, prunedState.sessionId, 0, 0)
               _ <- persistQueues(prunedState.sessionId, cleaned.execution)
-              // #886：注入即标记（与 ack 同点——本批的持久投递标记面）。
+              // #886：注入即标记（与 ack 同点——本批的持久投递标记面）。不过时批：按身份键。
               _ <- DeliveredReceiptLedger.markDelivered(
                 prunedState.sessionId.getOrElse(""),
-                held.flatMap(_.correlationId)
+                DeliveredReceiptLedger.identityKeysOf(held)
               )
               _ <- held.traverse_(nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent)
               _ <- syncHeldReceipts(resources, prunedState.sessionId, Nil).flatMap((h, u) =>

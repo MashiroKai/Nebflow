@@ -49,6 +49,12 @@ object DelegateWorkReport:
   /**
    * 附页构造（fail-soft 全包：record 缺失 / git 不可读 / 文件读失败 → 对应段缺席
    * 或整体 ""——绝不抛、绝不阻断终态投递）。
+   *
+   * 必达修复批 2026-10-29（恰一次去重腿）：ready-to-merge 停靠点已把工作结果全文
+   * 投父（BackoffSupervisor 停靠投递 + 交付回执），本附页的 work result 段只在该
+   * 投递**未被父确认**（回执缺席 / 未 ack——补投机器还可能补投全文）时才随行，
+   * 防同一工作结果两次进入父会话上下文；已确认 = 只带 merge status + report files
+   * （作者令 23:44「合并完成后可再补一行合并回执」）。
    */
   def appendixFor(record: Option[DelegateRegistry.Record]): String =
     Try {
@@ -59,13 +65,24 @@ object DelegateWorkReport:
             .map(_.trim)
             .filter(_.nonEmpty)
             .map(d => s"$Marker merge status: ${d.take(Bound.StatusChars)}")
-          val workResult = rec.workReport
-            .map(_.trim)
-            .filter(_.nonEmpty)
-            .map(w => s"$Marker work result (preserved from the work phase, before the merge round):\n${w.take(Bound.WorkChars)}")
+          val workResult =
+            if workResultAlreadyDelivered(rec.id) then None
+            else
+              rec.workReport
+                .map(_.trim)
+                .filter(_.nonEmpty)
+                .map(w => s"$Marker work result (preserved from the work phase, before the merge round):\n${w.take(Bound.WorkChars)}")
           val reportFiles = reportFilesSection(rec)
           compose(mergeStatus, workResult, reportFiles)
     }.getOrElse("")
+
+  /**
+   * 停靠投递是否已被父会话确认（回执在且已 ack）。回执缺席 = 未确认（保守——
+   * 附页照常带工作段，宁重复不丢失）。fail-soft：读失败 = 未确认。
+   */
+  private def workResultAlreadyDelivered(delegateId: String): Boolean =
+    if !DelegateDeliveryReceipts.validId(delegateId) then false
+    else DelegateDeliveryReceipts.find(delegateId).exists(_.ackedAt.isDefined)
 
   /**
    * 纯组装（spec 判红锚）：三段全空 = ""（老 delegate 逐字退化现状——不产空附页）；

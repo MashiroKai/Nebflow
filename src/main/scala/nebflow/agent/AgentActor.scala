@@ -399,7 +399,8 @@ object AgentActor extends AgentCore with AgentSession:
       plan.events.traverse_(nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent) *>
       nebflow.core.processor.DeliveredReceiptLedger.markDelivered(
         plan.state.sessionId.getOrElse(""),
-        plan.events.flatMap(_.correlationId)
+        // 不过时批 2026-10-29：按身份键标记（重投件的原件 id 随行）。
+        nebflow.core.processor.DeliveredReceiptLedger.identityKeysOf(plan.events)
       )
 
   // ═══ 后台任务完成事件账本补投腿（修复批 2026-10-24 spec ②）══════════════

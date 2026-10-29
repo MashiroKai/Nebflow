@@ -206,10 +206,63 @@ object BackoffSupervisor:
                     )
                   )
                 case Right(nebflow.core.delegate.DelegateTerminal.Outcome.HoldForMerge) =>
+                  // 必达修复（投递可靠性批 2026-10-29 · 断点 1，作者令 23:44「停靠
+                  // 等合并不再扣住报告」）：ready-to-merge 停靠**先投工作结果**——
+                  // 合并是引擎侧步骤，父会话有权先知道工作结果；合并完成后另有
+                  // 合并回执一行。投递走既有终态通道（source=delegate × completed
+                  // × correlationId=delegateId → 父 barrier 正确释放）+ 交付回执
+                  // 落盘（DelegateDeliveryReceipts——崩溃补投机器同覆盖；合并轮
+                  // Release 的附页据 ack 态去重工作段，恰一次）。**不停 actor、不动
+                  // MergeQueue 账、不覆写任务库状态**（ready-to-merge 停靠原样）。
+                  val parkPayload =
+                    s"""$payload
+
+[delegate-judge] verdict: ready-to-merge — the work is DONE and the branch is parked for the engine-side merge round (this message is the work result; a one-line merge receipt will follow when the merge lands)."""
+                  val parkDelivery = fileChangesMetadata().flatMap { fc =>
+                    val parkMeta = JsonObject(
+                      "description" -> description.asJson,
+                      "agentName" -> agentName.asJson
+                    ).deepMerge(extraMetadata).deepMerge(fc).deepMerge(
+                      JsonObject("parkedForMerge" -> true.asJson)
+                    )
+                    val deliver = parentRef match
+                      case Some(ref) =>
+                        ref ! AgentCommand.ExternalEvent(
+                          source = source,
+                          eventType = "completed",
+                          payload = parkPayload,
+                          metadata = parkMeta,
+                          correlationId = Some(subagentId)
+                        )
+                      case None =>
+                        logger.warn(
+                          s"[terminal-result-undelivered] delegate '$subagentId' reached ready-to-merge but no parent ref exists — " +
+                            s"park delivery falls back to the F2 persistent queue. Payload head: ${parkPayload.take(300)}"
+                        ) *> f2DeliveryBackstop(
+                          AgentCommand.ExternalEvent(source, "completed", parkPayload, parkMeta, Some(subagentId))
+                        )
+                    deliver *>
+                      nebflow.core.delegate.DelegateDeliveryReceipts.record(
+                        nebflow.core.delegate.DelegateDeliveryReceipts.Receipt(
+                          delegateId = subagentId,
+                          parentSessionId = parentSessionId,
+                          eventType = "completed",
+                          payload = parkPayload,
+                          metadata = parkMeta,
+                          deliveredAt = System.currentTimeMillis()
+                        )
+                      ) *>
+                      logger.info(
+                        s"BackoffSupervisor: delegate $subagentId ready-to-merge — work result delivered to the parent at park time (merge receipt to follow)"
+                      )
+                  }
                   // 合并窗预算重挂（旧窗口随工作相终结释放；DelegateBudget ∈
                   // agent 层——core 钩子只回 Outcome，重挂留在本层，分层纪律）。
                   DelegateBudget
                     .release(subagentId)
+                    .*>(
+                      parkDelivery
+                    )
                     .*>(
                       DelegateBudget
                         .register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "merge-window-timeout"))
@@ -243,6 +296,77 @@ object BackoffSupervisor:
                               "mode" -> "merge".asJson
                             )
                           ).handleErrorWith(e => logger.warn(s"delegateWaiting WS frame failed: ${e.getMessage}"))
+                        case None => IO.unit
+                    )
+                    .as(
+                      active(
+                        childRef,
+                        childSpawnFn,
+                        childName,
+                        parentRef,
+                        description,
+                        agentName,
+                        subagentId,
+                        parentSessionId,
+                        resources,
+                        initialPrompt,
+                        source,
+                        extraMetadata,
+                        wsSend,
+                        restartCount,
+                        restartHistory,
+                        minBackoff,
+                        maxBackoff,
+                        maxRestarts,
+                        withinTimeRange,
+                        bgWaitCapMs,
+                        bgWaitHeld,
+                        bgWaitCapFiber,
+                        bgWaitCapFired
+                      )
+                    )
+                case Right(nebflow.core.delegate.DelegateTerminal.Outcome.RequeueForLane(reason)) =>
+                  // 病灶②收口（投递可靠性批 2026-10-29 · 作者令 23:57「道忙应 REQUEUE，
+                  // 只有属主死灭的孤儿合并才走 abort+关账」）：合并轮撞道忙 = 不是失败
+                  // ——成员资格保留（turn-granted → waiting，#943 阻塞通知随行）、会话
+                  // 停靠保活（Waiting 语义同 HoldForMerge：TaskStuckWatcher 豁免 /
+                  // MailIdleGate 可投递 / 面板可见）；道净后 careTick 放行腿自动重排
+                  // （重新授窗 → 合并轮指令重新注入本会话）。会话预算重挂（合并窗语义
+                  // ——现值为 no-op 墓碑，机制重挂时本腿自动正确）。
+                  DelegateBudget
+                    .release(subagentId)
+                    .*>(
+                      IO.blocking(nebflow.core.delegate.MergeQueue.requeueForLane(subagentId, reason))
+                        .handleErrorWith(e => logger.warn(s"MergeQueue requeueForLane failed for $subagentId: ${e.getMessage}").void)
+                    )
+                    .*>(
+                      DelegateBudget
+                        .register(subagentId)(ctx.self ! AgentEvent.Cancelled(subagentId, "merge-window-timeout"))
+                    )
+                    .*>(
+                      logger.info(
+                        s"BackoffSupervisor: delegate $subagentId merge round re-queued (lane busy, membership kept, session parked) — $reason"
+                      )
+                    )
+                    .*>(
+                      resources.agentRegistry.modify { m =>
+                        m.get(subagentId) match
+                          case Some(rec) if rec.status != AgentStatus.Waiting =>
+                            (m.updated(subagentId, rec.copy(status = AgentStatus.Waiting)), ())
+                          case _ => (m, ())
+                      }
+                    )
+                    .*>(
+                      wsSend match
+                        case Some(send) =>
+                          send(
+                            Json.obj(
+                              "type" -> "delegateWaiting".asJson,
+                              "sessionId" -> subagentId.asJson,
+                              "rootSessionId" -> parentSessionId.asJson,
+                              "mode" -> "lane".asJson
+                            )
+                          ).handleErrorWith(e => logger.warn(s"delegateWaiting(lane) WS frame failed: ${e.getMessage}"))
                         case None => IO.unit
                     )
                     .as(
