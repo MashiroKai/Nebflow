@@ -33,6 +33,14 @@ trait SessionStorePort:
   def getFolderName(folderId: String): Option[String]
   def flushPendingUiWrites: IO[Unit]
   def flushPendingMessages: IO[Unit]
+
+  /**
+   * 读一页 UI 消息（⑤触发链上下文批 2026-10-29）：scheduler 在例行任务再次触发
+   * 时取「上一轮执行的结果摘要」（作者原令六条之⑤「重复任务再次触发时自动附带
+   * 上一次执行的结果摘要，执行者不用从零考古」）。gateway `SessionStore.getUiMessages`
+   * 已有同签名成员，mixin 零改动满足；limit <= 0 = 自 offset 起全量。
+   */
+  def getUiMessages(sessionId: String, offset: Int, limit: Int): IO[(List[UiMessage], Int)]
 end SessionStorePort
 
 /**
@@ -240,8 +248,10 @@ trait DeviceIdentityView:
   def deviceId: String
   def deviceName: String
   def userDescription: String
+
   /** 本机自报平台(windows/macos/linux/…;neblink.DeviceIdentity.detectPlatform 语义)。 */
   def platform: String
+
   /** 本机能力面(键名级消费——值是绝对路径,FleetRoster 只列键名)。 */
   def capabilities: Map[String, String]
 end DeviceIdentityView
