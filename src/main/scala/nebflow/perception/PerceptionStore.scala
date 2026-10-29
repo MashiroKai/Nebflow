@@ -53,6 +53,13 @@ class PerceptionStore(val root: Path):
       Right(())
     catch case e: Throwable => Left(s"perception dirs: ${e.getClass.getSimpleName}: ${e.getMessage}")
 
+  // ── blacklist.json（r1 §5.1 判定 0.1 / r2 §13 文件布局：用户可编辑）──────
+
+  /** 用户可编辑黑名单（域或完整地址，大小写不敏感；文件缺席 = 空表）。 */
+  def loadBlacklist(): List[String] =
+    readJson(root / "blacklist.json").flatMap(_.as[List[String]].toOption)
+      .getOrElse(Nil).map(_.trim.toLowerCase).filter(_.nonEmpty)
+
   // ── accounts.json ──────────────────────────────────────────────────────
 
   def loadAccounts(): List[MailAccount] =
@@ -177,12 +184,21 @@ object PerceptionStore:
     lastSeenUid: Long = 0L,
     uidvalidity: Long = 0L,
     lastError: String = "",
-    lastOkAt: Long = 0L
+    lastOkAt: Long = 0L,
+    /**
+     * 已判定 Message-ID 台账（r1 §4.1 去重双保险 + §5.2「Message-ID 已判过的
+     * 不再判」：UIDVALIDITY 重建/服务器 UID 跳变时按它去重，已判定邮件不重投）。
+     * 追加式、按序淘汰最旧（上限 [[DecidedMsgIdCap]]）。空 Message-ID 不入账。
+     */
+    decidedMsgIds: List[String] = Nil
   )
 
   object AccountState:
     given io.circe.Encoder[AccountState] = deriveEncoder
     given io.circe.Decoder[AccountState] = deriveDecoder
+
+  /** 台账容量（每账户）；超出即淘汰最旧。 */
+  val DecidedMsgIdCap: Int = 500
 
   /** 账单缓冲行（0.4 判定入缓冲的元数据形态；不落正文全文）。 */
   case class BillingLine(

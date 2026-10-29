@@ -94,8 +94,13 @@ class RestApiRoutes(
       // 编译期 seal 门控（release 构建 = HttpRoutes.empty，零痕迹可验证）。
       (if nebflow.core.ImageGenSeal.CompiledIn then ImageGenRoutes.routes(ctx) else HttpRoutes.empty[IO]) <+>
       SocialRoutes.routes(ctx) <+> SecretsRoutes.routes(ctx) <+>
-      // 感知域（mail-perception-impl 批）：面板条目 / 两问配置 / OTP 消费 /
-      // 草稿与发送——`/api/perception` 前缀与既有域互不重叠。
+      // 统一 daemon 批（2026-10-29）：引擎侧 ingest 三腿（deliver/broadcast/llm，
+      // token 门）——必须在感知代理腿之前（/api/perception/internal/* 与面板
+      // 路径同前缀，先到先得；代理腿对 internal 路径本身不代理，双保险）。
+      PerceptionIngestRoutes.routes(ctx) <+>
+      // 感知域（统一 daemon 批 2026-10-29 起为代理腿；权威实现 = daemon 进程
+      // PerceptionPanelRoutes）：面板条目 / 两问配置 / OTP 消费 / 草稿与发送——
+      // `/api/perception` 前缀与既有域互不重叠；preset 保持引擎本地。
       PerceptionRoutes.routes(ctx) <+>
       // Phase 3b: the AuthAdmin face (break-glass ticket / token rotate /
       // sessions list+revoke), file-token Bearer ONLY (R1-1) — appended last:

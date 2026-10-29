@@ -211,9 +211,14 @@ Behavior:
             "description" -> "Local file path — absolute, ~/…, or space/%20-encoded form; judged like Pop's file face (credential locations refused). Unregistered types download on click.".asJson
           )
         )
-      ),
-      "required" -> io.circe.Json.arr("questions".asJson)
-    )
+        ),
+        "otpWindow" -> io.circe.Json.obj(
+          "type" -> "boolean".asJson,
+          "description" ->
+            "Set true when the user is about to receive a one-time verification code by email (perception mail): the engine opens the OTP detection window NOW (T0 = ask emission). Codes arriving in the window surface as a click-to-fill chip under the secret input. Implied automatically when a secret question's text mentions a verification code.".asJson
+        ),
+        "required" -> io.circe.Json.arr("questions".asJson)
+      )
   )
 
   // ============================================================
@@ -386,10 +391,32 @@ Behavior:
             val requestId = InteractionRequestId.forAskUserNonBlocking()
             // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):桥构造经注册器(agent 实现原地)。
             val bridge = AskUserAnswerPort.ref(agentRef, items, requestId, ctx)
-            (agentRef ! AgentCommand.AskUser(requestId, items, Some(bridge), attachments))
-              .as(Right(nonBlockingAck(items, requestId, attachments)))
+            val emit = agentRef ! AgentCommand.AskUser(requestId, items, Some(bridge), attachments)
+            // 感知 OTP 窗（r1 §6.1 T0 = ask 弹出时刻，引擎同步开窗——r2 §6.2 逐字）。
+            // 修前窗由前端渲染腿开（console 关闭/刷新间隙窗不开，窗内码全数漏收）；
+            // 修后引擎在发射点开窗（幂等 by requestId，前端腿复用同一窗）。失败不
+            // 阻塞 ask 本体（感知未启动=无邮箱连接，窗无意义）。
+            // 统一 daemon 批 2026-10-29：窗持有方 = 统一 daemon 管理进程——开窗经
+            // PerceptionClient 工具腿（5s 有界；未 docked/停机窗 = 静默跳过 +
+            // 客户端腿 WARN，验证码走 L1/白名单/spool 既有兜底路径，watchdog
+            // 秒级拉回）。
+            val otpWindow: IO[Unit] =
+              if perceptionOtpAsk(input, items) then
+                nebflow.perception.PerceptionClient.openOtpWindow(requestId).attempt.void
+              else IO.unit
+            (otpWindow *> emit).as(Right(nonBlockingAck(items, requestId, attachments)))
     end match
   end askUser
+
+  /**
+   * OTP 开窗判据（r1 §6.1「问句含验证码意图，或 agent 显式声明 otpWindow: true」）：
+   * 顶层 `otpWindow:true`，或任一 secret 题的问句命中验证码意图词
+   * （OtpExtractor.questionLooksLikeOtp——与前端 perception.js 同语义族），
+   * 或任一 secret 题 = ephemeral（验证码通道本身就是 OTP 意图的强信号）。
+   */
+  private def perceptionOtpAsk(input: JsonObject, items: List[AskItem]): Boolean =
+    val explicit = input("otpWindow").flatMap(_.asBoolean).getOrElse(false)
+    explicit || items.exists(i => i.secret && (i.ephemeral || nebflow.perception.OtpExtractor.questionLooksLikeOtp(i.question)))
 
   /**
    * 非阻塞 ack（唯一回执面）：机器可读（requestId + 问题数 + 附件数）+ 明确

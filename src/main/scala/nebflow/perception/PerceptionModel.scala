@@ -1,5 +1,6 @@
 package nebflow.perception
 
+import cats.effect.IO
 import io.circe.generic.semiauto.*
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
@@ -96,6 +97,11 @@ object PerceptionModel:
   ):
     def maskedCodeFree: String = this.copy(bodyText = "[omitted]").bodyText
 
+  object IncomingMail:
+    // spool 待判信封（L1 降级搁置）需要整信进 spool 文件 —— 编解码在此挂账。
+    given io.circe.Encoder[IncomingMail] = deriveEncoder
+    given io.circe.Decoder[IncomingMail] = deriveDecoder
+
   /** 验证码窗口（单码槽）：窗开于 ask 卡弹出，窗内检测到的码只存进程内存。 */
   case class OtpWindow(
     windowId: String,
@@ -153,11 +159,35 @@ object PerceptionModel:
     given Decoder[AuditLine] = deriveDecoder
 
   /** 投递信封（注入主代理的文本 + 优先级）。 */
-  case class DeliveryEnvelope(priority: String, text: String)
+  case class DeliveryEnvelope(
+    priority: String,
+    text: String,
+    /**
+     * L1 降级搁置（r2 §5.2「LLM 不可用 → 搁置 spool 待恢复，恢复后按序补判，
+     * 不臆测投递也不臆测丢弃」）：整信随 spool 暂存，spoolLoop 回放时先补判再
+     * 决定投递/丢弃。None = 已判定信封（回放直接注入，向后兼容旧 spool 文件）。
+     */
+    pendingMail: Option[IncomingMail] = None
+  )
 
   object DeliveryEnvelope:
     given Encoder[DeliveryEnvelope] = deriveEncoder
     given Decoder[DeliveryEnvelope] = deriveDecoder
+
+  /** L1 判定 seam（生产 = MailImportanceJudge.judgeViaLlm(resources.llm…)；spec 注桩）。 */
+  type MailIncomingJudge = Option[IncomingMail => IO[L1Verdict]]
+
+  /** L1（LLM 重要性判定）裁决（r2 §5.2 三值；deliver-digest 为 P3 预留不实现）。 */
+  enum L1Verdict:
+    case Deliver   // 投递全文
+    case Drop      // 丢弃
+    case Unavailable // LLM 不可用/超时/不可解析 → 搁置 spool 待恢复
+
+  object L1Verdict:
+    def readable(v: L1Verdict): String = v match
+      case Deliver     => "deliver-full"
+      case Drop        => "drop"
+      case Unavailable => "unavailable"
 
   /** 发送请求结果（REST 面的语义化失败，回执卡直接可用）。 */
   enum SendFailure:

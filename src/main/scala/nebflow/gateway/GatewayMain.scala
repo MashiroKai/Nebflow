@@ -968,16 +968,15 @@ object GatewayMain extends IOApp:
                                       updateOrchestrator = Some(updateOrchestrator),
                                       updateConvergence = Some(updateConvergence)
                                     )
-                                  // 感知守护进程 boot（mail-perception-impl 批，裁决 4：
-                                  // 独立生命周期——随网关进程启停，不挂会话/流；广播经
-                                  // wsHub 窄端口注入）。失败只 WARN 绝不阻塞启动。
-                                  val perceptionBoot: IO[Unit] =
-                                    nebflow.perception.PerceptionService
-                                      .boot(json => wsHub.broadcast(json), sharedResources)
-                                      .handleErrorWith(e =>
-                                        logger.warn(s"perception daemon boot failed: ${e.getMessage}").void
-                                      )
-                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> perceptionBoot *> succeedPortGate(
+                                  // 感知守护进程（统一 daemon 批 2026-10-29，作者裁定
+                                  // 「独立daemon吧 正好和我们心跳进程合并 那就是管daemon的」）：
+                                  // 五循环 + 判定逻辑自引擎进程抽出为独立 JVM
+                                  // （PerceptionDaemonMain），经 DaemonService 声明托管——
+                                  // dock 腿（upsert 托管条目 + /health 握手）移至下方
+                                  // daemonService autoStart 块（构造序：dock 依赖
+                                  // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
+                                  // 契约由 dock 腿逐字保持。
+                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {
@@ -1495,12 +1494,33 @@ object GatewayMain extends IOApp:
                                                 )
                                               )
                                               // Auto-start daemons configured with autoStart=true
+                                              // 统一 daemon 批 2026-10-29：感知 dock 两半腿——prepare
+                                              // （upsert「感知守护进程」托管条目，autoStart=true）前置于
+                                              // 既有 autoStart（家族语义把它与用户 daemon 一起拉起）；
+                                              // handshake（/health 轮询，10s 有界）随后——失败只 WARN
+                                              // 绝不阻塞启动（原 perceptionBoot 失败契约逐字）。
+                                              // restartOnExit/端口健康探针/pid marker/stopAll 全部为
+                                              // 既有心跳语义。
                                               dispatcher.unsafeRunAndForget(
-                                                IO.sleep(2.seconds) *> daemonService
-                                                  .autoStart(DaemonStore())
-                                                  .handleErrorWith(e =>
-                                                    logger.warn(s"Daemon auto-start failed: ${e.getMessage}")
-                                                  )
+                                                IO.sleep(2.seconds) *>
+                                                  PerceptionDaemonDock
+                                                    .prepare(DaemonStore(), cfg.port.value)
+                                                    .handleErrorWith(e =>
+                                                      logger
+                                                        .warn(s"perception daemon dock prepare failed: ${e.getMessage}")
+                                                        .as(None)
+                                                    )
+                                                    .flatMap(up =>
+                                                      daemonService
+                                                        .autoStart(DaemonStore())
+                                                        .handleErrorWith(e =>
+                                                          logger.warn(s"Daemon auto-start failed: ${e.getMessage}")
+                                                        ) *>
+                                                        up.traverse_(PerceptionDaemonDock.handshake)
+                                                          .handleErrorWith(e =>
+                                                            logger.warn(s"perception daemon handshake failed: ${e.getMessage}")
+                                                          )
+                                                    )
                                               )
 
                                               TtsService.create().flatMap { ttsService =>
