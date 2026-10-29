@@ -1427,7 +1427,9 @@ export default {
     'askUser.pendingTitle': 'Pending questions',
   // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
   'heldReceipts.title': 'Delivery receipts pending injection',
-  'heldReceipts.held': '{n} receipt(s) held by the sub-agent barrier',
+  // 'heldReceipts.held' (barrier-hold process state) retired 2026-10-29 (author
+  // ruling: process self-heal states render nothing; the capsule surfaces the
+  // terminal unread side only) — seal: UserFaceProcessStateSealSpec.
   'heldReceipts.unread': '{n} undelivered (retry exhausted)',
 
   'askUser.sourceClosed': 'Source closed (node cancelled)',
@@ -2488,7 +2490,8 @@ export default {
   'social.hint.missingRef': 'Referenced file does not exist: {path}',
   'social.hint.modeBad': 'Wrong permissions (expected rw-------): {path}',
   'social.hint.pattern': 'Field format mismatch: {field}',
-  'social.hint.health': 'Reply-loss alert: {reason} ×{count} (auto-redelivery armed)',
+  // 'social.hint.health' retired 2026-10-29 (author ruling: process self-heal
+  // states render nothing on the user face) — seal: UserFaceProcessStateSealSpec.
   'social.status.notConfigured': 'Not configured',
   'social.status.configuredNotLinked': 'Configured · not linked',
   'social.status.configInvalid': 'Invalid configuration',

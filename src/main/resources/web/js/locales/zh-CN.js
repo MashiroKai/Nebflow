@@ -1378,7 +1378,8 @@ export default {
     'askUser.pendingTitle': '待回答问题',
   // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
   'heldReceipts.title': '回执待投递',
-  'heldReceipts.held': '{n} 条回执被子代理屏障扣留',
+  // 'heldReceipts.held'（屏障扣留过程态）retired 2026-10-29（作者令：过程性自愈
+  // 状态零用户面，胶囊只渲染终态 unread）— seal: UserFaceProcessStateSealSpec.
   'heldReceipts.unread': '{n} 条未投递（重试已穷尽）',
 
   'askUser.sourceClosed': '来源已关闭（节点已取消）',
@@ -2414,7 +2415,8 @@ export default {
   'social.hint.missingRef': '引用文件不存在：{path}',
   'social.hint.modeBad': '权限不正确（应为 rw-------）：{path}',
   'social.hint.pattern': '字段格式不符：{field}',
-  'social.hint.health': '回复丢失告警：{reason} ×{count}（将自动补投）',
+  // 'social.hint.health' retired 2026-10-29（作者令：过程性自愈状态零用户面）—
+  // seal: UserFaceProcessStateSealSpec.
   'social.status.notConfigured': '未配置',
   'social.status.configuredNotLinked': '已配置 · 未接入',
   'social.status.configInvalid': '配置有误',
