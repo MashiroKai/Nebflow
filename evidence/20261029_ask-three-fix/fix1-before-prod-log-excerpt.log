@@ -1,0 +1,6 @@
+2026-10-29 10:27:36.275 [io-compute-blocker-4] INFO  nebflow.handlers - nebflow 任务：边栏图谱入口暂时隐藏（作者 2026-10-29 手写想法①：「词典边栏的图谱入口暂时隐藏，因为目前感觉并没... Tool Grep("wiki-btn|detachFriendEntries|friendsEnabled|activity-btn")
+  (path="/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-7b63544d/tests") OK (47ms)
+2026-10-29 10:27:40.253 [io-compute-blocker-9] INFO  nebflow.ws - User text (ask-dock) for session ask-7712978b (10 chars)
+2026-10-29 10:27:40.255 [io-compute-blocker-9] WARN  nebflow.ws - Dropping message to unknown session ask-7712978b (not a real session)
+2026-10-29 10:27:46.035 [io-compute-9] INFO  nebflow.conn-guard - conn-guard snapshot ws=3/1024 perIpCap=64 trackedIps=5/1024 overflow=0 accepted=47 rejected=0 reqTotal=83 reqUntracked=0 top=[100.118.229.97:1,100.91.165.120:1,127.0.0.1:1] tunnelReq=75 tunnelRejected=0
+2026-10-29 10:27:46.692 [io-compute-blocker-17] WARN  nebflow.chain-ledger - chain-ledger[stand] over cap (1681 rows / 20151535B) but nothing movable (all payloads already archived) — signal only, no round

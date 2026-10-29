@@ -1,0 +1,15 @@
+2026-10-29 11:21:51.580 [io-compute-blocker-0] INFO  nebflow.ws - User text (ask-dock) for session ask-30316e1f (21 chars)
+2026-10-29 11:21:51.583 [io-compute-blocker-0] INFO  nebflow.agent.lifecycle - ask-ask-3031 -/ask-3031 event=spawn detail=parent=- msgs=0
+2026-10-29 11:21:51.584 [io-compute-4] INFO  nebflow.flow.tree - FlowTreeActor started for session Some(ask-30316e1f)
+2026-10-29 11:21:51.587 [io-compute-10] INFO  nebflow.agent.lifecycle - ask-ask-3031 -/ask-3031 event=start detail=msgs=0
+2026-10-29 11:21:51.725 [io-compute-blocker-10] INFO  nebflow.reminders - [time] Current time: 2026-10-29 11:21 +08:00
+2026-10-29 11:21:56.203 [io-compute-0] INFO  nebflow.llm.anthropic - message_start: model=glm-5.3-flash usage_json={"input_tokens":0,"output_tokens":0} inputTokens=0 cacheRead=None cacheWrite=None
+2026-10-29 11:22:03.989 [io-compute-6] INFO  nebflow.llm.anthropic - message_delta: model=glm-5.3-flash deltaInput=Some(1430) stored_input=0 final_input=1430 cacheRead=Some(0) cacheWrite=None totalInput=1430 outputTokens=241 stopReason=Some(tool_use)
+2026-10-29 11:22:04.015 [io-compute-blocker-2] INFO  nebflow.llm.logger - Log retention: pruned files older than 2026-10-26 (pass complete: refs=0, swept objects=0)
+2026-10-29 11:22:04.155 [io-compute-blocker-12] INFO  nebflow.handlers - ask - Tool message_record_search(能量谱抽样) OK (92ms)
+2026-10-29 11:22:04.156 [io-compute-blocker-10] INFO  nebflow.handlers - ask - Tool message_record_search(能量谱) OK (93ms)
+2026-10-29 11:22:04.159 [io-compute-blocker-11] INFO  nebflow.tools.logger - Tools log retention: pruned files older than 2026-10-26
+2026-10-29 11:22:04.714 [io-compute-11] INFO  nebflow.conn-guard - conn-guard snapshot ws=1/1024 perIpCap=64 trackedIps=1/1024 overflow=0 accepted=1 rejected=0 reqTotal=3 reqUntracked=0 top=[127.0.0.1:1] tunnelReq=0 tunnelRejected=0
+2026-10-29 11:22:09.396 [io-compute-2] INFO  nebflow.llm.anthropic - message_start: model=glm-5.3-flash usage_json={"input_tokens":0,"output_tokens":0} inputTokens=0 cacheRead=None cacheWrite=None
+2026-10-29 11:22:25.116 [io-compute-9] INFO  nebflow.llm.anthropic - message_delta: model=glm-5.3-flash deltaInput=Some(2948) stored_input=0 final_input=2948 cacheRead=Some(0) cacheWrite=None totalInput=2948 outputTokens=440 stopReason=Some(end_turn)
+2026-10-29 11:22:25.132 [io-compute-blocker-0] INFO  nebflow.agent.lifecycle - ask-ask-3031 -/ask-3031 event=turn-complete detail=msgs=4 textLen=327 textStreamed=true thinking=1163 model=zhipu/glm-5.3-flash
