@@ -378,4 +378,29 @@ class DelegateRevivalSpec extends CatsEffectSuite:
     }
   }
 
+  test("V9: cancel tombstone on record → sweep refuses revival, salvage settles failed (R1 三路径·boot sweep 腿)") {
+    withFx("v9") { fx =>
+      for
+        parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
+        child = "delegate-nebflow-v9"
+        // 形态 = 实证僵尸（e25cd0c2/b5646a58）：取消发生在引擎重启前、任务行仍
+        // running——墓碑（DelegateRegistry.cancelRequestedAt）必须压过行状态。
+        _ <- fx.store.recordTask(mkTask(child, parent.id))
+        _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord(child, parent.id, fx.seat.toString)))
+        _ <- IO(nebflow.core.delegate.DelegateRegistry.markCancelRequested(child, "the user panel"))
+        report <- sweepWith(fx)
+        _ = assertEquals(report.revived, Nil, "tombstoned orphan must never revive through the sweep")
+        _ = assertEquals(report.terminalized, List(child))
+        _ = assert(
+          report.revivalSkipped.exists((id, r) => id == child && r.contains("cancel tombstone")),
+          s"tombstone skip reason recorded: ${report.revivalSkipped}"
+        )
+        row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
+        _ = assertEquals(row.status, "failed", "salvage chain settles the honest terminal (never left running)")
+        live <- fx.resources.agentRegistry.get.map(_.contains(child))
+        _ = assert(!live, "tombstoned orphan must not be spawned into a live actor")
+      yield ()
+    }
+  }
+
 end DelegateRevivalSpec
