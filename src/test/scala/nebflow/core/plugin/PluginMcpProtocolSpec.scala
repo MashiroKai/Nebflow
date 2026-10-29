@@ -129,7 +129,10 @@ class PluginMcpProtocolSpec extends CatsEffectSuite:
       case Some(p) =>
         assertEquals(p.mcpServers.keySet, Set("good"), "sse entry must be skipped")
         assert(
-          p.warnings.exists(w => w.contains("sse") && w.contains("not supported")),
+          // 措辞对齐（安全批 2026-10-29 ④d）：生产侧 sse 告警由「not supported by this
+          // client」改为「declared-valid but not available in this client」——本 spec 该批
+          // 漏更（合并收尾 2026-10-30 补齐）；断言强度不变：仍要求 sse skip 必须被报告。
+          p.warnings.exists(w => w.contains("sse") && w.contains("not available")),
           s"sse skip must be reported, got: ${p.warnings}"
         )
       case None => fail("plugin must load")
