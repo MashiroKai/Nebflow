@@ -27,19 +27,19 @@ scope: 插件建仓批（ops）——23 插件独立 git 仓 + 版本 tag + GitH
 | 8 | academic-research | https://github.com/MashiroKai/academic-research | private | v1.0.1 | 实例 | f24276b194e7 |
 | 9 | backend-dev | https://github.com/MashiroKai/backend-dev | private | v1.0.1 | 实例 | b9e7979fa612 |
 | 10 | dbm-memory | https://github.com/MashiroKai/dbm-memory | private | v0.1.0 | 实例 | be204bee180c |
-| 11 | design-cards | https://github.com/MashiroKai/design-cards | private | v1.0.1 | 实例 | 待推送读数 |
-| 12 | design-spec | https://github.com/MashiroKai/design-spec | private | v1.0.1 | 实例 | 待推送读数 |
-| 13 | docs-prompt | https://github.com/MashiroKai/docs-prompt | private | v1.0.1 | 实例 | 待推送读数 |
-| 14 | engineering-methods | https://github.com/MashiroKai/engineering-methods | private | v1.0.1 | 实例 | 待推送读数 |
-| 15 | explorer-toolkit | https://github.com/MashiroKai/explorer-toolkit | private | v1.0.1 | 实例 | 待推送读数 |
-| 16 | imagegen | https://github.com/MashiroKai/imagegen | private | v0.1.0 | 实例 | 待推送读数 |
-| 17 | learn-anything | https://github.com/MashiroKai/learn-anything | private | v1.0.1 | 实例 | 待推送读数 |
-| 18 | nebflow-frontend-dev | https://github.com/MashiroKai/nebflow-frontend-dev | private | v1.0.1 | 实例 | 待推送读数 |
-| 19 | nebflow-qa | https://github.com/MashiroKai/nebflow-qa | private | v1.0.1 | 实例 | 待推送读数 |
-| 20 | phd-note | https://github.com/MashiroKai/phd-note | private | v1.0.1 | 实例 | 待推送读数 |
-| 21 | pipelines | https://github.com/MashiroKai/pipelines | private | v1.0.1 | 实例 | 待推送读数 |
-| 22 | thesis-review | https://github.com/MashiroKai/thesis-review | private | v1.0.1 | 实例 | 待推送读数 |
-| 23 | website | https://github.com/MashiroKai/website | private | v1.0.1 | 实例 | 待推送读数 |
+| 11 | design-cards | https://github.com/MashiroKai/design-cards | private | v1.0.1 | 实例 | 5d01734341ec |
+| 12 | design-spec | https://github.com/MashiroKai/design-spec | private | v1.0.1 | 实例 | 20ca3853a346 |
+| 13 | docs-prompt | https://github.com/MashiroKai/docs-prompt | private | v1.0.1 | 实例 | 2485ca4bf043 |
+| 14 | engineering-methods | https://github.com/MashiroKai/engineering-methods | private | v1.0.1 | 实例 | 93c4194fc32b |
+| 15 | explorer-toolkit | https://github.com/MashiroKai/explorer-toolkit | private | v1.0.1 | 实例 | 2f37831d452b |
+| 16 | imagegen | https://github.com/MashiroKai/imagegen | private | v0.1.0 | 实例 | ae950ad78454 |
+| 17 | learn-anything | https://github.com/MashiroKai/learn-anything | private | v1.0.1 | 实例 | 8f42f458a7ff |
+| 18 | nebflow-frontend-dev | https://github.com/MashiroKai/nebflow-frontend-dev | private | v1.0.1 | 实例 | 0ab50866da0f |
+| 19 | nebflow-qa | https://github.com/MashiroKai/nebflow-qa | private | v1.0.1 | 实例 | 1425fedded41 |
+| 20 | phd-note | https://github.com/MashiroKai/phd-note | private | v1.0.1 | 实例 | 775ab7cc8b02 |
+| 21 | pipelines | https://github.com/MashiroKai/pipelines | private | v1.0.1 | 实例 | 99fbcea34906 |
+| 22 | thesis-review | https://github.com/MashiroKai/thesis-review | private | v1.0.1 | 实例 | 2ba32c171310 |
+| 23 | website | https://github.com/MashiroKai/website | private | v1.0.1 | 实例 | 3f4cdf7217ad |
 
 **内容源裁定与校验**（种子 = 本仓 `src/main/resources/seed/plugins/<name>/`，实例 = `~/.stand/plugins/<name>/`）：
 
@@ -57,8 +57,9 @@ scope: 插件建仓批（ops）——23 插件独立 git 仓 + 版本 tag + GitH
 | 17:45–17:48 | 前 6 仓（document-production、nebflow-plugin-creator、web-search-toolkit、visual-report、computer-use、academic-research）创建+推送 main+tags 成功。 |
 | 17:48–17:52 | 触发 GitHub secondary rate limit：`createRepository` 报 `You have created too many repositories, too quickly`；REST `POST /user/repos` 报 403 `exceeded a secondary rate limit … temporarily blocked from content creation`。当时 10 仓已建并推送，14 仓待建。 |
 | 17:52–17:56 | 短 backoff 重试后 slideblocks 创建并推送成功；browser-use 首个端到端验证通过（`git ls-remote` main/tag 读数一致）。 |
-| 18:04 起 | 剩余 13 个 private 仓以长 backoff 收敛循环（每轮失败即歇 10 min）后台推进；已建仓的 main+tag 校验逐仓通过。 |
-| 终态 | 见 §1 表与各仓 `_push_log*.tsv`；`git ls-remote` 校验 main == 本地 HEAD、`v<version>` tag 解到导入 commit。 |
+| 18:04 起 | 剩余 13 个 private 仓以长 backoff 收敛循环后台推进（脚本 `_converge.sh`→`_converge2.sh`：单仓创建间隔 4 min，撞限流歇 15 min）。 |
+| 18:22 | design-cards 限流解除后第一个建仓成功；18:26–19:59 收敛循环逐仓建完剩余 12 仓（design-spec、docs-prompt、engineering-methods、imagegen、nebflow-frontend-dev、nebflow-qa、phd-note、thesis-review、website 推送成功；pipelines 推送初败重试成功；explorer-toolkit、learn-anything 为循环收敛后段建仓、remote 指向缺失，补挂 origin 后 main+tags 推送成功）。 |
+| 20:03–20:06 | 终验：23/23 仓 `git ls-remote` 全绿——remote `main` == 本地 HEAD，`v<version>` tag 在远端且解到导入 commit（`rev-list --max-parents=0`）。 |
 
 **账户现状核对**：`gh api user` = `MashiroKai`（display name "Kai"），作者令「账号 kaiyu 名下」即此账号。账号下原有 `MashiroKai/nebflow-plugins`（private，多包合一的开发协作用仓）**保持不变**，本批是「一插件一仓」，未复用、未覆盖该仓。
 
