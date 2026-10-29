@@ -341,9 +341,10 @@ private[project] trait NodeStarter:
           // 「plugin.md = 插件必要文件机制」批——解析块单点 = PluginInjection）；
           // ③ MCP server 启动 + 引用记账（PluginMcpManager，启动失败 → failNode）。
           // 三步全部发生在状态翻转（status=Running）之前——失败路径零 running 残留。
-          // panelscheme 批（2026-09-21）：§E.3 node.preset 静态消费**废止**——
-          // 节点无自有方案，worker 模型 = 分发器当前方案（entry.toAgentDef 经
-          // SchemePolicy 对 general 动态继承 project-dispatcher，装载期现读）。
+          // model-chain anchor batch（2026-10-29）：§E.3 node.preset 静态消费**废止**——
+          // 节点无自有方案，worker fallback 锚 = 内置执行 agent 的 /model 链
+          // （own fork > Nebula 主链 > seed），entry.toAgentDef 经 core.SchemePolicy
+          // 装载期现读。
           // resume（crash-recovery 批 D2/D3）：插件/装配链逐行复用，仅两处
           // 差异——sessionId 复用 sessionRef 旧 id（transcript 单文件续写 + F2 队列
           // 重放白捡，BackoffSupervisor respawn 同款先例）+ initialMessages 水合。
@@ -409,9 +410,9 @@ private[project] trait NodeStarter:
         case (None, _) => failNode(nodeId, s"worker agent '${node.agent}' not found in global library (loop node)")
         case (_, None) => failNode(nodeId, s"verify agent '${loopCfg.verify}' not found in global library (loop node)")
         case (Some(wEntry), Some(vEntry)) =>
-          // panelscheme 批（2026-09-21）：worker/verify 均经 SchemePolicy 名称策略
-          // ——worker（general）动态继承 project-dispatcher 当前方案（节点无自有
-          // 设置）；verify agent 同一策略（§E.3 node.preset 静态消费已废止）。
+          // model-chain anchor batch（2026-10-29）：worker/verify 均经 core.SchemePolicy
+          // 名称策略——own chain（可设角色）> Nebula 主链 > seed；§E.3 node.preset
+          // 静态消费已废止，节点自身不另设 fallback 链。
           val workerBase = wEntry.toAgentDef
           val verifyBase = vEntry.toAgentDef
           // worker/verify 均注入 node.plugins（§2.1 verify=通用 agent+plugins，验证域
@@ -484,11 +485,9 @@ private[project] trait NodeStarter:
   end spawnAndRunLoop
 
   /**
-   * panelscheme 批（2026-09-21）：§E.3 nodePresetDef（node.preset →
-   * PresetResolver 静态消费）**整体移除**——节点侧静态覆盖废止，引擎解析不再
-   * 读节点存储方案（NodeDef.preset 字段保留：存量数据零删除，仅显示/审计）。
-   * 节点 worker/verify 模型 = 分发器当前方案，经 AgentEntry.toAgentDef 内
-   * SchemePolicy 名称策略（general 动态继承 project-dispatcher）单点生效。
+   * model-chain anchor 批（2026-10-29）：节点 worker/verify fallback 锚 = 内置执行
+   * agent 的 /model 链（own fork > Nebula 主链 > seed），经 AgentEntry.toAgentDef
+   * 内 core.SchemePolicy 名称策略单点生效；节点侧 preset 参数仍仅显示/审计。
    */
 
   /**
@@ -547,7 +546,7 @@ private[project] trait NodeStarter:
 
   private def runWithAgent(
     node: NodeDef,
-    baseDef: nebflow.actor.AgentDef, // panelscheme 批：经 SchemePolicy 的 worker def（继承分发器当前方案）
+    baseDef: nebflow.actor.AgentDef, // model-chain anchor 批：经 core.SchemePolicy 的执行 agent def（/model 链）
     inputText: String,
     sessionId: String,
     prepared: NodeEngine.PluginPreparation,

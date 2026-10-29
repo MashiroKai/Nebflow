@@ -4,7 +4,6 @@ import cats.syntax.all.*
 import io.circe.*
 import io.circe.syntax.*
 import nebflow.actor.AgentDef
-import nebflow.core.presets.PresetStore
 import nebflow.shared.AgentModelConfig
 
 // ============================================================
@@ -95,11 +94,12 @@ object AgentEntry:
   extension (a: AgentEntry)
 
     def toAgentDef: AgentDef =
-      // panelscheme 批（2026-09-21）：输入先经 SchemePolicy 名称策略（与
-      // AgentLibrary.loadFromDir 同一单点）——kernel 继承 Nebula、general 继承
-      // project-dispatcher、其余引擎忽略存储引用；可设两类原样（红线不变）。
-      val (effPreset, effModel) = nebflow.core.presets.SchemePolicy.effectiveRefs(a.name, a.preset, a.model)
-      val (resolvedModel, _) = PresetStore().resolve(effPreset, effModel)
+      // model-chain anchor batch (2026-10-29): runtime model resolution is the
+      // /model chain policy and nothing else — own chain (settable roles) >
+      // Nebula primary chain (fresh read) > seed chain. The retired preset-name
+      // policy must not choose the fallback anchor here.
+      val (resolvedModel, _) = nebflow.core.SchemePolicy.resolveModel(a.name, a.model)
+      val resolvedPreset = if nebflow.core.SchemePolicy.isSettable(a.name) then a.preset else None
       AgentDef(
         name = a.name,
         description = a.description,
@@ -109,7 +109,7 @@ object AgentEntry:
         category = a.category,
         mcpServers = a.mcpServers,
         model = Some(resolvedModel),
-        preset = effPreset,
+        preset = resolvedPreset,
         skills = a.skills,
         flows = a.flows,
         displayName = a.displayName // display face carried through (disk custom agents: loadCustomFromDir 已解析同名字段)

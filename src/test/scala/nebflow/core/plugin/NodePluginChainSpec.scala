@@ -642,13 +642,21 @@ class NodePluginChainSpec extends CatsEffectSuite:
     }
   }
 
-  // ── panelscheme（2026-09-21）：preset 参数退役 + 节点继承分发器方案 ──────────
+  // ── panelscheme（2026-09-21）：preset 参数退役 + 节点跑 /model 主链 ──────────
 
-  test("panelscheme: NodeEdit preset 参数不可设（NODE_PRESET_UNSUPPORTED）；节点模型 = 分发器当前方案（general 动态继承）") {
+  test("panelscheme: NodeEdit preset 参数不可设（NODE_PRESET_UNSUPPORTED）；节点模型 = /model 主链") {
     val capture = TrieMap[String, LlmRequest]()
     val ws = tempRoot / "ws-preset"
     os.makeDir.all(ws)
-    // 预设 fixture：fast 链 = fast-model + fb-fallback（PresetStore 单点解析）
+    // model-chain anchor 批（2026-10-29）：节点 fallback 锚 = 内置执行 agent 的
+    // /model 链（own fork > Nebula 主链 > seed）。夹具 = Nebula 主链 sidecar
+    // （/model 面板的写入面），dispatcher 的旧 preset 目录面刻意一并写上——
+    // 旧「分发器当前方案」派生若仍在场，本断言即红。
+    os.makeDir.all(tempRoot / "agents" / "Nebula")
+    os.write.over(
+      tempRoot / "agents" / "Nebula" / "agent.json",
+      """{"name":"Nebula","model":{"preferred":"fast-model","fallbacks":["fb-fallback"]}}"""
+    )
     os.write.over(
       tempRoot / "model-presets.json",
       Json
@@ -669,12 +677,10 @@ class NodePluginChainSpec extends CatsEffectSuite:
         )
         .noSpaces
     )
-    // 分发器 fixture：preset=fast —— 节点（general）经 SchemePolicy 动态继承它
-    // （general 自身 agent.json 不带 preset：继承读的是 project-dispatcher 的当前引用）
     os.makeDir.all(tempRoot / "agents" / "project-dispatcher")
     os.write.over(
       tempRoot / "agents" / "project-dispatcher" / "agent.json",
-      """{"name":"project-dispatcher","description":"dispatcher fixture","preset":"fast"}"""
+      """{"name":"project-dispatcher","description":"dispatcher fixture","preset":"general"}"""
     )
     os.write.over(tempRoot / "agents" / "project-dispatcher" / "system.md", "# dispatcher\n")
     val system = ActorSystem(s"plc-preset-${scala.util.Random.nextInt(100000)}")
@@ -702,13 +708,13 @@ class NodePluginChainSpec extends CatsEffectSuite:
         )
         noNode <- rt.store.snapshot.map(s => !s.nodes.values.exists(_.name == "preset-retired"))
         _ = assert(noNode, "rejected NodeEdit must not create a node")
-        // ② 节点模型 = 分发器当前方案：无 preset 参数的普通节点，general 经
-        //    SchemePolicy 动态继承 project-dispatcher 的 fast 链
+        // ② 节点模型 = /model 主链：无 preset 参数的普通节点，执行 agent 的
+        //    AgentDef.model 经 core.SchemePolicy 现读 Nebula 主链（/model 写入面）
         ok <- nodeEdit(
           nodeInput(
             "plc-preset",
             "preset-ok",
-            "description" -> Json.fromString("dispatcher inherited"),
+            "description" -> Json.fromString("model chain inherited"),
             "task" -> Json.fromString("t"),
             "out" -> Json.fromString("Nebula")
           ),
@@ -723,11 +729,11 @@ class NodePluginChainSpec extends CatsEffectSuite:
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
       yield capture.values.find(_.sessionId.startsWith("node-"))
     program.map { reqOpt =>
-      val req = reqOpt.getOrElse(fail("no LLM request captured for dispatcher-inherited node"))
+      val req = reqOpt.getOrElse(fail("no LLM request captured for the /model-anchored node"))
       assertEquals(
         req.agentModel,
         Some(nebflow.shared.AgentModelConfig(Some("fast-model"), List("fb-fallback"))),
-        s"node session must run the dispatcher's current preset chain (dynamic inheritance), got: ${req.agentModel}"
+        s"node session must run the /model primary chain, got: ${req.agentModel}"
       )
     }
   }

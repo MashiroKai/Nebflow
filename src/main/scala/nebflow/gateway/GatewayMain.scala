@@ -426,6 +426,13 @@ object GatewayMain extends IOApp:
               // 安装的种子源走 providers 推导。
             try nebflow.core.presets.PresetStore.migrateGlobalModelChain()
             catch case e: Exception => logger.warn(s"llm.model migration failed: ${e.getMessage}")
+              // ⚠ 未接腿（model-chain anchor 批 2026-10-29 实测）：`ModelChainMigration
+              // .migrateLegacyPresetRefs()` 在全树仍**零生产调用点**。它会把
+              // model-presets.json 封存改名，而 `SubTaskTool` 的 preset 参数面仍读该
+              // 目录（PresetResolver.resolveExplicit）⇒ 接上启动腿等于拆掉 preset 面。
+              // 存量「只有 preset 引用、无 model 键」的角色 sidecar 因此与 /model 面板
+              // 读数一致地落到 seed 链（面板与运行时同源，不产生锚点分叉），是否正式
+              // 退役 preset 面留待作者裁决——不在本批擅自扩大范围。
               // personal-agent 批（2026-10-04）：Soul.md 启动一次性迁移腿
               // （agents/Nebula/memory.md → ~/.nebflow/Soul.md）。幂等：
               // Soul.md 已存在即跳过、再跑零副作用；写前经 MemorySnapshot 快照，
@@ -495,18 +502,19 @@ object GatewayMain extends IOApp:
                         // --- Fast path: only essential init before server start ---
                         val chatRoutes = new ChatRoutes(handle, tokenRef, gatewaySessions)
                         val isConfigured = config.llm.providers.nonEmpty
-                        // #339 D-c：contextWindow 改读默认 preset 链首个能解析到
-                        // provider 模型表的 ref（preferred 优先逐个试 fallbacks；
-                        // 全失败回 Defaults.ContextWindow + warn）。横幅同时暴露
-                        // preset 名 + 实际 ref，与设置页 preset 卡片逐字可对上。
-                        val (contextWindow, presetLabel): (Int, Option[(String, String)]) =
+                        // model-chain anchor 批（2026-10-29）：contextWindow 改读 /model
+                        // 主链（Nebula own chain → seed），首个能解析到 provider 模型表的
+                        // ref 为准（preferred 优先逐个试 fallbacks；全失败回
+                        // Defaults.ContextWindow + warn）。旧实现读默认 preset 目录
+                        // （model-presets.json），而该文件已在 model-chain 迁移中被封存
+                        // ⇒ 迁移后的 home 上预算恒按种子链算，与 /model 设置脱节。
+                        val (contextWindow, chainLabel): (Int, Option[(String, String)]) =
                           if !isConfigured then (Defaults.ContextWindow, None)
                           else
                             try
-                              val pFile = nebflow.core.presets.PresetStore().load()
-                              val dp = pFile.presets
-                                .getOrElse(pFile.defaultPreset, nebflow.core.presets.ModelPreset(pFile.defaultPreset))
-                              val chain = dp.preferred.toList ++ dp.fallbacks
+                              val policy = nebflow.core.SchemePolicy
+                              val (primary, source) = policy.resolveModel(policy.NebulaName, policy.nebulaChain())
+                              val chain = primary.preferred.toList ++ primary.fallbacks
                               val resolved = chain.flatMap { ref =>
                                 try
                                   val (providerId, modelId) = Config.parseModelRef(ref)
@@ -517,13 +525,13 @@ object GatewayMain extends IOApp:
                                 catch case _: Exception => None
                               }
                               resolved.headOption match
-                                case Some((cw, ref)) => (cw, Some((pFile.defaultPreset, ref)))
+                                case Some((cw, ref)) => (cw, Some((source, ref)))
                                 case None =>
                                   logger.warn(
-                                    s"Default preset '${pFile.defaultPreset}' resolves to no provider model; " +
+                                    s"Model chain ($source) resolves to no provider model; " +
                                       s"contextWindow falls back to ${Defaults.ContextWindow}"
                                   )
-                                  (Defaults.ContextWindow, Some((pFile.defaultPreset, dp.preferred.getOrElse(""))))
+                                  (Defaults.ContextWindow, Some((source, primary.preferred.getOrElse(""))))
                             catch case _: Exception => (Defaults.ContextWindow, None)
                         val baseUrl = s"http://localhost:${cfg.port}"
                         // Phase 3b (plan §6.5, stage B): the startup URL no longer
@@ -575,9 +583,9 @@ object GatewayMain extends IOApp:
                             .flatMap(wl => wl.map(l => logger.warn(l)).getOrElse(IO.unit)) *>
                           (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
                            else
-                             presetLabel match
+                             chainLabel match
                                case Some((name, ref)) =>
-                                 logger.info(s"Context window: $contextWindow tokens (default preset \"$name\": $ref)")
+                                 logger.info(s"Context window: $contextWindow tokens (model chain $name: $ref)")
                                case None =>
                                  logger.info(s"Context window: $contextWindow tokens")) *>
                           RateLimiter.create().flatMap { rateLimiter =>

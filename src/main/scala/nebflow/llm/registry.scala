@@ -78,23 +78,24 @@ class ProviderRegistry(
 
   def getCandidates(): IO[List[ModelCandidate]] =
     configRef.get.map { config =>
-      // Global chain source = the SEED chain: the first provider's first model in
-      // `nebflow.json` field order (a legacy `llm.model` chain still wins while
-      // it exists). Read fresh per call (small file) — /model edits apply on the
-      // next call.
+      // Global chain source = the /model primary chain: Nebula's own stored
+      // chain, degrading to the seed chain (first provider's first model in
+      // `nebflow.json` field order; a legacy `llm.model` chain still wins while
+      // it exists) when Nebula carries none. Read fresh per call (small file) —
+      // /model edits apply on the next call.
       //
-      // 🔴 This leg serves requests that carry NO `agentModel`, and it is NOT
-      // "the model the user configured": `resolveModel(NebulaName, None)`
-      // short-circuits to the seed chain ("Nebula has no one to follow"), so
-      // Nebula's OWN stored `model` key on disk is ignored here (corrected
-      // comment — the previous text claimed the opposite and was wrong; verifier
-      // round-2 proved it: with two live providers the probe hit the seed
-      // provider, not the picked one). A caller that must measure the user's
-      // pick has to pass it as `LlmRequest.agentModel`, which builds the chain
-      // per ref ([[getCandidateForRef]]) — see `OnboardingService.probeLlm`.
+      // 🔴 model-chain anchor batch (2026-10-29): this leg MUST pass Nebula's
+      // own chain as the resolution input. Calling
+      // `resolveModel(NebulaName, None)` short-circuits to the seed chain
+      // ("Nebula has no one to follow"), which silently dropped the /model
+      // setting on every request that carries no `agentModel` (the allocator /
+      // utility-model legs and this global fallback) — the fallback anchor then
+      // came from a fixed config seed instead of /model. Requests that carry
+      // `agentModel` build their chain per ref ([[getCandidateForRef]]).
       val chain =
         try
-          val (am, _) = nebflow.core.SchemePolicy.resolveModel(nebflow.core.SchemePolicy.NebulaName, None)
+          val policy = nebflow.core.SchemePolicy
+          val (am, _) = policy.resolveModel(policy.NebulaName, policy.nebulaChain())
           am.preferred.toList ++ am.fallbacks
         catch case _: Exception => Nil
       val fromChain = chain.flatMap { ref =>

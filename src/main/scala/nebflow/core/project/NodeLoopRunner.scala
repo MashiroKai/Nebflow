@@ -51,7 +51,7 @@ private[project] trait NodeLoopRunner:
   /**
    * spawn 单个 Loop 会话（agent + 常驻桥 + registry 注册）。MCP grant 由调用方
    * （spawnAndRunLoop）分别对 worker/verify acquire 后传入（各自独立引用记账）。
-   * baseDef=经 SchemePolicy 名称策略的 AgentDef；prepared=已解析的插件分配。
+   * baseDef=经 core.SchemePolicy /model 链解析的 AgentDef；prepared=已解析的插件分配。
    */
   private[project] def spawnLoopSession(
     baseDef: AgentDef,

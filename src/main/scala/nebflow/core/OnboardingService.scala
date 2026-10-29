@@ -177,10 +177,11 @@ object OnboardingService:
    *
    * `modelRef` = **the model the user just picked in the onboarding model step**.
    * The probe MUST measure that one (verifier round-2 finding): without it the
-   * request carries no `agentModel` and the global leg resolves the seed chain
-   * (`SchemePolicy.resolveModel(Nebula, None)` → first provider's first model in
-   * `nebflow.json` field order), so a probe could report success while the brain
-   * the user chose was dead. `modelRef` rides the EXISTING per-request point
+   * request carries no `agentModel` and the global leg resolves the /model
+   * primary chain (`SchemePolicy.resolveModel(Nebula, ownChain)` → Nebula's
+   * stored chain, seed chain when it has none), so a probe could report success
+   * while the brain the user chose was dead — and would measure a chain the
+   * agent will not run on. `modelRef` rides the EXISTING per-request point
    * (`LlmRequest.agentModel` → `ProviderRegistry.getCandidatesForAgent` →
    * `getCandidateForRef`, the same leg production agent turns use via
    * `AgentSessionExecution`), so the picked ref becomes the head of the measured
