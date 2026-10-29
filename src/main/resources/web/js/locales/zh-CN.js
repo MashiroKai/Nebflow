@@ -1080,6 +1080,17 @@ export default {
   'settings.imagegenDelete': '删除此提供方',
   'settings.imagegenDeleteConfirm': '再点一次确认删除',
   'settings.imagegenDeleted': '提供方已删除',
+  // settings-panel-jev-imagegen 批（2026-10-29 作者令「然后 Jev/生图，也要像我们
+  // LLM 这样，有个按钮来测试可用性」）：JeV 一枚测试钮（同 LLM 测试钮口径）；
+  // 生图两级（轻探活 + 实跑一次最小生成）。
+  'settings.jevTestBtn': '测试可用性',
+  'settings.jevTestTitle': '连接性测试：向分配通道发一次最小真实调用（测当前表单值，未保存也可测）',
+  'settings.imagegenTestBtn': '测试可用性',
+  'settings.imagegenTestTitle': '轻探活：key 解析 + 上游可达（models 端点）',
+  'settings.imagegenGenBtn': '实跑一次最小生成',
+  'settings.imagegenGenTitle': '真打上游：最小尺寸、最低质量实跑一次生成（产物进临时目录）',
+  'settings.imagegenGenRunning': '生成中…（几秒到几十秒）',
+  'settings.imagegenProbeModelsAbsent': '上游可达（models 面缺失，HTTP {code}）——鉴权未验证，以「实跑一次最小生成」为准',
   // settings-panel 批 B 件（2026-10-28）：每模型连接性测试钮。
   'provider.testModelTitle': '连接性测试：向该模型发一次最小真实调用',
   'provider.testRunning': '测试中…',

@@ -1,0 +1,65 @@
+<!doctype html>
+<!-- jev-imagegen-test-harness (JeV face) — test page for
+     tests/jev-imagegen-test-buttons.spec.mjs (settings-panel-jev-imagegen
+     batch, 2026-10-29).
+
+     Drives the REAL production module /js/sidebar/jevTestButton.js over a
+     throwaway static server; the surrounding form is the settings panel's
+     JeV collapse body (same ids the production wiring reads:
+     #cfg-jev-provider / #cfg-jev-endpoint / #cfg-jev-keyref). POST /api/jev/test
+     is intercepted by the spec via playwright route — the page never leaves
+     127.0.0.1.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>jev test harness</title>
+<link rel="stylesheet" href="/css/base.css">
+<link rel="stylesheet" href="/css/sidebar.css">
+<link rel="stylesheet" href="/css/chat.css">
+<style>
+  body { margin: 0; padding: 24px; max-width: 560px;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+  .settings-section-title { font-weight: 650; font-size: 14px; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+  <div class="settings-section-title">Jev（插件分配）</div>
+  <div class="settings-collapse-body" id="jev-advance-body">
+    <div class="cfg-form-group">
+      <label class="cfg-label" for="cfg-jev-provider">提供方</label>
+      <select class="cfg-input" id="cfg-jev-provider">
+        <option value="typesafe-jev">typesafe-jev</option>
+        <option value="laya">laya</option>
+      </select>
+      <label class="cfg-label" for="cfg-jev-endpoint">端点</label>
+      <input class="cfg-input" id="cfg-jev-endpoint" value="http://127.0.0.1:8080/predict" spellcheck="false">
+      <label class="cfg-label" for="cfg-jev-keyref">API 密钥引用</label>
+      <input class="cfg-input" id="cfg-jev-keyref" value="laya-key" autocomplete="off" spellcheck="false">
+    </div>
+  </div>
+  <script type="module">
+    const mod = await import('/js/sidebar/jevTestButton.js');
+    const body = document.getElementById('jev-advance-body');
+    // The production save row (sidebar.js): 保存 + 测试可用性 share one row.
+    body.insertAdjacentHTML('beforeend', `
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="cfg-btn cfg-btn-primary" id="btn-save-jev">保存</button>
+        ${mod.jevTestButtonHTML()}
+        <span class="inline-state" id="jev-save-state" role="status" aria-live="polite"></span>
+      </div>`);
+    body.insertAdjacentHTML('beforeend', mod.jevTestResultsHTML());
+    // The production wiring shape (sidebar.js bindSettingsEvents): the form's
+    // CURRENT values at click time, read live off the inputs.
+    mod.bindJevTestButton(document.body, {
+      getForm: () => ({
+        provider: document.getElementById('cfg-jev-provider')?.value || '',
+        endpoint: document.getElementById('cfg-jev-endpoint')?.value.trim() || '',
+        keyRef: document.getElementById('cfg-jev-keyref')?.value.trim() || '',
+      }),
+    });
+    window.__jevTest = mod;
+    document.body.dataset.ready = '1';
+  </script>
+</body>
+</html>

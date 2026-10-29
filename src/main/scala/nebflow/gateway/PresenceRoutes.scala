@@ -21,6 +21,8 @@ import nebflow.core.skill.SkillService
 import nebflow.core.task.{FileTaskStore, TaskStore}
 import nebflow.core.tools.NodeTools
 import nebflow.llm.*
+import nebflow.llm.decision.DecisionProvider
+import nebflow.llm.imagegen.{ImageGenAdapters, ImageGenProbe}
 import nebflow.llm.providers.ModelListFaces
 import nebflow.neblink.*
 import nebflow.neblink.FriendCodecs.given
@@ -59,6 +61,12 @@ private[gateway] object PresenceRoutes:
   // 一个诊断调用（双击/多面板重复点击 → 409，前端钮在测试中本就禁用——这是
   // 服务侧的第二道闸，不是唯一闸）。
   private val modelTestGate = new ProviderModelProbe.Gate
+
+  // JeV 分配通道 / 生图 provider 探针的单飞闸（settings-panel-jev-imagegen 批
+  // 2026-10-29 作者令「然后 Jev/生图，也要像我们LLM这样，有个按钮来测试可用性」
+  // ——同 B 件口径：引擎侧第二道闸，前端钮禁用是第一道）。
+  private val jevTestGate = new ProviderModelProbe.Gate
+  private val imagegenTestGate = new ImageGenProbe.Gate
 
   /** Shared probe shell for POST /provider/test（fourfix 批 ②件起为存储配置腿
     * 与表单覆写腿两条共用）：单飞闸 → 一次最小真实调用 → 脱敏判决。
@@ -2113,6 +2121,109 @@ private[gateway] object PresenceRoutes:
               }
             end if
           }
+        }
+
+      // ── JeV 分配通道连接性测试（settings-panel-jev-imagegen 批 2026-10-29
+      // 作者令逐字「然后 Jev/生图，也要像我们LLM这样，有个按钮来测试可用性」）──
+      // 表单覆写腿优先（未保存也测）：provider/endpoint/keyRef 覆写即按表单值
+      // 探活；缺省回落存储配置。laya 走 /health metadata 面、typesafe 走极小
+      // 真实补全（JevProbe 单点）；keyRef secret 缺席 = 直接 Failed（待录入），
+      // 不发注定 401 的击。零持久化——纯诊断读数。
+      case req @ POST -> Root / "jev" / "test" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            val providerOv = body.hcursor.downField("provider").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            val endpointOv = body.hcursor.downField("endpoint").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            val keyRefOv = body.hcursor.downField("keyRef").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            if providerOv.exists(p => !DecisionProvider.AllIds.contains(p)) then
+              BadRequest(Json.obj("error" -> s"unknown jev provider '${providerOv.get}'".asJson))
+            else
+              configRef.get.flatMap { cfg =>
+                val stored = cfg.jev
+                val provider = providerOv.getOrElse(stored.flatMap(_.provider).getOrElse(DecisionProvider.TypesafeJev))
+                val endpoint = endpointOv.orElse(stored.flatMap(_.endpoint)).getOrElse(
+                  if provider == DecisionProvider.Laya then DecisionProvider.DefaultLayaEndpoint
+                  else DecisionProvider.DefaultTypesafeEndpoint
+                )
+                val model = stored.flatMap(_.model).getOrElse(DecisionProvider.DefaultModel)
+                val keyRef = keyRefOv.orElse(stored.flatMap(_.keyRef))
+                if !jevTestGate.tryAcquire() then
+                  Conflict(Json.obj("error" -> "a test for this provider is already in flight".asJson))
+                else
+                  IO.blocking(JevProbe.callWithKeyRef(provider, endpoint, model, keyRef)).flatMap {
+                    case JevProbe.Verdict.Ok(latency, reply) =>
+                      Ok(Json.obj("ok" -> true.asJson, "latencyMs" -> latency.asJson, "reply" -> reply.asJson))
+                    case JevProbe.Verdict.Failed(detail) =>
+                      Ok(Json.obj("ok" -> false.asJson, "error" -> detail.asJson))
+                  }.guarantee(IO.blocking(jevTestGate.release()))
+              }
+            end if
+          }
+        }
+
+      // ── 生图 provider 连接性测试（同批同令③件）——两级：轻探活（GET
+      // {base}/models + 适配器鉴权头；401/403 = 死 key 状态码原样可见）与
+      // 「实跑一次最小生成」（mode=generate：256x256/最低质量真 POST，产物落
+      // os.TempDir，绝不进 <dataRoot>/imagegen 正式归档）。token 解析：表单
+      // 覆写 > 存储 keyRef > 派生名（ImageGenProbe.resolveToken 单点）；缺
+      // credential 属判决内容（ok:false）而非路由错误。零持久化——临时目录
+      // 产物除外。
+      case req @ POST -> Root / "imagegen" / "test" =>
+        withAuth(req) {
+          if !ImageGenSeal.CompiledIn then
+            NotFound(Json.obj("error" -> "imagegen face is not compiled in".asJson))
+          else
+            req.as[Json].flatMap { body =>
+              val name = body.hcursor.downField("provider").as[String].toOption.map(_.trim).getOrElse("")
+              val tpe = body.hcursor.downField("type").as[String].toOption.map(_.trim).getOrElse("")
+              val model = body.hcursor.downField("model").as[String].toOption.map(_.trim).getOrElse("")
+              val baseUrlOv = body.hcursor.downField("baseUrl").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+              val apiKeyOv = body.hcursor.downField("apiKey").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+              val generate = body.hcursor.downField("mode").as[String].toOption.map(_.trim).contains("generate")
+              ImageGenAdapters.byType(tpe) match
+                case None => BadRequest(Json.obj("error" -> s"unknown imagegen adapter type '$tpe'".asJson))
+                case Some(adapter) =>
+                  if name.isEmpty || model.isEmpty then
+                    BadRequest(Json.obj("error" -> "Missing required fields: provider, model".asJson))
+                  else
+                    configRef.get.flatMap { cfg =>
+                      val stored = cfg.imagegen.flatMap(_.providers).getOrElse(Map.empty).get(name)
+                      val baseUrl = baseUrlOv.orElse(stored.flatMap(_.baseUrl)).getOrElse(adapter.defaultBaseUrl)
+                      ImageGenProbe.resolveToken(apiKeyOv, stored.flatMap(_.keyRef), name) match
+                        case Left(missing) =>
+                          // key 在位性是探活判决的一部分（❌ + 待录入文案），不是路由错误。
+                          Ok(Json.obj("ok" -> false.asJson, "error" -> missing.asJson))
+                        case Right(token) =>
+                          if !imagegenTestGate.tryAcquire() then
+                            Conflict(Json.obj("error" -> "a test for this provider is already in flight".asJson))
+                          else
+                            val verdict = IO.blocking(
+                              if generate then ImageGenProbe.generateCall(adapter, baseUrl, model, token)
+                              else ImageGenProbe.lightCall(adapter, baseUrl, token)
+                            )
+                            verdict.flatMap {
+                              case ImageGenProbe.Verdict.Ok(latency, absent) =>
+                                val base = Json.obj(
+                                  "ok" -> true.asJson,
+                                  "mode" -> "probe".asJson,
+                                  "latencyMs" -> latency.asJson
+                                )
+                                Ok(absent.fold(base)(c => base.deepMerge(Json.obj("modelsFaceAbsent" -> c.asJson))))
+                              case ImageGenProbe.Verdict.Generated(latency, bytes, ext, path, dataUrl) =>
+                                val base = Json.obj(
+                                  "ok" -> true.asJson,
+                                  "mode" -> "generate".asJson,
+                                  "latencyMs" -> latency.asJson,
+                                  "bytes" -> bytes.asJson,
+                                  "format" -> ext.asJson,
+                                  "tempPath" -> path.asJson
+                                )
+                                Ok(dataUrl.fold(base)(u => base.deepMerge(Json.obj("thumbnail" -> u.asJson))))
+                              case ImageGenProbe.Verdict.Failed(detail) =>
+                                Ok(Json.obj("ok" -> false.asJson, "error" -> detail.asJson))
+                            }.guarantee(IO.blocking(imagegenTestGate.release()))
+                    }
+            }
         }
 
       // ===== Daemon Management =====
