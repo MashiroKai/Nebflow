@@ -2717,9 +2717,10 @@ onMessage('configData', (msg, view) => {
   // Wiki-graph 边栏入口封存 latch（graphseal 批，作者手写想法① 2026-10-29）：
   // 缺席 = 封存（activityBar.js boot 已摘 `#wiki-btn`，维持藏态即可）；显式
   // "features": {"wikiGraph": true} → enableWikiGraphEntry() 回挂静态槽
-  // （Projects 与 Plugins 之间 + 补 i18n 标题）。点击接线（本文件 boot 段的
-  // registerCanvasPanelButton('wiki-graph', 'wiki-btn', …)）绑在按钮**元素**
-  // 上，元素重插即自然复活，无需重注册。词条/文档关联引用链路零触碰。
+  // （Projects 与 Plugins 之间 + 补 i18n 标题）。点击接线在 canvas.js 的
+  // #activity-bar 事件委托上（回挂接线修复批 2026-10-30）——与按钮元素是否
+  // 在场无关，回挂即复活；per-element 绑定曾在封存态下注册落空（监听从未
+  // 挂上）。词条/文档关联引用链路零触碰。
   if (!wikiGraphGateDecided) {
     wikiGraphGateDecided = true;
     if (wikiGraphEnabled()) enableWikiGraphEntry();

@@ -532,25 +532,47 @@ export function isCanvasOpen() {
 // Pressed state (.active / aria-pressed) strictly mirrors "this tab IS the
 // visible Canvas content": Canvas closed or another tab displayed -> never
 // pressed, even when the tab still exists.
-/** @type {Map<string, {buttonId: string}>} */
+/** @type {Map<string, {buttonId: string, openFn: () => void}>} */
 const panelButtons = new Map();
-/** @type {Set<string>} buttonIds whose click handler is already bound. */
-const boundPanelButtons = new Set();
+/** Whether the delegated click listener is already on the activity bar. */
+let panelBarClickBound = false;
+
+// 点击接线 = #activity-bar 事件委托（回挂接线修复批 2026-10-30）：监听只挂
+// 容器一次、注册只写映射表，按钮元素在场与否不再影响接线。教训（封存批
+// 82c273a2a）：per-element 绑定在 main.js 动态 import 回调里注册时
+// #wiki-btn 已被 detachWikiGraphEntry() 摘下 DOM ⇒ getElementById = null ⇒
+// 监听从未挂上（enableWikiGraphEntry() 回挂只救可见性、救不了从未建立的
+// 接线）。委托让「元素重插即自然复活」对点击接线同样成立；未注册按钮
+// （files/settings/usage/…）不命中映射表、零行为变化。
+function bindPanelBarClickDelegation() {
+  if (panelBarClickBound) return;
+  const bar = document.getElementById('activity-bar');
+  if (!bar) return;
+  panelBarClickBound = true;
+  bar.addEventListener('click', (e) => {
+    const btn = e.target instanceof Element ? e.target.closest('button') : null;
+    if (!btn) return;
+    for (const [tabId, def] of panelButtons) {
+      if (def.buttonId === btn.id) {
+        onCanvasPanelButtonClick(tabId, def.openFn);
+        return;
+      }
+    }
+  });
+}
 
 /**
  * Register an Activity Bar button as a Canvas panel toggle.
+ * Idempotent: the click path is a single delegated container listener (bound
+ * once), so re-registration only updates the map entry (last one wins).
  * @param {string} tabId    — the Canvas tab id this button controls
  * @param {string} buttonId — the Activity Bar button element id
  * @param {() => void} openFn — opens the panel (state 1 entry point)
  */
 export function registerCanvasPanelButton(tabId, buttonId, openFn) {
   if (!tabId || !buttonId || typeof openFn !== 'function') return;
-  panelButtons.set(tabId, { buttonId });
-  const btn = document.getElementById(buttonId);
-  if (btn && !boundPanelButtons.has(buttonId)) {
-    boundPanelButtons.add(buttonId);
-    btn.addEventListener('click', () => onCanvasPanelButtonClick(tabId, openFn));
-  }
+  panelButtons.set(tabId, { buttonId, openFn });
+  bindPanelBarClickDelegation();
   syncCanvasPanelButtons();
 }
 
