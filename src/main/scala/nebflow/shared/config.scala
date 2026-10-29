@@ -293,6 +293,61 @@ object EmbeddingConfig:
   given Decoder[EmbeddingConfig] = deriveDecoder[EmbeddingConfig]
 
 /**
+ * LLM provider 自适应并发限流器配置节（429 反应式并发闸批，作者令
+ * 2026-10-29 21:32）——`nebflow.json` 的 `llm.adaptiveThrottle` 块：
+ *
+ *   "llm": { "providers": { ... },
+ *            "adaptiveThrottle": { "enabled": true,
+ *                                  "factors": [0.9, 0.7, 0.5],
+ *                                  "hardFloor": 2,
+ *                                  "quietWindowMs": 300000,
+ *                                  "accountUpstreamCodes": ["1302"],
+ *                                  "accountTextMarkers": ["您的账户已达到速率限制"] } }
+ *
+ * ==Every field is optional ON PURPOSE==
+ * Form precedent = [[JevConfig]]（全字段可选、半节解码为缺省而非抛，同 `jev` 节
+ * 教训——防 GatewayMain 走 crash-recovery 用 `{}` 快照打回 nebflow.json）。
+ *
+ * ==总闸缺省关 = 零行为变化==
+ * `enabled` absent/false ⇒ 限流器整体旁路（acquire 纯透传、零状态、零日志），
+ * 既有 retry/health 时间维路径逐字节现状。热读：每次过闸/信号/回松现读，配置
+ * 改动即刻生效，无重启门槛。状态机与闸机制见 `nebflow.llm.AdaptiveThrottle`。
+ *
+ * @param factors
+ *   降档因子阶梯（0-1 开区间，解析时降序去重、整数百分比化）。缺省
+ *   0.9/0.7/0.5（作者语义：90% → 70% → 50% → 硬下限）。
+ * @param hardFloor
+ *   硬下限并发（≥1）。缺省 2（作者建议 1–2）。硬下限仍 429 ⇒ 交给既有
+ *   health-DOWN 退避路径，闸不再降档。
+ * @param quietWindowMs
+ *   静默窗（≥1000ms）：窗内无账户级 429 ⇒ 回松一档（每档消耗一个观察窗）。
+ *   缺省 300000（5min，作者建议 5–10min）。
+ * @param accountUpstreamCodes
+ *   账户级 429 的上游码判定集（`"code":"<c>"` / ` [<c>]` 形）。缺省
+ *   `["1302"]`（zhipu 实证形态；Fallback.QuotaUpstreamCodes 同「只增确证
+ *   语义的码」纪律）。
+ * @param accountTextMarkers
+ *   账户级 429 的响应体文本标记。缺省 zhipu 文案「您的账户已达到速率限制」。
+ */
+case class AdaptiveThrottleConfig(
+  enabled: Option[Boolean] = None,
+  factors: Option[List[Double]] = None,
+  hardFloor: Option[Int] = None,
+  quietWindowMs: Option[Long] = None,
+  accountUpstreamCodes: Option[List[String]] = None,
+  accountTextMarkers: Option[List[String]] = None
+):
+  /**
+   * Toggle semantics: absent means OFF is the safe default — the gate sits on
+   * EVERY model call's hot path, and a concurrency cap is a behavior change
+   * even before the first 429 (JevConfig.isEnabled same direction).
+   */
+  def isEnabled: Boolean = enabled.getOrElse(false)
+
+object AdaptiveThrottleConfig:
+  given Decoder[AdaptiveThrottleConfig] = deriveDecoder[AdaptiveThrottleConfig]
+
+/**
  * 生图 provider 子节（imagegen 双层批 2026-10-24）——`imagegen.providers.<name>` 项。
  *
  * 🔴 凭据纪律（jev/embedding 同先例）：`keyRef` 是数据根 `secrets/` 下的**名字**
@@ -389,7 +444,14 @@ case class ServiceLlmConfig(
    * schema 仅容忍存量文件的 llm.model 节（可解析但被忽略）。
    */
   model: Option[ModelChainConfig] = None,
-  streamTimeouts: Option[StreamTimeoutsConfig] = None
+  streamTimeouts: Option[StreamTimeoutsConfig] = None,
+  /**
+   * LLM provider 自适应并发限流器（429 反应式并发闸批，作者令 2026-10-29 21:32）
+   * ——见 [[AdaptiveThrottleConfig]]。`None` = 未配置 ⇒ 限流器整体旁路（缺省关 =
+   * 零行为变化）；全字段可选，半节解码为缺省而非抛（同 `jev` 节教训）。热读：
+   * 过闸点每次现读 `cfgRef`，改配置即刻生效。
+   */
+  adaptiveThrottle: Option[AdaptiveThrottleConfig] = None
 )
 
 object ServiceLlmConfig:

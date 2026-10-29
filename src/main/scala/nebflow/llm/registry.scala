@@ -44,6 +44,16 @@ class ProviderRegistry(
 ):
   private val adaptersRef: Ref[IO, Map[String, ProviderAdapter[IO]]] = Ref.unsafe(Map.empty)
 
+  /**
+   * LLM provider 自适应并发限流器（429 反应式并发闸批，作者令 2026-10-29 21:32）。
+   * 每 registry 一实例（= 每网关一份），键 = provider.baseUrl（账户键）；
+   * 总闸 `llm.adaptiveThrottle.enabled` 缺省关 = 零行为变化；状态与闸机制见
+   * [[AdaptiveThrottle]]。reloadConfig 清 adaptersRef 时**不**清闸状态——账户级
+   * 429 风暴的记忆跨配置热重载保留（provider 改名/换 baseUrl 视为新账户键，
+   * 天然全新闸）。
+   */
+  private[llm] val throttle: AdaptiveThrottle = new AdaptiveThrottle(configRef)
+
   private def createAdapter(providerId: String, provider: ProviderConfig): ProviderAdapter[IO] =
     provider.protocol match
       case LlmProtocol.OpenAI => OpenAiAdapter(provider.baseUrl, provider.apiKey, backend)
@@ -62,7 +72,38 @@ class ProviderRegistry(
           requireThinkingPassback = ThinkingFamily.requiresPassback(providerId, provider)
         )
 
+  /**
+   * 过闸适配器视图（429 反应式并发闸批）：返回的 adapter 每次 sendMessage /
+   * sendMessageStream 过一次 [[throttle]] 闸（键 = provider 当前配置的 baseUrl，
+   * 热读）——handle 的流/非流路径、LlmAllocator、DelegateModeMachine、
+   * DelegateJudgeMachine 全部经本方法取适配器 ⇒ 全部模型流量单点过闸；闸关
+   * （缺省）= 包装内纯透传零行为变化。粒度 = 单次 HTTP attempt：fallback 换
+   * provider 各过各的闸，同 provider 重试（60s 退避后）重新过闸排队。
+   * 包装为无状态薄壳，每次取用现包（裸适配器本体仍走 adaptersRef 单缓存）。
+   */
   def getAdapter(providerId: String): IO[ProviderAdapter[IO]] =
+    for
+      raw <- getAdapterRaw(providerId)
+      baseUrlOpt <- baseUrlOf(providerId)
+    yield baseUrlOpt.fold[ProviderAdapter[IO]](raw)(baseUrl => new GatedAdapter(raw, baseUrl, throttle))
+
+  /** providerId → 当前配置的 baseUrl（429 信号喂入的账户键解析；热读）。 */
+  private[llm] def baseUrlOf(providerId: String): IO[Option[String]] =
+    configRef.get.map(_.llm.providers.get(providerId).map(_.baseUrl))
+
+  /**
+   * 限流器健康面读数（/api/health `throttle` 键，429 反应式并发闸批）——[[throttle]]
+   * 的公开只读投影（gateway 侧唯一合法触点；闸本体与信号喂入仍 private[llm]）。
+   */
+  def throttleHealthJson: IO[Option[io.circe.Json]] = throttle.healthJson
+
+  /**
+   * **不过闸**的裸适配器视图（裸本体缓存单点，getAdapter 在其上现包闸壳）——
+   * 仅供健康探测（HealthMonitor.probe）使用：探测是恢复机制（1 次/2min 微量
+   * 请求），排队在饱和闸后反而拖慢恢复判定（探测超时会计入排队等待 ⇒ 假阴性
+   * DOWN 延长）。其余一切调用方必须走 [[getAdapter]]。
+   */
+  private[llm] def getAdapterRaw(providerId: String): IO[ProviderAdapter[IO]] =
     adaptersRef.get.map(_.get(providerId)).flatMap {
       case Some(a) => IO.pure(a)
       case None =>

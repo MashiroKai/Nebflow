@@ -270,7 +270,9 @@ class HealthMonitorSpec extends CatsEffectSuite:
           if hangAfter then head ++ fs2.Stream.never[IO] else head
 
   private class FakeRegistry(adapter: ProviderAdapter[IO]) extends ProviderRegistry(null, null):
+    // probe 走 getAdapterRaw（不过闸裸视图，429 反应式并发闸批）——fake 同步覆写。
     override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
+    override def getAdapterRaw(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
 
   /**
    * Registry that resolves a whitelist of model refs (simulates a config with
@@ -279,6 +281,7 @@ class HealthMonitorSpec extends CatsEffectSuite:
    */
   private class FakeRegistry2(adapter: ProviderAdapter[IO], known: Set[String]) extends ProviderRegistry(null, null):
     override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
+    override def getAdapterRaw(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
 
     override def getCandidateForRef(ref: String): IO[Option[ModelCandidate]] =
       if known.contains(ref) then
