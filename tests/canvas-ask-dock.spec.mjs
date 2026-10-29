@@ -32,6 +32,11 @@
 //       入口钮只在文件型标签页（有真实文件 backing 的 canvas tab）挂载显示；
 //       插件面板等非文件型 surface 零残留（display:none 出命中盒），切卡离开
 //       文件 tab 即隐、开着切走即一并收起，切回文件 tab 复现
+//   T13 md/html 类型硬约束闸（设计稿 §2；作者 2026-10-29 11:46 自裁）：ask 能力
+//       仅 .md/.markdown/.html/.htm 四扩展名——非白名单文件 tab（.txt/.scala
+//       等文件型卡）入口同闸隐藏（与可见性闸同悬挂点：currentFile 赋值处过滤），
+//       零 askOpen 帧外发；大小写不敏感（README.MD 放行）；切回白名单文件
+//       入口复现。后端拒答面见 AskGateSpec + ask-gate-live（双层防呆之后端腿）
 //   T12 风格统一（三修③ 作者令 2026-10-29「ask 输入条/气泡对齐 canvas 统一风格，
 //       不新造风格」）：入口钮/输入条/气泡三面计算材质（backgroundColor /
 //       borderTopColor / backdropFilter）与聊天 #header 玻璃模板（--cv-* 单源）
@@ -197,16 +202,17 @@ async function bootMobilePage(browser) {
 const sessions = { msgs: {} };
 function expectTranscript(sid, msgs) { sessions.msgs[sid] = msgs; }
 
-async function openFile(page, name, { state = 'visible' } = {}) {
+async function openFile(page, name, { state = 'visible', itemType = 'markdown', content } = {}) {
   const absPath = `/tmp/canvas-ask-fixture/${name}`;
-  await page.evaluate(({ name, absPath }) => {
+  await page.evaluate(({ name, absPath, itemType, content }) => {
     window.dispatchEvent(new CustomEvent('workspace-open-item', {
       detail: {
-        id: 'file:' + absPath, itemType: 'markdown', title: name, content: `# ${name}\n\nmock body\n`,
+        id: 'file:' + absPath, itemType, title: name,
+        content: content != null ? content : `# ${name}\n\nmock body\n`,
         absPath, pinned: true,
       },
     }));
-  }, { name, absPath });
+  }, { name, absPath, itemType, content });
   await page.waitForSelector(`.canvas-tab-pane[data-tab-id="file:${absPath}"]`, { state, timeout: 10000 });
   await sleep(300);
   return absPath;
@@ -561,6 +567,37 @@ try {
   await sleep(400);
   t11 = await fabGate();
   ok('T11d 切回文件 tab 入口复现（闸随切卡落位）', t11.fabPresent && !t11.fabHidden, JSON.stringify(t11));
+
+  // T13 md/html 类型硬约束闸（设计稿 §2；作者 2026-10-29 11:46 自裁）：
+  // 文件型 tab 但非白名单扩展名（.txt/.scala）= 入口同闸隐藏（与可见性闸同一
+  // 悬挂点：currentFile 赋值处 isMdHtmlFile 过滤）+ 零 askOpen 帧外发；
+  // 白名单四扩展名（含大小写变体）放行。后端拒答腿不在本 spec（mock WS），
+  // 见 AskGateSpec（scala）与 ask-gate-live（真实例）。
+  const askOpens = () => inbound.filter((m) => m.type === 'askOpen');
+  inbound.length = 0;
+  const absTxt = await openFile(page, '实验记录.txt', { itemType: 'code' });
+  let t13 = await fabGate();
+  ok('T13a .txt 文件 tab 入口同闸隐藏（gate-off 出命中盒）', t13.fabPresent && t13.fabHidden, JSON.stringify(t13));
+  ok('T13b .txt 文件 tab dock 同闸隐藏', await page.evaluate(() => {
+    const d = document.querySelector('.ask-dock');
+    return !!d && getComputedStyle(d).display === 'none';
+  }), absTxt);
+  ok('T13c .txt 文件 tab 零 askOpen 帧外发', askOpens().length === 0, JSON.stringify(askOpens().map((m) => m.file)));
+  await shot(page, 't13-txt-no-fab');
+  await openFile(page, 'Plot.scala', { itemType: 'code' });
+  t13 = await fabGate();
+  ok('T13d .scala 文件 tab 入口同闸隐藏', t13.fabPresent && t13.fabHidden, JSON.stringify(t13));
+  const absReadme = await openFile(page, 'README.MD'); // 大小写变体放行（大小写不敏感同 FileTypeRegistry 口径）
+  t13 = await fabGate();
+  ok('T13e README.MD（大写扩展名）入口放行', t13.fabPresent && !t13.fabHidden, JSON.stringify(t13));
+  await openFile(page, 'page.htm', { itemType: 'code' }); // .htm = 白名单第四扩展名
+  t13 = await fabGate();
+  ok('T13f .htm 文件 tab 入口放行（四扩展名全量）', t13.fabPresent && !t13.fabHidden, JSON.stringify(t13));
+  await openFile(page, '记忆检索调优笔记.md');
+  t13 = await fabGate();
+  ok('T13g 切回 .md 文件 tab 入口复现（闸随切卡落位）', t13.fabPresent && !t13.fabHidden, JSON.stringify(t13));
+  ok('T13h 全程（含 .txt/.scala 切卡）零 askOpen 帧外发', askOpens().length === 0, JSON.stringify(askOpens().map((m) => m.file)));
+  void absTxt; void absReadme;
 
   await page.close();
 

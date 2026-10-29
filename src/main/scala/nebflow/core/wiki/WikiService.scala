@@ -900,9 +900,22 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
   // `resolved:false, ambiguous:true` with the candidate list — the engine
   // never guesses. `project` scopes to one project's root vault view; absent
   // = the merged view (every project's root vault).
+  //
+  // md/html 类型硬约束闸（第三批，设计稿 §8 词条同闸回写；作者 2026-10-29
+  // 11:46 自裁「作用面收缩 = 仅 md/html 文件启用词条引用与 ask mode」）：
+  // `doc` = 发起消解的宿主文档路径（可选参数——不带时是纯注册表查询，无
+  // 作用面可言，照常放行；带上后即按 `MdHtmlGate` 判据单点闸，非四扩展名
+  // 直接拒且**不建图谱视图**（`graph()` 零调用，零 30s 缓存扰动）。
+  // 拒绝走既有 `Left(err)` 通道（WikiRoutes → 400 + `error` 字段，不静默），
+  // 措辞与 ask 侧同源（`MdHtmlGate.rejectReason`）。存量口径 §9-8：只闸请求，
+  // 不清理任何既有数据。
 
-  def term(name: String, project: Option[String]): IO[Either[String, Json]] =
+  def term(name: String, project: Option[String], doc: Option[String] = None): IO[Either[String, Json]] =
     if name.isBlank then IO.pure(Left("name is required"))
+    else if doc.exists(!MdHtmlGate.isMdHtml(_)) then
+      val bad = doc.getOrElse("")
+      IO(logger.warnSync(s"wiki.term: rejected ${MdHtmlGate.rejectReason(bad)} doc=$bad")) *>
+        IO.pure(Left(MdHtmlGate.rejectReason(bad)))
     else
       graph(project, vault = None).map { view =>
         val viewError = view.hcursor.downField("error").as[String].toOption.filter(_.nonEmpty)

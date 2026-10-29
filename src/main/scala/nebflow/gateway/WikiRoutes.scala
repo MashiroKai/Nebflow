@@ -84,9 +84,18 @@ private[gateway] object WikiRoutes:
         withAuth(req) {
           val name = req.params.getOrElse("name", "")
           val project = req.params.get("project").map(_.trim).filter(_.nonEmpty)
+          // md/html 类型硬约束闸（第三批）：`doc` = 宿主文档（可选）。带上即按
+          // MdHtmlGate 单点闸，非四扩展名 → 400 + 明确原因（不静默、不 404）。
+          val doc = req.params.get("doc").map(_.trim).filter(_.nonEmpty)
           if name.isBlank then BadRequest(Json.obj("error" -> "name is required".asJson))
           else
-            service.term(name, project).flatMap {
+            service.term(name, project, doc).flatMap {
+              case Left(err) if err.startsWith(nebflow.core.wiki.MdHtmlGate.RejectPrefix) =>
+                BadRequest(Json.obj(
+                  "error" -> err.asJson,
+                  "reason" -> "not-md-html".asJson,
+                  "doc" -> doc.getOrElse("").asJson
+                ))
               case Left(err) => NotFound(Json.obj("error" -> err.asJson))
               case Right(json) => Ok(json)
             }
