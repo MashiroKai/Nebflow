@@ -1,5 +1,11 @@
-// askDock.js — Canvas 文件 ask mode（2026-10-28 实施批；同日 22:42 v2.1 简化修订）。
+// askDock.js — Canvas 文件 ask mode（2026-10-28 实施批；同日 22:42 v2.1 简化修订；
+// 2026-10-29 三修批②：FAB 通知点改绿点未读条件显示）。
 //
+// 三修②（作者令 2026-10-29「小点应为绿色通知点，只在有（未读）消息时显示」）：
+// 旧「has-sess = 会话有过消息 → 紫点常显」退役。新口径 = 未读通知：AI/注入帧
+// 到达时用户不在看着（dock 收起 ∨ 非当前文件）→ session.unread 置位 → 绿点
+// （--color-primary）+ pulse 唤回提示；打开该会话（open / 开态 askState 回放）
+// 即读 → 点熄。判定单点 syncUnreadDot()。
 // 形态 = 样张 v2.1（作者八条令 + v2.1 减法令「简约一点。不需要两个箭头，就右侧
 // 一个发送按钮就行，显示内容也尽量删掉不必要的消息」）：canvas 右下角最靠右
 // 入口钮 → 毛玻璃输入条（输入 + 右侧唯一发送钮，转交钮自 UI 撤除）→ 气泡列从
@@ -41,7 +47,7 @@ const ICONS = {
   send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
 };
 
-/** @type {Map<string, {sid: string, key: string, fileName: string, msgs: Array<{role: string, text: string, receipt?: boolean}>, stateSent: boolean}>} */
+/** @type {Map<string, {sid: string, key: string, fileName: string, msgs: Array<{role: string, text: string, receipt?: boolean}>, stateSent: boolean, unread: boolean}>} */
 const sessions = new Map(); // key: absPath
 let el = null; // { fab, dock, col, input, send }（v2.1：ghost/sess/handoff 件随减法退场）
 let currentFile = ''; // absPath of the active file entry ('' = 非文件卡)
@@ -75,6 +81,7 @@ async function sessionFor(absPath, fileName) {
       fileName: fileName || absPath.split('/').pop() || absPath,
       msgs: [],
       stateSent: false,
+      unread: false,
     };
     sessions.set(absPath, s);
   }
@@ -189,10 +196,7 @@ function syncToActiveTab() {
   currentFile = file;
   syncGate(); // 可见性闸每拍落位（幂等；含初始无卡态与切回文件卡复现）
   if (!switched) { syncSeat(); return; }
-  const s = activeSession();
-  const hasMsgs = !!(s && s.msgs.length);
-  el.fab.classList.toggle('has-sess', hasMsgs);
-  if (!isOpen() && hasMsgs) el.fab.classList.add('pulse');
+  syncUnreadDot(); // 通知点随 active session 的未读态落位（绿点只在有未读时显示）
   if (isOpen()) {
     if (currentFile) {
       render();
@@ -255,10 +259,22 @@ function syncSeat() {
 
 function isOpen() { return !!el && !el.dock.classList.contains('closed'); }
 
+// ── FAB 通知点（作者令 2026-10-29「三修②」：绿点=未读通知，无未读不显示）──
+// 旧口径「has-sess = 会话有过消息 → 紫点常显」退役。未读判定单点：AI/注入帧
+// 到达时用户不在看着（dock 收起 ∨ 非当前文件）即记未读；打开该会话即读。
+function syncUnreadDot() {
+  if (!el) return;
+  const s = activeSession();
+  const unread = !!(s && s.unread);
+  el.fab.classList.toggle('has-unread', unread);
+  if (!isOpen()) el.fab.classList.toggle('pulse', unread); // pulse=未读唤回提示（已读收起不再脉动）
+}
+
 async function open() {
   if (!currentFile) return; // 非文件卡入口已被可见性闸摘除；此守卫为冗余保险
   const s = await ensureActiveSession();
   if (!s) return;
+  s.unread = false; // 打开即读：通知点熄灭（ask 三修 2026-10-29 未读语义）
   el.dock.classList.remove('closed');
   el.fab.classList.add('open');
   el.fab.classList.remove('pulse');
@@ -272,8 +288,7 @@ function close() {
   if (!el) return;
   el.dock.classList.add('closed');
   el.fab.classList.remove('open');
-  const s = activeSession();
-  if (s && s.msgs.length) el.fab.classList.add('pulse');
+  syncUnreadDot(); // 已读收起 → 点/pulse 不亮；有未读 → pulse 提示（仅未读时）
 }
 
 function toggle() {
@@ -337,7 +352,6 @@ async function submit() {
   el.input.value = '';
   s.msgs.push({ role: 'user', text: v });
   s.msgs.push({ role: 'ai', text: '' });
-  el.fab.classList.add('has-sess');
   render();
   appendTyping();
   if (!s.stateSent) askOpen(s); // 未绑定先补一拍（历史回放与流式都依赖 askState）
@@ -386,12 +400,15 @@ function consumeFrame(msg) {
             }))
         : entry.msgs;
       if (file === currentFile) {
-        el.fab.classList.toggle('has-sess', entry.msgs.length > 0);
-        if (isOpen()) { removeTyping(); render(); }
+        // 回放即读（用户此刻正看着该会话）：未读清零 + 通知点落位。
+        if (isOpen()) { entry.unread = false; removeTyping(); render(); }
+        syncUnreadDot();
       }
       break;
     }
     case 'textDelta': {
+      // 未读判定（ask 三修②）：到达时用户不在看着（dock 收起 ∨ 后台文件）即记未读。
+      if (!(entry === activeSession() && isOpen())) entry.unread = true;
       const last = entry.msgs[entry.msgs.length - 1];
       if (!last || last.role !== 'ai') {
         entry.msgs.push({ role: 'ai', text: '' });
@@ -400,23 +417,30 @@ function consumeFrame(msg) {
       const ai = entry.msgs[entry.msgs.length - 1];
       ai.text += msg.delta || '';
       if (entry === activeSession()) updateStreamingBubble(entry);
-      markSess(entry, file);
+      if (entry === activeSession()) syncUnreadDot();
       break;
     }
     case 'done': {
+      if (!(entry === activeSession() && isOpen())) entry.unread = true;
       const last = entry.msgs[entry.msgs.length - 1];
       if (last && last.role === 'ai' && !last.text && msg.finalText) last.text = msg.finalText;
-      if (entry === activeSession() && isOpen()) { removeTyping(); render(); }
-      markSess(entry, file);
+      if (entry === activeSession()) {
+        if (isOpen()) { removeTyping(); render(); }
+        syncUnreadDot();
+      }
       break;
     }
     case 'error': {
       // v2.1：错误不再起 sys 气泡——文本落助手气泡槽（问答面只出两族）。
+      if (!(entry === activeSession() && isOpen())) entry.unread = true;
       const last = entry.msgs[entry.msgs.length - 1];
       const errText = tt('出错了：', 'Error: ') + (msg.message || 'unknown');
       if (last && last.role === 'ai' && !last.text) last.text = errText;
       else entry.msgs.push({ role: 'ai', text: errText });
-      if (entry === activeSession() && isOpen()) { removeTyping(); render(); }
+      if (entry === activeSession()) {
+        if (isOpen()) { removeTyping(); render(); }
+        syncUnreadDot();
+      }
       break;
     }
     case 'askHandoffAck': {
@@ -430,8 +454,12 @@ function consumeFrame(msg) {
       // 帧）。§7 契约即「以用户消息形态呈现」（前缀「主会话回问：」由后端注入
       // 文本携带）——v2.1 起直接进 user 族气泡（问答面两族制，零 sys 呈现）。
       if (msg.injected) {
+        if (!(entry === activeSession() && isOpen())) entry.unread = true;
         entry.msgs.push({ role: 'user', text: msg.text || '' });
-        if (entry === activeSession() && isOpen()) { removeTyping(); render(); }
+        if (entry === activeSession()) {
+          if (isOpen()) { removeTyping(); render(); }
+          syncUnreadDot();
+        }
       }
       break;
     }
@@ -440,11 +468,6 @@ function consumeFrame(msg) {
       // 不进气泡列，静默消费。
       break;
   }
-}
-
-function markSess(s, file) {
-  if (file === currentFile) el.fab.classList.add('has-sess');
-  else { /* 后台会话活跃：徽标在切回时由 syncToActiveTab 补点 */ }
 }
 
 // ── init（main.js 调用；幂等）─────────────────────────────────────────────
