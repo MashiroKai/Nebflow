@@ -12,6 +12,11 @@ import { authHeaders } from '../flowHelpers.js';
 // 探针单源（A 侧 uifix3 ② 抽共用）：POST /api/provider/models 的实现唯一属主 =
 // ../providerModels.js（onboarding 模型题与设置面同用一份，禁第二份）。
 import { fetchProviderModels } from '../providerModels.js';
+// 连接性测试钮（fourfix 批 ②件，2026-10-29 作者令「连接性测试按钮应放到 LLM
+// provider 配置页面里」+「保证测试通知能看得到」）：编辑弹窗每个模型行尾一枚
+// 测试钮 + 弹窗级结果块（每模型一行全量文本，永不截断）。渲染/绑定/绘制单点
+// = ./modelTestButton.js。
+import { modelTestButtonHTML, testResultsBlockHTML, bindModelTestButtons } from './modelTestButton.js';
 
 // ── Provider protocol face: display ←→ stored value (protoface-ui batch,
 // 2026-09-22) ────────────────────────────────────────────────────────────────
@@ -485,6 +490,29 @@ function showModal({title, fields, onConfirm}) {
 
   document.body.appendChild(overlay);
 
+  // 连接性测试（fourfix 批 ②件）：结果块挂在 models 组之下（弹窗级共享——
+  // 每模型一行，全量文本），绑定走弹窗级委托（动态加行也被覆盖）。三个解析器
+  // 都在点击时读表单现值：name/apiKey 输入框、protocol 下拉、行内 model 输入。
+  const modelsGroup = overlay.querySelector('[data-field="models"]')?.closest('.cfg-form-group');
+  if (modelsGroup) {
+    modelsGroup.insertAdjacentHTML('afterend', testResultsBlockHTML());
+    const fieldVal = (key) => /** @type {HTMLInputElement|HTMLSelectElement|null} */ (overlay.querySelector(`[data-field="${key}"]`))?.value?.trim() || '';
+    bindModelTestButtons(overlay, {
+      resultsEl: /** @type {HTMLElement} */ (overlay.querySelector('.cfg-test-results')),
+      getProvider: () => fieldVal('name'),
+      getModel: (btn) => {
+        const row = btn.closest('.cfg-model-row');
+        const el = row && /** @type {HTMLInputElement|HTMLSelectElement|null} */ (row.querySelector('.cfg-model-id'));
+        return (el && el.value.trim()) || btn.dataset.testModel || '';
+      },
+      getOverrides: () => {
+        const baseUrl = fieldVal('baseUrl');
+        if (!baseUrl) return null; // 未填端点 = 无表单可测 → 存储配置腿（旧形状）
+        return { baseUrl, apiKey: fieldVal('apiKey'), protocol: fieldVal('protocol') };
+      },
+    });
+  }
+
   // Wire up models add/remove
   overlay.querySelectorAll('.cfg-model-add').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -567,8 +595,11 @@ function renderModelRowContent(m) {
   // provider cards — no per-model control in this form (B1 裁定 2026-08-25).
   // maxTokens control removed (maxcfg batch 2026-09-16, author ruling): the
   // output cap is an internal engine constant, not user config.
+  // 连接性测试钮（fourfix 批 ②件）：行尾一枚——data-test-provider 是渲染时已知
+  // 名（add 弹窗为空串），绑定面在点击时读表单 name 字段现值（getProvider）。
   return `${idField}
 <input class="cfg-input cfg-model-ctx" type="number" value="${ctx}"${maxAttr} placeholder="${t('model.contextPlaceholder')}">
+${modelTestButtonHTML('', id)}
 <button class="cfg-model-remove" type="button" title="${t('provider.remove')}">&times;</button>`;
 }
 

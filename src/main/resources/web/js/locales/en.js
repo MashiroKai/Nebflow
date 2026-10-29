@@ -852,12 +852,11 @@ export default {
   'settings.thinkingEffort.medium': 'Medium',
   'settings.thinkingEffort.high': 'High',
   'settings.thinkingEffort.max': 'Max',
-  // thinking-config Phase 2 (2026-10-29): per-model thinking effort select.
-  'settings.thinkingPerModel': 'Thinking effort',
-  'settings.thinkingInherit': 'Inherit',
-  'settings.thinkingEffective': 'now {v}',
-  'settings.thinkingForcedBadge': 'Model forces thinking on',
-  'settings.thinkingMediumMap': 'med→high',
+  // thinking-config Phase 2 (2026-10-29) keys retired with the settings-panel-
+  // fourfix batch ① (author: per-model thinking config must not exist) —
+  // thinkingPerModel/Inherit/Effective/ForcedBadge/MediumMap removed with the
+  // per-model control; the global settings.thinkingMode select is the single
+  // configuration point.
   // === Settings-page permission-mode control (2026-09-12 batch) was deleted by
   // permshield F1 (2026-09-13): all 7 `settings.safetyMode*` keys went with it
   // (author re-ruling candidate B ① "delete the settings page"). The guidance now
@@ -1079,14 +1078,21 @@ export default {
   'settings.imagegenNotCompiled': 'Not compiled in (zero-trace release build)',
   'settings.imagegenNotCompiledHint': 'This build was made without STAND_IMAGEGEN, so the image generation face is entirely absent; this slot is status-only. Start a dev build with STAND_IMAGEGEN=1 to enable it.',
   'settings.imagegenEnabled': 'Enable image generation',
-  'settings.imagegenEnabledHint': 'A missing key or this switch off disables the generation leg entirely (engine-side graceful degrade — no half-available state).',
+  // settings-panel-fourfix batch ③ (2026-10-29 author orders: "keep it lean";
+  // "the frontend must never show 引用/keyRef/secrets-pointer wording"): the
+  // engine-internal long hints (EnabledHint/KeyHint/MissingKeyHint) and the
+  // keyRef keys (KeyRef/KeyRefRequired/KeySave) are removed wholesale — the
+  // face is a plain "type API key, save" flow; the pointer name is invisible.
+  'settings.imagegenShortHint': 'Enter the API key and save; without a key, image generation stays off.',
   'settings.imagegenProvider': 'Provider',
+  'settings.imagegenAddProvider': '＋ Add provider…',
+  'settings.imagegenProviderNamePlaceholder': 'New provider name (letters/digits/._-)',
   'settings.imagegenType': 'Adapter type',
+  'settings.imagegenTypePlaceholder': 'Choose an adapter type',
   'settings.imagegenModel': 'Model',
+  'settings.imagegenModelPlaceholder': 'Model ID',
   'settings.imagegenBaseUrl': 'Custom endpoint (optional)',
   'settings.imagegenBaseUrlPlaceholder': 'Empty = adapter default endpoint',
-  'settings.imagegenKeyRef': 'Key reference (keyRef)',
-  'settings.imagegenKeyHint': 'keyRef is a secret NAME under secrets/ (a pointer) — the value never enters the config file.',
   'settings.imagegenKeyConfigured': 'Configured',
   'settings.imagegenKeyMissing': 'Pending entry',
   'settings.imagegenKeyEntry': 'API Key',
@@ -1094,16 +1100,19 @@ export default {
   'settings.imagegenKeyReentryPlaceholder': 'Configured — typing overwrites',
   'settings.imagegenKeyShow': 'Show key value',
   'settings.imagegenKeyHide': 'Hide key value',
-  'settings.imagegenKeySave': 'Save key',
   'settings.imagegenKeySaved': 'Key saved',
   'settings.imagegenKeySaveFailed': 'Save failed ({code})',
-  'settings.imagegenKeyRefRequired': 'Enter a keyRef before saving the key',
   'settings.imagegenKeyEmpty': 'Key value is empty',
-  'settings.imagegenMissingKeyHint': 'Missing key = the generation leg is disabled; entering the key restores it.',
   'settings.imagegenModelRequired': 'Model is required',
-  'settings.imagegenNoProvider': 'No provider yet — configure nebflow.json imagegen.providers first',
+  'settings.imagegenTypeRequired': 'Choose an adapter type first',
+  'settings.imagegenNameRequired': 'Enter a provider name first',
+  'settings.imagegenNameInvalid': 'Provider name allows letters/digits/._- only',
+  'settings.imagegenDelete': 'Delete this provider',
+  'settings.imagegenDeleteConfirm': 'Click again to confirm',
+  'settings.imagegenDeleted': 'Provider deleted',
   // settings-panel batch B (2026-10-28): per-model connectivity test.
   'provider.testModelTitle': 'Connectivity test: one minimal real call to this model',
+  'provider.testRunning': 'Testing…',
   'provider.testModelOk': 'OK ({ms}ms)',
   'provider.testModelFailedHttp': 'Test failed (HTTP {code})',
   'provider.testModelFailedIo': 'Network error — engine unreachable',
