@@ -86,7 +86,10 @@ object NotificationHeader:
     // schedcard 批（2026-10-29）：定时任务触发腿（ScheduledTaskService.triggerTask
     // 落盘/广播 source="schedule"）。集合等值硬门（NotificationHeaderSpec）要求
     // BackendNamedSources 新增源必须在本表登记——键集恒等即逐字一致。
-    "schedule" -> "SCHEDULE"
+    "schedule" -> "SCHEDULE",
+    // 待办浮出腿（#822 复活批「Schedule 双面化」2026-10-29，单口合并时登记）：
+    // ScheduledTaskService.surfaceDigest 的每日 09:00 待办汇总 digest。
+    "todo" -> "TODO"
   )
 
   /**

@@ -368,25 +368,50 @@ object SystemReminders:
    */
   val MaxPersistedPluginSurfaceReminders: Int = 1
 
-  /** Summary of this session's pending (untriggered) scheduled tasks. */
+  /**
+   * Summary of this session's pending (untriggered) scheduled tasks + todos
+   * (双面化 2026-10-24：待办同栏呈现，id 即 done/cancel 句柄——与定时任务
+   * 的防 re-arm 盲区同款纪律)。只含本会话的条目（loadTasks 按 session 取）。
+   */
   private def pendingScheduleReminder(pending: List[ScheduledTask]): Option[SystemReminder] =
-    if pending.isEmpty then None
-    else
-      val now = System.currentTimeMillis()
-      val effective = pending.filter(t => t.enabled && !t.triggered && t.triggerAt > now)
-      val lines = effective
-        .sortBy(_.triggerAt)
-        .take(5)
-        .map { t =>
-          val when = formatScheduleTime(t.triggerAt, now)
-          val repeat = t.repeat.fold("")(r => s" ($r)")
-          // id + name：给 Nebula 直接的 cancel/upsert 句柄——
-          // 重启后无需先 list 就能辨认既有例行任务（防 re-arm 双份的事故盲区）。
-          val nm = t.name.fold("")(n => s" name: $n")
-          s"- [$when] ${t.content.take(60)}$repeat [id: ${t.id}$nm]"
-        }
-      if lines.isEmpty then None
-      else Some(SystemReminder("schedule", s"Pending schedules (${effective.size}):\n${lines.mkString("\n")}"))
+    val now = System.currentTimeMillis()
+    val sched = pending.filter(t => !t.isTodo && t.enabled && !t.triggered && t.triggerAt > now)
+    val todos = pending.filter(t => t.isTodo && t.enabled && !t.triggered)
+    val schedPart =
+      if sched.isEmpty then None
+      else
+        val lines = sched
+          .sortBy(_.triggerAt)
+          .take(5)
+          .map { t =>
+            val when = formatScheduleTime(t.triggerAt, now)
+            val repeat = t.repeat.fold("")(r => s" ($r)")
+            // id + name：给 Nebula 直接的 cancel/upsert 句柄——
+            // 重启后无需先 list 就能辨认既有例行任务（防 re-arm 双份的事故盲区）。
+            val nm = t.name.fold("")(n => s" name: $n")
+            s"- [$when] ${t.content.take(60)}$repeat [id: ${t.id}$nm]"
+          }
+        Some(s"Pending schedules (${sched.size}):\n${lines.mkString("\n")}")
+    val todoPart =
+      if todos.isEmpty then None
+      else
+        val lines = todos
+          .sortBy(t => (t.triggerAt, t.createdAt))
+          .take(5)
+          .map { t =>
+            val nm = t.name.fold("")(n => s" name: $n")
+            s"- ${t.content.take(60)} [id: ${t.id}$nm]"
+          }
+        Some(
+          s"Pending todos (${todos.size}) — 无固定时间，引擎侧持久（压缩/重启不丢），每日浮出直至处理 " +
+            s"(完成 {action:\"done\"} 销账 / 放弃 {action:\"cancel\"}):\n${lines.mkString("\n")}"
+        )
+    (schedPart, todoPart) match
+      case (None, None) => None
+      case (a, b) =>
+        val body = (a.toList ++ b.toList).mkString("\n")
+        Some(SystemReminder("schedule", body))
+  end pendingScheduleReminder
 
   private def formatScheduleTime(epochMs: Long, nowMs: Long): String =
     val zdt = ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(epochMs), java.time.ZoneId.systemDefault())

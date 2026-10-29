@@ -67,6 +67,12 @@ const INJECTED_SOURCE_LABELS = {
   // 登记 + 兜底标签（凡走通用注入泡渲染的边角——如引用菜单 senderName——不落
   // 「首字母大写兜底」）。
   schedule: 'Schedule',
+  // 待办浮出腿（#822 复活批「Schedule 双面化」2026-10-29，单口合并时登记）：
+  // 每日 09:00 的待办汇总 digest（`ScheduledTaskService.surfaceDigest`，
+  // `injected=true, source="todo", eventType="digest"`）走**通用注入泡**
+  // （标签「Todo · Digest」），刻意不进上面的定时任务专属卡分支——待办汇总是
+  // 「今天要办的事」清单，不是到点触发的单任务卡。
+  todo: 'Todo',
 };
 
 /** Map backend eventType → display suffix for the source label.

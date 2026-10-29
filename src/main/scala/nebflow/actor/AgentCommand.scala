@@ -146,6 +146,15 @@ object InjectionAttribution:
    *                       **不**进本集合（`visibleExternalEventSource` 对它恒
    *                       None，无可见气泡发射点）；本集合登记的是**注入行呈现
    *                       面**的定名（无连字符，兼容前端登记解析器）。
+   *   todo                待办浮出腿（#822 复活批「Schedule 双面化」2026-10-29，
+   *                       单口合并时登记）：`ScheduledTaskService.surfaceDigest`
+   *                       到期待办的每日 09:00 汇总 digest 注入行走
+   *                       `injected=true, source="todo", eventType="digest"`。
+   *                       与 `schedule` 分名是刻意的——待办汇总是「今天要办的事」
+   *                       清单，不是到点触发的单任务卡，二者呈现语义不同
+   *                       （前端走通用注入泡，不串定时任务专属卡）。同 `schedule`
+   *                       一样，LLM 事件归因面的源名 `"todo-surface"` 不进本集合
+   *                       （`visibleExternalEventSource` 对它恒 None）。
    * 例外：`eventType=="inject"` 的 API 注入 source 由调用方提供（用户域），
    * 不受本集合约束 —— 前端对其走既有兜底分支。
    */
@@ -164,7 +173,8 @@ object InjectionAttribution:
       "background",
       "chain",
       "deviceMail",
-      "schedule"
+      "schedule",
+      "todo"
     )
 
 end InjectionAttribution

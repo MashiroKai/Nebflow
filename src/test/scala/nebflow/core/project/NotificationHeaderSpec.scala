@@ -115,7 +115,9 @@ class NotificationHeaderSpec extends FunSuite:
       "background" -> "BACKGROUND",
       // schedcard 批（2026-10-29）：定时任务触发腿（词表集等值硬门随源新增自动覆盖，
       // 逐字断言在此补钉）。
-      "schedule" -> "SCHEDULE"
+      "schedule" -> "SCHEDULE",
+      // #822 复活批「Schedule 双面化」（2026-10-29）：待办浮出腿（surfaceDigest）。
+      "todo" -> "TODO"
     )
     expected.foreach { (src, kind) =>
       assertEquals(

@@ -103,7 +103,12 @@ class InjectionSourceContractSpec extends FunSuite:
         // schedcard 批（2026-10-29）：定时任务触发腿（ScheduledTaskService.triggerTask
         // 落盘/广播 source="schedule"；前端走 buildInjectedRow 专属卡分支 + 表项
         // schedule:'Schedule' 兜底标签）。
-        "schedule"
+        "schedule",
+        // #822 复活批「Schedule 双面化」（2026-10-29，单口合并时登记）：待办浮出腿
+        // （ScheduledTaskService.surfaceDigest 落盘/广播 source="todo"，每日 09:00
+        // 待办汇总 digest；前端走通用注入泡 + 表项 todo:'Todo'——刻意不进
+        // schedule 专属卡，二者呈现语义不同）。
+        "todo"
       ),
       "BackendNamedSources 变更 ⇒ 同步检查 web/js/chat.js#INJECTED_SOURCE_LABELS 并更新本 pin"
     )

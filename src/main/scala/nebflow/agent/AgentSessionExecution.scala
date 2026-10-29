@@ -2215,7 +2215,12 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                   logger.warn(s"$logCtx Tool $summary failed (${elapsed}ms): ${result.content.take(100)}")
                 else logger.info(s"$logCtx Tool $summary OK (${elapsed}ms)")
               // 方案 B：结构化 JSONL（errorText 全量不截断）
-              textLine *> logToolStructured(call, ctx, result, elapsedMs = elapsed)
+              // 例程自检降频批（2026-10-29）：工具成功落点 = 会话活动时钟的
+              // 唯一写点（ScheduledTaskService 据此判例行任务空转）——失败
+              // 不算活动（失败的工具调用不构成「有动作」的证据）。
+              val activityRecord =
+                if result.isError then IO.unit else nebflow.core.scheduler.SessionToolActivity.record(ctx.sessionId)
+              textLine *> activityRecord *> logToolStructured(call, ctx, result, elapsedMs = elapsed)
             }
         }
       case None =>
