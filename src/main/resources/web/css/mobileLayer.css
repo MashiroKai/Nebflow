@@ -1671,15 +1671,27 @@ body.mobile-layer #input-area {
 
 /* ── P8 项目：项目卡三段形态（名+徽标 → 摘要行 → 字段行）────────────────
    桌面 team-card 范式与样张同构；手机层 = 全宽单列堆叠 + 16px 卡圆角 +
-   字阶收紧；workspace/说明 ellipsis + tabular-nums（样张 §6 超长文本口径）。 */
+   字阶收紧；workspace/说明 ellipsis + tabular-nums（样张 §6 超长文本口径）。
+   手机单列批（2026-10-29 作者令「一列往下翻，不要可以往右拉的排布」）：
+   🔴 `flex-wrap: nowrap` 是单列成立的**必要条件**，不是 belt——基座
+   FLOW_CSS `.team-scroll`（flowCss.js:20）带 `flex-wrap: wrap`，本块只改
+   `flex-direction: column` 时 wrap 语义随之转到纵轴：卡片总高超出滚动容器
+   高（≥4 张卡，手机一屏即触）就**竖向换「列」**——第二列整列落在
+   x≥viewport 之外（实测 390×844 五项目 scrollWidth 768 > clientWidth 390，
+   作者截图 = 右拉后的中段态）。nowrap 后全部卡片恒走同一列，纵向出滚动。
+   🔴 `overflow-x: hidden` 只作兜底（nowrap 成立后横向本已无内容可滚）：
+   钉死「零横向 overflow」的 spec 口径（tests/mobile-projects-single-column
+   .spec.mjs M2），并防个离子件横向撑出。 */
 body.mobile-layer #mobile-pages .team-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
   display: flex;
   flex-direction: column;
+  flex-wrap: nowrap;
   gap: 12px;
   padding: 12px 12px calc(24px + env(safe-area-inset-bottom, 0px));
 }
