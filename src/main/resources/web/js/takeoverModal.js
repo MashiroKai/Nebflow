@@ -1,31 +1,56 @@
-// takeoverModal.js — 控制台单实例（接管独占）客户端腿（2026-10-27 批）。
+// takeoverModal.js — 控制台单实例（接管独占）客户端腿（2026-10-27 批；
+// 四修批 2026-10-29 作者令）：①被顶出态断内容渲染（ws.js 入口闸 + 服务端
+// gateFrame 双保险）②毛玻璃模糊背景（overlay .takeover-blur）③极简卡
+// （一行标题+一行说明+操作 chip，errorfrozen-dialog-minimal 同口径）④两按钮
+// 修真——【重新接管】= 发帧 + 回执 ok 后 reload 全量重同步重新进入（带 loading
+// 态/超时/失败提示）；【退出】= 直达官网个人主页（brand.js getProfileUrl）。
 //
-// 设计稿：reports/20261027_231456_console-single-instance/DESIGN.md（§6 前端落点）。
-// 服务端语义（ConsoleTakeover）：新实例认证成功 ⇒ 旧实例收 `takeover` 帧（被踢面：
-// 强制二选一【退出】【重新接管】，重新接管即反向踢，互斥权最后写入者胜）；【退出】
-// 翻退出面（重入门）。数据可见性不受影响（#929 多设备透明照旧）——本模态只独占
-// 「主动控制权」。
+// 设计稿：reports/20261027_231456_console-single-instance/DESIGN.md（§6 前端落点；
+// §7.3 数据透明口径已被 2026-10-29 作者令四修修订——被顶出态断内容渲染）。
 //
-// 模块图纪律：本文件是叶子（只 import ws.js/state.js/i18n.js，无回边）——ws.js 不能
-// 反向 import 本模块（成环，flowStepInterceptor 同款教训），故接管帧的路由权在
-// ws.js GLOBAL_MSG_TYPES 注册（takeover/takeoverResult 两型），消费点在本模块。
-// modal.js 的全局关闭钩子（Escape/遮罩/hideModals）按 DOM 在场判别绕行本模态
-// （强制二选一是互斥权的裁决点，不可被全局钩子误收）。
+// 模块图纪律：本文件是叶子（只 import ws.js/state.js/i18n.js/modal.js/brand.js，
+// 无回边）——ws.js 不能反向 import 本模块（成环，flowStepInterceptor 同款教训），
+// 故接管帧的路由权在 ws.js GLOBAL_MSG_TYPES 注册（takeover/takeoverResult 两型），
+// 消费点在本模块。modal.js 的全局关闭钩子（Escape/遮罩/hideModals）按 DOM 在场
+// 判别绕行本模态（强制二选一是互斥权的裁决点，不可被全局钩子误收）。
 //
 // 旗标（state.js 槽，跨模块读写）：
-//   state.consoleSuperseded — 本页已让出控制权；canvas 标签页账本联动读点
-//                             （设计稿 §8：唯一活跃实例 = 账本唯一写入方）。
-//   state.takeoverExited    — 用户已退出：ws.js onclose 见旗标跳过自动重连与
-//                             remint/粘贴票面；updateConnBanner 不再谎报「正在重连」。
+//   state.consoleSuperseded — 本页已让出控制权；ws.js onmessage 入口闸读点
+//                             （被顶出态一律不渲染新内容帧，只放行接管协议帧）。
 
 import state from './state.js';
 import { sendWs, onMessage } from './ws.js';
 import { t } from './i18n.js';
+import { showToast } from './modal.js';
+import { getProfileUrl } from './brand.js';
 
-let retakeInFlight = false;
+/** 回执缺席窗：超时 ⇒ 恢复可点 + 失败提示（连接抖动/判死/挤占竞态面）。 */
+const RETAKE_TIMEOUT_MS = 4000;
+let retakeTimer = null;
 
 function boxEl() {
   return document.getElementById('takeover-box');
+}
+
+function overlay() {
+  return state.dom?.modalOverlay || null;
+}
+
+/** 毛玻璃背景：弹窗出现即整页模糊（--cv-* 玻璃族同源材质，modal.css 消费）。 */
+function setBlur(on) {
+  const ov = overlay();
+  if (ov) ov.classList.toggle('takeover-blur', on);
+}
+
+function setRetakeLoading(loading) {
+  const btn = /** @type {HTMLButtonElement|null} */ (document.getElementById('takeover-retake'));
+  if (!btn) return;
+  btn.disabled = loading;
+  btn.textContent = loading ? t('takeover.retaking') : t('takeover.retake');
+}
+
+function clearRetakeTimer() {
+  if (retakeTimer) { clearTimeout(retakeTimer); retakeTimer = null; }
 }
 
 /** 被踢面（superseded）：强制二选一。幂等——重连补推/多连接同帧不叠弹。 */
@@ -33,7 +58,8 @@ function show() {
   const box = boxEl();
   if (!box) return; // 极旧入口无本盒：静默降级为现行为（无模态、连接照常）
   state.consoleSuperseded = true;
-  retakeInFlight = false;
+  clearRetakeTimer();
+  setRetakeLoading(false);
   // 既有模态族同拍：一次只亮一个盒（showConfirm/showConflict 同款互斥）。
   for (const id of ['modal-box', 'delete-box', 'conflict-box']) {
     const el = document.getElementById(id);
@@ -47,53 +73,46 @@ function show() {
   retakeBtn.textContent = t('takeover.retake');
   exitBtn.hidden = false;
   retakeBtn.hidden = false;
-  document.getElementById('takeover-reenter').hidden = true;
   box.style.display = 'block';
-  if (state.dom?.modalOverlay) state.dom.modalOverlay.classList.add('on');
-}
-
-/** 退出面（重入门）：单按钮，reload 后同会话重连 → 服务端落 superseded 面 → 一键 retake。 */
-function showExitFace() {
-  const box = boxEl();
-  if (!box) return;
-  state.consoleSuperseded = false;
-  document.getElementById('takeover-title').textContent = t('takeover.exitTitle');
-  document.getElementById('takeover-msg').textContent = t('takeover.exitMsg');
-  document.getElementById('takeover-exit').hidden = true;
-  document.getElementById('takeover-retake').hidden = true;
-  const reenterBtn = document.getElementById('takeover-reenter');
-  reenterBtn.textContent = t('takeover.reenter');
-  reenterBtn.hidden = false;
-  box.style.display = 'block';
-  if (state.dom?.modalOverlay) state.dom.modalOverlay.classList.add('on');
+  if (overlay()) overlay().classList.add('on');
+  setBlur(true);
 }
 
 function hide() {
   const box = boxEl();
   if (box) box.style.display = 'none';
+  setBlur(false);
   // 收起 = ownership 已回。不调 modal.js hideModals（那会连带清其他盒的回调态——
   // 本模态受强制二选一保护，只摘自己的 overlay 面）。
-  if (state.dom?.modalOverlay) state.dom.modalOverlay.classList.remove('on');
-}
-
-/** 【重新接管】：发 retake 帧反向踢（单飞；回执缺席 3s 后允许再点——连接抖动兜底）。 */
-export function takeoverRetake() {
-  if (retakeInFlight) return;
-  retakeInFlight = true;
-  sendWs({ type: 'takeoverRetake' });
-  setTimeout(() => { retakeInFlight = false; }, 3000);
+  if (overlay()) overlay().classList.remove('on');
 }
 
 /**
- * 【退出】：先置 exited 旗标再主动 close——ws.js onclose 见旗标不重连、不落
- * remint/粘贴票面（被踢面退出到可一键重入门）。
+ * 【重新接管】：发 retake 帧反向踢（单飞 + loading 态）。回执 ok ⇒ owner 已回
+ * （服务端已把另一端顶进同款弹窗态）⇒ reload 全量重同步重新进入控制台——内容闸
+ * 窗期的缺口只经 reload 愈合。回执 !ok/缺席 ⇒ 恢复可点 + 失败提示（挤占竞态：
+ * 互斥权最后写入者胜，败者可再点）。
+ */
+export function takeoverRetake() {
+  const btn = /** @type {HTMLButtonElement|null} */ (document.getElementById('takeover-retake'));
+  if (!btn || btn.disabled) return; // 单飞：loading 期间再点忽略
+  setRetakeLoading(true);
+  sendWs({ type: 'takeoverRetake' });
+  clearRetakeTimer();
+  retakeTimer = setTimeout(() => {
+    retakeTimer = null;
+    setRetakeLoading(false);
+    showToast(t('takeover.retakeFailed'), 'error');
+  }, RETAKE_TIMEOUT_MS);
+}
+
+/**
+ * 【退出】（2026-10-29 作者令四修修订，原「退出面/重入门」作废）：直达官网个人
+ * 主页（brand 契约 profileUrl，activityBar.js 同源读点）。本页随导航卸载；
+ * 被顶出连接的内容帧由服务端 gateFrame 断喂、ws.js 入口闸兜底不渲染。
  */
 export function takeoverExit() {
-  state.takeoverExited = true;
-  showExitFace();
-  try {
-    if (state.ws) state.ws.close();
-  } catch (_) { /* 已断开 */ }
+  window.location.href = getProfileUrl();
 }
 
 // ── 帧消费（GLOBAL 路由权在 ws.js 注册）────────────────────────────────────
@@ -101,12 +120,15 @@ export function takeoverExit() {
 onMessage('takeover', () => { show(); });
 
 onMessage('takeoverResult', (msg) => {
-  retakeInFlight = false;
+  clearRetakeTimer();
   if (msg && msg.ok) {
+    // 所有权已回：reload 重新进入（抢位竞态下迟到回执同样安全——owner 确已回本会话）。
     state.consoleSuperseded = false;
-    hide();
+    window.location.reload();
+  } else {
+    setRetakeLoading(false);
+    showToast(t('takeover.retakeFailed'), 'error');
   }
-  // !ok：所有权未回（竞态/总闸关闭）——被踢面原样保留，可再点或退出。
 });
 
 // ── 按钮接线（ESM deferred：import 时 DOM 已就绪，modal.js initModals 同拍语义）──
@@ -115,5 +137,3 @@ const exitBtn = document.getElementById('takeover-exit');
 if (exitBtn) exitBtn.onclick = () => takeoverExit();
 const retakeBtn = document.getElementById('takeover-retake');
 if (retakeBtn) retakeBtn.onclick = () => takeoverRetake();
-const reenterBtn = document.getElementById('takeover-reenter');
-if (reenterBtn) reenterBtn.onclick = () => { window.location.reload(); };

@@ -183,13 +183,6 @@ function offlineQueuedCount() {
 function updateConnBanner() {
   const el = document.getElementById('conn-banner');
   if (!el) return;
-  // 控制台单实例批：退出面在场 ⇒ 本页已主动让位断开、不再重连——横幅不得谎报
-  // 「正在重连」（退出面自身即当前唯一事实面）。
-  if (state.takeoverExited) {
-    el.classList.remove('show');
-    el.classList.add('hidden');
-    return;
-  }
   if (state.connected) {
     el.classList.remove('show');
     el.classList.add('hidden');
@@ -1135,9 +1128,6 @@ export function connect() {
     syncSendButtonConnState();
     disconnectCallbacks.forEach(cb => { try { cb(); } catch (e) { console.error('[ws] disconnect callback error:', e); } });
     if (state.heartbeat) { clearInterval(state.heartbeat); state.heartbeat = null; }
-    // 控制台单实例批（takeoverModal.js 置旗标）：用户点了【退出】——本页主动让位，
-    // 不重连、不落 remint/重登链（被踢面退出到可一键重入门：退出面【重新进入】= reload）。
-    if (state.takeoverExited) return;
     if (!opened) {
       // Handshake rejected before the socket ever opened. First try the
       // silent host-session re-establishment (fresh ticket → redemption →
@@ -1190,6 +1180,15 @@ export function connect() {
           // 衰减保留：连续正常心跳会把一次性抖动收回 5s 底限。
           hbMaxRttMs = Math.max(rtt, Math.round(hbMaxRttMs * 0.5));
         }
+        return;
+      }
+
+      // 控制台单实例四修批（2026-10-29 作者令 · 隐私面）：被顶出态（consoleSuperseded，
+      // 唯一写点 = takeoverModal.js）一律不渲染新内容帧——服务端已对该会话连接断喂
+      // （ConsoleTakeover.gateFrame），此处前端兜底（旧引擎 / 本连接直发帧）。放行
+      // 白名单 = 接管协议帧（takeover 重弹 / takeoverResult 裁决）。放在 pong 之后：
+      // 通道活性水位（lastWsInboundAt）已推进，心跳面不受影响。
+      if (state.consoleSuperseded && msg.type !== 'takeover' && msg.type !== 'takeoverResult') {
         return;
       }
 
