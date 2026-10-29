@@ -530,7 +530,22 @@ function enhanceAskCard(bubble, items, requestId, targetSid) {
   // ── OTP 单码片 ──
   const otpItemIdx = items.findIndex(i => i && i.secret && OTP_INTENT_RE.test(i.question || ''));
   if (otpItemIdx >= 0 && requestId) {
-    api('POST', '/api/perception/otp/window/open', { requestId, windowSec: 600 });
+    // 引擎已在 ask 发射点开窗（幂等 by requestId，本腿复用同一窗）。响应带槽内
+    // 命中元数据（无码值）——渲染晚于命中的卡面（console 重开/刷新）立即补片，
+    // 不再等一个可能永不再来的新码事件。
+    api('POST', '/api/perception/otp/window/open', { requestId, windowSec: 600 }).then((resp) => {
+      if (resp && resp.ok && resp.data && resp.data.hasHit && resp.data.windowId) {
+        const handler = otpCardHandlers.get(requestId);
+        if (handler) handler({
+          type: 'perception.otp.code',
+          windowId: resp.data.windowId,
+          requestId,
+          from: resp.data.from,
+          fromDomain: resp.data.fromDomain,
+          receivedAt: resp.data.receivedAt,
+        });
+      }
+    });
     const inputFound = bubble.querySelector('input[type="password"]');
     const input = inputFound instanceof HTMLInputElement ? inputFound : null;
     otpCardHandlers.set(requestId, (frame) => {
@@ -635,6 +650,12 @@ function renderSnapshotFace(bubble, items, draftItem, draftId, targetSid, reques
   let loadedDoc = null;
   // checkJs：querySelector 产出 Element——按钮一次性窄化为 HTMLButtonElement。
   const asBtn = (el) => (el instanceof HTMLButtonElement ? el : null);
+  // 一致性守则可见面（r2 §7.3 / r3 裁决 4）：画布一旦编辑（mtime > snapshotAt），
+  // 「照此发送」停用 + stale 提示行——服务端 409 仍是兜底，停用是设计首层。
+  const markStale = () => {
+    staleEl.classList.add('show');
+    if (sendBtn) sendBtn.disabled = true;
+  };
 
   const sendBtn = asBtn(btnrow.querySelector('[data-act="send"]'));
   sendBtn?.addEventListener('click', async () => {
@@ -642,7 +663,7 @@ function renderSnapshotFace(bubble, items, draftItem, draftId, targetSid, reques
     const r = await api('POST', '/api/perception/mail/send', { draftId, snapshot: true });
     sendBtn.disabled = false;
     if (r.ok) { showReceipt(face, true, r.data, null, loadedDoc); answer(t('perception.answerSent')); }
-    else if (r.status === 409) staleEl.classList.add('show');
+    else if (r.status === 409) markStale();
     else showReceipt(face, false, null, authErrMsg(r, t('perception.sendFailed')));
   });
   btnrow.querySelector('[data-act="canvas"]').addEventListener('click', () => {
@@ -661,7 +682,8 @@ function renderSnapshotFace(bubble, items, draftItem, draftId, targetSid, reques
       answer(t('perception.answerSent'));
     } else if (frame.type === 'perception.draft.updated') {
       if (frame.state === 'abandoned') answer(t('perception.answerAbandoned'));
-      else loadDraft(draftId).then(d => { if (d && d.stale) staleEl.classList.add('show'); });
+      // 画布编辑落地帧：拉最新 stale 位——已编辑 ⇒ 照此发送停用 + 提示行（r2 §7.3）。
+      else loadDraft(draftId).then(d => { if (d && d.stale) markStale(); });
     }
   });
 
@@ -673,7 +695,7 @@ function renderSnapshotFace(bubble, items, draftItem, draftId, targetSid, reques
     }
     loadedDoc = d.doc || null;
     fillSnapshot(face, d);
-    if (d.stale) staleEl.classList.add('show');
+    if (d.stale) markStale();
   });
 }
 
@@ -728,8 +750,12 @@ function showReceipt(face, ok, data, errMsg, doc) {
   }
   if (data && data.messageId) parts.push(String(data.messageId).slice(0, 40));
   receipt.textContent = ok ? parts.join(' · ') : `${t('perception.receiptFail')}${errMsg ? ' · ' + errMsg : ''}`;
-  const btnrow = face.querySelector('.pp-actions');
-  if (btnrow) btnrow.querySelectorAll('button').forEach(b => { b.disabled = true; });
+  // 终态只认成功：失败卡保留全部动作（重试=再点「照此发送」、放弃、画布）——
+  // r2 §7.5「失败卡带 [重试] 与 [放弃并告知 agent]」，修前失败把按钮一并禁死。
+  if (ok) {
+    const btnrow = face.querySelector('.pp-actions');
+    if (btnrow) btnrow.querySelectorAll('button').forEach(b => { b.disabled = true; });
+  }
 }
 
 /** 快照/引用 HTML 白化：剥 script/style/事件属性（卡面只读展示）。 */
@@ -838,17 +864,31 @@ export async function openMailEditor(draftId, opts = {}) {
   bodyEl.innerHTML = sanitizeMailHtml(doc.bodyHtml || '');
   wrap.appendChild(bodyEl);
 
-  // ── 附件（本批只读展示 + ×移除）──
+  // ── 附件（r3 裁决 4：chip 带 ×移除；在位性+大小来自 attachmentStats 面）──
   let attachments = (doc.attachments || []).slice();
+  // path → { exists, sizeBytes }（旧引擎/降级形态缺字段 = 未知大小，不判缺失）。
+  const attStats = {};
+  (d.attachmentStats || []).forEach((s) => { attStats[s.path] = s; });
+  const humanBytes = (n) => {
+    if (!Number.isFinite(n) || n <= 0) return '';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let v = n, i = 0;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
+    return `${v >= 100 ? Math.round(v) : v.toFixed(1).replace(/\.0$/, '')} ${units[i]}`;
+  };
+  const hasMissingAtt = () => attachments.some((a) => attStats[a] && attStats[a].exists === false);
   const attRow = document.createElement('div');
   attRow.className = 'att-row';
   const renderAtts = () => {
     attRow.innerHTML = '';
     attachments.forEach((a) => {
       const chip = document.createElement('span');
-      chip.className = 'att-chip';
-      chip.innerHTML = `<svg viewBox="0 0 24 24"><path d="M21.4 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg><span class="nm"></span><button class="x" title="${esc(t('perception.removeAtt'))}"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
+      chip.className = 'att-chip' + (attStats[a] && attStats[a].exists === false ? ' missing' : '');
+      chip.title = attStats[a] && attStats[a].exists === false ? t('perception.attMissingNote') : String(a);
+      chip.innerHTML = `<svg viewBox="0 0 24 24"><path d="M21.4 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg><span class="nm"></span><span class="sz"></span><button class="x" title="${esc(t('perception.removeAtt'))}"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>`;
       chip.querySelector('.nm').textContent = String(a).split('/').pop();
+      const sz = attStats[a] ? humanBytes(attStats[a].sizeBytes) : '';
+      if (sz) chip.querySelector('.sz').textContent = sz;
       chip.querySelector('.x').addEventListener('click', () => {
         attachments = attachments.filter(x => x !== a);
         renderAtts();
@@ -856,6 +896,9 @@ export async function openMailEditor(draftId, opts = {}) {
       });
       attRow.appendChild(chip);
     });
+    // 路径不存在 → 发送禁用并标红（r2 §7.3）；全移除后自动解禁。
+    const sendNode = tools.querySelector('[data-t="send"]');
+    if (sendNode instanceof HTMLButtonElement) sendNode.disabled = hasMissingAtt();
   };
   renderAtts();
   wrap.appendChild(attRow);
@@ -924,10 +967,15 @@ export async function openMailEditor(draftId, opts = {}) {
   };
   const sendToolBtn = toolBtn('[data-t="send"]');
   sendToolBtn?.addEventListener('click', async () => {
+    if (hasMissingAtt()) {
+      note.className = 'mail-send-note show err';
+      note.textContent = t('perception.attMissingNote');
+      return;
+    }
     sendToolBtn.disabled = true;
     if (saveTimer) { clearTimeout(saveTimer); await saveDraftContent(); }
     const r = await api('POST', '/api/perception/mail/send', { draftId, snapshot: false });
-    sendToolBtn.disabled = false;
+    sendToolBtn.disabled = hasMissingAtt(); // 失败可重试；缺失态仍禁发
     if (r.ok) {
       note.className = 'mail-send-note ok show';
       note.textContent = t('perception.receiptSent');

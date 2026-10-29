@@ -362,6 +362,9 @@ html[data-theme="dark"] .pp-btn.danger-line { color: #f26b6b; border-color: rgba
 }
 .att-chip svg { width: 13px; height: 13px; stroke: rgb(var(--st-sapphire)); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex-shrink: 0; }
 .att-chip .sz { font-size: 10.5px; color: var(--st-text-dim); }
+/* 路径不存在（r2 §7.3）：chip 标红（载体上色——红只上描边/图标/底纹），发送腿同步禁用 */
+.att-chip.missing { border-color: var(--st-error); background: color-mix(in srgb, var(--st-error) 8%, transparent); }
+.att-chip.missing svg, .att-chip.missing .nm { color: var(--st-error); stroke: var(--st-error); }
 .att-chip .x {
   width: 16px; height: 16px; border-radius: 5px; border: none; background: transparent; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; color: var(--st-text-dim); padding: 0;

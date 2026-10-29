@@ -2612,6 +2612,7 @@ export default {
   'perception.tbLink': '链接',
   'perception.linkPrompt': '链接地址',
   'perception.removeAtt': '移除',
+  'perception.attMissingNote': '有附件文件不存在，发送已停用；可在画布点 × 移除后重试。',
   'perception.removeAddr': '移除',
   'perception.toPh': '收件人地址，回车添加',
   'perception.addrPh': '输入地址，回车添加',

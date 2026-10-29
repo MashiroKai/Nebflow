@@ -107,7 +107,9 @@ private[gateway] object PerceptionRoutes:
           ))
         }
 
-      // ── OTP 窗口（前端在 OTP 意图的 secret ask 渲染时打开；过程态零 UI）──
+      // ── OTP 窗口（引擎在 ask 发射点开窗为主腿；前端渲染腿同 requestId 复用
+      // 同一窗——幂等。响应带槽内命中元数据（无码值）：渲染晚于命中的卡面
+      // （console 重开/刷新）也能立即补渲染码片）──
       case req @ POST -> Root / "perception" / "otp" / "window" / "open" =>
         withAuth(req) {
           core(ctx).flatMap { c =>
@@ -115,9 +117,20 @@ private[gateway] object PerceptionRoutes:
               val requestId = str(body, "requestId")
               val windowSec = optInt(body, "windowSec").getOrElse(PerceptionService.OtpWindowSec)
               if requestId.isBlank then BadRequest(Json.obj("error" -> "requestId required".asJson))
-              else c.openOtpWindow(requestId, math.max(30, math.min(windowSec, 3600))).map { w =>
-                Json.obj("windowId" -> w.windowId.asJson, "expiresAt" -> w.expiresAt.asJson)
-              }.flatMap(Ok(_))
+              else c.openOtpWindow(requestId, math.max(30, math.min(windowSec, 3600))).flatMap { w =>
+                c.windowHitMeta(w.windowId).flatMap { hit =>
+                  val fields: Vector[(String, Json)] = Vector(
+                    "windowId" -> w.windowId.asJson,
+                    "expiresAt" -> w.expiresAt.asJson,
+                    "hasHit" -> hit.isDefined.asJson
+                  ) ++ hit.map(h => Vector(
+                    "from" -> h.from.asJson,
+                    "fromDomain" -> h.fromDomain.asJson,
+                    "receivedAt" -> h.receivedAt.asJson
+                  )).getOrElse(Vector.empty)
+                  Ok(Json.fromJsonObject(io.circe.JsonObject.fromIterable(fields)))
+                }
+              }
             }
           }
         }
@@ -165,7 +178,10 @@ private[gateway] object PerceptionRoutes:
                         "attachments" -> d.attachments.asJson
                       )
                     case None => Json.Null
-                  )
+                  ),
+                  // 附件在位性 + 大小（快照卡/画布 chip 的标红与禁发判据，r2 §7.3；
+                  // 旧引擎/降级形态缺字段 = 前端按未知大小降级展示）。
+                  "attachmentStats" -> v.attachmentStats.asJson
                 ))
             }
           }

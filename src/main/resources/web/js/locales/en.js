@@ -2693,6 +2693,7 @@ export default {
   'perception.tbLink': 'Link',
   'perception.linkPrompt': 'Link URL',
   'perception.removeAtt': 'Remove',
+  'perception.attMissingNote': 'One or more attachment files are missing — sending is disabled. Remove the chip (×) in Canvas and retry.',
   'perception.removeAddr': 'Remove',
   'perception.toPh': 'Recipient address, Enter to add',
   'perception.addrPh': 'Type an address, Enter to add',

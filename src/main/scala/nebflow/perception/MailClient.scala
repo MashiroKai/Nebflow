@@ -161,7 +161,67 @@ object MailClient:
     def close(): Unit =
       try socket.close()
       catch case _: Throwable => ()
+
+    /** Re-arm the read timeout (IDLE renew wait needs ~25min, default is 15s). */
+    def setSoTimeout(ms: Int): Unit = socket.setSoTimeout(ms)
+
+    /** CAPABILITY 响应原文（IDLE 能力探测的原始面，r1 §4.3 退化判据）。 */
+    def capability(): Either[String, String] = command("CAPABILITY")
+
+    /**
+     * IDLE 一拍（RFC 2177）：发 IDLE → 等 continuation → 阻塞读 untagged 行至
+     * `* n EXISTS`（有新信）或 soTimeout（= 25min 重续点，r1 §4.1）→ 发 DONE
+     * 收 tagged 完成行。阻塞面——调用方必须包 IO.blocking。
+     *
+     * Left = 协议面拒绝（服务器不认 IDLE / 连接已死）；Right(ConnectionLost)
+     * = 等待中静默断连（r1 §4.3「静默掐断」计数由调用方持有）。
+     */
+    def idleOnce(renewMs: Long): Either[String, IdleEvent] =
+      val tag = nextTag
+      try
+        val out = socket.getOutputStream
+        out.write(s"$tag IDLE\r\n".getBytes(StandardCharsets.UTF_8))
+        out.flush()
+        val cont = readLine()
+        if cont == null then Left("IDLE: connection closed before continuation")
+        else if !cont.startsWith("+") then Left(s"IDLE not accepted: ${cont.take(120)}")
+        else
+          socket.setSoTimeout(renewMs.min(Int.MaxValue.toLong).toInt)
+          var event = IdleEvent.Renew
+          var settled = false
+          while !settled do
+            try
+              val line = readLine()
+              if line == null then { event = IdleEvent.ConnectionLost; settled = true }
+              else if line.toUpperCase.contains("EXISTS") then { event = IdleEvent.Exists; settled = true }
+              // 其余 untagged（EXPUNGE/FETCH/RECENT…）：继续等
+            catch
+              case _: java.net.SocketTimeoutException => settled = true // Renew 到点
+              case _: java.io.IOException             => event = IdleEvent.ConnectionLost; settled = true
+          socket.setSoTimeout(DefaultSoTimeoutMs)
+          try
+            out.write("DONE\r\n".getBytes(StandardCharsets.UTF_8))
+            out.flush()
+            readUntilTag(tag) // 消费 tagged 完成行（失败尽力而为）
+          catch case _: Throwable => ()
+          Right(event)
+      catch
+        case _: java.net.SocketTimeoutException => Right(IdleEvent.ConnectionLost)
+        case e: java.io.IOException =>
+          Left(s"IDLE: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}")
   end ImapSession
+
+  private val DefaultSoTimeoutMs: Int = 15000
+
+  /** IDLE 一拍结局（idleOnce 的返回面）。 */
+  enum IdleEvent:
+    case Exists         // `* n EXISTS`：有新信 → 调用方踢轮询即取
+    case Renew          // 重续点到（默认 25min）→ 原连接重发 IDLE
+    case ConnectionLost // 静默断连（NAT/防火墙特征，连续 ≥3 次 → 退化轮询）
+
+  /** CAPABILITY 响应是否含 IDLE（词元级匹配，非子串——防 `XIDLE` 类误判）。 */
+  def hasIdleCapability(capResp: String): Boolean =
+    Option(capResp).getOrElse("").toUpperCase.split("\\s+").contains("IDLE")
 
   private val LiteralPattern: Regex = """\{(\d+)\}\s*$""".r
   private val ExistsPattern: Regex = """\* (\d+) EXISTS""".r.unanchored

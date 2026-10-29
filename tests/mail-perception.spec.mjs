@@ -125,6 +125,19 @@ const DRAFT = {
   stale: false,
 };
 
+// 附件缺失钉（r3 裁决 4 / r2 §7.3）：一枚在位（带大小）+ 一枚路径不存在。
+const DRAFT_ATT = {
+  doc: {
+    ...DRAFT.doc,
+    attachments: ['C:/docs/att.txt', '/nonexistent/x.pdf'],
+  },
+  stale: false,
+  attachmentStats: [
+    { path: 'C:/docs/att.txt', name: 'att.txt', exists: true, sizeBytes: 1234 },
+    { path: '/nonexistent/x.pdf', name: 'x.pdf', exists: false, sizeBytes: 0 },
+  ],
+};
+
 // ============================================================
 // ① 感知面板：条目化 + 占位退役（零 reserved）+ 零统计 + 两问配置卡
 // ============================================================
@@ -277,6 +290,37 @@ test.describe('单码片脸', () => {
     expect(pageErrors).toEqual([]);
     await context.close();
   });
+
+  test('O3 开窗响应带命中元数据（hasHit）⇒ 卡面立即补渲染码片（console 重开/刷新后不再丢码）', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate(() => {
+      // 引擎同步开窗腿（ask 发射点 T0）先于前端渲染：渲染腿开窗复用同窗，
+      // 响应已带槽内命中 ⇒ 无需等新码事件，立即出片。
+      window.__routes.push({
+        method: 'POST', match: (p) => p === '/api/perception/otp/window/open',
+        data: { ok: true, windowId: 'w-hit', hasHit: true, from: 'no-reply@svc.com', fromDomain: 'svc.com', receivedAt: 1700000000000 },
+      });
+    });
+    await page.evaluate(() => {
+      const bubble = window.__mkBubble(true);
+      window.__enhance(bubble, [{ id: 'q1', question: '请输入邮件里的验证码', secret: true }], 'ask-otp-3', 'sess-1');
+    });
+    await page.waitForTimeout(400); // 开窗 api().then 异步补片
+    const face = await page.evaluate(() => {
+      const chip = document.querySelector('#chat .otp-chip');
+      return {
+        present: !!chip,
+        codeLeak: chip ? /\d{4,}/.test(chip.querySelector('.code')?.textContent || '') : false,
+        from: chip?.querySelector('.from')?.textContent || '',
+      };
+    });
+    expect(face.present, 'hasHit 响应直接补片（零 WS 帧）').toBe(true);
+    expect(face.codeLeak, '补片不落码值').toBe(false);
+    expect(face.from, '来源元数据渲染').toContain('svc.com');
+    expect(pageErrors).toEqual([]);
+    await page.screenshot({ path: path.join(SHOT_DIR, 'mail-perception-3b-otp-hashit.png') });
+    await context.close();
+  });
 });
 
 // ============================================================
@@ -364,6 +408,88 @@ test.describe('快照卡脸', () => {
     expect(pageErrors).toEqual([]);
     await page.screenshot({ path: path.join(SHOT_DIR, 'mail-perception-5-snapshot-stale.png') });
     await context.close();
+  });
+
+  test('S3 发送失败回执：按钮保持可用（重试/画布/放弃不disable——r2 §7.5）', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate((draft) => {
+      window.__routes.push({ method: 'GET', match: (p) => p === '/api/perception/mail/drafts/draft-e2e-1', data: draft });
+      window.__routes.push({ method: 'POST', match: (p) => p === '/api/perception/mail/send', status: 502, data: { error: 'SMTP 中继不可达' } });
+    }, DRAFT);
+    await page.evaluate(() => {
+      const bubble = window.__mkBubble(false);
+      window.__enhance(bubble, [{ id: 'perceptionDraft:draft-e2e-1', question: 'x', options: [{ label: 'a' }] }], 'ask-d4', 'sess-9');
+    });
+    await page.waitForTimeout(300);
+    await page.evaluate(() => document.querySelector('#chat .pdraft [data-act="send"]').click());
+    await page.waitForTimeout(500);
+    const face = await page.evaluate(() => {
+      const pd = document.querySelector('#chat .pdraft');
+      const receipt = pd.querySelector('.pdraft-receipt');
+      const btns = [...pd.querySelectorAll('.pp-actions button')].map((b) => ({ act: b.dataset.act, disabled: b.disabled }));
+      return { bad: receipt?.classList.contains('bad'), text: receipt?.textContent || '', btns };
+    });
+    expect(face.bad, '失败回执 bad 色调').toBe(true);
+    expect(face.text, '失败原因透传').toContain('SMTP 中继不可达');
+    expect(face.btns.every((b) => !b.disabled), '失败卡三按钮全部保持可用（重试=再点发送）').toBe(true);
+    expect(pageErrors).toEqual([]);
+    await page.screenshot({ path: path.join(SHOT_DIR, 'mail-perception-5b-snapshot-fail.png') });
+    await context.close();
+  });
+
+  test('S4 stale 双腿停用「照此发送」：载入即停用 + 画布 updated 帧后拉取停用', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    // 腿①：快照载入时服务端已判 stale ⇒ 停用 + 提示行（设计首层，非 409 兜底）
+    await page.evaluate((draft) => {
+      window.__routes.push({ method: 'GET', match: (p) => p === '/api/perception/mail/drafts/draft-e2e-1', data: { ...draft, stale: true } });
+    }, DRAFT);
+    await page.evaluate(() => {
+      const bubble = window.__mkBubble(false);
+      window.__enhance(bubble, [{ id: 'perceptionDraft:draft-e2e-1', question: 'x', options: [{ label: 'a' }] }], 'ask-d5', 'sess-9');
+    });
+    await page.waitForTimeout(300);
+    let face = await page.evaluate(() => {
+      const pd = document.querySelector('#chat .pdraft');
+      return {
+        staleShown: pd.querySelector('.pdraft-stale')?.classList.contains('show'),
+        sendDisabled: pd.querySelector('[data-act="send"]').disabled,
+      };
+    });
+    expect(face.staleShown, '载入 stale ⇒ 提示行显示').toBe(true);
+    expect(face.sendDisabled, '载入 stale ⇒ 照此发送停用').toBe(true);
+    await context.close();
+
+    // 腿②：载入时未 stale，画布编辑落地帧（draft.updated）后拉取 ⇒ 停用
+    const { context: c2, page: p2, pageErrors: pe2 } = await newPage(browser);
+    let staleNow = false;
+    await p2.evaluate((draft) => {
+      window.__routes.push({
+        method: 'GET', match: (p) => p === '/api/perception/mail/drafts/draft-e2e-1',
+        data: () => ({ ...draft, stale: window.__staleNow === true }),
+      });
+    }, DRAFT);
+    await p2.evaluate(() => { window.__staleNow = false; });
+    await p2.evaluate(() => {
+      const bubble = window.__mkBubble(false);
+      window.__enhance(bubble, [{ id: 'perceptionDraft:draft-e2e-1', question: 'x', options: [{ label: 'a' }] }], 'ask-d6', 'sess-9');
+    });
+    await p2.waitForTimeout(300);
+    await p2.evaluate(() => {
+      window.__staleNow = true; // 画布保存落地
+      window.__frame({ type: 'perception.draft.updated', draftId: 'draft-e2e-1' });
+    });
+    await p2.waitForTimeout(400);
+    face = await p2.evaluate(() => {
+      const pd = document.querySelector('#chat .pdraft');
+      return {
+        staleShown: pd.querySelector('.pdraft-stale')?.classList.contains('show'),
+        sendDisabled: pd.querySelector('[data-act="send"]').disabled,
+      };
+    });
+    expect(face.staleShown, 'updated 帧后拉取 stale ⇒ 提示行显示').toBe(true);
+    expect(face.sendDisabled, 'updated 帧后拉取 stale ⇒ 照此发送停用').toBe(true);
+    expect(pe2).toEqual([]);
+    await c2.close();
   });
 });
 
@@ -526,6 +652,55 @@ test.describe('Canvas 编辑器脸', () => {
     expect(note.text).toContain('已发送');
     expect(pageErrors).toEqual([]);
     await page.screenshot({ path: path.join(SHOT_DIR, 'mail-perception-6-editor.png') });
+    await context.close();
+  });
+
+  test('E2 画布附件 chip：大小标注 + 缺失标红停发 + 移除后解禁（r3 裁决 4 / r2 §7.3）', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.evaluate((draft) => {
+      window.__routes.push({ method: 'GET', match: (p) => p === '/api/perception/mail/drafts/draft-e2e-1', data: draft });
+      window.__routes.push({ method: 'PUT', match: (p) => p === '/api/perception/mail/drafts/draft-e2e-1', data: { ok: true } });
+      window.__routes.push({ method: 'POST', match: (p) => p === '/api/perception/mail/send', data: { draftId: 'draft-e2e-1', messageId: '<m3@x>', sentAt: 1700000000000 } });
+    }, DRAFT_ATT);
+    await page.evaluate(() => window.__openEditor('draft-e2e-1', {}));
+    const pane = page.locator('#canvas-content .canvas-tab-pane[data-tab-id="perception-draft:draft-e2e-1"]');
+    await expect(pane).toBeVisible({ timeout: 10000 });
+    // 缺失态：chip 2 枚、missing 一枚、send 禁用
+    const missing = await pane.evaluate((root) => {
+      const chips = [...root.querySelectorAll('.att-chip')];
+      const send = root.querySelector('[data-t="send"]');
+      return {
+        count: chips.length,
+        missingIdx: chips.findIndex((c) => c.classList.contains('missing')),
+        names: chips.map((c) => c.querySelector('.nm')?.textContent || ''),
+        sizes: chips.map((c) => c.querySelector('.sz')?.textContent || ''),
+        sendDisabled: send.disabled,
+        sendText: send.textContent,
+      };
+    });
+    expect(missing.count, '两枚附件 chip').toBe(2);
+    expect(missing.missingIdx, '第二枚（路径不存在）标红').toBe(1);
+    expect(missing.names).toEqual(['att.txt', 'x.pdf']);
+    expect(missing.sizes[0], '在位 chip 带大小').toContain('KB');
+    expect(missing.sendDisabled, '缺失 ⇒ 画布发送禁用').toBe(true);
+    await page.screenshot({ path: path.join(SHOT_DIR, 'mail-perception-6b-editor-att-missing.png') });
+    // × 移除缺失 chip ⇒ 发送解禁
+    await pane.locator('.att-chip.missing .x').click();
+    await page.waitForTimeout(200);
+    const after = await pane.evaluate((root) => ({
+      count: root.querySelectorAll('.att-chip').length,
+      missing: root.querySelectorAll('.att-chip.missing').length,
+      sendDisabled: root.querySelector('[data-t="send"]').disabled,
+    }));
+    expect(after.count, '移除后剩一枚').toBe(1);
+    expect(after.missing, '缺失 chip 清零').toBe(0);
+    expect(after.sendDisabled, '全在位 ⇒ 发送解禁').toBe(false);
+    // 成功发送腿：回执行 ok
+    await pane.locator('[data-t="send"]').click();
+    await page.waitForTimeout(600);
+    const note = await pane.evaluate((root) => root.querySelector('.mail-send-note')?.classList.contains('ok'));
+    expect(note, '移除缺失后发送成功').toBe(true);
+    expect(pageErrors).toEqual([]);
     await context.close();
   });
 });
