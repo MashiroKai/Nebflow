@@ -1020,11 +1020,27 @@ body.mobile-layer #bg-dropdown .bg-dropdown-list {
 body.mobile-layer #bg-dropdown .bg-task-row {
   padding: 6px 12px;
 }
+/* 面板树批（2026-10-29 ①）：手机密度行的派生树缩进——双类锚压过上行单类密度
+   简写；缩进宽档（18px > 基线 12px）+ 左引导竖线（chat.css 桌面形 2px 原样生效）。 */
+body.mobile-layer #bg-dropdown .bg-task-row.bg-task-row-child {
+  padding-left: 18px;
+}
 body.mobile-layer #bg-dropdown .bg-dropdown-empty {
   padding: 10px 12px;
 }
+/* 面板分区批（2026-10-29 ③ · 作者报障「后台任务和子智能体混在一起」）：手机端
+   两节升格为**两张内嵌卡**——玻璃载体（morph 形变面）内各节独立卡面（边界 +
+   圆角 + 间距），分区一目了然；「智能体」签的桌面顶界线在卡面内退役。 */
+body.mobile-layer #bg-dropdown .bg-section {
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  border-radius: 12px;
+  margin: 6px;
+  overflow: hidden;
+}
 body.mobile-layer #bg-dropdown .mh-bg-grp {
   padding: 6px 12px 2px;
+  border-top: none;
 }
 body.mobile-layer #bg-dropdown [hidden] { display: none; }
 

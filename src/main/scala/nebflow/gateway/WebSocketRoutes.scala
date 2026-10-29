@@ -3359,6 +3359,12 @@ object WebSocketRoutes:
         .getOrElse(rec.sessionId)
         .asJson,
       "rootSessionId" -> rec.rootSessionId.asJson,
+      // 面板树批（2026-10-29 · 后台智能体面板三修①）：父会话归属随快照出帧——
+      // 前端按 parentSessionId 建派生树（delegate 组头 + 缩进子行）；父已终态/
+      // 不可见时前端降级为「孤儿提升顶层 + 来源标注」。AgentRecord.parentSessionId
+      // 在 Delegate/SubTask/BlockingSubagent/FlowDag(dag-) 注册点均有值；缺省 ""
+      // = 无归属（前端 falsy，零徽标零认领——与 project/taskId 同契约）。
+      "parentSessionId" -> rec.parentSessionId.asJson,
       "kind" -> rec.kind.toString.asJson,
       "task" -> meta.map(_.name).getOrElse("").asJson,
       // 2026-08-22 缺口 2：快照自带可刷新恢复三字段（向后兼容——旧字段不动，
