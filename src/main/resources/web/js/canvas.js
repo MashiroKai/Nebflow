@@ -20,6 +20,15 @@ import { makeReference } from './reference.js';
 import { initCanvasDrop } from './canvasDrop.js';
 import { authHeaders } from './flowHelpers.js'; // Bearer token for REST withAuth (/api/canvas-tabs)
 import { setSideBarCollapsed, isMobileViewport } from './activityBar.js';
+// 独立窗口本机加速批：直连开窗计划 + 导航腿 + PM origin 记账（零环：本模块
+// 只消费，cardwinDirect 不回import canvas/ws）。
+import {
+  cardwinDirectPlan,
+  navigateCardWindowDirect,
+  rememberCardwinPmOrigin,
+  readCardwinPmOrigin,
+  forgetCardwinPmOrigin,
+} from './cardwinDirect.js';
 
 const MIN_CANVAS_WIDTH = 320;
 const MAX_CANVAS_WIDTH = 1200;
@@ -4039,35 +4048,86 @@ let cardLastMainBeat = 0;
 /** @param {any} m */
 function cardBcPost(m) {
   try { if (cardBC) cardBC.postMessage(m); } catch { /* 通道已废：静默 */ }
-}
-function ensureCardChannel() {
-  if (cardBC || typeof BroadcastChannel === 'undefined') return;
-  cardBC = new BroadcastChannel('nebflow-canvas-cards');
-  cardBC.onmessage = (e) => {
-    const m = e.data || {};
-      if (cardWindowMode) {
-        /* 卡窗侧 */
-        if (m.kind === 'main-here') cardLastMainBeat = Date.now();
-        else if (m.kind === 'merge' && m.tabId) requestMergeSelf();   // 出窗动画照放（作者令 C 双向）
-        else if (m.kind === 'update' && m.tabId) cardWindowReread();
-        else if (m.kind === 'close-self' && m.tabId) window.close();
-        return;
-      }
-    /* 主窗侧 */
-    if (m.kind === 'bye' && m.tabId) mergeCardWindow(m.tabId, { fromCard: true });
-    else if (m.kind === 'hello' && m.tabId) {
-      if (tabs.has(m.tabId)) {
-        if (!independentWins.has(m.tabId)) {
-          // 主窗刷新后由卡窗 hello 再收养（WindowProxy 不可得，看门狗交卡窗侧）
-          independentWins.set(m.tabId, { win: null, winId: String(m.winId || '') });
-          markIndependentUI(m.tabId, true, { animate: false });
-        }
-        cardBcPost({ kind: 'welcome', tabId: m.tabId });
-      } else {
-        cardBcPost({ kind: 'close-self', tabId: m.tabId });   // 主窗已无此卡 → 卡窗自关
+  // postMessage 桥（独立窗口本机加速批）：BroadcastChannel 同源限定 —— 主窗
+  // （官网入口 origin）与直连卡窗（本机网关 origin）互相听不见，桥补这一腿。
+  // 同源弹窗两侧照旧走 BC（PM 腿空转零害）；对端 origin 双向钉定（发信按
+  // 开窗时记录的 origin、收信校验 e.origin 等值），跨源伪造帧进不了分发。
+  try {
+    if (cardWindowMode) {
+      if (cardPeerOrigin && window.opener) window.opener.postMessage(m, cardPeerOrigin);
+    } else {
+      for (const rec of independentWins.values()) {
+        if (rec.pmOrigin && rec.win && !rec.win.closed) rec.win.postMessage(m, rec.pmOrigin);
       }
     }
-  };
+  } catch { /* PM 腿失败静默（BC 腿已试） */ }
+}
+
+/** 卡窗通道消息分派（BroadcastChannel 与 postMessage 桥共用的唯一入口；
+ *  形态 = 既有 cardBC.onmessage 体逐字迁入，语义零变化）。 */
+function cardChannelDispatch(m) {
+  m = m || {};
+    if (cardWindowMode) {
+      /* 卡窗侧 */
+      if (m.kind === 'main-here') cardLastMainBeat = Date.now();
+      else if (m.kind === 'merge' && m.tabId) requestMergeSelf();   // 出窗动画照放（作者令 C 双向）
+      else if (m.kind === 'update' && m.tabId) cardWindowReread();
+      else if (m.kind === 'close-self' && m.tabId) window.close();
+      return;
+    }
+  /* 主窗侧 */
+  if (m.kind === 'bye' && m.tabId) mergeCardWindow(m.tabId, { fromCard: true });
+  else if (m.kind === 'hello' && m.tabId) {
+    if (tabs.has(m.tabId)) {
+      if (!independentWins.has(m.tabId)) {
+        // 主窗刷新后由卡窗 hello 再收养（WindowProxy 不可得，看门狗交卡窗侧）。
+        // 直连卡窗的 opener origin 从记账读回（PM 桥再收养腿）。
+        independentWins.set(m.tabId, {
+          win: null, winId: String(m.winId || ''), pmOrigin: readCardwinPmOrigin(m.tabId),
+        });
+        markIndependentUI(m.tabId, true, { animate: false });
+      }
+      cardBcPost({ kind: 'welcome', tabId: m.tabId });
+    } else {
+      cardBcPost({ kind: 'close-self', tabId: m.tabId });   // 主窗已无此卡 → 卡窗自关
+    }
+  }
+}
+
+/** 卡窗 PM 桥对端 origin（卡窗侧；cwpo URL 参数先行，首条来帧 e.origin 钉定）。 */
+let cardPeerOrigin = '';
+
+/** window message 监听：PM 桥收信腿（两侧同一监听，按模式分派）。
+ *  主窗：只认自己弹出的直连卡窗回声（source===rec.win ∧ origin===rec.pmOrigin 双钉）；
+ *  卡窗：只认 opener（source 钉）+ origin 钉定（cwpo 参数/首帧二取一，钉后不认他源）。 */
+function acceptCardPeerMessage(e) {
+  if (cardWindowMode) {
+    if (e.source !== window.opener) return;
+    const want = cardPeerOrigin || (new URLSearchParams(location.search).get('cwpo') || '');
+    if (want) { if (e.origin !== want) return; }
+    else if (e.origin === 'null' || !e.origin) return;   // 不钉定不透明的 null origin
+    cardPeerOrigin = e.origin;
+    cardChannelDispatch(e.data);
+    return;
+  }
+  for (const rec of independentWins.values()) {
+    if (rec.win && rec.win === e.source && rec.pmOrigin && e.origin === rec.pmOrigin) {
+      cardChannelDispatch(e.data);
+      return;
+    }
+  }
+}
+
+function ensureCardChannel() {
+  // PM 桥收信腿先行安装（不依赖 BroadcastChannel 在场 —— 直连卡窗的通道生命线
+  // 是 postMessage；BC 缺席的老浏览器至少保住跨源直连形态的通道）。
+  if (!ensureCardChannel._pmInstalled) {
+    ensureCardChannel._pmInstalled = true;
+    window.addEventListener('message', acceptCardPeerMessage);
+  }
+  if (cardBC || typeof BroadcastChannel === 'undefined') return;
+  cardBC = new BroadcastChannel('nebflow-canvas-cards');
+  cardBC.onmessage = (e) => cardChannelDispatch(e.data);
   if (!cardWindowMode) {
     // 主窗心跳：卡窗 8s 静默自守卫的喂食腿（首弹卡时起搏，见 popoutCardWindow）。
     if (!cardLastMainBeat) cardLastMainBeat = Date.now();
@@ -4143,13 +4203,39 @@ function popoutCardWindow(id) {
     '&title=' + encodeURIComponent(entry.title || '');
   const winId = 'nf-card-' + id.replace(/[^a-zA-Z0-9_-]/g, '_');
   const mobile = isMobileViewport() || document.body.classList.contains('mobile-layer');
-  const win = mobile
-    ? window.open(url, winId)                                    // 手机：新标签页姿态
-    : window.open(url, winId, 'popup=yes,width=780,height=680');
+  // 独立窗口本机加速批（2026-10-29）：origin 解析规则钉（本机→网关直连；
+  // 远端→入口 origin）。官网入口腿 + 近路面已验证本机网关基址 ⇒ 预约式直连：
+  // 手势栈内**同步**预留空白窗（popup-blocker 只认同步 window.open），基址
+  // 再验证 + 经 relay 铸一次性 console ticket 后导航到本机网关 —— 弹窗页面/
+  // WS/文件零隧道（拥塞管道上的「有点慢/空白窗」根因在此断根）；票兑换出的
+  // 会话 accountSub 跟住父会话、origin=relay-mint ⇒「经官网」标记不丢。
+  // 直连腿仅钉 opener PM 桥 origin（BroadcastChannel 同源限定，跨源卡窗通道
+  // 由 PM 桥承接）。任一环失败 ⇒ 预约窗回落相对 URL = 改动前行为逐字。
+  const direct = cardwinDirectPlan();
+  let win;
+  if (direct) {
+    win = mobile
+      ? window.open('', winId)                                     // 手机：新标签页姿态
+      : window.open('', winId, 'popup=yes,width=780,height=680');
+    if (win) {
+      // 异步腿不阻塞手势返回：导航/回落都在已预留窗内完成。
+      void navigateCardWindowDirect(win, direct, url, id);
+    }
+  } else {
+    win = mobile
+      ? window.open(url, winId)                                    // 手机：新标签页姿态
+      : window.open(url, winId, 'popup=yes,width=780,height=680');
+  }
   cardPopInFlight.delete(id);
   if (!win) return false;                                        // 弹窗被拦：不动状态
   ensureCardChannel();
-  independentWins.set(id, { win, winId });
+  independentWins.set(id, {
+    win,
+    winId,
+    // 直连会话的 PM 桥对端 origin（本机网关 origin）；同源相对开窗恒空 = 零桥。
+    pmOrigin: direct ? (() => { try { return new URL(direct.base).origin; } catch { return ''; } })() : '',
+  });
+  if (direct) rememberCardwinPmOrigin(id, independentWins.get(id).pmOrigin);
   markIndependentUI(id, true, { animate: !mobile });
   // 崩溃兜底：卡窗以任何方式消失（× 之外的 Cmd-W / 崩溃）都收敛到合并路径
   const iv = setInterval(() => {
@@ -4170,6 +4256,7 @@ function mergeCardWindow(id, opts = {}) {
   const rec = independentWins.get(id);
   if (!rec) return false;
   independentWins.delete(id);
+  forgetCardwinPmOrigin(id);   // 直连会话 opener origin 记账随合并清账
   const iv = cardWinWatch.get(id);
   if (iv) { clearInterval(iv); cardWinWatch.delete(id); }
   if (!opts.fromCard && rec.win && !rec.win.closed) cardBcPost({ kind: 'merge', tabId: id });
