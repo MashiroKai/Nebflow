@@ -137,7 +137,11 @@ export function noteAuthRejected(source) {
   });
 }
 
-/** 可见过期横幅（内联样式零依赖；一次性，reload 即随页销毁）。 */
+/** 可见过期横幅（内联样式零依赖；一次性，reload 即随页销毁）。
+ *  极简批（2026-10-29 作者令「错误态浮层要极简，错误色不大面积铺红」）：
+ *  整条红底实色块退役 → 深霜玻璃 chip（staleTabHint 同族材质，
+ *  主题无关恒可读）+ 行首一枚 --status-error-icon 红图标（错误色的唯一载体）
+ *  + 中性白字。形态 = 一行说明（「正在重新进入」已是自愈动作，无需按钮）。 */
 function showBanner(source) {
   if (document.getElementById('stand-session-gate')) return;
   const bar = document.createElement('div');
@@ -147,9 +151,23 @@ function showBanner(source) {
   bar.setAttribute('role', 'alert');
   bar.style.cssText =
     'position:fixed;left:50%;transform:translateX(-50%);bottom:24px;z-index:2147483647;' +
-    'max-width:92vw;padding:10px 18px;border-radius:10px;background:#b62324;color:#fff;' +
-    "font:13px/1.5 -apple-system,'Segoe UI',sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.35);";
-  bar.textContent = '登录状态已过期，正在重新进入控制台… / Session expired — re-entering the console…';
+    'display:flex;align-items:center;gap:8px;max-width:92vw;padding:10px 16px;' +
+    'border-radius:12px;background:rgba(28,30,38,0.92);color:#f4f5f7;' +
+    "font:13px/1.5 -apple-system,'Segoe UI',sans-serif;" +
+    'box-shadow:0 6px 24px rgba(0,0,0,0.28);border:1px solid rgba(255,255,255,0.12);' +
+    'backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);';
+  const glyph = document.createElement('span');
+  glyph.setAttribute('aria-hidden', 'true');
+  glyph.style.cssText =
+    'display:inline-flex;flex-shrink:0;color:var(--status-error-icon,#f26b6b);';
+  glyph.innerHTML =
+    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor"' +
+    ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>' +
+    '<line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+  const text = document.createElement('span');
+  text.textContent = '登录状态已过期，正在重新进入控制台… / Session expired — re-entering the console…';
+  bar.append(glyph, text);
   (document.body || document.documentElement).appendChild(bar);
 }
 
