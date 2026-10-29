@@ -1170,6 +1170,13 @@
 }
 .mchain-chip.playing { border-color: rgba(7, 193, 96, 0.4); }
 .mchain-chip .agent-detail-playing-dot { flex-shrink: 0; }
+/* 时段闸（model-schedule-unavailable 批 2026-10-29）：active 受限 chip 灰显 +
+   窗口小注（.mchip-window）；同健康层 dim 语义——「这根这轮不会被选中」。 */
+.mchain-chip.restricted { opacity: 0.5; }
+.mchain-chip .mchip-window {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
 .mchain-arrow {
   color: var(--color-text-muted);
   font-size: 10px;

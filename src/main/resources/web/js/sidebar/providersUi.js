@@ -323,6 +323,10 @@ function showProviderModal(existingName, existingData, onSave) {
   const initialModels = p.models.length > 0 ? p.models.map(m => ({
     ...m,
   })) : [{id: '', contextWindow: 1000000}];
+  // 模型不可用时段（model-schedule-unavailable 批 2026-10-29）：provider 级窗口
+  // 序列化成「14:00-18:00, 23:00-07:00」文本框形态（days 属手编面，回读仅展示
+  // from-to，保存会丢 days——文本框形状装不下，属显式降级并注记于设计件 §5）。
+  const uwText = (p.unavailableWindows || []).map(w => `${w.from}-${w.to}`).join(', ');
   // 明文直显（作者令 2026-10-27）：编辑既有 provider 时，config 读面上的
   // "***" 用回读真值替换（revealProviderApiKeys 已在设置页打开时预取、卡点
   // 点击时再兜一次）；回读未落地/失败 ⇒ '' = 既有空态（占位符提示留为 ***
@@ -340,6 +344,7 @@ function showProviderModal(existingName, existingData, onSave) {
         { value: 'openai', label: 'chat/completions' },
       ]},
       {key: 'models', label: t('provider.models'), type: 'models', value: initialModels},
+      {key: 'unavailableWindows', label: t('provider.unavailableWindows'), type: 'text', value: uwText, placeholder: t('provider.unavailableWindowsPlaceholder')},
     ],
     onConfirm(values) {
       const name = values.name.trim();
@@ -386,15 +391,46 @@ function showProviderModal(existingName, existingData, onSave) {
       // edit-modal checkbox snapshot polluted nebflow.json ModelConfig.vision
       // (inline outranks models.json runtime annotations). An explicit inline
       // vision set by hand rides through untouched; new models omit the key.
+      // 模型不可用时段（model-schedule-unavailable 批）：模型行的 provider 级
+      // 之外的 per-model unavailableWindows 按 id 原样携带——models 数组在保存
+      // 时整体替换，不带即静默抹掉手编规则（深合并对数组是整体覆盖）。
       const modelsOut = checkedModels.map(m => {
         const prev = (p.models || []).find(x => x.id === m.id);
-        return prev && prev.vision !== undefined ? { ...m, vision: prev.vision } : m;
+        const withVision = prev && prev.vision !== undefined ? { ...m, vision: prev.vision } : m;
+        if (prev && Array.isArray(prev.unavailableWindows) && prev.unavailableWindows.length) {
+          return { ...withVision, unavailableWindows: prev.unavailableWindows };
+        }
+        return withVision;
       });
+      // provider 级不可用时段解析 + 校验（同 validateContextWindow 的拒存先例）：
+      // 逗号/空白分隔的 HH:mm-HH:mm；非法 → toast + abort（不落任何东西）；
+      // 清空 → 显式 null（深合并删键）；带 days 的手编规则在文本框回读会丢
+      // days（见 uwText 注记）——只在字段被改动时才覆盖，未动过的原始值原样
+      // 回写以保全 days。
+      const rawUw = (values.unavailableWindows || '').trim();
+      /** @type {Array<{from: string, to: string}>|null} */
+      let unavailableWindows = null;
+      if (rawUw) {
+        unavailableWindows = [];
+        for (const part of rawUw.split(/[,，;；\s]+/).filter(Boolean)) {
+          const m = /^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$/.exec(part);
+          if (!m) {
+            window.__showToast?.(t('provider.unavailableWindowsInvalid', { value: part }), 'error');
+            return;
+          }
+          unavailableWindows.push({ from: `${m[1]}:${m[2]}`, to: `${m[3]}:${m[4]}` });
+        }
+        if (unavailableWindows.length === 0) unavailableWindows = null;
+      }
+      const uwOut = rawUw
+        ? unavailableWindows
+        : (Array.isArray(p.unavailableWindows) && p.unavailableWindows.length ? p.unavailableWindows : null);
       onSave(name, {
         baseUrl,
         apiKey,
         protocol: values.protocol,
         models: modelsOut,
+        unavailableWindows: uwOut,
       });
       if (clampedRows.length) {
         for (const c of clampedRows) {

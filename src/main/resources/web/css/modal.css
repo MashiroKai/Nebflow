@@ -1563,6 +1563,12 @@
 .mp-editor { display: flex; flex-direction: column; gap: 6px; }
 .mp-rows { display: flex; flex-direction: column; gap: 6px; }
 .mp-row-unavailable { opacity: 0.45; }
+/* 时段闸（model-schedule-unavailable 批 2026-10-29）：链行尾的窗口小注。 */
+.mp-window {
+  font: 400 10px ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
 .mp-prov {
   font: 500 10px -apple-system, sans-serif;
   color: var(--color-text-muted);

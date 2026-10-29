@@ -1186,6 +1186,9 @@ export default {
   'model.errDuplicate': 'Model already in chain',
   'model.unavailable': 'Currently unavailable ({reason})',
   'model.healthFiltered': 'filtered by health',
+  // model-schedule-unavailable batch: panel gray-out / annotation face.
+  'model.scheduleRestrictedTitle': 'Unavailable {windows} — skipped automatically inside the window',
+  'model.scheduleRestrictedSuffix': 'unavailable {windows}',
   'model.saved': 'Saved',
   'model.divergedBar': '{roles} configured independently; unaffected by the primary chain',
   'model.divergedView': 'View',
@@ -1271,6 +1274,10 @@ export default {
   'provider.ctxExceedsCeiling': 'Model {id}: context window {value} exceeds the supported ceiling {max}',
   'provider.ctxDefaulted': 'Context window left empty for {ids}; saved with the default {def}',
   'provider.ctxClampedToMax': 'Model {id}: the default 1,000,000 exceeds the reported maximum; saved as {max}',
+  // model-schedule-unavailable batch: provider modal edit face.
+  'provider.unavailableWindows': 'Unavailable windows',
+  'provider.unavailableWindowsPlaceholder': 'e.g. 14:00-18:00; comma-separate multiple; cross-midnight as 23:00-07:00; empty = no restriction',
+  'provider.unavailableWindowsInvalid': 'Invalid unavailable window: "{value}" (expected HH:mm-HH:mm, start ≠ end)',
 
   // Model fields in modal
   'model.idPlaceholder': 'Model ID',
