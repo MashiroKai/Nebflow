@@ -196,4 +196,68 @@ class MergeQueueBootSweepSpec extends FunSuite:
     assertEquals(report, MergeQueueBootSweep.Report(), "an empty ledger sweeps to an empty report")
   }
 
+  test("⑤ mergeable + owner lost BUT the write-ahead channel holds an un-closed record ⇒ PRESERVED (window returned, task row untouched) — owner-gone suppressed by the channel premise (R5)") {
+    val repo = mkRepo(tempRoot / "sweep-preserve-repo", branch = "delegate/mq-preserve", merge = false)
+    seedRecord("mq-preserve", repo)
+    val m = MergeQueue.Member(
+      delegateId = "mq-preserve",
+      branch = "delegate/mq-preserve",
+      baseWs = repo.toString,
+      baseBranch = "main",
+      worktree = false,
+      projectKey = Try(GitWorktrees.projectKeyOf(repo)).getOrElse(repo.toString),
+      taskId = Some("99"),
+      parentSessionId = "nebula-root",
+      description = "survivor",
+      readyAt = 555L,
+      channelKind = "internal"
+    )
+    MergeQueue.seedMemberForTest(m) // 账本行（开放成员）
+    MergeQueue.seedChannelOnlyForTest(m) // write-ahead 通道镜像（未关账）——write-ahead 盘面
+    MergeQueue.dropMemoryStateForTest() // 模拟重启
+    val system = ActorSystem(s"mqbs-6-${scala.util.Random.nextInt(100000)}")
+    val (report, state, actions) = (for
+      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+      report <- MergeQueueBootSweep.sweep(res)
+      state = MergeQueue.find("mq-preserve").map(m => (m.state, m.lastBlockReason))
+      actions = ledgerActions("mq-preserve")
+      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield (report, state, actions)).unsafeRunSync()
+    assertEquals(report.ownerGone, Nil, "owner-gone must NOT fire while the channel holds an un-closed record")
+    assertEquals(report.preserved, List("mq-preserve"), "the member is reported preserved (durable membership)")
+    assertEquals(state.map(_._1), Some("waiting"), "the window is returned — the member stays queued")
+    assert(state.flatMap(_._2).exists(_.contains("PRESERVED")), s"the panel-visible reason carries the premise: $state")
+    assert(!actions.contains("owner-gone"), "no owner-gone audit row for a preserved member")
+    assert(actions.contains("restart-preserved"), s"the preservation is audited: $actions")
+  }
+
+  test("⑤b an already-merged member with a channel record but NO registry record ⇒ closed merged by fact-check (the channel premise never blocks the happy path)") {
+    val repo = mkRepo(tempRoot / "sweep-orphan-merged-repo", branch = "delegate/mq-orphan-merged", merge = true)
+    val m = MergeQueue.Member(
+      delegateId = "mq-orphan-merged",
+      branch = "delegate/mq-orphan-merged",
+      baseWs = repo.toString,
+      baseBranch = "main",
+      worktree = false,
+      projectKey = Try(GitWorktrees.projectKeyOf(repo)).getOrElse(repo.toString),
+      taskId = Some("99"),
+      parentSessionId = "nebula-root",
+      description = "orphan merged",
+      readyAt = 666L,
+      channelKind = "internal"
+    )
+    MergeQueue.seedChannelOnlyForTest(m) // 仅通道镜像（账本行缺——ready-前被杀 + 期间已被人工并入）
+    MergeQueue.dropMemoryStateForTest()
+    val system = ActorSystem(s"mqbs-7-${scala.util.Random.nextInt(100000)}")
+    val (report, state) = (for
+      res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
+      report <- MergeQueueBootSweep.sweep(res)
+      state = MergeQueue.find("mq-orphan-merged").map(m => (m.state, m.closeReason))
+      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield (report, state)).unsafeRunSync()
+    assertEquals(report.alreadyMerged, List("mq-orphan-merged"), "the adopted member is fact-checked and closed merged")
+    assertEquals(state.map(_._1), Some("merged"), "the channel-only membership closes as merged (never owner-gone)")
+    assert(state.flatMap(_._2).exists(_.contains("already merged")), s"the close reason names the fact-check: $state")
+  }
+
 end MergeQueueBootSweepSpec
