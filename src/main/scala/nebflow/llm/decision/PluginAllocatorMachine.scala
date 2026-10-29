@@ -157,8 +157,9 @@ object PluginAllocatorMachine:
 
   /**
    * 生产装配（注册点 = `agent.SharedResources` 构造行）：Jev 腿 = JevSettings 热读
-   * 构建（判定机 jevLeg 同款）；LLM 兜底腿 = 候选解析（判定机 utilityCandidate 同
-   * 口径）；门 = JevConfigReader 热读；探活 = 分配决策通道监控单实例。
+   * 构建（判定机 jevLeg 同款）；LLM 兜底腿 = 候选解析（判定机 utilityCandidates 同
+   * 口径——fail-open 根因修复批 2026-10-29 两腿同模板整链遍历）；门 =
+   * JevConfigReader 热读；探活 = 分配决策通道监控单实例。
    */
   def face(registry: ProviderRegistry, health: Option[DecisionHealthPort] = None): PluginAllocator.Face =
     new JevPluginAllocator(

@@ -441,8 +441,9 @@ object ImageGenConfig:
  *
  * @param utilityModel
  *   SmallJudge（LLM 兜底腿）的模型 ref（`providerId/modelId` 形态）。None =
- *   缺省口径「根链首选」（registry 全局候选链首条）。Jev 优先腿不受本键影响
- *   （Jev 走 `jev` 节自带的 provider/model）。
+ *   缺省口径「全局候选链整链」（fail-open 根因修复批 2026-10-29 判定机同族刀：
+ *   从「根链首选」升为整链遍历——已配且可解则该候选钉首位＋去重）。Jev 优先腿
+ *   不受本键影响（Jev 走 `jev` 节自带的 provider/model）。
  * @param timeoutMs
  *   判定调用时限（worktree 判定与终态三态判定共用）。None → 默认 30s（判定
  *   有界：spawn 腿与终态腿都绝不因判定机长悬）。
@@ -667,7 +668,8 @@ case class NebflowServiceConfig(
   jev: Option[JevConfig] = None,
   /**
    * Delegate 判定机 utility model 节（worktree-judge-fifo 批 #1224 增补）——见
-   * [[JudgeConfig]]。`None` = 未配置 ⇒ SmallJudge 走「根链首选」缺省、Jev 优先
+   * [[JudgeConfig]]。`None` = 未配置 ⇒ SmallJudge 走「全局候选链整链」缺省
+   * （2026-10-29 判定机同族刀：从「根链首选」升为整链遍历）、Jev 优先
    * 腿照常由 `jev` 节决定；全字段可选，半节解码为缺省而非抛（同 `jev` 节教训）。
    */
   judge: Option[JudgeConfig] = None,
