@@ -502,8 +502,8 @@ case class SessionContext(
    *
    * 🔴 **作用域 = 仅 root 会话**（口径③）：本字段的**唯一注入点**是
    * `WebSocketRoutes.doSpawnRootAgent`（depth=0 全仓唯一 spawn 点）。非 root
-   * spawn（`NodeRunner` / `EphemeralAgentRunner` / `MailTool` /
-   * `FlowTreeActor`）一律不传 ⇒ 恒为 `None` ⇒ 走现值函数。
+   * spawn（`NodeRunner` / `MailTool` / `FlowTreeActor`）一律不传 ⇒ 恒为 `None`
+   * ⇒ 走现值函数。
    * 🔴 **禁**把本字段放进 `SpawnParams` / `ToolContext`（那会让一次设定传染给
    * 全部子 agent / 节点，直接违反口径③）——静态泄漏判据见
    * `.nebflow/tools/20260915_ctxthresh_leak-check.sh`。
@@ -565,8 +565,9 @@ case class ExecutionContext(
   delegateCount: Int = 0,
   lastMaintenanceDelegateCount: Int = 0,
   // Snapshot of messages.size at turn start. Used to scope the expectsMail
-  // check so only Mail calls within the current turn count. Persisted to
-  // TurnStateStore for crash recovery — restored via ResumeTurn.
+  // check so only Mail calls within the current turn count. (The TurnStateStore
+  // crash-recovery leg that used to persist/restore this was removed in the R4
+  // hygiene batch 2026-10-29 — it had no production writer.)
   turnStartMessageCount: Int = 0,
   // Per-turn flag: true once the agent called the Mail tool at any point during
   // the current turn (set in ToolsComplete, reset when a new turn starts). This

@@ -5,7 +5,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import nebflow.core.SessionStore
-import nebflow.core.flow.{TeamSessionRegistry, TurnStateStore}
+import nebflow.core.flow.TeamSessionRegistry
 import nebflow.shared.{Message, MessageRole, PathUtil}
 
 import java.nio.file.{Files, Path}

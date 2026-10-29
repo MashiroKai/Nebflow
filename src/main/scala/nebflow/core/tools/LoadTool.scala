@@ -132,7 +132,7 @@ Use this after writing or editing team.json / flow.json files. Always loads the 
         else
           for
             treeRef <- FlowTreeRegistry.getOrCreate(ctx)
-            _ <- treeRef ! TreeCommand.MountTeam(team, None)
+            _ <- treeRef ! TreeCommand.MountTeam(team)
             agentCount = team.members.size + 1
             _ <- logger.info(s"Team '${team.name}' loaded and mounted ($agentCount agents)")
           yield Right(

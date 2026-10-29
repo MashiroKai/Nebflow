@@ -70,11 +70,8 @@ object MountedFlowStore:
 
   end load
 
-  /** Delete the store file (used when session is deleted). */
-  def delete(sessionId: String): IO[Unit] =
-    val file = storeFile(sessionId)
-    IO.blocking {
-      if os.exists(file) then os.remove(file)
-    }.void
+  // R4 legacy-hygiene batch (2026-10-29): `delete` removed — zero callers
+  // repo-wide (session deletion removes session files directly in
+  // SessionStore.deleteSession and never touched flows.json).
 
 end MountedFlowStore
