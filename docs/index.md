@@ -15,6 +15,7 @@ status: current
 - `templates/` — 文档批范本：按 wiki-docs 纪律改写的 Obsidian 格式报告模板，见 [[console-403-diagnosis]]（诊断报告范本）与 [[console-load-perf]]（性能验证报告范本）。
 - 根散件 — 运维检查单、并行会话资源规范等专项报告：[[production-ops-checklist.zh-CN]]（生产操作检查单）、[[parallel-session-resources.zh-CN]]（并行会话资源预分配规范）。
 - 审计报告 — [[20261028_171800_审计报告二五机制__delegate-nebflow-a13975e4]]（delegate／插件分配／AgentFlow／合并队列／门户数据面五机制审计·权威版，取代 reports/ 同名过程件）。
+- 运维报告 — [[20261029_175151_plugin-repo-registry]]（2026-10-29 插件建仓批：23 插件一仓一包、v tag 打在导入 commit、7 public／16 private、种子 vs 实例内容源裁定与三包实例直改差异申报、GitHub 二次限流全程读数）。
 
 ## 存目（v1.0.0 清仓移出，git 史可考）
 
