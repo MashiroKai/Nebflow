@@ -22,6 +22,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openHubPage } from './_mobile-dock-nav.mjs';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
 const MIME = {
@@ -101,10 +102,9 @@ async function bootApp(page) {
   await page.waitForTimeout(300);
 }
 
+/** 开页面：设置根页工作台行「token 用量」→ push（dock 批：右列液态下拉退役）。 */
 async function pushPage(page, face) {
-  await page.locator('.mh-dd[data-dd="right"] .mh-dd-hd').click();
-  await page.locator(`.mh-dd[data-dd="right"] [data-face="${face}"]`).click();
-  await expect(page.locator(`.mobile-page[data-page="${face}"]`)).toHaveClass(/live/);
+  await openHubPage(page, face);
 }
 
 function watchErrors(page) {
@@ -165,7 +165,7 @@ test('T2 controls: heat dim seg on top region, 52-week heatmap scrollable, curve
   expect(errors).toEqual([]);
 });
 
-test('T3 page-shell back button pops to chat (injected back retired by ②17 dedup)', async ({ page }) => {
+test('T3 page-shell back button pops to settings root (injected back retired by ②17 dedup)', async ({ page }) => {
   const errors = watchErrors(page);
   await pushPage(page, 'usage');
 
@@ -176,6 +176,8 @@ test('T3 page-shell back button pops to chat (injected back retired by ②17 ded
   await expect(back).toBeVisible();
   await back.click();
   await expect(page.locator('.mobile-page[data-page="usage"]')).not.toHaveClass(/live/);
-  expect(await page.locator('.mobile-page.live').count()).toBe(0);
+  // pop 一层 = 回设置根页（dock 批：入口腿 = 工作台行）。
+  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
+  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('settings');
   expect(errors).toEqual([]);
 });

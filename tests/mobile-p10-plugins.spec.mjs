@@ -24,6 +24,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openHubPage } from './_mobile-dock-nav.mjs';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
 const MIME = {
@@ -101,10 +102,9 @@ async function bootApp(page) {
   await page.waitForTimeout(300);
 }
 
+/** 开页面：设置根页工作台行「插件」→ push（dock 批：右列液态下拉退役）。 */
 async function pushPage(page, face) {
-  await page.locator('.mh-dd[data-dd="right"] .mh-dd-hd').click();
-  await page.locator(`.mh-dd[data-dd="right"] [data-face="${face}"]`).click();
-  await expect(page.locator(`.mobile-page[data-page="${face}"]`)).toHaveClass(/live/);
+  await openHubPage(page, face);
 }
 
 function watchErrors(page) {
@@ -183,9 +183,10 @@ test('T3 blocked card: dimmed, banned pill, dispatch disabled; back contract', a
   await expect(c2.locator('[data-plugin-dispatch]')).toHaveCount(1);
   expect(await c2.locator('[data-plugin-dispatch]').getAttribute('disabled')).not.toBeNull();
 
-  // 返回契约。
+  // 返回契约：pop 一层回设置根页（dock 批：入口腿 = 工作台行）。
   await page.locator('.mobile-page[data-page="plugins"] .mobile-back-btn').click();
   await expect(page.locator('.mobile-page[data-page="plugins"]')).not.toHaveClass(/live/);
-  expect(await page.locator('.mobile-page.live').count()).toBe(0);
+  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
+  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('settings');
   expect(errors).toEqual([]);
 });

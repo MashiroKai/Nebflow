@@ -23,6 +23,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openHubPage } from './_mobile-dock-nav.mjs';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
 const MIME = {
@@ -106,11 +107,9 @@ async function bootApp(page) {
   await page.waitForTimeout(300);
 }
 
-/** 开右列 → 点页面键（layoutController 页面键 → navigateTo）。 */
+/** 开页面：设置根页工作台行「项目」→ push（dock 批：右列液态下拉退役）。 */
 async function pushPage(page, face) {
-  await page.locator('.mh-dd[data-dd="right"] .mh-dd-hd').click();
-  await page.locator(`.mh-dd[data-dd="right"] [data-face="${face}"]`).click();
-  await expect(page.locator(`.mobile-page[data-page="${face}"]`)).toHaveClass(/live/);
+  await openHubPage(page, face);
 }
 
 function watchErrors(page) {
@@ -192,15 +191,13 @@ test('T2 project cards: three-part form, remote badge, ellipsis values, full-wid
   expect(errors).toEqual([]);
 });
 
-test('T3 back button pops to chat root; pressed key mirrors the stack', async ({ page }) => {
+test('T3 back button pops to settings root (dock batch: hub entry under settings)', async ({ page }) => {
   const errors = watchErrors(page);
   await pushPage(page, 'projects');
   await page.locator('.mobile-page[data-page="projects"] .mobile-back-btn').click();
   await expect(page.locator('.mobile-page[data-page="projects"]')).not.toHaveClass(/live/);
-  expect(await page.locator('.mobile-page.live').count()).toBe(0);
-  // 右列键按下态复位（syncPressed 镜像栈顶）。
-  await page.locator('.mh-dd[data-dd="right"] .mh-dd-hd').click();
-  const pressed = await page.locator('.mh-dd[data-dd="right"] [data-face="projects"]').getAttribute('aria-pressed');
-  expect(pressed).toBe('false');
+  // pop 一层 = 回设置根页（入口腿的工作台行所在根）—— 栈顶探针同帧核。
+  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
+  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('settings');
   expect(errors).toEqual([]);
 });
