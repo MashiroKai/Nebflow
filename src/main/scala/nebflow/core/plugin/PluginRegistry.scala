@@ -497,7 +497,7 @@ object PluginRegistry:
    * 快照。文件内容修改只变文件自身 mtime（父目录 mtime 不动）→ 签名必须含文件，
    * 否则「改动即重审」（§B.8-3）会在缓存命中路径上漏检。键 = 绝对路径。
    */
-  private case class Cache(sig: List[(String, Long)], snapshot: Snapshot)
+  private case class Cache(sig: List[(String, Long)], removed: Set[String], snapshot: Snapshot)
   private val cache = new java.util.concurrent.atomic.AtomicReference[Option[Cache]](None)
 
   /**
@@ -515,15 +515,23 @@ object PluginRegistry:
       (dir :: all).map(p => p.toString -> os.mtime(p)).sortBy(_._1)
     catch case _: Exception => Nil
 
-  /** 全量扫描唯一实现（缓存：目录树 mtime 签名未变则复用上次产出）。 */
+  /** 全量扫描唯一实现（缓存：目录树 mtime 签名未变则复用上次产出）。
+   *
+   * 卸载出册过滤（2026-10-29 卸载批）：`plugins.removed` 命中者**整体消失**——
+   * 不在 plugins 也不在 rejected（卸载 = 移除出册，不是拒载也不是封禁；面板/CLI/
+   * 目录/resolve 全部视同未安装）。`nebflow.json` 的变化不在目录树 mtime 签名内
+   * ⇒ 写面（[[PluginRemovePolicy]]）负责失效缓存，读面每次扫描现读表（廉价）。
+   * 过滤在拒载 WARN 打点之前 ⇒ 已卸载包不再刷「rejected」日志（出册 = 零声音）。
+   */
   private def snapshot(): IO[Snapshot] =
     IO.blocking {
       if !os.isDir(pluginsDir) then Snapshot(Nil, Nil)
       else
-        val subDirs = os.list(pluginsDir).filter(os.isDir).toList.sortBy(_.last)
+        val removed = PluginRemovePolicy.removedNames()
+        val subDirs = os.list(pluginsDir).filter(os.isDir).toList.sortBy(_.last).filterNot(d => removed(d.last))
         val full = treeSig(pluginsDir)
         cache.get match
-          case Some(c) if c.sig == full => c.snapshot
+          case Some(c) if c.sig == full && c.removed == removed => c.snapshot
           case _ =>
             val loaded = subDirs.map(d => loadPlugin(d))
             val snap = Snapshot(
@@ -531,7 +539,7 @@ object PluginRegistry:
               rejected = loaded.collect { case Left((n, r)) => n -> r }
             )
             snap.rejected.foreach { case (n, r) => logger.warnSync(s"Plugin '$n' rejected: $r") }
-            cache.set(Some(Cache(full, snap)))
+            cache.set(Some(Cache(full, removed, snap)))
             snap
     }
 
@@ -1277,6 +1285,10 @@ object PluginRegistry:
                   else
                     os.makeDir.all(pluginsDir)
                     os.copy(staged, target, createFolders = true, mergeFolders = true, replaceExisting = true)
+                    // 卸载批（2026-10-29）：显式重装 = 显式复职——清 `plugins.removed`
+                    // 标记，否则出册过滤会把刚装好的包继续藏住（重装却看不见 = 静默
+                    // 无效）。从未卸载过的包此调用为 no-op。
+                    PluginRemovePolicy.reinstate(pname)
                     cache.set(None)
                     logger.infoSync(
                       s"Plugin '$pname' installed from '$source' — active on next scan (presence = trust)"

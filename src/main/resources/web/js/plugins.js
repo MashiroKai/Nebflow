@@ -52,6 +52,16 @@
 //     轮询/开关收敛保持；整页重渲（locale 切换 / tab 恢复）无记忆 ⇒ 默认收起
 //     （🔴 不新造持久化）。
 //
+//   • **卸载入口（2026-10-29 作者令「除了 toggle，我们应该还要多一个卸载」）**：
+//     详情区 actions 行新增「卸载」钮（[data-plugin-uninstall]，每卡恰一，与派发
+//     开关同排）。二次确认极简档 = 既有 #delete-box 三键形态（showConfirm opts.alt
+//     第三动作）：主确认「卸载并删除目录」（POST remove {deleteDir:true}，danger）、
+//     第三键「仅停用（保留目录）」（POST remove {deleteDir:false}）、取消即退。
+//     语义分界：**卸载 = 移除出册**（`plugins.removed.<name>` 台账 + 存在台账墓碑，
+//     种子不自愈装回；重装 = stand plugin add 显式复职）；**停用 = 可逆**（revoke
+//     面板无入口，属 API / CLI）。成功后卡片随下一拍注册表收敛消失（出册 = 注册表
+//     面整体不可见），失败 toast 原始错误（F1 纪律同族）。
+//
 //   • 统一插件系统（2026-09-04 重设计，形态不变）：Skill 与 MCP 统一为「插件」，
 //     页面只呈现插件条目，skill/MCP 仅作条目展开详情区的内容构成标注语（含
 //     N 个技能 / MCP server 名+transport / 内建工具白名单 +N）。
@@ -381,6 +391,8 @@ const ITEM_CHEVRON_SVG = '<svg class="plugins-item-chevron" width="14" height="1
  *                               `[data-plugin-dispatch-row]` 整组退场）
  *    `.plugins-card-state`    — 条目行右上状态区（药丸 + chevron 载体）
  *    `[data-plugin-doc]`      — Plugin.md 入口（探针在场才显形；默认 hidden）
+ *    `[data-plugin-uninstall]`— 卸载钮（详情区 actions 行；二次确认三键：
+ *                               删除目录 / 仅停用 / 取消——2026-10-29 卸载批）
  *    `[data-skill-doc]`       — skill 胶囊（2026-10-21 作者令⑥：点击取 SKILL.md
  *                               经既有 Canvas 通路打开；data-skill-id = skill id）
  *  🔴 2026-09-14 面板收敛批退场钩子（**生产代码零使用**，判据见报告静态腿）：
@@ -446,6 +458,10 @@ function renderPluginCard(manifest) {
               + (disp.blocked ? ` data-dispatch-blocked="${esc(disp.blocked)}"` : ''),
           })}
         </span>
+        <button type="button" class="plugins-item-uninstall" data-plugin-uninstall="${esc(name)}"
+          title="${esc(t('plugins.uninstallTitle'))}">
+          ${statusIcon('trash-2', 12, '')}${esc(t('plugins.uninstall'))}
+        </button>
       </div>
       ${skillListHtml(skills, name)}
     </div>
@@ -594,6 +610,50 @@ async function setPluginDispatch(name, enable, card) {
   } catch (e) {
     flipDispatchState(card, !enable); // roll back the optimistic flip
     releaseCardActions(card);
+    window.__showToast?.(String(e?.message || e), 'error');
+  }
+}
+
+// ── Uninstall（2026-10-29 卸载批）─────────────────────────────────────────
+// 卸载 = 移除出册（引擎 `plugins.removed` 台账 + 种子存在台账墓碑；默认删目录），
+// 与「封禁 = 可逆停用」语义分界见文件头。二次确认用既有 #delete-box 三键形态：
+// `window.__showConfirm(title, msg, onConfirm, { alt })`——主确认 danger「卸载并
+// 删除目录」、第三动作中性「仅停用（保留目录）」、取消即退。确认器缺席（极端
+// 装载序）⇒ 什么都不做（零静默无操作，flowMapTab 既有纪律同款：绝不无确认直发
+// 不可逆动作）。
+
+/** 二次确认 + 两腿分发。 */
+function confirmUninstall(name) {
+  if (typeof window.__showConfirm !== 'function') {
+    console.warn('[plugins] uninstall needs the confirm dialog (window.__showConfirm) — refused');
+    return;
+  }
+  window.__showConfirm(
+    t('plugins.uninstallTitle'),
+    t('plugins.uninstallConfirm', { name }),
+    () => uninstallPlugin(name, true), // 主确认 = 默认腿：删目录
+    {
+      tone: 'danger',
+      confirmLabel: t('plugins.uninstallDeleteLabel'),
+      alt: { label: t('plugins.uninstallKeepLabel'), onAlt: () => uninstallPlugin(name, false) },
+    }
+  );
+}
+
+/** POST /api/plugins/:name/remove（{deleteDir}）→ 成功后整页重渲（出册卡片随
+ *  注册表收敛消失；失败 toast 原始错误消息——F1「零静默、可行动」同族）。 */
+async function uninstallPlugin(name, deleteDir) {
+  try {
+    const resp = await api(`/api/plugins/${encodeURIComponent(name)}/remove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deleteDir }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok || body.error) throw new Error(body.error || `HTTP ${resp.status}`);
+    window.__showToast?.(body.message || t('plugins.uninstalled', { name }), 'success');
+    renderPlugins(); // 出册 = 注册表不可见；重渲即消失（轮询收敛同样会摘卡）
+  } catch (e) {
     window.__showToast?.(String(e?.message || e), 'error');
   }
 }
@@ -964,6 +1024,15 @@ function bindCardEvents(card) {
       const plugin = capsule.getAttribute('data-skill-doc');
       const skillId = capsule.getAttribute('data-skill-id');
       if (plugin && skillId) openSkillDoc(plugin, skillId);
+    });
+  });
+  // 卸载（2026-10-29 卸载批）：二次确认三键（删除目录 / 仅停用 / 取消）后
+  // POST /api/plugins/:name/remove。浅绑定同胶囊——按钮随卡片重渲重建。
+  card.querySelectorAll('[data-plugin-uninstall]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation(); // 冒泡不得翻整行 accordion（同胶囊纪律）
+      const plugin = btn.getAttribute('data-plugin-uninstall');
+      if (plugin) confirmUninstall(plugin);
     });
   });
   mountPluginMdEntry(card);

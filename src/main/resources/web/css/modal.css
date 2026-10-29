@@ -163,6 +163,7 @@
 /* Neutral / Cancel button */
 #modal-cancel,
 #delete-cancel,
+#delete-alt,
 #conflict-cancel,
 #conflict-keep-both,
 #memory-modal-actions button,
@@ -179,6 +180,7 @@
 }
 #modal-cancel:hover,
 #delete-cancel:hover,
+#delete-alt:hover,
 #conflict-cancel:hover,
 #conflict-keep-both:hover,
 #memory-modal-actions button:hover,
@@ -190,6 +192,10 @@
     0 0 8px rgba(120, 160, 220, 0.08),
     0 0 20px rgba(120, 160, 220, 0.04);
 }
+/* 可选第三动作（卸载批 2026-10-29：showConfirm opts.alt——「仅停用」腿）。默认
+   hidden 属性收起，零调用方 = 零形态变化；样式 = 中性族（可逆次选，danger 主选
+   留给确认钮）。 */
+#delete-alt[hidden] { display: none; }
 
 /* Primary / Save button — sapphire style */
 #memory-modal-save {

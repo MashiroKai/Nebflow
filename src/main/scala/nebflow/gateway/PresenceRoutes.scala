@@ -1547,6 +1547,29 @@ private[gateway] object PresenceRoutes:
             }
         }
 
+      // POST /plugins/:name/remove — **卸载**（2026-10-29 作者令「除了 toggle，我们
+      // 应该还要多一个卸载」）：写 `plugins.removed.<name>`（出册，独立命名空间——
+      // 与 revoke「封禁·可逆」语义分清）＋ 默认**删目录**；body（可选）：
+      // {"deleteDir": false} = 仅停用腿（目录保留、出册不变）；{"reason": "…"}。
+      // 成功后落插件存在台账 userRemoved 墓碑（SeedService.markUserRemoved）——
+      // 默认集包不被种子自愈装回。出册 = 注册表面整体消失（目录/resolve/派发全拒；
+      // 在飞 MCP 由既有 revalidate ≤30s 停）。重装（stand plugin add / 面板 add）
+      // 显式清出册标记（PluginRemovePolicy.reinstate）。
+      case req @ POST -> Root / "plugins" / name / "remove" =>
+        withAuth(req) {
+          if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+          else
+            req.as[Json].attempt.map(_.getOrElse(Json.obj())).flatMap { body =>
+              val deleteDir = body.hcursor.downField("deleteDir").as[Boolean].toOption.getOrElse(true)
+              val reason = body.hcursor.downField("reason").as[String].toOption.getOrElse("")
+              nebflow.core.plugin.PluginRemovePolicy.remove(name, reason, "panel/rest", deleteDir).flatMap {
+                case Right(msg) =>
+                  SeedService.markUserRemoved(name).flatMap(_ => Ok(ApiJson.okMessage(msg)))
+                case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+              }
+            }
+        }
+
       // POST /plugins/:name/disable | /enable — **令 1 派发开关**（2026-09-12）：
       // 只写 `plugins.dispatch.<name>.authorEnabled`（durable 作者意图层）⇒ **只影响
       // 未来派发**：新节点拿不到该插件（闸 A 拒），已在飞/已派发节点**零影响**

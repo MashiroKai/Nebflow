@@ -311,6 +311,13 @@ object SeedService:
    * 共用单点）。`outcome` 只影响日志措辞，便于把「播种安装」与「既有 home 自愈安装」
    * 在读日志时分开（两者落盘语义相同：整目录复制 + approve）。approve 复用同一
    * computeDigest ⇒ 信任记录 digest 与刚落盘内容天然一致。
+   *
+   * **墓碑闸（卸载批 2026-10-29）**：台账 userRemoved 命中 ⇒ **不安装、不 approve**
+   * （返回 false）。此前只有 reconcilePlugin 的缺失分支读墓碑，`seedPlugin`（fresh
+   * home 全量播种 / seedVersion 升级重播）不读——产品卸载（落墓碑）后若 home 走到
+   * 全量播种路径（projects 与 marker 同缺的存储级场景），被卸载的默认集包会被静默
+   * 装回。闸收在安装**单点**：两条路径一次堵齐；「目录存在 → skip」与 reconcile ③
+   * 「在位清墓碑」的既有语义不变。
    */
   private def installPluginFromSeed(root: os.Path, name: String, outcome: String): Boolean =
     val targetDir = root / "plugins" / name
@@ -318,6 +325,12 @@ object SeedService:
     val files = resourceDirList(base)
     if files.isEmpty then
       logger.warnSync(s"Seed: plugin '$name' has no seed resources — skipped")
+      false
+    else if pluginLedgerFor(root).userRemoved.contains(name) then
+      logger.infoSync(
+        s"Seed: plugin '$name' carries the user-removed marker (uninstall flow) — $outcome refused " +
+          "(no install, no approve). Reinstall the package explicitly (stand plugin add / manual copy) to bring it back"
+      )
       false
     else
       files.foreach { rel =>
@@ -625,6 +638,30 @@ object SeedService:
   private def sha256File(bytes: Array[Byte]): String =
     val md = MessageDigest.getInstance("SHA-256")
     md.digest(bytes).map("%02x".format(_)).mkString
+
+  // ── 公共入口（产品卸载流 —— 2026-10-29 批）──
+
+  /**
+   * 卸载流的台账落点（产品卸载批 2026-10-29）：把 `name` 记为用户主动删除
+   * （userRemoved 墓碑）并写盘。此后种子 reconcile 对该包的「缺失自愈」分支读墓碑
+   * **不装回**（reconcilePlugin ①；播种单点闸见 installPluginFromSeed）——产品卸载
+   * 才不会在下一次 boot 被种子静默复活。卸载主编排在 REST（PresenceRoutes，CLI
+   * 面板同走）；本方法只管台账这一格，fail-soft（失败只 WARN，不推翻卸载本身——
+   * 出册由 `plugins.removed` 承担）。非默认集包也允许落墓碑（seen 只增、墓碑幂等；
+   * 无种子资源的名字墓碑无消费方，纯记录）。
+   */
+  def markUserRemoved(name: String): IO[Unit] = IO.blocking {
+    try
+      val root = PathUtil.dataRoot
+      val before = pluginLedgerFor(root)
+      val after = before.tombstone(name, System.currentTimeMillis() / 1000L)
+      writePluginLedger(root, before, after)
+      logger.infoSync(
+        s"Seed: plugin '$name' marked user-removed (uninstall flow) — the seed self-heal will not reinstall it"
+      )
+    catch case e: Exception =>
+      logger.warnSync(s"Seed: user-removed marker write failed for '$name': ${e.getMessage} (uninstall itself is unaffected)")
+  }
 
   // ── helpers ──────────────────────────────────────────────
   private def writeIfAbsent(path: os.Path, content: Option[String]): Boolean =

@@ -138,8 +138,10 @@ object PluginBlockPolicy:
   /**
    * `plugins.<table>.<name>` 的通用手术式改写：`Some(v)` = 置值，`None` = 删键。
    * 表为空且删键 ⇒ 保留空对象（不删表本身：写面语义恒定，读面 absent 与 `{}` 等价）。
+   * `private[plugin]`（卸载批 2026-10-29）：[[PluginRemovePolicy]] 的 `plugins.removed`
+   * 键族复用同一改写点——同文件、不同键族，互不覆盖（勿各造一份改写器）。
    */
-  private def mutatePluginsMap(table: String, name: String)(value: Option[Json]): Either[String, Unit] =
+  private[plugin] def mutatePluginsMap(table: String, name: String)(value: Option[Json]): Either[String, Unit] =
     val configPath = PathUtil.configJsonWritePath(PathUtil.dataRoot)
     if !os.exists(configPath) then
       val tableJson = value match
