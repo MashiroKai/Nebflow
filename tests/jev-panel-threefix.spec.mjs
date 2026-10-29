@@ -7,17 +7,30 @@
 //   ③「分配通道状态行如实反映（如「Jev 不可用 → 已回退 llm」）；两腿状态分开
 //      如实显示，回退后 llm 腿再挂仍是异常。」
 //
-// R1 收起态一行 — 卡片收起 = 标题「Jev（插件分配）」+ 开关（+chevron）一行；
-//    默认收起（enabled=true 也不展开）；点击行体（标题区，非开关）原位展开
-//    细节（提供方/端点/密钥/保存/分配通道状态），再点收起；键盘可开合。
-// R2 开关解耦 — toggle 只是用法闸（usage gate），点击不改变细节展开态。
-// R3 端点钉死 — provider=typesafe-jev：端点预填固定值
-//    https://api.typesafe.ai/v1/systemone（DecisionProvider.DefaultTypesafeEndpoint
-//    的前端单点）、disabled 禁用态、不可编辑；切到 laya 恢复可编辑（清掉钉死
-//    值/空值），切回重新钉死；保存 PUT 携带钉死端点。
-// R4 健康回退如实显示 — legs 载荷：jev 腿 down + 通道 up（llm 接管）→ warn 徽标
-//    「Jev 不可用 → 已回退 llm」+ jev 腿 reason 尾巴（title 全文）；两腿全挂 →
-//    err「异常」+ 两腿 reason；无 legs 的旧载荷 → 既有三态显示不回归。
+// ── 存量红清欠批（2026-10-29）锚换代 ─────────────────────────────
+// 本 spec 断言的旧卡结构锚（#jev-card / #jev-head / #jev-detail-body /
+// .cfg-card-head / .cfg-card-head-btn / .cfg-row 横排行 / .jev-health-row /
+// .cfg-head-chev）已被 2026-10-28 settings-panel 批 C 件重排整体删除
+// （作者令：「JeV 插件分配那部分的风格，与『STT 高级设置』区的风格保持一致」；
+// 旧锚在现树源码零命中，main 上本 spec 即全红——spec 停在过去，非产品回归）。
+// 新结构（sidebar.js:917-971，与 STT 高级设置逐项同源）：
+//   · 头行   #jev-advance-toggle（.settings-collapse-toggle，标题+
+//            .settings-collapse-chevron）+ 右侧状态位 #jev-status-hint
+//            （内含 #settings-jev-health 分配通道徽标——自旧折叠体内
+//            .jev-health-row 迁入头行，收起态也如实可见）；
+//   · 折叠体 #jev-advance-body（hidden 属性开合，session-memory 态
+//            jevAdvanceExpanded，默认收起）；
+//   · 开关行 #toggle-jev 随重排迁入折叠体首行（旧卡头行内开关退役；
+//            收起态开关不可达 = 设计态，非漂移）；
+//   · 字段组 .cfg-form-group 纵排（#cfg-jev-provider / #cfg-jev-endpoint /
+//            #cfg-jev-keyref / #cfg-jev-key-value 明文直显行 + #jev-key-eye）；
+//   · 保存行 #btn-save-jev + #btn-test-jev + #jev-save-state。
+// 语义映射（三修意图逐条保留，锚换新）：
+//   R1 一行收起 → 头行 + hidden 折叠体 + aria-expanded/aria-controls + 徽标头行在场；
+//   R1b 行体开合 + 键盘 → #jev-advance-toggle（真 <button>，Enter 原生可开合）；
+//   R2 开关解耦 → 折叠体展开态下翻档不改变折叠体可见性 + 收展不清值；
+//   R3/R3b 端点钉死 / 保存携带 → 锚 id 原样存活，断言零改动；
+//   R4 分配通道 legs 如实显示 → #settings-jev-health 锚存活，位迁头行。
 //
 // 截图（亮/暗双主题，零新色值核验）→ /tmp/nb-jev-threefix/shots/
 // SELF-CONTAINED（secrets-ui-redesign.spec.mjs 同款 harness）：静态服务器
@@ -115,82 +128,104 @@ async function openSettings(page) {
   await page.waitForSelector('#settings-content .settings-section', { timeout: 10000 });
 }
 
+/** Expand/collapse the JeV detail body through the head toggle (the C-batch
+ *  restructure's single entry point — STT-advance-toggle 同款). */
+async function setJevExpanded(page, wantOpen) {
+  const expanded = await page.evaluate(() => document.getElementById('jev-advance-toggle')?.getAttribute('aria-expanded') === 'true');
+  if (expanded !== wantOpen) await page.click('#jev-advance-toggle');
+  await page.waitForFunction((want) => {
+    const body = document.getElementById('jev-advance-body');
+    return body && body.hidden === !want;
+  }, wantOpen, { timeout: 5000 });
+}
+
+/** The JeV settings section (the C-batch shell has no id — locate by its
+ *  head toggle, the section's stable resident). */
+function jevSection(page) {
+  return page.locator('.settings-section').filter({ has: page.locator('#jev-advance-toggle') });
+}
+
 // ══ R1 · 收起态一行 ══════════════════════════════════════════
-test('R1 collapsed by default (even enabled): one head row only — title + toggle + chevron', async ({ page }) => {
+test('R1 collapsed by default (even enabled): one head row only — title + status slot, body hidden', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN' }); // jev.enabled=true in the mock
   await openSettings(page);
   const dump = await page.evaluate(() => {
-    const card = document.getElementById('jev-card');
-    const head = card?.querySelector('.cfg-card-head');
-    const body = document.getElementById('jev-detail-body');
-    const headBtn = head?.querySelector('.cfg-card-head-btn');
+    const head = document.getElementById('jev-advance-toggle');
+    const body = document.getElementById('jev-advance-body');
+    const section = head?.closest('.settings-section');
+    const statusHint = document.getElementById('jev-status-hint');
+    const badge = document.getElementById('settings-jev-health');
     return {
-      cardH: card?.getBoundingClientRect().height || 0,
-      headH: head?.getBoundingClientRect().height || 0,
-      bodyVisible: !!body && body.style.display !== 'none',
-      title: headBtn?.querySelector('.cfg-card-title')?.textContent.trim() || '',
-      toggleInHead: !!head?.querySelector('#toggle-jev'),
-      ariaExpanded: headBtn?.getAttribute('aria-expanded'),
-      controls: headBtn?.getAttribute('aria-controls'),
-      healthHidden: (() => { const r = card?.querySelector('.jev-health-row'); if (!r) return false; const el = r.closest('#jev-detail-body') || r; return el.style.display === 'none' || !r.offsetParent; })(),
+      title: head?.querySelector('.settings-label')?.textContent.trim() || '',
+      bodyHidden: !!body && body.hidden === true,
+      ariaExpanded: head?.getAttribute('aria-expanded'),
+      controls: head?.getAttribute('aria-controls'),
+      chev: head ? getComputedStyle(head.querySelector('.settings-collapse-chevron')).transform : null,
+      toggleInBody: !!document.querySelector('#jev-advance-body #toggle-jev'), // C-batch: gate moved INTO the body
+      statusInHead: !!statusHint && statusHint.closest('.stt-advance-toggle-row') === head?.closest('.stt-advance-toggle-row'),
+      badgeVisible: !!badge && !!badge.offsetParent,
+      sectionH: section?.getBoundingClientRect().height || 0,
     };
   });
   expect(dump.title, 'head row carries the Jev title').toBe('Jev（插件分配）');
-  expect(dump.toggleInHead, 'the toggle rides the head row').toBe(true);
-  expect(dump.bodyVisible, '🔴 detail body collapsed by default even when enabled').toBe(false);
-  expect(dump.ariaExpanded, 'head button declares collapsed').toBe('false');
-  expect(dump.controls, 'head button controls the detail body').toBe('jev-detail-body');
-  expect(dump.healthHidden, 'the health row lives inside the collapsed detail').toBe(true);
-  expect(dump.cardH, `collapsed card is ONE row (card ${dump.cardH}px ≈ head ${dump.headH}px)`).toBeLessThan(60);
+  expect(dump.bodyHidden, '🔴 detail body collapsed by default even when enabled (hidden 属性)').toBe(true);
+  expect(dump.ariaExpanded, 'head toggle declares collapsed').toBe('false');
+  expect(dump.controls, 'head toggle controls the detail body').toBe('jev-advance-body');
+  expect(dump.chev, 'chevron unrotated while collapsed').toBe('none');
+  expect(dump.toggleInBody, 'the usage gate rides the collapsed body first row (C-batch 迁入位)').toBe(true);
+  expect(dump.statusInHead, 'allocation-channel status slot lives in the HEAD row').toBe(true);
+  expect(dump.badgeVisible, '🔴 health badge visible even collapsed — 状态行如实反映不再藏进细节').toBe(true);
+  expect(dump.sectionH, `collapsed section is ONE row (${dump.sectionH}px < 60)`).toBeLessThan(60);
 });
 
-// ══ R1b · 点行体展开/收起（非开关）+ 键盘 ═════════════════════
-test('R1b clicking the head row expands/collapses in place; keyboard operable', async ({ page }) => {
+// ══ R1b · 点头行展开/收起 + 键盘 ══════════════════════════════
+test('R1b clicking the head toggle expands/collapses in place; keyboard operable', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN' });
   await openSettings(page);
-  await page.click('#jev-head');
-  await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'block');
+  await page.click('#jev-advance-toggle');
+  await page.waitForFunction(() => document.getElementById('jev-advance-body')?.hidden === false);
   const open = await page.evaluate(() => ({
-    aria: document.getElementById('jev-head').getAttribute('aria-expanded'),
-    chev: getComputedStyle(document.querySelector('#jev-head .cfg-head-chev svg')).transform,
-    rows: [...document.querySelectorAll('#jev-detail-body .cfg-row')].map(r => r.querySelector('.cfg-row-label')?.textContent.trim()),
+    aria: document.getElementById('jev-advance-toggle').getAttribute('aria-expanded'),
+    chev: getComputedStyle(document.querySelector('#jev-advance-toggle .settings-collapse-chevron')).transform,
+    toggleRow: document.querySelector('#jev-advance-body .settings-row .settings-label')?.textContent.trim(),
+    labels: [...document.querySelectorAll('#jev-advance-body .cfg-form-group .cfg-label')].map(l => l.textContent.trim()),
   }));
   expect(open.aria, 'expanded → aria-expanded=true').toBe('true');
-  expect(open.chev, 'chevron rotates when expanded').not.toBe('none');
-  expect(open.rows, 'expanded detail = 提供方 + 端点 + 密钥引用 + 分配通道')
-    .toEqual(['提供方', '端点', 'API 密钥引用', '分配通道']);
+  expect(open.chev, 'chevron rotates when expanded (rotate 180°)').toContain('matrix');
+  expect(open.toggleRow, 'first body row = the usage-gate toggle row').toBe('用 Jev 分配插件');
+  expect(open.labels, 'expanded detail = 提供方 + 端点 + 密钥引用 + key 值（分配通道升入头行状态位）')
+    .toEqual(['提供方', '端点', 'API 密钥引用', 'key 值']);
 
-  await page.click('#jev-head');
-  await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'none');
-  expect(await page.evaluate(() => document.getElementById('jev-head').getAttribute('aria-expanded')), 're-click collapses').toBe('false');
+  await page.click('#jev-advance-toggle');
+  await page.waitForFunction(() => document.getElementById('jev-advance-body')?.hidden === true);
+  expect(await page.evaluate(() => document.getElementById('jev-advance-toggle').getAttribute('aria-expanded')), 're-click collapses').toBe('false');
 
   // Keyboard: focus + Enter toggles (real <button> semantics).
-  await page.focus('#jev-head');
+  await page.focus('#jev-advance-toggle');
   await page.keyboard.press('Enter');
-  await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'block');
+  await page.waitForFunction(() => document.getElementById('jev-advance-body')?.hidden === false);
   await page.keyboard.press('Enter');
-  await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'none');
+  await page.waitForFunction(() => document.getElementById('jev-advance-body')?.hidden === true);
 });
 
 // ══ R2 · 开关解耦（toggle ≠ 展开）════════════════════════════
+// C-batch 后 gate 住在折叠体内——收起态不可达是设计态；解耦语义改在展开态钉：
+// 翻档（on/off 两个方向）都不改变折叠体可见性。
 test('R2 the toggle is only a usage gate — flipping it never changes the detail body', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN' });
   await openSettings(page);
-  // collapsed → toggle flip keeps collapsed
-  await page.click('#toggle-jev');
-  expect(await page.evaluate(() => document.getElementById('jev-detail-body').style.display), 'flip ON while collapsed stays collapsed').toBe('none');
-  // expand → toggle flip keeps expanded
-  await page.click('#jev-head');
-  await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'block');
+  await setJevExpanded(page, true);
+  // flip OFF then ON — body stays expanded throughout
   await page.click('#toggle-jev');
   await page.waitForTimeout(80);
-  expect(await page.evaluate(() => document.getElementById('jev-detail-body').style.display), 'flip OFF while expanded stays expanded').toBe('block');
+  expect(await page.evaluate(() => document.getElementById('jev-advance-body').hidden), 'flip OFF while expanded stays expanded').toBe(false);
+  await page.click('#toggle-jev');
+  await page.waitForTimeout(80);
+  expect(await page.evaluate(() => document.getElementById('jev-advance-body').hidden), 'flip ON again — still expanded').toBe(false);
   // collapse ≠ clear: the configured values survive expand/collapse
   await page.fill('#cfg-jev-keyref', 'my-key-name');
-  await page.click('#jev-head');
-  await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'none');
-  await page.click('#jev-head');
-  await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'block');
+  await setJevExpanded(page, false);
+  await setJevExpanded(page, true);
   expect(await page.inputValue('#cfg-jev-keyref'), 'collapse/expand keeps the input value').toBe('my-key-name');
 });
 
@@ -198,8 +233,7 @@ test('R2 the toggle is only a usage gate — flipping it never changes the detai
 test('R3 typesafe-jev pins the endpoint (prefilled + disabled); laya stays editable; switching re-pins', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN' });
   await openSettings(page);
-  await page.click('#jev-head');
-  await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'block');
+  await setJevExpanded(page, true);
 
   const pinned = await page.evaluate(() => {
     const input = document.getElementById('cfg-jev-endpoint');
@@ -240,8 +274,7 @@ test('R3b save PUT carries provider + enabled + the pinned endpoint', async ({ p
     return r.fulfill({ json: { updated: true } });
   });
   await openSettings(page);
-  await page.click('#jev-head'); // the save action lives in the expanded detail
-  await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'block');
+  await setJevExpanded(page, true); // the save action lives in the expanded detail
   await page.click('#btn-save-jev');
   await page.waitForFunction(() => (document.getElementById('jev-save-state')?.textContent || '').length > 0);
   expect(putBody, 'PUT body captured').not.toBeNull();
@@ -250,7 +283,7 @@ test('R3b save PUT carries provider + enabled + the pinned endpoint', async ({ p
   expect(putBody.endpoint, '🔴 the pinned endpoint travels — the user never had to type it').toBe(PINNED);
 });
 
-// ══ R4 · 健康回退如实显示（legs 载荷）════════════════════════
+// ══ R4 · 健康回退如实显示（legs 载荷；徽标现居头行状态位）══════
 test('R4 jev leg down + channel up (llm took over) → warn badge「Jev 不可用 → 已回退 llm」+ jev reason', async ({ page }) => {
   await bootPage(page, {
     locale: 'zh-CN',
@@ -272,8 +305,10 @@ test('R4 jev leg down + channel up (llm took over) → warn badge「Jev 不可�
       reason: b.querySelector('.badge-reason')?.textContent || '',
       title: b.title,
       warnIcon: !!b.querySelector('svg.st-warn'),
+      inHeadRow: !!b.closest('.stt-advance-toggle-row'), // C-batch: head status slot
     };
   });
+  expect(dump.inHeadRow, 'badge lives in the head status slot (visible collapsed)').toBe(true);
   expect(dump.tone, '🔴 fallback state = warn tone').toBe('warn');
   expect(dump.warnIcon, 'warn icon rides st-warn').toBe(true);
   expect(dump.text, '🔴 the fallback wording is the truthful story').toContain('Jev 不可用 → 已回退 llm');
@@ -320,7 +355,7 @@ test('R4c legacy payload without legs → the tri-state display does not regress
 
 // ══ 双主题截图（收起一行 / 展开细节，暗亮两态零新色值）════════
 async function shots(colorScheme, tag) {
-  test(`shots[${tag}] collapsed one-row card / expanded detail`, async ({ page }) => {
+  test(`shots[${tag}] collapsed one-row section / expanded detail`, async ({ page }) => {
     await bootPage(page, {
       locale: 'zh-CN', colorScheme,
       health: {
@@ -333,10 +368,9 @@ async function shots(colorScheme, tag) {
     });
     await openSettings(page);
     await page.waitForFunction(() => (document.getElementById('settings-jev-health')?.textContent || '').length > 0);
-    await page.locator('#jev-card').screenshot({ path: `${SHOTS}/jev-card-collapsed-${tag}.png` });
-    await page.click('#jev-head');
-    await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'block');
-    await page.locator('#jev-card').screenshot({ path: `${SHOTS}/jev-card-expanded-${tag}.png` });
+    await jevSection(page).screenshot({ path: `${SHOTS}/jev-card-collapsed-${tag}.png` });
+    await setJevExpanded(page, true);
+    await jevSection(page).screenshot({ path: `${SHOTS}/jev-card-expanded-${tag}.png` });
   });
 }
 await shots('light', 'light');
