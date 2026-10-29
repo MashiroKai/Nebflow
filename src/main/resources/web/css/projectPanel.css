@@ -564,6 +564,12 @@
     0px 2px 8px rgba(0, 0, 0, 0.04),
     0px 8px 24px rgba(0, 0, 0, 0.06);
 }
+/* hidden 属性守卫（与 :205 .project-empty-tag[hidden] 同款，本仓惯例）：author
+   `display:flex` 会压过 UA 的 `[hidden]{display:none}`——缺这条时关态菜单仍渲染
+   （min-width:300px 的空玻璃细条 + backdrop blur，盖在设备按钮下方内容区，
+   点测/几何双受害；projcreate-fab T6 窄档 subtree 溢出实测读数 sw300>cw285）。
+   开关仍由 projectTab.js devMenu.hidden 单缝驱动，语义不变。 */
+.dev-menu[hidden] { display: none; }
 @media (prefers-color-scheme: dark) {
   .dev-menu {
     box-shadow:

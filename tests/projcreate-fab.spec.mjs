@@ -18,6 +18,9 @@ import { test, expect } from '@playwright/test';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// dock 批（2026-10-29）手机层导航共用助手（T6 手机档 = 真实 UI 入口腿：dock 设置键
+// → 工作台「项目」行 → 全屏页推入）。
+import { openHubPage } from './_mobile-dock-nav.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
@@ -502,8 +505,19 @@ test('T6 几何四档：末行卡不被遮挡 + 两钮不重叠 + 弹层不溢�
   for (const vp of VIEWPORTS) {
     await page.setViewportSize({ width: vp.w, height: vp.h });
     await page.waitForTimeout(250);
-    // 视口变化后重新落位（点按钮不可用：已活动态再点 = 收起，见 openProjects 注释）。
-    await openProjects(page).catch(() => {});
+    // 视口变化后重新落位。🔴 手机档（dock 批 894874bd8 · 2026-10-29「各节目都是独立
+    // 界面」）改走真实 UI 入口腿：`openProjectsTab()` 只建 pane 内容、不再使面板可见
+    // （pane 被 re-parent 进互斥 `.mobile-page`（非 .live = visibility:hidden），页面
+    // 须由 dock 设置键 → 工作台「项目」行推入——旧直呼腿在手机档留下隐形 pane，
+    // FAB presence 在、visibility 无 ⇒ click 重试至测试超时（归因批 2026-10-31）。
+    // 档位判据 = 手机层激活折点本体 mobile/bootstrap.js MOBILE_MQ `(max-width: 768px)`
+    // （768 档亦命中））。桌面档维持旧腿（点按钮不可用：已活动态再点 = 收起，
+    // 见 openProjects 注释）。
+    if (vp.w <= 768) {
+      await openHubPage(page, 'projects');
+    } else {
+      await openProjects(page).catch(() => {});
+    }
     await page.waitForTimeout(200);
 
     // 滚到底部（末行卡进入与钮同带）
@@ -540,6 +554,8 @@ test('T6 几何四档：末行卡不被遮挡 + 两钮不重叠 + 弹层不溢�
         scrollPaddingBottom: cs?.paddingBottom || null,
         fabRight: fab ? getComputedStyle(fab).right : null,
         fabZ: fab ? getComputedStyle(fab).zIndex : null,
+        // 手机档新增读数：底 dock（dock 批常驻五栏）与 FAB 的几何关系
+        dock: rect(document.querySelector('#mobile-dock')),
       };
     });
 
@@ -548,6 +564,7 @@ test('T6 几何四档：末行卡不被遮挡 + 两钮不重叠 + 弹层不溢�
       ...geom,
       fabVsLastCardOverlap: ov(geom.fab, geom.lastCard),
       fabVsToggleOverlap: geom.toggleExists ? ov(geom.fab, geom.toggle) : null,
+      fabVsDockOverlap: geom.dock ? ov(geom.fab, geom.dock) : null,
       fabInViewport: geom.fab ? (geom.fab.left >= 0 && geom.fab.top >= 0 && geom.fab.right <= vp.w && geom.fab.bottom <= vp.h) : null,
     };
 
@@ -598,9 +615,19 @@ test('T6 几何四档：末行卡不被遮挡 + 两钮不重叠 + 弹层不溢�
   write('45-T6-geometry-viewports.json', out);
 
   for (const [tag, g] of Object.entries(out)) {
+    const isMobileLeg = g.dock !== null;
     expect(g.fab, `[${tag}] 钮存在`).not.toBeNull();
     expect(g.fabVsLastCardOverlap, `[${tag}] R13：钮与末行卡两轴均不相交`).toBe(false);
-    expect(g.scrollPaddingBottom, `[${tag}] 让位规则生效 padding-bottom=72px`).toBe('72px');
+    // 让位规则（腿各归其形）：桌面 = projectPanel.css:404 的 72px（「+」钮 16+40+10
+    // 叠窗净空）；手机档 = dock 批手机层单列清单形态（mobileLayer.css P8 块
+    // `padding: 12px 12px calc(24px + env(safe-area-inset-bottom,0px))`，Playwright
+    // env=0 ⇒ 计算值 24px）——同一让位意图的两套媒体形态，逐腿钉死防回归。
+    if (isMobileLeg) {
+      expect(g.scrollPaddingBottom, `[${tag}] 手机档让位 = 手机层单列形态 24px（+safe-area）`).toBe('24px');
+      expect(g.fabVsDockOverlap, `[${tag}] 手机档：「+」钮与底 dock 不重叠`).toBe(false);
+    } else {
+      expect(g.scrollPaddingBottom, `[${tag}] 让位规则生效 padding-bottom=72px`).toBe('72px');
+    }
     expect(g.fabInViewport, `[${tag}] 钮在视口内`).toBe(true);
     // projfab-ui-impl batch: edge seat pinned at every viewport (2026-09-25 order).
     expect(g.fabRight, `[${tag}] seat: computed right = 16px (bottom-right edge anchor)`).toBe('16px');

@@ -15,13 +15,28 @@
 //   等待脚注行   形态「被 XX 挡着」（XX = 持有者节点名，多持有者全列——`mergeQueue.holders`）
 //   降级红线     位次不可计算（键缺失/形状漂移）/ 同键多项目 ⇒ **不渲染数字**（至多裸「排队中」）
 //
+// **渲染面迁移（2026-10-31 归因修复批）**：本 spec 原走 per-project Flow Map 就地视图
+//    （点项目卡标题 → `.flowmap-view-body`）。该视图已随 tasklist-delegate 批
+//    bbbd6aeb8（#1228 两裁②，2026-10-06）整体退役——卡标题入口改指 delegate-chain
+//    链/全景视图，且链/全景载荷不含 `mergeQueue` 条件键（位次可见面在全景卡 `#N`
+//    chip，由 delegate-panorama.spec.mjs 覆盖）⇒ 原 openFlowMapInPlace 入口腿超时，
+//    6/6 红（bbbd6aeb8 前树 A/B 实证同 spec 绿 ⇒ 归因 = spec 入口腿过时，非产品回归）。
+//    本批把**装载腿**改挂到排队徽标契约的现役单源载体：`fmNodeCard.nodeHtml`
+//    （#1228 拆出件 = 卡面 HTML 唯一渲染单源，flowMapTab/delegateFlowMap/delegateChainView
+//    同件消费；`queueBadgeHtml`/`queueNoteText`/`mergeQueueView` 的 fixture 导出面逐字
+//    保留）。页面内动态 import **真模块**（route 静态服务真 web 树，非副本）+ 真
+//    ensureFlowCss() + flowMap.css（index.html 静态 link）+ i18n zh-CN，渲染夹具六卡，
+//    **断言 ①-⑨ 逐字保留**（文案/降级/互异/零漂移/几何/CSS 命中全不动）。
+//
 // 🔴 **本文件全部排队态载荷均为 FIXTURE（人工构造，非生产实测）**：载荷由本文件内联
-//    定义并经 `page.route` 注入，不来自任何真实运行实例。真实排队态的隔离实例构造未
-//    在本批完成（见节点报告「未证项」）——🔴 禁把本 fixture 读数冒充生产实测。
-//    （本批同队的 `queuepos-detail.spec.mjs` 用的是**引擎真实 dump 载荷**，非手写。）
+//    定义，不来自任何真实运行实例。真实排队态的隔离实例构造未在原批完成（见节点
+//    报告「未证项」）——🔴 禁把本 fixture 读数冒充生产实测。
 //
 // 运行：node node_modules/@playwright/test/cli.js test tests/mergequeue-pos.spec.mjs
-// 改动前对照（验红）：NEBFLOW_WEB_ROOT=<改动前 web 树绝对路径> 同一命令 ⇒ 本 spec 必红。
+// NEBFLOW_WEB_ROOT 开关保留（渲染面契约回归用：渲染面回归时旧树对照必红）。
+//   🔴 视面退役（bbbd6aeb8）的「改前红」判据不由本开关承担——该退役在渲染件层无
+//   diff（queueBadgeHtml/nodeHtml 两树逐字同），本批归因 A/B（spec@old × 双 web 树
+//   = before 6 passed / at 6 failed）见 2026-10-31 归因批报告与 git 历史。
 
 import { test, expect } from '@playwright/test';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -165,17 +180,35 @@ async function bootApp(page) {
   await page.waitForTimeout(300);
 }
 
-async function openFlowMapInPlace(page) {
-  await page.click('#projects-btn');
-  await page.waitForSelector('.project-card[data-project="alpha"]', { timeout: 8000 });
-  await page.click('.project-card[data-project="alpha"] [data-open-flowmap="alpha"]');
-  await page.waitForSelector('.flowmap-view-body .fm-node', { timeout: 8000 });
+/** 装载腿（渲染面迁移批）：页面内动态 import 真渲染单源 fmNodeCard.nodeHtml，
+ *  经真 ensureFlowCss()（FLOW_CSS 注入单点）+ index.html 静态 flowMap.css 的真
+ *  卡面 CSS 环境里渲染夹具六卡（非 plain 调用 = 与主图管线同形：绝对定位 + 卡面
+ *  几何常量单源）。🔴 禁改走 mock 渲染副本——契约载体就是这一个函数。 */
+async function mountFixtureCards(page, nodes) {
+  await page.evaluate((nodes) => (async () => {
+    const { ensureFlowCss } = await import('/js/flowCss.js');
+    ensureFlowCss();
+    const { nodeHtml, NODE_W } = await import('/js/fmNodeCard.js');
+    let host = document.getElementById('fm-fixture-host');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'fm-fixture-host';
+      host.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;overflow:auto;z-index:9999;';
+      document.body.appendChild(host);
+    }
+    host.innerHTML = '';
+    const GAP = 24;
+    nodes.forEach((n, i) => {
+      // 与主图同形调用（非 plain）：绝对定位 style 由 nodeHtml 自卡面几何常量算出。
+      host.insertAdjacentHTML('beforeend', nodeHtml(n, { x: 80 + i * (NODE_W + GAP), y: 140 }, 0, null));
+    });
+  })(), nodes);
 }
 
 /** 读数采集：徽标文案 / 脚注文案 / 几何（卡不溢出、徽标不溢出、数字可读）。 */
 const readQueue = (page) => page.evaluate(() => {
   const out = {};
-  document.querySelectorAll('.fm-node').forEach((card) => {
+  document.querySelectorAll('#fm-fixture-host .fm-node').forEach((card) => {
     const id = card.dataset.nodeId;
     const head = card.querySelector('.fm-node-head');
     const badge = card.querySelector('.fm-flag-queue');
@@ -216,15 +249,15 @@ for (const theme of THEMES) {
         const pageErrors = [];
         page.on('pageerror', (e) => pageErrors.push(e.message));
         await bootApp(page);
-        await openFlowMapInPlace(page);
-        await expect(page.locator('.flowmap-view-body .fm-node')).toHaveCount(6);
+        await mountFixtureCards(page, FM().nodes);
+        await expect(page.locator('#fm-fixture-host .fm-node')).toHaveCount(6);
 
         const r = await readQueue(page);
         // 读数落盘（取证开关；缺省关闭 = 零副作用）：每条 = 主题/视口/各卡几何与文案。
         if (process.env.NEBFLOW_MEASURE_OUT) {
           const head = await page.evaluate(() => {
-            const el = document.querySelector('.fm-node[data-node-id="n-q1"] .fm-node-head');
-            const card = document.querySelector('.fm-node[data-node-id="n-q1"]');
+            const el = document.querySelector('#fm-fixture-host .fm-node[data-node-id="n-q1"] .fm-node-head');
+            const card = document.querySelector('#fm-fixture-host .fm-node[data-node-id="n-q1"]');
             return {
               headScrollW: el.scrollWidth, headClientW: el.clientWidth,
               cardW: card.clientWidth, cardScrollW: card.scrollWidth, cardClientW: card.clientWidth,
@@ -280,7 +313,7 @@ for (const theme of THEMES) {
 
         // ⑨ 明暗双主题下徽标配色实际生效（背景非透明 = CSS 命中）
         const bg = await page.evaluate(() => {
-          const el = document.querySelector('.fm-node[data-node-id="n-q1"] .fm-flag-queue');
+          const el = document.querySelector('#fm-fixture-host .fm-node[data-node-id="n-q1"] .fm-flag-queue');
           const cs = getComputedStyle(el);
           return { bg: cs.backgroundColor, color: cs.color };
         });
