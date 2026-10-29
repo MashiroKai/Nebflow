@@ -147,8 +147,9 @@ object LlmAllocator:
 
   /**
    * 生产装配：模型候选解析（`judge.utilityModel` ref → 候选；缺省 = 全局候选链——
-   * 判定机 utilityCandidate 同口径）＋ **整链遍历调用缝**（fail-open 根因修复批
-   * 2026-10-29）。None = 无可用候选（腿不可用）。
+   * 判定机 utilityCandidates 同口径，fail-open 根因修复批 2026-10-29 起两腿同一
+   * 整链遍历模板）＋ **整链遍历调用缝**（fail-open 根因修复批 2026-10-29）。
+   * None = 无可用候选（腿不可用）。
    *
    * 🔴 零超时（2026-10-19 作者拍板，「stand 设计不要有任何超时控制——通过监测的
    * 手段」）：本腿**不带分配调用预算**（原 `timeoutMs` 参数与 15s `.timeout()`

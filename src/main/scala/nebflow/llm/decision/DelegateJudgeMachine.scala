@@ -23,8 +23,10 @@ import scala.concurrent.duration.*
  *      [[DecisionProvider]] 批量问句机制（与 JevAllocator 同族：Choice 问句 +
  *      P(yes)≥0.5 判据 / 三选一判词）；
  *   ② SmallJudge 兜底 —— Jev 未配置**或 Jev 调用失败** ⇒ 单次 LLM 调用（原文
- *      Batch 4：HealthMonitor.SendMessageParams 模式；模型 = `judge.utilityModel`
- *      可配，缺省 = 全局候选链首选；JSON 输出）。
+ *      Batch 4：HealthMonitor.SendMessageParams 模式；模型 = 候选链**整链遍历**
+ *      ——2026-10-29 fail-open 根因修复的判定机同族刀，与主分配腿
+ *      LlmAllocator.candidatesFrom/chainCall 同一模板：`judge.utilityModel`
+ *      钉首位＋去重，缺省 = 全局候选链；JSON 输出）。
  *
  * 失败语义：两层全败 ⇒ `None`（fail-open——spawn 腿两层全败＝按判是（fail-open
  * 反转）；判否＝整腿无绑定，终态腿落自申报/既有完成语义；判定机绝不阻塞派发与
@@ -209,33 +211,50 @@ object DelegateJudgeMachine:
       case _ => None
     }
 
-  // ── ② SmallJudge 兜底腿（单次 LLM 调用） ─────────────────────────────
+  // ── ② SmallJudge 兜底腿（单次 LLM 调用 × 候选链整链遍历） ─────────────
 
-  /** utility model 解析：`judge.utilityModel` ref → 候选；缺省 = 全局候选链首选（「根链首选」）。 */
-  private def utilityCandidate(registry: ProviderRegistry): IO[Option[nebflow.llm.ModelCandidate]] =
+  /**
+   * utility 候选链解析（fail-open 根因修复批 2026-10-29 判定机同族刀——主分配腿
+   * LlmAllocator.candidatesFrom 同一模板）：返回**整条候选链**而非链头一个。
+   *
+   * 根因（与主分配腿同族，2026-10-29）：旧 `utilityCandidate` 只取
+   * `getCandidates().headOption` ——链头单候选、单发即弃、调用错 `Left(_) => None`
+   * 吞掉——链头候选恰好坏掉时兜底判定腿 fail-open。新读法（与主分配腿逐条对齐）：
+   *  - `judge.utilityModel` ref 已配且处于**不可用时段** → WARN + 落全局链
+   *    （model-schedule-unavailable 批时段闸，链出口已滤，不会选到受限模型）；
+   *  - ref 已配且可解 → 该候选**钉首位**，其后接全局链去重（钉住的模型挂掉时
+   *    链上后备照答——同一句「主 agent 能用 ⇒ 兜底判定能用」）；
+   *  - ref 已配不可解 → 全链（WARN 留痕，原回落语义保留）；
+   *  - ref 未配 → 全链（原语义，从「头一个」升为「整条」）。
+   */
+  private[decision] def utilityCandidates(registry: ProviderRegistry): IO[List[nebflow.llm.ModelCandidate]] =
     IO.blocking(Config.loadServiceConfig().judge.flatMap(_.utilityModel)).flatMap {
       case Some(ref) =>
         // 时段闸（model-schedule-unavailable 批）：utility ref 当前处于不可用
-        // 时段 ⇒ WARN + 落到全局链首选（链出口已滤，不会选到受限模型）。
+        // 时段 ⇒ WARN + 落到全局链（链出口已滤，不会选到受限模型）。
         registry.scheduleRestrictionFor(ref).flatMap {
           case Some(w) =>
             IO(
               logger.warnSync(
-                s"delegate-judge: judge.utilityModel '$ref' schedule-restricted ($w) — falling back to root-chain head"
+                s"delegate-judge: judge.utilityModel '$ref' schedule-restricted ($w) — falling back to the full candidate chain"
               )
-            ) *> registry.getCandidates().map(_.headOption)
+            ) *> registry.getCandidates()
           case None =>
             registry.getCandidateForRef(ref).flatMap {
-              case Some(c) => IO.pure(Some(c))
+              case Some(c) =>
+                registry.getCandidates().map { chain =>
+                  val rest = chain.filterNot(r => r.providerId == c.providerId && r.model == c.model)
+                  c :: rest
+                }
               case None =>
                 IO(
-                  logger
-                    .warnSync(s"delegate-judge: judge.utilityModel '$ref' unresolved — falling back to root-chain head")
-                ) *>
-                  registry.getCandidates().map(_.headOption)
+                  logger.warnSync(
+                    s"delegate-judge: judge.utilityModel '$ref' unresolved — falling back to the full candidate chain"
+                  )
+                ) *> registry.getCandidates()
             }
         }
-      case None => registry.getCandidates().map(_.headOption)
+      case None => registry.getCandidates()
     }
 
   private def judgeTimeoutMs: Long =
@@ -247,16 +266,16 @@ object DelegateJudgeMachine:
       .getOrElse(DefaultTimeoutMs)
 
   private def smallJudgeWorktree(registry: ProviderRegistry, task: String): IO[Option[Boolean]] =
-    utilityCandidate(registry).flatMap {
-      // 四修③（2026-10-07 修复令）：utilityCandidate=None 不再静默——WARN 在案
-      // （原静默 None 路径，判定全败只有 finally 的两条腿级 warn，无此因）。
-      case None =>
+    utilityCandidates(registry).flatMap {
+      // 四修③（2026-10-07 修复令）：候选链空（整链，非旧链头）不再静默——WARN
+      // 在案（fail-open 结构态：判定全败只有 finally 的两条腿级 warn，无此因）。
+      case Nil =>
         IO(
           logger.warnSync(
             "delegate-judge: small-judge worktree leg unavailable — utility model resolves to no candidate (judge.utilityModel unresolved AND root candidate chain empty)"
           )
         ) *> IO.pure(None)
-      case Some(c) =>
+      case cands =>
         val params = SendMessageParams(
           messages = List(
             Message(
@@ -270,27 +289,40 @@ object DelegateJudgeMachine:
               )
             )
           ),
-          model = c.model,
+          model = cands.head.model, // 占位：chainCall 逐候选 copy(model) 覆写
           sessionId = Some(JudgeSessionId),
           agentId = Some(JudgeSessionId),
           // 辅面钉旧值（钳制批 2026-10-21）：小判官是单 JSON 短答调用，钉
           // ProbeMaxTokens（16384，升额前服务值）——128000 常量不再随主面上线。
           maxTokensOverride = Some(Defaults.ProbeMaxTokens)
         )
-        singleCall(registry, c.providerId, params).map(_.flatMap(parseWorktree))
+        chainCall(registry, cands)(params).flatMap {
+          // 链耗尽 = 可恢复调用层失败（归因词与主分配腿 LlmError 口径一致：
+          // 「candidate chain exhausted」——绝不与结构性 fail-open 混记；逐候选
+          // 真因已由缝内 WARN 落线）。
+          case None =>
+            IO(
+              logger.warnSync(
+                "delegate-judge: small-judge worktree call failed (candidate chain exhausted — see per-candidate WARN lines)"
+              )
+            ) *> IO.pure(None)
+          // 解析失败保持四修③既有口径：worktree 腿 parse 静默（None = 回落接手，
+          // 非误判）；WARN 位点只在终态判词腿（DelegateJudgeObserveSpec 钉面）。
+          case Some(raw) => IO.pure(parseWorktree(raw))
+        }
     }
   end smallJudgeWorktree
 
   private def smallJudgeVerdict(registry: ProviderRegistry, input: TerminalInput): IO[Option[Verdict]] =
-    utilityCandidate(registry).flatMap {
-      // 四修③：utilityCandidate=None 不再静默——WARN 在案（原静默 None 路径）。
-      case None =>
+    utilityCandidates(registry).flatMap {
+      // 四修③：候选链空（整链，非旧链头）不再静默——WARN 在案（fail-open 结构态）。
+      case Nil =>
         IO(
           logger.warnSync(
             "delegate-judge: small-judge verdict leg unavailable — utility model resolves to no candidate (judge.utilityModel unresolved AND root candidate chain empty)"
           )
         ) *> IO.pure(None)
-      case Some(c) =>
+      case cands =>
         val params = SendMessageParams(
           messages = List(
             Message(
@@ -304,16 +336,23 @@ object DelegateJudgeMachine:
               )
             )
           ),
-          model = c.model,
+          model = cands.head.model, // 占位：chainCall 逐候选 copy(model) 覆写
           sessionId = Some(JudgeSessionId),
           agentId = Some(JudgeSessionId),
           // 同上（钳制批 2026-10-21）：辅面钉 ProbeMaxTokens。
           maxTokensOverride = Some(Defaults.ProbeMaxTokens)
         )
-        singleCall(registry, c.providerId, params).flatMap {
+        chainCall(registry, cands)(params).flatMap {
+          // 链耗尽 = 可恢复调用层失败（归因词与主分配腿 LlmError 口径一致），绝不
+          // 与结构性 fail-open 混记；逐候选真因已由缝内 WARN 落线。
+          case None =>
+            IO(
+              logger.warnSync(
+                "delegate-judge: small-judge verdict call failed (candidate chain exhausted — see per-candidate WARN lines)"
+              )
+            ) *> IO.pure(None)
           // 四修③：parseVerdict 失败不再静默——回文在案（原文头部 160 字符，
           // WARN 可查「判没判成、为何没判成」；None = 回落腿接手，非误判）。
-          case None => IO.pure(None)
           case Some(raw) =>
             parseVerdict(raw) match
               case Some(v) => IO.pure(Some(v))
@@ -329,21 +368,61 @@ object DelegateJudgeMachine:
     }
   end smallJudgeVerdict
 
-  /** HealthMonitor.SendMessageParams 模式的单次调用（probe 同形：adapter.sendMessage + timeout + attempt）。回文全文（解析在纯函数单点）。 */
-  private def singleCall(
+  /**
+   * 整链遍历调用缝（fail-open 根因修复批 2026-10-29 判定机同族刀——主分配腿
+   * LlmAllocator.chainCall 同一模板）：逐候选 `sendMessage`——某候选传输/适配层
+   * 失败 ⇒ WARN 落真因（providerId/model/异常类）＋试下一候选；**全链败才 None**
+   * （None 语义自此 = 「候选链耗尽」，不再是「链头一个挂了」）。与主 agent 请求
+   * 路径同一遍历哲学：「主 agent 都在正常使用 llm ⇒ 兜底判定腿必有候选能答」。
+   *
+   * 🔴 每候选失败必留 WARN——真错不再被 `case Left(_) => None` 吞成一句
+   *    「call failed」；空回文（HTTP 200 但 body 空）= provider 侧故障，与传输错
+   *    同侧处理（试下一候选，不落 parse-fail）。
+   * 🔴 零超时红线（2026-10-19 作者拍板）：本缝**不新增**任何整链 wall-clock 预算；
+   *    每候选调用沿用判定机自身的既有预算轴（`judge.timeoutMs` →
+   *    [[judgeTimeoutMs]]，单调用有界如旧——判定族预算不随分配链零超时化消失）。
+   */
+  private[decision] def chainCall(
     registry: ProviderRegistry,
-    providerId: String,
-    params: SendMessageParams
-  ): IO[Option[String]] =
-    registry
-      .getAdapter(providerId)
-      .flatMap(_.sendMessage(params))
-      .timeout(judgeTimeoutMs.millis)
-      .attempt
-      .flatMap {
-        case Right(resp) => IO.pure(Some(resp.reply))
-        case Left(e) =>
-          IO(logger.warnSync(s"delegate-judge: small-judge call failed (${e.getClass.getSimpleName})")) *> IO.pure(None)
+    candidates: List[nebflow.llm.ModelCandidate]
+  ): SendMessageParams => IO[Option[String]] =
+    (params: SendMessageParams) =>
+      candidates.foldLeft[IO[Option[String]]](IO.pure(None)) { (acc, cand) =>
+        acc.flatMap {
+          case Some(reply) => IO.pure(Some(reply))
+          case None =>
+            registry.getAdapter(cand.providerId).attempt.flatMap {
+              case Left(e) =>
+                IO(
+                  logger.warnSync(
+                    s"delegate-judge: small-judge candidate ${cand.providerId}/${cand.model} adapter unavailable (${e.getClass.getSimpleName}) — trying next candidate"
+                  )
+                ).as(None)
+              case Right(adapter) =>
+                adapter
+                  .sendMessage(params.copy(model = cand.model))
+                  .timeout(judgeTimeoutMs.millis)
+                  .attempt
+                  .flatMap {
+                    // 空回文（HTTP 200 但 body 空）= provider 侧故障，与传输错同侧
+                    // 处理：试下一候选，不落 parse-fail（parse-fail 只收「有回文但
+                    // 不可用」的模型行为面）。
+                    case Right(resp) if resp.reply.trim.isEmpty =>
+                      IO(
+                        logger.warnSync(
+                          s"delegate-judge: small-judge candidate ${cand.providerId}/${cand.model} replied empty — trying next candidate"
+                        )
+                      ).as(None)
+                    case Right(resp) => IO.pure(Some(resp.reply))
+                    case Left(e) =>
+                      IO(
+                        logger.warnSync(
+                          s"delegate-judge: small-judge candidate ${cand.providerId}/${cand.model} errored (${e.getClass.getSimpleName}) — trying next candidate"
+                        )
+                      ).as(None)
+                  }
+            }
+        }
       }
 
   // ── 状态拼装与解析（纯函数——spec 判红锚） ───────────────────────────

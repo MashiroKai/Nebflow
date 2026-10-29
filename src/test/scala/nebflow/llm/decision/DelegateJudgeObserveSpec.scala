@@ -23,8 +23,8 @@ import scala.concurrent.duration.*
  *    `JevSettings.resolve` = None（腿自动关闭，不再构造注定 403 的 provider）；
  *    补上 secret 件 ⇒ 下一次热读自动恢复（Some＋token 在位）——开/关/开全程
  *    无重启；keyRef 未配置 = 不期望凭据，腿照常开（既有语义）。
- *  - **SmallJudge 两条静默 None 路径**：utilityCandidate=None（无候选）与
- *    parseVerdict 失败（回文无 JSON 判词）两条腿都 yield None——None 语义
+ *  - **SmallJudge 两条静默 None 路径**：候选链空（utilityCandidates=nil，无候选）
+ *    与 parseVerdict 失败（回文无 JSON 判词）两条腿都 yield None——None 语义
  *    不变（兜底/回落接手，绝非误判），但不再无声（两条 WARN 位点随刀）。
  *    parse 腿走**真 adapter**（真 sttp backend ＋本地 HttpServer 回散文），
  *    断言 `hits==1` 钉死「None 出自解析失败而非调用失败」——WARN 位点被触达。
@@ -132,7 +132,7 @@ class DelegateJudgeObserveSpec extends CatsEffectSuite:
       mergeRound = false
     )
 
-  test("smallJudgeVerdict with no candidates anywhere ⇒ None (utilityCandidate=None WARN path), zero HTTP") {
+  test("smallJudgeVerdict with no candidates anywhere ⇒ None (empty candidate chain WARN path), zero HTTP") {
     withTempDataRoot { _ =>
       val registry = new ProviderRegistry(
         CatsRef.unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
