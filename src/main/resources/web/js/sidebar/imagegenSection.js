@@ -31,6 +31,10 @@ import { escapeHtml, statusIcon } from '../utils.js';
 import { authHeaders } from '../flowHelpers.js';
 import { toggleHTML, setToggleState } from '../toggle.js';
 import { eyeSvg, eyeOffSvg } from './providersUi.js';
+// 测试结果行的绘制基座与 LLM 测试钮同组件同口径（settings-panel-jev-imagegen
+// 批 2026-10-29 作者令「然后 Jev/生图，也要像我们LLM这样，有个按钮来测试可用
+// 性」）：spinner 行 / 判决行直接复用 modelTestButton 的绘制函数与 class 族。
+import { paintTestingLine, paintTestResultLine } from './modelTestButton.js';
 
 // 适配器协议面三态（镜像 ImageGenAdapters.All 的 `type` 注册表——前端无后端
 // 常量导入面，此处是唯一拼写点；引擎侧以 byType 校验，typos 400 不落盘）。
@@ -138,10 +142,13 @@ function providerFieldsHTML() {
       </div>
       <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
         <button class="cfg-btn cfg-btn-primary" id="btn-save-imagegen">${escapeHtml(t('settings.save'))}</button>
+        <button class="cfg-btn" id="btn-test-imagegen" type="button" title="${escapeHtml(t('settings.imagegenTestTitle'))}" aria-label="${escapeHtml(t('settings.imagegenTestTitle'))}">${statusIcon('plug-zap', 12)}<span>${escapeHtml(t('settings.imagegenTestBtn'))}</span></button>
+        <button class="cfg-btn" id="btn-imagegen-generate" type="button" title="${escapeHtml(t('settings.imagegenGenTitle'))}" aria-label="${escapeHtml(t('settings.imagegenGenTitle'))}">${statusIcon('image', 12)}<span>${escapeHtml(t('settings.imagegenGenBtn'))}</span></button>
         ${isAdd ? '' : `<button class="cfg-btn" id="btn-delete-imagegen">${escapeHtml(t('settings.imagegenDelete'))}</button>`}
         <span class="inline-state" id="imagegen-save-state" role="status" aria-live="polite"></span>
       </div>
-    </div>`;
+    </div>
+    <div class="cfg-test-results imagegen-test-results" data-role="test-results" role="status" aria-live="polite"></div>`;
 }
 
 /**
@@ -181,6 +188,156 @@ function flashSaveState(ok) {
     ? statusIcon('circle-check', 11, 'st-ok') + escapeHtml(t('settings.saved'))
     : statusIcon('circle-alert', 11, 'st-err') + escapeHtml(t('settings.saveFailed'));
   setTimeout(() => { if (stateEl.isConnected) stateEl.innerHTML = ''; }, 1500);
+}
+
+// ── 测试可用性（settings-panel-jev-imagegen 批 2026-10-29 作者令「然后 Jev/
+// 生图，也要像我们LLM这样，有个按钮来测试可用性」）────────────────────────────
+// 两级：a) 轻探活 = key 解析 + 上游可达（models 端点 + 适配器鉴权头；401 =
+// 死 key 状态码原样可见）；b) 「实跑一次最小生成」= size 256 / 最低质量真打
+// 上游，回显 ✅+耗时+字节数+格式+缩略图预览（产物落引擎侧临时目录，不进正式
+// 归档）。测的是表单当前值（未保存也测；key 输入框有值 = 覆写腿，空 = 存储
+// 凭据腿）。同 LLM 测试钮口径：单飞 + 测试中禁用（双钮联动）+ 结果保留可重
+// 测（结果不落 localStorage、不改配置——纯诊断读数）。
+
+/** Shared single-flight flag: both test controls disable while either runs. */
+let imagegenTestInFlight = false;
+
+/**
+ * The engine call (owner-auth POST /api/imagegen/test). Required-field
+ * validation reuses the save flow's toasts — a test without provider/type/
+ * model guides instead of firing a注定 400 的击.
+ * @param {'probe'|'generate'} mode
+ * @returns {Promise<{ok: boolean, latencyMs?: number, bytes?: number, format?: string, thumbnail?: string, modelsFaceAbsent?: number, error?: string}>}
+ */
+export async function runImagegenTest(mode) {
+  const name = currentProviderName();
+  if (!name) { window.__showToast?.(t('settings.imagegenNameRequired'), 'error'); return { ok: false, error: 'missing-provider' }; }
+  const type = /** @type {HTMLSelectElement|null} */ (document.getElementById('cfg-imagegen-type'))?.value || '';
+  if (!type) { window.__showToast?.(t('settings.imagegenTypeRequired'), 'error'); return { ok: false, error: 'missing-type' }; }
+  const model = /** @type {HTMLInputElement|null} */ (document.getElementById('cfg-imagegen-model'))?.value.trim() || '';
+  if (!model) { window.__showToast?.(t('settings.imagegenModelRequired'), 'error'); return { ok: false, error: 'missing-model' }; }
+  const baseUrl = /** @type {HTMLInputElement|null} */ (document.getElementById('cfg-imagegen-baseurl'))?.value.trim() || '';
+  const keyValue = /** @type {HTMLInputElement|null} */ (document.getElementById('cfg-imagegen-key'))?.value.trim() || '';
+  /** @type {Record<string, string>} */
+  const body = { provider: name, type, model };
+  if (baseUrl) body.baseUrl = baseUrl; // 覆写腿判据键：引擎见 baseUrl 即走表单值
+  if (keyValue) body.apiKey = keyValue; // 空 = 沿用存储凭据（留空保存语义同源）
+  if (mode === 'generate') body.mode = 'generate';
+  try {
+    const resp = await fetch('/api/imagegen/test', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json().catch(() => null);
+    if (resp.ok && data && /** @type {any} */ (data).ok === true) {
+      const d = /** @type {any} */ (data);
+      return { ok: true, latencyMs: d.latencyMs, bytes: d.bytes, format: d.format, thumbnail: d.thumbnail || '', modelsFaceAbsent: d.modelsFaceAbsent };
+    }
+    const err = data && /** @type {any} */ (data).error;
+    return { ok: false, error: typeof err === 'string' && err ? err : t('provider.testModelFailedHttp', { code: String(resp.status) }) };
+  } catch {
+    return { ok: false, error: t('provider.testModelFailedIo') };
+  }
+}
+
+/**
+ * Append a muted note under an already-painted verdict line (the probe's
+ * 「models 面缺失——以实跑生成为准」face).
+ * @param {HTMLElement} block results block
+ * @param {string} key line key (the provider name)
+ * @param {string} note
+ */
+function appendLineNote(block, key, note) {
+  const line = /** @type {HTMLElement|null} */ (block.querySelector(`.cfg-test-result-line[data-model="${escapeHtml(key)}"]`));
+  const textEl = line?.querySelector('.cfg-test-line-text');
+  if (textEl) textEl.textContent += ` ${note}`;
+}
+
+/**
+ * Decorate a generate-verdict line with the real-run stats + thumbnail
+ * preview (✅+耗时+字节数/格式+缩略图——作者令的两级 b 腿回显口径).
+ * @param {HTMLElement} block results block
+ * @param {string} key line key (the provider name)
+ * @param {{latencyMs?: number, bytes?: number, format?: string, thumbnail?: string}} v
+ */
+function decorateGenerateLine(block, key, v) {
+  const line = /** @type {HTMLElement|null} */ (block.querySelector(`.cfg-test-result-line[data-model="${escapeHtml(key)}"]`));
+  const textEl = /** @type {HTMLElement|null} */ (line?.querySelector('.cfg-test-line-text'));
+  if (!textEl) return;
+  const stats = [
+    typeof v.latencyMs === 'number' ? `${v.latencyMs}ms` : '',
+    typeof v.bytes === 'number' ? `${v.bytes} bytes` : '',
+    v.format || '',
+  ].filter(Boolean).join(' · ');
+  textEl.textContent = stats;
+  if (v.thumbnail) {
+    const img = document.createElement('img');
+    img.className = 'cfg-test-thumb';
+    img.src = v.thumbnail;
+    img.alt = '';
+    textEl.appendChild(img);
+  }
+}
+
+/**
+ * Wire the two test buttons (probe + minimal generation) of the current
+ * provider fields face. Shared single-flight: while one test runs both
+ * buttons disable; the verdict repaints the shared results line in place
+ * (re-test = fresh line state).
+ */
+function bindImagegenTestButtons() {
+  const probeBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('btn-test-imagegen'));
+  const genBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('btn-imagegen-generate'));
+  const block = /** @type {HTMLElement|null} */ (document.querySelector('.imagegen-test-results'));
+  if (!probeBtn || !genBtn || !block) return;
+  const probeIdle = probeBtn.innerHTML;
+  const genIdle = genBtn.innerHTML;
+  const spinnerFace = (label) => `<span class="cfg-model-test-spinner" aria-hidden="true"></span><span>${escapeHtml(label)}</span>`;
+  const setName = currentProviderName();
+  const setDisabled = (v) => { probeBtn.disabled = v; genBtn.disabled = v; };
+
+  probeBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (imagegenTestInFlight || probeBtn.disabled) return; // 单飞：测试中不重入
+    const name = currentProviderName() || setName;
+    imagegenTestInFlight = true;
+    setDisabled(true);
+    probeBtn.innerHTML = spinnerFace(t('provider.testRunning'));
+    paintTestingLine(block, name);
+    const v = await runImagegenTest('probe');
+    if (v.ok) {
+      paintTestResultLine(block, name, { ok: true, latencyMs: v.latencyMs });
+      if (v.modelsFaceAbsent) appendLineNote(block, name, t('settings.imagegenProbeModelsAbsent', { code: String(v.modelsFaceAbsent) }));
+    } else if (v.error !== 'missing-provider' && v.error !== 'missing-type' && v.error !== 'missing-model') {
+      paintTestResultLine(block, name, { ok: false, error: v.error });
+    }
+    setDisabled(false);
+    probeBtn.innerHTML = probeIdle;
+    imagegenTestInFlight = false;
+  });
+
+  genBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (imagegenTestInFlight || genBtn.disabled) return; // 单飞：测试中不重入
+    const name = currentProviderName() || setName;
+    imagegenTestInFlight = true;
+    setDisabled(true);
+    genBtn.innerHTML = spinnerFace(t('settings.imagegenGenRunning'));
+    paintTestingLine(block, name);
+    const v = await runImagegenTest('generate');
+    if (v.ok) {
+      paintTestResultLine(block, name, { ok: true, latencyMs: v.latencyMs });
+      decorateGenerateLine(block, name, v);
+    } else if (v.error !== 'missing-provider' && v.error !== 'missing-type' && v.error !== 'missing-model') {
+      paintTestResultLine(block, name, { ok: false, error: v.error });
+    }
+    setDisabled(false);
+    genBtn.innerHTML = genIdle;
+    imagegenTestInFlight = false;
+  });
 }
 
 /** The provider name being edited (add mode = the typed new name). */
@@ -313,6 +470,10 @@ function bindSectionBody(wrap) {
   document.getElementById('btn-save-imagegen')?.addEventListener('click', () => {
     void saveImagegenSection();
   });
+
+  // 测试可用性双钮（轻探活 / 实跑一次最小生成）——settings-panel-jev-imagegen
+  // 批 2026-10-29；单飞 + 测试中禁用 + 结果保留可重测，同 LLM 测试钮口径。
+  bindImagegenTestButtons();
 
   // 删除此提供方（两段式确认——btn-clear-nf-cache 先例）：第一击挂确认位，
   // 第二击真删（整节 PUT 少该项）。

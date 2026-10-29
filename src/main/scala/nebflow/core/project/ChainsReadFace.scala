@@ -32,9 +32,10 @@ import nebflow.shared.PathUtil
  * == 纪律 ==
  *  - **只读**：本件零写盘（探针 open 的目录已存在性先行检查，防无目录副作用建目录；
  *    openScope 对已存在目录的 ledger 载入幂等——ProjectCrashRecovery 探针先例）。
- *  - **零第二权威**：节点投影只取活动区快照（归档成员的终态故事由三行族 verdict/
- *    spawn 投影承载）；不合成 chain-registered/chain-node-state 帧行（候定集透传
- *    纪律不破——前端禁造第二权威，后端同守）。
+ *  - **零第二权威**：节点投影 = 已挂载腿只取活动区快照（归档成员的终态故事由三行族
+ *    verdict/spawn 投影承载）；未挂载探针腿读活动区 ∪ 归档区（R3 flowmap 退役批：
+ *    宽限窗只读补拉窗，见 [[scopeProjection]] 注）。不合成 chain-registered/
+ *    chain-node-state 帧行（候定集透传纪律不破——前端禁造第二权威，后端同守）。
  *  - **fail-soft**：单行/单键坏形只降级该行（WARN），绝不让整面 500。
  */
 
@@ -77,9 +78,9 @@ object ChainsReadFace:
       val windowed: IO[List[DelegateRegistry.Record]] =
         if archived then IO.pure(scoped) // 历史窗：全量（零删除展示纪律）
         else activeWorldSeatFilter(scoped)
-      windowed.flatMap(_.traverse(rowJson(registry, taskStatuses, continuations))).map(rows =>
-        Json.obj("rows" -> rows.asJson)
-      )
+      windowed
+        .flatMap(_.traverse(rowJson(registry, taskStatuses, continuations)))
+        .map(rows => Json.obj("rows" -> rows.asJson))
     }
 
   /**
@@ -114,6 +115,8 @@ object ChainsReadFace:
         .lastOption
         .map(c => r.id -> c.id)
     }.toMap
+
+  end continuationLinks
 
   /** 记录的「座位」：项目 workspace 优先，回落派发 cwd（scopeProjection 同款取序）。 */
   private[project] def seatOf(rec: DelegateRegistry.Record): String =
@@ -351,6 +354,7 @@ object ChainsReadFace:
       (childrenIO, stepsIO).mapN { (ch, st) =>
         row.mapObject(_.add("topology", Json.obj("mode" -> mode.asJson).deepMerge(ch).deepMerge(st)))
       }
+    end if
   end withTopology
 
   /** 星扇子条目紧凑投影（SubAgentTask → {taskId,agentName,description,status,spawnedAt,completedAt}）。 */
@@ -363,7 +367,6 @@ object ChainsReadFace:
       "spawnedAt" -> t.spawnedAt.asJson,
       "completedAt" -> t.completedAt.asJson
     )
-
 
   /**
    * per-task 链视图投影（chains/:key 臂）。`None` = 查无 delegate 记录（HTTP 404 面）；
@@ -433,6 +436,13 @@ object ChainsReadFace:
   /**
    * delegate 作用域的 FlowMap 衍生投影：已挂载宿主现读 → 未挂载盘面探针（作用域目录
    * 在才开——防读面建目录副作用）→ 目录也无 = null。
+   *
+   * 读区差异（R3 flowmap 退役批 2026-10-29 · 设计 §5.6 第 3 步「宽限窗内结果文件仍
+   * 可经本面盘面探针只读补拉」）：**已挂载腿照旧只取活动区快照**（零第二权威纪律，
+   * 活动面板投影不变）；**未挂载探针腿读活动区 ∪ 归档区**（[[FlowMapStore.combinedNodes]]
+   * 同源单点）——退役作用域在宽限窗内的出库成员（含 result 全文载体）只有归档区还
+   * 持有，探针不读归档区 = 「宽限窗可补拉」的承诺空转。目录删除后本面照旧 null
+   * （三行族降级投影）——窗口有界，纪律不变。
    */
   private def scopeProjection(rec: DelegateRegistry.Record): IO[Option[Json]] =
     DelegateFlowHosts.get(rec.id).flatMap {
@@ -449,7 +459,17 @@ object ChainsReadFace:
             val projectName = rec.project.getOrElse(os.Path(baseWs).last)
             FlowMapStore
               .openScope(rec.id, projectName, baseWs)
-              .flatMap(_.snapshot.map(s => Some(chainNodesJson(rec.id, mounted = false, s))))
+              .flatMap { probe =>
+                probe.combinedNodes.map(nodes =>
+                  Some(
+                    chainNodesJson(
+                      rec.id,
+                      mounted = false,
+                      FlowMapState(project = projectName, updatedAt = 0L, nodes = nodes)
+                    )
+                  )
+                )
+              }
               .handleErrorWith { e =>
                 nebflow.shared.NebflowLogger
                   .forName("nebflow.core.project.chains-read-face")

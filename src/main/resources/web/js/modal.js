@@ -139,17 +139,26 @@ export function showDeleteFolderModal(folderId, folderName) {
 // Reuses #delete-box for any yes/no confirmation.
 let pendingConfirmCallback = null;
 
+/** Optional third-action callback for #delete-alt — reset on every open
+ *  (same no-residue discipline as pendingConfirmCallback). */
+let pendingAltCallback = null;
+
 /**
  * Show a Nebflow-styled confirmation dialog.
  * @param {string} title — dialog title
  * @param {string} message — dialog body text
  * @param {Function} onConfirm — called when user clicks Confirm
- * @param {object} [opts] 可选项 { tone?: 'danger'|'neutral', confirmLabel?: string } —
+ * @param {object} [opts] 可选项 { tone?: 'danger'|'neutral', confirmLabel?: string,
+ *   alt?: { label: string, onAlt: Function } } —
  *   'neutral'（可逆动作，如项目归档）→ 确认钮走 glass-control 中性材质
  *   （#delete-box.confirm-neutral）；默认 'danger' 保留红色语义。
  *   confirmLabel（social-fix-confirm 2026-10-09，社交面板解绑流）：本次确认钮的
  *   文案（如「解除绑定」）。每个打开路径都会重设按钮文案——下方与 showDeleteModal
  *   各自回落到 modal.deleteConfirm，定制文案绝不残留到下一次弹窗。
+ *   alt（卸载批 2026-10-29，插件面板卸载流「仅停用」腿）：可选**第三动作**钮
+ *   （#delete-alt，中性材质、确认钮左侧）；缺省 = hidden 属性收起（既有两键形态
+ *   逐字不变）。与 confirmLabel 同款纪律：每个打开路径都重设（显隐 + 文案 +
+ *   回调），定制态绝不残留到下一次弹窗。
  */
 export function showConfirm(title, message, onConfirm, opts = {}) {
   const { modalBox, deleteBox, deleteTitle, deleteMsg, deleteConfirmBtn, modalOverlay } = state.dom;
@@ -164,6 +173,18 @@ export function showConfirm(title, message, onConfirm, opts = {}) {
   state.pendingDeleteId = null;
   deleteBox.classList.toggle('confirm-neutral', opts.tone === 'neutral');
   if (deleteConfirmBtn) deleteConfirmBtn.textContent = opts.confirmLabel || t('modal.deleteConfirm');
+  const altBtn = document.getElementById('delete-alt');
+  if (altBtn) {
+    pendingAltCallback = opts.alt?.onAlt || null;
+    altBtn.textContent = opts.alt?.label || '';
+    altBtn.hidden = !opts.alt;
+    altBtn.onclick = () => {
+      const cb = pendingAltCallback;
+      pendingAltCallback = null;
+      hideModals();
+      cb?.();
+    };
+  }
   modalOverlay.classList.add('on');
 }
 

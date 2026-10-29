@@ -1,60 +1,110 @@
-// mobile/navController.js — r2 规格②＋③：以聊天为 root 的页面栈导航＋面板体系 app 化。
+// mobile/navController.js — dock 批（作者令 2026-10-29 13:31/13:36/13:38）：
+// 小红书式五栏底 dock ＋「每个节目都是独立界面」的全屏页导航。
 //
-// ── 导航模型（规格②）────────────────────────────────────────────────
-//   · root = 主聊天（#main + header + 输入区 + 悬浮工具条）；
-//   · 页面 = 项目 / 图谱 / 插件 / token 用量 / 设置 五个独立 view，互斥显示
-//     （真切换，非上下层覆盖：同一时刻至多一个 section 带 .live）；
-//   · 栈模型 = `stack = ['chat', ...pages]`：进页 push、返回 pop 一层；
-//   · 返回钮契约：每页左上角圆形毛玻璃「<」＝ pop 一层（从聊天推入的页
-//     ⇒ 返回聊天）；
-//   · 栈状态 = 会话内存（模块变量）；🔴 刷新后归位 root（交付裁定：刷新 ≙ App
-//     冷启动，落主会话 —— 与层内「启动自动展开抑制」同口径）。
+// ── 导航模型（dock 批重写；中键改版批 2026-10-29 23:36 修订）─────────
+//   · 底 dock = 根页切换器：五栏 `消息 / 联系人 / 对话 / canvas / 设置`
+//     （作者逐字顺序；DOCK_ORDER 钉死）。dock 常驻（聊天根上也显示，激活
+//     中键）；点 tab = 切换根页（互斥替换，非堆叠）。
+//   · 中键改版批（作者 23:36 逐字「中间那个对话 就是进入我跟你的这个输入框
+//     …最左侧的消息就是 跟联系人的对话消息」）：第三栏对话语义 = **chat
+//     home 键**（点 = 详情全清 + 回聊天根输入框；不是页面路由，无 section），
+//     形态 = 小红书中心键（sapphire 主色大圆、高出基线、图标 = agent 头像，
+//     无头像回落气泡字形）；消息键 = 跟联系人的对话消息（好友会话列表自原
+//     「对话」面迁入，气泡图标随迁）。
+//   · 栈模型 = `stack = [home, ...details]`：stack[0] ∈ 'chat' ∪ 五栏根；
+//     详情页（任务/搜索/定时/心跳/后台/智能体/手机接入/项目/图谱/插件/用量/
+//     会话窗）push 在当前根之上；返回 pop 一层；根页「<」= 回聊天根。
+//   · 总原则（作者 13:38 逐字「各节目都是独立界面 不再像目前这样跟其他界面
+//     重叠」）：页面 = 全屏不透明 section（#mobile-pages 容器互斥 .live）；
+//     浮层族全部退役 —— v3 双液态下拉列（headerController/layoutController/
+//     floatController）、任务浮层 morph（mh-tpanel 呈现位）、画板 bottom
+//     sheet（#canvas-panel 悬浮卡）、二级液态 morph 面板全部改为**收编进
+//     独立页面**（overlay/pane 锚点原位归还惯例不变）。
+//   · canvas = 独立整页（作者 13:36 判）：dock tab 进全屏 canvas 页，
+//     非弹窗非悬浮；页内卡片式切换多张 canvas 卡（卡片列表 chip 条 +
+//     ‹ › 步进 + 内容区横滑切卡，环式）；桌面 canvas 零变化（pane re-parent
+//     进页面体，#canvas-panel 手机层永不显示）。
+//   · 栈状态 = 会话内存（模块变量）；刷新后归位聊天根（口径同前批：刷新 ≙
+//     App 冷启动）。
 //
-// ── 面板体系 app 化（规格③）────────────────────────────────────────
-//   · 项目/图谱/插件：废除标签页形态 —— 桌面画板页签 pane 被 **re-parent 进各自
-//     页面体**（appendChild = move，监听随节点走；桌面模块零改动，渲染/取数
-//     全走桌面导出 API，零复制）。页签系统本身仍是桌面共享的**数据模型**
-//     （restore/persist/4 态机不动）；移动层废除的是它的**视觉形态**
-//     （页签条永不显示，见 mobileLayer.css）。
-//   · 用量/设置：内容面（#settings-modal / #usage-dashboard）**收编进各自页面体**
-//     （r3 p4fix：r2 的「overlay 原地升格」垫在页面容器 156 之下被不透明页面
-//     遮挡 ⇒ 页面体恒空 —— 改为与三页 pane-adopt 同款的 re-parent 真页面；
-//     锚点记录/原位归还照 paneAnchors 惯例）。overlay 节点原地保留，仅作状态
-//     载体（.on / [hidden] 与桌面关闭对账观察者不变）；开/关走桌面导出 API
-//     （openUsageDashboard / openSettingsPanel），头部注入同款「<」返回钮
-//     （桌面关闭钮手机层隐藏）。
-//   · 画板 = 文档卡片层：画板层只承载「pop 出来的文档」——面板 pane 一律被
-//     移出画板；文档以卡片呈现（圆角浮层卡片 + 卡片头：标题 / 计数 / 关闭）。
-//     卡片 X = closeTab（关单卡，关后落相邻文档卡）；上滑收整叠（closeCanvas，
-//     文档保留可再开，见 canvasGestures.js）；横滑 = 卡片间切换。
-//     卡片层可见性 = canvas-open ∧ 激活页签是文档（面板页签激活 ⇒ 层隐藏）。
+// ── 面收编（沿用 paneAnchors / overlayAnchors 两套锚点惯例）─────────
+//   · 面板页（项目/图谱/插件）：桌面画板 pane re-parent 进页面体（不变）。
+//   · overlay 面（设置/用量/搜索/定时/心跳/后台/智能体/手机接入/任务）：
+//     面节点 re-parent 进页面体；overlay 载体原地保留作状态源（外部关闭
+//     对账 = watchOverlayClose 扩展到全页面注册表）。
+//   · 会话窗（#fm-chat-overlay）：窗体节点 re-parent 进「会话」详情页；
+//     桌面 closeChat 摘除 overlay ⇒ 对账弃节点 + 弹页。
 //
-// ── App 打包留缝点（任务书要求，本轮只留缝不实现）──────────────────
-//   · 路由名稳定：'chat' | 'projects' | 'graph' | 'plugins' | 'usage' | 'settings'；
-//   · 通用导航 API：pushPage / popPage / popToRoot / popToPage / navigateTo
-//     （可任意深度 —— 深链、WebView 壳的历史栈映射可直接复用；UI 内只有
-//     navigateTo 一条入口，栈深实际 ≤2）；
-//   · 状态广播：document 事件 `nf:mobile-nav`（detail = { stack, top, action }）；
-//   · 只读探针：window.__nfMobileNav = { stack, top, version }。
+// ── App 打包留缝点 ──────────────────────────────────────────────────
+//   · 路由名稳定：'chat' | 五栏根 | 详情页 id（PAGES 注册表）；
+//   · 通用导航 API：pushPage / popPage / goHome / dockTo；
+//   · 状态广播：document 事件 `nf:mobile-nav`（detail = { stack, top, home, action }）；
+//   · 只读探针：window.__nfMobileNav = { stack, top, home, version }。
 //
-// 共享组件复用声明：本文件不复制任何桌面逻辑 —— 页面内容（项目列表/图谱/插件/
-// 用量/设置）全部走桌面导出 API；桌面侧零改动。
+// 共享组件复用声明：本文件不复制任何桌面逻辑 —— 页面内容全部走桌面导出
+// API / 桌面已渲染节点收编；桌面侧零改动。
 
 import {
-  openCanvas, closeCanvas, isCanvasOpen, getTabPane, setActiveTab, closeTab,
-  mobileCardToggle, isCardIndependent, cardCanPop, quoteActiveCardRef,
+  getTabPane, setActiveTab, closeTab,
+  cardCanPop, isCardIndependent, mobileCardToggle,
 } from '../canvas.js';
 import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
 import { createIconsIn } from '../utils.js';
+import { ensureSocialPage, syncSocialFaces } from './socialFaces.js';
+import { ensureTaskPanel, closeTaskPanel } from './taskPanel.js';
+import { wikiGraphEnabled } from '../featureFlags.js';
+import { agentAvatarDataUrl, onAgentAvatarChange } from '../agentProfile.js';
+import { avatarImgNode } from '../avatarRender.js';
 
-/** 页面注册表（root 之外）。route id 稳定 = App 深链/壳映射留缝点。 */
+/**
+ * 底 dock 五栏（作者 2026-10-29 令逐字顺序；顺序钉死 = spec 断言面）。
+ * 中键改版批（同日 23:36）：第三栏 = 'chat' —— 对话键是 **chat home 键**
+ * （点 = 回主对话输入框），不是页面路由：不在 PAGES、ensureContainer 不为
+ * 它建 section。 */
+export const DOCK_ORDER = ['messages', 'contacts', 'chat', 'canvas', 'settings'];
+
+/** chat home 键定义。icon = 回落字形（作者令：无 agent 头像时用「目前中间
+ *  对话按钮那个图标」= message-circle 气泡；有头像 = 圆头像图）。 */
+const DOCK_CHAT_DEF = { id: 'chat', icon: 'message-circle', zh: '对话', en: 'Chats' };
+
+/** dock 键定义解析：chat home 键走 CHAT_DEF，其余查 PAGES。 */
+function dockDef(id) {
+  return id === 'chat' ? DOCK_CHAT_DEF : PAGE_BY_ID.get(id);
+}
+
+/** 工作台分组行（设置根页顶部；dock 放不下的功能面的统一入口）。 */
+const HUB_ROWS = [
+  { page: 'projects',   icon: 'folder-kanban',   zh: '项目',      en: 'Projects' },
+  { page: 'plugins',    icon: 'puzzle',          zh: '插件',      en: 'Plugins' },
+  { page: 'usage',      icon: 'bar-chart-3',     zh: 'token 用量', en: 'Usage' },
+  { page: 'graph',      icon: 'sparkles',        zh: '图谱',      en: 'Wiki Graph', flagGated: true },
+  { page: 'reminder',   icon: 'alarm-clock',     zh: '定时任务',  en: 'Scheduled' },
+  { page: 'daemon',     icon: 'heart-pulse',     zh: '心跳',      en: 'Daemons' },
+  { page: 'background', icon: 'square-terminal', zh: '后台任务',  en: 'Background' },
+];
+
+/** 页面注册表。dock: true = 底栏根页；其余 = push 详情页。route id 稳定。
+ *  （chat home 键不在此表 —— 见 DOCK_ORDER/CHAT_DEF。）中键改版批：消息键
+ *  图标 = message-circle 气泡（作者令 23:36「图标换位」——气泡自原中键迁入；
+ *  消息页内容 = 跟联系人的对话消息，面迁移见 socialFaces.js）。 */
 export const PAGES = [
-  { id: 'projects', tabId: 'projects',   icon: 'folder-kanban', zh: '项目',       en: 'Projects' },
-  { id: 'graph',    tabId: 'wiki-graph', icon: 'sparkles',      zh: '图谱',       en: 'Wiki Graph' },
-  { id: 'plugins',  tabId: 'plugins',    icon: 'puzzle',        zh: '插件',       en: 'Plugins' },
-  { id: 'usage',    tabId: null,         icon: 'bar-chart-3',   zh: 'token 用量', en: 'Usage' },
-  { id: 'settings', tabId: null,         icon: 'settings',      zh: '设置',       en: 'Settings' },
+  { id: 'messages',      dock: true, icon: 'message-circle', zh: '消息',   en: 'Messages' },
+  { id: 'contacts',      dock: true, icon: 'contact-round',  zh: '联系人', en: 'Contacts' },
+  { id: 'canvas',        dock: true, icon: 'layers',         zh: 'canvas', en: 'canvas' },
+  { id: 'settings',      dock: true, icon: 'settings',       zh: '设置',   en: 'Settings' },
+  { id: 'projects', tabId: 'projects', icon: 'folder-kanban',   zh: '项目',     en: 'Projects' },
+  { id: 'graph',    tabId: 'wiki-graph', icon: 'sparkles',      zh: '图谱',     en: 'Wiki Graph' },
+  { id: 'plugins',  tabId: 'plugins',  icon: 'puzzle',          zh: '插件',     en: 'Plugins' },
+  { id: 'usage',    tabId: null,       icon: 'bar-chart-3',     zh: 'token 用量', en: 'Usage' },
+  { id: 'tasks',    tabId: null,       icon: 'list-todo',       zh: '任务',     en: 'Tasks' },
+  { id: 'search',   tabId: null,       icon: 'search',          zh: '搜索',     en: 'Search' },
+  { id: 'reminder', tabId: null,       icon: 'alarm-clock',     zh: '定时任务', en: 'Scheduled' },
+  { id: 'daemon',   tabId: null,       icon: 'heart-pulse',     zh: '心跳',     en: 'Daemons' },
+  { id: 'background', tabId: null,     icon: 'square-terminal', zh: '后台任务', en: 'Background' },
+  { id: 'profile',  tabId: null,       icon: 'bot',             zh: '智能体',   en: 'Agent' },
+  { id: 'social',   tabId: null,       icon: 'smartphone',      zh: '手机接入', en: 'Phone Access' },
+  { id: 'conversation', tabId: null,   icon: 'message-circle',  zh: '会话',     en: 'Conversation' },
 ];
 const PAGE_BY_ID = new Map(PAGES.map((p) => [p.id, p]));
 
@@ -69,13 +119,13 @@ const modProjects = () => lazy('projects', () => import('../projectTab.js'));
 const modGraph = () => lazy('graph', () => import('../wikiGraph.js'));
 const modPlugins = () => lazy('plugins', () => import('../plugins.js'));
 const modUsage = () => lazy('usage', () => import('../usageDashboard.js'));
+const modAgentProfile = () => lazy('agentProfile', () => import('../agentProfile.js'));
 
 /** 空闲预热（首次点击零延迟；失败静默 —— 页面路径有兜底）。 */
 export function warm() { modProjects(); modGraph(); modPlugins(); modUsage(); }
 
 function tt(zh, en) {
   // 语言源 = i18n.js 同源键（key('locale')，branding.js 命名空间派生）。
-  // 重启窗热修批 2026-10-18：裸 `'nebflow_locale'` 字面随品牌迁移失效，迁 `key()`。
   let lang = '';
   try { lang = localStorage.getItem(key('locale')) || ''; } catch { /* private mode */ }
   if (!lang) lang = document.documentElement.lang || navigator.language || '';
@@ -88,7 +138,7 @@ export function logEvent(kind, extra = {}) {
   __nfEvents.push({ t: Date.now(), kind, ...extra });
 }
 
-// ── 首触标记（启动自动展开抑制的判据，layoutController 消费）────────
+// ── 首触标记（启动自动展开抑制的判据）────────────────────────────────
 let layerTouched = false;
 export function touchLayer() {
   if (!layerTouched) { layerTouched = true; logEvent('layer-first-touch'); }
@@ -96,20 +146,24 @@ export function touchLayer() {
 export function isLayerTouched() { return layerTouched; }
 
 // ── 模块状态 ─────────────────────────────────────────────────────────
-/** @type {string[]} 页面栈；stack[0] 恒为 'chat'（root）。 */
+/** @type {string[]} 页面栈；stack[0] = home（'chat' 或 dock 根），其余 = 详情。 */
 let stack = ['chat'];
 /** @type {HTMLElement|null} */
 let container = null;
 /** @type {Map<string, HTMLElement>} route id → section */
 const sections = new Map();
-/** @type {{pane: Element, parent: Node, next: Node|null}[]} pane 归还锚点（拆层逆序归还）。 */
+/** @type {Map<string, HTMLElement>} 页面 hub 容器 */
+const hubBodies = new Map();
+/** @type {{pane: Element, parent: Node, next: Node|null}[]} pane 归还锚点。 */
 const paneAnchors = [];
-/** @type {HTMLElement|null} 卡片头（插入 .canvas-header，拆层移除）。 */
-let cardHead = null;
-/** @type {HTMLElement|null} 底部快捷切换条（2026-10-27 令：‹ 页点 ›｜收起，拆层移除）。 */
-let switchbarEl = null;
+/** @type {HTMLElement|null} 底 dock（dock 批：常驻根页切换器）。 */
+let dockEl = null;
 /** @type {MutationObserver|null} */
 let contentObserver = null;
+/** @type {MutationObserver|null} 会话窗收编观察者。 */
+let chatModalMo = null;
+/** @type {{modal: Element}|null} 会话窗收编槽。 */
+let chatAdopted = null;
 /** @type {MutationObserver[]} */
 let overlayObservers = [];
 /** @type {Array<() => void>} */
@@ -133,7 +187,7 @@ function buildSection(def) {
   back.title = backLabel();
   back.setAttribute('aria-label', backLabel());
   back.innerHTML = '<i data-lucide="chevron-left"></i>';
-  back.addEventListener('click', () => popPage());
+  back.addEventListener('click', () => backOut());
   const title = document.createElement('span');
   title.className = 'mobile-page-title';
   title.tabIndex = -1; // push 后聚焦（读屏从头播报页名）
@@ -147,7 +201,62 @@ function buildSection(def) {
   const body = document.createElement('div');
   body.className = 'mobile-page-body';
   section.append(head, body);
+  if (def.id === 'settings') buildHub(body);
+  if (def.id === 'canvas') buildCanvasPage(body);
   return section;
+}
+
+/** 设置根页的「工作台」分组行（dock 五栏放不下的功能面统一入口；push 详情）。 */
+function buildHubRow(r) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'mf-hub-row';
+  row.dataset.hubPage = r.page;
+  row.innerHTML = `<i data-lucide="${r.icon}"></i><span class="mf-hub-row-label"></span><i data-lucide="chevron-right" class="mf-hub-chev"></i>`;
+  /** @type {HTMLElement|null} */ (row.querySelector('.mf-hub-row-label')).textContent = tt(r.zh, r.en);
+  row.addEventListener('click', (e) => {
+    // 打开的面板（桌面 outside-close 监听 document 冒泡）会被本记点击的
+    // 继续冒泡误关 —— 入口键一律停冒泡（dock 批 2026-10-29 实测修复）。
+    e.stopPropagation();
+    touchLayer();
+    logEvent('hub-open', { page: r.page });
+    pushPage(r.page);
+  });
+  return row;
+}
+
+function buildHub(body) {
+  const hub = document.createElement('div');
+  hub.className = 'mf-hub';
+  const label = document.createElement('div');
+  label.className = 'mf-hub-label';
+  label.textContent = tt('工作台', 'Workspace');
+  hub.appendChild(label);
+  const rows = document.createElement('div');
+  rows.className = 'mf-hub-rows';
+  hub.appendChild(rows);
+  body.appendChild(hub);
+  hubBodies.set('settings', hub);
+  syncHubGate();
+}
+
+/** flag 门控行（graph）随配置到达重对账：ensureContainer 在 boot 早期建全部
+ *  页面，首帧 configData 可能尚未写入 parsedConfig —— 若只按建行当时的 flag
+ *  判定，graph 行会缺席到下次刷新（p9 单跑/全量均实测同点 flaky）。
+ *  renderPages 每次翻页对账一次：行集与 flag 期望不一致才重建（一致零成本）。 */
+function syncHubGate() {
+  const hub = hubBodies.get('settings');
+  const rows = hub?.querySelector('.mf-hub-rows');
+  if (!rows) return;
+  const want = HUB_ROWS.filter((r) => !r.flagGated || wikiGraphEnabled()).map((r) => r.page);
+  const have = [...rows.querySelectorAll('.mf-hub-row')].map((el) => (/** @type {HTMLElement} */ (el)).dataset.hubPage);
+  if (want.length === have.length && want.every((p, i) => p === have[i])) return;
+  rows.replaceChildren();
+  for (const r of HUB_ROWS) {
+    if (r.flagGated && !wikiGraphEnabled()) continue; // graphseal 同 flag（featureFlags 惯例）
+    rows.appendChild(buildHubRow(r));
+  }
+  if (typeof lucide !== 'undefined') createIconsIn(rows);
 }
 
 function ensureContainer() {
@@ -169,7 +278,17 @@ function ensureContainer() {
       const b = /** @type {HTMLElement|null} */ (s.querySelector('.mobile-back-btn'));
       if (b) { b.title = backLabel(); b.setAttribute('aria-label', backLabel()); }
     }
-    syncCardChrome();
+    const hub = hubBodies.get('settings');
+    const hubLabel = hub?.querySelector('.mf-hub-label');
+    if (hubLabel) hubLabel.textContent = tt('工作台', 'Workspace');
+    const rows = hub?.querySelectorAll('.mf-hub-row');
+    if (rows) {
+      for (const row of rows) {
+        const r = HUB_ROWS.find((x) => x.page === (/** @type {HTMLElement} */ (row)).dataset.hubPage);
+        if (r) (/** @type {HTMLElement|null} */ (row.querySelector('.mf-hub-row-label'))).textContent = tt(r.zh, r.en);
+      }
+    }
+    syncCanvasPage();
   };
   window.addEventListener('locale-changed', onLocale);
   unsubs.push(() => window.removeEventListener('locale-changed', onLocale));
@@ -180,7 +299,7 @@ function bodyOf(pageId) {
   return sections.get(pageId)?.querySelector('.mobile-page-body') || null;
 }
 
-// ── 面板 pane re-parent（③：标签页形态 → 真页面）────────────────────
+// ── 面板 pane re-parent（桌面画板 pane → 项目/图谱/插件页）──────────
 
 /** 把面板页签 pane 移入页面体（幂等）。移动 = appendChild（监听随节点走）。 */
 function adoptPane(pageId) {
@@ -193,18 +312,23 @@ function adoptPane(pageId) {
   body.appendChild(pane);
 }
 
-// ── overlay 内容面收编（r3 p4fix：usage/settings 与三页同款真页面）─────
-// overlay 节点原地保留，只作状态载体（.on / [hidden] 与 watchOverlayClose 的
-// 关闭对账照旧）；可见内容面 re-parent 进页面体。桌面重渲/销毁兼容：renderSettings
-// 写 #settings-content、usage reloadAll 写面板子树 —— 全是收编节点内部的面写入，
-// 与面的落点无关；两节点本体桌面代码从不替换（settings modal 静态、usage
-// buildShell 每页只建一次）。桌面层（layerActive=false）不走本文件任何路径 ⇒ 零收编。
+// ── overlay 内容面收编（设置/用量惯例扩展到全部页面面）───────────────
+// overlay 载体节点原地保留，只作状态载体（.on/.open/.hidden/[hidden] 与外部
+// 关闭对账照旧）；可见内容面 re-parent 进页面体。桌面重渲/销毁兼容：面写入
+// 都是收编节点内部的子树写入，与面的落点无关。
 /** @type {Map<string, {face: Element, parent: Node, next: Node|null}>} page id → 面锚点 */
 const overlayAnchors = new Map();
-/** 页面 → overlay 内容面（收编对象）。 */
+/** 页面 → overlay 内容面（收编对象；conversation 页走动态会话窗槽，不在此表）。 */
 const overlayFaceByPage = {
   settings: '#settings-modal',
   usage: '#usage-dashboard',
+  search: '#search-modal',
+  reminder: '#reminder-panel',
+  daemon: '#daemon-panel',
+  background: '#bg-dropdown',
+  profile: '#memory-modal',
+  social: '#social-modal',
+  tasks: '#mobile-task-panel',
 };
 
 /** 把 overlay 内容面移入页面体（幂等；锚点照 paneAnchors 惯例记录）。 */
@@ -231,10 +355,7 @@ function restoreOverlayFace(pageId) {
   } catch { /* 树已变：放弃归还，避免二次破坏 */ }
 }
 
-/** 栈 ↔ overlay 面对账（汇合点 = renderPages：在栈即收编，出栈即归还 ——
- *  外部关闭对账（watchOverlayClose）改栈后也走 renderPages，一处兜全）。
- *  usage 首开时面板由 openUsageDashboard 异步建出 —— pushPage 的 .then 里
- *  显式再跑一次；本函数幂等。 */
+/** 栈 ↔ overlay 面对账（汇合点 = renderPages：在栈即收编，出栈即归还）。 */
 function syncOverlayFaces() {
   for (const id of Object.keys(overlayFaceByPage)) {
     if (stack.includes(id)) adoptOverlayFace(id);
@@ -249,19 +370,80 @@ const openFnByPage = {
   plugins: () => modPlugins().then((m) => m.openPlugins()),
 };
 
+/** 桌面按钮同一入口的合面腿（桌面键在手机层不可见，click 语义 = 同一处理函数）。 */
+function clickDesktopBtn(id) { (/** @type {HTMLElement|null} */ (document.getElementById(id)))?.click(); }
+
 async function ensurePanelContent(pageId) {
   const fn = openFnByPage[pageId];
-  if (!fn) return;
-  try {
-    await fn();
-  } catch (e) {
-    console.error('[mobile-layer] page open failed:', pageId, e);
+  if (fn) {
+    try {
+      await fn();
+    } catch (e) {
+      console.error('[mobile-layer] page open failed:', pageId, e);
+    }
+    adoptPane(pageId);
+    return;
   }
-  adoptPane(pageId);
+  // 页面内容臂（按页面 id 分派；全部幂等）。
+  switch (pageId) {
+    case 'messages':
+    case 'contacts':
+      ensureSocialPage(pageId, bodyOf(pageId));
+      break;
+    case 'settings':
+      try { openSettingsPanel(); } catch (e) { console.error('[mobile-layer] settings', e); }
+      break;
+    case 'usage':
+      modUsage()
+        .then((m) => {
+          m.openUsageDashboard();
+          ensureOverlayReconcile('usage', '#usage-overlay', (el) => !!el.hidden, ['hidden']);
+          syncOverlayFaces(); // overlay 首开此刻才建出 —— 建好即收编
+        })
+        .catch((e) => console.error('[mobile-layer] usage', e));
+      break;
+    case 'search':
+      try {
+        const { openSearchModal } = await import('../chatSearch.js');
+        openSearchModal();
+      } catch (e) { console.error('[mobile-layer] search', e); }
+      break;
+    case 'reminder':
+      if (!document.querySelector('#reminder-panel.open')) clickDesktopBtn('reminder-btn');
+      break;
+    case 'daemon':
+      if (!document.querySelector('#daemon-panel.open')) clickDesktopBtn('daemon-btn');
+      break;
+    case 'background':
+      if (document.querySelector('#bg-dropdown.hidden')) clickDesktopBtn('bg-indicator');
+      // dock 批：手机层 bgagent 键属退场桌面簇 —— 载体开时补跑子智能体列表
+      // 渲染（桌面键开面分支同款 fetch + render；幂等，收编列表随节点走）。
+      import('../main/bgAgents.js').then((m) => {
+        m.fetchActiveAgentsOnOpen();
+        m.renderBgAgentDropdown();
+      }).catch(() => { /* 未载即无行 */ });
+      break;
+    case 'profile':
+      try {
+        const ap = await modAgentProfile();
+        if (ap.openProfilePanel) ap.openProfilePanel();
+      } catch (e) { console.error('[mobile-layer] profile', e); }
+      break;
+    case 'social':
+      if (!document.querySelector('#social-overlay.on')) clickDesktopBtn('social-btn');
+      break;
+    case 'tasks':
+      ensureTaskPanel();
+      // 面板惰性建出 —— 建好即挂关闭对账 + 收编（X 关闭 → hidden → 弹栈）。
+      ensureOverlayReconcile('tasks', '#mobile-task-panel', (el) => !!el.hidden, ['hidden']);
+      syncOverlayFaces();
+      break;
+    default:
+      break;
+  }
 }
 
-/** 画板内容区监视：启动恢复/服务端 reconcile 新建的面板 pane 出现即收编进页面
- *  （restoreTabs 晚于本层激活的到达路径；文档 pane 不收编）。 */
+/** 画板内容区监视：面板 pane 出现即收编进页面（文档 pane 由 canvas 页管）。 */
 function watchCanvasContent() {
   const content = document.getElementById('canvas-content');
   if (!content) return;
@@ -271,7 +453,7 @@ function watchCanvasContent() {
       const pageId = tabIdToPage.get((/** @type {HTMLElement} */ (pane)).dataset.tabId);
       if (pageId) adoptPane(pageId);
     }
-    syncCardLayer();
+    syncCanvasPage();
   };
   contentObserver = new MutationObserver(sweep);
   contentObserver.observe(content, { childList: true });
@@ -279,204 +461,153 @@ function watchCanvasContent() {
   unsubs.push(() => { contentObserver?.disconnect(); contentObserver = null; });
 }
 
-// ── 文档卡片（③：画板层只承载 pop 出来的文档，以卡片呈现）───────────
+// ══════════════════════════════════════════════════════════════════════
+// canvas 独立页（作者令 2026-10-29 13:36：手机端 canvas 不做悬浮窗，独立
+// 整页；页内卡片式呈现/切换多张 canvas 卡 —— 卡片列表 chip 条 + ‹ › 步进 +
+// 内容区横滑切卡。桌面 canvas 行为零变化：pane re-parent，#canvas-panel
+// 手机层永不显示（bottom sheet 退役）。
+// ══════════════════════════════════════════════════════════════════════
 
-// ── UI 批⑨ → 画板底卡批（作者令 2026-10-23 ⑦ → 2026-10-27 交互优化令改写）：
-// 卡头胶囊 = bottom sheet 顶缘──
-// 胶囊（.canvas-header，split.css §⑨ / mobileLayer §⑨ 通栏变体）上手势（无按压
-// 前置，作者令 C；2026-10-27 令改写纵横语义）：
-//   直滑**下滑** = 收起整叠 bottom sheet（closeCanvas —— 文档保留在页签数据模型，
-//     保留状态不销毁；两条收起通路之一，另一条在底部抓手/收起钮）；
-//   直滑**左右** = 切上一/下一张文档卡（2026-10-27 令：横滑语义统一 = 切卡，
-//     取代批⑨/⑦令的「横滑关卡」—— 破坏性动作收敛到卡头显性 X；环 = docTabs()
-//     卡片层序，释放 |dx|>64；⑦令「上滑换卡」同批退役）；
-//   长按 450ms（未锁轴未抬起）= 触感（is-longpress → scale/亮度）+ 浮出
-//     .mobile-card-ref-btn 引用钮（视口坐标落点），点击走 quoteActiveCardRef
-//     （canvas.js 导出，与桌面右键「引用当前页」同一 appendRefToActiveView 通路）；
-//   任意外部按下/滚动/换卡即收引用钮。
-// 与滚动冲突消解（分区契约，⑦ 令「canvas 内部手势优先」）：.canvas-header 手机端
-//   touch-action:none（既有），手势只绑卡头元素；内容区滚动发生在 pane 内部滚动器
-//   （canvasGestures 侧缘带外的区域零劫持）。轴锁 8px 与桌面胶囊/deck 同档；
-//   跟手位移走 --head-dx/--head-dy 变量链（CSS transform）。
-const CARDHEAD_AXIS_LOCK_PX = 8;
-const CARDHEAD_SWITCH_PX = 48;
-const CARDHEAD_LONGPRESS_MS = 450;
+/** 面板页签 id 集（文档页签 = 页签栏全集 − 本集）。 */
+const PANEL_TAB_IDS = new Set(PAGES.filter((p) => p.tabId).map((p) => p.tabId));
 
-/** 文档卡邻位切换（环绕；单卡不换）。
- *  @param {number} delta 方向（+1 下一张 / -1 上一张）
- *  @param {boolean=} peekOnly true = 只探邻（返回 {id,label}|null），不切 ——
- *    canvasGestures 横滑预览用。 */
-export function switchDocCard(delta, peekOnly = false) {
-  const docs = docTabs();
-  const id = activeDocId();
-  const idx = docs.findIndex((d) => d.id === id);
-  if (docs.length < 2 || idx < 0) return peekOnly ? null : undefined;
-  const nb = docs[(idx + delta + docs.length) % docs.length];
-  if (peekOnly) return nb && nb.id !== id ? nb : null;
-  if (nb && nb.id !== id) setActiveTab(nb.id);
-  return undefined;
-}
+const SWIPE_AXIS_PX = 8;
+const SWIPE_SWITCH_PX = 48;
 
-/** 卡头触屏手势装配（ensureCardHead 建购后一次）。 */
-function initCardHeadTouch(head) {
-  const flags = /** @type {any} */ (head);
-  if (flags._nf9Touch) return;
-  flags._nf9Touch = true;
-  const pill = /** @type {HTMLElement|null} */ (head.closest('.canvas-header'));
-  /** @type {{id: number, x0: number, y0: number, dx: number, dy: number, axis: string|null, longpressed: boolean}|null} */
-  let g = null;
-  let lpTimer = 0;
-  /** @type {HTMLButtonElement|null} */
-  let refBtn = null;
-  const clearLp = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = 0; } };
-  const dismissRef = () => {
-    if (refBtn) { refBtn.remove(); refBtn = null; }
-    head.classList.remove('is-longpress');
-    if (pill) pill.classList.remove('is-longpress');
-  };
-  head.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    if (/** @type {Element} */ (e.target).closest('button')) return;   // 钮群直通
-    dismissRef();
-    clearLp();
-    g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, axis: null, longpressed: false };
-    // 显式指针捕获：touch 隐式捕获已有，mouse 管线（桌面窄窗/自动化）不捕获则
-    // 拖离卡头后 move/up 不再经过 head，手势流断（缘带手势同批修法）。
-    try { head.setPointerCapture(e.pointerId); } catch (_) {}
-    // 长按 450ms：未锁轴未抬起 → 触感 + 浮出引用钮
-    lpTimer = window.setTimeout(() => {
-      if (!g || g.axis) return;
-      g.longpressed = true;
-      head.classList.add('is-longpress');
-      if (pill) pill.classList.add('is-longpress');
-      if (navigator.vibrate) navigator.vibrate(8);
-      const headRect = head.getBoundingClientRect();
-      refBtn = document.createElement('button');
-      refBtn.type = 'button';
-      refBtn.className = 'mobile-card-ref-btn';
-      refBtn.textContent = tt('引用', 'Reference');
-      refBtn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        quoteActiveCardRef();
-        dismissRef();
-      });
-      document.body.appendChild(refBtn);
-      const bw = refBtn.getBoundingClientRect().width || 76;
-      refBtn.style.left = Math.min(Math.max(e.clientX - bw / 2, 10), window.innerWidth - bw - 10) + 'px';
-      refBtn.style.top = Math.min(headRect.bottom + 10, window.innerHeight - 48) + 'px';
-      // 下一拍挂外部收臂器（放过本次触点；引用钮自身点击不收）
-      setTimeout(() => {
-        const outside = (ev) => {
-          const t = /** @type {Node|null} */ (ev.target);
-          if (refBtn && t && refBtn.contains(t)) return;
-          dismissRef();
-          document.removeEventListener('pointerdown', outside, true);
-        };
-        document.addEventListener('pointerdown', outside, true);
-      }, 0);
-    }, CARDHEAD_LONGPRESS_MS);
-  });
-  head.addEventListener('pointermove', (e) => {
-    if (!g || e.pointerId !== g.id) return;
-    g.dx = e.clientX - g.x0;
-    g.dy = e.clientY - g.y0;
-    if (!g.axis && (Math.abs(g.dx) > CARDHEAD_AXIS_LOCK_PX || Math.abs(g.dy) > CARDHEAD_AXIS_LOCK_PX)) {
-      g.axis = Math.abs(g.dx) > Math.abs(g.dy) ? 'x' : 'y';   // 平局取纵（deck 同规）
-      clearLp();                                              // 动了 = 非长按，直滑接管
-    }
-    if (g.axis && pill) {                                     // 跟手位移（变量链同桌面）
-      pill.classList.add('is-dragging');
-      pill.style.setProperty('--head-dx', (g.axis === 'x' ? Math.max(-18, Math.min(18, g.dx)) : 0) + 'px');
-      pill.style.setProperty('--head-dy', (g.axis === 'y' ? Math.max(-12, Math.min(12, g.dy)) : 0) + 'px');
-    }
-  });
-  const finish = (e) => {
-    if (!g || e.pointerId !== g.id) return;
-    const { dx, dy, axis, longpressed } = g;
-    g = null;
-    clearLp();
-    if (pill) {
-      pill.classList.remove('is-dragging');
-      pill.style.setProperty('--head-dx', '0px');
-      pill.style.setProperty('--head-dy', '0px');
-    }
-    if (longpressed) return;            // 长按已交引用钮接管，不判滑
-    const id = activeDocId();
-    if (!id) return;
-    // 2026-10-27 令纵横语义：顶部边缘（卡头胶囊）下滑 = 收起整叠（状态保留，
-    //   可再开）；横滑 = 切上一/下一张（环绕；关卡退役到卡头 X —— 横滑语义
-    //   统一为非破坏性切卡）。上滑换卡（批⑨/⑦令）随横滑全向接管退役。
-    if (axis === 'y' && dy > CARDHEAD_SWITCH_PX) {
-      logEvent('cards-collapse', { via: 'head-edge' });
-      closeCanvas();
-    } else if (axis === 'x' && Math.abs(dx) > CARDHEAD_SWITCH_PX) {
-      logEvent('card-switch', { via: 'head-swipe', dir: dx < 0 ? 1 : -1 });
-      switchDocCard(dx < 0 ? 1 : -1);
-    }
-  };
-  head.addEventListener('pointerup', finish);
-  head.addEventListener('pointercancel', finish);
-  // 滚动即收（引用钮/长按态不与内容滚动并存）
-  document.addEventListener('scroll', () => {
-    if (refBtn || head.classList.contains('is-longpress')) dismissRef();
-  }, true);
-}
+/** @type {{strip: HTMLElement, toolbar: HTMLElement, host: HTMLElement, empty: HTMLElement}|null} */
+let canvasUI = null;
+/** @type {{pane: Element, parent: Node, next: Node|null}|null} 活动文档 pane 收编槽（单槽）。 */
+let canvasDocAnchor = null;
 
-function activeTabId() {
-  const el = /** @type {HTMLElement|null} */ (document.querySelector('#canvas-tab-bar .canvas-tab.active'));
-  return el ? el.dataset.tabId : null;
-}
-
-/** 文档页签清单 = pane 仍在画板内容区里的页签（面板 pane 已收编进页面）。
+/** 文档页签全集（不按 pane 落点过滤 —— 活动 pane 可能已收编进页面体）。
  *  @returns {{id: string, label: string}[]} */
 export function docTabs() {
-  const content = document.getElementById('canvas-content');
-  if (!content) return [];
+  const bar = document.getElementById('canvas-tab-bar');
+  if (!bar) return [];
   const out = [];
-  for (const el of document.querySelectorAll('#canvas-tab-bar .canvas-tab')) {
+  for (const el of bar.querySelectorAll('.canvas-tab')) {
     const id = (/** @type {HTMLElement} */ (el)).dataset.tabId;
-    const pane = id ? getTabPane(id) : null;
-    if (pane && pane.parentElement === content) {
-      out.push({ id, label: el.querySelector('.canvas-tab-label')?.textContent || id });
-    }
+    if (!id || PANEL_TAB_IDS.has(id)) continue;
+    out.push({ id, label: el.querySelector('.canvas-tab-label')?.textContent || id });
   }
   return out;
 }
 
 export function hasDocTabs() { return docTabs().length > 0; }
 
-/** 当前激活的文档页签 id（激活页签是面板页签时返回 null）。 */
 export function activeDocId() {
-  const id = activeTabId();
-  if (!id) return null;
-  const pane = getTabPane(id);
-  const content = document.getElementById('canvas-content');
-  return pane && content && pane.parentElement === content ? id : null;
+  const el = /** @type {HTMLElement|null} */ (document.querySelector('#canvas-tab-bar .canvas-tab.active'));
+  const id = el ? el.dataset.tabId : null;
+  return id && !PANEL_TAB_IDS.has(id) ? id : null;
 }
 
-function ensureCardHead() {
-  if (cardHead) return cardHead;
-  const header = document.querySelector('#canvas-panel .canvas-header');
-  if (!header) return null;
-  cardHead = document.createElement('div');
-  cardHead.className = 'mobile-card-head';
-  const title = document.createElement('span');
-  title.className = 'mobile-card-title';
+/** 文档卡邻位切换（环绕；单卡不换）。@param {number} delta +1 下一张 / -1 上一张 */
+export function switchDocCard(delta) {
+  const docs = docTabs();
+  const id = activeDocId();
+  const idx = docs.findIndex((d) => d.id === id);
+  if (docs.length < 2 || idx < 0) return;
+  const nb = docs[(idx + delta + docs.length) % docs.length];
+  if (nb && nb.id !== id) setActiveTab(nb.id);
+}
+
+/** 活动文档 pane 收编进 canvas 页内容区（单槽锚点；换卡即归旧纳新）。 */
+function adoptActiveDoc() {
+  const id = activeDocId();
+  const pane = id ? getTabPane(id) : null;
+  const host = canvasUI?.host;
+  if (!host) return;
+  if (canvasDocAnchor && (!pane || canvasDocAnchor.pane !== pane)) {
+    // 换卡/关卡：旧 pane 原位归还画板内容区。
+    const a = canvasDocAnchor;
+    canvasDocAnchor = null;
+    if (a.pane.isConnected && a.parent && a.parent.isConnected) {
+      try { a.parent.insertBefore(a.pane, a.next); } catch { /* 树已变：放弃 */ }
+    }
+  }
+  if (pane && pane.parentElement !== host) {
+    canvasDocAnchor = { pane, parent: pane.parentElement, next: pane.nextSibling };
+    logEvent('canvas-page-adopt', { tab: id });
+    host.appendChild(pane);
+  }
+}
+
+/** canvas 页同步：chip 条重建（签名闸）+ 工具条态 + pane 收编 + 空态。 */
+function syncCanvasPage() {
+  if (!canvasUI) return;
+  const docs = docTabs();
+  const activeId = activeDocId();
+  const sig = docs.map((d) => d.id).join('|') + '#' + (activeId || '');
+  if (canvasUI.strip.dataset.sig !== sig) {
+    canvasUI.strip.dataset.sig = sig;
+    canvasUI.strip.innerHTML = '';
+    for (const d of docs) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'mf-strip-chip' + (d.id === activeId ? ' on' : '');
+      chip.dataset.tabId = d.id;
+      chip.textContent = d.label;
+      chip.title = d.label;
+      chip.addEventListener('click', () => {
+        logEvent('card-switch', { via: 'strip', tab: d.id });
+        setActiveTab(d.id);
+      });
+      canvasUI.strip.appendChild(chip);
+    }
+    // 活动 chip 滚入视野（切卡后一键可见）。
+    canvasUI.strip.querySelector('.mf-strip-chip.on')?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+  }
+  const idx = docs.findIndex((d) => d.id === activeId);
+  const cnt = /** @type {HTMLElement|null} */ (canvasUI.toolbar.querySelector('.mf-cv-count'));
+  if (cnt) cnt.textContent = docs.length > 1 && idx >= 0 ? `${idx + 1}/${docs.length}` : '';
+  const multi = docs.length > 1;
+  const prev = /** @type {HTMLButtonElement|null} */ (canvasUI.toolbar.querySelector('.mf-cv-prev'));
+  const next = /** @type {HTMLButtonElement|null} */ (canvasUI.toolbar.querySelector('.mf-cv-next'));
+  if (prev) prev.disabled = !multi;
+  if (next) next.disabled = !multi;
+  const pop = /** @type {HTMLButtonElement|null} */ (canvasUI.toolbar.querySelector('.mf-cv-pop'));
+  if (pop) {
+    const can = !!activeId && cardCanPop(activeId);
+    pop.hidden = !can;
+    if (can) pop.classList.toggle('is-independent', isCardIndependent(activeId));
+  }
+  adoptActiveDoc();
+  canvasUI.empty.hidden = docs.length > 0;
+  canvasUI.strip.hidden = docs.length === 0;
+  canvasUI.toolbar.hidden = docs.length === 0;
+  canvasUI.host.hidden = docs.length === 0;
+}
+
+/** canvas 页内容臂构建（一次；chip 条 + 工具条 + 文档区 + 空态）。 */
+function buildCanvasPage(body) {
+  const wrap = document.createElement('div');
+  wrap.className = 'mf-canvas-page';
+  const strip = document.createElement('div');
+  strip.className = 'mf-strip';
+  strip.setAttribute('role', 'tablist');
+  strip.setAttribute('aria-label', tt('文档卡片', 'Document cards'));
+
+  const toolbar = document.createElement('div');
+  toolbar.className = 'mf-cv-toolbar';
+  const prev = document.createElement('button');
+  prev.type = 'button';
+  prev.className = 'mf-cv-btn mf-cv-prev';
+  prev.title = tt('上一张', 'Previous');
+  prev.setAttribute('aria-label', tt('上一张', 'Previous'));
+  prev.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>';
+  prev.addEventListener('click', () => { logEvent('card-switch', { via: 'pagebar', dir: -1 }); switchDocCard(-1); });
   const count = document.createElement('span');
-  count.className = 'mobile-card-count';
-  count.hidden = true;
-  const close = document.createElement('button');
-  close.type = 'button';
-  close.className = 'mobile-card-close';
-  close.title = tt('关闭文档', 'Close document');
-  close.setAttribute('aria-label', tt('关闭文档', 'Close document'));
-  close.innerHTML = '<i data-lucide="x"></i>';
-  close.addEventListener('click', () => closeCard());
-  // UI 批⑧：独立/合并 toggle（新标签页姿态直切；文件卡才显示 —— 同 canvas.js
-  // cardCanPop 口径）。同位换形：.is-independent 切双图标 + title。
+  count.className = 'mf-cv-count';
+  const next = document.createElement('button');
+  next.type = 'button';
+  next.className = 'mf-cv-btn mf-cv-next';
+  next.title = tt('下一张', 'Next');
+  next.setAttribute('aria-label', tt('下一张', 'Next'));
+  next.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6 6-6 6"/></svg>';
+  next.addEventListener('click', () => { logEvent('card-switch', { via: 'pagebar', dir: 1 }); switchDocCard(1); });
   const pop = document.createElement('button');
   pop.type = 'button';
-  pop.className = 'mobile-card-pop';
+  pop.className = 'mf-cv-btn mf-cv-pop';
   pop.hidden = true;
   pop.title = tt('独立窗口打开', 'Open in standalone window');
   pop.setAttribute('aria-label', tt('独立窗口打开', 'Open in standalone window'));
@@ -487,202 +618,104 @@ function ensureCardHead() {
     const id = activeDocId();
     if (id && cardCanPop(id)) mobileCardToggle(id);
   });
-  cardHead.append(title, count, pop, close);
-  header.insertBefore(cardHead, header.firstChild);
-  if (typeof lucide !== 'undefined') createIconsIn(cardHead);
-  // UI 批⑨：卡头胶囊手势（直滑切卡/收起 + 长按引用钮；2026-10-27 令改写）。
-  initCardHeadTouch(cardHead);
-  return cardHead;
-}
-
-// ── 底部快捷切换条（作者令 2026-10-27「手机端 Canvas 交互优化」）──────────
-// 单手可达区（底部操作区）：[‹ 上一张] [页点指示(tap 跳卡)] [下一张 ›] ｜ [收起]。
-// frosted 胶囊族（与卡头/桌面胶囊同材质 token）；四钮命中盒 44×44（视觉圆 30px
-// 走 padding-box，不破卡头几何）。收起 = closeCanvas（文档保留可再开），与底缘
-// 抓手/卡头下滑同语义 —— 关掉整叠的第三条显性通路。‹ › 走 switchDocCard 既有环。
-function ensureSwitchbar() {
-  if (switchbarEl) return switchbarEl;
-  const root = document.getElementById('canvas-panel');
-  if (!root) return null;
-  switchbarEl = document.createElement('div');
-  switchbarEl.className = 'mobile-card-switchbar';
-  switchbarEl.setAttribute('role', 'toolbar');
-  switchbarEl.setAttribute('aria-label', tt('画板卡片操作条', 'Canvas card toolbar'));
-  const prev = document.createElement('button');
-  prev.type = 'button';
-  prev.className = 'sw-btn sw-prev';
-  prev.title = tt('上一张', 'Previous card');
-  prev.setAttribute('aria-label', tt('上一张', 'Previous card'));
-  prev.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>';
-  prev.addEventListener('click', () => {
-    if (!activeDocId()) return;
-    logEvent('card-switch', { via: 'bar', dir: -1 });
-    switchDocCard(-1);
-  });
-  const dots = document.createElement('div');
-  dots.className = 'sw-dots';
-  const next = document.createElement('button');
-  next.type = 'button';
-  next.className = 'sw-btn sw-next';
-  next.title = tt('下一张', 'Next card');
-  next.setAttribute('aria-label', tt('下一张', 'Next card'));
-  next.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
-  next.addEventListener('click', () => {
-    if (!activeDocId()) return;
-    logEvent('card-switch', { via: 'bar', dir: 1 });
-    switchDocCard(1);
-  });
-  const sep = document.createElement('div');
-  sep.className = 'sw-sep';
+  const sep = document.createElement('span');
+  sep.className = 'mf-cv-sep';
   sep.setAttribute('aria-hidden', 'true');
-  const collapse = document.createElement('button');
-  collapse.type = 'button';
-  collapse.className = 'sw-btn sw-collapse';
-  collapse.title = tt('收起画板', 'Collapse canvas');
-  collapse.setAttribute('aria-label', tt('收起画板', 'Collapse canvas'));
-  collapse.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
-  collapse.addEventListener('click', () => {
-    logEvent('cards-collapse', { via: 'switchbar' });
-    closeCanvas();
-    syncCardLayer();
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'mf-cv-btn mf-cv-close';
+  close.title = tt('关闭文档', 'Close document');
+  close.setAttribute('aria-label', tt('关闭文档', 'Close document'));
+  close.innerHTML = '<i data-lucide="x"></i>';
+  close.addEventListener('click', () => closeCard());
+  toolbar.append(prev, count, next, sep, pop, close);
+
+  const host = document.createElement('div');
+  host.className = 'mf-cv-host';
+  bindDocSwipe(host);
+  const empty = document.createElement('div');
+  empty.className = 'mf-cv-empty';
+  const eIcon = document.createElement('i');
+  eIcon.setAttribute('data-lucide', 'layers');
+  const eTitle = document.createElement('div');
+  eTitle.className = 'mf-cv-empty-title';
+  eTitle.textContent = tt('画板暂无文档卡片', 'No document cards yet');
+  const eSub = document.createElement('div');
+  eSub.className = 'mf-cv-empty-sub';
+  eSub.textContent = tt('在聊天里打开文件或文档后会出现在这里', 'Documents opened from chat appear here');
+  empty.append(eIcon, eTitle, eSub);
+  wrap.append(strip, toolbar, host, empty);
+  body.appendChild(wrap);
+  canvasUI = { strip, toolbar, host, empty };
+  if (typeof lucide !== 'undefined') createIconsIn(wrap);
+}
+
+/** 文档区横滑切卡（轴锁 8px / 阈 48px；环式；纵滚零劫持 —— 卡头手势同参数）。 */
+function bindDocSwipe(host) {
+  /** @type {{id: number, x0: number, y0: number, dx: number, dy: number, axis: string|null}|null} */
+  let g = null;
+  host.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (/** @type {Element} */ (e.target).closest('button, input, textarea, select, a')) return;
+    g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, axis: null };
+    try { host.setPointerCapture(e.pointerId); } catch (_) {}
   });
-  switchbarEl.append(prev, dots, next, sep, collapse);
-  root.appendChild(switchbarEl);
-  return switchbarEl;
-}
-
-/** 切换条随卡同步：页点重建（≤7 卡）、计数退化（>7 卡）、‹ › 禁用态。 */
-function syncSwitchbar() {
-  const bar = ensureSwitchbar();
-  if (!bar) return;
-  const docs = docTabs();
-  const activeId = activeDocId();
-  const idx = docs.findIndex((d) => d.id === activeId);
-  const dots = /** @type {HTMLElement} */ (bar.querySelector('.sw-dots'));
-  // 卡数变化才重建页点（避免每次 sync 抖动 tap 目标）。
-  const sig = docs.length + ':' + (idx >= 0 ? docs[idx].id : '');
-  if (dots.dataset.sig !== sig) {
-    dots.dataset.sig = sig;
-    dots.innerHTML = '';
-    if (docs.length > 7) {
-      const cnt = document.createElement('span');
-      cnt.className = 'sw-count';
-      cnt.textContent = idx >= 0 ? `${idx + 1}/${docs.length}` : `${docs.length}`;
-      dots.appendChild(cnt);
-    } else {
-      for (const d of docs) {
-        const dot = document.createElement('i');
-        dot.className = 'sw-dot' + (d.id === activeId ? ' on' : '');
-        dot.dataset.tabId = d.id;
-        dot.title = d.label;
-        dot.addEventListener('click', () => {
-          logEvent('card-switch', { via: 'dot', tab: d.id });
-          setActiveTab(d.id);
-        });
-        dots.appendChild(dot);
-      }
+  host.addEventListener('pointermove', (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    g.dx = e.clientX - g.x0;
+    g.dy = e.clientY - g.y0;
+    if (!g.axis && (Math.abs(g.dx) > SWIPE_AXIS_PX || Math.abs(g.dy) > SWIPE_AXIS_PX)) {
+      g.axis = Math.abs(g.dx) > Math.abs(g.dy) ? 'x' : 'y';
     }
-  }
-  const multi = docs.length > 1;
-  const prev = /** @type {HTMLButtonElement} */ (bar.querySelector('.sw-prev'));
-  const next = /** @type {HTMLButtonElement} */ (bar.querySelector('.sw-next'));
-  prev.disabled = !multi;
-  next.disabled = !multi;
-  dots.querySelectorAll('.sw-dot').forEach((el) => {
-    el.classList.toggle('on', (/** @type {HTMLElement} */ (el)).dataset.tabId === activeId);
   });
+  const finish = (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    const { dx, axis } = g;
+    g = null;
+    if (axis !== 'x' || Math.abs(dx) <= SWIPE_SWITCH_PX) return;
+    if (!activeDocId()) return;
+    logEvent('card-switch', { via: 'page-swipe', dir: dx < 0 ? 1 : -1 });
+    switchDocCard(dx < 0 ? 1 : -1);
+  };
+  host.addEventListener('pointerup', finish);
+  host.addEventListener('pointercancel', finish);
 }
 
-function syncCardChrome() {
-  if (!cardHead) return;
-  const docs = docTabs();
-  const activeId = activeDocId();
-  const idx = docs.findIndex((d) => d.id === activeId);
-  const title = cardHead.querySelector('.mobile-card-title');
-  if (title) title.textContent = idx >= 0 ? docs[idx].label : '';
-  const count = /** @type {HTMLElement|null} */ (cardHead.querySelector('.mobile-card-count'));
-  if (count) {
-    const show = docs.length > 1 && idx >= 0;
-    count.hidden = !show;
-    if (show) count.textContent = `${idx + 1}/${docs.length}`;
-  }
-  // UI 批⑧：独立/合并钮形同步（文件卡才可见；独立中 = 合并形 + 高亮）
-  const pop = /** @type {HTMLElement|null} */ (cardHead.querySelector('.mobile-card-pop'));
-  if (pop) {
-    const can = !!activeId && cardCanPop(activeId);
-    pop.hidden = !can;
-    if (can) {
-      const indep = isCardIndependent(activeId);
-      pop.classList.toggle('is-independent', indep);
-      const t = indep ? tt('合并回主窗', 'Merge back to main window') : tt('独立窗口打开', 'Open in standalone window');
-      pop.title = t;
-      pop.setAttribute('aria-label', t);
-    }
-  }
-  // 2026-10-27 令：底部快捷切换条随卡同步（页点/禁用态）。
-  syncSwitchbar();
-}
-
-/** 卡片层可见性 = 画板开 ∧ 激活页签是文档（面板页签激活 ⇒ 层隐藏，页面接管）。 */
-export function syncCardLayer() {
-  const live = isCanvasOpen() && !!activeDocId();
-  document.body.classList.toggle('mf-cards-live', live);
-  ensureCardHead();
-  syncCardChrome();
-}
-
-/** 关闭当前文档卡片（卡片头 X）：关单卡；关后落相邻文档卡，无文档卡则收层。
- *  注：closeTab 的 DOM/映射清算是异步收尾（transitionend/200ms），本卡在此期间
- *  仍会出现在 docTabs() 里 —— 相邻卡选择必须先滤掉它；抢先 setActiveTab 相邻卡
- *  也会让 closeTab 的 finalize 走「激活已变」分支，不再自选（可能选中面板页签）。 */
+/** 关闭当前文档（工具条 X）：关单卡；关后落相邻文档卡，无文档卡则保持空态。 */
 export function closeCard() {
   const id = activeDocId();
   if (!id) return;
   const docs = docTabs();
   const idx = docs.findIndex((d) => d.id === id);
-  logEvent('card-close', { tab: id });
+  logEvent('card-close', { tab: id, via: 'canvas-page' });
   closeTab(id);
   const rest = docTabs().filter((d) => d.id !== id);
   if (rest.length) {
-    // 桌面 closeTab 的相邻页签选择含面板页签；手机层改落相邻**文档**卡。
     const next = rest[Math.min(Math.max(idx, 0), rest.length - 1)];
-    if (next && next.id !== activeTabId()) setActiveTab(next.id);
+    if (next && next.id !== activeDocId()) setActiveTab(next.id);
   }
-  syncCardLayer();
+  syncCanvasPage();
 }
 
-/** bar「画板」键：开/收文档卡片层（无文档卡时轻提示，不伪造空层）。 */
-export function toggleCards() {
-  if (document.body.classList.contains('mf-cards-live')) {
-    closeCanvas();
-    logEvent('cards-collapse', { via: 'bar' });
-  } else if (hasDocTabs()) {
-    // 激活页签可能是面板页签：先落一张文档卡再开层，避免开出一个不可见层。
-    const docs = docTabs();
-    if (!activeDocId() && docs.length) setActiveTab(docs[docs.length - 1].id);
-    openCanvas();
-    logEvent('cards-expand', { via: 'bar' });
-  } else {
-    window.__showToast?.(tt('画板暂无文档卡片', 'No document cards yet'), 'info');
-    logEvent('cards-empty');
-  }
-  syncCardLayer();
-}
-
-/** 主会话键：pop 到 root 并收起卡片层（文档保留在栈里，可再开）。 */
+/** 主会话键：回聊天根（dock 根的「<」）；canvas 页离开 = 面归还、文档保留。 */
 export function goHome() {
-  popToRoot();
-  if (isCanvasOpen()) { closeCanvas(); logEvent('cards-collapse', { via: 'home' }); }
-  syncCardLayer();
+  while (stack.length > 1) closePageFace(stack.pop());
+  if (stack[0] !== 'chat') {
+    closePageFace(stack[0]);
+    stack[0] = 'chat';
+  }
+  renderPages();
+  emitNav('home');
 }
 
-// ── 页面栈（②：root chat + push/pop）────────────────────────────────
+// ── 页面栈（home + details）─────────────────────────────────────────
 
 export function navState() {
   return {
     stack: [...stack],
     top: stack[stack.length - 1],
-    cardsLive: document.body.classList.contains('mf-cards-live'),
+    home: stack[0],
+    cardsLive: false, // dock 批：bottom sheet 退役；字段保留兼容旧探针读者
   };
 }
 
@@ -697,54 +730,74 @@ function renderPages() {
     section.classList.toggle('live', live);
     if (live) (/** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title')))?.focus?.();
   }
-  document.body.classList.toggle('mf-page-open', PAGE_BY_ID.has(top));
-  syncOverlayFaces(); // usage/settings 面随栈收编/归还（外部关闭对账路径同此汇合）
+  document.body.classList.toggle('mf-page-open', top !== 'chat');
+  syncDockActive();
+  // 徽标可能晚于 buildDock 建出（封存态剖面好友面不初始化）——翻页时重查补绑。
+  syncDockBadges();
+  // hub 门控行（graph 随 wikiGraph flag）与 configData 到达时序重对账（p9 flaky 实证）。
+  syncHubGate();
+  syncOverlayFaces();
+  syncSocialFaces((id) => stack.includes(id));
+  if (top === 'canvas') syncCanvasPage();
 }
 
-/** 页面面关闭（overlay 升格的 usage/settings 与栈同步；面板页由 renderPages 收）。
- *  r3 p4fix：面关闭后其内容面的原位归还统一走 renderPages → syncOverlayFaces
- *  （本函数只负责桌面开/关态同步，不碰 DOM 落点）。 */
+/** dock 根页「<」/详情页「<」统一出栈腿：详情 pop 一层；根页回聊天。 */
+function backOut() {
+  if (stack.length > 1) popPage();
+  else if (stack[0] !== 'chat') goHome();
+}
+
+/** 页面面关闭（出栈/换根时归位桌面开/关态）。 */
 function closePageFace(pageId) {
-  if (pageId === 'settings') {
-    try { if (isSettingsPanelActive()) closeSettingsPanel(); } catch { /* 模块态异常不阻断 */ }
-  }
-  if (pageId === 'usage') {
-    modUsage().then((m) => m.closeUsageDashboard()).catch(() => { /* 未载即未开 */ });
+  switch (pageId) {
+    case 'settings':
+      try { if (isSettingsPanelActive()) closeSettingsPanel(); } catch { /* 模块态异常不阻断 */ }
+      break;
+    case 'usage':
+      modUsage().then((m) => m.closeUsageDashboard()).catch(() => { /* 未载即未开 */ });
+      break;
+    case 'search':
+      document.getElementById('search-overlay')?.classList.remove('on');
+      break;
+    case 'reminder':
+      document.querySelector('#reminder-panel')?.classList.remove('open');
+      break;
+    case 'daemon':
+      document.querySelector('#daemon-panel')?.classList.remove('open');
+      break;
+    case 'background':
+      document.querySelector('#bg-dropdown')?.classList.add('hidden');
+      break;
+    case 'profile':
+      import('../memory.js').then((m) => m.closeMemoryModal?.()).catch(() => { /* 未载即未开 */ });
+      break;
+    case 'social':
+      document.getElementById('social-overlay')?.classList.remove('on');
+      break;
+    case 'tasks':
+      closeTaskPanel(true);
+      break;
+    default:
+      break; // messages/contacts/canvas/panels/conversation：面态无需翻转
   }
 }
 
 /**
- * 通用 push（App 壳/深链留缝点）：目标已在栈中则先摘除再压顶（摘除位移的
- * overlay 面同步关闭）。UI 内统一走 navigateTo。
+ * 通用 push（详情页/壳/深链留缝点）：dock 根 id 走 dockTo；'chat' = 中键
+ * home；目标已在栈中先摘除再压顶（摘除位移的 overlay 面同步关闭）。
  * @param {string} pageId
  */
 export function pushPage(pageId) {
+  if (pageId === 'chat') return dockHome();
   if (!PAGE_BY_ID.has(pageId)) return;
+  if (PAGE_BY_ID.get(pageId).dock) return dockTo(pageId);
   ensureContainer();
   const displaced = [];
   stack = stack.filter((p) => (p === pageId ? (displaced.push(p), false) : true));
   for (const d of displaced) closePageFace(d);
   stack.push(pageId);
   logEvent('nav-push', { page: pageId, depth: stack.length });
-  const def = PAGE_BY_ID.get(pageId);
-  if (def.tabId) ensurePanelContent(pageId); // 异步：pane 建好即收编，页面壳即刻呈现
-  if (pageId === 'settings') {
-    try {
-      openSettingsPanel();
-      // 六件⑤：不再向 .settings-modal-header 注入返回钮 —— 页面壳
-      // .mobile-page-header 已有一枚，双层返回（手机实测反馈）退役。
-    } catch (e) { console.error('[mobile-layer] settings', e); }
-  }
-  if (pageId === 'usage') {
-    modUsage()
-      .then((m) => {
-        m.openUsageDashboard();
-        // 六件⑤：.ud-header 注入返回同上退役 —— 单返回入口 = 页面壳。
-        ensureUsageReconcile(); // overlay 首开即建 —— 此刻才存在，挂对账观察者
-        syncOverlayFaces();     // 首开的面板此刻才建出 —— 建好即收编进页面体
-      })
-      .catch((e) => console.error('[mobile-layer] usage', e));
-  }
+  void ensurePanelContent(pageId);
   renderPages();
   emitNav('push');
 }
@@ -759,7 +812,7 @@ export function popPage() {
   emitNav('pop');
 }
 
-/** pop 到 root（主会话键）。 */
+/** pop 到 home（聊天根或当前 dock 根；详情全清）。 */
 export function popToRoot() {
   if (stack.length <= 1) return;
   while (stack.length > 1) closePageFace(stack.pop());
@@ -777,18 +830,47 @@ export function popToPage(pageId) {
 }
 
 /**
- * UI 内统一入口（bar 页面键）：归 root 再 push —— 栈深实际 ≤2，overlay 面
- * 不可能出现「栈中位移但面残留」。通用 pushPage 保留给壳/深链。
- * @param {string} pageId
+ * 中键 = 对话 home 键（作者令 2026-10-29 23:36「中间那个对话 就是进入我跟你的
+ * 这个输入框」）：详情全清 + 回聊天根（输入框）；已在聊天根 = noop。
  */
+function dockHome() {
+  ensureContainer();
+  if (stack[0] === 'chat' && stack.length === 1) { emitNav('dock-noop'); return; }
+  logEvent('dock-switch', { page: 'chat' });
+  goHome();
+}
+
+/**
+ * 底 dock 切换根页：详情全清 + 根替换（互斥）。同根再点 = 清详情回根。
+ * chat home 键（中键）改走 dockHome。
+ * @param {string} pageId dock 根 id
+ */
+export function dockTo(pageId) {
+  if (pageId === 'chat') return dockHome();
+  if (!PAGE_BY_ID.get(pageId)?.dock) return;
+  ensureContainer();
+  if (stack[0] === pageId && stack.length === 1) { emitNav('dock-noop'); return; }
+  while (stack.length > 1) closePageFace(stack.pop());
+  if (stack[0] !== pageId) {
+    if (stack[0] !== 'chat') closePageFace(stack[0]);
+    stack[0] = pageId;
+    logEvent('dock-switch', { page: pageId });
+  }
+  void ensurePanelContent(pageId);
+  renderPages();
+  emitNav('dock');
+}
+
+/** UI 内统一入口：dock 根走 dockTo，详情走 pushPage；'chat' = 中键 home。 */
 export function navigateTo(pageId) {
+  if (pageId === 'chat') return dockHome();
   if (!PAGE_BY_ID.has(pageId)) return;
+  if (PAGE_BY_ID.get(pageId).dock) return dockTo(pageId);
   if (stack[stack.length - 1] === pageId) { emitNav('push-noop'); return; }
-  popToRoot();
   pushPage(pageId);
 }
 
-// ── overlay 面（usage/settings）的注入式返回钮 + 外部关闭对账 ────────
+// ── overlay 面外部关闭对账（watchOverlayClose 扩展到全页面注册表）────
 
 /** @type {HTMLElement[]} 注入的返回钮（拆层移除，桌面零残留）。 */
 const injectedBacks = [];
@@ -803,8 +885,6 @@ function ensureInjectedBack(hostSel, pageId) {
   back.title = backLabel();
   back.setAttribute('aria-label', backLabel());
   back.innerHTML = '<i data-lucide="chevron-left"></i>';
-  // r3 p4fix：自身页在栈顶时就是普通「返回一层」（popToPage 对栈顶页是空转）；
-  // 不在栈顶（下方叠了别的页）才弹回本页。
   back.addEventListener('click', () => {
     if (stack[stack.length - 1] === pageId) popPage();
     else popToPage(pageId);
@@ -814,64 +894,281 @@ function ensureInjectedBack(hostSel, pageId) {
   if (typeof lucide !== 'undefined') createIconsIn(back);
 }
 
-/** 桌面关闭路径（Escape / 桌面关闭钮 / overlay 点外）关掉面 ⇒ 栈同步弹层。
- *  设置 overlay 静态存在于 index.html（激活即可挂观察者）；用量 overlay 由
- *  usageDashboard.buildShell 首开时才建 —— 它的对账观察者延迟到首次 push
- *  （ensureUsageReconcile），避免在激活期对不存在的节点挂空观察。 */
-function watchOverlayClose() {
-  const settingsOv = document.getElementById('settings-overlay');
-  if (settingsOv) {
-    const reconcile = () => {
-      const top = stack[stack.length - 1];
-      if (top === 'settings' && !settingsOv.classList.contains('on')) {
-        stack.pop();
-        renderPages();
-        emitNav('pop-external');
-      }
-    };
-    const mo = new MutationObserver(reconcile);
-    mo.observe(settingsOv, { attributes: true, attributeFilter: ['class'] });
-    overlayObservers.push(mo);
-  }
-  unsubs.push(() => {
-    for (const mo of overlayObservers.splice(0)) mo.disconnect();
-  });
+/** 外部关闭对账注册表：页面 ←→ overlay 状态载体（桌面关闭路径 ⇄ 栈同步弹层）。 */
+const CLOSE_WATCH = [
+  { page: 'settings', sel: '#settings-overlay', off: (el) => !el.classList.contains('on'), attr: ['class'] },
+  { page: 'search', sel: '#search-overlay', off: (el) => !el.classList.contains('on'), attr: ['class'] },
+  { page: 'reminder', sel: '#reminder-panel', off: (el) => !el.classList.contains('open'), attr: ['class'] },
+  { page: 'daemon', sel: '#daemon-panel', off: (el) => !el.classList.contains('open'), attr: ['class'] },
+  { page: 'background', sel: '#bg-dropdown', off: (el) => el.classList.contains('hidden'), attr: ['class'] },
+  { page: 'profile', sel: '#memory-overlay', off: (el) => !el.classList.contains('on'), attr: ['class'] },
+  { page: 'social', sel: '#social-overlay', off: (el) => !el.classList.contains('on'), attr: ['class'] },
+];
+
+/** overlay 载体建出后才可挂观察者的页面（usage 面板首开建；taskPanel 惰性建）。 */
+const overlayReconcileBound = new Map();
+function ensureOverlayReconcile(pageId, sel, off, attr) {
+  if (overlayReconcileBound.get(pageId)) return;
+  const ov = document.querySelector(sel);
+  if (!ov) return;
+  overlayReconcileBound.set(pageId, true);
+  bindReconcile(pageId, ov, off, attr);
 }
 
-/** 用量 overlay 首开后挂对账观察者（幂等；节点不存在则下次 push 再试）。 */
-let usageReconcileBound = false;
-function ensureUsageReconcile() {
-  if (usageReconcileBound) return;
-  const usageOv = document.getElementById('usage-overlay');
-  if (!usageOv) return;
-  usageReconcileBound = true;
-  const reconcileUsage = () => {
+function bindReconcile(pageId, ov, off, attr) {
+  const reconcile = () => {
     const top = stack[stack.length - 1];
-    if (top === 'usage' && usageOv.hidden) {
+    if (top === pageId && off(ov)) {
       stack.pop();
       renderPages();
       emitNav('pop-external');
     }
   };
-  const mo = new MutationObserver(reconcileUsage);
-  mo.observe(usageOv, { attributes: true, attributeFilter: ['hidden'] });
+  const mo = new MutationObserver(reconcile);
+  mo.observe(ov, { attributes: true, attributeFilter: attr });
   overlayObservers.push(mo);
 }
 
-// ── 画板事件 → 卡片层可见性 ─────────────────────────────────────────
+function watchOverlayClose() {
+  for (const w of CLOSE_WATCH) {
+    const ov = document.querySelector(w.sel);
+    if (ov) bindReconcile(w.page, ov, w.off, w.attr);
+  }
+  unsubs.push(() => {
+    for (const mo of overlayObservers.splice(0)) mo.disconnect();
+  });
+  // 头像腿（桌面 handler 直开合并面板）：memory-overlay 被外部置 .on 且本层
+  // 不在 profile 页 ⇒ pushPage 收编进页面（浮层形态不落地）。与 closeWatch
+  // 同源观察（close 腿弹栈 / open 腿进页，一对镜像）。
+  const memOv = document.getElementById('memory-overlay');
+  if (memOv) {
+    let onPrev = memOv.classList.contains('on');
+    const mo = new MutationObserver(() => {
+      const on = memOv.classList.contains('on');
+      const rose = on && !onPrev;
+      onPrev = on;
+      if (rose && stack[stack.length - 1] !== 'profile' && !stack.includes('profile')) {
+        logEvent('profile-open-adopt', {});
+        pushPage('profile');
+      }
+    });
+    mo.observe(memOv, { attributes: true, attributeFilter: ['class'] });
+    overlayObservers.push(mo);
+  }
+}
+
+// ── 会话窗收编（对话列表行 → 「会话」详情页）────────────────────────
+// 桌面 renderChatModal 每次整建 #fm-chat-overlay（remove + create）；窗体
+// .fm-modal re-parent 进 conversation 页体；closeChat remove overlay ⇒ 对账
+// 弃收编节点（桌面整建语义下复用无意义）+ 弹页。
+
+function watchChatModal() {
+  chatModalMo = new MutationObserver(() => {
+    const ov = document.getElementById('fm-chat-overlay');
+    const modal = ov?.querySelector('.fm-modal') || null;
+    if (modal && chatAdopted?.modal !== modal) {
+      // 新窗建出：弃旧槽（旧节点已随旧 overlay 摘除）+ 收编新窗。
+      chatAdopted = null;
+      const body = bodyOf('conversation');
+      if (!body) return;
+      logEvent('chat-adopt', {});
+      chatAdopted = { modal };
+      body.appendChild(modal);
+      if (stack[stack.length - 1] !== 'conversation') pushPage('conversation');
+    } else if (!ov && chatAdopted) {
+      // 桌面关窗：弃收编节点（其 overlay 已整体摘除）+ 弹页。
+      chatAdopted.modal.remove();
+      chatAdopted = null;
+      if (stack[stack.length - 1] === 'conversation') popPage();
+    }
+  });
+  chatModalMo.observe(document.body, { childList: true, subtree: true });
+  unsubs.push(() => { chatModalMo?.disconnect(); chatModalMo = null; chatAdopted = null; });
+}
+
+// ── 底 dock（五栏根页切换器；作者令 2026-10-29 小红书样式基准）───────
+// 白底固定底栏、图标在上 + 文字标签在下、五等分、active 态可辨（克制形态：
+// 强调色 icon/label）、未读红点徽标镜像桌面既有徽标读数。
+// 中键改版批（同日 23:36）：中键 = 小红书中心键形态 —— sapphire 主色实心大圆、
+// 高出两侧常规 tab 基线，图标 = 给 agent 设置的头像（圆裁 + 主色细环；无头像
+// 回落气泡字形），点 = 回主对话输入框（chat home）。
+
+/** @type {Map<string, HTMLElement>} dock id → 键 */
+const dockKeys = new Map();
+/** @type {MutationObserver|null} 徽标镜像观察者。 */
+let badgeMo = null;
+
+function buildDock() {
+  if (dockEl) return dockEl;
+  dockEl = document.createElement('nav');
+  dockEl.id = 'mobile-dock';
+  dockEl.setAttribute('role', 'tablist');
+  dockEl.setAttribute('aria-label', tt('主导航', 'Main navigation'));
+  const DEFS = DOCK_ORDER.map(dockDef);
+  for (const def of DEFS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'dock-key';
+    btn.dataset.dock = def.id;
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-selected', 'false');
+    const badge = document.createElement('span');
+    badge.className = 'dock-badge';
+    badge.hidden = true;
+    const label = document.createElement('span');
+    label.className = 'dock-label';
+    label.textContent = tt(def.zh, def.en);
+    if (def.id === 'chat') {
+      // 中键（作者令 23:36）：中心键容器 —— 图标位由 paintDockCenterAvatar
+      // 按「agent 头像 / 气泡回落」两态填装（形态见 mobileLayer.css 中键块）。
+      btn.classList.add('dock-key-center');
+      const center = document.createElement('span');
+      center.className = 'dock-center';
+      btn.append(center, label, badge);
+    } else {
+      const icon = document.createElement('span');
+      icon.className = 'dock-ic';
+      icon.innerHTML = `<i data-lucide="${def.icon}"></i>`;
+      btn.append(icon, label, badge);
+    }
+    btn.addEventListener('click', (e) => {
+      // 同 hub 行：桌面面 outside-close 监听 document 冒泡，入口键停冒泡防误关。
+      e.stopPropagation();
+      touchLayer();
+      logEvent('dock-click', { page: def.id });
+      if (def.id === 'chat') dockHome();
+      else dockTo(def.id);
+    });
+    dockEl.appendChild(btn);
+    dockKeys.set(def.id, btn);
+  }
+  document.body.appendChild(dockEl);
+  paintDockCenterAvatar(); // 先装字形/头像再统一 createIcons（<i data-lucide> 替换腿）
+  if (typeof lucide !== 'undefined') createIconsIn(dockEl);
+  // 头像落点汇合订阅（本机上传/跨端收敛/会话切换都经 agentProfile.paintSlot）。
+  unsubs.push(onAgentAvatarChange(paintDockCenterAvatar));
+  const onLocale = () => {
+    for (const def of DEFS) {
+      const k = dockKeys.get(def.id);
+      if (k) (/** @type {HTMLElement|null} */ (k.querySelector('.dock-label'))).textContent = tt(def.zh, def.en);
+    }
+    if (dockEl) dockEl.setAttribute('aria-label', tt('主导航', 'Main navigation'));
+  };
+  window.addEventListener('locale-changed', onLocale);
+  unsubs.push(() => window.removeEventListener('locale-changed', onLocale));
+  watchDockBadges();
+  return dockEl;
+}
+
+/** 中键图标两态（作者令 23:36「图标应该用给agent设置的头像」）：读链 = 会话头
+ *  同一本地条目（agentProfile.agentAvatarDataUrl，跨端 sha 收敛同键），节点走
+ *  avatarRender 解码复用池；无头像回落气泡字形（= 原中键图标，作者逐字「就是
+ *  目前中间对话按钮那个图标」）。 */
+function paintDockCenterAvatar() {
+  const holder = dockKeys.get('chat')?.querySelector('.dock-center');
+  if (!holder) return;
+  const dataUrl = agentAvatarDataUrl();
+  const img = dataUrl ? avatarImgNode(dataUrl) : null;
+  if (img) {
+    img.className = 'dock-center-img';
+    img.draggable = false;
+    img.alt = '';
+    holder.replaceChildren(img);
+    holder.classList.add('has-avatar');
+    return;
+  }
+  holder.classList.remove('has-avatar');
+  if (holder.querySelector('svg')) return; // 字形已就位（lucide 已替换，幂等零重建）
+  holder.innerHTML = '<i data-lucide="message-circle"></i>';
+  if (typeof lucide !== 'undefined') createIconsIn(holder);
+}
+
+/** 徽标镜像：桌面徽标读数（#messages-badge/#contacts-badge，手机层按钮不可见
+ *  但 WS 计数流照写）→ dock 红点。零新轮询、零第二判据。 */
+function applyDockBadges() {
+  const msgs = document.getElementById('messages-badge');
+  const cts = document.getElementById('contacts-badge');
+  const setBadge = (dockId, on) => {
+    const b = /** @type {HTMLElement|null} */ (dockKeys.get(dockId)?.querySelector('.dock-badge'));
+    if (b) b.hidden = !on;
+  };
+  setBadge('messages', !!msgs && !msgs.hidden && msgs.textContent !== '');
+  setBadge('contacts', !!cts && !cts.hidden && cts.textContent !== '');
+}
+
+/** 已观察的徽标节点（徽标可能晚于 buildDock 才建出 —— 封存态剖面里好友面
+ *  不初始化，D3 判据实测：build 时查无节点 ⇒ 观察从未绑定，晚写的徽标读数
+ *  不触发镜像）。观察者挂 body 子树 childList 兜底捕捉晚建节点 + 已绑节点的
+ *  读数变化，回调统一走 bind+apply。 */
+const badgeWatched = new Set();
+function syncDockBadges() {
+  if (!badgeMo) return;
+  for (const sel of ['messages-badge', 'contacts-badge']) {
+    const el = document.getElementById(sel);
+    if (el && !badgeWatched.has(el)) {
+      badgeMo.observe(el, { attributes: true, attributeFilter: ['hidden'], childList: true, characterData: true, subtree: true });
+      badgeWatched.add(el);
+    }
+  }
+  applyDockBadges();
+}
+
+function watchDockBadges() {
+  badgeMo = new MutationObserver(() => syncDockBadges());
+  badgeWatched.clear();
+  badgeMo.observe(document.body, { childList: true, subtree: true });
+  syncDockBadges();
+  unsubs.push(() => { badgeMo?.disconnect(); badgeMo = null; badgeWatched.clear(); });
+}
+
+function syncDockActive() {
+  const home = stack[0];
+  for (const [id, btn] of dockKeys) {
+    const on = home === id;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  }
+}
+
+// ── 画板事件 → canvas 页同步（canvas-open 拦截：桌面 openCanvas ⇒ 进页）─
 
 function watchCanvasEvents() {
-  const onSwitch = () => syncCardLayer();
+  // 桌面开画板/切卡（聊天文件卡等路径）⇒ 手机层进 canvas 独立页（bottom sheet
+  // 退役）。三条闸：①canvas-open 在场；②启动抑制窗 3s（boot 恢复/兜底路径
+  // restoreTabs→openPlugins 先于/紧随本层把 canvas-open 置真 —— 那是恢复不是
+  // 用户开卡，刷新归聊天根契约不被拽页）；③已不在 canvas 页（页内切换不抢）。
+  // 触发源 = 画板 open 类的 **false→true 迁移沿** + canvas-tab-switched
+  // （已开画板时点文件卡 = openCanvas 幂等无类变化，靠切卡事件补触发）。
+  let bootedAt = Date.now();
+  const maybeAdopt = (why) => {
+    if (bootedAt && Date.now() - bootedAt <= 3000) return;
+    if (!document.body.classList.contains('canvas-open')) return;
+    if (stack[stack.length - 1] === 'canvas') return;
+    logEvent('canvas-open-adopt', { why });
+    dockTo('canvas');
+  };
+  const onSwitch = () => { syncCanvasPage(); maybeAdopt('tab-switched'); };
   document.addEventListener('canvas-tab-switched', onSwitch);
-  document.addEventListener('canvas-tab-closed', onSwitch);
-  // UI 批⑧：独立/合并态变化 → 卡头钮形跟随（canvas.js markIndependentUI 派发）
-  document.addEventListener('canvas-independent-changed', syncCardChrome);
-  const mo = new MutationObserver(() => syncCardLayer());
+  document.addEventListener('canvas-tab-closed', () => { syncCanvasPage(); maybeAdopt('tab-closed'); });
+  document.addEventListener('canvas-independent-changed', onSwitch);
+  // 联系人页「手机接入」行 / 消息页聚合行（socialFaces 事件环外发腿）。
+  document.addEventListener('nf:mobile-social-entry', () => pushPage('social'));
+  document.addEventListener('nf:mobile-goto', (e) => {
+    const page = (/** @type {CustomEvent<{page?: string}>} */ (e)).detail?.page;
+    if (page && PAGE_BY_ID.get(page)?.dock) dockTo(page);
+  });
+  let canvasOpenPrev = document.body.classList.contains('canvas-open');
+  const mo = new MutationObserver(() => {
+    const open = document.body.classList.contains('canvas-open');
+    const rose = open && !canvasOpenPrev;
+    canvasOpenPrev = open;
+    if (rose) maybeAdopt('open-edge');
+  });
   mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
   unsubs.push(() => {
     document.removeEventListener('canvas-tab-switched', onSwitch);
     document.removeEventListener('canvas-tab-closed', onSwitch);
-    document.removeEventListener('canvas-independent-changed', syncCardChrome);
+    document.removeEventListener('canvas-independent-changed', onSwitch);
     mo.disconnect();
   });
 }
@@ -881,41 +1178,55 @@ function watchCanvasEvents() {
 export function activateNav() {
   (/** @type {any} */ (window)).__nfMobileLayerEvents = __nfEvents;
   ensureContainer();
+  buildDock();
   watchCanvasContent();
   watchOverlayClose();
   watchCanvasEvents();
+  watchChatModal();
   // 激活即收编启动恢复已建成的面板 pane（同步路径；异步路径走 watchCanvasContent）。
   for (const def of PAGES) if (def.tabId) adoptPane(def.id);
-  syncCardLayer();
   renderPages();
   // 只读探针（App 壳/深链留缝点）。
   (/** @type {any} */ (window)).__nfMobileNav = {
     get stack() { return navState().stack; },
     get top() { return navState().top; },
-    version: 'mobile-ui-refactor r3 nav (p4fix settings/usage face-adopt)',
+    get home() { return navState().home; },
+    get dock() { return [...DOCK_ORDER]; },
+    version: 'mobile dock batch (five-tab dock + chat-home center key + fullscreen pages + canvas page)',
   };
   return function teardownNav() {
     for (const fn of unsubs.splice(0)) { try { fn(); } catch { /* ignore */ } }
-    // pane 原样归还画板内容区（逆序归还：锚点的 next 在归还时必然已就位）。
+    // pane 原样归还画板内容区（逆序归还）。
     for (const a of paneAnchors.reverse()) {
       try {
         if (a.pane && a.parent && a.parent.isConnected) a.parent.insertBefore(a.pane, a.next);
-      } catch { /* 树已变：放弃归还，避免二次破坏 */ }
+      } catch { /* 树已变：放弃归还 */ }
     }
     paneAnchors.length = 0;
-    // overlay 内容面原位归还（锚点语义同 paneAnchors；开/关态原样保留给桌面 ——
-    // 视口跨越回桌面时正在看的设置/用量页直接以桌面形态续显）。
+    // canvas 页活动文档 pane 归还。
+    if (canvasDocAnchor) {
+      try {
+        if (canvasDocAnchor.pane.isConnected && canvasDocAnchor.parent?.isConnected) {
+          canvasDocAnchor.parent.insertBefore(canvasDocAnchor.pane, canvasDocAnchor.next);
+        }
+      } catch { /* 放弃 */ }
+      canvasDocAnchor = null;
+    }
+    // overlay 内容面原位归还。
     for (const id of [...overlayAnchors.keys()].reverse()) restoreOverlayFace(id);
     overlayAnchors.clear();
-    if (cardHead) { cardHead.remove(); cardHead = null; }
-    if (switchbarEl) { switchbarEl.remove(); switchbarEl = null; }
+    if (chatAdopted) { try { chatAdopted.modal.remove(); } catch { /* ignore */ } chatAdopted = null; }
+    if (dockEl) { dockEl.remove(); dockEl = null; }
+    dockKeys.clear();
+    canvasUI = null;
+    hubBodies.clear();
     for (const b of injectedBacks.splice(0)) b.remove();
-    document.body.classList.remove('mf-cards-live', 'mf-page-open');
+    document.body.classList.remove('mf-page-open');
     if (container) { container.remove(); container = null; }
     sections.clear();
     stack = ['chat'];
     layerTouched = false;
-    usageReconcileBound = false;
+    overlayReconcileBound.clear();
     delete (/** @type {any} */ (window)).__nfMobileNav;
   };
 }

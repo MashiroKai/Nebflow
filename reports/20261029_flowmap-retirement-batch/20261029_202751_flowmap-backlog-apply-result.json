@@ -1,0 +1,30 @@
+{
+ "appliedAt": "2026-10-29T20:27:51",
+ "manifest": "20261029_202740_flowmap-backlog-manifest.json",
+ "before": {
+  "dirs": 500,
+  "bytes": 17729767,
+  "delete": 463,
+  "deleteBytes": 12893321,
+  "keep": 37,
+  "keepBytes": 4836446
+ },
+ "removedCount": 463,
+ "removedBytes": 12893321,
+ "registeredRetirementEvents": [
+  "delegate-nebflow-0ae466e0",
+  "delegate-nebflow-253ec234",
+  "delegate-nebflow-2c615a00",
+  "delegate-nebflow-c93d27ad"
+ ],
+ "failed": [],
+ "skipped": [],
+ "after": {
+  "dirs": 37,
+  "bytes": 4836446,
+  "delete": 0,
+  "deleteBytes": 0,
+  "keep": 37,
+  "keepBytes": 4836446
+ }
+}

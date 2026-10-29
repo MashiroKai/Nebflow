@@ -939,11 +939,12 @@ private[agent] object AgentProcessing:
               // 投递的终态回执永挂未确认 ⇒ sweep 按 10min grace 重投至上限（#886
               // 重复链的源头之一：canvas/imagegen 的首件即经本面投出）。补 ack +
               // 持久投递标记（重启恢复重放闸判据），与孪生面同形。
-              _ <- drainedEvents.traverse_(nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent)
-              _ <- nebflow.core.processor.DeliveredReceiptLedger.markDelivered(
-                state.sessionId.getOrElse(""),
-                drainedEvents.flatMap(_.correlationId)
-              )
+                  _ <- drainedEvents.traverse_(nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent)
+                  _ <- nebflow.core.processor.DeliveredReceiptLedger.markDelivered(
+                    state.sessionId.getOrElse(""),
+                    // 不过时批 2026-10-29：按身份键标记（重投件的原件 id 随行）。
+                    nebflow.core.processor.DeliveredReceiptLedger.identityKeysOf(drainedEvents)
+                  )
               result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, tc.replyTo)
             yield result
         end match
@@ -1219,7 +1220,8 @@ private[agent] object AgentProcessing:
                         _ <- drain.drainedEvents.traverse_(nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent)
                         _ <- nebflow.core.processor.DeliveredReceiptLedger.markDelivered(
                           state.sessionId.getOrElse(""),
-                          drain.drainedEvents.flatMap(_.correlationId)
+                          // 不过时批 2026-10-29：按身份键标记（重投件的原件 id 随行）。
+                          nebflow.core.processor.DeliveredReceiptLedger.identityKeysOf(drain.drainedEvents)
                         )
                         res <- pipeLlmCall(
                           agentDef,
@@ -1314,66 +1316,88 @@ private[agent] object AgentProcessing:
 
       // --- External event while processing ---
       case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, _) =>
-        logAgentEvent(
-          agentDef,
-          depth,
-          state.sessionId,
-          state.sessionName,
-          "external-event-queued",
-          s"source=$source type=$eventType"
-        )
         val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
-        // Sub-agent barrier: a Delegate/SubTask result (completed or failed)
-        // satisfies one outstanding slot of the parallel batch. The drain at the
-        // turn boundary only releases subtask/delegate events once the counter
-        // hits 0, so a batch completing mid-turn is still injected together.
-        val updatedOutstanding =
-          if TurnBoundaryDrains.isSubagentResult(event) then math.max(0, state.execution.outstandingSubagentResults - 1)
-          else state.execution.outstandingSubagentResults
-        // v2 反推送风暴批（2026-10-28，修复面③合并）：升级事件同键（同 failed
-        // 会话）在 pendingEvents 里原位替换——父忙期间同源升级波只积一条/会话，
-        // turn 边界 drain 的 reminder 天然单条携带最新 level（此前逐条 21 轮打断
-        // 的构成面之一）。
-        val coalescedPending = AgentActor.coalesceEscalationEvents(state.execution.pendingEvents, event)
-        val updatedExec = state.execution.copy(
-          pendingEvents = coalescedPending,
-          outstandingSubagentResults = updatedOutstanding
-        )
-        // 任务 Q: emit the visible bubble at receive time (the combined
-        // <system-reminder> injected later at finishTurn is for the LLM).
-        val visSource = visibleExternalEventSource(source, eventType)
-        val bubbleIO = visSource match
-          case Some(s) =>
-            val agentName = metadata("agentName").flatMap(_.asString)
-            emitInjectedUserEvent(
-              resources,
-              state.wsSend,
-              state.sessionId,
-              payload,
-              s,
-              Some(eventType),
-              agentName,
-              // file-diff → 委托结果行（bug #58 修）：delegate 终态事件 metadata
-              // 携带的改动文件 diff 载荷，随注入行落盘/下发（缺席 = 旧行为逐字）。
-              fileChanges = metadata("fileChanges"),
-              sessionProject = state.projectName
-            )
-          case None => IO.unit
-        bubbleIO *>
-          emitStream(
-            state.wsSend,
-            AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
-            isSubagent = depth > 0,
-            state.sessionId
-          ) *> persistQueues(state.sessionId, updatedExec) *>
-          // 台账对账（平台修复批 fix 1 落账点）：回执入 held 队列即记 producedAt，
-          // HeldDeliveryWatchdog 据此起算「N 分钟未投递」催注时钟；徽标帧随行
-          // （held 计数上升面）。
-          syncHeldReceipts(resources, state.sessionId, updatedExec.pendingEvents).flatMap((h, u) =>
-            emitHeldReceiptsBadge(state, h, u)
-          ) *> IO.pure(
-            processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending)
-          )
+        // 不过时批 intake 闸（投递可靠性批 2026-10-29 · 作者令「消息按 (sessionId,
+        // kind, 幂等键) 去重」；cancel 回执必须单发）：身份（raw correlationId ∪
+        // delegate 终态回执归位 id）已投递（DeliveredReceiptLedger）或已在
+        // pendingEvents 队列 ⇒ 丢弃 + 审计（实证 2026-10-29 21:49→21:59：原件在
+        // 忙父队列滞留，sweep 按 grace 重投改写 correlationId，两件同入回合 =
+        // 「cancelled by Nebula」双投）。无身份键事件恒放行（既有纪律零回退）。
+        nebflow.core.processor.DeliveredReceiptLedger
+          .intakeAccepts(state.sessionId.getOrElse(""), state.execution.pendingEvents, event)
+          .flatMap {
+            case false =>
+              IO(
+                logAgentEvent(
+                  agentDef,
+                  depth,
+                  state.sessionId,
+                  state.sessionName,
+                  "external-event-duplicate-suppressed",
+                  s"source=$source type=$eventType corr=${correlationId.getOrElse("-")} — identity already delivered/queued, exactly-once intake"
+                )
+              ) *> IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+            case true =>
+              logAgentEvent(
+                agentDef,
+                depth,
+                state.sessionId,
+                state.sessionName,
+                "external-event-queued",
+                s"source=$source type=$eventType"
+              )
+              // Sub-agent barrier: a Delegate/SubTask result (completed or failed)
+              // satisfies one outstanding slot of the parallel batch. The drain at the
+              // turn boundary only releases subtask/delegate events once the counter
+              // hits 0, so a batch completing mid-turn is still injected together.
+              val updatedOutstanding =
+                if TurnBoundaryDrains.isSubagentResult(event) then math.max(0, state.execution.outstandingSubagentResults - 1)
+                else state.execution.outstandingSubagentResults
+              // v2 反推送风暴批（2026-10-28，修复面③合并）：升级事件同键（同 failed
+              // 会话）在 pendingEvents 里原位替换——父忙期间同源升级波只积一条/会话，
+              // turn 边界 drain 的 reminder 天然单条携带最新 level（此前逐条 21 轮打断
+              // 的构成面之一）。
+              val coalescedPending = AgentActor.coalesceEscalationEvents(state.execution.pendingEvents, event)
+              val updatedExec = state.execution.copy(
+                pendingEvents = coalescedPending,
+                outstandingSubagentResults = updatedOutstanding
+              )
+              // 任务 Q: emit the visible bubble at receive time (the combined
+              // <system-reminder> injected later at finishTurn is for the LLM).
+              val visSource = visibleExternalEventSource(source, eventType)
+              val bubbleIO = visSource match
+                case Some(s) =>
+                  val agentName = metadata("agentName").flatMap(_.asString)
+                  emitInjectedUserEvent(
+                    resources,
+                    state.wsSend,
+                    state.sessionId,
+                    payload,
+                    s,
+                    Some(eventType),
+                    agentName,
+                    // file-diff → 委托结果行（bug #58 修）：delegate 终态事件 metadata
+                    // 携带的改动文件 diff 载荷，随注入行落盘/下发（缺席 = 旧行为逐字）。
+                    fileChanges = metadata("fileChanges"),
+                    sessionProject = state.projectName
+                  )
+                case None => IO.unit
+              bubbleIO *>
+                emitStream(
+                  state.wsSend,
+                  AgentStreamEvent.ExternalEventReceived(source, eventType, correlationId),
+                  isSubagent = depth > 0,
+                  state.sessionId
+                ) *> persistQueues(state.sessionId, updatedExec) *>
+                // 台账对账（平台修复批 fix 1 落账点）：回执入 held 队列即记 producedAt，
+                // HeldDeliveryWatchdog 据此起算「N 分钟未投递」催注时钟；徽标帧随行
+                // （held 计数上升面）。
+                syncHeldReceipts(resources, state.sessionId, updatedExec.pendingEvents).flatMap((h, u) =>
+                  emitHeldReceiptsBadge(state, h, u)
+                ) *> IO.pure(
+                  processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending)
+                )
+          }
 
       // --- AskUser from tool ---
       case AgentCommand.AskUser(requestId, items, replyToOpt, askAttachments, awaitsAnswer) =>

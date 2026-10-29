@@ -51,6 +51,7 @@ object DelegateTerminal:
   sealed trait Outcome
 
   object Outcome:
+
     /**
      * 判词完成（payload 后缀携带判词行——🔴 模型/用户可见文案，§16 待过目）。
      * `mergeOutcome`（台账 #896 交通引导员制 2026-10-26）：合并轮终态结论——
@@ -58,10 +59,20 @@ object DelegateTerminal:
      * 被拒（关账 failed，无重试无 park）；None = 非合并轮完成（队列成员若在账则
      * 走账实核对回落）。默认 None。
      */
-    final case class Release(verdictSuffix: String, mergeOutcome: Option[MergeQueue.RoundOutcome] = None) extends Outcome
+    final case class Release(verdictSuffix: String, mergeOutcome: Option[MergeQueue.RoundOutcome] = None)
+        extends Outcome
 
     /** ready-to-merge：保活等合并轮（预算重挂由监督者执行）。 */
     case object HoldForMerge extends Outcome
+
+    /**
+     * 道忙重排（投递可靠性批 2026-10-29 · 病灶②，作者令 23:57 范围补充②）：
+     * 合并轮拒绝的原因是**道被占**（他批合法占道解冲突 / 孤儿未收殓 / 外来手工
+     * 合并）——不是本批的失败。成员资格保留（MergeQueue.requeueForLane 退回
+     * waiting），会话停靠保活，道净后 careTick 放行腿自动重排。只有道净/己方
+     * 残留的拒绝才走 Release+Refused 关账 failed。
+     */
+    final case class RequeueForLane(reason: String) extends Outcome
   end Outcome
 
   /**
@@ -227,6 +238,24 @@ object DelegateTerminal:
             s"mechanical merge acceptance refused the release (the delegate/verdict claimed a completed merge): ${r.evidence}"
           )
         case _ => finalVerdict0b
+      // 病灶②（投递可靠性批 2026-10-29，作者令 23:57「道忙应 REQUEUE」）：机械
+      // 验收拒绝 × 道被占（非己残留、非道净真拒绝）⇒ 判定改走 RequeueForLane——
+      // 成员资格保留 + 会话停靠保活，道净自动重排；不写 terminal-verdict 行
+      // （非终态；审计行由 MergeQueue.requeueForLane 的 lane-requeued 承担）。
+      laneRequeueReason <-
+        if mergeRound && acceptance.exists(!_.ok) then
+          IO.blocking {
+            MergeQueue
+              .find(delegateId)
+              .filter(m => m.open && m.state == MergeQueue.State.TurnGranted)
+              .map { m =>
+                MergeQueue.laneVerdictFor(m) match
+                  case MergeQueue.LaneVerdict.Clear | MergeQueue.LaneVerdict.OwnLeftover => None // 真拒绝（道净/己方残留）
+                  case other => Some(MergeQueue.laneBlockReason(other))
+              }
+              .getOrElse(None)
+          }.handleErrorWith(e => IO(logger.warn(s"lane requeue classification failed: ${e.getMessage}")).as(None))
+        else IO.pure(None: Option[String])
       // P2-3 工作座位注记（不阻断）：completed 判词 + 领先提交且未入队——诚实化
       // 注记（判词归判定机，引擎只记账）。worktree 座位已被 queueFlip 翻转入队；
       // 本注记只剩就地座位与翻转降级形态（合并轮的同形态已被上方验收闸拦下）。
@@ -257,16 +286,19 @@ object DelegateTerminal:
         else if acceptance.exists(!_.ok) then "merge-verify"
         else if unjudged then "unjudged"
         else "judge"
-      _ = logVerdict(delegateId, taskId, finalVerdict, unjudged)
+      // 终态判词行（审计）。病灶②重排腿不写（非终态——lane-requeued 行由
+      // MergeQueue.requeueForLane 承担）。
       _ <- IO
-        .blocking(
-          ChainStore.appendSync(
-            ChainStore.keyFor(taskId, delegateId),
-            "terminal-verdict",
-            DelegateJudge.verdictPayload(delegateId, taskId, finalVerdict, source = source)
-          )
+        .whenA(laneRequeueReason.isEmpty)(
+          IO.blocking(
+            ChainStore.appendSync(
+              ChainStore.keyFor(taskId, delegateId),
+              "terminal-verdict",
+              DelegateJudge.verdictPayload(delegateId, taskId, finalVerdict, source = source)
+            )
+          ).handleErrorWith(e => IO(logger.warn(s"terminal-verdict chain line failed: ${e.getMessage}")))
         )
-        .handleErrorWith(e => IO(logger.warn(s"terminal-verdict chain line failed: ${e.getMessage}")))
+      _ = logVerdict(delegateId, taskId, finalVerdict, unjudged)
       outcome <- finalVerdict match
         case DelegateJudge.Verdict.ReadyToMerge =>
           holdForMerge(resources, record, delegateId, parentSessionId, childRef, supervisorRef, resultText)
@@ -288,17 +320,21 @@ object DelegateTerminal:
         case DelegateJudge.Verdict.CompletedNote(note) =>
           // #566：退役 blocked 的唯一残留出口——completed 判词＋注记交付（注记 =
           // 报告内容，不是状态）。合并轮上的注记形 = 合并未干净落地（机械验收
-          // 拒绝等）⇒ 队列成员关账 failed(原因)——无重试无 park（台账 #896）；
-          // 非合并轮注记 = 普通完成注记，语义不变。
-          val refused =
-            if mergeRound && acceptance.exists(!_.ok) then Some(MergeQueue.RoundOutcome.Refused(note))
-            else None
-          IO.pure(
-            Outcome.Release(
-              s"${verdictLineCompleted(unjudged = false)}\n[delegate-judge] note: $note" + workAppendix,
-              refused
+          // 拒绝等）。病灶②（投递可靠性批 2026-10-29）：拒绝原因是道忙 ⇒ 不关账
+          // 不停会话——成员资格保留重排（RequeueForLane），道净后自动重排；
+          // 道净/己方残留的真拒绝照旧关账 failed——无重试（处置归 dispatcher）。
+          if laneRequeueReason.isDefined then
+            IO.pure(Outcome.RequeueForLane(laneRequeueReason.get + s" [mechanical-acceptance note: ${note.take(300)}]"))
+          else
+            val refused =
+              if mergeRound && acceptance.exists(!_.ok) then Some(MergeQueue.RoundOutcome.Refused(note))
+              else None
+            IO.pure(
+              Outcome.Release(
+                s"${verdictLineCompleted(unjudged = false)}\n[delegate-judge] note: $note" + workAppendix,
+                refused
+              )
             )
-          )
     yield outcome
     end for
   end onCompleted
@@ -622,9 +658,13 @@ object DelegateTerminal:
     // / 未挂载 id = 零动作。ready-to-merge 停靠（HoldForMerge）不经本清理面 ⇒ 宿主照常
     // 存活等合并轮，合并轮终态仍走这里统一卸载。
     // 双模式批（2026-10-28 · 设计 §6 第 4 步）：dispatcher 腿追加速度摘要先行——
-    // 宿主仍在册时 sweep 出库 + chain-archived 审计落定，随后才 unmount；unmount 之后
-    // fork 宽限删除 fiber（graceMs 后双闸校验：未重挂 ∧ 已归档 ⇒ 删作用域目录）。
-    // kernel/闸关 = 本段全部分叉失效（现状逐字节）。
+    // 宿主仍在册时收口三段（sweep 出库 + chain-archived 审计落定；R3 批增：在飞链
+    // 台账 cancelled 处置 + chain-cancelled 审计——取消链走同一收口；台账收敛拍），
+    // 随后才 unmount；unmount 之后 fork 宽限删除 fiber（graceMs 后双闸校验：未重挂 ∧
+    // 已归档 ⇒ 删作用域目录）。kernel/闸关 = 本段全部分叉失效（现状逐字节）。
+    // R3 批（2026-10-29 · 审计二 P3/P10）：终态屏障单点不变——completed/failed/
+    // cancelled 三种终态都经本序列，取消链（NodeCancel 链级腿 / 会话终止遗留在飞链）
+    // 与自然完成链收敛到同一条「摘要→台账→unmount→宽限删」路径。
     val dispatcherLifecycle = DelegateFlowMapLifecycle.applies(record)
     val summaryFlush = if dispatcherLifecycle then DelegateFlowMapLifecycle.flushBeforeUnmount(delegateId) else IO.unit
     val hostUnmount =
@@ -665,9 +705,13 @@ object DelegateTerminal:
         .handleErrorWith(e => IO(logger.warn(s"delegate settlement note failed: ${e.getMessage}")))
     val graceRemoval: IO[Unit] =
       if dispatcherLifecycle then
-        DelegateFlowMapLifecycle.scheduleScopeRemoval(delegateId).start.as(()).handleErrorWith(e =>
-          IO(logger.warn(s"[flowmap-lifecycle] grace removal fiber failed to start: ${e.getMessage}"))
-        )
+        DelegateFlowMapLifecycle
+          .scheduleScopeRemoval(delegateId)
+          .start
+          .as(())
+          .handleErrorWith(e =>
+            IO(logger.warn(s"[flowmap-lifecycle] grace removal fiber failed to start: ${e.getMessage}"))
+          )
       else IO.unit
     verdictLine *> ledgerNote *> hostUnmount *> pluginRelease *> MergeQueue.onTerminalIO(
       delegateId,
@@ -796,9 +840,11 @@ object DelegateTerminal:
             .flatMap {
               case Right(Right(())) => IO.unit
               case other =>
-                IO(logger.warn(
-                  s"work-result preservation skipped for $delegateId: ${other.fold(_.getMessage, _.toString).take(200)}"
-                ))
+                IO(
+                  logger.warn(
+                    s"work-result preservation skipped for $delegateId: ${other.fold(_.getMessage, _.toString).take(200)}"
+                  )
+                )
             }
           _ <- resources.subAgentTaskStore
             .updateStatus(parentSessionId, delegateId, ReadyToMergeStatus, completedAt = Some(now))
@@ -808,6 +854,7 @@ object DelegateTerminal:
             s"delegate $delegateId held for merge (project=$projectKey, branch=${entry.branch}, readyAt=$now) — parent notified after the merge round"
           )
         yield Outcome.HoldForMerge
+        end for
     end match
   end holdForMerge
 

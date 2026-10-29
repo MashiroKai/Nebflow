@@ -8,12 +8,14 @@ import nebflow.shared.NebflowLogger
  * 2026-10-26 作者裁定落地批；消费点 = `TaskStuckWatcher.scan` 尾部，搭既有扫描拍
  * 零新增定时器）。
  *
- * 一拍两件事（事件判据，零时间判据；本体在 [[MergeQueue.careTick]]）：
+ * 一拍三件事（事件判据，零时间判据；本体在 [[MergeQueue.careTick]]）：
  *   - **持窗尸体判死**：turn-granted 成员的属主 actor 已退出 ⇒ owner-gone 关账
  *     （窗绝不许尸体持死——整队陪站的死亡形态在本拍收口）；
  *   - **补一拍放行**：每个有开放成员的 project 补一次放行尝试——净空转洁、阻碍
  *     消除、前位关账后的自然推进都经此兑现（队列自己不跑定时器，放行节奏 =
-     * 事件 + 本扫描拍）。
+ *     事件 + 本扫描拍）；
+ *   - **关账压缩**（R5）：write-ahead 通道终态镜像攒够阈值（[[MergeQueueChannel]].CompactAfter）
+ *     即批量移除——账本持终态审计，通道副本冗余；未关账镜像永不入压缩面。
  *
  * 幂等：动作过的成员已关账（终态），重复扫描零重复动作。本件**零重试零复活**
  * ——重试合并轮与复活轮已随交通引导员制整体退役（owner-gone / failed 关账后
@@ -27,5 +29,9 @@ object MergeQueueCare:
   def tick(): IO[Unit] =
     MergeQueue.careTickIO.handleErrorWith(e =>
       logger.warn(s"[merge-queue-care] tick failed: ${Option(e.getMessage).getOrElse(e.toString).take(200)}").void
-    )
+    ) *> IO.blocking(MergeQueueChannel.compactIfDue(MergeQueue.State.Terminal))
+      .flatMap(n => if n > 0 then logger.info(s"[merge-queue-care] write-ahead channel compacted $n closed mirror(s)").void else IO.unit)
+      .handleErrorWith(e =>
+        logger.warn(s"[merge-queue-care] channel compact failed: ${Option(e.getMessage).getOrElse(e.toString).take(200)}").void
+      )
 end MergeQueueCare

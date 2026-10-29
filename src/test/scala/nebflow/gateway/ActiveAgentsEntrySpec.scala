@@ -209,6 +209,22 @@ class ActiveAgentsEntrySpec extends FunSuite:
     assertEquals(WebSocketRoutes.delegateDisplayTitle(AgentKind.Ephemeral, Some("X"), Some("Y")), None)
   }
 
+  // ── 面板树批（2026-10-29 ① · 后台智能体面板三修）：快照 face 携带 parentSessionId ──
+
+  test("panel tree: parentSessionId echoes the registry record (frontend derivation key)") {
+    // Delegate/SubTask/BlockingSubagent/FlowDag(dag-) 注册点均写 parentSessionId；
+    // 快照 face 原样出帧——前端按它建派生树（delegate 组头 + 缩进子行）。
+    val r = rec("subagent-ab12cd34", AgentKind.SubTask).copy(parentSessionId = "delegate-nebflow-12345678")
+    val json = WebSocketRoutes.activeAgentEntryJson(r, None)
+    assertEquals(json.hcursor.get[String]("parentSessionId"), Right("delegate-nebflow-12345678"))
+  }
+
+  test("panel tree: parentSessionId defaults empty (no attribution → frontend falsy contract)") {
+    // 与 project/taskId 同契约：空串 = 无归属（前端零认领零徽标，旧行为零回归）。
+    val json = WebSocketRoutes.activeAgentEntryJson(rec("delegate-x-12345678", AgentKind.Delegate), None)
+    assertEquals(json.hcursor.get[String]("parentSessionId"), Right(""))
+  }
+
   // ── #752 空闲细分（在等什么可见化）：快照恢复字段 ──────────────────
 
   test("#752 idle-subdivision fields: defaults empty/zero on a bare record") {

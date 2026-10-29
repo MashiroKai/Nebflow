@@ -13,7 +13,7 @@ last_verified: 2026-10-21
 
 基准来源：官网仓 `stand-website/app/globals.css` 的 @theme 与双主题 token（品牌绿 #07c160、GitHub-dark 族暗色中性阶、系统字体栈、16/12/8/6/4 圆角族、160/240ms ease + cubic-bezier(0.4,0,0.2,1) 动效族）；客户端玻璃层（--glass-*、--glass-control-*、--sapphire 91 127 191）是官网语言的客户端延伸。两处同源不同值时：**客户端实现值为准**（本表即记客户端值，并标注官网同源值）。
 
-用户视觉硬裁定（弹窗禁 overlay 遮罩、面板必须毛玻璃、控件统一玻璃质感、主发送按钮微信绿实色族、字重方案 B：body 400/标题 600/按钮 500/代码 500、总基调低调克制）见 nebflow-frontend-dev 的 visual-style——与本表冲突时以裁定为准。
+用户视觉硬裁定（弹窗禁 overlay 遮罩、面板必须毛玻璃、控件统一玻璃质感、主发送按钮微信绿实色族、字重方案 B：body 400/标题 600/按钮 500/代码 500、总基调低调克制）见 frontend-dev 的 visual-style——与本表冲突时以裁定为准。
 
 ## 1. 配色
 

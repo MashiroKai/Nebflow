@@ -167,7 +167,11 @@ object LlmAllocator:
    * `getCandidates().headOption` ——单候选、单发、败即弃；主 agent 的请求路径走的是
    * 整链遍历（preferred→fallbacks→储备层，`getCandidatesForAgent`），于是链头候选
    * 恰好坏掉时「主 agent 正常用 LLM、兜底腿仍 fail-open」。新读法：
-   *  - `judge.utilityModel` ref 已配且可解 → 该候选**钉首位**，其后接全局链去重
+   *  - `judge.utilityModel` ref 已配且处于**不可用时段** → WARN + 落全局链
+   *    （model-schedule-unavailable 批时段闸，与本批合并融合：闸语义 = 受限 ref
+   *    不进兜底链；回落形状随本批从「链头一个」升为「整条链」——`getCandidates()`
+   *    构建出口已 filterNot 受限模型，回落链不含受限候选）；
+   *  - ref 已配且可解 → 该候选**钉首位**，其后接全局链去重
    *    （钉住的模型挂掉时链上后备照答——同一句「主 agent 能用 ⇒ 兜底能用」）；
    *  - ref 已配不可解 → 全链（WARN 留痕，原回落语义保留）；
    *  - ref 未配 → 全链（原语义，从「头一个」升为「整条」）。
@@ -175,17 +179,29 @@ object LlmAllocator:
   private[decision] def candidatesFrom(registry: ProviderRegistry): IO[List[ModelCandidate]] =
     IO.blocking(nebflow.shared.Config.loadServiceConfig().judge.flatMap(_.utilityModel)).flatMap {
       case Some(ref) =>
-        registry.getCandidateForRef(ref).flatMap {
-          case Some(c) =>
-            registry.getCandidates().map { chain =>
-              val rest = chain.filterNot(r => r.providerId == c.providerId && r.model == c.model)
-              c :: rest
-            }
-          case None =>
+        // 时段闸（model-schedule-unavailable 批）：utility ref 当前处于不可用
+        // 时段 ⇒ WARN + 落到全局链（链出口已滤，不会选到受限模型）。
+        registry.scheduleRestrictionFor(ref).flatMap {
+          case Some(w) =>
             NebflowLogger
               .forName("nebflow.llm.plugin-alloc")
-              .warnSync(s"plugin-alloc: judge.utilityModel '$ref' unresolved — falling back to the full candidate chain")
+              .warnSync(
+                s"plugin-alloc: judge.utilityModel '$ref' schedule-restricted ($w) — falling back to the full candidate chain"
+              )
             registry.getCandidates()
+          case None =>
+            registry.getCandidateForRef(ref).flatMap {
+              case Some(c) =>
+                registry.getCandidates().map { chain =>
+                  val rest = chain.filterNot(r => r.providerId == c.providerId && r.model == c.model)
+                  c :: rest
+                }
+              case None =>
+                NebflowLogger
+                  .forName("nebflow.llm.plugin-alloc")
+                  .warnSync(s"plugin-alloc: judge.utilityModel '$ref' unresolved — falling back to the full candidate chain")
+                registry.getCandidates()
+            }
         }
       case None => registry.getCandidates()
     }

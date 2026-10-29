@@ -80,6 +80,31 @@ object GitWorktrees:
     Try(git(ws, "rev-parse", "--short", "HEAD")).toOption.flatMap(_.toOption).map(_.trim).filter(_.nonEmpty)
 
   /**
+   * 合并道读数（投递可靠性批 2026-10-29 修复 A/B/②）：`.git/MERGE_HEAD` 在场 =
+   * 该工作区有一笔**进行中的 merge**（未 commit 未 abort）。返回其 commit 全 sha。
+   * 文件缺席 = None（道净）；读失败 = None（fail-open——读数缺失不判占道）。
+   */
+  def mergeHead(ws: os.Path): Option[String] =
+    Try(os.read(ws / ".git" / "MERGE_HEAD").trim).toOption.filter(_.nonEmpty)
+
+  /**
+   * 合并道回滚（孤儿合并收场，作者令 2026-10-29 23:55 范围补充 A：倾向=
+   * `git merge --abort`）。**只允许对已判死属主残留的合并态调用**——活属主/人的
+   * 手工合并绝不可 abort（调用方闸门负责）。fail-soft：失败返回 false 并 WARN。
+   */
+  def abortMerge(ws: os.Path): Boolean =
+    try
+      git(ws, "merge", "--abort") match
+        case Right(_) => true
+        case Left(err) =>
+          logger.warn(s"git merge --abort failed in $ws: $err")
+          false
+    catch
+      case e: Throwable =>
+        logger.warn(s"git merge --abort errored in $ws: ${Option(e.getMessage).getOrElse(e.toString)}")
+        false
+
+  /**
    * First free worktree directory name under `<ws>/.nebflow/worktrees/` —
    * the candidates loop moved verbatim (`<base>`, `<base>-2` … `<base>-99`).
    */

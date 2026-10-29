@@ -304,7 +304,10 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
       case _: StreamChunk.TextDelta | _: StreamChunk.ThinkingDelta | _: StreamChunk.ToolCallChunk => true
       case _ => false
     registry
-      .getAdapter(candidate.providerId)
+      // getAdapterRaw（不过闸裸视图，429 反应式并发闸批）：探测是恢复机制，
+      // 1 次/2min 微量请求——排在饱和闸后会拖慢恢复判定（探测超时计入排队等待
+      // ⇒ 假阴性 DOWN 延长）。其余调用方一律走 getAdapter（过闸视图）。
+      .getAdapterRaw(candidate.providerId)
       // `find` terminates the stream right after the first serving chunk (the
       // upstream request is cancelled by the compile scope); a stream that
       // ends without one — including a transport error raised before it —

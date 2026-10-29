@@ -51,3 +51,9 @@ DCL（DOMContentLoaded 事件） — 浏览器解析完 HTML、首次可交互�
 Service Worker（SW） — 浏览器在页面网络栈前注册的脚本代理，可缓存静态资源实现温访问秒开；本仓 `web/sw.js` 对静态面走 SWR 策略（[[#^swr]]），`/api`、`/ws` 零接触。 ^service-worker
 
 SWR（stale-while-revalidate） — 缓存策略：命中缓存立即应答（stale），同时后台拉新版本对账（revalidate）；本仓 Service Worker（[[#^service-worker]]）对 `/js/ /css/ /vendor/` 等静态面用此策略。 ^swr
+
+插件包 — Nebflow/Stand 的能力包（一个目录：manifest `plugin.json`＋包根使用指导件 `Plugin.md`＋`skills/` 等可选组件，亦称 Stand 插件）；2026-10-29 插件建仓批（[[20261029_175151_plugin-repo-registry]]）为 23 个现装插件各建独立 git 仓做版本回溯，插件仓以单仓单包存管。 ^plugin-package
+
+引擎种子（seed） — 打进分发 jar 的种子资源树 `src/main/resources/seed/plugins/`（缺省包由引擎同步落盘到实例）；与运行时实例（[[#^plugin-instance]]）构成双副本——种子是 canonical 面，建仓批以种子内容建仓。 ^engine-seed
+
+运行时实例（instance 副本） — 引擎实际装载的插件包面，即数据根下 `~/.stand/plugins/<name>/` 目录；种子更新会经同步机制覆盖它，直接改实例会在同步时失效——要持久化的修改须进种子。 ^plugin-instance

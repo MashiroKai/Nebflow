@@ -35,21 +35,31 @@ final case class AskServices(
   /**
    * spawn 面：ask 会话的运行时 AgentDef（name/category 仅为身份占位——工具面
    * 由 buildAllowedToolSet 的 askSession 早退集机制固定，不读声明）。
+   *
+   * md/html 硬约束闸·深防（调研稿 §7-A3）：spawn 前复问 `isAskable`——
+   * `<dataRoot>/ask/index.json` 旧绑定与直发 WS 帧绕不开本层（askOpen 是前
+   * 闸，本层是全量防线；§9-8「仅闸」后存量绑定不清理、但新问在 spawn 面
+   * 同样拒答）。WebSocketRoutes.resolveAgentDef 的 ask 分支只经本面。
    */
   def agentDefFor(sessionId: String): IO[nebflow.actor.AgentDef] =
     registry.byId(sessionId).flatMap {
       case None =>
         IO.raiseError(new RuntimeException(s"ask session $sessionId has no file binding"))
       case Some(binding) =>
-        cachedPrompt(sessionId, binding).map { prompt =>
-          nebflow.actor.AgentDef(
-            name = "ask",
-            description = s"Canvas 文件问答分身 · ${binding.fileName}",
-            tools = Nil,
-            systemPrompt = prompt,
-            category = "standalone"
-          )
-        }
+        if !AskSessions.isAskable(binding.file) then
+          IO.raiseError(new RuntimeException(
+            s"ask session $sessionId: file type not askable (md/html only): ${binding.fileName}"
+          ))
+        else
+          cachedPrompt(sessionId, binding).map { prompt =>
+            nebflow.actor.AgentDef(
+              name = "ask",
+              description = s"Canvas 文件问答分身 · ${binding.fileName}",
+              tools = Nil,
+              systemPrompt = prompt,
+              category = "standalone"
+            )
+          }
     }
 
   /** 提示词：缓存优先；缺席现场组装一次（幂等，冷却状态随之落账）。 */
@@ -59,14 +69,23 @@ final case class AskServices(
       case None => assembleNow(sessionId, binding)
   end cachedPrompt
 
+  /**
+   * 组装腿深防（§7-A3）：cachedPrompt 的组装通路复问 `isAskable`——agentDefFor
+   * 上游已有同判据，本层守住「绕过 agentDefFor 直取提示词」的假设性通路。
+   */
   private def assembleNow(sessionId: String, binding: AskBinding): IO[String] =
-    val now = System.currentTimeMillis()
-    AskContextAssembler.assemble(sources, binding.file, binding.fileName, now).flatMap { ctx =>
-      val prompt = AskContextAssembler.promptFor(binding.fileName, ctx.block)
-      prompts.put(sessionId, prompt, now)
-      registry.setAssemblyState(sessionId, AskCooldown.afterAssemble(now, ctx.fingerprint)) *>
-        IO.pure(prompt)
-    }
+    if !AskSessions.isAskable(binding.file) then
+      IO.raiseError(new RuntimeException(
+        s"ask session $sessionId: file type not askable (md/html only): ${binding.fileName}"
+      ))
+    else
+      val now = System.currentTimeMillis()
+      AskContextAssembler.assemble(sources, binding.file, binding.fileName, now).flatMap { ctx =>
+        val prompt = AskContextAssembler.promptFor(binding.fileName, ctx.block)
+        prompts.put(sessionId, prompt, now)
+        registry.setAssemblyState(sessionId, AskCooldown.afterAssemble(now, ctx.fingerprint)) *>
+          IO.pure(prompt)
+      }
   end assembleNow
 
   /**

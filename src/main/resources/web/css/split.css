@@ -2816,6 +2816,91 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 }
 .wg-tip.para .td { color: var(--color-frame-text-dim, var(--wg-muted)); }
 
+/* ── 词条 hover 气泡（词条引用批 batch 2, F3/F4）──────────────────────
+   文档阅读面词条引用（[[词条]] 短形）的悬停摘要卡：词条名 + 定义（≤280 字，
+   6 行截断）+ 所在文档 + 跳转提示。材质 = 全站 frosted token（--glass-bg /
+   --glass-blur saturate(1.15) / --glass-border / --frost-shadow，sapphire.css
+   单源，亮暗双主题随 prefers-color-scheme）——与 wg-tip 同族不同源（wg-tip
+   挂图谱 pane 的 --wg-* 作用域，本卡挂 body 级全局 token）。桌面
+   pointer-events:none 不挡点击（点击 = 深链跳转）；触屏面加 .touch 翻 auto
+   ——移动无 hover，「轻点即开气泡，气泡内再点跳转」（markdown.js
+   termTapExpand / 气泡 click 腿）。fixed 定位 = 跨滚动容器零漂移。 */
+.nf-term-tip {
+  position: fixed;
+  z-index: 900;
+  display: none;
+  max-width: 340px;
+  background: var(--glass-bg, rgba(255, 255, 255, 0.55));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
+  border-radius: 12px;
+  padding: 10px 14px;
+  box-shadow: var(--frost-shadow, 0 8px 28px rgba(0, 0, 0, 0.10));
+  color: var(--color-frame-text-bright, var(--color-text));
+  pointer-events: none;
+  cursor: default;
+}
+.nf-term-tip.touch { pointer-events: auto; cursor: pointer; }
+.nf-term-tip .tt { font-weight: 600; font-size: 13px; margin-bottom: 3px; word-break: break-word; }
+.nf-term-tip .ts {
+  color: var(--color-frame-text, var(--color-text-muted));
+  font-size: 12px;
+  line-height: 1.55;
+  display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
+}
+.nf-term-tip .td { color: var(--color-frame-text-dim, var(--color-text-muted)); font-size: 11px; margin-top: 5px; }
+
+/* 词条引用的视觉面（F3）：resolved 词条链接 = 点线底纹（区别于普通文档级
+   wikilink 的纯色亮面）；兜底腿的 unresolved 短形引用同纹（hover 可出泡的
+   信号），颜色随既有 unresolved 态。 */
+a.nf-wikilink.nf-wikilink-term {
+  text-decoration: underline dotted currentColor 1px;
+  text-underline-offset: 3px;
+}
+
+/* ── 返回原文档按钮（词条引用批 batch 2, F5；作者令 2026-10-29 11:49
+   「返回按钮放左上角」）─────────────────────────────────────────────
+   仅「经引用跳转打开」的页签渲染（canvas.js syncRefBackButton），钉在
+   #canvas-slide 左上角与居中标题头同排。材质 = 全站 frosted token 胶囊
+   （与 .canvas-header 同族）；宽度随文案自适应 + max-width 收缩护栏
+   （ellipsis 兜底，绝不溢出——#926 同纪律）。手机层通栏卡头占满顶行，
+   下移一行让位（mobileLayer 块）。 */
+.canvas-refback-btn {
+  position: absolute;
+  top: 10px;
+  left: 14px;
+  z-index: 32;
+  display: inline-flex;
+  align-items: center;
+  height: var(--capsule-h, 36px);
+  max-width: min(38%, calc(100% - 240px));
+  padding: 0 12px 0 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  box-shadow: var(--frost-shadow);
+  color: var(--color-frame-text-bright, var(--color-text));
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+.canvas-refback-btn:hover { filter: brightness(1.06); }
+.canvas-refback-btn:active { filter: brightness(0.92); }
+body.mobile-layer #canvas-refback-btn {
+  /* 手机层卡头通栏（mobileLayer.css §⑨ top:8 + 高 ~40px），按钮下移一行。 */
+  top: 56px;
+  left: 10px;
+  max-width: calc(100% - 20px);
+  height: 32px;
+}
+
 /* ── Compact in-pane bar — MOBILE LAYER ONLY. The phone shell hosts the pane
    full-page and has no left column, so search/chips/stats ride inside the
    pane (wikiGraph.js builds .wg-panebar; display:none everywhere else so the

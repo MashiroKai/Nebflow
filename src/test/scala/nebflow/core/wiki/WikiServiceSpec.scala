@@ -222,6 +222,35 @@ class WikiServiceSpec extends CatsEffectSuite:
     }
   }
 
+  test("WS-9 term 同闸（第三批）：非 md/html 宿主文档不做词条消解，md/html 照常（零回归）") {
+    // 非白名单宿主：直接 Left + 统一拒绝措辞（走 WikiRoutes 的 400 通道，不静默）。
+    svc.term("GCR", None, Some("/vault/notes.txt")).map {
+      case Left(err) =>
+        assert(err.startsWith(MdHtmlGate.RejectPrefix), clue(err))
+        assert(err.contains("ext=.txt"), clue(err))
+      case other => fail(s"expected Left, got $other")
+    } *>
+      // .pdf / 无扩展名同样被拒。
+      svc.term("GCR", Some("alpha"), Some("/vault/paper.pdf")).map {
+        case Left(err) => assert(err.contains("ext=.pdf"), clue(err))
+        case other     => fail(s"expected Left, got $other")
+      } *>
+      svc.term("GCR", Some("alpha"), Some("/vault/noext")).map {
+        case Left(err) => assert(err.contains("ext=<none>"), clue(err))
+        case other     => fail(s"expected Left, got $other")
+      } *>
+      // 大小写 + query/锚点归一后照常消解（与 ask 侧同一单点）。
+      svc.term("GCR", Some("alpha"), Some("/vault/a.MD?tab=1#^gcr")).map {
+        case Right(json) => assertEquals(str(termOf(json), "anchor"), Some("#^gcr"))
+        case other       => fail(s"expected Right, got $other")
+      } *>
+      // 不带 doc（纯注册表查询）不受闸影响——既有 wiki-graph 面零回归。
+      svc.term("GCR", None).map {
+        case Right(json) => assertEquals(str(termOf(json), "source"), Some("glossary"))
+        case other       => fail(s"expected Right, got $other")
+      }
+  }
+
   test("WS-8 ambiguity ruling: same-name doc-intro terms in two docs → resolved:false + candidates") {
     // fixture write scoped to this last test: c.md declares its own DCL intro term
     os.write.over(alphaWs / "docs" / "c.md", "# C\n\nDCL — C 档自己的 DCL 词条。 ^term-dcl\n")

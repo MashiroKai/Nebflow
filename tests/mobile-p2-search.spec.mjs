@@ -1,18 +1,22 @@
 // mobile-p2-search.spec.mjs — P2「搜索聊天记录」手机面验收
 //（mobile-secondary-screens 实施批；样张 v3.5 P2 §8 + v3.6 作者裁定②守卫）。
 //
-// 样张→实机 DOM 映射（实施批口径，逐条可断言）：
-//   §8-1 面板盒模型 …… #search-modal（morph 自左列搜索键）：left 6 / width 308
-//        / height 560 / radius 16；样张 top 54 落地为 v3 面族已批
-//        top = 58px + safe-area（与任务浮层同族恒等式）。
+// dock 批换代（2026-10-29 作者令「各节目都是独立界面」）：入口腿 = 聊天根顶栏
+// 「搜索」chrome 键；§8-1 悬浮盒模型（308×560 居中）随浮层形态退役 —— 判据
+// 换钉收编页面几何（页面体全幅 / radius 0 / 关闭对账弹栈）。其余内容面断言不变。
+//
+// 样张→实机 DOM 映射（换代注记）：
+//   §8-1 【换代】页面化盒模型 …… #search-modal 收编进 .mobile-page-body：
+//        全幅（w=375 / x=0）/ radius 0。
 //   §8-2 面板头图标 …… .search-modal-header 首子 = i-search 图标（searchFace.js）。
 //   §8-3 mark 高亮底 …… rgba sapphire 族 30%（产品 sapphire 字面 rgb(91,127,191)；
 //        样张 127,156,245 为样张侧调色，同族同 alpha —— 映射已记录）。
 //   v3.6-3 裁定②守卫 …… 范围 seg 退场（.search-filters display:none）、计数行
 //        以「主会话」开头、筛选两行 = tabs + 角色行（第二行含「全部来源」）、
 //        脚注含「无匹配结果」、结果行会话名前缀退场。
-//   §8-8 reduced-motion …… morphIn 早退 ⇒ #search-modal 无 .mh-morph-anim。
-//   返回契约（§8-5 面族映射）…… 面板关闭 ⇒ #search-overlay 摘 .on。
+//   §8-8 【换代】reduced-motion …… 收编面 animation:none（morph 族已删）。
+//   返回契约（§8-5 面族映射）…… 面板关闭 ⇒ #search-overlay 摘 .on + 栈弹回
+//        聊天根（CLOSE_WATCH 对账）。
 //
 // 数据面 = HTTP history 夹具（fetchHistory 走 /api/sessions/:id/history），
 // 零后端、零 sbt。Run: node <stand>/node_modules/@playwright/test/cli.js test tests/mobile-p2-search.spec.mjs
@@ -21,7 +25,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { settlePanel } from './_mobile-panel-settle.mjs';
+import { settlePage } from './_mobile-dock-nav.mjs';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
 const MIME = {
@@ -103,15 +107,14 @@ async function bootApp(page) {
   await page.waitForTimeout(300);
 }
 
-/** 开面板：左列液态下拉 → 搜索键（floatController 观察路径播 morph）。 */
+/** 开面板：聊天根顶栏「搜索」chrome 键 → push 搜索页（面收编进页面体）。 */
 async function openPanel(page) {
-  await page.locator('.mh-dd[data-dd="left"] .mh-dd-hd').click();
-  await page.locator('#search-btn').click();
+  await page.locator('[data-chrome="search"]').click();
+  await expect(page.locator('.mobile-page[data-page="search"]')).toHaveClass(/live/);
   await expect(page.locator('#search-overlay')).toHaveClass(/on/);
   await expect(page.locator('#search-modal')).toBeVisible();
-  // morph 终态（两段式守护，见 _mobile-panel-settle.mjs 头注 —— 只查类/
-  // transform 会抢跑进「已 .on 但形变未起」窗口，实测采到插值中值）。
-  await settlePanel(page, { overlaySel: '#search-overlay', panelSel: '#search-modal' });
+  // 页面滑入终态（dock 批：morph 退役 —— 位移 transform 归位即终态）。
+  await settlePage(page, 'search');
 }
 
 function watchErrors(page) {
@@ -125,19 +128,25 @@ test.beforeEach(async ({ page }) => {
   await bootApp(page);
 });
 
-test('T1 panel geometry: top-hung 308×560, centered, radius 16 (§8-1 landed mapping; 面板合并批⑤居中)', async ({ page }) => {
+test('T1 page geometry: adopted full-bleed in search page, radius 0 (dock 批换代判据)', async ({ page }) => {
   const errors = watchErrors(page);
   await openPanel(page);
-  const box = await page.locator('#search-modal').boundingBox();
-  expect(box).toBeTruthy();
-  expect(box.x).toBe(33.5); // 面板合并批⑤：居中 = (375-308)/2（原 left 6 退役）
-  expect(box.width).toBe(308);
-  expect(box.height).toBe(560);
-  const radius = await page.locator('#search-modal').evaluate((el) => getComputedStyle(el).borderRadius);
-  expect(radius).toBe('16px');
-  // 关闭契约：面板关闭 ⇒ overlay 摘 .on（§8-5 面族映射）。
+  // 收编页面几何 poll（滑入 transform 归位后采样 —— openPanel 已 settle，
+  // 双保险防抖）。
+  const geo = () => page.evaluate(() => {
+    const m = document.getElementById('search-modal');
+    const r = m.getBoundingClientRect();
+    return { x: Math.round(r.x), w: Math.round(r.width), h: Math.round(r.height), radius: getComputedStyle(m).borderRadius };
+  });
+  await expect.poll(geo, { timeout: 5000 }).toEqual({
+    x: 0, w: 375, h: expect.any(Number), radius: '0px',
+  });
+  expect((await geo()).h).toBeGreaterThan(400); // 页面体吃满（非内容零星高）
+  // 关闭契约：面板关闭 ⇒ overlay 摘 .on（§8-5 面族映射）+ 栈弹回聊天根。
   await page.locator('#search-modal-close').click();
   await expect(page.locator('#search-overlay')).not.toHaveClass(/on/);
+  await expect(page.locator('.mobile-page[data-page="search"]')).not.toHaveClass(/live/);
+  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('chat');
   expect(errors).toEqual([]);
 });
 

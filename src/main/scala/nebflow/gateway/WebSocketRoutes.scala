@@ -192,8 +192,7 @@ class WebSocketRoutes(
       // ── ctxthresh 批（2026-09-15 方案 A，作者卡答「按方案A实施」）─────────────
       // 🔴 **本行是全仓唯一的阈值覆盖注入点**（口径③「仅 Nebula 窗口」的**结构性**
       // 保证，不是口号）：depth=0 的 WS 根会话 spawn 是全仓唯一的 root spawn 点，
-      // 非 root spawn（NodeRunner / EphemeralAgentRunner / MailTool /
-      // FlowTreeActor）一律不传该实参 ⇒ SessionContext.compactThresholdRatio = None
+      // 非 root spawn（NodeRunner / MailTool / FlowTreeActor）一律不传该实参 ⇒ SessionContext.compactThresholdRatio = None
       // ⇒ 走 CompactThreshold 现值函数（口径②）。
       //
       // 优先级链：内存 Ref（本进程内已热更的权威值）＞ 盘上 SessionMeta（跨重启
@@ -3359,6 +3358,12 @@ object WebSocketRoutes:
         .getOrElse(rec.sessionId)
         .asJson,
       "rootSessionId" -> rec.rootSessionId.asJson,
+      // 面板树批（2026-10-29 · 后台智能体面板三修①）：父会话归属随快照出帧——
+      // 前端按 parentSessionId 建派生树（delegate 组头 + 缩进子行）；父已终态/
+      // 不可见时前端降级为「孤儿提升顶层 + 来源标注」。AgentRecord.parentSessionId
+      // 在 Delegate/SubTask/BlockingSubagent/FlowDag(dag-) 注册点均有值；缺省 ""
+      // = 无归属（前端 falsy，零徽标零认领——与 project/taskId 同契约）。
+      "parentSessionId" -> rec.parentSessionId.asJson,
       "kind" -> rec.kind.toString.asJson,
       "task" -> meta.map(_.name).getOrElse("").asJson,
       // 2026-08-22 缺口 2：快照自带可刷新恢复三字段（向后兼容——旧字段不动，

@@ -81,9 +81,10 @@ object ToolRegistry:
       "AgentControl" -> AgentControlTool,
       // FlowTrigger / FlowExecute / FlowReport retired 2026-09-06（工具面裁撤
       // 批，作者裁定提前执行阶段 2d 子集）：agent 侧 flow 触发/动态编排/verdict
-      // 报告三工具整体退役。Mail(→flow-name) 引擎触发链与 FlowDagRunner 引擎
-      // 本体不受影响（红线：引擎零触碰）；FlowReportStore（FlowDagExecutor 消费
-      // 的 verdict 数据面）抽出为独立文件保留至阶段 3。
+      // 报告三工具整体退役。FlowDagRunner 引擎本体当时保留（红线：引擎零触碰），
+      // 后由 R4 卫生批 2026-10-29（P4）删除——其唯一 spawn 点（FlowTrigger）已
+      // 退役，全仓零生产调用点；FlowReportStore（FlowDagExecutor 消费的 verdict
+      // 数据面）抽出为独立文件保留至阶段 3。
       // Team-member task delegation (self-clone + ephemeral worker, no Mail identity)
       "SubTask" -> SubTaskTool,
       // TransferFile retired 2026-09-14 (#145): cross-device file moves moved into

@@ -396,7 +396,7 @@ class SeedPluginReconcileSpec extends FunSuite:
 
     // 种子树里但不在默认集的 5 包：零安装（种子文件保留可手动装；
     // 默认集 = 7 包：作者裁定 2026-10-05 方案A 锚点 4→7 追认现状）
-    for name <- List("nebflow-qa", "nebflow-frontend-dev", "engineering-methods", "explorer-toolkit", "design-spec")
+    for name <- List("qa", "frontend-dev", "engineering-methods", "explorer-toolkit", "design-spec")
     do
       assert(
         !os.exists(home / "plugins" / name),

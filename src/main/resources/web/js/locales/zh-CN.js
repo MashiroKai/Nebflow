@@ -793,6 +793,12 @@ export default {
   'subagents.status.error': '失败',
   'subagents.status.frozen': '已冻结',
   'subagents.status.done': '已完成',
+  // 面板树批（2026-10-29 ①）：孤儿行来源角标（父不可见提升顶层的「来自 …」标注）。
+  'subagents.fromDelegate': '来自已结束的委托',
+  'subagents.fromFlowNode': '来自 AgentFlow 节点',
+  'subagents.fromSubagent': '来自上层子代理',
+  'subagents.orphanTip': '父会话已不可见 · {sid}',
+  // 面板行说明批（2026-10-29 ②）：任务摘要次行无文案键（原文上屏）。
   // 任务归属徽标（2026-09-27 taskbadge 批）：行内 `#号 · 标题` 徽标的悬停提示
   'subagents.taskBadge': '所属任务：{text}',
   'manage.uptime': '运行 {time}',
@@ -1074,6 +1080,17 @@ export default {
   'settings.imagegenDelete': '删除此提供方',
   'settings.imagegenDeleteConfirm': '再点一次确认删除',
   'settings.imagegenDeleted': '提供方已删除',
+  // settings-panel-jev-imagegen 批（2026-10-29 作者令「然后 Jev/生图，也要像我们
+  // LLM 这样，有个按钮来测试可用性」）：JeV 一枚测试钮（同 LLM 测试钮口径）；
+  // 生图两级（轻探活 + 实跑一次最小生成）。
+  'settings.jevTestBtn': '测试可用性',
+  'settings.jevTestTitle': '连接性测试：向分配通道发一次最小真实调用（测当前表单值，未保存也可测）',
+  'settings.imagegenTestBtn': '测试可用性',
+  'settings.imagegenTestTitle': '轻探活：key 解析 + 上游可达（models 端点）',
+  'settings.imagegenGenBtn': '实跑一次最小生成',
+  'settings.imagegenGenTitle': '真打上游：最小尺寸、最低质量实跑一次生成（产物进临时目录）',
+  'settings.imagegenGenRunning': '生成中…（几秒到几十秒）',
+  'settings.imagegenProbeModelsAbsent': '上游可达（models 面缺失，HTTP {code}）——鉴权未验证，以「实跑一次最小生成」为准',
   // settings-panel 批 B 件（2026-10-28）：每模型连接性测试钮。
   'provider.testModelTitle': '连接性测试：向该模型发一次最小真实调用',
   'provider.testRunning': '测试中…',
@@ -1131,6 +1148,9 @@ export default {
   'model.errDuplicate': '该模型已在链中',
   'model.unavailable': '当前不可用（{reason}）',
   'model.healthFiltered': '健康层过滤中',
+  // 模型不可用时段（model-schedule-unavailable 批 2026-10-29）：面板灰显/标注面。
+  'model.scheduleRestrictedTitle': '不可用时段 {windows}——窗内自动跳过该模型',
+  'model.scheduleRestrictedSuffix': '{windows} 不可用',
   'model.saved': '已保存',
   'model.divergedBar': '{roles} 已独立配置，不受主链影响',
   'model.divergedView': '查看',
@@ -1212,6 +1232,10 @@ export default {
   'provider.ctxExceedsCeiling': '模型 {id}：上下文窗口 {value} 超出支持的绝对上限 {max}',
   'provider.ctxDefaulted': '以下模型未填写上下文窗口，已按默认值 {def} 保存：{ids}',
   'provider.ctxClampedToMax': '模型 {id}：默认值 1,000,000 超过该模型上报的上限，已按 {max} 保存',
+  // 模型不可用时段（model-schedule-unavailable 批）：provider 弹窗编辑面。
+  'provider.unavailableWindows': '不可用时段',
+  'provider.unavailableWindowsPlaceholder': '如 14:00-18:00；多条用逗号分隔，跨午夜写 23:00-07:00；留空 = 不限制',
+  'provider.unavailableWindowsInvalid': '不可用时段格式错误：「{value}」（需 HH:mm-HH:mm，且开始≠结束）',
 
   // Model fields in modal
   'model.idPlaceholder': '模型 ID',
@@ -2040,6 +2064,10 @@ export default {
   'wiki.kindAttachment': '附件',
   'wiki.unresolved': '未解析的引用——所有项目文档库中都没有这个名字的文档',
   'wiki.backlinks': '反向链接',
+  // 词条引用批 batch 2（hover 气泡 + 返回原文档钮）
+  'wiki.termSource': '来源：',
+  'wiki.termJumpHint': '点击跳转',
+  'wiki.backToSource': '返回原文档',
   // 左栏控制面（搜索/chips/详情卡/断链清单/统计行）
   'wiki.chipAll': '全部',
   'wiki.chipRoot': '根目录',
@@ -2213,6 +2241,13 @@ export default {
   'plugins.dispatchOffTitle': '派发许可已关闭——不会再派给新节点。点击恢复派发',
   'plugins.dispatchBlockedBlocked': '已封禁——本开关不会生效；解封走 API / CLI（面板已无入口）',
   'plugins.dispatchBlockedTransition': '存在临时派发授权——该授权到期或被清除后，本开关才生效',
+  'plugins.uninstall': '卸载',
+  'plugins.uninstallTitle': '卸载插件',
+  'plugins.uninstallConfirm': '卸载「{name}」后它将移出插件注册表，且不会再被自动装回。确认卸载将同时删除其插件目录（含本地数据不可恢复）；也可以仅停用、保留目录。',
+  'plugins.uninstallDeleteLabel': '卸载并删除目录',
+  'plugins.uninstallKeepLabel': '仅停用（保留目录）',
+  'plugins.uninstalled': '已卸载 {name}',
+  'plugins.migratedHint': '该包名已迁移：「{name}」现以「{newName}」安装。删除旧目录（~/.stand/plugins/{name}/）后用新名重装即可恢复。',
   'plugins.author': '作者 {author}',
   'plugins.compositionSkills': '{n} 个技能',
   'plugins.compositionMcp': 'MCP：{servers}',
@@ -2371,7 +2406,7 @@ export default {
   'content.plugin.slideblocks.name': 'slideblocks',
   'content.plugin.slideblocks.desc': 'SlideBlocks 演示制作包——节点获得用 Slidev 从零制作/改进完整 PPT 演示（slides、deck、幻灯片）的全流程纪律。适用于做 PPT、写演示、出幻灯片、制作 slides、改进已有 deck、按 Slidev 重做演示等任务。内含 skill：slideblocks（Blocks/Decks/Recipes 全流程、执行锁、交付校验）。不适用于 HTML 卡片与社交图设计（另配 design-cards 插件）。组件面：无 mcp.json、无工具扩展。',
   'content.plugin.nebflow-plugin-creator.name': 'nebflow-plugin-creator',
-  'content.plugin.nebflow-plugin-creator.desc': '插件封装器包——节点获得把能力需求封装为合规插件包的全流程执行能力（三输入分析→包生成→机械自检→落盘即生效的交付自检）。适用于把已有 skill 或能力封装成插件、做一个能 Y 的新插件、写 plugin.json 与 SKILL.md、插件描述质量体检、跑包校验脚本等任务。内含 skills：plugin-packaging（三输入→生成→自检→交付的封装主流程，含同名冲突与 digest 漂移等六分叉处置、交付前自检与来源/digest 报告口径）、description-quality（manifest 五段式描述规范：模板、好坏范例、M1-M15 判定口径与核心词表圈定法）。验证与质量审查任务另配 nebflow-qa 插件。无 mcp.json、无工具扩展。',
+  'content.plugin.nebflow-plugin-creator.desc': '插件封装器包——节点获得把能力需求封装为合规插件包的全流程执行能力（三输入分析→包生成→机械自检→落盘即生效的交付自检）。适用于把已有 skill 或能力封装成插件、做一个能 Y 的新插件、写 plugin.json 与 SKILL.md、插件描述质量体检、跑包校验脚本等任务。内含 skills：plugin-packaging（三输入→生成→自检→交付的封装主流程，含同名冲突与 digest 漂移等六分叉处置、交付前自检与来源/digest 报告口径）、description-quality（manifest 五段式描述规范：模板、好坏范例、M1-M15 判定口径与核心词表圈定法）。验证与质量审查任务另配 qa 插件。无 mcp.json、无工具扩展。',
   'content.project.general.name': 'general',
   'content.project.general.desc': 'General-purpose project for executing general tasks: any domain, one-off or recurring; Nebula dispatches, nodes execute.',
 

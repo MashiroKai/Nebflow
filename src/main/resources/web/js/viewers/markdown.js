@@ -19,6 +19,7 @@ import { mintTickets, stripCredentialParams, decodePathParam } from '../nfTicket
 import { nfViewerUrl, nfCacheDrop } from '../nfFileCache.js';
 import { noteAuthRejected } from '../sessionGate.js';
 import { t } from '../i18n.js';
+import { isMdHtmlFile } from '../mdHtmlGate.js';
 // mermaid-md batch (2026-10-23): explicit hydration at the primary document
 // face (this viewer + wiki doc opens). The global observer in main.js covers
 // every other markdown face; this call is idempotent (state-attribute guard).
@@ -184,6 +185,10 @@ function applyJumpAnchor(mdViewer, anchor, blockIds) {
   }
   if (!target) return;
   scrollHeadingToTop(mdViewer, target);
+  // 落点时间戳：阅读位恢复（canvas-tab-activated 腿）在跳后 2s 窗口内让位——
+  // 落点滚动是新真源，不被旧阅读位拽回。
+  const jumpPane = /** @type {any} */ (mdViewer.closest('.canvas-tab-pane'));
+  if (jumpPane) jumpPane._mdJumpAt = Date.now();
   target.classList.remove('nf-jump-flash');
   // Force a reflow so consecutive jumps restart the animation.
   void target.offsetWidth;
@@ -229,11 +234,24 @@ async function wikiGraph() {
 /**
  * Resolve an Obsidian-style link target against the graph index.
  * Returns { absPath } for a local hit, { remote } for a peer doc, or null.
+ * 词条引用批 batch 2 (F1): after BOTH document legs fail, a target with no
+ * explicit anchor falls through to the TERM REGISTRY third leg — the graph
+ * payload already carries `nodes[].terms[]` (batch-1 projection), so this is
+ * a pure client-side lookup with zero extra requests. The hit reuses the
+ * resolved shape and adds `anchor:{kind:'block', id}` (the definition's block
+ * anchor — the deep-link landing) plus `term:{name,definition,rel,anchor,
+ * source}` (the hover-bubble payload). Ambiguity never guesses, mirroring the
+ * engine's selectTerm: a UNIQUE glossary hit wins, else a unique hit anywhere
+ * in the registry scope, else null (the link stays unresolved).
  * @param {string} target raw target (no anchor/alias)
  * @param {string} baseDir the current document's directory ('' when unknown)
  * @param {any} data graph JSON
+ * @param {{project?: string|null, allowTerm?: boolean}} [opts] project scopes
+ *   the term registry (engine: per-vault); allowTerm=false skips the third leg
+ *   (targets the author anchored explicitly are doc+anchor intent, never term
+ *   citations — [[GCR#某节]] must not re-route).
  */
-function resolveWikiTarget(target, baseDir, data) {
+function resolveWikiTarget(target, baseDir, data, opts) {
   const norm = (s) => String(s || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
   const clean = target.replace(/\\/g, '/').replace(/^\.\/+/, '');
   const withMd = clean.toLowerCase().endsWith('.md') ? clean : clean + '.md';
@@ -258,7 +276,15 @@ function resolveWikiTarget(target, baseDir, data) {
       hit = byBase.find((n) => sameVault(n)) || byBase.find((n) => n.device === 'self') || null;
     }
   }
-  if (!hit) return null;
+  if (!hit) {
+    // 3. Term registry (词条引用批 batch 2, F1) — documents first, terms fill
+    // only the gap (裁定 §9-4: today's doc hits stay doc hits tomorrow).
+    if (!opts || opts.allowTerm !== false) {
+      const termHit = resolveTermHit(target, data, opts ? opts.project : null);
+      if (termHit) return termHit;
+    }
+    return null;
+  }
   const proj = projects.find((pj) => pj.name === hit.project);
   if (!proj) return null;
   if (hit.device === 'self') {
@@ -268,13 +294,219 @@ function resolveWikiTarget(target, baseDir, data) {
   return { remote: { device: hit.device, vault: proj.vault, rel: hit.rel, project: hit.project } };
 }
 
+/** Term-registry lookup over the merged graph payload (F1 third leg). Key
+ *  normalization mirrors the engine's termTargetKey (trailing doc extension
+ *  stripped, case-insensitive); the registry scope is the linking document's
+ *  project (the engine derives the registry per vault — the merged view needs
+ *  the project filter to reproduce that scope). */
+function resolveTermHit(target, data, currentProject) {
+  if (!data || !Array.isArray(data.nodes)) return null;
+  const key = String(target || '').trim().replace(/\\/g, '/')
+    .replace(/\.markdown$/i, '').replace(/\.md$/i, '').toLowerCase();
+  if (!key) return null;
+  const candidates = [];
+  for (const n of data.nodes) {
+    if (n.stub || !Array.isArray(n.terms)) continue;
+    for (const term of n.terms) {
+      const keys = [term.name].concat(term.aliases || [])
+        .map((k) => String(k || '').trim().toLowerCase());
+      if (keys.includes(key)) candidates.push({ node: n, term });
+    }
+  }
+  if (!candidates.length) return null;
+  const scoped = currentProject
+    ? candidates.filter((c) => c.node.project === currentProject)
+    : candidates;
+  const pool = scoped.length ? scoped : candidates;
+  // selectTerm mirror (第一批裁定 5): unique glossary hit wins over doc-intro
+  // hits; multiple same-tier hits never guess.
+  const glossaryHits = pool.filter((c) => c.term.source === 'glossary');
+  const pick = glossaryHits.length === 1 ? glossaryHits[0]
+    : glossaryHits.length > 1 ? null
+    : pool.length === 1 ? pool[0] : null;
+  if (!pick) return null;
+  const project = (data.projects || []).find((p) => p.name === pick.node.project);
+  const resolved = resolvedForNode(pick.node, project);
+  if (!resolved) return null;
+  const anchorId = String(pick.term.anchor || '').replace(/^#\^/, '');
+  if (!anchorId) return null;
+  resolved.anchor = { kind: 'block', id: anchorId };
+  resolved.term = {
+    name: pick.term.name,
+    definition: pick.term.definition || '',
+    rel: pick.term.rel || pick.node.rel,
+    anchor: pick.term.anchor,
+    source: pick.term.source || '',
+    doc: pick.node.title || '',   // 所在文档标题（气泡面；空则回落 rel 基名）
+  };
+  return resolved;
+}
+
+// ── Term hover bubble (词条引用批 batch 2, F3/F4) ──────────────────────
+// 文档阅读面 resolved 词条引用的悬停摘要卡：词条名 + 定义（≤280 字）+ 所在
+// 文档 + 跳转提示。数据面两条腿（§4.4 定案）：
+//   ① 主路径 = graph 载荷零请求 —— 消解 pass 已把注册表命中连同 definition
+//     缓存进 dataset.wikiResolved，气泡直读；
+//   ② 兜底 = 词条不在载荷（30s TTL 内的陈旧图谱 / 服务端未重扫）⇒ 短形链接
+//     hover 时打 `GET /api/wiki/term?name=` 单查，命中同样出泡。
+// 材质 = 图谱 wg-tip 同族毛玻璃 token（--glass-*，亮暗双主题）。桌面
+// pointer-events:none 不挡点击（点击 = 深链跳转）；触屏面 ((hover:none)) 翻
+// auto —— 移动无 hover，按移动惯例「轻点即开气泡，气泡内再点跳转」
+// （termTapExpand 在点击腿消费，首击不导航）。
+
+let termTipEl = null;
+let termTipLink = null;
+let termTipHost = null;
+let termTipTimer = 0;
+let termTipDocBound = false;
+const TERM_TIP_DELAY = 150; // hover 防抖（§5.2：+150ms 才出泡）
+/** @type {Map<string, any>} term-API 兜底腿的结果缓存（含 miss=null，hover 不重复打） */
+const termApiCache = new Map();
+
+function noHoverEnv() {
+  return !!(window.matchMedia && window.matchMedia('(hover: none)').matches);
+}
+
+function ensureTermTipEl() {
+  if (termTipEl) return termTipEl;
+  const el = document.createElement('div');
+  el.className = 'nf-term-tip';
+  el.innerHTML = '<div class="tt"></div><div class="ts"></div><div class="td"></div>';
+  // 气泡内点击 = 跳转（移动惯例；桌面 pointer-events:none 时不可达，无害）。
+  el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const link = termTipLink;
+    const host = termTipHost;
+    hideTermTip();
+    if (link) onWikilinkClick(/** @type {HTMLAnchorElement} */ (link), host);
+  });
+  document.body.appendChild(el);
+  termTipEl = el;
+  if (!termTipDocBound) {
+    termTipDocBound = true;
+    // 点击别处收泡（触屏首击开泡后的第二次交互面）。
+    document.addEventListener('pointerdown', (e) => {
+      if (!termTipEl || termTipEl.style.display === 'none') return;
+      const t = /** @type {Node|null} */ (e.target);
+      if (t && termTipEl.contains(t)) return;
+      if (termTipLink && termTipLink.contains(/** @type {Node|null} */ (t))) return;
+      hideTermTip();
+    }, true);
+    // 换页签收泡（hover 的 pane 隐藏后气泡位置失效）。
+    document.addEventListener('canvas-tab-switched', hideTermTip);
+  }
+  return el;
+}
+
+function hideTermTip() {
+  if (termTipTimer) { clearTimeout(termTipTimer); termTipTimer = 0; }
+  termTipLink = null;
+  termTipHost = null;
+  if (termTipEl) termTipEl.style.display = 'none';
+}
+
+/** 气泡数据两条腿（①载荷直读 ②term API 兜底）的统一取数口。 */
+async function termInfoFor(a) {
+  if (a.dataset.wikiResolved) {
+    try {
+      const hit = JSON.parse(a.dataset.wikiResolved);
+      if (hit && hit.term) {
+        return { name: hit.term.name, definition: hit.term.definition || '', rel: hit.term.rel || '', doc: hit.term.doc || '' };
+      }
+    } catch (e) { /* fall through to the API leg */ }
+  }
+  const name = a.dataset.wikiTermFallback || '';
+  if (!name) return null;
+  const key = name.toLowerCase();
+  if (termApiCache.has(key)) return termApiCache.get(key);
+  let info = null;
+  try {
+    const { authHeaders } = await import('../flowHelpers.js');
+    const res = await fetch('/api/wiki/term?name=' + encodeURIComponent(name), { headers: { ...authHeaders() } });
+    if (res.ok) {
+      const body = await res.json();
+      if (body && body.resolved && body.term) {
+        info = { name: body.term.name, definition: body.term.definition || '', rel: body.term.rel || '', doc: '' };
+      }
+    }
+  } catch (e) { info = null; }
+  termApiCache.set(key, info);
+  return info;
+}
+
+function paintTermTip(a, info) {
+  const el = ensureTermTipEl();
+  el.classList.toggle('touch', noHoverEnv());
+  el.querySelector('.tt').textContent = info.name || '';
+  el.querySelector('.ts').textContent = info.definition || '';
+  const doc = info.doc || (info.rel ? String(info.rel).split('/').pop().replace(/\.(md|markdown|html?)$/i, '') : '');
+  el.querySelector('.td').textContent =
+    (doc ? t('wiki.termSource') + doc + ' · ' : '') + t('wiki.termJumpHint');
+  el.style.display = 'block';
+  // Viewport-clamped placement: above the link when there is room, else below.
+  const r = a.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const bw = el.offsetWidth;
+  const bh = el.offsetHeight;
+  const x = Math.min(Math.max(8, r.left + r.width / 2 - bw / 2), Math.max(8, vw - bw - 8));
+  let y = r.top - bh - 8;
+  if (y < 8) y = Math.min(r.bottom + 8, Math.max(8, vh - bh - 8));
+  el.style.left = Math.round(x) + 'px';
+  el.style.top = Math.round(y) + 'px';
+}
+
+function requestTermTip(a, mdViewer, delay) {
+  hideTermTip();
+  termTipLink = a;
+  termTipHost = mdViewer || null;
+  termTipTimer = setTimeout(async () => {
+    const info = await termInfoFor(a);
+    if (termTipLink !== a) return;   // superseded/hidden while fetching
+    if (!info) return;               // not a term after all — stay closed
+    paintTermTip(a, info);
+  }, delay);
+}
+
+/** 触屏首击开泡（返回 true = 点击已消费，点击腿不再导航）。第二次点击同一
+ *  链接返回 false → 落回深链跳转；「气泡内再点」由气泡自身的 click 腿消费。 */
+function termTapExpand(a, mdViewer) {
+  if (!noHoverEnv()) return false;
+  const kind = a.dataset.wikiTermKind;
+  if (!kind) { hideTermTip(); return false; }
+  if (termTipLink === a) return false;
+  requestTermTip(a, mdViewer, 0);
+  return true;
+}
+
+/** 挂词条面（F3）：词条命中链接挂 hover 出泡（+150ms 防抖）；载荷未收录的
+ *  短形 unresolved 链接挂兜底腿（hover 打 term API）。非词条普通链接不挂
+ *  （§5.2 克制口径）。触屏不挂 mouseenter —— 移动走点击腿 termTapExpand。 */
+function attachTermFace(a, mdViewer, opts) {
+  a.classList.add('nf-wikilink-term');
+  if (opts && opts.term) a.dataset.wikiTermKind = 'term';
+  else a.dataset.wikiTermKind = 'fallback';
+  if (opts && !opts.term && opts.fallbackName) a.dataset.wikiTermFallback = opts.fallbackName;
+  if (noHoverEnv()) return;
+  a.addEventListener('mouseenter', () => requestTermTip(a, mdViewer, TERM_TIP_DELAY));
+  a.addEventListener('mouseleave', () => { if (termTipLink === a) hideTermTip(); });
+}
+
+/** The canvas tab id hosting this viewer — the single-layer source a reference
+ *  jump records (F5 返回原文档；canvas.js openWorkspaceItem 消费). */
+function refSourceTabId(mdViewer) {
+  const pane = mdViewer && mdViewer.closest ? mdViewer.closest('.canvas-tab-pane') : null;
+  return (pane && pane.dataset && pane.dataset.tabId) || undefined;
+}
+
 /**
  * Post-render pass: turn `[[wikilink]]` text occurrences into reference
  * anchors. Runs over text nodes so fenced code and inline code stay literal.
  * @param {HTMLElement} mdViewer
  * @param {string} baseDir current document directory
+ * @param {string} [absPath] current document path (scopes the term registry)
  */
-async function renderWikilinks(mdViewer, baseDir) {
+async function renderWikilinks(mdViewer, baseDir, absPath) {
   let data = null;
   try { data = await wikiGraph(); } catch (e) { data = null; }
   // `![[embed]]` rides the same regex (Obsidian embed syntax): image embeds
@@ -324,17 +556,32 @@ async function renderWikilinks(mdViewer, baseDir) {
     node.parentNode?.replaceChild(frag, node);
   }
   // Resolution pass (best-effort, after all links exist).
+  // 词条引用批 batch 2: the term-registry scope follows the linking document's
+  // project (engine derives the registry per vault — graphNodeFor maps this
+  // document into its project; outside every vault = merged view scope).
+  const currentProject = (absPath && data)
+    ? ((graphNodeFor(absPath, data) || {}).project || {}).name || null
+    : null;
   mdViewer.querySelectorAll('a.nf-wikilink').forEach((el) => {
     const a = /** @type {HTMLAnchorElement} */ (el);
     const target = a.dataset.wikiTarget || '';
     if (!target) { a.classList.add('nf-wikilink-self'); return; }
-    const hit = data ? resolveWikiTarget(target, baseDir, data) : null;
+    const anchorRaw = a.dataset.wikiAnchor || '';
+    const hit = data
+      ? resolveWikiTarget(target, baseDir, data, { project: currentProject, allowTerm: !anchorRaw })
+      : null;
     if (hit) {
       a.classList.add('nf-wikilink-resolved');
       a.dataset.wikiResolved = JSON.stringify(hit);
+      // 词条命中：挂 hover 气泡 + 点击深链（F3；数据在 dataset 里零请求）。
+      if (hit.term) attachTermFace(a, mdViewer, { term: hit.term });
     } else {
       a.classList.add('nf-wikilink-unresolved');
       a.title = t('wiki.unresolved');
+      // 兜底腿（F3②）：无锚短形引用在载荷里查不到时，hover 打 term API
+      // 出泡（词条文档未重扫的 30s 窗口里引用仍然可读）。带锚目标 =
+      // 文档+锚意图，永不进词条面。
+      if (!anchorRaw) attachTermFace(a, mdViewer, { fallbackName: target });
     }
   });
 }
@@ -450,10 +697,11 @@ async function renderBacklinks(mdViewer, absPath) {
 
 /** Handle a click on a rendered wikilink. */
 async function onWikilinkClick(a, mdViewer) {
+  hideTermTip();
   const anchorRaw = a.dataset.wikiAnchor || '';
   const target = a.dataset.wikiTarget || '';
   // Anchor normalization: '^id' → block jump; otherwise a heading jump.
-  const anchor = anchorRaw.startsWith('^')
+  let anchor = anchorRaw.startsWith('^')
     ? { kind: 'block', id: anchorRaw.slice(1) }
     : (anchorRaw ? { kind: 'heading', text: anchorRaw } : null);
   // Self-reference (or an anchor-only link in this document).
@@ -464,7 +712,7 @@ async function onWikilinkClick(a, mdViewer) {
   let resolved = null;
   try { resolved = a.dataset.wikiResolved ? JSON.parse(a.dataset.wikiResolved) : null; } catch (e) { resolved = null; }
   if (!resolved) {
-    try { resolved = resolveWikiTarget(target, '', await wikiGraph()); } catch (e) {
+    try { resolved = resolveWikiTarget(target, '', await wikiGraph(), { allowTerm: !anchorRaw }); } catch (e) {
       // #762：点击腿是用户主动面——401/403（会话被拒）交 sessionGate 重认证伞，
       // 不再误报「无法解析该链接」；其余错误照旧落 unresolved 提示。
       if (e && (/** @type {any} */ (e).status === 401 || /** @type {any} */ (e).status === 403)) {
@@ -475,8 +723,23 @@ async function onWikilinkClick(a, mdViewer) {
     }
   }
   if (!resolved) { window.__showToast?.(t('wiki.unresolved'), 'info'); return; }
+  // 词条命中落点（F2）：作者未写锚时采用消解产物自带的块锚 —— 深链跳到词条
+  // 定义段（applyJumpAnchor 滚动 + nf-jump-flash 高亮的既有通道，零新机制）。
+  if (!anchor && resolved.anchor) anchor = resolved.anchor;
+  // 来源页签 id（F5 返回原文档；v1 单层来源，每次跳转覆写）。
+  const refSourceTab = refSourceTabId(mdViewer);
+  // F5 阅读位保真：任何跳转派发前固化来源阅读位并冻结 scroll 记账。新开
+  // 页签的同步布局抖动会把还在前台的来源滚动盒瞬时 clamp 回 0 并派发 scroll
+  // （harness 实测：事件落在 class 切换前 ~50ms，防无可防）——不冻结真值就被
+  // artifact 冲掉。冻结到来源页签下次激活（恢复阅读位）时解除。
+  const srcPane = mdViewer.closest('.canvas-tab-pane');
+  if (srcPane) {
+    const sc0 = srcPane.querySelector('.canvas-md-scroll');
+    if (sc0) srcPane._mdScrollPos = sc0.scrollTop;
+    srcPane._mdPosPinned = true;
+  }
   if (resolved.absPath) {
-    openLocalFileTab(resolved.absPath, anchor);
+    openLocalFileTab(resolved.absPath, anchor, refSourceTab);
     return;
   }
   if (resolved.remote) {
@@ -500,6 +763,7 @@ async function onWikilinkClick(a, mdViewer) {
           content: body.content || '',
           readOnly: true,
           anchor,
+          refSourceTab,
         },
       }));
     } catch (e) {
@@ -684,6 +948,23 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
 
   pane.classList.remove('scrollable');
   pane.innerHTML = `<div class="canvas-md-scroll"><div class="canvas-md-viewer">${html}</div></div>`;
+  // 阅读位保真（词条引用批 batch 2，F5 返回原文档配套）：pane 切换走
+  // display:none，Chromium 不保留滚动盒（实测 scrollTop 178→0）。scroll 监听
+  // 记账 pane._mdScrollPos，激活时（canvas-tab-activated，canvas.js 只对带
+  // 阅读位记账的 pane 派发）恢复；跳后 2s 窗口内不抢 applyJumpAnchor 的落点。
+  pane._mdScrollPos = pane._mdScrollPos || 0;
+  const scrollTrack = pane.querySelector('.canvas-md-scroll');
+  if (scrollTrack) {
+    // display:none 化（切走页签）时 Chromium 把滚动盒重置为 0 并派发 scroll——
+    // 那是布局 artifact 不是阅读意图，记账必须跳过（否则回来时永远恢复成 0）。
+    // 判据用 active 类而非 clientHeight：artifact 事件的派发时序里 clientHeight
+    // 读数不可靠（实测守不住），而 classList 是 JS 同步面。
+    scrollTrack.addEventListener('scroll', () => {
+      if (!pane.classList.contains('active')) return;   // 切走后的 artifact（见上）
+      if (pane._mdPosPinned) return;                    // 跳转冻结窗（onWikilinkClick）
+      pane._mdScrollPos = scrollTrack.scrollTop;
+    }, { passive: true });
+  }
   dedupeTitleHeading(pane.querySelector('.canvas-md-viewer'), fileName);
   /** @type {any} */ (pane)._renderedMdContent = content;
   // Jump face: the live analysis stays on the pane so a reference click into
@@ -696,6 +977,16 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
       const viewer = pane.querySelector('.canvas-md-viewer');
       const blockIds = /** @type {any} */ (pane)._mdAnalysis?.blockIds;
       if (viewer && e.detail) applyJumpAnchor(viewer, e.detail, blockIds);
+    });
+    // 阅读位恢复：切换回来（含「返回原文档」钮的单击）时把滚动盒写回记账值。
+    pane.addEventListener('canvas-tab-activated', () => {
+      // 解冻跳转冻结窗：回到来源页即恢复用户滚动记账权。
+      /** @type {any} */ (pane)._mdPosPinned = false;
+      if (Date.now() - (/** @type {any} */ (pane)._mdJumpAt || 0) < 2000) return;
+      const sc = pane.querySelector('.canvas-md-scroll');
+      if (sc && Number.isFinite(/** @type {any} */ (pane)._mdScrollPos)) {
+        sc.scrollTop = /** @type {any} */ (pane)._mdScrollPos;
+      }
     });
   }
 
@@ -740,6 +1031,14 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
     mdViewer.addEventListener('click', (e) => {
       const wikilink = e.target instanceof Element ? e.target.closest('a.nf-wikilink') : null;
       if (wikilink) {
+        // 触屏首击开泡（词条引用批 batch 2，移动惯例）：(hover:none) 环境里
+        // 词条面的第一次轻点只展开气泡不导航，再点（链接或气泡内）才跳转。
+        // 桌面环境此腿恒 false（hover 已预览，点击 = 直接深链跳转）。
+        if (termTapExpand(/** @type {HTMLAnchorElement} */ (wikilink), mdViewer)) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
         onWikilinkClick(/** @type {HTMLAnchorElement} */ (wikilink), mdViewer);
@@ -776,8 +1075,16 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
 
     // Wiki face: wikilinks (async, post-render) + jump anchor + backlinks foot
     // (KG audit ② — incoming edges only, collapsed; absent outside vaults).
-    if (absPath) { renderWikilinks(mdViewer, baseDir); renderBacklinks(mdViewer, absPath); }
+    // md/html 类型硬约束闸（设计稿 §8 词条同闸回写；调研稿 §9-1/§9-7）：wikilink
+    // 渲染消解（含词条引用第二批 F1 的词条回退——已落本闸内侧）仅对四扩展名
+    // 生效；非 md/html 文档 `[[词条]]` 按普通文本渲染不解析、点击无深链。viewer
+    // 注册表今天只把 .md/.markdown 指到本件，本闸是防再映射的显式单点（与
+    // askDock 同挂 mdHtmlGate.js 白名单）。
+    if (absPath && isMdHtmlFile(absPath)) { renderWikilinks(mdViewer, baseDir, absPath); renderBacklinks(mdViewer, absPath); }
     if (jumpAnchor) applyJumpAnchor(mdViewer, jumpAnchor, analysis.blockIds);
+    // 词条气泡随滚动收起：fixed 定位气泡不跟随文档滚动，锚点滚走即失位。
+    const mdScroller = pane.querySelector('.canvas-md-scroll');
+    if (mdScroller) mdScroller.addEventListener('scroll', hideTermTip, { passive: true });
     // Mermaid face: hydrate ```mermaid placeholders (lazy viewport render —
     // js/mermaidRenderer.js). Idempotent; no-op when the doc has no fences.
     hydrateMermaidIn(mdViewer);

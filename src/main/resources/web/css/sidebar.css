@@ -1170,6 +1170,13 @@
 }
 .mchain-chip.playing { border-color: rgba(7, 193, 96, 0.4); }
 .mchain-chip .agent-detail-playing-dot { flex-shrink: 0; }
+/* 时段闸（model-schedule-unavailable 批 2026-10-29）：active 受限 chip 灰显 +
+   窗口小注（.mchip-window）；同健康层 dim 语义——「这根这轮不会被选中」。 */
+.mchain-chip.restricted { opacity: 0.5; }
+.mchain-chip .mchip-window {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
 .mchain-arrow {
   color: var(--color-text-muted);
   font-size: 10px;
@@ -2265,21 +2272,16 @@
   color: var(--color-frame-text-dim);
   white-space: nowrap;
 }
-/* 右上状态区（补充令④：badge/chevron 自裁右上，不与文字争位）。 */
+/* 右上状态区（补充令④：badge/chevron 自裁右上，不与文字争位）。
+   🔴 单 toggle 定版（2026-10-29 作者令）：本区原「收起态行尾派发开关」
+   （`.plugins-card-state .nb-toggle`，2026-10-07 14:13 令①）随单 toggle 批整组
+   退场——每卡唯一开关回归详情区 `.plugins-item-actions`（js/plugins.js 单点）。 */
 .plugins-card-state {
   grid-column: 2;
   grid-row: 1;
   display: flex;
   align-items: center;
   gap: 6px;
-}
-/* 收起态行尾派发开关（2026-10-07 14:13 作者令①）：在 `.plugins-card-state`
-   内、药丸之后 chevron 之前（chevron 保持行末展开 affordance，与 badge/chevron
-   协调的行尾位）。开关本体 = 共享 nb-toggle（组件节样式，34×18 原尺寸）；
-   点击/Enter/Space 的 stopPropagation 在 js/bindCardEvents 统一绑定——收起态
-   点击只动开关，不触发整行 accordion。两视图（行尾 + 详情区）一处状态源。 */
-.plugins-card-state .nb-toggle {
-  flex: none;
 }
 /* 行 2 = 一行摘要（补充令③：独立行，最多两行，超出省略）。 */
 .plugins-item-summary {
@@ -2310,10 +2312,44 @@
 .plugins-item-detail[hidden] { display: none; }
 .plugins-item-detail .plugins-card-desc { -webkit-line-clamp: unset; }
 /* 启停操作钮行（既有派发开关收进展开态，2026-10-07 条目式批只动层级）：
-   右对齐呼应原「卡片右上」的肌肉记忆。 */
+   右对齐呼应原「卡片右上」的肌肉记忆。卸载批（2026-10-29）：行内加「卸载」钮——
+   开关居左、卸载居右（危险动作离手边最远位）。 */
 .plugins-item-actions {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+}
+/* 卸载钮（材质 = .plugins-item-doc 同族 glass-control；语义色 = error 族——
+   不可逆动作可辨识；尺寸比照 doc 钮 10px monospace）。 */
+.plugins-item-uninstall {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 500 10px ui-monospace, SFMono-Regular, monospace;
+  padding: 3px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  background: var(--glass-control-bg);
+  border: 1px solid color-mix(in srgb, var(--status-error-icon) 28%, transparent);
+  color: var(--status-word);
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.plugins-item-uninstall:hover {
+  background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
+  border-color: color-mix(in srgb, var(--status-error-icon) 45%, transparent);
+}
+.plugins-item-uninstall:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--status-error-icon) 50%, transparent);
+  outline-offset: 1px;
+}
+.plugins-item-uninstall .st-ic { width: 12px; height: 12px; }
+/* 拒载卡「已迁移」处置提示（迁移批 2026-10-29）：旧名包的拒载不再只是裸报错——
+   给出迁移去向。材质照 blocked 提示条族（可行动文案），色用 sapphire（信息向）。 */
+.plugins-card-hint.migrated {
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.08);
+  border: 1px solid rgb(var(--sapphire) / 0.25);
 }
 /* Plugin.md 入口（条目式批）：只做入口呈现，内容呈现归 Canvas 既有通路。
    探针在场才显形（默认 hidden 属性）；标注 = 文件名本身（数据投影）。 */
@@ -2660,6 +2696,19 @@
 .cfg-test-result-line.ok .cfg-test-line-text { color: var(--status-word); }
 .cfg-test-result-line.err .cfg-test-line-text { color: var(--status-error-icon); font-weight: 500; }
 .cfg-test-result-line.testing .cfg-test-line-text { color: var(--color-frame-text); }
+
+/* settings-panel-jev-imagegen 批 ③件（2026-10-29 作者令「Jev/生图也要有测试
+   可用性按钮」）：生图「实跑一次最小生成」的产物缩略预览——挂结果行文本位内，
+   玻璃基座零新色值（边框走 frame token，随亮暗双主题）。 */
+.cfg-test-thumb {
+  display: block;
+  margin-top: 6px;
+  max-width: 132px;
+  max-height: 132px;
+  border-radius: 8px;
+  border: 1px solid var(--color-frame-border-light);
+  background: var(--color-frame-bg, transparent);
+}
 
 /* ── thinking-config Phase 2（2026-10-29）→ 收归全局（settings-panel-fourfix
    批 ①件，作者令 2026-10-29「不要每个模型都能配置思考模式」）────────────────

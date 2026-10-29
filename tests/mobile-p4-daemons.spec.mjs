@@ -2,7 +2,8 @@
 //（mobile-secondary-screens 实施批；样张 v3.5 P4 §2 行结构 + §4 脉冲 + 开放点③④）。
 //
 // 样张→实机 DOM 映射（实施批口径）：
-//   §8-1 盒模型 …… #daemon-panel：left 6 / top 58+safe / 308×560 / r16。
+//   §8-1 【dock 批换代 2026-10-29】盒模型 …… #daemon-panel 收编进页面体：
+//        全幅（w=375 / x=0 / radius 0），入口 = 设置根页工作台行；悬浮盒退役。
 //   进程行（状态点+名+:port+命令+自启开关）…… 桌面 .daemon-row 全字段沿用
 //        （手机层两行化：行 1 = 点/名/:port/开关，行 2 = 命令 + 动作钮）。
 //   §4 心跳运行点 1.6s 脉冲 …… 桌面既有 daemon-pulse 1.6s infinite 原样。
@@ -19,7 +20,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { settlePanel } from './_mobile-panel-settle.mjs';
+import { openHubPage } from './_mobile-dock-nav.mjs';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
 const MIME = {
@@ -105,14 +106,11 @@ async function bootApp(page) {
   return writes;
 }
 
-/** 开面板：左列液态下拉 → 心跳键（.open 判据 → floatController morph）。 */
+/** 开面板：设置根页工作台行「心跳」→ push 页（面收编进页面体）。 */
 async function openPanel(page) {
-  await page.locator('.mh-dd[data-dd="left"] .mh-dd-hd').click();
-  await page.locator('#daemon-btn').click();
+  await openHubPage(page, 'daemon');
   await expect(page.locator('#daemon-panel')).toHaveClass(/open/);
   await expect(page.locator('#daemon-panel')).toBeVisible();
-  // morph 终态（两段式守护，见 _mobile-panel-settle.mjs 头注）。
-  await settlePanel(page, { overlaySel: '#daemon-panel', panelSel: '#daemon-panel', openClass: 'open' });
   await expect(page.locator('#daemon-panel .daemon-row')).toHaveCount(3);
 }
 
@@ -129,16 +127,15 @@ test.beforeEach(async ({ page }) => {
 /** @type {{method:string,path:string,body:any}[]} */
 let writes = [];
 
-test('T1 panel geometry: top-hung 308×560, centered, radius 16', async ({ page }) => {
+test('T1 page geometry: adopted full-bleed in daemon page, radius 0 (dock 批换代判据)', async ({ page }) => {
   const errors = watchErrors(page);
   await openPanel(page);
-  const box = await page.locator('#daemon-panel').boundingBox();
-  expect(box).toBeTruthy();
-  expect(box.x).toBe(33.5); // 面板合并批⑤：居中 = (375-308)/2（原 left 6 退役）
-  expect(box.width).toBe(308);
-  expect(box.height).toBe(560);
-  const radius = await page.locator('#daemon-panel').evaluate((el) => getComputedStyle(el).borderRadius);
-  expect(radius).toBe('16px');
+  const geo = () => page.evaluate(() => {
+    const m = document.getElementById('daemon-panel');
+    const r = m.getBoundingClientRect();
+    return { x: Math.round(r.x), w: Math.round(r.width), radius: getComputedStyle(m).borderRadius };
+  });
+  await expect.poll(geo, { timeout: 5000 }).toEqual({ x: 0, w: 375, radius: '0px' });
   expect(errors).toEqual([]);
 });
 

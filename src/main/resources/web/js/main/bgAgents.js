@@ -408,10 +408,19 @@ function bgFirstLine(text) {
  *      delegate 作用域自根成桶不经本面板，画布态细粒度结构 = S10 面非本面板职责）。
  * 嵌套 delegate（G3 source=delegate）作为**子行**渲染（C2 两级帽——其子结构随其
  * 详情弹窗下钻，不在本面板再展开）。
+ *
+ * 面板树批（2026-10-29 ①）：新增第④认领源 = live/快照行的 `parentSessionId`
+ * （各 spawn 路由单点注入 + activeAgents 快照出帧）——store 镜像未及刷新时子行
+ * 也能即时挂到可见父 delegate 组头下（同桶兄弟同级缩进）。孤儿裁定：ownerOf 命中
+ * 但父组头不可见（父已终态 / 父为 C1 内部件 / 父即桶根会话）的行**提升顶层**并随
+ * `orphanBy` 携带来源（渲染面出「来自 …」角标）；parent = 桶根会话的行**不算认领**
+ * （根会话自身不是行——root 直派的 delegate 恒为一等组头，既有语义零回归）。
+ *
  * @param {Array<[string, any]>} entries visibleBgAgentEntries 产出
- * @returns {{groups: Array<Object>, leftovers: Array<Array<any>>}}
+ * @param {string} bucketSid 桶根会话 id（root-parent 豁免判据）
+ * @returns {{groups: Array<Object>, leftovers: Array<Array<any>>, orphanBy: Map<string, {parentSid: string, parentTitle: string}>}}
  */
-function bgDelegateGroups(entries) {
+function bgDelegateGroups(entries, bucketSid) {
   const rows = listDelegateRows();
   const rowByDelegate = new Map();
   for (const r of rows) rowByDelegate.set(String(r.delegateId || ''), r);
@@ -423,13 +432,21 @@ function bgDelegateGroups(entries) {
       if (cid && !childOwner.has(cid)) childOwner.set(cid, String(r.delegateId || ''));
     }
   }
-  // Pass 1：组头认领（delegate-* / external-*；被 G3 认领的嵌套 delegate 不作组头）。
+  // 面板树批：live/快照 parentSessionId 认领源（root-parent 与自指豁免——见上注）。
+  const liveParentOf = new Map(); // childSessionId → parentSessionId
+  for (const [id, info] of entries) {
+    const sid = String((info && info.sessionId) || id || '').replace(/^team-/, '');
+    const p = String((info && info.parentSessionId) || '').trim();
+    if (p && p !== sid && p !== String(bucketSid || '')) liveParentOf.set(sid, p);
+  }
+  const ownerOf = (sid) => childOwner.get(sid) || liveParentOf.get(sid) || '';
+  // Pass 1：组头认领（delegate-* / external-*；被任一源认领的嵌套 delegate 不作组头）。
   const groups = [];
   const groupByDelegate = new Map();
   const leftovers = [];
   for (const [id, info] of entries) {
     const sid = String((info && info.sessionId) || id || '').replace(/^team-/, '');
-    if (!childOwner.has(sid) && (sid.startsWith('delegate-') || sid.startsWith('external-'))) {
+    if (!ownerOf(sid) && (sid.startsWith('delegate-') || sid.startsWith('external-'))) {
       const row = rowByDelegate.get(sid) || null;
       const key = String((row && (row.taskNo || row.delegateId)) || sid);
       const g = { id, info, sid, row, key, children: [] };
@@ -439,15 +456,20 @@ function bgDelegateGroups(entries) {
       leftovers.push([id, info]);
     }
   }
-  // Pass 2：live 子行认领（父组缺席 = 跨窗/竞态 ⇒ 按 leftover 原样呈现，零丢失）。
+  // Pass 2：live 子行认领（父组缺席 = 跨窗/竞态/父不可见 ⇒ leftover 原样呈现，
+  // 零丢失；孤儿来源随 orphanBy 下传渲染面标注）。
+  const orphanBy = new Map(); // childSid → {parentSid, parentTitle}
   for (const pair of leftovers.slice()) {
     const [id, info] = pair;
     const sid = String((info && info.sessionId) || id || '').replace(/^team-/, '');
-    const parent = childOwner.get(sid);
+    const parent = ownerOf(sid);
     const g = parent ? groupByDelegate.get(parent) : null;
     if (g) {
       g.children.push({ type: 'live', id, info, sid });
       leftovers.splice(leftovers.indexOf(pair), 1);
+    } else if (parent) {
+      const prow = rowByDelegate.get(parent) || null;
+      orphanBy.set(sid, { parentSid: parent, parentTitle: String((prow && prow.title) || '') });
     }
   }
   // Pass 3：store 子条目（去重——已在场的 live 子行不重复）+ flow 结构行。
@@ -463,7 +485,41 @@ function bgDelegateGroups(entries) {
       : [];
     for (const n of flowSteps) g.children.push({ type: 'flow', node: n });
   }
-  return { groups, leftovers };
+  return { groups, leftovers, orphanBy };
+}
+
+/**
+ * 泛名判读（面板行说明批 2026-10-29 ②）：行主名是不是「无说明名」——builtin def
+ * 名（subagent/nebflow/kernel…）、会话 id 形回落名（subagent-1a2b3c4d）、或等于
+ * 行 id 本身。泛名行主名让位任务摘要（摘要缺席时回落 id，绝不渲染纯「subagent」
+ * 空洞行——作者报障 2026-10-29 ②）。
+ */
+const BG_GENERIC_NAMES = new Set(['subagent', 'nebflow', 'nebula', 'kernel', 'general', 'worker', 'step']);
+function bgGenericName(name, sid) {
+  const n = String(name || '').trim();
+  if (!n) return true;
+  if (n === String(sid || '')) return true;
+  if (BG_GENERIC_NAMES.has(n.toLowerCase())) return true;
+  if (/^(subagent|workflow|subtask|ephemeral)-[0-9a-z-]+$/i.test(n)) return true;
+  return false;
+}
+
+/** 孤儿来源角标（面板树批 2026-10-29 ①）：父不可见行的「来自 …」标注（中性 muted
+ *  chip 族 = .bg-task-origin 同款；tooltip 承载完整父会话 id）。入参 = 行 opts
+ *  （orphanFrom/orphanTitle——bgDelegateGroups.orphanBy 下传形）。 */
+function bgOrphanChipHtml(orphan) {
+  const o = orphan && typeof orphan === 'object' ? orphan : {};
+  const parentSid = String(o.orphanFrom || '');
+  if (!parentSid) return '';
+  let label;
+  if (/^(node-|dag-|dispatcher-)/.test(parentSid)) label = t('subagents.fromFlowNode');
+  else if (/^(subagent-|subtask-|workflow-)/.test(parentSid)) label = t('subagents.fromSubagent');
+  else {
+    const title = bgFirstLine(o.orphanTitle);
+    label = title || t('subagents.fromDelegate');
+  }
+  return '<span class="bg-task-origin bg-task-orphan" title="' +
+    escapeHtml(t('subagents.orphanTip', { sid: parentSid })) + '">' + escapeHtml(label) + '</span>';
 }
 
 /**
@@ -473,7 +529,11 @@ function bgDelegateGroups(entries) {
  * opts.rowTitle（DelegateRegistry.Record.title 的 provider 镜像——spawn 落盘、
  * 跨重启存活），主名 = 批次标题/任务描述首行（全生命周期稳定，不再收缩成
  * sessionId）；session id 降为 title tooltip 次要信息。
- * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string, rowTitle?: string}} [opts]
+ * 面板行说明批（2026-10-29 ②）：非组头行主名 = 任务摘要首行（泛名让位——见
+ * bgGenericName）；实名行附任务摘要次行（.bg-task-subline，全文 tooltip）。
+ * 面板树批（2026-10-29 ①）：opts.orphanFrom/orphanTitle 孤儿来源角标（父不可见
+ * 行的「来自 …」标注）。
+ * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string, rowTitle?: string, orphanFrom?: string, orphanTitle?: string}} [opts]
  * @returns {string}
  */
 function bgTaskRowHtml(id, info, opts = {}) {
@@ -510,6 +570,8 @@ function bgTaskRowHtml(id, info, opts = {}) {
     ? '<span class="bg-task-badge" title="' + escapeHtml(t('subagents.taskBadge', { text: taskBadgeText })) + '">'
       + escapeHtml(taskBadgeText) + '</span>'
     : '';
+  // 孤儿来源角标（面板树批 2026-10-29 ①）：父不可见行提升顶层后仍标注来源。
+  const orphanPart = (opts && opts.orphanFrom) ? bgOrphanChipHtml(opts) : '';
   // ── 显示名契约（2026-10-22 · 作者「先长名后收缩成 sessionId」批）────────────
   // 症状根因：恢复脸（activeAgents 快照）对 delegate 会话 meta/displayName 恒缺席
   // ⇒ agentName 回落 sessionId；live 脸 agentId == sessionId，同 key 合并「快照为准」
@@ -520,17 +582,36 @@ function bgTaskRowHtml(id, info, opts = {}) {
   //   批次标题；恢复脸后端已把标题回填进 agentName）→ name（≠ sid 时——后端恢复脸
   //   已把标题写入本档）→ sid → 桶 id。session id 一律降级为 title tooltip 次要
   //   信息（完整名兜底）。非组头行（子行/leftover 非 delegate 行）逐字走旧形态。
+  // 面板行说明批（2026-10-29 ②）：非组头行主名 = 任务摘要首行优先（泛名让位）；
+  // 实名行任务摘要降为次行（subLine）。纯「subagent」空洞行自此绝迹。
   const sid = String((info && info.sessionId) || id || '').replace(/^team-/, '');
   let displayName;
   let nameTooltip;
+  let taskSummary = '';
   if (opts.headLevel) {
     const fromName = (info.name && String(info.name) !== sid) ? String(info.name) : '';
     const fullTitle = String(opts.rowTitle || '').trim() || bgFirstLine(info.task) || fromName;
     displayName = bgFirstLine(fullTitle) || info.name || sid || id;
     nameTooltip = displayName + (sid && sid !== displayName ? ' · ' + sid : '');
   } else {
-    displayName = info.name || id;
-    nameTooltip = info.task ? displayName + ' · ' + info.task : displayName;
+    const taskLine = bgFirstLine(info.task);
+    const generic = bgGenericName(info.name, sid || id);
+    if (taskLine && generic) {
+      // 泛名行：任务摘要上屏为主名（原「subagent」空洞位的替代）；原名/oid 降 tooltip。
+      displayName = taskLine;
+      const genericName = (info.name && String(info.name) !== taskLine) ? String(info.name) : '';
+      nameTooltip = displayName + (genericName ? ' · ' + genericName : '') + (sid ? ' · ' + sid : '');
+    } else if (taskLine) {
+      // 实名行：主名保留，任务摘要降为次行（全文 tooltip）。
+      displayName = info.name || id;
+      nameTooltip = displayName + ' · ' + info.task;
+      taskSummary = taskLine;
+    } else {
+      // 无任务摘要：泛名回落行 id（可辨识），实名照旧——绝不渲染纯「subagent」。
+      displayName = info.name || id;
+      if (generic && String(info.name || '') === String(displayName)) displayName = id;
+      nameTooltip = info.task ? displayName + ' · ' + info.task : displayName;
+    }
   }
   const namePart = '<span class="bg-task-name" title="' + escapeHtml(nameTooltip) + '">' + escapeHtml(displayName) + '</span>';
   // Uptime (spec §2.2): relative duration while non-terminal; hidden once done.
@@ -632,15 +713,23 @@ function bgTaskRowHtml(id, info, opts = {}) {
             : rowState === 'error' ? statusIcon('circle-x', 11, 'st-err')
             : '') +
           escapeHtml(statusLabel) + '</span>' +
-        kindPart + projectPart + namePart + taskPart + retriesPart + uptimePart +
+        kindPart + projectPart + orphanPart + namePart + taskPart + retriesPart + uptimePart +
       '</div>' +
+      // 任务摘要次行（面板行说明批 2026-10-29 ②）：实名行的任务摘要上屏位——
+      // 单行截断 + tooltip 全文；无摘要/已并入主名时零渲染（行高不膨胀）。
+      (taskSummary
+        ? '<div class="bg-task-line bg-task-subline"><span class="bg-task-sub" title="' +
+          escapeHtml(String(info.task || '')) + '">' + escapeHtml(taskSummary) + '</span></div>'
+        : '') +
       stuckPart + waitingPart + idlePart + toolPart +
     '</div>' +
   '</div>';
 }
 
 /** Store 子条目轻行（不在注册表的终态子——结构可见、状态由 store 条目承载；词复用
- *  面板状态词既有键）。点击 = 与 live 子行同一详情承载（bgAgentPopup 历史恢复）。 */
+ *  面板状态词既有键）。点击 = 与 live 子行同一详情承载（bgAgentPopup 历史恢复）。
+ *  面板行说明批（2026-10-29 ②）：与 live 行同契约——泛名（def 名）主名让位任务
+ *  摘要首行；实名行附摘要次行。 */
 function bgStoreChildHtml(child) {
   const c = child && typeof child === 'object' ? child : {};
   const sid = String(c.taskId || '');
@@ -648,9 +737,17 @@ function bgStoreChildHtml(child) {
   const statusLabel = t('subagents.status.' + (state === 'active' ? 'running' : state));
   const dotClass = { active: 'bg-status-active', done: 'bg-status-done', error: 'bg-status-error' }[state] || 'bg-status-idle';
   const kindWord = bgChildKindWord(String(c.source || ''));
-  const name = String(c.agentName || '') || sid;
+  const rawName = String(c.agentName || '') || sid;
   const desc = String(c.description || c.prompt || '');
-  const namePart = '<span class="bg-task-name" title="' + escapeHtml(desc ? name + ' · ' + desc : name) + '">' + escapeHtml(name) + '</span>';
+  const descLine = bgFirstLine(desc);
+  const generic = bgGenericName(rawName, sid);
+  const displayName = (descLine && generic) ? descLine : rawName;
+  const taskSummary = (descLine && !generic && descLine !== displayName) ? descLine : '';
+  const tipParts = [displayName];
+  if (descLine && descLine !== displayName) tipParts.push(desc);
+  else if (desc) tipParts.push(desc);
+  tipParts.push(sid);
+  const namePart = '<span class="bg-task-name" title="' + escapeHtml(tipParts.join(' · ')) + '">' + escapeHtml(displayName) + '</span>';
   const kindPart = kindWord ? '<span class="bg-task-kind">' + escapeHtml(kindWord) + '</span>' : '';
   const retries = c.retryCount || 0;
   const retriesPart = retries > 0
@@ -663,6 +760,9 @@ function bgStoreChildHtml(child) {
         '<span class="bg-task-state bg-state-' + (state === 'active' ? 'running' : state) + '">' + escapeHtml(statusLabel) + '</span>' +
         kindPart + namePart + retriesPart +
       '</div>' +
+      (taskSummary
+        ? '<div class="bg-task-line bg-task-subline"><span class="bg-task-sub" title="' + escapeHtml(desc) + '">' + escapeHtml(taskSummary) + '</span></div>'
+        : '') +
     '</div>' +
   '</div>';
 }
@@ -728,8 +828,9 @@ export function renderBgAgentDropdown() {
     listEl.innerHTML = '';
     return;
   }
-  // ── 两级渲染（C2/R6）：delegate 组头（徽标=编排模式）＋缩进一格子行 ──
-  const { groups, leftovers } = bgDelegateGroups(entries);
+  // ── 两级渲染（C2/R6 + 面板树批 2026-10-29 ①）：delegate 组头（徽标=编排模式）
+  // ＋缩进一格子行；孤儿行提升顶层并带「来自 …」来源角标。 ──
+  const { groups, leftovers, orphanBy } = bgDelegateGroups(entries, sid);
   const htmlParts = [];
   for (const g of groups) {
     htmlParts.push(bgTaskRowHtml(g.id, g.info, {
@@ -745,7 +846,10 @@ export function renderBgAgentDropdown() {
       else htmlParts.push(bgFlowChildHtml(c.node, g.key));
     }
   }
-  for (const [id, info] of leftovers) htmlParts.push(bgTaskRowHtml(id, info, {}));
+  for (const [id, info] of leftovers) {
+    const orphan = orphanBy.get(String((info && info.sessionId) || id || '').replace(/^team-/, ''));
+    htmlParts.push(bgTaskRowHtml(id, info, orphan ? { orphanFrom: orphan.parentSid, orphanTitle: orphan.parentTitle } : {}));
+  }
   // 台账 #929：远端投影行缀尾（本地行为主的合并语义——本地空时本组独立成面）。
   htmlParts.push(remoteHtml);
   listEl.innerHTML = htmlParts.join('');

@@ -4,7 +4,8 @@
 // 样张→实机 DOM 映射（实施批口径）：
 //   §8-4 重复徽标枚举 {每小时,每天,每周}、单次行无徽标节点
 //        …… .reminder-repeat-badge（桌面既有；repeatLabel 单次返回 '' 不建节点）。
-//   §8-1 盒模型 …… #reminder-panel：left 6 / top 58+safe / 308×560 / r16。
+//   §8-1 【dock 批换代 2026-10-29】盒模型 …… #reminder-panel 收编进页面体：
+//        全幅（w=375 / x=0 / radius 0），入口 = 设置根页工作台行；悬浮盒退役。
 //   开放点① 下次触发主行/上次副行 …… .reminder-row-time / .reminder-row-last
 //        （桌面既有结构，样张同构）。
 //   开放点③ 超时独立分组 …… .mh-rd-grp「已超时」组（renderList 手机层分支）。
@@ -18,7 +19,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { settlePanel } from './_mobile-panel-settle.mjs';
+import { openHubPage } from './_mobile-dock-nav.mjs';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
 const MIME = {
@@ -109,14 +110,11 @@ async function bootApp(page, { tasks = taskFixture() } = {}) {
   };
 }
 
-/** 开面板：左列液态下拉 → 定时键（面板 .open 判据 → floatController morph）。 */
+/** 开面板：设置根页工作台行「定时任务」→ push 页（面收编进页面体）。 */
 async function openPanel(page) {
-  await page.locator('.mh-dd[data-dd="left"] .mh-dd-hd').click();
-  await page.locator('#reminder-btn').click();
+  await openHubPage(page, 'reminder');
   await expect(page.locator('#reminder-panel')).toHaveClass(/open/);
   await expect(page.locator('#reminder-panel')).toBeVisible();
-  // morph 终态（两段式守护，见 _mobile-panel-settle.mjs 头注）。
-  await settlePanel(page, { overlaySel: '#reminder-panel', panelSel: '#reminder-panel', openClass: 'open' });
 }
 
 function watchErrors(page) {
@@ -132,28 +130,17 @@ test.beforeEach(async ({ page }) => {
 /** @type {{sendTasks: (list: any[]) => void}|null} */
 let harness = null;
 
-test('T1 panel geometry: top-hung 308×560, centered, radius 16', async ({ page }) => {
+test('T1 page geometry: adopted full-bleed in reminder page, radius 0 (dock 批换代判据)', async ({ page }) => {
   const errors = watchErrors(page);
   await openPanel(page);
-  // 终态几何双读 poll（同 P6 T1 口径）：spring 过冲穿越 + faceMo 晚重放
-  // 都可能让单次采样踩进形变中段 —— 相隔 120ms 两次全等 ∧ transform 归位。
+  // 终态几何 poll（滑入 transform 已由 settlePage 归位；双保险防抖）。
   const geo = () => page.evaluate(() => {
     const m = document.getElementById('reminder-panel');
-    const snap = () => {
-      const r = m.getBoundingClientRect();
-      return JSON.stringify({
-        x: r.x, w: Math.round(r.width), h: Math.round(r.height),
-        radius: getComputedStyle(m).borderRadius, tf: getComputedStyle(m).transform,
-      });
-    };
-    const a = snap();
-    return new Promise((resolve) => setTimeout(() => {
-      const b = snap();
-      resolve(a === b ? JSON.parse(b) : { x: NaN });
-    }, 120));
+    const r = m.getBoundingClientRect();
+    return { x: Math.round(r.x), w: Math.round(r.width), radius: getComputedStyle(m).borderRadius, tf: getComputedStyle(m).transform };
   });
   await expect.poll(geo, { timeout: 8000 }).toEqual({
-    x: 33.5, w: 308, h: 560, radius: '16px', tf: 'none', // 面板合并批⑤居中（原 left 6 退役）
+    x: 0, w: 375, radius: '0px', tf: 'none',
   });
   expect(errors).toEqual([]);
 });

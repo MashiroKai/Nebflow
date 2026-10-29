@@ -7,7 +7,7 @@ import io.circe.syntax.*
 import nebflow.actor.AgentCommand
 import nebflow.core.AgentRuntimePort
 import nebflow.core.GitWorktrees
-import nebflow.core.delegate.{DelegateRegistry, MergeQueue, PostMergeCleanup}
+import nebflow.core.delegate.{DelegateRegistry, MergeQueue, MergeQueueChannel, PostMergeCleanup}
 import nebflow.shared.NebflowLogger
 
 import scala.util.Try
@@ -31,10 +31,14 @@ import scala.util.Try
  *   - **可并但属主失联**：进程重启 = 属主会话（actor / 外部 CLI 子进程）随进程
  *     消亡——合并轮通知不可达 ⇒ **owner-gone** 关账 + 父收 blocked 通知；面板
  *     显式「需 dispatcher 处置」，绝不静默 park，绝不自动续起合并回合。
+ *     **R5 前提反转**：owner-gone 以「write-ahead 通道无未关账镜像」为前提——
+ *     通道还有该成员的未关账记录 = 成员资格在盘上，**不凭进程内存缺席关账**：
+ *     窗让回（waiting）+ 保留成员（[[MergeQueue.preserveAfterRestart]]），可行动
+ *     通知照发；属主续活后下拍自然放行，人工并入后下拍账实核对自动关账 merged。
  *
  * == 排线 ==
  * GatewayMain boot 链（startupMount/projectBootWake 之后；单次执行、失败只 WARN
- * 绝不阻塞启动）。无开放成员 = 零动作。
+ * 绝不阻塞启动）。无开放成员 = 零动作。收尾批量压缩通道终态镜像（关账压缩）。
  */
 object MergeQueueBootSweep:
 
@@ -44,12 +48,15 @@ object MergeQueueBootSweep:
   final case class Report(
     alreadyMerged: List[String] = Nil,
     droppedEmpty: List[String] = Nil,
-    ownerGone: List[String] = Nil
+    ownerGone: List[String] = Nil,
+    /** R5：通道镜像未关账 ⇒ 保留（窗让回留队）而非 owner-gone 的成员。 */
+    preserved: List[String] = Nil
   ):
 
     def summary: String =
       s"alreadyMerged=${alreadyMerged.size} (${alreadyMerged.mkString(",")}) " +
-        s"droppedEmpty=${droppedEmpty.size} ownerGone=${ownerGone.size} (${ownerGone.mkString(",")})"
+        s"droppedEmpty=${droppedEmpty.size} ownerGone=${ownerGone.size} (${ownerGone.mkString(",")}) " +
+        s"preserved=${preserved.size} (${preserved.mkString(",")})"
 
   /** Run the boot reconcile sweep. Returns the report (for the boot log line). */
   def sweep(resources: AgentRuntimePort, wsSend: Option[Json => IO[Unit]] = None): IO[Report] =
@@ -59,39 +66,85 @@ object MergeQueueBootSweep:
         logger.warn(
           s"[merge-queue-recovery] ${open.size} open merge-ledger membership(s) survived a restart — reconciling (no merge rounds are revived)"
         ) *>
-          open.foldLeftM(Report())((acc, m) =>
-            reconcileOne(resources, m)
-              .map(combine(acc, _))
-              .handleErrorWith { e =>
-                logger
-                  .warn(s"[merge-queue-recovery] reconcile failed for ${m.delegateId}: ${e.getMessage}")
-                  .as(Report(ownerGone = List(m.delegateId)))
-              }
-          )
+          open
+            .foldLeftM(Report())((acc, m) =>
+              reconcileOne(resources, m)
+                .map(combine(acc, _))
+                .handleErrorWith { e =>
+                  logger
+                    .warn(s"[merge-queue-recovery] reconcile failed for ${m.delegateId}: ${e.getMessage}")
+                    .as(Report(ownerGone = List(m.delegateId)))
+                }
+            )
+            .flatMap { report =>
+              // 关账压缩（R5）：对账落定后批量移除通道终态镜像（账本持终态审计行，
+              // 副本冗余）；未关账镜像（preserved/open）永不入压缩面。fail-soft。
+              IO
+                .blocking(MergeQueueChannel.compact(MergeQueue.State.Terminal))
+                .flatMap(n =>
+                  if n > 0 then
+                    logger.info(s"[merge-queue-recovery] write-ahead channel compacted $n closed mirror(s)").void
+                  else IO.unit
+                )
+                .handleErrorWith(e =>
+                  logger.warn(s"[merge-queue-recovery] channel compact failed: ${e.getMessage}").void
+                )
+                .as(report)
+            }
     }
 
   /** 一条开放成员的对账（分类 + 关账 + 报父，逐条不串扰）。 */
   private def reconcileOne(resources: AgentRuntimePort, m: MergeQueue.Member): IO[Report] =
     IO.blocking(DelegateRegistry.find(m.delegateId)).flatMap {
       case None =>
-        // 记录已随清理消失（旧盘/外部腿）——无可并现场，诚实关 owner-gone。
-        ownerGone(resources, m, s"no delegate registry record for '${m.delegateId}' — the owner session did not survive the restart")
+        // R5 前提反转：registry 记录缺席但 write-ahead 通道还有未关账镜像 = 成员
+        // 资格在盘上——不凭记录缺席判 owner-gone。以成员自锚做账实核对：已并 ⇒
+        // 关账 merged（无记录 ⇒ cleanup 无目标，零动作）；可并 ⇒ 保留留队。
+        if MergeQueueChannel.hasOpenRecord(m.delegateId, MergeQueue.State.Open) then
+          factCheckOrPreserve(
+            m,
+            s"no delegate registry record after restart, but the write-ahead merge-channel holds an un-closed record — membership preserved; continue/revive the owner session or merge the branch manually (the queue fact-checks and closes it as merged)"
+          )
+        else
+          // 通道无未关账镜像（本批前存量账面/直写账本）——前提成立，照旧关账。
+          ownerGone(
+            resources,
+            m,
+            s"no delegate registry record for '${m.delegateId}' — the owner session did not survive the restart"
+          )
       case Some(rec) =>
         (rec.branch, rec.baseBranch) match
           case (Some(branch), Some(baseBranch)) =>
             IO.blocking {
               Try(os.Path(rec.projectWorkspace.getOrElse(rec.cwd))).toOption
                 .filter(GitWorktrees.isGitRepo)
-                .map(ws => (ws, GitWorktrees.isAncestor(ws, branch, baseBranch), GitWorktrees.commitsAhead(ws, baseBranch, branch)))
+                .map(ws =>
+                  (
+                    ws,
+                    GitWorktrees.isAncestor(ws, branch, baseBranch),
+                    GitWorktrees.commitsAhead(ws, baseBranch, branch)
+                  )
+                )
             }.flatMap {
               case None =>
-                ownerGone(resources, m, s"base workspace '${rec.projectWorkspace.getOrElse(rec.cwd)}' unreadable after restart — needs dispatcher handling")
+                ownerGone(
+                  resources,
+                  m,
+                  s"base workspace '${rec.projectWorkspace.getOrElse(rec.cwd)}' unreadable after restart — needs dispatcher handling"
+                )
               case Some((ws, ancestor, ahead)) =>
                 if ancestor.contains(true) then
                   // 已并：合并落地、成员中断在关账前——收残留现场（同守卫），报父 completed。
                   for
                     _ <- PostMergeCleanup.run(Some(rec)).void
-                    _ <- IO(MergeQueue.closeMerged(m.delegateId, via = "boot-reconcile", closeReason = Some("branch already merged (fact-check at boot)"), cleanup = false))
+                    _ <- IO(
+                      MergeQueue.closeMerged(
+                        m.delegateId,
+                        via = "boot-reconcile",
+                        closeReason = Some("branch already merged (fact-check at boot)"),
+                        cleanup = false
+                      )
+                    )
                     _ <- notifyParent(
                       resources,
                       rec,
@@ -102,7 +155,16 @@ object MergeQueueBootSweep:
                   yield Report(alreadyMerged = List(m.delegateId))
                 else if !GitWorktrees.branchExists(ws, branch) || ahead == 0 then
                   for
-                    _ <- IO(MergeQueue.closeMerged(m.delegateId, via = "boot-reconcile", closeReason = Some(s"nothing to merge (branch exists=${GitWorktrees.branchExists(ws, branch)}, commitsAhead=$ahead)"), cleanup = false))
+                    _ <- IO(
+                      MergeQueue.closeMerged(
+                        m.delegateId,
+                        via = "boot-reconcile",
+                        closeReason = Some(
+                          s"nothing to merge (branch exists=${GitWorktrees.branchExists(ws, branch)}, commitsAhead=$ahead)"
+                        ),
+                        cleanup = false
+                      )
+                    )
                     _ <- notifyParent(
                       resources,
                       rec,
@@ -111,6 +173,13 @@ object MergeQueueBootSweep:
                       blockedStyle = false
                     )
                   yield Report(droppedEmpty = List(m.delegateId))
+                else if MergeQueueChannel.hasOpenRecord(m.delegateId, MergeQueue.State.Open) then
+                  // R5 前提反转：可并但属主失联 + 通道未关账镜像在盘 = 成员资格持久——
+                  // 保留（窗让回留队），绝不凭重启事实伪造 owner-gone。
+                  preserve(
+                    m,
+                    s"branch `$branch` still has $ahead commit(s) ahead of `$baseBranch` and the owner session did not survive the restart — membership PRESERVED by the write-ahead channel (window returned, stays queued); continue/revive the owner session or merge the branch manually (the queue fact-checks and closes it as merged)"
+                  )
                 else
                   ownerGone(
                     resources,
@@ -120,13 +189,50 @@ object MergeQueueBootSweep:
                 end if
             }
           case _ =>
-            ownerGone(
-              resources,
-              m,
-              s"incomplete spawn binding (branch=${rec.branch.getOrElse("-")}, baseBranch=${rec.baseBranch.getOrElse("-")}) — merge target unknown, needs dispatcher handling"
-            )
+            if MergeQueueChannel.hasOpenRecord(m.delegateId, MergeQueue.State.Open) then
+              preserve(
+                m,
+                s"incomplete spawn binding on the registry record (branch=${rec.branch.getOrElse("-")}, baseBranch=${rec.baseBranch.getOrElse("-")}) but the write-ahead channel holds an un-closed record — membership preserved; needs dispatcher handling"
+              )
+            else
+              ownerGone(
+                resources,
+                m,
+                s"incomplete spawn binding (branch=${rec.branch.getOrElse("-")}, baseBranch=${rec.baseBranch.getOrElse("-")}) — merge target unknown, needs dispatcher handling"
+              )
     }
   end reconcileOne
+
+  /**
+   * R5 前提腿（registry 记录缺席 + 通道镜像在盘）：以成员自锚账实核对——已并关账
+   * merged，可并保留留队。
+   */
+  private def factCheckOrPreserve(m: MergeQueue.Member, preserveReason: String): IO[Report] =
+    IO.blocking {
+      Try(os.Path(m.baseWs)).toOption
+        .filter(GitWorktrees.isGitRepo)
+        .map(ws => GitWorktrees.isAncestor(ws, m.branch, m.baseBranch))
+    }.flatMap {
+      case Some(Some(true)) =>
+        IO(
+          MergeQueue.closeMerged(
+            m.delegateId,
+            via = "boot-reconcile",
+            closeReason = Some("branch already merged (fact-check at boot; registry record gone, channel record open)"),
+            cleanup = false
+          )
+        ).as(Report(alreadyMerged = List(m.delegateId)))
+      case _ =>
+        preserve(m, preserveReason)
+    }
+
+  /**
+   * 保留腿（R5）：窗让回 + 留队 + 可行动通知（BlockNotifyPort 去重/升级同面）。
+   * 任务行保持 ready-to-merge（合并轮仍在队列手上）——绝不静默 park（通知必达）。
+   */
+  private def preserve(m: MergeQueue.Member, reason: String): IO[Report] =
+    logger.warn(s"[merge-queue-recovery] PRESERVED ${m.delegateId}: $reason") *>
+      IO(MergeQueue.preserveAfterRestart(m.delegateId, reason)).as(Report(preserved = List(m.delegateId)))
 
   /** owner-gone 关账（队列单点落账 + 面板呈现）+ 父收 blocked 通知。 */
   private def ownerGone(resources: AgentRuntimePort, m: MergeQueue.Member, reason: String): IO[Report] =
@@ -159,7 +265,8 @@ object MergeQueueBootSweep:
     Report(
       alreadyMerged = a.alreadyMerged ++ b.alreadyMerged,
       droppedEmpty = a.droppedEmpty ++ b.droppedEmpty,
-      ownerGone = a.ownerGone ++ b.ownerGone
+      ownerGone = a.ownerGone ++ b.ownerGone,
+      preserved = a.preserved ++ b.preserved
     )
 
   /**

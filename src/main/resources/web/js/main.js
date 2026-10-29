@@ -2206,6 +2206,10 @@ onMessage('agentStart', (msg, view) => {
     // msg.sessionId on delegate/subtask events is the PARENT session (injected
     // by routeWsSend), so using it here loaded the host's history (串台).
     sessionId: msg.nodeSessionId || '',
+    // 面板树批（2026-10-29 ①）：父会话归属（agentStart 入口帧注入——delegate/
+    // subtask/subagent/dag 各 spawn 路由单点；快照 face 同键）。前端派生树据此
+    // 把子行缩进挂到父 delegate 组头下；跨 turn 与 kind/startedAt 同款保留。
+    parentSessionId: msg.parentSessionId || (prev && prev.parentSessionId) || '',
     kind: (prev && prev.kind) || bgAgentKindFromSession(msg.nodeSessionId || ''),
     // Project attribution badge: live frames carry it only on agentStart
     // (routeSubagentWsSend injects it for node-*/dispatcher-* sessions);
@@ -4583,6 +4587,9 @@ onMessage('activeAgents', (msg) => {
       // entry (merge, not rebuild: an older snapshot must not blank a field the
       // live frames already filled in).
       kind: a.kind || (prev && prev.kind) || '',
+      // 面板树批（2026-10-29 ①）：快照 authority（registry parentSessionId 单源）；
+      // 旧后端无字段 → 缺省回落本地值（同 project/kind 合并类——不降级已渲染行）。
+      parentSessionId: a.parentSessionId || (prev && prev.parentSessionId) || '',
       // Project attribution (2026-09-06): activeAgents restore entries carry
       // project for node-*/dispatcher-* rows (AgentRecord.project →
       // activeAgentEntryJson); empty string → no badge.

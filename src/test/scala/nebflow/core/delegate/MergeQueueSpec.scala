@@ -503,4 +503,121 @@ class MergeQueueSpec extends CatsEffectSuite:
     end for
   }
 
+  // ── ⑫ write-ahead 通道 + 重启重放（R5 报告二 §4.3 / 设计稿 P5） ──────
+
+  test("⑫ write-ahead channel + boot replay: enqueue→restart restores queue state — including a member whose ledger write never landed (the ready-killed gap)") {
+    val system = ActorSystem(s"mq-13-${scala.util.Random.nextInt(100000)}")
+    val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
+    val repo = mkRepo(tempRoot / "mq13-repo", branch = "delegate/d-wa", merge = false)
+    for
+      a <- member(system, records, "d-wa", repo, readyAt = 7L)
+      _ <- IO { MergeQueue.enqueue(a.copy(projectKey = "p13")) } // write-ahead：镜像先于账本落盘
+      fileExists = os.exists(PathUtil.dataRoot / "merge-channel" / "d-wa.json")
+      before = MergeQueue.find("d-wa").map(m => (m.state, m.grantedAt.isDefined))
+      _ <- IO { MergeQueue.dropMemoryStateForTest() } // kill：内存清零，盘面（账本+通道）幸存
+      after = MergeQueue.find("d-wa") // boot 重放：账本 + 通道并回
+      openRecord = MergeQueueChannel.hasOpenRecord("d-wa", MergeQueue.State.Open)
+      // ready-前被杀形态：通道落盘后、账本写盘前进程死亡——boot 从通道收养
+      lost <- member(system, records, "d-lost", repo, readyAt = 8L)
+      _ <- IO { MergeQueue.seedChannelOnlyForTest(lost.copy(projectKey = "p13", internal = None)) }
+      _ <- IO { MergeQueue.dropMemoryStateForTest() } // 重启（d-lost 无账本行）
+      adopted = MergeQueue.find("d-lost")
+      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield
+      assertEquals(fileExists, true, "enqueue must land the channel mirror on disk (write-ahead, before the ledger)")
+      assertEquals(before, Some(("turn-granted", true)), "the member was granted before the restart")
+      assertEquals(after.map(_.state), Some("turn-granted"), "boot replay restores the queue state from disk")
+      assertEquals(after.flatMap(_.internal).isDefined, false, "closures stay process-local — only the data plane persists")
+      assertEquals(openRecord, true, "the un-closed channel record survives the restart (owner-gone premise)")
+      assertEquals(adopted.map(_.state), Some("waiting"), "a channel-only member (ledger write lost) is ADOPTED at boot — the ready-killed gap is closed")
+      assertEquals(adopted.map(_.readyAt), Some(8L), "the adopted member keeps its FIFO rank")
+    end for
+  }
+
+  // ── ⑬ owner-gone 前提反转（R5）：内存缺席不再判死 ────────────────────
+
+  test("⑬ owner-gone premise inversion: a restarted member with an un-closed channel record is preserved on grant attempts (never owner-gone); a ledger-only member without a record still closes owner-gone") {
+    val system = ActorSystem(s"mq-14-${scala.util.Random.nextInt(100000)}")
+    val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
+    val repo = mkRepo(tempRoot / "mq14-repo", branch = "delegate/d-premise", merge = false)
+    val notices = ListBuffer.empty[(String, String)]
+    MergeQueue.BlockNotifyPort.install((m, kind, reason) => IO { notices += ((m.delegateId, s"$kind|$reason")) })
+    for
+      a <- member(system, records, "d-premise", repo, readyAt = 1L)
+      _ <- IO { MergeQueue.enqueue(a.copy(projectKey = "p14")) }
+      _ <- IO.sleep(80.millis)
+      _ <- IO { MergeQueue.dropMemoryStateForTest() } // 重启：闭包消亡，通道镜像在盘
+      holder = MergeQueue.find("d-premise").map(_.state)
+      _ <- IO { MergeQueue.preserveAfterRestart("d-premise", "boot sweep: window returned (channel record open)") }
+      preserved = MergeQueue.find("d-premise").map(m => (m.state, m.grantedAt))
+      _ <- IO { MergeQueue.pump("p14") } // 无活通道的放行尝试
+      state = MergeQueue.find("d-premise").map(_.state)
+      reason = MergeQueue.find("d-premise").flatMap(_.lastBlockReason)
+      _ <- IO.blocking { (2 to MergeQueue.EscalateAfterBlockedRounds).foreach(_ => MergeQueue.pump("p14")) }
+      after = notices.toList
+      // 对照组：无通道镜像的存量账面（直写账本）——前提成立，owner-gone 照旧
+      repo2 = mkRepo(tempRoot / "mq14b-repo", branch = "delegate/d-legacy", merge = false)
+      legacy = MergeQueue.Member(
+        delegateId = "d-legacy",
+        branch = "delegate/d-legacy",
+        baseWs = repo2.toString,
+        baseBranch = "main",
+        worktree = false,
+        projectKey = "p14b",
+        taskId = Some("31"),
+        parentSessionId = "nebula-root",
+        description = "legacy",
+        readyAt = 1L,
+        channelKind = "internal"
+      )
+      _ <- IO { MergeQueue.seedMemberForTest(legacy) } // 仅账本——无通道镜像
+      _ <- IO { MergeQueue.pump("p14b") }
+      legacyState = MergeQueue.find("d-legacy").map(_.state)
+      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield
+      assertEquals(holder, Some("turn-granted"), "the restart restores the granted state (ledger + channel)")
+      assertEquals(preserved, Some(("waiting", None)), "preserveAfterRestart returns the window (waiting, grant cleared)")
+      assertEquals(state, Some("waiting"), "a member with an un-closed channel record must NOT be owner-gone on memory absence")
+      assert(reason.exists(_.contains("un-closed record")), s"the block reason names the channel premise: $reason")
+      // 三条通知：preserve 落账（原因 A）→ Deferred 原因 B ≠ A ⇒ 状态变化重发（既有
+      // 去重语义）→ 同因第 10 拍恰一次 escalate。
+      assertEquals(after.size, 3, "preserve notifies, the changed Deferred cause re-notifies, round N escalates exactly once")
+      assert(after(0)._2.startsWith("blocked|"), "the first notice is the preservation block")
+      assert(after(1)._2.startsWith("blocked|") && after(1)._2.contains("un-closed record"), "the Deferred cause rides as its own blocked notice")
+      assert(after(2)._2.startsWith("escalate|"), "the escalation rides the same blocked premise")
+      assertEquals(legacyState, Some("owner-gone"), "a ledger-only member (no channel record) still closes owner-gone — premise met")
+    end for
+  }
+
+  // ── ⑭ 关账压缩（R5）：终态镜像出通道，账本留审计 ─────────────────────
+
+  test("⑭ closed memberships compact out of the write-ahead channel; open mirrors survive; the ledger keeps the audit row") {
+    val system = ActorSystem(s"mq-15-${scala.util.Random.nextInt(100000)}")
+    val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
+    val repo = mkRepo(tempRoot / "mq15-repo", branch = "delegate/d-compact", merge = false)
+    for
+      a <- member(system, records, "d-compact", repo, readyAt = 1L)
+      _ <- IO { MergeQueue.enqueue(a.copy(projectKey = "p15")) }
+      _ <- IO.sleep(80.millis)
+      fileOf = PathUtil.dataRoot / "merge-channel" / "d-compact.json"
+      existsOpen = os.exists(fileOf)
+      _ <- IO { MergeQueue.closeMerged("d-compact", via = "merge-round") }
+      mirrorTerminal = MergeQueueChannel.readAll().find(_.delegateId == "d-compact").map(_.state)
+      belowThreshold = MergeQueueChannel.compactIfDue(MergeQueue.State.Terminal) // 1 < 8 → 零动作
+      survivedAfterIfDue = os.exists(fileOf)
+      removed = MergeQueueChannel.compact(MergeQueue.State.Terminal) // 显式压缩
+      goneAfterCompact = !os.exists(fileOf)
+      ledgerRow = MergeQueue.find("d-compact").map(_.state)
+      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield
+      assertEquals(existsOpen, true, "the open member has a channel mirror")
+      assertEquals(mirrorTerminal, Some("merged"), "the close-out mirrors the terminal state into the channel")
+      assertEquals(belowThreshold, 0, "below the threshold the tick compacts nothing")
+      assertEquals(survivedAfterIfDue, true, "the threshold gate keeps the mirror")
+      assert(removed >= 1, "explicit compaction removes the closed mirror")
+      assertEquals(goneAfterCompact, true, "the closed mirror is compacted away")
+      assertEquals(ledgerRow, Some("merged"), "the ledger keeps the closed member (audit/panel authority)")
+    end for
+  }
+
 end MergeQueueSpec

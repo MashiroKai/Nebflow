@@ -61,6 +61,7 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
 
   override def afterEach(context: munit.AfterEach): Unit =
     System.clearProperty(DualModeConfig.SysPropEnabled)
+    System.clearProperty(nebflow.core.delegate.DelegateFlowMapLifecycle.SysPropGraceMs)
     (nebflow.core.project.ProjectRuntimeRegistry.clear *> nebflow.core.project.DelegateFlowHosts.clear).unsafeRunSync()
 
   // ── 基建（ChainWriteToolSpec 同款骨架）────────────────────────────────────
@@ -152,27 +153,33 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
   private def delegateCtx(delegateId: String, ws: os.Path): ToolContext =
     ToolContext(projectRoot = ws.toString, sessionId = Some(delegateId))
 
-  private def mkModeRecord(delegateId: String, mode: String): Unit =
+  private def mkModeRecord(delegateId: String, mode: String, archived: Boolean = false, cwd: os.Path = tempRoot): Unit =
     DelegateRegistry.put(
       DelegateRegistry.Record(
         id = delegateId,
         executor = "nebflow",
-        cwd = tempRoot.toString,
+        cwd = cwd.toString,
         project = None,
         taskId = None,
         parentSessionId = "parent-scope",
         title = s"dispatcher scope $delegateId",
         createdAt = System.currentTimeMillis() - 60_000L,
-        mode = Some(mode)
+        mode = Some(mode),
+        archivedAt = if archived then Some(System.currentTimeMillis()) else None
       )
     )
 
   private def nodesJson(items: JsonObject*) =
     JsonObject("nodes" -> io.circe.Json.arr(items.map(obj => io.circe.Json.fromJsonObject(obj))*))
 
-  private def nodeJson(id: String, task: String, deps: List[String] = Nil, extra: (String, io.circe.Json)*): JsonObject =
+  private def nodeJson(
+    id: String,
+    task: String,
+    deps: List[String] = Nil,
+    extra: (String, io.circe.Json)*
+  ): JsonObject =
     JsonObject.fromIterable(
-      List[ (String, io.circe.Json)]("id" -> id.asJson, "task" -> task.asJson) ++
+      List[(String, io.circe.Json)]("id" -> id.asJson, "task" -> task.asJson) ++
         (if deps.nonEmpty then List("deps" -> deps.map(_.asJson).asJson) else Nil) ++
         extra.toList
     )
@@ -207,6 +214,7 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
       )
       assertEquals(snap.nodes.size, 0, "all-or-nothing: zero nodes may land")
       assertEquals(reqs, Nil, "zero spawn: no LLM request may fire on a refused chain")
+    end for
   }
 
   test("D2: worktree and merge keys are sealed chain-wide in dispatcher mode (same gate window)") {
@@ -232,6 +240,7 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
     yield
       assert(wt.left.exists(_.message.contains("NODE_WORKTREE_UNSUPPORTED")), wt.toString)
       assert(mg.left.exists(_.message.contains("NODE_MERGE_UNSUPPORTED")), mg.toString)
+    end for
   }
 
   // ── D3 无键分发器链（登记 + 逐 node 分配物化 + 放行）──────────────────────
@@ -257,7 +266,9 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
         .map(_.getOrElse(fail("keyless dispatcher chain must register")))
       entry <- h.store.getNode("survey").map(_.getOrElse(fail("entry must exist")))
       _ <- waitUntil(45.seconds)(
-        h.store.getNode("survey").map(n => n.exists(x => nebflow.core.project.NodeLifecycle.Terminal.contains(x.status)))
+        h.store
+          .getNode("survey")
+          .map(n => n.exists(x => nebflow.core.project.NodeLifecycle.Terminal.contains(x.status)))
       )
       done <- h.store.getNode("survey").map(_.getOrElse(fail("entry must exist")))
       _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
@@ -274,6 +285,7 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
         nebflow.core.project.NodeLifecycle.Terminal.contains(done.status),
         s"the entry actually ran to a terminal state: ${done.status}"
       )
+    end for
   }
 
   // ── D4 writeScope 软闸 ─────────────────────────────────────────────────────
@@ -312,6 +324,7 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
         s"the collision pair must be audited: ${events.filter(_.contains("collision"))}"
       )
       assertEquals(snap.nodes.size, 3, "advisory only — the chain still lands whole")
+    end for
   }
 
   // ── D5 NodeEdit 分发器作用域三态 ───────────────────────────────────────────
@@ -348,7 +361,9 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
             IO.raiseError(new AssertionError(s"keyless dispatcher create failed: ${err.message}"))
           case Right(v) => IO.pure(v)
         }
-      node <- h.store.snapshot.map(_.nodes.values.find(_.name == "auto-plugins")).map(_.getOrElse(fail("node must exist")))
+      node <- h.store.snapshot
+        .map(_.nodes.values.find(_.name == "auto-plugins"))
+        .map(_.getOrElse(fail("node must exist")))
       _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
@@ -356,8 +371,13 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
         refused.left.exists(_.message.contains(ChainWriteTool.Codes.PluginsDispatcherAllocated)),
         refused.toString
       )
-      assertEquals(node.status, nebflow.core.project.NodeLifecycle.Pending, "dispatcher create still lands PENDING (zero auto-start)")
+      assertEquals(
+        node.status,
+        nebflow.core.project.NodeLifecycle.Pending,
+        "dispatcher create still lands PENDING (zero auto-start)"
+      )
       assertEquals(node.plugins, Nil, "engine-allocated empty set materializes as Nil")
+    end for
   }
 
   // ── D6 闸关对照组（行为分叉只在闸 on 的分发器链）─────────────────────────
@@ -386,6 +406,7 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
     yield
       assert(ack.contains("registered with 2 node(s)"), ack)
       assertEquals(a.plugins, Nil, "explicit empty declaration = no capability face (unchanged)")
+    end for
   }
 
   // ── D7 摘要先行（设计 §6 第 4 步 · 宿主存活窗内的链级 sweep + 审计落定）────
@@ -419,8 +440,224 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
       _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(before, true, "precondition: the terminal chain is still in the active region (no TtlTick in harness)")
-      assert(events.exists(_.contains("chain-archived")), s"the chain-archived audit must land: ${events.mkString("\n")}")
+      assertEquals(
+        before,
+        true,
+        "precondition: the terminal chain is still in the active region (no TtlTick in harness)"
+      )
+      assert(
+        events.exists(_.contains("chain-archived")),
+        s"the chain-archived audit must land: ${events.mkString("\n")}"
+      )
       assertEquals(after, false, "the sweep removes the chain from the active region before the unmount")
+    end for
+  }
+
+  // ── R3 flowmap 退役批（2026-10-29 · 审计二 P3/P10 · 设计 §5.6）────────────────
+  //
+  // D8 全链时序：终态 → 摘要行（chain-archived + 台账 Archived）→ unmount → 宽限窗
+  //      内 ChainsReadFace 盘面探针只读补拉（归档区组合读）→ 宽限过期目录整删。
+  // D9 取消链同一收口：终态时在飞链（无 blocked）→ 台账 cancelled 处置 + 事件，节点零触碰。
+  // D10 blocked 永不自动处置：含 blocked 成员的链在收口与出库两腿都整链跳过。
+  // D11 复活窗不删：宽限过期点已重挂（boot sweep 认领形态）⇒ 目录保留。
+
+  private def seedNode(h: nebflow.core.project.DelegateFlowRuntime, n: nebflow.core.project.NodeDef): IO[Unit] =
+    h.store.mutate(st => st.copy(nodes = st.nodes + (n.id -> n))).void
+
+  private def mkNode(id: String, status: String, in: List[String] = Nil): nebflow.core.project.NodeDef =
+    nebflow.core.project.NodeDef(
+      id = id,
+      name = id,
+      agent = "nebflow",
+      description = Some("R3 retire spec node"),
+      in = in,
+      status = status,
+      createdAt = System.currentTimeMillis() - 60_000L
+    )
+
+  private def ledgerControlOf(h: nebflow.core.project.DelegateFlowRuntime, chainId: String) =
+    h.store.chainLedgerStore.chainControlOf(chainId).map(_.status)
+
+  test(
+    "D8: full retirement chain — terminal sweep lands the summary rows, unmount, grace-window probe still reads, then the dir goes"
+  ) {
+    val ws = os.temp.dir(prefix = "nb-dm-d8-", deleteOnExit = false)
+    val system = ActorSystem(s"dm-d8-${scala.util.Random.nextInt(1000000)}")
+    val delegateId = "delegate-general-d8a8b9c0"
+    mkModeRecord(delegateId, DualModeConfig.ModeDispatcher, archived = true, cwd = ws)
+    System.setProperty(nebflow.core.delegate.DelegateFlowMapLifecycle.SysPropGraceMs, "150")
+    val scopeDir = ws / ".nebflow" / "flow-maps" / delegateId
+    for
+      res <- mkResources(system, new ScriptLlm(_ => "unused").handle)
+      mo <- mount(ws, delegateId, system, res)
+      h = mo.getOrElse(fail("host must mount"))
+      // 终态链（completed——机械可出库；绕 spawn 以保确定性）。先跑一拍在生期 reconcile
+      // （台账出生 Active——真实生命周期的 TtlTick 同位），退役收口才有行可翻。
+      _ <- seedNode(h, mkNode("solo8", nebflow.core.project.NodeLifecycle.Completed))
+      _ <- h.store.reconcileChainLedger(System.currentTimeMillis())
+      _ <- nebflow.core.delegate.DelegateFlowMapLifecycle.flushBeforeUnmount(delegateId)
+      events <- readEvents(ws)
+      activeEmpty <- h.store.snapshot.map(_.nodes.isEmpty)
+      archivedEntry <- h.store.chainLedgerStore.snapshot.map(
+        _.entries.values.exists(e =>
+          e.status == nebflow.core.project.ChainLedger.StatusArchived && e.archivedAt.isDefined
+        )
+      )
+      // unmount（终态屏障单点的下一环）→ 宽限窗内的盘面探针只读补拉。
+      _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
+      probe <- nebflow.core.project.ChainsReadFace.chainJson(delegateId, Map.empty)
+      nodesVisible = probe
+        .flatMap(_.hcursor.downField("chain").downField("nodes").as[List[io.circe.Json]].toOption)
+        .getOrElse(Nil)
+      mountedFlag = probe.flatMap(_.hcursor.downField("chain").downField("mounted").as[Boolean].toOption)
+      // 宽限窗内目录仍在（删除还没跑）——存在性必须在推导体内先取值，yield 只做断言。
+      dirWithinGrace <- IO(os.exists(scopeDir))
+      _ <- nebflow.core.delegate.DelegateFlowMapLifecycle.scheduleScopeRemoval(delegateId)
+      goneAfterGrace <- IO(os.exists(scopeDir))
+      probeAfter <- nebflow.core.project.ChainsReadFace.chainJson(delegateId, Map.empty)
+      chainAfter = probeAfter.flatMap(_.hcursor.downField("chain").as[Option[io.circe.Json]].toOption).flatten
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(
+        dirWithinGrace,
+        true,
+        "the scope dir must still exist during the grace window (before the removal leg runs)"
+      )
+      assertEquals(activeEmpty, true, "the terminal sweep empties the active region before the unmount")
+      assert(events.exists(_.contains("chain-archived")), s"chain-archived audit must land: ${events.mkString("\n")}")
+      assertEquals(archivedEntry, true, "the ChainLedger summary row must flip to archived inside the grace window")
+      assertEquals(mountedFlag, Some(false), "the probe must serve the unmounted (disk-probe) leg")
+      assertEquals(
+        nodesVisible.map(_.hcursor.get[String]("id").toOption).toList.flatten,
+        List("solo8"),
+        "the grace-window probe must still fetch the swept member from the archive zone (combined read)"
+      )
+      assertEquals(goneAfterGrace, false, "the scope dir must be removed once the grace window expires")
+      assertEquals(
+        chainAfter,
+        None: Option[io.circe.Json],
+        "after removal the chain projection degrades to null (three-row-family view)"
+      )
+    end for
+  }
+
+  test(
+    "D9: cancel chains walk the same retirement closure — in-flight chains get the ledger cancelled disposition, node states untouched"
+  ) {
+    val ws = os.temp.dir(prefix = "nb-dm-d9-", deleteOnExit = false)
+    val system = ActorSystem(s"dm-d9-${scala.util.Random.nextInt(1000000)}")
+    val delegateId = "delegate-general-d9a8b9c0"
+    mkModeRecord(delegateId, DualModeConfig.ModeDispatcher, cwd = ws)
+    for
+      res <- mkResources(system, new ScriptLlm(_ => "unused").handle)
+      mo <- mount(ws, delegateId, system, res)
+      h = mo.getOrElse(fail("host must mount"))
+      // 在飞链：n9a（pending，入口）→ n9b（pending，in=n9a）——同一拓扑分量。
+      _ <- seedNode(h, mkNode("n9a", nebflow.core.project.NodeLifecycle.Pending))
+      _ <- seedNode(h, mkNode("n9b", nebflow.core.project.NodeLifecycle.Pending, in = List("n9a")))
+      snap9 <- h.store.snapshot
+      chainId = nebflow.core.project.FlowMapStore.topologicalChains(snap9.nodes.values).head.id
+      controlBefore <- ledgerControlOf(h, chainId)
+      _ <- nebflow.core.delegate.DelegateFlowMapLifecycle.flushBeforeUnmount(delegateId)
+      events <- readEvents(ws)
+      controlAfter <- ledgerControlOf(h, chainId)
+      nodesAfter <- h.store.snapshot.map(s => s.nodes.map { case (k, v) => k -> v.status })
+      _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(
+        controlBefore,
+        nebflow.core.project.ChainLedger.StatusActive,
+        "precondition: the in-flight chain reads active"
+      )
+      assertEquals(
+        controlAfter,
+        nebflow.core.project.ChainLedger.StatusCancelled,
+        "the retirement closure must mark the in-flight chain cancelled (same write primitive as chain cancel)"
+      )
+      assert(
+        events.exists(e => e.contains("chain-cancelled") && e.contains(chainId)),
+        s"the chain-cancelled audit must land at the base workspace: ${events.mkString("\n")}"
+      )
+      assertEquals(
+        nodesAfter.get("n9a"),
+        Some(nebflow.core.project.NodeLifecycle.Pending),
+        "node states are untouched on disk (revival-window safety — boot sweep claim face stays intact)"
+      )
+      assertEquals(
+        nodesAfter.get("n9b"),
+        Some(nebflow.core.project.NodeLifecycle.Pending),
+        "downstream stays pending too"
+      )
+    end for
+  }
+
+  test(
+    "D10: blocked is never auto-disposed at retirement — a blocked-member chain is skipped by both the sweep and the cancel closure"
+  ) {
+    val ws = os.temp.dir(prefix = "nb-dm-d10-", deleteOnExit = false)
+    val system = ActorSystem(s"dm-d10-${scala.util.Random.nextInt(1000000)}")
+    val delegateId = "delegate-general-d10a8b9c"
+    mkModeRecord(delegateId, DualModeConfig.ModeDispatcher, cwd = ws)
+    for
+      res <- mkResources(system, new ScriptLlm(_ => "unused").handle)
+      mo <- mount(ws, delegateId, system, res)
+      h = mo.getOrElse(fail("host must mount"))
+      _ <- seedNode(h, mkNode("n10blocked", nebflow.core.project.NodeLifecycle.Blocked))
+      _ <- seedNode(h, mkNode("n10pending", nebflow.core.project.NodeLifecycle.Pending, in = List("n10blocked")))
+      snap10 <- h.store.snapshot
+      chainId = nebflow.core.project.FlowMapStore.topologicalChains(snap10.nodes.values).head.id
+      _ <- nebflow.core.delegate.DelegateFlowMapLifecycle.flushBeforeUnmount(delegateId)
+      events <- readEvents(ws)
+      control <- ledgerControlOf(h, chainId)
+      nodesAfter <- h.store.snapshot.map(s => s.nodes.map { case (k, v) => k -> v.status })
+      _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assertEquals(
+        control,
+        nebflow.core.project.ChainLedger.StatusActive,
+        "blocked-member chains keep the active control state (human adjudication territory)"
+      )
+      assert(
+        !events.exists(e => e.contains("chain-cancelled") && e.contains(chainId)),
+        "no chain-cancelled audit may land for a blocked-member chain"
+      )
+      assertEquals(
+        nodesAfter.get("n10blocked"),
+        Some(nebflow.core.project.NodeLifecycle.Blocked),
+        "the blocked node stays in the active region (never auto-archived)"
+      )
+      assertEquals(
+        nodesAfter.get("n10pending"),
+        Some(nebflow.core.project.NodeLifecycle.Pending),
+        "its chain stays unswept"
+      )
+    end for
+  }
+
+  test("D11: revival window — a scope re-mounted when the grace expires is never deleted (boot-sweep claim wins)") {
+    val ws = os.temp.dir(prefix = "nb-dm-d11-", deleteOnExit = false)
+    val system = ActorSystem(s"dm-d11-${scala.util.Random.nextInt(1000000)}")
+    val delegateId = "delegate-general-d11a8b9c"
+    mkModeRecord(delegateId, DualModeConfig.ModeDispatcher, cwd = ws)
+    System.setProperty(nebflow.core.delegate.DelegateFlowMapLifecycle.SysPropGraceMs, "120")
+    val scopeDir = ws / ".nebflow" / "flow-maps" / delegateId
+    for
+      res <- mkResources(system, new ScriptLlm(_ => "unused").handle)
+      mo <- mount(ws, delegateId, system, res)
+      h = mo.getOrElse(fail("host must mount"))
+      _ <- seedNode(h, mkNode("solo11", nebflow.core.project.NodeLifecycle.Completed))
+      _ <- nebflow.core.delegate.DelegateFlowMapLifecycle.flushBeforeUnmount(delegateId)
+      _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
+      // 复活窗：grace 过期点之前重挂（boot sweep 认领形态）。
+      mo2 <- mount(ws, delegateId, system, res)
+      _ = mo2.getOrElse(fail("remount must succeed"))
+      _ <- nebflow.core.delegate.DelegateFlowMapLifecycle.scheduleScopeRemoval(delegateId)
+      stillThere <- IO(os.exists(scopeDir))
+      _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield assertEquals(stillThere, true, "the remount gate must keep the dir (revival window wins over tidiness)")
+    end for
   }
 end DualModeDispatcherScopeSpec

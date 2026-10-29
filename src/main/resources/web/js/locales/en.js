@@ -835,6 +835,12 @@ export default {
   'subagents.status.error': 'Failed',
   'subagents.status.frozen': 'Frozen',
   'subagents.status.done': 'Done',
+  // Panel-tree batch (2026-10-29 ①): orphan-row origin chips (parent invisible,
+  // row promoted top-level — "from …" attribution).
+  'subagents.fromDelegate': 'from a finished delegate',
+  'subagents.fromFlowNode': 'from an AgentFlow node',
+  'subagents.fromSubagent': 'from a parent sub-agent',
+  'subagents.orphanTip': 'Parent session no longer visible · {sid}',
   // Task attribution badge (2026-09-27 taskbadge batch): hover tooltip of the
   // per-row `#id · title` badge
   'subagents.taskBadge': 'Task: {text}',
@@ -1111,6 +1117,17 @@ export default {
   'settings.imagegenDelete': 'Delete this provider',
   'settings.imagegenDeleteConfirm': 'Click again to confirm',
   'settings.imagegenDeleted': 'Provider deleted',
+  // settings-panel-jev-imagegen batch (2026-10-29, author order: give JeV and
+  // imagegen the same test-availability button the LLM face has). JeV = one
+  // button; imagegen = two levels (light probe + one minimal real generation).
+  'settings.jevTestBtn': 'Test availability',
+  'settings.jevTestTitle': 'Connectivity test: one minimal real call to the allocation channel (tests the current form values — unsaved edits included)',
+  'settings.imagegenTestBtn': 'Test availability',
+  'settings.imagegenTestTitle': 'Light probe: key resolution + upstream reachability (models endpoint)',
+  'settings.imagegenGenBtn': 'Run one minimal generation',
+  'settings.imagegenGenTitle': 'Hits the upstream for real: one generation at the smallest size / lowest quality (artifact goes to the temp dir)',
+  'settings.imagegenGenRunning': 'Generating… (seconds to tens of seconds)',
+  'settings.imagegenProbeModelsAbsent': 'Upstream reachable (models face absent, HTTP {code}) — auth unverified; run the minimal generation for the authoritative verdict',
   // settings-panel batch B (2026-10-28): per-model connectivity test.
   'provider.testModelTitle': 'Connectivity test: one minimal real call to this model',
   'provider.testRunning': 'Testing…',
@@ -1169,6 +1186,9 @@ export default {
   'model.errDuplicate': 'Model already in chain',
   'model.unavailable': 'Currently unavailable ({reason})',
   'model.healthFiltered': 'filtered by health',
+  // model-schedule-unavailable batch: panel gray-out / annotation face.
+  'model.scheduleRestrictedTitle': 'Unavailable {windows} — skipped automatically inside the window',
+  'model.scheduleRestrictedSuffix': 'unavailable {windows}',
   'model.saved': 'Saved',
   'model.divergedBar': '{roles} configured independently; unaffected by the primary chain',
   'model.divergedView': 'View',
@@ -1254,6 +1274,10 @@ export default {
   'provider.ctxExceedsCeiling': 'Model {id}: context window {value} exceeds the supported ceiling {max}',
   'provider.ctxDefaulted': 'Context window left empty for {ids}; saved with the default {def}',
   'provider.ctxClampedToMax': 'Model {id}: the default 1,000,000 exceeds the reported maximum; saved as {max}',
+  // model-schedule-unavailable batch: provider modal edit face.
+  'provider.unavailableWindows': 'Unavailable windows',
+  'provider.unavailableWindowsPlaceholder': 'e.g. 14:00-18:00; comma-separate multiple; cross-midnight as 23:00-07:00; empty = no restriction',
+  'provider.unavailableWindowsInvalid': 'Invalid unavailable window: "{value}" (expected HH:mm-HH:mm, start ≠ end)',
 
   // Model fields in modal
   'model.idPlaceholder': 'Model ID',
@@ -2117,6 +2141,10 @@ export default {
   'wiki.kindAttachment': 'attachment',
   'wiki.unresolved': 'Unresolved reference — no document with this name in any project vault',
   'wiki.backlinks': 'Backlinks',
+  // Term citation batch 2 (hover bubble + back-to-source button)
+  'wiki.termSource': 'Source: ',
+  'wiki.termJumpHint': 'Click to jump',
+  'wiki.backToSource': 'Back to source doc',
   // Side control face (search/chips/detail card/broken list/stats line)
   'wiki.chipAll': 'All',
   'wiki.chipRoot': 'Root',
@@ -2291,6 +2319,13 @@ export default {
   'plugins.dispatchOffTitle': 'Dispatch permission OFF — this plugin is not assigned to new nodes. Click to allow future dispatches again',
   'plugins.dispatchBlockedBlocked': 'Blocked — this switch cannot take effect; unblock via the API / CLI (the panel has no entry for this)',
   'plugins.dispatchBlockedTransition': 'A temporary dispatch grant is active — this switch only takes effect once the grant expires or is cleared',
+  'plugins.uninstall': 'Uninstall',
+  'plugins.uninstallTitle': 'Uninstall plugin',
+  'plugins.uninstallConfirm': 'Uninstalling "{name}" removes it from the plugin registry and it will not be reinstalled automatically. Confirming also deletes its plugin directory (local data is unrecoverable); alternatively disable only and keep the directory.',
+  'plugins.uninstallDeleteLabel': 'Uninstall & delete directory',
+  'plugins.uninstallKeepLabel': 'Disable only (keep directory)',
+  'plugins.uninstalled': 'Uninstalled {name}',
+  'plugins.migratedHint': 'This package name has been migrated: "{name}" is now installed as "{newName}". Delete the old directory (~/.stand/plugins/{name}/) and reinstall under the new name.',
   'plugins.author': 'by {author}',
   'plugins.compositionSkills': '{n} skill(s)',
   'plugins.compositionMcp': 'MCP: {servers}',
@@ -2450,7 +2485,7 @@ export default {
   'content.plugin.slideblocks.name': 'slideblocks',
   'content.plugin.slideblocks.desc': 'SlideBlocks presentation pack — nodes gain the end-to-end discipline for building from scratch or improving a complete slide deck with Slidev (slides, deck, presentation). Use for making a deck, writing a presentation, producing slides, improving an existing deck, or rebuilding a presentation in Slidev. Bundles skill: slideblocks (the full Blocks/Decks/Recipes pipeline, execution lock, delivery validation). Not for HTML cards or social-image design (use the design-cards plugin). Component surface: no mcp.json, no tool extensions.',
   'content.plugin.nebflow-plugin-creator.name': 'nebflow-plugin-creator',
-  'content.plugin.nebflow-plugin-creator.desc': 'Plugin packager — nodes gain the full-pipeline ability to package a capability requirement into a compliant plugin pack (three-input analysis → pack generation → mechanical self-check → delivery self-check that takes effect once written to disk). Use for packaging an existing skill or capability into a plugin, building a new plugin that does Y, writing plugin.json and SKILL.md, running a quality review of a plugin description, or running the pack validation script. Bundles skills: plugin-packaging (the three-input → generate → self-check → deliver packaging pipeline, including the handling of six forks such as name collisions and digest drift, the pre-delivery self-check, and the origin/digest reporting convention) and description-quality (the five-part manifest description spec: templates, good and bad examples, the M1-M15 criteria, and how to bound the core vocabulary). Verification and quality-review tasks use the nebflow-qa plugin instead. No mcp.json, no tool extensions.',
+  'content.plugin.nebflow-plugin-creator.desc': 'Plugin packager — nodes gain the full-pipeline ability to package a capability requirement into a compliant plugin pack (three-input analysis → pack generation → mechanical self-check → delivery self-check that takes effect once written to disk). Use for packaging an existing skill or capability into a plugin, building a new plugin that does Y, writing plugin.json and SKILL.md, running a quality review of a plugin description, or running the pack validation script. Bundles skills: plugin-packaging (the three-input → generate → self-check → deliver packaging pipeline, including the handling of six forks such as name collisions and digest drift, the pre-delivery self-check, and the origin/digest reporting convention) and description-quality (the five-part manifest description spec: templates, good and bad examples, the M1-M15 criteria, and how to bound the core vocabulary). Verification and quality-review tasks use the qa plugin instead. No mcp.json, no tool extensions.',
   'content.project.general.name': 'general',
   'content.project.general.desc': 'General-purpose project for executing general tasks: any domain, one-off or recurring; Nebula dispatches, nodes execute.',
 

@@ -1,9 +1,9 @@
-// mobile/bootstrap.js — 手机交互层注册钩子（mobile-ui-refactor 批，作者五点规格）。
+// mobile/bootstrap.js — 手机交互层注册钩子（mobile-ui-refactor 批，作者五点规格；
+// dock 批 2026-10-29 换代）。
 //
 // 架构定位（任务书硬要求）：移动端＝**独立交互层**，不是响应式补丁。
-//   · 组件与桌面共享（画板/设置/用量/项目/图谱/插件全部复用桌面导出 API 与 DOM），
-//     但交互面分离 —— 本目录自组 bootstrap + 交互控制器
-//     （nav / layout / gestures / floats）。
+//   · 组件与桌面共享（画板/设置/用量/项目/图谱/插件/社交面全部复用桌面导出
+//     API 与 DOM），但交互面分离 —— 本目录自组 bootstrap + 交互控制器。
 //   · 桌面代码路径零行为改动：桌面视口本模块只做一次 media-query 判定即返回，
 //     不 import 任何控制器、不建任何 DOM；唯一的桌面痕迹是 index.html 里的
 //     一行 <script> 注册钩子（与一行 <link>）。
@@ -11,17 +11,20 @@
 //     手机上以 body.mobile-layer 类为总开关（css/mobile/mobileLayer.css 全部规则
 //     挂在该类下，桌面窗口永远不会命中）。
 //   · 视口跨越（旋转/拉窗）双向处理：进入手机态激活，退回桌面态拆除并原样
-//     归还被移动的桌面 DOM 节点（floatController 记锚点）。
+//     归还被移动的桌面 DOM 节点（navController 记锚点）。
 //
-// 规格⑤侧 → layoutController（活动栏「双态」：展开=贴右缘无外浮把手，
-//              收起=半嵌低调图标即展开钮；走廊 --mobile-bar-gutter 随态
-//              58px/30px 适配，见 mobileLayer.css）
-// 规格②③ → navController（聊天为 root 的页面栈导航 + 面板真页面 + 文档卡片画板）
-// 规格③   → canvasGestures（文档卡片手势：横滑切卡 / 上滑收层；r1 页签形态已废除）
-// 规格⑤   → floatController（会话工具收编 header 右簇 + 居中浮层面板；r4 起
-//             底部只留输入卡 —— 搜索/历史/图标条上移归位进顶部一体化顶栏）
-// 规格②   → 纯 CSS（mobileLayer.css：手机端隐藏手机绑定/文件浏览器入口；
-//             项目卡「在文件浏览器中打开」按钮随层隐藏）。
+// dock 批激活谱系（作者令 2026-10-29 五栏底 dock + 各节目独立界面零重叠）：
+//   · nav = 五栏底 dock + 页面栈（dockTo/pushPage/popPage）+ canvas 独立页
+//     + 全页面收编（overlay 面/面板 pane/会话窗）；
+//   · socialFaces = 消息/联系人两面内容臂 + 消息页通知段（中键改版批 23:36：
+//     好友会话列表迁入消息页，原「对话」面退役；桌面面收编 + 封存态）；
+//   · chatChrome = 聊天根顶栏双键（任务/搜索；液态下拉列退役后的常驻入口）；
+//   · searchFace / daemonFace / memoryFace = 桌面面的手机呈现附件（脚注/角色行/
+//     卡读态——面收编进页面后照常生效）；
+//   · taskPanel = 任务页面板（数据/卡渲染同源，呈现位=页面收编）。
+//   · 退役（随批摘除激活）：headerController（双液态下拉列）、layoutController
+//     （右列页面键）、floatController（左列键+二级 morph）、morphPanel、
+//     canvasGestures（bottom sheet 手势）、bgStatusFace（键拦截 morph）。
 //
 // QA 探针：window.__nfMobileLayer = { active, version } —— 采集脚本用它确认
 // 交互层已激活（结构读数），不依赖任何视觉推断。导航探针：window.__nfMobileNav。
@@ -43,34 +46,25 @@ async function activate() {
   // （桌面视口两路径都不跑 ⇒ html.mobile-html-layer 桌面永不出现）。
   document.documentElement.classList.add('mobile-html-layer');
   try {
-    // 动态 import：桌面视口永不执行这些行（激活判据在前）。
-    // v3 激活序：header 先行（双液态列壳就位，layout/floats 才有列可填）；
-    // 拆除以**数组序**执行 ⇒ teardowns 倒排激活序：floats 最先归还搬移节点
-    //（锚点归还需要列壳仍在场），nav 最后拆（pane 归还在手势解绑之后）。
-    // mobile-secondary-screens 批：面板手机面控制器（P2 起逐屏）随 floats
-    // 之后激活（只追加自有节点/写缝，不搬移列键），拆除紧随 tFloats。
-    const [header, layout, gestures, floats, nav, searchFace, daemonFace, memoryFace, bgStatusFace] = await Promise.all([
-      import('./headerController.js'),
-      import('./layoutController.js'),
-      import('./canvasGestures.js'),
-      import('./floatController.js'),
+    // dock 批激活序：nav 先行（dock/页面壳就位，chrome/faces 才有栈可推）；
+    // 拆除以**数组序**执行 ⇒ teardowns 倒排激活序：faces/chrome 先归还搬移
+    // 节点，nav 最后拆（pane/overlay 面归还锚点在页面壳仍在场时执行）。
+    const [nav, socialFaces, chatChrome, searchFace, daemonFace, memoryFace] = await Promise.all([
       import('./navController.js'),
+      import('./socialFaces.js'),
+      import('./chatChrome.js'),
       import('./searchFace.js'),
       import('./daemonFace.js'),
       import('./memoryFace.js'),
-      import('./bgStatusFace.js'),
     ]);
     if (!active) return; // 激活期间已跨越回桌面 —— 直接拆除
     const navTeardown = nav.activateNav();
-    const tHeader = header.activateHeader();
-    const tLayout = layout.activateLayout();
-    const tGestures = gestures.activateGestures();
-    const tFloats = floats.activateFloats();
+    const tFaces = socialFaces.activateSocialFaces();
+    const tChrome = chatChrome.activateChatChrome();
     const tSearchFace = searchFace.activateSearchFace();
     const tDaemonFace = daemonFace.activateDaemonFace();
     const tMemoryFace = memoryFace.activateMemoryFace();
-    const tBgStatusFace = bgStatusFace.activateBgStatusFace();
-    teardowns = [tFloats, tSearchFace, tDaemonFace, tMemoryFace, tBgStatusFace, tGestures, tLayout, tHeader, navTeardown];
+    teardowns = [tMemoryFace, tDaemonFace, tSearchFace, tChrome, tFaces, navTeardown];
   } catch (err) {
     // 控制器加载失败：回到桌面形态（宁可退回可用桌面，不可半挂层）。
     console.error('[mobile-layer] activate failed', err);
@@ -98,5 +92,5 @@ if (mq.matches) activate();
 // QA / 诊断探针（只读）。
 (/** @type {any} */ (window)).__nfMobileLayer = {
   get active() { return active; },
-  version: 'mobile-ui-refactor v3 (floating-header + liquid-dd + secondary-morph + tpanel + secondary-screens)',
+  version: 'mobile dock batch (five-tab dock + fullscreen independent pages + canvas page + social faces)',
 };

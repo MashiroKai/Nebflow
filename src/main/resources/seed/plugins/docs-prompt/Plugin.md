@@ -9,7 +9,7 @@ docs-prompt 是文档与提示词工程域知识包：节点获得两块方法�
 - `skills/nebflow-docs/`——技术文档域知识：写作规范（准确/简洁/结构化/示例驱动/不过度展开）、中英双语文档同步、导航结构维护、文档一致性联动（代码改了文档跟着改）、产出路径纪律、图文报告图片内嵌纪律。
 - `skills/nebflow-prompt-engineering/`——提示词工程方法论：六核心原则（唯一解析/渐进披露/token 效率/结构化/行为性/示例优先）、系统提示词解剖结构、编辑既有提示词的纪律与反模式清单、工具描述写法（含按角色分化先走定义层）、agent 定义周期体检清单。
 
-**包纪律一句话**：改文档先保「与代码一致」，改提示词先保「每句话只有一种解析」——两块都讲最小改动、示例驱动、before/after diff 交付；代码实现与交付验证不在本包（另配 `nebflow-backend-dev`、`nebflow-qa`）。
+**包纪律一句话**：改文档先保「与代码一致」，改提示词先保「每句话只有一种解析」——两块都讲最小改动、示例驱动、before/after diff 交付；代码实现与交付验证不在本包（另配 `nebflow-backend-dev`、`qa`）。
 
 ## 2. 安装与启用
 
@@ -59,7 +59,7 @@ docs-prompt/                            （包根）
 - **中英双语同步**或文档导航结构调整 → `nebflow-docs`。
 - 设计/优化 **system prompt**、重构提示词章节、降 token 消耗 → `nebflow-prompt-engineering`。
 - 写/优化 **工具 description**、agent 定义（system.md/agent.json）体检 → `nebflow-prompt-engineering`。
-- **代码实现** → 不在本包：另配 `nebflow-backend-dev`；**交付验证** → 另配 `nebflow-qa`。
+- **代码实现** → 不在本包：另配 `nebflow-backend-dev`；**交付验证** → 另配 `qa`。
 - 两 skill 常连用：一次基础设施改动＝代码外的一切文本面（文档走 nebflow-docs，提示词与工具描述走 prompt-engineering）按联动清单同步。
 
 ## 7. 共享件专节
@@ -77,6 +77,6 @@ docs-prompt/                            （包根）
 ## 9. 维护约定
 
 - **权威面同步**：图文报告图片内嵌口径的权威面在项目仓 AGENTS.md 同名节——改任一侧必须同步另一侧，禁两套口径；skill 内该节为执行面副本。
-- **跨包口径**：与 `nebflow-backend-dev`（代码实现）、`nebflow-qa`（交付验证）的分工边界若调整，两侧同步。
+- **跨包口径**：与 `nebflow-backend-dev`（代码实现）、`qa`（交付验证）的分工边界若调整，两侧同步。
 - **方法论沉淀**：反模式清单、周期体检检查项随生产观测增删；增删时核对其余条目未被推翻。
 - **本文件定位**：Plugin.md 是按需 Read 面——装载器不注入；SKILL.md 是注入面权威，两者不一致时以 SKILL.md 为准并回改本文。

@@ -56,12 +56,16 @@ class PluginMcpManager private (
         existing <- serverRefs.get
         toStart = wanted.filter { case (sid, _) => !existing.contains(sid) }
         started <- toStart.toList.traverse { case (sid, (_, pdir, _, cfg)) =>
-          runtimeConfig(pdir, cfg).flatMap { eff =>
-            mcp
-              .startServer(sid, eff)
-              .timeout(15.seconds)
-              .attempt
-              .map(sid -> _)
+          runtimeConfig(pdir, cfg).flatMap {
+            case Left(err) =>
+              // secret 指针解析失败 → 走 startServer 的同一条 Left 通道（回滚腿复用）
+              IO.pure(sid -> (Left(new java.lang.IllegalStateException(err)): Either[Throwable, Unit]))
+            case Right(eff) =>
+              mcp
+                .startServer(sid, eff)
+                .timeout(15.seconds)
+                .attempt
+                .map(sid -> _)
           }
         }
         failures = started.collect { case (sid, Left(err)) => sid -> err }
@@ -98,26 +102,11 @@ class PluginMcpManager private (
   end acquire
 
   /**
-   * §9 占位符展开 + 环境注入（协议符合度批）：
-   * - PLUGIN_ROOT = 插件根绝对路径；PLUGIN_DATA = <dataRoot>/plugin-data/<plugin>/
-   *   （§9.1 客户端必须在启动前创建、可写、跨更新保留——makeDir.all 幂等）。
-   * - 展开：args 元素、env 值、cwd（单次非递归替换）；command 不展开（§9.2）。
-   * - cwd 缺省 → 插件根（§11.1-7 子进程默认工作目录 = 插件根）。
+   * §9 展开的实例包装（blocking 线程转移）——唯一实现与 ④a secret 指针语义文档
+   * 在 [[PluginMcpManager.expandRuntimeConfig]]（对象级，`private[plugin]` spec 直读）。
    */
-  private def runtimeConfig(pluginDir: String, cfg: McpServerConfig): IO[McpServerConfig] =
-    IO.blocking {
-      val pluginData = PathUtil.dataRoot / "plugin-data" / java.nio.file.Paths.get(pluginDir).getFileName.toString
-      os.makeDir.all(pluginData)
-      def expand(s: String): String =
-        s.replace("${PLUGIN_ROOT}", pluginDir).replace("${PLUGIN_DATA}", pluginData.toString)
-      val injectedEnv = cfg.env.getOrElse(Map.empty).map { case (k, v) => k -> expand(v) } +
-        ("PLUGIN_ROOT" -> pluginDir) + ("PLUGIN_DATA" -> pluginData.toString)
-      cfg.copy(
-        args = cfg.args.map(_.map(expand)),
-        env = Some(injectedEnv),
-        cwd = Some(cfg.cwd.map(expand).getOrElse(pluginDir))
-      )
-    }
+  private def runtimeConfig(pluginDir: String, cfg: McpServerConfig): IO[Either[String, McpServerConfig]] =
+    IO.blocking(PluginMcpManager.expandRuntimeConfig(pluginDir, cfg))
 
   /**
    * release：会话终态回收（completed/failed/cancelled/blocked 全终态统一调用，
@@ -239,6 +228,53 @@ object PluginMcpManager:
    */
   def serverIdFor(pluginName: String, serverName: String): String =
     s"plugin_${pluginName}_$serverName"
+
+  /**
+   * §9 占位符展开 + 环境注入（协议符合度批；对象级纯函数面，`private[plugin]` =
+   * spec 直读）：
+   * - PLUGIN_ROOT = 插件根绝对路径；PLUGIN_DATA = <dataRoot>/plugin-data/<plugin>/
+   *   （§9.1 客户端必须在启动前创建、可写、跨更新保留——makeDir.all 幂等）。
+   * - 展开：args 元素、env 值、cwd（单次非递归替换）；command 不展开（§9.2）。
+   * - cwd 缺省 → 插件根（§11.1-7 子进程默认工作目录 = 插件根）。
+   * - **secret 指针展开（安全批 2026-10-29 ④a）**：env 值 = `${secret:<name>}` ⇒
+   *   从 secrets 库读值注入（`SecretInjection.materialize` 同款读取语义：raw bytes
+   *   / UTF-8 / 去一个尾换行 / ≤64KiB；值永不上日志、不上 Left 消息）。**失败语义
+   *   （裁定）**：缺失/超限/空值 ⇒ Left（acquire 既有失败载体 → 回滚本批启动者 →
+   *   PLUGIN_MCP_START_FAILED，点名 env 键与 secret 名）——fail-closed 而非跳过
+   *   env：半配置（无凭据）的 server 会在请求期才崩，显式启动失败才可行动。
+   */
+  private[plugin] def expandRuntimeConfig(pluginDir: String, cfg: McpServerConfig): Either[String, McpServerConfig] =
+    val pluginData = PathUtil.dataRoot / "plugin-data" / java.nio.file.Paths.get(pluginDir).getFileName.toString
+    os.makeDir.all(pluginData)
+    def expand(s: String): String =
+      s.replace("${PLUGIN_ROOT}", pluginDir).replace("${PLUGIN_DATA}", pluginData.toString)
+    def resolveEnv: Either[String, Map[String, String]] =
+      cfg.env.getOrElse(Map.empty).toList.sortBy(_._1).foldLeft[Either[String, List[(String, String)]]](Right(Nil)) {
+        case (Left(e), _) => Left(e)
+        case (Right(acc), (k, v)) =>
+          SecretEnvPointer.parse(v) match
+            case None => Right((k, expand(v)) :: acc)
+            case Some(secretName) =>
+              val resolved =
+                nebflow.core.secrets.SecretInjection.materialize(
+                  PathUtil.dataRoot / "secrets",
+                  List(nebflow.core.secrets.SecretInjection.Entry(variable = k, secret = secretName))
+                ).get(k)
+              resolved match
+                case Some(value) => Right((k, value) :: acc)
+                case None =>
+                  Left(
+                    s"env '$k' points at secret '$secretName' which did not resolve " +
+                      "(missing, empty, or over the 64KiB cap) — write it via the secrets store and restart the node"
+                  )
+      }.map(_.toMap + ("PLUGIN_ROOT" -> pluginDir) + ("PLUGIN_DATA" -> pluginData.toString))
+    resolveEnv.map { injectedEnv =>
+      cfg.copy(
+        args = cfg.args.map(_.map(expand)),
+        env = Some(injectedEnv),
+        cwd = Some(cfg.cwd.map(expand).getOrElse(pluginDir))
+      )
+    }
 
   /** 创建（GatewayMain / SharedResources 默认实例共用）。 */
   def create: IO[PluginMcpManager] =

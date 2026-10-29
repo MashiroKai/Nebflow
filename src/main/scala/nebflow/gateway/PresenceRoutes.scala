@@ -16,10 +16,13 @@ import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
 import nebflow.core.hotrestart.HealthPayload
 import nebflow.core.project.*
 import nebflow.core.schedule.FreezeSchedule.given
+import nebflow.core.seed.SeedService
 import nebflow.core.skill.SkillService
 import nebflow.core.task.{FileTaskStore, TaskStore}
 import nebflow.core.tools.NodeTools
 import nebflow.llm.*
+import nebflow.llm.decision.DecisionProvider
+import nebflow.llm.imagegen.{ImageGenAdapters, ImageGenProbe}
 import nebflow.llm.providers.ModelListFaces
 import nebflow.neblink.*
 import nebflow.neblink.FriendCodecs.given
@@ -58,6 +61,12 @@ private[gateway] object PresenceRoutes:
   // 一个诊断调用（双击/多面板重复点击 → 409，前端钮在测试中本就禁用——这是
   // 服务侧的第二道闸，不是唯一闸）。
   private val modelTestGate = new ProviderModelProbe.Gate
+
+  // JeV 分配通道 / 生图 provider 探针的单飞闸（settings-panel-jev-imagegen 批
+  // 2026-10-29 作者令「然后 Jev/生图，也要像我们LLM这样，有个按钮来测试可用性」
+  // ——同 B 件口径：引擎侧第二道闸，前端钮禁用是第一道）。
+  private val jevTestGate = new ProviderModelProbe.Gate
+  private val imagegenTestGate = new ImageGenProbe.Gate
 
   /** Shared probe shell for POST /provider/test（fourfix 批 ②件起为存储配置腿
     * 与表单覆写腿两条共用）：单飞闸 → 一次最小真实调用 → 脱敏判决。
@@ -1167,6 +1176,13 @@ private[gateway] object PresenceRoutes:
                     candidates <- sharedResources.providerRegistry.getCandidatesForAgent(Some(effective))
                     (healthy, _) <- sharedResources.healthMonitor.filterCandidates(candidates)
                     current = healthy.headOption.map(c => s"${c.providerId}/${c.model}")
+                    // 时段闸可见性（model-schedule-unavailable 批，2026-10-29）：
+                    // effectiveChain 逐 ref 的不可用窗口声明（active = 当前在窗内）
+                    // ——/model 面板据此灰显 + 说明；`current` 经链出口过滤后天然
+                    // 只反映未受限模型。
+                    scheduleRestricted <- sharedResources.providerRegistry.scheduleWindowsByRef(
+                      effective.preferred.toList ++ effective.fallbacks
+                    )
                     result <- Ok(
                       Json.obj(
                         "name" -> agentName.asJson,
@@ -1175,7 +1191,16 @@ private[gateway] object PresenceRoutes:
                         "effectiveChain" -> effective.asJson,
                         "resolvedFrom" -> resolvedFrom.asJson,
                         "current" -> current.asJson,
-                        "settable" -> policy.isSettable(agentName).asJson
+                        "settable" -> policy.isSettable(agentName).asJson,
+                        "scheduleRestricted" -> scheduleRestricted
+                          .collect { case (ref, windows, active) if windows.nonEmpty =>
+                            Json.obj(
+                              "ref" -> ref.asJson,
+                              "windows" -> windows.asJson,
+                              "active" -> active.asJson
+                            )
+                          }
+                          .asJson
                       )
                     )
                   yield result
@@ -1493,12 +1518,36 @@ private[gateway] object PresenceRoutes:
       // 写一条审批审计记录（digest + 逐文件快照）到 `plugins.trust`。⚠️ 该记录**不再决定
       // 装载**（在位即信任），但它是 seed 覆盖的**仲裁基准**（`trustRecordDigest`）⇒ 手动
       // approve 一个用户改过的默认集包会让下次 boot 的种子镜像覆盖视为「干净」。
+      // **堵口（安全批 2026-10-29 ④b）**：默认集包 ∧ runtime digest ≠ 种子 digest ⇒
+      // **拒绝**（400 + 指引）—— approve 的基准前移会让下一次 boot 的 reconcile 判
+      // 「runtime == trusted」⇒ 出厂镜像覆盖用户版（有备份，但用户意图被静默否决）。
+      // 显式接受种子版的两条路：删目录让种子自愈装回（自动 approve 出厂 digest），或
+      // 手动恢复种子内容后再 approve。非默认集包不受此闸（approve 只是审计记录）。
       // 名字段白名单校验（拒绝路径穿越形态）。
       case req @ POST -> Root / "plugins" / name / "approve" =>
         withAuth(req) {
           if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
           else
-            nebflow.core.plugin.PluginRegistry.approve(name).flatMap {
+            (for
+              defs <- nebflow.core.plugin.PluginRegistry.scan()
+              guard <- IO.blocking {
+                defs.find(_.name == name) match
+                  case None => Right(()) // 不在注册表 ⇒ 交给 approve 本身报 not found
+                  case Some(p) =>
+                    if SeedService.approveWouldRewriteDefaultBaseline(name, p.digest) then
+                      Left(
+                        s"Refused: '$name' is a default-set plugin and its on-disk content differs from the shipped seed " +
+                          "(digest mismatch). Approving now would rewrite the reconcile baseline and let the next boot's " +
+                          "seed mirror overwrite your copy (a pre-sync backup is kept, but your changes are rolled). " +
+                          "Accept the seed version explicitly first: delete " + PathUtil.dataRoot / "plugins" / name +
+                          " and let the seed reinstall it (auto-approved factory digest), then re-run approve if needed."
+                      )
+                    else Right(())
+              }
+              res <- guard match
+                case Left(err) => IO.pure(Left(err): Either[String, String])
+                case Right(()) => nebflow.core.plugin.PluginRegistry.approve(name)
+            yield res).flatMap {
               case Right(msg) => Ok(ApiJson.okMessage(msg))
               case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
             }
@@ -1544,6 +1593,29 @@ private[gateway] object PresenceRoutes:
                   )
                 )
               case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+            }
+        }
+
+      // POST /plugins/:name/remove — **卸载**（2026-10-29 作者令「除了 toggle，我们
+      // 应该还要多一个卸载」）：写 `plugins.removed.<name>`（出册，独立命名空间——
+      // 与 revoke「封禁·可逆」语义分清）＋ 默认**删目录**；body（可选）：
+      // {"deleteDir": false} = 仅停用腿（目录保留、出册不变）；{"reason": "…"}。
+      // 成功后落插件存在台账 userRemoved 墓碑（SeedService.markUserRemoved）——
+      // 默认集包不被种子自愈装回。出册 = 注册表面整体消失（目录/resolve/派发全拒；
+      // 在飞 MCP 由既有 revalidate ≤30s 停）。重装（stand plugin add / 面板 add）
+      // 显式清出册标记（PluginRemovePolicy.reinstate）。
+      case req @ POST -> Root / "plugins" / name / "remove" =>
+        withAuth(req) {
+          if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+          else
+            req.as[Json].attempt.map(_.getOrElse(Json.obj())).flatMap { body =>
+              val deleteDir = body.hcursor.downField("deleteDir").as[Boolean].toOption.getOrElse(true)
+              val reason = body.hcursor.downField("reason").as[String].toOption.getOrElse("")
+              nebflow.core.plugin.PluginRemovePolicy.remove(name, reason, "panel/rest", deleteDir).flatMap {
+                case Right(msg) =>
+                  SeedService.markUserRemoved(name).flatMap(_ => Ok(ApiJson.okMessage(msg)))
+                case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+              }
             }
         }
 
@@ -2065,6 +2137,109 @@ private[gateway] object PresenceRoutes:
               }
             end if
           }
+        }
+
+      // ── JeV 分配通道连接性测试（settings-panel-jev-imagegen 批 2026-10-29
+      // 作者令逐字「然后 Jev/生图，也要像我们LLM这样，有个按钮来测试可用性」）──
+      // 表单覆写腿优先（未保存也测）：provider/endpoint/keyRef 覆写即按表单值
+      // 探活；缺省回落存储配置。laya 走 /health metadata 面、typesafe 走极小
+      // 真实补全（JevProbe 单点）；keyRef secret 缺席 = 直接 Failed（待录入），
+      // 不发注定 401 的击。零持久化——纯诊断读数。
+      case req @ POST -> Root / "jev" / "test" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            val providerOv = body.hcursor.downField("provider").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            val endpointOv = body.hcursor.downField("endpoint").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            val keyRefOv = body.hcursor.downField("keyRef").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+            if providerOv.exists(p => !DecisionProvider.AllIds.contains(p)) then
+              BadRequest(Json.obj("error" -> s"unknown jev provider '${providerOv.get}'".asJson))
+            else
+              configRef.get.flatMap { cfg =>
+                val stored = cfg.jev
+                val provider = providerOv.getOrElse(stored.flatMap(_.provider).getOrElse(DecisionProvider.TypesafeJev))
+                val endpoint = endpointOv.orElse(stored.flatMap(_.endpoint)).getOrElse(
+                  if provider == DecisionProvider.Laya then DecisionProvider.DefaultLayaEndpoint
+                  else DecisionProvider.DefaultTypesafeEndpoint
+                )
+                val model = stored.flatMap(_.model).getOrElse(DecisionProvider.DefaultModel)
+                val keyRef = keyRefOv.orElse(stored.flatMap(_.keyRef))
+                if !jevTestGate.tryAcquire() then
+                  Conflict(Json.obj("error" -> "a test for this provider is already in flight".asJson))
+                else
+                  IO.blocking(JevProbe.callWithKeyRef(provider, endpoint, model, keyRef)).flatMap {
+                    case JevProbe.Verdict.Ok(latency, reply) =>
+                      Ok(Json.obj("ok" -> true.asJson, "latencyMs" -> latency.asJson, "reply" -> reply.asJson))
+                    case JevProbe.Verdict.Failed(detail) =>
+                      Ok(Json.obj("ok" -> false.asJson, "error" -> detail.asJson))
+                  }.guarantee(IO.blocking(jevTestGate.release()))
+              }
+            end if
+          }
+        }
+
+      // ── 生图 provider 连接性测试（同批同令③件）——两级：轻探活（GET
+      // {base}/models + 适配器鉴权头；401/403 = 死 key 状态码原样可见）与
+      // 「实跑一次最小生成」（mode=generate：256x256/最低质量真 POST，产物落
+      // os.TempDir，绝不进 <dataRoot>/imagegen 正式归档）。token 解析：表单
+      // 覆写 > 存储 keyRef > 派生名（ImageGenProbe.resolveToken 单点）；缺
+      // credential 属判决内容（ok:false）而非路由错误。零持久化——临时目录
+      // 产物除外。
+      case req @ POST -> Root / "imagegen" / "test" =>
+        withAuth(req) {
+          if !ImageGenSeal.CompiledIn then
+            NotFound(Json.obj("error" -> "imagegen face is not compiled in".asJson))
+          else
+            req.as[Json].flatMap { body =>
+              val name = body.hcursor.downField("provider").as[String].toOption.map(_.trim).getOrElse("")
+              val tpe = body.hcursor.downField("type").as[String].toOption.map(_.trim).getOrElse("")
+              val model = body.hcursor.downField("model").as[String].toOption.map(_.trim).getOrElse("")
+              val baseUrlOv = body.hcursor.downField("baseUrl").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+              val apiKeyOv = body.hcursor.downField("apiKey").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+              val generate = body.hcursor.downField("mode").as[String].toOption.map(_.trim).contains("generate")
+              ImageGenAdapters.byType(tpe) match
+                case None => BadRequest(Json.obj("error" -> s"unknown imagegen adapter type '$tpe'".asJson))
+                case Some(adapter) =>
+                  if name.isEmpty || model.isEmpty then
+                    BadRequest(Json.obj("error" -> "Missing required fields: provider, model".asJson))
+                  else
+                    configRef.get.flatMap { cfg =>
+                      val stored = cfg.imagegen.flatMap(_.providers).getOrElse(Map.empty).get(name)
+                      val baseUrl = baseUrlOv.orElse(stored.flatMap(_.baseUrl)).getOrElse(adapter.defaultBaseUrl)
+                      ImageGenProbe.resolveToken(apiKeyOv, stored.flatMap(_.keyRef), name) match
+                        case Left(missing) =>
+                          // key 在位性是探活判决的一部分（❌ + 待录入文案），不是路由错误。
+                          Ok(Json.obj("ok" -> false.asJson, "error" -> missing.asJson))
+                        case Right(token) =>
+                          if !imagegenTestGate.tryAcquire() then
+                            Conflict(Json.obj("error" -> "a test for this provider is already in flight".asJson))
+                          else
+                            val verdict = IO.blocking(
+                              if generate then ImageGenProbe.generateCall(adapter, baseUrl, model, token)
+                              else ImageGenProbe.lightCall(adapter, baseUrl, token)
+                            )
+                            verdict.flatMap {
+                              case ImageGenProbe.Verdict.Ok(latency, absent) =>
+                                val base = Json.obj(
+                                  "ok" -> true.asJson,
+                                  "mode" -> "probe".asJson,
+                                  "latencyMs" -> latency.asJson
+                                )
+                                Ok(absent.fold(base)(c => base.deepMerge(Json.obj("modelsFaceAbsent" -> c.asJson))))
+                              case ImageGenProbe.Verdict.Generated(latency, bytes, ext, path, dataUrl) =>
+                                val base = Json.obj(
+                                  "ok" -> true.asJson,
+                                  "mode" -> "generate".asJson,
+                                  "latencyMs" -> latency.asJson,
+                                  "bytes" -> bytes.asJson,
+                                  "format" -> ext.asJson,
+                                  "tempPath" -> path.asJson
+                                )
+                                Ok(dataUrl.fold(base)(u => base.deepMerge(Json.obj("thumbnail" -> u.asJson))))
+                              case ImageGenProbe.Verdict.Failed(detail) =>
+                                Ok(Json.obj("ok" -> false.asJson, "error" -> detail.asJson))
+                            }.guarantee(IO.blocking(imagegenTestGate.release()))
+                    }
+            }
         }
 
       // ===== Daemon Management =====

@@ -184,7 +184,16 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
         json =>
           json.asObject match
             case Some(obj) =>
-              val builder = obj.add("rootSessionId", sid.asJson).add("sessionId", sid.asJson)
+              // 面板树批（2026-10-29 ①）：agentStart（面板入口帧）注入
+              // parentSessionId——前端按它把本子会话缩进挂到父 delegate 行下
+              // （快照面 activeAgentEntryJson.parentSessionId 同契约）。仅
+              // agentStart 注入：流事件族零载荷膨胀（routeSubagentWsSend 的
+              // project/taskId 注入判据同律）。
+              val isStart = obj("type").exists(_.asString.contains("agentStart"))
+              val withParent =
+                if !isStart || obj.contains("parentSessionId") then obj
+                else obj.add("parentSessionId", sid.asJson)
+              val builder = withParent.add("rootSessionId", sid.asJson).add("sessionId", sid.asJson)
               val finalObj =
                 if obj.contains("nodeSessionId") then builder
                 else builder.add("nodeSessionId", subagentId.asJson)

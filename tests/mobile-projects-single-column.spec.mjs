@@ -29,6 +29,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dockTo } from './_mobile-dock-nav.mjs';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
 const MIME = {
@@ -111,10 +112,11 @@ async function bootApp(page) {
   await page.waitForTimeout(300);
 }
 
-/** 开右列 → projects 推送页（P8 既有通路）。 */
+/** 设置根页「工作台」行 → projects 推送页（dock 批 2026-10-29 换代：v3 双液态
+ *  下拉列 `.mh-dd[data-dd="right"]` 整族退役，入口统一走设置 hub 行）。 */
 async function pushProjectsPage(page) {
-  await page.locator('.mh-dd[data-dd="right"] .mh-dd-hd').click();
-  await page.locator('.mh-dd[data-dd="right"] [data-face="projects"]').click();
+  await dockTo(page, 'settings');
+  await page.locator('.mobile-page[data-page="settings"] .mf-hub-row[data-hub-page="projects"]').click();
   await expect(page.locator('.mobile-page[data-page="projects"]')).toHaveClass(/live/);
   const cards = page.locator('.mobile-page[data-page="projects"] .team-card.project-card');
   await expect(cards).toHaveCount(5);

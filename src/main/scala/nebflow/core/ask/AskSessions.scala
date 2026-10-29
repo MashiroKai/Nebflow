@@ -4,6 +4,7 @@ import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.AtomicJson
+import nebflow.core.wiki.MdHtmlGate
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.security.MessageDigest
@@ -47,6 +48,24 @@ object AskSessions:
   /** Option 面（AgentSessionExecution 调用点与 DelegateSessions.isDelegateSession 同形）。 */
   def isAskSession(sessionId: Option[String]): Boolean =
     sessionId.exists(isAskSession)
+
+  /**
+   * md/html 类型硬约束闸（设计稿 §2「类型硬约束闸」行，调研稿 §5.6/§9-7）。
+   * **判据单点 = `MdHtmlGate`（core/wiki）**——ask 作用面与词条作用面共用同
+   * 一份四扩展名枚举（「作用面收缩」是同一个裁定，不是两个白名单）。
+   * `AskableExtensions` / `isAskable` 保留为 ask 侧门面（既有调用点与 spec
+   * 引用面），实现一行委托，禁写第二份。
+   */
+  val AskableExtensions: Set[String] = MdHtmlGate.Extensions
+
+  /**
+   * ask 侧判据门面：仅白名单扩展名可问（大小写不敏感，`?query`/`#frag` 由
+   * [[MdHtmlGate.extOf]] 先剥离）。askOpen 拒答（WsAskHandlers）与 spawn 面
+   * 深防（AskServices.agentDefFor/assembleNow 复问）全部经本判据——§9-8
+   * 「仅闸新问题、不清理」：本判据只拒新问，不触碰既有绑定表。
+   */
+  def isAskable(path: String): Boolean =
+    MdHtmlGate.isMdHtml(path)
 
   /** sha256 前 8 位 hex（会话 id 用；展示再截前 4 位）。 */
   def fileHash(canonicalPath: String): String =

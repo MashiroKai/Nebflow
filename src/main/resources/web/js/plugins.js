@@ -41,12 +41,26 @@
 //       ├ 组件面（mcp/skills/org.nebflow 现读投影 = 既有 comp chips 族；org.nebflow
 //       │   行 = viewerContributions.viewers[].name 数据投影，无贡献不渲染）
 //       └ 启停操作钮 = 既有派发开关**原样收进展开态**（钩子/语义/乐观翻转零变，
-//           只动层级）＋ **收起态行尾第二视图**（2026-10-07 14:13 作者令①：
-//           `[data-plugin-dispatch-row]` 挂 `.plugins-card-state`，药丸后 chevron
-//           前；点击 stopPropagation 不触发展开；两视图一处状态源同源同步）。
+//           只动层级）。
+//     🔴 **单 toggle 定版（2026-10-29 作者令「为什么我们插件面板里有两个 toggle？」）**：
+//     每卡**恰一个**开关 = 详情区 `[data-plugin-dispatch]`。2026-10-07 14:13 令①引入的
+//     收起态行尾第二视图（`[data-plugin-dispatch-row]`）整组退场——同一状态源的两处
+//     视图被读作「两个 toggle」（面板实证：pipelines 卡右上 + 展开区中部各一枚），
+//     一个控制启停的原则下行尾视图是冗余件：视图合一回详情区单点，钩子/语义/乐观
+//     翻转/收敛管线零变（少一个消费方而已）。
 //     展开态默认收起；收敛管线（applyRegistryStates）保持节点身份 ⇒ 展开态跨
 //     轮询/开关收敛保持；整页重渲（locale 切换 / tab 恢复）无记忆 ⇒ 默认收起
 //     （🔴 不新造持久化）。
+//
+//   • **卸载入口（2026-10-29 作者令「除了 toggle，我们应该还要多一个卸载」）**：
+//     详情区 actions 行新增「卸载」钮（[data-plugin-uninstall]，每卡恰一，与派发
+//     开关同排）。二次确认极简档 = 既有 #delete-box 三键形态（showConfirm opts.alt
+//     第三动作）：主确认「卸载并删除目录」（POST remove {deleteDir:true}，danger）、
+//     第三键「仅停用（保留目录）」（POST remove {deleteDir:false}）、取消即退。
+//     语义分界：**卸载 = 移除出册**（`plugins.removed.<name>` 台账 + 存在台账墓碑，
+//     种子不自愈装回；重装 = stand plugin add 显式复职）；**停用 = 可逆**（revoke
+//     面板无入口，属 API / CLI）。成功后卡片随下一拍注册表收敛消失（出册 = 注册表
+//     面整体不可见），失败 toast 原始错误（F1 纪律同族）。
 //
 //   • 统一插件系统（2026-09-04 重设计，形态不变）：Skill 与 MCP 统一为「插件」，
 //     页面只呈现插件条目，skill/MCP 仅作条目展开详情区的内容构成标注语（含
@@ -64,7 +78,9 @@
 //       │   封禁 / 内容已变更**仍出字且照常渲染**（那是可行动信号，不是说明性小字）。
 //       └ 派发开关 `[data-plugin-dispatch]` = **展开详情区内**控件（原「唯一控件」
 //           ——`.plugins-item-actions` 行，2026-10-07 条目式批收进展开态）；
-//           2026-10-07 14:13 作者令①增补收起态行尾第二视图（同源，见上）；
+//           🔴 **单 toggle 定版（2026-10-29 作者令）**：2026-10-07 14:13 令①的收起态
+//           行尾第二视图（`data-plugin-dispatch-row`）随本批整组退场——每卡恰一开关
+//           （见上「单 toggle 定版」段）；
 //           🔴 **2026-09-15 作者令：
 //           可见文案「任务分发器可见性」小字整体删除**（toggle 本体自明）——
 //           `plugins.dispatchLabel` 仅作 **aria-label** 保留（可访问性面；
@@ -370,14 +386,13 @@ const ITEM_CHEVRON_SVG = '<svg class="plugins-item-chevron" width="14" height="1
  *    `[data-plugin-item]`     — 条目行（点击/键盘 toggle 展开态；role=button +
  *                               aria-expanded/aria-controls 可访问性面）
  *    `.plugins-item-detail`   — 展开详情区（默认 hidden；accordion 载体）
- *    `[data-plugin-dispatch]` — 任务分发器可见性开关·**展开态**（令 1 既有钩子，
- *                               保留不动；2026-10-07 条目式批：层级改到详情区
- *                               actions 行）
- *    `[data-plugin-dispatch-row]` — 同一开关的**收起态行尾视图**（2026-10-07
- *                               14:13 作者令①）：与上钩子同源同态（一处状态源、
- *                               两处视图），点击 stopPropagation 不触发展开
- *    `.plugins-card-state`    — 条目行右上状态区（药丸 + 行尾开关 + chevron 载体）
+ *    `[data-plugin-dispatch]` — 任务分发器可见性开关·详情区 actions 行（**每卡唯一**
+ *                               开关；2026-10-29 单 toggle 定版：收起态行尾第二视图
+ *                               `[data-plugin-dispatch-row]` 整组退场）
+ *    `.plugins-card-state`    — 条目行右上状态区（药丸 + chevron 载体）
  *    `[data-plugin-doc]`      — Plugin.md 入口（探针在场才显形；默认 hidden）
+ *    `[data-plugin-uninstall]`— 卸载钮（详情区 actions 行；二次确认三键：
+ *                               删除目录 / 仅停用 / 取消——2026-10-29 卸载批）
  *    `[data-skill-doc]`       — skill 胶囊（2026-10-21 作者令⑥：点击取 SKILL.md
  *                               经既有 Canvas 通路打开；data-skill-id = skill id）
  *  🔴 2026-09-14 面板收敛批退场钩子（**生产代码零使用**，判据见报告静态腿）：
@@ -419,20 +434,6 @@ function renderPluginCard(manifest) {
       </div>
       <div class="plugins-card-state">
         ${pill.text ? `<span class="plugins-state-pill ${pill.key}">${pillInnerHtml(pill)}</span>` : ''}
-        ${toggleHTML({
-          on: disp.on,
-          disabled: !!disp.blocked,
-          // 收起态行尾开关（2026-10-07 14:13 作者令①）：与状态药丸/chevron 同排，
-          // 药丸之后、chevron 之前（chevron 保持行末展开 affordance）。与展开态
-          // 详情区开关同一状态源（disp / cardSignature 单点），两处视图；
-          // 🔴 新钩子 `data-plugin-dispatch-row`——既有 `[data-plugin-dispatch]`
-          // 钩子语义/测试钉（详情区 actions 行）零变。点击 stopPropagation 由
-          // bindCardEvents 统一绑定（不触发整行 accordion）。
-          label: t('plugins.dispatchLabel'),
-          title: disp.title,
-          attrs: `data-plugin-dispatch-row="${esc(name)}"`
-            + (disp.blocked ? ` data-dispatch-blocked="${esc(disp.blocked)}"` : ''),
-        })}
         ${ITEM_CHEVRON_SVG}
       </div>
       <span class="plugins-item-summary">${esc(desc)}</span>
@@ -457,6 +458,10 @@ function renderPluginCard(manifest) {
               + (disp.blocked ? ` data-dispatch-blocked="${esc(disp.blocked)}"` : ''),
           })}
         </span>
+        <button type="button" class="plugins-item-uninstall" data-plugin-uninstall="${esc(name)}"
+          title="${esc(t('plugins.uninstallTitle'))}">
+          ${statusIcon('trash-2', 12, '')}${esc(t('plugins.uninstall'))}
+        </button>
       </div>
       ${skillListHtml(skills, name)}
     </div>
@@ -465,8 +470,18 @@ function renderPluginCard(manifest) {
 
 /** Rejected (load-failed) plugin row — informational only, no controls, not
  *  expandable（无详情可展开 ⇒ 无 chevron/role=button；拒载原因即条目行摘要；
- *  多行卡式同构：图标＋名称行 / 摘要行，badge 常在——2026-10-07 补充令改形）。 */
+ *  多行卡式同构：图标＋名称行 / 摘要行，badge 常在——2026-10-07 补充令改形）。
+ *  迁移批（2026-10-29 作者令「两个插件拒载修复」）：旧官方名包
+ *  （`nebflow-qa`/`nebflow-frontend-dev`，随批重命名为 `qa`/`frontend-dev`）的
+ *  OFFICIAL_IMPERSONATION 拒载给出「已迁移」处置提示（点名新名 + 迁移动作），
+ *  而不是裸报错——判据 = 保留前缀硬闸错误码 + 名字在迁移映射表（旧实例侧的
+ *  存量包目录不会随分发改名，得让作者面看到去向）。 */
+const MIGRATED_OFFICIAL_NAMES = { 'nebflow-frontend-dev': 'frontend-dev', 'nebflow-qa': 'qa' };
+
 function renderRejectedCard(entry) {
+  const migrated = entry.reason?.includes('OFFICIAL_IMPERSONATION')
+    ? MIGRATED_OFFICIAL_NAMES[entry.name]
+    : undefined;
   return `<div class="plugins-card rejected" data-plugin="${esc(entry.name)}">
     <div class="plugins-card-head">
       <div class="plugins-item-id">
@@ -478,6 +493,7 @@ function renderRejectedCard(entry) {
       </div>
       <span class="plugins-item-summary">${esc(entry.reason || '')}</span>
     </div>
+    ${migrated ? `<div class="plugins-card-hint migrated" data-plugin-migrated="${esc(entry.name)}">${esc(t('plugins.migratedHint', { name: entry.name, newName: migrated }))}</div>` : ''}
   </div>`;
 }
 
@@ -559,20 +575,15 @@ function renderAuthRequired(content) {
   content.querySelector('[data-plugins-relogin]')?.addEventListener('click', () => openLoginModal());
 }
 
-/** All per-card dispatch-toggle views（一处状态源、两处视图——14:13 令①）：
- *  展开态 `[data-plugin-dispatch]` ＋ 收起态行尾 `[data-plugin-dispatch-row]`。
- *  乐观翻转/收敛/释放三条路径都必须遍历本集，两视图才不会漂移。 */
+/** The per-card dispatch-toggle view（单 toggle 定版 2026-10-29）：详情区 actions 行
+ *  `[data-plugin-dispatch]` 是每卡唯一开关。乐观翻转/收敛/释放三条路径都经本集。 */
 function dispatchToggles(card) {
-  // Legacy hook first so querySelector('[data-plugin-dispatch]') consumers
-  // (domCardSignature / specs) keep reading the detail-area view.
-  return card
-    ? card.querySelectorAll('[data-plugin-dispatch], [data-plugin-dispatch-row]')
-    : [];
+  return card ? card.querySelectorAll('[data-plugin-dispatch]') : [];
 }
 
 /** Optimistic in-place flip of one card's DISPATCH switch (no re-render) —
  *  the only optimistic path left on the card (the content switch retired
- *  2026-09-13), same in-flight latch discipline. Flips BOTH views. */
+ *  2026-09-13), same in-flight latch discipline. */
 function flipDispatchState(card, on) {
   for (const sw of dispatchToggles(card)) {
     setToggleState(sw, on);
@@ -610,6 +621,50 @@ async function setPluginDispatch(name, enable, card) {
   } catch (e) {
     flipDispatchState(card, !enable); // roll back the optimistic flip
     releaseCardActions(card);
+    window.__showToast?.(String(e?.message || e), 'error');
+  }
+}
+
+// ── Uninstall（2026-10-29 卸载批）─────────────────────────────────────────
+// 卸载 = 移除出册（引擎 `plugins.removed` 台账 + 种子存在台账墓碑；默认删目录），
+// 与「封禁 = 可逆停用」语义分界见文件头。二次确认用既有 #delete-box 三键形态：
+// `window.__showConfirm(title, msg, onConfirm, { alt })`——主确认 danger「卸载并
+// 删除目录」、第三动作中性「仅停用（保留目录）」、取消即退。确认器缺席（极端
+// 装载序）⇒ 什么都不做（零静默无操作，flowMapTab 既有纪律同款：绝不无确认直发
+// 不可逆动作）。
+
+/** 二次确认 + 两腿分发。 */
+function confirmUninstall(name) {
+  if (typeof window.__showConfirm !== 'function') {
+    console.warn('[plugins] uninstall needs the confirm dialog (window.__showConfirm) — refused');
+    return;
+  }
+  window.__showConfirm(
+    t('plugins.uninstallTitle'),
+    t('plugins.uninstallConfirm', { name }),
+    () => uninstallPlugin(name, true), // 主确认 = 默认腿：删目录
+    {
+      tone: 'danger',
+      confirmLabel: t('plugins.uninstallDeleteLabel'),
+      alt: { label: t('plugins.uninstallKeepLabel'), onAlt: () => uninstallPlugin(name, false) },
+    }
+  );
+}
+
+/** POST /api/plugins/:name/remove（{deleteDir}）→ 成功后整页重渲（出册卡片随
+ *  注册表收敛消失；失败 toast 原始错误消息——F1「零静默、可行动」同族）。 */
+async function uninstallPlugin(name, deleteDir) {
+  try {
+    const resp = await api(`/api/plugins/${encodeURIComponent(name)}/remove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deleteDir }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok || body.error) throw new Error(body.error || `HTTP ${resp.status}`);
+    window.__showToast?.(body.message || t('plugins.uninstalled', { name }), 'success');
+    renderPlugins(); // 出册 = 注册表不可见；重渲即消失（轮询收敛同样会摘卡）
+  } catch (e) {
     window.__showToast?.(String(e?.message || e), 'error');
   }
 }
@@ -656,7 +711,7 @@ function applyPluginCardState(card, manifest) {
     }
   }
   // 派发面（令 1）：开关态 = 作者意图层；blocked 时 disabled + 注明原因。
-  // 两处视图（展开态 + 收起态行尾）同源收敛——遍历 dispatchToggles，防漂移。
+  // 单 toggle（2026-10-29 定版）：唯一开关在详情区 actions 行——遍历 dispatchToggles 收敛。
   for (const dsw of dispatchToggles(card)) {
     setToggleState(dsw, disp.on);
     dsw.disabled = !!disp.blocked;
@@ -953,18 +1008,16 @@ function bindCardEvents(card) {
     });
   }
   // 派发开关（令 1 派发面）：只写 plugins.dispatch；blocked 时控制件自带
-  // disabled，故此处点击不可达（零静默空操作）。两处视图同绑（2026-10-07
-  // 14:13 令①）：展开态详情区 + 收起态行尾（同源同态）。
-  // 🔴 stopPropagation（14:13 令①硬条）：行尾开关在 `[data-plugin-item]`
-  // （role=button accordion）**内部**——click 冒泡会触发展开，Enter/Space 的
-  // keydown 冒泡同样会（`<button>` 原生 click 语义已激活开关本体，行不得再动）。
+  // disabled，故此处点击不可达（零静默空操作）。单 toggle（2026-10-29 定版）：
+  // 唯一开关在详情区 actions 行（accordion 行为面之外）；stopPropagation 为
+  // 防御性保留——冒泡不得翻整行（与 skill 胶囊同款纪律）。
   for (const dsw of dispatchToggles(card)) {
     if (boundDispatchSwitches.has(dsw)) continue;
     boundDispatchSwitches.add(dsw);
     dsw.addEventListener('click', (e) => {
-      e.stopPropagation(); // 收起态行尾开关不得触发整行 accordion（详情态无害）
+      e.stopPropagation(); // 详情区控件：冒泡不得翻整行 accordion（防御性，同胶囊）
       if (dsw.disabled) return;
-      const name = dsw.dataset.pluginDispatch || dsw.dataset.pluginDispatchRow;
+      const name = dsw.dataset.pluginDispatch;
       const enable = !dsw.classList.contains('on');
       const cardEl = dsw.closest('.plugins-card');
       flipDispatchState(cardEl, enable); // optimistic — converged/rolled back async
@@ -982,6 +1035,15 @@ function bindCardEvents(card) {
       const plugin = capsule.getAttribute('data-skill-doc');
       const skillId = capsule.getAttribute('data-skill-id');
       if (plugin && skillId) openSkillDoc(plugin, skillId);
+    });
+  });
+  // 卸载（2026-10-29 卸载批）：二次确认三键（删除目录 / 仅停用 / 取消）后
+  // POST /api/plugins/:name/remove。浅绑定同胶囊——按钮随卡片重渲重建。
+  card.querySelectorAll('[data-plugin-uninstall]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation(); // 冒泡不得翻整行 accordion（同胶囊纪律）
+      const plugin = btn.getAttribute('data-plugin-uninstall');
+      if (plugin) confirmUninstall(plugin);
     });
   });
   mountPluginMdEntry(card);

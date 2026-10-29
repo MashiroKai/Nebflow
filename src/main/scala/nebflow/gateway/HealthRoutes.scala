@@ -53,7 +53,14 @@ private[gateway] object HealthRoutes:
           .map(_.flatten)
           .flatMap { extra =>
             val updateKey = extra.map(u => Json.obj("update" -> u)).getOrElse(Json.obj())
-            HealthPayload.build(sharedResources.healthMonitor, updateKey)
+            // 429 反应式并发闸批（作者令 2026-10-29 21:32）：`throttle` 键 = 各
+            // provider 账户的当前限流档位（limit/rung/inFlight/queued）。「有状态
+            // 才出现」纪律同 `update`/`deviceId`：总闸关或从无闸 ⇒ None ⇒ 载荷
+            // 逐字节不变（探针契约零回归）。
+            sharedResources.providerRegistry.throttleHealthJson.flatMap { throttleKey =>
+              val extraAll = throttleKey.fold(updateKey)(t => updateKey.deepMerge(Json.obj("throttle" -> t)))
+              HealthPayload.build(sharedResources.healthMonitor, extraAll)
+            }
           }
           .flatMap(nearPathProbePayload(req, _))
           .flatMap(Ok(_).map(_.putHeaders(probeCorsHeaders(req)*)))

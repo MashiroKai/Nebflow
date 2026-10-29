@@ -81,7 +81,7 @@ OFFICIAL_BASELINE = {"nebflow-plugin-creator", "visual-report", "slideblocks"}
 # C9 保留 namespace 前缀（OfficialPackages.scala:51 逐字「nebflow-」；🔴 禁收窄/改写）
 RESERVED_OFFICIAL_PREFIX = "nebflow-"
 # 官方面 9 包名单：--profile official 的适用面。名单外包（engineering-methods /
-# nebflow-frontend-dev / nebflow-qa）不属 seed 官方面。仅作适用面核对提示用，
+# frontend-dev / qa）不属 seed 官方面。仅作适用面核对提示用，
 # 不改 M4 白名单语义。
 OFFICIAL_FACE = frozenset({
     "browser-use", "computer-use", "design-spec", "explorer-toolkit",
@@ -123,6 +123,9 @@ SHELL_LIKE_COMMANDS = {
 }
 CREDENTIAL_KEY_RE = re.compile(r"(?i)(passw(or)?d|secret|token|api.?key|access.?key|private.?key|credential|auth)")
 PLACEHOLDER_ENV_KEYS = {"PLUGIN_ROOT", "PLUGIN_DATA"}
+# secret 指针形态（SecretEnvPointer.scala 逐字镜像；安全批 2026-10-29 ④a）：env 值
+# = ${secret:<name>}，name = [a-z0-9][a-z0-9._-]{0,63}（SecretsStore.validateName 同面）。
+SECRET_POINTER_RE = re.compile(r"\$\{secret:([a-z0-9][a-z0-9._-]{0,63})\}")
 # M15 模式按字面量拼接构造（而非整串写出）——本脚本自身也在包内、也被 M15 扫描，
 # 整串写出会自我命中。
 M15_RE = re.compile("|".join(["TB" + "D", "TO" + "DO", "FIX" + "ME", "<pla" + "ceholder>"]))
@@ -431,17 +434,35 @@ def check_mcp_json(pkg, manifest):
             bad.append(f"{sname}: transport 非法（{tpe!r}，允许 stdio|streamable-http|sse）")
             continue
         if tpe == "sse":
-            warn_lines.append(f"M14 mcp server '{sname}': sse 传输本客户端不支持（装载时跳过+告警）——建议改 streamable-http")
+            warn_lines.append(
+                f"M14 mcp server '{sname}': sse 传输**声明合法但当前不可用**（本客户端只支持 stdio / "
+                "streamable-http，装载时跳过+告警）——建议改 streamable-http"
+            )
         env = entry.get("env")
         if env is not None:
             if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
                 bad.append(f"{sname}: env 必须是 string→string object")
             else:
-                for k in env:
+                # secret 指针形态（安全批 2026-10-29 ④a 镜像）：env 值 = "${secret:<name>}"
+                # 合法且**优先**（值不落 mcp.json/审批面，运行期从 secrets 库解析）；
+                # 半截指针 = 笔误，装载必拒（entry 跳过）。凭据类键名的红标启发对指针
+                # 形态不触发（值不是明文凭据——红标降为兜底）。
+                def _is_pointer(v):
+                    return isinstance(v, str) and bool(SECRET_POINTER_RE.fullmatch(v.strip()))
+                for k, v in env.items():
                     if k in PLACEHOLDER_ENV_KEYS:
                         bad.append(f"{sname}: env 声明了保留占位键 '{k}'（§9.1，装载必拒）")
-                    elif CREDENTIAL_KEY_RE.search(k):
+                    elif isinstance(v, str) and "${secret:" in v and not _is_pointer(v):
+                        bad.append(
+                            f"{sname}: env '{k}' 含残缺 ${{secret:…}} 指针（须恰为 '${{secret:<name>}}'，"
+                            "secret 名 [a-z0-9][a-z0-9._-]{0,63}）——装载时该 entry 被跳过"
+                        )
+                    elif CREDENTIAL_KEY_RE.search(k) and not _is_pointer(v):
                         warn_lines.append(f"M14 mcp server '{sname}': env 键 '{k}' 疑似凭据——人审确认（红标启发式）")
+                    elif _is_pointer(v):
+                        warn_lines.append(
+                            f"M14 mcp server '{sname}': env '{k}' = secrets 库指针（值不落盘，运行期解析）——形态合规"
+                        )
         cmd = entry.get("command")
         if tpe == "stdio":
             if not isinstance(cmd, str) or not cmd:

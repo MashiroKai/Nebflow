@@ -71,6 +71,42 @@ object LlmInterface extends LlmRuntime:
   private[llm] var streamInactivityOverride: Option[(FiniteDuration, FiniteDuration)] = None
 
   /**
+   * 模型不可用时段闸（model-schedule-unavailable 批，2026-10-29 作者令 17:44）：
+   * 请求级**补滤单点**——输入 = 合并后的候选列表（会话 override ++ 链候选）。
+   * 链候选已在 ProviderRegistry 链出口滤过（此处幂等）；override 候选只有这里
+   * 能拦住——否则 13:50 选中的 session 模型会在 14:00 后继续打受限 provider。
+   *
+   * 语义（作者令倾向，采纳）：仍按链序尝试未受限模型（过滤保序）；受限候选
+   * 单行 WARN（不静默）；**全受限才显式报错**——[[ModelScheduleRestrictedError]]
+   * 携带原因与窗口。流面在本闸快失败，不进 120s 全灭闸等待：时间闸等不来
+   * （同配额类「等不如换」逻辑；全受限时换无可换才报）。
+   */
+  private def applyScheduleGate(
+    candidates: List[ModelCandidate],
+    registry: ProviderRegistry
+  ): IO[List[ModelCandidate]] =
+    if candidates.isEmpty then IO.pure(Nil)
+    else
+      registry.filterScheduleRestricted(candidates).flatMap { case (available, restricted) =>
+        val skipLog =
+          if restricted.isEmpty then IO.unit
+          else
+            IO(
+              logger.warn(
+                s"schedule-restricted skipped: " +
+                  restricted.map { case (c, w) => s"${c.providerId}/${c.model} ($w)" }.mkString(", ")
+              )
+            )
+        skipLog *>
+          IO.raiseWhen(available.isEmpty)(
+            ModelScheduleRestrictedError(
+              restricted.map { case (c, _) => s"${c.providerId}/${c.model}" },
+              restricted.map { case (_, w) => w }.distinct.mkString(" / ")
+            )
+          ).as(available)
+      }
+
+  /**
    * Flow-node supervision P3 (2026-08-26): apply llm.streamTimeouts config
    * overrides (boot-time, from GatewayMain). Each window is independently
    * optional — unspecified windows keep the Defaults value. Not a test hook:
@@ -525,7 +561,10 @@ object LlmInterface extends LlmRuntime:
               val start = System.currentTimeMillis()
               (for
                 overrides <- sessionOverrides.get
-                regCandidates <- registry.getCandidatesForAgent(req.agentModel)
+                // 🔴 请求路径取**未滤**链（model-schedule-unavailable 批）：全受限
+                // 终局判定需要完整受限清单——链出口先滤会把受限信息丢成「空链」，
+                // 流面就会落进 120s 全灭闸等待而非带原因快失败。
+                regCandidates <- registry.getCandidatesForAgentUnfiltered(req.agentModel)
                 candidates = overrides.get(req.sessionId).toList ++ regCandidates
                   .filterNot(c =>
                     overrides.get(req.sessionId).exists(o => o.providerId == c.providerId && o.model == c.model)
@@ -533,13 +572,15 @@ object LlmInterface extends LlmRuntime:
                 // #33: drop stale session overrides whose provider was removed
                 // by a config hot-reload — graceful skip, never "Unknown provider".
                 filtered <- registry.filterKnownProviders(candidates)
-                (up, _) <- healthMonitor.filterCandidates(filtered)
+                // 时段闸补滤（model-schedule-unavailable 批）：override 候选只有
+                // 这里能拦住；全受限在此显式报错（带原因）。
+                schedAvailable <- applyScheduleGate(filtered, registry)
+                (up, _) <- healthMonitor.filterCandidates(schedAvailable)
                 _ <- IO.raiseWhen(up.isEmpty)(new RuntimeException("All providers unavailable"))
                 result <- Fallback.tryProviderWithFallback[AdapterResponse](
                   up,
                   candidate =>
-                    val cappedThinking = req.thinking.map { t =>
-                      t.hcursor.downField("budget_tokens").as[Int] match
+                    val cappedThinking = req.thinking.map { t =>                      t.hcursor.downField("budget_tokens").as[Int] match
                         // Clamp at the internal ceiling (maxcfg batch 2026-09-16): the budget
                         // no longer follows the removed per-model `maxTokens` config — the old
                         // `maxTokens / 2` clamp cut "high" thinking (32768) to 8192 with the
@@ -585,7 +626,21 @@ object LlmInterface extends LlmRuntime:
                     yield resp
                     end for
                   ,
-                  onAttempt = None,
+                  // 429 反应式并发闸批（作者令 2026-10-29 21:32）：非流面同流面喂入——
+                  // onAttempt 每次失败分类恰好调用一次（成功通知 reason=Unknown 在
+                  // 限流器内部自判为 no-op；总闸关 / 配额体 / 非账户级响应体同判
+                  // no-op）。账户键 = providerId 现读当前配置的 baseUrl（热读）。
+                  onAttempt = Some(attempt =>
+                    registry.baseUrlOf(attempt.providerId).flatMap {
+                      case Some(baseUrl) =>
+                        registry.throttle.onRateLimitSignal(
+                          baseUrl,
+                          attempt.reason.getOrElse(FailoverReason.Unknown),
+                          attempt.message.getOrElse("")
+                        )
+                      case None => IO.unit
+                    }
+                  ),
                   onProviderExhausted = Some(c => healthMonitor.markDown(c.providerId, c.model, "provider exhausted"))
                 )
                 // 修 2026-10-21 「恢复不回绿」腿②（非流面）：调用成功即清除——
@@ -645,14 +700,21 @@ object LlmInterface extends LlmRuntime:
                     .eval(
                       for
                         overrides <- sessionOverrides.get
-                        regCandidates <- registry.getCandidatesForAgent(req.agentModel)
+                        // 🔴 请求路径取**未滤**链（model-schedule-unavailable 批）：
+                        // 全受限终局判定需要完整受限清单——链出口先滤会把受限信息
+                        // 丢成「空链」，流面就会落进 120s 全灭闸等待而非带原因快失败。
+                        regCandidates <- registry.getCandidatesForAgentUnfiltered(req.agentModel)
                         candidates = overrides.get(req.sessionId).toList ++ regCandidates
                           .filterNot(c =>
                             overrides.get(req.sessionId).exists(o => o.providerId == c.providerId && o.model == c.model)
                           )
                         // #33: same graceful skip as the non-streaming path.
                         filtered <- registry.filterKnownProviders(candidates)
-                      yield filtered
+                        // 时段闸补滤（model-schedule-unavailable 批）：同非流面——
+                        // override 候选在此拦住；全受限在健康检查**之前**快失败
+                        // （带原因），不进 120s 全灭闸等待。
+                        schedAvailable <- applyScheduleGate(filtered, registry)
+                      yield schedAvailable
                     )
                     .flatMap { candidates =>
 
@@ -1006,7 +1068,19 @@ object LlmInterface extends LlmRuntime:
                                               java.time.Instant.now().toString,
                                               classification.message.orElse(Option(err.getMessage))
                                             )
-                                            val notify = onAttempt.traverse_(_.apply(attempt))
+                                            // 429 反应式并发闸批（作者令 2026-10-29 21:32）：账户级
+                                            // 429 → 限流器降档信号。挂在 notify（四条分支共用、每次
+                                            // 失败分类恰好过一次）上；内部自判——总闸关 / 非
+                                            // RateLimit / 配额体（1308 计划性额度 = 换链腿）/ 非账户级
+                                            // 响应体（单请求类，走既有 retry）⇒ no-op，零行为变化。
+                                            val notify = onAttempt.traverse_(_.apply(attempt)) *>
+                                              registry.throttle.onRateLimitSignal(
+                                                candidate.provider.baseUrl,
+                                                classification.reason,
+                                                classification.message
+                                                  .orElse(Option(err.getMessage))
+                                                  .getOrElse("")
+                                              )
                                             val downReason = classification.message
                                               .orElse(Option(err.getMessage))
                                               .getOrElse(classification.reason.toString)
