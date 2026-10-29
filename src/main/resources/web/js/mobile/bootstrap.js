@@ -16,7 +16,8 @@
 // dock 批激活谱系（作者令 2026-10-29 五栏底 dock + 各节目独立界面零重叠）：
 //   · nav = 五栏底 dock + 页面栈（dockTo/pushPage/popPage）+ canvas 独立页
 //     + 全页面收编（overlay 面/面板 pane/会话窗）；
-//   · socialFaces = 消息/联系人/对话三面内容臂（桌面面收编 + 封存态）；
+//   · socialFaces = 消息/联系人两面内容臂 + 消息页通知段（中键改版批 23:36：
+//     好友会话列表迁入消息页，原「对话」面退役；桌面面收编 + 封存态）；
 //   · chatChrome = 聊天根顶栏双键（任务/搜索；液态下拉列退役后的常驻入口）；
 //   · searchFace / daemonFace / memoryFace = 桌面面的手机呈现附件（脚注/角色行/
 //     卡读态——面收编进页面后照常生效）；
