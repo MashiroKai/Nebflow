@@ -270,9 +270,10 @@ object NfOfficeRoutes:
   private def sweep(cacheDir: os.Path): Unit =
     try
       if os.exists(cacheDir) then
-        val entries = os.list(cacheDir).sortBy(f => os.mtime(f).toMillis)
+        // os.mtime 在现 os-lib 已直接返回 Long（复活批对齐：分支原稿多写 .toMillis）。
+        val entries = os.list(cacheDir).sortBy(f => os.mtime(f))
         val now = System.currentTimeMillis()
-        entries.filter(f => os.mtime(f).toMillis < now - CacheSweepAge.toMillis).foreach(os.remove.all)
+        entries.filter(f => os.mtime(f) < now - CacheSweepAge.toMillis).foreach(os.remove.all)
         entries.drop(CacheSweepCap).foreach(os.remove.all)
     catch case _: Throwable => () // 清理面永不拖垮主腿
   end sweep

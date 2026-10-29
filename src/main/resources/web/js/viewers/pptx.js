@@ -368,14 +368,11 @@ function buildShell(unitsHtml, slideDims, zoom) {
  *  blob 双腿纪律同 pdf/docx（`objectUrl || await ticketUrl(absPath)`，点击铸票见降级腿）。
  *  @param {HTMLElement} pane
  *  @param {{absPath?:string, fileName?:string, size?:number, objectUrl?:string}} ctx */
-async function viewPptx(pane, { absPath, fileName, size, objectUrl }) {
-  revokePaneBlobUrls(pane); // 同 pane 重渲：清上一轮 viewer 自铸 blob（含 staging 帧/桥清理）
-  /** @type {any} */ (pane)._pptxTeardown?.();
-  pane.classList.remove('scrollable');
-  // 加载占位 + 进度读数（#815 收口批）：大件（几十 MB deck）取数/解析全程异步，
-  // 占位不再是一句死文案——取数腿经 nfViewerUrl 的 onProgress 逐段回填「字节/百分比」，
-  // 字节到齐后切换「渲染中」读数直到产物帧接管。objectUrl 腿（字节已在本地）与
-  // 账本命中（cached blob）不触发进度（瞬时完成，无可报）。
+/** 加载占位（#815 收口批形态）：大件取数/解析全程异步，占位带进度读数；
+ *  返回 `loadLabel`（渲染腿切换「渲染中」读数用）与 `onProgress`（取数进度
+ *  回填闭包）。复活批注：转换腿失败落路线 A 时占位子树可能已被
+ *  setLoadingText 换成单行文本——重建一次本占位即可，两闭包随新节点重绑。 */
+function buildLoadingPane(pane) {
   const loadingBox = document.createElement('div');
   loadingBox.className = 'canvas-md-viewer';
   loadingBox.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--color-text-muted);';
@@ -394,6 +391,18 @@ async function viewPptx(pane, { absPath, fileName, size, objectUrl }) {
       ? `${formatSize(loaded)} / ${formatSize(total)}（${Math.round((loaded / total) * 100)}%）`
       : formatSize(loaded);
   };
+  return { loadLabel, onProgress };
+}
+
+async function viewPptx(pane, { absPath, fileName, size, objectUrl }) {
+  revokePaneBlobUrls(pane); // 同 pane 重渲：清上一轮 viewer 自铸 blob（含 staging 帧/桥清理）
+  /** @type {any} */ (pane)._pptxTeardown?.();
+  pane.classList.remove('scrollable');
+  // 加载占位 + 进度读数（#815 收口批）：大件（几十 MB deck）取数/解析全程异步，
+  // 占位不再是一句死文案——取数腿经 nfViewerUrl 的 onProgress 逐段回填「字节/百分比」，
+  // 字节到齐后切换「渲染中」读数直到产物帧接管。objectUrl 腿（字节已在本地）与
+  // 账本命中（cached blob）不触发进度（瞬时完成，无可报）。
+  const { loadLabel, onProgress } = buildLoadingPane(pane);
   /** @type {any} */ (pane)._pptxDiag = { gateDecision: 'pending' };
   const diag = /** @type {any} */ (pane)._pptxDiag;
   const ctx = { absPath, fileName, size, objectUrl };
@@ -411,15 +420,18 @@ async function viewPptx(pane, { absPath, fileName, size, objectUrl }) {
     // 未转换（转换器缺席/全败/无票）⇒ 落路线 A；convertSkipped 已记因。
     if (!pane.isConnected) return;
     pane.classList.remove('scrollable');
-    pane.innerHTML = `<div class="canvas-md-viewer" style="display:flex;align-items:center;justify-content:center;color:var(--color-text-muted);opacity:0.5;">Loading presentation...</div>`;
+    buildLoadingPane(pane); // 转换腿的加载文案已重写占位子树——重建（新闭包下行）
   }
 
-  await renderFrontendPptx(pane, ctx, diag);
+  // 复活批修：onProgress/loadLabel 是本函数闭包变量，显式传参下行（分支原稿
+  // 直接引用自由标识符，路线 A 首取数即 ReferenceError → fetch-failed）。
+  await renderFrontendPptx(pane, ctx, diag, onProgress, loadLabel);
 }
 
 /** 路线 A 纯前端渲染腿（结构 = 2026-10-06 MVP 原样；本批仅外加 paneBlobUrls 回收
- *  与 diag 因果记录）。 */
-async function renderFrontendPptx(pane, { absPath, fileName, size, objectUrl }, diag) {
+ *  与 diag 因果记录）。onProgress/loadLabel = viewPptx 加载占位的闭包对（复活批
+ *  补显式传参——见 viewPptx 尾注）。 */
+async function renderFrontendPptx(pane, { absPath, fileName, size, objectUrl }, diag, onProgress, loadLabel) {
   const ctx = { absPath, fileName, size, objectUrl };
 
   // 闸 4：源件 >50MB 拒绝渲染（声明尺寸先看，objectUrl 腿的实际尺寸在取字节后复核）

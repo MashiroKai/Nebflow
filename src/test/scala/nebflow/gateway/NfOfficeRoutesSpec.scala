@@ -60,7 +60,7 @@ class NfOfficeRoutesSpec extends CatsEffectSuite:
 
   private def failingLeg(ledger: Ledger, tag: String = "failing"): NfOfficeRoutes.Leg =
     NfOfficeRoutes.Leg(tag, (src, outDir) =>
-      ledger.calls.incrementAndGet() *> IO.raiseError(new java.io.IOException("boom"))
+      IO(ledger.calls.incrementAndGet()) *> IO.raiseError(new java.io.IOException("boom"))
     )
 
   private def legsOf(ls: List[NfOfficeRoutes.Leg]): NfOfficeRoutes.Legs = new NfOfficeRoutes.Legs:
@@ -69,13 +69,15 @@ class NfOfficeRoutesSpec extends CatsEffectSuite:
   private def noLegs: NfOfficeRoutes.Legs = new NfOfficeRoutes.Legs:
     def probe: IO[List[NfOfficeRoutes.Leg]] = IO.pure(Nil)
 
-  /** One seeded source file; the suite hands its realpath-bound ticket to `test`. */
-  private def withSeedFile[A](name: String, bytes: Array[Byte])(test: (Path, String) => IO[A]): A =
+  /** One seeded source file; the suite hands its realpath-bound ticket to `test`.
+   *  复活批对齐：test 体按普通断言代码写（与 withTempCache 同风格），此处统一
+   *  lift 进 IO 再跑——省掉每个用例的 IO{} 包装，语义不变（IO{} 延迟执行）。 */
+  private def withSeedFile(name: String, bytes: Array[Byte])(test: (Path, String) => Any): Unit =
     val tmp   = Files.createTempDirectory("nf-office-test")
     val file  = tmp.resolve(name)
     Files.write(file, bytes)
     val ticket = store.issue("spec", file.toRealPath().toString).unsafeRunSync().token
-    try test(file, ticket).unsafeRunSync()
+    try IO(test(file, ticket)).unsafeRunSync()
     finally
       Files.walk(tmp).sorted(java.util.Comparator.reverseOrder()).iterator().asScala.foreach(Files.deleteIfExists)
 
