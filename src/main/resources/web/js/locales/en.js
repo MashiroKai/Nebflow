@@ -2113,6 +2113,10 @@ export default {
   'wiki.kindAttachment': 'attachment',
   'wiki.unresolved': 'Unresolved reference — no document with this name in any project vault',
   'wiki.backlinks': 'Backlinks',
+  // Term citation batch 2 (hover bubble + back-to-source button)
+  'wiki.termSource': 'Source: ',
+  'wiki.termJumpHint': 'Click to jump',
+  'wiki.backToSource': 'Back to source doc',
   // Side control face (search/chips/detail card/broken list/stats line)
   'wiki.chipAll': 'All',
   'wiki.chipRoot': 'Root',

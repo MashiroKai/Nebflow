@@ -530,12 +530,16 @@ function isRenderedFrame(src) {
  *  into the app document (no frame, no postMessage), so it calls this directly.
  *  `anchor` (wiki-graph batch) rides the open-item payload through the readFile
  *  round trip: {kind:'block',id} | {kind:'heading',text} | {kind:'line',line}.
+ *  `refSourceTab` (词条引用批 batch 2, F5 返回原文档): the source tab id of a
+ *  REFERENCE jump — canvas.js records it on the opened entry and shows the
+ *  top-left back button (作者令 2026-10-29 11:49); undefined for plain opens.
  *  @param {string} path
- *  @param {any} [anchor] */
-export function openLocalFileTab(path, anchor) {
+ *  @param {any} [anchor]
+ *  @param {string} [refSourceTab] */
+export function openLocalFileTab(path, anchor, refSourceTab) {
   if (!path) return;
   window.dispatchEvent(new CustomEvent('workspace-open-item', {
-    detail: { id: 'file:' + path, itemType: '', content: '', absPath: path, anchor: anchor || undefined },
+    detail: { id: 'file:' + path, itemType: '', content: '', absPath: path, anchor: anchor || undefined, refSourceTab: refSourceTab || undefined },
   }));
   revealCanvas();
 }
