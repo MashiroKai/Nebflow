@@ -15,6 +15,10 @@
 //     由 ask agent 工具腿发起）/askReply（§7 回问）；
 //   - 流式帧（textDelta/done/error 等）经 ws.js ask 拦截面（sessionId 前缀
 //     `ask-`）路由进本模块，与主会话视图零交集（§2 z 序/视图排他同律）。
+// 可见性闸（作者缺陷报 2026-10-29「Askmode怎么在插件面板里也有？」）：入口钮
+//   只在文件型标签页（有真实文件 backing 的 canvas tab = active entry 携
+//   absPath）挂载显示——插件面板/工具面板/图谱等非文件型 surface 零挂载零残
+//   留，切卡离开文件 tab 即摘（syncGate → css .gate-off display:none）。
 // 移动（#988 同律）：气泡列 touch-action: pan-y 原生纵滚；canvasGestures 的
 // zoneOf 对 .ask-dock/.ask-fab 返回 ''（surface 归属制，横滑零切卡）。
 
@@ -165,11 +169,26 @@ function isCanvasVisible() {
   return document.body.classList.contains('canvas-open');
 }
 
+// ── 可见性闸（作者缺陷报 2026-10-29「Askmode怎么在插件面板里也有？」）──────
+// 入口钮（连带 dock）只在文件型标签页在场：active entry 携 absPath = 有真实
+// 文件 backing 的 canvas tab。插件面板/工具面板/图谱等非文件型 surface 零挂
+// 载零残留——.gate-off = display:none（出布局出命中盒，非视觉弱化）。闸随
+// syncToActiveTab 每拍落位：切卡/关卡/批量恢复的 active 变更全经 setActiveTab
+// → canvas-tab-switched（或 canvas-tab-closed）事件到齐，初始无卡态同样吃闸。
+function syncGate() {
+  if (!el) return;
+  const off = !currentFile;
+  el.fab.classList.toggle('gate-off', off);
+  el.dock.classList.toggle('gate-off', off);
+}
+
 function syncToActiveTab() {
   const entry = activeCanvasEntry();
   const file = entry && entry.absPath ? entry.absPath : '';
-  if (file === currentFile) { syncSeat(); return; }
+  const switched = file !== currentFile;
   currentFile = file;
+  syncGate(); // 可见性闸每拍落位（幂等；含初始无卡态与切回文件卡复现）
+  if (!switched) { syncSeat(); return; }
   const s = activeSession();
   const hasMsgs = !!(s && s.msgs.length);
   el.fab.classList.toggle('has-sess', hasMsgs);
@@ -237,7 +256,7 @@ function syncSeat() {
 function isOpen() { return !!el && !el.dock.classList.contains('closed'); }
 
 async function open() {
-  if (!currentFile) return; // 非文件卡无 ask 面（入口常驻，点了无效即静默）
+  if (!currentFile) return; // 非文件卡入口已被可见性闸摘除；此守卫为冗余保险
   const s = await ensureActiveSession();
   if (!s) return;
   el.dock.classList.remove('closed');

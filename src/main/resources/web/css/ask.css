@@ -143,6 +143,14 @@ html[data-theme='light'] {
   55% { box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.16), 0 1px 3px rgb(0 0 0 / 0.25), 0 0 0 9px rgb(96 165 250 / 0); }
 }
 
+/* ═══ 可见性闸（作者缺陷报 2026-10-29「Askmode怎么在插件面板里也有？」）═══
+ * 入口钮只在文件型标签页（有真实文件 backing 的 canvas tab）挂载显示——插件
+ * 面板/工具面板/图谱等非文件型 surface 零挂载零残留：.gate-off = display:none
+ * （出布局出命中盒，非视觉弱化），切卡离开文件 tab 即摘。闸由 askDock.syncGate
+ * 随切卡/关卡/恢复每拍落位（「常驻可点」口径 = 文件卡在场的常驻）。 */
+.ask-fab.gate-off,
+.ask-dock.gate-off { display: none; }
+
 /* ═══ 覆盖层（作者令④无窗体）：气泡列 + 输入条，z < 顶行（v2.1：徽标退场）═══ */
 .ask-dock {
   position: absolute;
