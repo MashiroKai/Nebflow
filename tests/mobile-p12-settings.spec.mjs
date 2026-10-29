@@ -21,6 +21,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dockTo } from './_mobile-dock-nav.mjs';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
 const MIME = {
@@ -99,10 +100,9 @@ async function bootApp(page, colorScheme = 'dark') {
   await page.waitForTimeout(300);
 }
 
+/** 开设置：底 dock「设置」键 → 根页（dock 批：右列液态下拉退役）。 */
 async function pushSettings(page) {
-  await page.locator('.mh-dd[data-dd="right"] .mh-dd-hd').click();
-  await page.locator('.mh-dd[data-dd="right"] [data-face="settings"]').click();
-  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
+  await dockTo(page, 'settings');
 }
 
 function watchErrors(page) {
@@ -117,12 +117,17 @@ test('T1 settings opens with NO profile entry row; agent surface lives in the me
   await bootApp(page, 'dark');
   await pushSettings(page);
 
-  // 面板合并批 ④：设置页零智能体入口行（页体首块 = 设置面，不是 .profile-entry），
+  // 面板合并批 ④：设置页零智能体入口行（页体无 .profile-entry），
   // 也无旧独立面板解隐路径。
   await expect(page.locator('.profile-entry')).toHaveCount(0);
   const body = page.locator('.mobile-page[data-page="settings"] .mobile-page-body');
-  const firstId = await body.evaluate((el) => el.firstElementChild?.id || '');
-  expect(firstId).toBe('settings-modal');
+  // dock 批：页体首块 = 工作台分组行（HUB_ROWS），随后 = 收编设置面。
+  const head = await body.evaluate((el) => ({
+    first: el.firstElementChild?.className || '',
+    second: el.children[1]?.id || '',
+  }));
+  expect(head.first).toContain('mf-hub');
+  expect(head.second).toBe('settings-modal');
 
   // 出页回根 → header 头像 = 唯一智能体入口：开合并面板（智能体分区）。
   await page.locator('.mobile-page[data-page="settings"] .mobile-page-header .mobile-back-btn').click();
@@ -203,8 +208,7 @@ test('T3 name inline save on Enter via merged panel; settings groups follow desk
 
   // 七分组沿用桌面次序：#settings-modal 内分组标题在场（收编进设置页）。
   await page.keyboard.press('Escape');
-  await page.locator('.mh-dd[data-dd="right"] .mh-dd-hd').click();
-  await page.locator('.mh-dd[data-dd="right"] [data-face="settings"]').click();
+  await pushSettings(page);
   await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
   await expect(page.locator('#settings-modal .settings-modal-header')).toBeVisible();
 

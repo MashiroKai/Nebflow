@@ -19,6 +19,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openHubPage } from './_mobile-dock-nav.mjs';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
 const MIME = {
@@ -78,7 +79,9 @@ async function bootApp(page) {
   });
   await page.routeWebSocket(/\/ws/, (ws) => {
     const sendConfig = () => ws.send(JSON.stringify({
-      type: 'configData', config: '{}', configured: true, onboarding: 'done',
+      // dock 批：图谱工作台行随 wikiGraphEnabled 门控 —— 夹具携 flag（graphseal
+      // 通道 features.wikiGraph，缺省封存）。
+      type: 'configData', config: '{"features":{"wikiGraph":true}}', configured: true, onboarding: 'done',
     }));
     const sendSessions = () => ws.send(JSON.stringify({
       type: 'sessionList',
@@ -107,10 +110,10 @@ async function bootApp(page) {
   await page.waitForTimeout(300);
 }
 
+/** 开页面：设置根页工作台行「图谱」→ push（dock 批：右列液态下拉退役；
+ *  graph 行随 wikiGraphEnabled 门控 —— 夹具 configData 携 features.wikiGraph）。 */
 async function pushPage(page, face) {
-  await page.locator('.mh-dd[data-dd="right"] .mh-dd-hd').click();
-  await page.locator(`.mh-dd[data-dd="right"] [data-face="${face}"]`).click();
-  await expect(page.locator(`.mobile-page[data-page="${face}"]`)).toHaveClass(/live/);
+  await openHubPage(page, face);
 }
 
 function watchErrors(page) {
@@ -171,16 +174,17 @@ test('T2 canvas-only face: zoom cluster retired, graph canvas is the page surfac
   expect(errors).toEqual([]);
 });
 
-test('T3 back contract pops to chat; page carries no toolbar glass buttons', async ({ page }) => {
+test('T3 back contract pops to settings root; page carries no toolbar glass buttons', async ({ page }) => {
   const errors = watchErrors(page);
   await pushPage(page, 'graph');
 
   // 工具条玻璃钮已随控制面迁左栏退役 —— 页内零存留（防复活钉，判据跟 8a2c703f9）。
   await expect(page.locator('.mobile-page[data-page="graph"] .wiki-toolbar-btn')).toHaveCount(0);
 
-  // 返回契约：pop 一层回聊天。
+  // 返回契约：pop 一层回设置根页（dock 批：入口腿 = 工作台行）。
   await page.locator('.mobile-page[data-page="graph"] .mobile-back-btn').click();
   await expect(page.locator('.mobile-page[data-page="graph"]')).not.toHaveClass(/live/);
-  expect(await page.locator('.mobile-page.live').count()).toBe(0);
+  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
+  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('settings');
   expect(errors).toEqual([]);
 });

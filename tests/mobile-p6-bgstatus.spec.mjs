@@ -1,20 +1,22 @@
 // mobile-p6-bgstatus.spec.mjs — P6「运行状态」合并面板验收
 //（mobile-secondary-screens 实施批；样张 v3.5 P6 + 开放点①②④按设计批推荐；
-//  后台合并批 2026-10-23 ⑥ 更新：几何改**水平居中**（作者令 ⑤）+ **内容高
-//  自适应紧凑化**（作者令 ⑥「手机端空白太多」，固定 560 高退役）；结构归并
-//  上移桌面共享单点 bgMergedPanel.js，断言语义不变。）
+//  后台合并批 2026-10-23 ⑥：结构归并上移桌面共享单点 bgMergedPanel.js；
+//  dock 批换代 2026-10-29「各节目都是独立界面」：入口 = 设置根页工作台行
+//  「后台任务」→ 独立整页（悬浮盒 308 居中/紧凑化判据随浮层形态退役，
+//  换钉收编页面几何）；桌面图标键（#bg-indicator/#bgagent-indicator）在手机层
+//  属退场桌面簇（.header-right display:none），键可见性断言随之退役 ——
+//  计数读数改钉页内「后台任务 · N」头。）
 //
-// 样张→实机 DOM 映射（实施批口径）：
-//   §8-1 盒模型 …… #bg-dropdown（合并载体）：left/right 0 + margin auto 居中 /
-//        top 58+safe / 宽 308 / 高 = 内容高（max 560 兜底）/ r16。
+// 样张→实机 DOM 映射（换代注记）：
+//   §8-1 【换代】页面化盒模型 …… #bg-dropdown 收编进 .mobile-page-body：
+//        全幅（w=375 / x=0 / radius 0）。
 //   在飞任务行 …… 桌面 .bg-task-row 全字段沿用：状态点 + 状态词（六档：
 //        running/idle/stuck/cancelling/failed/done，卡死阈值 idle>10min 桌面
 //        既有）+ origin chip + 本地·远程 kind chip + 行数 + 时长。
 //   开放点① 两下拉归并 …… #bgagent-dropdown 幽灵面退场（chat.css 全局
 //        display:none），列表节点由 bgMergedPanel.js 收编进载体
-//        （载体桌面头「后台任务」= 第一分组题 + 「智能体」分组签）；bgagent 键
-//        capture 拦截（bgStatusFace.js），点按自播二级液态 morph（手机层键列收回
-//        后键不可二连击，收口 = 点面板外 —— 桌面 outside-close 同源，见 T3）。
+//        （载体桌面头「后台任务」= 第一分组题 + 「智能体」分组签）；收口 =
+//        页面返回钮（closePageFace 置 hidden → CLOSE_WATCH 对账弹栈，见 T3）。
 //   开放点④ 远程 chip …… .bg-task-kind（bg.kind.remote = 远程）。
 //   开放点③ 资源占用条 …… 后端无 CPU/内存/网络字段，不实施不伪造（见实施 spec）。
 //
@@ -25,7 +27,7 @@ import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { settlePanel } from './_mobile-panel-settle.mjs';
+import { openHubPage } from './_mobile-dock-nav.mjs';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
 const MIME = {
@@ -121,18 +123,20 @@ async function seedAgent(page) {
       m.default.updateBgAgentIndicator();
     });
   }, SID);
-  await expect(page.locator('#bgagent-indicator')).toBeVisible();
-  // 图标常驻键角标 = 运行中子智能体数（桌面 updateBgAgentIndicator 同源信号，
-  // 只数运行行 —— 2026-09-14 author ruling 语义在手机层原样）。
-  await expect(page.locator('#bgagent-indicator .bgagent-count')).toHaveText('1');
+  // dock 批换代：桌面图标键（#bgagent-indicator）属手机层退场簇 —— 键可见性
+  // 断言退役；种子判据 = 运行中子智能体已写入 state.sessionBgAgents（桌面合并
+  // 面板的数据源；载体开时 navController 补跑 renderBgAgentDropdown 落行）。
+  const seeded = await page.evaluate(async (sid) => {
+    const s = (await import('/js/state.js')).default;
+    return Object.keys(s.sessionBgAgents?.[sid] || {}).length;
+  }, SID);
+  expect(seeded).toBe(1);
 }
 
-/** 开载体：后台键（桌面自身 toggle 路径）。 */
-async function openViaBgKey(page) {
-  await page.locator('.mh-dd[data-dd="left"] .mh-dd-hd').click();
-  await page.locator('#bg-indicator').click();
+/** 开载体：设置根页工作台行「后台任务」→ push 页（面收编进页面体）。 */
+async function openViaHub(page) {
+  await openHubPage(page, 'background');
   await expect(page.locator('#bg-dropdown')).toBeVisible();
-  await settlePanel(page, { overlaySel: '#bg-dropdown', panelSel: '#bg-dropdown', openClass: 'hidden' });
 }
 
 function watchErrors(page) {
@@ -148,36 +152,18 @@ test.beforeEach(async ({ page }) => {
 /** @type {{sendBg: (tasks: any) => void}|null} */
 let harness = null;
 
-test('T1 merged panel geometry: centered 308×content-height (≤560), radius 16 (bg key path)', async ({ page }) => {
+test('T1 page geometry: adopted full-bleed in background page, ghost retired (dock 批换代判据)', async ({ page }) => {
   const errors = watchErrors(page);
-  await openViaBgKey(page);
-  // 终态几何用 poll 采样（双读稳定性判据）：spring 过冲会在终值附近穿越
-  // x=居中值/scale=1（单样可踩中），faceMo 重放也可能晚起第二场形变 —— 要求
-  // 相隔 120ms 两次采样全等 ∧ transform 归位，才算真终态。
+  await openViaHub(page);
+  // 收编页面几何 poll（滑入 transform 归位后采样）。
   const geo = () => page.evaluate(() => {
     const m = document.getElementById('bg-dropdown');
-    const snap = () => {
-      const r = m.getBoundingClientRect();
-      return JSON.stringify({
-        x: r.x, w: Math.round(r.width), h: Math.round(r.height),
-        radius: getComputedStyle(m).borderRadius, tf: getComputedStyle(m).transform,
-        vw: window.innerWidth,
-      });
-    };
-    const a = snap();
-    return new Promise((resolve) => setTimeout(() => {
-      const b = snap();
-      resolve(a === b ? JSON.parse(b) : { x: NaN });
-    }, 120));
+    const r = m.getBoundingClientRect();
+    return { x: Math.round(r.x), w: Math.round(r.width), radius: getComputedStyle(m).borderRadius, vw: window.innerWidth };
   });
-  // 后台合并批 ⑥：居中（x = (vw-308)/2）+ 内容高自适应紧凑化（3 行 ≪ 560，
-  // 面板不再撑满固定高 —— 「手机端空白太多」紧凑化断言）。
   await expect.poll(geo, { timeout: 8000 }).toEqual({
-    x: (375 - 308) / 2, w: 308, h: expect.any(Number), radius: '16px', tf: 'none', vw: 375,
+    x: 0, w: 375, radius: '0px', vw: 375,
   });
-  const h = (await page.locator('#bg-dropdown').boundingBox())?.height ?? 0;
-  expect(h, 'compact: content-height, not fixed 560').toBeGreaterThan(80);
-  expect(h).toBeLessThanOrEqual(560);
   // 幽灵面恒退场。
   expect(await page.locator('#bgagent-dropdown').evaluate((el) => getComputedStyle(el).display)).toBe('none');
   expect(errors).toEqual([]);
@@ -185,7 +171,7 @@ test('T1 merged panel geometry: centered 308×content-height (≤560), radius 16
 
 test('T2 task rows: status word / origin chip / local·remote kind chip / lines / uptime (open point ②④)', async ({ page }) => {
   const errors = watchErrors(page);
-  await openViaBgKey(page);
+  await openViaHub(page);
   const rows = page.locator('#bg-dropdown > .bg-dropdown-list').first().locator('.bg-task-row');
   await expect(rows).toHaveCount(3);
 
@@ -208,23 +194,19 @@ test('T2 task rows: status word / origin chip / local·remote kind chip / lines 
   const grps = page.locator('#bg-dropdown .mh-bg-grp');
   await expect(grps).toHaveCount(1);
   expect(await grps.nth(0).textContent()).toBe('智能体');
-  // 手机小批（2026-10-21 图标常驻键）：键角标 = 后台任务计数（桌面 updateBgTasksUI
-  // 同源信号 —— badge == 面板行数，桌面 §3 不变量在手机层同样成立）。
-  await expect(page.locator('#bg-indicator')).toBeVisible();
-  await expect(page.locator('#bg-indicator .bg-count')).toHaveText('3');
+  // dock 批换代：桌面图标键（#bg-indicator）属手机层退场簇 —— 键可见性断言
+  // 退役；计数读数 = 页内「后台任务 · 3」头（上行已断言）。
   expect(errors).toEqual([]);
 });
 
-test('T3 merge: bgagent key opens the CARRIER (ghost stays retired), outside-click closes, re-open keeps adoption', async ({ page }) => {
+test('T3 merge: agents group rides the CARRIER page (ghost stays retired), back-out closes, re-open keeps adoption', async ({ page }) => {
   const errors = watchErrors(page);
   await seedAgent(page);
 
-  // 开：bgagent 键 → 载体开（幽灵面不落地）。
-  await page.locator('.mh-dd[data-dd="left"] .mh-dd-hd').click();
-  await page.locator('#bgagent-indicator').click();
-  await expect(page.locator('#bg-dropdown')).toBeVisible();
+  // 开：工作台行「后台任务」→ 载体开（幽灵面不落地；子智能体已种 → 智能体
+  // 分组随桌面合并逻辑同场建出）。
+  await openViaHub(page);
   await expect(page.locator('#bgagent-dropdown')).toBeHidden();
-  await settlePanel(page, { overlaySel: '#bg-dropdown', panelSel: '#bg-dropdown', openClass: 'hidden' });
 
   // 收编断言：智能体分组签 + 子智能体行在载体内（列表节点 re-parent）。
   const agentsGrp = page.locator('#bg-dropdown .mh-bg-grp', { hasText: '智能体' });
@@ -234,35 +216,31 @@ test('T3 merge: bgagent key opens the CARRIER (ghost stays retired), outside-cli
   // 收编列表 = 幽灵面的原列表节点（identity 保持 → 桌面重渲命中）：其父 = 载体。
   expect(await adoptedList.evaluate((el) => el.parentElement?.id || '')).toBe('bg-dropdown');
 
-  // 关（手机层真路径）：键列在键击后自动收回，键不可二连击；重开键列的
-  // hd 点按目标在载体/后台键之外 → 桌面 outside-close（main.js document
-  // bubble 处理器）收载体 —— 面板收口语义 = 桌面同源，零新增开合路径。
-  // 注意：这记 hd 点按同时把键列重新展开（收列/开列只看列自身态），故
-  // 下一步直接点键，不再补 hd（补一记会把列收回去，键被折叠裁掉不可点）。
-  await page.locator('.mh-dd[data-dd="left"] .mh-dd-hd').click();
+  // 关（dock 批真路径）：页面返回钮 → closePageFace 置 hidden → CLOSE_WATCH
+  // 对账弹栈（回设置根页）—— 收口语义 = 页面栈同源，零新增开合路径。
+  await page.locator('.mobile-page[data-page="background"] .mobile-back-btn').click();
   await expect(page.locator('#bg-dropdown')).toBeHidden();
+  await expect(page.locator('.mobile-page[data-page="background"]')).not.toHaveClass(/live/);
 
   // 再开（回归：拦截 handler 无内部奇偶态 —— 恒自 classList 读态，开合
   // 循环无漂移；幽灵面恒退场、收编列表不回流）。
-  await page.locator('#bgagent-indicator').click();
-  await expect(page.locator('#bg-dropdown')).toBeVisible();
+  await openViaHub(page);
   await expect(page.locator('#bgagent-dropdown')).toBeHidden();
-  await settlePanel(page, { overlaySel: '#bg-dropdown', panelSel: '#bg-dropdown', openClass: 'hidden' });
   await expect(adoptedList.locator('.bg-task-row', { hasText: '调研子agent' })).toHaveCount(1);
   expect(await adoptedList.evaluate((el) => el.parentElement?.id || '')).toBe('bg-dropdown');
   expect(errors).toEqual([]);
 });
 
-test('T4 empty drain: panel auto-hides when all tasks end (desktop auto-hide intact)', async ({ page }) => {
+test('T4 empty drain: page pops when all tasks end (desktop auto-hide intact, dock 批换代)', async ({ page }) => {
   const errors = watchErrors(page);
-  await openViaBgKey(page);
-  // 推空快照（activeBgTasks 同源路径）→ updateBgTasksUI 计数 0 自动隐藏载体。
+  await openViaHub(page);
+  // 推空快照（activeBgTasks 同源路径）→ updateBgTasksUI 计数 0 自动隐藏载体
+  // → CLOSE_WATCH 对账弹栈（回设置根页）。
   harness?.sendBg({});
   await expect(page.locator('#bg-dropdown')).toBeHidden({ timeout: 8000 });
-  // 手机小批（2026-10-21 图标常驻键）：排空后键本体常驻（图标不退场）、角标
-  // 隐藏（.hidden = 桌面 count-0 信号源，CSS 只藏角标 —— 零新轮询零新监听）。
-  await expect(page.locator('#bg-indicator')).toBeVisible();
-  await expect(page.locator('#bg-indicator .bg-count')).toBeHidden();
-  await expect(page.locator('#bg-indicator svg.mh-persist-ico')).toBeVisible();
+  await expect(page.locator('.mobile-page[data-page="background"]')).not.toHaveClass(/live/);
+  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('settings');
+  // dock 批换代：桌面图标键角标断言退役（键属手机层退场簇）—— 排空判据 =
+  // 载体 hidden + 栈弹回设置根页（上行）。
   expect(errors).toEqual([]);
 });

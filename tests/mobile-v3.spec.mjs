@@ -1,10 +1,14 @@
-// mobile-v3.spec.mjs — 手机层 v3 实施批验收（mobile-mockup-375 v3 落地 + 三扩展）。
+// mobile-v3.spec.mjs — 手机层 v3 实施批验收（mobile-mockup-375 v3 落地 + 三扩展；
+// dock 批 2026-10-29 判据换代：T1/T2 随液态下拉列/任务浮层退役改钉五栏底 dock
+// 与任务页面板 —— 作者令「各节目都是独立界面 不再跟其他界面重叠」）。
 //
-// 覆盖（任务书验收①）：
-//   T1 双圆钮液态下拉开合：aria-expanded / 宽 40 恒定 / 子键数与可见性
-//      （0 计数键 hidden 退场）/ 列高含头钮（--dh）／两列互斥
-//   T2 任务二级液态：开合 + 形变类 + 分组序（运行/排队/已完成）+ 六级卡
-//      （状态点/标题/进度/状态词/成员预览 +N 溢出）+ 徽标计数
+// 覆盖（任务书验收①；dock 批换代注记）：
+//   T1 【换代】五栏底 dock：五键序（消息/联系人/对话/canvas/设置逐字）、
+//      图标+标签结构、切换 home/top、active 态、根页返回=聊天根、
+//      退役浮层零残留（.mh-dd/.mh-scrim/body.mh-v3/#canvas-panel 不落地）
+//   T2 【换代】任务页面板：聊天头任务键徽标 + push 页收编面板 + 分组序
+//      （运行/排队/已完成）+ 六级卡（状态点/标题/进度/状态词/成员预览 +N 溢出）
+//      + X 关闭对账（面板 hidden + 弹栈）
 //   T3 profile 面板进出入 + 头像 localStorage 持久化 + 名称回车保存
 //   T4 登录卡形态：单键制 + 官方横排 lockup（currentColor）+ 社交键退役
 //   T5 顶栏无时间断言（v3① 口径守护）
@@ -143,73 +147,80 @@ test.beforeEach(async ({ page }) => {
   await bootApp(page);
 });
 
-test('T1 liquid dropdowns: aria-expanded, width-40 constant, visible-key count, mutual exclusion', async ({ page }) => {
+test('T1 five-tab dock: author-order keys, icon+label structure, switching, active state, retired floats absent', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
-  const hdL = page.locator('.mh-dd[data-dd="left"] .mh-dd-hd');
-  const hdR = page.locator('.mh-dd[data-dd="right"] .mh-dd-hd');
-  await expect(hdL).toHaveAttribute('aria-expanded', 'false');
-  await expect(page.locator('.mh-dd[data-dd="left"]')).toHaveCSS('width', '40px');
-  await expect(page.locator('.mh-dd[data-dd="right"]')).toHaveCSS('width', '40px');
-
-  // 左列成员：任务键 + FLOAT_IDS 搬移键在列内；关闭的 memory 键 hidden 退场
-  // （.mh-key[hidden]{display:none}）。手机小批（2026-10-21 作者令「与桌面端做
-  // 区分」）后 bg/bgagent 键改**图标常驻**：0 计数不退场（.hidden 只藏角标），
-  // 注入图标在场；待答胶囊内容驱动语义不变（0 退场）。
-  await expect(page.locator('#mobile-task-key')).toBeVisible();
-  for (const id of ['search-btn', 'reminder-btn', 'daemon-btn', 'bg-indicator', 'bgagent-indicator']) {
-    await expect(page.locator(`.mh-dd[data-dd="left"] > .mh-dd-bd > #${id}`)).toBeVisible();
+  // 结构钉：五键 = 作者逐字顺序（消息/联系人/对话/canvas/设置）；探针同源。
+  const dock = page.locator('#mobile-dock');
+  await expect(dock).toBeVisible();
+  const keys = page.locator('#mobile-dock .dock-key');
+  await expect(keys).toHaveCount(5);
+  const order = await keys.evaluateAll((els) => els.map((b) => b.dataset.dock));
+  expect(order).toEqual(['messages', 'contacts', 'conversations', 'canvas', 'settings']);
+  const probeDock = await page.evaluate(() => window.__nfMobileNav?.dock);
+  expect(probeDock).toEqual(['messages', 'contacts', 'conversations', 'canvas', 'settings']);
+  // 键结构 = 图标在上 + 文字标签在下（小红书基准）；标签为中文。
+  const labels = await keys.evaluateAll((els) => els.map((b) => b.querySelector('.dock-label')?.textContent));
+  expect(labels).toEqual(['消息', '联系人', '对话', 'canvas', '设置']);
+  for (let i = 0; i < 5; i++) {
+    await expect(keys.nth(i).locator('.dock-ic svg')).toBeVisible();
+    await expect(keys.nth(i).locator('.dock-label')).toBeVisible();
   }
-  for (const id of ['bg-indicator', 'bgagent-indicator']) {
-    await expect(page.locator(`.mh-dd[data-dd="left"] > .mh-dd-bd > #${id} svg.mh-persist-ico`)).toBeVisible();
-  }
-  await expect(page.locator('.mh-dd[data-dd="left"] > .mh-dd-bd > #memory-btn')).toBeHidden();
+  // boot 落聊天根：dock 无激活态（home=chat 不属于五栏）。
+  expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('chat');
+  await expect(page.locator('#mobile-dock .dock-key.active')).toHaveCount(0);
 
-  await hdL.click();
-  await expect(hdL).toHaveAttribute('aria-expanded', 'true');
-  // 列高含头钮（40 + n*40 + (n-1)*6 + 6）；少算 ⇒ 末键被裁（回归护栏）。
-  // spring 高度 0.55s + 末键 stagger(~0.68s) —— 等全部过渡终态再量。
-  await page.waitForTimeout(1100);
-  const box = await page.locator('.mh-dd[data-dd="left"]').boundingBox();
-  const lastKey = await page.locator('.mh-dd[data-dd="left"] > .mh-dd-bd > .mh-key:visible').last().boundingBox();
-  expect(lastKey).toBeTruthy();
-  expect(box.height).toBeGreaterThan(120); // 展开终态（≥ 头钮 + 2 键）
-  expect(lastKey.y + lastKey.height).toBeLessThanOrEqual(box.y + box.height + 1);
+  // 切换：点「对话」→ home/top=conversations + active 态 + 页面头标题。
+  await page.locator('#mobile-dock .dock-key[data-dock="conversations"]').click();
+  expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('conversations');
+  await expect(page.locator('#mobile-dock .dock-key[data-dock="conversations"]')).toHaveClass(/active/);
+  await expect(page.locator('.mobile-page[data-page="conversations"]')).toHaveClass(/live/);
+  await expect(page.locator('.mobile-page[data-page="conversations"] .mobile-page-title')).toHaveText('对话');
+  // 五栏互斥替换（非堆叠）：再点「设置」→ home 换根，栈深恒 1。
+  await page.locator('#mobile-dock .dock-key[data-dock="settings"]').click();
+  expect(await page.evaluate(() => window.__nfMobileNav)).toMatchObject({ home: 'settings', top: 'settings' });
+  expect((await page.evaluate(() => window.__nfMobileNav?.stack)).length).toBe(1);
+  await expect(page.locator('#mobile-dock .dock-key[data-dock="conversations"].active')).toHaveCount(0);
+  await expect(page.locator('#mobile-dock .dock-key[data-dock="settings"]')).toHaveClass(/active/);
+  // 同根再点 = 清详情回根（栈已 1 → noop 不塌栈）。
+  await page.locator('#mobile-dock .dock-key[data-dock="settings"]').click();
+  expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('settings');
+  // 根页「<」= 回聊天根；聊天根无激活态。
+  await page.locator('.mobile-page[data-page="settings"] .mobile-back-btn').click();
+  expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('chat');
+  await expect(page.locator('#mobile-dock .dock-key.active')).toHaveCount(0);
 
-  // 互斥：开右列收左列。
-  await hdR.click();
-  await expect(hdR).toHaveAttribute('aria-expanded', 'true');
-  await expect(hdL).toHaveAttribute('aria-expanded', 'false');
-  // 右列 = 六页面键（画板/项目/图谱/插件/用量/设置），全可见。
-  const faces = page.locator('.mh-dd[data-dd="right"] > .mh-dd-bd > [data-face]');
-  await expect(faces).toHaveCount(6);
-  for (let i = 0; i < 6; i++) await expect(faces.nth(i)).toBeVisible();
-  // scrim 同步开。
-  await expect(page.locator('.mh-scrim')).toHaveClass(/open/);
-  // 点幕全收。
-  await page.locator('.mh-scrim').click({ position: { x: 187, y: 500 } });
-  await expect(hdR).toHaveAttribute('aria-expanded', 'false');
-  await expect(page.locator('.mh-scrim')).not.toHaveClass(/open/);
+  // 退役浮层零残留（作者令「不再跟其他界面重叠」）：下拉列/幕布/任务浮层键/
+  // 画板 bottom sheet 全不落地；探针版本换代。
+  await expect(page.locator('.mh-dd')).toHaveCount(0);
+  await expect(page.locator('.mh-scrim')).toHaveCount(0);
+  await expect(page.locator('#mobile-task-key')).toHaveCount(0);
+  await expect(page.locator('#canvas-panel')).toBeHidden();
+  const panelDisplay = await page.locator('#canvas-panel').evaluate((el) => getComputedStyle(el).display);
+  expect(panelDisplay).toBe('none');
+  const ver = await page.evaluate(() => window.__nfMobileLayer?.version);
+  expect(String(ver)).toContain('dock');
   expect(pageErrors).toEqual([]);
 });
 
-test('T2 task panel: morph class, badge count, group order (running/queued/done), six-level cards', async ({ page }) => {
+test('T2 tasks page: chrome key badge, page-adopted panel, group order (running/queued/done), six-level cards, X close reconcile', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
   await seedTasks(page);
 
-  // 任务键徽标 = 在册任务数（collectChains 同源：运行 6 + 排队 3）。
-  await expect(page.locator('#mobile-task-key .mh-key-badge')).toHaveText('9');
+  // 聊天头任务键（chatChrome）徽标 = 在册任务数（collectChains 同源：运行 6 + 排队 3）。
+  await expect(page.locator('.mh-chrome-btn[data-chrome="tasks"] .mh-chrome-badge')).toHaveText('9');
 
-  await page.locator('.mh-dd[data-dd="left"] .mh-dd-hd').click();
-  await page.locator('#mobile-task-key').click();
-  const panel = page.locator('#mobile-task-panel');
+  // 点任务键 → push「任务」详情页；面板收编进页面体（浮层形态退役）。
+  await page.locator('.mh-chrome-btn[data-chrome="tasks"]').click();
+  expect(await page.evaluate(() => window.__nfMobileNav)).toMatchObject({ home: 'chat', top: 'tasks' });
+  const panel = page.locator('.mobile-page[data-page="tasks"] #mobile-task-panel');
   await expect(panel).toBeVisible();
-  // 二级液态形变类（morphIn 注入；收毕移除 —— 开后立刻在场）。
-  await expect(panel).toHaveClass(/mh-morph-anim|mh-morph-close|tp-static|mh-tpanel/);
+  // 面板在页面体内（收编判据）而非 body 直挂浮层。
+  expect(await panel.evaluate((el) => !!el.closest('.mobile-page-body'))).toBe(true);
   // 头部统计：18 单元（#61 链 5 成员 + #62 链 3 + 4 薄块 + 排队 3 + 已完成 3）
-  // · 6 运行 —— unitCount 与任务面板同一算法（chainProgressMeta 同源口径）。
+  // · 6 运行 —— unitCount 与任务列表同一算法（chainProgressMeta 同源口径）。
   await expect(panel.locator('.tp-stats')).toContainText('18');
   await expect(panel.locator('.tp-stats')).toContainText('6');
   // 分组序：运行中 → 排队 → 已完成（标签文本序）。
@@ -232,9 +243,10 @@ test('T2 task panel: morph class, badge count, group order (running/queued/done)
   await expect(c61.locator('.tp-mem-more')).toHaveText('+2');
   // 已完成卡整卡降透明（tp-dim）。
   await expect(panel.locator('.tp-card.tp-done').first()).toHaveClass(/tp-dim/);
-  // X 逆向收回 → 面板隐藏。
+  // X 关闭 → 对账弹栈（面板 hidden + top 回聊天根）。
   await panel.locator('.tp-x').click();
-  await expect(panel).toBeHidden();
+  await expect(page.locator('#mobile-task-panel')).toBeHidden();
+  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('chat');
   expect(pageErrors).toEqual([]);
 });
 
@@ -260,12 +272,15 @@ test('T3 merged panel: avatar opens Agent+Memory panel (agent pane), avatar loca
   const panel = page.locator('#memory-modal');
   await expect(panel).toBeVisible();
   await expect(panel).toHaveAttribute('data-pane', 'agent');
-  const pb = await panel.boundingBox();
   const vb = page.viewportSize();
+  // 页面滑入过渡（0.26s）结束后量几何 —— 轮询等落定帧，不在动画中途断言。
+  await expect.poll(async () => {
+    const b = await panel.boundingBox();
+    return !!b && b.x >= 0 && b.x + b.width <= vb.width + 1 && b.y >= 0;
+  }).toBe(true);
+  const pb = await panel.boundingBox();
   expect(pb).toBeTruthy();
-  expect(pb.x).toBeGreaterThanOrEqual(0);
   expect(pb.x + pb.width).toBeLessThanOrEqual(vb.width + 1);
-  expect(pb.y).toBeGreaterThanOrEqual(0);
 
   // 名称回车保存：写穿 rootDisplayName + agentsData + 事件（会话头胶囊同帧更新）。
   await page.locator('.ap-name-input').fill('大笨');

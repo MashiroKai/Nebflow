@@ -20,14 +20,12 @@
 //        「关闭/关闭其他」三项（stopPropagation 不与面板菜单双弹）。
 //   CC5 分区（滚动冲突消解）—— 手势只绑胶囊：胶囊竖滑换卡前后 pane scrollTop
 //        不变；内容区滚轮正常滚 pane（零劫持）；胶囊 touch-action:none。
-//   CC6 手机 375 —— 无按压前置：卡头直滑下滑=收起整叠（⑦令 2026-10-23 取代批⑨
-//        「下滑换卡」下半向；closeCanvas 状态保留可再开）、上滑=换下一张（批⑨
-//        保留上向）、左右=关卡（closeCard）；长按 450ms → is-longpress 触感
-//        （缩放断言通道 = computedStyleMap —— #canvas-panel 子树 getComputedStyle
-//        .transform 恒返 none（2026-10-25 探针实证），以 toMatrix() 真值 + rect
-//        收缩比交叉验证）+ .mobile-card-ref-btn 浮出，点击 → 引用 chip 进
-//        #attachment-preview 且钮收；外部滚动即收；
-//        底缘带上滑收层保留（卡头带不再收层 —— ⑨ 语义取代）。
+//   CC6 【dock 批换代 2026-10-29】手机 375 = canvas 独立整页：入口 = 底 dock
+//        canvas 键；呈现 = chip 卡片条 + 工具条 ‹计数›/X + 文档区（前卡头胶囊
+//        /卡头直滑/长按引用钮/bottom sheet 族退役，长按引用链不在本页恢复）。
+//        换卡 = 文档区横滑（轴锁/阈 48，环式；横滑永不关卡）+ 工具条 ‹ ›；
+//        关卡只走工具条 X（邻卡落位）；离开 canvas 页 = 页签保留、回页恢复
+//        活动卡（closeCanvas 语义闭环）。
 //
 // 断言通道 = window.__canvasDeck.state()（open/activeId/tabCount/tabs）+ DOM 计算
 // 样式 + 合成 PointerEvent（手机腿）。桌面拖拽走真实 mouse（pointer 事件全链）。
@@ -326,7 +324,7 @@ const headerInfo = (page) => page.evaluate(() => {
   await ctx.close();
 }
 
-/* ════════ 手机腿 375：CC6 直滑换卡/关卡 + 长按引用钮 ════════ */
+/* ════════ 手机腿 375：CC6 canvas 独立整页（dock 批 2026-10-29 判据换代）════════ */
 {
   const { ctx, page, errors } = await boot({ colorScheme: 'dark', viewport: { width: 375, height: 812 } });
   const mobile = await page.evaluate(() => document.body.classList.contains('mobile-layer'));
@@ -335,121 +333,79 @@ const headerInfo = (page) => page.evaluate(() => {
   // 关掉 boot 自带面板页签（plugins）—— 文档卡环确定化（docTabs 本就滤面板 pane）
   await page.evaluate(() => document.querySelector('.canvas-tab[data-tab-id="plugins"] .canvas-tab-close')?.click());
   await sleep(400);
-  await page.evaluate(() => {
-    const key = document.querySelector('.mh-dd[data-dd="right"] [data-face="canvas"]');
-    if (key) key.click();
+  // 入口 = 底 dock canvas 键（前右列液态下拉键退役）。
+  await page.locator('#mobile-dock .dock-key[data-dock="canvas"]').click();
+  await page.waitForSelector('.mobile-page[data-page="canvas"].live', { timeout: 8000 });
+  await sleep(400); // 滑入终态
+  const info = await page.evaluate(() => {
+    const pg = document.querySelector('.mobile-page[data-page="canvas"]');
+    const h = pg.querySelector('.canvas-tab-pane .canvas-header');
+    return {
+      chips: [...pg.querySelectorAll('.mf-strip-chip')].map((c) => ({ on: c.classList.contains('on'), label: c.textContent })),
+      paneHeaderDisplay: h ? getComputedStyle(h).display : 'gone',
+      panelDisplay: getComputedStyle(document.getElementById('canvas-panel')).display,
+      adopted: pg.querySelectorAll('.mf-cv-host .canvas-tab-pane').length,
+      cardsLive: document.body.classList.contains('mf-cards-live'),
+    };
   });
-  await sleep(900);
-  await page.waitForSelector('.mobile-card-head', { timeout: 8000 });
-  const headInfo = await page.evaluate(() => {
-    const head = document.querySelector('.mobile-card-head');
-    const pill = head.closest('.canvas-header');
-    const cs = getComputedStyle(pill);
-    const r = head.getBoundingClientRect();
-    return { title: head.querySelector('.mobile-card-title').textContent, touch: cs.touchAction,
-      x: r.left + r.width * 0.35, y: r.top + r.height / 2, pillPos: cs.position, pillRadius: cs.borderRadius };
-  });
-  ok('CC6-0 前置：手机卡片层 + 卡头胶囊（通栏变体 + touch-action none）',
-    mobile && headInfo.touch === 'none' && headInfo.pillRadius === '999px',
-    `title=${headInfo.title} touch=${headInfo.touch} r=${headInfo.pillRadius}`);
+  ok('CC6-0 前置：canvas 独立整页 + chip 卡条（2 卡）+ pane 收编 + 桌面卡头退场 + 悬浮 sheet 恒隐',
+    mobile && info.chips.length === 2 && info.adopted === 1
+      // .canvas-header 是面板级元素（住 #canvas-panel 内）不随 doc pane 进页 —
+      // 'gone'（未收进页）与 'none'（页内显式退场）同为达标终态（口径同 sheet T1）。
+      && ['gone', 'none'].includes(info.paneHeaderDisplay)
+      && info.panelDisplay === 'none' && !info.cardsLive,
+    `chips=${info.chips.map((c) => c.label).join(',')} adopted=${info.adopted} panel=${info.panelDisplay} paneHead=${info.paneHeaderDisplay}`);
 
-  /** 合成 touch PointerEvent 序列（down → 步进 move → up）。 */
-  async function swipe(x, y, dx, dy, steps = 8) {
-    await page.dispatchEvent('.mobile-card-head', 'pointerdown',
+  const activeLabel = () => page.evaluate(() => document.querySelector('.mf-strip-chip.on')?.textContent || '');
+
+  /** 文档区合成 touch PointerEvent 序列（down → 步进 move → up；轴锁/阈同真机）。 */
+  async function swipeHost(x, y, dx, dy, steps = 8) {
+    await page.dispatchEvent('.mf-cv-host', 'pointerdown',
       { pointerId: 7, pointerType: 'touch', isPrimary: true, button: 0, buttons: 1, clientX: x, clientY: y, bubbles: true });
     for (let i = 1; i <= steps; i++) {
-      await page.dispatchEvent('.mobile-card-head', 'pointermove',
+      await page.dispatchEvent('.mf-cv-host', 'pointermove',
         { pointerId: 7, pointerType: 'touch', isPrimary: true, button: 0, buttons: 1, clientX: x + (dx * i) / steps, clientY: y + (dy * i) / steps, bubbles: true });
       await sleep(16);
     }
-    await page.dispatchEvent('.mobile-card-head', 'pointerup',
+    await page.dispatchEvent('.mf-cv-host', 'pointerup',
       { pointerId: 7, pointerType: 'touch', isPrimary: true, button: 0, buttons: 0, clientX: x + dx, clientY: y + dy, bubbles: true });
     await sleep(300);
   }
 
-  const titleOf = () => page.evaluate(() => document.querySelector('.mobile-card-title')?.textContent || '');
-
-  // ⑦令语义（2026-10-23，取代批⑨「下滑=下一张」下半向）：直滑下滑 = 收起整叠
-  // bottom sheet（closeCanvas —— 文档保留在页签数据模型，状态保留可再开）。
-  const layerState = () => page.evaluate(() => ({
-    cardsLive: document.body.classList.contains('mf-cards-live'),
-    canvasOpen: document.body.classList.contains('canvas-open'),
-    panelVisible: getComputedStyle(document.getElementById('canvas-panel')).display !== 'none',
-  }));
-  await swipe(headInfo.x, headInfo.y, 0, 70);
+  // CC6-1 状态保留语义闭环（前「下滑收层」退役）：离开 canvas 页 → 页签保留；
+  // 回页 → 活动卡 bravo 不变（closeCanvas 语义在页面栈上延续）。
+  await page.locator('#mobile-dock .dock-key[data-dock="settings"]').click();
   await sleep(400);
-  const st1 = await layerState();
-  const s1 = await stateOf(page);
-  ok('CC6-1 直滑下滑 = 收起整叠（⑦令：canvas 收层，页签数据保留）',
-    !st1.cardsLive && !st1.canvasOpen && s1.tabCount === 2,
-    `cardsLive=${st1.cardsLive} open=${st1.canvasOpen} n=${s1.tabCount}`);
-  // 再开（bar 画板键同 boot 通路）⇒ 层回来且活动卡不变（状态保留语义闭环）。
-  await page.evaluate(() => {
-    const key = document.querySelector('.mh-dd[data-dd="right"] [data-face="canvas"]');
-    if (key) key.click();
-  });
-  await page.waitForSelector('.mobile-card-head', { timeout: 8000 });
-  await sleep(300);
-  const tRe = await titleOf();
-  const stRe = await layerState();
-  ok('CC6-1b 收起后再开 = 状态保留（活动卡 bravo 不变，层回 live）',
-    stRe.cardsLive && tRe === 'bravo.md', `title=${tRe} live=${stRe.cardsLive}`);
+  const stLeave = await stateOf(page);
+  ok('CC6-1 离开 canvas 页 = 页签保留（tabCount 2 不变）',
+    stLeave.tabCount === 2, `n=${stLeave.tabCount}`);
+  await page.locator('#mobile-dock .dock-key[data-dock="canvas"]').click();
+  await page.waitForSelector('.mobile-page[data-page="canvas"].live', { timeout: 8000 });
+  await sleep(400);
+  const tRe = await activeLabel();
+  ok('CC6-1b 回页 = 状态保留（活动卡 bravo.md 不变，页 live）',
+    tRe === 'bravo.md', `label=${tRe}`);
 
-  // ⑦令保留上向：直滑上滑 = 换下一张（批⑨换卡语义上向；bravo → alpha 环绕）
-  await swipe(headInfo.x, headInfo.y, 0, -70);
-  const t2 = await titleOf();
-  ok('CC6-2 直滑上滑 = 下一张文档卡（⑦令：上滑换卡保留，bravo→alpha）', t2 === 'alpha.md', `title=${t2}`);
-  // 直滑左 = 关卡（closeCard，tabCount 2→1）
+  // CC6-2 文档区横滑 = 换下一张（前「卡头上滑换卡」迁入 host；bravo → alpha 环绕）
+  const hb = await page.locator('.mf-cv-host').boundingBox();
+  await swipeHost(hb.x + hb.width - 40, hb.y + hb.height / 2, -120, 0);
+  const t2 = await activeLabel();
+  ok('CC6-2 文档区横滑左 = 下一张文档卡（bravo→alpha 环绕）', t2 === 'alpha.md', `label=${t2}`);
+  const sAfterSwipe = await stateOf(page);
+  ok('CC6-2b 横滑零关卡（tabCount 2 不变）', sAfterSwipe.tabCount === 2, `n=${sAfterSwipe.tabCount}`);
+
+  // CC6-3 关卡只走工具条 X（前「卡头直滑左 = 关卡」退役）：tabCount 2→1
   const n0 = (await stateOf(page)).tabCount;
-  await swipe(headInfo.x, headInfo.y, -90, 0);
-  await sleep(400);
+  await page.locator('.mobile-page[data-page="canvas"] .mf-cv-close').click();
   const s6 = await pollUntil(page, (x) => x.tabCount === 1);
-  ok('CC6-3 直滑左 = 关卡（tabCount 2→1）', n0 === 2 && s6.tabCount === 1, `n=${s6.tabCount}`);
+  ok('CC6-3 工具条 X = 关卡（tabCount 2→1，邻卡落位）', n0 === 2 && s6.tabCount === 1, `n=${s6.tabCount}`);
 
-  // 长按 450ms → 触感 + 引用钮浮出；点击 → 引用 chip + 钮收
-  const lp = await page.evaluate(() => {
-    const head = document.querySelector('.mobile-card-head');
-    const r = head.getBoundingClientRect();
-    const pill = head.closest('.canvas-header');
-    return { x: r.left + r.width * 0.35, y: r.top + r.height / 2, pillW0: pill.getBoundingClientRect().width };
-  });
-  await page.dispatchEvent('.mobile-card-head', 'pointerdown',
-    { pointerId: 9, pointerType: 'touch', isPrimary: true, button: 0, buttons: 1, clientX: lp.x, clientY: lp.y, bubbles: true });
-  await sleep(700);                                       // > 450ms 长按阈 + 0.18s 过渡收尾
-  const lpState = await page.evaluate(() => {
-    const head = document.querySelector('.mobile-card-head');
-    const pill = head.closest('.canvas-header');
-    const btn = document.querySelector('.mobile-card-ref-btn');
-    // 断言通道 = computedStyleMap（真值）：#canvas-panel 子树 getComputedStyle
-    // .transform 恒返 'none'（2026-10-25 P1 批探针实证：内联/!important 注入同谎，
-    // toMatrix() 与真实渲染一致）——缩放腿的判定面。
-    let scale = null;
-    try {
-      const tf = pill.computedStyleMap().get('transform');
-      scale = tf && tf.toMatrix ? tf.toMatrix().a : null;
-    } catch (_) { /* 旧引擎无 computedStyleMap：回落 rect 比 */ }
-    return { feel: head.classList.contains('is-longpress') || pill.classList.contains('is-longpress'),
-      scale, btn: !!btn, btnText: btn ? btn.textContent : '',
-      pillW1: pill.getBoundingClientRect().width };
-  });
-  const rectRatio = lp.pillW0 > 0 ? lpState.pillW1 / lp.pillW0 : 1;
-  ok('CC6-4 长按触感 + 引用钮浮出（is-longpress + computedStyleMap scale<1 + rect 收缩交叉验证）',
-    lpState.feel && lpState.scale !== null && lpState.scale < 0.999 && rectRatio < 0.999 && rectRatio > 0.9
-      && lpState.btn && lpState.btnText.length > 0,
-    `feel=${lpState.feel} scale=${lpState.scale === null ? 'null' : lpState.scale.toFixed(3)} rect=${rectRatio.toFixed(3)} btn=${lpState.btn}(${lpState.btnText})`);
-  await page.evaluate(() => document.querySelector('.mobile-card-ref-btn').click());
-  await sleep(300);
-  const afterRef = await page.evaluate(() => {
-    const att = document.getElementById('attachment-preview');
-    return { chip: att ? att.children.length : -1, btnGone: !document.querySelector('.mobile-card-ref-btn'),
-      feelCleared: !document.querySelector('.mobile-card-head').classList.contains('is-longpress') };
-  });
-  ok('CC6-5 引用钮点击 → 引用 chip 进 #attachment-preview + 钮收 + 触感清',
-    afterRef.chip > 0 && afterRef.btnGone && afterRef.feelCleared,
-    `chip=${afterRef.chip} btnGone=${afterRef.btnGone} cleared=${afterRef.feelCleared}`);
+  // CC6-4/5【退役】卡头长按触感 + 引用钮浮出链随卡头胶囊族一并退役（dock 批
+  // 不在 13:31/13:36/13:38 令范围内恢复）；桌面 CC4 引用链原样保留。
   ok('R1 主文档零 JS 错误（手机腿）', errors.length === 0, errors.slice(0, 2).join(' | '));
   await ctx.close();
 }
+
 
 await browser.close();
 server.close();

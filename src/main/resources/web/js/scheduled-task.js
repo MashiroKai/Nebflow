@@ -667,6 +667,11 @@ export function initScheduledTask() {
   // Outside click: close panel
   document.addEventListener('click', (e) => {
     const panel = $('#reminder-panel');
+    // isConnected 守卫：面内点击若在冒泡途中触发面板自重渲（body.innerHTML
+    // 重建，点击目标被摘除），contains() 对已摘除节点返 false 会被误读成
+    // 「面外点击」而误关面板（dock 批 2026-10-29 p3 T5 实测：创建态点分组签
+    // 取消 → 重渲 → 面板被误关）。真·面外点击目标恒在树内，守卫不影响。
+    if (!(e.target instanceof Node) || !e.target.isConnected) return;
     if (panel && panelOpen && !panel.contains(e.target) && !e.target.closest('#reminder-btn')) {
       closePanel();
     }

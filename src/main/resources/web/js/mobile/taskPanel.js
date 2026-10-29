@@ -1,7 +1,13 @@
-// mobile/taskPanel.js — v3「二级液态任务浮层」（样张 20261020_214500 v3⑤ 同款）。
+// mobile/taskPanel.js — 任务面（dock 批改写：浮层 → 「任务」详情页面板）。
 //
-// 形态：下拉列中点「任务」→ 六键液态收回 → 圆钮原地形变加宽成任务浮层
-//（40→308 / 40→560，圆角 20→16，spring 过冲回稳）；X 逆向收回；点空白全收。
+// dock 批（作者令 2026-10-29「各节目都是独立界面 不再跟其他界面重叠」）：
+// v3⑤ 的「圆钮二级液态形变任务浮层」形态退役（morph 腿随 floatController/
+// morphPanel 一并退场）；本文件保留**数据面与卡渲染面全部原样**（12 卡六级
+// 信息层级、分组序、同一读取口），呈现位 = navController 收编进「任务」详情
+// 页（overlayFaceByPage.tasks = #mobile-task-panel，出页原位归还）。
+//
+// 形态沿革：下拉列中点「任务」→ 六键液态收回 → 圆钮原地形变加宽成任务浮层
+//（40→308 / 40→560）→ dock 批改「任务」键（聊天头左槽）push 任务页。
 // 12 卡信息层级（六级，样张⑤口径）：
 //   ① 状态点（运行绿 / 排队灰 / 完成绿 / 失败红）
 //   ② 标题（#taskNo + 名）
@@ -14,18 +20,17 @@
 // 数据面（任务书：功能逻辑不重造）：与 taskList.js **同一**读取口
 //（delegateChainStub.js listDelegateRows / getChainByTask）+ collectChains 导出
 // 缝 —— 活跃组直接吃 collectChains 现值（与面板行同源），已完成组按同一状态域
-// 从 listDelegateRows 终态行补出（桌面面板不显示终态行 = 既有口径，浮层补该组
+// 从 listDelegateRows 终态行补出（桌面面板不显示终态行 = 既有口径，面板补该组
 // 纯为样张分组序；呈现层职责）。渲染触发 = delegate-chain-mirror-updated +
 // 会话切换（与 taskList 同族事件），Nebula 统一面会话门同源（sessionShowsNodeEntries）。
 
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
 import state from '../state.js';
-import { listDelegateRows, getChainByTask } from '../delegateChainStub.js';
+import { listDelegateRows } from '../delegateChainStub.js';
 import {
   collectChains, DELEGATE_WORD_KEY, chainProgressMeta, rowMetaOf, sessionShowsNodeEntries,
 } from '../taskList.js';
-import { morphIn, morphOut } from './morphPanel.js';
 import { logEvent } from './navController.js';
 
 const CHECK_SVG = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.6 6.2l1.7 1.7 3.1-3.6"/></svg>';
@@ -37,10 +42,6 @@ let panel = null;
 let listEl = null;
 /** @type {HTMLElement|null} */
 let statsEl = null;
-/** @type {HTMLElement|null} */
-let originBtn = null;
-/** @type {number|null} */
-let openTimer = null;
 
 export function isTaskPanelOpen() {
   return !!(panel && !panel.hidden);
@@ -243,24 +244,19 @@ function render() {
   }
 }
 
-/** 开浮层：morph 自 origin 圆钮（调用方已把下拉列收回）。 */
-export function openTaskPanel(originEl) {
+/** 页面开臂（navController.ensurePanelContent 分派）：惰性建板 + 重渲 + 显出。
+ *  收编由 navController 的 overlayFaceByPage.tasks 完成（本函数只管态）。 */
+export function ensureTaskPanel() {
   const p = ensurePanel();
-  originBtn = originEl || null;
   render();
   p.hidden = false;
-  logEvent('tpanel-open', {});
-  morphIn(p, originEl);
+  logEvent('tpanel-open', { via: 'page' });
 }
 
-/** 收浮层；viaScrim（点空白）直接收 —— X 走逆向形变（样张口径）。 */
+/** 关面板（页面出栈腿 closePageFace / 面板头 X 共用；instant = 无动画直隐）。 */
 export function closeTaskPanel(instant = false) {
   if (!isTaskPanelOpen()) return;
   const p = /** @type {HTMLElement} */ (panel);
-  logEvent('tpanel-close', { via: instant ? 'scrim' : 'x' });
-  if (instant || !originBtn) {
-    p.hidden = true;
-    return;
-  }
-  morphOut(p, originBtn, () => { p.hidden = true; });
+  logEvent('tpanel-close', { via: instant ? 'page' : 'x' });
+  p.hidden = true;
 }
