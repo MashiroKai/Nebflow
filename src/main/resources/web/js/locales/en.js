@@ -1426,6 +1426,8 @@ export default {
   'askUser.attachmentDownload': 'Download {name} (no in-app viewer for this type)',
     'askUser.pendingTitle': 'Pending questions',
   // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
+  // 补投静默批（2026-10-29）：词条去机制名——"held by the sub-agent barrier"
+  // （引擎内部机制词）改平实表述；作者可见面不出现 barrier/force-drain 字样。
   'heldReceipts.title': 'Delivery receipts pending injection',
   // 'heldReceipts.held' (barrier-hold process state) retired 2026-10-29 (author
   // ruling: process self-heal states render nothing; the capsule surfaces the

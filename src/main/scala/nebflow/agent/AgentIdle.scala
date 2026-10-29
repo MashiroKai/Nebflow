@@ -739,10 +739,17 @@ private[agent] object AgentIdle:
       // ── HeldDeliveryWatchdog 催注（平台修复批 fix 2 动作面，2026-10-21）────────
       // idle 态收到 = 投递可靠性自检判定「已产出回执 N 分钟未注入」成立 → 强制补投
       // 全部 held 回执（buildEventReminder 合批一 turn，语义与批完成汇聚腿同形），
-      // 并归还幻影屏障槽位（outstanding 清零，issue #31）+ 补投注记气泡（父会话
-      // 可见的投递事实）+ 徽标帧清零。队列已空（正常 drain 抢先投递）⇒ 幂等 no-op，
-      // 仅把 pendingEventCount 快照对齐防漂移。processing/frozen 态另有各自 no-op
-      // 分支（turn 边界 drain / 解冻后 drain 兜住）。
+      // 并归还屏障槽位（outstanding 清零，issue #31 幻影槽位兜底）+ 徽标帧清零。
+      // 队列已空（正常 drain 抢先投递）⇒ 幂等 no-op，仅把 pendingEventCount 快照
+      // 对齐防漂移。processing/frozen 态另有各自 no-op 分支（turn 边界 drain /
+      // 解冻后 drain 兜住）。
+      // ── 补投静默（作者 2026-10-29 11:05 console 报障批）：补投**不产**任何独立
+      // 通知卡。回执本体在接收时刻已走正常消息流（processing/idle 两腿的接收气泡
+      // = 正常 DELEGATE/SUBTASK 呈现），催注补投对作者面零新增——原「[投递补注]…」
+      // 机械卡（source=system / eventType=force-drain → header「SYSTEM · NEBULA ·
+      // FORCE-DRAIN」）把引擎内部机制名暴露给作者且逐字复述已见过的回执，已拆除
+      // （emitForceDrainVisibility 整体退役）；投递事实的留痕面 = lifecycle 日志
+      // （held-receipts-force-drain，操作者诊断面）+ LLM reminder。
       case AgentCommand.DrainHeldReceipts =>
         val heldAll = state.execution.pendingEvents
         // #886 注入侧幂等（双保险腿）：催注注入前查 DeliveredReceiptLedger——
@@ -775,7 +782,6 @@ private[agent] object AgentIdle:
                 if depth == 0 then
                   prunedState.sessionId.fold(IO.unit)(sid => emitSessionBusy(prunedState.wsSend, sid, busy = true))
                 else IO.unit
-              _ <- emitForceDrainVisibility(resources, prunedState, held)
               _ <- touchBarrierSnapshot(resources, prunedState.sessionId, 0, 0)
               _ <- persistQueues(prunedState.sessionId, cleaned.execution)
               // #886：注入即标记（与 ack 同点——本批的持久投递标记面）。

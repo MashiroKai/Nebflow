@@ -1377,6 +1377,8 @@ export default {
   'askUser.attachmentDownload': '下载 {name}（该类型没有应用内查看器）',
     'askUser.pendingTitle': '待回答问题',
   // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
+  // 补投静默批（2026-10-29）：词条去机制名——「被子代理屏障扣留」（引擎内部
+  // 机制词）改人话「待补投」；作者可见面不出现屏障/force-drain 字样。
   'heldReceipts.title': '回执待投递',
   // 'heldReceipts.held'（屏障扣留过程态）retired 2026-10-29（作者令：过程性自愈
   // 状态零用户面，胶囊只渲染终态 unread）— seal: UserFaceProcessStateSealSpec.
