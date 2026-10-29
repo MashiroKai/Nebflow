@@ -108,9 +108,10 @@ object Fallback:
   /**
    * 错误体是否携带某上游码：JSON 引号形（`"code":"1308"`）/ 上游 message 前缀形
    * （`[1308]`）。**不认裸数字文本**——request_id 等十六进制串可能偶然含该数字，
-   * 裸匹配会凭空制造配额判定。
+   * 裸匹配会凭空制造配额判定。private[llm]：AdaptiveThrottle 的账户级 429 判定
+   * 同判据复用（429 反应式并发闸批，2026-10-29）。
    */
-  private def carriesUpstreamCode(body: String, code: String): Boolean =
+  private[llm] def carriesUpstreamCode(body: String, code: String): Boolean =
     body.contains(s""""code":"$code"""") || body.contains(s"[$code]")
 
   /**

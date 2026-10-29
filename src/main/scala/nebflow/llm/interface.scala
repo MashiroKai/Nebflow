@@ -538,8 +538,7 @@ object LlmInterface extends LlmRuntime:
                 result <- Fallback.tryProviderWithFallback[AdapterResponse](
                   up,
                   candidate =>
-                    val cappedThinking = req.thinking.map { t =>
-                      t.hcursor.downField("budget_tokens").as[Int] match
+                    val cappedThinking = req.thinking.map { t =>                      t.hcursor.downField("budget_tokens").as[Int] match
                         // Clamp at the internal ceiling (maxcfg batch 2026-09-16): the budget
                         // no longer follows the removed per-model `maxTokens` config — the old
                         // `maxTokens / 2` clamp cut "high" thinking (32768) to 8192 with the
@@ -585,7 +584,21 @@ object LlmInterface extends LlmRuntime:
                     yield resp
                     end for
                   ,
-                  onAttempt = None,
+                  // 429 反应式并发闸批（作者令 2026-10-29 21:32）：非流面同流面喂入——
+                  // onAttempt 每次失败分类恰好调用一次（成功通知 reason=Unknown 在
+                  // 限流器内部自判为 no-op；总闸关 / 配额体 / 非账户级响应体同判
+                  // no-op）。账户键 = providerId 现读当前配置的 baseUrl（热读）。
+                  onAttempt = Some(attempt =>
+                    registry.baseUrlOf(attempt.providerId).flatMap {
+                      case Some(baseUrl) =>
+                        registry.throttle.onRateLimitSignal(
+                          baseUrl,
+                          attempt.reason.getOrElse(FailoverReason.Unknown),
+                          attempt.message.getOrElse("")
+                        )
+                      case None => IO.unit
+                    }
+                  ),
                   onProviderExhausted = Some(c => healthMonitor.markDown(c.providerId, c.model, "provider exhausted"))
                 )
                 // 修 2026-10-21 「恢复不回绿」腿②（非流面）：调用成功即清除——
@@ -1006,7 +1019,19 @@ object LlmInterface extends LlmRuntime:
                                               java.time.Instant.now().toString,
                                               classification.message.orElse(Option(err.getMessage))
                                             )
-                                            val notify = onAttempt.traverse_(_.apply(attempt))
+                                            // 429 反应式并发闸批（作者令 2026-10-29 21:32）：账户级
+                                            // 429 → 限流器降档信号。挂在 notify（四条分支共用、每次
+                                            // 失败分类恰好过一次）上；内部自判——总闸关 / 非
+                                            // RateLimit / 配额体（1308 计划性额度 = 换链腿）/ 非账户级
+                                            // 响应体（单请求类，走既有 retry）⇒ no-op，零行为变化。
+                                            val notify = onAttempt.traverse_(_.apply(attempt)) *>
+                                              registry.throttle.onRateLimitSignal(
+                                                candidate.provider.baseUrl,
+                                                classification.reason,
+                                                classification.message
+                                                  .orElse(Option(err.getMessage))
+                                                  .getOrElse("")
+                                              )
                                             val downReason = classification.message
                                               .orElse(Option(err.getMessage))
                                               .getOrElse(classification.reason.toString)
