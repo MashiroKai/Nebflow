@@ -515,7 +515,17 @@ object PluginRegistry:
       (dir :: all).map(p => p.toString -> os.mtime(p)).sortBy(_._1)
     catch case _: Exception => Nil
 
-  /** 全量扫描唯一实现（缓存：目录树 mtime 签名未变则复用上次产出）。 */
+  /**
+   * 全量扫描唯一实现（缓存：目录树 mtime 签名未变则复用上次产出）。
+   *
+   * provenance 回填挂载点（P1 源引用批，§2.4）：**首次扫描产出**后跑一次存量回填
+   * （[[runProvenanceBackfill]]，一次性闸；幂等——已记账零改写、绝不改包目录字节）。
+   * 挂在这里而不是 boot 主流程：扫描是所有读面（catalog / 面板 / resolve / 健康摘要）的
+   * 共同入口，且此刻 `plugins/` 已解析出全部包与 digest（回填输入齐备）。一次性闸保证
+   * 进程内只跑一次（缓存命中路径同样经过本挂钩，CAS 消耗后即 no-op）；空盘（plugins/
+   * 缺席且零包）**不消耗闸**——首次真实读到包清单的那次扫描才是回填时机。
+   * 回填失败绝不阻塞读面（异常吞掉 + WARN，同「损坏账本降级不崩」纪律）。
+   */
   private def snapshot(): IO[Snapshot] =
     IO.blocking {
       if !os.isDir(pluginsDir) then Snapshot(Nil, Nil)
@@ -533,7 +543,46 @@ object PluginRegistry:
             snap.rejected.foreach { case (n, r) => logger.warnSync(s"Plugin '$n' rejected: $r") }
             cache.set(Some(Cache(full, snap)))
             snap
-    }
+    }.flatMap(snap => backfillOnce(snap).as(snap))
+
+  // ── provenance 存量回填（P1 源引用批；首查一次，幂等）──────────────────
+  // 判据与写面全部在 [[PluginSourceLedger]]（单点）；此处只负责「何时跑」与「失败不阻塞」。
+
+  /** 一次性闸：进程内首次扫描产出后跑一次；测试钩子可复位。 */
+  private val backfillGate = new java.util.concurrent.atomic.AtomicBoolean(false)
+
+  /** 回填覆盖（**仅测试**）：换槽位即可断言「首查触发一次」。生产恒 `None`。 */
+  private val backfillOverride =
+    new java.util.concurrent.atomic.AtomicReference[Option[List[PluginDef] => PluginSourceLedger.BackfillReport]](None)
+
+  private def backfillOnce(snap: Snapshot): IO[Unit] =
+    if snap.plugins.isEmpty && snap.rejected.isEmpty then IO.unit // 空盘不消耗闸（首次真实读到包清单才回填）
+    else if !backfillGate.compareAndSet(false, true) then IO.unit
+    else
+      IO.blocking(runProvenanceBackfill(snap.plugins)).void.handleErrorWith { e =>
+        IO.delay(
+          logger.warnSync(
+            s"plugin provenance backfill failed (${e.getClass.getSimpleName}: ${e.getMessage}) — " +
+              "packages without a ledger entry stay unknown-source; installation and loading are unaffected"
+          )
+        )
+      }
+
+  /**
+   * 存量回填入口（唯一实现 = [[PluginSourceLedger.backfill]]）：boot 或首查时对已装包
+   * 幂等回填 provenance（seed 树内 ⇒ via=seed + 当前 digest 基线 pin；seed 外 ⇒ via=local），
+   * **绝不改包目录任何字节**。public 以便 spec 直接驱动同一条实现（不经一次性闸）。
+   */
+  def runProvenanceBackfill(output: List[PluginDef]): PluginSourceLedger.BackfillReport =
+    backfillOverride.get().getOrElse(PluginSourceLedger.backfill)(output)
+
+  /** 回填覆盖设置（**仅测试**；传 None 恢复真实现）。 */
+  def setProvenanceBackfillForTest(
+      f: Option[List[PluginDef] => PluginSourceLedger.BackfillReport]
+  ): Unit = backfillOverride.set(f)
+
+  /** 复位一次性闸（**仅测试**：同一进程内验证「第二次扫描不再回填」）。 */
+  def resetProvenanceBackfillGate(): Unit = backfillGate.set(false)
 
   /** 全量注册表（含**被封禁**项——面板/审计需要看到 deny-list 命中者及其 block 元数据）。 */
   def scan(): IO[List[PluginDef]] = snapshot().map(_.plugins)
@@ -1277,6 +1326,11 @@ object PluginRegistry:
                   else
                     os.makeDir.all(pluginsDir)
                     os.copy(staged, target, createFolders = true, mergeFolders = true, replaceExisting = true)
+                    // provenance 账本落账（P1 源引用批；设计稿 §2.1/§2.4）：引擎唯一写点=安装路径。
+                    // 账本在包目录**外**（<dataRoot>/plugin-sources/<name>.json）⇒ 硬不变量「记账不改
+                    // 包 digest」（先装→记账→重算前后相等，spec 钉死）。best-effort：落账失败不回滚
+                    // 安装（在位即信任零变化），该包查询面降级 unknown-source 并 WARN 留痕。
+                    recordProvenance(pname, staged, target, json, source, isGit)
                     cache.set(None)
                     logger.infoSync(
                       s"Plugin '$pname' installed from '$source' — active on next scan (presence = trust)"
@@ -1295,6 +1349,73 @@ object PluginRegistry:
     end try
 
   end installFromSync
+
+  /**
+   * provenance 账本落账（P1 源引用批；唯一写点见 [[PluginSourceLedger.recordInstall]]）。
+   *
+   * via 判定（本批两腿；official/https 腿 P2 接）：
+   *  - git 来源（既有 isGit 判据）⇒ `via=git` + pin 记 **clone 后 HEAD 实测 commit**——诚实
+   *    provenance：今天的 clone 语义是默认分支 HEAD（浮动；其退役按设计 §2.2B 在 P2 落），
+   *    账本先如实记录「这次实际装到的是哪个 commit」，行为零变化；
+   *  - 本地目录 ⇒ `via=local` + url 记解析后的**绝对**源路径（开发态来源可回指）。
+   *
+   * 失败面：digest 现算失败 / 账本写失败都只 WARN——安装已成功（在位即信任），账本缺席
+   * 的代价是该包查询面 unknown-source（诚实降级），绝不因 provenance 拒绝安装。
+   */
+  private def recordProvenance(
+      pname: String,
+      staged: os.Path,
+      target: os.Path,
+      manifest: Json,
+      source: String,
+      isGit: Boolean
+  ): Unit =
+    computeDigest(target) match
+      case Left(err) =>
+        logger.warnSync(
+          s"plugin provenance not recorded for '$pname' (digest computation failed after install: $err) — " +
+            "the package stays installed; its source query degrades to unknown-source"
+        )
+      case Right((digest, _)) =>
+        val version = manifest.hcursor.downField("version").as[String].toOption.map(_.trim).getOrElse("")
+        val recorded =
+          if isGit then
+            PluginSourceLedger.recordInstall(
+              name = pname,
+              kind = PluginSourceLedger.Kind.Git,
+              url = Some(source),
+              pin = gitHeadCommit(staged).map(c => PluginSourceLedger.Pin.Commit(tag = None, commit = c)),
+              version = version,
+              digest = digest,
+              via = PluginSourceLedger.Via.Git
+            )
+          else
+            val url =
+              try Some(os.Path(source, os.pwd).toString)
+              catch case _: Exception => Some(source)
+            PluginSourceLedger.recordInstall(
+              name = pname,
+              kind = PluginSourceLedger.Kind.Local,
+              url = url,
+              pin = None,
+              version = version,
+              digest = digest,
+              via = PluginSourceLedger.Via.Local
+            )
+        recorded.left.foreach { err =>
+          logger.warnSync(
+            s"plugin provenance recording failed for '$pname' ($err) — the package stays installed " +
+              "(presence = trust); its source query degrades to unknown-source"
+          )
+        }
+
+  /** clone 后 HEAD 实测 commit（40-hex 才采纳为 pin；本地仓库读取，零网络）。 */
+  private def gitHeadCommit(repo: os.Path): Option[String] =
+    try
+      val res = os.proc("git", "-C", repo, "rev-parse", "HEAD").call(check = false)
+      val out = if res.exitCode == 0 then res.out.text().trim else ""
+      if out.matches("[0-9a-fA-F]{40}") then Some(out.toLowerCase) else None
+    catch case _: Exception => None
 
   /**
    * canonical 化后 `src` == cwd 自身或为 cwd 的**祖先** ⇒ true（该源一旦拷贝就是整个 cwd 树）。
