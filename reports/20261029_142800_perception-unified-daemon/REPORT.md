@@ -61,6 +61,7 @@ LLM 三腿入引擎。**
 | checkJs | **252 < 260 基线，零新增** PASS |
 | sbt compile / Test/compile | rc=0 |
 | sbt assembly | rc=0，`stand-assembly-2026.10.26-beta.2.jar`（hash 193eb39696ab3220f501d48b52162f09656419b9） |
+| **main 并入后复核**（merge f64d2b881 后终态树） | Test/compile rc=0；感知族+生命周期+AuthGate **76/76 通过**（main 的 PresenceRoutes 增量仅 /provider/test 腿，/api/daemons 零变化）；**LIVE 冒烟终态复跑 PASS** boot_ready=5s checks=11111111（8/8 全绿，零孤儿）——P4 拒绝面=403（勘误 commit 718de87b3：spec 注释/设计件 §5 的 401 字样改 403，实现=Forbidden 403 与断言/冒烟本就一致） |
 | **LIVE 冒烟**（隔离实例，boot-smoke 家族纪律） | **PERCEPTION-DAEMON-SMOKE: PASS** boot_ready=4s checks=11111111（8/8）：引擎 boot→dock 握手线→daemon 家族 marker（pid 存活）→daemon /health 200（token 门 403 对照）→**感知五循环 live 日志**（poll/sweep/digest/spool/idle boot 行 + serving 行）→**心跳腿 live**（/api/daemons 托管行 running+portOpen=true）→面板代理 200→**干净退出零孤儿**（引擎 SIGTERM ⇒ daemon 随引擎走，端口释放）。证据：`live-smoke.log` |
 
 ## 四、红线合规
