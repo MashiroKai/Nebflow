@@ -75,8 +75,8 @@ class ChainLedgerStore private (
 
   private def encode(st: State): String = st.asJson.noSpaces
 
-  /** 当前热态落盘字节数（**轴 c 的字节阈值现读面**；与 checkpoint 逐字节同源）。 */
-  def hotBytes: IO[Long] = state.get.map(st => encode(st).getBytes("UTF-8").length.toLong)
+  /** 当前热态落盘字节数（**轴 c 的字节阈值现读面**；与 checkpoint 实写逐字节同源 —— R3 续批起 = 窗口视角）。 */
+  def hotBytes: IO[Long] = state.get.map(st => checkpointEncode(st).getBytes("UTF-8").length.toLong)
 
   // ── perf-481 A3：增量写（append journal + 周期 checkpoint）────────────────
   //
@@ -96,12 +96,24 @@ class ChainLedgerStore private (
   /** checkpoint 已有的 manifest 条数（记录里 `rounds` 段的下界）。 */
   @volatile private var committedRounds: Int = initialCommittedRounds
 
+  /**
+   * R3 续批（manifest 外置）：**冷档旁卷是否已完整**（open 期把「checkpoint 之外」的
+   * manifest 全量回填旁卷后置真）。假 ⇒ 折叠**禁**用窗口视图（截掉的历史 manifest 尚无
+   * 旁卷副本，截断 = 丢史）—— 折叠退回全量 encode（旧行为），下一拍再试。
+   */
+  @volatile private var sideVolumeComplete: Boolean = false
+
   /** journal 里待折叠的字节数（rotation 判据；载入时由现读回填）。 */
   @volatile private var pendingBytes: Long = initialPendingBytes
 
   /** 本拍要落的**增量记录**（相对 checkpoint）：非轮字段全量 + 新增 manifest 段。 */
   private def recordOf(st: State): ChainLedger.JournalRecord =
-    ChainLedger.JournalRecord(base = committedRounds, state = st.copy(rounds = st.rounds.drop(committedRounds)))
+    // R3 续批：`roundsTotal` = 写入时刻的全量 manifest 水位（checkpoint 只带尾部窗口后，
+    // 「journal 增量段的下界」由本字段承载；旧格式文件缺省 0，载入端回落 rounds.size）。
+    ChainLedger.JournalRecord(
+      base = committedRounds,
+      state = st.copy(rounds = st.rounds.drop(committedRounds), roundsTotal = st.rounds.size)
+    )
 
   /**
    * 增量落盘：append 一条记录，累积到阈值再折叠 + 截断。**整条临界区串行化**
@@ -119,7 +131,7 @@ class ChainLedgerStore private (
       try
         if !os.exists(path) then
           // 无 checkpoint（全新台账，或此前从未折叠）⇒ 本次建立权威面。
-          AtomicJson.rotateSyncDurable(path, encode(st))
+          AtomicJson.rotateSyncDurable(path, checkpointEncode(st))
           committedRounds = st.rounds.size
           pendingBytes = 0L
         else
@@ -132,7 +144,7 @@ class ChainLedgerStore private (
           pendingBytes += AtomicJson.recordBytes(line)
           if pendingBytes >= rotateBytes then
             // 折叠：checkpoint 写在前、journal 截断在后（durable 形态的同一次序）。
-            AtomicJson.rotateSyncDurable(path, encode(st))
+            AtomicJson.rotateSyncDurable(path, checkpointEncode(st))
             // 折叠成功后才推进水位（崩溃在上一行与这一行之间 ⇒ 只是重放，幂等）。
             committedRounds = st.rounds.size
             pendingBytes = 0L
@@ -140,14 +152,28 @@ class ChainLedgerStore private (
       end try
     }
 
+  /**
+   * checkpoint 实写编码（R3 续批，manifest 外置）：[[ChainLedger.checkpointView]] 视角
+   * （rounds 只带尾部窗口）。旁卷未完整（回填未成）⇒ 退回全量 encode —— **禁**在历史
+   * manifest 尚无旁卷副本时截断 checkpoint（截断 = 丢史；旁卷是唯一权威全量面）。
+   */
+  private def checkpointEncode(st: State): String =
+    if sideVolumeComplete then ChainLedger.checkpointView(st).asJson.noSpaces
+    else encode(st)
+
   /** 现读 journal 待折叠字节（诊断/量具面；不改变状态）。 */
   private[project] def journalPendingBytes: IO[Long] = IO.blocking(AtomicJson.noteBytes(path))
 
-  // ── 冷档 ─────────────────────────────────────────────
+  /** R3 续批：open 期旁卷回填的收口写点（回填成功 ⇒ 折叠允许窗口视图截断）。 */
+  private[project] def markSideVolumeComplete(complete: Boolean): Unit =
+    sideVolumeComplete = complete
+
+  // ── 冷档（R3 续批：gzip 透明读 + 多轮 JSONL 束 + manifest 旁卷）────────────
 
   /**
    * 冷档内容摘要（hex sha-256；口径与 `SeedService.sha256*` 逐字同款 —— 逐字节摘要，
-   * 供「冷档未被改写」事后核对）。
+   * 供「冷档未被改写」事后核对）。摘要对象 = **未压缩的 JSON 文本**（与 gzip 与否无关，
+   * 跨形态恒可比）。
    */
   private def digestOf(content: String): String =
     MessageDigest
@@ -156,25 +182,149 @@ class ChainLedgerStore private (
       .map("%02x".format(_))
       .mkString
 
-  /** 冷档全量读入（按轮号升序；单档损坏只跳该档并 WARN，不拖垮台账）。 */
+  /** 冷档目录里的可读文件清单（新旧四种形态全收；名字升序 —— 消费方均按轮号重排，序不敏感）。 */
+  private def coldFiles: List[os.Path] =
+    if !os.exists(archiveDir) then Nil
+    else
+      os.list(archiveDir).toList
+        .filter(f =>
+          val n = f.last
+          n.endsWith(".json") || n.endsWith(".json.gz") || n.endsWith(".jsonl") || n.endsWith(".jsonl.gz")
+        )
+        .sortBy(_.last)
+
+  /** GZIP 解压一个 .gz 文件为文本（冷档读路径；损坏抛 IOException 由调用方按档跳过）。 */
+  private def gunzip(f: os.Path): String =
+    val in = new java.util.zip.GZIPInputStream(new java.io.FileInputStream(f.toIO), 8 * 1024)
+    try new String(in.readAllBytes(), "UTF-8")
+    finally in.close()
+
+  /**
+   * 流式折叠一个 JSONL 冷档（.jsonl / .jsonl.gz）：**逐行**解压解析，内存以单行为界 ——
+   * 存量迁移束（数万轮打包，解压后数百 MB）禁整读进内存。文件级损坏（打不开/解压失败）
+   * ⇒ None（调用方跳档并 WARN）；行级损坏由 `step` 自行处置（跳行 + WARN）。
+   */
+  private def foldJsonl[A](f: os.Path, z: A)(step: (A, String, Int) => A): Option[A] =
+    try
+      val stream =
+        if f.last.endsWith(".gz") then
+          new java.util.zip.GZIPInputStream(new java.io.FileInputStream(f.toIO), 64 * 1024)
+        else new java.io.FileInputStream(f.toIO)
+      val out =
+        try
+          val r = new java.io.BufferedReader(new java.io.InputStreamReader(stream, "UTF-8"), 64 * 1024)
+          try
+            var acc = z
+            var line = r.readLine()
+            var idx = 0
+            while line != null do
+              if line.trim.nonEmpty then acc = step(acc, line, idx)
+              idx += 1
+              line = r.readLine()
+            acc
+          finally r.close()
+        finally stream.close()
+      Some(out)
+    catch
+      case e: Exception =>
+        logger.warnSync(s"chain-ledger[$project] cold file unreadable: ${f.last}: ${e.getMessage} — skipped")
+        None
+
+  /** GZIP 原子写（tmp + fsync + ATOMIC_MOVE + 目录 fsync —— 语义与 `AtomicJson.writeSyncDurable` 同款）。 */
+  private def gzipWriteSync(target: os.Path, content: String): Unit =
+    val tmp = target / os.up / s"${target.last}.tmp.${java.util.UUID.randomUUID()}"
+    try
+      // 冷档目录可能尚不存在（首写轮）；`AtomicJson.writeSync` 靠 os.write 的
+      // createFolders 兜同一场景，此处显式建目录。
+      java.nio.file.Files.createDirectories(tmp.toNIO.getParent)
+      val out = new java.util.zip.GZIPOutputStream(new java.io.FileOutputStream(tmp.toIO), 8 * 1024)
+      try out.write(content.getBytes("UTF-8"))
+      finally out.close()
+      val ch = java.nio.channels.FileChannel.open(tmp.toNIO, java.nio.file.StandardOpenOption.READ)
+      try ch.force(true)
+      finally ch.close()
+      try
+        java.nio.file.Files.move(tmp.toNIO, target.toNIO, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+      catch
+        case _: java.nio.file.AtomicMoveNotSupportedException =>
+          java.nio.file.Files.move(tmp.toNIO, target.toNIO, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+      end try
+      AtomicJson.forceParentDir(target)
+    catch
+      case e: Throwable =>
+        try if os.exists(tmp) then os.remove(tmp)
+        catch case _: Exception => ()
+        throw e
+    end try
+  end gzipWriteSync
+
+  /**
+   * 解析**一个冷档文件**为 0..n 轮（R3 续批三形态，逐字向后兼容）：
+   *   · `round-<n>.json`（旧形态）：单对象一轮；
+   *   · `round-<n>.json.gz`（新写形态）：gzip 单对象一轮；
+   *   · `<name>.jsonl[.gz]`（存量迁移束 / 旁卷同款）：**一行一 RoundFile**，逐行解析
+   *     （束内单行损坏只丢该行并 WARN，不拖垮整束 —— 与 checkpoint 残尾纪律同款）。
+   * 任一形态解析失败（非逐行级）⇒ 返回 None，调用方跳档并 WARN。
+   */
+  private def parseColdFile(f: os.Path): Option[List[RoundFile]] =
+    val name = f.last
+    if name.endsWith(".jsonl") || name.endsWith(".jsonl.gz") then
+      foldJsonl(f, List.empty[RoundFile]) { (acc, line, idx) =>
+        jsonParse(line).flatMap(_.as[RoundFile]) match
+          case Right(r) => r :: acc
+          case Left(e) =>
+            logger.warnSync(s"chain-ledger[$project] cold bundle $name line ${idx + 1} corrupt: $e — skipped")
+            acc
+      }.map(_.reverse)
+    else
+      val text =
+        try if name.endsWith(".gz") then gunzip(f) else os.read(f)
+        catch case e: Exception =>
+          logger.warnSync(s"chain-ledger[$project] cold file unreadable: $name: ${e.getMessage} — skipped")
+          return None
+      jsonParse(text).flatMap(_.as[RoundFile]) match
+        case Right(r) => Some(List(r))
+        case Left(e) =>
+          logger.warnSync(s"chain-ledger[$project] cold file corrupt: $name: $e — skipped")
+          None
+  end parseColdFile
+
+  /** 冷档全量读入（按轮号升序去重；单档损坏只跳该档并 WARN，不拖垮台账）。 */
   def readRounds: IO[List[RoundFile]] =
     IO.blocking {
-      if !os.exists(archiveDir) then Nil
-      else
-        os.list(archiveDir).filter(_.last.endsWith(".json")).toList.sortBy(_.last).flatMap { f =>
-          jsonParse(os.read(f)).flatMap(_.as[RoundFile]) match
-            case Right(r) => Some(r)
-            case Left(e) =>
-              logger.warnSync(s"chain-ledger[$project] cold file corrupt: ${f.last}: $e — skipped")
-              None
+      coldFiles
+        .flatMap(parseColdFile)
+        .flatten
+        .sortBy(_.round)
+        .foldLeft(List.empty[RoundFile]) { (acc, r) =>
+          if acc.headOption.exists(_.round == r.round) then acc else r :: acc
         }
+        .reverse
     }
 
-  /** 写一轮冷档（**只归档不删除**；文件内容含该轮阈值与前后读数 ⇒ 离线可复算）。 */
-  private def writeRound(f: RoundFile): IO[String] =
+  /** 写一轮冷档（**只归档不删除**；文件内容含该轮阈值与前后读数 ⇒ 离线可复算）。
+    * R3 续批起落 **gzip 形态**（`round-<n>.json.gz`：归档只写不读、读路径透明解压，
+    * 44 KB 级未压缩 JSON 的盘面放大就此收口）。返回 (实际文件名, 未压缩内容摘要)。 */
+  private def writeRound(f: RoundFile): IO[(String, String)] =
     val content = f.asJson.noSpaces
-    val target = archiveDir / s"round-${f.round}.json"
-    AtomicJson.write(target, content).as(digestOf(content))
+    val name = s"round-${f.round}.json.gz"
+    IO.blocking(gzipWriteSync(archiveDir / name, content)).as((name, digestOf(content)))
+
+  /**
+   * **manifest 旁卷追加**（R3 续批，manifest 外置）：完整 manifest 史的权威面 =
+   * `chain-ledger-rounds.jsonl`（append-only，一行一条，写轮同刻先于热账落盘 ⇒
+   * 「先证据后记账」的次序不变）。崩溃在追加后、热账前 ⇒ 旁卷多一条、下一拍以同轮号
+   * 重放（内容确定 ⇒ 幂等，[[ChainLedger.mergeRounds]] 轮号去重吸收）。
+   */
+  private def appendSideVolume(ms: List[RoundManifest]): IO[Unit] =
+    if ms.isEmpty then IO.unit
+    else
+      IO.blocking {
+        val f = archiveDir / ChainLedger.RoundsSideVolumeFile
+        val line = ms.map(_.asJson.noSpaces).mkString("", "\n", "\n")
+        os.write.append(f, line, createFolders = true)
+        AtomicJson.forceParentDir(f)
+      }
 
   private def roundFileOf(
     round: Int,
@@ -198,6 +348,7 @@ class ChainLedgerStore private (
 
   private def manifestOf(
     f: RoundFile,
+    fileName: String,
     digest: String,
     tick: Long
   ): RoundManifest =
@@ -205,7 +356,7 @@ class ChainLedgerStore private (
       round = f.round,
       at = f.at,
       kind = f.kind,
-      file = s"round-${f.round}.json",
+      file = fileName,
       movedEntries = f.entries.size,
       movedAliases = f.aliases.size,
       movedMembers = f.entries.map(_.members.size).sum,
@@ -437,41 +588,57 @@ class ChainLedgerStore private (
   /** 链号解析（热面）：现链号 → 自身；别名 → 现链号。 */
   def resolve(id: String): IO[Option[String]] = state.get.map(st => ChainLedger.resolve(st, id))
 
-  /** 链号解析（热面未命中 ⇒ 逐冷档回翻）：已下沉的条目/别名行**照旧可达**。 */
+  /**
+   * 链号解析（热面未命中 ⇒ 逐冷档回翻）：已下沉的条目/别名行**照旧可达**。
+   * R3 续批两级增补：① 冷档扫描前先查**待落批**（离场行入批后、整批落轮前的窗口里，
+   * 行尚无冷档文件 —— 从批内回翻，「旧号永久可达」在批化窗口内不断链）；② 冷档读面
+   * 走 [[parseColdFile]]（gzip / JSONL 束透明）。
+   */
   def resolveDeep(id: String): IO[Option[String]] =
     state.get.flatMap { st =>
       ChainLedger.resolve(st, id) match
         case some @ Some(_) => IO.pure(some)
         case None =>
-          // Same result as reading every round up front (newest round wins), but
-          // files are parsed one at a time so memory stays bounded by a single
-          // round file regardless of archive size.
-          IO.blocking {
-            if !os.exists(archiveDir) then Nil
-            else os.list(archiveDir).filter(_.last.endsWith(".json")).toList
-          }.flatMap { files =>
-            files
-              .foldLeft(IO.pure(List.empty[(Int, Option[String])])) { (acc, f) =>
-                acc.flatMap { out =>
-                  IO.blocking {
-                    jsonParse(os.read(f)).flatMap(_.as[RoundFile]) match
-                      case Right(r) =>
-                        val hit =
-                          r.entries
-                            .find(_.chainId == id)
-                            .map(_.chainId)
-                            .orElse(r.aliases.find(_.alias == id).map(_.canonical))
-                        (r.round, hit) :: out
-                      case Left(e) =>
-                        logger.warnSync(s"chain-ledger[$project] cold file corrupt: ${f.last}: $e — skipped")
-                        out
+          val pendingHit =
+            st.pendingDissolve.entries.find(_.chainId == id).map(_.chainId)
+              .orElse(st.pendingDissolve.aliases.find(_.alias == id).map(_.canonical))
+              .orElse(st.pendingRetire.entries.find(_.chainId == id).map(_.chainId))
+              .orElse(st.pendingRetire.aliases.find(_.alias == id).map(_.canonical))
+          if pendingHit.isDefined then IO.pure(pendingHit)
+          else
+            // Same result as reading every round up front (newest round wins), but
+            // files are parsed one at a time so memory stays bounded — JSONL 束
+            // 逐行折叠（内存以单行为界），单轮文件整读（44 KB 级）。
+            def hitsOf(r: RoundFile): List[(Int, Option[String])] =
+              r.entries
+                .find(_.chainId == id)
+                .map(_.chainId)
+                .orElse(r.aliases.find(_.alias == id).map(_.canonical))
+                .map(canonical => (r.round, Some(canonical)))
+                .toList
+            IO.blocking(coldFiles).flatMap { files =>
+              files
+                .foldLeft(IO.pure(List.empty[(Int, Option[String])])) { (acc, f) =>
+                  acc.flatMap { out =>
+                    IO.blocking {
+                      val name = f.last
+                      if name.endsWith(".jsonl") || name.endsWith(".jsonl.gz") then
+                        foldJsonl(f, out) { (o, line, _) =>
+                          jsonParse(line).flatMap(_.as[RoundFile]).toOption match
+                            case Some(r) => hitsOf(r) ::: o
+                            case None    => o
+                        }.getOrElse(out)
+                      else
+                        parseColdFile(f) match
+                          case Some(rounds) => rounds.flatMap(hitsOf) ::: out
+                          case None         => out
+                    }
                   }
                 }
-              }
-              .map { out =>
-                out.sortBy(_._1).reverse.collectFirst { case (_, Some(canonical)) => canonical }
-              }
-          }
+                .map { out =>
+                  out.sortBy(_._1).reverse.collectFirst { case (_, Some(canonical)) => canonical }
+                }
+            }
     }
 
   // ── 拍点：reconcile（出生/承继/合并/拆分 → 计数 → 退役 → 压缩）──────────
@@ -528,59 +695,70 @@ class ChainLedgerStore private (
         ChainLedger.FaceCounts(activeMembers = activeMembers, declarations = declarations, batchIds = batchIds)
       )
       val retire = ChainLedger.planRetire(stCounted, now)
-      val stRetired = retire.state
+      // ── 离场轮批化（R3 续批：逐拍落盘 → 攒批 flush，事件驱动不挂定时器）──
+      // 本拍的离场行（observe 离场 + 孤儿别名）与退役行（轴 a×b）先**入批**（批持久在
+      // 热态里 ⇒ 崩溃安全同热账），批达 [[ChainLedger.OfflineFlushRows]] /
+      // [[ChainLedger.OfflineFlushAgeMs]] 任一阈值 ⇒ 下一整批落一轮。坐标口径：入批
+      // **读数中性**（[[ChainLedger.totals]] 计入待落批）⇒ 拍内/跨拍链式在「入批不落轮、
+      // 落轮整批减」下结构性成立；轮 kind 按批来源两腿分立（一轮一 kind）。
+      val pd1 = stCounted.pendingDissolve.absorb(obs.dissolved, obs.orphanAliases, now)
+      val pr1 = stCounted.pendingRetire.absorb(retire.entries, retire.aliases, now)
+      val stBase = retire.state.copy(pendingDissolve = pd1, pendingRetire = pr1, updatedAt = now)
       // ── 拍标识（[[ChainLedger.RoundManifest.tick]]）：本拍**首轮**的轮号 —— 由
       //    append-only 轮号派生 ⇒ 同拍恒同值、异拍恒异值（轮间链式只对同拍相邻轮断言）──
       val tick = st0.rounds.size + 1
-      // ── 轮 1（dissolve：链已离场 ⇒ 整行下沉）──
-      // 坐标口径（先例 D1-a）：`hotAfter` 取**计数复算之后**的热态（= 轮 2 的 `hotBefore`，
-      // 逐项恒等 ⇒ 拍内链式结构性成立）；`hotBefore` 由「`hotAfter` + 本轮搬走量」机械推出。
-      // 🔴 禁改回 `stObs`（复算之前）：那会让轮 1 与轮 2 站在两套坐标基准上 ⇒ 恒假 `Left`。
-      val dissolveRows = obs.dissolved
-      val orphanAliases = obs.orphanAliases
-      val hasDissolve = dissolveRows.nonEmpty || orphanAliases.nonEmpty
-      val roundDissolve = tick
-      val hotAfterDissolve = ChainLedger.totals(stCounted)
+      val totalsBase = ChainLedger.totals(stBase)
+      // ── flush 腿 1（dissolve 批整批落轮）──
+      // 坐标口径（先例 D1-a 不变）：`hotBefore` 由「`hotAfter` + 本轮搬走量」机械推出，
+      // `hotAfter` 取落轮后的热态。批内行来自本拍与此前各拍 ⇒ 轮的坐标仍以「本拍计数
+      // 复算之后」的热态为基准（与旧口径同源，链式成立）。
+      val flushDissolve = pd1.isFlushDue(now)
+      val stAfterDissolveFlush = if flushDissolve then stBase.copy(pendingDissolve = ChainLedger.PendingOffline()) else stBase
+      val hotAfterDissolve = ChainLedger.totals(stAfterDissolveFlush)
       val fileDissolve = roundFileOf(
-        roundDissolve,
+        tick,
         RoundDissolve,
         now,
-        hotBeforeOf(hotAfterDissolve, RoundDissolve, dissolveRows, orphanAliases),
+        hotBeforeOf(hotAfterDissolve, RoundDissolve, pd1.entries, pd1.aliases),
         hotAfterDissolve,
-        dissolveRows,
-        orphanAliases
+        pd1.entries,
+        pd1.aliases
       )
       for
-        // ── 轮 1 落盘（冷档在前、热账在后；见类头注第 2 条）──
-        digestD <- if hasDissolve then writeRound(fileDissolve) else IO.pure("")
-        stAfterDissolve =
-          if hasDissolve then stObs.copy(rounds = st0.rounds :+ manifestOf(fileDissolve, digestD, tick)) else stObs
-        // ── 轮 2（retire：轴 a×b 联合判据；热行移除、冷档留全行）──
-        hasRetire = retire.entries.nonEmpty || retire.aliases.nonEmpty
+        // ── flush 腿 1 落盘（冷档在前、旁卷次之、热账最后；见类头注第 2 条）──
+        writtenD <-
+          if flushDissolve then writeRound(fileDissolve).map { case (n, d) => Some(manifestOf(fileDissolve, n, d, tick)) }
+          else IO.pure(None)
+        _ <- appendSideVolume(writtenD.toList)
+        stAfterDissolve = stAfterDissolveFlush.copy(rounds = stBase.rounds ++ writtenD.toList)
+        // ── flush 腿 2（retire 批整批落轮；轴 a×b 联合判据的行在此下沉）──
+        flushRetire = pr1.isFlushDue(now)
+        stAfterRetireFlush = if flushRetire then stAfterDissolve.copy(pendingRetire = ChainLedger.PendingOffline()) else stAfterDissolve
+        hotAfterRetire = ChainLedger.totals(stAfterRetireFlush)
         roundRetire = stAfterDissolve.rounds.size + 1
-        hotAfterRetire = ChainLedger.totals(stRetired)
         fileRetire = roundFileOf(
           roundRetire,
           RoundRetire,
           now,
-          hotBeforeOf(hotAfterRetire, RoundRetire, retire.entries, retire.aliases),
+          hotBeforeOf(hotAfterRetire, RoundRetire, pr1.entries, pr1.aliases),
           hotAfterRetire,
-          retire.entries,
-          retire.aliases
+          pr1.entries,
+          pr1.aliases
         )
-        digestR <- if hasRetire then writeRound(fileRetire) else IO.pure("")
-        stAfterRetire =
-          if hasRetire then stRetired.copy(rounds = stAfterDissolve.rounds :+ manifestOf(fileRetire, digestR, tick))
-          else stRetired.copy(rounds = stAfterDissolve.rounds)
-        // ── 轮 3（compact：轴 c 双阈值 —— 条数 ∨ 字节）──
-        bytes <- IO.blocking(encode(stAfterRetire).getBytes("UTF-8").length.toLong)
+        writtenR <-
+          if flushRetire then writeRound(fileRetire).map { case (n, d) => Some(manifestOf(fileRetire, n, d, tick)) }
+          else IO.pure(None)
+        _ <- appendSideVolume(writtenR.toList)
+        stAfterRetire = stAfterRetireFlush.copy(rounds = stAfterDissolve.rounds ++ writtenR.toList)
+        // ── 轮 3（compact：轴 c 双阈值 —— 条数 ∨ 字节；字节 = checkpoint 实写视角）──
+        bytes <- IO.blocking(checkpointEncode(stAfterRetire).getBytes("UTF-8").length.toLong)
         capExceeded = ChainLedger.needsCompaction(stAfterRetire, bytes)
         plan =
           if capExceeded then ChainLedger.planCompaction(stAfterRetire, bytes)
           else ChainLedger.CompactPlan(stAfterRetire)
         hasCompact = capExceeded && !plan.isEmpty
         roundCompact = stAfterRetire.rounds.size + 1
-        // 坐标口径同源：`plan.hotBefore = totals(stAfterRetire)`（= 轮 2 的 `hotAfter`，
+        // 坐标口径同源：`plan.hotBefore = totals(stAfterRetire)`（= 上 legs 的 `hotAfter`，
         // `rounds` 字段不进读数）⇒ 拍内链式对轮 3 同样成立；`plan.hotAfter` 与
         // [[hotBeforeOf]] 互为逆式（compaction 只搬载荷 + 整行移出别名）。
         fileCompact = roundFileOf(
@@ -592,21 +770,24 @@ class ChainLedgerStore private (
           plan.compactedEntries,
           plan.retiredAliases
         )
-        digestC <- if hasCompact then writeRound(fileCompact) else IO.pure("")
-        compactManifest = if hasCompact then Some(manifestOf(fileCompact, digestC, tick)) else None
+        writtenC <-
+          if hasCompact then writeRound(fileCompact).map { case (n, d) => Some(manifestOf(fileCompact, n, d, tick)) }
+          else IO.pure(None)
+        _ <- appendSideVolume(writtenC.toList)
         stFinal =
           val base = if hasCompact then plan.state else stAfterRetire
-          base.copy(project = project, rounds = stAfterRetire.rounds ++ compactManifest.toList, updatedAt = now)
+          base.copy(project = project, rounds = stAfterRetire.rounds ++ writtenC.toList, updatedAt = now)
         _ <- persist(stFinal)
         _ <- state.set(stFinal)
         _ <-
-          if hasDissolve || hasRetire || hasCompact then
+          if flushDissolve || flushRetire || hasCompact then
             IO(
               logger.infoSync(
-                s"chain-ledger[$project] rounds: dissolve=${if hasDissolve then 1 else 0}" +
-                  s" retire=${retire.entries.size}E/${retire.aliases.size}A" +
+                s"chain-ledger[$project] rounds: dissolve=${if flushDissolve then s"1(${pd1.rowCount} rows)" else "0"}" +
+                  s" retire=${if flushRetire then s"1(${pr1.rowCount} rows)" else "0"}" +
                   s" compact=${if hasCompact then 1 else 0}" +
-                  s" hotBefore=${ChainLedger.hotRows(stAfterRetire)} rows/${bytes}B" +
+                  s" pendingD=${pd1.rowCount}/pendingR=${pr1.rowCount}" +
+                  s" hotBefore=${ChainLedger.hotRows(stBase)} rows/${bytes}B" +
                   s" hotAfter=${ChainLedger.hotRows(stFinal)} rows" +
                   s" caps=${ThresholdsNow.maxHotRows}rows/${ThresholdsNow.maxHotBytes}B"
               )
@@ -624,7 +805,7 @@ class ChainLedgerStore private (
         state = stFinal,
         retired = retire.entries.size + retire.aliases.size,
         capExceeded = capExceeded,
-        compaction = compactManifest
+        compaction = writtenC
       )
       end for
     }
@@ -644,7 +825,7 @@ class ChainLedgerStore private (
   private def coldArchiveBytes: Long =
     if !os.exists(archiveDir) then 0L
     else
-      val files = os.list(archiveDir).iterator.filter(_.last.endsWith(".json"))
+      val files = coldFiles.iterator
       var acc = 0L
       while acc <= coldReadBudgetBytes && files.hasNext do acc += os.size(files.next())
       acc
@@ -733,14 +914,43 @@ object ChainLedgerStore:
     for
       read <- IO.blocking(AtomicJson.readAll(ledgerPath))
       loaded <- IO.blocking(loadState(project, ledgerPath, read))
+      // R3 续批（manifest 外置）：旁卷读取 + 合并 + 回填。旁卷 = 完整 manifest 史的
+      // 权威面；内存态的全量轮清单 = checkpoint ∪ journal 增量 ∪ 旁卷（按轮号合并去重）。
+      // 「内存态里有、旁卷里没有」的 manifest（升级首开 = 全部 5.4 万条，稳态 = 0 条）
+      // 先回填旁卷（append-only、fsync），然后折叠才允许用窗口视图截断 checkpoint。
+      sideRounds <- readSideVolume(project, archivePath)
+      (checkpointState, committedWatermark) = loaded
+      merged = checkpointState.copy(rounds = ChainLedger.mergeRounds(checkpointState.rounds, sideRounds))
+      missing = merged.rounds.filterNot(m => sideRounds.exists(_.round == m.round))
+      _ <-
+        if missing.isEmpty then IO.unit
+        else
+          IO.blocking {
+            val f = archivePath / ChainLedger.RoundsSideVolumeFile
+            os.write.append(f, missing.map(_.asJson.noSpaces).mkString("", "\n", "\n"), createFolders = true)
+            AtomicJson.forceParentDir(f)
+          }.flatTap { _ =>
+            IO(
+              logger.infoSync(
+                s"chain-ledger[$project] side volume backfilled: ${missing.size} manifests → ${ChainLedger.RoundsSideVolumeFile}"
+              )
+            )
+          }.handleErrorWith(e =>
+            IO(
+              logger.warnSync(
+                s"chain-ledger[$project] side volume backfill FAILED (${e.getMessage}) — checkpoint folding stays FULL-ENCODE " +
+                  "until the backfill succeeds (window truncation disabled)"
+              )
+            )
+          )
       store = new ChainLedgerStore(
         project,
         ledgerPath,
         archivePath,
-        Ref.unsafe[IO, ChainLedger.State](loaded._1),
+        Ref.unsafe[IO, ChainLedger.State](merged),
         logger,
         coldReadBudgetBytes,
-        initialCommittedRounds = loaded._2,
+        initialCommittedRounds = committedWatermark,
         // Pending fold bytes come from the records readAll already returned
         // (each Note carries its on-disk frame size — the same definition
         // noteBytes sums). Re-reading the journal file here doubled the open
@@ -749,9 +959,41 @@ object ChainLedgerStore:
         initialPendingBytes = read.records.map(_.frameBytes).sum,
         rotateBytes = rotateBytes
       )
+      _ = store.markSideVolumeComplete(missing.isEmpty)
       _ <- store.selfCheck("open")
     yield store
   end open
+
+  /**
+   * 读 manifest 旁卷（append-only JSONL；坏行跳过并 WARN —— 与冷档束同一容错口径）。
+   * 同轮号多次出现（重放/回填重叠）⇒ 后见者胜（内容恒同，见 [[ChainLedger.mergeRounds]]）。
+   */
+  private def readSideVolume(project: String, archivePath: os.Path): IO[List[ChainLedger.RoundManifest]] =
+    IO.blocking {
+      val f = archivePath / ChainLedger.RoundsSideVolumeFile
+      if !os.exists(f) then Nil
+      else
+        os.read(f)
+          .linesIterator
+          .zipWithIndex
+          .flatMap { (line, idx) =>
+            if line.trim.isEmpty then None
+            else
+              jsonParse(line).flatMap(_.as[ChainLedger.RoundManifest]) match
+                case Right(m) => Some(m)
+                case Left(e) =>
+                  logger.warnSync(
+                    s"chain-ledger[$project] side volume line ${idx + 1} corrupt: $e — skipped"
+                  )
+                  None
+          }
+          .toList
+          .sortBy(_.round)
+          .foldLeft(List.empty[ChainLedger.RoundManifest]) { (acc, m) =>
+            if acc.headOption.exists(_.round == m.round) then m :: acc.tail else m :: acc
+          }
+          .reverse
+    }
 
   /**
    * 折叠两文件为一个状态（纯读；WARN 由本方法按判据打）。返回 `(状态, checkpoint 已有轮数)`。
@@ -783,7 +1025,13 @@ object ChainLedgerStore:
           read.checkpointJson.flatMap(_.as[ChainLedger.State].toOption)
         val parsedNotes: List[ChainLedger.JournalRecord] =
           read.records.flatMap(n => jsonParse(n.note).flatMap(_.as[ChainLedger.JournalRecord]).toOption)
-        val committedRounds = committed.map(_.rounds.size).getOrElse(0)
+        // R3 续批：journal 增量下界的水位 = checkpoint 折叠时刻的全量 manifest 数
+        // （[[State.roundsTotal]]）；旧格式 checkpoint（无窗口、携带全量）缺字段 ⇒
+        // 缺省 0，回落 `rounds.size`（两值在旧格式下恒相等）。journal 记录不推进该水位
+        // —— 它们相对 checkpoint 而非相对上一条记录（记录 = 完整快照 + 轮号去重 ⇒ 幂等）。
+        val committedRounds =
+          committed.flatMap(s => if s.roundsTotal > 0 then Some(s.roundsTotal) else None)
+            .getOrElse(committed.map(_.rounds.size).getOrElse(0))
         val base = committed.getOrElse(ChainLedger.State(project = project))
         parsedNotes.lastOption match
           case Some(rec) =>

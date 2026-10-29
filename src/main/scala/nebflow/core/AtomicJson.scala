@@ -391,8 +391,12 @@ object AtomicJson:
    * non-POSIX filesystems) simply skips this — the file's own `force(true)`
    * already happened, so the degradation is "narrower guarantee", never "write
    * lost".
+   *
+   * `private[core]` since the R3 chain-ledger batch (2026-10-30): the cold
+   * archive's gzip write path and the manifest side-volume append share the
+   * same durability discipline (bytes force'd, then the directory entry).
    */
-  private def forceParentDir(path: os.Path): Unit =
+  private[core] def forceParentDir(path: os.Path): Unit =
     val parent = path.toNIO.getParent
     if parent == null then ()
     else

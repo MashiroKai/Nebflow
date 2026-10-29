@@ -1,0 +1,32 @@
+{
+  "tool": "chain-ledger-archive-migrate.py",
+  "mode": "apply",
+  "archive": "/Users/kaiyu/Claude code/Stand/.nebflow/chain-ledger-archive",
+  "manifest": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-880de30d/reports/20261030_chain-ledger-hygiene/20261030_010115_archive-migrate-dry-run.json",
+  "finishedAtEpochSec": 1793293453,
+  "before": {
+    "files": 54309,
+    "bytes": 2418105559,
+    "kinds": {
+      "compact": 341,
+      "dissolve": 6,
+      "retire": 53962
+    }
+  },
+  "after": {
+    "looseRoundFiles": 0
+  },
+  "bundles": [
+    {
+      "name": "rounds-202609.jsonl.gz",
+      "fileCount": 31002,
+      "bytes": 177800725
+    },
+    {
+      "name": "rounds-202610.jsonl.gz",
+      "fileCount": 23307,
+      "bytes": 135699237
+    }
+  ],
+  "deleted": 54309
+}
