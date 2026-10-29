@@ -1,7 +1,9 @@
 # stand-jar-pull — KAI → Mac jar 流转（一页用法）
 
 > KAI 主线迁移批（2026-10-26）落地件。方向：**KAI 出包，Mac 按需拉取替换 `stand start` 构建位**。
-> 脚本与仓绑定、从仓内跑（同 `ops/release.sh` 分类，不入 live）。**实际替换等作者令**；
+> 脚本与仓绑定、从仓内跑（同 `ops/release.sh` 分类，不入 live）。**首替已完成**
+> （2026-10-26 01:07，指针 = `2026.10.26-dev.38b81eb4f`；此后按 KAI 主线日常流出包即拉，
+> 见 `ops/README.md` §KAI 主线构建约定）。
 > 本页写的命令都可以先用 `--verify` / `--dry-run` 零触碰预演。
 
 ```bash
@@ -13,7 +15,7 @@ bash "$REPO/ops/bin/stand-jar-pull" --verify
 # ② 全流程演练: 下载→SHA 对账→落位→切指针 全在临时沙箱 root
 bash "$REPO/ops/bin/stand-jar-pull" --dry-run
 
-# ③ 实际替换（等作者令）: 拉 KAI 最新 jar → versions/<v>/ 原子落位 → 切 current-version
+# ③ 实际替换（日常流）: 拉 KAI 最新 jar → versions/<v>/ 原子落位 → 切 current-version
 bash "$REPO/ops/bin/stand-jar-pull"
 ```
 
@@ -49,6 +51,15 @@ KAI_JAR_DIR="D:/build/out" ops/bin/stand-jar-pull               # 换 KAI 出包
 - ssh 通道：Mac `~/.ssh/config` `Host kai`（Tailscale 100.91.165.120）；BatchMode 免密。
 - 基线同步：Mac→KAI 走 bundle 通道（`git-receive-pack` 在 Windows PATH 缺位，push 直连不可用）：
   `git bundle create /tmp/x.bundle <kai-head>..main && scp` → KAI `git fetch <bundle> main && git merge --ff-only FETCH_HEAD`。
+
+## 版本名（dev 出包纪律）
+
+- KAI 日常 dev 出包：构建前把仓 VERSION 覆写为 `YYYY.MM.DD-dev.<main HEAD 短sha>`
+  （sbt 启动时读 VERSION，jar 文件名与 jar 内 runtime version 一并生效），**打包完立即还原**。
+  拉指定版本用 `--version <v>`。
+- **不要让 dev 构建挂 release 版名**：本脚本按文件名落位，release 名会落进 Mac 侧同名
+  版本目录、把不可变的 release 包挤去 `.bak`（2026-10-26 01:03 首替事故，当批已按
+  「还原发布包 → dev 名重建重拉」更正并写入 README 纪律）。
 
 ## 回滚
 

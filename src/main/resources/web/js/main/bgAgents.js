@@ -210,6 +210,9 @@ function visibleBgAgentEntries(bgAgents) {
 // 后台合并批（2026-10-23 ⑥）：子智能体行现居合并载体 #bg-dropdown —— 在开判据
 // 随行落点改读载体（旧幽灵面恒 display:none，读它会让 uptimes 永停）。
 let bgUptimeTick = null;
+// bg-panel-ghost-resync 批（2026-10-28）：uptick 拍数计数（每 2 拍 = 30s 一次
+// 快照回填，见 armBgUptimeTick 内注释）。
+let bgUptimeTicks = 0;
 export function armBgUptimeTick(view) {
   if (bgUptimeTick) clearTimeout(bgUptimeTick);
   bgUptimeTick = setTimeout(() => {
@@ -227,6 +230,18 @@ export function armBgUptimeTick(view) {
         ensureMergeQueueStatus().then((changed) => {
           if (changed) renderBgAgentDropdown();
         }).catch(() => {});
+      }
+      // bg-panel-ghost-resync 批（2026-10-28）：面板在开 ⇒ 每第 2 拍（30s，与
+      // BG_SNAPSHOT_STALE_MS 对齐）回填一次 activeAgents 快照。幽灵行清道夫
+      // （合并规则②记 _missSince + 规则③ 30s 陈旧淘汰）只吃快照，而快照旧来
+      // 只在「开面板那一下」与「WS 重连」两个事件流——单张快照只给幽灵行**起表**，
+      // 永无第二张来**销账**，终态帧丢失（断线/引擎重启/OS 休眠）的行便以
+      // 「空闲 N 分钟」挂屏 12h+（作者面板 2026-10-27 实证：深空图源批止损后
+      // 17 行僵尸滞留整天）。可见性门：后台标签页零取数（与 hotStamp 45s 门
+      // 轮询同律）；fetchActiveAgentsOnOpen 自带 1s 冷却，与开面板取数不叠加。
+      if ((++bgUptimeTicks % 2) === 0 &&
+          (typeof document === 'undefined' || document.visibilityState === 'visible')) {
+        fetchActiveAgentsOnOpen();
       }
       armBgUptimeTick(view);
     }
