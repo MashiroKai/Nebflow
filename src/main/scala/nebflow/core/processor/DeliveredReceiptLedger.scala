@@ -119,15 +119,70 @@ object DeliveredReceiptLedger:
     e.correlationId.exists(_.nonEmpty)
 
   /**
+   * 事件身份键（不过时批 2026-10-29 · 作者令「消息按 (sessionId, kind, 幂等键)
+   * 去重」的幂等键面）：raw correlationId ＋ delegate 终态回执的**归位 id**
+   * （redeliveryOf 元数据优先、`delivery-redelivery-<id>` 前缀剥离次之——重投件
+   * 与原件同一身份）。无 correlationId = Nil（永放行——既有纪律：同文多次通知
+   * 是合法形态，载荷摘要不具身份唯一性）。
+   */
+  def identityKeys(e: AgentCommand.ExternalEvent): List[String] =
+    val raw = e.correlationId.filter(_.nonEmpty).toList
+    val resolved = nebflow.core.delegate.DelegateDeliveryReceipts.ackableReceiptId(e).toList
+    (raw ++ resolved).distinct
+
+  /**
+   * 事件列的身份键展开（markDelivered 喂养面）：注入腿标记时把重投件的原件 id
+   * 一并标记，重启重放闸 / intake 闸按身份命中。
+   */
+  def identityKeysOf(events: List[AgentCommand.ExternalEvent]): List[String] =
+    events.flatMap(identityKeys).distinct
+
+  /**
+   * intake 判重（纯函数，spec 判红锚）：事件身份键与**已投标记集**或**待发队列
+   * 里任一事件的身份键**相交 = 重复件（2026-10-29 21:49→21:59 cancel 回执双投
+   * 实证：原件在忙父队列滞留未注入，sweep 按 10min grace 重投改写 correlationId
+   * → 两件同入回合）。无身份键恒 false（永放行）。
+   */
+  private[processor] def isDuplicateIdentity(
+    delivered: Set[String],
+    pending: List[AgentCommand.ExternalEvent],
+    e: AgentCommand.ExternalEvent
+  ): Boolean =
+    val ids = identityKeys(e)
+    ids.nonEmpty && (ids.exists(delivered.contains) ||
+      pending.exists(p => identityKeys(p).exists(ids.contains)))
+  end isDuplicateIdentity
+
+  /**
+   * intake 闸（IO 面，消费点 = AgentProcessing/AgentIdle 的 ExternalEvent 收件口）：
+   * false = 重复件——调用方丢弃并留审计，不进 pendingEvents、不注入（同一会话内
+   * 恰一次）。读失败 = 放行（fail-open——簿记面故障绝不造成丢件，既有纪律）。
+   */
+  def intakeAccepts(
+    sessionId: String,
+    pending: List[AgentCommand.ExternalEvent],
+    e: AgentCommand.ExternalEvent
+  ): IO[Boolean] =
+    if identityKeys(e).isEmpty then IO.pure(true)
+    else
+      load(sessionId).map(delivered => !isDuplicateIdentity(delivered, pending, e))
+        .handleErrorWith(_ => IO.pure(true))
+
+  /**
    * 注入前闸（纯函数，spec 判红锚）：给定已投标记集，把事件列分成
    * （放行件, 已投被滤件）。无 correlationId 的事件**恒放行**（不入账不过滤——
-   * 语义零回退）；有 id 且已标记 ⇒ 滤除。
+   * 语义零回退）；有身份键且**任一键已标记** ⇒ 滤除（不过时批 2026-10-29：判重
+   * 从 raw correlationId 升级为身份键——重投件按归位 id 命中已投标记，重启重放
+   * 不再复活原件已投递过的重投件）。
    */
   private[processor] def partitionDelivered(
     delivered: Set[String],
     events: List[AgentCommand.ExternalEvent]
   ): (List[AgentCommand.ExternalEvent], List[AgentCommand.ExternalEvent]) =
-    events.partition(e => !hasStableId(e) || !delivered.contains(e.correlationId.getOrElse("")))
+    events.partition { e =>
+      val ids = identityKeys(e)
+      ids.isEmpty || !ids.exists(delivered.contains)
+    }
 
   /**
    * 注入前闸（IO 面）：读标记集 → [[partitionDelivered]]。返回 (放行件, 被滤件)。

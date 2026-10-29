@@ -64,6 +64,15 @@ object DelegateTerminal:
 
     /** ready-to-merge：保活等合并轮（预算重挂由监督者执行）。 */
     case object HoldForMerge extends Outcome
+
+    /**
+     * 道忙重排（投递可靠性批 2026-10-29 · 病灶②，作者令 23:57 范围补充②）：
+     * 合并轮拒绝的原因是**道被占**（他批合法占道解冲突 / 孤儿未收殓 / 外来手工
+     * 合并）——不是本批的失败。成员资格保留（MergeQueue.requeueForLane 退回
+     * waiting），会话停靠保活，道净后 careTick 放行腿自动重排。只有道净/己方
+     * 残留的拒绝才走 Release+Refused 关账 failed。
+     */
+    final case class RequeueForLane(reason: String) extends Outcome
   end Outcome
 
   /**
@@ -229,6 +238,24 @@ object DelegateTerminal:
             s"mechanical merge acceptance refused the release (the delegate/verdict claimed a completed merge): ${r.evidence}"
           )
         case _ => finalVerdict0b
+      // 病灶②（投递可靠性批 2026-10-29，作者令 23:57「道忙应 REQUEUE」）：机械
+      // 验收拒绝 × 道被占（非己残留、非道净真拒绝）⇒ 判定改走 RequeueForLane——
+      // 成员资格保留 + 会话停靠保活，道净自动重排；不写 terminal-verdict 行
+      // （非终态；审计行由 MergeQueue.requeueForLane 的 lane-requeued 承担）。
+      laneRequeueReason <-
+        if mergeRound && acceptance.exists(!_.ok) then
+          IO.blocking {
+            MergeQueue
+              .find(delegateId)
+              .filter(m => m.open && m.state == MergeQueue.State.TurnGranted)
+              .map { m =>
+                MergeQueue.laneVerdictFor(m) match
+                  case MergeQueue.LaneVerdict.Clear | MergeQueue.LaneVerdict.OwnLeftover => None // 真拒绝（道净/己方残留）
+                  case other => Some(MergeQueue.laneBlockReason(other))
+              }
+              .getOrElse(None)
+          }.handleErrorWith(e => IO(logger.warn(s"lane requeue classification failed: ${e.getMessage}")).as(None))
+        else IO.pure(None: Option[String])
       // P2-3 工作座位注记（不阻断）：completed 判词 + 领先提交且未入队——诚实化
       // 注记（判词归判定机，引擎只记账）。worktree 座位已被 queueFlip 翻转入队；
       // 本注记只剩就地座位与翻转降级形态（合并轮的同形态已被上方验收闸拦下）。
@@ -259,16 +286,19 @@ object DelegateTerminal:
         else if acceptance.exists(!_.ok) then "merge-verify"
         else if unjudged then "unjudged"
         else "judge"
-      _ = logVerdict(delegateId, taskId, finalVerdict, unjudged)
+      // 终态判词行（审计）。病灶②重排腿不写（非终态——lane-requeued 行由
+      // MergeQueue.requeueForLane 承担）。
       _ <- IO
-        .blocking(
-          ChainStore.appendSync(
-            ChainStore.keyFor(taskId, delegateId),
-            "terminal-verdict",
-            DelegateJudge.verdictPayload(delegateId, taskId, finalVerdict, source = source)
-          )
+        .whenA(laneRequeueReason.isEmpty)(
+          IO.blocking(
+            ChainStore.appendSync(
+              ChainStore.keyFor(taskId, delegateId),
+              "terminal-verdict",
+              DelegateJudge.verdictPayload(delegateId, taskId, finalVerdict, source = source)
+            )
+          ).handleErrorWith(e => IO(logger.warn(s"terminal-verdict chain line failed: ${e.getMessage}")))
         )
-        .handleErrorWith(e => IO(logger.warn(s"terminal-verdict chain line failed: ${e.getMessage}")))
+      _ = logVerdict(delegateId, taskId, finalVerdict, unjudged)
       outcome <- finalVerdict match
         case DelegateJudge.Verdict.ReadyToMerge =>
           holdForMerge(resources, record, delegateId, parentSessionId, childRef, supervisorRef, resultText)
@@ -290,17 +320,21 @@ object DelegateTerminal:
         case DelegateJudge.Verdict.CompletedNote(note) =>
           // #566：退役 blocked 的唯一残留出口——completed 判词＋注记交付（注记 =
           // 报告内容，不是状态）。合并轮上的注记形 = 合并未干净落地（机械验收
-          // 拒绝等）⇒ 队列成员关账 failed(原因)——无重试无 park（台账 #896）；
-          // 非合并轮注记 = 普通完成注记，语义不变。
-          val refused =
-            if mergeRound && acceptance.exists(!_.ok) then Some(MergeQueue.RoundOutcome.Refused(note))
-            else None
-          IO.pure(
-            Outcome.Release(
-              s"${verdictLineCompleted(unjudged = false)}\n[delegate-judge] note: $note" + workAppendix,
-              refused
+          // 拒绝等）。病灶②（投递可靠性批 2026-10-29）：拒绝原因是道忙 ⇒ 不关账
+          // 不停会话——成员资格保留重排（RequeueForLane），道净后自动重排；
+          // 道净/己方残留的真拒绝照旧关账 failed——无重试（处置归 dispatcher）。
+          if laneRequeueReason.isDefined then
+            IO.pure(Outcome.RequeueForLane(laneRequeueReason.get + s" [mechanical-acceptance note: ${note.take(300)}]"))
+          else
+            val refused =
+              if mergeRound && acceptance.exists(!_.ok) then Some(MergeQueue.RoundOutcome.Refused(note))
+              else None
+            IO.pure(
+              Outcome.Release(
+                s"${verdictLineCompleted(unjudged = false)}\n[delegate-judge] note: $note" + workAppendix,
+                refused
+              )
             )
-          )
     yield outcome
     end for
   end onCompleted

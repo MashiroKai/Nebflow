@@ -543,10 +543,22 @@ When to use:
           // without a terminal event; held>0 = results parked waiting for the batch.
           // held-receipt 批（fix 3）：held 列追加 unread 终态计数（催注穷尽的未读
           // 回执）——`o/h(+u)` 形态，u>0 即「父会话有 N 条回执注入不了」的可见积压。
+          // 投递可靠性批 2026-10-29（可观测③，作者令「给 barrier 列补
+          // pendingDelivery 可见性」）：追加 `!N` = 本会话**作为父**名下未确认
+          // （未 ack）的 delegate 交付回执数——「子代理终态已发、父会话尚未注入
+          // 确认」的在途投递（含停靠投递与合并回执）。N>0 且持续 = 投递链可疑，
+          // sweep 会按 grace 重投。
+          val pendingDelivery =
+            try
+              nebflow.core.delegate.DelegateDeliveryReceipts.list().count(r =>
+                r.parentSessionId == rec.sessionId && r.ackedAt.isEmpty
+              )
+            catch case _: Throwable => 0
           val barrier =
-            if rec.outstandingSubagents > 0 || rec.pendingEventCount > 0 || rec.unreadReceiptCount > 0 then
+            if rec.outstandingSubagents > 0 || rec.pendingEventCount > 0 || rec.unreadReceiptCount > 0 || pendingDelivery > 0 then
               val base = s"${rec.outstandingSubagents}/${rec.pendingEventCount}"
-              if rec.unreadReceiptCount > 0 then s"$base(+${rec.unreadReceiptCount})" else base
+              val withUnread = if rec.unreadReceiptCount > 0 then s"$base(+${rec.unreadReceiptCount})" else base
+              if pendingDelivery > 0 then s"$withUnread!$pendingDelivery" else withUnread
             else "-"
           List(
             rec.sessionId,

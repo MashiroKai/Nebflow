@@ -549,6 +549,105 @@ object MergeQueue:
           logger.warn(s"[merge-queue] reason scan failed: ${e.getMessage}")
           Map.empty
 
+  // ── 合并道闸（投递可靠性批 2026-10-29 · 病灶三型收口）──────────────────
+  //
+  // 病灶（作者令 2026-10-29 23:44/23:55/23:57/00:13 四段范围）：
+  //   ① 属主死在道中（孤儿 MERGE_HEAD）——后续批 merge 撞 exit 128；
+  //   ② 健康占道被误关账——道忙（他批合法占道解冲突）被机械验收判 REFUSED 关账
+  //     failed（今晚 a464fdc0 / b3020083 两例，健康分支逼人工重派）；
+  //   ③ 窗口完成不销账——合并 commit 已落 main、属主死灭，窗仍 turn-granted。
+  //
+  // 收口（单一判据 = MERGE_HEAD 读数 × 属主活性）：
+  //   - 授窗前（[[grant]]）：道闸 [[laneVerdictFor]]——占道即不授（等待者
+  //     requeueBlocked，#943 必通知），绝不把合并轮放进被占的道；
+  //   - 合并轮结算（DelegateTerminal.onCompleted × [[laneVerdictFor]]）：拒绝原
+  //     因 = 道忙 ⇒ [[Outcome.RequeueForLane]]（保成员资格、会话停靠保活、道净
+  //     后自动重排）——只有「己方残留/道净真拒绝」才关账 failed；
+  //   - 属主死亡事件（[[markOwnerGone]]）：残留 MERGE_HEAD == 本成员分支 tip ⇒
+  //     `git merge --abort`（孤儿收场，作者裁定 23:55「倾向=abort 回滚」）；
+  //   - 每拍看护（[[careTick]]）：持窗成员先账实核对（合并 commit 已落 = 立即
+  //     销账 + pump 下一位，不依赖属主下一拍主动还窗——病灶③），再持窗尸体判死
+  //     （死 ⇒ owner-gone，abort 随 markOwnerGone 收场——病灶①）。
+
+  /** 合并道判读（[[classifyLane]] 的产物；spec 判红锚四态 + abort 决策面）。 */
+  sealed trait LaneVerdict extends Product with Serializable
+  object LaneVerdict:
+    /** 道净（无 MERGE_HEAD）。 */
+    case object Clear extends LaneVerdict
+    /** 己方残留：MERGE_HEAD == 本成员分支 tip（自家上一次冲突合并的未收场态）。 */
+    case object OwnLeftover extends LaneVerdict
+    /** 道忙：占道者会话存活（他批合法占道解冲突）——等待，绝不 abort。 */
+    final case class BusyLive(ownerId: String) extends LaneVerdict
+    /** 占道者会话已死但未收殓（careTick 一拍内收口）——等待一拍。 */
+    final case class BusyDeadHolder(ownerId: String) extends LaneVerdict
+    /** 外来占道：无法归属任何队列成员（人的手工合并/未知分支）——等待 + 通知，
+      * **绝不 abort**（作者在解冲突时被引擎 abort = 事故）。 */
+    case object Foreign extends LaneVerdict
+  end LaneVerdict
+
+  /**
+   * 纯判读（spec 判红锚，零 git 零锁）：MERGE_HEAD 缺席 = Clear；== 我分支 tip =
+   * OwnLeftover；归属属主按活性分派 BusyLive / BusyDeadHolder；归属失败 = Foreign。
+   * `myBranchTip` 缺席（ref 不可读）= fail-open 视作 Foreign（不误判己方残留）。
+   */
+  private[delegate] def classifyLane(
+    mergeHead: Option[String],
+    myBranchTip: Option[String],
+    occupierOwner: Option[(String, Boolean)] // (delegateId, sessionAlive)
+  ): LaneVerdict =
+    mergeHead match
+      case None => LaneVerdict.Clear
+      case Some(mh) =>
+        if myBranchTip.contains(mh) then LaneVerdict.OwnLeftover
+        else
+          occupierOwner match
+            case Some((id, true)) => LaneVerdict.BusyLive(id)
+            case Some((id, false)) => LaneVerdict.BusyDeadHolder(id)
+            case None => LaneVerdict.Foreign
+  end classifyLane
+
+  /**
+   * git × 账本读数面（grant 与合并轮结算共用单点）：读 baseWs MERGE_HEAD + 本成员
+   * 分支 tip + 占道者归属（开放成员分支 tip 命中 MERGE_HEAD；活性 = 内部腿探针，
+   * 无内部腿 = 不活——重启后通道丢失的诚实面）。读数任何一步不可得 = Foreign
+   * （fail-open：不可确证绝不 abort，等待+通知）。
+   */
+  private[delegate] def laneVerdictFor(m: Member): LaneVerdict =
+    val ws = Try(os.Path(m.baseWs)).toOption
+    val mh = ws.filter(os.exists(_)).flatMap(GitWorktrees.mergeHead)
+    val myTip = ws.flatMap(w => GitWorktrees.resolveRef(w, m.branch))
+    val occupier: Option[(String, Boolean)] = mh.flatMap { head =>
+      lock.synchronized {
+        ensureLoadedLocked()
+        members.values.find(mm => mm.open && mm.delegateId != m.delegateId && branchTipIs(ws, mm.branch, head))
+      }.map { occupier =>
+        val alive = occupier.internal.exists(leg => childAlive(leg.childRef))
+        (occupier.delegateId, alive)
+      }
+    }
+    classifyLane(mh, myTip, occupier)
+  end laneVerdictFor
+
+  /** 分支 tip == sha 判定（fail-soft：不可读 = 不命中）。 */
+  private def branchTipIs(ws: Option[os.Path], branch: String, sha: String): Boolean =
+    ws.flatMap(w => GitWorktrees.resolveRef(w, branch)).contains(sha)
+
+  /** 道闸是否放行（grant 用）：Clear / OwnLeftover（自家残留由合并 brief 教学 abort+重试）放行。 */
+  private def laneGrants(v: LaneVerdict): Boolean = v match
+    case LaneVerdict.Clear | LaneVerdict.OwnLeftover => true
+    case _ => false
+
+  /** 道闸阻塞原因文本（#943 必通知的原因全文；🔴 模型/面板可见）。 */
+  private[delegate] def laneBlockReason(v: LaneVerdict): String = v match
+    case LaneVerdict.BusyLive(id) =>
+      s"merge lane busy: another queue member's merge round is in progress (MERGE_HEAD belongs to '$id', session alive and resolving) — waiting for the lane to clear"
+    case LaneVerdict.BusyDeadHolder(id) =>
+      s"merge lane busy: holder '$id' session is dead with an unfinished merge (orphan MERGE_HEAD) — pending care-tick reap and abort"
+    case LaneVerdict.Foreign =>
+      s"merge lane busy: an unattributed merge is in progress (MERGE_HEAD matches no queue member — likely a manual/human merge) — waiting; the engine never aborts a merge it cannot attribute"
+    case other =>
+      s"merge lane blocked: $other"
+
   // ── 入队（waiting） ───────────────────────────────────────────────────
 
   /**
@@ -624,14 +723,22 @@ object MergeQueue:
         return
       case false => ()
     end match
-    // ② 净空闸（引擎侧 base 净空维护——白名单工件还原/收编；非合并执行）。
+    // ② 合并道闸（病灶①②收口，2026-10-29）：MERGE_HEAD 在场 = 道被占——占道
+    // 即不授（等待者 requeueBlocked 留队必通知，道净后 careTick 重排）；绝不把
+    // 合并轮放进被占的道（今晚 a464fdc0/b3020083 撞 exit 128 被误关账的预防位）。
+    // 自家残留（OwnLeftover）放行——合并 brief 教学 abort+重试，属内自愈。
+    val lane = laneVerdictFor(reserved)
+    if !laneGrants(lane) then
+      requeueBlocked(reserved, laneBlockReason(lane))
+      return
+    // ③ 净空闸（引擎侧 base 净空维护——白名单工件还原/收编；非合并执行）。
     baseReady(reserved) match
       case Left(blockReason) =>
         requeueBlocked(reserved, blockReason)
         return
       case Right(baseTip) => ()
     end match
-    // ③ 放行 = 通知（属主自己执行合并并回报）。
+    // ④ 放行 = 通知（属主自己执行合并并回报）。
     notifyTurn(reserved, channelPremised) match
       case NotifyResult.Delivered =>
         val tip = baseTipOf(reserved)
@@ -859,8 +966,12 @@ object MergeQueue:
   /**
    * 关账 owner-gone（幂等）：属主失联——通知不可达 / 会话终态 / 重启后通道丢失。
    * 关账前**先账实核对**：期间被并（human/别的轮次）⇒ 关 merged 而非 owner-gone
-   * （今晚「分支已落定仍在账上罚站」的消除闸）。升级通知经 [[OwnerGonePort]]
-   * （面板「需 dispatcher 处置」的数据源；绝不静默）。
+   * （今晚「分支已落定仍在账上罚站」的消除闸）。
+   * **孤儿合并收场（投递可靠性批 2026-10-29 · 病灶①，作者令 23:55 范围补充 A）**：
+   * 属主已死 + 主工作区残留 MERGE_HEAD == 本成员分支 tip = 引擎所授合并轮的孤儿
+   * 残留（死在解冲突/提交途中）⇒ `git merge --abort` 回滚 + 审计行（merge-lane
+   * orphan-abort）——恢复语义非代并（作者裁定「倾向=abort 回滚 + 合并轮作废重排」）。
+   * MERGE_HEAD 指向他人分支/不可归属 = 零触碰（人的手工合并绝不可 abort）。
    */
   def markOwnerGone(delegateId: String, reason: String): Unit =
     val mOpt = lock.synchronized {
@@ -871,6 +982,7 @@ object MergeQueue:
       if alreadyMerged(m) then
         closeMerged(delegateId, via = "fact-check-on-owner-gone", closeReason = Some("owner gone, but the branch was already merged — closed as merged"), cleanup = true)
       else
+        abortOrphanMergeLeftover(m, via = s"owner-gone: $reason")
         val closed = lock.synchronized {
           members.get(delegateId) match
             case Some(cur) if cur.open =>
@@ -889,6 +1001,63 @@ object MergeQueue:
         }
     }
   end markOwnerGone
+
+  /**
+   * 孤儿合并残留收场（[[markOwnerGone]] / careTick 持窗尸体判死共用）：仅当
+   * MERGE_HEAD == 本成员分支 tip（死属主自己的未收场合并态）才 `git merge
+   * --abort`；其余形态零触碰。全程审计（ChainStore `merge-queue` 行
+   * action=orphan-abort / orphan-abort-skipped + WARN）。
+   */
+  private def abortOrphanMergeLeftover(m: Member, via: String): Unit =
+    val ws = Try(os.Path(m.baseWs)).toOption
+    val mh = ws.filter(os.exists(_)).flatMap(GitWorktrees.mergeHead)
+    val mine = branchTipIs(ws, m.branch, mh.getOrElse(""))
+    (mh, mine) match
+      case (Some(head), true) =>
+        val aborted = ws.exists(GitWorktrees.abortMerge)
+        logger.warn(
+          s"[merge-queue] orphan merge ${if aborted then "ABORTED" else "abort FAILED"} for '${m.delegateId}' " +
+            s"(branch '${m.branch}', MERGE_HEAD=$head): $via — recovery semantics, not an engine merge"
+        )
+        record(
+          m,
+          "orphan-abort",
+          Json.obj("mergeHead" -> head.take(12).asJson, "aborted" -> aborted.asJson, "via" -> via.take(300).asJson)
+        )
+      case (Some(head), false) =>
+        // 残留指向他人/未知分支——零触碰（人的手工合并形态），只留痕。
+        record(
+          m,
+          "orphan-abort-skipped",
+          Json.obj("mergeHead" -> head.take(12).asJson, "reason" -> "MERGE_HEAD does not belong to this member's branch — untouched".asJson)
+        )
+      case _ => () // 道净（无 MERGE_HEAD）= 无收场动作
+  end abortOrphanMergeLeftover
+
+  /**
+   * 合并轮道忙重排（投递可靠性批 2026-10-29 · 病灶②，作者令 23:57 范围补充②）：
+   * 合并轮结算发现拒绝原因是道忙（他批合法占道/孤儿未收殓/外来手工合并）⇒ 成员
+   * **保留资格退回 waiting**（turn-granted → waiting，grantedAt 清空、阻塞原因
+   * 入账、#943 必通知），会话由监督者停靠保活；道净后 careTick 放行腿自动重排
+   * （重授 → 重新注入合并轮指令）。查无开放成员/已关账 = no-op（幂等）。
+   */
+  def requeueForLane(delegateId: String, reason: String): Unit =
+    val memoTarget = lock.synchronized {
+      ensureLoadedLocked()
+      members.get(delegateId) match
+        case Some(cur) if cur.state == State.TurnGranted =>
+          val back = cur.copy(state = State.Waiting, grantedAt = None, grantedBaseTip = None, lastBlockReason = Some(reason.take(2000)))
+          members = members.updated(delegateId, back)
+          persistLocked()
+          record(back, "lane-requeued", Json.obj("reason" -> reason.take(2000).asJson))
+          Some(back)
+        case _ => None
+    }
+    memoTarget.foreach { m =>
+      logger.warn(s"[merge-queue] merge round re-queued for '${m.delegateId}' (lane busy, membership kept): $reason")
+      noteBlockedOrFailed(m, "blocked", reason)
+    }
+  end requeueForLane
 
   /** IO 包装。 */
   def markOwnerGoneIO(delegateId: String, reason: String): IO[Unit] = IO.blocking(markOwnerGone(delegateId, reason))
@@ -953,17 +1122,29 @@ object MergeQueue:
 
   /**
    * 一拍看护（事件判据，零时间判据）：
-   *   - 持窗成员（turn-granted）内部腿属主 actor 已死 ⇒ owner-gone（窗绝不许尸体持死）；
-   *   - 每个有开放成员的 project 补一拍放行尝试（净空转洁 / 阻碍消除后自然推进）。
+   *   - 持窗成员（turn-granted）**先账实核对**（投递可靠性批 2026-10-29 · 病灶③，
+   *     作者令 00:13「窗口释放必须绑定合并 commit 落 main 或属主终态事件自动销账，
+     *     不依赖属主下一拍主动还窗」）：分支已是基分支祖先 = 合并真落地 ⇒ 立即关账
+   *     merged + pump 下一位（属主死灭/迟报/漏报都不再扣窗）；
+   *   - 持窗成员内部腿属主 actor 已死 ⇒ owner-gone（窗绝不许尸体持死；孤儿
+   *     MERGE_HEAD 收场随 [[markOwnerGone]] 的 abort 腿——病灶①）；
+   *   - 每个有开放成员的 project 补一拍放行尝试（净空转洁 / 阻碍消除 / 道净后
+   *     重排成员的自然推进——病灶②的重排兑现腿）。
    * 幂等：动作过的成员已关账，重复扫描零重复动作。
    */
   def careTick(): Unit =
     val granted = snapshot.filter(m => m.state == State.TurnGranted)
     granted.foreach { m =>
-      m.internal match
-        case Some(leg) if !childAlive(leg.childRef) =>
-          markOwnerGone(m.delegateId, "merge-round holder session is no longer live — needs dispatcher handling")
-        case _ => ()
+      if alreadyMerged(m) then
+        logger.info(
+          s"[merge-queue] care-tick fact-check: '${m.delegateId}' branch already merged into base — closing the window without waiting for the owner (stale-holder release)"
+        )
+        closeMerged(m.delegateId, via = "fact-check-care-tick", closeReason = Some("merge landed (care-tick fact-check; owner did not report back)"), cleanup = true)
+      else
+        m.internal match
+          case Some(leg) if !childAlive(leg.childRef) =>
+            markOwnerGone(m.delegateId, "merge-round holder session is no longer live — needs dispatcher handling")
+          case _ => ()
     }
     snapshot.map(_.projectKey).distinct.foreach(pump)
 
@@ -1039,7 +1220,8 @@ Read-only pre-check FIRST (zero writes): run `git -C ${m.baseWs} merge-base --is
 Otherwise execute the merge EXACTLY like this (single command, no flags beyond these):
   git -C ${m.baseWs} merge --no-ff ${m.branch}
 This merges your branch into the base branch `${m.baseBranch}`. Do NOT merge anywhere else, do NOT force-push, do NOT rebase, do NOT touch other branches or other sessions' work.
-If git refuses or reports conflicts: STOP — change nothing, resolve nothing; report the refusal/conflict verbatim in your final text, call delegate_report(category="finish", detail=<the refusal/conflict>), and end your turn (there is no blocked category — the refusal is your report's content, not a state; the queue closes your membership as failed — no automatic retries).
+Special case — YOUR OWN leftover merge state: if the merge refuses with "you have unmerged files" / "cannot merge ... unresolved conflicts" AND `git -C ${m.baseWs} rev-parse MERGE_HEAD` equals YOUR branch tip (an earlier conflicted attempt of your own round), recover IN THIS ROUND: run `git -C ${m.baseWs} merge --abort`, then re-run the single merge command above once. Never abort when MERGE_HEAD points at someone else's branch.
+If git refuses or reports conflicts: STOP — change nothing, resolve nothing; report the refusal/conflict verbatim in your final text, call delegate_report(category="finish", detail=<the refusal/conflict>), and end your turn (there is no blocked category — the refusal is your report's content, not a state; a lane-busy refusal re-queues your membership automatically — a genuine refusal closes it as failed, no automatic retries).
 On success, call delegate_report(category="finish", detail=<what the merge landed>) and end with your final report; the engine re-judges the merge round. Your final report must LEAD with the work result (what the task produced, artifacts, REPORT.md paths) and keep the merge info to one line — the parent session reads this report as the task's result.
 </system-reminder>"""
   end mergeBriefFor

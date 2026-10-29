@@ -489,9 +489,10 @@ private[agent] object AgentFinishTurn:
         // （忙碌父会话的注入面在本文而非 AgentIdle——回执只认注入不认持有）。
         _ <- drainedEvents.traverse_(nebflow.core.delegate.DelegateDeliveryReceipts.ackEvent)
         // #886 完成回执重启去重批：注入即标记（持久投递标记——重启恢复重放闸判据）。
+        // 不过时批 2026-10-29：按身份键标记（重投件的原件 id 随行）。
         _ <- nebflow.core.processor.DeliveredReceiptLedger.markDelivered(
           state.sessionId.getOrElse(""),
-          drainedEvents.flatMap(_.correlationId)
+          nebflow.core.processor.DeliveredReceiptLedger.identityKeysOf(drainedEvents)
         )
         // 台账对账 + 徽标帧（平台修复批 fix 1/3）：drainBarrier 投递面——已投递回执
         // 出账、余件保簿记；held 计数下降随行。

@@ -60,8 +60,10 @@ object DelegateDeliveryReceipts:
    *   - 普通件 ⇒ correlationId 原值；
    *   - 事件须为 delegate 终态（source × eventType 词表闸），id 过 [[validId]]。
    *     解析不出合法 id ⇒ None（ackEvent no-op，既有宽容面）。
+   * 不过时批 2026-10-29 放宽可见性（private[delegate] → public）：消费方扩至
+   * DeliveredReceiptLedger.identityKeys（intake 判重的归位 id 面）。
    */
-  private[delegate] def ackableReceiptId(event: AgentCommand.ExternalEvent): Option[String] =
+  def ackableReceiptId(event: AgentCommand.ExternalEvent): Option[String] =
     if !(event.source == "delegate" && TerminalEventTypes.contains(event.eventType)) then None
     else
       val fromMeta = event.metadata("redeliveryOf").flatMap(_.asString).filter(validId)
