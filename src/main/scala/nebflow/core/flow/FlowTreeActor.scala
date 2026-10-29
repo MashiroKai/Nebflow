@@ -7,7 +7,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.core.AgentRuntimePort
 import nebflow.core.entity.{EntityLoader, TeamDef}
-import nebflow.shared.{Message, MessageRole, NebflowLogger}
+import nebflow.shared.NebflowLogger
 
 // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M1/M6):定位器参数窄化,AgentActor 构造改经工厂镜像
 // ============================================================
@@ -15,15 +15,20 @@ import nebflow.shared.{Message, MessageRole, NebflowLogger}
 // ============================================================
 //
 // In the unified model, this actor only manages Team agent sessions.
-// Flow DAG execution is handled entirely by FlowDagExecutor/FlowDagRunner
-// via the FlowTrigger tool.
+// (The Flow DAG engine face — FlowTrigger/FlowExecute tools + FlowDagRunner —
+// is retired: tools 2026-09-06, runner residual removed in the R4 hygiene
+// batch 2026-10-29.)
 //
 // Responsibilities:
-//   1. Mount/unmount: create/remove team agent sessions
+//   1. Mount: create team agent sessions (Load tool; restore on startup)
 //   2. Restore: on startup, recreate sessions from MountedFlowStore
-//   3. Hot reload: file changes → diff-based team update
+//   3. Hot reload: def file changes → diff-based team update (incl. removal)
 //   4. Cancel: stop all running actors for a team
-//   5. Crash recovery: resume interrupted turns
+//
+// R4 legacy-hygiene batch (2026-10-29): removed the dead crash-recovery
+// subtree — TurnStateStore.save had no production writer (the restore path
+// read files nothing ever wrote) and UnmountBranch/WatchAgent/ResumeAgent/
+// Shutdown had zero senders repo-wide.
 
 /**
  * Global registry for team session lookups (replaces FlowMembership).
@@ -293,7 +298,6 @@ object FlowTreeActor:
       given ActorContext[TreeCommand] = ctx
 
       val flowNamesRef = Ref.unsafe[IO, Map[String, String]](Map.empty) // instanceName → teamName
-      val watchedAgentsRef = Ref.unsafe[IO, Map[String, ActorRef[AgentCommand]]](Map.empty)
 
       for
         _ <- logger.info(s"FlowTreeActor started for session ${config.sessionId}")
@@ -301,9 +305,6 @@ object FlowTreeActor:
           logger
             .error(s"restoreTeams failed: ${e.getMessage}\n${e.getStackTrace.take(5).map(_.toString).mkString("\n")}")
             .void
-        )
-        _ <- restoreInterruptedTurns(flowNamesRef, config).handleErrorWith(e =>
-          logger.error(s"restoreInterruptedTurns failed: ${e.getMessage}").void
         )
         // Notify frontend that teams are now available
         restoredNames <- flowNamesRef.get
@@ -316,7 +317,7 @@ object FlowTreeActor:
             startFileWatcher(ctx, config)
               .handleErrorWith(e => logger.error(s"startFileWatcher failed: ${e.getMessage}").void)
           else IO.unit
-      yield running(flowNamesRef, watchedAgentsRef, config, ctx)
+      yield running(flowNamesRef, config, ctx)
       end for
     }
 
@@ -326,7 +327,6 @@ object FlowTreeActor:
 
   private def running(
     flowNamesRef: Ref[IO, Map[String, String]],
-    watchedAgentsRef: Ref[IO, Map[String, ActorRef[AgentCommand]]],
     cfg: TreeConfig,
     setupCtx: ActorContext[TreeCommand]
   ): Behavior[TreeCommand] =
@@ -339,53 +339,17 @@ object FlowTreeActor:
           )
           .as(this)
 
-      override def onSignal(ctx: ActorContext[TreeCommand], signal: SystemSignal): IO[Behavior[TreeCommand]] =
-        signal match
-          case SystemSignal.Terminated(deadRef) =>
-            for
-              watched <- watchedAgentsRef.get
-              sidOpt = watched.find(_._2 == deadRef).map(_._1)
-              _ <- sidOpt.traverse_ { sid =>
-                for
-                  _ <- TeamSessionRegistry.unregisterActor(sid, cfg.resources)
-                  _ <- TeamSessionRegistry.markIdle(sid)
-                  _ = logger.info(
-                    s"team agent actor stopped: agent='${deadRef.path.name}' session=$sid — registry unregistered, busy cleared"
-                  )
-                  _ <- watchedAgentsRef.update(_ - sid)
-                  turnStateOpt <- TurnStateStore.load(sid)
-                  _ <- turnStateOpt.filter(_.inProgress).traverse_ { ts =>
-                    logger.info(s"Agent '${deadRef.path.name}' terminated with in-progress turn, scheduling resume")
-                    (ctx.self ! TreeCommand.ResumeAgent(sid, ts.turnStartMessageCount, ts.turnIdx)).void
-                  }
-                yield ()
-              }
-            yield this
-
       def receive(ctx: ActorContext[TreeCommand], msg: TreeCommand): IO[Behavior[TreeCommand]] =
         given ActorContext[TreeCommand] = ctx
         msg match
-          case TreeCommand.MountTeam(teamDef, replyTo) =>
-            handleMountTeam(flowNamesRef, cfg, teamDef, replyTo).as(this)
-
-          case TreeCommand.UnmountBranch(name) =>
-            handleUnmount(flowNamesRef, cfg, name).as(this)
+          case TreeCommand.MountTeam(teamDef) =>
+            handleMountTeam(flowNamesRef, cfg, teamDef).as(this)
 
           case TreeCommand.ReloadDefinition(flowName) =>
             handleReload(flowNamesRef, cfg, flowName).as(this)
 
           case TreeCommand.CancelPipeline(name) =>
             handleCancel(cfg, name).as(this)
-
-          case TreeCommand.WatchAgent(ref, sid) =>
-            ctx.watch(ref) *>
-              watchedAgentsRef.update(_ + (sid -> ref)).as(this)
-
-          case TreeCommand.ResumeAgent(sid, turnStart, turnIdx) =>
-            resumeInterruptedAgent(cfg, sid, turnStart, turnIdx).as(this)
-
-          case TreeCommand.Shutdown =>
-            logger.info("FlowTreeActor shutdown").as(Behaviors.stopped[TreeCommand])
         end match
 
       end receive
@@ -398,8 +362,7 @@ object FlowTreeActor:
   private def handleMountTeam(
     flowNamesRef: Ref[IO, Map[String, String]],
     cfg: TreeConfig,
-    teamDef: TeamDef,
-    replyTo: Option[ActorRef[MountResult]]
+    teamDef: TeamDef
   )(using ActorContext[TreeCommand]): IO[Unit] =
     for
       names <- flowNamesRef.get
@@ -419,7 +382,6 @@ object FlowTreeActor:
             _ <- emit(cfg, "treeBranchMounted", "name" -> baseName.asJson, "type" -> "team".asJson)
             _ <- logger.info(s"Team '$baseName' mounted (team: ${teamDef.name})")
           yield ()
-      _ <- replyTo.traverse_(_ ! MountResult.Mounted(baseName, baseName))
     yield ()
 
   private def hotReloadTeam(
@@ -512,28 +474,6 @@ object FlowTreeActor:
     end for
 
   end createSingleTeamSession
-
-  private def handleUnmount(
-    flowNamesRef: Ref[IO, Map[String, String]],
-    cfg: TreeConfig,
-    name: String
-  )(using ActorContext[TreeCommand]): IO[Unit] =
-    for
-      names <- flowNamesRef.get
-      _ <-
-        if names.contains(name) then
-          for
-            _ <- handleCancel(cfg, name)
-            sids <- TeamSessionRegistry.sessionIdsOf(name)
-            _ <- TeamSessionRegistry.unregisterInstance(name)
-            _ <- sids.traverse_(sid => cfg.resources.sessionStore.deleteSession(sid).handleErrorWith(_ => IO.unit))
-            _ <- flowNamesRef.update(_ - name)
-            _ <- persistTeams(flowNamesRef, cfg)
-            _ <- emit(cfg, "treeBranchUnmounted", "name" -> name.asJson)
-            _ <- logger.info(s"Team '$name' unmounted (cleaned ${sids.size} sessions)")
-          yield ()
-        else logger.warn(s"Cannot unmount '$name': not found")
-    yield ()
 
   private def handleCancel(cfg: TreeConfig, name: String): IO[Unit] =
     for
@@ -644,95 +584,6 @@ object FlowTreeActor:
     entries
       .sortBy(e => if e.name == e.flowName then 0 else 1)
       .distinctBy(_.flowName)
-
-  // ============================================================
-  // Crash recovery — restore interrupted turns on startup
-  // ============================================================
-
-  private def restoreInterruptedTurns(
-    flowNamesRef: Ref[IO, Map[String, String]],
-    cfg: TreeConfig
-  )(using ActorContext[?]): IO[Unit] =
-    for
-      teamNames <- flowNamesRef.get
-      _ <- teamNames.toList.traverse_ { (instanceName, _) =>
-        for
-          sessionIds <- TeamSessionRegistry.sessionIdsOf(instanceName)
-          _ <- sessionIds.traverse_ { sid =>
-            for
-              turnStateOpt <- TurnStateStore.load(sid)
-              _ <- turnStateOpt.filter(_.inProgress).traverse_ { ts =>
-                for
-                  messages <- cfg.resources.sessionStore.loadMessagesForSession(sid)
-                  lastRole = messages.lastOption.map(_.role)
-                  _ <- lastRole match
-                    case Some(MessageRole.Assistant) =>
-                      TurnStateStore.clear(sid)
-                    case Some(_) =>
-                      logger.info(
-                        s"Restoring interrupted turn for session ${sid.take(8)} (msgs=${messages.size} turnStart=${ts.turnStartMessageCount})"
-                      )
-                      resumeInterruptedAgent(cfg, sid, ts.turnStartMessageCount, ts.turnIdx)
-                    case None =>
-                      TurnStateStore.clear(sid)
-                yield ()
-              }
-            yield ()
-          }
-        yield ()
-      }
-    yield ()
-
-  /** Reactivate a team agent session and send ResumeTurn. */
-  private def resumeInterruptedAgent(
-    cfg: TreeConfig,
-    sessionId: String,
-    turnStartMessageCount: Int,
-    turnIdx: Int
-  )(using ctx: ActorContext[?]): IO[Unit] =
-    for
-      sessionOpt <- cfg.resources.sessionStore.getSessionMeta(sessionId)
-      _ <- sessionOpt.traverse_ { session =>
-        val agentName = session.agentName.getOrElse("")
-        for
-          entryOpt <- session.flowName match
-            case Some(teamName) => EntityLoader.loadTeamAgent(teamName, agentName)
-            case None => EntityLoader.loadAgent(agentName)
-          _ <- entryOpt.traverse_ { entry =>
-            val agentDef = entry.toAgentDef
-            val rootSid = cfg.sessionId.getOrElse(session.id)
-            for
-              // permshield S1（2026-09-13）：档位 = 应用级全局持久值，走**唯一入口**
-              // （`cfg.safetyMode` 仍是建树快照/展示用，非权威；不再作为兜底来源）。
-              safetyMode <- cfg.resources.effectiveSafetyMode
-                .map(nebflow.core.SafetyMode.toString)
-              // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-C):AgentActor 构造改经工厂
-              // 镜像(resources 以 this 代入,实参逐字,零行为差)。
-              ref <- cfg.resources.actorSystem.spawn(
-                cfg.resources.agentActorBehavior(
-                  agentDef = agentDef,
-                  wsSend = cfg.wsSend.getOrElse(_ => IO.unit),
-                  depth = 1,
-                  parentRef = Some(cfg.parentAgentRef),
-                  sessionId = Some(session.id),
-                  sessionName = Some(session.name),
-                  projectRoot = Some(cfg.projectRoot),
-                  safetyMode = safetyMode,
-                  rootSessionId = rootSid,
-                  expectsMail = agentDef.name != "Manager"
-                ),
-                s"resume-${session.id.take(8)}"
-              )
-              _ <- TeamSessionRegistry.registerActor(session.id, ref, cfg.resources, rootSid)
-              _ <- (ref ! AgentCommand.ResumeTurn(turnStartMessageCount, turnIdx)).void
-              _ <- emit(cfg, "flowResumed", "sessionId" -> session.id.asJson)
-            yield ()
-            end for
-          }
-        yield ()
-        end for
-      }
-    yield ()
 
   // ============================================================
   // File watcher — notify agent of stale changes
