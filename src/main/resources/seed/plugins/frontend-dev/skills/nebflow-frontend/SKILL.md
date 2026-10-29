@@ -1,7 +1,7 @@
 ---
 name: nebflow-frontend
 description: Nebflow 客户端前端开发域知识——web/ 无构建 vanilla JS 结构、Sapphire Glass 设计系统（CSS 变量/玻璃组件/双主题）、设计原则（层级/间距/字重/一致性/打磨）、硬约束（无 emoji/无 accent bars）、截图驱动验证流与响应式三档。Use when 修改 src/main/resources/web/ 下的 JS/CSS/HTML。
-when_to_use: Nebflow 客户端 UI 实现（布局/组件/交互/主题）。与同插件 visual-style（用户裁定硬规则，最高优先级）和 nebflow-qa 插件的 frontend-verification（自验方法论）分层配合：本 skill 管结构与实现规范，visual-style 管视觉裁定，frontend-verification 管怎么自验。
+when_to_use: Nebflow 客户端 UI 实现（布局/组件/交互/主题）。与同插件 visual-style（用户裁定硬规则，最高优先级）和 qa 插件的 frontend-verification（自验方法论）分层配合：本 skill 管结构与实现规范，visual-style 管视觉裁定，frontend-verification 管怎么自验。
 language: zh
 status: active
 ---
@@ -71,4 +71,4 @@ src/main/resources/web/
 - **无法截图时（服务没起/工具故障）必须明说**，不许声称已验证。
 - 响应式三档：desktop 1440×900 / tablet 768×1024 / mobile 375×812。
 - dev server `http://localhost:3000`；起服务 `npm run dev`（后台）后等 3-5 秒再截。
-- 深度自验方法（Playwright harness/wire 探针/契约断言）见 `nebflow-qa` 插件的 `frontend-verification`。
+- 深度自验方法（Playwright harness/wire 探针/契约断言）见 `qa` 插件的 `frontend-verification`。

@@ -81,7 +81,7 @@ OFFICIAL_BASELINE = {"nebflow-plugin-creator", "visual-report", "slideblocks"}
 # C9 保留 namespace 前缀（OfficialPackages.scala:51 逐字「nebflow-」；🔴 禁收窄/改写）
 RESERVED_OFFICIAL_PREFIX = "nebflow-"
 # 官方面 9 包名单：--profile official 的适用面。名单外包（engineering-methods /
-# nebflow-frontend-dev / nebflow-qa）不属 seed 官方面。仅作适用面核对提示用，
+# frontend-dev / qa）不属 seed 官方面。仅作适用面核对提示用，
 # 不改 M4 白名单语义。
 OFFICIAL_FACE = frozenset({
     "browser-use", "computer-use", "design-spec", "explorer-toolkit",

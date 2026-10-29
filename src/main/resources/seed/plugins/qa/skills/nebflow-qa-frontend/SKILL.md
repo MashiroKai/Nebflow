@@ -1,7 +1,7 @@
 ---
 name: nebflow-qa-frontend
 description: Nebflow 前端验证域知识——隔离真实例三步验证（隔离 sbt 实例/C2 Playwright 冒烟套件/资源可达性实测含动态 import 链）、禁静态服务器替身规则、FAIL 判定三条款、双端契约静态审核四维方法、只验不改纪律。Use when 验证 Nebflow 前端（src/main/resources/web/）交付：合并回归、资源可达性、WS/REST 契约一致性。
-when_to_use: 每轮前端交付后的合并前独立验收；verify 节点分配此 skill。自验 harness 方法论（wire 探针/契约夹具/Playwright 坑）见同插件 frontend-verification；视觉硬规则见 nebflow-frontend-dev 插件的 visual-style。
+when_to_use: 每轮前端交付后的合并前独立验收；verify 节点分配此 skill。自验 harness 方法论（wire 探针/契约夹具/Playwright 坑）见同插件 frontend-verification；视觉硬规则见 frontend-dev 插件的 visual-style。
 language: zh
 status: active
 ---

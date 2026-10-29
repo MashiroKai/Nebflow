@@ -2218,7 +2218,7 @@ export default {
   'plugins.uninstallDeleteLabel': '卸载并删除目录',
   'plugins.uninstallKeepLabel': '仅停用（保留目录）',
   'plugins.uninstalled': '已卸载 {name}',
-  'plugins.migratedHint': '该包名已迁移：请以新名安装。删除旧目录后重装即可。',
+  'plugins.migratedHint': '该包名已迁移：「{name}」现以「{newName}」安装。删除旧目录（~/.stand/plugins/{name}/）后用新名重装即可恢复。',
   'plugins.author': '作者 {author}',
   'plugins.compositionSkills': '{n} 个技能',
   'plugins.compositionMcp': 'MCP：{servers}',
@@ -2377,7 +2377,7 @@ export default {
   'content.plugin.slideblocks.name': 'slideblocks',
   'content.plugin.slideblocks.desc': 'SlideBlocks 演示制作包——节点获得用 Slidev 从零制作/改进完整 PPT 演示（slides、deck、幻灯片）的全流程纪律。适用于做 PPT、写演示、出幻灯片、制作 slides、改进已有 deck、按 Slidev 重做演示等任务。内含 skill：slideblocks（Blocks/Decks/Recipes 全流程、执行锁、交付校验）。不适用于 HTML 卡片与社交图设计（另配 design-cards 插件）。组件面：无 mcp.json、无工具扩展。',
   'content.plugin.nebflow-plugin-creator.name': 'nebflow-plugin-creator',
-  'content.plugin.nebflow-plugin-creator.desc': '插件封装器包——节点获得把能力需求封装为合规插件包的全流程执行能力（三输入分析→包生成→机械自检→落盘即生效的交付自检）。适用于把已有 skill 或能力封装成插件、做一个能 Y 的新插件、写 plugin.json 与 SKILL.md、插件描述质量体检、跑包校验脚本等任务。内含 skills：plugin-packaging（三输入→生成→自检→交付的封装主流程，含同名冲突与 digest 漂移等六分叉处置、交付前自检与来源/digest 报告口径）、description-quality（manifest 五段式描述规范：模板、好坏范例、M1-M15 判定口径与核心词表圈定法）。验证与质量审查任务另配 nebflow-qa 插件。无 mcp.json、无工具扩展。',
+  'content.plugin.nebflow-plugin-creator.desc': '插件封装器包——节点获得把能力需求封装为合规插件包的全流程执行能力（三输入分析→包生成→机械自检→落盘即生效的交付自检）。适用于把已有 skill 或能力封装成插件、做一个能 Y 的新插件、写 plugin.json 与 SKILL.md、插件描述质量体检、跑包校验脚本等任务。内含 skills：plugin-packaging（三输入→生成→自检→交付的封装主流程，含同名冲突与 digest 漂移等六分叉处置、交付前自检与来源/digest 报告口径）、description-quality（manifest 五段式描述规范：模板、好坏范例、M1-M15 判定口径与核心词表圈定法）。验证与质量审查任务另配 qa 插件。无 mcp.json、无工具扩展。',
   'content.project.general.name': 'general',
   'content.project.general.desc': 'General-purpose project for executing general tasks: any domain, one-off or recurring; Nebula dispatches, nodes execute.',
 

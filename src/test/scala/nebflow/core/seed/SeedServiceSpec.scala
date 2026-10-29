@@ -86,7 +86,7 @@ class SeedServiceSpec extends FunSuite:
         !os.exists(home / "plugins" / name),
         s"plugin '$name' NOT seeded (absent from manifest + seed/plugins tree)"
       )
-    for name <- List("nebflow-qa", "nebflow-frontend-dev", "engineering-methods", "explorer-toolkit", "design-spec")
+    for name <- List("qa", "frontend-dev", "engineering-methods", "explorer-toolkit", "design-spec")
     do
       assert(
         !os.exists(home / "plugins" / name),

@@ -470,8 +470,18 @@ function renderPluginCard(manifest) {
 
 /** Rejected (load-failed) plugin row — informational only, no controls, not
  *  expandable（无详情可展开 ⇒ 无 chevron/role=button；拒载原因即条目行摘要；
- *  多行卡式同构：图标＋名称行 / 摘要行，badge 常在——2026-10-07 补充令改形）。 */
+ *  多行卡式同构：图标＋名称行 / 摘要行，badge 常在——2026-10-07 补充令改形）。
+ *  迁移批（2026-10-29 作者令「两个插件拒载修复」）：旧官方名包
+ *  （`nebflow-qa`/`nebflow-frontend-dev`，随批重命名为 `qa`/`frontend-dev`）的
+ *  OFFICIAL_IMPERSONATION 拒载给出「已迁移」处置提示（点名新名 + 迁移动作），
+ *  而不是裸报错——判据 = 保留前缀硬闸错误码 + 名字在迁移映射表（旧实例侧的
+ *  存量包目录不会随分发改名，得让作者面看到去向）。 */
+const MIGRATED_OFFICIAL_NAMES = { 'nebflow-frontend-dev': 'frontend-dev', 'nebflow-qa': 'qa' };
+
 function renderRejectedCard(entry) {
+  const migrated = entry.reason?.includes('OFFICIAL_IMPERSONATION')
+    ? MIGRATED_OFFICIAL_NAMES[entry.name]
+    : undefined;
   return `<div class="plugins-card rejected" data-plugin="${esc(entry.name)}">
     <div class="plugins-card-head">
       <div class="plugins-item-id">
@@ -483,6 +493,7 @@ function renderRejectedCard(entry) {
       </div>
       <span class="plugins-item-summary">${esc(entry.reason || '')}</span>
     </div>
+    ${migrated ? `<div class="plugins-card-hint migrated" data-plugin-migrated="${esc(entry.name)}">${esc(t('plugins.migratedHint', { name: entry.name, newName: migrated }))}</div>` : ''}
   </div>`;
 }
 

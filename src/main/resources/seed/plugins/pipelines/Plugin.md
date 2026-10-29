@@ -61,7 +61,7 @@ pipelines/                        （包根）
 - 要**合并 feature 分支**（就绪评估、冲突处置、合并后清理）→ `merge-pipeline`。
 - 要**发版**（bump VERSION、合并进 beta/release、打 tag、构建安装包、CI 矩阵确认）→ `release-pipeline`（低频高危，执行前通读其验证清单）。
 - 要**代码质量审查**（交付后把关、`/review` 显式触发、合并后 diff 审查）→ `review`（后端 Scala 四步门禁；前端按适配段替换）。
-- **功能开发本身** → 不在本包；**交付验证执行**（冒烟/契约/五维审核）→ 另配 `nebflow-qa` 插件——review 的三维质量审查与 qa 的交付验证是两道不同关卡。
+- **功能开发本身** → 不在本包；**交付验证执行**（冒烟/契约/五维审核）→ 另配 `qa` 插件——review 的三维质量审查与 qa 的交付验证是两道不同关卡。
 - 三个 skill 常连用：一次收口＝review 过关 → merge-pipeline 落并 → 需要发版时 release-pipeline 全链。
 
 ## 7. 共享件专节
