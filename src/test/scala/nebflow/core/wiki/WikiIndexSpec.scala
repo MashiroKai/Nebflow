@@ -397,4 +397,146 @@ body links [[real]]"""
     assert(g.paragraphs.exists(_.anchor == edge.anchor.get), "edge.anchor 直查 node.paragraphs 命中")
   }
 
+  // ───────────── term registry (词条引用批) ─────────────
+
+  private val glossaryDoc =
+    """# 词汇表
+      |
+      |GCR（银河宇宙线） — 来自银河系的高能粒子流，图谱样例词条。 ^gcr
+      |
+      |重试风暴 — 失败触发重试、重试放大失败的反馈循环。 ^retry-storm
+      |
+      |无分隔符的词表段落不算词条 ^not-a-term
+      |""".stripMargin
+
+  private val introDoc =
+    """# 报告
+      |
+      |## 词条
+      |
+      |- DCL（DOMContentLoaded 事件） — 浏览器首次可交互的时间点。 ^term-dcl
+      |
+      |- 归因结论 — 本批缺陷由配置漂移引入。 ^term-attrib
+      |
+      |普通锚段落不声明词条 ^plain-anchor
+      |""".stripMargin
+
+  test("WI-28 glossary terms: every block-anchored paragraph registers, source=glossary, paren aliases derived") {
+    val parsed = WikiIndex.parseDoc("glossary.md", glossaryDoc)
+    val terms = WikiIndex.termsOf("glossary.md", parsed)
+    assertEquals(terms.map(_.name), List("GCR（银河宇宙线）", "重试风暴"))
+    val gcr = terms.head
+    assertEquals(gcr.source, "glossary")
+    assertEquals(gcr.anchor, "#^gcr")
+    assertEquals(gcr.rel, "glossary.md")
+    assert(gcr.line > 0 && gcr.endLine >= gcr.line)
+    assert(gcr.definition.startsWith("GCR（银河宇宙线） — 来自银河系"))
+    // trailing-parenthetical alias keys: base + inner, both lowercase-lookup-able
+    assertEquals(gcr.aliases, List("GCR", "银河宇宙线"))
+    // the no-separator anchored block is NOT a term (registry stays clean;
+    // the check script flags it as term-format instead)
+    assert(!terms.exists(_.anchor == "#^not-a-term"))
+    // markdown links inside the definition collapse to text (hover payload face)
+    val withLink = WikiIndex.parseDoc("glossary.md", "# G\n\n词条 — 定义见 [[其他#^x]] 处。 ^t\n")
+    assertEquals(WikiIndex.termsOf("glossary.md", withLink).head.definition, "词条 — 定义见 其他#^x 处。")
+  }
+
+  test("WI-29 doc-intro terms: only ^term-* blocks register in ordinary docs; ^term- blocks lacking a separator don't") {
+    val parsed = WikiIndex.parseDoc("report.md", introDoc)
+    val terms = WikiIndex.termsOf("report.md", parsed)
+    assertEquals(terms.map(_.name), List("DCL（DOMContentLoaded 事件）", "归因结论"))
+    assert(terms.forall(_.source == "doc"))
+    assertEquals(terms.head.aliases, List("DCL", "DOMContentLoaded 事件"))
+    // ordinary anchored paragraphs in a non-glossary doc never register
+    assert(!terms.exists(_.anchor == "#^plain-anchor"))
+    // a ^term-* id with no ` —`/`：` separator yields no name ⇒ not a term
+    val bad = WikiIndex.parseDoc("r.md", "# R\n\nsome words without separator ^term-x\n")
+    assertEquals(WikiIndex.termsOf("r.md", bad), Nil)
+    // glossary detection mirrors check_wiki_docs.py: stem (last ext stripped) contains "glossary"
+    assert(WikiIndex.isGlossaryRel("glossary.md"))
+    assert(WikiIndex.isGlossaryRel("sub/docs/Glossary.zh-CN.md"))
+    assert(!WikiIndex.isGlossaryRel("report.md"))
+  }
+
+  test("WI-30 selectTerm ruling: glossary beats doc-intro, unique hit resolves, same-tier duplicates never guess") {
+    // aliases here mirror what termsOf derives (trailing parenthetical groups)
+    val gcr = WikiIndex.WikiTerm("GCR", List("GCR", "银河宇宙线"), "glossary.md", "#^gcr", 3, 3, "glossary", "定义 GCR")
+    val storm = WikiIndex.WikiTerm("重试风暴", List("retry storm"), "glossary.md", "#^retry-storm", 5, 5, "glossary", "定义 重试风暴")
+    val dclA = WikiIndex.WikiTerm("DCL", Nil, "a.md", "#^term-dcl", 2, 2, "doc", "A 的 DCL")
+    val dclB = WikiIndex.WikiTerm("DCL", Nil, "b.md", "#^term-dcl", 2, 2, "doc", "B 的 DCL")
+    val terms = List(gcr, storm, dclA, dclB)
+    // glossary-priority: a doc-intro GCR cannot outshine the glossary entry
+    val withShadow = terms :+ WikiIndex.WikiTerm("GCR", Nil, "a.md", "#^term-gcr", 2, 2, "doc", "A 的 GCR")
+    assertEquals(WikiIndex.selectTerm("gcr", withShadow), WikiIndex.TermSelection.Resolved(gcr))
+    // alias keys hit: paren-inner and explicit alias, case-insensitively
+    assertEquals(WikiIndex.selectTerm("银河宇宙线", terms), WikiIndex.TermSelection.Resolved(gcr))
+    assertEquals(WikiIndex.selectTerm("RETRY STORM", terms), WikiIndex.TermSelection.Resolved(storm))
+    // unique doc-intro hit resolves
+    assertEquals(WikiIndex.selectTerm("DCL", List(gcr, storm, dclA)), WikiIndex.TermSelection.Resolved(dclA))
+    // same-tier duplicates (two docs' intro terms) stay ambiguous — never a guess
+    assertEquals(WikiIndex.selectTerm("DCL", terms), WikiIndex.TermSelection.Ambiguous(List(dclA, dclB)))
+    // two glossary entries of the same name = ambiguous (R4 duplicate face)
+    val dupGloss = List(gcr, gcr.copy(rel = "sub-glossary.md"))
+    assertEquals(WikiIndex.selectTerm("gcr", dupGloss), WikiIndex.TermSelection.Ambiguous(dupGloss))
+    assertEquals(WikiIndex.selectTerm("nope", terms), WikiIndex.TermSelection.NotFound)
+    assertEquals(WikiIndex.selectTerm("  ", terms), WikiIndex.TermSelection.NotFound)
+  }
+
+  test("WI-31 edge resolution: term fallback is third priority — doc wins, term fills the gap, ambiguity stays phantom") {
+    // registry: glossary GCR + doc-intro DCL; vault also has a real gcr.md doc
+    val gParsed = WikiIndex.parseDoc("glossary.md", glossaryDoc)
+    val rParsed = WikiIndex.parseDoc("report.md", introDoc)
+    val terms = WikiIndex.termsOf("glossary.md", gParsed) ++ WikiIndex.termsOf("report.md", rParsed)
+    val from = WikiIndex.parseDoc("a.md",
+      "see [[GCR]] and [[DCL]] and [[银河宇宙线]] and [[GCR#^gcr]] and [[NoTerm#^blk]] and [[ghost]]")
+    val knownRels = Set("a.md", "glossary.md", "report.md", "gcr.md")
+    val edges = WikiIndex.buildEdges("proj", "self", "a.md", from, knownRels, terms)
+    val tos = edges.map(e => (e.to, e.anchor))
+    // ① same-name DOCUMENT wins — [[GCR]] hits the case-insensitive doc leg and the edge
+    // rides the AUTHORED case ("GCR.md", pre-existing face of the doc legs); no term anchor
+    assertEquals(tos(0), ("proj:GCR.md", None))
+    // ② term fallback: [[DCL]] → the declaring document + its block anchor
+    assertEquals(tos(1), ("proj:report.md", Some("#^term-dcl")))
+    // ③ alias-key registry hit (paren-inner name), case handled by selectTerm
+    assertEquals(tos(2), ("proj:glossary.md", Some("#^gcr")))
+    // ④ existing doc+block edge is untouched by the term layer (authored case rides, as today)
+    assertEquals(tos(3), ("proj:GCR.md", Some("#^gcr")))
+    // ⑤ anchored targets never term-fall: unresolved doc + explicit anchor stays a phantom edge
+    assertEquals(tos(4), ("proj:NoTerm.md", Some("#^blk")))
+    // ⑥ unregistered bare name stays an unresolved phantom
+    assertEquals(tos(5)._2, None)
+    // full scan: term-resolved links create NO phantom nodes; scan.terms carries the registry
+    val scan = WikiIndex.buildVaultScan("proj", "self",
+      List("a.md" -> "see [[DCL]]", "report.md" -> introDoc, "glossary.md" -> glossaryDoc))
+    assertEquals(scan.edges.find(_.from == "proj:a.md").get.to, "proj:report.md")
+    assert(!scan.nodes.exists(n => n.stub && n.rel.equalsIgnoreCase("dcl.md")), "term hit must not phantom a dcl.md")
+    assertEquals(scan.terms.map(_.name).sorted, List("DCL（DOMContentLoaded 事件）", "GCR（银河宇宙线）", "归因结论", "重试风暴"))
+    // no registry in this vault ⇒ the same link stays an unresolved phantom — zero behavior change
+    val legacy = WikiIndex.buildVaultScan("proj", "self", List("a.md" -> "see [[DCL]]"))
+    assert(legacy.nodes.exists(n => n.stub && n.rel.equalsIgnoreCase("dcl.md")))
+  }
+
+  test("WI-32 nodeJson terms[] projection + VaultScan registry + decodeTerm round-trip") {
+    val scan = WikiIndex.buildVaultScan("proj", "self",
+      List("report.md" -> introDoc, "glossary.md" -> glossaryDoc), List("fig.png"))
+    val report = scan.nodes.find(_.rel == "report.md").get
+    val json = WikiIndex.nodeJson(report)
+    val terms = json.hcursor.downField("terms").as[List[io.circe.Json]].toOption.get
+    assertEquals(terms.map(_.hcursor.downField("name").as[String].toOption.get),
+      List("DCL（DOMContentLoaded 事件）", "归因结论"))
+    val dcl = terms.head
+    assertEquals(dcl.hcursor.downField("source").as[String].toOption, Some("doc"))
+    assertEquals(dcl.hcursor.downField("rel").as[String].toOption, Some("report.md"))
+    assertEquals(dcl.hcursor.downField("anchor").as[String].toOption, Some("#^term-dcl"))
+    assertEquals(dcl.hcursor.downField("aliases").as[List[String]].toOption, Some(List("DCL", "DOMContentLoaded 事件")))
+    // attachment + phantom nodes carry no terms
+    val att = scan.nodes.find(_.kind == "attachment").get
+    assertEquals(WikiIndex.nodeJson(att).hcursor.downField("terms").as[List[io.circe.Json]].toOption.get, Nil)
+    // service-level ruling reads back through decodeTerm (JSON → model → selection)
+    val decoded = terms.flatMap(WikiIndex.decodeTerm)
+    assertEquals(decoded.flatMap(t => WikiIndex.selectTerm("dcl", List(t)) match
+      case WikiIndex.TermSelection.Resolved(t) => Some(t.anchor)
+      case _ => None), List("#^term-dcl"))
+  }
+
 end WikiIndexSpec

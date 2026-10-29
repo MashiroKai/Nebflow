@@ -13,9 +13,9 @@ below automatically.
 
 ## Mandatory clauses (checkable — a violation is a rework)
 
-The three clauses below are author mandates (2026-10-21), not style advice.
-Every clause is machine-checkable by the validator in
-`scripts/check_wiki_docs.py` (Python 3 stdlib only, zero deps):
+The four clauses below are author mandates (2026-10-21; ④ added 2026-10-29,
+term-citation batch), not style advice. Every clause is machine-checkable by
+the validator in `scripts/check_wiki_docs.py` (Python 3 stdlib only, zero deps):
 
 1. **Obsidian format, every document** — written inside the vault
    `<workspace>/docs/`, with a frontmatter block (`type:` / `status:`),
@@ -23,16 +23,26 @@ Every clause is machine-checkable by the validator in
    → check rule `obsidian-format`.
 2. **Paper-style citation graph** — when document B builds on document A, B
    cites A at the point of use. Broken references (missing target, missing
-   `#heading` anchor, missing `^block-id`) are defects; so is an orphan
-   document with zero outgoing and zero incoming links (index/glossary
-   exempt). → check rules `broken-link` / `broken-anchor` / `broken-block` /
-   `orphan-doc`.
+   `#heading` anchor, missing `^block-id`, an unregistered term short form)
+   are defects; so is an orphan document with zero outgoing and zero incoming
+   links (index/glossary exempt). → check rules `broken-link` / `broken-anchor`
+   / `broken-block` / `orphan-doc`.
 3. **Every concept: explained or cited at first occurrence** — at a term's
    first mention there must be an inline one-sentence definition (dash /
    colon / parenthesis form), or a `[[glossary#^block-id]]` citation to the
-   document that already defines it. Multiple documents must never invent
-   their own definition of the same concept — the glossary is the single
-   definition source. → check rules `concept-first-use` / `duplicate-definition`.
+   document that already defines it (a registered-term short form `[[Name]]`
+   that resolves into the glossary counts as the citation). Multiple documents
+   must never invent their own definition of the same concept — the glossary
+   is the single definition source. → check rules `concept-first-use` /
+   `duplicate-definition`.
+4. **Term registry hygiene (词条引用批)** — a term is an explicitly declared,
+   block-anchored definition: every glossary block entry and every `^term-*`
+   declaration block must yield a term name via the ` —`/`：` separator
+   convention, and within one document a term name is declared at most once.
+   Short-form citations `[[Name]]` resolve through the term registry
+   (glossary hit wins over doc-intro hits); a short form that is neither a
+   document nor a registered term is a broken link. → check rules
+   `term-format` / `term-duplicate` (R4; the citation face is R2 `broken-link`).
 
 Run before delivering any document batch:
 
@@ -46,7 +56,10 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --root <workspace>/docs --glossa
 - `--graph out.json` exports a WikiIndex-semantics `{nodes, edges}` JSON
   (graph samples / offline analysis); each doc node embeds its paragraph
   index (`paragraphs`: edge-form anchor / line range / ≤280-char excerpt —
-  the wiki-graph hover-snapshot surface, isomorphic with WikiIndex.scala);
+  the wiki-graph hover-snapshot surface) and its declared terms
+  (`terms`: name / aliases / source `glossary|doc` / rel / anchor / line
+  range / ≤280-char definition — isomorphic with WikiIndex.scala, the
+  `GET /api/wiki/term` + `nodeJson.terms[]` consumption face);
   `--json` machine-reads the violation list; exit codes: 0 clean,
   1 violations, 2 usage error.
 - Paragraph-level references use the two in-vault anchor forms (validated by
@@ -137,6 +150,62 @@ mention as a definition or a concept reference, not as bare jargon:
 
 HTML deliverables follow the same discipline with plain anchors to the
 companion markdown documents in the vault.
+
+## Terms and short-form citations (词条, term-citation batch 2026-10-29)
+
+A term is a named, block-anchored definition the whole vault can cite by
+name. Two declaration faces, both derived from the block-anchor paragraphs
+the graph already indexes — never declared in frontmatter (a `terms:`
+frontmatter list would be a second source of truth that drifts from the
+body anchors):
+
+- **Glossary terms** (cross-document shared concepts): every block-anchored
+  entry of a glossary document (file whose name contains `glossary`) is a
+  term. This is the single definition source (mandatory clause ③).
+- **Document-intro terms** (a document introducing its own topic, or its
+  citable plans/attribution findings): declare them in a `## 词条` section
+  near the top of the document. ONE entry per paragraph — a blank line
+  between entries — each ending with a `^term-<slug>` block id:
+
+  ```
+  ## 词条
+
+  - DCL（DOMContentLoaded 事件） — the browser's first interactive moment. ^term-dcl
+
+  - 归因结论 — this incident was caused by config drift, not code. ^term-attribution
+  ```
+
+Declaration shape (machine-checked, rule `term-format`):
+
+- The name is the text before the first ` —` (em/en dash) or `：`/`:`
+  separator; no separator means the block is NOT a term and R4 flags it.
+- A trailing parenthetical group derives lookup aliases:
+  `DCL（DOMContentLoaded 事件）` is citeable as `[[DCL]]`, `[[银河宇宙线]]`-style
+  inner names likewise. Do not invent other alias syntaxes — the pipe is the
+  wikilink reference alias (`[[target|display]]`), not a declaration face.
+- Within one document a term name is unique (rule `term-duplicate`).
+- The same term name MAY live in several documents' intro blocks (each
+  document self-introduces) — but `[[Name]]` then stays unresolved: the
+  engine never guesses between same-tier hits.
+
+Citation resolution for `[[Name]]` (no anchor) — fixed priority:
+
+1. exact vault-relative path → 2. unique basename document →
+3. **term registry** (a unique glossary hit beats doc-intro hits) →
+4. still ambiguous/unhit = unresolved (a broken link in R2's report).
+
+Practical discipline: cite `[[Name]]` when the name is unique vault-wide or
+glossary-defined; when you mean a SPECIFIC document's term (its plan, its
+attribution), cite `[[doc#^term-slug]]` explicitly. `[[Name|display]]`
+aliases and `![[Name]]` embeds ride the same resolution.
+
+Engine faces that consume the registry (no extra work for the writer):
+`GET /api/wiki/term?name=…&project=…` (single lookup:
+`{found, resolved, term}` / `{resolved:false, ambiguous, candidates}` /
+404 unregistered), and each graph node's `terms[]` projection (hover
+preview + deep links). Scope v1: term definitions are a markdown face —
+html documents get reference jumps with a document-level summary fallback,
+no html definition blocks.
 
 ## What not to do
 

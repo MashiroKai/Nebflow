@@ -32,8 +32,22 @@ class WikiServiceSpec extends CatsEffectSuite:
   private val betaWs = tempRoot / "beta-ws"
 
   os.makeDir.all(alphaWs / "docs" / "sub" / "docs")
-  os.write.over(alphaWs / "docs" / "a.md", "# A\n\nSee [[b]] and [[sub/docs/child.md]].\n")
-  os.write.over(alphaWs / "docs" / "b.md", "# B\n\nBack to [[a]].\n")
+  os.write.over(alphaWs / "docs" / "a.md",
+    "# A\n\nSee [[b]] and [[sub/docs/child.md]] and [[GCR]] and [[DCL]].\n")
+  os.write.over(alphaWs / "docs" / "b.md",
+    "# B\n\nBack to [[a]].\n\nDCL — DOMContentLoaded 事件，本档词条样例。 ^term-dcl\n")
+  os.write.over(alphaWs / "docs" / "glossary.md",
+    """---
+      |type: glossary
+      |status: current
+      |---
+      |
+      |# 词汇表
+      |
+      |GCR（银河宇宙线） — 来自银河系的高能粒子流，词条样例。 ^gcr
+      |
+      |重试风暴 — 失败触发重试、重试放大失败的反馈循环。 ^retry-storm
+      |""".stripMargin)
   os.write.over(alphaWs / "docs" / "sub" / "docs" / "child.md", "# Child\n\nParent [[a.md]].\n")
   os.makeDir.all(betaWs)
 
@@ -70,7 +84,7 @@ class WikiServiceSpec extends CatsEffectSuite:
       val nodes = g.hcursor.downField("nodes").as[List[io.circe.Json]].getOrElse(Nil)
       val realRels = nodes.filterNot(n => n.hcursor.get[Boolean]("stub").toOption.contains(true))
         .flatMap(n => str(n, "rel")).sorted
-      assertEquals(realRels, List("a.md", "b.md"))
+      assertEquals(realRels, List("a.md", "b.md", "glossary.md"))
     }
   }
 
@@ -83,19 +97,29 @@ class WikiServiceSpec extends CatsEffectSuite:
       val nodes = g.hcursor.downField("nodes").as[List[io.circe.Json]].getOrElse(Nil)
       val realRels = nodes.filterNot(n => n.hcursor.get[Boolean]("stub").toOption.contains(true))
         .flatMap(n => str(n, "rel")).sorted
-      assertEquals(realRels, List("a.md", "b.md")) // child.md isolated
+      assertEquals(realRels, List("a.md", "b.md", "glossary.md")) // child.md isolated
 
       val children = g.hcursor.downField("childVaults").as[List[io.circe.Json]].getOrElse(Nil)
       assertEquals(children.map(c => str(c, "name")), List(Some("sub")))
       assertEquals(children.map(c => str(c, "rel")), List(Some("sub/docs")))
       assertEquals(children.flatMap(c => long(c, "docCount")), List(1L))
 
-      // stats: a→b and b→a in-vault edges; a→sub/docs/child.md external
+      // stats: a→b, b→a, a→glossary ([[GCR]] term edge), a→b ([[DCL]] term edge) in-vault;
+      // a→sub/docs/child.md external
       val stats = g.hcursor.downField("stats")
-      assertEquals(stats.downField("docs").as[Long].toOption, Some(2L))
-      assertEquals(stats.downField("edges").as[Long].toOption, Some(2L))
+      assertEquals(stats.downField("docs").as[Long].toOption, Some(3L))
+      assertEquals(stats.downField("edges").as[Long].toOption, Some(4L))
       assertEquals(stats.downField("crossVault").as[Long].toOption, Some(1L))
       assertEquals(stats.downField("unresolved").as[Long].toOption, Some(0L))
+      // 词条引用批: each doc node embeds its declared terms[]; the [[GCR]] edge
+      // resolves to the glossary term's doc+anchor (no phantom gcr.md node)
+      val glossTerms = nodes.find(n => str(n, "rel").contains("glossary.md")).get
+        .hcursor.downField("terms").as[List[io.circe.Json]].toOption.getOrElse(Nil)
+      assertEquals(glossTerms.map(_.hcursor.downField("name").as[String].toOption.get),
+        List("GCR（银河宇宙线）", "重试风暴"))
+      val gcrEdge = g.hcursor.downField("edges").as[List[io.circe.Json]].getOrElse(Nil)
+        .find(e => str(e, "from").exists(_.endsWith(":a.md")) && str(e, "to").exists(_.endsWith(":glossary.md")))
+      assertEquals(gcrEdge.flatMap(e => str(e, "anchor")), Some("#^gcr"))
       // the external placeholder rides the nodes with external=true
       val ext = nodes.filter(n => n.hcursor.get[Boolean]("external").toOption.contains(true))
       assertEquals(ext.flatMap(n => str(n, "rel")), List("sub/docs/child.md"))
@@ -154,6 +178,60 @@ class WikiServiceSpec extends CatsEffectSuite:
       assert(str(alpha, "vault").exists(_.endsWith("docs")))
       val beta = vaults.find(p => str(p, "project").contains("beta")).get
       assertEquals(beta.hcursor.get[Boolean]("present").toOption, Some(false))
+    }
+  }
+
+  private def termOf(json: io.circe.Json): io.circe.Json =
+    json.hcursor.downField("term").as[io.circe.Json].toOption.get
+
+  test("WS-7 term lookup API: glossary hit, paren alias, doc-intro hit, scoping, 404 face") {
+    // blank name → Left (the route answers 400 before this, the service keeps its own guard)
+    svc.term("", None).map {
+      case Left(_) => ()
+      case other   => fail(s"expected Left, got $other")
+    } *>
+    // glossary term resolves with definition + location anchor
+    svc.term("GCR", None).map {
+      case Right(json) =>
+        assertEquals(json.hcursor.get[Boolean]("resolved").toOption, Some(true))
+        val t = termOf(json)
+        assertEquals(str(t, "source"), Some("glossary"))
+        assertEquals(str(t, "rel"), Some("glossary.md"))
+        assertEquals(str(t, "anchor"), Some("#^gcr"))
+        assert(str(t, "definition").exists(_.startsWith("GCR（银河宇宙线）")))
+      case other => fail(s"expected Right, got $other")
+    } *>
+    // paren-inner alias key hits, scoped to the project
+    svc.term("银河宇宙线", Some("alpha")).map {
+      case Right(json) => assertEquals(str(termOf(json), "anchor"), Some("#^gcr"))
+      case other       => fail(s"expected Right, got $other")
+    } *>
+    // doc-intro term, case-insensitive name
+    svc.term("dcl", Some("alpha")).map {
+      case Right(json) =>
+        val t = termOf(json)
+        assertEquals(str(t, "source"), Some("doc"))
+        assertEquals(str(t, "rel"), Some("b.md"))
+        assertEquals(str(t, "anchor"), Some("#^term-dcl"))
+      case other => fail(s"expected Right, got $other")
+    } *>
+    // unregistered name → Left (route answers 404)
+    svc.term("不存在的词", Some("alpha")).map {
+      case Left(err) => assert(err.contains("not registered"))
+      case other     => fail(s"expected Left, got $other")
+    }
+  }
+
+  test("WS-8 ambiguity ruling: same-name doc-intro terms in two docs → resolved:false + candidates") {
+    // fixture write scoped to this last test: c.md declares its own DCL intro term
+    os.write.over(alphaWs / "docs" / "c.md", "# C\n\nDCL — C 档自己的 DCL 词条。 ^term-dcl\n")
+    svc.term("DCL", Some("alpha")).map {
+      case Right(json) =>
+        assertEquals(json.hcursor.get[Boolean]("resolved").toOption, Some(false))
+        assertEquals(json.hcursor.get[Boolean]("ambiguous").toOption, Some(true))
+        val candidates = json.hcursor.downField("candidates").as[List[io.circe.Json]].getOrElse(Nil)
+        assertEquals(candidates.flatMap(c => str(c, "rel")).sorted, List("b.md", "c.md"))
+      case other => fail(s"expected Right, got $other")
     }
   }
 end WikiServiceSpec

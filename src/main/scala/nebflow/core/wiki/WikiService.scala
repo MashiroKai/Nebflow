@@ -892,6 +892,45 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
       IO(logger.warnSync(s"wiki: stand-recall leg skipped: ${msgOf(e)}")) *> IO.pure(None)
     }
 
+  // ── Term lookup (词条引用批 — GET /api/wiki/term?name=&project=) ────
+  // Single-query face over the SAME TTL-cached graph payload the graph view
+  // serves (no second scan path; freshness follows the 30s graph cache).
+  // Ruling (design §4.1-A/§4.2-A): unique glossary hit wins over doc-intro
+  // hits; otherwise a unique hit resolves; multiple same-tier hits answer
+  // `resolved:false, ambiguous:true` with the candidate list — the engine
+  // never guesses. `project` scopes to one project's root vault view; absent
+  // = the merged view (every project's root vault).
+
+  def term(name: String, project: Option[String]): IO[Either[String, Json]] =
+    if name.isBlank then IO.pure(Left("name is required"))
+    else
+      graph(project, vault = None).map { view =>
+        val viewError = view.hcursor.downField("error").as[String].toOption.filter(_.nonEmpty)
+        viewError match
+          case Some(err) => Left(err)
+          case None =>
+            val terms = view.hcursor.downField("nodes").as[List[Json]].getOrElse(Nil)
+              .flatMap(n => n.hcursor.downField("terms").as[List[Json]].toOption.getOrElse(Nil))
+              .flatMap(WikiIndex.decodeTerm)
+            WikiIndex.selectTerm(name, terms) match
+              case WikiIndex.TermSelection.Resolved(t) =>
+                Right(Json.obj(
+                  "found" -> true.asJson,
+                  "resolved" -> true.asJson,
+                  "term" -> WikiIndex.termJson(t)
+                ))
+              case WikiIndex.TermSelection.Ambiguous(candidates) =>
+                Right(Json.obj(
+                  "found" -> true.asJson,
+                  "resolved" -> false.asJson,
+                  "ambiguous" -> true.asJson,
+                  "name" -> name.asJson,
+                  "candidates" -> candidates.map(WikiIndex.termJson).asJson
+                ))
+              case WikiIndex.TermSelection.NotFound =>
+                Left(s"term '$name' is not registered")
+      }
+
   private def emptyStubScan(project: String, device: String): WikiIndex.VaultScan =
     WikiIndex.VaultScan(
       List(

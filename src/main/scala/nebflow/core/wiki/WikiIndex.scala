@@ -50,7 +50,8 @@ object WikiIndex:
     external: Boolean = false,      // true = cross-vault placeholder (#744-B): the target
                                    // lives in ANOTHER vault of the same project — counted
                                    // in stats, never drawn, never a broken-link entry
-    paragraphs: List[WikiParagraph] = Nil // paragraph index (段落级引用批 — docs only)
+    paragraphs: List[WikiParagraph] = Nil, // paragraph index (段落级引用批 — docs only)
+    terms: List[WikiTerm] = Nil    // terms DECLARED by this document (词条引用批 — docs only)
   )
 
   /** A sub-vault discovered inside a vault (#744-B hierarchy): `rel` is the
@@ -86,7 +87,8 @@ object WikiIndex:
     line: Int          // source line of the link in `from`
   )
 
-  final case class VaultScan(nodes: List[WikiDocNode], edges: List[WikiEdge], warnings: List[String])
+  final case class VaultScan(nodes: List[WikiDocNode], edges: List[WikiEdge], warnings: List[String],
+                             terms: List[WikiTerm] = Nil)
 
   // ── File classification (docs vs attachments) ───────────────────
 
@@ -435,6 +437,149 @@ object WikiIndex:
     if anchor.startsWith("#") || anchor.startsWith("^") then "#" + anchor.stripPrefix("#")
     else "#" + anchor
 
+  // ── Term registry (词条引用批, design 20261029_111029 term-citation §4.2-A) ──
+  // A term = an EXPLICITLY declared, block-anchored definition. Two sources,
+  // both derived from the same block-paragraph index (zero extra parsing):
+  //   (a) "glossary" — every block-anchored paragraph of a glossary document
+  //       (rel basename stem contains "glossary" — the R3 single definition
+  //       source, mirrored field-for-field by check_wiki_docs.py);
+  //   (b) "doc" — block paragraphs whose block id carries the `term-` prefix
+  //       (`^term-<slug>`); the SKILL's doc-intro block convention (`## 词条`
+  //       section, one `- Name — definition ^term-<slug>` per line) uses these.
+  // Ordinary anchored paragraphs never become terms (noise control — design
+  // §4.2-A: terms are the intersection of explicit declaration + convention).
+  // Frontmatter `terms:` was REJECTED (design §4.2-B: second source of truth
+  // drifts from the body anchors).
+
+  /** One registered term. `anchor` is the edge-anchor form (`"#^id"`) so a
+    * consumer resolves it against the SAME document's `paragraphs` index with
+    * a plain equality lookup; `definition` is the ≤280-char cleaned paragraph
+    * text (the hover-preview payload). */
+  final case class WikiTerm(
+    name: String,        // primary name — the ` —`/`：`-prefix segment of the block
+    aliases: List[String], // derived lookup keys (trailing parenthetical groups)
+    rel: String,         // containing document, vault-relative
+    anchor: String,      // edge form "#^<block-id>"
+    line: Int,           // 1-based full-file coordinates
+    endLine: Int,
+    source: String,      // "glossary" | "doc"
+    definition: String   // cleaned block text, ≤ParagraphMaxChars (hover payload)
+  )
+
+  private val TermNameSepRe = raw"\s*[—–]\s*|\s*[:：]\s*".r
+
+  /** Glossary-document test — same rule as check_wiki_docs.py (R3): the rel's
+    * basename stem (last extension stripped) contains "glossary". */
+  def isGlossaryRel(rel: String): Boolean =
+    val b = basename(rel)
+    val dot = b.lastIndexOf('.')
+    val stem = (if dot <= 0 then b else b.substring(0, dot)).toLowerCase
+    stem.contains("glossary")
+
+  /** Terms declared by one parsed document. Glossary docs contribute every
+    * block paragraph; other docs contribute only `^term-*` blocks. A block
+    * whose text has no ` —`/`–`/`:`/`：` separator yields no name ⇒ NOT a term
+    * (the check script flags it as `term-format`; the registry stays clean). */
+  def termsOf(rel: String, parsed: ParsedDoc): List[WikiTerm] =
+    val glossary = isGlossaryRel(rel)
+    parsed.paragraphs.flatMap { p =>
+      val declared = p.kind == "block" && p.anchor.startsWith("#^") &&
+        (glossary || p.anchor.startsWith("#^term-"))
+      if !declared then None else termFromParagraph(p, rel, if glossary then "glossary" else "doc")
+    }
+
+  private def termFromParagraph(p: WikiParagraph, rel: String, source: String): Option[WikiTerm] =
+    // p.text is the cleaned, whitespace-collapsed block with the ^id already
+    // stripped — the name segment is the text before the FIRST separator, with
+    // list/heading markers stripped (same `^[#*-]+` rule as blockTitle and the
+    // Python exporter; `- GCR — …` names the term GCR, not "- GCR").
+    TermNameSepRe.findFirstMatchIn(p.text).flatMap { m =>
+      val name = p.text.substring(0, m.start).trim.replaceAll(raw"^[#*-]+\s*", "").trim
+      if name.isEmpty then None
+      else Some(WikiTerm(name, termAliasKeys(name), rel, p.anchor, p.line, p.endLine, source, p.text))
+    }
+
+  /** Derived lookup keys from a primary name's TRAILING parenthetical group —
+    * the glossary convention `名（全称）` / `Name (expansion)`. `DCL（DOMContentLoaded
+    * 事件）` registers "dcl" and "domcontentloaded 事件" alongside the full
+    * name, so the author's short form `[[DCL]]` resolves. Explicit `|` aliases
+    * in DECLARATIONS were rejected — the pipe is the wikilink reference alias
+    * separator; declarations keep zero new syntax. */
+  private def termAliasKeys(name: String): List[String] =
+    val t = name.trim
+    val pairs = List('（' -> '）', '(' -> ')')
+    pairs.collectFirst {
+      case (open, close) if t.endsWith(close.toString) && t.lastIndexOf(open) > 0 =>
+        val start = t.lastIndexOf(open)
+        List(t.substring(0, start).trim, t.substring(start + 1, t.length - 1).trim)
+          .filter(k => k.nonEmpty && k != t)
+    }.getOrElse(Nil).distinct
+
+  /** All case-insensitive lookup keys of a term: primary + derived aliases. */
+  def termKeys(t: WikiTerm): List[String] =
+    (t.name :: t.aliases).map(_.trim.toLowerCase).distinct
+
+  // ── Term selection (消解优先级裁定, design §4.1-A) ────────────────
+  // `[[X]]` falls through to the term registry ONLY after every document leg
+  // failed (exact rel → case-insensitive → unique basename — unchanged). The
+  // registry itself rules ambiguity: a UNIQUE glossary hit wins over doc-intro
+  // hits (R3 single-definition-source discipline); otherwise a unique hit
+  // anywhere resolves; multiple same-tier hits never guess (same rule as the
+  // basename leg — unresolved, tooltip candidates are the batch-2 face).
+
+  sealed trait TermSelection
+  object TermSelection:
+    final case class Resolved(term: WikiTerm) extends TermSelection
+    final case class Ambiguous(candidates: List[WikiTerm]) extends TermSelection
+    case object NotFound extends TermSelection
+
+  def selectTerm(name: String, terms: List[WikiTerm]): TermSelection =
+    val key = name.trim.toLowerCase
+    if key.isEmpty then TermSelection.NotFound
+    else
+      val hits = terms.filter(t => termKeys(t).contains(key))
+      val glossaryHits = hits.filter(_.source == "glossary")
+      if glossaryHits.sizeIs == 1 then TermSelection.Resolved(glossaryHits.head)
+      else if glossaryHits.sizeIs > 1 then TermSelection.Ambiguous(glossaryHits)
+      else if hits.sizeIs == 1 then TermSelection.Resolved(hits.head)
+      else if hits.sizeIs > 1 then TermSelection.Ambiguous(hits)
+      else TermSelection.NotFound
+
+  /** Link target → registry lookup key: the normalized target with a trailing
+    * document extension stripped (`[[GCR]]` → "GCR.md" → "gcr"). */
+  def termTargetKey(normalizedTarget: String): String =
+    val low = normalizedTarget.toLowerCase
+    if low.endsWith(".markdown") then normalizedTarget.dropRight(".markdown".length)
+    else if low.endsWith(".md") then normalizedTarget.dropRight(".md".length)
+    else normalizedTarget
+
+  def termJson(t: WikiTerm): Json =
+    Json.obj(
+      "name" -> t.name.asJson,
+      "aliases" -> t.aliases.asJson,
+      "source" -> t.source.asJson,
+      "rel" -> t.rel.asJson,
+      "anchor" -> t.anchor.asJson,
+      "line" -> t.line.asJson,
+      "endLine" -> t.endLine.asJson,
+      "definition" -> t.definition.asJson
+    )
+
+  /** Inverse of [[termJson]] — the service-level term lookup rules over the
+    * TTL-cached graph payload (no second scan path). */
+  def decodeTerm(j: Json): Option[WikiTerm] =
+    val c = j.hcursor
+    for
+      name <- c.downField("name").as[String].toOption
+      aliases <- c.downField("aliases").as[List[String]].toOption
+      rel <- c.downField("rel").as[String].toOption
+      anchor <- c.downField("anchor").as[String].toOption
+      line <- c.downField("line").as[Int].toOption
+      endLine <- c.downField("endLine").as[Int].toOption
+      source <- c.downField("source").as[String].toOption
+      definition <- c.downField("definition").as[String].toOption
+    yield WikiTerm(name, aliases, rel, anchor, line, endLine, source, definition)
+
   // ── Graph assembly ───────────────────────────────────────────────
 
   /** Normalize a link target to a vault-relative doc path (forward slashes,
@@ -448,10 +593,15 @@ object WikiIndex:
   /**
    * Resolve one document's links against the vault's file list and build edges.
    * Resolution order (Obsidian-like): exact vault-relative path, then unique
-   * basename match. Unresolved targets become phantom nodes (`stub=true`) so
-   * the graph still shows the reference — Obsidian draws them the same way.
+   * basename match, then (词条引用批) the TERM REGISTRY — a target every
+   * document leg failed, carrying no explicit anchor, uniquely hits a
+   * registered term resolves to the term's document + its block anchor, so
+   * `[[GCR]]` lands on the definition paragraph instead of a phantom node.
+   * Unresolved targets still become phantom nodes (`stub=true`) so the graph
+   * still shows the reference — Obsidian draws them the same way.
    */
-  def buildEdges(project: String, device: String, fromRel: String, parsed: ParsedDoc, knownRels: Set[String]): List[WikiEdge] =
+  def buildEdges(project: String, device: String, fromRel: String, parsed: ParsedDoc, knownRels: Set[String],
+                 terms: List[WikiTerm] = Nil): List[WikiEdge] =
     val byBasename = knownRels.groupBy(r => basename(r).stripSuffix(".md").toLowerCase)
     parsed.links.flatMap { case (rawTarget, anchor, kind, line) =>
       val target = normalizeTarget(rawTarget)
@@ -464,10 +614,19 @@ object WikiIndex:
           byBasename.get(basename(target).stripSuffix(".md").toLowerCase) match
             case Some(matches) if matches.sizeIs == 1 => Some(matches.head)
             case _ => None
-      val toId = resolved match
-        case Some(rel) => nodeId(project, rel)
-        case None => nodeId(project, target)
-      Some(WikiEdge(nodeId(project, fromRel), toId, kind, anchor.map(a => "#" + a), line))
+      // Term fallback (third priority): only when EVERY document leg failed and
+      // the author wrote no explicit anchor (`[[X#…]]` is a doc+anchor intent,
+      // never a term citation). Doc priority is untouched — a same-name doc
+      // resolved above and the term leg never runs.
+      val (toId, termAnchor) = resolved match
+        case Some(rel) => (nodeId(project, rel), None)
+        case None =>
+          if anchor.isDefined then (nodeId(project, target), None)
+          else
+            selectTerm(termTargetKey(target), terms) match
+              case TermSelection.Resolved(t) => (nodeId(project, t.rel), Some(t.anchor))
+              case _ => (nodeId(project, target), None)
+      Some(WikiEdge(nodeId(project, fromRel), toId, kind, anchor.map(a => "#" + a).orElse(termAnchor), line))
     }
 
   def nodeId(project: String, rel: String): String = s"$project:${rel.replace('\\', '/')}"
@@ -501,31 +660,40 @@ object WikiIndex:
   /** Build a full vault scan from (rel -> raw text) document pairs plus the
     * vault's attachment files (rel paths; content is never read). Attachments
     * join the resolution namespace so `[[paper.pdf]]` cites resolve like any
-    * Obsidian link. */
+    * Obsidian link. Two passes (词条引用批): every document is parsed first,
+    * the TERM REGISTRY derives from the paragraph indexes, then edges build
+    * with the registry available for the third-priority term fallback. The
+    * registry is per-vault — a term only resolves within its own vault
+    * (cross-vault references stay on the external/broken classification). */
   def buildVaultScan(project: String, device: String, docs: List[(String, String)], attachments: List[String] = Nil): VaultScan =
     val knownRels = docs.map(_._1).toSet ++ attachments.toSet
+    val parsed = docs.map { case (rel, text) =>
+      val (frontmatter, _, _) = frontmatterOf(text)
+      val p = parseDoc(rel, text)
+      (rel, frontmatter, p, termsOf(rel, p))
+    }
+    val allTerms = parsed.flatMap { case (_, _, _, ts) => ts }
     val nodes = ListBuffer.empty[WikiDocNode]
     val edges = ListBuffer.empty[WikiEdge]
     val phantom = scala.collection.mutable.LinkedHashMap.empty[String, WikiDocNode]
-    docs.foreach { (rel, text) =>
-      val (frontmatter, _, _) = frontmatterOf(text)
-      val parsed = parseDoc(rel, text)
+    parsed.foreach { case (rel, frontmatter, p, nodeTerms) =>
       nodes += WikiDocNode(
         id = nodeId(project, rel),
         project = project,
         device = device,
         rel = rel,
-        title = parsed.title,
-        headings = parsed.headings,
-        blocks = parsed.blocks,
+        title = p.title,
+        headings = p.headings,
+        blocks = p.blocks,
         stub = false,
         kind = "doc",
         docType = frontmatter.flatMap(_.get("type")).filter(_.nonEmpty),
         status = frontmatter.flatMap(_.get("status")).filter(_.nonEmpty),
-        summary = parsed.summary,
-        paragraphs = parsed.paragraphs
+        summary = p.summary,
+        paragraphs = p.paragraphs,
+        terms = nodeTerms
       )
-      edges ++= buildEdges(project, device, rel, parsed, knownRels)
+      edges ++= buildEdges(project, device, rel, p, knownRels, allTerms)
     }
     attachments.foreach { rel =>
       nodes += WikiDocNode(
@@ -545,7 +713,7 @@ object WikiIndex:
         phantom(e.to) = phantomNode(project, device, e.to.drop(project.length + 1))
     }
     nodes ++= phantom.values
-    VaultScan(nodes.toList, edges.toList, Nil)
+    VaultScan(nodes.toList, edges.toList, Nil, allTerms)
 
   // ── JSON encoding ────────────────────────────────────────────────
 
@@ -574,7 +742,8 @@ object WikiIndex:
       "status" -> n.status.map(_.asJson).getOrElse(Json.Null),
       "summary" -> n.summary.map(_.asJson).getOrElse(Json.Null),
       "external" -> n.external.asJson,
-      "paragraphs" -> n.paragraphs.map(paragraphJson).asJson
+      "paragraphs" -> n.paragraphs.map(paragraphJson).asJson,
+      "terms" -> n.terms.map(termJson).asJson
     )
 
   def edgeJson(e: WikiEdge): Json =
