@@ -175,3 +175,34 @@ export function consoleInputMode() {
   const m = state.parsedConfig?.console?.inputMode;
   return m === 'queue' ? 'queue' : 'direct'; // 缺席/非法值 = direct（新缺省，作者令）
 }
+
+/**
+ * wikiGraphEnabled — 词典文档图谱（wiki graph）**边栏入口**开关（graphseal 批，
+ * 作者手写想法① 2026-10-29 逐字：「词典边栏的图谱入口暂时隐藏，因为目前感觉
+ * 并没有很好用，未来可能还要优化。但是保留词条有关的各种关联、引用的功能，
+ * 需要保留」）。
+ *
+ * 形态沿用本仓封存惯例（`voiceEnabled()` 同款）：flag 源 = 既有服务端配置
+ * 通道，不新增机制 —— <home>/nebflow.json 键 `"features": { "wikiGraph": true }`
+ * 经 WS `configData` → `state.parsedConfig` 原样到达前端；**缺席即封存
+ * （默认 OFF）= 边栏图谱入口隐藏**。main.js 在本 boot 首帧 configData 上一次性
+ * latch（好友批同款：不热切换，配置改动刷新页面生效）。
+ *
+ * 范围边界（申报）：只藏**边栏入口** —— activityBar.js boot 摘挂 `#wiki-btn`
+ * （静态槽：Projects 与 Plugins 之间）。词条/文档的关联引用功能零触碰
+ * （markdown [[wikilink]] 解析、反链、引用跳转等不经本 flag）。图谱的**另外
+ * 两个入口**本批不动（作者令只点名边栏）：文件查看器的「在图谱中打开」浮钮
+ * （viewers/shared.js addGraphToggle）与移动端底栏图谱页签
+ * （mobile/navController.js）——若后续要全量封存，复用本 flag 一处判定即可。
+ *
+ * 生效路径（同好友/语音批）：
+ *   · dev 树（sbt run 直供 source）：改 nebflow.json → 刷新页面即生效；
+ *   · 打包态：改 nebflow.json → 刷新页面生效（配置逐字透传，无需重建 jar）。
+ * 封存 ≠ 删数据/删代码：index.html 按钮静态槽、canvas.js 页签工厂与刷新注册、
+ * wikiGraph.js 全部原样保留；恢复 = 配置加 `"wikiGraph": true` 一行（零改码）。
+ * 不接 `__NEBFLOW_RELEASE__` 剥除分支（voiceseal 纠正批同款取舍：封存 ≠ 剥除，
+ * 可恢复优先 —— release 产物同样可用配置恢复）。
+ */
+export function wikiGraphEnabled() {
+  return state.parsedConfig?.features?.wikiGraph === true; // 缺席 = 封存（默认 OFF）
+}

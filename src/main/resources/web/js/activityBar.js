@@ -242,6 +242,10 @@ function initSidePanels() {
   // now; main.js calls enableFriendPanels() once the first configData latches
   // the flag on. Default is ON / unsealed (author ruling 2026-09-14).
   detachFriendEntries();
+  // Wiki-graph entry seal (graphseal batch, author note ① 2026-10-29): the
+  // graph entry is hidden by default; see detachWikiGraphEntry/enableWikiGraphEntry
+  // below for the posture (friendseal-pattern DOM detach, config-only restore).
+  detachWikiGraphEntry();
   // Restore the persisted panel; unregistered ids fall back to files.
   const stored = localStorage.getItem(LS_PANEL);
   activePanelId = stored && sidePanels.has(stored) ? stored : 'files';
@@ -350,6 +354,50 @@ export function enableFriendPanels() {
   const stored = localStorage.getItem(LS_PANEL);
   if (stored && sidePanels.has(stored)) activePanelId = stored;
   syncPanelDom();
+}
+
+// ── Wiki-graph entry seal（graphseal 批，作者手写想法① 2026-10-29）─────────
+// 「词典边栏的图谱入口暂时隐藏……但是保留词条有关的各种关联、引用的功能」
+// （featureFlags.js wikiGraphEnabled：nebflow.json "features": {"wikiGraph":
+// true} 缺席 = 封存 = 默认 OFF；恢复 = 配置加一行，零改码）。姿态沿用好友
+// 封存（DOM 摘挂，非 CSS 藏）：boot 摘 `#wiki-btn`（静态槽在 Projects 与
+// Plugins 之间），flag ON 的 configData latch（main.js）调 enableWikiGraphEntry()
+// 回挂原槽。词条/文档关联引用链路（[[wikilink]] 解析、反链、引用跳转等）
+// 零触碰；main.js 的 canvas 点击接线绑在按钮**元素**上，元素重插即自然复活。
+/** @type {HTMLElement | null} */
+let wikiGraphEntryNode = null;
+
+/** Detach the gated wiki-graph entry from the DOM (default-off boot posture). */
+function detachWikiGraphEntry() {
+  const btn = document.getElementById('wiki-btn');
+  if (!btn) return;
+  wikiGraphEntryNode = btn;
+  btn.remove();
+}
+
+/**
+ * Re-attach the gated wiki-graph entry to its static slot (flag confirmed on).
+ * Idempotent — a no-op once the entry is back in the DOM.
+ */
+export function enableWikiGraphEntry() {
+  if (!wikiGraphEntryNode) return;
+  const btn = wikiGraphEntryNode;
+  wikiGraphEntryNode = null;
+  // Static slot order (index.html): files → projects → wiki → agents(Plugins)
+  // → usage → settings. Anchor on the next sibling; fall down the tail of the
+  // bar if the static markup ever changes (W1-equivalent: keep Projects as the
+  // entry's previous sibling whenever both are present).
+  const anchor = document.getElementById('agents-btn')
+    ?? document.getElementById('usage-btn')
+    ?? document.getElementById('settings-btn');
+  if (anchor) {
+    anchor.before(btn);
+  } else {
+    document.getElementById('activity-bar')?.append(btn);
+  }
+  // The locale apply pass may have run while the entry was detached — re-apply
+  // its title (i18n.js attr map: 'wiki-btn' → wiki.tabTitle).
+  btn.title = t('wiki.tabTitle');
 }
 
 /**

@@ -141,7 +141,7 @@ import { initLightbox } from './lightbox.js';
 import './agentManager.js';
 import { openPlugins } from './plugins.js';
 import { initColResizers } from './colResizer.js';
-import { initActivityBar, toggleSideBar, enableFriendPanels } from './activityBar.js';
+import { initActivityBar, toggleSideBar, enableFriendPanels, enableWikiGraphEntry } from './activityBar.js';
 // diff 拆面板批（2026-10-22）：左栏「变更文件」面板 boot 挂点（面板 DOM + 注册；
 // 调用时序在 initActivityBar 之后——持久化的陈旧面板 id 先行回落 files，diff
 // 面板是瞬态视图，由交付消息上的摘要条按需唤起）。
@@ -155,7 +155,7 @@ import { initSocialPanel } from './socialPanel.js';
 // from the settings page entry row (#btn-open-secrets). Document-level wiring,
 // so it survives the settings re-renders that rebuild that button.
 import { initSecretsPanel } from './secretsPanel.js';
-import { friendsEnabled, voiceEnabled, voiceOrbEnabled } from './featureFlags.js';
+import { friendsEnabled, voiceEnabled, voiceOrbEnabled, wikiGraphEnabled } from './featureFlags.js';
 // voiceseal 批（批 #508）：全双工语音 + 同源语音气泡 封存面的 DOM 挡板
 // （hidden 挡面，零删除；flag = features.voice，默认封存）。
 import { applyVoiceSeal } from './voiceSeal.js';
@@ -178,6 +178,11 @@ let friendsGateDecided = false;
 // 一次性判定（不热切换，flag 改动刷新页面生效）。latch 前两面维持 index.html
 // 的静态封存姿态（`hidden`，预绘制零闪现）。
 let voiceGateDecided = false;
+
+// graphseal 批（作者手写想法① 2026-10-29）wiki-graph 边栏入口封存 latch：
+// 同好友/语音批 —— 本 boot 首帧 configData 一次性判定（缺席 = 封存 = 默认藏
+// 入口；显式 "features": {"wikiGraph": true} 回挂，配置改动刷新页面生效）。
+let wikiGraphGateDecided = false;
 
 // Expose for cross-module cleanup (input.js)
 window.__stopThinkingTimer = stopThinkingTimer;
@@ -2668,6 +2673,16 @@ onMessage('configData', (msg, view) => {
     voiceGateDecided = true;
     applyVoiceSeal(voiceEnabled(), voiceOrbEnabled());
     if (voiceOrbEnabled()) initMicOrb();
+  }
+  // Wiki-graph 边栏入口封存 latch（graphseal 批，作者手写想法① 2026-10-29）：
+  // 缺席 = 封存（activityBar.js boot 已摘 `#wiki-btn`，维持藏态即可）；显式
+  // "features": {"wikiGraph": true} → enableWikiGraphEntry() 回挂静态槽
+  // （Projects 与 Plugins 之间 + 补 i18n 标题）。点击接线（本文件 boot 段的
+  // registerCanvasPanelButton('wiki-graph', 'wiki-btn', …)）绑在按钮**元素**
+  // 上，元素重插即自然复活，无需重注册。词条/文档关联引用链路零触碰。
+  if (!wikiGraphGateDecided) {
+    wikiGraphGateDecided = true;
+    if (wikiGraphEnabled()) enableWikiGraphEntry();
   }
   const editor = document.getElementById('config-editor');
   if (editor) editor.value = state.configText;
