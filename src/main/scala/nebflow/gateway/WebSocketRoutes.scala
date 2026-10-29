@@ -1171,7 +1171,20 @@ class WebSocketRoutes(
                               ) *>
                               outboundOverflowClosed.complete(()).void
                         }
-                    hubConnId <- wsHub.register(perConnWsSend)
+                    // 单实例四修批（2026-10-29 作者令 · 隐私面）：被顶出连接的
+                    // 内容帧闸——ConsoleTakeover.gateFrame 按会话裁决（owner 非本会话
+                    // ⇒ 只放行 takeover/takeoverResult 接管协议帧，对话内容帧断喂）。
+                    // Bearer 轨（takeoverSession=None）与总闸关闭 ⇒ 恒放行（零漂移）。
+                    // 心跳面不受影响：pong 走 perConnJsonSend 旁路，不经本闸。
+                    gatedWsSend = (text: String, isStream: Boolean) =>
+                      takeoverSession match
+                        case None => perConnWsSend(text, isStream)
+                        case Some(sid) =>
+                          takeover.gateFrame(sid, text).flatMap {
+                            case true  => perConnWsSend(text, isStream)
+                            case false => IO.unit
+                          }
+                    hubConnId <- wsHub.register(gatedWsSend)
 
                     // A1: the hub now hands connections pre-serialized text. The
                     // handlers below (message dispatch, session list, the explorer

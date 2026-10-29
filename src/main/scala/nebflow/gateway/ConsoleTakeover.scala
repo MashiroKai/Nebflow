@@ -12,8 +12,12 @@ import nebflow.shared.{Branding, NebflowLogger}
  *
  * 目标（作者令）：同一时刻只有一个可信实例在查看/操作控制台——第二台电脑/浏览器
  * 进入时，第一台弹「控制台已在其他位置打开」（【退出】【重新接管】两按钮，重新
- * 接管即反向踢，互斥权最后写入者胜）。同时多设备数据透明（#929）不受影响：本
- * 注册表只独占「主动控制权」，不出只读观察者语义。
+ * 接管即反向踢，互斥权最后写入者胜）。
+ *
+ * 数据可见性（2026-10-29 作者令四修修订，原批「数据透明照旧」作废）：被顶出
+ * （superseded）会话的连接**断喂对话内容帧**——[[ConsoleTakeover.gateFrame]] 只放行
+ * 接管协议帧（隐私面：被顶出的标签页不得继续看到最新对话）。#929 多设备透明对
+ * **主动控制权**的独占语义不变。
  *
  * == 身份与粒度 ==
  * 实例 = 门户会话（`GatewaySessionStore.SessionRecord.sessionId`，HttpOnly cookie）。
@@ -65,6 +69,36 @@ final class ConsoleTakeover(
    */
   private val pastOwnersRef: Ref[IO, Vector[(String, Long)]] = Ref.unsafe(Vector.empty)
 
+  /**
+   * 内容帧闸（2026-10-29 作者令四修 · 隐私面）：被顶出（superseded）会话的连接
+   * 对 wsHub 广播/定向扇出一律断喂对话内容——只放行接管协议帧
+   * （takeover/takeoverResult）。pong/心跳与本连接直回帧（perConnJsonSend）不经此闸。
+   *
+   * 裁决（每帧一次；owner 命中即放行、零解析开销——热路径只是一次 Ref 读：
+   * 仅 superseded 会话付 type 解析代价，稀有面）：
+   *   总闸关 / owner==本会话 / owner 未定（claim 前引导窗） ⇒ 放行；
+   *   其余（owner==他会话 = superseded）⇒ 仅接管协议帧放行，其余内容帧断喂。
+   *
+   * 语义：retake 翻位后 owner==本会话 ⇒ 闸自动放开（后续帧照常送达）；前端在
+   * takeoverResult ok 后 reload 全量重同步——闸窗期的内容缺口只经 reload 愈合，
+   * 不做增量续传（单实例语义：同一时刻只有一个可信实例在查看控制台）。
+   */
+  def gateFrame(sessionId: String, text: String): IO[Boolean] =
+    if !enabled then IO.pure(true)
+    else
+      ownerRef.get.flatMap {
+        case None => IO.pure(true) // owner 未定（claim 前引导窗）⇒ 放行——首实例就位前不饿引导帧
+        case Some(o) if o == sessionId => IO.pure(true)
+        case Some(_) =>
+          // superseded：只放行接管协议帧（重弹 superseded / retake 裁决回执经本连接）。
+          IO.pure(
+            io.circe.parser
+              .parse(text)
+              .flatMap(_.hcursor.downField("type").as[String])
+              .toOption
+              .exists(ConsoleTakeover.GatePassTypes)
+          )
+      }
   /** 控制权读数（spec / 未来观测面用）。 */
   def owner: IO[Option[String]] = ownerRef.get
 
@@ -212,6 +246,12 @@ object ConsoleTakeover:
 
   /** retake 回执帧。 */
   def resultFrame(ok: Boolean): Json = Json.obj("type" -> "takeoverResult".asJson, "ok" -> ok.asJson)
+
+  /**
+   * 内容帧闸放行集（[[ConsoleTakeover.gateFrame]]）：被顶出连接只喂接管协议帧。
+   * 集中一处，禁各调用点自列（第二份判据 = 漂移源）。
+   */
+  private val GatePassTypes: Set[String] = Set("takeover", "takeoverResult")
 
   /** 收流管判别（廉价 parse + type 比对；非 JSON/异型 ⇒ false 走常规分派）。 */
   def isRetakeFrame(text: String): Boolean =
