@@ -19,6 +19,7 @@ import { mintTickets, stripCredentialParams, decodePathParam } from '../nfTicket
 import { nfViewerUrl, nfCacheDrop } from '../nfFileCache.js';
 import { noteAuthRejected } from '../sessionGate.js';
 import { t } from '../i18n.js';
+import { isMdHtmlFile } from '../mdHtmlGate.js';
 // mermaid-md batch (2026-10-23): explicit hydration at the primary document
 // face (this viewer + wiki doc opens). The global observer in main.js covers
 // every other markdown face; this call is idempotent (state-attribute guard).
@@ -1074,7 +1075,12 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
 
     // Wiki face: wikilinks (async, post-render) + jump anchor + backlinks foot
     // (KG audit ② — incoming edges only, collapsed; absent outside vaults).
-    if (absPath) { renderWikilinks(mdViewer, baseDir, absPath); renderBacklinks(mdViewer, absPath); }
+    // md/html 类型硬约束闸（设计稿 §8 词条同闸回写；调研稿 §9-1/§9-7）：wikilink
+    // 渲染消解（含词条引用第二批 F1 的词条回退——已落本闸内侧）仅对四扩展名
+    // 生效；非 md/html 文档 `[[词条]]` 按普通文本渲染不解析、点击无深链。viewer
+    // 注册表今天只把 .md/.markdown 指到本件，本闸是防再映射的显式单点（与
+    // askDock 同挂 mdHtmlGate.js 白名单）。
+    if (absPath && isMdHtmlFile(absPath)) { renderWikilinks(mdViewer, baseDir, absPath); renderBacklinks(mdViewer, absPath); }
     if (jumpAnchor) applyJumpAnchor(mdViewer, jumpAnchor, analysis.blockIds);
     // 词条气泡随滚动收起：fixed 定位气泡不跟随文档滚动，锚点滚走即失位。
     const mdScroller = pane.querySelector('.canvas-md-scroll');

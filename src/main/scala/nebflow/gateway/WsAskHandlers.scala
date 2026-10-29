@@ -75,28 +75,38 @@ private[gateway] object WsAskHandlers:
         case None => askError(wsSend, "", "ask mode unavailable on this instance")
         case Some(svc) =>
           val canonical = ctx.expandTilde(absPath.trim)
-          for
-            binding <- svc.registry.bind(canonical, fileName)
-            sid = binding.id
-            _ <- if mainSessionId.nonEmpty then svc.registry.refreshMainSession(sid, mainSessionId) else IO.unit
-            freshBinding <- svc.registry.byId(sid).map(_.getOrElse(binding))
-            _ <- svc
-              .assembleIfDue(sid, freshBinding)
-              .handleErrorWith(e => logger.warn(s"ask assemble failed (non-fatal,问答继续): ${e.getMessage}"))
-            msgs <- sessionStore.getUiMessages(sid, 0, 200).map(_._1)
-            _ <- send(
+          // md/html 硬约束闸（设计稿 §2；调研稿 §7-A2）：canonicalize 之后、
+          // bind 之前拒非白名单——既有 askError 通道，绑定表零写入（仅闸新
+          // 问题：存量绑定不清理，自然衰减 §9-8）。
+          if !AskSessions.isAskable(canonical) then
+            askError(
               wsSend,
-              Json.obj(
-                "type" -> "askState".asJson,
-                "sessionId" -> sid.asJson,
-                "sessionKey" -> AskSessions.displayKey(canonical).asJson,
-                "file" -> freshBinding.file.asJson,
-                "fileName" -> freshBinding.fileName.asJson,
-                "messages" -> encodeTranscript(msgs).asJson
-              )
+              "",
+              s"askOpen: file type not askable (md/html only: ${AskSessions.AskableExtensions.toList.sorted.mkString(",")}): $fileName"
             )
-          yield ()
-          end for
+          else
+            for
+              binding <- svc.registry.bind(canonical, fileName)
+              sid = binding.id
+              _ <- if mainSessionId.nonEmpty then svc.registry.refreshMainSession(sid, mainSessionId) else IO.unit
+              freshBinding <- svc.registry.byId(sid).map(_.getOrElse(binding))
+              _ <- svc
+                .assembleIfDue(sid, freshBinding)
+                .handleErrorWith(e => logger.warn(s"ask assemble failed (non-fatal,问答继续): ${e.getMessage}"))
+              msgs <- sessionStore.getUiMessages(sid, 0, 200).map(_._1)
+              _ <- send(
+                wsSend,
+                Json.obj(
+                  "type" -> "askState".asJson,
+                  "sessionId" -> sid.asJson,
+                  "sessionKey" -> AskSessions.displayKey(canonical).asJson,
+                  "file" -> freshBinding.file.asJson,
+                  "fileName" -> freshBinding.fileName.asJson,
+                  "messages" -> encodeTranscript(msgs).asJson
+                )
+              )
+            yield ()
+            end for
       end match
     end if
   end handleAskOpen

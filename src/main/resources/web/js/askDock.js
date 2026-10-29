@@ -25,6 +25,11 @@
 //   只在文件型标签页（有真实文件 backing 的 canvas tab = active entry 携
 //   absPath）挂载显示——插件面板/工具面板/图谱等非文件型 surface 零挂载零残
 //   留，切卡离开文件 tab 即摘（syncGate → css .gate-off display:none）。
+// md/html 类型硬约束闸（设计稿 §2「类型硬约束闸」，作者 2026-10-29 11:46 自裁）：
+//   ask 能力仅 .md/.markdown/.html/.htm 四扩展名——非白名单文件 tab 与插件
+//   面板同待遇（currentFile 赋值处过滤 → 入口不挂/隐藏）；后端 askOpen 同闸
+//   拒答（AskSessions.isAskable 单点）——前端藏 + 后端拒双层防呆；存量绑定
+//   仅闸新问题不清理（自然衰减 §9-8）。白名单前端单点 = mdHtmlGate.js。
 // 移动（#988 同律）：气泡列 touch-action: pan-y 原生纵滚；canvasGestures 的
 // zoneOf 对 .ask-dock/.ask-fab 返回 ''（surface 归属制，横滑零切卡）。
 
@@ -32,6 +37,7 @@ import { key } from './branding.js';
 import state from './state.js';
 import { sendWs, setAskFrameSink, onReconnect } from './ws.js';
 import { activeCanvasEntry } from './canvas.js';
+import { isMdHtmlFile } from './mdHtmlGate.js';
 
 // ── 文案（i18n 键 = key('locale')，navController tt 同源）─────────────────
 function tt(zh, en) {
@@ -182,6 +188,9 @@ function isCanvasVisible() {
 // 载零残留——.gate-off = display:none（出布局出命中盒，非视觉弱化）。闸随
 // syncToActiveTab 每拍落位：切卡/关卡/批量恢复的 active 变更全经 setActiveTab
 // → canvas-tab-switched（或 canvas-tab-closed）事件到齐，初始无卡态同样吃闸。
+// md/html 类型硬约束闸（设计稿 §2；作者 2026-10-29 11:46 自裁）：currentFile
+// 赋值处即过滤非白名单扩展名——非 md/html 文件 tab 与插件面板同待遇（入口
+// 不挂/隐藏，双层防呆之后端 isAskable 拒答）；白名单单点 = mdHtmlGate.js。
 function syncGate() {
   if (!el) return;
   const off = !currentFile;
@@ -191,7 +200,8 @@ function syncGate() {
 
 function syncToActiveTab() {
   const entry = activeCanvasEntry();
-  const file = entry && entry.absPath ? entry.absPath : '';
+  // md/html 硬闸在赋值处生效（§7-A4）：非白名单扩展名 = 视同非文件卡（''）。
+  const file = entry && entry.absPath && isMdHtmlFile(entry.absPath) ? entry.absPath : '';
   const switched = file !== currentFile;
   currentFile = file;
   syncGate(); // 可见性闸每拍落位（幂等；含初始无卡态与切回文件卡复现）
@@ -271,7 +281,8 @@ function syncUnreadDot() {
 }
 
 async function open() {
-  if (!currentFile) return; // 非文件卡入口已被可见性闸摘除；此守卫为冗余保险
+  // 非文件卡入口已被可见性闸摘除；md/html 硬闸复核（§7-A4 冗余守卫双层防呆）。
+  if (!currentFile || !isMdHtmlFile(currentFile)) return;
   const s = await ensureActiveSession();
   if (!s) return;
   s.unread = false; // 打开即读：通知点熄灭（ask 三修 2026-10-29 未读语义）
@@ -344,7 +355,7 @@ function askOpen(s) {
 }
 
 async function submit() {
-  if (!el || !currentFile) return;
+  if (!el || !currentFile || !isMdHtmlFile(currentFile)) return; // 硬闸复核（冗余守卫）
   const s = await ensureActiveSession();
   if (!s) return;
   const v = el.input.value.trim();
