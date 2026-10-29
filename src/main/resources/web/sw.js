@@ -109,11 +109,25 @@ async function swrResponse(event) {
 }
 
 /**
+ * 真 app shell 导航判定：索引兜底缓存与哈希指纹链只认 shell 自身的导航
+ * （`/` 与其别名 `/index.html`——gateway 对两者给同一 brand 注入应答）。
+ * 其它任何导航（代理文件帧导航、静态文件直开、非 shell 入口）一律不进
+ * INDEX_CACHE——一次帧导航把别的内容体当「索引」缓存、把其 sha-256 当索引
+ * 指纹，会毒化整条兜底/对账链（下次真索引导航哈希必不符 ⇒ 白清一次静态
+ * 缓存 + 对客户端多补一跳；sw navigate 腿修复批 2026-10-30 裁决）。
+ */
+function isShellNavigation(url) {
+  const p = url.pathname;
+  return p === INDEX_URL || p === '/index.html';
+}
+
+/**
  * 导航腿：网络优先 + 索引哈希版本指纹（陈旧防护主链，见文件头）。
  * 返回 null = 不接管（如 ?nfsw=0），fetch 处理器放行为原生路径。
  */
 async function navigateResponse(event) {
   const req = event.request;
+  const shellNav = isShellNavigation(new URL(req.url));
   let fresh = null;
   try {
     fresh = await fetch(req, { cache: 'no-cache' });
@@ -121,11 +135,17 @@ async function navigateResponse(event) {
     /* 断网：走兜底副本 */
   }
   if (!fresh || !fresh.ok) {
+    // 兜底副本 = **索引**离线兜底，只对 shell 导航应答；非 shell 导航断网
+    // 就放行原生错误面（塞 app shell 进帧 = 错误内容假装加载成功）。
+    if (!shellNav) return fresh || Response.error();
     const idxCache = await caches.open(INDEX_CACHE);
     const fallback = await idxCache.match(INDEX_URL);
     if (fallback) return fallback;
     return fresh || Response.error();
   }
+  // 非 shell 的成功导航（含 /uploads 等帧导航）原样透传：不进索引缓存键、
+  // 不碰指纹链（/api 已在 fetch 处理器更早处零接触）。
+  if (!shellNav) return fresh;
 
   const idxCache = await caches.open(INDEX_CACHE);
   const prevHashRes = await idxCache.match(INDEX_HASH_KEY);
@@ -158,12 +178,18 @@ self.addEventListener('fetch', (event) => {
   } catch (_) {
     return;
   }
+  // /api 零接触——次序纪律：必须在 navigate 腿**之前**判定（修复批
+  // 2026-10-30；此前 navigate 腿先生效，同源 /api/nf-file?… 帧导航被接管：
+  // SW 自身 fetch 对页面层 route/探针不可见 ⇒ 打到静态面 404 ⇒ 离线索引
+  // 兜底把 app shell 塞进帧）。/api 是引擎 API 面，任何形态（含导航帧）
+  // 都走浏览器原生路径。
+  if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return;
   if (req.mode === 'navigate') {
     if (url.searchParams.has('nfsw')) return; // 显式绕过
     event.respondWith(navigateResponse(event));
     return;
   }
-  if (!isAllowlisted(url)) return; // /api /uploads /plugin-assets /ws …零接触
+  if (!isAllowlisted(url)) return; // /uploads /plugin-assets /ws …零接触
   if (req.headers.has('range')) return; // 媒体 Range 走原生
   event.respondWith(swrResponse(event));
 });

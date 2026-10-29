@@ -146,18 +146,12 @@ const BINARY = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp', 'pdf'
 const MAX_READ = 100 * 1024 * 1024;   // = WebSocketRoutes.MaxPopReadFileBytes（打开闸 100MB）
 
 async function boot(browser, live = false) {
-  // serviceWorkers:'block'（存量红清欠批 2026-10-29）——修② 五连红的归因锚：
-  // console-load-perf 批（97fd9e274，2026-10-21）上线的 /sw.js 其 fetch 处理器
-  // 的 navigate 腿（req.mode==='navigate'）先于「/api 零接触」名单生效，同源
-  // 帧导航 /api/nf-file?… 会被 navigateResponse 接管；而 SW 自身发起的 fetch
-  // 对本 harness 的 page.route 不可见 ⇒ 静态服务器 404 ⇒ 命中离线索引兜底副本
-  // ⇒ app shell 进帧 ⇒ html.js 的 embedded-shell 护栏（正确地）停渲染。实测
-  // 探针（本批）：SW 活 = {bar:false,hasIframe:false,stopped:true} + 页面层零
-  // /api/nf-file 请求；SW 阻断 = {bar:true,hasIframe:true}。被测契约是前端
-  // viewer 面（html.js load 分流 + 返回条），SW 是传输层缓存面，与本契约正交；
-  // 真实例（活引擎）下 SW fetch 得 200 原样透传，返回条语义不受影响——故修
-  // harness 不修源：阻断 SW 恢复「mock 传输层」这一 harness 自设前提。
-  const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 }, serviceWorkers: 'block' });
+  // SW 环境回归（sw navigate 腿修复批 2026-10-30）：存量红清欠批曾在此挂
+  // serviceWorkers:'block' 规避修②五连红（归因=sw.js navigate 腿接管同源
+  // /api 帧导航，见 git 历史注）。sw.js 已修（/api 零接触挪到 navigate 腿
+  // 之前 + INDEX_CACHE 只记真索引导航），本 harness 撤掉 block——SW 活跑
+  // 才是真环境回归：mock 传输层（page.route）对 /api 面照常可见。
+  const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   let token = 't';
   if (live) {
     // 真实例的 <home>/auth.json 是**裸 token 字符串**（不是 {token: …} 对象；实测 45 字节，

@@ -14,8 +14,8 @@
 //        双态都钉：开关关 = 入口不在 DOM（负断言，摘挂非 CSS 藏）；开关开 =
 //        入口回挂静态槽（正断言）。§P1–P8 全族改在开关开档跑。
 //        ⚠ 清欠批核实发现：开关开的回挂入口点击无响应 = 封存批自身的产品回归
-//        （回挂接线从未建立，归因与修向见 §P0b 的 fixme 注）——修复落地前
-//        §P1–P8 以红挂在入口腿（可见红 + 报告登记，spec 锚本身已换代不再漂移）。
+//        （回挂接线从未建立，归因与修法见 §P0b 注）——回挂接线修复批
+//        （2026-10-30，canvas.js 改 #activity-bar 事件委托）落地后全族转绿。
 //   §P1 边锚保真：payload 边的 anchor 在前端去重后保留（带锚边中点画 2.4px
 //       石墨圆点——canvas 是单一位图，spec 经 __wikiGraphProbe 读模型态）；
 //   §P2 引用边 hover = 段落快照小窗：.wg-tip.para 毛玻璃浮层，§ 段标题 +
@@ -238,20 +238,16 @@ test.describe('§P0 图谱入口封存闸（graphseal 批 82c273a2a，双态都�
     await context.close();
   });
 
-  // ── 存量红清欠批（2026-10-29）发现的产品回归钉（fixme = 跳过留证，修好即摘）──
-  // 开关开的回挂入口**点了没反应**：registerCanvasPanelButton 的点击接线在
-  // main.js:4210 动态 import().then 里 boot 时注册，此刻 #wiki-btn 已被
-  // activityBar.js:248 detachWikiGraphEntry() 摘下 DOM ⇒ canvas.js:546
-  // getElementById('wiki-btn') = null ⇒ 监听从未挂上；enableWikiGraphEntry()
-  // 只回挂元素+补标题，无重注册。封存批注释「元素重插即自然复活」对**可见性**
-  // 成立、对**点击接线**不成立（接线压根没建立过）；seal spec W2 只断言挂载
-  // 未点击，故漏网。实证：本 spec 首轮 §P0 开关开点击腿 + §P1–P8 全数挂于
-  // openGraph 的 pane 等待（按钮 [active] 聚焦、pane 零出现，10s 超时）。
-  // 修向（产品侧一行，本批不动——清欠纪律「严禁为绿改产品代码」）：
-  // enableWikiGraphEntry() 回挂后补一次 registerCanvasPanelButton('wiki-graph',
-  // 'wiki-btn', …)（boundPanelButtons 未含该 id，重复注册幂等安全），或改接线
-  // 为 #activity-bar 事件委托。修好 = 摘掉本用例 .fixme 修饰符即可。
-  test.fixme('开关开 → 回挂入口可点开图谱 pane（封存批回挂接线回归钉，待产品修复）', async ({ browser }) => {
+  // ── 产品回归钉（清欠批 2026-10-29 发现，回挂接线修复批 2026-10-30 落地转绿）──
+  // 曾病：开关开的回挂入口**点了没反应**——点击接线在 main.js 动态 import().then
+  // 里 boot 时注册，此刻 #wiki-btn 已被 activityBar.js detachWikiGraphEntry()
+  // 摘下 DOM ⇒ per-element getElementById = null ⇒ 监听从未挂上；
+  // enableWikiGraphEntry() 只回挂元素+补标题，救不了从未建立的接线（封存批
+  // 「元素重插即自然复活」注释对可见性成立、对点击接线不成立；seal spec W2
+  // 只断言挂载未点击，故漏网）。修法 = canvas.js 点击接线改 #activity-bar
+  // 事件委托：监听挂容器一次、注册只写映射表，元素重插即复活。清欠批预留的
+  // .fixme 已摘，本用例转真断言（§P1–P8 同因全族随之转绿）。
+  test('开关开 → 回挂入口可点开图谱 pane（封存批回挂接线回归钉）', async ({ browser }) => {
     const { context, page } = await boot(browser, { wikiGraph: true });
     await page.waitForSelector('#wiki-btn', { state: 'attached', timeout: 15000 });
     await page.click('#wiki-btn');
