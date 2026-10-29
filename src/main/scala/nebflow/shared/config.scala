@@ -6,6 +6,37 @@ import io.circe.syntax.*
 import io.circe.{Decoder, Json}
 import nebflow.shared.{Defaults, PathUtil}
 
+/**
+ * 模型不可用时段规则（model-schedule-unavailable 批，2026-10-29 作者令 17:44）：
+ * `unavailableWindows` 数组的一项。时段内该 provider / 模型视为**计划性不可用**，
+ * fallback 链构建时直接剔除（判定单点 = [[ModelAvailability]]）。
+ *
+ *   "unavailableWindows": [ { "from": "14:00", "to": "18:00" },
+ *                           { "from": "23:00", "to": "07:00", "days": [6, 7] } ]
+ *
+ * @param from / to
+ *   "HH:mm"（本机时区）；段语义 = [from, to)（14:00 整即禁、18:00 整即解）；
+ *   from > to = 跨午夜段（23:00-07:00 = [23:00,24:00)∪[00:00,07:00)）；
+ *   from == to 非法（fail-safe 永不命中——同 FreezeSchedule D6「误配即全停
+ *   过于危险」口径，也**不**定义为 24h 全禁）。
+ * @param days
+ *   ISO 星期（1=周一…7=周日）；缺席 = 每天。跨午夜段的清晨腿归**昨天**的星期
+ *   （周一 23:00 开窗 → 周二 06:59 仍禁，判据 = 昨天是周一）。
+ *
+ * 挂载点：`ProviderConfig`（provider 粒度，对该 provider 全部模型生效）与
+ * `ModelConfig`（模型粒度）；生效窗口 = 两层并集。缺省（无本字段）= 无限制
+ * ——零行为变化铁律。decoder 派生容忍缺字段；无 Encoder（config 写路径 =
+ * raw-JSON 深合并，同 vision/maxTokens 先例）。
+ */
+case class UnavailableWindow(
+  from: String,
+  to: String,
+  days: Option[List[Int]] = None
+)
+
+object UnavailableWindow:
+  given Decoder[UnavailableWindow] = deriveDecoder[UnavailableWindow]
+
 enum LlmProtocol:
   case Anthropic, OpenAI
 
@@ -66,7 +97,18 @@ case class ModelConfig(
    * 思考面能力类显式覆盖（设计 §4.2：启发式只影响缺省，显式配置永远赢）。
    * 缺省 = `ThinkingFamily.forModel(id)` 家族启发（AnthropicAdapter 单点取）。
    */
-  thinkingKind: Option[ThinkingKind] = None
+  thinkingKind: Option[ThinkingKind] = None,
+  /**
+   * 模型不可用时段规则（model-schedule-unavailable 批，2026-10-29）：模型粒度
+   * 时段闸——见 [[UnavailableWindow]]。缺省 None = 无限制（零行为变化）。
+   * 生效窗口 = 本层 ∪ provider 层（判定单点 = [[ModelAvailability]]）。
+   * 🔴 形状纪律：deriveDecoder **不认 case class 默认值**（ensureLlmDefaults
+   * 批实测教训）——缺省字段必须 Option 形（本文件全部缺省字段同律），否则
+   * 存量 nebflow.json 解码即抛 Missing required field。
+   * 🔴 前端契约：provider 编辑弹窗保存整体重建 `models` 数组 ⇒ 本字段必须由
+   * 保存路径按 id 原样携带（providersUi.js），否则每次保存都会静默抹掉。
+   */
+  unavailableWindows: Option[List[UnavailableWindow]] = None
 )
 
 object ModelConfig:
@@ -89,7 +131,16 @@ case class ProviderConfig(
   /** provider 级 thinking 层（三层继承中段；见 [[ModelConfig.thinking]]）。 */
   thinking: Option[ThinkingLayerConfig] = None,
   /** provider 级能力类覆盖（对该 provider 全部模型生效；model 级更优先）。 */
-  thinkingKind: Option[ThinkingKind] = None
+  thinkingKind: Option[ThinkingKind] = None,
+  /**
+   * 模型不可用时段规则（model-schedule-unavailable 批，2026-10-29）：provider
+   * 粒度时段闸，对该 provider 全部模型生效——见 [[UnavailableWindow]] 与
+   * [[ModelConfig.unavailableWindows]]。缺省 None = 无限制（零行为变化）。
+   * 🔴 形状纪律同上：Option 形（deriveDecoder 不认默认值）。
+   * 🔴 深合并存活面：本键是 provider **对象**上的键，provider 编辑弹窗保存
+   * （不提及本键）经 `ConfigService.mergeConfig` 天然保留——无需前端携带。
+   */
+  unavailableWindows: Option[List[UnavailableWindow]] = None
 )
 
 object ProviderConfig:

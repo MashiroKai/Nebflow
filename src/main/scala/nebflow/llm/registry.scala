@@ -77,6 +77,14 @@ class ProviderRegistry(
     }
 
   def getCandidates(): IO[List[ModelCandidate]] =
+    // 读面出口过滤（model-schedule-unavailable 批）——判定机缺省腿等读面取已滤
+    // 链；请求路径走 [[getCandidatesForAgentUnfiltered]]（终局判定在 LlmInterface）。
+    getCandidatesUnfiltered().flatMap { candidates =>
+      configRef.get.map(config => dropScheduleRestricted(candidates, config))
+    }
+
+  /** 未过滤全局链（seed 链 + 首 provider 兜底）——请求路径专用。 */
+  def getCandidatesUnfiltered(): IO[List[ModelCandidate]] =
     configRef.get.map { config =>
       // Global chain source = the SEED chain: the first provider's first model in
       // `nebflow.json` field order (a legacy `llm.model` chain still wins while
@@ -130,29 +138,107 @@ class ProviderRegistry(
       // Fallback: if model chain resolves to nothing (e.g. default points to a
       // non-existent provider after initial setup), use the first available model
       // across all providers so the system works out of the box.
-      if fromChain.nonEmpty then fromChain
-      else
-        config.llm.providers.headOption
-          .map { case (providerId, provider) =>
-            provider.models.headOption.map { mc =>
-              val caps = resolveCapabilities(providerId, mc.id, Some(mc))
-              // 案② B2 同点（**第三处构造点**，与上面两处同形；卡文只列了 :72/:122，
-              // 本处一并收口以免留下「绕过 clamp」的形状——见报告「偏离登记」）：
-              ModelCandidate(
-                providerId,
-                provider,
-                mc.id,
-                effectiveContextWindow(mc.contextWindow, mc.modelMaxContext),
-                caps,
-                mc.modelMaxContext,
-                mc.thinking,
-                mc.thinkingKind
-              )
+      val fromChainOrFallback =
+        if fromChain.nonEmpty then fromChain
+        else
+          config.llm.providers.headOption
+            .map { case (providerId, provider) =>
+              provider.models.headOption.map { mc =>
+                val caps = resolveCapabilities(providerId, mc.id, Some(mc))
+                // 案② B2 同点（**第三处构造点**，与上面两处同形；卡文只列了 :72/:122，
+                // 本处一并收口以免留下「绕过 clamp」的形状——见报告「偏离登记」）：
+                ModelCandidate(
+                  providerId,
+                  provider,
+                  mc.id,
+                  effectiveContextWindow(mc.contextWindow, mc.modelMaxContext),
+                  caps,
+                  mc.modelMaxContext,
+                  mc.thinking,
+                  mc.thinkingKind
+                )
+              }
             }
-          }
-          .flatten
-          .toList
-      end if
+            .flatten
+            .toList
+      // 模型不可用时段闸在此**不**过滤（本出口 = 未滤；过滤在 [[getCandidates]]
+      // 读面出口与 LlmInterface.applyScheduleGate 请求闸两处单点）。
+      fromChainOrFallback
+    }
+
+  // ============================================================
+  // 模型不可用时段闸（model-schedule-unavailable 批，2026-10-29 作者令 17:44）
+  // ============================================================
+
+  /** 时钟缝（观测/测试面；生产 = 系统钟）。 */
+  protected def nowMillis(): Long = System.currentTimeMillis()
+
+  /** 某 provider/model 的生效不可用窗口 = provider 级 ∪ 模型级（判定输入单点）。 */
+  private def scheduleWindowsFor(
+    config: NebflowServiceConfig,
+    providerId: String,
+    modelId: String
+  ): List[UnavailableWindow] =
+    config.llm.providers.get(providerId).toList.flatMap { provider =>
+      provider.unavailableWindows.getOrElse(Nil) ++
+        provider.models.find(_.id == modelId).toList.flatMap(_.unavailableWindows.getOrElse(Nil))
+    }
+
+  /**
+   * 链出口过滤（[[getCandidates]] / [[getCandidatesForAgent]] 共用）：剔除当前
+   * 处于不可用时段内的候选，**序不变**。缺省配置（全链无 unavailableWindows）
+   * 恒等原样返回——零行为变化铁律。判定单点 = [[ModelAvailability.isUnavailable]]。
+   * 注意：全受限时这里返回空链（不在此报错）——「全受限 ⇒ 显式报错」的终局
+   * 判定在 LlmInterface（合并 override 后、有完整受限清单时）单点给出。
+   */
+  private def dropScheduleRestricted(
+    candidates: List[ModelCandidate],
+    config: NebflowServiceConfig
+  ): List[ModelCandidate] =
+    val now = nowMillis()
+    candidates.filterNot(c => ModelAvailability.isUnavailable(scheduleWindowsFor(config, c.providerId, c.model), now))
+
+  /**
+   * 过滤 + 受限清单（带各自窗口描述）：LlmInterface 合并会话 override 后的
+   * **补滤单点**（override 候选不经链构建出口）——返回 (可用链, 受限[候选, 原因])。
+   * 原因串形态 = "14:00-18:00"（当前命中窗口，供日志/错误消息直出）。
+   */
+  def filterScheduleRestricted(
+    candidates: List[ModelCandidate]
+  ): IO[(List[ModelCandidate], List[(ModelCandidate, String)])] =
+    configRef.get.map { config =>
+      val now = nowMillis()
+      val (available, restricted) = candidates.partitionMap { c =>
+        ModelAvailability.activeWindowDesc(scheduleWindowsFor(config, c.providerId, c.model), now) match
+          case None => Left(c)
+          case Some(w) => Right((c, w))
+      }
+      (available, restricted)
+    }
+
+  /** 某 ref（"provider/model"）当前是否处于不可用时段（判定机 utility ref 腿用）。None = 可用。 */
+  def scheduleRestrictionFor(ref: String): IO[Option[String]] =
+    configRef.get.map { config =>
+      try
+        val (providerId, modelId) = Config.parseModelRef(ref)
+        ModelAvailability.activeWindowDesc(scheduleWindowsFor(config, providerId, modelId), nowMillis())
+      catch case _: Exception => None // 非法 ref：无时段信息 = 不受限（解析错误由既有路径处理）
+    }
+
+  /** effectiveChain 各 ref 的窗口声明面（REST 可见性腿；active = 当前在窗内）。 */
+  def scheduleWindowsByRef(refs: List[String]): IO[List[(String, List[String], Boolean)]] =
+    configRef.get.map { config =>
+      val now = nowMillis()
+      refs.map { ref =>
+        val windows =
+          try
+            val (providerId, modelId) = Config.parseModelRef(ref)
+            scheduleWindowsFor(config, providerId, modelId)
+          catch case _: Exception => Nil
+        val desc = windows.map(ModelAvailability.describeWindow)
+        val active = ModelAvailability.isUnavailable(windows, now)
+        (ref, desc, active)
+      }
     }
 
   /**
@@ -237,23 +323,38 @@ class ProviderRegistry(
    * （REST 的「当前模型」显示取 healthy.head，故主用模型面零改）。
    */
   def getCandidatesForAgent(agentModel: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
+    // 模型不可用时段闸（model-schedule-unavailable 批，2026-10-29）：读面出口
+    // 过滤（/model 面板 current、判定机缺省腿等）——窗内候选剔除、序不变；缺省
+    // 恒等原样（零行为变化）。请求路径**不走本出口**：LlmInterface 取
+    // [[getCandidatesForAgentUnfiltered]] 并在 [[LlmInterface.applyScheduleGate]]
+    // 单点过滤——全受限终局判定需要完整受限清单，链出口先滤会把受限信息丢掉
+    // （漏成「空链」，流面落进 120s 全灭闸等待而非带原因快失败）。
+    for
+      candidates <- getCandidatesForAgentUnfiltered(agentModel)
+      config <- configRef.get
+    yield dropScheduleRestricted(candidates, config)
+
+  end getCandidatesForAgent
+
+  /** 未过滤 agent 链（含储备层）——请求路径专用（LlmInterface 时段闸的单点输入）。 */
+  def getCandidatesForAgentUnfiltered(agentModel: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
     val base = agentModel match
       case None | Some(nebflow.shared.AgentModelConfig(None, Nil)) =>
-        getCandidates() // no config → global list
+        getCandidatesUnfiltered() // no config → global list
       case Some(cfg) =>
         // Build agent chain: [preferred, ...fallbacks]
         val agentChain = cfg.preferred.toList ++ cfg.fallbacks
         for
           resolved <- agentChain.traverse(ref => getCandidateForRef(ref))
           agentCandidates = resolved.flatten
-          b <- if agentCandidates.nonEmpty then IO.pure(agentCandidates) else getCandidates()
+          b <- if agentCandidates.nonEmpty then IO.pure(agentCandidates) else getCandidatesUnfiltered()
         yield b
     for
       candidates <- base
       config <- configRef.get
     yield reserveTier(config, candidates)
 
-  end getCandidatesForAgent
+  end getCandidatesForAgentUnfiltered
 
   /**
    * 储备层（腿 a）：把 `config.llm.providers` 里**已存在但当前链未引用**的

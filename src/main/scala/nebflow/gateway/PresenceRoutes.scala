@@ -1167,6 +1167,13 @@ private[gateway] object PresenceRoutes:
                     candidates <- sharedResources.providerRegistry.getCandidatesForAgent(Some(effective))
                     (healthy, _) <- sharedResources.healthMonitor.filterCandidates(candidates)
                     current = healthy.headOption.map(c => s"${c.providerId}/${c.model}")
+                    // 时段闸可见性（model-schedule-unavailable 批，2026-10-29）：
+                    // effectiveChain 逐 ref 的不可用窗口声明（active = 当前在窗内）
+                    // ——/model 面板据此灰显 + 说明；`current` 经链出口过滤后天然
+                    // 只反映未受限模型。
+                    scheduleRestricted <- sharedResources.providerRegistry.scheduleWindowsByRef(
+                      effective.preferred.toList ++ effective.fallbacks
+                    )
                     result <- Ok(
                       Json.obj(
                         "name" -> agentName.asJson,
@@ -1175,7 +1182,16 @@ private[gateway] object PresenceRoutes:
                         "effectiveChain" -> effective.asJson,
                         "resolvedFrom" -> resolvedFrom.asJson,
                         "current" -> current.asJson,
-                        "settable" -> policy.isSettable(agentName).asJson
+                        "settable" -> policy.isSettable(agentName).asJson,
+                        "scheduleRestricted" -> scheduleRestricted
+                          .collect { case (ref, windows, active) if windows.nonEmpty =>
+                            Json.obj(
+                              "ref" -> ref.asJson,
+                              "windows" -> windows.asJson,
+                              "active" -> active.asJson
+                            )
+                          }
+                          .asJson
                       )
                     )
                   yield result

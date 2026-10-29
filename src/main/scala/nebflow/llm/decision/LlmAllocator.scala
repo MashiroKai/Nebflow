@@ -160,13 +160,25 @@ object LlmAllocator:
   private[decision] def candidateFrom(registry: ProviderRegistry): IO[Option[ModelCandidate]] =
     IO.blocking(nebflow.shared.Config.loadServiceConfig().judge.flatMap(_.utilityModel)).flatMap {
       case Some(ref) =>
-        registry.getCandidateForRef(ref).flatMap {
-          case Some(c) => IO.pure(Some(c))
-          case None =>
+        // 时段闸（model-schedule-unavailable 批）：utility ref 当前处于不可用
+        // 时段 ⇒ WARN + 落到全局链首选（链出口已滤，不会选到受限模型）。
+        registry.scheduleRestrictionFor(ref).flatMap {
+          case Some(w) =>
             NebflowLogger
               .forName("nebflow.llm.plugin-alloc")
-              .warnSync(s"plugin-alloc: judge.utilityModel '$ref' unresolved — falling back to root-chain head")
+              .warnSync(
+                s"plugin-alloc: judge.utilityModel '$ref' schedule-restricted ($w) — falling back to root-chain head"
+              )
             registry.getCandidates().map(_.headOption)
+          case None =>
+            registry.getCandidateForRef(ref).flatMap {
+              case Some(c) => IO.pure(Some(c))
+              case None =>
+                NebflowLogger
+                  .forName("nebflow.llm.plugin-alloc")
+                  .warnSync(s"plugin-alloc: judge.utilityModel '$ref' unresolved — falling back to root-chain head")
+                registry.getCandidates().map(_.headOption)
+            }
         }
       case None => registry.getCandidates().map(_.headOption)
     }

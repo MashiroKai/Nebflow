@@ -1131,6 +1131,9 @@ export default {
   'model.errDuplicate': '该模型已在链中',
   'model.unavailable': '当前不可用（{reason}）',
   'model.healthFiltered': '健康层过滤中',
+  // 模型不可用时段（model-schedule-unavailable 批 2026-10-29）：面板灰显/标注面。
+  'model.scheduleRestrictedTitle': '不可用时段 {windows}——窗内自动跳过该模型',
+  'model.scheduleRestrictedSuffix': '{windows} 不可用',
   'model.saved': '已保存',
   'model.divergedBar': '{roles} 已独立配置，不受主链影响',
   'model.divergedView': '查看',
@@ -1212,6 +1215,10 @@ export default {
   'provider.ctxExceedsCeiling': '模型 {id}：上下文窗口 {value} 超出支持的绝对上限 {max}',
   'provider.ctxDefaulted': '以下模型未填写上下文窗口，已按默认值 {def} 保存：{ids}',
   'provider.ctxClampedToMax': '模型 {id}：默认值 1,000,000 超过该模型上报的上限，已按 {max} 保存',
+  // 模型不可用时段（model-schedule-unavailable 批）：provider 弹窗编辑面。
+  'provider.unavailableWindows': '不可用时段',
+  'provider.unavailableWindowsPlaceholder': '如 14:00-18:00；多条用逗号分隔，跨午夜写 23:00-07:00；留空 = 不限制',
+  'provider.unavailableWindowsInvalid': '不可用时段格式错误：「{value}」（需 HH:mm-HH:mm，且开始≠结束）',
 
   // Model fields in modal
   'model.idPlaceholder': '模型 ID',

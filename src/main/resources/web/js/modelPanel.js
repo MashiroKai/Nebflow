@@ -74,26 +74,48 @@ export function chainRefs(chain) {
   return [chain?.preferred, ...(chain?.fallbacks || [])].filter(Boolean);
 }
 
+// ── 模型不可用时段（model-schedule-unavailable 批 2026-10-29）──────────────
+// GET /agents/:name/model 的 scheduleRestricted 数组 → ref → {windows, active}
+// 查找表。面板用它给受限 ref 灰显（active）+ 窗口说明（title/标注）。缺席或
+// 空数组 = 无任何时段规则（缺省零行为变化）。
 /**
- * Render a model chain as read-only chips: preferred highlighted, fallbacks
- * small, pulsing dot on the currently running model.
- * refs: [preferred, ...fallbacks]; current: running ref.
+ * Build a ref → {windows, active} map from a GET /agents/:name/model response.
+ * @param {{scheduleRestricted?: Array<{ref: string, windows: string[], active: boolean}>}|null} model
+ * @returns {Map<string, {windows: string[], active: boolean}>}
  */
-export function chainChipsHtml(refs, current) {
+export function restrictedMapOf(model) {
+  const map = new Map();
+  (model?.scheduleRestricted || []).forEach(r => {
+    if (r && r.ref && Array.isArray(r.windows) && r.windows.length) {
+      map.set(r.ref, { windows: r.windows, active: !!r.active });
+    }
+  });
+  return map;
+}
+
+/** Render a model chain as read-only chips: preferred highlighted, fallbacks
+ * small, pulsing dot on the currently running model.
+ * refs: [preferred, ...fallbacks]; current: running ref;
+ * restricted: optional 时段闸查找表（restrictedMapOf）——配置了窗口的 chip 加
+ * title 说明，active（当前在窗内）的灰显。缺省 null = 既有消费方零变化。 */
+export function chainChipsHtml(refs, current, restricted = null) {
   const list = (refs || []).filter(Boolean);
   if (list.length === 0) {
     return `<div class="mchain-empty">${esc(t('model.seedNote'))}</div>`;
   }
   const chips = list.map((ref, i) => {
     const playing = current && ref === current;
-    return `<span class="mchain-chip${i === 0 ? ' preferred' : ''}${playing ? ' playing' : ''}">${playing ? '<span class="agent-detail-playing-dot"></span>' : ''}${esc(ref)}</span>`;
+    const res = restricted?.get(ref);
+    const resAttr = res ? ` title="${esc(t('model.scheduleRestrictedTitle', { windows: res.windows.join(', ') }))}"` : '';
+    const resCls = res?.active ? ' restricted' : '';
+    return `<span class="mchain-chip${i === 0 ? ' preferred' : ''}${playing ? ' playing' : ''}${resCls}"${resAttr}>${playing ? '<span class="agent-detail-playing-dot"></span>' : ''}${esc(ref)}${res ? `<span class="mchip-window">${esc(res.windows.join(', '))}</span>` : ''}</span>`;
   }).join('<span class="mchain-arrow">→</span>');
   return `<div class="mchain">${chips}</div>`;
 }
 
 /** Chain chips from a GET /agents/:name/model response (effective chain). */
 export function resolvedChainChipsHtml(model) {
-  return chainChipsHtml(chainRefs(model?.effectiveChain), model?.current || '');
+  return chainChipsHtml(chainRefs(model?.effectiveChain), model?.current || '', restrictedMapOf(model));
 }
 
 /** Source note key for a GET /agents/:name/model response. */
@@ -263,20 +285,29 @@ function refPartsHtml(ref) {
   return `<span class="mp-prov">${esc(prov)}</span><span class="mp-model">${esc(model)}</span>`;
 }
 
-function chainRowsHtml(refs, currentRef) {
+function chainRowsHtml(refs, currentRef, restricted = null) {
   const headIdx = currentRef ? refs.indexOf(currentRef) : -1;
   return refs.map((ref, i) => {
     const dim = headIdx > -1 && i < headIdx;
-    return `<div class="agent-detail-model-row mp-row${dim ? ' mp-row-unavailable' : ''}" draggable="true" data-idx="${i}"${dim ? ` title="${esc(t('model.unavailable', { reason: t('model.healthFiltered') }))}"` : ''}>
+    const res = restricted?.get(ref);
+    // 时段闸灰显（model-schedule-unavailable 批）：active = 当前在不可用窗内
+    // ⇒ 复用 .mp-row-unavailable 灰显档；title 说明窗口（与健康层 dim 语义可
+    // 叠加——两者都是「这一行这次不会被选中」的可见事实）。
+    const schedDim = !!res?.active;
+    const resTitle = res ? t('model.scheduleRestrictedTitle', { windows: res.windows.join(', ') }) : '';
+    const title = [dim ? t('model.unavailable', { reason: t('model.healthFiltered') }) : '', resTitle]
+      .filter(Boolean).join('；');
+    return `<div class="agent-detail-model-row mp-row${dim || schedDim ? ' mp-row-unavailable' : ''}" draggable="true" data-idx="${i}"${title ? ` title="${esc(title)}"` : ''}>
       <span class="agent-detail-grip">⠿</span>
       ${refPartsHtml(ref)}
+      ${res ? `<span class="mp-window">${esc(res.windows.join(', '))}</span>` : ''}
       <span class="mp-pos">${i === 0 ? esc(t('model.chainHead')) : esc(t('model.chainFallback'))}</span>
       <span class="agent-detail-model-remove mp-remove" data-idx="${i}" title="×">×</span>
     </div>`;
   }).join('');
 }
 
-function addSelectHtml(refs, chain) {
+function addSelectHtml(refs, chain, restricted = null) {
   const available = refs.filter(r => !chain.includes(r));
   const groups = new Map();
   available.forEach(ref => {
@@ -286,8 +317,14 @@ function addSelectHtml(refs, chain) {
     groups.get(prov).push(ref);
   });
   if (groups.size === 0) return '';
+  // 时段闸标注（model-schedule-unavailable 批）：配置了窗口的模型在下拉里带
+  // 窗口后缀（可见规则）；不禁用——窗内只是暂不可用，仍允许加进链。
   const optgroups = [...groups.entries()].map(([prov, list]) =>
-    `<optgroup label="${esc(prov)}">${list.map(r => `<option value="${esc(r)}">${esc(shortModel(r))}</option>`).join('')}</optgroup>`
+    `<optgroup label="${esc(prov)}">${list.map(r => {
+      const res = restricted?.get(r);
+      const label = res ? `${shortModel(r)} · ${t('model.scheduleRestrictedSuffix', { windows: res.windows.join(', ') })}` : shortModel(r);
+      return `<option value="${esc(r)}">${esc(label)}</option>`;
+    }).join('')}</optgroup>`
   ).join('');
   return `<select class="mp-add-select"><option value="">${esc(t('model.addModel'))}</option>${optgroups}</select>`;
 }
@@ -309,10 +346,11 @@ function buildChainEditor(container, role, commit) {
   probedModels.forEach((list, prov) => list.forEach(m => probed.push(`${prov}/${m}`)));
   const allRefs = [...new Set([...getAllModelRefs(), ...probed])];
   const current = st.data?.current || '';
+  const restricted = restrictedMapOf(st.data);
   editor.innerHTML = `
-    <div class="mp-rows">${chainRowsHtml(chain, current)}</div>
+    <div class="mp-rows">${chainRowsHtml(chain, current, restricted)}</div>
     <div class="mp-addrow">
-      ${addSelectHtml(allRefs, chain)}
+      ${addSelectHtml(allRefs, chain, restricted)}
       <button type="button" class="cfg-btn cfg-btn-sm mp-refresh">${esc(t('model.refreshList'))}</button>
       <button type="button" class="cfg-btn cfg-btn-sm mp-manual-toggle">${esc(t('model.manualInput'))}</button>
       <input type="text" class="cfg-input mp-manual" style="display:none" placeholder="${esc(t('model.manualPlaceholder'))}">
