@@ -416,6 +416,8 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
       before <- ledgerOf(rt)
       obs <- rt.store.chainLedgerStore.reconcile(Nil, Set.empty, Map.empty, Set.empty, 10L)
       after <- ledgerOf(rt)
+      // R3 续批（批化落盘）：离场行先入待落批，龄期到才整批落轮 —— 补一拍过龄期再读轮。
+      _ <- rt.store.chainLedgerStore.reconcile(Nil, Set.empty, Map.empty, Set.empty, 10L + ChainLedger.OfflineFlushAgeMs + 1L)
       rounds <- rt.store.chainLedgerStore.readRounds
       noted <- rt.store.chainLedgerStore.noteTextReferences(s"本条引用 $canon（已退役号）", "board-usage")
       afterNote <- ledgerOf(rt)
@@ -430,7 +432,7 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
       assert(before.entries.contains(canon), "起跑：归档零引用行仍在热面（未到拍）")
       assertEquals(obs.dissolved.map(_.chainId), List(canon), "无命中分量 ⇒ 离场 ⇒ 整行下沉（读数：1 行）")
       assert(!after.entries.contains(canon), "下沉后热面不再有该行（载荷整行在冷档）")
-      assertEquals(rounds.map(_.kind), List(ChainLedger.RoundDissolve), "冷档留痕：dissolve 一轮（只归档不删除）")
+      assertEquals(rounds.map(_.kind), List(ChainLedger.RoundDissolve), "冷档留痕：dissolve 一轮（只归档不删除；批化后龄期到落轮）")
       assertEquals(noted, Right(Nil): Either[String, List[String]], "已退役号不在 knownIds（热面）⇒ 零命中")
       assertEquals(afterNote.externalRefs, Map.empty[String, Int], "🔴 不复活：不为已退役号新建计数键（本批计数零副作用）")
       assertEquals(afterNote.entries.keySet, after.entries.keySet, "🔴 不复活：entries 集合逐字不变（计数不建条目、不改状态）")

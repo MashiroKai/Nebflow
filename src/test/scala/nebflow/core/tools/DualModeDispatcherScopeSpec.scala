@@ -498,11 +498,17 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
       _ <- nebflow.core.delegate.DelegateFlowMapLifecycle.flushBeforeUnmount(delegateId)
       events <- readEvents(ws)
       activeEmpty <- h.store.snapshot.map(_.nodes.isEmpty)
-      archivedEntry <- h.store.chainLedgerStore.snapshot.map(
-        _.entries.values.exists(e =>
+      // R3 续批（活性别闸）：收敛拍会把图空行送进**离场待落批** —— 行本体仍带着
+      // Archived + archivedAt（绑定证据随行），只是不在热面 entries 里了。两处任一
+      // 命中即「摘要行翻了归档态」。
+      archivedEntry <- h.store.chainLedgerStore.snapshot.map { st =>
+        st.entries.values.exists(e =>
+          e.status == nebflow.core.project.ChainLedger.StatusArchived && e.archivedAt.isDefined
+        ) ||
+        st.pendingDissolve.entries.exists(e =>
           e.status == nebflow.core.project.ChainLedger.StatusArchived && e.archivedAt.isDefined
         )
-      )
+      }
       // unmount（终态屏障单点的下一环）→ 宽限窗内的盘面探针只读补拉。
       _ <- nebflow.core.project.DelegateFlowHosts.unmount(delegateId)
       probe <- nebflow.core.project.ChainsReadFace.chainJson(delegateId, Map.empty)
