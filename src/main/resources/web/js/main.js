@@ -2797,7 +2797,10 @@ onMessage('user', (msg, view) => {
     // 旧帧缺该字段 ⇒ null（同 intake：缺席即回落，逐字不变）。
     // fileChanges（file-diff → 委托结果行 bug #58 修）：delegate 终态 diff 载荷随行
     // 进缓存——两条缓存恢复读路径读 `m.fileChanges`，漏落 ⇒ 重载丢 diff（header 先例）。
-    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null, intake: msg.intake || null, header: msg.header || null, fileChanges: msg.fileChanges || null }, sid);
+    // schedule（schedcard 批 2026-10-29）：定时任务卡片载荷随行进缓存——缓存恢复
+    // 路径读 `m.schedule`，漏落 ⇒ 重载降级成无载荷卡（header 先例）。旧帧缺该字段
+    // ⇒ null（缺席即回落，逐字不变）。
+    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null, intake: msg.intake || null, header: msg.header || null, fileChanges: msg.fileChanges || null, schedule: msg.schedule || null }, sid);
   }
   // Window ownership. First disjunct = the pre-existing rule, unchanged: a frame
   // whose sessionId is the globally active session renders into the active view.
@@ -2814,7 +2817,9 @@ onMessage('user', (msg, view) => {
     // 气泡四段式统一批（2026-09-15）：帧上的 `header`（引擎已渲染）逐字透传——
     // 缺席（旧帧 / 词表外 source）时 `buildInjectedRow` 回落既有标签组装。
     // fileChanges（bug #58 修）：delegate 终态 diff 载荷同位透传（缺席 = 旧行为）。
-    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam, msg.delivery, msg.intake, msg.header, msg.fileChanges);
+    // schedule（schedcard 批 2026-10-29）：定时任务卡片载荷同位透传——
+    // `source==='schedule'` 的帧在 builder 内走专属卡分支（缺席 = 旧行为）。
+    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam, msg.delivery, msg.intake, msg.header, msg.fileChanges, msg.schedule);
     smartScroll();
   }
 });

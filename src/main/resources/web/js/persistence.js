@@ -634,7 +634,9 @@ export function restoreFromStorage(opts = {}) {
         if (isOutgoingInjection(m, ownerSessionId)) return;
         // fileChanges（file-diff → 委托结果行 bug #58 修）：缓存恢复读同一字段
         //（main.js saveMsg 落缓存；缺席 ⇒ undefined = 旧行为逐字不变）。
-        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam, undefined, m.delivery, m.intake, m.header, m.fileChanges));
+        // schedule（schedcard 批 2026-10-29）：定时任务卡片载荷同字段透传——
+        // `m.source==='schedule'` 的行在 builder 内走专属卡分支（缺席 = 旧行为）。
+        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam, undefined, m.delivery, m.intake, m.header, m.fileChanges, m.schedule));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,
@@ -1026,8 +1028,10 @@ function buildHistoryRow(m, i, ctx) {
         // messages join the rAF markdown batch — no synchronous render storm
         // on hard-refresh (P0-2).
         // fileChanges（bug #58 修）：后端历史分页行同字段透传（缺席 = 旧行为）。
+        // schedule（schedcard 批 2026-10-29）：定时任务卡片载荷同字段透传——
+        // `m.source==='schedule'` 的行在 builder 内走专属卡分支（缺席 = 旧行为）。
         fragment.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam,
-          (el, text) => deferMd(el, text, false), m.delivery, m.intake, m.header, m.fileChanges));
+          (el, text) => deferMd(el, text, false), m.delivery, m.intake, m.header, m.fileChanges, m.schedule));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,

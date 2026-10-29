@@ -112,7 +112,7 @@ object InjectionAttribution:
    * 出处（逐个可溯源）：
    *   mail                MailTool#sendMail（腿③ / team 腿）
    *   task / dispatch     ProjectActor.SourceTask（TriggerDispatcher 默认源：重入 /
- *                       spawn 首条 prompt）/ SourceDispatch（DispatchNotify 回流）
+   *                       spawn 首条 prompt）/ SourceDispatch（DispatchNotify 回流）
    *   system              NodeEngine#injectRunning（腿②，见 SourceSystem）
    *   node                NodeEngine#deliverToRoot（节点完成通报）
    *   skill               AgentActor SkillActivate 分支
@@ -133,6 +133,19 @@ object InjectionAttribution:
    *                       ⇒ 注入本机 Nebula 会话的蓝色气泡（标签 = i18n
    *                       「来自 <from_device> 的 Nebula」，前端走显式分支，
    *                       同 `node` 先例）
+   *   schedule            定时任务触发腿（schedcard 批 2026-10-29，作者令「定时
+   *                       任务卡片防退化 + stand 配色」）：到点触发在
+   *                       `ScheduledTaskService.triggerTask` 落盘 + 广播
+   *                       `injected=true, source="schedule"` 的注入行（卡片载荷
+   *                       随行进 `UiMessage.User.schedule` 键）。前端把它渲染成
+   *                       定时任务专属卡（`buildInjectedRow` 的显式分支，同
+   *                       `node`/`deviceMail` 专用分支先例；兜底标签
+   *                       `INJECTED_SOURCE_LABELS.schedule='Schedule'`）。
+   *                       注：`AgentCommand.ExternalEvent` 的 agent 面源名仍为
+   *                       `"scheduled-task"`（带连字符）——那是 LLM 事件归因面，
+   *                       **不**进本集合（`visibleExternalEventSource` 对它恒
+   *                       None，无可见气泡发射点）；本集合登记的是**注入行呈现
+   *                       面**的定名（无连字符，兼容前端登记解析器）。
    * 例外：`eventType=="inject"` 的 API 注入 source 由调用方提供（用户域），
    * 不受本集合约束 —— 前端对其走既有兜底分支。
    */
@@ -150,7 +163,8 @@ object InjectionAttribution:
       "tool",
       "background",
       "chain",
-      "deviceMail"
+      "deviceMail",
+      "schedule"
     )
 
 end InjectionAttribution

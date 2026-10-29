@@ -99,7 +99,11 @@ class InjectionSourceContractSpec extends FunSuite:
         // （source=deviceMail，DeviceMailInbox 的会话注入；前端走 i18n 显式分支
         // 「来自 <from_device> 的 Nebula」，同 `node` 先例 —— 故不在表内，靠
         // explicitBranchSources 覆盖本门）。
-        "deviceMail"
+        "deviceMail",
+        // schedcard 批（2026-10-29）：定时任务触发腿（ScheduledTaskService.triggerTask
+        // 落盘/广播 source="schedule"；前端走 buildInjectedRow 专属卡分支 + 表项
+        // schedule:'Schedule' 兜底标签）。
+        "schedule"
       ),
       "BackendNamedSources 变更 ⇒ 同步检查 web/js/chat.js#INJECTED_SOURCE_LABELS 并更新本 pin"
     )
