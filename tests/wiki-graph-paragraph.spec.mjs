@@ -5,6 +5,17 @@
 // 「那一段」的内容（非整文档），点击跳转目标文档并高亮该段。设计稿
 // docs/design/wiki-graph-paragraph-ref-design.zh-CN.md §4 交互表的本 spec 钉面：
 //
+//   §P0 图谱入口封存闸（存量红清欠批 2026-10-29 新增）：graphseal 批
+//       （82c273a2a，作者手写想法① 2026-10-29「词典边栏的图谱入口暂时隐藏…
+//        但是保留词条有关的各种关联、引用的功能」）boot 摘挂 #wiki-btn，
+//        features.wikiGraph 显式 true 才回挂（featureFlags.wikiGraphEnabled，
+//        缺席 = 封存 = 默认 OFF）。本 spec 原 openGraph 直点 #wiki-btn——封存
+//        后入口不在 DOM，10 用例全挂（词条二批报告留档：干净树基线同挂）。
+//        双态都钉：开关关 = 入口不在 DOM（负断言，摘挂非 CSS 藏）；开关开 =
+//        入口回挂静态槽（正断言）。§P1–P8 全族改在开关开档跑。
+//        ⚠ 清欠批核实发现：开关开的回挂入口点击无响应 = 封存批自身的产品回归
+//        （回挂接线从未建立，归因与修向见 §P0b 的 fixme 注）——修复落地前
+//        §P1–P8 以红挂在入口腿（可见红 + 报告登记，spec 锚本身已换代不再漂移）。
 //   §P1 边锚保真：payload 边的 anchor 在前端去重后保留（带锚边中点画 2.4px
 //       石墨圆点——canvas 是单一位图，spec 经 __wikiGraphProbe 读模型态）；
 //   §P2 引用边 hover = 段落快照小窗：.wg-tip.para 毛玻璃浮层，§ 段标题 +
@@ -79,7 +90,7 @@ function startServer() {
 let server;
 const base = `http://127.0.0.1:${PORT}`;
 
-async function boot(browser, { colorScheme = 'dark', viewport = { width: 1440, height: 900 } } = {}) {
+async function boot(browser, { colorScheme = 'dark', viewport = { width: 1440, height: 900 }, wikiGraph = false } = {}) {
   const context = await browser.newContext();
   const page = await context.newPage();
   const pageErrors = [];
@@ -103,6 +114,12 @@ async function boot(browser, { colorScheme = 'dark', viewport = { width: 1440, h
   await page.route('**/agents/**', r => r.fulfill({ json: {} }));
   await page.route('**/api/neblink/status', r => r.fulfill({ json: { loggedIn: false, device: null, peers: [] } }));
   await page.routeWebSocket(/\/ws/, ws => {
+    // graphseal 批闸帧（82c273a2a）：首帧 configData 一次性判定入口封存态——
+    // 缺席 features.wikiGraph = 封存（#wiki-btn 摘挂）；显式 true = 回挂静态槽。
+    ws.send(JSON.stringify({
+      type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {},
+      config: JSON.stringify(wikiGraph ? { features: { wikiGraph: true } } : {}),
+    }));
     ws.onMessage(raw => {
       let m; try { m = JSON.parse(raw); } catch { return; }
       if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
@@ -180,9 +197,72 @@ async function nodePoint(page, id) {
 test.beforeAll(async () => { server = await startServer(); });
 test.afterAll(async () => { server.close(); });
 
+test.describe('§P0 图谱入口封存闸（graphseal 批 82c273a2a，双态都钉）', () => {
+  test('开关关（features.wikiGraph 缺席）→ #wiki-btn 不在 DOM（封存 = 摘挂，非 CSS 藏）', async ({ browser }) => {
+    const { context, page, pageErrors } = await boot(browser, {}); // 默认 = 封存态（无 wikiGraph 键）
+    // 封存判定窗：configData latch 走完（seal spec 同款 600ms 窗 + 余量）后仍不在场
+    await page.waitForTimeout(900);
+    const dump = await page.evaluate(() => {
+      const bar = document.getElementById('activity-bar');
+      const ids = bar ? [...bar.children].map(e => e.id) : [];
+      const pi = ids.indexOf('projects-btn'), ai = ids.indexOf('agents-btn');
+      return {
+        wikiCount: document.querySelectorAll('#wiki-btn').length,
+        wikiConnected: document.getElementById('wiki-btn')?.isConnected ?? false,
+        projectsAgentsAdjacent: pi !== -1 && ai === pi + 1, // 图谱静态槽空出、边栏不塌
+        paneAttached: !!document.querySelector('.wiki-graph-pane'),
+      };
+    });
+    expect(dump.wikiCount, '🔴 开关关 = 入口不可见（不在 DOM，防复活钉）').toBe(0);
+    expect(dump.wikiConnected, '入口摘挂（DOM 摘挂姿态，非 display 藏）').toBe(false);
+    expect(dump.projectsAgentsAdjacent, '图谱静态槽空出：projects → agents 相邻').toBe(true);
+    expect(dump.paneAttached, '封存态无图谱 pane').toBe(false);
+    expect(pageErrors, 'R0 console 零错误').toEqual([]);
+    await context.close();
+  });
+
+  test('开关开（features.wikiGraph:true）→ #wiki-btn 回挂静态槽（入口在位正断言）', async ({ browser }) => {
+    const { context, page, pageErrors } = await boot(browser, { wikiGraph: true });
+    await page.waitForSelector('#wiki-btn', { state: 'attached', timeout: 15000 });
+    const dump = await page.evaluate(() => {
+      const bar = document.getElementById('activity-bar');
+      const ids = bar ? [...bar.children].map(e => e.id) : [];
+      const pi = ids.indexOf('projects-btn'), wi = ids.indexOf('wiki-btn'), ai = ids.indexOf('agents-btn');
+      return { connected: document.getElementById('wiki-btn')?.isConnected ?? false, order: { pi, wi, ai }, title: document.getElementById('wiki-btn')?.title || '' };
+    });
+    expect(dump.connected, '🔴 开关开 = 入口在位（静态槽回挂）').toBe(true);
+    expect(dump.order.pi !== -1 && dump.order.wi === dump.order.pi + 1 && dump.order.ai === dump.order.wi + 1,
+      '槽位契约：projects → wiki → agents（静态槽精确还原）').toBe(true);
+    expect(dump.title, 'i18n 标题就位').not.toBe('');
+    expect(pageErrors, 'R0 console 零错误').toEqual([]);
+    await context.close();
+  });
+
+  // ── 存量红清欠批（2026-10-29）发现的产品回归钉（fixme = 跳过留证，修好即摘）──
+  // 开关开的回挂入口**点了没反应**：registerCanvasPanelButton 的点击接线在
+  // main.js:4210 动态 import().then 里 boot 时注册，此刻 #wiki-btn 已被
+  // activityBar.js:248 detachWikiGraphEntry() 摘下 DOM ⇒ canvas.js:546
+  // getElementById('wiki-btn') = null ⇒ 监听从未挂上；enableWikiGraphEntry()
+  // 只回挂元素+补标题，无重注册。封存批注释「元素重插即自然复活」对**可见性**
+  // 成立、对**点击接线**不成立（接线压根没建立过）；seal spec W2 只断言挂载
+  // 未点击，故漏网。实证：本 spec 首轮 §P0 开关开点击腿 + §P1–P8 全数挂于
+  // openGraph 的 pane 等待（按钮 [active] 聚焦、pane 零出现，10s 超时）。
+  // 修向（产品侧一行，本批不动——清欠纪律「严禁为绿改产品代码」）：
+  // enableWikiGraphEntry() 回挂后补一次 registerCanvasPanelButton('wiki-graph',
+  // 'wiki-btn', …)（boundPanelButtons 未含该 id，重复注册幂等安全），或改接线
+  // 为 #activity-bar 事件委托。修好 = 摘掉本用例 .fixme 修饰符即可。
+  test.fixme('开关开 → 回挂入口可点开图谱 pane（封存批回挂接线回归钉，待产品修复）', async ({ browser }) => {
+    const { context, page } = await boot(browser, { wikiGraph: true });
+    await page.waitForSelector('#wiki-btn', { state: 'attached', timeout: 15000 });
+    await page.click('#wiki-btn');
+    await page.waitForSelector('.wiki-graph-pane', { state: 'attached', timeout: 10000 });
+    await context.close();
+  });
+});
+
 test.describe('§P1 边锚保真', () => {
   test('payload 边 anchor 在去重后保留；带锚边计数入 probe', async ({ browser }) => {
-    const { context, page, pageErrors } = await boot(browser);
+    const { context, page, pageErrors } = await boot(browser, { wikiGraph: true });
     const probe = await openGraph(page);
     const edges = await page.evaluate(() => window.__wikiGraphProbe().edges);
     const anchored = edges.find(e => e.from === 'alpha:a.md' && e.to === 'alpha:g.md');
@@ -198,7 +278,7 @@ test.describe('§P1 边锚保真', () => {
 
 test.describe('§P2 引用边 hover = 段落快照小窗', () => {
   test('hover 带锚边 → .wg-tip.para 显示那一段（§ 段标题 + 段文本），probe.hoverEdge 同步', async ({ browser }) => {
-    const { context, page, pageErrors } = await boot(browser);
+    const { context, page, pageErrors } = await boot(browser, { wikiGraph: true });
     await openGraph(page);
     const mid = await edgeMidpoint(page, '#^vault');
     expect(mid, '带锚边在场').toBeTruthy();
@@ -219,7 +299,7 @@ test.describe('§P2 引用边 hover = 段落快照小窗', () => {
 
 test.describe('§P3 索引未覆盖 → 文档级回退；空白 → 隐藏', () => {
   test('锚不在段落索引 → tip 无 .para（回退文档摘要，td 仍给跳转提示）；空白处 hover → 隐藏', async ({ browser }) => {
-    const { context, page, pageErrors } = await boot(browser);
+    const { context, page, pageErrors } = await boot(browser, { wikiGraph: true });
     await openGraph(page);
     const mid = await edgeMidpoint(page, '#^ghost');
     await page.mouse.move(mid.x, mid.y, { steps: 4 });
@@ -238,7 +318,7 @@ test.describe('§P3 索引未覆盖 → 文档级回退；空白 → 隐藏', ()
 
 test.describe('§P4 带锚边点击 → 跳转载荷', () => {
   test('click（无拖动）→ workspace-open-item 带 anchor={kind:block,id:vault}', async ({ browser }) => {
-    const { context, page, pageErrors } = await boot(browser);
+    const { context, page, pageErrors } = await boot(browser, { wikiGraph: true });
     await openGraph(page);
     const mid = await edgeMidpoint(page, '#^vault');
     await page.mouse.move(mid.x, mid.y, { steps: 3 });
@@ -258,7 +338,7 @@ test.describe('§P4 带锚边点击 → 跳转载荷', () => {
 
 test.describe('§P5 无锚边点击 → 选中目标', () => {
   test('click plain edge → selected = 目标节点（画布语义不变）', async ({ browser }) => {
-    const { context, page, pageErrors } = await boot(browser);
+    const { context, page, pageErrors } = await boot(browser, { wikiGraph: true });
     await openGraph(page);
     const mid = await edgeMidpoint(page, null);
     await page.mouse.move(mid.x, mid.y, { steps: 3 });
@@ -274,7 +354,7 @@ test.describe('§P5 无锚边点击 → 选中目标', () => {
 
 test.describe('§P6 详情卡引出词条带锚 chip', () => {
   test('选中 a.md → 引出列表 g.md 行显示 #^vault 锚 chip（信息性）', async ({ browser }) => {
-    const { context, page, pageErrors } = await boot(browser);
+    const { context, page, pageErrors } = await boot(browser, { wikiGraph: true });
     await openGraph(page);
     const pt = await nodePoint(page, 'alpha:a.md');
     await page.mouse.click(pt.x, pt.y);
@@ -291,7 +371,7 @@ test.describe('§P8 点击→高亮 端到端（真 markdown 查看器）', () =
   // 进真 viewMarkdown → applyJumpAnchor → 滚动定位 + .nf-jump-flash 落在 ^vault 段。
   for (const scheme of ['light', 'dark']) {
     test(`${scheme} · anchor 载荷 → 滚动+高亮落在那一段`, async ({ browser }) => {
-      const { context, page, pageErrors } = await boot(browser, { colorScheme: scheme });
+      const { context, page, pageErrors } = await boot(browser, { colorScheme: scheme, wikiGraph: true });
       await openGraph(page);
       const md = [
         '# 词汇表', '',
@@ -320,7 +400,7 @@ test.describe('§P8 点击→高亮 端到端（真 markdown 查看器）', () =
 test.describe('§P7 亮暗双主题截图', () => {
   for (const scheme of ['light', 'dark']) {
     test(`${scheme} · 段落快照小窗截图`, async ({ browser }) => {
-      const { context, page } = await boot(browser, { colorScheme: scheme });
+      const { context, page } = await boot(browser, { colorScheme: scheme, wikiGraph: true });
       await openGraph(page);
       const mid = await edgeMidpoint(page, '#^vault');
       await page.mouse.move(mid.x, mid.y, { steps: 4 });
