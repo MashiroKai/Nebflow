@@ -460,7 +460,7 @@ admits_v2 启用后，allowlist 的构成（P4 落地形态）：
 |---|---|---|---|---|---|
 | **T0（现状）** | 18 包全集，canonical | seed 首装 + 自愈 | boot 期 digest 仲裁 | 六分支全开（SeedService.scala:456-566） | — |
 | **T1 双轨** | 全集保留 | seed 首装；`add <name>@ver` 可从官方源装 | 用户点击（§5） | 保留，但**官方前缀包与已源化包跳过**（provenance `via: official` ⇒ reconcile 不碰） | 官方源可装可升；默认集 7 包在全新 home 与存量 home 都能从源装成功 |
-| **T2 指针化** | 只留 `seed/plugins.json`（name → {version, digest, url} 指针）+ `official-pins.json`；**包本体出树** | 官方源（首装即拉取）；源不可达 ⇒ 惰性态（面板显示「未安装：源不可用」，不回落半截包） | 用户点击 | reconcile 只读指针，**零镜像覆盖**（「出厂字节赢」机制退役） | 全新 home 在断网 + 有缓存场景可完成安装；联网场景全部走源 |
+| **T2 指针化** | 只留 `seed/manifest.json`（扩为指针形态：name → {version, digest, url}）+ `official-pins.json`；**包本体出树** | 官方源（首装即拉取）；源不可达 ⇒ 惰性态（面板显示「未安装：源不可用」，不回落半截包） | 用户点击 | reconcile 只读指针，**零镜像覆盖**（「出厂字节赢」机制退役） | 联网全新 home 可完成源首装；断网全新 home 的降级文案可见且**不装半截包**（这是 T2 的**已知代价**：官方包不再随 jar 离线可得，作者需在接受这一代价后才准入 T2） |
 | **T3 清空** | 只剩 `official-pins.json` | 官方源 | 用户点击 | 删除 reconcile 的 plugin 段（presence 台账保留给「用户定向删除」判定，或一并对齐） | 引擎 jar 体积下降；`SeedService` 的插件腿代码删除 |
 
 **时间表**：本稿不替作者定日期（裁定点 A2）。依赖关系必须写清：**T2 只能在 P4（pin 表信任迁移）落地并观察一个发布周期后开工**，否则 T2 的「源不可达 ⇒ 没有官方包」会变成一次可用性事故。
