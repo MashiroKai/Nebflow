@@ -157,39 +157,51 @@ test('T1 five-tab dock: author-order keys, icon+label structure, switching, acti
   const keys = page.locator('#mobile-dock .dock-key');
   await expect(keys).toHaveCount(5);
   const order = await keys.evaluateAll((els) => els.map((b) => b.dataset.dock));
-  expect(order).toEqual(['messages', 'contacts', 'conversations', 'canvas', 'settings']);
+  expect(order).toEqual(['messages', 'contacts', 'chat', 'canvas', 'settings']);
   const probeDock = await page.evaluate(() => window.__nfMobileNav?.dock);
-  expect(probeDock).toEqual(['messages', 'contacts', 'conversations', 'canvas', 'settings']);
+  expect(probeDock).toEqual(['messages', 'contacts', 'chat', 'canvas', 'settings']);
   // 键结构 = 图标在上 + 文字标签在下（小红书基准）；标签为中文。
+  // 中键改版批（2026-10-29 23:36）：第三栏 = chat home 键 —— 中心键容器
+  // （.dock-center，无常规 .dock-ic 图标位）；其余四键 = 常规 icon+label。
   const labels = await keys.evaluateAll((els) => els.map((b) => b.querySelector('.dock-label')?.textContent));
   expect(labels).toEqual(['消息', '联系人', '对话', 'canvas', '设置']);
   for (let i = 0; i < 5; i++) {
-    await expect(keys.nth(i).locator('.dock-ic svg')).toBeVisible();
-    await expect(keys.nth(i).locator('.dock-label')).toBeVisible();
+    if (i === 2) await expect(keys.nth(i).locator('.dock-center')).toBeVisible();
+    else {
+      await expect(keys.nth(i).locator('.dock-ic svg')).toBeVisible();
+      await expect(keys.nth(i).locator('.dock-label')).toBeVisible();
+    }
   }
-  // boot 落聊天根：dock 无激活态（home=chat 不属于五栏）。
+  // boot 落聊天根：中键（对话 = chat home 键）激活。
   expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('chat');
-  await expect(page.locator('#mobile-dock .dock-key.active')).toHaveCount(0);
+  await expect(page.locator('#mobile-dock .dock-key.active')).toHaveCount(1);
+  await expect(page.locator('#mobile-dock .dock-key[data-dock="chat"]')).toHaveClass(/active/);
 
-  // 切换：点「对话」→ home/top=conversations + active 态 + 页面头标题。
-  await page.locator('#mobile-dock .dock-key[data-dock="conversations"]').click();
-  expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('conversations');
-  await expect(page.locator('#mobile-dock .dock-key[data-dock="conversations"]')).toHaveClass(/active/);
-  await expect(page.locator('.mobile-page[data-page="conversations"]')).toHaveClass(/live/);
-  await expect(page.locator('.mobile-page[data-page="conversations"] .mobile-page-title')).toHaveText('对话');
+  // 切换：点「消息」→ home/top=messages + active 态 + 页面头标题；点中键 →
+  // 详情全清回聊天根（输入框）+ 中键激活。
+  await page.locator('#mobile-dock .dock-key[data-dock="messages"]').click();
+  expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('messages');
+  await expect(page.locator('#mobile-dock .dock-key[data-dock="messages"]')).toHaveClass(/active/);
+  await expect(page.locator('.mobile-page[data-page="messages"]')).toHaveClass(/live/);
+  await expect(page.locator('.mobile-page[data-page="messages"] .mobile-page-title')).toHaveText('消息');
+  await page.locator('#mobile-dock .dock-key[data-dock="chat"]').click();
+  expect(await page.evaluate(() => window.__nfMobileNav)).toMatchObject({ home: 'chat', top: 'chat', stack: ['chat'] });
+  await expect(page.locator('.mobile-page.live')).toHaveCount(0);
+  await expect(page.locator('#mobile-dock .dock-key[data-dock="chat"]')).toHaveClass(/active/);
   // 五栏互斥替换（非堆叠）：再点「设置」→ home 换根，栈深恒 1。
   await page.locator('#mobile-dock .dock-key[data-dock="settings"]').click();
   expect(await page.evaluate(() => window.__nfMobileNav)).toMatchObject({ home: 'settings', top: 'settings' });
   expect((await page.evaluate(() => window.__nfMobileNav?.stack)).length).toBe(1);
-  await expect(page.locator('#mobile-dock .dock-key[data-dock="conversations"].active')).toHaveCount(0);
+  await expect(page.locator('#mobile-dock .dock-key[data-dock="chat"].active')).toHaveCount(0);
   await expect(page.locator('#mobile-dock .dock-key[data-dock="settings"]')).toHaveClass(/active/);
   // 同根再点 = 清详情回根（栈已 1 → noop 不塌栈）。
   await page.locator('#mobile-dock .dock-key[data-dock="settings"]').click();
   expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('settings');
-  // 根页「<」= 回聊天根；聊天根无激活态。
+  // 根页「<」= 回聊天根；中键激活。
   await page.locator('.mobile-page[data-page="settings"] .mobile-back-btn').click();
   expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('chat');
-  await expect(page.locator('#mobile-dock .dock-key.active')).toHaveCount(0);
+  await expect(page.locator('#mobile-dock .dock-key.active')).toHaveCount(1);
+  await expect(page.locator('#mobile-dock .dock-key[data-dock="chat"].active')).toHaveCount(1);
 
   // 退役浮层零残留（作者令「不再跟其他界面重叠」）：下拉列/幕布/任务浮层键/
   // 画板 bottom sheet 全不落地；探针版本换代。

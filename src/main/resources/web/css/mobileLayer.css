@@ -5,11 +5,13 @@
  * 命中任何一条规则（桌面渲染逐字节不变）；桌面对本文件的唯一感知是 index.html
  * 里一行 <link> 注册钩子。
  *
- * dock 批（作者令 2026-10-29 13:31/13:36/13:38）落位：
+ * dock 批（作者令 2026-10-29 13:31/13:36/13:38）落位；中键改版批（同日 23:36）：
  *   ① 五栏底 dock（小红书样式基准）：#mobile-dock 常驻根页切换器 —— 白底固定
  *      底栏、图标在上 + 文字标签在下、五等分（消息/联系人/对话/canvas/设置，
  *      作者逐字顺序）、active 态可辨（强调色 icon/label，克制形态）、未读红点
- *      镜像桌面既有徽标读数（零新轮询）。
+ *      镜像桌面既有徽标读数（零新轮询）。中键改版批：中键（对话）= 小红书
+ *      中心键 —— sapphire 主色实心大圆高出基线、图标 = agent 头像（无头像回落
+ *      气泡字形）、点 = 回主对话输入框；消息键 = 跟联系人的对话消息（气泡图标）。
  *   ② 各节目独立界面（作者 13:38「不再跟其他界面重叠」）：五根页 + push 详情页
  *      全部为全屏不透明 section；v3 双液态下拉列（headerController/layoutController/
  *      floatController）、二级液态 morph（morphPanel）、任务浮层、mh-scrim 整族
@@ -19,8 +21,9 @@
  *      胶囊手势/底缘带/侧缘带/切换条/邻卡预览全部随批退场），#canvas-panel
  *      手机层恒不可见；文档 pane re-parent 进 canvas 页 —— 页内卡片式切换
  *      （chip 卡片列表 + ‹ › 步进 + 内容区横滑，环式）。桌面 canvas 零变化。
- *   ④ 社交三面：消息（通知流 + 未读聚合）/ 联系人（联系人面收编 + 手机接入行）
- *      / 对话（会话列表收编 → 会话窗收编进「会话」详情页）。封存态 = 骨架空态卡。
+ *   ④ 社交页面（中键改版批修订）：消息 = 跟联系人的对话消息（会话列表收编 →
+ *      会话窗收编进「会话」详情页）+ 通知段；联系人 = 联系人面收编 + 手机接入
+ *      行。封存态 = 骨架空态卡（通知段不封存）。
  *
  * 历史落位（r2-r4 / v3 沿革，语义仍生效部分保留）：
  *   r2 页面栈导航（#mobile-pages 互斥 .live）；r3 面板体系 app 化 + overlay 面
@@ -231,8 +234,16 @@ body.mobile-layer .mh-chrome-badge[hidden] { display: none; }
 
 /* ── 五栏底 dock（作者令 2026-10-29 小红书样式基准）──────────────────
    白底固定底栏（亮暗 = 不透明 surface token，非玻璃 —— 参考图为实心底栏），
-   图标在上 + 文字标签在下，五等分 grid；active = 品牌绿 icon/label（克制形态：
-   无大色块、无凸起钮）；未读红点 = 桌面徽标读数镜像。safe-area 底垫内置。 */
+   图标在上 + 文字标签在下，五等分 grid；active = 品牌绿 icon/label（克制形态）；
+   未读红点 = 桌面徽标读数镜像。safe-area 底垫内置。
+   中键改版批（同日 23:36）：中键 = 小红书中心键 —— sapphire 主色实心大圆
+   （亮档深档 --accent-agent-light / 暗档 --sapphire，unified panel design §6.2
+   同款双档，不新造色）、高出常规 tab 基线（--dock-center-lift），图标 = agent
+   头像（圆裁 + 主色细环 = 底色露边）或气泡字形回落；输入卡底距同步让位。 */
+body.mobile-layer {
+  --dock-center-size: 50px;
+  --dock-center-lift: 12px;
+}
 body.mobile-layer #mobile-dock {
   position: fixed;
   left: 0;
@@ -292,6 +303,69 @@ body.mobile-layer .dock-key.active {
   color: rgb(var(--brand-green, 7 193 96));
 }
 body.mobile-layer .dock-key.active .dock-label { font-weight: 600; }
+/* ── 中键 = 对话 home 键（作者令 23:36 小红书中心键）────────────────
+   实心大圆高出基线；fill 双档 = sapphire 族既有 token 对（暗 --sapphire /
+   亮 --accent-agent-light 深档保白字形对比）；白字形口径同 #send-btn 实色族
+   （input.css 白字先例）。头像 = 圆裁铺满、底色露 2.5px 环（环色 = fill 本色，
+   满足「细描边与主题色一致」零新色）；无头像回落白色气泡字形。 */
+body.mobile-layer .dock-key.dock-key-center {
+  justify-content: flex-start;
+  padding-top: 0;
+  padding-bottom: 2px;
+}
+body.mobile-layer .dock-key.dock-key-center .dock-center {
+  flex: none;
+  width: var(--dock-center-size);
+  height: var(--dock-center-size);
+  margin-top: calc(-1 * var(--dock-center-lift));
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(var(--sapphire));
+  color: #fff;
+  box-shadow: 0 2px 8px rgb(var(--sapphire) / 0.35);
+  transition: transform 0.12s ease, box-shadow 0.2s ease;
+  overflow: hidden;
+}
+@media (prefers-color-scheme: light) {
+  body.mobile-layer .dock-key.dock-key-center .dock-center {
+    background: rgb(var(--accent-agent-light));
+    box-shadow: 0 2px 8px rgb(var(--accent-agent-light) / 0.35);
+  }
+}
+body.mobile-layer .dock-key.dock-key-center .dock-center svg {
+  width: 24px;
+  height: 24px;
+}
+body.mobile-layer .dock-key.dock-key-center .dock-center .dock-center-img {
+  width: calc(100% - 5px);
+  height: calc(100% - 5px);
+  border-radius: 50%;
+  object-fit: cover;
+}
+body.mobile-layer .dock-key.dock-key-center:active .dock-center { transform: scale(0.94); }
+body.mobile-layer .dock-key.dock-key-center.active {
+  color: rgb(var(--sapphire));
+}
+@media (prefers-color-scheme: light) {
+  body.mobile-layer .dock-key.dock-key-center.active {
+    color: rgb(var(--accent-agent-light));
+  }
+}
+body.mobile-layer .dock-key.dock-key-center.active .dock-center {
+  box-shadow:
+    0 2px 10px rgb(var(--sapphire) / 0.45),
+    0 0 0 3px rgb(var(--sapphire) / 0.18);
+}
+@media (prefers-color-scheme: light) {
+  body.mobile-layer .dock-key.dock-key-center.active .dock-center {
+    box-shadow:
+      0 2px 10px rgb(var(--accent-agent-light) / 0.45),
+      0 0 0 3px rgb(var(--accent-agent-light) / 0.18);
+  }
+}
+body.mobile-layer .dock-key.dock-key-center.active .dock-label { font-weight: 600; }
 /* 未读红点（dock 徽标）：图标右上角；纯提示无计数（计数面 = 消息页聚合行）。 */
 body.mobile-layer .dock-badge {
   position: absolute;
@@ -1105,7 +1179,7 @@ body.mobile-layer .mf-hub-row-label { flex: 1; min-width: 0; }
 body.mobile-layer .mf-hub-chev { opacity: 0.5; }
 body.mobile-layer .mf-hub-chev svg { width: 14px; height: 14px; }
 
-/* ── 社交三面（消息/联系人/对话；socialFaces.js）────────────────────── */
+/* ── 社交页面（消息/联系人；socialFaces.js）────────────────────────── */
 /* 封存空态卡（features.friends 缺席；骨架占位 + 文案，不伪造数据）。 */
 body.mobile-layer .mf-social-sealed {
   flex: 1;
@@ -1156,14 +1230,31 @@ body.mobile-layer .mf-social-entry-ic svg { width: 17px; height: 17px; }
 body.mobile-layer .mf-social-entry-label { flex: 1; min-width: 0; text-align: left; }
 body.mobile-layer .mf-social-entry-chev { opacity: 0.5; }
 body.mobile-layer .mf-social-entry-chev svg { width: 14px; height: 14px; }
-/* 消息页（通知流 + 未读聚合）。 */
-body.mobile-layer .mf-msgfeed {
-  flex: 1;
-  min-height: 0;
+/* 消息页通知段（主体面 = 收编会话列表/封存卡之后；恒渲染，行集 = banner 镜像）。 */
+body.mobile-layer .mf-notify-sec {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 12px 16px;
+}
+body.mobile-layer .mf-notify-cap {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-frame-text-muted, #98a2b3);
+  padding: 0 2px;
+}
+body.mobile-layer .mf-notify-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px 12px 16px;
+}
+body.mobile-layer .mf-notify-empty {
+  padding: 18px 8px 6px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--color-frame-text-muted, #98a2b3);
 }
 body.mobile-layer .mf-msgrow {
   display: flex;
@@ -1203,25 +1294,6 @@ body.mobile-layer .mf-msgrow-label {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
-body.mobile-layer .mf-msgrow-count {
-  flex: none;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 7px;
-  border-radius: 999px;
-  background: var(--status-word, #d64545);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 22px;
-  text-align: center;
-}
-body.mobile-layer .mf-msgfeed-empty {
-  padding: 32px 8px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--color-frame-text-muted, #98a2b3);
-}
 
 /* ── 附件条 v4（uifix 批 2026-10-22）：手机层单行 + 「+N」折叠差异 ── */
 body.mobile-layer #attachment-preview { flex-wrap: nowrap; }
@@ -1246,7 +1318,8 @@ body.mobile-layer #header .header-center {
    桌面 JS 零改动。 */
 body.mobile-layer #input-area {
   bottom: 0;
-  padding-bottom: calc(var(--dock-h) + max(12px, env(safe-area-inset-bottom, 0px)));
+  /* 中键改版批：+lift —— 中键大圆高出 dock 基线，输入卡底距同步让位防叠。 */
+  padding-bottom: calc(var(--dock-h) + var(--dock-center-lift, 0px) + max(12px, env(safe-area-inset-bottom, 0px)));
 }
 
 /* ════════════════════════════════════════════════════════════════════

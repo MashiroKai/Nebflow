@@ -1,10 +1,16 @@
 // mobile/navController.js — dock 批（作者令 2026-10-29 13:31/13:36/13:38）：
 // 小红书式五栏底 dock ＋「每个节目都是独立界面」的全屏页导航。
 //
-// ── 导航模型（dock 批重写）──────────────────────────────────────────
+// ── 导航模型（dock 批重写；中键改版批 2026-10-29 23:36 修订）─────────
 //   · 底 dock = 根页切换器：五栏 `消息 / 联系人 / 对话 / canvas / 设置`
-//     （作者逐字顺序；DOCK_ORDER 钉死）。dock 常驻（聊天根上也显示，
-//     聊天根无激活态）；点 tab = 切换根页（互斥替换，非堆叠）。
+//     （作者逐字顺序；DOCK_ORDER 钉死）。dock 常驻（聊天根上也显示，激活
+//     中键）；点 tab = 切换根页（互斥替换，非堆叠）。
+//   · 中键改版批（作者 23:36 逐字「中间那个对话 就是进入我跟你的这个输入框
+//     …最左侧的消息就是 跟联系人的对话消息」）：第三栏对话语义 = **chat
+//     home 键**（点 = 详情全清 + 回聊天根输入框；不是页面路由，无 section），
+//     形态 = 小红书中心键（sapphire 主色大圆、高出基线、图标 = agent 头像，
+//     无头像回落气泡字形）；消息键 = 跟联系人的对话消息（好友会话列表自原
+//     「对话」面迁入，气泡图标随迁）。
 //   · 栈模型 = `stack = [home, ...details]`：stack[0] ∈ 'chat' ∪ 五栏根；
 //     详情页（任务/搜索/定时/心跳/后台/智能体/手机接入/项目/图谱/插件/用量/
 //     会话窗）push 在当前根之上；返回 pop 一层；根页「<」= 回聊天根。
@@ -48,9 +54,24 @@ import { createIconsIn } from '../utils.js';
 import { ensureSocialPage, syncSocialFaces } from './socialFaces.js';
 import { ensureTaskPanel, closeTaskPanel } from './taskPanel.js';
 import { wikiGraphEnabled } from '../featureFlags.js';
+import { agentAvatarDataUrl, onAgentAvatarChange } from '../agentProfile.js';
+import { avatarImgNode } from '../avatarRender.js';
 
-/** 底 dock 五栏（作者 2026-10-29 令逐字顺序；顺序钉死 = spec 断言面）。 */
-export const DOCK_ORDER = ['messages', 'contacts', 'conversations', 'canvas', 'settings'];
+/**
+ * 底 dock 五栏（作者 2026-10-29 令逐字顺序；顺序钉死 = spec 断言面）。
+ * 中键改版批（同日 23:36）：第三栏 = 'chat' —— 对话键是 **chat home 键**
+ * （点 = 回主对话输入框），不是页面路由：不在 PAGES、ensureContainer 不为
+ * 它建 section。 */
+export const DOCK_ORDER = ['messages', 'contacts', 'chat', 'canvas', 'settings'];
+
+/** chat home 键定义。icon = 回落字形（作者令：无 agent 头像时用「目前中间
+ *  对话按钮那个图标」= message-circle 气泡；有头像 = 圆头像图）。 */
+const DOCK_CHAT_DEF = { id: 'chat', icon: 'message-circle', zh: '对话', en: 'Chats' };
+
+/** dock 键定义解析：chat home 键走 CHAT_DEF，其余查 PAGES。 */
+function dockDef(id) {
+  return id === 'chat' ? DOCK_CHAT_DEF : PAGE_BY_ID.get(id);
+}
 
 /** 工作台分组行（设置根页顶部；dock 放不下的功能面的统一入口）。 */
 const HUB_ROWS = [
@@ -63,11 +84,13 @@ const HUB_ROWS = [
   { page: 'background', icon: 'square-terminal', zh: '后台任务',  en: 'Background' },
 ];
 
-/** 页面注册表。dock: true = 底栏根页；其余 = push 详情页。route id 稳定。 */
+/** 页面注册表。dock: true = 底栏根页；其余 = push 详情页。route id 稳定。
+ *  （chat home 键不在此表 —— 见 DOCK_ORDER/CHAT_DEF。）中键改版批：消息键
+ *  图标 = message-circle 气泡（作者令 23:36「图标换位」——气泡自原中键迁入；
+ *  消息页内容 = 跟联系人的对话消息，面迁移见 socialFaces.js）。 */
 export const PAGES = [
-  { id: 'messages',      dock: true, icon: 'inbox',          zh: '消息',   en: 'Messages' },
+  { id: 'messages',      dock: true, icon: 'message-circle', zh: '消息',   en: 'Messages' },
   { id: 'contacts',      dock: true, icon: 'contact-round',  zh: '联系人', en: 'Contacts' },
-  { id: 'conversations', dock: true, icon: 'message-circle', zh: '对话',   en: 'Chats' },
   { id: 'canvas',        dock: true, icon: 'layers',         zh: 'canvas', en: 'canvas' },
   { id: 'settings',      dock: true, icon: 'settings',       zh: '设置',   en: 'Settings' },
   { id: 'projects', tabId: 'projects', icon: 'folder-kanban',   zh: '项目',     en: 'Projects' },
@@ -365,7 +388,6 @@ async function ensurePanelContent(pageId) {
   switch (pageId) {
     case 'messages':
     case 'contacts':
-    case 'conversations':
       ensureSocialPage(pageId, bodyOf(pageId));
       break;
     case 'settings':
@@ -756,16 +778,17 @@ function closePageFace(pageId) {
       closeTaskPanel(true);
       break;
     default:
-      break; // messages/contacts/conversations/canvas/panels/conversation：面态无需翻转
+      break; // messages/contacts/canvas/panels/conversation：面态无需翻转
   }
 }
 
 /**
- * 通用 push（详情页/壳/深链留缝点）：dock 根 id 走 dockTo；目标已在栈中先摘除
- * 再压顶（摘除位移的 overlay 面同步关闭）。
+ * 通用 push（详情页/壳/深链留缝点）：dock 根 id 走 dockTo；'chat' = 中键
+ * home；目标已在栈中先摘除再压顶（摘除位移的 overlay 面同步关闭）。
  * @param {string} pageId
  */
 export function pushPage(pageId) {
+  if (pageId === 'chat') return dockHome();
   if (!PAGE_BY_ID.has(pageId)) return;
   if (PAGE_BY_ID.get(pageId).dock) return dockTo(pageId);
   ensureContainer();
@@ -807,10 +830,23 @@ export function popToPage(pageId) {
 }
 
 /**
+ * 中键 = 对话 home 键（作者令 2026-10-29 23:36「中间那个对话 就是进入我跟你的
+ * 这个输入框」）：详情全清 + 回聊天根（输入框）；已在聊天根 = noop。
+ */
+function dockHome() {
+  ensureContainer();
+  if (stack[0] === 'chat' && stack.length === 1) { emitNav('dock-noop'); return; }
+  logEvent('dock-switch', { page: 'chat' });
+  goHome();
+}
+
+/**
  * 底 dock 切换根页：详情全清 + 根替换（互斥）。同根再点 = 清详情回根。
+ * chat home 键（中键）改走 dockHome。
  * @param {string} pageId dock 根 id
  */
 export function dockTo(pageId) {
+  if (pageId === 'chat') return dockHome();
   if (!PAGE_BY_ID.get(pageId)?.dock) return;
   ensureContainer();
   if (stack[0] === pageId && stack.length === 1) { emitNav('dock-noop'); return; }
@@ -825,8 +861,9 @@ export function dockTo(pageId) {
   emitNav('dock');
 }
 
-/** UI 内统一入口：dock 根走 dockTo，详情走 pushPage。 */
+/** UI 内统一入口：dock 根走 dockTo，详情走 pushPage；'chat' = 中键 home。 */
 export function navigateTo(pageId) {
+  if (pageId === 'chat') return dockHome();
   if (!PAGE_BY_ID.has(pageId)) return;
   if (PAGE_BY_ID.get(pageId).dock) return dockTo(pageId);
   if (stack[stack.length - 1] === pageId) { emitNav('push-noop'); return; }
@@ -951,7 +988,10 @@ function watchChatModal() {
 
 // ── 底 dock（五栏根页切换器；作者令 2026-10-29 小红书样式基准）───────
 // 白底固定底栏、图标在上 + 文字标签在下、五等分、active 态可辨（克制形态：
-// 强调色 icon/label，不做大红按钮）、未读红点徽标镜像桌面既有徽标读数。
+// 强调色 icon/label）、未读红点徽标镜像桌面既有徽标读数。
+// 中键改版批（同日 23:36）：中键 = 小红书中心键形态 —— sapphire 主色实心大圆、
+// 高出两侧常规 tab 基线，图标 = 给 agent 设置的头像（圆裁 + 主色细环；无头像
+// 回落气泡字形），点 = 回主对话输入框（chat home）。
 
 /** @type {Map<string, HTMLElement>} dock id → 键 */
 const dockKeys = new Map();
@@ -964,7 +1004,7 @@ function buildDock() {
   dockEl.id = 'mobile-dock';
   dockEl.setAttribute('role', 'tablist');
   dockEl.setAttribute('aria-label', tt('主导航', 'Main navigation'));
-  const DEFS = DOCK_ORDER.map((id) => PAGE_BY_ID.get(id));
+  const DEFS = DOCK_ORDER.map(dockDef);
   for (const def of DEFS) {
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -975,25 +1015,38 @@ function buildDock() {
     const badge = document.createElement('span');
     badge.className = 'dock-badge';
     badge.hidden = true;
-    const icon = document.createElement('span');
-    icon.className = 'dock-ic';
-    icon.innerHTML = `<i data-lucide="${def.icon}"></i>`;
     const label = document.createElement('span');
     label.className = 'dock-label';
     label.textContent = tt(def.zh, def.en);
-    btn.append(icon, label, badge);
+    if (def.id === 'chat') {
+      // 中键（作者令 23:36）：中心键容器 —— 图标位由 paintDockCenterAvatar
+      // 按「agent 头像 / 气泡回落」两态填装（形态见 mobileLayer.css 中键块）。
+      btn.classList.add('dock-key-center');
+      const center = document.createElement('span');
+      center.className = 'dock-center';
+      btn.append(center, label, badge);
+    } else {
+      const icon = document.createElement('span');
+      icon.className = 'dock-ic';
+      icon.innerHTML = `<i data-lucide="${def.icon}"></i>`;
+      btn.append(icon, label, badge);
+    }
     btn.addEventListener('click', (e) => {
       // 同 hub 行：桌面面 outside-close 监听 document 冒泡，入口键停冒泡防误关。
       e.stopPropagation();
       touchLayer();
       logEvent('dock-click', { page: def.id });
-      dockTo(def.id);
+      if (def.id === 'chat') dockHome();
+      else dockTo(def.id);
     });
     dockEl.appendChild(btn);
     dockKeys.set(def.id, btn);
   }
   document.body.appendChild(dockEl);
+  paintDockCenterAvatar(); // 先装字形/头像再统一 createIcons（<i data-lucide> 替换腿）
   if (typeof lucide !== 'undefined') createIconsIn(dockEl);
+  // 头像落点汇合订阅（本机上传/跨端收敛/会话切换都经 agentProfile.paintSlot）。
+  unsubs.push(onAgentAvatarChange(paintDockCenterAvatar));
   const onLocale = () => {
     for (const def of DEFS) {
       const k = dockKeys.get(def.id);
@@ -1005,6 +1058,29 @@ function buildDock() {
   unsubs.push(() => window.removeEventListener('locale-changed', onLocale));
   watchDockBadges();
   return dockEl;
+}
+
+/** 中键图标两态（作者令 23:36「图标应该用给agent设置的头像」）：读链 = 会话头
+ *  同一本地条目（agentProfile.agentAvatarDataUrl，跨端 sha 收敛同键），节点走
+ *  avatarRender 解码复用池；无头像回落气泡字形（= 原中键图标，作者逐字「就是
+ *  目前中间对话按钮那个图标」）。 */
+function paintDockCenterAvatar() {
+  const holder = dockKeys.get('chat')?.querySelector('.dock-center');
+  if (!holder) return;
+  const dataUrl = agentAvatarDataUrl();
+  const img = dataUrl ? avatarImgNode(dataUrl) : null;
+  if (img) {
+    img.className = 'dock-center-img';
+    img.draggable = false;
+    img.alt = '';
+    holder.replaceChildren(img);
+    holder.classList.add('has-avatar');
+    return;
+  }
+  holder.classList.remove('has-avatar');
+  if (holder.querySelector('svg')) return; // 字形已就位（lucide 已替换，幂等零重建）
+  holder.innerHTML = '<i data-lucide="message-circle"></i>';
+  if (typeof lucide !== 'undefined') createIconsIn(holder);
 }
 
 /** 徽标镜像：桌面徽标读数（#messages-badge/#contacts-badge，手机层按钮不可见
@@ -1116,7 +1192,7 @@ export function activateNav() {
     get top() { return navState().top; },
     get home() { return navState().home; },
     get dock() { return [...DOCK_ORDER]; },
-    version: 'mobile dock batch (five-tab dock + fullscreen pages + canvas page)',
+    version: 'mobile dock batch (five-tab dock + chat-home center key + fullscreen pages + canvas page)',
   };
   return function teardownNav() {
     for (const fn of unsubs.splice(0)) { try { fn(); } catch { /* ignore */ } }

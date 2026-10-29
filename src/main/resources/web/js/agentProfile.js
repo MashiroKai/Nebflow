@@ -166,6 +166,40 @@ export function currentAgentName() {
   return (active && active.agentName) || 'Nebula';
 }
 
+// ── dock 中键头像读数面（中键改版批 · 作者令 2026-10-29 23:36）────────
+// dock「对话」中键图标 = 给 agent 设置的头像（作者逐字）。读链 = 会话头
+// paintSlot 同一本地条目（跨端 sha 收敛落同一键），零第二数据源。
+
+/**
+ * 当前 agent 的本地头像 dataURL（无 agentName 参数 = 当前会话 agent）。
+ * @param {string} [agentName]
+ * @returns {string} dataURL；无自定义头像 ⇒ `''`（调用方回落既有字形图标）。
+ */
+export function agentAvatarDataUrl(agentName) {
+  const entry = readEntry(agentName || currentAgentName());
+  return (entry && entry.dataUrl) || '';
+}
+
+/** 头像重绘订阅者（dock 中键等异地面）。paintSlot 是全部头像落地点的汇合
+ *  （本机上传、跨端收敛回填、会话切换、identity 广播、重连对账都经它重绘）
+ *  ——订阅者在每次重绘时重读 agentAvatarDataUrl() 即与 会话头 恒同像。 */
+const avatarSubs = new Set();
+
+/**
+ * @param {() => void} fn
+ * @returns {() => void} 退订函数
+ */
+export function onAgentAvatarChange(fn) {
+  avatarSubs.add(fn);
+  return () => avatarSubs.delete(fn);
+}
+
+function notifyAvatarSubs() {
+  for (const fn of avatarSubs) {
+    try { fn(); } catch { /* 订阅者异常不阻断会话头重绘 */ }
+  }
+}
+
 /** 会话头显示名（与 sidebar.js updateHeaderSessionName 同一读链的本地镜像：
  *  root → rootName 单读点（未命名 = 空串，机制名永不作为显示回落）；
  *  非 root → agentsData displayName，机制名兜底。 */
@@ -197,6 +231,7 @@ function initialOf(label) {
 }
 
 function paintSlot() {
+  notifyAvatarSubs(); // 先广播再自绘：订阅面（dock 中键）与会话头同帧同像
   if (!slot) return;
   const agentName = currentAgentName();
   const label = headerLabel(agentName);
