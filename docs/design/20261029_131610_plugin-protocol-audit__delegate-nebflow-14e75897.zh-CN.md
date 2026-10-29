@@ -178,6 +178,8 @@ status: final
 - 针对缝隙 6：mcp.json env 支持 `${secret:keyRef}` 指针形态（复用 SecretsStore/AkUserSecretSink ACL 纪律），红标启发降级为兜底。
 - 针对缝隙 7/8：sandbox.json 档表（P0-4）与 validator 增加「sse 传输 → 警告不可用」静态提示。
 
+> **后续批**：本文档的现状事实面已成为插件远程发布源架构设计（[[20261029_174545_plugin-remote-source-design__delegate-nebflow-585363ad.zh-CN]]）的基线——该稿把本文档 §7 缝隙 1/2/3/4/5 归并为同一根因（本体与来源同住分发载体），并提出源引用模型、拉取式安装、用户自选更新与信任根迁移方案（仍为设计稿，裁定点未拍板）。
+
 ## 9. 证据基线
 
 - 读码基线：main `5c2ad9b57`（本地，含 `8b5138640` 插件三层规范、`1dcbb1517` 卫生批；origin fetch 当日网络不可达，以本地 main 最新为准）。
