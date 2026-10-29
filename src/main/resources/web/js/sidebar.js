@@ -10,7 +10,7 @@ function showBatchDeleteModalLazy() {
   import('./modal.js').then(({ showBatchDeleteModal }) => showBatchDeleteModal());
 }
 import { renderMarkdownWithMath, smartScroll, stopSpinner, createIconsIn, statusIcon } from './utils.js';
-import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './chat.js';
+import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF, bindCollapsibleToggle } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
 import { renderTaskList } from './taskList.js';
 import { clearMemoryCache } from './memory.js';
@@ -2337,8 +2337,16 @@ export function resetChatForActiveSession() {
           content.style.display = visible ? 'none' : '';
           label.classList.toggle('expanded', !visible);
         };
+      } else {
+        // 重连折叠持久批（2026-10-20）口径对齐（残片清理批 2026-10-29）：busy
+        // 重建面恒折叠 —— 会话切换重放腿与 historyReplay 同一契约，不得把缓冲
+        // 的思考全文摊开；用户可点 label 手动展开。
+        content.style.display = 'none';
+        bindCollapsibleToggle(label, () => content);
       }
-      content.innerHTML = renderMarkdownWithMath(pv.stream.thinkingText, true, { cache: done }) + (!done ? '<span class="cursor"></span>' : '');
+      // 残片清理批：重放补发的 thinking 段按历史渲染，不带流式游标（与
+      // historyReplay 同批语义；真仍在飞的轮次由 live 增量帧的 rAF 自带游标）。
+      content.innerHTML = renderMarkdownWithMath(pv.stream.thinkingText, true, { cache: done });
       bubble.appendChild(label);
       bubble.appendChild(content);
       row.appendChild(bubble);

@@ -43,6 +43,7 @@ import {
   appendAskAnswer, finishAskAnswer, renderAskError,
   appendThinkingDelta, finishThinking,
   appendToolStreamDelta, cancelToolStreamRAF,
+  finalizeStreamingFaces,
   bareProcessRows,
   formatResumeClock
 } from './chat.js';
@@ -792,6 +793,15 @@ function applyAuthoritativeSessionBusy(sid, busy) {
   if (state.busySessionIds.has(sid)) clearBusy(sid);
   // 权威 idle 同时是黑暗窗终态事实：放行队列的「有开轮事实、无越界终态戳」闸。
   state.lastTerminalAt[sid] = Date.now();
+  // 残片清理批（2026-10-29）：权威 idle = 终态事实 —— 收口该会话视图的在场流式
+  // 面（done 帧在断连窗内丢失时，重放腿从陈旧缓冲重建的流式态思考块在此收口；
+  // 与 done/error 终态兜底同一入口），并清终态后已无消费方的流缓冲（引擎序
+  // done → sessionBusy{false}：正常轮缓冲已被 done 消费；断连重同步形态下残留
+  // 缓冲只有「下一场重放再建一次流式面」这一个消费方，删）。
+  const idleView = findViewBySessionId(sid);
+  if (idleView) finalizeStreamingFaces(idleView);
+  if (state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
+  if (state.sessionTexts[sid]) delete state.sessionTexts[sid];
   scheduleQueueDrain(sid);
   applyLocalFreeze();
 }
@@ -1034,7 +1044,6 @@ onMessage('errorEscalated', (msg) => {
 onMessage('thinkingDelta', (msg, view) => {
   const sid = msg.sessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
-  phaseStampIfMissing(sid); // thinkingtimer-fix：段未开则开段（重试重流不重置既有段）
   // Accumulate thinking text for ALL sessions
   if (sid) state.sessionThinkingBuffers[sid] = (state.sessionThinkingBuffers[sid] || '') + msg.delta;
   resetStreamTimeout(sid);
@@ -1049,12 +1058,17 @@ onMessage('thinkingDelta', (msg, view) => {
       if (row) row.remove();
       if (activeView.stream.currentAiBubble === existing) activeView.stream.currentAiBubble = null;
     }
-    // Guard: only create thinking bubbles when a turn is expected (user sent
-    // message or server explicitly started a new round). Prevents stray thinking
-    // bubbles from late-arriving thinkingDelta after done has been processed.
-    if (!state.turnExpecting[sid] && !activeView.stream.currentThinkingBubble && !activeView.stream.currentAiBubble) {
+    // 残片清理批（2026-10-29 报障「回复已完成 但下面还是有一个思考过程流式卡在
+    // 那」）晚到帧闸：开/续流式面要求 turn 在场（真人派发 turnExpecting ∨ 引擎
+    // busy）。终态后到达的增量帧 —— 在场面 ⇒ 终态兜底漏了（渲染器 bug 形态），
+    // 就地收口；无在场面 ⇒ 纯丢弃。两条路都绝不开新流式块、绝不挂流式态。
+    // （旧闸的 `∨ currentThinkingBubble ∨ currentAiBubble` 通过腿放宽了这条纪律
+    // —— 残留的开面会让后续晚到帧一直续流，正是报障残片的存活通道。）
+    if (!(state.turnExpecting[sid] || state.busySessionIds.has(sid))) {
+      finalizeStreamingFaces(activeView);
       return;
     }
+    phaseStampIfMissing(sid); // thinkingtimer-fix：段未开则开段（重试重流不重置既有段）
     // B2 (RC-2): hand the frame's identity (round, block) to the renderer.
     appendThinkingDelta(msg.delta, { round: msg.round, block: msg.block });
   }
@@ -1107,11 +1121,18 @@ onMessage('textDone', (msg, view) => {
 onMessage('thinking', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
-  phaseStampIfMissing(sid); // thinkingtimer-fix：段未开则开段——引擎自主轮首帧 / 深度
-  //                          会话 / 工具收段后的重开；既有段（重试重发帧）原样保留。
   resetStreamTimeout(sid);
   armBusyFromStream(sid); // ①-2: gated (see armBusyFromStream)
   if (view) {
+    // 残片清理批晚到帧闸：`thinking` 段起点帧此前**零闸** —— 终态后到达会原地
+    // 开一条新工作线（dots 段），等不到终态帧即成残片。与 thinkingDelta 同一
+    // 判据：turn 不在场 ⇒ 不开面、不重开段锚；在场面就地收口。
+    if (!(state.turnExpecting[sid] || state.busySessionIds.has(sid))) {
+      finalizeStreamingFaces(activeView);
+      return;
+    }
+    phaseStampIfMissing(sid); // thinkingtimer-fix：段未开则开段——引擎自主轮首帧 / 深度
+    //                          会话 / 工具收段后的重开；既有段（重试重发帧）原样保留。
     // stream-ux redesign (2026-10-03): the pre-token face is the turn line's
     // dots item — no placeholder bubble row any more (the old guard checked
     // currentAiBubble + a .thinking-placeholder row; the line is idempotent
@@ -1171,10 +1192,15 @@ onMessage('toolCallDetected', (msg, view) => {
         delete state.sessionToolCards[sid];
       }
     }
-    renderToolPending(msg.name, msg.sessionId);
-    // Reset tool argument streaming for the new tool call
-    activeView.stream.toolStreamText = '';
-    activeView.stream.toolStreamToolName = msg.name;
+    // 残片清理批晚到帧闸：终态后到达的工具帧不开新面（待命卡 + 工作线 spinner 项
+    // 都是流式面 —— 报障残片的 [› + spinner + 单行流] 形态的工具族腿）。turn 不在
+    // 场 ⇒ 跳过开卡；在飞收口腿（finishThinking/finishAi/flush）照旧幂等跑。
+    if (state.turnExpecting[sid] || state.busySessionIds.has(sid)) {
+      renderToolPending(msg.name, msg.sessionId);
+      // Reset tool argument streaming for the new tool call
+      activeView.stream.toolStreamText = '';
+      activeView.stream.toolStreamToolName = msg.name;
+    }
   }
 });
 
@@ -1219,13 +1245,17 @@ onMessage('toolStart', (msg, view) => {
     }
     // In ask mode, finalize the current ask bubble so the tool card renders below it
     if (activeView.stream.currentAskBubble) finishAskAnswer();
-    renderToolPending(msg.label, msg.sessionId);
-    // Tag the card with the full tool label so toolEnd can find the right card
-    // when multiple tools share the session (single sessionToolCards slot).
-    const startedRow = state.sessionToolCards[msg.sessionId];
-    if (startedRow) {
-      const cardEl = startedRow.querySelector('.tool-card');
-      if (cardEl) cardEl.dataset.toolLabel = msg.label;
+    // 残片清理批晚到帧闸（同 toolCallDetected）：终态后到达的 toolStart 不开新
+    // 待命卡 + 不落工作线 spinner 项。
+    if (state.turnExpecting[toolStartSid] || state.busySessionIds.has(toolStartSid)) {
+      renderToolPending(msg.label, msg.sessionId);
+      // Tag the card with the full tool label so toolEnd can find the right card
+      // when multiple tools share the session (single sessionToolCards slot).
+      const startedRow = state.sessionToolCards[msg.sessionId];
+      if (startedRow) {
+        const cardEl = startedRow.querySelector('.tool-card');
+        if (cardEl) cardEl.dataset.toolLabel = msg.label;
+      }
     }
   }
 });
@@ -1442,6 +1472,10 @@ onMessage('done', (msg, view) => {
       title: lastBadge?.querySelector('.duration-badge-time')?.textContent || '',
       sessionId: sid,
     });
+    // 残片清理批终态兜底：常规收口（finishThinking/finishAi/collapseTurn）之后，
+    // 在场流式块全数 final 化 —— 终态后仍有流式残片 = 渲染器 bug 形态（晚到帧
+    // 开出的第二块 / 指针不在场的重建面），一视同仁就地收口。
+    finalizeStreamingFaces(activeView);
   } else if (turnHadRealMessage || turnHadRealUserMessage) {
     // 未读门（2026-09-16 msunread）：**只计真消息** ⇒ 纯工具 turn（thinking +
     // 工具、没有正文，也不含真实用户消息，本 turn 不产出任何被 countsAsRealMessage
@@ -1530,6 +1564,7 @@ onMessage('error', (msg, view) => {
     finishThinking();
     finishAi();
     failTurn(activeView); // #346: group but keep expanded for troubleshooting
+    finalizeStreamingFaces(activeView); // 残片清理批终态兜底（错误终态同律）
     renderError(msg.message);
     clearStatus();
   } else {
@@ -1651,6 +1686,7 @@ onMessage('interrupted', (msg, view) => {
     finishThinking();
     finishAi();
     failTurn(activeView); // #346: interrupted turns stay expanded
+    finalizeStreamingFaces(activeView); // 残片清理批终态兜底（打断终态同律）
     clearStatus();
   }
 });
@@ -1668,6 +1704,7 @@ onMessage('timeout', (msg, view) => {
     finishThinking();
     finishAi();
     failTurn(activeView); // #346: timed-out turns stay expanded
+    finalizeStreamingFaces(activeView); // 残片清理批终态兜底（超时终态同律）
     renderTimeoutNotice();
     clearStatus();
   } else {
@@ -1698,6 +1735,7 @@ onMessage('maxTokens', (msg, view) => {
     finishThinking();
     finishAi();
     failTurn(activeView); // #346: truncated turns stay expanded
+    finalizeStreamingFaces(activeView); // 残片清理批终态兜底（截断终态同律）
     renderError('Max tokens reached — response truncated');
     clearStatus();
   } else {
