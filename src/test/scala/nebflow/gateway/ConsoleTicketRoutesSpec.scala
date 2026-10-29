@@ -206,4 +206,38 @@ class ConsoleTicketRoutesSpec extends CatsEffectSuite:
       _ = assert(none.isEmpty, "no ticket => fall-through (None), the static tree keeps serving /")
     yield ()
 
+  // ── 独立窗口本机加速批（2026-10-29）：兑换 303 保留 ticket 之外的深链 query ──
+  // 直连卡窗 `http://<本机>:<port>/?card-window=1&path=…&ticket=…` 兑换后必须
+  // 落回**同一张卡窗页**；恒定 `Location: /` 会把弹窗重定向成全功能控制台。
+
+  test("redemption with a card-window deep link => 303 carries the non-ticket params, ticket never echoes"):
+    for
+      unbound <- cats.effect.Ref.of[IO, Boolean](false)
+      store = ConsoleTicketStore.unsafeCreate()
+      faces = mkFaces(unbound, store)
+      issued <- store.issue("logto|user-42", "qa-device")
+      deep = get(s"/?card-window=1&path=%2Ftmp%2Fa.md&title=a.md&cwdir=1&ticket=${issued.token}")
+      resp <- route(faces)(deep).value.map(_.get)
+      _ = assertEquals(resp.status, Status.SeeOther)
+      loc = resp.headers.headers.find(h => h.name.toString.equalsIgnoreCase("Location")).map(_.value)
+      // http4s query 渲染口径：值内 `/` 不再转义（%2F → /，RFC 允许）——
+      // 功能等价（URLSearchParams 解码同值），钉 canonical 渲染。
+      _ = assertEquals(loc, Some("/?card-window=1&path=/tmp/a.md&title=a.md&cwdir=1"))
+      _ = assert(!loc.exists(_.contains("ticket")), "the one-time credential must never echo into Location")
+      _ = assertEquals(setCookies(resp).size, 1)
+    yield ()
+
+  test("redemption drops ONLY the ticket param (multi-param order preserved, bare ticket leg unchanged)"):
+    for
+      unbound <- cats.effect.Ref.of[IO, Boolean](false)
+      store = ConsoleTicketStore.unsafeCreate()
+      faces = mkFaces(unbound, store)
+      issued <- store.issue("logto|user-42", "qa-device")
+      // ticket 首位 + 值缺省参数（flag 形态）混合：其余参数原序原值保留。
+      deep = get(s"/?ticket=${issued.token}&card-window=1&cwpo=http%3A%2F%2F127.0.0.1%3A6138&flag")
+      resp <- route(faces)(deep).value.map(_.get)
+      loc = resp.headers.headers.find(h => h.name.toString.equalsIgnoreCase("Location")).map(_.value)
+      _ = assertEquals(loc, Some("/?card-window=1&cwpo=http%3A//127.0.0.1%3A6138&flag"))
+    yield ()
+
 end ConsoleTicketRoutesSpec
