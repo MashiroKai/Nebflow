@@ -69,9 +69,13 @@
 }
 /* Error-recovery strip (frozen-error-recovery plan §4.3 dims 2-5): icon +
    reason + retry count + retry/abandon buttons, rendered inside the input
-   wrap above the textarea — the "input bar carries the state" carrier. Amber
-   glass, distinct from the quiet sapphire schedule tint. Shared by the main
-   input bar (#input-bar) and the popup input bar (.fa-input-bar). */
+   wrap above the textarea — the "input bar carries the state" carrier.
+   极简批（2026-10-29 作者令「错误态对话框要极简」）：结构 = 1 图标 + 1 句说明 +
+   文本 chip 动作钮——图标脉冲动画退役（静态即警示，amber 只此一处点缀）；
+   按钮从「实底/描边块」收敛为 skip-freeze-btn 同族的静音文本 chip
+   （主操作 retry = amber 字，次级 abandon = 中性字，hover 才起淡底）。
+   Shared by the main input bar (#input-bar) and the popup input bar
+   (.fa-input-bar). */
 .error-recovery-strip {
   display: flex;
   align-items: center;
@@ -86,7 +90,6 @@
   height: 18px;
   flex-shrink: 0;
   color: rgb(var(--amber));
-  animation: error-pulse 1.6s ease-in-out infinite;
 }
 .error-recovery-strip .error-recovery-text {
   min-width: 0;
@@ -114,14 +117,15 @@
     color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
   white-space: nowrap;
   flex-shrink: 0;
+  /* 静音文本 chip：无底无框，色只落在字上（skip-freeze-btn 同族）。 */
+  background: transparent;
+  border: none;
 }
 .error-retry-btn {
-  background: rgb(var(--amber) / 0.16);
-  border: 1px solid rgb(var(--amber) / 0.45);
   color: rgb(var(--amber));
 }
 .error-retry-btn:hover:not(:disabled) {
-  background: rgb(var(--amber) / 0.26);
+  background: rgb(var(--amber) / 0.12);
 }
 /* N-1 (2026-09-10): disabled retry = visibly inert (the no-op is gone, so the
    affordance must stop looking actionable). Hover feedback is excluded above —
@@ -129,25 +133,15 @@
 .error-retry-btn:disabled {
   cursor: not-allowed;
   opacity: 0.45;
-  background: rgb(var(--amber) / 0.08);
-  border-color: rgb(var(--amber) / 0.25);
 }
 .error-abandon-btn {
-  background: transparent;
-  border: 1px solid rgb(var(--color-error, 244 67 54) / 0.40);
-  color: var(--color-error, #f44336);
+  color: var(--color-text-muted);
 }
 .error-abandon-btn:hover {
-  background: rgb(var(--color-error, 244 67 54) / 0.10);
-}
-@keyframes error-pulse {
-  0%, 100% { opacity: 0.75; transform: scale(1.0); }
-  50% { opacity: 1; transform: scale(1.06); }
+  background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
+  color: var(--color-text);
 }
 @media (prefers-reduced-motion: reduce) {
-  .error-recovery-strip .error-icon {
-    animation: none;
-  }
   .error-retry-btn, .error-abandon-btn {
     transition: none;
   }
@@ -162,10 +156,14 @@
   outline-offset: -2px;
 }
 /* Frozen "ice-sealed" input bar (2026-08-24 spec, user ruling: the bar itself
-   carries the frozen state — no standalone status row). Cold sapphire glass:
-   stronger tint + border, a 3px frost ring, a frost glow, and the refraction
-   line brightened to an ice edge. Zero new color tokens — sapphire/
-   sapphire-glow alpha variants only.
+   carries the frozen state — no standalone status row). Cold sapphire glass.
+
+   极简化批（2026-10-29 作者令「错误态/冻结态对话框要极简」）：状态表达收敛为
+   「1px 蓝宝描边 + 淡蓝底 + 冰蓝 placeholder」三件——3px frost ring、18px 外
+   发光、placeholder 光晕（text-shadow）三层装饰退役，材质阴影回落到常态玻璃
+   卡的三件套（frozen 与常态唯一差异 = 色相，不再有轮廓级差异）。零新色值：
+   sapphire alpha 变体 only。placeholder 的恢复时刻一句话即「一行说明」，
+   「跳过本次」是唯一主操作（08-25 22:28 ruling 不变）。
 
    Corrected 2026-09-10 (F-1 alignment): the former note here read "Frozen ≠
    disabled: the field stays fully editable and the send button keeps its green
@@ -182,29 +180,13 @@
    exits are 「跳过本次」 and the schedule window ending. */
 #input-bar.frozen,
 .fa-input-bar.frozen {
-  border-color: rgb(var(--sapphire) / 0.45);
-  background: rgb(var(--sapphire) / 0.10);
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0 0 0 3px rgb(var(--sapphire) / 0.10),
-    0 0 18px rgb(var(--sapphire-glow) / 0.22),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
+  border-color: rgb(var(--sapphire) / 0.35);
+  background: rgb(var(--sapphire) / 0.07);
 }
-#input-bar.frozen::before,
-.fa-input-bar.frozen::before {
-  background: linear-gradient(90deg,
-    transparent 10%,
-    rgb(var(--sapphire-glow) / 0.55) 50%,
-    transparent 90%
-  );
-}
-/* Ice-blue placeholder with a frost halo (text-shadow carries the "frosted
-   glass text" feel — blurring the glyphs themselves is forbidden). */
+/* Ice-blue placeholder — plain sapphire glyphs, no halo (极简批：text-shadow 退役). */
 #input-bar.frozen #input::placeholder,
 .fa-input-bar.frozen .fa-input::placeholder {
   color: rgb(var(--sapphire) / 0.9);
-  text-shadow: 0 0 8px rgb(var(--sapphire-glow) / 0.35);
 }
 /* Skip-current-freeze button (08-25 ruling: "跳过本次" voids the current
    freeze window; 22:28 amendment — minimal text button, lowest visual weight).
@@ -271,33 +253,18 @@
   opacity: 1;
 }
 /* Error-recovery input bar (frozen-error-recovery plan §4.3 dim 1) — amber
-   family. Mirrors the .frozen structure EXACTLY (border/bg/ring/glow/edge/
-   transition) and swaps only the hue — the "同族" skeleton with an importable
-   hue difference. Applied alongside the error strip; the strip is the added
-   differentiation (icon + reason + retry/abandon buttons). */
+   family. 极简批（2026-10-29）：与 .frozen 同一收敛——状态表达 = 1px 琥珀描边 +
+   淡琥珀底，3px ring / 18px glow / placeholder 光晕 / 顶缘冰线提亮全部退役；
+   材质阴影保持常态玻璃卡三件套，唯一差异 = 色相。Applied alongside the error
+   strip; the strip is the added differentiation (icon + reason + actions). */
 #input-bar.frozen-error,
 .fa-input-bar.frozen-error {
-  border-color: rgb(var(--amber) / 0.45);
-  background: rgb(var(--amber) / 0.10);
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0 0 0 3px rgb(var(--amber) / 0.10),
-    0 0 18px rgb(var(--amber-glow) / 0.22),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
-}
-#input-bar.frozen-error::before,
-.fa-input-bar.frozen-error::before {
-  background: linear-gradient(90deg,
-    transparent 10%,
-    rgb(var(--amber-glow) / 0.55) 50%,
-    transparent 90%
-  );
+  border-color: rgb(var(--amber) / 0.38);
+  background: rgb(var(--amber) / 0.07);
 }
 #input-bar.frozen-error #input::placeholder,
 .fa-input-bar.frozen-error .fa-input::placeholder {
   color: rgb(var(--amber) / 0.95);
-  text-shadow: 0 0 8px rgb(var(--amber-glow) / 0.30);
 }
 /* ── Attachment strip: in-flow row above the textarea（uifix 批 2026-10-22）──
    作者令：「设计一批附件的ui优化。让附件放在对话框上面，不要遮挡文字。」
@@ -1517,55 +1484,26 @@
       0px 2px 8px rgba(0, 0, 0, 0.20),
       0px 8px 24px rgba(0, 0, 0, 0.35);
   }
-  /* Frozen ice material — dark values (spec §5.1/§5.2) */
+  /* Frozen ice material — dark values (极简批 2026-10-29：ring/glow/光晕同灯档
+     退役，材质回落暗档常态三件套，状态差异只剩描边+底色）。 */
   #input-bar.frozen,
   .fa-input-bar.frozen {
-    border-color: rgb(var(--sapphire) / 0.50);
-    background: rgb(var(--sapphire) / 0.14);
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0 0 0 3px rgb(var(--sapphire) / 0.14),
-      0 0 18px rgb(var(--sapphire-glow) / 0.30),
-      0px 2px 8px rgba(0, 0, 0, 0.20),
-      0px 8px 24px rgba(0, 0, 0, 0.35);
-  }
-  #input-bar.frozen::before,
-  .fa-input-bar.frozen::before {
-    background: linear-gradient(90deg,
-      transparent 10%,
-      rgb(var(--sapphire-glow) / 0.40) 50%,
-      transparent 90%
-    );
+    border-color: rgb(var(--sapphire) / 0.42);
+    background: rgb(var(--sapphire) / 0.12);
   }
   #input-bar.frozen #input::placeholder,
   .fa-input-bar.frozen .fa-input::placeholder {
     color: rgb(var(--sapphire-glow) / 0.9);
-    text-shadow: 0 0 8px rgb(var(--sapphire-glow) / 0.45);
   }
-  /* Error-recovery amber material — dark values (frozen-error-recovery §4.3) */
+  /* Error-recovery amber material — dark values (极简批：同 frozen 收敛)。 */
   #input-bar.frozen-error,
   .fa-input-bar.frozen-error {
-    border-color: rgb(var(--amber) / 0.52);
-    background: rgb(var(--amber) / 0.16);
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0 0 0 3px rgb(var(--amber) / 0.16),
-      0 0 18px rgb(var(--amber-glow) / 0.30),
-      0px 2px 8px rgba(0, 0, 0, 0.20),
-      0px 8px 24px rgba(0, 0, 0, 0.35);
-  }
-  #input-bar.frozen-error::before,
-  .fa-input-bar.frozen-error::before {
-    background: linear-gradient(90deg,
-      transparent 10%,
-      rgb(var(--amber-glow) / 0.42) 50%,
-      transparent 90%
-    );
+    border-color: rgb(var(--amber) / 0.44);
+    background: rgb(var(--amber) / 0.12);
   }
   #input-bar.frozen-error #input::placeholder,
   .fa-input-bar.frozen-error .fa-input::placeholder {
     color: rgb(var(--amber-glow) / 0.95);
-    text-shadow: 0 0 8px rgb(var(--amber-glow) / 0.40);
   }
   #input {
     color: #e0e2e5;
