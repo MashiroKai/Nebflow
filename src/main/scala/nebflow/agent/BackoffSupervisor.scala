@@ -618,6 +618,55 @@ object BackoffSupervisor:
         now: Long,
         recentRestarts: List[Long]
       ): IO[Behavior[AgentEvent]] =
+        // R1 缝隙 C 修收口（进程内 respawn 腿，2026-10-29 三路径批 · 报告二 §1.3
+        // 硬验收）：**取消墓碑在场的 delegate 永不 respawn**。runbook：doCancel 的
+        // 降级兜底（回执超窗）只 Stop child——监督者若只是慢（未死），child 的
+        // Terminated 原样走进本链，把已 cancelled 的行翻回 restarting 并 spawn
+        // 新内核 = 墓碑被进程内复活腿无视（DelegateRevival 七闸管不到本腿）。闸在
+        // respawn 头部（crashed 与 empty-completion 两腿共用本单点）读
+        // DelegateRegistry 墓碑：在场 ⇒ 不写 restarting、不 spawn，直接落
+        // cancelled 终态（父通知照常——兜底路径本就欠一次诚实的取消通知）。判据与
+        // DelegateRevival.eligibility 同源：墓碑在 = 永不复活。读失败/无记录 =
+        // fail-open 照旧 respawn（读面故障绝不阻断崩溃恢复；delegate 无 registry
+        // 记录的形态本就没有墓碑）。
+        IO
+          .blocking(nebflow.core.delegate.DelegateRegistry.find(subagentId))
+          .handleErrorWith(e =>
+            logger
+              .warn(s"BackoffSupervisor: cancel-tombstone probe failed for $subagentId (respawn proceeds): ${e.getMessage}")
+              .as(None)
+          )
+          .flatMap {
+            case Some(rec) if rec.cancelRequestedAt.isDefined =>
+              logger
+                .warn(
+                  s"BackoffSupervisor: respawn of $childName ($trigger) REFUSED — cancel tombstone on record " +
+                    s"(requested by ${rec.cancelRequestedBy.getOrElse("?")} at ${rec.cancelRequestedAt.get}); " +
+                    "a cancelled delegate is never revived — settling cancelled instead"
+                )
+                .as(()) *>
+                notifyParentAndStop(
+                  "cancelled",
+                  s""""$description": respawn refused — cancel tombstone on record (a cancelled delegate is never revived)""",
+                  JsonObject(
+                    "failedSessionId" -> subagentId.asJson,
+                    "retryable" -> false.asJson,
+                    "failureType" -> "cancelled".asJson,
+                    "cancelled" -> true.asJson,
+                    "reason" -> "cancel tombstone present — respawn refused".asJson
+                  ),
+                  taskStatusOverride = Some("cancelled")
+                )
+            case _ => respawnBody(ctx, trigger, now, recentRestarts)
+          }
+
+      /** respawn 链本体（R1-C 收口批自 respawn 抽出，逐字未改——墓碑闸在其上游）。 */
+      private def respawnBody(
+        ctx: ActorContext[AgentEvent],
+        trigger: String,
+        now: Long,
+        recentRestarts: List[Long]
+      ): IO[Behavior[AgentEvent]] =
         // Phase 3 去重(行为保持重构,2026-09-25):原三行手写延迟计算
         // (min(minBackoff×2^n, maxBackoff) + 抖动[0,1000)ms)收口为
         // restartDelayMs 纯函数——指数+封顶复用 shared Retry.delayAfter,
@@ -800,7 +849,7 @@ object BackoffSupervisor:
           bgWaitCapFired
         )
         end for
-      end respawn
+      end respawnBody
 
       /**
        * file-diff → 委托结果行（bug #58 修，2026-10-09）：本 delegate 批次的

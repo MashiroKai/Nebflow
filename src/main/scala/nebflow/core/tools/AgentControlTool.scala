@@ -1088,22 +1088,44 @@ When to use:
           )
         case Some(task) =>
           val parentSid = if rec.parentSessionId.nonEmpty then rec.parentSessionId else task.parentSessionId
-          for
-            _ <- resources.subAgentTaskStore
-              .updateStatus(parentSid, rec.sessionId, "restarting")
-              .handleErrorWith(e => logger.warn(s"restart taskStore update failed: ${e.getMessage}"))
-            _ <- rec.ref ! AgentCommand.Stop(
-              s"agent-control-restart${if reason.nonEmpty then s": $reason" else ""}"
-            )
-            // 父决策销账（v2 反推送风暴批）：restart 即关闭其未决升级事件。
-            _ <- clearRegistryEscalation(resources, rec.sessionId)
-          yield Right(
-            s"Restart sent for '${rec.sessionId}': the stuck turn is terminated now; the supervisor will " +
-              s"respawn it after a short backoff (~5s) and resume from the last persisted checkpoint " +
-              s"(completed work is kept). NOTE: manual restarts consume the supervisor's circuit-breaker " +
-              s"budget — after 2 restarts within 5 minutes the task fails with a notification. " +
-              s"Current task retryCount: ${task.retryCount}."
-          )
+          // R1 缝隙 C 修收口（restart 腿同闸，2026-10-29 三路径批 · 报告二 §1.3）：
+          // 取消墓碑在场 = 已取消会话**不可 restart**。restart 的续跑机制就是
+          // respawn（Stop → Terminated → BackoffSupervisor.respawn），监督者的
+          // 墓碑闸会把 spawn 拒回 cancelled 终态；此处先行显式拒绝、回执如实
+          // ——不再「回了 restarting 又被闸翻回去」。查无 registry 记录 = 无墓碑
+          // （subtask 等形态），照旧放行。
+          IO
+            .blocking(nebflow.core.delegate.DelegateRegistry.find(rec.sessionId))
+            .handleErrorWith(_ => IO.pure(None))
+            .flatMap {
+              case Some(r) if r.cancelRequestedAt.isDefined =>
+                IO.pure(
+                  Left(
+                    ToolError(
+                      s"Session '${rec.sessionId}' has a cancel tombstone on record (cancelled by " +
+                        s"${r.cancelRequestedBy.getOrElse("?")}) — a cancelled session cannot be restarted. " +
+                        "Delegate again if the work should continue."
+                    )
+                  )
+                )
+              case _ =>
+                for
+                  _ <- resources.subAgentTaskStore
+                    .updateStatus(parentSid, rec.sessionId, "restarting")
+                    .handleErrorWith(e => logger.warn(s"restart taskStore update failed: ${e.getMessage}"))
+                  _ <- rec.ref ! AgentCommand.Stop(
+                    s"agent-control-restart${if reason.nonEmpty then s": $reason" else ""}"
+                  )
+                  // 父决策销账（v2 反推送风暴批）：restart 即关闭其未决升级事件。
+                  _ <- clearRegistryEscalation(resources, rec.sessionId)
+                yield Right(
+                  s"Restart sent for '${rec.sessionId}': the stuck turn is terminated now; the supervisor will " +
+                    s"respawn it after a short backoff (~5s) and resume from the last persisted checkpoint " +
+                    s"(completed work is kept). NOTE: manual restarts consume the supervisor's circuit-breaker " +
+                    s"budget — after 2 restarts within 5 minutes the task fails with a notification. " +
+                    s"Current task retryCount: ${task.retryCount}."
+                )
+            }
       }
 
   /**
