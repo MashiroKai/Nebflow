@@ -11,7 +11,7 @@ import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord}
 import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.processor.TaskStuckWatcher
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{BgTaskRegistry, FileLockManager, NodeEditTool, ToolContext}
+import nebflow.core.tools.{BgTaskRegistry, FileLockManager, NodeEditTool, ShellSession, ToolContext}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.gateway.WsHub
 import nebflow.llm.ModelCandidate
@@ -92,6 +92,19 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
     val nodeSessions: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     val turnCount: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     @volatile var res: SharedResources = null
+    /** death-watch 批 fixture 收尾：行对应真进程——杀后台进程 + 毁会话（幂等）。 */
+    def cleanupBg: IO[Unit] =
+      for
+        sids <- nodeSessions.get
+        jids <- jobIds.get
+        _ <- sids.traverse_ { sid =>
+          ShellSession
+            .peekSession(sid)
+            .flatMap(_.fold(IO.unit)(sh => jids.traverse_(j => sh.cancelBackgroundJob(j).attempt.void))) *>
+            ShellSession.destroySession(sid).attempt.void
+        }
+      yield ()
+
 
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
@@ -112,7 +125,10 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
                         reg.values.find(rec => rec.kind == AgentKind.Flow && rec.sessionId.startsWith("node-")) match
                           case Some(rec) =>
                             val jobId = s"dead-reap-spec-${java.util.UUID.randomUUID().toString.take(8)}"
-                            BgTaskRegistry.register(jobId, rec.sessionId, "spec bg task", "local", "nebula-root") *>
+                            ShellSession.forSession(rec.sessionId).flatMap { shell =>
+                            shell.executeBackground("sleep 3600", jobIdOverride = Some(jobId)) *>
+                              BgTaskRegistry.register(jobId, rec.sessionId, "spec bg task", "local", "nebula-root")
+                          } *>
                               jobIds.update(_ :+ jobId) *> nodeSessions.update(_ :+ rec.sessionId)
                           case None =>
                             IO.raiseError(new RuntimeException("node session record not found at first LLM request"))
@@ -286,7 +302,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
       _ <- IO.sleep(300.millis) // 给「假如仍有 failed 投递」留观察窗口（护栏）
       imms <- recordedImmediate(recorded)
       events <- readEvents(ws)
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // 🔴 改后断言（原 5 条 :276-284 ⇒ 改后 5 条，断言数不减；killruling 批 #19 降档）
       assertEquals(
@@ -358,7 +374,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
       _ <- IO.sleep(500.millis) // 给「假如 collect 仍在异步启动 B」留观察窗口
       up <- byName(rt, "up-a")
       dn <- byName(rt, "down-b")
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(
         up.status,
@@ -444,7 +460,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
       _ <- (rt.engine.settleStaleRunningNodes() *> byName(rt, "wait-bg"))
         .guarantee(BgTaskRegistry.unregister("dead-reap-bg-job"))
       z4 <- byName(rt, "wait-bg")
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield assertEquals(
       z4.status,
       NodeLifecycle.Running,
@@ -494,7 +510,7 @@ class NodeDeadSessionAutoReapSpec extends CatsEffectSuite:
       _ <- waitUntil(20.seconds)(byName(rt, "bgw-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
       done <- byName(rt, "bgw-a")
       _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(holding.bgWait.isDefined, s"payload must carry bgWait while holding, got: ${holding.bgWait}")
       assert(holding.status == NodeLifecycle.Running, "holding node must stay Running (completion gate not bypassed)")

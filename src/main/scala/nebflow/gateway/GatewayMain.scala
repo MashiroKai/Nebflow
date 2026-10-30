@@ -2016,6 +2016,9 @@ object GatewayMain extends IOApp:
                                                           // 账本审计；进展即时降回 healthy（重排不判死）。零 Kill——正确性由
                                                           // 提醒/徽标/通知表达（ScanAction 封闭类型编译守门）。429 风暴期经
                                                           // providerRegistry.throttleStormActive 抑制 Nudge、徽标照刷。
+                                                          // P2：death-watch 收割器的全站广播口同点装配（reap 的终态帧出口——
+                                                          // 面板行即时摘除；未装配时收割语义不受影响，只欠一帧）。
+                                                          _ = nebflow.core.tools.BgTaskReaper.installSink(wsHub)
                                                           _ <- nebflow.core.processor.BgLifecycleReconciler
                                                             .run(
                                                               sharedResourcesWithDaemon,

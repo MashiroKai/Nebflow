@@ -6,7 +6,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.AgentCommand
 import nebflow.core.{AgentRuntimePort, EventSink}
-import nebflow.core.tools.{BgHealth, BgNotifyDelivery, BgTaskLedger, BgTaskOutputStore, BgTaskRegistry}
+import nebflow.core.tools.{BgHealth, BgNotifyDelivery, BgTaskLedger, BgTaskOutputStore, BgTaskReaper, BgTaskRegistry}
 import nebflow.shared.{Defaults, NebflowLogger}
 
 import scala.concurrent.duration.FiniteDuration
@@ -289,7 +289,7 @@ object BgLifecycleReconciler:
       ) *> IO.sleep(interval) >> loop
     loop
 
-  /** 单轮扫描（执行面）：读账本快照 → scanCore 纯决策 → 逐动作执行 → 徽标对账。 */
+  /** 单轮扫描（执行面）：death-watch 活性收割 → 读账本快照 → scanCore 纯决策 → 逐动作执行 → 徽标对账。 */
   def scan(
     resources: AgentRuntimePort,
     wsHub: EventSink,
@@ -300,6 +300,16 @@ object BgLifecycleReconciler:
     else
       for
         _ <- bootstrapEscalationsIfNeeded
+        // P2 death-watch（设计稿 §4.2 + 10-30 合并闸卡死病灶）：先收割活性死行——
+        // 被收割的挂起会话由注入的终态通知唤醒，下拍起其行已出表（health 轨不
+        // 再为死任务浪费判据）。零墙钟：活性 = 内核进程事实。
+        reap <- BgTaskReaper.reapDead(Some(resources.actorSystem), Some(resources.agentRegistry), now)
+        _ <- IO.whenA(reap.reaped.nonEmpty)(
+          logger.warn(
+            s"[bg-lifecycle] death-watch reaped ${reap.reaped.size} owner-lost task(s): " +
+              reap.reaped.map { case (id, reason) => s"$id($reason)" }.mkString(", ")
+          )
+        )
         tasks <- BgTaskRegistry.allActiveTasks
         lineCounts <- BgTaskOutputStore.lineCounts
         storm <- stormActive.getOrElse(IO.pure(false))

@@ -11,7 +11,7 @@ import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord}
 import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.processor.TaskStuckWatcher
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{BgTaskRegistry, FileLockManager, NodeEditTool, ToolContext}
+import nebflow.core.tools.{BgTaskRegistry, FileLockManager, NodeEditTool, ShellSession, ToolContext}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.gateway.WsHub
 import nebflow.llm.ModelCandidate
@@ -78,10 +78,11 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(originalRoot)
 
   /**
-   * 后台任务模拟 stub LLM：首轮请求时在 BgTaskRegistry 登记一个等待型任务
-   * （模拟 agent 起 run_in_background 后台命令——真实登记在 BashTool，spec 用
-   * registry 直种等价），应答请求首行；后续轮（通知唤醒轮）应答 "bg-noted"。
-   * 登记的 jobId/sessionId 记入 Ref 供 spec 断言与清理。
+   * 后台任务模拟 stub LLM：首轮请求时为本节点会话起**真后台进程**（
+   * ShellSession.executeBackground——death-watch 批：活性探针读内核进程事实，
+   * 合成行会被判 owner-lost 收割，hold 语义无从钉住）并登记等待型任务，
+   * 应答请求首行；后续轮（通知唤醒轮）应答 "bg-noted"。
+   * 登记的 jobId/sessionId 记入 Ref 供 spec 断言与 cleanupBg 清理。
    */
   private class BgStubLlm(persistent: Boolean = false, registerTask: Boolean = true):
     val jobIds: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
@@ -90,6 +91,19 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     // 循环依赖解法（handle 需 res，mkResources 需 handle）：spec 在 mkResources
     // 后回填 res；首轮 LLM 请求发生在回填之后，时序安全。
     @volatile var res: SharedResources = null
+    /** death-watch 批 fixture 收尾：行对应真进程——杀后台进程 + 毁会话（幂等）。 */
+    def cleanupBg: IO[Unit] =
+      for
+        sids <- nodeSessions.get
+        jids <- jobIds.get
+        _ <- sids.traverse_ { sid =>
+          ShellSession
+            .peekSession(sid)
+            .flatMap(_.fold(IO.unit)(sh => jids.traverse_(j => sh.cancelBackgroundJob(j).attempt.void))) *>
+            ShellSession.destroySession(sid).attempt.void
+        }
+      yield ()
+
 
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
@@ -111,14 +125,17 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
                         reg.values.find(rec => rec.kind == AgentKind.Flow && rec.sessionId.startsWith("node-")) match
                           case Some(rec) =>
                             val jobId = s"bg-gate-spec-${java.util.UUID.randomUUID().toString.take(8)}"
-                            BgTaskRegistry.register(
-                              jobId,
-                              rec.sessionId,
-                              "spec bg task",
-                              "local",
-                              "nebula-root",
-                              persistent
-                            ) *>
+                            ShellSession.forSession(rec.sessionId).flatMap { shell =>
+                              shell.executeBackground("sleep 3600", jobIdOverride = Some(jobId)) *>
+                                BgTaskRegistry.register(
+                                  jobId,
+                                  rec.sessionId,
+                                  "spec bg task",
+                                  "local",
+                                  "nebula-root",
+                                  persistent
+                                )
+                            } *>
                               jobIds.update(_ :+ jobId) *> nodeSessions.update(_ :+ rec.sessionId)
                           case None =>
                             IO.raiseError(new RuntimeException("node session record not found at first LLM request"))
@@ -365,7 +382,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       // G1 是「零后台任务」用例（registerTask=false）⇒ 此处**刻意**不用 awaitJobs（它等
       // 「快照非空」，本用例的正确期望恰是空表）；断言本体逐字不变。
       jobs <- llm.jobIds.get
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(a.status, NodeLifecycle.Completed, "no-bg node must complete immediately")
       assertEquals(a.result, Some("result-PLAIN"))
@@ -415,7 +432,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       postImms <- awaitDelivery(recorded, "[Node 'wait-a' completed]")
       events <- readEvents(ws)
       _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(midRun.status, NodeLifecycle.Running, "node must stay Running while bg task pending (hold)")
       assertEquals(midImms, Nil, "no delivery while holding")
@@ -462,7 +479,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
         j.toString.contains("taskId")
       }
       _ <- llm.jobIds.get.flatMap(_.traverse_(BgTaskRegistry.unregister))
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(done.status, NodeLifecycle.Completed, "persistent task must not hold the node")
       assertEquals(waiting, Nil, "waitingFor must filter persistent tasks")
@@ -506,7 +523,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       // 批 4：显式等批 flush（见 awaitDelivery）——投递是异步腿，读一次即红；判据本体逐字不变
       imms <- awaitDelivery(recorded, "[Node 'kill-a' failed]")
       ledgerLeft <- BgTaskRegistry.drainFailures(nodeSid)
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(done.status, NodeLifecycle.Failed, "guard-killed wait-set task must fail the node, not complete it")
       assert(done.result.exists(_.contains("killed by the background guard")), s"annotation expected: ${done.result}")
@@ -548,7 +565,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       done <- byName(rt, "cap-a")
       events <- readEvents(ws)
       _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // 🔴 改后断言（原 2 条 :502-503 ⇒ 改后仍 2 条 + 保留 :504/:505 两条 = 4 条，断言数不减）
       assertEquals(
@@ -608,7 +625,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       _ <- waitUntil(30.seconds)(byName(rt, "down-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
       done <- byName(rt, "down-a")
       events <- readEvents(ws)
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(midRun.status, NodeLifecycle.Running, "bg wait happens before finalize (node stays running)")
       assertEquals(done.status, NodeLifecycle.Completed, "after bg release the node finalizes as completed")
@@ -642,7 +659,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       a <- byName(rt, "stuck-a")
       stillRegistered <- res.agentRegistry.get.map(_.contains(nodeSid))
       _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(a.status, NodeLifecycle.Running, "waiting Idle node must never be a stuck candidate")
       assert(stillRegistered, "agent record must survive the scan")
@@ -674,7 +691,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       _ <- waitUntil(20.seconds)(byName(rt, "givup-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
       done <- byName(rt, "givup-a")
       _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield assertEquals(
       done.status,
       NodeLifecycle.Cancelled,
@@ -712,7 +729,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       events <- readEvents(ws)
       jobs <- awaitJobs(llm)
       _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(done.status, NodeLifecycle.Completed, "sealed gate: a pending wait-set task must not hold the node")
       assertEquals(done.result, Some("result-SEALED"), "first-turn text finalizes immediately")

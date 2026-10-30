@@ -678,9 +678,12 @@ Git safety:
                   // real output. The caller (another Nebflow instance via HTTP)
                   // manages the lifecycle — the call blocks until the remote
                   // result arrives (or the remote timeout fires).
+                  // P2 单任务取消远端腿：host 随下发参数带 bgJobId ⇒ 对端把本进程
+                  // 登记进 RemoteExecCancelRegistry（execKey），bg-cancel 按它精确杀树。
                   val remoteTimeout = explicitTimeoutMs.getOrElse(DEFAULT_TIMEOUT).millis
+                  val execKey = input("bgJobId").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
                   shell
-                    .execute(actualCommand, remoteTimeout)
+                    .execute(actualCommand, remoteTimeout, execKey = execKey)
                     .attempt
                     .map {
                       case Right(pr) => formatResult(pr, desc, tailN)
@@ -1230,6 +1233,10 @@ Git safety:
         // doesn't prevent the other.
         // 输出查看批：终态翻转 + 进留存区（completed/failed；cancelled 走 WS
         // cancelBackgroundJob / reclaimSession 的 finalizeTask，幂等防双写）。
+        // P2 first-terminal-wins：行已被显式取消/death-watch 收割取走（None）
+        // ⇒ 终态已有人落（通知+账本齐）——本迟到腿只补输出留存区（幂等翻转），
+        // 不重注账本/不重发通知（防「terminated→completed」双注）。
+        val alreadyTerminal = registered.isEmpty
         BgTaskOutputStore
           .finalizeTask(jobId, storeStatus, exitCodeOpt, errHintOpt)
           .handleErrorWith(e2 => logger.warn(s"bg-output finalize failed for job $jobId: ${e2.getMessage}")) *>
@@ -1239,20 +1246,25 @@ Git safety:
           // 直投未唤醒 / 激活 Deferred），账本条目挂起，会话下次唤醒由补投腿
           // （AgentActor.flushPendingLedgerCompletions）先补投未消费事件，永不
           // 蒸发。fail-soft：账本故障绝不阻断投递。
-          BgTaskLedger
-            .recordCompletion(
-              ctx.sessionId.getOrElse(""),
-              jobId,
-              description,
-              eventType,
-              payload
-            )
-            .handleErrorWith(e2 => logger.warn(s"bg-ledger record failed for job $jobId: ${e2.getMessage}")) *>
+          (if alreadyTerminal then IO.unit
+           else
+             BgTaskLedger
+               .recordCompletion(
+                 ctx.sessionId.getOrElse(""),
+                 jobId,
+                 description,
+                 eventType,
+                 payload
+               )
+               .handleErrorWith(e2 => logger.warn(s"bg-ledger record failed for job $jobId: ${e2.getMessage}"))
+          ) *>
           logger.info(
-            s"Background job $jobId callback: $eventType$exitInfo",
+            s"Background job $jobId callback: $eventType$exitInfo" +
+              (if alreadyTerminal then " (row already terminal — output store only, no re-notify)" else ""),
             "sessionId" -> ctx.sessionId.getOrElse("")
           ) *>
-          notifyFrontend.void *> notifyAgent
+          (if alreadyTerminal then IO.unit
+           else notifyFrontend.void *> notifyAgent)
       }
     }
 

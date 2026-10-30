@@ -536,6 +536,22 @@ object BackoffSupervisor:
                     case still => BgWaitForce(bgWaitCapNote(still))
                   }
               else
+                // P2 death-watch 活性复检（10-30 合并闸卡死 3 小时病灶收口：
+                // e0478867 进程已死 + 行残留 ⇒ 每回合 Completed 被 hold 到 2h cap）：
+                // hold 前探活等待集——进程已死/属主会话已殁的行即收割（注销 + 代行
+                // 终态记账 + 沿等待链注入终态通知），复检等待集再决 hold/放行。
+                // 零墙钟：活性 = proc.isAlive/会话在册的内核事实。
+                nebflow.core.tools.BgTaskReaper
+                  .reapDead(Some(resources.actorSystem), Some(resources.agentRegistry))
+                  .flatTap { r =>
+                    IO.whenA(r.reaped.nonEmpty)(
+                      logger.info(
+                        s"BackoffSupervisor: delegate $subagentId bg-wait recheck reaped " +
+                          r.reaped.map { case (id, reason) => s"$id($reason)" }.mkString(", ") +
+                          " — re-evaluating hold"
+                      )
+                    )
+                  } *>
                 nebflow.core.tools.BgTaskRegistry.waitingFor(subagentId).flatMap {
                   case Nil =>
                     bgWaitHeld.get.flatMap { held =>

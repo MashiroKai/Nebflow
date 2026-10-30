@@ -194,12 +194,19 @@ final class ShellSession private (
     command: String,
     timeout: FiniteDuration,
     health: Option[JobHealth] = None,
-    isBackground: Boolean = false
+    isBackground: Boolean = false,
+    /**
+     * 远端执行取消登记键（后台任务生命周 P2 批）：对端 remote-exec 前台 Bash
+     * 经本键把 OS 进程登记进 [[RemoteExecCancelRegistry]]——host 侧单任务取消
+     * （`bg-cancel` 动作）按 jobId 精确杀对端进程树（1/N 判据）。None = 本地
+     * 常规调用，零行为变化（默认值兼容全部既有调用方）。
+     */
+    execKey: Option[String] = None
   ): IO[ProcessResult] =
     for
       _ <- checkAlive *> touch
       cwd <- currentDir.get
-      result <- runProcess(command, cwd, timeout, health, isBackground)
+      result <- runProcess(command, cwd, timeout, health, isBackground, execKey)
       // On Windows (Git Bash), pwd -W returns Windows-style paths (C:/Users/...)
       // which Java's File and Paths APIs accept. Plain pwd would return MSYS2
       // paths (/c/Users/...) which are unusable for Read/Write/Edit tools.
@@ -315,6 +322,36 @@ final class ShellSession private (
           command = job.command
         )
       }
+    }
+
+  /**
+   * death-watch 活性探针（P2 批）：读任务终态/进程活性**原始读数**——
+   * 不 touch、不过 checkAlive、不建会话（探针失败绝不拖垮被测会话）。
+   * None = 本会话名下无此任务；Some(complete, alive)：
+   *   - complete = deferred 已落终态（完成回调可能已在飞）；
+   *   - alive    = OS 进程可验证存活。
+   * 判读纪律（BgTaskLiveness 单点）：alive=false ⇒ 可验证已死；complete 不构成
+   * 进展信号（死亡判据只看内核进程事实，零墙钟）。
+   */
+  /**
+   * 后台任务活性探针（death-watch P2 批）。返回：
+   *   - None ⇒ 任务不在本会话任务图（行指向错会话——结构性绝路证据）；
+   *   - Some(probe) ⇒ probe.done = deferred 已落终态；probe.handlePresent = OS
+   *     进程句柄已落 [[JobHealth.processRef]]（spawn 在飞 = **false**——句柄缺席
+   *     不是死证，executeBackground 先注册任务图/行、后落句柄，存在毫秒级窗口；
+   *     误判 Dead 会把刚起的活任务收割掉）；probe.alive = 句柄在且内核存活。
+   */
+  final case class JobLivenessProbe(done: Boolean, handlePresent: Boolean, alive: Boolean)
+
+  def probeJobLiveness(jobId: String): IO[Option[JobLivenessProbe]] =
+    backgroundJobs.get.flatMap { jobs =>
+      jobs.get(jobId) match
+        case None => IO.pure(None)
+        case Some(job) =>
+          job.deferred.tryGet.flatMap { done =>
+            val proc = job.health.processRef.get()
+            IO.pure(Some(JobLivenessProbe(done.isDefined, proc != null, proc != null && proc.isAlive)))
+          }
     }
 
   /** List background jobs with completion status */
@@ -634,7 +671,8 @@ final class ShellSession private (
     cwd: String,
     timeout: FiniteDuration,
     health: Option[JobHealth] = None,
-    isBackground: Boolean = false
+    isBackground: Boolean = false,
+    execKey: Option[String] = None
   ): IO[ProcessResult] =
     IO.blocking {
       try buildProcessBuilder(command, cwd).start()
@@ -654,6 +692,10 @@ final class ShellSession private (
       // 机制 E：进程启动即注册进 session 活动表（前台 + 后台），bracket
       // release 注销——restart/Stop 时 killSessionProcesses 靠它杀进程树。
       val registerActive = activeProcesses.update(_ + proc)
+      // P2 bg-cancel 对端登记：execKey 非空（对端 remote-exec 且 host 下发了
+      // bgJobId）时进程同时登记进 RemoteExecCancelRegistry——host 经 `bg-cancel`
+      // 动作按 jobId 精确杀树（1/N 判据）；release 对称注销（bracket 保证）。
+      val registerExec = execKey.fold(IO.unit)(RemoteExecCancelRegistry.register(_, proc))
       // On Windows, write the command to bash's stdin (bash -s mode), then
       // close stdin to signal EOF. This avoids Java ProcessBuilder's Windows
       // argument quoting which mangles double quotes and special characters.
@@ -799,6 +841,7 @@ final class ShellSession private (
       for
         _ <- storeProc
         _ <- registerActive
+        _ <- registerExec
         _ <- writeStdin
 
         // (#3 删) 原 M3 停滞探测 fiber 已整块移除——此处无 detector fiber。
@@ -836,7 +879,9 @@ final class ShellSession private (
     } { proc =>
       // 先注销再 killProcessTree（进程已退出时是幂等 no-op）——避免
       // killSessionProcesses 在 release 中途并发读到已收尾的进程。
-      activeProcesses.update(_ - proc) *> ProcessTree.killProcessTree(proc)
+      activeProcesses.update(_ - proc) *>
+        execKey.fold(IO.unit)(RemoteExecCancelRegistry.unregister(_)) *>
+        ProcessTree.killProcessTree(proc)
     }
 
   private def backgroundExecute(
@@ -1517,6 +1562,21 @@ object ShellSession:
         case Some(s) => (m - sessionId, s.kill())
         case None => (m, IO.unit)
     }.flatten
+
+  /**
+   * 活性探针读面（后台任务生命周 P2 death-watch 批）：**非创建式**读会话——
+   * 不存在/已死 ⇒ None（调用方判「属主会话已殁」，与 forSession 的 get-or-create
+   * 语义严格相反：探针绝不造会话）。滞留注册表的死会话（isDead）同判 None
+   * （kill() 已杀其进程树，行内任务不可能再有终态腿）。
+   */
+  def peekSession(sessionId: String): IO[Option[ShellSession]] =
+    if sessionId.trim.isEmpty then IO.pure(None)
+    else
+      sessions.get.flatMap { m =>
+        m.get(sessionId) match
+          case Some(s) => s.isDead.map(dead => if dead then None else Some(s))
+          case None    => IO.pure(None)
+      }
 
   /**
    * 机制 E：restart/Stop 联动——杀该 session 全部 OS 进程树（前台进程 +
