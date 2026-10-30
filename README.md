@@ -108,6 +108,18 @@ To build from source (Java 21+, sbt):
 sbt assembly
 ```
 
+### Local dev: one-step logged-in panel (no website login)
+
+For local development testing, `scripts/coldstart-lt.sh` brings the whole loop up in one step: it starts the engine via the `nebflow-restart.sh` system (`NEBFLOW_RESTART_PORT`, default **6138**) when it is not already running — a live engine is never restarted — then mints a one-shot local console ticket (the engine's existing loopback-only `console-ticket` path, authorized by the local `auth.json` file token) and opens the panel at `http://localhost:6138/` **already logged in**, with zero contact to the mystand.space website or the Logto login chain:
+
+```bash
+./scripts/coldstart-lt.sh            # engine up (if needed) → browser opens logged-in panel
+./scripts/coldstart-lt.sh --no-open  # same, but only prints the logged-in URL
+DRY_RUN=1 ./scripts/coldstart-lt.sh  # preview everything, touch nothing
+```
+
+Knobs: `LT_PORT` (default `$NEBFLOW_RESTART_PORT` | 6138), `LT_HOME` (engine home whose `auth.json` authorizes ticket minting, default `~/.stand`), `LT_RESTART_MODE` (default `--force`; `--restart-if-idle` refuses while busy). The script only ever talks to loopback addresses and adds no auth bypass of its own — production builds and official domains are untouched by construction. (For an isolated fresh-instance cold start with the new-user onboarding path, use `scripts/coldstart.sh` instead.)
+
 ## Weixin (iLink) channel
 
 Nebflow connects to Weixin through the official ClawBot plugin, which runs attached to your OpenClaw host. Nebflow itself hosts only the seam: it does not implement the iLink protocol (long polling, auth headers, media decryption, cursors and session backoff all live in the official plugin).
