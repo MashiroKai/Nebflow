@@ -186,7 +186,7 @@ object MemoryWriteGate:
        |Budget is enforced on the WRITE side (injection is never truncated — an over-budget memory taxes every future session instead).
        |Consolidate first, then write. Largest sections:
        |${MemoryBudget.topSections(newContent)}
-       |Trim stale/duplicate entries, or demote detail into ~/.nebflow/memory/<id>.md files.
+       |Trim stale/duplicate entries in place.
        |If this write only shrinks the file, it stays exempt from the hard cap — retry as an in-place shrink (delete stale `- ` entries or rewrite the largest `## ` section down). (${Code.Budget})""".stripMargin
 
   private def warnDetail(target: String, path: os.Path, bytes: Long, soft: Long, hard: Long): String =

@@ -352,8 +352,6 @@ object ContextRefresher:
       else
         s"""# Memory
            |
-           |Your memory is below. Entries with →id have read-only legacy detail files at `~/.stand/memory/{id}.md` — read them when the scenario matches. Detail files are snapshots and red-lines only; historical events and rulings live in the conversation archive.
-           |
            |## Recall archive — `tools/stand-recall`
            |
            |Your full conversation history with the user is auto-indexed into a searchable archive at `~/.stand/memory-db/`. When context is missing, a past ruling is uncertain, or compaction ate a detail you need — search FIRST, then act:

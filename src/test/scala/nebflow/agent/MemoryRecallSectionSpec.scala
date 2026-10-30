@@ -6,8 +6,9 @@ import munit.FunSuite
  * 记忆检索库指引段 spec（2026-10-29 作者令「让主 agent 知道如何用 CLI 检索
  * 历史记忆」批）：renderMemoryBlock 的 # Memory 头部固定携带 stand-recall 检索
  * 指引——2026-10-21 记忆改制后记忆主库 = 对话检索库（`~/.stand/memory-db/`），
- * 检索 CLI = `tools/stand-recall`（仓根执行；cwd 漂移回仓根/绝对路径）；detail
- * files 退居快照/红线载体，历史事件与裁定去检索库找。
+ * 检索 CLI = `tools/stand-recall`（仓根执行；cwd 漂移回仓根/绝对路径）；
+ * detail files 机制已退役（detail-demote-retire 批 2026-10-30，作者 15:58 裁定）——
+ * 不再教读/新建，记忆块头部不再携带 →id 指引行。
  *
  * 纯渲染直测（不触文件系统）。断言=机制锚点（contains），不做逐字节快照——
  * 措辞微调不应碎测试；CLI 名 / 库路径 / 命令形态 / cwd 纪律才是锚。
@@ -30,8 +31,9 @@ class MemoryRecallSectionSpec extends FunSuite:
     assert(block.contains("session anchor"), "输出带会话锚在场")
     assert(block.contains("commit hashes"), "穷尽自检索（近义词/英文/提交号）在场")
 
-  test("recall: detail files 关系一句话（改制后=快照/红线载体）"):
-    assert(block.contains("snapshots and red-lines only"), block)
+  test("recall: →id detail-file 指引行已摘除（机制退役，不再教读新建）"):
+    assert(!block.contains("→id"), block)
+    assert(!block.contains("~/.stand/memory/{id}.md"), block)
 
   test("recall: 指引段在记忆主体之前（头部指引先于内容）"):
     val iRecall = block.indexOf("## Recall archive")
