@@ -948,6 +948,13 @@ private[gateway] object NeblinkRoutes:
                     case Right(json) => Ok(Json.obj("output" -> json.noSpaces.asJson))
                     case Left(err) => Ok(Json.obj("error" -> err.asJson, "output" -> "".asJson))
                   }
+                case "BgCancel" =>
+                  // P2 单任务取消远端腿（bg-cancel）：与 FileTransfer 同表同安全面
+                  // （verifyPeerAccess 设备鉴权——与下发远端 Bash 同一通道）。
+                  nebflow.neblink.BgCancelAction.handle(params).flatMap {
+                    case Right(json) => Ok(Json.obj("output" -> json.noSpaces.asJson))
+                    case Left(err) => Ok(Json.obj("error" -> err.asJson, "output" -> "".asJson))
+                  }
                 case _ =>
                   val toolOpt = nebflow.core.tools.ToolRegistry.TOOL_MAP.get(action)
                   toolOpt match

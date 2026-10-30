@@ -11,7 +11,7 @@ import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord}
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{BgTaskRegistry, FileLockManager}
+import nebflow.core.tools.{BgTaskRegistry, FileLockManager, ShellSession}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
 import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk, ThinkingConfig, SubAgentTask}
@@ -118,9 +118,27 @@ class DelegateBgWaitHoldSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  /** 747cd36a 形态的在册等待任务（描述还原现场：sbt 全量回归）。 */
+  /**
+   * 747cd36a 形态的在册等待任务（描述还原现场：sbt 全量回归）。
+   * P2 death-watch 批：fixture 升级为**真进程**（真实 ShellSession + 后台
+   * sleep）——活性探针（BgTaskLiveness）读内核进程事实，合成行（无会话无
+   * 进程）会被判 owner-lost 收割，hold 语义无从钉住；真进程 ⇒ Alive ⇒ hold，
+   * 与生产世界同构。
+   */
   private def registerWaitingTask(sessionId: String, jobId: String): IO[Unit] =
-    BgTaskRegistry.register(jobId, sessionId, "Full test suite (sbt -batch test)", kind = "local")
+    for
+      shell <- ShellSession.forSession(sessionId)
+      _ <- shell.executeBackground("sleep 3600", jobIdOverride = Some(jobId))
+      _ <- BgTaskRegistry.register(jobId, sessionId, "Full test suite (sbt -batch test)", kind = "local")
+    yield ()
+
+  /** fixture 收尾：杀后台进程 + 毁会话 + 出册（幂等，进程绝不泄漏到测试外）。 */
+  private def cleanupWaitingTask(sessionId: String, jobId: String): IO[Unit] =
+    ShellSession
+      .peekSession(sessionId)
+      .flatMap(_.fold(IO.unit)(s => s.cancelBackgroundJob(jobId).attempt.void)) *>
+      ShellSession.destroySession(sessionId).attempt.void *>
+      BgTaskRegistry.unregisterSession(Some(sessionId)).attempt.void
 
   test("A-1 747cd36a 复现：结束回合时有未结后台作业 ⇒ hold（不报父、不停 child），清空后唤醒轮 Completed 放行") {
     val system = ActorSystem("bgwait-1")
@@ -174,7 +192,7 @@ class DelegateBgWaitHoldSpec extends CatsEffectSuite:
       events <- parentEvents.get
       childCmds <- childEvents.get
       tasks <- resources.subAgentTaskStore.loadTasks(parentSid)
-      _ <- BgTaskRegistry.unregisterSession(Some(childSid))
+      _ <- cleanupWaitingTask(childSid, jobId)
       _ <- system.stopAll
     yield
       // hold 面：零父通知、零 child Stop、任务仍 running、等待集仍在册
@@ -264,7 +282,7 @@ class DelegateBgWaitHoldSpec extends CatsEffectSuite:
       _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("subtask text output")))
       _ <- waitUntil(10.seconds)(parentEvents.get.map(_.nonEmpty))
       events <- parentEvents.get
-      _ <- BgTaskRegistry.unregisterSession(Some(childSid))
+      _ <- cleanupWaitingTask(childSid, jobId)
       _ <- system.stopAll
     yield
       val ext = parentEventsNow(events)
@@ -317,7 +335,7 @@ class DelegateBgWaitHoldSpec extends CatsEffectSuite:
       events <- parentEvents.get
       childCmds <- childEvents.get
       tasks <- resources.subAgentTaskStore.loadTasks(parentSid)
-      _ <- BgTaskRegistry.unregisterSession(Some(childSid))
+      _ <- cleanupWaitingTask(childSid, jobId)
       _ <- system.stopAll
     yield
       val ext = parentEventsNow(events)

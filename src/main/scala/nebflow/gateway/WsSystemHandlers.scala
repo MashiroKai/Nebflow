@@ -192,9 +192,41 @@ private[gateway] object WsSystemHandlers:
     val cancelSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
     val jobId = json.hcursor.downField("jobId").as[String].getOrElse("")
     if cancelSessionId.nonEmpty && jobId.nonEmpty then
-      nebflow.core.tools.ShellSession
-        .forSession(cancelSessionId)
-        .flatMap { shell =>
+      // P2 单任务取消泛化（设计稿 §4.1-a）：面板帧不再只认本地腿——先在册查行，
+      // kind=remote（deviceName 非空）走设备通道 bg-cancel（RemoteExecutor
+      // 精确打断本侧等待 + 对端按 bgJobId 杀进程树，1/N）；其余行落既有本地腿
+      // （下方逐字不变）。前端帧形状不变（仍 {type, sessionId, jobId}）。
+      nebflow.core.tools.BgTaskRegistry.find(jobId).flatMap {
+        case Some(row) if row.deviceName.nonEmpty =>
+          ctx.sharedResources.agentRegistry.get.flatMap { reg =>
+            nebflow.core.tools.BgTaskCancel
+              .cancelOne(
+                jobId,
+                by = "the user panel",
+                wsSend = Some(wsSend),
+                agentRef = reg.get(row.sessionId).map(_.ref)
+              )
+              .flatMap {
+                case Right(detail) =>
+                  logger.info(detail, "sessionId" -> row.sessionId, "jobId" -> jobId)
+                case Left(err) =>
+                  logger.warn(s"remote cancelBackgroundJob failed for session=${row.sessionId} job=$jobId: $err") *>
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "backgroundTaskUpdate".asJson,
+                        "sessionId" -> cancelSessionId.asJson,
+                        "rootSessionId" -> cancelSessionId.asJson,
+                        "taskId" -> jobId.asJson,
+                        "description" -> "".asJson,
+                        "status" -> "failed".asJson
+                      )
+                    ).handleErrorWith(_ => IO.unit)
+              }
+          }
+        case _ =>
+          nebflow.core.tools.ShellSession
+            .forSession(cancelSessionId)
+            .flatMap { shell =>
           shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
             val logMsg =
               if cancelled then s"Cancelled background job $jobId"
@@ -253,6 +285,7 @@ private[gateway] object WsSystemHandlers:
             )
           ).handleErrorWith(_ => IO.unit)
         }
+      }
     else IO.unit
     end if
   end handleCancelBackgroundJob

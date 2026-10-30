@@ -47,7 +47,7 @@ object AgentControlTool extends Tool:
 Actions:
 - **list**: table of all live background agents (kind, status, stuck?, phase, uptime, idle time, retry count, task). Use this FIRST when a sub-agent is silent or you suspect it is stuck — "stuck?" marks Processing agents that either produced no agent-side event (LLM chunk / tool batch) for >10min, or have a single tool call running for >10min inside an unfinished turn (same judgement as the automatic watcher — process CPU is irrelevant to it). "phase" shows the in-flight tool call (name + elapsed), which is what tells you whether the agent is executing a tool or has gone silent.
 - **status**: full detail for one agent (pass sessionId from list): state, timings, in-flight tool phase, task prompt excerpt, retry count, last error. Also detects orphan task files (actor gone but task still marked running).
-- **cancel**: terminate an agent's current task. The parent session receives a "cancelled" notification and any wait barrier is released — nobody waits forever. Allowed kinds: Delegate, SubTask, Ephemeral, Project node/dispatcher sessions (node-*/dispatcher-*, settles via the session bridge), and Team members (permission-scoped — see Safety rules).
+- **cancel**: terminate an agent's current task. The parent session receives a "cancelled" notification and any wait barrier is released — nobody waits forever. Allowed kinds: Delegate, SubTask, Ephemeral, Project node/dispatcher sessions (node-*/dispatcher-*, settles via the session bridge), and Team members (permission-scoped — see Safety rules). With scope="bgTask" + jobId: cancel ONE background task inside the target session instead of the session (local shell job or remote device job) — the session and its other tasks keep running.
 - **restart**: kill the stuck turn and resume from the last persisted checkpoint (same mechanism as crash recovery — completed work is kept). Allowed kinds: Delegate (ephemeral) and SubTask (both consume the supervisor's restart budget, 2 per 5min; exceeding it fails the task), and Team members (Stop + re-activation from persisted history — no supervisor budget consumed).
 
 Safety rules: you cannot cancel/restart yourself, Root/plan sessions (self-preservation guard), or dag-* Flow workers (flow cancellation goes through cancelFlow / RunningFlowRegistry). Project node/dispatcher sessions (node-*/dispatcher-*) support cancel only (single-shot — no restart; cancel the dispatcher and re-dispatch via Delegate(task=..., project=<name>) — Mail dispatches nothing). Delegate/SubTask/Ephemeral sessions under your own root session are always controllable. Team members are manageable by their team's Manager (subtree scope — own team members and their sub-agents) and by Nebula (global scope); other callers are read-only for Team. Killing a team MANAGER (cancel/restart) additionally requires confirm=true plus a non-empty reason — a killed Manager leaves its members running but coordinator-less (members remain manageable by Nebula); every such kill is recorded in the audit log.
@@ -73,6 +73,15 @@ When to use:
         "reason" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Optional for cancel/restart. Recorded into the task file (lastError) and the parent notification for traceability. REQUIRED (non-empty) when cancelling/restarting a team Manager with confirm=true.".asJson
+        ),
+        "scope" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "enum" -> io.circe.Json.arr("session".asJson, "bgTask".asJson),
+          "description" -> "Optional for cancel. Omit or \"session\" = the existing whole-session cancel (unchanged). \"bgTask\" = precise single-task cancel: kill ONLY the background task identified by jobId in the target session (local shell job or remote device job), leaving the session and its other tasks untouched. Requires jobId; the task must belong to the target session (own sessionId or its rootSessionId).".asJson
+        ),
+        "jobId" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Required when scope=\"bgTask\": the background task id (jobId) to cancel — as shown in the bg tasks panel / background_task_id outputs.".asJson
         ),
         "confirm" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
@@ -294,22 +303,36 @@ When to use:
             else doStatus(resources, ctx, sessionId)
           case "cancel" =>
             if sessionId.isEmpty then IO.pure(Left(ToolError("cancel requires sessionId (run list first to get one)")))
-            else if sessionId.startsWith(nebflow.core.executor.ExternalSessionRunner.SessionPrefix) then
-              // 外部腿（external-executors 批 #1225）：外部 delegate 无 actor /
-              // agentRegistry 行——取消直达进程树（原书：ProcessTree.killProcessTree）。
-              // 权限 = root 桶调用者（与 delegate 派发面同族）。
-              withExternalRootGuard(resources, ctx) {
-                nebflow.core.executor.ExternalSessionRunner
-                  .cancel(sessionId, reason, by = callerLabel(ctx))
-                  .map(_.left.map(ToolError(_)))
-              }
             else
-              val confirm = input("confirm").flatMap(_.asBoolean).getOrElse(false)
-              withGuardedRecord(resources, ctx, sessionId, "cancel", confirm, reason)((rec, _) =>
-                // notifyWs = 调用者 WS 出口：node-* 会话取消补发面板终态帧
-                // （Sub-Agents 面板取消实时刷新修复）。
-                doCancel(resources, rec, reason, by = callerLabel(ctx), notifyWs = ctx.wsSend)
-              )
+              val scope = input("scope").flatMap(_.asString).getOrElse("").trim
+              if scope == "bgTask" then
+                // P2 单任务取消 agent 面（设计稿 §4.1-b）：scope=bgTask + jobId =
+                // 只杀目标会话名下的一条后台任务（local 直调 / remote 设备通道），
+                // 会话与其余任务逐字不动。护栏整体复用 withGuardedRecord（查无 /
+                // kind 门 / 自杀守卫 / 同桶-子树 scope），其上再校验任务归属。
+                val bgJobId = input("jobId").flatMap(_.asString).getOrElse("").trim
+                if bgJobId.isEmpty then
+                  IO.pure(Left(ToolError("scope=\"bgTask\" requires jobId (the background task id to cancel)")))
+                else
+                  withGuardedRecord(resources, ctx, sessionId, "cancel", confirm = false, reason)((rec, _) =>
+                    doCancelBgTask(resources, ctx, rec, bgJobId, reason)
+                  )
+              else if sessionId.startsWith(nebflow.core.executor.ExternalSessionRunner.SessionPrefix) then
+                // 外部腿（external-executors 批 #1225）：外部 delegate 无 actor /
+                // agentRegistry 行——取消直达进程树（原书：ProcessTree.killProcessTree）。
+                // 权限 = root 桶调用者（与 delegate 派发面同族）。
+                withExternalRootGuard(resources, ctx) {
+                  nebflow.core.executor.ExternalSessionRunner
+                    .cancel(sessionId, reason, by = callerLabel(ctx))
+                    .map(_.left.map(ToolError(_)))
+                }
+              else
+                val confirm = input("confirm").flatMap(_.asBoolean).getOrElse(false)
+                withGuardedRecord(resources, ctx, sessionId, "cancel", confirm, reason)((rec, _) =>
+                  // notifyWs = 调用者 WS 出口：node-* 会话取消补发面板终态帧
+                  // （Sub-Agents 面板取消实时刷新修复）。
+                  doCancel(resources, rec, reason, by = callerLabel(ctx), notifyWs = ctx.wsSend)
+                )
           case "restart" =>
             if sessionId.isEmpty then IO.pure(Left(ToolError("restart requires sessionId (run list first to get one)")))
             else
@@ -871,6 +894,46 @@ When to use:
    * 避免双发）。工具路径传 ctx.wsSend、面板路径传连接 wsSend；None = 静默
    * （既有测试/无 WS 语境零改动）。
    */
+  /**
+   * P2 scope=bgTask 执行面（设计稿 §4.1-b）：校验任务归属目标会话（自有
+   * sessionId ∪ 根挂靠 rootSessionId——与 waitingFor 同口径），经
+   * [[nebflow.core.tools.BgTaskCancel.cancelOne]] 精确取消一条（local 直调 /
+   * remote 经设备通道 bg-cancel）。会话取消语义零触碰。
+   */
+  private def doCancelBgTask(
+    resources: AgentRuntimePort,
+    ctx: ToolContext,
+    rec: AgentRecord,
+    jobId: String,
+    reason: String
+  ): IO[Either[ToolError, String]] =
+    nebflow.core.tools.BgTaskRegistry.find(jobId).flatMap {
+      case None =>
+        IO.pure(Left(ToolError(s"No active background task with jobId='$jobId' (not found or already terminal).")))
+      case Some(row) =>
+        val owned =
+          row.sessionId == rec.sessionId ||
+            (row.rootSessionId.nonEmpty && row.rootSessionId == rec.sessionId)
+        if !owned then
+          IO.pure(
+            Left(
+              ToolError(
+                s"Background task '$jobId' does not belong to session '${rec.sessionId}' " +
+                  s"(owner='${row.sessionId}', root='${row.rootSessionId}'). Refused — you can only cancel tasks of the targeted session."
+              )
+            )
+          )
+        else
+          nebflow.core.tools.BgTaskCancel
+            .cancelOne(
+              jobId,
+              by = s"${callerLabel(ctx)}${if reason.nonEmpty then s" ($reason)" else ""}",
+              wsSend = ctx.wsSend,
+              agentRef = Some(rec.ref)
+            )
+            .map(_.leftMap(ToolError(_)))
+    }
+
   def doCancel(
     resources: AgentRuntimePort,
     rec: AgentRecord,

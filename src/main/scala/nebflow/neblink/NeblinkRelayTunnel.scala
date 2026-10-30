@@ -931,6 +931,13 @@ final class NeblinkRelayTunnel(
             case Right(json) => (json.noSpaces, "")
             case Left(err) => ("", err)
           }
+        case "BgCancel" =>
+          // P2 单任务取消远端腿（bg-cancel）relay 分发：与 P2P 腿（NeblinkRoutes
+          // remote-exec）同表同语义，隧道会话鉴权。
+          BgCancelAction.handle(params).map {
+            case Right(json) => (json.noSpaces, "")
+            case Left(err) => ("", err)
+          }
         case "Notify" =>
           val payload = params("payload").getOrElse(Json.Null)
           // P6 诊断探针（delegate 断点追查，腿3 定案后）②分发层：relay_request 的

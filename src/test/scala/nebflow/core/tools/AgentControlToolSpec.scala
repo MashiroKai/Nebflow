@@ -102,13 +102,17 @@ class AgentControlToolSpec extends CatsEffectSuite:
     action: String,
     target: String = "",
     reason: String = "",
-    confirm: Boolean = false
+    confirm: Boolean = false,
+    scope: String = "",
+    jobId: String = ""
   ): Either[ToolError, String] =
     val input = io.circe.JsonObject(
       "action" -> action.asJson,
       "sessionId" -> target.asJson,
       "reason" -> reason.asJson,
-      "confirm" -> confirm.asJson
+      "confirm" -> confirm.asJson,
+      "scope" -> scope.asJson,
+      "jobId" -> jobId.asJson
     )
     AgentControlTool.call(input, ctx(resources, sessionId)).unsafeRunSync()
 
@@ -867,6 +871,113 @@ class AgentControlToolSpec extends CatsEffectSuite:
     yield
       assert(res.left.exists(_.message.contains("single-shot")), res.toString)
       assert(res.left.exists(_.message.contains("Cancel")), res.toString)
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+  // ── P2 scope=bgTask（后台任务生命周批 · 设计稿 §4.1-b：三守卫复用 + 任务归属校验）──
+
+  test("P2 scope=bgTask：1/N 精确取消——目标会话恰好收到一条 cancelled 事件，其余任务存活") {
+    val system = ActorSystem("ac-bg-task")
+    val tmp = os.temp.dir()
+    val sid = "delegate-bgTask-1"
+    val program = for
+      resources <- mkResources(system, tmp)
+      record <- Ref.of[IO, List[AgentCommand]](Nil)
+      delRef <- system.spawn(mkRecordingCmd(record), "bg-task-del")
+      shell <- ShellSession.forSession(sid)
+      result <- (
+        for
+          // 两条真实后台任务（属主 = 目标会话）
+          _ <- shell.executeBackground("sleep 3600", jobIdOverride = Some("g1"))
+          _ <- shell.executeBackground("sleep 3600", jobIdOverride = Some("g2"))
+          _ <- BgTaskRegistry.register("g1", sid, "task-g1", "local", rootSessionId = "root-p2")
+          _ <- BgTaskRegistry.register("g2", sid, "task-g2", "local", rootSessionId = "root-p2")
+          _ <- resources.agentRegistry.set(
+            Map(
+              sid -> AgentRecord(sid, delRef, AgentKind.Delegate, "root-p2", supervisorRef = None)
+            )
+          )
+          res <- IO(call(resources, "root-p2", "cancel", target = sid, scope = "bgTask", jobId = "g1"))
+          _ <- IO {
+            assert(res.isRight, s"scope=bgTask cancel must succeed: $res")
+            assert(res.toOption.get.contains("Cancelled background task g1"))
+          }
+          // 1/N：g1 出册、g2 存活
+          rows <- BgTaskRegistry.allActiveTasks
+          _ <- IO(assertEquals(rows.map(_.jobId), List("g2"), "只杀指定的一条"))
+          h2 <- shell.getBackgroundJobHealth("g2")
+          _ <- IO(assert(h2.exists(_.isAlive), "g2 进程必须存活"))
+          // 目标会话恰好收到一条 cancelled 事件（correlationId = jobId）
+          cmds <- record.get
+          evts = cmds.collect { case e: AgentCommand.ExternalEvent => e }
+          _ <- IO {
+            assertEquals(evts.size, 1, s"恰一条取消事件: $evts")
+            assertEquals(evts.head.eventType, "cancelled")
+            assertEquals(evts.head.correlationId, Some("g1"))
+            assert(evts.head.payload.contains("Cancelled"), evts.head.payload)
+          }
+        yield ()
+      ).guarantee(
+        shell.cancelBackgroundJob("g2").attempt.void *>
+          List("g1", "g2").traverse_(j => BgTaskRegistry.unregister(j).attempt.void) *>
+          ShellSession.destroySession(sid).attempt.void
+      )
+    yield result
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+  test("P2 scope=bgTask：缺 jobId / 任务不属于目标会话 / 未知任务 ⇒ 拒绝（守卫与归属校验）") {
+    val system = ActorSystem("ac-bg-task-guard")
+    val tmp = os.temp.dir()
+    val sid = "delegate-bgTask-2"
+    val program = for
+      resources <- mkResources(system, tmp)
+      delRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "bg-task-del2")
+      _ <- resources.agentRegistry.set(
+        Map(sid -> AgentRecord(sid, delRef, AgentKind.Delegate, "root-p2g", supervisorRef = None))
+      )
+      // 缺 jobId
+      r1 <- IO(call(resources, "root-p2g", "cancel", target = sid, scope = "bgTask"))
+      // 未知任务
+      r2 <- IO(call(resources, "root-p2g", "cancel", target = sid, scope = "bgTask", jobId = "ghost"))
+      // 归属校验：任务挂在**别的**会话名下
+      _ <- BgTaskRegistry.register("other-1", "someone-else", "task-x", "local")
+      r3 <- IO(call(resources, "root-p2g", "cancel", target = sid, scope = "bgTask", jobId = "other-1"))
+      _ <- BgTaskRegistry.unregister("other-1")
+      _ <- IO {
+        assert(r1.left.exists(_.message.contains("jobId")), r1.toString)
+        assert(r2.left.exists(_.message.contains("No active background task")), r2.toString)
+        assert(r3.left.exists(_.message.contains("does not belong")), r3.toString)
+      }
+    yield ()
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+  test("P2 scope=bgTask：会话取消语义零漂移——不带 scope 的 cancel 仍走整会话 doCancel") {
+    val system = ActorSystem("ac-bg-task-session")
+    val tmp = os.temp.dir()
+    val sid = "delegate-bgTask-3"
+    val program = for
+      resources <- mkResources(system, tmp)
+      record <- Ref.of[IO, List[AgentEvent]](Nil)
+      supRefEvt <- system.spawn(mkRecordingEvt(record), "bg-task-sup")
+      delRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "bg-task-del3")
+      rootRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "bg-task-root")
+      _ <- resources.subAgentTaskStore.recordTask(mkTask("root-p2s", sid))
+      _ <- resources.agentRegistry.set(
+        Map(
+          sid -> AgentRecord(sid, delRef, AgentKind.Delegate, "root-p2s", supervisorRef = Some(supRefEvt)),
+          "root-p2s" -> AgentRecord("root-p2s", rootRef, AgentKind.Delegate, "root-p2s", supervisorRef = None)
+        )
+      )
+      res <- IO(call(resources, "root-p2s", "cancel", target = sid))
+      _ <- IO(assert(res.isRight, s"session cancel unchanged: $res"))
+      evts <- record.get
+      _ <- IO(assert(evts.exists {
+        case AgentEvent.Cancelled(id, _) => id == sid
+        case _                           => false
+      }, s"supervisor got Cancelled: $evts"))
+    yield ()
     program.guarantee(system.stopAll.attempt.void)
   }
 

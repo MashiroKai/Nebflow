@@ -955,7 +955,31 @@ private[project] trait NodeStarter:
                       //     会话存活）并起表（只置不重）；非空 ⇒ 清表后放行，终态点 drain
                       //     照常分流（blocked/pass/fail 三链零改动）。
                       val waitingIO: IO[List[BgTaskRegistry.ActiveTask]] =
-                        if bgGateHoldEnabled then BgTaskRegistry.waitingFor(sessionId)
+                        if bgGateHoldEnabled then
+                          // P2 death-watch 活性复检（与 delegate 闸同病灶同收口）：
+                          // hold 前探活等待集并收割活性死行（进程已死/属主已殁 ⇒
+                          // 注销 + 代行终态 + 沿等待链注入），复检后再决 hold——
+                          // 零墙钟（活性 = 内核进程事实）。未开 flag 的封存面零变化。
+                          nebflow.core.tools.BgTaskReaper
+                            .reapDead(Some(resources.actorSystem), Some(resources.agentRegistry))
+                            .flatTap { r =>
+                              IO.whenA(r.reaped.nonEmpty)(
+                                FlowMapEventLog
+                                  .append(
+                                    workspace,
+                                    projectName,
+                                    nodeId,
+                                    "bg-wait-reap",
+                                    "death-watch reaped owner-lost task(s) before hold: " +
+                                      r.reaped.map { case (id, reason) => s"$id($reason)" }.mkString(", ")
+                                  )
+                                  .handleErrorWith(_ => IO.unit) *>
+                                  logger.info(
+                                    s"Node '$nodeName' ($nodeId) bg-wait recheck reaped " +
+                                      r.reaped.map { case (id, reason) => s"$id($reason)" }.mkString(", ")
+                                  )
+                              )
+                            } *> BgTaskRegistry.waitingFor(sessionId)
                         else IO.pure(Nil)
                       waitingIO.flatMap { waiting =>
                         if waiting.nonEmpty then

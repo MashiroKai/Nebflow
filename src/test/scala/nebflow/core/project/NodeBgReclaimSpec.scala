@@ -97,6 +97,19 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
     val nodeSessions: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     val turnCount: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
     @volatile var res: SharedResources = null
+    /** death-watch 批 fixture 收尾：行对应真进程——杀后台进程 + 毁会话（幂等）。 */
+    def cleanupBg: IO[Unit] =
+      for
+        sids <- nodeSessions.get
+        jids <- jobIds.get
+        _ <- sids.traverse_ { sid =>
+          ShellSession
+            .peekSession(sid)
+            .flatMap(_.fold(IO.unit)(sh => jids.traverse_(j => sh.cancelBackgroundJob(j).attempt.void))) *>
+            ShellSession.destroySession(sid).attempt.void
+        }
+      yield ()
+
 
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
@@ -117,7 +130,10 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
                         reg.values.find(rec => rec.kind == AgentKind.Flow && rec.sessionId.startsWith("node-")) match
                           case Some(rec) =>
                             val jobId = s"bg-reclaim-${java.util.UUID.randomUUID().toString.take(8)}"
-                            BgTaskRegistry.register(jobId, rec.sessionId, "spec bg task", "local", "nebula-root") *>
+                            ShellSession.forSession(rec.sessionId).flatMap { shell =>
+                              shell.executeBackground("sleep 3600", jobIdOverride = Some(jobId)) *>
+                                BgTaskRegistry.register(jobId, rec.sessionId, "spec bg task", "local", "nebula-root")
+                            } *>
                               jobIds.update(_ :+ jobId) *> nodeSessions.update(_ :+ rec.sessionId)
                           case None =>
                             IO.raiseError(new RuntimeException("node session record not found at first LLM request"))
@@ -315,7 +331,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       eventsAfterSecond <- readEvents(ws)
       _ <- BgTaskRegistry.unregisterSession(Some(nodeSid)).attempt.void // 防御清理
       _ <- BgTaskRegistry.reopenSession(nodeSid).attempt.void
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(done.status, NodeLifecycle.Cancelled, "bridge Cancelled must finalize node as cancelled")
       // 窗口登记（③ 只登记不杀进程）
@@ -412,7 +428,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       frames <- wsFrames.get
       _ <- BgTaskRegistry.unregisterSession(Some(nodeSid)).attempt.void // 防御清理
       _ <- BgTaskRegistry.reopenSession(nodeSid).attempt.void
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // 🔴 改后断言（原 11 条 ⇒ 改后 11 条；断言数不减——见上判据面 ①–⑤）
       // 原「must fail the node」改：**不终态化**（挂起中；#17 的核心改判）
@@ -554,7 +570,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       finalized <- BgTaskRegistry.finalizedAt(sid)
       events <- readEvents(ws)
       _ <- BgTaskRegistry.reopenSession(sid).attempt.void
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(after.destroyAt, None, "a non-terminal node must have its stale window cleared")
       assertEquals(finalized, None, "the spawn ban must be lifted when the window is withdrawn")
@@ -641,7 +657,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       after <- byName(rt, "pid-probe-node")
       _ <- BgTaskRegistry.reopenSession(sid).attempt.void
       _ <- ShellSession.destroySession(sid).attempt.void
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assert(aliveInWindow, s"inside the window the real background process (pid $pid) must still be alive")
       assert(tasksInWindow.nonEmpty, "inside the window the task stays registered (evidence window)")
@@ -737,7 +753,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
       _ <- BgTaskRegistry.reopenSession(sid).attempt.void
       _ <- ShellSession.destroySession(sid).attempt.void
       _ <- BgTaskRegistry.unregisterSession(Some(sid)).attempt.void
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       // ① 归档资格与窗口正交：窗口未到期**照常出库**（改前此处为红：F1 的拒收让链永不出库）
       assert(
@@ -837,7 +853,7 @@ class NodeBgReclaimSpec extends CatsEffectSuite:
         )
       )
       _ <- BgTaskRegistry.unregisterSession(Some(sid)).attempt.void
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(
         held.status,

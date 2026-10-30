@@ -11,7 +11,7 @@ import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord}
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{BgTaskLedger, BgTaskOutputStore, BgTaskRegistry, FileLockManager}
+import nebflow.core.tools.{BgTaskLedger, BgTaskOutputStore, BgTaskRegistry, FileLockManager, ShellSession}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
 import nebflow.shared.{
@@ -128,6 +128,10 @@ class BgWaitCapLedgerSpec extends CatsEffectSuite:
     val program = for
       resources <- mkResources(system, tmp)
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
+      // P2 death-watch 批：fixture 升级为真进程（真实 ShellSession + 后台 sleep）——
+      // 活性探针读内核进程事实，合成行会被判 owner-lost 收割，cap 语义无从钉住。
+      shell <- ShellSession.forSession(childSid)
+      _ <- shell.executeBackground("sleep 3600", jobIdOverride = Some(jobId))
       _ <- BgTaskRegistry.register(jobId, childSid, "Full test suite (sbt -batch test)", kind = "local")
       // 输出缓冲预置：cap 孤儿登记的尾段快照面（「输出尾段」入账的可断言载体）
       buffer <- BgTaskOutputStore.open(jobId)
@@ -179,6 +183,8 @@ class BgWaitCapLedgerSpec extends CatsEffectSuite:
         "[Background task completed] \"Full test suite (sbt -batch test)\":\nall green"
       )
       upgraded <- BgTaskLedger.pending(childSid)
+      _ <- shell.cancelBackgroundJob(jobId).attempt.void
+      _ <- ShellSession.destroySession(childSid).attempt.void
       _ <- BgTaskRegistry.unregisterSession(Some(childSid))
       _ <- system.stopAll
     yield
