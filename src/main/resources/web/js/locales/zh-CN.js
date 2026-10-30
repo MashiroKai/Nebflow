@@ -1671,6 +1671,9 @@ export default {
   'delegate.mergeQueue': '合并队列',
   // ⑤ S11 worktree 座标
   'delegate.worktree': '工作树',
+  // ⑤b 跨设备 worktree 归属修复批（2026-10-30）：设备项目无 worktree 腿（设备仓无
+  // git / 不可达回落）——Worktree 行显示 workspace 路径并标注「直接使用工作区」。
+  'delegate.workspaceSeat': '直接使用工作区',
   // ⑥ S16 外部行出口动作（openNative 钮 title/aria）
   'delegate.openNative': '在原软件打开',
   // ⑦ S10 fail-soft 态（链拉取失败；行保留，点击重试）

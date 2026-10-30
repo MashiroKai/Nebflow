@@ -146,8 +146,11 @@ const PENDING_N1_KINDS = new Set([FRAME_KINDS.CHAIN_REGISTERED, FRAME_KINDS.CHAI
  * @property {string} taskId            存储键（台账号优先，delegateId 回落——ChainStore.keyFor 同口径）
  * @property {string} delegateId        主 delegate（单 delegate 链现形；N1 多节点链 = nodes 加宽）
  * @property {ChainNode[]} nodes        链节点（N1 定稿前 = 单 delegate 节点形）
- * @property {{branch: string, worktree: string, cwd: string, baseWorkspace: string, baseBranch: string, baseSha: string, plugins: string[], allocation: string}|null} worktree
+ * @property {{branch: string, worktree: string, cwd: string, workspaceSeat: string, baseWorkspace: string, baseBranch: string, baseSha: string, plugins: string[], allocation: string}|null} worktree
  *                                      spawn 行投影（S11 自动建 worktree 面的数据源；无分支腿 = null）。
+ *                                      workspaceSeat = 归属修复批 additive 键——设备项目无 worktree
+ *                                      腿（无 git/不可达回落）时的直用 workspace 座位（设备盘路径），
+ *                                      视图据此标注「直接使用工作区」；旧行缺键 = ''（缺键容忍）。
  *                                      plugins/allocation = jev-plugins 批 additive 两键（旧行缺键 → []/''）
  * @property {string[]} plugins          分配集顶层投影（#523 补齐批：jev-plugins spawn 行 additive 键
  *                                      原名透传——无分支腿的 spawn 也有分配面，旧盘/缺键 → []）
@@ -293,6 +296,9 @@ export function chainFromStoreRecord(record) {
           branch: String(p.branch || ''),
           worktree: String(p.worktree || ''),
           cwd: String(p.cwd || ''),
+          // 归属修复批（2026-10-30）：additive 键——无 worktree 腿的设备项目直用
+          // workspace 座位；旧行缺键 = ''（缺键容忍，不臆造）。
+          workspaceSeat: String(p.workspaceSeat || ''),
           baseWorkspace: String(p.baseWorkspace || ''),
           baseBranch: String(p.baseBranch || ''),
           baseSha: String(p.baseSha || ''),
@@ -345,7 +351,7 @@ export function chainFromStoreRecord(record) {
     taskId: String(rec.taskId || ''),
     delegateId,
     nodes,
-    worktree: worktree && (worktree.branch || worktree.cwd) ? worktree : null,
+    worktree: worktree && (worktree.branch || worktree.cwd || worktree.workspaceSeat) ? worktree : null,
     plugins: allocPlugins,
     allocation: allocMode,
     verdict,

@@ -1738,6 +1738,10 @@ export default {
   'delegate.mergeQueue': 'Merge queue',
   // ⑤ S11 worktree seat label
   'delegate.worktree': 'Worktree',
+  // ⑤b Device-worktree ownership fix (2026-10-30): device project without a worktree
+  // leg (device repo has no git / unreachable fallback) — the Worktree row shows the
+  // workspace path annotated as direct workspace use.
+  'delegate.workspaceSeat': 'Direct workspace use',
   // ⑥ S16 external row exit action (openNative button title/aria)
   'delegate.openNative': 'Open in original app',
   // ⑦ S10 fail-soft state (chain fetch failed; row kept, click to retry)

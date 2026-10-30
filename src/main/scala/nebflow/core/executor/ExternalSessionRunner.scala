@@ -109,7 +109,14 @@ object ExternalSessionRunner:
     rootSessionId: String,
     parentRef: Option[ActorRef[AgentCommand]],
     wsSend: Option[Json => IO[Unit]],
-    resources: AgentRuntimePort
+    resources: AgentRuntimePort,
+    /**
+     * 跨设备 worktree 归属修复批（2026-10-30）：设备项目（origin 绑对端）= true——
+     * 外部 CLI 是 **host 本地进程**，对设备仓跑本机 git 判定腿是归属错（worktree
+     * 会落在编排机 brain 下）；跳过 DelegateWorkspace.prepare（binding=None，旧形态
+     * spawn：座位 = 传入 workspace）。本机项目恒缺省 false（零变化）。
+     */
+    deviceProject: Boolean = false
   )
 
   /** Delegate 外部腿入口。成功 = `(sessionId, ack)`（续聊地址行由调用方拼）。 */
@@ -133,15 +140,21 @@ object ExternalSessionRunner:
               // -judge）裁决 + 分支 `delegate/<id>` + worktree 座位（cwd = worktree
               // +分支）；非 git 工作区 = None（旧形态逐字：座位 = 原 workspace）。
               // 判定机两层全败 = prepare 内部 fail-open 反转判是（分支纪律不丢）。
-              binding <- DelegateWorkspace
-                .prepare(spec.workspace, spec.task, sessionId)
-                .handleErrorWith(e =>
-                  logger
-                    .warn(
-                      s"DelegateWorkspace.prepare failed on the external leg (degraded to legacy spawn): ${e.getMessage}"
+              // 归属修复批（2026-10-30）：设备项目跳过本机判定腿——外部 CLI 是 host
+              // 本地进程，设备仓的 worktree/分支纪律不适用于 host 座位（在 brain 下
+              // 建 worktree = 归属错）；binding=None = 旧形态逐字。
+              binding <-
+                if spec.deviceProject then IO.pure(None)
+                else
+                  DelegateWorkspace
+                    .prepare(spec.workspace, spec.task, sessionId)
+                    .handleErrorWith(e =>
+                      logger
+                        .warn(
+                          s"DelegateWorkspace.prepare failed on the external leg (degraded to legacy spawn): ${e.getMessage}"
+                        )
+                        .as(None)
                     )
-                    .as(None)
-                )
               seatWs = binding.map(_.cwd).getOrElse(spec.workspace)
               // 进程 cwd = 工作座位（worktree 腿）；spawn 后续 settle 的 git 读数同座。
               seatedSpec = spec.copy(workspace = seatWs)
