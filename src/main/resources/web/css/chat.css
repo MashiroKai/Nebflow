@@ -4416,15 +4416,15 @@
 .pop-stack-area .pill:hover { background: rgba(128, 128, 128, 0.2); }
 .pop-stack-area .pill:active { transform: scale(0.95); }
 
-/* The stack box takes the FRONT media's own aspect ratio (popArtifacts.js pins
-   an explicit width/height pair from the media's natural size, fitted into
-   220×320). It used to be a hard 200×256 with `object-fit: cover` on the media,
-   which cropped every image that was not 200×256 — a wide screenshot lost its
-   left and right thirds (zcode-484 D1). `4 / 3` is the neutral fallback while
-   the bytes load: the box always has a definite size, never 0×0. */
+/* The stack box is ONE fixed WeChat-style card face — 220×280 (11:14, the
+   「Expand N」 reference card's proportions). The 2026-10-30 author order
+   (「参考微信的叠卡…强制放缩所有尺寸的卡片到一个大小」) retires the
+   front-media-ratio box (zcode-484 D1's per-media fit): every entry, whatever
+   its own ratio, is cropped onto this same face by the stack-scoped
+   `object-fit: cover` below. The renderer no longer pins a ratio here. */
 .pop-stack-view {
   position: relative;
-  width: 220px; aspect-ratio: 4 / 3;
+  width: 220px; aspect-ratio: 11 / 14;
   flex-shrink: 0; touch-action: pan-y;
 }
 .pop-stack-view.dragging { cursor: grabbing; }
@@ -4436,9 +4436,18 @@
   transition: transform 0.42s var(--panel-ease, cubic-bezier(0.32, 0.72, 0, 1)), filter 0.42s var(--panel-ease, cubic-bezier(0.32, 0.72, 0, 1));
 }
 .pop-stack-view.dragging .media-layer { transition: none; }
-.media-layer.layer-front { transform: none; z-index: 3; filter: none; }
-.media-layer.layer-mid   { transform: translateX(16px) scale(0.965); z-index: 2; filter: brightness(0.9); }
-.media-layer.layer-back  { transform: translateX(32px) scale(0.93); z-index: 1; filter: brightness(0.78); }
+/* The 2026-10-30 fan design (「像扑克一样轻微旋转展开 而不是重叠」): each back
+   layer keeps the front card's FULL size and fans out with a small translate
+   + a slight rotation about the layer's own center — a poker spread, not the
+   retired translate+scale overlap (layer-mid translateX(16px) scale(.965) /
+   layer-back translateX(32px) scale(.93), brightness dimming included). With a
+   220×280 face the painted overhang past the box is ≈ +18.8px (mid,
+   translateX 14 × rotate 2°) / ≈ +34.3px (back, translateX 26 × rotate 3.5°)
+   — the pill clearances below are set against these painted extents, the
+   A-2 invariant (zero overlap, ≥8px air), not the box. */
+.media-layer.layer-front { transform: none; z-index: 3; }
+.media-layer.layer-mid   { transform: translateX(14px) rotate(2deg); z-index: 2; }
+.media-layer.layer-back  { transform: translateX(26px) rotate(3.5deg); z-index: 1; }
 /* zcode-484 D2: a stack shows its FRONT card plus the two peeking layers; the
    rest are hidden. Before this rule every item past the third was painted with
    `layer-back` at the SAME z-index as the third, so 4+ items stacked into one
@@ -4461,13 +4470,22 @@
 .pop-expand-view .pop-media { height: auto; }
 
 .pop-media { position: relative; width: 100%; height: 100%; }
-/* zcode-484 D1/D3: the media fills its box WITHOUT being cropped. `cover`
+/* 2026-10-30 fan order: the COLLAPSED stack face crops every entry onto the one
+   fixed card face (`object-fit: cover`, the WeChat 「强制放缩到一个大小」
+   semantics — the media's own ratio no longer drives the box). Scoped to
+   .pop-stack-view ONLY: the expanded rows and the flat single keep `contain`
+   and their own ratios (zcode-484 D1/D3 stand there — 展开态不受扇形影响). */
+.pop-stack-view .pop-img,
+.pop-stack-view .pop-video { object-fit: cover; }
+
+/* zcode-484 D1/D3: outside the collapsed stack (flat single, expanded rows)
+   the media fills its box WITHOUT being cropped. `cover`
    (the pre-batch rule) cut every image whose aspect ratio differed from the
    box's — a 1600×400 screenshot lost two thirds of its width, a portrait shot
    lost its top and bottom. `contain` letterboxes inside the box instead, so
    the WHOLE frame is visible at its own ratio, and the box keeps whatever
-   aspect ratio the renderer derived from the front media (`.pop-stack-view`
-   / `.pop-expand-view .media-layer` above). */
+   aspect ratio the renderer derived from the front media
+   (`.pop-expand-view .media-layer` above). */
 .pop-img, .pop-video { width: 100%; height: 100%; display: block; object-fit: contain; background: #17191f; }
 /* 缺陷 D fix (2026-10-03 UI-E/UI-F): the failed-media placeholder used to be
    reachable ONLY for `.bubble.ai img` (see the 2026-09-15 rule at the top of
@@ -4719,29 +4737,31 @@
    measured 钮心 y − 栈卡 y 几何中心 = 0.0px (before AND after, all forms). */
 .row.pop-artifact:not(.user) .pop-stack-area > .pill { order: 3; }
 
-/* 复报令 A-2 (2026-10-06 19:43 作者截图令): the LLM-side pill needs its own
-   clearance from the PEEKING layers, not just from the stack view's box. The
-   painted peek chrome runs ~24px past the view box's right edge
-   (.layer-back = translateX(32px) × scale(0.93) ≈ +24.3px over a 220px box),
-   and the layers paint ABOVE the non-positioned pill (z-index 1..3) — the
-   area's 16px gap alone left the pill's box 8.3px UNDER the painted chrome
-   (measured before this rule: clearanceRight −8.3px). margin-left lifts the
-   pill to 36px from the box → ≈ +11.7px of visible air past the painted
-   edge. Zero overlap, spacing held; user rows keep their 16px gap (pill sits
-   on the LEFT there — the peek extends AWAY from it, clearance +16px,
-   measured). Expanded state: same margin reads as a wider gap beside the
-   expand column — flat, no chrome there. Geometry otherwise untouched. */
-.row.pop-artifact:not(.user) .pop-stack-area > .pill { margin-left: 20px; }
+/* 复报令 A-2 (2026-10-06 19:43 作者截图令) — re-measured for the 2026-10-30
+   fan design: the LLM-side pill needs its own clearance from the PEEKING
+   layers, not just from the stack view's box. The fan's painted peek chrome
+   runs ≈ +34.3px past the view box's right edge (.layer-back = translateX(26px)
+   × rotate(3.5°) over a 220×280 box), and the layers paint ABOVE the
+   non-positioned pill (z-index 1..3). margin-left 32px lifts the pill to a
+   48px box gap → ≈ +13.7px of visible air past the painted edge (spec-c2
+   measured; the A-2 invariant = zero overlap + ≥8px air against the PAINTED
+   extent, whatever the peek geometry). Zero overlap, spacing held; user rows
+   keep the mirrored margin (below). Expanded state: same margin reads as a
+   wider gap beside the expand column — flat, no chrome there. Geometry
+   otherwise untouched. */
+.row.pop-artifact:not(.user) .pop-stack-area > .pill { margin-left: 32px; }
 
-/* 三修批 uifix3 ① (2026-10-06 21:36 作者双截图令): the USER-side stack mirrors
-   the peek INTO the chat interior. The layers' translateX is hard-coded +X —
-   rightward — so on a right-aligned user row the peek painted PAST the chat
+/* 三修批 uifix3 ① (2026-10-06 21:36 作者双截图令) — mirrored for the
+   2026-10-30 fan design: the USER-side stack mirrors the fan INTO the chat
+   interior. The layers' translateX/rotate are hard-coded +X/+clockwise —
+   rightward — so on a right-aligned user row the fan painted PAST the chat
    column's right edge and #chat's overflow clipped it (截图一: the purple stack
-   cut flush at the edge). Mirror disposition, 36c11b9bb A-2's same technique
-   read the other way:
-   • 位移方向自洽 — the two peeking layers flip to negative X on user rows, so
-     the stack expands toward the conversation (interior), never off-canvas.
-     Drag axis and JS stay untouched (CSS-only, the A-2 precedent).
+   cut flush at the edge). Mirror disposition, A-2's same technique read the
+   other way:
+   • 位移方向自洽 — the two fan layers flip to negative X / counter-clockwise
+     on user rows, so the stack expands toward the conversation (interior),
+     never off-canvas. Drag axis and JS stay untouched (CSS-only, the A-2
+     precedent).
    • 盒宽自洽 — two widths were wrong on the user side. (1) The stack area is
      width-capped by .pop-group's 78% while its pill+220px-view content is
      wider; an LTR flex row spills the excess RIGHT, so the stack view's own
@@ -4749,20 +4769,20 @@
      一's flush cut). width: max-content lets the area take its content width
      and .row.user-media's flex-end alignment pins its RIGHT edge at the
      column line — the same line every user bubble sits on — with all growth
-     going LEFT, into open chat. (2) The flipped peek now runs TOWARD the pill
+     going LEFT, into open chat. (2) The flipped fan now runs TOWARD the pill
      (user pill sits LEFT, DOM order), so the pill takes the mirrored A-2
-     clearance: margin-right: 20px → 36px box gap → the painted left edge
-     (translateX 32px × scale 0.93 ≈ 24.3px past the box) clears the pill by
-     ≈ +11.7px — the exact LLM-side numbers, mirrored. The former user-side
-     reading (+16px, pill vs a peek extending AWAY) is superseded by this
-     mirrored form: the invariant that carries over is zero overlap with ≥8px
-     air (spec (c2)), which holds on both sides before AND after.
+     clearance: margin-right: 32px → 48px box gap → the painted left edge
+     (translateX 26px × rotate 3.5° ≈ 34.3px past the box) clears the pill by
+     ≈ +13.7px (spec-c2 measured) — the exact LLM-side numbers, mirrored. The
+     former user-side reading is superseded by this mirrored form: the
+     invariant carried over from A-2 is zero overlap with ≥8px air on BOTH
+     sides, against the PAINTED extent, whatever the fan geometry.
    Vertical centering (0.0px), pill sides (user left / LLM right), and the
    A-1 click-opens-shown path are geometrically untouched. */
-.row.pop-artifact.user .pop-stack-view .media-layer.layer-mid { transform: translateX(-16px) scale(0.965); }
-.row.pop-artifact.user .pop-stack-view .media-layer.layer-back { transform: translateX(-32px) scale(0.93); }
+.row.pop-artifact.user .pop-stack-view .media-layer.layer-mid { transform: translateX(-14px) rotate(-2deg); }
+.row.pop-artifact.user .pop-stack-view .media-layer.layer-back { transform: translateX(-26px) rotate(-3.5deg); }
 .row.pop-artifact.user .pop-stack-area { width: max-content; }
-.row.pop-artifact.user .pop-stack-area > .pill { margin-right: 20px; }
+.row.pop-artifact.user .pop-stack-area > .pill { margin-right: 32px; }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    attach-bubble-unify (2026-10-20 author ruling 「用户发送附件与气泡设计语言统一

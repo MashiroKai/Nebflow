@@ -13,16 +13,20 @@
 //   that path is git-ignored — `.gitignore:38` `*demo*.html` — so it is an
 //   author-side preview, not a tracked deliverable):
 //   - MEDIA (image / video / audio) — no Canvas tab. Several items in one call
-//     render as ONE WeChat-style stacked card: front card + peeking layers to
-//     the right, the 「展开 N」 pill beside the stack on the sender side (user
-//     rows: left; LLM rows: right — 三修 ①, 2026-10-06); drag switches; a click
+//     render as ONE WeChat-style fan stack (2026-10-30 作者令: fixed 220×280
+//     card face for every entry, `object-fit: cover`; back layers fan out
+//     poker-style with slight rotate + offset, not a plain overlap): front card
+//     + fanning layers to the right, the 「展开 N」 pill beside the stack on the
+//     sender side (user rows: left; LLM rows: right — 三修 ①, 2026-10-06); drag
+//     switches; a click
 //     on the collapsed stack opens Canvas with the SHOWN (front) card — swipe
 //     to the Nth card and the click opens N (复报令 2026-10-06 19:43 A-1;
 //     三修 ③'s first-item face is the no-swipe case), and an
 //     expanded row's whole-face click opens Canvas with THAT item (复验令
 //     2026-10-06 16:47 — expanded was the last lightbox leg, and the collapsed
 //     binding itself was dead on real clicks, see buildMediaStack); expand
-//     flattens to one card per row (「收起」 re-stacks). A single media item
+//     flattens to one card per row at each media's OWN ratio (「收起」 re-stacks;
+//     展开态不受扇形影响). A single media item
 //     renders flat with no stack at all, and its whole-card click opens Canvas
 //     like a file card (三修 ②, pathless inline bytes keep the lightbox zoom).
 //     (canvas-media Wave2, 2026-10-05
@@ -395,7 +399,10 @@ function fitLayer(layer, w, h, maxW, maxH) {
   layer.style.aspectRatio = w + ' / ' + h;
   layer.dataset.nfRatio = w + 'x' + h;
 }
-/** The stack box (front card) allowance — the WeChat-style card size. */
+/** The flat single's box allowance (its width cap; its height cap pairs with
+ *  the expanded rows' EXPAND_MAX). The 2026-10-30 fan order retired the
+ *  collapsed stack's per-media fit — the stack is a fixed 220×280 face in
+ *  chat.css — so this no longer governs the stack, only buildMediaFlat. */
 const STACK_MAX = { w: 220, h: 320 };
 /** The expanded column's per-item allowance — full column width, taller cap. */
 const EXPAND_MAX = { w: 220, h: 420 };
@@ -537,19 +544,24 @@ function openMediaItemClick(item) {
 const POP_SWIPE_STEP_PX = 56;    // 横滑一格步进（= canvas.js RING_WHEEL_STEP 同档）
 const POP_SWIPE_QUIET_MS = 160;  // 动量窗：翻页后事件流静默 ≥160ms 才重新武装
 
-/**
- * The stacked media group (≥2 items): pill beside the stack on the sender-side
- * (user rows left / LLM rows right, 三修 ①). A pointer drag of >38px goes
- * next / previous; a trackpad two-finger horizontal swipe (wheel deltaX,
- * 2026-10-22 作者令) goes next / previous too — threshold + momentum-window
- * suppression, coexisting with the drag (separate decision windows); 「展开 N」
- * flattens, 「收起」 re-stacks. A click on the
- * COLLAPSED stack opens Canvas with the SHOWN (front) card — swipe to the Nth
- * card and the click follows the swipe (复报令 2026-10-06 19:43 A-1); the
- * first card before any swipe (三修 ③). An EXPANDED row's whole-face click
- * opens Canvas with THAT row's item (复验令 16:47) — the lightbox survives
- * only as openMediaItemClick's pathless-inline fallback.
- */
+/** The stacked media group (≥2 items), 2026-10-30 fan design (作者令 12:47
+ *  「参考微信的叠卡…强制放缩所有尺寸的卡片到一个大小…像扑克一样轻微旋转
+ *  展开 而不是重叠」): the collapsed stack is ONE fixed 220×280 card face —
+ *  every entry (any image/video ratio) is force-fit onto it via the
+ *  stack-scoped `object-fit: cover`; the back layers fan out poker-style
+ *  (translateX + slight rotate, pure CSS transforms — chat.css). The pill rides
+ *  the conversation CENTER-AXIS side of the stack, per sender (user rows left /
+ *  LLM rows right, 三修 ①). A pointer drag of >38px goes next / previous; a
+ *  trackpad two-finger horizontal swipe (wheel deltaX, 2026-10-22 作者令) goes
+ *  next / previous too — threshold + momentum-window suppression, coexisting
+ *  with the drag (separate decision windows); 「展开 N」 flattens (each row back
+ *  to its OWN ratio + contain, 展开态不受扇形影响), 「收起」 re-stacks. A click on
+ *  the COLLAPSED stack opens Canvas with the SHOWN (front) card — swipe to the
+ *  Nth card and the click follows the swipe (复报令 2026-10-06 19:43 A-1); the
+ *  first card before any swipe (三修 ③). An EXPANDED row's whole-face click opens
+ *  Canvas with THAT row's item (复验令 16:47) — the lightbox survives only as
+ *  openMediaItemClick's pathless-inline fallback. ≤3 layers all show; a 4th+
+ *  item is-buried into the 「展开 N」 (zcode-484 D2). */
 function buildMediaStack(items) {
   const area = document.createElement('div');
   area.className = 'pop-stack-area';
@@ -565,17 +577,15 @@ function buildMediaStack(items) {
 
   let front = 0;
   let expanded = false;
-  // The media's own ratio, per item, as soon as the bytes report it. Until then
-  // the CSS fallback ratio holds the box (never a 0-height frame).
-  const ratios = items.map(() => null);
+  // 2026-10-30 fan order: the collapsed stack is ONE fixed 220×280 card face
+  // (chat.css .pop-stack-view) with the stack-scoped `object-fit: cover` crop —
+  // every entry, whatever its own ratio, is force-fit onto that face. No
+  // fitLayer drives the stack box anymore; a face's natural ratio is only
+  // consumed by its EXPANDED row (own-ratio fit, contain — 展开态不受扇形影响).
   const layers = items.map((item, i) => {
     const layer = document.createElement('div');
     layer.className = 'media-layer';
     layer.appendChild(mediaFace(item, 'stack', (w, h) => {
-      ratios[i] = { w, h };
-      // The front card drives the stack box, and the expanded row drives its own
-      // layer — re-fit whichever face this item owns (zcode-484 D1/D4).
-      if (i === front) fitLayer(view, w, h, STACK_MAX.w, STACK_MAX.h);
       fitLayer(expandLayers[i], w, h, EXPAND_MAX.w, EXPAND_MAX.h);
       if (expanded) settleExpandHeight();
     }));
@@ -586,8 +596,6 @@ function buildMediaStack(items) {
     const layer = document.createElement('div');
     layer.className = 'media-layer';
     layer.appendChild(mediaFace(item, 'expanded', (w, h) => {
-      ratios[i] = { w, h };
-      if (i === front) fitLayer(view, w, h, STACK_MAX.w, STACK_MAX.h);
       fitLayer(layer, w, h, EXPAND_MAX.w, EXPAND_MAX.h);
       if (expanded) settleExpandHeight();
     }));
@@ -616,9 +624,6 @@ function buildMediaStack(items) {
       layer.style.zIndex = String(3 - Math.min(p, 2));
       layer.classList.toggle('is-buried', p > VISIBLE_LAYERS - 1);
     });
-    const frontRatio = ratios[front];
-    if (frontRatio) fitLayer(view, frontRatio.w, frontRatio.h);
-    else { view.style.width = ''; view.style.aspectRatio = ''; }
   };
   applyLayers();
 
