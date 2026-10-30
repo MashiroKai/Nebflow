@@ -450,13 +450,15 @@ object GatewayMain extends IOApp:
               // 安装的种子源走 providers 推导。
             try nebflow.core.presets.PresetStore.migrateGlobalModelChain()
             catch case e: Exception => logger.warn(s"llm.model migration failed: ${e.getMessage}")
-              // ⚠ 未接腿（model-chain anchor 批 2026-10-29 实测）：`ModelChainMigration
-              // .migrateLegacyPresetRefs()` 在全树仍**零生产调用点**。它会把
-              // model-presets.json 封存改名，而 `SubTaskTool` 的 preset 参数面仍读该
-              // 目录（PresetResolver.resolveExplicit）⇒ 接上启动腿等于拆掉 preset 面。
-              // 存量「只有 preset 引用、无 model 键」的角色 sidecar 因此与 /model 面板
-              // 读数一致地落到 seed 链（面板与运行时同源，不产生锚点分叉），是否正式
-              // 退役 preset 面留待作者裁决——不在本批擅自扩大范围。
+              // preset→chain 迁移批（2026-10-30，作者令 08:29「做」）：接上启动腿。
+              // 前置 seed/llm.model 迁移已跑（:422/:427）；本腿把 model-presets.json
+              // 的 preset 定义 write-ahead 迁进 ModelChainRegistry（model-chains.json，
+              // 既有条目恒胜 ⇒ 幂等），原目录文件随后加戳封存（迁移完成戳）。
+              // PresetStore 默认路径读面已切注册表、旧 preset 名逐字兼容 ⇒ 封存不再
+              // 拆 preset 面（SubTask preset 参数/工具文档/错误面单源）。二次启动
+              // 目录文件缺席 ⇒ 全腿 no-op。失败不阻断启动（与上两行迁移同款纪律）。
+            try nebflow.core.ModelChainMigration.migrateLegacyPresetRefs()
+            catch case e: Exception => logger.warn(s"preset→chain migration failed: ${e.getMessage}")
               // personal-agent 批（2026-10-04）：Soul.md 启动一次性迁移腿
               // （agents/Nebula/memory.md → ~/.nebflow/Soul.md）。幂等：
               // Soul.md 已存在即跳过、再跑零副作用；写前经 MemorySnapshot 快照，

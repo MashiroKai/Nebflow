@@ -863,30 +863,40 @@ object ConfigService:
     os.move.over(tmp, path)
 
   /**
-   * Apply a JSON transform to model-presets.json. Skips when the file is
-   * absent — provider cleanup must NOT initialize the presets store
-   * (PresetStore.load owns the create/re-init semantics). Never clobbers an
-   * unparseable file. Writes back only when something actually changed.
+   * Apply a JSON transform to the preset catalog face(s). Skips absent files —
+   * provider cleanup must NOT initialize the presets store (PresetStore.load
+   * owns the create/re-init semantics). Never clobbers an unparseable file.
+   * Writes back only when something actually changed.
+   *
+   * preset→chain 迁移批（2026-10-30）：变换**同时**落在 legacy 目录与迁移后的
+   * 链注册表（`model-chains.json`，chains 槽位）——provider 删除/改名的链清洗
+   * 在两个面上等价，不随迁移产生清洗死角。transform 按各面的槽位名
+   * （"presets" / "chains"）参数化。
    */
-  private def editPresets(transform: Json => Json): IO[Unit] = IO.blocking {
-    if os.exists(presetsPath) then
-      parse(os.read(presetsPath)) match
-        case Right(json) =>
-          val updated = transform(json)
-          if updated != json then atomicWriteJson(presetsPath, updated)
-        case Left(_) => ()
+  private def editPresets(transform: String => Json => Json): IO[Unit] = IO.blocking {
+    List(presetsPath -> "presets", nebflow.core.presets.ModelChainRegistry.chainsPath() -> "chains")
+      .foreach { (path, field) =>
+        if os.exists(path) then
+          parse(os.read(path)) match
+            case Right(json) =>
+              val updated = transform(field)(json)
+              if updated != json then atomicWriteJson(path, updated)
+            case Left(_) => ()
+      }
   }
 
   /**
    * Transform every preset's {preferred, fallbacks} chain. Presets whose
    * chain is unchanged are left byte-identical; the file object is rebuilt
-   * only when at least one preset actually changed.
+   * only when at least one preset actually changed. `field` names the catalog
+   * slot ("presets" on the legacy file, "chains" on the migrated registry).
    */
   private def mapPresetChains(
     json: Json,
+    field: String,
     f: (Option[String], List[String]) => (Option[String], List[String])
   ): Json =
-    json.hcursor.downField("presets").focus.flatMap(_.asObject) match
+    json.hcursor.downField(field).focus.flatMap(_.asObject) match
       case None => json
       case Some(presetsObj) =>
         var touched = false
@@ -911,7 +921,7 @@ object ConfigService:
         if !touched then json
         else
           json.asObject
-            .map(o => Json.fromFields(o.toMap.updated("presets", Json.fromFields(newPresets))))
+            .map(o => Json.fromFields(o.toMap.updated(field, Json.fromFields(newPresets))))
             .getOrElse(json)
 
   /**
@@ -921,27 +931,30 @@ object ConfigService:
    * chain at agent-load time.
    */
   private def scrubPresetRefs(deleted: List[String]): IO[Unit] =
-    editPresets(json =>
-      deleted.foldLeft(json) { (acc, provider) =>
-        val prefix = s"$provider/"
-        mapPresetChains(
-          acc,
-          (preferred, fallbacks) =>
-            val prefTouched = preferred.exists(_.startsWith(prefix))
-            val fbs = fallbacks.filterNot(_.startsWith(prefix))
-            if prefTouched then (fbs.headOption, fbs.drop(1)) else (preferred, fbs)
-        )
-      }
+    editPresets(field =>
+      json =>
+        deleted.foldLeft(json) { (acc, provider) =>
+          val prefix = s"$provider/"
+          mapPresetChains(
+            acc,
+            field,
+            (preferred, fallbacks) =>
+              val prefTouched = preferred.exists(_.startsWith(prefix))
+              val fbs = fallbacks.filterNot(_.startsWith(prefix))
+              if prefTouched then (fbs.headOption, fbs.drop(1)) else (preferred, fbs)
+          )
+        }
     )
 
   /** Rewrite renamed-provider refs old→new in every preset chain. */
   private def rewritePresetRefs(renames: List[(String, String)]): IO[Unit] =
-    editPresets(json =>
-      renames.foldLeft(json) { (acc, rename) =>
-        val (oldName, newName) = rename
-        val oldPrefix = s"$oldName/"; val newPrefix = s"$newName/"
-        def rw(ref: String) = if ref.startsWith(oldPrefix) then newPrefix + ref.stripPrefix(oldPrefix) else ref
-        mapPresetChains(acc, (preferred, fallbacks) => (preferred.map(rw), fallbacks.map(rw)))
-      }
+    editPresets(field =>
+      json =>
+        renames.foldLeft(json) { (acc, rename) =>
+          val (oldName, newName) = rename
+          val oldPrefix = s"$oldName/"; val newPrefix = s"$newName/"
+          def rw(ref: String) = if ref.startsWith(oldPrefix) then newPrefix + ref.stripPrefix(oldPrefix) else ref
+          mapPresetChains(acc, field, (preferred, fallbacks) => (preferred.map(rw), fallbacks.map(rw)))
+        }
     )
 end ConfigService
