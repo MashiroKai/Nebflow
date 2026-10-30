@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<!-- imagegen-blocking harness.html — 生图交互修正批（2026-10-30 作者令，照 Codex
+     玩法定案）的静态测试 harness：
+
+       阻塞语义：generate_image 调用挂起至图成（后端保证），前端两段生命期全部
+       走**生产通用腿**——
+         ① 调用期间：标准 pending 工具卡原位占位（renderToolPending：spinner +
+            「生图」标签，纯文本风格动效纪律，零特判面）；
+         ② 完成：toolEnd 的 ___POP_JSON___ 载荷走 isPopPayload 通用腿
+            （renderTool → renderPopToolRow + buildPopArtifactRow）原位直出单张
+            图（Pop 卡片样式：点击 Canvas 打开、扇卡那套保留）。
+
+       本 harness 驱动**真实前端模块**（chatView.js / chat.js / popArtifacts.js /
+       state.js——无 stub 无 bundling），按 main.js 在 WS 事件上的真实调用形态回放：
+
+       window.__igUser(text)                 → renderUserBubble（回合开场）
+       window.__igCallStart(label)           → renderToolPending（toolStart 形）
+       window.__igDone(label, summary,
+                       content, input)       → renderTool（toolEnd 形 → 完成翻转）
+       window.__igError(label, summary,
+                       errText, input)       → renderTool（isError=true 形）
+       window.__igCensus()                   → DOM 契约 census（零双渲染断言数据源）
+       window.__igReset()                    → 清聊天区 + 工具卡槽
+
+       图片字节由 spec 侧小源服务器提供：POST /api/nf-ticket 铸票 +
+       GET /api/nf-file 取件（真 PNG 字节、带请求计数）。
+
+       Served over a throwaway static file server spawned and killed by the spec
+       itself (never the host port) — same discipline as tests/fixtures/toolline-detail.
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>imagegen-blocking harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 720px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    const SID = 'ig-harness-session';
+    state.activeSessionId = SID;
+    chatViews.primary.sessionId = SID;
+    // 真实 app 由 ws.js 建链；harness 禁止真 socket（nf-ticket 走 spec 侧源服务器）。
+    state.ws = { readyState: 1, send: () => {} };
+
+    const chatMod = await import(`${WEB}/chat.js`);
+    const view = chatViews.primary;
+
+    const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    window.__igUser = (text) => {
+      chatMod.renderUserBubble(text, [], Date.now());
+    };
+
+    // WS toolStart 形：阻塞调用期间的**原位占位面**（标准 pending 工具卡）。
+    window.__igCallStart = async (label) => {
+      chatMod.renderToolPending(label, SID);
+      await raf2();
+    };
+
+    // WS toolEnd 形：完成翻转 + Pop 载荷腿（___POP_JSON___ → isPopPayload 通用渲染）。
+    window.__igDone = async (label, summary, content, input) => {
+      chatMod.renderTool(label, summary, content, false, input, SID);
+      await raf2();
+    };
+
+    // WS toolEnd 形（失败面）。
+    window.__igError = async (label, summary, errText, input) => {
+      chatMod.renderTool(label, summary, errText, true, input, SID);
+      await raf2();
+    };
+
+    /** DOM 契约 census —— 全部断言只读 DOM（classes/dataset/计数），零内部状态。 */
+    window.__igCensus = () => {
+      const chat = document.getElementById('chat');
+      const toolRows = Array.from(chat.querySelectorAll('.row.tool'));
+      const pendingCards = chat.querySelectorAll('.tool-card--pending');
+      const artifactRows = Array.from(chat.querySelectorAll('.row.pop-artifact'));
+      const imgs = Array.from(chat.querySelectorAll('img'));
+      const popImgs = imgs.filter(i => i.classList.contains('pop-img'));
+      // 旧非阻塞占位模块的渲染残留（双渲染病灶面）——任何形态都必须为零。
+      const legacyImagegen = chat.querySelectorAll('.imagegen-row, .imagegen-ph, [data-role="ph"]');
+      return {
+        toolRows: toolRows.length,
+        pendingCards: pendingCards.length,
+        artifactRows: artifactRows.length,
+        imgs: imgs.length,
+        popImgs: popImgs.length,
+        popImgsLoaded: popImgs.filter(i => i.complete && i.naturalWidth > 0).length,
+        legacyImagegen: legacyImagegen.length,
+        // 原位探针：第一张工具卡的行节点身份 + 徽章行（完成翻转不换行）。
+        firstToolRowTag: toolRows[0] ? toolRows[0].dataset.msgId || null : null,
+        pendingSpinner: pendingCards.length ? !!pendingCards[0].querySelector('.spinner') : false,
+        // Pop 载荷行几何：artifact 行紧随工具行（#491 时间序原位语义）。
+        artifactAfterTool: artifactRows.length > 0 && toolRows.length > 0
+          ? toolRows[toolRows.length - 1].nextElementSibling === artifactRows[0]
+          : false,
+        // 工具卡完成面徽标（spinner 翻勾）。
+        doneIcons: chat.querySelectorAll('.tool-card .icon.ok').length,
+      };
+    };
+
+    /** 完成翻转前的 pending 行 msgId（原位复用断言：翻转后同 id 仍在同一节点）。 */
+    window.__igProbePendingRowId = () => {
+      const row = document.querySelector('#chat .row.tool');
+      return row ? (row.dataset.msgId || null) : null;
+    };
+
+    window.__igReset = () => {
+      chatEl.innerHTML = '';
+      state.sessionToolCards = {};
+    };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

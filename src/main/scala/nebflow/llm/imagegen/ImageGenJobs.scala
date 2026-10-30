@@ -4,13 +4,14 @@ import java.util.concurrent.ConcurrentHashMap
 import scala.jdk.CollectionConverters.*
 
 /**
- * 生图 job 台账（imagegen 双层批 2026-10-24，腿①非阻塞生命周期的状态面）。
+ * 生图 job 台账（imagegen 双层批 2026-10-24；交互修正批 2026-10-30 语义刷新）。
  *
- * 非阻塞语义：`generate_image` 工具调用**立即返回 job 句柄**（回合不阻塞），
- * 生成在后台 fiber 跑；完成经 WS `imagegenUpdate` 帧推送回填前端占位卡片
- * （前端原位替换为真实图片）。本台账是 job 状态的权威读面（REST 查询腿 +
- * 完成回调写点），内存态 + PNG 已落盘（`<dataRoot>/imagegen/`），重启后台账
- * 清空、磁盘文件仍在（nf-file 票据展示链不依赖本台账）。
+ * 阻塞语义：`generate_image` 工具调用**挂起至生成完成**（回合不并发推进），
+ * 台账随之退为簿记/读面——REST `/api/imagegen` 查询腿与 sidebar 状态投影仍消费
+ * 它（register → complete/fail 翻转照旧），但完成回填**不再走 WS imagegenUpdate
+ * 帧**（该腿已整腿退役：结果载荷走 toolEnd 的 Pop 面原位直出）。内存态 +
+ * 文件已落盘（`<dataRoot>/imagegen/`），重启后台账清空、磁盘文件仍在（nf-file
+ * 票据展示链不依赖本台账）。
  */
 object ImageGenJobs:
 

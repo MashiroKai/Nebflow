@@ -475,10 +475,10 @@ object AgentCore:
     "Schedule",
     // 记忆（§C.2 MemoryNote）
     "MemoryNote",
-    // generate_image（imagegen 双层批 2026-10-24，调试状态）：Nebula 面非阻塞
-    // 生图件——提交即返回 job 句柄、前端占位动画回填；编译期 seal 关时由
-    // imageGenSealedStrip 在本消费点剥除（静态集与件数常量不动，friends seal
-    // 同款条件化口径）。
+    // generate_image（imagegen 双层批 2026-10-24；交互修正批 2026-10-30 转阻塞
+    // 语义）：Nebula 面阻塞生图件——调用挂起至图成、结果走 Pop 面原位直出；
+    // 编译期 seal 关时由 imageGenSealedStrip 在本消费点剥除（静态集与件数常量
+    // 不动，friends seal 同款条件化口径）。
     "generate_image"
   )
 
@@ -598,7 +598,7 @@ object AgentCore:
    * Jev 重排）。本增量属「按面变更」（新增成员），非「凑数字」。
    *
    * **imagegen 双层批（2026-10-24）：+`generate_image` ⇒ 19（在飞值）**——Nebula
-   * 面非阻塞生图件（调试状态，编译期 seal 门控：seal 关时经
+   * 面生图件（交互修正批 2026-10-30 起为阻塞语义；编译期 seal 门控：seal 关时经
    * [[imageGenSealedStrip]] 在本面唯一消费点剥除，静态集不动，friends seal
    * 同款条件化口径）。本增量同属「按面变更」。
    */
