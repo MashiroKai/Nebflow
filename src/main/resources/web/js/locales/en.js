@@ -909,6 +909,12 @@ export default {
   'ob2.btn.useThis': 'Use this',
   'ob2.btn.picked': 'Done picking',
   'ob2.typing.skip': 'Skip typing',
+  // Whole-flow skip (Onboarding skip batch, author order 2026-10-30): bail into
+  // the main UI anytime; the marker lands as `skipped` (no re-prompt), and the
+  // Settings entry re-opens the flow.
+  'ob2.flow.skip': 'Skip',
+  'ob2.flow.skipEcho': 'Sure — onboarding paused for now. You can re-enter it anytime from Settings.',
+  'ob2.flow.skipFailed': 'Could not save the skipped state: {error}.',
   'ob2.ph.free': 'Write it in your own words…',
   'ob2.source.unnamed': 'The one without a name yet',
   'ob2.greet1': 'Hello. First time meeting you.',

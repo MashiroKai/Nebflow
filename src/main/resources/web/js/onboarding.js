@@ -69,6 +69,33 @@ let pendingState = null;       // { resolve, timer } while a setOnboardingState 
 let pendingFinish = null;      // { resolve, timer } while a finishOnboarding is in flight
 let activeSim = null;          // current typewriter controller { finish } — for Esc / replay cleanup
 
+// ── Whole-flow skip (Onboarding 跳过批，作者令 2026-10-30) ───
+/** Sentinel raced through every flow step when the user bails out. */
+const ABORTED = Symbol('ob-flow-aborted');
+
+/**
+ * One abort controller per runFlow invocation. Every awaited step in the
+ * flow is raced against `ctrl.promise`, so a single abort() unwinds the
+ * whole chain (greetings → question cards → writing ritual) no matter which
+ * step is currently parked. Without this the skip button could only ever
+ * cancel the step that happened to be running when it grew its own bespoke
+ * out — one channel, every step.
+ */
+let flowAbort = null;
+
+function beginFlowAbort() {
+  const ctrl = { aborted: false, resolve: /** @type {((v: symbol) => void)|null} */ (null), promise: /** @type {Promise<symbol>|null} */ (null) };
+  ctrl.promise = new Promise((resolve) => { ctrl.resolve = resolve; });
+  ctrl.abort = () => { if (!ctrl.aborted) { ctrl.aborted = true; ctrl.resolve(ABORTED); } };
+  return ctrl;
+}
+
+/** Race one flow step against the current run's abort signal. */
+function step(promise) {
+  if (!flowAbort) return promise;
+  return Promise.race([promise, flowAbort.promise]);
+}
+
 // ── probeLlm hard gate ───────────────────────────────────────
 onMessage('probeResult', (msg) => {
   if (!pendingProbe) return;
@@ -514,6 +541,22 @@ function askCard(def, bubble, total, idx) {
     };
     const skip = () => finish('skip', '', null, t('ob2.echo.skip'));
 
+    // Whole-flow skip (跳过批 2026-10-30): when the run is aborted while THIS
+    // card is parked, freeze it like an answered one and release the flow —
+    // the marker write (`skipped`) is the terminal step now, not this card.
+    // (The card was built inside this run, so its ctrl is the current one.)
+    flowAbort?.promise.then((v) => {
+      if (v !== ABORTED || settled) return;
+      settled = true;
+      card.querySelectorAll('button, input').forEach((n) => {
+        const el = /** @type {HTMLButtonElement|HTMLInputElement} */ (n);
+        el.disabled = true;
+        el.style.pointerEvents = 'none';
+      });
+      card.style.opacity = '0.62';
+      resolve(ABORTED);
+    });
+
     // shared free-input row (used by all three kinds)
     const freeRow = document.createElement('div');
     freeRow.className = 'free-row';
@@ -956,6 +999,12 @@ export function replayOnboarding() {
   modelContextWindow = null;   // a replay must not inherit the previous run's window
   lastAttempt = null;          // …nor a stale retry payload from the previous run
   clearFinishFailure();
+  clearSkipFailure();
+  unmountFlowSkip();
+  // If a previous run is still parked on a question card, abort it (its own
+  // finally then clears ONLY what is still its — never this new run's token
+  // or control, which runFlow installs next).
+  if (flowAbort) flowAbort.abort();
   if (activeSim) activeSim.finish();
   void runFlow();
 }
@@ -975,34 +1024,135 @@ function userSay(text) {
   smartScroll();
 }
 
+// ── Whole-flow skip control (「跳过」批 2026-10-30) ────────────
+// The per-question [data-skip] (跳过这一题) only blanks ONE page; this batch
+// adds the flow-level escape hatch: ONE plainly-visible button, live for the
+// WHOLE run, that lands the user in the main UI and persists the `skipped`
+// marker so the flow never re-fires (initOnboarding's S0 early-return).
+// Backend: the state machine accepts `skipped` WITHOUT the probe hard gate
+// (OnboardingService.setState gates `done` only) — skipping stays a pure
+// user decision.
+let flowSkipEl = null;      // the floating control's wrap — live for exactly one run
+let skipWriteBusy = false;  // skip-click double-guard (the state write is async)
+
+/** Mount the floating skip control at the top of the chat viewport. */
+/** Mount the floating skip control at the top of the chat viewport.
+ *  Returns the wrap element (run-scoped — a run's finally only removes its OWN). */
+function mountFlowSkip() {
+  const chat = activeView?.dom?.chat;
+  if (!chat || flowSkipEl) return flowSkipEl;
+  const wrap = document.createElement('div');
+  wrap.className = 'ob-flow-skip-wrap';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'glass-control ob-flow-skip';
+  btn.textContent = t('ob2.flow.skip');
+  btn.setAttribute('data-skip-flow', '1');
+  btn.addEventListener('click', () => { void skipWholeFlow(); });
+  wrap.appendChild(btn);
+  chat.prepend(wrap);
+  flowSkipEl = wrap;
+  return wrap;
+}
+
+/** Remove the wrap only if it is still the mounted one: an old run's finally
+ *  must not unmount a new run's control (replay starts the new run before the
+ *  old run's unwinding finally runs). */
+function unmountFlowSkip(wrap) {
+  if (wrap && flowSkipEl !== wrap) return;
+  if (flowSkipEl) { flowSkipEl.remove(); flowSkipEl = null; }
+}
+
+function clearSkipFailure() {
+  document.querySelectorAll('[data-retry-skip]').forEach((n) => n.closest('.row.notice')?.remove());
+}
+
+/** A refused/failed skip write leaves the marker untouched — name it and
+ *  offer the retry (same discipline as reportFinishFailure). */
+function reportSkipFailure(detail) {
+  const b = noticeBubble();
+  if (b) {
+    b.textContent = t('ob2.flow.skipFailed', { error: detail });
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'glass-control ob-primary';
+    retry.textContent = t('ob2.finish.retry');
+    retry.setAttribute('data-retry-skip', '1');
+    retry.addEventListener('click', () => { void skipWholeFlow(); });
+    b.appendChild(document.createTextNode(' '));
+    b.appendChild(retry);
+  }
+  enableComposer();
+}
+
+/**
+ * Whole-flow skip: abort the run, persist `skipped`, hand back the main UI.
+ * The abort unwinds whichever step is parked; the marker write is awaited so
+ * a server refusal is a visible verdict (retry button), not a silent miss —
+ * a silent miss would re-fire the whole questionnaire on the next boot.
+ */
+async function skipWholeFlow() {
+  if (skipWriteBusy) return;
+  skipWriteBusy = true;
+  try {
+    if (flowAbort && !flowAbort.aborted) {
+      flowAbort.abort();
+      if (activeSim) activeSim.finish();   // cursor/typing cleanup, same channel as Esc
+    }
+    const st = await setOnboardingState('skipped');
+    if (!st.ok) { reportSkipFailure(st.error || ''); return; }
+    clearSkipFailure();
+    userSay(t('ob2.flow.skipEcho'));
+    enableComposer();
+  } finally {
+    skipWriteBusy = false;
+  }
+}
+
 async function runFlow() {
   const total = SCRIPT().length;
   const script = SCRIPT();
-  // B-2: no `source` on the greetings — bubbles never carry a sender label.
-  await streamBubble([t('ob2.greet1')]);
-  await streamBubble([t('ob2.greet2'), t('ob2.greet3'), t('ob2.greet4')]);
-  for (let i = 0; i < script.length; i++) {
-    await askQuestion(script[i], total, i + 1);
+  const ctrl = beginFlowAbort();
+  flowAbort = ctrl;
+  const skipEl = mountFlowSkip();
+  try {
+    // B-2: no `source` on the greetings — bubbles never carry a sender label.
+    if (await step(streamBubble([t('ob2.greet1')])) === ABORTED) return;
+    if (await step(streamBubble([t('ob2.greet2'), t('ob2.greet3'), t('ob2.greet4')])) === ABORTED) return;
+    for (let i = 0; i < script.length; i++) {
+      if (await step(askQuestion(script[i], total, i + 1)) === ABORTED) return;
+    }
+    await wait(300);
+    if (await step(streamBubble([t('ob2.collected')])) === ABORTED) return;
+    // 🔴 The finale is the flow's SUCCESS closing (「配置完成…」) — it may only run
+    // once the marker actually landed as `done`. A refused terminal transition
+    // keeps the session unfinished (and the retry button live), so the closing
+    // must not claim completion.
+    const finished = await step(writingRitual());
+    if (finished === ABORTED) return;
+    if (finished) await finale();
+  } finally {
+    // Run-scoped teardown: a replay may already have mounted the next run's
+    // control/token — only clear what is still THIS run's.
+    unmountFlowSkip(skipEl);
+    if (flowAbort === ctrl) flowAbort = null;
   }
-  await wait(300);
-  await streamBubble([t('ob2.collected')]);
-  // 🔴 The finale is the flow's SUCCESS closing (「配置完成…」) — it may only run
-  // once the marker actually landed as `done`. A refused terminal transition
-  // keeps the session unfinished (and the retry button live), so the closing
-  // must not claim completion.
-  const finished = await writingRitual();
-  if (finished) await finale();
 }
 
 async function askQuestion(def, total, idx) {
-  if (def.intro) await streamBubble(def.intro);
-  const { row } = await streamBubbleAsync(def.lead.concat([def.q]), { question: true });
+  if (def.intro) {
+    if (await step(streamBubble(def.intro)) === ABORTED) return ABORTED;
+  }
+  const streamed = await step(streamBubbleAsync(def.lead.concat([def.q]), { question: true }));
+  if (streamed === ABORTED) return ABORTED;
+  const { row } = streamed;
   const bubble = row ? row.querySelector('.bubble') : null;
   if (!bubble) return;
   await wait(CARD_BEAT_MS);
-  const ans = await askCard(def, bubble, total, idx);
+  const ans = await step(askCard(def, bubble, total, idx));
+  if (ans === ABORTED) return ABORTED;
   await wait(220);
-  await streamBubble([followLine(def, ans)]);
+  if (await step(streamBubble([followLine(def, ans)])) === ABORTED) return ABORTED;
 }
 
 /** streamBubble variant exposing the row. (Same microtask defer as streamBubble —
@@ -1143,6 +1293,9 @@ async function finishFlow(answers, modelRef, lines) {
     const fin = await finishOnboarding({ answers, modelRef });
     if (!fin.ok) { reportFinishFailure('artifacts', fin.error || ''); return false; }
 
+    // A whole-flow skip clicked while the ritual was in flight owns the marker
+    // now (`skipped`) — a late `done` must not overwrite it.
+    if (flowAbort?.aborted) return false;
     const st = await setOnboardingState('done');
     if (!st.ok) {
       reportFinishFailure(st.code === 'probe_required' ? 'probeRequired' : 'state', st.error || '');
@@ -1224,8 +1377,10 @@ function finishOnboarding({ answers, modelRef }, timeoutMs = FINISH_TIMEOUT_MS) 
 }
 
 async function writingRitual() {
-  const row = await streamBubbleAsync([t('ob2.writing.title')]);
-  const bubble = row.row ? row.row.querySelector('.bubble') : null;
+  const streamed = await step(streamBubbleAsync([t('ob2.writing.title')]));
+  if (streamed === ABORTED) return ABORTED;
+  const row = streamed.row;
+  const bubble = row ? row.querySelector('.bubble') : null;
   if (!bubble) return false;
   const lines = document.createElement('div');
   lines.className = 'write-lines';
@@ -1235,6 +1390,7 @@ async function writingRitual() {
   ];
   bubble.appendChild(lines);
   for (const text of seq) {
+    if (flowAbort?.aborted) return ABORTED;   // skip clicked mid-ritual — bail before writing more lines
     setWriteLine(appendWriteLine(lines, text), true, text);
     await wait(220);
   }
@@ -1242,7 +1398,7 @@ async function writingRitual() {
   const answers = answersPayload();
   const modelAnswer = collected.get('model');
   const modelRef = modelAnswer && modelAnswer.kind !== 'skip' ? modelAnswer.value : null;
-  return await finishFlow(answers, modelRef, lines);
+  return await step(finishFlow(answers, modelRef, lines));
 }
 
 async function finale() {

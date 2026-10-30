@@ -865,6 +865,11 @@ export default {
   'ob2.btn.useThis': '用这句',
   'ob2.btn.picked': '选好了',
   'ob2.typing.skip': '跳过打字',
+  // 整流程跳过（Onboarding 跳过批 2026-10-30 作者令）：随时跳过进入主界面，
+  // 状态落 `skipped`（不再反复弹），设置里保留重新进入入口。
+  'ob2.flow.skip': '跳过',
+  'ob2.flow.skipEcho': '好 —— 新手引导先到这里。以后想继续，设置里可以随时重新进入。',
+  'ob2.flow.skipFailed': '跳过状态保存失败：{error}。',
   'ob2.ph.free': '用你自己的话写…',
   'ob2.source.unnamed': '还没有名字的我',
   // 开场
