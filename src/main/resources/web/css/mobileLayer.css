@@ -366,7 +366,10 @@ body.mobile-layer .dock-key.dock-key-center.active .dock-center {
   }
 }
 body.mobile-layer .dock-key.dock-key-center.active .dock-label { font-weight: 600; }
-/* 未读红点（dock 徽标）：图标右上角；纯提示无计数（计数面 = 消息页聚合行）。 */
+/* 未读徽标（dock）：纯红点（联系人键 = 好友待处理请求，布尔语义）；
+   消息键 = **数字角标**（作者令 2026-10-30 08:29「就像微信一样就行了，有新消息
+   在消息按钮的右上角加数字角标就行」）—— 读数/归一（99+）全部取桌面
+   #messages-badge，手机层零换算（navController.applyDockBadges 加 .is-count）。 */
 body.mobile-layer .dock-badge {
   position: absolute;
   top: 3px;
@@ -377,7 +380,37 @@ body.mobile-layer .dock-badge {
   background: var(--status-word, #d64545);
   pointer-events: none;
 }
-body.mobile-layer .dock-badge[hidden] { display: none; }
+/* [hidden] 契约压过两条形态：.is-count 的 display:flex 特异度高于本行，
+   !important 是既有同族守卫（见页面体 [hidden] 规则）—— 角标清零必须真隐。 */
+body.mobile-layer .dock-badge[hidden] { display: none !important; }
+/* 数字角标形态：微信式——图标右上角，红色实心胶囊 + 白字；宽度随位数自适应
+   （单字符 = 16px 圆），描边取自 dock 底色（不透明 surface token）把胶囊从图标
+   上「托出来」，与白字的可读性同一条来源。 */
+body.mobile-layer .dock-badge.is-count {
+  top: 1px;
+  left: calc(50% + 4px);
+  width: auto;
+  height: 16px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  box-sizing: border-box;
+  display: flex;          /* 居中不靠 line-height：描边吃掉盒高后仍垂直居中 */
+  align-items: center;
+  justify-content: center;
+  background: var(--status-word, #d64545);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  border: 1.5px solid var(--color-bg, #f5f6f8);
+}
+@media (prefers-color-scheme: dark) {
+  body.mobile-layer .dock-badge.is-count {
+    border-color: #16181d; /* = #mobile-dock 暗档底（同块内 --dock bg 字面） */
+  }
+}
 
 /* ── 页面容器 + 页面 section（互斥 .live；iOS push/pop 曲线）─────────
    dock 批：页面底缘让位常驻 dock（--dock-h 单源）。 */
@@ -1230,70 +1263,10 @@ body.mobile-layer .mf-social-entry-ic svg { width: 17px; height: 17px; }
 body.mobile-layer .mf-social-entry-label { flex: 1; min-width: 0; text-align: left; }
 body.mobile-layer .mf-social-entry-chev { opacity: 0.5; }
 body.mobile-layer .mf-social-entry-chev svg { width: 14px; height: 14px; }
-/* 消息页通知段（主体面 = 收编会话列表/封存卡之后；恒渲染，行集 = banner 镜像）。 */
-body.mobile-layer .mf-notify-sec {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 4px 12px 16px;
-}
-body.mobile-layer .mf-notify-cap {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--color-frame-text-muted, #98a2b3);
-  padding: 0 2px;
-}
-body.mobile-layer .mf-notify-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-body.mobile-layer .mf-notify-empty {
-  padding: 18px 8px 6px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--color-frame-text-muted, #98a2b3);
-}
-body.mobile-layer .mf-msgrow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 48px;
-  padding: 8px 12px;
-  border-radius: 14px;
-  border: 1px solid var(--glass-control-border);
-  background: var(--glass-control-bg);
-  color: var(--color-frame-text, #e6e9ef);
-  font-size: 13px;
-  cursor: pointer;
-  text-align: left;
-  touch-action: manipulation;
-}
-body.mobile-layer .mf-msgrow.is-static { cursor: default; }
-body.mobile-layer .mf-msgrow:not(.is-static):active { transform: scale(0.99); }
-body.mobile-layer .mf-msgrow-ic {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  background: rgba(91, 127, 191, 0.18);
-  color: rgb(91, 127, 191);
-}
-body.mobile-layer .mf-msgrow-ic svg { width: 15px; height: 15px; }
-body.mobile-layer .mf-msgrow-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
+/* 消息页通知段退役（作者令 2026-10-30 08:29「这个图的消息的底部，通知是干嘛的，
+   我觉得不用显示。就像微信一样就行了，有新消息在消息按钮的右上角加数字角标
+   就行」）：.mf-notify-* / .mf-msgrow* 四条样式随段落一起摘除，零残留死样式。
+   站内通知仍由桌面 #notification-banner（#top-overlays 内）承载。 */
 
 /* ── 附件条 v4（uifix 批 2026-10-22）：手机层单行 + 「+N」折叠差异 ── */
 body.mobile-layer #attachment-preview { flex-wrap: nowrap; }

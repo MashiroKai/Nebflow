@@ -12,12 +12,14 @@
 //   · 联系人 contacts = 桌面联系人面 #fm-contacts-body 收编（contacts.js 唯一
 //     属主；好友/新的朋友/设备段全走桌面渲染）+「手机接入」入口行（渠道卡
 //     配置面 #social-overlay 的移动入口，socialPanel 渠道数据源）。
-//   · 通知段 = 站内通知流（notificationBanner 属主 #notification-banner 子树
-//     镜像：类型/文本/时间），挂在消息页主体面之后 —— 非好友封存域（站内通知/
-//     设备互联不属好友封存域），恒渲染。桌面无独立通知 feed 面，此段为移动
-//     适配版（任务书口径：对应面在移动端从未有过的按桌面数据源做移动适配）；
-//     原「未读聚合行」随面迁移退役（会话列表行自带未读数 + dock 消息键红点
-//     镜像，零信息丢失）。
+//
+// 通知段退役（作者令 2026-10-30 08:29 逐字「这个图的消息的底部，通知是干嘛的，
+// 我觉得不用显示。就像微信一样就行了，有新消息在消息按钮的右上角加数字角标
+// 就行」）：原挂在消息页底部的站内通知镜像段（notificationBanner 属主
+// #notification-banner 子树只读镜像）整段摘除，**不留孤儿数据**——源头
+// `addNotification`（reminder/conn/task/device-mail 四类）照旧写
+// `state.notifications` 并渲染进 `#top-overlays` 内的 `#notification-banner`
+// （手机层未隐藏，聊天根顶带仍可见），本节只退役它的移动镜像面，零第二实现。
 //
 // 封存态（featureFlags.friendsEnabled 缺席 = 封存，release 剥除不变）：消息/
 // 联系人两面显示封存空态卡（骨架占位 + 文案），社交 dock 栏常驻（五栏固定 =
@@ -38,8 +40,6 @@ const anchors = new Map();
 let remountMo = null;
 /** @type {Array<() => void>} */
 let unsubs = [];
-/** @type {MutationObserver|null} 通知段镜像观察者。 */
-let notifMo = null;
 
 function tt(zh, en) {
   let lang = '';
@@ -108,14 +108,14 @@ export function syncSocialFaces(stackIncludes) {
 
 /** 页面内容臂（navController.ensurePanelContent 分派；幂等）。
  *  消息页 = 跟联系人的对话消息（好友封存域：flag OFF = 封存空态，ON = 真面
- *  收编）+ 通知段（非封存域，恒渲染）；联系人 = 好友封存域。 */
+ *  收编）；联系人 = 好友封存域。通知段已退役（作者令 2026-10-30 08:29），
+ *  页面体只承载收编面/封存卡。 */
 export function ensureSocialPage(pageId, body) {
   if (!body) return;
   if (pageId === 'messages') {
     body.querySelector('.mf-social-sealed')?.remove();
     if (friendsEnabled()) adoptPanelFace('messages', '#panel-messages', '#fm-conversations');
     else if (!body.querySelector('.mf-social-sealed')) buildSealedFace(body, '消息');
-    ensureNotifySection(body); // 恒插入主体面之后（appendChild 幂等保序）
     return;
   }
   const on = friendsEnabled();
@@ -155,62 +155,6 @@ function ensureSocialEntry(body) {
   });
   body.insertBefore(entry, body.firstChild);
   if (typeof lucide !== 'undefined') createIconsIn(entry);
-}
-
-/** 消息页通知段（页面主体面之后；站内通知镜像 + 恒渲染）。 */
-function ensureNotifySection(body) {
-  let sec = body.querySelector('.mf-notify-sec');
-  if (!sec) {
-    sec = document.createElement('div');
-    sec.className = 'mf-notify-sec';
-    const cap = document.createElement('div');
-    cap.className = 'mf-notify-cap';
-    cap.textContent = tt('通知', 'Notifications');
-    const list = document.createElement('div');
-    list.className = 'mf-notify-list';
-    sec.append(cap, list);
-  }
-  body.appendChild(sec); // 恒在会话列表/封存卡之后（幂等保序）
-  renderNotifyList(sec.querySelector('.mf-notify-list'));
-  if (!notifMo) {
-    const banner = document.getElementById('notification-banner');
-    if (banner) {
-      notifMo = new MutationObserver(() => {
-        const l = document.querySelector('#mobile-pages .mf-notify-list');
-        if (l) renderNotifyList(l);
-      });
-      notifMo.observe(banner, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
-      unsubs.push(() => { notifMo?.disconnect(); notifMo = null; });
-    }
-  }
-}
-
-/** 通知段重打：站内通知行（banner 子树只读镜像）；无项 = 空态文案一行。 */
-function renderNotifyList(list) {
-  list.replaceChildren();
-  const banner = document.getElementById('notification-banner');
-  const items = banner ? [...banner.querySelectorAll('.notif-item')] : [];
-  if (!items.length) {
-    const empty = document.createElement('div');
-    empty.className = 'mf-notify-empty';
-    empty.textContent = tt('暂无消息通知', 'No notifications');
-    list.appendChild(empty);
-    return;
-  }
-  for (const item of items) {
-    const text = item.querySelector('.notif-text')?.textContent || item.textContent || '';
-    const row = document.createElement('div');
-    row.className = 'mf-msgrow is-static';
-    const ic = document.createElement('span');
-    ic.className = 'mf-msgrow-ic';
-    ic.innerHTML = '<i data-lucide="bell"></i>';
-    const label = document.createElement('span');
-    label.className = 'mf-msgrow-label';
-    label.textContent = text.trim();
-    row.append(ic, label);
-    list.appendChild(row);
-  }
-  if (typeof lucide !== 'undefined') createIconsIn(list);
 }
 
 /** enableFriendPanels 回挂观察：面板节点出现在 #sidebar-panel 即补收编。 */

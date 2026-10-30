@@ -47,9 +47,10 @@ const SID = 'dock-root-session';
 
 test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, colorScheme: 'dark' });
 
-/** 静态路由 + WS 夹具（社交封存态：features 缺席 = friends 封存）。 */
-async function bootApp(page, { friends = false } = {}) {
-  await page.addInitScript(({ friends: f }) => {
+/** 静态路由 + WS 夹具（社交封存态：features 缺席 = friends 封存）。
+ *  `unread` = mock 会话未读数（真实未读链夹具，D14 数字角标用；默认 0）。 */
+async function bootApp(page, { friends = false, unread = 0 } = {}) {
+  await page.addInitScript(({ friends: f, unread: u }) => {
     localStorage.setItem('nebflow_token', 'e2e-token');
     localStorage.setItem('nebflow_locale', 'zh-CN');
     if (f) {
@@ -65,7 +66,7 @@ async function bootApp(page, { friends = false } = {}) {
         conversations: [
           {
             conversationId: 'c-p', friend: { userId: 'u-p', neblinkId: 'pagfriend', name: '分页君', avatarUrl: '' },
-            lastMessage: { id: 220, senderId: 'u-p', kind: 'text', body: '历史消息 #220', createdAt: Date.now() - 60e3 }, unreadCount: 0,
+            lastMessage: { id: 220, senderId: 'u-p', kind: 'text', body: '历史消息 #220', createdAt: Date.now() - 60e3 }, unreadCount: u,
           },
         ],
         messages: {
@@ -75,7 +76,7 @@ async function bootApp(page, { friends = false } = {}) {
         },
       }));
     }
-  }, { friends });
+  }, { friends, unread });
   await page.route('**/*', (route) => {
     const url = new URL(route.request().url());
     let p = decodeURIComponent(url.pathname);
@@ -247,6 +248,80 @@ test('D3 dock badge mirrors desktop badge streams (zero second source)', async (
   expect(errors).toEqual([]);
 });
 
+test('D13 messages key numeric badge (WeChat style): count mirrors desktop readout, 99+ cap, clears to hidden, top-right of icon', async ({ page }) => {
+  const errors = watchErrors(page);
+  const keySel = '#mobile-dock .dock-key[data-dock="messages"]';
+  const badgeSel = `${keySel} .dock-badge`;
+  // 起步：无未读 ⇒ 角标不出现（作者令「有新消息…加数字角标」= 条件显示）。
+  expect(await page.locator(badgeSel).isVisible()).toBe(false);
+  // 造桌面读数（桌面 setActivityBadge 已归一：>99 ⇒ '99+'，0 ⇒ hidden+空串；
+  // 手机层只镜像该读数，零换算 ⇒ 此处置真值后校验镜像）。
+  const writeDesktop = (hidden, text) => page.evaluate(({ h, tx }) => {
+    let b = document.getElementById('messages-badge');
+    if (!b) {
+      b = document.createElement('span');
+      b.id = 'messages-badge';
+      b.className = 'activity-badge';
+      document.querySelector('#messages-btn')?.appendChild(b) || document.body.appendChild(b);
+    }
+    b.hidden = h;
+    b.textContent = tx;
+  }, { h: hidden, tx: text });
+
+  // ① 出现 + 计数：未读 3 ⇒ 角标可见且读 '3'，形态 = 数字胶囊（is-count）。
+  await writeDesktop(false, '3');
+  await expect(page.locator(badgeSel)).toBeVisible();
+  await expect(page.locator(badgeSel)).toHaveText('3');
+  const form = await page.evaluate((sel) => {
+    const b = document.querySelector(sel);
+    const key = b.closest('.dock-key');
+    const br = b.getBoundingClientRect();
+    const kr = key.getBoundingClientRect();
+    const cs = getComputedStyle(b);
+    return {
+      isCount: b.classList.contains('is-count'),
+      radius: cs.borderRadius,
+      color: cs.color,
+      bg: cs.backgroundColor,
+      // 右上角：角标右缘越过图标中线，且顶缘落在键上部（图标行）。
+      rightOfCenter: br.left > kr.left + kr.width / 2,
+      inTopHalf: br.top < kr.top + kr.height / 2,
+    };
+  }, badgeSel);
+  expect(form.isCount).toBe(true);
+  expect(form.radius).toBe('999px');       // 微信式胶囊（>1 字符时）
+  expect(form.color).toBe('rgb(255, 255, 255)');
+  expect(form.bg).not.toBe('rgba(0, 0, 0, 0)');
+  expect(form.rightOfCenter).toBe(true);   // 「消息按钮的右上角」
+  expect(form.inTopHalf).toBe(true);
+
+  // ② 两位数 + 上限：读数 12 ⇒ '12'；99+ 原样镜像（不新造换算）。
+  await writeDesktop(false, '12');
+  await expect(page.locator(badgeSel)).toHaveText('12');
+  await writeDesktop(false, '99+');
+  await expect(page.locator(badgeSel)).toHaveText('99+');
+
+  // ③ 清零 ⇒ 角标消失（不是显示 '0'），is-count 摘除复位成纯红点形态。
+  await writeDesktop(true, '');
+  await expect(page.locator(badgeSel)).toBeHidden();
+  expect(await page.evaluate((sel) => {
+    const b = document.querySelector(sel);
+    return { text: b.textContent, isCount: b.classList.contains('is-count') };
+  }, badgeSel)).toEqual({ text: '', isCount: false });
+
+  // ④ 打开会话已读（真实清零腿）：桌面 updateBadge 在 markConvRead 后把徽标
+  //    置 hidden+空串 —— 角标随之熄灭（同一条镜像腿，零第二册判据）。
+  await writeDesktop(false, '2');
+  await expect(page.locator(badgeSel)).toHaveText('2');
+  await page.evaluate(() => {
+    const b = document.getElementById('messages-badge');
+    b.hidden = true;
+    b.textContent = '';
+  });
+  await expect(page.locator(badgeSel)).toBeHidden();
+  expect(errors).toEqual([]);
+});
+
 test('D4 canvas page: empty state on entry, doc cards via openTab (chips/stepper/close), #canvas-panel never displays', async ({ page }) => {
   const errors = watchErrors(page);
   // 空态：首开 canvas 页（无文档卡）= chip 条/工具条隐、空态卡显。
@@ -355,7 +430,7 @@ test('D9 retired floats zero-residue: dd columns/scrim/task-key gone, sheet DOM 
   expect(errors).toEqual([]);
 });
 
-test('D5 sealed state: messages/contacts pages show skeleton empty cards; messages page keeps the notification section', async ({ page }) => {
+test('D5 sealed state: messages/contacts pages show skeleton empty cards; messages page has NO notification section', async ({ page }) => {
   const errors = watchErrors(page);
   // 好友封存域 = 消息/联系人两面（中键改版批：消息页主体 = 跟联系人的对话消息，
   // 原独立「对话」面退役）。
@@ -376,21 +451,27 @@ test('D5 sealed state: messages/contacts pages show skeleton empty cards; messag
     expect(st.fmConv, id).toBe(0);
     expect(st.fmContacts, id).toBe(0);
   }
-  // 消息页 = 封存卡 + 通知段（非好友封存域，恒渲染；空态文案；段在封存卡之后）。
+  // 通知段退役（作者令 2026-10-30 08:29「这个图的消息的底部，通知是干嘛的，
+  // 我觉得不用显示」）：消息页**无**通知段 —— 段容器/标题/空态文案/镜像行
+  // 四层零残留，页面体最后子节点 = 封存卡（段曾恒追加在主体面之后）。
   await dockTo(page, 'messages');
   const notify = await page.evaluate(() => {
     const pg = document.querySelector('.mobile-page[data-page="messages"]');
-    const sec = pg.querySelector('.mf-notify-sec');
-    const sealed = pg.querySelector('.mf-social-sealed');
+    const body = pg.querySelector('.mobile-page-body');
+    const last = body.lastElementChild;
     return {
-      cap: sec?.querySelector('.mf-notify-cap')?.textContent,
-      empty: sec?.querySelector('.mf-notify-empty')?.textContent,
-      afterSealed: !!(sec && sealed && (sealed.compareDocumentPosition(sec) & Node.DOCUMENT_POSITION_FOLLOWING)),
+      sec: pg.querySelectorAll('.mf-notify-sec, .mf-notify-cap, .mf-notify-list, .mf-notify-empty').length,
+      msgrow: pg.querySelectorAll('.mf-msgrow').length,
+      text: pg.textContent.includes('通知') || pg.textContent.includes('暂无消息通知'),
+      lastClass: last ? last.className : '',
+      banner: document.querySelectorAll('#notification-banner').length, // 桌面源头仍在（非孤儿数据）
     };
   });
-  expect(notify.cap).toBe('通知');
-  expect(notify.empty).toBe('暂无消息通知');
-  expect(notify.afterSealed).toBe(true);
+  expect(notify.sec).toBe(0);
+  expect(notify.msgrow).toBe(0);
+  expect(notify.text).toBe(false);
+  expect(notify.lastClass).toContain('mf-social-sealed');
+  expect(notify.banner).toBe(1);
   expect(errors).toEqual([]);
 });
 
@@ -532,6 +613,37 @@ test.describe('friends-ON social pages', () => {
     await page.locator('.mobile-page[data-page="social"] .mobile-back-btn').click();
     await expect(page.locator('.mobile-page[data-page="social"]')).not.toHaveClass(/live/);
     await expect(page.locator('.mobile-page[data-page="contacts"]')).toHaveClass(/live/);
+    expect(errors).toEqual([]);
+  });
+});
+
+test.describe('friends-ON unread chain', () => {
+  test.beforeEach(async ({ page }) => {
+    await bootApp(page, { friends: true, unread: 1 });
+  });
+
+  test('D14 numeric badge on real unread chain: mock unread=1 paints "1" on the messages key; opening the conversation clears it', async ({ page }) => {
+    const errors = watchErrors(page);
+    const badgeSel = '#mobile-dock .dock-key[data-dock="messages"] .dock-badge';
+    // 真实未读链（mock 会话 unreadCount=1 ⇒ messages.js totalUnread →
+    // setActivityBadge('messages-btn') → 手机层镜像），零夹具直写徽标。
+    await expect(page.locator(badgeSel)).toBeVisible({ timeout: 8000 });
+    await expect(page.locator(badgeSel)).toHaveText('1');
+    // 进消息页 → 点会话 → 开窗即已读（markConvRead ⇒ 未读清零 ⇒ 角标熄灭）。
+    await dockTo(page, 'messages');
+    const row = page.locator('.mobile-page[data-page="messages"] .mobile-page-body #fm-conversations .fm-conv-row').first();
+    await expect(row).toBeVisible({ timeout: 8000 });
+    await row.click();
+    await expect(page.locator('.mobile-page[data-page="conversation"]')).toHaveClass(/live/);
+    await expect(page.locator(badgeSel)).toBeHidden({ timeout: 8000 });
+    // 返回消息页：会话列表未读数同步归零（角标与行徽标同一条读数额），
+    // 且页面无通知段（退役面不复活）。
+    await page.locator('.mobile-page[data-page="conversation"] .mobile-back-btn').click();
+    await expect(page.locator('.mobile-page[data-page="messages"]')).toHaveClass(/live/);
+    expect(await page.evaluate(() => ({
+      sec: document.querySelectorAll('.mobile-page[data-page="messages"] .mf-notify-sec').length,
+      rowBadge: document.querySelectorAll('.mobile-page[data-page="messages"] .fm-row-badge').length,
+    }))).toEqual({ sec: 0, rowBadge: 0 });
     expect(errors).toEqual([]);
   });
 });
