@@ -74,7 +74,8 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
     pane.classList.remove('scrollable'); // zoom/pan viewport manages its own overflow
 
     const wrap = document.createElement('div');
-    wrap.className = 'canvas-image-viewer';
+    // P0 §6 顶垫共享类（防胶囊遮挡；桌面常态零垫、手机层/环展开态垫）
+    wrap.className = 'canvas-image-viewer canvas-viewer-safe-top';
     // 「文件名+体积」标签行退役（2026-10-25 作者报障「胶囊底下文件名称重复显示」）：
     // canvas 顶带标题胶囊（icon + 文件名，split.css .canvas-title）恒在场且是唯一
     // 名称面 —— 本行渲染的「fileName — size」被胶囊叠住只露出边缘，形成同屏重复。
