@@ -19,7 +19,8 @@ import scala.util.control.NonFatal
  * 字段（本批任务字段表）：`{schema, name, kind, url?, pin?, version, digest, installedAt, via}`
  *  - `kind` ∈ official | git | https | local（local = 本地目录拷贝，非三态 spec 形态：字节
  *    在盘上，无「重取源」语义）；
- *  - `via` ∈ seed | official | git | local（seed = 随引擎分发内置字节）；
+ *  - `via` ∈ seed | official | git | https | local（seed = 随引擎分发内置字节；https =
+ *    P2 直链归档腿，additive 扩展——旧读端按闭合枚举降级 unknown-source）；
  *  - `pin` 两形态：git 源 = `{commit[, tag]}`（本批 install 腿记录 clone 后 HEAD 实测值）；
  *    seed 回填 = `{digest}`（「以当前 digest 为基线 pin」，任务字段表原文）。
  *  - `history` 由 update 腿（P2/P3）追加（滚动裁剪 N=10，§2.4）；本批 reader 对文件内
@@ -64,6 +65,8 @@ object PluginSourceLedger:
     case Seed extends Via("seed")
     case Official extends Via("official")
     case Git extends Via("git")
+    /** 直链归档安装（P2 https 腿；additive——旧读端遇该值按闭合枚举降级 unknown-source，诚实不猜）。 */
+    case Https extends Via("https")
     case Local extends Via("local")
 
   object Via:
@@ -73,6 +76,13 @@ object PluginSourceLedger:
   enum Pin:
     case Commit(tag: Option[String], commit: String)
     case DigestBasis(digest: String)
+
+    /** 投影用（REST/CLI 读面；与写面 pinJson 同形——单一序列化形态）。 */
+    def toJson: io.circe.Json = this match
+      case Commit(tag, commit) =>
+        val o = JsonObject.empty.add("commit", commit.asJson)
+        Json.fromJsonObject(tag.fold(o)(t => o.add("tag", t.asJson)))
+      case DigestBasis(digest) => Json.obj("digest" -> digest.asJson)
 
   /** 单包账本条目（字段表见类注释；`url`/`pin` 可缺席——缺席 ≠ null，不出现在 JSON 里）。 */
   final case class Entry(
@@ -209,7 +219,7 @@ object PluginSourceLedger:
       for
         name <- requiredStr(c, "name")
         kind <- requiredStr(c, "kind").flatMap(l => Kind.fromLabel(l).toRight(s"unknown ledger kind '$l' (expected: official | git | https | local)"))
-        via <- requiredStr(c, "via").flatMap(l => Via.fromLabel(l).toRight(s"unknown ledger via '$l' (expected: seed | official | git | local)"))
+        via <- requiredStr(c, "via").flatMap(l => Via.fromLabel(l).toRight(s"unknown ledger via '$l' (expected: seed | official | git | https | local)"))
         version <- requiredStr(c, "version")
         digest <- requiredStr(c, "digest")
         _ <- Either.cond(digest.matches(Hex64), (), s"digest must be 64-hex, got '${digest.take(12)}…'")
