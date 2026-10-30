@@ -220,7 +220,7 @@ object MemoryBudget:
        |Budget is enforced on the WRITE side (injection is never truncated — over-budget memory silently degrades every future session instead).
        |Consolidate first, then write. Largest sections:
        |${topSections(newContent)}
-       |Trim stale/duplicate entries in place (the append and the remove/update are paired in the same round; memory-consolidation skill), or demote detail into ~/.stand/memory/<id>.md files.
+       |Trim stale/duplicate entries in place (the append and the remove/update are paired in the same round; memory-consolidation skill).
        |A write that shrinks the file stays exempt from the hard cap. (MEMORYEDIT_BUDGET)""".stripMargin
   end exceededMessage
 
