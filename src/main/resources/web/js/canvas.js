@@ -1481,6 +1481,23 @@ export async function openWorkspaceItem(item) {
   // showing a blank tab. The fileContent handler will dispatch a new
   // workspace-open-item with full content and correct itemType.
   if (content === '' && itemType === '' && absPath) {
+    // 手机端自动弹页修复（作者报障 2026-10-30 12:30「点了不自动弹 canvas」）：
+    // 原先把「开面板」完全押在 pop.readFile → fileContent 应答之后的 openTab
+    // 里——应答一慢（手机网络）或时序一丢，点击零反馈，用户手动开面板后才看到
+    // 内容。更隐蔽的根因：boot 恢复腿（restoreTabs）在手机端把 canvas-open 永久
+    // 置真（移动层离开 canvas 页从不摘 body 类），「canvas-open 上升沿」这个
+    // 自动弹页触发源对已恢复会话**永不复现**——只剩应答驱动的 tab-switched
+    // 一根独腿。故点击瞬间同步：①开面板（桌面即时反馈 + 闭合时造上升沿）；
+    // ②发显式用户意图事件 nf:canvas-open-intent（移动层直收、绕过启动抑制闸
+    // ——它天生是用户点击，不是 boot 恢复）；③记旗补「点击早于层挂载」竞态。
+    // background 腿仍不抢面板。
+    if (!item.background) {
+      if (!isCanvasOpen()) openCanvas();
+      try {
+        (/** @type {any} */ (window)).__nfPendingCanvasOpen = Date.now();
+        document.dispatchEvent(new CustomEvent('nf:canvas-open-intent'));
+      } catch { /* ignore */ }
+    }
     // #303 C3: a document-reference jump carries a page anchor — stash it so
     // it survives the readFile round trip (the response item has no anchor)
     // and is consumed at render time below. The wiki-graph batch widened the

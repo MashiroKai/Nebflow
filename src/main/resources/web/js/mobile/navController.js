@@ -1155,13 +1155,40 @@ function watchCanvasEvents() {
   // 触发源 = 画板 open 类的 **false→true 迁移沿** + canvas-tab-switched
   // （已开画板时点文件卡 = openCanvas 幂等无类变化，靠切卡事件补触发）。
   let bootedAt = Date.now();
-  const maybeAdopt = (why) => {
-    if (bootedAt && Date.now() - bootedAt <= 3000) return;
+  const clearPending = () => {
+    try { (/** @type {any} */ (window)).__nfPendingCanvasOpen = 0; } catch { /* ignore */ }
+  };
+  // 显式收养（无启动抑制闸）：nf:canvas-open-intent = 用户点击 Pop/文件卡的即时
+  // 意图（canvas.js Pop 重开腿派发）——点击不可能是 boot 恢复，故不受 3s 窗约束；
+  // 「canvas-open 已真」的老会话（restoreTabs 恢复后腿）也只有这条路能自动弹页。
+  const adoptNow = (why) => {
     if (!document.body.classList.contains('canvas-open')) return;
     if (stack[stack.length - 1] === 'canvas') return;
+    clearPending();
     logEvent('canvas-open-adopt', { why });
     dockTo('canvas');
   };
+  const maybeAdopt = (why) => {
+    if (bootedAt && Date.now() - bootedAt <= 3000) return;
+    adoptNow(why);
+  };
+  const onIntent = () => adoptNow('open-intent');
+  document.addEventListener('nf:canvas-open-intent', onIntent);
+  // 点击早于本层挂载的竞态补放（canvas.js Pop 重开腿记旗）：慢机冷启时用户在
+  // navController 挂载前点完 Pop 图片——open 沿与切卡事件都已错过，无回放则
+  // 「点了不弹、手动开才弹」。旗 = 显式用户开卡意图（boot 恢复不记旗），不受
+  // 上方 3s 启动抑制闸约束； freshness 30s + canvas-open 在场双判据，陈旧旗/
+  // 用户已手动关面板都不拽页。
+  try {
+    const pending = (/** @type {any} */ (window)).__nfPendingCanvasOpen;
+    if (pending && Date.now() - pending < 30000 && document.body.classList.contains('canvas-open')) {
+      clearPending();
+      if (stack[stack.length - 1] !== 'canvas') {
+        logEvent('canvas-open-adopt', { why: 'pending-replay' });
+        dockTo('canvas');
+      }
+    }
+  } catch { /* ignore */ }
   const onSwitch = () => { syncCanvasPage(); maybeAdopt('tab-switched'); };
   document.addEventListener('canvas-tab-switched', onSwitch);
   document.addEventListener('canvas-tab-closed', () => { syncCanvasPage(); maybeAdopt('tab-closed'); });
@@ -1184,6 +1211,7 @@ function watchCanvasEvents() {
     document.removeEventListener('canvas-tab-switched', onSwitch);
     document.removeEventListener('canvas-tab-closed', onSwitch);
     document.removeEventListener('canvas-independent-changed', onSwitch);
+    document.removeEventListener('nf:canvas-open-intent', onIntent);
     mo.disconnect();
   });
 }
