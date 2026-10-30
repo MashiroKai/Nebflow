@@ -89,10 +89,12 @@ const FILE_CONTENTS = new Map([
 
 function makeServerWsMocks(ctx) {
   return ctx.routeWebSocket(/\/ws/, (ws) => {
-    // graphseal 闸（2026-10-29 批后默认 OFF，#wiki-btn boot 摘挂）——本 spec 的
-    // wiki 图谱腿需显式 latch flag 回挂入口（存量红清欠：graphseal 批前本 spec
-    // 靠裸 #wiki-btn 直点，封存后无 flag 时按钮不在 DOM，wiki 腿整体红）。
-    ws.send(JSON.stringify({ type: 'configData', config: '{"features":{"wikiGraph":true}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
+    // graphseal 批（2026-10-29，作者手写想法①）：wiki 图谱入口默认封存
+    // （activityBar.js boot 摘 #wiki-btn）——重挂 = configData 首帧 latch
+    // features.wikiGraph:true（featureFlags.js wikiGraphEnabled，零改码恢复）。
+    // 合并注记：graphseal 夹具两侧同义双写（main 侧为字符串字面量），取本批
+    // JSON.stringify 写法，语义等价。
+    ws.send(JSON.stringify({ type: 'configData', config: JSON.stringify({ features: { wikiGraph: true } }), configured: true, onboarding: 'done', models: [], defaults: {} }));
     ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: 'sess-1', agentName: 'Nebula', title: 'T', updatedAt: Date.now() }], activeId: 'sess-1', folders: [] }));
     ws.onMessage((raw) => {
       let m; try { m = JSON.parse(raw); } catch { return; }
@@ -323,6 +325,9 @@ const activate = async (page, tabId) => { await page.evaluate((id) => document.q
     (sap.match(/--capsule-h:\s*36px/g) || []).length === 1
     && (sap.match(/--capsule-w:\s*180px/g) || []).length === 1,
     `h=${(sap.match(/--capsule-h:\s*36px/g) || []).length} w=${(sap.match(/--capsule-w:\s*180px/g) || []).length}`);
+  // 合并注记：本批 w-ref 恒 3 锚写于其基线（ef25d4e3a，扇卡批未落）；合流树
+  // split.css 已被扇卡批重锚（.cr-capsule 卡面 220px 有意字面量、token 消费
+  // 5 处全回落 36px），故 F6b 取 main 侧锚（w-ref=1/h-ref=5 精确计数）。
   ok('F6b 标题头胶囊消费 token（split.css：var(--capsule-w) 1 处〔标题头 width〕+ var(--capsule-h) 5 处〔标题头 height/卡窗胶囊/内容顶垫档〕—— 扇卡批 2026-10-30 后 .cr-capsule 卡面 220px 为有意字面量规格〔Pop 扇卡同套卡面，F4b 钉〕，不再消费胶囊 token）',
     (split.match(/var\(--capsule-w/g) || []).length === 1
     && (split.match(/var\(--capsule-h/g) || []).length === 5,

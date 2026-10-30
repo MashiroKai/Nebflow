@@ -623,7 +623,9 @@ button.fm-req-decline:focus-visible {
      · 圆角 —— `.fm-modal` = 20px，与主窗口弹窗族（`.cfg-modal` / `#settings-modal` /
        `#search-modal`，均 20px）**逐值相等**（既有，未改）。
      · 标题区距 —— 由 `14px 16px 10px` 对齐到主窗口标题带
-       `padding: 14px 14px 12px 20px`（`.settings-modal-header` / `.search-modal-header`）。
+       `padding: 12px 16px 12px 20px`（`.settings-modal-header` / `.search-modal-header`；
+       2026-10-30 收敛批随主窗重钉——主窗值由 3dae0857c 控制台设计语言批改为
+       `12px 16px 12px 20px`，本面同步收敛，parity 锚保持逐值相等）。
      · 标题字重/字号 —— 500 → **600**（主窗口 `#settings-modal-title` / `#search-modal-title`
        = 15px/600；亦合设计系统「标题 600」铁律）。
      · 标题色 —— `--color-text` → `--color-frame-text-bright`（主窗口弹窗标题同款 token；
@@ -638,7 +640,7 @@ button.fm-req-decline:focus-visible {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 14px 12px 20px;
+  padding: 12px 16px 12px 20px;
 }
 
 /* 会话窗头头像槽（40px 档；**窗头头像槽**，三类全挂（作者 2026-09-21 16:54 令

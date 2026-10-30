@@ -17,6 +17,11 @@
 //        display:none），列表节点由 bgMergedPanel.js 收编进载体
 //        （载体桌面头「后台任务」= 第一分组题 + 「智能体」分组签）；收口 =
 //        页面返回钮（closePageFace 置 hidden → CLOSE_WATCH 对账弹栈，见 T3）。
+//   T2/T3 重锚 2026-10-30（存量红挂账清零批）：后台面板两分区换代
+//        （8864ecb9c 面板分区批 2026-10-29 ③ · 作者报障「后台任务会和子智能体
+//        混在一起」）—— 任务/智能体两列表各居 .bg-section-tasks /
+//        .bg-section-agents section 内，不再做 #bg-dropdown 直子；分区签带
+//        实时行数（n=0 时签 hidden；n>0 文案 = 「智能体 · N」）。
 //   开放点④ 远程 chip …… .bg-task-kind（bg.kind.remote = 远程）。
 //   开放点③ 资源占用条 …… 后端无 CPU/内存/网络字段，不实施不伪造（见实施 spec）。
 //
@@ -172,7 +177,8 @@ test('T1 page geometry: adopted full-bleed in background page, ghost retired (do
 test('T2 task rows: status word / origin chip / local·remote kind chip / lines / uptime (open point ②④)', async ({ page }) => {
   const errors = watchErrors(page);
   await openViaHub(page);
-  const rows = page.locator('#bg-dropdown > .bg-dropdown-list').first().locator('.bg-task-row');
+  // 面板分区批换代：任务列表居 .bg-section-tasks 内（非 #bg-dropdown 直子）。
+  const rows = page.locator('#bg-dropdown .bg-section-tasks .bg-dropdown-list').first().locator('.bg-task-row');
   await expect(rows).toHaveCount(3);
 
   // 行 1：运行中 + Nebula origin + 本地 chip + 行数 + 时长。
@@ -189,11 +195,15 @@ test('T2 task rows: status word / origin chip / local·remote kind chip / lines 
   // 行 3：卡死阈值沿用（idle>10min → 超过 10 分钟无输出）。
   await expect(rows.nth(2).locator('.bg-task-state')).toHaveText('超过 10 分钟无输出');
 
-  // 分组题：载体桌面头 = 第一分组题（renderBgDropdown 写活计数），收编列表前一枚「智能体」签。
+  // 分组题：任务节头「后台任务 · N」（renderBgDropdown 写活计数）。
   await expect(page.locator('#bg-dropdown .bg-dropdown-header')).toHaveText('后台任务 · 3');
-  const grps = page.locator('#bg-dropdown .mh-bg-grp');
-  await expect(grps).toHaveCount(1);
-  expect(await grps.nth(0).textContent()).toBe('智能体');
+  // 智能体节：本夹具未种子智能体 ⇒ 空节收签（签 hidden，n=0 无「· N」后缀）。
+  const agentsSec = page.locator('#bg-dropdown .bg-section-agents');
+  await expect(agentsSec).toHaveCount(1);
+  const grp = agentsSec.locator('.mh-bg-grp');
+  await expect(grp).toHaveCount(1);
+  await expect(grp).toBeHidden();
+  expect(await grp.textContent()).toBe('智能体');
   // dock 批换代：桌面图标键（#bg-indicator）属手机层退场簇 —— 键可见性断言
   // 退役；计数读数 = 页内「后台任务 · 3」头（上行已断言）。
   expect(errors).toEqual([]);
@@ -208,13 +218,19 @@ test('T3 merge: agents group rides the CARRIER page (ghost stays retired), back-
   await openViaHub(page);
   await expect(page.locator('#bgagent-dropdown')).toBeHidden();
 
-  // 收编断言：智能体分组签 + 子智能体行在载体内（列表节点 re-parent）。
-  const agentsGrp = page.locator('#bg-dropdown .mh-bg-grp', { hasText: '智能体' });
-  await expect(agentsGrp).toHaveCount(1);
-  const adoptedList = page.locator('#bg-dropdown > .bg-dropdown-list').last();
+  // 收编断言：智能体分组签 + 子智能体行在载体内（列表节点 re-parent 进
+  // .bg-section-agents；分区签带实时行数「智能体 · 1」）。
+  const agentsSec = page.locator('#bg-dropdown .bg-section-agents');
+  await expect(agentsSec).toHaveCount(1);
+  const grp = agentsSec.locator('.mh-bg-grp');
+  await expect(grp).toHaveCount(1);
+  await expect(grp).toBeVisible();
+  expect(await grp.textContent()).toBe('智能体 · 1');
+  const adoptedList = agentsSec.locator('.bg-dropdown-list');
   await expect(adoptedList.locator('.bg-task-row', { hasText: '调研子agent' })).toHaveCount(1);
-  // 收编列表 = 幽灵面的原列表节点（identity 保持 → 桌面重渲命中）：其父 = 载体。
-  expect(await adoptedList.evaluate((el) => el.parentElement?.id || '')).toBe('bg-dropdown');
+  // 收编列表 = 幽灵面的原列表节点（identity 保持 → 桌面重渲命中）：其节 = 载体
+  // 内智能体分区（列表不再做 #bg-dropdown 直子）。
+  expect(await adoptedList.evaluate((el) => el.parentElement?.className || '')).toBe('bg-section bg-section-agents');
 
   // 关（dock 批真路径）：页面返回钮 → closePageFace 置 hidden → CLOSE_WATCH
   // 对账弹栈（回工作台根页）—— 收口语义 = 页面栈同源，零新增开合路径。
@@ -227,7 +243,7 @@ test('T3 merge: agents group rides the CARRIER page (ghost stays retired), back-
   await openViaHub(page);
   await expect(page.locator('#bgagent-dropdown')).toBeHidden();
   await expect(adoptedList.locator('.bg-task-row', { hasText: '调研子agent' })).toHaveCount(1);
-  expect(await adoptedList.evaluate((el) => el.parentElement?.id || '')).toBe('bg-dropdown');
+  expect(await adoptedList.evaluate((el) => el.parentElement?.className || '')).toBe('bg-section bg-section-agents');
   expect(errors).toEqual([]);
 });
 

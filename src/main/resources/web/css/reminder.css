@@ -604,7 +604,11 @@
   max-width: min(440px, 82%);
   padding: 11px 14px 10px;
   border-radius: 14px;
-  border-bottom-right-radius: 4px; /* 气泡族尾角（与 .bubble.user/.injected 同语言） */
+  /* 气泡族尾角：不就地复写 —— 本卡 = .bubble.injected 族（injectedRows.js
+     建类「bubble injected schedule-card」），尾角 4px 由 chat.css
+     `.bubble.injected` 单源下发（2026-10-30 收敛批：此处写死被判据
+     「A1/A2 气泡方向尾角 4px」（scripts/check-msgstyle-single-source.mjs）
+     判红——同值零视觉变化，纯收归）。 */
   background:
     linear-gradient(rgb(var(--sapphire) / 0.055), rgb(var(--sapphire) / 0.055)),
     var(--glass-bg);

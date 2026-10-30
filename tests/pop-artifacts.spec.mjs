@@ -432,15 +432,20 @@ test.describe('UI-G — subagent window: no added periodic refresh', () => {
     });
 
     const moduleRaf = read.subagent.raf - read.baseline.raf;
-    // The one module-side frame in this sequence is chat.js appendThinkingDelta's
-    // COALESCED one-shot (`if (!_pendingThinkingRAF) _pendingThinkingRAF = rAF(…)`
-    // — a pending-flag guard, the callback self-clears): 1 frame, never a loop.
-    // A loop would grow with the await count; 1 does not.
+    // The module-side frames in this sequence are TWO COALESCED ONE-SHOTS, not a
+    // loop (re-anchored 2026-10-30: bound was 1, quote 批 added the 2nd — first
+    // seen in checkpoint a0f2edfc7/2026-10-10 — both are pending-flag-guarded, self-clearing, and fire identically in the
+    // primary role; a loop would grow with the await count, these stay constant):
+    //   ① chat.js appendThinkingDelta's `_pendingThinkingRAF` one-shot
+    //     (`if (!_pendingThinkingRAF) _pendingThinkingRAF = rAF(…)`);
+    //   ② msgQuote.js scheduleQuoteButtonMount's `_btnMountRaf` one-shot
+    //     (armed by renderTool → tagQuotableRow on EVERY window role — same code,
+    //     two roles; multi-row coalesces into ONE callback via the Set).
     expect(moduleRaf,
       `no rAF loop: the module scheduled ${moduleRaf} frame(s) over `
       + `${read.subagent.raf} total (harness baseline ${read.baseline.raf}); `
-      + 'a coalescing one-shot is 1, a loop grows with the step count')
-      .toBeLessThanOrEqual(1);
+      + 'two coalescing one-shots = 2, a loop grows with the step count')
+      .toBeLessThanOrEqual(2);
     expect(read.subagent.interval,
       'the subagent window armed NO setInterval (the dots live-seconds timer is gated)')
       .toBe(0);

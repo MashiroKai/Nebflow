@@ -1486,7 +1486,11 @@ body.mobile-layer #mobile-pages .ud-curve {
 /* 设置模态主键同规格覆盖保留（cfg-btn-primary = v3.6①「绿键全面退役」规格）。 */
 body.mobile-layer #settings-modal .cfg-btn-primary {
   background: #111827;
-  color: #fff;
+  /* 2026-10-30 按钮量产批登记收敛项：主操作墨色单源 token --btn-primary-ink
+     （btnsweep 批落地的五类具名 token 族，sapphire.css）——墨族字面量 #fff 收归
+     消费，改墨色一处全量同步。（暗色媒体腿 #13161c = 浅面上的反极墨，无既有
+     token，不在本登记项内。） */
+  color: var(--btn-primary-ink);
   border-color: transparent;
   font-weight: 500;
   box-shadow: none;

@@ -245,8 +245,24 @@ await page.waitForTimeout(150);
 const actives = await page.locator('#search-results .search-result').evaluateAll(els => els.map(e => e.classList.contains('active')));
 check('A4 ArrowDown moves active to 2nd', actives[1] === true && actives[0] === false, JSON.stringify(actives));
 await page.keyboard.press('Enter');
-await page.waitForTimeout(300);
-check('A4 Enter closes modal', await page.locator('#search-overlay.on').count() === 0);
+await page.waitForTimeout(600);   // float: history fetch + window render
+// 换代重锚（key-based lookup rework 批，chatSearch.js Enter 分支）：Enter =
+// 激活当前行跳转，**不再关窗** —— 消息行开浮窗（chatSearchFloat
+// .nf-msgfloat，modal 保持打开）；Pop 产物行才走「关窗 + 开产物」腿。
+check('A4 Enter 激活当前行（换代：Enter=跳转非关窗，modal 保持打开 + 消息浮窗落地）',
+  (await page.locator('#search-overlay.on').count()) === 1 &&
+  (await page.locator('.nf-msgfloat').count()) === 1,
+  `modal=${await page.locator('#search-overlay.on').count()} float=${await page.locator('.nf-msgfloat').count()}`);
+const floatText = await page.locator('.nf-msgfloat .nf-msgfloat-chat').innerText().catch(() => '');
+check('A4 浮窗渲染命中窗口（seed history 同源直读）', floatText.trim().length > 0, floatText.slice(0, 40).replace(/\s+/g, ' '));
+
+// 清场：关浮窗（自身 ✕）+ Esc 关 modal（kw 已空 ⇒ 单 Esc 关窗）——A8 focus
+// trap 腿需要 modal 从关态重开（#search-btn 点击 = 开合 toggle）。
+await page.click('.nf-msgfloat-close');
+await page.keyboard.press('Escape');
+await page.waitForTimeout(200);
+check('A4 清场：浮窗 + modal 全关', (await page.locator('.nf-msgfloat').count()) === 0
+  && (await page.locator('#search-overlay.on').count()) === 0);
 
 // A8 regression: focus trap — 20 Tabs never leave the modal subtree
 await page.click('#search-btn');

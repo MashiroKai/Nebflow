@@ -12,7 +12,8 @@
 //   CW4 关窗等价 —— 卡窗被外部关闭（page.close() = 用户 ×）→ 主窗 win.closed
 //        轮询（600ms）走同一条 mergeCardWindow → 状态与 CW3 终态全等；
 //   CW5 reduced-motion —— 直切降级：无 pop/merge 动画类，合并即时完成；
-//   CW6 手机 375 —— 卡片头 .mobile-card-pop（navController 腿）：新标签页姿态
+//   CW6 手机 375 —— canvas 页工具条 .mf-cv-pop（navController 腿；2026-10-30
+//        重锚：dock 批换代 .mobile-card-pop 退役）：新标签页姿态
 //        （window.open 无 features）、独立/合并同链路，标记与回笼一致。
 //
 // 断言通道 = window.__canvasDeck.state()（cardWindowMode / independent / tabCount /
@@ -306,36 +307,43 @@ const ALPHA = '/tmp/cw-fixture/alpha.md';
   await ctx.close();
 }
 
-/* ════════ CW6 手机 375（卡片头腿：新标签页姿态直切）════════ */
+/* ════════ CW6 手机 375（canvas 页工具条腿：新标签页姿态直切）════════ */
+// 重锚 2026-10-30（存量红挂账清零批）：dock 批（894874bd8）换代——mh-dd 卡片
+// 层面整族退役（画布 = 独立整页），手机卡头 toggle 由 navController canvas 页
+// 工具条 .mf-cv-pop 承担（原 .mobile-card-pop 随 mh-dd 退场，split.css 仅余
+// 死规则）；开文件即自动进 canvas 页，钮形换「合并」= is-independent 类图标
+// 互换（title 恒「独立窗口打开」，形态由类承担）。
 {
   const { ctx, page, errors } = await boot({ colorScheme: 'dark', viewport: { width: 375, height: 812 } });
   const mobile = await page.evaluate(() => document.body.classList.contains('mobile-layer'));
   await openFile(page, ALPHA);
   await openFile(page, BRAVO);
-  // 开卡片层（移动层画布卡片形态）
-  await page.evaluate(() => {
-    const key = document.querySelector('.mh-dd[data-dd="right"] [data-face="canvas"]');
-    if (key) key.click();
-  });
-  await sleep(900);
-  await page.waitForSelector('.mobile-card-pop', { timeout: 8000 });
+  // 开文件 ⇒ 手机层自动进 canvas 页（启动抑制窗内未弹 ⇒ dock canvas 键补上）。
+  await page.waitForSelector('.mobile-page[data-page="canvas"]', { state: 'attached', timeout: 8000 });
+  const onCanvas = await page.evaluate(() =>
+    document.querySelector('.mobile-page[data-page="canvas"]')?.classList.contains('live'));
+  if (!onCanvas) await page.click('#mobile-dock .dock-key[data-dock="canvas"]');
+  await page.waitForSelector('.mf-cv-pop', { state: 'visible', timeout: 8000 });
   const popVisible = await page.evaluate(() => {
-    const b = document.querySelector('.mobile-card-pop');
+    const b = document.querySelector('.mf-cv-pop');
     return !!b && b.hidden === false;
   });
-  ok('CW6-1 手机卡头 toggle 在位（文件卡卡头可见）', mobile && popVisible, `mobile=${mobile} visible=${popVisible}`);
-  const popup = await waitPopup(ctx, () => page.click('.mobile-card-pop'));
+  ok('CW6-1 手机工具条 toggle 在位（文件卡活动 ⇒ .mf-cv-pop 可见）', mobile && popVisible, `mobile=${mobile} visible=${popVisible}`);
+  const popup = await waitPopup(ctx, () => page.click('.mf-cv-pop'));
   await sleep(400);
   const s6 = await stateOf(page);
   const popShape = await page.evaluate(() => {
-    const b = document.querySelector('.mobile-card-pop');
-    return { indep: b.classList.contains('is-independent'), title: b.title };
+    const b = document.querySelector('.mf-cv-pop');
+    if (!b) return null;
+    const disp = (sel) => { const el = b.querySelector(sel); return el ? getComputedStyle(el).display : 'missing'; };
+    // 钮形换「合并」= is-independent 类图标互换（pop 图标隐 / merge 图标显）。
+    return { indep: b.classList.contains('is-independent'), popIcon: disp('.pop-ic-pop'), mergeIcon: disp('.pop-ic-merge'), title: b.title };
   });
-  ok('CW6-2 手机新标签页姿态：卡窗弹出 + 主窗标记 + 钮形换「合并」',
+  ok('CW6-2 手机新标签页姿态：卡窗弹出 + 主窗标记 + 钮形换「合并」（is-independent 图标互换）',
     popup.url().includes('card-window=1') && s6.independent.length === 1 &&
-    popShape.indep && popShape.title === '合并回主窗',
+    !!popShape && popShape.indep && popShape.popIcon === 'none' && popShape.mergeIcon !== 'none' && popShape.mergeIcon !== 'missing',
     `url=${popup.url().slice(-40)} indep=${JSON.stringify(s6.independent)} btn=${JSON.stringify(popShape)}`);
-  await page.click('.mobile-card-pop');
+  await page.click('.mf-cv-pop');
   await sleep(700);                        // 卡窗 out 动画 180ms + close 落定
   const s7 = await pollUntil(page, (x) => x.independent.length === 0);
   ok('CW6-3 手机合并回笼：卡窗关 + 标记清（同链路等价）',
