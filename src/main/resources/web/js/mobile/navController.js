@@ -1084,15 +1084,30 @@ function paintDockCenterAvatar() {
 }
 
 /** 徽标镜像：桌面徽标读数（#messages-badge/#contacts-badge，手机层按钮不可见
- *  但 WS 计数流照写）→ dock 红点。零新轮询、零第二判据。 */
+ *  但 WS 计数流照写）→ dock 徽标。零新轮询、零第二判据。
+ *
+ *  数字角标（作者令 2026-10-30 08:29 逐字「就像微信一样就行了，有新消息在消息
+ *  按钮的右上角加数字角标就行」）：消息键 = **数字角标**，读数与文案逐字取桌面
+ *  `#messages-badge`（messages.js `updateBadge` → `setActivityBadge` 已归一
+ *  「>99 ⇒ 99+」+ 空串/0 ⇒ hidden），手机层零换算零第二实现。联系人键口径不变
+ *  （布尔红点 —— 该键语义 = 好友待处理请求，非「新消息」，作者令只针对消息键）。
+ *
+ *  🔴 写回必须**幂等**（同值不写）：`watchDockBadges` 挂的是 body 子树
+ *  childList 观察器，而 `textContent =` 无论值是否相同都会重建子节点 ——
+ *  无守卫的赋值 = 自触发无限循环（本轮实测：D3 3 分钟超时、页面假死）。 */
 function applyDockBadges() {
   const msgs = document.getElementById('messages-badge');
   const cts = document.getElementById('contacts-badge');
-  const setBadge = (dockId, on) => {
+  const setBadge = (dockId, on, text = '') => {
     const b = /** @type {HTMLElement|null} */ (dockKeys.get(dockId)?.querySelector('.dock-badge'));
-    if (b) b.hidden = !on;
+    if (!b) return;
+    const want = on ? text : '';
+    if (b.hidden !== !on) b.hidden = !on;
+    if (b.textContent !== want) b.textContent = want;
+    b.classList.toggle('is-count', on && text !== ''); // 数字角标形态 vs 纯红点
   };
-  setBadge('messages', !!msgs && !msgs.hidden && msgs.textContent !== '');
+  const msgOn = !!msgs && !msgs.hidden && msgs.textContent !== '';
+  setBadge('messages', msgOn, msgOn ? String(msgs.textContent) : '');
   setBadge('contacts', !!cts && !cts.hidden && cts.textContent !== '');
 }
 
