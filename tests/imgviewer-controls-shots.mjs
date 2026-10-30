@@ -111,7 +111,13 @@ async function runTheme(browser, tag, colorScheme) {
   });
   const lap = (a, b) => (!a || !b) ? 0 : Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
   const P = geo.panel;
-  ok(`${tag} G1 胶囊居左（左缘落面板左侧 1/3）`, geo.header && geo.header.x - P.x < (P.width / 3), `dx=${(geo.header.x - P.x).toFixed(0)} panelW=${P.width.toFixed(0)}`);
+  // 换代重锚（2026-10-30 存量红挂账清零批）：标题头 = 居中浮层胶囊（UI批⑨
+  // 胶囊批 cbaec5364「标题头实条→浮层胶囊 absolute top10 居中 + fit-content」，
+  // glass 族同判据 GU3-1「卡窗胶囊行水平居中」）——旧「居左（左缘落面板左
+  // 1/3）」是实条时代判据，已退役。实测居中读数 dx=(panelW−180)/2=226。
+  const capCx = geo.header ? geo.header.x + geo.header.w / 2 : NaN;
+  const panelCx = P.x + P.width / 2;
+  ok(`${tag} G1 标题胶囊水平居中（换代：浮层胶囊 absolute top10 居中，±3px）`, geo.header && Math.abs(capCx - panelCx) <= 3, `cx=${capCx.toFixed(1)} pcx=${panelCx.toFixed(1)}`);
   ok(`${tag} G2 缩放条底右（底缘距面板底 <40px）`, geo.zoom && (P.y + P.height) - (geo.zoom.y + geo.zoom.h) < 40 && (P.x + P.width) - (geo.zoom.x + geo.zoom.w) < 200,
     `db=${(P.y + P.height - geo.zoom.y - geo.zoom.h).toFixed(0)} dr=${(P.x + P.width - geo.zoom.x - geo.zoom.w).toFixed(0)}`);
   ok(`${tag} G3 fab 可见且顶右（回退批 2026-10-22：移位批右下 → 迁回顶右原位）`,

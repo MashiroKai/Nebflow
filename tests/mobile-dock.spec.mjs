@@ -59,9 +59,11 @@ test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, colorScheme: '
  *  `friends:false`（缺省）= 缺省开放（未登录 ⇒ 消息/联系人页 = 桌面面登录态）；
  *  `friends:true`  = 好友 LIVE（fm_api_mock + features.friends:true）；
  *  `sealed:true`   = 显式再封（features.friends:false ⇒ 封存空态卡面）。
- *  `unread` = mock 会话未读数（真实未读链夹具，D14 用；默认 0）。 */
-async function bootApp(page, { friends = false, unread = 0, sealed = false } = {}) {
-  await page.addInitScript(({ friends: f, unread: u }) => {
+ *  `unread` = mock 会话未读数（真实未读链夹具，D14 用；默认 0）。
+ *  `pendingAsk` = 该会话未读里点名作者行动的条数（认知二期可行动判据夹具，
+ *    D14 用；默认 0 —— 纯未读不上徽标，见 messages.js actionableUnread）。 */
+async function bootApp(page, { friends = false, unread = 0, pendingAsk = 0, sealed = false } = {}) {
+  await page.addInitScript(({ friends: f, unread: u, pendingAsk: pa }) => {
     localStorage.setItem('nebflow_token', 'e2e-token');
     localStorage.setItem('nebflow_locale', 'zh-CN');
     // harness：stub 掉 SW 注册（swReg.js 在 localhost 安全上下文 register /sw.js；
@@ -82,6 +84,7 @@ async function bootApp(page, { friends = false, unread = 0, sealed = false } = {
           {
             conversationId: 'c-p', friend: { userId: 'u-p', neblinkId: 'pagfriend', name: '分页君', avatarUrl: '' },
             lastMessage: { id: 220, senderId: 'u-p', kind: 'text', body: '历史消息 #220', createdAt: Date.now() - 60e3 }, unreadCount: u,
+            pendingAskCount: pa,
           },
         ],
         messages: {
@@ -91,7 +94,7 @@ async function bootApp(page, { friends = false, unread = 0, sealed = false } = {
         },
       }));
     }
-  }, { friends, unread, sealed });
+  }, { friends, unread, pendingAsk, sealed });
   await page.route('**/*', (route) => {
     const url = new URL(route.request().url());
     let p = decodeURIComponent(url.pathname);
@@ -644,18 +647,20 @@ test.describe('friends-ON social pages', () => {
 });
 
 test.describe('friends-ON unread chain', () => {
-  test.beforeEach(async ({ page }) => {
-    await bootApp(page, { friends: true, unread: 1 });
-  });
-
-  test('D14 numeric badge on real unread chain: mock unread=1 paints "1" on the messages key; opening the conversation clears it', async ({ page }) => {
+  // 认知二期产品批②角标可行动判据（9f016dfb3；设计稿 §5 P6）：
+  // messages 徽标只报「需要作者行动」的量 —— 未读 ∩ 点名行动（pendingAsk/mention）
+  // + 跨面板可行动提供者；纯「有更新」不上徽标（新鲜度 ≠ 可行动量）。
+  test('D14 actionable unread lights the numeric badge: mock unread=1 + pendingAsk=1 paints "1"; opening the conversation clears it', async ({ page }) => {
+    await bootApp(page, { friends: true, unread: 1, pendingAsk: 1 });
     const errors = watchErrors(page);
     const badgeSel = '#mobile-dock .dock-key[data-dock="messages"] .dock-badge';
-    // 真实未读链（mock 会话 unreadCount=1 ⇒ messages.js totalUnread →
-    // setActivityBadge('messages-btn') → 手机层镜像），零夹具直写徽标。
+    // 可行动未读链（mock 会话 unreadCount=1 + pendingAskCount=1 ⇒
+    // messages.js actionableUnread()=1 → setActivityBadge('messages-btn') →
+    // 手机层镜像），零夹具直写徽标。
     await expect(page.locator(badgeSel)).toBeVisible({ timeout: 8000 });
     await expect(page.locator(badgeSel)).toHaveText('1');
-    // 进消息页 → 点会话 → 开窗即已读（markConvRead ⇒ 未读清零 ⇒ 角标熄灭）。
+    // 进消息页 → 点会话 → 开窗即已读（markConvRead ⇒ 未读清零 ⇒ 可行动量归零
+    // ⇒ 角标熄灭）。
     await dockTo(page, 'messages');
     const row = page.locator('.mobile-page[data-page="messages"] .mobile-page-body #fm-conversations .fm-conv-row').first();
     await expect(row).toBeVisible({ timeout: 8000 });
@@ -670,6 +675,21 @@ test.describe('friends-ON unread chain', () => {
       sec: document.querySelectorAll('.mobile-page[data-page="messages"] .mf-notify-sec').length,
       rowBadge: document.querySelectorAll('.mobile-page[data-page="messages"] .fm-row-badge').length,
     }))).toEqual({ sec: 0, rowBadge: 0 });
+    expect(errors).toEqual([]);
+  });
+
+  test('D14b pure unread (no actionable flag) does NOT light the dock badge; the row face still reports it', async ({ page }) => {
+    await bootApp(page, { friends: true, unread: 1 });
+    const errors = watchErrors(page);
+    // 可行动判据负向锚：unread=1 但无 pendingAsk/mention ⇒ actionableUnread()=0
+    // ⇒ 徽标恒隐（「有更新」不上徽标）。
+    await expect(page.locator('#mobile-dock .dock-key[data-dock="messages"] .dock-badge')).toBeHidden({ timeout: 8000 });
+    // 行面语义不变：会话列表行徽标照报纯未读（行面 ≠ 徽标面，两判据分钉）。
+    await dockTo(page, 'messages');
+    const row = page.locator('.mobile-page[data-page="messages"] .mobile-page-body #fm-conversations .fm-conv-row').first();
+    await expect(row).toBeVisible({ timeout: 8000 });
+    await expect(page.locator('.mobile-page[data-page="messages"] .fm-row-badge')).toHaveCount(1);
+    await expect(page.locator('.mobile-page[data-page="messages"] .fm-row-badge')).toHaveText('1');
     expect(errors).toEqual([]);
   });
 });

@@ -89,7 +89,10 @@ const FILE_CONTENTS = new Map([
 
 function makeServerWsMocks(ctx) {
   return ctx.routeWebSocket(/\/ws/, (ws) => {
-    ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
+    // graphseal 批（2026-10-29，作者手写想法①）：wiki 图谱入口默认封存
+    // （activityBar.js boot 摘 #wiki-btn）——重挂 = configData 首帧 latch
+    // features.wikiGraph:true（featureFlags.js wikiGraphEnabled，零改码恢复）。
+    ws.send(JSON.stringify({ type: 'configData', config: JSON.stringify({ features: { wikiGraph: true } }), configured: true, onboarding: 'done', models: [], defaults: {} }));
     ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: 'sess-1', agentName: 'Nebula', title: 'T', updatedAt: Date.now() }], activeId: 'sess-1', folders: [] }));
     ws.onMessage((raw) => {
       let m; try { m = JSON.parse(raw); } catch { return; }
@@ -317,11 +320,19 @@ const activate = async (page, tabId) => { await page.evaluate((id) => document.q
     (sap.match(/--capsule-h:\s*36px/g) || []).length === 1
     && (sap.match(/--capsule-w:\s*180px/g) || []).length === 1,
     `h=${(sap.match(/--capsule-h:\s*36px/g) || []).length} w=${(sap.match(/--capsule-w:\s*180px/g) || []).length}`);
-  ok('F6b 两胶囊脸消费 token（split.css：标题头 width + .cr-capsule width/max-width 护栏共 3 处 var() 引用，无第二字面量档）',
+  // 2026-10-30 重锚（存量红挂账清零批；#wiki-btn 修通后本钉随全量跑到显形）：
+  // h-ref Exact-count 2 是两胶囊脸时代（标题头 + .cr-capsule）的读数 —— 后续
+  // 批新增**同 token 消费者**（5b384bdbf 词条引用第二批 .canvas-refback-btn 返
+  // 回原文档钮 = 第三胶囊脸；0eea12139 阅读器 P0 批 .canvas-viewer-safe-top
+  // 顶垫 ×3 + 环开腿），单源语义不变（无第二字面量档）。故钉语义不钉计数：
+  // w-ref 恒 3；h-ref ≥2 且每个 var() 回落值都 = 36px（一把尺）。
+  const hRefs = (split.match(/var\(--capsule-h[^)]*\)/g) || []);
+  ok('F6b 胶囊 token 单源（split.css：w-ref=3；h-ref≥2 全经 var() 且回落档逐字 36px，无第二字面量档）',
     (split.match(/var\(--capsule-w/g) || []).length === 3
-    && (split.match(/var\(--capsule-h/g) || []).length === 2
+    && hRefs.length >= 2
+    && hRefs.every(r => r === 'var(--capsule-h, 36px)')
     && !/\.cr-capsule\s*\{[^}]*width:\s*\d+px/.test(split),
-    `w-ref=${(split.match(/var\(--capsule-w/g) || []).length} h-ref=${(split.match(/var\(--capsule-h/g) || []).length}`);
+    `w-ref=${(split.match(/var\(--capsule-w/g) || []).length} h-ref=${hRefs.length}`);
   ok('F6c 标题头固定宽不再有 fit-content 桌面档（body:not(.mobile-layer) 规则内）',
     !/body:not\(\.mobile-layer\) \.canvas-header\s*\{[^}]*fit-content/.test(split),
     'desktop rule clean');

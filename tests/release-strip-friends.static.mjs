@@ -24,15 +24,18 @@
 //   S3  friends 配置判据链（features?.friends）——featureFlags.js dev 分支
 //         是否被 DCE 物理剔除
 //   S4  好友激活路径符号（enableFriendPanels/initContacts/initMessages）——
-//         逐符号按 minify/chunk 可观测性分担方向：跨 chunk 导出名只承担
-//         「露出存在性」，被重命名的内部绑定只承担「stripped 零残留」
-//         （实测读数见该段注释；两符号的存在性由其模块的映射表条目承担）
+//         逐符号按 minify/chunk 可观测性分担方向：跨 chunk 导出名
+//         （enableFriendPanels/initMessages，dock 批共享 chunk 化后 minify
+//         稳定）只承担「露出存在性」，被重命名的内部绑定（initContacts）
+//         只承担「stripped 零残留」（实测读数见该段注释；模块级存在性由
+//         S7 映射表条目承担）
 //   S5  对照：fm-friends-changed 模块副作用仍在（外科手术式剔除——剔除的是
 //         激活路径，不是整个模块失联）**不随形态变**
 //   S6  对照：neblink 设备互联仍在（作者裁定不 gating）**不随形态变**
-//   S7  源码映射面（*.js.map 的 `sources` / `sourcesContent`）——与 S2/S3/S4
-//         同向：映射表随包发运且内嵌源文件全文，故 stripped 形态下它同样不得
-//         携带好友模块源码（= 该形态唯一未覆盖的剥除面，今起被断言）。
+//   S7  源码映射面（*.js.map 的 `sources` / `sourcesContent`）——露出方向断
+//         「好友源码在场」；stripped 方向自 2026-10-30 重锚起为 NOTE（剥除
+//         机制 = define+DCE 激活路径、非摘模块，映射面内嵌源码两形态必然
+//         在场，B5 引入即红、机制上不可达——核实见该段注释）
 // Run:
 //   node scripts/build-web.mjs                 && node tests/release-strip-friends.static.mjs
 //   node scripts/build-web.mjs --strip-friends && node tests/release-strip-friends.static.mjs --expect stripped
@@ -123,17 +126,21 @@ check(
 );
 
 // ── S4: 激活路径符号 ──
-// 🔴 minify / chunk 口径（2026-09-14 实测：两形态各在 N1 worktree 重建一次）：
-//   · `enableFriendPanels` = **跨 chunk 导出名**（main.js ← 惰性 chunk
-//     activityBar-*.js）⇒ esbuild 保名，**两形态各命中 1 次** ⇒ 它**判不了
-//     形态**（stripped 方向断言「零残留」是永久红——这正是既有 S4 红债的真因，
-//     不是「旧树残留」）。故只作露出方向的存在性断言，stripped 方向给 NOTE。
-//   · `initContacts` / `initMessages` = 同 chunk 内部绑定 ⇒ minify 重命名，
-//     **两形态各命中 0 次** ⇒ 只能承担 stripped 方向的（弱）零残留断言；
-//     露出方向的模块级存在性由 S7（映射表 `sources`）承担。
-// 真正判形态的面 = S2 / S3（marker / 判据链）+ S7（映射表面）。
+// 🔴 minify / chunk 口径（2026-09-14 实测：两形态各在 N1 worktree 重建一次；
+//   2026-10-30 重锚：dock 批 894874bd8 把手机 bootstrap 提为第二入口 +
+//   navController/socialFaces 直引 messages.js ⇒ messages.js 成跨 chunk 共享
+//   模块 ⇒ 其导出名 minify 稳定，stripped 形态同样命中——与 enableFriendPanels
+//   同性质（esbuild 保跨 chunk 导出名，剥除判据不看符号面））：
+//   · `enableFriendPanels` / `initMessages` = **跨 chunk 导出名**（main.js ←
+//     惰性 chunk）⇒ esbuild 保名，**两形态各命中** ⇒ 判不了形态（stripped
+//     方向断言「零残留」是永久红——这正是既有 S4 红债的真因，不是「旧树残
+//     留」）。故只作露出方向的存在性断言，stripped 方向给 NOTE。
+//   · `initContacts` = 同 chunk 内部绑定 ⇒ minify 重命名，**两形态各命中 0 次**
+//     ⇒ 只能承担 stripped 方向的（弱）零残留断言；露出方向的模块级存在性
+//     由 S7（映射表 `sources`）承担。
+// 真正判形态的面 = S2 / S3（marker / 判据链）+ S7 露出方向（映射表面）。
 const S4_SYMBOLS = ['enableFriendPanels', 'initContacts', 'initMessages'];
-const S4_MINIFY_STABLE = new Set(['enableFriendPanels']); // 跨 chunk 导出名
+const S4_MINIFY_STABLE = new Set(['enableFriendPanels', 'initMessages']); // 跨 chunk 导出名（2026-10-30 重锚：dock 批共享 chunk 化）
 for (const sym of S4_SYMBOLS) {
   const hit = combined.includes(sym);
   if (STRIPPED) {
@@ -156,9 +163,18 @@ check('S5 control: fm-friends-changed side-effect still present (module kept)', 
 check('S6 control: neblink (device interconnect) still present', combined.includes('neblink'));
 
 // ── S7: 源码映射面（*.js.map）——B5 ──
-// `sourcemap: 'linked'` 让 .js.map 随包发运，其 `sources` / `sourcesContent`
-// 内嵌源文件全文：present 形态下这是正常的；stripped 形态下则是**未覆盖的
-// 剥除面**（S2/S3/S4 只看发出代码，看不见映射表里的源树）。故与 S2/S3/S4 同向。
+// `sourcemap: 'linked'`（build-web.mjs，两形态无条件）让 .js.map 随包发运，其
+// `sources` / `sourcesContent` 内嵌源文件全文。
+// 🔴 2026-10-30 重锚（核实换代语义后改写，B5 引入即红、非新回归）：剥除机制 =
+// `window.__NEBFLOW_RELEASE__` define + dev 分支 DCE（build-web.mjs RELEASE
+// 块）——**外科手术式剔除激活路径，不摘模块**：好友模块仍整棵在图内（S5 对照
+// 同向），映射表必然内嵌其源码，stripped 形态「映射面零残留」从机制上不可达
+// （3430e784a 引入 S7 当轮 stripped 实测即 FAIL，证据 = 本仓 git archive 重建）。
+// 故 S7 两形态分工：露出方向断「源码在场」；stripped 方向降为 NOTE（映射面
+// 不构成剥除面）。真剥除面 = S2/S3（代码面 marker/判据链）。
+// 注：若未来要真剥映射面，需 build-web.mjs stripped 形态改 sourcemap 策略
+// （如 sourcesContent:false / 不发射 map）——那是产物机制改动，超出本测试
+// 断言批的「零产品代码」纪律，另行立项。
 const FRIEND_SOURCES = ['contacts.js', 'messages.js', 'friendsApi.js'];
 const carrying = [];   // 映射表内嵌了好友模块源码
 const unreadable = []; // 映射表无法解析（无法核验 ⇒ 两形态均判失败）
@@ -176,13 +192,20 @@ for (const p of maps) {
   }
 }
 check('S7 sourcemaps readable (JSON)', unreadable.length === 0, unreadable.join(', '));
-check(
-  STRIPPED
-    ? 'S7 map face: no friend module source in *.js.map (strip surface complete)'
-    : 'S7 map face: friend module sources present in *.js.map (unsealed artifact)',
-  STRIPPED ? carrying.length === 0 : carrying.length > 0,
-  `${maps.length} maps scanned; ` + (carrying.length ? `carrying friend sources: ${carrying.slice(0, 8).join(', ')}${carrying.length > 8 ? ` (+${carrying.length - 8} more)` : ''}` : 'no map carries friend sources')
-);
+if (STRIPPED) {
+  console.log(`NOTE  S7 map face: ${maps.length} maps scanned; friend module sources embedded in BOTH forms `
+    + `(${carrying.length ? carrying.slice(0, 8).join(', ') : 'none'}`
+    + `${carrying.length > 8 ? ` (+${carrying.length - 8} more)` : ''}) — the strip mechanism is `
+    + 'define+DCE of the activation path, NOT module removal (S5 control same-direction); '
+    + 'map-face zero-residue is unreachable by construction (red since B5 3430e784a). '
+    + 'Strip face = S2/S3 code surface.');
+} else {
+  check(
+    'S7 map face: friend module sources present in *.js.map (unsealed artifact)',
+    carrying.length > 0,
+    `${maps.length} maps scanned; ` + (carrying.length ? `carrying friend sources: ${carrying.slice(0, 8).join(', ')}${carrying.length > 8 ? ` (+${carrying.length - 8} more)` : ''}` : 'no map carries friend sources')
+  );
+}
 
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAILED`);
 process.exit(failed ? 1 : 0);

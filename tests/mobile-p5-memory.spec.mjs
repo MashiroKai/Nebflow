@@ -2,11 +2,15 @@
 //（mobile-secondary-screens 实施批；样张 v3.5 P5 + 开放点①②③按设计批推荐；
 //  面板合并批 2026-10-23 ①③⑤ 更新：记忆面板并入「智能体+记忆」合并面板
 //  （#memory-modal 双分区页签），手机记忆键退场 —— 入口 = header 头像 →
-//  智能体分区 → 记忆页签；几何改水平居中（作者令 ⑤）。）
+//  智能体分区 → 记忆页签。
+//  T1 重锚 2026-10-30（存量红挂账清零批）：几何判据从「308×560 悬浮盒居中
+//  r16」重锚为 dock 批（894874bd8）「收编面统一页面化几何」—— #memory-modal
+//  收编进 profile 页面体 in-flow 全幅（x=0 / w=375 / r0，mobileLayer.css
+//  「收编面统一页面化几何（dock 批）」块），浮层 308 几何已整体退役。）
 //
-// 样张→实机 DOM 映射（实施批口径）：
-//   §8-1 盒模型 …… #memory-modal：left/right 0 + margin auto 居中 / top 58+safe /
-//        308×560 / r16。
+// 样张→实机 DOM 映射（实施批口径；T1 几何已按 dock 批换代重锚）：
+//   §8-1 盒模型 …… #memory-modal：收编进 profile 页面体 in-flow 全幅
+//        （x=0 / w=375 / r0；308×560 悬浮盒形态退役，见文件头重锚注记）。
 //   scope seg 措辞（开放点②）…… .memory-tab 文案 =「智能体 · memory.md /
 //        用户 · User.md」（新键 memory.scopeAgent/scopeUser；拆层还原桌面原文）。
 //   条目卡（开放点①切分规则采纳）…… .mh-memory-card =「## 标题」分节切
@@ -137,20 +141,23 @@ test.beforeEach(async ({ page }) => {
 /** @type {{sentTypes: string[]}|null} */
 let harness = null;
 
-test('T1 merged panel geometry: top-hung 308×560, centered, radius 16 (avatar path)', async ({ page }) => {
+test('T1 merged panel geometry: page-ized full-bleed adoption in profile page (dock 批换代判据)', async ({ page }) => {
   const errors = watchErrors(page);
-  // 开面板（停在智能体分区）验证居中盒模型；再切记忆分区验证读态默认。
+  // 开面板（停在智能体分区）验证页面化盒模型；再切记忆分区验证读态默认。
   await expect(page.locator('#memory-btn')).toBeHidden();
   await page.locator('#agent-avatar-btn').click();
   await expect(page.locator('#memory-overlay')).toHaveClass(/on/);
   await settlePanel(page, { overlaySel: '#memory-overlay', panelSel: '#memory-modal' });
-  const box = await page.locator('#memory-modal').boundingBox();
-  expect(box).toBeTruthy();
-  expect(box.x).toBe((375 - 308) / 2); // 面板合并批 ⑤：水平居中（原 left 6 退役）
-  expect(box.width).toBe(308);
-  expect(box.height).toBe(560);
-  const radius = await page.locator('#memory-modal').evaluate((el) => getComputedStyle(el).borderRadius);
-  expect(radius).toBe('16px');
+  // dock 批「收编面统一页面化几何」：收编面在页面体内 in-flow 全幅
+  // （x=0 / w=375 / r0；原 308×560 悬浮盒居中 r16 形态已退役）。
+  const geo = () => page.evaluate(() => {
+    const m = document.getElementById('memory-modal');
+    const r = m.getBoundingClientRect();
+    return { x: Math.round(r.x), w: Math.round(r.width), radius: getComputedStyle(m).borderRadius, vw: window.innerWidth };
+  });
+  await expect.poll(geo, { timeout: 8000 }).toEqual({
+    x: 0, w: 375, radius: '0px', vw: 375,
+  });
   // 顶层双页签在场（合并面板注册形态）。
   await expect(page.locator('.merged-tab')).toHaveCount(2);
   await expect(page.locator('#memory-modal .ap-pane')).toBeVisible();

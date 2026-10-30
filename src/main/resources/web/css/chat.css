@@ -1385,7 +1385,10 @@
   padding: 4px 8px;
 }
 .bubble.ai th, .bubble.injected th { background: #f5f5f5; }
-.bubble.ai a, .bubble.injected a { color: var(--color-primary); }
+/* 2026-10-30 按钮量产批登记收敛项：chat 链接全面蓝化 —— 设计系统蓝
+   rgb(var(--sapphire))（#5b7fbf 单源 triplet，亮暗同值可读），原
+   var(--color-primary) 品牌绿退役为链接色（绿保留给主操作/通知点族）。 */
+.bubble.ai a, .bubble.injected a { color: rgb(var(--sapphire)); }
 .bubble.ai hr, .bubble.injected hr { border: none; border-top: 1px solid #eee; margin: 8px 0; }
 .bubble.ai strong, .bubble.injected strong { font-weight: 600; }
 
@@ -1621,7 +1624,8 @@
 .tool-mail-msg pre code { background: none; padding: 0; }
 .tool-mail-msg blockquote { border-left: 3px solid var(--color-border); margin: 6px 0; padding-left: 10px; color: var(--color-text-muted); }
 .tool-mail-msg strong { font-weight: 600; }
-.tool-mail-msg a { color: var(--color-primary); }
+/* 链接蓝化同登记项（chat 链接全面蓝化，与 .bubble.ai a 同 token 同源）。 */
+.tool-mail-msg a { color: rgb(var(--sapphire)); }
 
 /* Pop tool — rainbow filename inline + clickable card */
 .tool-card.pop-tool-card { cursor: pointer; }
@@ -4409,7 +4413,11 @@
 .row.pop-artifact { display: flex; justify-content: flex-start; margin: 8px 0 10px; }
 .pop-group {
   display: flex; flex-direction: column; align-items: flex-start;
-  gap: 10px; min-width: 0; max-width: 78%;
+  gap: 10px; min-width: 0;
+  /* 2026-10-30 收敛批：消费消息列宽单源 token（--msg-bubble-max-w，值的家 =
+     sapphire.css「Shared message surface」③A3 判据——面内零字面量，改一处两侧同步；
+     写死 78% 被 scripts/check-msgstyle-single-source.mjs「A3 面内不得再写死 78%」判红）。 */
+  max-width: var(--msg-bubble-max-w);
 }
 
 /* ── media stack (WeChat-style: front card + peeking layers right) ── */

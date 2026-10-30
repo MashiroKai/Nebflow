@@ -95,7 +95,7 @@ const ROWS = [
       ['padding', declOf(CSS.friends, '.fm-modal-header', 'padding'), declOf(CSS.modal, '.settings-modal-header', 'padding')],
     ],
     kind: 'eq',
-    note: '逐值相等 = `14px 14px 12px 20px`（本批由 `14px 16px 10px` 对齐而来）。',
+    note: '逐值相等 = `12px 16px 12px 20px`（本批由 `14px 16px 10px` 对齐、2026-10-30 收敛批随主窗 3dae0857c 重钉同步收敛——parity 是动态对照（declOf 两边现算），主窗值即真值）。',
   },
   {
     item: '对话框标题字（字号/字重/字色）',

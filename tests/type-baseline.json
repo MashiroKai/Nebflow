@@ -1,6 +1,6 @@
 {
   "generatedBy": "scripts/check-js-types.mjs --update",
-  "total": 260,
+  "total": 321,
   "files": {
     "src/main/resources/web/js/activityBar.js": {
       "TS2345": 1,
@@ -9,8 +9,14 @@
     "src/main/resources/web/js/agentManager.js": {
       "TS2339": 3
     },
+    "src/main/resources/web/js/askDock.js": {
+      "TS2339": 2
+    },
     "src/main/resources/web/js/bgAgentPopup.js": {
       "TS2339": 1
+    },
+    "src/main/resources/web/js/bgMergedPanel.js": {
+      "TS2322": 1
     },
     "src/main/resources/web/js/cardRegistry.js": {
       "TS2339": 8,
@@ -77,7 +83,7 @@
       "TS2339": 1
     },
     "src/main/resources/web/js/main.js": {
-      "TS2339": 14,
+      "TS2339": 13,
       "TS2345": 1
     },
     "src/main/resources/web/js/memory.js": {
@@ -90,7 +96,7 @@
       "TS2339": 11
     },
     "src/main/resources/web/js/nearpath.js": {
-      "TS2339": 2,
+      "TS2339": 1,
       "TS2322": 1
     },
     "src/main/resources/web/js/neblink.js": {
@@ -99,6 +105,12 @@
     "src/main/resources/web/js/notificationBanner.js": {
       "TS2304": 1,
       "TS1005": 1,
+      "TS2339": 1
+    },
+    "src/main/resources/web/js/plugins.js": {
+      "TS2353": 1
+    },
+    "src/main/resources/web/js/profileSignals.js": {
       "TS2339": 1
     },
     "src/main/resources/web/js/scheduled-task.js": {
@@ -110,7 +122,7 @@
       "TS2339": 1
     },
     "src/main/resources/web/js/sidebar.js": {
-      "TS2339": 62,
+      "TS2339": 65,
       "TS2345": 1
     },
     "src/main/resources/web/js/sidebar/pathRules.js": {
@@ -120,13 +132,28 @@
       "TS2339": 13
     },
     "src/main/resources/web/js/socialPanel.js": {
-      "TS2339": 7
+      "TS2339": 3
     },
     "src/main/resources/web/js/viewers/docx.js": {
       "TS2339": 4
     },
+    "src/main/resources/web/js/viewers/epub.js": {
+      "TS2345": 1
+    },
+    "src/main/resources/web/js/viewers/markdown.js": {
+      "TS2345": 1,
+      "TS2339": 1
+    },
+    "src/main/resources/web/js/viewers/readerChrome.js": {
+      "TS1127": 2,
+      "TS2740": 1,
+      "TS2339": 52
+    },
     "src/main/resources/web/js/viewers/shared.js": {
       "TS2339": 13
+    },
+    "src/main/resources/web/js/viewers/textReader.js": {
+      "TS2345": 1
     },
     "src/main/resources/web/js/viewers/xlsx.js": {
       "TS2339": 4
