@@ -1,5 +1,12 @@
-#!/usr/bin/env python3
+#!/bin/sh
 # stand-profile — 维度画像库检索/校准 CLI（stand 仓 tools/）
+# polyglot 头：被 zsh/sh 直接当脚本跑（而非 shebang 执行）时，Python 源码里的
+# `import ...` 行会被 shell 当命令解析，PATH 上 ImageMagick 的同名 `import`
+# 抢先命中、输出其 usage 且工具静默失效（2026-10-30 实证，与 stand-recall 同根因）。
+# 此头让 shell 解释时立即 re-exec 回 python3；Python 解释时整体只是一个字符串字面量。
+''':'
+exec python3 "$0" "$@"
+':'''
 #
 # 用途：画像库（~/.stand/profile-db/）的读取与校准入口——查「他是谁/要我怎样」先本工具，
 #       查「当时怎么定的」再 stand-recall（两库序查红线 A1-11，D-003）。
