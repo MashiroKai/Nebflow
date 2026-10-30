@@ -1,0 +1,334 @@
+{
+ "archivedAt": "2026-10-30T09:03:23",
+ "archivedCount": 2,
+ "archivedBytes": 49868,
+ "destinationRoot": "/Users/kaiyu/.stand/archive/flowmap-keep-20261030",
+ "basis": "R3 KEEP 清单 20261029_202740 manifest + 2026-10-30 逐个 liveness 复核（delegate 记录/flow-map 节点/台账事件）",
+ "archived": [
+  {
+   "id": "delegate-nebflow-3a220d12",
+   "ws": "stand",
+   "bytes": 36904,
+   "from": "/Users/kaiyu/Claude code/Stand/.nebflow/flow-maps/delegate-nebflow-3a220d12",
+   "to": "/Users/kaiyu/.stand/archive/flowmap-keep-20261030/stand/delegate-nebflow-3a220d12",
+   "manifestReason": [
+    "no-record"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-a2d25ad9",
+   "ws": "stand",
+   "bytes": 12964,
+   "from": "/Users/kaiyu/Claude code/Stand/.nebflow/flow-maps/delegate-nebflow-a2d25ad9",
+   "to": "/Users/kaiyu/.stand/archive/flowmap-keep-20261030/stand/delegate-nebflow-a2d25ad9",
+   "manifestReason": [
+    "no-record"
+   ]
+  }
+ ],
+ "kept": [
+  {
+   "id": "delegate-nebflow-017653fb",
+   "ws": "stand",
+   "bytes": 17526,
+   "reason": [
+    "record:not-archived"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-0b640e55",
+   "ws": "stand",
+   "bytes": 19594,
+   "reason": [
+    "record:not-archived",
+    "report:merge"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-109d8ab6",
+   "ws": "stand",
+   "bytes": 16210,
+   "reason": [
+    "report:finish"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-233e3a44",
+   "ws": "stand",
+   "bytes": 87462,
+   "reason": [
+    "report:finish"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-35b31668",
+   "ws": "stand",
+   "bytes": 14706,
+   "reason": [
+    "record:not-archived",
+    "report:finish"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-3a877cec",
+   "ws": "stand",
+   "bytes": 310994,
+   "reason": [
+    "record:not-archived",
+    "report:merge"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-3ad3478e",
+   "ws": "stand",
+   "bytes": 16210,
+   "reason": [
+    "report:finish"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-4f58672f",
+   "ws": "stand",
+   "bytes": 5118,
+   "reason": [
+    "record:not-archived"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-52fbf252",
+   "ws": "stand",
+   "bytes": 48170,
+   "reason": [
+    "report:finish"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-56930fbd",
+   "ws": "stand",
+   "bytes": 325282,
+   "reason": [
+    "record:not-archived",
+    "report:merge"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-6cbd7d08",
+   "ws": "stand",
+   "bytes": 81070,
+   "reason": [
+    "record:not-archived",
+    "report:merge"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-6d7097a6",
+   "ws": "stand",
+   "bytes": 25234,
+   "reason": [
+    "record:not-archived",
+    "report:finish"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-75b0ba04",
+   "ws": "stand",
+   "bytes": 10382,
+   "reason": [
+    "record:not-archived"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-79cc79eb",
+   "ws": "stand",
+   "bytes": 326410,
+   "reason": [
+    "record:not-archived",
+    "report:merge"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-7dc83f66",
+   "ws": "stand",
+   "bytes": 288622,
+   "reason": [
+    "record:not-archived",
+    "report:merge"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-8312db45",
+   "ws": "stand",
+   "bytes": 39334,
+   "reason": [
+    "record:not-archived",
+    "cancelRequested",
+    "report:finish"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-88974c4d",
+   "ws": "stand",
+   "bytes": 48170,
+   "reason": [
+    "report:finish"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-a336d824",
+   "ws": "stand",
+   "bytes": 326410,
+   "reason": [
+    "record:not-archived",
+    "report:merge"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-a464fdc0",
+   "ws": "stand",
+   "bytes": 47230,
+   "reason": [
+    "report:finish"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-aab5503d",
+   "ws": "stand",
+   "bytes": 93102,
+   "reason": [
+    "record:not-archived",
+    "report:blocked"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-b3020083",
+   "ws": "stand",
+   "bytes": 60390,
+   "reason": [
+    "report:finish"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-b3e88eb0",
+   "ws": "stand",
+   "bytes": 75430,
+   "reason": [
+    "report:finish"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-c79ba0e3",
+   "ws": "stand",
+   "bytes": 326410,
+   "reason": [
+    "record:not-archived",
+    "report:merge"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-ca33e103",
+   "ws": "stand",
+   "bytes": 57382,
+   "reason": [
+    "report:finish"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-dca51539",
+   "ws": "stand",
+   "bytes": 304790,
+   "reason": [
+    "record:not-archived",
+    "report:merge"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-ddbdde82",
+   "ws": "stand",
+   "bytes": 69790,
+   "reason": [
+    "record:not-archived",
+    "report:merge"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-e153d31a",
+   "ws": "stand",
+   "bytes": 155518,
+   "reason": [
+    "cancelRequested",
+    "report:finish"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-f3af8589",
+   "ws": "stand",
+   "bytes": 325282,
+   "reason": [
+    "record:not-archived",
+    "report:merge"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-f7679358",
+   "ws": "stand",
+   "bytes": 16962,
+   "reason": [
+    "record:not-archived",
+    "report:finish"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-fe4f891e",
+   "ws": "stand",
+   "bytes": 39710,
+   "reason": [
+    "record:not-archived",
+    "report:merge"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-af984340",
+   "ws": "general(dataRoot)",
+   "bytes": 319814,
+   "reason": [
+    "record:not-archived",
+    "report:merge"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-b6c1b0cc",
+   "ws": "general(dataRoot)",
+   "bytes": 22654,
+   "reason": [
+    "record:not-archived"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-1cc53dfe",
+   "ws": "stand-website",
+   "bytes": 519058,
+   "reason": [
+    "record:not-archived",
+    "report:finish"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-52308ee4",
+   "ws": "projects/general",
+   "bytes": 298154,
+   "reason": [
+    "record:not-archived",
+    "report:finish"
+   ]
+  },
+  {
+   "id": "delegate-nebflow-3879148f",
+   "ws": "Slideblocks Skill Dev",
+   "bytes": 47998,
+   "reason": [
+    "record:not-archived",
+    "report:merge"
+   ]
+  }
+ ]
+}
