@@ -110,15 +110,15 @@ sbt assembly
 
 ### Local dev: one-step logged-in panel (no website login)
 
-For local development testing, `scripts/coldstart-lt.sh` brings the whole loop up in one step: it starts the engine via the `nebflow-restart.sh` system (`NEBFLOW_RESTART_PORT`, default **6138**) when it is not already running — a live engine is never restarted — then mints a one-shot local console ticket (the engine's existing loopback-only `console-ticket` path, authorized by the local `auth.json` file token) and opens the panel at `http://localhost:6138/` **already logged in**, with zero contact to the mystand.space website or the Logto login chain:
+For local development testing, `scripts/coldstart-lt.sh` brings up a **separate cold-start instance** in one step — its own home (`/tmp/stand-lt`) and its own port (**8199**, clear of both 6138 and 8097). Engine startup is delegated wholesale to `scripts/coldstart.sh` (per-pid identity checks, selective home cleanup, model-config seeding, secrets symlink, `--net` tier; `--net off` by default so the test instance makes zero external contact), with the instance booted `--no-browser`. Once the cold instance is ready, the script adds the no-login door: the cold instance self-mints a local dev token in its own home at boot (loopback-only, dies with the home, zero identity flow — the main home's `device.json`/`auth.json` are never copied), then a one-shot local console ticket is minted through the engine's existing loopback-only `console-ticket` path, and the browser opens `http://localhost:8199/?ticket=…` **already logged in** — no mystand.space, no Logto:
 
 ```bash
-./scripts/coldstart-lt.sh            # engine up (if needed) → browser opens logged-in panel
+./scripts/coldstart-lt.sh            # cold instance up → browser opens logged-in panel
 ./scripts/coldstart-lt.sh --no-open  # same, but only prints the logged-in URL
 DRY_RUN=1 ./scripts/coldstart-lt.sh  # preview everything, touch nothing
 ```
 
-Knobs: `LT_PORT` (default `$NEBFLOW_RESTART_PORT` | 6138), `LT_HOME` (engine home whose `auth.json` authorizes ticket minting, default `~/.stand`), `LT_RESTART_MODE` (default `--force`; `--restart-if-idle` refuses while busy). The script only ever talks to loopback addresses and adds no auth bypass of its own — production builds and official domains are untouched by construction. (For an isolated fresh-instance cold start with the new-user onboarding path, use `scripts/coldstart.sh` instead.)
+Knobs: `LT_PORT` (default **8199**; **6138 is refused outright** — the script never signals the host instance), `LT_HOME` (cold-instance home, default `/tmp/stand-lt`; refusing to equal the main home), `LT_NET` (`off` default; `staging`/`prod` passthrough), `LT_SECRETS_DIR` (default `<main home>/lt-secrets`). The script only ever talks to the cold instance's loopback port and adds no auth bypass of its own — production builds and official domains are untouched by construction. (For an isolated fresh-user cold start with the website onboarding path, use `scripts/coldstart.sh` instead.)
 
 ## Weixin (iLink) channel
 
