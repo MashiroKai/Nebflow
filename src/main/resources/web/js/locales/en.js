@@ -114,6 +114,9 @@ export default {
   // Self-selected hint line (same slot, same sentence shape, no pointer clause —
   // a factual difference, not a device tier).
   'project.createDeviceHintlineSelf': 'The project will be stored on {device} and run by it.',
+  // picker-device-switch batch (2026-10-30): reject a pick whose origin device no
+  // longer matches the selected storage device (in-picker device switch).
+  'project.createDeviceMismatch': 'The picked path does not belong to the selected storage device (the device was switched inside the picker) — please pick again.',
   'project.createWorkspaceLabelRemote': 'Workspace path (on {device})',
   'project.createWorkspacePickRemote': 'Choose a path on {device}…',
   'project.createRemotePending': 'Creating on {device} (a few seconds)',
@@ -2405,6 +2408,8 @@ export default {
   'explorer.pickupCancel': 'Cancel',
   'explorer.pickupStalled': 'Stalled — cancellable',
   'explorer.remoteReadonly': 'Remote directories are read-only; write actions are unavailable.',
+  // === picker-device-switch batch (2026-10-30): explorer device switch button ===
+  'explorer.deviceSelectAria': 'Switch browsing device',
   'daemons.delete': 'Delete',
   // === Workspace picker card + in-app directory browser (workspace-picker batch) ===
   'workspacePicker.pickTitle': 'Pick Workspace',
@@ -2443,6 +2448,12 @@ export default {
   // "start from the home directory"): localized "not shared + the way out" copy in
   // place of the peer's raw English error.
   'workspacePicker.deviceShareDenied': 'This directory is not shared by {device} — remote browsing is limited to registered project workspaces, captures and uploads on it. To browse other locations such as the home directory, add them to that device\'s deviceShare.extraPaths config and retry.',
+  // === picker-device-switch batch (2026-10-30): in-picker device switcher row ===
+  // thisDevice = fallback label when the roster self name is unavailable (never the
+  // bare string "local"); offline tag / menu foot reuse project.deviceOfflineTag /
+  // project.deviceMenuFoot (reuse-before-create).
+  'workspacePicker.thisDevice': 'This device',
+  'workspacePicker.deviceSelectAria': 'Choose which device to browse',
 
   // === Device-conversation server switch, MVP-2 (2026-09-15): device receipts ===
   // 🔴 `messages.deviceRetention`（P10 留存明示句）已删 —— 作者 2026-09-15 令

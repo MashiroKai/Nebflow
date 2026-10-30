@@ -104,6 +104,8 @@ export default {
   'project.createDeviceHintline': '项目将存放在 {device}，由该设备执行；仅登记指针，文件按需查看。',
   // self 选中提示行（同一行位、同一句式，无指针从句——事实差异，非设备分级）。
   'project.createDeviceHintlineSelf': '项目将存放在 {device}，由该设备执行。',
+  // picker-device-switch 批（2026-10-30）：选择器内设备切换回写与「存放设备」不一致时拒收。
+  'project.createDeviceMismatch': '所选路径与存放设备不一致（面板内切过设备），请重新选择。',
   'project.createWorkspaceLabelRemote': '工作区路径（{device} 上）',
   'project.createWorkspacePickRemote': '在 {device} 上选择路径…',
   'project.createRemotePending': '正在 {device} 上创建（约数秒）',
@@ -2325,6 +2327,8 @@ export default {
   'explorer.pickupCancel': '取消取件',
   'explorer.pickupStalled': '停滞 — 可取消',
   'explorer.remoteReadonly': '远端目录只读，写操作不可用。',
+  // === picker-device-switch 批（2026-10-30）：文件浏览器设备切换钮 ===
+  'explorer.deviceSelectAria': '切换浏览设备',
   'daemons.delete': '删除',
   // === 工作区选择卡 + 应用内目录浏览器（workspace-picker 批次，2026-09-05） ===
   'workspacePicker.pickTitle': '选择工作区',
@@ -2362,6 +2366,11 @@ export default {
   // 设备共享白名单拒绝 = 预期可读态（2026-10-30 三修①「从家目录开始」）：给
   // 「未共享 + 出路」的本地化说明，替代对端原始英文报错。
   'workspacePicker.deviceShareDenied': '该设备未共享此目录——远端浏览只覆盖它已登记的项目工作区、captures 与 uploads。若需浏览家目录等其它位置，在那台设备的配置中加入 deviceShare.extraPaths 后重试。',
+  // === picker-device-switch 批（2026-10-30）：选择器内设备切换行 ===
+  // thisDevice = 花名册 self 名不可得时的回落显示（绝不直出「local」）；离线 tag /
+  // 菜单脚注复用 project.deviceOfflineTag / project.deviceMenuFoot（先复用后新建）。
+  'workspacePicker.thisDevice': '本机',
+  'workspacePicker.deviceSelectAria': '选择浏览设备',
 
   // === 设备会话切服务端数据源，MVP-2（2026-09-15）：设备回执 ===
   // 🔴 `messages.deviceRetention`（P10 留存明示句）已删 —— 作者 2026-09-15 令 ⑤b

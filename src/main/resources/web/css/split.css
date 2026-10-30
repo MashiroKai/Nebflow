@@ -20,6 +20,13 @@
   color: var(--color-frame-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  /* picker-device-switch 批：头部新增常驻设备 chip 后空间收紧——标题收窄省略
+     （禁换行撑高头部），把余量让给 chip + 动作排。 */
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .explorer-folder-btn {
   display: flex;
@@ -43,6 +50,7 @@
   display: flex;
   gap: 2px;
   align-items: center;
+  flex: 0 0 auto; /* picker-device-switch 批：常驻 chip 入列后动作排不得被压缩 */
 }
 .explorer-action-btn {
   display: flex;
@@ -400,6 +408,34 @@
   background: transparent;
   border: 1px solid var(--glass-border, var(--color-frame-border));
   color: var(--color-frame-text-muted);
+}
+/* picker-device-switch 批（2026-10-30）：chip 升级为常驻设备切换钮——锚包裹
+   （.dev-menu absolute 定位锚）+ 按钮态重置（.dev-chip 原为 span 徽标）。 */
+.explorer-dev-anchor {
+  position: relative; /* .dev-menu 的锚 */
+  display: inline-flex;
+  margin-left: 7px;
+  min-width: 0;
+  flex: 0 1 auto; /* 窄栏里与标题分余量，不让动作排出排 */
+}
+.explorer-dev-anchor .dev-chip {
+  margin-left: 0;
+  cursor: pointer;
+  max-width: 110px; /* 窄栏头部纪律：超长设备名省略，不挤动作排 */
+}
+button.dev-chip {
+  border: none;
+  padding: 2px 7px;
+  font: 600 10px/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.dev-chip .chev {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+.explorer-dev-anchor .dev-menu {
+  min-width: 220px;
 }
 /* 远端加载行：sapphire spinner（减动效停转见文件尾降级块）。 */
 .explorer-loading .spin {

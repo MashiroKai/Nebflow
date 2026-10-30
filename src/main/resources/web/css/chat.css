@@ -3721,6 +3721,15 @@
   color: var(--color-frame-text-bright);
   margin-bottom: 12px;
 }
+/* picker-device-switch 批（2026-10-30）：面板顶部设备选择行——复用全局
+   .dev-row/.dev-btn/.dev-menu 族（projectPanel.css），仅间距按面板基调微调；
+   下拉菜单收窄一档（面板宽 520px，不必 300px 起步）。 */
+.wsp-dev-row {
+  margin-bottom: 10px;
+}
+.wsp-dev-row .dev-menu {
+  min-width: 240px;
+}
 /* Breadcrumb etched strip — app directory-browser baseline values */
 .wsp-crumbs {
   font-size: 12px;
