@@ -155,6 +155,9 @@ A task with 2+ independent parts — different file domains, or different nature
                   // preset/model — resolve before spawning so the worker's LLM
                   // requests run on the requested provider chain. Missing
                   // preset → self-describing error with the available list.
+                  // preset→chain 迁移批（2026-10-30）：PresetStore 默认路径读面
+                  // 已切 ModelChainRegistry——本参数解析到迁移后的 model 链，
+                  // 旧 preset 名逐字兼容（名随迁移带走，无别名表）。
                   PresetResolver.applyPreset(PresetStore(), agentDef, presetName) match
                     case Left(err) => IO.pure(Left(ToolError(err)))
                     case Right(effectiveDef) =>

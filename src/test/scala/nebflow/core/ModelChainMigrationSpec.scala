@@ -1,6 +1,10 @@
 package nebflow.core
 
+import io.circe.syntax.*
 import munit.FunSuite
+import nebflow.actor.AgentDef
+import nebflow.core.presets.{ModelChainRegistry, PresetStore}
+import nebflow.core.tools.PresetResolver
 import nebflow.shared.AgentModelConfig
 import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
 
@@ -127,6 +131,109 @@ class ModelChainMigrationSpec extends FunSuite:
       ModelChainMigration.migrateLegacyPresetRefs()
       val coder = readAgent(root, "coder")
       assertEquals(coder.hcursor.downField("preset").as[String].toOption, Some("LowCost"))
+    }
+  }
+
+  // ── preset→chain 迁移批（2026-10-30）：链注册表面 ──────────────
+
+  private val generalChain: AgentModelConfig =
+    AgentModelConfig(
+      preferred = Some("cmdcode/deepseek/deepseek-v4.1-flash"),
+      fallbacks = List("kimi/kimi-k3", "zhipu/GLM-5.3-Flash", "deepseek/deepseek-flash")
+    )
+
+  test("preset definitions migrate to the chain registry; legacy preset names keep resolving (SubTask preset face)") {
+    withRoot("registry") { root =>
+      writeAgent(root, "Nebula", """{"preset":"LowCost","name":"Nebula"}""")
+      os.write.over(root / "model-presets.json", catalogJson)
+
+      ModelChainMigration.migrateLegacyPresetRefs()
+
+      // ① 注册表落盘：preset 原名逐字保留（旧名兼容 = 名随迁移带走，无别名表），链随定义走
+      val pf = ModelChainRegistry.load(root).get
+      assertEquals(pf.defaultPreset, "general")
+      assertEquals(pf.presets.keySet, Set("general", "Vision", "LowCost"))
+      assertEquals(pf.presets("general").preferred, generalChain.preferred)
+      assertEquals(pf.presets("general").fallbacks, generalChain.fallbacks)
+      assert(ModelChainRegistry.migratedAt(root).isDefined, "迁移完成戳必须落下")
+      assert(!os.exists(root / "model-presets.json"), "原目录文件封存后不再出现于原路径")
+
+      // ② PresetStore 默认路径读面切注册表：旧 preset 名经 resolveExplicit 解析到迁移后的链
+      val store = new PresetStore()
+      assertEquals(store.resolveExplicit("general"), Right(generalChain))
+      assertEquals(store.availableNames, "LowCost, Vision, general")
+
+      // ③ SubTask preset 参数腿（PresetResolver = SubTask 调用点）走迁移后的链
+      val bare = AgentDef(name = "worker", description = "t")
+      val applied = PresetResolver.applyPreset(store, bare, Some("general"))
+      assert(applied.isRight, s"legacy preset name must resolve on migrated home: $applied")
+      assertEquals(applied.toOption.get.model, Some(generalChain))
+      assertEquals(applied.toOption.get.preset, Some("general"))
+    }
+  }
+
+  test("migrated home: ensureDefaultPreset no churn; repair writes the registry, never re-seeds the sealed catalog") {
+    withRoot("nochurn") { root =>
+      writeAgent(root, "Nebula", """{"preset":"LowCost","name":"Nebula"}""")
+      os.write.over(root / "model-presets.json", catalogJson)
+      ModelChainMigration.migrateLegacyPresetRefs()
+      val registryBytes = os.read(root / "model-chains.json")
+
+      // healthy 注册表 ⇒ 不变量执行是纯读：不重写、不重建 legacy 目录文件
+      PresetStore().ensureDefaultPreset()
+      assert(!os.exists(root / "model-presets.json"), "封存的目录文件不得被 re-seed 重建")
+      assertEquals(os.read(root / "model-chains.json"), registryBytes, "healthy 注册表逐字不动（零churn）")
+
+      // dangling defaultPreset ⇒ repair 重指 AND 写回注册表（写面同帧落注册表）
+      val broken = io.circe.parser
+        .parse(registryBytes)
+        .toOption
+        .get
+        .deepMerge(io.circe.Json.obj("defaultPreset" -> "Bogus".asJson))
+      os.write.over(root / "model-chains.json", broken.noSpaces)
+      val repaired = PresetStore().load()
+      assertEquals(repaired.defaultPreset, "LowCost", "repair 必须重指到首个带链条目（渲染按名排序 ⇒ LowCost）")
+      assert(!os.exists(root / "model-presets.json"), "repair 不得重建 legacy 目录文件")
+      assertEquals(ModelChainRegistry.load(root).get.defaultPreset, "LowCost", "repair 写回注册表")
+    }
+  }
+
+  test("registry merge is write-ahead idempotent: a replayed migration never overwrites existing entries") {
+    withRoot("replay") { root =>
+      writeAgent(root, "Nebula", """{"preset":"LowCost","name":"Nebula"}""")
+      os.write.over(root / "model-presets.json", catalogJson)
+      ModelChainMigration.migrateLegacyPresetRefs()
+
+      // 模拟「写后封存前进程死」：注册表已迁移、目录文件仍在 ⇒ 重放合并
+      // 既有条目恒胜 —— 用户后编辑的链不被陈旧目录覆盖。
+      val edited = io.circe.Json.obj(
+        "version"    -> 1.asJson,
+        "migratedAt" -> "2026-10-30T08:29:00+08:00".asJson,
+        "defaultPreset" -> "general".asJson,
+        "chains" -> io.circe.Json.obj(
+          "general" -> io.circe.Json.obj(
+            "name"        -> "general".asJson,
+            "description" -> "user edit after migration".asJson,
+            "preferred"   -> "kimi/kimi-for-coding".asJson,
+            "fallbacks"   -> io.circe.Json.arr()
+          )
+        )
+      )
+      os.write.over(root / "model-chains.json", edited.noSpaces)
+      // 模拟「写后封存前进程死」：把封存文件挪回原始路径 ⇒ 二次启动重放迁移腿
+      val sealedFile = os.list(root).find(_.last.startsWith("model-presets.json.sealed-")).get
+      os.move(sealedFile, root / "model-presets.json")
+      ModelChainMigration.migrateLegacyPresetRefs()
+
+      val pf = ModelChainRegistry.load(root).get
+      assertEquals(
+        pf.presets("general").preferred,
+        Some("kimi/kimi-for-coding"),
+        "既有注册表条目必须胜过重放的目录数据（write-ahead 幂等）"
+      )
+      assertEquals(ModelChainRegistry.migratedAt(root).get, "2026-10-30T08:29:00+08:00", "迁移完成戳不重写")
+      // 重放补齐缺失条目（LowCost/Vision 不在用户编辑版里）
+      assertEquals(pf.presets.keySet, Set("general", "Vision", "LowCost"))
     }
   }
 end ModelChainMigrationSpec

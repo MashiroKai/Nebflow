@@ -3,6 +3,7 @@ package nebflow.core
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.shared.AgentModelConfig
+import nebflow.core.presets.{ModelChainRegistry, ModelPreset}
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
@@ -21,9 +22,14 @@ import nebflow.shared.{NebflowLogger, PathUtil}
  *   - the executor agent (`nebflow`, and the retired `kernel` / `general`
  *     spellings still present on an existing home): stale `preset` keys are
  *     removed (the engine ignored them).
- *   - The preset catalog file `model-presets.json` is sealed in place:
- *     renamed with a timestamp suffix so the data survives for audit, and a
- *     second boot finds nothing at the original path.
+ *   - The preset **definitions** migrate to the chain registry
+ *     ([[ModelChainRegistry]], `model-chains.json`) — write-ahead merged
+ *     BEFORE the catalog is sealed (R5 write-ahead precedent `c30e6945c`):
+ *     a crash between the two is replayed idempotently on the next boot.
+ *     The catalog file `model-presets.json` is then sealed in place:
+ *     renamed with a timestamp suffix (the 迁移完成戳) so the original data
+ *     survives for audit, and a second boot finds nothing at the original
+ *     path.
  *
  * Non-role agents' stored references are untouched (audit-only data).
  */
@@ -62,27 +68,55 @@ object ModelChainMigration:
   /** Entry point; idempotent, safe to call on every boot. */
   def migrateLegacyPresetRefs(): Unit =
     val presetsFile = PathUtil.dataRoot / "model-presets.json"
-    val catalog = readCatalog(presetsFile)
+    val entries = if os.exists(presetsFile) then readCatalogEntries(presetsFile) else Map.empty
+    // 角色引用迁移**无条件**执行（与旧行为一致）：无目录文件的家，Nebula 的
+    // LowCost 引用仍落内置默认链、其余引用 key-removal——不能随目录缺席而跳过。
+    val catalog = entries
+      .map((n, p) => n -> AgentModelConfig(p.preferred, p.fallbacks))
+      .filter((_, c) => SchemePolicy.hasChain(c))
     RoleAgents.foreach(name => migrateAgent(name, catalog))
+    // 注册表迁移 + 封存只在目录文件实存时进行（幂等的另一半：二次启动无文件 ⇒ no-op）。
+    if os.exists(presetsFile) then migrateCatalogToRegistry(presetsFile, entries)
+
+  /**
+   * preset 定义 → 链注册表（write-ahead 先行），随后封存原目录文件。
+   * 链缺失的 preset 条目不进注册表（与角色引用解析同一过滤，报 WARN）。
+   */
+  private def migrateCatalogToRegistry(presetsFile: os.Path, entries: Map[String, ModelPreset]): Unit =
+    val (chained, chainless) = entries.partition((_, p) => SchemePolicy.hasChain(AgentModelConfig(p.preferred, p.fallbacks)))
+    chainless.foreach { (name, _) =>
+      logger.warnSync(s"model-chain migration: preset '$name' carries no chain; not migrated to registry")
+    }
+    if chained.nonEmpty then
+      ModelChainRegistry.mergeChains(chained, readDefaultPreset(presetsFile))
+      chained.foreach { (name, p) =>
+        logger.infoSync(
+          s"model-chain migration: preset '$name' -> chain registry " +
+            s"(preferred=${p.preferred.getOrElse("-")}, fallbacks=${p.fallbacks.size})"
+        )
+      }
     sealCatalog(presetsFile)
 
-  /** Read {presetName -> chain} from the catalog file, tolerating absence. */
-  private def readCatalog(presetsFile: os.Path): Map[String, AgentModelConfig] =
-    if !os.exists(presetsFile) then Map.empty
-    else
-      io.circe.parser
-        .parse(os.read(presetsFile))
-        .toOption
-        .flatMap(_.hcursor.downField("presets").focus.flatMap(_.asObject))
-        .map { presets =>
-          presets.toList.flatMap { (name, pj) =>
-            val preferred = pj.hcursor.downField("preferred").as[Option[String]].toOption.flatten
-            val fallbacks = pj.hcursor.downField("fallbacks").as[Option[List[String]]].toOption.flatten.getOrElse(Nil)
-            val chain = AgentModelConfig(preferred, fallbacks)
-            if SchemePolicy.hasChain(chain) then Some(name -> chain) else None
-          }.toMap
-        }
-        .getOrElse(Map.empty)
+  /** Read {presetName -> entry} from the catalog file, tolerating absence. */
+  private def readCatalogEntries(presetsFile: os.Path): Map[String, ModelPreset] =
+    io.circe.parser
+      .parse(os.read(presetsFile))
+      .toOption
+      .flatMap(_.hcursor.downField("presets").focus.flatMap(_.asObject))
+      .map { presets =>
+        presets.toList.flatMap { (name, pj) =>
+          pj.as[ModelPreset].toOption.map(name -> _)
+        }.toMap
+      }
+      .getOrElse(Map.empty)
+
+  /** The catalog's defaultPreset field, tolerating absence ("general" fallback). */
+  private def readDefaultPreset(presetsFile: os.Path): String =
+    io.circe.parser
+      .parse(os.read(presetsFile))
+      .toOption
+      .flatMap(_.hcursor.downField("defaultPreset").as[Option[String]].toOption.flatten)
+      .getOrElse("general")
 
   private def migrateAgent(name: String, catalog: Map[String, AgentModelConfig]): Unit =
     val jsonPath = PathUtil.dataRoot / "agents" / name / "agent.json"

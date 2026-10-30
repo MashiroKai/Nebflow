@@ -95,6 +95,16 @@ end PresetFile
  * The store reads the file fresh on every call (small file, rare writes) so
  * edits take effect on the next `refreshTurn` without restart or cache
  * invalidation.
+ *
+ * preset→chain 迁移批（2026-10-30）：启动迁移腿
+ * （[[nebflow.core.ModelChainMigration]]）把本目录文件迁进
+ * [[ModelChainRegistry]]（`model-chains.json`）后，走**默认路径**的 store
+ * 读面整体切到注册表（[[ModelChainRegistry.activeFor]] 判定）——旧 preset 名
+ * 逐字随迁移带走，故 `resolve` / `resolveExplicit` / `availableNames` /
+ * `catalogLines` 全部**零改动地解析到迁移后的链**（SubTask `preset` 参数、
+ * 工具文档目录、自描述错误面单源不分叉）；写面（`save` / repair 回写）同帧
+ * 落到注册表，绝不在已迁移 home 上重建被封存的 `model-presets.json`。
+ * 自定义 configPath（测试注入）永不切面，legacy 语义原样。
  */
 class PresetStore(
   configPath: os.Path = PathUtil.dataRoot / "model-presets.json",
@@ -105,16 +115,26 @@ class PresetStore(
 
   private def globalChain: List[String] = globalChainProvider()
 
+  /** 迁移面判定结果缓存不得跨调用——dataRoot 可在测试中被重定向（def 语义）。 */
+  private def registryRoot: Option[os.Path] = ModelChainRegistry.activeFor(configPath)
+
   /**
    * Idempotent invariant enforcer: the preset file exists and its
    * defaultPreset carries a model chain. Call after the first provider/model
    * save (updateConfig / onboarding) and at gateway boot. A healthy file is
    * untouched (no write); an absent/empty/broken file is created or repaired.
+   * On a migrated home (chain registry present) the invariant is enforced on
+   * the registry instead — the sealed catalog is never re-seeded.
    */
   def ensureDefaultPreset(): Unit = load()
 
   /** Load the preset file, initializing it from the global chain on first use. */
   def load(): PresetFile =
+    registryRoot match
+      case Some(root) => ModelChainRegistry.load(root).map(repair).getOrElse(loadLegacy())
+      case None       => loadLegacy()
+
+  private def loadLegacy(): PresetFile =
     if !os.exists(configPath) then
       // 首载物化竞态防护（trigger-chain-fix fork 化前置硬化）：触发链并行化后并
       // 发节点 spawn 成为常态——check-then-act 下多 fiber 同时 !exists → 并发 save
@@ -157,7 +177,9 @@ class PresetStore(
    * REPLACE_EXISTING|ATOMIC_MOVE），碰撞形态从机制上不存在，重试与阻塞一并退役。
    */
   def save(f: PresetFile): Unit =
-    AtomicJson.writeSync(configPath, f.asJson.noSpaces)
+    registryRoot match
+      case Some(root) => ModelChainRegistry.save(f, root)
+      case None       => AtomicJson.writeSync(configPath, f.asJson.noSpaces)
 
   /**
    * Resolve an agent's model configuration given its preset reference and
