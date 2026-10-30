@@ -195,6 +195,21 @@
       };
     }
 
+    /** Three images with THREE DIFFERENT ratios (wide / tall / square) — the
+     *  2026-10-30 author order's fan-design probe: the collapsed stack must
+     *  force every entry onto ONE card face (object-fit cover), so mixed
+     *  ratios are the discriminating shape (pop-stack-fan.spec.mjs). */
+    function payloadStackMixedRatios() {
+      const specs = [[1600, 400], [400, 1600], [800, 600]];
+      return {
+        fileRefs: { inlined: 3, referenced: 0, failed: 0, omitted: 0 },
+        warnings: [], notes: [],
+        items: specs.map(([w, h], i) => ({
+          kind: 'image', path: `/tmp/pop/fan-${i}.png`, name: `fan-${i}.png`, src: svgDataUri(w, h),
+        })),
+      };
+    }
+
     /** An audio whose payload points at a path with NO bytes: the ticket route
      *  404s (static server refuses) → terminal failure mark + note (缺陷 D). */
     function payloadBrokenAudio() {
@@ -284,6 +299,14 @@
       chatMod.renderTool('Pop\n  ("p0.png", …)', '5 files', popContent(payloadFiveImages()), false,
         '{"filePath":["/tmp/pop/p0.png","/tmp/pop/p1.png","/tmp/pop/p2.png","/tmp/pop/p3.png","/tmp/pop/p4.png"]}',
         'pop-harness');
+      await raf2();
+    };
+
+    /** Three different-ratio images — the fan-design stack probe. */
+    window.__popStackMixedRatios = async () => {
+      chatMod.renderUserBubble('三比例图', [], Date.now());
+      chatMod.renderTool('Pop\n  ("fan-0.png", …)', '3 files', popContent(payloadStackMixedRatios()), false,
+        '{"filePath":["/tmp/pop/fan-0.png","/tmp/pop/fan-1.png","/tmp/pop/fan-2.png"]}', 'pop-harness');
       await raf2();
     };
 

@@ -522,8 +522,8 @@ test.describe('UI-G — main window effects intact', () => {
  *  against the media's own ratio only where the browser has reported one. */
 const RATIO_TOL = 0.06;
 
-test.describe('U1 — mixed wide/tall/video/file payload keeps every ratio', () => {
-  test('the stack cover takes the front media ratio and nothing is cropped', async ({ browser }) => {
+test.describe('U1 — mixed wide/tall/video/file payload: one fixed card face', () => {
+  test('the collapsed stack force-fits every entry onto the 220×280 face (2026-10-30 fan order)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__popMixedSized());
     await page.waitForFunction(() => {
@@ -541,15 +541,21 @@ test.describe('U1 — mixed wide/tall/video/file payload keeps every ratio', () 
     const front = read.layers.find(l => l.cls.includes('layer-front'));
     expect(front, 'exactly one front layer').toBeTruthy();
     expect(front.natRatio, 'the wide image reported its intrinsic ratio').toBeCloseTo(4, 1);
-    // D1 core: the cover box is derived from the FRONT media, so the wide image
-    // fills it without losing its left/right thirds (the old 200×256 cover box
-    // kept only the middle ~15%).
-    expect(read.viewRatio, `cover ratio ${read.viewRatio} must follow the front media ${front.natRatio}`)
-      .toBeCloseTo(front.natRatio, 1);
+    // 2026-10-30 作者令 supersedes zcode-484 D1's per-media stack box: the
+    // collapsed stack is ONE fixed WeChat-style card face (220×280, 11/14) and
+    // every entry — the 4:1 wide image, the 1:4 tall image, the video — is
+    // force-fit onto it with `object-fit: cover` (强制放缩到一个大小). The box
+    // no longer follows the front media; the mixed payload IS the proof
+    // (front natRatio 4 vs face 0.786).
+    expect(read.viewW, 'the face is 220px wide').toBe(220);
+    expect(read.viewRatio, `cover ratio ${read.viewRatio} is the fixed 11/14 face, not the front media ${front.natRatio}`)
+      .toBeCloseTo(11 / 14, 2);
 
-    // And the family-wide un-cropped face.
+    // The stack-scoped crop: collapsed layers COVER the face; the un-cropped
+    // `contain` contract survives only on the expanded rows (U3) and the flat
+    // single (U5).
     for (const l of read.layers) {
-      expect(l.objectFit, `${l.cls}: the media is contained, never cropped`).toBe('contain');
+      expect(l.objectFit, `${l.cls}: the collapsed stack face crops onto the one card (cover)`).toBe('cover');
     }
 
     // D2: visible layers carry DISTINCT z-indices (no two painted at one depth).
