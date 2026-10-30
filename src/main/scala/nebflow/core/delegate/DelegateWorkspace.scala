@@ -27,7 +27,10 @@ import scala.util.Try
  *   - 分支/worktree 创建权在判定机——delegate 不自建（brief 一行申报，见
  *     [[workingBranchLine]]）；
  *   - 非 git 工作区 = 整腿跳过（返回 None）：无可判之 repo，「禁直改 main」在
- *     非 git 目录是空集。
+ *     非 git 目录是空集；
+ *   - **设备项目腿**（跨设备 worktree 归属修复批 2026-10-30）= [[prepareDevice]]：
+ *     worktree 归属 origin 设备的 workspace（不在编排机 brain 下建）；设备仓无
+ *     git / 不可达 ⇒ 不建 worktree 直用 workspace（WARN，不阻断派发）。
  *
  * 机械强制力（A5 步1 的核心论证）：座位在 worktree 内后，模型自然形态的直改
  * 基分支（`git checkout <base> && … && git commit`）被 **git 本体拒绝**（同分支
@@ -145,6 +148,90 @@ object DelegateWorkspace:
     }
   end prepare
 
+  /**
+   * 设备项目腿的 worktree 解析（跨设备 worktree 归属修复批 2026-10-30——作者报障：
+   * 绑定设备的项目（如「跨设备测试」@ KAI），delegate 的 worktree 被建在编排机
+   * 本机 brain 根下 `<brain>/.nebflow/worktrees/…`——归属错 + 无 git 仓的设备项目
+   * 空转建权）。
+   *
+   * 两态裁量（作者令）：
+   *   - 设备 workspace **有 git 仓** ⇒ worktree 落在**设备内**
+   *     `<设备workspace>/.stand-worktrees/<id>`（分支纪律同本机腿：`delegate/<id>`
+   *     ＋判定机的判是/判否 brief 变体；基分支/基 SHA = 设备仓读数）——建权全经
+   *     设备通道（[[DeviceGitPort]]），编排机 brain 只留 ledger（设计如此，勿动）；
+   *   - **无 git 仓** ⇒ 不建 worktree（返回 None）——delegate 直用设备 workspace，
+   *     执行形态面板 Worktree 行经 spawn 行的 additive `workspaceSeat` 键显示
+   *     workspace 路径并标注「直接使用工作区」；
+   *   - 设备不可达/通道失败 ⇒ WARN + None 回落（同「直用 workspace」形态）——
+   *     **派发永不因设备 git 面失败而拒绝**（fail-open 合同与本机腿一致）。
+   *
+   * 建败（有 git 但 `git worktree add` 失败）同回落 None + WARN——设备腿的 in-place
+   * 分支回落不在本批范围（设备仓的合并轮本身需设备道，见批次报告开放项）。
+   */
+  def prepareDevice(
+    deviceName: String,
+    deviceWorkspace: String,
+    task: String,
+    delegateId: String
+  ): IO[Option[Binding]] =
+    // IO.defer：端口解析推迟到 IO 运行期——调用方（spec）可在构建后安装 fake 面
+    // （与 prepare 腿内 DelegateJudgePort 的惰性解析同律）。
+    IO.defer {
+      val port = DeviceGitPort.current
+      port.isGitRepo(deviceName, deviceWorkspace).flatMap {
+      case Left(err) =>
+        IO {
+          logger.warn(
+            s"delegate $delegateId: device '$deviceName' git probe failed ($err) — no device worktree, direct workspace seat"
+          )
+        }.as(None)
+      case Right(false) => IO.pure(None)
+      case Right(true) =>
+        val branch = s"delegate/$delegateId"
+        for
+          judged <- DelegateJudge.DelegateJudgePort.decideWorktreeDetailed(task)
+          changesFiles = judged.map(_.changesFiles).getOrElse(true)
+          judgeLeg     = judged.map(_.leg).getOrElse(DelegateJudge.JudgeLeg.FailOpen)
+          refs         <- port.refInfo(deviceName, deviceWorkspace)
+          (baseBranch, baseSha) = refs
+          created <- port.createWorktree(
+            deviceName,
+            deviceWorkspace,
+            branch,
+            GitWorktrees.sanitizeRefName(delegateId)
+          )
+          binding <- created match
+            case Right(wtPath) =>
+              IO {
+                logger.info(
+                  s"delegate $delegateId: device worktree created on '$deviceName' at $wtPath (branch=$branch, base=${baseBranch.getOrElse("?")})"
+                )
+              }.as(
+                Some(
+                  Binding(
+                    branch,
+                    worktree = Some(wtPath),
+                    cwd = wtPath,
+                    baseWs = deviceWorkspace,
+                    baseBranch = baseBranch,
+                    baseSha = baseSha,
+                    briefLine = Some(workingBranchLine(branch, baseBranch, worktree = true, readOnly = !changesFiles)),
+                    worktreeJudged = Some(changesFiles),
+                    judgeLeg = Some(judgeLeg)
+                  )
+                )
+              )
+            case Left(err) =>
+              IO {
+                logger.warn(
+                  s"delegate $delegateId: device worktree creation failed on '$deviceName' ($branch): $err — direct workspace seat"
+                )
+              }.as(None)
+        yield binding
+    }
+    }
+  end prepareDevice
+
   /** 建败回落腿：项目内建分支（共享 HEAD 不动）；分支再建失败 → 无 brief 行降级形态。 */
   private def inPlaceBinding(
     ws: os.Path,
@@ -221,7 +308,14 @@ object DelegateWorkspace:
     project: Option[String],
     b: Option[Binding],
     plugins: Option[List[String]] = None,
-    allocation: Option[String] = None
+    allocation: Option[String] = None,
+    /**
+     * 跨设备 worktree 归属修复批（additive，缺省不落键——旧行字节不变）：设备项目
+     * **无 worktree 腿**（设备仓无 git / 不可达回落 / 建败）时的直用 workspace 座位
+     * （origin 盘 workspace 路径）——执行形态面板 Worktree 行据此显示 workspace
+     * 路径并标注「直接使用工作区」。本机项目恒 None。
+     */
+    workspaceSeat: Option[String] = None
   ): Json =
     io.circe.Json.fromJsonObject(
       io.circe.JsonObject.fromIterable(
@@ -239,6 +333,7 @@ object DelegateWorkspace:
           ++ allocation.toList.map(a => "allocation" -> a.asJson)
           ++ b.flatMap(_.worktreeJudged).map(j => "worktreeJudged" -> j.asJson)
           ++ b.flatMap(_.judgeLeg).map(l => "judgeLeg" -> l.asJson)
+          ++ workspaceSeat.toList.map(w => "workspaceSeat" -> w.asJson)
       )
     )
 

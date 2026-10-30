@@ -369,8 +369,14 @@ function renderStructureBody(pane) {
       const val = document.createElement('span');
       val.className = 'delegate-chain-mono';
       const w = p.chain.worktree;
+      // 归属修复批（2026-10-30）：无 worktree 腿（w.worktree/w.cwd 全空）但有
+      // workspaceSeat = 设备项目直用 workspace 形态——Worktree 行显示 workspace
+      // 路径并标注「直接使用工作区」（i18n delegate.workspaceSeat）。
+      const directWs = !w.worktree && !w.cwd && w.workspaceSeat;
       const bits = [p.row.taskNo ? `#${p.row.taskNo}` : '', w.branch,
-        w.worktree || w.cwd, w.baseBranch ? `← ${w.baseBranch}` : '',
+        w.worktree || w.cwd || (directWs ? w.workspaceSeat : ''),
+        w.baseBranch ? `← ${w.baseBranch}` : '',
+        directWs ? t('delegate.workspaceSeat') : '',
         ...spawnAllocBits(w)].filter(Boolean);
       val.textContent = bits.join(' · ');
       val.title = bits.join(' · ');

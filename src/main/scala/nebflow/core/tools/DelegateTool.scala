@@ -644,7 +644,10 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
                   rootSessionId = rootSid,
                   parentRef = ctx.agentActorRef,
                   wsSend = ctx.wsSend,
-                  resources = resources
+                  resources = resources,
+                  // 归属修复批（2026-10-30）：设备项目 + 外部执行器 = host 本地进程——
+                  // 跳过本机 git 判定腿（设备仓 worktree 归属设备，外部腿不建）。
+                  deviceProject = sessionDevice.isDefined
                 )
               )
             yield spawned
@@ -901,16 +904,44 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     val isDispatcher = modeDecision.exists(_.mode == DualModeConfig.ModeDispatcher)
     for
       // 判定机腿（R6/S13）：git 工作区才成腿——返回 None = 非 git（旧形态逐字）。
+      // 跨设备 worktree 归属修复批（2026-10-30）：设备项目（sessionDevice 在场）走
+      // **设备侧**解析——worktree 归属 origin 设备的 workspace（`<设备ws>/.stand-
+      // worktrees/<id>`，设备通道建权），绝不在编排机 brain 下建；设备仓无 git /
+      // 不可达 / 建败 ⇒ 不建 worktree 直用设备 workspace（WARN，派发不阻断），面板
+      // 经 workspaceSeat 键标注「直接使用工作区」。本机项目 = 原 prepare 腿逐字。
       binding <-
         if judgeWorkspace then
-          DelegateWorkspace
-            .prepare(workspace, task, subagentId)
-            .handleErrorWith(e =>
-              logger.warn(s"DelegateWorkspace.prepare failed (degraded to legacy spawn): ${e.getMessage}").as(None)
-            )
+          (sessionDevice, sessionDeviceWorkspace) match
+            case (Some(dev), Some(devWs)) =>
+              DelegateWorkspace
+                .prepareDevice(dev, devWs, task, subagentId)
+                .handleErrorWith(e =>
+                  logger
+                    .warn(
+                      s"DelegateWorkspace.prepareDevice failed (degraded to direct workspace seat): ${e.getMessage}"
+                    )
+                    .as(None)
+                )
+            case _ =>
+              DelegateWorkspace
+                .prepare(workspace, task, subagentId)
+                .handleErrorWith(e =>
+                  logger.warn(s"DelegateWorkspace.prepare failed (degraded to legacy spawn): ${e.getMessage}").as(None)
+                )
         else IO.pure(None)
-      // 判是腿的 delegate 工作座 = worktree；判否/无腿 = 原 workspace。
-      effectiveWs = binding.map(_.cwd).getOrElse(workspace)
+      // 判是腿的 delegate 工作座 = worktree；判否/无腿 = 原 workspace。设备项目（归属
+      // 修复批）：本机引擎座位恒 = 基 workspace（brain 根）——设备 worktree 是设备
+      // 本地路径（如对端盘符），绝不能当本机 projectRoot。
+      effectiveWs =
+        if sessionDevice.isDefined then workspace
+        else binding.map(_.cwd).getOrElse(workspace)
+      // 设备项目的默认设备 cwd（会话默认设备 workspace 的生效值）：设备 git 腿 =
+      // 设备 worktree 座位（brief 申报与 Bash cwd 注入同源——模型开局即在座位内）；
+      // 无腿 = origin 盘 workspace（直用工作区形态）。本机项目恒原值（零变化）。
+      effectiveDevWs =
+        (sessionDevice, binding.flatMap(_.worktree)) match
+          case (Some(_), Some(wt)) => Some(wt)
+          case _                   => sessionDeviceWorkspace
       params = NodeRunner.SpawnParams(
         agentDef = agentDef,
         resources = resources,
@@ -925,9 +956,10 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
         safetyMode = safetyMode,
         rootSessionId = resolvedRoot,
         // 跨设备批（2026-10-25）：设备项目 delegate 的会话默认设备上下文——六件
-        // 工具未显式带 device 默认路由设备（cwd 注入 = 设备盘 workspace）。
+        // 工具未显式带 device 默认路由设备（cwd 注入 = 设备盘 workspace；归属修复批
+        // 2026-10-30：设备 git 腿改为注入 worktree 座位——见 effectiveDevWs）。
         sessionDevice = sessionDevice,
-        sessionDeviceWorkspace = sessionDeviceWorkspace
+        sessionDeviceWorkspace = effectiveDevWs
       )
       // brief：工作座行 + 判定机的 working-branch 申报行（🔴 均模型可见——
       // §16 待过目，最小成稿；无绑定 = 无行，旧 brief 逐字——无绑定 = 非 git
@@ -948,7 +980,7 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
             sessionDevice.getOrElse("local") + "\" on EVERY Bash/Read/Write/Edit/Glob/Grep call — calls without it are refused."
         else ""
       deviceWorkspaceLine =
-        (sessionDevice, sessionDeviceWorkspace) match
+        (sessionDevice, effectiveDevWs) match
           case (Some(dev), Some(ws)) =>
             s"[workspace] $ws (on device $dev — Bash/Read/Write/Edit/Glob/Grep run on that device by " +
               "default; paths are device-local absolute paths. Pass device=\"local\" explicitly for a " +
@@ -1062,6 +1094,12 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               allocation =
                 if allocated.actionRan then Some(allocated.mode)
                 else if isDispatcher then Some("dispatcher-off")
+                else None,
+              // 归属修复批（2026-10-30）：设备项目无 worktree 腿（无 git/不可达/建败）
+              // ⇒ 直用 workspace 座位落行（additive 键 workspaceSeat——执行形态面板
+              // 「直接使用工作区」标注的数据源；本机项目恒 None，旧行字节不变）。
+              workspaceSeat =
+                if sessionDevice.isDefined && binding.isEmpty then sessionDeviceWorkspace
                 else None
             )
           )
