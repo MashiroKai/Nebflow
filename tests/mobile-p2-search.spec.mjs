@@ -40,7 +40,8 @@ const T0 = Date.now();
 
 test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, colorScheme: 'dark' });
 
-/** 会话历史夹具：user/ai/tool 三 kind 各一条含「量子纠缠」+ 一条不含（角色过滤断言）。 */
+/** 会话历史夹具：user/ai/tool 三 kind 各一条含「量子纠缠」+ 一条不含（角色过滤断言；
+ *  tool 行随作者令① 2026-10-30 不入关键词结果——种它在场只为守卫「排除」）。 */
 function historyFixture() {
   return { messages: [
     { type: 'user', text: '帮我查一下量子纠缠的最新进展', timestamp: T0 - 40_000 },
@@ -167,13 +168,14 @@ test('T2 main-session face: head icon, scope retired, kind row = second filter r
   // 夹具服务端不驱动 scope —— 兜底断言：pin 腿已把 select 值钉在 current。
   expect(await page.locator('#search-scope').inputValue()).toBe('current');
 
-  // 筛选两行：第一行 = 类型·日期 tabs；第二行 = 角色行（首档「全部来源」）。
+  // 筛选两行：第一行 = 类型·日期 tabs；第二行 = 角色行（首档「全部来源」；
+  // 「工具」档随 2026-10-30 作者令①退役——tool 行不入搜索结果）。
   await expect(page.locator('#search-modal .search-tabs .search-tab')).toHaveCount(5);
   const kindOptions = page.locator('#mh-search-kind option');
-  await expect(kindOptions).toHaveCount(5);
+  await expect(kindOptions).toHaveCount(4);
   expect(await kindOptions.nth(0).textContent()).toBe('全部来源');
   expect(await kindOptions.nth(1).textContent()).toBe('用户');
-  expect(await kindOptions.nth(4).textContent()).toBe('工具');
+  expect(await kindOptions.nth(3).textContent()).toBe('AI');
 
   // 脚注：主会话说明 + 空态两腿（现网同款键）。
   const foot = await page.locator('#mh-search-foot').textContent();
@@ -188,11 +190,12 @@ test('T3 status prefix「主会话」+ mark highlight + session prefix hidden + 
   await openPanel(page);
 
   await page.locator('#search-keyword').fill('量子纠缠');
-  await expect(page.locator('#search-status')).toHaveText(/^主会话 · 3 条结果/, { timeout: 8000 });
+  await expect(page.locator('#search-status')).toHaveText(/^主会话 · 2 条结果/, { timeout: 8000 });
 
-  // 结果行：3 行（user/ai/tool），会话名前缀退场（裁定②）。
+  // 结果行：2 行（user/ai——tool 种植行被排除，作者令①「搜索结果只搜对话」），
+  // 会话名前缀退场（裁定②）。
   const rows = page.locator('#search-results .search-result');
-  await expect(rows).toHaveCount(3);
+  await expect(rows).toHaveCount(2);
   const sessDisplay = await rows.first().locator('.search-result-session').evaluate((el) => getComputedStyle(el).display);
   expect(sessDisplay).toBe('none');
 
@@ -200,12 +203,12 @@ test('T3 status prefix「主会话」+ mark highlight + session prefix hidden + 
   const markBg = await rows.first().locator('.search-result-preview mark').first().evaluate((el) => getComputedStyle(el).backgroundColor);
   expect(markBg).toBe('rgba(91, 127, 191, 0.3)');
 
-  // 角色过滤：选「用户」→ 仅 user 行；回「全部来源」→ 复原 3 行。
+  // 角色过滤：选「用户」→ 仅 user 行；回「全部来源」→ 复原 2 行。
   await page.locator('#mh-search-kind').selectOption('user');
   await expect(rows).toHaveCount(1, { timeout: 8000 });
   await expect(rows.first()).toHaveAttribute('data-kind', 'user');
   await page.locator('#mh-search-kind').selectOption('');
-  await expect(rows).toHaveCount(3, { timeout: 8000 });
+  await expect(rows).toHaveCount(2, { timeout: 8000 });
   expect(errors).toEqual([]);
 });
 

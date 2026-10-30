@@ -158,6 +158,29 @@ class ChatSearchRoutesSpec extends CatsEffectSuite:
     assert(bodyJson(resp).hcursor.downField("reason").as[String].toOption.exists(_.contains("shard predicate")))
   }
 
+  test("作者令①：kinds=tool 剥除后无谓词 ⇒ 503（tool 片已退役）") {
+    val resp = serve(req("/api/search/chat?q=delegate&kinds=tool"))
+    assertEquals(resp.status, Status.ServiceUnavailable)
+    assert(bodyJson(resp).hcursor.downField("reason").as[String].toOption.exists(_.contains("shard predicate")))
+  }
+
+  test("作者令①：旧库残留的 kind=tool 行不入结果（无 kinds 谓词的查询亦过滤 + total 减扣）") {
+    // 模拟改动前入库的残留行：直接灌一条 kind="tool" 文档（adapter 已不再产出）。
+    // 用 since/until 谓词而非 sid——sid 谓词会触发惰性对账把无源残留行清掉，
+    // 这里要验的恰是对账覆盖不到的情形。
+    SearchIndexService.unsafeInsertDocs("chat", List(
+      SearchIndexService.IndexDoc(sid = "seed-stale", ord = 0, kind = "tool", ts = 0L,
+        text = "staletool delegate noise", extra = "{\"tool\":\"Bash\"}")
+    ))
+    val resp = serve(req(s"/api/search/chat?q=staletool&since=0&until=${Long.MaxValue}"))
+    assertEquals(resp.status, Status.Ok)
+    val json = bodyJson(resp)
+    val hits = json.hcursor.downField("hits").as[List[Json]].getOrElse(Nil)
+    assert(hits.forall(_.hcursor.downField("kind").as[String].toOption != Some("tool")),
+      "残留 tool 行必须被过滤（不入结果）")
+    assertEquals(json.hcursor.downField("total").as[Int].toOption, Some(0))
+  }
+
   test("鉴权：无 Bearer ⇒ 403") {
     val resp = app(Request[IO](Method.GET, Uri.unsafeFromString("/api/search/chat?q=x&kinds=message"))).unsafeRunSync()
     assertEquals(resp.status, Status.Forbidden)
