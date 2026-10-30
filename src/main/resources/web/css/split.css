@@ -2324,16 +2324,20 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
    胶囊叠住只露出边缘 = 同屏重复。渲染端（viewers/image.js、viewers/video.js）
    同批摘除，规则随层退役 —— 非 z-index 遮盖。 */
 /* Zoom/pan viewport: overflow hidden, transform-driven (viewers/zoom.js). */
+/* 冷启动批（2026-10-30 作者实证①）：默认非拖拽 —— 修前 cursor:grab 常显、
+   任意按下即拖动画布。光标/hand 语义随 pan-enabled 门（image.js hand 钮 /
+   按住 Space 才挂类），默认态 cursor:default。 */
 .canvas-image-viewport {
   flex: 1;
   min-height: 0;
   width: 100%;
   position: relative;
   overflow: hidden;
-  cursor: grab;
+  cursor: default;
   touch-action: none; /* let pointer events drive pan on touch */
 }
-.canvas-image-viewport.panning { cursor: grabbing; }
+.canvas-image-viewport.pan-enabled { cursor: grab; }
+.canvas-image-viewport.pan-enabled.panning { cursor: grabbing; }
 .canvas-image-viewport img {
   display: block;
   max-width: none; /* natural size; visual size is transform scale */
@@ -2419,6 +2423,24 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   border: 1px solid var(--cv-border, var(--glass-border));
   box-shadow: var(--cv-shadow);
 }
+/* 冷启动批③（2026-10-30）：控件条玻璃对齐主对话输入框 #input-bar 同款 ——
+   顶缘 sapphire 折射细线（input.css #input-bar::before 同配方逐字），
+   面阴影走 --cv-shadow 单源（sapphire.css 已对齐输入框三档栈）。 */
+.canvas-zoom-bar::before,
+.nf-findbar::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 10%,
+    var(--sapphire-refraction) 50%,
+    transparent 90%
+  );
+  pointer-events: none;
+}
 .canvas-zoom-btn {
   width: var(--cv-size-btn, 26px);
   height: var(--cv-size-btn, 26px);
@@ -2426,15 +2448,32 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   align-items: center;
   justify-content: center;
   padding: 0;
-  border: none;
+  /* 冷启动批②（2026-10-30）：hover 抬亮升级为完整玻璃控件材质（抬亮底 +
+     描边 + 内外缘）——修前只换底色，hover 态在毛玻璃条上几乎不可辨（作者
+     实证「hover 按钮直接消失」）。rest 态 1px 透明边框占位，hover 换色
+     零布局位移。 */
+  border: 1px solid transparent;
   border-radius: var(--cv-radius-btn-sm, 7px);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
-  transition: background .15s ease, color .15s ease, transform .15s ease;
+  transition: background .15s ease, color .15s ease, transform .15s ease, border-color .15s ease;
 }
-.canvas-zoom-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
+.canvas-zoom-btn:hover {
+  background: var(--cv-hover-bg);
+  border-color: var(--cv-hover-border);
+  color: var(--color-text);
+  box-shadow:
+    inset 0 1px 0 var(--cv-hover-highlight),
+    inset 0 -1px 0 var(--cv-hover-underedge);
+}
 .canvas-zoom-btn:active { transform: scale(var(--cv-active-scale, 0.96)); }
+/* 抓手开关 is-on 档 = 同 hover 材质（latch 态常亮可读，非一次性反馈）。 */
+.canvas-zoom-btn.canvas-pan-toggle.is-on {
+  background: var(--cv-hover-bg);
+  border-color: var(--cv-hover-border);
+  color: var(--color-text);
+}
 .canvas-zoom-btn svg { width: var(--cv-icon-btn, 14px); height: var(--cv-icon-btn, 14px); }
 .canvas-zoom-pct {
   min-width: 40px;

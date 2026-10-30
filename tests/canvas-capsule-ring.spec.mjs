@@ -311,19 +311,27 @@ const ringInfo = (page) => page.evaluate(() => {
   ok('CR2-4 中心位接班：常态标题让位（t-inner opacity 0，同位 morph）',
     hov.titleOpacity === '0', `title=${hov.titleOpacity}`);
 
-  /* ② frosted 材质 = chat header 同 token（逐项相等）—— 取缘位胶囊（完整
-   * frosted 药丸；中心位是内容-only 覆层，底 = 标题头胶囊本体） */
+  /* ② frosted 材质 = chat 模板同 token（逐项相等）—— 取缘位胶囊（完整
+   * frosted 药丸；中心位是内容-only 覆层，底 = 标题头胶囊本体）。
+   * 冷启动批③（2026-10-30 作者令「控件条玻璃对齐主对话输入框那款」）：阴影参考件
+   * chat #header → #input-bar（--cv-shadow 三档栈逐字同源）；胶囊底缘 transparent 为
+   * 件三统一批刻意语义（内容穿底不衬线，split.css .cr-capsule），与 #input-bar 通体
+   * 描边有意不同 —— 故 border 只钉顶/左右 == --glass-border、底 == transparent。 */
   const mat = await page.evaluate(() => {
     const pick = (el) => {
       const c = getComputedStyle(el);
       return { bg: c.backgroundColor, blur: c.backdropFilter || c.webkitBackdropFilter, border: c.borderColor, shadow: c.boxShadow };
     };
     const cap = document.querySelector('#canvas-capsule-ring .cr-capsule.is-edge');
-    return { header: pick(document.querySelector('#header')), capsule: cap ? pick(cap) : null };
+    return { ref: pick(document.getElementById('input-bar')), capsule: cap ? pick(cap) : null };
   });
-  ok('CR2-5 材质 = 全站统一 frosted（bg/blur/border/shadow 与 chat header 逐项相等）',
-    !!mat.capsule && JSON.stringify(mat.header) === JSON.stringify(mat.capsule),
-    JSON.stringify({ header: mat.header, capsule: mat.capsule }).slice(0, 220));
+  const borderOk = !!mat.capsule && (() => {
+    const parts = mat.capsule.border.match(/rgba\([^)]*\)/g) || [];
+    return parts.length === 3 && parts[0] === mat.ref.border && parts[1] === mat.ref.border && parts[2] === 'rgba(0, 0, 0, 0)';
+  })();
+  ok('CR2-5 材质 = 全站统一 frosted（bg/blur/shadow 与 #input-bar 逐项相等 + 底缘透明钉，冷启动批③改锚）',
+    !!mat.capsule && mat.ref.bg === mat.capsule.bg && mat.ref.blur === mat.capsule.blur && mat.ref.shadow === mat.capsule.shadow && borderOk,
+    JSON.stringify({ ref: mat.ref, capsule: mat.capsule }).slice(0, 700));
 
   /* 证据截图：环开态（环锚顶带 —— 上缘位真实越出顶缘渲染（真越出批，无裁切
    *  线）+ 下缘位下垂；clip 取面板顶外扩，含顶缘外探出段全貌） */

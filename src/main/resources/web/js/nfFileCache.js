@@ -477,6 +477,30 @@ let viewerRevokeBound = false;
 /** @type {Map<string, Promise<Blob>>} 键 = 'nf:<absPath>' */
 const viewerFetchInFlight = new Map();
 
+/** 冷启动批④（2026-10-30）：**旧账本字节类型自愈** —— 修前流式拼接腿产出
+ *  无 type 的 Blob，入账时 CacheStorage 以 application/octet-stream 落盘
+ *  （跨会话存活）⇒ 升级后同版本键仍命中这些不可辨型 blob，<img> 对 SVG
+ *  走严格 MIME 照旧拒渲。消费单点按扩展名补 MIME：空 type 与 octet-stream
+ *  两形都兜（二者都**零类型信息**，窄白名单扩展名覆盖才改，其余原样透传）。
+ *  新取数字节已在 fetchBlobWithProgress 注类型，此处是双保险。 */
+const EXT_MIME = {
+  svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+  gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', avif: 'image/avif',
+  ico: 'image/x-icon', tif: 'image/tiff', tiff: 'image/tiff',
+  mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime',
+};
+/** @param {Blob} blob @param {string} absPath @returns {Blob} */
+function ensureBlobType(blob, absPath) {
+  if (!blob || !absPath) return blob;
+  const hasInfo = blob.type && blob.type !== 'application/octet-stream';
+  if (hasInfo) return blob;
+  const seg = absPath.slice(absPath.lastIndexOf('/') + 1);
+  const dot = seg.lastIndexOf('.');
+  if (dot <= 0) return blob;
+  const mime = EXT_MIME[seg.slice(dot + 1).toLowerCase()];
+  return mime ? new Blob([blob], { type: mime }) : blob;
+}
+
 /** 会话内已知的路径→整件 hash 读数（设备取件腿 fileContent 帧免费带回；viewer
  *  取数入账时作 cid——同内容跨设备/跨键只存一份字节，v1 §6.3）。 */
 /** @type {Map<string, string>} 键 = 'nf:<absPath>' → hash16 */
@@ -521,7 +545,8 @@ export async function nfViewerSource(p) {
   const cacheKey = 'nf:' + absPath;
   const hit = await nfCachedBlob(cacheKey);
   if (hit) {
-    const url = trackViewerUrl(pane || document.body, URL.createObjectURL(hit));
+    const typed = ensureBlobType(hit, absPath);
+    const url = trackViewerUrl(pane || document.body, URL.createObjectURL(typed));
     return { url, cached: true };
   }
   // 未命中：票据链（动态 import——静态边会成环：nfTicket ← viewers/shared ← …）。
@@ -587,7 +612,8 @@ export async function nfViewerSource(p) {
     shared.then(settle, settle);
   }
   const blob = await shared;
-  const url = trackViewerUrl(pane || document.body, URL.createObjectURL(blob));
+  const typed = ensureBlobType(blob, absPath);
+  const url = trackViewerUrl(pane || document.body, URL.createObjectURL(typed));
   return { url, cached: false };
 }
 
@@ -724,6 +750,12 @@ export async function fetchBlobWithProgress(url, onProgress) {
   }
   const lastModified = resp.headers.get('Last-Modified') || '';
   const lmMs = Date.parse(lastModified) || 0; // HTTP-date → epoch ms（对账口径与列目录 mtime 同轴）
+  // 冷启动批④（2026-10-30 作者实证：聊天搜索里 SVG 附件缩略图渲染失败出「?」
+  // 占位 —— pelican-bike.svg 案）：流式拼接腿**必须**把响应 Content-Type 注进
+  // Blob —— 修前 `new Blob(chunks)` 无 type，object URL 以 text/plain 出件，
+  // <img> 对 SVG 走严格 MIME（image/svg+xml 才渲染）⇒ 整链必败。非流式腿
+  // `resp.blob()` 自带类型，天然免疫。
+  const mimeType = (resp.headers.get('Content-Type') || '').split(';')[0].trim();
   const lenHeader = Number(resp.headers.get('Content-Length'));
   const total = Number.isFinite(lenHeader) && lenHeader > 0 ? lenHeader : 0;
   /** @type {Blob} */
@@ -739,7 +771,7 @@ export async function fetchBlobWithProgress(url, onProgress) {
       if (value && value.length) { chunks.push(value); loaded += value.length; }
       if (onProgress) onProgress(loaded, total);
     }
-    blob = new Blob(/** @type {BlobPart[]} */ (chunks));
+    blob = new Blob(/** @type {BlobPart[]} */ (chunks), mimeType ? { type: mimeType } : undefined);
   } else {
     blob = await resp.blob(); // 无流式 body 的引擎：整收（进度退化为一次 100%）
     if (onProgress) onProgress(blob.size, blob.size || total);
