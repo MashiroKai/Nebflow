@@ -107,8 +107,224 @@
   <link rel="stylesheet" href="css/mobileLayer.css">
   <!-- 对话层活性批（2026-10-22）：回合活动流条 + 断连横幅 -->
   <link rel="stylesheet" href="css/liveness.css">
+  <!-- 偶发裸渲染修复批（2026-10-30，作者 20:03 截图实证：冷启动实例「有时候」
+       右侧面板整面无样式、工作台列表以原文竖排裸露）。根因面：stylesheet 是
+       渲染阻塞资源，但若任一 CSS 请求**失败**（实例重启在途请求被掐断 / 隧道
+       上 SW 未命中回 Response.error / 深层 404 / gzip 流中断），浏览器放弃该
+       表并立即无样式绘制——JS 模块图请求是独立并发fetch，可全部成功 ⇒ 列表
+       照样渲染，样式面整体未挂 = 作者所见截图。旧行为无任何韧性：不 gate、
+       无骨架、无失败面 ⇒ 失败态恒等裸 DOM。
+       本件 = 未就绪不裸露三件套（全部内联、零请求依赖、经典脚本先于模块图）：
+       ① 门样式（下方 <style>，内联故自身永不缺席）：html.nf-boot-gate 下
+          body 整面 visibility:hidden（visibility 可被子代覆写——失败面/加载面
+          自显），任何 body 级新增容器零维护全覆盖；
+       ② 门脚本（下方经典脚本）：逐条 head stylesheet 三态判定——sheet 缺席
+          = pending，cssRules>0 = ok，已处理而 0 规则 = fail（404/空体形态），
+          error 事件/看门狗（15s，与卡窗静态看门狗同档预算）兜底挂死；全 ok
+          ⇒ 摘门（缓存即中时常在首帧前完成，零闪现），任一 fail ⇒ 永不摘门，
+          换失败卡（重试 / 绕过缓存重试 nfsw=0 逃生门）——裸 DOM 暴露不可能。
+          关键机制：本脚本自身被先行 render-blocking 表 script-block（HTML
+          标准机制）——执行时先行表必已终态，初始评 sheet 缺席即网络失败类
+          （error 事件先于本脚本挂监听 fire 完毕，此判据是唯一收口）；纯慢
+          （无失败）路径由浏览器首帧阻塞天然兜底（白窗非裸），骨架面覆盖
+          非阻塞引擎的「失败 unblock 后其余未决」窗。
+       ③ 加载/失败面（body 首元素 #nf-boot-gate）：纯 CSS 环 + 文本卡，不属
+          「弹窗禁遮罩」族（应用本体未就绪时的整页引导面，同卡窗失败卡先例）。
+       隧道首开打包脸全部 CSS 内联成 <style> ⇒ 门脚本见零 link 即开，零开销；
+       dist 脸 16 链并 1 bundle 链，同一判定成立。内嵌脸（nfEmbedded）由
+       main.js 自渲染停止面，不进门。 -->
+  <style>
+    html.nf-boot-gate body { visibility: hidden; }
+    html.nf-boot-gate #nf-boot-gate { visibility: visible; }
+    #nf-boot-gate {
+      position: fixed; inset: 0; z-index: 9999;
+      display: none; align-items: center; justify-content: center;
+      background: #f2f3f5;
+      font: 13px/1.6 -apple-system, 'Segoe UI', sans-serif;
+    }
+    html.nf-boot-gate #nf-boot-gate { display: flex; }
+    .nf-boot-ring {
+      width: 22px; height: 22px; border-radius: 50%;
+      border: 2px solid rgba(0, 0, 0, 0.25); border-top-color: transparent;
+      animation: nf-boot-spin 0.8s linear infinite;
+    }
+    @media (prefers-color-scheme: reduce) { .nf-boot-ring { animation: none; } }
+    @keyframes nf-boot-spin { to { transform: rotate(360deg); } }
+    #nf-boot-gate[data-state="failed"] .nf-boot-ring { display: none; }
+    .nf-boot-card {
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      max-width: 78vw; padding: 26px 34px; text-align: center;
+      background: #fff; color: #1b1e26;
+      border: 1px solid #e0e1e4; border-radius: 14px;
+      box-shadow: 0 2px 14px rgba(0, 0, 0, 0.08);
+    }
+    .nf-boot-card-title { font-size: 14px; font-weight: 600; }
+    .nf-boot-card-hint { font-size: 12px; color: #6a737d; max-width: 340px; }
+    .nf-boot-card-actions { display: flex; gap: 10px; margin-top: 6px; }
+    .nf-boot-card-actions button {
+      padding: 6px 18px; border-radius: 8px; font-size: 12px; cursor: pointer;
+      border: 1px solid #d8d9dd; background: transparent; color: inherit;
+    }
+    .nf-boot-card-actions button:hover { border-color: #b9bcc2; }
+    /* 暗色覆写必须在基态之后（同特异性序胜）——放本块尾。 */
+    @media (prefers-color-scheme: dark) {
+      #nf-boot-gate { background: #141519; }
+      .nf-boot-card { background: #1e2025; color: #e6e8ec; border-color: #33363d; }
+      .nf-boot-card-hint { color: #9aa0a8; }
+      .nf-boot-card-actions button { border-color: #3a3e46; }
+      .nf-boot-card-actions button:hover { border-color: #4c525c; }
+      .nf-boot-ring { border-color: rgba(255, 255, 255, 0.3); border-top-color: transparent; }
+    }
+  </style>
+  <script>
+  (function () {
+    var root = document.documentElement;
+    try {
+      // 内嵌脸（沙箱 HTML 预览防递归体系）不进门：main.js 在 DOMContentLoaded
+      // 自渲染停止面，门会把body藏起来连停止面一起吞。卡窗脸进门——其壳隐藏
+      // 规则也在 CSS 里，CSS 失败时卡窗同样会裸整壳，门是它在模块图跑起来之前
+      // 唯一的遮羞面（卡窗静态看门狗只管模块图挂起，不管 CSS 失败）。
+      if (root.dataset.nfEmbedded === '1') return;
+      root.classList.add('nf-boot-gate');
+
+      var links = Array.prototype.slice.call(
+        document.querySelectorAll('head link[rel~="stylesheet"]')
+      );
+      var done = false;
+      // 与卡窗静态看门狗同档预算：判定「永远到不了」，不是性能超时。
+      var WATCHDOG_MS = 15000;
+      var watchdog = null;
+
+      // 三态判定（逐链终态性自知）：本脚本被**script-blocking 表**（媒体条件
+      // 命中或无媒体条件的 render-blocking 表）阻塞——执行到此处时这类表必已
+      // 终态（成功/失败），其 sheet 缺席 = 网络失败类（abort/断流：error 事件
+      // 在本脚本挂监听**之前**就 fire 完毕，此判据是唯一收口），0 规则 = 404/
+      // 空体（本树 CSS 均非空，0 规则即失败语义）。非适用媒体表（highlight
+      // 双主题对）不阻塞脚本、可能仍在途——缺席按 pending，其 load/error 事件
+      // 驱动复评；已处理即足（适用性由媒体查询决定，与规则数无关）。看门狗
+      // 兜底一切挂死。
+      function isScriptBlocking(link) {
+        var m = link.getAttribute('media');
+        if (!m || !window.matchMedia) return true;
+        try { return window.matchMedia(m).matches; } catch (e) { return true; }
+      }
+      function classify(link) {
+        var sheet = link.sheet;
+        if (!sheet) return isScriptBlocking(link) ? 'fail' : 'pending';
+        if (!isScriptBlocking(link)) return 'ok';
+        // CSSOM：加载失败的表 cssRules 访问抛 SecurityError（同源前提下 throw
+        // 即失败语义）；0 规则 = 404/空体（本树 CSS 均非空）。
+        try { return sheet.cssRules.length > 0 ? 'ok' : 'fail'; }
+        catch (e) { return 'fail'; }
+      }
+
+      function cleanup() {
+        document.removeEventListener('load', onRes, true);
+        document.removeEventListener('error', onRes, true);
+        if (watchdog !== null) { clearTimeout(watchdog); watchdog = null; }
+      }
+
+      function lift() {
+        if (done) return;
+        done = true;
+        cleanup();
+        root.classList.remove('nf-boot-gate');
+      }
+
+      function fail() {
+        if (done) return;
+        done = true;
+        window.__nfBootGateFailed = true; // 卡窗静态看门狗去重锚（下方）
+        cleanup();
+        // error 可在 body 解析完成前到达（首帧前失败）——面元素在 body 首元素，
+        // 未解析则挂 DOMContentLoaded 补画；门类保持（body 维持隐藏）。
+        if (document.getElementById('nf-boot-gate')) showFailedFace();
+        else document.addEventListener('DOMContentLoaded', showFailedFace, { once: true });
+      }
+
+      function showFailedFace() {
+        var face = document.getElementById('nf-boot-gate');
+        if (!face) return;
+        face.setAttribute('data-state', 'failed');
+        var card = face.querySelector('.nf-boot-card');
+        if (!card) return;
+        var title = card.querySelector('.nf-boot-card-title');
+        var hint = card.querySelector('.nf-boot-card-hint');
+        var retry = card.querySelector('.nf-boot-retry');
+        var bypass = card.querySelector('.nf-boot-retry-bypass');
+        if (title) title.textContent = '页面样式加载失败 / Styles failed to load';
+        if (hint) hint.textContent = '部分样式资源未能到达（网络中断或缓存过期），重试即可恢复。Some stylesheets never arrived — retry to reload.';
+        if (retry) {
+          retry.textContent = '重试 / Retry';
+          retry.addEventListener('click', function () {
+            try { location.reload(); } catch (e) { /* 永不抛 */ }
+          });
+        }
+        if (bypass) {
+          bypass.textContent = '绕过缓存重试 / Retry without cache';
+          bypass.addEventListener('click', function () {
+            try {
+              var u = new URL(location.href);
+              u.searchParams.set('nfsw', '0'); // sw.js 逃生门：query 其余原样保留
+              location.replace(u.toString());
+            } catch (e) { location.reload(); }
+          });
+        }
+        card.hidden = false;
+      }
+
+      function evaluate() {
+        if (done) return;
+        var ok = 0;
+        for (var i = 0; i < links.length; i++) {
+          var c = classify(links[i]);
+          if (c === 'fail') { fail(); return; }
+          if (c === 'ok') ok++;
+        }
+        if (ok === links.length) lift();
+      }
+
+      // load/error 在 link 上不冒泡——捕获阶段挂在 document 上收。error 即判死
+      // （样式加载失败的定义本身），不等 sheet 态；load 走常规三态复评。
+      function onRes(evt) {
+        var t = evt.target;
+        if (!t || t.tagName !== 'LINK') return;
+        var rel = ' ' + (t.getAttribute('rel') || '') + ' ';
+        if (rel.indexOf(' stylesheet ') < 0) return;
+        if (evt.type === 'error') { fail(); return; }
+        evaluate();
+      }
+
+      document.addEventListener('load', onRes, true);
+      document.addEventListener('error', onRes, true);
+      watchdog = setTimeout(function () {
+        if (done) return;
+        fail(); // 到点仍有未决样式 ⇒ 失败面收口，绝不回落裸壳
+      }, WATCHDOG_MS);
+
+      evaluate(); // 初始评：缓存即中 ⇒ 首帧前摘门，加载面零闪现
+    } catch (e) {
+      // 门自身故障 ⇒ 放行回现状行为（面只在 html.nf-boot-gate 下可见，自隐）。
+      try { root.classList.remove('nf-boot-gate'); } catch (_) { /* 永不抛 */ }
+    }
+  })();
+  </script>
 </head>
 <body>
+  <!-- 偶发裸渲染修复批（2026-10-30）：加载/失败引导面，body 首元素。常态
+       display:none（html.nf-boot-gate 下才显）；纯 CSS 环 + 文本卡，零资产
+       依赖——它报告的正是样式面缺席，自身绝不能再依赖任何请求。 -->
+  <div id="nf-boot-gate" role="status" aria-live="polite">
+    <div class="nf-boot-ring" aria-hidden="true"></div>
+    <div class="nf-boot-card" hidden>
+      <div class="nf-boot-card-title"></div>
+      <div class="nf-boot-card-hint"></div>
+      <div class="nf-boot-card-actions">
+        <button type="button" class="nf-boot-retry"></button>
+        <button type="button" class="nf-boot-retry-bypass"></button>
+      </div>
+    </div>
+  </div>
   <!-- conn-liveness（对话层活性批 2026-10-22）：ws 断连/重连顶栏横幅。传输层
        问题不再伪装成卡死：断开 ⇒ 顶栏「连接断开 · 正在重连」（离线排队消息
        在场时追加「N 条待送达」）；重连成功 ⇒ 横幅收起，队列由 flushOfflineQueue
@@ -696,6 +912,7 @@
       setTimeout(function () {
         try {
           if (document.body.classList.contains('card-window')) return;   // 引导已启动
+          if (window.__nfBootGateFailed) return; // 裸渲染批：引导门已出样式失败面，不重复报告
           if (document.getElementById('nf-cardwin-boot')) return;        // canvas.js 引导态面在场
           var pane = document.querySelector('#canvas-content .canvas-tab-pane');
           if (pane && pane.childElementCount > 0) return;                // 真容已挂
