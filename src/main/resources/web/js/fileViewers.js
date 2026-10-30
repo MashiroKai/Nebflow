@@ -12,6 +12,7 @@
 import { t } from './i18n.js';
 import codeViewer, { jsonViewer, csvViewer } from './viewers/monaco.js';
 import markdownViewer from './viewers/markdown.js';
+import textReaderViewer from './viewers/textReader.js';
 import yamlViewer from './viewers/yaml.js';
 import htmlViewer from './viewers/html.js';
 import imageViewer from './viewers/image.js';
@@ -114,9 +115,16 @@ export async function renderFile(pane, ctx) {
   // rendered by the read-only virtual-scroll view and fed by on-demand windows.
   // This is the ONE place that decides it — callers only forward `ctx.stream`.
   const stream = /** @type {any} */ (ctx).stream;
+  // 阅读器 P1 批（设计稿 §3.1 格式矩阵）：.txt 转换渲染进统一阅读 chrome
+  // （epub/txt/md 共内核）。判据 = itemType 回落 'code' + .txt 扩展名——
+  // 注册表（服务端 FileTypeRegistry）不动，单点分流在此（stream 腿优先，
+  // 大文本仍走 largeText 分块读取视图）。
+  const ext = String(ctx.fileName || ctx.absPath || '').split('.').pop().toLowerCase();
   const viewer = (stream && stream.kind === 'text')
     ? largeTextViewer
-    : (registry.get(ctx.itemType) || registry.get('code'));
+    : (ext === 'txt' && ctx.itemType === 'code')
+      ? textReaderViewer
+      : (registry.get(ctx.itemType) || registry.get('code'));
   try {
     await viewer.render(pane, ctx);
   } catch (err) {

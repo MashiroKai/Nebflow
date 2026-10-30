@@ -1932,6 +1932,20 @@ export default {
   'epub.aa.sans': 'Sans',
   'epub.resMissing': '{count} resource(s) missing',
   'epub.imgTooBig': 'Image over 8MB, not loaded',
+  // Reader P1 unified chrome (design §2.2/§2.3/§4.1; copy assertions use i18n keys)
+  'reader.toc': 'Contents',
+  'reader.aria.aa': 'Reading settings',
+  'reader.aria.toc': 'Table of contents',
+  'reader.aria.more': 'More',
+  'reader.aria.slider': 'Reading progress',
+  'reader.mode': 'Page mode',
+  'reader.mode.scroll': 'Scroll',
+  'reader.mode.flip': 'Flip',
+  'reader.jump': 'Go',
+  'reader.jumpPct': 'Position %',
+  'reader.refresh': 'Refresh',
+  'reader.pos': '{title} · {pct}%',
+  'reader.chapter': 'Part {n}',
   // cardwin-whitepage fix batch (2026-10-22): standalone card-window boot-face
   // failure copy (canvas.js cardWindowBootFace)
   'canvas.cardwinFailHint': 'Failed to load the card content — you can retry.',

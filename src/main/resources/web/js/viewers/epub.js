@@ -11,29 +11,21 @@
 //     localStorage `nf.reader.prefs`（A11）。
 //   · 点按 1/3-1/3-1/3 分区（A4）：左翻上页、右翻下页、中间唤阅读菜单；
 //     菜单开时正文点按仅收菜单不翻页；选区守卫维持既有口径。
+//
+// 阅读器 P1 统一批（同设计稿 §2.2/§2.3/§3.1/§4.1）：渲染面改挂统一阅读
+// chrome（./readerChrome.js——底栏重排/进度条滑杆+章节刻度/TOC 抽屉/240ms
+// 双页夹翻页/触滑跟手/reduced-motion/翻页·滚动双模式，epub/txt/md 共内核）；
+// 本件只留 EPUB 专属：ZIP/OPF 解析、资源改写、章节装载、TOC 提取
+// （OPF2 NCX navMap + OPF3 nav.xhtml）、章内锚点定位、epub-page-change 追踪。
 
 import { escapeHtml, parseZipEntries, decompressZipEntry, decompressZipEntryBytes } from './shared.js';
+import { mountReader } from './readerChrome.js';
 import { reMint } from '../nfTicket.js';
 import { nfViewerUrl } from '../nfFileCache.js';
 import { t } from '../i18n.js';
 
-/** 阅读器偏好持久化键（设计稿 §1.2：跨书跨会话生效）。 */
-const PREFS_KEY = 'nf.reader.prefs';
 /** 单图体积闸（设计稿 §1.1-3：> 8MB 不解压为 object URL，占位可见降级）。 */
 const SINGLE_IMAGE_BYTES = 8 * 1024 * 1024;
-
-const FONT_SIZE_STEPS = [14, 16, 18, 20, 22];
-const LINE_HEIGHT_STEPS = [1.5, 1.6, 1.8, 2.0];
-const PARA_SPACE_STEPS = { compact: '0.5em', standard: '1em', loose: '1.5em' };
-
-/** 主题档位。纸质 = 设计稿给定字面量；明亮/暗夜 = base.css 面板 token
- *  亮/暗档取值（--color-surface / --color-text 的两档值，非新设计 token），
- *  保证暗夜在任何面板态下对比度 ≥4.5:1（A3 可断言）。 */
-const THEMES = {
-  paper: { bg: '#F7F3EA', fg: '#3B342C' },
-  light: { bg: '#ffffff', fg: '#1b1e26' },
-  dark: { bg: '#1c1f27', fg: '#e8eaed' },
-};
 
 /** 资源引用属性（设计稿 §1.1-2 清单）。值按「相对章节路径归一 → 资源索引」解析。 */
 const RESOURCE_ATTRS = ['src', 'href', 'xlink:href'];
@@ -73,39 +65,6 @@ function buildEntriesIndex(entries) {
 /** 目录部取尾：'OEBPS/text/ch1.xhtml' → 'OEPBS/text/' 形态（带尾斜杠）。 */
 function dirOf(normPath) {
   return normPath.includes('/') ? normPath.slice(0, normPath.lastIndexOf('/') + 1) : '';
-}
-
-// ── 偏好持久化 ────────────────────────────────────────────────────────────
-
-/** @returns {{theme: string, fontSize: number, lineHeight: number, paraSpace: string, fontFamily: string}} */
-function loadPrefs() {
-  const defaults = { theme: 'auto', fontSize: 16, lineHeight: 1.8, paraSpace: 'standard', fontFamily: 'serif' };
-  try {
-    const raw = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
-    const p = { ...defaults, ...(raw && typeof raw === 'object' ? raw : {}) };
-    if (!['auto', 'paper', 'light', 'dark'].includes(p.theme)) p.theme = 'auto';
-    if (!FONT_SIZE_STEPS.includes(p.fontSize)) p.fontSize = 16;
-    if (!LINE_HEIGHT_STEPS.includes(p.lineHeight)) p.lineHeight = 1.8;
-    if (!Object.keys(PARA_SPACE_STEPS).includes(p.paraSpace)) p.paraSpace = 'standard';
-    if (!['serif', 'sans'].includes(p.fontFamily)) p.fontFamily = 'serif';
-    return p;
-  } catch { return defaults; }
-}
-
-function savePrefs(prefs) {
-  try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* 存储不可用时仅本次生效 */ }
-}
-
-/** 「跟随面板明暗」：显式 data-theme 优先，否则随系统色方案（设计稿 §1.2 默认）。 */
-function panelDark() {
-  const explicit = document.documentElement.dataset.theme;
-  if (explicit === 'dark' || explicit === 'light') return explicit === 'dark';
-  return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-}
-
-/** 应用主题档：auto → 面板暗则暗夜、面板亮则纸质。 */
-function effectiveTheme(prefs) {
-  return prefs.theme === 'auto' ? (panelDark() ? 'dark' : 'paper') : prefs.theme;
 }
 
 // ── 书内硬编码色只读清洗（A3 另一半） ───────────────────────────────────────
@@ -403,6 +362,89 @@ async function extractChapterStyles(res, chapterDoc, chapterDir) {
   return out.join('\n');
 }
 
+// ── TOC 提取（设计稿 §2.1：解析 OPF NCX / nav.xhtml 出目录） ────────────────
+
+/** OPF2 toc.ncx：navMap > navPoint 递归（depth = 嵌套深），content@src →
+ *  章序 + 章内锚。href 相对 NCX 自身目录解析（R2 同纪律：先 decode 再归一）。 */
+async function parseNcxToc(entries, entriesByNorm, ncxNorm, chapterOfNorm) {
+  const entryName = entriesByNorm.get(ncxNorm);
+  if (!entryName) return [];
+  let raw;
+  try { raw = await decompressZipEntry(entries[entryName]); } catch { return []; }
+  const doc = new DOMParser().parseFromString(raw, 'application/xml');
+  const ncxDir = dirOf(ncxNorm);
+  const out = [];
+  const walk = (node, depth) => {
+    for (const np of Array.from(node.children)) {
+      if (!/navPoint$/.test(np.tagName)) continue;
+      const labelEl = np.getElementsByTagName('navLabel')[0];
+      const textEl = labelEl ? labelEl.getElementsByTagName('text')[0] : null;
+      const contentEl = np.getElementsByTagName('content')[0];
+      const src = contentEl ? contentEl.getAttribute('src') : '';
+      const label = textEl ? (textEl.textContent || '').trim() : '';
+      let chapterIdx = -1;
+      let anchor = '';
+      if (src) {
+        const hash = src.indexOf('#');
+        const pathPart = hash >= 0 ? src.slice(0, hash) : src;
+        anchor = hash >= 0 ? src.slice(hash + 1) : '';
+        const ch = chapterOfNorm.get(normalizeZipPath(ncxDir, pathPart));
+        if (typeof ch === 'number') chapterIdx = ch;
+      }
+      if (label && chapterIdx >= 0) out.push({ label, depth, chapterIdx, anchor });
+      walk(np, depth + 1);
+    }
+  };
+  const navMap = doc.getElementsByTagName('navMap')[0];
+  if (navMap) walk(navMap, 0);
+  return out;
+}
+
+/** OPF3 nav.xhtml：`<nav epub:type="toc">` 首个 ol 递归；li > a[href] →
+ *  章序 + 章内锚；li > span（无链）仅作层级标题（不可点，落在可解析子项）。 */
+async function parseNavToc(entries, entriesByNorm, navNorm, chapterOfNorm) {
+  const entryName = entriesByNorm.get(navNorm);
+  if (!entryName) return [];
+  let raw;
+  try { raw = await decompressZipEntry(entries[entryName]); } catch { return []; }
+  const doc = new DOMParser().parseFromString(raw, 'application/xhtml+xml');
+  const navDir = dirOf(navNorm);
+  const out = [];
+  let nav = null;
+  for (const n of Array.from(doc.getElementsByTagName('nav'))) {
+    const type = n.getAttribute('epub:type') ||
+      n.getAttributeNS('http://www.idpf.org/2007/ops', 'type') || '';
+    if (type === 'toc') { nav = n; break; }
+  }
+  if (!nav) nav = doc.getElementsByTagName('nav')[0] || null;
+  if (!nav) return [];
+  const walkList = (ol, depth) => {
+    for (const li of Array.from(ol.children)) {
+      if (li.tagName.toLowerCase() !== 'li') continue;
+      const a = li.getElementsByTagName('a')[0] || null;
+      const span = li.getElementsByTagName('span')[0] || null;
+      const label = (((a || span) && (a || span).textContent) || '').trim();
+      let chapterIdx = -1;
+      let anchor = '';
+      if (a && a.getAttribute('href')) {
+        const href = a.getAttribute('href');
+        const hash = href.indexOf('#');
+        const pathPart = hash >= 0 ? href.slice(0, hash) : href;
+        anchor = hash >= 0 ? href.slice(hash + 1) : '';
+        const ch = chapterOfNorm.get(normalizeZipPath(navDir, pathPart));
+        if (typeof ch === 'number') chapterIdx = ch;
+      }
+      if (label && chapterIdx >= 0) out.push({ label, depth, chapterIdx, anchor });
+      for (const sub of Array.from(li.children)) {
+        if (sub.tagName.toLowerCase() === 'ol') walkList(sub, depth + 1);
+      }
+    }
+  };
+  const firstOl = nav.getElementsByTagName('ol')[0];
+  if (firstOl) walkList(firstOl, 0);
+  return out;
+}
+
 /** EPUB viewer — paginated reader with chapter navigation.
  *  Parses ZIP structure, extracts XHTML chapters, renders with CSS column pagination.
  *  Dispatches 'epub-page-change' events for tracking what user is reading.
@@ -411,6 +453,11 @@ async function extractChapterStyles(res, chapterDoc, chapterDir) {
  *  blob: URL 直接 fetch 成 `arrayBuffer` 交给 ZIP 解析，无本机路径 ⇒ 不触票据链。
  *  与 `pdf.js` / `image.js` 的 `objectUrl` 腿**同构**（同一模式，非第二套取字节路）。 */
 async function viewEpub(pane, { absPath, fileName, size, objectUrl }) {
+  // 旧 chrome 实例（切书/重开）先卸：撤 fab 让位、面板主题监听等 document 级钩子。
+  if (/** @type {any} */ (pane)._nfReaderTeardown) {
+    try { /** @type {any} */ (pane)._nfReaderTeardown(); } catch { /* 卸载容错 */ }
+    /** @type {any} */ (pane)._nfReaderTeardown = null;
+  }
   pane.innerHTML = `<div class="canvas-md-viewer" style="display:flex;align-items:center;justify-content:center;color:var(--color-text-muted);opacity:0.5;">Loading ebook...</div>`;
   if (!absPath && !objectUrl) {
     pane.innerHTML = `<div class="canvas-error">No file path provided for EPUB viewer.</div>`;
@@ -486,6 +533,8 @@ async function viewEpub(pane, { absPath, fileName, size, objectUrl }) {
 
     // Pre-load all chapter contents（章节 DOM 化：去脚本 + 资源改写 + 样式提取）
     const chapters = [];
+    /** 章归一路径 → 章序（TOC 条目 href 定位用）。 */
+    const chapterOfNorm = new Map();
     for (const id of spineIds) {
       const item = manifest[id];
       if (!item || !item.href) continue;
@@ -501,260 +550,91 @@ async function viewEpub(pane, { absPath, fileName, size, objectUrl }) {
       const scopedCss = await extractChapterStyles(resources, doc, chapterDir);
       const titleMatch = doc.body.querySelector('h1, h2, h3, h4, h5, h6');
       const title = titleMatch ? titleMatch.textContent.trim() : `Chapter ${chapters.length + 1}`;
-      chapters.push({ title, doc, scopedCss, missCount });
+      chapterOfNorm.set(norm, chapters.length);
+      chapters.push({ title, doc, scopedCss, missCount, norm });
     }
 
     if (chapters.length === 0) throw new Error('EPUB has no readable chapters');
 
-    renderEpubReader(pane, chapters, fileName || 'EPUB');
+    // TOC 提取（§2.1）：EPUB3 nav 优先，OPF2 NCX 次之；href 定位章序 + 章内锚。
+    let tocEntries = [];
+    const navItem = opfDoc.querySelector('manifest > item[properties~="nav"]');
+    if (navItem && navItem.getAttribute('href')) {
+      tocEntries = await parseNavToc(entries, entriesByNorm,
+        normalizeZipPath(opfDir, navItem.getAttribute('href')), chapterOfNorm);
+    }
+    if (!tocEntries.length) {
+      const spineTocId = opfDoc.querySelector('spine') && opfDoc.querySelector('spine').getAttribute('toc');
+      let ncxItem = spineTocId ? manifest[spineTocId] : null;
+      if (!ncxItem) {
+        for (const id of Object.keys(manifest)) {
+          if ((manifest[id].mediaType || '').includes('dtbncx')) { ncxItem = manifest[id]; break; }
+        }
+      }
+      if (ncxItem && ncxItem.href) {
+        tocEntries = await parseNcxToc(entries, entriesByNorm,
+          normalizeZipPath(opfDir, ncxItem.href), chapterOfNorm);
+      }
+    }
+
+    renderEpubReader(pane, chapters, tocEntries, fileName || 'EPUB');
   } catch (err) {
     pane.innerHTML = `<div class="canvas-error">Failed to render EPUB: ${escapeHtml(err.message)}</div>`;
   }
 }
 
-/** Render paginated EPUB reader UI — scroll-based pagination. */
-function renderEpubReader(pane, chapters, bookTitle) {
-  let chapterIdx = 0;
-  const prefs = loadPrefs();
+/** Render paginated EPUB reader UI —— 统一阅读 chrome 挂载（P1 批）：
+ *  底栏/进度条/TOC 抽屉/菜单/翻页动效全在 readerChrome.js；本函数只给 EPUB
+ *  正文适配器（章节装载 + 章内锚定位 + 缺失资源 toast + epub-page-change）。 */
+function renderEpubReader(pane, chapters, tocEntries, bookTitle) {
+  /** 当前内容盒（锚定位用；chrome 每次装载后回写）。 */
+  let currentContentEl = null;
 
-  pane.innerHTML = `
-    <div class="epub-reader" data-epub-theme="${effectiveTheme(prefs)}">
-      <div class="epub-reader-header">
-        <span class="epub-chapter-title"></span>
-      </div>
-      <div class="epub-reader-menu" data-epub-menu="closed" hidden></div>
-      <div class="epub-reader-viewport canvas-viewer-safe-top">
-        <div class="epub-reader-content"></div>
-      </div>
-      <div class="epub-reader-nav">
-        <button class="epub-nav-btn epub-prev" title="${escapeHtml(t('epub.prev'))}">‹</button>
-        <span class="epub-nav-info"></span>
-        <button class="epub-nav-btn epub-next" title="${escapeHtml(t('epub.next'))}">›</button>
-      </div>
-    </div>`;
-
-  const reader = pane.querySelector('.epub-reader');
-  const viewport = pane.querySelector('.epub-reader-viewport');
-  const content = pane.querySelector('.epub-reader-content');
-  const menu = pane.querySelector('.epub-reader-menu');
-  const chapterTitleEl = pane.querySelector('.epub-chapter-title');
-  const infoEl = pane.querySelector('.epub-nav-info');
-  const prevBtn = pane.querySelector('.epub-prev');
-  const nextBtn = pane.querySelector('.epub-next');
-
-  // ── 主题/档位应用（改档即重排，无动画） ──────────────────────────────────
-  function applyPrefs() {
-    const theme = effectiveTheme(prefs);
-    reader.dataset.epubTheme = theme;
-    const palette = THEMES[theme];
-    content.style.setProperty('--epub-bg', palette.bg);
-    content.style.setProperty('--epub-fg', palette.fg);
-    content.style.fontSize = prefs.fontSize + 'px';
-    content.style.lineHeight = String(prefs.lineHeight);
-    content.style.setProperty('--epub-para-space', PARA_SPACE_STEPS[prefs.paraSpace]);
-    content.dataset.fontFamily = prefs.fontFamily;
-    if (!menu.hidden) renderMenu();
-    updateUI();
-  }
-
-  function setPrefs(patch) {
-    Object.assign(prefs, patch);
-    savePrefs(prefs);
-    applyPrefs();
-  }
-
-  // 「跟随面板」档：面板明暗翻转时自动跟随（显式选档时不跟）
-  const darkMq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
-  const onPanelThemeChange = () => { if (prefs.theme === 'auto') applyPrefs(); };
-  if (darkMq) {
-    if (darkMq.addEventListener) darkMq.addEventListener('change', onPanelThemeChange);
-    else if (darkMq.addListener) darkMq.addListener(onPanelThemeChange);
-  }
-  const themeAttrObserver = new MutationObserver(() => { if (prefs.theme === 'auto') applyPrefs(); });
-  themeAttrObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-
-  // ── 阅读菜单（中间 1/3 唤出；毛玻璃浮层锚定阅读器顶部，禁 overlay 暗化） ──
-  const menuOpen = () => !menu.hidden;
-
-  function renderMenu() {
-    const theme = effectiveTheme(prefs);
-    const cycle = (steps, current, dir) => {
-      const i = steps.indexOf(current);
-      return steps[(i + dir + steps.length) % steps.length];
-    };
-    const paraKeys = { compact: 'epub.aa.paraCompact', standard: 'epub.aa.paraStandard', loose: 'epub.aa.paraLoose' };
-    menu.innerHTML = `
-      <div class="epub-menu-title">${escapeHtml(chapters[chapterIdx].title)}</div>
-      <div class="epub-menu-row" role="group" aria-label="${escapeHtml(t('epub.theme.label'))}">
-        <span class="epub-menu-label">${escapeHtml(t('epub.theme.label'))}</span>
-        ${['paper', 'light', 'dark'].map((m) =>
-          `<button type="button" class="epub-menu-btn${theme === m ? ' on' : ''}" data-epub-theme-pick="${m}">${escapeHtml(t('epub.theme.' + m))}</button>`
-        ).join('')}
-      </div>
-      <div class="epub-menu-row" role="group" aria-label="${escapeHtml(t('epub.aa.fontSize'))}">
-        <span class="epub-menu-label">${escapeHtml(t('epub.aa.fontSize'))}</span>
-        <button type="button" class="epub-menu-btn" data-epub-step="fontSize:-1">−</button>
-        <span class="epub-menu-value">${prefs.fontSize}px</span>
-        <button type="button" class="epub-menu-btn" data-epub-step="fontSize:1">＋</button>
-      </div>
-      <div class="epub-menu-row" role="group" aria-label="${escapeHtml(t('epub.aa.lineHeight'))}">
-        <span class="epub-menu-label">${escapeHtml(t('epub.aa.lineHeight'))}</span>
-        <button type="button" class="epub-menu-btn" data-epub-step="lineHeight:-1">−</button>
-        <span class="epub-menu-value">${prefs.lineHeight}</span>
-        <button type="button" class="epub-menu-btn" data-epub-step="lineHeight:1">＋</button>
-      </div>
-      <div class="epub-menu-row" role="group" aria-label="${escapeHtml(t('epub.aa.paraSpace'))}">
-        <span class="epub-menu-label">${escapeHtml(t('epub.aa.paraSpace'))}</span>
-        ${Object.keys(PARA_SPACE_STEPS).map((k) =>
-          `<button type="button" class="epub-menu-btn${prefs.paraSpace === k ? ' on' : ''}" data-epub-para="${k}">${escapeHtml(t(paraKeys[k]))}</button>`
-        ).join('')}
-      </div>
-      <div class="epub-menu-row" role="group" aria-label="${escapeHtml(t('epub.aa.fontFamily'))}">
-        <span class="epub-menu-label">${escapeHtml(t('epub.aa.fontFamily'))}</span>
-        <button type="button" class="epub-menu-btn${prefs.fontFamily === 'serif' ? ' on' : ''}" data-epub-font="serif">${escapeHtml(t('epub.aa.serif'))}</button>
-        <button type="button" class="epub-menu-btn${prefs.fontFamily === 'sans' ? ' on' : ''}" data-epub-font="sans">${escapeHtml(t('epub.aa.sans'))}</button>
-      </div>
-      <button type="button" class="epub-menu-btn epub-menu-close" data-epub-close>${escapeHtml(t('epub.menu.close'))}</button>`;
-    menu.querySelectorAll('[data-epub-theme-pick]').forEach((btn) => {
-      btn.addEventListener('click', () => setPrefs({ theme: btn.dataset.epubThemePick }));
-    });
-    menu.querySelectorAll('[data-epub-step]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const [key, dirRaw] = btn.dataset.epubStep.split(':');
-        const dir = Number(dirRaw);
-        if (key === 'fontSize') setPrefs({ fontSize: cycle(FONT_SIZE_STEPS, prefs.fontSize, dir) });
-        else setPrefs({ lineHeight: cycle(LINE_HEIGHT_STEPS, prefs.lineHeight, dir) });
-      });
-    });
-    menu.querySelectorAll('[data-epub-para]').forEach((btn) => {
-      btn.addEventListener('click', () => setPrefs({ paraSpace: btn.dataset.epubPara }));
-    });
-    menu.querySelectorAll('[data-epub-font]').forEach((btn) => {
-      btn.addEventListener('click', () => setPrefs({ fontFamily: btn.dataset.epubFont }));
-    });
-    menu.querySelector('[data-epub-close]').addEventListener('click', closeMenu);
-  }
-
-  function openMenu() {
-    renderMenu();
-    menu.hidden = false;
-    menu.dataset.epubMenu = 'open';
-  }
-  function closeMenu() {
-    menu.hidden = true;
-    menu.dataset.epubMenu = 'closed';
-  }
-
-  function getTotalPages() {
-    return Math.max(1, Math.ceil(viewport.scrollHeight / viewport.clientHeight));
-  }
-
-  function getCurrentPage() {
-    return Math.round(viewport.scrollTop / viewport.clientHeight);
-  }
-
-  function emitTracking() {
-    const total = getTotalPages();
-    const page = getCurrentPage();
-    pane.dispatchEvent(new CustomEvent('epub-page-change', {
-      detail: {
-        bookTitle,
-        chapter: chapterIdx,
-        chapterTitle: chapters[chapterIdx].title,
-        page,
-        totalPages: total,
-        totalChapters: chapters.length,
-        progress: chapterIdx / chapters.length + (page + 1) / total / chapters.length,
+  const adapter = {
+    title: bookTitle,
+    chapterCount: chapters.length,
+    chapterTitle: (i) => (chapters[i] ? chapters[i].title : ''),
+    toc: tocEntries && tocEntries.length ? tocEntries : null,
+    themeable: true,
+    contentKind: 'flow',
+    tracking: true,
+    mountChapter(el, i) {
+      const chapter = chapters[i];
+      if (!chapter) return;
+      // cloneNode 而非搬运：章节 doc 是重复装载的源（翻页邻页层/重访章共用），
+      // 搬运会把 doc 掏空导致重访空白（P0 潜在缺欠，P1 随内核化一并根治）。
+      el.replaceChildren(...Array.from(chapter.doc.body.childNodes).map((n) => n.cloneNode(true)));
+      // 原书内 <style> 一律摘除（防注入进应用页后全局生效），scoped 版单点注入
+      el.querySelectorAll('style').forEach((s) => s.remove());
+      if (chapter.scopedCss) {
+        const styleEl = document.createElement('style');
+        styleEl.className = 'epub-book-style';
+        styleEl.textContent = chapter.scopedCss;
+        el.appendChild(styleEl);
       }
-    }));
-  }
-
-  function updateUI() {
-    const page = getCurrentPage() + 1;
-    const total = getTotalPages();
-    chapterTitleEl.textContent = chapters[chapterIdx].title;
-    infoEl.textContent = `Ch ${chapterIdx + 1}/${chapters.length} · Pg ${page}/${total}`;
-    prevBtn.disabled = chapterIdx === 0 && viewport.scrollTop <= 0;
-    nextBtn.disabled = chapterIdx === chapters.length - 1 && viewport.scrollTop >= viewport.scrollHeight - viewport.clientHeight - 1;
-    emitTracking();
-  }
-
-  function loadChapter(idx, scrollPos) {
-    chapterIdx = idx;
-    const chapter = chapters[idx];
-    content.replaceChildren(...chapter.doc.body.childNodes);
-    // 原书内 <style> 一律摘除（防注入进应用页后全局生效），scoped 版单点注入
-    content.querySelectorAll('style').forEach((s) => s.remove());
-    if (chapter.scopedCss) {
-      const styleEl = document.createElement('style');
-      styleEl.className = 'epub-book-style';
-      styleEl.textContent = chapter.scopedCss;
-      content.appendChild(styleEl);
-    }
-    requestAnimationFrame(() => {
-      viewport.scrollTop = scrollPos || 0;
-      updateUI();
+      currentContentEl = el;
+    },
+    onChapterChanged(i) {
+      const chapter = chapters[i];
       // 缺失资源一次性 toast（可见降级纪律：不阻塞渲染，N = 该章 miss 计数）
-      if (chapter.missCount > 0 && window.__showToast) {
+      if (chapter && chapter.missCount > 0 && window.__showToast) {
         window.__showToast(t('epub.resMissing', { count: chapter.missCount }), 'info');
       }
-    });
-  }
+    },
+    anchorScrollTop(_i, anchor) {
+      if (!anchor || !currentContentEl) return null;
+      let target = null;
+      try {
+        target = currentContentEl.querySelector(`[id="${CSS.escape(anchor)}"]`);
+      } catch { target = null; }
+      if (!target) return null;
+      const scroller = currentContentEl.closest('.epub-reader-viewport');
+      if (!scroller) return null;
+      return target.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    },
+  };
 
-  function nextPage() {
-    const bottom = viewport.scrollHeight - viewport.clientHeight;
-    if (viewport.scrollTop < bottom - 1) {
-      viewport.scrollTo({ top: viewport.scrollTop + viewport.clientHeight, behavior: 'smooth' });
-    } else if (chapterIdx < chapters.length - 1) {
-      loadChapter(chapterIdx + 1, 0);
-    }
-  }
-
-  function prevPage() {
-    if (viewport.scrollTop > 1) {
-      viewport.scrollTo({ top: viewport.scrollTop - viewport.clientHeight, behavior: 'smooth' });
-    } else if (chapterIdx > 0) {
-      loadChapter(chapterIdx - 1, 999999); // bottom of previous chapter
-    }
-  }
-
-  prevBtn.addEventListener('click', (e) => { e.stopPropagation(); prevPage(); });
-  nextBtn.addEventListener('click', (e) => { e.stopPropagation(); nextPage(); });
-
-  // 点按 1/3-1/3-1/3 分区（A4）：菜单开时正文点按仅收菜单不翻页（Apple Books 口径）
-  viewport.addEventListener('click', (e) => {
-    // 章节内锚点不触发应用页导航（单页应用守卫；锚跳转属 P1 目录面）
-    const anchor = e.target && e.target.closest ? e.target.closest('a[href]') : null;
-    if (anchor) e.preventDefault();
-    if (menuOpen()) { closeMenu(); return; }
-    const sel = window.getSelection();
-    if (sel && sel.toString().trim().length > 0) return;
-    const rect = viewport.getBoundingClientRect();
-    if (e.clientX < rect.left + rect.width / 3) prevPage();
-    else if (e.clientX > rect.right - rect.width / 3) nextPage();
-    else openMenu();
-  });
-
-  // Keyboard navigation
-  pane.tabIndex = 0;
-  pane.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); prevPage(); }
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); nextPage(); }
-  });
-
-  // Update indicator on scroll
-  let scrollTimer = null;
-  viewport.addEventListener('scroll', () => {
-    clearTimeout(scrollTimer);
-    scrollTimer = setTimeout(() => updateUI(), 100);
-  });
-
-  // Recalculate on resize
-  new ResizeObserver(() => updateUI()).observe(viewport);
-
-  // Initial load
-  applyPrefs();
-  loadChapter(0, 0);
+  mountReader(pane, adapter);
 }
 
 export default {
