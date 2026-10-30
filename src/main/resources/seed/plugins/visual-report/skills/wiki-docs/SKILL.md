@@ -13,9 +13,12 @@ below automatically.
 
 ## Mandatory clauses (checkable — a violation is a rework)
 
-The four clauses below are author mandates (2026-10-21; ④ added 2026-10-29,
-term-citation batch), not style advice. Every clause is machine-checkable by
-the validator in `scripts/check_wiki_docs.py` (Python 3 stdlib only, zero deps):
+The five clauses below are author mandates (2026-10-21; ④ added 2026-10-29,
+term-citation batch; ⑤ added 2026-10-30, human-face batch), not style advice.
+Clauses ①–④ are machine-checkable by the validator in
+`scripts/check_wiki_docs.py` (Python 3 stdlib only, zero deps); clause ⑤ is
+convention-enforced (skill + dispatch briefs) until the validator grows its
+existence rule (design §7.4, still open):
 
 1. **Obsidian format, every document** — written inside the vault
    `<workspace>/docs/`, with a frontmatter block (`type:` / `status:`),
@@ -43,6 +46,22 @@ the validator in `scripts/check_wiki_docs.py` (Python 3 stdlib only, zero deps):
    (glossary hit wins over doc-intro hits); a short form that is neither a
    document nor a registered term is a broken link. → check rules
    `term-format` / `term-duplicate` (R4; the citation face is R2 `broken-link`).
+5. **Human face (人面子, human-face batch 2026-10-30)** — every report
+   opens with a human-face header inside a fenced ```human block, four
+   parts: **Impression → key numbers → Findings pointer → open items**
+   (template in the "Human face" section below). Inside the fence:
+   BLUF conclusion ≤3 lines, 3-7 key numbers, ≥1 key chart
+   (`![[key-chart.png]]`, caption = the conclusion sentence). Agent
+   jargon (spec pass counts, merge-queue speak, worktree, commit
+   hashes, session/chain internals) stays OUT of the human face —
+   plain wording, or a registered-term short form `[[Name]]` for the
+   terms that must stay (hover gloss via the term registry). Content
+   outside the fence is the machine face: full detail, code anchors,
+   acceptance readouts — written as fully as ever, presented folded
+   (the product renders the fence as a card and folds the rest into a
+   details drawer; plain-text channels degrade to one marker line).
+   → no validator rule yet — existence check deferred with the design
+   (§7.4 另议); enforced by this skill + dispatch briefs until then.
 
 Run before delivering any document batch:
 
@@ -112,6 +131,62 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --root <workspace>/docs --glossa
   Retry storm — a feedback loop where failures trigger retries that multiply
   load and produce more failures. ^retry-storm
   ```
+
+## Human face (报告头, human-face batch 2026-10-30)
+
+Batch / investigation reports open with the four-part human-face header
+inside a ```` ```human ```` fence (设计稿: docs/design/20261030_human-readable-
+presentation.zh-CN.md, 附录 A; author ruling 2026-10-30: the human face is
+MANDATORY — an agent that forgets the fence has not delivered):
+
+````markdown
+# <batch / investigation> report
+
+```human
+## Impression
+<one-sentence conclusion: what was done + outcome + whether the author
+must act; ≤3 lines>
+
+**Key numbers**: <files changed · assertions green · time · scale, 3-7>
+![[key-chart.png]]   <!-- ≥1 chart; the caption IS the conclusion sentence -->
+```
+
+## Findings
+<machine face: full detail, code anchors, acceptance readouts — written
+in full; presented folded since the human-face batch>
+
+## Open items & deviations
+<open items, deviation declarations>
+````
+
+- Impression = the human face (BLUF, zero jargon, ≤3 lines). Findings =
+  the machine face (complete detail, jargon fine). Key numbers = the
+  hinge between the two layers: 3-7 quantified readouts (files changed,
+  assertions green, wall time, scale) — the author's basis for deciding
+  whether to open the drawer.
+- One document may carry several ```human fences (a conclusion card, a
+  chart card); they render in order as cards and everything outside
+  folds into a "details (N lines)" drawer. The fence is the agent's
+  anchor for "what is written for humans" — without it the discipline
+  has no landing point.
+- Jargon ban (human face only): spec pass counts → "all tests pass" +
+  one key-numbers line; merge / merge queue → "merged into main
+  (queued)"; worktree → "working copy" or omit; chain / node / delegate
+  session → "subtask"; commit hashes stay in the machine face. Retained
+  terms that genuinely must stay are written as registered-term short
+  forms `[[Name]]` — hover gloss via the term registry (section "Terms
+  and short-form citations" above).
+- The key-chart obligation is a HUMAN-FACE obligation (Tufte: one chart,
+  one conclusion): ≥1 chart inside the fence, its caption stating the
+  conclusion, the asset under `attachments/`. Findings tables stay
+  chart-free — the chart duty does not propagate into the machine face.
+- Product face (already shipped, all markdown faces share one pipeline):
+  `utils.js renderMarkdownWithMath` renders the fence into
+  `.nf-human-card` and wraps outside content in `<details
+  class="nf-human-details">`; chat bubbles, canvas md viewer, wiki
+  docs, flow cards and report cards all present the same way. Streaming
+  safety: the transform engages only after every fence is closed —
+  mid-stream snapshots render as plain code blocks, nothing crashes.
 
 ## References (the graph's edges)
 
@@ -210,6 +285,9 @@ no html definition blocks.
 ## What not to do
 
 - Do not write reports outside the vault (chat-only delivery loses the graph).
+- Do not bury the conclusion in the middle of a report — the human-face
+  header (clause ⑤) is the presentation default; Findings detail never
+  precedes it.
 - Do not duplicate a concept's definition in several documents — define once,
   reference everywhere else.
 - Do not use bare file paths as references; the link IS the graph edge, a

@@ -1,6 +1,6 @@
 ---
 type: design-note
-status: draft
+status: approved（作者已批 2026-10-30 13:19，按推荐＋两项裁定：人面子强制、框外抽屉折叠）
 ---
 
 # 人类可读呈现——输出分层与汇报范式设计稿
@@ -155,25 +155,27 @@ status: draft
 | 聊天回复模板 | 附录 B 落进派发 brief：回贴首段 BLUF、五元素降为尾段机器面 | 新回贴首段 ≤3 行且是结论 |
 | 术语纪律 | §5.1 禁入清单＋括号注脚规则写进派发 brief | 抽查人面子段落，行话 0 命中（禁入清单词表 grep） |
 
-### 二期：产品改动（作者拍板后派实施）
+### 二期：产品改动（作者已批 2026-10-30 13:19；本批已实施）
 
 | 项 | 内容 | 验收 |
 |---|---|---|
-| 前端过滤层渲染 | `utils.js` 渲染管线加 ```human 围栏后处理（照 mermaid pass 形态）：框内卡片化、框外 `<details>` 抽屉；亮/暗主题 | e2e 截图：框内卡片、抽屉开合、流式期围栏未闭合不炸；五面（气泡/Canvas/wiki/flow/report）同测 |
-| visual-report skill 约定修订 | wiki-docs SKILL.md 增「人面子条款」（报告头模板＋术语纪律＋关键图表区）；**注意双副本纪律：修订进引擎种子（[[glossary#^engine-seed]]），运行时实例（[[glossary#^plugin-instance]]）由同步覆盖，直接改实例会失效** | check_wiki_docs 增规则后存量零新增违规（人面子段存在性另议，见 §7） |
-| hover 术语气泡 | 人面子术语用词条短形引用（双方括号包词条名）→ hover 释义；接词条注册表既有 API | hover 出气泡、跳转高亮 |
+| 前端过滤层渲染 | `utils.js` 渲染管线加 ```human 围栏后处理（照 mermaid pass 形态）：框内卡片化、框外 `<details>` 抽屉；亮/暗主题。落点：`utils.js renderMarkdownWithMath` 单管线（`_humanFencesBalanced` 流式闸 → `_transformHumanFace` 卡片/抽屉变换），样式 `css/humanFace.css`（面中立组件，五面全收） | e2e 截图：框内卡片、抽屉开合、流式期围栏未闭合不炸；五面（气泡/Canvas/wiki/flow/report）同测 → `tests/human-face-render.spec.mjs`（含亮暗双截图） |
+| visual-report skill 约定修订 | wiki-docs SKILL.md 增「人面子条款」（条款⑤：报告头四段式 Impression→关键数字→Findings→遗留，附录 A 模板入 SKILL；术语禁入＋保留术语短形引用 hover 兜底）。**双副本纪律已执行**：引擎种子（`src/main/resources/seed/plugins/visual-report/skills/wiki-docs/SKILL.md`）与运行时实例（`<dataRoot>/plugins/visual-report/...`）sha256 一致同步（plugin-repos 副本同对齐）；校验器存在性规则维持另议（§7#4） | check_wiki_docs 规则未增（另议）——存量零新增违规 trivially 成立；条款存在性由 `tests/wiki-docs-human-face.spec.mjs` 钉 |
+| hover 术语气泡 | 人面子术语用词条短形引用（双方括号包词条名，形态见 §5.2 与词条引用批裁定 3）→ hover 释义；接词条注册表既有 API。落点：气泡本体抽为共享件 `js/termTip.js`（原 viewers/markdown.js 机制零改动迁出，docs viewer 经 `setTermTipNav` 注入深链导航）；新 `js/termCite.js` 以 body 级 MutationObserver（mermaidRenderer 先例）把 ```human 卡内的词条短形引用接成 hover 引用，API 兜底腿 | hover 出气泡、跳转高亮 → `tests/human-face-render.spec.mjs` R6 组 + 既有 `tests/wiki-term-citation.spec.mjs` 全量回归 |
 
 一期零代码先行，是因为模板和纪律不依赖任何渲染支持——围栏在纯文本下只是一行标记，一期就能用「框内=人面子、框外=机器面」的写法养成习惯，二期渲染只是让呈现默认值自动生效。
 
 ## 7. 未决项（呈作者裁定）
 
-1. **折叠交互形态**：单 `<details>` 抽屉 / 渐进灰显 / 右侧侧栏？（倾向抽屉——仓内两先例，成本最低）
-2. **人面子是否强制**：agent 忘写框 = 全文照常呈现（宽容）还是渲染侧提示「无人面子段」（强制）？强制涉及校验器与 prompt 双管。
-3. **围栏信息串命名**：`human` / `face` / `brief`？（倾向 `human`，与「人面子」直译对齐）
-4. **与 wiki-docs 校验器的关系**：check_wiki_docs 是否新增规则（人面子段存在性/长度上限/框内断链算边）？报告类文档强制、设计稿类豁免？
-5. **流式渲染期**：围栏未闭合的流式中间态，按「框外可见」还是「整段等闭合」？
-6. **外发渠道**：邮件/IM bridge 是否过滤（只发人面子）还是全文直发？
-7. **关键图表的数据来源**：visual-report 一图一结论的图由谁产出（agent 自绘 / 模板脚本 / 数据文件渲染）？
+作者裁定（2026-10-30 13:19，随二期实施批落字）：**人面子=强制**、**折叠=抽屉**。其余各项按稿内倾向随批裁定，落字如下；二期已实施项的落点见 §6 二期表。
+
+1. **折叠交互形态** → **裁定：抽屉**（稿内倾向抽屉，成本最低；照 `<details>` 落地，仓内两先例）。
+2. **人面子是否强制** → **裁定：强制**。 enforcement 双管：wiki-docs skill 条款⑤（报告头模板强制，忘框=未交付）＋派发 brief；校验器存在性规则维持「另决」（本条强制裁定不自动派生计数规则，见 #4）。
+3. **围栏信息串命名** → **裁定：`human`**（稿内倾向，与「人面子」直译对齐；前端 pass 已按此实现）。
+4. **与 wiki-docs 校验器的关系** → **维持另议**（稿无倾向；实施批不新增存在性/长度/断链规则，避免未批规则造成存量违规）。条款⑤在 SKILL 内明示「no validator rule yet」。
+5. **流式渲染期** → **落地：整段等闭合**（稿无倾向；实施口径：源文本 fence 全部闭合才启用卡片+抽屉变换，流式中间态按普通代码块呈现，不炸不跳版）。
+6. **外发渠道**：仍开放（稿无倾向，本期无邮件/IM bridge 改动面）。
+7. **关键图表的数据来源**：仍开放（稿无倾向；本期模板义务已落「≥1 图入 fence」，产出方式不定）。
 
 ## 附录 A：报告头模板（一期可用草案）
 
