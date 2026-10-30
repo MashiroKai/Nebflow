@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.foldable.toFoldableOps
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.scheduler.{ScheduledTask, ScheduledTaskService, ScheduledTaskStore}
+import nebflow.core.scheduler.{DoneRecord, ScheduledTask, ScheduledTaskService, ScheduledTaskStore}
 
 import java.time.*
 
@@ -415,6 +415,21 @@ Your context does NOT show the current date/time — never invent an absolute da
           case Some(t) =>
             for
               _ <- taskStore.deleteTask(t.sessionId, t.id)
+              // 认知二期产品批·打卡 done 历史：销账即留痕（只增 JSONL）——
+              // 周报「本周打卡 N/M」的聚合数据源；删除行不留痕则无从聚合。
+              _ <- ctx.sharedResources match
+                case Some(sr) =>
+                  sr.doneRecordStore.record(
+                    DoneRecord(
+                      taskId = t.id,
+                      name = t.name,
+                      content = t.content,
+                      sessionId = t.sessionId,
+                      doneAt = System.currentTimeMillis(),
+                      via = DoneRecord.ViaTool
+                    )
+                  )
+                case None => IO.unit
               _ <- taskService match
                 case Some(svc) => svc.notifyTaskChange()
                 case None => IO.unit

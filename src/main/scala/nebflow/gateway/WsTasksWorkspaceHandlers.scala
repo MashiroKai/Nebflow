@@ -44,6 +44,10 @@ private[gateway] object WsTasksWorkspaceHandlers:
     "listScheduledTasks" -> handleListScheduledTasks,
     "deleteScheduledTask" -> handleDeleteScheduledTask,
     "toggleScheduledTask" -> handleToggleScheduledTask,
+    "completeTodo" -> handleCompleteTodo,
+    "getPresentationProfile" -> handleGetPresentationProfile,
+    "setPresentationProfile" -> handleSetPresentationProfile,
+    "setProfileParamOverride" -> handleSetProfileParamOverride,
     "getTaskList" -> handleGetTaskList,
     "completeTask" -> handleCompleteTask,
     "listWorkspaceItems" -> handleListWorkspaceItems,
@@ -419,7 +423,10 @@ private[gateway] object WsTasksWorkspaceHandlers:
             "repeat" -> t.repeat.asJson,
             "enabled" -> t.enabled.asJson,
             // 双面化（2026-10-24）：kind ∈ null/"task"（定时）| "todo"（待办）
-            "kind" -> t.kind.asJson
+            "kind" -> t.kind.asJson,
+            // 认知二期产品批③打卡缺卡调整流：缺卡计数随列表下发（UI 据此给
+            // 连续未销卡条目的调整建议）。
+            "missCount" -> t.missCount.asJson
           )
         }
         wsSend(
@@ -482,6 +489,144 @@ private[gateway] object WsTasksWorkspaceHandlers:
       }
     else IO.unit
   end handleToggleScheduledTask
+
+  /**
+   * `completeTodo` — 打卡 UI 销账腿（认知二期产品批③）：与 delete 的区别 =
+   * **留 done 痕**（done-records JSONL，周报数据源）再删行。仅待办面接受；
+   * 定时任务走 deleteScheduledTask 不变。广播沿用 scheduledTaskDeleted 帧型
+   * （既有前端消费点零改动）。
+   */
+  private def handleCompleteTodo(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val json = parsedJson(text)
+    val cpSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+    val cpId = json.hcursor.downField("id").as[String].getOrElse("")
+    if cpSessionId.nonEmpty && cpId.nonEmpty then
+      sharedResources.scheduledTaskStore.findTaskById(cpId).flatMap {
+        case Some(t) if t.isTodo =>
+          for
+            _ <- sharedResources.doneRecordStore.record(
+              nebflow.core.scheduler.DoneRecord(
+                taskId = t.id,
+                name = t.name,
+                content = t.content,
+                sessionId = t.sessionId,
+                doneAt = System.currentTimeMillis(),
+                via = nebflow.core.scheduler.DoneRecord.ViaWs
+              )
+            )
+            _ <- sharedResources.scheduledTaskStore.deleteTask(t.sessionId, t.id)
+            _ <- sharedResources.scheduledTaskService.traverse_(_.notifyTaskChange())
+            _ <- wsSend(
+              io.circe.Json.obj(
+                "type" -> "scheduledTaskDeleted".asJson,
+                "id" -> t.id.asJson,
+                "sessionId" -> t.sessionId.asJson
+              )
+            )
+          yield ()
+        case Some(t) =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "error".asJson,
+              "msgType" -> "completeTodo".asJson,
+              "message" -> s"Id ${t.id} is a scheduled task, not a todo — use deleteScheduledTask.".asJson
+            )
+          )
+        case None =>
+          // 幂等宽容：行已不在（他窗已销/已删）⇒ 照发 deleted 帧，UI 收敛到同态。
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "scheduledTaskDeleted".asJson,
+              "id" -> cpId.asJson,
+              "sessionId" -> cpSessionId.asJson
+            )
+          )
+      }
+    else IO.unit
+  end handleCompleteTodo
+
+  /**
+   * `getPresentationProfile` — 选档器数据面（认知二期产品批①）：档集定义 +
+   * 当前档 + 逐项覆盖全量下发（profiles 数组每项含 overrides 块）。响应帧型
+   * presentationProfileData。
+   */
+  private def handleGetPresentationProfile(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    sharedResources.presentationProfileStore.snapshotJson.flatMap { snap =>
+      wsSend(io.circe.Json.obj("type" -> "presentationProfileData".asJson, "profile" -> snap))
+    }
+  end handleGetPresentationProfile
+
+  /**
+   * `setPresentationProfile {profile}` — 显式选档主路（§6.3 裁定：行为推断永
+   * 不做）：校验五档枚举后落盘，回 presentationProfileChanged（多窗各自对账
+   * 于下次开窗；本窗即时生效）。
+   */
+  private def handleSetPresentationProfile(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val key = parsedJson(text).hcursor.downField("profile").as[String].getOrElse("")
+    sharedResources.presentationProfileStore.setCurrent(key).flatMap {
+      case Right(_) =>
+        sharedResources.presentationProfileStore.snapshotJson.flatMap { snap =>
+          wsSend(io.circe.Json.obj("type" -> "presentationProfileChanged".asJson, "profile" -> snap))
+        }
+      case Left(err) =>
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "error".asJson,
+            "msgType" -> "setPresentationProfile".asJson,
+            "message" -> err.asJson
+          )
+        )
+    }
+  end handleSetPresentationProfile
+
+  /**
+   * `setProfileParamOverride {profile, param, value?}` — 档参数逐项覆盖
+   * （§6.2 表的产品化）：value 缺省 = 清除该参数覆盖（回档默认）；先校验后入账。
+   */
+  private def handleSetProfileParamOverride(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val hc = parsedJson(text).hcursor
+    val pKey = hc.downField("profile").as[String].getOrElse("")
+    val param = hc.downField("param").as[String].getOrElse("")
+    val value = hc.downField("value").as[Option[String]].getOrElse(None)
+    sharedResources.presentationProfileStore.setOverride(pKey, param, value).flatMap {
+      case Right(_) =>
+        sharedResources.presentationProfileStore.snapshotJson.flatMap { snap =>
+          wsSend(io.circe.Json.obj("type" -> "presentationProfileChanged".asJson, "profile" -> snap))
+        }
+      case Left(err) =>
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "error".asJson,
+            "msgType" -> "setProfileParamOverride".asJson,
+            "message" -> err.asJson
+          )
+        )
+    }
+  end handleSetProfileParamOverride
 
   private def handleGetTaskList(
     ctx: WsDispatchCtx,

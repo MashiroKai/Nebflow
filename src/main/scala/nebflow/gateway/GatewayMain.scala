@@ -1453,6 +1453,23 @@ object GatewayMain extends IOApp:
 
                                               // --- Create Scheduled Task Service before wsRoutes ---
                                               // routeToAgent needs wsRoutesHolder, which is set below (same pattern as bridge)
+                                              // 认知二期产品批④：周报生成器——工作区 = 第一个本机非归档项目
+                                              // （ProjectStore.list 已滤归档/卸载；deviceOrigin 在场 = 本体在对端
+                                              // 盘，本机不写；实存探一下防悬空路径）。None = 跳过+日志，不静默写别处。
+                                              val weeklyReportWorkspace: IO[Option[os.Path]] =
+                                                nebflow.core.project.ProjectStore
+                                                  .list()
+                                                  .map(_.filter(pd => nebflow.core.project.ProjectStore.deviceOrigin(pd).isEmpty))
+                                                  .map(_.sortBy(_.name).headOption)
+                                                  .map(_.map(pd => os.Path(pd.workspace)))
+                                                  .map(_.filter(p => os.exists(p)))
+                                              val weeklyReport = new nebflow.core.scheduler.WeeklyReportGenerator(
+                                                sharedResourcesWithBridge.scheduledTaskStore,
+                                                sharedResourcesWithBridge.doneRecordStore,
+                                                weeklyReportWorkspace,
+                                                wsHub.broadcast,
+                                                (PathUtil.dataRoot / "weekly-report" / "state.json").toNIO
+                                              )
                                               val scheduledTaskService = new ScheduledTaskService(
                                                 sharedResourcesWithBridge.dispatcher,
                                                 sharedResourcesWithBridge.scheduledTaskStore,
@@ -1461,7 +1478,8 @@ object GatewayMain extends IOApp:
                                                     case Some(routes) => routes.handleBridgeAgentCommand(sid, event)
                                                     case None => IO.unit,
                                                 wsHub.broadcast,
-                                                sessionStore
+                                                sessionStore,
+                                                weeklyReport = Some(weeklyReport)
                                               )
                                               dispatcher.unsafeRunAndForget(scheduledTaskService.start())
                                               val sharedResourcesFinal = sharedResourcesWithBridge.copy(

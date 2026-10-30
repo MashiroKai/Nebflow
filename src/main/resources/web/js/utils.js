@@ -3,6 +3,9 @@ import { t, getLocale } from './i18n.js';
 // 本机设备显示名读数（设备角标本名批 2026-10-27）：deviceRoster 单一读取点
 // （花名册 self + configData.selfDevice 两源缓存），utils 只消费其同步读数面。
 import { currentSelfDeviceName } from './deviceRoster.js';
+// 认知二期产品批①选档器：human 过滤层折叠默认读档（profileState 零依赖，
+// 无导入环）；profileGeneration 掺进 markdown 缓存键——切档即旧缓存失效。
+import { getCurrentProfile, profileGeneration } from './profileState.js';
 
 // ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
 
@@ -293,7 +296,7 @@ export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   // renderers pass { cache:false } and go straight to the parser; only
   // finish*/history renders (stable text) populate the cache.
   if (opts && opts.cache === false) return _renderMarkdownWithMath(text, parseVoice);
-  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${mentionListState().gen}|${text}`;
+  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${profileGeneration()}|${mentionListState().gen}|${text}`;
   const hit = _mdCache.get(key);
   if (hit !== undefined) {
     _mdCache.delete(key);
@@ -385,7 +388,11 @@ function _transformHumanFace(html) {
       result += '<div class="nf-human-card">' + inner + '</div>';
     } else {
       const text = p.html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
-      if (!text) {
+      // 认知二期产品批①：折叠默认 = 档参数（§6.2）。备考冲刺档 foldDefault =
+      // "expand-findings" ⇒ Findings 默认展开，框外不折（P5 教学引导层唯一例外
+      // 档的呈现面）；其余四档一律折。
+      const fold = getCurrentProfile().foldDefault !== 'expand-findings';
+      if (!text || !fold) {
         result += p.html;
       } else {
         const n = text.split('\n').filter((l) => l.trim()).length;

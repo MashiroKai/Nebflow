@@ -59,6 +59,8 @@ import { protocolFormLabel, escapeHtml, flushConfigToServer, showProviderModal, 
 // 生图设置节（settings-panel 批 ②③件）与每模型连接性测试钮（B 件）——渲染/
 // 绑定单点在各自子模块，本文件只挂壳 + 转发调用（子模块不回指本文件）。
 import { bindImagegenSection, debugBadge } from './sidebar/imagegenSection.js';
+// 认知二期产品批①选档器：设置面板区块（五档 + 档参数逐项覆盖，§6.2 产品化）。
+import { renderProfileSection, bindProfileEvents } from './presentationProfile.js';
 // 连接性测试钮已随 settings-panel-fourfix 批 ②件（2026-10-29 作者令「连接性
 // 测试按钮应放到 LLM provider 配置页面里」）迁入 provider 编辑弹窗——设置页
 // provider 卡模型行不再携带测试钮；模块 = sidebar/modelTestButton.js（弹窗面
@@ -895,6 +897,7 @@ export function renderSettings() {
         <span class="settings-label">${t('settings.language')}</span>
         <select class="cfg-select" id="cfg-language" style="width:auto">${langOpts}</select>
       </div>
+      ${renderProfileSection()}
       <div class="settings-row">
         <span class="settings-label">${t('settings.autostart')}</span>
         ${toggleHTML({ on: !!(state.autostartStatus && state.autostartStatus.enabled), id: 'toggle-autostart', label: t('settings.autostart'), disabled: !!(state.autostartStatus && !state.autostartStatus.supported) })}
@@ -1290,6 +1293,8 @@ function paintNfCacheUsage(el) {
 }
 
 function bindSettingsEvents(content, cfg) {
+  // 认知二期产品批①：选档器区块事件（选档 + 覆盖 + 复位）。
+  bindProfileEvents();
   // Thinking effort selector (#345, user ruling 2026-08-20): OpenAI-style
   // off/low/medium/high dropdown replaces the Anthropic numeric budget input.
   // Levels map to budget_tokens at the same boundaries OpenAiAdapter.

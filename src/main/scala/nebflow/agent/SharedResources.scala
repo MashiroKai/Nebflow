@@ -55,6 +55,20 @@ case class SharedResources(
   hookEngine: HookEngine = HookEngine.noop,
   bridgeManager: Option[BridgeManager] = None,
   scheduledTaskStore: ScheduledTaskStore = new ScheduledTaskStore(PathUtil.dataRoot / "scheduled-tasks"),
+  /**
+   * 认知二期产品批①选档器：方案档案持久化（作者裁定 §9-11：数据根独立 JSON）。
+   * 同步构造默认实例（scheduledTaskStore 同款先例）⇒ 存量测试构造零改动。
+   */
+  presentationProfileStore: nebflow.core.profile.PresentationProfileStore =
+    nebflow.core.profile.PresentationProfileStore(PathUtil.dataRoot),
+  /**
+   * 认知二期产品批③④：打卡 done 历史（只增 JSONL）——周报生成器聚合数据源；
+   * 打卡 UI 销账与 Schedule done 双写口。
+   */
+  override val doneRecordStore: nebflow.core.scheduler.DoneRecordStore =
+    nebflow.core.scheduler.DoneRecordStore(PathUtil.dataRoot),
+  // ↑ override：AgentRuntimePort 给了 dataRoot 默认实现（匿名窄视图零改动），
+  // SharedResources 以同一路径覆盖之。
   neblinkService: Option[NeblinkService] = None,
   /**
    * A2A 好友与消息服务（spec §11 客户端）。由 GatewayMain 在 NeblinkClient

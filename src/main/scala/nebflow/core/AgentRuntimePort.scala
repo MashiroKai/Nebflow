@@ -61,6 +61,11 @@ trait AgentRuntimePort extends AgentRegistryPort:
   /** 镜像 `SharedResources.scheduledTaskStore`(core.scheduler)。 */
   def scheduledTaskStore: ScheduledTaskStore
 
+  /** 镜像 `SharedResources.doneRecordStore`（认知二期产品批：打卡 done 历史，周报数据源）。
+   * 默认实例（SharedResources 覆盖为同一 dataRoot 路径；匿名窄视图实现零改动）。 */
+  def doneRecordStore: nebflow.core.scheduler.DoneRecordStore =
+    nebflow.core.scheduler.DoneRecordStore(nebflow.shared.PathUtil.dataRoot)
+
   /** 镜像 `SharedResources.scheduledTaskService`(core.scheduler)。 */
   def scheduledTaskService: Option[ScheduledTaskService]
 

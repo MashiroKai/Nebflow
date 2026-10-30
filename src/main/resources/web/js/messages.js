@@ -30,6 +30,11 @@ import { appendRefToActiveView } from './input.js';
 import { showPopupMenu, isPopupMenuOpen } from './contextMenu.js';
 // ⑥ 信任好友封存（作者裁定 2026-09-12）：静态常量，非配置读取、不过 latch。
 import { TRUST_SEALED } from './featureFlags.js';
+// 认知二期产品批②角标可行动判据（设计稿 §5 P6）：messages 徽标只报「需要
+// 作者行动」的量（待批准 + 待销账/待处置 + 未读回执），纯未读消息不上徽标
+// （新鲜度 ≠ 可行动量，闭合相关性判据）。
+import { pendingAskCount } from './askPending.js';
+import { actionableTotal, onActionableChanged } from './actionable.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 // 本模块的好友会话输入框（作者点名的面）此前**零组字判定** —— 组字 Enter 会
 // 直接 doSend()。
@@ -427,14 +432,31 @@ function groupEventText(ev) {
   }
 }
 
-function totalUnread() {
-  return conversations.reduce((s, c) => s + (c.unreadCount || 0), 0);
+/**
+ * 可行动未读（P6 判据）：未读会话里点名作者行动的条数。会话无行动标记
+ * （pendingAsk/mention）⇒ 该会话计数 0——「有更新」不构成行动请求，纯未读
+ * 不上徽标。未读同步等既有腿不消费本函数，零触碰。
+ */
+function actionableUnread() {
+  return conversations.reduce((s, c) => {
+    const unread = c.unreadCount || 0;
+    if (unread <= 0) return s;
+    const flagged = (c.pendingAskCount || 0) + (c.mentionCount || 0);
+    return s + Math.min(unread, flagged);
+  }, 0);
 }
 
 function updateBadge() {
-  const n = loggedIn() ? totalUnread() : 0;
-  setActivityBadge('messages-btn', n, t('messages.ariaUnread', { n }));
+  // 徽标 = 可行动量：会话内点名行动（待批准/@）+ 跨面板可行动（待销账待办/
+  // 待处置任务/未读回执——各面板注册的提供者）。纯「有更新」不上徽标。
+  const n = loggedIn()
+    ? actionableUnread() + pendingAskCount() + actionableTotal()
+    : 0;
+  setActivityBadge('messages-btn', n, t('messages.ariaActionable', { n }));
 }
+
+// 任一可行动提供者计数变化 ⇒ 重算徽标（actionable.js 广播面）。
+onActionableChanged(() => updateBadge());
 
 // ── Conversation list (§3.2) ─────────────────────────────
 /** 会话列表刷新。

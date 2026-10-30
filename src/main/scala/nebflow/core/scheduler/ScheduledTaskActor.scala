@@ -38,19 +38,37 @@ object ScheduledTaskService:
    * （调用方不发）。
    */
   def digestPayload(todos: List[ScheduledTask], now: Long): String =
+    digestPayloadWithStreak(todos, Set.empty, now)
+
+  /**
+   * 缺卡调整建议阈值（认知二期产品批）：连续浮出未被销账达此次数 ⇒ 浮出文案
+   * 附调整建议（不指责，只给默认建议呈确认——注意力伦理，不擅自改计划）。
+   */
+  val MissThreshold: Int = 3
+
+  /**
+   * digest 文案（缺卡调整流版）：[[digestPayload]] 同款，另对 missStreak 集内
+   * 的待办逐条附「已连续 N 次浮出未销账——建议降频或拆小，要调整请直接说」。
+   * missStreak = 本次浮出后计数将达阈值的待办 id 集（纯函数，now/集合注入）。
+   */
+  def digestPayloadWithStreak(todos: List[ScheduledTask], missStreak: Set[String], now: Long): String =
     if todos.isEmpty then ""
     else
       val zone = ZoneId.systemDefault()
       val fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(zone)
       val lines = todos.zipWithIndex.map { case (t, i) =>
-        s"${i + 1}. [id: ${t.id}] ${t.content.take(200)}（创建于 ${fmt.format(Instant.ofEpochMilli(t.createdAt))}）"
+        val streakNote =
+          if missStreak(t.id) then
+            s"【已连续 ${MissThreshold} 次浮出未销账——建议：降低提醒频率或把这条拆小；要调整请直接说，不擅自改计划】"
+          else ""
+        s"${i + 1}. [id: ${t.id}] ${t.content.take(200)}（创建于 ${fmt.format(Instant.ofEpochMilli(t.createdAt))}）$streakNote"
       }
       val header =
         s"[待办浮出] 你有 ${todos.size} 项未完成待办（引擎侧持久存储，会话压缩/重启不丢失，每日早晨浮出一次直至处理）："
       val tail =
         "\n处理方式：已完成 → Schedule {action:\"done\", id:\"<id>\"} 销账（不再浮出）；不再需要 → {action:\"cancel\", id:\"<id>\"} 取消。现在请逐条处置。"
       ((header +: lines) :+ tail).mkString("\n")
-  end digestPayload
+  end digestPayloadWithStreak
 
   /**
    * ⑤触发链上下文（作者原令六条之⑤「重复任务再次触发时自动附带上一次执行的
@@ -78,7 +96,12 @@ class ScheduledTaskService(
    * 它 ⇒ 该预定触发点被停机跨过 ⇒ 恢复后补跑并标注「错过后补跑」。默认取构造
    * 时刻（服务只在启动时装配一次，等价引擎 boot）；spec 注入固定值可钉。
    */
-  bootAtMs: Long = System.currentTimeMillis()
+  bootAtMs: Long = System.currentTimeMillis(),
+  /**
+   * 认知二期产品批·周报生成器：挂在既有调度循环尾（一周一应谓词，marker
+   * 持久化判重）。None = 未装配（存量测试构造零改动）⇒ tick 不跑。
+   */
+  weeklyReport: Option[WeeklyReportGenerator] = None
 ):
 
   private val logger = NebflowLogger.forName("nebflow.scheduled-task")
@@ -131,6 +154,9 @@ class ScheduledTaskService(
       }
       dueTodos <- taskStore.getAllDueTodos
       _ <- surfaceTodos(dueTodos)
+      // 认知二期产品批·周报生成器：一周一应谓词（marker 持久化判重），非生成
+      // 周零成本早退。接在待办面之后 = 与既有调度同节奏，不新造循环。
+      _ <- weeklyReport.fold(IO.unit)(_.tick())
     yield ()
 
   // ------------------------------------------------------------
@@ -611,7 +637,13 @@ class ScheduledTaskService(
       for
         allTodos <- taskStore.getAllTodos
         now = System.currentTimeMillis()
-        payload = ScheduledTaskService.digestPayload(allTodos, now)
+        // 缺卡调整流：先给到期待办 +1 缺卡计数，计数达阈值的进 missStreak
+        // （浮出文案附调整建议）。计数与顺延同事务序（store 锁串行），重启不丢。
+        _ <- dueTodos.traverse_(t =>
+          taskStore.updateTask(t.sessionId, t.id)(x => x.copy(missCount = x.missCount + 1)).void
+        )
+        missStreak = dueTodos.filter(_.missCount + 1 >= ScheduledTaskService.MissThreshold).map(_.id).toSet
+        payload = ScheduledTaskService.digestPayloadWithStreak(allTodos, missStreak, now)
         _ <- if payload.isEmpty then IO.unit else surfaceDigest(dueTodos, allTodos, payload, now)
       yield ()
 

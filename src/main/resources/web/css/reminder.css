@@ -350,6 +350,39 @@
   white-space: nowrap;
 }
 
+/* 认知二期产品批③打卡缺卡调整流：行内调整建议（弱化小字，不指责口吻的
+   呈现面；克制基调与 .reminder-row-last 同族）。 */
+.reminder-miss-suggest {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--color-text);
+  opacity: 0.45;
+  letter-spacing: -0.01em;
+  margin-top: 2px;
+  white-space: normal;
+}
+
+/* 认知二期产品批③：待办行的取消钮（×）——中性弱显，hover 才实。 */
+.reminder-cancel {
+  align-self: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text);
+  opacity: 0.25;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.reminder-cancel:hover {
+  opacity: 0.7;
+  background: var(--color-frame-hover);
+}
+
 /* disabled task row */
 .reminder-row.disabled .reminder-row-text { opacity: 0.4; }
 .reminder-row.disabled .reminder-row-time { opacity: 0.3; }
