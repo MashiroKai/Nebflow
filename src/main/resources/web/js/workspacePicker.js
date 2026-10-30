@@ -22,6 +22,16 @@
 // only" still holds). Breadcrumbs are prefixed with a device chip; the foot shows
 // the remote read-only note.
 //
+// DEVICE SWITCHER (picker-device-switch 批 2026-10-30，作者报单 09:36：「选择项目
+// 路径的时候，只能看到本机的路径」)：面板顶部常驻设备选择行——平级设备列表
+// （设计语言「所有设备平等」：self 以花名册设备名平级在列，无本机/self 特殊化），
+// 选中对端后目录列表经既有设备通道读该设备文件系统（wsBrowse.list 的 additive
+// `device` 腿，复用 dirPicker 远端伺服腿，零新端点）；离线对端行置灰禁选 +
+// 「离线」标注。面板内切设备 = 换盘：已浏览路径不复用（本机从 ~ 起、远端从根
+// 起），读写 chrome 按模式重挂（远端只读：无 mkdir/goto/search——沿用 R-A5 的
+// 「Absent-not-hidden」纪律，既有断言 .wsp-mkdir 计数不被隐藏元素污染）。
+// 数据源 = deviceRoster.js（/api/neblink/status，60s 内存缓存，零新后端面）。
+//
 // Wire contract (existing channels only — zero new backend endpoints):
 //   wsBrowse.list  {path, sessionId}  → wsBrowseList {path, home, entries:string[], error?}
 //       Plain navigation. Complete listing (server applies no cap), `home` feeds
@@ -137,8 +147,12 @@ function buildCrumbs(path, home) {
  * Open the directory picker (singleton: reopening closes the old dialog and
  * fires its onCancel).
  * @param {object} opts {
- *   sessionId, startPath='~', title, showClear=false,
- *   onPick(path), onClear(), onCancel(), onListUnavailable(error)
+ *   sessionId, startPath='~', title, showClear=false, device, deviceName,
+ *   deviceSwitch=true (picker-device-switch 批：面板顶部设备选择行；个别消费方
+ *     的路径语义绑定本机（sidebar set-project-root）可显式关掉),
+ *   onPick(path, device) (第二参 = 选择时面板所处的 origin 设备（null=本机）——
+ *     面板内可切设备，裸路径之外补 origin 绑定，调用方按消费),
+ *   onClear(), onCancel(), onListUnavailable(error)
  * }
  */
 export function openPicker(opts = {}) {
@@ -155,42 +169,64 @@ export function openPicker(opts = {}) {
     // DEVICE MODE (ui-device-faces 批 A4): browse a remote device's dirs read-only.
     device: opts.device || null,
     deviceName: opts.deviceName || opts.device || '',
+    // 设备选择行开关（picker-device-switch 批）：默认常驻；绑定本机语义的消费方
+    // （sidebar set-project-root）显式 deviceSwitch:false（其回写面无设备定语）。
+    deviceSwitch: opts.deviceSwitch !== false,
     current: opts.startPath || '~',
     home: '',
     seq: 0, // monotonic request token (staleness guard)
     searchTimer: null,
+    rosterSelf: null, // 花名册 self {id,name}（设备行显示名；未取到 = 回落本机串）
+    devMenuOpen: false,
     teardown: null, // set below: detach the Esc listener + pending debounce
   };
-  const titleText = opts.title
-    || (ctx.device ? t('workspacePicker.deviceTitle', { device: ctx.deviceName }) : t('workspacePicker.browseTitle'));
+  const hasCustomTitle = !!opts.title;
+  const titleEl = document.createElement('div');
+  titleEl.className = 'wsp-title';
+  /** 标题随模式变（自定义标题除外）：本机 = browseTitle，远端 = deviceTitle。 */
+  const updateTitle = () => {
+    const titleText = hasCustomTitle
+      ? /** @type {string} */ (opts.title)
+      : (ctx.device ? t('workspacePicker.deviceTitle', { device: ctx.deviceName }) : t('workspacePicker.browseTitle'));
+    titleEl.textContent = titleText;
+    titleEl.setAttribute('aria-label', titleText);
+  };
+  updateTitle();
 
-  // Device mode: read-only remote browse — no goto/search boxes (no remote leg on
-  // browsePath; D4 "picker only" — a hand-typed remote path has no authority), the
-  // mkdir button yields its seat to the read-only note.
-  const deviceChrome = ctx.device
-    ? ''
-    : '<div class="wsp-goto">' +
-        '<input class="wsp-goto-input" type="text" spellcheck="false" autocomplete="off" placeholder="' + escapeHtml(t('workspacePicker.gotoPlaceholder')) + '" />' +
-        '<button type="button" class="wsp-goto-btn">' + escapeHtml(t('workspacePicker.go')) + '</button>' +
-      '</div>' +
-      '<div class="wsp-search">' +
-        '<input class="wsp-search-input" type="text" spellcheck="false" autocomplete="off" placeholder="' + escapeHtml(t('workspacePicker.searchPlaceholder')) + '" />' +
-      '</div>';
-  const footNote = ctx.device
-    ? '<span class="pick-note">' + escapeHtml(t('workspacePicker.deviceNote')) + '</span>'
-    : '<button type="button" class="wsp-mkdir">+ ' + escapeHtml(t('workspacePicker.newFolder')) + '</button>';
+  // Device icons（设计稿 A1/A3 两形，与 projectTab.js 同款串）：本机 = monitor、
+  // 远端 = hard-drive + sapphire 着色（.dev-btn.is-remote 族）。
+  const DEV_ICON_SELF =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>';
+  const DEV_ICON_REMOTE =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/></svg>';
+  const DEV_ICON_CHECK =
+    '<svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+
   const overlay = document.createElement('div');
   overlay.className = 'wsp-overlay';
   overlay.innerHTML =
-    '<div class="wsp-panel" role="dialog" aria-modal="true" aria-label="' + escapeHtml(titleText) + '">' +
-      '<div class="wsp-title"></div>' +
-      deviceChrome +
+    '<div class="wsp-panel" role="dialog" aria-modal="true">' +
+      '<div class="wsp-title-slot"></div>' +
+      // 设备选择行（picker-device-switch 批）：标题下、面包屑上。行类复用
+      // projectPanel.css 全局 .dev-row/.dev-btn/.dev-menu 族（零新样式面，仅
+      // .wsp-dev-row 间距微调在 chat.css）。deviceSwitch=false 时整行不挂。
+      (ctx.deviceSwitch
+        ? '<div class="wsp-dev-row dev-row">' +
+            '<button type="button" class="dev-btn wsp-dev-btn" aria-haspopup="listbox" aria-expanded="false" aria-label="' + escapeHtml(t('workspacePicker.deviceSelectAria')) + '">' +
+              '<span class="dev-ic"></span>' +
+              '<span class="dev-nm"></span>' +
+              '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>' +
+            '</button>' +
+            '<div class="dev-menu" hidden></div>' +
+          '</div>'
+        : '') +
+      '<div class="wsp-chrome"></div>' + // goto/search 挂点（仅本机模式挂载——Absent-not-hidden）
       '<div class="wsp-crumbs"></div>' +
       '<div class="wsp-note" hidden></div>' +
       '<div class="wsp-err" hidden></div>' +
       '<div class="wsp-list"></div>' +
       '<div class="wsp-foot">' +
-        footNote +
+        '<span class="wsp-foot-slot"></span>' + // mkdir | 远端只读脚注（按模式挂载）
         '<span class="wsp-cur"></span>' +
         '<span class="wsp-foot-btns">' +
           '<button type="button" class="wsp-cancel">' + escapeHtml(t('workspacePicker.cancel')) + '</button>' +
@@ -199,7 +235,7 @@ export function openPicker(opts = {}) {
         '</span>' +
       '</div>' +
     '</div>';
-  overlay.querySelector('.wsp-title').textContent = titleText;
+  overlay.querySelector('.wsp-title-slot').replaceWith(titleEl);
   document.body.appendChild(overlay);
 
   const listEl = overlay.querySelector('.wsp-list');
@@ -207,8 +243,14 @@ export function openPicker(opts = {}) {
   const curEl = /** @type {HTMLElement} */ (overlay.querySelector('.wsp-cur'));
   const noteEl = /** @type {HTMLElement} */ (overlay.querySelector('.wsp-note'));
   const errEl = /** @type {HTMLElement} */ (overlay.querySelector('.wsp-err'));
-  const gotoEl = /** @type {HTMLInputElement} */ (overlay.querySelector('.wsp-goto-input'));
-  const searchEl = /** @type {HTMLInputElement} */ (overlay.querySelector('.wsp-search-input'));
+  const chromeEl = /** @type {HTMLElement} */ (overlay.querySelector('.wsp-chrome'));
+  const footSlot = /** @type {HTMLElement} */ (overlay.querySelector('.wsp-foot-slot'));
+  // 本机模式输入框（mountChrome 挂载；远端模式 = null——🔴 引用点必须 optional
+  // chaining，曾裸引用在 device 模式首帧抛 TypeError 的坑见 navigate 注）。
+  /** @type {HTMLInputElement|null} */
+  let gotoEl = null;
+  /** @type {HTMLInputElement|null} */
+  let searchEl = null;
   openCtx = ctx;
 
   /** Terminal transition: teardown, then exactly one caller callback. */
@@ -217,10 +259,173 @@ export function openPicker(opts = {}) {
     openCtx = null;
     if (ctx.teardown) ctx.teardown();
     overlay.remove();
-    if (outcome.type === 'pick') ctx.onPick(outcome.path);
+    // onPick 第二参 = 选择时面板所处的 origin 设备（null=本机）——picker-device-switch
+    // 批：面板内可切设备，裸路径之外补 origin 绑定（旧调用方单参回调零影响）。
+    if (outcome.type === 'pick') ctx.onPick(outcome.path, ctx.device);
     else if (outcome.type === 'clear') ctx.onClear();
     else ctx.onCancel();
   };
+
+  // ── 设备选择行（picker-device-switch 批）：平级设备列表，所有设备平等 ──────
+  const devBtn = ctx.deviceSwitch ? /** @type {HTMLElement} */ (overlay.querySelector('.wsp-dev-btn')) : null;
+  const devMenu = ctx.deviceSwitch ? /** @type {HTMLElement} */ (overlay.querySelector('.wsp-dev-row .dev-menu')) : null;
+
+  const renderDevBtn = () => {
+    if (!devBtn) return;
+    devBtn.classList.toggle('is-remote', !!ctx.device);
+    const ic = devBtn.querySelector('.dev-ic');
+    if (ic) ic.innerHTML = ctx.device ? DEV_ICON_REMOTE : DEV_ICON_SELF;
+    const nm = devBtn.querySelector('.dev-nm');
+    if (nm) nm.textContent = ctx.device ? ctx.deviceName : (ctx.rosterSelf?.name || t('workspacePicker.thisDevice'));
+    devBtn.title = ctx.device ? ctx.deviceName : (ctx.rosterSelf?.name || t('workspacePicker.thisDevice'));
+    devBtn.setAttribute('aria-expanded', String(ctx.devMenuOpen));
+  };
+
+  const closeDevMenu = () => {
+    if (!ctx.devMenuOpen) return;
+    ctx.devMenuOpen = false;
+    if (devMenu) { devMenu.hidden = true; devMenu.innerHTML = ''; }
+    renderDevBtn();
+  };
+
+  /** 菜单行填充：self（花名册名，平级呈现）+ peers；离线行禁选 + 离线 tag。 */
+  const fillDevMenu = (rows) => {
+    if (!devMenu) return;
+    devMenu.innerHTML = '';
+    const currentId = ctx.device || (ctx.rosterSelf && ctx.rosterSelf.id) || null;
+    for (const row of rows) {
+      const selected = row.id === currentId;
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'dev-item' + (selected ? ' active' : '') + (row.online ? '' : ' disabled');
+      if (!row.online) item.disabled = true;
+      item.innerHTML =
+        '<span class="dot' + (row.online ? '' : ' off') + '"></span>' +
+        '<span class="nm">' + escapeHtml(row.name) + '</span>';
+      if (selected) item.innerHTML += DEV_ICON_CHECK;
+      else if (!row.online) item.innerHTML += '<span class="off-tag">' + escapeHtml(t('project.deviceOfflineTag')) + '</span>';
+      if (row.online) item.addEventListener('click', (e) => { e.stopPropagation(); selectDevice(row); });
+      devMenu.appendChild(item);
+    }
+    const foot = document.createElement('div');
+    foot.className = 'dev-menu-foot';
+    foot.textContent = t('project.deviceMenuFoot');
+    devMenu.appendChild(foot);
+  };
+
+  const openDevMenu = () => {
+    if (!devBtn || !devMenu) return;
+    ctx.devMenuOpen = true;
+    devMenu.hidden = false;
+    renderDevBtn();
+    import('./deviceRoster.js')
+      .then(({ getDeviceRoster }) => getDeviceRoster())
+      .then((roster) => {
+        if (!ctx.devMenuOpen) return;
+        ctx.rosterSelf = roster.self;
+        // 显示名补写：调用方只给 deviceId 未给显示名时，花名册命中即换名（id 不上显示面）。
+        if (ctx.device && ctx.deviceName === ctx.device) {
+          const peer = roster.peers.find((p) => p.id === ctx.device);
+          if (peer) { ctx.deviceName = peer.name; updateTitle(); }
+        }
+        renderDevBtn();
+        fillDevMenu([
+          // 「所有设备平等」：self 以花名册设备名平级在列，无本机/self 特殊化。
+          roster.self
+            ? { id: roster.self.id, name: roster.self.name, online: true, self: true }
+            : { id: 'self', name: t('workspacePicker.thisDevice'), online: true, self: true },
+          ...roster.peers.map((p) => ({ id: p.id, name: p.name, online: p.online, self: false })),
+        ]);
+      })
+      .catch(() => {
+        // 花名册不可得 = 回落单本机行（现状形态），不弹错误（可继续本机浏览）。
+        if (!ctx.devMenuOpen) return;
+        ctx.rosterSelf = null;
+        fillDevMenu([{ id: 'self', name: t('workspacePicker.thisDevice'), online: true, self: true }]);
+      });
+  };
+
+  /** 选中一台设备。面板内切设备 = 换盘：路径不复用、chrome 按模式重挂。 */
+  const selectDevice = (row) => {
+    const next = row && !row.self ? { id: row.id, name: row.name } : null;
+    const changed = (next && next.id) !== (ctx.device || null);
+    ctx.device = (next && next.id) || null;
+    ctx.deviceName = (next && next.name) || '';
+    closeDevMenu();
+    renderDevBtn();
+    if (!changed) return;
+    ctx.home = '';
+    mountChrome();
+    updateTitle();
+    navigate(ctx.device ? '/' : '~'); // 远端从根起（wsBrowse.list device 腿）；本机从 ~ 起
+  };
+
+  if (devBtn) {
+    devBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (ctx.devMenuOpen) closeDevMenu();
+      else openDevMenu();
+    };
+  }
+  // 点面板其它区域收菜单（capture：先于子件 stopPropagation——菜单内点击除外）。
+  /** @param {Event} e */
+  const devOutsideClose = (e) => {
+    if (!ctx.devMenuOpen) return;
+    const tgt = /** @type {Element|null} */ (e.target);
+    if (tgt && (tgt.closest('.wsp-dev-row'))) return;
+    closeDevMenu();
+  };
+  document.addEventListener('pointerdown', devOutsideClose, true);
+  // 面板一打开即预取花名册（self 显示名异步补写——本机设备名不在显示面直出「local」）。
+  import('./deviceRoster.js')
+    .then(({ getDeviceRoster }) => getDeviceRoster())
+    .then((roster) => {
+      if (openCtx !== ctx) return;
+      ctx.rosterSelf = roster.self;
+      if (ctx.device && ctx.deviceName === ctx.device) {
+        const peer = roster.peers.find((p) => p.id === ctx.device);
+        if (peer) { ctx.deviceName = peer.name; updateTitle(); }
+      }
+      renderDevBtn();
+    })
+    .catch(() => {});
+
+  // ── 读写 chrome 按模式挂载（mountChrome）────────────────────────────────
+  // Absent-not-hidden 纪律（R-A5 断言 .wsp-mkdir 计数）：远端只读腿下 goto/search/
+  // mkdir **不挂 DOM**（不是 hidden）——既有断言与查询不受污染；切回本机时重挂并
+  // 重新绑定输入处理。
+  function mountChrome() {
+    chromeEl.innerHTML = '';
+    footSlot.innerHTML = '';
+    gotoEl = null;
+    searchEl = null;
+    if (ctx.device) {
+      // 远端只读：无 mkdir/goto/search（browsePath 无远端腿，D4 "picker only"），
+      // mkdir 的座位让远端只读脚注（deviceNote）。
+      const note = document.createElement('span');
+      note.className = 'pick-note';
+      note.textContent = t('workspacePicker.deviceNote');
+      footSlot.appendChild(note);
+      return;
+    }
+    chromeEl.innerHTML =
+      '<div class="wsp-goto">' +
+        '<input class="wsp-goto-input" type="text" spellcheck="false" autocomplete="off" placeholder="' + escapeHtml(t('workspacePicker.gotoPlaceholder')) + '" />' +
+        '<button type="button" class="wsp-goto-btn">' + escapeHtml(t('workspacePicker.go')) + '</button>' +
+      '</div>' +
+      '<div class="wsp-search">' +
+        '<input class="wsp-search-input" type="text" spellcheck="false" autocomplete="off" placeholder="' + escapeHtml(t('workspacePicker.searchPlaceholder')) + '" />' +
+      '</div>';
+    gotoEl = /** @type {HTMLInputElement} */ (chromeEl.querySelector('.wsp-goto-input'));
+    searchEl = /** @type {HTMLInputElement} */ (chromeEl.querySelector('.wsp-search-input'));
+    const mkdir = document.createElement('button');
+    mkdir.type = 'button';
+    mkdir.className = 'wsp-mkdir';
+    mkdir.textContent = '+ ' + t('workspacePicker.newFolder');
+    mkdir.onclick = () => startMkdir();
+    footSlot.appendChild(mkdir);
+    bindLocalChromeInputs();
+  }
 
   // Esc closes (cancel) — never during IME composition (Esc belongs to the IME then).
   /** @param {KeyboardEvent} e */
@@ -232,6 +437,7 @@ export function openPicker(opts = {}) {
   };
   ctx.teardown = () => {
     document.removeEventListener('keydown', onKey);
+    document.removeEventListener('pointerdown', devOutsideClose, true);
     if (ctx.searchTimer) { clearTimeout(ctx.searchTimer); ctx.searchTimer = null; }
   };
   document.addEventListener('keydown', onKey);
@@ -241,8 +447,6 @@ export function openPicker(opts = {}) {
   /** @type {HTMLElement} */ (overlay.querySelector('.wsp-pick')).onclick = () => finish({ type: 'pick', path: ctx.current });
   const clearBtn = /** @type {HTMLElement|null} */ (overlay.querySelector('.wsp-clear'));
   if (clearBtn) clearBtn.onclick = () => finish({ type: 'clear' }); // legacy parity: Clear closes WITHOUT onCancel
-  const mkdirBtn = /** @type {HTMLElement|null} */ (overlay.querySelector('.wsp-mkdir'));
-  if (mkdirBtn) mkdirBtn.onclick = () => startMkdir(); // device mode: no mkdir face (read-only remote leg)
 
   function hideErr() { errEl.hidden = true; errEl.innerHTML = ''; }
   function hideNote() { noteEl.hidden = true; noteEl.textContent = ''; }
@@ -468,14 +672,16 @@ export function openPicker(opts = {}) {
 
   // ── goto: direct entry. Enter or the Go button jumps to the typed path; the
   // box keeps its text so a wrong path can be corrected instead of retyped. ──
-  // Device mode: the boxes are not rendered (read-only remote leg) — skip binds.
+  // 仅本机模式挂载（mountChrome 内调用；远端只读腿无输入框）。
   const gotoTyped = () => {
-    const typed = gotoEl.value.trim();
+    const typed = gotoEl ? gotoEl.value.trim() : '';
     if (!typed) return;
     navigate(typed, { origin: 'goto' });
   };
-  if (gotoEl && searchEl) {
-    /** @type {HTMLElement} */ (overlay.querySelector('.wsp-goto-btn')).onclick = gotoTyped;
+  /** 本机模式输入处理绑定（每次 chrome 重挂后调用；元素为本次挂载实例）。 */
+  function bindLocalChromeInputs() {
+    if (!gotoEl || !searchEl) return;
+    /** @type {HTMLElement} */ (chromeEl.querySelector('.wsp-goto-btn')).onclick = gotoTyped;
     bindImeGuard(gotoEl);
     gotoEl.addEventListener('keydown', (e) => {
       if (isImeComposing(e, gotoEl)) return;
@@ -503,6 +709,8 @@ export function openPicker(opts = {}) {
     });
   }
 
+  renderDevBtn();
+  mountChrome(); // 首挂：按初始模式（本机全功能 / 远端只读）
   navigate(ctx.current); // first paint (backend expands `~`; device mode = remote root list)
 }
 

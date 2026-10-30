@@ -107,6 +107,9 @@ export default {
   'project.deviceOfflineTag': 'Offline',
   'project.deviceMenuFoot': 'Devices come from the NebLink network (peers); offline devices are not selectable and appear automatically once online.',
   'project.createDeviceHintline': 'The project will be stored on {device} and created by that device; this Mac only records a pointer — files are fetched on demand.',
+  // picker-device-switch batch (2026-10-30): reject a pick whose origin device no
+  // longer matches the selected storage device (in-picker device switch).
+  'project.createDeviceMismatch': 'The picked path does not belong to the selected storage device (the device was switched inside the picker) — please pick again.',
   'project.createWorkspaceLabelRemote': 'Workspace path (on {device})',
   'project.createWorkspacePickRemote': 'Choose a path on {device}…',
   'project.createRemotePending': 'Creating on {device} (a few seconds)',
@@ -2397,6 +2400,8 @@ export default {
   'explorer.pickupCancel': 'Cancel',
   'explorer.pickupStalled': 'Stalled — cancellable',
   'explorer.remoteReadonly': 'Remote directories are read-only; write actions are unavailable.',
+  // === picker-device-switch batch (2026-10-30): explorer device switch button ===
+  'explorer.deviceSelectAria': 'Switch browsing device',
   'daemons.delete': 'Delete',
   // === Workspace picker card + in-app directory browser (workspace-picker batch) ===
   'workspacePicker.pickTitle': 'Pick Workspace',
@@ -2431,6 +2436,12 @@ export default {
   // === ui-device-faces batch (2026-10-10): picker device mode (remote leg, read-only) ===
   'workspacePicker.deviceTitle': 'Choose a directory on {device}',
   'workspacePicker.deviceNote': 'Remote directories are read-only — the directory must already exist (missing items are reported, never created).',
+  // === picker-device-switch batch (2026-10-30): in-picker device switcher row ===
+  // thisDevice = fallback label when the roster self name is unavailable (never the
+  // bare string "local"); offline tag / menu foot reuse project.deviceOfflineTag /
+  // project.deviceMenuFoot (reuse-before-create).
+  'workspacePicker.thisDevice': 'This device',
+  'workspacePicker.deviceSelectAria': 'Choose which device to browse',
 
   // === Device-conversation server switch, MVP-2 (2026-09-15): device receipts ===
   // 🔴 `messages.deviceRetention`（P10 留存明示句）已删 —— 作者 2026-09-15 令

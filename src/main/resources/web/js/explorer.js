@@ -9,7 +9,7 @@
 import state from './state.js';
 import { key } from './branding.js';
 import { sendWs, onMessage, onReconnect } from './ws.js';
-import { createIconsIn } from './utils.js';
+import { createIconsIn, escapeHtml } from './utils.js';
 import { t } from './i18n.js';
 import { makeReference } from './reference.js';
 import { appendRefToActiveView } from './input.js';
@@ -45,12 +45,17 @@ const EXPLORER_ROOT_KEY = key('explorer_root');
 let explorerRootDevice = null;
 const EXPLORER_ROOT_DEVICE_KEY = key('explorer_root_device');
 
+/** 本机根记忆（picker-device-switch 批）：切到远端浏览前记住本机根，切回本机时还原
+ *  （不跨窗口重开——重启后回落缺省项目目录，无数据丢失：根只是视图偏好）。 */
+let localRootMemory = null;
+
 function loadPersistedRoot() {
   try {
     const saved = localStorage.getItem(EXPLORER_ROOT_KEY);
     if (!saved) return null;
     // 伴生 device 键只在 root 在场时有效（悬挂 device = 视为本机根）。
     explorerRootDevice = localStorage.getItem(EXPLORER_ROOT_DEVICE_KEY) || null;
+    if (!explorerRootDevice) localRootMemory = saved;
     return saved;
   } catch (_) { return null; }
 }
@@ -58,6 +63,7 @@ function loadPersistedRoot() {
 function persistRoot(path, device = null) {
   explorerRoot = path;
   explorerRootDevice = path ? (device || null) : null;
+  if (!explorerRootDevice && path) localRootMemory = path; // 本机根入记忆（切远端后可还原）
   try {
     if (path) localStorage.setItem(EXPLORER_ROOT_KEY, path);
     else localStorage.removeItem(EXPLORER_ROOT_KEY);
@@ -71,43 +77,186 @@ function persistRoot(path, device = null) {
 const DEVICE_HD_SVG =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>';
+const DEV_ICON_CHECK =
+  '<svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+const DEV_CHEV_SVG =
+  '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
 
-/** 头部设备徽标 chip（`.explorer-title` 旁常显；子行零徽标——整树同源）。 */
+/** 头部设备 chip 的菜单开合态 + 花名册 self（显示名缓存，模块级——chip 常驻后跨
+ *  paint 复用；picker-device-switch 批）。 */
+let explorerDevMenuOpen = false;
+let explorerRosterSelf = null;
+
+/**
+ * 头部设备 chip（picker-device-switch 批 2026-10-30 改造）：由「远端根才出现的只读
+ * 徽标」升级为**常驻设备切换钮**（作者报单：「文件浏览器，那也应该要加设备选择」）——
+ * 点开菜单平级列出 self（花名册名，所有设备平等）+ peers，选中即换浏览目标：
+ * listDir/readFile 走既有 additive `device` 腿（零新端点）；离线对端行置灰禁选 +
+ * 「离线」标注。写操作边界不变：远端根只读闸（refuseRemoteWrite）+ 写入口摘除。
+ */
 function renderExplorerDeviceChip() {
   const header = document.querySelector('.explorer-header');
   if (!header) return;
-  let chip = /** @type {HTMLElement | null} */ (header.querySelector('.dev-chip'));
-  if (!explorerRootDevice) {
-    chip?.remove();
+  let anchor = /** @type {HTMLElement | null} */ (header.querySelector('.explorer-dev-anchor'));
+  if (!anchor) {
+    anchor = document.createElement('span');
+    anchor.className = 'explorer-dev-anchor';
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.id = 'explorer-device-btn';
+    chip.className = 'dev-chip';
+    chip.setAttribute('aria-haspopup', 'listbox');
+    chip.setAttribute('aria-expanded', 'false');
+    chip.setAttribute('aria-label', t('explorer.deviceSelectAria'));
+    const menu = document.createElement('div');
+    menu.className = 'dev-menu';
+    menu.hidden = true;
+    anchor.append(chip, menu);
+    const titleEl = header.querySelector('.explorer-title');
+    if (titleEl) titleEl.after(anchor);
+    else header.appendChild(anchor);
+    chip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (explorerDevMenuOpen) closeExplorerDevMenu();
+      else openExplorerDevMenu();
+    });
+    document.addEventListener('pointerdown', explorerDevOutsideClose, true);
+  }
+  paintExplorerDevChip();
+}
+
+/** chip 常态绘制：当前 origin 设备（远端 = 花名册名 + 离线琥珀点；本机 = self 名）。 */
+function paintExplorerDevChip() {
+  const chip = /** @type {HTMLElement | null} */ (document.getElementById('explorer-device-btn'));
+  if (!chip) return;
+  const deviceId = explorerRootDevice;
+  const selfName = (explorerRosterSelf && explorerRosterSelf.name) || '';
+  const label = deviceId || selfName || t('workspacePicker.thisDevice');
+  chip.classList.remove('is-offline');
+  chip.innerHTML = DEVICE_HD_SVG;
+  chip.appendChild(document.createTextNode(label));
+  chip.insertAdjacentHTML('beforeend', DEV_CHEV_SVG);
+  chip.title = deviceId || selfName;
+  chip.setAttribute('aria-expanded', String(explorerDevMenuOpen));
+  // 显示名 + 离线态异步补写（花名册 60s 内存缓存；失败回落 deviceId 直显）。
+  if (deviceId) {
+    import('./deviceRoster.js').then(async ({ resolveDeviceName, isDeviceOnline }) => {
+      if (!explorerRootDevice || !chip.isConnected) return;
+      const [name, online] = await Promise.all([resolveDeviceName(explorerRootDevice), isDeviceOnline(explorerRootDevice)]);
+      if (!explorerRootDevice || !chip.isConnected) return;
+      chip.textContent = '';
+      chip.innerHTML = DEVICE_HD_SVG;
+      chip.appendChild(document.createTextNode(name));
+      chip.insertAdjacentHTML('beforeend', DEV_CHEV_SVG);
+      chip.title = explorerRootDevice;
+      if (online === false) {
+        chip.classList.add('is-offline');
+        const dot = document.createElement('span');
+        dot.className = 'warn-dot';
+        chip.prepend(dot);
+      }
+    }).catch(() => {});
+  } else if (!selfName) {
+    // 本机显示名补写（花名册 self 名；未取到 = 回落「本机」串，绝不直出「local」）。
+    import('./deviceRoster.js').then(async ({ getDeviceRoster }) => {
+      const roster = await getDeviceRoster();
+      if (!roster.self || explorerRootDevice || !chip.isConnected) return;
+      explorerRosterSelf = roster.self;
+      chip.textContent = '';
+      chip.innerHTML = DEVICE_HD_SVG;
+      chip.appendChild(document.createTextNode(roster.self.name));
+      chip.insertAdjacentHTML('beforeend', DEV_CHEV_SVG);
+      chip.title = roster.self.name;
+    }).catch(() => {});
+  }
+}
+
+function closeExplorerDevMenu() {
+  if (!explorerDevMenuOpen) return;
+  explorerDevMenuOpen = false;
+  const menu = /** @type {HTMLElement | null} */ (document.querySelector('.explorer-dev-anchor .dev-menu'));
+  if (menu) { menu.hidden = true; menu.innerHTML = ''; }
+  const chip = document.getElementById('explorer-device-btn');
+  if (chip) chip.setAttribute('aria-expanded', 'false');
+}
+
+/** @param {Event} e */
+function explorerDevOutsideClose(e) {
+  if (!explorerDevMenuOpen) return;
+  const tgt = /** @type {Element|null} */ (e.target);
+  if (tgt && tgt.closest('.explorer-dev-anchor')) return;
+  closeExplorerDevMenu();
+}
+
+function openExplorerDevMenu() {
+  explorerDevMenuOpen = true;
+  const chip = document.getElementById('explorer-device-btn');
+  const menu = /** @type {HTMLElement | null} */ (document.querySelector('.explorer-dev-anchor .dev-menu'));
+  if (chip) chip.setAttribute('aria-expanded', 'true');
+  if (!menu) return;
+  menu.hidden = false;
+  import('./deviceRoster.js')
+    .then(({ getDeviceRoster }) => getDeviceRoster())
+    .then((roster) => {
+      if (!explorerDevMenuOpen) return;
+      explorerRosterSelf = roster.self;
+      paintExplorerDevChip();
+      const rows = [
+        // 「所有设备平等」：self 以花名册设备名平级在列，无本机/self 特殊化。
+        roster.self
+          ? { id: roster.self.id, name: roster.self.name, online: true, self: true }
+          : { id: 'self', name: t('workspacePicker.thisDevice'), online: true, self: true },
+        ...roster.peers.map((p) => ({ id: p.id, name: p.name, online: p.online, self: false })),
+      ];
+      menu.innerHTML = '';
+      const currentId = explorerRootDevice || (explorerRosterSelf && explorerRosterSelf.id) || null;
+      for (const row of rows) {
+        const selected = row.id === currentId;
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'dev-item' + (selected ? ' active' : '') + (row.online ? '' : ' disabled');
+        if (!row.online) item.disabled = true;
+        item.innerHTML =
+          '<span class="dot' + (row.online ? '' : ' off') + '"></span>' +
+          '<span class="nm">' + escapeHtml(row.name) + '</span>';
+        if (selected) item.innerHTML += DEV_ICON_CHECK;
+        else if (!row.online) item.innerHTML += '<span class="off-tag">' + escapeHtml(t('project.deviceOfflineTag')) + '</span>';
+        if (row.online) item.addEventListener('click', (e) => { e.stopPropagation(); selectExplorerDevice(row); });
+        menu.appendChild(item);
+      }
+      const foot = document.createElement('div');
+      foot.className = 'dev-menu-foot';
+      foot.textContent = t('project.deviceMenuFoot');
+      menu.appendChild(foot);
+    })
+    .catch(() => {
+      // 花名册不可得 = 回落单本机行，不弹错误（可继续本机浏览）。
+      if (!explorerDevMenuOpen) return;
+      menu.innerHTML = '';
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'dev-item active';
+      item.innerHTML = '<span class="dot"></span><span class="nm">' + escapeHtml(t('workspacePicker.thisDevice')) + '</span>' + DEV_ICON_CHECK;
+      item.addEventListener('click', (e) => { e.stopPropagation(); selectExplorerDevice({ id: 'self', name: '', online: true, self: true }); });
+      menu.appendChild(item);
+    });
+}
+
+/**
+ * 选中一台浏览设备：本机 = 还原本机根（记忆缺失则回落缺省项目目录）；对端 = 从该
+ * 设备根起建远端只读树。整树同源一设备的既有纪律不变（listDir/readFile device 腿）。
+ * @param {{id: string, name: string, online: boolean, self: boolean}} row
+ */
+function selectExplorerDevice(row) {
+  closeExplorerDevMenu();
+  if (!row || row.self) {
+    if (!explorerRootDevice) return; // 已在本机：无操作
+    rerootExplorer(localRootMemory, null);
     return;
   }
-  if (!chip) {
-    chip = document.createElement('span');
-    chip.className = 'dev-chip';
-    const titleEl = header.querySelector('.explorer-title');
-    if (titleEl) titleEl.after(chip);
-    else header.appendChild(chip);
-  }
-  chip.innerHTML = DEVICE_HD_SVG;
-  chip.appendChild(document.createTextNode(explorerRootDevice));
-  chip.title = explorerRootDevice;
-  chip.classList.remove('is-offline');
-  // 显示名 + 离线态异步补写（花名册 60s 内存缓存；失败回落 deviceId 直显）。
-  import('./deviceRoster.js').then(async ({ resolveDeviceName, isDeviceOnline }) => {
-    if (!explorerRootDevice) return;
-    const [name, online] = await Promise.all([resolveDeviceName(explorerRootDevice), isDeviceOnline(explorerRootDevice)]);
-    if (!explorerRootDevice || !chip.isConnected) return;
-    chip.textContent = '';
-    chip.innerHTML = DEVICE_HD_SVG;
-    chip.appendChild(document.createTextNode(name));
-    chip.title = explorerRootDevice;
-    if (online === false) {
-      chip.classList.add('is-offline');
-      const dot = document.createElement('span');
-      dot.className = 'warn-dot';
-      chip.prepend(dot);
-    }
-  }).catch(() => {});
+  if (row.id === explorerRootDevice) return; // 同设备：无操作
+  if (!explorerRootDevice && explorerRoot) localRootMemory = explorerRoot; // 本机根入记忆
+  rerootExplorer('/', row.id); // 远端从根起（listDir device 腿，只读）
 }
 
 function updateExplorerTitle() {
@@ -1388,9 +1537,13 @@ export function initExplorer() {
       import('./workspacePicker.js').then(({ openPicker }) => {
         openPicker({
           startPath: explorerRoot || '~',
+          // picker-device-switch 批：远端根下「换根」在同一设备的盘上选（既有 device
+          // 腿）；面板顶部设备行仍可换设备，onPick 第二参回传选择时的 origin。
+          device: explorerRootDevice || undefined,
+          deviceName: explorerRootDevice || undefined,
           title: t('workspacePicker.projectTitle'),
-          onPick: (selectedPath) => {
-            persistRoot(selectedPath);
+          onPick: (selectedPath, pickedDevice) => {
+            persistRoot(selectedPath, pickedDevice || null);
             expandedDirs.clear();
             renderTree();
           },
@@ -1813,6 +1966,12 @@ function refreshDirOf(path) {
  */
 export function openExplorerAt(path, device) {
   if (!path) return;
+  rerootExplorer(path, device || null);
+  showSidePanel('files');
+}
+
+/** 换根公共体（openExplorerAt / 头部设备切换钮共用）：落根 + 清树态 + 重渲染。 */
+function rerootExplorer(path, device) {
   persistRoot(path, device || null);
   expandedDirs.clear();
   loadingDirs.clear();
@@ -1821,7 +1980,6 @@ export function openExplorerAt(path, device) {
   pendingPickups.clear();
   hidePickupFailureBar();
   clearSelection();
-  showSidePanel('files');
   renderTree();
 }
 

@@ -3327,6 +3327,10 @@ function showFolderCtxMenu(x, y, folderId) {
       openPicker({
         startPath: folder.projectRoot || '~',
         title: t('workspacePicker.projectTitle'),
+        // picker-device-switch 批：项目根绑定本机会话工作区（回写面无设备定语——
+        // setFolderProjectRoot 只收路径串），选择器内禁用设备切换，杜绝远端路径
+        // 静默落本机的错觉（G.12）。新建/迁移项目与文件浏览器的入口不受影响。
+        deviceSwitch: false,
         showClear: !!folder.projectRoot,
         onPick: (path) => {
           sendWs({ type: 'setFolderProjectRoot', folderId: folder.id, projectRoot: path });

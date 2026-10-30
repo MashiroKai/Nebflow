@@ -532,7 +532,15 @@ function openProjectsCreateDialog(trigger) {
             device: pickedDevice.id,
             deviceName: pickedDevice.name,
             startPath: pickedPath || '/',
-            onPick: (p) => {
+            // picker-device-switch 批：选择器内可切设备——onPick 第二参 = 选择时的
+            // origin；与「存放设备」不一致的路径绝不回写（路径是设备定语，混写 =
+            // G.12 路径错觉），显式报错请用户重选。
+            onPick: (p, pickedOn) => {
+              if ((pickedOn || null) !== (pickedDevice && pickedDevice.id)) {
+                reattach();
+                showError(t('project.createDeviceMismatch'));
+                return;
+              }
               pickedPath = p;
               renderPath();
               clearError();
@@ -543,7 +551,12 @@ function openProjectsCreateDialog(trigger) {
         } else {
           openPicker({
             startPath: pickedPath || '~',
-            onPick: (p) => {
+            onPick: (p, pickedOn) => {
+              if (pickedOn) { // 本机腿不该带回 origin——带回即面板内切过设备，按混写拒
+                reattach();
+                showError(t('project.createDeviceMismatch'));
+                return;
+              }
               pickedPath = p;
               renderPath();
               clearError();
