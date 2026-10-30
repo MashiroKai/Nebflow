@@ -523,6 +523,135 @@ test.describe('Reply attachment rendering — image inline + lightbox, non-image
 });
 
 // ============================================================
+// §7 Other 自由输入态附件（askuser-otherattach 批 2026-10-30，作者追加令 11:52）：
+// 选择题卡点「其他…」进入自由输入态 ⇒ 挂同款附件控件；附件随 Other 文本随帧
+// 到达 agent（信封协议不变）。修正①收窄为「未进 Other 态无入口」；附件仍不替
+// 代选项（闸语义不变：仅附件 ⇒ 确认键保持禁用）。
+// ============================================================
+
+test.describe('Other free-input attachments — mounts on Other state, rides the answer frame', () => {
+  test('single-select: no zone at rest → Other click mounts zone → file+text → frame carries both', async ({ page }) => {
+    await stubUploadOk(page);
+    await setupCard(page, [{
+      question: 'Which stack?',
+      options: [{ label: 'Scala' }, { label: 'Rust' }],
+    }], RID);
+    const box = lastCard(page);
+    const confirm = box.locator('.option-confirm');
+
+    // 静止态：选择题卡零入口（修正①收窄后仍钉死）。
+    await expect(box.locator('.ask-answer-attach-zone')).toHaveCount(0);
+
+    // 进 Other 态 ⇒ 同款附件区出现。
+    await box.locator('.option-btn.opt-other').first().click();
+    await expect(box.locator('.option-custom-input')).toBeVisible();
+    await expect(box.locator('.ask-answer-attach-zone')).toBeVisible();
+
+    // 仅附件（无 Other 文本）⇒ 确认键保持禁用（附件不替代选项，闸语义不变）。
+    await box.locator('input[type=file]').setInputFiles([
+      { name: 'note.txt', mimeType: 'text/plain', buffer: Buffer.from('n') },
+    ]);
+    await expect(box.locator('.ask-answer-attach-chip', { hasText: 'note.txt' }).locator('text=Attached')).toBeVisible();
+    await expect(confirm).toBeDisabled();
+
+    // Other 文本就位 ⇒ 开闸；确认 ⇒ 帧同时带 Other 文本 + 附件引用。
+    await box.locator('.option-custom-input').fill('my custom answer');
+    await expect(confirm).toBeEnabled();
+    await confirm.click();
+    const payloads = await page.evaluate(() => window.__captured);
+    const p = payloads.find((m) => m.type === 'askUserAnswer');
+    expect(p).toBeTruthy();
+    expect(p.answers).toEqual(['my custom answer']);
+    expect(p.attachments).toHaveLength(1);
+    expect(p.attachments[0]).toMatchObject({ name: 'note.txt', kind: 'file' });
+    expect(p.attachments[0].path).toContain('note.txt');
+
+    // 已决卡：附件面转只读（同 §3 纪律）。
+    await expect(box.locator('.ask-answer-attach-rm')).toHaveCount(0);
+  });
+
+  test('multi-select: Other checkbox mounts zone; JSON-array payload carries attachments', async ({ page }) => {
+    await stubUploadOk(page);
+    await setupCard(page, [{
+      question: 'Pick stacks',
+      options: [{ label: 'Scala' }, { label: 'Rust' }],
+      multiple: true,
+    }], RID);
+    const box = lastCard(page);
+    const confirm = box.locator('.option-confirm');
+
+    await expect(box.locator('.ask-answer-attach-zone')).toHaveCount(0);
+
+    // 多选腿的 Other 复选入口（data-other）⇒ 挂载同款区。
+    await box.locator('.option-btn[data-other]').first().click();
+    await expect(box.locator('.ask-answer-attach-zone')).toBeVisible();
+
+    await box.locator('input[type=file]').setInputFiles([
+      { name: 'shot.png', mimeType: 'image/png', buffer: Buffer.from('png') },
+    ]);
+    await expect(box.locator('.ask-answer-attach-chip', { hasText: 'shot.png' }).locator('text=Attached')).toBeVisible();
+    await box.locator('.option-custom-input').fill('mostly scala');
+    await expect(confirm).toBeEnabled();
+    await confirm.click();
+    const payloads = await page.evaluate(() => window.__captured);
+    const p = payloads.find((m) => m.type === 'askUserAnswer');
+    expect(p).toBeTruthy();
+    const slot = JSON.parse(p.answers[0]); // 多选槽 = JSON 数组串
+    expect(slot).toContain('mostly scala');
+    expect(p.attachments).toHaveLength(1);
+    expect(p.attachments[0]).toMatchObject({ name: 'shot.png', kind: 'image' });
+  });
+
+  test('Other-unpick keeps the mounted zone (no orphan churn); picking preset still sends attachments', async ({ page }) => {
+    await stubUploadOk(page);
+    await setupCard(page, [{
+      question: 'Which stack?',
+      options: [{ label: 'Scala' }, { label: 'Rust' }],
+    }], RID);
+    const box = lastCard(page);
+    const confirm = box.locator('.option-confirm');
+
+    await box.locator('.option-btn.opt-other').first().click();
+    await box.locator('input[type=file]').setInputFiles([
+      { name: 'evidence.txt', mimeType: 'text/plain', buffer: Buffer.from('e') },
+    ]);
+    await expect(box.locator('.ask-answer-attach-chip', { hasText: 'evidence.txt' }).locator('text=Attached')).toBeVisible();
+
+    // 改选预设项（单选腿 Other 自动退选）：区常驻（不藏不销），附件随帧同行。
+    await box.locator('.option-btn', { hasText: 'Rust' }).first().click();
+    await expect(box.locator('.ask-answer-attach-zone')).toBeVisible();
+    await expect(confirm).toBeEnabled();
+    await confirm.click();
+    const payloads = await page.evaluate(() => window.__captured);
+    const p = payloads.find((m) => m.type === 'askUserAnswer');
+    expect(p.answers).toEqual(['Rust']);
+    expect(p.attachments).toHaveLength(1);
+    expect(p.attachments[0].name).toBe('evidence.txt');
+  });
+
+  test('negative gates: secret/dirPicker/freeInput-false cards never mount on Other', async ({ page }) => {
+    // secret 卡：选项/Other 面本就不渲染（密码输入面）⇒ 永不挂载（fail-closed 双保险）。
+    await setupCard(page, [{ question: 'Token?', options: [{ label: 'A' }], secret: true }], RID);
+    let box = lastCard(page);
+    await expect(box.locator('.ask-answer-attach-zone')).toHaveCount(0);
+    expect(await box.locator('.option-btn.opt-other').count()).toBe(0);
+
+    await setupCard(page, [{ question: 'Pick dir', options: [{ label: 'A' }], dirPicker: true }], RID);
+    box = lastCard(page);
+    // dirPicker 卡：Other 按钮照常渲染，但 eligibility 排除 dirPicker 题 ⇒ 点进 Other 态也不挂。
+    const dirOther = box.locator('.option-btn.opt-other');
+    if (await dirOther.count()) await dirOther.first().click();
+    await expect(box.locator('.ask-answer-attach-zone')).toHaveCount(0);
+
+    await setupCard(page, [{ question: 'Pick one', options: [{ label: 'A' }, { label: 'B' }], freeInput: false }], RID);
+    box = lastCard(page);
+    const other = box.locator('.option-btn.opt-other');
+    if (await other.count()) await other.first().click();
+    await expect(box.locator('.ask-answer-attach-zone')).toHaveCount(0); // 无自由输入面 ⇒ 不挂
+  });
+});
+
+// ============================================================
 // §5 375×812 移动面（作者修正④）+ 截图证据
 // ============================================================
 // 无测试间依赖（每 test 独立 page/context）——不用 serial：一条装配抖动不该
