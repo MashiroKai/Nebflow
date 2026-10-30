@@ -68,7 +68,14 @@ case class ScheduledTask(
    * 最近一次实际触发的墙钟（降频批）：下轮触发的空转判据 = 本会话在
    * [lastFiredAt, now) 窗口内零工具动作。None = 尚未触发过（首个周期不计空转）。
    */
-  lastFiredAt: Option[Long] = None
+  lastFiredAt: Option[Long] = None,
+  /**
+   * 缺卡计数（认知二期产品批·打卡缺卡调整流）：待办每浮出一次未被销账 ⇒ +1；
+   * 销账/取消即随记录删除。达 MissThreshold 后浮出文案附**调整建议**（降频或
+   * 重拆，呈作者确认——不擅自改计划，注意力伦理）。随任务持久化，存量文件
+   * 无此键 → 0（withDefaults 零迁移）。
+   */
+  missCount: Int = 0
 ):
   /** true = 待办面（周期浮出直至销账），false = 定时任务面（现状）。 */
   def isTodo: Boolean = kind.contains(ScheduledTask.KindTodo)

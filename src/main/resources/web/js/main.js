@@ -28,6 +28,10 @@ import { armMermaidAutoHydrate } from './mermaidRenderer.js';
 // human-face batch (2026-10-30): ```human 卡内 [[词条]] 短形引用 → hover 气泡
 // （termTip.js 共享件，API 兜底腿）。同一 body 级 MutationObserver 先例。
 import { armTermCiteAutoHydrate } from './termCite.js';
+// 认知二期产品批②角标可行动判据：heldReceipts 未读回执提供者可行动计数。
+import { registerActionableProvider, notifyActionableChanged } from './actionable.js';
+// 认知二期产品批①选档器：WS 对账 + 设置面板区块（模块自注册消息处理器）。
+import { requestProfile } from './presentationProfile.js';
 import { getProjectsSnapshot, getProjectsListGen, preheatProjects, onProjectsArrival } from './mentionComplete.js';
 import { initServiceWorker } from './swReg.js'; // console-load-perf 批：温访问秒开注册器（load 后注册，降级零影响）
 import { initHotStampWatch } from './hotStamp.js'; // 台账 #919：热更新地基——asset stamp 轮询自愈（端点缺席 = 静默空转）
@@ -2350,7 +2354,14 @@ onMessage('heldReceipts', (msg) => {
   if (held <= 0 && unread <= 0) delete state.sessionHeldReceipts[sid];
   else state.sessionHeldReceipts[sid] = { held, unread };
   renderHeldReceiptsCapsule();
+  // 认知二期产品批②：未读回执（催注穷尽 = 需要作者行动的终态）计入可行动徽标。
+  notifyActionableChanged();
 });
+// 可行动判据（P6）提供者注册：未读回执总数（跨会话求和；held 为过程态零显示，
+// 同胶囊语义）。
+registerActionableProvider(() =>
+  Object.values(state.sessionHeldReceipts || {})
+    .reduce((s, r) => s + ((r && r.unread) || 0), 0));
 // ── P0 面板投影批（设计稿 20261030_background-task-lifecycle §3.2/§3.4）──────
 // WS `bgHealth` 徽标帧（发射面 = BgTaskRegistry.syncHealthBadge，heldReceipts
 // 同款计数对账广播）：{type:'bgHealth', unread, suspect, escalated}——全表健康
@@ -4275,6 +4286,8 @@ restoreTabs().then((restored) => {
 });
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
+// 认知二期产品批①：档态与引擎对账（WS 就绪后；reconnect 时模块自补）。
+requestProfile();
 initDaemons();
 initPerception();
 initChatSearch();

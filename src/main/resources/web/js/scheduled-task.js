@@ -6,6 +6,9 @@ import { t } from './i18n.js';
 import { statusIcon } from './utils.js'; // escapeHtml = 本文件既有本地实现（107 行）
 import { addNotification } from './notificationBanner.js';
 import { createIconsIn } from './utils.js';
+// 认知二期产品批②角标可行动判据（P6）：本面板注册「待销账待办」计数提供者；
+// 提醒徽标只报可行动量（待办 + 已超时定时任务），未来时间任务不上徽标。
+import { registerActionableProvider, notifyActionableChanged } from './actionable.js';
 // chatViews/shouldFollowBottom 随 schedcard 批（2026-10-29）摘除：瞬态 toast 注入
 // 腿退役后本文件零聊天流 DOM 注入（卡片唯一呈现 = 注入 user 帧专属卡分支）。
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
@@ -89,8 +92,17 @@ function isOverdue(t) {
   return !t.triggered && t.triggerAt < Date.now();
 }
 
+function isTodoTask(t) {
+  return t.kind === 'todo';
+}
+
+/**
+ * 可行动判据（认知二期产品批②，设计稿 §5 P6）：徽标只报「需要作者行动」的量
+ * ——待办（待销账）+ 已到点未触发的定时任务（待处置）；未来时间的定时任务是
+ * 「有更新」不是「要动手」，不上徽标。
+ */
 function pendingCount() {
-  return tasks.filter(t => !t.triggered).length;
+  return tasks.filter(t => !t.triggered && (isTodoTask(t) || isOverdue(t))).length;
 }
 
 function defaultTriggerAt() {
@@ -137,6 +149,8 @@ function updateBadge() {
   } else if (badge) {
     badge.remove();
   }
+  // 可行动总量变了 ⇒ 通知 messages 徽标等订阅者（P6 判据单一聚合面）。
+  notifyActionableChanged();
 }
 
 // ── Render ─────────────────────────────────────────────────────────────
@@ -171,9 +185,16 @@ function renderList() {
     // 已超时（isOverdue 独立分组，红 clock-alert 语义仍由行级携带）→ 已停用
     //（enabled=false 整组垫底，行级降透明走既有 .disabled 类 + 手机层组内
     // 整行降透明）。桌面扁平序（分支外）不变。
-    const upcoming = pending.filter(r => r.enabled !== false && !isOverdue(r));
-    const overdue = pending.filter(r => r.enabled !== false && isOverdue(r));
-    const disabled = pending.filter(r => r.enabled === false);
+    // 认知二期产品批③：待办（打卡）组恒置顶——单任务行动面（ADHD 档语义）。
+    const todos = pending.filter(isTodoTask);
+    const rest = pending.filter(t => !isTodoTask(t));
+    if (todos.length) {
+      body.appendChild(buildGroupLabel('task.grpCheckin', todos.length));
+      for (const r of todos) body.appendChild(buildRow(r, false));
+    }
+    const upcoming = rest.filter(r => r.enabled !== false && !isOverdue(r));
+    const overdue = rest.filter(r => r.enabled !== false && isOverdue(r));
+    const disabled = rest.filter(r => r.enabled === false);
     const groups = [
       ['task.grpUpcoming', upcoming],
       ['task.overdue', overdue],
@@ -185,7 +206,14 @@ function renderList() {
       for (const r of rows) body.appendChild(buildRow(r, false));
     }
   } else {
-    for (const r of pending) body.appendChild(buildRow(r, false));
+    // 认知二期产品批③：待办（打卡）组置顶，定时任务随后（扁平序不变）。
+    const todos = pending.filter(isTodoTask);
+    const timed = pending.filter(t => !isTodoTask(t));
+    if (todos.length) {
+      body.appendChild(buildGroupLabel('task.grpCheckin', todos.length));
+      for (const r of todos) body.appendChild(buildRow(r, false));
+    }
+    for (const r of timed) body.appendChild(buildRow(r, false));
   }
 
   // Create form (always at bottom)
@@ -231,6 +259,16 @@ function buildRow(r, isTriggered) {
     circle.classList.add('completed');
     circle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
     circle.disabled = true;
+  } else if (isTodoTask(r)) {
+    // 认知二期产品批③打卡：待办圆钮 = 打卡销账（completeTodo——留 done 痕，
+    // 周报数据源）；取消走行尾 ×（deleteScheduledTask，不留痕）。
+    circle.dataset.action = 'checkin';
+    circle.dataset.id = r.id;
+    circle.title = t('task.checkin');
+    circle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      completeCheckin(r.id);
+    });
   } else {
     circle.dataset.action = 'delete';
     circle.dataset.id = r.id;
@@ -292,8 +330,31 @@ function buildRow(r, isTriggered) {
     content.appendChild(lastEl);
   }
 
+  // 认知二期产品批③缺卡调整流：连续浮出未销账达阈值的待办，行内附调整建议
+  // （不指责，只给默认建议呈作者确认——注意力伦理，不擅自改计划）。
+  if (!isTriggered && isTodoTask(r) && (r.missCount || 0) >= 3) {
+    const missEl = document.createElement('div');
+    missEl.className = 'reminder-miss-suggest';
+    missEl.textContent = t('task.missSuggest', { n: r.missCount });
+    content.appendChild(missEl);
+  }
+
   row.appendChild(circle);
   row.appendChild(content);
+
+  // 待办的取消钮（×）——与打卡圆钮并存：打卡 = 留痕销账，取消 = 无痕删除。
+  if (!isTriggered && isTodoTask(r)) {
+    const cancel = document.createElement('button');
+    cancel.className = 'reminder-cancel';
+    cancel.type = 'button';
+    cancel.title = t('task.cancel');
+    cancel.textContent = '×';
+    cancel.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteTask(r.id);
+    });
+    row.appendChild(cancel);
+  }
 
   return row;
 }
@@ -532,6 +593,25 @@ function deleteTask(id) {
   }
 }
 
+/**
+ * 打卡销账（认知二期产品批③）：completeTodo 帧——引擎留 done 痕（周报数据
+ * 源）后删行；广播回执沿用 scheduledTaskDeleted 帧型，本地乐观收敛同 delete。
+ */
+function completeCheckin(id) {
+  if (!state.activeSessionId) return;
+  const row = document.querySelector(`.reminder-row[data-id="${id}"]`);
+  if (row) {
+    const circle = row.querySelector('.reminder-circle');
+    if (circle) circle.classList.add('completing');
+    row.classList.add('removing');
+  }
+  sendWs({ type: 'completeTodo', sessionId: state.activeSessionId, id: id });
+  tasks = tasks.filter(t => t.id !== id);
+  if (state.activeSessionId) saveCachedTasks(state.activeSessionId, tasks);
+  renderList();
+  updateBadge();
+}
+
 // ── WS Message Handlers ───────────────────────────────────────────────
 
 onMessage('scheduledTaskList', (msg) => {
@@ -578,6 +658,14 @@ onMessage('scheduledTaskToggled', (msg) => {
   if (state.activeSessionId) saveCachedTasks(state.activeSessionId, tasks);
   renderList();
   updateBadge();
+});
+
+onMessage('weeklyReportReady', (msg) => {
+  // 认知二期产品批④周报生成器：引擎生成后横幅浮出（反悬念——文案 = 结论：
+  // 打卡数/趋势/落点，不抛「有 1 条新报告」）。
+  if (msg && msg.summary) {
+    addNotification('task', msg.summary, { dismissAfter: 0 });
+  }
 });
 
 onMessage('scheduledTaskTriggered', (msg) => {
@@ -669,6 +757,11 @@ export function initScheduledTask() {
   // Flush any creates queued while the WS was down once the connection is
   // (re)established. Runs on every open; the queue is normally empty.
   onReconnect(flushPendingCreates);
+
+  // 认知二期产品批②：注册「待销账待办 + 已超时任务」可行动计数提供者——
+  // messages 徽标等订阅者经 actionable.js 聚合（P6 可行动判据）。
+  registerActionableProvider(pendingCount);
+  notifyActionableChanged();
 
   // Auto-load tasks for active session
   if (state.activeSessionId) {
