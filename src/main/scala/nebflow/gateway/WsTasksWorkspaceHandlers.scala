@@ -346,7 +346,54 @@ private[gateway] object WsTasksWorkspaceHandlers:
     val crTriggerAt = hc.downField("triggerAt").as[Long].getOrElse(0L)
     val crRefPath = hc.downField("referencePath").as[Option[String]].getOrElse(None)
     val crRepeat = hc.downField("repeat").as[Option[String]].getOrElse(None)
-    if crSessionId.nonEmpty && crContent.nonEmpty && crTriggerAt > System.currentTimeMillis() then
+    val crName = hc.downField("name").as[Option[String]].getOrElse(None).map(_.trim).filter(_.nonEmpty)
+    // 待办分家批（2026-10-30）：kind="todo" = 待办面创建（侧边栏待办面板）——
+    // 无固定触发时间，triggerAt 由引擎侧固定策略算（下一次 09:00 浮出），客户端
+    // 时间不采信；repeat 无待办语义。缺省/其它值 = 定时任务面（现状逐字节不变）。
+    val crKindTodo = hc.downField("kind").as[Option[String]].getOrElse(None)
+      .map(_.trim.toLowerCase).contains(nebflow.core.scheduler.ScheduledTask.KindTodo)
+    if crKindTodo && crSessionId.nonEmpty && crContent.nonEmpty then
+      val surfaceAt = nebflow.core.scheduler.ScheduledTask.nextTodoSurfaceAt(
+        System.currentTimeMillis(), java.time.ZoneId.systemDefault()
+      )
+      val todo = nebflow.core.scheduler.ScheduledTask.create(
+        crSessionId, crContent, surfaceAt, None, None, crName,
+        Some(nebflow.core.scheduler.ScheduledTask.KindTodo)
+      )
+      (for
+        removed <- crName match
+          case Some(_) => sharedResources.scheduledTaskStore.upsertTaskByName(todo)
+          case None => sharedResources.scheduledTaskStore.addTask(todo).as(Nil)
+        _ <- sharedResources.scheduledTaskService.traverse_(_.notifyTaskChange())
+        _ <- removed.traverse_(old =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "scheduledTaskDeleted".asJson,
+              "id" -> old.id.asJson,
+              "sessionId" -> old.sessionId.asJson
+            )
+          )
+        )
+        _ <- wsSend(
+          io.circe.Json.obj(
+            "type" -> "scheduledTaskCreated".asJson,
+            "sessionId" -> crSessionId.asJson,
+            "task" -> io.circe.Json.obj(
+              "id" -> todo.id.asJson,
+              "content" -> todo.content.asJson,
+              "triggerAt" -> todo.triggerAt.asJson,
+              "createdAt" -> todo.createdAt.asJson,
+              "referencePath" -> io.circe.Json.Null,
+              "repeat" -> io.circe.Json.Null,
+              "name" -> todo.name.asJson,
+              "kind" -> nebflow.core.scheduler.ScheduledTask.KindTodo.asJson
+            )
+          )
+        )
+      yield ()).handleErrorWith(e =>
+        logger.warn(s"createScheduledTask(kind=todo) failed: ${e.getMessage}")
+      )
+    else if crSessionId.nonEmpty && crContent.nonEmpty && crTriggerAt > System.currentTimeMillis() then
       val task =
         nebflow.core.scheduler.ScheduledTask.create(crSessionId, crContent, crTriggerAt, crRefPath, crRepeat)
       sharedResources.scheduledTaskStore.addTask(task).flatMap { _ =>
@@ -425,6 +472,9 @@ private[gateway] object WsTasksWorkspaceHandlers:
             "enabled" -> t.enabled.asJson,
             // 双面化（2026-10-24）：kind ∈ null/"task"（定时）| "todo"（待办）
             "kind" -> t.kind.asJson,
+            // 待办分家批（2026-10-30）：稳定 upsert 名随列表下发——前端据
+            // ask-<requestId> 前缀识别「待答镜像行」（点击跳回提问卡，不走打卡）。
+            "name" -> t.name.asJson,
             // 认知二期产品批③打卡缺卡调整流：缺卡计数随列表下发（UI 据此给
             // 连续未销卡条目的调整建议）。
             "missCount" -> t.missCount.asJson

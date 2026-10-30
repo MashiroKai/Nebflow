@@ -100,6 +100,9 @@ const PENDING_N1_KINDS = new Set([FRAME_KINDS.CHAIN_REGISTERED, FRAME_KINDS.CHAI
  * @property {number} createdAt         Record.createdAt 透传（epoch ms；0 = 缺键/非数）
  * @property {string} orchestrationMode G1 编排模式（ORCHESTRATION_MODES 值域；'' = 旧盘
  *                                      null/缺键——过渡启发兜底，禁折叠为 single）
+ * @property {string} mode              任务模式标注批（2026-10-30）执行形态（DelegateRegistry.
+ *                                      Record.mode：kernel|dispatcher；'' = 双模式闸关/
+ *                                      旧盘/外部执行器——徽标零渲染判据）
  * @property {number|null} archivedAt   G6 归档时间戳 epoch ms（null = 在册未归档）
  * @property {{projectKey: string, ahead: string[], holder: string|null, state: string}|null} mergeQueue
  *                                      G5 行内排队可见性槽（引擎闸透传；未排队 = null；
@@ -232,6 +235,10 @@ export function rowFromRegistry(record, live) {
     project: String(r.project || ''),
     createdAt: typeof r.createdAt === 'number' ? r.createdAt : 0,
     orchestrationMode: String(r.orchestrationMode || ''),
+    // 任务模式标注批（2026-10-30 作者令「派发任务显示执行模式」）：Record.mode
+    // （kernel|dispatcher；REST 行已携带，此前在此被丢弃）。闸关/旧盘 = '' ⇒
+    // 各消费面零渲染。
+    mode: String(r.mode || ''),
     archivedAt: typeof r.archivedAt === 'number' ? r.archivedAt : null,
     // 重启对账批 2026-10-22：打断旗 + 接续指针（缺键容忍——旧引擎行 = null/''）。
     restartInterruptedAt,

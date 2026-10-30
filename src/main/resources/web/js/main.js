@@ -3287,6 +3287,15 @@ function renderBgDropdown() {
       : t('bg.openedBy', { origin: label });
     const originPart = '<span class="bg-task-origin bg-origin-' + cat + '" title="' +
       escapeHtml(originTitle) + '">' + escapeHtml(label) + '</span>';
+    // 任务模式标注批（2026-10-30 作者令）：开启任务的 delegate 会话生效执行形态
+    // （kernel 极简内核 / dispatcher 分发器，注册帧 + 快照帧 ownerMode 字段）。
+    // 空/脏值（旧后端/非 delegate/双模式闸关）零渲染——与 origin chip 同纪律。
+    const modeWord = (task.ownerMode === 'kernel' || task.ownerMode === 'dispatcher')
+      ? t('task.mode.' + task.ownerMode) : '';
+    const modePart = modeWord
+      ? '<span class="bg-task-mode bg-mode-' + task.ownerMode + '" title="' +
+        escapeHtml(t('bg.modeTitle', { mode: modeWord })) + '">' + escapeHtml(modeWord) + '</span>'
+      : '';
     const kindPart = task.kind
       ? '<span class="bg-task-kind">' + escapeHtml((task.kind === 'local' || task.kind === 'remote') ? t('bg.kind.' + task.kind) : task.kind) + '</span>'
       : '';
@@ -3335,7 +3344,7 @@ function renderBgDropdown() {
       '<div class="bg-task-info">' +
         '<div class="bg-task-line bg-task-meta">' +
           '<span class="bg-task-state' + stateClass + '">' + escapeHtml(statusLabel) + '</span>' +
-          originPart + kindPart + healthPart + linesPart + exitPart + uptimePart +
+          originPart + modePart + kindPart + healthPart + linesPart + exitPart + uptimePart +
         '</div>' +
         '<div class="bg-task-line bg-task-name-line">' +
           '<span class="bg-task-name" title="' + escapeHtml(nameTitle) + '">' + escapeHtml(desc) + '</span>' +
@@ -3653,6 +3662,8 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
     if (msg.kind && !tasks[idx].kind) tasks[idx].kind = msg.kind;
     if (msg.origin && !tasks[idx].origin) tasks[idx].origin = msg.origin;
     if (msg.originLabel && !tasks[idx].originLabel) tasks[idx].originLabel = msg.originLabel;
+    // 任务模式标注批（2026-10-30）：ownerMode 随注册帧携带一次，缺省回填不覆盖。
+    if (msg.ownerMode && !tasks[idx].ownerMode) tasks[idx].ownerMode = msg.ownerMode;
     if (isTerminal) {
       // Retention deadline (R1): the 1s sweep removes the row from the bucket when
       // it passes; while the row's output card is open the deadline is re-armed
@@ -3683,7 +3694,8 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
       sessionId: msg.sessionId || '',
       kind: msg.kind || '',
       origin: msg.origin || '',
-      originLabel: msg.originLabel || ''
+      originLabel: msg.originLabel || '',
+      ownerMode: msg.ownerMode || ''
     });
   }
   // Terminal rows are RETAINED in the bucket for a bounded window (2026-09-09
@@ -4543,6 +4555,9 @@ onMessage('activeBgTasks', (msg) => {
         kind: t.kind || (prev ? prev.kind : '') || '',
         origin: t.origin || (prev ? prev.origin : '') || '',
         originLabel: t.originLabel || (prev ? prev.originLabel : '') || '',
+        // 任务模式标注批（2026-10-30）：执行形态随快照下发；旧后端缺省沿用本地
+        // embellishment，再缺省 = ''（零渲染）。
+        ownerMode: t.ownerMode || (prev ? prev.ownerMode : '') || '',
         // P0 面板投影批（设计稿 §3.4）：行健康字段随快照同行（BgTaskRegistry
         // 行内派生）；旧后端缺省沿用本地 embellishment，再缺省 = ''（前端
         // bgHealthNorm 容错：空/脏值回落 healthy 或零渲染）。

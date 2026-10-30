@@ -693,10 +693,35 @@ object GatewayMain extends IOApp:
                                   // sourceSession 现查统一注册表落 `askerAlive`，「发起会话已
                                   // 结束、答复将走重入面」在健康面可见（僵尸 pending 标注，
                                   // 只读不杀）。
+                                  // wsHub 提前到 startupMount 之前创建：启动挂载的项目
+                                  // engine 需要持有一个真实广播 wsSend（节点/分发器 agent
+                                  // 事件 + nodeUpdated/nodeCompleted 等 Flow Map 事件）。
+                                  // 此前 wsHub 在挂载后才构造 → mountAll 传 None → engine
+                                  // wsSendFn 为 no-op，节点/分发器事件永远到不了前端
+                                  // （#28 可观测缺口根因之一）。wsHub 本身无依赖，提前
+                                  // 构造零副作用（无连接时 broadcast 空转）。
+                                  // 监督链自动恢复批（2026-10-22）：再提前到
+                                  // subagentCrashSweep 之前——复活腿（DelegateRevival）
+                                  // 的子会话 WS 事件面同源接入（routeWsSendFor 注
+                                  // rootSessionId/sessionId 后走 broadcast）。
+                                  // 待办分家批（2026-10-30）：再提前到 interaction-hub
+                                  // 装配之前——hub 的 Ask→待办镜像桥构造点需要 wsHub.broadcast
+                                  // （前向引用禁令：同块内 val 不得后引，故 wsHub 必须
+                                  // 先于 hubSetup 出现；wsHub 无依赖，再三提前仍零副作用）。
+                                  val wsHub = new WsHub()
                                   // 重启孤儿对账批（2026-10-22「Header 待答徽标僵尸态」批）：
                                   // 接线 PendingAskLedger —— 槽位创建/四条收口路径随行记账，
                                   // boot 清点过期关闭（见下方 pendingAskBootSweep）。
                                   val pendingAskLedger = new nebflow.agent.PendingAskLedger()
+                                  // 待办分家批（2026-10-30 作者令「待办接 AskUserQuestion」）：
+                                  // Ask→待办镜像桥——hub 内 AskUser 挂起 ⇒ root 会话待办
+                                  // 收件箱镜像 kind=todo 条目；任意终态 ⇒ 幂等销账。广播
+                                  // 走 wsHub（面板/徽标即时收敛）。全部 best-effort。
+                                  val askTodoBridge = new nebflow.core.scheduler.AskTodoBridge(
+                                    sharedResources.scheduledTaskStore,
+                                    sharedResources.scheduledTaskService,
+                                    (json: io.circe.Json) => wsHub.broadcast(json)
+                                  )
                                   val hubSetup: IO[Unit] =
                                     actorSystem
                                       .spawn(
@@ -704,7 +729,8 @@ object GatewayMain extends IOApp:
                                           Some((sid: String) =>
                                             sharedResources.agentRegistry.get.map(_.contains(sid))
                                           ),
-                                          Some(pendingAskLedger)
+                                          Some(pendingAskLedger),
+                                          Some(askTodoBridge)
                                         ),
                                         "interaction-hub"
                                       )
@@ -727,18 +753,10 @@ object GatewayMain extends IOApp:
                                   // 永不阻塞启动；失败在 upkeep 内部记 WARN 吞掉。
                                   val taskIndexBackfill: IO[Unit] =
                                     nebflow.core.index.TaskSearchIndex.upkeep().start.void
-                                  // wsHub 提前到 startupMount 之前创建：启动挂载的项目
-                                  // engine 需要持有一个真实广播 wsSend（节点/分发器 agent
-                                  // 事件 + nodeUpdated/nodeCompleted 等 Flow Map 事件）。
-                                  // 此前 wsHub 在挂载后才构造 → mountAll 传 None → engine
-                                  // wsSendFn 为 no-op，节点/分发器事件永远到不了前端
-                                  // （#28 可观测缺口根因之一）。wsHub 本身无依赖，提前
-                                  // 构造零副作用（无连接时 broadcast 空转）。
-                                  // 监督链自动恢复批（2026-10-22）：再提前到
-                                  // subagentCrashSweep 之前——复活腿（DelegateRevival）
-                                  // 的子会话 WS 事件面同源接入（routeWsSendFor 注
-                                  // rootSessionId/sessionId 后走 broadcast）。
-                                  val wsHub = new WsHub()
+                                  // wsHub 已上移至 interaction-hub 装配之前（待办分家批
+                                  // 2026-10-30，Ask→待办桥构造点需要 broadcast；其「提前到
+                                  // startupMount / subagentCrashSweep 之前」的既有理由
+                                  // 原注释随移动保留，见上方定义处）。
                                   // V2 (2026-09-03) 孤儿 delegate 启动收殓：崩溃时在飞的
                                   // SubTask/Delegate 任务——部分结果抢救 + 父会话 F2 队列
                                   // 通知（correlationId 幂等）+ 任务记录终态化。挂在启动
@@ -793,7 +811,8 @@ object GatewayMain extends IOApp:
                                       .bootReconcile(
                                         broadcast = json => wsHub.broadcast(json),
                                         appendReceipt = (rootSid, msg) =>
-                                          sessionStore.appendUiMessages(rootSid, List(msg))
+                                          sessionStore.appendUiMessages(rootSid, List(msg)),
+                                        retireAskTodo = (rid: String) => askTodoBridge.retire(rid)
                                       )
                                       .attempt
                                       .flatMap {

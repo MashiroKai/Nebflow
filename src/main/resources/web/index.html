@@ -374,6 +374,11 @@
          teams-btn/flows-btn）已整体删除（作者裁定「直接删除，不是封存」）；
          Projects 按钮沿用 Team/Flow 让出的槽位。 -->
     <button id="files-btn" class="activity-btn active" data-panel-btn="files" title="Files" aria-pressed="true"><i data-lucide="files"></i></button>
+    <!-- 待办分家批（2026-10-30 作者令）：待办从定时任务面拆出，侧边栏单独图标——
+         定时任务 = 给 agent 用（顶栏时钟，计划触发）；待办 = 给人（此处，等作者
+         处理）。徽标 = 待销账待办计数（AskUserQuestion 挂起自动入列，见
+         AskTodoBridge）。 -->
+    <button id="todo-btn" class="activity-btn" data-panel-btn="todo" title="待办" aria-pressed="false"><i data-lucide="list-checks"></i><span class="activity-badge" id="todo-badge" hidden></span></button>
     <button id="projects-btn" class="activity-btn" title="Projects"><i data-lucide="folder-kanban"></i></button>
     <!-- Wiki document graph (wiki-graph batch, 2026-10-14; icon wiring batch,
          2026-10-15: lucide sparkles replaced by the C2 hub-spoke inline SVG —
@@ -422,6 +427,21 @@
       <div id="panel-messages" class="panel" data-panel-id="messages">
         <div class="panel-header"><span class="panel-title" data-i18n="panel.messages">Messages</span></div>
         <div id="fm-conversations" role="listbox" aria-label="Messages"></div>
+      </div>
+      <!-- 待办面板（待办分家批 2026-10-30）：行语言复用 reminder-row 族；面板
+           由 scheduled-task.js 的 todo 面渲染（打卡销账 + 待答镜像跳转行）。 -->
+      <div id="panel-todo" class="panel" data-panel-id="todo">
+        <div class="panel-header">
+          <span class="panel-title" data-i18n="todo.title">待办</span>
+          <div class="reminder-panel-header-right">
+            <span class="reminder-panel-count" id="todo-panel-count"></span>
+            <button class="reminder-create-btn" id="todo-create-btn" title="New">
+              <i data-lucide="plus"></i>
+            </button>
+          </div>
+        </div>
+        <div class="reminder-panel-body" id="todo-panel-body"></div>
+        <div class="reminder-panel-footer"></div>
       </div>
       <div id="panel-contacts" class="panel" data-panel-id="contacts">
         <div class="panel-header"><span class="panel-title" data-i18n="panel.contacts">Contacts</span></div>

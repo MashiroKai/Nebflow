@@ -88,7 +88,16 @@ object BgTaskRegistry:
      */
     suspicionLevel: Int = 0,
     escalatedAtMs: Long = 0L,
-    lastActivityMs: Long = 0L
+    lastActivityMs: Long = 0L,
+    /**
+     * 任务模式标注批（2026-10-30 作者令「派发任务显示执行模式」）：开启本任务的
+     * delegate 会话的**生效执行形态**（"kernel" | "dispatcher"），注册时经
+     * DelegateRegistry.modeFaceOf 解析。空 = 非 delegate 会话 / 双模式总闸关
+     * （Inert）/ 记录缺席 ⇒ 前端零渲染（徽标只在两态之一出现）。与 origin
+     * （谁开启的类别轴）正交：dispatcher 形态 delegate 自己开的任务 origin 仍
+     * 是 "nebula"。
+     */
+    ownerMode: String = ""
   )
 
   /**
@@ -260,7 +269,8 @@ object BgTaskRegistry:
     origin: String = "nebula",
     originLabel: String = "",
     deviceName: String = "",
-    outputPath: String = ""
+    outputPath: String = "",
+    ownerMode: String = ""
   ): IO[Unit] =
     tasks.update(
       _ + (jobId -> ActiveTask(
@@ -274,7 +284,8 @@ object BgTaskRegistry:
         origin,
         originLabel,
         deviceName,
-        outputPath
+        outputPath,
+        ownerMode = ownerMode
       ))
     )
 
@@ -610,6 +621,9 @@ object BgTaskRegistry:
             "kind" -> t.kind.asJson,
             "origin" -> t.origin.asJson,
             "originLabel" -> t.originLabel.asJson,
+            // 任务模式标注批（2026-10-30）：delegate 会话生效执行形态随快照下发
+            // （kernel/dispatcher；空 = 无徽标——旧行/非 delegate 恒空，零渲染）。
+            "ownerMode" -> t.ownerMode.asJson,
             // #753 行带已产出行数（刷新恢复路径）：实时行由心跳帧携带
             // outputLines，快照行此前无来源——面板行在页面刷新后行数 chip
             // 消失。本字段 = BgTaskOutputStore 的当前 totalLines（无缓冲

@@ -181,8 +181,53 @@
   stroke-width: 2;
 }
 
-/* ── Empty State ──────────────────────────────────────────────────────── */
-.reminder-empty {
+/* ── 待办面板（待办分家批 2026-10-30）：侧边栏 #panel-todo ────────────────
+   行/空态/内联创建全复用 reminder-* 族（单一视觉语言）；本块只补待办面特有件：
+   待答镜像行的 chip 与跳转态。待答镜像行 = AskUserQuestion 挂起的待办镜像
+   （引擎 AskTodoBridge 产物）——整行点击跳回提问卡作答，作答后镜像随行销账。 */
+#panel-todo .reminder-panel-body {
+  /* 侧边栏面板高由 .panel 布局接管；min-height 保住空态的点击创建区。 */
+  min-height: 140px;
+}
+#panel-todo .reminder-create-btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: rgb(91, 127, 191);
+  cursor: pointer;
+  transition: all 0.15s;
+  opacity: 0.7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#panel-todo .reminder-create-btn:hover {
+  opacity: 1;
+  background: rgba(91, 127, 191, 0.08);
+}
+.todo-ask-row {
+  cursor: pointer;
+}
+.todo-ask-chip {
+  flex-shrink: 0;
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 6px;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  /* 待答 = 「在等一个回答」的可行动标注：sapphire 强调族（同 .reminder-circle
+     选中态语系），区别于打卡圆钮的中性。 */
+  color: rgb(var(--sapphire));
+  background: color-mix(in srgb, rgb(var(--sapphire)) 10%, transparent);
+  border: 1px solid color-mix(in srgb, rgb(var(--sapphire)) 30%, transparent);
+}
+
+/* ── Empty State ──────────────────────────────────────────────────────── */.reminder-empty {
   display: flex;
   flex-direction: column;
   align-items: center;

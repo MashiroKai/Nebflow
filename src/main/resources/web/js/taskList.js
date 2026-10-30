@@ -590,6 +590,17 @@ function buildChainHeaderRow(block) {
     badge.textContent = t('task.restartBadge');
     labelRow.appendChild(badge);
   }
+  // 任务模式标注批（2026-10-30 作者令）：双模式总闸开时 delegate 行标注生效执行
+  // 形态——极简内核（kernel）还是分发器（dispatcher）。row.mode 缺键（闸关/旧盘
+  // /外部执行器）= 不渲染（零徽标语义与 orchestration 徽标同纪律）。
+  const execMode = String(r.mode || '');
+  if (execMode === 'kernel' || execMode === 'dispatcher') {
+    const modeBadge = document.createElement('span');
+    modeBadge.className = 'task-delegate-badge task-delegate-badge-mode task-delegate-badge-mode-' + execMode;
+    modeBadge.setAttribute('aria-hidden', 'true');
+    modeBadge.textContent = t(execMode === 'kernel' ? 'task.mode.kernel' : 'task.mode.dispatcher');
+    labelRow.appendChild(modeBadge);
+  }
   text.appendChild(labelRow);
   if (external) {
     // S16 coarse progress leg: buffered output tail line (raw data).

@@ -901,7 +901,9 @@ class RemoteExecutor(
         bgOrigin,
         bgOriginLabel,
         peer.deviceName,
-        bgOutputPath
+        bgOutputPath,
+        // 任务模式标注批（2026-10-30）：设备通道任务同样标注开启会话的执行形态。
+        nebflow.core.delegate.DelegateRegistry.modeFaceOf(ctx.sessionId).getOrElse("")
       )
       // 2. Start heartbeat so frontend shows progress (remote tasks have no process-level health)
       doneRef <- IO.ref(false)
@@ -1088,6 +1090,9 @@ class RemoteExecutor(
     origin: String,
     originLabel: String
   ): IO[Unit] =
+    // 任务模式标注批（2026-10-30）：与注册面同源解析（modeFaceOf 三闸，非
+    // delegate/闸关 ⇒ 空串，前端零渲染）。
+    val ownerMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(ctx.sessionId).getOrElse("")
     // 来源字段（多设备后台任务可见批）：由注册面（executeRemoteBackground）传入
     // ——设备任务 = ("device", 设备名)，与 BgTaskRegistry.register 同源同值；
     // 快照路径（activeTasksJson）与实时信封两条路径的 chip 数据不再分叉。
@@ -1105,7 +1110,8 @@ class RemoteExecutor(
           "startedAt" -> System.currentTimeMillis().asJson,
           "kind" -> "remote".asJson,
           "origin" -> origin.asJson,
-          "originLabel" -> originLabel.asJson
+          "originLabel" -> originLabel.asJson,
+          "ownerMode" -> ownerMode.asJson
         )
       ).handleErrorWith(e => logger.warn(s"WS send failed for remote job $jobId: ${e.getMessage}"))
     )
