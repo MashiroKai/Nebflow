@@ -140,7 +140,19 @@ case class ProviderConfig(
    * 🔴 深合并存活面：本键是 provider **对象**上的键，provider 编辑弹窗保存
    * （不提及本键）经 `ConfigService.mergeConfig` 天然保留——无需前端携带。
    */
-  unavailableWindows: Option[List[UnavailableWindow]] = None
+  unavailableWindows: Option[List[UnavailableWindow]] = None,
+  /**
+   * provider 摘除标记（reserveTier 语义修复批，2026-10-30，对齐
+   * docs/20261030_cmdcode-provider-removal.md §5）：`true` = 该 provider 整体停发
+   * （key 失效等运维摘除态），记录保留待重新启用。引擎语义 = **fail-closed**：
+   * 链 tiering 全路径（全局链 / agent 链 / 储备层）一律不可被选——判定散列在
+   * `ProviderRegistry` 各构建腿的 `disabled.getOrElse(false)` 守卫。缺省 None =
+   * 未禁用（零行为变化铁律）。
+   * 🔴 形状纪律同上：Option 形（deriveDecoder 不认默认值）。
+   * 🔴 深合并存活面：同上方 unavailableWindows——provider 对象键，
+   * `ConfigService.mergeConfig` 天然保留。
+   */
+  disabled: Option[Boolean] = None
 )
 
 object ProviderConfig:

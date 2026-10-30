@@ -161,7 +161,8 @@ class ProviderRegistry(
         try
           val (providerId, modelId) = Config.parseModelRef(ref)
           config.llm.providers.get(providerId) match
-            case Some(provider) =>
+            // 摘除标记守卫（reserveTier 语义修复批）：disabled provider 一律不可被选
+            case Some(provider) if !isDisabled(provider) =>
               val modelConfig = provider.models.find(_.id == modelId)
               // 案② B2：`min(configured, modelMaxContext)` 的取数**单点**（见
               // [[effectiveContextWindow]]）——此处是「全局链」这条腿。
@@ -182,17 +183,19 @@ class ProviderRegistry(
                   modelConfig.flatMap(_.thinkingKind)
                 )
               )
-            case None => None // Skip unknown provider
+            case _ => None // Skip unknown or disabled provider
           end match
         catch case _: Exception => None // Skip malformed ref
       }
       // Fallback: if model chain resolves to nothing (e.g. default points to a
       // non-existent provider after initial setup), use the first available model
       // across all providers so the system works out of the box.
+      // 摘除标记守卫（reserveTier 语义修复批）：seed 兜底同样跳过 disabled provider。
       val fromChainOrFallback =
         if fromChain.nonEmpty then fromChain
         else
-          config.llm.providers.headOption
+          config.llm.providers
+            .find { case (_, p) => !isDisabled(p) && p.models.nonEmpty }
             .map { case (providerId, provider) =>
               provider.models.headOption.map { mc =>
                 val caps = resolveCapabilities(providerId, mc.id, Some(mc))
@@ -223,6 +226,15 @@ class ProviderRegistry(
 
   /** 时钟缝（观测/测试面；生产 = 系统钟）。 */
   protected def nowMillis(): Long = System.currentTimeMillis()
+
+  /**
+   * provider 摘除标记判定（reserveTier 语义修复批，2026-10-30）：`disabled: true`
+   * ⇒ fail-closed 不可被选。缺省（None/false）= 未禁用。判定散列在链 tiering 的
+   * 每条构建腿（全局链 / seed 兜底 / agent ref 腿 / 储备层），与
+   * docs/20261030_cmdcode-provider-removal.md §5 对齐。
+   */
+  private[llm] def isDisabled(provider: ProviderConfig): Boolean =
+    provider.disabled.getOrElse(false)
 
   /** 某 provider/model 的生效不可用窗口 = provider 级 ∪ 模型级（判定输入单点）。 */
   private def scheduleWindowsFor(
@@ -335,7 +347,10 @@ class ProviderRegistry(
     configRef.get.map { config =>
       try
         val (providerId, modelId) = Config.parseModelRef(ref)
-        config.llm.providers.get(providerId).map { provider =>
+        // 摘除标记守卫（reserveTier 语义修复批）：disabled provider 的显式 ref 也
+        // 不可被选（fail-closed）——调用方（agent 链腿 / allocator / judge /
+        // 面板）全部按 None 优雅处理，与「unknown id ⇒ None」同形。
+        config.llm.providers.get(providerId).filterNot(isDisabled).map { provider =>
           val modelConfig = provider.models.find(_.id == modelId)
           // 案② B2：取数单点（按 ref 这条腿）。
           val contextWindow = effectiveContextWindow(
@@ -417,7 +432,9 @@ class ProviderRegistry(
    *     绝不凭空造候选；配置不足时链深照实（1 根就是 1 根）；
    *   - 只**追加**、不重排、不去重已引用项之外的东西：与已引用 ref 相同的项被剔除；
    *   - 字典序保证同配置下链序可复现（Map 迭代序不保证），便于取证与断言；
-   *   - 与 [[filterKnownProviders]] 正交（储备层全部来自当前 config，必然存活）。
+   *   - 与 [[filterKnownProviders]] 正交（储备层全部来自当前 config，必然存活）；
+   *   - `disabled: true` 的 provider 一律不进储备层（fail-closed；reserveTier 语义
+   *     修复批 2026-10-30）。
    */
   private[llm] def reserveTier(
     config: NebflowServiceConfig,
@@ -426,26 +443,30 @@ class ProviderRegistry(
     if config.llm.providers.isEmpty then chain
     else
       val referred = chain.map(c => s"${c.providerId}/${c.model}").toSet
+      // 摘除标记守卫（reserveTier 语义修复批，2026-10-30）：disabled provider 一律
+      // 不可被选（fail-closed）——与 docs/20261030_cmdcode-provider-removal.md §5 对齐。
       val reserve = config.llm.providers.toList.sortBy(_._1).flatMap { case (providerId, provider) =>
-        provider.models
-          .sortBy(_.id)
-          .filterNot(mc => referred.contains(s"$providerId/${mc.id}"))
-          .map { mc =>
-            val caps = resolveCapabilities(providerId, mc.id, Some(mc))
-            // 案② B2 同点（**第四处构造点**——provchain 腿 a 储备层，晚于卡文成文合入
-            // main；与上面三处同形收口，储备层不得成为「绕过 clamp」的通道——见报告
-            // 「偏离登记」）：
-            ModelCandidate(
-              providerId,
-              provider,
-              mc.id,
-              effectiveContextWindow(mc.contextWindow, mc.modelMaxContext),
-              caps,
-              mc.modelMaxContext,
-              mc.thinking,
-              mc.thinkingKind
-            )
-          }
+        if isDisabled(provider) then Nil
+        else
+          provider.models
+            .sortBy(_.id)
+            .filterNot(mc => referred.contains(s"$providerId/${mc.id}"))
+            .map { mc =>
+              val caps = resolveCapabilities(providerId, mc.id, Some(mc))
+              // 案② B2 同点（**第四处构造点**——provchain 腿 a 储备层，晚于卡文成文合入
+              // main；与上面三处同形收口，储备层不得成为「绕过 clamp」的通道——见报告
+              // 「偏离登记」）：
+              ModelCandidate(
+                providerId,
+                provider,
+                mc.id,
+                effectiveContextWindow(mc.contextWindow, mc.modelMaxContext),
+                caps,
+                mc.modelMaxContext,
+                mc.thinking,
+                mc.thinkingKind
+              )
+            }
       }
       // 同 (providerId, model) 只保留一次（配置里重复声明 model 时也不得重复进链）
       chain ++ reserve.distinctBy(c => s"${c.providerId}/${c.model}")
