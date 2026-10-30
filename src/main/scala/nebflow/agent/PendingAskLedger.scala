@@ -116,7 +116,8 @@ class PendingAskLedger(path: os.Path = nebflow.shared.PathUtil.dataRoot / "pendi
    */
   def bootReconcile(
     broadcast: Json => IO[Unit],
-    appendReceipt: (String, UiMessage) => IO[Unit]
+    appendReceipt: (String, UiMessage) => IO[Unit],
+    retireAskTodo: String => IO[Unit] = _ => IO.unit
   ): IO[Report] =
     for
       entries <- load().handleErrorWith(_ => IO.pure(Nil))
@@ -135,7 +136,7 @@ class PendingAskLedger(path: os.Path = nebflow.shared.PathUtil.dataRoot / "pendi
           )
         ) *>
           // ② 持久回执行：历史重载的 pending 判据结构性失效（askUser 行不再是
-          //    「最后一条真实消息」）。best-effort——落盘失败不拦广播与清账。
+          // 「最后一条真实消息」）。best-effort——落盘失败不拦广播与清账。
           appendReceipt(
             e.rootSessionId,
             UiMessage.System(
@@ -146,6 +147,11 @@ class PendingAskLedger(path: os.Path = nebflow.shared.PathUtil.dataRoot / "pendi
             )
           ).handleErrorWith(err =>
             logger.warn(s"ask-expired receipt append failed requestId=${e.requestId}: ${err.getMessage}")
+          ) *>
+          // ②b 待办分家批：AskUser 镜像条目随行销账（幂等；AskUser kind 以外
+          // 未入过待办面 ⇒ retire 天然 no-op，无需 kind 闸）。
+          retireAskTodo(e.requestId).handleErrorWith(err =>
+            logger.warn(s"ask-expired todo retire failed requestId=${e.requestId}: ${err.getMessage}")
           ) *>
           // ③ 审计（清点面：谁、多久、怎么处置）。
           audit

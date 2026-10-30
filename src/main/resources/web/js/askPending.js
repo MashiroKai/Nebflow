@@ -318,8 +318,11 @@ function renderBar() {
  *  #250 ①: a row whose card can no longer be located is NOT a silent no-op
  *  anymore — the entry is dropped from the mirror and the user gets a visible
  *  notice (a dead row that does nothing on click is exactly the "silently lost
- *  todo signal" this batch removes; #250 ⑥ same rule). */
-function jumpToAsk(entry) {
+ *  todo signal" this batch removes; #250 ⑥ same rule).
+ *
+ *  待办分家批（2026-10-30）：导出复用——待办面板的 AskUser 镜像行（name=ask-*）
+ *  点击同样跳回提问卡作答（闭环 Ask→待办→答→销账）。 */
+export function jumpToAsk(entry) {
   lastFocusedRequestId = entry.requestId;
   const locate = () => {
     const esc = window.CSS && CSS.escape ? CSS.escape(entry.requestId) : entry.requestId;

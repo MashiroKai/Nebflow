@@ -265,8 +265,13 @@ export function armBgUptimeTick(view) {
  *  `orchestrationMode`；subagent-star → Subagent、agentflow → Flow（R6：badge 跟模式
  *  走，项目内 delegate 不再标 Flow）。single/''（旧盘 null）= 过渡启发兜底：快照 kind
  *  优先（external- → External 信息保留），前缀启发（bgAgentKindFromSession）殿后——
- *  单一切换点收敛在该启发函数，P4 后自然消失。 */
+ *  单一切换点收敛在该启发函数，P4 后自然消失。
+ *  任务模式标注批（2026-10-30 作者令）：执行形态（row.mode = kernel/dispatcher，
+ *  双模式总闸开时 DelegateRegistry.Record.mode 随 REST 行下发）**优先**于编排
+ *  模式词——徽标回答「这活跑在哪种形态里」；闸关/旧盘 mode='' 回落既有编排词。 */
 function bgDelegateBadgeWord(info, row) {
+  const execMode = String((row && row.mode) || '');
+  if (execMode === 'kernel' || execMode === 'dispatcher') return execMode;
   const mode = String((row && row.orchestrationMode) || '');
   if (mode === 'subagent-star') return 'Subagent';
   if (mode === 'agentflow') return 'Flow';

@@ -1994,6 +1994,24 @@ export default {
   'task.cardChip': '定时任务',
   'task.cardScheduledAt': '预定 {time}',
 
+  // === 待办（待办分家批 2026-10-30：待办独立侧边栏面板，与定时任务分家）===
+  'activity.todo': '待办',
+  'todo.title': '待办',
+  'todo.empty': '暂无待办',
+  'todo.emptyHint': '点击空白处或按 + 创建',
+  'todo.inputPlaceholder': '输入待办内容...',
+  // AskUserQuestion 镜像行（引擎 AskTodoBridge 产物）：点击跳回提问卡作答，
+  // 作答后镜像随行销账（闭环 Ask→待办→答→销账）。
+  'todo.askChip': '待答',
+  'todo.askJump': '点击跳转到提问卡片作答',
+  // 任务模式标注批（2026-10-30 作者令「派发任务显示执行模式」）：
+  // 派发任务（delegate/节点）的执行形态徽标——极简内核（kernel）/ 分发器（dispatcher）。
+  // task.mode.* 三处消费：任务卡（taskList 行内徽标）+ 后台任务面板行 mode chip +
+  // 面板组头徽标词（bgAgents 用原始数据词，不经 i18n）。
+  'task.mode.kernel': '内核',
+  'task.mode.dispatcher': '分发器',
+  'bg.modeTitle': '执行模式：{mode}',
+
   // NebLink
   'neblink.thisDevice': '本机',
   'neblink.unknownDevice': '未命名设备',

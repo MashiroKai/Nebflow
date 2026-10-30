@@ -2071,6 +2071,24 @@ export default {
   'task.cardChip': 'Scheduled Task',
   'task.cardScheduledAt': 'Scheduled {time}',
 
+  // === To-dos (todo-split batch 2026-10-30: to-dos get their own sidebar panel) ===
+  'activity.todo': 'To-dos',
+  'todo.title': 'To-dos',
+  'todo.empty': 'No to-dos',
+  'todo.emptyHint': 'Click empty area or press + to create',
+  'todo.inputPlaceholder': 'Enter a to-do...',
+  // AskUserQuestion mirror rows (engine AskTodoBridge product): click jumps back
+  // to the question card; answering retires the mirror (Ask→todo→answer→write-off).
+  'todo.askChip': 'Awaiting',
+  'todo.askJump': 'Click to jump to the question card',
+  // Task-mode badge batch (2026-10-30 author order "show dispatch execution mode"):
+  // delegate/node tasks carry their execution-mode badge — kernel vs dispatcher.
+  // task.mode.* consumers: task cards (taskList row badge) + bg-panel row mode chip
+  // (bgAgents group-head badge word uses the raw data word, not i18n).
+  'task.mode.kernel': 'Kernel',
+  'task.mode.dispatcher': 'Dispatcher',
+  'bg.modeTitle': 'Execution mode: {mode}',
+
   // NebLink
   'neblink.thisDevice': 'This device',
   'neblink.unknownDevice': 'Unnamed device',

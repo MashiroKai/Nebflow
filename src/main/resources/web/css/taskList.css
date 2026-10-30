@@ -303,6 +303,20 @@
   border: 1px solid color-mix(in srgb, var(--color-warning, #ff9800) 35%, transparent);
 }
 
+/* 任务模式标注批（2026-10-30）：执行形态徽标——kernel 极简内核（中性 sapphire
+   语系，同待答 chip 家族）/ dispatcher 分发器（亮一档正文色，同编排徽标的
+   「信息标注非警示」基调）。闸关/旧盘不渲染，行高零变化。 */
+.task-delegate-badge-mode-kernel {
+  color: rgb(var(--sapphire));
+  background: color-mix(in srgb, rgb(var(--sapphire)) 10%, transparent);
+  border: 1px solid color-mix(in srgb, rgb(var(--sapphire)) 30%, transparent);
+}
+.task-delegate-badge-mode-dispatcher {
+  color: var(--color-frame-text);
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+}
+
 .task-chain-folds { display: block; }
 
 .task-chain-folded {

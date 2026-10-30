@@ -1315,6 +1315,10 @@ Git safety:
     // 注册会话推导（node- → Flow Map 节点名，dispatcher- → dispatcher/<project>，
     // 其余 → Nebula），注册与 WS 信封同源携带。
     val (origin, originLabel) = BgTaskRegistry.originFor(ctx.sessionId.getOrElse(""), ctx.sessionName)
+    // 任务模式标注批（2026-10-30）：开启任务的 delegate 会话生效执行形态
+    // （kernel/dispatcher；modeFaceOf = 双模式总闸 + delegate 会话 + 记录三闸，
+    // 闸关/非 delegate ⇒ None ⇒ 空串零渲染）。
+    val ownerMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(ctx.sessionId).getOrElse("")
     BgTaskRegistry.register(
       jobId,
       ctx.sessionId.getOrElse(""),
@@ -1323,7 +1327,8 @@ Git safety:
       ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
       persistent,
       origin,
-      originLabel
+      originLabel,
+      ownerMode = ownerMode
     ) *>
       (ctx.wsSend.fold(
         logger.debug(s"Cannot notify frontend for background job $jobId: no wsSend (remote execution)")
@@ -1338,7 +1343,8 @@ Git safety:
           "startedAt" -> System.currentTimeMillis().asJson,
           "kind" -> "local".asJson,
           "origin" -> origin.asJson,
-          "originLabel" -> originLabel.asJson
+          "originLabel" -> originLabel.asJson,
+          "ownerMode" -> ownerMode.asJson
         )
         logger.info(s"Background job $jobId \"$description\" started", "sessionId" -> ctx.sessionId.getOrElse("")) *>
           send(json).handleErrorWith(e => logger.warn(s"WS send failed for job $jobId: ${e.getMessage}"))

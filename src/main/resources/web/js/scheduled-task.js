@@ -1,4 +1,13 @@
-// scheduled-task.js — Session Scheduled Tasks UI (iPhone Reminders style)
+// scheduled-task.js — Scheduled Tasks + To-do 双面 UI（iPhone Reminders style）
+// 待办分家批（2026-10-30 作者令）：待办从定时任务面拆出——
+//   定时任务（顶栏 #reminder-btn 时钟）= 给 agent 用的计划触发；
+//   待办（侧边栏 #todo-btn）           = 给人的，等作者处理。
+// 两面共享同一 WS 数据源（scheduledTaskList 按 kind 分面渲染）：
+//   · 提醒面只渲染 kind≠todo，徽标 = 已超时定时任务数；
+//   · 待办面只渲染 kind=todo，徽标 = 待销账待办数（含 AskUserQuestion 镜像行
+//     name=ask-*——点击跳回提问卡作答，闭环 Ask→待办→答→销账）；
+//   · 可行动聚合（actionable.js，messages 徽标消费）= 待办面计数——定时任务是
+//     agent 面，不再计入「需要作者行动」的总量。
 import state from './state.js';
 import { key } from './branding.js';
 import { sendWs, onMessage, onReconnect } from './ws.js';
@@ -6,6 +15,7 @@ import { t } from './i18n.js';
 import { statusIcon } from './utils.js'; // escapeHtml = 本文件既有本地实现（107 行）
 import { addNotification } from './notificationBanner.js';
 import { createIconsIn } from './utils.js';
+import { jumpToAsk } from './askPending.js'; // 待办分家批：ask- 镜像行跳转提问卡
 // 认知二期产品批②角标可行动判据（P6）：本面板注册「待销账待办」计数提供者；
 // 提醒徽标只报可行动量（待办 + 已超时定时任务），未来时间任务不上徽标。
 import { registerActionableProvider, notifyActionableChanged } from './actionable.js';
@@ -22,6 +32,7 @@ function getLocale() {
 // ── State ──────────────────────────────────────────────────────────────
 let tasks = [];
 let isCreating = false;
+let isCreatingTodo = false;
 let panelOpen = false;
 // Recurrence selected in the inline create form ("once" | "hourly" | "daily"
 // | "weekly"). Reset whenever the form opens. Wire values match ScheduleTool
@@ -97,12 +108,31 @@ function isTodoTask(t) {
 }
 
 /**
- * 可行动判据（认知二期产品批②，设计稿 §5 P6）：徽标只报「需要作者行动」的量
- * ——待办（待销账）+ 已到点未触发的定时任务（待处置）；未来时间的定时任务是
- * 「有更新」不是「要动手」，不上徽标。
+ * 待答镜像行判据（待办分家批 2026-10-30）：AskUserQuestion 挂起时引擎侧
+ * AskTodoBridge upsert 的 kind=todo 镜像条目，name = ask-<requestId>。
+ * 镜像的唯一销账路 = ask 终态（引擎幂等销账）⇒ 待办面不给打卡圆钮/取消 ×，
+ * 整行 = 跳回提问卡作答的入口。非 ask- 前缀（人建待办/周报打卡）⇒ ''。
  */
-function pendingCount() {
-  return tasks.filter(t => !t.triggered && (isTodoTask(t) || isOverdue(t))).length;
+function askRequestIdOf(r) {
+  const n = typeof r.name === 'string' ? r.name : '';
+  return n.startsWith('ask-') ? n.slice('ask-'.length) : '';
+}
+
+/**
+ * 提醒面（定时任务）待处置计数：已到点未触发 = 需要处置；未来时间任务是
+ * 「有更新」不是「要动手」，不上徽标。待办已从提醒面拆出（待办分家批），
+ * 不计入本徽标。
+ */
+function reminderPendingCount() {
+  return tasks.filter(t => !t.triggered && !isTodoTask(t) && isOverdue(t)).length;
+}
+
+/**
+ * 待办面待销账计数（提醒徽标 + todo 按钮徽标 + 可行动聚合三处同源）：
+ * 未触发的 kind=todo 条目（含 ask- 待答镜像——等人作答即等人行动）。
+ */
+function todoPendingCount() {
+  return tasks.filter(t => !t.triggered && isTodoTask(t)).length;
 }
 
 function defaultTriggerAt() {
@@ -135,19 +165,28 @@ function repeatLabel(r) {
 // ── Badge ──────────────────────────────────────────────────────────────
 
 function updateBadge() {
+  // 提醒面徽标（顶栏时钟）：已超时定时任务数（待办已拆出，不计）。
   const btn = $('#reminder-btn');
-  if (!btn) return;
-  let badge = btn.querySelector('.reminder-badge');
-  const count = pendingCount();
-  if (count > 0) {
-    if (!badge) {
-      badge = document.createElement('span');
-      badge.className = 'reminder-badge';
-      btn.appendChild(badge);
+  if (btn) {
+    let badge = btn.querySelector('.reminder-badge');
+    const count = reminderPendingCount();
+    if (count > 0) {
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'reminder-badge';
+        btn.appendChild(badge);
+      }
+      badge.textContent = count > 9 ? '9+' : count;
+    } else if (badge) {
+      badge.remove();
     }
-    badge.textContent = count > 9 ? '9+' : count;
-  } else if (badge) {
-    badge.remove();
+  }
+  // 待办面徽标（侧边栏 todo 按钮）：待销账待办数（含待答镜像）。
+  const todoBadge = document.getElementById('todo-badge');
+  if (todoBadge) {
+    const n = todoPendingCount();
+    todoBadge.hidden = n <= 0;
+    todoBadge.textContent = n > 9 ? '9+' : String(n);
   }
   // 可行动总量变了 ⇒ 通知 messages 徽标等订阅者（P6 判据单一聚合面）。
   notifyActionableChanged();
@@ -166,10 +205,16 @@ function buildGroupLabel(labelKey, n) {
 }
 
 function renderList() {
+  renderReminderPanel();
+  renderTodoPanel();
+}
+
+/** 提醒面（顶栏时钟浮层）：只渲染定时任务（kind≠todo；待办已拆去侧边栏）。 */
+function renderReminderPanel() {
   const body = $('#reminder-panel .reminder-panel-body');
   if (!body) return;
 
-  const pending = tasks.filter(t => !t.triggered);
+  const pending = tasks.filter(t => !t.triggered && !isTodoTask(t));
 
   // Update header count
   const countEl = $('#reminder-panel .reminder-panel-count');
@@ -178,23 +223,17 @@ function renderList() {
   // Clear and rebuild
   body.innerHTML = '';
 
-  if (tasks.length === 0 && !isCreating) {
+  if (pending.length === 0 && !isCreating) {
     body.appendChild(buildEmptyState());
   } else if (document.body.classList.contains('mobile-layer')) {
     // P3 手机层三分组（样张 v3.5 P3 + 开放点③⑤按设计批推荐）：即将触发 →
     // 已超时（isOverdue 独立分组，红 clock-alert 语义仍由行级携带）→ 已停用
     //（enabled=false 整组垫底，行级降透明走既有 .disabled 类 + 手机层组内
     // 整行降透明）。桌面扁平序（分支外）不变。
-    // 认知二期产品批③：待办（打卡）组恒置顶——单任务行动面（ADHD 档语义）。
-    const todos = pending.filter(isTodoTask);
-    const rest = pending.filter(t => !isTodoTask(t));
-    if (todos.length) {
-      body.appendChild(buildGroupLabel('task.grpCheckin', todos.length));
-      for (const r of todos) body.appendChild(buildRow(r, false));
-    }
-    const upcoming = rest.filter(r => r.enabled !== false && !isOverdue(r));
-    const overdue = rest.filter(r => r.enabled !== false && isOverdue(r));
-    const disabled = rest.filter(r => r.enabled === false);
+    // 待办分家批：打卡（待办）组随拆家移去侧边栏待办面板，本面三分组纯定时任务。
+    const upcoming = pending.filter(r => r.enabled !== false && !isOverdue(r));
+    const overdue = pending.filter(r => r.enabled !== false && isOverdue(r));
+    const disabled = pending.filter(r => r.enabled === false);
     const groups = [
       ['task.grpUpcoming', upcoming],
       ['task.overdue', overdue],
@@ -206,14 +245,7 @@ function renderList() {
       for (const r of rows) body.appendChild(buildRow(r, false));
     }
   } else {
-    // 认知二期产品批③：待办（打卡）组置顶，定时任务随后（扁平序不变）。
-    const todos = pending.filter(isTodoTask);
-    const timed = pending.filter(t => !isTodoTask(t));
-    if (todos.length) {
-      body.appendChild(buildGroupLabel('task.grpCheckin', todos.length));
-      for (const r of todos) body.appendChild(buildRow(r, false));
-    }
-    for (const r of timed) body.appendChild(buildRow(r, false));
+    for (const r of pending) body.appendChild(buildRow(r, false));
   }
 
   // Create form (always at bottom)
@@ -226,6 +258,39 @@ function renderList() {
   // Focus inline input if creating
   if (isCreating) {
     const input = body.querySelector('#reminder-inline-input');
+    if (input) requestAnimationFrame(() => input.focus());
+  }
+}
+
+/** 待办面（侧边栏 #panel-todo）：只渲染 kind=todo（含 ask- 待答镜像跳转行）。 */
+function renderTodoPanel() {
+  const body = $('#todo-panel-body');
+  if (!body) return;
+
+  const pendingTodos = tasks.filter(t => !t.triggered && isTodoTask(t));
+
+  const countEl = $('#todo-panel-count');
+  if (countEl) countEl.textContent = pendingTodos.length > 0 ? String(pendingTodos.length) : '';
+
+  body.innerHTML = '';
+
+  if (pendingTodos.length === 0 && !isCreatingTodo) {
+    body.appendChild(buildTodoEmptyState());
+  }
+  for (const r of pendingTodos) {
+    body.appendChild(askRequestIdOf(r) ? buildAskTodoRow(r) : buildRow(r, false));
+  }
+
+  // Create form (always at bottom) — 待办创建 = 纯文本（无时间/周期：浮出时刻是
+  // 引擎侧固定策略，下一次 09:00，由 WS 处理器 kind=todo 分支算）。
+  if (isCreatingTodo) {
+    body.appendChild(buildTodoInlineCreate());
+  }
+
+  if (typeof lucide !== 'undefined') createIconsIn(body);
+
+  if (isCreatingTodo) {
+    const input = body.querySelector('#todo-inline-input');
     if (input) requestAnimationFrame(() => input.focus());
   }
 }
@@ -243,6 +308,58 @@ function buildEmptyState() {
     startInlineCreate();
   });
   return el;
+}
+
+/** 待办面空态（待办分家批）：文案走 todo.* 键，点击空白创建待办。 */
+function buildTodoEmptyState() {
+  const el = document.createElement('div');
+  el.className = 'reminder-empty';
+  el.innerHTML = `
+    <div class="reminder-empty-text">${t('todo.empty')}</div>
+    <div class="reminder-empty-hint">${t('todo.emptyHint')}</div>`;
+  el.addEventListener('click', (e) => {
+    e.stopPropagation();
+    startTodoInlineCreate();
+  });
+  return el;
+}
+
+/**
+ * 待答镜像行（AskTodoBridge 产物，name=ask-<requestId>）：整行 = 跳回提问卡作答
+ * 的入口——无打卡圆钮 / 取消 ×（镜像的唯一销账路 = ask 终态，引擎侧幂等销账；
+ * 人在这里打卡会造成「待办已销、提问仍挂」的分叉）。行首待答 chip 标注语义。
+ */
+function buildAskTodoRow(r) {
+  const row = document.createElement('div');
+  row.className = 'reminder-row todo-ask-row';
+  row.dataset.id = r.id;
+  row.setAttribute('role', 'button');
+  row.title = t('todo.askJump');
+
+  const chip = document.createElement('span');
+  chip.className = 'todo-ask-chip';
+  chip.textContent = t('todo.askChip');
+
+  const content = document.createElement('div');
+  content.className = 'reminder-row-content';
+  const titleRow = document.createElement('div');
+  titleRow.className = 'reminder-row-title';
+  const textSpan = document.createElement('span');
+  textSpan.className = 'reminder-row-text';
+  textSpan.textContent = r.content;
+  titleRow.appendChild(textSpan);
+  content.appendChild(titleRow);
+
+  row.appendChild(chip);
+  row.appendChild(content);
+
+  const askId = askRequestIdOf(r);
+  row.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // 镜像挂在提问所在的 root 会话；askPending.jumpToAsk 负责切会话 + 定位卡片。
+    jumpToAsk({ requestId: askId, sessionId: r.sessionId || state.activeSessionId });
+  });
+  return row;
 }
 
 function buildRow(r, isTriggered) {
@@ -437,6 +554,39 @@ function buildInlineCreate() {
   return wrap;
 }
 
+/** 待办面内联创建（待办分家批）：纯文本——待办无固定触发时间（下一次 09:00
+ *  浮出是引擎侧固定策略），无周期语义，故不渲染时间/重复控件。 */
+function buildTodoInlineCreate() {
+  const wrap = document.createElement('div');
+  wrap.className = 'reminder-inline-create';
+
+  wrap.innerHTML = `
+    <div class="reminder-inline-main">
+      <span class="reminder-circle ghost"></span>
+      <input type="text" class="reminder-inline-input" id="todo-inline-input"
+        placeholder="${t('todo.inputPlaceholder')}" autocomplete="off">
+    </div>`;
+
+  const input = /** @type {HTMLInputElement | null} */ (wrap.querySelector('#todo-inline-input'));
+  if (input) {
+    // ⑤ 组字期间 Enter/Esc 交还输入法（非组字态行为逐键不变）。
+    bindImeGuard(input);
+    input.addEventListener('keydown', (e) => {
+      if (isImeComposing(e, input)) return;
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        saveTodoInline();
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        cancelTodoInlineCreate();
+      }
+    });
+  }
+
+  return wrap;
+}
+
 // ── Actions ────────────────────────────────────────────────────────────
 
 function openPanel() {
@@ -475,15 +625,29 @@ function startInlineCreate() {
   renderList();
 }
 
+/** 待办面内联创建开/关（待办分家批，与提醒面 isCreating 互不干扰）。 */
+function startTodoInlineCreate() {
+  if (isCreatingTodo) return;
+  isCreatingTodo = true;
+  renderList();
+}
+
 function cancelInlineCreate() {
   isCreating = false;
+  renderList();
+}
+
+function cancelTodoInlineCreate() {
+  isCreatingTodo = false;
   renderList();
 }
 
 // Send a create frame and add the optimistic temp row. Only call this when
 // the WS is OPEN and a session is active — otherwise the row would be a lie
 // (sendWs silently drops non-OPEN sends).
-function submitCreate(content, triggerAt, repeat) {
+// kind: undefined = 定时任务（现状）；'todo' = 待办（待办分家批——triggerAt 客户端
+// 占位、服务端 kind=todo 分支重算为下一次 09:00 浮出时刻；repeat 无待办语义）。
+function submitCreate(content, triggerAt, repeat, kind) {
   const payload = {
     type: 'createScheduledTask',
     sessionId: state.activeSessionId,
@@ -494,18 +658,25 @@ function submitCreate(content, triggerAt, repeat) {
   // "once" = one-shot = omit repeat (ScheduleTool schema: optional field);
   // hourly/daily/weekly are sent verbatim.
   if (repeat && repeat !== 'once') payload.repeat = repeat;
+  if (kind === 'todo') {
+    payload.kind = 'todo';
+    // 服务端 kind=todo 分支不校验客户端时间（重算浮出时刻）；占位一个未来值仅供
+    // 乐观行渲染，回执到达后 re-list 以服务端值为准。
+    if (!payload.triggerAt || payload.triggerAt <= Date.now()) payload.triggerAt = Date.now() + 60000;
+  }
   sendWs(payload);
 
   // Optimistic add — append to end
   tasks.push({
     id: 'temp-' + Date.now(),
     content: content,
-    triggerAt: triggerAt,
+    triggerAt: payload.triggerAt,
     createdAt: Date.now(),
     triggered: false,
     triggeredAt: null,
     referencePath: null,
-    repeat: repeat && repeat !== 'once' ? repeat : undefined
+    repeat: (kind === 'todo') ? undefined : (repeat && repeat !== 'once' ? repeat : undefined),
+    kind: kind === 'todo' ? 'todo' : undefined
   });
   if (state.activeSessionId) saveCachedTasks(state.activeSessionId, tasks);
 }
@@ -519,6 +690,11 @@ function flushPendingCreates() {
   const queued = pendingCreates;
   pendingCreates = [];
   for (const q of queued) {
+    if (q.kind === 'todo') {
+      // 待办：无客户端时间语义，直接补发（服务端算浮出时刻）。
+      submitCreate(q.content, 0, 'once', 'todo');
+      continue;
+    }
     // Same auto-bump semantics as saveInlineTask: a trigger time that expired
     // while queued becomes 2 min from now.
     const triggerAt = q.triggerAt <= Date.now() ? Date.now() + 120000 : q.triggerAt;
@@ -565,6 +741,32 @@ function saveInlineTask() {
 
   submitCreate(content, effectiveTriggerAt, currentRepeat);
   isCreating = false;
+  renderList();
+  updateBadge();
+}
+
+/** 待办面保存（待办分家批）：纯文本待办，kind='todo' 帧——服务端算下一次
+ *  09:00 浮出时刻。WS 未就绪时排队（重连补发），不造乐观行谎报。 */
+function saveTodoInline() {
+  const input = /** @type {HTMLInputElement | null} */ (document.querySelector('#todo-inline-input'));
+  if (!input) return;
+
+  const content = input.value.trim();
+  if (!content) {
+    cancelTodoInlineCreate();
+    return;
+  }
+
+  if (!wsReady()) {
+    pendingCreates.push({ content: content, triggerAt: 0, repeat: 'once', kind: 'todo' });
+    addNotification('task', t('task.queuedOffline'), { dismissAfter: 15000 });
+    isCreatingTodo = false;
+    renderList();
+    return;
+  }
+
+  submitCreate(content, 0, 'once', 'todo');
+  isCreatingTodo = false;
   renderList();
   updateBadge();
 }
@@ -725,6 +927,29 @@ export function initScheduledTask() {
     });
   }
 
+  // 待办分家批：侧边栏待办面板的 + 钮（保存/开表单 双态，与提醒面同节奏）。
+  const todoCreateBtn = $('#todo-create-btn');
+  if (todoCreateBtn) {
+    todoCreateBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (isCreatingTodo) {
+        saveTodoInline();
+      } else {
+        startTodoInlineCreate();
+      }
+    });
+  }
+
+  // 待办面板体点击：点空白创建待办（与提醒面同交互语言）。
+  const todoBody = $('#todo-panel-body');
+  if (todoBody) {
+    todoBody.addEventListener('click', (e) => {
+      if (e.target.closest('button, input, a, .reminder-row')) return;
+      if (isCreatingTodo) saveTodoInline();
+      else startTodoInlineCreate();
+    });
+  }
+
   // Panel body click: click empty area to create/save
   const body = $('#reminder-panel .reminder-panel-body');
   if (body) {
@@ -761,9 +986,10 @@ export function initScheduledTask() {
   // (re)established. Runs on every open; the queue is normally empty.
   onReconnect(flushPendingCreates);
 
-  // 认知二期产品批②：注册「待销账待办 + 已超时任务」可行动计数提供者——
-  // messages 徽标等订阅者经 actionable.js 聚合（P6 可行动判据）。
-  registerActionableProvider(pendingCount);
+  // 认知二期产品批② + 待办分家批（2026-10-30）语义理清：可行动聚合 = 待办面
+  // 计数（待办是「等人处理」的面，含 AskUser 待答镜像）；定时任务是 agent 面
+  // （计划触发，到点自动叫醒模型处置），不再计入「需要作者行动」的总量。
+  registerActionableProvider(todoPendingCount);
   notifyActionableChanged();
 
   // Auto-load tasks for active session
@@ -784,6 +1010,7 @@ export function initScheduledTask() {
 /** Called when session switches — refresh task list */
 export function refreshScheduledTasks(sessionId) {
   isCreating = false;
+  isCreatingTodo = false;
   // Session just became available — retry any creates queued while there was
   // no active session (flush no-ops when the queue is empty or WS is down).
   flushPendingCreates();

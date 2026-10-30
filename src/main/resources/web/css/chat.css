@@ -509,6 +509,33 @@
 .bg-task-origin.bg-origin-device {
   color: var(--color-frame-text);
 }
+/* 任务模式标注批（2026-10-30 作者令「派发任务显示执行模式」）：开启任务的
+   delegate 会话执行形态 chip——kernel 极简内核（sapphire 强调族，同 origin-node
+   先例）/ dispatcher 分发器（亮一档正文色）。同 chip 家族，零新色板 token；
+   ownerMode 缺席（旧后端/非 delegate/闸关）= 不渲染，行高零变化。 */
+.bg-task-mode {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  color: var(--color-frame-text-muted);
+  flex-shrink: 0;
+}
+.bg-task-mode.bg-mode-kernel {
+  color: rgb(var(--accent-agent-light));
+  border-color: rgb(var(--accent-agent-light) / 0.35);
+}
+.bg-task-mode.bg-mode-dispatcher {
+  color: var(--color-frame-text);
+}
+@media (prefers-color-scheme: dark) {
+  .bg-task-mode.bg-mode-kernel {
+    color: rgb(var(--sapphire));
+    border-color: rgb(var(--sapphire) / 0.35);
+  }
+}
 @media (prefers-color-scheme: dark) {
   .bg-task-origin.bg-origin-node {
     color: rgb(var(--sapphire));
