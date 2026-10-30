@@ -115,6 +115,11 @@
 #      遗漏；脚本其余写盘（.pid/.pid.meta、neblink/config.json 的 url+networkId、
 #      模型配置种子）均无凭据面。生产通道（主 home）的密钥引用一律指向
 #      ~/.nebflow/secrets/——跨 home 引用 /tmp 路径即本批事故形态，勿再为。
+#   10) 免开门档 COLDSTART_NO_OPEN=1（本地测试批②，2026-10-30 作者语义纠正批）——
+#      scripts/coldstart-lt.sh 的【委托面】：置位 ⇒ 实例带 --no-browser 启动，跳过
+#      全部开门腿（一次性档案/wrapper 注入、官网预探、开门观察、回落开门），开门
+#      责任完全在调用方（lt 脚本在冷实例就绪后走自己的免登录铸票腿）。缺省 0 =
+#      本脚本开门语义逐字不变。
 
 # 用法：
 #   ./scripts/coldstart.sh                                            # staging 档冷启动（默认，不进生产网）
@@ -127,10 +132,13 @@
 #   COLDSTART_FULL=1 ./scripts/coldstart.sh                           # 出厂档：不种模型配置（全零携带）
 #   COLDSTART_CHROME=<path> ./scripts/coldstart.sh                    # 指定开门用的 Chrome 可执行件
 #   NEBFLOW_ALLOW_PROD_ENROLL=1 ./scripts/coldstart.sh --net prod     # 显式放行：注册到生产 NebLink
+#   COLDSTART_NO_OPEN=1 ./scripts/coldstart.sh                        # 免开门档：--no-browser 启动，开门由调用方负责（coldstart-lt.sh 委托面）
 #
-# 相关脚本：scripts/coldstart-lt.sh —— 本地测试便利批（作者 10-30 令）：主实例（6138 体系）
-# 一步拉起 + 本地铸票直达已登录面板（免官网登录）。本脚本管【隔离新用户态】冷启动，
-# 那管【作者日常本地态】直达测试；两者复用同一铸票面，互不重叠。
+# 相关脚本：scripts/coldstart-lt.sh —— 本地测试便利批（作者 10-30 二次纠正批）：起【真独立
+# 冷启动实例】（自有 home /tmp/stand-lt + 自有端口 8199，引擎语义整建制委托本脚本 + 免开门档），
+# 冷实例就绪后追加免登录铸票开门腿（冷 home 自铸本地 dev token，零身份流动；:6138 宿主红线
+# 在 lt 侧同款护栏）。本脚本管【隔离新用户态】冷启动开门（官网入口/一次性档案），lt 管
+# 【作者日常本地态】直达测试；两者复用同一铸票面，互不重叠。
 #
 # 说明：已配置的模型（home 顶层的 nebflow.json / models.json / model-presets.json）
 #       在冷启动时原地保留；主 home 有而新 home 无的模型配置会被种入（见 7)）。
@@ -150,6 +158,8 @@ COLDSTART_MARKER="nebflow-coldstart"
 COLDSTART_FULL="${COLDSTART_FULL:-0}"
 # 开门用 Chrome 可执行件（缺省 = 标准 macOS 安装位；缺失时退化为无痕窗口指引）。
 CHROME_BIN="${COLDSTART_CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
+# 免开门档（文件头 10)，coldstart-lt.sh 委托面）：1 = --no-browser 启动 + 跳过全部开门腿。
+COLDSTART_NO_OPEN="${COLDSTART_NO_OPEN:-0}"
 
 # ── 网络档位解析（批①）：--net <tier> 优先，其次 COLDSTART_NET，默认 staging ──
 NET_TIER="${COLDSTART_NET:-staging}"
@@ -523,7 +533,12 @@ CHROME_PROFILE="/tmp/stand-coldstart-console-profile-$$"
 CHROME_PRESENT=0
 if [ -x "$CHROME_BIN" ]; then CHROME_PRESENT=1; fi
 LAUNCH_FLAGS=""
-if [ "$CHROME_PRESENT" = "1" ]; then
+if [ "$COLDSTART_NO_OPEN" = "1" ]; then
+  # 免开门档（文件头 10)：开门责任在调用方（coldstart-lt.sh 自有铸票腿）——
+  # 不建档案/wrapper、不探测官网、不做开门观察与回落开门；宁可明确不开门。
+  LAUNCH_FLAGS="--no-browser"
+  echo "[coldstart] COLDSTART_NO_OPEN=1 ⇒ 免开门档：实例带 --no-browser 启动；不建开门载体、不预探官网、不做开门观察/回落（开门由调用方负责）"
+elif [ "$CHROME_PRESENT" = "1" ]; then
   # 陈档清理（含旧版固定路径 /tmp/stand-coldstart-console-profile）：仅当无活进程
   # 引用才删——门窗还开着的档绝不抽底（绝不重演 rm -rf 抽运行中 Chrome 的档案）。
   for stale in /tmp/stand-coldstart-console-profile /tmp/stand-coldstart-console-profile-*; do
@@ -571,7 +586,7 @@ fi
 # 票开门），并大声打印回落原因。不另造开关、不改解析序：用的就是既有 env 的既有语义。
 # 预探通过而 boot 时刻门户才断（探测窗口外抖动）属残余风险：开门后页面报错时按
 # 打印指引 NEBFLOW_OPEN_UI=local 重跑即可。
-if [ "$CHROME_PRESENT" = "1" ] && [ "$OPEN_UI_LOCAL" = "0" ] && [ -n "$PORTAL_BASE" ]; then
+if [ "$COLDSTART_NO_OPEN" != "1" ] && [ "$CHROME_PRESENT" = "1" ] && [ "$OPEN_UI_LOCAL" = "0" ] && [ -n "$PORTAL_BASE" ]; then
   if curl -sS -o /dev/null -m 5 "$PORTAL_BASE" 2>/dev/null; then
     echo "[coldstart] 官网可达: $PORTAL_BASE → 本次走官网统一入口档（真实凭据登录）"
   else
@@ -625,7 +640,9 @@ portal_with_device() {
 }
 
 if [ "$READY" = "1" ]; then
-  if [ "$OPEN_UI_LOCAL" = "1" ]; then
+  if [ "$COLDSTART_NO_OPEN" = "1" ]; then
+    echo "[coldstart] 免开门档：实例就绪（http://localhost:$COLDSTART_PORT/）。开门腿由调用方执行——本脚本到此只陪跑。"
+  elif [ "$OPEN_UI_LOCAL" = "1" ]; then
     echo "[coldstart] 开门档: NEBFLOW_OPEN_UI=local ⇒ 实例开门走【本地自铸票】（PortalUrl 回落语义 LocalConsoleUrl；不经官网登录）"
   else
     echo "[coldstart] 开门目标: 官网统一入口 $(portal_with_device "$PORTAL_BASE")（PortalUrl 解析序；登录后经门户回投 relay-mint 票进本地控制台）"
