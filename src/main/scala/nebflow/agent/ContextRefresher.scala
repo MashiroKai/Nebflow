@@ -352,7 +352,7 @@ object ContextRefresher:
       else
         s"""# Memory
            |
-           |Your memory is below. Entries with →id have detail files at `~/.nebflow/memory/{id}.md` — read them when the scenario matches. Detail files are snapshots and red-lines only; historical events and rulings live in the conversation archive.
+           |Your memory is below. Entries with →id have read-only legacy detail files at `~/.stand/memory/{id}.md` — read them when the scenario matches. Detail files are snapshots and red-lines only; historical events and rulings live in the conversation archive.
            |
            |## Recall archive — `tools/stand-recall`
            |
@@ -402,10 +402,10 @@ object ContextRefresher:
     if userOver || agentOver then
       val lines = List(
         Option.when(userOver)(
-          s"- ~/.nebflow/User.md: $userBytes bytes (soft line $userSoft, hard $userHard)"
+          s"- ~/.stand/User.md: $userBytes bytes (soft line $userSoft, hard $userHard)"
         ),
         Option.when(agentOver)(
-          s"- ~/.nebflow/Soul.md: $agentBytes bytes (soft line $agentSoft, hard $agentHard)"
+          s"- ~/.stand/Soul.md: $agentBytes bytes (soft line $agentSoft, hard $agentHard)"
         )
       ).flatten
       s"""## Memory hygiene — IMMEDIATE TASK

@@ -170,7 +170,7 @@ Nebflow 特有关注点：
 - BashTool 执行任意用户命令 — 必须有超时和进程隔离
 - Config 解析 `${ENV_VAR}` 模式 — 确保不会意外记录环境变量值
 - MCP server 命令是用户配置的 — 验证配置无命令注入
-- Session 文件存储在 `~/.nebflow/` — 验证无敏感数据明文存储
+- Session 文件存储在 `~/.stand/` — 验证无敏感数据明文存储
 - Gateway HTTP 端点 — 验证输入大小限制
 - API key 穿透多层 — 确保它们不出现在任何错误消息中
 

@@ -93,7 +93,7 @@ status: active
 - 坐标路径（`mouse.click({x,y})` 等）只用于快照读不到的画布/自绘控件/纯视觉目标，
   且必须**与截图配对**让目标可被观察。
 - 文件上传、下载、`file:` 之外的特殊协议等边界按运行时实际报错如实登记，不绕。
-- **不碰宿主**：浏览器只打你被授权的目标；宿主的 `:8080` 网关监听者**永不触碰**；
+- **不碰宿主**：浏览器只打你被授权的目标；宿主的 `:6138` 网关监听者**永不触碰**（宿主端口以 Environment 表的 Gateway port 为准，当前 :6138）；
   自起的服务用自己的端口和自己的数据目录，收尾自清。
 
 ## 七、开工前自检（先证明载体真的在）
@@ -105,7 +105,7 @@ status: active
 node -e "console.log('playwright', require('playwright/package.json').version)"
 ls ~/Library/Caches/ms-playwright 2>/dev/null
 
-# 2. 起一个**自有端口 + 自有目录**的被测服务（禁碰宿主的 :8080），经包装器起
+# 2. 起一个**自有端口 + 自有目录**的被测服务（禁碰宿主的 :6138 网关端口），经包装器起
 <进程组包装器> roster --node <nodeId> --tag httpd -- \
   python3 -m http.server <自有端口> --directory <静态根>
 

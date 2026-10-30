@@ -10,7 +10,7 @@ Deploy changes to mystand.space. The website is a Next.js app hosted on Vercel; 
 ## Project Location
 
 ```
-/Users/kaiyu/.nebflow/projects/nebflow-website
+/Users/kaiyu/.stand/projects/nebflow-website
 ```
 
 GitHub repo: `MashiroKai/nebflow-website`
@@ -18,7 +18,7 @@ GitHub repo: `MashiroKai/nebflow-website`
 ## Step 1: Commit and Push
 
 ```bash
-cd /Users/kaiyu/.nebflow/projects/nebflow-website
+cd /Users/kaiyu/.stand/projects/nebflow-website
 git add -A
 git commit -m "<descriptive message>"
 git push origin main

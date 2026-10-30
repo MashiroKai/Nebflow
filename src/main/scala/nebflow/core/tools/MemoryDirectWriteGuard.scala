@@ -136,12 +136,12 @@ object MemoryDirectWriteGuard:
     val pct = if hard > 0 then f"${bytes * 100.0 / hard}%.0f%%" else "?"
     if bytes > hard then
       s"""<system-reminder>
-         |Memory budget HARD CAP: $pathStr is at $bytes bytes, over the $hard-byte hard cap. Writes that grow this layer are refused. Shrink first (rewrite the largest `## ` section down, delete stale `- ` entries), snapshot to `~/.nebflow/memory-backups/<ts>/` before editing, then retry the write.
+         |Memory budget HARD CAP: $pathStr is at $bytes bytes, over the $hard-byte hard cap. Writes that grow this layer are refused. Shrink first (rewrite the largest `## ` section down, delete stale `- ` entries), snapshot to `~/.stand/memory-backups/<ts>/` before editing, then retry the write.
          |</system-reminder>"""
     else
       s"""<system-reminder>
          |Memory budget: $pathStr is at $bytes bytes ($pct% of the $hard-byte hard cap; soft line $soft).
-         |Consolidate this turn: trim stale batch-status sections and superseded rulings first (replace in place, never append a correction beside the old line), or demote detail into `~/.nebflow/memory/<id>.md` files. Further writes past the hard cap will be refused until the file is back under budget.
+         |Consolidate this turn: trim stale batch-status sections and superseded rulings first (replace in place, never append a correction beside the old line), or demote detail into `~/.stand/memory/<id>.md` files. Further writes past the hard cap will be refused until the file is back under budget.
          |</system-reminder>"""
 
   /**
