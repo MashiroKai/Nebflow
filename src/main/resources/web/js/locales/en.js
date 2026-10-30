@@ -1548,6 +1548,7 @@ export default {
   'chat.permExecCmd': 'Execute command',
   'chat.copied': 'Copied!',
   'chat.copy': 'Copy',
+  'human.details': 'Details',
   'mermaid.renderFailed': 'Diagram failed to render',
   'mermaid.showSource': 'Show source',
   'mermaid.hideSource': 'Hide source',

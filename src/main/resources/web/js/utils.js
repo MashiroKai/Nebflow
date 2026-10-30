@@ -280,6 +280,10 @@ const RE_IMG_TAG = /<img\b(?![^>]*\bclass=)/g;
 // as-is (already HTML-escaped by marked) — safe for the double-quoted
 // data-mermaid-src attribute because marked escapes `"` to `&quot;`.
 const RE_MERMAID_BLOCK = /<pre><code class="language-mermaid"[^>]*>([\s\S]*?)<\/code><\/pre>/g;
+// human-face batch (2026-10-30, 设计稿 docs/design/20261030_human-readable-
+// presentation.zh-CN.md 二期): marked v12 emits a fenced ```human block in the
+// same shape as mermaid (plain <pre>, single language class, escaped body).
+const RE_HUMAN_BLOCK = /<pre><code class="language-human"[^>]*>([\s\S]*?)<\/code><\/pre>/g;
 
 export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   if (!text) return '';
@@ -318,7 +322,88 @@ function _renderMarkdownWithMath(text, parseVoice) {
   return _renderMarkdownInternal(text, voiceBlocks);
 }
 
-function _renderMarkdownInternal(protected_, voiceBlocks) {
+// ── ```human filter fence (human-face batch 2026-10-30) ────────────────────
+// 设计稿：docs/design/20261030_human-readable-presentation.zh-CN.md §3 —
+// 框内卡片化、框外 <details> 抽屉、单管线五面（聊天气泡 / Canvas md viewer /
+// wiki docs / flow 卡片 / report 卡片）共用此 pass。
+//
+/** Source-level gate: true only when the text has ≥1 ```human fence AND every
+ *  one is closed. Mirrors CommonMark fence semantics (a closing fence is 3+
+ *  backticks with no info string; while a fence is open, a ```human line is
+ *  literal content, not a nested opener). The fast includes() pre-check keeps
+ *  the per-frame streaming hot path (cache:false) at one cheap scan for the
+ *  overwhelmingly common no-fence case. */
+function _humanFencesBalanced(text) {
+  if (text.indexOf('```human') === -1) return false;
+  let open = false;
+  let saw = false;
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!open) {
+      if (/^```human[ \t]*$/.test(line)) { saw = true; open = true; }
+    } else if (/^```[ \t]*$/.test(line)) {
+      open = false;
+    }
+  }
+  return saw && !open;
+}
+
+/** Reverse marked's HTML escaping inside a fenced body so the card content can
+ *  be re-rendered as markdown. Order matters: &amp; decodes LAST. */
+function _decodeHumanEntities(s) {
+  return s
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/** Post-marked transform: split the HTML on closed ```human blocks; render each
+ *  fence body as a markdown card; wrap every outside chunk that carries text
+ *  in a <details> drawer (whitespace-only chunks pass through untouched). */
+function _transformHumanFace(html) {
+  const parts = [];
+  let last = 0;
+  let m;
+  RE_HUMAN_BLOCK.lastIndex = 0;
+  while ((m = RE_HUMAN_BLOCK.exec(html)) !== null) {
+    if (m.index > last) parts.push({ kind: 'out', html: html.slice(last, m.index) });
+    parts.push({ kind: 'card', code: m[1] });
+    last = m.index + m[0].length;
+  }
+  RE_HUMAN_BLOCK.lastIndex = 0;
+  if (!parts.length) return html;
+  if (last < html.length) parts.push({ kind: 'out', html: html.slice(last) });
+  let result = '';
+  for (const p of parts) {
+    if (p.kind === 'card') {
+      // Inner render with noHuman=true: a nested ```human fence inside a card
+      // stays a plain code block (no unbounded recursion).
+      const inner = _renderMarkdownInternal(_decodeHumanEntities(p.code), [], true);
+      result += '<div class="nf-human-card">' + inner + '</div>';
+    } else {
+      const text = p.html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
+      if (!text) {
+        result += p.html;
+      } else {
+        const n = text.split('\n').filter((l) => l.trim()).length;
+        const label = escapeHtml(t('human.details')) + ' (' + n + ')';
+        result += '<details class="nf-human-details"><summary>' + label + '</summary>' + p.html + '</details>';
+      }
+    }
+  }
+  return result;
+}
+
+function _renderMarkdownInternal(protected_, voiceBlocks, noHuman) {
+  // human-face batch (2026-10-30): the ```human filter fence renders ONLY when
+  // every fence in the source is closed (streaming gate, 设计稿 §7.5 落地口径
+  // 「整段等闭合」). An unclosed fence (mid-stream snapshot) falls through to
+  // the normal code-block path — everything stays visible, nothing crashes, and
+  // the card+drawer layout appears in one step the moment the fence closes.
+  const humanOn = !noHuman && _humanFencesBalanced(protected_);
   const mathBlocks = [];
   const mentionBlocks = [];
   // Math is protected BEFORE marked.parse and restored AFTER it on the whole
@@ -363,6 +448,14 @@ function _renderMarkdownInternal(protected_, voiceBlocks) {
   // chat bubbles, flow cards, report cards) gets the same placeholder.
   html = html.replace(RE_MERMAID_BLOCK, (m, code) =>
     `<div class="nf-mermaid" data-mermaid-src="${code}"><div class="nf-mermaid-body"><div class="nf-mermaid-ph"></div></div></div>`);
+  // human-face pass (2026-10-30): a CLOSED ```human fence is a human-face card,
+  // not code — its markdown body is rendered into `.nf-human-card`; every
+  // outside chunk (before / between / after cards) collapses into a
+  // `<details class="nf-human-details">` drawer. Runs BEFORE the <pre> copy-
+  // button pass so a card never gets code chrome. Single pipeline ⇒ all five
+  // markdown faces (chat bubbles, canvas md viewer, wiki docs, flow cards,
+  // report cards) pick it up at once, same as the mermaid pass above.
+  if (humanOn) html = _transformHumanFace(html);
   // Wrap <pre> blocks with a copy button and close the wrapper in the SAME pass
   // (修法 2: one whole-string scan instead of two). The alternation keeps the
   // original per-tag output byte-for-byte: every `<pre…>` gets the wrap opener +

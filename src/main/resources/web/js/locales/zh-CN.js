@@ -1487,6 +1487,7 @@ export default {
   'chat.permExecCmd': '执行命令',
   'chat.copied': '已复制！',
   'chat.copy': '复制',
+  'human.details': '细节',
   'mermaid.renderFailed': '图表渲染失败',
   'mermaid.showSource': '查看源码',
   'mermaid.hideSource': '收起源码',

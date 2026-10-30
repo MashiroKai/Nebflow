@@ -1,0 +1,53 @@
+/* humanFace.css — ```human filter fence rendering (human-face batch,
+   2026-10-30; 设计稿 docs/design/20261030_human-readable-presentation.zh-CN.md
+   §3.2). Face-neutral component styles: the shared markdown pipeline
+   (utils.js) emits .nf-human-card / .nf-human-details in EVERY markdown face
+   (canvas md viewer, wiki docs, chat bubbles, flow/report cards). Tokens
+   only — no bare values outside the layout skeleton. No accent bars, no
+   emoji (visual-style hard rules). */
+
+/* 框内 → 人面子卡片：安静的内容卡面（结论/关键数字/图表的呈现默认值）。
+   玻璃质感引用 sapphire token 单源；亮暗双主题随 CSS 变量自动翻转。 */
+.nf-human-card {
+  margin: 8px 0;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--sapphire-edge, var(--color-frame-hover));
+  border: 1px solid var(--color-frame-border-light, var(--color-frame-border));
+}
+
+.nf-human-card > :first-child { margin-top: 0; }
+.nf-human-card > :last-child { margin-bottom: 0; }
+
+/* 框外 → 细节抽屉：默认收起的 <details>。summary 行 = 弱化的可点行，
+   形态照仓内 nf-fc / flow-blocked-raw 两处 <details> 先例。 */
+.nf-human-details {
+  margin: 6px 0;
+  border-radius: 8px;
+}
+
+.nf-human-details > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  padding: 4px 2px;
+  border-radius: 6px;
+}
+
+.nf-human-details > summary::-webkit-details-marker { display: none; }
+.nf-human-details > summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 10px;
+  transition: transform 0.12s ease;
+}
+
+.nf-human-details[open] > summary::before { transform: rotate(90deg); }
+.nf-human-details > summary:hover {
+  color: var(--color-text-dim);
+  background: var(--color-frame-hover);
+}
