@@ -17,6 +17,7 @@
 | `ops/nebflow-restart.sh` | `~/.stand/bin/nebflow-restart.sh` | 开发实例自重启工具 v4.2（verbatim 入库，改动仍走它自己的版本纪律） |
 | `ops/release.sh` | —（不入 live：与仓绑定，从仓内跑） | **发版流水线（工程化 M2）**：`stage` → `approve` → `rollback` / `tag`，显式批准门（见下节） |
 | `ops/bin/stand-jar-pull` | —（不入 live：与仓绑定，从仓内跑） | **KAI → Mac jar 流转（KAI 主线迁移批 2026-10-26）**：拉 KAI 出包位最新 jar → SHA 对账 → 原子落位 → 切指针 → start 指针解析验证（`--verify`/`--dry-run` 零触碰预演；用法一页：`ops/stand-jar-pull.md`） |
+| `release/install.sh` `release/install.ps1` | release 出包路径 | release 安装器：`stand` 主命令 + `nebflow` legacy 转发垫片（与本目录 CLI 的隔离契约分工见 REBRAND「双命令并存」） |
 | `ops/test/stand-lifecycle.test.sh` | —（不入 live） | 守卫的纯 bash 断言测试（沙箱化，零真实 daemon；覆盖 stand+nebflow 两品牌隔离与 `restart --dry-run` 假点火） |
 | `ops/test/release-pipeline.test.sh` | —（不入 live） | release.sh 的纯 bash 断言测试（沙箱化：假构建/假冒烟/假 java + fixture git 仓） |
 
@@ -214,6 +215,11 @@ bash ops/test/release-pipeline.test.sh        # 89 断言全绿; RELEASE_TEST_RE
 argv[0] 对 .app 二进制无效——测试基建里踩过的坑）。覆盖：start 命中/外姓拒启/
 未命中放行（子命令与端口 env 钉一致）、stop 双探针命中/失配态（pid 腿）/双空幂等/
 身份门拒杀/`--force`/`--tree` 透传、Java 版本门 rc=11、passthrough。
+
+**双实例并存批 2026-10-30**（作者令「和 nebflow 隔离，同时可用」）在此基础上新增：
+默认值解析断言（`stand`→`~/.stand`+6138、`nebflow`→`~/.nebflow`+8080，经隐藏探针
+`__brand-defaults`，零 JVM）；start 撞**对家品牌实例**占口时 rc=1、报错点名「另一实例」
+（含其默认家/口与共存提示）。引擎侧对账 spec 见 `src/test/scala/nebflow/cli/CliBrandDefaultsSpec.scala` 等。
 
 ## 版本纪律
 

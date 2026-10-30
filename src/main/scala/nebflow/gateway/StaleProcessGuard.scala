@@ -58,6 +58,28 @@ object StaleProcessGuard:
   /** Max length of an occupant command line in error output. */
   val CmdlineDetailLimit: Int = 200
 
+  /**
+   * **异品牌实例的路径根标记**（双实例并存批 2026-10-30）。
+   *
+   * 同机并存两个命令品牌：`stand`（数据根 `~/.stand`，jar 位 `~/.stand/bin`）与
+   * legacy `nebflow`（数据根 `~/.nebflow`，jar 位 `~/.nebflow/bin`）。两者跑同一引擎、
+   * 命令行都带 `*-assembly-*.jar` 标记 ⇒ [[NebflowMarkers]] 会把 legacy 实例判成
+   * 「可安全 kill 的陈旧本家进程」。这在双实例世界里是**跨实例误杀**：stand 引擎若在
+   * legacy 实例的口上走到本闸，就会 destroyForcibly 掉别人的实例。
+   *
+   * 判据只看**路径归属**（cmdline 里的品牌根目录），不看品牌词：命中一个「不是本实例
+   * 数据根的已知品牌根」即判为异实例 ⇒ 拒启、零信号（同 foreign 语义）。
+   * `ownDataRoot` 缺省（None）时本判据整体关闭 —— 纯分类 spec / 既有调用零行为变化。
+   */
+  val KnownBrandRoots: List[String] = List(".stand", ".nebflow")
+
+  def otherInstanceRoot(cmdline: String, ownDataRoot: String): Option[String] =
+    val own = ownDataRoot.replace('\\', '/')
+    val cmd = cmdline.replace('\\', '/')
+    KnownBrandRoots.find { root =>
+      cmd.contains(s"/$root/") && !own.contains(s"/$root")
+    }
+
   def truncate(s: String, limit: Int = CmdlineDetailLimit): String =
     if s.length <= limit then s else s.substring(0, limit) + "…(truncated)"
 

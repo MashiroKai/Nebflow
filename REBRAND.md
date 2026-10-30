@@ -6,7 +6,33 @@ Stand 原名 Nebflow。网站入口是 https://mystand.space，跨设备控制�
 
 本机使用可设置 `STAND_OPEN_UI=local`。启动或再次打开时，启动器用现有本机凭据换取一次性浏览器会话票据，不把长期令牌放进地址栏。门户配置在 `<home>/neblink/config.json` 顶层 `portalUrl`；设为空字符串同样选择本机入口。云端模式通过网站账号登录，本机会话不能代替云端账号登录。
 
-如果提示已有实例，说明网关已经在运行；无需再启动第二个进程。本地地址为 http://localhost:8080。旧版本需要运行 `sbt "run token"` 获取一次性票据并在登录卡片中使用。不要删除数据目录来解决登录问题。更新源码后，已运行的旧 JVM 需要由其所属会话重启才能加载新版本。
+如果提示已有实例，说明网关已经在运行；无需再启动第二个进程。旧版本需要运行 `sbt "run token"` 获取一次性票据并在登录卡片中使用。不要删除数据目录来解决登录问题。更新源码后，已运行的旧 JVM 需要由其所属会话重启才能加载新版本。
+
+> 端口默认已换：新装 `stand` 默认 http://localhost:6138；旧命令 `nebflow` 的默认口是
+> 8080（数据根 `~/.nebflow`）。两个命令品牌同机并存，见下节「双命令并存」。
+> 经由 release 安装器安装的 `~/.local/bin` 入口仍按部署时的默认值生效，详见
+> `release/install.sh` 的包装脚本。
+
+## 双命令并存（双实例批 2026-10-30，作者令 2026-10-30 08:29）
+
+作者令（逐字）:「开启动 stand 的命令是 nebflow。我们需要把 KAI 迁移到正常的 stand 使用。
+和 nebflow 隔离。这样 nebflow 和 stand 可以同时使用。」
+
+两个命令品牌同机并存、互不干涉，缺省值**必须**错开：
+
+| 命令 | 数据根（无 env） | 默认端口 | 入口（权威副本） |
+|---|---|---|---|
+| `stand` | `~/.stand` | 6138 | `ops/bin/stand` → `~/.stand/bin/stand` |
+| `nebflow` | `~/.nebflow` | 8080 | `ops/bin/nebflow` → `~/.nebflow/bin/nebflow` |
+
+- 两入口共用一份实现库 `stand-cli-lib.sh`（单一实现路径），按品牌壳只认自家 env；
+  PATH 上没有 `nebflow` 时由垫片 `~/.stand/bin/nebflow` 转投真入口。
+- 引擎只绑定 6138；8080 只是 legacy 命令线的缺省读数/报错文案（`Defaults.LegacyGatewayPort`），
+  引擎自身绝不绑定 8080。
+- 启动时端口被占，报错会**点名**占口的是哪一实例（stand vs nebflow，含其默认家/口），
+  不再只有裸端口。既有合同「绝不 focus/杀对家实例」零弱化。
+- 本批把 KAI 从「启动器叫 nebflow」迁到「启动器叫 stand」：详见
+  `docs/runbooks/kai-stand-migration.md`。
 
 ## 远程控制台构建
 
@@ -49,7 +75,7 @@ python3 scripts/sync-brand-auth.py --env-file <官网凭据文件>
 ## 发布与兼容边界
 
 - 官网登录使用 `https://auth.mystand.space`，现有 Logto 应用保留旧域回调并追加新域回调；不新建账号、不更改密码。
-- 数据目录继续为 `~/.nebflow`，配置继续为 `nebflow.json`。本次更名不复制或搬移已有账号、设备、密钥和会话。
+- 数据目录默认为 `~/.stand`；legacy 机器（无 ~/.stand 仅有 ~/.nebflow）继续用 `~/.nebflow`，配置继续为 `nebflow.json`。本次更名不复制或搬移已有账号、设备、密钥和会话。
 - `nebflow.Main`、存储键、Scala 包名和中继协议继续兼容；更名不要求改写历史数据。
 - 官网和登录页通过已授权的部署发布；源码保留在修复分支，未经明确指示不合并、不推送 Git 分支、不打标签、不改 VERSION。
 - 自动检查覆盖 OIDC 初始化、回调注册、租户配置、错误密码路径和资源一致性。真实密码登录、社交身份提供方往返与邮件实际收件需要真实用户完成，不能用自动检查代替。

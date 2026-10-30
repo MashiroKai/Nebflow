@@ -53,6 +53,30 @@ object GatewayMain extends IOApp:
    */
   private def ensureSingleInstance(port: Int): IO[Unit] =
     IO.blocking {
+      // 双实例并存批 2026-10-30：`stand`（~/.stand）与 legacy `nebflow`（~/.nebflow）
+      // 同机并存，两者命令行都带 `*-assembly-*.jar` —— 旧判据会把对家实例判成
+      // 「可安全 kill 的陈旧本家进程」并 destroyForcibly（跨实例误杀）。故先按**路径
+      // 归属**分一层：任一 listener 的 cmdline 落在另一个品牌根下 ⇒ 拒启、零信号。
+      val otherInstance = StaleProcessGuard
+        .portListenerPids(port)
+        .filterNot(_ == ProcessHandle.current.pid)
+        .iterator
+        .flatMap(pid =>
+          StaleProcessGuard
+            .readCommandLine(pid)
+            .flatMap(cmd => StaleProcessGuard.otherInstanceRoot(cmd, PathUtil.dataRoot.toString).map(root => (pid, cmd, root)))
+        )
+        .toList
+        .headOption
+      otherInstance match
+        case Some((pid, cmd, root)) =>
+          val detail =
+            s"[startup] REFUSING to start: port $port is held by the OTHER instance (pid $pid, rooted at a " +
+              s"foreign brand home '…/$root/…'; this instance roots at ${PathUtil.dataRoot}) — " +
+              s"command: ${StaleProcessGuard.truncate(cmd)}; stop that instance or pick another port"
+          logger.error(detail).unsafeRunSync()
+          throw new IllegalStateException(detail)
+        case None => ()
       StaleProcessGuard.classify(
         StaleProcessGuard.portListenerPids(port),
         ProcessHandle.current.pid

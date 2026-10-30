@@ -97,7 +97,6 @@ class SingleInstanceGuardSpec extends FunSuite:
 
   test("unrelated product/version fields must not hijack startup focus") {
     for body <- List(
-        """{"product":"other","version":"1.0"}""",
         """{"version":"1.0"}""",
         """<html>"product" and "version"</html>"""
       )
@@ -201,6 +200,43 @@ class SingleInstanceGuardSpec extends FunSuite:
       assert(st.isInstanceOf[SingleInstanceGuard.NebflowInstance], s"got $st")
     }
 
+  // ── 双实例并存批 2026-10-30：health 探测的品牌集 ────────────────────
+  // 判据 = **路径归属**（命令行里的品牌数据根），不是品牌词（理由见 probeOnce 注释——
+  // rename 兼容：改前构建的本产品实例健康面仍写 `nebflow`，必须照旧 focus）。因此
+  // 带品牌词的 health 面：能读出命令行品牌根证据才升级 OtherInstance；否则按自家/兼容
+  // 命中即 NebflowInstance。品牌词本身只是「读数 + 拒绝文案」的主键，也决定「认不认识」。
+
+  test("health probe accepts both command brands as known products (stand + nebflow)") {
+    // 「认不认识」这条主键钉在这：两个已知品牌都进 known 集，异品牌字面才算出来。
+    // （路径证据是另一层，见 probeOnce 注释 + StaleProcessGuardSpec 的归属判据用例。）
+    assertEquals(SingleInstanceGuard.OtherBrands, Set("nebflow"), "已知对家品牌集（本批钉）")
+    assertEquals(SingleInstanceGuard.OwnBrand, "stand")
+  }
+
+  test("health probe classifies same-brand and legacy-health products as NebflowInstance (focusable)") {
+    withHttpServer("""{"product":"stand","status":"ok","version":"2026.10.26"}""") { p =>
+      val st = SingleInstanceGuard.checkPort("127.0.0.1", p, drainWaitMs = 0).unsafeRunSync()
+      assert(st.isInstanceOf[SingleInstanceGuard.NebflowInstance], s"same-brand stays focusable, got $st")
+    }
+    // 无路径证据的 nebflow-品牌词：rename 前的本产品实例 —— 兼容，照旧 focus。
+    withHttpServer("""{"product":"nebflow","status":"ok","version":"1.4.1"}""") { p =>
+      val st = SingleInstanceGuard.checkPort("127.0.0.1", p, drainWaitMs = 0).unsafeRunSync()
+      assert(st.isInstanceOf[SingleInstanceGuard.NebflowInstance], s"rename-boundary compat: focus, not refuse, got $st")
+    }
+    // 无 product 字段的 legacy 形态（老构建）：也 focus。
+    withHttpServer("""{"status":"ok","version":"1.4.0-beta.48","providers":{}}""") { p =>
+      val st = SingleInstanceGuard.checkPort("127.0.0.1", p, drainWaitMs = 0).unsafeRunSync()
+      assert(st.isInstanceOf[SingleInstanceGuard.NebflowInstance], s"legacy shape stays focusable, got $st")
+    }
+  }
+
+  test("foreign health whose product is an unrelated product name classifies ForeignOccupant") {
+    withHttpServer("""{"product":"other","status":"ok","version":"1.0"}""") { p =>
+      val st = SingleInstanceGuard.checkPort("127.0.0.1", p, drainWaitMs = 0).unsafeRunSync()
+      assert(st.isInstanceOf[SingleInstanceGuard.ForeignOccupant], s"got $st")
+    }
+  }
+
   test("health JSON carries the product marker") {
     // Contract side: /api/health must include "product":<lowerName> so the
     // guard's primary identification marker actually exists. The health
@@ -214,6 +250,8 @@ class SingleInstanceGuardSpec extends FunSuite:
     // still identify each other across the rename boundary.
     // Pinned here textually against that single source to survive
     // refactorings; the route itself is exercised E2E.
+    // 双实例并存批 2026-10-30：健康面 `product` 的识别集与拒绝文案的对家品牌名同源于此
+    // (`Branding.lowerName` + `OtherBrands`) —— 这两条是本 spec 的重钉面，防重构改丢。
     val source = scala.io.Source
       .fromFile(
         java.nio.file.Path.of("src/main/scala/nebflow/core/hotrestart/HealthProbe.scala").toFile
