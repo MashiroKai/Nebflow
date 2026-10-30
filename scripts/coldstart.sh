@@ -128,6 +128,10 @@
 #   COLDSTART_CHROME=<path> ./scripts/coldstart.sh                    # 指定开门用的 Chrome 可执行件
 #   NEBFLOW_ALLOW_PROD_ENROLL=1 ./scripts/coldstart.sh --net prod     # 显式放行：注册到生产 NebLink
 #
+# 相关脚本：scripts/coldstart-lt.sh —— 本地测试便利批（作者 10-30 令）：主实例（6138 体系）
+# 一步拉起 + 本地铸票直达已登录面板（免官网登录）。本脚本管【隔离新用户态】冷启动，
+# 那管【作者日常本地态】直达测试；两者复用同一铸票面，互不重叠。
+#
 # 说明：已配置的模型（home 顶层的 nebflow.json / models.json / model-presets.json）
 #       在冷启动时原地保留；主 home 有而新 home 无的模型配置会被种入（见 7)）。
 #       开门形态见文件头 8)：boot 自动开门 → PortalUrl 官网统一入口；一次性档案
