@@ -89,7 +89,10 @@ const FILE_CONTENTS = new Map([
 
 function makeServerWsMocks(ctx) {
   return ctx.routeWebSocket(/\/ws/, (ws) => {
-    ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
+    // graphseal 闸（2026-10-29 批后默认 OFF，#wiki-btn boot 摘挂）——本 spec 的
+    // wiki 图谱腿需显式 latch flag 回挂入口（存量红清欠：graphseal 批前本 spec
+    // 靠裸 #wiki-btn 直点，封存后无 flag 时按钮不在 DOM，wiki 腿整体红）。
+    ws.send(JSON.stringify({ type: 'configData', config: '{"features":{"wikiGraph":true}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
     ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: 'sess-1', agentName: 'Nebula', title: 'T', updatedAt: Date.now() }], activeId: 'sess-1', folders: [] }));
     ws.onMessage((raw) => {
       let m; try { m = JSON.parse(raw); } catch { return; }
@@ -248,18 +251,21 @@ const activate = async (page, tabId) => { await page.evaluate((id) => document.q
   ok('C6 环开态高度不变（面板页签胶囊 hover 态 = 常态 36px）',
     ringOpenPinned && mRingOpen.h === 36, `open=${ringOpenPinned} h=${mRingOpen.h}`);
 
-  // F4 环胶囊固定几何：hover 环全胶囊（中心+缘位）180×36，与主胶囊同 token 档
-  // （offsetWidth/Height = 布局盒，对 rotateX/translateZ/scale 变换免疫 ——
-  //   缘位 cover-flow 的投影盒不是几何本体，canvas-stack.spec 同口径）
+  // F4 环卡固定几何（扇卡批 2026-10-30 重钉，作者令「canvas 顶部多文件 tab 视图
+  // 改为卡片式左右翻动（卡片扇翻）」—— 环胶囊 → 文件扇，卡面规格复用 Pop 扇卡
+  // 220×280）：hover 扇全卡（游标+邻位）220×280（作者令「强制放缩所有尺寸卡片
+  // 到一个大小」），offsetWidth/Height = 布局盒，对 rotate/translate 变换免疫 ——
+  // 扑克扇形的投影盒不是几何本体（canvas-stack.spec 同口径）。标题头胶囊
+  // 180×36 不变（C6/F4c 继续钉）。
   const ring = await page.evaluate(() => {
     const hdr = document.querySelector('#canvas-panel .canvas-header');
     const caps = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule')]
       .map((c) => ({ w: c.offsetWidth, h: c.offsetHeight, cls: c.className }));
     return { hdrW: hdr.offsetWidth, hdrH: hdr.offsetHeight, caps, n: caps.length };
   });
-  ok('F4a 环开且胶囊挂载（前置）', ring.n >= 3, `n=${ring.n}`);
-  ok('F4b 环全胶囊固定 180×36（中心+缘位同 token 档）',
-    ring.caps.every((c) => c.w === tokW && c.h === tokH),
+  ok('F4a 环开且扇卡挂载（前置）', ring.n >= 3, `n=${ring.n}`);
+  ok('F4b 扇全卡固定 220×280（游标+邻位同卡面 —— 强制放缩到一个大小，Pop 扇卡同规格）',
+    ring.caps.every((c) => c.w === 220 && c.h === 280),
     ring.caps.map((c) => `${c.w}x${c.h}`).join(' '));
   ok('F4c 中心环胶囊与标题头胶囊同盒（同位同尺寸无缝 morph 承诺）',
     Math.abs(ring.hdrW - tokW) <= 0.5 && Math.abs(ring.hdrH - tokH) <= 0.5,
@@ -268,7 +274,7 @@ const activate = async (page, tabId) => { await page.evaluate((id) => document.q
     path: join(HERE, '../evidence/20261025_capsule-fixed-size/shots/2-ring-open-36-dark.png'),
     clip: await page.evaluate(() => {
       const p = document.getElementById('canvas-panel').getBoundingClientRect();
-      return { x: Math.max(0, p.left), y: Math.max(0, p.top - 56), width: p.width, height: 260 };
+      return { x: Math.max(0, p.left), y: Math.max(0, p.top), width: p.width, height: 380 };
     }),
   });
   await page.mouse.move(cp.x, cp.y + 320);
@@ -317,10 +323,9 @@ const activate = async (page, tabId) => { await page.evaluate((id) => document.q
     (sap.match(/--capsule-h:\s*36px/g) || []).length === 1
     && (sap.match(/--capsule-w:\s*180px/g) || []).length === 1,
     `h=${(sap.match(/--capsule-h:\s*36px/g) || []).length} w=${(sap.match(/--capsule-w:\s*180px/g) || []).length}`);
-  ok('F6b 两胶囊脸消费 token（split.css：标题头 width + .cr-capsule width/max-width 护栏共 3 处 var() 引用，无第二字面量档）',
-    (split.match(/var\(--capsule-w/g) || []).length === 3
-    && (split.match(/var\(--capsule-h/g) || []).length === 2
-    && !/\.cr-capsule\s*\{[^}]*width:\s*\d+px/.test(split),
+  ok('F6b 标题头胶囊消费 token（split.css：var(--capsule-w) 1 处〔标题头 width〕+ var(--capsule-h) 5 处〔标题头 height/卡窗胶囊/内容顶垫档〕—— 扇卡批 2026-10-30 后 .cr-capsule 卡面 220px 为有意字面量规格〔Pop 扇卡同套卡面，F4b 钉〕，不再消费胶囊 token）',
+    (split.match(/var\(--capsule-w/g) || []).length === 1
+    && (split.match(/var\(--capsule-h/g) || []).length === 5,
     `w-ref=${(split.match(/var\(--capsule-w/g) || []).length} h-ref=${(split.match(/var\(--capsule-h/g) || []).length}`);
   ok('F6c 标题头固定宽不再有 fit-content 桌面档（body:not(.mobile-layer) 规则内）',
     !/body:not\(\.mobile-layer\) \.canvas-header\s*\{[^}]*fit-content/.test(split),

@@ -1844,6 +1844,11 @@ export default {
   'explorer.reference': '引用',
   'canvas.referenceCurrent': '引用当前页/选区',
   'canvas.noRef': '该标签页暂不支持引用',
+  // canvas 顶部文件扇（2026-10-30 作者令：canvas 文件切换卡片扇翻批）——
+  // 卡头中文签 + 扇顶操作提示（卡片名不裸英文，作者令）
+  'canvas.fanTagFile': '文件',
+  'canvas.fanTagPanel': '面板',
+  'canvas.fanHint': '左右滑动或滚动翻页 · 点击卡片切换文件',
   'canvas.unreadableTitle': '文件不可读',
   'canvas.unreadableHint': '文件不存在或被清理，无法读取。',
   'canvas.unreadablePathHint': '路径非法，无法读取。',

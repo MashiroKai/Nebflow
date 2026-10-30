@@ -121,7 +121,10 @@ async function points(page) {
     const p = document.getElementById('canvas-panel').getBoundingClientRect();
     return {
       cap: { x: r.left + r.width / 2, y: r.top + r.height / 2 },
-      far: { x: p.left + p.width / 2, y: Math.min(p.top + 320, p.bottom - 80) },
+      // 扇卡批 2026-10-30：环从竖胶囊（±~90px）改为文件扇悬于标题头下方
+      // （落差 56 + 卡高 280 + 旋摆 ≈ 400px 纵深、±~370px 半宽）——「区外」点须
+      // 越过扇面纵深（560px 档），+320 会落进游标卡 hover 区被正当消费。
+      far: { x: p.left + p.width / 2, y: Math.min(p.top + 560, p.bottom - 40) },
     };
   });
 }
