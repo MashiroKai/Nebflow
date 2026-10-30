@@ -1946,6 +1946,23 @@ export default {
   'reader.refresh': 'Refresh',
   'reader.pos': '{title} · {pct}%',
   'reader.chapter': 'Part {n}',
+  // Reader P3 batch (design §3.2/§4.2): mobi/azw3 degrade faces + annotation face
+  'mobi.encrypted': 'This ebook is encrypted — the reader never decrypts. Download only.',
+  'mobi.unsupported': 'This ebook uses an unsupported compression (HUFF/CDIC). Download only.',
+  'mobi.tooBig': 'This ebook exceeds the decompression size gate. Download only.',
+  'mobi.invalid': 'Not a parseable MOBI/AZW3 file.',
+  'mobi.download': 'Download',
+  'reader.anno.list': 'Notes',
+  'reader.anno.note': 'Note',
+  'reader.anno.del': 'Delete',
+  'reader.anno.save': 'Save',
+  'reader.anno.close': 'Close',
+  'reader.anno.placeholder': 'Write a note…',
+  'reader.anno.stale': 'Text changed',
+  'reader.anno.yellow': 'Yellow',
+  'reader.anno.green': 'Green',
+  'reader.anno.blue': 'Blue',
+  'reader.anno.pink': 'Pink',
   // cardwin-whitepage fix batch (2026-10-22): standalone card-window boot-face
   // failure copy (canvas.js cardWindowBootFace)
   'canvas.cardwinFailHint': 'Failed to load the card content — you can retry.',

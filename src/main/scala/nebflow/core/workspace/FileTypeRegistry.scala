@@ -67,6 +67,12 @@ object FileTypeRegistry:
     "ppt" -> Entry("pptx", true),
     "pptx" -> Entry("pptx", true),
     "epub" -> Entry("epub", true),
+    // reader P3 生态批（设计稿 20261030_181655 §3.2）：mobi/azw3 纯前端解析
+    // （viewers/mobi.js——PalmDB+PalmDOC LZ77 / KF8 扫 PK 边界抽内嵌 EPUB），
+    // 零新重依赖。azw3 与 mobi 同 itemType（'mobi' 族）：azw3 = KF8 内嵌 EPUB，
+    // 前端抽取后复用 EPUB 渲染管线。.azw 与加密 mobi 不注册：渲染面走下载兜底。
+    "mobi" -> Entry("mobi", true),
+    "azw3" -> Entry("mobi", true),
     // media — video (binary; the frontend fetches bytes via /api/nf-file,
     // which already whitelists every extension below and supports Range).
     "mp4" -> VideoEntry,

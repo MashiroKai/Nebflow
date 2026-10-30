@@ -21,6 +21,7 @@ import docxViewer from './viewers/docx.js';
 import xlsxViewer from './viewers/xlsx.js';
 import pptxViewer from './viewers/pptx.js';
 import epubViewer from './viewers/epub.js';
+import mobiViewer from './viewers/mobi.js';
 import videoViewer from './viewers/video.js';
 import largeTextViewer from './viewers/largeText.js';
 
@@ -38,7 +39,7 @@ function registerBuiltIns() {
   for (const viewer of [
     codeViewer, jsonViewer, csvViewer,
     markdownViewer, yamlViewer, htmlViewer,
-    imageViewer, pdfViewer, docxViewer, xlsxViewer, pptxViewer, epubViewer,
+    imageViewer, pdfViewer, docxViewer, xlsxViewer, pptxViewer, epubViewer, mobiViewer,
     videoViewer,
   ]) {
     // The built-in viewer modules predate the ViewerProtocol typedef and

@@ -28,6 +28,10 @@ class FileTypeRegistrySpec extends FunSuite:
       ("ppt", "pptx", true),
       ("pptx", "pptx", true),
       ("epub", "epub", true),
+      // reader P3 生态批（设计稿 20261030_181655 §3.2）：mobi/azw3 纯前端解析，
+      // azw3 与 mobi 同 itemType（'mobi' 族）。.azw 与加密 mobi 不注册（下载兜底）。
+      ("mobi", "mobi", true),
+      ("azw3", "mobi", true),
       // canvas-media batch (2026-10-05): the two new media families.
       ("mp4", "video", true),
       ("webm", "video", true),
@@ -65,6 +69,7 @@ class FileTypeRegistrySpec extends FunSuite:
     // 2026-10-05 canvas-media batch: added "video" and "audio" (new itemTypes;
     // every pre-existing one is unchanged — before/after disclosed verbatim in
     // the batch report, OD-5).
+    // 2026-10-30 reader-P3 batch: added "mobi" (mobi/azw3 ebook family).
     val itemTypes = FileTypeRegistry.BuiltIn.values.map(_.itemType).toSet
     val expected =
       Set(
@@ -79,6 +84,7 @@ class FileTypeRegistrySpec extends FunSuite:
         "xlsx",
         "pptx",
         "epub",
+        "mobi",
         "video",
         "audio",
         "code"
@@ -91,6 +97,8 @@ class FileTypeRegistrySpec extends FunSuite:
     // 2026-10-05 canvas-media batch: the 11 media extensions below are the
     // deliberate, disclosed addition (OD-5; whitelist-aligned families, m4v
     // excluded — see FileTypeRegistry header).
+    // 2026-10-30 reader-P3 batch: mobi/azw3 disclosed addition (design
+    // 20261030_181655 §3.2; .azw deliberately absent — download fallback).
     val oldBinaryExts = Set(
       "png",
       "jpg",
@@ -112,6 +120,8 @@ class FileTypeRegistrySpec extends FunSuite:
       "ppt",
       "pptx",
       "epub",
+      "mobi",
+      "azw3",
       "mp4",
       "webm",
       "ogv",
