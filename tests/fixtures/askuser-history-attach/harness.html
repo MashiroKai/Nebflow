@@ -13,7 +13,8 @@
        __events         → 捕获到的 'workspace-open-item' 明细（单点入口的证据）
 
      🔴 读数只锚类名 / 属性 / DOM 计数（禁锚本地化文本）。
-     🔴 绝不连任何真实后端：state.ws 是桩（send 只记录帧）。 -->
+     🔴 绝不连任何真实后端：state.ws 是桩（send 只记录帧）；附件行取数/探针面
+     由 window.fetch 桩（票据轨模拟，计数 __railCounts）承接。 -->
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
@@ -42,11 +43,41 @@
     setActiveView(chatViews.primary);
     state.activeSessionId = 'histatt-harness-session';
 
-    // WS stub: 只记录出站帧，绝不连后端。readyState 1 = OPEN（探针会发 pop.readFile，
-    // 无应答 ⇒ 1.5s 后该行降级为静态行 —— 这是「无后端」的夹具产物，不是被测代码行为；
-    // 本 harness 的读数一律在窗口内取，并另取一个「降级后」读数作对照）。
+    // WS stub: 只记录出站帧，绝不连后端。readyState 1 = OPEN。
+    // （askuser-attach-replyrender 批 2026-10-30 起：附件行探针**不再**走本 WS 腿——
+    // 旧 pop.readFile 探针的 fileContent 应答会被 explorer.js 全局处理器重派
+    // workspace-open-item 自动跳 Canvas，即作者报障根因 ⇒ 探针迁至下方票据轨 fetch 桩。
+    // 本 stub 仅为行为记录面保留；既有断言「零 pop.readFile 帧」照钉。）
     window.__sent = [];
     state.ws = { readyState: 1, send: (d) => window.__sent.push(JSON.parse(d)) };
+
+    // fetch stub（askuser-attach-replyrender 批）：模拟**票据轨**——POST /api/nf-ticket
+    // 逐路径出票（{tickets:{path:{t,exp}}}），GET /api/nf-file 恒回 206 单字节
+    // （Range 首字节探针 / 下载腿同面）。计数入 window.__railCounts = {mint, nfFile}
+    // 作 spec 的可达性/下载腿读数面。baseline 树（改前代码）不消费本轨 ⇒ 零扰动。
+    window.__railCounts = { mint: 0, nfFile: 0 };
+    const __realFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const url = typeof input === 'string' ? input : ((input && input.url) || '');
+      if (url.indexOf('/api/nf-ticket') !== -1) {
+        window.__railCounts.mint += 1;
+        let body = {};
+        try { body = JSON.parse((init && init.body) || '{}'); } catch { /* ignore */ }
+        const tickets = {};
+        (Array.isArray(body.paths) ? body.paths : []).forEach((p) => {
+          if (typeof p === 'string') tickets[p] = { t: 'harness-ticket', exp: Date.now() + 60000 };
+        });
+        return Promise.resolve(new Response(JSON.stringify({ tickets }), {
+          status: 200, headers: { 'Content-Type': 'application/json' },
+        }));
+      }
+      if (url.indexOf('/api/nf-file') !== -1) {
+        window.__railCounts.nfFile += 1;
+        return Promise.resolve(new Response(
+          new Blob([new Uint8Array([0])], { type: 'application/octet-stream' }), { status: 206 }));
+      }
+      return __realFetch(input, init);
+    };
 
     window.__events = [];
     window.addEventListener('workspace-open-item', (e) => window.__events.push(e.detail || null));
@@ -109,6 +140,7 @@
         boxHistoryReplay: box ? box.dataset.historyReplay === '1' : null,
         clickHandlerAttached: rows.map(r => r.tagName === 'BUTTON' ? typeof r.onclick === 'function' : null),
         sentFrames: window.__sent.map(f => f.type),
+        railCounts: { ...window.__railCounts },
       };
     };
 
@@ -145,9 +177,9 @@
       return hits();
     };
 
-    /** 行级入口读数（绕过卡级 capture 哨兵，直接调该行 onclick —— 证明**接线**正确、
-     *  走的是 Canvas 打开腿（与 live 腿/Pop 文件卡同源）、readFile path 与 absPath
-     *  逐字同形；同时回报旧事件面计数 = 0（退役实证）。 */
+    /** 【legacy · askuser-attach-replyrender 批后无消费方】行级入口读数（旧 Canvas
+     *  打开腿时代的接线证明，轮询 pop.readFile 帧）。行入口现为下载腿——下载腿的
+     *  读数面 = window.__railCounts.nfFile（见 __pendingRestore 的轮询形态）。 */
     window.__callRowEntry = async (i) => {
       const box = chatElNow().querySelector('.option-box');
       const rows = box ? [...box.querySelectorAll('.ask-attachments-wrap .ob-compare-btn')] : [];
@@ -255,15 +287,21 @@
         boxResolved: box ? box.classList.contains('resolved') : null,
       };
       const row = rows[0];
-      let click = { dispatched: 0, detailIds: [] };
+      let click = { dispatched: 0, events: 0 };
       if (row) {
         window.__events.length = 0;
         window.__sent.length = 0;
+        const nfBefore = window.__railCounts.nfFile;
         row.click();
-        const frames = await window.__openLegFrames(row.title);
+        // 行级入口 = 下载腿（askuser-attach-replyrender 批）：可观测面 = 票据轨
+        // nf-file 取回（+1）+ 零 workspace-open-item（Canvas 面已退役）。
+        const t0 = Date.now();
+        while (window.__railCounts.nfFile === nfBefore && Date.now() - t0 < 2500) {
+          await new Promise(r => setTimeout(r, 100));
+        }
         click = {
-          dispatched: frames.length,
-          detailIds: frames.map(f => f.path),
+          dispatched: window.__railCounts.nfFile - nfBefore,
+          detailIds: [],
           events: window.__events.length,
         };
       }

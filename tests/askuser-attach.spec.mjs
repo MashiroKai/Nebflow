@@ -13,7 +13,7 @@
 //   BASE_URL=http://localhost:8094 NEBFLOW_TOKEN=<auth.json> npx playwright test tests/askuser-attach.spec.mjs
 
 import { test, expect } from '@playwright/test';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { establishSession } from './helpers/session-rail.mjs';
 
@@ -393,6 +393,132 @@ test.describe('Answered badge on history cards', () => {
       return bubble.querySelectorAll('.ask-answer-attach-badge').length;
     });
     expect(noBadge).toBe(0);
+  });
+});
+
+// ============================================================
+// §6 答复附件渲染面（askuser-attach-replyrender 批 2026-10-30，
+// 作者令「我回复你的附件，不需要在 Canvas 打开」）：
+//   · 图片 ⇒ 会话流内联直显（不依赖 Canvas 标签页）+ 点击 lightbox 大图；
+//   · 非图片 ⇒ 点击下载（/api/nf-file 票据腿）；
+//   · 两者都**不开 Canvas**：断言 .canvas-tab 数 = 0、workspace-open-item
+//     零派发、URL 不触 /canvas 路由。
+// ============================================================
+
+test.describe('Reply attachment rendering — image inline + lightbox, non-image download, never Canvas', () => {
+  // 真盘真字节：内联图与下载腿都打真实 /api/nf-file；探针 pop.readFile 也要读得到件。
+  const PHOTO = `${NEBFLOW_HOME}/photo.png`;
+  const NOTES = `${NEBFLOW_HOME}/notes.txt`;
+  const PHOTO_BYTES = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+    'base64');
+
+  test.beforeAll(() => {
+    mkdirSync(NEBFLOW_HOME, { recursive: true });
+    writeFileSync(PHOTO, PHOTO_BYTES);
+    writeFileSync(NOTES, 'e2e reply notes\n');
+  });
+
+  /** 与 §4 同骨架的已答历史卡装配；额外钉 Canvas 开面间谍（workspace-open-item
+   *  派发计数 = 本批「不打开 Canvas」断言面）。 */
+  async function renderAnsweredCard(page, answerAttachments) {
+    await establishShared(page);
+    await page.waitForLoadState('networkidle');
+    await page.evaluate(async () => {
+      const { isCanvasOpen, closeCanvas } = await import('/js/canvas.js');
+      if (isCanvasOpen()) closeCanvas();
+      // 清零基线：关掉一切既存标签（别的 spec/上一轮运行持久化进来的——旧探针
+      // 时代还会把答复附件自动开成 file: 标签），本批 Canvas 断言从零起数。
+      const canvas = await import('/js/canvas.js');
+      const ids = [...document.querySelectorAll('.canvas-tab')].map((t) => t.dataset.tabId).filter(Boolean);
+      ids.forEach((id) => canvas.closeTab(id));
+      window.__canvasOpens = [];
+      window.addEventListener('workspace-open-item', () => { window.__canvasOpens.push(1); });
+      const { sendWs } = await import('/js/ws.js');
+      sendWs({ type: 'createSession', name: 'e2e-askuser-attach-render', agentName: 'Nebula' });
+    });
+    await page.waitForFunction(() => {
+      const c = document.getElementById('chat');
+      return c && c.getBoundingClientRect().width > 100;
+    }, null, { timeout: 10000 });
+
+    await page.evaluate(async (atts) => {
+      const { renderAskUserHistory } = await import('/js/chat.js');
+      const { chatViews, setActiveView } = await import('/js/chatView.js');
+      setActiveView(chatViews.primary);
+      const bubble = document.createElement('div');
+      document.querySelector('#chat .msgs, #chat')?.appendChild(bubble);
+      renderAskUserHistory(bubble, [{ question: 'Send a screenshot?' }], 'here it is', undefined, undefined, atts);
+      // 装配期可能已有无关 workspace-open-item 派发（会话恢复等）⇒ 取增量基线，
+      // 断言只钉「本卡渲染 + 点击」不新增 Canvas 开面。
+      window.__canvasOpensBaseline = window.__canvasOpens.length;
+      window.__tabBaseline = [...document.querySelectorAll('.canvas-tab')].map((t) => t.dataset.tabId);
+    }, answerAttachments);
+    return page.locator('.option-box').last();
+  }
+
+  const noNewCanvasOpen = (page) => page.evaluate(() => window.__canvasOpens.length - window.__canvasOpensBaseline);
+  /** 零 Canvas 开面双断言：① 渲染后无**新增**标签（任意 id）；② 全程无 file: 查看器
+   *  标签（plugins 面板页首装默认 tab 是应用自身行为，与本批无关 ⇒ 只钉增量 + file: 面）。 */
+  async function expectNoCanvasTab(page) {
+    const r = await page.evaluate(() => ({
+      newTabs: [...document.querySelectorAll('.canvas-tab')].map((t) => t.dataset.tabId)
+        .filter((id) => !(window.__tabBaseline || []).includes(id)),
+      fileTabs: [...document.querySelectorAll('.canvas-tab')].map((t) => t.dataset.tabId)
+        .filter((id) => String(id).startsWith('file:')),
+    }));
+    expect(r.newTabs).toEqual([]);
+    expect(r.fileTabs).toEqual([]);
+  }
+
+  test('image reply attachment renders inline in the session flow — visible thumbnail, zero Canvas', async ({ page }) => {
+    const box = await renderAnsweredCard(page, [
+      { id: 'ra1', seq: 1, name: 'photo.png', path: PHOTO, sha256: 's1', size: PHOTO_BYTES.length, mime: 'image/png', kind: 'image' },
+    ]);
+    const img = box.locator('.ask-attachments-wrap img');
+    await expect(img).toBeVisible();
+    // 真字节解码成功 = 内联直显链路（nfViewerSource ⇒ /api/nf-file）全通。
+    await expect.poll(async () => img.evaluate((i) => i.naturalWidth), { timeout: 15000 }).toBeGreaterThan(0);
+    // 零 Canvas 依赖：无标签页、无 workspace-open-item 派发、URL 不触 /canvas。
+    expect(await noNewCanvasOpen(page)).toBe(0);
+    await expectNoCanvasTab(page);
+    expect(page.url()).not.toContain('/canvas');
+  });
+
+  test('clicking the inline thumbnail opens the lightbox — still no Canvas tab', async ({ page }) => {
+    const box = await renderAnsweredCard(page, [
+      { id: 'ra1', seq: 1, name: 'photo.png', path: PHOTO, sha256: 's1', size: PHOTO_BYTES.length, mime: 'image/png', kind: 'image' },
+    ]);
+    const imgBtn = box.locator('button.ask-attachment-image');
+    await expect(imgBtn).toBeVisible();
+    await expect(imgBtn).toHaveAttribute('aria-label', 'Preview photo.png');
+    await expect.poll(async () => imgBtn.locator('img').evaluate((i) => i.naturalWidth), { timeout: 15000 }).toBeGreaterThan(0);
+
+    await imgBtn.click();
+    await expect(page.locator('.nf-lightbox.on')).toBeVisible(); // lightbox 大图，非 Canvas
+    expect(await noNewCanvasOpen(page)).toBe(0);
+    await expectNoCanvasTab(page);
+    expect(page.url()).not.toContain('/canvas');
+
+    await page.keyboard.press('Escape'); // ESC 关闭（lightbox 既有语义）
+    await expect(page.locator('.nf-lightbox.on')).toHaveCount(0);
+  });
+
+  test('non-image reply attachment click downloads via the ticket rail — no Canvas', async ({ page }) => {
+    const box = await renderAnsweredCard(page, [
+      { id: 'ra2', seq: 1, name: 'notes.txt', path: NOTES, sha256: 's2', size: 16, mime: 'text/plain', kind: 'file' },
+    ]);
+    const btn = box.locator('button.ob-compare-btn', { hasText: 'notes.txt' });
+    await expect(btn).toBeVisible();
+    await expect(btn).toHaveAttribute('aria-label', 'Download notes.txt');
+
+    const dl = page.waitForRequest((r) => r.url().includes('/api/nf-file'), { timeout: 15000 });
+    await btn.click();
+    const req = await dl; // 下载腿 = nfTicket 铸票 ⇒ /api/nf-file 整件取回（同通路纪律）
+    expect(req.url()).toContain('path=');
+    expect(await noNewCanvasOpen(page)).toBe(0);
+    await expectNoCanvasTab(page);
+    expect(page.url()).not.toContain('/canvas');
   });
 });
 

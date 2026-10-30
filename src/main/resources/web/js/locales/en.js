@@ -1467,8 +1467,8 @@ export default {
   'askUser.attachmentsTitle': 'Attachments',
   'askUser.attachmentsCount': '{n} attachments',
   'askUser.attachmentUnavailable': 'unavailable',
-  'askUser.attachmentOpenCanvas': 'Open {name} in Canvas',
-  'askUser.attachmentDownload': 'Download {name} (no in-app viewer for this type)',
+  'askUser.attachmentPreview': 'Preview {name}',
+  'askUser.attachmentDownload': 'Download {name}',
     'askUser.pendingTitle': 'Pending questions',
   // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
   // 补投静默批（2026-10-29）：词条去机制名——"held by the sub-agent barrier"
