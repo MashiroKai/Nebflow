@@ -77,11 +77,13 @@ injectRenderSessionSidebar(renderSessionSidebar);
 // 用户本地已存自定义配置照常生效；翻回 true 即恢复配置区。
 const ORB_SETTINGS_VISIBLE = false;
 
-// 2026-09-05 作者裁定（设置页清理批②）：新手运行指导入口隐藏封存。与
-// SIDEBAR_LEGACY_ENTRIES 同款 flag 形态——false = 渲染与绑定整体门控；
-// 按钮/绑定代码与 i18n 键 settings.rerunOnboarding 保留不删（隐藏 ≠ 删除），
-// 翻回 true 即原样回归。onboarding 本体与 /onboarding slash 命令零触碰。
-const SHOW_RERUN_ONBOARDING = false;
+// 2026-09-05 作者裁定（设置页清理批②）曾将此入口隐藏封存；2026-10-30
+// 「Onboarding 跳过批」作者令（更新、更具体）要求设置里保留重新进入
+// Onboarding 的入口 —— 跳过用户唯一的回归面，故翻回 true 原样回归。
+// 与 SIDEBAR_LEGACY_ENTRIES 同款 flag 形态；按钮/绑定与 i18n 键
+// settings.rerunOnboarding 从未删除（隐藏 ≠ 删除）。onboarding 本体与
+// /onboarding slash 命令零触碰。
+const SHOW_RERUN_ONBOARDING = true;
 
 // ---------- Active Folder (VSCode-style) ----------
 export function setActiveFolder(folderId) {

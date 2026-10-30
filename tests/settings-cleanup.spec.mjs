@@ -4,8 +4,10 @@
 // route mock API，零真实后端）：
 //   T1 ① MCP 区块移除 — zh/en 设置 DOM 无 MCP 标题/#mcp-server-list/[data-mcp]，
 //      相邻区块照常渲染；locales 双语均已删 settings.mcpServers 组键。
-//   T2 ② 新手指导入口封存 — #btn-rerun-onboarding 不渲染；源码保留
-//      SHOW_RERUN_ONBOARDING flag + settings.rerunOnboarding 键（隐藏 ≠ 删除）。
+//   T2 ② 新手指导入口 —— 2026-09-05 批曾裁定封存（不渲染）；2026-10-30
+//      「Onboarding 跳过批」作者令（更新、更具体）要求设置里保留重新进入
+//      入口，SHOW_RERUN_ONBOARDING 翻回 true ⇒ #btn-rerun-onboarding 渲染；
+//      源码保留 flag + settings.rerunOnboarding 键不变。
 //   T3 ③ NL 号入口移除 — neblink-nlid* 全选择器零命中；neblink 设备区仍在；
 //      neblink.nlId* 键组双语已删；friendsApi 两个 NL API 包装已删。
 //      （auth-trim 批 2026-10-20 改写：设置页「切换账号/退出登录」两键退役，
@@ -164,8 +166,8 @@ for (const [locale, mcpTitle] of [['zh-CN', 'MCP 服务器'], ['en', 'MCP Server
   });
 }
 
-// ══ T2 · ② 新手指导入口封存 ═══════════════════════════════
-test('T2 rerun-onboarding entry sealed (not rendered), code + i18n key retained', async ({ page }) => {
+// ══ T2 · ② 新手指导入口（2026-10-30 跳过批翻回可见）══════════
+test('T2 rerun-onboarding entry rendered (unsealed by 2026-10-30 skip batch), code + i18n key retained', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN' });
   await openSettings(page);
   const dump = await page.evaluate(() => {
@@ -176,11 +178,11 @@ test('T2 rerun-onboarding entry sealed (not rendered), code + i18n key retained'
       jsonBtn: !!content.querySelector('#btn-toggle-json'),
     };
   });
-  expect(dump.btn, '#btn-rerun-onboarding must not render while sealed').toBe(false);
+  expect(dump.btn, '#btn-rerun-onboarding must render while unsealed (2026-10-30 跳过批作者令)').toBe(true);
   expect(dump.advancedTitle, 'advanced section must remain').toContain('高级');
   expect(dump.jsonBtn, 'sibling raw-JSON button must remain').toBe(true);
 
-  // Sealed ≠ deleted: flag + binding + i18n key all still in source.
+  // 封存期「隐藏 ≠ 删除」的保留断言沿用：flag + binding + i18n key 都在源码里。
   const src = await page.evaluate(async () => (await (await fetch('/js/sidebar.js')).text()));
   expect(src, 'SHOW_RERUN_ONBOARDING flag must exist in source').toContain('SHOW_RERUN_ONBOARDING');
   expect(src, 'button template + binding must exist behind the flag').toContain('btn-rerun-onboarding');
