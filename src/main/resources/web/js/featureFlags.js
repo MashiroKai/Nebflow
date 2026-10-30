@@ -2,23 +2,31 @@
 //
 // Friends feature (contacts panel + friend messaging) build-environment split
 // (author ruling 2026-09-10, supersedes the "default off everywhere" posture
-// of 2026-09-08):
+// of 2026-09-08; RUNTIME DEFAULT OPENED by the 功能开放批， author order
+// 2026-10-30 18:22 verbatim: 「生图功能以及 消息 联系功能怎么还没开放出来？
+// 直接开放出来。」):
 //
 //   - CI/CD release bundle (scripts/build-web.mjs, the esbuild chain ci.yml
-//     runs before `sbt -D<lowerName>.webdist=1 assembly`): friends are
-//     STRIPPED. build-web.mjs injects the compile-time marker
-//     `window.__NEBFLOW_RELEASE__ = true` via esbuild `define`, so the guard
-//     below folds to `if (true)` and esbuild's dead-code elimination removes
-//     the dev branch — friendsEnabled() becomes a physical `return false` in
-//     shipped bundles. Entries stay detached at boot (activityBar.js) and the
-//     contacts/messages modules never init (no polling, no WS handlers).
+//     runs before `sbt -D<lowerName>.webdist=1 assembly`): friends ship
+//     VISIBLE by default (author ruling 2026-09-14, D1②). build-web.mjs keeps
+//     an opt-in re-seal switch — `node scripts/build-web.mjs --strip-friends`
+//     injects the compile-time marker `window.__NEBFLOW_RELEASE__ = true` via
+//     esbuild `define`, so the guard below folds to `if (true)` and esbuild's
+//     dead-code elimination removes the open branch — friendsEnabled()
+//     becomes a physical `return false` in that artifact. Entries stay
+//     detached at boot (activityBar.js) and the contacts/messages modules
+//     never init (no polling, no WS handlers).
 //
 //   - Local dev (sbt run serves the SOURCE tree directly — no esbuild, no
-//     marker property): friends default SEALED (friendseal batch, author
-//     ruling 2026-09-25 — the seal is the default posture; the backend latches
-//     the same key at boot). `"features": { "friends": true }` in
-//     <home>/nebflow.json unseals (two-state debugging); a config edit takes
-//     effect on reload, an instance restart unseals the tool face too.
+//     marker property): friends default OPEN (功能开放批 2026-10-30 — the
+//     runtime seal is opt-out now, mirroring the backend latch
+//     `FriendsSeal.initFromDisk`). ONLY the literal `"features": { "friends":
+//     false }` in <home>/nebflow.json re-seals; an absent key (or true, or a
+//     wrong-typed value) leaves the feature open. A config edit takes effect
+//     on page reload; an instance restart re-seals/re-opens the tool face too.
+//     安全闸原样随缺省解封恢复（好友请求-确认制 / 服务端鉴权 / 双层限速 /
+//     SendConfirm 三档权限链全在常编代码路径上，friendseal 封存本就是
+//     零删除条件化）——不是裸开。
 //
 // Flag source = the existing server config channel (no new mechanism): the
 // backend serves the install config verbatim via WS `configData` →
@@ -35,17 +43,17 @@ import state from './state.js';
 /**
  * true when the friends feature (contacts + friend messaging) is enabled.
  *
- * The release guard reads the marker expression INLINE (no intermediate
- * const): esbuild's `define` replaces the member expression textually, so
- * the bundled form is `if (true === true)` → the dev branch is folded away.
- * Dev-tree semantics: absent property → sealed (friendseal batch 2026-09-25:
- * default OFF unless explicitly `true`).
+ * The release re-seal guard reads the marker expression INLINE (no
+ * intermediate const): esbuild's `define` replaces the member expression
+ * textually, so the bundled form is `if (true === true)` → the open branch
+ * is folded away. Dev-tree semantics (post-功能开放批): only an explicit
+ * `false` seals — absent key = OPEN.
  */
 export function friendsEnabled() {
   if (/** @type {Window & { __NEBFLOW_RELEASE__?: boolean }} */ (window).__NEBFLOW_RELEASE__ === true) {
-    return false; // release bundle: stripped (author ruling 2026-09-10)
+    return false; // --strip-friends artifact: re-sealed (opt-in build switch)
   }
-  return state.parsedConfig?.features?.friends === true; // dev: default OFF (sealed, 2026-09-25)
+  return state.parsedConfig?.features?.friends !== false; // dev: default OPEN (功能开放批 2026-10-30)
 }
 
 /**

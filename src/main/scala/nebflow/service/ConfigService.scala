@@ -561,12 +561,13 @@ object ConfigService:
 
   /**
    * 生图设置面状态投影（GET /api/config/imagegen 的载荷；面板两形态的唯一
-   * 数据源）。`compiledIn` = 编译期 seal 常量（release 构建恒 false——面板据此
-   * 显示「未编入（release 构建零痕迹）」提示位）；配置段热读现取（JevSettings
-   * 同款口径）；`keyConfigured` 只读 secrets **在位性**（存在且非空——
-   * ImageGenService.readSecret 同判据），**永不回传 key 值**。🔴 日志零 key：
-   * 本投影不打日志，值的唯一可能位置是 secrets 文件本身（本函数不读值，只
-   * stat 在位性）。
+   * 数据源）。`compiledIn` = 编译期 seal 常量（功能开放批 2026-10-30 起缺省
+   * true——面板据此显示正常配置面；显式 `STAND_IMAGEGEN=0` 构建恒 false =
+   * 「未编入」提示位）；配置段热读现取（JevSettings 同款口径）；`keyConfigured`
+   * 只读 secrets **在位性**（存在且非空——ImageGenService.readSecret 同判据），
+   * **永不回传 key 值**。`debugLabel` 随正式开放退役为空串（线框保留，任何面
+   * 不得再渲染「调试中」）。🔴 日志零 key：本投影不打日志，值的唯一可能位置是
+   * secrets 文件本身（本函数不读值，只 stat 在位性）。
    */
   def imagegenStatus: IO[Json] = IO.blocking {
     val raw = if os.exists(configPath) then os.read(configPath) else "{}"

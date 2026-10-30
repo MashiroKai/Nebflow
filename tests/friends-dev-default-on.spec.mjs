@@ -1,17 +1,22 @@
 // friends-dev-default-on.spec.mjs — 好友功能构建环境区分·dev 两态门
-// （判据换代注记：本 spec 初版钉作者令 2026-09-10「dev 默认开」——该前提已被
+// （判据换代注记：本 spec 初版钉作者令 2026-09-10「dev 默认开」——该前提先被
 // friendseal 批作者裁定 ④（2026-09-25，featureFlags.js friendsEnabled：dev 树
-// 缺席 = 封存 = 默认 OFF，显式 true 才回挂）推翻。旧「空配置 ⇒ 入口回挂可见」
-// 判据在干净 HEAD 即红，换代为钉封存缺省**新形态**（缺席 + 防复活），显式两态
-// 与面板激活契约保留。）
+// 缺席 = 封存 = 默认 OFF，显式 true 才回挂）推翻，又被功能开放批作者令
+// 2026-10-30 18:22（「消息 联系功能……直接开放出来」）再度翻转：dev 树缺席 =
+// **开放** = 缺省 ON，仅显式 `"friends": false` 重新封存。本次换代钉开放缺省
+// 新形态（缺席 ⇒ 入口回挂可见，与后端 FriendsSeal 缺省解封镜像），显式两态
+// （true/false）与面板激活契约保留。）
 //
 // 覆盖（featureFlags.js friendsEnabled() 语义，源码树直跑 = 无 __NEBFLOW_RELEASE__）：
-//   D1  空配置（configData 不含 features.friends）→ 封存缺省：Messages/Contacts
-//       入口与面板**不在 DOM**（防复活钉）；#social-btn 按 friendseal ④ 明示不随
-//       封存摘挂（社交卡入口 = "Phone access" 配置面板，非好友域）
-//   D2  显式 features.friends:true → 入口回挂（顺序契约 messages → contacts →
-//       social 且在 spacer 之前）+ 点击 Contacts → 面板激活（原 D2/D4 合并）
-//   D3  显式 features.friends:false → 入口缺席（dev 两态调试：关态可达）
+//   D1  空配置（configData 不含 features.friends）→ 开放缺省：Messages/Contacts
+//       入口与面板**在 DOM**（功能开放批 2026-10-30）；#social-btn 按 friendseal ④
+//       明示不随封存摘挂（社交卡入口 = "Phone access" 配置面板，非好友域）——
+//       开放态亦在场，本断言两态不变
+//   D2  显式 features.friends:true → 入口在场（顺序契约 messages → contacts →
+//       social 且在 spacer 之前）+ 点击 Contacts → 面板激活（原 D2/D4 合并）；
+//       开放批后与 D1 同判据，保留作显式态 parity 钉
+//   D3  显式 features.friends:false → 入口缺席（dev 两态调试：显式封存态可达，
+//       防复活钉——面板 DOM 也不得在）
 // 自包含：route 拦截静态文件 + mock WS，无后端、无真实端口。
 // Run: node tests/friends-dev-default-on.spec.mjs
 import { chromium } from 'playwright-core';
@@ -69,14 +74,14 @@ async function bootPage({ configJson = '{}' } = {}) {
   return { ctx, page, pageErrors };
 }
 
-// ── D1: 空配置 → 封存缺省（friendseal ④）：入口/面板缺席 + 防复活 ──
+// ── D1: 空配置 → 开放缺省（功能开放批 2026-10-30，镜像后端 FriendsSeal 缺省解封）──
 {
   const { ctx, page, pageErrors } = await bootPage({ configJson: '{}' });
-  ok('D1 #messages-btn absent (sealed default: dev 树缺席 = OFF，friendseal 2026-09-25 ④)', await page.locator('#messages-btn').count() === 0);
-  ok('D1 #contacts-btn absent (sealed default)', await page.locator('#contacts-btn').count() === 0);
-  // 防复活钉：面板 DOM 也不得在（detachFriendEntries 摘挂的是按钮 + 面板四件套）。
-  ok('D1 #panel-messages/#panel-contacts absent (detach 四件套，防复活)', await page.locator('#panel-messages').count() === 0 && await page.locator('#panel-contacts').count() === 0);
-  // friendseal ④ 明示：#social-btn 不随好友封存摘挂（社交卡配置面板，非好友域）。
+  ok('D1 #messages-btn attached (open default: dev 树缺席 = ON，功能开放批 2026-10-30)', await page.locator('#messages-btn').count() === 1 && await page.locator('#messages-btn').evaluate(el => el.isConnected));
+  ok('D1 #contacts-btn attached (open default)', await page.locator('#contacts-btn').count() === 1 && await page.locator('#contacts-btn').evaluate(el => el.isConnected));
+  // 面板四件套随开放缺省回挂（enableFriendPanels 挂回按钮 + 面板）。
+  ok('D1 #panel-messages/#panel-contacts attached (开放缺省回挂)', await page.locator('#panel-messages').count() === 1 && await page.locator('#panel-contacts').count() === 1);
+  // friendseal ④ 明示：#social-btn 不随好友封存摘挂（社交卡配置面板，非好友域）——开放态亦在场。
   ok('D1 #social-btn stays mounted (friendseal ④ 不随封存摘挂)', await page.locator('#social-btn').count() === 1 && await page.locator('#social-btn').evaluate(el => el.isConnected));
   ok('D1 no page errors', pageErrors.length === 0, pageErrors.join('; '));
   await ctx.close();

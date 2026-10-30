@@ -38,11 +38,12 @@ object ImageGenService:
       case Some(c) if !c.isEnabled => Left(E.Disabled)
       case Some(c) =>
         val name = req.provider.orElse(c.defaultProvider).getOrElse("")
+        val configuredNames = c.providers.getOrElse(Map.empty).keys.toList.sorted
         c.providers.getOrElse(Map.empty).get(name) match
-          case None => Left(if name.isEmpty then E.Disabled else E.UnknownProvider(name))
+          case None => Left(if name.isEmpty then E.Disabled else E.UnknownProvider(name, configuredNames))
           case Some(pc) =>
             ImageGenAdapters.byType(pc.`type`) match
-              case None => Left(E.UnknownProvider(s"$name (type '${pc.`type`}' has no adapter)"))
+              case None => Left(E.UnknownProvider(s"$name (type '${pc.`type`}' has no adapter)", configuredNames))
               case Some(adapter) =>
                 readSecret(pc.keyRef) match
                   case Left(err) => Left(err)

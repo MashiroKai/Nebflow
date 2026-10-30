@@ -138,11 +138,12 @@ object MailTool extends Tool:
    * Both-missing error (verbatim word table; after the device leg retired, the target face is `address`-only).
    *
    * The tail pointer is SEAL-AWARE. With the
-   * friends feature sealed (the default posture), SendMessage's friend/group/
-   * local targets — including the this-machine local copy — answer
+   * friends feature sealed (explicit opt-out re-seal — `"features": {"friends":
+   * false}`; open by default since the 功能开放批 2026-10-30), SendMessage's
+   * friend/group/local targets — including the this-machine local copy — answer
    * `FRIENDS_SEALED`, so the pointer names the surviving `device:` target
    * explicitly; unsealed, the original sentence is kept verbatim (zero
-   * behavior change while the flag is on). `def` (not `val`): the latch is a
+   * behavior change while the flag is off). `def` (not `val`): the latch is a
    * boot-time constant, but this word table must follow it without a second
    * source.
    */
@@ -154,7 +155,8 @@ object MailTool extends Tool:
       (if nebflow.core.FriendsSeal.isSealed then
          "files for another machine go via SendMessage's `device:` target — its friend/group/local " +
            "targets (including the local this-machine copy) are sealed (FRIENDS_SEALED) until the " +
-           "feature is unsealed."
+           "feature is unsealed (remove the `\"features\": {\"friends\": false}` key from nebflow.json " +
+           "and restart)."
        else "files for another machine's user go via SendMessage.")
 
   /** Retirement refusal for a stale caller's `device=` (pure constructor, for direct spec testing). */

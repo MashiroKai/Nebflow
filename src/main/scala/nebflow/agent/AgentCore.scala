@@ -502,11 +502,11 @@ object AgentCore:
     if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty
 
   /**
-   * imagegen 双层批（2026-10-24）：`generate_image` 的编译期 seal 剥离面——
-   * friendsSealedStrip 同款条件化口径（静态集与件数常量不动，seal 状态只在本
-   * 消费点读一次）。seal 编译进产物（`STAND_IMAGEGEN=1` 构建）⇒ 空剥除、工具在
-   * 面；release 构建（seal=false，final val 常量折叠）⇒ 名字永不抵达 LLM——
-   * 幻觉调用在 allowed-set 分区即落，与 friends seal 同机制。
+   * imagegen 双层批（2026-10-24）+ 功能开放批（2026-10-30）：`generate_image`
+   * 的编译期 seal 剥离面——friendsSealedStrip 同款条件化口径（静态集与件数
+   * 常量不动，seal 状态只在本消费点读一次）。缺省构建（seal 编入）⇒ 空剥除、
+   * 工具在面；显式 `STAND_IMAGEGEN=0` 构建（seal=false，final val 常量折叠）⇒
+   * 名字永不抵达 LLM——幻觉调用在 allowed-set 分区即落，与 friends seal 同机制。
    */
   def imageGenSealedStrip: Set[String] =
     if nebflow.core.ImageGenSeal.CompiledIn then Set.empty else Set("generate_image")

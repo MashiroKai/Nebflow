@@ -4,7 +4,6 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.core.ImageGenSeal
 import nebflow.llm.imagegen.{ImageGenJobs, ImageGenService}
 import nebflow.llm.imagegen.ImageGenTypes.ImageGenRequest
 import nebflow.shared.NebflowLogger
@@ -12,11 +11,10 @@ import nebflow.shared.NebflowLogger
 import java.util.UUID
 
 /**
- * 腿① 内置生图工具（imagegen 双层批 2026-10-24，作者裁定：「主 agent 使用内置工具
- * …生图的时候有个占位动画…非阻塞」）。**调试状态（experimental）**——发版经
- * [[ImageGenSeal]] 编译期剔除。
- *
- * 非阻塞 job 生命周期（与 Bash run_in_background 同款三段通知 BashTool 先例）：
+ * 腿① 内置生图工具（imagegen 双层批 2026-10-24；功能开放批 2026-10-30 作者令
+ * 「直接开放出来」起为**正式产品面**——编译期 seal 缺省编入，STAND_IMAGEGEN=0
+ * 构建才剔除）。非阻塞 job 生命周期（与 Bash run_in_background 同款三段通知
+ * BashTool 先例）：
  *  1. `call` 立即返回 job 句柄 `{jobId, status:"running"}`——**回合零阻塞**；
  *  2. 生成在后台 fiber 跑（腿②与本服共用 [[ImageGenService]] provider 层）；
  *  3. 完成三段回填：PNG 落盘 `<dataRoot>/imagegen/<jobId>.png`（+ 台账翻转）→
@@ -32,7 +30,7 @@ object GenerateImageTool extends Tool:
 
   val name = "generate_image"
 
-  val description = s"""Generate an image from a text prompt (${ImageGenSeal.DebugLabel} / experimental — non-blocking job).
+  val description = """Generate an image from a text prompt (non-blocking job).
 
 - NON-BLOCKING: the call returns immediately with a job handle {jobId, status:"running"}; generation runs in the background and the frontend placeholder card is replaced in place when the image is ready (pushed over WS).
 - The completed image is saved under the instance data root (imagegen/ dir, format sniffed from real bytes) and displayed via the nf-file ticket chain.
@@ -98,7 +96,7 @@ object GenerateImageTool extends Tool:
                   .obj(
                     "jobId" -> jobId.asJson,
                     "status" -> "running".asJson,
-                    "note" -> s"${ImageGenSeal.DebugLabel}: 生成中，完成经 WS 推送回填占位卡片；结果落盘 imagegen/ 目录".asJson
+                    "note" -> "生成中，完成经 WS 推送回填占位卡片；结果落盘 imagegen/ 目录".asJson
                   )
                   .noSpaces
               )

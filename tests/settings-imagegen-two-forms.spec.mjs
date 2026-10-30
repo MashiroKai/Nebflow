@@ -12,7 +12,8 @@
 //
 // 语义钉：
 //   A1 seal OFF 形态：「未编入（release 构建零痕迹）」提示位、配置面控件全无
-//   A2 seal OFF 形态同样携带「调试中」徽标（设计六验收⑥的面板腿）
+//   A2 seal OFF 形态零「调试中」徽标（功能开放批 2026-10-30：徽标退役，两形态
+//      均不得再渲染 .imagegen-badge）
 //   B1 seal ON 既有 provider：配置值与投影载荷一致；「待录入」徽标；掩码默认态
 //   B2 凭据面无感化：整节渲染文本零 keyRef/密钥引用/指针字眼（fourfix ③铁钉）；
 //      单一「保存」钮（无「保存密钥」第二钮）
@@ -23,7 +24,7 @@
 //   B5 既有 provider 保存：409→PUT 覆写重录；已配置态 + 输入清空
 //   B6 整节替换 PUT：全部 provider 原样保留、投影字段不回写
 //   B7 删除提供方：两段式确认 → PUT 少该项（defaultProvider 让位）
-//   B8 两形态共享同一枚 .imagegen-badge
+//   B8 「调试中」徽标零渲染（功能开放批：debugBadge 单源已撤，页面零 .imagegen-badge）
 //
 // Run: npx playwright test tests/settings-imagegen-two-forms.spec.mjs
 
@@ -94,17 +95,17 @@ test.afterAll(() => {
 
 /** Status payloads (spec-owned truth — the shape ConfigService.imagegenStatus
  *  projects; the scala side pins the same shape in ImageGenSettingsSpec). */
-const statusOff = { compiledIn: false, debugLabel: '调试中', configured: true, enabled: true, defaultProvider: 'zhipu', providers: {} };
+const statusOff = { compiledIn: false, debugLabel: '', configured: true, enabled: true, defaultProvider: 'zhipu', providers: {} };
 const zhipuMissing = { type: 'cogview', model: 'cogview-3-flash', baseUrl: null, keyRef: 'zhipu-api-key', keyConfigured: false };
 const statusMissingKey = {
-  compiledIn: true, debugLabel: '调试中', configured: true, enabled: true, defaultProvider: 'zhipu',
+  compiledIn: true, debugLabel: '', configured: true, enabled: true, defaultProvider: 'zhipu',
   providers: { zhipu: zhipuMissing },
 };
 const statusWithKey = {
   ...statusMissingKey,
   providers: { zhipu: { ...zhipuMissing, keyConfigured: true } },
 };
-const statusEmpty = { compiledIn: true, debugLabel: '调试中', configured: false, enabled: false, defaultProvider: null, providers: {} };
+const statusEmpty = { compiledIn: true, debugLabel: '', configured: false, enabled: false, defaultProvider: null, providers: {} };
 
 /**
  * Route interception with a call ledger. The GET replies with the CURRENT
@@ -168,7 +169,7 @@ async function expectNoPointerWording(page) {
   }
 }
 
-test('A. seal=OFF 形态：未编入提示位 + 调试中徽标 + 配置面控件全无', async ({ page }) => {
+test('A. seal=OFF 形态：未编入提示位 + 零调试徽标 + 配置面控件全无', async ({ page }) => {
   const state = { status: statusOff, existingSecrets: new Set() };
   const { install } = wireRoutes(page, state);
   await install();
@@ -181,9 +182,8 @@ test('A. seal=OFF 形态：未编入提示位 + 调试中徽标 + 配置面控�
   await expect(page.locator('#toggle-imagegen')).toHaveCount(0);
   await expect(page.locator('#cfg-imagegen-model')).toHaveCount(0);
   await expect(page.locator('#cfg-imagegen-key')).toHaveCount(0);
-  // 徽标（A2/B8）：调试中，同一枚单源。
-  const badge = page.locator('#badge-slot .imagegen-badge');
-  await expect(badge).toHaveText('调试中');
+  // 徽标（A2/B8）：功能开放批退役——页面零 .imagegen-badge 渲染。
+  await expect(page.locator('.imagegen-badge')).toHaveCount(0);
   await page.screenshot({ path: path.join(SHOT_DIR, 'A-seal-off-not-compiled.png'), fullPage: true });
 });
 
@@ -349,10 +349,10 @@ test('B7. 删除提供方：两段式确认 → PUT 少该项', async ({ page })
   await page.screenshot({ path: path.join(SHOT_DIR, 'B7-provider-deleted.png'), fullPage: true });
 });
 
-test('B8. 调试中徽标单源在场（seal ON 配置面同枚）', async ({ page }) => {
+test('B8. 「调试中」徽标零渲染（功能开放批：debugBadge 单源已撤）', async ({ page }) => {
   const state = { status: statusMissingKey, existingSecrets: new Set() };
   const { install } = wireRoutes(page, state);
   await install();
   await openHarness(page);
-  await expect(page.locator('#badge-slot .imagegen-badge')).toHaveText('调试中');
+  await expect(page.locator('.imagegen-badge')).toHaveCount(0);
 });

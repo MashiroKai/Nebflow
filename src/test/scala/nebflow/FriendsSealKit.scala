@@ -18,6 +18,9 @@ import nebflow.core.FriendsSeal
  *    sbt's parallel suites — a plain boolean setter would let one suite's
  *    restore flip the latch under another still-running suite. Every lift is
  *    restored via guarantee/finally (all paths).
+ *  - `withForceSealed` / `withForceSealedSync` (功能开放批 2026-10-30): the
+ *    mirror pair that forces the SEALED posture — sealed-state specs stay
+ *    deterministic under the flipped (default-open) latch.
  */
 object FriendsSealKit:
 
@@ -45,4 +48,18 @@ object FriendsSealKit:
     FriendsSeal.testUnseal()
     try a
     finally FriendsSeal.testReseal()
+
+  /**
+   * 功能开放批（2026-10-30，缺省解封）：force the SEALED posture for the
+   * duration of `ioa` (ref-counted, restored on every path) — sealed-state
+   * specs stay deterministic regardless of the flipped default.
+   */
+  def withForceSealed[A](ioa: IO[A]): IO[A] =
+    IO(FriendsSeal.testForceSeal()) *> ioa.guarantee(IO(FriendsSeal.testForceUnseal()))
+
+  /** Non-IO variant for plain FunSuite behavior probes. */
+  def withForceSealedSync[A](a: => A): A =
+    FriendsSeal.testForceSeal()
+    try a
+    finally FriendsSeal.testForceUnseal()
 end FriendsSealKit

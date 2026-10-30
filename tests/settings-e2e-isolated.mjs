@@ -48,9 +48,9 @@ check('① eye 缺省=明文态', eyePressed === 'false', `aria-pressed=${eyePre
 await page.click('#jev-advance-toggle');
 await page.locator('.cfg-form-group:has(#cfg-jev-key-value)').first().screenshot({ path: `${SHOT}/S1-jev-key-plaintext.png` });
 
-// ③ 调试徽标
+// ③ 调试徽标（功能开放批 2026-10-30：正式开放，徽标退役——必须零渲染）
 const badge = await page.locator('.imagegen-badge').count();
-check('③ 调试徽标在场', badge >= 1, `count=${badge}`);
+check('③ 调试徽标退役（零渲染）', badge === 0, `count=${badge}`);
 
 // ② 缺 key 形态（warn 徽标 待录入）→ 录入 → 已配置（ok）
 const badgeDump = await page.evaluate(() =>

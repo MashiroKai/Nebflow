@@ -35,7 +35,6 @@
       window.__toasts.push(String(msg));
     };
     const mod = await import('/js/sidebar/imagegenSection.js');
-    document.getElementById('badge-slot').innerHTML = mod.debugBadge();
     window.__imagegen = mod;
     await mod.bindImagegenSection();
     document.body.dataset.ready = '1';

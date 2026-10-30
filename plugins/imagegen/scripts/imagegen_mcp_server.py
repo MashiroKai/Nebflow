@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""imagegen MCP server（imagegen 双层批 2026-10-24，腿②插件模式）——调试中 / experimental。
+"""imagegen MCP server（imagegen 双层批 2026-10-24，腿②插件模式；功能开放批
+2026-10-30 起正式产品面，DEBUG 标记退役）。
 
 stdio JSON-RPC 2.0（newline-delimited，MCP 2025-06-18 子集：initialize /
 notifications/initialized / tools/list / tools/call）。单工具 generate_image：
 把调用翻译成本机引擎环回路由 POST http://127.0.0.1:<port>/api/imagegen 的**阻塞**
 HTTP 调用——路由侧走与腿①内置工具完全相同的 provider 层（配置同读 nebflow.json
-imagegen 节），返回落盘 PNG 绝对路径。无第三方依赖（纯 stdlib）。
+imagegen 节），返回落盘图片绝对路径。无第三方依赖（纯 stdlib）。
 
 端口解析序：--port 参数 > $STAND_GATEWAY_PORT > $NEBFLOW_GATEWAY_PORT > 8080。
 """
@@ -18,15 +19,16 @@ import urllib.request
 
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "stand-imagegen"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "1.0.0"
 
 TOOL_NAME = "generate_image"
 TOOL_DESCRIPTION = (
-    "Generate an image from a text prompt (DEBUG/experimental). BLOCKING: the call "
-    "waits for generation to finish and returns the saved PNG absolute path. "
+    "Generate an image from a text prompt. BLOCKING: the call "
+    "waits for generation to finish and returns the saved image's absolute path. "
     "Providers/config come from the instance nebflow.json `imagegen` section "
-    "(cogview / openai-images / imagen adapters). Root sessions should use the "
-    "built-in non-blocking generate_image tool instead."
+    "(cogview / openai-images / imagen adapters; keys via the Settings → Image "
+    "generation panel). Root sessions should use the built-in non-blocking "
+    "generate_image tool instead."
 )
 TOOL_SCHEMA = {
     "type": "object",
@@ -123,8 +125,7 @@ def handle_request(req):
                 payload = json.loads(resp.read().decode("utf-8"))
             text = (
                 f"Image generated ({payload.get('provider', 'imagegen')}): {payload['path']}\n"
-                f"bytes={payload.get('bytes')}\n"
-                f"debug=调试中"
+                f"bytes={payload.get('bytes')}"
             )
             return {
                 "jsonrpc": "2.0",

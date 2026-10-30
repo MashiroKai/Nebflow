@@ -102,7 +102,7 @@ async function openJev(page) {
 
 /** The imagegen harness fetches its status projection before rendering. */
 const statusWithKey = {
-  compiledIn: true, debugLabel: '调试中', configured: true, enabled: true, defaultProvider: 'zhipu',
+  compiledIn: true, debugLabel: '', configured: true, enabled: true, defaultProvider: 'zhipu',
   providers: { zhipu: { type: 'cogview', model: 'cogview-3-flash', baseUrl: null, keyRef: 'zhipu-api-key', keyConfigured: true } },
 };
 

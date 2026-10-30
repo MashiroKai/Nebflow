@@ -82,8 +82,9 @@ class ImageGenSettingsSpec extends munit.FunSuite:
       assertEquals(status.hcursor.downField("enabled").as[Boolean].toOption, Some(false))
       val providers = status.hcursor.downField("providers").as[Map[String, Json]].toOption.get
       assertEquals(providers.isEmpty, true, "未配置态 providers 空对象（不是 null/缺席）")
-      // 调试标记随投影走（面板徽标数据源；设计六验收⑥的面板腿）。
-      assertEquals(status.hcursor.downField("debugLabel").as[String].toOption, Some("调试中"))
+      // 调试标记随投影走（功能开放批 2026-10-30：正式开放、DebugLabel 退役为
+      // 空串——锚定镜像常量，任何一侧漂移即破）。
+      assertEquals(status.hcursor.downField("debugLabel").as[String].toOption, Some(nebflow.core.ImageGenSeal.DebugLabel))
     }
   }
 
