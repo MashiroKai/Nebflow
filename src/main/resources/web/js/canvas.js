@@ -3862,6 +3862,10 @@ function initCapsuleRing() {
     lastPtr = null;
     build();
     hdr.classList.add('ring-open');
+    // P0 §6 查看面顶垫：环展开 = 胶囊浮层侵占内容顶带——给面板壳挂
+    // .capsule-ring-open，.canvas-viewer-safe-top 共享类随环过渡同长垫高
+    // （240ms，split.css 尾块），收起即撤。桌面单页签态不开环，壳类恒不挂。
+    document.getElementById('canvas-content')?.classList.add('capsule-ring-open');
     // 真越出批：显隐随环层本位；可点性 = 稳态门（0.36s 展开过渡后缘位才接
     // pointer —— 展开中胶囊从指针位掠过会抢标题头按压/拖划，见 split.css 注）。
     root.classList.add('open');
@@ -3879,6 +3883,7 @@ function initCapsuleRing() {
     if (!ringState) return;
     ringState = null;
     hdr.classList.remove('ring-open');
+    document.getElementById('canvas-content')?.classList.remove('capsule-ring-open');
     root.classList.remove('open');
     root.classList.remove('steady');
     if (steadyTimer) { clearTimeout(steadyTimer); steadyTimer = 0; }

@@ -805,7 +805,8 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   }
 
   pane.classList.remove('scrollable');
-  pane.innerHTML = `<div class="canvas-md-scroll"><div class="canvas-md-viewer">${html}</div></div>`;
+  // P0 §6 顶垫共享类（防胶囊遮挡；桌面常态由 split.css 尾块钉，手机层常态垫）
+  pane.innerHTML = `<div class="canvas-md-scroll canvas-viewer-safe-top"><div class="canvas-md-viewer">${html}</div></div>`;
   // 阅读位保真（词条引用批 batch 2，F5 返回原文档配套）：pane 切换走
   // display:none，Chromium 不保留滚动盒（实测 scrollTop 178→0）。scroll 监听
   // 记账 pane._mdScrollPos，激活时（canvas-tab-activated，canvas.js 只对带

@@ -11,7 +11,8 @@ async function viewMonaco(pane, ctx) {
   const { createEditor } = await import('../monacoEditor.js');
   // Create a container for Monaco
   const container = document.createElement('div');
-  container.className = 'canvas-monaco-container';
+  // P0 §6 顶垫共享类（防胶囊遮挡；桌面常态零垫、手机层/环展开态垫）
+  container.className = 'canvas-monaco-container canvas-viewer-safe-top';
   container.style.width = '100%';
   container.style.height = '100%';
   pane.innerHTML = '';

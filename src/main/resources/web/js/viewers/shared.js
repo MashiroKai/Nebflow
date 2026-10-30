@@ -1026,6 +1026,40 @@ export function parseZipEntries(buffer) {
   return entries;
 }
 
+/** Shared inflation core: declared-size pre-check + method dispatch → bytes.
+ *  2026-10-30 reader-P0 batch: EPUB resource rewriting needs binary bytes
+ *  (images/fonts/CSS), not text — one core keeps both paths on the identical
+ *  ZIP_BUDGET pre-check so a lying header is rejected before any inflate. */
+async function inflateZipEntryBytes(entry) {
+  const declared = (typeof entry.uncompSize === 'number' && entry.uncompSize > 0)
+    ? entry.uncompSize
+    : (entry.compMethod === 0 ? entry.data.byteLength : 0);
+  if (declared > ZIP_BUDGET.maxEntryBytes) {
+    throw new Error(`ZIP entry decompressed size ${declared} bytes exceeds budget ${ZIP_BUDGET.maxEntryBytes}`);
+  }
+  if (entry.compMethod === 0) return entry.data;
+  if (entry.compMethod === 8) {
+    const ds = new DecompressionStream('deflate-raw');
+    const stream = new Blob([entry.data]).stream().pipeThrough(ds);
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+  throw new Error('Unsupported ZIP compression: ' + entry.compMethod);
+}
+
+/** Account `byteLength` against the per-source-buffer cumulative budget. */
+function accountZipBytes(entry, byteLength) {
+  const source = entry.data && entry.data.buffer;
+  const budget = source ? _zipBudgetFor(source) : null;
+  if (!budget) return;
+  // Actual-size accounting: header-declared sums are pre-verified in
+  // parseZipEntries; this backstop catches lying/streamed headers before a
+  // runaway multi-entry decode can exceed the family total.
+  budget.used += byteLength;
+  if (budget.used > ZIP_BUDGET.maxTotalBytes) {
+    throw new Error(`ZIP cumulative decompressed size ${budget.used} bytes exceeds budget ${ZIP_BUDGET.maxTotalBytes}`);
+  }
+}
+
 /** Decompress a ZIP entry to text. Method 0 = stored, 8 = deflate.
  *  2026-10-06 pptx-mvp batch: ZIP_BUDGET enforcement lives here so every caller
  *  (epub leg today, any future zip consumer) inherits the same budget family.
@@ -1033,29 +1067,18 @@ export function parseZipEntries(buffer) {
  *  zips are backstopped by the actual-size re-check after decode). */
 export async function decompressZipEntry(entry) {
   if (!entry) return '';
-  const source = entry.data && entry.data.buffer;
-  const budget = source ? _zipBudgetFor(source) : null;
-  const declared = (typeof entry.uncompSize === 'number' && entry.uncompSize > 0)
-    ? entry.uncompSize
-    : (entry.compMethod === 0 ? entry.data.byteLength : 0);
-  if (declared > ZIP_BUDGET.maxEntryBytes) {
-    throw new Error(`ZIP entry decompressed size ${declared} bytes exceeds budget ${ZIP_BUDGET.maxEntryBytes}`);
-  }
-  let text;
-  if (entry.compMethod === 0) text = new TextDecoder().decode(entry.data);
-  else if (entry.compMethod === 8) {
-    const ds = new DecompressionStream('deflate-raw');
-    const stream = new Blob([entry.data]).stream().pipeThrough(ds);
-    text = await new Response(stream).text();
-  } else throw new Error('Unsupported ZIP compression: ' + entry.compMethod);
-  if (budget) {
-    // Actual-size accounting: header-declared sums are pre-verified in
-    // parseZipEntries; this backstop catches lying/streamed headers before a
-    // runaway multi-entry decode can exceed the family total.
-    budget.used += new TextEncoder().encode(text).byteLength;
-    if (budget.used > ZIP_BUDGET.maxTotalBytes) {
-      throw new Error(`ZIP cumulative decompressed size ${budget.used} bytes exceeds budget ${ZIP_BUDGET.maxTotalBytes}`);
-    }
-  }
+  const bytes = await inflateZipEntryBytes(entry);
+  const text = new TextDecoder().decode(bytes);
+  accountZipBytes(entry, new TextEncoder().encode(text).byteLength);
   return text;
+}
+
+/** Decompress a ZIP entry to raw bytes (EPUB image/font/CSS rewriting leg,
+ *  reader-P0 batch 2026-10-30). Same budget family as the text leg: images
+ *  count their byte length into the same per-source cumulative ledger. */
+export async function decompressZipEntryBytes(entry) {
+  if (!entry) return new Uint8Array(0);
+  const bytes = await inflateZipEntryBytes(entry);
+  accountZipBytes(entry, bytes.byteLength);
+  return bytes;
 }

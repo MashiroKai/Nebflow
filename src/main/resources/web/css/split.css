@@ -1840,6 +1840,9 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
 .canvas-tab-pane .canvas-monaco-container {
   border-radius: 0;
   overflow: hidden;
+  /* P0 §6 顶垫共享类配套：padding-top 入 100% 高内（mobile 层常态垫
+     calc(--capsule-h + 16px)），编辑器随之缩高而非溢出裁底。 */
+  box-sizing: border-box;
 }
 .canvas-monaco-container .monaco-editor,
 .canvas-monaco-container .monaco-editor .overflow-guard {
@@ -2001,11 +2004,12 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   position: absolute;
   inset: 0;
   overflow-y: auto;
-  /* 移位批（作者令 2026-10-22 ②）：卡头胶囊从顶部居中改顶部居左后，md 首行
-     （H1 落左上）正好顶进胶囊带（top 10 + 胶囊高 ≈36px ⇒ 底缘 ~46px）。scroller
-     内让出这段带头：内容起笔在胶囊下方，首行不再被罩；滚动穿底语义不变
-     （内容照旧从胶囊底下穿过、scroll-under-glass 裙边照旧渐隐）。 */
-  padding-top: 46px;
+  /* 顶垫移交 .canvas-viewer-safe-top 共享类（文件尾单源块，P0 §6 批）：
+     移位批（作者令 2026-10-22 ②）的让带语义不变——卡头胶囊居左后 md 首行
+     （H1 落左上）顶进胶囊带（top 10 + 胶囊高 ≈36px），scroller 内让出这段
+     带头：内容起笔在胶囊下方，首行不再被罩；滚动穿底语义不变（内容照旧从
+     胶囊底下穿过、scroll-under-glass 裙边照旧渐隐）。桌面常态值由
+     #canvas-content .canvas-md-scroll.canvas-viewer-safe-top 钉。 */
   /* 2026-09-20 (mdscroll batch, author report 2026-09-20 22:56「这个滚动有泄露」).
      Wording and citations corrected 2026-09-20 (mdscroll r2, errata after the
      verify read): this declaration was described as covering "the ONE
@@ -2107,8 +2111,11 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
 .canvas-md-viewer strong { font-weight: 600; }
 .canvas-md-viewer img { max-width: 100%; border-radius: 8px; }
 
-/* ── EPUB Reader — paginated ── */
+/* ── EPUB Reader — paginated ──
+   P0 止血批（设计稿 20261030 §1.2/§2.1/§6）：三主题档（data-epub-theme）+
+   阅读菜单（毛玻璃浮层锚定阅读器顶部，禁 overlay 暗化）+ 资源降级占位。 */
 .epub-reader {
+  position: relative;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -2129,14 +2136,25 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   overflow-y: auto;
   overflow-x: hidden;
   cursor: text;
+  position: relative;
 }
 .epub-reader-content {
   padding: 24px 36px;
   font-size: 16px;
   line-height: 1.8;
+  /* 三主题底/墨（设计稿 §1.2 对比度硬指标：纸质 ≈11.5:1，明亮/暗夜 ≥4.5:1）。
+     --epub-bg/--epub-fg 由 epub.js 按档位写入（值 = THEMES 表，亮/暗档即
+     base.css 面板 token 取值，非新设计 token）。 */
+  background: var(--epub-bg, var(--color-surface));
+  color: var(--epub-fg, var(--color-text));
+  min-height: 100%;
+  box-sizing: border-box;
+}
+.epub-reader-content[data-font-family="sans"] {
+  font-family: -apple-system, 'Segoe UI', 'PingFang SC', 'Helvetica Neue', sans-serif;
 }
 .epub-reader-content p {
-  margin: 0 0 1em;
+  margin: 0 0 var(--epub-para-space, 1em);
   text-align: justify;
 }
 .epub-reader-content h1, .epub-reader-content h2, .epub-reader-content h3 {
@@ -2147,13 +2165,103 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
 .epub-reader-content h2 { font-size: 18px; }
 .epub-reader-content h3 { font-size: 16px; }
 .epub-reader-content img { max-width: 100%; border-radius: 8px; }
+.epub-reader-content a { color: inherit; text-decoration: underline; }
 .epub-reader-content blockquote {
   margin: 1em 0;
   padding-left: 12px;
   border-left: 3px solid var(--color-border);
-  color: var(--color-text-muted);
+  /* 引用色 = 主题墨色 75% 混透明（color-mix，无新 token）：纸/暗主题下
+     对比度均 ≥4.5:1（旧 --color-text-muted 直涂在米白底仅 ~3.2:1）。 */
+  color: color-mix(in srgb, var(--epub-fg, var(--color-text)) 75%, transparent);
   font-style: italic;
 }
+/* 资源可见降级占位（设计稿 §1.1-2/3） */
+.epub-reader-content [data-nf-res-too-big] {
+  display: block;
+  min-width: 96px;
+  min-height: 64px;
+  border-radius: 8px;
+  border: 1px dashed var(--color-border);
+  background: var(--color-frame-input-bg, rgba(127, 127, 127, 0.08));
+}
+.epub-reader-content [data-nf-res-miss] {
+  display: inline-block;
+  min-width: 48px;
+  min-height: 24px;
+  outline: 1px dashed var(--color-border);
+}
+
+/* 阅读菜单（中间 1/3 唤出）：毛玻璃面板（铁律：面板本身必须毛玻璃，
+   禁 overlay 暗化层）——锚定阅读器顶部，材质复用 --glass-* 零新 token。 */
+.epub-reader-menu {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  width: min(92%, 420px);
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  box-shadow: var(--frost-shadow);
+  font-size: 13px;
+}
+.epub-reader-menu[hidden] { display: none; }
+.epub-menu-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-bottom: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}
+.epub-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  flex-wrap: wrap;
+}
+.epub-menu-label {
+  flex: none;
+  min-width: 44px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.epub-menu-value {
+  min-width: 44px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.epub-menu-btn {
+  flex: none;
+  min-width: 32px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  color: var(--color-text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.epub-menu-btn:hover { background: var(--glass-control-bg-hover); }
+.epub-menu-btn.on {
+  border-color: rgb(var(--brand-green) / 0.5);
+  background: rgb(var(--brand-green) / 0.14);
+}
+.epub-menu-close {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+}
+
 .epub-reader-nav {
   display: flex;
   align-items: center;
@@ -3415,3 +3523,26 @@ body.card-window #canvas-panel.card-win-merging { animation: nf-card-win-out 0.1
 .mobile-card-pop .pop-ic-merge { display: none; }
 .mobile-card-pop.is-independent .pop-ic-pop { display: none; }
 .mobile-card-pop.is-independent .pop-ic-merge { display: block; color: rgb(var(--sapphire)); }
+
+/* ── 查看面顶部留白共享类（P0 §6，设计稿 20261030）──
+   单源纪律：四个面（monaco/md/image/epub）统一引用本类，禁四处各写数值。
+   值 = 胶囊高 token + 16px 安全距。桌面常态不额外垫（避免白洞——基类不设
+   padding-top，各面保留自身默认；md 面由下方例外规则钉常驻垫）；环展开态
+   由 canvas.js 给 #canvas-content 挂 .capsule-ring-open（240ms 与环过渡同长，
+   收起即撤）；手机层 chip 条 + 工具条形态下常态生效（A9）。
+   位置注：本块置文件尾——垫值规则需压过上方查看器 padding 简写
+   （.canvas-image-viewer 等）。 */
+.canvas-viewer-safe-top {
+  transition: padding-top 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+body.mobile-layer .canvas-viewer-safe-top {
+  padding-top: calc(var(--capsule-h, 36px) + 16px);
+}
+#canvas-content.capsule-ring-open .canvas-viewer-safe-top {
+  padding-top: calc(var(--capsule-h, 36px) + 16px);
+}
+/* md 面例外：卡头胶囊浮带是真实遮挡（移位批 2026-10-22 作者报障实测），
+   桌面常态保留顶垫——值同源上式（同一表达式，非第二把尺）。 */
+#canvas-content .canvas-md-scroll.canvas-viewer-safe-top {
+  padding-top: calc(var(--capsule-h, 36px) + 16px);
+}
