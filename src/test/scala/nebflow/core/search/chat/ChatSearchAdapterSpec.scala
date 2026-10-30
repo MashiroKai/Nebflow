@@ -15,10 +15,12 @@ import java.nio.charset.StandardCharsets
  *   - message 片：user/ai/agent/ask 行入索引，injected user 行带 agent 投影；
  *     system/askUser/askPermission 不入（与前端口径一致）；
  *   - user 行附件名并入可检索文本（📎 前缀——§6.1）；
- *   - tool 片：summary+input+content 拼接 + tool 净名投影（cleanToolName 同款）；
+ *   - tool 行不入索引（2026-10-30 作者令①：搜索结果只搜对话）——summary/
+ *     input/content 不产生 kind="tool" 文档；其 Pop 载荷仍产出 media/file/
+ *     link 条目（工件面数据源不动）；
  *   - media/file/link 条目：user 附件（image/file）+ Pop 载荷（含 url 腿），
  *     extra = popMediaIndex 条目形状（前端网格免重抽——C4）；
- *   - 时间锚：tool 行取向前最近带 ts 行的回复锚（popMediaIndex 同款）；
+ *   - 时间锚：tool 行的媒体条目取向前最近带 ts 行的回复锚（popMediaIndex 同款）；
  *   - 源目录零写入：抽取前后目标 .ui.json 字节不变（§4.1 纪律 1 +
  *     §6 冒烟红线）。
  */
@@ -71,21 +73,17 @@ class ChatSearchAdapterSpec extends CatsEffectSuite:
     assert(media.extra.contains("photo.png"))
   }
 
-  test("tool 片：summary+input+content 拼接 + tool 净名投影（cleanToolName 同款）") {
+  test("tool 行不入索引（作者令①）：summary/input/content 不产生 kind=\"tool\" 文档；Pop 载荷媒体条目照产") {
     writeUi("s3", List(
       UiMessage.User(text = "run it", timestamp = 1000L),
       UiMessage.Tool(label = "Bash\n  (ls)", summary = "ls output",
         content = "file list", input = "{\"cmd\":\"ls\"}")
     ))
     val docs = adapter.extractSession("s3").getOrElse(Nil)
-    val tool = docs.find(_.kind == "tool").get
-    assert(tool.text.contains("ls output"))
-    assert(tool.text.contains("file list"))
-    // cleanToolName：leading identifier before '(' / whitespace / newline。
-    // 标签首段含空格（"Bash\n  (ls)" 的 \n 在 JSON 序列化里为 \\n 字面两字符）
-    // ⇒ 正则首段止于空格处。生产标签同形态（chatSearch.js cleanToolName
-    // 同款正则）——投影面读数一致即满足「与前端同源」判据。
-    assert(tool.extra.contains("\"tool\":\"Bash"), clue(tool.extra))
+    assertEquals(docs.count(_.kind == "tool"), 0)
+    assertEquals(docs.count(_.kind == "message"), 1)
+    // 非 Pop 载荷的 tool 行也不产出媒体条目（无工件可索引）。
+    assertEquals(docs.count(k => Set("media", "file", "link")(k.kind)), 0)
   }
 
   test("时间锚：tool 行的媒体条目取向前最近带 ts 行（回复锚——popMediaIndex 同款）") {
@@ -94,8 +92,8 @@ class ChatSearchAdapterSpec extends CatsEffectSuite:
       UiMessage.Tool(label = "Pop", summary = "p", content = "x")
     ))
     val docs = adapter.extractSession("s4").getOrElse(Nil)
-    // tool 文档自身 ts=0（popMediaIndex 同款：tool 行不带 ts）；
-    // 回复锚体现在同 ord 的媒体条目上（锚 = 5000）。
+    // tool 行自身已不入索引（作者令①）；回复锚语义保留在 media/file/link
+    // 条目上（此处无 Pop 载荷 ⇒ 无条目，断言退化恒真；有载荷时锚 = 5000）。
     val anchored = docs.filter(d => d.ord == 1 && d.kind != "tool")
     assert(anchored.isEmpty || anchored.forall(_.ts == 5000L), clue(anchored.map(_.ts)))
   }

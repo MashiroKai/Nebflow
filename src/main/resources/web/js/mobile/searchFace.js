@@ -7,8 +7,10 @@
 //   · 计数行 =「主会话 · N 条结果」（+ 既有截断尾注，chatSearch.statusSummary
 //     手机层分支同源键 search.scopeMain）；
 //   · 筛选两行：类型·日期（桌面 .search-tabs 同款沿用）+ 角色（本文件建的
-//     kind select：全部来源/用户/助手/AI/工具 —— i18n search.sourceAll 同源键；
-//     档值走 chatSearch.matchesKind 缝，window.__mhSearchKind，桌面恒空）；
+//     kind select：全部来源/用户/助手/AI —— i18n search.sourceAll 同源键；
+//     档值走 chatSearch.matchesKind 缝，window.__mhSearchKind，桌面恒空。
+//     「工具」档随 2026-10-30 作者令①退役：关键词搜索只搜对话，tool 行不入
+//     结果，常驻空档不再列出）；
 //   · 脚注（说明/空态）：「仅检索当前主会话 · 类型/日期/角色筛选可叠加 ·
 //     空态：无匹配结果——试试缩短关键词或清除日期/类型筛选」（empty/hint 两腿
 //     = 既有 search.noResults / search.noResultsSuggestion 现网同款）。
@@ -21,13 +23,13 @@ import { createIconsIn } from '../utils.js';
 import { scheduleSearch } from '../chatSearch.js';
 import { logEvent } from './navController.js';
 
-/** 角色档位（值 = chatSearch data-kind 词表；label 键与桌面 type 徽标同源）。 */
+/** 角色档位（值 = chatSearch data-kind 词表；label 键与桌面 type 徽标同源）。
+ *  2026-10-30 作者令①：tool 档退役（搜索结果只搜对话，tool 行不入结果）。 */
 const KIND_OPTIONS = [
   { value: '', labelKey: 'search.sourceAll' },
   { value: 'user', labelKey: 'search.typeUser' },
   { value: 'agent', labelKey: 'search.typeAgent' },
   { value: 'ai', labelKey: 'search.typeAi' },
-  { value: 'tool', labelKey: 'search.typeTool' },
 ];
 
 /** @type {HTMLElement|null} 角色行（.search-tabs 之后的第二筛选行）。 */

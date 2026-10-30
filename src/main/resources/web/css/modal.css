@@ -1018,6 +1018,18 @@
   padding: 1px 6px;
   flex-shrink: 0;
 }
+/* 作者令②（2026-10-30）：结果列表用户/AI 异色——token 见 base.css
+  （--search-kind-*，面板明暗双档、小字 4.5:1 判读）。agent（注入蓝泡）与 ai
+  同档（同为 AI 侧）；tool 行只剩浏览流，沿用默认 sapphire 不动。 */
+.search-result-type.type-user {
+  color: var(--search-kind-user);
+  background: var(--search-kind-user-bg);
+}
+.search-result-type.type-ai,
+.search-result-type.type-agent {
+  color: var(--search-kind-ai);
+  background: var(--search-kind-ai-bg);
+}
 .search-result-time {
   margin-left: auto;
   font-size: 11px;

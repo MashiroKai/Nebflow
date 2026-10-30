@@ -1,20 +1,25 @@
 // card-persist-fe-search.spec.mjs — Card( filePath ) on the SEARCH surface
-// (chain-card-persist-impl · E3-6 · FE leg, 2026-10-01).
+// (chain-card-persist-impl · E3-6 · FE leg, 2026-10-01; 2026-10-30 换代).
 //
 // Author ruling 2026-10-01 【全裁】: E3-6 = 采 — a persisted Card (a Card tool
 // call carrying a `filePath`) must surface in message search as a Canvas
 // artifact (badge + click-to-open), while the LEGACY html-only Card call must
 // NOT activate that leg.
 //
+// 换代（聊天记录搜索优化批 2026-10-30 作者令①：搜索结果只搜对话——tool 行
+// 退出关键词结果）：E3-6 的工件面改走分类 tab——持久化 Card 经 popMediaIndex
+// 退化路径在「文件」tab 产出 file 条目（activateMediaEntry → openPopArtifact
+// → workspace-open-item，同一 Canvas 单点）；legacy html-only Card 无 filePath
+// ⇒ 不产生条目（比旧行面更强的负向判别：行面它还渲染一行，条目面直接缺席）。
+//
 // The real chain under test (no live gateway, no backend):
 //   static server serves src/main/resources/web → boot index.html with a
 //   mocked WS sessionList (activeId sess-1) and a mocked
 //   GET /api/sessions/sess-1/history returning two `tool` rows →
-//   openSearchModal() → keyword typed → 300ms debounce → runSearch() →
-//   normalizeMessage() → resultElement() → popArtifactFromInput(r.tool, r.input)
-//   → data-artifact → click → activateResult() → openPopArtifact() →
-//   CustomEvent 'workspace-open-item' (canvas.js then fetches content via
-//   pop.readFile — deliberately out of scope here).
+//   openSearchModal() → 文件 tab → indexMedia degrade → media grid →
+//   click the persisted-Card file card → activateMediaEntry() →
+//   openPopArtifact() → CustomEvent 'workspace-open-item' (canvas.js then
+//   fetches content via pop.readFile — deliberately out of scope here).
 //
 // Scope discipline (task brief §二C): this is a SPLIT-SURFACE proof — the tool
 // input JSON is fed directly by the harness. The merged-state end-to-end leg
@@ -38,7 +43,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // The artifact path fed to the persisted-Card row (a split-surface input; the
 // file itself never has to exist — no backend leg is exercised here).
 const ART_PATH = '/tmp/nfc-cpf/demo.html';
-const ART_TITLE = 'demo';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -82,7 +86,7 @@ const POS_ROW = {
   type: 'tool',
   label: 'Card\n  (demo)',
   summary: `Card\n  (demo)`,
-  input: JSON.stringify({ filePath: ART_PATH, title: ART_TITLE }),
+  input: JSON.stringify({ filePath: ART_PATH, title: 'demo' }),
   content: '___CARD_HTML___{"html":"<div id=\\"pos\\">hi</div>","title":"demo"}',
   isError: false,
 };
@@ -153,65 +157,38 @@ let rc = 0;
 try {
   const { ctx, page, pageErrors, consoleErrors } = await bootPage(browser);
 
-  // ── Open the search modal and run a keyword query that matches BOTH rows ──
+  // ── Open the search modal, switch to the Files tab (artifact surface
+  //     after the 2026-10-30 ruling: tool rows left the keyword results;
+  //     persisted Cards surface here through the index degrade leg) ──
   ok('the search opener button is present', (await page.$('#search-btn')) !== null);
   await page.click('#search-btn');
   await page.waitForSelector('#search-overlay.on', { timeout: 5000 });
+  await page.click('#search-tab-files');
+  await sleep(700);
 
-  await page.fill('#search-keyword', 'hi');
-  // 300ms debounce + fetch + render
-  let rows = 0;
-  for (let i = 0; i < 40; i++) {
-    await sleep(150);
-    rows = await page.$$eval('#search-results .search-result', (els) => els.length);
-    if (rows >= 2) break;
-  }
-  ok('both history rows reached the result list', rows === 2, `rows=${rows}`);
-
-  // ── ① badge surface: positive row carries data-artifact="1"; the legacy
-  //       html-only row must NOT (negative — old usage never mis-activates).
-  // Rows are addressed by their documented stable identity `data-key`
-  // (`<sessionId>:<ord>`, chatSearch.js wrapItem) — the preview snippet is
-  // keyword-centred and clipped at 180 chars, so it is NOT a row address.
-  const badges = await page.$$eval('#search-results .search-result', (els) =>
+  // ① entry surface: the persisted Card degrades to exactly ONE file entry
+  //    (stable entry id `sess-1:0:0` = <sessionId>:<msgOrd>:<itemIdx>); the
+  //    legacy html-only Card produces NO entry (no filePath → no artifact).
+  const cards = await page.$$eval('#search-results .search-media-card', (els) =>
     els.map((el) => ({
-      artifact: el.getAttribute('data-artifact'),
-      kind: el.getAttribute('data-kind'),
-      key: el.getAttribute('data-key'),
-      // The full in-memory row text is reachable through the badge-window the
-      // row itself renders; used only to fingerprint which row is which.
-      preview: (el.querySelector('.search-result-preview')?.textContent || ''),
+      entryType: el.dataset.entryType,
+      entryId: el.dataset.entryId,
+      name: el.querySelector('.search-media-name')?.textContent || '',
     })));
-  const posRow = badges.find((b) => b.key === 'sess-1:0');
-  const negRow = badges.find((b) => b.key === 'sess-1:1');
-  ok('a result row exists for the persisted (filePath) history entry', !!posRow, JSON.stringify(badges.map((b) => b.key)));
-  ok('a result row exists for the legacy (html-only) history entry', !!negRow, JSON.stringify(badges.map((b) => b.key)));
-  ok('① persisted Card row has data-artifact="1"', posRow?.artifact === '1', JSON.stringify(posRow));
-  ok('① legacy html-only Card row has data-artifact="" (not activated)', negRow?.artifact === '', JSON.stringify(negRow));
-  ok('① both rows are kind=tool (same tool, same shape)', posRow?.kind === 'tool' && negRow?.kind === 'tool');
+  ok('① exactly one file card (the persisted Card degrade)', cards.length === 1 && cards[0].entryType === 'file', JSON.stringify(cards));
+  ok('① the card is the persisted (filePath) entry sess-1:0:0', cards[0]?.entryId === 'sess-1:0:0', JSON.stringify(cards));
+  ok('① legacy html-only Card produces no entry (stronger negative)', !cards.some((c) => c.entryId === 'sess-1:1:0'), JSON.stringify(cards));
 
-  // ①b badge affordance (the ↗ the data-artifact attribute drives, modal.css
-  // .search-result[data-artifact="1"] .search-result-type::after) — present on
-  // the persisted row, absent on the legacy row.
-  const afterContent = await page.$$eval('#search-results .search-result', (els) =>
-    els.map((el) => ({
-      key: el.getAttribute('data-key'),
-      after: getComputedStyle(el.querySelector('.search-result-type'), '::after').content,
-    })));
-  const posAfter = afterContent.find((a) => a.key === 'sess-1:0');
-  const negAfter = afterContent.find((a) => a.key === 'sess-1:1');
-  ok('①b persisted row renders the ↗ affordance', /↗/.test(String(posAfter?.after || '')), JSON.stringify(posAfter));
-  ok('①b legacy row renders NO affordance', !/↗/.test(String(negAfter?.after || '')), JSON.stringify(negAfter));
-
-  // ── ② click the persisted row ⇒ workshop-open item with the five fields ────
+  // ② click the file card ⇒ workshop-open item with the five fields
+  //    (activateMediaEntry → openPopArtifact: same Canvas single point the
+  //    old row-artifact leg used; title = baseName(ref) on the grid leg).
   const clicked = await page.evaluate(() => {
-    const els = [...document.querySelectorAll('#search-results .search-result')];
-    const el = els.find((e) => e.getAttribute('data-artifact') === '1');
+    const el = document.querySelector('#search-results .search-media-card[data-entry-id="sess-1:0:0"]');
     if (!el) return false;
     el.click();
     return true;
   });
-  ok('② the persisted row was clickable', clicked === true);
+  ok('② the persisted entry card was clickable', clicked === true);
   await sleep(600);
   const opened = await page.evaluate(() => window.__opened || []);
   ok('② a workspace-open-item event was dispatched', opened.length === 1, JSON.stringify(opened));
@@ -220,7 +197,7 @@ try {
   ok('② detail.content === "" (content fetched by Canvas via readFile)', d.content === '', JSON.stringify(d.content));
   ok('② detail.itemType === "" (type resolved after the readFile round trip)', d.itemType === '', JSON.stringify(d.itemType));
   ok('② detail.id === "file:" + filePath', d.id === 'file:' + ART_PATH, String(d.id));
-  ok('② detail.title === the tool input title', d.title === ART_TITLE, String(d.title));
+  ok('② detail.title === the entry name (baseName of the filePath)', d.title === 'demo.html', String(d.title));
 
   // ── ③ zero JS runtime errors (pageerror + console.error) ──────────────────
   ok('③ zero pageerror', pageErrors.length === 0, pageErrors.join(' | '));

@@ -61,6 +61,18 @@
   --color-frame-input-bg: #f5f6f8;
   --color-frame-input-border: #ddd;
   --color-frame-input-text: #3a3d45;
+
+  /* ── 搜索结果角色徽标（chatSearch 异色批 2026-10-30 作者令②：结果列表用户/
+     AI 异色，跟随面板明暗 token）。徽标字 = 10px 小字 → AA 4.5:1 判读，底色
+     取面板底（--color-modal-bg 亮 #fff / 暗 #1c1f27；徽标 tint 仅 ~8% 透过，
+     保守按面板底读数）。用户 = 微信绿族（与 --color-bubble-user 同族压深——
+     原绿 #95ec69 亮底 1.3:1 不可用）；AI/助手 = sapphire 族。
+     亮档读数：user 5.4:1 ✓ / ai 5.2:1 ✓（旧值 #5b7fbf 仅 4.0:1，顺带抬达标）；
+     暗档读数见 dark 块。 */
+  --search-kind-user: #067a40;
+  --search-kind-user-bg: rgba(6, 122, 64, 0.08);
+  --search-kind-ai: #4a6da7;
+  --search-kind-ai-bg: rgba(91, 127, 191, 0.08);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -115,6 +127,13 @@ body {
     --color-frame-input-bg: #0e1117;
     --color-frame-input-border: #2a2d35;
     --color-frame-input-text: #c8cad0;
+
+    /* 搜索结果角色徽标暗档（#1c1f27 面板底读数）：user 8.6:1 ✓ / ai 6.1:1 ✓
+       （旧值暗档仅 4.1:1，抬档达标；tint 同步提亮保可见）。 */
+    --search-kind-user: #6fce8e;
+    --search-kind-user-bg: rgba(111, 206, 142, 0.12);
+    --search-kind-ai: #7d9fd4;
+    --search-kind-ai-bg: rgba(125, 159, 212, 0.12);
 
     /* 危险族暗档（2026-09-16 按钮批）：`--color-danger` 此前**无 dark 覆盖**
        ⇒ 暗档沿用亮档旧深红（面板底 3.76:1 / 页面底 4.14:1）⇒ 判红。暗档改成

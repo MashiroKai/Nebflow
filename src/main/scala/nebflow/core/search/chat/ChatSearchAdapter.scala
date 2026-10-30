@@ -17,16 +17,20 @@ import java.time.{Instant, LocalDate, ZoneId}
  *   - message 片：user（injected=false）/ai/agent/ask 行的可检索文本
  *     （user 行附 📎 附件名——§6.1 口径）；injected=true 的 user 行是
  *     「agent 产生」注入行 → agent 类（messageKind 单一判别点同款）。
- *   - tool 片：tool 行 summary+input+content（cap 由索引层做——text 原样上交）。
+ *   - tool 行**不入索引**（聊天记录搜索优化批 2026-10-30 作者令①：搜索结果只搜
+ *     对话——tool call/tool result 的 summary/input/content 噪声不进索引不进
+ *     结果）；但 tool 行的 Pop 载荷仍按原口径产出 media/file/link 条目（工件
+ *     面，非「对话检索」，三个分类 tab 的数据源不动）。
  *   - extra 投影：message 片 = {role: user|agent|ai, agent?}（前端 messageKind
  *     同款词汇——浮窗 (sid,ord) 直定位的 typeMatches 快路靠它对齐）；tool 片 =
- *     {tool: 净名}；media/file/link 片 = popMediaIndex 条目形状（id/sessionId/
- *     msgOrd/ts/type/source/name/ext/size/ref/thumbRef），前端网格**免重抽**
- *     （C4 验收面）。Pop 载荷用 circe 宽松解析（含非法 JSON 的容忍——
- *     getOrElse 退化）。
+ *     {tool: 净名}（已随 tool 行退索引，仅旧库残留行可能携带）；media/file/link
+ *     片 = popMediaIndex 条目形状（id/sessionId/msgOrd/ts/type/source/name/ext/
+ *     size/ref/thumbRef），前端网格**免重抽**（C4 验收面）。Pop 载荷用 circe
+ *     宽松解析（含非法 JSON 的容忍——getOrElse 退化）。
  *
  * 时间锚：tool/ask/agent 行无 ts → 取向前最近一条带 ts 的行（popMediaIndex
- * 同款「回复锚」语义）；行级 ts=0 且无前锚 ⇒ 0（排未日期尾部）。
+ * 同款「回复锚」语义，media/file/link 条目仍消费）；行级 ts=0 且无前锚 ⇒ 0
+ * （排未日期尾部）。
  */
 final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
 
@@ -102,11 +106,9 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
           docs += SearchIndexService.IndexDoc(
             sid = sid, ord = ord, kind = "message", ts = ts,
             text = List(q.question, q.answer).filter(_.nonEmpty).mkString("\n"), extra = roleExtra("ai"))
-        case t: UiMessage.Tool =>
-          docs += SearchIndexService.IndexDoc(
-            sid = sid, ord = ord, kind = "tool", ts = 0,
-            text = List(t.summary, t.input, t.content).filter(_.nonEmpty).mkString("\n"),
-            extra = toolExtra(cleanToolName(t.label)))
+        // 聊天记录搜索优化批 2026-10-30 作者令①：tool call/result 行不入索引
+        // （搜索结果只搜对话）。Pop 载荷/media 条目在下面 mediaEntriesOf 照产。
+        case _: UiMessage.Tool => ()
         case _ => () // system/askUser/askPermission 不入索引（与前端口径一致）
       // media/file/link 条目（Pop 载荷 + user 附件——indexMedia 同源）
       mediaEntriesOf(sid, m, ord, ts).foreach { e =>
@@ -128,16 +130,6 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
     val base = io.circe.Json.obj("role" -> io.circe.Json.fromString(role))
     (if agent.nonEmpty then base.deepMerge(
       io.circe.Json.obj("agent" -> io.circe.Json.fromString(agent))) else base).noSpaces
-
-  private def toolExtra(tool: String): String =
-    io.circe.Json.obj("tool" -> io.circe.Json.fromString(tool)).noSpaces
-
-  /** tool 标签取净名（chatSearch.js cleanToolName 同款正则）。 */
-  private def cleanToolName(label: String): String =
-    val re = "^([A-Za-z_][A-Za-z0-9_-]*)".r
-    label match
-      case re(name) => name
-      case _        => label
 
   private def attName(a: Json): Option[String] =
     a.hcursor.downField("name").as[String].toOption.filter(_.nonEmpty)

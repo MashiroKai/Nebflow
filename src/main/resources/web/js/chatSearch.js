@@ -77,10 +77,11 @@ const PAGE_JUMP = 5;
 // 全量拉取流——设计稿 C3 只切搜索模式。
 const SEARCH_API_ENABLED = true;
 const SEARCH_API_LIMIT = 200;         // 与 MAX_RESULTS 同档
-/** 五 tab → 索引类型片谓词（all = message+tool 两片的并查询）。 */
+/** 五 tab → 索引类型片谓词（media/files/links 用 TAB_KINDS）。 */
 const TAB_KINDS = { media: ['media'], files: ['file'], links: ['link'] };
-/** all/date tab 的索引类型片（与 matchesTab 的 default 分支同口径）。 */
-const SEARCH_KINDS_ALL = ['message', 'tool'];
+/** all/date tab 的索引类型片：只搜对话（2026-10-30 作者令①——tool call/result
+ *  不入索引不入结果；tool 行只留在浏览流，工件走 media/file/link 分类片）。 */
+const SEARCH_KINDS_ALL = ['message'];
 
 // ── C6 条件请求缓存（§4.4 凭证腿前端半边）：规范化查询 url → {etag, body}。
 // 二次同查询带 If-None-Match，304 ⇒ 零重发，用缓存体渲染；会话变更 ⇒
@@ -1309,7 +1310,8 @@ async function loadAfterPages() {
  * 新旧并行，旧路径逐字保底）。
  *
  * 谓词纪律（§4.1 ③）：current 档带 sid（会话键谓词）；all 档 kinds 必给
- * （五 tab 映射——media/files/links 用 TAB_KINDS，all/date = message+tool）。
+ * （五 tab 映射——media/files/links 用 TAB_KINDS，all/date = message 单
+ * 片〔作者令①：tool 片退役，服务端亦剥除/过滤——见 SEARCH_KINDS_ALL〕）。
  * agentSel 保留既有前端过滤语义（all 档按会话 agent 名过滤；current 档与
  * 旧路径同——不过滤），在命中侧按 sid 归组前过滤会话清单。
  *
@@ -1407,7 +1409,9 @@ function applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, res
     return true;
   }
 
-  // all/date tab：message/tool 行——tool 过滤/手机角色筛选沿用既有前端谓词。
+  // all/date tab：message 行（作者令①后 tool 片不再出现在命中里——服务端
+  // 剥除/过滤；下面的 tool 分支仅为兼容旧索引体的防御，永不触发）。
+  // tool 过滤/手机角色筛选沿用既有前端谓词。
   populateToolFilter(
     [{ all: hits.map(h => ({ kind: h.kind, tool: (h.extra && h.extra.tool) || '' })) }],
     selectById('search-tool')?.value || '');
@@ -1537,11 +1541,15 @@ async function runSearch() {
     };
 
     // Match (v2.1 semantics, plus the category tab filter)
+    // 作者令①（2026-10-30）：关键词搜索只搜对话——tool call/result 行不入结果
+    // （与索引快路 kinds=message 同口径；tool 行只在浏览流出现，工件走
+    // media/files/links 分类索引）。
     const kwLower = kw.toLowerCase();
     const toolSel = activeToolFilter();
     const results = [];
     for (const { session, all } of perSession) {
       for (const m of all) {
+        if (m.kind === 'tool') continue;
         if (!matchesTab(m)) continue;
         if (!matchesTool(m, toolSel)) continue;
         if (!matchesKind(m)) continue; // 手机层角色筛选缝（桌面恒真）

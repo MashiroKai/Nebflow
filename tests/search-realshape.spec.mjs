@@ -134,23 +134,24 @@ async function openSearchMobile(page) {
 
 // ── T1 真形状关键词搜索（桌面）──────────────────────────────
 // 真实形状数据（含 injected 注入行/无 ts 工具行/system·askUser 不可检索行）
-// 上：三类种植行（user/ai/tool）全部命中，kind 词表 = data-kind 同款。
-test('T1 real-shape keyword search hits user+ai+tool across real payload shapes (desktop)', async ({ page }) => {
+// 上：种植行（user/ai）命中，tool 种植行被排除（2026-10-30 作者令①：搜索结果
+// 只搜对话，tool call/result 不入结果），kind 词表 = data-kind 同款。
+test('T1 real-shape keyword search hits user+ai, excludes tool, across real payload shapes (desktop)', async ({ page }) => {
   historyMode = 'real';
   await bootApp(page, { viewport: { width: 1400, height: 900 } });
   await openSearchDesktop(page);
 
   await page.locator('#search-keyword').fill(KW);
-  await expect(page.locator('#search-status')).toHaveText(/^3 条结果/, { timeout: 8000 });
+  await expect(page.locator('#search-status')).toHaveText(/^2 条结果/, { timeout: 8000 });
 
   const rows = page.locator('#search-results .search-result');
-  await expect(rows).toHaveCount(3);
+  await expect(rows).toHaveCount(2);
   const kinds = await rows.evaluateAll((els) => els.map((el) => el.getAttribute('data-kind')).sort());
-  expect(kinds).toEqual(['ai', 'tool', 'user']); // 三类种植行全中 = 真形状三腿可检索
+  expect(kinds).toEqual(['ai', 'user']); // 对话两腿可检索；tool 种植行被排除
 
-  // 工具行的真实形状字段（label 换行富串/input 为 JSON 字符串）进检索文本：
-  const toolRow = page.locator('#search-results .search-result[data-kind="tool"]');
-  await expect(toolRow.locator('.search-result-preview')).toContainText(KW);
+  // 工具行的真实形状字段（label 换行富串/input 为 JSON 字符串）即便含关键词
+  // 也不入结果（作者令①）：
+  await expect(page.locator('#search-results .search-result[data-kind="tool"]')).toHaveCount(0);
 });
 
 // ── T2 浏览流（真形状）───────────────────────────────────────
@@ -187,7 +188,7 @@ test('T3 transport failure surfaces error+retry, never fake zero (the reported b
   // 重试腿：故障解除 ⇒ 同一面板内直接恢复（真实使用 = 隧道回连后点重试）。
   historyMode = 'real';
   await status.locator('button').click();
-  await expect(status).toHaveText(/^3 条结果/, { timeout: 8000 });
+  await expect(status).toHaveText(/^2 条结果/, { timeout: 8000 });
 
   // 截断体（200 + messages 缺失）同罪同罚。
   historyMode = 'malformed';
@@ -211,14 +212,15 @@ test('T4 mobile P2 face on real shapes: main-session search + kind filter narrow
   await openSearchMobile(page);
 
   await page.locator('#search-keyword').fill(KW);
-  await expect(page.locator('#search-status')).toHaveText(/^主会话 · 3 条结果/, { timeout: 8000 });
+  await expect(page.locator('#search-status')).toHaveText(/^主会话 · 2 条结果/, { timeout: 8000 });
   const rows = page.locator('#search-results .search-result');
-  await expect(rows).toHaveCount(3);
+  await expect(rows).toHaveCount(2);
 
-  // 角色行（P2 二筛选行）在真形状数据上收窄：工具档 ⇒ 仅 tool 种植行。
-  await page.locator('#mh-search-kind').selectOption('tool');
+  // 角色行（P2 二筛选行）在真形状数据上收窄：AI 档 ⇒ 仅 ai 种植行（「工具」档
+  // 随作者令①退役——tool 行不入结果，角色档不再列出）。
+  await page.locator('#mh-search-kind').selectOption('ai');
   await expect(rows).toHaveCount(1, { timeout: 8000 });
-  await expect(rows.first()).toHaveAttribute('data-kind', 'tool');
+  await expect(rows.first()).toHaveAttribute('data-kind', 'ai');
   await page.locator('#mh-search-kind').selectOption('');
-  await expect(rows).toHaveCount(3, { timeout: 8000 });
+  await expect(rows).toHaveCount(2, { timeout: 8000 });
 });
