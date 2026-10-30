@@ -186,7 +186,7 @@ test('T3 blocked card: dimmed, banned pill, dispatch disabled; back contract', a
   // 返回契约：pop 一层回设置根页（dock 批：入口腿 = 工作台行）。
   await page.locator('.mobile-page[data-page="plugins"] .mobile-back-btn').click();
   await expect(page.locator('.mobile-page[data-page="plugins"]')).not.toHaveClass(/live/);
-  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
-  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('settings');
+  await expect(page.locator('.mobile-page[data-page="workbench"]')).toHaveClass(/live/);
+  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('workbench');
   expect(errors).toEqual([]);
 });

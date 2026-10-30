@@ -100,9 +100,12 @@ async function bootApp(page, colorScheme = 'dark') {
   await page.waitForTimeout(300);
 }
 
-/** 开设置：底 dock「设置」键 → 根页（dock 批：右列液态下拉退役）。 */
+/** 开设置：底 dock「工作台」键 → 工作台根 → 设置行 → 设置推送页
+ * （工作台批 2026-10-30：设置自顶层导航降级为工作台成员）。 */
 async function pushSettings(page) {
-  await dockTo(page, 'settings');
+  await dockTo(page, 'workbench');
+  await page.locator('.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="settings"]').click();
+  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
 }
 
 function watchErrors(page) {
@@ -121,17 +124,19 @@ test('T1 settings opens with NO profile entry row; agent surface lives in the me
   // 也无旧独立面板解隐路径。
   await expect(page.locator('.profile-entry')).toHaveCount(0);
   const body = page.locator('.mobile-page[data-page="settings"] .mobile-page-body');
-  // dock 批：页体首块 = 工作台分组行（HUB_ROWS），随后 = 收编设置面。
+  // 工作台批：设置页体首块即收编设置面（hub 行迁回工作台根页，页体无 mf-hub）。
   const head = await body.evaluate((el) => ({
-    first: el.firstElementChild?.className || '',
-    second: el.children[1]?.id || '',
+    first: el.firstElementChild?.id || el.firstElementChild?.className || '',
   }));
-  expect(head.first).toContain('mf-hub');
-  expect(head.second).toBe('settings-modal');
+  expect(head.first).toBe('settings-modal');
 
-  // 出页回根 → header 头像 = 唯一智能体入口：开合并面板（智能体分区）。
+  // 出页弹回工作台根（设置 = push 详情）→ 再「<」回聊天根（页为全屏独立界面，
+  // 顶栏头像只在聊天根可达）→ header 头像 = 唯一智能体入口：开合并面板。
   await page.locator('.mobile-page[data-page="settings"] .mobile-page-header .mobile-back-btn').click();
   await expect(page.locator('.mobile-page[data-page="settings"]')).not.toHaveClass(/live/);
+  await expect(page.locator('.mobile-page[data-page="workbench"]')).toHaveClass(/live/);
+  await page.locator('.mobile-page[data-page="workbench"] .mobile-page-header .mobile-back-btn').click();
+  await expect(page.locator('.mobile-page.live')).toHaveCount(0);
   await page.locator('#agent-avatar-btn').click();
   await expect(page.locator('#memory-overlay')).toHaveClass(/on/);
   await expect(page.locator('#memory-modal')).toHaveAttribute('data-pane', 'agent');
@@ -192,9 +197,12 @@ test('T3 name inline save on Enter via merged panel; settings groups follow desk
   await pushSettings(page);
 
   // 名称行内回车存（入口 = header 头像 → 合并面板智能体分区；saveName 写穿
-  // state.rootDisplayName + 播 root-name-change）。
+  // state.rootDisplayName + 播 root-name-change）。设置弹回工作台根后再「<」
+  // 回聊天根，顶栏头像只在聊天根可达（页 = 全屏独立界面）。
   await page.locator('.mobile-page[data-page="settings"] .mobile-page-header .mobile-back-btn').click();
   await expect(page.locator('.mobile-page[data-page="settings"]')).not.toHaveClass(/live/);
+  await page.locator('.mobile-page[data-page="workbench"] .mobile-page-header .mobile-back-btn').click();
+  await expect(page.locator('.mobile-page.live')).toHaveCount(0);
   await page.locator('#agent-avatar-btn').click();
   await expect(page.locator('#memory-overlay')).toHaveClass(/on/);
   const input = page.locator('#memory-modal .ap-name-input');
@@ -212,9 +220,10 @@ test('T3 name inline save on Enter via merged panel; settings groups follow desk
   await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
   await expect(page.locator('#settings-modal .settings-modal-header')).toBeVisible();
 
-  // 出页清场：零入口行残留（面板合并批 ④）。
+  // 出页清场：零入口行残留（面板合并批 ④）+ 弹回工作台根（工作台批）。
   await page.locator('.mobile-page[data-page="settings"] .mobile-page-header .mobile-back-btn').click();
   await expect(page.locator('.mobile-page[data-page="settings"]')).not.toHaveClass(/live/);
+  await expect(page.locator('.mobile-page[data-page="workbench"]')).toHaveClass(/live/);
   expect(await page.locator('.profile-entry').count()).toBe(0);
   expect(errors).toEqual([]);
 });

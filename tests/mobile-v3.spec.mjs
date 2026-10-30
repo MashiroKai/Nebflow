@@ -151,20 +151,21 @@ test('T1 five-tab dock: author-order keys, icon+label structure, switching, acti
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
 
-  // 结构钉：五键 = 作者逐字顺序（消息/联系人/对话/canvas/设置）；探针同源。
+  // 结构钉：五键 = 作者逐字顺序（消息/联系人/对话/canvas/工作台——工作台批
+  // 2026-10-30：设置自顶层导航降级为工作台成员）；探针同源。
   const dock = page.locator('#mobile-dock');
   await expect(dock).toBeVisible();
   const keys = page.locator('#mobile-dock .dock-key');
   await expect(keys).toHaveCount(5);
   const order = await keys.evaluateAll((els) => els.map((b) => b.dataset.dock));
-  expect(order).toEqual(['messages', 'contacts', 'chat', 'canvas', 'settings']);
+  expect(order).toEqual(['messages', 'contacts', 'chat', 'canvas', 'workbench']);
   const probeDock = await page.evaluate(() => window.__nfMobileNav?.dock);
-  expect(probeDock).toEqual(['messages', 'contacts', 'chat', 'canvas', 'settings']);
+  expect(probeDock).toEqual(['messages', 'contacts', 'chat', 'canvas', 'workbench']);
   // 键结构 = 图标在上 + 文字标签在下（小红书基准）；标签为中文。
   // 中键改版批（2026-10-29 23:36）：第三栏 = chat home 键 —— 中心键容器
   // （.dock-center，无常规 .dock-ic 图标位）；其余四键 = 常规 icon+label。
   const labels = await keys.evaluateAll((els) => els.map((b) => b.querySelector('.dock-label')?.textContent));
-  expect(labels).toEqual(['消息', '联系人', '对话', 'canvas', '设置']);
+  expect(labels).toEqual(['消息', '联系人', '对话', 'canvas', '工作台']);
   for (let i = 0; i < 5; i++) {
     if (i === 2) await expect(keys.nth(i).locator('.dock-center')).toBeVisible();
     else {
@@ -188,17 +189,17 @@ test('T1 five-tab dock: author-order keys, icon+label structure, switching, acti
   expect(await page.evaluate(() => window.__nfMobileNav)).toMatchObject({ home: 'chat', top: 'chat', stack: ['chat'] });
   await expect(page.locator('.mobile-page.live')).toHaveCount(0);
   await expect(page.locator('#mobile-dock .dock-key[data-dock="chat"]')).toHaveClass(/active/);
-  // 五栏互斥替换（非堆叠）：再点「设置」→ home 换根，栈深恒 1。
-  await page.locator('#mobile-dock .dock-key[data-dock="settings"]').click();
-  expect(await page.evaluate(() => window.__nfMobileNav)).toMatchObject({ home: 'settings', top: 'settings' });
+  // 五栏互斥替换（非堆叠）：再点「工作台」→ home 换根，栈深恒 1。
+  await page.locator('#mobile-dock .dock-key[data-dock="workbench"]').click();
+  expect(await page.evaluate(() => window.__nfMobileNav)).toMatchObject({ home: 'workbench', top: 'workbench' });
   expect((await page.evaluate(() => window.__nfMobileNav?.stack)).length).toBe(1);
   await expect(page.locator('#mobile-dock .dock-key[data-dock="chat"].active')).toHaveCount(0);
-  await expect(page.locator('#mobile-dock .dock-key[data-dock="settings"]')).toHaveClass(/active/);
+  await expect(page.locator('#mobile-dock .dock-key[data-dock="workbench"]')).toHaveClass(/active/);
   // 同根再点 = 清详情回根（栈已 1 → noop 不塌栈）。
-  await page.locator('#mobile-dock .dock-key[data-dock="settings"]').click();
-  expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('settings');
+  await page.locator('#mobile-dock .dock-key[data-dock="workbench"]').click();
+  expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('workbench');
   // 根页「<」= 回聊天根；中键激活。
-  await page.locator('.mobile-page[data-page="settings"] .mobile-back-btn').click();
+  await page.locator('.mobile-page[data-page="workbench"] .mobile-back-btn').click();
   expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('chat');
   await expect(page.locator('#mobile-dock .dock-key.active')).toHaveCount(1);
   await expect(page.locator('#mobile-dock .dock-key[data-dock="chat"].active')).toHaveCount(1);
@@ -255,8 +256,10 @@ test('T2 tasks page: chrome key badge, page-adopted panel, group order (running/
   await expect(c61.locator('.tp-mem-more')).toHaveText('+2');
   // 已完成卡整卡降透明（tp-dim）。
   await expect(panel.locator('.tp-card.tp-done').first()).toHaveClass(/tp-dim/);
-  // X 关闭 → 对账弹栈（面板 hidden + top 回聊天根）。
-  await panel.locator('.tp-x').click();
+  // 页面壳「<」关闭 → 对账弹栈（面板 hidden + top 回聊天根）。面板头 X 已随
+  // 重复返回钮清查批在页面壳内退场（手机层唯一出页键 = 页面壳「<」）。
+  await expect(panel.locator('.tp-x')).toBeHidden();
+  await page.locator('.mobile-page[data-page="tasks"] .mobile-back-btn').click();
   await expect(page.locator('#mobile-task-panel')).toBeHidden();
   expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('chat');
   expect(pageErrors).toEqual([]);
@@ -285,7 +288,8 @@ test('T3 merged panel: avatar opens Agent+Memory panel (agent pane), avatar loca
   await expect(panel).toBeVisible();
   await expect(panel).toHaveAttribute('data-pane', 'agent');
   const vb = page.viewportSize();
-  // 页面滑入过渡（0.26s）结束后量几何 —— 轮询等落定帧，不在动画中途断言。
+  // 页面无动画直切（作者令 2026-10-30 动画退役批）—— 轮询等落定帧，
+  // 不在渲染中途断言。
   await expect.poll(async () => {
     const b = await panel.boundingBox();
     return !!b && b.x >= 0 && b.x + b.width <= vb.width + 1 && b.y >= 0;

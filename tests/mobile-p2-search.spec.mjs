@@ -142,8 +142,11 @@ test('T1 page geometry: adopted full-bleed in search page, radius 0 (dock 批换
     x: 0, w: 375, h: expect.any(Number), radius: '0px',
   });
   expect((await geo()).h).toBeGreaterThan(400); // 页面体吃满（非内容零星高）
-  // 关闭契约：面板关闭 ⇒ overlay 摘 .on（§8-5 面族映射）+ 栈弹回聊天根。
-  await page.locator('#search-modal-close').click();
+  // 关闭契约：页面壳「<」弹栈 ⇒ overlay 摘 .on（§8-5 面族映射）+ 栈弹回聊天根。
+  // （桌面 #search-modal-close 已随重复返回钮清查批在页面壳内退场——出页唯一
+  // 键 = 页面壳「<」。）
+  await expect(page.locator('#search-modal-close')).toBeHidden();
+  await page.locator('.mobile-page[data-page="search"] .mobile-back-btn').click();
   await expect(page.locator('#search-overlay')).not.toHaveClass(/on/);
   await expect(page.locator('.mobile-page[data-page="search"]')).not.toHaveClass(/live/);
   expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('chat');

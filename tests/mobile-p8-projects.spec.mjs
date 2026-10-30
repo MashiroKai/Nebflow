@@ -191,13 +191,13 @@ test('T2 project cards: three-part form, remote badge, ellipsis values, full-wid
   expect(errors).toEqual([]);
 });
 
-test('T3 back button pops to settings root (dock batch: hub entry under settings)', async ({ page }) => {
+test('T3 back button pops to workbench root (dock batch: hub entry under workbench root)', async ({ page }) => {
   const errors = watchErrors(page);
   await pushPage(page, 'projects');
   await page.locator('.mobile-page[data-page="projects"] .mobile-back-btn').click();
   await expect(page.locator('.mobile-page[data-page="projects"]')).not.toHaveClass(/live/);
   // pop 一层 = 回设置根页（入口腿的工作台行所在根）—— 栈顶探针同帧核。
-  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
-  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('settings');
+  await expect(page.locator('.mobile-page[data-page="workbench"]')).toHaveClass(/live/);
+  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('workbench');
   expect(errors).toEqual([]);
 });

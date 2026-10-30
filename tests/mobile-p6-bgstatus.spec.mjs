@@ -217,7 +217,7 @@ test('T3 merge: agents group rides the CARRIER page (ghost stays retired), back-
   expect(await adoptedList.evaluate((el) => el.parentElement?.id || '')).toBe('bg-dropdown');
 
   // 关（dock 批真路径）：页面返回钮 → closePageFace 置 hidden → CLOSE_WATCH
-  // 对账弹栈（回设置根页）—— 收口语义 = 页面栈同源，零新增开合路径。
+  // 对账弹栈（回工作台根页）—— 收口语义 = 页面栈同源，零新增开合路径。
   await page.locator('.mobile-page[data-page="background"] .mobile-back-btn').click();
   await expect(page.locator('#bg-dropdown')).toBeHidden();
   await expect(page.locator('.mobile-page[data-page="background"]')).not.toHaveClass(/live/);
@@ -235,12 +235,12 @@ test('T4 empty drain: page pops when all tasks end (desktop auto-hide intact, do
   const errors = watchErrors(page);
   await openViaHub(page);
   // 推空快照（activeBgTasks 同源路径）→ updateBgTasksUI 计数 0 自动隐藏载体
-  // → CLOSE_WATCH 对账弹栈（回设置根页）。
+  // → CLOSE_WATCH 对账弹栈（回工作台根页）。
   harness?.sendBg({});
   await expect(page.locator('#bg-dropdown')).toBeHidden({ timeout: 8000 });
   await expect(page.locator('.mobile-page[data-page="background"]')).not.toHaveClass(/live/);
-  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('settings');
+  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('workbench');
   // dock 批换代：桌面图标键角标断言退役（键属手机层退场簇）—— 排空判据 =
-  // 载体 hidden + 栈弹回设置根页（上行）。
+  // 载体 hidden + 栈弹回工作台根页（上行）。
   expect(errors).toEqual([]);
 });

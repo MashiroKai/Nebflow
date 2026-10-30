@@ -412,8 +412,11 @@ body.mobile-layer .dock-badge.is-count {
   }
 }
 
-/* ── 页面容器 + 页面 section（互斥 .live；iOS push/pop 曲线）─────────
-   dock 批：页面底缘让位常驻 dock（--dock-h 单源）。 */
+/* ── 页面容器 + 页面 section（互斥 .live；微信式无动画直切）──────────
+   dock 批：页面底缘让位常驻 dock（--dock-h 单源）。
+   页面切换动画退役批（作者令 2026-10-30「去掉页面切换右拉入动画…无动画直切，
+   参考微信」）：删 translateX(102%) 滑入 + 0.26s 过渡 + visibility 延迟——
+   隐藏 = visibility:hidden 直切，live = 直切可见，零过渡零位移。 */
 body.mobile-layer #mobile-pages {
   position: fixed;
   inset: 0;
@@ -430,40 +433,46 @@ body.mobile-layer .mobile-page {
   flex-direction: column;
   overflow: hidden;
   background: var(--color-bg, #f5f6f8);
-  transform: translateX(102%);
   visibility: hidden;
   pointer-events: none;
-  transition:
-    transform 0.26s cubic-bezier(0.32, 0.72, 0, 1),
-    visibility 0s linear 0.26s;
 }
 body.mobile-layer .mobile-page.live {
-  transform: none;
   visibility: visible;
   pointer-events: auto;
-  transition: transform 0.26s cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-/* 页面头：左上角 Apple 式「<」返回钮（圆形毛玻璃底）＋居中页名。
+/* 页面头：左上角「<」返回钮（悬浮玻璃圆，glass-control 材质）＋居中标题胶囊。
+   顶部胶囊语言统一批（作者令 2026-10-30）：页头走聊天顶栏同款悬浮语言——
+   无通栏底面（背景/底缘分隔线/毛玻璃全退），控件各自悬浮；标题 = 玻璃胶囊
+   （与会话名胶囊 #session-name 同一 glass-control token 族）；按钮 = 悬浮
+   玻璃空间（glass-control 圆，材质与聊天顶栏 chrome 键同源）。
    dock 根页「<」= 回聊天根；详情页「<」= pop 一层。 */
 body.mobile-layer .mobile-page-header {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: calc(8px + env(safe-area-inset-top, 0px)) 10px 8px;
-  border-bottom: 1px solid var(--glass-border);
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   flex-shrink: 0;
 }
+/* 标题胶囊：环抱文案的玻璃药丸（margin-inline auto = 在返回钮与占位间居中）。 */
 body.mobile-layer .mobile-page-title {
-  flex: 1;
+  flex: 0 1 auto;
+  margin-inline: auto;
   min-width: 0;
-  text-align: center;
-  font-size: 16px;
+  max-width: calc(100% - 88px);
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow);
+  font-size: 13px;
   font-weight: 600;
-  color: var(--color-frame-text, #e6e9ef);
+  color: var(--color-frame-text-bright, var(--color-frame-text));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -471,32 +480,52 @@ body.mobile-layer .mobile-page-title {
 }
 body.mobile-layer .mobile-page-head-spacer {
   width: 30px;
-  flex-shrink: 0;
+  flex: none;
 }
-/* 圆形毛玻璃「<」返回钮。 */
+/* 悬浮玻璃「<」返回钮（glass-control 材质 = 聊天顶栏 chrome 键同源 token 族）。 */
 body.mobile-layer .mobile-back-btn {
   width: 30px;
   height: 30px;
-  flex-shrink: 0;
+  flex: none;
   padding: 0;
   border-radius: 50%;
-  border: 1px solid var(--glass-border);
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow),
+    0 2px 8px var(--glass-control-shadow);
   color: var(--color-frame-text, #e6e9ef);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  touch-action: manipulation;
 }
+/* 玻璃空间相对按钮图标居中（统一批「全清查」）：图标块在圆内水平垂直居中，
+   svg 转块级消除行内基线隙——顶栏全部圆形玻璃键同口径。 */
 body.mobile-layer .mobile-back-btn svg {
+  display: block;
   width: 18px;
   height: 18px;
 }
 body.mobile-layer .mobile-back-btn:active {
   transform: scale(0.92);
+}
+/* 玻璃空间居中清查（顶部胶囊语言统一批「玻璃空间相对按钮图标居中…全清查」）：
+   顶栏/页面族全部圆形玻璃键的图标块统一 display:block + flex 居中口径——
+   聊天顶栏 chrome 键、顶栏头像键、dock 图标位、canvas 页工具键、任务面板 X。 */
+body.mobile-layer .mh-chrome-btn svg,
+body.mobile-layer #agent-avatar-btn svg,
+body.mobile-layer .dock-key .dock-ic svg,
+body.mobile-layer .dock-key .dock-center svg,
+body.mobile-layer .mf-cv-btn svg,
+body.mobile-layer .mf-cv-btn i svg,
+body.mobile-layer .mh-tpanel .tp-x svg {
+  display: block;
 }
 
 /* 页面体：纵向滚域（收编面自管内滚的以其自身为准；body 滚动兜底封面/空态）。 */
@@ -1163,10 +1192,20 @@ body.mobile-layer #usage-overlay {
 body.mobile-layer #usage-overlay.closing {
   display: none !important;
 }
-/* 桌面关闭钮退场：返回 = 页面壳 .mobile-page-header 唯一「<」；桌面关闭路径
-   本身保留（Escape/外部关闭 ⇒ 对账弹栈，见 navController）。 */
+/* 桌面关闭/返回钮退场（重复返回钮清查批 2026-10-30 作者令「各页面出现两个返回
+   钮的小 bug 清查修掉」）：收编进页面的桌面面自带窗头钮与页面壳返回钮构成双
+   返回/双关闭——页面壳 .mobile-page-header 唯一「<」统管出页；桌面关闭路径
+   本身保留（Escape/外部关闭 ⇒ 对账弹栈，见 navController）。
+   清查面：设置 X / 用量 X（沿袭）＋ 搜索 X / 心跳 X / 手机接入 X / 会话窗 ✕ /
+   任务面板 X / 项目页链视图返回条（返回条其余件——标题/摘要/视图筛选——保留）。 */
 body.mobile-layer #settings-modal-close,
-body.mobile-layer #usage-close {
+body.mobile-layer #usage-close,
+body.mobile-layer #search-modal-close,
+body.mobile-layer #daemon-close-btn,
+body.mobile-layer #social-modal-close,
+body.mobile-layer #mobile-pages .fm-modal-close,
+body.mobile-layer #mobile-pages .mh-tpanel .tp-x,
+body.mobile-layer #mobile-pages .flowmap-nav-bar .flowmap-back-btn {
   display: none !important;
 }
 

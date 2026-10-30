@@ -374,7 +374,7 @@ const headerInfo = (page) => page.evaluate(() => {
 
   // CC6-1 状态保留语义闭环（前「下滑收层」退役）：离开 canvas 页 → 页签保留；
   // 回页 → 活动卡 bravo 不变（closeCanvas 语义在页面栈上延续）。
-  await page.locator('#mobile-dock .dock-key[data-dock="settings"]').click();
+  await page.locator('#mobile-dock .dock-key[data-dock="workbench"]').click();
   await sleep(400);
   const stLeave = await stateOf(page);
   ok('CC6-1 离开 canvas 页 = 页签保留（tabCount 2 不变）',

@@ -112,11 +112,12 @@ async function bootApp(page) {
   await page.waitForTimeout(300);
 }
 
-/** 设置根页「工作台」行 → projects 推送页（dock 批 2026-10-29 换代：v3 双液态
- *  下拉列 `.mh-dd[data-dd="right"]` 整族退役，入口统一走设置 hub 行）。 */
+/** 工作台根页「工作台」行 → projects 推送页（dock 批 2026-10-29 换代：v3 双液态
+ *  下拉列 `.mh-dd[data-dd="right"]` 整族退役；工作台批 2026-10-30：入口统一走
+ *  工作台根 hub 行）。 */
 async function pushProjectsPage(page) {
-  await dockTo(page, 'settings');
-  await page.locator('.mobile-page[data-page="settings"] .mf-hub-row[data-hub-page="projects"]').click();
+  await dockTo(page, 'workbench');
+  await page.locator('.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="projects"]').click();
   await expect(page.locator('.mobile-page[data-page="projects"]')).toHaveClass(/live/);
   const cards = page.locator('.mobile-page[data-page="projects"] .team-card.project-card');
   await expect(cards).toHaveCount(5);
