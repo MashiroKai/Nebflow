@@ -2040,6 +2040,11 @@ export function initInput(view) {
     setMicState('processing');
     input.classList.remove('voice-dictating');
     input.focus();
+    // 占位文本恢复（作者报障 2026-10-30 12:55）：startVoice 把 placeholder 直写为
+    // 「正在聆听…」，退出路径此前没有任何恢复调用 —— 之后无任何 input/附件事件时
+    // 文案永远卡在聆听态。三条退出路（点击切换/Esc/拖动 ensureDictationIdle）全部
+    // 经本函数 ⇒ 在此归一恢复（voiceActive 已 false，回落附件/闸/通用文案）。
+    updateInputPlaceholder();
   }
 
   // Click-toggle voice (user ruling 2026-08-25 21:34: tap once to start, tap
