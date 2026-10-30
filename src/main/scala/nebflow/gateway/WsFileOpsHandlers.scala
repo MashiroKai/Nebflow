@@ -53,7 +53,9 @@ private[gateway] object WsFileOpsHandlers:
     "movePath" -> handleMovePath,
     "deletePaths" -> handleDeletePaths,
     "writeFile" -> handleWriteFile,
-    "browsePath" -> handleBrowsePath
+    "browsePath" -> handleBrowsePath,
+    // 阅读器标注库（reader P3 批，设计稿 §4.2）：load/save 整件，落点服务端构建。
+    "reader.anno" -> handleReaderAnno
   )
 
   private def handleListDir(
@@ -1235,6 +1237,63 @@ private[gateway] object WsFileOpsHandlers:
     else IO.unit
     end if
   end handleWriteFile
+
+  /** 阅读器标注库 load/save（reader P3 批，设计稿 §4.2 存储面——载体 = 随工作区
+   *  落库的 json 件，[[ReaderAnnoStore]] 为纯核）。落点 = 服务端构建的
+   *  `<projectRoot>/.nebflow/reader-annotations.json`（客户端只送 action/content，
+   *  零路径操控）；项目根解析与 [[handleWriteFile]] 同族（sessionId → folderId →
+   *  resolveProjectRoot），containment 由「路径服务端自建」天然成立，仍过同一
+   *  canonical 检查与 writeFile 同口径。load 缺件 = 空库（ok:true content:null）；
+   *  save 超 [[ReaderAnnoStore.MaxBytes]] 拒写；JSON 不解析（字节透传，容错在前端）。
+   *  保存成功按 writeFile 同纪律广播 M2 缓存失效（本件被别的查看面打开时防陈旧）。 */
+  private def handleReaderAnno(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val json = parsedJson(text)
+    val hc = json.hcursor
+    val raSessionId = hc.downField("sessionId").as[String].getOrElse("")
+    val action = hc.downField("action").as[String].getOrElse("")
+    val reqId = hc.downField("reqId").as[String].getOrElse("")
+    if raSessionId.nonEmpty && (action == "load" || action == "save") then
+      (for
+        metaOpt <- sessionStore.getSessionMeta(raSessionId)
+        folderId = metaOpt.flatMap(_.folderId)
+        prOpt <- sessionStore.resolveProjectRoot(folderId)
+        pr = prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
+        target = ReaderAnnoStore.storePath(os.Path(pr, os.pwd))
+        _ <- IO.raiseUnless(
+          target.toIO.getCanonicalPath.startsWith(os.Path(pr, os.pwd).toIO.getCanonicalPath)
+        )(new RuntimeException("path outside project root"))
+        frame <-
+          if action == "load" then
+            IO.blocking {
+              if os.exists(target) && os.isFile(target) then
+                ReaderAnnoStore.loadedFrame(reqId, Some(os.read(target)))
+              else ReaderAnnoStore.loadedFrame(reqId, None)
+            }
+          else
+            val content = hc.downField("content").as[String].getOrElse("")
+            ReaderAnnoStore.saveVerdict(content.getBytes("UTF-8").length) match
+              case Left(reason) => IO.pure(ReaderAnnoStore.errorFrame(reqId, reason))
+              case Right(()) =>
+                IO.blocking {
+                  if !os.exists(target / os.up) then os.makeDir.all(target / os.up)
+                  os.write.over(target, content)
+                } *> NfCacheInvalidator.invalidated(target.toString)
+                  .as(ReaderAnnoStore.savedFrame(reqId))
+      yield frame)
+        .flatMap(wsSend)
+        .handleErrorWith { e =>
+          logger.warn(s"reader.anno $action failed: ${e.getMessage}")
+          wsSend(ReaderAnnoStore.errorFrame(reqId, e.getMessage))
+        }
+    else IO.unit
+    end if
+  end handleReaderAnno
 
   private def handleBrowsePath(
     ctx: WsDispatchCtx,

@@ -115,8 +115,9 @@ function sanitizeDeclarationBlock(body) {
 }
 
 /** 内联 style 只读清洗：color/background/background-color/-webkit-text-fill-color
- *  具体色值删除，排版声明（字体/字号/行距/对齐/斜体）全保留（保真优先）。 */
-function sanitizeInlineStyles(root) {
+ *  具体色值删除，排版声明（字体/字号/行距/对齐/斜体）全保留（保真优先）。
+ *  P3 批：导出供 mobi.js 复用（同一清洗纪律，防第二实现漂移）。 */
+export function sanitizeInlineStyles(root) {
   const els = root.querySelectorAll('[style]');
   for (const el of els) {
     const st = el.style;
@@ -464,11 +465,7 @@ async function viewEpub(pane, { absPath, fileName, size, objectUrl }) {
     return;
   }
   // 切书/重开：先 revoke 上一本书的全部 object URL（同书缓存、切书统一 revoke）。
-  const prevUrls = pane._epubBlobUrls;
-  if (prevUrls) {
-    for (const u of prevUrls.values ? prevUrls.values() : prevUrls) URL.revokeObjectURL(u);
-  }
-  pane._epubBlobUrls = null;
+  resetBookBlobUrls(pane);
   // M2 账本接缝（imgdoor #542 推广批）：票据腿经 nfViewerUrl——账本命中 = blob URL
   // 直开（第二次打开零取数），未命中走既有票据链并入账 `nf:<absPath>`。
   // #762 同族盘点批：本 viewer 是 office 族里最后一个**裸取件**（无 reMint 自愈）
@@ -495,7 +492,23 @@ async function viewEpub(pane, { absPath, fileName, size, objectUrl }) {
       retried = true;
       buffer = await fetchBytes(await reMint(absPath));
     }
+    await renderEpubBuffer(pane, buffer, fileName || 'EPUB', {
+      format: 'epub',
+      bookRef: absPath || ('attachment:' + (fileName || 'epub')),
+    });
+  } catch (err) {
+    if (!pane.querySelector('.canvas-error')) {
+      pane.innerHTML = `<div class="canvas-error">Failed to render EPUB: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+}
 
+/** 从 EPUB（zip）字节直渲染统一阅读 chrome——P3 批抽出供 azw3 腿复用：
+ *  azw3 = KF8 内嵌 EPUB，mobi.js 扫 PK 边界切出 zip 字节后**零改动**进本管线
+ *  （设计稿 §3.2 路线 A：「直接喂现有 EPUB viewer，现有管线零改动复用」）。
+ *  blob 账本接管（pane._epubBlobUrls）在解析中途失败时也随下次入口统一 revoke。 */
+export async function renderEpubBuffer(pane, buffer, title, opts) {
+  try {
     const entries = parseZipEntries(buffer);
     if (!entries['META-INF/container.xml']) throw new Error('Not a valid EPUB file');
 
@@ -577,18 +590,32 @@ async function viewEpub(pane, { absPath, fileName, size, objectUrl }) {
       }
     }
 
-    renderEpubReader(pane, chapters, tocEntries, fileName || 'EPUB');
+    renderEpubReader(pane, chapters, tocEntries, title || 'EPUB', opts);
   } catch (err) {
     pane.innerHTML = `<div class="canvas-error">Failed to render EPUB: ${escapeHtml(err.message)}</div>`;
   }
 }
 
+/** 切书/重开统一卸上一本书的 object URL（同书缓存、切书统一 revoke）。
+ *  P3 批：导出供 mobi.js（azw3 → EPUB 管线腿）复用，防第二实现。 */
+export function resetBookBlobUrls(pane) {
+  const prevUrls = pane._epubBlobUrls;
+  if (prevUrls) {
+    for (const u of prevUrls.values ? prevUrls.values() : prevUrls) URL.revokeObjectURL(u);
+  }
+  pane._epubBlobUrls = null;
+}
+
 /** Render paginated EPUB reader UI —— 统一阅读 chrome 挂载（P1 批）：
  *  底栏/进度条/TOC 抽屉/菜单/翻页动效全在 readerChrome.js；本函数只给 EPUB
- *  正文适配器（章节装载 + 章内锚定位 + 缺失资源 toast + epub-page-change）。 */
-function renderEpubReader(pane, chapters, tocEntries, bookTitle) {
+ *  正文适配器（章节装载 + 章内锚定位 + 缺失资源 toast + epub-page-change）。
+ *  opts.bookRef = 标注锚（文件路径；blob 腿退化 attachment:文件名）；opts.format
+ *  进标注数据面（epub / azw3——azw3 腿全量复用本管线，标注格式落 'azw3'）。 */
+function renderEpubReader(pane, chapters, tocEntries, bookTitle, opts) {
   /** 当前内容盒（锚定位用；chrome 每次装载后回写）。 */
   let currentContentEl = null;
+  /** 章纯文本缓存（标注定位/回渲用，懒算）。 */
+  const chapterTextCache = new Map();
 
   const adapter = {
     title: bookTitle,
@@ -598,6 +625,18 @@ function renderEpubReader(pane, chapters, tocEntries, bookTitle) {
     themeable: true,
     contentKind: 'flow',
     tracking: true,
+    // P3 批（设计稿 §4.2）：引擎通用标注面——epub 系格式（epub/azw3）落标注。
+    annotatable: {
+      format: (opts && opts.format) || 'epub',
+      bookRef: (opts && opts.bookRef) || ('attachment:' + bookTitle),
+      chapterText(i) {
+        if (chapterTextCache.has(i)) return chapterTextCache.get(i);
+        const ch = chapters[i];
+        const text = ch && ch.doc && ch.doc.body ? (ch.doc.body.textContent || '') : '';
+        chapterTextCache.set(i, text);
+        return text;
+      },
+    },
     mountChapter(el, i) {
       const chapter = chapters[i];
       if (!chapter) return;

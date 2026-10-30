@@ -17,6 +17,9 @@
 //        touch 横滑跟手，|v|>0.3px/ms 或位移>1/4 页宽 → 完成（240ms 收束），
 //        否则回弹（180ms）；prefers-reduced-motion 全程 0.01s 直切。
 //   翻页/滚动双模式：默认滚动（现状行为，P0 A4 断言不扰）；翻页模式走双页夹。
+//   P3 生态批（同设计稿 §4.2）：标注面接线——adapter.annotatable 在场即挂
+//   annotations.js（划选浮动条四色/笔记编辑器/笔记抽屉/章内高亮回渲），
+//   存储面随工作区落库（WS reader.anno 腿），epub/mobi/azw3 系格式启用。
 //   进度条：全书均匀位置空间 (章内偏移+章序)/N —— 跨章跳章无需预估页数；
 //        TOC 章起刻度（密度过高抽样）；拖动出 tooltip「章名 · %」，松手才跳。
 //
@@ -27,6 +30,7 @@
 //         .epub-toc[data-epub-toc] / .epub-flip-stage / .epub-flip-layer
 
 import { escapeHtml } from './shared.js';
+import { mountAnnotationFace } from './annotations.js';
 import { t } from '../i18n.js';
 
 /** 阅读器偏好持久化键（P0 既定：跨书跨会话生效；P1 增补 mode 档）。 */
@@ -104,6 +108,7 @@ const MAX_TICKS = 48;
  */
 export function mountReader(pane, adapter) {
   let chapterIdx = 0;
+  let annoFace = null; // P3 标注面（adapter.annotatable 在场即挂，见事件接线前段）
   const prefs = loadReaderPrefs();
   const N = Math.max(1, adapter.chapterCount);
 
@@ -213,6 +218,7 @@ export function mountReader(pane, adapter) {
     chapterIdx = i;
     if (adapter.contentKind !== 'host') adapter.mountChapter(contentEl, i);
     if (adapter.onChapterChanged) adapter.onChapterChanged(i);
+    if (annoFace) annoFace.renderChapter(i); // 标注回渲（§4.2：重开本/跳章时）
   }
 
   /** 章内位置（0..1）：maxScroll=0 的章（无滚动）在末章记 1，否则 0。 */
@@ -422,6 +428,10 @@ export function mountReader(pane, adapter) {
       <div class="epub-menu-row">
         <button type="button" class="epub-menu-btn epub-menu-wide" data-reader-toc>☰ ${escapeHtml(t('reader.toc'))}</button>
       </div>`;
+    const annoRow = annoFace ? `
+      <div class="epub-menu-row">
+        <button type="button" class="epub-menu-btn epub-menu-wide" data-reader-anno>✎ ${escapeHtml(t('reader.anno.list'))}${annoFace.count() ? `（${annoFace.count()}）` : ''}</button>
+      </div>` : '';
     const refreshRow = isMobileBar() ? `
       <div class="epub-menu-row">
         <button type="button" class="epub-menu-btn epub-menu-wide" data-reader-refresh>⟳ ${escapeHtml(t('reader.refresh'))}</button>
@@ -429,6 +439,7 @@ export function mountReader(pane, adapter) {
     menu.innerHTML = `
       <div class="epub-menu-title">${escapeHtml(adapter.chapterTitle(chapterIdx))}</div>
       ${tocRow}
+      ${annoRow}
       ${themeRows}
       <div class="epub-menu-row" role="group" aria-label="${escapeHtml(t('reader.jumpPct'))}">
         <span class="epub-menu-label">${escapeHtml(t('reader.jumpPct'))}</span>
@@ -462,6 +473,8 @@ export function mountReader(pane, adapter) {
     });
     const tocBtnRow = menu.querySelector('[data-reader-toc]');
     if (tocBtnRow) tocBtnRow.addEventListener('click', () => { closeMenu(); openToc(); });
+    const annoBtnRow = menu.querySelector('[data-reader-anno]');
+    if (annoBtnRow && annoFace) annoBtnRow.addEventListener('click', () => { closeMenu(); annoFace.openDrawer(); });
     const jumpInput = menu.querySelector('[data-reader-jump-input]');
     const doJump = () => {
       const v = Math.min(100, Math.max(0, parseInt(jumpInput.value, 10) || 0));
@@ -899,6 +912,27 @@ export function mountReader(pane, adapter) {
     if (flipState) finishFlip(false);
   }, { passive: true });
 
+  // ── 标注面（设计稿 §4.2；epub 系格式 adapter.annotatable 在场即挂） ────────
+  if (adapter.annotatable) {
+    annoFace = mountAnnotationFace({
+      pane, reader, scroller,
+      getContentEl: () => contentEl,
+      annotatable: adapter.annotatable,
+      chapterTitle: (i) => adapter.chapterTitle(i),
+      // 不用 loadChapterScroll：它 rAF 里 scrollTop=0 会盖掉标注回跳的
+      // scrollIntoView（renderChapter 在 mountChapter 内同步触发 reveal）。
+      jumpToChapter: (i) => {
+        scroller.scrollTop = 0;
+        mountChapter(i);
+        updateUI();
+      },
+      setPanelGate: (on) => {
+        if (on) { setFabGate(true); return; }
+        if (menu.hidden && tocEl.hidden) setFabGate(false);
+      },
+    });
+  }
+
   // ── 事件接线 ──────────────────────────────────────────────────────────────
 
   prevBtn.addEventListener('click', (e) => { e.stopPropagation(); prevPage(); });
@@ -916,9 +950,10 @@ export function mountReader(pane, adapter) {
     if (menuOpen()) { closeMenu(); return; }
     if (tocOpen()) { closeToc(); return; }
     if (barMenuOpen()) { closeBarMenu(); return; }
-    // 链接/表单控件交还原语义（md 链接路由、菜单钮等），不进点按分区。
+    // 链接/表单控件/既有高亮交还原语义（md 链接路由、菜单钮、标注编辑条等），
+    // 不进点按分区。
     const interactive = e.target && e.target.closest
-      ? e.target.closest('a[href], button, input, select, textarea, summary, label')
+      ? e.target.closest('a[href], button, input, select, textarea, summary, label, mark.nf-anno')
       : null;
     if (interactive) return;
     if (flipBusy()) return;
@@ -947,6 +982,8 @@ export function mountReader(pane, adapter) {
   function onEscClose(e) {
     if (e.key !== 'Escape') return;
     if (!reader.isConnected) { document.removeEventListener('keydown', onEscClose); return; }
+    if (annoFace && annoFace.noteEditorOpen && annoFace.noteEditorOpen()) { annoFace.closeNoteEditor(); return; }
+    if (annoFace && annoFace.drawerOpen()) { annoFace.closeDrawer(); return; }
     if (menuOpen()) { closeMenu(); return; }
     if (tocOpen()) { closeToc(); return; }
     if (barMenuOpen()) closeBarMenu();
@@ -971,6 +1008,7 @@ export function mountReader(pane, adapter) {
   // 清理函数挂 pane 供复用入口（epub 切书 revoke blob 等独立于 chrome）。
   /** @type {any} */ (pane)._nfReaderTeardown = () => {
     setFabGate(false);
+    if (annoFace) annoFace.destroy();
     themeAttrObserver.disconnect();
     if (darkMq && darkMq.removeEventListener) darkMq.removeEventListener('change', onPanelThemeChange);
     document.removeEventListener('keydown', onEscClose);
