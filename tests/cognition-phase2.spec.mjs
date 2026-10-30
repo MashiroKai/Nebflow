@@ -9,7 +9,9 @@
 //      messages 徽标 = 可行动聚合（actionable.js 单件断言）
 //   ③ 打卡 UI — 待办组置顶 + 打卡圆钮发 completeTodo（留痕销账）+ 取消 × +
 //      缺卡调整建议（missCount ≥ 3）
-//   ④ 周报生成器 — weeklyReportReady 帧 → 反悬念结论文案横幅
+//   ④ 周报浮出面（收尾回填 §6.4 接合面）— weeklyReportReady 帧 → 通知横幅退役，
+//      改为收件箱刷新：周报 todo 条目落待办组置顶（打卡销账 = P2 闭合回路），
+//      徽标 +1（可行动量）
 //
 // 被测真实链路：照 human-face-render.spec.mjs 同一套替身纪律（静态服务真
 // web/ 树 + WS 替身 + ticket mock），前端零替身。
@@ -44,6 +46,15 @@ const FIXTURE_TASKS = [
   { id: 'tk-0002', content: '例行巡检', triggerAt: nowMs + 3_600_000, createdAt: nowMs,
     triggered: false, triggeredAt: null, referencePath: null, repeat: 'daily', enabled: true, kind: 'task', missCount: 0 },
 ];
+// §6.4 回填：引擎侧 weeklyReportReady 时已 upsert 的周报待办条目帧形
+// （content = 反悬念结论 + 报告路径 = 来源动作；referencePath 落报告现场）。
+const WEEKLY_TODO = {
+  id: 'td-week', content: '打卡周报 2026-W44 已生成：打卡 5/6，趋势↑ — 周报：/tmp/x/REPORT.md（读后可打卡销账）',
+  triggerAt: nowMs + 86_400_000, createdAt: nowMs, triggered: false, triggeredAt: null,
+  referencePath: '/tmp/x/REPORT.md', repeat: null, enabled: true, kind: 'todo', missCount: 0,
+};
+// listScheduledTasks 替身应答 = 可变列表（R6 切换为「周报入账后」的库态）。
+let currentTasks = FIXTURE_TASKS;
 
 const PROFILE_DEFS = [
   { key: 'adhd-friendly', maxLines: 8, keyNumbers: 4, foldDefault: 'fold', imageDensity: 'high', reminderCadence: 'single', supervision: 'fine', pendingStyle: 'single', teachingAllowed: false },
@@ -119,7 +130,8 @@ async function boot(browser, captures) {
         return ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
       }
       if (m.type === 'listScheduledTasks') {
-        return ws.send(JSON.stringify({ type: 'scheduledTaskList', sessionId: m.sessionId, tasks: FIXTURE_TASKS }));
+        captures.listRequests.push(m);
+        return ws.send(JSON.stringify({ type: 'scheduledTaskList', sessionId: m.sessionId, tasks: currentTasks }));
       }
       if (m.type === 'getPresentationProfile') {
         return ws.send(JSON.stringify({ type: 'presentationProfileData', profile: { current: 'expert-minimal', profiles: PROFILE_DEFS, overrides: {} } }));
@@ -149,7 +161,7 @@ const ok = (cond, label) => {
 };
 
 const browser = await chromium.launch();
-const captures = { completeTodo: [], setProfile: [], setOverride: [] };
+const captures = { completeTodo: [], setProfile: [], setOverride: [], listRequests: [] };
 try {
   const { page, pageErrors, consoleErrors, push } = await boot(browser, captures);
 
@@ -258,15 +270,36 @@ try {
   ok(r5.total === 5 && r5.seen === 5, `R5a 可行动聚合（=${r5.total}）`);
   ok(r5.afterOff === 0, `R5b 注销后归零（=${r5.afterOff}）`);
 
-  // ── R6 周报横幅：反悬念结论文案 ─────────────────────────────────────
+  // ── R6 周报浮出面（§6.4 回填）：横幅退役 → 待办收件箱浮出 ─────────────
+  // 库态切到「周报入账后」：td-0001 已打卡销账（R3），引擎 upsert 周报待办。
+  currentTasks = [WEEKLY_TODO, FIXTURE_TASKS[1]];
+  const listsBefore = captures.listRequests.length;
   push({ type: 'weeklyReportReady', weekKey: '2026-W44', reportPath: '/tmp/x/REPORT.md',
     summary: '打卡周报 2026-W44 已生成：打卡 5/6，趋势↑（reports/weekly-checkin）' });
-  await sleep(300);
+  await sleep(400);
   const r6 = await page.evaluate(() => {
-    const items = Array.from(document.querySelectorAll('.notif-item'));
-    return items.map((i) => i.textContent || '').join(' | ');
+    const notifs = Array.from(document.querySelectorAll('.notif-item')).map((i) => i.textContent || '');
+    const body = document.querySelector('#reminder-panel .reminder-panel-body');
+    const rows = body ? Array.from(body.querySelectorAll('.reminder-row')) : [];
+    const weeklyRow = rows.find((r) => r.dataset.id === 'td-week');
+    const badge = document.querySelector('#reminder-btn .reminder-badge');
+    return {
+      notifs,
+      weeklyFirst: rows.length > 0 && rows[0].dataset.id === 'td-week',
+      weeklyCheckin: !!(weeklyRow && weeklyRow.querySelector('.reminder-circle[data-action="checkin"]')),
+      weeklyCancel: !!(weeklyRow && weeklyRow.querySelector('.reminder-cancel')),
+      weeklyText: weeklyRow ? weeklyRow.textContent || '' : '',
+      badge: badge ? badge.textContent : '0',
+    };
   });
-  ok(r6.includes('打卡周报') && r6.includes('趋势↑'), 'R6 周报就绪横幅 = 结论文案（反悬念）');
+  ok(!r6.notifs.some((n) => n.includes('打卡周报')), 'R6a 零横幅（浮出面从横幅回填为收件箱）');
+  ok(captures.listRequests.length > listsBefore,
+    `R6b weeklyReportReady 触发收件箱刷新（listScheduledTasks ×${captures.listRequests.length - listsBefore}）`);
+  ok(r6.weeklyFirst, 'R6c 周报条目落待办组置顶');
+  ok(r6.weeklyCheckin && r6.weeklyCancel, 'R6d 周报条目带打卡销账钮 + 取消 ×（P2 闭合回路）');
+  ok(r6.weeklyText.includes('打卡周报') && r6.weeklyText.includes('趋势↑'),
+    'R6e 条目文案 = 反悬念结论（来源动作在）');
+  ok(r6.badge === '1', `R6f 徽标 +1（周报待办 = 可行动量，=${r6.badge}）`);
 
   // ── R7 截图 + 零错误 ────────────────────────────────────────────────
   mkdirSync(SHOTS_DIR, { recursive: true });
