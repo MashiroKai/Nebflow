@@ -248,7 +248,7 @@
    （字＋图标）转红 = 交互红保留（铁律三）。 */
 .social-btn-danger { color: var(--color-frame-text); }
 .social-btn-danger .st-ic { color: var(--status-error-icon); margin-right: 5px; }
-.social-btn-danger:hover, .social-btn-danger:hover .st-ic { color: var(--status-error-icon); }
+.social-btn-danger:hover, .social-btn-danger:hover .st-ic { color: var(--btn-danger-ink); }
 /* 🔴 socpanel-min wave-2: `.social-archive-hint` REMOVED — 0 emitters. The
    hint's permanent line went away and its copy (social.feishu.archive.hint)
    moved onto the unbind button's `title`, i.e. hover-at-intent, so no rule is

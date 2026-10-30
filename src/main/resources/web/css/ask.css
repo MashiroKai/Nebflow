@@ -199,12 +199,13 @@ html[data-theme='light'] {
   color: var(--color-text); caret-color: var(--color-primary);
 }
 .ask-input input::placeholder { color: var(--color-text-muted); }
-/* 发送钮 = 全站发送键绿家族（input.css #send-btn 基准，逐字同源：
- * WeChat 绿实底 #07C160 / 描边 #06AD56 / 白字；hover C1 / active C2 同款） */
+/* 发送钮 = 全站主操作墨族 token 单源（2026-10-30 按钮体系批：与 #send-btn 同
+ * --btn-primary-* → --btn-ink-*；亮 #111827 近黑/暗 #e6edf3 浅墨随面板主题
+ * ink-swap；hover/active 双档 token 自动解析，无暗档字面量分支） */
 .ask-input .ask-send {
   flex: none; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; padding: 0;
-  background: #07C160; color: #fff;
-  border: 1px solid #06AD56;
+  background: var(--btn-primary-bg); color: var(--btn-primary-ink);
+  border: 1px solid var(--btn-primary-bg-active);
   display: flex; align-items: center; justify-content: center;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.22),
@@ -214,7 +215,7 @@ html[data-theme='light'] {
   transition: background 0.2s, box-shadow 0.2s;
 }
 .ask-input .ask-send:hover {
-  background: #06AD56;
+  background: var(--btn-primary-bg-hover);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.26),
     inset 0 -1px 0 rgba(0, 0, 0, 0.10),
@@ -222,7 +223,7 @@ html[data-theme='light'] {
     0 2px 12px rgba(0, 0, 0, 0.07);
 }
 .ask-input .ask-send:active {
-  background: #059A4C;
+  background: var(--btn-primary-bg-active);
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.18), 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 .ask-input .ask-send svg { width: 14px; height: 14px; pointer-events: none; }

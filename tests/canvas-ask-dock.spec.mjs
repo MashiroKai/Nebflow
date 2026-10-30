@@ -40,7 +40,9 @@
 //   T12 风格统一（三修③ 作者令 2026-10-29「ask 输入条/气泡对齐 canvas 统一风格，
 //       不新造风格」）：入口钮/输入条/气泡三面计算材质（backgroundColor /
 //       borderTopColor / backdropFilter）与聊天 #header 玻璃模板（--cv-* 单源）
-//       逐项相等；发送钮 = 全站发送键绿家族 #07C160；通知点底色 = --color-primary
+//       逐项相等；发送钮 = 全站墨族主操作单源（--btn-primary-* → --btn-ink-*，
+//       2026-10-30 按钮体系批，暗档 #e6edf3）；通知点底色 = --color-primary（身份/
+//       状态绿，绿降级冻结保留）
 //
 // 运行：node tests/canvas-ask-dock.spec.mjs
 // 可选 env：PORT（默认 8216，避开在跑 spec 的固定端口）、ASK_SHOTS_DIR（截图目录）。
@@ -536,8 +538,8 @@ try {
     send: getComputedStyle(document.querySelector('.ask-input .ask-send')).backgroundColor,
     dot: getComputedStyle(document.querySelector('.ask-fab .ask-sess-dot')).backgroundColor,
   }));
-  ok('T12d 发送钮 = 全站发送键绿家族（#send-btn 基准 #07C160）', greenFaces.send === 'rgb(7, 193, 96)', greenFaces.send);
-  ok('T12e 通知点底色 = --color-primary 品牌绿（#07c160）', greenFaces.dot === 'rgb(7, 193, 96)', greenFaces.dot);
+  ok('T12d 发送钮 = 墨族主操作单源（--btn-primary-* → --btn-ink-*，暗档 #e6edf3）', greenFaces.send === 'rgb(230, 237, 243)', greenFaces.send);
+  ok('T12e 通知点底色 = --color-primary 品牌绿（#07c160，身份/状态色冻结保留）', greenFaces.dot === 'rgb(7, 193, 96)', greenFaces.dot);
   await shot(page, 't12-unified-style');
 
   // T11 可见性闸（作者缺陷报 2026-10-29「Askmode怎么在插件面板里也有？」）：

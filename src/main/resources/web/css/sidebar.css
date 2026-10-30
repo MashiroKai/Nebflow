@@ -957,8 +957,13 @@
   transition: all 0.15s;
 }
 .config-actions button:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
-.config-actions .btn-save { border-color: rgba(91, 127, 191, 0.35); color: rgb(91, 127, 191); }
-.config-actions .btn-save:hover { background: rgba(91, 127, 191, 0.08); }
+/* 设置内主保存 = 主操作语义（2026-10-30 按钮体系批 B7：蓝描边 → 墨族实心底） */
+.config-actions .btn-save {
+  border-color: var(--btn-primary-bg);
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-ink);
+}
+.config-actions .btn-save:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); }
 /* About section */
 .about-info {
   font-size: 12px;
@@ -1132,7 +1137,9 @@
   background: #fff;
   transition: transform 0.2s;
 }
-.cfg-toggle.on { background: var(--color-primary); }
+/* 开关 ON 档（2026-10-30 按钮体系批 B9：绿填充 → 墨 tint，--btn-primary-tint
+   重定墨族后自动跟随亮暗双档；开关本体豁免按钮四态，既有设计不动结构） */
+.cfg-toggle.on { background: var(--btn-primary-tint); }
 .cfg-toggle.on::after { transform: translateX(16px); }
 .cfg-card-sub {
   font-size: 11px;
@@ -1168,7 +1175,7 @@
   font-weight: 500;
   border-color: rgb(var(--sapphire) / 0.35);
 }
-.mchain-chip.playing { border-color: rgba(7, 193, 96, 0.4); }
+.mchain-chip.playing { border-color: var(--color-frame-text-muted); }
 .mchain-chip .agent-detail-playing-dot { flex-shrink: 0; }
 /* 时段闸（model-schedule-unavailable 批 2026-10-29）：active 受限 chip 灰显 +
    窗口小注（.mchip-window）；同健康层 dim 语义——「这根这轮不会被选中」。 */
@@ -1191,7 +1198,8 @@
 /* ── Config Buttons ────────────────────────────────────────────────────────
    设计语言批 2026-10-21（账本 design-language §2/§4/§5/§7）：面板按钮档 =
    12px 字（11px 判偏整改）/ 6px 12px 栅格距（5px 判偏）/ radius 8（5px 判偏，
-   输入同档）；主档绿实底（--color-primary 白字，visual-style 铁律），几何与
+   输入同档）；主档墨族实底（--btn-primary-* 墨族 token 单源，2026-10-30 按钮
+   体系批：原绿实底 --color-primary 降级为身份/状态绿），几何与
    ghost 档同值仅内距 6px 14px；sm 档 12px 字 4px 10px。字色 --frame-text
    （原 dim 在 hover 前对比不足）。transition 逐属性 + 时长 token（禁 all）。 */
 .cfg-btn {
@@ -1210,15 +1218,15 @@
 .cfg-btn-sm { font-size: 12px; padding: 4px 10px; }
 .cfg-btn-primary {
   font-size: 12px; padding: 6px 14px; border-radius: 8px;
-  border: 1px solid var(--color-primary);
-  background: var(--color-primary);
-  color: #fff;
+  border: 1px solid var(--btn-primary-bg);
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-ink);
   cursor: pointer;
   font-family: inherit;
   transition: background var(--dur-2) ease, border-color var(--dur-2) ease,
               box-shadow var(--dur-2) ease, opacity var(--dur-2) ease;
 }
-.cfg-btn-primary:hover { background: var(--color-primary-hover); border-color: var(--color-primary-hover); opacity: 1; }
+.cfg-btn-primary:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); opacity: 1; }
 .cfg-btn-primary:disabled { opacity: 0.5; cursor: default; }
 .cfg-btn-add {
   width: 100%;
@@ -2589,12 +2597,15 @@
   transition: transform 0.15s ease, background 0.15s;
 }
 .nb-toggle.on {
-  background: rgb(var(--brand-green) / 0.35);
-  border-color: rgb(var(--brand-green) / 0.5);
+  /* 开关 ON 档墨 tint（2026-10-30 按钮体系批 B9：原 brand-green 35%/50% 随绿
+     降级改墨族；亮 rgb(17 24 39 / .35) / 暗 rgb(230 237 243 / .35) 双档自动） */
+  background: var(--btn-primary-tint);
+  border-color: color-mix(in srgb, var(--btn-ink-bg) 50%, transparent);
 }
 .nb-toggle.on::after {
   transform: translateX(14px);
-  background: rgb(var(--brand-green));
+  /* 圆钮实心墨（亮近黑 / 暗浅墨），与轨道 tint 同族 ink-swap */
+  background: var(--btn-ink-bg);
 }
 .nb-toggle:focus-visible {
   outline: 2px solid rgb(var(--brand-green) / 0.5);

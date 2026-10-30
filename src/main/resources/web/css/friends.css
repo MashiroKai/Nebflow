@@ -1808,7 +1808,7 @@ body > .fm-context-menu { z-index: 10001; }
    消费点仍收敛于本类一处（hover 态），单源令不破。 */
 .fm-gs-danger { color: var(--color-text); }
 .fm-gs-danger .st-ic { color: var(--status-error-icon); margin-right: 5px; }
-.fm-gs-danger:hover, .fm-gs-danger:hover .st-ic { color: var(--status-error-icon); }
+.fm-gs-danger:hover, .fm-gs-danger:hover .st-ic { color: var(--btn-danger-ink); }
 .fm-gs-hint { font-size: 11px; color: var(--color-text-muted, #888); }
 .fm-gs-picker { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
 .fm-gs-picker .fm-msg-btn { align-self: flex-start; }
@@ -2132,7 +2132,9 @@ body > .fm-context-menu { z-index: 10001; }
   font-family: inherit;
   cursor: pointer;
 }
-.fm-device-desc-save { color: var(--color-primary); font-weight: 500; }
+/* 文字链保存 = 链接语义（2026-10-30 按钮体系批：--color-primary 冻结为身份/状态绿，
+   链接蓝单源 --btn-focus-ring，设计稿 §5.1「含 .fm-device-desc-save 一类文字链」） */
+.fm-device-desc-save { color: var(--btn-focus-ring); font-weight: 500; }
 .fm-device-desc-cancel { color: var(--color-text-muted); }
 .fm-device-desc-actions button:disabled { cursor: not-allowed; opacity: 0.6; }
 .fm-msg-device-receipt {
