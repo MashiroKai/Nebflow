@@ -52,5 +52,9 @@ markup 零改动（`type-*` 类本就是 QA 断言面）。
 - `msg-search-v3-smoke.mjs` 的 `A4 Enter closes modal` 在基线即 FAIL
   （v2 浮窗裁定后 Enter 开浮窗不关面板，smoke 期望未跟进）——非本批引入，
   未修（反增额）。
+- 本机无头（swiftshader）环境下 `#search-btn` 被头部碰撞链判隐
+  （`nb-header-hide`），search-realshape 等依赖点按钮开面板的 spec 在
+  **基线提交同样失败**（已在 6c53ea678 干净克隆上归因证实）——环境性既有
+  问题，非本批引入；本批改动的断言经程序化开面板探针全部通过。
 
 关联：chatSearch.js v3.x 头注沿革（datalayer-spec 批 C1-C6）、[[20261030_191500_reader-p0-implementation__delegate-nebflow-a1e28e75.zh-CN]]（同批并行线）。
