@@ -13,8 +13,9 @@ import scala.jdk.CollectionConverters.*
 
 /**
  * 生图服务层（imagegen 双层批 2026-10-24）——配置解析（热读）+ 适配器分发 +
- * HTTP + URL 下载/ base64 解码 + PNG 落盘。腿①（内置工具，非阻塞 job 的生成段）
- * 与腿②（本机 `/api/imagegen` 路由，阻塞）共用本层，一行 provider 代码不重复。
+ * HTTP + URL 下载/ base64 解码 + PNG 落盘。腿①（内置工具，交互修正批 2026-10-30
+ * 起调用方阻塞 await 本层）与腿②（本机 `/api/imagegen` 路由，阻塞）共用本层，
+ * 一行 provider 代码不重复。
  *
  * 凭据纪律（jev/embedding 同先例）：`keyRef` = 数据根 secrets/ 下的名字；
  * token 只进请求 header，永不写日志、永不进任何返回值。
@@ -133,7 +134,7 @@ object ImageGenService:
 
   /**
    * 完整一击：resolve → POST → parse → materialize。返回 PNG 字节。
-   * 调用方决定阻塞等（腿②路由）还是丢后台 fiber（腿①工具）。
+   * 调用方阻塞等（腿②路由 / 腿①工具——交互修正批 2026-10-30 起两腿同阻塞）。
    */
   def generate(req: ImageGenRequest): IO[Either[ImageGenError, Array[Byte]]] =
     IO.blocking {

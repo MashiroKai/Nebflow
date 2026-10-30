@@ -1880,6 +1880,7 @@ export default {
   'tool.WebSearch': '网络搜索',
   'tool.WebFetch': '抓取网页',
   'tool.Curl': 'HTTP 请求',
+  'tool.generate_image': '生图',
   'tool.MCP': 'MCP',
 
   // === Tool result summaries ===

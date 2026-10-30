@@ -11,7 +11,6 @@ import { formatHm, formatFooterTime, toggleTimeFormat, bindTimeToggle } from './
 import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
-import { renderImageGenPlaceholder } from './imagegen.js';
 import { t } from './i18n.js';
 import { sendWs, onMessage } from './ws.js';
 import { askSourceLabel, removePendingAsk } from './askPending.js';
@@ -1041,27 +1040,11 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // of the tool_result content ("Message sent...").
   const _toolName = label ? label.split('(')[0].split('\n')[0].trim() : '';
 
-  // generate_image (imagegen 双层批 2026-10-24，调试状态)：非阻塞 job——工具调用
-  // 立即返回 job 句柄，标准工具卡头之下渲染占位卡片（克制 shimmer + spinner +
-  // 「调试中」徽标），完成经 WS imagegenUpdate 帧原位替换为真实图片（nf-file
-  // 票据链）。release bundle 经 __NEBFLOW_RELEASE__ define 整体 DCE（后端 seal
-  // 同步剔除，双保险零痕迹）。
-  if (_toolName === 'generate_image' && content && !isError &&
-      (typeof window !== 'undefined' && (/** @type {Window & { __NEBFLOW_RELEASE__?: boolean }} */ (window)).__NEBFLOW_RELEASE__ !== true)) {
-    const gIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
-    const gLocalLabel = localizeToolLabel(label);
-    const gLocalSummary = localizeToolSummary(summary, label);
-    card.innerHTML = '<span class="icon ok">' + gIcon + '</span>' +
-      '<div class="content"><div class="label">' + escapeHtml(gLocalLabel) + ' &mdash; ' + escapeHtml(gLocalSummary) + '</div></div>';
-    let gPrompt = '';
-    try {
-      const gInp = typeof inputJson === 'string' ? JSON.parse(inputJson) : inputJson;
-      gPrompt = (gInp && gInp.prompt) || '';
-    } catch {}
-    renderImageGenPlaceholder(row, content, gPrompt);
-    smartScroll();
-    return { type: 'tool', label, summary, content, isError, input: inputJson };
-  }
+  // generate_image（交互修正批 2026-10-30 起**阻塞语义**）：无特判面——调用期间
+  // 由上方标准 pending 工具卡原位占位（spinner + 生图标签），完成时工具结果
+  // 自带 ___POP_JSON___ 载荷，走下方 isPopPayload 通用腿原位直出单张图
+  // （旧非阻塞占位卡 + WS 完成帧推送的第二渲染腿整腿退役，双渲染根因拆除；
+  //   退役帧形与占位模块 imagegen.js 均已从生产源移除——见 imagegen-blocking spec）。
 
   // Pop artifact payload (pop-upgrade batch): the tool row renders as a plain
   // process face; the media stack / file cards render in a SEPARATE row below
