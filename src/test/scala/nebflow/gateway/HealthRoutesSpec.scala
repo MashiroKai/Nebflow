@@ -182,7 +182,10 @@ class HealthRoutesSpec extends FunSuite:
     assertEquals(authed.status, Status.Ok)
     assertEquals(
       bodyJson(authed).hcursor.downField("port").as[Int].toOption,
-      Some(8080),
+      // 端口缺省锚随 Defaults.GatewayPort 单一来源（8080→6138 让渡批已落档，
+      // 见 Defaults.scala 块注释）——本用例钉「loopback-info 应答 ctx.gatewayPort
+      // 缺省锚」的接线语义，不断言具体数字。
+      Some(nebflow.shared.Defaults.GatewayPort),
       "the near-path switch needs the local port anchor"
     )
     val anon = serve(req(path = "/api/health/loopback-info"))

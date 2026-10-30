@@ -43,6 +43,11 @@ class DeviceProjectMountSpec extends CatsEffectSuite:
     savedRoot = PathUtil.dataRoot
     tmp = os.Path(Files.createTempDirectory("nb-device-mount"))
     PathUtil.setDataRoot(tmp)
+    // 全量闸门单 JVM 串扰自足化（存量红清欠批 2026-10-30）：他套件（DevicesDelta/
+    // RemoteExecutor* 等）经 RemoteExecutor.initialize 写过全局单例且不复位 —
+    // 用例 (b) 的判据「executor 未初始化 ⇒ 结构化拒绝」依赖 current=None，必须
+    // 在 setup 显式清回（生产零调用点的测试接缝 resetForTests）。
+    RemoteExecutor.resetForTests()
 
   override def afterEach(context: munit.AfterEach): Unit =
     PathUtil.setDataRoot(savedRoot)

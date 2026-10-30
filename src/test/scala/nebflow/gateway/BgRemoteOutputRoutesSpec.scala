@@ -38,6 +38,10 @@ class BgRemoteOutputRoutesSpec extends FunSuite:
   private def json(s: String): Json = parse(s).fold(e => throw e, identity)
 
   private def withRoutes(f: HttpRoutes[IO] => Unit): Unit =
+    // 全量闸门单 JVM 串扰自足化（存量红清欠批 2026-10-30）：他套件经
+    // RemoteExecutor.initialize 写过全局单例且不复位 —— 「noExecutor」臂的判据
+    // 依赖 current=None，setup 显式清回（生产零调用点的测试接缝 resetForTests）。
+    nebflow.core.tools.RemoteExecutor.resetForTests()
     val root = os.Path(Files.createTempDirectory("bg-remote-routes-spec").toRealPath().toString)
     val (dispatcher, releaseDispatcher) = Dispatcher.parallel[IO].allocated.unsafeRunSync()
     try

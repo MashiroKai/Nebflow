@@ -102,12 +102,26 @@ class NfFileDenyLogSpec extends CatsEffectSuite:
     os.remove.all(tmp)
   }
 
+  /**
+   * 铸票路径必须过判据同款 canonicalize（`toRealPath`）：生产铸票端点
+   * （POST /api/nf-ticket）以 verdict 解出的 realpath 铸票（NfFileRoutes.scala:
+   * store.issue(sessionId, real.toString)），取回端点 verifyAndConsume 对同一
+   * verdict realpath 验票 —— 两 legs 恒一致。macOS java.io.tmpdir = /var/folders/…
+   * 而 /var → /private/var 是符号链接：直接以词法路径铸票会把票绑在
+   * /var/folders/… 上，verify 侧比对的却是 /private/var/folders/… ⇒ path-mismatch。
+   * 本 spec 绕开铸票端点直调 store.issue ⇒ fixture 必须自带 canonicalize。
+   */
+  private def canonicalTicketPath(p: os.Path): String =
+    java.nio.file.Files.exists(p.toNIO) match
+      case true  => p.toNIO.toRealPath().toString
+      case false => p.toNIO.toAbsolutePath.normalize().toString
+
   test("③ 负控：有效票 200 成功腿零 deny 日志") {
     val tmp  = os.temp.dir(prefix = "nffile-deny-log-ok")
     val file = tmp / "ok.png"
     os.write(file, Array[Byte](9, 8, 7))
     val q = java.net.URLEncoder.encode(file.toString, "UTF-8")
-    val t = store.issue("sess-denylog", file.toString).unsafeRunSync().token
+    val t = store.issue("sess-denylog", canonicalTicketPath(file)).unsafeRunSync().token
     val (resp, logs) = capturedLogs {
       get(q, t).unsafeRunSync()
     }
@@ -123,7 +137,7 @@ class NfFileDenyLogSpec extends CatsEffectSuite:
     val q = java.net.URLEncoder.encode(file.toString, "UTF-8")
     val mark = nebflow.shared.TunnelOriginMark.headerName
     // 等权正控：带 tunnel-mark 头的有效票请求 ⇒ 200 字节面。
-    val t = store.issue("sess-tunnel", file.toString).unsafeRunSync().token
+    val t = store.issue("sess-tunnel", canonicalTicketPath(file)).unsafeRunSync().token
     val ok = get(q, t, mark -> "any-mark-value").unsafeRunSync()
     assertEquals(ok.status, Status.Ok, "隧道 leg 与 localhost leg 等权：判据不读 mark（红线）")
     // 等权负控：带 tunnel-mark 头的 bogus 票 ⇒ 403 + 同 reason + 日志留痕同形。

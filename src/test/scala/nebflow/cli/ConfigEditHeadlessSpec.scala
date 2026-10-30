@@ -9,10 +9,10 @@ import munit.FunSuite
  */
 class ConfigEditHeadlessSpec extends FunSuite:
 
-  test("H9 逐字（§16 文案闸：禁改写）") {
+  test("H9 逐字（§16 文案闸：禁改写；命令名随品牌更名批 d6b057256 为 stand）") {
     assertEquals(
       ConfigCommand.NoEditorMessage,
-      "No editor available (no interactive terminal / no $EDITOR). Use 'nebflow config set <key> <value>' instead."
+      "No editor available (no interactive terminal / no $EDITOR). Use 'stand config set <key> <value>' instead."
     )
   }
 

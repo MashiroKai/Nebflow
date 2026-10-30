@@ -1673,6 +1673,15 @@ object RemoteExecutor:
   def current: Option[RemoteExecutor] = instance
 
   /**
+   * 测试接缝（存量红清欠批 2026-10-30）：全量闸门单 JVM 内多套件经
+   * `initialize` 写全局单例且从不复位 —— 依赖「单例未初始化」读数的套件
+   * （DeviceProjectMountSpec / BgRemoteOutputRoutesSpec 等）在全量面下被
+   * 串扰红。规格固件在 setup 调本缝清回 None 自足化（initialize 的套件
+   * 均自负责初始化，复位不影响它们）。生产零调用点。
+   */
+  private[nebflow] def resetForTests(): Unit = instance = None
+
+  /**
    * 目标解析（xdev 批 2026-09-15 作者裁定「歧义即拒绝 A」）：
    * **分层匹配 + 多命中显式拒绝**。
    *   1. 精确层（equalsIgnoreCase）：恰一命中 ⇒ 用它；多命中（真同名设备）⇒ 拒绝。

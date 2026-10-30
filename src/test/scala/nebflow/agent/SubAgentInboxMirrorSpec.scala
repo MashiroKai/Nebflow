@@ -362,14 +362,22 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     // 15 = 14 调用 + 1 def：AgentActor 5 / AgentFinishTurn 2 / AgentFrozen 1 /
     // AgentIdle 4 / AgentProcessing 3），钉值未随批重同步（main 裸跑同红）。
     // 本批（b73c3e73 复活）零调用点改动——两值同为 15，纯基线重钉非放宽。
+    // re-pin（2026-10-30 存量红清欠批，对现 main 重钉）：15 钉又漂移 ——
+    // 90a9d7b42（台账 #939 Mail 注入时机提前到 ToolsComplete 边界，2026-10-26）
+    // 在 AgentProcessing.scala 新增 1 调用点；d5ba67e59（回执补投静默化批，
+    // 2026-10-29）整体退役 AgentActor.emitForceDrainVisibility 摘除其 2 个调用点。
+    // 两批均为已落 main 的合法行为批 ⇒ 现值 14 = 13 调用 + 1 def
+    // （AgentActor 3 / AgentFinishTurn 2 / AgentFrozen 1 / AgentIdle 4 /
+    // AgentProcessing 4），纯基线重钉非放宽；镜像腿单点收口语义（下发射点内、
+    // wsSend 之后、rootSessionId 解析）不变。
     assertEquals(
       "emitInjectedUserEvent\\(".r.findAllMatchIn(agentActor).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentFinishTurn).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentFrozen).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentIdle).size +
         "emitInjectedUserEvent\\(".r.findAllMatchIn(agentProcessing).size,
-      15,
-      "`emitInjectedUserEvent(` occurrence-count drift (expected 14 call sites + 1 def, aggregated over AgentActor + AgentFinishTurn + AgentFrozen + AgentIdle + AgentProcessing) - call sites must not change in this batch"
+      14,
+      "`emitInjectedUserEvent(` occurrence-count drift (expected 13 call sites + 1 def, aggregated over AgentActor + AgentFinishTurn + AgentFrozen + AgentIdle + AgentProcessing) - call sites must not change in this batch"
     )
     val emitStart = agentActor.indexOf("private[agent] def emitInjectedUserEvent(")
     val applyStart = agentActor.indexOf("\n  def apply(", emitStart)

@@ -648,6 +648,15 @@ class NodeFailedRetrySpec extends CatsEffectSuite:
         )
       )
       framesAfter <- frames.get
+      // eng-deferred-cancel 批（b6088aa75, 2026-10-02, K-1）后取消为**延迟语义**：
+      // cancelNodeById 只发信号 → Stop() → settleDeferredCancel 等会话真死 →
+      // cancelNode 落终态。askUserClosed 帧改由**会话死亡腿**的 hub 清场广播
+      // （先于 cancelNode 的 status 写）⇒ 帧到达时读节点 status 是与终态化的
+      // 竞读（本批前单读形态是 latent race，延迟批把窗口放大成确定性红）。
+      // 修法 = 有界轮询等终态（帧断言不变 + 终态必达断言不松）。
+      _ <- waitUntil(20.seconds)(
+        nodeById(rt, nodeId).map(_.exists(_.status == NodeLifecycle.Cancelled))
+      )
       nodeAfter <- nodeById(rt, nodeId).map(_.getOrElse(fail("node must exist")))
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield

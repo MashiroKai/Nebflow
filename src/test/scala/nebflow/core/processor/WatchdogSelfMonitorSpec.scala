@@ -588,7 +588,7 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
     val shadow = driveShadowArm("shd", shadow = true).unsafeRunSync()
     val (cRows, cBridge, cCmds, cAborted) = control
     val (sRows, sBridge, sCmds, sAborted) = shadow
-    // 对照：生产链未被误关（L1 真硬取消在飞 LLM）
+    // 对照：生产链未被误关（L1 拍仍 firing——动作面按裁定退役，见下）
     //
     // ⚠ 2026-09-11 判据序改造（stuck 自动恢复批 P1，作者裁定 R-3）后的口径更新：
     // 本臂刻意在会话上注册了一条**在飞 LLM 请求**（用作 L1 硬取消的可观测量）⇒ 按
@@ -599,7 +599,15 @@ class WatchdogSelfMonitorSpec extends CatsEffectSuite:
     // L2/L3 腿本身的覆盖不受影响：`l3-ineffective` 用例与本 spec 外的
     // `node-l3ok/node-l3fail` 用例都是**无在飞请求**的类① 会话，L3 腿照常开火；
     // 本用例保留的三条 `stuck-fire` 行（L1/L2/L3 三拍）亦证明升级链未被关掉。
-    assert(cAborted, "shadow=false 臂：L1 必须真实硬取消在飞 LLM（证明开关边界正确）")
+    //
+    // ⚠ 2026-10-30 存量红清欠批再订正：原断言 `cAborted`（L1 必须硬取消在飞 LLM）
+    // 与 killruling 批 2026-09-23 作者裁定 #28「删」冲突——L1 的 LLM-halt 动作因
+    // 假阳性 95.4%（E 面 16 227 : 785）**已退役为 sensor-only tick**（TaskStuckWatcher
+    // L1 拍 WARN 文本逐字载明；redfix A1 批 a5ce60959 2026-10-14 按裁定摘除 PR48
+    // 重建静默带回的复活段）。「L1 拍 firing 但不 abort」正是现行生产语义——本断言
+    // 反转钉之：shadow=false 臂 L1 拍**不得**硬取消在飞 LLM（动作零 = 裁定生效），
+    // 同时仍须留下 L1 stuck-fire 行（升级链未关，下方 cRows==3 承担）。
+    assert(!cAborted, "shadow=false 臂：L1 已退役为 sensor-only（killruling #28）——不得再硬取消在飞 LLM；若 abort 发生 = 复活段回流")
     assert(
       !cBridge.exists(_.isInstanceOf[AgentEvent.Cancelled]),
       s"shadow=false 臂：类④（inflight>0）不得发桥 Cancelled——节点级 L3 腿对类④ 被结构性跳过，得 $cBridge"
