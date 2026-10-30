@@ -27,7 +27,7 @@ fork 出的 sbt/java 子进程 **cmdline 不含项目路径**——按端口或�
 
 ## 3. 沙盒泄漏验证（三信号三角定位）
 
-验证冒烟/沙盒运行是否泄漏进真实数据根（如 ~/.nebflow）时，三角定位三个独立信号，单一信号可被欺骗（env 缺失、cwd-relative fallback、静默回退链），三信号一致才算隔离：
+验证冒烟/沙盒运行是否泄漏进真实数据根（如 ~/.stand，旧 ~/.nebflow = legacy 再生区）时，三角定位三个独立信号，单一信号可被欺骗（env 缺失、cwd-relative fallback、静默回退链），三信号一致才算隔离：
 
 1. **源码 data-root 优先级**：flag override > env/home > default，确认实际取哪个
 2. **实例日志 config provenance**：从实例日志的模型/上下文窗口值反推它读了哪个 home（先例形态：实例日志出现非当前 home 所配默认的模型别名，即证明其读的不是真实 home）
