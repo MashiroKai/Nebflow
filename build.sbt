@@ -106,8 +106,10 @@ lazy val root = (project in file("."))
       slf4jApi,
       // Browser automation (optional — not bundled in distribution, detected at runtime)
       playwright % "provided",
-      // Diff
-      diffUtils,
+    // Diff
+    diffUtils,
+    // Search data layer (datalayer-spec 批)：SQLite FTS5 分片索引（设计稿 §4.1）
+    sqliteJdbc,
       // Testing
       munit,
       munitCatsEffect,

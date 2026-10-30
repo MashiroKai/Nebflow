@@ -293,12 +293,28 @@ class SessionStore(
   /** Optional hook — called with sessionId after any session data change. */
   private var sessionChangedHook: Option[String => IO[Unit]] = None
 
+  /**
+   * Optional hook — called with sessionId when a session is deleted
+   * (datalayer-spec 批 2026-10-30：索引层删片锚点——§4.3 三处写路径之一；
+   * 与 sessionChangedHook 同为既有单缝机制，不新增写面)。
+   */
+  private var sessionDeletedHook: Option[String => IO[Unit]] = None
+
   /** Register a callback invoked after session data changes (messages saved, session created/deleted). */
   def setSessionChangedHook(hook: String => IO[Unit]): Unit =
     sessionChangedHook = Some(hook)
 
+  /** Register a callback invoked when a session is deleted (index-layer prune anchor). */
+  def setSessionDeletedHook(hook: String => IO[Unit]): Unit =
+    sessionDeletedHook = Some(hook)
+
   private def notifySessionChanged(sessionId: String): IO[Unit] =
     sessionChangedHook match
+      case Some(hook) => hook(sessionId).handleErrorWith(_ => IO.unit)
+      case None => IO.unit
+
+  private def notifySessionDeleted(sessionId: String): IO[Unit] =
+    sessionDeletedHook match
       case Some(hook) => hook(sessionId).handleErrorWith(_ => IO.unit)
       case None => IO.unit
 
@@ -1099,7 +1115,7 @@ class SessionStore(
             _ - id
           ) *> (if wasActive && newActiveId.nonEmpty then
                   loadSessionMessages(newActiveId).flatMap(msgs => activeMessagesRef.set(msgs))
-                else IO.unit) *> TurnStateStore.clear(id) *> saveIndex
+                else IO.unit) *> TurnStateStore.clear(id) *> saveIndex *> notifySessionDeleted(id)
       }
 
   def markUnread(id: String): IO[Unit] =

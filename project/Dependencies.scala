@@ -71,6 +71,13 @@ object Dependencies {
   // Diff
   val diffUtils = "io.github.java-diff-utils" % "java-diff-utils" % "4.12"
 
+  // Search data layer (datalayer-spec 批 2026-10-30，设计稿 §4.1-4.3）：
+  // SQLite FTS5 分片索引，单文件、零服务、Apache 2.0。Native lib 会被
+  // sbt-assembly 打进 fat jar（SQLite 无官方纯-JDBC/无-native 变体可用；
+  // 备选降级 = 纯 Scala 内存倒排，接口不变——见设计稿 R3）。
+  val SqliteJdbcVer = "3.47.1.0"
+  val sqliteJdbc    = "org.xerial" % "sqlite-jdbc" % SqliteJdbcVer
+
   // Testing
   val munit = "org.scalameta" %% "munit" % MunitVer % Test
   val munitCatsEffect = "org.typelevel" %% "munit-cats-effect" % MunitCEVer % Test
