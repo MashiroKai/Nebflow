@@ -58,7 +58,7 @@ import { nfCacheStats, nfCacheReset } from './nfFileCache.js';
 import { protocolFormLabel, escapeHtml, flushConfigToServer, showProviderModal, saveNewProvider, revealProviderApiKeys } from './sidebar/providersUi.js';
 // 生图设置节（settings-panel 批 ②③件）与每模型连接性测试钮（B 件）——渲染/
 // 绑定单点在各自子模块，本文件只挂壳 + 转发调用（子模块不回指本文件）。
-import { bindImagegenSection, debugBadge } from './sidebar/imagegenSection.js';
+import { bindImagegenSection } from './sidebar/imagegenSection.js';
 // 认知二期产品批①选档器：设置面板区块（五档 + 档参数逐项覆盖，§6.2 产品化）。
 import { renderProfileSection, bindProfileEvents } from './presentationProfile.js';
 // 连接性测试钮已随 settings-panel-fourfix 批 ②件（2026-10-29 作者令「连接性
@@ -975,13 +975,14 @@ export function renderSettings() {
       </div>
     </div>
     <div class="settings-section">
-      <!-- 生图（imagegen）设置节（settings-panel 批 ②③件，2026-10-28 作者令）。
-           两形态由 sidebar/imagegenSection.js 单点渲染：seal=OFF → 「未编入
-           （release 构建零痕迹）」提示位；seal=ON → 正常配置面（enabled 开关 /
-           provider/model 编辑 / key 状态与录入）。调试中徽标延续工具面/插件面
-           同一枚 .imagegen-badge。本处只落壳（标题 + 徽标 + wrap），数据与
-           绑定全在该模块（renderSettings 尾部 bindImagegenSection 拉取装配）。-->
-      <div class="settings-section-title">${t('settings.imagegenTitle')} ${debugBadge()}</div>
+      <!-- 生图（imagegen）设置节（settings-panel 批 ②③件，2026-10-28 作者令；
+           功能开放批 2026-10-30：正式开放、调试中徽标退役）。
+           两形态由 sidebar/imagegenSection.js 单点渲染：seal=OFF（显式剔除构建）
+           → 「未编入（release 构建零痕迹）」提示位；seal=ON（缺省）→ 正常配置面
+           （enabled 开关 / provider/model 编辑 / key 状态与录入）。本处只落壳
+           （标题 + wrap），数据与绑定全在该模块（renderSettings 尾部
+           bindImagegenSection 拉取装配）。-->
+      <div class="settings-section-title">${t('settings.imagegenTitle')}</div>
       <div id="imagegen-section-wrap"><div class="cfg-hint">${t('settings.imagegenLoading')}</div></div>
     </div>
     <div class="settings-section">

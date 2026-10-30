@@ -188,9 +188,10 @@ object ToolRegistry:
       "message_record_search" -> MessageRecordSearchTool,
       "send_message_to_main_chat" -> SendMessageToMainChatTool
     )
-    // imagegen 双层批（2026-10-24，调试状态）：编译期 seal 门控——release 构建
-    // （ImageGenSeal.CompiledIn=false，final val 常量折叠）本注册整段消失，
-    // 「release build 零痕迹」断言锚见 ImageGenSpec。授权面 = Nebula 专属
+    // imagegen 双层批（2026-10-24）+ 功能开放批（2026-10-30 作者令「直接开放
+    // 出来」，缺省编入）：编译期 seal 门控保留为应急开关——显式 `STAND_IMAGEGEN=0`
+    // 构建（ImageGenSeal.CompiledIn=false，final val 常量折叠）本注册整段消失；
+    // 缺省构建在场。seal 断言锚见 ImageGenSpec。授权面 = Nebula 专属
     // （RootOrchestrationTools 单点 + RootExclusiveTools 防声明逃逸 + 工具内
     // isRootAgent 身份闸）。非阻塞 job 语义见 GenerateImageTool。
     val experimental: Map[String, Tool] =

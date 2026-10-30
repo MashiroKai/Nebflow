@@ -23,12 +23,21 @@ object ImageGenTypes:
   object ImageGenError:
     /** 节缺失 / enabled=false —— 面整体关闭（零迁移安全缺省方向）。 */
     case object Disabled extends ImageGenError:
-      val message = "imagegen face is disabled or unconfigured (nebflow.json top-level `imagegen` section, enabled=true required)"
-    final case class UnknownProvider(name: String) extends ImageGenError:
-      def message = s"unknown imagegen provider '$name'"
+      val message =
+        "image generation is not configured or is turned off: add a top-level `imagegen` section " +
+          "to nebflow.json with \"enabled\": true, a \"defaultProvider\", and at least one entry under " +
+          "\"providers\" (adapter types: cogview / openai-images / imagen), then enter each provider's " +
+          "API key in Settings → Image generation and retry"
+    final case class UnknownProvider(name: String, configured: List[String]) extends ImageGenError:
+      def message =
+        val known = if configured.isEmpty then "none are configured yet" else configured.mkString("'", "', '", "'")
+        s"unknown imagegen provider '$name' — configured providers: $known. " +
+          "Pass one of those via the provider parameter, or set imagegen.defaultProvider in nebflow.json."
     final case class MissingCredential(provider: String, keyRef: Option[String]) extends ImageGenError:
       def message =
-        s"provider '$provider' has no usable credential (keyRef ${keyRef.getOrElse("<unset>")} resolves to no readable secret under the data-root secrets/ dir)"
+        s"provider '$provider' has no usable API key: the stored key (pointer '${keyRef.getOrElse("<unset>")}') " +
+          "is missing or empty under the instance secrets dir. Add the key in Settings → Image generation " +
+          "(the API Key field of that provider) and retry."
     final case class HttpStatus(provider: String, status: Int, body: String) extends ImageGenError:
       def message =
         s"provider '$provider' returned HTTP $status: ${body.take(300)}"

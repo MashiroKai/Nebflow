@@ -21,7 +21,9 @@
 // `state.notifications` 并渲染进 `#top-overlays` 内的 `#notification-banner`
 // （手机层未隐藏，聊天根顶带仍可见），本节只退役它的移动镜像面，零第二实现。
 //
-// 封存态（featureFlags.friendsEnabled 缺席 = 封存，release 剥除不变）：消息/
+// 封存态（显式 "features": {"friends": false} 或 --strip-friends 产物；功能开放批
+// 2026-10-30 起运行态缺省为开放，friendseal 批 2026-09-25 的「缺席 = 封存」语义
+// 已被本批取代）：消息/
 // 联系人两面显示封存空态卡（骨架占位 + 文案），社交 dock 栏常驻（五栏固定 =
 // 作者令），不伪造数据。flag ON 时 enableFriendPanels 重挂面板 → 本文件的重挂
 // 观察腿自动补装真面。

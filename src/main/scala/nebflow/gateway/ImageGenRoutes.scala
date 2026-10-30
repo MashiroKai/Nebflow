@@ -4,7 +4,6 @@ package nebflow.gateway
 import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.ImageGenSeal
 import nebflow.llm.imagegen.{ImageGenJobs, ImageGenService}
 import nebflow.llm.imagegen.ImageGenTypes.ImageGenRequest
 import org.http4s.*
@@ -12,7 +11,8 @@ import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 
 /**
- * 生图 REST 面（imagegen 双层批 2026-10-24，调试状态）——腿②（delegate 等下层
+ * 生图 REST 面（imagegen 双层批 2026-10-24；功能开放批 2026-10-30 起随 seal
+ * 缺省编入常态在场）——腿②（delegate 等下层
  * 走插件 MCP 模式）与腿①共用 [[ImageGenService]] provider 层的本机入口：
  * 插件包的 stdio MCP server 把工具调用翻译成对本路由的**阻塞** HTTP 调用
  * （路由侧阻塞等生成完、PNG 落盘、一次性返回路径——delegate 无前端语义，
@@ -23,8 +23,9 @@ import org.http4s.dsl.io.*
  * 能调本路由的本机进程同样能直读 nebflow.json/secrets——环回门与凭据面暴露
  * 等价，不造第二把假尺。非环回一律 403，与鉴权失败不可区分。
  *
- * 本路由整体只在编译期 seal 开（`STAND_IMAGEGEN=1`）时挂进级联；release 构建
- * 级联位是 `HttpRoutes.empty`——「release build 零痕迹」的 REST 锚。
+ * 本路由整体跟随编译期 seal 缺省（`STAND_IMAGEGEN` 未设 ⇒ 编入常态在场；
+ * `STAND_IMAGEGEN=0` 构建的级联位是 `HttpRoutes.empty`——应急封存开关的
+ * REST 锚，机制保留）。
  */
 private[gateway] object ImageGenRoutes:
 
@@ -60,21 +61,18 @@ private[gateway] object ImageGenRoutes:
                       BadGateway(Json.obj("error" -> "generate_failed".asJson, "reason" -> err.message.asJson))
                     }
                   case Right(bytes) =>
+                    val providerName =
+                      ImageGenService.resolve(reqModel).toOption.map(_.name).getOrElse("imagegen")
                     val name = s"mcp-${System.currentTimeMillis()}-${bytes.length}"
                     ImageGenService.saveImage(name, bytes).attempt.flatMap {
                       case Right(path) =>
-                        ImageGenService.resolve(reqModel) match
-                          case Right(resolved) =>
-                            Ok(
-                              Json.obj(
-                                "path" -> path.asJson,
-                                "bytes" -> bytes.length.asJson,
-                                "provider" -> resolved.name.asJson,
-                                "debug" -> ImageGenSeal.DebugLabel.asJson
-                              )
-                            )
-                          case Left(_) =>
-                            Ok(Json.obj("path" -> path.asJson, "bytes" -> bytes.length.asJson))
+                        Ok(
+                          Json.obj(
+                            "path" -> path.asJson,
+                            "bytes" -> bytes.length.asJson,
+                            "provider" -> providerName.asJson
+                          )
+                        )
                       case Left(e) =>
                         InternalServerError(
                           Json.obj(

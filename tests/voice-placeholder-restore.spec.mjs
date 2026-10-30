@@ -173,7 +173,8 @@ test.describe('voice placeholder — enter/exit restore (author report 2026-10-3
     await expect.poll(() => placeholderOf(page)).toBe(ph.listening);
 
     // 切走再切回：单会话架构下侧栏无会话轨（sidebar.js:2043 注释 session
-    // list DOM removed），好友面默认封存（activityBar.js detachFriendEntries）
+    // list DOM removed），好友面按 friendsEnabled latch 摘挂（activityBar.js
+    // detachFriendEntries；功能开放批 2026-10-30 起缺省开放）
     // —— 产品上可达的「切页面」= 打开 social 配置弹窗再点外关窗（Esc 与听写
     // 停止键同键冲突，故用 overlay 点外关闭路径）。dictation 仍在飞 ⇒ placeholder
     // 必须仍是聆听态（不误恢复）；退出后归零残留 —— 作者报障的「切走再切回也

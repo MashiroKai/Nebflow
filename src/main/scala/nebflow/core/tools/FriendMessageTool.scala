@@ -89,8 +89,10 @@ object FriendMessageTool extends Tool:
       "(friend targets, group targets, and the local this-machine copy) is currently sealed by " +
       "configuration, so nothing was sent and nothing was queued. The device leg is unaffected — " +
       "use `device:<deviceName|deviceId>` to move text or files to another of the user's machines. " +
-      "Unsealing is a config change (\"features\": { \"friends\": true } in nebflow.json) followed " +
-      "by an instance restart; until then every friend/group/local call returns this error."
+      "The friends feature is open by default — this instance was explicitly re-sealed via " +
+      "\"features\": { \"friends\": false } in nebflow.json; remove that key (or set it to true), " +
+      "restart the instance, and the friend/group/local targets work again. Until then every " +
+      "friend/group/local call returns this error."
 
   private def sealedKindLabel(kind: ToKind): String = kind match
     case ToKind.Local => "local"

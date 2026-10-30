@@ -112,7 +112,8 @@ async function installApi(page, log) {
 async function bootContext(browser, { serveRevertedWs = false, log, token = 't' } = {}) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   // 网关 token 由调用方注入（隔离实例的 <home>/auth.json）——WS 必须真连上，否则
-  // 页面收不到 configData 帧、好友面板不挂载（featureFlags.friendsEnabled 的 latch）。
+  // 页面收不到 configData 帧、好友面板不挂载（featureFlags.friendsEnabled 的 latch；
+  // 功能开放批 2026-10-30 起缺省开放——该句说的是 latch 未到时的 boot 窗口语义）。
   await ctx.addInitScript((tok) => {
     localStorage.setItem('nebflow_token', tok);
     localStorage.setItem('neblink_token', tok);

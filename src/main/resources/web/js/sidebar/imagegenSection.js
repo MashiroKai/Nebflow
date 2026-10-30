@@ -2,11 +2,12 @@
 // 2026-10-28 初版；settings-panel-fourfix 批 ③件 2026-10-29 作者令重做：
 // 「配置风格对齐 JeV 面板那种普通 LLM 配置：就是普通配置过程——填 API Key 值、
 // 保存，完事」「不要过拟合智谱——生图要支持所有生图模型/提供方」「整体精简，
-// 现在感觉很乱」）。
+// 现在感觉很乱」；功能开放批 2026-10-30 作者令「直接开放出来」：seal 缺省编入、
+// 「调试中」徽标退役——本节为正式产品配置面）。
 //
-// 两形态（seal 面，作者令 2026-10-28 保留不动）：
-//   · compiledIn=false（release / 未开 STAND_IMAGEGEN 的 dev 构建）→ 只渲染
-//     「未编入（release 构建零痕迹）」提示位 + 调试中徽标；
+// 两形态（seal 面保留为应急开关，机制不动）：
+//   · compiledIn=false（显式 `STAND_IMAGEGEN=0` 的剔除构建）→ 只渲染
+//     「未编入（release 构建零痕迹）」提示位；
 //   · compiledIn=true → 正常配置面（本件重做后的形态，见下）。
 //
 // 重做后的配置面（JeV 同款普通 LLM 配置过程）：
@@ -62,15 +63,6 @@ async function fetchStatus() {
   } catch {
     return null;
   }
-}
-
-/**
- * The 调试中 badge — single source for the panel face (same glyph the tool
- * card / plugin face carry; design-六 验收⑤⑥ 纪律延续).
- * @returns {string}
- */
-export function debugBadge() {
-  return `<span class="imagegen-badge" title="${escapeHtml(t('settings.imagegenDebugTitle'))}">${escapeHtml(t('settings.imagegenDebug'))}</span>`;
 }
 
 /**

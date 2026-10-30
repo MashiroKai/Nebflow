@@ -1,14 +1,15 @@
 ---
 name: imagegen
-description: 生图工具调用纪律——generate_image 的参数面、阻塞语义、provider 选择与调试状态声明（调试中 / experimental）。
+description: 生图工具调用纪律——generate_image 的参数面、阻塞语义、provider 选择与失败面处置（正式产品面，功能开放批 2026-10-30）。
 ---
 
-# imagegen 生图纪律（调试中 / experimental）
+# imagegen 生图纪律
 
 ## 这是什么
 
-本插件授予 `generate_image` 一件生图工具（MCP 模式）。**调试状态**：能力在案但
-未升稳定——结果需人工过目，发现异常在任务报告里注明「imagegen 调试面」。
+本插件授予 `generate_image` 一件生图工具（MCP 模式）。**正式产品面**（功能开放批
+2026-10-30，作者令「直接开放出来」）：与根会话内置件共用同一 provider 层，能力
+常态在场（引擎构建显式 `STAND_IMAGEGEN=0` 剔除的除外）。
 
 ## 与根会话内置件的分工（铁律）
 
@@ -29,13 +30,14 @@ description: 生图工具调用纪律——generate_image 的参数面、阻塞�
 ## 调用纪律
 
 1. **一击一张**：一次调用一张图；需要变体就多次调用，不要一次塞复杂多图要求。
-2. 返回值 = 落盘 PNG 的**绝对路径** + 字节数——它是交付物引用：后续加工/展示
+2. 返回值 = 落盘图片的**绝对路径** + 字节数——它是交付物引用：后续加工/展示
    直接用该路径（Read 工具可读图；交付给上层时把路径写进结果）。
-3. 失败面是结构化文本（HTTP 状态 + provider 原因）：**可重试的只限网络/5xx**；
-   4xx（配置缺失/凭据缺席/参数非法）重试无意义——把原文带进报告。
+3. 失败面是人话结构化文本（哪个 provider、缺什么 key、怎么配）：**可重试的只限
+   网络/5xx**；4xx（配置缺失/凭据缺席/参数非法）重试无意义——把原文带进报告。
 4. provider 由实例 nebflow.json 顶层 `imagegen` 节配置（type =
-   `cogview` / `openai-images` / `imagen`；凭据 keyRef 指针指 secrets/）。
-   你没有的配置不要猜名字——缺省走 defaultProvider。
+   `cogview` / `openai-images` / `imagen`；凭据 keyRef 指针指 secrets/，也可在
+   设置页「生图」节直接填 API Key）。你没有的配置不要猜名字——缺省走
+   defaultProvider。
 
 ## 边界
 
