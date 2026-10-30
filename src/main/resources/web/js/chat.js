@@ -2270,6 +2270,28 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   // （checkAllAnswered 在 syncMulti 的草稿恢复腿里早于挂载点被调用——TDZ 防御）；
   // 挂载本体在按钮行构造处（活卡 + 入口判据通过才挂，见彼处注）。
   let answerAttach = null;
+  // askuser-otherattach 批（2026-10-30 作者追加令 11:52）：选择题卡点「其他…」进入
+  // 自由输入态 ⇒ 挂**同款**附件控件，附件随 Other 文本随帧到达（信封协议不变——
+  // `attachments` 键卡级挂载，后端注入与题型无关）。修正①的「选择题卡无入口」
+  // 收窄为「未进 Other 态无入口」；附件仍不替代选项（`satisfyGate` 对选项卡恒
+  // false 不动，发送闸照旧要求本体作答 + 上传中置灰）。惰性单次挂载：Other 态
+  // 激活即挂、之后常驻——已挂区不随 Other 取消再隐藏（区里有用户文件，藏=孤儿面）。
+  // 资格判据 = 有 options + 允许 Other + 自由输入面在场（freeInput !== false）+
+  // 非 secret/dirPicker（与 answerAttachmentsAllowed 同族 fail-closed 口径）；
+  // 开放题卡走 answerAttachmentsAllowed 早挂腿（下方挂载点），这里显式排除防双挂。
+  // 🔴 声明前置理由同 answerAttach：草稿恢复腿（questions.forEach 内）会调用
+  // mountOtherAttachments —— 彼处按钮行尚未构建，只置 pendingOtherMount 旗标、
+  // 由挂载点统一落挂（禁在 btnRow 缺席时提前插区，插位会退化到卡尾）。
+  const otherAttachEligible = !!(onConfirm && requestId) &&
+    !answerAttachmentsAllowed(questions) &&
+    questions.some(q => q && q.options && q.options.length > 0 &&
+      q.freeInput !== false && q.allowOther !== false &&
+      q.secret !== true && q.dirPicker !== true);
+  let pendingOtherMount = false;
+  function mountOtherAttachments() {
+    if (answerAttach || !otherAttachEligible) return;
+    answerAttach = mountAnswerAttachments(box, { requestId, onChange: () => checkAllAnswered() });
+  }
   const confirmLabel = doneLabel || t('chat.confirm');
   const saved = askSessionId ? loadAskDrafts(askSessionId) : {};
   const questionWrappers = [];
@@ -2578,6 +2600,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
           otherBtn.classList.add('picked');
           customInput.style.display = '';
           customInput.value = savedVal;
+          pendingOtherMount = true; // askuser-otherattach 批：草稿恢复 = 已处 Other 态（挂载点统一落挂）
         } else {
           customInput.style.display = 'none';
         }
@@ -2586,6 +2609,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
           if (otherBtn.classList.contains('picked')) {
             customInput.style.display = '';
             customInput.focus();
+            mountOtherAttachments(); // askuser-otherattach 批：Other 自由输入态挂附件区
           } else {
             customInput.style.display = 'none';
             customInput.value = '';
@@ -2600,6 +2624,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         if (savedVal && !item.options.some(o => (typeof o === 'string' ? o : o.label) === savedVal)) {
           otherBtn.classList.add('picked');
           customInput.style.display = '';
+          pendingOtherMount = true; // askuser-otherattach 批：草稿恢复 = 已处 Other 态（挂载点统一落挂）
         } else {
           customInput.style.display = 'none';
         }
@@ -2608,6 +2633,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
           otherBtn.classList.add('picked');
           customInput.style.display = '';
           customInput.focus();
+          mountOtherAttachments(); // askuser-otherattach 批：Other 自由输入态挂附件区
           if (customInput.value.trim()) {
             answers[qi] = customInput.value.trim();
           }
@@ -2631,6 +2657,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
         if (hasOptions) {
           optsDiv.querySelectorAll('.option-btn').forEach(el => el.classList.remove('picked'));
           otherBtn && otherBtn.classList.add('picked');
+          mountOtherAttachments(); // askuser-otherattach 批：键入即进 Other 态 ⇒ 同款挂载
         }
       } else if (hasOptions && !otherBtn?.classList.contains('picked')) {
         // Don't clear answer if a preset option is selected
@@ -2682,6 +2709,8 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
   if (answerAttachMounted) {
     answerAttach = mountAnswerAttachments(box, { requestId, onChange: () => checkAllAnswered() });
   }
+  // askuser-otherattach 批：草稿恢复腿置旗 ⇒ 此处统一落挂（btnRow 已构建、插位正确）。
+  if (pendingOtherMount) mountOtherAttachments();
   confirmBtn.onclick = () => {
     // askuser-dragdrop 批（作者修正⑤·设计稿 §2.7）：有失败 chip ⇒ toast 且不发送
     // （上传中的 chip 已由发送钮置灰覆盖；失败不阻塞文本输入与其它 chip）。
