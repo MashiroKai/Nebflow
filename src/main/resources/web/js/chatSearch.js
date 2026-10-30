@@ -70,6 +70,84 @@ const FETCH_CONCURRENCY = 4;
 const DEBOUNCE_MS = 300;
 const PAGE_JUMP = 5;
 
+// ── 数据层检索骨架（datalayer-spec 批 2026-10-30，设计稿 §4.5 C2-C6）─────
+// 搜索模式优先走服务端 SQLite FTS5 索引查询 `GET /api/search/chat`
+// （分片谓词 + ETag 凭证 304）；503/失败 ⇒ 回落旧全扫路径（设计稿 §4.6 R4
+// 灰度零风险：新旧并行，旧路径保底可回退）。游空档（无关键词）维持既有
+// 全量拉取流——设计稿 C3 只切搜索模式。
+const SEARCH_API_ENABLED = true;
+const SEARCH_API_LIMIT = 200;         // 与 MAX_RESULTS 同档
+/** 五 tab → 索引类型片谓词（all = message+tool 两片的并查询）。 */
+const TAB_KINDS = { media: ['media'], files: ['file'], links: ['link'] };
+/** all/date tab 的索引类型片（与 matchesTab 的 default 分支同口径）。 */
+const SEARCH_KINDS_ALL = ['message', 'tool'];
+
+// ── C6 条件请求缓存（§4.4 凭证腿前端半边）：规范化查询 url → {etag, body}。
+// 二次同查询带 If-None-Match，304 ⇒ 零重发，用缓存体渲染；会话变更 ⇒
+// 服务端 ETag 必变 ⇒ 200 新体覆缓存（精确失效，不做内容缓存）。──────────
+const searchEtagCache = new Map();
+
+// ── C5 多选一次打开（作者令②）：选择态与批量打开 ─────────────
+/** @type {Set<string>} 已选条目 id（媒体卡 = entry.id；结果行 = key）。 */
+let multiSelected = new Set();
+let multiAnchor = -1;        // Shift 范围选择的锚点（lastResults 下标）
+
+/** 条目选择 id：媒体卡 = entry.id；结果行 = key。 */
+function selIdOf(res) { return (res && (res.key || res.id)) || ''; }
+
+/** 选择态可视面：data-key 匹配的卡/行挂/摘 .multi-sel（样式随
+ *  search-media-active-style 同款内联注入——chat.css 本批锁定）。 */
+function paintMultiClass(id, on) {
+  document.querySelectorAll(`#search-results [data-key="${CSS.escape(id)}"]`)
+    .forEach(el => el.classList.toggle('multi-sel', on));
+}
+
+/** Cmd/Ctrl 点选：翻转入/出选择集；锚点恒更新到点中行。 */
+function multiToggleAt(idx) {
+  const res = lastResults[idx];
+  const id = selIdOf(res);
+  if (!id) return;
+  if (multiSelected.has(id)) { multiSelected.delete(id); paintMultiClass(id, false); }
+  else { multiSelected.add(id); paintMultiClass(id, true); }
+  multiAnchor = idx;
+}
+
+/** Shift 范围选：锚点 ⇒ 点中行（含两端）并入选择集；无锚 ⇒ 退化为点选。 */
+function multiRangeTo(idx) {
+  if (multiAnchor < 0 || multiAnchor >= lastResults.length) { multiToggleAt(idx); return; }
+  const lo = Math.min(multiAnchor, idx), hi = Math.max(multiAnchor, idx);
+  for (let i = lo; i <= hi; i++) {
+    const id = selIdOf(lastResults[i]);
+    if (id && !multiSelected.has(id)) { multiSelected.add(id); paintMultiClass(id, true); }
+  }
+}
+
+/** 全选本组（Cmd/Ctrl+A）：当前结果面全部条目。 */
+function multiSelectAll() {
+  lastResults.forEach((res) => {
+    const id = selIdOf(res);
+    if (id && !multiSelected.has(id)) { multiSelected.add(id); paintMultiClass(id, true); }
+  });
+  multiAnchor = lastResults.length - 1;
+}
+
+/** 批量打开：逐条走既有 activateMediaEntry/activateResult 单点路由
+ * （entry 有 type = 媒体卡；否则 = 结果行）。不建持久化结果集——会话内
+ * 一次性打开（未决项④裁定）。 */
+function openMultiSelected() {
+  for (const res of lastResults) {
+    if (!multiSelected.has(selIdOf(res))) continue;
+    if (res.type) activateMediaEntry(res);
+    else activateResult(res);
+  }
+}
+
+/** 结果面重建（新查询/切 tab/新渲染）⇒ 选择态清零。 */
+function resetMulti() {
+  multiSelected = new Set();
+  multiAnchor = -1;
+}
+
 // v3.2: the date tab JOINS the roving enumeration (keyboard arrows now cross
 // it naturally); it keeps its anchor semantics — clicking it opens the calendar
 // popover, it never switches the category.
@@ -108,6 +186,9 @@ let streamMode = 'browse';   // 'browse' | 'anchor' | 'search'
 let pageInFlight = false;
 let sentinelEl = null;
 let sentinelObserver = null;
+/** C4：媒体网格分批渲染的专属哨兵观察器（与文本流 sentinelObserver 互斥，
+ *   renderStreamFresh/renderMediaGrid 各管各的，切换时先 disconnect）。 */
+let mediaGridObserver = null;
 
 /**
  * Typed element lookups (getElementById returns bare HTMLElement).
@@ -145,6 +226,17 @@ export function initChatSearch() {
     st.id = 'search-media-active-style';
     st.textContent = '.search-media-card.active{border-color:rgba(91,127,191,.9);' +
       'box-shadow:inset 2px 0 0 rgba(91,127,191,.5),0 0 0 1px rgba(91,127,191,.35);}';
+    document.head.appendChild(st);
+  }
+
+  // C5 多选批: selection ring for multi-selected cards/rows — same locked-css
+  // inline-injection receipt as above; .multi-sel rides the accent family,
+  // dashed to stay distinguishable from the roving .active ring.
+  if (!document.getElementById('search-multi-sel-style')) {
+    const st = document.createElement('style');
+    st.id = 'search-multi-sel-style';
+    st.textContent = '.search-media-card.multi-sel,.search-result.multi-sel{' +
+      'outline:2px dashed rgba(91,127,191,.85);outline-offset:1px;}';
     document.head.appendChild(st);
   }
 
@@ -217,7 +309,11 @@ export function initChatSearch() {
     if (!el) return;
     const idx = modelKeys.get(el.dataset.key || '');
     const res = idx === undefined ? null : lastResults[idx];
-    if (res) activateResult(res);
+    if (!res) return;
+    // C5 多选：Cmd/Ctrl 点选、Shift 范围（批量打开 = Cmd/Ctrl+Enter）。
+    if (e.metaKey || e.ctrlKey) { e.preventDefault(); multiToggleAt(idx); return; }
+    if (e.shiftKey) { e.preventDefault(); multiRangeTo(idx); return; }
+    activateResult(res);
   });
   // Hovering a result clears the keyboard selection — media-grid cards join
   // the same contract (媒体直开批; additive selector, text rows unaffected).
@@ -627,6 +723,15 @@ function onModalKeydown(e) {
   const inNativeControl = !!(ae && modal?.contains(ae) && ae.tagName === 'SELECT');
   const onTab = !!(ae instanceof Element && ae.classList?.contains('search-tab'));
 
+  // C5 全选本组：Cmd/Ctrl+A（输入框内让原生全选文本）。
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    multiSelectAll();
+    return;
+  }
+
   switch (e.key) {
     case 'Escape': {
       e.preventDefault();
@@ -649,6 +754,11 @@ function onModalKeydown(e) {
       if (inNativeControl || ae?.tagName === 'BUTTON') return;
       e.preventDefault();
       e.stopImmediatePropagation();
+      // C5 批量打开：Cmd/Ctrl+Enter 且选择集非空 ⇒ 逐条走既有激活路由。
+      if ((e.metaKey || e.ctrlKey) && multiSelected.size > 0) {
+        openMultiSelected();
+        return;
+      }
       if (activeIndex >= 0 && lastResults[activeIndex]) {
         // 媒体直开批: under the typed grid tabs the roving selection walks
         // media cards — Enter runs the SAME activation a card click does.
@@ -1191,6 +1301,157 @@ async function loadAfterPages() {
 }
 
 // ── Search mode (keyword) — v2.1 one-shot query ────────────
+
+/**
+ * C3：搜索模式的索引快路（GET /api/search/chat——分片谓词 + FTS5 命中 +
+ * ETag 凭证）。返回 true = 结果已渲染（或本查询已中止/被取代，UI 归更新
+ * 的查询所有）；false = 索引不可用，调用方回落旧全扫（§4.6 R4 灰度零风险：
+ * 新旧并行，旧路径逐字保底）。
+ *
+ * 谓词纪律（§4.1 ③）：current 档带 sid（会话键谓词）；all 档 kinds 必给
+ * （五 tab 映射——media/files/links 用 TAB_KINDS，all/date = message+tool）。
+ * agentSel 保留既有前端过滤语义（all 档按会话 agent 名过滤；current 档与
+ * 旧路径同——不过滤），在命中侧按 sid 归组前过滤会话清单。
+ *
+ * C6：同查询二次发起带 If-None-Match（searchEtagCache 按规范化 url 存
+ * 凭证）；304 ⇒ 零重发，缓存体直接渲染；200 ⇒ 新凭证+新体覆缓存。
+ */
+async function runSearchIndex(kw, scope, agentSel, ac, mySeq, statusEl, resultsEl) {
+  try {
+    let sessions;
+    let sessionNameById = new Map();
+    if (scope === 'current') {
+      const sid = state.activeSessionId;
+      if (!sid) {
+        if (mySeq !== searchSeq) return true;
+        resultsEl.removeAttribute('data-loading');
+        clearResults(resultsEl);
+        resultsEl.innerHTML = `<div class="search-hint">${escapeHtml(t('search.noResults'))}<br>${escapeHtml(t('search.noResultsSuggestion'))}</div>`;
+        statusEl.textContent = t('search.noSession');
+        streamSessions = [];
+        lastResults = [];
+        renderedCount = 0;
+        lastTotal = 0;
+        return true;
+      }
+      const local = (state.sessions || []).find(s => s.id === sid);
+      sessions = [{ id: sid, name: local?.name || sid }];
+      sessionNameById = new Map([[sid, local?.name || sid]]);
+    } else {
+      sessions = await fetchSessionList(ac.signal);
+      if (mySeq === searchSeq) populateAgentFilter(sessions, agentSel);
+      if (agentSel) sessions = sessions.filter(s => agentNameOf(s) === agentSel);
+      sessionNameById = new Map(sessions.map(s => [s.id, s.name || s.id]));
+    }
+
+    const kinds = MEDIA_TABS.includes(currentTab) ? (TAB_KINDS[currentTab] || []) : SEARCH_KINDS_ALL;
+    const params = new URLSearchParams({ q: kw, kinds: kinds.join(','), limit: String(SEARCH_API_LIMIT) });
+    if (scope === 'current') params.set('sid', state.activeSessionId);
+    const url = `/api/search/chat?${params.toString()}`;
+
+    // C6 条件请求：缓存凭证命中 ⇒ 带 If-None-Match，304 零重发。
+    const cached = searchEtagCache.get(url);
+    const headers = { ...authHeaders() };
+    if (cached) headers['If-None-Match'] = cached.etag;
+    const resp = await fetch(url, { headers, signal: ac.signal });
+    if (resp.status === 304 && cached) {
+      return applyIndexResults(cached.body, sessions, sessionNameById, mySeq, statusEl, resultsEl);
+    }
+    if (!resp.ok) return false;          // 503 降级面 / 5xx ⇒ 回落旧全扫
+    const etag = resp.headers.get('ETag') || '';
+    const body = await resp.json();
+    // 形状把关：夹具/代理误答的 200（hits/total 缺字段）不得吞掉结果——
+    // 不是合法索引响应 ⇒ 回落旧全扫（与 fetchHistory 的 malformed 同律）。
+    if (!body || !Array.isArray(body.hits) || typeof body.total !== 'number') return false;
+    if (etag) searchEtagCache.set(url, { etag, body });
+    return applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, resultsEl);
+  } catch (e) {
+    if (e.name === 'AbortError') throw e;   // runSearch 既有 catch 静默处理
+    if (mySeq !== searchSeq) return true;   // 已被取代：UI 归新查询，勿回落
+    return false;                           // 网络错/体损坏 ⇒ 回落旧全扫
+  }
+}
+
+/**
+ * 索引命中 → 既有渲染管线（与旧全扫路径同一 streamSessions/lastResults
+ * 模型，渲染/键盘/浮窗零分叉）。媒体三 tab 用 hit.extra 的 popMediaIndex
+ * 条目形状直渲染（C4——免重抽）；all/date tab 补 wrapItem 同款字段面。
+ */
+function applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, resultsEl) {
+  if (mySeq !== searchSeq) return true;
+  const hits = (body && Array.isArray(body.hits)) ? body.hits : [];
+
+  if (MEDIA_TABS.includes(currentTab)) {
+    const entries = [];
+    for (const h of hits) {
+      const extra = (h.extra && typeof h.extra === 'object') ? h.extra : {};
+      const e = {
+        ...extra,
+        id: extra.id || `${h.sid}:${h.ord}`,
+        sessionId: h.sid,
+        sessionName: sessionNameById.get(h.sid) || h.sid,
+        msgOrd: typeof extra.msgOrd === 'number' ? extra.msgOrd : h.ord,
+        ts: h.ts || extra.ts || 0,
+      };
+      if (currentSource && e.source !== currentSource) continue;
+      entries.push(e);
+    }
+    entries.sort((a, b) => (b.ts - a.ts) || (b.msgOrd - a.msgOrd));
+    streamSessions = sessions.map(s => {
+      const mine = entries.filter(e => e.sessionId === s.id);
+      return { id: s.id, name: s.name || s.id, all: [], view: mine, entries: mine,
+               start: 0, end: mine.length, el: null, headerEl: null };
+    });
+    buildModel();          // message view empty under grid tabs — keep state coherent
+    renderStreamFresh(resultsEl, statusEl);
+    return true;
+  }
+
+  // all/date tab：message/tool 行——tool 过滤/手机角色筛选沿用既有前端谓词。
+  populateToolFilter(
+    [{ all: hits.map(h => ({ kind: h.kind, tool: (h.extra && h.extra.tool) || '' })) }],
+    selectById('search-tool')?.value || '');
+  const toolSel = activeToolFilter();
+  const results = [];
+  for (const h of hits) {
+    // kind 词汇对齐前端 messageKind（user|agent|ai|tool）——索引片只有
+    // message|tool 两档，message 的角色由 extra.role 投影（adapter 同源）。
+    const kind = h.kind === 'tool' ? 'tool' : ((h.extra && h.extra.role) || 'ai');
+    const m = { kind, tool: (h.extra && h.extra.tool) || '' };
+    if (!matchesTool(m, toolSel)) continue;
+    if (!matchesKind(m)) continue; // 手机层角色筛选缝（桌面恒真）
+    results.push({
+      sessionId: h.sid,
+      sessionName: sessionNameById.get(h.sid) || h.sid,
+      kind,
+      tool: m.tool,
+      input: '',
+      text: h.snippet || '',
+      // 索引行不投影原始 segments——浮窗按 (sid, ord, kind) 直定位
+      // （chatSearchFloat.findHitIndex 的 ord 快路，C3 兼容面）。
+      summary: '',
+      content: '',
+      ts: h.ts,
+      ord: h.ord,
+      attachments: [],
+    });
+  }
+  results.sort((a, b) => ((b.ts || 0) - (a.ts || 0)) || (b.ord - a.ord));
+  lastTotal = typeof body.total === 'number' ? body.total : results.length;
+  const capped = results.slice(0, MAX_RESULTS);
+  streamSessions = sessions.map(s => {
+    const view = capped.filter(r => r.sessionId === s.id);
+    return {
+      id: s.id, name: s.name || s.id, all: [], view,
+      start: 0, end: view.length, el: null, headerEl: null,
+    };
+  });
+  buildModel();
+  renderStreamFresh(resultsEl, statusEl);
+  if (anchorDate) scrollToAnchorInResults();
+  return true;
+}
+
 async function runSearch() {
   const mySeq = ++searchSeq;
   searchAbort?.abort();
@@ -1209,6 +1470,13 @@ async function runSearch() {
   statusEl.textContent = t('search.searching');
 
   try {
+    // C3：索引快路优先——成功（或已被更新的查询取代/中止）⇒ handled；
+    // 索引不可用（503/5xx/网络错）⇒ false，继续旧全扫路径（§4.6 R4 保底）。
+    if (SEARCH_API_ENABLED && kw) {
+      const handled = await runSearchIndex(kw, scope, agentSel, ac, mySeq, statusEl, resultsEl);
+      if (handled) return;
+    }
+
     let sessions;
     if (scope === 'current') {
       const sid = state.activeSessionId;
@@ -1398,6 +1666,9 @@ function renderStreamFresh(resultsEl, statusEl) {
   resultsEl.removeAttribute('data-loading');
   sentinelObserver?.disconnect();
   sentinelEl = null;
+  mediaGridObserver?.disconnect();
+  mediaGridObserver = null;
+  resetMulti();              // C5：结果面重建 ⇒ 选择态清零
   clearResults(resultsEl);
   renderedCount = 0;
   activeIndex = -1;
@@ -1905,7 +2176,19 @@ function mediaEntryCard(e) {
   time.className = 'search-media-time';
   time.textContent = e.ts ? formatTime(e.ts) : '';
   card.appendChild(time);
-  card.addEventListener('click', () => activateMediaEntry(e));
+  // C5 多选：Cmd/Ctrl 点选、Shift 范围（卡片的直开单击语义保留给裸点）。
+  card.addEventListener('click', (ev) => {
+    if (ev.metaKey || ev.ctrlKey || ev.shiftKey) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const idx = modelKeys.get(e.id);
+      if (idx === undefined) return;
+      if (ev.shiftKey) multiRangeTo(idx);
+      else multiToggleAt(idx);
+      return;
+    }
+    activateMediaEntry(e);
+  });
   return card;
 }
 
@@ -1965,8 +2248,18 @@ function renderMediaGrid(resultsEl, statusEl) {
     statusEl.textContent = statusSummary();
     return;
   }
+  clearResults(resultsEl);
+  statusEl.textContent = statusSummary();
+
+  // C4 分批渲染：首块 RENDER_BATCH 张卡立刻上屏（Top Hit 预选契约不变），
+  // 尾部哨兵可见时续渲下一块（与文本行 renderNextBatch 的
+  // RENDER_BATCH/IntersectionObserver 同思路）——千级条目的网格不再一次
+  // 性卡主线程。分组边界跨块时先封口旧 grid、再开新组的 header+grid。
+  mediaGridObserver?.disconnect();
   const groups = groupEntriesByTime(entries, new Date());
-  for (const g of groups) {
+  let pi = 0, ci = 0, gridEl = null, firstPainted = false;
+
+  const openGroup = (g) => {
     if (g.key !== 'undated') {
       const header = document.createElement('div');
       header.className = 'search-media-group-header';
@@ -1975,15 +2268,43 @@ function renderMediaGrid(resultsEl, statusEl) {
         : t('search.groupMonth', { n: g.m0 + 1 });
       resultsEl.appendChild(header);
     }
-    const grid = document.createElement('div');
-    grid.className = 'search-media-grid';
-    for (const e of g.entries) grid.appendChild(mediaEntryCard(e));
-    resultsEl.appendChild(grid);
-  }
-  statusEl.textContent = statusSummary();
-  // First card pre-selected — same Top-Hit contract the result rows render
-  // with (renderStreamFresh's setActive(0)), so Enter opens without a click.
-  if (entries.length) setActive(0);
+    gridEl = document.createElement('div');
+    gridEl.className = 'search-media-grid';
+    resultsEl.appendChild(gridEl);
+  };
+
+  const paintNext = () => {
+    let painted = 0;
+    while (pi < groups.length && painted < RENDER_BATCH) {
+      const g = groups[pi];
+      if (!gridEl) openGroup(g);
+      const take = Math.min(g.entries.length - ci, RENDER_BATCH - painted);
+      for (let k = 0; k < take; k++) gridEl.appendChild(mediaEntryCard(g.entries[ci++]));
+      painted += take;
+      if (ci >= g.entries.length) { pi++; ci = 0; gridEl = null; }
+    }
+    if (!firstPainted) {
+      firstPainted = true;
+      if (entries.length) setActive(0);   // Top-Hit contract（同 renderStreamFresh）
+    }
+    // 仍有未渲块 ⇒ 尾部挂哨兵，可见续渲；渲完 ⇒ 摘哨兵。
+    mediaGridObserver?.disconnect();
+    mediaGridObserver = null;
+    if (pi < groups.length || ci < (groups[pi]?.entries.length || 0)) {
+      const sentinel = document.createElement('div');
+      sentinel.className = 'search-sentinel';
+      resultsEl.appendChild(sentinel);
+      const ob = new IntersectionObserver((obs) => {
+        for (const en of obs) {
+          if (en.isIntersecting) { paintNext(); break; }
+        }
+      }, { root: resultsEl });
+      ob.observe(sentinel);
+      mediaGridObserver = ob;
+    }
+  };
+
+  paintNext();
 }
 
 // ── Result activation ───────────────────────────────────────

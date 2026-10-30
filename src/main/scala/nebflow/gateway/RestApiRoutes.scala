@@ -76,7 +76,10 @@ class RestApiRoutes(
   private given RestApiCtx = ctx
 
   def routes: HttpRoutes[IO] =
-    HealthRoutes.routes(ctx) <+> SessionRoutes.routes(ctx) <+> AskUserCancelRoutes.routes(ctx) <+>
+    HealthRoutes.routes(ctx) <+> SessionRoutes.routes(ctx) <+>
+      // datalayer-spec 批 2026-10-30：聊天检索索引查询面（/api/search/chat，
+      // 与旧全扫路径并行存在——设计稿 §4.6 R4；/api/search 前缀与既有域互不重叠）。
+      ChatSearchRoutes.routes(ctx) <+> AskUserCancelRoutes.routes(ctx) <+>
       // askuser-dragdrop 实施批（2026-10-19，批 #551）：卡片作用域答复附件上传域
       // （/api/askuser/attachments —— 与 cancel 域同族挂载）。
       AskUserAttachmentRoutes.routes(ctx) <+>

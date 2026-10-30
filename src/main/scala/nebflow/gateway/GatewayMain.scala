@@ -501,7 +501,30 @@ object GatewayMain extends IOApp:
               // 判据(判据本体仍在 NfFilePolicy,实现不搬)。生产唯一装配点,早于一切
               // 工具执行;未接线的消费方按既有语义 fail-closed。
               FilePolicyPort.install(NfFilePolicy)
+              // datalayer-spec 批 2026-10-30（C1）：数据层检索骨架的聊天面注册——
+              // 索引文件落 `<dataRoot>/search-index/chat.db`（memory-db 目录先例
+              // 同款；只读 sessions 真源，绝不回写）。写路径钩子 = 既有
+              // sessionChangedHook 单缝（不新增写面）；冷建/对账走 boot 后台
+              // fiber（下方），不阻塞启动，建库期间查询降级旧全扫（§4.6 R1/R4）。
+              val chatSearchAdapter = new nebflow.core.search.chat.ChatSearchAdapter(
+                PathUtil.dataRoot / "sessions")
+              nebflow.core.search.SearchIndexService.register(chatSearchAdapter, PathUtil.dataRoot).unsafeRunSync()
+              sessionStore.setSessionChangedHook { sid =>
+                IO(nebflow.core.search.SearchIndexService.markSessionChanged(sid))
+              }
+              sessionStore.setSessionDeletedHook { sid =>
+                nebflow.core.search.SearchIndexService.removeSession("chat", sid)
+              }
               sessionStore.load
+                .flatMap { _ =>
+                  // datalayer-spec 批（C1 冷建）：全量对账后台 fiber——逐会话
+                  // 指纹比对，缺失/陈旧者重建；不阻塞 boot（§4.3）；零超时红线：
+                  // 不设 wall-clock 超时，完成读数走日志（`search-index rebuild:`）。
+                  (sessionStore.listSessionsIncludeUnindexed.flatMap { sessions =>
+                    nebflow.core.search.SearchIndexService.fullRebuild(
+                      "chat", sessions.map(_.id))
+                  }.start).void
+                }
                 .flatMap { _ =>
                   // Single-session architecture: guarantee the primary agent Nebula
                   // has exactly one session and that it is the active session shown in
