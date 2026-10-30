@@ -8,8 +8,9 @@
 //     nebflow-session-change 与 taskPanel 同族事件，零新轮询）；
 //   · 右键「搜索」（search）：push「搜索」详情页（chatSearch 面，openSearchModal
 //     同一桌面导出 API）。
-// 定时/心跳/后台/智能体/手机接入等其余入口 = 设置根页「工作台」分组行
-// （navController HUB_ROWS）与联系人页「手机接入」行（socialFaces）。
+// 定时/心跳/后台/智能体/手机接入等其余入口 = 工作台根页「工作台」分组行
+// （navController HUB_ROWS；设置自顶层导航降级后同为其中一行）与联系人页
+// 「手机接入」行（socialFaces）。
 // 桌面零改动边界：两键为本层自建节点（拆层摘除）；桌面 header 簇零触碰。
 
 import { t } from '../i18n.js';

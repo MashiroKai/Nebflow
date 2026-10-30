@@ -165,7 +165,7 @@ test('T2 controls: heat dim seg on top region, 52-week heatmap scrollable, curve
   expect(errors).toEqual([]);
 });
 
-test('T3 page-shell back button pops to settings root (injected back retired by ②17 dedup)', async ({ page }) => {
+test('T3 page-shell back button pops to workbench root (injected back retired by ②17 dedup)', async ({ page }) => {
   const errors = watchErrors(page);
   await pushPage(page, 'usage');
 
@@ -177,7 +177,7 @@ test('T3 page-shell back button pops to settings root (injected back retired by 
   await back.click();
   await expect(page.locator('.mobile-page[data-page="usage"]')).not.toHaveClass(/live/);
   // pop 一层 = 回设置根页（dock 批：入口腿 = 工作台行）。
-  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
-  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('settings');
+  await expect(page.locator('.mobile-page[data-page="workbench"]')).toHaveClass(/live/);
+  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('workbench');
   expect(errors).toEqual([]);
 });

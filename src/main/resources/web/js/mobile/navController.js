@@ -2,9 +2,10 @@
 // 小红书式五栏底 dock ＋「每个节目都是独立界面」的全屏页导航。
 //
 // ── 导航模型（dock 批重写；中键改版批 2026-10-29 23:36 修订）─────────
-//   · 底 dock = 根页切换器：五栏 `消息 / 联系人 / 对话 / canvas / 设置`
-//     （作者逐字顺序；DOCK_ORDER 钉死）。dock 常驻（聊天根上也显示，激活
-//     中键）；点 tab = 切换根页（互斥替换，非堆叠）。
+//   · 底 dock = 根页切换器：五栏 `消息 / 联系人 / 对话 / canvas / 工作台`
+//     （工作台批 2026-10-30 作者令：设置从顶层导航降级为工作台成员——
+//     第五栏 设置 → 工作台；DOCK_ORDER 钉死）。dock 常驻（聊天根上也显示，
+//     激活中键）；点 tab = 切换根页（互斥替换，非堆叠）。
 //   · 中键改版批（作者 23:36 逐字「中间那个对话 就是进入我跟你的这个输入框
 //     …最左侧的消息就是 跟联系人的对话消息」）：第三栏对话语义 = **chat
 //     home 键**（点 = 详情全清 + 回聊天根输入框；不是页面路由，无 section），
@@ -13,7 +14,7 @@
 //     「对话」面迁入，气泡图标随迁）。
 //   · 栈模型 = `stack = [home, ...details]`：stack[0] ∈ 'chat' ∪ 五栏根；
 //     详情页（任务/搜索/定时/心跳/后台/智能体/手机接入/项目/图谱/插件/用量/
-//     会话窗）push 在当前根之上；返回 pop 一层；根页「<」= 回聊天根。
+//     设置/会话窗）push 在当前根之上；返回 pop 一层；根页「<」= 回聊天根。
 //   · 总原则（作者 13:38 逐字「各节目都是独立界面 不再像目前这样跟其他界面
 //     重叠」）：页面 = 全屏不透明 section（#mobile-pages 容器互斥 .live）；
 //     浮层族全部退役 —— v3 双液态下拉列（headerController/layoutController/
@@ -62,7 +63,7 @@ import { avatarImgNode } from '../avatarRender.js';
  * 中键改版批（同日 23:36）：第三栏 = 'chat' —— 对话键是 **chat home 键**
  * （点 = 回主对话输入框），不是页面路由：不在 PAGES、ensureContainer 不为
  * 它建 section。 */
-export const DOCK_ORDER = ['messages', 'contacts', 'chat', 'canvas', 'settings'];
+export const DOCK_ORDER = ['messages', 'contacts', 'chat', 'canvas', 'workbench'];
 
 /** chat home 键定义。icon = 回落字形（作者令：无 agent 头像时用「目前中间
  *  对话按钮那个图标」= message-circle 气泡；有头像 = 圆头像图）。 */
@@ -73,7 +74,9 @@ function dockDef(id) {
   return id === 'chat' ? DOCK_CHAT_DEF : PAGE_BY_ID.get(id);
 }
 
-/** 工作台分组行（设置根页顶部；dock 放不下的功能面的统一入口）。 */
+/** 工作台分组行（工作台根页体；dock 放不下的功能面的统一入口）。
+ *  工作台批（作者令 2026-10-30「设置并入工作台一览」）：末行 = 设置——
+ *  设置自顶层导航降级为工作台成员，点行进设置页（push 详情）。 */
 const HUB_ROWS = [
   { page: 'projects',   icon: 'folder-kanban',   zh: '项目',      en: 'Projects' },
   { page: 'plugins',    icon: 'puzzle',          zh: '插件',      en: 'Plugins' },
@@ -82,6 +85,7 @@ const HUB_ROWS = [
   { page: 'reminder',   icon: 'alarm-clock',     zh: '定时任务',  en: 'Scheduled' },
   { page: 'daemon',     icon: 'heart-pulse',     zh: '心跳',      en: 'Daemons' },
   { page: 'background', icon: 'square-terminal', zh: '后台任务',  en: 'Background' },
+  { page: 'settings',   icon: 'settings',        zh: '设置',      en: 'Settings' },
 ];
 
 /** 页面注册表。dock: true = 底栏根页；其余 = push 详情页。route id 稳定。
@@ -92,7 +96,8 @@ export const PAGES = [
   { id: 'messages',      dock: true, icon: 'message-circle', zh: '消息',   en: 'Messages' },
   { id: 'contacts',      dock: true, icon: 'contact-round',  zh: '联系人', en: 'Contacts' },
   { id: 'canvas',        dock: true, icon: 'layers',         zh: 'canvas', en: 'canvas' },
-  { id: 'settings',      dock: true, icon: 'settings',       zh: '设置',   en: 'Settings' },
+  { id: 'workbench',     dock: true, icon: 'layout-grid',    zh: '工作台', en: 'Workspace' },
+  { id: 'settings',      tabId: null,      icon: 'settings',  zh: '设置',   en: 'Settings' },
   { id: 'projects', tabId: 'projects', icon: 'folder-kanban',   zh: '项目',     en: 'Projects' },
   { id: 'graph',    tabId: 'wiki-graph', icon: 'sparkles',      zh: '图谱',     en: 'Wiki Graph' },
   { id: 'plugins',  tabId: 'plugins',  icon: 'puzzle',          zh: '插件',     en: 'Plugins' },
@@ -107,6 +112,11 @@ export const PAGES = [
   { id: 'conversation', tabId: null,   icon: 'message-circle',  zh: '会话',     en: 'Conversation' },
 ];
 const PAGE_BY_ID = new Map(PAGES.map((p) => [p.id, p]));
+/** 面板页 id 集（项目/图谱/插件——承载桌面画板 pane 的页）。栈顶 = 面板页时
+ *  canvas-open 上升沿/切卡事件是面板开页签的副产物，自动弹 canvas 页会把刚
+ *  push 的面板页顶掉（工作台误路由批 2026-10-30 作者令实证：点工作台行进
+ *  项目 ⇒ 弹出 canvas）。 */
+const PANEL_PAGE_IDS = new Set(PAGES.filter((p) => p.tabId).map((p) => p.id));
 
 // ── 共享模块惰性单载（首次进入页面后同步可用；与 r1 同款机制）────────
 /** @type {Record<string, Promise<any>>} */
@@ -201,12 +211,13 @@ function buildSection(def) {
   const body = document.createElement('div');
   body.className = 'mobile-page-body';
   section.append(head, body);
-  if (def.id === 'settings') buildHub(body);
+  if (def.id === 'workbench') buildHub(body);
   if (def.id === 'canvas') buildCanvasPage(body);
   return section;
 }
 
-/** 设置根页的「工作台」分组行（dock 五栏放不下的功能面统一入口；push 详情）。 */
+/** 工作台根页的「工作台」分组行（dock 五栏放不下的功能面统一入口；push 详情；
+ *  末行 = 设置——设置自顶层导航降级为工作台成员，工作台批 2026-10-30）。 */
 function buildHubRow(r) {
   const row = document.createElement('button');
   row.type = 'button';
@@ -236,7 +247,7 @@ function buildHub(body) {
   rows.className = 'mf-hub-rows';
   hub.appendChild(rows);
   body.appendChild(hub);
-  hubBodies.set('settings', hub);
+  hubBodies.set('workbench', hub);
   syncHubGate();
 }
 
@@ -245,7 +256,7 @@ function buildHub(body) {
  *  判定，graph 行会缺席到下次刷新（p9 单跑/全量均实测同点 flaky）。
  *  renderPages 每次翻页对账一次：行集与 flag 期望不一致才重建（一致零成本）。 */
 function syncHubGate() {
-  const hub = hubBodies.get('settings');
+  const hub = hubBodies.get('workbench');
   const rows = hub?.querySelector('.mf-hub-rows');
   if (!rows) return;
   const want = HUB_ROWS.filter((r) => !r.flagGated || wikiGraphEnabled()).map((r) => r.page);
@@ -278,7 +289,7 @@ function ensureContainer() {
       const b = /** @type {HTMLElement|null} */ (s.querySelector('.mobile-back-btn'));
       if (b) { b.title = backLabel(); b.setAttribute('aria-label', backLabel()); }
     }
-    const hub = hubBodies.get('settings');
+    const hub = hubBodies.get('workbench');
     const hubLabel = hub?.querySelector('.mf-hub-label');
     if (hubLabel) hubLabel.textContent = tt('工作台', 'Workspace');
     const rows = hub?.querySelectorAll('.mf-hub-row');
@@ -1164,6 +1175,11 @@ function watchCanvasEvents() {
   const adoptNow = (why) => {
     if (!document.body.classList.contains('canvas-open')) return;
     if (stack[stack.length - 1] === 'canvas') return;
+    // 工作台误路由修复（作者令 2026-10-30「点工作台弹出的是 canvas」）：项目/
+    // 图谱/插件面板页在栈顶时，canvas-open 上升沿是面板页开页签的副产物——
+    // 面板页自己承载 pane，自动弹 canvas 页会把刚 push 的面板详情顶掉（canvas
+    // 页只呈现文档卡，不呈现面板 pane）。文档卡路径（Pop/文件卡）栈顶恒非面板页。
+    if (PANEL_PAGE_IDS.has(stack[stack.length - 1])) return;
     clearPending();
     logEvent('canvas-open-adopt', { why });
     dockTo('canvas');
@@ -1235,7 +1251,7 @@ export function activateNav() {
     get top() { return navState().top; },
     get home() { return navState().home; },
     get dock() { return [...DOCK_ORDER]; },
-    version: 'mobile dock batch (five-tab dock + chat-home center key + fullscreen pages + canvas page)',
+    version: 'mobile dock batch (five-tab dock + workbench root + settings-as-hub-row + chat-home center key + fullscreen pages + canvas page)',
   };
   return function teardownNav() {
     for (const fn of unsubs.splice(0)) { try { fn(); } catch { /* ignore */ } }

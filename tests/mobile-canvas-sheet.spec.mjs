@@ -201,8 +201,8 @@ test('T2 leaving the canvas page keeps doc tabs; return restores the active card
   await openDocCards(page, [['doc-a', '卡甲', 'pg-a'], ['doc-b', '卡乙', 'pg-b']]);
   expect(await activeChip(page)).toBe('doc-b'); // 后开的卡乙为活动卡
 
-  // 离开 canvas 页（dock 切设置根）—— 文档保留在页签数据模型（closeCanvas 语义）。
-  await dockTo(page, 'settings');
+  // 离开 canvas 页（dock 切工作台根）—— 文档保留在页签数据模型（closeCanvas 语义）。
+  await dockTo(page, 'workbench');
   const kept = await page.evaluate(async () => {
     const m = await import('/js/canvas.js');
     return m.hasTab('doc-a') && m.hasTab('doc-b');

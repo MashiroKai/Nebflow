@@ -174,7 +174,7 @@ test('T2 canvas-only face: zoom cluster retired, graph canvas is the page surfac
   expect(errors).toEqual([]);
 });
 
-test('T3 back contract pops to settings root; page carries no toolbar glass buttons', async ({ page }) => {
+test('T3 back contract pops to workbench root; page carries no toolbar glass buttons', async ({ page }) => {
   const errors = watchErrors(page);
   await pushPage(page, 'graph');
 
@@ -184,7 +184,7 @@ test('T3 back contract pops to settings root; page carries no toolbar glass butt
   // 返回契约：pop 一层回设置根页（dock 批：入口腿 = 工作台行）。
   await page.locator('.mobile-page[data-page="graph"] .mobile-back-btn').click();
   await expect(page.locator('.mobile-page[data-page="graph"]')).not.toHaveClass(/live/);
-  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
-  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('settings');
+  await expect(page.locator('.mobile-page[data-page="workbench"]')).toHaveClass(/live/);
+  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('workbench');
   expect(errors).toEqual([]);
 });

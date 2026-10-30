@@ -3,6 +3,14 @@
 // canvas 设置」+ 13:36「canvas 独立整页卡片式切换」+ 13:38「各节目都是独立界面」
 // + 23:36 中键改版「中间那个对话 就是进入我跟你的这个输入框…最左侧的消息就是
 // 跟联系人的对话消息」）。
+// 页面切换与导航修复批（作者令 2026-10-30 20:17 五条）增量：
+//   D15 工作台根：第五栏 设置 → 工作台（设置降级为工作台 hub 末行，push 设置页）。
+//   D16 工作台误路由修复：hub 行进项目 ⇒ 栈顶恒 projects（canvas 页不抢导航）。
+//   D17 页面切换动画退役：无过渡零位移直切（微信口径）。
+//   D18 顶部胶囊语言统一：页头无通栏底面、标题玻璃胶囊、返回钮 glass-control
+//       悬浮圆、玻璃空间相对图标居中。
+//   D19 重复返回钮清查：收编面窗头关闭/返回钮（搜索 X/心跳 X/任务 X/会话 ✕/
+//       链视图返回条）页面壳内全隐。
 //
 // 覆盖：
 //   D1  五栏结构与顺序钉：消息/联系人/对话/canvas/设置逐字（作者令序）、
@@ -47,12 +55,19 @@ const SID = 'dock-root-session';
 
 test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, colorScheme: 'dark' });
 
-/** 静态路由 + WS 夹具（社交封存态：features 缺席 = friends 封存）。
- *  `unread` = mock 会话未读数（真实未读链夹具，D14 数字角标用；默认 0）。 */
-async function bootApp(page, { friends = false, unread = 0 } = {}) {
+/** 静态路由 + WS 夹具。社交三态（功能开放批 2026-10-30 18:22 后语义）：
+ *  `friends:false`（缺省）= 缺省开放（未登录 ⇒ 消息/联系人页 = 桌面面登录态）；
+ *  `friends:true`  = 好友 LIVE（fm_api_mock + features.friends:true）；
+ *  `sealed:true`   = 显式再封（features.friends:false ⇒ 封存空态卡面）。
+ *  `unread` = mock 会话未读数（真实未读链夹具，D14 用；默认 0）。 */
+async function bootApp(page, { friends = false, unread = 0, sealed = false } = {}) {
   await page.addInitScript(({ friends: f, unread: u }) => {
     localStorage.setItem('nebflow_token', 'e2e-token');
     localStorage.setItem('nebflow_locale', 'zh-CN');
+    // harness：stub 掉 SW 注册（swReg.js 在 localhost 安全上下文 register /sw.js；
+    // 404 会记 console error 混进 errors 断言；D5 封存态二次 boot 同样经此腿）。
+    // configurable：二次 boot 的 initScript 重跑时重定义不炸（pageerror 污染断言）。
+    Object.defineProperty(navigator.serviceWorker, 'register', { value: () => Promise.resolve(), configurable: true });
     if (f) {
       localStorage.setItem('fm_api_mock', '1');
       localStorage.setItem('fm_api_mock_seed', JSON.stringify({
@@ -76,11 +91,15 @@ async function bootApp(page, { friends = false, unread = 0 } = {}) {
         },
       }));
     }
-  }, { friends, unread });
+  }, { friends, unread, sealed });
   await page.route('**/*', (route) => {
     const url = new URL(route.request().url());
     let p = decodeURIComponent(url.pathname);
     if (p === '/') p = '/index.html';
+    if (p === '/agents/Nebula/agent.json') {
+      // agent 档案缺省（app 走默认腿；非 2xx 会被浏览器记 console error）。
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    }
     if (p.startsWith('/api/')) {
       if (p === '/api/sessions') {
         return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [{ id: SID, name: 'root', agentName: 'Nebula' }], activeId: SID }) });
@@ -101,7 +120,7 @@ async function bootApp(page, { friends = false, unread = 0 } = {}) {
   await page.routeWebSocket(/\/ws/, (ws) => {
     const sendConfig = () => ws.send(JSON.stringify({
       type: 'configData',
-      config: friends ? '{"features":{"friends":true}}' : '{}',
+      config: sealed ? '{"features":{"friends":false}}' : (friends ? '{"features":{"friends":true}}' : '{}'),
       configured: true, onboarding: 'done',
     }));
     const sendSessions = () => ws.send(JSON.stringify({
@@ -160,10 +179,11 @@ test('D1 five-tab dock structure: author-order labels, chat-home center key, ico
     };
   });
   expect(dock.role).toBe('tablist');
-  // 作者令逐字顺序：消息 / 联系人 / 对话 / canvas / 设置。
-  expect(dock.keys.map((k) => k.label)).toEqual(['消息', '联系人', '对话', 'canvas', '设置']);
+  // 作者令逐字顺序：消息 / 联系人 / 对话 / canvas / 工作台（工作台批：设置
+  // 自顶层导航降级为工作台成员，第五栏 = 工作台）。
+  expect(dock.keys.map((k) => k.label)).toEqual(['消息', '联系人', '对话', 'canvas', '工作台']);
   // 中键改版批：第三栏 = chat home 键（对话 = 进主对话输入框；非页面路由）。
-  expect(dock.keys.map((k) => k.id)).toEqual(['messages', 'contacts', 'chat', 'canvas', 'settings']);
+  expect(dock.keys.map((k) => k.id)).toEqual(['messages', 'contacts', 'chat', 'canvas', 'workbench']);
   for (const k of dock.keys) {
     if (k.id === 'chat') expect(k.hasCenter, k.id).toBe(true);
     else expect(k.hasIcon, k.id).toBe(true);
@@ -177,7 +197,7 @@ test('D1 five-tab dock structure: author-order labels, chat-home center key, ico
 
 test('D2 root switching: live page mirror, exclusive .live, active key, center key clears details back to chat', async ({ page }) => {
   const errors = watchErrors(page);
-  for (const id of ['messages', 'contacts', 'canvas', 'settings']) {
+  for (const id of ['messages', 'contacts', 'canvas', 'workbench']) {
     await dockTo(page, id);
     const st = await page.evaluate((pid) => ({
       live: document.querySelector(`.mobile-page[data-page="${pid}"]`)?.classList.contains('live'),
@@ -196,7 +216,7 @@ test('D2 root switching: live page mirror, exclusive .live, active key, center k
   }
   // 中键 = chat home 键（作者令 23:36「就是进入我跟你的这个输入框」）：详情全清
   // + 回聊天根（无 .live 页 + 中键激活）。
-  await dockTo(page, 'settings');
+  await dockTo(page, 'workbench');
   await page.locator('.mf-hub-row[data-hub-page="projects"]').click();
   await expect(page.locator('.mobile-page[data-page="projects"]')).toHaveClass(/live/);
   await page.locator('#mobile-dock .dock-key[data-dock="chat"]').click();
@@ -204,8 +224,8 @@ test('D2 root switching: live page mirror, exclusive .live, active key, center k
   expect(await page.evaluate(() => window.__nfMobileNav)).toMatchObject({ home: 'chat', top: 'chat', stack: ['chat'] });
   expect(await page.evaluate(() => document.querySelector('#mobile-dock .dock-key[data-dock="chat"]')?.classList.contains('active'))).toBe(true);
   // 根页「<」= 回聊天根（home 复位 + 中键激活）。
-  await dockTo(page, 'settings');
-  await page.locator('.mobile-page[data-page="settings"] .mobile-back-btn').click();
+  await dockTo(page, 'workbench');
+  await page.locator('.mobile-page[data-page="workbench"] .mobile-back-btn').click();
   await expect(page.locator('.mobile-page.live')).toHaveCount(0);
   expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('chat');
   expect(await page.evaluate(() => document.querySelectorAll('#mobile-dock .dock-key.active').length)).toBe(1);
@@ -376,7 +396,7 @@ test('D4 canvas page: empty state on entry, doc cards via openTab (chips/stepper
   expect(errors).toEqual([]);
 });
 
-test('D7 tasks page via chat chrome key: page live, panel adopted, X close reconciles', async ({ page }) => {
+test('D7 tasks page via chat chrome key: page live, panel adopted, header back pops (panel X retired in page)', async ({ page }) => {
   const errors = watchErrors(page);
   await page.locator('[data-chrome="tasks"]').click();
   await expect(page.locator('.mobile-page[data-page="tasks"]')).toHaveClass(/live/);
@@ -384,19 +404,22 @@ test('D7 tasks page via chat chrome key: page live, panel adopted, X close recon
   // 面板收编进页面体（懒建 + 收编同步腿）。
   await expect(page.locator('.mobile-page[data-page="tasks"] .mobile-page-body > #mobile-task-panel')).toHaveCount(1);
   await expect(page.locator('#mobile-task-panel')).toBeVisible();
-  // X 关闭 → hidden + 弹栈回聊天根。
-  await page.locator('#mobile-task-panel .tp-x').click();
+  // 重复返回钮清查批：面板头 X 在页面壳内退场（返回 = 页面壳唯一「<」）。
+  expect(await page.locator('#mobile-task-panel .tp-x').evaluate((el) => getComputedStyle(el).display)).toBe('none');
+  // 「<」关闭 → 弹栈回聊天根。
+  await page.locator('.mobile-page[data-page="tasks"] .mobile-back-btn').click();
   await expect(page.locator('#mobile-task-panel')).toBeHidden();
   expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('chat');
   expect(errors).toEqual([]);
 });
 
-test('D8 hub rows push detail pages: projects pane adopted, back returns to settings root', async ({ page }) => {
+test('D8 hub rows push detail pages: projects pane adopted, back returns to workbench root', async ({ page }) => {
   const errors = watchErrors(page);
-  await dockTo(page, 'settings');
+  await dockTo(page, 'workbench');
   const rows = await page.evaluate(() => [...document.querySelectorAll('.mf-hub-row')].map((r) => r.dataset.hubPage));
-  // graph 行随 wikiGraphEnabled 门控（夹具无 flag → 封存缺席）。
-  expect(rows).toEqual(['projects', 'plugins', 'usage', 'reminder', 'daemon', 'background']);
+  // graph 行随 wikiGraphEnabled 门控（夹具无 flag → 封存缺席）；末行 = 设置
+  // （工作台批：设置降级为工作台成员）。
+  expect(rows).toEqual(['projects', 'plugins', 'usage', 'reminder', 'daemon', 'background', 'settings']);
   await page.locator('.mf-hub-row[data-hub-page="projects"]').click();
   await expect(page.locator('.mobile-page[data-page="projects"]')).toHaveClass(/live/);
   await settlePage(page, 'projects');
@@ -404,8 +427,8 @@ test('D8 hub rows push detail pages: projects pane adopted, back returns to sett
     '.mobile-page[data-page="projects"] .mobile-page-body .canvas-tab-pane[data-tab-id="projects"]',
   )).toHaveCount(1);
   await page.locator('.mobile-page[data-page="projects"] .mobile-back-btn').click();
-  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
-  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('settings');
+  await expect(page.locator('.mobile-page[data-page="workbench"]')).toHaveClass(/live/);
+  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('workbench');
   expect(errors).toEqual([]);
 });
 
@@ -432,6 +455,9 @@ test('D9 retired floats zero-residue: dd columns/scrim/task-key gone, sheet DOM 
 
 test('D5 sealed state: messages/contacts pages show skeleton empty cards; messages page has NO notification section', async ({ page }) => {
   const errors = watchErrors(page);
+  // 功能开放批（2026-10-30 18:22）后 friends 缺省解封 —— 封存态须显式
+  // features.friends=false 再封（本用例钉的正是再封面）。
+  await bootApp(page, { sealed: true });
   // 好友封存域 = 消息/联系人两面（中键改版批：消息页主体 = 跟联系人的对话消息，
   // 原独立「对话」面退役）。
   for (const id of ['messages', 'contacts']) {
@@ -646,4 +672,196 @@ test.describe('friends-ON unread chain', () => {
     }))).toEqual({ sec: 0, rowBadge: 0 });
     expect(errors).toEqual([]);
   });
+});
+
+// ── 页面切换与导航修复批（作者令 2026-10-30 20:17 五条）────────────────
+
+test('D15 workbench root: settings demoted to hub row; settings row pushes settings page with adopted modal', async ({ page }) => {
+  const errors = watchErrors(page);
+  await dockTo(page, 'workbench');
+  // 设置行 = hub 末行（图标/标签 = 设置）。
+  const settingsRow = page.locator('.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="settings"]');
+  await expect(settingsRow).toHaveCount(1);
+  await expect(settingsRow.locator('.mf-hub-row-label')).toHaveText('设置');
+  await settingsRow.click();
+  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
+  await settlePage(page, 'settings');
+  // 设置面收编进设置页体（overlay 载体原位留作状态源）。
+  await expect(page.locator('.mobile-page[data-page="settings"] .mobile-page-body > #settings-modal')).toHaveCount(1);
+  await expect(page.locator('.mobile-page[data-page="settings"] .mobile-page-title')).toHaveText('设置');
+  // 返回 = 弹一层回工作台根（非聊天根）。
+  await page.locator('.mobile-page[data-page="settings"] .mobile-back-btn').click();
+  await expect(page.locator('.mobile-page[data-page="workbench"]')).toHaveClass(/live/);
+  expect(await page.evaluate(() => window.__nfMobileNav)).toMatchObject({ home: 'workbench', top: 'workbench' });
+  expect(errors).toEqual([]);
+});
+
+test('D16 workbench misroute fix: hub row to projects keeps projects on top (canvas page does not hijack)', async ({ page }) => {
+  const errors = watchErrors(page);
+  // canvas 自动弹页的启动抑制窗 = 3s（navController bootedAt）——真实用户点击远
+  // 在抑制窗之后，等过它再点（误路由只在抑制窗外触发，必须实测该时序）。
+  await page.waitForFunction(() => !!window.__nfMobileNav, null, { timeout: 15000 });
+  await page.waitForTimeout(3300);
+  await dockTo(page, 'workbench');
+  await page.locator('.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="projects"]').click();
+  await expect(page.locator('.mobile-page[data-page="projects"]')).toHaveClass(/live/);
+  await settlePage(page, 'projects');
+  // 修前：openProjectsTab 抬 canvas-open 上升沿 ⇒ dockTo('canvas') 把根顶成
+  // canvas（用户点工作台行进的是 canvas 空页）。修后：栈顶恒 projects。
+  const nav = await page.evaluate(() => ({
+    top: window.__nfMobileNav?.top,
+    home: window.__nfMobileNav?.home,
+    stack: window.__nfMobileNav?.stack,
+    canvasLive: document.querySelector('.mobile-page[data-page="canvas"]')?.classList.contains('live'),
+    canvasKeyActive: document.querySelector('#mobile-dock .dock-key[data-dock="canvas"]')?.classList.contains('active'),
+  }));
+  expect(nav.top).toBe('projects');
+  expect(nav.home).toBe('workbench');
+  expect(nav.stack).toEqual(['workbench', 'projects']);
+  expect(nav.canvasLive).toBe(false);
+  expect(nav.canvasKeyActive).toBe(false);
+  // 项目 pane 收编进项目页体（面板页承载自己的 pane）。
+  await expect(page.locator(
+    '.mobile-page[data-page="projects"] .mobile-page-body .canvas-tab-pane[data-tab-id="projects"]',
+  )).toHaveCount(1);
+  expect(errors).toEqual([]);
+});
+
+test('D17 page switch animation retired: zero transition, zero transform, direct cut', async ({ page }) => {
+  const errors = watchErrors(page);
+  const cs = await page.evaluate(() => {
+    const pg = document.querySelector('.mobile-page[data-page="workbench"]');
+    const s = getComputedStyle(pg);
+    const probe = document.createElement('span');
+    probe.style.background = 'var(--color-bg, #f5f6f8)';
+    document.body.appendChild(probe);
+    const pageBg = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return {
+      transitionProperty: s.transitionProperty,
+      transitionDuration: s.transitionDuration,
+      transform: s.transform,
+      visibility: s.visibility,
+      bg: s.backgroundColor,
+      pageBg,
+    };
+  });
+  // 动画退役批：过渡全删（无显式 transition ⇒ 计算值 = all/0s 默认对），
+  // 隐藏页无 translateX 位移。
+  expect(cs.transitionDuration).toBe('0s');
+  expect(cs.transitionProperty).toBe('all'); // 未声明任何过渡（默认初始值）
+  expect(cs.transform).toBe('none');
+  expect(cs.visibility).toBe('hidden');
+  expect(cs.bg).toBe(cs.pageBg);
+  // 直切时序：live 翻真同帧即终态（无 0.26s 位移中段可踩）。
+  await dockTo(page, 'messages');
+  const instant = await page.evaluate(() => {
+    const el = document.querySelector('.mobile-page[data-page="workbench"]');
+    const live = document.querySelector('.mobile-page.live');
+    return {
+      hiddenVisibility: getComputedStyle(el).visibility,
+      liveVisibility: getComputedStyle(live).visibility,
+      liveTransform: getComputedStyle(live).transform,
+    };
+  });
+  expect(instant.hiddenVisibility).toBe('hidden');
+  expect(instant.liveVisibility).toBe('visible');
+  expect(instant.liveTransform).toBe('none');
+  expect(errors).toEqual([]);
+});
+
+test('D18 top capsule language: floating header (no bar surface), capsule title, glass back disc, icon centered', async ({ page }) => {
+  const errors = watchErrors(page);
+  await dockTo(page, 'workbench');
+  const st = await page.evaluate(() => {
+    const head = document.querySelector('.mobile-page[data-page="workbench"] .mobile-page-header');
+    const title = head.querySelector('.mobile-page-title');
+    const back = head.querySelector('.mobile-back-btn');
+    const svg = back.querySelector('svg');
+    const chrome = document.querySelector('.mh-chrome-btn[data-chrome="search"]');
+    const chromeSvg = chrome?.querySelector('svg');
+    // token 同源探针（frontend-verification 口径）：等值判据取自同一 var()。
+    const probe = document.createElement('span');
+    probe.style.background = 'var(--glass-control-bg)';
+    document.body.appendChild(probe);
+    const glassBg = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    const br = back.getBoundingClientRect();
+    const sr = svg.getBoundingClientRect();
+    const cr = chrome.getBoundingClientRect();
+    const csr = chromeSvg.getBoundingClientRect();
+    const hs = getComputedStyle(head);
+    const ts = getComputedStyle(title);
+    const bs = getComputedStyle(back);
+    return {
+      // 页头无通栏底面：背景透明 + 零底边线。
+      headBg: hs.backgroundColor,
+      headBorderBottomWidth: hs.borderBottomWidth,
+      // 标题 = 玻璃胶囊。
+      titleRadius: ts.borderRadius,
+      titleBg: ts.backgroundColor,
+      titleGlassBg: glassBg,
+      // 返回钮 = glass-control 悬浮圆（材质与 chrome 键同源）。
+      backBg: bs.backgroundColor,
+      backRadius: bs.borderRadius,
+      // 玻璃空间相对图标居中（水平+垂直 ≤1px）。
+      backDx: Math.abs((sr.left + sr.width / 2) - (br.left + br.width / 2)),
+      backDy: Math.abs((sr.top + sr.height / 2) - (br.top + br.height / 2)),
+      chromeDx: Math.abs((csr.left + csr.width / 2) - (cr.left + cr.width / 2)),
+      chromeDy: Math.abs((csr.top + csr.height / 2) - (cr.top + cr.height / 2)),
+    };
+  });
+  expect(st.headBg).toBe('rgba(0, 0, 0, 0)');
+  expect(st.headBorderBottomWidth).toBe('0px');
+  expect(st.titleRadius).toBe('999px');
+  expect(st.titleBg).toBe(st.titleGlassBg);
+  expect(st.backBg).toBe(st.titleGlassBg); // 标题胶囊与返回钮同 glass-control 族
+  expect(st.backRadius).toBe('50%');
+  expect(st.backDx).toBeLessThanOrEqual(1);
+  expect(st.backDy).toBeLessThanOrEqual(1);
+  expect(st.chromeDx).toBeLessThanOrEqual(1);
+  expect(st.chromeDy).toBeLessThanOrEqual(1);
+  expect(errors).toEqual([]);
+});
+
+test('D19 duplicate back/close buttons audited: face-owned header controls hidden inside pages', async ({ page }) => {
+  const errors = watchErrors(page);
+  // 搜索页（入口 = 聊天根顶栏搜索 chrome 键，非 hub 行）：#search-modal-close
+  // 退场（返回 = 页面壳唯一「<」）。
+  await page.locator('[data-chrome="search"]').click();
+  await expect(page.locator('.mobile-page[data-page="search"]')).toHaveClass(/live/);
+  await settlePage(page, 'search');
+  expect(await page.locator('#search-modal-close').evaluate((el) => getComputedStyle(el).display)).toBe('none');
+  await page.locator('.mobile-page[data-page="search"] .mobile-back-btn').click();
+  // 搜索从聊天根推入（chrome 键）——pop 回聊天根；心跳行在工作台根，重进。
+  await expect(page.locator('.mobile-page.live')).toHaveCount(0);
+  await dockTo(page, 'workbench');
+  // 心跳页：#daemon-close-btn 退场。
+  await page.locator('.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="daemon"]').click();
+  await expect(page.locator('.mobile-page[data-page="daemon"]')).toHaveClass(/live/);
+  await settlePage(page, 'daemon');
+  expect(await page.locator('#daemon-close-btn').evaluate((el) => getComputedStyle(el).display)).toBe('none');
+  // 合成节点钉 CSS 清查面：会话窗 ✕ / 任务面板 X（页面壳内作用域）/
+  // 项目页链视图返回条按钮 —— 同一条退役规则覆盖族。
+  const synth = await page.evaluate(() => {
+    const body = document.querySelector('.mobile-page[data-page="workbench"] .mobile-page-body');
+    const mk = (html) => {
+      const wrap = document.createElement('div');
+      wrap.innerHTML = html;
+      const el = wrap.firstElementChild;
+      body.appendChild(el);
+      const d = getComputedStyle(el.querySelector('button, span') || el).display;
+      el.remove();
+      return d;
+    };
+    return {
+      fmClose: mk('<div class="fm-modal"><span class="fm-modal-close"></span></div>'),
+      tpX: mk('<div class="mh-tpanel"><button type="button" class="tp-x"></button></div>'),
+      flowBack: mk('<div class="flowmap-nav-bar"><button type="button" class="flowmap-back-btn"></button></div>'),
+    };
+  });
+  expect(synth.fmClose).toBe('none');
+  expect(synth.tpX).toBe('none');
+  expect(synth.flowBack).toBe('none');
+  expect(errors).toEqual([]);
 });
