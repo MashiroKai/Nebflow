@@ -193,10 +193,20 @@ function isCanvasVisible() {
 // 不挂/隐藏，双层防呆之后端 isAskable 拒答）；白名单单点 = mdHtmlGate.js。
 function syncGate() {
   if (!el) return;
-  const off = !currentFile;
+  const off = !currentFile || readerPanelOpen;
   el.fab.classList.toggle('gate-off', off);
   el.dock.classList.toggle('gate-off', off);
 }
+
+// ── 阅读器面板让位（阅读器 P1 批，设计稿 §2.2：阅读菜单/TOC 抽屉开时 ──────
+// ask-fab 与角落圆钮簇让位隐藏）——readerChrome.js 派发 nf-reader-panel-toggle
+// （detail.open）；闸与可见性闸合成：syncGate off = 非文件卡 或 阅读面板开。
+// 面板关/切书由 chrome 的对应 false 事件复位（其卸载路径必发）。
+let readerPanelOpen = false;
+document.addEventListener('nf-reader-panel-toggle', (e) => {
+  readerPanelOpen = !!(e && e.detail && e.detail.open);
+  syncGate();
+});
 
 function syncToActiveTab() {
   const entry = activeCanvasEntry();

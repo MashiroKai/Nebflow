@@ -12,6 +12,7 @@
 //     and "open in wiki graph".
 
 import { addSourceToggle, addFindToggle, addGraphToggle, routeLocalHref, openLocalFileTab, openExternalUrlTab } from './shared.js';
+import { mountReader } from './readerChrome.js';
 import { mintTickets, stripCredentialParams, decodePathParam } from '../nfTicket.js';
 // 二次加载清剿批（2026-10-24 · #816 同法）：文档图片字节改经 **nfFileCache 账本
 // 单点**——`nfViewerUrl` 命中零抓取 / 未命中取数即入账；blob 解码失败自愈逐出
@@ -805,15 +806,85 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   }
 
   pane.classList.remove('scrollable');
-  // P0 §6 顶垫共享类（防胶囊遮挡；桌面常态由 split.css 尾块钉，手机层常态垫）
-  pane.innerHTML = `<div class="canvas-md-scroll canvas-viewer-safe-top"><div class="canvas-md-viewer">${html}</div></div>`;
+  // P0 §6 顶垫共享类（防胶囊遮挡；桌面常态由 split.css 尾块钉，手机层常态垫）。
+  //
+  // 阅读器 P1 批（设计稿 §3.1「md 转换渲染：现有 markdown 渲染 → 包统一内核
+  // chrome；先统一操控，排版二期」）：正文 DOM 原样自建，经 readerChrome
+  // host 模式挂载——底栏进度条/TOC 抽屉/翻页动效/触滑/点按分区全接内核，
+  // 正文渲染、主题、wiki 面一字不动；themeable=false ⇒ 菜单无主题/Aa 档。
+  if (/** @type {any} */ (pane)._nfReaderTeardown) {
+    try { /** @type {any} */ (pane)._nfReaderTeardown(); } catch { /* 卸载容错 */ }
+    /** @type {any} */ (pane)._nfReaderTeardown = null;
+  }
+  const mdHost = document.createElement('div');
+  mdHost.className = 'canvas-md-viewer';
+  mdHost.innerHTML = html;
+  const mdScroller = document.createElement('div');
+  mdScroller.className = 'canvas-md-scroll canvas-viewer-safe-top';
+  mdScroller.appendChild(mdHost);
+
+  // marked v5+ dropped the `headerIds` option, so add slug ids manually
+  // for TOC anchor navigation. Keeps word chars, spaces, CJK, hyphens;
+  // strips other punctuation, lowercases, spaces→hyphens.
+  // （P1：id 分配前移到 chrome 挂载前——TOC 抽屉条目要带锚 id。）
+  {
+    const slugCounts = {};
+    const slugify = (text) => (text || '')
+      .toLowerCase()
+      .replace(/[^\w\s一-鿿-]/g, '')
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-');
+    mdHost.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach(h => {
+      if (h.id) return;
+      let slug = slugify(h.textContent);
+      if (!slug) slug = 'heading';
+      if (slug in slugCounts) { slugCounts[slug]++; slug = `${slug}-${slugCounts[slug]}`; }
+      else slugCounts[slug] = 0;
+      h.id = slug;
+    });
+    // Source-line map for reference jumps (only meaningful with a file).
+    if (analysis.blockStarts.length) assignSourceLines(mdHost, analysis.blockStarts);
+  }
+  // TOC 抽屉条目：h1-h3 进抽屉（锚 = slug id）；无标题不挂 ☰。
+  const mdTocEntries = [];
+  mdHost.querySelectorAll('h1, h2, h3').forEach((h) => {
+    const label = (h.textContent || '').trim();
+    if (label) mdTocEntries.push({ label, depth: Number(h.tagName.charAt(1)) - 1, chapterIdx: 0, anchor: h.id });
+  });
+  /** @type {any} */ (pane)._mdScrollPos = /** @type {any} */ (pane)._mdScrollPos || 0;
+  mountReader(pane, {
+    title: fileName || 'Markdown',
+    chapterCount: 1,
+    chapterTitle: () => fileName || '',
+    toc: mdTocEntries.length ? mdTocEntries : null,
+    themeable: false, // 排版二期：md 正文渲染/主题不接管（设计稿 §3.1）
+    contentKind: 'host',
+    hostScroller: mdScroller,
+    hostContent: mdHost,
+    tracking: false,
+    anchorScrollTop(_i, anchor) {
+      let target = null;
+      try {
+        target = mdHost.querySelector(`[id="${CSS.escape(anchor)}"]`);
+      } catch { target = null; }
+      if (!target) return null;
+      const top = target.getBoundingClientRect().top - mdScroller.getBoundingClientRect().top + mdScroller.scrollTop;
+      // 落点高亮（applyJumpAnchor 同款 nf-jump-flash）；阅读位记账让位 2s 窗。
+      /** @type {any} */ (pane)._mdJumpAt = Date.now();
+      target.classList.remove('nf-jump-flash');
+      void target.offsetWidth;
+      target.classList.add('nf-jump-flash');
+      target.addEventListener('animationend', () => target.classList.remove('nf-jump-flash'), { once: true });
+      return top;
+    },
+  });
   // 阅读位保真（词条引用批 batch 2，F5 返回原文档配套）：pane 切换走
   // display:none，Chromium 不保留滚动盒（实测 scrollTop 178→0）。scroll 监听
   // 记账 pane._mdScrollPos，激活时（canvas-tab-activated，canvas.js 只对带
-  // 阅读位记账的 pane 派发）恢复；跳后 2s 窗口内不抢 applyJumpAnchor 的落点。
-  pane._mdScrollPos = pane._mdScrollPos || 0;
-  const scrollTrack = pane.querySelector('.canvas-md-scroll');
-  if (scrollTrack) {
+  // 阅读位记账的 pane 派发）恢复；跳后 2s 窗口内不抢 TOC/引用落点。
+  const scrollTrack = mdScroller;
+  {
     // display:none 化（切走页签）时 Chromium 把滚动盒重置为 0 并派发 scroll——
     // 那是布局 artifact 不是阅读意图，记账必须跳过（否则回来时永远恢复成 0）。
     // 判据用 active 类而非 clientHeight：artifact 事件的派发时序里 clientHeight
@@ -824,7 +895,7 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
       pane._mdScrollPos = scrollTrack.scrollTop;
     }, { passive: true });
   }
-  dedupeTitleHeading(pane.querySelector('.canvas-md-viewer'), fileName);
+  dedupeTitleHeading(mdHost, fileName);
   /** @type {any} */ (pane)._renderedMdContent = content;
   // Jump face: the live analysis stays on the pane so a reference click into
   // an ALREADY-OPEN tab (canvas.js switches without re-rendering) can still
@@ -854,28 +925,10 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   const newScroller = pane.querySelector('.canvas-md-scroll');
   if (newScroller && prevScrollTop > 0) newScroller.scrollTop = prevScrollTop;
 
-  // marked v5+ dropped the `headerIds` option, so add slug ids manually
-  // for TOC anchor navigation. Keeps word chars, spaces, CJK, hyphens;
-  // strips other punctuation, lowercases, spaces→hyphens.
+  // slug id 与 source-line 映射已在 chrome 挂载前落定（P1 TOC 抽屉需要锚 id），
+  // 此处只取引用继续链接路由/wiki 面接线。
   const mdViewer = pane.querySelector('.canvas-md-viewer');
   if (mdViewer) {
-    const slugCounts = {};
-    const slugify = (text) => (text || '')
-      .toLowerCase()
-      .replace(/[^\w\s\u4e00-\u9fff-]/g, '')
-      .trim()
-      .replace(/\s+/g, '-')
-      .replace(/-+/g, '-');
-    mdViewer.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach(h => {
-      if (h.id) return;
-      let slug = slugify(h.textContent);
-      if (!slug) slug = 'heading';
-      if (slug in slugCounts) { slugCounts[slug]++; slug = `${slug}-${slugCounts[slug]}`; }
-      else slugCounts[slug] = 0;
-      h.id = slug;
-    });
-    // Source-line map for reference jumps (only meaningful with a file).
-    if (analysis.blockStarts.length) assignSourceLines(mdViewer, analysis.blockStarts);
     // Link routing — the SAME criterion the HTML preview frame runs
     // (`routeLocalHref` in viewers/shared.js, embedded by source into the
     // frame's injected script, so there is one definition and no drift).
@@ -950,10 +1003,14 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   }
 
   addSourceToggle(pane, viewMarkdown, { content, absPath, fileName, readOnly: readOnly === true });
+  // 阅读器 P1：底栏占位 44px——角浮件（源码/查找/图谱）抬到栏上同簇，
+  // 不与底栏 ☰/⋯ 叠影（textReader 同款纪律，见 seatFloatsAboveBar）。
+  const srcToggle = pane.querySelector(':scope > .canvas-source-toggle');
+  if (srcToggle) srcToggle.style.bottom = '64px';
   // Glass toggles — stacked with the source toggle (48px per slot; 移位批
   // 2026-10-22 簇 +48 给底右 deck fab 让位): find at 112px, graph at 160px.
-  addFindToggle(pane, 64);
-  addGraphToggle(pane, absPath || '', 112);
+  addFindToggle(pane, 112);
+  addGraphToggle(pane, absPath || '', 160);
 }
 
 export default {

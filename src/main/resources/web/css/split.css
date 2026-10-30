@@ -2262,15 +2262,24 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   margin-top: 8px;
 }
 
+/* ── 统一阅读底栏（阅读器 P1 批，设计稿 §2.2；epub/txt/md 共内核）─────────
+   桌面： [‹ ›] [══ 进度条滑杆（TOC 章起刻度 + 常态位置 tooltip）══] [页码] [Aa] [☰] [⋯]
+   移动： [‹]   [══ 滑杆 ══]                                     [Ch]   [Aa] [☰] [⋯]
+   刷新钮不在底栏：移动收入 ⋯ 菜单；桌面维持面板角浮件原位（shared.js 不动，
+   角浮件与底栏互斥由本文件尾 :has() 让位块承担）。 */
 .epub-reader-nav {
+  position: relative; /* ⋯ 弹出菜单的锚 */
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 8px;
   padding: 6px 16px;
   flex-shrink: 0;
   border-top: 1px solid var(--color-border);
+  min-height: 44px;
+  box-sizing: border-box;
 }
 .epub-nav-btn {
+  flex: none;
   width: 32px;
   height: 32px;
   border-radius: 8px;
@@ -2284,14 +2293,249 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   justify-content: center;
   transition: background 0.15s, color 0.15s;
   user-select: none;
+  padding: 0;
 }
+.epub-nav-btn[hidden] { display: none; }
 .epub-nav-btn:hover { background: var(--color-frame-hover); color: var(--color-text); }
 .epub-nav-btn:disabled { opacity: 0.3; cursor: default; }
 .epub-nav-info {
+  flex: none;
+  min-width: 84px;
   font-size: 11px;
   color: var(--color-text-muted);
   text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
+/* 进度条滑杆（§2.2：拖动跳全书位置；常态 tooltip「章名 · %」；TOC 章起刻度） */
+.epub-progress {
+  position: relative;
+  flex: 1 1 auto;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  min-width: 60px;
+}
+.epub-progress-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  margin: 0;
+  border-radius: 2px;
+  background: var(--color-frame-hover, var(--color-border));
+  outline: none;
+  cursor: pointer;
+}
+.epub-progress-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  cursor: grab;
+}
+.epub-progress-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  cursor: grab;
+}
+.epub-progress-ticks {
+  position: absolute;
+  left: 7px; /* 拇指半径：刻度对齐滑杆内轨 */
+  right: 7px;
+  top: 50%;
+  height: 0;
+  pointer-events: none;
+}
+.epub-progress-tick {
+  position: absolute;
+  top: -4px;
+  width: 2px;
+  height: 8px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--color-text-muted);
+  opacity: 0.55;
+}
+.epub-progress-tip {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  transform: translateX(-50%);
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+/* ⋯ 溢出菜单（毛玻璃同菜单族；移动含刷新项 + 翻页模式快捷切换） */
+.epub-bar-menu {
+  position: absolute;
+  right: 16px;
+  bottom: calc(100% + 6px);
+  z-index: 21;
+  width: 208px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  box-shadow: var(--frost-shadow);
+  font-size: 13px;
+}
+.epub-bar-menu[hidden] { display: none; }
+.epub-menu-wide { width: 100%; }
+.epub-menu-input {
+  flex: 1 1 auto;
+  min-width: 56px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  color: var(--color-text);
+  font-size: 12px;
+  box-sizing: border-box;
+}
+/* TOC 抽屉（§2.1：桌面左侧毛玻璃抽屉；移动底部弹出；无 overlay 暗化） */
+.epub-toc {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: min(78%, 300px);
+  z-index: 22;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 8px;
+  border-right: 1px solid var(--glass-border);
+  border-radius: 0 12px 12px 0;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  box-shadow: var(--frost-shadow);
+  font-size: 13px;
+  box-sizing: border-box;
+}
+.epub-toc[hidden] { display: none; }
+.epub-toc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 6px 8px;
+  flex: none;
+}
+.epub-toc-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.epub-toc-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+}
+.epub-toc-item {
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: 13px;
+  min-height: 36px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.epub-toc-item:hover { background: var(--glass-control-bg-hover); }
+.epub-toc-item[data-depth="1"] { padding-left: 26px; }
+.epub-toc-item[data-depth="2"] { padding-left: 42px; }
+.epub-toc-item[data-depth="3"] { padding-left: 58px; }
+.epub-toc-item.on {
+  background: rgb(var(--brand-green) / 0.12);
+}
+/* 双页夹翻页舞台（§4.1：纯 transform 双页夹；页缘 8px 投影随位移线性衰减，
+   纯渐变无图片；一次只动两页。reduced-motion 全程 0.01s 直切。） */
+.epub-flip-stage {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 15;
+  overflow: hidden;
+  pointer-events: none;
+}
+.epub-flip-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  will-change: transform;
+  background: var(--epub-bg, var(--color-surface));
+  transition: transform 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.epub-flip-layer.rebound { transition-duration: 180ms; }
+.epub-flip-page {
+  position: relative;
+  overflow: hidden;
+  background: var(--epub-bg, var(--color-surface));
+}
+.epub-flip-shadow {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 2;
+}
+.epub-flip-shadow.l { left: 0; background: linear-gradient(to right, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0)); }
+.epub-flip-shadow.r { right: 0; background: linear-gradient(to left, rgba(0, 0, 0, 0.18), rgba(0, 0, 0, 0)); }
+@media (prefers-reduced-motion: reduce) {
+  .epub-flip-layer { transition-duration: 0.01s !important; }
+}
+/* 纯文本正文（textReader）：保留空白、不两端对齐（代码/日志对齐优先） */
+.epub-reader-content[data-format="text"] p { white-space: pre-wrap; text-align: start; }
+
+/* 移动底栏（§2.2：下一页交点右区/横滑；触控热区 ≥40px；底高让位 safe-area） */
+@media (max-width: 768px) {
+  .epub-reader-nav {
+    gap: 6px;
+    padding: 4px 10px calc(4px + env(safe-area-inset-bottom, 0px));
+    min-height: 48px;
+  }
+  .epub-nav-btn { width: 40px; height: 40px; }
+  .epub-next { display: none; }
+  .epub-nav-info { min-width: 52px; }
+  .epub-toc {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 60%;
+    border-right: none;
+    border-top: 1px solid var(--glass-border);
+    border-radius: 12px 12px 0 0;
+  }
+}
+
+/* ── 阅读器底栏让位（P1 §2.2）─────────────────────────────────────────────
+   角浮件簇（壳层刷新钮）抬到底栏上方同簇；移动层阅读器的刷新退入 ⋯ 菜单，
+   壳层浮件直隐（双显防增额）。:has() 随活动页签自动落位/复位，零 JS。 */
+#canvas-content:has(.canvas-tab-pane.active .epub-reader) > .canvas-refresh-toggle { bottom: 64px !important; /* 座席是内联样式，须压 */ }
+body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .canvas-refresh-toggle { display: none !important; }
 
 /* ── YAML viewer ── */
 .canvas-yaml-viewer {
