@@ -21,8 +21,10 @@
   padding: 10px 16px;
   border-radius: 8px;
   border: none;
-  background: var(--color-primary);
-  color: white;
+  /* 主操作 = 墨族单源（2026-10-30 按钮体系批：绿实底 → --btn-primary-*，
+     随面板主题 ink-swap） */
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-ink);
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;

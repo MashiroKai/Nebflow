@@ -387,8 +387,8 @@
                                    （提交失败的可见分态走 `groupErrToast`，不做
                                    链路态键面）⇒ 该档对 ⑥ 无生产者，见本批报告 §⑥。
    状态色（🔴 逐字取自主对话框基准，零自创、零新增字面量）：
-     rest   = var(--color-primary)        （= input.css:801 主对话框 rest 绿，既有 token）
-     hover  = var(--color-primary-hover)  （= input.css:830 主对话框 hover 绿，既有 token）
+     rest   = var(--btn-primary-bg)        （= 墨族 --btn-ink-*；2026-10-30 起，原 --color-primary 绿降级为身份/状态色）
+     hover  = var(--btn-primary-bg-hover)  （= 墨族 hover 档，同左）
      active = 描边递进 var(--glass-send-border-active)（既有档）。基准的 active 深绿
               是个字面量 ⇒ 为守「git diff 零新增字面量色值」本批**不复制**它，改用
               本族既有描边档表达按下（登记偏离，见报告 §③）。
@@ -407,10 +407,10 @@
 :is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip, button.fm-create-submit) {
   /* 机制：`:is()` 取列表内最高特异度（= #id 档 1,0,0）⇒ 族内所有状态规则同档，
      一律压过 .cfg-btn / .cfg-btn-primary 的常态与 hover 声明（本文件最后加载）。 */
-  background: var(--color-primary);
+  background: var(--btn-primary-bg);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border: 1px solid var(--color-primary-hover);
+  border: 1px solid var(--btn-primary-bg-hover);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge),
@@ -479,8 +479,8 @@
 /* hover — 填充递进到主对话框同款 hover 绿（`--color-primary-hover`）+ 描边同色；
    基准（input.css:827-836）的 fill 递进就是这样做的，本族照抄其**色值**（非自创）。 */
 :is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip, button.fm-create-submit):hover {
-  background: var(--color-primary-hover);
-  border-color: var(--color-primary-hover);
+  background: var(--btn-primary-bg-hover);
+  border-color: var(--btn-primary-bg-hover);
   opacity: 1;
 }
 
@@ -600,8 +600,8 @@
      （改前 == 改后 逐值，见 compare.json「面键」段）。
    状态色（🔴 零新增字面量色值，全部引用既有 token；机械判据 = `git diff` 新增行
      不含十六进制色值、rgb 函数、hsl 函数字面量）：
-       rest     = var(--color-primary)        （= 发送键族 / 主对话框 rest 绿）
-       hover    = var(--color-primary-hover)  （= 同族 hover 绿）
+       rest     = var(--btn-primary-bg)        （= 墨族 --btn-ink-*；2026-10-30 起）
+       hover    = var(--btn-primary-bg-hover)  （= 墨族 hover 档，同左）
        active   = 描边 var(--glass-send-border-active) + 按下投影 var(--glass-send-shadow-active)
        disabled = var(--glass-send-bg-disabled) + var(--glass-send-border-disabled) + not-allowed
      ⇒ 与发送键族「正常 / 按下 / 不可用」三态同源同值（两族视觉上是一家）。
@@ -640,8 +640,8 @@ button.glass-control.fm-login-btn {
 }
 :is(.fm-login-btn, .login-modal-btn),
 button.glass-control.fm-login-btn {
-  background: var(--color-primary);
-  border: 1px solid var(--color-primary-hover);
+  background: var(--btn-primary-bg);
+  border: 1px solid var(--btn-primary-bg-hover);
   box-shadow: var(--glass-send-stack), var(--glass-send-shadow);
   display: block;
   width: 100%;
@@ -660,8 +660,8 @@ button.glass-control.fm-login-btn {
 }
 :is(.fm-login-btn, .login-modal-btn):hover,
 button.glass-control.fm-login-btn:hover {
-  background: var(--color-primary-hover);
-  border-color: var(--color-primary-hover);
+  background: var(--btn-primary-bg-hover);
+  border-color: var(--btn-primary-bg-hover);
   opacity: 1;
 }
 :is(.fm-login-btn, .login-modal-btn):active,
@@ -901,7 +901,7 @@ button.glass-control.fm-login-btn:disabled {
    §四 判红终稿 R1′–R12′ / J1–J8）
    ───────────────────────────────────────────────────────────────────────
    四类角色 + 禁用档，逐面按**语义归属**重绘（含 4 条名实不符枚的改属）：
-     主操作 = 绿实心（`--color-primary` + 白墨）
+     主操作 = 墨族实心（`--btn-primary-*` → `--btn-ink-*`，官网双档；2026-10-30 起）
      次操作 = 描边（中性玻璃材质保留：既有 `--glass-send-stack`）
      幽灵   = 无底 + 文字弱化
      危险   = 红描边 + 红字（单源 = `--color-danger`）
@@ -917,13 +917,28 @@ button.glass-control.fm-login-btn:disabled {
    `.nebflow/tools/20260916_btnsweep-analyze.cjs` 的 `resolveClass()`。
    ═══════════════════════════════════════════════════════════════════════ */
 
-/* ── 五类具名 token（单源；值全部指向既有 token / 既有字面量）──────────── */
+/* ── 五类具名 token（单源；值全部指向既有 token / 既有字面量）────────────
+   2026-10-30 按钮体系单源重设计（作者令「按钮不要绿色…像 SpaceX」，设计稿
+   docs/design/20261030_201846_button-system-monochrome-redesign）：
+     主操作 = 墨族 ink family（官网 --auth-btn-* 双档，亮近黑/暗浅墨 ink-swap），
+     绿整体降级为身份/状态色（--color-primary 冻结保留，供通知点/运行点/链接等
+     状态面消费，不再承担可交互主操作）；蓝族 = focus/链接专用 --btn-focus-ring；
+     红族危险单源 --color-danger 不变。墨族/蓝族亮暗双档与 html[data-theme]
+     三态解析见 stand-tokens.css「按钮三态解析」块。 */
 :root {
+  /* 墨族 — 主操作（亮档值；暗档与主题双档见 stand-tokens.css） */
+  --btn-ink-bg: #111827;
+  --btn-ink-bg-hover: #374151;
+  --btn-ink-bg-active: #0b1220;
+  --btn-ink-ink: #ffffff;
+  /* 蓝族 — focus ring / 链接专用（亮档 #3b82f6 / 暗档 #60a5fa，官网 --color-primary） */
+  --btn-focus-ring: #3b82f6;
   /* 主操作 */
-  --btn-primary-bg: var(--color-primary);
-  --btn-primary-bg-hover: var(--color-primary-hover);
-  --btn-primary-ink: #fff; /* 值逐字取自既有 sidebar.css:1166 的 `.cfg-btn-primary` 墨色声明（R4′ 唯一豁免） */
-  --btn-primary-tint: rgb(var(--brand-green) / 0.35); /* 开关 ON 档（sidebar.css:2421 同源） */
+  --btn-primary-bg: var(--btn-ink-bg);
+  --btn-primary-bg-hover: var(--btn-ink-bg-hover);
+  --btn-primary-bg-active: var(--btn-ink-bg-active);
+  --btn-primary-ink: var(--btn-ink-ink);
+  --btn-primary-tint: rgb(17 24 39 / 0.35); /* 开关 ON 档墨 tint（原 brand-green 35%；暗档见 stand-tokens.css） */
   /* 次操作（描边；fill 档 = 开关等非文本控件保留的既有中性玻璃填充） */
   --btn-secondary-bg: transparent;
   --btn-secondary-stroke: var(--glass-send-border-active);
@@ -1165,9 +1180,10 @@ button.fm-req-decline:active,
   box-shadow: inset 0 0 0 1px var(--btn-danger-stroke);
 }
 
-/* ── 主操作 — 绿实心（声明在四类之后 ⇒ 同名元素归属以本节胜出：族内
+/* ── 主操作 — 墨族实心（声明在四类之后 ⇒ 同名元素归属以本节胜出：族内
    `.glass-control.fm-gs-save` / `.glass-control.fm-req-accept` 的特异度
-   (0,2,1) 高于次操作档 (0,1,1)）──────────────────────────────────────── */
+   (0,2,1) 高于次操作档 (0,1,1)；2026-10-30 起绿实心底退役，墨族双档见
+   stand-tokens.css「按钮三态解析」块）────────────────────────────────── */
 #dropbox-send-btn,
 .cfg-btn.cfg-btn-primary,
 button.fm-send-btn,
@@ -1223,6 +1239,21 @@ button.glass-control.fm-req-accept:active {
   }
 }
 
+/* ── 焦点态（2026-10-30 按钮体系批，设计稿 §3：全主操作统一蓝环）────────────
+   蓝族全 UI 只此 focus ring 与链接两处使用（--btn-focus-ring 单源，亮 #3b82f6 /
+   暗 #60a5fa，官网 focus 语言逐字一致）；列表 = 本文件主操作族 + B 组字面量换面的
+   主操作件（#send-btn / .ask-send / #modal-confirm / .btn-save / 登录键等）。 */
+:is(#send-btn, .ask-input .ask-send, #modal-confirm, #dropbox-send-btn,
+    .cfg-btn-primary, .config-actions .btn-save, .neblink-login-btn,
+    .fm-login-btn, .login-modal-btn, .flow-viewer-save, .pp-btn.primary,
+    .daemon-btn.start,
+    button.fm-send-btn, button.fm-verify-send, button.fm-send-chip,
+    button.fm-create-submit, button.glass-control.fm-gs-save,
+    button.glass-control.fm-req-accept):focus-visible {
+  outline: 2px solid var(--btn-focus-ring);
+  outline-offset: 2px;
+}
+
 /* 开关本体（`.nb-toggle`，js/toggle.js）在方向 A 下的口径：
    · 形态**保持**既有开关语言（轨道填充 + 圆钮）—— 铁律 2 与「开关不是按钮」的
      设计系统既有排除条款（本文件 :170-172）优先，本批**不改其填充/几何**；
@@ -1230,7 +1261,8 @@ button.glass-control.fm-req-accept:active {
      一族语言）；② 显式墨色（`color` 此前落 UA 默认，暗档 = 1.38:1 —— 无文本控件
      仍按可读性口径给值，避免「读数为黑却是继承而来」的隐性缺陷）。
    注：轨道填充值 = `--btn-secondary-fill`（既有 `--glass-control-bg`），ON 档 =
-   `--btn-primary-tint`（既有 brand-green 35% 三元组）⇒ 分类仍只依赖 token。 */
+   `--btn-primary-tint`（2026-10-30 起 = 墨族 35% tint，原 brand-green 三元组随绿
+   一并降级为身份/状态色）⇒ 分类仍只依赖 token。 */
 .nb-toggle {
   color: var(--btn-secondary-ink);
   border-color: var(--btn-secondary-fill-stroke); /* 具名化（值 = 既有 --glass-control-border，零视觉变化） */

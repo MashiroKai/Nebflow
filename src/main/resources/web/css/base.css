@@ -1,4 +1,10 @@
 :root {
+  /* 2026-10-30 按钮体系单源重设计（作者令「按钮不要绿色…像 SpaceX」）：
+     --color-primary/-hover **冻结保留原绿值**，语义从「交互主色」降级为
+     「身份/状态专用绿」（通知点/运行点/繁忙 spinner/caret/链接等状态面继续
+     消费，与官网 --color-pixel identity-only 裁定同构）。可交互主操作一律
+     走墨族 --btn-primary-* → --btn-ink-*（蓝 focus/链接 = --btn-focus-ring），
+     见 sapphire.css 五类 token 块与 stand-tokens.css 三态解析块。 */
   --color-primary: #07c160;
   --color-primary-hover: #06ad56;
   --color-error: #f44336;
@@ -429,7 +435,9 @@ body.sidebar-collapsed #sidebar {
   cursor: pointer;
   background: var(--bg-tertiary, rgba(255, 255, 255, 0.6));
 }
-.global-perm-toast-btn.approve { color: #07C160; font-weight: 600; }
+/* 权限批准 = 主操作语义（2026-10-30 按钮体系批 B10：字面绿 → 墨族 token，
+   随面板主题 ink-swap） */
+.global-perm-toast-btn.approve { background: var(--btn-primary-bg); color: var(--btn-primary-ink); font-weight: 600; }
 .global-perm-toast-btn.deny { opacity: 0.75; }
 @media (prefers-color-scheme: dark) {
   .global-perm-toast {

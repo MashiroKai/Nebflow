@@ -135,11 +135,15 @@ html[data-theme="dark"] #perception-panel {
     0 1px 3px var(--st-control-glow), 0 2px 8px var(--st-control-shadow);
 }
 .pp-btn:hover { background: var(--st-control-bg-hover); }
-.pp-btn.primary { background: var(--st-primary); border-color: var(--st-primary); color: #fff; font-weight: 500; box-shadow: none; }
-.pp-btn.primary:hover { background: #06ad56; }
-.pp-btn.danger-line { color: #c0392b; border-color: rgba(192, 57, 43, .4); box-shadow: none; background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
-html[data-theme="dark"] .pp-btn.danger-line { color: #f26b6b; border-color: rgba(242, 107, 107, .35); }
-.pp-btn.danger-line:hover { background: rgba(214, 69, 69, .08); }
+/* 主操作 = 墨族单源（2026-10-30 按钮体系批：connect/send/reconnect 等批准腿从
+   --st-primary 绿迁入 --btn-primary-*，随面板主题 ink-swap；--st-primary 绿
+   降级身份/状态）。 */
+.pp-btn.primary { background: var(--btn-primary-bg); border-color: var(--btn-primary-bg); color: var(--btn-primary-ink); font-weight: 500; box-shadow: none; }
+.pp-btn.primary:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); }
+/* 危险描边：红系统一（2026-10-30 §5.3）——字面红/暗档覆写并入 --btn-danger-*
+   （单源 --color-danger，亮暗双档经 token 自动解析，暗档覆写块随之作废）。 */
+.pp-btn.danger-line { color: var(--btn-danger-ink); border-color: var(--btn-danger-stroke); box-shadow: none; background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.pp-btn.danger-line:hover { background: var(--btn-danger-tint); }
 .pp-btn:disabled { opacity: .45; cursor: not-allowed; }
 .pp-actions { display: flex; gap: 8px; margin-top: 10px; }
 .pp-actions .pp-btn { flex: 1; }

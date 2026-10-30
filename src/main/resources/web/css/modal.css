@@ -197,39 +197,41 @@
    留给确认钮）。 */
 #delete-alt[hidden] { display: none; }
 
-/* Primary / Save button — sapphire style */
+/* Primary / Save button — 墨族主操作（2026-10-30 按钮体系批：save = 主操作语义，
+   蓝幽灵退出，与 #modal-confirm 同 --btn-primary-* 墨族 token 单源） */
 #memory-modal-save {
-  border-color: rgba(91, 127, 191, 0.35) !important;
-  color: rgb(91, 127, 191) !important;
-  background: rgba(91, 127, 191, 0.06) !important;
+  border-color: var(--btn-primary-bg) !important;
+  color: var(--btn-primary-ink) !important;
+  background: var(--btn-primary-bg) !important;
 }
 #memory-modal-save:hover {
-  background: rgba(91, 127, 191, 0.14) !important;
-  border-color: rgba(91, 127, 191, 0.55) !important;
+  background: var(--btn-primary-bg-hover) !important;
+  border-color: var(--btn-primary-bg-hover) !important;
   box-shadow:
-    0 0 12px rgba(120, 160, 220, 0.15),
-    0 0 24px rgba(120, 160, 220, 0.08) !important;
-  color: rgb(91, 127, 191) !important;
+    0 2px 8px rgba(0, 0, 0, 0.12),
+    0 2px 12px rgba(0, 0, 0, 0.07) !important;
+  color: var(--btn-primary-ink) !important;
 }
 
-/* Destructive button */
+/* Destructive button — 危险族单源（2026-10-30 按钮体系批 §5.3 红系统一：
+   字面红 rgba(220,60,60,…) 并入 --btn-danger-*（红单源 = --color-danger）） */
 #delete-confirm,
 #conflict-replace,
 #rules-modal-delete {
-  border: 1px solid rgba(220, 60, 60, 0.3) !important;
-  color: rgba(220, 60, 60, 0.85) !important;
-  background: rgba(220, 60, 60, 0.04) !important;
+  border: 1px solid var(--btn-danger-stroke) !important;
+  color: var(--btn-danger-ink) !important;
+  background: var(--btn-danger-bg) !important;
   transition: all 0.25s ease;
 }
 #delete-confirm:hover,
 #conflict-replace:hover,
 #rules-modal-delete:hover {
-  background: rgba(220, 60, 60, 0.08) !important;
-  border-color: rgba(220, 60, 60, 0.5) !important;
+  background: var(--btn-danger-tint) !important;
+  border-color: var(--btn-danger-stroke) !important;
   box-shadow:
     0 0 12px rgba(220, 60, 60, 0.1),
     0 0 24px rgba(220, 60, 60, 0.05) !important;
-  color: #e55 !important;
+  color: var(--btn-danger-ink) !important;
 }
 
 /* Neutral confirm — reversible actions only (showConfirm opts.tone='neutral',
@@ -255,23 +257,39 @@
     0 4px 12px var(--glass-control-shadow-hover) !important;
 }
 
-/* ── Confirm button (main modal — primary green) ──────────────────────── */
+/* ── Confirm button (main modal — 墨族主操作，2026-10-30 按钮体系批：绿实心底
+   退役，hover 绿 glow 改中性抬升影，token 单源随面板主题 ink-swap) ───────── */
 #modal-confirm {
   padding: 8px 18px;
   border: none;
   border-radius: 10px;
-  background: var(--color-primary);
-  color: #fff;
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-ink);
   font-size: 14px;
   cursor: pointer;
   font-family: inherit;
   transition: background 0.15s, box-shadow 0.2s;
 }
 #modal-confirm:hover {
-  background: var(--color-primary-hover);
+  background: var(--btn-primary-bg-hover);
   box-shadow:
-    0 0 12px rgba(7, 193, 96, 0.15),
-    0 0 24px rgba(7, 193, 96, 0.08);
+    0 2px 8px rgba(0, 0, 0, 0.12),
+    0 2px 12px rgba(0, 0, 0, 0.07);
+}
+
+/* 主对话框取消键 = 幽灵族（2026-10-30 按钮体系批 B5：蓝退出对话框，蓝仅保留
+   focus/链接用途；覆盖上方中性键的 sapphire tint 底/描边，只留字墨两档）。 */
+#modal-cancel {
+  background: none;
+  border-color: transparent;
+  color: var(--btn-ghost-ink);
+  box-shadow: none;
+}
+#modal-cancel:hover {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--btn-ghost-ink-hover);
 }
 
 /* ---------- Main Modal ---------- */

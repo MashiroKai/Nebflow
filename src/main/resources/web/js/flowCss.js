@@ -184,7 +184,7 @@ export const FLOW_CSS = `
 .flow-viewer .code-copy-btn { right: 40px; }
 .flow-viewer-body { flex: 1; overflow-y: auto; padding: 14px 18px; scrollbar-color: var(--color-frame-border) transparent; }
 .flow-viewer-footer { display: flex; align-items: center; gap: 8px; justify-content: flex-end; padding: 10px 16px; border-top: 1px solid var(--glass-border); flex-shrink: 0; }
-.flow-viewer-save { font: 600 12px -apple-system, sans-serif; color: #fff; background: var(--color-primary, #07c160); border: none; border-radius: 8px; padding: 6px 16px; cursor: pointer; transition: opacity 0.15s; }
+.flow-viewer-save { font: 600 12px -apple-system, sans-serif; color: var(--btn-primary-ink, #fff); background: var(--btn-primary-bg, #111827); border: none; border-radius: 8px; padding: 6px 16px; cursor: pointer; transition: opacity 0.15s; }
 .flow-viewer-save:hover { opacity: 0.88; }
 .flow-viewer-save:disabled { opacity: 0.5; cursor: default; }
 .flow-viewer-status { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); margin-right: auto; }

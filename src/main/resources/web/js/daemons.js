@@ -229,8 +229,8 @@ const DAEMON_CSS = `
     inset 0 -1px 0 var(--glass-control-underedge);
   cursor: pointer; transition: all 0.15s; white-space: nowrap;
 }
-.daemon-btn.start { color: var(--color-primary, #07c160); border-color: rgba(7, 193, 96, 0.25); }
-.daemon-btn.start:hover { background: rgba(7, 193, 96, 0.08); }
+.daemon-btn.start { color: var(--btn-primary-bg, #111827); border-color: color-mix(in srgb, var(--btn-primary-bg, #111827) 25%, transparent); }
+.daemon-btn.start:hover { background: color-mix(in srgb, var(--btn-primary-bg, #111827) 8%, transparent); }
 .daemon-btn.stop { color: rgb(91, 127, 191); border-color: rgba(91, 127, 191, 0.25); }
 .daemon-btn.stop:hover { background: rgba(91, 127, 191, 0.08); }
 .daemon-btn-icon {

@@ -1,0 +1,280 @@
+{
+  "light": {
+    "send": {
+      "bg": "rgb(17, 24, 39)",
+      "border": "rgb(11, 18, 32)",
+      "color": "rgb(255, 255, 255)",
+      "outline": "rgb(255, 255, 255)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "sendDisconnected": {
+      "bg": "rgba(255, 255, 255, 0.66)",
+      "border": "rgba(0, 0, 0, 0.18)",
+      "color": "rgb(139, 142, 150)",
+      "outline": "rgb(139, 142, 150)",
+      "outlineOffset": "0px",
+      "cursor": "not-allowed",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "sendDisabled": {
+      "bg": "rgba(255, 255, 255, 0.18)",
+      "border": "rgba(255, 255, 255, 0.2)",
+      "color": "rgb(139, 142, 150)",
+      "outline": "rgb(139, 142, 150)",
+      "outlineOffset": "0px",
+      "cursor": "default",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "askSend": {
+      "bg": "rgb(17, 24, 39)",
+      "border": "rgb(11, 18, 32)",
+      "color": "rgb(255, 255, 255)",
+      "outline": "rgb(255, 255, 255)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "modalConfirm": {
+      "bg": "rgb(17, 24, 39)",
+      "border": "rgb(255, 255, 255)",
+      "color": "rgb(255, 255, 255)",
+      "outline": "rgb(255, 255, 255)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "deleteConfirm": {
+      "bg": "rgba(0, 0, 0, 0)",
+      "border": "rgb(192, 57, 43)",
+      "color": "rgb(192, 57, 43)",
+      "outline": "rgb(192, 57, 43)",
+      "outlineOffset": "0px",
+      "cursor": "default",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "ppDanger": {
+      "bg": "rgba(0, 0, 0, 0)",
+      "border": "rgb(192, 57, 43)",
+      "color": "rgb(192, 57, 43)",
+      "outline": "rgb(192, 57, 43)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "cfgPrimary": {
+      "bg": "rgb(17, 24, 39)",
+      "border": "rgb(55, 65, 81)",
+      "color": "rgb(255, 255, 255)",
+      "outline": "rgb(255, 255, 255)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "btnSave": {
+      "bg": "rgb(17, 24, 39)",
+      "border": "rgb(17, 24, 39)",
+      "color": "rgb(255, 255, 255)",
+      "outline": "rgb(255, 255, 255)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "neblinkLogin": {
+      "bg": "rgb(17, 24, 39)",
+      "border": "rgb(255, 255, 255)",
+      "color": "rgb(255, 255, 255)",
+      "outline": "rgb(255, 255, 255)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "ppPrimary": {
+      "bg": "rgb(17, 24, 39)",
+      "border": "rgb(17, 24, 39)",
+      "color": "rgb(255, 255, 255)",
+      "outline": "rgb(255, 255, 255)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "nbToggleOn": {
+      "bg": "rgba(17, 24, 39, 0.35)",
+      "border": "color(srgb 0.0666667 0.0941176 0.152941 / 0.5)",
+      "color": "rgb(27, 30, 38)",
+      "outline": "rgb(27, 30, 38)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "tokens": {
+      "--btn-primary-bg": "#111827",
+      "--btn-primary-bg-hover": "#374151",
+      "--btn-primary-ink": "#ffffff",
+      "--btn-secondary-stroke": "rgba(0, 0, 0, 0.18)",
+      "--btn-ghost-ink": "#3a3d45",
+      "--btn-danger-stroke": "#c0392b",
+      "--btn-danger-ink": "#c0392b",
+      "--btn-ink-bg": "#111827",
+      "--btn-ink-bg-hover": "#374151",
+      "--btn-ink-ink": "#ffffff",
+      "--btn-focus-ring": "#3b82f6",
+      "--color-danger": "#c0392b"
+    },
+    "greenBtns": [
+      "icon-btn recording|"
+    ]
+  },
+  "dark": {
+    "send": {
+      "bg": "rgb(230, 237, 243)",
+      "border": "rgb(201, 209, 217)",
+      "color": "rgb(13, 17, 23)",
+      "outline": "rgb(13, 17, 23)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "sendDisconnected": {
+      "bg": "rgba(255, 255, 255, 0.15)",
+      "border": "rgba(255, 255, 255, 0.15)",
+      "color": "rgb(123, 126, 136)",
+      "outline": "rgb(123, 126, 136)",
+      "outlineOffset": "0px",
+      "cursor": "not-allowed",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "sendDisabled": {
+      "bg": "rgba(255, 255, 255, 0.03)",
+      "border": "rgba(255, 255, 255, 0.05)",
+      "color": "rgb(123, 126, 136)",
+      "outline": "rgb(123, 126, 136)",
+      "outlineOffset": "0px",
+      "cursor": "default",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "askSend": {
+      "bg": "rgb(230, 237, 243)",
+      "border": "rgb(201, 209, 217)",
+      "color": "rgb(13, 17, 23)",
+      "outline": "rgb(13, 17, 23)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "modalConfirm": {
+      "bg": "rgb(230, 237, 243)",
+      "border": "rgb(13, 17, 23)",
+      "color": "rgb(13, 17, 23)",
+      "outline": "rgb(13, 17, 23)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "deleteConfirm": {
+      "bg": "rgba(0, 0, 0, 0)",
+      "border": "rgb(242, 107, 107)",
+      "color": "rgb(242, 107, 107)",
+      "outline": "rgb(242, 107, 107)",
+      "outlineOffset": "0px",
+      "cursor": "default",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "ppDanger": {
+      "bg": "rgba(0, 0, 0, 0)",
+      "border": "rgb(242, 107, 107)",
+      "color": "rgb(242, 107, 107)",
+      "outline": "rgb(242, 107, 107)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "cfgPrimary": {
+      "bg": "rgb(230, 237, 243)",
+      "border": "rgb(255, 255, 255)",
+      "color": "rgb(13, 17, 23)",
+      "outline": "rgb(13, 17, 23)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "btnSave": {
+      "bg": "rgb(230, 237, 243)",
+      "border": "rgb(230, 237, 243)",
+      "color": "rgb(13, 17, 23)",
+      "outline": "rgb(13, 17, 23)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "neblinkLogin": {
+      "bg": "rgb(230, 237, 243)",
+      "border": "rgb(13, 17, 23)",
+      "color": "rgb(13, 17, 23)",
+      "outline": "rgb(13, 17, 23)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "ppPrimary": {
+      "bg": "rgb(230, 237, 243)",
+      "border": "rgb(230, 237, 243)",
+      "color": "rgb(13, 17, 23)",
+      "outline": "rgb(13, 17, 23)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "nbToggleOn": {
+      "bg": "rgba(230, 237, 243, 0.35)",
+      "border": "color(srgb 0.901961 0.929412 0.952941 / 0.5)",
+      "color": "rgb(232, 234, 237)",
+      "outline": "rgb(232, 234, 237)",
+      "outlineOffset": "0px",
+      "cursor": "pointer",
+      "outlineStyle": "none",
+      "outlineWidth": "3px"
+    },
+    "tokens": {
+      "--btn-primary-bg": "#e6edf3",
+      "--btn-primary-bg-hover": "#ffffff",
+      "--btn-primary-ink": "#0d1117",
+      "--btn-secondary-stroke": "rgba(255, 255, 255, 0.15)",
+      "--btn-ghost-ink": "#e8eaed",
+      "--btn-danger-stroke": "#f26b6b",
+      "--btn-danger-ink": "#f26b6b",
+      "--btn-ink-bg": "#e6edf3",
+      "--btn-ink-bg-hover": "#ffffff",
+      "--btn-ink-ink": "#0d1117",
+      "--btn-focus-ring": "#60a5fa",
+      "--color-danger": "#f26b6b"
+    },
+    "greenBtns": [
+      "icon-btn recording|"
+    ]
+  }
+}
