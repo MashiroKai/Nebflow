@@ -114,9 +114,27 @@ function mkdir(sessionId, path, name) {
   });
 }
 
-/** Breadcrumb segments from an absolute path (home prefix folded to one segment). */
-function buildCrumbs(path, home) {
+/** Breadcrumb segments from an absolute path (home prefix folded to one segment).
+ *  DEVICE MODE (remote=true): the path lives on the REMOTE OS — its separator may be
+ *  `\` (Windows peer) — segments split on both separators and crumbs rebuild with the
+ *  path's own separator; the leading crumb is the share root (`/` POSIX · `C:\` drive)
+ *  so no crumb/up-row ever emits a separatorless drive letter or a POSIX root at a
+ *  Windows peer (2026-10-30 三修①：开箱 `/` ⇒ `\` 的根路径折损族). */
+function buildCrumbs(path, home, remote) {
   if (!path) return [];
+  if (remote) {
+    const segs = path.split(/[/\\]+/).filter(Boolean);
+    if (!segs.length) return [];
+    const sep = path.indexOf('\\') >= 0 ? '\\' : '/';
+    const drive = /^[A-Za-z]:$/.test(segs[0]);
+    const crumbs = [{ label: drive ? segs[0] : '/', path: drive ? segs[0] + sep : '/' }];
+    let acc = crumbs[0].path;
+    for (const s of segs.slice(drive ? 1 : 0)) {
+      acc = (acc.endsWith(sep) ? acc : acc + sep) + s;
+      crumbs.push({ label: s, path: acc });
+    }
+    return crumbs;
+  }
   if (home && (path === home || path.startsWith(home + '/'))) {
     const rest = path === home ? '' : path.slice(home.length);
     const segs = rest.split('/').filter(Boolean);
@@ -269,7 +287,7 @@ export function openPicker(opts = {}) {
       crumbsEl.appendChild(chip);
       crumbsEl.appendChild(document.createTextNode(' '));
     }
-    const crumbs = buildCrumbs(ctx.current, ctx.home);
+    const crumbs = buildCrumbs(ctx.current, ctx.home, !!ctx.device);
     crumbs.forEach((c, i) => {
       if (i > 0) crumbsEl.appendChild(document.createTextNode(' / '));
       if (i === crumbs.length - 1) {
@@ -389,7 +407,12 @@ export function openPicker(opts = {}) {
     const failed = !res || res.__timeout || res.error || res.errorKind;
     if (failed) {
       const detail = res && typeof res.error === 'string' ? res.error : '';
-      showErr(detail || t('workspacePicker.error.invalid'));
+      // 设备共享白名单拒绝 = 预期可读态（2026-10-30 三修①「从家目录开始」）：不给
+      // 原始英文报错，给本地化的「未共享 + 出路」说明；其余错误照旧透传（诊断价值）。
+      const msg = ctx.device && /outside the device share whitelist/i.test(detail)
+        ? t('workspacePicker.deviceShareDenied', { device: ctx.deviceName })
+        : (detail || t('workspacePicker.error.invalid'));
+      showErr(msg);
       hideNote();
       if (env.origin !== 'goto') {
         // Navigation-origin failure: the target listing never arrived, so the
@@ -405,7 +428,10 @@ export function openPicker(opts = {}) {
 
     hideErr();
     if (res.home) ctx.home = res.home;
-    ctx.current = res.path || env.requested; // server-resolved absolute path
+    // DEVICE 腿：优先采用**对端解析后**的绝对路径（additive `resolvedPath` 键——
+    // 初始 `~` 回显为真实家目录，面包屑/上级行才有正确展开点）；老帧无该键 ⇒
+    // 回退 `res.path`/`env.requested`（逐字节现状，零回归）。
+    ctx.current = res.resolvedPath || res.path || env.requested;
     renderCrumbs();
 
     // A: explicit truncation word (never silent) — the fact, then the way out.
@@ -422,8 +448,13 @@ export function openPicker(opts = {}) {
     }
 
     listEl.innerHTML = '';
-    // Parent row first (hidden at the filesystem root)
-    if (ctx.current !== '/') {
+    // Parent row first. DEVICE MODE: hide at the share root (single-segment path —
+    // `C:\` / `/`); stripping one segment from there would emit a separatorless
+    // drive letter / empty path (2026-10-30 三修①根路径折损族)。
+    const showUp = ctx.device
+      ? ctx.current.split(/[/\\]+/).filter(Boolean).length > 1
+      : ctx.current !== '/';
+    if (showUp) {
       const parentRow = document.createElement('button');
       parentRow.type = 'button';
       parentRow.className = 'wsp-row wsp-dir wsp-up-row';
@@ -431,9 +462,14 @@ export function openPicker(opts = {}) {
         '<span class="wsp-row-icon">..</span>' +
         '<span class="wsp-row-name">..</span>';
       parentRow.onclick = () => {
-        const parts = ctx.current.replace(/\/$/, '').split('/');
-        parts.pop();
-        navigate(parts.join('/') || '/');
+        if (ctx.device) {
+          const up = ctx.current.replace(/[/\\][^/\\]*$/, '');
+          if (up) navigate(up);
+        } else {
+          const parts = ctx.current.replace(/\/$/, '').split('/');
+          parts.pop();
+          navigate(parts.join('/') || '/');
+        }
       };
       listEl.appendChild(parentRow);
     }
@@ -460,7 +496,13 @@ export function openPicker(opts = {}) {
           '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2.2 2.5H19a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>' +
         '</span>' +
         '<span class="wsp-row-name">' + escapeHtml(entry.name) + '</span>';
-      const child = entry.path || ((ctx.current === '/' ? '' : ctx.current) + '/' + entry.name);
+      const child = entry.path || (
+        (ctx.current === '/' ? '' : ctx.current) +
+        // 子路径拼接用**当前路径自己的**分隔符（Windows 对端 = `\`）——混拼虽被
+        // 接收端 normalize 救回，但出站帧/面包屑读数保持对端原生形态（三修①）。
+        (ctx.current.indexOf('\\') >= 0 ? '\\' : '/') +
+        entry.name
+      );
       row.onclick = () => navigate(child);
       listEl.appendChild(row);
     }

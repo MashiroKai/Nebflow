@@ -142,9 +142,11 @@ async function bootApp(page) {
         ws.send(JSON.stringify({ type: 'historyPage', sessionId: msg.sessionId, messages: [], hasMore: false, offset: 0 }));
       } else if (msg.type === 'wsBrowse.list') {
         if (msg.device === 'dev-studio') {
+          // 2026-10-30 三修①后 device 模式初始路径 = `~`（对端家目录，接收端展开）——
+          // mock 对 `~` 与后续路径一律回远端根列举夹具，下游点选 assets 不变。
           ws.send(JSON.stringify({
             type: 'wsBrowseList', path: msg.path === '~' ? '/' : msg.path,
-            entries: msg.path === '~' ? ['Volumes'] : REMOTE_DIRS, device: msg.device,
+            entries: REMOTE_DIRS, device: msg.device,
           }));
         } else {
           // 本机腿镜像真实后端语义：~ 在服务端展开为绝对路径（PathUtil.expandTilde），
@@ -211,7 +213,7 @@ test.setTimeout(120_000);
 // ════════════════════════════════════════════════════════════════════════════
 // 面 A · 创建项目设备选择
 // ════════════════════════════════════════════════════════════════════════════
-test('R-A 面A：设备行 + 本机零 device 键 + 菜单/禁选 + 远端模式形', async ({ page }) => {
+test('R-A 面A：设备行 + self 零 device 键 + 菜单/禁选 + 远端模式形', async ({ page }) => {
   const h = await bootApp(page);
   const { pageErrors } = h;
   await openProjects(page);
@@ -221,15 +223,20 @@ test('R-A 面A：设备行 + 本机零 device 键 + 菜单/禁选 + 远端模式
   const idle = await page.evaluate(() => {
     const panel = document.querySelector('.proj-create-overlay .wsp-panel');
     const btn = panel.querySelector('.dev-btn');
+    const hint = panel.querySelector('.dev-hintline');
     return {
       hasDevRow: !!btn,
       btnText: btn?.textContent ?? null,
-      isRemote: btn?.classList.contains('is-remote') ?? null,
+      // 平级设计语言（2026-10-30）：无 is-remote 分级 class（self/远端同一按钮形）。
+      hasIsRemoteClass: btn?.classList.contains('is-remote') ?? null,
+      btnIcon: btn?.querySelector('.dev-ic')?.innerHTML ?? null,
+      hintText: hint?.textContent ?? null,
+      hintVisible: !!hint && hint.hidden === false,
       wsLabel: panel.querySelector('label[for="proj-create-ws"]')?.textContent ?? null,
     };
   });
 
-  // 本机提交：帧零 device 键（先补路径——复用本机选择器，mock 返回 ws-alpha）。
+  // self 提交：帧零 device 键（先补路径——复用本机选择器，mock 返回 ws-alpha）。
   await page.click('.proj-create-overlay .proj-create-pick');
   await page.waitForSelector('.wsp-list', { timeout: 5000 });
   await page.click('.wsp-list .wsp-row:has(.wsp-row-name:text-is("ws-alpha"))');
@@ -238,7 +245,7 @@ test('R-A 面A：设备行 + 本机零 device 键 + 菜单/禁选 + 远端模式
   await page.waitForTimeout(350);
   await page.evaluate(() => {
     const ta = document.querySelector('.proj-create-desc');
-    ta.value = '本机创建（存量语义）';
+    ta.value = 'self 创建（存量语义）';
     ta.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await page.click('.proj-create-overlay .wsp-pick');
@@ -253,13 +260,16 @@ test('R-A 面A：设备行 + 本机零 device 键 + 菜单/禁选 + 远端模式
   const remoteState = await page.evaluate(() => {
     const panel = document.querySelector('.proj-create-overlay .wsp-panel');
     const btn = panel.querySelector('.dev-btn');
+    const hint = panel.querySelector('.dev-hintline');
     return {
-      isRemote: btn?.classList.contains('is-remote') ?? null,
+      // 平级设计语言：远端选中也无 is-remote 分级 class。
+      hasIsRemoteClass: btn?.classList.contains('is-remote') ?? null,
       btnText: btn?.textContent ?? null,
+      btnIcon: btn?.querySelector('.dev-ic')?.innerHTML ?? null,
       wsLabel: panel.querySelector('label[for="proj-create-ws"]')?.textContent ?? null,
       pickText: panel.querySelector('.proj-create-pick')?.textContent ?? null,
-      hintline: panel.querySelector('.dev-hintline')?.textContent ?? null,
-      hintlineVisible: !!panel.querySelector('.dev-hintline') && panel.querySelector('.dev-hintline').hidden === false,
+      hintline: hint?.textContent ?? null,
+      hintlineVisible: !!hint && hint.hidden === false,
       pathPicked: panel.querySelector('.proj-create-path')?.dataset.picked ?? null,
     };
   });
@@ -277,6 +287,9 @@ test('R-A 面A：设备行 + 本机零 device 键 + 菜单/禁选 + 远端模式
     const off = items.find((el) => el.classList.contains('disabled'));
     return {
       names: items.map((el) => el.querySelector('.nm')?.textContent ?? ''),
+      // 平级设计语言（2026-10-30）：行间无 self/direct/relay 标签（连接方式只进 title）。
+      subCount: items.filter((el) => el.querySelector('.sub')).length,
+      titles: items.map((el) => el.getAttribute('title') ?? ''),
       offlineName: off?.querySelector('.nm')?.textContent ?? null,
       offlineTag: off?.querySelector('.off-tag')?.textContent ?? null,
       foot: document.querySelector('.proj-create-overlay .dev-menu-foot')?.textContent ?? null,
@@ -297,21 +310,30 @@ test('R-A 面A：设备行 + 本机零 device 键 + 菜单/禁选 + 远端模式
 
   write('60-faceA.json', { idle, localFrames, remoteState, menu, afterNasClick, pageErrors });
   expect(idle.hasDevRow, 'R-A1：存放设备行在场').toBe(true);
-  expect(idle.isRemote, 'R-A1：默认本机形（无 is-remote）').toBe(false);
-  expect(localFrames.length, '前置：本机提交发出 1 帧').toBe(1);
+  // 平级设计语言：首开即渲染（原实现首开空白），缺省 self 显示名 = 中性兜底键。
+  expect(idle.btnText, 'R-A1：首开设备行已渲染（self 缺省显示名）').toContain('这台设备');
+  expect(idle.hasIsRemoteClass, 'R-A1：平级设计语言——无 is-remote 分级 class').toBe(false);
+  expect(idle.hintVisible, 'R-A1：语义提示行常显（self 短句，不点名本机）').toBe(true);
+  expect(idle.hintText || '', 'R-A1：self 提示行 = 存放+执行陈述').toContain('由该设备执行');
+  expect(localFrames.length, '前置：self 提交发出 1 帧').toBe(1);
   expect(
     localFrames[0] && 'device' in localFrames[0],
-    'R-A2：本机提交帧零 device 键（机制面缺省腿逐字节）'
+    'R-A2：self 提交帧零 device 键（机制面缺省腿逐字节）'
   ).toBe(false);
   expect(localFrames[0]?.workspace, 'R-A2 前置：workspace 键照旧').toBe('/tmp/pick-home/ws-alpha');
-  expect(menu.names, 'R-A3：菜单 = self + peers（在线在前、离线在列）').toEqual(
-    expect.arrayContaining(['本机（这台 Mac）', 'Studio-M2', 'NAS-Uat'])
+  // 平级设计语言：菜单 = self + peers，self 显示花名册本名（无「本机」特殊行）。
+  expect(menu.names, 'R-A3：菜单 = self + peers（self = 花名册本名 This-Mac）').toEqual(
+    ['This-Mac', 'Studio-M2', 'NAS-Uat']
   );
+  expect(menu.subCount, 'R-A3：平级设计语言——行间零 self/direct/relay 标签').toBe(0);
+  expect(menu.titles, 'R-A3：连接方式弱化为 title tooltip').toEqual(['direct', 'direct', 'relay']);
   expect(menu.offlineName, 'R-A3：离线行在列（可见性）').toBe('NAS-Uat');
   expect(menu.offlineTag, 'R-A3：离线行带「离线」tag').toBe('离线');
   expect(menu.foot || '', 'R-A3：菜单脚注说明 peers 来源').toContain('NebLink');
   expect(afterNasClick, 'R-A3：离线行禁选 —— 点击后按钮文案不变').toBe(beforeNasClick);
-  expect(remoteState.isRemote, 'R-A4：远端选中 → is-remote 形').toBe(true);
+  expect(remoteState.hasIsRemoteClass, 'R-A4：平级设计语言——远端选中也无分级 class').toBe(false);
+  expect(remoteState.btnIcon, 'R-A4：平级设计语言——self/远端同一按钮图标').toBe(idle.btnIcon);
+  expect(remoteState.btnText, 'R-A4：远端选中显示设备名').toContain('Studio-M2');
   expect(remoteState.wsLabel, 'R-A4：工作区 label 变体（<设备> 上）').toContain('Studio-M2');
   expect(remoteState.pickText, 'R-A4：pick 钮变体（在 <设备> 上选择）').toContain('Studio-M2');
   expect(remoteState.hintlineVisible, 'R-A4：语义提示行可见').toBe(true);
@@ -397,7 +419,7 @@ test('R-A5/A6 远端提交：wsBrowse.list 带 device + 创建中 chips + 失败
     acts: [...document.querySelectorAll('.proj-create-error .err-act')].map((el) => el.textContent),
   }));
   const framesBeforeSwitch = h.frames('projectCreate').length;
-  await page.click('.proj-create-error .err-act:has-text("换成本机")');
+  await page.click('.proj-create-error .err-act:has-text("改用这台设备")');
   await page.waitForTimeout(300);
   const framesAfterSwitch = h.frames('projectCreate');
   const lastFrame = framesAfterSwitch[framesAfterSwitch.length - 1];
@@ -427,8 +449,8 @@ test('R-A5/A6 远端提交：wsBrowse.list 带 device + 创建中 chips + 失败
     expect.arrayContaining(['重试', '换一台设备…'])
   );
   expect(menuReopened, 'R-A7：[换一台设备…] 打开设备菜单').toBe(true);
-  expect(failB.acts, 'R-A7：DEVICE_OFFLINE 动作 = [重试][换成本机]').toEqual(
-    expect.arrayContaining(['重试', '换成本机'])
+  expect(failB.acts, 'R-A7：DEVICE_OFFLINE 动作 = [重试][改用这台设备]（平级文案）').toEqual(
+    expect.arrayContaining(['重试', '改用这台设备'])
   );
   expect(framesAfterSwitch.length, 'R-A8：[换成本机] 重发一帧').toBe(framesBeforeSwitch + 1);
   expect(

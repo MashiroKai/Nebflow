@@ -102,11 +102,18 @@ export default {
   // Copy aligned with the design doc (/tmp/nebflow-coldstart/general/proto-device-agnostic/
   // 20261010_002900_neblink-stage1-ui-faces-design.md §1/§3).
   'project.deviceLabel': 'Store on device',
-  'project.deviceSelf': 'This Mac',
-  'project.deviceNoteSelf': 'The project will be stored on this Mac.',
+  // Flat-device design language (author ruling 2026-10-30 "all devices are equal"):
+  // neutral self fallback name (the button/menu show the roster's own device name
+  // whenever the roster is reachable; this key is only the not-yet-fetched fallback).
+  'project.deviceSelf': 'This device',
   'project.deviceOfflineTag': 'Offline',
-  'project.deviceMenuFoot': 'Devices come from the NebLink network (peers); offline devices are not selectable and appear automatically once online.',
-  'project.createDeviceHintline': 'The project will be stored on {device} and created by that device; this Mac only records a pointer — files are fetched on demand.',
+  'project.deviceMenuFoot': 'Devices come from the NebLink network; offline devices are not selectable and appear automatically once online.',
+  // Remote-selected hint line: stated as a storage relationship, never naming "this
+  // Mac" (flat design language; author ruling "only a pointer is recorded").
+  'project.createDeviceHintline': 'The project will be stored on {device} and run by it; only a pointer is recorded here — files are fetched on demand.',
+  // Self-selected hint line (same slot, same sentence shape, no pointer clause —
+  // a factual difference, not a device tier).
+  'project.createDeviceHintlineSelf': 'The project will be stored on {device} and run by it.',
   'project.createWorkspaceLabelRemote': 'Workspace path (on {device})',
   'project.createWorkspacePickRemote': 'Choose a path on {device}…',
   'project.createRemotePending': 'Creating on {device} (a few seconds)',
@@ -115,7 +122,8 @@ export default {
   'project.createStep3': 'Write scaffold',
   'project.createStep4': 'Register project',
   'project.createErrRetry': 'Retry',
-  'project.createErrSwitchLocal': 'Use this Mac',
+  // Flat design language: neutral action wording (was "Use this Mac").
+  'project.createErrSwitchLocal': 'Use this device',
   'project.createErrSwitchDevice': 'Switch device…',
   'project.devBadgeTitle': 'Remote project · device {device} · path {path}',
   'project.devBadgeOfflineTitle': 'Remote project · device {device} (offline) · path {path}',
@@ -2431,6 +2439,10 @@ export default {
   // === ui-device-faces batch (2026-10-10): picker device mode (remote leg, read-only) ===
   'workspacePicker.deviceTitle': 'Choose a directory on {device}',
   'workspacePicker.deviceNote': 'Remote directories are read-only — the directory must already exist (missing items are reported, never created).',
+  // Device share-whitelist denial = expected readable state (2026-10-30 fix-1 batch,
+  // "start from the home directory"): localized "not shared + the way out" copy in
+  // place of the peer's raw English error.
+  'workspacePicker.deviceShareDenied': 'This directory is not shared by {device} — remote browsing is limited to registered project workspaces, captures and uploads on it. To browse other locations such as the home directory, add them to that device\'s deviceShare.extraPaths config and retry.',
 
   // === Device-conversation server switch, MVP-2 (2026-09-15): device receipts ===
   // 🔴 `messages.deviceRetention`（P10 留存明示句）已删 —— 作者 2026-09-15 令

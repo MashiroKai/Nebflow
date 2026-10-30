@@ -95,11 +95,15 @@ export default {
   // 文案逐字对齐设计稿（/tmp/nebflow-coldstart/general/proto-device-agnostic/
   // 20261010_002900_neblink-stage1-ui-faces-design.md §1/§3）。
   'project.deviceLabel': '存放设备',
-  'project.deviceSelf': '本机（这台 Mac）',
-  'project.deviceNoteSelf': '项目将存放在本机。',
+  // 平级设计语言（作者 2026-10-30「所有设备是平等的」）：self 回退显示名中性化
+  // （花名册可得时按钮/菜单一律显示设备本名，此键仅作未拉取花名册时的兜底）。
+  'project.deviceSelf': '这台设备',
   'project.deviceOfflineTag': '离线',
-  'project.deviceMenuFoot': '设备来自 NebLink 网络（peers）；离线设备不可选，上线后自动出现。',
-  'project.createDeviceHintline': '项目将存放在 {device}，由该设备执行；本机只登记指针，文件按需查看。',
+  'project.deviceMenuFoot': '设备来自 NebLink 网络；离线设备不可选，上线后自动出现。',
+  // 远端选中提示行：按存放关系陈述、不点名「本机」（平级设计语言；作者令「仅登记指针」）。
+  'project.createDeviceHintline': '项目将存放在 {device}，由该设备执行；仅登记指针，文件按需查看。',
+  // self 选中提示行（同一行位、同一句式，无指针从句——事实差异，非设备分级）。
+  'project.createDeviceHintlineSelf': '项目将存放在 {device}，由该设备执行。',
   'project.createWorkspaceLabelRemote': '工作区路径（{device} 上）',
   'project.createWorkspacePickRemote': '在 {device} 上选择路径…',
   'project.createRemotePending': '正在 {device} 上创建（约数秒）',
@@ -108,7 +112,8 @@ export default {
   'project.createStep3': '写脚手架',
   'project.createStep4': '落项目定义',
   'project.createErrRetry': '重试',
-  'project.createErrSwitchLocal': '换成本机',
+  // 平级设计语言：动作文案中性化（原「换成本机」点名本机）。
+  'project.createErrSwitchLocal': '改用这台设备',
   'project.createErrSwitchDevice': '换一台设备…',
   'project.devBadgeTitle': '远端项目 · 设备 {device} · 路径 {path}',
   'project.devBadgeOfflineTitle': '远端项目 · 设备 {device}（离线）· 路径 {path}',
@@ -2354,6 +2359,9 @@ export default {
   // === ui-device-faces 批（2026-10-10）：选择器 device 模式（远端腿，只读） ===
   'workspacePicker.deviceTitle': '在 {device} 上选择目录',
   'workspacePicker.deviceNote': '远端目录只读 — 目录须已存在（缺件即报，不新建）。',
+  // 设备共享白名单拒绝 = 预期可读态（2026-10-30 三修①「从家目录开始」）：给
+  // 「未共享 + 出路」的本地化说明，替代对端原始英文报错。
+  'workspacePicker.deviceShareDenied': '该设备未共享此目录——远端浏览只覆盖它已登记的项目工作区、captures 与 uploads。若需浏览家目录等其它位置，在那台设备的配置中加入 deviceShare.extraPaths 后重试。',
 
   // === 设备会话切服务端数据源，MVP-2（2026-09-15）：设备回执 ===
   // 🔴 `messages.deviceRetention`（P10 留存明示句）已删 —— 作者 2026-09-15 令 ⑤b
