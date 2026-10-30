@@ -3,6 +3,7 @@
 // shared viewers/zoom.js engine; pan via pointer drag.
 
 import { escapeHtml } from './shared.js';
+import { createIconsIn } from '../utils.js';
 import { reMint } from '../nfTicket.js';
 import { nfViewerUrl } from '../nfFileCache.js';
 import { enableViewerZoom } from './zoom.js';
@@ -138,10 +139,72 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
       attachTo: viewport,
     });
 
-    // ── Pan (pointer drag) ─────────────────────────────────
+    // ── Pan (pointer drag) — OPT-IN ONLY (cold-start batch 2026-10-30) ──
+    // Default = non-drag: opening the viewer used to arm the canvas in grab
+    // state (cursor: grab + drag on any press-and-move), so a stray drag
+    // yanked the image. Pan now arms in exactly two ways:
+    //   · the hand tool toggle (first button of the shared zoom bar), or
+    //   · holding Space (press-and-hold temporary pan, editor convention).
     let drag = null;
+    let panEnabled = false;   // hand toggle latch
+    let spaceHeld = false;    // Space press-and-hold
+    const syncPanCursor = () => {
+      viewport.classList.toggle('pan-enabled', panEnabled || spaceHeld);
+    };
+
+    // Hand tool toggle — joins the shared zoom bar as its first button.
+    const zoomBar = pane.querySelector('.canvas-zoom-bar');
+    if (zoomBar) {
+      const hand = document.createElement('button');
+      hand.type = 'button';
+      hand.className = 'canvas-zoom-btn canvas-pan-toggle';
+      hand.innerHTML = '<i data-lucide="hand"></i>';
+      hand.title = 'Pan (or hold Space)';
+      hand.setAttribute('aria-label', 'Pan (or hold Space)');
+      hand.addEventListener('click', () => {
+        panEnabled = !panEnabled;
+        hand.classList.toggle('is-on', panEnabled);
+        if (!panEnabled && !spaceHeld) { drag = null; viewport.classList.remove('panning'); }
+        syncPanCursor();
+      });
+      zoomBar.insertBefore(hand, zoomBar.firstChild);
+      createIconsIn(hand);
+    }
+
+    // Space = temporary pan. document-level (the cursor may sit anywhere over
+    // the viewer); armed ONLY while the pointer hovers this viewport — global
+    // Space hijack would eat button keystrokes elsewhere in the app. Detached-
+    // pane self-cleanup so re-opened tabs never stack listeners. Editable
+    // focus keeps Space for typing.
+    let pointerOver = false;
+    viewport.addEventListener('mouseenter', () => { pointerOver = true; });
+    viewport.addEventListener('mouseleave', () => { pointerOver = false; });
+    const onSpaceDown = (e) => {
+      if (!pane.isConnected) {
+        document.removeEventListener('keydown', onSpaceDown);
+        document.removeEventListener('keyup', onSpaceUp);
+        return;
+      }
+      if (e.code !== 'Space' || e.repeat) return;
+      const ae = document.activeElement;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || /** @type {HTMLElement} */ (ae).isContentEditable)) return;
+      if (!pointerOver && !(ae && pane.contains(ae))) return; // 只认本查看器上的 Space
+      e.preventDefault();
+      spaceHeld = true;
+      syncPanCursor();
+    };
+    const onSpaceUp = (e) => {
+      if (e.code !== 'Space' || !spaceHeld) return;
+      spaceHeld = false;
+      if (!panEnabled) { drag = null; viewport.classList.remove('panning'); }
+      syncPanCursor();
+    };
+    document.addEventListener('keydown', onSpaceDown);
+    document.addEventListener('keyup', onSpaceUp);
+
     viewport.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
+      if (!(panEnabled || spaceHeld)) return; // default non-drag (cold-start batch)
       userTouched = true; // manual pan — stop auto re-fit
       drag = { x: e.clientX, y: e.clientY, tx, ty };
       viewport.setPointerCapture(e.pointerId);

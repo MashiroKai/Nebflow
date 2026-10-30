@@ -303,7 +303,17 @@ export function renderMarkdownWithMath(text, parseVoice = true, opts) {
     _mdCache.set(key, hit);
     return hit;
   }
-  const html = _renderMarkdownWithMath(text, parseVoice);
+  // 冷启动批⑤（2026-10-30 作者实证「偶发收到的消息以原始 markdown 文本显示
+  // 不渲染」）：渲染器**永不抛** —— 修前一枚病态输入让 marked/KaTeX/DOM 后
+  // 处理在 rAF 升级批中途抛错，链上后续消息全部滞留 textContent 原始态
+  // （persistence.js 两升级批已同步加单元素护栏，双保险）。异常腿回落
+  // escapeHtml 纯文本（安全、可读、绝不整行消失，也区别于编辑态显源码）。
+  let html;
+  try {
+    html = _renderMarkdownWithMath(text, parseVoice);
+  } catch (e) {
+    html = escapeHtml(text);
+  }
   _mdCache.set(key, html);
   if (_mdCache.size > MD_CACHE_CAP) {
     _mdCache.delete(_mdCache.keys().next().value);

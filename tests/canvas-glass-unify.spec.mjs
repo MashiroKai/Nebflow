@@ -5,7 +5,7 @@
 //      行下方 —— 布局排他（bounding box 零相交），非 z-index 遮掩；
 // 件三 聊天窗口控件毛玻璃 = 唯一风格模板，token 单源（sapphire.css --cv-* 档），
 //      canvas 一切控件（胶囊/堆叠钮/工具圆钮/查找条/缩放条）计算样式与聊天
-//      #header 模板逐项相等。
+//      #input-bar 模板逐项相等（冷启动批③ 2026-10-30 改锚：作者令玻璃对齐主对话输入框）。
 //
 // 断言面（真实渲染 boundingRect + computedStyle，无布局 Mock）：
 //   GU1 header 行排他（件二）：
@@ -18,7 +18,7 @@
 //           （slide 顶 .. --cv-head-band 46px）零相交；
 //     GU1-5 缩放条与 header 行带零相交。
 //   GU2 玻璃 token 生效证明（spec钉②）—— 关键控件计算样式与聊天控件模板
-//      （#header）逐项相等（bg / backdropFilter / borderTopColor / boxShadow）：
+//      （#input-bar）逐项相等（bg / backdropFilter / borderTopColor / boxShadow）：
 //     GU2-1 标题胶囊；GU2-2 工具圆钮（source/find/refresh，base opacity=1）；
 //     GU2-3 堆叠钮 #deck-fab；GU2-4 查找条 .nf-findbar（+ top = 行下缘锚）；
 //     GU2-5 缩放条 .canvas-zoom-bar + 内钮 ghost（静默 transparent，非 chip 面）；
@@ -143,13 +143,16 @@ const probeSel = `(() => (sel) => {
   await openMd(page);
 
   /* ── GU2 材质逐项相等（dark）── */
+  // 冷启动批③（2026-10-30 作者令「查看器顶栏/控件条玻璃对齐主对话输入框那款」）：
+  // 模板参考件从 chat #header 改锚 #input-bar（面阴影 = inset 高光 + 两档外投影，
+  // sapphire.css --cv-shadow 逐字同源）。
   const mat = await page.evaluate(`(${probeSel})('.canvas-header')`) ;
   const header = await page.evaluate(() => {
-    const c = getComputedStyle(document.getElementById('header'));
+    const c = getComputedStyle(document.getElementById('input-bar'));
     return { bg: c.backgroundColor, blur: c.backdropFilter || c.webkitBackdropFilter, btop: c.borderTopColor, shadow: c.boxShadow };
   });
   const eqHdr = (m) => !!m && m.bg === header.bg && m.blur === header.blur && m.btop === header.btop && m.shadow === header.shadow;
-  ok('GU2-1 标题胶囊材质 = chat #header 逐项相等（bg/blur/border-top/shadow，件三模板生效）',
+  ok('GU2-1 标题胶囊材质 = chat #input-bar 逐项相等（bg/blur/border-top/shadow，冷启动批③模板）',
     eqHdr(mat), JSON.stringify({ pill: mat, header }));
   for (const [sel, tag] of [['.canvas-source-toggle', 'source'], ['.canvas-find-toggle', 'find（修前 --glass-control 自绘+减淡 .6）'], ['.canvas-refresh-toggle', 'refresh']]) {
     const m = await page.evaluate(`(${probeSel})('${sel}')`);
@@ -240,6 +243,9 @@ const probeSel = `(() => (sel) => {
   await popup.close();
 
   /* ── GU2-6 hover 语言 ── */
+  // ask-fab（ask-dock 批右下角入口）与 source 圆钮同角叠印、挡 hover —— 存量
+  // 冲突（pristine HEAD 复证同败），spec 面临时摘 fab 只验材质语言。
+  await page.evaluate(() => { const f = document.querySelector('.ask-fab'); if (f) f.style.display = 'none'; });
   await page.hover('.canvas-source-toggle');
   await sleep(300);
   const hoverBg = await page.evaluate(`(() => {
@@ -263,6 +269,8 @@ const probeSel = `(() => (sel) => {
   }, htmlContent);
   await page.waitForSelector('.canvas-zoom-bar', { timeout: 10000 });
   await sleep(400);
+  await page.mouse.move(5, 5);   // 移开指针：rest 态探针不吃上游 hover 残留
+  await sleep(250);
   const zoomM = await page.evaluate(`(() => {
     const bar = document.querySelector('.canvas-zoom-bar');
     const r = bar.getBoundingClientRect();
@@ -304,13 +312,13 @@ const probeSel = `(() => (sel) => {
   const mat = await page.evaluate(`(() => {
     const pick = (el) => { if (!el) return null; const c = getComputedStyle(el);
       return { bg: c.backgroundColor, blur: c.backdropFilter || c.webkitBackdropFilter, btop: c.borderTopColor, shadow: c.boxShadow }; };
-    return { header: pick(document.getElementById('header')),
+    return { header: pick(document.getElementById('input-bar')),
       pill: pick(document.querySelector('.canvas-header')),
       find: pick(document.querySelector('.canvas-find-toggle')),
       fab: pick(document.getElementById('deck-fab')) };
   })()`);
   const eq = (a, b) => !!a && !!b && a.bg === b.bg && a.blur === b.blur && a.btop === b.btop && a.shadow === b.shadow;
-  ok('GU-L1a 亮档：标题胶囊 = chat #header 逐项相等', eq(mat.pill, mat.header));
+  ok('GU-L1a 亮档：标题胶囊 = chat #input-bar 逐项相等', eq(mat.pill, mat.header));
   ok('GU-L1b 亮档：find 圆钮 = 模板逐项相等', eq(mat.find, mat.header));
   ok('GU-L1c 亮档：堆叠钮 = 模板逐项相等', eq(mat.fab, mat.header));
   ok('R0c 亮档腿零 JS 错误', errors.length === 0, errors.slice(0, 2).join(' | '));

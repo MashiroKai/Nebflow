@@ -1536,13 +1536,19 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   }
   // Batch-upgrade deferred markdown rendering (marked.parse + KaTeX) via rAF.
   // Processes a few elements per frame to avoid blocking the main thread.
+  // 冷启动批⑤：单元素 try/catch 护栏 —— 一枚病态输入不再炸断整条 rAF 链
+  // （修前 upgradeBatch 中途抛错 ⇒ 后续消息永久滞留原始 markdown 文本态）。
   const BATCH_SIZE = 6;
   let ri = 0;
   function upgradeBatch() {
     const end = Math.min(ri + BATCH_SIZE, pendingRenders.length);
     for (; ri < end; ri++) {
       const { el, text, parseVoice } = pendingRenders[ri];
-      el.innerHTML = renderMarkdownWithMath(text, parseVoice);
+      try {
+        el.innerHTML = renderMarkdownWithMath(text, parseVoice);
+      } catch (e) {
+        el.textContent = text; // 回落纯文本（renderer 自身另有永不抛护栏，双保险）
+      }
     }
     if (ri < pendingRenders.length) {
       requestAnimationFrame(upgradeBatch);
@@ -1637,7 +1643,11 @@ export async function mountHistoryPageChunked(msgs, opts = {}, hooks = {}) {
     for (const j of pendingRenders) jobs.push(() => { j.el.innerHTML = renderMarkdownWithMath(j.text, j.parseVoice); });
     for (let ji = 0; ji < jobs.length; ji += MOUNT_UPGRADE_BATCH) {
       const end = Math.min(ji + MOUNT_UPGRADE_BATCH, jobs.length);
-      for (; ji < end; ji++) jobs[ji]();
+      // 冷启动批⑤：同上护栏 —— 单片失败不拖垮整页升级批（病态输入回落
+      // 其 textContent 纯文本，链继续）。
+      for (; ji < end; ji++) {
+        try { jobs[ji](); } catch (e) { /* 单元素回落：元素保持 textContent 原样 */ }
+      }
       reanchor();
       if (end < jobs.length) await nextMountFrame();
     }

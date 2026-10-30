@@ -31,8 +31,8 @@
 //   D8  工作台 push：设置根页 hub 行 → 项目页（pane 收编）→ 返回设置根。
 //   D9  退役零残留：.mh-dd/.mh-scrim/#mobile-task-key/#canvas-panel 不落地，
 //       sheet 族 DOM 零存留，boot 探针 version 含 'dock'。
-//   D10 中键形态（暗档）：sapphire 实心圆 50×50 高出基线、圆裁、无头像回落
-//       气泡字形；D11 头像两态（种子 avatar 圆图 + identity 变更活链重绘 +
+//   D10 中键形态（暗档）：sapphire 实心圆 44×44 高出基线、圆裁、无头像回落
+//       气泡字形（冷启动批⑧ 2026-10-30 从 50 缩一档）；D11 头像两态（种子 avatar 圆图 + identity 变更活链重绘 +
 //       清除回落）；D12 亮档 fill = --accent-agent-light 深档 token。
 //
 // Run: node node_modules/@playwright/test/cli.js test tests/mobile-dock.spec.mjs
@@ -501,7 +501,7 @@ test('D5 sealed state: messages/contacts pages show skeleton empty cards; messag
   expect(errors).toEqual([]);
 });
 
-test('D10 center chat-home key form: sapphire circle 50×50 lifted above baseline, bubble fallback glyph (dark scheme)', async ({ page }) => {
+test('D10 center chat-home key form: sapphire circle 44×44 lifted above baseline, bubble fallback glyph (dark scheme)', async ({ page }) => {
   const errors = watchErrors(page);
   const st = await page.evaluate(() => {
     const key = document.querySelector('#mobile-dock .dock-key[data-dock="chat"]');
@@ -531,14 +531,34 @@ test('D10 center chat-home key form: sapphire circle 50×50 lifted above baselin
     };
   });
   expect(st.present).toBe(true);
-  expect(st.w).toBe(50);                  // --dock-center-size（小红书中心键量级）
-  expect(st.h).toBe(50);
+  expect(st.w).toBe(44);                  // --dock-center-size（冷启动批⑧ 2026-10-30「缩小一档」50→44）
+  expect(st.h).toBe(44);
   expect(st.lifted).toBe(true);           // --dock-center-lift
   expect(st.radius).toBe('50%');
   expect(st.bg).toBe(st.tokenColor);      // 暗档 fill = --sapphire 本值（不新造色）
   expect(st.glyph).toBe(true);            // 无头像回落 = 气泡字形（原中键图标）
   expect(st.noImg).toBe(true);
   expect(st.hasAvatarClass).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+// D13 冷启动批⑧（2026-10-30 作者令「输入框与 dock 无缝贴合」）：输入卡底缘
+// 与 dock 顶缘的缝 == --dock-center-lift（12px）——修前另有 +12px 背景缝。
+// 几何恒等式：gap = (dock-h + lift + safe) − (dock-h + safe) = lift。
+test('D13 input card flush-fit above dock: gap == --dock-center-lift (no stray background seam)', async ({ page }) => {
+  const errors = watchErrors(page);
+  const g = await page.evaluate(() => {
+    const bar = document.getElementById('input-bar').getBoundingClientRect();
+    const dock = document.getElementById('mobile-dock').getBoundingClientRect();
+    const probe = document.createElement('span');
+    probe.style.marginTop = 'var(--dock-center-lift, 0px)';
+    document.body.appendChild(probe);
+    const lift = parseFloat(getComputedStyle(probe).marginTop) || 0;
+    probe.remove();
+    return { gap: dock.top - bar.bottom, lift, barBottom: bar.bottom, dockTop: dock.top };
+  });
+  expect(g.lift).toBe(12);
+  expect(Math.abs(g.gap - g.lift)).toBeLessThanOrEqual(1.5); // 亚像素容差
   expect(errors).toEqual([]);
 });
 

@@ -23,7 +23,10 @@
      block): with the band in flow that measurement is ≤ 0 forever, so the
      block self-parks at the 8px baseline below and never writes again. */
   margin: 0; /* uifix ⑤：带已 overlay，chat 顶回 #main 顶（让位走 JS reserve） */
-  padding: 8px 0 36px;
+  /* 冷启动批⑦（2026-10-30 作者令「消息列表左右留白，不再贴满屏幕」）：水平
+     内距 16px（4px 栅格档，= #header 水平内距 chat.css:56 同 token 量级），
+     用户/AI 两行两侧同留白。 */
+  padding: 8px 16px 36px;
   display: flex;
   flex-direction: column;
   overscroll-behavior: contain;
@@ -4929,6 +4932,9 @@
   width: 100%; aspect-ratio: 4 / 3; object-fit: cover;
   display: block; background: #17191f;
 }
+/* object 回退形态（冷启动批④ SVG「?」占位案）：<object> 不吃 object-fit，
+   交给其内文档自缩放 + 居中裁切同效（卡盒 overflow:hidden 已收口）。 */
+object.search-media-thumb { object-fit: initial; }
 .search-media-broken .search-media-thumb { object-fit: contain; opacity: 0.45; }
 .search-media-name {
   padding: 6px 8px 8px;

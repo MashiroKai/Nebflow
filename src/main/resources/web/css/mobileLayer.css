@@ -240,8 +240,11 @@ body.mobile-layer .mh-chrome-badge[hidden] { display: none; }
    （亮档深档 --accent-agent-light / 暗档 --sapphire，unified panel design §6.2
    同款双档，不新造色）、高出常规 tab 基线（--dock-center-lift），图标 = agent
    头像（圆裁 + 主色细环 = 底色露边）或气泡字形回落；输入卡底距同步让位。 */
+/* 冷启动批⑧（2026-10-30 作者令「dock 中间对话钮缩小一档」）：50 → 44
+   （4px 栅格下一档）。lift 保持 12 —— 输入卡底距按 lift 让位（下方
+   #input-area 批），圆钮顶缘与输入卡底缘相切即「无缝贴合」。 */
 body.mobile-layer {
-  --dock-center-size: 50px;
+  --dock-center-size: 44px;
   --dock-center-lift: 12px;
 }
 body.mobile-layer #mobile-dock {
@@ -1323,15 +1326,17 @@ body.mobile-layer #memory-btn { display: none; }
 body.mobile-layer #header .header-center {
   max-width: none !important;
 }
-/* ── 输入卡：视口链末端压点 + dock 让位（dock 批）────────────────────
-   输入卡 bottom = 0、自身 padding-bottom = dock 高 + safe-area —— 一举两得：
+/* ── 输入卡：视口链末端压点 + dock 无缝贴合（冷启动批⑧ 2026-10-30）────
+   输入卡 bottom = 0、自身 padding-bottom = dock 高 + 中键 lift + safe-area ——
+   三件套语义：
    ① 输入卡悬浮在 dock 之上；② main.js 的 #chat padding-bottom 让位逻辑读
    #input-area.offsetHeight（含本 padding）⇒ 最后一条消息自动让出 dock 带，
-   桌面 JS 零改动。 */
+   桌面 JS 零改动；③ 修前的 `+ max(12px, safe-area)` 额外档在输入卡与 dock
+   之间留了一条 12px 背景缝 —— 本批撤掉该档：输入卡底缘与中键大圆顶缘
+   相切（lift 即缝），输入框与 dock 无缝贴合。 */
 body.mobile-layer #input-area {
   bottom: 0;
-  /* 中键改版批：+lift —— 中键大圆高出 dock 基线，输入卡底距同步让位防叠。 */
-  padding-bottom: calc(var(--dock-h) + var(--dock-center-lift, 0px) + max(12px, env(safe-area-inset-bottom, 0px)));
+  padding-bottom: calc(var(--dock-h) + var(--dock-center-lift, 0px) + env(safe-area-inset-bottom, 0px));
 }
 
 /* ════════════════════════════════════════════════════════════════════

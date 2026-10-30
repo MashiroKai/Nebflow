@@ -188,13 +188,14 @@
 
 /* ── Canvas 控件玻璃 token（2026-10-28 canvas 三件 UI/UX 修 · 件三）─────────
    唯一风格模板 = 聊天窗口控件现用毛玻璃（chat.css #header 玻璃面 + .memory-btn
-   hover-active 语言），逐值同源转录；canvas 里创建的一切控件（标题胶囊/环胶囊/
+   hover-active 语言；面阴影模板 2026-10-30 冷启动批改锚 #input-bar —— 作者令
+   「查看器顶栏/控件条玻璃对齐主对话输入框那款」），逐值同源转录；canvas 里
+   创建的一切控件（标题胶囊/环胶囊/
    堆叠钮 #deck-fab/工具圆钮 source·ref·refresh·find·graph/文件内查找条
    .nf-findbar/图片缩放条 .canvas-zoom-bar/独立-合并钮）只准引用本块变量，
    禁自带材质/尺寸字面量（一个 token 单源，作者令「禁止各控件自带尺寸」）。
-   面阴影取 #header 现值（仅顶缘 inset 高光、外投影零 —— chat.css 底缘零边界
-   批同规；修前 --frost-shadow 的外投影两档随本令退役，canvas 控件与聊天控件
-   计算样式逐项相等）。 */
+   面阴影取 #input-bar 现值（顶缘 inset 高光 + 两档外投影 —— 与主对话输入框
+   同款；修前取 #header inset-only 档，控件条在内容面上「飘不住」）。 */
 :root {
   /* 模糊配方（= chat #header：--glass-bg + blur 24 saturate 1.15） */
   --cv-bg: var(--glass-bg);
@@ -202,8 +203,11 @@
   --cv-saturate: 1.15;
   /* 边框（= chat #header） */
   --cv-border: var(--glass-border);
-  /* 面阴影（= chat #header box-shadow 现值；暗档 0.04 见下方媒体块） */
-  --cv-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.25);
+  /* 面阴影（冷启动批 2026-10-30 作者令「查看器顶栏/控件条玻璃对齐主对话
+     输入框那款」——参考件 = #input-bar，input.css 现值逐字：顶缘 inset 高光 +
+     两档外投影；修前只取 #header 的 inset-only 档，控件条在内容面上「飘
+     不住」= 与输入框不同款）。暗档外投影两档见下方媒体块。 */
+  --cv-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.25), 0px 2px 8px rgba(0, 0, 0, 0.04), 0px 8px 24px rgba(0, 0, 0, 0.06);
   /* hover-active 语言（= 聊天玻璃控件：hover 抬亮 --glass-control 族 +
      scale 手感；active 按压回缩） */
   --cv-hover-bg: var(--glass-control-bg-hover);
@@ -243,8 +247,9 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* = chat #header 暗档 box-shadow（chat.css 逐字同源） */
-    --cv-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
+    /* = chat #input-bar 暗档 box-shadow（input.css:1480-1485 逐字同源：
+       inset 高光 + 0.2/0.35 两档外投影 —— 冷启动批③同令对齐） */
+    --cv-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.04), 0px 2px 8px rgba(0, 0, 0, 0.20), 0px 8px 24px rgba(0, 0, 0, 0.35);
   }
 }
 

@@ -2112,7 +2112,21 @@ function mediaEntryCard(e) {
       img.loading = 'lazy';
       img.draggable = false;
       resolveEntryImageThumb(e).then(url => { if (img.isConnected && url) img.src = url; }).catch(() => {});
-      img.addEventListener('error', () => card.classList.add('search-media-broken'));
+      // 冷启动批④（2026-10-30 SVG 缩略图「?」占位案）：img 为主形态（网格
+      // object-fit 尺寸语言），onerror 回退 <object type="image/svg+xml"> ——
+      // 兜「旧账本 blob 无 MIME / 引擎不认 img 内 SVG」两形；object 形态下
+      // 再错才落 search-media-broken 占位。
+      img.addEventListener('error', () => {
+        if (!img.isConnected || img.dataset.nfObjFallback === '1') { card.classList.add('search-media-broken'); return; }
+        img.dataset.nfObjFallback = '1';
+        const obj = document.createElement('object');
+        obj.className = 'search-media-thumb';
+        obj.type = 'image/svg+xml';
+        obj.data = img.src;
+        obj.setAttribute('aria-label', e.name);
+        obj.addEventListener('error', () => card.classList.add('search-media-broken'));
+        img.replaceWith(obj);
+      });
       card.appendChild(img);
     } else {
       // Duration badge rides the browser's own metadata probe — the payload

@@ -1001,9 +1001,14 @@ class SessionStore(
   def ensureAgentSession(agentName: String): IO[(SessionMeta, Boolean)] =
     // modify is an atomic read-modify-write: the decide-to-create and the state
     // update happen in one step, closing the TOCTOU window that listSessions + createSession had.
-    // Also deduplicate: if past races/bugs left more than one session for this agent,
-    // keep the most recently updated one and drop the rest.
-    // Returns (meta, action) where action is "created" | "deduped" | "exists".
+    // Multiple sessions per agent are the NORMAL shape of the main-window conversation
+    // list (every frontend "New Session" is tagged with the root agent — modal.js
+    // getTargetAgent), so the multiple-match leg SELECTS the newest as this agent's
+    // representative and NEVER prunes siblings from the index. The old prune
+    // (boot-coldstart batch 2026-10-30, author report "history disappeared after
+    // chatting one round") erased every conversation but the newest from the
+    // sidebar on EVERY boot while the message files survived on disk.
+    // Returns (meta, action) where action is "created" | "claimed" | "exists".
     indexRef
       .modify { case (activeId, sessions, folders) =>
         val matching = sessions.filter(_.agentName.contains(agentName))
@@ -1012,7 +1017,11 @@ class SessionStore(
             // No session for this agent yet. Before creating a brand-new one, try
             // to adopt a legacy session that has no agentName (e.g. an old "Default
             // Session" from the multi-session era) so the user keeps their history.
-            sessions.find(_.agentName.isEmpty) match
+            // The persisted ACTIVE session is tried first: claiming a different
+            // agentless session and then re-homing activeId (ensureActiveAgentSession)
+            // used to silently strand the user on another conversation at boot.
+            sessions.find(s => s.id == activeId && s.agentName.isEmpty)
+              .orElse(sessions.find(_.agentName.isEmpty)) match
               case Some(legacy) =>
                 val claimed = legacy.copy(agentName = Some(agentName), name = agentName)
                 val claimedSessions = sessions.map(s => if s.id == legacy.id then claimed else s)
@@ -1025,14 +1034,17 @@ class SessionStore(
           case one :: Nil =>
             ((activeId, sessions, folders), (one, "exists"))
           case multiple =>
-            // Dedup: keep the newest (max updatedAt), drop the rest.
+            // SELECT-only dedup (boot-coldstart batch 2026-10-30): multiples are
+            // normal (each main-window conversation is tagged with the root agent),
+            // so pruning them from the index hid every conversation but the newest
+            // from the sidebar on every boot. Return the newest as this agent's
+            // representative; the index stays untouched (action "exists" ⇒ no flush).
             val keeper = multiple.maxBy(_.updatedAt)
-            val pruned = sessions.filterNot(s => s.agentName.contains(agentName) && s.id != keeper.id)
-            ((activeId, pruned, folders), (keeper, "deduped"))
+            ((activeId, sessions, folders), (keeper, "exists"))
         end match
       }
       .flatMap { case (meta, action) =>
-        // Persist: always save the index when we created/claimed/pruned sessions.
+        // Persist: always save the index when we created/claimed sessions.
         val persist =
           if action == "exists" then IO.unit
           else
@@ -1050,12 +1062,19 @@ class SessionStore(
   /**
    * Ensure a session exists for `agentName` AND that it is the active session.
    *
-   * Used by the single-session architecture to guarantee the primary agent
-   * (Nebula) always owns the Main window: at startup there must be exactly one
-   * session, it belongs to Nebula, and it is active. Sub-agent sessions are
-   * created separately by the flow runtime and never made active here.
+   * Boot no longer HIJACKS a valid active session (boot-coldstart batch
+   * 2026-10-30, author report "history disappeared after chatting one round —
+   * like an accidental new session"): the previous unconditional
+   * `switchSession(keeper)` re-homed the active conversation to the agent's
+   * newest session on EVERY restart, so the frontend (which applies the pushed
+   * activeId silently with a full chat wipe) showed a different/empty
+   * conversation. Now the switch happens only when the persisted activeId is
+   * empty or no longer names an indexed session (orphaned/invalid); a live
+   * user session — agentless, root-agent, or sub-agent — keeps its place.
+   * Sub-agent sessions are created separately by the flow runtime and never
+   * made active here.
    *
-   * Reuses `ensureAgentSession` (existence + dedup + legacy adoption) and
+   * Reuses `ensureAgentSession` (existence + selection + legacy adoption) and
    * `switchSession` (flush outgoing writes, load incoming messages, persist
    * index) rather than reimplementing those steps.
    */
@@ -1063,10 +1082,12 @@ class SessionStore(
     for
       (meta, _) <- ensureAgentSession(agentName)
       activeId <- getActiveId
-      // Only switch when the active session isn't already this agent's.
+      sessions <- listSessions
+      // Only switch when the persisted active session is gone (invalid/orphaned).
       // switchSession no-ops on the same id, but we short-circuit to avoid the
       // disk flush round-trip in the common case (already active at startup).
-      _ <- if activeId != meta.id then switchSession(meta.id).void else IO.unit
+      activeValid = activeId.nonEmpty && sessions.exists(_.id == activeId)
+      _ <- if activeValid then IO.unit else switchSession(meta.id).void
     yield meta
 
   def deleteSession(id: String): IO[Unit] =
