@@ -129,8 +129,10 @@ class UserTextGateSpec extends FunSuite:
       !body.contains("interactionHubRef"),
       "handleUserText 仍在读 interactionHubRef —— 输入框直通分支没摘净"
     )
+    // 前缀形态：device-provenance 批（aefea8f77）给两腿加了第 5 参 device 后调用点为
+    // 5 参全形 —— 钉「无条件直投」语义而非参数个数，后续再加参不再误伤本门。
     assert(
-      body.contains("dispatchUserText(sessionId, content, source, fromUser)"),
+      body.contains("dispatchUserText(sessionId, content, source, fromUser"),
       "handleUserText 必须把文本无条件交给 dispatchUserText（普通消息通道）"
     )
   }
@@ -149,9 +151,11 @@ class UserTextGateSpec extends FunSuite:
     val start = wsRoutesCode.indexOf("private def dispatchUserText")
     assert(start >= 0, "普通消息入队路径 dispatchUserText 丢失（越界删除）")
     val body = wsRoutesCode.substring(start)
+    // device-provenance 批（aefea8f77）后首参为 device.fold(content)(compose) 形态 ——
+    // 钉「仍投 ImmediateInput 且 fromUser 原样透传」语义，不钉首参字面。
     assert(
-      body.contains("AgentCommand.ImmediateInput(content, fromUser = fromUser)"),
-      "dispatchUserText 不再投 ImmediateInput —— 输入框文本的「普通消息」承接被改坏"
+      body.contains("AgentCommand.ImmediateInput(") && body.contains("fromUser = fromUser"),
+      "dispatchUserText 不再投 ImmediateInput（或 fromUser 透传丢失）—— 输入框文本的「普通消息」承接被改坏"
     )
   }
 

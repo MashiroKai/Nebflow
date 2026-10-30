@@ -114,7 +114,10 @@ class DetachedApplySpec extends CatsEffectSuite:
     val cmds = scala.collection.mutable.ListBuffer.empty[List[String]]
     val fakeRun: DetachedApply.Run = c => IO { cmds += c; Right("ok") }
     for
-      r <- DetachedApply.register(p, fakeRun)
+      // forcePosix = Some(false) 强制 Windows 分支：本批新增（存量红清欠批 2026-10-30）——
+      // 原调用未注力 ⇒ 宿主 OS（macOS CI/开发机）走上 launchd 腿，fakeRun 的 "ok"
+      // 无数字段 ⇒ "cannot resolve uid" 红；两臂均须宿主无关（posix 臂已用 Some(true) 先例）。
+      r <- DetachedApply.register(p, fakeRun, forcePosix = Some(false))
       _ = assert(r.isRight, s"registration expected to succeed, got $r")
       xml <- IO.blocking(new String(os.read.bytes(p.dataRoot / "apply" / s"${p.winTask}.xml"), java.nio.charset.StandardCharsets.UTF_16))
       _ = assert(xml.contains("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"), xml)
@@ -139,7 +142,8 @@ class DetachedApplySpec extends CatsEffectSuite:
     val fakeRun: DetachedApply.Run = c =>
       IO { cmds += c; Right("ok") }
     for
-      r <- DetachedApply.register(p, fakeRun)
+      // 同 windows-task-xml 用例：forcePosix = Some(false) 强制 Windows 分支（宿主无关）。
+      r <- DetachedApply.register(p, fakeRun, forcePosix = Some(false))
       _ = assert(r.isRight, s"registration expected to succeed, got $r")
       _ = assert(
         cmds.exists(c => c.headOption.contains("schtasks") && c.contains("/Create")),

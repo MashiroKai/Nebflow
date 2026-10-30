@@ -221,8 +221,10 @@ class DataRootPlaceholderSpec extends munit.FunSuite:
         s"缺键时既有语义为静默透传（PromptSections.scala:574-578 只替换 JSON 中存在键），实测：$env"
       )
       assert(
-        env.contains("| Gateway port | 8080 |"),
-        s"同段其它键仍被正常替换（缺键不得拖垮整段渲染）：$env"
+        env.contains(s"| Gateway port | ${nebflow.shared.Defaults.GatewayPort} |"),
+        s"同段其它键仍被正常替换（缺键不得拖垮整段渲染）：$env。注：data.sh 的 " +
+          s"NEBFLOW_GATEWAY_PORT 由产品侧注入，缺省锚 = Defaults.GatewayPort（8080→6138 " +
+          s"让渡批已落档）——断言跟单一来源，不断言具体数字。"
       )
     finally
       PathUtil.setDataRoot(prevRoot)

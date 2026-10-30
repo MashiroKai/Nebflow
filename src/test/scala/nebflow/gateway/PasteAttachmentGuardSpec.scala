@@ -49,17 +49,22 @@ class PasteAttachmentGuardSpec extends FunSuite:
     )
     // Both search entry points must be gated by the flag.
     // 2026-09-24:钉死文本更新为 scalafmt 重排后的两行形态(判据语义不变)。
+    // 2026-10-30:缩进又漂（28 空格 ≠ 30）——判据改 regex `\s+` 跨空白匹配，
+    // 钉「gating 条件 + 调用点相邻」语义，缩进/格式化不再误伤（既有先例：
+    // 本文件 2026-09-24 同名处理）。
     val idxFlag = src.indexOf("val isFrontendBlob")
-    val idxWalk =
-      src.indexOf(
-        "if !isFrontendBlob && hash.nonEmpty && fileSize > 0 then\n                              findLocalFile"
-      )
-    val idxSpot =
-      src.indexOf(
-        "case None if !isFrontendBlob && hash.nonEmpty && fileSize > 0 =>\n                              spotlightSearch"
-      )
-    assert(idxWalk > idxFlag, "findLocalFile no longer gated by isFrontendBlob")
-    assert(idxSpot > idxFlag, "spotlightSearch no longer gated by isFrontendBlob")
+    assert(idxFlag >= 0, "isFrontendBlob 定义丢失")
+    val gateAfterFlag = (pat: String) =>
+      val m = java.util.regex.Pattern.compile(pat).matcher(src)
+      m.find() && m.start() > idxFlag
+    assert(
+      gateAfterFlag("if !isFrontendBlob && hash\\.nonEmpty && fileSize > 0 then\\s+findLocalFile"),
+      "findLocalFile no longer gated by isFrontendBlob"
+    )
+    assert(
+      gateAfterFlag("case None if !isFrontendBlob && hash\\.nonEmpty && fileSize > 0 =>\\s+spotlightSearch"),
+      "spotlightSearch no longer gated by isFrontendBlob"
+    )
   }
 
 end PasteAttachmentGuardSpec

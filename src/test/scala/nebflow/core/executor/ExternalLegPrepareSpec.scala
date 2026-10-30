@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
-import nebflow.core.delegate.{ChainStore, DelegateJudge, DelegateRegistry, MergeQueue}
+import nebflow.core.delegate.{ChainStore, DelegateJudge, DelegateRegistry, MergeQueue, MergeQueueChannel}
 import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, MessageRole, PathUtil, StreamChunk}
 
 import scala.concurrent.duration.*
@@ -231,6 +231,11 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
       closed = MergeQueue.find("delegate-ext-chan")
       // ③b 无通道成员（重启后通道闭包丢失形态）：放行时通知不可达 ⇒ owner-gone 关账
       // + OwnerGonePort 升级——绝不静默 park，窗即时放给后继。
+      // R5 前提反转（369144a97, 2026-10-29）后本场景的构造法须改：enqueue 的
+      // write-ahead 镜像（state=waiting ∈ Open）在本进程内必已在盘 ⇒ 占窗前提恒
+      // 成立 ⇒ 首拍 Deferred 留队（等属主续活），拿不到 owner-gone。owner-gone
+      // 现在只打在「账本有条目但通道无未关账镜像」的 R5 前存量账面/直写账面形态
+      // ——用 MergeQueueChannel.clear() 抹掉镜像 + 显式补一拍 pump 精确复现该形态。
       _ <- IO {
         MergeQueue.enqueue(
           MergeQueue.Member(
@@ -241,6 +246,13 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
           )
         )
       }
+      deferred = MergeQueue.find("delegate-nochan")
+      // R5 语义正控：首拍 Deferred ⇒ 留队 waiting（成员资格在盘上，绝不 owner-gone）。
+      _ = assertEquals(deferred.map(_.state), Some(MergeQueue.State.Waiting), "premised channel-less member defers (R5: membership on disk, never owner-gone at first grant)")
+      _ <- IO {
+        MergeQueueChannel.clear() // 抹掉 write-ahead 镜像 ⇒ 占窗前提反转面（R5 前存量账面）
+        MergeQueue.pump("p-nochan") // 补一拍放行（留队成员的重排拍，careTick 同型）
+      }
       gone = MergeQueue.find("delegate-nochan")
       released = MergeQueue.queueViewOf("delegate-nochan")
     yield
@@ -248,7 +260,7 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
       assert(sent.peek().contains("<system-reminder>") && sent.peek().contains("merge --no-ff"), "the injected text is the merge brief")
       assertEquals(granted.map(_.state), Some(MergeQueue.State.TurnGranted), "the external member holds the window after the send")
       assertEquals(closed.map(_.state), Some(MergeQueue.State.Merged), "the merge-round terminal closes the membership merged")
-      assertEquals(gone.map(_.state), Some(MergeQueue.State.OwnerGone), "a channel-less member is closed owner-gone at grant time")
+      assertEquals(gone.map(_.state), Some(MergeQueue.State.OwnerGone), "a channel-less, premise-less member is closed owner-gone at grant time (R5 stock-ledger shape)")
       assert(
         gone.flatMap(_.closeReason).exists(_.contains("no delivery channel on record")),
         s"the close reason names the undeliverable notification: ${gone.flatMap(_.closeReason)}"

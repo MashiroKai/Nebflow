@@ -258,6 +258,16 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
       recorded <- registerRecorder(res, system, delegateId, AgentKind.Delegate)
       _ <- seedRunningNode(ws, delegateId, "n-r1", Some(sid), out = List(OutEdge.root), system, res)
       h <- rehydrateViaSweep(ws, delegateId, "n-r1", sid)
+      // 存量红清欠批 2026-10-30：终态翻转后投递腿（offerRootNotify → ImmediateInput
+      // → markRootDelivered）异步落账——先等到投递文本真实到达 recorder 再读账本/
+      // 事件，消除「状态已 Completed 但 ledger/审计腿未落」的点读竞 flake（全量闸门
+      // R1 实形：nebulaDeliveredAt 读 0）。
+      _ <- waitUntil(10.seconds)(
+        recorded.get.map(_.exists {
+          case m: AgentCommand.ImmediateInput => m.text.contains("[Node 'node-n-r1' completed]")
+          case _                              => false
+        })
+      )
       a <- hostNode(h, "n-r1")
       imms <- recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
       events <- readEvents(ws)
@@ -346,6 +356,15 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
       h <- rehydrateViaSweep(ws, delegateId, "n-r3", sid)
       a <- hostNode(h, "n-r3")
       bystanderBefore <- bystander.get
+      // 存量红清欠批 2026-10-30：终态翻转后投递/审计腿是**异步**的——先等到
+      // outcome=parked 审计行真实落盘再读事件。否则本线程可能抢在引擎腿前读到
+      // 空事件（parkedAudit=0 假红），且随后的 revived 注册会把「死创建者」窗口
+      // 捅穿（腿迟到时见到 live ref ⇒ offered/suppressed 而非 parked——R1/R3 两态
+      // 互翻的 flake 根源）。creator 此刻恒死（revived 在断言后才注册），腿迟到
+      // 也只会补 parked 行 ⇒ 等待是确定性的。
+      _ <- waitUntil(10.seconds)(
+        readEvents(ws).map(_.exists(l => l.contains(NodeEngine.NotifyRedirectedEventType) && l.contains("outcome=parked")))
+      )
       events <- readEvents(ws)
       parkedAudit = events.filter(l => l.contains(NodeEngine.NotifyRedirectedEventType) && l.contains("outcome=parked"))
       // 复活：delegate 会话回注册表 → 补投扫描补投。
