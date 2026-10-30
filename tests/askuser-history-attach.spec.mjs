@@ -31,8 +31,13 @@ const SHOT_DIR = process.env.ASKUSER_HISTATT_SHOTS
 // W1 写根断言（模块加载期 fail-fast，先于任何 browser/启动动作）
 guardWrites([SHOT_DIR], { repoRoot: REPO_ROOT, label: 'askuser-history-attach' });
 
-// 基线 ref = 本批开工时的 main 尖（= 改前代码；本支提交后 HEAD 前移，故钉死此 sha）。
-const BASELINE_REF = process.env.ASKUSER_HISTATT_BASELINE_REF ?? '66f7ec46a4dcb9903a699f93ac435b5cd2f6c21c';
+// 基线 ref = 本批开工时的分支尖 9389ff749（= 本批改动的父提交；含 opt-other 等
+// 先行批、不含本批改动）。历史注记：原默认值 66f7ec46a 是 2026-10-02「历史卡无
+// 附件渲染面」缺口的验红基线——该缺口早已被后续批关闭，且 2026-10-06 杂交批的
+// `opt-other` 钩子类使 N1 双树 outerHTML 对照在 main 上先行失绿；askuser-
+// attach-replyrender 批（2026-10-30）顺势把基线前移到本批父提交，B1 由「缺口验红」
+// 改签为「旧 Canvas 开法行为锚」（B1 三读数 = 本批刻意改变的旧语义回归钉）。
+const BASELINE_REF = process.env.ASKUSER_HISTATT_BASELINE_REF ?? '9389ff749';
 
 let baselineRoot;
 let baselinePort;
@@ -145,16 +150,25 @@ const PENDING_WITH_ATT = [{
 }];
 
 // ============================================================
-// ① 验红基线（改前代码）：历史卡没有附件渲染面
+// ① 基线树（baseline）— 旧 Canvas 开法行为锚（askuser-attach-replyrender 批改签）
 // ============================================================
-test.describe('改前树（baseline）— 缺口如实复现', () => {
-  test('B1 带附件的历史行：零附件块（缺口成立，非渲染失败）', async ({ browser }) => {
+test.describe('基线树（baseline）— 旧行为锚', () => {
+  test('B1 基线锚：附件行在位，但 = 旧语义（WS 探针 / 行 disabled / 入口跳 Canvas）', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser, baselinePort);
-    const r = await page.evaluate((msgs) => window.__replay(msgs), WITH_ATT);
+    await page.evaluate((msgs) => window.__replay(msgs), WITH_ATT);
+    const r = await page.evaluate(() => window.__read());
     expect(pageErrors).toEqual([]);
     expect(r.hasBox, '卡照常渲染').toBe(true);
-    expect(r.hasWrap, '改前：历史卡没有附件渲染面').toBe(false);
-    expect(r.rows).toBe(0);
+    // 历史注记：基线已含 2026-10-02 附件行本身（缺口早已关闭）——本腿锚的是
+    // 「行在，但开法/锁语义是旧的那套」，三读数全是本批刻意改变的旧语义。
+    expect(r.hasWrap, '基线（本批开工尖）已有附件渲染面').toBe(true);
+    expect(r.rows).toBe(2);
+    expect(r.rowTags).toEqual(['BUTTON', 'BUTTON']);
+    expect(r.sentFrames.filter(f => f === 'pop.readFile').length, '旧探针 = pop.readFile WS 帧').toBe(2);
+    expect(r.rowDisabled, '旧 lockOptionBox 不豁免附件行 ⇒ 终态卡行 disabled').toEqual([true, true]);
+    const viaEntry = await page.evaluate(() => window.__callRowEntry(0));
+    expect(viaEntry.dispatched, '旧行入口 = Canvas 打开腿（readFile 帧已发）').toBe(1);
+    expect(viaEntry.detailIds).toEqual(['/tmp/nb-histatt-fixture/notes.md']);
     await context.close();
   });
 });
@@ -179,33 +193,35 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     await context.close();
   });
 
-  test('F2 点击面两读数：行级单点入口已接线；卡级终态锁（既有语义）为独立读数', async ({ browser }) => {
+  test('F2 点击面两读数：行级入口 = 下载腿；已决卡附件行可点（lockOptionBox 豁免实证）+ 零 Canvas', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser, fixedPort);
     await page.evaluate((msgs) => window.__replay(msgs), WITH_ATT);
     const r = await page.evaluate(() => window.__read());
     expect(pageErrors).toEqual([]);
-    expect(r.clickHandlerAttached, '每行挂 onclick（单点入口 = Canvas 打开腿）').toEqual([true, true]);
-    // 历史卡走 lockOptionBox（既有终态语义：历史恢复卡 = 已决卡）：置灰 + disabled。
-    // 本批不越界改 lockOptionBox / renderAskAttachments 本体 ⇒ 如实取读数。
-    expect(r.boxResolved, '历史恢复卡 = 已决卡（既有 lockOptionBox 语义）').toBe(true);
-    expect(r.rowDisabled, '终态卡内可交互件 disabled（既有语义）').toEqual([true, true]);
-    expect(r.sentFrames.filter(f => f === 'pop.readFile').length, '每行一次可达性探针').toBe(2);
+    expect(r.clickHandlerAttached, '每行挂 onclick（单点入口 = 下载腿）').toEqual([true, true]);
+    // 历史卡仍走 lockOptionBox（终态语义不变），但 askuser-attach-replyrender 批
+    // （2026-10-30 作者令「不需要在 Canvas 打开」）给 .ask-attachments-wrap 只读查看面
+    // 开了豁免：「查看附件」≠「重新作答」⇒ 附件行不 disabled、点击哨兵放行。
+    expect(r.boxResolved, '历史恢复卡 = 已决卡（lockOptionBox 语义不变）').toBe(true);
+    expect(r.rowDisabled, '附件行豁免终态锁 ⇒ 仍可用').toEqual([false, false]);
+    // 探针已从 WS pop.readFile 腿迁到票据轨（旧探针的 fileContent 应答被 explorer.js
+    // 全局处理器重派 workspace-open-item 自动跳 Canvas = 作者报障机制根因）⇒ 零帧。
+    expect(r.sentFrames.filter(f => f === 'pop.readFile').length, '探针迁离 WS 轨 ⇒ 零 pop.readFile 帧').toBe(0);
+    // 探针在新轨有真实读数：两件附件 ⇒ 至少一次 nf-file 首字节探测（铸票合帧，≤1 次 mint）。
+    // 探针链是异步的（模块 import + 铸票 + Range 取字节）⇒ 轮询等读数落账。
+    await expect.poll(async () =>
+      (await page.evaluate(() => window.__railCounts)).nfFile,
+      { timeout: 5000 }).toBeGreaterThanOrEqual(2);
 
-    // ① 卡级点击读数（终态锁的既有语义）：capture 阶段哨兵拦下 ⇒ 零派发。
+    // ① 卡级真点击（终态卡内）：哨兵豁免附件行 ⇒ 点击到达行 onclick；行入口 =
+    //    下载腿 ⇒ 零 workspace-open-item（Canvas 面整批退役）。
     const viaClick = await page.evaluate(() => window.__clickRow(0));
     expect(viaClick.clicked).toBe(true);
     expect(viaClick.tag).toBe('BUTTON');
-    expect(viaClick.dispatched, '终态卡：capture 哨兵拦下整卡点击（既有 lockOptionBox 语义）').toBe(0);
-
-    // ② 行级接线读数（askuser-attach-align 2026-10-07 重接线后）：入口 =
-    //    Pop 文件卡同一条 Canvas 通路（openAttachmentInCanvas ⇒
-    //    canvas.openWorkspaceItem），可观测面 = 其 readFile 腿（pop.readFile 帧，
-    //    path 逐字 = absPath）；旧 workspace-open-item 事件面随 previewLocalPath
-    //    代理闸退役 ⇒ events = 0 即同判（本地面信任级 = Pop 同级，排除面不再把关）。
-    const viaEntry = await page.evaluate(() => window.__callRowEntry(0));
-    expect(viaEntry.dispatched, '行级单点入口本身可用（接线正确：Canvas readFile 腿已发出）').toBe(1);
-    expect(viaEntry.detailIds, 'readFile path 逐字 = absPath').toEqual(['/tmp/nb-histatt-fixture/notes.md']);
-    expect(viaEntry.events, '旧预览代理事件面已退役（零 workspace-open-item）').toBe(0);
+    expect(viaClick.dispatched, '下载腿 ⇒ 零 workspace-open-item').toBe(0);
+    await expect.poll(async () =>
+      (await page.evaluate(() => window.__railCounts)).nfFile,
+      { timeout: 5000 }).toBeGreaterThanOrEqual(3); // 点击触发整件取回（探针 2 + 下载 1+）
     await context.close();
   });
 
@@ -230,12 +246,10 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     await context.close();
   });
 
-  // 🔴 开放项（如实申报，不擅自扩面）：**已决**（已作答 / 已取消）的历史恢复卡是
-  // 终态卡（既有 `lockOptionBox` 语义）⇒ 其内附件行 disabled（锁内件）。该形态 =
-  // 既有语义、非本批引入：同一份 lockOptionBox 在 live 腿确认后对同一附件行取到
-  // **同一读数**。🔴 **「可点」的实证腿 = F7 的 pending 重挂**（未作答卡恢复后由
-  // live `renderAskUser` 接管，未进终态锁）—— 已决卡本就不是「可点」的承载面。
-  test('F5 对照：同一 lockOptionBox 语义在 live 卡确认后对附件行取到同一 disabled 读数', async ({ browser }) => {
+  // askuser-attach-replyrender 批（2026-10-30）：附件行（.ask-attachments-wrap =
+  // 只读查看面）已获 lockOptionBox 豁免 ⇒ 「已决卡附件行不可点」的开放项随本批关闭。
+  // 豁免只放通行，不放开作答控件（option-btn/confirm/cancel 仍锁）。
+  test('F5 对照：live 卡确认后附件行仍可点（豁免语义），作答控件保持终态锁', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser, fixedPort);
     const r = await page.evaluate(() => window.__liveThenConfirm());
     expect(pageErrors).toEqual([]);
@@ -243,30 +257,30 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     expect(r.before.disabled, 'live pending 卡：附件行可点（未锁）').toEqual([false]);
     expect(r.before.boxResolved).toBe(false);
     expect(r.confirmEnabled, '选完首个问题后确认键可用').toBe(true);
-    expect(r.after.boxResolved, '确认后卡进入既有终态（resolved）').toBe(true);
-    expect(r.after.disabled, '确认后同一附件行 disabled —— 与本批历史卡读数一致（既有语义）').toEqual([true]);
+    expect(r.after.boxResolved, '确认后卡进入终态（resolved）').toBe(true);
+    expect(r.after.disabled, '确认后同一附件行**仍可用**——豁免语义（只读查看面 ≠ 重新作答）').toEqual([false]);
     await context.close();
   });
 
-  // 🔴 开放项取证（结构性）：在**已决**历史卡上即便把 disabled 强行复位，卡级
-  // capture 点击哨兵仍拦下 ⇒ 「已决卡附件行可点」须改 `lockOptionBox` 本体（任务书
-  // 明令禁触面）⇒ 本席不停手、不擅自扩面；🔴 已决卡本就不是「可点」的承载面（见 F7）。
-  test('F6 开放项取证：已决卡复位 disabled 后仍零派发 ⇒ 该面须改 lockOptionBox 本体（禁触面）', async ({ browser }) => {
+  // 【原开放项取证批 · 语义已由 askuser-attach-replyrender 批关闭】已决卡附件行
+  //  现默认可点（lockOptionBox 豁免）⇒ 「复位 disabled 再点击」变成纯冗余动作：
+  //  点击走下载腿 ⇒ 零 workspace-open-item、行不被降级/移除。本腿保留为回归钉。
+  test('F6 豁免回归钉：已决卡附件行复位后再点击 ⇒ 下载腿、零 Canvas 开面', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser, fixedPort);
     await page.evaluate((msgs) => window.__replay(msgs), WITH_ATT);
     const r = await page.evaluate(() => window.__forceEnableAndClick(0));
     expect(pageErrors).toEqual([]);
     expect(r.clicked).toBe(true);
     expect(r.disabledAfterReset, '复位生效（disabled=false）').toBe(false);
-    expect(r.rowStillInDom, '行未被降级/移除（探针无应答窗口内取数）').toBe(true);
-    expect(r.dispatched, 'capture 哨兵单独即拦下 ⇒ 不改 lockOptionBox 则不可点').toBe(0);
+    expect(r.rowStillInDom, '行未被降级/移除（下载腿可达）').toBe(true);
+    expect(r.dispatched, '下载腿 ⇒ 零 workspace-open-item').toBe(0);
     await context.close();
   });
 
   // ✅ 「在位且可点」的实证腿 = main.js:1977 的 pending 重挂（历史行附件 ⇒ live
-  // `renderAskUser` ⇒ 交互卡）。这是「刷新后附件行可点」的真实到达面：未作答的
-  // askUser 行在恢复后由 live 卡接管，而该卡**未**进终态锁。
-  test('F7 pending 腿（main.js:1977 同形）：历史行附件还原到 live 交互卡 ⇒ 在位且可点', async ({ browser }) => {
+  // `renderAskUser` ⇒ 交互卡）。askuser-attach-replyrender 批后行入口 = **下载腿**：
+  // 可观测面 = 票据轨 nf-file 取回（+1）+ 零 workspace-open-item（Canvas 面退役）。
+  test('F7 pending 腿（main.js:1977 同形）：历史行附件还原到 live 交互卡 ⇒ 在位、可点、走下载腿', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser, fixedPort);
     const r = await page.evaluate((msgs) => window.__pendingRestore(msgs), PENDING_WITH_ATT);
     expect(pageErrors).toEqual([]);
@@ -274,9 +288,8 @@ test.describe('改后树（fixed）— 附件行在位', () => {
     expect(r.read.rows, '附件行在位').toBe(1);
     expect(r.read.boxResolved, '交互卡未进终态锁（pending）').toBe(false);
     expect(r.read.disabled, '附件行未禁用 ⇒ 可点').toEqual([false]);
-    expect(r.click.dispatched, '真点击 ⇒ Canvas 打开腿 readFile 帧已发出（可点性实证）').toBe(1);
-    expect(r.click.detailIds).toEqual(['/tmp/nb-histatt-fixture/notes.md']);
-    expect(r.click.events, '旧预览代理事件面已退役（零 workspace-open-item）').toBe(0);
+    expect(r.click.dispatched, '真点击 ⇒ 下载腿 nf-file 取回已发生（可点性实证）').toBeGreaterThanOrEqual(1);
+    expect(r.click.events, 'Canvas 面退役 ⇒ 零 workspace-open-item').toBe(0);
     await context.close();
   });
 });

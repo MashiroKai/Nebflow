@@ -1405,8 +1405,8 @@ export default {
   'askUser.attachmentsTitle': '附件',
   'askUser.attachmentsCount': '{n} 个附件',
   'askUser.attachmentUnavailable': '不可用',
-  'askUser.attachmentOpenCanvas': '在 Canvas 打开 {name}',
-  'askUser.attachmentDownload': '下载 {name}（该类型没有应用内查看器）',
+  'askUser.attachmentPreview': '预览 {name}',
+  'askUser.attachmentDownload': '下载 {name}',
     'askUser.pendingTitle': '待回答问题',
   // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
   // 补投静默批（2026-10-29）：词条去机制名——「被子代理屏障扣留」（引擎内部
