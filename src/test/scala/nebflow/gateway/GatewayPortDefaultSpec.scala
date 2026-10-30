@@ -22,6 +22,12 @@ class GatewayPortDefaultSpec extends FunSuite:
   test("Defaults.GatewayPort is the 2026-10-23 fleet default 6138"):
     assertEquals(Defaults.GatewayPort, 6138, "作者令 2026-10-23：默认 6138（8080 让渡 9.19 自有根实例）")
 
+  test("the legacy command brand default stays 8080 and differs from the engine default"):
+    // 双实例并存批 2026-10-30：两个命令品牌（stand / nebflow）同机并存、缺省口必须错开。
+    // 该 8080 只服务读数/报错文案，引擎自身绝不绑定 —— 见 Defaults.LegacyGatewayPort 注释。
+    assertEquals(Defaults.LegacyGatewayPort, 8080)
+    assertNotEquals(Defaults.GatewayPort, Defaults.LegacyGatewayPort)
+
   test("GatewayConfig binding default resolves from the single-source constant"):
     // The ip4s Port the engine actually binds when neither --port nor env speaks.
     assertEquals(GatewayConfig.DefaultPort.value, Defaults.GatewayPort)

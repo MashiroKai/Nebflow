@@ -6,7 +6,8 @@
 #   ops/bin/nebflow  (entry, brand=nebflow) → ~/.nebflow/bin/nebflow
 #   ops/bin/stand-cli-lib.sh (本文件)       → 与 entry 同目录部署两份根各一份
 #
-# ── 隔离契约 (作者令 2026-10-27: stand 与 nebflow 彻底独立, 互不拉起/探活/误杀) ──
+# ── 隔离契约 (作者令 2026-10-27: stand 与 nebflow 彻底独立, 互不拉起/探活/误杀;
+#               作者令 2026-10-30 双实例并存批: 两命令同机可用) ──
 #   命令      home 解析(只读自己的 env)   端口解析(只读自己的 env)                 jar 位
 #   stand     STAND_HOME > ~/.stand       --port > STAND_GATEWAY_PORT > 6138       ENTRY_DIR/versions 指针+winsort
 #   nebflow   NEBFLOW_HOME > ~/.nebflow   --port > NEBFLOW_GATEWAY_PORT > 8080     ENTRY_DIR/nebflow-assembly-*.jar winsort
@@ -91,6 +92,44 @@ stand_is_ours() { # <pid> 身份门(按品牌收窄 — 隔离: 各家只认自�
     esac
     return 1
 }
+
+# >>> BRAND-MAP (双实例并存批 2026-10-30: 端口冲突时指明占口的是哪一实例) >>>
+# 各品牌的默认家/默认口 —— 单一来源（本文档头契约表的机械读面；测试与文档表同读此处）。
+stand_brand_default_home() { # <brand> -> 默认 root (无 env 时)
+    case "$1" in
+        stand)   printf '%s\n' "${HOME:-}/.stand" ;;
+        nebflow) printf '%s\n' "${HOME:-}/.nebflow" ;;
+        *) return 1 ;;
+    esac
+}
+
+stand_brand_default_port() { # <brand> -> 默认端口
+    case "$1" in
+        stand)   printf '6138\n' ;;
+        nebflow) printf '8080\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+stand_other_brand() { # -> 对家品牌名 (stand <-> nebflow)
+    case "$BRAND" in
+        stand)   printf 'nebflow\n' ;;
+        nebflow) printf 'stand\n' ;;
+    esac
+}
+
+stand_brand_of_pid() { # <pid> -> stand|nebflow|(空=认不出) —— 只认 jar 路径标记, 不猜 sbt
+    local _c
+    _c=$(stand_cmd_of "$1")
+    case "$_c" in
+        *stand-assembly*)                    printf 'stand\n' ;;
+        *nebflow-assembly*)                  printf 'nebflow\n' ;;
+        */stand/bin/*|*/\.stand/bin/*)       printf 'stand\n' ;;
+        */\.nebflow/bin/*|*/nebflow/bin/*)   printf 'nebflow\n' ;;
+        *)                                   return 0 ;;
+    esac
+}
+# <<< BRAND-MAP <<<
 
 # >>> BRAND-BANNER (仅 stand; nebflow 面无横幅 — 9.19 自有根 launcher 契约) >>>
 # 仅 start 且守卫放行(真的要起 daemon)时打印; already-running / 拒启 / stop 不印。
@@ -478,10 +517,26 @@ cli_java_hint() {
 # ── 主分发 ───────────────────────────────────────────────────────────────────
 cli_pin_child_env() { # <port> — 探到的端口/解析的家钉进子进程 env (只写不读; 写对家
                       #   变量名仅为引擎旧名兼容面, 与隔离无涉 — env 是进程私有的)
+    #
+    # 双实例并存批 2026-10-30（隔离补课 · 数据根 env 穿透洞）：只钉端口不够 ——
+    # 引擎侧数据根解析是 `STAND_HOME > NEBFLOW_HOME > 默认`（shared/paths.scala dataRoot）。
+    # stand 入口原先不写 STAND_HOME ⇒ 用户在 shell 里遗留导出 NEBFLOW_HOME 时，
+    # `stand start` 起的引擎会落进 **~/.nebflow**（对家的家），而 launcher 的
+    # already-running / stop 守卫查的是 ~/.stand —— 双实例隔离在「数据根」面破口。
+    # 修法：把本品牌解析出的家钉进**自家变量名**（stand ⇒ STAND_HOME，引擎第一优先命中），
+    # 并把对家的 home 变量从子进程 env 里**摘掉**（不是改写 —— 摘掉才叫「子进程只见一家」）。
+    # 端口侧不变：两家名字都写成同一解析值（引擎旧名兼容面本就是同一个进程私有 env）。
     local _port="$1"
     case "$BRAND" in
-        stand)   export STAND_GATEWAY_PORT="$_port"; export NEBFLOW_GATEWAY_PORT="$_port" ;;
-        nebflow) export NEBFLOW_GATEWAY_PORT="$_port"; export NEBFLOW_HOME="$STAND_HOME" ;;
+        stand)
+            export STAND_HOME="$STAND_HOME"
+            export STAND_GATEWAY_PORT="$_port"
+            export NEBFLOW_GATEWAY_PORT="$_port"   # 引擎旧名端口别名（兼容面，同值）
+            unset NEBFLOW_HOME ;;                  # 对家家名不进子进程 env
+        nebflow)
+            export NEBFLOW_HOME="$STAND_HOME"
+            export NEBFLOW_GATEWAY_PORT="$_port"
+            unset STAND_HOME STAND_GATEWAY_PORT ;; # 同理: 对家名不残留
     esac
 }
 
@@ -501,7 +556,19 @@ stand_cli_main() {
                 fi
                 echo "ERROR: port $_port is occupied by a non-$BRAND process (pid $_guard_pid):" >&2
                 echo "       $(stand_cmd_of "$_guard_pid")" >&2
-                echo "       Stop it, or pick another port (--port / ${BRAND}_GATEWAY_PORT)." >&2
+                # 双实例并存批 2026-10-30：占口者若是另一品牌实例，点名报出（对号入座，
+                # 不再让人对着裸端口猜）。认不出就照旧只说「非本品牌」。
+                local _occ_brand
+                _occ_brand=$(stand_brand_of_pid "$_guard_pid")
+                if [ -n "$_occ_brand" ] && [ "$_occ_brand" != "$BRAND" ]; then
+                    echo "       This is the OTHER instance: '$_occ_brand' (default home $(stand_brand_default_home "$_occ_brand"), default port $(stand_brand_default_port "$_occ_brand"))." >&2
+                    echo "       The two command brands are isolated and meant to coexist: '$BRAND' and '$_occ_brand'" >&2
+                    echo "       never share a port/home. Check the port: it looks like you launched '$BRAND'" >&2
+                    echo "       with $_occ_brand's port. Use '$BRAND' default (port $(stand_brand_default_port "$BRAND")) or" >&2
+                    echo "       '$BRAND --port <free>' / '$_occ_brand stop' first." >&2
+                else
+                    echo "       Stop it, or pick another port (--port / ${BRAND}_GATEWAY_PORT)." >&2
+                fi
                 exit 1
             fi
             cli_boot "$@"
@@ -536,6 +603,16 @@ stand_cli_main() {
             [ "$_dry" = 1 ] && _RESTART_DRY=1
             # dry-run 隐含 detached (ppid=1 证据必须经孤儿化产生)
             cli_restart_arm "${_fwd[@]}"
+            ;;
+        __brand-defaults)   # 隐藏动词（help/补全不列；测试与文档对账用）：
+                            # 打印本品牌解析出的 家/口/对家 一行式读数，零 JVM 零网络。
+                            # 双实例并存批 2026-10-30 加：让 `ops/test/stand-lifecycle.test.sh`
+                            # 无需真起引擎即可断言「stand→~/.stand+6138 / nebflow→~/.nebflow+8080」。
+                            printf 'brand=%s\nhome=%s\nport=%s\nother=%s\nother_home=%s\nother_port=%s\n' \
+                                "$BRAND" "$STAND_HOME" "$(stand_resolve_port "$@")" \
+                                "$(stand_other_brand)" "$(stand_brand_default_home "$(stand_other_brand)")" \
+                                "$(stand_brand_default_port "$(stand_other_brand)")"
+            exit 0
             ;;
         __ignite-restart)   # 隐藏动词 (help/补全不列): cli_restart_arm 专用
             shift

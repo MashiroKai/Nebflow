@@ -1631,6 +1631,29 @@ object Defaults:
    * （沙箱口 = 高位随机，`SandboxRuntime` 自有分配面）。
    */
   val GatewayPort = 6138
+
+  /**
+   * **legacy `nebflow` 命令的默认口 = 8080**（双实例并存批 2026-10-30，作者令
+   * 「开启动 stand 的命令是 nebflow … 和 nebflow 隔离，这样 nebflow 和 stand 可以同时使用」）。
+   *
+   * 两个命令品牌同机并存，缺省口必须错开：`stand` = 6138（上面的 GatewayPort），
+   * `nebflow` = 8080（9.19 自有根实例的口，其启动器 `ops/bin/nebflow` 缺省值即本值）。
+   * 本常量只服务**读数与报错文案**（端口冲突时点名「占口的是另一实例」）与 spec 钉；
+   * 引擎自身（stand 构建）绝不绑定它 —— 引擎绑定面仍只有 [[GatewayPort]] 一个来源。
+   * CLI 面同名真值在 `ops/bin/stand-cli-lib.sh` 的 BRAND-MAP（`stand_brand_default_port`），
+   * 两侧由 `CliBrandDefaultsSpec` 文本对账钉住。
+   */
+  val LegacyGatewayPort = 8080
+
+  /** 命令品牌 → 其缺省端口（双实例并存批 2026-10-30 的读数面单点）。
+   *  `stand` = [[GatewayPort]]（6138），`nebflow` = [[LegacyGatewayPort]]（8080）。
+   *  认不出的品牌返回 `None`（调用方据此只说「对家实例」，不编数字）。
+   *  CLI 侧同名真值在 `ops/bin/stand-cli-lib.sh` 的 `stand_brand_default_port`。 */
+  def legacyPortOf(brand: String): String =
+    brand match
+      case "nebflow" => LegacyGatewayPort.toString
+      case "stand"   => GatewayPort.toString
+      case _         => "?"
 end Defaults
 
 /**

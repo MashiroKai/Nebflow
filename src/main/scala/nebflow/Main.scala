@@ -4,7 +4,7 @@ import cats.effect.{ExitCode, IO, IOApp}
 import cats.syntax.all.*
 import nebflow.cli.*
 import nebflow.gateway.GatewayConfig
-import nebflow.shared.{Branding, Config, PathUtil}
+import nebflow.shared.{Branding, Config, Defaults, PathUtil}
 
 import scala.util.Try
 
@@ -77,6 +77,15 @@ object MainDispatch:
         Some(
           s"daemon child refused: port $port already served by a ${Branding.productName} instance — " +
             "not focusing (no terminal), not killing"
+        )
+      // 双实例并存批 2026-10-30：占口的是另一命令品牌的实例 —— 点名是谁、默认家/口在哪。
+      case SingleInstanceGuard.OtherInstance(brand, _) =>
+        Some(
+          s"daemon child refused: port $port is held by the OTHER instance brand '$brand' " +
+            s"(default home ~/.$brand, default port ${Defaults.legacyPortOf(brand)}) — " +
+            s"${Branding.productName} and '$brand' are isolated and meant to coexist; they never share " +
+            s"a port. Stop that instance ('$brand stop') or pick another port " +
+            "(--port / GATEWAY_PORT)."
         )
       case SingleInstanceGuard.ForeignOccupant(detail) =>
         Some(s"ERROR: $detail — ${Branding.productName} cannot start.\nStop it, or pick another port (--port / GATEWAY_PORT).")
@@ -280,6 +289,17 @@ object Main extends IOApp:
                   )
                   .as(ExitCode.Success)
             }
+          case nebflow.cli.SingleInstanceGuard.OtherInstance(brand, _) =>
+            // 双实例并存批 2026-10-30：同机并存的对家命令品牌占着这个口 ——
+            // 绝不 focus（那是别人的实例/别人的家），拒启并点名。
+            IO.println(
+              s"ERROR: port ${cfg.port.value} is held by the OTHER instance brand '$brand' " +
+                s"(default home ~/.$brand, default port ${Defaults.legacyPortOf(brand)})."
+            ) *>
+              IO.println(
+                s"'${Branding.productName}' and '$brand' are isolated and meant to coexist — they never share " +
+                  s"a port. Stop that instance ('$brand stop') or pick another port (--port / GATEWAY_PORT)."
+              ) *> IO.pure(ExitCode.Error)
           case nebflow.cli.SingleInstanceGuard.ForeignOccupant(detail) =>
             IO.println(s"ERROR: $detail — ${Branding.productName} cannot start.") *>
               IO.println(

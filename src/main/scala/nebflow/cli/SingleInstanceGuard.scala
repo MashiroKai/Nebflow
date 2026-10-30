@@ -33,6 +33,19 @@ object SingleInstanceGuard:
   sealed trait PortState
   case object PortFree extends PortState
   final case class NebflowInstance(url: String) extends PortState
+
+  /**
+   * 端口被**另一个命令品牌**的实例占着（双实例并存批 2026-10-30）。
+   *
+   * 背景：`stand` 与 `nebflow` 两个命令品牌同机并存（默认口 6138 / 8080、数据根
+   * `~/.stand` / `~/.nebflow`，见 `ops/bin/stand-cli-lib.sh` 头契约表）。两者跑的是同一
+   * 引擎产品线，健康面都长成「自己人」——旧分类会把它判成 `NebflowInstance` 走
+   * focus-existing 分支：`stand start` 撞上 legacy 8080 实例会去**聚焦对家**而不是
+   * 报错。故按健康面的 `product` 标记再分一层：同品牌 → [[NebflowInstance]]（聚焦），
+   * 异品牌 → 本类（拒启 + 点名是哪一实例）。
+   */
+  final case class OtherInstance(brand: String, url: String) extends PortState
+
   final case class ForeignOccupant(detail: String) extends PortState
 
   /**
@@ -50,7 +63,7 @@ object SingleInstanceGuard:
    * pid-file fast path). None == not a live stand port.
    */
   def checkPortBlocking(host: String, port: Int): Option[String] =
-    probeNebflow(port)
+    probeNebflow(port).map(_.url)
 
   /**
    * Classifier inputs — host/port mirror exactly what EmberServerBuilder
@@ -98,10 +111,42 @@ object SingleInstanceGuard:
     else if connectAccepted(port) then
       Right(
         probeNebflow(port) match
-          case Some(url) => NebflowInstance(url)
+          case Some(ProbeHit(brand, url)) =>
+            // 判据 = **路径归属**（命令行里的品牌数据根），不是品牌词。
+            // 理由（rename 兼容契约，2026-10-18 批文）：改名当天之前构建的本产品实例
+            // 健康面 product 仍写 `nebflow`，它其实是**自己人**，必须照旧 focus 而不是拒启。
+            // 反过来 legacy `nebflow` 命令线（9.19 自有根）实打实跑在 `~/.nebflow/bin`
+            // 下 —— 那条路径就是「不是本实例」的铁证。故只有路径证据才升级为
+            // [[OtherInstance]]；品牌词只进拒绝文案（让人看清占口的是哪条线）。
+            otherRootOccupant(port) match
+              case Some((_, _, _)) => OtherInstance(if brand == OwnBrand then OtherBrandBrandName else brand, url)
+              case None            => NebflowInstance(url)
           case None => ForeignOccupant(s"port $port is held by another program")
       )
     else Left(())
+
+  /**
+   * 端口 listener 里「命令行根落在另一个品牌数据根下」的那一个（pid, cmdline, root）。
+   * 复用 [[nebflow.gateway.StaleProcessGuard]] 的 pid 枚举 / 命令行读取 / 根判定 ——
+   * 单一实现，不另造第二套 ps 解析。
+   */
+  private[cli] def otherRootOccupant(port: Int): Option[(Long, String, String)] =
+    try
+      nebflow.gateway.StaleProcessGuard
+        .portListenerPids(port)
+        .filterNot(_ == ProcessHandle.current.pid)
+        .iterator
+        .flatMap(pid =>
+          nebflow.gateway.StaleProcessGuard
+            .readCommandLine(pid)
+            .flatMap(cmd =>
+              nebflow.gateway.StaleProcessGuard
+                .otherInstanceRoot(cmd, nebflow.shared.PathUtil.dataRoot.toString)
+                .map(root => (pid, cmd, root))
+            )
+        )
+        .nextOption()
+    catch case _: Exception => None
 
   /**
    * Strict bind probe — reuse off so a wildcard bind can't pass over a
@@ -147,11 +192,31 @@ object SingleInstanceGuard:
    */
   def connectProbeAccepted(port: Int): Boolean = connectAccepted(port)
 
+  /**
+   * 本引擎品牌（`brand.conf lowerName`，今天 = "stand"）—— 健康面 `product` 标记与它
+   * 相等即「自己人」（聚焦）；等于另一个已知命令品牌（[[OtherBrands]]）即「对家实例」
+   * （拒启点名）；其余一律 unknown（按兼容口径当自己人，见 [[probeNebflow]]）。
+   */
+  private[cli] val OwnBrand: String = Branding.lowerName
+
+  /** 同机并存的另一个命令品牌（legacy `nebflow` 线）。 */
+  private[cli] val OtherBrands: Set[String] = Set("nebflow").filterNot(_ == OwnBrand)
+
+  /** 品牌词读不出来、只凭路径归属判出的对家实例的名字（legacy 线固定名）。 */
+  private[cli] val OtherBrandBrandName: String = OtherBrands.headOption.getOrElse("nebflow")
+
+  /** 健康面探测结果：品牌标记 + 聚焦 URL。 */
+  private[cli] final case class ProbeHit(brand: String, url: String)
+
   /** Probe health without the system proxy. Recognize the current/legacy
    * product names, or the full legacy health shape, rather than arbitrary
    * responses containing a product/version key.
+   *
+   * 双实例并存批 2026-10-30：除了「是不是本产品」还要回答「是哪条命令线的实例」——
+   * 返回的 `brand` 就是健康面 `product` 的原文（stand / nebflow），缺 `product`
+   * 字段的老构建归 [[OwnBrand]]（兼容：宁可聚焦，不与老实例开战）。
    */
-  private def probeNebflow(port: Int): Option[String] =
+  private def probeNebflow(port: Int): Option[ProbeHit] =
     Try {
       val conn = java.net.URI
         .create(s"http://127.0.0.1:$port/api/health")
@@ -167,16 +232,20 @@ object SingleInstanceGuard:
           val body = Using.resource(scala.io.Source.fromInputStream(conn.getInputStream))(
             _.mkString
           )
-          val isOurs = parse(body).toOption.exists { json =>
+          val hit = parse(body).toOption.flatMap { json =>
             val c = json.hcursor
             c.get[String]("product").toOption match
-              case Some(product) => Set("stand", "stand", Branding.lowerName).contains(product)
+              case Some(product) =>
+                val known = Set("stand", OwnBrand) ++ OtherBrands
+                if known.contains(product) then Some(ProbeHit(product, s"http://localhost:$port"))
+                else None
               case None =>
-                c.get[String]("status").toOption.contains("ok") &&
+                val legacyShape = c.get[String]("status").toOption.contains("ok") &&
                   c.get[String]("version").toOption.exists(_.nonEmpty) &&
                   c.downField("providers").focus.exists(_.isObject)
+                if legacyShape then Some(ProbeHit(OwnBrand, s"http://localhost:$port")) else None
           }
-          if isOurs then Some(s"http://localhost:$port") else None
+          hit
       finally conn.disconnect()
     }.toOption.flatten
 

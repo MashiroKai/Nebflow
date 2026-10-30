@@ -73,6 +73,53 @@ class StaleProcessGuardSpec extends FunSuite:
   test("empty occupant list is a no-op Right"):
     assertEquals(StaleProcessGuard.classify(Nil, 1L, fakeReader), Right(Nil))
 
+  // ── 双实例并存批 2026-10-30：异品牌实例的「路径归属」判据 ──────────────
+  // 两个命令品牌同机并存（stand ⇒ ~/.stand，legacy nebflow ⇒ ~/.nebflow），跑同一引擎、
+  // 命令行都带 *-assembly-*.jar —— 只看品牌标记会把对家判成「可安全 kill 的陈旧本家」。
+  // 判据 = cmdline 里的品牌数据根归属；本 spec 钉住它的三条边界。
+
+  test("other-instance root detection: a foreign brand home in the cmdline is detected"):
+    val own = "/Users/kaiyu/.stand"
+    val peerCmd =
+      "java -jar /Users/kaiyu/.nebflow/bin/nebflow-assembly-2026.9.19.jar start --no-browser"
+    assertEquals(
+      StaleProcessGuard.otherInstanceRoot(peerCmd, own),
+      Some(".nebflow"),
+      "对家品牌根下的 listener 必须被判为异实例（否则会被 stale-classify 后误杀）"
+    )
+
+  test("other-instance root detection: our own data root is never flagged foreign"):
+    val own = "/Users/kaiyu/.stand"
+    val ownCmd =
+      "java --add-opens java.base/java.lang=ALL-UNNAMED -jar /Users/kaiyu/.stand/bin/versions/2026.10.26/stand-assembly-2026.10.26.jar start"
+    assertEquals(StaleProcessGuard.otherInstanceRoot(ownCmd, own), None)
+
+  test("other-instance root detection: Windows separators and unrelated paths"):
+    val own = "C:/Users/Kai/.stand"
+    val peer = "java -jar C:\\Users\\Kai\\.nebflow\\bin\\nebflow-assembly-2026.9.19.jar start"
+    assertEquals(StaleProcessGuard.otherInstanceRoot(peer, own), Some(".nebflow"))
+    assertEquals(
+      StaleProcessGuard.otherInstanceRoot("python3 -m http.server 8080", own),
+      None,
+      "与品牌根无关的命令行不得被本判据认领（交给 classify 的 foreign 面）"
+    )
+    assertEquals(
+      StaleProcessGuard.otherInstanceRoot("/tmp/x/.stand-junk/run", own),
+      None,
+      "路径片段必须带尾部分隔符才算品牌根（.stand-junk 不是 ~/.stand）"
+    )
+
+  test("legacy nebflow listener stays killable-looking to classify — the brand-root gate is its only guard"):
+    // 事实钉：classify 本身按品牌标记判，对家的 *-assembly-* 命令行同样命中 NebflowMarkers。
+    // 这正是 GatewayMain/SingleInstanceGuard 必须在 classify **之前**加品牌根闸的原因；
+    // 若未来有人把闸挪走，本断言仍绿、集成面会红 —— 所以这里只在守护逻辑侧钉（见
+    // SingleInstanceGuardSpec「other-brand instance」用例 + GatewayMain.ensureSingleInstance）。
+    val peerCmd = "java -jar /Users/kaiyu/.nebflow/bin/nebflow-assembly-2026.9.19.jar start"
+    assert(
+      StaleProcessGuard.isNebflowCommandLine(peerCmd),
+      "前置事实：品牌标记面无法区分两条命令线"
+    )
+
   test("foreign detail truncates the cmdline at 200 chars"):
     val long = "x" * 250
     val d = StaleProcessGuard.ForeignOccupant(1L, long).detail

@@ -614,6 +614,57 @@ for _i in $(seq 1 80); do
 done
 assert_contains "stale-guard dry-run verdict OK" "verdict: DRY-RUN OK" "$_L25"
 
+# ── 26. 双实例并存批 2026-10-30: 默认值解析（stand→~/.stand+6138, nebflow→~/.nebflow+8080）──
+t "case 26: default resolution per brand (hidden __brand-defaults probe)"
+fresh_sandbox
+_D26="$(cd "$SANDBOX" && env -u STAND_HOME -u NEBFLOW_HOME -u STAND_GATEWAY_PORT -u NEBFLOW_GATEWAY_PORT \
+    "$SANDBOX/bin/stand" __brand-defaults 2>&1)"
+assert_contains "stand default home is ~/.stand" "home=$HOME/.stand" "$_D26"
+assert_contains "stand default port is 6138" "port=6138" "$_D26"
+assert_contains "stand names its peer brand" "other=nebflow" "$_D26"
+assert_contains "stand peer default home is ~/.nebflow" "other_home=$HOME/.nebflow" "$_D26"
+assert_contains "stand peer default port is 8080" "other_port=8080" "$_D26"
+_D26N="$(cd "$SANDBOX" && env -u STAND_HOME -u NEBFLOW_HOME -u STAND_GATEWAY_PORT -u NEBFLOW_GATEWAY_PORT \
+    "$SANDBOX/bin/nebflow" __brand-defaults 2>&1)"
+assert_contains "nebflow default home is ~/.nebflow" "home=$HOME/.nebflow" "$_D26N"
+assert_contains "nebflow default port is 8080" "port=8080" "$_D26N"
+assert_contains "nebflow names its peer brand" "other=stand" "$_D26N"
+assert_contains "nebflow peer default port is 6138" "other_port=6138" "$_D26N"
+assert_eq "declared defaults are distinct ports" "1" \
+    "$([ "$(printf '%s' "$_D26" | sed -n 's/^port=//p')" != "$(printf '%s' "$_D26N" | sed -n 's/^port=//p')" ] && echo 1 || echo 0)"
+assert_eq "declared defaults are distinct homes" "1" \
+    "$([ "$(printf '%s' "$_D26" | sed -n 's/^home=//p')" != "$(printf '%s' "$_D26N" | sed -n 's/^home=//p')" ] && echo 1 || echo 0)"
+# env 只认自家: 对家 env 不得改写本品牌读数
+_D26E="$(cd "$SANDBOX" && STAND_GATEWAY_PORT=25111 NEBFLOW_GATEWAY_PORT=25112 STAND_HOME="$SANDBOX/home" NEBFLOW_HOME="$SANDBOX/homeB" \
+    "$SANDBOX/bin/stand" __brand-defaults 2>&1)"
+assert_contains "stand port reads own env only" "port=25111" "$_D26E"
+assert_contains "stand home reads own env only" "home=$SANDBOX/home" "$_D26E"
+_D26EN="$(cd "$SANDBOX" && STAND_GATEWAY_PORT=25111 NEBFLOW_GATEWAY_PORT=25112 STAND_HOME="$SANDBOX/home" NEBFLOW_HOME="$SANDBOX/homeB" \
+    "$SANDBOX/bin/nebflow" __brand-defaults 2>&1)"
+assert_contains "nebflow port reads own env only" "port=25112" "$_D26EN"
+assert_contains "nebflow home reads own env only" "home=$SANDBOX/homeB" "$_D26EN"
+
+# ── 27. 双实例并存批: 端口被对家品牌实例占用 → 报错点名「另一实例」──
+t "case 27: start hits the OTHER brand instance -> refusal names the peer instance"
+fresh_sandbox
+P27=$(pick_free_port)
+# 造一个 nebflow 品牌占口进程: 命令行路径落 …/.nebflow/bin/ 下（品牌路径归属判据）,
+# 且不含任何 *-assembly- 标记 ⇒ stand 的身份门判它「非本品牌」, 品牌归属判据点名为 nebflow。
+mkdir -p "$SANDBOX/fakebin/peer/.nebflow/bin"
+FIX27=$(start_fixture "$P27" marker peer/.nebflow/bin/gateway-peer)
+if case "$FIX27" in ''|*[!0-9]*) false ;; *) true ;; esac; then
+    run_stand_on "$P27" start; RC=$?
+    assert_rc "peer-occupant refusal rc" 1 "$RC"
+    assert_contains "refusal names the OTHER instance" "OTHER instance" "$RUN_OUT"
+    assert_contains "refusal names the peer brand" "nebflow" "$RUN_OUT"
+    assert_contains "refusal states coexistence intent" "coexist" "$RUN_OUT"
+    assert_eq "no java exec'd on peer refusal" "0" "$(FAKE_LOG_LINES)"
+    kill "$FIX27" 2>/dev/null
+    if wait_gone "$P27"; then ok "fixture cleaned up (no orphan leak)"; else bad "fixture leaked on $P27"; fi
+else
+    bad "case 27 skipped: fixture failed ($FIX27)"
+fi
+
 echo
 echo "== summary: PASS=$PASS FAIL=$FAIL =="
 [ "$FAIL" -eq 0 ]
