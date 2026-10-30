@@ -98,6 +98,14 @@ class ProviderRegistry(
   def throttleHealthJson: IO[Option[io.circe.Json]] = throttle.healthJson
 
   /**
+   * 限流风暴活性读数（后台任务生命周期 reconciler 的 Nudge 抑制面，设计稿 §5：
+   * 「节流风暴期抑制非必要 Nudge（只保留徽标）」）——任一账户闸处于有限档
+   * （rung>0）⇒ true。公开只读投影（gateway 侧合法触点；闸本体仍 private[llm]）。
+   */
+  def throttleStormActive: IO[Boolean] =
+    throttle.snapshot.map(_.values.exists(_.limit.isDefined))
+
+  /**
    * **不过闸**的裸适配器视图（裸本体缓存单点，getAdapter 在其上现包闸壳）——
    * 仅供健康探测（HealthMonitor.probe）使用：探测是恢复机制（1 次/2min 微量
    * 请求），排队在饱和闸后反而拖慢恢复判定（探测超时会计入排队等待 ⇒ 假阴性

@@ -832,6 +832,57 @@ object Defaults:
    */
   val HeldDeliveryMaxAttempts: Int = 5
 
+  // ── 后台任务生命周期 reconciler（设计稿 20261030_background-task-lifecycle §3，P1 批）──
+  //
+  // 判据数值 = 稿 §9-③ 默认档（作者未另拍板前按此落地）：suspect = 空闲 >
+  // max(基线×3, 10min)；escalated = 催注 3 次（10/20/40min 退避）无进展 或
+  // 空闲 > 基线×10。基线 = 任务自基线（头 K 分钟活跃间隔中位，§3.3/§9-② 自基线
+  // 方案）。全部现读 prop（BgGateWaitTimeoutMs 同款先例）⇒ spec 可即时翻转；
+  // 本控制器全部动作为 提醒/徽标/通知/审计，零 wall-clock 判死（红线照旧）。
+
+  /**
+   * P1 控制器总闸：`nebflow.bglifecycle.enabled`，缺省 true；false = reconciler
+   * 每拍 no-op（逐字回到 P0 现状——纯投影、零健康轨行为）。
+   */
+  def BgLifecycleEnabled: Boolean =
+    sys.props.getOrElse("nebflow.bglifecycle.enabled", "true").toBoolean
+
+  /** 扫描拍频（秒）——稿 §3.2 的 30s 档（HeldDeliveryScanIntervalSec 同款形态）。 */
+  val BgLifecycleScanIntervalSec: Int = 30
+
+  /**
+   * 自基线观测窗 K（ms）：任务头 K 分钟的活跃间隔采样窗，到龄冻结中位为基线
+   * （稿 §3.3「任务头 K 分钟的观测中位×系数」；§9-② 建议先自基线+全局默认档）。
+   * 全程零采样的任务冻结基线 = 0 ⇒ 判据恒走地板档（suspect=10min，escalated 的
+   * ×10 腿仅基线>0 时生效）。
+   */
+  def BgLifecycleBaselineWindowMs: Long =
+    sys.props.getOrElse("nebflow.bglifecycle.baselineWindowMs", (10 * 60 * 1000L).toString).toLong
+
+  /** suspect 判据系数 N（稿默认档 3）：suspect ⟺ 空闲 > max(基线×N, 地板)。 */
+  def BgLifecycleSuspectBaselineFactor: Long =
+    sys.props.getOrElse("nebflow.bglifecycle.suspectBaselineFactor", "3").toLong
+
+  /** suspect 空闲地板（ms，稿默认档 10min）——慢任务/零采样任务豁免档（R5）。 */
+  def BgLifecycleSuspectMinIdleMs: Long =
+    sys.props.getOrElse("nebflow.bglifecycle.suspectMinIdleMs", (10 * 60 * 1000L).toString).toLong
+
+  /** escalated 空闲判据系数 M（稿默认档 10）：空闲 > 基线×M（基线>0）⇒ 直达升级。 */
+  def BgLifecycleEscalateBaselineFactor: Long =
+    sys.props.getOrElse("nebflow.bglifecycle.escalateBaselineFactor", "10").toLong
+
+  /** 催注穷尽阈值 k（稿默认档 3）：k 次指数退避催注仍无进展 ⇒ escalated。 */
+  def BgLifecycleMaxNudges: Int =
+    sys.props.getOrElse("nebflow.bglifecycle.maxNudges", "3").toInt
+
+  /** 首催间隔（ms，稿默认档 10min——HeldDeliveryFirstRetryMs 哲学同款：首催前窗口留给正常推进）。 */
+  def BgLifecycleNudgeFirstMs: Long =
+    sys.props.getOrElse("nebflow.bglifecycle.nudgeFirstMs", (10 * 60 * 1000L).toString).toLong
+
+  /** 催注退避封顶（ms，稿默认档 40min——§9-③「10/20/40min 退避」链的封顶档）。 */
+  def BgLifecycleNudgeMaxBackoffMs: Long =
+    sys.props.getOrElse("nebflow.bglifecycle.nudgeMaxBackoffMs", (40 * 60 * 1000L).toString).toLong
+
   /**
    * 2026-09-10 卡死判据换轴（取证 20260910_130621_flow-node-activity-signal-forensics.md）：
    * **工具相位**卡死阈值——同一 turn 内单个工具调用持续超过此值、且该 turn 仍

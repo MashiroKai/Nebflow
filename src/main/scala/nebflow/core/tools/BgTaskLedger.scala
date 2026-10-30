@@ -44,7 +44,7 @@ object BgTaskLedger:
   final case class Entry(
     jobId: String,
     description: String,
-    /** "completion"（终态事件）| "orphan"（cap 强制终判时仍未结的孤儿）。 */
+    /** "completion"（终态事件）| "orphan"（cap 强制终判时仍未结的孤儿）| "escalation"（健康轨升级审计，consumed=true 落笔即真）。 */
     kind: String,
     /** completed | failed；orphan 未结时为空串。 */
     eventType: String,
@@ -232,6 +232,65 @@ object BgTaskLedger:
           newEntries.map(e => e.jobId -> e)
         save(sessionId, snap.copy(entries = byId.values.toList))
       }
+
+  /**
+   * escalated 升级审计落盘（后台任务生命周期 P1 批 · 设计稿 §8-R2）：kind=
+   * "escalation" 行——**consumed=true 落笔即真**（审计/重建面，绝不经补投腿再
+   * 投递：pending() 只取 !consumed 条目，升级行天然豁免完成补投；consume 的
+   * 出账过滤也只清 consumed && kind=="completion"，升级行持久留痕）。同 jobId
+   * 重复升级（进展降级后再升级）原位替换、recordedAtMs 刷新。重启后 reconciler
+   * 首拍经 [[allEscalations]] 重建红徽视图（§8-R2「重启后一拍内由 reconciler
+   * 重建视图」）。
+   */
+  def recordEscalation(
+    sessionId: String,
+    jobId: String,
+    description: String,
+    payload: String
+  ): IO[Unit] =
+    if sessionId.trim.isEmpty then IO.unit
+    else
+      load(sessionId).flatMap { snap =>
+        val now = System.currentTimeMillis()
+        val entry = Entry(
+          jobId = jobId,
+          description = description,
+          kind = "escalation",
+          eventType = "escalated",
+          payloadHead = payload.take(PayloadHeadLen),
+          payload = payload,
+          tailSnapshot = None,
+          recordedAtMs = now,
+          completedAtMs = None,
+          consumed = true
+        )
+        val kept = snap.entries.filterNot(_.jobId == jobId)
+        save(sessionId, snap.copy(entries = kept :+ entry))
+      }
+
+  /**
+   * 全盘 escalated 审计行（reconciler 重启重建面）：遍历 `<dataRoot>/sessions/<sid>/
+   * bg-task-ledger.json`，收集 kind="escalation" 行（(sessionId, entry) 对）。
+   * 逐文件解码失败容忍（跳过该文件）——重建面失败绝不阻断主扫描（fail-soft
+   * 簿记面纪律）。会话目录量大时仅首拍执行一次（调用侧 bootstrapped 旗）。
+   */
+  def allEscalations: IO[List[(String, Entry)]] =
+    val dir = PathUtil.dataRoot / "sessions"
+    IO.blocking {
+      if !os.exists(dir) then Nil
+      else
+        os.list(dir)
+          .filter(os.isDir)
+          .flatMap { d =>
+            val f = d / "bg-task-ledger.json"
+            if os.exists(f) then
+              decode[Snapshot](os.read(f)) match
+                case Right(s) => s.entries.filter(_.kind == "escalation").map(e => (d.last, e))
+                case Left(_) => Nil
+            else Nil
+          }
+          .toList
+    }.handleErrorWith(e => logger.warn(s"BgTaskLedger.allEscalations failed: ${e.getMessage}").as(Nil))
 
   /** 未消费条目（补投腿的数据源；空 sessionId = Nil）。 */
   def pending(sessionId: String): IO[List[Entry]] =
