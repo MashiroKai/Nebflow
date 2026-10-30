@@ -107,8 +107,9 @@ object BgTaskRegistry:
 
   /**
    * bgHealth 徽标计数（设计稿 §3.2 BadgeSync · heldReceipts 同款帧载荷）：
-   * suspect/escalated 由行内健康字段派生（BgHealth.healthCounts）；unread 为
-   * P1 前桩（恒 0——完成未读轨随 P1 控制器/通知面批，占位保持帧形状稳定）。
+   * suspect/escalated 由行内健康字段派生（BgHealth.of）；unread = P1 激活语义——
+   * 「已升级但编排者通知未送达」的任务数（Escalate 执行面按投递路由记账，
+   * 见 [[unreadEscalations]]）。
    */
   case class BgHealthCounts(
     unread: Int = 0,
@@ -278,7 +279,28 @@ object BgTaskRegistry:
     )
 
   def unregister(jobId: String): IO[Unit] =
-    tasks.update(_ - jobId)
+    tasks.update(_ - jobId) *> unreadEscalations.update(_ - jobId)
+
+  /**
+   * 全表快照（P1 BgLifecycleReconciler 扫描面；只读零副作用——每拍一次全表读，
+   * 与 activeTasksJson 同 Ref 数据源）。
+   */
+  def allActiveTasks: IO[List[ActiveTask]] =
+    tasks.get.map(_.values.toList)
+
+  /**
+   * 活动戳写缝（P1 reconciler · 面板快照帧 lastActivityMs 数据源）：仅当更新鲜
+   * 才抬升（乱序/回退宽容）；行不存在 ⇒ false。远端任务由心跳面喂本缝
+   * （RemoteExecutor.startRemoteHeartbeat），reconciler 把行戳增长视作进展信号。
+   */
+  def recordActivity(jobId: String, atMs: Long): IO[Boolean] =
+    tasks.modify { m =>
+      m.get(jobId) match
+        case None => (m, false)
+        case Some(t) =>
+          if atMs > t.lastActivityMs then (m + (jobId -> t.copy(lastActivityMs = atMs)), true)
+          else (m, false)
+    }
 
   /**
    * 单任务查行（输出查看补全批：remote-output 路由按 jobId 取 deviceName/
@@ -293,10 +315,11 @@ object BgTaskRegistry:
    * 行不存在（极早终态/重复回调）⇒ None，调用方耗时段落省略。
    */
   def unregisterReturning(jobId: String): IO[Option[ActiveTask]] =
-    tasks.modify { m =>
-      val removed = m.get(jobId)
-      (m - jobId, removed)
-    }
+    unreadEscalations.update(_ - jobId) *>
+      tasks.modify { m =>
+        val removed = m.get(jobId)
+        (m - jobId, removed)
+      }
 
   /**
    * #391 机制 E：移除某 session 的全部任务并返回它们——restart/Stop 联动时
@@ -310,6 +333,9 @@ object BgTaskRegistry:
         tasks.modify { m =>
           val (removed, kept) = m.partition(_._2.sessionId == sid)
           (kept, removed.values.toList)
+        }.flatTap { removed =>
+          val ids = removed.map(_.jobId).toSet
+          unreadEscalations.update(_ -- ids)
         }
 
   // ── 健康轨数据面（P0 面板投影批 · 设计稿 20261030_background-task-lifecycle §3.4）──
@@ -347,9 +373,36 @@ object BgTaskRegistry:
           (m + (jobId -> next), true)
     }
 
-  /** 全表健康计数（bgHealth 徽标帧载荷数据源）。 */
+  /**
+   * 全表健康计数（bgHealth 徽标帧载荷数据源）：suspect/escalated 行内派生 +
+   * unread 升级未送达记账归并。
+   */
   def healthCounts: IO[BgHealthCounts] =
-    tasks.get.map(m => BgHealth.healthCounts(m.values))
+    for
+      m <- tasks.get
+      u <- unreadEscalations.get
+    yield BgHealth.healthCounts(m.values, u)
+
+  // ── unread 激活（P1 控制器批 · 设计稿 §3.2 BadgeSync 的 unread 格）────────
+  //
+  // P0 桩 unread=0 → P1 语义 = 「已升级但编排者通知未送达」（升级通知入持久收件箱
+  // 补偿腿 / 目标不可达 / 投递失败）的任务数：Escalate 执行面按 BgNotifyDelivery
+  // 投递路由记账（Delivered ⇒ read；Persist/Undeliverable/异常 ⇒ unread）。
+  // 单一事实源纪律：unread 只是投递记账的投影，健康枚举仍唯一派生自行内字段；
+  // 注销（含会话收殓）即清账。
+
+  private val unreadEscalations: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
+
+  /** 升级通知未送达记账（Escalate 执行面 · Persist/Undeliverable/失败腿）。 */
+  private[core] def markEscalationsUnread(jobIds: Set[String]): IO[Unit] =
+    if jobIds.isEmpty then IO.unit else unreadEscalations.update(_ ++ jobIds)
+
+  /** 升级通知已送达记账（直投 root 转录成功腿 / 进展降级消解）。 */
+  private[core] def markEscalationsRead(jobIds: Set[String]): IO[Unit] =
+    if jobIds.isEmpty then IO.unit else unreadEscalations.update(_ -- jobIds)
+
+  /** unread 记账快照（spec 断言面 / 取证）。 */
+  private[core] def unreadEscalationSnapshot: IO[Set[String]] = unreadEscalations.get
 
   /**
    * 最近一次已广播的 bgHealth 计数（徽标对账基准：计数变化才广播，heldReceipts
@@ -630,12 +683,29 @@ object BgHealth:
     else if t.suspicionLevel > 0 then Suspect
     else Healthy
 
-  /** 行表 → 徽标计数（unread 桩 = 0，P1 前恒零；suspect/escalated 全表归并）。 */
+  /**
+   * 行表 → 徽标计数（unread 桩 = 0，P1 前恒零；单参重载保持 P0 调用方/spec
+   * 逐字兼容）。P1 生产面走双参版（unread = 升级未送达记账投影）。
+   */
   def healthCounts(tasks: Iterable[BgTaskRegistry.ActiveTask]): BgTaskRegistry.BgHealthCounts =
+    healthCounts(tasks, Set.empty)
+
+  /**
+   * 行表 + unread 记账 → 徽标计数（P1 激活：unread = 升级未送达集合 ∩ 在册
+   * escalated 行；escalated/suspect 仍行内派生——唯一归并点，禁第二状态源）。
+   */
+  def healthCounts(
+    tasks: Iterable[BgTaskRegistry.ActiveTask],
+    unreadJobIds: Set[String]
+  ): BgTaskRegistry.BgHealthCounts =
     tasks.foldLeft(BgTaskRegistry.BgHealthCounts()) { (acc, t) =>
       of(t) match
         case Suspect => acc.copy(suspect = acc.suspect + 1)
-        case Escalated => acc.copy(escalated = acc.escalated + 1)
+        case Escalated =>
+          acc.copy(
+            escalated = acc.escalated + 1,
+            unread = if unreadJobIds.contains(t.jobId) then acc.unread + 1 else acc.unread
+          )
         case _ => acc
     }
 

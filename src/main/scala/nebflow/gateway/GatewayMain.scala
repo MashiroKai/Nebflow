@@ -2010,6 +2010,23 @@ object GatewayMain extends IOApp:
                                                                 nebflow.shared.Defaults.HeldDeliveryScanIntervalSec.seconds
                                                             )
                                                             .start
+                                                          // --- Background: BgLifecycleReconciler (后台任务生命周期 P1 批 2026-10-30) ---
+                                                          // 健康轨 reconcile 控制器（设计稿 20261030 §3）：每拍比对全表任务观测态
+                                                          // （输出行/活动戳），suspect 黄徽+退避提醒、escalated 红徽+编排者通知+
+                                                          // 账本审计；进展即时降回 healthy（重排不判死）。零 Kill——正确性由
+                                                          // 提醒/徽标/通知表达（ScanAction 封闭类型编译守门）。429 风暴期经
+                                                          // providerRegistry.throttleStormActive 抑制 Nudge、徽标照刷。
+                                                          _ <- nebflow.core.processor.BgLifecycleReconciler
+                                                            .run(
+                                                              sharedResourcesWithDaemon,
+                                                              wsHub,
+                                                              interval =
+                                                                nebflow.shared.Defaults.BgLifecycleScanIntervalSec.seconds,
+                                                              stormActive = Some(
+                                                                sharedResourcesWithDaemon.providerRegistry.throttleStormActive
+                                                              )
+                                                            )
+                                                            .start
                                                           // --- P0（2026-08-30）：skip 持久化恢复 ---
                                                           // 重启前「跳过本次」若未到期（skipUntil > now），恢复进内存
                                                           // ref——WS/REST 的 freezeState.skipped 随即可见，输入栏不再

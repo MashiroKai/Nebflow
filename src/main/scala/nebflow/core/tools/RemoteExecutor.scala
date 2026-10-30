@@ -994,7 +994,13 @@ class RemoteExecutor(
                 )
               )
             ).handleErrorWith(_ => IO.unit)
-          } *> IO.sleep(baseSec.seconds) *> loop
+          } *>
+          // 健康轨进展信号（后台任务生命周期 P1 批 · 设计稿 §3.3「心跳行 → 远端
+          // 任务活性」）：远端任务无本地输出行数面，心跳 tick = 对端通道仍活的
+          // 既有观测——经 P0 写缝 recordActivity 喂行内 lastActivityMs，
+          // BgLifecycleReconciler 把行戳增长视作进展（零新传感器）。
+          BgTaskRegistry.recordActivity(jobId, now).handleErrorWith(_ => IO.unit) *>
+          IO.sleep(baseSec.seconds) *> loop
       }
     loop.start.void
   end startRemoteHeartbeat
