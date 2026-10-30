@@ -5,7 +5,7 @@ import io.circe.syntax.*
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
 import nebflow.actor.{ActorRef, AgentCommand, AgentKind, AgentRecord}
-import nebflow.core.tools.BgTaskRegistry
+import nebflow.core.tools.{BgHealth, BgTaskRegistry}
 
 /**
  * 修复批 2026-10-24 spec ①「起后台任务→结束回合→会话状态面可见任务数断言」：
@@ -36,7 +36,7 @@ class BgWaitingCountSpec extends FunSuite:
       val json: Json = WebSocketRoutes.activeAgentEntryJson(
         rec(sessionId),
         None,
-        bgWaiting = waiting.map(t => (t.jobId, t.description, t.startedAtMs))
+        bgWaiting = waiting.map(t => (t.jobId, t.description, t.startedAtMs, BgHealth.of(t)))
       )
       assertEquals(json.hcursor.get[Int]("bgWaitingCount"), Right(2), "explicit count field on the status face")
       val rows = json.hcursor.downField("bgWaiting").values.get.toList
@@ -44,6 +44,9 @@ class BgWaitingCountSpec extends FunSuite:
       assert(rows.exists(_.hcursor.get[String]("taskId").exists(_ == "job-1")), rows)
       assert(rows.exists(_.hcursor.get[String]("description").exists(_ == "render deck (puppeteer)")), rows)
       assert(rows.forall(_.hcursor.get[Long]("startedAt").isRight), "start timestamp carried for the 起止 face")
+      // P0 面板投影批（设计稿 §3.4 验收③）：行健康字段随行且与账本行同源——
+      // 值 = 同一 ActiveTask 行经 BgHealth.of 派生（单一事实源，禁第二状态源）。
+      assert(rows.forall(_.hcursor.get[String]("health").contains("healthy")), rows)
     finally BgTaskRegistry.unregisterSession(Some(sessionId)).unsafeRunSync()
 
     end try
@@ -52,4 +55,40 @@ class BgWaitingCountSpec extends FunSuite:
     val json = WebSocketRoutes.activeAgentEntryJson(rec("sid-bgcount-2"), None, bgWaiting = Nil)
     assertEquals(json.hcursor.get[Int]("bgWaitingCount"), Right(0))
     assertEquals(json.hcursor.downField("bgWaiting").values.map(_.size), Some(0))
+
+  test("S3 健康写缝激活后 ⇒ 快照行 health 与账本行同源（suspect/escalated 逐字一致）"):
+    // P0 面板投影批（设计稿 §7 P0 验收③「快照帧与实时帧字段同源」）：updateHealth
+    // 写缝（P1 reconciler 落点）落行后，bgWaiting 载荷的健康值与 BgHealth.of(行)
+    // 恒一致——面板黄/红徽不依赖第二状态源。
+    val sessionId = "sid-bgcount-3"
+    BgTaskRegistry.register("job-h1", sessionId, "playwright e2e", kind = "local").unsafeRunSync()
+    try
+      BgTaskRegistry.updateHealth("job-h1", "suspect").unsafeRunSync()
+      val waitingSuspect = BgTaskRegistry.waitingBySession.unsafeRunSync().getOrElse(sessionId, Nil)
+      val jsonS = WebSocketRoutes.activeAgentEntryJson(
+        rec(sessionId),
+        None,
+        bgWaiting = waitingSuspect.map(t => (t.jobId, t.description, t.startedAtMs, BgHealth.of(t)))
+      )
+      val rowS = jsonS.hcursor.downField("bgWaiting").values.get.toList.head
+      assertEquals(rowS.hcursor.get[String]("health"), Right("suspect"), "suspect 投影随行")
+
+      BgTaskRegistry.updateHealth("job-h1", "escalated").unsafeRunSync()
+      val waitingEsc = BgTaskRegistry.waitingBySession.unsafeRunSync().getOrElse(sessionId, Nil)
+      val jsonE = WebSocketRoutes.activeAgentEntryJson(
+        rec(sessionId),
+        None,
+        bgWaiting = waitingEsc.map(t => (t.jobId, t.description, t.startedAtMs, BgHealth.of(t)))
+      )
+      val rowE = jsonE.hcursor.downField("bgWaiting").values.get.toList.head
+      assertEquals(rowE.hcursor.get[String]("health"), Right("escalated"), "escalated 投影随行")
+      // 重排不判死（设计稿 §3.1）：降回 healthy ⇒ 停滞计数清零、升级戳清零。
+      BgTaskRegistry.updateHealth("job-h1", "healthy").unsafeRunSync()
+      val waitingOk = BgTaskRegistry.waitingBySession.unsafeRunSync().getOrElse(sessionId, Nil)
+      assertEquals(BgHealth.of(waitingOk.head), "healthy")
+      assertEquals(waitingOk.head.suspicionLevel, 0)
+      assertEquals(waitingOk.head.escalatedAtMs, 0L)
+    finally BgTaskRegistry.unregisterSession(Some(sessionId)).unsafeRunSync()
+
+    end try
 end BgWaitingCountSpec

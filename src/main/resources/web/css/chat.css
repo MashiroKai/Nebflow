@@ -661,6 +661,20 @@
 /* 长空闲徽标字色 = 既有 warn 图标档 token（base.css --status-warn-icon，亮暗双档）。 */
 .bg-task-idle-detail.bg-idle-stale { color: var(--status-warn-icon); font-weight: 500; }
 .bg-task-idle-detail.bg-idle-stale .st-ic { color: var(--status-warn-icon); }
+/* P0 面板投影批（设计稿 20261030_background-task-lifecycle §3.4）：后台任务健康
+   轨三色圆点——色值全部取 ui-status-redesign 状态 token（亮暗双档随主题），
+   零新色值：绿=healthy / 黄=suspect / 红=escalated。载体 = 后台任务行 meta 与
+   智能体行空闲细分注记（行级同源，词表 = locales bg.health.*）。 */
+.bg-health-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.bg-health-healthy { background: var(--status-success-icon); }
+.bg-health-suspect { background: var(--status-warn-icon); }
+.bg-health-escalated { background: var(--status-error-icon); }
 /* #753 同族聚合行（waiter 族）：组头行 — 收起态默认（计数一目了然）；成员行
    缩进一格（与 subagent 面板 bg-task-row-child 同款缩进语义）；carets 中性。 */
 .bg-task-row-family { border-top: 1px solid var(--color-frame-border); }

@@ -645,6 +645,18 @@ export function esc(s) {
   return d.innerHTML;
 }
 
+// ── P0 面板投影批（设计稿 20261030_background-task-lifecycle §3.4）───────────
+// 后台任务健康枚举词表与容错归一（后端 BgHealth.normalize 同款语义，双端
+// 兜底）：healthy/suspect/escalated 之外的任何值（缺字段/脏枚举/旧后端）一律
+// 回落 'healthy'——面板行永不因脏数据崩，缺字段（旧后端快照）按最保守呈现。
+// 返回 '' 表示输入为空串（调用方据此决定零渲染，保持旧行形态不膨胀）。
+const BG_HEALTH_WORDS = ['healthy', 'suspect', 'escalated'];
+export function bgHealthNorm(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  return BG_HEALTH_WORDS.indexOf(s) >= 0 ? s : 'healthy';
+}
+
 // === Diff formatting (unified diff) ===
 export function formatDiff(content) {
   if (!content) return null;

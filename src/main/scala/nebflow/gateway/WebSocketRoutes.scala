@@ -3338,8 +3338,8 @@ object WebSocketRoutes:
     retryCount: Option[Int] = None,
     taskTitle: Option[String] = None, // taskbadge batch (main-side): title resolved by the caller via the ledger
     delegateTitle: Option[String] = None, // 显示名契约批 2026-10-22: delegate/SubTask 行批次标题（delegateDisplayTitle 解析）
-    bgWaiting: List[(String, String, Long)] =
-      Nil // #752: (jobId, description, startedAtMs) — the session's own waiting-type bg tasks
+    bgWaiting: List[(String, String, Long, String)] =
+      Nil // #752: (jobId, description, startedAtMs, health) — the session's own waiting-type bg tasks
   ): Json =
     Json.obj(
       "sessionId" -> rec.sessionId.asJson,
@@ -3401,16 +3401,21 @@ object WebSocketRoutes:
       "outstandingSubagents" -> rec.outstandingSubagents.asJson,
       // #752 空闲细分：「等后台任务」——会话自有等待型任务（BgTaskRegistry
       // waitingBySession，调用方一次全表扫描传入）。[{taskId, description,
-      // startedAt}]；空数组 = 无（前端 falsy 判 length）。启动戳毫秒，前端算时长。
+      // startedAt, health}]；空数组 = 无（前端 falsy 判 length）。启动戳毫秒，
+      // 前端算时长；health = 行内健康字段派生（BgHealth.of），面板健康色同源。
       // bgWaitingCount（修复批 2026-10-24 spec ①「状态面可见任务数断言」）：在飞
       // 任务数的显式字段——面板与取证直接读数，不必从数组长度反推（数组空 =
       // 0，两字段恒一致）。
       "bgWaitingCount" -> bgWaiting.size.asJson,
-      "bgWaiting" -> bgWaiting.map { case (jobId, description, startedAtMs) =>
+      "bgWaiting" -> bgWaiting.map { case (jobId, description, startedAtMs, health) =>
         Json.obj(
           "taskId" -> jobId.asJson,
           "description" -> description.asJson,
-          "startedAt" -> startedAtMs.asJson
+          "startedAt" -> startedAtMs.asJson,
+          // P0 面板投影批（设计稿 §3.4）：健康色随行——值 = 行内健康字段经
+          // BgHealth.of 派生（调用方从 registry 行直取，快照与实时帧同源）；
+          // 非法值在写缝已归一，此处逐字透传（前端兜底容错）。
+          "health" -> health.asJson
         )
       }.asJson
     )

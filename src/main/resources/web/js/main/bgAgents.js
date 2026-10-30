@@ -7,7 +7,7 @@
 import state from '../state.js';
 import { sendWs } from '../ws.js';
 import { t } from '../i18n.js';
-import { escapeHtml, isBgAgentId, createIconsIn, statusIcon } from '../utils.js';
+import { escapeHtml, isBgAgentId, createIconsIn, statusIcon, bgHealthNorm } from '../utils.js';
 import { findViewBySessionId, activeView } from '../chatView.js';
 import { fmtUptime, isFailedSnapshotStatus } from '../managePanel.js';
 import { openStepPopup as openFlowStepPopup } from '../flowAgentPopup.js';
@@ -140,15 +140,20 @@ function bgRowState(info) {
 // 无在飞工具 —— 琥珀字「空闲 N 分钟」，提示该行无在飞工作（可安全收编/合并）。
 const BG_LONG_IDLE_MS = 10 * 60 * 1000;
 
-/** 空闲/waiting 行的细分注记（null = 无——行保持既有形态）。 */
+/** 空闲/waiting 行的细分注记（null = 无——行保持既有形态）。
+ *  P0 面板投影批（设计稿 20261030 §3.4）：等后台任务段随行健康色——首条任务
+ *  的 health（快照 bgWaiting[].health，行内字段派生）经 bgHealthNorm 容错后
+ *  以 {health: 'healthy'|'suspect'|'escalated'|''} 随返回值出（渲染层转色点）。 */
 function bgIdleDetail(info) {
   const bgWaiting = Array.isArray(info.bgWaiting) ? info.bgWaiting : [];
   const receipts = (Number(info.heldReceipts) || 0) + (Number(info.unreadReceipts) || 0)
     + (Number(info.outstandingSubagents) || 0);
   const parts = [];
+  let health = '';
   if (bgWaiting.length > 0) {
     const w = bgWaiting[0];
     const dur = w.startedAt ? fmtUptime(Date.now() - w.startedAt) : '';
+    health = bgHealthNorm(w.health);
     parts.push(t('subagents.waitingBg', {
       count: bgWaiting.length,
       desc: String(w.description || w.taskId || ''),
@@ -156,11 +161,11 @@ function bgIdleDetail(info) {
     }));
   }
   if (receipts > 0) parts.push(t('subagents.waitingReceipts', { count: receipts }));
-  if (parts.length > 0) return { text: parts.join(' · '), stale: false };
+  if (parts.length > 0) return { text: parts.join(' · '), stale: false, health };
   // 长空闲：无在飞工作（①②皆空）且 agent 侧活动戳距今 > 10min。
   const idleMs = Number(info.lastActivityMs) > 0 ? Date.now() - Number(info.lastActivityMs) : 0;
   if (idleMs > BG_LONG_IDLE_MS) {
-    return { text: t('subagents.longIdle', { mins: Math.floor(idleMs / 60000) }), stale: true };
+    return { text: t('subagents.longIdle', { mins: Math.floor(idleMs / 60000) }), stale: true, health: '' };
   }
   return null;
 }
@@ -673,11 +678,17 @@ function bgTaskRowHtml(id, info, opts = {}) {
     ? '<span class="bg-task-waiting"' + (waitingTip ? ' title="' + escapeHtml(waitingTip) + '"' : '') + '>'
       + escapeHtml(t('subagents.status.waitingMerge') + waitingText) + '</span>'
     : '';
-  // #752 空闲细分注记：idle/waiting 行显示「在等什么」（等后台任务名+时长 /
+  // #752 空闲细分注记：idle/waiting 行显示「在等什么」（等后台任务名+时长+健康色 /
   // 等子代理回执 N 条 / 长空闲提醒徽标）。仅在停靠态出现，active 行零变化。
+  // P0 面板投影批：健康色点 = 首条等待任务的健康枚举（绿/黄/红），词表与后台
+  // 任务行（activeBgTasks[].health）同一账本；空/脏值（旧后端）零渲染。
   const idleDetail = (rowState === 'idle' || rowState === 'waiting') ? bgIdleDetail(info) : null;
+  const idleHealthDot = idleDetail && idleDetail.health
+    ? '<span class="bg-health-dot bg-health-' + idleDetail.health + '" title="' + escapeHtml(t('bg.health.' + idleDetail.health)) + '" aria-hidden="true"></span>'
+    : '';
   const idlePart = idleDetail
     ? '<span class="bg-task-idle-detail' + (idleDetail.stale ? ' bg-idle-stale' : '') + '" role="' + (idleDetail.stale ? 'alert' : 'note') + '">'
+      + idleHealthDot
       + (idleDetail.stale ? statusIcon('timer-off', 11, 'st-warn') : '')
       + escapeHtml(idleDetail.text) + '</span>'
     : '';
