@@ -260,8 +260,8 @@ object TextStreamSearch:
   /**
    * The Canvas / file-viewer OPEN gate — the largest file the WS `pop.readFile`
    * leg will serve (2026-09-20 author order: 10MB → 100MB; the author could not
-   * open a PDF over 10MB). It is the ONE ruler for the open path on the server
-   * side: the frontend pre-check (`web/js/attachmentPreview.js` `MAX_TEXT_BYTES`)
+   * open a PDF over 10MB). TEXT leg only since the P2 split (below): the
+   * frontend pre-check (`web/js/attachmentPreview.js` `MAX_TEXT_BYTES`)
    * mirrors this value, so the two cannot drift.
    *
    * NOT the WS frame cap (`WebSocketRoutes.MaxMessageSize`, inbound), nor
@@ -272,8 +272,31 @@ object TextStreamSearch:
    * streaming (a WS frame carries one whole string). The BINARY leg does not
    * read the bytes at all — it sends metadata and the viewer streams the file
    * from `GET /api/nf-file` (http4s `StaticFile` ⇒ `fs2.io.file.Files.readRange`),
-   * so a 100MB PDF never enters this JVM's heap (see the `pop.readFile` case).
+   * so a PDF never enters this JVM's heap (see the `pop.readFile` case).
    */
   val MaxPopReadFileBytes: Long = 100L * 1024 * 1024
+
+  /**
+   * P2 批（阅读器体验设计件 §5.1，2026-10-30）：二进制查看腿（nf-file 族：pdf/
+   * image/docx/xlsx/pptx/epub 等 `FileTypeRegistry.binary` 件）的打开闸 =
+   * `AttachContract.MaxFileBytes`（1024 MB = 1 GiB = 1,073,741,824 B）——与附件
+   * 总闸同一数值权威面，前端镜像 = `attachmentPreview.js` `MAX_VIEWER_BYTES`
+   * （禁第二把尺：两端同源同值，但文本/二进制分两闸）。
+   *
+   * 解除无资源代价的前提（设计件 §5.1）：二进制腿**不读字节**，只回元数据 +
+   * `size`，字节由 viewer 经 `/api/nf-file` Range 流式自取自渲 —— 1 GiB PDF 与
+   * 10MB PDF 在 JVM 侧的资源曲线等价（零整件堆读，既有口径）。文本腿维持
+   * [[MaxPopReadFileBytes]]：它的 content 会进 WS 帧/整件缓存，闸不可上移。
+   */
+  val MaxViewerFileBytes: Long = nebflow.shared.AttachContract.MaxFileBytes
+
+  /**
+   * `pop.readFile` 打开闸的二值判据（P2 批闸拆分）：`isBinary` 由扩展名经
+   * `FileTypeRegistry.detect` 得出（与 handler 的判定同源）。纯函数 ——
+   * `PopReadGateSpec` 钉死两门各归各位（文本 100MB+1 仍拒、二进制 100MB+1 放行、
+   * 二进制 1GiB+1 仍拒）。
+   */
+  def popReadGateLimit(isBinary: Boolean): Long =
+    if isBinary then MaxViewerFileBytes else MaxPopReadFileBytes
 
 end TextStreamSearch
