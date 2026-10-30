@@ -252,18 +252,25 @@ class ActiveAgentsEntrySpec extends FunSuite:
     assertEquals(json.hcursor.get[Int]("unreadReceipts"), Right(1))
   }
 
-  test("#752 bgWaiting carries (taskId, description, startedAt) triples") {
+  test("#752 bgWaiting carries (taskId, description, startedAt, health) tuples") {
     val json = WebSocketRoutes.activeAgentEntryJson(
       rec("delegate-n752-3", AgentKind.Delegate),
       None,
-      bgWaiting = List(("job-1", "background waiter 67", 1724336000456L), ("job-2", "sbt test", 1724336000789L))
+      bgWaiting = List(
+        ("job-1", "background waiter 67", 1724336000456L, "healthy"),
+        ("job-2", "sbt test", 1724336000789L, "suspect")
+      )
     )
     val arr = json.hcursor.downField("bgWaiting").values.map(_.toVector).getOrElse(Vector.empty)
     assertEquals(arr.size, 2)
     assertEquals(arr(0).hcursor.get[String]("taskId"), Right("job-1"))
     assertEquals(arr(0).hcursor.get[String]("description"), Right("background waiter 67"))
     assertEquals(arr(0).hcursor.get[Long]("startedAt"), Right(1724336000456L))
+    // P0 面板投影批（设计稿 §3.4）：健康色随行——值由调用方从 registry 行经
+    // BgHealth.of 派生传入，本帧逐字透传（前端兜底容错）。
+    assertEquals(arr(0).hcursor.get[String]("health"), Right("healthy"))
     assertEquals(arr(1).hcursor.get[String]("description"), Right("sbt test"))
+    assertEquals(arr(1).hcursor.get[String]("health"), Right("suspect"))
   }
 
 end ActiveAgentsEntrySpec

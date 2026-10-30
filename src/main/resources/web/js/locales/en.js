@@ -1655,6 +1655,11 @@ export default {
   'bg.kind.remote': 'remote',
   'bg.openedBy': 'Started by {origin}',
   'bg.runsOn': 'Runs on {origin}',
+  // P0 面板投影批（设计稿 20261030_background-task-lifecycle §3.4）：后台任务
+  // 健康轨三色词表（healthy/suspect/escalated）——行内健康色点 tooltip。
+  'bg.health.healthy': 'healthy',
+  'bg.health.suspect': 'suspect — no recent progress',
+  'bg.health.escalated': 'escalated — needs attention',
   // Ledger #929 (cross-device sub-agent transparency): remote projected-row badges.
   'subagents.deviceOffline': 'Device offline',
   // Retained terminal rows + output detail card (2026-09-09 output viewing)

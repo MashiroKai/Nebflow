@@ -19,7 +19,7 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
   throw new Error('[nf] embedded context — boot refused (anti-recursion guard)');
 }
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
-import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, enhanceMentionSpansInDom } from './utils.js';
+import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, enhanceMentionSpansInDom, bgHealthNorm } from './utils.js';
 // mermaid-md batch (2026-10-23): ONE global hydration point — every markdown
 // face that shares renderMarkdownWithMath gets its ```mermaid placeholders
 // hydrated by this observer (chat bubbles, flow/report cards, popups). The
@@ -2347,6 +2347,20 @@ onMessage('heldReceipts', (msg) => {
   else state.sessionHeldReceipts[sid] = { held, unread };
   renderHeldReceiptsCapsule();
 });
+// ── P0 面板投影批（设计稿 20261030_background-task-lifecycle §3.2/§3.4）──────
+// WS `bgHealth` 徽标帧（发射面 = BgTaskRegistry.syncHealthBadge，heldReceipts
+// 同款计数对账广播）：{type:'bgHealth', unread, suspect, escalated}——全表健康
+// 计数（无 sessionId）。P0 消费 = 计数记账（state.bgHealthCounts，数据面供后续
+// 徽标渲染/排查）；可见健康色由面板行从快照 bgWaiting[].health / activeBgTasks
+// [].health 直渲（行级同源），本帧不驱动行重渲——P1 reconciler 上线后行健康
+// 变化经快照回填（uptick 30s）落地，计数帧在此留权威对账面。
+onMessage('bgHealth', (msg) => {
+  state.bgHealthCounts = {
+    unread: Number(msg.unread) || 0,
+    suspect: Number(msg.suspect) || 0,
+    escalated: Number(msg.escalated) || 0,
+  };
+});
 // delegateWaiting（平台修复批 fix 4）：delegate ready-to-merge 停靠——快照/面板
 // 由 activeAgents status:"Waiting" 承载；本帧仅作 Sub-Agents 行的实时态提示（行
 // 仍在则置 waiting 标记并刷新指示器）。
@@ -3268,6 +3282,14 @@ function renderBgDropdown() {
     const kindPart = task.kind
       ? '<span class="bg-task-kind">' + escapeHtml((task.kind === 'local' || task.kind === 'remote') ? t('bg.kind.' + task.kind) : task.kind) + '</span>'
       : '';
+    // 健康色点（P0 面板投影批 · 设计稿 §3.4）：快照帧行内 health 字段派生——
+    // 绿=healthy / 黄=suspect / 红=escalated；bgHealthNorm 双端容错（脏值回落
+    // healthy、空值（旧后端）零渲染不膨胀行高）。与智能体行 bgWaiting[].health
+    // 同一词表同一账本（禁第二状态源）。
+    const healthWord = bgHealthNorm(task.health);
+    const healthPart = healthWord
+      ? '<span class="bg-health-dot bg-health-' + healthWord + '" title="' + escapeHtml(t('bg.health.' + healthWord)) + '" aria-hidden="true"></span>'
+      : '';
     const hb = task.heartbeat;
     // 行数 chip（#753）：实时行用心跳 outputLines；快照恢复行（无心跳）用
     // activeBgTasks 快照的 outputLines（BgTaskOutputStore 当前总行数）。
@@ -3305,7 +3327,7 @@ function renderBgDropdown() {
       '<div class="bg-task-info">' +
         '<div class="bg-task-line bg-task-meta">' +
           '<span class="bg-task-state' + stateClass + '">' + escapeHtml(statusLabel) + '</span>' +
-          originPart + kindPart + linesPart + exitPart + uptimePart +
+          originPart + kindPart + healthPart + linesPart + exitPart + uptimePart +
         '</div>' +
         '<div class="bg-task-line bg-task-name-line">' +
           '<span class="bg-task-name" title="' + escapeHtml(nameTitle) + '">' + escapeHtml(desc) + '</span>' +
@@ -4510,7 +4532,11 @@ onMessage('activeBgTasks', (msg) => {
         sessionId: t.sessionId || (prev ? prev.sessionId : '') || '',
         kind: t.kind || (prev ? prev.kind : '') || '',
         origin: t.origin || (prev ? prev.origin : '') || '',
-        originLabel: t.originLabel || (prev ? prev.originLabel : '') || ''
+        originLabel: t.originLabel || (prev ? prev.originLabel : '') || '',
+        // P0 面板投影批（设计稿 §3.4）：行健康字段随快照同行（BgTaskRegistry
+        // 行内派生）；旧后端缺省沿用本地 embellishment，再缺省 = ''（前端
+        // bgHealthNorm 容错：空/脏值回落 healthy 或零渲染）。
+        health: t.health || (prev ? prev.health : '') || ''
       };
     });
   }

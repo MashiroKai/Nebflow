@@ -242,6 +242,12 @@ const GLOBAL_MSG_TYPES = new Set([
   'restartStatus', 'restartResult',
   'remoteUpdateResult', 'peerListChanged',
   'activeBgTasks', 'activeAgents',
+  // P0 面板投影批（设计稿 20261030 §3.2/§3.4）：bgHealth 徽标帧
+  // {type:'bgHealth', unread, suspect, escalated}——全表健康计数对账广播
+  // （heldReceipts 同款机制；发射面 = BgTaskRegistry.syncHealthBadge，P1
+  // reconciler 每拍驱动），无 sessionId ⇒ 必须 GLOBAL：否则被入口过滤器当
+  // 会话内事件 ⇒ setActiveView(primary) 抢走当前视图（projectCreated 同律）。
+  'bgHealth',
   // 台账 #929（后台子智能体跨设备透明）：远端设备投影行帧 {type:'remoteAgents',
   // agents:[{sessionId,title,source,status,startedAt,endedAt,retryCount,deviceId,
   // deviceName,deviceOnline}]}——无 sessionId 的全应用广播（wsHub.broadcast +

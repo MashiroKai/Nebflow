@@ -1591,6 +1591,11 @@ export default {
   'bg.kind.remote': '远程',
   'bg.openedBy': '由 {origin} 开启',
   'bg.runsOn': '跑在 {origin}',
+  // P0 面板投影批（设计稿 20261030_background-task-lifecycle §3.4）：后台任务
+  // 健康轨三色词表（healthy/suspect/escalated）——行内健康色点 tooltip。
+  'bg.health.healthy': '健康',
+  'bg.health.suspect': '疑似停滞',
+  'bg.health.escalated': '已升级·待处理',
   // 台账 #929（后台子智能体跨设备透明）：远端投影行角标族。
   'subagents.deviceOffline': '设备离线',
   // 终态留存行 + 输出详情卡（2026-09-09 输出查看批）

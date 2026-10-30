@@ -70,7 +70,25 @@ object BgTaskRegistry:
      * 对端日志路径（remote 专属；RemoteBgOutputLog.parseRedirect 从命令文本
      * 解析——无可解析重定向 = 空 ⇒ 面板走「输出不可用 + 原因」降级，不猜路径）。
      */
-    outputPath: String = ""
+    outputPath: String = "",
+    /**
+     * 终态轨行内实际态（P0 面板投影批 · 设计稿 20261030 §3.4）：快照帧 status
+     * 改读本字段、不再硬编码字面量。P0 恒 "running"（在册即未终态；终态记账随
+     * P2 取消/death-watch 批）；默认值兼容旧调用方（向后兼容铁律）。
+     */
+    status: String = "running",
+    /**
+     * 健康轨行内字段（设计稿 §3.1/§3.4 · 单一事实源）：健康枚举 = [[BgHealth.of]]
+     * 从本三字段派生（禁第二状态源，与 MergeQueue.queueViewOf 同纪律）。
+     *   - suspicionLevel = 嫌疑级数（0 = healthy，>0 = suspect）；
+     *   - escalatedAtMs  = 升级时刻（>0 = escalated，优先于 suspect）；
+     *   - lastActivityMs = 行内最近活动戳（P1 判据输入）。
+     * P0 数据面默认全零（恒 healthy、零行为变化）；判据与写方 = P1
+     * BgLifecycleReconciler，写缝 = [[BgHealth]] 词表经 updateHealth 翻译落行。
+     */
+    suspicionLevel: Int = 0,
+    escalatedAtMs: Long = 0L,
+    lastActivityMs: Long = 0L
   )
 
   /**
@@ -85,6 +103,17 @@ object BgTaskRegistry:
     /** 杀因原文（TimeoutException message：idle 超时 / 硬超时+停滞）。 */
     cause: String,
     failedAtMs: Long
+  )
+
+  /**
+   * bgHealth 徽标计数（设计稿 §3.2 BadgeSync · heldReceipts 同款帧载荷）：
+   * suspect/escalated 由行内健康字段派生（BgHealth.healthCounts）；unread 为
+   * P1 前桩（恒 0——完成未读轨随 P1 控制器/通知面批，占位保持帧形状稳定）。
+   */
+  case class BgHealthCounts(
+    unread: Int = 0,
+    suspect: Int = 0,
+    escalated: Int = 0
   )
 
   private val tasks: Ref[IO, Map[String, ActiveTask]] = Ref.unsafe(Map.empty)
@@ -283,6 +312,72 @@ object BgTaskRegistry:
           (kept, removed.values.toList)
         }
 
+  // ── 健康轨数据面（P0 面板投影批 · 设计稿 20261030_background-task-lifecycle §3.4）──
+  //
+  // 单一事实源 = 行内 suspicionLevel/escalatedAtMs/lastActivityMs 三字段；健康
+  // 枚举（healthy/suspect/escalated）只是 BgHealth.of 的派生投影词表，禁第二
+  // 状态源。P0 只做数据面 + UI 面：判据（何时升/降级）归 P1
+  // BgLifecycleReconciler（启发式、零 wall-clock 判死），本对象只提供写缝
+  // （updateHealth）、计数读面（healthCounts）与徽标对账广播（syncHealthBadge，
+  // heldReceipts 同款：快照比对、计数变化才发帧）。
+
+  /**
+   * 健康轨写缝（P1 reconciler 的落点）：枚举值经 BgHealth.normalize 容错
+   * （非法值一律回落 healthy——面板永不因脏数据崩）后翻译进行内字段。
+   * 语义：suspect = 置嫌疑级；escalated = 置嫌疑级 + 记升级时刻（幂等：已
+   * 升级的重复写入保留首次 escalatedAtMs）；healthy = 重排不判死——停滞计数
+   * 清零、升级戳清零（任何进展信号即时降回，设计稿 §3.1）。
+   * 行不存在 ⇒ false（极早终态/重复回调宽容）。
+   */
+  def updateHealth(jobId: String, health: String, nowMs: Long = System.currentTimeMillis()): IO[Boolean] =
+    tasks.modify { m =>
+      m.get(jobId) match
+        case None => (m, false)
+        case Some(t) =>
+          val next = BgHealth.normalize(health) match
+            case BgHealth.Escalated =>
+              t.copy(
+                suspicionLevel = math.max(t.suspicionLevel, 1),
+                escalatedAtMs = if t.escalatedAtMs > 0 then t.escalatedAtMs else nowMs
+              )
+            case BgHealth.Suspect =>
+              t.copy(suspicionLevel = math.max(t.suspicionLevel, 1))
+            case _ =>
+              t.copy(suspicionLevel = 0, escalatedAtMs = 0L)
+          (m + (jobId -> next), true)
+    }
+
+  /** 全表健康计数（bgHealth 徽标帧载荷数据源）。 */
+  def healthCounts: IO[BgHealthCounts] =
+    tasks.get.map(m => BgHealth.healthCounts(m.values))
+
+  /**
+   * 最近一次已广播的 bgHealth 计数（徽标对账基准：计数变化才广播，heldReceipts
+   * 同款）。初始 = 空表计数（全零）⇒ P0 全 healthy 期零广播（零行为变化）。
+   */
+  private val lastHealthBadge: Ref[IO, BgHealthCounts] = Ref.unsafe(BgHealthCounts())
+
+  /**
+   * bgHealth 徽标对账（heldReceipts BadgeSync 同款机制）：现值与上次广播基准
+   * 不一致 ⇒ 广播 bgHealth 帧并更新基准；一致 ⇒ 静默。返回是否发出了帧。
+   * P1 reconciler 每拍调用；P0 无生产调用方（写缝未激活，恒全零静默）——
+   * 帧形状与对账语义本批钉死，spec 直测往返。
+   */
+  def syncHealthBadge(wsHub: nebflow.core.EventSink): IO[Boolean] =
+    healthCounts.flatMap { now =>
+      lastHealthBadge
+        .modify { prev =>
+          if now == prev then (prev, false) else (now, true)
+        }
+        .flatMap { changed =>
+          IO.whenA(changed)(
+            wsHub
+              .broadcast(BgHealth.frame(now))
+              .handleErrorWith(e => logger.warn(s"BgTaskRegistry: bgHealth badge broadcast failed: ${e.getMessage}"))
+          ).as(changed)
+        }
+    }
+
   // ── 终态延迟销毁窗口的「禁 spawn」表──────
   //
   // 语义：节点终态后**一律存活 30 分钟再销毁**——窗口内进程/任务
@@ -451,7 +546,10 @@ object BgTaskRegistry:
           io.circe.Json.obj(
             "taskId" -> t.jobId.asJson,
             "description" -> t.description.asJson,
-            "status" -> "running".asJson,
+            // P0 面板投影批（设计稿 §3.4）：status 改读行内实际态、不再硬编码
+            // "running"（P0 在册即未终态，行字段恒 "running"——形状先行，终态
+            // 记账随 P2 批；向后兼容：旧调用方默认值填 "running"，输出逐字节不变）。
+            "status" -> t.status.asJson,
             "startedAt" -> t.startedAtMs.asJson,
             // 后台任务面板重设计：快照补 kind（local/remote）与
             // 来源字段（origin 类别 + originLabel 显示名）——前端来源 chip
@@ -463,7 +561,14 @@ object BgTaskRegistry:
             // outputLines，快照行此前无来源——面板行在页面刷新后行数 chip
             // 消失。本字段 = BgTaskOutputStore 的当前 totalLines（无缓冲
             // 任务 = 0，前端 falsy 不渲染）。remote 任务无缓冲，恒 0。
-            "outputLines" -> lineCounts.getOrElse(t.jobId, 0L).asJson
+            "outputLines" -> lineCounts.getOrElse(t.jobId, 0L).asJson,
+            // P0 面板投影批（设计稿 §3.4 · 单一事实源）：健康枚举由行内
+            // suspicionLevel/escalatedAtMs 派生（BgHealth.of）——快照帧、
+            // bgWaiting 实时载荷、bgHealth 徽标帧三处同源，禁第二状态源。
+            // 非法行值经派生天然容错（escalatedAtMs<=0 且 suspicionLevel<=0
+            // ⇒ healthy）；行字段默认值全零 ⇒ 旧行恒 healthy（纯增量零变化）。
+            "health" -> BgHealth.of(t).asJson,
+            "lastActivityMs" -> t.lastActivityMs.asJson
           )
         }.toList
       }
@@ -492,6 +597,59 @@ object BgTaskRegistry:
   def tasksOf(sessionId: String): IO[List[ActiveTask]] =
     tasks.get.map(_.values.filter(_.sessionId == sessionId).toList)
 end BgTaskRegistry
+
+/**
+ * 后台任务健康轨词表与投影（设计稿 20261030_background-task-lifecycle §3.1/§3.4）：
+ * healthy → suspect → escalated 正交健康轨的**投影面**。P0 只做数据面 + UI 面——
+ * 判据（何时升/降级、基线、退避）归 P1 `BgLifecycleReconciler`（启发式、零
+ * wall-clock 判死）；本对象只有四件纯面：词表归一（含非法值容错）、行→枚举派生
+ * （单一事实源）、计数归并、徽标帧构造。重排不判死：healthy 写入即停滞计数清零。
+ */
+object BgHealth:
+
+  val Healthy: String = "healthy"
+  val Suspect: String = "suspect"
+  val Escalated: String = "escalated"
+
+  /** 徽标帧类型（前端 bgHealth 处理器注册名；heldReceipts 同款机制）。 */
+  val FrameType: String = "bgHealth"
+
+  /**
+   * 值域容错（spec「枚举非法值容错」锚）：非 suspect/escalated 一律回落
+   * healthy——面板/帧永不因脏枚举崩，坏值按最保守（无嫌疑）呈现。
+   */
+  def normalize(raw: String): String =
+    raw match
+      case Suspect => Suspect
+      case Escalated => Escalated
+      case _ => Healthy
+
+  /** 行内字段 → 健康枚举（escalated 优先于 suspect；唯一派生点，禁复制）。 */
+  def of(t: BgTaskRegistry.ActiveTask): String =
+    if t.escalatedAtMs > 0 then Escalated
+    else if t.suspicionLevel > 0 then Suspect
+    else Healthy
+
+  /** 行表 → 徽标计数（unread 桩 = 0，P1 前恒零；suspect/escalated 全表归并）。 */
+  def healthCounts(tasks: Iterable[BgTaskRegistry.ActiveTask]): BgTaskRegistry.BgHealthCounts =
+    tasks.foldLeft(BgTaskRegistry.BgHealthCounts()) { (acc, t) =>
+      of(t) match
+        case Suspect => acc.copy(suspect = acc.suspect + 1)
+        case Escalated => acc.copy(escalated = acc.escalated + 1)
+        case _ => acc
+    }
+
+  /** bgHealth 徽标帧构造：{type, unread, suspect, escalated}（无 sessionId——
+   *  全表计数面，前端 GLOBAL 路由）。 */
+  def frame(counts: BgTaskRegistry.BgHealthCounts): Json =
+    Json.obj(
+      "type" -> FrameType.asJson,
+      "unread" -> counts.unread.asJson,
+      "suspect" -> counts.suspect.asJson,
+      "escalated" -> counts.escalated.asJson
+    )
+
+end BgHealth
 
 /**
  * #753 会话级后台任务创建速率闸——纯判定面（零依赖，spec 直测）。
