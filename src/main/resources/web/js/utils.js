@@ -5,7 +5,7 @@ import { t, getLocale } from './i18n.js';
 import { currentSelfDeviceName } from './deviceRoster.js';
 // 认知二期产品批①选档器：human 过滤层折叠默认读档（profileState 零依赖，
 // 无导入环）；profileGeneration 掺进 markdown 缓存键——切档即旧缓存失效。
-import { getCurrentProfile, profileGeneration } from './profileState.js';
+import { profileGeneration } from './profileState.js';
 
 // ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
 
@@ -388,11 +388,12 @@ function _transformHumanFace(html) {
       result += '<div class="nf-human-card">' + inner + '</div>';
     } else {
       const text = p.html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
-      // 认知二期产品批①：折叠默认 = 档参数（§6.2）。备考冲刺档 foldDefault =
-      // "expand-findings" ⇒ Findings 默认展开，框外不折（P5 教学引导层唯一例外
-      // 档的呈现面）；其余四档一律折。
-      const fold = getCurrentProfile().foldDefault !== 'expand-findings';
-      if (!text || !fold) {
+      // 围栏语义定案（作者令 2026-10-30 20:13，重启后生效）：围栏在时 = 只显
+      // 围栏内人面子，框外内容一律默认折叠（抽屉可展开），五档无渲染豁免——
+      // 备考冲刺档 foldDefault="expand-findings" 的框外不折豁免随之退役（档参数
+      // 保留在枚举/覆盖面，findings 展开的呈现语义移交下批 calibrate/渲染面
+      // 细做）。无渲染支持的面（纯文本/外发）框外照常直出，信息无损。
+      if (!text) {
         result += p.html;
       } else {
         const n = text.split('\n').filter((l) => l.trim()).length;

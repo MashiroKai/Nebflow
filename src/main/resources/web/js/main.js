@@ -28,6 +28,8 @@ import { armMermaidAutoHydrate } from './mermaidRenderer.js';
 // human-face batch (2026-10-30): ```human 卡内 [[词条]] 短形引用 → hover 气泡
 // （termTip.js 共享件，API 兜底腿）。同一 body 级 MutationObserver 先例。
 import { armTermCiteAutoHydrate } from './termCite.js';
+// 呈现档入口改造+围栏语义批（2026-10-30 20:13 ②）：框外抽屉展开 → 校准信号。
+import { armProfileSignalCapture } from './profileSignals.js';
 // 认知二期产品批②角标可行动判据：heldReceipts 未读回执提供者可行动计数。
 import { registerActionableProvider, notifyActionableChanged } from './actionable.js';
 // 认知二期产品批①选档器：WS 对账 + 设置面板区块（模块自注册消息处理器）。
@@ -303,6 +305,7 @@ if (typeof lottie !== 'undefined') initSpinner();
 if (typeof lucide !== 'undefined') lucide.createIcons();
 armMermaidAutoHydrate(); // mermaid-md batch: global ```mermaid placeholder hydration
 armTermCiteAutoHydrate(); // human-face batch: global ```human card term-cite linkify
+armProfileSignalCapture(); // 校准数据面：抽屉展开即报，零判定零调整
 
 // Mention-render batch (2026-09-27): the message renderer reads the shared
 // project list through this provider — mentionComplete.js owns the single

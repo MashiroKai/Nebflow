@@ -62,6 +62,13 @@ case class SharedResources(
   presentationProfileStore: nebflow.core.profile.PresentationProfileStore =
     nebflow.core.profile.PresentationProfileStore(PathUtil.dataRoot),
   /**
+   * 呈现档入口改造+围栏语义批（作者令 2026-10-30 20:13）：校准信号持久化
+   * （抱怨/换档/抽屉展开只追加环形缓冲）。同步构造默认实例 ⇒ 存量测试构造
+   * 零改动。auto 调整逻辑下批再接 calibrate 消费面。
+   */
+  profileCalibrationStore: nebflow.core.profile.ProfileCalibrationStore =
+    nebflow.core.profile.ProfileCalibrationStore(PathUtil.dataRoot),
+  /**
    * 认知二期产品批③④：打卡 done 历史（只增 JSONL）——周报生成器聚合数据源；
    * 打卡 UI 销账与 Schedule done 双写口。
    */

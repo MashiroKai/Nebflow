@@ -2430,6 +2430,27 @@ class WebSocketRoutes(
     fromUser: Boolean,
     device: Option[nebflow.bridge.ResolvedDevice] = None
   ): IO[Unit] =
+    // 校准信号采集（呈现档入口改造+围栏语义批，作者令 2026-10-30 20:13 ②）：
+    // 真人聊天文本命中「太长」类信号词表 ⇒ 落 complaint 信号（词表 =
+    // ProfileCalibrationSignal.classifyComplaint，纯函数）。采集独立先行且
+    // attempt 兜底——校准面绝不阻断用户消息主链；auto 调整逻辑下批再接
+    // ProfileCalibrator 消费面。
+    val complaintSignal =
+      if fromUser then
+        nebflow.core.profile.ProfileCalibrationSignal
+          .classifyComplaint(content)
+          .map(rule =>
+            nebflow.core.profile.ProfileCalibrationSignal.Signal(
+              ts = System.currentTimeMillis(),
+              kind = "complaint",
+              data = Map(
+                "rule" -> rule,
+                "detail" -> content.take(nebflow.core.profile.ProfileCalibrationSignal.DetailMaxChars)
+              )
+            )
+          )
+      else None
+    complaintSignal.fold(IO.unit)(s => sharedResources.profileCalibrationStore.record(s).attempt.void) *>
     logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
       sessionStore.appendUiMessages(
         sessionId,

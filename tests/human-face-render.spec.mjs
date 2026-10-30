@@ -134,9 +134,11 @@ async function boot(browser) {
     });
   });
   await installTicketMock(page);
+  const calFrames = []; // 校准信号帧捕获（recordCalibrationSignal，R2b 断言）
   await page.routeWebSocket(/\/ws/, (ws) => {
     ws.onMessage((raw) => {
       let m; try { m = JSON.parse(raw); } catch { return; }
+      if (m.type === 'recordCalibrationSignal') { calFrames.push(m); return; }
       if (m.type === 'getHistory') {
         return ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
       }
@@ -164,7 +166,7 @@ async function boot(browser) {
     document.documentElement.classList.remove('ui-init');
   });
   await sleep(500);
-  return { ctx, page, pageErrors, consoleErrors, termApi: () => termApiHits };
+  return { ctx, page, pageErrors, consoleErrors, termApi: () => termApiHits, calFrames };
 }
 
 async function openMdTab(page, absPath, content) {
@@ -186,7 +188,7 @@ const ok = (cond, label) => {
 
 const browser = await chromium.launch();
 try {
-  const { page, pageErrors, consoleErrors, termApi } = await boot(browser);
+  const { page, pageErrors, consoleErrors, termApi, calFrames } = await boot(browser);
   await openMdTab(page, MD_PATH, MD_CONTENT);
   const viewer = '.canvas-tab-pane.active .canvas-md-viewer';
 
@@ -238,6 +240,11 @@ try {
     return d && d.open && d.innerText.includes('机器面细节第一段') && d.innerText.includes('机器面细节第二段');
   }, viewer);
   ok(drawerOpen === true, 'R2 点开后 Findings 全文可见');
+  // R2b 校准信号面：抽屉展开即报 recordCalibrationSignal（profileSignals.js
+  // body 捕获监听；校准数据面只采集不判定）。
+  await sleep(200);
+  ok(calFrames.length >= 1 && calFrames.every((f) => f.kind === 'drawer-expanded'),
+    `R2b 抽屉展开上报校准信号（${calFrames.length} 帧，kind=drawer-expanded）`);
   const jsInDrawer = await page.evaluate((sel) => {
     const v = document.querySelector(sel);
     const ds = Array.from(v.querySelectorAll('.nf-human-details'));
@@ -359,6 +366,22 @@ try {
     return !el || el.style.display === 'none';
   });
   ok(tipHidden, 'R6 移开后气泡收起');
+
+  // ── R9 围栏语义定案（作者令 2026-10-30 20:13）：备考冲刺档 expand-findings
+  //    渲染豁免退役——围栏在时框外一律默认折叠，五档无差 ──
+  const sprintFold = await page.evaluate(async (md) => {
+    const ps = await import('/js/profileState.js');
+    ps.setCurrentProfile({ key: 'exam-sprint', foldDefault: 'expand-findings' });
+    const utils = await import('/js/utils.js');
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    host.innerHTML = utils.renderMarkdownWithMath(md);
+    const n = host.querySelectorAll('.nf-human-details').length;
+    ps.setCurrentProfile({ key: 'expert-minimal', foldDefault: 'anomaly-top' });
+    host.remove();
+    return n;
+  }, MD_CONTENT);
+  ok(sprintFold >= 2, `R9 备考冲刺档框外仍折叠（抽屉=${sprintFold}）——定案后无档豁免`);
 
   // ── R7 亮暗双主题 + 截图（聊天气泡宿主元素级取景，抽屉点开态） ──
   await page.evaluate(() => {

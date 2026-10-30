@@ -48,6 +48,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
     "getPresentationProfile" -> handleGetPresentationProfile,
     "setPresentationProfile" -> handleSetPresentationProfile,
     "setProfileParamOverride" -> handleSetProfileParamOverride,
+    "recordCalibrationSignal" -> handleRecordCalibrationSignal,
     "getTaskList" -> handleGetTaskList,
     "completeTask" -> handleCompleteTask,
     "listWorkspaceItems" -> handleListWorkspaceItems,
@@ -581,19 +582,34 @@ private[gateway] object WsTasksWorkspaceHandlers:
   ): IO[Unit] =
     import ctx.*
     val key = parsedJson(text).hcursor.downField("profile").as[String].getOrElse("")
-    sharedResources.presentationProfileStore.setCurrent(key).flatMap {
-      case Right(_) =>
-        sharedResources.presentationProfileStore.snapshotJson.flatMap { snap =>
-          wsSend(io.circe.Json.obj("type" -> "presentationProfileChanged".asJson, "profile" -> snap))
-        }
-      case Left(err) =>
-        wsSend(
-          io.circe.Json.obj(
-            "type" -> "error".asJson,
-            "msgType" -> "setPresentationProfile".asJson,
-            "message" -> err.asJson
+    // 校准信号采集（作者令 2026-10-30 20:13）：换档即落 profile-switch 信号
+    // （from → to）。onboarding 选档与设置面板次级入口同帧 rides 本路 ⇒ 一处
+    // 采集全覆盖；选档被拒（未知档）不落信号。
+    sharedResources.presentationProfileStore.currentProfile.map(_.key).flatMap { before =>
+      sharedResources.presentationProfileStore.setCurrent(key).flatMap {
+        case Right(_) =>
+          for
+            _ <- sharedResources.profileCalibrationStore
+              .record(
+                nebflow.core.profile.ProfileCalibrationSignal.Signal(
+                  ts = System.currentTimeMillis(),
+                  kind = "profile-switch",
+                  data = Map("from" -> before, "to" -> key)
+                )
+              )
+              .attempt
+            snap <- sharedResources.presentationProfileStore.snapshotJson
+            _ <- wsSend(io.circe.Json.obj("type" -> "presentationProfileChanged".asJson, "profile" -> snap))
+          yield ()
+        case Left(err) =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "error".asJson,
+              "msgType" -> "setPresentationProfile".asJson,
+              "message" -> err.asJson
+            )
           )
-        )
+      }
     }
   end handleSetPresentationProfile
 
@@ -627,6 +643,38 @@ private[gateway] object WsTasksWorkspaceHandlers:
         )
     }
   end handleSetProfileParamOverride
+
+  /**
+   * `recordCalibrationSignal {kind, data?}` — 前端行为信号直写入口（呈现档入口
+   * 改造+围栏语义批，作者令 2026-10-30 20:13 ②）：目前唯一前端信号 =
+   * ```human 框外抽屉被展开（drawer-expanded，profileSignals.js 捕获 toggle
+   * 发送）。kind 白名单 = ProfileCalibrationSignal.Kinds——complaint 类不接受
+   * 前端直写（抱怨判定权在引擎词表分类器，防前端伪造抱怨驱动校准）。
+   * 落账失败不炸面（attempt 吞掉，校准面绝不阻断交互）。
+   */
+  private def handleRecordCalibrationSignal(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val hc = parsedJson(text).hcursor
+    val kind = hc.downField("kind").as[String].getOrElse("").trim
+    val data = hc.downField("data").as[Map[String, String]].getOrElse(Map.empty)
+    if !nebflow.core.profile.ProfileCalibrationSignal.Kinds(kind) then IO.unit
+    else
+      sharedResources.profileCalibrationStore
+        .record(
+          nebflow.core.profile.ProfileCalibrationSignal.Signal(
+            ts = System.currentTimeMillis(),
+            kind = kind,
+            data = data.map { case (k, v) => (k.take(32), v.take(200)) }
+          )
+        )
+        .attempt
+        .void
+  end handleRecordCalibrationSignal
 
   private def handleGetTaskList(
     ctx: WsDispatchCtx,

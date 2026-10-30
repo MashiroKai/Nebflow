@@ -89,6 +89,9 @@ export function renderProfileSection() {
   }).join('');
 
   const calNote = t('profile.calibrationNote');
+  // 作者令 2026-10-30 20:13：选档主入口进新手引导；设置面板保留为次级入口
+  // （选档能力不撤，只明示主路径）。
+  const secondaryHint = t('profile.secondaryHint');
   return `<div class="settings-section" id="profile-section">
     <div class="settings-section-title">${t('profile.sectionTitle')}</div>
     <div class="settings-row">
@@ -96,6 +99,7 @@ export function renderProfileSection() {
       <select class="cfg-select" id="cfg-profile-select" style="width:auto">${options}</select>
     </div>
     <div class="cfg-hint" id="profile-desc">${t('profile.desc.' + cur)}</div>
+    <div class="cfg-hint">${secondaryHint}</div>
     <div class="settings-section-title" style="margin-top:10px">${t('profile.overridesTitle')}</div>
     ${overrideRows}
     <div class="cfg-hint">${calNote}</div>
