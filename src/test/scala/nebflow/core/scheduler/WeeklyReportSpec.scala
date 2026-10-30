@@ -12,8 +12,12 @@ import java.time.{Instant, ZoneId}
 
 /**
  * 认知二期产品批④周报生成器：纯函数（周界/聚合/markdown/SVG）+ 生成器
- * tick（marker 判重、catch-up、产物落盘、广播）。零超时设计：正确性全在
- * marker 状态表达，生成时刻不承载语义。
+ * tick（marker 判重、catch-up、产物落盘、广播、收件箱入账）。零超时设计：
+ * 正确性全在 marker 状态表达，生成时刻不承载语义。
+ *
+ * 收尾回填（§6.4 接合面，§9-12/§9-13 授权）：周报 Ready 从通知横幅回填为
+ * 待办收件箱浮出——tick 生成后 upsert kind=todo 条目（聚合节奏接每日 09:00
+ * todo digest 面，done 销账 = P2 闭合回路）。
  */
 class WeeklyReportSpec extends CatsEffectSuite:
 
@@ -163,6 +167,70 @@ class WeeklyReportSpec extends CatsEffectSuite:
     gen.tick(mondayAfter, zone).map { _ =>
       assert(!os.exists(tempRoot / "weekly-report-3" / "state.json"), "marker 未落")
     }
+  }
+
+  test("生成器：周报 Ready ⇒ 待办收件箱入账（§6.4 回填：横幅 → 收件箱浮出，聚合接 digest 面）") {
+    val ws = tempRoot / "ws-inbox"
+    os.makeDir.all(ws / "docs" / "attachments")
+    val taskStore = new ScheduledTaskStore(tempRoot / "scheduled-tasks-inbox")
+    val store = DoneRecordStore(tempRoot)
+    val broadcasted = Ref.unsafe[IO, List[Json]](Nil)
+    val gen = new WeeklyReportGenerator(
+      taskStore,
+      store,
+      IO.pure(Some(ws)),
+      j => broadcasted.update(_ :+ j),
+      (tempRoot / "weekly-report-inbox" / "state.json").toNIO,
+      activeSession = IO.pure("sess-weekly")
+    )
+    val weekKey = WeeklyReport.lastWeekBounds(mondayAfter, zone)._3
+    for
+      _ <- store.record(rec(mondayAfter.minus(java.time.Duration.ofDays(6))))
+      _ <- gen.tick(mondayAfter, zone)
+      todos <- taskStore.getAllTodos
+      _ = assertEquals(todos.length, 1)
+      t = todos.head
+      _ = assertEquals(t.sessionId, "sess-weekly")
+      _ = assertEquals(t.kind, Some(ScheduledTask.KindTodo), "kind=todo（待办面）")
+      _ = assertEquals(t.name, Some(s"weekly-report-$weekKey"), "name 稳定键带周键")
+      _ = assert(t.content.contains("打卡周报") && t.content.contains(weekKey), "content = 反悬念结论 + 周键（来源动作）")
+      _ = assert(t.content.contains("趋势"), "趋势结论在文案（P6 给结论不给悬念）")
+      reportPath = (ws / "reports" / "20261102_weekly-checkin" / "REPORT.md").toString
+      _ = assertEquals(t.referencePath, Some(reportPath), "referencePath 落报告现场")
+      _ = assert(t.content.contains(reportPath), "content 内嵌报告路径")
+      _ = assertEquals(t.triggerAt, ScheduledTask.nextTodoSurfaceAt(mondayAfter.toEpochMilli, zone),
+        "浮出节奏 = 聚合（下一 09:00 汇总，接 todo digest 面）")
+      _ = assert(t.enabled && !t.triggered && t.repeat.isEmpty, "待办语义：enabled/未触发/无 repeat")
+      // weeklyReportReady 广播保留（多窗同步 + 前端收件箱刷新信号）
+      frames <- broadcasted.get
+      _ = assertEquals(frames.length, 1)
+      _ = assertEquals(frames.head.hcursor.downField("type").as[String].toOption, Some("weeklyReportReady"))
+      // 幂等：抹掉 marker 再 tick（重启补跑面）⇒ 同名 upsert 收敛单份，不叠加
+      _ <- IO.blocking(os.remove(tempRoot / "weekly-report-inbox" / "state.json"))
+      _ <- gen.tick(mondayAfter.plus(java.time.Duration.ofDays(1)), zone)
+      todos2 <- taskStore.getAllTodos
+      _ = assertEquals(todos2.length, 1, "重复生成同名 upsert ⇒ 仍单份")
+    yield ()
+  }
+
+  test("生成器：无活跃会话 ⇒ 跳过收件箱入账（报告与广播不受影响）") {
+    val ws = tempRoot / "ws-nosess"
+    os.makeDir.all(ws / "docs" / "attachments")
+    val taskStore = new ScheduledTaskStore(tempRoot / "scheduled-tasks-nosess")
+    val gen = new WeeklyReportGenerator(
+      taskStore,
+      DoneRecordStore(tempRoot),
+      IO.pure(Some(ws)),
+      _ => IO.unit,
+      (tempRoot / "weekly-report-nosess" / "state.json").toNIO
+      // activeSession 缺省 = IO.pure("")（无活跃会话面）
+    )
+    for
+      _ <- gen.tick(mondayAfter, zone)
+      todos <- taskStore.getAllTodos
+      _ = assertEquals(todos.length, 0, "零待办入账")
+      _ = assertEquals(os.list(ws / "reports").length, 1, "报告照生成归档")
+    yield ()
   }
 
 end WeeklyReportSpec

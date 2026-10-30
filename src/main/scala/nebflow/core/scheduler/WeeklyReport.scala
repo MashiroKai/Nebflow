@@ -188,19 +188,22 @@ object WeeklyReport:
 end WeeklyReport
 
 /**
- * 生成器（状态 + 落盘 + 广播）。`tick` 每轮引擎调度循环调用一次，内部谓词
- * 早退（非周一后/已生成周 ⇒ 零写盘零广播）。
+ * 生成器（状态 + 落盘 + 广播 + 收件箱入账）。`tick` 每轮引擎调度循环调用一次，
+ * 内部谓词早退（非周一后/已生成周 ⇒ 零写盘零广播零入账）。
  *
  * @param resolveWorkspace 本机可写工作区解析（None = 跳过 + 日志，不静默写别处）
- * @param broadcast 周报就绪广播面（前端横幅 + 多窗同步）
+ * @param broadcast 周报就绪广播面（多窗同步 + 前端收件箱刷新信号）
  * @param stateFile marker 持久化位置（默认 dataRoot 内；spec 注临时路径）
+ * @param activeSession 收件箱入账会话解析（§6.4 回填）：空串 = 无活跃会话，
+ *   跳过入账（报告与广播不受影响）；默认 IO.pure("") 保存量 spec 构造零改动。
  */
 final class WeeklyReportGenerator(
   taskStore: ScheduledTaskStore,
   doneRecords: DoneRecordStore,
   resolveWorkspace: IO[Option[os.Path]],
   broadcast: Json => IO[Unit],
-  stateFile: JPath
+  stateFile: JPath,
+  activeSession: IO[String] = IO.pure("")
 ):
 
   private val logger = NebflowLogger.forName("nebflow.weekly-report")
@@ -264,8 +267,39 @@ final class WeeklyReportGenerator(
                   _ <- IO.blocking { os.write.over(reportDir / "REPORT.md", md) }
                   _ <- IO.blocking { os.write.over(ws / "docs" / "attachments" / heatmapName, WeeklyReport.renderHeatmapSvg(stats)) }
                   _ <- writeMarker(Marker(weekKey))
+                  reportPath = (reportDir / "REPORT.md").toString
+                  // §6.4 接合面回填（§9-12/§9-13 授权）：周报 Ready 从通知横幅改为
+                  // 待办收件箱浮出——upsert 一条 kind=todo 条目，走既有待办语义
+                  // （引擎持久 / 每日 09:00 汇总浮出接 digest 面 / done 销账 = P2
+                  // 闭合回路），零新机制。接合面两件：
+                  //   (a) 来源动作：content = 反悬念结论（P6 文案给结论不给悬念）+
+                  //       报告路径，referencePath 落报告现场（digest/面板可回得到）。
+                  //   (b) 可选档提示：条目浮出节奏 = 聚合（每日 09:00 汇总）——即档
+                  //       参数「提醒节奏=aggregate」的既有引擎语义落点；引擎侧尚无
+                  //       按档分频机制，不增设条目级提示字段（反增额）。
+                  // name 带周键：marker 判重之外再以状态表达收敛——重复 tick/重启
+                  // 补跑同名 upsert ⇒ 单份不叠加（§6.4「name 稳定 upsert」语义）。
+                  sid <- activeSession
+                  _ <-
+                    if sid.isEmpty then
+                      logger.info("Weekly report surfaced but no active session — inbox entry skipped (report archived)")
+                    else
+                      taskStore
+                        .upsertTaskByName(
+                          ScheduledTask.create(
+                            sessionId = sid,
+                            content =
+                              s"打卡周报 $weekKey 已生成：打卡 ${stats.doneCount}/${stats.plannedCount}，趋势${stats.trendArrow}" +
+                                s" — 周报：$reportPath（读后可打卡销账）",
+                            triggerAt = ScheduledTask.nextTodoSurfaceAt(instant.toEpochMilli, zone),
+                            referencePath = Some(reportPath),
+                            name = Some(s"weekly-report-$weekKey"),
+                            kind = Some(ScheduledTask.KindTodo)
+                          )
+                        )
+                        .void
                   summary = s"打卡周报 ${weekKey} 已生成：打卡 ${stats.doneCount}/${stats.plannedCount}，趋势${stats.trendArrow}（reports/weekly-checkin）"
-                  _ <- logger.info(s"Weekly report written: ${reportDir / "REPORT.md"}")
+                  _ <- logger.info(s"Weekly report written: $reportPath")
                   _ <- broadcast(
                     Json.obj(
                       "type" -> "weeklyReportReady".asJson,

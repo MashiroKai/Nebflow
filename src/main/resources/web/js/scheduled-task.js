@@ -661,10 +661,13 @@ onMessage('scheduledTaskToggled', (msg) => {
 });
 
 onMessage('weeklyReportReady', (msg) => {
-  // 认知二期产品批④周报生成器：引擎生成后横幅浮出（反悬念——文案 = 结论：
-  // 打卡数/趋势/落点，不抛「有 1 条新报告」）。
-  if (msg && msg.summary) {
-    addNotification('task', msg.summary, { dismissAfter: 0 });
+  // 认知二期收尾回填（设计稿 §6.4 接合面 + §9-12/§9-13 授权）：周报浮出面从
+  // 通知横幅改为待办收件箱浮出——引擎侧已 upsert kind=todo 条目（name=
+  // weekly-report-<weekKey>，聚合节奏接每日 09:00 todo digest 面，done 销账 =
+  // P2 闭合回路）。本帧保留为「就绪」同步信号：刷新收件箱列表（条目落打卡组
+  // 置顶 + 徽标 +1），横幅退役（P6：聚合一次浮出，不逐节点打扰）。
+  if (state.activeSessionId) {
+    sendWs({ type: 'listScheduledTasks', sessionId: state.activeSessionId });
   }
 });
 

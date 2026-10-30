@@ -1468,7 +1468,11 @@ object GatewayMain extends IOApp:
                                                 sharedResourcesWithBridge.doneRecordStore,
                                                 weeklyReportWorkspace,
                                                 wsHub.broadcast,
-                                                (PathUtil.dataRoot / "weekly-report" / "state.json").toNIO
+                                                (PathUtil.dataRoot / "weekly-report" / "state.json").toNIO,
+                                                // §6.4 回填：周报 Ready 收件箱入账到当前活跃会话
+                                                // （待办面会话归属与既有待办同语义；无活跃会话 ⇒
+                                                // 生成器记日志跳过入账，报告与广播不受影响）。
+                                                sessionStore.getActiveId
                                               )
                                               val scheduledTaskService = new ScheduledTaskService(
                                                 sharedResourcesWithBridge.dispatcher,
