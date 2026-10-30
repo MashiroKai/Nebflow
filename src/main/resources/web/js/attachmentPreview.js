@@ -46,10 +46,20 @@ const BLOB_ITEM_TYPES = new Set(['image', 'pdf', 'docx', 'xlsx', 'pptx', 'epub']
  *  （见 `.nebflow/reports/20260915_attbrowsersem-impl.md` 开放项 1）。 */
 const EXCLUDED_ITEM_TYPES = new Set(['html']);
 
-/** 打开路径的文本预览上限：与 gateway `pop.readFile` 的**打开闸**同值同源
+/** 打开路径的文本预览上限：与 gateway `pop.readFile` **文本腿**打开闸同值同源
  *  （禁第二把尺）。2026-09-20 作者令「canvas 的文件大小限制太小了……提高到
- *  100MB」⇒ 两端同批 10MB → 100MB（服务端常量 = `WebSocketRoutes.MaxPopReadFileBytes`）。 */
+ *  100MB」⇒ 两端同批 10MB → 100MB（服务端常量 = `TextStreamSearch.MaxPopReadFileBytes`）。
+ *  P2 批（设计件 §5.1）起本值只管**文本**腿；二进制查看腿的镜像 = 下方
+ *  `MAX_VIEWER_BYTES`（两门各归各位，一值两用的历史形态拆分）。 */
 const MAX_TEXT_BYTES = 100 * 1024 * 1024;
+
+/** 二进制查看腿（blob viewer：image/pdf/docx/xlsx/pptx/epub 经 `objectUrl` 渲）
+ *  的打开闸镜像 = 服务端 `AttachContract.MaxFileBytes`（1024 MB = 1 GiB =
+ *  1,073,741,824 B，单一数值权威面在 Scala 侧，本值禁改写为其它数）。
+ *  P2 批（阅读器体验设计件 §5.1）：PDF 等二进制件走 Range 流式自取自渲、零整件
+ *  堆读，闸与附件总闸对齐到 1 GiB；超限走既有可见降级（unsupported），
+ *  **不**做部分渲染。 */
+const MAX_VIEWER_BYTES = 1073741824; // = AttachContract.MaxFileBytes (1 GiB)
 
 /** 对话框内**直显**图片附件的字节上限（uifix 批 2026-09-17）。
  *
@@ -171,6 +181,9 @@ export async function previewBlob({ id, title, blob, fileName }) {
   }
 
   if (BLOB_ITEM_TYPES.has(itemType)) {
+    // P2 批打开闸拆分：二进制查看腿走 1 GiB 镜像闸（MAX_VIEWER_BYTES）；
+    // 超限 = 可见降级，同文本腿的超限语义（unsupported，不部分渲染）。
+    if (blob.size > MAX_VIEWER_BYTES) return 'unsupported';
     bindObjectUrlRevoke();
     const objectUrl = URL.createObjectURL(blob);
     objectUrls.set(id, objectUrl);
@@ -424,6 +437,11 @@ async function runProgressAttempt(paneEl, args) {
       return 'ok';
     }
     if (BLOB_ITEM_TYPES.has(effType)) {
+      // P2 批打开闸拆分：二进制查看腿走 1 GiB 镜像闸（同 previewBlob 腿判据）。
+      if (blob.size > MAX_VIEWER_BYTES) {
+        renderProgressNote(paneEl, t('messages.attachPreviewUnsupported', { name }));
+        return 'unsupported';
+      }
       // 重试/重挂腿：同 tab id 换新 objectURL 前先撤旧的（禁泄漏，同 closeTab 家族）。
       const prevUrl = objectUrls.get(args.id);
       if (prevUrl) {

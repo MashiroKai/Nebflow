@@ -599,9 +599,16 @@ private[gateway] object WsFileOpsHandlers:
           new RuntimeException("path is not a regular file")
         )
         fileSize = os.size(basePath)
-        _ <- IO.raiseWhen(fileSize > TextStreamSearch.MaxPopReadFileBytes)(
+        // P2 批（设计件 §5.1）打开闸拆分：二进制查看腿（nf-file 族）解除到
+        // 1 GiB = AttachContract.MaxFileBytes（[[TextStreamSearch.MaxViewerFileBytes]]）；
+        // 文本腿维持 100MB（[[TextStreamSearch.MaxPopReadFileBytes]]）——文本 content
+        // 会进 WS 帧/整件缓存，闸不可上移；二进制腿不读字节，解除无资源代价。
+        popExt = popFilePath.split('.').lastOption.getOrElse("").toLowerCase
+        popIsBinary = nebflow.core.workspace.FileTypeRegistry.detect(popExt).binary
+        popGateBytes = TextStreamSearch.popReadGateLimit(popIsBinary)
+        _ <- IO.raiseWhen(fileSize > popGateBytes)(
           new RuntimeException(
-            s"file exceeds ${TextStreamSearch.MaxPopReadFileBytes / (1024 * 1024)}MB limit"
+            s"file exceeds ${popGateBytes / (1024 * 1024)}MB limit"
           )
         )
         // 🔴 二进制腿不读字节（2026-09-20 打开闸批）：本 case 只回元数据，
@@ -609,8 +616,6 @@ private[gateway] object WsFileOpsHandlers:
         // `fs2.io.file.Files.readRange`，支持 Range）。改前这里对所有件
         // 无条件 `os.read` 再丢弃二进制的 content —— 闸提到 100MB 后那等于
         // 为一次 PDF 打开把 100MB 读进堆里再扔。
-        popExt = popFilePath.split('.').lastOption.getOrElse("").toLowerCase
-        popIsBinary = nebflow.core.workspace.FileTypeRegistry.detect(popExt).binary
         // 流式态（卡 §三.3）：> TextStream.ThresholdBytes 的文本件**不读字节** ——
         // 100MiB 整件读出 = 单帧 106.4M 字符 / 峰值 +1.07GB。改为回元数据 +
         // `stream` 描述符，字节由 `textWindow` 按需拉（一窗一取 = 流控本体）。
