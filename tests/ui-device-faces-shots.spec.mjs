@@ -96,9 +96,11 @@ async function boot(page, theme) {
         ws.send(JSON.stringify({ type: 'historyPage', sessionId: msg.sessionId, messages: [], hasMore: false, offset: 0 }));
       } else if (msg.type === 'wsBrowse.list') {
         if (msg.device === 'dev-studio') {
+          // 2026-10-30 三修①后 device 模式初始路径 = `~`——mock 对 `~` 与后续路径
+          // 一律回远端根列举夹具（['docs','assets','README.md']），下游点选不变。
           ws.send(JSON.stringify({
             type: 'wsBrowseList', path: msg.path === '~' ? '/' : msg.path,
-            entries: msg.path === '~' ? ['Volumes'] : ['docs', 'assets', 'README.md'], device: msg.device,
+            entries: ['docs', 'assets', 'README.md'], device: msg.device,
           }));
         } else {
           ws.send(JSON.stringify({ type: 'wsBrowseList', path: msg.path, home: '/Users/kai', entries: ['Projects', 'Documents', 'Downloads'] }));

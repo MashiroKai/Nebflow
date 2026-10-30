@@ -225,6 +225,10 @@ private[gateway] object WsTasksWorkspaceHandlers:
    * **只读面**：仅目录名（选目录模式语义）、无 mkdir 对应腿（G.13 目录须已存在）。
    * 不带 `home`（远端盘无本机 home 语义——前端面包屑自根展开 + 设备 chip 前缀）。
    * 任何失败 = 显式 error 帧（fail-closed，G.12：绝不静默落本机）。
+   *
+   * additive `resolvedPath`（2026-10-30 三修①）：对端解析后的**真实绝对路径**——
+   * 初始 `~` 由接收端展开为它对家目录（如 `C:\Users\name`），前端面包屑/上级行
+   * 以真实路径展开（老帧无该键 ⇒ 前端回退原 path，逐字节零回归）。
    */
   private def browseRemoteDirs(
     ctx: WsDispatchCtx,
@@ -233,13 +237,14 @@ private[gateway] object WsTasksWorkspaceHandlers:
     wsSend: io.circe.Json => IO[Unit]
   ): IO[Unit] =
     import ctx.*
-    def frame(entries: List[String], err: Option[String]): io.circe.Json =
+    def frame(entries: List[String], err: Option[String], resolved: Option[String] = None): io.circe.Json =
       val fields = scala.collection.mutable.ListBuffer[(String, io.circe.Json)](
         "type" -> io.circe.Json.fromString("wsBrowseList"),
         "path" -> io.circe.Json.fromString(raw),
         "entries" -> io.circe.Json.arr(entries.map(io.circe.Json.fromString)*),
         "device" -> io.circe.Json.fromString(device)
       )
+      resolved.foreach(r => fields += "resolvedPath" -> io.circe.Json.fromString(r))
       err.foreach(e => fields += "error" -> io.circe.Json.fromString(e))
       io.circe.Json.obj(fields.toList*)
     WsFileOpsHandlers
@@ -271,7 +276,10 @@ private[gateway] object WsTasksWorkspaceHandlers:
                       if isDir then name else None
                     }
                     .sorted
-                  wsSend(frame(names, None))
+                  // 对端解析后的真实绝对路径（其 handleList 响应体的 `path` 键）——
+                  // additive 透传，初始 `~` 的面包屑展开点（见本函数头注）。
+                  val resolved = json.hcursor.downField("path").as[String].toOption
+                  wsSend(frame(names, None, resolved))
               }
       }
       .handleErrorWith { e =>

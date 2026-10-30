@@ -251,8 +251,10 @@ function openProjectsCreateDialog(trigger) {
       '</div>' +
       // ── 存放设备行（ui-device-faces 批 · 设计稿 §1/开放题①）：描述 meter 之下、
       //    工作区路径之上——设备是路径的定语（先定设备，路径选择器才知道去哪台机器
-      //    浏览；G.13 校验序第一步也是设备解析）。缺省本机 ⇒ 提交帧不带 device 键 =
-      //    机制面缺省腿逐字节。数据源 = /api/neblink/status（self + peers，零新后端面）。──
+      //    浏览；G.13 校验序第一步也是设备解析）。缺省 self ⇒ 提交帧不带 device 键 =
+      //    机制面缺省腿逐字节。数据源 = /api/neblink/status（self + peers，零新后端面）。
+      //    设备平级设计语言（作者 2026-10-30 裁定「所有设备是平等的」）：本行无 self 特殊
+      //    文案/图标分级——self 显示名 = 花名册本名，详见 renderDeviceUI/openDeviceMenu。──
       `<label class="proj-create-label" for="${PROJECT_CREATE_DEV_ID}">${esc(t('project.deviceLabel'))}</label>` +
       '<div class="dev-row">' +
         `<button type="button" class="dev-btn" id="${PROJECT_CREATE_DEV_ID}" aria-haspopup="listbox" aria-expanded="false">` +
@@ -260,10 +262,12 @@ function openProjectsCreateDialog(trigger) {
           '<span class="dev-nm"></span>' +
           '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>' +
         '</button>' +
-        `<span class="dev-note">${esc(t('project.deviceNoteSelf'))}</span>` +
-        // 菜单挂在 .dev-row 内（position:absolute 锚定按钮下方；hidden 属性控显隐）。
+        // 菜单挂在 .dev-row 内（position:absolute 锚定按钮下方；hidden 属性控显隐，
+        // 渲染守卫 = projectPanel.css `.dev-menu[hidden]{display:none}`——缺它时空菜单
+        // 以「min-width:300px 玻璃细条」残留在按钮下方内容区（2026-10-30 作者报障②）。
         '<div class="dev-menu" hidden></div>' +
       '</div>' +
+      // 语义提示行（self/远端同一行位；文案按存放关系陈述、不点名「本机」——平级设计语言）。
       '<div class="dev-hintline" hidden></div>' +
       // ── D4 path slot (author 2026-09-24 D4: "use a path picker to choose, rather
       //    than relying on the user typing a path") ──
@@ -294,10 +298,9 @@ function openProjectsCreateDialog(trigger) {
   const submitEl = /** @type {HTMLElement} */ (overlay.querySelector('.wsp-pick'));
   const pickEl = /** @type {HTMLElement} */ (overlay.querySelector('.proj-create-pick'));
   const pathEl = /** @type {HTMLElement} */ (overlay.querySelector('.proj-create-path'));
-  // ── 存放设备行（面A）控件引用：pickedDevice = null ⇔ 本机（缺省）。逻辑主体
-  //    （renderDeviceUI/菜单/选中）在 renderPath 定义之后装配（见下方同标注段）。──
+  // ── 存放设备行（面A）控件引用：pickedDevice = null ⇔ self（缺省，提交帧零 device 键）。
+  //    逻辑主体（renderDeviceUI/菜单/选中）在 renderPath 定义之后装配（见下方同标注段）。──
   const devBtn = /** @type {HTMLElement} */ (overlay.querySelector('.dev-btn'));
-  const devNote = /** @type {HTMLElement} */ (overlay.querySelector('.dev-note'));
   const devMenu = /** @type {HTMLElement} */ (overlay.querySelector('.dev-menu'));
   const devHint = /** @type {HTMLElement} */ (overlay.querySelector('.dev-hintline'));
   const wsLabel = /** @type {HTMLElement} */ (overlay.querySelector(`label[for="${PROJECT_CREATE_WS_ID}"]`));
@@ -323,8 +326,8 @@ function openProjectsCreateDialog(trigger) {
   /** 面A A6（远端失败）：错误行升级为「中性正文 + 错误码尾注 + 行内动作链接」。
    *  动作映射（设计稿 §1.3，机制面四码）：重试恒发（幂等，G.13 重试安全）；
    *  REMOTE_SCAFFOLD_FAILED → [换一台设备…]（重开设备菜单）；DEVICE_OFFLINE /
-   *  DEVICE_ROUTE_UNAVAILABLE → [换成本机]（回缺省腿重发）；REMOTE_DIR_UNVERIFIED
-   *  → 仅 [重试]（A4 只读浏览器是长期解）。本机失败（device=null）保持既有形态零变化。 */
+   *  DEVICE_ROUTE_UNAVAILABLE → [改用这台设备]（回缺省腿重发）；REMOTE_DIR_UNVERIFIED
+   *  → 仅 [重试]（A4 只读浏览器是长期解）。self 失败（device=null）保持既有形态零变化。 */
   const showErrorResult = (msg, device) => {
     if (!device) { showError(msg); return; }
     const m = /\(([A-Z][A-Z0-9_]+)\)\s*$/.exec(msg);
@@ -371,7 +374,7 @@ function openProjectsCreateDialog(trigger) {
     // 面A A3：远端模式路径回显前缀设备 chip（.path-chip，材质 = .project-empty-tag 族）。
     if (pickedDevice) {
       pathEl.innerHTML =
-        `<span class="path-chip">${DEV_ICON_REMOTE}${esc(pickedDevice.name)}</span>`;
+        `<span class="path-chip">${DEV_ICON_DEVICE}${esc(pickedDevice.name)}</span>`;
       pathEl.appendChild(document.createTextNode(pickedPath || t('project.createWorkspaceNone')));
     } else {
       pathEl.textContent = pickedPath || t('project.createWorkspaceNone');
@@ -379,17 +382,24 @@ function openProjectsCreateDialog(trigger) {
     pathEl.dataset.picked = pickedPath ? '1' : '0';
   };
 
-  // ── 存放设备行（面A · ui-device-faces 批 2026-10-10）逻辑装配 ────────────────
-  // pickedDevice = null ⇔ 本机（缺省，提交帧零 device 键 = 机制面缺省腿逐字节）；
+  // ── 存放设备行（面A · ui-device-faces 批 2026-10-10；设备平级设计语言 2026-10-30）──
+  // pickedDevice = null ⇔ self（缺省，提交帧零 device 键 = 机制面缺省腿逐字节）；
   // {id, name} ⇔ 远端（提交帧 additive device=<deviceId>；路径选择改走应用内浏览器
   // 的 device 腿——原生对话框只能看本机盘）。本段落在 renderPath 之后（TDZ 安全）。
+  /** 设备平级（作者 2026-10-30 裁定「所有设备是平等的」，上升为设计语言）：
+   *  · 选择器按钮单一图标形、无本机/远端分级 class 与着色；
+   *  · 下拉行 = 名称 + 在线点 + 勾选，self 与 peers 同一视觉权重（self 显示名 =
+   *    花名册本名，不再本地化为「本机（这台 Mac）」）；
+   *  · 连接方式（direct/relay）弱化为行 title tooltip，不与设备名抢视觉；
+   *  · isSelf 标记只服务提交线（self ⇒ 零 device 键），不参与任何视觉分级。 */
   /** @type {null | {id: string, name: string}} */
   let pickedDevice = null;
+  /** 花名册 self 读数缓存（按钮缺省显示名；花名册未拉到时回退 locale 键）。 */
+  /** @type {null | {id: string, name: string}} */
+  let selfRow = null;
   let deviceMenuOpen = false;
-  /** 设备图标（设计稿 A1/A3 两形：本机 = monitor、远端 = hard-drive + sapphire 着色）。 */
-  const DEV_ICON_SELF =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>';
-  const DEV_ICON_REMOTE =
+  /** 设备图标（平级设计语言：self/远端同一 hard-drive 形，无 monitor 特殊形）。 */
+  const DEV_ICON_DEVICE =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/></svg>';
   const DEV_ICON_INFO =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="16" y2="12"/><line x1="12" x2="12.01" y1="8" y2="8"/></svg>';
@@ -399,34 +409,35 @@ function openProjectsCreateDialog(trigger) {
   /** 设备行总渲染（btn 形 / label 变体 / pick 钮变体 / 语义提示行 / 路径回显）。 */
   const renderDeviceUI = () => {
     const remote = !!pickedDevice;
-    devBtn.classList.toggle('is-remote', remote);
     const ic = devBtn.querySelector('.dev-ic');
-    if (ic) ic.innerHTML = remote ? DEV_ICON_REMOTE : DEV_ICON_SELF;
+    if (ic) ic.innerHTML = DEV_ICON_DEVICE;
     const nm = devBtn.querySelector('.dev-nm');
-    if (nm) nm.textContent = remote ? pickedDevice.name : t('project.deviceSelf');
+    if (nm) nm.textContent = remote ? pickedDevice.name : (selfRow?.name || t('project.deviceSelf'));
     devBtn.setAttribute('aria-expanded', String(deviceMenuOpen));
-    devNote.hidden = remote || deviceMenuOpen;
-    devNote.textContent = t('project.deviceNoteSelf');
     wsLabel.textContent = remote
       ? t('project.createWorkspaceLabelRemote', { device: pickedDevice.name })
       : t('project.createWorkspaceLabel');
     pickEl.textContent = remote
       ? t('project.createWorkspacePickRemote', { device: pickedDevice.name })
       : t('project.createWorkspacePick');
-    devHint.hidden = !remote;
-    if (remote) {
-      devHint.innerHTML = DEV_ICON_INFO;
-      devHint.appendChild(document.createTextNode(t('project.createDeviceHintline', { device: pickedDevice.name })));
-    } else {
-      devHint.innerHTML = '';
-    }
+    // 语义提示行：self/远端同一行位（菜单展开时让位）。文案按存放关系陈述、
+    // 不点名「本机」——远端多一句「仅登记指针」的事实说明（平级设计语言 2026-10-30）。
+    devHint.hidden = deviceMenuOpen;
+    devHint.innerHTML = DEV_ICON_INFO;
+    devHint.appendChild(document.createTextNode(
+      remote
+        ? t('project.createDeviceHintline', { device: pickedDevice.name })
+        : t('project.createDeviceHintlineSelf', { device: selfRow?.name || t('project.deviceSelf') })
+    ));
     renderPath();
   };
 
   /** 选中一台设备。🔴 路径是设备定语：换设备 = 清空已选路径（旧路径属于另一台
-   *  机器的盘，不跨设备复用——回显随之复位，由 renderDeviceUI → renderPath 承担）。 */
+   *  机器的盘，不跨设备复用——回显随之复位，由 renderDeviceUI → renderPath 承担）。
+   *  isSelf 行 ⇒ pickedDevice = null（提交帧零 device 键 = 机制面缺省腿；纯提交线
+   *  优化，视觉无任何 self 分级——平级设计语言）。 */
   const selectDevice = (row) => {
-    pickedDevice = row && !row.self ? { id: row.id, name: row.name } : null;
+    pickedDevice = row && !row.isSelf ? { id: row.id, name: row.name } : null;
     pickedPath = null;
     closeDeviceMenu();
     renderDeviceUI();
@@ -440,10 +451,10 @@ function openProjectsCreateDialog(trigger) {
     renderDeviceUI();
   };
 
-  /** 设备菜单（设计稿 A2）：self 恒在首项 + peers（/api/neblink/status）。行语言 =
-   *  .header-dropdown-menu 既有件（圆点行 + 选中勾）。在线绿点（--color-primary）；
-   *  离线行禁选（灰点 + 「离线」tag + 减淡，disabled 钮）——不给"点了必失败"的按钮；
-   *  竞态兜底 = 后端 DEVICE_OFFLINE fail-closed。 */
+  /** 设备菜单（设计稿 A2 + 平级设计语言 2026-10-30）：self + peers（/api/neblink/status），
+   *  同一行语言 = 名称 + 在线点（--color-primary）+ 选中勾；连接方式（direct/relay）只进
+   *  行 title tooltip。在线绿点；离线行禁选（灰点 + 「离线」tag + 减淡，disabled 钮）——
+   *  不给"点了必失败"的按钮；竞态兜底 = 后端 DEVICE_OFFLINE fail-closed。 */
   const openDeviceMenu = () => {
     deviceMenuOpen = true;
     devMenu.hidden = false;
@@ -453,23 +464,25 @@ function openProjectsCreateDialog(trigger) {
       .then((roster) => {
         if (!deviceMenuOpen) return;
         devMenu.innerHTML = '';
+        // self 与 peers 同一视觉权重：self 显示名 = 花名册本名（平级设计语言——
+        // 不再有本地化「本机（这台 Mac）」特殊行）；isSelf 只服务提交线 device 键语义。
+        if (roster.self) selfRow = { id: roster.self.id, name: roster.self.name };
         const rows = [
-          // self 行显示名恒为本地化「本机（这台 Mac）」（花名册的自身设备名在此是
-          // 噪声——菜单语境 = 「把项目放哪」，首项永远指当前这台机器）。
-          { self: true, id: roster.self?.id || 'self', name: t('project.deviceSelf'), online: true, direct: true },
-          ...roster.peers.map((p) => ({ self: false, id: p.id, name: p.name, online: p.online, direct: p.direct })),
+          { isSelf: true, id: roster.self?.id || 'self', name: roster.self?.name || t('project.deviceSelf'), online: true, direct: true },
+          ...roster.peers.map((p) => ({ isSelf: false, id: p.id, name: p.name, online: p.online, direct: p.direct })),
         ];
         const currentId = pickedDevice?.id || null;
         for (const row of rows) {
-          const selected = row.self ? !currentId : currentId === row.id;
+          const selected = row.isSelf ? !currentId : currentId === row.id;
           const item = document.createElement('button');
           item.type = 'button';
           item.className = 'dev-item' + (selected ? ' active' : '') + (row.online ? '' : ' disabled');
           if (!row.online) item.disabled = true;
+          // 连接方式弱化：不进行间标签，只作次级说明（tooltip）——不与设备名抢视觉。
+          item.title = row.direct ? 'direct' : 'relay';
           item.innerHTML =
             `<span class="dot${row.online ? '' : ' off'}"></span>` +
-            `<span class="nm">${esc(row.name)}</span>` +
-            `<span class="sub">${row.self ? 'self' : (row.direct ? 'direct' : 'relay')}</span>`;
+            `<span class="nm">${esc(row.name)}</span>`;
           if (selected) item.innerHTML += DEV_ICON_CHECK;
           else if (!row.online) item.innerHTML += `<span class="off-tag">${esc(t('project.deviceOfflineTag'))}</span>`;
           if (row.online) item.addEventListener('click', (e) => { e.stopPropagation(); selectDevice(row); });
@@ -481,7 +494,7 @@ function openProjectsCreateDialog(trigger) {
         devMenu.appendChild(foot);
       })
       .catch(() => {
-        // 花名册不可得 = 回落本机单选（现状形态），不弹错误（可继续本机创建）。
+        // 花名册不可得 = 回落 self 单选（现状形态），不弹错误（可继续 self 创建）。
         if (!deviceMenuOpen) return;
         devMenu.innerHTML = '';
         selectDevice(null);
@@ -531,7 +544,11 @@ function openProjectsCreateDialog(trigger) {
           openPicker({
             device: pickedDevice.id,
             deviceName: pickedDevice.name,
-            startPath: pickedPath || '/',
+            // 初始路径 = 对端家目录：`~` 由**接收端**展开为它自己的 user.home（通道
+            // 能力内的合法起点）。🔴 勿用 `/`——POSIX 根在 Windows 对端会被
+            // normalizeSeparators 折成 `\`，parse 失败 = 开箱「Invalid path: \」
+            // （2026-10-30 作者报障①根因）。picking again reopens at the last pick.
+            startPath: pickedPath || '~',
             onPick: (p) => {
               pickedPath = p;
               renderPath();
@@ -659,6 +676,7 @@ function openProjectsCreateDialog(trigger) {
   // devOutsideClose（面A）：层关闭时随层摘除（见 closeProjectsCreateDialog）。
   createDialogCtx = { overlay, escHandler, trigger, devOutsideClose };
   renderCount();
+  renderDeviceUI(); // 首开即渲染设备行（原实现首开空白、首次点击才填充——平级设计语言顺带补齐）
   renderPath();
   descEl.focus(); // 打开即聚焦描述文本域
 }
