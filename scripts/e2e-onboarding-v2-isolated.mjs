@@ -289,7 +289,7 @@ const SCRIPT = [
   { id: 'temper1', label: '语气基线', scope: 'soul', kind: 'choice' },
   { id: 'temper2', label: '做事方式', scope: 'soul', kind: 'choice' },
   { id: 'identity', label: '日常身份', scope: 'user', kind: 'choice' },
-  { id: 'focus', label: '当前关注', scope: 'user', kind: 'free' },
+  { id: 'presentation', label: '呈现风格', scope: 'base', kind: 'choice' },
 ];
 
 function answerFrame(id, label, scope, kind, value, values) {
@@ -336,14 +336,12 @@ try {
   // ── B. Questionnaire walk (per-question upsert) ────────────────────────
   const NAME = process.env.E2E_AGENT_NAME || '小满';
   const CALL = process.env.E2E_USER_CALL || '阿凯';
-  const FOCUS = '把这批真系统改造落地，别在细节上走样。';
   const answers = {};
   for (const q of SCRIPT) {
     if (q.id === 'model') continue; // the model question is answered through the config store (D below)
     let a;
     if (q.id === 'name') a = answerFrame(q.id, q.label, q.scope, 'free', NAME);
     else if (q.id === 'call') a = answerFrame(q.id, q.label, q.scope, 'free', CALL);
-    else if (q.id === 'focus') a = answerFrame(q.id, q.label, q.scope, 'free', FOCUS);
     else if (q.kind === 'multi') a = answerFrame(q.id, q.label, q.scope, 'multi', '', ['先问再做', '别替我拍板']);
     else a = answerFrame(q.id, q.label, q.scope, 'choice', `${q.label}的选项A`);
     answers[q.id] = a;
@@ -368,7 +366,6 @@ try {
   check('B User.md carries the user-call answer', user.includes(CALL), CALL);
   check('B Soul.md carries the free-form quote under 你说过的原话',
     soul.includes('## 你说过的原话') && soul.includes(NAME), 'name quote');
-  check('B User.md carries the free-form focus quote verbatim', user.includes(FOCUS), FOCUS);
   check('B name written to displayName (mechanism dir unchanged)',
     fin.agentName === NAME, `agentName=${fin.agentName}`);
   const agentJson = JSON.parse(readFileSync(join(HOME, 'agents', 'Nebula', 'agent.json'), 'utf8'));
@@ -447,7 +444,7 @@ try {
   for (const sec of ['## 自我认知', '## 相处之道', '## 你说过的原话', '## 成长约定']) {
     check(`C all-skipped: Soul.md keeps ${sec}`, soul2.includes(sec), sec);
   }
-  for (const sec of ['## 称呼与身份', '## 当前关注', '## 你说过的原话', '## 记录规则']) {
+  for (const sec of ['## 称呼与身份', '## 你说过的原话', '## 记录规则']) {
     check(`C all-skipped: User.md keeps ${sec}`, user2.includes(sec), sec);
   }
   check('C all-skipped: per-field placeholders, no empty holes',
@@ -732,6 +729,33 @@ try {
       probeUnknown.error.includes('no-such-model'),
     `ok=${probeUnknown.ok} error=${probeUnknown.error} provider=${probeUnknown.provider}`);
 
+  // ── H. 校准信号落盘（呈现档入口改造+围栏语义批，作者令 2026-10-30 20:13 ②）──
+  // 换档帧（onboarding 选档与设置面板次级入口同路）⇒ 引擎侧落 profile-switch
+  // 信号到 <HOME>/profile-calibration.json。只钉采集面：信号存在且 from→to 正确。
+  const profChanged = await ask(conn, { type: 'setPresentationProfile', profile: 'deep-work' },
+    'presentationProfileChanged', 8000);
+  check('H setPresentationProfile roundtrips the snapshot frame',
+    profChanged && profChanged.profile && profChanged.profile.current === 'deep-work',
+    `current=${profChanged && profChanged.profile && profChanged.profile.current}`);
+  const calFile = join(HOME, 'profile-calibration.json');
+  let calSignals = [];
+  try {
+    calSignals = JSON.parse(readFileSync(calFile, 'utf8')).signals || [];
+  } catch { /* 文件未写出 = 下方断言失败并给出路径 */ }
+  const switches = calSignals.filter((s) => s.kind === 'profile-switch');
+  check('H 换档落 profile-switch 校准信号（含 from→to）',
+    switches.length >= 1 && switches[switches.length - 1].data &&
+      switches[switches.length - 1].data.to === 'deep-work',
+    `file=${calFile} signals=${calSignals.length}`);
+  // 未知档被拒且不落信号。
+  const sigBeforeBad = calSignals.length;
+  await ask(conn, { type: 'setPresentationProfile', profile: 'nope' }, 'error', 8000)
+    .catch(() => ({}));
+  let calSignalsAfter = calSignals;
+  try { calSignalsAfter = JSON.parse(readFileSync(calFile, 'utf8')).signals || []; } catch { /* keep */ }
+  check('H 未知档被拒且不落校准信号', calSignalsAfter.length === sigBeforeBad,
+    `before=${sigBeforeBad} after=${calSignalsAfter.length}`);
+
   // ── D4. The FRONT END actually sends the window ────────────────────────
   // The frame contract above proves the engine honours `contextWindow`; this
   // proves the model question is wired to send it (the author's item ② asks for
@@ -769,6 +793,14 @@ try {
     check('D4 front end offers a retry for a refused terminal step',
       src.includes('data-retry-finish') && src.includes('ob2.finish.retry'),
       'retry control');
+    // 呈现风格题（作者令 2026-10-30 20:13）：五档选项带 profile 键映射，选定
+    // 即发 setPresentationProfile 主路；设置面板选档器降级次级入口。
+    check('D4 呈现风格题：五档选项映射 profile 键',
+      src.includes("id: 'presentation'") && /profile: 'exam-sprint'/.test(src) && /profile: 'expert-minimal'/.test(src),
+      'presentation question + five profile keys');
+    check('D4 呈现风格题：选定即发 setPresentationProfile',
+      /applyPresentationProfile\(o\.profile\)/.test(src) && /type: 'setPresentationProfile'/.test(src),
+      'applyPresentationProfile on pick');
   } else {
     check('D4 front-end source check', false, `E2E_ONBOARDING_JS not set or missing: ${jsPath}`);
   }

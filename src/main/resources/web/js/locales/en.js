@@ -1005,6 +1005,19 @@ export default {
   'ob2.opt.id.other': 'Other',
   'ob2.fh.identity': 'e.g. code by day, podcast by night',
   'ob2.label.identity': 'Day-to-day role',
+  // Presentation profile tiers (author order 2026-10-30 20:13: tier picking is a
+  // main-path onboarding step; tier names reuse profile.name.*, see descs below;
+  // skippable — default tier is expert-minimal).
+  'ob2.lead.presentation1': 'Last one — how I show you results.',
+  'ob2.lead.presentation2': 'The five tiers differ in length, folding and reminder cadence. Unsure? Start with "Expert minimal" — you can switch anytime with one sentence.',
+  'ob2.q.presentation': 'How do you like to read results day to day?',
+  'ob2.opt.profile.adhd': 'One thing at a time, denser visual anchors — for distractible days.',
+  'ob2.opt.profile.deep': 'Zero interruptions, batched windows — for long focus sessions.',
+  'ob2.opt.profile.quick': 'Fastest skim, conclusion cards only.',
+  'ob2.opt.profile.expert': 'Fewest words, anomalies only — the pro default.',
+  'ob2.opt.profile.exam': 'Learner mode, teaching allowed — for exam sprints.',
+  'ob2.fh.presentation': 'e.g. shortest conclusion first; I\'ll open details myself',
+  'ob2.label.presentation': 'Presentation style',
   // (ob2.lead.focus / ob2.q.focus / ob2.ph.focus / ob2.label.focus removed whole —
   //  author 2026-10-05: drop the "one thing you most want to solve" question.)
   'ob2.echo.skip': '(skipping this one for now)',
@@ -1557,6 +1570,9 @@ export default {
   'profile.overridden': 'overridden',
   'profile.reset': 'Reset',
   'profile.calibrationNote': 'Switching takes effect immediately; tell us your preference (e.g. "shorter", "don\'t nag me") and we adjust.',
+  // Author order 2026-10-30 20:13: tier picking is a main-path onboarding step;
+  // this settings picker stays as a secondary entry.
+  'profile.secondaryHint': 'Primary path: onboarding (rerun anytime via /onboarding); this picker is the secondary entry — switch anytime.',
   'profile.name.adhd-friendly': 'ADHD Friendly',
   'profile.name.deep-work': 'Deep Work',
   'profile.name.quick-browse': 'Quick Browse',

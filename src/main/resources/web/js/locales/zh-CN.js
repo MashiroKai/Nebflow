@@ -966,6 +966,18 @@ export default {
   'ob2.opt.id.other': '其他',
   'ob2.fh.identity': '比如：白天写代码，晚上做播客',
   'ob2.label.identity': '日常身份',
+  // 呈现风格五档（作者令 2026-10-30 20:13：选档主入口进引导；档名复用
+  // profile.name.*，差异描述见下；可跳过走默认档=专家极简）。
+  'ob2.lead.presentation1': '最后一题，关于我怎么把结果呈现给你。',
+  'ob2.lead.presentation2': '五档的差异在篇幅、折叠和提醒节奏。拿不准就选「专家极简」——之后随时一句话换档。',
+  'ob2.q.presentation': '平时结果怎么看最顺手？',
+  'ob2.opt.profile.adhd': '一次一件事，视觉锚点加密——容易分心时靠它。',
+  'ob2.opt.profile.deep': '零打扰、窗口聚合——长时间专注时靠它。',
+  'ob2.opt.profile.quick': '最快扫视，只留结论卡。',
+  'ob2.opt.profile.expert': '最少字，只报异常——熟手默认。',
+  'ob2.opt.profile.exam': '学习者身份，允许引导层——备考冲刺用。',
+  'ob2.fh.presentation': '比如：给我最短结论，细节我自己点开看',
+  'ob2.label.presentation': '呈现风格',
   // （ob2.lead.focus / ob2.q.focus / ob2.ph.focus / ob2.label.focus 四键已整键删除——
   //   作者 2026-10-05：「最近半年，你最想解决的一件事是什么？不要这个问题。」）
   // 作答回执 / 承接句
@@ -1496,6 +1508,8 @@ export default {
   'profile.overridden': '已覆盖',
   'profile.reset': '复位',
   'profile.calibrationNote': '换档即时生效；对呈现有想法直接说（如「太长」「别烦我」），按你的偏好调整。',
+  // 作者令 2026-10-30 20:13：选档主入口进新手引导，设置面板选档器保留但降级为次级入口。
+  'profile.secondaryHint': '主入口：新手引导（/onboarding 可随时重跑）；此处为次级调整入口，随时可换档。',
   'profile.name.adhd-friendly': 'ADHD 友好',
   'profile.name.deep-work': '深度工作',
   'profile.name.quick-browse': '快速浏览',

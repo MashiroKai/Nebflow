@@ -227,7 +227,9 @@ try {
   ok(captures.setProfile.length === 1 && captures.setProfile[0].profile === 'exam-sprint',
     'R4c 切档发 setPresentationProfile 帧');
 
-  // 引擎回执 ⇒ 渲染面即时生效（备考冲刺档 = Findings 默认展开，无抽屉）
+  // 引擎回执 ⇒ 渲染面即时生效。围栏语义定案（作者令 2026-10-30 20:13）：
+  // 围栏在时框外一律默认折叠（可展开），五档无渲染豁免——备考冲刺档
+  // foldDefault=expand-findings 的框外不折豁免退役。
   push({ type: 'presentationProfileChanged', profile: { current: 'exam-sprint', profiles: PROFILE_DEFS, overrides: {} } });
   await sleep(200);
   const examRender = await page.evaluate(async (md) => {
@@ -240,8 +242,8 @@ try {
       details: host.querySelectorAll('.nf-human-details').length,
     };
   }, FENCE_MD);
-  ok(examRender.cards === 1 && examRender.details === 0,
-    `R4d 备考冲刺档 Findings 默认展开（卡=${examRender.cards} 抽屉=${examRender.details}）`);
+  ok(examRender.cards === 1 && examRender.details === 1,
+    `R4d 备考冲刺档框外也折叠（卡=${examRender.cards} 抽屉=${examRender.details}）——围栏语义定案，无档豁免`);
 
   push({ type: 'presentationProfileChanged', profile: { current: 'expert-minimal', profiles: PROFILE_DEFS, overrides: {} } });
   await sleep(200);
