@@ -1,0 +1,534 @@
+#!/usr/bin/env python3
+# stand-profile — 维度画像库检索/校准 CLI（stand 仓 tools/）
+#
+# 用途：画像库（~/.stand/profile-db/）的读取与校准入口——查「他是谁/要我怎样」先本工具，
+#       查「当时怎么定的」再 stand-recall（两库序查红线 A1-11，D-003）。
+#
+# 设计锚：Stand 仓 docs/design/20261030_memory-dimension-profiles.zh-CN.md §7 一期 +
+#         附录 C（张安齐借鉴吸收三件套，2026-10-30 作者批随行）：
+#   - 置信纪律：只升不降不隐，降级走 _archive/ 尸档（decide 对降置信写入直接拒）。
+#   - 证据四值证书：verified/supported/contradicted/insufficient；推断封顶 supported
+#     （source=inferred 时 certificate=verified 被拒不入库）；judge 协议：裁定必须带 quote。
+#   - 号分配器：tl_next 模式（dllm tools/tl_next.py 同款）——flock 内「重读 → 正则 max+1
+#     → 写占位行」，病史（stale-tail 撞号/双会话同号）用锁+重读根治。
+#
+# 与 stand-recall 互补（设计稿 §2.2 原判）：检索库=事件考古，画像库=当前综合；
+# 证据指针（session+ts / memory-archive 路径 / D 号）留在维度文件里可双向回溯。
+#
+# 用法：
+#   stand-profile get kai.K3                    # 单维全量（frontmatter+正文）
+#   stand-profile get kai.K3 --field base_color # 单字段原始值（代码层判定用）
+#   stand-profile list [--ns kai|agent-requirements]
+#   stand-profile match A1-01                   # 反查：哪些维度带此码/值
+#   stand-profile match key=值                   # 限定字段名（子串）再匹配值
+#   stand-profile evidence kai.K3.base_color    # 证据链 → stand-recall/memory-archive/D 号
+#   stand-profile calibrate [--ns kai]          # 待裁定观测批一览（推断校准路入口）
+#   stand-profile decide --dim kai.K3 --field base_color --value green \
+#       --source explicit --confidence high --quote "原文quote" --note "一句话"
+#                                               # 裁定入库：分配 D 号+改写维度值（带全套闸）
+#   stand-profile check                         # 四件套/证书/码域/INDEX 登记自检（退出码1=有问题）
+#
+# 数据根解析顺序（同 stand-recall）：--data-root 旗标 > STAND_DATA_ROOT env > ~/.stand。
+#
+# 零第三方依赖：Python3 标准库（argparse/re/fcntl/json/pathlib/datetime）。
+
+import argparse
+import fcntl
+import json
+import os
+import re
+import sys
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+
+CERTIFICATES = ("verified", "supported", "contradicted", "insufficient")
+SOURCES = ("explicit", "inferred")
+CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
+FOUR_PIECE_TOP = ("dim", "name", "updated_at", "encoding", "update_mechanism", "fields")
+FOUR_PIECE_FIELD = ("value", "certificate", "confidence", "source", "evidence")
+
+OBS_RE = re.compile(
+    r"^- (\d{4}-\d{2}-\d{2}) \[(verified|supported|contradicted|insufficient)\] "
+    r"(.+?)\s*—\s*quote:「(.+?)」\s*ptr:(.+?)\s*$"
+)
+DLINE_RE = re.compile(r"^D-(\d+) \|", re.MULTILINE)
+CODES_ROW_RE = re.compile(r"^\| ([\w.\*]+) \| (.+?) \|", re.MULTILINE)
+QUOTE_MAX = 80
+
+
+# ── 基础设施 ──────────────────────────────────────────────────────────────────
+
+def data_root(args):
+    return Path(args.data_root or os.environ.get("STAND_DATA_ROOT") or os.path.expanduser("~/.stand"))
+
+
+def db_root(args):
+    return data_root(args) / "profile-db"
+
+
+def dim_files(args):
+    root = db_root(args)
+    out = []
+    for ns in sorted(root.iterdir()) if root.is_dir() else []:
+        if ns.is_dir() and not ns.name.startswith("_"):
+            for f in sorted(ns.glob("*.md")):
+                out.append(f)
+    return out
+
+
+def parse_scalar(s):
+    s = s.strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'":
+        return s[1:-1]
+    return s
+
+
+def dump_scalar(v):
+    v = str(v)
+    if v == "" or re.search(r"[:#\[\]{}&*!|>'\"%@`,]|^[-?]", v) or v != v.strip() or ": " in v:
+        return '"' + v.replace('"', '\\"') + '"'
+    return v
+
+
+def parse_frontmatter(text):
+    """frontmatter 子集解析：顶层标量 + 二级映射（fields → field → 属性）。"""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None, text
+    try:
+        end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+    except StopIteration:
+        return None, text
+    fm, stack = {}, []
+    for raw in lines[1:end]:
+        if not raw.strip():
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        key, _, val = raw.strip().partition(":")
+        if indent == 0:
+            if val.strip():
+                fm[key] = parse_scalar(val)
+                stack = []
+            else:
+                fm[key] = {}
+                stack = [key]
+        elif indent == 2 and stack:
+            parent = stack[0]
+            if val.strip():
+                fm[parent][key] = parse_scalar(val)
+                stack = [parent]
+            else:
+                fm[parent][key] = {}
+                stack = [parent, key]
+        elif indent == 4 and len(stack) == 2:
+            fm[stack[0]][stack[1]][key] = parse_scalar(val)
+    return fm, "\n".join(lines[end + 1:]).lstrip("\n")
+
+
+def dump_frontmatter(fm):
+    lines = ["---"]
+    for k, v in fm.items():
+        if isinstance(v, dict):
+            lines.append(f"{k}:")
+            for k2, v2 in v.items():
+                if isinstance(v2, dict):
+                    lines.append(f"  {k2}:")
+                    for k3, v3 in v2.items():
+                        lines.append(f"    {k3}: {dump_scalar(v3)}")
+                else:
+                    lines.append(f"  {k2}: {dump_scalar(v2)}")
+        else:
+            lines.append(f"{k}: {dump_scalar(v)}")
+    lines.append("---")
+    return "\n".join(lines) + "\n"
+
+
+def load_dim(path):
+    text = path.read_text(encoding="utf-8")
+    fm, body = parse_frontmatter(text)
+    return fm, body
+
+
+def find_dim(args, dim_id):
+    ns, _, _ = dim_id.partition(".")
+    for f in db_root(args).glob(f"{ns}/*.md"):
+        fm, body = load_dim(f)
+        if fm and fm.get("dim") == dim_id:
+            return f, fm, body
+    return None, None, None
+
+
+def observations(body):
+    obs = []
+    in_obs = False
+    for line in body.splitlines():
+        if line.startswith("## "):
+            in_obs = line.startswith("## 待裁定观测")
+            continue
+        if in_obs:
+            m = OBS_RE.match(line)
+            if m:
+                obs.append({"date": m.group(1), "certificate": m.group(2),
+                            "claim": m.group(3), "quote": m.group(4), "ptr": m.group(5)})
+    return obs
+
+
+def now_iso():
+    return datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+
+
+# ── get ───────────────────────────────────────────────────────────────────────
+
+def cmd_get(args):
+    path, fm, body = find_dim(args, args.dim)
+    if fm is None:
+        print(f"未找到维度：{args.dim}（stand-profile list 看总目）", file=sys.stderr)
+        return 1
+    if args.field:
+        f = fm.get("fields", {}).get(args.field)
+        if f is None:
+            print(f"维度 {args.dim} 无字段 {args.field}；现有字段：{', '.join(fm.get('fields', {}))}",
+                  file=sys.stderr)
+            return 1
+        if args.json:
+            print(json.dumps({args.field: f}, ensure_ascii=False, indent=2))
+        else:
+            print(f.get("value", ""))
+        return 0
+    if args.json:
+        print(json.dumps(fm, ensure_ascii=False, indent=2))
+    else:
+        print(path.read_text(encoding="utf-8").rstrip())
+    return 0
+
+
+# ── list ──────────────────────────────────────────────────────────────────────
+
+def cmd_list(args):
+    rows = []
+    for f in dim_files(args):
+        fm, _ = load_dim(f)
+        if not fm:
+            continue
+        if args.ns and fm.get("ns") != args.ns:
+            continue
+        fields = fm.get("fields", {})
+        high = [k for k, v in fields.items() if v.get("confidence") == "high"]
+        rows.append((fm.get("dim", f.stem), fm.get("name", "-"), fm.get("updated_at", "-"),
+                     len(fields), len(high), f.name))
+    if args.json:
+        print(json.dumps([{"dim": r[0], "name": r[1], "updated_at": r[2],
+                           "fields": r[3], "high_confidence_fields": r[4]} for r in rows],
+                         ensure_ascii=False, indent=2))
+        return 0
+    print(f"{'dim':<34} {'name':<14} {'updated_at':<26} 字段/高置信")
+    for r in rows:
+        print(f"{r[0]:<34} {r[1]:<14} {r[2]:<26} {r[3]}/{r[4]}")
+    print(f"— {len(rows)} 个维度")
+    return 0
+
+
+# ── match ─────────────────────────────────────────────────────────────────────
+
+def cmd_match(args):
+    pattern = args.pattern
+    key_filter = None
+    if "=" in pattern and not pattern.startswith("="):
+        key_filter, _, pattern = pattern.partition("=")
+
+    def scan(use_key_filter):
+        out = []
+        for f in dim_files(args):
+            fm, _ = load_dim(f)
+            if not fm:
+                continue
+            for fk, fv in fm.get("fields", {}).items():
+                if use_key_filter and key_filter not in fk:
+                    continue
+                val = str(fv.get("value", ""))
+                if pattern == val or pattern == fk or pattern in val:
+                    out.append((fm.get("dim", "?"), fk, val, fv.get("certificate", "?"),
+                                fv.get("confidence", "?")))
+        return out
+
+    hits = scan(use_key_filter=key_filter is not None)
+    if key_filter and not hits:
+        print(f"注：无字段名含「{key_filter}」，已退化为全字段值匹配", file=sys.stderr)
+        hits = scan(use_key_filter=False)
+    for h in hits:
+        print(f"{h[0]}.{h[1]} = {h[2]}  [{h[3]}/{h[4]}]")
+    print(f"— {len(hits)} 命中")
+    return 0
+
+
+# ── evidence ──────────────────────────────────────────────────────────────────
+
+def cmd_evidence(args):
+    parts = args.target.split(".")
+    if len(parts) == 2:
+        dim_id, field = args.target, ""
+    elif len(parts) == 3:
+        dim_id, field = ".".join(parts[:2]), parts[2]
+    else:
+        print(f"目标格式应为 dim 或 dim.field：{args.target}", file=sys.stderr)
+        return 1
+    path, fm, body = find_dim(args, dim_id)
+    if fm is None:
+        print(f"未找到维度：{dim_id}", file=sys.stderr)
+        return 1
+    print(f"# 证据链 {args.target}")
+    fields = fm.get("fields", {})
+    if field:
+        f = fields.get(field)
+        if f is None:
+            print(f"维度 {dim_id} 无字段 {field}", file=sys.stderr)
+            return 1
+        items = [(field, f)]
+    else:
+        items = list(fields.items())
+    for fk, fv in items:
+        print(f"\n## {dim_id}.{fk} = {fv.get('value')}")
+        print(f"certificate={fv.get('certificate')} confidence={fv.get('confidence')} "
+              f"source={fv.get('source')}")
+        ev = str(fv.get("evidence", ""))
+        print(f"evidence: {ev}")
+        for m in re.finditer(r"(session [0-9a-f]{8} @ [\d-]+)", ev):
+            print(f"  → 检索库回溯：stand-recall --session {m.group(1).split()[1]} "
+                  f"（或按关键词+时间窗检索）")
+        for m in re.finditer(r"(memory-archive/[^\s；;]+)", ev):
+            print(f"  → 归档回溯：cat ~/.stand/{m.group(1)}")
+        for m in re.finditer(r"(D-\d+)", ev):
+            print(f"  → 决策轴回溯：grep '{m.group(1)}' ~/.stand/profile-db/_decisions.md")
+    obs = observations(body)
+    if obs:
+        print(f"\n## 待裁定观测（{len(obs)} 条，stand-profile calibrate 看全库）")
+        for o in obs:
+            print(f"- {o['date']} [{o['certificate']}] {o['claim']}")
+            print(f"    quote:「{o['quote']}」 ptr:{o['ptr']}")
+    return 0
+
+
+# ── calibrate ─────────────────────────────────────────────────────────────────
+
+def cmd_calibrate(args):
+    rows = []
+    for f in dim_files(args):
+        fm, body = load_dim(f)
+        if not fm:
+            continue
+        if args.ns and fm.get("ns") != args.ns:
+            continue
+        for o in observations(body):
+            rows.append((fm.get("dim", "?"), fm.get("name", "?"), o))
+    if args.json:
+        print(json.dumps([{"dim": r[0], "name": r[1], **r[2]} for r in rows],
+                         ensure_ascii=False, indent=2))
+        return 0
+    print(f"{'dim':<34} {'date':<12} {'certificate':<14} 观测")
+    for r in rows:
+        print(f"{r[0]:<34} {r[2]['date']:<12} {r[2]['certificate']:<14} {r[2]['claim']}")
+    print(f"— {len(rows)} 条待裁定观测；转正路径：stand-profile decide --dim <dim> --field <f> "
+          f"--value <v> --source explicit --confidence <级> --quote <原文>")
+    return 0
+
+
+# ── decide（号分配器 + judge 闸 + 置信纪律）────────────────────────────────────
+
+def cmd_decide(args):
+    if not args.quote.strip():
+        print("judge 协议：裁定入库必须带 --quote（原文摘录），拒绝空 quote", file=sys.stderr)
+        return 1
+    cert = args.certificate or ("verified" if args.source == "explicit" else "supported")
+    if cert not in CERTIFICATES:
+        print(f"certificate 必须是 {CERTIFICATES} 之一", file=sys.stderr)
+        return 1
+    if args.source == "inferred" and cert == "verified":
+        print("四值证书纪律：推断封顶 supported——source=inferred 不得给 verified"
+              "（要 verified 请走显式裁定路）", file=sys.stderr)
+        return 1
+    if args.confidence not in CONFIDENCE_RANK:
+        print(f"confidence 必须是 {tuple(CONFIDENCE_RANK)} 之一", file=sys.stderr)
+        return 1
+    path, fm, body = find_dim(args, args.dim)
+    if fm is None:
+        print(f"未找到维度：{args.dim}", file=sys.stderr)
+        return 1
+    fields = fm.setdefault("fields", {})
+    if args.field not in fields:
+        print(f"维度 {args.dim} 无字段 {args.field}（一期字段已建全；新字段请先手编文件）",
+              file=sys.stderr)
+        return 1
+    old = fields[args.field]
+    if CONFIDENCE_RANK[args.confidence] < CONFIDENCE_RANK.get(str(old.get("confidence")), 0):
+        print(f"置信纪律：只升不降不隐——{args.dim}.{args.field} 现为 "
+              f"{old.get('confidence')}，降至 {args.confidence} 被拒；"
+              f"降级请走 _archive/ 尸档（旧值同刻归档后重裁）", file=sys.stderr)
+        return 1
+    contradicted = cert == "contradicted"
+
+    # 号分配：flock 内重读 → 正则 max+1 → 占位行（tl_next 模式）
+    dec_path = db_root(args) / "_decisions.md"
+    dec_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(dec_path, "a+", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        fh.seek(0)
+        content = fh.read()
+        nums = [int(n) for n in DLINE_RE.findall(content)]
+        dnum = max(nums) + 1 if nums else 1
+        did = f"D-{dnum:03d}"
+        today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
+        target = f"{args.dim}.{args.field}"
+        if contradicted:
+            effect = (f"不覆盖现行值（旧值 {old.get('value')!r} 保持有效）；"
+                      f"矛盾证据留轴，旧值若被推翻走 _archive/ 尸档 + ⇢ 新裁")
+        else:
+            effect = f"改写 {target}：{old.get('value')!r} → {args.value!r}"
+            if args.note:
+                effect += f"；{args.note}"
+        line = (f"{did} | {today} | 裁定 | {target}={args.value} [{cert}] "
+                f"quote:「{args.quote}」 | {effect}\n")
+        fh.write(line)
+        fh.flush()
+        os.fsync(fh.fileno())
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+    if not contradicted:
+        quote_short = args.quote if len(args.quote) <= QUOTE_MAX else args.quote[:QUOTE_MAX] + "…"
+        old_ev = str(old.get("evidence", ""))
+        old["value"] = args.value
+        old["certificate"] = cert
+        old["confidence"] = args.confidence
+        old["source"] = args.source
+        old["evidence"] = f"{old_ev}；{did} quote:「{quote_short}」" if old_ev else \
+            f"{did} quote:「{quote_short}」"
+        fm["updated_at"] = now_iso()
+        path.write_text(dump_frontmatter(fm) + body, encoding="utf-8")
+        print(f"{did} 已落轴；{target} 改写完成（{cert}/{args.confidence}/{args.source}）")
+    else:
+        print(f"{did} 已落轴（contradicted 不覆盖现行值；见决策轴）")
+    return 0
+
+
+# ── check ─────────────────────────────────────────────────────────────────────
+
+def load_code_domains(args):
+    """CODES.md 码表 → {dim: {field: set(值域)}}；`维度.*` 行展开为该维全部字段。"""
+    codes_path = db_root(args) / "CODES.md"
+    domains = {}
+    if not codes_path.is_file():
+        return domains
+    for m in CODES_ROW_RE.finditer(codes_path.read_text(encoding="utf-8")):
+        field_pat, domain = m.group(1), m.group(2)
+        vals = {v.strip() for v in domain.split("|") if v.strip() and not v.strip().startswith("…")}
+        dim_id, _, fname = field_pat.partition(".")
+        domains.setdefault(dim_id, {})[fname] = vals
+    return domains
+
+
+def cmd_check(args):
+    problems, checked = [], 0
+    domains = load_code_domains(args)
+    files = dim_files(args)
+    index_text = (db_root(args) / "INDEX.md").read_text(encoding="utf-8") \
+        if (db_root(args) / "INDEX.md").is_file() else ""
+    for f in files:
+        checked += 1
+        tag = f.name
+        fm, body = load_dim(f)
+        if fm is None:
+            problems.append(f"{tag}: frontmatter 缺失或无法解析")
+            continue
+        for k in FOUR_PIECE_TOP:
+            if k not in fm:
+                problems.append(f"{tag}: 四件套缺顶层字段 {k}（编码形态/更新机制/置信度/时态）")
+        dim_id = str(fm.get("dim", ""))
+        if dim_id:
+            ns, _, short = dim_id.partition(".")
+            if dim_id not in index_text and f"{ns}/{short}-" not in index_text:
+                problems.append(f"{tag}: INDEX.md 未登记 {dim_id}")
+        for fk, fv in fm.get("fields", {}).items():
+            for k in FOUR_PIECE_FIELD:
+                if k not in fv or str(fv.get(k, "")).strip() == "":
+                    problems.append(f"{tag}: {dim_id}.{fk} 四件套缺 {k}")
+            cert, src = str(fv.get("certificate", "")), str(fv.get("source", ""))
+            if cert and cert not in CERTIFICATES:
+                problems.append(f"{tag}: {dim_id}.{fk} certificate={cert} 非四值之一")
+            if src and src not in SOURCES:
+                problems.append(f"{tag}: {dim_id}.{fk} source={src} 非 {SOURCES} 之一")
+            if src == "inferred" and cert == "verified":
+                problems.append(f"{tag}: {dim_id}.{fk} 推断封顶 supported，不得 verified")
+            val = str(fv.get("value", ""))
+            dim_domains = domains.get(dim_id, {})
+            for fname, vals in dim_domains.items():
+                if fname != "*" and fname != fk:
+                    continue
+                if val and val not in vals and not val.startswith("证据待补"):
+                    problems.append(f"{tag}: {dim_id}.{fk}={val} 超出 CODES.md 值域 {sorted(vals)}")
+        for o in observations(body):
+            if not o["quote"].strip():
+                problems.append(f"{tag}: 待裁定观测缺 quote（judge 协议）")
+    for p in problems:
+        print(f"FAIL {p}")
+    print(f"— check 完成：{checked} 个维度文件，{len(problems)} 个问题"
+          f"（退出码 {'1' if problems else '0'}）")
+    return 1 if problems else 0
+
+
+# ── main ──────────────────────────────────────────────────────────────────────
+
+def main():
+    ap = argparse.ArgumentParser(
+        prog="stand-profile",
+        description="维度画像库检索/校准 CLI（get/list/match/evidence/calibrate/decide/check），"
+                    "零依赖。先 stand-profile（他是谁/要我怎样），再 stand-recall（当时怎么定的）。")
+    ap.add_argument("--data-root", help="数据根（默认 STAND_DATA_ROOT env > ~/.stand）")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("get", help="单维全量或单字段")
+    p.add_argument("dim", help="维度 id，如 kai.K3")
+    p.add_argument("--field", help="只输出该字段原始值（代码层判定用）")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_get)
+
+    p = sub.add_parser("list", help="维度总目")
+    p.add_argument("--ns", choices=["kai", "agent-requirements"])
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_list)
+
+    p = sub.add_parser("match", help="反查：哪些维度带此码/值（可加 key= 限定字段名）")
+    p.add_argument("pattern", help="如 A1-01 / blue / key=A1-01")
+    p.set_defaults(fn=cmd_match)
+
+    p = sub.add_parser("evidence", help="证据链 → stand-recall/memory-archive/决策轴回溯")
+    p.add_argument("target", help="dim 或 dim.field，如 kai.K3.base_color")
+    p.set_defaults(fn=cmd_evidence)
+
+    p = sub.add_parser("calibrate", help="待裁定观测批一览（推断校准路入口）")
+    p.add_argument("--ns", choices=["kai", "agent-requirements"])
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_calibrate)
+
+    p = sub.add_parser("decide", help="裁定入库：D 号分配 + judge 闸 + 置信纪律 + 四值证书")
+    p.add_argument("--dim", required=True)
+    p.add_argument("--field", required=True)
+    p.add_argument("--value", required=True)
+    p.add_argument("--source", choices=list(SOURCES), default="explicit")
+    p.add_argument("--confidence", choices=list(CONFIDENCE_RANK), default="high")
+    p.add_argument("--certificate", choices=list(CERTIFICATES),
+                   help="默认：explicit→verified，inferred→supported")
+    p.add_argument("--quote", required=True, help="裁定原文摘录（judge 协议必填）")
+    p.add_argument("--note", default="", help="影响说明（进决策轴）")
+    p.set_defaults(fn=cmd_decide)
+
+    p = sub.add_parser("check", help="四件套/证书/码域/INDEX 登记自检（退出码 1=有问题）")
+    p.set_defaults(fn=cmd_check)
+
+    args = ap.parse_args()
+    if not db_root(args).is_dir():
+        print(f"profile-db 不存在：{db_root(args)}", file=sys.stderr)
+        return 1
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

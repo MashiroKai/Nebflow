@@ -129,7 +129,7 @@ status: draft（呈作者拍板 2026-10-30；只研究+设计，零产品代码�
 更新机制两路分工（作者令①「对话推断校准 vs 显式裁定」的落法）：
 
 - **显式裁定路**：作者令、swatch 测试拍板、目标入账——直写，`source=explicit`。红线集（A1）**只走此路**。
-- **推断校准路**：对话中观测到信号（抱怨词表、行为模式）→ 先进**证据池**（文件尾「待裁定观测」节，记忆三问的 reusable/hard-to-obtain 准入照用）→ 攒批呈作者确认或达自动升级阈值（同维度 ≥3 独立证据且互不矛盾）才转正。LLM 不得静默改已裁定值——与 memory-consolidation「取代纪律」（append+remove 成对）同构。
+- **推断校准路**：对话中观测到信号（抱怨词表、行为模式）→ 先进**证据池**（文件尾「待裁定观测」节，记忆三问的 reusable/hard-to-obtain 准入照用）→ 攒批呈作者确认或达自动升级阈值（同维度 ≥3 独立证据且互不矛盾）才转正。LLM 不得静默改已裁定值——与 memory-consolidation「取代纪律」（append+remove 成对）同构。一期增补（附录 C）：证据池观测带四值证书；裁定转正走 `stand-profile decide`，必须带 quote，D 号进决策轴。
 
 **K8 关系画像单列伦理护栏**（Muse 教训，置信度高）：关系维度只记「与 Kai 协作相关的事实」（师弟提供粒子谱数据、Zcode 是外部编码代理），**不推断未说出口的目标、不建非协作关系的第三方档案**——Meta 因关系画像按小时更新被 WIRED 点名「监视胜于帮助」，这条红线直接写进 A6 记忆伦理维度。
 
@@ -380,6 +380,16 @@ fields:
 ## 附录 B：hook 文件实例（XHS change log，作者令示例原样落格式）
 
 见 §5.1 定义块——`when_code` 锁 beta 渠道发布事件，`when_llm` 兜「用户可见改动」的语义判断，cooldown 7d 防连发双注。该 hook 建议作者以 L1 档亲自落盘作首个实例。
+
+## 附录 C：张安齐借鉴吸收（2026-10-30 作者批随行，一期已落地）
+
+> 来源：DOSTEL 仓 `docs/20261030_161826_zaq-memory-retrieval-recon.md`（dllm 双时态记忆体系 + knowledge-retriever 裁决内核侦察）。未决项 1-9 作者已按推荐默认全批（其中 #2 中央码表落 `profile-db/CODES.md`）。三条借鉴已工具化进一期：
+
+1. **置信纪律（替代/细化原「改写即归档」表述）**：维度值置信**只升不降不隐**——收紧（升级）直写；放松（降级）不静默改写，旧值同刻进 `_archive/` 尸档留痕后重裁（与 dllm `knowledge/` 策展「降级走尸档」一致）。「改写即归档」只管**值被取代**（双时态简化版原判不变）；**置信降级**另有尸档通道——两者并行不悖，本条替代原稿把两者混说的表述。工具闸：`stand-profile decide` 对降置信写入直接拒（退出码 1 + 指路尸档）。
+2. **证据四值证书 + judge 协议**：verified / supported / contradicted / insufficient（kr kernel 同款）。推断（source=inferred）**封顶 supported**；contradicted **永不覆盖现行值**（只留决策轴；旧值被推翻走尸档 + ⇢ 新裁）。**入库裁决必须带 quote**（原文摘录）——无 quote 拒入；证据缺口显式标「证据待补」（insufficient），不许静默（一期实证：`kai.K3` 待裁定观测「先图后文」检索库未核到原话，标 insufficient）。
+3. **号分配器（tl_next 式）**：决策轴 `profile-db/_decisions.md` append-only（`D-xxx | 日期 | 类型 | 内容 | 影响`，取代指针 ⇢）；D 号由 `stand-profile decide` 分配——**flock 内「重读 → 全文件正则 max+1 → 写占位行」**（dllm `tools/tl_next.py` 同款；其 58 行 docstring 记载的病史——stale-tail 撞号、双会话同号——用锁内重读根治）。
+
+**一期落点**：数据根 `~/.stand/profile-db/`（INDEX.md 总目 + CODES.md 中央码表 + `kai/K1-K5` + `agent-requirements/A1-A5` + `_decisions.md` + `_archive/` 尸档）；CLI `tools/stand-profile`（get/list/match/evidence/calibrate/decide/check 七命令，零依赖）；User.md/Soul.md 已降级为导航页（原文件尸档 `_archive/nav-migration-20261030/`，逐条对账零丢失）。
 
 ## 接入图谱
 
