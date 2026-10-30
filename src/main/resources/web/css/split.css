@@ -1352,159 +1352,181 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
 
-/* ── 胶囊环（2026-10-22 作者令追加：hover 态展开为圆环排布）──────────
-   作者令：平时态 = 单胶囊（缩小）；hover 态 = 各页签胶囊沿圆环排布，
-   最多同时可见 3 个（中心 = 环游标 · 上下邻位沿弧后仰）；滚轮换选（hover
-   交互改向令 2026-10-22「改为上下的，这样才方便 Windows 这样的电脑用鼠标
-   进行操作」——鼠标滚轮 = 纵向，横滑触控板用户才有的输入不再是一等手势）：
-   **纵滚 deltaY 主导**（一格滚轮 = 一换），触控板横滑 deltaX 保留为副手势，
-   点击即切换页签；邻位胶囊沿曲率 rotateX 透视 + 模糊扭曲（竖向 cover-flow），
+/* ── 文件扇（扇卡批 2026-10-30 作者令 20:09「canvas 顶部多文件 tab 视图改为
+   卡片式左右翻动操作（卡片扇翻）」；形态演进史：2026-10-22 胶囊环 → 扇卡）──
+   作者令（设计锚 = 2026-10-29 叠卡令 + Pop 扇形叠卡落地批 d5613e0ea）：参考
+   微信叠卡 —— 强制放缩所有卡片到一个大小（复用 Pop 扇卡同套卡面规格 220×280，
+   11/14）+ 扑克式轻微旋转展开（游标卡完整置顶，邻卡以卡顶中心为轴轻微旋开
+   收于其下 —— 不是直直重叠）；左右翻动换选。卡面规格与扇形语言与
+   chat.css .pop-stack-view 同族（tests/pop-stack-fan 先例）。
+   交互：hover 标题头胶囊开扇；滚轮/触控板横滑左右翻动；卡面横拖跟手翻页；
+   点击卡片切换；右键菜单（多开/关闭/独立窗口，引用保留）；Escape/离区收扇。
    材质 = 全站统一 frosted token（--glass-bg / --glass-blur saturate(1.15) /
-   --glass-border / --frost-shadow，sapphire.css 单源 —— 禁止各画各的）。
-   对称批（作者令 2026-10-23「hover 要在上下显示…上下对称；大小固定；相对
-   canvas 居中」）+ 顶部修正批（作者令 2026-10-23 逐字「canvas的hover要保持在
-   顶部居中，而不是整个canvas居中，顶部有些超出是正常且允许的。但是不要
-   太多。」）：胶囊常驻 canvas 顶带横轴中线（§⑨ 居中批，环锚不沉降 —— 对称批
-   曾用 hover 沉降 canvas 垂直中点供对称空间，修正批撤销），缘位上下**对称**
-   展开（上一签 −edgeY / 下一签 +edgeY，|y| 相等，JS layout()）：上缘位允许
-   略微越出面板顶缘（真越出批 2026-10-23 六项②：环层挂 body —— 裁切盒失效，
-   探出段真实渲染在顶缘外，修前面板 overflow:hidden 的硬裁切线退役；越出量
-   克制 = 胶囊自身高度的一小部分 —— canvas.js RING_TOP_OUT），绝不沉向 canvas
-   中部。胶囊本体尺寸恒定（零缩放零呼吸）；透视由环容器自身 perspective 提供
-   （原点 = 环锚 = 胶囊中心 —— .canvas-header 的 perspective 只达直接子级，
-   够不到孙级胶囊）。
-   几何：环容器 fixed 0×0 锚在标题头中心视口点（JS 置 left/top px），胶囊
-   absolute 居中于锚点，transform = translate(-50%,-50%) translateY(--cr-y)
-   translateZ(--cr-z) rotateX(--cr-rx) scale(--cr-press)。
-   按住=按钮语义（作者令③）：胶囊本体 button + 全头 user-select:none。
+   --glass-border / --cv-shadow，sapphire.css 单源 —— 与 chat #header 逐项相等，
+   canvas-glass-unify 批同源）；卡面圆角 14px（Pop 卡语言；竖环期 999px 药丸形
+   随形态退役）。
+   几何：环容器 fixed 0×0 锚在标题头中心视口点（JS 置 left/top px）；卡
+   absolute 悬于锚点下方（--cr-y 落差 = 卡顶在胶囊中心 +FAN_DROP_Y，扇悬于
+   标题头之下 —— 不顶替标题头文字（竖环期 t-inner 开环隐去 + 中心透明覆层 +
+   --cr-popw 缝同步三件套随之退役，#926 文字行零平移由结构保证），亦不越
+   面板顶缘）；transform = translate(-50%, var(--cr-y)) translateX(calc(
+   var(--cr-x) + var(--fan-dx))) rotate(var(--cr-r))，transform-origin = 卡顶
+   中心（旋转即扑克扇形：卡底外摆）；--fan-dx = 卡面横拖跟手位移（.dragging
+   关过渡 1:1）。游标卡 z 5 完整置顶，|rel|=1/2 邻卡 z 4/3 收于其下，
+   |rel|≥3 零透明不可点（位姿保留保收放/步进连续）。
+   扇顶中文提示条 .cr-hint（左右翻动操作引导，作者令中文界面文案）悬于
+   游标卡正上方；卡头 = 类型图标 + 「文件/面板」中文签 + 页签名（卡片名
+   不裸英文）+ 脏点。
    层序：z-246 —— overlay 面板（240）之上、deck fab（250）与模态族（300+）
-   之下（环只开在非 deck 态，与 fab 不共时）。中心位胶囊 pointer-events:none
-   —— 环层如今叠在标题头之上，中心位事件必须落穿到下方标题头手势链
-   （按压/竖滑/横滑/右键四契约不变；缘位胶囊仍自身可点）。 */
+   之下（扇只开在非 deck 态，与 fab 不共时）。扇卡自收 pointer（悬于标题头
+   下方、不与标题头重叠 —— 竖环期「中心位 pe:none 落穿标题头手势链」机制
+   随之退役；标题头按压/竖滑/横滑/右键四契约零接触）。 */
 .capsule-ring {
   position: fixed;
   width: 0;
   height: 0;
   z-index: 246;
   pointer-events: none;
-  perspective: 640px;     /* 透视原点 = 环锚 = 胶囊中心（顶带环锚，不沉降） */
-  perspective-origin: 50% 50%;
 }
 .cr-capsule {
   position: absolute;
   top: 0;
   left: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  /* 固定几何（2026-10-25 胶囊固定尺寸批，作者令「全部胶囊面统一固定宽高」）：
-     环页签胶囊与标题头主胶囊同一 token 档（--capsule-h 36 / --capsule-w 180）——
-     修前 fit-content（max-width 150）随内容自适应；环几何（canvas.js layout()
-     的 h = offsetHeight / edgeY 反解）全部动态读数，36px 面自动流入 —— 越出量
-     随之换挡（h+2 防叠底线主导 ⇒ 越出 = h−8 档），canvas-capsule-ring.spec
-     CR2-6/L1 界已随 36px 统一面重钉。max-width 只留窄窗极值护栏（≤92vw），
-     超长页签名 .cr-name ellipsis 截断（「绝不撑开几何」）。 */
-  height: var(--capsule-h, 36px);
-  width: var(--capsule-w, 180px);
-  max-width: min(var(--capsule-w, 180px), 92vw);
-  padding: 4px 10px;
-  /* 标题溢出收口（作者令 2026-10-26「任何状态下不得出界」）：胶囊本体兜底
-     overflow:hidden —— .cr-name ellipsis 为主收口（flex 链 min-width:0），本体
-     裁切为兜底（过渡中途/字体度量抖动等任何态，文字绝不越过胶囊圆角边界）。 */
-  overflow: hidden;
+  flex-direction: column;
+  /* 固定卡面 220×280（11/14，作者令「强制放缩所有尺寸的卡片到一个大小」——
+     复用 Pop 扇卡规格；aspect-ratio 承载高度，宽度唯一来源 220）。 */
+  width: 220px;
+  aspect-ratio: 11 / 14;
   border: 1px solid var(--glass-border);
-  border-bottom-color: transparent;   /* 件三统一批：同 #header 底缘透明（内容穿底不衬线） */
-  border-radius: 999px;
+  border-bottom-color: transparent;     /* glass-unify 批：同 #header 底缘透明（材质逐项相等钉） */
+  border-radius: 14px;                            /* Pop 卡面圆角语言 */
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  box-shadow: var(--cv-shadow);       /* 件三统一批：= chat #header 阴影现值（CR2-5 逐项相等） */
+  box-shadow: var(--cv-shadow);       /* = chat #header 阴影现值（glass-unify 同源） */
   color: var(--color-frame-text-bright, var(--color-text));
   font-size: 12px;
   font-weight: 500;
   line-height: 1;
-  white-space: nowrap;
   cursor: pointer;
   outline: none;
   user-select: none;
   -webkit-user-select: none;
+  /* 标题溢出收口：卡头文字链 ellipsis 为主收口（flex 链 min-width:0），本体
+     裁切为兜底（过渡中途/字体度量抖动等任何态，文字绝不越过卡面圆角界）。 */
+  overflow: hidden;
   opacity: 0;
   pointer-events: none;                     /* 收起态不拦 hover 命中 */
-  transform: translate(-50%, -50%) translateY(var(--cr-y, 0px)) translateZ(var(--cr-z, 0px))
-    rotateX(var(--cr-rx, 0deg)) scale(var(--cr-press, 1));
+  transform: translate(-50%, var(--cr-y, 56px))
+    translateX(calc(var(--cr-x, 0px) + var(--fan-dx, 0px)))
+    rotate(var(--cr-r, 0deg));
+  transform-origin: 50% 0;                /* 旋转轴 = 卡顶中心 —— 扑克扇形（卡底外摆） */
   /* 作者令「动画放慢、自然、流畅」与本批缓动族一致：0.36s 温和缓出
-     （cubic-bezier(0.22,0.61,0.36,1)），透明度 0.32s —— 竖向换选的位姿迁移
+     （cubic-bezier(0.22,0.61,0.36,1)），透明度 0.32s —— 扇开/翻页的位姿迁移
      不再是旧 0.22s 硬切。 */
-  transition: transform 0.36s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.32s ease, filter 0.36s cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition: transform 0.36s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.32s ease;
 }
-/* 真越出批：显隐选择器随环层本位（环挂 body，标题头后代选择器够不到）。
-   可点性走 .steady 门（openRing 在 0.36s 展开过渡后加）——环层如今叠在标题头
-   之上，展开动画中的缘位胶囊会从指针位置掠过（起点=中心位），未稳态先拦下
-   按压/拖划会把标题头手势链饿死（CC1/CC2/CC3 实测回归）；稳态后缘位照旧可点
-   （点击切换/右键菜单），中心位恒 pe:none 落穿（见 is-center 块注）。 */
+/* 横拖跟手：拖动中整扇 1:1 位移、零过渡（松手摘类后过渡回挂，回弹/翻页走
+   0.18s 稳态步进档或 0.36s 收放档）。 */
+#canvas-capsule-ring.dragging .cr-capsule { transition: none; }
+/* 显隐选择器随环层本位（环挂 body，标题头后代选择器够不到）。可点性走 .steady
+   门（openRing 在 0.36s 展开过渡后加）——展开中的扇卡会从指针位掠过（起点 =
+   堆叠中心位），未稳态先拦下按压/横拖会把标题头手势链饿死（CC1/CC2/CC3 实测
+   回归）；稳态后缘位照旧可点（点击切换/横拖翻页/右键菜单），游标卡点击零动作。 */
 #canvas-capsule-ring.open .cr-capsule { opacity: 1; }
 #canvas-capsule-ring.open.steady .cr-capsule { pointer-events: auto; }
 /* 触控板手感批（作者报障 2026-10-25「触控板滑动不够灵敏和丝滑」③切换动画）：
-   环开稳态后的**游标步进**换快跟手档 —— transform/opacity/filter 全 0.18s
-   （150-200ms 档）：换选一击即至、连拨不断链（0.36s 每步重定相位，连拨时
-   拖泥带水）。环展开/收起的 0.36s 温和 morph（「动画放慢、自然、流畅」令）
+   环开稳态后的**游标步进**换快跟手档 —— transform/opacity 全 0.18s
+   （150-200ms 档）：翻页一击即至、连拨不断链（0.36s 每步重定相位，连拨时
+   拖泥带水）。扇展开/收起的 0.36s 温和 morph（「动画放慢、自然、流畅」令）
    不收窄 —— 本规则只在 .steady 后生效，收放路径照旧走基档。prefers-reduced-
    motion 直切由 §动效降级 0.01s !important 兜底（importance 压过特异性）。 */
 #canvas-capsule-ring.open.steady .cr-capsule {
   transition-duration: 0.18s;
 }
-/* 中心位落穿（双态全钉，特异性压过上方 steady 全开 (1,3,0)）：环层叠在标题头
-   之上，中心位事件必须落穿到标题头手势链（按压/竖滑换卡/横滑关卡/右键引用）。 */
-#canvas-capsule-ring .cr-capsule.is-center,
-#canvas-capsule-ring.open.steady .cr-capsule.is-center { pointer-events: none; }
+/* 卡头：类型图标 + 中文签（文件/面板 —— 卡片名不裸英文，作者令）+ 页签名 +
+   脏点。padding 左 12 右 10（脏点位），gap 6。 */
+.cr-capsule .cr-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 10px 0 12px;
+  min-width: 0;
+}
 .cr-capsule .cr-icon { flex: none; width: 14px; height: 14px; color: var(--color-text-muted); display: flex; }
 .cr-capsule .cr-icon svg { width: 14px; height: 14px; }
+.cr-capsule .cr-tag {
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  background: rgba(128, 128, 128, 0.14);
+  border-radius: 4px;
+  padding: 2px 5px;
+  line-height: 1;
+}
 .cr-capsule .cr-dot {
   flex: none; width: 5px; height: 5px; border-radius: 50%;
   background: var(--color-primary); display: none;
 }
 .cr-capsule.is-dirty .cr-dot { display: block; }
 .cr-capsule .cr-name {
-  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--color-frame-text-bright, var(--color-text));
 }
-/* 中心位 = 环游标胶囊：内容-only 覆层（底 = 常态标题头胶囊本体 —— 同位无缝
-   morph；按压触感也由标题头 is-pressed scale 承接），零变换全清晰。
-   #926 件1（作者令 2026-10-26「hover 的时候不要改变文字的布局」）：覆层与常态
-   标题行**同栅格** —— padding 镜像胶囊（左 12 / 右 = 7 + var(--cr-popw)〔pop 钮
-   实占 26+gap 6，JS openRing/layout 供 32px / 0px〕）、gap 7 = .t-inner 同值：
-   覆层文字盒（pop 可见 106px 档 / 隐藏 138px 档）与被替换的 .t-name 盒逐像素
-   等宽 —— hover 换层前后 ellipsis 截断点不变、字号字距零改动、零缩放，文字行
-   不平移不换排。溢出防护照常生效：本体 overflow:hidden（下方基类）+.cr-name
-   ellipsis，任何状态文字不出胶囊圆角界。
-   真越出批：pointer-events:none 钉死 —— 环层挂 body 后叠在标题头之上，中心
-   位事件必须落穿到标题头手势链（按压/竖滑换卡/横滑关卡/右键引用照旧）。 */
+/* 卡体：大类型字形（220×280 卡面的驻面内容，muted 读作文件类型图腾）。 */
+.cr-capsule .cr-body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+.cr-capsule .cr-glyph { width: 56px; height: 56px; color: var(--color-text-muted); opacity: 0.5; display: flex; }
+.cr-capsule .cr-glyph svg { width: 56px; height: 56px; }
+/* 游标卡 = 扇前景：完整清晰、z 置顶（z 由 canvas.js layout() 直写 style）。
+   竖环期「中心透明覆层（底 = 标题头胶囊本体）」语义随形态退役 —— 扇卡悬于
+   标题头下方、自收 pointer（点击 = 游标卡零动作 / 非游标卡切换）。 */
 .cr-capsule.is-center {
-  z-index: 3;
-  gap: 7px;
-  padding: 4px calc(7px + var(--cr-popw, 0px)) 4px 12px;
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  pointer-events: none;
+  z-index: 5;
 }
-.cr-capsule.is-center:active { --cr-press: 0.96; filter: brightness(0.92); }
-/* 缘位 = 竖向 cover-flow（对称批 2026-10-23：上 −edgeY / 下 +edgeY 真对称，
-   几何值见 canvas.js layout()）：沿弧后仰 + 模糊扭曲 +
-   半透（毛玻璃照挂 —— 模糊叠加在 backdrop 之上，曲率感来自 rotateX 透视） */
 .cr-capsule.is-edge {
-  z-index: 2;
-  opacity: 0.82;
-  filter: blur(1.6px) saturate(1.25);
+  z-index: 3;
 }
-.cr-capsule.is-edge:active { --cr-press: 0.96; }
-/* 弧外位（|rel|≥2）：不可见不可点，保留位姿让收放有连续轨迹 */
+.cr-capsule.is-center:active,
+.cr-capsule.is-edge:active { filter: brightness(0.92); }
+/* 弧外位（|rel|≥3）：不可见不可点，保留位姿让收放/步进有连续轨迹
+   （扇面最多 5 张可见 = 同 Pop 层级≤3 全露语义的侧向五卡档）。 */
 .cr-capsule.is-far { opacity: 0 !important; pointer-events: none !important; }
-/* 环开时常态标题让位（同位同容的中心胶囊接班 —— 无缝 morph）；pop 钮浮在环上 */
-.canvas-header.ring-open .canvas-title .t-inner { opacity: 0; pointer-events: none; }
+/* 扇顶中文提示条：左右翻动操作引导（作者令中文界面文案）。absolute 悬于锚
+   点上方（游标卡正顶上），translate(-50%,-100%) 回拉自身全高 + 8px 缝。 */
+.cr-hint {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translate(-50%, calc(var(--cr-y, 56px) - 100% - 8px));
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--color-text-muted);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  padding: 6px 12px;
+  opacity: 0;
+  pointer-events: none;                  /* 提示条不拦命中（hover 区仍计其 rect） */
+  user-select: none;
+  -webkit-user-select: none;
+  transition: opacity 0.32s ease;
+}
+#canvas-capsule-ring.open .cr-hint { opacity: 1; }
+/* 环开时常态标题**常驻**（扇卡批 2026-10-30：扇悬于标题头下方、不顶替其
+   文字 —— 竖环期「ring-open → t-inner opacity 0（中心覆层接班）」规则退役）；
+   pop 钮浮在环上 */
 .canvas-header .canvas-pop-btn { position: relative; z-index: 6; }
 
 /* ── 层叠浮钮（v5②）：body 层固定元素，JS 逐帧同步面板盒（top 10 / right 12 /

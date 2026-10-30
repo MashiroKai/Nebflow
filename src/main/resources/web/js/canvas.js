@@ -3535,48 +3535,37 @@ function initCardHeadGestures() {
   });
 }
 
-// ── 胶囊环（2026-10-22 作者令追加：hover 态圆环排布 · 滚轮换选 · 点击切换）──
-// 作者令：平时态 = 单胶囊（缩小）；hover 态 = 各页签胶囊沿**竖向**圆环排布、
-// 最多同时可见 3 个；滚轮换选（hover 交互改向令 2026-10-22：「现在…hover 之后
-// 左右滑动…改为上下的，这样才方便 Windows 这样的电脑用鼠标进行操作」——鼠标
-// 滚轮 = 纵向 deltaY，横滑触控板用户无此输入）：**纵滚（deltaY）主导**，触控板
-// 横滑（deltaX）保留为同环副手势，按主导轴取用；点击即切换；上下缘位沿曲率
-// rotateX 透视 + 模糊扭曲（竖向 cover-flow），材质 = 全站统一 frosted token；
-// 右键菜单 = 多开/关闭/在独立窗口打开（capsuleMenuActions 共用一份语义）。
-// 修复批（作者令 2026-10-23「hover 要在上下显示…上下对称；胶囊大小固定；相对
-// canvas 居中」）：胶囊常态回 canvas 顶带横轴居中（split.css 居中批，v2①
-// 「居中标题头」原位 —— 不在画布中央挡内容命中：wiki 图谱/流程图中心区节点
-// 点击实证）。顶部修正批（作者令 2026-10-23 逐字「canvas的hover要保持在顶部
-// 居中，而不是整个canvas居中，顶部有些超出是正常且允许的。但是不要太多。」）：
-// 对称批的「hover 沉降 canvas 垂直中点」（.ring-open + --ring-dy）撤销 —— 环锚
-// 常驻顶带，横轴中线居中不变；缘位仍上下对称（上一签上展 −edgeY、下一签下垂
-// +edgeY，|y| 严格相等；rotateX 反号等幅），上缘位允许**略微越出面板顶缘**
-// （负向超出正常且允许 —— 真越出批六项②：环层挂 body，探出段真实渲染在
-// canvas 顶缘外，不再被面板 overflow:hidden 裁切；越出量克制 = 胶囊自身高度的
-// 一小部分（RING_TOP_OUT），绝不沉向 canvas 中部）。
-// 胶囊本体任何状态尺寸恒定（零缩放零呼吸）。
-// 收环判定 = **hover 区联合盒**（环开点 ∪ 胶囊本体 ∪ 上下缘位胶囊，各外扩
-// 14px）：竖环几何下「中心→缘位」有 ~edgeY 间隙，pointerleave 单源会立即误收
-// （甚至开→收振荡）—— 环开期间 document pointermove 跟踪指针，离区才调度
-// 140ms 宽限收环。（对称批的「环开点→沉底胶囊顶走廊 ±90px」随沉降撤销一并
-// 退役 —— 环锚回顶带，胶囊不再离位，走廊无事可桥。）
-// 滚轮 = 环开期间 document 捕获（capture），**hover 区内消费为换选、区外零响
-// 应**（触控板手感批 2026-10-25 收窄：旧「面板矩形内一律消费」会抢面板内容
-// 滚动 —— 光标在胶囊/环胶囊/环开点走廊之外时页面滚动照旧，不 preventDefault
-// 不换选）；面板外（侧栏/聊天）滚轮不消费零感知照旧。#716 捏合缩放分区：环开
-// = 环优先（区内），画布区缩放/平移与 pane 滚动在环开期间 Escape/离区即还。
-// 按住=按钮语义（作者令③）：胶囊本体 <button> + 全头 user-select:none（CSS）
-// + dragstart preventDefault（拦从胶囊发起的原生拖拽；OS 文件拖入 drop 不受影响）。
-// 实现形态：纯前端组件（真越出批六项②：#canvas-capsule-ring 挂 body 层，
-// position:fixed 0×0 锚在标题头中心视口点 = 胶囊中心 —— 面板裁剪盒够不到，
-// 上缘位真实越出顶缘渲染；环锚常驻顶带 —— 顶部修正批撤销沉降；胶囊 absolute
-// 沿弧 transform），与左栏控制面零共享。手机层/卡窗态整腿让位（各有自己的
-// 卡头形态）；deck 叠卡态不开环（叠卡有自己的环卡滚轮语义，双环互搏）。
-// 触控板手感批（作者报障 2026-10-25 13:07「使用 mac 的触控板进行滑动的时候，
-// 不够灵敏和丝滑」）：旧「单事件过恒定阈值即切」在两类输入下两难 —— 触控板
-// 滑动是高频小增量 + 惯性末段，鼠标滚轮是离散大步进（|dy|≈±100）；阈高触控板
-// 要用力甩（不灵敏）、阈低惯性一冲连跳三格（不丝滑）。改**设备分档 + 累积器
-// + 冷却**三件：
+// ── 文件扇（2026-10-30 20:09 作者令「canvas 顶部多文件 tab 视图改为卡片式
+// 左右翻动操作（卡片扇翻）」；形态演进史：2026-10-22 胶囊环 → 2026-10-30 扇卡）──
+// 作者令（设计锚 = 2026-10-29 叠卡令 + Pop 扇形叠卡落地批 d5613e0ea）：参考微信
+// 叠卡 —— **强制放缩所有卡片到一个大小**（复用 Pop 扇卡同套卡面规格 220×280，
+// 11/14）+ **扑克式轻微旋转展开**（扇形语言复用：游标卡完整置顶，邻卡以卡顶
+// 中心为轴轻微旋开收于其下 —— 不是直直重叠）；**左右翻动**换选。仓内先例：
+// tests/pop-stack-fan.spec / chat.css .pop-stack-view。
+// 交互面（沿自胶囊环，契约不变）：hover 标题头胶囊开扇；滚轮/触控板横滑 =
+// **左右翻动**（deltaX 主导、deltaY 副手势，设备分档 + 累积器 + 冷却三件，
+// 单事件一格不超调）；卡面横拖 = 跟手翻动（松手过阈翻一张，快甩翻两张）；
+// 点击卡片 = 切换（游标卡 = 激活时零动作）；右键菜单 = 引用/多开/关闭/独立
+// 窗口（capsuleMenuActions 共用一份语义）；Escape/离区 140ms 宽限收扇。
+// 文件名显示带中文界面文案：卡头 = 类型图标 + 「文件/面板」中文签 + 页签名
+// （不裸英文），扇顶提示条 = 「左右滑动或滚动翻页 · 点击卡片切换文件」。
+// 退役契约（竖环几何随形态重写，令 > 旧 spec，原钉见 git 历史批注）：
+// 竖向 cover-flow（±edgeY/rotateX/模糊扭曲）、中心透明覆层（#926 文字行零
+// 平移 —— 扇卡悬于胶囊下方、不再顶替标题头文字）、t-inner 开环隐去、
+// --cr-popw/--cr-z/RING_TOP_OUT 顶部越出反解（扇形下沉 280px 占内容顶带，
+// 不再越顶缘 —— 环层仍挂 body，真越出机制保留但本形态零探出）。
+// 保留机制：环层挂 body（#canvas-capsule-ring position:fixed z-246，面板
+// overflow:hidden 裁不到）；hover 区联合盒收扇判定（开扇点 ∪ 标题头 ∪ 非弧外
+// 卡，各外扩 RING_ZONE_PAD_PX —— 扇形几何下卡与卡之间仍有缝隙，pointerleave
+// 单源会误收，环开期间 document pointermove 跟踪，离区才调度宽限收扇）；
+// 稳态门（0.36s 展开过渡后 .steady 才接 pointer —— 展开中卡从指针位掠过会抢
+// 标题头按压/拖划）；滚轮 document 捕获、hover 区内消费区外零响应（不抢 pane
+// 滚动）；#716 捏合缩放分区；deck 开着不开扇（叠卡有自己的滚轮语义）；单页签
+// 不开扇；手机层/卡窗态整腿让位（手机端文件界面独立成态，不于主窗重复打开）。
+// 触控板手感批（作者报障 2026-10-25 13:07「mac 触控板滑动不够灵敏和丝滑」）：
+// 旧「单事件过恒定阈值即切」在两类输入下两难 —— 触控板滑动是高频小增量 + 惯性
+// 末段，鼠标滚轮是离散大步进（|d|≈±100）；阈高触控板要用力甩（不灵敏）、阈低
+// 惯性一冲连跳三格（不丝滑）。改**设备分档 + 累积器 + 冷却**三件：
 //   · 设备分档（deck DECK_NOTCH_PX 同口径）：单事件 |d|（deltaMode 归一 px）
 //     ≥ RING_MOUSE_DELTA = 鼠标离散格（一格意图）→ 低阈 RING_WHEEL_STEP_MOUSE
 //     即切；否则触控板高频小增量 → 按方向累积过 RING_WHEEL_STEP_TRACKPAD 才切
@@ -3592,35 +3581,46 @@ const RING_MOUSE_DELTA = 40;         // 单事件 |d|≥40 判鼠标格（触控
 const RING_WHEEL_COOLDOWN_MS = 200;  // 切换冷却（惯性末段防连跳；150-250ms 档取中）
 const RING_CLOSE_GRACE_MS = 140; // 离环收起宽限（快速掠过不闪收）
 const RING_ZONE_PAD_PX = 14;  // hover 区外扩（缘位胶囊 hit 盒外缘，穿越不闪收）
-const RING_STEADY_MS = 370;   // 真越出批：展开过渡（0.36s）后缘位才接 pointer 的稳态门
-/** 环开上缘位越出面板顶缘的量（顶部修正批 2026-10-23 作者令「顶部有些超出是
- *  正常且允许的。但是不要太多」）：**布局空间**系数 × 胶囊高（clamp 8–24px）。
- *  缘位胶囊带 rotateX(34°)+translateZ(-110)（perspective 640）投影把角点向
- *  锚收回 —— 视觉越出 ≈ 布局越出的 0.4 倍（实测 1440×900：布局 19.2px →
- *  视觉 ~8px ≈ 胶囊高 1/3，即「自身高度的一小部分量级」）。真越出批
- *  （2026-10-23 六项②）：环层挂 body 后探出段**真实渲染**在 canvas 顶缘外
- *  （修前面板 overflow:hidden 硬裁切线退役），越出量保持本克制档不变。
- *  下缘位 |y| 对称下垂（上下对称裁定保持）。 */
-const RING_TOP_OUT = 0.8;
+const RING_STEADY_MS = 370;   // 展开过渡（0.36s）后缘位才接 pointer 的稳态门
+/** 文件扇几何（扇卡批，作者令 2026-10-30 20:09；卡面规格与扇形语言复用 Pop
+ *  扇卡落地批 d5613e0ea / chat.css .pop-stack-view —— 强制所有卡到一个大小 +
+ *  扑克式轻微旋转展开，非直直重叠）：
+ *  · 卡面 220×280（11/14，CSS aspect-ratio 承载 —— 卡面宽度唯一来源）；
+ *  · 游标卡完整置顶（z 5、零旋转），邻卡 transform-origin = 卡顶中心，按环距
+ *    轻微旋开收于其下：|rel|=1 → translateX ±FAN_PITCH1 + rotate ±FAN_ANGLE1，
+ *    |rel|=2 → ±FAN_PITCH2/±FAN_ANGLE2（Pop 扇 2°/3.5° 递增语言的侧向展开版：
+ *    角度随环距递增、左右镜像对称，扇读作一副扑克）；
+ *  · |rel|≥3 = is-far 不可见不可点（位姿保留让收放/步进有连续轨迹）——
+ *    同 Pop 层级≤3 全露语义，扇面最多 5 张可见；
+ *  · FAN_DROP_Y = 扇顶缘在胶囊中心下方落差（扇悬于标题头之下，不顶替其文字
+ *    亦不越面板顶缘 —— 竖环期 RING_TOP_OUT 越出反解随之退役）。 */
+const FAN_CARD_W = 220;
+const FAN_PITCH1 = 112;      // |rel|=1 横移（卡宽/2 + 2px 压边 —— 前卡完整、邻卡露大半）
+const FAN_PITCH2 = 206;      // |rel|=2 横移（级差 94px ≈ 邻卡露边宽）
+const FAN_ANGLE1 = 7;        // |rel|=1 旋转（扑克式轻微旋转展开，deg）
+const FAN_ANGLE2 = 13;       // |rel|=2 旋转（递增档；2×7−1，Pop 3.5/2=1.75 递增比的侧向档）
+const FAN_DROP_Y = 56;       // 扇顶缘落差（px，卡面顶在胶囊中心 +56 —— 胶囊底缘与卡顶
+                             // 之间留 38px 气隙：扇顶中文提示条悬于此隙，不叠标题头）
+const FAN_AXIS_LOCK_PX = 8;  // 卡面横拖轴锁（deck DECK_AXIS_LOCK_PX 同档）
+const FAN_DRAG_FLIP_PX = 64; // 卡面横拖翻页阈（松手 |dx|≥阈翻一张；标题头横滑关卡阈同档）
+const FAN_DRAG_FLING_V = 0.5; // 快甩速度阈（px/ms，过阈追加翻一张）
 
 /** 环开态单例（{ ids: string[], cursor: number, lastDir: number }；null = 环闭）。
- *  lastDir = 最近一次滚轮换选方向（±1）——双卡环（n=2）的方向感知布局档消费：
- *  非游标胶囊驻「来向侧」，滑动永远读作「来一张/走一张」的滚动而不是弹回。
+ *  lastDir = 最近一次翻动方向（±1）——双卡扇（n=2）的方向感知布局档消费：
+ *  非游标卡驻「来向侧」，滑动永远读作「来一张/走一张」的滚动而不是弹回。
  *  hdr 重建时随 initCanvas 重挂，状态本体放模块级 —— 手势 finish() 的
  *  ringClickCenter 同读。 */
 let ringState = /** @type {{ids: string[], cursor: number, lastDir: number}|null} */ (null);
 
-/* 真越出批（作者令 2026-10-23 六项②）：环层挂 body（#canvas-capsule-ring
- *  position:fixed，z-246 —— overlay 面板 240 之上、fab 250 之下、模态 300+ 之下），
- *  不再是面板子树 —— 面板 overflow:hidden 裁不到它，上缘位探出段**真实渲染**在
- *  canvas 顶缘外（硬裁切线消灭；越出量仍走 RING_TOP_OUT 克制档不变）。锚定与
- *  几何随之改视口坐标：anchor() 直写视口点，layout() 的 edgeY 反解改
- *  「锚视口 y − 面板视口顶 − h/2 + out」（与旧 offsetTop 链同义，对 offsetParent
- *  链免疫）。中心位胶囊 pointer-events:none（split.css）—— 环层如今在标题头
- *  之上，放行事件才能照旧落到标题头手势链（按压/竖滑/横滑/右键契约不变）。 */
+/* 环层挂 body（#canvas-capsule-ring position:fixed，z-246 —— overlay 面板 240
+ *  之上、fab 250 之下、模态 300+ 之下），不是面板子树 —— 面板 overflow:hidden
+ *  裁不到它（真越出机制本体；文件扇形态悬于标题头之下、零探出，机制保留）。
+ *  锚定改视口坐标：anchor() 直写视口点（对 offsetParent 链免疫）。扇卡在环层
+ *  之内自收 pointer（悬于标题头下方、不与标题头重叠 —— 标题头手势链按压/竖滑
+ *  换卡/横滑关卡/右键引用契约零接触）。 */
 
-/** 中心位（环游标）胶囊的「点击即切换」——标题头手势 finish() 的 !moved 臂
- *  消费（中心位 pointer 事件被标题头 capture 重定向，click 不达胶囊）。
+/** 中心位（扇游标）卡的「点击即切换」——标题头手势 finish() 的 !moved 臂消费
+ *  （点击标题头 = 切换游标所指页签，扇卡批前由中心覆层承接到同一语义）。
  *  游标 = 激活页签时零动作（CC1「点击界内零动作」契约保留）。@returns {boolean} */
 function ringClickCenter() {
   const id = ringCursorId();
@@ -3640,13 +3640,14 @@ function initCapsuleRing() {
   flags._capsuleRing = true;
   if (cardWindowMode) return;                      // 卡窗 = 单卡查看器，无环
   const isMobileLayer = () => document.body.classList.contains('mobile-layer');
-  const panelEl = /** @type {HTMLElement} */ (hdr.closest('#canvas-panel'));
 
   let acc = 0;                                     // 横滑游标累加器（deltaX 刻度）
   let accY = 0;                                    // 纵滚游标累加器（deltaY 刻度，整数步进零浮点）
   let wheelLockUntil = 0;                          // 滚轮切换冷却截止（performance.now() ms，触控板手感批）
   let leaveTimer = 0;
-  let steadyTimer = 0;                             // 真越出批：稳态门定时（展开过渡后缘位才可点）
+  let steadyTimer = 0;                             // 稳态门定时（展开过渡后缘位才接 pointer）
+  let hintEl = /** @type {HTMLElement|null} */ (null);  // 扇顶中文提示条（build 重建）
+  let suppressCardClick = 0;                       // 横拖翻页后同源 click 压制截止（deck 同模式）
 
   const root = document.createElement('div');
   root.className = 'capsule-ring';
@@ -3656,32 +3657,83 @@ function initCapsuleRing() {
   // 上缘位探出段真实渲染在 canvas 顶缘外（split.css §ring 注详）。
   document.body.appendChild(root);
 
-  /** 环序 = 页签插序（tabs Map 序 —— 与标签条/deckBuildRing 源序同源）。 */
+  /** 扇序 = 页签插序（tabs Map 序 —— 与标签条/deckBuildRing 源序同源）。 */
   const build = () => {
     root.textContent = '';
+    hintEl = null;
     ringState.ids = [...tabs.keys()];
     for (const id of ringState.ids) {
       const entry = tabs.get(id);
       if (!entry) continue;
       // div[role=button] 而非 <button>：标题头手势按 closest('button') 直通钮群
-      // —— 环胶囊若是 button，环开着时按压/竖滑换卡/横滑关卡全被钮群守卫吞掉
-      // （CC1/CC2/CC3 契约）。中心位事件照旧穿透标题头走手势链（按住=按钮语义），
-      // 缘位 = 纯点击钮（stopPropagation）。切换语义：缘位 click / 中心位
-      // ringClickCenter()（finish !moved 臂）。
+      // —— 扇卡若是 button，按压/横拖翻页全被钮群守卫吞掉。扇卡悬于标题头下方、
+      // 自收 pointer（不与标题头手势链重叠 —— 竖环期「中心位穿透标题头」机制
+      // 随之退役）。切换语义：卡 click（非游标）/ 标题头点击 ringClickCenter()
+      // （finish !moved 臂，游标=激活时零动作）。
+      const family = deckTypeFamily(entry);
+      const tag = entry.absPath ? t('canvas.fanTagFile') : t('canvas.fanTagPanel');
       const b = document.createElement('div');
       b.className = 'cr-capsule' + (isTabDirty(entry) ? ' is-dirty' : '');
       b.setAttribute('role', 'button');
       b.dataset.tabId = id;
-      b.innerHTML = '<span class="cr-icon">' + deckIconOf(deckTypeFamily(entry)) + '</span>' +
-        '<span class="cr-dot"></span><span class="cr-name">' + escapeDeckText(entry.title || entry.id) + '</span>';
-      // 中心位让 pointer 事件穿透标题头（按压触感/竖滑换卡/横滑关卡手势照旧，
-      // 作者令③「按住=交互按钮」）；缘位胶囊 = 纯按钮（不进手势链）。
-      b.addEventListener('pointerdown', (e) => { if (ringState && ringState.ids[ringState.cursor] !== id) e.stopPropagation(); });
-      // 缘位点击即切换（中心位被标题头 pointer capture 重定向 —— 走
-      // ringClickCenter()，见 initCardHeadGestures finish() 的 !moved 臂）。
+      // 卡头 = 类型图标 + 中文签（文件/面板 —— 卡片名不裸英文，作者令）+ 页签名
+      // + 脏点；卡体 = 大类型字形（卡面 220×280 的驻面内容）。
+      b.innerHTML =
+        '<div class="cr-head"><span class="cr-icon">' + deckIconOf(family) + '</span>' +
+        '<span class="cr-tag">' + escapeDeckText(tag) + '</span>' +
+        '<span class="cr-name">' + escapeDeckText(entry.title || entry.id) + '</span>' +
+        '<span class="cr-dot"></span></div>' +
+        '<div class="cr-body"><span class="cr-glyph">' + deckIconOf(family) + '</span></div>';
+      // 卡面横拖 = 左右翻动（作者令「卡片式左右翻动操作」的指针腿）：轴锁 8px
+      // 判横后整扇跟手（--fan-dx，.dragging 关过渡 1:1），松手过阈翻一张、快甩
+      // （速度阈）追加一张；不足阈回弹。纵拖不消费（滚轮/横拖才是翻动腿）。
+      let drag = /** @type {{pid: number, x0: number, t0: number, dx: number, axis: string|null}|null} */ (null);
+      b.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || !ringState) return;
+        drag = { pid: e.pointerId, x0: e.clientX, t0: performance.now(), dx: 0, axis: null };
+        try { b.setPointerCapture(e.pointerId); } catch { /* 已释放 */ }
+      });
+      b.addEventListener('pointermove', (e) => {
+        if (!drag || e.pointerId !== drag.pid) return;
+        drag.dx = e.clientX - drag.x0;
+        if (!drag.axis && Math.abs(drag.dx) > FAN_AXIS_LOCK_PX) {
+          drag.axis = 'x';
+          root.classList.add('dragging');
+        }
+        if (drag.axis === 'x') root.style.setProperty('--fan-dx', drag.dx.toFixed(1) + 'px');
+      });
+      const endDrag = (e, cancelled) => {
+        if (!drag || e.pointerId !== drag.pid) return;
+        const d = drag;
+        drag = null;
+        root.classList.remove('dragging');
+        root.style.setProperty('--fan-dx', '0px');
+        if (cancelled || d.axis !== 'x' || !ringState) return;
+        // 横拖手势（含不足阈回弹的小拖）消费后，同源 click 一律吞掉 —— 否则
+        // 轻拖松手的 trailing click 会走「点击切换」误翻页签（FAN-6/7a 实证）。
+        suppressCardClick = performance.now() + 350;
+        const n = ringState.ids.length;
+        const v = Math.abs(d.dx) / Math.max(1, performance.now() - d.t0);
+        let steps = Math.abs(d.dx) >= FAN_DRAG_FLIP_PX ? 1 : 0;
+        if (steps && v >= FAN_DRAG_FLING_V) steps = 2;
+        if (!steps) return;
+        const dir = d.dx < 0 ? -1 : 1;               // 左拖=上一张 / 右拖=下一张（环向）
+        for (let s = 0; s < steps; s++) {
+          ringState.cursor = (ringState.cursor + dir + n) % n;
+          ringState.lastDir = dir;
+        }
+        layout();
+      };
+      b.addEventListener('pointerup', (e) => endDrag(e, false));
+      b.addEventListener('pointercancel', (e) => endDrag(e, true));
+      // 卡点击语义（= 标题头 ringClickCenter 同契约）：游标卡 = 激活 → 零动作
+      // （CC1）；游标卡 ≠ 激活（翻动后游标已离激活）→ 点击翻入切换；非游标卡 →
+      // 切换。横拖翻页后的同源 click 被压制窗吞掉。
       b.addEventListener('click', () => {
-        if (!ringState || ringState.ids[ringState.cursor] === id) return;
-        setActiveTab(id);                          // canvas-tab-switched 收环
+        if (!ringState) return;
+        if (performance.now() < suppressCardClick) return;
+        if (ringState.ids[ringState.cursor] === id && id === activeTabId) return;   // 界内零动作
+        setActiveTab(id);                              // canvas-tab-switched 续扇
       });
       b.addEventListener('contextmenu', (e) => {
         if (isMobileLayer()) return;
@@ -3693,80 +3745,45 @@ function initCapsuleRing() {
       });
       root.appendChild(b);
     }
+    // 扇顶中文提示条（左右翻动操作引导，作者令中文界面文案）：悬于游标卡正上方。
+    const hint = document.createElement('div');
+    hint.className = 'cr-hint';
+    hint.textContent = t('canvas.fanHint');
+    root.appendChild(hint);
+    hintEl = hint;
   };
 
-  /** 位姿（2026-10-23 作者令「hover 要在上下显示，这样才有滚动的感觉」——上下
-   *  对称；顶部修正批：环锚常驻顶带，不沉降）：rel = 到游标的最短环距（wrap）；
-   *  0 = 中心清晰（与常态胶囊同位同尺寸，尺寸恒定）；±1 = 缘位 cover-flow：
-   *  上一签（rel<0）上展 −edgeY、下一签（rel>0）下垂 +edgeY，**|y| 严格相等**
-   *  （上下对称断言的几何来源）；rotateX 反号等幅（上缘位 +34° 顶边后仰 /
-   *  下缘位 −34° 底边后仰 —— 竖圆柱同侧曲率）；透视由 .capsule-ring 自身
-   *  perspective 提供（原点 = 环锚 = 胶囊中心）；模糊扭曲（CSS is-edge）。
-   *  |rel|≥2 = 弧外不可见（±2× 对称轨迹保留，收放有连续感）。
-   *  间距 = 环锚面板几何反解（顶部修正批 + 真越出批六项②视口版）：edgeY 令
-   *  上缘位顶越过面板顶缘 RING_TOP_OUT×h（胶囊高的一小部分 —— 作者令「顶部
-   *  有些超出…不要太多」，探出段真实渲染在顶缘外 —— 环层挂 body 裁切盒失效），
-   *  下缘位对称下垂；h + 2 下限兜底防退化叠置。本体尺寸恒定 ⇒ 间距恒定。 */
-  /** #926 件1（作者令 2026-10-26「hover 的时候不要改变文字的布局」）：中心覆层
-   *  的右内缝随 pop 钮实占宽同步（--cr-popw = 26 钮 + 6 gap，隐藏/缺席 = 0）——
-   *  pop 可见时覆层文字盒收窄到与被替换的常态 .t-name 盒逐像素等宽（106px 档），
-   *  隐藏时回宽档（138px）：hover 换层前后 ellipsis 截断点不变，文字行零换排。
-   *  layout() 每次调（openRing / 滚轮换选 / 开环换签）都同步 —— CR4 开环换签时
-   *  pop 可见性可能随新活动页签翻转，落在这条路径上刷新。 */
-  const syncCenterInset = () => {
-    const pop = hdr.querySelector('.canvas-pop-btn');
-    const on = !!pop && getComputedStyle(pop).display !== 'none';
-    root.style.setProperty('--cr-popw', on ? '32px' : '0px');
-  };
-
+  /** 位姿（扇卡批 2026-10-30）：rel = 到游标的最短环距（wrap）；0 = 游标卡完整
+   *  置顶（z 5、零旋转）；±1/±2 = 邻卡以卡顶中心为轴轻微旋开收于其下
+   *  （transform-origin 50% 0：旋转让卡底外摆 —— 扑克扇形；CSS 消费 --cr-x/
+   *  --cr-r/--cr-y）；|rel|≥3 = is-far 不可见（位姿保留，收放/步进连续）。
+   *  双卡方向感知档（作者令 2026-10-26「<3 卡也要能正常滚动」）保留：非游标卡
+   *  驻 lastDir 侧（横扇：来向侧 = 翻动方向侧）。 */
   const layout = () => {
     if (!ringState) return;
-    anchor();                                        // 真越出批：先回锚（环开中窗口尺寸变化随动）
-    syncCenterInset();                               // #926 件1：中心覆层右内缝随 pop 钮实占同步
+    anchor();                                        // 先回锚（扇开中窗口尺寸变化随动）
     const { ids, cursor } = ringState;
     const n = ids.length;
-    const kids = /** @type {HTMLElement[]} */ ([...root.children]);
-    const centerKid = cursor >= 0 && cursor < n ? kids[cursor] : null;
-    const h = centerKid ? centerKid.offsetHeight : 28;
-    const out = Math.max(8, Math.min(24, h * RING_TOP_OUT));
-    // 环锚面板纵深（真越出批视口版）= 锚视口 y − 面板视口顶（getBoundingClientRect，
-    // 对 offsetParent 链免疫，语义与旧 hdr.offsetTop + root.offsetTop 同一）；
-    // edgeY 反解自「上缘位顶 = 锚 − edgeY − h/2 = 面板顶 − out」。
-    const pr = panelEl.getBoundingClientRect();
-    const ay = parseFloat(root.style.top) || 0;
-    const edgeY = Math.max(h + 2, ay - pr.top - h / 2 + out);
+    const kids = /** @type {HTMLElement[]} */ ([...root.querySelectorAll('.cr-capsule')]);
     for (let i = 0; i < kids.length; i++) {
       let rel = (i - cursor + n) % n;
       if (rel > n / 2) rel -= n;
-      /* 双卡方向感知档（作者令 2026-10-26「卡片数 <3 也要能正常滚动/切换」）：
-       * n=2 时环距取模恒落 +1（下方）——两卡来回换选的位姿集合不变，视觉读作
-       * 「弹回自己」。改：非游标胶囊驻 lastDir 侧（滚上来 = 它从上方来，滚下去
-       * = 从下方来），单步动画 = 真「滚一格」；≥3 卡模运算本就覆盖上下两侧，不
-       * 走本档（动画按实际卡数退化，不强求三卡）。 */
       if (n === 2 && rel !== 0) rel = ringState.lastDir === -1 ? -1 : 1;
       const ar = Math.abs(rel);
       const k = kids[i];
       k.classList.toggle('is-center', rel === 0);
-      k.classList.toggle('is-edge', ar === 1);
-      k.classList.toggle('is-far', ar > 1);
+      k.classList.toggle('is-edge', ar >= 1 && ar <= 2);
+      k.classList.toggle('is-far', ar > 2);
       const side = rel < 0 ? -1 : 1;
-      const y = rel === 0 ? 0 : side * (ar === 1 ? edgeY : edgeY * 2);
-      k.style.setProperty('--cr-y', y.toFixed(1) + 'px');
-      k.style.setProperty('--cr-z', (ar === 0 ? 0 : ar === 1 ? -110 : -230) + 'px');
-      /* rotateX(+θ) = 顶边远离视者（CSS y 轴向下 ⇒ 顶部 y<0 ⇒ z' = y·sinθ < 0）：
-         上缘位（侧 −1）取 +34°（顶边后仰 = 竖圆柱外侧曲率），下缘位取 −34°
-         （底边后仰）—— 反号等幅，双缘同读作「圆柱外侧」。 */
-      k.style.setProperty('--cr-rx', String(rel === 0 ? 0 : -side * (ar === 1 ? 34 : 44)) + 'deg');
+      k.style.setProperty('--cr-y', FAN_DROP_Y + 'px');
+      k.style.setProperty('--cr-x', (rel === 0 ? 0 : side * (ar === 1 ? FAN_PITCH1 : FAN_PITCH2)).toFixed(1) + 'px');
+      k.style.setProperty('--cr-r', (rel === 0 ? 0 : side * (ar === 1 ? FAN_ANGLE1 : FAN_ANGLE2)).toFixed(1) + 'deg');
+      k.style.zIndex = String(ar === 0 ? 5 : ar === 1 ? 4 : 3);
     }
   };
 
-  /** 环锚 = 标题头胶囊盒（.canvas-header）中心（环收放与常态胶囊同位无缝 morph）。
-   *  #926 件1（作者 2026-10-26 报障「hover 的时候不要改变文字的布局」）：旧锚取
-   *  #canvas-title 中心 —— pop 钮（独立窗口入口 26px+gap6）可见时标题 fit-content
-   *  盒整体偏左（title 中心 ≠ 胶囊中心，1440 面实测偏 ~13.5px），hover 中心覆层
-   *  随之左移 = 文字行平移换位 + 前导图标顶穿胶囊左圆角（长名 ellipsis 态尤甚）。
-   *  改锚胶囊盒本体中心：覆层与胶囊同轴，文字行零平移。
-   *  真越出批：环层已挂 body（position:fixed），锚点直写**视口坐标**。 */
+  /** 扇锚 = 标题头胶囊盒（.canvas-header）中心视口点（扇收放于胶囊正下方展开，
+   *  环层已挂 body（position:fixed），锚点直写**视口坐标**，对 offsetParent 链免疫。 */
   const anchor = () => {
     const r = hdr.getBoundingClientRect();
     root.style.left = (r.left + r.width / 2) + 'px';
@@ -3774,10 +3791,9 @@ function initCapsuleRing() {
   };
 
   /* ── hover 区（环开态收环判定）──：环开点（顶带胶囊处）∪ 胶囊本体 ∪ 非弧外
-   *  环胶囊，各外扩 RING_ZONE_PAD_PX。竖环几何下中心→缘位有 ~edgeY 间隙，
-   *  pointerleave 单源会立即误收（甚至开→收振荡）；环开期间 document
-   *  pointermove 持续跟踪，离区才调度 140ms 宽限。（对称批「环开点→沉底胶囊
-   *  顶走廊 ±90px」随沉降撤销退役 —— 环锚回顶带，胶囊不再离位，走廊无事可桥。） */
+   *  扇卡 ∪ 提示条，各外扩 RING_ZONE_PAD_PX。扇形几何下游标卡与邻卡之间仍有
+   *  缝隙，pointerleave 单源会立即误收（甚至开→收振荡）；环开期间 document
+   *  pointermove 持续跟踪，离区才调度 140ms 宽限。 */
   let openPt = /** @type {{x: number, y: number}|null} */ (null);
   let lastPtr = /** @type {{x: number, y: number}|null} */ (null);
   const inHoverZone = (x, y) => {
@@ -3886,9 +3902,13 @@ function initCapsuleRing() {
     document.getElementById('canvas-content')?.classList.remove('capsule-ring-open');
     root.classList.remove('open');
     root.classList.remove('steady');
+    root.classList.remove('dragging');
+    root.style.setProperty('--fan-dx', '0px');
     if (steadyTimer) { clearTimeout(steadyTimer); steadyTimer = 0; }
     root.hidden = true;
     root.textContent = '';
+    hintEl = null;
+    suppressCardClick = 0;
     acc = 0;
     accY = 0;
     wheelLockUntil = 0;

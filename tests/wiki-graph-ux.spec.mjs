@@ -120,7 +120,10 @@ async function boot(page, preset = {}) {
       if (m.type === 'autostartStatus') ws.send(JSON.stringify({ type: 'autostartStatusResult', enabled: false, supported: true }));
       if (m.type === 'autostartSet') ws.send(JSON.stringify({ type: 'autostartStatusResult', enabled: m.enabled, supported: true }));
     });
-    ws.send(JSON.stringify({ type: 'configData', config: '{"features":{"friends":true}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
+    // graphseal 闸（2026-10-29 批后默认 OFF，#wiki-btn boot 摘挂）——本 spec 全腿
+    // 经 #wiki-btn 进图谱，显式 latch flag 回挂入口（存量红清欠：graphseal 批
+    // 只给 wiki-graph-paragraph 补了双态钉，本 spec 裸 #wiki-btn 直点自此红）。
+    ws.send(JSON.stringify({ type: 'configData', config: '{"features":{"friends":true,"wikiGraph":true}}', configured: true, onboarding: 'done', models: [], defaults: {} }));
     ws.send(JSON.stringify({ type: 'sessionList', sessions: [], activeId: null, folders: [] }));
     ws.send(JSON.stringify({ type: 'serverConfig', mcpServers: [], streamTimeoutMs: 60000, version: 'test', thinking: {}, workSchedule: {}, tools: [] }));
   });

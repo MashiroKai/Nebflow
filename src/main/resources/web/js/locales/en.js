@@ -1903,6 +1903,10 @@ export default {
   'explorer.reference': 'Reference',
   'canvas.referenceCurrent': 'Reference current page/selection',
   'canvas.noRef': 'This tab cannot be referenced',
+  // canvas top file fan (2026-10-30 author order: card-fan flip for file switching)
+  'canvas.fanTagFile': 'File',
+  'canvas.fanTagPanel': 'Panel',
+  'canvas.fanHint': 'Swipe or scroll to flip · click a card to switch',
   'canvas.unreadableTitle': 'File unreadable',
   'canvas.unreadableHint': 'The file does not exist or was cleaned up; it cannot be read.',
   'canvas.unreadablePathHint': 'The path is invalid; it cannot be read.',
