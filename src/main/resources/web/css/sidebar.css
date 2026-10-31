@@ -1197,15 +1197,19 @@
 
 /* ── Config Buttons ────────────────────────────────────────────────────────
    设计语言批 2026-10-21（账本 design-language §2/§4/§5/§7）：面板按钮档 =
-   12px 字（11px 判偏整改）/ 6px 12px 栅格距（5px 判偏）/ radius 8（5px 判偏，
-   输入同档）；主档墨族实底（--btn-primary-* 墨族 token 单源，2026-10-30 按钮
-   体系批：原绿实底 --color-primary 降级为身份/状态绿），几何与
-   ghost 档同值仅内距 6px 14px；sm 档 12px 字 4px 10px。字色 --frame-text
-   （原 dim 在 hover 前对比不足）。transition 逐属性 + 时长 token（禁 all）。 */
+   12px 字（11px 判偏整改）/ 6px 16px 栅格距（5px 判偏）；主档墨族实底
+   （--btn-primary-* 墨族 token 单源，2026-10-30 按钮体系批：原绿实底
+   --color-primary 降级为身份/状态绿），几何与 ghost 档同值仅内距 6px 18px；
+   sm 档 12px 字 4px 12px。字色 --frame-text（原 dim 在 hover 前对比不足）。
+   transition 逐属性 + 时长 token（禁 all）。
+   liquid-glass-v2 批 2026-10-31（作者 08:43 裁定① + 09:03 拍板）：按钮形态
+   换代 = r8 矩形族 → 999px 全药丸（设计稿 §5.2「主/次按钮统一药丸」）；
+   水平内距加宽一档成药丸比例，垂直栅格距不动。材质（blur/sat 双档、镜面
+   高光、spring 按压回弹）在 liquid-glass.css 共享底材承接。 */
 .cfg-btn {
   font-size: 12px;
-  padding: 6px 12px;
-  border-radius: 8px;
+  padding: 6px 16px;
+  border-radius: 999px;
   border: 1px solid var(--color-frame-border);
   background: none;
   color: var(--color-frame-text);
@@ -1215,9 +1219,9 @@
               border-color var(--dur-2) ease, box-shadow var(--dur-2) ease;
 }
 .cfg-btn:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
-.cfg-btn-sm { font-size: 12px; padding: 4px 10px; }
+.cfg-btn-sm { font-size: 12px; padding: 4px 12px; border-radius: 999px; }
 .cfg-btn-primary {
-  font-size: 12px; padding: 6px 14px; border-radius: 8px;
+  font-size: 12px; padding: 6px 18px; border-radius: 999px;
   border: 1px solid var(--btn-primary-bg);
   background: var(--btn-primary-bg);
   color: var(--btn-primary-ink);

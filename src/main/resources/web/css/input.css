@@ -915,57 +915,63 @@
      html[data-theme]，三态解析见 stand-tokens.css）。阴影槽位（inset 顶折线/底缘/
      接触影）本就是零绿中性槽位，逐槽保留；disabled 从褪绿 wash 改灰玻璃族
      （--btn-disabled-*）。此前 hover/active 的暗档字面量（#22CE78/#0BA95A）随
-     token 双档化作废删除。 */
-  background: var(--btn-primary-bg);
-  -webkit-backdrop-filter: blur(8px) saturate(1.3);
-  backdrop-filter: blur(8px) saturate(1.3);
-  color: var(--btn-primary-ink);
-  /* Edge: 墨族 active 档（比 rest 深一档的按压边），token 单源。 */
-  border: 1px solid var(--btn-primary-bg-active);
-  /* Layered depth, zero hue (candidate B slots preserved): a faint top fold-line +
-     inner bottom edge keep the "glass" edge signature, and two neutral contact
-     shadows keep the button seated on the bar. */
+     token 双档化作废删除。
+     liquid-glass-v2 批 2026-10-31（作者 08:43 裁定① + 09:03 拍板）：发送键形态
+     换代 = 36px 圆 → 墨玻璃药丸 h32 r999（设计稿 §5.2；底色/字色/状态引用
+     --g2-ink-* 墨玻璃 token 单源 = 墨族单源 + 高光/浮影叠层）；spring 按压
+     scale(.95) 180ms 回弹；镜面高光层 ::before 在 liquid-glass.css 承接。 */
+  background-color: var(--g2-ink-bg);
+  color: var(--g2-ink-ink);
+  /* Edge: 药丸同底色描边（按压态递进 --g2-ink-bg-active）。 */
+  border: 1px solid var(--g2-ink-bg);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.10),
-    0 1px 3px rgba(0, 0, 0, 0.10),
-    0 2px 8px rgba(0, 0, 0, 0.06);
-  border-radius: 50%;
-  width: 36px; height: 36px;
+    inset 0 1px 0 var(--g2-ink-highlight),
+    0 6px 20px var(--g2-ink-shadow);
+  border-radius: 999px;
+  height: 32px;
+  padding: 0 14px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   flex-shrink: 0;
-  transition: background 0.2s, box-shadow 0.2s, border-color 0.2s;
+  transition:
+    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.18s ease,
+    background-color 0.18s ease,
+    border-color 0.2s;
 }
 #send-btn:hover {
   /* 墨阶升一档（亮 #111827→#374151 / 暗 #e6edf3→#fff，token 双档自动）——
-     填充本身承担反馈；中性投影抬一档匹配。 */
-  background: var(--btn-primary-bg-hover);
+     填充本身承担反馈；浮影抬短档匹配。 */
+  background-color: var(--g2-ink-bg-hover);
+  border-color: var(--g2-ink-bg-hover);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.26),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.10),
-    0 2px 8px rgba(0, 0, 0, 0.12),
-    0 2px 12px rgba(0, 0, 0, 0.07);
+    inset 0 1px 0 var(--g2-ink-highlight),
+    0 3px 12px var(--g2-ink-shadow);
 }
 #send-btn:active {
-  /* 再深一档（--btn-primary-bg-active）+ 按压 inset（槽位沿用）。 */
-  background: var(--btn-primary-bg-active);
+  /* spring 按压回弹：形变 + 再深一档 + 投影收短（设计稿 §4/§6）。 */
+  transform: scale(0.95);
+  background-color: var(--g2-ink-bg-active);
+  border-color: var(--g2-ink-bg-active);
   box-shadow:
-    inset 0 1px 3px rgba(0, 0, 0, 0.18),
-    0 1px 2px rgba(0, 0, 0, 0.08);
+    inset 0 1px 0 var(--g2-ink-highlight),
+    0 3px 10px var(--g2-ink-shadow);
 }
 #send-btn:disabled {
-  /* 灰玻璃禁用档（褪绿 wash 作废）：材质与全站发送族禁用档同 token。 */
+  /* 灰玻璃禁用档（褪绿 wash 作废）：材质与全站发送族禁用档同 token。
+     liquid-glass-v2 批：禁用档保持灰玻璃语义（--btn-disabled-*），药丸几何随本体。 */
   background: var(--btn-disabled-bg);
   border-color: var(--btn-disabled-stroke);
   color: var(--btn-disabled-ink);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
   cursor: default;
+  transform: none;
 }
 #send-btn:disabled svg { opacity: 0.45; }
-#send-btn svg { width: 18px; height: 18px; stroke-width: 2.5; }
+#send-btn svg { width: 16px; height: 16px; stroke-width: 2.5; }
 /* Disconnected state — doubles as the connection indicator: the send button
    fades into the family's **gray** (掉线灰) so users see they can't send until
    the link is back.
