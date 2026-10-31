@@ -1,4 +1,7 @@
 /* ── Floating Input Area (overlays chat bottom) ──────────────────────── */
+/* 输入框瘦身批（2026-10-31 作者令「消息输入框的上下留白尽量小 让输入框的占比
+   小一点 让主要信息凸显」）：#input-area 底缘外留白 10px → 4px（4px 栅格档）。
+   JS 让位逻辑读 #input-area.offsetHeight ⇒ 消息列底缘让位同步收紧，零 JS 改动。 */
 #input-area {
   position: absolute;
   bottom: 0;
@@ -7,7 +10,7 @@
   z-index: 20;
   /* Safe area (viewport-fit=cover): keeps the composer above the browser's
      own home-indicator / toolbar controls on phone viewports. */
-  padding: 0 0 max(10px, env(safe-area-inset-bottom)) 0;
+  padding: 0 0 max(4px, env(safe-area-inset-bottom)) 0;
   pointer-events: none;
 }
 
@@ -19,7 +22,9 @@
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: 20px;
-  padding: 8px 12px;
+  /* 瘦身批：垂直内 padding 8px → 6px（横向 12px 不动；mic-orb 64px/图标钮 36px
+     为静息态高度驱动件，本项在输入态（textarea 驱动行高）再省 4px）。 */
+  padding: 6px 12px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -286,7 +291,8 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 0 0 6px;
+  /* 瘦身批：与 textarea 的间距 6px → 4px（栅格档；in-flow 行，零遮挡语义不变）。 */
+  margin: 0 0 4px;
   flex-wrap: wrap;
   overflow: visible;
   scrollbar-width: none;
@@ -658,7 +664,9 @@
   border: none;
   background: transparent;
   border-radius: 18px;
-  padding: 8px 14px;
+  /* 瘦身批：垂直内 padding 8px → 6px（横向 14px 不动；多行增长逻辑读
+     scrollHeight，与本 padding 无耦合）。 */
+  padding: 6px 14px;
   font-size: 14.5px;
   outline: none;
   width: 100%;
