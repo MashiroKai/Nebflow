@@ -2824,7 +2824,6 @@ export default {
   'taskpanel.stats': '{n} · {run} running',
   'taskpanel.grpRunning': 'Running',
   'taskpanel.grpQueued': 'Queued',
-  'taskpanel.grpDone': 'Done',
   'taskpanel.empty': 'No tasks yet',
   // ── Perception domain (mail-perception-impl batch) ──
   'perception.title': 'Perception',

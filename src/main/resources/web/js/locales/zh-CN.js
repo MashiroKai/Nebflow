@@ -2732,7 +2732,6 @@ export default {
   'taskpanel.stats': '{n} · {run} 运行中',
   'taskpanel.grpRunning': '运行中',
   'taskpanel.grpQueued': '排队',
-  'taskpanel.grpDone': '已完成',
   'taskpanel.empty': '暂无任务',
   // ── 感知域（mail-perception-impl 批）──
   'perception.title': '感知',
