@@ -159,6 +159,16 @@ final class ShellSession private (
 
   private val SessionTTL = 30.minutes.toMillis
 
+  /**
+   * 会话**实例** id（death-watch 误报修复批 ④ 观测腿，作者令 2026-10-31「修」）：
+   * 每次 `ShellSession.create` 实体生成时随机铸号——任务图 job 注册/移除的结构化
+   * 日志携本号落盘，#1220 行↔图发散（`not owned by session`）的下一起实证即可
+   * 按「注册在实例 A、移除在实例 B」对上官错装/重复注册路径（会话 replace 后同
+   * sessionId 出现两个实例 id 即铁证）。会话 id（sessionId）不含实例区分——
+   * TTL/replace 后新实体同号复用，唯有随机实例号可辨。
+   */
+  val instanceId: String = java.util.UUID.randomUUID().toString.take(8)
+
   def getCurrentDir: IO[String] = currentDir.get
 
   private[tools] def touch: IO[Unit] =
@@ -306,6 +316,14 @@ final class ShellSession private (
           health
         )
         _ <- backgroundJobs.update(_ + (jobId -> job))
+        // ④ 任务图注册观测腿（实例 id + 原因——#1220 行↔图发散定谳腿）。
+        _ <- ShellSession.jobGraphLog.info(
+          "[bg-job-graph] register",
+          "jobId"    -> jobId,
+          "instance" -> instanceId,
+          "session"  -> sessionId,
+          "cause"    -> "executeBackground"
+        )
       yield jobId
     }
 
@@ -320,7 +338,14 @@ final class ShellSession private (
             job.deferred.tryGet.flatMap {
               case None => IO.pure(None)
               case Some(result) =>
-                backgroundJobs.update(_ - jobId).as(Some(result))
+                // ④ 任务图移除观测腿：正常完成消费（getBackgroundResult 取走式）。
+                ShellSession.jobGraphLog.info(
+                  "[bg-job-graph] remove",
+                  "jobId"    -> jobId,
+                  "instance" -> instanceId,
+                  "session"  -> sessionId,
+                  "cause"    -> "getBackgroundResult"
+                ) *> backgroundJobs.update(_ - jobId).as(Some(result))
             }
         }
       yield res
@@ -414,7 +439,15 @@ final class ShellSession private (
                 val cancelFibers =
                   job.fiber.cancel *> job.heartbeatFiber.traverse(_.cancel) *> job.healthCheckFiber.traverse(_.cancel)
                 // 4) Remove from map
-                val remove = backgroundJobs.update(_ - jobId)
+                // ④ 任务图移除观测腿：显式取消（cancelBackgroundJob 取走式）。
+                val remove =
+                  ShellSession.jobGraphLog.info(
+                    "[bg-job-graph] remove",
+                    "jobId"    -> jobId,
+                    "instance" -> instanceId,
+                    "session"  -> sessionId,
+                    "cause"    -> "cancelBackgroundJob"
+                  ) *> backgroundJobs.update(_ - jobId)
 
                 killProcess *> completeDeferred *> cancelFibers *> remove.as(true)
             }
@@ -449,15 +482,23 @@ final class ShellSession private (
       for
         _ <- isAlive.set(false)
         jobs <- backgroundJobs.getAndSet(Map.empty)
-        _ <- jobs.values.toList.traverse_(job =>
+        // ④ 任务图移除观测腿：会话 kill 清空（含未完成任务——结构性移除点）。
+        _ <- jobs.toList.traverse_ { case (jobId, job) =>
           val proc = job.health.processRef.get()
-          (if proc != null && proc.isAlive then ProcessTree.killProcessTree(proc) else IO.unit) *>
+          ShellSession.jobGraphLog.info(
+            "[bg-job-graph] remove",
+            "jobId"    -> jobId,
+            "instance" -> instanceId,
+            "session"  -> sessionId,
+            "cause"    -> "kill"
+          ) *>
+            (if proc != null && proc.isAlive then ProcessTree.killProcessTree(proc) else IO.unit) *>
             job.deferred.complete(Left(new InterruptedException("Session killed"))).attempt.void *>
             job.fiber.cancel *>
             job.heartbeatFiber.traverse(_.cancel) *>
             job.healthCheckFiber.traverse(_.cancel) *>
             job.fiber.join.void.timeout(5.seconds).attempt.void
-        )
+        }
         _ <- cleanupFiber.cancel *> cleanupFiber.join.void.timeout(5.seconds).attempt.void
       yield ()
     }
@@ -1076,6 +1117,14 @@ final class ShellSession private (
           health
         )
         _ <- backgroundJobs.update(_ + (jobId -> job))
+        // ④ 任务图注册观测腿（实例 id + 原因——前台转后台收编路径同登记）。
+        _ <- ShellSession.jobGraphLog.info(
+          "[bg-job-graph] register",
+          "jobId"    -> jobId,
+          "instance" -> instanceId,
+          "session"  -> sessionId,
+          "cause"    -> "adoptAsBackgroundJob"
+        )
       yield ()
     }
 
@@ -1436,6 +1485,12 @@ end ShellSession
 object ShellSession:
 
   /**
+   * 任务图观测腿 logger（[bg-job-graph] 结构化行统一出口）——death-watch 误报
+   * 修复批 ④：companion 级（类体与清理 fiber 两腿共用）。
+   */
+  private val jobGraphLog = NebflowLogger.forName("nebflow.shell")
+
+  /**
    * cwd 判定触发点符号（T2）：错误文本逐字引用，验红 / 日志排障按此串 grep。
    * 调用点只有一处——`buildProcessBuilder` 内 `safeCwd`（前台 execute、
    * 后台 executeBackground、命令后 `pwd` 复核三条路径都经 `runProcess` 到此）。
@@ -1704,7 +1759,18 @@ object ShellSession:
             // Cancel heartbeat fibers for completed jobs
             completed.traverse_ { case (_, job) =>
               job.heartbeatFiber.traverse(_.cancel) *> job.healthCheckFiber.traverse(_.cancel)
-            } *> jobsRef.update(_ -- completed.map(_._1))
+            } *>
+              // ④ 任务图移除观测腿：5min 清理 fiber 淘汰已完成 job（静默移除点——
+              // #1220 发散候选路径之一，注册/淘汰实例号对不上即铁证）。
+              completed.traverse_ { case (id, _) =>
+                ShellSession.jobGraphLog.info(
+                  "[bg-job-graph] remove",
+                  "jobId"    -> id,
+                  "instance" -> "unknown(evict-leg)",
+                  "session"  -> "unknown(evict-leg)",
+                  "cause"    -> "evictCompleted"
+                )
+              } *> jobsRef.update(_ -- completed.map(_._1))
           }
     }
 end ShellSession

@@ -2188,6 +2188,11 @@ object GatewayMain extends IOApp:
                                                       }
                                                       .guarantee(
                                                         logger.info("shutting down...") *>
+                                                          // death-watch 误报修复批 ③：关停抑制旗在关停链**最前**置位
+                                                          // （quit / Ctrl+C / 热重启 handover / SIGTERM 全收敛到本 guarantee）——
+                                                          // 旗起期间 BgTaskReaper 不判死只告警，消灭「关机窗内被杀任务记
+                                                          // owner-lost」误报（实证 639c9d15）。
+                                                          IO(nebflow.core.tools.BgTaskReaper.markEngineShutdown()) *>
                                                           daemonService.stopAll() *>
                                                           // P0 (2026-08-19): abort in-flight LLM requests BEFORE the
                                                           // sttp backend/dispatcher close — Ctrl+C previously let

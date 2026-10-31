@@ -317,6 +317,15 @@ object BgTaskOutputStore:
     entries.get.map { m =>
       m.view.map { case (id, e) => id -> e.buffer.snapshot(0L).totalLines }.toMap
     }
+
+  /**
+   * death-watch 误报修复批 ⑤ 观测面：jobId → 输出缓冲**最近一次 append 戳**（ms；
+   * 0 = 从未 append / 条目不在册）。判死二次确认读它判「近 N 秒输出是否仍在增长」——
+   * 真活着的任务（如正在吐编译日志的 sbt）缓冲 append 戳持续刷新，据此豁免一轮
+   * 收割（实证 887c8244：行在、任务图无、进程活、输出增长）。
+   */
+  def lastOutputAt(jobId: String): IO[Option[Long]] =
+    entries.get.map(_.get(jobId).map(_.buffer.lastAppendAt))
 end BgTaskOutputStore
 
 /**
@@ -330,6 +339,8 @@ final class BgTaskOutputBuffer(capBytes: Int):
   private var endOffset: Long = 0L // 下一行的起始偏移 = 已写入总字节
   private var totalLines: Long = 0L
   private var droppedHead: Boolean = false
+  /** 最近一行 append 的墙钟戳（death-watch 误报修复批 ⑤ 的增长判据；0 = 从未 append）。 */
+  private var lastAppendAtMs: Long = 0L
 
   /**
    * 追加一行（读取线程并发调用，锁内 O(1)；超限从头丢行，至少保一行——单行
@@ -340,10 +351,14 @@ final class BgTaskOutputBuffer(capBytes: Int):
     lines.addLast((endOffset, line))
     endOffset += line.getBytes(StandardCharsets.UTF_8).length.toLong + 1L
     totalLines += 1L
+    lastAppendAtMs = System.currentTimeMillis()
     while lines.size() > 1 && endOffset - lines.peekFirst()._1 > capBytes.toLong do
       lines.removeFirst()
       droppedHead = true
   }
+
+  /** 最近一次 append 戳（ms；0 = 从未 append）——只读，供 death-watch 增长确认。 */
+  def lastAppendAt: Long = lock.synchronized(lastAppendAtMs)
 
   /** 切片快照（独立 case class——项目 Scala 版本未开 named tuples）。 */
   final case class Snapshot(output: String, totalBytes: Long, totalLines: Long, truncated: Boolean)

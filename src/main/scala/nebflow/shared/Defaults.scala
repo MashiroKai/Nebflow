@@ -883,6 +883,34 @@ object Defaults:
   def BgLifecycleNudgeMaxBackoffMs: Long =
     sys.props.getOrElse("nebflow.bglifecycle.nudgeMaxBackoffMs", (40 * 60 * 1000L).toString).toLong
 
+  // ── death-watch 误报修复批（2026-10-31 作者令「修」，根因 docs/20261031_owner-lost.md
+  //    §4 修法清单 ①②③⑤⑥ 的参数面；全部现读 prop，spec 可即时翻转边界）──────────
+
+  /**
+   * 幼龄行豁免窗（ms，默认 10s）：行龄 < 本窗 ⇒ death-watch 跳过本轮判死（spawn/
+   * 句柄/任务图落位的毫秒~秒级窗口；瞬起瞬崩合法 case 不误伤——实证 5ae83e33）。
+   * 唯 `owner session gone` 分支不受本窗豁免（会话已殁是结构性死证，不抢在窗内）。
+   */
+  def BgDeathWatchYoungRowExemptMs: Long =
+    sys.props.getOrElse("nebflow.bg.deathWatch.youngRowExemptMs", "10000").toLong
+
+  /**
+   * 句柄未落豁免的期限（ms，默认 5min）：行龄超本窗而 OS 进程句柄仍未落
+   * （重启恢复/收编的句柄永不再落形态）⇒ 豁免逾期，降级回普通判死路径——
+   * 堵「永久 Alive」僵尸免疫反向缺陷（实证 46a86d3f 型的另一半）。
+   */
+  def BgDeathWatchHandleGraceMs: Long =
+    sys.props.getOrElse("nebflow.bg.deathWatch.handleGraceMs", (5 * 60 * 1000L).toString).toLong
+
+  /**
+   * 判死二次确认窗（ms，默认 5s）：`not owned by session` / `process dead` /
+   * `handle never landed` verdict 落地收割前，复查该 job 输出行数是否在本窗内
+   * 仍有增长（缓冲最近 append 戳）——有增长 ⇒ 判 Alive 跳过一拍（低成本防真活着
+   * 被误埋——实证 887c8244 当时正在输出编译日志）。
+   */
+  def BgDeathWatchOutputGrowthConfirmMs: Long =
+    sys.props.getOrElse("nebflow.bg.deathWatch.outputGrowthConfirmMs", "5000").toLong
+
   /**
    * 2026-09-10 卡死判据换轴（取证 20260910_130621_flow-node-activity-signal-forensics.md）：
    * **工具相位**卡死阈值——同一 turn 内单个工具调用持续超过此值、且该 turn 仍
