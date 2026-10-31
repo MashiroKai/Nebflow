@@ -32,11 +32,17 @@ object AskSessions:
   val Prefix = "ask-"
 
   /**
-   * 白名单封闭枚举（机制稿 §5）：ask 会话唯一工具面，白名单外一律不下发。
-   * 名字 = 机制稿 §5 契约名（snake_case 逐字），buildAllowedToolSet 早退集
-   * 与工具注册名同源（AskTools 两对象常量回指本集成员）。
+   * 白名单封闭枚举（机制稿 §5 + 20261031 只读工具批）：ask 会话唯一工具面，
+   * 白名单外一律不下发。名字 = 机制稿 §5 契约名（snake_case 逐字），
+   * buildAllowedToolSet 早退集与工具注册名同源（AskTools 各对象常量回指本集成员）。
+   *   - message_record_search —— 消息检索 CLI 封装（只读）；
+   *   - send_message_to_main_chat —— 单向信使（§7 转交）；
+   *   - read_file_content —— 读本文件原文（只读，行窗口；设计清单
+   *     docs/design/20261031_113700_ask-readonly-tool-design__delegate-nebflow-09ef7b2e
+   *     .zh-CN.md，路径锁绑定表、2MB 文件顶、64KB 输出顶）。
    */
-  val AllowedTools: Set[String] = Set("message_record_search", "send_message_to_main_chat")
+  val AllowedTools: Set[String] =
+    Set("message_record_search", "send_message_to_main_chat", "read_file_content")
 
   /** 重组冷却档（§3.3：10 分钟）。 */
   val ReassemblyCooldownMs: Long = 10L * 60L * 1000L

@@ -93,6 +93,7 @@ Canvas 画布上的每个文件卡获得一个小控件，点击展开一个迷�
 | 工具 | 形态 | 说明 |
 |---|---|---|
 | `message_record_search` | 消息检索 CLI 封装 | 包 `tools/stand-recall`（关键词/时间窗/角色过滤/--json），只读 |
+| `read_file_content` | 引擎内置只读工具 | 读本文件原文（2026-10-31 只读工具批增补；路径锁绑定表无 path 参数，行窗口 start_line/max_lines 硬顶 500，文件 2MB 顶、输出 64KB 顶）。设计清单 = [[20261031_113700_ask-readonly-tool-design__delegate-nebflow-09ef7b2e]] |
 | `send_message_to_main_chat` | 单向信使 | 见 §7；ask 会话唯一的对外动作 |
 
 无文件写、无 shell、无任务调度、无 agent 编排；不注册任何 MCP 面。实现上 = 现有会话工具注册面的一个白名单 profile（复用插件工具授权机制的单点裁剪），不新增权限模型。
@@ -112,10 +113,14 @@ Canvas 画布上的每个文件卡获得一个小控件，点击展开一个迷�
 
 【上下文】你的上下文由三路组装（文件全文、文档图谱邻接段、主会话记忆检索命中），
 不含主会话的最近对话历史；上下文每 10 分钟随记忆与文档更新重组——被问到「刚才」
-类问题时，以检索结果为准，不臆造连续性。
+类问题时，以检索结果为准，不臆造连续性。文件原文可随时经 read_file_content
+工具按行窗口重读（不止依赖组装快照；被问细节/原文引用时优先用它，不要答
+「读不到文件」）。
 
 【边界】
-1. 你没有编辑、执行、编排类工具；绝不能承诺「我去改/我去跑/我去派任务」。
+1. 你没有任何编辑、执行、编排类工具；工具面只有两件只读（read_file_content
+   读本文件原文 / message_record_search 检索主会话记忆）加一条转交通道
+   （send_message_to_main_chat）。绝不能承诺「我去改/我去跑/我去派任务」。
 2. 对主会话只有一条通道：send_message_to_main_chat（转交请求）。仅当用户明确要
    「让主会话处理/跟进/执行」时使用；转交后告知用户「已发送，它可回问」，然后留在
    本窗继续服务。
@@ -192,7 +197,7 @@ Canvas 画布上的每个文件卡获得一个小控件，点击展开一个迷�
 | 会话绑定/冷却/白名单 | `src/main/scala/nebflow/core/ask/AskSessions.scala` | `ask-<sha256前8hex>` 单点派生、`ask:<4hex>` 展示键、AllowedTools 封闭集、10 分钟冷却、`<dataRoot>/ask/index.json` 持久 |
 | 上下文组装 + §6 提示词 | `src/main/scala/nebflow/core/ask/AskContextAssembler.scala` | 三路管线（文件全文 16k → 图谱邻接 ≤6 → recall top5）+ 提示词全文 `promptFor` |
 | 服务定位 + 活体源 | `src/main/scala/nebflow/core/ask/AskGatewayServices.scala` | AskServices 冷却腿 + AskLiveSources（盘读/图谱 1-2 跳/stand-recall CLI） |
-| 白名单工具面 | `src/main/scala/nebflow/core/tools/AskTools.scala` | `send_message_to_main_chat`（双保险身份 + 1/min 频控）+ `message_record_search`（只读 CLI 封装） |
+| 白名单工具面 | `src/main/scala/nebflow/core/tools/AskTools.scala` | `send_message_to_main_chat`（双保险身份 + 1/min 频控）+ `message_record_search`（只读 CLI 封装）+ `read_file_content`（2026-10-31 只读工具批，绑定表锁路径 + 行窗口 + 2MB/64KB 双顶） |
 | ask WS 域 | `src/main/scala/nebflow/gateway/WsAskHandlers.scala` | askOpen/askQuestion/askHandoff/askReply 四路由 + 转交 face 注入 |
 | 前端全套 | `web/css/ask.css` + `web/js/askDock.js` | 样张 v2 形态（E 表 token 全量落位）+ 挂载/流式消费/切卡切 session |
 | 验收 spec | `tests/canvas-ask-dock.spec.mjs` | §8 断言面 38 断言（T0-T10，含 v2.1 减法面 T6/T10）+ 截图 ×4（`evidence/canvas-ask-dock/shots/`；v2.1 前后对比另存 `evidence/ask-v2.1/`） |

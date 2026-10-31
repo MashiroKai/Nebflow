@@ -38,6 +38,10 @@ import state from './state.js';
 import { sendWs, setAskFrameSink, onReconnect } from './ws.js';
 import { activeCanvasEntry } from './canvas.js';
 import { isMdHtmlFile } from './mdHtmlGate.js';
+// 修复批 2026-10-31（作者令 ①）：ai 气泡渲染复用主会话渲染腿
+// utils.renderMarkdownWithMath（代码块/表格/列表/数学全套，含 marked+KaTeX
+// 护栏与 LRU）——渲染腿零重写；user 气泡维持 textContent 纯文本面。
+import { renderMarkdownWithMath } from './utils.js';
 
 // ── 文案（i18n 键 = key('locale')，navController tt 同源）─────────────────
 function tt(zh, en) {
@@ -330,7 +334,10 @@ function render() {
   vis.forEach((m, i) => {
     const b = document.createElement('div');
     b.className = 'ask-bub ' + (m.role === 'user' ? 'user' : 'ai');
-    b.textContent = m.text;
+    // ① 修复批 2026-10-31：ai 族走主会话渲染腿（markdown 全套）；user 族
+    // 维持 textContent（用户输入纯文本面，与主会话一致）。渲染腿复用不重写。
+    if (m.role === 'user') b.textContent = m.text;
+    else b.innerHTML = renderMarkdownWithMath(m.text);
     // 弹幕感：越靠上（越旧）越透明（样张按龄渐隐同律）。
     const d = vis.length - 1 - i;
     b.style.setProperty('--ask-age-alpha', String(Math.max(0.3, 1 - d * 0.13)));
@@ -349,7 +356,8 @@ function updateStreamingBubble(s) {
     render();
     return;
   }
-  node.textContent = last ? last.text : '';
+  // 主会话流式同律：cache:false 直解析（每帧重解析增长文本，不进 LRU 挤占）。
+  node.innerHTML = last ? renderMarkdownWithMath(last.text, true, { cache: false }) : '';
   el.col.scrollTop = el.col.scrollHeight;
 }
 
@@ -371,8 +379,10 @@ async function submit() {
   const v = el.input.value.trim();
   if (!v) return;
   el.input.value = '';
+  // ④ 双泡修复批 2026-10-31（作者截图：等待小气泡上方叠多余空泡）：发问时
+  // **不再预压空 ai 泡**——等待期只有 typing 一件；首个 textDelta 落 ai 泡时
+  // removeTyping() 单点换泡（双泡根因 = 空 ai 泡 + typing 泡并存）。
   s.msgs.push({ role: 'user', text: v });
-  s.msgs.push({ role: 'ai', text: '' });
   render();
   appendTyping();
   if (!s.stateSent) askOpen(s); // 未绑定先补一拍（历史回放与流式都依赖 askState）
@@ -411,7 +421,12 @@ function consumeFrame(msg) {
       entry.sid = msg.sessionId || entry.sid;
       entry.key = msg.sessionKey || '';
       entry.fileName = msg.fileName || entry.fileName;
-      entry.msgs = Array.isArray(msg.messages)
+      // ④ 双泡修复批伴随守卫：submit 先 askOpen 后 askQuestion，回放帧快照可能
+      // 早于本拍提问落账——整表替换会把刚发的 user 泡抹掉（视觉丢问）。合并律：
+      // 本地末条为 user 且服务端历史末条 user 文本不同 ⇒ 本地该问是回放快照后
+      // 的新问，补挂到回放尾（幂等：下帧回放已含它时自然 dedup）。
+      const pendingLocal = entry.msgs.filter((m) => m.role === 'user').slice(-1)[0];
+      const serverMsgs = Array.isArray(msg.messages)
         ? msg.messages
             .filter((m) => m && typeof m.text === 'string')
             .map((m) => ({
@@ -420,6 +435,15 @@ function consumeFrame(msg) {
               receipt: false,
             }))
         : entry.msgs;
+      const serverLastUser = serverMsgs.filter((m) => m.role === 'user').slice(-1)[0];
+      entry.msgs = serverMsgs;
+      if (
+        pendingLocal &&
+        pendingLocal.role === 'user' &&
+        (!serverLastUser || serverLastUser.text !== pendingLocal.text)
+      ) {
+        entry.msgs = entry.msgs.concat([pendingLocal]);
+      }
       if (file === currentFile) {
         // 回放即读（用户此刻正看着该会话）：未读清零 + 通知点落位。
         if (isOpen()) { entry.unread = false; removeTyping(); render(); }

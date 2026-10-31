@@ -37,6 +37,12 @@
 //       等文件型卡）入口同闸隐藏（与可见性闸同悬挂点：currentFile 赋值处过滤），
 //       零 askOpen 帧外发；大小写不敏感（README.MD 放行）；切回白名单文件
 //       入口复现。后端拒答面见 AskGateSpec + ask-gate-live（双层防呆之后端腿）
+//   F  修复批 2026-10-31（作者令 10-31 10:43 + 截屏 3 张）：
+//       F1 ④双泡修复——发问等待期零空 ai 泡（typing 单件）；
+//       F2 ①ai 气泡复用主会话渲染腿 renderMarkdownWithMath（h2/ul/pre+code/
+//          table 全在场、裸 md 字面量退场）；
+//       F3 ⑤顶带渐隐按液体玻璃 v2（--g2-veil + blur(18) saturate(1.5) + 两段式
+//          mask）且列顶留白 64px 首条不入带。
 //   T12 风格统一（三修③ 作者令 2026-10-29「ask 输入条/气泡对齐 canvas 统一风格，
 //       不新造风格」）：入口钮/输入条/气泡三面计算材质（backgroundColor /
 //       borderTopColor / backdropFilter）与聊天 #header 玻璃模板（--cv-* 单源）
@@ -353,6 +359,87 @@ try {
   // ⇒ 点不亮（旧「has-sess 有过消息即亮紫点」退役——此处正是旧口径会误亮的现场）。
   ok('T3h 在看流（dock 开）无未读：通知点不亮', !fabState.hasUnread && parseFloat(fabState.dotOpacity) < 0.1, JSON.stringify(fabState));
   await shot(page, 't3-conversation');
+
+  // ── F 修复批 2026-10-31（作者令 10-31 10:43 + 截屏 3 张）──────────────────
+  // F1 ④双泡：发问等待期只有 typing 一件——零空 ai 泡（根因 = 预压空 ai 泡 +
+  //    typing 泡并存；首个 textDelta 换泡单点 removeTyping）。
+  // F2 ①markdown：ai 气泡渲染复用主会话渲染腿 renderMarkdownWithMath
+  //    （代码块/表格/列表全套 HTML 产物在场，裸 markdown 字面量退场）。
+  // F3 ⑤液体玻璃 v2 顶带：.ask-veil 材质 = --g2-veil + blur(--g2-fade-blur)
+  //    saturate(--g2-fade-sat) + 两段式 mask；列顶留白 = fade-h（首条不入带）。
+  inbound.length = 0;
+  const aiCountBefore = await page.evaluate(() => document.querySelectorAll('.ask-dock .ask-bub.ai').length);
+  await page.fill('.ask-dock input', '## 结构\n\n- 甲\n- 乙\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```js\ncode\n```');
+  await page.press('.ask-dock input', 'Enter');
+  await sleep(250);
+  const f1 = await page.evaluate((prevAi) => ({
+    user: document.querySelectorAll('.ask-dock .ask-bub.user').length,
+    ai: document.querySelectorAll('.ask-dock .ask-bub.ai').length,
+    emptyAi: [...document.querySelectorAll('.ask-dock .ask-bub.ai')].filter((b) => !b.textContent.trim()).length,
+    typing: document.querySelectorAll('.ask-dock .ask-bub.typing').length,
+    prevAi,
+  }), aiCountBefore);
+  // ④双泡（作者截屏 3 = 空 ai 泡叠 typing 双泡）：等待期 ai 泡数不增长（无新空泡）、
+  // typing 单件；既有 T3 答复泡不算新泡。
+  ok('F1 双泡修复：等待期零新增空 ai 泡（typing 单件）', f1.ai === f1.prevAi && f1.emptyAi === 0 && f1.typing === 1, JSON.stringify(f1));
+  const fAskQ = inbound.find((m) => m.type === 'askQuestion');
+  const fSid = fAskQ ? fAskQ.sessionId : askedSid;
+  for (const d of ['## 结构\n\n', '- 甲\n- 乙\n\n', '| A | B |\n|---|---|\n| 1 | 2 |\n\n', '```js\ncode\n```']) {
+    wsSend({ type: 'textDelta', sessionId: fSid, delta: d });
+    await sleep(80);
+  }
+  await sleep(200);
+  const f2mid = await page.evaluate(() => {
+    const nodes = [...document.querySelectorAll('.ask-dock .ask-bub.ai')];
+    const b = nodes[nodes.length - 1];
+    return b ? {
+      n: nodes.length,
+      pre: !!b.querySelector('pre'),
+      code: !!b.querySelector('pre code'),
+      table: !!b.querySelector('table td'),
+      list: !!b.querySelector('ul li'),
+      h2: !!b.querySelector('h2'),
+      rawMd: b.textContent.includes('## ') || b.textContent.includes('|---|'),
+      typing: document.querySelectorAll('.ask-dock .ask-bub.typing').length,
+    } : null;
+  });
+  ok('F2 流式 markdown 渲染（主会话渲染腿复用）：h2/ul/pre+code/table 全在场、裸 md 字面量退场、typing 已换泡',
+    !!f2mid && f2mid.n === aiCountBefore + 1 && f2mid.pre && f2mid.code && f2mid.table && f2mid.list && f2mid.h2 && !f2mid.rawMd && f2mid.typing === 0,
+    JSON.stringify(f2mid));
+  wsSend({ type: 'done', sessionId: fSid });
+  await sleep(250);
+  const f2final = await page.evaluate(() => {
+    const nodes = [...document.querySelectorAll('.ask-dock .ask-bub.ai')];
+    const b = nodes[nodes.length - 1];
+    return b ? { n: nodes.length, table: !!b.querySelector('table td'), pre: !!b.querySelector('pre') } : null;
+  });
+  ok('F2-b done 定稿：markdown 渲染保持 + ai 泡总数稳定（无空泡残留）', !!f2final && f2final.n === aiCountBefore + 1 && f2final.table && f2final.pre, JSON.stringify(f2final));
+  const f3 = await page.evaluate(() => {
+    const veil = document.querySelector('.ask-colwrap .ask-veil');
+    const wrap = document.querySelector('.ask-colwrap');
+    const col = document.querySelector('.ask-col');
+    const vcs = getComputedStyle(veil);
+    const wcs = getComputedStyle(wrap);
+    const vr = veil.getBoundingClientRect();
+    const cr = col.getBoundingClientRect();
+    return {
+      veilBg: vcs.backgroundImage,
+      veilFilter: vcs.backdropFilter || vcs.webkitBackdropFilter,
+      veilMask: vcs.maskImage || vcs.webkitMaskImage,
+      colPadTop: wcs.paddingTop, // 带净空在 colwrap（滚动容器之外）
+      // 结构保证：列可视口顶 = 带底沿——可视气泡永在带下（滚出的旧泡被 overflow 裁剪）。
+      colTop: cr.top,
+      veilBottom: vr.bottom,
+    };
+  });
+  ok('F3 液体玻璃 v2 顶带：--g2-veil 渐层 + blur(18px) saturate(1.5) + 两段式 mask',
+    f3.veilBg.includes('gradient') && /blur\(18px\)/.test(f3.veilFilter) && /saturate\(1\.5\)/.test(f3.veilFilter) && f3.veilMask.includes('gradient'),
+    JSON.stringify({ bg: f3.veilBg.slice(0, 40), f: f3.veilFilter, m: f3.veilMask.slice(0, 40) }));
+  ok('F3-b 与消息留距：colwrap 列顶留白 = fade-h 64px（滚动容器外保留区），列可视口顶 ≥ 带底沿（首条永不入带）',
+    f3.colPadTop === '64px' && f3.colTop >= f3.veilBottom - 1,
+    JSON.stringify({ pad: f3.colPadTop, colTop: f3.colTop, veilBottom: f3.veilBottom }));
+  await shot(page, 'f-batch-md-render-and-fade');
+
   // mock 服务端持久化面：A 的转录入库（T5 再开 askOpen 重放需复现——服务端为权威）。
   expectTranscript(askedSid, [
     { role: 'user', text: 'τ 为什么取 30 天？' },
@@ -506,7 +593,9 @@ try {
     };
   });
   ok('T10b 服务端转录 sys 帧渲染面永久过滤（气泡面只出 user/ai 两族）',
-    t10b.sys === 0 && t10b.user === 1 && t10b.ai === 1 && !t10b.hasReceiptText, JSON.stringify(t10b));
+    // user=2：回放转录 1 问 + F 批新问经 askState 合并守卫补挂（回放快照早于
+    // 新问落账时问题不消失——服务端为权威、本地新问保留）；sys 两帧收进不可见处。
+    t10b.sys === 0 && t10b.user === 2 && t10b.ai === 1 && !t10b.hasReceiptText, JSON.stringify(t10b));
 
   // T12 风格统一（三修③ 作者令 2026-10-29「对齐 canvas 统一风格，不新造风格」）：
   // 三面（fab/输入条/气泡）计算材质与聊天 #header 玻璃模板逐项相等——GU2-7
@@ -636,7 +725,8 @@ try {
     });
     ok('T9a 移动入口钮 44×44', !!m1 && Math.abs(m1.w - 44) < 1.5 && Math.abs(m1.h - 44) < 1.5, JSON.stringify(m1));
     ok('T9b 座位在切换条上方（最靠右 · 让位实测）', !!m1 && m1.barTopToPanel !== null && m1.fabBottomToPanel >= m1.barTopToPanel + 8 && m1.fabRight <= 14, JSON.stringify(m1));
-    ok('T9c 列 max-h 250（E-2 移动档）', m1 && m1.colMaxH === '250px', m1 && m1.colMaxH);
+    // F3-b 批后口径：列可视高 = 总档 − 带档（⑤带净空在 colwrap，E-2 移动 250−56=194）。
+  ok('T9c 列可视 max-h = 总档 250 − 带档 56 = 194（E-2 移动档，⑤带净空口径）', m1 && m1.colMaxH === '194px', m1 && m1.colMaxH);
     // 气泡列表面横滑零切卡（surface 归属制：peek 不亮）
     await mob.page.click('.ask-fab');
     await sleep(500);
