@@ -8,26 +8,28 @@
 //
 // 形态沿革：下拉列中点「任务」→ 六键液态收回 → 圆钮原地形变加宽成任务浮层
 //（40→308 / 40→560）→ dock 批改「任务」键（聊天头左槽）push 任务页。
-// 12 卡信息层级（六级，样张⑤口径）：
-//   ① 状态点（运行绿 / 排队灰 / 完成绿 / 失败红）
+// 活跃过滤批（作者令 2026-10-31 11:49「手机端任务列表不要显示全部历史（含已完成），
+// 只显示进行中的」）：已完成组（completed/failed/cancelled 终态行呈现层补组）整组
+// 退役——手机端列表面 = collectChains 现役行（pending/running/ready-to-merge/
+// interrupted，未归档），与桌面面板现役窗同口径；终态行仍可从桌面结构视图/归档
+// 抽屉到达。interrupted（重启打断灰态）保留在运行组内以灰点显形（重启对账批语义
+// 不变：尸体系可见、禁借 done 勾绿）。
+// 卡信息层级（六级，样张⑤口径）：
+//   ① 状态点（运行绿 / 排队灰 / 中断灰）
 //   ② 标题（#taskNo + 名）
 //   ③ 进度 n/m（tabular-nums，chainProgressMeta 同源）
 //   ④ 状态词（DELEGATE_WORD_KEY 同源键）
 //   ⑤ 成员预览（仅运行中卡，限 2 行 +「+n」溢出计数）
-//   ⑥ 分组序：运行中 → 排队 → 已完成（已完成整卡降透明；分组标签 = 站内
-//      小写字号语言，无装饰条）。
+//   ⑥ 分组序：运行中 → 排队（分组标签 = 站内小写字号语言，无装饰条）。
 //
 // 数据面（任务书：功能逻辑不重造）：与 taskList.js **同一**读取口
-//（delegateChainStub.js listDelegateRows / getChainByTask）+ collectChains 导出
-// 缝 —— 活跃组直接吃 collectChains 现值（与面板行同源），已完成组按同一状态域
-// 从 listDelegateRows 终态行补出（桌面面板不显示终态行 = 既有口径，面板补该组
-// 纯为样张分组序；呈现层职责）。渲染触发 = delegate-chain-mirror-updated +
-// 会话切换（与 taskList 同族事件），Nebula 统一面会话门同源（sessionShowsNodeEntries）。
+//（collectChains 导出缝——活跃行直接吃 collectChains 现值（与面板行同源））。
+// 渲染触发 = delegate-chain-mirror-updated + 会话切换（与 taskList 同族事件），
+// Nebula 统一面会话门同源（sessionShowsNodeEntries）。
 
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
 import state from '../state.js';
-import { listDelegateRows } from '../delegateChainStub.js';
 import {
   collectChains, DELEGATE_WORD_KEY, chainProgressMeta, rowMetaOf, sessionShowsNodeEntries,
 } from '../taskList.js';
@@ -91,25 +93,10 @@ export function taskBadgeCount() {
   return collectChains().length;
 }
 
-/** 状态域三分（样张分组序）：运行中（pending/running/blocked）→ 排队（ready-to-merge）→ 已完成（终态）。
- *  重启对账批 2026-10-22：interrupted（重启打断灰态）归终态组——灰点（tp-g-stop），
- *  禁借 done 勾绿（打勾只给真完成）。 */
+/** 状态域二分（活跃过滤批）：ready-to-merge → 排队；其余现役行（pending/running/
+ *  interrupted）→ 运行中。终态行经 collectChains 现役闸天然缺席，无需再判。 */
 function groupOf(status) {
-  if (status === 'ready-to-merge') return 'queued';
-  if (['completed', 'failed', 'cancelled', 'interrupted'].includes(status)) return 'done';
-  return 'running';
-}
-
-/** 已完成组：与活跃组同一读取口的终态行（未归档，新→旧；呈现层补组）。 */
-function collectDone() {
-  if (!sessionShowsNodeEntries(state.activeSessionId)) return [];
-  const ts0 = (r) => {
-    const v = typeof r.createdAt === 'number' ? r.createdAt : Date.parse(String(r.createdAt || ''));
-    return Number.isFinite(v) ? v : 0;
-  };
-  return listDelegateRows()
-    .filter((r) => r && !r.archivedAt && ['completed', 'failed', 'cancelled', 'interrupted'].includes(String(r.status)))
-    .sort((a, b) => ts0(b) - ts0(a));
+  return status === 'ready-to-merge' ? 'queued' : 'running';
 }
 
 function glyph(cls) {
@@ -119,7 +106,7 @@ function glyph(cls) {
   return g;
 }
 
-/** 一张任务卡（六级层级见文件头）。block = collectChains 现值或 done 行的轻包。 */
+/** 一张任务卡（六级层级见文件头）。block = collectChains 现值。 */
 function buildCard(entry) {
   const r = entry.row;
   const st = String(r.status || 'running');
@@ -130,13 +117,13 @@ function buildCard(entry) {
   const members = entry.members || [];
 
   const card = document.createElement('div');
-  card.className = `tp-card tp-${grp}` + (grp === 'done' ? ' tp-dim' : '');
+  card.className = `tp-card tp-${grp}`;
   card.setAttribute('role', 'button');
 
   const hd = document.createElement('div');
   hd.className = 'tp-c-hd';
   // 重启对账批 2026-10-22：interrupted = 灰点（stop），永不借 done 勾语言。
-  hd.appendChild(glyph(grp === 'queued' ? 'queue' : grp === 'done' ? (st === 'failed' ? 'fail' : st === 'interrupted' ? 'stop' : 'done') : 'run'));
+  hd.appendChild(glyph(grp === 'queued' ? 'queue' : st === 'interrupted' ? 'stop' : 'run'));
   const ttl = document.createElement('span');
   ttl.className = 'tp-ttl';
   ttl.textContent = taskNo ? `#${taskNo} ${title}` : title;
@@ -151,7 +138,7 @@ function buildCard(entry) {
   if (word.textContent) hd.appendChild(word);
   card.appendChild(hd);
 
-  // ⑤ 成员预览：仅运行中卡（排队=display-only、已完成=整卡降透明，均不出成员）。
+  // ⑤ 成员预览：仅运行中卡（排队=display-only，均不出成员）。
   if (grp === 'running' && members.length > 1) {
     const box = document.createElement('div');
     box.className = 'tp-members';
@@ -206,17 +193,16 @@ function buildCard(entry) {
 }
 
 function groupLabel(grp, n) {
-  const key = grp === 'running' ? 'taskpanel.grpRunning' : grp === 'queued' ? 'taskpanel.grpQueued' : 'taskpanel.grpDone';
+  const key = grp === 'running' ? 'taskpanel.grpRunning' : 'taskpanel.grpQueued';
   return `${t(key)} · ${n}`;
 }
 
 function render() {
   if (!listEl || !statsEl) return;
   const chains = collectChains();
-  const done = collectDone();
   const running = chains.filter((c) => groupOf(String(c.row.status)) === 'running');
   const queued = chains.filter((c) => groupOf(String(c.row.status)) === 'queued');
-  const unitCount = chains.reduce((n, c) => n + (c.allCount || 1), 0) + done.length;
+  const unitCount = chains.reduce((n, c) => n + (c.allCount || 1), 0);
   statsEl.textContent = t('taskpanel.stats', { n: String(unitCount), run: String(running.length) });
 
   listEl.replaceChildren();
@@ -226,7 +212,6 @@ function render() {
       progressText: c.view.ordered.length > 1 ? chainProgressMeta(c.view.ordered).split(' · ')[0] : '',
     }))],
     ['queued', queued.map((c) => ({ key: c.key, row: c.row, members: [], progressText: '' }))],
-    ['done', done.map((r) => ({ key: String(r.taskNo || r.delegateId || ''), row: r, members: [], progressText: '' }))],
   ];
   for (const [grp, entries] of groups) {
     if (!entries.length) continue;

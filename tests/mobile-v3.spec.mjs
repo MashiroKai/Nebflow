@@ -7,15 +7,15 @@
 //      图标+标签结构、切换 home/top、active 态、根页返回=聊天根、
 //      退役浮层零残留（.mh-dd/.mh-scrim/body.mh-v3/#canvas-panel 不落地）
 //   T2 【换代】任务页面板：聊天头任务键徽标 + push 页收编面板 + 分组序
-//      （运行/排队/已完成）+ 六级卡（状态点/标题/进度/状态词/成员预览 +N 溢出）
-//      + X 关闭对账（面板 hidden + 弹栈）
+//      （运行/排队——作者令 10-31：终态行不进手机端列表）+ 六级卡（状态点/标题/
+//      进度/状态词/成员预览 +N 溢出）+ X 关闭对账（面板 hidden + 弹栈）
 //   T3 profile 面板进出入 + 头像 localStorage 持久化 + 名称回车保存
 //   T4 登录卡形态：单键制 + 官方横排 lockup（currentColor）+ 社交键退役
 //   T5 顶栏无时间断言（v3① 口径守护）
 //   T6 走廊退役：内容恒全宽（#main margin-right 0）+ 桌面壳退场
 //   T7 附件条 in-flow：溢出收「+N」（真实 MutationObserver 链）
 //
-// 数据面 = stub 夹具缝（delegateChainStub.__setFixture，12 卡三分组），
+// 数据面 = stub 夹具缝（delegateChainStub.__setFixture，12 行 = 活跃 10 + 终态 2），
 // 与 tasklist-chain-blocks.spec.mjs 同一 harness 族；零后端、零 sbt。
 // Run: node node_modules/@playwright/test/cli.js test tests/mobile-v3.spec.mjs
 
@@ -95,7 +95,9 @@ async function bootApp(page) {
   await page.waitForTimeout(300);
 }
 
-/** delegate 链夹具：12 卡 = 运行 6（#61 富成员 5 链成员）+ 排队 3 + 已完成 3。 */
+/** delegate 链夹具：12 行 = 运行 6（#61 富成员 5 链成员）+ 排队 3 + 终态 2
+ * （completed/failed——作者令 10-31 过滤面的反例证）+ 中断 1（灰态保留面）。
+ * 手机端面板只出活跃 10 卡（运行 7 + 排队 3），终态 2 行不得进列表。 */
 async function seedTasks(page) {
   await page.evaluate(() => {
     const now = Date.now();
@@ -123,7 +125,7 @@ async function seedTasks(page) {
       row(69, '会话头居中', 'ready-to-merge', 150, { mergeQueuePos: { position: 3, total: 3, readyAt: now - 20_000, branch: 'delegate/head-center', baseBranch: 'main' } }),
       row(70, '附件 in-flow', 'completed', 190),
       row(71, '登录卡单键', 'failed', 240),
-      row(72, '走廊退役', 'completed', 320),
+      row(72, '走廊退役', 'interrupted', 320),
     ];
     const chains = [
       chain(61, [
@@ -217,13 +219,14 @@ test('T1 five-tab dock: author-order keys, icon+label structure, switching, acti
   expect(pageErrors).toEqual([]);
 });
 
-test('T2 tasks page: chrome key badge, page-adopted panel, group order (running/queued/done), six-level cards, X close reconcile', async ({ page }) => {
+test('T2 tasks page: chrome key badge, page-adopted panel, active-only list (running/queued; terminal filtered out), six-level cards, X close reconcile', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
   await seedTasks(page);
 
-  // 聊天头任务键（chatChrome）徽标 = 在册任务数（collectChains 同源：运行 6 + 排队 3）。
-  await expect(page.locator('.mh-chrome-btn[data-chrome="tasks"] .mh-chrome-badge')).toHaveText('9');
+  // 聊天头任务键（chatChrome）徽标 = 在册任务数（collectChains 同源：运行 7 + 排队 3；
+  // 终态 #70/#71 不过现役闸，interrupt #72 在列）。
+  await expect(page.locator('.mh-chrome-btn[data-chrome="tasks"] .mh-chrome-badge')).toHaveText('10');
 
   // 点任务键 → push「任务」详情页；面板收编进页面体（浮层形态退役）。
   await page.locator('.mh-chrome-btn[data-chrome="tasks"]').click();
@@ -232,30 +235,37 @@ test('T2 tasks page: chrome key badge, page-adopted panel, group order (running/
   await expect(panel).toBeVisible();
   // 面板在页面体内（收编判据）而非 body 直挂浮层。
   expect(await panel.evaluate((el) => !!el.closest('.mobile-page-body'))).toBe(true);
-  // 头部统计：18 单元（#61 链 5 成员 + #62 链 3 + 4 薄块 + 排队 3 + 已完成 3）
-  // · 6 运行 —— unitCount 与任务列表同一算法（chainProgressMeta 同源口径）。
-  await expect(panel.locator('.tp-stats')).toContainText('18');
-  await expect(panel.locator('.tp-stats')).toContainText('6');
-  // 分组序：运行中 → 排队 → 已完成（标签文本序）。
+  // 头部统计：16 单元（#61 链 5 成员 + #62 链 3 + 5 薄块 + 排队 3——终态 2 行不计）
+  // · 7 运行 —— unitCount 与任务列表同一算法（chainProgressMeta 同源口径）。
+  await expect(panel.locator('.tp-stats')).toContainText('16');
+  await expect(panel.locator('.tp-stats')).toContainText('7');
+  // 分组序：运行中 → 排队（作者令 10-31：已完成组整组退役，标签只出两组）。
   const labels = await panel.locator('.tp-grp').allTextContents();
-  expect(labels.length).toBe(3);
+  expect(labels.length).toBe(2);
   expect(labels[0]).toContain('运行中');
   expect(labels[1]).toContain('排队');
-  expect(labels[2]).toContain('已完成');
-  // 各组卡数：6 / 3 / 3。
+  // 各组卡数：7 / 3；终态行（completed/failed）零进列表。
   const cards = panel.locator('.tp-card');
-  await expect(cards).toHaveCount(12);
-  await expect(panel.locator('.tp-card.tp-running')).toHaveCount(6);
+  await expect(cards).toHaveCount(10);
+  await expect(panel.locator('.tp-card.tp-running')).toHaveCount(7);
   await expect(panel.locator('.tp-card.tp-queued')).toHaveCount(3);
-  await expect(panel.locator('.tp-card.tp-done')).toHaveCount(3);
+  await expect(panel.locator('.tp-card.tp-done')).toHaveCount(0);
+  for (const gone of ['#70', '#71']) {
+    await expect(panel.locator('.tp-ttl', { hasText: gone })).toHaveCount(0);
+  }
   // 六级卡：#61 富成员链 = 标题 + 进度 1/5 + 状态词 + 成员预览 2 行 + 「+2」溢出。
   const c61 = panel.locator('.tp-card', { hasText: '#61' });
   await expect(c61.locator('.tp-meta')).toContainText('1/5');
   await expect(c61.locator('.tp-word')).not.toBeEmpty();
   await expect(c61.locator('.tp-mem')).toHaveCount(2);
   await expect(c61.locator('.tp-mem-more')).toHaveText('+2');
-  // 已完成卡整卡降透明（tp-dim）。
-  await expect(panel.locator('.tp-card.tp-done').first()).toHaveClass(/tp-dim/);
+  // interrupted（#72）保留在运行组：灰点 tp-g-stop（重启对账批语义——尸体系可见、
+  // 禁借 done 勾绿；活跃过滤批后不再随终态组退场）。
+  const c72 = panel.locator('.tp-card', { hasText: '#72' });
+  await expect(c72).toHaveCount(1);
+  await expect(c72).toHaveClass(/tp-running/);
+  await expect(c72.locator('.tp-g-stop')).toHaveCount(1);
+  await expect(c72.locator('.tp-word')).not.toBeEmpty();
   // 页面壳「<」关闭 → 对账弹栈（面板 hidden + top 回聊天根）。面板头 X 已随
   // 重复返回钮清查批在页面壳内退场（手机层唯一出页键 = 页面壳「<」）。
   await expect(panel.locator('.tp-x')).toBeHidden();
