@@ -725,10 +725,10 @@ export function openTab(id, title, opts = {}) {
   tab.draggable = true;
   /* UI 批⑧：独立/合并 toggle 不放标签条 —— 桌面标签行已退役（canvas-stack v5，
      split.css 隐藏）、移动层也藏（mobileLayer.css），可见卡头 = 居中标题头
-     （#canvas-pop-btn，syncCardHeaderPop）+ 环卡卡头（.deck-card-pop）+ 手机
-     卡片头（.mobile-card-pop，navController）。 */
+     （批②三件套：✕/标题/堆叠视角钮，syncHeaderActions）+ 环卡卡头
+     （.deck-card-pop）。 */
   const closeHtml = closable
-    ? `<button class="canvas-tab-close" title="Close"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>`
+    ? `<button class="canvas-tab-close" title="${t('canvas.closeTab')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>`
     : '';
   tab.innerHTML = `<span class="canvas-tab-label">${title}</span>${closeHtml}`;
 
@@ -1933,14 +1933,16 @@ function initDeck() {
   deckLayer.id = 'deck-layer';
   deckFab = document.createElement('button');
   deckFab.id = 'deck-fab';
-  deckFab.className = 'deck-fab';
+  deckFab.className = 'deck-fab g2-fab';   // 批②：材质升 v2 液体玻璃（liquid-glass.css 共享类）
   deckFab.setAttribute('aria-pressed', 'false');
-  deckFab.setAttribute('title', '叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）');
+  deckFab.setAttribute('title', t('canvas.stackToggle'));
   deckFab.setAttribute('aria-label', '叠卡切换');
   deckFab.innerHTML = DECK_ICONS.deck;
 
   // 层序（dock 态全 z-auto，按 DOM 序）：deck-layer < #canvas-panel < fab；
   // .over 抬 deck-layer z-60（overlay 形态 245）盖过面板（split.css）。
+  // 堆叠视角钮维持 body 层浮动（批②曾试迁胶囊右座，实证被 deck-layer 环卡
+  // 吞命中——环开着时面板顶带被卡组拦截，退出叠卡必须有恒可点的浮钮）。
   document.body.insertBefore(deckLayer, panel);
   panel.after(deckFab);
 
@@ -2007,42 +2009,63 @@ function renderCanvasHeader() {
   if (deckTitleIconEl) deckTitleIconEl.innerHTML = entry ? deckIconOf(family) : '';
   if (deckTitleNameEl) deckTitleNameEl.textContent = entry ? (entry.title || entry.id) : '画板';
   deckTitleEl.classList.toggle('is-dirty', !!(entry && isTabDirty(entry)));
-  if (deckFab) deckFab.disabled = tabs.size === 0;
-  syncCardHeaderPop();
+  syncHeaderActions();
   syncRefBackButton();   // F5 返回原文档：随激活页签重sync可见性/座位
 }
 
-/* ── UI 批⑧：居中标题头独立/合并 toggle（桌面可见卡头；活动文件卡才显示）── */
+/* ── Canvas 改造批②⑤（2026-10-31 作者令「顶栏换代：左叉号右堆叠视角钮」）──
+ *  桌面居中标题头胶囊：左座 ✕（关活动页签，批②）+ 中央标题（图标+名称+
+ *  「独立中」角标投射）+ 批⑤堆叠态标签数（.t-count，deck.open 且页签>1 时
+ *  「前景序/总数」）。堆叠视角钮本体维持 body 层 #deck-fab（顶右浮动 = 批②
+ *  「右堆叠视角钮」桌面落点；曾试迁胶囊右座，实证被 deck-layer 环卡吞命中，
+ *  退出叠卡必须恒可点）——材质随本批升 v2 液体玻璃（.g2-fab 共享类）。
+ *  原「独立窗口」chip（#canvas-pop-btn）随批⑤退役（独立窗出口 = 卡头右键
+ *  菜单「在独立窗口打开」+ 环卡卡头 .deck-card-pop，零能力损失）。
+ *  卡窗态（cardWindowMode）✕ 全隐（卡窗自有窗关）。 */
+/* 环卡卡头独立/合并 toggle 图标（批⑤后唯一消费面 = .deck-card-pop；原
+   标题头 #canvas-pop-btn 同批退役，SVG 常量随调用面留此单点）。 */
 const CARD_POP_SVG =
   '<svg class="pop-ic-pop" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>' +
   '<svg class="pop-ic-merge" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><path d="M14 10 21 3"/><path d="M3 21l7-7"/></svg>';
-/** 标题头 toggle 建购 + 形态同步（活动页签视角：独立中=合并形高亮）。 */
-function syncCardHeaderPop() {
-  if (cardWindowMode) return;                     // 卡窗有自己的「合并」钮
+const HEAD_CLOSE_SVG =
+  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+function syncHeaderActions() {
   const hdr = document.querySelector('#canvas-panel .canvas-header');
   if (!hdr) return;
-  syncIndependentChip();                          // 「独立中」角标壳层同步（件二）
-  let btn = document.getElementById('canvas-pop-btn');
-  if (!btn) {
-    btn = document.createElement('button');
-    btn.id = 'canvas-pop-btn';
-    btn.className = 'canvas-pop-btn';
-    btn.innerHTML = CARD_POP_SVG;
-    btn.addEventListener('click', (e) => {
+  syncIndependentChip();   // 「独立中」角标壳层同步（件二）
+
+  let closeBtn = document.getElementById('canvas-head-close');
+  if (!closeBtn) {
+    closeBtn = document.createElement('button');
+    closeBtn.id = 'canvas-head-close';
+    closeBtn.className = 'canvas-head-btn';
+    closeBtn.type = 'button';
+    closeBtn.innerHTML = HEAD_CLOSE_SVG;
+    closeBtn.setAttribute('title', t('canvas.closeTab'));
+    closeBtn.setAttribute('aria-label', t('canvas.closeTab'));
+    closeBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (activeTabId) toggleCardWindow(activeTabId);
+      if (activeTabId) closeTab(activeTabId);
     });
-    hdr.insertBefore(btn, document.getElementById('canvas-close-btn'));
+    hdr.insertBefore(closeBtn, hdr.firstChild);
   }
-  const entry = activeTabId ? tabs.get(activeTabId) : null;
-  const can = !!(entry && entry.absPath);
-  btn.hidden = !can;
-  if (!can) return;
-  const indep = independentWins.has(activeTabId);
-  btn.classList.toggle('is-independent', indep);
-  const t = indep ? '合并回主窗' : '独立窗口打开';
-  btn.title = t;
-  btn.setAttribute('aria-label', t);
+
+  if (deckFab) deckFab.disabled = tabs.size === 0;
+
+  // 批⑤：堆叠态顶部标签数（前景序/总数；常态与单卡态隐藏——数从哪来
+  // 标签条/chip 条已有，不重复显示）。
+  let cnt = document.getElementById('canvas-title-count');
+  if (!cnt && deckTitleEl) {
+    cnt = document.createElement('span');
+    cnt.id = 'canvas-title-count';
+    cnt.className = 't-count';
+    deckTitleEl.appendChild(cnt);
+  }
+  if (cnt) {
+    const keys = [...tabs.keys()];
+    const idx = keys.indexOf(activeTabId);
+    cnt.textContent = (deck.open && keys.length > 1 && idx >= 0) ? (idx + 1) + '/' + keys.length : '';
+  }
 }
 
 /** 「独立中」角标壳层同步（件二排他批 2026-10-28）：角标渲染点从 pane ::after
@@ -2050,7 +2073,7 @@ function syncCardHeaderPop() {
  *  （docx/xlsx 族 .scrollable），absolute 角标随内容滚走漂出 header 行；slide
  *  不滚，角标恒钉 header 行（堆叠钮左侧让位位）。数据源零新增 = 活动页签的
  *  independent 状态（independentWins）；pane 的 data-independent 属性保留
- *  （CW 链数据面仍消费）。调用点 = syncCardHeaderPop（活动切换/toggle 两路
+ *  （CW 链数据面仍消费）。调用点 = syncHeaderActions（活动切换/toggle 两路
  *  都汇于此）。 */
 function syncIndependentChip() {
   const slide = document.getElementById('canvas-slide');
@@ -2161,11 +2184,6 @@ function syncDeckBox() {
       deckLayer.style.height = r.height + 'px';
     }
     if (deckFab) {
-      // 回退批（作者令 2026-10-22 回访裁定）：fab 钉区回顶右原位（top = 面板顶
-      // + 10）。移位批曾迁右下（top = 面板底 − 56 与圆钮簇同排），但作者只令
-      // 图片查看器缩放控件迁右下，fab 属移位范围过宽；缩放条既已居底右、文件名
-      // 胶囊居左，顶行叠印前提消失，回移安全。right 语义不变（12px 内缝）。
-      // CSS 缺省（top:10）与本次式同源。
       deckFab.style.top = (r.top + 10) + 'px';
       deckFab.style.right = (window.innerWidth - r.right + 12) + 'px';
     }
@@ -2876,6 +2894,7 @@ function openDeck() {
   layoutDeck();
   syncDeckBox();
   deckFab.setAttribute('aria-pressed', 'true');
+  renderCanvasHeader();                  // 批⑤：叠卡态顶部标签数落位（.t-count）
   deckLiveBind();                        // ③：活性窗监听（滚动镜像 + 变更重截）
   deckAttachSnapshots();                 // ③b：开卡组时批量截快照（近卡先挂，分帧补）
   deckStartLoop();
@@ -2913,6 +2932,7 @@ function closeDeck() {
     deckClearSnapshots();
     deckWheelReset();
     deckStopLoop();
+    renderCanvasHeader();                // 批⑤：收起后标签数退场
     deckFlushQueuedToggle();             // ②：收场补发连点排队
   }, deckRm.matches ? 30 : 300);
 }
@@ -4324,7 +4344,7 @@ function markIndependentUI(id, on, o = {}) {
       deckBtn.setAttribute('aria-label', t);
     }
   }
-  syncCardHeaderPop();                 // 活动卡头钮形跟随
+  syncHeaderActions();                 // 活动卡头钮形跟随（批②三件套 + 角标）
   // 手机卡片头钮形跟随（navController 消费；跨模块薄通知，零轮询）
   document.dispatchEvent(new CustomEvent('canvas-independent-changed', { detail: { id, on } }));
 }

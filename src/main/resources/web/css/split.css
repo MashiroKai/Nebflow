@@ -1525,58 +1525,34 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
 }
 #canvas-capsule-ring.open .cr-hint { opacity: 1; }
 /* 环开时常态标题**常驻**（扇卡批 2026-10-30：扇悬于标题头下方、不顶替其
-   文字 —— 竖环期「ring-open → t-inner opacity 0（中心覆层接班）」规则退役）；
-   pop 钮浮在环上 */
-.canvas-header .canvas-pop-btn { position: relative; z-index: 6; }
+   文字 —— 竖环期「ring-open → t-inner opacity 0（中心覆层接班）」规则退役）。
+   Canvas 改造批②：#canvas-pop-btn 已退役（批⑤去「独立窗口」钮），本条随之
+   清死。 */
 
-/* ── 层叠浮钮（v5②）：body 层固定元素，JS 逐帧同步面板盒（top 10 / right 12 /
-   40px 玻璃钮语言逐字不动）。钉区历史：移位批（作者令 2026-10-22 ②）曾迁
-   「右下角 bottom16/right12」；回退批（作者令 2026-10-22 回访裁定）迁回顶右
-   原位——作者只要求图片查看器缩放控件迁右下，fab 属移位范围过宽；缩放条既已
-   居底右、文件名胶囊居左，原「顶行三件打架」的叠印前提消失，顶右回移安全
-   （顶右 fab 与居左胶囊分居面板顶行两端）。JS 同步式（canvas.js syncDeckBox：
-   top = 面板顶 + 10），本 CSS 顶锚为 JS 前的缺省姿。
-   件二排他批（2026-10-28）：fab = header 固定行成员（行 = 胶囊+堆叠钮+独立中
-   角标），top 10 即 --cv-head-top 档；下方控件一律从 --cv-head-clear 起算。
-   件三统一批（同令）：材质归一聊天模板 token（修前 --glass-control-* 自绘 +
-   减淡 opacity .6 —— 与圆钮族两种玻璃并存退役，材质到位不靠减淡）；尺寸 =
-   --cv-size-circle 40 / 图标 --cv-icon 18；hover-active = --cv-hover-scale /
-   --cv-active-scale。
-   不在面板子树（panel.contains(fab)===false），不随整区缩放/前景轮换移动；
-   z-250 恒高于 deck-layer（auto/.over 60/245）与面板（docked auto / overlay
-   240），低于模态族（300+）。 */
+
+/* ── 层叠浮钮（v5②；Canvas 改造批② 2026-10-31）────────────────────────
+   批②曾试把堆叠视角钮迁入标题头胶囊右座，实证被 deck-layer 环卡吞命中（环开
+   时面板顶带被卡组/飞行卡拦截，退出叠卡必须恒可点）——维持 body 层独立浮动
+   圆钮（= 批②「右堆叠视角钮」桌面落点，钉面板顶右、z-250 恒在卡组与面板之上）。
+   材质随本批升 v2 液体玻璃：JS className 挂共享类 .g2-fab（liquid-glass.css
+   底材/折射/高光/按压 spring/hover 档全继承），本块只留几何/定位/显隐/活性态
+   ——v1 玻璃 token（--cv-*）逐字退役。盒逐帧同步 = canvas.js syncDeckBox。 */
 #deck-fab {
   position: fixed;
-  top: var(--cv-head-top, 10px);
-  right: 12px;
+  top: var(--cv-head-top, 10px);   /* JS 逐帧覆写（面板顶 +10） */
+  right: 12px;                      /* JS 逐帧覆写（面板右 -12） */
   z-index: 250;
-  width: var(--cv-size-circle, 40px);
-  height: var(--cv-size-circle, 40px);
-  border-radius: 50%;
-  cursor: pointer;
   display: none;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--cv-border, var(--glass-border));
-  background: var(--cv-bg, var(--glass-bg));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  box-shadow: var(--cv-shadow);
-  color: var(--color-text);
-  transition: background 0.18s ease, transform 0.18s ease, color 0.18s ease,
-              opacity 0.18s ease, box-shadow 0.18s ease;
 }
-body.canvas-open:not(.mobile-layer) #deck-fab { display: flex; }
-#deck-fab:hover { background: var(--cv-hover-bg); transform: scale(var(--cv-hover-scale, 1.05)); }
-#deck-fab:active { transform: scale(var(--cv-active-scale, 0.96)); }
-#deck-fab svg { width: var(--cv-icon, 18px); height: var(--cv-icon, 18px); }
+body.canvas-open:not(.mobile-layer) #deck-fab { display: inline-flex; }
+#deck-fab svg { width: 18px; height: 18px; }
+/* 堆叠态活性语义的活性蓝档（canvas aria-pressed 既有词汇；id+attr 特异性高于
+   .g2-fab:hover 的 hover 档，活性态不被 hover 填充盖掉） */
 #deck-fab[aria-pressed="true"] {
-  opacity: 1;
-  background: rgb(var(--sapphire) / 0.14);
-  border-color: rgb(var(--sapphire) / 0.35);
+  background-color: rgb(var(--sapphire) / 0.14);
   color: rgb(var(--sapphire));
 }
-#deck-fab[disabled] { opacity: 0.3; pointer-events: none; }
+#deck-fab[disabled] { pointer-events: none; }
 
 /* ── 背后卡组层（v4②/v5①）：body 层固定元素、面板之前（DOM 序 ⇒ docked 态画在
    面板之下），盒 = 面板盒（JS 逐帧同步）；圆角裁切 = 卡组舞台边界（v4②）。
@@ -2530,6 +2506,40 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
 /* 纯文本正文（textReader）：保留空白、不两端对齐（代码/日志对齐优先） */
 .epub-reader-content[data-format="text"] p { white-space: pre-wrap; text-align: start; }
 
+/* ── 纯文本朴素滚动面（Canvas 改造批⑦，2026-10-31）：txt 退出统一阅读 chrome
+   后的自持滚动容器——排版对齐 epub 纸质档（同字号/行距/段距族），无 chrome
+   底栏/翻页/TOC；\f 段界只作分段视觉距（段间 28px + 细分隔线）。 ── */
+.canvas-txt-scroll {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: 24px 36px;
+  box-sizing: border-box;
+  font-size: 16px;
+  line-height: 1.8;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.canvas-txt-seg p {
+  margin: 0 0 1em;
+  white-space: pre-wrap;
+  text-align: start;
+}
+.canvas-txt-seg p[data-blank] { margin: 0 0 0.5em; }
+.canvas-txt-seg-gap {
+  height: 28px;
+  display: flex;
+  align-items: center;
+}
+.canvas-txt-seg-gap::before {
+  content: '';
+  width: 100%;
+  border-top: 1px dashed var(--color-border, rgba(128, 128, 128, 0.35));
+}
+@media (max-width: 560px) {
+  .canvas-txt-scroll { padding: 16px 18px; font-size: 15px; }
+}
+
 /* ── 标注面（阅读器 P3 批，设计稿 §4.2）────────────────────────────────────
    划选浮动条 / 四色高亮 / 笔记抽屉 / 笔记编辑器。材质复用 --glass-* 零新 token；
    四色 = 行业标注色族的半透明 tint（三主题底下对比均可读）；灰显 = 原文已变动。 */
@@ -3135,7 +3145,9 @@ body.col-resizing #canvas-panel { transition: none; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   Wiki document graph + in-file find (wiki-graph batch, 2026-10-14)
+   In-file find 圆钮（wiki-graph batch, 2026-10-14；图谱圆钮 .canvas-graph-toggle
+   随 Canvas 改造批④ 2026-10-31 退役——作者令「去知识图谱钮（无此面板）」，
+   builder/调用/i18n 引用面同清，本块只留 find 单钮）
    ═══════════════════════════════════════════════════════════════════════ */
 
 /* Floating glass toggles — same material family as .canvas-source-toggle;
@@ -3148,8 +3160,7 @@ body.col-resizing #canvas-panel { transition: none; }
    圆钮两种玻璃并存 —— 现整族归一到聊天模板 token（--cv-bg/--cv-blur/
    --cv-saturate/--cv-border/--cv-shadow），减淡 opacity 退役（材质到位不靠
    减淡，S4-2 同规）；尺寸/hover-active 同 --cv-* 档。 */
-.canvas-find-toggle,
-.canvas-graph-toggle {
+.canvas-find-toggle {
   position: absolute; bottom: 16px;
   width: var(--cv-size-circle, 40px); height: var(--cv-size-circle, 40px); border-radius: 50%;
   border: 1px solid var(--cv-border, var(--glass-border));
@@ -3161,12 +3172,10 @@ body.col-resizing #canvas-panel { transition: none; }
   cursor: pointer; z-index: 10; color: var(--color-text);
   transition: all .2s ease;
 }
-.canvas-find-toggle:hover,
-.canvas-graph-toggle:hover {
+.canvas-find-toggle:hover {
   background: var(--cv-hover-bg); transform: scale(var(--cv-hover-scale, 1.05));
 }
-.canvas-find-toggle:active,
-.canvas-graph-toggle:active { transform: scale(var(--cv-active-scale, 0.96)); }
+.canvas-find-toggle:active { transform: scale(var(--cv-active-scale, 0.96)); }
 
 /* ── Glass find bar (fileSearch.js) ───────────────────────────────
    件三统一批（2026-10-28）：材质整族归一聊天模板 token（修前 --glass-control-*
@@ -3678,34 +3687,46 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
    （桌面标签行/移动层标签条均已退役，卡头 = 居中标题 + 环卡名条 + 手机卡片头）
    件三统一批（2026-10-28）：尺寸/圆角/hover 收 --cv-* token 档（26px 小钮档），
    ghost 静默 + hover 抬亮玻璃 = 聊天控件语言（卡窗 .canvas-merge-btn 同款）。 */
-.canvas-pop-btn {
+/* Canvas 改造批②（2026-10-31 作者令「顶栏换代：左叉号」）：桌面居中标题头
+   胶囊 = 左 ✕（#canvas-head-close，关活动页签）/ 中央标题（flex:1 居中）；
+   堆叠视角钮维持 body 层 #deck-fab（本文件上方批②块——迁胶囊实证被环卡吞
+   命中）。卡窗态（body.card-window）✕ 全隐——卡窗自有合并钮/窗关。 */
+body:not(.mobile-layer) .canvas-header { justify-content: space-between; }
+body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
+body.card-window .canvas-header .canvas-head-btn { display: none; }
+.canvas-head-btn {
   flex: none;
-  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  display: flex;
   align-items: center;
   justify-content: center;
-  width: var(--cv-size-btn, 26px);
-  height: var(--cv-size-btn, 26px);
-  border: none;
-  border-radius: var(--cv-radius-btn, 8px);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: background 0.14s ease, color 0.14s ease, transform 0.14s ease;
 }
-.canvas-pop-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
-/* 入口隐藏权威化（独立窗口内容物收口批 2026-10-22）：面板页签的独立钮 =
-   入口隐藏（syncCardHeaderPop / navController syncCardChrome 置 hidden）。
-   族内 display 规则会压过 UA 的 [hidden] 档（hidden 置了钮仍渲染）——两处
-   显式钉死 hidden 即 display:none，面板页签的独立入口真不可见。 */
-.canvas-pop-btn[hidden],
+.canvas-head-btn:hover { background: var(--color-border); color: var(--color-text); }
+.canvas-head-btn:active { transform: scale(0.9); }
+.canvas-head-btn svg { width: 12px; height: 12px; pointer-events: none; }
+.canvas-head-btn[disabled] { opacity: 0.3; pointer-events: none; }
+/* 批⑤：堆叠态顶部标签数（前景序/总数；空串即隐） */
+.canvas-title .t-count {
+  flex: none;
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+}
+.canvas-title .t-count:empty { display: none; }
+
+/* ── 环卡卡头「在独立窗口打开」钮（批⑤后独立窗唯一可见卡头入口；标题头
+   #canvas-pop-btn 同批退役）────────────────────────────────────────── */
 .mobile-card-pop[hidden] { display: none !important; }
-.canvas-pop-btn .pop-ic-merge { display: none; }
-.canvas-pop-btn.is-independent {
-  color: rgb(var(--sapphire));
-  background: rgb(var(--sapphire) / 0.12);
-}
-.canvas-pop-btn.is-independent .pop-ic-pop { display: none; }
-.canvas-pop-btn.is-independent .pop-ic-merge { display: block; }
 .deck-card .deck-card-pop {
   position: absolute;
   top: 7px;
@@ -3827,10 +3848,10 @@ html.card-window-boot #daemon-config-overlay,
 body.card-window #daemon-config-overlay,
 html.card-window-boot .edge-bar,
 body.card-window .edge-bar,
-html.card-window-boot #deck-fab,
-body.card-window #deck-fab,
 html.card-window-boot #deck-layer,
 body.card-window #deck-layer,
+html.card-window-boot #deck-fab,
+body.card-window #deck-fab,
 html.card-window-boot #canvas-close-btn,
 body.card-window #canvas-close-btn { display: none !important; }
 html.card-window-boot body #main,

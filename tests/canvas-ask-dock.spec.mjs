@@ -572,7 +572,7 @@ try {
 
   // T13 md/html 类型硬约束闸（设计稿 §2；作者 2026-10-29 11:46 自裁）：
   // 文件型 tab 但非白名单扩展名（.txt/.scala）= 入口同闸隐藏（与可见性闸同一
-  // 悬挂点：currentFile 赋值处 isMdHtmlFile 过滤）+ 零 askOpen 帧外发；
+  // 悬挂点：currentFile 赋值处 isAskableFile 过滤——批⑩ 判据 = md/html + 电子书并集）+ 零 askOpen 帧外发；
   // 白名单四扩展名（含大小写变体）放行。后端拒答腿不在本 spec（mock WS），
   // 见 AskGateSpec（scala）与 ask-gate-live（真实例）。
   const askOpens = () => inbound.filter((m) => m.type === 'askOpen');
@@ -595,6 +595,13 @@ try {
   await openFile(page, 'page.htm', { itemType: 'code' }); // .htm = 白名单第四扩展名
   t13 = await fabGate();
   ok('T13f .htm 文件 tab 入口放行（四扩展名全量）', t13.fabPresent && !t13.fabHidden, JSON.stringify(t13));
+  // 批⑩ 2026-10-31（作者令「对话按钮扩到电子书格式」）：epub/mobi/azw3 并入可问面。
+  await openFile(page, 'book.epub', { itemType: 'code' });
+  t13 = await fabGate();
+  ok('T13f2 .epub 文件 tab 入口放行（批⑩ 电子书并集）', t13.fabPresent && !t13.fabHidden, JSON.stringify(t13));
+  await openFile(page, 'novel.azw3', { itemType: 'code' });
+  t13 = await fabGate();
+  ok('T13f3 .azw3 文件 tab 入口放行（批⑩ 三扩展名全量）', t13.fabPresent && !t13.fabHidden, JSON.stringify(t13));
   await openFile(page, '记忆检索调优笔记.md');
   t13 = await fabGate();
   ok('T13g 切回 .md 文件 tab 入口复现（闸随切卡落位）', t13.fabPresent && !t13.fabHidden, JSON.stringify(t13));
@@ -611,31 +618,30 @@ try {
     // 先 openFile（事件建卡）再点卡层键（右抽屉 → 画板卡层展开）。
     await openFile(mob.page, '记忆检索调优笔记.md', { state: 'attached' });
     await sleep(400);
-    await mob.page.evaluate(() => {
-      const key = document.querySelector('.mh-dd[data-dd="right"] [data-face="canvas"]');
-      if (key) key.click();
-    });
+    // 批⑨ 2026-10-31：手机层 FAB 可见性闸 = __nfMobileNav.top==='canvas'——
+    // 进 canvas 页走 dock 键（mh-dd 右抽屉键随 v3 下拉列批已退役）。
+    await mob.page.click('#mobile-dock .dock-key[data-dock="canvas"]');
     await sleep(800);
     await mob.page.waitForSelector(`.canvas-tab-pane[data-tab-id="file:/tmp/canvas-ask-fixture/记忆检索调优笔记.md"]`, { state: 'visible', timeout: 8000 }).catch(() => {});
     await sleep(400);
     const m1 = await mob.page.evaluate(() => {
-      const panel = document.getElementById('canvas-panel');
+      // 批⑨ 2026-10-31：手机层 FAB = body 级 fixed（canvas 整页制，切换条/
+      // #canvas-panel 手机层退役）——座位判据改视口径：底 = dock 高 + 10、右 12。
       const fab = document.querySelector('.ask-fab');
       if (!fab) return null;
-      const pr = panel.getBoundingClientRect();
       const fr = fab.getBoundingClientRect();
-      const bar = panel.querySelector('.mobile-card-switchbar');
-      const br = bar ? bar.getBoundingClientRect() : null;
+      const dock = document.getElementById('mobile-dock');
+      const dr = dock ? dock.getBoundingClientRect() : null;
       return {
         w: fr.width, h: fr.height,
-        fabBottomToPanel: pr.bottom - fr.bottom,
-        barTopToPanel: br ? pr.bottom - br.top : null,
-        fabRight: pr.right - fr.right,
+        fabBottomToDock: dr ? dr.top - fr.bottom : null,
+        dockH: dr ? dr.height : null,
+        fabRightToViewport: window.innerWidth - fr.right,
         colMaxH: getComputedStyle(document.querySelector('.ask-col')).maxHeight,
       };
     });
     ok('T9a 移动入口钮 44×44', !!m1 && Math.abs(m1.w - 44) < 1.5 && Math.abs(m1.h - 44) < 1.5, JSON.stringify(m1));
-    ok('T9b 座位在切换条上方（最靠右 · 让位实测）', !!m1 && m1.barTopToPanel !== null && m1.fabBottomToPanel >= m1.barTopToPanel + 8 && m1.fabRight <= 14, JSON.stringify(m1));
+    ok('T9b 座位钉底 dock 上方 +10（body fixed 视口径 · 批⑨）', !!m1 && m1.fabBottomToDock !== null && Math.abs(m1.fabBottomToDock - 10) < 2 && m1.fabRightToViewport <= 14, JSON.stringify(m1));
     ok('T9c 列 max-h 250（E-2 移动档）', m1 && m1.colMaxH === '250px', m1 && m1.colMaxH);
     // 气泡列表面横滑零切卡（surface 归属制：peek 不亮）
     await mob.page.click('.ask-fab');

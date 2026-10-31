@@ -75,14 +75,15 @@ private[gateway] object WsAskHandlers:
         case None => askError(wsSend, "", "ask mode unavailable on this instance")
         case Some(svc) =>
           val canonical = ctx.expandTilde(absPath.trim)
-          // md/html 硬约束闸（设计稿 §2；调研稿 §7-A2）：canonicalize 之后、
-          // bind 之前拒非白名单——既有 askError 通道，绑定表零写入（仅闸新
-          // 问题：存量绑定不清理，自然衰减 §9-8）。
+          // 可问面硬闸（设计稿 §2；调研稿 §7-A2；批⑩ 2026-10-31 扩列电子书
+          // epub/mobi/azw3）：canonicalize 之后、bind 之前拒非白名单——既有
+          // askError 通道，绑定表零写入（仅闸新问题：存量绑定不清理，自然
+          // 衰减 §9-8）。
           if !AskSessions.isAskable(canonical) then
             askError(
               wsSend,
               "",
-              s"askOpen: file type not askable (md/html only: ${AskSessions.AskableExtensions.toList.sorted.mkString(",")}): $fileName"
+              s"askOpen: file type not askable (allowed: ${(AskSessions.AskableExtensions ++ AskSessions.AskableEbookExtensions).toList.sorted.mkString(",")}): $fileName"
             )
           else
             for

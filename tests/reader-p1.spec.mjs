@@ -569,11 +569,11 @@ console.log('\n== A6 进度条：拖至 >50% → 当前章变化，epub-page-cha
   await h.ctx.close();
 }
 
-/* ───────── §4.1 双页夹翻页动效（txt 内核上断言：时长/缓动/双页/投影） ───────── */
+/* ───────── §4.1 双页夹翻页动效（epub 内核上断言：时长/缓动/双页/投影） ───────── */
 console.log('\n== 翻页动效：240ms 双页夹（transition/双页层/页缘投影/滚动模式默认不扰） ==');
 {
   const h = await boot(browser);
-  await openPath(h.page, sampleTxt);
+  await openPath(h.page, bookNcx);   // 批⑦：载体自 txt 换 epub（txt 出统一内核）
   await waitReader(h.page);
   await h.page.waitForFunction(() => {
     const v = document.querySelector('.canvas-tab-pane.active .epub-reader-viewport');
@@ -637,7 +637,7 @@ console.log('\n== 翻页动效：240ms 双页夹（transition/双页层/页缘�
 console.log('\n== A10 reduced-motion：翻页动画时长 ≤0.01s（媒体查询降级） ==');
 {
   const h = await boot(browser, { reducedMotion: true });
-  await openPath(h.page, sampleTxt);
+  await openPath(h.page, bookNcx);   // 批⑦：载体自 txt 换 epub
   await waitReader(h.page);
   await stabilizeReader(h.page);
   await h.page.click('.canvas-tab-pane.active .epub-more-btn');
@@ -662,7 +662,7 @@ console.log('\n== A10 reduced-motion：翻页动画时长 ≤0.01s（媒体查�
 console.log('\n== touch 横滑跟手：速率判定（慢→回弹 / 快→完成） ==');
 {
   const h = await boot(browser, { mobile: true });
-  await openPath(h.page, sampleTxt);
+  await openPath(h.page, bookNcx);   // 批⑦：载体自 txt 换 epub
   await waitReader(h.page);
   await stabilizeReader(h.page);
   await h.page.click('.canvas-tab-pane.active .epub-more-btn');
@@ -725,118 +725,87 @@ console.log('\n== touch 横滑跟手：速率判定（慢→回弹 / 快→完�
   await h.ctx.close();
 }
 
-/* ───────── 统一 chrome 套 txt：主题/Aa/\f 分章 ───────── */
-console.log('\n== 统一内核套 txt：转换渲染（\f 分章 + 主题档 + 段落白空间留） ==');
+/* ───────── 批⑦ 2026-10-31：阅读器视角仅电子书生效 —— txt 朴素滚动面 ─────────
+ *  作者令⑦「阅读器视角仅电子书格式生效（epub/mobi/azw3 等）」：txt 不再挂
+ *  epub-reader 统一 chrome（主题/Aa/\f 分章/TOC/滑杆全退役），回归朴素
+ *  .canvas-txt-scroll 滚动面（textReader.js 批⑦重写）。翻页动效/A10/触滑
+ *  上段已换 epub 载体，覆盖不丢。 */
+console.log('\n== 批⑦ txt 出统一 chrome：朴素滚动面 + 阅读器 chrome 零命中 ==');
 {
   const h = await boot(browser);
   await openPath(h.page, sampleTxt);
-  await waitReader(h.page);
+  await h.page.waitForSelector('.canvas-tab-pane.active .canvas-txt-scroll', { timeout: 20000 });
   const txt = await h.page.evaluate(() => {
     const pane = document.querySelector('.canvas-tab-pane.active');
-    const c = pane.querySelector('.epub-reader-content');
+    const sc = pane.querySelector('.canvas-txt-scroll');
     return {
-      format: c.dataset.format,
-      paras: c.querySelectorAll('p').length,
-      firstLine: c.querySelector('p').textContent.slice(0, 12),
-      theme: pane.querySelector('.epub-reader').dataset.epubTheme,
-      aaVisible: getComputedStyle(pane.querySelector('.epub-aa')).display !== 'none',
-      tocBtnHidden: pane.querySelector('.epub-toc-btn').hidden,
+      scrollMounted: !!sc,
+      readerChromeZero: !pane.querySelector('.epub-reader'),
+      moreZero: !pane.querySelector('.epub-more-btn'),
+      lineFirst: sc.textContent.includes('TXT-LINE-001'),
+      lineLast: sc.textContent.includes('TXT-LINE-260'),
+      scrollable: sc.scrollHeight > sc.clientHeight,
     };
   });
-  ok('txt 进统一 chrome（data-format=text）', txt.format === 'text', JSON.stringify(txt));
-  ok('txt 行 → 段落（260 行 = 260 段，textContent 防 XSS）', txt.paras === 260 && txt.firstLine.startsWith('TXT-LINE-001'), JSON.stringify(txt));
-  ok('txt 默认纸质主题（亮面板 auto → paper）', txt.theme === 'paper', txt.theme);
-  ok('txt Aa 直显（themeable）/ 单章 ☰ 隐藏', txt.aaVisible === true && txt.tocBtnHidden === true, JSON.stringify(txt));
-
-  // 切暗夜档 → 对比度口径沿用 P0（epub 腿同款主题表）
-  await tapViewport(h.page, 0.5, 0.55);
-  await h.page.waitForSelector('.canvas-tab-pane.active .epub-reader-menu:not([hidden])');
-  await h.page.click('.canvas-tab-pane.active [data-epub-theme-pick="dark"]');
-  const dark = await h.page.evaluate(() => document.querySelector('.canvas-tab-pane.active .epub-reader').dataset.epubTheme);
-  ok('txt 主题三档可切（暗夜）', dark === 'dark', dark);
-
-  // \f 分章：parts.txt 两节 → ☰ 显 + TOC 两项 + 拖杆跨节
+  ok('txt 朴素滚动面在挂（.canvas-txt-scroll）', txt.scrollMounted === true, JSON.stringify(txt));
+  ok('txt 阅读器 chrome 零命中（epub-reader/more 钮退役）', txt.readerChromeZero && txt.moreZero, JSON.stringify(txt));
+  ok('txt 全文 260 行直渲（首/尾行齐）', txt.lineFirst && txt.lineLast, JSON.stringify(txt));
+  ok('txt 可滚动（scrollHeight > clientHeight）', txt.scrollable === true, JSON.stringify(txt));
+  // 滚动位置机制保留（pane._mdScrollPos 阅读位同源）
+  await h.page.evaluate(() => { const sc = document.querySelector('.canvas-tab-pane.active .canvas-txt-scroll'); sc.scrollTop = 200; });
+  const st = await h.page.evaluate(() => document.querySelector('.canvas-tab-pane.active .canvas-txt-scroll').scrollTop);
+  ok('txt 滚动直设生效', st === 200, `scrollTop=${st}`);
+  // \f 文件同面直渲（分章/TOC 语义退役 = 批⑦口径：不再有章结构）
   const h2 = await boot(browser);
   await openPath(h2.page, partsTxt);
-  await waitReader(h2.page);
-  const parts = await h2.page.evaluate(() => ({
-    info: document.querySelector('.canvas-tab-pane.active .epub-nav-info').textContent,
-    tocHidden: document.querySelector('.canvas-tab-pane.active .epub-toc-btn').hidden,
-  }));
-  ok('txt \\f 分章：Ch 1/2，☰ 显', /Ch 1\/2/.test(parts.info) && parts.tocHidden === false, JSON.stringify(parts));
-  await h2.page.click('.canvas-tab-pane.active .epub-toc-btn');
-  await h2.page.waitForSelector('.canvas-tab-pane.active .epub-toc:not([hidden])');
-  const partItems = await h2.page.evaluate(() => [...document.querySelectorAll('.canvas-tab-pane.active .epub-toc-item')].map((b) => b.textContent.trim()));
-  ok('txt TOC = 两节（第 1 节/第 2 节）', partItems.length === 2 && partItems[1].includes('2'), JSON.stringify(partItems));
-  await shot(h2.page, 'txt-toc-parts.png');
+  await h2.page.waitForSelector('.canvas-tab-pane.active .canvas-txt-scroll', { timeout: 20000 });
+  const parts = await h2.page.evaluate(() => {
+    const pane = document.querySelector('.canvas-tab-pane.active');
+    const sc = pane.querySelector('.canvas-txt-scroll');
+    return { mounted: !!sc, chromeZero: !pane.querySelector('.epub-reader'), p1: sc.textContent.includes('PART1-LINE-1'), p2: sc.textContent.includes('PART2-LINE-120') };
+  });
+  ok('parts.txt 同面直渲（\f 分章退役——两节同卷）', parts.mounted && parts.chromeZero && parts.p1 && parts.p2, JSON.stringify(parts));
   await h2.ctx.close();
+  ok('txt 腿零 pageerror', h.errors.length === 0, h.errors.join(' | '));
   await h.ctx.close();
 }
 
-/* ───────── 统一 chrome 套 md：TOC 抽屉/滑杆/fab gate-off ───────── */
-console.log('\n== 统一内核套 md：TOC 抽屉（标题锚）+ 滑杆 + 阅读菜单开 fab gate-off ==');
+/* ───────── 批⑦ 2026-10-31：md 出统一 chrome —— 原生 md 滚动面 ─────────
+ *  作者令⑦：md 回归 .canvas-md-scroll 原生链（mountReader 退役），epub 阅读
+ *  器 chrome（TOC 抽屉/进度滑杆/Aa/阅读菜单）对 md 零接管；TOC 锚跳转由既有
+ *  引用/大纲链承担，不在本 spec 面。 */
+console.log('\n== 批⑦ md 出统一 chrome：原生 md 滚动面 + 阅读器 chrome 零命中 ==');
 {
   const h = await boot(browser);
   await openPath(h.page, docMd);
-  await waitReader(h.page);
+  await h.page.waitForSelector('.canvas-tab-pane.active .canvas-md-scroll .canvas-md-viewer', { timeout: 20000 });
   const md = await h.page.evaluate(() => {
     const pane = document.querySelector('.canvas-tab-pane.active');
     return {
-      aaHidden: pane.querySelector('.epub-aa').hidden,
-      slider: !!pane.querySelector('.epub-progress-range'),
-      tocVisible: !pane.querySelector('.epub-toc-btn').hidden,
       mdScrollIntact: !!pane.querySelector('.canvas-md-scroll.canvas-viewer-safe-top .canvas-md-viewer'),
-      info: pane.querySelector('.epub-nav-info').textContent,
+      readerChromeZero: !pane.querySelector('.epub-reader'),
+      sliderZero: !pane.querySelector('.epub-progress-range'),
+      tocBtnZero: !pane.querySelector('.epub-toc-btn'),
+      aaZero: !pane.querySelector('.epub-aa'),
+      heading: !!pane.querySelector('.canvas-md-viewer h1'),
     };
   });
-  ok('md 包统一 chrome：滑杆 + ☰ 显', md.slider === true && md.tocVisible === true, JSON.stringify(md));
-  ok('md 排版二期：Aa 隐藏（主题/字号档不接管）', md.aaHidden === true);
-  ok('md 正文渲染不动（canvas-md-scroll 原链保留）', md.mdScrollIntact === true);
-  ok('md 页码 = Pg a/b（单章）', /^Pg \d+\/\d+ · Ch 1\/1$/.test(md.info), md.info);
+  ok('md 原生链在挂（canvas-md-scroll + viewer）', md.mdScrollIntact === true, JSON.stringify(md));
+  ok('md 阅读器 chrome 零命中（reader/滑杆/☰/Aa 全退役）', md.readerChromeZero && md.sliderZero && md.tocBtnZero && md.aaZero, JSON.stringify(md));
+  ok('md 正文渲染不动（h1 在场）', md.heading === true, JSON.stringify(md));
 
-  await h.page.click('.canvas-tab-pane.active .epub-toc-btn');
-  await h.page.waitForSelector('.canvas-tab-pane.active .epub-toc:not([hidden])');
-  const mdToc = await h.page.evaluate(() => [...document.querySelectorAll('.canvas-tab-pane.active .epub-toc-item')].map((b) => b.textContent.trim()));
-  ok('md TOC = h1-h3 标题四项', mdToc.length === 4 && mdToc[0] === '文档主标题' && mdToc[3] === '末节', JSON.stringify(mdToc));
-  await h.page.click('.canvas-tab-pane.active .epub-toc-item:nth-child(3)');
-  await h.page.waitForFunction(() => {
-    const pane = document.querySelector('.canvas-tab-pane.active');
-    const sc = pane.querySelector('.canvas-md-scroll');
-    const flash = pane.querySelector('.nf-jump-flash');
-    return sc.scrollTop > 50 && !!flash;
-  }, { timeout: 5000 });
-  ok('md TOC 点击 → 标题锚滚动 + 落点高亮', true);
-  await shot(h.page, 'md-toc-jump.png');
+  // 滚动直设 + 阅读位（pane._mdScrollPos 机制随批⑦保留）
+  await h.page.evaluate(() => { const sc = document.querySelector('.canvas-tab-pane.active .canvas-md-scroll'); sc.scrollTop = 120; });
+  const st = await h.page.evaluate(() => document.querySelector('.canvas-tab-pane.active .canvas-md-scroll').scrollTop);
+  ok('md 滚动直设生效', st === 120, `scrollTop=${st}`);
 
-  // 进度条拖 → md 滚动（单章 = 滚动位置空间）
-  await h.page.evaluate(() => {
-    const r = document.querySelector('.canvas-tab-pane.active .epub-progress-range');
-    r.value = '0';
-    r.dispatchEvent(new Event('input', { bubbles: true }));
-    r.dispatchEvent(new Event('change', { bubbles: true }));
-  });
-  await h.page.waitForFunction(() => document.querySelector('.canvas-tab-pane.active .canvas-md-scroll').scrollTop < 10, { timeout: 5000 });
-  ok('md 滑杆拖回 0% → 滚回首部', true);
-
-  // 阅读菜单开 ⇒ ask-fab gate-off（设计稿 §2.2 联动）
+  // 无阅读菜单可开 ⇒ ask-fab 恒不 gate-off（gate-off 语义随 chrome 退役对 md 失效）
   const fabState = await h.page.evaluate(() => {
     const fab = document.querySelector('.ask-fab');
     return { exists: !!fab, gated: fab ? fab.classList.contains('gate-off') : null };
   });
-  ok('md 卡 ask-fab 在场且未 gate-off（菜单关）', fabState.exists && fabState.gated === false, JSON.stringify(fabState));
-  const rect = await h.page.evaluate(() => {
-    const r = document.querySelector('.canvas-tab-pane.active .canvas-md-scroll').getBoundingClientRect();
-    return { left: r.left, top: r.top, width: r.width, height: r.height };
-  });
-  await tapViewport(h.page, 0.5, 0.55, '.canvas-md-scroll');
-  await h.page.waitForSelector('.canvas-tab-pane.active .epub-reader-menu:not([hidden])');
-  const gated = await h.page.evaluate(() => document.querySelector('.ask-fab').classList.contains('gate-off'));
-  ok('阅读菜单开 ⇒ ask-fab gate-off', gated === true);
-  await shot(h.page, 'md-menu-fab-gated.png');
-  await h.page.keyboard.press('Escape');
-  await h.page.waitForSelector('.canvas-tab-pane.active .epub-reader-menu[hidden]', { state: 'attached' });
-  const ungated = await h.page.evaluate(() => document.querySelector('.ask-fab').classList.contains('gate-off'));
-  ok('菜单关 ⇒ gate-off 复位', ungated === false);
+  ok('md 卡 ask-fab 在场且未 gate-off（批⑦：md 无阅读菜单）', fabState.exists && fabState.gated === false, JSON.stringify(fabState));
+  await shot(h.page, 'md-plain-batch7.png');
   ok('md 腿零 pageerror', h.errors.length === 0, h.errors.join(' | '));
   await h.ctx.close();
 }

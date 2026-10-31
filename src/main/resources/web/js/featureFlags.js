@@ -198,10 +198,10 @@ export function consoleInputMode() {
  *
  * 范围边界（申报）：只藏**边栏入口** —— activityBar.js boot 摘挂 `#wiki-btn`
  * （静态槽：Projects 与 Plugins 之间）。词条/文档的关联引用功能零触碰
- * （markdown [[wikilink]] 解析、反链、引用跳转等不经本 flag）。图谱的**另外
- * 两个入口**本批不动（作者令只点名边栏）：文件查看器的「在图谱中打开」浮钮
- * （viewers/shared.js addGraphToggle）与移动端底栏图谱页签
- * （mobile/navController.js）——若后续要全量封存，复用本 flag 一处判定即可。
+ * （markdown [[wikilink]] 解析、反链、引用跳转等不经本 flag）。图谱入口面
+ * 随 Canvas 改造批④（2026-10-31 作者令「去知识图谱钮」）已收缩：文件查看器
+ * 「在图谱中打开」浮钮（viewers/shared.js addGraphToggle）整件退役——剩余
+ * 入口 = 工作台图谱行（flagGated，本 flag 藏）与 wiki-graph 标签页深链。
  *
  * 生效路径（同好友/语音批）：
  *   · dev 树（sbt run 直供 source）：改 nebflow.json → 刷新页面即生效；

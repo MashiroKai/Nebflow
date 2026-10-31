@@ -11,6 +11,7 @@
 // the content point under the cursor stationary).
 
 import { createIconsIn } from '../utils.js';
+import { t } from '../i18n.js';
 
 /** @type {Set<{pane: HTMLElement, zoomBy: Function, reset: Function}>} */
 const hovered = new Set();
@@ -70,10 +71,10 @@ export function enableViewerZoom(pane, opts) {
   const pct = document.createElement('span');
   pct.className = 'canvas-zoom-pct';
   const setPct = s => { pct.textContent = Math.round(s * 100) + '%'; };
-  bar.appendChild(mkBtn('zoom-out', 'Zoom out', () => zoomBy(1 / 1.25, null)));
+  bar.appendChild(mkBtn('zoom-out', t('canvas.zoomOut'), () => zoomBy(1 / 1.25, null)));
   bar.appendChild(pct);
-  bar.appendChild(mkBtn('zoom-in', 'Zoom in', () => zoomBy(1.25, null)));
-  bar.appendChild(mkBtn('maximize-2', 'Fit to view', () => { opts.reset(); setPct(opts.getScale()); }));
+  bar.appendChild(mkBtn('zoom-in', t('canvas.zoomIn'), () => zoomBy(1.25, null)));
+  bar.appendChild(mkBtn('maximize-2', t('canvas.zoomFit'), () => { opts.reset(); setPct(opts.getScale()); }));
   pane.appendChild(bar);
   createIconsIn(bar);
   setPct(opts.getScale());

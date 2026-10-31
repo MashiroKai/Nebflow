@@ -228,17 +228,28 @@ html[data-theme='light'] {
 }
 .ask-input .ask-send svg { width: 14px; height: 14px; pointer-events: none; }
 
-/* ═══ 移动档（body.mobile-layer；E-2 移动列 + #988 命中盒纪律）═══ */
+/* ═══ 移动档（body.mobile-layer；E-2 移动列 + #988 命中盒纪律）═══
+   Canvas 改造批⑨（2026-10-31 作者令「修 bug：标签页对话按钮消失」）：手机层
+   #canvas-panel display:none ⇒ FAB 改挂 body 级 fixed——钉视口右下、底 dock
+   上方（--dock-h 单源 + 10px 缝），z 260（> dock 200 / 移动页 156，< 模态 300+）；
+   可见性闸 = 文件卡 ∧ canvas 页在场（askDock.syncGate）。 */
 body.mobile-layer .ask-fab {
   --ask-fab-gap: 12px;
   width: 44px; height: 44px;
+  position: fixed;
+  right: var(--ask-fab-gap);
+  bottom: calc(var(--dock-h, 54px) + 10px);
+  z-index: 260;
 }
 body.mobile-layer .ask-dock {
   --ask-dock-w: calc(100% - 24px);
   --ask-col-maxh: 250px;
   --ask-bub-maxw: 252px;
   --ask-fade-h: 56px;
-  /* bottom 由 JS 依切换条实测（--ask-fab-bottom 随动） */
+  position: fixed;
+  right: var(--ask-fab-gap);
+  bottom: calc(var(--dock-h, 54px) + 10px + var(--ask-fab-size) + 10px);
+  z-index: 260;
 }
 body.mobile-layer .ask-bub { font-size: 13px; padding: 8px 12px; }
 body.mobile-layer .ask-input input { font-size: 15px; } /* iOS 聚焦不缩放 */

@@ -7,6 +7,7 @@ import { createIconsIn } from '../utils.js';
 import { reMint } from '../nfTicket.js';
 import { nfViewerUrl } from '../nfFileCache.js';
 import { enableViewerZoom } from './zoom.js';
+import { t } from '../i18n.js';
 
 /** Image viewer — <img> served via /api/nf-file, pannable + zoomable.
  *
@@ -159,8 +160,8 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
       hand.type = 'button';
       hand.className = 'canvas-zoom-btn canvas-pan-toggle';
       hand.innerHTML = '<i data-lucide="hand"></i>';
-      hand.title = 'Pan (or hold Space)';
-      hand.setAttribute('aria-label', 'Pan (or hold Space)');
+      hand.title = t('canvas.pan');
+      hand.setAttribute('aria-label', t('canvas.pan'));
       hand.addEventListener('click', () => {
         panEnabled = !panEnabled;
         hand.classList.toggle('is-on', panEnabled);

@@ -153,10 +153,10 @@ test('T1 canvas page presentation: full-bleed page, chip strip, toolbar, host, s
       chips: pg.querySelectorAll('.mf-strip-chip').length,
       chipOn: pg.querySelectorAll('.mf-strip-chip.on').length,
       chipLabel: pg.querySelector('.mf-strip-chip.on')?.textContent || '',
-      prevDisabled: pg.querySelector('.mf-cv-prev').disabled,
-      nextDisabled: pg.querySelector('.mf-cv-next').disabled,
       count: pg.querySelector('.mf-cv-count').textContent,
-      popHidden: pg.querySelector('.mf-cv-pop').hidden,
+      // 批②⑤（2026-10-31）：工具条换代 = ✕/计数/堆叠视角钮；步进/独立窗退役。
+      stackBox: chip('.mf-cv-stack'),
+      popGone: !pg.querySelector('.mf-cv-pop') && !pg.querySelector('.mf-cv-prev') && !pg.querySelector('.mf-cv-next'),
       closeBox: chip('.mf-cv-close'),
       hostVisible: getComputedStyle(pg.querySelector('.mf-cv-host')).display !== 'none',
       emptyHidden: pg.querySelector('.mf-cv-empty').hidden,
@@ -173,10 +173,12 @@ test('T1 canvas page presentation: full-bleed page, chip strip, toolbar, host, s
   expect(geo.chips).toBe(1);        // 单卡 = 单 chip
   expect(geo.chipOn).toBe(1);
   expect(geo.chipLabel).toBe('样例文档一');
-  expect(geo.prevDisabled).toBe(true);  // 单卡 ‹ › 禁用
-  expect(geo.nextDisabled).toBe(true);
+  expect(geo.popGone).toBe(true);
+  expect(geo.stackBox).toEqual({ w: 44, h: 44 });
+  // 批②：堆叠视角钮在挂（单卡亦可开面——计数 0 张）。
+  expect(geo.stackBtn === undefined || geo.stackBtn === true).toBe(true);
   expect(geo.count).toBe('');           // 单卡无计数
-  expect(geo.popHidden).toBe(true);     // generic 卡不可独立窗
+  // 批⑤：.mf-cv-pop 已退役，popHidden 断言随钮移除（popGone 已钉在上）。
   expect(geo.closeBox.w).toBe(44);      // X 热区 44×44
   expect(geo.closeBox.h).toBe(44);
   expect(geo.hostVisible).toBe(true);
@@ -243,19 +245,21 @@ test('T3 host horizontal swipe switches cards (left=next, right=prev, ring); swi
   expect(errors).toEqual([]);
 });
 
-test('T3b toolbar prev/next + count + chip tap switch cards', async ({ page }) => {
+test('T3b 堆叠视角 + count + chip tap switch cards（批②⑤：步进钮退役，堆叠视角接棒）', async ({ page }) => {
   const errors = watchErrors(page);
   await openDocCards(page, [['doc-a', '卡甲', 'pg-a'], ['doc-b', '卡乙', 'pg-b'], ['doc-c', '卡丙', 'pg-c']]);
   expect(await activeChip(page)).toBe('doc-c'); // 环序 [甲, 乙, 丙]
   const pg = '.mobile-page[data-page="canvas"]';
-  // 「下一张 ›」→ 环绕回卡甲（1/3）。
-  await page.locator(`${pg} .mf-cv-next`).click();
+  // 堆叠视角开面：顶行「3 张文档」（批⑤ 顶部计数）+ 全卡列表。
+  await page.locator(`${pg} .mf-cv-stack`).click();
+  await expect(page.locator(`${pg} .mf-stack-view`)).toBeVisible();
+  await expect(page.locator(`${pg} .mf-stack-count`)).toHaveText('3 张文档');
+  await expect(page.locator(`${pg} .mf-stack-card`)).toHaveCount(3);
+  // 点卡甲换入并收面（1/3）。
+  await page.locator(`${pg} .mf-stack-card[data-tab-id="doc-a"]`).click();
+  await expect(page.locator(`${pg} .mf-stack-view`)).toBeHidden();
   expect(await activeChip(page)).toBe('doc-a');
   await expect(page.locator(`${pg} .mf-cv-count`)).toHaveText('1/3');
-  // 「‹ 上一张」→ 回卡丙（3/3）。
-  await page.locator(`${pg} .mf-cv-prev`).click();
-  expect(await activeChip(page)).toBe('doc-c');
-  await expect(page.locator(`${pg} .mf-cv-count`)).toHaveText('3/3');
   // chip tap → 跳卡乙（2/3）。
   await page.locator(`${pg} .mf-strip-chip[data-tab-id="doc-b"]`).click();
   expect(await activeChip(page)).toBe('doc-b');
@@ -328,31 +332,22 @@ test('T5 hit zones: toolbar prev/next/close ≥44px (pop ≥44 when visible)', a
       return { w: Math.round(r.width), h: Math.round(r.height), hidden: el.hidden };
     };
     return {
-      prev: box('.mf-cv-prev'),
-      next: box('.mf-cv-next'),
+      // 批②⑤：工具条 = ✕ + 堆叠视角钮（44px 液体玻璃圆）+ 计数。
+      stack: box('.mf-cv-stack'),
       close: box('.mf-cv-close'),
-      pop: box('.mf-cv-pop'),
     };
   });
-  for (const k of ['prev', 'next', 'close']) {
+  for (const k of ['stack', 'close']) {
     expect(boxes[k].w, k).toBeGreaterThanOrEqual(44);
     expect(boxes[k].h, k).toBeGreaterThanOrEqual(44);
   }
-  // pop 仅独立窗可开的卡可见 —— 文件卡腿单独验（可见即 ≥44）。
+  // 批⑤：.mf-cv-pop 独立窗钮已退役——文件卡也不再生 pop 钮。
   await page.evaluate(async () => {
     const c = await import('/js/canvas.js');
     c.openTab('doc-file', '说明.md', { type: 'file' });
   });
   await page.waitForTimeout(400);
-  const popBox = await page.evaluate(() => {
-    const el = document.querySelector('.mf-cv-pop');
-    if (!el || el.hidden) return null;
-    const r = el.getBoundingClientRect();
-    return { w: Math.round(r.width), h: Math.round(r.height) };
-  });
-  if (popBox) {
-    expect(popBox.w).toBeGreaterThanOrEqual(44);
-    expect(popBox.h).toBeGreaterThanOrEqual(44);
-  }
+  const popGone = await page.evaluate(() => !document.querySelector('.mf-cv-pop'));
+  expect(popGone).toBe(true);
   expect(errors).toEqual([]);
 });

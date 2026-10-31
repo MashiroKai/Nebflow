@@ -963,8 +963,8 @@ body.mobile-layer .mh-memory-empty {
 body.mobile-layer #canvas-panel {
   display: none !important;
 }
-/* 桌面卡头（.canvas-title/#canvas-pop-btn/关闭钮）随 pane 进页面后同样退场
-   —— canvas 页自带 chip 条 + 工具条（标题/计数/独立窗/关闭）。 */
+/* 桌面卡头（.canvas-title/关闭钮）随 pane 进页面后同样退场 —— canvas 页
+   自带 chip 条 + 工具条（批②：✕ / 计数 / 堆叠视角钮；批⑤：独立窗钮退役）。 */
 body.mobile-layer .canvas-tab-pane .canvas-header {
   display: none !important;
 }
@@ -977,6 +977,7 @@ body.mobile-layer #canvas-content {
 body.mobile-layer .mf-canvas-page {
   flex: 1;
   min-height: 0;
+  position: relative;   /* 批②⑤：堆叠视角浮层（.mf-stack-view absolute inset:0）锚本页 */
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1020,35 +1021,26 @@ body.mobile-layer .mf-strip-chip.on {
   font-weight: 600;
 }
 body.mobile-layer .mf-strip-chip:active { transform: scale(0.95); }
-/* 工具条：‹ 计数 › ｜ 独立窗 ｜ 关闭 X（44px 热区，视觉 32px 圆）。 */
+/* 工具条（Canvas 改造批②⑤，2026-10-31 作者令「顶栏换代：左叉号右堆叠视角
+   钮」）：✕ 左 · 计数居中 · 堆叠视角钮右——钮体 = 44px 液体玻璃悬浮圆
+   （.g2-fab 复用 v2 材质：blur/sat 双档 + 镜面高光 + spring 按压，零新造；
+   材质面见 liquid-glass.css）。批⑤退役：‹ › 步进 / 独立窗钮 / 分隔线。 */
 body.mobile-layer .mf-cv-toolbar {
   flex: none;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 2px;
   padding: 4px 10px;
   border-bottom: 1px solid var(--glass-border);
 }
 body.mobile-layer .mf-cv-toolbar[hidden] { display: none; }
-body.mobile-layer .mf-cv-btn {
+body.mobile-layer .mf-cv-toolbar .g2-fab {
   width: 44px;
   height: 44px;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--color-frame-text, #e6e9ef);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  touch-action: manipulation;
 }
-body.mobile-layer .mf-cv-btn:disabled { opacity: 0.3; }
-body.mobile-layer .mf-cv-btn:active { background: rgba(255, 255, 255, 0.12); }
-body.mobile-layer .mf-cv-btn svg { width: 16px; height: 16px; }
-body.mobile-layer .mf-cv-btn i svg { width: 16px; height: 16px; }
-body.mobile-layer .mf-cv-btn[hidden] { display: none; }
+body.mobile-layer .mf-cv-toolbar .g2-fab svg { width: 17px; height: 17px; }
+body.mobile-layer .mf-cv-toolbar .g2-fab:disabled { opacity: 0.35; }
 body.mobile-layer .mf-cv-count {
   min-width: 40px;
   text-align: center;
@@ -1057,15 +1049,118 @@ body.mobile-layer .mf-cv-count {
   color: var(--color-frame-text-muted, #98a2b3);
   font-variant-numeric: tabular-nums;
 }
-body.mobile-layer .mf-cv-sep {
-  flex: none;
-  width: 1px;
-  height: 22px;
-  margin: 0 4px;
-  background: var(--glass-border);
+/* 文档区横滑邻卡圆环（批③：横拖时拖向侧露玻璃描边圆环 = 桌面上下滚动的
+   横屏变体；进深 = 拖距/换卡阈 0→1，松手即退）。半露圆（54px，缘外 20px），
+   纵向居中。 */
+body.mobile-layer .mf-cv-host { position: relative; }
+body.mobile-layer .mf-swipe-ring {
+  position: absolute;
+  top: 50%;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: 2px solid var(--glass-border, rgba(255, 255, 255, 0.5));
+  background: var(--glass-bg, rgba(255, 255, 255, 0.12));
+  -webkit-backdrop-filter: blur(8px) saturate(1.3);
+  backdrop-filter: blur(8px) saturate(1.3);
+  box-shadow: var(--cv-shadow, none);
+  pointer-events: none;
+  opacity: 0;
+  z-index: 12;
+  will-change: transform, opacity;
 }
-body.mobile-layer .mf-cv-pop.is-independent .pop-ic-pop { display: none; }
-body.mobile-layer .mf-cv-pop:not(.is-independent) .pop-ic-merge { display: none; }
+body.mobile-layer .mf-swipe-ring.left { left: -20px; }
+body.mobile-layer .mf-swipe-ring.right { right: -20px; }
+/* 堆叠视角面（批②⑤）：全卡堆叠列表浮层——顶行「N 张文档」计数（批⑤：堆叠
+   态顶部显示标签数）+ ✕ 收面；卡列毛玻璃卡面，活动卡活性蓝高亮。 */
+body.mobile-layer .mf-stack-view {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-bg, rgba(20, 24, 33, 0.55));
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  backdrop-filter: blur(18px) saturate(1.5);
+}
+body.mobile-layer .mf-stack-view[hidden] { display: none; }
+body.mobile-layer .mf-stack-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+body.mobile-layer .mf-stack-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-frame-text, #e6e9ef);
+  font-variant-numeric: tabular-nums;
+}
+body.mobile-layer .mf-stack-x { width: 40px; height: 40px; }
+body.mobile-layer .mf-stack-x svg { width: 16px; height: 16px; }
+body.mobile-layer .mf-stack-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px 16px 20px;
+  -webkit-overflow-scrolling: touch;
+}
+body.mobile-layer .mf-stack-card {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 14px;
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.28));
+  border-radius: 14px;
+  background: var(--glass-bg, rgba(255, 255, 255, 0.12));
+  color: var(--color-frame-text, #e6e9ef);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: start;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+/* 堆叠语义：卡自上而下渐次缩径内收（远卡小一档），近卡完整。 */
+body.mobile-layer .mf-stack-card:nth-child(n+2) { transform: scale(0.985); }
+body.mobile-layer .mf-stack-card:nth-child(n+4) { transform: scale(0.97); }
+body.mobile-layer .mf-stack-card:active { transform: scale(0.97); }
+body.mobile-layer .mf-stack-card.on {
+  border-color: rgb(var(--sapphire, 96 165 250) / 0.45);
+  background: rgb(var(--sapphire, 96 165 250) / 0.14);
+}
+body.mobile-layer .mf-stack-num {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-frame-text-muted, #98a2b3);
+  background: rgba(128, 128, 128, 0.16);
+}
+body.mobile-layer .mf-stack-card.on .mf-stack-num {
+  color: rgb(var(--sapphire, 96 165 250));
+  background: rgb(var(--sapphire, 96 165 250) / 0.16);
+}
+body.mobile-layer .mf-stack-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* 文档区：活动文档 pane 宿主（pane 自管滚动）。 */
 body.mobile-layer .mf-cv-host {
   flex: 1;

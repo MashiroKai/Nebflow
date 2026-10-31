@@ -1017,6 +1017,10 @@ export function mountReader(pane, adapter) {
   // Esc 关闭（单个 document 监听，多实例共存：闭包各自判断自己面板状态）。
   document.addEventListener('keydown', onEscClose);
 
+  // 批⑩ 2026-10-31：底栏挂载完成广播——ask-fab 座位重算（epub 并入可问面后
+  // fab 上阅读器页，底栏 ⋯ 右端与 fab 同角，must 让位；askDock syncSeat 收听）。
+  pane.dispatchEvent(new CustomEvent('nf-reader-mounted', { bubbles: true }));
+
   return {
     reader, viewport, scroller, contentEl, menu, tocEl,
     prefs, setPrefs,
