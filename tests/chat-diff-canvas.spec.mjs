@@ -547,6 +547,10 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     expect(reads.backdrop).toContain('saturate(1.15)');
     // 小注墨族灰字在亮档同样成立：透明底 + 零边框 + 非透明文字色（「灰字小注」
     // 形态双主题不漂移；旧 glass chip 的描边/999 圆角断言随胶囊退役移除）。
+    // 单行化+hover 批（2026-10-31 22:29）：小注为分块 hover 单元（hover 上底色），
+    // 上文 click 后指针仍悬停小注 ⇒ 先移开指针再读 rest 构造（零背景是 rest 断言）。
+    await page.mouse.move(2, 2);
+    await page.waitForTimeout(300); // hover 底色 0.15s 过渡走完再读 rest 构造。
     const noteStyles = await note(page).evaluate((el) => {
       const cs = getComputedStyle(el);
       return { border: cs.borderTopWidth, bg: cs.backgroundColor, color: cs.color };
