@@ -23,6 +23,8 @@
 import { t } from './i18n.js';
 import { key } from './branding.js';
 import { statusIcon, escapeHtml } from './utils.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层输出卡铺满屏 + 左上返回（桌面零变化）。
+import { mobileSheetBack } from './mobile/popSheet.js';
 
 // ── State（单例卡：同一时刻最多一张详情卡）─────────────────
 let overlayEl = null;
@@ -790,6 +792,7 @@ export function openBgTaskOutput(task) {
   wireCopyButton(copyBtn);
 
   document.body.appendChild(overlayEl);
+  mobileSheetBack(overlayEl, closeBgTaskOutput);
 
   // 关闭交互：× 按钮 / 点 overlay 空白 / Esc（capture——避免被其他全局 Esc 抢）
   overlayEl.querySelector('.bgt-close').addEventListener('click', closeBgTaskOutput);

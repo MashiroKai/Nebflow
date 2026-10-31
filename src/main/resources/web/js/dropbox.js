@@ -18,6 +18,8 @@ import { formatHm, bindTimeToggle } from './timeFormat.js';
 import { loadDeviceMessages, saveDeviceMessages } from './fmDropboxCache.js';
 // ⑩ 合并期滚动位保持（与好友消息面**共用一份实现**，无第二个公式）。
 import { preserveScrollAnchor } from './msgScrollAnchor.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层 dropbox 窗铺满屏 + 左上返回（桌面零变化）。
+import { mobileSheetBack } from './mobile/popSheet.js';
 
 // Per-device message cache: deviceId -> DropboxMessage[]
 // ⑩ 语义变更：本对象从「服务端回包的镜像」升级为「**先缓存、后增量合并**的工作集」
@@ -316,6 +318,7 @@ function renderModal(device) {
       ${descHtml}
     </div>`;
 
+  mobileSheetBack(overlay, closeDropbox);
   document.body.appendChild(overlay);
 
   // 🔴 件 1 真因面（2026-09-14 作者报「附件的按钮不可见」）：图标渲染必须显式触发。

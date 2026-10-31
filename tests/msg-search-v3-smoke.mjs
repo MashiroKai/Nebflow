@@ -67,7 +67,7 @@ await page.routeWebSocket(/\/ws/, (ws) => {
     let msg; try { msg = JSON.parse(raw); } catch { return; }
     if (msg.type === 'getConfig') sendConfig();
     else if (msg.type === 'getSessions' || msg.type === 'listSessions') sendSessions();
-    else if (msg.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: msg.sessionId, messages: [], hasMore: false, offset: 0 }));
+    else if (msg.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: msg.sessionId, messages: HISTORY, hasMore: false, offset: HISTORY.length, total: HISTORY.length }));
   });
 });
 
@@ -245,24 +245,16 @@ await page.waitForTimeout(150);
 const actives = await page.locator('#search-results .search-result').evaluateAll(els => els.map(e => e.classList.contains('active')));
 check('A4 ArrowDown moves active to 2nd', actives[1] === true && actives[0] === false, JSON.stringify(actives));
 await page.keyboard.press('Enter');
-await page.waitForTimeout(600);   // float: history fetch + window render
-// 换代重锚（key-based lookup rework 批，chatSearch.js Enter 分支）：Enter =
-// 激活当前行跳转，**不再关窗** —— 消息行开浮窗（chatSearchFloat
-// .nf-msgfloat，modal 保持打开）；Pop 产物行才走「关窗 + 开产物」腿。
-check('A4 Enter 激活当前行（换代：Enter=跳转非关窗，modal 保持打开 + 消息浮窗落地）',
-  (await page.locator('#search-overlay.on').count()) === 1 &&
-  (await page.locator('.nf-msgfloat').count()) === 1,
-  `modal=${await page.locator('#search-overlay.on').count()} float=${await page.locator('.nf-msgfloat').count()}`);
-const floatText = await page.locator('.nf-msgfloat .nf-msgfloat-chat').innerText().catch(() => '');
-check('A4 浮窗渲染命中窗口（seed history 同源直读）', floatText.trim().length > 0, floatText.slice(0, 40).replace(/\s+/g, ' '));
-
-// 清场：关浮窗（自身 ✕）+ Esc 关 modal（kw 已空 ⇒ 单 Esc 关窗）——A8 focus
-// trap 腿需要 modal 从关态重开（#search-btn 点击 = 开合 toggle）。
-await page.click('.nf-msgfloat-close');
-await page.keyboard.press('Escape');
-await page.waitForTimeout(200);
-check('A4 清场：浮窗 + modal 全关', (await page.locator('.nf-msgfloat').count()) === 0
-  && (await page.locator('#search-overlay.on').count()) === 0);
+// 弹窗退场批①（2026-10-31 作者令）：Enter = 激活当前行 ⇒ 主会话直接跳转定位——
+// 搜索面关闭（act-and-exit）+ #chat 命中行滚动定位 + .search-hit-flash 高亮；
+// 消息浮窗已整体退役（chatSearchFloat.js 删除）。
+await page.waitForSelector('#chat .search-hit-flash', { timeout: 5000 });
+check('A4 Enter 激活当前行（换代：主会话命中行闪击带落地）', true);
+const actAndExit = await page.evaluate(() =>
+  !document.getElementById('search-overlay')?.classList.contains('on') &&
+  document.querySelectorAll('.nf-msgfloat').length === 0);
+check('A4 act-and-exit：modal 已关 + 无消息浮窗', actAndExit);
+await page.waitForTimeout(2000);   // let the flash expire before A8 reopens the modal
 
 // A8 regression: focus trap — 20 Tabs never leave the modal subtree
 await page.click('#search-btn');

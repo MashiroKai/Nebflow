@@ -1,16 +1,19 @@
-// pr41-locale-search-jump.spec.mjs — 搜索面工具行契约 + 浮窗定位回归
+// pr41-locale-search-jump.spec.mjs — 搜索面工具行契约 + 主会话定位回归
 //（原 #41 locale-jump 守卫的换代版，2026-10-30 聊天记录搜索优化批作者令①）。
 //
 // 历史前提（#41, maintainer fix 18fc201f）：tool 卡片 DOM 本地化 label/summary，
-// 搜索索引带原始英文 summary ⇒ 浮窗跳转按原文匹配。该回归腿原样守护了三年。
+// 搜索索引带原始英文 summary ⇒ 跳转定位按原文匹配。
 //
-// 换代（作者令① 2026-10-30「搜索结果只搜对话」）：tool call/tool result 不入
-// 索引不入结果——#41 的工具行关键词命中场景整体退役（浮窗对 tool 行的定位
-// 仍经浏览流点击可达，kind 谓词单一判别点未动）。本文件换代为两条新判据：
+// 换代①（作者令 2026-10-30「搜索结果只搜对话」）：tool call/tool result 不入
+// 索引不入结果——#41 的工具行关键词命中场景整体退役。判据 S1 守此契约。
+//
+// 换代②（弹窗退场批① 作者令 2026-10-31「点检索结果不再弹窗显示那条消息，
+// 改为主会话直接跳转定位（滚动+高亮）」）：消息浮窗（chatSearchFloat.js）退役，
+// 判据 S2/S3 换代为 act-and-exit 主会话定位契约：
 //   S1  zh-CN：关键词只命中 tool 行文本（gamma/delta）⇒ 0 条结果——工具噪声
 //       不再出现在搜索结果（既有 noResults 空态）；
-//   S2  zh-CN + en：关键词命中 user 行 ⇒ 浮窗在命中处打开（.search-hit-flash
-//       落在浮窗内，主会话零触碰）——浮窗定位机制度换代后仍活。
+//   S2  zh-CN + en：关键词命中 user 行 ⇒ 搜索面关闭 + #chat 命中行滚动定位
+//       + .search-hit-flash 高亮；无任何消息浮窗出现。
 //
 // Self-contained: route-intercepted static files + mocked REST/WS, no backend.
 // Run: node tests/pr41-locale-search-jump.spec.mjs
@@ -149,8 +152,12 @@ async function search(page, kw) {
   await context.close();
 }
 
-// ── S2: 关键词命中 user 行 ⇒ 浮窗在命中处打开（定位机制度换代后仍活）──
-async function floatJumpLeg(locale, label) {
+// ── S2: 关键词命中 user 行 ⇒ 主会话直接跳转定位（弹窗退场批①换代判据）──
+// 2026-10-31 弹窗退场批①（作者令「点检索结果不再弹窗显示那条消息，改为主会话
+// 直接跳转定位（滚动+高亮）」）：点命中行 = 关搜索面 + 主聊天滚动定位 + 高亮
+// 闪击带；不再开消息浮窗（chatSearchFloat.js 已删）。浮窗契约判据（modal 保持
+// 打开/主会话零触碰）随之换代为 act-and-exit 契约（modal 关闭、浮窗缺席）。
+async function jumpLeg(locale, label) {
   const { page, context, pageErrors } = await newPage(locale);
   await search(page, 'omega');
   const rows = await page.evaluate(() =>
@@ -158,21 +165,21 @@ async function floatJumpLeg(locale, label) {
   check(`${label}: 命中 = user 行（tool 行文本含 omega? 否——仅 user 种植行）`, rows.length === 1 && rows[0] === 'user', JSON.stringify(rows));
 
   await page.click('#search-results .search-result');
-  // 浮窗打开：窗内闪击带 + 主会话不被触碰（浮窗契约 v2）。
+  // 主会话定位：闪击带落在 #chat 的命中行上，且 modal 已关（act-and-exit）。
   const flashed = await page.waitForFunction(() => {
-    const el = document.querySelector('.nf-msgfloat .search-hit-flash');
+    const el = document.querySelector('#chat .search-hit-flash');
     return !!el && el.textContent.includes('omega');
   }, { timeout: 8000 });
-  check(`${label}: floating window flashed the hit row (omega) within 8s`, !!flashed);
-  const mainUntouched = await page.evaluate(() =>
-    !document.querySelector('#chat .search-hit-flash') &&
-    !!document.getElementById('search-overlay')?.classList.contains('on'));
-  check(`${label}: main chat untouched, modal stays open (float contract)`, mainUntouched);
+  check(`${label}: main chat flashed the hit row (omega) within 8s`, !!flashed);
+  const actAndExit = await page.evaluate(() =>
+    !document.getElementById('search-overlay')?.classList.contains('on') &&
+    document.querySelectorAll('.nf-msgfloat').length === 0);
+  check(`${label}: modal closed, no message float (act-and-exit contract)`, actAndExit);
   check(`${label}: no page errors`, pageErrors.length === 0, pageErrors.join('; '));
   await context.close();
 }
-await floatJumpLeg('zh-CN', 'S2 zh-CN user float');
-await floatJumpLeg('en', 'S3 en user float');
+await jumpLeg('zh-CN', 'S2 zh-CN user jump');
+await jumpLeg('en', 'S3 en user jump');
 
 await browser.close();
 

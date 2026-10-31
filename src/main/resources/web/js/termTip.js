@@ -14,6 +14,8 @@
 // 「轻点即开气泡，气泡内再点跳转」（termTapExpand 在点击腿消费，首击不导航）。
 
 import { t } from './i18n.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层触屏词条泡 = 全屏词条卡 + 左上返回。
+import { mobileSheetBack } from './mobile/popSheet.js';
 
 let termTipEl = null;
 let termTipLink = null;
@@ -39,6 +41,8 @@ function ensureTermTipEl() {
   if (termTipEl) return termTipEl;
   const el = document.createElement('div');
   el.className = 'nf-term-tip';
+  // 返回 = 收泡（仅触屏腿挂；桌面 hover 泡的 .mfs-back 由 CSS 隐藏）。
+  mobileSheetBack(el, hideTermTip);
   el.innerHTML = '<div class="tt"></div><div class="ts"></div><div class="td"></div>';
   // 气泡内点击 = 跳转（移动惯例；桌面 pointer-events:none 时不可达，无害）。
   el.addEventListener('click', (e) => {
@@ -106,6 +110,9 @@ async function termInfoFor(a) {
 function paintTermTip(a, info) {
   const el = ensureTermTipEl();
   el.classList.toggle('touch', noHoverEnv());
+  // 弹窗退场批：触屏腿 show 时补注左上返回（幂等；非手机层不注入——
+  // ensureTermTipEl 创建期那次在非手机层是空注）。
+  if (el.classList.contains('touch')) mobileSheetBack(el, hideTermTip);
   el.querySelector('.tt').textContent = info.name || '';
   el.querySelector('.ts').textContent = info.definition || '';
   const doc = info.doc || (info.rel ? String(info.rel).split('/').pop().replace(/\.(md|markdown|html?)$/i, '') : '');

@@ -180,7 +180,8 @@ test('T1 long-press opens the desktop-same context menu; menu survives finger li
   const { touch } = await longPressRow(page, textRow, 't1-longpress-text-menu');
   const menu = page.locator('.fm-context-menu');
   await expect(menu).toBeVisible();
-  const items = await menu.locator('button').allTextContents();
+  // 动作项（排除弹窗退场批②注入的左上 .mfs-back 返回钮）。
+  const items = await menu.locator('button:not(.mfs-back)').allTextContents();
   expect(items).toEqual(['复制', '引用']);
 
   // 手指抬起：合成 click 被吞窗吃掉（contextMenu.js swallowTouchClick），

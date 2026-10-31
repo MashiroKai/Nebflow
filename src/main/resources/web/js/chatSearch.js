@@ -35,15 +35,17 @@
 //   GET /api/sessions?includeUnindexed=1 → session list incl. unindexed
 //   GET /api/sessions/{id}/history       → UiMessage list per session
 //
-// v2 (2026-09-11 author ruling) — two changes on top of v3.1, nothing else:
-//   1) A hit whose tool message produced a Card renders that card body inline
-//      under the preview (same renderer as the chat: renderWithRegistry). Every
-//      other row keeps its exact DOM/styling; the list layout is untouched.
-//   2) Clicking a non-Pop hit opens an independent floating window that starts
-//      at the hit (chatSearchFloat.js) instead of scrolling the MAIN session.
-//      Pop/Card artifacts with a Canvas-openable filePath keep the existing
-//      Canvas-direct routing. The in-session jump machinery (scrollToMessage /
-//      flashRow / jumpToResult + its WS paging) is gone with it.
+// v2 (2026-09-11 author ruling): a hit whose tool message produced a Card
+//   renders that card body inline under the preview (same renderer as the
+//   chat: renderWithRegistry). Every other row keeps its exact DOM/styling.
+//
+// 弹窗退场批①（2026-10-31 作者令「点检索结果不再弹窗显示那条消息，改为主会话
+//   直接跳转定位（滚动+高亮）」）：v2 的「点击非 Pop 命中开独立消息浮窗」
+//   （chatSearchFloat.js，2026-09-11 msgsearch v2 浮层批引入）整体退役——
+//   chatSearchFloat.js 已删除，非 Pop 命中恢复考古版主会话定位腿
+//   （jumpToResult/scrollToMessage/flashRow + WS 翻页驱动，21fab56d5 考古），
+//   滚动用就近滚容器 scrollTop 口径（msgQuote.js 同纪律，禁 scrollIntoView
+//   泄漏 overflow:hidden 祖先）。手机层同一条腿：关搜索面后回聊天根再定位。
 
 import state from './state.js';
 import { key } from './branding.js';
@@ -60,7 +62,9 @@ import { attachmentImageUrl } from './persistence.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
-import { openSearchMessageFloat } from './chatSearchFloat.js';
+import { chatViews } from './chatView.js';
+import { sendWs } from './ws.js';
+import { expandGroupContaining } from './turnGroup.js';
 
 const MAX_RESULTS = 200;      // search-mode cap (v2.1 one-shot query)
 const FETCH_PAGE = 100;       // stream page size (spec §6.3 caps a page at ≤200;
@@ -705,18 +709,11 @@ function openPillListbox(pill, pop) {
 }
 
 // ── Keyboard contract ──────────────────────────────────────
-/** True when the event originated inside a detached message window (its own
- *  Esc / Tab handling must win over the modal's capture-phase handler). */
-function inMessageFloat(target) {
-  return target instanceof Element && !!target.closest('[data-nf-float-layer]');
-}
-
 function onModalKeydown(e) {
   const overlay = document.getElementById('search-overlay');
   if (!overlay?.classList.contains('on')) return;
   // ⑤ 收归：单一谓词（元素级 dataset 兜底 + 事件级 isComposing/keyCode 229）。
   if (isImeComposing(e, e.target instanceof HTMLElement ? e.target : null)) return;
-  if (inMessageFloat(e.target)) return;   // keys belong to the message window
 
   const modal = document.getElementById('search-modal');
   const ae = document.activeElement;
@@ -860,9 +857,6 @@ function setActive(i, scroll = false) {
 /** Focus trap: Tab/Shift+Tab cycle inside the modal (or inside the open
  *  calendar popover), never escaping to the background chat area. */
 function trapFocus(e) {
-  // v2: a detached message window (chatSearchFloat) is its own focus scope —
-  // keys raised while focus sits inside one belong to that window.
-  if (inMessageFloat(e.target)) return;
   const scope = calOpen
     ? document.getElementById('search-date-popover')
     : document.getElementById('search-modal');
@@ -936,7 +930,7 @@ async function fetchHistory(sessionId, signal, cursor = {}) {
   // 控制台收 502/504/截断体）曾把 fetchHistory 吞成 [] ⇒ 搜索面假装「0 条结果」，
   // 传输故障与真空数据不可分辨（作者报障「搜消息记录零结果」的机制）。
   //   · 404 = 会话已删 ⇒ 合法空（scope=all 扫 6345 会话时单会话消失不炸全队）；
-  //   · 其余非 2xx ⇒ 抛（fetchSessionList/chatSearchFloat 同律）⇒ runSearch/
+  //   · 其余非 2xx ⇒ 抛（fetchSessionList 同律）⇒ runSearch/
   //     runStream 既有 catch ⇒ showError 渲染「加载失败: … + 重试」钮；
   //   · 2xx 但体损坏（messages 缺失/非数组 = 截断体）⇒ 同样抛。
   if (resp.status === 404) return [];
@@ -971,7 +965,7 @@ async function mapLimit(items, limit, fn, onProgress) {
  * Message-source classification — THE single point (author ruling 2026-09-19,
  * "检索分类粒度": 「用户消息」= the author's own input ONLY; the agent-produced
  * blue bubble is its own class). Every consumer — the filters/badges/counts
- * below AND chatSearchFloat.js's raw-message lookup — derives from this one
+ * below AND the result rows' kind badges — derives from this one
  * function; never re-map UiMessage.type to a kind anywhere else.
  *
  *   - 'user'  ⇔ type === 'user' ∧ injected !== true
@@ -1431,8 +1425,8 @@ function applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, res
       tool: m.tool,
       input: '',
       text: h.snippet || '',
-      // 索引行不投影原始 segments——浮窗按 (sid, ord, kind) 直定位
-      // （chatSearchFloat.findHitIndex 的 ord 快路，C3 兼容面）。
+      // 索引行不投影原始 segments——跳转定位按 (sid, ord, kind) 直查 +
+      // 文本/时间戳兜底（chatSearch.js#scrollToMessage，C3 兼容面）。
       summary: '',
       content: '',
       ts: h.ts,
@@ -2331,15 +2325,12 @@ function renderMediaGrid(resultsEl, statusEl) {
 
 // ── Result activation ───────────────────────────────────────
 /**
- * Activate a result row (click or Enter).
- *   - Pop/Card artifact messages (Canvas-openable filePath — same detection as
- *     the message bubble's Pop card) keep the existing Canvas-direct routing:
- *     the modal closes and the artifact opens in Canvas (act-and-exit).
- *   - Every other result opens a detached floating window that STARTS at the
- *     clicked message (chatSearchFloat.js). The main session is left exactly as
- *     it was — no session switch, no scroll, no focus change — and the search
- *     modal stays open (opening a window changes neither the main window's
- *     state nor the modal's, and several windows can be opened in a row).
+ * Activate a result row (click or Enter). Pop/Card artifact messages (with a
+ * Canvas-openable filePath — same detection as the message bubble's Pop card)
+ * open the content DIRECTLY in Canvas, no message jump; everything else
+ * locates-and-jumps in the MAIN session (scroll + highlight, 弹窗退场批①
+ * 2026-10-31: the v2 message float window is retired). The modal closes in
+ * both cases (act-and-exit).
  */
 function activateResult(res) {
   const art = popArtifactFromInput(res.tool, res.input);
@@ -2348,15 +2339,126 @@ function activateResult(res) {
     openPopArtifact(art.filePath, art.title);
     return;
   }
-  const row = document.querySelector(`#search-results .search-result[data-key="${CSS.escape(res.key || '')}"]`);
-  openSearchMessageFloat(res, {
-    // The raw-message lookup inside the window cannot import the predicate
-    // back (that would close a static cycle with this module — rejected by
-    // scripts/check-circular.mjs), so the single point is injected here: the
-    // window's kind↔UiMessage comparison runs THIS function, never a copy.
-    kindOf: messageKind,
-    onError: (msg) => { if (row instanceof HTMLElement) mountRowNotice(row, msg); },
-  });
+  jumpToResult(res);
+}
+
+// ── Jump to message（弹窗退场批①：考古回退 21fab56d5 口径 + msgQuote 滚动纪律）──
+// DOM matching normalizes away whitespace and non-alphanumeric characters so
+// markdown formatting (**bold**, `code`, list bullets) doesn't break the match.
+const stripForMatch = (s) => (s || '').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+
+// The chat view initially renders only the newest 50 messages and pages older
+// history on scroll-to-top, so a search hit can sit far outside the loaded
+// window — a pure DOM scan fails "most of the time" (2026-08-18 user report).
+// scrollToMessage therefore drives the same WS pagination the scroll listener
+// uses: while the target is unmatched and the view has older pages, request
+// them (50 at a time) and retry, up to JUMP_MAX_PAGES / JUMP_DEADLINE_MS.
+const JUMP_TICK_MS = 250;
+const JUMP_MAX_PAGES = 40;        // 40 × 50 = 2000 messages of lookback
+const JUMP_DEADLINE_MS = 25000;   // overall budget
+
+function jumpToResult(res) {
+  closeSearchModal();
+  // 手机层：检索面收编在「搜索」页里——关闭后面回聊天根再定位（搜索页 CLOSE_WATCH
+  // 对账弹栈在观察器微任务里跑；goHome 幂等先行清栈，观察器到来时 top 已非
+  // search ⇒ 不会双弹）。
+  if (document.body.classList.contains('mobile-layer')) {
+    import('./mobile/navController.js').then((m) => m.goHome()).catch(() => { /* 导航缺席：聊天根本就在场 */ });
+  }
+  // 跨会话：切会话是异步腿（history 重放落后一拍），scrollToMessage 的
+  // pendingInitialLoad 闸保证初载完成前不发分页请求。
+  if (res.sessionId && res.sessionId !== state.activeSessionId) {
+    import('./sidebar.js').then(({ switchToSession }) => {
+      switchToSession(res.sessionId);
+    }).catch(() => { /* 切换失败：scrollToMessage 的同会话守卫会静默收口 */ });
+  }
+  scrollToMessage(res, { pages: 0, start: Date.now(), settleTicks: 0 });
+}
+
+/** @param {HTMLElement} el */
+function flashRow(el) {
+  expandGroupContaining(el); // #346 E10: reveal collapsed turn before scrolling
+  // 就近滚容器（overflow-y auto/scroll 的最近祖先）内平滑居中——禁
+  // scrollIntoView（泄漏进 overflow:hidden 祖先，msgQuote.js 同纪律）。
+  let scroller = el.parentElement;
+  while (scroller && scroller !== document.body) {
+    const oy = getComputedStyle(scroller).overflowY;
+    if (oy === 'auto' || oy === 'scroll') break;
+    scroller = scroller.parentElement;
+  }
+  if (scroller && scroller !== document.body) {
+    const fr = scroller.getBoundingClientRect();
+    const nr = el.getBoundingClientRect();
+    const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    const top = Math.max(0, Math.min(max,
+      scroller.scrollTop + (nr.top - fr.top) - Math.max(0, (scroller.clientHeight - nr.height) / 2)));
+    scroller.scrollTo({ top, behavior: 'smooth' });
+  }
+  el.classList.remove('search-hit-flash');
+  void el.offsetWidth;   // restart the flash animation on repeat jumps
+  el.classList.add('search-hit-flash');
+  setTimeout(() => el.classList.remove('search-hit-flash'), 1800);
+}
+
+/**
+ * @param {any} res search result ({sessionId, kind, text, summary, content, ts})
+ * @param {{pages:number, start:number, settleTicks:number}} st jump state
+ */
+function scrollToMessage(res, st) {
+  const pv = chatViews.primary;
+  const chat = pv?.dom?.chat;
+  if (!chat) return;
+  // User navigated away mid-jump — abort silently.
+  if (state.activeSessionId !== res.sessionId) return;
+
+  // 1. Text-snippet match (primary, human-meaningful). Tool cards localize
+  //    label/summary at render time, so under a non-English UI the raw summary
+  //    heading the joined text never matches the DOM (#41). Try candidates in
+  //    order: content (rendered verbatim in the card body — locale-independent),
+  //    then the raw summary and the legacy joined text (keeps the English-UI
+  //    path intact). Non-tool kinds keep the single legacy snippet.
+  const candidates = res.kind === 'tool'
+    ? [res.content, res.summary, res.text]
+    : [res.text];
+  const snippets = [];
+  for (const cand of candidates) {
+    const s = stripForMatch(cand).slice(0, 40);
+    if (s.length >= 4 && !snippets.includes(s)) snippets.push(s);
+  }
+  for (const snippet of snippets) {
+    const rows = chat.querySelectorAll('.row, .tool-card');
+    for (const el of rows) {
+      if (stripForMatch(el.textContent).includes(snippet)) { flashRow(el); return; }
+    }
+  }
+  // 2. Exact-timestamp fallback — covers image-only / very short messages
+  //    whose stripped snippet is under 4 chars (the duration badge carries
+  //    data-ts epoch ms). Tool/agent/ask rows normalize to ts=0 and skip.
+  if (res.ts) {
+    const badge = chat.querySelector(`[data-ts="${res.ts}"]`);
+    const row = badge?.closest('.row, .tool-card');
+    if (row) { flashRow(row); return; }
+  }
+
+  // 3. Not in the loaded window — page older history in and retry.
+  const p = pv.pagination;
+  const expired = Date.now() - st.start > JUMP_DEADLINE_MS;
+  if (!expired && p && !p.pendingInitialLoad && !p.loading && p.hasMore && p.offset > 0 && st.pages < JUMP_MAX_PAGES) {
+    p.loading = true;
+    st.pages++;
+    sendWs({ type: 'getHistory', sessionId: res.sessionId, limit: 50, beforeIndex: p.offset });
+  } else if (!expired && p && !p.pendingInitialLoad && !p.loading && !p.hasMore) {
+    // History fully loaded and still no match — allow a few settle ticks for
+    // deferred markdown rendering, then give up.
+    if (++st.settleTicks > 4) {
+      (/** @type {any} */ (window)).__showToast?.(t('search.jumpFailed'), 'error');
+      return;
+    }
+  } else if (expired) {
+    (/** @type {any} */ (window)).__showToast?.(t('search.jumpFailed'), 'error');
+    return;
+  }
+  setTimeout(() => scrollToMessage(res, st), JUMP_TICK_MS);
 }
 
 // Re-apply labels when the locale changes while the modal is open.

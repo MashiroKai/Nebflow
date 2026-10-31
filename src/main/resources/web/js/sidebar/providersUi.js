@@ -17,6 +17,8 @@ import { fetchProviderModels } from '../providerModels.js';
 // 测试钮 + 弹窗级结果块（每模型一行全量文本，永不截断）。渲染/绑定/绘制单点
 // = ./modelTestButton.js。
 import { modelTestButtonHTML, testResultsBlockHTML, bindModelTestButtons } from './modelTestButton.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层 provider 编辑窗铺满屏 + 左上返回（= 取消腿，桌面零变化）。
+import { mobileSheetBack } from '../mobile/popSheet.js';
 
 // ── Provider protocol face: display ←→ stored value (protoface-ui batch,
 // 2026-09-22) ────────────────────────────────────────────────────────────────
@@ -525,6 +527,8 @@ function showModal({title, fields, onConfirm}) {
     </div>`;
 
   document.body.appendChild(overlay);
+  // 返回 = 取消（overlay 摘除，不触发 onConfirm——与 #cfg-modal-cancel 同语义）。
+  mobileSheetBack(overlay, () => overlay.remove());
 
   // 连接性测试（fourfix 批 ②件）：结果块挂在 models 组之下（弹窗级共享——
   // 每模型一行，全量文本），绑定走弹窗级委托（动态加行也被覆盖）。三个解析器

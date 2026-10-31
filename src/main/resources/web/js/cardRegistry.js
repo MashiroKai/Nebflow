@@ -174,7 +174,7 @@ window.addEventListener('message', (e) => {
       // Ownership rule (msgsearch v2, 2026-09-11): only a card that actually
       // lives inside the active view's chat may drive that chat's scroll
       // restoration. Cards drawn outside it — a detached message window
-      // (chatSearchFloat) or the search-result list inside the search modal —
+      // (search float, retired 2026-10-31) or the search-result list inside the search modal —
       // own a different scroll container and must never move the session the
       // user is reading.
       if (!chat.contains(iframe)) return;

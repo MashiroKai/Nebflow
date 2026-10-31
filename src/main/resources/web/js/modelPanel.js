@@ -26,6 +26,8 @@ import state from './state.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
 import { statusIcon, escapeHtml } from './utils.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层 /model 面板铺满屏 + 左上返回（桌面零变化）。
+import { mobileSheetBack } from './mobile/popSheet.js';
 import { createDepVisibility } from './depVisibility.js';
 import { rootNameParams } from './rootName.js';
 
@@ -153,6 +155,8 @@ const probedModels = new Map();
 
 let panelEl = null; // the overlay element while the panel is open
 let panelMode = 'unified'; // 'unified' | 'separate'
+// 弹窗退场批③：手机层角色下钻态（点角色头进该角色全屏配置；返回回列表）。
+let drilledRole = null;
 let panelVisibility = null; // the banner + followers conditional-display pair
 let panelOnKey = null; // the panel's document-level Escape handler
 /** role → { data: GET response|null, chain: string[]|null (null = follow), expanded: boolean } */
@@ -588,11 +592,27 @@ function buildFollowerBlock(container, role, commit) {
   const head = /** @type {HTMLElement} */ (block.querySelector('.mp-role-head-toggle'));
   const toggle = () => {
     const s = roleState.get(role);
+    // 弹窗退场批③（作者令「不再有展开式配置」）：手机层点角色头 = 下钻下一
+    // 层级（该角色全屏配置），钻入态再点同一头 = 返回列表；桌面保持原位展开。
+    if (document.body.classList.contains('mobile-layer')) {
+      if (drilledRole === role) {
+        drilledRole = null;
+        s.expanded = false;
+        renderPanel();
+        return;
+      }
+      drilledRole = role;
+      s.expanded = true;
+      renderPanel(); // full re-render — `block` above is detached afterwards
+      panelEl?.querySelector(`.mp-roleblock-follower[data-role="${role}"] .mp-role-body`)
+        ?.classList.add('ob-q-reveal');
+      return;
+    }
     s.expanded = !s.expanded;
     renderPanel(); // full re-render — `block` above is detached afterwards
     if (s.expanded) {
-      // Same reveal animation as the AskUser dependsOn branches — applied to
-      // the FRESH body element from the re-rendered DOM.
+      // Same reveal animation as the AskUser dependsOn branches — applied to the
+      // FRESH body element from the re-rendered DOM.
       panelEl?.querySelector(`.mp-roleblock-follower[data-role="${role}"] .mp-role-body`)
         ?.classList.add('ob-q-reveal');
     }
@@ -689,6 +709,17 @@ function renderPanel() {
   nebula.replaceChildren();
   followers.replaceChildren();
   const commit = (role) => { saveChain(role); };
+  // 弹窗退场批③：手机层下钻态 = 只渲染被钻角色块（Nebula 槽与横幅让位），
+  // 面板自带左上返回（popSheet）回列表；桌面 drilledRole 恒 null ⇒ 零变化。
+  const drill = document.body.classList.contains('mobile-layer') ? drilledRole : null;
+  if (drill) {
+    nebula.style.display = 'none';
+    followers.style.display = '';
+    buildFollowerBlock(followers, drill, commit);
+    const banner = panelEl.querySelector('.mp-banner');
+    if (banner) banner.style.display = 'none';
+    return;
+  }
   buildNebulaBlock(nebula, commit);
   FOLLOWER_ROLES.forEach(role => buildFollowerBlock(followers, role, commit));
   renderBannerContent();
@@ -733,6 +764,17 @@ function buildPanel() {
       </div>
     </div>`;
   document.body.appendChild(overlay);
+// 弹窗退场批②③：返回 = 钻入态先回角色列表，列表态再关面板。
+  mobileSheetBack(overlay, () => {
+    if (drilledRole) {
+      const st = roleState.get(drilledRole);
+      drilledRole = null;
+      if (st) st.expanded = false;
+      renderPanel();
+      return;
+    }
+    closeModelPanel();
+  });
 
   // The conditional-display pair: item 0 = divergence banner (unified mode ∧
   // at least one follower forked), item 1 = follower group (separate mode).

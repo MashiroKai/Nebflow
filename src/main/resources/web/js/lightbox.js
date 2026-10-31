@@ -14,6 +14,8 @@ import { reMint, decodePathParam } from './nfTicket.js';
 // 单点**先行——`nf:<path>` 命中零抓取直显（气泡/文档渲染已入账的同件）；未命中 =
 // 账本票据链取数 + 入账（恰一次）。失败回落既有 reMint 直取腿（下方逐字保留）。
 import { nfViewerSource, nfCacheDrop } from './nfFileCache.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层灯箱补左上返回（灯箱本已全屏；桌面零变化）。
+import { mobileSheetBack } from './mobile/popSheet.js';
 
 let overlayEl = null;   // lazily-created singleton
 let imgEl = null;
@@ -144,6 +146,7 @@ function ensureDom() {
   overlayEl.addEventListener('click', (e) => {
     if (e.target === overlayEl) closeLightbox();
   });
+  mobileSheetBack(overlayEl, closeLightbox);
   document.body.appendChild(overlayEl);
 }
 

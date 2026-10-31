@@ -89,6 +89,8 @@ import { escapeHtml, statusIcon } from './utils.js';
 import state from './state.js';
 // ⑤ Chinese-IME takeover (author ruling 2026-09-12): the ONE composition source = imeGuard.js.
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层选择器铺满屏 + 左上返回（= 取消腿，桌面零变化）。
+import { mobileSheetBack } from './mobile/popSheet.js';
 
 let openCtx = null; // live dialog context (singleton reentry guard)
 
@@ -283,6 +285,8 @@ export function openPicker(opts = {}) {
     else if (outcome.type === 'clear') ctx.onClear();
     else ctx.onCancel();
   };
+  // 返回 = 取消（与 .wsp-cancel 同语义——不触发 onPick/onClear）。
+  mobileSheetBack(overlay, () => finish({ type: 'cancel' }));
 
   // ── 设备选择行（picker-device-switch 批）：平级设备列表，所有设备平等 ──────
   const devBtn = ctx.deviceSwitch ? /** @type {HTMLElement} */ (overlay.querySelector('.wsp-dev-btn')) : null;

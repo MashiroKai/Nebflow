@@ -798,7 +798,6 @@ async function afterSuite(browser, base) {
     'src/main/resources/web/js/bgTaskOutputPopup.js',
     'src/main/resources/web/js/chat.js',
     'src/main/resources/web/js/chatSearch.js',
-    'src/main/resources/web/js/chatSearchFloat.js',
     'src/main/resources/web/js/contacts.js',
     'src/main/resources/web/js/daemonPanel.js',
     'src/main/resources/web/js/daemons.js',

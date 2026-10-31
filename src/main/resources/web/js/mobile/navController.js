@@ -54,6 +54,8 @@ import { createIconsIn } from '../utils.js';
 import { ensureSocialPage, syncSocialFaces } from './socialFaces.js';
 import { ensureTaskPanel, closeTaskPanel } from './taskPanel.js';
 import { buildMeFace } from './meFace.js';
+// 弹窗退场批③（2026-10-31）：设置页折叠配置项 → 层级子页（meFace 同款注入式）。
+import { buildSettingsSubFace, syncSettingsSubFaces, initSettingsSub, SETTINGS_SUB } from './settingsSub.js';
 import { showLoginModal } from '../activityBar.js';
 import { avatarViewState, noteAvatarFailure, paintAvatarSlot, getNeblinkState, onNeblinkStatus, fetchNeblinkStatus } from '../neblink.js';
 import { brand } from '../brand.js';
@@ -122,6 +124,10 @@ export const PAGES = [
   { id: 'me-user',   tabId: null, icon: 'user-round', zh: '用户名',   en: 'Username' },
   { id: 'me-avatar', tabId: null, icon: 'image',      zh: '头像',     en: 'Avatar' },
   { id: 'me-bind',   tabId: null, icon: 'link',       zh: '绑定',     en: 'Bindings' },
+  // 弹窗退场批③（作者令「不再有展开式配置：点配置项进下一层级铺满屏、左上
+  // 返回」）：设置页三处 chevron 折叠体的层级子页——内容面 = 收编桌面
+  // .settings-collapse-body 节点（settingsSub.js 锚点惯例，桌面零改动）。
+  ...SETTINGS_SUB.map((d) => ({ id: d.id, tabId: /** @type {string | null} */ (null), icon: 'chevron-right', zh: d.zh, en: d.en })),
 ];
 /** 个人主页层级页 id 集（buildSection 面内容分派；meFace.js 单点实现）。 */
 const ME_PAGE_IDS = new Set(['me', 'me-user', 'me-avatar', 'me-bind']);
@@ -242,6 +248,7 @@ function buildSection(def) {
   if (def.id === 'workbench') buildHub(body);
   if (def.id === 'canvas') buildCanvasPage(body);
   if (ME_PAGE_IDS.has(def.id)) unsubs.push(buildMeFace(def.id, body, { push: pushPage }));
+  if (SETTINGS_SUB.some((d) => d.id === def.id)) buildSettingsSubFace(def.id, body);
   return section;
 }
 
@@ -1012,6 +1019,7 @@ function renderPages() {
   // hub 门控行（graph 随 wikiGraph flag）与 configData 到达时序重对账（p9 flaky 实证）。
   syncHubGate();
   syncOverlayFaces();
+  syncSettingsSubFaces(stack);
   syncSocialFaces((id) => stack.includes(id));
   if (top === 'canvas') syncCanvasPage();
 }
@@ -1513,6 +1521,7 @@ export function activateNav() {
   watchOverlayClose();
   watchCanvasEvents();
   watchChatModal();
+  initSettingsSub({ push: pushPage });
   // 激活即收编启动恢复已建成的面板 pane（同步路径；异步路径走 watchCanvasContent）。
   for (const def of PAGES) if (def.tabId) adoptPane(def.id);
   renderPages();
@@ -1522,7 +1531,7 @@ export function activateNav() {
     get top() { return navState().top; },
     get home() { return navState().home; },
     get dock() { return [...DOCK_ORDER]; },
-    version: 'mobile dock batch (five-tab dock + workbench root + settings-as-hub-row + chat-home center key + fullscreen pages + canvas page)',
+    version: 'mobile dock batch (five-tab dock + workbench root + settings-as-hub-row + chat-home center key + fullscreen pages + canvas page) + popup-retire (mfs sheets + settings sub-pages)',
   };
   return function teardownNav() {
     for (const fn of unsubs.splice(0)) { try { fn(); } catch { /* ignore */ } }

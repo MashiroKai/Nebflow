@@ -27,6 +27,8 @@ import { verdictToStatus } from './delegateChainStub.js';
 // #752 面板进展可见化：弹窗内「会话在做什么」条（最近动作 + 本会话后台任务行，
 // 点击行 = 输出详情卡）。挂载/卸载与 openStepPopup/closeStepPopup 成对。
 import { mountSessionWorkStrip, unmountSessionWorkStrip } from './bgAgentWorkStrip.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层查看器铺满屏 + 左上返回（桌面零变化）。
+import { mobileSheetBack } from './mobile/popSheet.js';
 
 // P2-4 cycle cut（flowAgentPopup 同款先例）：showToast 动态 import 破环。净化批
 // （2026-10-09）后本文件暂零 toast 消费点（归档入口已迁 L2 抽屉）——常量在册保留
@@ -504,6 +506,7 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   }
 
   document.body.appendChild(popupOverlay);
+  mobileSheetBack(popupOverlay, closeStepPopup);
 
   const modal = popupOverlay.querySelector('.flow-agent-modal');
 

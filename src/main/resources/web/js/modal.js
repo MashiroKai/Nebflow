@@ -9,6 +9,10 @@ import { t } from './i18n.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 import { statusIcon } from './utils.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层通用确认族铺满屏 + 左上返回——
+// 返回语义 = 取消（与 Esc/遮罩点击同腿；接管模态在场时绕行，同 takeoverBlocking
+// 纪律）。桌面零变化。
+import { mobileSheetBack } from './mobile/popSheet.js';
 
 // ---------- Session Modals ----------
 // 控制台单实例批（2026-10-27）：接管模态（#takeover-box，takeoverModal.js 持渲染）
@@ -26,6 +30,7 @@ export function showNewSessionModal() {
   modalBox.style.display = 'block';
   modalInput.value = '';
   modalOverlay.classList.add('on');
+  bindModalSheetBack(); // 弹窗退场批：跨档重排后补注左上返回（幂等）
   setTimeout(() => modalInput.focus(), 50);
 }
 
@@ -107,6 +112,7 @@ export function showDeleteModal(sessionId, sessionName) {
   pendingBatchDelete = false;
   pendingFolderDelete = false;
   modalOverlay.classList.add('on');
+  bindModalSheetBack(); // 弹窗退场批：跨档重排后补注左上返回（幂等）
 }
 
 export function showBatchDeleteModal() {
@@ -120,6 +126,7 @@ export function showBatchDeleteModal() {
   pendingBatchDelete = true;
   pendingFolderDelete = false;
   modalOverlay.classList.add('on');
+  bindModalSheetBack(); // 弹窗退场批：跨档重排后补注左上返回（幂等）
 }
 
 export function showDeleteFolderModal(folderId, folderName) {
@@ -133,6 +140,7 @@ export function showDeleteFolderModal(folderId, folderName) {
   pendingBatchDelete = false;
   state.pendingDeleteId = null;
   modalOverlay.classList.add('on');
+  bindModalSheetBack(); // 弹窗退场批：跨档重排后补注左上返回（幂等）
 }
 
 // --- Generic confirm dialog ---
@@ -186,6 +194,7 @@ export function showConfirm(title, message, onConfirm, opts = {}) {
     };
   }
   modalOverlay.classList.add('on');
+  bindModalSheetBack(); // 弹窗退场批：跨档重排后补注左上返回（幂等）
 }
 
 // --- Drop conflict dialog (external file drag-in, VS Code parity) ---
@@ -213,6 +222,7 @@ export function showConflict(title, message, cbs = {}) {
   conflictCallbacks = cbs;
   box.style.display = 'block';
   modalOverlay.classList.add('on');
+  bindModalSheetBack(); // 弹窗退场批：跨档重排后补注左上返回（幂等）
 }
 
 /** Reset the conflict dialog to a never-shown state (no overlay flash). */
@@ -372,4 +382,17 @@ export function initModals() {
   window.__showConfirm = showConfirm;
   window.__showToast = showToast;
   /** @type {any} */ (window).__showConflict = showConflict;
+  bindModalSheetBack();
+}
+
+// 弹窗退场批：#modal-overlay 左上返回（取消语义；接管模态在场 = 无返回语义，
+// 强制二选一不被全局关闭路径误收——与 Esc/遮罩守卫同一判据）。show 路径
+// 重复调用补注：跨档重排（桌面→手机层）后 initModals 那次注入不在场
+// （mobileSheetBack 非手机层直接不注入，桌面 DOM 零变化）。
+function bindModalSheetBack() {
+  mobileSheetBack(state.dom.modalOverlay, () => {
+    if (takeoverBlocking()) return;
+    if (conflictCallbacks) resolveConflict('cancel');
+    else hideModals();
+  });
 }
