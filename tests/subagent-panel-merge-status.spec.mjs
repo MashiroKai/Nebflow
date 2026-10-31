@@ -17,6 +17,12 @@
 //
 // 数据面 = WS activeAgents 帧 + /api/merge-queue 路由打桩，零后端、零 sbt。
 // Run: node <stand>/node_modules/@playwright/test/cli.js test tests/subagent-panel-merge-status.spec.mjs
+//
+// 徽标归位批（2026-10-31 23:02）选择器重锚（存量红清欠）：行取数面
+// `#bg-dropdown > .bg-dropdown-list:last-child` → `#bg-dropdown .bg-section-agents
+// .bg-dropdown-list`（后台合并批 2026-10-23 ⑥ + 分区批 2026-10-29 ③ 后智能体行
+// 落 .bg-section-agents 节，原直接子代选择器落空——HEAD 对照实证存量红）。
+// 断言语义逐字不变。
 
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
@@ -143,7 +149,7 @@ async function seedAgent(page, status) {
 async function openAgentSection(page) {
   await page.click('#bgagent-indicator');
   await expect(page.locator('#bg-dropdown')).toBeVisible();
-  return page.locator('#bg-dropdown > .bg-dropdown-list:last-child .bg-task-row');
+  return page.locator('#bg-dropdown .bg-section-agents .bg-dropdown-list .bg-task-row');
 }
 
 function watchErrors(page) {
@@ -283,7 +289,7 @@ test('T5 no idle polling: a panel without merge-queued rows never hits /api/merg
   });
   await seedAgent(page, 'running'); // 非候合并行
   await openAgentSection(page);
-  await expect(page.locator('#bg-dropdown > .bg-dropdown-list:last-child .bg-task-row')).toHaveCount(1);
+  await expect(page.locator('#bg-dropdown .bg-section-agents .bg-dropdown-list .bg-task-row')).toHaveCount(1);
   await page.waitForTimeout(700); // 覆盖一次 uptick 节拍的富余量
   expect(mqHits).toBe(0);
 });
