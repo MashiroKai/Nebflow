@@ -4196,7 +4196,19 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
        滚动态内容上穿）。桌面⇄手机层同规（手机层渐隐裙边同步退役，见
        scrollUnderGlass.css 契约注记）。 */
     const chatTop = chatBox.top;
-    const clipTop = Math.max(0, Math.ceil(header.getBoundingClientRect().top - chatTop));
+    /* 手机端白屏批（作者 10-31 15:38 截图令）：手机层（body.mobile-layer）下
+       桌面 #header display:none（rect 全零），「header.top − chat.top」失去锚
+       意义——任何让 #chat 盒瞬态上移的读数（iOS 固定层橡皮筋回弹 / 键盘位移
+       等 getBoundingClientRect 含 transform 的瞬态）都会把 clip 写成数百 px
+       的垃圾值；观察器只挂在 header/overlays resize 上，转场结束后无重测 ⇒
+       垃圾值持久化 ⇒ #chat mask 把消息区顶部整段裁没（作者所见：ask 卡上方
+       一大段白、卡内容全没、只剩 取消/确认 浮在半空）。手机层顶缘渐隐带
+       #g2-edge-fade 自带「滚入渐隐」语义（先糊后没），chat 顶部**不需要**再挂
+       mask ⇒ 手机层 clip 恒 0。桌面公式不变。 */
+    const mobileLayer = document.body.classList.contains('mobile-layer');
+    const clipTop = mobileLayer
+      ? 0
+      : Math.max(0, Math.ceil(header.getBoundingClientRect().top - chatTop));
     if ((parseFloat(chat.style.getPropertyValue('--chat-top-clip')) || 0) !== clipTop) {
       chat.style.setProperty('--chat-top-clip', clipTop + 'px');
     }
@@ -4225,6 +4237,10 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
   const ro = new ResizeObserver(syncTopReserve);
   ro.observe(header);
   ro.observe(overlays);
+  // 手机端白屏批：渐隐带 #g2-edge-fade 是 bandBottom() 的成员且随手机层
+  // 显隐（display 切换 = 尺寸 88↔0 变化）——把它也挂进观察器，层翻转/带显隐
+  // 后 reserve/clip 必有一拍重测，不依赖「resize 恰好也来」的时序。
+  if (edgeFade) ro.observe(edgeFade);
   // 顶部消失点批（2026-10-22，原 UI 批⑦ resize 兜底）：桌面⇄手机层翻转
   // （matchMedia 768px，mobile/bootstrap.js）走窗口 resize 兜底重算——層翻转时
   // header 尺寸恰好不变也不漏（幂等轻写）。

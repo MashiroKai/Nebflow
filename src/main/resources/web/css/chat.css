@@ -2219,7 +2219,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .option-confirm:hover { filter: brightness(1.06); }
 .option-confirm:disabled {
-  background: rgba(10, 192, 101, 0.30);
+  /* 手机端白屏批（作者 10-31 截图核对「确认钮淡显」）：禁用档保留半透绿语言
+     （空输入闸语义不变），但白字压 30% 绿底对比度过低（截图呈洗白薄荷、字
+     不可读）——字改绿深档 #069a4e（两档恒定 token），tint 略提一档，淡显
+     _gate 语义与可读性兼得。 */
+  background: rgba(10, 192, 101, 0.35);
+  color: var(--ask-green-deep);
   box-shadow: none;
   cursor: default;
 }
