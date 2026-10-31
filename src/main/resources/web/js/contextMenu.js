@@ -29,15 +29,24 @@ export function hidePopupMenu() {
  *  keystroke). Zero behaviour change for existing consumers. */
 export function isPopupMenuOpen() { return !!menuEl; }
 
+/** 触屏长按批（2026-10-31，mobileLayer 口径）：长按松手时浏览器会补发一个合成
+ *  click（落在触点上）——document 捕获期的全局关闭监听会在菜单刚弹出的一瞬间
+ *  把它关掉。openQuoteMenuForRow 长按腿以 opts.swallowTouchClick 开窗：窗口内
+ *  的合成 click 被忽略（菜单保住），窗口外行为逐字不变。桌面右键路径不传该
+ *  旗标 ⇒ 零行为变化。 */
+let _swallowClicksUntil = 0;
+
 /**
  * Show a popup menu at (x, y).
  * @param {number} x clientX
  * @param {number} y clientY
  * @param {Array<{label: string, danger?: boolean, onClick?: () => void}>} items
+ * @param {{swallowTouchClick?: boolean}} [opts]
  */
-export function showPopupMenu(x, y, items) {
+export function showPopupMenu(x, y, items, opts) {
   hidePopupMenu();
   if (!items || items.length === 0) return;
+  if (opts && opts.swallowTouchClick) _swallowClicksUntil = Date.now() + 500;
   menuEl = document.createElement('div');
   menuEl.className = 'fm-context-menu';
   menuEl.setAttribute('role', 'menu');
@@ -66,7 +75,11 @@ export function showPopupMenu(x, y, items) {
 
 // Global dismiss: any click / scroll / Escape / resize closes the menu.
 // Capture phase so the menu closes before the click reaches its target.
-document.addEventListener('click', () => hidePopupMenu(), true);
+// （吞窗：触屏长按腿刚开窗时跳过这一次合成 click —— 见上方 _swallowClicksUntil。）
+document.addEventListener('click', (e) => {
+  if (Date.now() < _swallowClicksUntil) { e.stopPropagation(); e.preventDefault(); return; }
+  hidePopupMenu();
+}, true);
 document.addEventListener('contextmenu', (e) => {
   // A right-click outside the menu closes it; menu items handle themselves.
   if (menuEl && !(e.target instanceof Element && menuEl.contains(e.target))) hidePopupMenu();

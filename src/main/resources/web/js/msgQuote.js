@@ -104,8 +104,13 @@ function fullTextOf(d) {
   }
 }
 
-/** 行描述符 → makeReference 输入（refType:'chat-message'，§3.1 wire 形状）。 */
+/** 行描述符 → makeReference 输入（refType:'chat-message'，§3.1 wire 形状）。
+ *  附件批（2026-10-31 作者令「引用要支持你发的文件 图片等」）：描述符 d.attachments
+ *  （媒体行全量附件 / 文本行引用时兄弟媒体行合入）随 content.attachments 上 wire，
+ *  live 腿引用块据此渲染附件缩略；后端落盘 quote 快照白名单化 type/name/path
+ *  （WebSocketRoutes.quoteFromRefs），preview（data: 内联字节）只活在前端内存。 */
 export function chatMessageRefInput(d) {
+  const atts = Array.isArray(d.attachments) ? d.attachments : [];
   return {
     refType: 'chat-message',
     source: {
@@ -115,10 +120,22 @@ export function chatMessageRefInput(d) {
       senderRole: d.senderRole || 'user',
       senderName: d.senderName || '',
     },
-    content: { excerpt: excerptOf(d), fullText: fullTextOf(d) },
+    content: {
+      excerpt: excerptOf(d),
+      fullText: fullTextOf(d),
+      attachments: atts.slice(0, MAX_QUOTE_ATTS).map(a => ({
+        type: a.type === 'image' || a.type === 'video' ? a.type : 'file',
+        name: String(a.name || '').slice(0, 200),
+        path: String(a.path || '').slice(0, 600),
+        preview: (typeof a.preview === 'string' && a.preview.startsWith('data:')) ? a.preview : undefined,
+      })),
+    },
     meta: { ts: d.ts || 0 },
   };
 }
+
+/** 引用快照随附附件的上限（引用块缩略面带，防失控行的 wire/落盘膨胀）。 */
+export const MAX_QUOTE_ATTS = 8;
 
 // ── footer 引用按钮（2026-10-09 用户原话：footer 复制钮旁加双引号引用钮，
 //    「既可以右键也可以点按钮」）────────────────────────────────────────────
@@ -159,12 +176,7 @@ export function createMsgQuoteButton() {
     // 属性面，行引用按 any 视图读取（dataset 同视图）。
     const row = /** @type {any} */ (btn.closest('.row'));
     const d = (row && row.__nfQuoteDesc) || {};
-    const view = state.getActiveView && state.getActiveView();
-    startQuote({
-      ...d,
-      messageId: d.messageId || (row && row.dataset.msgId) || '',
-      sessionId: d.sessionId || (view && view.sessionId) || '',
-    });
+    startQuote(resolveQuoteDesc(row, d));
   });
   return btn;
 }
@@ -252,6 +264,47 @@ export function renderQuoteStrip(target) {
 
 // ── 右键菜单 ────────────────────────────────────────────────────────────
 
+/** 兄弟媒体行附件合入（附件批 2026-10-31）：用户文本行与它的媒体卡行共用同一
+ *  data-msg-id（chat.js renderUserBubble 随行挂），长按/右键**文本行**时把媒体行
+ *  描述符里的附件并入引用 —— 引用对象 = 整条消息（微信语义），不是半条。 */
+function siblingMediaAttsOf(rowEl) {
+  const id = rowEl && rowEl.dataset ? rowEl.dataset.msgId : '';
+  if (!id) return null;
+  const root = rowEl.closest('#chat') || document;
+  const mediaRow = root.querySelector(`.row.user-media[data-msg-id="${CSS.escape(id)}"]`);
+  const md = mediaRow && mediaRow.__nfQuoteDesc;
+  return (md && Array.isArray(md.attachments) && md.attachments.length) ? md.attachments : null;
+}
+
+/** 行身份 + 附件的统一解析（右键菜单项 / footer 引用按钮同一链）：messageId/
+ *  sessionId 单点注入口径不变，附件 = 描述符自带 ⇢ 兄弟媒体行合入。 */
+function resolveQuoteDesc(rowEl, d) {
+  const view = state.getActiveView && state.getActiveView();
+  return {
+    ...d,
+    messageId: d.messageId || (rowEl && rowEl.dataset.msgId) || '',
+    sessionId: d.sessionId || (view && view.sessionId) || '',
+    attachments: (d && Array.isArray(d.attachments) && d.attachments.length) ? d.attachments : siblingMediaAttsOf(rowEl),
+  };
+}
+
+/** 行上下文菜单的**单点出口**（附件批 2026-10-31）：桌面 contextmenu 与手机端
+ *  长按（js/mobile/msgLongPress.js）构建**同一份**菜单 —— 有正文 ⇒ 复制 + 引用，
+ *  其余 ⇒ 仅引用；壳 = showPopupMenu（好友窗/联系人行同一玻璃面板）。
+ *  opts 透传 showPopupMenu（长按腿传 swallowTouchClick 吞合成 click）。 */
+export function openQuoteMenuForRow(rowEl, x, y, opts) {
+  const d = (rowEl && rowEl.__nfQuoteDesc) || null;
+  if (!rowEl || !d) return false;
+  const items = [];
+  const body = String(d.text || '');
+  if (body.trim()) {
+    items.push({ label: t('messages.copy'), onClick: () => { navigator.clipboard?.writeText(body).catch(() => {}); } });
+  }
+  items.push({ label: t('messages.quote'), onClick: () => startQuote(resolveQuoteDesc(rowEl, d)) });
+  showPopupMenu(x, y, items, opts);
+  return true;
+}
+
 /** 行挂右键菜单（spec §2.1）。items：有正文（d.text）⇒ 复制 + 引用；其余 ⇒ 仅引用。
  *  与好友窗 msgmenu 同壳（showPopupMenu），零第二套菜单形态。
  *  🔴 messageId/sessionId 单点注入：所有挂点（chat.js/persistence.js/popArtifacts.js）
@@ -267,33 +320,31 @@ export function attachQuoteMenu(rowEl, d) {
   scheduleQuoteButtonMount(rowEl);
   rowEl.addEventListener('contextmenu', (e) => {
     e.preventDefault();
-    const items = [];
-    const body = String(d.text || '');
-    if (body.trim()) {
-      items.push({ label: t('messages.copy'), onClick: () => { navigator.clipboard?.writeText(body).catch(() => {}); } });
-    }
-    items.push({ label: t('messages.quote'), onClick: () => {
-      const view = state.getActiveView && state.getActiveView();
-      startQuote({
-        ...d,
-        messageId: d.messageId || rowEl.dataset.msgId || '',
-        sessionId: d.sessionId || (view && view.sessionId) || '',
-      });
-    } });
-    showPopupMenu(e.clientX, e.clientY, items);
+    openQuoteMenuForRow(rowEl, e.clientX, e.clientY);
   });
 }
 
 // ── 气泡引用块（live 与历史重放同一渲染器，spec §3.4）────────────────────
 
-/** UiMessage.User.quote / 引用 ref → 引用块的统一视图。 */
+/** UiMessage.User.quote / 引用 ref → 引用块的统一视图。
+ *  attachments（附件批 2026-10-31）：被引消息的附件缩略清单
+ *  [{type:'image'|'video'|'file', name, path, preview?}] —— live 腿来自 ref
+ *  content.attachments（含 data: 内联 preview），历史腿来自落盘 quote 快照
+ *  （后端白名单 type/name/path，无 preview）。 */
 function quoteViewOf(q) {
   if (!q || typeof q !== 'object') return null;
+  const raw = Array.isArray(q.attachments) ? q.attachments : [];
   return {
     refMessageId: String(q.refMessageId || (q.source && q.source.messageId) || ''),
     excerpt: String(q.excerpt || (q.content && q.content.excerpt) || ''),
     senderRole: String(q.senderRole || (q.source && q.source.senderRole) || ''),
     senderName: String(q.senderName || (q.source && q.source.senderName) || ''),
+    attachments: raw.slice(0, MAX_QUOTE_ATTS).map(a => ({
+      type: a.type === 'image' || a.type === 'video' ? a.type : 'file',
+      name: String(a.name || ''),
+      path: String(a.path || ''),
+      preview: (typeof a.preview === 'string' && a.preview.startsWith('data:')) ? a.preview : '',
+    })),
     deleted: q.deleted === true,
   };
 }
@@ -341,9 +392,69 @@ export function syncQuoteJumpStates(root) {
   });
 }
 
+/** 引用块附件缩略带（附件批 2026-10-31）：图片/视频 = 48px 缩略（字节腿与 Pop 脸
+ *  同一 hydrateMedia；点击 = openMediaItemClick 同款——有 path 开 Canvas，纯内联
+ *  字节进灯箱），文件 = 图标 + 文件名 chip（有 path 才挂打开，零死点击）。
+ *  动态 import：popArtifacts.js 静态依赖本模块（attachQuoteMenu/nextChatMsgId），
+ *  本模块禁静态回指（renderQuoteStrip 动态导入 chat.js 同款先例）。缩略面点击
+ *  stopPropagation —— 不触发引用块自身的跳转。 */
+function renderQuoteAttStrip(atts) {
+  const strip = document.createElement('div');
+  strip.className = 'msg-quote-atts';
+  import('./popArtifacts.js').then((pop) => {
+    if (!strip.isConnected) return;
+    atts.forEach((a) => {
+      if (a.type === 'image' || a.type === 'video') {
+        const item = { kind: a.type, name: a.name, src: a.preview, path: a.path || '' };
+        const cell = document.createElement('div');
+        cell.className = 'msg-quote-att-media';
+        const media = document.createElement(a.type === 'video' ? 'video' : 'img');
+        media.className = 'msg-quote-att-img';
+        if (a.type === 'video') { media.muted = true; media.playsInline = true; media.preload = 'metadata'; }
+        else { media.alt = a.name || ''; media.draggable = false; }
+        pop.hydrateMedia(media, item, null);
+        cell.appendChild(media);
+        if (a.path) {
+          cell.setAttribute('role', 'button');
+          cell.title = a.name || '';
+          cell.addEventListener('click', (e) => {
+            e.stopPropagation();
+            pop.openMediaItemClick(item);
+          });
+        } else {
+          cell.title = a.name || '';
+        }
+        strip.appendChild(cell);
+      } else {
+        const chip = document.createElement('div');
+        chip.className = 'msg-quote-att-file';
+        const icon = document.createElement('span');
+        icon.className = 'msg-quote-att-file-icon';
+        icon.textContent = (a.name || '').split('.').pop() ? (a.name.split('.').pop() || '').slice(0, 4).toUpperCase() : 'FILE';
+        const label = document.createElement('span');
+        label.className = 'msg-quote-att-file-name';
+        label.textContent = a.name || (a.path ? a.path.split('/').pop() : '') || '';
+        chip.append(icon, label);
+        chip.title = a.path || a.name || '';
+        if (a.path) {
+          chip.setAttribute('role', 'button');
+          chip.addEventListener('click', (e) => {
+            e.stopPropagation();
+            pop.openPopArtifact(a.path, a.name || a.path.split('/').pop());
+          });
+        }
+        strip.appendChild(chip);
+      }
+    });
+  }).catch(() => {});
+  return strip;
+}
+
 /** 气泡引用块渲染器（唯一实现）。quote = UiMessage.User.quote 形状
- *  （{refMessageId, excerpt, senderRole, senderName, ts?, deleted?}）或引用 ref 本体
- *  （live/排队腿从附件推导）。可点性由 syncQuoteJumpStates 统一收敛。 */
+ *  （{refMessageId, excerpt, senderRole, senderName, ts?, deleted?, attachments?}）
+ *  或引用 ref 本体（live/排队腿从附件推导）。可点性由 syncQuoteJumpStates 统一收敛。
+ *  附件批（2026-10-31）：attachments 在场 ⇒ 摘要行下挂缩略带（文件卡/图片预览，
+ *  点击可开），只兜文字的现状退役。 */
 export function renderQuoteBlock(quote) {
   const q = quoteViewOf(quote);
   const box = document.createElement('div');
@@ -365,6 +476,7 @@ export function renderQuoteBlock(quote) {
   line.appendChild(sender);
   line.appendChild(document.createTextNode(sender.textContent ? `：${q.excerpt}` : q.excerpt));
   box.appendChild(line);
+  if (q.attachments.length) box.appendChild(renderQuoteAttStrip(q.attachments));
   // 点击不消费菜单/不触发行上其它交互。
   box.addEventListener('click', (e) => { e.stopPropagation(); jumpToQuote(box); });
   box.addEventListener('keydown', (e) => {
@@ -407,7 +519,8 @@ export function jumpToQuote(box) {
   return true;
 }
 
-/** 引用 ref（wire/pendingAttachments 形状）→ renderQuoteBlock 入参视图。 */
+/** 引用 ref（wire/pendingAttachments 形状）→ renderQuoteBlock 入参视图。
+ *  附件批：ref.content.attachments 随带（live 腿，含内联 preview）。 */
 export function quoteFromRef(ref) {
   if (!ref || ref.refType !== 'chat-message') return null;
   return {
@@ -415,5 +528,6 @@ export function quoteFromRef(ref) {
     excerpt: (ref.content && ref.content.excerpt) || '',
     senderRole: (ref.source && ref.source.senderRole) || 'user',
     senderName: (ref.source && ref.source.senderName) || '',
+    attachments: Array.isArray(ref.content && ref.content.attachments) ? ref.content.attachments : [],
   };
 }

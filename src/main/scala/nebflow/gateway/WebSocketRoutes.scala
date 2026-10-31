@@ -2588,9 +2588,12 @@ class WebSocketRoutes(
    * quote-message 一期（2026-10-09，spec §3.3）：帧 refs 里 refType==='chat-message'
    * 的首条 → 落盘 quote 快照 Json（UiMessage.User.quote）。形状（引擎不解释内部
    * 字段，原样落盘原样下发）：
-   *   { refMessageId, excerpt ≤80, senderRole, senderName?, ts? }
+   *   { refMessageId, excerpt ≤80, senderRole, senderName?, ts?, attachments? }
    * 无 chat-message ref / 形态不合 ⇒ None（编码器缺席不落键，旧行字节形态不变）。
    * excerpt 一律过 RefResolver.sanitize 再截 80（引用块快照的防伪同源）。
+   * attachments（附件批 2026-10-31 作者令「引用要支持你发的文件 图片等」）：
+   * content.attachments 的**白名单**拷贝 —— 每项只留 type（image|video|file）/
+   * name/path（sanitize + 截长，cap 8），前端 preview（data: 内联字节）不落盘。
    */
   private def quoteFromRefs(frame: io.circe.Json): Option[io.circe.Json] =
     val refs = frame.hcursor.downField("refs").as[List[io.circe.Json]].getOrElse(Nil)
@@ -2622,6 +2625,31 @@ class WebSocketRoutes(
           .toOption
           .filter(_ > 0)
           .foreach(ts => base("ts") = ts.asJson)
+        val atts = c
+          .downField("content")
+          .downField("attachments")
+          .as[List[io.circe.Json]]
+          .getOrElse(Nil)
+          .take(8)
+          .flatMap { a =>
+            val tpe = a.hcursor.downField("type").as[String].getOrElse("file") match {
+              case "image" => "image"
+              case "video" => "video"
+              case _       => "file"
+            }
+            val name = RefResolver.sanitize(a.hcursor.downField("name").as[String].getOrElse("")).take(200)
+            val path = RefResolver.sanitize(a.hcursor.downField("path").as[String].getOrElse("")).take(600)
+            if name.isEmpty && path.isEmpty then None
+            else
+              Some(
+                io.circe.Json.obj(
+                  "type" -> tpe.asJson,
+                  "name" -> name.asJson,
+                  "path" -> (if path.nonEmpty then path.asJson else Json.Null)
+                )
+              )
+          }
+        if atts.nonEmpty then base("attachments") = io.circe.Json.fromValues(atts)
         Some(io.circe.Json.fromJsonObject(io.circe.JsonObject.fromIterable(base)))
       end if
     }
