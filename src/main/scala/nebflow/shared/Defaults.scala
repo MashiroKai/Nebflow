@@ -137,6 +137,24 @@ object Defaults:
     "[plugin discovery] Query installed plugin capabilities anytime (read-only, zero side effects): `tools/stand-plugins list` / `tools/stand-plugins search <keyword>` / `tools/stand-plugins mounts [--project <name>]` (repo-root CLI). If the current task lacks a capability, declare the needed plugin(s) and the intended use in your result — mounting authority stays with the dispatch side (you cannot hot-mount plugins yourself)."
 
   /**
+   * output 块语法批（作者令 2026-10-31 16:13，16:16 修订标签式）：用户可见输出
+   * 铁律单点。只有 `<output>...</output>` 成对标签包裹的内容会呈现给用户——
+   * 框外（推理、工具叙述、机器面细节）默认一概摘除不显示，用户点开角标才见
+   * 全文（且标签语法原样现形）；未包裹的历史内容照常全显（降级语义）。
+   *
+   * 注入面（同源单点，勿散落复制）：delegate brief（`DelegateTool.assembleBrief`）、
+   * 节点 ProtocolFootnote 前缀（`NodeEngineContract.protocolFootnoteFor`）、
+   * subagent/workflow 步首条消息（`BlockingSubagent.promptWithRule`）；root 侧
+   * 同文在 `BuiltinAgents.NebulaPromptTemplate` 的 Voice 节（正文接线面）。
+   * 风格面：块内写法类微信（短句、结论先行、零客套）；有用户画像
+   * （`~/.stand/User.md` 交流方式段，经 ContextRefresher 注入）按画像调整，
+   * 无画像默认中文简洁直白。
+   */
+  val OutputBlockRule: String =
+    """── Output discipline ──
+      |ONLY the content you wrap in paired `<output>...</output>` tags is shown to the user — write it WeChat-style: short direct paragraphs, conclusion first, zero filler. Everything outside the tags (reasoning, tool narration, machine detail) stays in your message but is stripped from display; the user expands a badge to see the full raw text. Adjust tone/length to the user's profile (their `~/.stand/User.md` communication-style answers); with no profile, default to concise direct Chinese.""".stripMargin
+
+  /**
    * A 段（等待屏障）开关：delegate 会话结束回合时存在未结等待型后台作业 ⇒
    * 不终态化（hold + 完成通知唤醒 + 复检），对齐 Project node 完成闸语义。
    * 默认 **true**（作者令本体行为）；现读 prop `nebflow.delegate.bgWaitHold.enabled`

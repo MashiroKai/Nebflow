@@ -298,10 +298,12 @@ class OnboardingV2Spec extends FunSuite:
     val user = os.read(home / "User.md")
     assert(user.contains("- 怎么称呼：阿凯"))
     assert(user.contains("- 日常身份：创作者"))
-    // 🔴 「最近半年，你最想解决的一件事是什么？」整题移除（作者 2026-10-05）：
-    // User.md 无「当前关注」段、答案值不残留。
-    assert(!user.contains("## 当前关注"), "User.md 不得再有「当前关注」段")
-    assert(!user.contains("把 Nebflow 做成真正的 Personal Agent"))
+    // output 块语法批④（作者令 2026-10-31）：交流方式两题落 User.md 专段——
+    // 经 ContextRefresher 注入驱动 <output> 块内风格（画像注入面）。
+    assert(user.contains("## 交流方式（你希望的）"), "User.md 应有交流方式段")
+    assert(user.contains("- 篇幅："), "User.md 交流方式段应有篇幅行")
+    assert(user.contains("- 语气："), "User.md 交流方式段应有语气行")
+    assert(user.contains("未设置（这一题你跳过了）"), "未答项占位（本题未含 outshape/outtone 答案）")
     assert(!res.allSkipped)
 
   test("artifacts: 全跳过路径留下结构完整骨架（含 ## 备注），非空壳"):
@@ -323,9 +325,23 @@ class OnboardingV2Spec extends FunSuite:
       assert(soul.contains(sec), s"Soul.md 缺段 $sec")
     assert(soul.contains("未设置（这一题你跳过了）"), "跳过项逐字段占位")
     val user = os.read(home / "User.md")
-    for sec <- List("## 称呼与身份", "## 你说过的原话", "## 记录规则") do assert(user.contains(sec), s"User.md 缺段 $sec")
-    assert(!user.contains("## 当前关注"), "User.md 不得再有「当前关注」段")
+    for sec <- List("## 称呼与身份", "## 交流方式（你希望的）", "## 你说过的原话", "## 记录规则") do assert(user.contains(sec), s"User.md 缺段 $sec")
+    assert(user.contains("未设置（这一题你跳过了）"), "跳过项逐字段占位（含交流方式段）")
     assert(res.soulBytes > 0L && res.userBytes > 0L)
+
+  test("artifacts: 交流方式两题（outshape/outtone）落 User.md 段并参与 allSkipped") {
+    reset()
+    val answers = Map(
+      ans("outshape", "交流篇幅", "user", OnboardingArtifacts.Kind.Choice, "只说结论"),
+      ans("outtone", "说话语气", "user", OnboardingArtifacts.Kind.Free, "像微信一样短句"),
+    ).map(t => t._1 -> t._2)
+    val res = OnboardingArtifacts.apply(answers).unsafeRunSync()
+    assert(!res.allSkipped, "交流方式两题算实答（已入 allSkipped 判定表）⇒ 非全跳过")
+    val user = os.read(home / "User.md")
+    assert(user.contains("- 篇幅：只说结论"), "choice 答案落篇幅行")
+    assert(user.contains("- 语气：像微信一样短句"), "free 答案落语气行（原话标记在原话段）")
+    assert(user.contains("「像微信一样短句」（说话语气）"), "free 答案同时进你说过的原话段")
+  }
 
   test("artifacts: 起名写 displayName，且机制键（agent 目录名）不变"):
     reset()

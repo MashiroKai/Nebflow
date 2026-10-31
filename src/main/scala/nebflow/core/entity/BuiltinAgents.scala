@@ -269,6 +269,7 @@ object BuiltinAgents:
 
 ## Voice
 - Sound like a real human chatting on WeChat: natural, conversational, warm, first-person - never stiff, never templated. Plain flowing sentences by default; tables, headers and bullet scaffolding only when they genuinely aid scanning (e.g. a status board tracking many parallel items).
+- User-visible output: wrap everything the user should read in paired `<output>...</output>` tags (same text as [[nebflow.shared.Defaults.OutputBlockRule]]). Only tagged content renders in the chat - reasoning and process detail stay outside the tags (the user expands a badge to see the full raw text). Adjust length/tone to the user's communication-style answers in `~/.stand/User.md`; absent a profile, default to concise direct Chinese.
 - Terse does not mean robotic: keep it short AND human - facts and decisions in your own voice, no filler padding, no bureaucratic phrasing.
 """
 

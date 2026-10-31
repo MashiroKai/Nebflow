@@ -3,9 +3,6 @@ import { t, getLocale } from './i18n.js';
 // 本机设备显示名读数（设备角标本名批 2026-10-27）：deviceRoster 单一读取点
 // （花名册 self + configData.selfDevice 两源缓存），utils 只消费其同步读数面。
 import { currentSelfDeviceName } from './deviceRoster.js';
-// 认知二期产品批①选档器：human 过滤层折叠默认读档（profileState 零依赖，
-// 无导入环）；profileGeneration 掺进 markdown 缓存键——切档即旧缓存失效。
-import { profileGeneration } from './profileState.js';
 // voice 块补封批 2026-10-31（作者令「封存所有会话的 voice 块——应随全双工 TTS
 // 一起封存，漏网」）：<voice> TTS 输出族与全双工同 flag（voiceEnabled，缺席封存）。
 // featureFlags 只依赖 state.js，无导入环。
@@ -280,6 +277,9 @@ const RE_MATH_INLINE_PAREN = /(^|[^\\])\\\((\S(?:[^\n]*\S)?)\\\)/g;
 // pass emits byte-identical output while scanning the HTML only once.
 const RE_PRE_TAG = /<pre[^>]*>|<\/pre>/g;
 const RE_VOICE_RESTORE = /VOICEBLOCK(\d+)END/g;
+const RE_OUTPUT_RESTORE = /OUTPUTBLOCK(\d+)END/g;
+const RE_OUTPUT_PAIR = /<output>([\s\S]*?)<\/output>/g;
+const RE_OUTPUT_ANY_TAG = /<\/?output>/g;
 const RE_MENTION_RESTORE = /MENTIONBLOCK(\d+)END/g;
 const RE_IMG_TAG = /<img\b(?![^>]*\bclass=)/g;
 // mermaid-md batch: marked v12 emits fenced ```mermaid exactly as this shape
@@ -300,7 +300,7 @@ export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   // renderers pass { cache:false } and go straight to the parser; only
   // finish*/history renders (stable text) populate the cache.
   if (opts && opts.cache === false) return _renderMarkdownWithMath(text, parseVoice);
-  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${profileGeneration()}|${mentionListState().gen}|${text}`;
+  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${mentionListState().gen}|${text}`;
   const hit = _mdCache.get(key);
   if (hit !== undefined) {
     _mdCache.delete(key);
@@ -335,6 +335,24 @@ function _renderMarkdownWithMath(text, parseVoice) {
   if (parseVoice && !voiceEnabled()) {
     text = text.replace(RE_VOICE, '$1');
   }
+  // output 块语法批（作者令 2026-10-31 16:13，16:16 修订标签式）：成对
+  // `<output>…</output>` 标签 = 用户可见内容。提取照 voice 块同构（占位符
+  // 先行、marked 后恢复）；平衡闸照 ```human 围栏「整段等闭合」同构——全部
+  // 成对闭合才提取，散标签（流式中间态/手误）转义为字面文本：marked 会把裸
+  // `<output>` 当 HTML 块把后续内容整段吞掉，必须先行掐断。无标签文本零改动
+  // （降级语义：未包裹的旧内容照常全显，不吞历史消息）。
+  const outputBlocks = [];
+  if (text.indexOf('<output>') !== -1 || text.indexOf('</output>') !== -1) {
+    if (_outputTagsBalanced(text)) {
+      text = text.replace(RE_OUTPUT_PAIR, (m, inner) => {
+        outputBlocks.push(inner.trim());
+        return `OUTPUTBLOCK${outputBlocks.length - 1}END`;
+      });
+    } else {
+      text = text.replace(RE_OUTPUT_ANY_TAG, (tag) =>
+        tag === '<output>' ? '&lt;output&gt;' : '&lt;/output&gt;');
+    }
+  }
   // Extract <voice>...</voice> blocks before any markdown processing (only for AI output, not thinking)
   const voiceBlocks = [];
   if (parseVoice && voiceEnabled()) {
@@ -342,9 +360,52 @@ function _renderMarkdownWithMath(text, parseVoice) {
       voiceBlocks.push(content.trim());
       return `VOICEBLOCK${voiceBlocks.length - 1}END`;
     });
-    return _renderMarkdownInternal(vp, voiceBlocks);
+    return _renderMarkdownInternal(vp, voiceBlocks, false, outputBlocks);
   }
-  return _renderMarkdownInternal(text, voiceBlocks);
+  return _renderMarkdownInternal(text, voiceBlocks, false, outputBlocks);
+}
+
+// ── <output> user-visible block (output 块语法批 2026-10-31) ────────────────
+// 设计稿：docs/design/20261030_human-readable-presentation.zh-CN.md §11。
+// 单管线透明面：标签不现形、内容照 markdown 渲染——canvas md viewer / wiki
+// docs / flow 卡 / report 卡四面经此 pass 读得了 output 文档；聊天气泡面的
+// 「只显块内容 + 角标展开」摘除语义在 chat.js/outputTag.js（不在管线内做，
+// 那里需要源文本级的摘除与原文回填）。
+//
+/** Source-level gate: true only when the text has ≥1 `<output>...</output>` pair
+ *  AND every tag is properly paired in order (no stray close, no nesting). The
+ *  fast indexOf pre-check keeps the per-frame streaming hot path at one cheap
+ *  scan for the overwhelmingly common no-tag case (same shape as
+ *  _humanFencesBalanced). */
+function _outputTagsBalanced(text) {
+  if (text.indexOf('<output>') === -1) return false;
+  let open = false;
+  let saw = false;
+  const re = /<\/?output>/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m[0] === '<output>') {
+      if (open) return false; // nesting = not the agreed shape
+      open = true;
+      saw = true;
+    } else {
+      if (!open) return false; // stray close
+      open = false;
+    }
+  }
+  return saw && !open;
+}
+
+/** Shared inner-content joiner: every balanced pair's body, blank-line joined —
+ *  the chat face (outputTag.js) renders this as the whole visible message. */
+export function extractOutputInner(text) {
+  if (!_outputTagsBalanced(text)) return null;
+  const parts = [];
+  text.replace(RE_OUTPUT_PAIR, (m, inner) => {
+    parts.push(inner.trim());
+    return m;
+  });
+  return parts.length ? parts.join('\n\n') : null;
 }
 
 // ── ```human filter fence (human-face batch 2026-10-30) ────────────────────
@@ -427,7 +488,7 @@ function _transformHumanFace(html) {
   return result;
 }
 
-function _renderMarkdownInternal(protected_, voiceBlocks, noHuman) {
+function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks) {
   // human-face batch (2026-10-30): the ```human filter fence renders ONLY when
   // every fence in the source is closed (streaming gate, 设计稿 §7.5 落地口径
   // 「整段等闭合」). An unclosed fence (mid-stream snapshot) falls through to
@@ -494,6 +555,17 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman) {
     if (tag === '</pre>') return '</pre></div>';
     return '<div class="code-block-wrap"><button class="code-copy-btn" onclick="window.copyCode(this)" title="' + t('chat.copy') + '"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span>' + t('chat.copy') + '</span></button>' + tag;
   });
+  // Restore output blocks (output 块语法批 2026-10-31): each pair's body is
+  // rendered by a NESTED internal pass (own math/mermaid/<pre>-wrap handling),
+  // so the restore runs AFTER the outer <pre> copy-button pass — restoring
+  // earlier would double-wrap the inner code blocks. Tags stay invisible
+  // (transparent face); the chat removal/expand semantics live in outputTag.js.
+  if (outputBlocks && outputBlocks.length) {
+    html = html.replace(RE_OUTPUT_RESTORE, (m, idx) => {
+      const inner = outputBlocks[parseInt(idx, 10)] || '';
+      return '<div class="nf-output">' + _renderMarkdownInternal(inner, [], true) + '</div>';
+    });
+  }
   // Restore math blocks as KaTeX
   mathBlocks.forEach((block, i) => {
     const token = `MATHBLOCK${i}END`;

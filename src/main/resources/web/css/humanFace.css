@@ -51,3 +51,22 @@
   color: var(--color-text-dim);
   background: var(--color-frame-hover);
 }
+
+/* ── <output> user-visible block (output 块语法批 2026-10-31) ───────────────
+   管线透明面：.nf-output 无 chrome——块内即用户可见正文（类微信排版交给
+   气泡本体）。聊天摘除面的展开态 = .nf-output-raw-pre：原文全量纯文本，
+   <output> 标签语法原样现形（pre-wrap，灰调与普通正文区分）。 */
+.nf-output { display: block; }
+.bubble .nf-output-raw-pre {
+  margin: 0;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--color-text-muted, #6b7280);
+  background: var(--color-frame-hover, rgba(128, 128, 128, 0.08));
+  border: 1px solid var(--color-frame-border-light, var(--color-frame-border, rgba(128, 128, 128, 0.2)));
+  border-radius: 8px;
+}

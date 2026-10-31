@@ -85,6 +85,10 @@ import { isNearBottom } from './utils.js';
 // (history rebuild, popup restores). One-way dependency: workline.js imports
 // i18n + utils only, so this adds no cycle (chat.js → workline.js ← here).
 import { settleWorklineAsHeader, removeWorkline, priorTurnBadgeSettled, buildBadgeLabel } from './workline.js';
+// output 块语法批（作者令 2026-10-31）：turn-header 角标 = 「看思考过程与工具
+// 结果」的现成入口——output 气泡的展开/收起随同一 toggle 换面（展开 = 原文
+// 全量 + <output> 语法原样现形）。
+import { setOutputExpanded } from './outputTag.js';
 
 /* ---------- row classification ---------- */
 
@@ -137,6 +141,25 @@ function isNonInjectedUserRow(row) {
 function isTuckableRow(row) {
   if (!row.classList.contains('row') || isExcludedRow(row)) return false;
   return row.classList.contains('tool') || row.classList.contains('thinking-row');
+}
+
+/** output 块语法批（作者令 2026-10-31）：the row carries an output-faced ai
+ *  bubble — stamped `data-nf-output` by outputTag.applyOutputFace, or
+ *  `data-nf-defer-output` by the deferred history build (the summary pass runs
+ *  synchronously BEFORE the rAF upgrade batch renders the face; the marker is
+ *  set at row-build time). Such a turn gets a header even with zero tuckable
+ *  rows: the badge is the ONLY expand entry to the raw full text. */
+function rowHasOutputFace(row) {
+  return !!(row.querySelector && row.querySelector('.bubble[data-nf-output], .bubble[data-nf-defer-output]'));
+}
+
+/** Swap every output-faced bubble in `rows` to the expanded (raw full text,
+ *  tags verbatim) or collapsed (output-only) face. No-op on plain bubbles. */
+function swapOutputFaces(rows, expanded) {
+  for (const row of rows) {
+    const b = row.querySelector('.bubble[data-nf-output]');
+    if (b) setOutputExpanded(b, expanded);
+  }
 }
 
 /* ---------- stats (数字口径从 turn 子列表统计) ---------- */
@@ -273,15 +296,18 @@ function bindHeaderToggle(header) {
   header.setAttribute('tabindex', '0');
   const toggle = () => {
     if (header.dataset.turnState !== 'done' && header.dataset.turnState !== 'done-expanded') return;
-    const tuckable = scopeFromHeader(header).filter(isTuckableRow);
+    const scope = scopeFromHeader(header);
+    const tuckable = scope.filter(isTuckableRow);
     if (header.dataset.turnState === 'done') {
       header.dataset.turnState = 'done-expanded';
       header.setAttribute('aria-expanded', 'true');
       untuckRows(tuckable);
+      swapOutputFaces(scope, true);
     } else {
       header.dataset.turnState = 'done';
       header.setAttribute('aria-expanded', 'false');
       tuckRows(tuckable);
+      swapOutputFaces(scope, false);
     }
   };
   header.onclick = toggle;
@@ -409,8 +435,10 @@ export function collapseTurn(view, meta = {}) {
     return null; // group stays open — no header, no markClosed; rows stay tucked (2026-10-08 令)
   }
   const tuckable = rows.filter(isTuckableRow);
+  // output 块语法批：零过程行但有 output 气泡的轮同样立 header——角标是
+  // 框外原文的唯一展开入口（E5 的「无可收拢则平铺」对 output 轮让位）。
   let header = null;
-  if (tuckable.length > 0) {
+  if (tuckable.length > 0 || rows.some(rowHasOutputFace)) {
     const stats = computeTurnStats(rows);
     const segments = headerSegments(meta, stats);
     // Same-element settle first (「过程全部展示在这一行」): the live line rolls
@@ -459,6 +487,8 @@ export function failTurn(view) {
   for (const el of scope) {
     if (el.classList && el.classList.contains('nf-tucked')) el.classList.remove('nf-tucked');
   }
+  // output 面同揭：失败轮平铺排障 ⇒ output 气泡回原文全量（标签现形）。
+  swapOutputFaces(scope.filter(el => el.classList && el.classList.contains('row')), true);
   removeWorkline(view);
   markClosed(chat); // #403: terminal reached — later arrivals are a new turn
   return null;
@@ -476,11 +506,13 @@ export function expandGroupContaining(el) {
     n = n.previousElementSibling;
   }
   if (!header || header.dataset.turnState !== 'done') return false;
-  const tuckable = scopeFromHeader(header).filter(isTuckableRow);
-  if (!tuckable.some(r => r.classList.contains('nf-tucked'))) return false;
+  const scope = scopeFromHeader(header);
+  const tuckable = scope.filter(isTuckableRow);
+  if (!tuckable.some(r => r.classList.contains('nf-tucked')) && !scope.some(rowHasOutputFace)) return false;
   header.dataset.turnState = 'done-expanded';
   header.setAttribute('aria-expanded', 'true');
   untuckRows(tuckable);
+  swapOutputFaces(scope, true);
   return true;
 }
 
@@ -563,7 +595,8 @@ export function buildTurnSummariesForHistory(chat, opts = {}) {
 
 function summarizeSegment(chat, seg) {
   const tuckable = seg.filter(isTuckableRow);
-  if (tuckable.length === 0) return []; // E5: nothing to tuck — no header
+  // output 块语法批：output 轮零过程行也立 header（角标 = 原文唯一展开入口）。
+  if (tuckable.length === 0 && !seg.some(rowHasOutputFace)) return []; // E5: nothing to tuck — no header
   // E4 P0 done criterion — replay-terminal 批（2026-10-28，案一「A 根治」）改为
   // 数据驱动优先：「段内存在 writer 盖戳的 terminal 行」（后端 done/agentDone
   // 落盘 UiMessage.Ai.terminal=true；卫生批补工具行等价面——段内零 ai 行的退化

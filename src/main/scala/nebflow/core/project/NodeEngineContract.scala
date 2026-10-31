@@ -660,13 +660,17 @@ private[project] object NodeEngineContract:
    * stand-plugins 批（作者令 2026-10-23）：铁律之后、基线之前同缝注入插件能力
    * 查询行（[[Defaults.PluginDiscoveryLine]]）——节点会话有 Bash，可自主查目录；
    * 仍前缀注入位形（endsWith 断言零波及）。
+   *
+   * output 块语法批（作者令 2026-10-31）：查询行之后再同缝注入 output 块纪律行
+   * （[[Defaults.OutputBlockRule]]）——节点终稿亦只显 `<output>` 包裹内容；
+   * 仍前缀注入位形（endsWith 断言零波及）。
    */
   def protocolFootnoteFor(role: Option[String]): String =
     val base =
       if NodeRoles.normalize(role.getOrElse("")) == NodeRoles.Verifier then
         ProtocolFootnote + "\n" + VerifierVerdictFootnote
       else ProtocolFootnote
-    Defaults.NoSleepPollRule + "\n\n" + Defaults.PluginDiscoveryLine + "\n\n" + base
+    Defaults.NoSleepPollRule + "\n\n" + Defaults.PluginDiscoveryLine + "\n\n" + Defaults.OutputBlockRule + "\n\n" + base
 
   // ── 链级抽象 P2：链上下文透传（过程文档溯源 §9.2）──
 

@@ -99,4 +99,50 @@ class SleepPollStartupRuleSpec extends FunSuite:
     assert(wrapped.endsWith("Find all callers of X."), "original prompt intact")
     assert(BlockingSubagent.promptWithRule("").startsWith(rule), "empty prompt still gets the rule")
   }
+
+  // ── output 块语法批（作者令 2026-10-31 16:13；16:16 修订标签式）──
+
+  test("output 块纪律行（OutputBlockRule）：<output> 标签式 + 类微信 + 画像驱动 + 默认中文") {
+    val line = Defaults.OutputBlockRule
+    assert(line.contains("<output>") && line.contains("</output>"), s"paired tags named: $line")
+    assert(!line.contains("```output"), "围栏形态已废（作者令 16:16：标签式取代，防 md 语法冲突）")
+    assert(line.contains("WeChat"), s"WeChat-style voice required: $line")
+    assert(line.contains("User.md"), s"profile injection surface named: $line")
+    assert(line.contains("concise direct Chinese"), s"no-profile default named: $line")
+    assert(line.nonEmpty && line.length < 900, s"compact: ${line.length} chars")
+  }
+
+  test("output 块纪律行：delegate brief 插件行之后、任务正文之前注入") {
+    val brief = DelegateTool.assembleBrief(
+      workspaceLine = "[workspace] /tmp/ws",
+      bindingLine = None,
+      task = "Do the thing.",
+      injectedBlock = ""
+    )
+    val plugAt = brief.indexOf("[plugin discovery]")
+    val outAt = brief.indexOf("Output discipline")
+    val taskAt = brief.indexOf("Do the thing.")
+    assert(plugAt >= 0 && outAt > plugAt && outAt < taskAt, s"output rule sits after the discovery line, before the task: $brief")
+  }
+
+  test("output 块纪律行：节点脚注同源注入（endsWith 身份断言零波及）") {
+    val plain = NodeEngine.protocolFootnoteFor(None)
+    assert(plain.contains(Defaults.OutputBlockRule), "node footnote must carry the output rule")
+    assert(plain.indexOf(Defaults.OutputBlockRule) > plain.indexOf(Defaults.PluginDiscoveryLine),
+      "output rule sits after the discovery line")
+    assert(plain.endsWith(NodeEngine.ProtocolFootnote), "identity pin intact (NodeChainAttributionSpec anchor)")
+  }
+
+  test("output 块纪律行：subagent/workflow 步包装同源注入（铁律之后、原文之前）") {
+    val wrapped = BlockingSubagent.promptWithRule("Find all callers of X.")
+    assert(wrapped.contains(Defaults.OutputBlockRule), "wrapped prompt carries the output rule")
+    assert(wrapped.indexOf(Defaults.OutputBlockRule) > wrapped.indexOf(rule), "after the iron rule")
+    assert(wrapped.endsWith("Find all callers of X."), "original prompt intact")
+  }
+
+  test("output 块纪律行：root Nebula 提示词正文同文（Voice 节接线面）") {
+    val prompt = nebflow.core.entity.BuiltinAgents.entry("Nebula").map(_.systemPrompt).getOrElse("")
+    assert(prompt.contains("<output>") && prompt.contains("</output>"), "root prompt carries the paired-tag rule")
+    assert(prompt.contains("User.md"), "root prompt names the profile surface")
+  }
 end SleepPollStartupRuleSpec

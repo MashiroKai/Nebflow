@@ -74,7 +74,10 @@ object OnboardingArtifacts:
    * 一题的作答。
    *
    * @param id     题目 id（`name` / `call` / `model` / `role` / `style` / `pro` /
-   *               `boundaries` / `temper1` / `temper2` / `identity`）
+   *               `boundaries` / `temper1` / `temper2` / `identity` /
+   *               `outshape` / `outtone`——后两题 = 希望的交流方式，作者令
+   *               2026-10-31「output 块语法批」④，答案落 User.md「交流方式」段、
+   *               经 ContextRefresher 注入驱动 `<output>` 块内风格）
    * @param label  该题在文件里的行标签（`名字` / `角色定位` / …）
    * @param scope  落点文件：`soul` / `user` / `base`（`base` = 不进文件正文，
    *               如模型题与起名题的显示名侧写）
@@ -193,6 +196,11 @@ object OnboardingArtifacts:
    *
    * 「最近半年，你最想解决的一件事是什么？」整题移除（作者 2026-10-05）⇒
    * 原 `## 当前关注` 段随之收口，不留悬空段、不留 `（暂未填写）` 占位。
+   *
+   * 「希望的交流方式」两题（output 块语法批④，作者令 2026-10-31）⇒
+   * `## 交流方式（你希望的）` 段：篇幅/语气两行，跳过错位占位；该段经
+   * ContextRefresher 的 User 记忆块注入根会话提示词，驱动 `<output>` 块内
+   * 写法风格（无画像时纪律行默认中文简洁直白）。
    */
   def buildUser(answers: Map[String, Answer]): String =
     val call = callOr(answers)
@@ -204,6 +212,10 @@ object OnboardingArtifacts:
        |## 称呼与身份
        |- 怎么称呼：$callLine
        |- 日常身份：$identity
+       |
+       |## 交流方式（你希望的）
+       |- 篇幅：${textOr(answers, "outshape", SkippedSoul)}
+       |- 语气：${textOr(answers, "outtone", SkippedSoul)}
        |
        |## 你说过的原话
        |${freeQuotes(answers, "user")}
@@ -227,7 +239,7 @@ object OnboardingArtifacts:
     val agentName = nameOf(answers)
     val skipped = answers.values.count(_.kind == Kind.Skip)
     val allSkipped = agentName.isEmpty &&
-      List("role", "style", "pro", "boundaries", "temper1", "temper2", "identity")
+      List("role", "style", "pro", "boundaries", "temper1", "temper2", "identity", "outshape", "outtone")
         .forall(id => byId(answers, id).isEmpty)
     for
       _ <- MemoryStore.saveSoulMemory(soul)

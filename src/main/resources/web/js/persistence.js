@@ -17,6 +17,9 @@ import { evict as evictLocalStore } from './localStore.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom, deviceTagHtml } from './utils.js';
+// output 块语法批（作者令 2026-10-31）：历史重放腿同 live 腿一个 output 面——
+// 平衡 <output> 对 ⇒ 正常态只渲染块内，角标展开回原文（turnGroup toggle）。
+import { applyOutputFace, hasOutputBlock } from './outputTag.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { createDurationBadgeElement, createMsgFooterBadge, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow, sameAskCards, applyThinkingWindowCap } from './chat.js';
 // pop-upgrade 批(2026-10-03):Pop 工件载荷面(叠卡/文件卡片)单一真源——live
@@ -735,7 +738,9 @@ export function restoreFromStorage(opts = {}) {
         if (m.text) {
           const bubble = document.createElement('div');
           bubble.className = 'bubble ai';
-          bubble.innerHTML = renderMarkdownWithMath(m.text || '');
+          if (!applyOutputFace(bubble, m.text || '')) {
+            bubble.innerHTML = renderMarkdownWithMath(m.text || '');
+          }
           row.appendChild(bubble);
         }
         if (isTurnTerminal) {
@@ -1165,6 +1170,8 @@ function buildHistoryRow(m, i, ctx) {
           });
           const bubble = document.createElement('div');
           bubble.className = 'bubble ai';
+          // output 面标记：升级批渲染时走 applyOutputFace（与 live/sync 两腿同面）。
+          if (hasOutputBlock(m.text || '')) bubble.dataset.nfDeferOutput = '1';
           deferMd(bubble, m.text || '');
           row.appendChild(bubble);
         }
@@ -1552,7 +1559,9 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
     for (; ri < end; ri++) {
       const { el, text, parseVoice } = pendingRenders[ri];
       try {
-        el.innerHTML = renderMarkdownWithMath(text, parseVoice);
+        // output 块语法批：标记泡走 output 面（只显块内；角标展开在 turnGroup）。
+        if (el.dataset && el.dataset.nfDeferOutput === '1') applyOutputFace(el, text);
+        else el.innerHTML = renderMarkdownWithMath(text, parseVoice);
       } catch (e) {
         el.textContent = text; // 回落纯文本（renderer 自身另有永不抛护栏，双保险）
       }
@@ -1647,7 +1656,11 @@ export async function mountHistoryPageChunked(msgs, opts = {}, hooks = {}) {
     };
     const jobs = [];
     for (const j of pendingToolBodies) jobs.push(() => { j.el.innerHTML = j.build(); });
-    for (const j of pendingRenders) jobs.push(() => { j.el.innerHTML = renderMarkdownWithMath(j.text, j.parseVoice); });
+    for (const j of pendingRenders) jobs.push(() => {
+      // output 块语法批：标记泡走 output 面（与 upgradeBatch 同处置）。
+      if (j.el.dataset && j.el.dataset.nfDeferOutput === '1') applyOutputFace(j.el, j.text);
+      else j.el.innerHTML = renderMarkdownWithMath(j.text, j.parseVoice);
+    });
     for (let ji = 0; ji < jobs.length; ji += MOUNT_UPGRADE_BATCH) {
       const end = Math.min(ji + MOUNT_UPGRADE_BATCH, jobs.length);
       // 冷启动批⑤：同上护栏 —— 单片失败不拖垮整页升级批（病态输入回落
