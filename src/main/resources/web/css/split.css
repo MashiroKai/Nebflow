@@ -1543,6 +1543,22 @@ body.canvas-open:not(.mobile-layer) #deck-fab { display: inline-flex; }
 }
 #deck-fab[disabled] { pointer-events: none; }
 
+/* ── 左移批（作者令 2026-10-31 21:37「电脑端关签钮左移，与堆叠钮左右对称」）：
+   关签钮离开居中标题胶囊、升格 body 层左缘浮钮 —— 顶同 #deck-fab（面板顶
+   +10），left = 面板左 +12 镜像 fab 的 right = 视口宽 − 面板右 +12（JS 同
+   syncDeckBox 逐帧落笔，盒变才写）；材质/尺寸同 .g2-fab（40px 液体玻璃圆钮）
+   = 手机工具条（.mf-cv-close ↔ .mf-cv-stack）同款语义桌面化。桌面标签条
+   其余元素序不变（胶囊 = 居中标题 + t-count，批②左座 ✕ 退役）。 */
+#canvas-head-close {
+  position: fixed;
+  top: var(--cv-head-top, 10px);   /* JS 逐帧覆写（面板顶 +10，syncDeckBox） */
+  left: 12px;                      /* JS 逐帧覆写（面板左 +12） */
+  z-index: 250;
+  display: none;
+}
+body.canvas-open:not(.mobile-layer) #canvas-head-close { display: inline-flex; }
+#canvas-head-close svg { width: 18px; height: 18px; pointer-events: none; }
+
 /* ── 背后卡组层（v4②/v5①）：body 层固定元素、面板之前（DOM 序 ⇒ docked 态画在
    面板之下），盒 = 面板盒（JS 逐帧同步）；圆角裁切 = 卡组舞台边界（v4②）。
    .over：换入飞行/环卡前景期间抬 z，让飞行的卡盖过面板根。
@@ -1565,7 +1581,8 @@ body.canvas-open:not(.mobile-layer) #deck-fab { display: inline-flex; }
 body.canvas-overlay #deck-layer.over { z-index: 245; }
 #deck-layer.collapse { opacity: 0; }
 body.mobile-layer #deck-layer,
-body.mobile-layer #deck-fab { display: none !important; }
+body.mobile-layer #deck-fab,
+body.mobile-layer #canvas-head-close { display: none !important; }
 
 /* ── 整区缩放（v4①）：唯一整区 scale 变换，落 canvas 根。
    uifix ③a：叠卡态投影 = 前景档 token（随 look 三版联动）。
@@ -3679,29 +3696,12 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 /* Canvas 改造批②（2026-10-31 作者令「顶栏换代：左叉号」）：桌面居中标题头
    胶囊 = 左 ✕（#canvas-head-close，关活动页签）/ 中央标题（flex:1 居中）；
    堆叠视角钮维持 body 层 #deck-fab（本文件上方批②块——迁胶囊实证被环卡吞
-   命中）。卡窗态（body.card-window）✕ 全隐——卡窗自有合并钮/窗关。 */
+   命中）。卡窗态（body.card-window）✕ 全隐——卡窗自有合并钮/窗关。
+   左移批（同日 21:37 作者令「关签钮左移，与堆叠钮左右对称」）：✕ 离开胶囊
+   升格 body 层左缘浮钮（本文件上方 #deck-fab 对称块），原胶囊左座
+   .canvas-head-btn（24px ghost 档）随批整体退役——唯一消费面退役，零残留。 */
 body:not(.mobile-layer) .canvas-header { justify-content: space-between; }
 body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
-body.card-window .canvas-header .canvas-head-btn { display: none; }
-.canvas-head-btn {
-  flex: none;
-  width: 24px;
-  height: 24px;
-  border: none;
-  border-radius: 50%;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  transition: background 0.14s ease, color 0.14s ease, transform 0.14s ease;
-}
-.canvas-head-btn:hover { background: var(--color-border); color: var(--color-text); }
-.canvas-head-btn:active { transform: scale(0.9); }
-.canvas-head-btn svg { width: 12px; height: 12px; pointer-events: none; }
-.canvas-head-btn[disabled] { opacity: 0.3; pointer-events: none; }
 /* 批⑤：堆叠态顶部标签数（前景序/总数；空串即隐） */
 .canvas-title .t-count {
   flex: none;
@@ -3841,6 +3841,8 @@ html.card-window-boot #deck-layer,
 body.card-window #deck-layer,
 html.card-window-boot #deck-fab,
 body.card-window #deck-fab,
+html.card-window-boot #canvas-head-close,
+body.card-window #canvas-head-close,
 html.card-window-boot #canvas-close-btn,
 body.card-window #canvas-close-btn { display: none !important; }
 html.card-window-boot body #main,

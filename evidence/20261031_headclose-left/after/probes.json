@@ -1,0 +1,115 @@
+{
+  "desktop": {
+    "panel": {
+      "l": 878,
+      "t": 16,
+      "r": 1430,
+      "b": 890,
+      "w": 552,
+      "h": 874
+    },
+    "close": {
+      "l": 890,
+      "t": 26,
+      "r": 930,
+      "b": 66,
+      "w": 40,
+      "h": 40
+    },
+    "fab": {
+      "l": 1378,
+      "t": 26,
+      "r": 1418,
+      "b": 66,
+      "w": 40,
+      "h": 40
+    },
+    "cap": {
+      "l": 1064,
+      "t": 27,
+      "r": 1244,
+      "b": 63,
+      "w": 180,
+      "h": 36
+    },
+    "closeInline": "top: 26px; left: 890px;",
+    "fabInline": "top: 26px; right: 22px;",
+    "panelOffset": {
+      "l": 878,
+      "t": 16,
+      "w": 552,
+      "h": 874
+    },
+    "closeInHeader": false,
+    "capButtons": 0,
+    "closeDisplay": "flex",
+    "closeZ": "250",
+    "closeDisabled": false,
+    "fabDisabled": false,
+    "closeG2": true,
+    "tabCount": 2
+  },
+  "deckOpen": {
+    "panel": {
+      "l": 919.4000244140625,
+      "t": 89.54998779296875,
+      "r": 1388.60009765625,
+      "b": 832.4500122070312,
+      "w": 469.2000732421875,
+      "h": 742.9000244140625
+    },
+    "close": {
+      "l": 890,
+      "t": 26,
+      "r": 930,
+      "b": 66,
+      "w": 40,
+      "h": 40
+    },
+    "fab": {
+      "l": 1378,
+      "t": 26,
+      "r": 1418,
+      "b": 66,
+      "w": 40,
+      "h": 40
+    },
+    "cap": {
+      "l": 1064.0001220703125,
+      "t": 96.19999694824219,
+      "r": 1244,
+      "b": 132.19998168945312,
+      "w": 179.9998779296875,
+      "h": 35.99998474121094
+    },
+    "closeInline": "top: 26px; left: 890px;",
+    "fabInline": "top: 26px; right: 22px;",
+    "panelOffset": {
+      "l": 878,
+      "t": 16,
+      "w": 552,
+      "h": 874
+    },
+    "closeInHeader": false,
+    "capButtons": 0,
+    "closeDisplay": "flex",
+    "closeZ": "250",
+    "closeDisabled": false,
+    "fabDisabled": false,
+    "closeG2": true,
+    "tabCount": 2
+  },
+  "closeClick": {
+    "before": 2,
+    "after": 1,
+    "worked": true
+  },
+  "errors": [],
+  "mobile": {
+    "mfClose": true,
+    "mfStack": true,
+    "mfG2": true,
+    "headCloseDisplay": "none",
+    "mobileLayer": true
+  }
+}
