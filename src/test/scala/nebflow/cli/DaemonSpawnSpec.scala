@@ -91,20 +91,21 @@ class DaemonSpawnSpec extends FunSuite:
     assertEquals(MainDispatch.strictRefusalMessage(SingleInstanceGuard.PortFree, 8080), None)
   }
 
-  test("strictRefusalMessage names the OTHER instance brand (dual-instance batch 2026-10-30)") {
+  test("strictRefusalMessage names the OTHER instance brand (dual-instance batch 2026-10-30; port source 双生分家批 2026-10-31)") {
     // 端口被 legacy `nebflow` 命令线占用: 报错必须点名「占口的是另一实例」、给出其
-    // 默认家/口，并指路 coexist（'nebflow stop' 或换口）—— 绝不能 focus 对家。
+    // 默认家/口（分家批后 nebflow 品牌缺省口 = 6140，经 Defaults.legacyPortOf 读出），
+    // 并指路 coexist（'nebflow stop' 或换口）—— 绝不能 focus 对家。
     val msg = MainDispatch.strictRefusalMessage(
-      SingleInstanceGuard.OtherInstance("nebflow", "http://localhost:8080"),
-      8080
+      SingleInstanceGuard.OtherInstance("nebflow", "http://localhost:6138"),
+      6138
     )
     assert(msg.exists(_.contains("daemon child refused")), msg.toString)
     assert(msg.exists(_.contains("'nebflow'")), msg.toString)
     assert(msg.exists(_.contains("~/.nebflow")), msg.toString)
-    assert(msg.exists(_.contains("8080")), msg.toString)
+    assert(msg.exists(_.contains("6140")), msg.toString)
     assert(msg.exists(_.contains("coexist")), msg.toString)
     // 反钉: 无其他品牌实例时绝不产生本面
-    assert(MainDispatch.strictRefusalMessage(SingleInstanceGuard.PortFree, 8080).isEmpty)
+    assert(MainDispatch.strictRefusalMessage(SingleInstanceGuard.PortFree, 6138).isEmpty)
   }
 
   // ── JVM argument inheritance (blacklist first — F-9) ───────────────────

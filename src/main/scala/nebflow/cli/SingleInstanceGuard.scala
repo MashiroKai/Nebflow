@@ -35,14 +35,18 @@ object SingleInstanceGuard:
   final case class NebflowInstance(url: String) extends PortState
 
   /**
-   * 端口被**另一个命令品牌**的实例占着（双实例并存批 2026-10-30）。
+   * 端口被**另一个命令品牌**的实例占着（双实例并存批 2026-10-30 立类；
+   * 判据换代为双生分家批 2026-10-31）。
    *
-   * 背景：`stand` 与 `nebflow` 两个命令品牌同机并存（默认口 6138 / 8080、数据根
+   * 背景：`stand` 与 `nebflow` 两个命令品牌同机并存（默认口 6138 / 6140、数据根
    * `~/.stand` / `~/.nebflow`，见 `ops/bin/stand-cli-lib.sh` 头契约表）。两者跑的是同一
    * 引擎产品线，健康面都长成「自己人」——旧分类会把它判成 `NebflowInstance` 走
-   * focus-existing 分支：`stand start` 撞上 legacy 8080 实例会去**聚焦对家**而不是
-   * 报错。故按健康面的 `product` 标记再分一层：同品牌 → [[NebflowInstance]]（聚焦），
-   * 异品牌 → 本类（拒启 + 点名是哪一实例）。
+   * focus-existing 分支：`stand start` 撞上对家实例会去**聚焦对家**而不是报错。
+   * 10-30 批的修法是「品牌词 + 路径证据」分层，10-31 作者裁定收紧为**三元组判据**
+   * （品牌+自己的端口+自己的 home）且**绝不跨品牌 focus**：健康面 `product` 是
+   * 已知品牌且 ≠ 本构建品牌 ⇒ 本类（拒启 + 点名是哪一实例），零路径证据要求；
+   * 路径证据只在同品牌词场景下兜底升级（家腿）。两品牌的引擎兜底口自本批起
+   * 错开（6138/6140），撞口只剩显式同配一类，撞了也只会互相点名拒启，永不 focus。
    */
   final case class OtherInstance(brand: String, url: String) extends PortState
 
@@ -112,15 +116,21 @@ object SingleInstanceGuard:
       Right(
         probeNebflow(port) match
           case Some(ProbeHit(brand, url)) =>
-            // 判据 = **路径归属**（命令行里的品牌数据根），不是品牌词。
-            // 理由（rename 兼容契约，2026-10-18 批文）：改名当天之前构建的本产品实例
-            // 健康面 product 仍写 `nebflow`，它其实是**自己人**，必须照旧 focus 而不是拒启。
-            // 反过来 legacy `nebflow` 命令线（9.19 自有根）实打实跑在 `~/.nebflow/bin`
-            // 下 —— 那条路径就是「不是本实例」的铁证。故只有路径证据才升级为
-            // [[OtherInstance]]；品牌词只进拒绝文案（让人看清占口的是哪条线）。
-            otherRootOccupant(port) match
-              case Some((_, _, _)) => OtherInstance(if brand == OwnBrand then OtherBrandBrandName else brand, url)
-              case None            => NebflowInstance(url)
+            // 双生分家批 2026-10-31（作者裁定「品牌+自己的端口+自己的 home」三元组，
+            // **绝不跨品牌 focus**）：健康面的品牌词就是权威身份 ——
+            //   · 已知**异**品牌（health `product` ≠ 本构建品牌）⇒ [[OtherInstance]]
+            //     拒启并点名，**零路径证据要求**。10-18 的 rename 兼容腿（「无路径
+            //     证据的 nebflow 词当自家人 focus」）被本裁定退役：双产品世界里
+            //     品牌词即身份，跨品牌永不 focus（改名前构建的健康面早已淘汰）。
+            //   · 同品牌词 ⇒ 自家实例，但先过一遍路径证据兜底：listener 命令行
+            //     落在**另一个**品牌根下（极老构建健康面无品牌词、或混装 shim 的
+            //     残留态）仍升级为 [[OtherInstance]] —— 三元组的家腿在此闭合。
+            // 端口腿恒成立：被探口就是冲突口本身。
+            if brand == OwnBrand then
+              otherRootOccupant(port) match
+                case Some((_, _, root)) => OtherInstance(root.stripPrefix("."), url)
+                case None               => NebflowInstance(url)
+            else OtherInstance(brand, url)
           case None => ForeignOccupant(s"port $port is held by another program")
       )
     else Left(())
@@ -199,11 +209,14 @@ object SingleInstanceGuard:
    */
   private[cli] val OwnBrand: String = Branding.lowerName
 
-  /** 同机并存的另一个命令品牌（legacy `nebflow` 线）。 */
-  private[cli] val OtherBrands: Set[String] = Set("nebflow").filterNot(_ == OwnBrand)
+  /**
+   * 本产品线的全部已知命令品牌（双生分家批 2026-10-31）：健康面 `product` 命
+   * 中本集即「认识」；其中 [[OwnBrand]] 是「自己人」，其余是「对家实例」。
+   */
+  private[cli] val KnownBrands: Set[String] = Set("stand", "nebflow")
 
-  /** 品牌词读不出来、只凭路径归属判出的对家实例的名字（legacy 线固定名）。 */
-  private[cli] val OtherBrandBrandName: String = OtherBrands.headOption.getOrElse("nebflow")
+  /** 同机并存的另一个/另一些命令品牌（= [[KnownBrands]] − 本构建品牌）。 */
+  private[cli] val OtherBrands: Set[String] = KnownBrands.filterNot(_ == OwnBrand)
 
   /** 健康面探测结果：品牌标记 + 聚焦 URL。 */
   private[cli] final case class ProbeHit(brand: String, url: String)
@@ -213,8 +226,10 @@ object SingleInstanceGuard:
    * responses containing a product/version key.
    *
    * 双实例并存批 2026-10-30：除了「是不是本产品」还要回答「是哪条命令线的实例」——
-   * 返回的 `brand` 就是健康面 `product` 的原文（stand / nebflow），缺 `product`
-   * 字段的老构建归 [[OwnBrand]]（兼容：宁可聚焦，不与老实例开战）。
+   * 返回的 `brand` 就是健康面 `product` 的原文（stand / nebflow）。
+   * 双生分家批 2026-10-31：缺 `product` 字段的老构建仍归 [[OwnBrand]]（兼容：无品牌词
+   * 无从谈跨品牌），但其 focus 资格在 [[probeOnce]] 里还要过路径证据兜底腿——老构建
+   * 落在对家品牌根下照样拒启点名，不会跨品牌 focus。
    */
   private def probeNebflow(port: Int): Option[ProbeHit] =
     Try {
@@ -236,7 +251,7 @@ object SingleInstanceGuard:
             val c = json.hcursor
             c.get[String]("product").toOption match
               case Some(product) =>
-                val known = Set("stand", OwnBrand) ++ OtherBrands
+                val known = KnownBrands + OwnBrand
                 if known.contains(product) then Some(ProbeHit(product, s"http://localhost:$port"))
                 else None
               case None =>

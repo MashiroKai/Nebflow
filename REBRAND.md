@@ -9,28 +9,37 @@ Stand 原名 Nebflow。网站入口是 https://mystand.space，跨设备控制�
 如果提示已有实例，说明网关已经在运行；无需再启动第二个进程。旧版本需要运行 `sbt "run token"` 获取一次性票据并在登录卡片中使用。不要删除数据目录来解决登录问题。更新源码后，已运行的旧 JVM 需要由其所属会话重启才能加载新版本。
 
 > 端口默认已换：新装 `stand` 默认 http://localhost:6138；旧命令 `nebflow` 的默认口是
-> 8080（数据根 `~/.nebflow`）。两个命令品牌同机并存，见下节「双命令并存」。
+> 6140（数据根 `~/.nebflow`；双生分家批 2026-10-31 前的旧构建是 8080 或无独立默认）。
+> 两个命令品牌同机并存，见下节「双命令并存」。显式换口三条路：`--port`、
+> `GATEWAY_PORT` 环境变量（`STAND_GATEWAY_PORT` / `NEBFLOW_GATEWAY_PORT`）、或配置文件
+> `<home>/nebflow.json` 顶层 `"port": <整数>`（解析序：--port > env > config > 品牌默认）。
 > 经由 release 安装器安装的 `~/.local/bin` 入口仍按部署时的默认值生效，详见
 > `release/install.sh` 的包装脚本。
 
-## 双命令并存（双实例批 2026-10-30，作者令 2026-10-30 08:29）
+## 双命令并存（双实例批 2026-10-30 立约；端口判据换代为双生分家批 2026-10-31）
 
-作者令（逐字）:「开启动 stand 的命令是 nebflow。我们需要把 KAI 迁移到正常的 stand 使用。
+作者令（逐字，2026-10-30）:「开启动 stand 的命令是 nebflow。我们需要把 KAI 迁移到正常的 stand 使用。
 和 nebflow 隔离。这样 nebflow 和 stand 可以同时使用。」
+作者令（2026-10-31）:「同机双产品必须各自独立启动……给 nebflow 独立默认端口，如 6140 之类。」
 
 两个命令品牌同机并存、互不干涉，缺省值**必须**错开：
 
 | 命令 | 数据根（无 env） | 默认端口 | 入口（权威副本） |
 |---|---|---|---|
 | `stand` | `~/.stand` | 6138 | `ops/bin/stand` → `~/.stand/bin/stand` |
-| `nebflow` | `~/.nebflow` | 8080 | `ops/bin/nebflow` → `~/.nebflow/bin/nebflow` |
+| `nebflow` | `~/.nebflow` | 6140 | `ops/bin/nebflow` → `~/.nebflow/bin/nebflow` |
 
+- 引擎默认口**品牌感知**（`Defaults.brandDefaultPortFor`）：stand 构建绑 6138、nebflow
+  构建绑 6140（其自有独立默认——考古：8080 年代 nebflow 用的是全引擎唯一主默认，6138
+  年代跟着撞车，从无前例的独立默认；6140 是第一个）。8080 自此只属 9.19 自有根实例，
+  经 `NEBFLOW_GATEWAY_PORT=8080` / `--port 8080` 管辖，任何品牌都不绑定它。
 - 两入口共用一份实现库 `stand-cli-lib.sh`（单一实现路径），按品牌壳只认自家 env；
-  PATH 上没有 `nebflow` 时由垫片 `~/.stand/bin/nebflow` 转投真入口。
-- 引擎只绑定 6138；8080 只是 legacy 命令线的缺省读数/报错文案（`Defaults.LegacyGatewayPort`），
-  引擎自身绝不绑定 8080。
-- 启动时端口被占，报错会**点名**占口的是哪一实例（stand vs nebflow，含其默认家/口），
-  不再只有裸端口。既有合同「绝不 focus/杀对家实例」零弱化。
+  PATH 上没有 `nebflow` 时由垫片 `~/.stand/bin/nebflow` 转投真入口（该垫片已弃用，应删除；
+  KAI 的 `C:\Users\Kai\AppData\Local\stand\nebflow.cmd` 转发 shim 同理）。
+- 单实例守卫按**「品牌+自己的端口+自己的 home」三元组**判定：健康面 `product` 是已知
+  异品牌 ⇒ 拒启并点名（**绝不跨品牌 focus**）；同品牌词仍聚焦；同品牌词但对家根路径
+  证据 ⇒ 拒启。两个品牌的引擎兜底口已错开，撞口只剩显式同配一类，撞了也只会互相
+  点名拒启，永不 focus、永不误杀（引擎侧 ensureSingleInstance 的对家根红线同守）。
 - 本批把 KAI 从「启动器叫 nebflow」迁到「启动器叫 stand」：详见
   `docs/runbooks/kai-stand-migration.md`。
 

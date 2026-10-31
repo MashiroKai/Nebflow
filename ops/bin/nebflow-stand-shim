@@ -5,7 +5,7 @@
 # 而 ~/.zshrc:18 只把 ~/.stand/bin 加进 PATH ⇒ 命令行 `nebflow` 实际起的是
 # stand 6138 实例 —— 跨品牌拉起的总根。修法: 垫片改转投 nebflow 自有根真入口
 # (~/.nebflow/bin/nebflow + 同目录 stand-cli-lib.sh), rc 零改动 (不动用户 shell rc)。
-# 隔离契约: `nebflow` 只动 ~/.nebflow (8080 缺省), `stand` 只动 ~/.stand (6138)。
+# 隔离契约（双生分家批 2026-10-31 换代）: `nebflow` 只动 ~/.nebflow (6140 缺省), `stand` 只动 ~/.stand (6138)；本垫片已弃用，应删除。
 REAL="$HOME/.nebflow/bin/nebflow"
 if [ ! -x "$REAL" ]; then
     echo "ERROR: nebflow real entry missing at $REAL" >&2

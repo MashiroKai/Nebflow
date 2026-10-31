@@ -540,7 +540,7 @@ object DoctorCommand extends CliCommand:
         // --- 5. PID file / Gateway status ---
         val pidOpt = ProcessManager.readPid()
         val gatewayRunning = pidOpt.exists(ProcessManager.isRunning)
-        val port = nebflow.shared.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(nebflow.shared.Defaults.GatewayPort)
+        val port = nebflow.shared.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(nebflow.shared.Defaults.brandDefaultPort)
         if gatewayRunning then checks += Diagnostic("Gateway", true, s"Running (pid=${pidOpt.get}, port=$port)", "")
         else
           // Stale PID file?

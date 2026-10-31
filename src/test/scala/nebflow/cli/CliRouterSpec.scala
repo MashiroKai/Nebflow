@@ -342,10 +342,23 @@ class CliRouterSpec extends FunSuite:
     finally GatewayClient.resetPort()
   }
 
-  test("A4/C1: without an override, env wins, then the 8080 default") {
+  test("A4/C1: without an override, env wins, then the config port key, then the brand default") {
     GatewayClient.resetPort()
-    val expected = nebflow.shared.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
-    assertEquals(GatewayClient.readPort.unsafeRunSync(), expected)
+    val tmp = os.temp.dir(prefix = "cli-router-port-spec")
+    val saved = nebflow.shared.PathUtil.dataRoot
+    try
+      // env 腿在场时 config/默认腿不可达；env 沉默时 config "port" 键须生效。
+      nebflow.shared.PathUtil.setDataRoot(tmp)
+      os.write.over(tmp / "nebflow.json", """{"port": 6199}""", createFolders = true)
+      val expected = nebflow.shared.Branding
+        .env("GATEWAY_PORT")
+        .flatMap(_.toIntOption)
+        .getOrElse(6199)
+      assertEquals(GatewayClient.readPort.unsafeRunSync(), expected)
+    finally
+      GatewayClient.resetPort()
+      nebflow.shared.PathUtil.setDataRoot(saved)
+      os.remove.all(tmp)
   }
 
   // ===== 7. command bodies reached through an injected client (A3) =====

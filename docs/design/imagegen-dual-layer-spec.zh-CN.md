@@ -109,7 +109,7 @@ status: open
 
 - 历史重放：job 句柄是瞬时态——重放旧会话时占位卡不会自动找回图片（重启后台账
   清空；磁盘 PNG 仍在，路径在后续 agent 回合文本中）。升稳定批的候选修法。
-- MCP server 端口解析序：--port > $STAND_GATEWAY_PORT > $NEBFLOW_GATEWAY_PORT > 8080。
+- MCP server 端口解析序（双生分家批 2026-10-31 换代）：--port > $STAND_GATEWAY_PORT > $NEBFLOW_GATEWAY_PORT > 品牌缺省（stand 构建 6138；nebflow 品牌 6140——8080 自此只属 9.19 自有根实例，不再作缺省读数）。
 - Imagen 适配器未真连验证（Google 停服窗口）；gpt-image-1/Seedream 真连需各家长
   期 key——免费档 cogview-3-flash 为默认试点。
 

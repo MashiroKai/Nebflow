@@ -519,9 +519,9 @@ private[gateway] object PresenceRoutes:
                       val peerDeviceName = req.params.getOrElse("deviceName", "Unknown")
                       val peerPlatform = req.params.getOrElse("platform", "")
                       val peerPort = req.params
-                        .getOrElse("port", nebflow.shared.Defaults.GatewayPort.toString)
+                        .getOrElse("port", nebflow.shared.Defaults.brandDefaultPort.toString)
                         .toIntOption
-                        .getOrElse(nebflow.shared.Defaults.GatewayPort)
+                        .getOrElse(nebflow.shared.Defaults.brandDefaultPort)
                       val capsStr = req.params.getOrElse("capabilities", "{}")
                       val capabilities = parser.decode[Map[String, String]](capsStr).getOrElse(Map.empty)
                       val info = nebflow.neblink.DeviceDiscoveryInfo(

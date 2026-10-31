@@ -105,7 +105,7 @@ object HookRunner:
       // 活跃网关进程内 sysprop 恒被 GatewayMain 预置（cfg.port 派生）；此处兜底
       // 亦从单一来源取默认口（端口对调批 2026-10-25：6138，曾 8080）。
       "NEBFLOW_URL" -> sys.props
-        .getOrElse("nebflow.url", s"http://localhost:${nebflow.shared.Defaults.GatewayPort}")
+        .getOrElse("nebflow.url", s"http://localhost:${nebflow.shared.Defaults.brandDefaultPort}")
     )
 
   // ------------------------------------------------------------------

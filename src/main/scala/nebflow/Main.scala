@@ -85,10 +85,10 @@ object MainDispatch:
             s"(default home ~/.$brand, default port ${Defaults.legacyPortOf(brand)}) — " +
             s"${Branding.productName} and '$brand' are isolated and meant to coexist; they never share " +
             s"a port. Stop that instance ('$brand stop') or pick another port " +
-            "(--port / GATEWAY_PORT)."
+            "(--port / GATEWAY_PORT / config 'port' key)."
         )
       case SingleInstanceGuard.ForeignOccupant(detail) =>
-        Some(s"ERROR: $detail — ${Branding.productName} cannot start.\nStop it, or pick another port (--port / GATEWAY_PORT).")
+        Some(s"ERROR: $detail — ${Branding.productName} cannot start.\nStop it, or pick another port (--port / GATEWAY_PORT / config 'port' key).")
 
 end MainDispatch
 
@@ -298,12 +298,12 @@ object Main extends IOApp:
             ) *>
               IO.println(
                 s"'${Branding.productName}' and '$brand' are isolated and meant to coexist — they never share " +
-                  s"a port. Stop that instance ('$brand stop') or pick another port (--port / GATEWAY_PORT)."
+                  s"a port. Stop that instance ('$brand stop') or pick another port (--port / GATEWAY_PORT / config 'port' key)."
               ) *> IO.pure(ExitCode.Error)
           case nebflow.cli.SingleInstanceGuard.ForeignOccupant(detail) =>
             IO.println(s"ERROR: $detail — ${Branding.productName} cannot start.") *>
               IO.println(
-                "Stop it, or pick another port (--port / GATEWAY_PORT)."
+                "Stop it, or pick another port (--port / GATEWAY_PORT / config 'port' key)."
               ) *> IO.pure(ExitCode.Error)
         }
     }

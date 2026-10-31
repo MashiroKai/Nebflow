@@ -12,9 +12,12 @@ import java.util.concurrent.Executors
  * The classifier decides between boot / focus-existing / fail-loud — these
  * tests pin each branch against a real socket / HTTP occupant:
  *  - free port                     -> PortFree
- *  - nebflow-style /api/health     -> NebflowInstance (product marker)
+ *  - same-brand /api/health        -> NebflowInstance (product marker; own brand)
+ *  - other KNOWN brand health      -> OtherInstance (双生分家批 2026-10-31 红线：
+ *    绝不跨品牌 focus —— 健康面品牌词 ≠ 本构建品牌即拒启点名，零路径证据要求)
  *  - legacy health (version only)  -> NebflowInstance (older build compat —
- *    a pre-product-field instance must still be FOCUSED, not fought)
+ *    a pre-product-field instance must still be FOCUSED, not fought; 其 focus
+ *    资格仍过路径证据兜底腿——落对家品牌根下照样 OtherInstance)
  *  - foreign JSON / silent socket  -> ForeignOccupant
  */
 class SingleInstanceGuardSpec extends FunSuite:
@@ -61,12 +64,17 @@ class SingleInstanceGuardSpec extends FunSuite:
     assertEquals(st, SingleInstanceGuard.PortFree)
   }
 
-  test("nebflow health (product marker) classifies NebflowInstance") {
+  test("other KNOWN brand health (nebflow product marker, zero path evidence) classifies OtherInstance — never focused") {
+    // 双生分家批 2026-10-31 红线：健康面品牌词是权威身份，已知异品牌 ⇒ 拒启点名，
+    // 绝不 focus。本用例的 occupant 是本测试 JVM 内嵌 HTTP server（命令行无任何
+    // 品牌根证据）——正是 10-30 批会误判 focus 的场景。
     withHttpServer("""{"product":"nebflow","status":"ok","version":"1.4.1"}""") { p =>
       val st = SingleInstanceGuard.checkPort("127.0.0.1", p).unsafeRunSync()
       st match
-        case SingleInstanceGuard.NebflowInstance(url) => assertEquals(url, s"http://localhost:$p")
-        case other => fail(s"expected NebflowInstance, got $other")
+        case SingleInstanceGuard.OtherInstance(brand, url) =>
+          assertEquals(brand, "nebflow")
+          assertEquals(url, s"http://localhost:$p")
+        case other => fail(s"expected OtherInstance, got $other")
     }
   }
 
@@ -194,22 +202,27 @@ class SingleInstanceGuardSpec extends FunSuite:
       assert(elapsed < 5_000, s"live occupant must classify instantly, not drain-wait (elapsed=$elapsed)")
     }
 
-  test("R1 RED LINE: a live nebflow instance is focused, not drained past"):
+  test("R1 RED LINE: a live OTHER-BRAND instance is refused and named instantly — NEVER focused (双生分家批 2026-10-31)"):
     withHttpServer("""{"product":"nebflow","status":"ok","version":"1.4.1"}""") { p =>
+      val start = System.currentTimeMillis()
       val st = SingleInstanceGuard.checkPort("127.0.0.1", p, drainWaitMs = 60_000).unsafeRunSync()
-      assert(st.isInstanceOf[SingleInstanceGuard.NebflowInstance], s"got $st")
+      val elapsed = System.currentTimeMillis() - start
+      assert(st.isInstanceOf[SingleInstanceGuard.OtherInstance], s"cross-brand occupant must be refused, not focused, got $st")
+      assert(elapsed < 5_000, s"live occupant must classify instantly, not drain-wait (elapsed=$elapsed)")
     }
 
-  // ── 双实例并存批 2026-10-30：health 探测的品牌集 ────────────────────
-  // 判据 = **路径归属**（命令行里的品牌数据根），不是品牌词（理由见 probeOnce 注释——
-  // rename 兼容：改前构建的本产品实例健康面仍写 `nebflow`，必须照旧 focus）。因此
-  // 带品牌词的 health 面：能读出命令行品牌根证据才升级 OtherInstance；否则按自家/兼容
-  // 命中即 NebflowInstance。品牌词本身只是「读数 + 拒绝文案」的主键，也决定「认不认识」。
+  // ── 双实例并存批 2026-10-30 立类；判据换代为双生分家批 2026-10-31 ──────────
+  // 判据 = **品牌+自己的端口+自己的 home** 三元组，且**绝不跨品牌 focus**：健康面
+  // `product` 是 [[SingleInstanceGuard.KnownBrands]] 成员且 ≠ 本构建品牌 ⇒ OtherInstance
+  //（零路径证据要求 —— 10-18 的 rename 兼容腿「无路径证据的 nebflow 词当自家人 focus」
+  // 退役）。路径证据只在同品牌词场景兜底升级（家腿）：listener 命令行落对家品牌根
+  // ⇒ OtherInstance。端口腿恒成立（被探口即冲突口）。
 
   test("health probe accepts both command brands as known products (stand + nebflow)") {
     // 「认不认识」这条主键钉在这：两个已知品牌都进 known 集，异品牌字面才算出来。
-    // （路径证据是另一层，见 probeOnce 注释 + StaleProcessGuardSpec 的归属判据用例。）
-    assertEquals(SingleInstanceGuard.OtherBrands, Set("nebflow"), "已知对家品牌集（本批钉）")
+    // （路径证据是同品牌词场景的家腿兜底，见 probeOnce 注释 + StaleProcessGuardSpec 的归属判据用例。）
+    assertEquals(SingleInstanceGuard.KnownBrands, Set("stand", "nebflow"), "已知命令品牌集（分家批钉）")
+    assertEquals(SingleInstanceGuard.OtherBrands, Set("nebflow"), "已知对家品牌集（本构建 = stand）")
     assertEquals(SingleInstanceGuard.OwnBrand, "stand")
   }
 
@@ -218,15 +231,22 @@ class SingleInstanceGuardSpec extends FunSuite:
       val st = SingleInstanceGuard.checkPort("127.0.0.1", p, drainWaitMs = 0).unsafeRunSync()
       assert(st.isInstanceOf[SingleInstanceGuard.NebflowInstance], s"same-brand stays focusable, got $st")
     }
-    // 无路径证据的 nebflow-品牌词：rename 前的本产品实例 —— 兼容，照旧 focus。
-    withHttpServer("""{"product":"nebflow","status":"ok","version":"1.4.1"}""") { p =>
-      val st = SingleInstanceGuard.checkPort("127.0.0.1", p, drainWaitMs = 0).unsafeRunSync()
-      assert(st.isInstanceOf[SingleInstanceGuard.NebflowInstance], s"rename-boundary compat: focus, not refuse, got $st")
-    }
-    // 无 product 字段的 legacy 形态（老构建）：也 focus。
+    // 无 product 字段的 legacy 形态（老构建）：也 focus（ occupant 命令行无品牌根证据时）。
     withHttpServer("""{"status":"ok","version":"1.4.0-beta.48","providers":{}}""") { p =>
       val st = SingleInstanceGuard.checkPort("127.0.0.1", p, drainWaitMs = 0).unsafeRunSync()
-      assert(st.isInstanceOf[SingleInstanceGuard.NebflowInstance], s"legacy shape stays focusable, got $st")
+      assert(st.isInstanceOf[SingleInstanceGuard.NebflowInstance], s"legacy shape stays focusable (no brand-root evidence), got $st")
+    }
+  }
+
+  test("health probe classifies a nebflow-branded occupant as OtherInstance with ZERO path evidence (red line)") {
+    // 分家批换代判据的核心用例： occupy 进程是**本测试 JVM**（命令行里既没有
+    // ~/.stand 也没有 ~/.nebflow），10-30 批的路径证据分层会把它当自己人 focus；
+    // 10-31 起品牌词即身份 —— 跨品牌永不 focus。
+    withHttpServer("""{"product":"nebflow","status":"ok","version":"2026.10.26"}""") { p =>
+      val st = SingleInstanceGuard.checkPort("127.0.0.1", p, drainWaitMs = 0).unsafeRunSync()
+      st match
+        case SingleInstanceGuard.OtherInstance(brand, _) => assertEquals(brand, "nebflow")
+        case other => fail(s"expected OtherInstance('nebflow'), got $other")
     }
   }
 

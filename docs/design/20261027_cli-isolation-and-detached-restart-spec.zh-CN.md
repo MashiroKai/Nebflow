@@ -19,7 +19,7 @@ status: done
 |---|---|---|
 | `stand` | `~/.stand/bin/stand`（348 行单文件 launcher，权威副本 `ops/bin/stand`） | 端口/home 解析链回落 `NEBFLOW_*` 变量（env 互窜） |
 | `nebflow`（PATH 命中） | `~/.stand/bin/nebflow` = 139B「弃用→转发 stand」垫片（2026-10-22） | **跨品牌拉起的总根**：`~/.zshrc:18` 只把 `~/.stand/bin` 加进 PATH ⇒ 命令行 `nebflow …` 实际起的是 stand 6138 |
-| `nebflow`（全路径） | `~/.nebflow/bin/nebflow`（2026.9.19 自有根 launcher，2011B） | 不在 PATH；契约正确（NEBFLOW_HOME 钉 `~/.nebflow`、缺省 8080、JDK 钉 `~/.stand/jdk-21`） |
+| `nebflow`（全路径） | `~/.nebflow/bin/nebflow`（2026.9.19 自有根 launcher，2011B） | 不在 PATH；契约正确（NEBFLOW_HOME 钉 `~/.nebflow`、缺省 8080（9.19 年代主默认；双生分家批 2026-10-31 起 nebflow 品牌缺省换代为 6140）、JDK 钉 `~/.stand/jdk-21`） |
 
 `which -a`/zsh 别名：无别名；唯一 PATH 注入是 `~/.zshrc:18`（installer 写入，
 纪律：**不编辑用户 rc**，隔离由换掉垫片达成，rc 零改动）。
@@ -29,7 +29,7 @@ status: done
 | 命令 | home（只读自家 env） | 端口（`--port > 自家 env > 缺省`） | jar 位 | JDK |
 |---|---|---|---|---|
 | `stand` | `STAND_HOME > ~/.stand` | `STAND_GATEWAY_PORT > 6138` | 入口目录 `versions/` 指针 + winsort 兜底 | `STAND_JAVA_BIN > $STAND_HOME/jdk-21` |
-| `nebflow` | `NEBFLOW_HOME > ~/.nebflow` | `NEBFLOW_GATEWAY_PORT > 8080` | 入口目录 `nebflow-assembly-*.jar` winsort | `NEBFLOW_JAVA_BIN > ~/.stand/jdk-21`（9.19 契约：JDK 资产在 stand 根） |
+| `nebflow` | `NEBFLOW_HOME > ~/.nebflow` | `NEBFLOW_GATEWAY_PORT > 6140` | 入口目录 `nebflow-assembly-*.jar` winsort | `NEBFLOW_JAVA_BIN > ~/.stand/jdk-21`（9.19 契约：JDK 资产在 stand 根） |
 
 - **互不拉起**：垫片换向（`~/.stand/bin/nebflow` → `exec ~/.nebflow/bin/nebflow`）。
 - **互不探活**：端口解析只认自家变量 + `--port`；对家变量在场也不读（case 19 行为级证明）。
@@ -105,7 +105,7 @@ restart 命令，bare 报错 rc=2 并指路 detached 面）。
   挂活监听也不探不杀）、双 home 双端口 stop 互不波及、品牌收窄身份门、bare restart
   逐字透传、**dry-run 假点火全证据链**（ppid=1/树杀不可达/引擎分毫未动/零 JVM/
   守卫清账）、nebflow 品牌假点火、陈年守卫覆写。
-- 沙箱纪律不变：零真实 daemon、端口 21000+ 随机段、缺省口（6138/8080）一律不进测试。
+- 沙箱纪律不变：零真实 daemon、端口 21000+ 随机段、缺省口（6138/6140，及历史 8080）一律不进测试。
 
 ## 四、边界与不做
 

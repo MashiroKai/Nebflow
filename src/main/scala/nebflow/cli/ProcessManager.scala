@@ -188,11 +188,11 @@ object ProcessManager:
    * passes — the dev-host gate cannot read markers, so only spawn shapes
    * that cannot be dev hosts may proceed. With layer A the dev-host gate is
    * analytically satisfied (launcher children never carry dev-host markers),
-   * so a default-port (Defaults.GatewayPort = 6138, 端口对调批 2026-10-25)
+   * so a default-port (Defaults.brandDefaultPort = 6138 (stand 构建), 端口对调批 2026-10-25)
    * instance is stoppable — the exact author case.
    *
    * Layer B (port same source): the pid listens on the gateway port the CLI
-   * itself resolves (--port > GATEWAY_PORT > Defaults.GatewayPort) — the port
+   * itself resolves (--port > GATEWAY_PORT > config "port" > Defaults.brandDefaultPort) — the port
    * and the pid
    * come from our own state, high confidence it is our instance. Refused
    * when the pid holds a PROTECTED port (8080/8097): there the dev-host
@@ -279,9 +279,9 @@ object ProcessManager:
   /**
    * Gateway port resolution — the SAME source the CLI's gateway-facing
    * commands use (GatewayClient.readPort: --port > GATEWAY_PORT >
-   * Defaults.GatewayPort). Specs inject `gatewayPortOverride`; the live face
+   * Defaults.brandDefaultPort). Specs inject `gatewayPortOverride`; the live face
    * resolves lazily (only when the degraded face is actually entered).
-   * Resolution failure falls back to Defaults.GatewayPort (readPort's own
+   * Resolution failure falls back to Defaults.brandDefaultPort (readPort's own
    * default).
    */
   private def resolveGatewayPort(deps: StopDeps): IO[Int] =
@@ -289,7 +289,7 @@ object ProcessManager:
       case Some(p) => IO.pure(p)
       case None =>
         GatewayClient.readPort
-          .handleError(_ => nebflow.shared.Defaults.GatewayPort)
+          .handleError(_ => nebflow.shared.Defaults.brandDefaultPort)
 
   private def stopVerified(
       pid: Long,
