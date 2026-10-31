@@ -2141,6 +2141,13 @@ Object.values(chatViews).forEach(v => {
     if (opening) {
       fetchActiveAgentsOnOpen();
       renderBgAgentDropdown();
+      // 面板拆分批（2026-10-31 ④ · 作者追加令）：桌面端两键各开单族视图——本键
+      // （智能体键）只显智能体节；手机端（mobile-layer）维持合并单面板不变，视图
+      // 类由 CSS（body:not(.mobile-layer) 闸）兜住不生效。
+      if (!document.body.classList.contains('mobile-layer')) {
+        dropdown.classList.remove('bg-view-tasks');
+        dropdown.classList.add('bg-view-agents');
+      }
       dropdown.classList.remove('hidden');
       armBgUptimeTick(v);
     } else {
@@ -2213,6 +2220,9 @@ onMessage('agentStart', (msg, view) => {
     // subtask/subagent/dag 各 spawn 路由单点；快照 face 同键）。前端派生树据此
     // 把子行缩进挂到父 delegate 组头下；跨 turn 与 kind/startedAt 同款保留。
     parentSessionId: msg.parentSessionId || (prev && prev.parentSessionId) || '',
+    // 面板命名批（2026-10-31 ②）：批次短名（live 帧 routeWsSend 注入；快照面
+    // activeAgentEntryJson 同键）——跨 turn 保留同款合并语义。
+    delegateName: msg.delegateName || (prev && prev.delegateName) || '',
     kind: (prev && prev.kind) || bgAgentKindFromSession(msg.nodeSessionId || ''),
     // Project attribution badge: live frames carry it only on agentStart
     // (routeSubagentWsSend injects it for node-*/dispatcher-* sessions);
@@ -3606,6 +3616,12 @@ Object.values(chatViews).forEach(v => {
       // redesign — subagent parity; the stale-count empty-dropdown fork fixed
       // 2026-09-05 now surfaces as a proper empty state instead of nothing).
       renderBgDropdown();
+      // 面板拆分批（2026-10-31 ④ · 作者追加令）：桌面端本键（后台任务键）只显
+      // 任务节；手机端 mobile-layer 维持合并单面板（CSS 闸兜住视图类）。
+      if (!document.body.classList.contains('mobile-layer')) {
+        dropdown.classList.remove('bg-view-agents');
+        dropdown.classList.add('bg-view-tasks');
+      }
       dropdown.classList.remove('hidden');
       // Any retained row (terminal included) keeps the 1s sweep running while the
       // panel is open; ensureBgTimer() also covers the bucket-non-empty case.
@@ -4649,6 +4665,9 @@ onMessage('activeAgents', (msg) => {
       // 面板树批（2026-10-29 ①）：快照 authority（registry parentSessionId 单源）；
       // 旧后端无字段 → 缺省回落本地值（同 project/kind 合并类——不降级已渲染行）。
       parentSessionId: a.parentSessionId || (prev && prev.parentSessionId) || '',
+      // 面板命名批（2026-10-31 ②）：批次短名随快照出帧；旧后端无字段 → 回落本地
+      // 值（同 parentSessionId 合并类——不降级已渲染行）。
+      delegateName: a.delegateName || (prev && prev.delegateName) || '',
       // Project attribution (2026-09-06): activeAgents restore entries carry
       // project for node-*/dispatcher-* rows (AgentRecord.project →
       // activeAgentEntryJson); empty string → no badge.

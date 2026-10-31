@@ -853,6 +853,10 @@ export default {
   'subagents.fromFlowNode': 'from an AgentFlow node',
   'subagents.fromSubagent': 'from a parent sub-agent',
   'subagents.orphanTip': 'Parent session no longer visible · {sid}',
+  // Panel-hierarchy batch (2026-10-31 ①): group-head collapse caret a11y/hover
+  // text (flips with the collapsed state).
+  'subagents.collapseGroup': 'Collapse subtasks',
+  'subagents.expandGroup': 'Expand subtasks',
   // Task attribution badge (2026-09-27 taskbadge batch): hover tooltip of the
   // per-row `#id · title` badge
   'subagents.taskBadge': 'Task: {text}',

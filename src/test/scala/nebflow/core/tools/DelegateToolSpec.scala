@@ -90,20 +90,49 @@ class DelegateToolSpec extends CatsEffectSuite:
 
   // ---------- 1. schema 面 ----------
 
-  test("schema: exactly task/project/executor/mode — description and the legacy parameters are gone"):
+  test("schema: exactly task/name/project/executor/mode — description and the legacy parameters are gone"):
     // external-executors 批 #1225（S14 运行时半）：`executor` 入场——主 agent
     // 动态选择执行器的唯一显式输入（缺省 nebflow）；legacy 集合照旧反向钉死。
     // 双模式批（2026-10-28）：`mode` 入场——执行形态显式声明（kernel|dispatcher|
     // auto，缺省 auto；enum 契约由 DualModeToolFaceSpec F7 钉死）；闸关时参数
     // 照旧声明（schema 是静态面——Inert 语义在 call 侧）。
-    assertEquals(props, Set("task", "project", "executor", "mode"))
+    // 面板命名批（2026-10-31 · 作者令②）：`name` 入场——批次短名（≤12 字，
+    // maxLength 12 钉死；可选，required 不变）。
+    assertEquals(props, Set("task", "name", "project", "executor", "mode"))
     assertEquals(required, List("task"))
+    val nameMaxLen: Option[Int] = io.circe.Json
+      .fromJsonObject(DelegateTool.inputSchema)
+      .hcursor
+      .downField("properties")
+      .downField("name")
+      .downField("maxLength")
+      .as[Int]
+      .toOption
+    assertEquals(
+      nameMaxLen,
+      Some(12),
+      "name must carry maxLength 12 (author ruling ≤12 chars)"
+    )
     Set("prompt", "agent", "lifecycle", "taskDescription", "images", "preset").foreach { legacy =>
       assert(!props.contains(legacy), s"legacy parameter must be deleted from the schema: $legacy")
     }
     // 2026-09-14 作者裁定 U1/U2：`device` 是摘除目标（非 legacy 参数）——逐字钉死。
     assert(!props.contains("device"), s"device must be gone from the Delegate schema, got: $props")
     assertEquals(DelegateTool.name, "Delegate")
+
+  test("name parameter: short-name guidance is model-visible (dispatch prompt face)"):
+    // 面板命名批（2026-10-31 ②）：dispatch 提示词面（description = 模型可见指导）
+    // 必须带「用短名概括批次」口径——锚点：行首显短名，扫一眼分辨哪批是哪批。
+    val d = DelegateTool.description
+    assert(d.contains("name"), "description must document the name parameter")
+    assert(
+      d.toLowerCase.contains("12 character") || d.contains("12 characters") || d.contains("12 字符") || d.contains("≤12"),
+      "description must state the ≤12-char bound"
+    )
+    assert(
+      d.toLowerCase.contains("background-agents panel") || d.toLowerCase.contains("panel"),
+      "description must state the panel surface the name lands on"
+    )
 
   test("description carries the hard facts (self-contained brief / delegate: address / no concurrency cap)"):
     val d = DelegateTool.description

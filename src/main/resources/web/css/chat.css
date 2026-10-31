@@ -438,9 +438,12 @@
 .bg-task-main .bg-task-project { flex-shrink: 0; }
 /* The name yields, but at half the badge's rate: the badge is the designated
    truncation slot (largest basis + #id anchor + full title tooltip), so it
-   absorbs the shortfall first while the name keeps ~its identity readable. */
+   absorbs the shortfall first while the name keeps ~its identity readable.
+   面板版式批（2026-10-31 ③）：name 收 flex-shrink 1（分数收缩 0.5 在窄宽下
+   解析失稳——长名行实测 layout 宽越出容器），徽章升为 2——「徽章先截、名
+   字半速」的相对速率不变（徽章 2× 基准 vs 名字 1× 基准）。 */
 .bg-task-main .bg-task-name {
-  flex: 0 0.5 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -588,7 +591,8 @@
   white-space: nowrap;
   max-width: 200px;
   min-width: 0;
-  flex-shrink: 1;
+  /* 面板版式批（2026-10-31 ③）：2× 收缩率 = 指定截断槽先截（名字半速让位）。 */
+  flex-shrink: 2;
 }
 @media (prefers-color-scheme: dark) {
   .bg-task-badge {
@@ -771,6 +775,38 @@
   }
 }
 #bg-dropdown.hidden { display: none; }
+/* 面板拆分批（2026-10-31 ④ · 作者追加令）：桌面端两顶键各开单族面板——任务键
+   只显任务节（bg-view-tasks 隐智能体节）、智能体键只显智能体节（bg-view-agents
+   隐任务节）；视图类由 main.js 在开合时挂载体。手机端（body.mobile-layer）维持
+   合并单面板——:not 闸外规则不生效，零移动面改动。 */
+body:not(.mobile-layer) #bg-dropdown.bg-view-tasks .bg-section-agents { display: none; }
+body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display: none; }
+/* 面板版式批（2026-10-31 ③ · 作者报障「面板要左右拖」）：禁横向滚动——面板宽度
+   钳在视口内（right:24px 对称留白），信息列全槽位（主行/次行/工具行/停靠行）
+   收进列宽、溢出省略（全文 tooltip 既有承载），桌面 + 375 双端一屏装完。 */
+#bg-dropdown {
+  min-width: min(280px, calc(100vw - 48px));
+  max-width: min(380px, calc(100vw - 48px));
+}
+#bg-dropdown .bg-section { overflow-x: hidden; }
+#bg-dropdown .bg-dropdown-list { overflow-x: hidden; }
+#bg-dropdown .bg-task-info > * { min-width: 0; max-width: 100%; }
+#bg-dropdown .bgagent-tool { max-width: 100%; }
+/* 面板层级批（2026-10-31 ①）：组头折叠 caret——行首固定位小 chevron（中性
+   muted），点击区整格 14px（命中友好）；悬停提亮，点击语义（收起/展开子行树）
+   由 bgAgents.js 承载，行体点击开详情不变。 */
+.bg-task-caret {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: -2px;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+}
+.bg-task-caret:hover { color: var(--color-text); }
 .bg-dropdown-header {
   padding: 8px 12px;
   font-size: 11px;
