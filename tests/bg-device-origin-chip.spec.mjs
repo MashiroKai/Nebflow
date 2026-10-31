@@ -14,6 +14,11 @@
 //
 // 数据面 = WS activeBgTasks 快照直种，零后端、零 sbt。
 // Run: node <stand>/node_modules/@playwright/test/cli.js test tests/bg-device-origin-chip.spec.mjs
+//
+// 徽标归位批（2026-10-31 23:02）选择器重锚（存量红清欠）：行取数面
+// `#bg-dropdown > .bg-dropdown-list` → `#bg-dropdown .bg-section-tasks
+// .bg-dropdown-list`（后台合并批 2026-10-23 ⑥ + 分区批 2026-10-29 ③ 后任务行
+// 落 .bg-section-tasks 节，原直接子代选择器落空）。断言语义逐字不变。
 
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
@@ -112,7 +117,7 @@ test('T1 device-origin row: chip = device name, bg-origin-device class, 「跑�
   const errors = watchErrors(page);
   await page.click('#bg-indicator');
   await expect(page.locator('#bg-dropdown')).toBeVisible();
-  const row = page.locator('#bg-dropdown > .bg-dropdown-list').first()
+  const row = page.locator('#bg-dropdown .bg-section-tasks .bg-dropdown-list').first()
     .locator('.bg-task-row[data-task-id="job-kai"]');
   await expect(row).toHaveCount(1);
   const chip = row.locator('.bg-task-origin');
@@ -129,7 +134,7 @@ test('T2 legacy snapshot fallback: no origin fields → device name extracted fr
   const errors = watchErrors(page);
   await page.click('#bg-indicator');
   await expect(page.locator('#bg-dropdown')).toBeVisible();
-  const row = page.locator('#bg-dropdown > .bg-dropdown-list').first()
+  const row = page.locator('#bg-dropdown .bg-section-tasks .bg-dropdown-list').first()
     .locator('.bg-task-row[data-task-id="job-legacy"]');
   await expect(row).toHaveCount(1);
   const chip = row.locator('.bg-task-origin');
@@ -142,7 +147,7 @@ test('T3 control: nebula-origin row chip unchanged (Started-by semantics intact)
   const errors = watchErrors(page);
   await page.click('#bg-indicator');
   await expect(page.locator('#bg-dropdown')).toBeVisible();
-  const row = page.locator('#bg-dropdown > .bg-dropdown-list').first()
+  const row = page.locator('#bg-dropdown .bg-section-tasks .bg-dropdown-list').first()
     .locator('.bg-task-row[data-task-id="job-local"]');
   await expect(row).toHaveCount(1);
   const chip = row.locator('.bg-task-origin');

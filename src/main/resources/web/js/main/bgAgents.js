@@ -279,23 +279,23 @@ function bgHeadDefaultCollapsed(info) {
   return st === 'done' || st === 'error';
 }
 
-/** G1 mode → 组头徽标词（kind 词 = 面板既有数据词，非 locale 文案）。权威 = rows 行内
- *  `orchestrationMode`；subagent-star → Subagent、agentflow → Flow（R6：badge 跟模式
- *  走，项目内 delegate 不再标 Flow）。single/''（旧盘 null）= 过渡启发兜底：快照 kind
- *  优先（external- → External 信息保留），前缀启发（bgAgentKindFromSession）殿后——
- *  单一切换点收敛在该启发函数，P4 后自然消失。
- *  任务模式标注批（2026-10-30 作者令）：执行形态（row.mode = kernel/dispatcher，
- *  双模式总闸开时 DelegateRegistry.Record.mode 随 REST 行下发）**优先**于编排
- *  模式词——徽标回答「这活跑在哪种形态里」；闸关/旧盘 mode='' 回落既有编排词。 */
+/** 徽标归位批（2026-10-31 23:02 作者令 + 实拍截图）：**顶层 delegate 组头行只标一个
+ *  徽标 = delegate 执行形态 `row.mode`（kernel / dispatcher，即 delegate:type）**——
+ *  Delegate/Subagent/Flow 字样一律不上顶层；子级行的徽标 = 自身 kind（subagent /
+ *  agentflow 等，视实际类型，渲染在 childLevel 分支）。
+ *  考古（顶层为何会标上 Subagent——徽章来源字段取错）：旧实现以 `orchestrationMode`
+ *  兜底（subagent-star → Subagent / agentflow → Flow），再退快照 kind / 会话 id
+ *  前缀（SubTask → Delegate）。这三个字段全是**历史类型残留**——编排形态随子代理
+ *  spawn 记账惰性升级、kind 是 spawn 时刻的会话种类——与「这行在面板的层级」无关；
+ *  双模式总闸关 / 旧盘 mode='' 时兜底链把残留词顶到顶层组头 ⇒ 作者实拍截图的
+ *  「同层混排」乱象（有的 kernel、有的 Delegate、有的 Subagent）。
+ *  行级判定锚 = **层级**（不是历史类型残留）：顶层 ⇒ 只认 row.mode；mode 缺席
+ *  （总闸关/旧盘）⇒ **无徽标**（绝不回退残留词——无信息胜过错信息；子级 kind 词
+ *  的显示词归一仍走 bgKindDisplayWord / bgChildKindWord，渲染点不动数据面）。 */
 function bgDelegateBadgeWord(info, row) {
   const execMode = String((row && row.mode) || '');
   if (execMode === 'kernel' || execMode === 'dispatcher') return execMode;
-  const mode = String((row && row.orchestrationMode) || '');
-  if (mode === 'subagent-star') return 'Subagent';
-  if (mode === 'agentflow') return 'Flow';
-  // 修订批九点②补漏：快照 kind（AgentKind.SubTask）同走显示词归一（数据面不动）。
-  return bgKindDisplayWord(info && info.kind) ||
-    bgAgentKindFromSession((info && info.sessionId) || '') || '';
+  return '';
 }
 
 /** Store 子条目状态 → 面板行状态（SubAgentTask 值域 running|completed|failed|restarting；
@@ -580,8 +580,13 @@ function bgTaskRowHtml(id, info, opts = {}) {
     waiting: 'bg-status-waiting',
   }[rowState];
   // 修订批九点②补漏：快照 kind（AgentKind.SubTask）同走显示词归一（数据面不动）。
-  const kind = (opts && opts.badgeWord) || bgKindDisplayWord(info.kind) ||
+  let kind = (opts && opts.badgeWord) || bgKindDisplayWord(info.kind) ||
     bgAgentKindFromSession(info.sessionId || id);
+  // 徽标归位批（2026-10-31 23:02 作者裁定）：**顶层行**（组头 + 未被认领的 leftover/
+  //  孤儿行，即一切非 childLevel 行）不渲染 Delegate/Subagent 字样——层级锚不是历史
+  //  类型残留。组头徽标只认 row.mode（bgDelegateBadgeWord，mode 缺席即无徽标）；此处
+  //  兜底摘掉 leftover 行的 kind 残留词（「来自 …」孤儿角标/任务归属徽标不受影响）。
+  if (!opts.childLevel && (kind === 'Delegate' || kind === 'Subagent')) kind = '';
   const kindPart = kind ? '<span class="bg-task-kind">' + escapeHtml(kind) + '</span>' : '';
   // Project attribution (2026-09-06 author ruling): Flow rows carry the
   // owning project's name next to the kind chip — muted plain text,
