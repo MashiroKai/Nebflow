@@ -1,4 +1,10 @@
-// voice-seal.spec.mjs — voiceseal 批（批 #508）→ **纠正批（批 #513）** 护栏。
+// voice-seal.spec.mjs — voiceseal 批（批 #508）→ **纠正批（批 #513）** 护栏
+// → **voice 块补封批（2026-10-31，作者令「封存所有会话的 voice 块——应随全双工
+// TTS 一起封存，漏网；呈证据」）**：TTS 输出族（<voice> 块渲染 + VoicePlayer
+// 播报）与全双工同 flag（voiceEnabled，缺席封存）——
+//   N10 默认封存：<voice> 剥签普通文本渲染（零 .voice-block、内容无损）+
+//        speakText 探针零 /api/tts 请求；
+//   R6  恢复态（features.voice:true）：<voice> 提取路径原样回归（封存 ≠ 删除）。
 // 作者澄清令逐字：「怎么语音气泡直接没了，我要去掉的是hover拖动这些功能。」
 // —— #508 把拖动居中语音气泡整个藏了 = 理解过宽；#513 纠正为**分面受控**：
 //
@@ -62,6 +68,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const browser = await chromium.launch();
 
+/** /api/tts 请求留档（N10 TTS 播放面封存断言的计数面）。 */
+const ttsRequests = [];
+
 /**
  * bootPage — 自包含页面（静态文件从 web 树读盘；WS = mock）。
  * @param {{voiceOn?: boolean, orbOff?: boolean}} opts
@@ -98,6 +107,7 @@ async function bootPage({ voiceOn = false, orbOff = false } = {}) {
     const url = new URL(route.request().url());
     let p = decodeURIComponent(url.pathname);
     if (p === '/') p = '/index.html';
+    if (p === '/api/tts') ttsRequests.push(route.request().postData() || '');
     if (p.startsWith('/api/')) return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
     const file = normalize(join(WEB, p));
     if (!file.startsWith(normalize(WEB))) return route.fulfill({ status: 403, body: 'forbidden' });
@@ -291,6 +301,25 @@ async function realHoverBubble(page) {
   ok('N9 范围护栏：header 语音输出开关（独立面）未被本批触碰（在 DOM、无封存 hidden）',
     s.voiceToggleAttached === true && s.voiceToggleHidden === false,
     `attached=${String(s.voiceToggleAttached)} hidden=${String(s.voiceToggleHidden)}`);
+  // N10 voice 块补封批 2026-10-31（作者令「封存所有会话的 voice 块——应随全双工
+  // TTS 一起封存，漏网」）：默认封存态 <voice> 剥签按普通文本渲染（内容在、
+  // 零 .voice-block 可点绿字）；TTS 播放面（speakText → VoicePlayer.enqueue
+  // 同管线）静默 no-op、零 /api/tts 请求。
+  const ttsBefore = ttsRequests.length;
+  const voiceRender = await page.evaluate(async () => {
+    const m = await import('/js/utils.js');
+    const html = m.renderMarkdownWithMath('前文 <voice>朗读这段</voice> 后文', true);
+    const speak = await import('/js/chat.js');
+    speak.speakText('封存态探针文本');
+    return { html, speakOk: typeof speak.speakText === 'function' };
+  });
+  ok('N10 默认封存：<voice> 块剥签普通文本渲染（零 .voice-block、内容无损）',
+    !voiceRender.html.includes('voice-block') && voiceRender.html.includes('朗读这段'),
+    voiceRender.html.slice(0, 120));
+  await sleep(300);
+  ok('N10-b TTS 播放面封存：speakText 探针后零 /api/tts 请求',
+    voiceRender.speakOk && ttsRequests.length === ttsBefore,
+    `tts=${ttsRequests.length - ttsBefore}`);
   ok('S1 零 page error', pageErrors.length === 0, pageErrors.join('; '));
   await seeded.ctx.close();
 }
@@ -347,6 +376,15 @@ async function realHoverBubble(page) {
     after.wrapVisible === true && !after.wrapHiddenAttr && after.wrapStaticCls);
   ok('R5-c 范围护栏（恢复态）：header 语音输出开关仍未被触碰',
     after.voiceToggleAttached === true && after.voiceToggleHidden === false);
+  // R6 voice 块补封批（恢复态回归面）：features.voice:true 时 <voice> 提取路径
+  // 原样回归（.voice-block 在场）——封存 ≠ 删除，flag 恢复即完整功能面。
+  const restoredRender = await page.evaluate(async () => {
+    const m = await import('/js/utils.js');
+    return m.renderMarkdownWithMath('前文 <voice>朗读这段</voice> 后文', true);
+  });
+  ok('R6 恢复态：<voice> 渲染路径回归（.voice-block 在场）',
+    restoredRender.includes('voice-block') && restoredRender.includes('朗读这段'),
+    restoredRender.slice(0, 120));
   ok('S2 零 page error', pageErrors.length === 0, pageErrors.join('; '));
   await unsealed.ctx.close();
 }

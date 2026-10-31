@@ -6,6 +6,10 @@ import { currentSelfDeviceName } from './deviceRoster.js';
 // 认知二期产品批①选档器：human 过滤层折叠默认读档（profileState 零依赖，
 // 无导入环）；profileGeneration 掺进 markdown 缓存键——切档即旧缓存失效。
 import { profileGeneration } from './profileState.js';
+// voice 块补封批 2026-10-31（作者令「封存所有会话的 voice 块——应随全双工 TTS
+// 一起封存，漏网」）：<voice> TTS 输出族与全双工同 flag（voiceEnabled，缺席封存）。
+// featureFlags 只依赖 state.js，无导入环。
+import { voiceEnabled } from './featureFlags.js';
 
 // ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
 
@@ -323,9 +327,17 @@ export function renderMarkdownWithMath(text, parseVoice = true, opts) {
 
 function _renderMarkdownWithMath(text, parseVoice) {
   if (typeof marked === 'undefined') return escapeHtml(text);
+  // voice 块补封批 2026-10-31（作者令「封存所有会话的 voice 块」，漏网面）：
+  // 全双工 TTS 已随 #508 封存（voiceEnabled 缺席即封存），TTS 输出族
+  // （<voice> 块 = .voice-block 可点绿字 + VoicePlayer 播报）是同源漏网——
+  // 封存态下剥签按普通内联文本渲染（内容零丢失、零 .voice-block、零播放
+  // 入口）；features.voice:true 解封时提取路径原样回归（零删除惯例）。
+  if (parseVoice && !voiceEnabled()) {
+    text = text.replace(RE_VOICE, '$1');
+  }
   // Extract <voice>...</voice> blocks before any markdown processing (only for AI output, not thinking)
   const voiceBlocks = [];
-  if (parseVoice) {
+  if (parseVoice && voiceEnabled()) {
     let vp = text.replace(RE_VOICE, (m, content) => {
       voiceBlocks.push(content.trim());
       return `VOICEBLOCK${voiceBlocks.length - 1}END`;

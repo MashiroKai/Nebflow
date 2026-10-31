@@ -33,9 +33,8 @@
   --ask-fab-bottom: 14px;        /* 钮距画布下缘（JS 随角落圆钮簇实测让位） */
   --ask-dock-w: 372px;           /* 覆盖层宽（= 输入框档宽） */
   --ask-col-maxh: 316px;         /* 气泡列 max-height（小巧不占 canvas） */
-  --ask-fade-h: 64px;            /* 顶部渐变模糊过渡带高 */
+  --ask-fade-h: 64px;            /* 顶部液体玻璃 v2 渐隐带高（列顶留白同值，首条不入带） */
   --ask-bub-maxw: 306px;         /* 气泡 max-width */
-  --ask-veil-blur: 8px;          /* 顶部模糊幕 blur */
   --z-ask-dock: 24;              /* < 顶行 30（排他 z 序：永不入顶行） */
   --ask-dot-ring: rgba(255, 255, 255, 0.9);  /* 通知点描边圈（暗档翻 #0b0e14） */
   --ask-link: #1d4ed8;           /* cite 徽标链色（亮档） */
@@ -121,29 +120,45 @@ html[data-theme='light'] {
 }
 .ask-dock.closed { opacity: 0; transform: translateY(16px) scale(0.6); pointer-events: none; }
 
-/* 气泡列：从按钮位置长出；顶部渐变模糊过渡（作者令③⑤） */
+/* 气泡列：从按钮位置长出；顶部渐变模糊过渡（作者令③⑤）
+ * ⑤ 修复批 2026-10-31：顶带渐隐按液体玻璃 v2 已上线语言实施（材质/模糊/饱和/
+ * mask 全部引用 --g2-* 单源，与 #g2-edge-fade 同配方：--g2-veil 渐层 +
+ * blur(var(--g2-fade-blur)) saturate(var(--g2-fade-sat)) + 两段式 mask），并与
+ * 消息留距——带净空走 .ask-colwrap 的 padding-top（**滚动容器之外**：气泡滚到
+ * 顶也只到带底沿，首条永不入带；若 padding 加在 .ask-col 上会随滚动被卷走，
+ * 气泡仍会滚进带区）；旧消息渐隐由列 mask + 按龄透明度承担。 */
 .ask-colwrap {
   position: relative; width: 100%;
   max-height: var(--ask-col-maxh);
+  /* ⑤ 带净空：渐隐带独占列顶 fade-h 保留区。 */
+  padding-top: var(--ask-fade-h);
   display: flex; flex-direction: column; justify-content: flex-end;
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.55) 26px, #000 var(--ask-fade-h));
   mask-image: linear-gradient(to bottom, transparent 0, rgba(0, 0, 0, 0.55) 26px, #000 var(--ask-fade-h));
 }
 .ask-col {
-  width: 100%; max-height: var(--ask-col-maxh); overflow-y: auto;
+  /* 列可视高 = 总档 − 带档（E-2：桌面 316−64=252 / 移动 250−56=194）。 */
+  width: 100%; max-height: calc(var(--ask-col-maxh) - var(--ask-fade-h)); overflow-y: auto;
   display: flex; flex-direction: column; gap: 7px; align-items: flex-end;
   padding: 6px 2px 2px;
   scrollbar-width: none; touch-action: pan-y; /* #988：列内纵滚原生，手势零劫持 */
 }
 .ask-col::-webkit-scrollbar { display: none; }
-/* 顶部模糊幕：越升越高的旧气泡渐变模糊进画布（backdrop blur + 渐隐 mask） */
+/* 顶部模糊幕：液体玻璃 v2 渐隐带（--g2-* 单源；越升越高的旧气泡渐变模糊进画布） */
 .ask-colwrap .ask-veil {
   position: absolute; top: 0; left: 0; right: 0; height: var(--ask-fade-h);
   z-index: 2; pointer-events: none;
-  -webkit-backdrop-filter: blur(var(--ask-veil-blur));
-  backdrop-filter: blur(var(--ask-veil-blur));
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, transparent 100%);
+  background: var(--g2-veil);
+  -webkit-backdrop-filter: blur(var(--g2-fade-blur)) saturate(var(--g2-fade-sat));
+  backdrop-filter: blur(var(--g2-fade-blur)) saturate(var(--g2-fade-sat));
+  /* 两段式 ease-out 衰减：先糊后没（#g2-edge-fade 同款 mask，双写 -webkit-） */
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.55) 50%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.55) 50%, transparent 100%);
+}
+/* no-backdrop 降级（liquid-glass.css 同口径：带退化为纯渐层罩，渐隐不破） */
+html.no-backdrop .ask-colwrap .ask-veil {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 
 /* 玻璃气泡（三修③：材质 = canvas --cv-* 单源，与聊天 #header / canvas 控件

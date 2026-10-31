@@ -11,15 +11,20 @@ import nebflow.shared.PathUtil
 import scala.concurrent.duration.DurationLong
 
 import scala.collection.concurrent.TrieMap
+import scala.util.control.NonFatal
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Canvas ask mode 工具面（机制稿 §5/§7，实施批 2026-10-28）
+ * Canvas ask mode 工具面（机制稿 §5/§7，实施批 2026-10-28；2026-10-31 只读工具批
+ * 增补第三件 read_file_content——设计清单 docs/design/20261031_113700_ask-readonly-
+ * tool-design__delegate-nebflow-09ef7b2e.zh-CN.md，作者令「agent 报无法读取文件」）
  *
- * 白名单封闭枚举的两件（AskSessions.AllowedTools 单点）：
+ * 白名单封闭枚举的三件（AskSessions.AllowedTools 单点）：
  *   - message_record_search —— 消息检索 CLI 封装（tools/stand-recall，只读）；
  *   - send_message_to_main_chat —— 单向信使（§7 ask_handoff；ask 会话唯一的
  *     对外动作），经 AskHandoffPort 注册器投递（gateway 侧 ensureAgent 主会话
  *     ! ExternalEvent(source="ask") ⇒ injected 气泡 + 来源行引擎呈现链）。
+ *   - read_file_content —— 读本文件原文（只读）：路径锁绑定表（无 path 参数）、
+ *     行窗口（start_line/max_lines，硬顶 500）、2MB 文件顶、64KB 输出顶。
  *
  * 双保险（DelegateReportTool 挂载先例）：挂载面 = buildAllowedToolSet 早退集
  * （ask 会话专属）；工具内侧 = ctx.sessionId 同判据拒绝（AskSessions 单点）。
@@ -249,3 +254,149 @@ object MessageRecordSearchTool extends Tool:
     end if
   end call
 end MessageRecordSearchTool
+
+/**
+ * 读本文件原文（2026-10-31 只读工具批：`read_file_content`）——ask 会话唯一的
+ * 文件读取通道。设计清单（作者过目面）=
+ * docs/design/20261031_113700_ask-readonly-tool-design__delegate-nebflow-09ef7b2e
+ * .zh-CN.md，本对象逐字按清单落地：
+ *   - 路径锁绑定表：无 `path` 参数，工具内侧经 AskSessionRegistry 回查本会话
+ *     绑定文件——读「当前这份文件」与 ask 使命同边界，任意路径读取不成立；
+ *   - 格式：UTF-8 文本；扩展名双保险复问 isAskable（绑定已过闸，此处防直调绕过）；
+ *   - 体积上限：单文件 2MB（超出显式拒绝，不静默截文件级语义）；行窗口
+ *     start_line（1 起，缺省 1）/ max_lines（缺省 200，硬顶 500）；单次输出
+ *     64KB（窗口内再截，truncated:true + 截断标记——单行巨型文件撑不爆上下文）；
+ *   - 返回 JSON 结构化结果（file/totalLines/startLine/returnedLines/truncated/
+ *     content）。
+ * 身份双保险同 SendMessageToMainChatTool：非 ask 会话（含 REST 直调）拒绝。
+ */
+object ReadFileContentTool extends Tool:
+
+  val Name: String = "read_file_content"
+
+  /** 文件级体积顶（清单 §体积上限：2MB 超出即拒）。 */
+  val MaxFileBytes: Long = 2L * 1024L * 1024L
+
+  /** 单次输出字符顶（清单 §单次输出上限 64KB）。 */
+  val MaxOutputChars: Int = 64 * 1024
+
+  /** 行窗口硬顶（清单：max_lines 缺省 200、硬顶 500）。 */
+  val DefaultMaxLines: Int = 200
+  val HardMaxLines: Int = 500
+
+  override def name: String = Name
+
+  override def description: String =
+    """Read the original text of THIS session's bound file (the file the user is asking about) — read-only. The path is fixed to the session binding; you cannot read any other file. Content is UTF-8 text returned as a line window: use start_line (1-based, default 1) and max_lines (default 200, hard cap 500) to page through long files. Returns JSON with totalLines/returnedLines/truncated so you can plan the next window. Use it whenever the answer needs exact wording/structure beyond the assembled context snapshot."""
+
+  override def inputSchema: JsonObject = JsonObject(
+    "type" -> "object".asJson,
+    "properties" -> Json.obj(
+      "start_line" -> Json.obj(
+        "type" -> "integer".asJson,
+        "description" -> "First line to return (1-based). Optional, default 1.".asJson
+      ),
+      "max_lines" -> Json.obj(
+        "type" -> "integer".asJson,
+        "description" -> "Max lines to return. Optional, default 200, hard cap 500.".asJson
+      )
+    ),
+    "required" -> Json.arr()
+  )
+
+  override def summarize(input: JsonObject): String =
+    val s = input("start_line").flatMap(_.asNumber.flatMap(_.toInt)).getOrElse(1)
+    val n = input("max_lines").flatMap(_.asNumber.flatMap(_.toInt)).getOrElse(DefaultMaxLines)
+    s"read_file_content(lines $s..+${n.min(HardMaxLines)})"
+
+  override def summarizeResult(input: JsonObject, result: String): String =
+    if result.length > 160 then result.take(157) + "..." else result
+
+  override def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+    val sid = ctx.sessionId.getOrElse("")
+
+    // 身份双保险之工具内侧：非 ask 会话（含 REST 直调 / 其余一切身份）拒绝。
+    if !AskSessions.isAskSession(sid) then
+      IO.pure(
+        Left(
+          ToolError(
+            "read_file_content: permission denied — this tool is exclusive to file-ask sessions. (ASK_READ_FORBIDDEN)"
+          )
+        )
+      )
+    else
+      val startLine = input("start_line").flatMap(_.asNumber.flatMap(_.toInt)) match
+        case Some(n) if n >= 1 => n
+        case _                 => 1
+      val maxLines = input("max_lines").flatMap(_.asNumber.flatMap(_.toInt)) match
+        case Some(n) if n >= 1 => n.min(HardMaxLines)
+        case _                 => DefaultMaxLines
+
+      val flow =
+        for
+          registry <- IO.pure(AskGatewayServices.instance.map(_.registry))
+          bindingOpt <- registry match
+            case Some(r) => r.byId(sid)
+            case None    => IO.pure(None)
+          result <- bindingOpt match
+            case None =>
+              IO.pure(
+                Left(
+                  ToolError(
+                    "read_file_content: this ask session has no file binding — open the file card in canvas first. (ASK_READ_NO_BINDING)"
+                  )
+                )
+              )
+            case Some(binding) if !AskSessions.isAskable(binding.file) =>
+              // 扩展名双保险（清单 §可读格式）：绑定面已过闸，此处防直调绕过。
+              IO.pure(
+                Left(
+                  ToolError(
+                    s"read_file_content: file type not askable (md/html only): ${binding.fileName}. (ASK_READ_NOT_ASKABLE)"
+                  )
+                )
+              )
+            case Some(binding) =>
+              IO.blocking {
+                try
+                  val p = os.Path(binding.file)
+                  if !os.exists(p) || !os.isFile(p) then
+                    Left(ToolError(s"read_file_content: file not found: ${binding.fileName}. (ASK_READ_NOT_FOUND)"))
+                  else
+                    val size = os.size(p)
+                    if size > MaxFileBytes then
+                      Left(
+                        ToolError(
+                          s"read_file_content: file too large (${size}B > ${MaxFileBytes}B cap): ${binding.fileName}. (ASK_READ_TOO_LARGE)"
+                        )
+                      )
+                    else
+                      val allLines = os.read.lines(p)
+                      val total = allLines.length
+                      val from = math.min(startLine, total + 1)
+                      val slice =
+                        if from > total then Vector.empty
+                        else allLines.slice(from - 1, math.min(from - 1 + maxLines, total))
+                      var content = slice.mkString("\n")
+                      var truncated = from > total && total > 0
+                      if content.length > MaxOutputChars then
+                        content = content.take(MaxOutputChars) + "\n…[truncated at 64KB output cap — narrow max_lines or page with start_line]"
+                        truncated = true
+                      val json = Json.obj(
+                        "file"          -> binding.fileName.asJson,
+                        "totalLines"    -> (if total > 0 then total else 0).asJson,
+                        "startLine"     -> from.asJson,
+                        "returnedLines" -> slice.length.asJson,
+                        "truncated"     -> truncated.asJson,
+                        "content"       -> content.asJson
+                      )
+                      Right(json.noSpaces)
+                catch
+                  case NonFatal(e) =>
+                    Left(ToolError(s"read_file_content failed: ${e.getMessage}"))
+              }
+        yield result
+      flow.handleErrorWith(e => IO.pure(Left(ToolError(s"read_file_content failed: ${e.getMessage}"))))
+    end if
+  end call
+end ReadFileContentTool

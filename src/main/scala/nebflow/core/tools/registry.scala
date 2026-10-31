@@ -180,13 +180,15 @@ object ToolRegistry:
       // 与 remoteableTools 均不含本件。
       "TaskSearch" -> TaskSearchTool,
       // ── Canvas ask mode（2026-10-28 实施批，机制稿 §5）─────────────────
-      // ask 会话白名单封闭枚举两件：授能唯一来源 = buildAllowedToolSet 的
+      // ask 会话白名单封闭枚举三件（2026-10-31 只读工具批增补 read_file_content）：
+      // 授能唯一来源 = buildAllowedToolSet 的
       // askSession 早退集（引擎侧会话身份，机制固定零配置）；非 ask 身份在
       // 同函数尾段反剥（声明 "*" 也不授能，TeamTaskTools 先例）；插件白名单
-      // 与 remoteableTools 均不含两件。工具内侧再用 ctx.sessionId 同判据
+      // 与 remoteableTools 均不含三件。工具内侧再用 ctx.sessionId 同判据
       // 拒绝（AskTools 双保险，DelegateReportTool 先例）。
       "message_record_search" -> MessageRecordSearchTool,
-      "send_message_to_main_chat" -> SendMessageToMainChatTool
+      "send_message_to_main_chat" -> SendMessageToMainChatTool,
+      "read_file_content" -> ReadFileContentTool
     )
     // imagegen 双层批（2026-10-24）+ 功能开放批（2026-10-30 作者令「直接开放
     // 出来」，缺省编入）：编译期 seal 门控保留为应急开关——显式 `STAND_IMAGEGEN=0`

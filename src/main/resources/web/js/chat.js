@@ -3,6 +3,10 @@
 
 import state, { AGENT_PALETTE } from './state.js';
 import { key } from './branding.js';
+// voice 块补封批 2026-10-31（作者令「封存所有会话的 voice 块」，漏网面）：TTS
+// 输出族（<voice> 块 + VoicePlayer 播报）与全双工同 flag 封存（voiceEnabled，
+// 缺席即封存；utils 渲染面剥签，此处把住播放面三入口 prefetch/enqueue/replay）。
+import { voiceEnabled } from './featureFlags.js';
 // 时制（12h/24h）：偏好、格式化与热区绑定的唯一属主 = timeFormat.js（主对话框
 // / 设备对话框 / 好友对话框三面共享同一偏好与同一实现；本模块只消费）。
 // formatFooterTime = footer-time 批（2026-10-06）的分层 footer label：
@@ -142,9 +146,10 @@ const VoicePlayer = {
     }
   },
 
-  /** 流式预取：检测到完整 voice 块时立即发起 TTS 请求（并行，不等结果）。 */
+  /** 流式预取：检测到完整 voice 块时立即发起 TTS 请求（并行，不等结果）。
+   *  voice 块补封批 2026-10-31：封存态（voiceEnabled 缺席）不预取——零 TTS 请求。 */
   prefetch(text) {
-    if (!text || this._cache.has(text)) return;
+    if (!text || this._cache.has(text) || !voiceEnabled()) return;
     this._cacheSet(text, this._fetchTts(text));
   },
 
@@ -181,8 +186,11 @@ const VoicePlayer = {
     return await p;
   },
 
-  /** Add a voice block to the playback queue. */
+  /** Add a voice block to the playback queue.
+   *  voice 块补封批 2026-10-31：封存态（voiceEnabled 缺席）不入队——
+   *  所有播报（块队列 / speakText / 全双工 aireply 同管线）单点闸死。 */
   enqueue(text, element) {
+    if (!voiceEnabled()) return;
     this.queue.push({ text, element });
     if (!this.processing) this._processQueue();
   },
