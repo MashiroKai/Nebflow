@@ -768,8 +768,12 @@ function popupBlockedFallback(url) {
  * A logto-not-configured answer is an ERROR face (台账 #924: the legacy
  * device-flow fallback was retired with the flow itself, 2026-10-26).
  * Closing the modal cancels polling.
+ *
+ * 导出（顶栏批 2026-10-31）：手机层工作台头像的未登录点击腿与 Activity Bar /
+ * 设置头像同一登录面（禁第二份登录实现）。🔴 调用必须在真实用户手势栈内
+ * （PKCE 弹窗预留依赖同步手势，见 activateAccountEntry 注记）。
  */
-function showLoginModal(opts = {}) {
+export function showLoginModal(opts = {}) {
   if (document.getElementById('nebflow-login-modal')) return;
   // Non-gesture repeat guard (2026-09-15 OIDC fix) — see LOGIN_FLOW_GUARD_MS.
   // Checked BEFORE the modal is built, so a suppressed repeat leaves no empty

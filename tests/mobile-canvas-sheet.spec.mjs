@@ -149,7 +149,7 @@ test('T1 canvas page presentation: full-bleed page, chip strip, toolbar, host, s
     return {
       x: Math.round(r.x), w: Math.round(r.width),
       live: pg.classList.contains('live'),
-      title: pg.querySelector('.mobile-page-title').textContent,
+      title: pg.querySelector('.mobile-page-title')?.textContent ?? null,
       chips: pg.querySelectorAll('.mf-strip-chip').length,
       chipOn: pg.querySelectorAll('.mf-strip-chip.on').length,
       chipLabel: pg.querySelector('.mf-strip-chip.on')?.textContent || '',
@@ -169,7 +169,8 @@ test('T1 canvas page presentation: full-bleed page, chip strip, toolbar, host, s
   expect(geo.x).toBe(0);            // 全屏独立页面（各节目不重叠）
   expect(geo.w).toBe(375);
   expect(geo.live).toBe(true);
-  expect(geo.title).toBe('canvas');
+  // 顶栏批 2026-10-31（作者令①）：canvas = dock 根页，顶栏标题胶囊随根页退役。
+  expect(geo.title).toBe(null);
   expect(geo.chips).toBe(1);        // 单卡 = 单 chip
   expect(geo.chipOn).toBe(1);
   expect(geo.chipLabel).toBe('样例文档一');

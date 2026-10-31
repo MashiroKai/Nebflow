@@ -205,9 +205,12 @@ test('T3 NL-ID entry gone (logged-in view), auth buttons removed with read-only 
       '#neblink-nlid-save', '#neblink-nlid-cancel', '.neblink-nlid-statusline', '.neblink-nlid-value'];
     return {
       leaked: sels.filter(s => content.querySelector(s)),
-      // ①④（作者 2026-09-15）：设备列表已移出设置 ⇒ 账号段无设备列表。
+      // ①④（作者 2026-09-15）：旧内联设备列表已移出设置 ⇒ 账号段无 .neblink-peers-list。
       peersList: !!content.querySelector('.neblink-peers-list'),
-      deviceRows: content.querySelectorAll('.neblink-peer').length,
+      // friendseal ①-A（2026-09-25）设置页设备区经许可槽位回归（#settings-devices-slot，
+      // unifyfix R1b 同口径）：只钉「槽位外零设备行」。手机顶栏批（2026-10-31 ③）
+      // 手机层整槽不渲染 —— 该断言跑桌面视口，槽位缺席由 mobile-topbar T2 钉。
+      deviceRows: [...content.querySelectorAll('.neblink-peer')].filter(el => !el.closest('#settings-devices-slot')).length,
       oldWindowEntry: content.querySelectorAll('.dropbox-clickable').length,
       // auth-trim（2026-10-20）：两键零残留 + 只读身份行在位。
       switchBtn: !!content.querySelector('#neblink-switch-btn'),

@@ -53,6 +53,10 @@ import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '..
 import { createIconsIn } from '../utils.js';
 import { ensureSocialPage, syncSocialFaces } from './socialFaces.js';
 import { ensureTaskPanel, closeTaskPanel } from './taskPanel.js';
+import { buildMeFace } from './meFace.js';
+import { showLoginModal } from '../activityBar.js';
+import { avatarViewState, noteAvatarFailure, paintAvatarSlot, getNeblinkState, onNeblinkStatus, fetchNeblinkStatus } from '../neblink.js';
+import { brand } from '../brand.js';
 import { wikiGraphEnabled } from '../featureFlags.js';
 import { agentAvatarDataUrl, onAgentAvatarChange } from '../agentProfile.js';
 import { avatarImgNode } from '../avatarRender.js';
@@ -109,7 +113,18 @@ export const PAGES = [
   { id: 'profile',  tabId: null,       icon: 'bot',             zh: '智能体',   en: 'Agent' },
   { id: 'social',   tabId: null,       icon: 'smartphone',      zh: '手机接入', en: 'Phone Access' },
   { id: 'conversation', tabId: null,   icon: 'message-circle',  zh: '会话',     en: 'Conversation' },
+  // 手机顶栏批（2026-10-31 作者令④）：个人主页 + 层级配置子页（苹果层级式
+  // 点进下一层铺满屏、左上返回 —— 复用既有详情页壳，返回钮/pop 语义零新建）。
+  // 内容面 = 官网个人页字段的本地读数（/api/neblink/status：displayName/email/
+  // avatarUrl/peers），配置动作统一跳官网个人主页（brand getProfileUrl，
+  // 既有接口）——不新造配置面。
+  { id: 'me',        tabId: null, icon: 'user-round', zh: '个人主页', en: 'Profile' },
+  { id: 'me-user',   tabId: null, icon: 'user-round', zh: '用户名',   en: 'Username' },
+  { id: 'me-avatar', tabId: null, icon: 'image',      zh: '头像',     en: 'Avatar' },
+  { id: 'me-bind',   tabId: null, icon: 'link',       zh: '绑定',     en: 'Bindings' },
 ];
+/** 个人主页层级页 id 集（buildSection 面内容分派；meFace.js 单点实现）。 */
+const ME_PAGE_IDS = new Set(['me', 'me-user', 'me-avatar', 'me-bind']);
 const PAGE_BY_ID = new Map(PAGES.map((p) => [p.id, p]));
 /** 面板页 id 集（项目/图谱/插件——承载桌面画板 pane 的页）。栈顶 = 面板页时
  *  canvas-open 上升沿/切卡事件是面板开页签的副产物，自动弹 canvas 页会把刚
@@ -188,19 +203,24 @@ function buildSection(def) {
   section.dataset.page = def.id;
   section.setAttribute('aria-label', tt(def.zh, def.en));
 
-  const head = document.createElement('div');
-  head.className = 'mobile-page-header';
-  const title = document.createElement('span');
-  title.className = 'mobile-page-title';
-  title.tabIndex = -1; // push 后聚焦（读屏从头播报页名）
-  title.textContent = tt(def.zh, def.en);
-  const spacer = document.createElement('span');
-  spacer.className = 'mobile-page-head-spacer';
-  spacer.setAttribute('aria-hidden', 'true');
-  // Canvas 改造批②（2026-10-31 作者令）：canvas/工作台/联系人/消息 = dock 一级
-  // 面板，禁左上角返回钮——返回语义由底 dock 承担（dock 根无「<」；详情页
-  // 保留「<」= pop 一层）。spacer 保留占位，标题胶囊居中不变。
+  const body = document.createElement('div');
+  body.className = 'mobile-page-body';
+
+  // 手机顶栏批（2026-10-31 作者令①「手机端各页顶部标题文字全去掉」）：dock
+  // 根页（消息/联系人/canvas/工作台）顶栏整体退役 —— 标题胶囊移除、内容上移
+  // 吃回顶栏空间；安全区顶距改由页面壳自管（mobileLayer.css .mobile-page
+  // padding-top = env(safe-area-inset-top)，真机不留刘海侵入、桌面视口零高）。
+  // 详情页顶栏不变（「<」+ 标题胶囊 = iOS 层级导航面，个人主页层级复用它）。
   if (!def.dock) {
+    const head = document.createElement('div');
+    head.className = 'mobile-page-header';
+    const title = document.createElement('span');
+    title.className = 'mobile-page-title';
+    title.tabIndex = -1; // push 后聚焦（读屏从头播报页名）
+    title.textContent = tt(def.zh, def.en);
+    const spacer = document.createElement('span');
+    spacer.className = 'mobile-page-head-spacer';
+    spacer.setAttribute('aria-hidden', 'true');
     const back = document.createElement('button');
     back.type = 'button';
     back.className = 'mobile-back-btn';
@@ -209,16 +229,16 @@ function buildSection(def) {
     back.innerHTML = '<i data-lucide="chevron-left"></i>';
     back.addEventListener('click', () => backOut());
     head.append(back, title, spacer);
+    if (typeof lucide !== 'undefined') createIconsIn(head);
+    section.append(head, body);
   } else {
-    head.append(title, spacer);
+    // 顶栏批：根页无页头 —— 壳级标记 = 安全区顶距由页面壳自管（mobileLayer.css）。
+    section.classList.add('mobile-page-nohead');
+    section.append(body);
   }
-  if (typeof lucide !== 'undefined') createIconsIn(head);
-
-  const body = document.createElement('div');
-  body.className = 'mobile-page-body';
-  section.append(head, body);
   if (def.id === 'workbench') buildHub(body);
   if (def.id === 'canvas') buildCanvasPage(body);
+  if (ME_PAGE_IDS.has(def.id)) unsubs.push(buildMeFace(def.id, body, { push: pushPage }));
   return section;
 }
 
@@ -243,6 +263,11 @@ function buildHubRow(r) {
 }
 
 function buildHub(body) {
+  // 手机顶栏批（2026-10-31 作者令②④）：工作台顶 = 用户头像入口（圆形，与设置页
+  // 头像同源同态：avatarViewState 双态 + paintAvatarSlot 就绪门绘制）。点击 =
+  // 账号统一行为（activityBar 口径）：已登录 → push 个人主页；未登录/配对中 →
+  // 登录面（showLoginModal 必须在真实手势栈内调用）。
+  body.appendChild(buildWorkbenchMeEntry());
   const hub = document.createElement('div');
   hub.className = 'mf-hub';
   const label = document.createElement('div');
@@ -255,6 +280,77 @@ function buildHub(body) {
   body.appendChild(hub);
   hubBodies.set('workbench', hub);
   syncHubGate();
+  // 状态拍重绘（登录/登出/头像变更）：订阅 neblink 状态流，拆除时随层注销。
+  unsubs.push(onNeblinkStatus(() => paintWorkbenchMe()));
+  void fetchNeblinkStatus().then(() => paintWorkbenchMe()).catch(() => {});
+}
+
+/** @type {HTMLElement|null} 工作台头像入口（paintWorkbenchMe 重绘对象）。 */
+let workbenchMeEntry = null;
+
+function buildWorkbenchMeEntry() {
+  const entry = document.createElement('button');
+  entry.type = 'button';
+  entry.className = 'mf-me-entry';
+  entry.setAttribute('data-me-entry', '1'); // QA 断言面：工作台头像入口机械定位
+  entry.innerHTML = `
+    <span class="mf-me-avatar-frame">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="${brand.logoDarkUrl}">
+        <img class="mf-me-avatar-logo" src="${brand.logoUrl}" alt="">
+      </picture>
+      <img class="mf-me-avatar-photo" alt="" hidden>
+    </span>
+    <span class="mf-me-meta">
+      <span class="mf-me-name"></span>
+      <span class="mf-me-sub"></span>
+    </span>
+    <i data-lucide="chevron-right" class="mf-hub-chev"></i>`;
+  entry.addEventListener('click', (e) => {
+    e.stopPropagation();
+    touchLayer();
+    const st = getNeblinkState();
+    if (st.pairing) return;
+    if (st.loggedIn) {
+      logEvent('me-open', { from: 'workbench' });
+      pushPage('me');
+      return;
+    }
+    logEvent('me-login', { from: 'workbench' });
+    showLoginModal();
+  });
+  workbenchMeEntry = entry;
+  paintWorkbenchMe();
+  if (typeof lucide !== 'undefined') createIconsIn(entry); // chevron 就位（图标绘制零依赖后续清扫）
+  return entry;
+}
+
+/** 工作台头像入口重绘：头像双态（paintAvatarSlot 就绪门，永不空环）+ 名/副行。
+ *  数据源 = neblink 状态（displayName/email，与设置账号区同读数面）。 */
+function paintWorkbenchMe() {
+  const entry = workbenchMeEntry;
+  if (!entry) return;
+  const st = getNeblinkState();
+  const { url: validAvatarUrl, showPhoto } = avatarViewState();
+  const photoEl = entry.querySelector('.mf-me-avatar-photo');
+  const logoEl = entry.querySelector('.mf-me-avatar-logo');
+  if (photoEl instanceof HTMLImageElement) {
+    paintAvatarSlot(photoEl, logoEl instanceof HTMLImageElement ? logoEl : null,
+      validAvatarUrl, showPhoto, () => {
+        noteAvatarFailure(validAvatarUrl);
+        const view = avatarViewState();
+        photoEl.hidden = true;
+        if (logoEl instanceof HTMLImageElement) logoEl.hidden = view.showPhoto;
+      });
+  }
+  const nameEl = entry.querySelector('.mf-me-name');
+  const subEl = entry.querySelector('.mf-me-sub');
+  if (nameEl) nameEl.textContent = st.loggedIn
+    ? (st.device?.displayName || st.device?.email || tt('已登录', 'Signed in'))
+    : tt('未登录', 'Not signed in');
+  if (subEl) subEl.textContent = st.loggedIn
+    ? (st.device?.email || '')
+    : tt('点击登录账号', 'Tap to sign in');
 }
 
 /** flag 门控行（graph）随配置到达重对账：ensureContainer 在 boot 早期建全部
@@ -298,6 +394,7 @@ function ensureContainer() {
     const hub = hubBodies.get('workbench');
     const hubLabel = hub?.querySelector('.mf-hub-label');
     if (hubLabel) hubLabel.textContent = tt('工作台', 'Workspace');
+    paintWorkbenchMe(); // 顶栏批：未登录/已登录文案随语言切换重绘
     const rows = hub?.querySelectorAll('.mf-hub-row');
     if (rows) {
       for (const row of rows) {
