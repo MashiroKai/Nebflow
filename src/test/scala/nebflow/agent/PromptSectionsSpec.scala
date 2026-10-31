@@ -406,6 +406,44 @@ class PromptSectionsSpec extends munit.FunSuite:
     assertEquals(MountedProjectList.renderLinesWithDevice(Nil), MountedProjectList.EmptyText)
 
   // ============================================================
+  // SendMessage/Pop 边界（渠道文件出站+工具说明批 2026-10-31，作者 22:10 令
+  // + 22:30 追加令）：order-376 独立段，逐字承载 Defaults.SendMessageScopeRule，
+  // root-only。追加令明示「不能只进画像记忆，要改在提示词源」——order-375
+  // （OutputBlockRule）同款存在性保证机制。
+  // ============================================================
+
+  test("SendMessage scope section injected for root agent (order 376, verbatim SendMessageScopeRule)"):
+    withIsolatedDataRoot {
+      val ctx = PromptContext(isRootAgent = true)
+      val blocks = buildConditionalBlocks(ctx)
+      assert(
+        blocks.contains(nebflow.shared.Defaults.SendMessageScopeRule),
+        "root agent systemStable must carry the SendMessage scope rule as its own section"
+      )
+      assert(blocks.contains("── SendMessage scope ──"), "section body is the scope-rule text")
+      // 段序钉：必须排在 order-375 output 块纪律段之后
+      assert(
+        blocks.indexOf("── Output discipline ──") < blocks.indexOf("── SendMessage scope ──"),
+        "SendMessage scope section must follow the output discipline section (order 376 > 375)"
+      )
+    }
+
+  test("SendMessage scope section NOT injected for non-root agents (dispatcher/node sessions)"):
+    withIsolatedDataRoot {
+      val dispatcher = buildConditionalBlocks(PromptContext(isRootAgent = false))
+      assert(
+        !dispatcher.contains(nebflow.shared.Defaults.SendMessageScopeRule),
+        "dispatcher/node sessions carry no SendMessage tool at all — the root-only section must not leak"
+      )
+      val nodeCtx = PromptContext(isRootAgent = false, availableTools = Set(nebflow.core.tools.NodeReportToolDef.Name))
+      val node = buildConditionalBlocks(nodeCtx)
+      assert(
+        !node.contains(nebflow.shared.Defaults.SendMessageScopeRule),
+        "flow-node sessions must not receive the root-only section"
+      )
+    }
+
+  // ============================================================
   // 文档溯源规范（order 350，always 段；作者 2026-09-11 裁定 / 方案 #165）
   //
   // 系统提示词 = 唯一权威面。运行时（~/.nebflow/**）9 处本地重述删除由

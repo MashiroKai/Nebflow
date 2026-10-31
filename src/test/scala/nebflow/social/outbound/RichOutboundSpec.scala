@@ -201,12 +201,15 @@ class RichOutboundSpec extends CatsEffectSuite:
 
   // ─────────────────── R-2 no silent drop, ever ───────────────────
 
-  test("R-2 Unknown produces exactly one text call and is NEVER silently dropped") {
-    // social-webshot batch: the pinned line is now the FRIENDLY one-liner — the
+  test("R-2 Unknown is NEVER silently dropped: an on-disk off-table product rides the FILE leg (2026-10-31 widening)") {
+    // social-webshot batch: the pinned line was the FRIENDLY one-liner — the
     // mechanism wording (`extension is in neither authority table: …`) went to
     // the adapter's WARN log, never to the recipient. The product is a real
     // on-disk file of an off-table extension: the exact shape of the 2026-10-09
     // incident (`diagram.html` 透出英文机制报错).
+    // 渠道文件出站批（2026-10-31 作者实证收口）：off-table 在盘件不再「降级文本卡」
+    // 而是文件腿直推（与 W-4/W-4c 同面）——「never silently dropped」的语义不变且
+    // 更强：文件本身到达，连降级文本都不需要；机制词汇零透出（无文本可漏）。
     val rec = Recorder()
     val odd = tmpDir() / "diagram.xyz"
     Files.write(odd.toNIO, Array[Byte](1, 2, 3))
@@ -221,18 +224,10 @@ class RichOutboundSpec extends CatsEffectSuite:
         yield
           assertEquals(results.size, 1, "one intent must yield exactly one reading (count conservation)")
           assertEquals(imgs.size, 0, "an unknown kind must never upload an image")
-          assertEquals(files.size, 0, "an unknown kind must never upload a file")
-          assertEquals(msgs.size, 0, "an unknown kind must never send an image/file message")
-          assertEquals(texts.size, 1, "an unknown kind must still say something")
-          val line = texts.head
-          assert(line.contains(RichDegrade.UnsupportedPrefix), s"the placeholder must be machine-matchable, got: $line")
-          assert(line.contains("原件在桌面端"), s"the line must point at the desktop original: $line")
-          assert(line.contains(odd.toString), s"the line must carry the absolute original path: $line")
-          assert(line.contains("diagram.xyz"), s"the line must name the file: $line")
-          assert(
-            !line.contains("authority") && !line.contains("neither") && !line.contains("extension"),
-            s"mechanism vocabulary must not leak to the recipient: $line"
-          )
+          assertEquals(files, List((odd, "diagram.xyz")), "the ORIGINAL bytes ride the file leg — delivered, not logged and dropped")
+          assertEquals(msgs, List(("file", RichFeishuAdapter.fileKeyBody("file_key_1"))), "one msg_type=file send")
+          assertEquals(texts.size, 0, "a delivered file needs no companion text — zero mechanism-vocabulary leakage surface")
+          assert(results.forall(_.ok), results)
       }
   }
 
@@ -680,10 +675,10 @@ class RichOutboundSpec extends CatsEffectSuite:
 
   test("R-12b RichDegradeProbe's failure cases hold as assertions on the same code path") {
     // Mirror of the probe's A/B/C/D cases: (A) a card whose renderer cannot run,
-    // (B) an oversize document, (C) an off-table on-disk product (the incident
-    // shape — friendly line, no mechanism words), (D) a missing product. All
-    // four must land on exactly one visible text with a machine-matchable
-    // Chinese placeholder.
+    // (B) an oversize document, (C) an off-table on-disk product — since the
+    // 2026-10-31 渠道文件出站批 this is NO LONGER a degrade case: it rides the
+    // file leg (delivery, asserted here), (D) a missing product. A/B/D must land
+    // on exactly one visible text with a machine-matchable Chinese placeholder.
     val failing =
       new RecordingRenderer(RichRenderer.RenderResult.engineUnavailable("no Chrome binary detected on this host"))
     val recA = Recorder()
@@ -706,6 +701,8 @@ class RichOutboundSpec extends CatsEffectSuite:
       textsD <- recD.texts.get
       imgsA <- recA.images.get
       filesB <- recB.files.get
+      filesC <- recC.files.get
+      msgsC <- recC.msgs.get
     yield
       assertEquals(imgsA.size, 0, "A: a failed render uploads nothing")
       assert(
@@ -717,11 +714,13 @@ class RichOutboundSpec extends CatsEffectSuite:
         textsB.size == 1 && textsB.head.contains("尺寸闸拒绝") && textsB.head.contains("ATTACH_TOO_LARGE"),
         s"B: expected the size-gate line with the existing code, got $textsB"
       )
-      assert(
-        textsC.size == 1 && textsC.head.contains(RichDegrade.UnsupportedPrefix)
-          && textsC.head.contains("原件在桌面端") && textsC.head.contains("diagram.xyz"),
-        s"C: expected the friendly unsupported line, got $textsC"
+      assertEquals(
+        filesC,
+        List((offTable, "diagram.xyz")),
+        "C: the off-table on-disk product rides the FILE leg since the 2026-10-31 widening — delivered, not a text card"
       )
+      assertEquals(msgsC, List(("file", RichFeishuAdapter.fileKeyBody("file_key_1"))), "C: one msg_type=file send")
+      assertEquals(textsC.size, 0, "C: a delivered file needs no degrade text")
       assert(
         textsD.size == 1 && textsD.head.contains(RichDegrade.UnreachablePrefix)
           && textsD.head.contains(gone.toString),
@@ -954,7 +953,14 @@ class RichOutboundSpec extends CatsEffectSuite:
       }
   }
 
-  test("W-4 an off-table NON-convertible product never consults the long-shot seam (straight to b)") {
+  // W-4 pins the OFF-TABLE on-disk arm after the 2026-10-31 渠道文件出站批收口
+  // （作者 10-31 22:10 实证：Pop 两个 .txt 测试件、微信/飞书双双未收，两腿日志
+  // 落「extension is in neither authority table: txt」——投递面缺口不在腿能力，
+  // 在分类层 off-table 件的 v1 日志边界）：off-table 且**在盘上**的普通文件
+  // 不再落 [暂不支持] 文本卡，而是与文档腿完全同路（体积闸 → UploadFile 原
+  // 字节 → msg_type=file）。红-by-construction：摘掉本臂，本测试退回文本卡即红。
+  // 「文件不在盘」的 off-table 件维持 v1 [未送达] 边界 —— W-4d 另钉。
+  test("W-4 an off-table NON-convertible ON-DISK product rides the FILE leg (never the long-shot, never a text card)") {
     FileLongShot.Dedup.reset()
     val rec = Recorder()
     val odd = tmpDir() / "notes.xyz"
@@ -962,23 +968,84 @@ class RichOutboundSpec extends CatsEffectSuite:
     val longshot = new RecordingLongShot(Right(tmpDir() / "never.png"))
     adapter(rec, longshot = longshot)
       .deliver(RichKind.Unknown("extension is in neither authority table: xyz"), Some(odd))
-      .flatMap { _ =>
+      .flatMap { results =>
         for
           calls <- longshot.calls.get
           texts <- rec.texts.get
+          files <- rec.files.get
+          msgs  <- rec.msgs.get
         yield
           assertEquals(calls, 0, "only md/markdown/html/htm may reach the conversion seam")
-          assertEquals(texts.size, 1)
-          assert(texts.head.contains(RichDegrade.UnsupportedPrefix) && texts.head.contains(odd.toString), texts.head)
+          assertEquals(texts, Nil, "no [暂不支持] text card — the file itself is the deliverable")
+          assertEquals(files, List((odd, "notes.xyz")), "exactly one UploadFile call with the ORIGINAL bytes")
+          assertEquals(
+            msgs,
+            List(("file", RichFeishuAdapter.fileKeyBody("file_key_1"))),
+            "exactly one msg_type=file send carrying the file_key"
+          )
+          assert(results.forall(_.ok), results)
+      }
+  }
+
+  // W-4c pins the AUTHOR'S 10-31 22:10 REPRO SHAPE verbatim: a plain .txt Pop'd file
+  // （stand_file_channel_test.txt / stand_wx_file_test.txt 同款） rides the file leg
+  // —— the exact case that landed「extension is in neither authority table: txt」and
+  // reached neither WeChat nor Feishu before this batch.
+  test("W-4c a plain .txt product rides the FILE leg (the 10-31 author repro shape, Feishu half)") {
+    FileLongShot.Dedup.reset()
+    val rec = Recorder()
+    val txt = tmpDir() / "stand_wx_file_test.txt"
+    Files.write(txt.toNIO, "Stand 文件通道测试\n".getBytes("UTF-8"))
+    val longshot = new RecordingLongShot(Right(tmpDir() / "never.png"))
+    adapter(rec, longshot = longshot)
+      .deliver(RichKind.Unknown("extension is in neither authority table: txt"), Some(txt))
+      .flatMap { results =>
+        for
+          calls <- longshot.calls.get
+          texts <- rec.texts.get
+          files <- rec.files.get
+          msgs  <- rec.msgs.get
+        yield
+          assertEquals(calls, 0, "txt is not a convertible class — the long-shot seam stays untouched")
+          assertEquals(texts, Nil, "no degrade text — the txt file itself is the deliverable")
+          assertEquals(files, List((txt, "stand_wx_file_test.txt")), "one UploadFile with the ORIGINAL bytes")
+          assertEquals(msgs, List(("file", RichFeishuAdapter.fileKeyBody("file_key_1"))))
+          assert(results.forall(_.ok), results)
+      }
+  }
+
+  // W-4d pins the surviving v1 boundary: an off-table product whose FILE IS NOT ON
+  // DISK has nothing to carry — exactly one [未送达] degrade text, zero uploads,
+  // zero message sends.
+  test("W-4d an off-table product MISSING from disk degrades to one [未送达] text, zero uploads") {
+    FileLongShot.Dedup.reset()
+    val rec = Recorder()
+    val gone = tmpDir() / "ghost.txt"
+    val longshot = new RecordingLongShot(Right(tmpDir() / "never.png"))
+    adapter(rec, longshot = longshot)
+      .deliver(RichKind.Unknown("path does not exist or is not a regular file: ghost.txt"), Some(gone))
+      .flatMap { results =>
+        for
+          calls <- longshot.calls.get
+          texts <- rec.texts.get
+          files <- rec.files.get
+          msgs  <- rec.msgs.get
+        yield
+          assertEquals(calls, 0)
+          assertEquals(files, Nil, "nothing to upload — the file is not on disk")
+          assertEquals(msgs, Nil, "no message send either")
+          assertEquals(texts.size, 1, "exactly the [未送达] degrade line")
+          assert(texts.head.contains("[未送达]"), s"the degrade line: ${texts.head}")
       }
   }
 
   // W-4b pins the ARCHIVE exception to the W-4 boundary: zip/7z/rar/tar 族不在两张
   // 分类权威表里（生产分类对 zip 给 Unknown，与 W-1 同样直接构造 Unknown 进入），
-  // 但 pop-file-leg 作者令（2026-10-21 微信半边 / 2026-10-31 本批飞书半边）裁定
+  // 但 pop-file-leg 作者令（2026-10-21 微信半边 / 2026-10-31 飞书半边）裁定
   // 压缩包 = 文件腿直推 —— 与 Document 腿完全同路（体积闸 → im/v1/files 上传 →
   // msg_type=file），不落 [暂不支持] 文本卡。红-by-construction：摘掉
-  // RichFeishuAdapter.deliver 的 FileLeg.isPushable 臂，本测试退回文本卡即红。
+  // RichFeishuAdapter.deliver 的 off-table 文件腿臂（2026-10-31 渠道文件出站批
+  // 起 = 一切在盘 off-table 文件直推，见 W-4/W-4c），本测试退回文本卡即红。
   test("W-4b an on-disk ARCHIVE rides the FILE leg (pop-file-leg Feishu parity, never the long-shot)") {
     FileLongShot.Dedup.reset()
     val rec = Recorder()

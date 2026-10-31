@@ -1021,6 +1021,58 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       assert(nebflow.social.outbound.FileLongShot.Dedup.size == 0, "a failed push never records dedup")
   }
 
+  // ───── 渠道文件出站批 (2026-10-31 22:10 作者令收口): off-table 文件腿 widening ─────
+  //
+  // WO-W11 钉作者当日实证 repro 同款：Pop 一个 .txt（stand_file_channel_test.txt
+  // / stand_wx_file_test.txt 形态）⇒ Unknown 分类（两张权威表都不收 txt）⇒
+  // 文件腿直推。批前实况（stand.log 2026-10-31 21:59:28）：「rich item not
+  // carriable (extension is in neither authority table: txt) — the text reply
+  // carries the turn」，微信未收。红-by-construction：摘掉
+  // deliverClassifiedItem Unknown 臂的 off-table 直推（恢复 FileLeg.isPushable
+  // 压缩包表闸），本测试退回日志边界即红。
+  test("WO-W11 a plain .txt product rides the FILE leg (the 10-31 author repro shape)") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val txt = tmpRoot() / "stand_wx_file_test.txt"
+    os.write(txt, "Stand 文件通道测试\n", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", txt))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(
+        mediaCalls.map(_._2),
+        List(WeixinOutboundAdapter.WeixinMedia.file(txt.toString)),
+        "off-table txt: the ORIGINAL bytes ride file_path — the pre-batch log-only drop is closed"
+      )
+      assertEquals(calls, Nil, "a clean file delivery puts out NO companion text")
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size == 1, "success records the dedup key")
+  }
+
+  // WO-W12 钉 widening 后**唯一**保留下来的 v1 边界：off-table 件但文件不在盘
+  // （Pop 解析到的路径已被删/不可读）⇒ 无件可发，零发送、零文本卡，日志一行。
+  test("WO-W12 an off-table product MISSING from disk sends NOTHING (the surviving v1 log boundary)") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val gone = tmpRoot() / "ghost.txt"
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", gone))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(mediaCalls, Nil, "no file send — the product is not on disk")
+      assertEquals(calls, Nil, "no degrade card either — nothing was attempted, the text reply carries the turn")
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size == 0, "a non-attempt records no dedup")
+  }
+
   // ───── 媒体合并批 (2026-10-22, 台账 #756): runs — grouping + text-first + caption ─────
 
   test(

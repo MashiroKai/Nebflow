@@ -1637,10 +1637,15 @@ final class WeixinIlinkBridgePlugin(
         // pop-social-files batch（2026-10-20 作者令）：文件类可转换形态
         // （md/markdown/html/htm 且原件在盘上）→ 单张长图 PNG 走 image_path 腿
         // + 原件路径伴行注（[[deliverLongShotMedia]]，同字节重复 Pop 去重抑制；
-        // 转不动降文本卡）。pop-file-leg batch（2026-10-21 作者令）：压缩包类
-        // （[[FileLeg.ArchiveExtensions]]）→ 文件腿直推。其余保持 v1 边界。
+        // 转不动降文本卡）。pop-file-leg batch（2026-10-21）＋渠道文件出站批
+        // （2026-10-31 作者实证收口）：压缩包先行收编、本批把直推面 widened 到
+        // **一切在盘普通文件**（[[FileLeg.isPushable]]）——作者 10-31 22:10 令
+        // 前实况：Pop 两个 .txt 测试件双双只落「not carriable: txt」日志、
+        // 微信未收（stand.log 21:59:28 行实证）。文件腿=dedup+25MB 体积闸+
+        // `file_path`；渠道类型白名单无公开文档，拒绝走可见保底（deliverFileMedia
+        // 内部）。文件不在盘 ⇒ 维持 v1 日志边界（无件可发，正文腿带回合）。
         if Try(os.isFile(p)).getOrElse(false) && FileLongShot.isConvertible(p) then deliverLongShotMedia(sender, p)
-        else if Try(os.isFile(p)).getOrElse(false) && FileLeg.isPushable(p) then deliverFileMedia(sender, p)
+        else if Try(os.isFile(p)).getOrElse(false) then deliverFileMedia(sender, p)
         else
           logger.info(
             s"weixin-ilink bridge: rich item not carriable ($reason) — the text reply carries the turn"
