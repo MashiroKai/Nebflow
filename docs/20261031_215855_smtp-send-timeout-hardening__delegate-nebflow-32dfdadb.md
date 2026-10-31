@@ -34,7 +34,9 @@ scope: 邮件发送超时调查修复批（作者 10-31 21:42 报「Host did not
 
 ## 验证
 
-`MailClientSendSpec`（新，13 例）：脚本 mock SMTP 服务器（loopback 明文 socket 直驱 `smtpTransact`）——慢回执 1.2s 落在分级窗口内成功（握手超时 400ms 作验红对照：旧统一超时必败）；慢回执超限归 Ambiguous 且禁重试；握手静默归 Timeout 可重试；535/550/451/552/452 各码分类；`dataTimeoutMsFor` 分级数学；`sendWithRetry` 重试边界（Ambiguous/AuthFailed 一次即停）；readable 三态文案无裸异常。
+`MailClientSendSpec`（新，12 例）：脚本 mock SMTP 服务器（loopback 明文 socket 直驱 `smtpTransact`）——慢回执 1.2s 落在分级窗口内成功（握手超时 400ms 作验红对照：旧统一超时必败）；慢回执超限归 Ambiguous 且禁重试；握手静默归 Timeout 可重试；535/550/451/552/452 各码分类；`dataTimeoutMsFor` 分级数学；`sendWithRetry` 重试边界（Ambiguous/AuthFailed 一次即停）；readable 三态文案无裸异常。
+
+回归（sbt test 全量，-Xmx3g/MaxMetaspace 1536m 起跑——首跑撞 Metaspace OOM 为宿主资源面）：**8465 例，8447 过，13 失败全部为存量**（RemoteableDeviceParamSpec / UpdateOrchestratorSpec / PresetCatalogInToolDocSpec / NeblinkPresenceDialBudgetSpec 四套件，locale 键集与 Delegate schema 漂移类，与感知域零耦合且其输入文件在本批 base→HEAD diff 中字节不变——`git diff e633d88b6..HEAD` 恰为本批 4 文件，故失败与批无关）；感知域三 spec 81/81 全绿，全量跑中感知域零失败（NeblinkPresenceDialBudget 在隔离重跑中通过，属满载并行下的时序 flake）。
 
 ## 诚实边界
 
