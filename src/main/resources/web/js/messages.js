@@ -5383,12 +5383,22 @@ function deviceSubLabel(d) {
   return platformDisplay(d.platform).text || '';
 }
 
-/** 本账号**自有设备**（去重后）。数据源 = `getNeblinkState().peers`（不是好友关系域：
- *  设备无好友语义、无服务端 presence 面，卡 §2 A1）。未登录 ⇒ 空集。 */
+/** 本账号**自有设备**（去重后；设备平级批 2026-10-31：本机以普通设备条目
+ *  前置入列——数据源同拍加 `isLocal` 标记，在线/直连态对本机恒真）。
+ *  数据源 = `getNeblinkState()`（device = 自身，peers = 对端——同一 state 单点，
+ *  禁另开第二份身份面）。未登录 ⇒ 空集。
+ *  🔴 消费方纪律：`deviceConvs`（唯一建窗实现）有本机防御剔重（`did === selfId`
+ *  ⇒ 不成窗），本机行只在**联系人/设置设备段**渲染 + `openDeviceChat` 可开窗。 */
 export function devicePeers() {
   const rel = getNeblinkState();
   if (!rel || !rel.loggedIn) return [];
-  return dedupeDevices(rel.peers);
+  const peers = dedupeDevices(rel.peers);
+  const self = rel.device && rel.device.deviceId
+    ? [{ ...rel.device, online: true, directOnline: true, isLocal: true }]
+    : [];
+  // 防御：服务端 peers 已剔本机（neblink.js F5），此处按 deviceId 再剔一次（不猜）。
+  const selfId = String(rel.device.deviceId);
+  return [...self, ...peers.filter((p) => String(p.deviceId) !== selfId)];
 }
 
 // ── Settings-page device expansion area (friendseal batch ①-A, 2026-09-25) ──
