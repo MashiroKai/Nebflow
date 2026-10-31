@@ -243,7 +243,7 @@ class MergeQueueSpec extends CatsEffectSuite:
 
   // ── ④ 合并指令文本（放行 = 通知） ─────────────────────────────────────
 
-  test("④ merge brief pins the direction + read-only fact-check pre-check: git -C <baseWs> merge --no-ff <branch>, conflict = STOP") {
+  test("④ merge brief pins the direction + read-only fact-check pre-check: git -C <baseWs> merge --no-ff <branch>, conflict = resolve in place (hardened 2026-10-31)") {
     val system = ActorSystem(s"mq-4-${scala.util.Random.nextInt(100000)}")
     val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
     val repo = mkRepo(tempRoot / "mq4-repo", branch = "delegate/d-dir", merge = false)
@@ -267,10 +267,43 @@ class MergeQueueSpec extends CatsEffectSuite:
       assert(brief.contains("abcdef123456"), "the base tip must ride the notice (grant carries base tip)")
       assert(
         brief.toLowerCase.contains("stop"),
-        "conflict/refusal must instruct a clean stop (no resolution, no force, no retry)"
+        "a NON-conflict refusal must still instruct a clean stop (no force, no retry)"
       )
       assert(brief.contains(e.baseBranch), "the target base branch must be named")
       assert(brief.toLowerCase.contains("no automatic retries"), "the refusal path must state closed-as-failed (no auto-retry)")
+    end for
+  }
+
+  // ── ④b 带冲突合并轮回归（合并轮提示词加固批 2026-10-31，Canvas 撤摊事故） ──
+
+  test("④b conflicted merge turn: brief hardens resolve-in-place + post-merge tests + honesty gate + Canvas counter-example") {
+    val system = ActorSystem(s"mq-4b-${scala.util.Random.nextInt(100000)}")
+    val records = ListBuffer.empty[(String, Option[ActorRef[AgentEvent]])]
+    val repo = mkRepo(tempRoot / "mq4b-repo", branch = "delegate/d-conf", merge = false)
+    for
+      e <- member(system, records, "d-conf", repo, readyAt = 1L)
+      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield
+      val brief = MergeQueue.mergeBriefFor(e)
+      // 冲突=必须就地解决：禁止 abort 收尾 / 「rebase 后再合」推回人工
+      assert(brief.contains("就地解决"), "conflicts must be resolved in place")
+      assert(brief.contains("merge --abort 收尾"), "abort-as-finish must be explicitly forbidden")
+      assert(brief.contains("rebase 后再合"), "deferral to 'rebase later' must be named and forbidden")
+      assert(brief.contains("git add"), "the resolve path must spell out git add + git commit to complete the merge")
+      assert(brief.contains("git commit"), "the resolve path must spell out git add + git commit to complete the merge")
+      // 合并后必测
+      assert(brief.contains("合并后必测"), "post-merge testing is mandatory")
+      assert(brief.contains("相邻套件"), "the minimum test bar (neighboring suites of the conflict files) must be spelled out")
+      // 诚实申报闸（机械验收可对账：第二亲本＝分支 tip）
+      assert(brief.contains("诚实申报"), "the honesty gate must be declared so the model knows reconciliation exists")
+      assert(brief.contains("第二亲本"), "the gate must name the mechanical check (second parent = branch tip)")
+      assert(brief.contains("虚报"), "a false merged claim must state its consequence (whole round voided)")
+      // 反面教材
+      assert(brief.contains("Canvas"), "the Canvas bail-out incident must ride the brief as the counter-example")
+      // 真解不动的唯一逃生口：abort 后必须显式声明未完成合并
+      assert(brief.contains("未完成合并"), "the abort escape hatch must require an explicit not-completed declaration")
+      // 旧矛盾条款不得残留（旧 brief 教「resolve nothing」撤摊——加固批正是为此退役它）
+      assert(!brief.contains("resolve nothing"), "the retired STOP-and-resolve-nothing clause must not linger (direct contradiction)")
     end for
   }
 
