@@ -1,6 +1,6 @@
 {
   "generatedBy": "scripts/check-js-types.mjs --update",
-  "total": 321,
+  "total": 350,
   "files": {
     "src/main/resources/web/js/activityBar.js": {
       "TS2345": 1,
@@ -89,11 +89,18 @@
     "src/main/resources/web/js/memory.js": {
       "TS2339": 8
     },
+    "src/main/resources/web/js/mobile/msgLongPress.js": {
+      "TS2339": 1,
+      "TS2769": 4
+    },
     "src/main/resources/web/js/modal.js": {
       "TS2339": 1
     },
     "src/main/resources/web/js/monacoEditor.js": {
       "TS2339": 11
+    },
+    "src/main/resources/web/js/msgQuote.js": {
+      "TS2339": 4
     },
     "src/main/resources/web/js/nearpath.js": {
       "TS2339": 1,
@@ -134,6 +141,11 @@
     "src/main/resources/web/js/socialPanel.js": {
       "TS2339": 3
     },
+    "src/main/resources/web/js/viewers/annotations.js": {
+      "TS2740": 1,
+      "TS2339": 10,
+      "TS2353": 1
+    },
     "src/main/resources/web/js/viewers/docx.js": {
       "TS2339": 4
     },
@@ -144,10 +156,15 @@
       "TS2345": 1,
       "TS2339": 1
     },
+    "src/main/resources/web/js/viewers/mobi.js": {
+      "TS2339": 2,
+      "TS2345": 1
+    },
     "src/main/resources/web/js/viewers/readerChrome.js": {
       "TS1127": 2,
       "TS2740": 1,
-      "TS2339": 52
+      "TS2339": 56,
+      "TS2322": 1
     },
     "src/main/resources/web/js/viewers/shared.js": {
       "TS2339": 13
