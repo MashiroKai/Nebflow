@@ -614,7 +614,7 @@ for _i in $(seq 1 80); do
 done
 assert_contains "stale-guard dry-run verdict OK" "verdict: DRY-RUN OK" "$_L25"
 
-# ── 26. 双实例并存批 2026-10-30: 默认值解析（stand→~/.stand+6138, nebflow→~/.nebflow+8080）──
+# ── 26. 双生分家批 2026-10-31: 默认值解析（stand→~/.stand+6138, nebflow→~/.nebflow+6140；端口判据换代）──
 t "case 26: default resolution per brand (hidden __brand-defaults probe)"
 fresh_sandbox
 _D26="$(cd "$SANDBOX" && env -u STAND_HOME -u NEBFLOW_HOME -u STAND_GATEWAY_PORT -u NEBFLOW_GATEWAY_PORT \
@@ -623,11 +623,11 @@ assert_contains "stand default home is ~/.stand" "home=$HOME/.stand" "$_D26"
 assert_contains "stand default port is 6138" "port=6138" "$_D26"
 assert_contains "stand names its peer brand" "other=nebflow" "$_D26"
 assert_contains "stand peer default home is ~/.nebflow" "other_home=$HOME/.nebflow" "$_D26"
-assert_contains "stand peer default port is 8080" "other_port=8080" "$_D26"
+assert_contains "stand peer default port is 6140" "other_port=6140" "$_D26"
 _D26N="$(cd "$SANDBOX" && env -u STAND_HOME -u NEBFLOW_HOME -u STAND_GATEWAY_PORT -u NEBFLOW_GATEWAY_PORT \
     "$SANDBOX/bin/nebflow" __brand-defaults 2>&1)"
 assert_contains "nebflow default home is ~/.nebflow" "home=$HOME/.nebflow" "$_D26N"
-assert_contains "nebflow default port is 8080" "port=8080" "$_D26N"
+assert_contains "nebflow default port is 6140" "port=6140" "$_D26N"
 assert_contains "nebflow names its peer brand" "other=stand" "$_D26N"
 assert_contains "nebflow peer default port is 6138" "other_port=6138" "$_D26N"
 assert_eq "declared defaults are distinct ports" "1" \

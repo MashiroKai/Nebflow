@@ -10,12 +10,12 @@
 #               作者令 2026-10-30 双实例并存批: 两命令同机可用) ──
 #   命令      home 解析(只读自己的 env)   端口解析(只读自己的 env)                 jar 位
 #   stand     STAND_HOME > ~/.stand       --port > STAND_GATEWAY_PORT > 6138       ENTRY_DIR/versions 指针+winsort
-#   nebflow   NEBFLOW_HOME > ~/.nebflow   --port > NEBFLOW_GATEWAY_PORT > 8080     ENTRY_DIR/nebflow-assembly-*.jar winsort
+#   nebflow   NEBFLOW_HOME > ~/.nebflow   --port > NEBFLOW_GATEWAY_PORT > 6140     ENTRY_DIR/nebflow-assembly-*.jar winsort
 #   历史病根: ~/.stand/bin/nebflow 弃用垫片 exec stand (PATH 经 ~/.zshrc:18 含
 #   ~/.stand/bin) ⇒ 跑 nebflow 实际起的是 stand 6138; 且旧 stand 端口/home 链回落
 #   NEBFLOW_* 变量(env 互窜)。修复: 垫片改指真 launcher; 端口/home 链各只认自己的变量。
 #   stop 面口径天然按 home/端口收窄: 双探针 = lsof(本品牌端口) ∪ $本品牌home/.pid,
-#   ⇒ `nebflow stop` 碰不到 6138 实例, `stand stop` 碰不到 8080 实例。
+#   ⇒ `nebflow stop` 碰不到 6138 实例, `stand stop` 碰不到 6140 实例（双生分家批 2026-10-31：nebflow 自有独立默认口 6140，8080 自此只属 9.19 自有根实例）。
 #
 # ── restart --detached (作者令 2026-10-27, 自重启事故 2026-10-26 20:55 的 CLI 面修复) ──
 #   作者用 Bash 工具挂 `stand stop && stand start` 定时器时, 点火器活在引擎进程树内,
@@ -62,7 +62,7 @@ stand_resolve_port() { # $@ = 子命令参数; --port > 本品牌 env > 品牌�
     local _p _env _dflt
     case "$BRAND" in
         stand)   _env="${STAND_GATEWAY_PORT:-}";   _dflt=6138 ;;
-        nebflow) _env="${NEBFLOW_GATEWAY_PORT:-}"; _dflt=8080 ;;
+        nebflow) _env="${NEBFLOW_GATEWAY_PORT:-}"; _dflt=6140 ;;
     esac
     if _p=$(stand_port_from_args "$@"); then printf '%s\n' "$_p"; return 0; fi
     printf '%s\n' "${_env:-$_dflt}"
@@ -106,7 +106,7 @@ stand_brand_default_home() { # <brand> -> 默认 root (无 env 时)
 stand_brand_default_port() { # <brand> -> 默认端口
     case "$1" in
         stand)   printf '6138\n' ;;
-        nebflow) printf '8080\n' ;;
+        nebflow) printf '6140\n' ;;
         *) return 1 ;;
     esac
 }
@@ -607,7 +607,7 @@ stand_cli_main() {
         __brand-defaults)   # 隐藏动词（help/补全不列；测试与文档对账用）：
                             # 打印本品牌解析出的 家/口/对家 一行式读数，零 JVM 零网络。
                             # 双实例并存批 2026-10-30 加：让 `ops/test/stand-lifecycle.test.sh`
-                            # 无需真起引擎即可断言「stand→~/.stand+6138 / nebflow→~/.nebflow+8080」。
+                            # 无需真起引擎即可断言「stand→~/.stand+6138 / nebflow→~/.nebflow+6140」（双生分家批 2026-10-31）。
                             printf 'brand=%s\nhome=%s\nport=%s\nother=%s\nother_home=%s\nother_port=%s\n' \
                                 "$BRAND" "$STAND_HOME" "$(stand_resolve_port "$@")" \
                                 "$(stand_other_brand)" "$(stand_brand_default_home "$(stand_other_brand)")" \

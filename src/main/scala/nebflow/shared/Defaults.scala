@@ -1718,10 +1718,9 @@ object Defaults:
    * （msgloop）投递目标 `127.0.0.1:6138/.../weixin-ilink/ingress` 全部
    * tcp_refused —— 微信入站全断。此前 10-23 对调只落在 ops 显式传参
    * （autostart/restart/stand CLI 均 `NEBFLOW_GATEWAY_PORT=6138` / `--port 6138`），
-   * 引擎代码默认值没跟，裸启动即分叉。自此引擎侧全部「默认端口」读数统一引用
-   * 本常量（GatewayConfig.load 兜底 / CLI GatewayClient.readPort / doctor 端口
-   * 读数 / prompt 变量 `nebflow.gateway.port` 兜底 / 热更新 Rollback 复起缺省 /
-   * FlowTree·RestApiRoutes 构造兜底 / neblink 对端口兜底），改默认只动这一处。
+   * 引擎代码默认值没跟，裸启动即分叉。自此引擎侧「默认端口」读数统一从 Defaults
+   * 收口；双生分家批（2026-10-31）起多品牌世界的消费面一律引用
+   * [[brandDefaultPort]]（品牌感知），本常量退居「stand/原生默认」的角色。
    *
    * 8080 让渡给 9.19 自有根实例（其启动器缺省 8080 不变），故 ProcessManager
    * 的 ProtectedPorts（8080/8097 dev-host 硬闸）**保持不动**；沙箱不走本值
@@ -1730,25 +1729,56 @@ object Defaults:
   val GatewayPort = 6138
 
   /**
-   * **legacy `nebflow` 命令的默认口 = 8080**（双实例并存批 2026-10-30，作者令
-   * 「开启动 stand 的命令是 nebflow … 和 nebflow 隔离，这样 nebflow 和 stand 可以同时使用」）。
+   * **nebflow 品牌自有缺省口 = 6140**（双生实例分家批 2026-10-31，作者裁定
+   * 「同机双产品必须各自独立启动……给 nebflow 独立默认端口，如 6140 之类」；
+   * 取代双实例并存批 2026-10-30 的 8080 选择）。
    *
-   * 两个命令品牌同机并存，缺省口必须错开：`stand` = 6138（上面的 GatewayPort），
-   * `nebflow` = 8080（9.19 自有根实例的口，其启动器 `ops/bin/nebflow` 缺省值即本值）。
-   * 本常量只服务**读数与报错文案**（端口冲突时点名「占口的是另一实例」）与 spec 钉；
-   * 引擎自身（stand 构建）绝不绑定它 —— 引擎绑定面仍只有 [[GatewayPort]] 一个来源。
-   * CLI 面同名真值在 `ops/bin/stand-cli-lib.sh` 的 BRAND-MAP（`stand_brand_default_port`），
+   * 事故链（2026-10-31，KAI）：KAI 的 nebflow 产品是 10-25 后构建
+   * （`nebflow-assembly-2026.10.26-beta.1.jar`），引擎代码默认口只有一个
+   * [[GatewayPort]]（6138）——两个品牌的产品裸启动都落 6138，stand 先占口后
+   * `nebflow` 的守卫把 stand 实例当自己人 focus（或经弃用 shim nebflow.cmd→
+   * stand.cmd 直接拉起 stand）。考古结论：nebflow 从无前例的独立默认口——8080
+   * 年代它是全引擎唯一主默认（对调前的旧值），6138 年代它跟着新主默认撞车；
+   * 本常量是它的第一个真正独立默认。
+   *
+   * 8080 自此只属 9.19 自有根实例（其 launcher 缺省是那个年代的主默认）——
+   * 该实例仍用 `NEBFLOW_GATEWAY_PORT=8080` / `--port 8080` 管辖，引擎任何品牌
+   * 都不绑定 8080（ProcessManager ProtectedPorts 的 8080/8097 硬闸保持不动）。
+   *
+   * 生效面 = 品牌感知解析链的兜底档（`--port` > `GATEWAY_PORT` env > config
+   * `port` 键 > 本值），见 [[brandDefaultPortFor]] / `GatewayConfig.resolvePort`；
+   * 读数/报错文案面（点名「占口的是另一实例」）走 [[legacyPortOf]]。
+   * CLI 侧同名真值在 `ops/bin/stand-cli-lib.sh` 的 BRAND-MAP（`stand_brand_default_port`），
    * 两侧由 `CliBrandDefaultsSpec` 文本对账钉住。
    */
-  val LegacyGatewayPort = 8080
+  val NebflowBrandGatewayPort = 6140
 
-  /** 命令品牌 → 其缺省端口（双实例并存批 2026-10-30 的读数面单点）。
-   *  `stand` = [[GatewayPort]]（6138），`nebflow` = [[LegacyGatewayPort]]（8080）。
-   *  认不出的品牌返回 `None`（调用方据此只说「对家实例」，不编数字）。
+  /**
+   * 品牌小写名（brand.conf `lowerName`）→ 该品牌引擎的缺省绑定口 ——
+   * **纯核心**（spec 直接驱多品牌矩阵，不受本构建 brand.conf 冻结限制）：
+   * `nebflow` = [[NebflowBrandGatewayPort]]（6140，独立默认），其余（含 `stand`
+   * 与任何未来/未知品牌）= [[GatewayPort]]（6138，本仓原生默认）。双生分家批的
+   * 铁律：同机两品牌的**引擎兜底口必须错开**，绝不允许回落到同一默认值。
+   */
+  def brandDefaultPortFor(lowerName: String): Int =
+    if lowerName == "nebflow" then NebflowBrandGatewayPort else GatewayPort
+
+  /**
+   * 本构建的品牌缺省口（`Branding.lowerName` 现读）：stand 构建 = 6138，
+   * nebflow 构建 = 6140。引擎侧凡「本引擎默认网关口」语义的兜底读数（绑定 /
+   * CLI readPort / doctor / prompt 变量 / Rollback 复起 / FlowTree /
+   * RestApiRoutes 构造 / neblink 对端口兜底）一律引用本函数，不直接引用
+   * [[GatewayPort]] —— 否则 nebflow 品牌构建会把自家读数写成 stand 的口。
+   */
+  def brandDefaultPort: Int = brandDefaultPortFor(Branding.lowerName)
+
+  /** 命令品牌 → 其缺省端口（双实例并存批 2026-10-30 的读数面单点；分家批换源）。
+   *  `stand` = [[GatewayPort]]（6138），`nebflow` = [[NebflowBrandGatewayPort]]（6140）。
+   *  认不出的品牌返回 `"?"`（调用方据此只说「对家实例」，不编数字）。
    *  CLI 侧同名真值在 `ops/bin/stand-cli-lib.sh` 的 `stand_brand_default_port`。 */
   def legacyPortOf(brand: String): String =
     brand match
-      case "nebflow" => LegacyGatewayPort.toString
+      case "nebflow" => NebflowBrandGatewayPort.toString
       case "stand"   => GatewayPort.toString
       case _         => "?"
 end Defaults

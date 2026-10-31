@@ -9,7 +9,7 @@
 | 权威副本（这里） | live 部署位 | 用途 |
 |---|---|---|
 | `ops/bin/stand` | `~/.stand/bin/stand` | stand CLI 入口（薄品牌壳）：只管辖 `~/.stand`（6138 缺省）实例 |
-| `ops/bin/nebflow` | `~/.nebflow/bin/nebflow` | nebflow CLI 入口（薄品牌壳）：只管辖 `~/.nebflow`（8080 缺省）实例（2026-10-27 隔离批） |
+| `ops/bin/nebflow` | `~/.nebflow/bin/nebflow` | nebflow CLI 入口（薄品牌壳）：只管辖 `~/.nebflow`（6140 缺省，双生分家批 2026-10-31）实例（2026-10-27 隔离批） |
 | `ops/bin/stand-cli-lib.sh` | `~/.stand/bin/` 与 `~/.nebflow/bin/` **各一份** | 两入口的**共享实现库**（隔离契约/守卫/横幅/`restart --detached` 全在此；单一代码路径） |
 | `ops/bin/nebflow-stand-shim` | `~/.stand/bin/nebflow` | PATH 垫片：`nebflow` → `~/.nebflow/bin/nebflow` 真入口（`~/.zshrc` 只把 `~/.stand/bin` 加进 PATH；2026-10-22 旧垫片是「转发 stand」，即跨品牌拉起的总根，本垫片取而代之） |
 | `ops/bin/stand-jdk` | `~/.stand/bin/stand-jdk` | pinned JDK（`$STAND_HOME/jdk-21`）自愈 installer（装 / 修 / 体检） |
@@ -39,7 +39,7 @@ bash "$REPO/ops/test/stand-lifecycle.test.sh"   # 回归：全绿再部署
 ```
 
 **品牌隔离契约（2026-10-27 作者令）**：`stand` 只动 `~/.stand`（端口 `--port > STAND_GATEWAY_PORT > 6138`），
-`nebflow` 只动 `~/.nebflow`（`--port > NEBFLOW_GATEWAY_PORT > 8080`）——互不拉起、互不探活、互不误杀；
+`nebflow` 只动 `~/.nebflow`（`--port > NEBFLOW_GATEWAY_PORT > 6140`；分家批后引擎侧解析链同为 --port > env > config "port" > 品牌缺省）——互不拉起、互不探活、互不误杀；
 home/端口/JDK 覆写 env 各只认自家变量，stop 双探针（自家端口 ∪ 自家 `.pid`）+ 身份门按品牌收窄。
 **不编辑用户 shell rc**：`~/.zshrc:18` 的 PATH 原样保留，隔离由垫片换向达成。
 
@@ -217,7 +217,7 @@ argv[0] 对 .app 二进制无效——测试基建里踩过的坑）。覆盖：
 身份门拒杀/`--force`/`--tree` 透传、Java 版本门 rc=11、passthrough。
 
 **双实例并存批 2026-10-30**（作者令「和 nebflow 隔离，同时可用」）在此基础上新增：
-默认值解析断言（`stand`→`~/.stand`+6138、`nebflow`→`~/.nebflow`+8080，经隐藏探针
+默认值解析断言（`stand`→`~/.stand`+6138、`nebflow`→`~/.nebflow`+6140，经隐藏探针
 `__brand-defaults`，零 JVM）；start 撞**对家品牌实例**占口时 rc=1、报错点名「另一实例」
 （含其默认家/口与共存提示）。引擎侧对账 spec 见 `src/test/scala/nebflow/cli/CliBrandDefaultsSpec.scala` 等。
 

@@ -7,7 +7,7 @@
 #
 # 2026.9.19 自有根契约 (承 ~/.nebflow/bin/nebflow 旧 launcher, 2026-10-23 作者令):
 #   home : ~/.nebflow (NEBFLOW_HOME 钉住防漂移; 不读 STAND_HOME — 隔离契约)
-#   port : 缺省 8080 不钉死; NEBFLOW_GATEWAY_PORT 或 argv --port 覆盖; 不读 STAND_*
+#   port : 缺省 6140 不钉死（双生分家批 2026-10-31：nebflow 品牌自有独立默认口；8080 自此只属 9.19 自有根实例，经 NEBFLOW_GATEWAY_PORT=8080 管辖）; NEBFLOW_GATEWAY_PORT 或 argv --port 覆盖; 不读 STAND_*
 #   jar  : ~/.nebflow/bin/nebflow-assembly-*.jar winsort 择新
 #   JDK  : 钉住 ~/.stand/jdk-21 (与 stand 同一 pinned JDK 资产); 缺失 WARN 后才回落
 #   保护 : 目标端口已被占用 → 拒绝启动(绝不静默换端口); start/stop 守卫与 stand 同源

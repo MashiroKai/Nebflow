@@ -8,7 +8,7 @@ notifications/initialized / tools/list / tools/call）。单工具 generate_imag
 HTTP 调用——路由侧走与腿①内置工具完全相同的 provider 层（配置同读 nebflow.json
 imagegen 节），返回落盘图片绝对路径。无第三方依赖（纯 stdlib）。
 
-端口解析序：--port 参数 > $STAND_GATEWAY_PORT > $NEBFLOW_GATEWAY_PORT > 8080。
+端口解析序（双生分家批 2026-10-31 换代）：--port 参数 > $STAND_GATEWAY_PORT > $NEBFLOW_GATEWAY_PORT > 品牌缺省（本脚本随 stand 构建分发 = 6138；nebflow 品牌构建 = 6140）。
 """
 
 import json
@@ -61,7 +61,10 @@ def resolve_port(argv):
         val = os.environ.get(var)
         if val and val.isdigit():
             return int(val)
-    return 8080
+    # 品牌缺省（双生分家批 2026-10-31）：本脚本随 stand 构建分发 = 6138；nebflow
+    # 品牌构建侧缺省 6140（引擎单源 Defaults.brandDefaultPortFor）。8080 自此只属
+    # 9.19 自有根实例，不再作任何缺省读数。
+    return 6138
 
 
 PORT = resolve_port(sys.argv)
