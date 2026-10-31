@@ -252,13 +252,13 @@ class ActiveAgentsEntrySpec extends FunSuite:
     assertEquals(json.hcursor.get[Int]("unreadReceipts"), Right(1))
   }
 
-  test("#752 bgWaiting carries (taskId, description, startedAt, health) tuples") {
+  test("#752 bgWaiting carries (taskId, description, startedAt, health, ownerName) tuples") {
     val json = WebSocketRoutes.activeAgentEntryJson(
       rec("delegate-n752-3", AgentKind.Delegate),
       None,
       bgWaiting = List(
-        ("job-1", "background waiter 67", 1724336000456L, "healthy"),
-        ("job-2", "sbt test", 1724336000789L, "suspect")
+        ("job-1", "background waiter 67", 1724336000456L, "healthy", ""),
+        ("job-2", "sbt test", 1724336000789L, "suspect", "液体玻璃批")
       )
     )
     val arr = json.hcursor.downField("bgWaiting").values.map(_.toVector).getOrElse(Vector.empty)
@@ -271,6 +271,10 @@ class ActiveAgentsEntrySpec extends FunSuite:
     assertEquals(arr(0).hcursor.get[String]("health"), Right("healthy"))
     assertEquals(arr(1).hcursor.get[String]("description"), Right("sbt test"))
     assertEquals(arr(1).hcursor.get[String]("health"), Right("suspect"))
+    // 归属批（2026-10-31）：ownerName 随行透传——空 = 前端回退现显示，非空 =
+    // 等待行归属短名（与后台任务行 ownerName 同链同源）。
+    assertEquals(arr(0).hcursor.get[String]("ownerName"), Right(""))
+    assertEquals(arr(1).hcursor.get[String]("ownerName"), Right("液体玻璃批"))
   }
 
   // ── 面板命名批（2026-10-31 · 作者令②）：快照面 delegateName 键 ─────────────

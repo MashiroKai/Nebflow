@@ -512,6 +512,20 @@
 .bg-task-origin.bg-origin-device {
   color: var(--color-frame-text);
 }
+/* 后台任务归属批（作者令 2026-10-31「后台任务行标归属」）：delegate 批次短名
+   占归属槽位时的专属 chip——agent 强调族（同 origin-node 先例），「一眼看出
+   是谁的任务」；无短名（非 delegate/旧数据）零渲染，回退既有来源显示。
+   零新色板 token（visual-style: reuse before inventing）。 */
+.bg-task-origin.bg-origin-delegate {
+  color: rgb(var(--accent-agent-light));
+  border-color: rgb(var(--accent-agent-light) / 0.35);
+}
+@media (prefers-color-scheme: dark) {
+  .bg-task-origin.bg-origin-delegate {
+    color: rgb(var(--sapphire));
+    border-color: rgb(var(--sapphire) / 0.35);
+  }
+}
 /* 任务模式标注批（2026-10-30 作者令「派发任务显示执行模式」）：开启任务的
    delegate 会话执行形态 chip——kernel 极简内核（sapphire 强调族，同 origin-node
    先例）/ dispatcher 分发器（亮一档正文色）。同 chip 家族，零新色板 token；

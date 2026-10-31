@@ -470,4 +470,17 @@ object DelegateRegistry:
         case Some(sid) =>
           find(sid).flatMap(_.mode).filter(DualModeConfig.isModeWord)
 
+  /**
+   * 后台任务归属批（作者令 2026-10-31「后台任务行标归属」）：开启任务的会话的
+   * delegate 批次短名读面（Record.name，≤12 字）——与面板命名批的 delegateName
+   * 链同源同判据（isDelegateSession + find + name trim），复用不新造。无双模式
+   * 闸（归属标注不是双模式语义，同 activeAgents 快照 delegateName 面）。空/无名 =
+   * None ⇒ 调用方落空串，前端回退既有显示（零渲染）。
+   */
+  def ownerNameOf(sessionId: Option[String]): Option[String] =
+    sessionId.filter(sid => DelegateSessions.isDelegateSession(Some(sid))) match
+      case None => None
+      case Some(sid) =>
+        find(sid).flatMap(_.name).map(_.trim).filter(_.nonEmpty)
+
 end DelegateRegistry

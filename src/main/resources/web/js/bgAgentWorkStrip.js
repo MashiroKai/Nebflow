@@ -153,7 +153,11 @@ function renderStrip(stripEl, nodeSessionId) {
     if (bgWaiting.length > 0) {
       const w = bgWaiting[0];
       const dur = w.startedAt ? fmtDur(Date.now() - w.startedAt) : '';
-      actValue.textContent = t('subagents.waitingBg', { count: bgWaiting.length, desc: String(w.description || w.taskId || ''), dur });
+      // 归属批（2026-10-31）：等待行同样标归属（与面板行 bgIdleDetail 同规则）——
+      // delegate 批次短名随段尾；空（非 delegate/旧后端）回退现显示。
+      const owner = String(w.ownerName || '').trim();
+      actValue.textContent = t('subagents.waitingBg', { count: bgWaiting.length, desc: String(w.description || w.taskId || ''), dur })
+        + (owner ? ' · ' + owner : '');
     } else if (receipts > 0) {
       actValue.textContent = t('subagents.waitingReceipts', { count: receipts });
     } else {
