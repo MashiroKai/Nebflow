@@ -131,6 +131,7 @@ test('T1 mobile layer active; top band carries no gradient skirt; hard-clip var 
       headerAfterMask: hs.maskImage || hs.webkitMaskImage || 'none',
       headerBgImage: getComputedStyle(header).backgroundImage,
       headerBackdrop: getComputedStyle(header).backdropFilter || getComputedStyle(header).webkitBackdropFilter,
+      headerDisplay: getComputedStyle(header).display,
       chatClipVar: chat.style.getPropertyValue('--chat-top-clip').trim(),
       chatMask: (getComputedStyle(chat).maskImage || '').slice(0, 24),
     };
@@ -141,9 +142,10 @@ test('T1 mobile layer active; top band carries no gradient skirt; hard-clip var 
   expect(shape.headerHasSkirtClass).toBe(false);
   expect(shape.headerAfterContent === 'none' || shape.headerAfterContent === 'normal').toBe(true);
   expect(String(shape.headerAfterMask)).not.toContain('linear-gradient');
-  // v3 悬浮顶栏：无通栏渐变底面（玻璃质感由各控件 glass-control 承担）。
-  expect(shape.headerBgImage).toBe('none');
-  expect(shape.headerBackdrop).toBe('none');
+  /* 液体玻璃 v2 批（10-31，作者 09:03 拍板）：顶栏容器整体退役 display:none ——
+     「无通栏渐变底面」语义由不渲染保证（computed background 仍回指定值，但盒
+     零绘制零命中）。渐隐带契约见 T3。 */
+  expect(shape.headerDisplay).toBe('none');
   // 硬裁切机制在场（--chat-top-clip 锚点变量 + #chat mask）。
   expect(shape.chatClipVar === '' || shape.chatClipVar.endsWith('px')).toBe(true);
   expect(shape.chatMask).toContain('linear-gradient');
@@ -187,23 +189,24 @@ test('T2 first bubble line sits fully below the floating header glass (readable)
   expect(errors).toEqual([]);
 });
 
-test('T3 scrolled content is clipped by the viewport edge, never veiled by a gradient overlay', async ({ page }) => {
+test('T3 scrolled content "blurs then fades" under the edge-fade band (liquid-glass v2); no other gradient veil over bubbles', async ({ page }) => {
   const errors = watchErrors(page);
   await seedRows(page);
 
   const scrolled = await page.evaluate(() => {
     const chat = document.getElementById('chat');
-    chat.scrollTop = 220; // 顶让位 reserve 之上 —— 内容穿入浮层控件区
-    const header = document.getElementById('header');
+    chat.scrollTop = 220; // 顶让位 reserve 之上 —— 内容穿入顶缘渐隐带
+    const fade = document.getElementById('g2-edge-fade');
     const chatBox = chat.getBoundingClientRect();
-    // 视口顶带（y∈[0, header.bottom]）内，除 header 控件外不得有不透明渐变蒙版元素：
-    // 收集首行气泡此刻的可见性 —— 它可能被裁掉/被控件压住，但不得被半透明
-    // 渐变层盖住（即：没有任何 position:fixed/absolute 渐变背景元素以 >50% 不
-    // 透明度横跨气泡宽度）。
+    const fadeCs = getComputedStyle(fade);
+    // 顶带（y∈[chatTop, chatTop+120]）内除 #g2-edge-fade 外不得有渐变蒙版元素：
+    // 渐隐带本身是 v2 设计契约（作者 10-31 09:03 拍板，取代 10-22「零蒙层」令 —
+    // 历史裁定回写见设计稿 §7）；其余任何 veil 仍属破约。
     const veils = [];
     for (const el of document.querySelectorAll('body *')) {
-      // header 悬浮控件（头像渐变底等）是作者批准的 glass-control 族 —— 不算蒙版。
-      if (el.closest('#header')) continue;
+      if (el === fade || el.closest('#g2-edge-fade')) continue;
+      // 悬浮圆钮（g2 液体玻璃）是作者批准的按钮族 —— 不算蒙版。
+      if (el.closest('#mobile-fab-layer')) continue;
       const cs = getComputedStyle(el);
       if (cs.display === 'none' || cs.visibility === 'hidden') continue;
       if (!String(cs.backgroundImage).includes('linear-gradient')) continue;
@@ -217,13 +220,28 @@ test('T3 scrolled content is clipped by the viewport edge, never veiled by a gra
     return {
       scrollTop: chat.scrollTop,
       clipVar: chat.style.getPropertyValue('--chat-top-clip').trim(),
-      headerTop: header.getBoundingClientRect().top,
+      fade: {
+        display: fadeCs.display,
+        pointerEvents: fadeCs.pointerEvents,
+        height: fadeCs.height,
+        backdrop: fadeCs.backdropFilter || fadeCs.webkitBackdropFilter,
+        mask: fadeCs.maskImage || fadeCs.webkitMaskImage,
+        veil: String(fadeCs.backgroundImage).includes('linear-gradient'),
+      },
       veils,
     };
   });
   expect(scrolled.scrollTop).toBe(220);
-  // 无渐变蒙版元素横跨内容顶带（10-22 作者令字面：「不允许任何渐变蒙层盖在
-  // 气泡内容上」）。浮层控件用 glass-control 純色底，不是渐变蒙版。
+  // 渐隐带契约：在场 / 不拦截 / 88px / blur(18px) saturate(1.5) / 两段式 mask /
+  // veil 底色渐层（设计稿 §9-②）。
+  expect(scrolled.fade.display).not.toBe('none');
+  expect(scrolled.fade.pointerEvents).toBe('none');
+  expect(scrolled.fade.height).toBe('88px');
+  expect(String(scrolled.fade.backdrop)).toContain('blur(18px)');
+  expect(String(scrolled.fade.backdrop)).toContain('saturate(1.5)');
+  expect(scrolled.fade.mask).toContain('linear-gradient');
+  expect(scrolled.fade.veil).toBe(true);
+  // 除渐隐带外顶带零蒙版（10-22 令的保留面：不允许**任何其他**渐变蒙层）。
   expect(scrolled.veils).toEqual([]);
   expect(errors).toEqual([]);
 });

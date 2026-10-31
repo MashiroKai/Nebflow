@@ -98,6 +98,12 @@
        Its grouped glass-control rules must win equal-specificity ties
        against feature CSS hover/base states. -->
   <link rel="stylesheet" href="css/sapphire.css">
+  <!-- 液体玻璃 v2 批（2026-10-31，作者 08:43 裁定 + 09:03 拍板）：按钮族换代
+       （圆钮/药丸/墨玻璃药丸 + 镜面高光 + spring 按压 + 边缘光折射）+ 手机端
+       顶缘 88px 渐隐带。紧随 sapphire 加载：换代规则同特异性时以本文件为准；
+       桌面 #header（chat.css）零触碰。折射滤镜 defs（feTurbulence +
+       feDisplacementMap）在本文件 body 首 #g2-refract-defs。 -->
+  <link rel="stylesheet" href="css/liquid-glass.css">
   <link rel="stylesheet" href="css/mobile.css">
   <!-- mobile-ui-refactor 批：手机交互层（独立层，非响应式补丁）。全部规则挂在
        body.mobile-layer 之下 —— 该类只由 js/mobile/bootstrap.js 在 ≤768px 视口
@@ -325,6 +331,18 @@
       </div>
     </div>
   </div>
+  <!-- 液体玻璃 v2 批：边缘光折射滤镜 defs（追加批指定方案 —— SVG feDisplacementMap
+       驱动 backdrop 光畸变，iOS 26 液体玻璃 CSS 复刻通行做法）。低频次 fractal
+       噪声 + 克制 scale（5）：折射集中在边缘、按钮文字零畸变。消费 =
+       liquid-glass.css ::before 折射层（html.g2-refract-on 类开关，js/liquidGlass.js
+       能力探测）；旧 WebView 无滤镜 = 高光+浮影直 blur，不裸断。filter 区域外扩
+       20%：边缘位移不裁切。 -->
+  <svg id="g2-refract-defs" width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <filter id="g2-refract" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.012 0.018" numOctaves="2" seed="8" result="g2noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="g2noise" scale="5" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </svg>
   <!-- conn-liveness（对话层活性批 2026-10-22）：ws 断连/重连顶栏横幅。传输层
        问题不再伪装成卡死：断开 ⇒ 顶栏「连接断开 · 正在重连」（离线排队消息
        在场时追加「N 条待送达」）；重连成功 ⇒ 横幅收起，队列由 flushOfflineQueue
@@ -533,6 +551,11 @@
         </button>
       </div>
     </div>
+    <!-- 顶缘滚入渐隐带（液体玻璃 v2 批 2026-10-31）：手机端替代顶栏的 88px
+         「先糊后没」层（blur 18 / sat 1.5 + veil + 两段式 mask；liquid-glass.css）。
+         桌面恒隐；不是栏——pointer-events:none、无背景容器/边框/固定标题
+         （作者裁定 ② 逐字）。层级：内容 < 渐隐带 25 < 悬浮圆钮层 30。 -->
+    <div id="g2-edge-fade" aria-hidden="true"></div>
     <!-- Dropdowns moved outside #header so backdrop-filter can blur chat content.
          #header has its own backdrop-filter which creates a backdrop root, preventing
          child elements from blurring content behind the header. -->

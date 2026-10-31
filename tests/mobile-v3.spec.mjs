@@ -353,13 +353,30 @@ test('T4 login card: single unified key + horizontal lockup (currentColor), soci
   expect(pageErrors).toEqual([]);
 });
 
-test('T5 header carries no time (v3① guard)', async ({ page }) => {
+test('T5 header retired on mobile (liquid-glass v2 2026-10-31); top edge = fade band + floating circles; header carries no time', async ({ page }) => {
+  // v2 契约（作者 08:43 裁定② + 09:03 拍板）：手机端无 header 容器 —— #header
+  // display:none（DOM 保留）；顶缘 = 88px 渐隐带 + 左右悬浮圆钮层；页标题
+  // （头像/会话名/记忆钮）入流 .g2-chat-head。时间守护沿用到入流头与 header。
   const header = page.locator('#header');
-  await expect(header).toBeVisible();
+  await expect(header).toBeHidden();
   const text = await header.innerText();
   expect(text).not.toMatch(/\d{1,2}:\d{2}/);
   // 时间元素不存在（历史时钟载体类名一并守护）。
   expect(await page.locator('#header .header-time, #header .clock, #header time').count()).toBe(0);
+  // 顶缘渐隐带：存在、不拦截、契约材质（liquid-glass.css #g2-edge-fade）。
+  const fade = page.locator('#g2-edge-fade');
+  await expect(fade).toBeVisible();
+  expect(await fade.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe('none');
+  expect(await fade.evaluate((el) => getComputedStyle(el).height)).toBe('88px');
+  // 悬浮圆钮层：任务/搜索双键在场且可见（48px v2 液体玻璃正圆）。
+  await expect(page.locator('#mobile-fab-layer .mh-chrome-btn')).toHaveCount(2);
+  await expect(page.locator('.mh-chrome-btn[data-chrome="tasks"]')).toBeVisible();
+  await expect(page.locator('.mh-chrome-btn[data-chrome="search"]')).toBeVisible();
+  // 页标题入流：头像 + 会话名迁入 .g2-chat-head（首位、可见）。
+  const head = page.locator('#chat > .g2-chat-head');
+  await expect(head).toHaveCount(1);
+  await expect(head.locator('#agent-avatar-btn')).toBeVisible();
+  await expect(head.locator('#session-name')).toHaveCount(1);
 });
 
 test('T6 gutter retired: content full-width, desktop shells gone, task-list auto-bar gone', async ({ page }) => {

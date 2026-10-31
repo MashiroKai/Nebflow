@@ -62,6 +62,7 @@ import { startWorklineDots, beginRound } from './workline.js';
 import { replayHistoryPageInitialLoad } from './chat/historyReplay.js';
 import { notePendingAsk, removePendingAsk, applyPendingAskSnapshot, pendingSnapshotFailed, initPendingAsks, requestPendingAskSync, startPendingAskSync } from './askPending.js';
 import { initScrollUnderGlass } from './scrollUnderGlass.js'; // uifix ⑤
+import { initLiquidGlass } from './liquidGlass.js'; // 液体玻璃 v2：折射能力探测类开关
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   deleteSession, formatSessionTime, setSessionAttention,
@@ -277,6 +278,7 @@ initPendingAsks();
 // 可见期节拍与页面重新可见共用一个 requestPendingAskSync，镜像不再只靠重连自愈。
 startPendingAskSync(sendWs);
 initScrollUnderGlass(); // uifix ⑤：浮层毛玻璃裙边降级探测器
+initLiquidGlass(); // 液体玻璃 v2 批：边缘折射能力探测（html.g2-refract-on 类开关）
 initServiceWorker(); // console-load-perf 批：温访问秒开（/sw.js 未上线的引擎上为静默空转）
 initHotStampWatch(); // 台账 #919：热更新地基——stamp 轮询自愈（/api/nf-asset-stamp 缺席的引擎上为静默空转）
 
@@ -4143,11 +4145,16 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
   const overlays = document.getElementById('top-overlays');
   const chat = document.getElementById('chat');
   if (!header || !overlays || !chat || !window.ResizeObserver) return;
+  // 液体玻璃 v2 批：顶缘滚入渐隐带计入顶带实测（仅手机端渲染；桌面 display:none
+  // ⇒ getBoundingClientRect 全零，本行桌面恒无副作用）。静止态内容首（页标题/
+  // 首条消息）让位到渐隐带之下，滚动态内容穿入渐隐带「先糊后没」。
+  const edgeFade = document.getElementById('g2-edge-fade');
   // chat.css's #chat padding-top (the no-overlay breathing room baseline).
   const BASE_TOP_PAD = 8;
   const bandBottom = () => Math.max(
     header.getBoundingClientRect().bottom,
     overlays.getBoundingClientRect().bottom,
+    edgeFade ? edgeFade.getBoundingClientRect().bottom : 0,
   );
   const syncTopReserve = () => {
     const chatBox = chat.getBoundingClientRect();

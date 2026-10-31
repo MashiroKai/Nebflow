@@ -227,7 +227,18 @@ export class ChatView {
     // Clear chat area — release card iframe observers/browsing contexts first
     if (this.dom.chat) {
       cleanupCardIframes(this.dom.chat);
-      this.dom.chat.innerHTML = '';
+      /* 液体玻璃 v2 批：手机端页标题入流层 .g2-chat-head（chatChrome.js 自 #header
+         迁入的头像/会话名/记忆钮）随内容流留在首位 —— innerHTML='' 会连它一起销毁
+         （agentProfile 的槽位节点只建一次，不重建），改为保留该层的定向清空。
+         桌面无此节点 ⇒ 分支等价原 innerHTML=''（零行为差）。 */
+      const head = this.dom.chat.querySelector(':scope > .g2-chat-head');
+      if (head) {
+        for (const node of [...this.dom.chat.childNodes]) {
+          if (node !== head) this.dom.chat.removeChild(node);
+        }
+      } else {
+        this.dom.chat.innerHTML = '';
+      }
     }
     // Clear queue bar — will be re-rendered by the event listener in input.js
     if (this.dom.queueBar) {

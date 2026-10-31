@@ -152,6 +152,129 @@ html[data-theme="dark"] {
   }
 }
 
+/* ── 液体玻璃 v2 族（liquid-glass-v2 批 2026-10-31；设计稿
+   docs/design/20261031_084400_liquid-glass-effect-v2 §5.2 token 表逐值 + 追加折射批）
+   圆钮/玻璃药丸/顶缘渐隐带/输入条材质三态双档：:root = 亮档默认（无 data-theme
+   且系统亮时的解析面，与 --btn-ink-* 同构 —— 墨族 :root 亮档默认在 sapphire.css），
+   html[data-theme] 强制档优先，无属性回退 prefers-color-scheme —— 勿复制
+   --glass-* 的 data-theme 裂缝（设计稿 v1 §6 风险条）。
+   --g2-ink-* 墨玻璃药丸引用墨族单源（--btn-ink-*，墨族共存不换代，10-30 单色批
+   继续有效）。 */
+:root {
+  --g2-fab-bg: rgba(255, 255, 255, 0.60);
+  --g2-fab-bg-hover: rgba(255, 255, 255, 0.74);
+  --g2-fab-blur: 16px;
+  --g2-fab-sat: 1.8;
+  --g2-fab-specular: rgba(255, 255, 255, 0.90);
+  --g2-fab-highlight: rgba(255, 255, 255, 0.95);
+  --g2-fab-border: rgba(255, 255, 255, 0.90);
+  --g2-fab-underedge: rgba(0, 0, 0, 0.08);
+  --g2-fab-shadow: rgba(0, 0, 0, 0.12);
+  /* no-backdrop 降级实色（设计稿 §7：亮 .60→.78，高光/投影/按压保留） */
+  --g2-fab-solid: rgba(255, 255, 255, 0.78);
+  /* 墨玻璃药丸（主操作；底色/字色引用墨族单源，高光/浮影为玻璃叠层增量） */
+  --g2-ink-bg: var(--btn-ink-bg);
+  --g2-ink-bg-hover: var(--btn-ink-bg-hover);
+  --g2-ink-bg-active: var(--btn-ink-bg-active);
+  --g2-ink-ink: var(--btn-ink-ink);
+  --g2-ink-highlight: rgba(255, 255, 255, 0.18);
+  --g2-ink-shadow: rgba(17, 24, 39, 0.25);
+  /* 顶缘滚入渐隐带（仅手机端，替代顶栏） */
+  --g2-fade-height: 88px;
+  --g2-fade-blur: 18px;
+  --g2-fade-sat: 1.5;
+  --g2-veil: linear-gradient(to bottom, rgba(245, 246, 248, 0.92) 0%, rgba(245, 246, 248, 0.45) 45%, rgba(245, 246, 248, 0) 100%);
+  /* 输入条材质升级（结构不动：blur 24 + 微渐层 + 镜面高光 + 发送键药丸化） */
+  --g2-input-bg: linear-gradient(to bottom, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.58));
+  --g2-input-border: rgba(255, 255, 255, 0.75);
+  --g2-input-specular: rgba(255, 255, 255, 0.90);
+  --g2-input-shadow: rgba(0, 0, 0, 0.08);
+}
+html[data-theme="light"] {
+  --g2-fab-bg: rgba(255, 255, 255, 0.60);
+  --g2-fab-bg-hover: rgba(255, 255, 255, 0.74);
+  --g2-fab-blur: 16px;
+  --g2-fab-sat: 1.8;
+  --g2-fab-specular: rgba(255, 255, 255, 0.90);
+  --g2-fab-highlight: rgba(255, 255, 255, 0.95);
+  --g2-fab-border: rgba(255, 255, 255, 0.90);
+  --g2-fab-underedge: rgba(0, 0, 0, 0.08);
+  --g2-fab-shadow: rgba(0, 0, 0, 0.12);
+  /* no-backdrop 降级实色（设计稿 §7：亮 .60→.78，高光/投影/按压保留） */
+  --g2-fab-solid: rgba(255, 255, 255, 0.78);
+  /* 墨玻璃药丸（主操作；底色/字色引用墨族单源，高光/浮影为玻璃叠层增量） */
+  --g2-ink-bg: var(--btn-ink-bg);
+  --g2-ink-bg-hover: var(--btn-ink-bg-hover);
+  --g2-ink-bg-active: var(--btn-ink-bg-active);
+  --g2-ink-ink: var(--btn-ink-ink);
+  --g2-ink-highlight: rgba(255, 255, 255, 0.18);
+  --g2-ink-shadow: rgba(17, 24, 39, 0.25);
+  /* 顶缘滚入渐隐带（仅手机端，替代顶栏） */
+  --g2-fade-height: 88px;
+  --g2-fade-blur: 18px;
+  --g2-fade-sat: 1.5;
+  --g2-veil: linear-gradient(to bottom, rgba(245, 246, 248, 0.92) 0%, rgba(245, 246, 248, 0.45) 45%, rgba(245, 246, 248, 0) 100%);
+  /* 输入条材质升级（结构不动：blur 24 + 微渐层 + 镜面高光 + 发送键药丸化） */
+  --g2-input-bg: linear-gradient(to bottom, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.58));
+  --g2-input-border: rgba(255, 255, 255, 0.75);
+  --g2-input-specular: rgba(255, 255, 255, 0.90);
+  --g2-input-shadow: rgba(0, 0, 0, 0.08);
+}
+html[data-theme="dark"] {
+  --g2-fab-bg: rgba(255, 255, 255, 0.14);
+  --g2-fab-bg-hover: rgba(255, 255, 255, 0.20);
+  --g2-fab-blur: 16px;
+  --g2-fab-sat: 1.8;
+  --g2-fab-specular: rgba(255, 255, 255, 0.28);
+  --g2-fab-highlight: rgba(255, 255, 255, 0.35);
+  --g2-fab-border: rgba(255, 255, 255, 0.32);
+  --g2-fab-underedge: rgba(0, 0, 0, 0.40);
+  --g2-fab-shadow: rgba(0, 0, 0, 0.50);
+  --g2-fab-solid: rgba(255, 255, 255, 0.26);
+  --g2-ink-bg: var(--btn-ink-bg);
+  --g2-ink-bg-hover: var(--btn-ink-bg-hover);
+  --g2-ink-bg-active: var(--btn-ink-bg-active);
+  --g2-ink-ink: var(--btn-ink-ink);
+  --g2-ink-highlight: rgba(255, 255, 255, 0.50);
+  --g2-ink-shadow: rgba(0, 0, 0, 0.50);
+  --g2-fade-height: 88px;
+  --g2-fade-blur: 18px;
+  --g2-fade-sat: 1.5;
+  --g2-veil: linear-gradient(to bottom, rgba(19, 22, 28, 0.90) 0%, rgba(19, 22, 28, 0.40) 45%, rgba(19, 22, 28, 0) 100%);
+  --g2-input-bg: linear-gradient(to bottom, rgba(28, 32, 44, 0.80), rgba(24, 28, 38, 0.62));
+  --g2-input-border: rgba(255, 255, 255, 0.14);
+  --g2-input-specular: rgba(255, 255, 255, 0.16);
+  --g2-input-shadow: rgba(0, 0, 0, 0.40);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) {
+    --g2-fab-bg: rgba(255, 255, 255, 0.14);
+    --g2-fab-bg-hover: rgba(255, 255, 255, 0.20);
+    --g2-fab-blur: 16px;
+    --g2-fab-sat: 1.8;
+    --g2-fab-specular: rgba(255, 255, 255, 0.28);
+    --g2-fab-highlight: rgba(255, 255, 255, 0.35);
+    --g2-fab-border: rgba(255, 255, 255, 0.32);
+    --g2-fab-underedge: rgba(0, 0, 0, 0.40);
+    --g2-fab-shadow: rgba(0, 0, 0, 0.50);
+    --g2-fab-solid: rgba(255, 255, 255, 0.26);
+    --g2-ink-bg: var(--btn-ink-bg);
+    --g2-ink-bg-hover: var(--btn-ink-bg-hover);
+    --g2-ink-bg-active: var(--btn-ink-bg-active);
+    --g2-ink-ink: var(--btn-ink-ink);
+    --g2-ink-highlight: rgba(255, 255, 255, 0.50);
+    --g2-ink-shadow: rgba(0, 0, 0, 0.50);
+    --g2-fade-height: 88px;
+    --g2-fade-blur: 18px;
+    --g2-fade-sat: 1.5;
+    --g2-veil: linear-gradient(to bottom, rgba(19, 22, 28, 0.90) 0%, rgba(19, 22, 28, 0.40) 45%, rgba(19, 22, 28, 0) 100%);
+    --g2-input-bg: linear-gradient(to bottom, rgba(28, 32, 44, 0.80), rgba(24, 28, 38, 0.62));
+    --g2-input-border: rgba(255, 255, 255, 0.14);
+    --g2-input-specular: rgba(255, 255, 255, 0.16);
+    --g2-input-shadow: rgba(0, 0, 0, 0.40);
+  }
+}
+
 /* 派生组合面（感知域消费；值全部来自上表，零新色值） */
 :root {
   --st-mail-panel-bg: var(--st-glass-bg);

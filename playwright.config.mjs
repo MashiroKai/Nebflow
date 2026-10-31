@@ -40,6 +40,10 @@ const instanceBacked = [
   // CI 也不跑——与 askinput-off-pending-text / askuser-lockline-history 同族重件，
   // 编排成本见 ci.yml frontend-smoke 的说明。
   'askuser-refresh-survive.spec.mjs',
+  // queuepos-detail：渲染面由引擎真实推导载荷驱动（target/queuepos-payload.json，
+  // 由 MergeQueuePositionSpec 落盘）——无载荷即抛错，自足任务面排除（liquid-glass
+  // 批 2026-10-31 实证：裸跑自足套件被其缺载荷抛错打断整轮收集）。
+  'queuepos-detail.spec.mjs',
   // session-rail / clientconn-wake / askuser-lockline-history / askinput-off-pending-text
   // 是独立脚本（②），本就不在收集面；其 CI 编排见 ci.yml frontend-smoke。
 ];

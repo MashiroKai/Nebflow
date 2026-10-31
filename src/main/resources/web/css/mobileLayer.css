@@ -86,134 +86,43 @@ body.mobile-layer #main {
   margin: 0;
 }
 
-/* ── 悬浮顶栏：无通栏底面，内容直顶，控件各自悬浮 ─────────────────
-   #header 手机层改透明悬浮层（grid 52/1fr/52）：桌面簇（左模型信息/右工具簇）
-   整体退场；中簇 = 会话头（头像 + 名称胶囊，agentProfile.js 插入的同一节点）；
-   左右两格 = chatChrome 的任务/搜索圆键（dock 批：液态下拉列退役后的聊天根
-   常驻入口）。聊天内容在顶栏之下直顶滚动（#chat 顶距由 main.js 的
-   ResizeObserver 按顶栏实测高度自动让位）。
-   控件材质 = glass-control 既有 token（sapphire.css --glass-control-*，零新值）。 */
+/* ── 顶栏退役（液体玻璃 v2 批 2026-10-31，作者 08:43 裁定② + 09:03 拍板 v2）──
+   手机端无 header 容器：顶缘就是内容区。#header 整体不渲染（display:none；
+   DOM 保留在场 —— 桌面簇 WS 徽标读数源与 header 内桌面控件 JS 全部零扰动），
+   10-29 的「透明悬浮顶栏」形态随本批退役。顶缘分三件套承接：
+   · 顶缘 88px 滚入渐隐带 #g2-edge-fade（liquid-glass.css；内容滚入先糊后没）；
+   · 原中簇（头像 + 会话名 + 记忆钮）由 chatChrome.js 迁入 #chat 内容流首的
+     .g2-chat-head —— 页标题入流随滚动离开（设计稿 §3.1 字面）；
+   · 任务/搜索双键迁入 #mobile-fab-layer（48px v2 液体玻璃正圆，下块）。
+   聊天内容顶让位：main.js 顶带实测把渐隐带计入 reserve ⇒ 静止态内容首
+   （会话头）在渐隐带之下，滚动态内容穿入渐隐带「先糊后没」。 */
 body.mobile-layer #header {
+  display: none !important;
+}
+
+/* ── 聊天根左右悬浮圆钮（#mobile-fab-layer；chatChrome.js 建层与双键）────
+   左 = 任务（徽标 = taskBadgeCount 镜像）；右 = 搜索。v2 换代：48px 正圆
+   液体玻璃（liquid-glass.css .g2-fab 材质：blur 16/sat 1.8 双档、上半镜面
+   高光、spring 按压 scale(.88)、边缘光折射）；top:16px 左右 16px 悬浮顶缘
+   （设计稿 §3.1），z 高于渐隐带（30 > 25）。 */
+body.mobile-layer #mobile-fab-layer {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  margin: 0;
-  border: none;
-  border-radius: 0;
-  /* 悬浮态：无通栏底面（玻璃底/底缘分隔线/浮卡阴影全退），内容直顶状态栏下 */
-  background: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  box-shadow: none;
-  padding: calc(6px + env(safe-area-inset-top, 0px)) 6px 0;
-  display: grid;
-  grid-template-columns: 52px minmax(0, 1fr) 52px;
-  align-items: start;
-  pointer-events: none; /* 悬浮层自身不拦截 —— 只有各控件接事件 */
-  z-index: 40;
+  height: 0;
+  z-index: 30;
+  pointer-events: none; /* 层自身不拦截 —— 只有两枚圆钮接事件（渐隐带同源口径） */
 }
-body.mobile-layer #header > * { pointer-events: auto; }
-/* 桌面簇退场（左簇模型信息/侧栏钮、右簇工具链 —— 成员键留在原位隐藏，
-   WS 计数流照写：dock/顶栏徽标镜像的读数源）。 */
-body.mobile-layer #header .header-left,
-body.mobile-layer #header .header-right {
-  display: none !important;
-}
-/* 中簇 = 会话头：头像居中浮起 + 名称玻璃胶囊（顶栏零时间戳守护不变） */
-body.mobile-layer #header .header-center {
-  position: static;
-  transform: none;
-  max-width: none;
-  overflow: visible;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding-top: 2px;
-  grid-column: 2;
-  pointer-events: none;
-}
-body.mobile-layer #header .header-center > * { pointer-events: auto; }
-/* 会话头头像（两端同一节点；此处手机 375 形 —— 52px 圆 + glass-control 缘） */
-body.mobile-layer #agent-avatar-btn {
-  width: 52px;
-  height: 52px;
-  border-radius: 50%;
-  flex: none;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  cursor: pointer;
-  color: #fff;
-  font-size: 21px;
-  font-weight: 600;
-  background: linear-gradient(145deg, #5b7fbf, #3c568c);
-  border: 1px solid var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    0 2px 8px var(--glass-control-shadow);
-  transition: transform 0.15s ease;
-}
-body.mobile-layer #agent-avatar-btn:active { transform: scale(0.94); }
-body.mobile-layer #agent-avatar-btn .agent-avatar-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-body.mobile-layer #agent-avatar-btn svg { width: 22px; height: 22px; }
-/* 名称玻璃胶囊（v3「名称」一囊；顶栏零时间戳） */
-body.mobile-layer #header #session-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-frame-text-bright, var(--color-frame-text));
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 2px 10px;
-  border-radius: 999px;
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow);
-}
-/* bypass 下拉锚在 #main 上（top 50px 按桌面浮卡几何硬编码）——顶栏几何
-   （52px 头像 + 6px 顶距）下锚点同步，菜单挂在悬浮层正下方。 */
-body.mobile-layer .header-dropdown-menu {
-  top: calc(58px + env(safe-area-inset-top, 0px));
-  right: 12px;
-}
-
-/* ── 聊天根顶栏双圆键（chatChrome.js 建；dock 批）────────────────────
-   左 = 任务（徽标 = taskBadgeCount 镜像）；右 = 搜索。glass-control 材质，
-   44px 热区（视觉圆 40px 走 padding-box）。 */
 body.mobile-layer .mh-chrome-btn {
-  grid-row: 1;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  flex: none;
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-frame-text, #e6e9ef);
-  cursor: pointer;
-  position: relative;
-  touch-action: manipulation;
+  position: absolute;
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  pointer-events: auto;
 }
-body.mobile-layer .mh-chrome-btn[data-chrome='tasks'] { grid-column: 1; justify-self: start; }
-body.mobile-layer .mh-chrome-btn[data-chrome='search'] { grid-column: 3; justify-self: end; }
-body.mobile-layer .mh-chrome-btn svg { width: 19px; height: 19px; }
-body.mobile-layer .mh-chrome-btn:active { transform: scale(0.94); }
+body.mobile-layer .mh-chrome-btn[data-chrome='tasks'] { left: 16px; }
+body.mobile-layer .mh-chrome-btn[data-chrome='search'] { right: 16px; }
+body.mobile-layer .mh-chrome-btn svg { width: 20px; height: 20px; }
+body.mobile-layer .mh-chrome-btn:active { transform: scale(0.88); }
 body.mobile-layer .mh-chrome-badge {
   position: absolute;
   top: -2px;

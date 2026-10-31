@@ -144,46 +144,57 @@
    One material for buttons/inputs sitting on glass surfaces: semi-
    transparent tint, backdrop blur, 3D edges (top highlight + bottom
    under-edge), whisper border. Feature CSS hover states should reuse
-   these variables so every control shares the same material. */
+   these variables so every control shares the same material.
+   liquid-glass-v2 批（2026-10-31，作者 09:03 拍板）：材质值换代 = 设计稿 §5.2
+   白玻璃双档（blur 10→16 / sat 1.2→1.8、底 .60/.14、新增镜面高光层 token、
+   底部 inset 折射 -2px 5px、浮影 0 8px 24px 同值双槽）；hover 只动填充
+   （设计稿 §4）⇒ glow/shadow hover 档与 rest 同值。暗档仍挂
+   prefers-color-scheme（本文件历史结构；--g2-* 新族已走 html[data-theme]
+   三态，勿把此裂缝复制给新族）。 */
 :root {
-  --glass-control-bg: rgba(255, 255, 255, 0.45);
-  --glass-control-bg-hover: rgba(255, 255, 255, 0.65);
-  --glass-control-border: rgba(255, 255, 255, 0.40);
-  --glass-control-highlight: rgba(255, 255, 255, 0.50);
-  --glass-control-highlight-hover: rgba(255, 255, 255, 0.62);
+  --glass-control-bg: rgba(255, 255, 255, 0.60);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.74);
+  --glass-control-border: rgba(255, 255, 255, 0.90);
+  --glass-control-highlight: rgba(255, 255, 255, 0.95);
+  --glass-control-highlight-hover: rgba(255, 255, 255, 0.95);
+  /* 上半镜面高光层（设计稿 --g2-fab-specular 同值；折射层本体在 liquid-glass.css） */
+  --glass-control-specular: rgba(255, 255, 255, 0.90);
   --glass-control-underedge: rgba(0, 0, 0, 0.08);
-  --glass-control-glow: rgba(0, 0, 0, 0.06);
-  --glass-control-glow-hover: rgba(0, 0, 0, 0.09);
-  --glass-control-shadow: rgba(0, 0, 0, 0.04);
-  --glass-control-shadow-hover: rgba(0, 0, 0, 0.06);
-  --glass-control-blur: 10px;
+  --glass-control-glow: rgba(0, 0, 0, 0.12);
+  --glass-control-glow-hover: rgba(0, 0, 0, 0.12);
+  --glass-control-shadow: rgba(0, 0, 0, 0.12);
+  --glass-control-shadow-hover: rgba(0, 0, 0, 0.12);
+  --glass-control-blur: 16px;
+  --glass-control-sat: 1.8;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --glass-control-bg: rgba(255, 255, 255, 0.05);
-    --glass-control-bg-hover: rgba(255, 255, 255, 0.10);
-    --glass-control-border: rgba(255, 255, 255, 0.08);
-    --glass-control-highlight: rgba(255, 255, 255, 0.08);
-    --glass-control-highlight-hover: rgba(255, 255, 255, 0.13);
-    --glass-control-underedge: rgba(0, 0, 0, 0.25);
-    --glass-control-glow: rgba(0, 0, 0, 0.20);
-    --glass-control-glow-hover: rgba(0, 0, 0, 0.28);
-    --glass-control-shadow: rgba(0, 0, 0, 0.15);
-    --glass-control-shadow-hover: rgba(0, 0, 0, 0.20);
+    --glass-control-bg: rgba(255, 255, 255, 0.14);
+    --glass-control-bg-hover: rgba(255, 255, 255, 0.20);
+    --glass-control-border: rgba(255, 255, 255, 0.32);
+    --glass-control-highlight: rgba(255, 255, 255, 0.35);
+    --glass-control-highlight-hover: rgba(255, 255, 255, 0.35);
+    --glass-control-specular: rgba(255, 255, 255, 0.28);
+    --glass-control-underedge: rgba(0, 0, 0, 0.40);
+    --glass-control-glow: rgba(0, 0, 0, 0.50);
+    --glass-control-glow-hover: rgba(0, 0, 0, 0.50);
+    --glass-control-shadow: rgba(0, 0, 0, 0.50);
+    --glass-control-shadow-hover: rgba(0, 0, 0, 0.50);
   }
 }
 
 .glass-control {
-  background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  background-color: var(--glass-control-bg);
+  background-image: linear-gradient(to bottom, var(--glass-control-specular) 0%, transparent 46%);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
   border: 1px solid var(--glass-control-border);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
+    inset 0 -2px 5px var(--glass-control-underedge),
     0 1px 3px var(--glass-control-glow),
-    0 2px 8px var(--glass-control-shadow);
+    0 8px 24px var(--glass-control-shadow);
 }
 
 /* ── Canvas 控件玻璃 token（2026-10-28 canvas 三件 UI/UX 修 · 件三）─────────
@@ -284,7 +295,8 @@
   transition: background 0.15s, color 0.15s, border-color 0.15s,
               box-shadow 0.15s, opacity 0.15s, transform 0.1s;
 }
-/* Pattern A — hover */
+/* Pattern A — hover（liquid-glass-v2 批：材质换代 = .glass-control 同配方 +
+   镜面高光层；按压 spring 回弹 = 投影收短 + 高光收敛，形变档随 v2 规范） */
 .panel-btn:hover,
 .activity-avatar:hover,
 .session-delete:hover,
@@ -296,19 +308,21 @@
 .cfg-eye-btn:hover,
 .agent-detail-prompt-toggle:hover,
 .project-archive-btn:hover {
-  background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  background-color: var(--glass-control-bg-hover);
+  background-image: linear-gradient(to bottom, var(--glass-control-specular) 0%, transparent 46%);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
   border-color: var(--glass-control-border);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight-hover),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 2px 8px var(--glass-control-glow-hover),
-    0 4px 12px var(--glass-control-shadow-hover);
+    inset 0 -2px 5px var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow-hover),
+    0 8px 24px var(--glass-control-shadow-hover);
 }
 
 /* Pattern B — base (border-color only, no shorthand: preserves dashed
-   add-buttons and per-variant border styles) */
+   add-buttons and per-variant border styles; liquid-glass-v2 批：材质换代 +
+   镜面高光层） */
 .cfg-btn:not(.cfg-btn-primary),
 .config-actions button,
 .agent-detail-save-btn,
@@ -321,19 +335,21 @@
 #delete-cancel,
 #memory-modal-actions button,
 #rules-modal-actions button {
-  background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  background-color: var(--glass-control-bg);
+  background-image: linear-gradient(to bottom, var(--glass-control-specular) 0%, transparent 46%);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
   border-color: var(--glass-control-border);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
+    inset 0 -2px 5px var(--glass-control-underedge),
     0 1px 3px var(--glass-control-glow),
-    0 2px 8px var(--glass-control-shadow);
-  transition: background 0.15s, color 0.15s, border-color 0.15s,
-              box-shadow 0.15s, opacity 0.15s;
+    0 8px 24px var(--glass-control-shadow);
+  transition: background-color 0.18s ease, color 0.15s, border-color 0.15s,
+              box-shadow 0.18s ease, opacity 0.15s, transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
-/* Pattern B — hover (picked/copied states excluded: accent must survive) */
+/* Pattern B — hover（picked/copied states excluded: accent must survive;
+   liquid-glass-v2 批：hover 只动填充 —— 投影/高光与 rest 同档） */
 .cfg-btn:not(.cfg-btn-primary):hover,
 .config-actions button:hover,
 .agent-detail-save-btn:hover,
@@ -346,12 +362,31 @@
 #delete-cancel:hover,
 #memory-modal-actions button:hover,
 #rules-modal-actions button:hover {
-  background: var(--glass-control-bg-hover);
+  background-color: var(--glass-control-bg-hover);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight-hover),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 2px 8px var(--glass-control-glow-hover),
-    0 4px 12px var(--glass-control-shadow-hover);
+    inset 0 -2px 5px var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow-hover),
+    0 8px 24px var(--glass-control-shadow-hover);
+}
+/* Pattern B — active（liquid-glass-v2 批补：spring 按压回弹，形变 + 投影收短） */
+.cfg-btn:not(.cfg-btn-primary):active,
+.config-actions button:active,
+.agent-detail-save-btn:active,
+.option-btn:not(.picked):active,
+.neblink-peer-update-btn:active,
+.neblink-ch-btn:active,
+.epub-nav-btn:active,
+.code-copy-btn:not(.copied):active,
+#modal-cancel:active,
+#delete-cancel:active,
+#memory-modal-actions button:active,
+#rules-modal-actions button:active {
+  transform: scale(0.95);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -2px 5px var(--glass-control-underedge),
+    0 3px 10px var(--glass-control-shadow);
 }
 
 /* ── 发送键族统一 — 正常绿 / 掉线灰（作者 2026-09-15 逐字令）──────────────
@@ -408,8 +443,8 @@
   /* 机制：`:is()` 取列表内最高特异度（= #id 档 1,0,0）⇒ 族内所有状态规则同档，
      一律压过 .cfg-btn / .cfg-btn-primary 的常态与 hover 声明（本文件最后加载）。 */
   background: var(--btn-primary-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
   border: 1px solid var(--btn-primary-bg-hover);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
@@ -1195,8 +1230,8 @@ button.glass-control.fm-req-accept {
   background: var(--btn-primary-bg);
   border-color: var(--btn-primary-bg-hover);
   color: var(--btn-primary-ink);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
   box-shadow: var(--glass-send-stack);
   cursor: pointer;
   opacity: 1;
