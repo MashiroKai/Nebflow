@@ -2049,6 +2049,25 @@ export default {
   // to the question card; answering retires the mirror (Ask→todo→answer→write-off).
   'todo.askChip': 'Awaiting',
   'todo.askJump': 'Click to jump to the question card',
+  // Todo-inbox redesign batch (2026-10-31 author order): user-facing inbox —
+  // message-list entry row + Reminders-style page (groups: overdue floats top /
+  // decisions / approvals / planned).
+  'todo.entryTitle': 'To-Dos',
+  'todo.entryEmpty': 'All clear',
+  'todo.grpOverdue': 'Overdue',
+  'todo.grpDecision': 'Decisions',
+  'todo.grpApproval': 'Approvals',
+  'todo.grpPlan': 'Planned',
+  // Permission / McpPermission mirror rows (engine AskTodoBridge perm- product):
+  // click jumps back to the approval card; the card's terminal state retires it.
+  'todo.permChip': 'Approval',
+  'todo.permJump': 'Click to jump to the approval card',
+  // Added order (2026-10-31 23:14): project dimension (grouping/filter) + full
+  // CRUD on the user face.
+  'todo.filterAll': 'All',
+  'todo.filterUngrouped': 'Ungrouped',
+  'todo.projectPlaceholder': 'Project (optional)',
+  'todo.edit': 'Edit',
   // Task-mode badge batch (2026-10-30 author order "show dispatch execution mode"):
   // delegate/node tasks carry their execution-mode badge — kernel vs dispatcher.
   // task.mode.* consumers: task cards (taskList row badge) + bg-panel row mode chip

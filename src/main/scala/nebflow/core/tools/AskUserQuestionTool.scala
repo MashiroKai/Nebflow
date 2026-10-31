@@ -55,11 +55,21 @@ object AskUserQuestionTool extends Tool:
     """Ask the user one or more questions. Each question can have predefined options or be open-ended. The tool gives the user clickable options and a structured UI, which is faster and clearer than reading a text question — never ask clarifying questions in plain text.
 
 When to use:
-- You cannot proceed without an answer.
-- There are multiple valid approaches to choose between.
+- You cannot proceed without an answer (TRULY blocking — the next step is impossible
+  without it). This is the only gate that justifies a popup.
+- There are multiple valid approaches to choose between AND the choice changes what you
+  do next before you can continue.
 - You need the user to provide information you cannot infer.
 
 When NOT to use (anti-pattern): if you can make a reasonable decision yourself, do NOT ask — just proceed and let the user correct course if needed. Example: don't ask "Which file should I fix?" when the error message already names the file.
+
+分流（待办体系改版批 2026-10-31，用户面收件箱）：decisions and approvals the user can
+make WHEN FREE — 待决策 (pick between options you can also default), 待批准 (approve/reject
+something not gating your next step), 计划 (reminders, "remember to ...") — do NOT popup.
+Write them as a Schedule todo (kind="todo", content = the decision/approval to make). They
+land in the user's todo inbox (消息列表 → 待办事项); the user batch-approves when free, and
+the answer comes back on your next turn. Reserve this tool for TRULY blocking questions:
+a popup interrupts the user NOW — a todo waits politely.
 
 Supervision note (project nodes): when a project node asks, the question card is attributed with a "project · node" source label and a node-ask trace event is written to the flow map event log — every ask is visible to the dispatcher for audit. Asking is supervised, not a bypass; still follow the anti-pattern rule above (decide yourself when you reasonably can, and batch dependent questions into one call).
 

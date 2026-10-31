@@ -1978,6 +1978,23 @@ export default {
   // 作答后镜像随行销账（闭环 Ask→待办→答→销账）。
   'todo.askChip': '待答',
   'todo.askJump': '点击跳转到提问卡片作答',
+  // 待办体系改版批（2026-10-31 作者令）：用户面收件箱——消息列表入口行 +
+  // 提醒事项页（分组：已到期浮顶 / 待决策 / 待批准 / 计划）。
+  'todo.entryTitle': '待办事项',
+  'todo.entryEmpty': '全部清零',
+  'todo.grpOverdue': '已到期',
+  'todo.grpDecision': '待决策',
+  'todo.grpApproval': '待批准',
+  'todo.grpPlan': '计划',
+  // Permission / McpPermission 镜像行（引擎 AskTodoBridge perm- 产物）：点击
+  // 跳回批准卡处理，卡终态随行销账。
+  'todo.permChip': '待批准',
+  'todo.permJump': '点击跳转到批准卡片处理',
+  // 追加令（2026-10-31 23:14）：项目维度（分组/筛选）+ 增删改查全量能力。
+  'todo.filterAll': '全部',
+  'todo.filterUngrouped': '未分组',
+  'todo.projectPlaceholder': '项目（可选）',
+  'todo.edit': '编辑',
   // 任务模式标注批（2026-10-30 作者令「派发任务显示执行模式」）：
   // 派发任务（delegate/节点）的执行形态徽标——极简内核（kernel）/ 分发器（dispatcher）。
   // task.mode.* 三处消费：任务卡（taskList 行内徽标）+ 后台任务面板行 mode chip +

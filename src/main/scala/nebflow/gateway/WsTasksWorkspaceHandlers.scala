@@ -43,6 +43,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
     "createScheduledTask" -> handleCreateScheduledTask,
     "listScheduledTasks" -> handleListScheduledTasks,
     "deleteScheduledTask" -> handleDeleteScheduledTask,
+    "updateScheduledTask" -> handleUpdateScheduledTask,
     "toggleScheduledTask" -> handleToggleScheduledTask,
     "completeTodo" -> handleCompleteTodo,
     "getTaskList" -> handleGetTaskList,
@@ -346,15 +347,18 @@ private[gateway] object WsTasksWorkspaceHandlers:
     // 待办分家批（2026-10-30）：kind="todo" = 待办面创建（侧边栏待办面板）——
     // 无固定触发时间，triggerAt 由引擎侧固定策略算（下一次 09:00 浮出），客户端
     // 时间不采信；repeat 无待办语义。缺省/其它值 = 定时任务面（现状逐字节不变）。
+    // 改版批追加令（2026-10-31 23:14）：project = 事项归属标签（UI 分组/筛选维度）。
     val crKindTodo = hc.downField("kind").as[Option[String]].getOrElse(None)
       .map(_.trim.toLowerCase).contains(nebflow.core.scheduler.ScheduledTask.KindTodo)
+    val crProject = hc.downField("project").as[Option[String]].getOrElse(None)
+      .map(_.trim).filter(_.nonEmpty)
     if crKindTodo && crSessionId.nonEmpty && crContent.nonEmpty then
       val surfaceAt = nebflow.core.scheduler.ScheduledTask.nextTodoSurfaceAt(
         System.currentTimeMillis(), java.time.ZoneId.systemDefault()
       )
       val todo = nebflow.core.scheduler.ScheduledTask.create(
         crSessionId, crContent, surfaceAt, None, None, crName,
-        Some(nebflow.core.scheduler.ScheduledTask.KindTodo)
+        Some(nebflow.core.scheduler.ScheduledTask.KindTodo), None, crProject
       )
       (for
         removed <- crName match
@@ -382,7 +386,8 @@ private[gateway] object WsTasksWorkspaceHandlers:
               "referencePath" -> io.circe.Json.Null,
               "repeat" -> io.circe.Json.Null,
               "name" -> todo.name.asJson,
-              "kind" -> nebflow.core.scheduler.ScheduledTask.KindTodo.asJson
+              "kind" -> nebflow.core.scheduler.ScheduledTask.KindTodo.asJson,
+              "project" -> todo.project.asJson
             )
           )
         )
@@ -442,6 +447,12 @@ private[gateway] object WsTasksWorkspaceHandlers:
     end if
   end handleCreateScheduledTask
 
+  /** `listScheduledTasks` — 单会话全量（现状）+ 改版批（2026-10-31）`scope:"all"`
+   *  跨会话待办收件箱（仅 kind=todo 语义，用户面聚合，数据源 =
+   *  store.getAllTodos）。all 路径逐行带 sessionId（行级操作帧 completeTodo /
+   *  deleteScheduledTask 据此跨会话寻址；completeTodo 后端按 id 查库取真值，
+   *  帧内值仅兜底）；响应回显 scope 供前端路由（收件箱列表 vs 提醒面列表分态，
+   *  互不漏行）。单会话路径逐字节不变（无 scope 字段的旧前端零感知）。 */
   private def handleListScheduledTasks(
     ctx: WsDispatchCtx,
     text: String,
@@ -450,32 +461,27 @@ private[gateway] object WsTasksWorkspaceHandlers:
   ): IO[Unit] =
     import ctx.*
     val lrSessionId = inboundEnvelope(text).sessionId
-    if lrSessionId.nonEmpty then
+    val json = parsedJson(text)
+    val scopeAll = json.hcursor.downField("scope").as[String].toOption
+      .map(_.trim.equalsIgnoreCase("all")).getOrElse(false)
+    if scopeAll then
+      sharedResources.scheduledTaskStore.getAllTodos.flatMap { todos =>
+        val taskJsons = todos.map(listTaskJson)
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "scheduledTaskList".asJson,
+            "tasks" -> taskJsons.asJson,
+            "sessionId" -> lrSessionId.asJson,
+            "scope" -> "all".asJson
+          )
+        )
+      }
+    else if lrSessionId.nonEmpty then
       sharedResources.scheduledTaskStore.loadTasks(lrSessionId).flatMap { allTasks =>
         // Only return pending (untriggered) tasks — triggered tasks are
         // deleted from storage on firing, but filter as a safety net.
         val tasks = allTasks.filterNot(_.triggered)
-        val taskJsons = tasks.map { t =>
-          io.circe.Json.obj(
-            "id" -> t.id.asJson,
-            "content" -> t.content.asJson,
-            "triggerAt" -> t.triggerAt.asJson,
-            "createdAt" -> t.createdAt.asJson,
-            "triggered" -> t.triggered.asJson,
-            "triggeredAt" -> t.triggeredAt.asJson,
-            "referencePath" -> t.referencePath.asJson,
-            "repeat" -> t.repeat.asJson,
-            "enabled" -> t.enabled.asJson,
-            // 双面化（2026-10-24）：kind ∈ null/"task"（定时）| "todo"（待办）
-            "kind" -> t.kind.asJson,
-            // 待办分家批（2026-10-30）：稳定 upsert 名随列表下发——前端据
-            // ask-<requestId> 前缀识别「待答镜像行」（点击跳回提问卡，不走打卡）。
-            "name" -> t.name.asJson,
-            // 认知二期产品批③打卡缺卡调整流：缺卡计数随列表下发（UI 据此给
-            // 连续未销卡条目的调整建议）。
-            "missCount" -> t.missCount.asJson
-          )
-        }
+        val taskJsons = tasks.map(listTaskJson)
         wsSend(
           io.circe.Json.obj(
             "type" -> "scheduledTaskList".asJson,
@@ -487,6 +493,33 @@ private[gateway] object WsTasksWorkspaceHandlers:
     else IO.unit
     end if
   end handleListScheduledTasks
+
+  /** 列表行 JSON 单点（两条 list 路共用）：字段 = 现状全集 + 改版批行级
+   *  sessionId（跨会话收件箱寻址面；单会话路径同帧回带，纯增量）。 */
+  private def listTaskJson(t: nebflow.core.scheduler.ScheduledTask): io.circe.Json =
+    io.circe.Json.obj(
+      "id" -> t.id.asJson,
+      "content" -> t.content.asJson,
+      "triggerAt" -> t.triggerAt.asJson,
+      "createdAt" -> t.createdAt.asJson,
+      "triggered" -> t.triggered.asJson,
+      "triggeredAt" -> t.triggeredAt.asJson,
+      "referencePath" -> t.referencePath.asJson,
+      "repeat" -> t.repeat.asJson,
+      "enabled" -> t.enabled.asJson,
+      // 双面化（2026-10-24）：kind ∈ null/"task"（定时）| "todo"（待办）
+      "kind" -> t.kind.asJson,
+      // 待办分家批（2026-10-30）：稳定 upsert 名随列表下发——前端据
+      // ask-<requestId> 前缀识别「待答镜像行」（点击跳回提问卡，不走打卡）。
+      "name" -> t.name.asJson,
+      // 认知二期产品批③打卡缺卡调整流：缺卡计数随列表下发（UI 据此给
+      // 连续未销卡条目的调整建议）。
+      "missCount" -> t.missCount.asJson,
+      // 改版批（2026-10-31）：行级会话归属（scope:all 收件箱的跨会话寻址面）。
+      "sessionId" -> t.sessionId.asJson,
+      // 改版批追加令（2026-10-31 23:14）：项目维度（UI 分组/筛选主维度；None=未分组）。
+      "project" -> t.project.asJson
+    )
 
   private def handleDeleteScheduledTask(
     ctx: WsDispatchCtx,
@@ -536,6 +569,76 @@ private[gateway] object WsTasksWorkspaceHandlers:
       }
     else IO.unit
   end handleToggleScheduledTask
+
+  /**
+   * `updateScheduledTask` — 改版批追加令（2026-10-31 23:14 ②「修改与删除都要有」）
+   * 用户面编辑腿：字段级 patch（content / project；project 传 "" = 清空归属）。
+   * 帧内 sessionId 仅兜底——按 id 全库寻址（completeTodo 同法）。广播
+   * scheduledTaskUpdated 帧型（全量 task JSON，前端就地替换/重渲）。
+   */
+  private def handleUpdateScheduledTask(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val json = parsedJson(text)
+    val upId = json.hcursor.downField("id").as[String].getOrElse("").trim
+    val upSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+    val contentOpt = json.hcursor.downField("content").as[String].toOption
+      .map(_.trim).filter(_.nonEmpty)
+    // project 提供即生效（"" 清空）；缺席不改。
+    val projectOpt: Option[Option[String]] =
+      json.hcursor.downField("project").as[String].toOption.map(raw => Some(raw.trim).filter(_.nonEmpty))
+    if upId.nonEmpty && (contentOpt.isDefined || projectOpt.isDefined) then
+      sharedResources.scheduledTaskStore.findTaskById(upId).flatMap {
+        case Some(t) =>
+          val updated = t.copy(
+            content = contentOpt.getOrElse(t.content),
+            project = projectOpt.getOrElse(t.project)
+          )
+          sharedResources.scheduledTaskStore.updateTask(t.sessionId, upId)(_ => updated).flatMap { changed =>
+            if !changed then IO.unit
+            else
+              for
+                _ <- sharedResources.scheduledTaskService.traverse_(_.notifyTaskChange())
+                _ <- wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "scheduledTaskUpdated".asJson,
+                    "sessionId" -> updated.sessionId.asJson,
+                    "task" -> io.circe.Json.obj(
+                      "id" -> updated.id.asJson,
+                      "content" -> updated.content.asJson,
+                      "triggerAt" -> updated.triggerAt.asJson,
+                      "createdAt" -> updated.createdAt.asJson,
+                      "triggered" -> updated.triggered.asJson,
+                      "triggeredAt" -> updated.triggeredAt.asJson,
+                      "referencePath" -> updated.referencePath.asJson,
+                      "repeat" -> updated.repeat.asJson,
+                      "enabled" -> updated.enabled.asJson,
+                      "kind" -> updated.kind.asJson,
+                      "name" -> updated.name.asJson,
+                      "missCount" -> updated.missCount.asJson,
+                      "project" -> updated.project.asJson,
+                      "sessionId" -> updated.sessionId.asJson
+                    )
+                  )
+                )
+              yield ()
+          }
+        case None =>
+          // 幂等宽容：行已不在 ⇒ 回 deleted 帧让 UI 收敛到同态。
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "scheduledTaskDeleted".asJson,
+              "id" -> upId.asJson,
+              "sessionId" -> upSessionId.asJson
+            )
+          )
+      }
+    else IO.unit
+  end handleUpdateScheduledTask
 
   /**
    * `completeTodo` — 打卡 UI 销账腿（认知二期产品批③）：与 delete 的区别 =

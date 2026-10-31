@@ -107,4 +107,78 @@ class AskTodoBridgeSpec extends CatsEffectSuite:
     assertEquals(AskTodoBridge.requestIdOf(Some("ask-")), None)
   }
 
+  // ── 改版批（2026-10-31）：perm- 待批准镜像 ──────────────────────────
+
+  test("attachPermission 落 perm- 镜像（[待批准] toolName · summary — agent）") {
+    val store = freshStore()
+    val sent = collection.mutable.ListBuffer.empty[Json]
+    val bridge = mkBridge(store, sent)
+    val payload = Json.obj(
+      "toolName" -> "Bash".asJson,
+      "summary" -> "rm -rf build/tmp".asJson,
+      "dangerLevel" -> 2.asJson
+    )
+    for
+      _ <- bridge.attachPermission("root-1", "permnb-ccc333", payload, "worker-a")
+      todos <- store.getAllTodos
+    yield
+      assertEquals(todos.length, 1)
+      assertEquals(todos.head.name, Some("perm-permnb-ccc333"))
+      assertEquals(todos.head.kind, Some(ScheduledTask.KindTodo))
+      assertEquals(todos.head.content, "[待批准] Bash · rm -rf build/tmp — worker-a")
+  }
+
+  test("retire 双前缀同清：ask- 与 perm- 镜像一并销账（单边缺失 = no-op）") {
+    val store = freshStore()
+    val sent = collection.mutable.ListBuffer.empty[Json]
+    val bridge = mkBridge(store, sent)
+    val payload = Json.obj("toolName" -> "Edit".asJson, "summary" -> "Edit file".asJson)
+    for
+      _ <- bridge.attach("root-1", "rid-dual", "问题", "a")
+      _ <- bridge.attachPermission("root-1", "rid-dual", payload, "a")
+      before <- store.getAllTodos
+      _ <- bridge.retire("rid-dual")
+      after <- store.getAllTodos
+      // 只有 ask- 镜像的 id retire：perm 侧缺失不报错。
+      _ <- bridge.attach("root-1", "rid-ask-only", "问题二", "a")
+      _ <- bridge.retire("rid-ask-only")
+      askOnly <- store.getAllTodos
+    yield
+      assertEquals(before.length, 2)
+      assertEquals(after.length, 0)
+      assertEquals(askOnly.length, 0)
+  }
+
+  test("助手：permContent 字段回落（toolName → serverId → approval）；permRequestIdOf 只认 perm- 前缀") {
+    val full = Json.obj("toolName" -> "Bash".asJson, "summary" -> "ls".asJson)
+    assertEquals(AskTodoBridge.permContent(full, "a"), "[待批准] Bash · ls — a")
+    val noSummary = Json.obj("toolName" -> "Curl".asJson)
+    assertEquals(AskTodoBridge.permContent(noSummary, ""), "[待批准] Curl")
+    val mcp = Json.obj("serverId" -> "fs-server".asJson, "summary" -> "read dir".asJson)
+    assertEquals(AskTodoBridge.permContent(mcp, "a"), "[待批准] fs-server · read dir — a")
+    assertEquals(AskTodoBridge.permContent(Json.obj(), ""), "[待批准] approval")
+    assertEquals(AskTodoBridge.permRequestIdOf(Some("perm-abc123")), Some("abc123"))
+    assertEquals(AskTodoBridge.permRequestIdOf(Some("ask-abc123")), None)
+    assertEquals(AskTodoBridge.permRequestIdOf(Some("weekly-report-42")), None)
+  }
+
+  // ── 改版批追加令（2026-10-31 23:14 ①）：项目维度 ─────────────────────
+
+  test("attach 带 project 标签落库；payloadProject 提取（project → sourceFlow，空串=未分组）") {
+    val store = freshStore()
+    val sent = collection.mutable.ListBuffer.empty[Json]
+    val bridge = mkBridge(store, sent)
+    for
+      _ <- bridge.attach("root-1", "rid-proj", "选哪个方案？", "worker-a", Some(" stand "))
+      todos <- store.getAllTodos
+    yield
+      assertEquals(todos.length, 1)
+      assertEquals(todos.head.project, Some("stand"))
+      // 提取单点：project 优先；空串/缺席 = None（未分组）。
+      assertEquals(AskTodoBridge.payloadProject(Json.obj("project" -> "DOSTEL".asJson)), Some("DOSTEL"))
+      assertEquals(AskTodoBridge.payloadProject(Json.obj("sourceFlow" -> "stand".asJson)), Some("stand"))
+      assertEquals(AskTodoBridge.payloadProject(Json.obj("project" -> "   ".asJson)), None)
+      assertEquals(AskTodoBridge.payloadProject(Json.obj()), None)
+  }
+
 end AskTodoBridgeSpec

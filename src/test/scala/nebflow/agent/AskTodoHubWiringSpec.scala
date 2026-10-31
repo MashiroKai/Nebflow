@@ -6,16 +6,18 @@ import io.circe.Json
 import munit.CatsEffectSuite
 
 import scala.concurrent.duration.*
-import nebflow.actor.{InteractionHubCommand, InteractionKind, InteractionReply, InteractionRequest}
+import nebflow.actor.{InteractionAnswered, InteractionHubCommand, InteractionKind, InteractionReply, InteractionRequest}
 import nebflow.core.scheduler.{AskTodoBridge, ScheduledTask, ScheduledTaskStore}
 
 /**
  * Ask→待办 hub 接线钉（待办分家批 2026-10-30，作者令「待办接 AskUserQuestion，
- * 闭环 Ask→待办→用户答→销账」）——钉的是 **hub↔bridge 接线缝**，bridge 本体
- * 语义见 AskTodoBridgeSpec：
- *  1. AskUser 挂起 ⇒ root 会话待办收件箱出现 ask- 镜像（permission 卡不入面）；
- *  2. 用户取消（CancelRequest）⇒ 镜像随行销账（闭环的「答/取消→销账」半环）；
- *  3. 源会话死亡（CleanupForSession）⇒ 镜像随行销账。
+ * 闭环 Ask→待办→用户答→销账」；改版批 2026-10-31 扩面：Permission /
+ * McpPermission 同步镜像 perm- 待批准组）——钉的是 **hub↔bridge 接线缝**，
+ * bridge 本体语义见 AskTodoBridgeSpec：
+ *  1. AskUser 挂起 ⇒ root 会话待办收件箱出现 ask- 镜像；
+ *  2. Permission 挂起 ⇒ perm- 待批准镜像（content 带 [待批准] 前缀）；
+ *  3. 用户取消（CancelRequest）⇒ 镜像随行销账（闭环的「答/取消→销账」半环）；
+ *  4. 源会话死亡（CleanupForSession）⇒ 镜像随行销账。
  */
 class AskTodoHubWiringSpec extends CatsEffectSuite:
 
@@ -92,7 +94,7 @@ class AskTodoHubWiringSpec extends CatsEffectSuite:
     end for
   }
 
-  test("permission 卡不入待办面（kind 闸）") {
+  test("permission 卡挂起 ⇒ perm- 待批准镜像；批准作答 ⇒ 随行销账（改版批 kind 闸放宽）") {
     val system = nebflow.actor.ActorSystem("ask-todo-hub-test2")
     val store = freshStore()
     val bridge = new AskTodoBridge(store, None, (_: Json) => IO.unit)
@@ -106,8 +108,24 @@ class AskTodoHubWiringSpec extends CatsEffectSuite:
       _ <- hub ! InteractionHubCommand.Request(permissionRequest("perm-1", d))
       _ <- IO.sleep(150.millis)
       todos <- store.getAllTodos
+      // 批准路径收口（permission 卡无用户取消路——CancelRequest 对非 AskUser
+      // 槽位回 NotAskUser 不终结，见 hub 注释①；终态 = 作答 / 源会话死亡）。
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("perm-1", "root-1", Json.obj("approved" -> Json.fromBoolean(true)))
+      )
+      _ <- IO.sleep(150.millis)
+      afterAnswer <- store.getAllTodos
       _ <- system.stopAll
-    yield assertEquals(todos.length, 0)
+    yield
+      // 改版批：permission 入面（原「不入面」闸反转）——单份 perm- 镜像，
+      // content 从 payload toolName/summary 提取，带 [待批准] 前缀。
+      assertEquals(todos.length, 1)
+      assertEquals(todos.head.name, Some("perm-perm-1"))
+      assertEquals(todos.head.sessionId, "root-1")
+      assertEquals(todos.head.kind, Some(ScheduledTask.KindTodo))
+      assert(todos.head.content.startsWith("[待批准] Edit"))
+      // 批准收口：镜像随行销账（retire 双前缀幂等清的 permission 半环）。
+      assertEquals(afterAnswer.length, 0)
     end for
   }
 

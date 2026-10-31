@@ -239,15 +239,9 @@ function initSidePanels() {
     panelId: 'panel-sessions',
     i18nKey: 'activity.files',
   });
-  // 待办分家批（2026-10-30 作者令）：待办独立侧边栏面板——定时任务=给 agent，
-  // 待办=给人；面板本体由 scheduled-task.js 渲染（与顶栏提醒面板同一数据源
-  // 按 kind 分面）。
-  registerSidePanel({
-    id: 'todo',
-    buttonId: 'todo-btn',
-    panelId: 'panel-todo',
-    i18nKey: 'activity.todo',
-  });
+  // 待办分家批（2026-10-30 作者令）的 todo 侧边栏槽随改版批（2026-10-31）退役：
+  // 待办不占单独侧边栏空间——入口 = 消息列表顶部「待办事项」行，内页 =
+  // #todo-page（scheduled-task.js 渲染核）。
   // Friends gating — single decision point: js/featureFlags.js friendsEnabled()
   // (release marker vs. dev config chain). Detach the Messages/Contacts entries
   // now; main.js calls enableFriendPanels() once the first configData latches

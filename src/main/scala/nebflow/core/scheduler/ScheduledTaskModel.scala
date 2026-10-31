@@ -57,8 +57,7 @@ case class ScheduledTask(
    * 零工具动作 ⇒ 本轮触发记 1 次，有动作清零。达 IdleDownfreqThreshold 自动
    * 降频（repeat 阶梯 hour→day→week）并挂 reviewFlag。随任务持久化，重启不清。
    */
-  idleStreak: Int = 0,
-  /**
+  idleStreak: Int = 0,  /**
    * 「待审查」标记（2026-10-29 降频批）：连续空转达阈值后被引擎自动降频的
    * 例程挂此标——list 可见；作者恢复 = 同名 re-arm（upsert 换新任务，标记与
    * 计数自然归零）或 cancel 销账。粘性：一旦挂上不自动摘（自清则作者永远看不到）。
@@ -75,7 +74,14 @@ case class ScheduledTask(
    * 重拆，呈作者确认——不擅自改计划，注意力伦理）。随任务持久化，存量文件
    * 无此键 → 0（withDefaults 零迁移）。
    */
-  missCount: Int = 0
+  missCount: Int = 0,
+  /**
+   * 项目维度（待办体系改版批追加令 2026-10-31 23:14「事项按项目分」）：事项
+   * 归属标签（如 "DOSTEL"/"stand"），UI 分组与筛选的主维度。None = 未分组。
+   * 自由文本标签（引擎不持项目注册表权威——标签即数据）；存量文件无此键 →
+   * None（withDefaults 零迁移）。定/待两面通用（定时任务面 UI 暂不消费）。
+   */
+  project: Option[String] = None
 ):
   /** true = 待办面（周期浮出直至销账），false = 定时任务面（现状）。 */
   def isTodo: Boolean = kind.contains(ScheduledTask.KindTodo)
@@ -113,7 +119,8 @@ object ScheduledTask:
     repeat: Option[String] = None,
     name: Option[String] = None,
     kind: Option[String] = None,
-    condition: Option[String] = None
+    condition: Option[String] = None,
+    project: Option[String] = None
   ): ScheduledTask =
     val normalizedKind = kind.map(_.trim.toLowerCase).filter(_.nonEmpty)
     ScheduledTask(
@@ -128,7 +135,8 @@ object ScheduledTask:
       repeat = if normalizedKind.contains(KindTodo) then None else repeat,
       name = name.map(_.trim).filter(_.nonEmpty),
       kind = normalizedKind.filter(_ == KindTodo), // 非 "todo" 值一律归定时任务面
-      condition = condition.map(_.trim).filter(_.nonEmpty)
+      condition = condition.map(_.trim).filter(_.nonEmpty),
+      project = project.map(_.trim).filter(_.nonEmpty)
     )
 
   end create
