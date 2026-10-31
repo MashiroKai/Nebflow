@@ -50,7 +50,7 @@ class SeedServiceSpec extends FunSuite:
   private val DefaultPlugins = List(
     "visual-report",
     "slideblocks",
-    "nebflow-plugin-creator",
+    "stand-dev",
     "web-search-toolkit",
     "browser-use",
     "computer-use",
@@ -86,7 +86,7 @@ class SeedServiceSpec extends FunSuite:
         !os.exists(home / "plugins" / name),
         s"plugin '$name' NOT seeded (absent from manifest + seed/plugins tree)"
       )
-    for name <- List("qa", "frontend-dev", "engineering-methods", "explorer-toolkit", "design-spec")
+    for name <- List("design-language", "design-cards", "engineering-methods", "explorer-toolkit", "design-spec")
     do
       assert(
         !os.exists(home / "plugins" / name),

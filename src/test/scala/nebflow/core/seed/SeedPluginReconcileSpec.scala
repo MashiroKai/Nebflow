@@ -255,57 +255,26 @@ class SeedPluginReconcileSpec extends FunSuite:
     assert(recordSha.contains(pristine), "trust record untouched (no re-approve)")
     assert(dirDigest(pluginDir) == userDigest, "runtime content untouched by seed")
 
-  // ── ②b 官方保留 namespace + 陈旧信任记录 → 出厂字节赢（2026-10-21 诊断批）──
+  // ── ②b 保留 namespace 面无出厂包 ⇒ fail-closed 结构闭包（2026-10-31 stand-dev 合并批）──
   /**
-   * 死锁回归钉（作者 home 实录 2026-10-14/10-20 两次重演）：runtime == 旧出厂、
-   * seed == 新出厂、信任记录 == 更旧的 approve 时刻 digest ⇒ 修前走「用户改过保留」
-   * （信任记录陈旧 ⇒ 判用户版），而装载层 OfficialPackages 只认**当前 jar** 出厂
-   * digest ⇒ 包被判死且永不自愈（SeedService 刷新腿要求 runtime==trusted，永不触发）。
-   * 修后：保留 `nebflow-` 前缀包 runtime ≠ seed 一律种子镜像覆盖 + 重审（备份在位）。
+   * 原用例（官方保留名包 + 陈旧信任记录 ⇒ 出厂字节赢，2026-10-21 死锁回归钉）的 fixture
+   * = 种子树里的 `nebflow-plugin-creator`。「开发插件统一批」（2026-10-31）已把它并入
+   * `stand-dev`，种子树内再无 `nebflow-` 保留前缀包 ⇒ 该场景在 classpath 夹具上结构性
+   * 不可复现，按批文档登记暂搁（恢复条件 = 下一枚 `nebflow-` 官方包进种子树；机制代码
+   * OfficialPackages / SeedService 官方分支本批零改动）。
+   *
+   * 替代锁（本用例）：新世界里内置允许列表不含任何保留前缀包，且 admits 对任意保留前缀
+   * 名恒 false（fail-closed）——「漂移官方包坐成死包」的路径在装载闸结构上被关闭。
    */
-  test("official reserved-namespace package with a stale trust record is refreshed from seed, not kept"):
+  test("reserved namespace has no builtin package: allowlist is reserved-name-free, admits refuses any reserved name"):
     makeIsolatedHome()
-    val creator = "nebflow-plugin-creator"
-    val creatorDir = home / "plugins" / creator
-    // 先在位**出厂原样**并 approve（记录 = 当时出厂 digest；实录里 e885 记录的等价时刻），
-    // 再把 runtime 漂成旧出厂形态（等价实录 0621）、把记录改写成陈旧假 digest——
-    // 直接对漂移态 approve 是不可达路径（官方闸已在 scan 拒掉漂移的保留名包）。
-    copySeedPlugin(creator)
-    PluginRegistry.approve(creator).unsafeRunSync()
-    // runtime = 旧出厂形态（对 seed 有差异；等价实录里的 0621 旧出厂版）
-    val skillPath = creatorDir / "skills" / "plugin-packaging" / "SKILL.md"
-    os.write.append(skillPath, "\n<!-- stale-factory marker -->")
-    val runtimeDigest = dirDigest(creatorDir)
-    assert(runtimeDigest != dirDigest(seedDirOf(creator)), "precondition: runtime != seed")
-    val cfgPath = PathUtil.configJsonReadPath(home)
-    val stale = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-    val patched = io.circe.parser
-      .parse(os.read(cfgPath))
-      .toOption
-      .get
-      .hcursor
-      .downField("plugins")
-      .downField("trust")
-      .downField(creator)
-      .downField("sha256")
-      .set(io.circe.Json.fromString(stale))
-      .top
-      .get
-    os.write.over(cfgPath, patched.noSpaces)
-    assert(recordShaOf(creator).contains(stale), "precondition: trust record is the stale fake digest")
-
-    ensure()
-
-    // 出厂字节赢：镜像覆盖 + 重审（修前此处 = 「keeping user version」死包）
     assert(
-      treeAsText(creatorDir) == treeAsText(seedDirOf(creator)),
-      "official package mirrored back to the shipped factory tree (byte-level)"
+      nebflow.core.plugin.OfficialPackages.allowlist().keySet.forall(n => !nebflow.core.plugin.OfficialPackages.isReserved(n)),
+      "builtin seed tree carries zero 'nebflow-'-prefixed package (stand-dev merge batch)"
     )
-    assert(recordShaOf(creator).contains(dirDigest(creatorDir)), "re-approved on the factory digest")
-    val backups = os.list(home / "plugins-backups").filter(os.isDir).toList
     assert(
-      backups.exists(_.last.endsWith(s"_pre-sync-$creator")),
-      s"pre-sync backup holds the overwritten stale-factory content: ${backups.map(_.last)}"
+      !nebflow.core.plugin.OfficialPackages.admits("nebflow-anything", "deadbeefdeadbeef"),
+      "fail-closed: any reserved-prefix runtime package is refused while no official package is shipped"
     )
 
   // ── ③ seed == runtime 一致 → 无动作 ├──────────────────────
@@ -364,26 +333,26 @@ class SeedPluginReconcileSpec extends FunSuite:
     val myproj = home / "projects" / "myproj"
     os.makeDir.all(myproj)
     os.write.over(myproj / "project.json", """{"name":"myproj"}""")
-    // 既有形态：装了一部分默认集（visual-report），另两包（含 nebflow-plugin-creator）缺失
+    // 既有形态：装了一部分默认集（visual-report），另两包（含 stand-dev）缺失
     copySeedPlugin("visual-report")
-    assert(!os.exists(home / "plugins" / "nebflow-plugin-creator"), "precondition: creator absent")
+    assert(!os.exists(home / "plugins" / "stand-dev"), "precondition: stand-dev absent")
     assert(!os.exists(home / "plugins" / "slideblocks"), "precondition: slideblocks absent")
 
     ensure()
 
     // ① 缺失的默认集插件被自愈安装（整目录实件 + trusted）——author home 的缺口机制解
-    for name <- List("nebflow-plugin-creator", "slideblocks")
+    for name <- List("stand-dev", "slideblocks")
     do
       assert(os.exists(home / "plugins" / name / "plugin.json"), s"default-set plugin '$name' self-healed")
       assert(PluginRegistry.resolve(name).unsafeRunSync().isRight, s"self-healed '$name' is trusted (approved)")
     assert(
-      treeAsText(home / "plugins" / "nebflow-plugin-creator") == treeAsText(seedDirOf("nebflow-plugin-creator")),
+      treeAsText(home / "plugins" / "stand-dev") == treeAsText(seedDirOf("stand-dev")),
       "self-healed content == seed tree (byte-level)"
     )
     // ② 幂等：第二次 ensure 对该目录零动作（digest 已与种子一致）
-    val healed = dirDigest(home / "plugins" / "nebflow-plugin-creator")
+    val healed = dirDigest(home / "plugins" / "stand-dev")
     ensure()
-    assert(dirDigest(home / "plugins" / "nebflow-plugin-creator") == healed, "second ensure is a no-op")
+    assert(dirDigest(home / "plugins" / "stand-dev") == healed, "second ensure is a no-op")
 
   // ── ⑦ 自愈面 = 默认集（不向种子树全集扩张）───────────────
   test("self-heal installs only the default set — never the whole seed tree"):
@@ -396,7 +365,7 @@ class SeedPluginReconcileSpec extends FunSuite:
 
     // 种子树里但不在默认集的 5 包：零安装（种子文件保留可手动装；
     // 默认集 = 7 包：作者裁定 2026-10-05 方案A 锚点 4→7 追认现状）
-    for name <- List("qa", "frontend-dev", "engineering-methods", "explorer-toolkit", "design-spec")
+    for name <- List("design-language", "design-cards", "engineering-methods", "explorer-toolkit", "design-spec")
     do
       assert(
         !os.exists(home / "plugins" / name),
@@ -409,8 +378,8 @@ class SeedPluginReconcileSpec extends FunSuite:
         "browser-use",
         "computer-use",
         "document-production",
-        "nebflow-plugin-creator",
         "slideblocks",
+        "stand-dev",
         "visual-report",
         "web-search-toolkit"
       ),
