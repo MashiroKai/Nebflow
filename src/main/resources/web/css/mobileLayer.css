@@ -1283,28 +1283,10 @@ body.mobile-layer .mf-social-sealed-sub {
   line-height: 1.5;
   color: var(--color-frame-text-muted, #98a2b3);
 }
-/* 联系人页「手机接入」入口行（渠道卡配置面入口）。 */
-body.mobile-layer .mf-social-entry {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 46px;
-  margin: 10px 12px 6px;
-  padding: 0 14px;
-  border-radius: 14px;
-  border: 1px solid var(--glass-control-border);
-  background: var(--glass-control-bg);
-  color: var(--color-frame-text, #e6e9ef);
-  font-size: 14px;
-  cursor: pointer;
-  touch-action: manipulation;
-}
-body.mobile-layer .mf-social-entry:active { transform: scale(0.99); }
-body.mobile-layer .mf-social-entry-ic svg { width: 17px; height: 17px; }
-body.mobile-layer .mf-social-entry-label { flex: 1; min-width: 0; text-align: left; }
-body.mobile-layer .mf-social-entry-chev { opacity: 0.5; }
-body.mobile-layer .mf-social-entry-chev svg { width: 14px; height: 14px; }
+/* 联系人页「手机接入」入口行（作者令 2026-10-31 08:51）：行形态收编进桌面
+   .fm-nf-entry 家族（圆底淡色图标 + 标题 + 右箭头，与「设备」「发起群聊」
+   同栏），样式吃 friends.css:451-486；原 .mf-social-entry-* 专属五条样式随
+   旧形态整段摘除，零残留死样式。 */
 /* 消息页通知段退役（作者令 2026-10-30 08:29「这个图的消息的底部，通知是干嘛的，
    我觉得不用显示。就像微信一样就行了，有新消息在消息按钮的右上角加数字角标
    就行」）：.mf-notify-* / .mf-msgrow* 四条样式随段落一起摘除，零残留死样式。
