@@ -352,6 +352,12 @@ body.mobile-layer .mobile-page.live {
   visibility: visible;
   pointer-events: auto;
 }
+/* 顶栏批 2026-10-31（作者令①）：dock 根页顶栏整体退役，安全区顶距由页面壳
+   自管 —— env(safe-area-inset-top) 真机留刘海/状态栏净空，桌面视口 0 高零变化；
+   详情页有页头（自带 safe-area padding），不受影响。 */
+body.mobile-layer .mobile-page-nohead {
+  padding-top: env(safe-area-inset-top, 0px);
+}
 
 /* 页面头：左上角「<」返回钮（悬浮玻璃圆，glass-control 材质）＋居中标题胶囊。
    顶部胶囊语言统一批（作者令 2026-10-30）：页头走聊天顶栏同款悬浮语言——
@@ -1290,6 +1296,201 @@ body.mobile-layer .mf-hub-row > i svg { width: 18px; height: 18px; }
 body.mobile-layer .mf-hub-row-label { flex: 1; min-width: 0; }
 body.mobile-layer .mf-hub-chev { opacity: 0.45; color: var(--color-text-muted, #8b8e96); }
 body.mobile-layer .mf-hub-chev svg { width: 16px; height: 16px; }
+
+/* ── 工作台顶头像入口 + 个人主页层级面（手机顶栏批 2026-10-31 作者令②④）── */
+/* 头像入口卡：与 hub 行卡同族（白卡 r16 轻阴影），圆形头像 + 名/副行 + chevron；
+   头像双态骨架与设置页同源（.mf-me-avatar-logo 品牌标 / .mf-me-avatar-photo
+   账号照片，paintAvatarSlot 就绪门翻面）。 */
+body.mobile-layer .mf-me-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 14px 0;
+  min-height: 64px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 16px;
+  background: var(--color-surface, #ffffff);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.06);
+  color: var(--color-text, #1b1e26);
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+@media (prefers-color-scheme: dark) {
+  body.mobile-layer .mf-me-entry {
+    box-shadow:
+      0 2px 8px rgba(0, 0, 0, 0.20),
+      0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+body.mobile-layer .mf-me-entry:active {
+  background: color-mix(in srgb, var(--color-text, #1b1e26) 6%, var(--color-surface, #ffffff));
+}
+/* 圆形头像框（登录态照片 / 未登录品牌标双态；几何 = 设置页头像框同族缩档）。 */
+body.mobile-layer .mf-me-avatar-frame {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--color-frame-input-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+body.mobile-layer .mf-me-avatar-frame.big { width: 56px; height: 56px; }
+body.mobile-layer .mf-me-avatar-frame.huge { width: 88px; height: 88px; }
+body.mobile-layer .mf-me-avatar-frame picture {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+body.mobile-layer .mf-me-avatar-logo {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  pointer-events: none;
+}
+body.mobile-layer .mf-me-avatar-frame.big .mf-me-avatar-logo { width: 32px; height: 32px; }
+body.mobile-layer .mf-me-avatar-frame.huge .mf-me-avatar-logo { width: 48px; height: 48px; }
+body.mobile-layer .mf-me-avatar-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  pointer-events: none;
+}
+body.mobile-layer .mf-me-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+body.mobile-layer .mf-me-name {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--color-text, #1b1e26);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.mobile-layer .mf-me-sub {
+  font-size: 12px;
+  color: var(--color-text-muted, #8b8e96);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 个人主页（me）：资料卡。 */
+body.mobile-layer .mf-me-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 14px 0;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--color-surface, #ffffff);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  body.mobile-layer .mf-me-card {
+    box-shadow:
+      0 2px 8px rgba(0, 0, 0, 0.20),
+      0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+body.mobile-layer .mf-me-names {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+body.mobile-layer .mf-me-card .mf-me-name { font-size: 17px; }
+body.mobile-layer .mf-me-login { flex: none; }
+/* 分组标签与账号行沿用 mf-hub 家族（mf-me-grouplabel 复用 mf-hub-label 口径，
+   个人主页分组与 hub 分组视觉同族）。 */
+body.mobile-layer .mf-me-grouplabel { margin: 0 14px; padding-left: 10px; padding-right: 10px; }
+/* 个人主页账号行卡（无 .mf-hub 容器兜边距，壳级补 14px 侧距；分组标签紧贴其上）。 */
+body.mobile-layer .mobile-page[data-page="me"] .mf-hub-rows { margin: 0 14px; }
+/* 入口行右值（当前读数，如用户名/绑定的邮箱）。 */
+body.mobile-layer .mf-hub-row-val {
+  flex: none;
+  max-width: 45%;
+  font-size: 14px;
+  color: var(--color-text-muted, #8b8e96);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 层级子页字段行（label + 只读 value；卡与 hairline 同 hub 族）。 */
+body.mobile-layer .mf-me-fields { margin: 12px 14px 0; }
+body.mobile-layer .mf-me-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 50px;
+  padding: 0 16px;
+  font-size: 15px;
+  color: var(--color-text, #1b1e26);
+}
+body.mobile-layer .mf-me-field:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 0;
+  height: 1px;
+  background: var(--color-frame-border-light, #eeeff1);
+}
+body.mobile-layer .mf-me-field-label { flex: none; }
+body.mobile-layer .mf-me-field-value {
+  min-width: 0;
+  font-size: 14px;
+  color: var(--color-text-muted, #8b8e96);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 头像子页大头像展位。 */
+body.mobile-layer .mf-me-hero {
+  display: flex;
+  justify-content: center;
+  padding: 36px 0 28px;
+}
+/* 官网出口键（玻璃质感控件族，玻璃空间相对钮；视觉裁定：面板/控件玻璃质感）。 */
+body.mobile-layer .mf-me-portal {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 12px 14px 0;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+/* 提示文案（官网统一管理口径）。 */
+body.mobile-layer .mf-me-hint {
+  margin: 12px 24px 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-muted, #8b8e96);
+}
 
 /* ── 社交页面（消息/联系人；socialFaces.js）────────────────────────── */
 /* 封存空态卡（features.friends 缺席；骨架占位 + 文案，不伪造数据）。 */

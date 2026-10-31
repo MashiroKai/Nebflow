@@ -180,13 +180,17 @@ test('T1 five-tab dock: author-order keys, icon+label structure, switching, acti
   await expect(page.locator('#mobile-dock .dock-key.active')).toHaveCount(1);
   await expect(page.locator('#mobile-dock .dock-key[data-dock="chat"]')).toHaveClass(/active/);
 
-  // 切换：点「消息」→ home/top=messages + active 态 + 页面头标题；点中键 →
+  // 切换：点「消息」→ home/top=messages + active 态；点中键 →
   // 详情全清回聊天根（输入框）+ 中键激活。
   await page.locator('#mobile-dock .dock-key[data-dock="messages"]').click();
   expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('messages');
   await expect(page.locator('#mobile-dock .dock-key[data-dock="messages"]')).toHaveClass(/active/);
   await expect(page.locator('.mobile-page[data-page="messages"]')).toHaveClass(/live/);
-  await expect(page.locator('.mobile-page[data-page="messages"] .mobile-page-title')).toHaveText('消息');
+  // 顶栏批 2026-10-31（作者令①「手机端各页顶部标题文字全去掉」）：dock 根页
+  // 顶栏整体退役 —— 无标题胶囊、无页头条，内容上移；安全区顶距由页面壳自管。
+  await expect(page.locator('.mobile-page[data-page="messages"] .mobile-page-title')).toHaveCount(0);
+  await expect(page.locator('.mobile-page[data-page="messages"] .mobile-page-header')).toHaveCount(0);
+  await expect(page.locator('.mobile-page[data-page="messages"]')).toHaveClass(/mobile-page-nohead/);
   await page.locator('#mobile-dock .dock-key[data-dock="chat"]').click();
   expect(await page.evaluate(() => window.__nfMobileNav)).toMatchObject({ home: 'chat', top: 'chat', stack: ['chat'] });
   await expect(page.locator('.mobile-page.live')).toHaveCount(0);
@@ -200,8 +204,9 @@ test('T1 five-tab dock: author-order keys, icon+label structure, switching, acti
   // 同根再点 = 清详情回根（栈已 1 → noop 不塌栈）。
   await page.locator('#mobile-dock .dock-key[data-dock="workbench"]').click();
   expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('workbench');
-  // 根页「<」= 回聊天根；中键激活。
-  await page.locator('.mobile-page[data-page="workbench"] .mobile-back-btn').click();
+  // 回聊天根 = 中键（chat home 键）；批② + 顶栏批：dock 根页无「<」（顶栏退役），
+  // 返回语义由底 dock 承担。
+  await page.locator('#mobile-dock .dock-key[data-dock="chat"]').click();
   expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('chat');
   await expect(page.locator('#mobile-dock .dock-key.active')).toHaveCount(1);
   await expect(page.locator('#mobile-dock .dock-key[data-dock="chat"].active')).toHaveCount(1);

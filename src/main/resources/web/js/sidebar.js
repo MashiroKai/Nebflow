@@ -865,9 +865,15 @@ export function renderSettings() {
   // 2026-09-06 作者裁定：账号区与设备互联统一为一个区块——设备属于账号，
   // 登录态头像下方直接放设备列表，未登录态只有 logo + 一句「不可用」说明，
   // 不再有独立的 neblink settings-section。
+  // 手机顶栏批（2026-10-31 作者令②③，仅手机层）：设置页撤掉头像入口与设备区 ——
+  // 头像上收工作台顶部（点击进个人主页），设备在联系人页展示、不重复。桌面
+  // 逐字不变（渲染期按 body.mobile-layer 判别；两处消费腿均为元素在场判空，
+  // 缺席零成本）。设置页账号块保留 neblink 登录态读数行。
+  const mobileLayer = typeof document !== 'undefined' && document.body.classList.contains('mobile-layer');
   content.innerHTML = `
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.account')}</div>
+      ${mobileLayer ? '' : `
       <button class="settings-avatar-entry" id="settings-avatar-entry" type="button">
         <span class="settings-avatar-frame">
           <picture>
@@ -876,9 +882,9 @@ export function renderSettings() {
           </picture>
           <img class="settings-avatar-photo" alt="" hidden>
         </span>
-      </button>
+      </button>`}
       ${neblinkSettingsHTML()}
-      <div id="settings-devices-slot"></div>
+      ${mobileLayer ? '' : '<div id="settings-devices-slot"></div>'}
     </div>
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.runtime')}</div>
