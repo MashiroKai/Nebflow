@@ -1,11 +1,16 @@
 package nebflow.gateway
 
 import cats.effect.{IO, Ref}
+import cats.effect.unsafe.implicits.global
+import cats.syntax.all.*
 import nebflow.shared.Branding
 import org.http4s.{ResponseCookie, SameSite}
 
 import java.security.SecureRandom
 import java.util.Base64
+import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * One console session record: the value of the HttpOnly session cookie the
@@ -36,6 +41,10 @@ final case class SessionRecord(
   slidingExpiresAt: Long
 )
 
+object SessionRecord:
+  /** Snapshot (de)serialization for the optional persistence file — field names are the wire. */
+  given io.circe.Codec[SessionRecord] = io.circe.generic.semiauto.deriveCodec
+
 /**
  * Diagnostics/CLI view of a live session. `maskedId` is the FIRST 8
  * characters of the session id — enough to target a revocation, never the
@@ -61,24 +70,76 @@ final case class SessionView(
  * creates / verifications cannot double-spend), and an opportunistic expiry
  * sweep on the write paths. The store is tiny — no background fiber.
  *
- * Persistence: NONE, deliberately. Sliding renewal touches every verified
- * request (a disk write per request for zero benefit), and persisting session
- * credentials would grow the stolen-artifact surface. A gateway restart kills
- * every session; the browser then falls back to the portal ticket leg or the
- * break-glass ticket — that is the registered trade-off (plan §2.6).
- *
- * Constant-time comparison (the `Auth.validateToken` `MessageDigest.isEqual`
- * discipline) is NOT used here, on purpose: session ids are 256-bit random
- * values living at most 30d (originally 12h — the lookup-failure argument is
- * entropy-bound, not lifetime-bound), and the lookup is a plain `Map` hit
- * (same as the ticket stores) — there is no long-lived secret to compare
- * against. The lookup failure mode is a Map miss, not a byte comparison loop.
+ * Persistence: OPTIONAL file snapshot (portal 会话短命根修批, 2026-10-31 —
+ * 「引擎重启不杀 portal 会话」, #908 修法②). The pre-batch trade-off (a
+ * gateway restart kills every session; plan §2.6) is what the portal console
+ * user hit as 「登录已失效」 after every engine restart: the relay session
+ * outlives the host, so every forwarded call 401'd until a manual re-entry.
+ * The snapshot restores live rows across restarts:
+ *   - structural changes (create / revocations) write through immediately;
+ *   - sliding touches only mark dirty — a 60s daemon flushes them, so the
+ *     per-request cost stays the in-memory Ref (no disk write per request,
+ *     the original objection);
+ *   - the file is written temp-then-atomic-move with 0600 perms; a corrupt or
+ *     absent file loads as an empty store (fail-open, never blocks boot).
+ * `None` (the default, and every spec assembly) keeps the pure in-memory
+ * shape byte-for-byte.
  */
 class GatewaySessionStore private (
   sessionsRef: Ref[IO, Map[String, SessionRecord]],
   absoluteTtlSeconds: Long,
-  idleTimeoutSeconds: Long
+  idleTimeoutSeconds: Long,
+  persistenceFile: Option[os.Path]
 ):
+  private val log = org.slf4j.LoggerFactory.getLogger(classOf[GatewaySessionStore])
+  /** Sliding-touch dirtiness — the daemon's flush signal (write amplification guard). */
+  private val dirty = new AtomicBoolean(false)
+  /** One daemon thread per persistent store; no-op (None) for in-memory assemblies. */
+  private val flusher: Option[ScheduledThreadPoolExecutor] = persistenceFile.map { _ =>
+    val ex = new ScheduledThreadPoolExecutor(1, r =>
+      new Thread(r, "gateway-session-snapshot") { setDaemon(true) })
+    ex.setRemoveOnCancelPolicy(true)
+    ex.scheduleWithFixedDelay(() => flushIfDirty(), 60, 60, TimeUnit.SECONDS)
+    ex
+  }
+
+  private def markDirty(): Unit = dirty.set(true)
+
+  private def flushIfDirty(): Unit =
+    if dirty.getAndSet(false) then
+      sessionsRef.get
+        .map(rows => writeSnapshot(rows.values))
+        .handleErrorWith(e => IO(log.warn("session snapshot flush failed", e)))
+        .unsafeRunSync()
+
+  /** Snapshot the current rows to the persistence file (atomic, best-effort). */
+  private def writeSnapshot(rows: Iterable[SessionRecord]): Unit =
+    persistenceFile.foreach { f =>
+      try
+        // Temp file as a SIBLING of the target (never a child — f is the file
+        // path itself), then atomic move into place.
+        val tmp = f / os.up / os.RelPath(f.last + ".tmp")
+        os.write.over(tmp, io.circe.syntax.EncoderOps(rows.toVector).asJson.noSpaces, createFolders = true)
+        if !scala.util.Properties.isWin then
+          java.nio.file.Files.setPosixFilePermissions(
+            tmp.toNIO, java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"))
+        os.move(tmp, f, replaceExisting = true, atomicMove = true)
+      catch
+        case e: Throwable =>
+          log.warn("session snapshot write failed: {}", e.toString)
+    }
+
+  /** Write-through after a structural mutation (create/revoke). */
+  private def persistNow: IO[Unit] =
+    persistenceFile match
+      case None => IO.unit
+      case Some(_) => sessionsRef.get.flatMap(rows => IO(writeSnapshot(rows.values)))
+
+  /** Daemon lifecycle hook (tests shut their store down; assemblies live for the process). */
+  def shutdown(): Unit = flusher.foreach(_.shutdownNow())
+
+  /** Test seam: run the daemon's flush path synchronously (its real cadence is 60s). */
+  private[gateway] def flushIfDirtyForTest(): Unit = flushIfDirty()
 
   /**
    * Mint a session. Sweeps expired rows in the same `modify` (opportunistic
@@ -102,6 +163,7 @@ class GatewaySessionStore private (
           val live = current.filter { case (_, r) => isLive(r, now) }
           (live.updated(sid, rec), rec)
         }
+        .flatTap(_ => persistNow)
     }
 
   /**
@@ -109,7 +171,8 @@ class GatewaySessionStore private (
    * advances `lastSeenAt` / `slidingExpiresAt` (capped at the absolute
    * ceiling) in the SAME `modify`; an expired row is deleted in that same
    * transition (expired-then-gone, same shape as the ticket stores); a miss
-   * returns `None`.
+   * returns `None`. Sliding touches never write through — they only mark the
+   * snapshot dirty (the 60s daemon flushes it).
    */
   def verifyAndTouch(sessionId: String): IO[Option[SessionRecord]] =
     IO.realTime.map(_.toMillis).flatMap { now =>
@@ -126,7 +189,7 @@ class GatewaySessionStore private (
             )
             (current.updated(sessionId, touched), Some(touched))
       }
-    }
+    }.flatTap(hit => IO(markDirty()).whenA(hit.isDefined && persistenceFile.isDefined))
 
   /** Live sessions, masked-id views (CLI / endpoint enumeration face). */
   def list: IO[List[SessionView]] =
@@ -143,10 +206,11 @@ class GatewaySessionStore private (
       sessionsRef.modify { current =>
         val (hit, rest) = current.partition { case (sid, _) => sid.startsWith(prefix) }
         (rest, hit.size)
-      }
+      }.flatTap(n => persistNow.whenA(n > 0))
 
   /** Revoke EVERY session (`sessions revoke --all`, the local emergency face). */
-  def revokeAll(): IO[Int] = sessionsRef.getAndSet(Map.empty).map(_.size)
+  def revokeAll(): IO[Int] =
+    sessionsRef.getAndSet(Map.empty).map(_.size).flatTap(n => persistNow.whenA(n > 0))
 
   /**
    * Revoke only `origin == relay-mint` sessions — the binding-revocation
@@ -160,7 +224,7 @@ class GatewaySessionStore private (
     sessionsRef.modify { current =>
       val (hit, rest) = current.partition { case (_, r) => r.origin == GatewaySessionStore.OriginRelayMint }
       (rest, hit.size)
-    }
+    }.flatTap(n => persistNow.whenA(n > 0))
 
   /** Live session count (diagnostics / tests). */
   def size: IO[Int] = sessionsRef.get.map(_.size)
@@ -251,16 +315,50 @@ object GatewaySessionStore:
 
   def create(
     absoluteTtlSeconds: Long = AbsoluteTtlSeconds,
-    idleTimeoutSeconds: Long = IdleTimeoutSeconds
+    idleTimeoutSeconds: Long = IdleTimeoutSeconds,
+    persistenceFile: Option[os.Path] = None
   ): IO[GatewaySessionStore] =
-    Ref.of[IO, Map[String, SessionRecord]](Map.empty)
-      .map(new GatewaySessionStore(_, absoluteTtlSeconds, idleTimeoutSeconds))
+    IO(unsafeCreate(absoluteTtlSeconds, idleTimeoutSeconds, persistenceFile))
 
   /** Sync construction (assembly code runs outside an IO constructor; same as the ticket stores). */
   def unsafeCreate(
     absoluteTtlSeconds: Long = AbsoluteTtlSeconds,
-    idleTimeoutSeconds: Long = IdleTimeoutSeconds
+    idleTimeoutSeconds: Long = IdleTimeoutSeconds,
+    persistenceFile: Option[os.Path] = None
   ): GatewaySessionStore =
-    new GatewaySessionStore(Ref.unsafe(Map.empty), absoluteTtlSeconds, idleTimeoutSeconds)
+    val log = org.slf4j.LoggerFactory.getLogger(classOf[GatewaySessionStore])
+    val initial = persistenceFile match
+      case None => Map.empty[String, SessionRecord]
+      case Some(f) => loadSnapshot(f, log)
+    new GatewaySessionStore(
+      Ref.unsafe(initial),
+      absoluteTtlSeconds,
+      idleTimeoutSeconds,
+      persistenceFile
+    )
+
+  /**
+   * Boot-time snapshot load: parse the file, keep ONLY rows still live right
+   * now (both windows) — a session that died quietly from disuse must not be
+   * resurrected by a restart. A missing/corrupt/unreadable file is fail-open:
+   * an empty store and a WARN line, never a boot failure.
+   */
+  private def loadSnapshot(f: os.Path, log: org.slf4j.Logger): Map[String, SessionRecord] =
+    if !os.exists(f) then Map.empty
+    else
+      try
+        val parsed = io.circe.parser.decode[Vector[SessionRecord]](os.read(f))
+        parsed match
+          case Left(err) =>
+            log.warn("gateway session snapshot unreadable (starting empty): {}", err.toString)
+            Map.empty
+          case Right(rows) =>
+            val now = System.currentTimeMillis()
+            val live = rows.collect { case r if r.absoluteExpiresAt > now && r.slidingExpiresAt > now => r.sessionId -> r }.toMap
+            if live.nonEmpty then log.info("gateway sessions: restored {} session(s) from {}", live.size, f)
+            live
+      catch case e: Throwable =>
+        log.warn("gateway session snapshot load failed (starting empty): {}", e.toString)
+        Map.empty
 
 end GatewaySessionStore

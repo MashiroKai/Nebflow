@@ -494,8 +494,17 @@ object GatewayMain extends IOApp:
               // (criterion 7). The five injection points below all read it live.
               val tokenRef: Ref[IO, String] = Ref.unsafe(token)
               // Phase 3b: the console session store behind the HttpOnly session
-              // cookie (plan §2) — in-memory by design (§2.6).
-              val gatewaySessions = GatewaySessionStore.unsafeCreate()
+              // cookie (plan §2). Persistence（portal 会话短命根修批 2026-10-31，
+              // #908 修法②）：快照落 `<dataRoot>/gateway-sessions.json`——引擎重启
+              // 不再杀 portal 会话（修前：内存 store 每次重启清空，隧道里 relay 会话
+              // 还活着而 host 会话已死 ⇒ 每个转发调用 401 ⇒ 控制台「登录已失效」，
+              // 只能靠手动重进）。结构变更写穿、滑动触摸 60s 守护落盘；置
+              // NEBFLOW_GATEWAY_SESSION_PERSIST=0 即回到纯内存旧行为（应急闸）。
+              val sessionSnapshotFile =
+                if sys.env.get("NEBFLOW_GATEWAY_SESSION_PERSIST").exists(v => v == "0" || v.equalsIgnoreCase("off") || v.equalsIgnoreCase("false"))
+                then None
+                else Some(PathUtil.dataRoot / "gateway-sessions.json")
+              val gatewaySessions = GatewaySessionStore.unsafeCreate(persistenceFile = sessionSnapshotFile)
               // Global session state shared across all connections
               val sessionStore = new SessionStore(PathUtil.dataRoot / "sessions", PathUtil.dataRoot / "tasks")
               val sessionModelOverrides: Ref[IO, Map[String, ModelCandidate]] = Ref.unsafe(Map.empty)
