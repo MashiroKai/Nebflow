@@ -1,6 +1,6 @@
 ---
 type: design-spec
-status: draft
+status: superseded
 title: 液体玻璃设计语言（顶栏渐隐 + 液体玻璃按钮）效果图设计稿
 created: 2026-10-31
 author: stand (delegate-nebflow-764d8fb0)
@@ -9,6 +9,10 @@ tags: [design, visual, liquid-glass, glassmorphism]
 ---
 
 # 液体玻璃设计语言设计稿（只设计不实施）
+
+> **已被 v2 取代（10-31 08:43 作者裁定）**：按钮须为圆形悬浮钮 + 药丸钮；手机端取消顶栏容器，
+> 内容滚到顶边渐隐；桌面端顶栏维持现状。取代稿：[[20261031_084400_liquid-glass-effect-v2__delegate-nebflow-a9ba5eff.zh-CN]]，
+> 新效果图 [[liquid-glass-effect-mockup-v2.html]]。本文档保留作版本演进存档（v1 → v2 对读用）。
 
 配套效果图：[[liquid-glass-effect-mockup.html]]（亮/暗双版，组件可交互）。
 前作关联：[[20261030_201846_button-system-monochrome-redesign__delegate-nebflow-fa3d4d6f.zh-CN]]（墨族单色批）· 视觉铁律 `visual-style`。
