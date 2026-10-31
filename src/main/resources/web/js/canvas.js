@@ -463,6 +463,9 @@ export function openCanvas(title = '') {
   document.body.classList.add('canvas-open');
   applyCanvasLayoutMode();
   syncCanvasPanelButtons();
+  // 左移批兜底：见 initDeck transitionend 注 —— 无过渡/reduced-motion 路径
+  // 不冒 transitionend，超时尾补一次浮钮盒重同步（0.32s 过渡 + 余量）。
+  setTimeout(syncDeckBox, 380);
   // Mobile drawer exclusivity (≤768px, css/mobile.css): both drawers are full
   // overlays, so an opening canvas drawer collapses the Side Bar drawer —
   // whoever expands second wins (the Side Bar announces its own expansion via
@@ -1967,6 +1970,14 @@ function initDeck() {
   deckLayer.addEventListener('contextmenu', (e) => { if (e.target === deckLayer) e.preventDefault(); });
 
   bindDeckInput();
+  // 左移批收口：面板 flex-basis 开合过渡（0.32s，左缘从右缘向左展开）期间
+  // offset 盒逐帧漂移 —— 浮钮盒必须在过渡尾重同步。右锚 #deck-fab 被「面板右缘
+  // 过渡全程不动」掩盖此 latent 缺陷（boot 缓存盒 = 收拢残宽盒，fab 右锚/顶锚
+  // 恰好等价全幅值）；左锚关签钮（面板左 +12）随左移批显性化。transitionend
+  // 主腿 + openCanvas 超时兜底（reduced-motion/无过渡路径）双保险。
+  panel.addEventListener('transitionend', (e) => {
+    if (e.propertyName === 'flex-basis') syncDeckBox();
+  });
   syncDeckBox();
   renderCanvasHeader();
 }
@@ -2013,15 +2024,16 @@ function renderCanvasHeader() {
   syncRefBackButton();   // F5 返回原文档：随激活页签重sync可见性/座位
 }
 
-/* ── Canvas 改造批②⑤（2026-10-31 作者令「顶栏换代：左叉号右堆叠视角钮」）──
- *  桌面居中标题头胶囊：左座 ✕（关活动页签，批②）+ 中央标题（图标+名称+
- *  「独立中」角标投射）+ 批⑤堆叠态标签数（.t-count，deck.open 且页签>1 时
- *  「前景序/总数」）。堆叠视角钮本体维持 body 层 #deck-fab（顶右浮动 = 批②
- *  「右堆叠视角钮」桌面落点；曾试迁胶囊右座，实证被 deck-layer 环卡吞命中，
- *  退出叠卡必须恒可点）——材质随本批升 v2 液体玻璃（.g2-fab 共享类）。
- *  原「独立窗口」chip（#canvas-pop-btn）随批⑤退役（独立窗出口 = 卡头右键
- *  菜单「在独立窗口打开」+ 环卡卡头 .deck-card-pop，零能力损失）。
- *  卡窗态（cardWindowMode）✕ 全隐（卡窗自有窗关）。 */
+/* ── Canvas 改造批②⑤（2026-10-31 作者令「顶栏换代：左叉号右堆叠视角钮」；
+ *  左移批（同日 21:37 作者令「关签钮左移，与堆叠钮左右对称」）追改：✕ 不再
+ *  坐胶囊左座，升格 body 层左缘浮钮 —— 顶同堆叠钮（面板顶 +10）、左 = 面板左
+ *  +12（镜像 #deck-fab 右 = 面板右 −12），材质/尺寸同 .g2-fab（40px 液体玻璃
+ *  圆钮）= 手机工具条（.mf-cv-close ↔ .mf-cv-stack）同款语义桌面化。堆叠视角钮
+ *  本体维持 body 层 #deck-fab（顶右浮动 = 批②「右堆叠视角钮」桌面落点；曾试
+ *  迁胶囊右座，实证被 deck-layer 环卡吞命中，退出叠卡必须恒可点）——材质随
+ *  本批升 v2 液体玻璃（.g2-fab 共享类）。原「独立窗口」chip（#canvas-pop-btn）
+ *  随批⑤退役（独立窗出口 = 卡头右键菜单「在独立窗口打开」+ 环卡卡头
+ *  .deck-card-pop，零能力损失）。卡窗态（cardWindowMode）✕ 全隐（卡窗自有窗关）。 */
 /* 环卡卡头独立/合并 toggle 图标（批⑤后唯一消费面 = .deck-card-pop；原
    标题头 #canvas-pop-btn 同批退役，SVG 常量随调用面留此单点）。 */
 const CARD_POP_SVG =
@@ -2038,7 +2050,7 @@ function syncHeaderActions() {
   if (!closeBtn) {
     closeBtn = document.createElement('button');
     closeBtn.id = 'canvas-head-close';
-    closeBtn.className = 'canvas-head-btn';
+    closeBtn.className = 'g2-fab';   // 左移批：材质/尺寸与堆叠钮同款（左右对称判据）
     /** @type {HTMLButtonElement} */ (closeBtn).type = 'button';
     closeBtn.innerHTML = HEAD_CLOSE_SVG;
     closeBtn.setAttribute('title', t('canvas.closeTab'));
@@ -2047,10 +2059,15 @@ function syncHeaderActions() {
       e.stopPropagation();
       if (activeTabId) closeTab(activeTabId);
     });
-    hdr.insertBefore(closeBtn, hdr.firstChild);
+    // 左移批：body 层左缘浮钮（几何/显隐 = split.css #deck-fab 对称块）；落位
+    // 走 syncDeckBox 既有驱动腿（与 fab 同块同帧落笔，不另起调用——首开序中
+    // 面板盒尚在动画/收拢态时强行同步会把缓存盒写脏，fab 同款瞬态由 CSS 缺省
+    // 值（top 10/left 12）兜到首帧真同步，零可见跳变）。
+    document.body.appendChild(closeBtn);
   }
 
   if (deckFab) deckFab.disabled = tabs.size === 0;
+  if (closeBtn) /** @type {HTMLButtonElement} */ (closeBtn).disabled = tabs.size === 0;
 
   // 批⑤：堆叠态顶部标签数（前景序/总数；常态与单卡态隐藏——数从哪来
   // 标签条/chip 条已有，不重复显示）。
@@ -2186,6 +2203,13 @@ function syncDeckBox() {
     if (deckFab) {
       deckFab.style.top = (r.top + 10) + 'px';
       deckFab.style.right = (window.innerWidth - r.right + 12) + 'px';
+    }
+    // 左移批：左缘关签钮与 fab 同帧落笔（顶同 = 面板顶 +10；左 = 面板左 +12，
+    // 镜像 fab 右 = 视口宽 − 面板右 +12）——左右对称关系随面板盒逐帧守恒。
+    const hc = document.getElementById('canvas-head-close');
+    if (hc) {
+      hc.style.top = (r.top + 10) + 'px';
+      hc.style.left = (r.left + 12) + 'px';
     }
   }
 }
@@ -3199,7 +3223,7 @@ function bindDeckInput() {
     if (!(tgt instanceof Element)) return;
     if (tgt.closest('input, textarea, [contenteditable="true"], .monaco-editor, .cm-editor')) return;
     const inDeck = (deckLayer && deckLayer.contains(tgt)) ||
-      panel.contains(tgt) || !!tgt.closest('#deck-fab');
+      panel.contains(tgt) || !!tgt.closest('#deck-fab') || !!tgt.closest('#canvas-head-close');
     if (!inDeck) return;               // 叠卡面之外：原生滚动（不 preventDefault）
     e.preventDefault();
     if (deck.M < 2) return;            // 单卡无环可转
