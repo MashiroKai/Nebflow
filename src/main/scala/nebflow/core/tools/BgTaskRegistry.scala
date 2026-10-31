@@ -280,14 +280,19 @@ object BgTaskRegistry:
     deviceName: String = "",
     outputPath: String = "",
     ownerMode: String = "",
-    ownerName: String = ""
+    ownerName: String = "",
+    /**
+     * 行龄起点（death-watch 豁免窗的输入；spec 回拨造例用——death-watch 误报修复批
+     * ②⑤⑥ 的边界断言需行龄 > 幼龄窗）。缺省 = 注册时刻（生产行为逐字不变）。
+     */
+    startedAtMs: Long = System.currentTimeMillis()
   ): IO[Unit] =
     tasks.update(
       _ + (jobId -> ActiveTask(
         jobId,
         sessionId,
         description,
-        System.currentTimeMillis(),
+        startedAtMs,
         kind,
         rootSessionId,
         persistent,
