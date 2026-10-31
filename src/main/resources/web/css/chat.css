@@ -3307,10 +3307,22 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .turn-header[aria-expanded="true"] .nf-chevron { transform: rotate(90deg); }
 /* Long summaries wrap to multiple lines (height auto-grows) — the full text
    is always visible; no text-overflow / line-clamp swallowing (2026-09-06
-   author ruling: 长总结必须完整可见). */
+   author ruling: 长总结必须完整可见).
+   2026-10-31 归因行瘦身批（作者令）— the wrap contract is NARROWED: a summary
+   may wrap, but ONLY at a 「·」 separator, never mid-word. The text is one
+   `.nf-th-seg` span per segment (phrase / model / 工具 N 次 / 读写 K 文件)
+   joined by `.nf-th-sep` spans (' · '); segments are nowrap, so the only soft
+   wrap opportunities are the separator spaces. overflow-wrap must stay
+   `normal` here — `break-word`/`anywhere` would re-open mid-word breaks and
+   defeat the ruling. */
 .turn-header-text {
   min-width: 0;
-  overflow-wrap: break-word;
+  overflow-wrap: normal;
+}
+.turn-header-text .nf-th-seg {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 /* Static tucked state for the stripped middle blocks (thinking + tool rows).
    max-height 0 + collapsed margins so no gap remains. The expand/collapse
@@ -4294,7 +4306,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .nf-wl-item.is-final { position: static; white-space: normal; }
 .nf-wl-item.is-final .nf-wl-label {
   white-space: normal;
-  overflow-wrap: break-word;
+  /* 2026-10-31 归因行瘦身批：same wrap contract as .turn-header-text — wrap
+     only at the 「·」 separators (.nf-th-sep spaces), never mid-word; the
+     per-segment .nf-th-seg nowrap carries the enforcement, this stays
+     `normal` so no emergency break can open inside a segment. */
+  overflow-wrap: normal;
   overflow: visible;
   text-overflow: clip;
   flex: 0 1 auto;

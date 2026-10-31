@@ -589,14 +589,15 @@ test.describe('A5 — 终态与现状一致（工作行交还既有展开面）'
       };
     });
     // stream-ux redesign (2026-10-03): the thinking-only turn's process ran on
-    // the line, so the line settles into its OWN header (思考 stats, no 工具
-    // segment) — the old "no header for E6" default is gone with the run-time
-    // pre-tuck (the thinking row is never visible during the run any more).
-    // The readSeq contract still holds: the settled header is a `.turn-header`
-    // top-level node, so no stray survives.
+    // the line, so the line settles into its OWN header — the old "no header
+    // for E6" default is gone with the run-time pre-tuck (the thinking row is
+    // never visible during the run any more). 2026-10-31 归因行瘦身批: the
+    // badge no longer carries a 思考-duration segment (author ruling), only
+    // the model. The readSeq contract still holds: the settled header is a
+    // `.turn-header` top-level node, so no stray survives.
     expect(shape.headers, 'the E6 turn still gets its own settled header').toBe(1);
-    expect(shape.headerText, 'the badge carries the model + 思考 segment').toContain('test-model');
-    expect(shape.headerText).toContain('思考');
+    expect(shape.headerText, 'the badge carries the model').toContain('test-model');
+    expect(shape.headerText, 'no thinking-duration segment on the line (10-31 ruling)').not.toContain('思考');
     expect(shape.stray, 'and no stray top-level node survives it').toEqual([]);
 
     // The settled header expands the pre-tucked thinking row (the expand face).

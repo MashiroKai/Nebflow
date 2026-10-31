@@ -355,6 +355,24 @@
 
     window.__reset = async () => { chatEl.innerHTML = ''; await raf2(); };
 
+    // 2026-10-31 归因行瘦身批验收钩：一条段内容刻意偏长的 turn（✻ 字句用
+    // 作者 10-31 15:36 令附的现行形态原文），终态经 settleWorklineAsHeader 落成
+    // badge——tests/turn-header-wrap.spec.mjs 在窄窗下断言折行只发生在「·」分隔处。
+    window.__longBadgeTurn = async (phrase, model, toolCount) => {
+      chatMod.renderUserBubble('长归因行折行验收', [], Date.now());
+      for (let i = 1; i <= toolCount; i++) {
+        chatMod.renderTool(`Bash\n  ("step-${i}")`, 'ok', 'out', false,
+          `{"command":"step-${i}"}`, 'harness-session');
+      }
+      chatMod.appendAiText('长归因行的最终回复。');
+      chatMod.finishAi(78000, model);
+      turnMod.collapseTurn(view, {
+        durationMs: 78000, model, phrase,
+        title: '15:36', sessionId: 'harness-session',
+      });
+      await raf2();
+    };
+
     // UI-C 探针（2026-10-03 纯文本动画批）：在活动视图里起一个工具过程，读
     // work line 的 spinner face。与 drop-in 的 pop-artifacts harness 同名同义
     // （那里还带窗口角色腿），本 harness 只需 primary 角色这一条。

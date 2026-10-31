@@ -549,6 +549,29 @@ export function thinkingWorklineDone(view, text) {
   swap(wl, item, { key: 'thinking', kind: 'thinking', roll: false });
 }
 
+/** 归因行 badge 的段结构构建（2026-10-31 归因行瘦身批）：
+ *  `segments` = 已本地化的段文案数组（✻ 字句 / model / 工具 N 次 / 读写 K 文件），
+ *  本模块不感知段的语义与来源（stay-a-leaf 纪律：段推导在 turnGroup.js）。
+ *  每段一个 `.nf-th-seg`（段内 white-space:nowrap，CSS 在 chat.css），分隔处一枚
+ *  `.nf-th-sep`（文本 ' · '）——折行机会只存在于分隔符的空格，段内绝不拦腰折断
+ *  （作者令 10-31：只能在「·」分隔处断开）。textContent 仍为
+ *  `seg · seg · seg`（分隔符空格真实存在于 DOM），读者/规格契约不变。 */
+export function buildBadgeLabel(label, segments) {
+  label.textContent = '';
+  (segments || []).forEach((seg, i) => {
+    if (i > 0) {
+      const sep = document.createElement('span');
+      sep.className = 'nf-th-sep';
+      sep.textContent = ' · ';
+      label.appendChild(sep);
+    }
+    const s = document.createElement('span');
+    s.className = 'nf-th-seg';
+    s.textContent = seg;
+    label.appendChild(s);
+  });
+}
+
 /** Terminal morph (stream-ux redesign 2026-10-03): the turn line IS the
  *  summary. The last running item rolls out, the stats badge text rolls in,
  *  and the row itself becomes the `.turn-header` — same element, same turn-top
@@ -557,6 +580,10 @@ export function thinkingWorklineDone(view, text) {
  *  Returns the morphed header element, or null when there is no live line
  *  (caller falls back to buildHeader). Idempotent: a second call is a no-op.
  *
+ *  2026-10-31 归因行瘦身批：`headerText` 形态由整串改为段数组（segments），
+ *  经 buildBadgeLabel 落成 `.nf-th-seg` / `.nf-th-sep` 结构（折行只在「·」处，
+ *  见该函数注释）。调用方：turnGroup.js 的 collapseTurn settle 路径。
+ *
  *  UI-B (author 2026-10-03 「Badge 按轮次切分没有做的很好」): the settle RELEASES
  *  the line. The morph consumes `wl.row` (it is now the header, owned by
  *  turnGroup's toggle), so leaving `wl.row` / `wl.slot` pointing at it made the
@@ -564,7 +591,7 @@ export function thinkingWorklineDone(view, text) {
  *  items into the PREVIOUS turn's settled badge — the badge carried the wrong
  *  round's process. Only `kind='done'` is kept, so a re-entrant settle inside
  *  the same terminal is still a no-op. */
-export function settleWorklineAsHeader(view, headerText, title) {
+export function settleWorklineAsHeader(view, headerSegments, title) {
   const wl = state(view);
   if (!wl || !wl.row || !wl.row.isConnected) return null;
   if (wl.kind === 'done') return null;
@@ -575,7 +602,7 @@ export function settleWorklineAsHeader(view, headerText, title) {
   // expandGroupContaining tooltips, future consumers) reads the settled badge
   // through the SAME selector as a built header's text span.
   label.className = 'nf-wl-label turn-header-text';
-  label.textContent = headerText;
+  buildBadgeLabel(label, headerSegments);
   item.appendChild(label);
   swap(wl, item, { key: 'done', kind: 'done', roll: true });
   const row = wl.row;

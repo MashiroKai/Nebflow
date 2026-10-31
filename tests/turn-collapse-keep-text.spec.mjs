@@ -5,8 +5,9 @@
 //
 // v2 semantics: the turn keeps its ordered row list IN PLACE — collapse is a
 // render-layer transform. A persistent `.turn-header` (✻ 字句 · model ·
-// 思考 Ns · 工具 M 次 · 读写 K 文件 + chevron) lands at the turn top; ONLY
-// thinking rows + tool-call rows tuck away (`.nf-tucked`). Assistant text
+// 工具 M 次 · 读写 K 文件 + chevron; the 思考 segment was removed from the
+// attribution line by the 2026-10-31 author ruling) lands at the turn top;
+// ONLY thinking rows + tool-call rows tuck away (`.nf-tucked`). Assistant text
 // rows, card deliverables and injected bubbles stay visible. Expanding
 // restores every middle block to its ORIGINAL position (they never moved).
 // The toggle is INSTANT — no transition layer (the 批② 320ms/stagger WAAPI
@@ -208,13 +209,15 @@ test.describe('decompression model — live alternating turn (验收 ②④)', (
     expect(vis.tools).toEqual([false, false]);
     expect(vis.injected).toEqual([true]);
 
-    // The header carries the restored ✻ design phrase + model + 思考 +
-    // whole-turn tool count + file count (Read turnGroup.js → 1 file;
-    // WebSearch has no file payload).
+    // The header carries the restored ✻ design phrase + model + whole-turn
+    // tool count + file count (Read turnGroup.js → 1 file;
+    // WebSearch has no file payload). 2026-10-31 归因行瘦身批 (author ruling):
+    // the 思考 segment is REMOVED from the attribution line — the live
+    // thinking duration must NOT appear between the model and the tool count.
     const headerText = await page.locator('.turn-header-text').first().textContent();
     expect(headerText).toContain('✻ 整理线索 4 秒'); // v1-designed copy, restored 2026-09-06
     expect(headerText).toContain('test-model');
-    expect(headerText).toContain('思考'); // duration is live-measured (< 1s here)
+    expect(headerText).not.toContain('思考'); // 10-31 ruling: no thinking time on the line
     expect(headerText).toContain('工具 2 次');
     expect(headerText).toContain('读写 1 文件');
 
@@ -331,7 +334,10 @@ test.describe('思考单行揭示 (2026-10-03 stream-ux redesign)', () => {
     ]);
     const headerText = await page.locator('.turn-header-text').first().textContent();
     expect(headerText).toContain('test-model');
-    expect(headerText).toContain('思考');
+    // 2026-10-31 归因行瘦身批: no thinking-duration segment on the summary
+    // line (author ruling) — the settle path (buildBadgeLabel segment spans)
+    // is what lands here.
+    expect(headerText).not.toContain('思考');
 
     // The turn's header untucks the process face. The thinking CONTENT itself
     // stays auto-collapsed (09-07 ruling) until its label is clicked — the

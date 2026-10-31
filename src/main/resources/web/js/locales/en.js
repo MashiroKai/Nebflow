@@ -1633,7 +1633,9 @@ export default {
   'chat.thinkingInProgress': 'Thinking…',
   'chat.turnSummaryTools': '{n} tool calls',
   'chat.turnSummaryToolsOne': '1 tool call',
-  'chat.turnHeaderThinking': 'thought for {d}',
+  // 'chat.turnHeaderThinking' ('thought for {d}') removed with the 2026-10-31
+  // attribution-line slimming batch — author ruling: no thinking duration on
+  // the summary line (tool count stays).
   'chat.turnHeaderFiles': '{n} files',
   // Work-line (stream-ux §二.1.1/§二.1.4): the completed badge of the running
   // turn's single-line indicator. The expand surface stays `.turn-header`

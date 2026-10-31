@@ -1568,7 +1568,8 @@ export default {
   'chat.thinkingInProgress': '思考中…',
   'chat.turnSummaryTools': '工具 {n} 次',
   'chat.turnSummaryToolsOne': '工具 1 次',
-  'chat.turnHeaderThinking': '思考 {d}',
+  // 'chat.turnHeaderThinking'（思考 {d}）已随 2026-10-31 归因行瘦身批移除——
+  // 作者令：归因行不再显示思考耗时（工具次数保留）。
   'chat.turnHeaderFiles': '读写 {n} 文件',
   // 工作行（stream-ux §二.1.1/§二.1.4）：运行期单行徽标的完成态文案。
   // 终态展开面仍是 .turn-header（既有展开面不动），故 hint 只指路。
