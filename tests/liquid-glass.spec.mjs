@@ -222,15 +222,16 @@ test.describe('手机视口（mobile-layer）', () => {
     expect(errors).toEqual([]);
   });
 
-  test('M5 §9-④ 发送键药丸化：r999 h32 墨玻璃（真元素断言）', async ({ page }) => {
+  test('M5 §9-④ 发送键纯圆化（收形批⑥ 作者令 10-31 22:50）：r50% 36×36 圆钮，绿保留（真元素断言）', async ({ page }) => {
     const errors = watchErrors(page);
     await bootApp(page);
     const r = await page.evaluate(() => {
       const cs = getComputedStyle(document.getElementById('send-btn'));
-      return { radius: cs.borderRadius, h: cs.height, bg: cs.backgroundColor, color: cs.color };
+      return { radius: cs.borderRadius, w: cs.width, h: cs.height, bg: cs.backgroundColor, color: cs.color };
     });
-    expect(r.radius).toBe('999px');
-    expect(r.h).toBe('32px');
+    expect(r.radius).toBe('50%');
+    expect(r.w).toBe('36px');
+    expect(r.h).toBe('36px');
     expect(errors).toEqual([]);
   });
 });

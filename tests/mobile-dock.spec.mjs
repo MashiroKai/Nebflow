@@ -173,7 +173,7 @@ test('D1 five-tab dock structure: author-order labels, chat-home center key, ico
       ariaLabel: el.getAttribute('aria-label'),
       keys: keys.map((k) => ({
         id: k.dataset.dock,
-        label: k.querySelector('.dock-label')?.textContent,
+        label: k.querySelector('.dock-label')?.textContent ?? null,
         hasIcon: !!k.querySelector('.dock-ic i svg, .dock-ic svg'),
         hasCenter: !!k.querySelector('.dock-center'),
         ariaSelected: k.getAttribute('aria-selected'),
@@ -185,7 +185,12 @@ test('D1 five-tab dock structure: author-order labels, chat-home center key, ico
   expect(dock.role).toBe('tablist');
   // 作者令逐字顺序：消息 / 联系人 / 对话 / canvas / 工作台（工作台批：设置
   // 自顶层导航降级为工作台成员，第五栏 = 工作台）。
-  expect(dock.keys.map((k) => k.label)).toEqual(['消息', '联系人', '对话', 'canvas', '工作台']);
+  expect(dock.keys.map((k) => k.label)).toEqual(['消息', '联系人', null, 'canvas', '工作台']);
+  // 收形批②（作者令 10-31 22:50「中间对话钮只留图案」）：中键零可见标签，
+  // 语义由 aria-label 承接（图标即语义）。
+  expect(dock.keys.find((k) => k.id === 'chat')?.label ?? null).toBe(null);
+  expect(await page.evaluate(() =>
+    document.querySelector('#mobile-dock .dock-key[data-dock="chat"]')?.getAttribute('aria-label'))).toBe('对话');
   // 中键改版批：第三栏 = chat home 键（对话 = 进主对话输入框；非页面路由）。
   expect(dock.keys.map((k) => k.id)).toEqual(['messages', 'contacts', 'chat', 'canvas', 'workbench']);
   for (const k of dock.keys) {
@@ -505,7 +510,7 @@ test('D5 sealed state: messages/contacts pages show skeleton empty cards; messag
   expect(errors).toEqual([]);
 });
 
-test('D10 center chat-home key form: sapphire circle 44×44 lifted above baseline, bubble fallback glyph (dark scheme)', async ({ page }) => {
+test('D10 center chat-home key form: sapphire circle 44×44 inside dock bounds, stand-logo fallback (dark scheme; 收形批 10-31 22:50)', async ({ page }) => {
   const errors = watchErrors(page);
   const st = await page.evaluate(() => {
     const key = document.querySelector('#mobile-dock .dock-key[data-dock="chat"]');
@@ -525,31 +530,34 @@ test('D10 center chat-home key form: sapphire circle 44×44 lifted above baselin
       present: true,
       w: r.width,
       h: r.height,
-      lifted: r.top < dockR.top,          // 基线微浮起：圆顶高出 dock 顶缘
+      circleTop: r.top,
+      dockTop: dockR.top,
+      inside: r.top >= dockR.top - 0.5,      // 收形批⑤：圆顶不探出 dock 顶缘
+      shadow: cs.boxShadow,
       radius: cs.borderRadius,
       bg: cs.backgroundColor,
       tokenColor,
-      glyph: !!circle.querySelector('svg.lucide-message-circle'),
-      noImg: !circle.querySelector('img'),
+      logo: !!circle.querySelector('img.dock-center-logo'), // 收形批③：回落 = stand logo
       hasAvatarClass: circle.classList.contains('has-avatar'),
     };
   });
   expect(st.present).toBe(true);
   expect(st.w).toBe(44);                  // --dock-center-size（冷启动批⑧ 2026-10-30「缩小一档」50→44）
   expect(st.h).toBe(44);
-  expect(st.lifted).toBe(true);           // --dock-center-lift
+  expect(st.inside).toBe(true);           // 收形批⑤：中键收回 dock 边界内（lift=0）
+  expect(st.shadow).toBe('none');         // 收形批④：边缘收简 = 纯色零浮影零光环
   expect(st.radius).toBe('50%');
   expect(st.bg).toBe(st.tokenColor);      // 暗档 fill = --sapphire 本值（不新造色）
-  expect(st.glyph).toBe(true);            // 无头像回落 = 气泡字形（原中键图标）
-  expect(st.noImg).toBe(true);
+  expect(st.logo).toBe(true);             // 无头像回落 = stand logo（不显示空白/默认人形）
   expect(st.hasAvatarClass).toBe(false);
   expect(errors).toEqual([]);
 });
 
-// D13 冷启动批⑧（2026-10-30 作者令「输入框与 dock 无缝贴合」）：输入卡底缘
-// 与 dock 顶缘的缝 == --dock-center-lift（12px）——修前另有 +12px 背景缝。
+// D13 冷启动批⑧（2026-10-30 作者令「输入框与 dock 无缝贴合」）→ 收形批⑤
+//（10-31 22:50「中键收回 dock + 间隙收窄」）：lift 归 0，输入卡底缘与 dock
+// 顶缘的缝 = lift = 0（修前 12px 抬升缝随收形收窄为零）。
 // 几何恒等式：gap = (dock-h + lift + safe) − (dock-h + safe) = lift。
-test('D13 input card flush-fit above dock: gap == --dock-center-lift (no stray background seam)', async ({ page }) => {
+test('D13 input card flush-fit above dock: gap == --dock-center-lift (lift=0, no protrusion seam)', async ({ page }) => {
   const errors = watchErrors(page);
   const g = await page.evaluate(() => {
     const bar = document.getElementById('input-bar').getBoundingClientRect();
@@ -561,12 +569,12 @@ test('D13 input card flush-fit above dock: gap == --dock-center-lift (no stray b
     probe.remove();
     return { gap: dock.top - bar.bottom, lift, barBottom: bar.bottom, dockTop: dock.top };
   });
-  expect(g.lift).toBe(12);
+  expect(g.lift).toBe(0);
   expect(Math.abs(g.gap - g.lift)).toBeLessThanOrEqual(1.5); // 亚像素容差
   expect(errors).toEqual([]);
 });
 
-test('D11 center key avatar: seeded agent avatar paints circular img; live repaint on identity change; cleared falls back to glyph', async ({ page }) => {
+test('D11 center key avatar: seeded agent avatar paints circular img; live repaint on identity change; cleared falls back to stand logo', async ({ page }) => {
   const errors = watchErrors(page);
   // 活链重绘腿：种子写会话头同链存储条目（branding.key('agent_avatar_Nebula')
   // —— 键名走 app 同一 key() 派生，夹具不硬编码品牌前缀）+ 触发
@@ -595,15 +603,15 @@ test('D11 center key avatar: seeded agent avatar paints circular img; live repai
   expect(withAvatar.circular).toBe('50%');   // 圆形裁切
   expect(withAvatar.cover).toBe('cover');
   expect(withAvatar.src.startsWith('data:image/svg+xml')).toBe(true);
-  // 清除（他端 reset 收敛同路径：键删除 + 重绘）→ 回落气泡字形。
+  // 清除（他端 reset 收敛同路径：键删除 + 重绘）→ 回落 stand logo（收形批③）。
   await page.evaluate(async () => {
     const { key } = await import('/js/branding.js');
     localStorage.removeItem(key('agent_avatar_Nebula'));
     window.dispatchEvent(new CustomEvent('nebflow-session-change', { detail: { sessionId: 'dock-root-session' } }));
   });
-  await expect(page.locator('#mobile-dock .dock-key[data-dock="chat"] .dock-center img')).toHaveCount(0);
+  await expect(page.locator('#mobile-dock .dock-key[data-dock="chat"] .dock-center img.dock-center-logo')).toHaveCount(1);
   expect(await page.evaluate(
-    () => !!document.querySelector('#mobile-dock .dock-key[data-dock="chat"] .dock-center svg.lucide-message-circle'),
+    () => !document.querySelector('#mobile-dock .dock-key[data-dock="chat"] .dock-center img.dock-center-img'),
   )).toBe(true);
   expect(errors).toEqual([]);
 });

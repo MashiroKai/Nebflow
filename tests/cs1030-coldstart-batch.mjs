@@ -431,10 +431,10 @@ async function legMobileDock(browser) {
     const r = circle.getBoundingClientRect();
     const dock = document.getElementById('mobile-dock').getBoundingClientRect();
     const bar = document.getElementById('input-bar').getBoundingClientRect();
-    return { w: r.width, h: r.height, lifted: r.top < dock.top, gap: dock.top - bar.bottom };
+    return { w: r.width, h: r.height, inside: r.top >= dock.top - 0.5, gap: dock.top - bar.bottom };
   });
-  ok('D1 dock 中键缩小一档（44×44，修前 50）+ 高出基线', Math.abs(d.w - 44) <= 1 && Math.abs(d.h - 44) <= 1 && d.lifted, JSON.stringify(d));
-  ok('D2 输入卡与 dock 无缝贴合（缝 == lift 12px，修前另有 +12px 背景缝)', Math.abs(d.gap - 12) <= 1.5, `gap=${d.gap}`);
+  ok('D1 dock 中键缩小一档（44×44，修前 50）+ 收回 dock 边界内（收形批⑤ lift 归 0）', Math.abs(d.w - 44) <= 1 && Math.abs(d.h - 44) <= 1 && d.inside, JSON.stringify(d));
+  ok('D2 输入卡与 dock 缝 == lift 0px（收形批⑤间隙收窄，修前 12px 抬升缝）', Math.abs(d.gap) <= 1.5, `gap=${d.gap}`);
   await page.screenshot({ path: join(SHOTS_DIR, 'dark-D-mobile-dock.png') });
   ok('R0 腿D零 JS 错误', errors.length === 0, errors.slice(0, 2).join(' | '));
   await ctx.close();

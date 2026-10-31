@@ -70,8 +70,9 @@ import { avatarImgNode } from '../avatarRender.js';
  * 它建 section。 */
 export const DOCK_ORDER = ['messages', 'contacts', 'chat', 'canvas', 'workbench'];
 
-/** chat home 键定义。icon = 回落字形（作者令：无 agent 头像时用「目前中间
- *  对话按钮那个图标」= message-circle 气泡；有头像 = 圆头像图）。 */
+/** chat home 键定义。收形批（作者令 10-31 22:50 ②③）：中键只留图案 —— 无
+ *  agent 头像时回落 **stand logo**（不显示空白/默认人形，气泡字形随批退役）；
+ *  有头像 = 圆头像图。zh/en 不再渲染为可见标签，只承接 aria-label。 */
 const DOCK_CHAT_DEF = { id: 'chat', icon: 'message-circle', zh: '对话', en: 'Chats' };
 
 /** dock 键定义解析：chat home 键走 CHAT_DEF，其余查 PAGES。 */
@@ -1289,9 +1290,10 @@ function watchChatModal() {
 // ── 底 dock（五栏根页切换器；作者令 2026-10-29 小红书样式基准）───────
 // 白底固定底栏、图标在上 + 文字标签在下、五等分、active 态可辨（克制形态：
 // 强调色 icon/label）、未读红点徽标镜像桌面既有徽标读数。
-// 中键改版批（同日 23:36）：中键 = 小红书中心键形态 —— sapphire 主色实心大圆、
-// 高出两侧常规 tab 基线，图标 = 给 agent 设置的头像（圆裁 + 主色细环；无头像
-// 回落气泡字形），点 = 回主对话输入框（chat home）。
+// 中键改版批（同日 23:36；收形批②③ 2026-10-31 22:50 修订）：中键 = 小红书
+// 中心键形态 —— sapphire 主色实心圆收进 dock 边界内（lift 退役）、**只留图案**
+// （「对话」文字标签退役）、无头像回落 stand logo（气泡字形退役），点 = 回主
+// 对话输入框（chat home）。
 
 /** @type {Map<string, HTMLElement>} dock id → 键 */
 const dockKeys = new Map();
@@ -1315,17 +1317,20 @@ function buildDock() {
     const badge = document.createElement('span');
     badge.className = 'dock-badge';
     badge.hidden = true;
-    const label = document.createElement('span');
-    label.className = 'dock-label';
-    label.textContent = tt(def.zh, def.en);
     if (def.id === 'chat') {
-      // 中键（作者令 23:36）：中心键容器 —— 图标位由 paintDockCenterAvatar
-      // 按「agent 头像 / 气泡回落」两态填装（形态见 mobileLayer.css 中键块）。
+      // 中键（作者令 23:36；收形批② 10-31 22:50 修订）：中心键容器只留图案 ——
+      // 「对话」文字标签随批退役（可见标签 = 图标即语义），aria-label 承接
+      // 可及性；图标位由 paintDockCenterAvatar 按「agent 头像 / stand logo
+      // 回落」两态填装（形态见 mobileLayer.css 中键块）。
       btn.classList.add('dock-key-center');
+      btn.setAttribute('aria-label', tt(def.zh, def.en));
       const center = document.createElement('span');
       center.className = 'dock-center';
-      btn.append(center, label, badge);
+      btn.append(center, badge);
     } else {
+      const label = document.createElement('span');
+      label.className = 'dock-label';
+      label.textContent = tt(def.zh, def.en);
       const icon = document.createElement('span');
       icon.className = 'dock-ic';
       icon.innerHTML = `<i data-lucide="${def.icon}"></i>`;
@@ -1350,7 +1355,11 @@ function buildDock() {
   const onLocale = () => {
     for (const def of DEFS) {
       const k = dockKeys.get(def.id);
-      if (k) (/** @type {HTMLElement|null} */ (k.querySelector('.dock-label'))).textContent = tt(def.zh, def.en);
+      if (!k) continue;
+      // 收形批②：中键无可见标签（aria-label 仍随 locale 更新）。
+      const lbl = k.querySelector('.dock-label');
+      if (lbl) lbl.textContent = tt(def.zh, def.en);
+      if (def.id === 'chat') k.setAttribute('aria-label', tt(def.zh, def.en));
     }
     if (dockEl) dockEl.setAttribute('aria-label', tt('主导航', 'Main navigation'));
   };
@@ -1360,10 +1369,11 @@ function buildDock() {
   return dockEl;
 }
 
-/** 中键图标两态（作者令 23:36「图标应该用给agent设置的头像」）：读链 = 会话头
- *  同一本地条目（agentProfile.agentAvatarDataUrl，跨端 sha 收敛同键），节点走
- *  avatarRender 解码复用池；无头像回落气泡字形（= 原中键图标，作者逐字「就是
- *  目前中间对话按钮那个图标」）。 */
+/** 中键图标两态（作者令 23:36「图标应该用给agent设置的头像」；收形批③修订）：
+ *  读链 = 会话头同一本地条目（agentProfile.agentAvatarDataUrl，跨端 sha 收敛同键），
+ *  节点走 avatarRender 解码复用池；无头像回落 **stand logo**（brand.logoUrl/
+ *  logoDarkUrl 双主题 picture，与「我」入口同货源 —— 作者令 10-31 22:50：
+ *  不显示空白/默认人形；原 message-circle 气泡字形随批退役）。 */
 function paintDockCenterAvatar() {
   const holder = dockKeys.get('chat')?.querySelector('.dock-center');
   if (!holder) return;
@@ -1378,9 +1388,10 @@ function paintDockCenterAvatar() {
     return;
   }
   holder.classList.remove('has-avatar');
-  if (holder.querySelector('svg')) return; // 字形已就位（lucide 已替换，幂等零重建）
-  holder.innerHTML = '<i data-lucide="message-circle"></i>';
-  if (typeof lucide !== 'undefined') createIconsIn(holder);
+  if (holder.querySelector('.dock-center-logo')) return; // logo 已就位（幂等零重建）
+  holder.innerHTML =
+    `<picture><source media="(prefers-color-scheme: dark)" srcset="${brand.logoDarkUrl}">` +
+    `<img class="dock-center-logo" src="${brand.logoUrl}" alt=""></picture>`;
 }
 
 /** 徽标镜像：桌面徽标读数（#messages-badge/#contacts-badge，手机层按钮不可见

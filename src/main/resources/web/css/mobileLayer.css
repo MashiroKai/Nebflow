@@ -9,6 +9,19 @@
  *      （.mh-search-open 判据，max-height 220ms spring，自钮处生长）；④ 消息页
  *      检索 = 按会话分组 + mark 高亮 + 跳转闪烁（.fm-reveal-flash）。文件尾批次块。
  *
+ * dock 收形批（作者令 2026-10-31 22:50 六件）落位 —— 文件尾批次块 +
+ * 中键块改写：
+ *   ① 消息流头像+agent 名：主对话每条 agent 消息泡上方补 .g2-msg-meta 身份头
+ *      （节点由 chatChrome.js 守望挂出/摘除，桌面 DOM 零感知）；
+ *   ② dock 中键去文字：只留图案，「对话」标签退役（aria-label 承接）；
+ *   ③ 无头像回落 = stand logo：dock 中键 / 消息流身份头 / 会话头空态三面
+ *      统一换 stand 符号（默认人形/气泡字形退役）；
+ *   ④ 中键边缘收简：纯色零浮影零光环（rest/active 两档 box-shadow 摘除）；
+ *   ⑤ 中键收回 dock 边界内：--dock-center-lift 12 → 0（零探出），输入卡
+ *      与 dock 间隙随之收窄归零（#input-area 块）；
+ *   ⑥ 发送钮退回纯圆：36×36 r50%（考古 d4cc8d189^ 基准），绿保留
+ *      （--ctl-send-* 不动，#send-btn 手机层覆盖块）。
+ *
  * 铁律：本文件全部规则挂在 body.mobile-layer 之下 —— 该类只由 mobile/bootstrap.js
  * 在手机视口（≤768px，与既有 css/mobile.css 折叠点同源）激活。桌面窗口永远不
  * 命中任何一条规则（桌面渲染逐字节不变）；桌面对本文件的唯一感知是 index.html
@@ -161,11 +174,12 @@ body.mobile-layer .mh-chrome-badge[hidden] { display: none; }
    同款双档，不新造色）、高出常规 tab 基线（--dock-center-lift），图标 = agent
    头像（圆裁 + 主色细环 = 底色露边）或气泡字形回落；输入卡底距同步让位。 */
 /* 冷启动批⑧（2026-10-30 作者令「dock 中间对话钮缩小一档」）：50 → 44
-   （4px 栅格下一档）。lift 保持 12 —— 输入卡底距按 lift 让位（下方
-   #input-area 批），圆钮顶缘与输入卡底缘相切即「无缝贴合」。 */
+   （4px 栅格下一档）。收形批⑤（作者令 10-31 22:50）：lift 12 → 0 —— 中键圆
+   收回 dock 边界内（不再探出顶缘，悬浮感收口），输入卡底距同步 -12px，
+   输入框与 dock 之间的间隙随收形收窄（输入卡底缘直接贴合 dock 顶缘）。 */
 body.mobile-layer {
   --dock-center-size: 44px;
-  --dock-center-lift: 12px;
+  --dock-center-lift: 0px;
 }
 body.mobile-layer #mobile-dock {
   position: fixed;
@@ -226,46 +240,46 @@ body.mobile-layer .dock-key.active {
   color: rgb(var(--brand-green, 7 193 96));
 }
 body.mobile-layer .dock-key.active .dock-label { font-weight: 600; }
-/* ── 中键 = 对话 home 键（作者令 23:36 小红书中心键）────────────────
-   实心大圆高出基线；fill 双档 = sapphire 族既有 token 对（暗 --sapphire /
-   亮 --accent-agent-light 深档保白字形对比）；白字形口径同 #send-btn 实色族
-   （input.css 白字先例）。头像 = 圆裁铺满、底色露 2.5px 环（环色 = fill 本色，
-   满足「细描边与主题色一致」零新色）；无头像回落白色气泡字形。 */
+/* ── 中键 = 对话 home 键（作者令 23:36 小红书中心键；收形批 10-31 22:50）──
+   实心圆收进 dock 边界内（lift=0，零探出）；fill 双档 = sapphire 族既有 token
+   对（暗 --sapphire / 亮 --accent-agent-light 深档）；边缘收简（批④）：纯色
+   零浮影零光环 —— 原 rest/active 两档 box-shadow（外投光 + active 3px 光环）
+   随批摘除，「只留图案」：无文字标签（批②）、无头像回落 = stand logo
+   （批③，气泡字形已退役）。 */
 body.mobile-layer .dock-key.dock-key-center {
-  justify-content: flex-start;
-  padding-top: 0;
-  padding-bottom: 2px;
+  justify-content: center;
+  padding: 2px;
 }
 body.mobile-layer .dock-key.dock-key-center .dock-center {
   flex: none;
   width: var(--dock-center-size);
   height: var(--dock-center-size);
-  margin-top: calc(-1 * var(--dock-center-lift));
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   background: rgb(var(--sapphire));
   color: #fff;
-  box-shadow: 0 2px 8px rgb(var(--sapphire) / 0.35);
-  transition: transform 0.12s ease, box-shadow 0.2s ease;
+  transition: transform 0.12s ease;
   overflow: hidden;
 }
 @media (prefers-color-scheme: light) {
   body.mobile-layer .dock-key.dock-key-center .dock-center {
     background: rgb(var(--accent-agent-light));
-    box-shadow: 0 2px 8px rgb(var(--accent-agent-light) / 0.35);
   }
-}
-body.mobile-layer .dock-key.dock-key-center .dock-center svg {
-  width: 24px;
-  height: 24px;
 }
 body.mobile-layer .dock-key.dock-key-center .dock-center .dock-center-img {
   width: calc(100% - 5px);
   height: calc(100% - 5px);
   border-radius: 50%;
   object-fit: cover;
+}
+/* stand logo 回落（批③）：彩色 fill 上缩 62% 居中（符号本体即图案，不铺底）。 */
+body.mobile-layer .dock-key.dock-key-center .dock-center .dock-center-logo {
+  width: 62%;
+  height: 62%;
+  object-fit: contain;
+  display: block;
 }
 body.mobile-layer .dock-key.dock-key-center:active .dock-center { transform: scale(0.94); }
 body.mobile-layer .dock-key.dock-key-center.active {
@@ -276,19 +290,6 @@ body.mobile-layer .dock-key.dock-key-center.active {
     color: rgb(var(--accent-agent-light));
   }
 }
-body.mobile-layer .dock-key.dock-key-center.active .dock-center {
-  box-shadow:
-    0 2px 10px rgb(var(--sapphire) / 0.45),
-    0 0 0 3px rgb(var(--sapphire) / 0.18);
-}
-@media (prefers-color-scheme: light) {
-  body.mobile-layer .dock-key.dock-key-center.active .dock-center {
-    box-shadow:
-      0 2px 10px rgb(var(--accent-agent-light) / 0.45),
-      0 0 0 3px rgb(var(--accent-agent-light) / 0.18);
-  }
-}
-body.mobile-layer .dock-key.dock-key-center.active .dock-label { font-weight: 600; }
 /* 未读徽标（dock）：纯红点（联系人键 = 好友待处理请求，布尔语义）；
    消息键 = **数字角标**（作者令 2026-10-30 08:29「就像微信一样就行了，有新消息
    在消息按钮的右上角加数字角标就行」）—— 读数/归一（99+）全部取桌面
@@ -1617,17 +1618,89 @@ body.mobile-layer #memory-btn { display: none; }
 body.mobile-layer #header .header-center {
   max-width: none !important;
 }
-/* ── 输入卡：视口链末端压点 + dock 无缝贴合（冷启动批⑧ 2026-10-30）────
-   输入卡 bottom = 0、自身 padding-bottom = dock 高 + 中键 lift + safe-area ——
-   三件套语义：
-   ① 输入卡悬浮在 dock 之上；② main.js 的 #chat padding-bottom 让位逻辑读
-   #input-area.offsetHeight（含本 padding）⇒ 最后一条消息自动让出 dock 带，
-   桌面 JS 零改动；③ 修前的 `+ max(12px, safe-area)` 额外档在输入卡与 dock
-   之间留了一条 12px 背景缝 —— 本批撤掉该档：输入卡底缘与中键大圆顶缘
-   相切（lift 即缝），输入框与 dock 无缝贴合。 */
+/* ── 输入卡：视口链末端压点 + dock 无缝贴合（冷启动批⑧ 2026-10-30；收形批⑤
+   2026-10-31 22:50 修订）──────────────────────────────────────────────
+   输入卡 bottom = 0、自身 padding-bottom = dock 高 + safe-area（lift 已归 0：
+   中键收回 dock 内，输入卡与 dock 之间不再留 12px 抬升缝 —— 间隙随收形收窄
+   为零，输入框底缘直接贴合 dock 顶缘）。
+   两件套语义：① 输入卡悬浮在 dock 之上；② main.js 的 #chat padding-bottom
+   让位逻辑读 #input-area.offsetHeight（含本 padding）⇒ 最后一条消息自动让出
+   dock 带，桌面 JS 零改动。 */
 body.mobile-layer #input-area {
   bottom: 0;
   padding-bottom: calc(var(--dock-h) + var(--dock-center-lift, 0px) + env(safe-area-inset-bottom, 0px));
+}
+
+/* ── 发送钮退回纯圆（收形批⑥，作者令 10-31 22:50）──────────────────────
+   药丸几何（r999 h32 + 横向 padding）是桌面档；手机层退回考古圆形
+   （d4cc8d189^ 前基准：r50% 36×36 方圆钮，与输入条 36px 图标钮同高）——
+   绿色保留（--ctl-send-* 三态 token 单源不动），只收几何。 */
+body.mobile-layer #send-btn {
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+}
+
+/* ── 消息流头像 + agent 名（收形批①③，作者令 10-31 22:50）──────────────
+   主对话每条 agent 消息（.row.ai 直子 .bubble.ai）泡上方补一行身份头：
+   圆头像（28px）+ agent 名（12px 弱色）—— 微信式两元件行，由
+   chatChrome.js 挂出/摘除（手机层专属，teardown 全量摘除 ⇒ 桌面 DOM
+   零变化）。无头像回落 stand logo（缩 72% 居中，不显示空白/默认人形）。 */
+body.mobile-layer #chat .row.ai .g2-msg-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 5px 2px;
+  flex: none;
+}
+body.mobile-layer #chat .g2-msg-avatar-slot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+body.mobile-layer #chat .g2-msg-avatar-slot picture { display: flex; }
+body.mobile-layer #chat .g2-msg-avatar {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+body.mobile-layer #chat .g2-msg-avatar.g2-msg-logo {
+  width: 72%;
+  height: 72%;
+  object-fit: contain;
+}
+body.mobile-layer #chat .g2-msg-name {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--color-frame-text-muted, #98a2b3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60vw;
+}
+/* 会话头头像空态回落 stand logo（批③；节点由 chatChrome.js 注入 —— 未命名
+   root 原显示中性 user 人形字形，随批换 stand logo；已命名无头像的首字母牌
+   是身份标记，保留不动。图标随槽尺寸缩放，中心对齐同 user 字形档）。 */
+body.mobile-layer #agent-avatar-btn .agent-avatar-stand-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 58%;
+  height: 58%;
+}
+body.mobile-layer #agent-avatar-btn .agent-avatar-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
 }
 
 /* ════════════════════════════════════════════════════════════════════
