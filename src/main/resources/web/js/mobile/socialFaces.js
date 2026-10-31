@@ -132,29 +132,39 @@ export function ensureSocialPage(pageId, body) {
   }
 }
 
-/** 联系人页「手机接入」入口行（渠道卡配置面 = socialPanel 渠道数据源的移动入口）。 */
+/** 联系人页「手机接入」入口行（渠道卡配置面 = socialPanel 渠道数据源的移动入口）。
+ *  🔴 作者令 2026-10-31 08:51：行形态与下方「设备」「发起群聊」完全同栏
+ * （圆底淡色图标 + 标题 + 右箭头）⇒ markup 逐件复刻 `.fm-nf-entry` 家族
+ * （contacts.js buildDevicesEntry/buildCreateGroupEntry 同款：容器 .fm-nf-entry +
+ *  .fm-nf-icon + .fm-nf-label + .fm-nf-chevron），CSS 吃 friends.css:451-486，
+ *  零新增样式；仅换图标（smartphone）与文案。「mf-social-entry」留作无样式
+ *  标记类（dedupe 判据 + 既有测试定位面，同 fm-devices-entry 先例），原
+ *  .mf-social-entry-* 专属样式条随本批整段摘除。 */
 function ensureSocialEntry(body) {
   if (body.querySelector('.mf-social-entry')) return;
-  const entry = document.createElement('button');
-  entry.type = 'button';
-  entry.className = 'mf-social-entry';
+  const entry = document.createElement('div');
+  entry.className = 'fm-nf-entry mf-social-entry';
+  entry.setAttribute('role', 'button');
+  entry.setAttribute('tabindex', '0');
   entry.dataset.page = 'social';
   const ic = document.createElement('span');
-  ic.className = 'mf-social-entry-ic';
+  ic.className = 'fm-nf-icon';
   ic.innerHTML = '<i data-lucide="smartphone"></i>';
   const label = document.createElement('span');
-  label.className = 'mf-social-entry-label';
+  label.className = 'fm-nf-label';
   label.textContent = tt('手机接入', 'Phone access');
-  const chev = document.createElement('i');
-  chev.setAttribute('data-lucide', 'chevron-right');
-  chev.className = 'mf-social-entry-chev';
+  const chev = document.createElement('span');
+  chev.className = 'fm-nf-chevron';
+  chev.innerHTML = '<i data-lucide="chevron-right"></i>';
   entry.append(ic, label, chev);
-  entry.addEventListener('click', (e) => {
+  const open = (e) => {
     // 桌面面 outside-close 监听 document 冒泡 —— 入口键停冒泡防误关。
     e.stopPropagation();
     // navController 事件环外发（避免循环 import）：由栈层 push social 页。
     document.dispatchEvent(new CustomEvent('nf:mobile-social-entry'));
-  });
+  };
+  entry.addEventListener('click', open);
+  entry.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(e); } });
   body.insertBefore(entry, body.firstChild);
   if (typeof lucide !== 'undefined') createIconsIn(entry);
 }
