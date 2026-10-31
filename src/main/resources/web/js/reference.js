@@ -186,6 +186,14 @@ export function makeReference(input) {
     const content = input.content || {};
     const fullText = String(content.fullText || '').slice(0, 1200);
     const preview = String(content.excerpt || previewOf('', fullText, 60));
+    // 附件批（2026-10-31）：被引消息的附件缩略清单随 content 走（live 腿引用块
+    // 渲染缩略带；后端落盘白名单化 type/name/path —— preview 只活在前端）。
+    const attachments = (Array.isArray(content.attachments) ? content.attachments : []).slice(0, 8).map((a) => ({
+      type: a.type === 'image' || a.type === 'video' ? a.type : 'file',
+      name: String(a.name || '').slice(0, 200),
+      path: String(a.path || '').slice(0, 600),
+      preview: (typeof a.preview === 'string' && a.preview.startsWith('data:')) ? a.preview : undefined,
+    }));
     return {
       type: 'ref', refType: 'chat-message',
       id: src.messageId ? `ref:chatmsg:${src.messageId}` : nextRefId('chatmsg'),
@@ -197,7 +205,7 @@ export function makeReference(input) {
         senderName: src.senderName || '',
       },
       anchor,
-      content: { excerpt: preview, fullText },
+      content: { excerpt: preview, fullText, attachments },
       meta: { icon: 'message-circle', typeLabel: t('messages.quote'), ts: (input.meta && input.meta.ts) || 0 },
       display: { label: src.senderName ? `${src.senderName}：${preview}` : preview, preview },
     };

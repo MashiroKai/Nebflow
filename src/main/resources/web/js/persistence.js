@@ -502,7 +502,14 @@ export function buildUserAttachmentRows(row, atts) {
     if (att && (att.type === 'ref' || att.type === 'taskRef')) appendAttachmentBubble(row, att);
     else mediaAtts.push(att);
   });
-  return mediaAtts.length ? buildUserMediaRow(mediaAtts, { resolver: attachmentImageUrl }) : null;
+  if (!mediaAtts.length) return null;
+  const mediaRow = buildUserMediaRow(mediaAtts, { resolver: attachmentImageUrl });
+  // live 腿（chat.js renderUserBubble）媒体卡随行挂**同一** msgId —— 重放腿同形
+  // 对齐（附件批 2026-10-31）：引用寻址/兄弟行合入判据（msgQuote.siblingMediaAttsOf
+  // 按同 msgId 找 .row.user-media）两条腿一致，此前重放腿媒体行拿独立 c- id ⇒
+  // 引用文本行合不到附件。
+  if (mediaRow && row && row.dataset && row.dataset.msgId) mediaRow.dataset.msgId = row.dataset.msgId;
+  return mediaRow;
 }
 
 // ---------- Save a message entry to localStorage (best-effort cache) ----------

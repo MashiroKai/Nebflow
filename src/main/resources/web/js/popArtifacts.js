@@ -179,7 +179,9 @@ const FWD_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true
  *    真令牌重试（nfTicket.js）+ 旧根字面路径双读（NfFilePolicy.scala,
  *    b9ed91bb6）。**双腿都败**才落终态 fail —— 与 媒体统一适配批「resolver
  *    拒答（null）回落票腿；票腿也 404 才是终态」的既定语义补全成同一形状。 */
-function hydrateMedia(el, item, onFail) {
+/** 字节水合腿（导出：附件批 2026-10-31 —— msgQuote 引用块缩略带动态 import 复用
+ *  本函数，与 Pop 脸同一取字节链；静态 import 会成环，故走动态导入）。 */
+export function hydrateMedia(el, item, onFail) {
   if (item.src) {
     el.src = item.src;
     return;
@@ -526,8 +528,10 @@ function canvasCornerButton(item) {
  *  the file card's whole-card click uses; no second open path is minted. An
  *  item without an absolute path (a live user attachment whose bytes ride
  *  inline — Canvas cannot open a pathless file) keeps the #491 主题三 lightbox
- *  zoom: same face that case had before this ruling, no bogus open dispatch. */
-function openMediaItemClick(item) {
+ *  zoom: same face that case had before this ruling, no bogus open dispatch.
+ *  （导出：附件批 2026-10-31 —— msgQuote 引用块缩略点击同款单点，动态 import
+ *    复用；静态 import 会成环。） */
+export function openMediaItemClick(item) {
   if (item && item.path) openPopArtifact(item.path, item.name);
   else openMediaLightbox(item);
 }
@@ -927,6 +931,9 @@ export function buildUserMediaRow(attachments, opts) {
   row.className = 'row pop-artifact user user-media';
   // quote-message 一期（spec §2.1/§2.5）：媒体/文件行可引用（仅引用项，无正文
   // 可复制）。多条 stack 摘要取首项（引用对象 = 行）。
+  // 附件批（2026-10-31 作者令「引用要支持你发的文件 图片等」）：描述符随带
+  // **全量**附件清单（type/name/path/preview）——引用块据此渲染附件缩略带；
+  // 文本行引用时经 msgQuote.siblingMediaAttsOf 按同 msgId 合入（微信整消息语义）。
   row.dataset.msgId = nextChatMsgId();
   {
     const first = items[0] || {};
@@ -934,7 +941,14 @@ export function buildUserMediaRow(attachments, opts) {
       ? { kind: 'image', fileName: first.name, path: first.path }
       : { kind: 'file', fileName: first.name || (first.path || '').split('/').pop(), path: first.path };
     attachQuoteMenu(row, {
-      ...d, senderRole: 'user', senderName: t('chat.quoteSenderMe'), ts: Date.now(),
+      ...d,
+      attachments: items.map(it => ({
+        type: (it.kind === 'image' || it.kind === 'video') ? it.kind : 'file',
+        name: it.name || (it.path || '').split('/').pop() || '',
+        path: it.path || '',
+        preview: it.src || undefined,
+      })),
+      senderRole: 'user', senderName: t('chat.quoteSenderMe'), ts: Date.now(),
     });
   }
   const group = document.createElement('div');

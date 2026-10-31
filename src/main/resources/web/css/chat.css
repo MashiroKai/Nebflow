@@ -5101,6 +5101,70 @@ object.search-media-thumb { object-fit: initial; }
 /* 降级注记（「原消息已删除」；.fm-quote-note 同族：再降一档不透明度）。 */
 .msg-quote-note { opacity: 0.75; font-size: 11px; margin-top: 2px; }
 .msg-quote-note:empty { display: none; }
+/* 引用块附件缩略带（附件批 2026-10-31 作者令「引用要支持你发的文件 图片等」）：
+   被引消息带文件/图片附件 ⇒ 摘要行下挂缩略。图片/视频 = 48px 方缩略
+   （object-fit cover；字节腿与 Pop 脸同一 hydrateMedia），文件 = 图标 + 文件名
+   chip。材质零新色值 —— chip 底 = 引用块底加深一档（亮/暗双态走同款相对加深），
+   文字 var(--color-text-muted) 继承引用块；可开项（有 path）cursor:pointer，
+   无 path 项无指针（零死点击 —— paintJumpAffordance 同纪律）。 */
+.msg-quote-atts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.msg-quote-att-media {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  overflow: hidden;
+  flex: 0 0 auto;
+  background: rgba(0, 0, 0, 0.06);
+}
+.msg-quote-att-media[role="button"] { cursor: pointer; }
+.msg-quote-att-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.msg-quote-att-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 180px;
+  padding: 3px 8px 3px 4px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.06);
+  font-size: 11px;
+  line-height: 1.3;
+  flex: 0 0 auto;
+}
+.msg-quote-att-file[role="button"] { cursor: pointer; }
+.msg-quote-att-file-icon {
+  flex: 0 0 auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.08);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.msg-quote-att-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (prefers-color-scheme: dark) {
+  .msg-quote-att-media,
+  .msg-quote-att-file { background: rgba(255, 255, 255, 0.09); }
+  .msg-quote-att-file-icon { background: rgba(255, 255, 255, 0.12); }
+}
 /* 可点态（判据单点 = data-quote-jump="ready"；不可得 ⇒ 无指针无按钮语义，
    禁「点了没反应」半成品入口 —— friends.css paintJumpAffordance 同纪律）。 */
 .msg-quote-block[data-quote-jump="ready"] { cursor: pointer; }

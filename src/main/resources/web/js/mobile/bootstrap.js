@@ -25,6 +25,8 @@
 //   · searchFace / daemonFace / memoryFace = 桌面面的手机呈现附件（脚注/角色行/
 //     卡读态——面收编进页面后照常生效）；
 //   · taskPanel = 任务页面板（数据/卡渲染同源，呈现位=页面收编）。
+//   · msgLongPress = 消息长按 → 上下文菜单（附件批 2026-10-31：与桌面右键同一份
+//     菜单单点出口 msgQuote.openQuoteMenuForRow；手势契约见该文件头）。
 //   · 退役（随批摘除激活）：headerController（双液态下拉列）、layoutController
 //     （右列页面键）、floatController（左列键+二级 morph）、morphPanel、
 //     canvasGestures（bottom sheet 手势）、bgStatusFace（键拦截 morph）。
@@ -52,13 +54,14 @@ async function activate() {
     // dock 批激活序：nav 先行（dock/页面壳就位，chrome/faces 才有栈可推）；
     // 拆除以**数组序**执行 ⇒ teardowns 倒排激活序：faces/chrome 先归还搬移
     // 节点，nav 最后拆（pane/overlay 面归还锚点在页面壳仍在场时执行）。
-    const [nav, socialFaces, chatChrome, searchFace, daemonFace, memoryFace] = await Promise.all([
+    const [nav, socialFaces, chatChrome, searchFace, daemonFace, memoryFace, msgLongPress] = await Promise.all([
       import('./navController.js'),
       import('./socialFaces.js'),
       import('./chatChrome.js'),
       import('./searchFace.js'),
       import('./daemonFace.js'),
       import('./memoryFace.js'),
+      import('./msgLongPress.js'),
     ]);
     if (!active) return; // 激活期间已跨越回桌面 —— 直接拆除
     const navTeardown = nav.activateNav();
@@ -67,7 +70,8 @@ async function activate() {
     const tSearchFace = searchFace.activateSearchFace();
     const tDaemonFace = daemonFace.activateDaemonFace();
     const tMemoryFace = memoryFace.activateMemoryFace();
-    teardowns = [tMemoryFace, tDaemonFace, tSearchFace, tChrome, tFaces, navTeardown];
+    const tLongPress = msgLongPress.activateMsgLongPress();
+    teardowns = [tLongPress, tMemoryFace, tDaemonFace, tSearchFace, tChrome, tFaces, navTeardown];
   } catch (err) {
     // 控制器加载失败：回到桌面形态（宁可退回可用桌面，不可半挂层）。
     console.error('[mobile-layer] activate failed', err);
