@@ -1125,7 +1125,7 @@ private[gateway] object WsSessionChatHandlers:
                           delegateName = delegateName,
                           bgWaiting = waitingBySession
                             .getOrElse(rec.sessionId, Nil)
-                            .map(t => (t.jobId, t.description, t.startedAtMs, nebflow.core.tools.BgHealth.of(t)))
+                            .map(t => (t.jobId, t.description, t.startedAtMs, nebflow.core.tools.BgHealth.of(t), t.ownerName))
                         )
                       }
                       }

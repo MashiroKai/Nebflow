@@ -1334,6 +1334,9 @@ Git safety:
     // （kernel/dispatcher；modeFaceOf = 双模式总闸 + delegate 会话 + 记录三闸，
     // 闸关/非 delegate ⇒ None ⇒ 空串零渲染）。
     val ownerMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(ctx.sessionId).getOrElse("")
+    // 后台任务归属批（2026-10-31）：开启会话的 delegate 批次短名（ownerNameOf
+    // 单点；非 delegate/无名 ⇒ 空串零渲染），注册面与 WS 信封同源携带。
+    val ownerName = nebflow.core.delegate.DelegateRegistry.ownerNameOf(ctx.sessionId).getOrElse("")
     BgTaskRegistry.register(
       jobId,
       ctx.sessionId.getOrElse(""),
@@ -1343,7 +1346,8 @@ Git safety:
       persistent,
       origin,
       originLabel,
-      ownerMode = ownerMode
+      ownerMode = ownerMode,
+      ownerName = ownerName
     ) *>
       (ctx.wsSend.fold(
         logger.debug(s"Cannot notify frontend for background job $jobId: no wsSend (remote execution)")
@@ -1359,7 +1363,8 @@ Git safety:
           "kind" -> "local".asJson,
           "origin" -> origin.asJson,
           "originLabel" -> originLabel.asJson,
-          "ownerMode" -> ownerMode.asJson
+          "ownerMode" -> ownerMode.asJson,
+          "ownerName" -> ownerName.asJson
         )
         logger.info(s"Background job $jobId \"$description\" started", "sessionId" -> ctx.sessionId.getOrElse("")) *>
           send(json).handleErrorWith(e => logger.warn(s"WS send failed for job $jobId: ${e.getMessage}"))

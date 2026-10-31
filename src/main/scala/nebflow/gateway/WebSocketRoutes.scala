@@ -3388,8 +3388,8 @@ object WebSocketRoutes:
     taskTitle: Option[String] = None, // taskbadge batch (main-side): title resolved by the caller via the ledger
     delegateTitle: Option[String] = None, // 显示名契约批 2026-10-22: delegate/SubTask 行批次标题（delegateDisplayTitle 解析）
     delegateName: Option[String] = None, // 面板命名批 2026-10-31: 批次短名（DelegateRegistry.Record.name，≤12 字）——行首扫读名
-    bgWaiting: List[(String, String, Long, String)] =
-      Nil // #752: (jobId, description, startedAtMs, health) — the session's own waiting-type bg tasks
+    bgWaiting: List[(String, String, Long, String, String)] =
+      Nil // #752: (jobId, description, startedAtMs, health, ownerName) — the session's own waiting-type bg tasks; ownerName = 开启会话的 delegate 批次短名（归属批 2026-10-31，空 = 非 delegate/无名）
   ): Json =
     Json.obj(
       "sessionId" -> rec.sessionId.asJson,
@@ -3461,7 +3461,7 @@ object WebSocketRoutes:
       // 任务数的显式字段——面板与取证直接读数，不必从数组长度反推（数组空 =
       // 0，两字段恒一致）。
       "bgWaitingCount" -> bgWaiting.size.asJson,
-      "bgWaiting" -> bgWaiting.map { case (jobId, description, startedAtMs, health) =>
+      "bgWaiting" -> bgWaiting.map { case (jobId, description, startedAtMs, health, ownerName) =>
         Json.obj(
           "taskId" -> jobId.asJson,
           "description" -> description.asJson,
@@ -3469,7 +3469,10 @@ object WebSocketRoutes:
           // P0 面板投影批（设计稿 §3.4）：健康色随行——值 = 行内健康字段经
           // BgHealth.of 派生（调用方从 registry 行直取，快照与实时帧同源）；
           // 非法值在写缝已归一，此处逐字透传（前端兜底容错）。
-          "health" -> health.asJson
+          "health" -> health.asJson,
+          // 后台任务归属批（2026-10-31）：等待任务的归属短名随行（行内
+          // ownerName 直取；空 = 非 delegate/无名 ⇒ 前端回退现显示）。
+          "ownerName" -> ownerName.asJson
         )
       }.asJson
     )

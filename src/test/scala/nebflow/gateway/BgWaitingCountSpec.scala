@@ -36,7 +36,7 @@ class BgWaitingCountSpec extends FunSuite:
       val json: Json = WebSocketRoutes.activeAgentEntryJson(
         rec(sessionId),
         None,
-        bgWaiting = waiting.map(t => (t.jobId, t.description, t.startedAtMs, BgHealth.of(t)))
+        bgWaiting = waiting.map(t => (t.jobId, t.description, t.startedAtMs, BgHealth.of(t), t.ownerName))
       )
       assertEquals(json.hcursor.get[Int]("bgWaitingCount"), Right(2), "explicit count field on the status face")
       val rows = json.hcursor.downField("bgWaiting").values.get.toList
@@ -47,6 +47,9 @@ class BgWaitingCountSpec extends FunSuite:
       // P0 面板投影批（设计稿 §3.4 验收③）：行健康字段随行且与账本行同源——
       // 值 = 同一 ActiveTask 行经 BgHealth.of 派生（单一事实源，禁第二状态源）。
       assert(rows.forall(_.hcursor.get[String]("health").contains("healthy")), rows)
+      // 归属批（2026-10-31）：非 delegate 会话注册的任务 ownerName 行内恒空串，
+      // 快照键逐字透传（前端 falsy 回退既有显示）。
+      assert(rows.forall(_.hcursor.get[String]("ownerName").contains("")), rows)
     finally BgTaskRegistry.unregisterSession(Some(sessionId)).unsafeRunSync()
 
     end try
@@ -68,7 +71,7 @@ class BgWaitingCountSpec extends FunSuite:
       val jsonS = WebSocketRoutes.activeAgentEntryJson(
         rec(sessionId),
         None,
-        bgWaiting = waitingSuspect.map(t => (t.jobId, t.description, t.startedAtMs, BgHealth.of(t)))
+        bgWaiting = waitingSuspect.map(t => (t.jobId, t.description, t.startedAtMs, BgHealth.of(t), t.ownerName))
       )
       val rowS = jsonS.hcursor.downField("bgWaiting").values.get.toList.head
       assertEquals(rowS.hcursor.get[String]("health"), Right("suspect"), "suspect 投影随行")
@@ -78,7 +81,7 @@ class BgWaitingCountSpec extends FunSuite:
       val jsonE = WebSocketRoutes.activeAgentEntryJson(
         rec(sessionId),
         None,
-        bgWaiting = waitingEsc.map(t => (t.jobId, t.description, t.startedAtMs, BgHealth.of(t)))
+        bgWaiting = waitingEsc.map(t => (t.jobId, t.description, t.startedAtMs, BgHealth.of(t), t.ownerName))
       )
       val rowE = jsonE.hcursor.downField("bgWaiting").values.get.toList.head
       assertEquals(rowE.hcursor.get[String]("health"), Right("escalated"), "escalated 投影随行")

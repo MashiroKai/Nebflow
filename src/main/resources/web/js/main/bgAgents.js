@@ -154,11 +154,15 @@ function bgIdleDetail(info) {
     const w = bgWaiting[0];
     const dur = w.startedAt ? fmtUptime(Date.now() - w.startedAt) : '';
     health = bgHealthNorm(w.health);
+    // 归属批（作者令 2026-10-31）：等待行同样标归属——首条等待任务的 delegate
+    // 批次短名（快照 bgWaiting[].ownerName）随段尾标注；空（非 delegate/旧后端）
+    // 回退现显示（零附加）。
+    const owner = String(w.ownerName || '').trim();
     parts.push(t('subagents.waitingBg', {
       count: bgWaiting.length,
       desc: String(w.description || w.taskId || ''),
       dur,
-    }));
+    }) + (owner ? ' · ' + owner : ''));
   }
   if (receipts > 0) parts.push(t('subagents.waitingReceipts', { count: receipts }));
   if (parts.length > 0) return { text: parts.join(' · '), stale: false, health };

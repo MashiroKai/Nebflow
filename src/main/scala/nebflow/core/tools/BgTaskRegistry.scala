@@ -97,7 +97,16 @@ object BgTaskRegistry:
      * （谁开启的类别轴）正交：dispatcher 形态 delegate 自己开的任务 origin 仍
      * 是 "nebula"。
      */
-    ownerMode: String = ""
+    ownerMode: String = "",
+    /**
+     * 后台任务归属批（作者令 2026-10-31「后台任务行标归属」）：开启本任务的
+     * 会话的 delegate 批次短名（DelegateRegistry.Record.name，注册时经
+     * DelegateRegistry.ownerNameOf 单点解析落行）。空 = 非 delegate / 无名旧
+     * 记录 ⇒ 前端回退既有来源显示（零渲染）。与 ownerMode 同纪律：注册面解析
+     * 一次、行内承载、快照（activeTasksJson）与实时信封（backgroundTaskUpdate）
+     * 同源携带。
+     */
+    ownerName: String = ""
   )
 
   /**
@@ -270,7 +279,8 @@ object BgTaskRegistry:
     originLabel: String = "",
     deviceName: String = "",
     outputPath: String = "",
-    ownerMode: String = ""
+    ownerMode: String = "",
+    ownerName: String = ""
   ): IO[Unit] =
     tasks.update(
       _ + (jobId -> ActiveTask(
@@ -285,7 +295,8 @@ object BgTaskRegistry:
         originLabel,
         deviceName,
         outputPath,
-        ownerMode = ownerMode
+        ownerMode = ownerMode,
+        ownerName = ownerName
       ))
     )
 
@@ -543,7 +554,9 @@ object BgTaskRegistry:
                 "rootSessionId" -> rootSessionId.asJson,
                 "taskId" -> t.jobId.asJson,
                 "description" -> t.description.asJson,
-                "status" -> "cancelled".asJson
+                "status" -> "cancelled".asJson,
+                // 归属短名随收割帧携带（与注册帧同键；缺省空串，前端零渲染）。
+                "ownerName" -> t.ownerName.asJson
               )
             ).handleErrorWith(_ => IO.unit)
         }
@@ -624,6 +637,9 @@ object BgTaskRegistry:
             // 任务模式标注批（2026-10-30）：delegate 会话生效执行形态随快照下发
             // （kernel/dispatcher；空 = 无徽标——旧行/非 delegate 恒空，零渲染）。
             "ownerMode" -> t.ownerMode.asJson,
+            // 后台任务归属批（2026-10-31）：行归属短名随快照下发（delegate 批次
+            // 短名；空 = 非 delegate/无名 ⇒ 前端回退既有来源显示，零渲染）。
+            "ownerName" -> t.ownerName.asJson,
             // #753 行带已产出行数（刷新恢复路径）：实时行由心跳帧携带
             // outputLines，快照行此前无来源——面板行在页面刷新后行数 chip
             // 消失。本字段 = BgTaskOutputStore 的当前 totalLines（无缓冲

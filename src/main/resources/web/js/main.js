@@ -3160,6 +3160,11 @@ function bgTaskRowState(task) {
  *  kind=remote —— 前缀识别优先于会话前缀启发（后者只分得出「谁开启」），
  *  兜底 'device'。 */
 function bgTaskOrigin(task) {
+  // 归属批（作者令 2026-10-31「后台任务行标归属」）：归属槽位 = 开启任务的会话的
+  // delegate 批次短名（行 ownerName，注册帧 + 快照帧同源）——有短名显短名
+  // （cat=delegate 专属样式），无 name 回退既有来源显示（下方原逻辑逐字不动）。
+  const owner = String(task.ownerName || '').trim();
+  if (owner) return { cat: 'delegate', label: owner };
   let cat = task.origin || '';
   let label = task.originLabel || '';
   const deviceFromDesc = (!cat || cat === 'device') ? bgDeviceFromDescription(task.description) : '';
@@ -3682,6 +3687,8 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
     if (msg.originLabel && !tasks[idx].originLabel) tasks[idx].originLabel = msg.originLabel;
     // 任务模式标注批（2026-10-30）：ownerMode 随注册帧携带一次，缺省回填不覆盖。
     if (msg.ownerMode && !tasks[idx].ownerMode) tasks[idx].ownerMode = msg.ownerMode;
+    // 归属批（2026-10-31）：delegate 批次短名随注册帧携带一次，同纪律缺省回填。
+    if (msg.ownerName && !tasks[idx].ownerName) tasks[idx].ownerName = msg.ownerName;
     if (isTerminal) {
       // Retention deadline (R1): the 1s sweep removes the row from the bucket when
       // it passes; while the row's output card is open the deadline is re-armed
@@ -3713,7 +3720,8 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
       kind: msg.kind || '',
       origin: msg.origin || '',
       originLabel: msg.originLabel || '',
-      ownerMode: msg.ownerMode || ''
+      ownerMode: msg.ownerMode || '',
+      ownerName: msg.ownerName || ''
     });
   }
   // Terminal rows are RETAINED in the bucket for a bounded window (2026-09-09
@@ -4581,6 +4589,9 @@ onMessage('activeBgTasks', (msg) => {
         // 任务模式标注批（2026-10-30）：执行形态随快照下发；旧后端缺省沿用本地
         // embellishment，再缺省 = ''（零渲染）。
         ownerMode: t.ownerMode || (prev ? prev.ownerMode : '') || '',
+        // 归属批（2026-10-31）：delegate 批次短名随快照下发；旧后端缺省沿用本地
+        // embellishment，再缺省 = ''（前端回退既有来源显示）。
+        ownerName: t.ownerName || (prev ? prev.ownerName : '') || '',
         // P0 面板投影批（设计稿 §3.4）：行健康字段随快照同行（BgTaskRegistry
         // 行内派生）；旧后端缺省沿用本地 embellishment，再缺省 = ''（前端
         // bgHealthNorm 容错：空/脏值回落 healthy 或零渲染）。

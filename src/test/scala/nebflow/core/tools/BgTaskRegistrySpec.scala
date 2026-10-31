@@ -105,6 +105,23 @@ class BgTaskRegistrySpec extends FunSuite:
             assertEquals(t.hcursor.get[String]("origin").toOption, Some("nebula"))
             assertEquals(t.hcursor.get[String]("originLabel").toOption, Some(""))
             assertEquals(t.hcursor.get[String]("kind").toOption, Some("local"))
+            // 归属批（2026-10-31）：旧调用方缺省 ownerName = 空串（前端回退既有显示）。
+            assertEquals(t.hcursor.get[String]("ownerName").toOption, Some(""))
+          }
+        } *> cleanup(job)
+    io.unsafeRunSync()
+  }
+
+  // ── 后台任务归属批（作者令 2026-10-31）：快照行 ownerName（delegate 批次短名）──
+
+  test("activeTasksJson carries ownerName on the snapshot path (注册帧与快照同源)") {
+    val (job, root) = ("bgtaskspec-owner-1", "main-bgtaskspec-owner")
+    val io =
+      BgTaskRegistry.register(job, root, "spec task owner", "local", root, ownerName = "液体玻璃批") *>
+        BgTaskRegistry.activeTasksJson.flatMap { json =>
+          IO {
+            val t = clue(tasksFor(root, json)).find(_.hcursor.get[String]("taskId").toOption.contains(job)).get
+            assertEquals(t.hcursor.get[String]("ownerName").toOption, Some("液体玻璃批"))
           }
         } *> cleanup(job)
     io.unsafeRunSync()
