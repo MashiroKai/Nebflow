@@ -111,6 +111,11 @@ object ExternalSessionRunner:
     wsSend: Option[Json => IO[Unit]],
     resources: AgentRuntimePort,
     /**
+     * 面板命名批（2026-10-31）：批次短名（Delegate 工具 `name` 参数）随外部腿
+     * 落 Record——与内置腿同面板语义。缺省 None：旧调用面/续聊腿零变化。
+     */
+    name: Option[String] = None,
+    /**
      * 跨设备 worktree 归属修复批（2026-10-30）：设备项目（origin 绑对端）= true——
      * 外部 CLI 是 **host 本地进程**，对设备仓跑本机 git 判定腿是归属错（worktree
      * 会落在编排机 brain 下）；跳过 DelegateWorkspace.prepare（binding=None，旧形态
@@ -173,6 +178,9 @@ object ExternalSessionRunner:
                     parentSessionId = spec.parentSessionId,
                     title = spec.title,
                     createdAt = System.currentTimeMillis(),
+                    // 面板命名批（2026-10-31）：批次短名落盘；续聊腿 spec.name 缺席时
+                    // 回读存量记录补保（复活/续起不丢名）。
+                    name = spec.name.orElse(DelegateRegistry.find(sessionId).flatMap(_.name)),
                     // P1-2：分支纪律四键（非 git 腿 = None——解码缺键容忍不变）
                     branch = binding.map(_.branch),
                     worktree = binding.flatMap(_.worktree),

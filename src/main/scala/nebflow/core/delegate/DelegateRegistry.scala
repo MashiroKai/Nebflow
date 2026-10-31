@@ -53,6 +53,13 @@ object DelegateRegistry:
     /** 任务摘要（列表显示用；全文在 TaskLedger）。 */
     title: String,
     createdAt: Long,
+    /**
+     * 批次短名（后台任务面板层级/命名/版式批 2026-10-31 · 作者令）：Delegate 工具
+     * `name` 参数（≤12 字）——面板 delegate 组头行首的扫读名（「扫一眼就知道哪批是
+     * 哪批」）；空/缺省 = 旧数据 ⇒ 前端回退既有截断式标题显示（零迁移）。
+     * 缺省 None：旧盘面照常解码（cliSessionId 同款纪律）。
+     */
+    name: Option[String] = None,
     /** 工作分支（S13 分支纪律：恒 `delegate/<id>`；非 git 工作区 = None）。 */
     branch: Option[String] = None,
     /** worktree 目录（R6 判是腿；判否腿 = None——分支建在项目内）。 */
@@ -163,6 +170,10 @@ object DelegateRegistry:
   /** id 安全校验：只允许落盘文件名白名单字符（防路径穿越）。 */
   def validId(id: String): Boolean =
     id.nonEmpty && id.length <= 128 && id.matches("^[a-zA-Z0-9._-]+$")
+
+  /** 批次短名上界（面板命名批 2026-10-31 · 作者令「≤12 字」）——schema maxLength
+   *  与引擎钳位共用此常量。 */
+  val ShortNameMaxChars: Int = 12
 
   def put(record: Record): Unit =
     os.makeDir.all(dir)
@@ -396,6 +407,7 @@ object DelegateRegistry:
       parentSessionId <- c.get[String]("parentSessionId")
       title <- c.get[String]("title")
       createdAt <- c.get[Long]("createdAt")
+      name <- c.get[Option[String]]("name")
       branch <- c.get[Option[String]]("branch")
       worktree <- c.get[Option[String]]("worktree")
       baseBranch <- c.get[Option[String]]("baseBranch")
@@ -423,6 +435,7 @@ object DelegateRegistry:
       parentSessionId,
       title,
       createdAt,
+      name,
       branch,
       worktree,
       baseBranch,

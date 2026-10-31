@@ -3387,6 +3387,7 @@ object WebSocketRoutes:
     retryCount: Option[Int] = None,
     taskTitle: Option[String] = None, // taskbadge batch (main-side): title resolved by the caller via the ledger
     delegateTitle: Option[String] = None, // 显示名契约批 2026-10-22: delegate/SubTask 行批次标题（delegateDisplayTitle 解析）
+    delegateName: Option[String] = None, // 面板命名批 2026-10-31: 批次短名（DelegateRegistry.Record.name，≤12 字）——行首扫读名
     bgWaiting: List[(String, String, Long, String)] =
       Nil // #752: (jobId, description, startedAtMs, health) — the session's own waiting-type bg tasks
   ): Json =
@@ -3413,6 +3414,10 @@ object WebSocketRoutes:
       // 在 Delegate/SubTask/BlockingSubagent/FlowDag(dag-) 注册点均有值；缺省 ""
       // = 无归属（前端 falsy，零徽标零认领——与 project/taskId 同契约）。
       "parentSessionId" -> rec.parentSessionId.asJson,
+      // 面板命名批（2026-10-31 · 作者令②）：批次短名随快照出帧（live 面由
+      // routeWsSend 在 agentStart 同键注入）——前端行首扫读名数据源；空串 = 无名
+      // 旧数据（前端回落既有截断式标题显示，falsy 契约同 project/taskId）。
+      "delegateName" -> delegateName.getOrElse("").asJson,
       "kind" -> rec.kind.toString.asJson,
       "task" -> meta.map(_.name).getOrElse("").asJson,
       // 2026-08-22 缺口 2：快照自带可刷新恢复三字段（向后兼容——旧字段不动，

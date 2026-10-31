@@ -76,6 +76,7 @@ object DelegateTool extends Tool:
 
 **Parameters:**
 - `task` (required): self-contained brief — goal, constraints, absolute paths, exact commands/limits, and what "done" looks like. The executor starts with a clean context; the brief is its entire world.
+- `name` (optional): a short name for this batch — at most 12 characters, summarizing it in a glance (e.g. "液体玻璃批", "ask-mode修复"). It shows at the front of the batch's row in the background-agents panel, so the user can tell batches apart at a glance. Omit it and the panel falls back to the truncated task title. Longer values are clamped to 12 characters.
 - `project` (optional): name of a mounted project — the task then runs in that project's workspace. Omit it to run in the default general workspace.
 - `executor` (optional): which executor runs the task. You pick it dynamically per task; omit it for the built-in default (`nebflow`). The available set (with detected external CLIs) is listed in your "Available executors" prompt section. An unavailable pick fails explicitly — there is no silent fallback.
 
@@ -95,6 +96,11 @@ object DelegateTool extends Tool:
         "task" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Self-contained task brief: goal, constraints, absolute paths, exact commands/limits, what \"done\" looks like. The executor starts with a clean context and no conversation history.".asJson
+        ),
+        "name" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "maxLength" -> 12.asJson,
+          "description" -> "Optional short batch name (≤12 chars) summarizing this dispatch in a glance — shown at the front of the batch's row in the background-agents panel so batches are distinguishable at a glance (e.g. \"液体玻璃批\"). Omit to fall back to the truncated task title; longer values are clamped to 12 characters.".asJson
         ),
         "project" -> io.circe.Json.obj(
           "type" -> "string".asJson,
@@ -119,6 +125,19 @@ object DelegateTool extends Tool:
     task.linesIterator.nextOption().getOrElse("delegate").trim match
       case "" => "delegate"
       case s => if s.length > 60 then s.take(57) + "..." else s
+
+  /**
+   * 批次短名解析（后台任务面板层级/命名/版式批 2026-10-31 · 作者令②）：Delegate
+   * 工具 `name` 参数——≤12 字的扫读名（面板 delegate 组头行首显示）。trim 后空 =
+   * None（回落既有标题截断显示）；超 12 字钳位截断（schema maxLength 是模型面约束，
+   * 引擎侧再钳一次——REST/旧调用面可能绕开 schema）。
+   */
+  private[tools] def shortNameOf(input: JsonObject): Option[String] =
+    input("name")
+      .flatMap(_.asString)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .map(n => if n.length > DelegateRegistry.ShortNameMaxChars then n.take(DelegateRegistry.ShortNameMaxChars) else n)
 
   /**
    * delegate brief 装配单点（sleep-poll 禁令批 C 段抽纯函数——spec 判红锚）。
@@ -176,7 +195,10 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
   private def routeWsSend(
     wsSend: Option[io.circe.Json => IO[Unit]],
     parentSessionId: Option[String],
-    subagentId: String
+    subagentId: String,
+    /** 批次短名（面板命名批 2026-10-31）：随 agentStart 注入 delegateName——live 行
+     *  即时拿到短名，不等快照回填；None = 无名旧形态逐字。 */
+    delegateName: Option[String] = None
   ): io.circe.Json => IO[Unit] =
     val base = wsSend.getOrElse((_: io.circe.Json) => IO.unit)
     parentSessionId match
@@ -193,7 +215,11 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
               val withParent =
                 if !isStart || obj.contains("parentSessionId") then obj
                 else obj.add("parentSessionId", sid.asJson)
-              val builder = withParent.add("rootSessionId", sid.asJson).add("sessionId", sid.asJson)
+              // 面板命名批：同判据注入 delegateName（短名 live 面）。
+              val withName =
+                if !isStart || delegateName.isEmpty || withParent.contains("delegateName") then withParent
+                else withParent.add("delegateName", delegateName.get.asJson)
+              val builder = withName.add("rootSessionId", sid.asJson).add("sessionId", sid.asJson)
               val finalObj =
                 if obj.contains("nodeSessionId") then builder
                 else builder.add("nodeSessionId", subagentId.asJson)
@@ -384,6 +410,8 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
     val task = input("task").flatMap(_.asString).getOrElse("")
     val project = input("project").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val description = labelOf(task)
+    // 面板命名批（2026-10-31 · 作者令②）：批次短名随三条 spawn 腿落台账记录。
+    val shortName = shortNameOf(input)
 
     if task.trim.isEmpty then
       IO.pure(
@@ -408,7 +436,7 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
           val modeParam = input("mode").flatMap(_.asString).map(_.trim.toLowerCase).filter(_.nonEmpty)
           modeParam match
             case m if m.forall(w => w == "auto" || nebflow.core.delegate.DualModeConfig.isModeWord(w)) =>
-              internalSpawn(project, task, description, ctx, input("executor").flatMap(_.asString), modeParam)
+              internalSpawn(project, task, description, ctx, input("executor").flatMap(_.asString), modeParam, shortName)
             case bad =>
               IO.pure(
                 Left(
@@ -428,7 +456,7 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
                 )
               )
             )
-          else externalSpawn(project, task, description, defn, binPath, ctx)
+          else externalSpawn(project, task, description, defn, binPath, ctx, shortName)
     end if
   end call
 
@@ -468,7 +496,9 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
     description: String,
     ctx: ToolContext,
     executorParam: Option[String] = None,
-    modeParam: Option[String] = None
+    modeParam: Option[String] = None,
+    /** 面板命名批（2026-10-31）：批次短名（≤12 字）随 Record 落盘 + agentStart 注入。 */
+    shortName: Option[String] = None
   ): IO[Either[ToolError, String]] =
     resolveWorkspace(project, ctx).flatMap {
       case Left(err) => IO.pure(Left(err))
@@ -502,7 +532,9 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
                 // 跨设备批（2026-10-25）：设备项目的会话默认设备上下文透传——
                 // 六件工具默认路由设备 + brief 设备 workspace 行。
                 sessionDevice = sessionDevice,
-                sessionDeviceWorkspace = sessionDeviceWorkspace
+                sessionDeviceWorkspace = sessionDeviceWorkspace,
+                // 面板命名批（2026-10-31）：批次短名透传（Record 落盘 + agentStart 注入）。
+                shortName = shortName
               )
             yield result
           case _ =>
@@ -522,7 +554,7 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
                 )
               )
             )
-          case None => dispatchRemote(remote, task, description, ctx)
+          case None => dispatchRemote(remote, task, description, ctx, shortName)
     }
   end internalSpawn
 
@@ -536,7 +568,9 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
     route: WorkspaceResolution.RemoteRoute,
     task: String,
     description: String,
-    ctx: ToolContext
+    ctx: ToolContext,
+    /** 面板命名批（2026-10-31）：批次短名随 host 侧 dispatch 记录落盘。 */
+    shortName: Option[String] = None
   ): IO[Either[ToolError, String]] =
     ctx.sharedResources match
       case Some(resources) =>
@@ -584,7 +618,8 @@ $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
                     taskId = taskId,
                     parentSessionId = ctx.sessionId.getOrElse(""),
                     title = description,
-                    createdAt = System.currentTimeMillis()
+                    createdAt = System.currentTimeMillis(),
+                    name = shortName
                   )
                 )
               val ack =
@@ -609,7 +644,9 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     description: String,
     defn: nebflow.core.executor.ExecutorRegistry.ExecutorDef,
     binPath: String,
-    ctx: ToolContext
+    ctx: ToolContext,
+    /** 面板命名批（2026-10-31）：批次短名随外部腿 SpawnSpec 落 Record。 */
+    shortName: Option[String] = None
   ): IO[Either[ToolError, String]] =
     resolveWorkspace(project, ctx).flatMap {
       case Left(err) => IO.pure(Left(err))
@@ -645,6 +682,8 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
                   parentRef = ctx.agentActorRef,
                   wsSend = ctx.wsSend,
                   resources = resources,
+                  // 面板命名批（2026-10-31）：批次短名随外部腿落 Record。
+                  name = shortName,
                   // 归属修复批（2026-10-30）：设备项目 + 外部执行器 = host 本地进程——
                   // 跳过本机 git 判定腿（设备仓 worktree 归属设备，外部腿不建）。
                   deviceProject = sessionDevice.isDefined
@@ -677,7 +716,9 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     requestedMode: Option[String] = None,
     /** 跨设备批：会话默认设备上下文（设备项目 delegate）。None = 本机（零变化）。 */
     sessionDevice: Option[String] = None,
-    sessionDeviceWorkspace: Option[String] = None
+    sessionDeviceWorkspace: Option[String] = None,
+    /** 面板命名批（2026-10-31）：批次短名透传（Record 落盘 + agentStart 注入）。 */
+    shortName: Option[String] = None
   ): IO[Either[ToolError, String]] =
     // 提示词来源拆分批（2026-10-08）：delegate spawn 走 **delegate 面解析路径**
     // `delegateEntry`（= delegate_report 纪律的系统提示词；节点面恒走
@@ -703,7 +744,8 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
           judgeWorkspace = judgeWorkspace,
           requestedMode = requestedMode,
           sessionDevice = sessionDevice,
-          sessionDeviceWorkspace = sessionDeviceWorkspace
+          sessionDeviceWorkspace = sessionDeviceWorkspace,
+          shortName = shortName
         ).map(_.map { case (subagentId, ack) => ack + DelegateRegistry.continuationLine(subagentId) })
     }
 
@@ -747,12 +789,14 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     sessionDevice: Option[String] = None,
     sessionDeviceWorkspace: Option[String] = None,
     /** 双模式批：mode 参数（kernel|dispatcher|auto；None = auto）。 */
-    requestedMode: Option[String] = None
+    requestedMode: Option[String] = None,
+    /** 面板命名批（2026-10-31）：批次短名（Record 落盘 + agentStart 帧注入）。 */
+    shortName: Option[String] = None
   ): IO[Either[ToolError, (String, String)]] =
     val childDepth = parentDepth + 1
     val agentName = agentDef.name
     val subagentId = s"delegate-$agentName-${java.util.UUID.randomUUID().toString.take(8)}"
-    val childWsSend = routeWsSend(wsSend, parentSessionId, subagentId)
+    val childWsSend = routeWsSend(wsSend, parentSessionId, subagentId, delegateName = shortName)
     val resolvedRoot = if rootSessionId.nonEmpty then rootSessionId else parentSessionId.getOrElse(subagentId)
 
     /**
@@ -861,7 +905,8 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
               delegatedBy,
               sessionDevice,
               sessionDeviceWorkspace,
-              modeDecision = decision
+              modeDecision = decision,
+              shortName = shortName
             )
         }
     }
@@ -898,7 +943,10 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     sessionDevice: Option[String] = None,
     sessionDeviceWorkspace: Option[String] = None,
     /** 双模式批：模式判定（None = 总闸关 Inert 态——零字段零分叉）。 */
-    modeDecision: Option[nebflow.core.delegate.ModeDecision] = None
+    modeDecision: Option[nebflow.core.delegate.ModeDecision] = None,
+    /** 面板命名批（2026-10-31）：批次短名——Record 落盘；None = 旧形态（且复活腿
+     *  不丢名：落盘时回读存量记录补保）。 */
+    shortName: Option[String] = None
   ): IO[Either[ToolError, (String, String)]] =
     val agentName = agentDef.name
     val isDispatcher = modeDecision.exists(_.mode == DualModeConfig.ModeDispatcher)
@@ -1052,6 +1100,9 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               parentSessionId = parentSessionId.getOrElse(""),
               title = description,
               createdAt = System.currentTimeMillis(),
+              // 面板命名批（2026-10-31）：批次短名落盘；None（Mail 复活腿等不经
+              // call 的腿）回读存量记录补保——复活不丢名。
+              name = shortName.orElse(DelegateRegistry.find(subagentId).flatMap(_.name)),
               branch = binding.map(_.branch),
               worktree = binding.flatMap(_.worktree),
               baseBranch = binding.flatMap(_.baseBranch),

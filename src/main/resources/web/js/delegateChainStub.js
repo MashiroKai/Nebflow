@@ -93,6 +93,10 @@ const PENDING_N1_KINDS = new Set([FRAME_KINDS.CHAIN_REGISTERED, FRAME_KINDS.CHAI
  * @property {string} taskNo            TaskLedger 台账号（task #N 的 N；'' = 派发期台账失败回落形态）
  * @property {string} delegateId        delegate 会话 id（`delegate:<id>` 续聊地址 payload）
  * @property {string} title             任务摘要（全文在 TaskLedger）
+ * @property {string} name              面板命名批（2026-10-31 · 作者令②）批次短名
+ *                                     （DelegateRegistry.Record.name，≤12 字）——后台
+ *                                     智能体面板 delegate 组头行首扫读名；'' = 无名/
+ *                                     旧盘 ⇒ 行回落既有标题截断显示（零迁移）
  * @property {string} executor          执行器 id（nebflow|zcode|claude-code|codex|hermes；'' = 未知）
  * @property {string} status            ROW_STATUS 值域
  * @property {boolean} external         外部执行器（executor ≠ nebflow）⇒ S16 粗粒度行
@@ -229,6 +233,9 @@ export function rowFromRegistry(record, live) {
     taskNo: String(r.taskId || ''),
     delegateId: String(r.id || ''),
     title: String(r.title || ''),
+    // 面板命名批（2026-10-31）：批次短名镜像（Record.name additive 键；旧行/无名
+    // 缺键 → ''——读面零渲染判据，同 mode 键纪律）。
+    name: String(r.name || ''),
     executor,
     status,
     external: executor !== '' && executor !== 'nebflow',

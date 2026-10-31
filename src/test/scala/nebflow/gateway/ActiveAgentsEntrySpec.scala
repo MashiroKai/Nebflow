@@ -273,4 +273,24 @@ class ActiveAgentsEntrySpec extends FunSuite:
     assertEquals(arr(1).hcursor.get[String]("health"), Right("suspect"))
   }
 
+  // ── 面板命名批（2026-10-31 · 作者令②）：快照面 delegateName 键 ─────────────
+
+  test("delegateName: default empty (unnamed/old records render the truncated-title fallback)") {
+    val json = WebSocketRoutes.activeAgentEntryJson(rec("sid-dn0", AgentKind.Delegate), None)
+    assertEquals(json.hcursor.get[String]("delegateName"), Right(""))
+  }
+
+  test("delegateName: caller-resolved batch short name rides the snapshot frame") {
+    // 值由调用方（WsSessionChatHandlers.handleGetActiveAgents）从
+    // DelegateRegistry.Record.name 解析传入——本帧逐字透传。
+    val json = WebSocketRoutes.activeAgentEntryJson(
+      rec("delegate-n31-x", AgentKind.Delegate),
+      None,
+      delegateName = Some("液体玻璃批")
+    )
+    assertEquals(json.hcursor.get[String]("delegateName"), Right("液体玻璃批"))
+    // 既有键零回归：agentName 链不受影响。
+    assertEquals(json.hcursor.get[String]("agentName"), Right("delegate-n31-x"))
+  }
+
 end ActiveAgentsEntrySpec

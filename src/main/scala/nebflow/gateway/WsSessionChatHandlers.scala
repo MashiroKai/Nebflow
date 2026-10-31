@@ -1098,7 +1098,23 @@ private[gateway] object WsSessionChatHandlers:
                           )
                         }
                         .handleErrorWith(_ => IO.pure(None))
+                    // 面板命名批（2026-10-31 · 作者令②）：批次短名同缝解析——
+                    // DelegateRegistry.Record.name（≤12 字）⇒ 快照 delegateName 键；
+                    // 空/旧盘 = None（前端回落既有标题截断显示，零迁移）。
+                    val delegateNameIO: IO[Option[String]] =
+                      IO
+                        .blocking {
+                          if rec.kind == AgentKind.Delegate then
+                            nebflow.core.delegate.DelegateRegistry
+                              .find(rec.sessionId)
+                              .flatMap(_.name)
+                              .map(_.trim)
+                              .filter(_.nonEmpty)
+                          else None
+                        }
+                        .handleErrorWith(_ => IO.pure(None))
                     delegateTitleIO.flatMap { delegateTitle =>
+                      delegateNameIO.flatMap { delegateName =>
                       sessionStore.getSessionMeta(rec.sessionId).map { meta =>
                         WebSocketRoutes.activeAgentEntryJson(
                           rec,
@@ -1106,10 +1122,12 @@ private[gateway] object WsSessionChatHandlers:
                           taskOpt.map(_.retryCount),
                           taskTitle = rec.taskId.flatMap(titles.get),
                           delegateTitle = delegateTitle,
+                          delegateName = delegateName,
                           bgWaiting = waitingBySession
                             .getOrElse(rec.sessionId, Nil)
                             .map(t => (t.jobId, t.description, t.startedAtMs, nebflow.core.tools.BgHealth.of(t)))
                         )
+                      }
                       }
                     }
                   }

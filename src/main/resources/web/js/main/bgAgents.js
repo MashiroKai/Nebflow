@@ -260,6 +260,20 @@ export function armBgUptimeTick(view) {
 // 徽标 = 自身 kind。数据侧全程走 stub 读取口（rows/children/chain——provider 镜像），
 // 禁渲染面直连 WS/REST。非 delegate 编排形态中仅 C1 集（dispatcher-*/node-*）被滤
 // （isBgRowVisible 单点）；其余未被认领的行（ephemeral/dag/team 等）按原序缀后照 render。
+//
+// 面板层级批（2026-10-31 ① · 作者令）：父行可折叠——组头行首 caret，点击收起/展开
+// 其子行树（用户偏好记在 bgHeadCollapsePref，重渲染不丢）；**默认展开进行中父**
+// （非终态组头默认展开），终态组头默认收起（完成态灰化照旧，计数不变——签与
+// 列表同走 visibleBgAgentEntries，折叠只影响子行渲染）。
+
+/** 组头折叠用户偏好：delegate sid → true=收起（undefined = 走默认规——终态收起）。 */
+const bgHeadCollapsePref = new Map();
+
+/** 默认折叠规（面板层级批 ①）：终态（done/error）组头默认收起，进行中父默认展开。 */
+function bgHeadDefaultCollapsed(info) {
+  const st = bgRowState(info);
+  return st === 'done' || st === 'error';
+}
 
 /** G1 mode → 组头徽标词（kind 词 = 面板既有数据词，非 locale 文案）。权威 = rows 行内
  *  `orchestrationMode`；subagent-star → Subagent、agentflow → Flow（R6：badge 跟模式
@@ -543,7 +557,13 @@ function bgOrphanChipHtml(orphan) {
  * bgGenericName）；实名行附任务摘要次行（.bg-task-subline，全文 tooltip）。
  * 面板树批（2026-10-29 ①）：opts.orphanFrom/orphanTitle 孤儿来源角标（父不可见
  * 行的「来自 …」标注）。
- * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string, rowTitle?: string, orphanFrom?: string, orphanTitle?: string}} [opts]
+ * 面板命名批（2026-10-31 ② · 作者锚点「行首必须显短名」）：opts.shortName
+ * （DelegateRegistry.Record.name / 快照 delegateName，≤12 字）在场 ⇒ 行首主名 =
+ * 短名，批次标题降为次行（全文 tooltip）——扫一眼分辨哪批是哪批；缺席 ⇒ 旧链
+ * 逐字（标题截断显示，老数据零迁移）。
+ * 面板层级批（2026-10-31 ①）：opts.childCount/opts.collapsed——组头行首 caret
+ * 折叠锚（有子行的组头才渲染；caret 点击 = 收起/展开子行树，行体点击照旧开详情）。
+ * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string, rowTitle?: string, shortName?: string, childCount?: number, collapsed?: boolean, orphanFrom?: string, orphanTitle?: string}} [opts]
  * @returns {string}
  */
 function bgTaskRowHtml(id, info, opts = {}) {
@@ -601,8 +621,20 @@ function bgTaskRowHtml(id, info, opts = {}) {
   if (opts.headLevel) {
     const fromName = (info.name && String(info.name) !== sid) ? String(info.name) : '';
     const fullTitle = String(opts.rowTitle || '').trim() || bgFirstLine(info.task) || fromName;
-    displayName = bgFirstLine(fullTitle) || info.name || sid || id;
-    nameTooltip = displayName + (sid && sid !== displayName ? ' · ' + sid : '');
+    const shortName = String(opts.shortName || (info && info.delegateName) || '').trim();
+    if (shortName) {
+      // 面板命名批（2026-10-31 ②）：行首显短名——批次标题降为次行（全文 tooltip
+      // 承载标题 + sid）；「扫一眼面板上的名字就知道哪批是哪批」。
+      displayName = shortName;
+      const titleLine = bgFirstLine(fullTitle);
+      nameTooltip = shortName +
+        (titleLine && titleLine !== shortName ? ' · ' + String(fullTitle || '') : '') +
+        (sid && sid !== shortName ? ' · ' + sid : '');
+      taskSummary = (titleLine && titleLine !== shortName) ? titleLine : '';
+    } else {
+      displayName = bgFirstLine(fullTitle) || info.name || sid || id;
+      nameTooltip = displayName + (sid && sid !== displayName ? ' · ' + sid : '');
+    }
   } else {
     const taskLine = bgFirstLine(info.task);
     const generic = bgGenericName(info.name, sid || id);
@@ -710,7 +742,20 @@ function bgTaskRowHtml(id, info, opts = {}) {
     ? `data-bg-key="${escapeHtml(id)}" data-node-session-id="${escapeHtml(sessionId)}"`
     : '';
   const levelCls = (opts.headLevel ? ' bg-task-row-head' : '') + (opts.childLevel ? ' bg-task-row-child' : '');
+  // 面板层级批（2026-10-31 ①）：组头折叠 caret——有子行的组头行首渲染（中性
+  // muted、行体点击开详情不变；caret 自带停冒泡点击收起/展开子行树）。aria/title
+  // 随折叠态翻转（屏幕阅读器与悬停同知）。
+  const childCount = Number(opts.childCount) || 0;
+  const collapsedNow = !!(opts.headLevel && childCount > 0 && opts.collapsed);
+  const caretWord = collapsedNow ? t('subagents.expandGroup') : t('subagents.collapseGroup');
+  const caretPart = (opts.headLevel && childCount > 0)
+    ? '<span class="bg-task-caret' + (collapsedNow ? ' is-collapsed' : '') + '" data-bg-caret="' +
+      escapeHtml(sid) + '" role="button" aria-label="' + escapeHtml(caretWord) + '" title="' +
+      escapeHtml(caretWord) + '">' +
+      statusIcon(collapsedNow ? 'chevron-right' : 'chevron-down', 11) + '</span>'
+    : '';
   return '<div class="bg-task-row' + (rowState === 'done' ? ' done' : '') + levelCls + '" role="listitem" tabindex="0" ' + clickAttr + '>' +
+    caretPart +
     '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
     '<div class="bg-task-info">' +
       // Single-line row (2026-09-27 badge-inline batch, author order: task
@@ -846,16 +891,27 @@ export function renderBgAgentDropdown() {
   }
   // ── 两级渲染（C2/R6 + 面板树批 2026-10-29 ①）：delegate 组头（徽标=编排模式）
   // ＋缩进一格子行；孤儿行提升顶层并带「来自 …」来源角标。 ──
+  // 面板层级批（2026-10-31 ①）：组头可折叠——用户偏好 > 默认规（终态收起/进行中
+  // 展开）；收起组头的子行不进本轮 HTML（计数签不受影响）。
   const { groups, leftovers, orphanBy } = bgDelegateGroups(entries, sid);
   const htmlParts = [];
   for (const g of groups) {
+    const childCount = g.children.length;
+    const pref = bgHeadCollapsePref.get(g.sid);
+    const collapsed = childCount > 0 && (pref !== undefined ? pref : bgHeadDefaultCollapsed(g.info));
     htmlParts.push(bgTaskRowHtml(g.id, g.info, {
       headLevel: true,
       badgeWord: bgDelegateBadgeWord(g.info, g.row),
       // 显示名契约批（2026-10-22）：组头注册行标题（DelegateRegistry.Record.title
       // 的 provider 镜像——跨重启存活，存量记录自带）透传为主名第一源。
       rowTitle: (g.row && g.row.title) || '',
+      // 面板命名批（2026-10-31 ②）：批次短名第一源 = 注册行镜像（spawn 落盘），
+      // 快照/live 帧 delegateName 殿后（存量记录回填前 live 行即时可用）。
+      shortName: (g.row && g.row.name) || g.info.delegateName || '',
+      childCount,
+      collapsed,
     }));
+    if (collapsed) continue;
     for (const c of g.children) {
       if (c.type === 'live') htmlParts.push(bgTaskRowHtml(c.id, c.info, { childLevel: true }));
       else if (c.type === 'store') htmlParts.push(bgStoreChildHtml(c.child));
@@ -888,19 +944,36 @@ export function renderBgAgentDropdown() {
         // strip it, matching how the retired Team panel used to open these
         // popups; live team-agent events keep flowing into the same view.
         const sessionId = rawSessionId.replace(/^team-/, '');
+        // 面板命名批（2026-10-31 ② · 作者锚点）：弹窗头名 = 行首已解析显示名
+        // （短名在场 = 短名；否则 = 标题/摘要首行）——不再把执行器 def 名
+        // （「nebflow」）顶在弹窗头。
+        const rowNameEl = row.querySelector('.bg-task-name');
+        const rowName = rowNameEl ? rowNameEl.textContent : '';
         if (isBgAgentId(rawSessionId)) {
           // delegate-*/subtask-* → bg-agent popup (ephemeral sessions,
           // live-rendered; history only persists at completion).
-          openBgAgentPopup(rawSessionId, info.name, info.task);
+          openBgAgentPopup(rawSessionId, rowName || info.name, info.task);
         } else {
           // dag-*/bare sid → flow popup — the SAME entry the Flow/Team panel
           // uses, so live events flow into one shared view instead of
           // building a duplicate hidden view per popup module.
-          openFlowStepPopup(row.getAttribute('data-bg-key'), info.name, info.name, '', sessionId);
+          openFlowStepPopup(row.getAttribute('data-bg-key'), rowName || info.name, info.name, '', sessionId);
         }
         // Close the dropdown
         if (dropdown) dropdown.classList.add('hidden');
       }
+    });
+  });
+
+  // 面板层级批（2026-10-31 ①）：组头 caret 点击 = 收起/展开子行树（停冒泡——行体
+  // 点击开详情的语义不变）；偏好落 bgHeadCollapsePref，重渲染后保持。
+  listEl.querySelectorAll('[data-bg-caret]').forEach(caret => {
+    caret.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const headSid = caret.getAttribute('data-bg-caret');
+      if (!headSid) return;
+      bgHeadCollapsePref.set(headSid, !caret.classList.contains('is-collapsed'));
+      renderBgAgentDropdown();
     });
   });
 
@@ -920,7 +993,10 @@ export function renderBgAgentDropdown() {
       const c = sid ? storeChildBySid.get(sid) : null;
       if (c) {
         const dropdown = activeView.dom.bgDropdownEl;
-        openBgAgentPopup(sid, String(c.agentName || '') || sid, String(c.description || c.prompt || ''));
+        // 面板命名批（2026-10-31 ②）：弹窗头名 = 行首已解析显示名（store 子行 =
+        // 摘要首行），不再泛名「subagent」顶上头。
+        const rowNameEl = row.querySelector('.bg-task-name');
+        openBgAgentPopup(sid, rowNameEl ? rowNameEl.textContent : (String(c.agentName || '') || sid), String(c.description || c.prompt || ''));
         if (dropdown) dropdown.classList.add('hidden');
       }
     });

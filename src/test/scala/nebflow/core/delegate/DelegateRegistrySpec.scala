@@ -2,6 +2,7 @@ package nebflow.core.delegate
 
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
+import io.circe.syntax.EncoderOps
 import munit.CatsEffectSuite
 import nebflow.shared.PathUtil
 
@@ -88,5 +89,40 @@ class DelegateRegistrySpec extends CatsEffectSuite:
     assert(line.contains("\"delegate:delegate-kernel-abc12345\""), line)
     assert(line.contains("Mail"), line)
     assert(!line.contains("kernel:delegate-kernel"), line)
+  }
+
+  // ── 面板命名批（2026-10-31 · 作者令②）：批次短名 name 字段的落盘/向后兼容 ──
+
+  test("name: put/find round-trips the batch short name through disk") {
+    withTempDataRoot { tmp =>
+      IO {
+        DelegateRegistry.put(rec("d-named").copy(name = Some("液体玻璃批")))
+        val hit = DelegateRegistry.find("d-named")
+        assertEquals(hit.flatMap(_.name), Some("液体玻璃批"))
+        // Encoder 派生 ⇒ JSON 含 name 键（REST 行 rec.asJson 透传的数据面）
+        val json = hit.get.asJson
+        assertEquals(json.hcursor.get[String]("name"), Right("液体玻璃批"))
+      }
+    }.unsafeRunSync()
+  }
+
+  test("name: legacy record JSON without the key decodes as None (zero migration)") {
+    import io.circe.parser.decode
+    withTempDataRoot { tmp =>
+      IO {
+        // 旧盘面形：无 name 键（手工 Decoder 缺键容忍——deriveDecoder 会让存量
+        // 记录静默消失，禁）。
+        val legacy = """{"id":"d-legacy","executor":"nebflow","cwd":"/tmp/ws","project":null,"taskId":null,"parentSessionId":"root-1","title":"t","createdAt":1}"""
+        val decoded = decode[DelegateRegistry.Record](legacy)
+        assertEquals(decoded.map(_.name), Right(None))
+        assertEquals(decoded.map(_.id), Right("d-legacy"))
+      }
+    }.unsafeRunSync()
+  }
+
+  test("name: absent by default (old call sites construct records without it)") {
+    val r = rec("d-plain")
+    assertEquals(r.name, None)
+    assertEquals(r.asJson.hcursor.get[Option[String]]("name"), Right(None))
   }
 end DelegateRegistrySpec
