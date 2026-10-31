@@ -47,7 +47,8 @@ import LogtoTransport.Request
  * SECURITY CONTRACT (security self-check, 台账 #924):
  *   · the password lives in the request body of step 3 ONLY — it never
  *     enters any [[Failure]] payload, any log line, or any persisted store;
- *   · transport = TLS (auth.nebflow.space) via the shared Direct15s policy,
+ *   · transport = TLS (auth.mystand.space; legacy alias auth.nebflow.space retired
+ *     from defaults by the 2026-10-31 old-domain sweep batch) via the shared Direct15s policy,
  *     same as every other Logto conversation this codebase makes;
  *   · the exchange rides first-party code end to end — the CLI hands the
  *     credentials to the LOCAL gateway (loopback), the gateway performs the

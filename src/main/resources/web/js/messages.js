@@ -5185,7 +5185,11 @@ export function initMessages() {
   // `{auto:true}`: not a user gesture — one event per failed request, so it
   // must not open an OAuth window per event (repeat guard, 2026-09-15 OIDC
   // fix; the 登录失效卡 stays the visible manual retry surface).
-  window.addEventListener('fm-auth-required', () => { openLoginModal({ auto: true }); });
+  // `deferPopup:true`（作者根因批 2026-10-31）：自动链**零 window.open** ——
+  // 非手势的 window.open 在微信内置浏览器触发「attempting to open a pop-up」
+  // 系统弹窗且每次 401 重试都再弹一遍（弹窗循环根因）。登录卡页面内单飞：
+  // 卡内「重新打开登录页面」键才是真手势的唯一点开入口。
+  window.addEventListener('fm-auth-required', () => { openLoginModal({ auto: true, deferPopup: true }); });
   window.addEventListener('fm-network-error', () => { window.__showToast?.(t('messages.networkError'), 'error'); });
   // 群域变更（建群/退群/解散/踢人/邀请响应/可用性翻面）：群列表重取；建群成功
   // 带 openConversationId ⇒ 列表就绪后直接开群窗（新群必在服务端返回里）。
