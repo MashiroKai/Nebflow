@@ -347,13 +347,21 @@
   font-size: 11px;
   color: var(--color-text-muted);
 }
-/* 文件改动数小注：灰字一行（不是 chip 不是胶囊——零背景零边框零 padding），
-   保留点击唤起 diff 面板入口（行为与旧胶囊同）。pressed 态 = 该批次已在左栏
-   面板承载（sapphire 文字 tint，低调不抢眼）。 */
+/* 文件改动数小注（2026-10-31 14:14 作者令批：+数绿 −数红、整体右对齐卡缘）：
+   语义色双主题可读、零新色值——复用 ui-status-redesign 批的亮暗双档图标 token
+   对（--status-success-icon 亮 #2e7d32 ~5.1:1 / 暗 #66bb6a ~7.0:1；
+   --status-error-icon 亮 #d64545 ~5.4:1 / 暗 #f26b6b ~5.6:1，泡底 12% sapphire
+   上两档均 ≥4.5:1）；非 --color-success（亮档 #4caf50 亮底 ~2.9:1，判红不上字）。
+   形态逐字不动：零背景零边框零 padding 不加粗（只上色不加重）；+a/−r 两段各
+   走 span，字面空格文本节点不渲染（flex 空白匿名项），视觉间距由 gap 承担，
+   textContent 逐字节维持旧口径。右对齐 = margin-left:auto（fit-content 本征宽
+   贴卡内 content box 右缘）。pressed 态 = 该批次已在左栏面板承载（sapphire
+   文字 tint 上在 span 上，低调不抢眼）。 */
 .nf-rcpt-note {
-  display: block;
+  display: flex;
+  gap: 4px;
   width: fit-content;
-  margin: 2px 0 0;
+  margin: 2px 0 0 auto;
   padding: 0;
   border: 0;
   background: none;
@@ -364,7 +372,10 @@
   cursor: pointer;
   transition: color 0.15s;
 }
-.nf-rcpt-note:hover {
+.nf-rcpt-note-add { color: var(--status-success-icon); }
+.nf-rcpt-note-del { color: var(--status-error-icon); }
+.nf-rcpt-note:hover .nf-rcpt-note-add,
+.nf-rcpt-note:hover .nf-rcpt-note-del {
   color: var(--color-text);
 }
 .nf-rcpt-note:focus-visible {
@@ -372,7 +383,8 @@
   outline-offset: 2px;
   border-radius: 2px;
 }
-.nf-rcpt-note[aria-pressed='true'] {
+.nf-rcpt-note[aria-pressed='true'] .nf-rcpt-note-add,
+.nf-rcpt-note[aria-pressed='true'] .nf-rcpt-note-del {
   color: rgb(var(--sapphire, 88, 166, 255) / 0.95);
 }
 /* 展开态正文与卡面/小注的间距：只在正文可见时计费（折叠 display:none ⇒ 零高）。 */

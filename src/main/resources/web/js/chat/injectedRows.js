@@ -520,12 +520,17 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   if (collapsible) {
     bindCollapsibleToggle(source === 'delegate' ? receiptTop : label, () => content);
   }
-  // diff 拆面板批入口（2026-10-22 建、2026-10-31 改形态）：fileChanges 载荷在场 ⇒
-  // 灰字小注一行（+a −r；作者令「不做 chip 不做胶囊」）——点击 → 左栏
+  // diff 拆面板批入口（2026-10-22 建、2026-10-31 改形态；10-31 14:14 作者令批
+  // 「diff 计数用颜色区分并且靠右对齐」）：fileChanges 载荷在场 ⇒ +a −r 小注一行
+  // ——+数绿 −数红语义色（span 承载）、整体右对齐卡缘；形态仍零背景零边框零
+  // padding 不加粗（只上色不加重，低调语义逐字保持）——点击 → 左栏
   // #panel-filechanges 出该批次文件列表 + Canvas 出选中文件 diff；本批已在面板时
   // 再点 → 收起侧栏（diffPanel.toggleDiffBatch 现有面板 toggle 语义）。缺载荷
   // （零改动批 / 旧历史）⇒ 零渲染。非 delegate 源携载荷的形态历史上不存在（载荷
-  // 只由 delegate 终态事件携带），故注记只在 delegate 卡分支下挂载。
+  // 只由 delegate 终态事件携带），故注记只在 delegate 卡分支下挂载。两段各走
+  // 独立 span（CSS 语义色上在 span 上），字面空格文本节点保留 ⇒ textContent
+  // 逐字节维持旧口径「+a −r」（flex 容器内空白匿名项不渲染，视觉间距由 CSS
+  // gap 承担，消费方/可及名零感知）。
   if (source === 'delegate' && Array.isArray(fileChanges?.files) && fileChanges.files.length) {
     const tot = fileChanges.files.reduce((acc, f) => {
       acc.a += Number(f?.added) || 0; acc.r += Number(f?.removed) || 0; return acc;
@@ -535,7 +540,13 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
     note.className = 'nf-rcpt-note';
     note.setAttribute('aria-pressed', 'false');
     note.dataset.fcBatch = String(fileChanges.nodeId || fileChanges.generatedAt || 'adhoc');
-    note.textContent = `+${tot.a} −${tot.r}`;
+    const add = document.createElement('span');
+    add.className = 'nf-rcpt-note-add';
+    add.textContent = `+${tot.a}`;
+    const del = document.createElement('span');
+    del.className = 'nf-rcpt-note-del';
+    del.textContent = `−${tot.r}`;
+    note.append(add, document.createTextNode(' '), del);
     note.addEventListener('click', () => { toggleDiffBatch(fileChanges); });
     bubble.appendChild(note);
   }

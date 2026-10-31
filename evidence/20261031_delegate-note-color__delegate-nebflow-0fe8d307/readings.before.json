@@ -1,0 +1,29 @@
+{
+  "phase": "before",
+  "tiers": {
+    "dark": {
+      "noteText": "+99 −99",
+      "noteColor": "rgb(123, 126, 136)",
+      "noteBg": "rgba(0, 0, 0, 0)",
+      "noteBorder": "0px",
+      "notePad": "0px",
+      "noteFontWeight": "400",
+      "addColor": null,
+      "delColor": null,
+      "rightDelta": 163.265625,
+      "pressed": "false"
+    },
+    "light": {
+      "noteText": "+99 −99",
+      "noteColor": "rgb(139, 142, 150)",
+      "noteBg": "rgba(0, 0, 0, 0)",
+      "noteBorder": "0px",
+      "notePad": "0px",
+      "noteFontWeight": "400",
+      "addColor": null,
+      "delColor": null,
+      "rightDelta": 163.265625,
+      "pressed": "false"
+    }
+  }
+}
