@@ -1,23 +1,4 @@
-// canvas-capsule-ring.spec.mjs — canvas 顶部多文件视图 胶囊环（2026-10-22 作者令）
-// → **文件扇**（2026-10-30 20:09 作者令「canvas 顶部多文件 tab 视图改为卡片式
-// 左右翻动操作（卡片扇翻）」；设计锚 = 2026-10-29 叠卡令 + Pop 扇形叠卡批
-// d5613e0ea）spec 钉。
-//
-// 【扇卡批改写声明，令 > 旧 spec】竖环几何钉（上下对称 ±edgeY/rotateX ±34°/
-// 模糊扭曲/顶部越出 ≤全高−6/中心透明覆层 t-inner 隐去接班/is-center pe:none
-// 落穿）整体退役，换代为文件扇契约：全卡固定 220×280（Pop 同套卡面，「强制
-// 放缩所有尺寸卡片到一个大小」）、扑克式镜像扇形（|rel|=1 ±112px/±7°、
-// |rel|=2 ±206px/±13°、游标 z5 完整置顶、|rel|≥3 弧外零透明）、扇悬标题头
-// 下方（零越顶缘、标题常驻可见 —— #926 文字行零平移由结构保证）、卡头中文签
-// （文件/面板，卡片名不裸英文）+ 扇顶中文提示条、游标卡可点（=激活零动作）。
-// 交互契约沿自胶囊环不改：hover 开扇/离区收扇、滚轮左右翻动（设备分档+累积
-// +冷却、单事件一格）、点击切换 + 换签续扇零断链、右键菜单、deck 互斥、
-// 单页签不展、双卡方向感知。卡面横拖跟手翻页指针腿钉在
-// tests/canvas-card-fan.spec.mjs（本批新增）。下方历史令存档（胶囊环期
-// 2026-10-22~26）供溯源，被取代钉以本头注为准：
-//
-// 胶囊环期作者令存档（2026-10-22 五令 + 修复批三令 + 顶部修正批 + 六项批 +
-// hover 连续性批 + 固定尺寸批 + 触控板手感批 —— 原文见 git 历史）：
+// canvas-capsule-ring.spec.mjs — canvas 顶部胶囊交互重做（作者令 2026-10-22）+ 对称修复批（作者令 2026-10-23）spec 钉
 //
 // 作者令五条（2026-10-22）：
 //   ① 平时态 = 单胶囊（尺寸调小，与现状一致同位）
@@ -180,7 +161,7 @@ async function hoverCapsule(page) {
 }
 async function unhover(page) {
   const p = await capsulePoint(page);
-  await page.mouse.move(p.x, p.y + 560);            // 离开 hover 区（环开点 ∪ 标题头 ∪ 扇卡/提示条联合盒 —— 扇悬于标题头下方 ~336px，须越过扇面）
+  await page.mouse.move(p.x, p.y + 320);            // 离开 hover 区（环开点 ∪ 环胶囊，顶带联合盒）
   await sleep(450);                                 // 140ms 宽限 + 收环过渡
 }
 const ringInfo = (page) => page.evaluate(() => {
@@ -191,53 +172,25 @@ const ringInfo = (page) => page.evaluate(() => {
     const c = getComputedStyle(el);
     return { bg: c.backgroundColor, blur: c.backdropFilter || c.webkitBackdropFilter, border: c.borderColor, shadow: c.boxShadow, filter: c.filter, opacity: +(+c.opacity).toFixed(2) };
   };
-  const isCenter = (c) => c.classList.contains('is-center');
-  const isEdge = (c) => c.classList.contains('is-edge');
   return {
     open: hdr.classList.contains('ring-open'),
     n: caps.length,
-    center: caps.find(isCenter) || null,
-    edges: caps.filter(isEdge),
+    center: caps.find((c) => c.classList.contains('is-center')) || null,
+    edges: caps.filter((c) => c.classList.contains('is-edge')),
     fars: caps.filter((c) => c.classList.contains('is-far')),
     centerMat: caps[0] ? cs(caps[0]) : null,
-    centerId: (caps.find(isCenter) || {}).dataset?.tabId || null,
-    centerX: caps.find(isCenter)?.style.getPropertyValue('--cr-x') || null,
-    centerR: caps.find(isCenter)?.style.getPropertyValue('--cr-r') || null,
-    centerZ: caps.find(isCenter)?.style.zIndex || null,
-    edgeXs: caps.filter(isEdge).map((c) => c.style.getPropertyValue('--cr-x')),
-    edgeRs: caps.filter(isEdge).map((c) => c.style.getPropertyValue('--cr-r')),
-    edgeZs: caps.filter(isEdge).map((c) => c.style.zIndex),
-    edgeBlur: caps.find(isEdge) ? cs(caps.find(isEdge)).filter : null,
+    centerId: (caps.find((c) => c.classList.contains('is-center')) || {}).dataset?.tabId || null,
+    centerRx: caps.find((c) => c.classList.contains('is-center'))?.style.getPropertyValue('--cr-rx') || null,
+    edgeRx: caps.find((c) => c.classList.contains('is-edge'))?.style.getPropertyValue('--cr-rx') || null,
+    edgeRxs: caps.filter((c) => c.classList.contains('is-edge')).map((c) => c.style.getPropertyValue('--cr-rx')),
+    edgeYs: caps.filter((c) => c.classList.contains('is-edge')).map((c) => c.style.getPropertyValue('--cr-y')),
+    edgeBlur: caps.find((c) => c.classList.contains('is-edge')) ? cs(caps.find((c) => c.classList.contains('is-edge'))).filter : null,
     farCount: caps.filter((c) => c.classList.contains('is-far')).length,
     titleOpacity: getComputedStyle(document.querySelector('.canvas-title .t-inner')).opacity,
     hdrUserSelect: getComputedStyle(hdr).userSelect || getComputedStyle(hdr).webkitUserSelect,
     ringHidden: ring ? ring.hidden : null,
-    hint: document.querySelector('#canvas-capsule-ring .cr-hint')?.textContent || null,
-    hintVisible: (() => { const h = document.querySelector('#canvas-capsule-ring .cr-hint'); return h ? getComputedStyle(h).opacity : null; })(),
   };
 });
-
-/** 扇卡点 click 助手（扑克叠收几何：邻卡被游标卡压住内半 —— Playwright 默认
- *  点元素中心会落在游标卡上被拦；改点卡的**外侧上角**（sliver 可见区必命中
- *  本卡，其上无更高 z 卡）。点内前 elementFromPoint 校验 + 向外角步进兜底。 */
-async function clickFanCard(page, tabId, button = 'left') {
-  const pt = await page.evaluate((id) => {
-    const card = document.querySelector(`#canvas-capsule-ring .cr-capsule[data-tab-id="${id}"]`);
-    if (!card) return null;
-    const r = card.getBoundingClientRect();
-    const cursor = document.querySelector('#canvas-capsule-ring .cr-capsule.is-center').getBoundingClientRect();
-    const side = (r.left + r.width / 2) < (cursor.left + cursor.width / 2) ? -1 : 1;
-    for (const inset of [28, 20, 12, 6]) {
-      const x = side < 0 ? r.left + inset : r.right - inset;
-      const y = r.top + 30;
-      const hit = document.elementFromPoint(x, y);
-      if (hit && hit.closest(`#canvas-capsule-ring .cr-capsule[data-tab-id="${id}"]`)) return { x, y };
-    }
-    return { x: side < 0 ? r.left + 28 : r.right - 28, y: r.top + 30 };
-  }, tabId);
-  if (!pt) throw new Error('fan card not found: ' + tabId);
-  await page.mouse.click(pt.x, pt.y, { button });
-}
 
 /* ════════ 桌面腿 ════════ */
 {
@@ -268,70 +221,67 @@ async function clickFanCard(page, tabId, button = 'left') {
   ok('CR1-1 尺寸调小：t-name 12px + 头 padding 4px 档', restStyle.font === '12px' && restStyle.pad === '4px',
     `font=${restStyle.font} pad=${restStyle.pad}`);
 
-  /* ② hover 展开：ring-open + 3 扇卡（1 游标 + 2 邻位）+ 扑克扇形位姿
-     （扇卡批 2026-10-30 重钉：横扇取代竖环 cover-flow） */
+  /* ② hover 展开：ring-open + 3 胶囊（1 中心 + 2 缘位）+ cover-flow 位姿 */
   await hoverCapsule(page);
   const hov = await ringInfo(page);
-  ok('CR2-1 hover 展开：ring-open + 3 扇卡挂载（0 弧外 —— 三卡扇全露）',
+  ok('CR2-1 hover 展开：ring-open + 3 胶囊挂载（0 弧外 —— 最多同时可见 3 个）',
     hov.open && hov.n === 3 && hov.farCount === 0, `open=${hov.open} n=${hov.n} far=${hov.farCount}`);
-  ok('CR2-2 游标 = 激活页签（charlie）+ 零平移零旋转 + z 置顶',
-    hov.centerId === 'file:/tmp/cr-fixture/charlie.md' && hov.centerX === '0.0px' && hov.centerR === '0.0deg' && hov.centerZ === '5',
-    `center=${hov.centerId} x=${hov.centerX} r=${hov.centerR} z=${hov.centerZ}`);
-  const exsSorted = hov.edgeXs.map(parseFloat).sort((a, b) => a - b);   // [左(负), 右(正)]
-  const ersSorted = hov.edgeRs.map(parseFloat).sort((a, b) => a - b);   // [左(负), 右(正)]
-  ok('CR2-3 邻位镜像扇形（扇卡批：扑克式轻微旋转展开，Pop 扇语言侧向版）：一左一右、|x| 相等（±112px）、旋转反号等幅（±7°）、零模糊扭曲（扇卡全清晰材质）',
-    hov.edges.length === 2 && exsSorted.length === 2
-    && exsSorted[0] < 0 && exsSorted[1] > 0
-    && approx(-exsSorted[0], exsSorted[1], 0.5) && approx(exsSorted[1], 112, 0.5)
-    && approx(Math.abs(ersSorted[0]), ersSorted[1], 0.5) && approx(ersSorted[1], 7, 0.5)
-    && !/blur/.test(hov.edgeBlur || ''),
-    `xs=${hov.edgeXs.join('/')} rs=${hov.edgeRs.join('/')} filter=${hov.edgeBlur}`);
+  ok('CR2-2 中心 = 激活页签（charlie）+ 零旋转',
+    hov.centerId === 'file:/tmp/cr-fixture/charlie.md' && hov.centerRx === '0deg', `center=${hov.centerId} rx=${hov.centerRx}`);
+  const eysSorted = hov.edgeYs.map(parseFloat).sort((a, b) => a - b);   // [上(负), 下(正)]
+  const rxsSorted = hov.edgeRxs.map(parseFloat).sort((a, b) => a - b);  // [下(负), 上(正)]
+  ok('CR2-3 缘位上下真对称（作者令 2026-10-23）：一上一下、|y| 严格相等、rotateX 反号等幅（±34°）+ 模糊扭曲',
+    hov.edges.length === 2 && eysSorted.length === 2
+    && eysSorted[0] < 0 && eysSorted[1] > 0
+    && approx(-eysSorted[0], eysSorted[1], 0.5)
+    && approx(Math.abs(rxsSorted[0]), rxsSorted[1], 0.5) && Math.abs(rxsSorted[1]) === 34
+    && /blur/.test(hov.edgeBlur || ''),
+    `ys=${hov.edgeYs.join('/')} rxs=${hov.edgeRxs.join('/')} filter=${hov.edgeBlur}`);
 
-  /* ② 扇卡批·零越顶缘：扇悬于标题头下方（FAN_DROP_Y 落差）——全部扇卡顶缘
-     在标题头底缘之下、更在面板顶缘之内（竖环期「顶部越出克制」语义由结构
-     取代：探出量 = 0）；扇底不越面板底缘（面板 ~900 高，扇顶 ~134 + 卡高
-     280 + 旋转外摆 ~63 ≈ 477，纵深充足）。 */
+  /* ② E 令·顶部越出克制（修正批；固定尺寸批 2026-10-25 重钉）：环锚常驻顶带
+     —— 上缘位允许略微越出面板顶缘（负向超出正常且允许），下缘位仍全在面板内。
+     越出界换代：36px 统一面（--capsule-h token，固定尺寸批）后 edgeY 反解被
+     h+2 防叠底线主导（面板顶→环锚 28 < 10+out），越出 = (h+2)+h/2−28 = h−8
+     = 28px 确定档 —— 「顶部超出不要太多」的语义从「≤ 0.5×胶囊高」（24px 面代
+     界）换代为「≤ 全高−6」（28 ≤ 30，2px 舍入余量）；公式与 JS 零改动，界随
+     token 档走。 */
   const clip = await page.evaluate(() => {
     const p = document.getElementById('canvas-panel').getBoundingClientRect();
-    const hdr = document.querySelector('#canvas-panel .canvas-header').getBoundingClientRect();
-    const rs = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule')]
+    const rs = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule.is-edge')]
       .map((c) => c.getBoundingClientRect());
-    const hint = document.querySelector('#canvas-capsule-ring .cr-hint').getBoundingClientRect();
-    return { pTop: p.top, pBottom: p.bottom, hdrBottom: hdr.bottom,
-             minTop: Math.min(...rs.map((r) => r.top)), maxBottom: Math.max(...rs.map((r) => r.bottom)),
-             hintTop: hint.top, n: rs.length };
+    const cap = document.querySelector('#canvas-capsule-ring .cr-capsule.is-center');
+    return { pTop: p.top, pBottom: p.bottom, minTop: Math.min(...rs.map((r) => r.top)),
+             maxBottom: Math.max(...rs.map((r) => r.bottom)), n: rs.length,
+             capH: cap ? cap.offsetHeight : 28 };
   });
   const topOut = clip.pTop - clip.minTop;
-  ok('CR2-6 零越顶缘（扇卡批）：全扇卡顶缘 ≥ 面板顶缘（越出量 = 0）+ 卡顶在标题头底缘之下 + 提示条嵌于气隙（卡顶之上、标题头之下）+ 扇底不越面板底缘',
-    clip.n === 3 && topOut <= 0 && clip.minTop >= clip.hdrBottom - 1
-    && clip.hintTop >= clip.hdrBottom - 1 && clip.maxBottom <= clip.pBottom - 1,
-    `out=${topOut.toFixed(1)}px minTop=${clip.minTop.toFixed(1)} hdrBottom=${clip.hdrBottom.toFixed(1)} hintTop=${clip.hintTop.toFixed(1)} maxBottom=${clip.maxBottom.toFixed(1)} vs ${clip.pBottom.toFixed(1)}`);
+  ok('CR2-6 顶部越出克制（固定尺寸批重钉：36px 面 ⇒ 越出 = h−8 ≤ 全高−6）+ 下缘位不越底缘',
+    clip.n === 2 && topOut > 0 && topOut <= clip.capH - 6 && clip.maxBottom <= clip.pBottom - 1,
+    `out=${topOut.toFixed(1)}px (cap ${clip.capH}px) / maxBottom=${clip.maxBottom.toFixed(1)} vs ${clip.pBottom.toFixed(1)}`);
 
-  /* ② 环层挂 body（六项②机制本体沿承 —— 裁切盒失效机制保留；扇卡批形态零
-     探出：扇全悬于面板顶缘之下）；游标卡可点（扇卡批：pe:auto 自收 —— 竖环期
-     「中心位 pe:none 落穿标题头」机制退役，扇卡不与标题头重叠、手势链零接触），
-     缘位可点性走稳态门不变。 */
+  /* ② E 令·真越出（六项批 2026-10-23「顶部越出去掉截断感」）：环层挂 body ——
+     面板 overflow:hidden 裁不到，上缘位探出段真实渲染在 canvas 顶缘外（修前
+     硬裁切线退役）；中心位恒 pe:none 落穿标题头手势链，缘位可点性走稳态门。 */
   const real = await page.evaluate(() => {
     const panel = document.getElementById('canvas-panel');
     const ring = document.getElementById('canvas-capsule-ring');
     const pTop = panel.getBoundingClientRect().top;
-    const cards = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule')];
-    const minTop = Math.min(...cards.map((c) => c.getBoundingClientRect().top));
+    const edge = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule.is-edge')]
+      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0]; // 上缘位（min top），非 DOM 序首 元
+    const er = edge ? edge.getBoundingClientRect() : null;
     const center = document.querySelector('#canvas-capsule-ring .cr-capsule.is-center');
-    const edge = document.querySelector('#canvas-capsule-ring .cr-capsule.is-edge');
     return {
       ringParent: ring ? ring.parentElement.id || ring.parentElement.tagName : null,
       panelContainsRing: panel.contains(ring),
-      fanBelowPanelTop: minTop > pTop + 0.5,
+      edgeAbovePanel: er ? er.top < pTop - 0.5 : null,
       centerPe: center ? getComputedStyle(center).pointerEvents : null,
-      edgePe: edge ? getComputedStyle(edge).pointerEvents : null,
     };
   });
-  ok('CR2-9 环层挂 body（机制沿承）：面板 overflow:hidden 裁切盒失效 + 扇全在面板顶缘之下（零探出 —— 扇卡批取代「上缘位越顶缘」形态）',
-    real.ringParent === 'BODY' && real.panelContainsRing === false && real.fanBelowPanelTop === true,
-    `parent=${real.ringParent} contains=${real.panelContainsRing} below=${real.fanBelowPanelTop}`);
-  ok('CR2-9b 游标卡可点（扇卡批换代钉）：is-center pe:auto（点击 = =激活零动作 / ≠激活切换）+ 邻位 pe:auto',
-    real.centerPe === 'auto' && real.edgePe === 'auto', `centerPe=${real.centerPe} edgePe=${real.edgePe}`);
+  ok('CR2-9 真越出（六项②）：环层在面板外（body 层 —— overflow:hidden 裁切盒失效）+ 上缘位 rect 真实高于面板顶缘',
+    real.ringParent === 'BODY' && real.panelContainsRing === false && real.edgeAbovePanel === true,
+    `parent=${real.ringParent} contains=${real.panelContainsRing} edgeAbove=${real.edgeAbovePanel}`);
+  ok('CR2-9b 中心位落穿（六项②配套）：is-center pointer-events none（标题头手势链不受环层遮蔽）',
+    real.centerPe === 'none', `centerPe=${real.centerPe}`);
 
   /* ② B 令·尺寸恒定：常态 → hover 展开 → 环滚动中，胶囊本体宽高全等 + 零缩放 */
   const openRect = await page.evaluate(() => {
@@ -358,15 +308,11 @@ async function clickFanCard(page, tabId, button = 'left') {
   ok('CR2-8b 环开顶部保持（修正批 D 令）：横轴中线不变（±2px）+ 纵轴零沉降（环开位 = 常态顶带位 ±1.5px，绝不落 canvas 中部）',
     Math.abs(centered.dx) <= 2 && Math.abs((restStyle.cy - restStyle.slideCy) - centered.dy) <= 1.5,
     `dx=${centered.dx.toFixed(1)} dyOpen=${centered.dy.toFixed(1)} dyRest=${(restStyle.cy - restStyle.slideCy).toFixed(1)}`);
-  ok('CR2-4 标题常驻（扇卡批换代钉：扇悬于标题头下方、不顶替其文字 —— t-inner opacity 恒 1，#926 文字行零平移由结构保证）',
-    hov.titleOpacity === '1', `title=${hov.titleOpacity}`);
+  ok('CR2-4 中心位接班：常态标题让位（t-inner opacity 0，同位 morph）',
+    hov.titleOpacity === '0', `title=${hov.titleOpacity}`);
 
-  /* ② frosted 材质 = chat 模板同 token（逐项相等）—— 取缘位扇卡（全卡
-   * frosted 面；扇卡批后中心位亦是完整卡面，缘位/游标同材质族）。
-   * 冷启动批③（2026-10-30 作者令「控件条玻璃对齐主对话输入框那款」）：阴影参考件
-   * chat #header → #input-bar（--cv-shadow 三档栈逐字同源）；扇卡底缘 transparent 为
-   * 件三统一批刻意语义（内容穿底不衬线，split.css .cr-capsule），与 #input-bar 通体
-   * 描边有意不同 —— 故 border 只钉顶/左右 == --glass-border、底 == transparent。 */
+  /* ② frosted 材质 = chat header 同 token（逐项相等）—— 取缘位胶囊（完整
+   * frosted 药丸；中心位是内容-only 覆层，底 = 标题头胶囊本体） */
   const mat = await page.evaluate(() => {
     const pick = (el) => {
       const c = getComputedStyle(el);
@@ -383,14 +329,14 @@ async function clickFanCard(page, tabId, button = 'left') {
     !!mat.capsule && mat.ref.bg === mat.capsule.bg && mat.ref.blur === mat.capsule.blur && mat.ref.shadow === mat.capsule.shadow && borderOk,
     JSON.stringify({ ref: mat.ref, capsule: mat.capsule }).slice(0, 700));
 
-  /* 证据截图：扇开态（扇悬标题头下方 + 提示条嵌气隙 + 游标完整置顶 + 邻卡
-   *  扑克旋开；clip 取面板顶带 420px 含扇全貌） */
+  /* 证据截图：环开态（环锚顶带 —— 上缘位真实越出顶缘渲染（真越出批，无裁切
+   *  线）+ 下缘位下垂；clip 取面板顶外扩，含顶缘外探出段全貌） */
   const shotBox = await page.evaluate(() => {
     const p = document.getElementById('canvas-panel').getBoundingClientRect();
-    return { x: Math.max(0, p.left), y: Math.max(0, p.top), width: p.width, height: 420 };
+    return { x: Math.max(0, p.left), y: Math.max(0, p.top - 56), width: p.width, height: 260 };
   });
   await page.screenshot({
-    path: join(HERE, '../evidence/20261030_canvas-card-fan/shots/1-fan-open-dark.png'),
+    path: join(HERE, '../evidence/20261023_capsule-six/shots/1-ring-open-dark.png'),
     clip: shotBox,
   });
 
@@ -449,7 +395,7 @@ async function clickFanCard(page, tabId, button = 'left') {
   ok('CR3-3 环优先消费：环上滚轮后 pane scrollTop 不变（不外溢内容区）',
     scrollTopBefore === scrollTopAfter, `scroll ${scrollTopBefore} → ${scrollTopAfter}`);
 
-/* ② 点击即切换：邻位扇卡点击 → 激活易主。环收腿已被作者令 2026-10-25
+  /* ② 点击即切换：缘位胶囊点击 → 激活易主。环收腿已被作者令 2026-10-25
    *  「hover 连续性」批取代（作者报障逐字「如果滚动，切换了其他卡片，那么就
    *  无法再次滚动，需要重新hover触发」）：指针仍在 hover 区时换签 = 环保持
    *  开、游标跳到新激活页签（滚动链零断链）；旧「换签即收环」契约只在指针
@@ -459,13 +405,13 @@ async function clickFanCard(page, tabId, button = 'left') {
     return e.map((x) => x.dataset.tabId);
   });
   const target = edgeId.find((id) => id === 'file:/tmp/cr-fixture/charlie.md') || edgeId[0];
-  await clickFanCard(page, target);
+  await page.click(`#canvas-capsule-ring .cr-capsule[data-tab-id="${target}"]`);
   await sleep(350);
   const afterClick = await ringInfo(page);
   const sClick = await stateOf(page);
-  ok('CR4 点击邻位扇卡 = 切换（激活易主 + 扇保持开·指针在区〔2026-10-25 连续性令〕+ 游标跳新激活 + 标题常驻）',
+  ok('CR4 点击缘位胶囊 = 切换（激活易主 + 环保持开·指针在区〔2026-10-25 连续性令〕+ 游标跳新激活）',
     sClick.activeId === target && afterClick.open && afterClick.n === 3
-    && afterClick.centerId === target && afterClick.titleOpacity === '1',
+    && afterClick.centerId === target && afterClick.titleOpacity === '0',
     `active=${sClick.activeId} open=${afterClick.open} center=${afterClick.centerId}`);
   // CR4b 连续性钉：换签后环上滚轮仍活着（旧腿此处滚动链死断 = 作者报障本体）
   await page.mouse.wheel(0, 100);
@@ -493,13 +439,13 @@ async function clickFanCard(page, tabId, button = 'left') {
     hov2.open && !closed.open && closed.n === 0 && closed.titleOpacity === '1',
     `open ${hov2.open} → ${closed.open} n=${closed.n}`);
 
-  /* 证据截图：平时态（收起）——胶囊回顶带横轴居中、零扇（顶带 clip） */
+  /* 证据截图：平时态（收起）——胶囊回顶带横轴居中、零环（顶带 clip） */
   const restBox = await page.evaluate(() => {
     const p = document.getElementById('canvas-panel').getBoundingClientRect();
     return { x: Math.max(0, p.left), y: Math.max(0, p.top), width: p.width, height: 120 };
   });
   await page.screenshot({
-    path: join(HERE, '../evidence/20261030_canvas-card-fan/shots/2-rest-dark.png'),
+    path: join(HERE, '../evidence/20261023_capsule-six/shots/2-rest-dark.png'),
     clip: restBox,
   });
 
@@ -589,21 +535,21 @@ async function clickFanCard(page, tabId, button = 'left') {
     !!menu3 && menu3.includes('收起叠卡') && deckClosed.open === false,
     `menu=${menu3 ? menu3.join('/') : 'none'} open=${deckClosed.open}`);
 
-  // 关闭：右键邻位扇卡（非激活卡）→ 关闭该项 → tabCount −1
-  // （扇卡批：扇卡全悬于面板顶缘之下、零探出裁切 —— victim 取 rect 主体在面板
-  // 内的卡，Playwright 点缘外段会逃出面板）
+  // 关闭：右键缘位胶囊（非激活卡）→ 关闭该项 → tabCount −1
+  // （顶部修正批：上缘位探出段被面板 overflow:hidden 裁掉，rect 大部在面板顶
+  // 上方 —— victim 取 rect 主体在面板内的胶囊，Playwright 点裁切段会逃出面板）
   await hoverCapsule(page);
   const victim = await page.evaluate(() => {
     const caps = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule')];
     const active = window.__canvasDeck.state().activeId;
     const p = document.getElementById('canvas-panel').getBoundingClientRect();
-    const inside = (c) => { const r = c.getBoundingClientRect(); return r.top >= p.top - 1 && r.bottom <= p.bottom + 1 && r.left >= p.left - 1 && r.right <= p.right + 1; };
+    const inside = (c) => { const r = c.getBoundingClientRect(); return r.top >= p.top - 1 && r.bottom <= p.bottom + 1; };
     const other = caps.find((c) => c.dataset.tabId !== active && inside(c))
       || caps.find((c) => c.dataset.tabId !== active);
     return other ? other.dataset.tabId : null;
   });
   if (victim) {
-    await clickFanCard(page, victim, 'right');
+    await page.click(`#canvas-capsule-ring .cr-capsule[data-tab-id="${victim}"]`, { button: 'right' });
     await sleep(250);
     await page.evaluate(() => {
       const b = [...document.querySelectorAll('.canvas-tab-context-menu button')].find((x) => x.textContent === '关闭');
@@ -671,30 +617,30 @@ async function clickFanCard(page, tabId, button = 'left') {
     s2.tabCount === 2 && open2.open && open2.n === 2 && open2.edges.length === 1 && open2.farCount === 0,
     `n=${s2.tabCount} caps=${open2.n} edges=${open2.edges.length} far=${open2.farCount}`);
 
-  // 上滚一格（-200）：bravo→alpha 居中，非游标（bravo）翻到左方（来向侧 --cr-x < 0）
+  // 上滚一格（-200）：bravo→alpha 居中，非游标（bravo）翻到上方（--cr-y < 0）
   await page.mouse.wheel(0, -200);
   await sleep(300);
   const up = await ringInfo(page);
-  const upX = parseFloat(up.edgeXs[0]);
-  ok('CR9-2 双卡上滚：换选生效（alpha 居中）+ 非游标卡翻到左方（横扇来向侧，不再恒驻一侧弹回）',
-    up.centerId === 'file:/tmp/cr-fixture/alpha.md' && upX < 0,
-    `center=${up.centerId} edgeX=${upX}px`);
+  const upY = parseFloat(up.edgeYs[0]);
+  ok('CR9-2 双卡上滚：换选生效（alpha 居中）+ 非游标胶囊翻到上方（来向侧，不再恒驻下方）',
+    up.centerId === 'file:/tmp/cr-fixture/alpha.md' && upY < 0,
+    `center=${up.centerId} edgeY=${upY}px`);
 
-  // 下滚一格（+200）：回 bravo 居中，非游标（alpha）落右方（--cr-x > 0）
+  // 下滚一格（+200）：回 bravo 居中，非游标（alpha）落下方（--cr-y > 0）
   await page.mouse.wheel(0, 200);
   await sleep(300);
   const down = await ringInfo(page);
-  const downX = parseFloat(down.edgeXs[0]);
-  ok('CR9-3 双卡下滚：换选生效（bravo 居中）+ 非游标卡落右方（方向感知随动）',
-    down.centerId === 'file:/tmp/cr-fixture/bravo.md' && downX > 0,
-    `center=${down.centerId} edgeX=${downX}px`);
+  const downY = parseFloat(down.edgeYs[0]);
+  ok('CR9-3 双卡下滚：换选生效（bravo 居中）+ 非游标胶囊回落下方（方向感知随动）',
+    down.centerId === 'file:/tmp/cr-fixture/bravo.md' && downY > 0,
+    `center=${down.centerId} edgeY=${downY}px`);
 
-  // 缘位点击照旧切换（<3 卡交互面完备；扑克叠收几何 —— 外角点 click）
+  // 缘位点击照旧切换（<3 卡交互面完备）
   const edgeId2 = await page.evaluate(() => {
     const e = document.querySelector('#canvas-capsule-ring .cr-capsule.is-edge');
     return e ? e.dataset.tabId : null;
   });
-  await clickFanCard(page, edgeId2);
+  await page.click(`#canvas-capsule-ring .cr-capsule[data-tab-id="${edgeId2}"]`);
   await sleep(350);
   const clicked2 = await stateOf(page);
   ok('CR9-4 双卡缘位点击 = 切换（<3 卡交互面完备）',
@@ -703,7 +649,7 @@ async function clickFanCard(page, tabId, button = 'left') {
   await ctx.close();
 }
 
-/* ════════ 亮色腿：顶带扇展开/收起证据（亮主题 × 2 面，扇卡批重钉）════════ */
+/* ════════ 亮色腿：顶带环展开/收起证据（亮主题 × 2 面）════════ */
 {
   const { ctx, page, errors } = await boot({ colorScheme: 'light' });
   await openFile(page, '/tmp/cr-fixture/alpha.md');
@@ -713,40 +659,39 @@ async function clickFanCard(page, tabId, button = 'left') {
   await sleep(400);
   const shotBoxL = await page.evaluate(() => {
     const p = document.getElementById('canvas-panel').getBoundingClientRect();
-    return { x: Math.max(0, p.left), y: Math.max(0, p.top), width: p.width, height: 420 };
+    return { x: Math.max(0, p.left), y: Math.max(0, p.top - 56), width: p.width, height: 260 };
   });
   await hoverCapsule(page);
   const hovL = await ringInfo(page);
-  const exsL = hovL.edgeXs.map(parseFloat).sort((a, b) => a - b);
-  const ersL = hovL.edgeRs.map(parseFloat).sort((a, b) => a - b);
+  const eys = hovL.edgeYs.map(parseFloat).sort((a, b) => a - b);
   const clipL = await page.evaluate(() => {
     const p = document.getElementById('canvas-panel').getBoundingClientRect();
-    const rs = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule')]
+    const rs = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule.is-edge')]
       .map((c) => c.getBoundingClientRect());
-    return { pTop: p.top, minTop: Math.min(...rs.map((r) => r.top)) };
+    const cap = document.querySelector('#canvas-capsule-ring .cr-capsule.is-center');
+    return { pTop: p.top, minTop: Math.min(...rs.map((r) => r.top)), capH: cap ? cap.offsetHeight : 28 };
   });
   const topOutL = clipL.pTop - clipL.minTop;
-  ok('L1 亮色：扇展开镜像（|x| 相等一左一右 ±112px、旋转 ±7° 反号等幅）+ 零越顶缘（扇全在面板顶缘之下）+ 标题常驻 + 环锚顶带',
-    hovL.open && hovL.n === 3 && exsL[0] < 0 && exsL[1] > 0 && approx(-exsL[0], exsL[1], 0.5)
-    && approx(Math.abs(ersL[0]), ersL[1], 0.5)
-    && topOutL <= 0 && hovL.titleOpacity === '1'
+  ok('L1 亮色：环展开上下对称（|y| 相等一上一下）+ 顶部越出克制（固定尺寸批重钉 ≤ 全高−6）+ 环锚顶带零沉降',
+    hovL.open && hovL.n === 3 && eys[0] < 0 && eys[1] > 0 && approx(-eys[0], eys[1], 0.5)
+    && topOutL > 0 && topOutL <= clipL.capH - 6
     && await page.evaluate(() => {
       const hdr = document.querySelector('#canvas-panel .canvas-header').getBoundingClientRect();
       const slide = document.getElementById('canvas-slide').getBoundingClientRect();
       return Math.abs((hdr.left + hdr.width / 2) - (slide.left + slide.width / 2)) <= 2
         && (hdr.top + hdr.height / 2) < (slide.top + slide.height / 2);
     }),
-    `xs=${hovL.edgeXs.join('/')} rs=${hovL.edgeRs.join('/')} out=${topOutL.toFixed(1)}px`);
+    `ys=${hovL.edgeYs.join('/')} out=${topOutL.toFixed(1)}px (cap ${clipL.capH}px)`);
   await page.screenshot({
-    path: join(HERE, '../evidence/20261030_canvas-card-fan/shots/3-fan-open-light.png'),
+    path: join(HERE, '../evidence/20261023_capsule-six/shots/3-ring-open-light.png'),
     clip: shotBoxL,
   });
   await unhover(page);
   const closedL = await ringInfo(page);
-  ok('L2 亮色：收起回单胶囊（扇清 + 标题常驻 + 回顶带）', !closedL.open && closedL.n === 0 && closedL.titleOpacity === '1',
+  ok('L2 亮色：收起回单胶囊（环清 + 标题回位 + 回顶带）', !closedL.open && closedL.n === 0 && closedL.titleOpacity === '1',
     `open=${closedL.open} n=${closedL.n}`);
   await page.screenshot({
-    path: join(HERE, '../evidence/20261030_canvas-card-fan/shots/4-rest-light.png'),
+    path: join(HERE, '../evidence/20261023_capsule-six/shots/4-rest-light.png'),
     clip: await page.evaluate(() => {
       const p = document.getElementById('canvas-panel').getBoundingClientRect();
       return { x: Math.max(0, p.left), y: Math.max(0, p.top), width: p.width, height: 120 };

@@ -149,7 +149,11 @@ test('T1 canvas page presentation: full-bleed page, chip strip, toolbar, host, s
     return {
       x: Math.round(r.x), w: Math.round(r.width),
       live: pg.classList.contains('live'),
+      // 顶栏批 2026-10-31（作者令①，两批合流）：canvas = dock 根页，顶栏标题
+      // 胶囊随根页页头整体退役；标签条上移就位顶带（安全区顶距由页面壳
+      // .mobile-page-nohead 自管，垫高不再随条）。
       title: pg.querySelector('.mobile-page-title')?.textContent ?? null,
+      stripTop: Math.round(document.querySelector('.mf-strip').getBoundingClientRect().top),
       chips: pg.querySelectorAll('.mf-strip-chip').length,
       chipOn: pg.querySelectorAll('.mf-strip-chip.on').length,
       chipLabel: pg.querySelector('.mf-strip-chip.on')?.textContent || '',
@@ -169,8 +173,10 @@ test('T1 canvas page presentation: full-bleed page, chip strip, toolbar, host, s
   expect(geo.x).toBe(0);            // 全屏独立页面（各节目不重叠）
   expect(geo.w).toBe(375);
   expect(geo.live).toBe(true);
-  // 顶栏批 2026-10-31（作者令①）：canvas = dock 根页，顶栏标题胶囊随根页退役。
+  // 顶栏批 2026-10-31（作者令①，两批合流）：canvas = dock 根页，顶栏标题胶囊
+  // 随根页页头整体退役；标签条置顶（桌面 inset=0 时 top=0）。
   expect(geo.title).toBe(null);
+  expect(geo.stripTop).toBe(0);       // 标签条置顶（安全区顶距由页面壳自管）
   expect(geo.chips).toBe(1);        // 单卡 = 单 chip
   expect(geo.chipOn).toBe(1);
   expect(geo.chipLabel).toBe('样例文档一');

@@ -985,18 +985,28 @@ body.mobile-layer .mf-canvas-page {
   flex-direction: column;
   overflow: hidden;
 }
-/* 卡片列表（chip 条）：文档卡一览 + 当前卡高亮；横滚 + 消 bar。 */
+/* 卡片列表（chip 条）：文档卡一览 + 当前卡高亮；横滚 + 消 bar。
+   顶栏批②（2026-10-31 作者令①②）：canvas 页头胶囊退役 → 标签条上移就位
+   顶带（安全区顶距由页面壳 .mobile-page-nohead 自管，本条只留 6px 气隙，
+   合流批注：原「垫高随条」方案与壳级 safe-area 合并后防双计 inset）；通栏
+   毛玻璃条面退役（「不再是现在形态」）——chips 悬浮本位零条面。左右两端
+   溢出时渐隐模糊 = 横向边缘环形模糊（.fade 双侧 mask 渐隐，chat.css
+   .nf-wl-clip 同配方横置版；溢出门控 = JS syncStripFade，不溢出全清晰）。 */
 body.mobile-layer .mf-strip {
   flex: none;
   display: flex;
   gap: 6px;
   overflow-x: auto;
   scrollbar-width: none;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--glass-border);
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  padding: 6px 28px 8px;
+  background: none;
+  border-bottom: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+body.mobile-layer .mf-strip.fade {
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
 }
 body.mobile-layer .mf-strip::-webkit-scrollbar { display: none; }
 body.mobile-layer .mf-strip[hidden] { display: none; }
@@ -1085,7 +1095,14 @@ body.mobile-layer .mf-stack-view {
   background: var(--glass-bg, rgba(20, 24, 33, 0.55));
   -webkit-backdrop-filter: blur(18px) saturate(1.5);
   backdrop-filter: blur(18px) saturate(1.5);
+  /* 顶栏批④（2026-10-31 作者令「展开动画与电脑端类似」）：开合从瞬时显隐改
+     为两段——浮面整体淡入（.open），卡列自堆叠位逐张弹簧升起（卡条目初始
+     落位态挂 .mf-stack-view 本体（:not(.open)），.open 逐个归位 + opacity；
+     stagger 递延仅 .open 态生效，收面 .closing 清零递延不拖尾）。 */
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
+body.mobile-layer .mf-stack-view.open { opacity: 1; }
 body.mobile-layer .mf-stack-view[hidden] { display: none; }
 body.mobile-layer .mf-stack-head {
   flex: none;
@@ -1135,6 +1152,32 @@ body.mobile-layer .mf-stack-card {
 body.mobile-layer .mf-stack-card:nth-child(n+2) { transform: scale(0.985); }
 body.mobile-layer .mf-stack-card:nth-child(n+4) { transform: scale(0.97); }
 body.mobile-layer .mf-stack-card:active { transform: scale(0.97); }
+/* 顶栏批④：收合态（:not(.open)）卡列自落位 + 零透明起步，.open 逐张归位；
+   位姿/透明双过渡（与桌面 deck 展开同走 transform/opacity 合成通道）。
+   stagger：前 10 张 28ms 逐张递延（约 300ms 全列就位），其后零递延齐动。 */
+body.mobile-layer .mf-stack-card {
+  transition: transform 0.34s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.24s ease;
+}
+body.mobile-layer .mf-stack-view:not(.open) .mf-stack-card {
+  opacity: 0;
+  transform: translateY(22px) scale(0.96);
+}
+body.mobile-layer .mf-stack-view.open .mf-stack-card { opacity: 1; }
+body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(1) { transition-delay: 0ms; }
+body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(2) { transition-delay: 28ms; }
+body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(3) { transition-delay: 56ms; }
+body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(4) { transition-delay: 84ms; }
+body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(5) { transition-delay: 112ms; }
+body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(6) { transition-delay: 140ms; }
+body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(7) { transition-delay: 168ms; }
+body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(8) { transition-delay: 196ms; }
+body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(9) { transition-delay: 224ms; }
+body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(10) { transition-delay: 252ms; }
+body.mobile-layer .mf-stack-view.closing .mf-stack-card { transition-delay: 0ms; }
+@media (prefers-reduced-motion: reduce) {
+  body.mobile-layer .mf-stack-card,
+  body.mobile-layer .mf-stack-view { transition: none; }
+}
 body.mobile-layer .mf-stack-card.on {
   border-color: rgb(var(--sapphire, 96 165 250) / 0.45);
   background: rgb(var(--sapphire, 96 165 250) / 0.14);

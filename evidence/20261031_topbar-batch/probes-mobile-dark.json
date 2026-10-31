@@ -1,0 +1,23 @@
+{
+  "strip": {
+    "hasHeader": false,
+    "hasTitle": false,
+    "stripTop": 0,
+    "stripLeft": 0,
+    "stripH": 44,
+    "stripFade": true,
+    "stripOverflow": true,
+    "stripBarless": true,
+    "maskImage": "linear-gradient(90deg, rgba(0, 0, 0, 0) 0px, rgb(0, 0, 0) 28px, rgb(0, 0, 0) calc(100% - 28px), rgba(0, 0, 0, 0) 100%)",
+    "chipCount": 6
+  },
+  "stackMid": {
+    "open": true,
+    "hidden": false,
+    "firstOp": 0.779456,
+    "lastOp": 0,
+    "firstTf": "matrix(0.988894, 0, 0, 0.988894, 0, 6.10828)",
+    "lastTf": "matrix(0.96, 0, 0, 0.96, 0, 22)",
+    "n": 6
+  }
+}

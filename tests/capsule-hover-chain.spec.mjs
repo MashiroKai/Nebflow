@@ -180,25 +180,15 @@ const ringSnap = (page) => page.evaluate(() => ({
   await sleep(400);
 
   await hoverCapsule(page);
-  // 邻位扇卡（面板内完整 rect 的一条）点击 → 切换 + 环保持开（指针在卡上）。
-  // 扇卡批：扑克叠收几何 —— 卡中心被游标卡压住，点取**外侧上角** sliver
-  // （elementFromPoint 校验命中本卡；其上无更高 z 卡）。
+  // 缘位胶囊（面板内完整 rect 的一条）点击 → 切换 + 环保持开（指针在胶囊上）
   const victim = await page.evaluate(() => {
     const caps = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule')];
     const active = window.__canvasDeck.state().activeId;
     const p = document.getElementById('canvas-panel').getBoundingClientRect();
-    const inside = (c) => { const r = c.getBoundingClientRect(); return r.top >= p.top + 1 && r.bottom <= p.bottom - 1 && r.left >= p.left + 1 && r.right <= p.right - 1; };
+    const inside = (c) => { const r = c.getBoundingClientRect(); return r.top >= p.top + 1 && r.bottom <= p.bottom - 1; };
     const other = caps.find((c) => c.dataset.tabId !== active && inside(c)) || caps.find((c) => c.dataset.tabId !== active);
     if (!other) return null;
     const r = other.getBoundingClientRect();
-    const cursor = document.querySelector('#canvas-capsule-ring .cr-capsule.is-center').getBoundingClientRect();
-    const side = (r.left + r.width / 2) < (cursor.left + cursor.width / 2) ? -1 : 1;
-    for (const inset of [28, 20, 12, 6]) {
-      const x = side < 0 ? r.left + inset : r.right - inset;
-      const y = r.top + 30;
-      const hit = document.elementFromPoint(x, y);
-      if (hit && hit.closest(`#canvas-capsule-ring .cr-capsule[data-tab-id="${other.dataset.tabId}"]`)) return { id: other.dataset.tabId, x, y };
-    }
     return { id: other.dataset.tabId, x: r.left + r.width / 2, y: r.top + r.height / 2 };
   });
   if (victim) {
