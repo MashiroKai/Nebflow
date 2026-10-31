@@ -166,8 +166,10 @@ test('T1 five-tab dock: author-order keys, icon+label structure, switching, acti
   // 键结构 = 图标在上 + 文字标签在下（小红书基准）；标签为中文。
   // 中键改版批（2026-10-29 23:36）：第三栏 = chat home 键 —— 中心键容器
   // （.dock-center，无常规 .dock-ic 图标位）；其余四键 = 常规 icon+label。
-  const labels = await keys.evaluateAll((els) => els.map((b) => b.querySelector('.dock-label')?.textContent));
-  expect(labels).toEqual(['消息', '联系人', '对话', 'canvas', '工作台']);
+  // 收形批②（作者令 10-31 22:50「中间对话钮只留图案」）：中键文字标签退役
+  // （label = null，aria-label 承接语义）。
+  const labels = await keys.evaluateAll((els) => els.map((b) => b.querySelector('.dock-label')?.textContent ?? null));
+  expect(labels).toEqual(['消息', '联系人', null, 'canvas', '工作台']);
   for (let i = 0; i < 5; i++) {
     if (i === 2) await expect(keys.nth(i).locator('.dock-center')).toBeVisible();
     else {
