@@ -2184,13 +2184,6 @@ export default {
   'search.cardUnavailable': 'Card content unavailable',
   'search.cardRenderFailed': 'Card failed to render',
   'search.cardLoadFailed': 'Card assets failed to load',
-  'search.floatTitle': 'Message window',
-  'search.floatFromHere': 'From this message',
-  'search.floatClose': 'Close window',
-  'search.floatLoadFailed': 'Could not load this session\u2019s history',
-  'search.floatHitNotFound': 'Could not locate this message',
-  'search.floatRenderFailed': 'Message rendering failed',
-  'search.floatTruncated': '{n} more messages below are not shown',
 
   // === Daemons (Heartbeat) ===
   'daemons.title': 'Heartbeat',

@@ -13,7 +13,7 @@
 // node — declare the clock text as its own element instead.
 //
 // `data-ts` is a DIFFERENT contract: it is the jump anchor consumed by
-// chatSearchFloat.js (`querySelector('[data-ts="…"]')`), and it legitimately
+// chatSearch.js jump (`querySelector('[data-ts="…"]')`), and it legitimately
 // sits on whole containers (flowMapArchive `.fm-entry`, chatSearch
 // `.search-result`). It is deliberately NOT a refresh target — that over-reach
 // was the P1 defect this module fixes.
