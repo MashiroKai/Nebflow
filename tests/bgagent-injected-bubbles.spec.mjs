@@ -205,6 +205,13 @@ function probe(page) {
       // free of the badge while still asserting the engine string byte-for-byte.
       headers: [...c.querySelectorAll('.bubble.injected .ask-label.injected-source-label')]
         .map((el) => (el.firstChild && el.firstChild.nodeType === Node.TEXT_NODE ? el.firstChild.nodeValue : '')),
+      // 完工通知卡重设计批（2026-10-31）：delegate 行不再渲染通用标签行——卡头
+      // 短名（.nf-rcpt-name = header 去尾段判词）+ 判词徽标（.nf-rcpt-badge）。
+      // T5 的 delegate fixture 行经此面读数。
+      rcptNames: [...c.querySelectorAll('.bubble.injected .nf-rcpt-name')]
+        .map((el) => el.textContent),
+      rcptBadges: [...c.querySelectorAll('.bubble.injected .nf-rcpt-badge')]
+        .map((el) => el.textContent),
       deliveryBadges: [...c.querySelectorAll('.bubble.injected .ask-label .delivery-badge')]
         .map((el) => el.textContent),
       aiRows: c.querySelectorAll('.row.ai').length,
@@ -434,8 +441,14 @@ test('T5 payload that carries renderable rows: the container is rebuilt from his
     .toContain('PERSISTED-ASSISTANT-TEXT');
   expect(open.aiText, 'the superseded live text is not concatenated in')
     .not.toContain('Dispatching the batch now.');
-  expect(open.headers, 'header verbatim from the persisted field')
-    .toEqual(['DELEGATE · NEBFLOW · EXPLORER · RESULT']);
+  expect(open.headers, 'delegate 行零通用标签行（卡面接管，非空串占位）')
+    .toEqual([]);
+  // delegate 行经完工通知卡（2026-10-31 重设计批）：header 判词段移入单色徽标，
+  // 短名 = header 去尾段（该 fixture sender=Explorer 非已知执行器 ⇒ 中段逐字）。
+  expect(open.rcptNames, 'receipt name = persisted header minus the verdict segment')
+    .toEqual(['DELEGATE · NEBFLOW · EXPLORER']);
+  expect(open.rcptBadges, 'verdict rendered as the monochrome badge')
+    .toEqual(['RESULT']);
 
   expect(pageErrors).toEqual([]);
 });

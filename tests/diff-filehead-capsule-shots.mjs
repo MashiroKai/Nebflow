@@ -172,7 +172,7 @@ for (const scheme of ['dark', 'light']) {
   const page = await boot(1440, 860, scheme);
   await injectBatch(page, PAYLOAD_A, 'DELEGATE · nebflow · headpill · COMPLETED');
   await raf(page);
-  await page.locator('.bubble.injected .nf-diff-chip').click();
+  await page.locator('.bubble.injected .nf-rcpt-note').click();
   await page.waitForSelector('#panel-filechanges.active', { timeout: 8000 });
   await page.waitForSelector('.canvas-tab-pane[data-type="filechanges"] .fcv-headpill', { timeout: 8000 });
   await page.waitForTimeout(600); // 出现动画走完再采材质/几何
@@ -260,7 +260,7 @@ for (const scheme of ['dark', 'light']) {
   await injectBatch(page, PAYLOAD_A, 'DELEGATE · nebflow · headpill · COMPLETED');
   await raf(page);
   await page.evaluate(() => import('/js/mobile/navController.js').then((m) => m.touchLayer()));
-  await page.locator('.bubble.injected .nf-diff-chip').click();
+  await page.locator('.bubble.injected .nf-rcpt-note').click();
   await page.waitForSelector('body.mf-cards-live', { timeout: 8000 });
   await page.waitForSelector('.canvas-tab-pane[data-type="filechanges"] .fcv-headpill', { timeout: 8000 });
   await page.waitForTimeout(600);

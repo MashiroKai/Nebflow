@@ -101,35 +101,75 @@ function nodeStatusLabel(eventType) {
   return NODE_STATUS_LABELS[eventType] || String(eventType).toUpperCase();
 }
 
-/** Delegate 结果气泡信息提纯（作者令 2026-10-28 17:3x 报障批）：把已渲染的
- *  delegate 头部（KIND · PROJECT · SUBJECT · STATE 或回落形态）重排为
- *  `KIND · EXECUTOR · STATE` 三枚：
- *   - 内置执行器（sender 携带的 executor id = `nebflow`，引擎
- *     `ExecutorRegistry.DefaultId`）⇒ 一律显示 `INTERNAL`
- *     （报障原文：「DELEGATE · NEBULA · NEBFLOW · COMPLETED」中 SUBJECT 段
- *     NEBFLOW 无信息量）；
- *   - 外部执行器（zcode / claude-code / codex / hermes）⇒ 显示各自 id
- *     （全大写，同四段式全大写排版）；
- *   - PROJECT 段不再进头部（会话/project 上下文已由气泡外 chrome 展示，
- *     重复=零信息量）。
- * 只改**显示文案的组装**——帧/落盘行上的 header、sender（executor id）、
- * project 字段一律原样保留，不删数据。
- * 边界：sender 是**已知 executor id**（引擎 `ExecutorRegistry.defs` 全集）才重排；
- * 自定义 agent 委托（DelegateTool sender = agentDef.name，如 `Explorer`）的
- * SUBJECT 段有信息量，**逐字不动**（PROJECT 段同保留）；sender 缺席（旧历史
- * 行）⇒ 执行器不可判定 ⇒ 同样逐字不变。 */
+/** Delegate 结果头部口径（作者令 2026-10-28 17:3x 信息提纯批，2026-10-31 完工
+ *  通知卡重设计批承继）：已知执行器（sender = `nebflow` / zcode / claude-code /
+ *  codex / hermes，引擎 `ExecutorRegistry` 全集）⇒ 执行器段一律 `INTERNAL` /
+ *  各自 id 全大写（报障原文：「DELEGATE · NEBULA · NEBFLOW · COMPLETED」中
+ *  NEBFLOW 段无信息量）；PROJECT 段不进头部；自定义 agent 委托（sender =
+ *  agentDef.name，如 `Explorer`）与 sender 缺席（旧历史行）⇒ 逐字保留。
+ * 只改**显示文案的组装**——帧/落盘行上的 header、sender、project 字段一律
+ *  原样保留，不删数据。重设计批起由 [[delegateReceiptName]] /
+ *  [[delegateReceiptVerdict]] / [[delegateReceiptSummary]] 三纯函数承载
+ *  （判词从串尾段移入单色徽标，摘要独立成行）。 */
+/** 已知执行器 id 集合：sender 命中其一 ⇒ 执行器段重排为 INTERNAL / 各自 id；
+ *  自定义 agent 委托与 sender 缺席行 ⇒ 逐字保留。 */
 const DELEGATE_EXECUTOR_IDS = new Set(['nebflow', 'zcode', 'claude-code', 'codex', 'hermes']);
 
-function delegateResultLabel(headerText, sender, eventType) {
+/** 合并轮工作结果附页的 merge status 行标（[[DelegateWorkReport]] 面文案——
+ *  合并轮 completed 终态的 payload 恒携该行（model/用户可见文案，§16 待过目）；
+ *  判定 merged 判词客户端侧唯一可判据（帧面无结构化 merge 结论字段）。 */
+const DELEGATE_MERGE_STATUS_MARKER = '[delegate-finish] merge status:';
+
+/** 完工通知卡判词徽标（2026-10-31 重设计批）：merged = completed × merge status
+ *  行在场（客户端推导）；其余终态逐字大写（词表同 [[NODE_STATUS_LABELS]] 面）。 */
+function delegateReceiptVerdict(eventType, text, state) {
+  if (eventType === 'completed' && String(text || '').includes(DELEGATE_MERGE_STATUS_MARKER)) return 'MERGED';
+  return state || (eventType ? String(eventType).toUpperCase() : '');
+}
+
+/** 从 header 串解出「批次短名」段（纯函数）：已知执行器 ⇒ `KIND · INTERNAL|ID`
+ *  （信息提纯批 2026-10-28 口径逐字保持）；自定义 agent / sender 缺席（旧历史行）
+ *  ⇒ header 去掉尾段判词后逐字保留（PROJECT/SUBJECT 段有信息量）。eventType 缺席
+ *  ⇒ 无判词段可剥 ⇒ 整串逐字保留。 */
+function delegateReceiptName(headerText, sender, eventType) {
   const exec = sender == null ? '' : String(sender).trim();
-  if (!exec) return headerText;
-  const lower = exec.toLowerCase();
-  if (!DELEGATE_EXECUTOR_IDS.has(lower)) return headerText;
-  const segs = String(headerText).split(' · ');
+  const segs = String(headerText || '').split(' · ');
   const kind = (segs[0] || 'DELEGATE').trim();
-  const executorLabel = lower === 'nebflow' ? 'INTERNAL' : exec.toUpperCase();
-  const state = eventType && segs.length > 1 ? segs[segs.length - 1] : null;
-  return [kind, executorLabel, state].filter(Boolean).join(' · ');
+  if (exec && DELEGATE_EXECUTOR_IDS.has(exec.toLowerCase())) {
+    return [kind, exec.toLowerCase() === 'nebflow' ? 'INTERNAL' : exec.toUpperCase()].join(' · ');
+  }
+  const rest = eventType && segs.length >= 2 ? segs.slice(0, -1) : segs;
+  return rest.join(' · ');
+}
+
+/** 一句话结果摘要（纯函数，钉面可单测）：
+ *  merged ⇒ merge status 行正文 + 短哈希（7-40 位 hex 取 7——渲染层右缘不省略
+ *    号截断，判词摘要恒带得到 merge commit 短哈希是作者令硬判据）。去重口径：
+ *    哈希在**串尾**（含括号包裹，模型 finish 申报的典型形态「merged … (hash)」）
+ *    ⇒ 尾段剥出进独立哈希段，正文不重复；哈希在串中 ⇒ 正文原样（哈希本可见），
+ *    不另立哈希段；status 行无哈希 ⇒ 只给正文。
+ *  其余 ⇒ 首条非空且非引擎注记行（`[delegate-judge]` / `[delegate-finish]` 是
+ *    判词/附记机器行，不是结果摘要）——completed = 模型自写摘要首行，
+ *    failed/cancelled = 失败原因首行。摘要恒一行，CSS 省略号截断。 */
+function delegateReceiptSummary(text, merged) {
+  const lines = String(text || '').split('\n');
+  if (merged) {
+    const line = lines.find((l) => l.trimStart().startsWith(DELEGATE_MERGE_STATUS_MARKER));
+    const status = line == null ? '' : line.trim().slice(DELEGATE_MERGE_STATUS_MARKER.length).trim();
+    if (status) {
+      const tail = /\s*[\(\[]?([0-9a-f]{7,40})[\)\]]?\s*$/i.exec(status);
+      if (tail) {
+        const body = status.slice(0, tail.index).trimEnd();
+        // 尾段剥空（status 只有一枚哈希）⇒ 正文回退整串，哈希段不再重复立。
+        if (body) return { text: body, hash: tail[1].slice(0, 7) };
+      }
+      return { text: status, hash: '' };
+    }
+  }
+  const first = lines
+    .map((l) => l.trim())
+    .find((l) => l && !l.startsWith('[delegate-judge]') && !l.startsWith('[delegate-finish]'));
+  return { text: first || '', hash: '' };
 }
 
 /** Build the source label text, optionally combining with sender and eventType.
@@ -347,16 +387,17 @@ function buildScheduleCardRow(row, text, timestamp, deferFn, schedule) {
  *  e.g. the in-flight device-mail source) ⇒ falls back to
  *  `injectedSourceLabel` above, byte-identical to before.
  *  fileChanges (optional, file-diff → 委托结果行 bug #58 修 2026-10-09；2026-10-10
- *  展开改 Canvas；2026-10-22 拆面板批「摘要上移+左右分体」换代): the per-batch
+ *  展开改 Canvas；2026-10-22 拆面板批「摘要上移+左右分体」换代；2026-10-31 完工
+ *  通知卡重设计批改形态「diff 胶囊退役，灰字小注承位」): the per-batch
  *  changed-file diff payload carried by delegate terminal events (engine
  *  `FileChangeReport.delegateBatchMetadata` — same wire shape as the REST
- *  file-changes face). Present with files ⇒ a compact summary CHIP mounts at
- *  the TOP of the delivery bubble (folded-state visible; `N files · +a −r`,
- *  glass pill) — click reveals the diff file list in the LEFT Side Bar panel
+ *  file-changes face). Present with files ⇒ a quiet +a −r gray NOTE line mounts
+ *  under the receipt head (folded-state visible; NOT a chip/capsule per author
+ *  ruling) — click reveals the diff file list in the LEFT Side Bar panel
  *  (#panel-filechanges) and the focused file's diff in the Canvas reader
  *  (diffPanel.js / diffCanvas.js); re-clicking an open batch collapses the
  *  Side Bar (existing panel toggle semantics). The bubble body keeps zero
- *  diff rows. Absent (non-delegate rows / old history) ⇒ render unchanged.
+ *  diff rows. Absent (zero-change batch / old history) ⇒ no note.
  *  schedule (optional, schedcard 批 2026-10-29): 定时任务触发行的卡片载荷
  *  （引擎 `UiMessage.User.schedule` 同源：{id, name?, triggerAt, repeat?,
  *  referencePath?}）。`source==='schedule'` ⇒ 走**专属卡分支**（见下），载荷
@@ -390,8 +431,8 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   label.className = 'ask-label injected-source-label';
   const trimmed = (text || '').trim();
   const content = document.createElement('div');
-  // 类名供 diff 同线行 CSS 选择展开态间距（.nf-diff-headline + .injected-content）；
-  // 折叠态 content display:none ⇒ 零高度贡献（尺寸回归批 2026-10-28）。
+  // 类名供展开态间距 CSS 选择（.nf-rcpt-* + .injected-content / 同线行旧选择器
+  // 已随 chip 退役移除）；折叠态 content display:none ⇒ 零高度贡献（尺寸回归批 2026-10-28）。
   content.className = 'injected-content';
   // 打回注入块收敛 (2026-08-27 user ruling): the backend [打回任务 #id: title]
   // injection collapses to the one-line `#<任务号> <任务标题>` form with a
@@ -417,62 +458,86 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   const collapsible = trimmed.length > 0;
   if (collapsible) {
     content.style.display = 'none'; // collapsed default
-    bindCollapsibleToggle(label, () => content);
   }
   // 引擎单一来源优先（气泡四段式统一批 2026-09-15）：帧/落盘行带 `header` ⇒ 逐字
   // 渲染该串（**禁二次拼接**——引擎 `NotificationHeader` 是唯一格式化实现）；
   // 缺席 ⇒ 回落既有 `injectedSourceLabel`（旧历史行与词表外 source 逐字节不变）。
-  // delegate 腿例外重排：信息提纯批（2026-10-28 作者令）只改显示文案组装，
-  // KIND · EXECUTOR · STATE——内置执行器 → INTERNAL、外部执行器 → 各自 id、
-  // PROJECT 段不进头部；sender 缺席 ⇒ 逐字不变。
   const renderedLabel =
     (header && String(header).trim()) ? String(header) : injectedSourceLabel(source, eventType, sender, sourceTeam, intake);
-  label.appendChild(document.createTextNode(
-    source === 'delegate' ? delegateResultLabel(renderedLabel, sender, eventType) : renderedLabel
-  ));
-  appendDeliveryBadge(label, delivery);
-  // diff 拆面板批（2026-10-22 作者令「改为在最上面看，而且是一个小的摘要」）：
-  // 交付消息顶部的紧凑摘要条（.glass-control 玻璃 pill）：`N files · +a −r`，
-  // 折叠态即可见——取代原展开体尾部的 Changes 段与标签内安静 hint（摘要上移，
-  // 信息一处呈现，两处占位即信息重复）。点击 → 左栏 #panel-filechanges 出该
-  // 批次文件列表 + Canvas 出选中文件 diff（旧 master-detail 一体大面板退役）；
-  // 本批已在面板时再点 → 收起侧栏（diffPanel.toggleDiffBatch，现有面板 toggle
-  // 语义）。缺载荷（非 delegate 行 / 旧历史）⇒ 零渲染。
-  // 同线批（2026-10-22 作者令「计数与 COMPLETED 同行」）：chip 不再独占一行，
-  // 与 header（… · COMPLETED 段）装进同一 flex 行（.nf-diff-headline）——chip
-  // 接在 COMPLETED 段之后同行右缘呈现；常规宽必一行（label 弹性收缩 + 省略号
-  // 截断），窄面板允许截断策略。缺载荷 ⇒ label 原位直挂（逐字节不变）。
-  if (Array.isArray(fileChanges?.files) && fileChanges.files.length) {
+
+  // ── Delegate 完工通知卡（2026-10-31 重设计批，作者令「diff 胶囊很丑」+ 设计决定）
+  //   首行  批次短名（KIND · EXECUTOR 口径同信息提纯批）+ 判词**单色墨族徽标**
+  //         （completed / merged / failed 同族无彩色相；右缘对齐）
+  //   次行  一句话结果摘要（merge 轮给 merge status 行 + merge commit 短哈希——
+  //         哈希独立右缘 mono 段，不随省略号截断；失败给原因首行）
+  //   三行  +x/−y **灰字小注**（不是 chip 不是胶囊；点击唤起 diff 面板的入口保留，
+  //         行为与旧胶囊同——左栏文件列表 + Canvas 阅读面）
+  // 点击卡头/摘要行 = 展开正文（折叠语义与旧 label 同）；非 delegate 源 ⇒
+  // 下方通用 label 路径逐字节不动。投递内容（帧字段/payload）零改动。
+  let receiptTop = null;
+  if (source === 'delegate') {
+    // 判词段 = eventType 词表（[[nodeStatusLabel]] 面同引擎 NotificationHeader
+    // .StateLabels 拼写——含 cancelled→CANCELED 单 L 历史口径），不从 header 串
+    // 反解（回落标签是 TitleCase，反解会泄大小写）。
+    const verdict = delegateReceiptVerdict(eventType, trimmed, eventType ? nodeStatusLabel(eventType) : '');
+    receiptTop = document.createElement('div');
+    receiptTop.className = 'nf-rcpt-top';
+    const head = document.createElement('div');
+    head.className = 'nf-rcpt-head';
+    const name = document.createElement('span');
+    name.className = 'nf-rcpt-name';
+    name.textContent = delegateReceiptName(renderedLabel, sender, eventType);
+    head.appendChild(name);
+    if (verdict) {
+      const badge = document.createElement('span');
+      badge.className = 'nf-rcpt-badge';
+      badge.textContent = verdict;
+      head.appendChild(badge);
+    }
+    receiptTop.appendChild(head);
+    const summary = delegateReceiptSummary(trimmed, verdict === 'MERGED');
+    if (summary.text) {
+      const line = document.createElement('div');
+      line.className = 'nf-rcpt-summary';
+      const txt = document.createElement('span');
+      txt.className = 'nf-rcpt-summary-text';
+      txt.textContent = summary.text;
+      line.appendChild(txt);
+      if (summary.hash) {
+        const hash = document.createElement('span');
+        hash.className = 'nf-rcpt-hash';
+        hash.textContent = summary.hash;
+        line.appendChild(hash);
+      }
+      receiptTop.appendChild(line);
+    }
+    bubble.appendChild(receiptTop);
+  } else {
+    label.appendChild(document.createTextNode(renderedLabel));
+    appendDeliveryBadge(label, delivery);
+    bubble.appendChild(label);
+  }
+  if (collapsible) {
+    bindCollapsibleToggle(source === 'delegate' ? receiptTop : label, () => content);
+  }
+  // diff 拆面板批入口（2026-10-22 建、2026-10-31 改形态）：fileChanges 载荷在场 ⇒
+  // 灰字小注一行（+a −r；作者令「不做 chip 不做胶囊」）——点击 → 左栏
+  // #panel-filechanges 出该批次文件列表 + Canvas 出选中文件 diff；本批已在面板时
+  // 再点 → 收起侧栏（diffPanel.toggleDiffBatch 现有面板 toggle 语义）。缺载荷
+  // （零改动批 / 旧历史）⇒ 零渲染。非 delegate 源携载荷的形态历史上不存在（载荷
+  // 只由 delegate 终态事件携带），故注记只在 delegate 卡分支下挂载。
+  if (source === 'delegate' && Array.isArray(fileChanges?.files) && fileChanges.files.length) {
     const tot = fileChanges.files.reduce((acc, f) => {
       acc.a += Number(f?.added) || 0; acc.r += Number(f?.removed) || 0; return acc;
     }, { a: 0, r: 0 });
-    const chip = document.createElement('button');
-    chip.type = 'button';
-    chip.className = 'nf-diff-chip glass-control';
-    chip.setAttribute('aria-pressed', 'false');
-    chip.dataset.fcBatch = String(fileChanges.nodeId || fileChanges.generatedAt || 'adhoc');
-    const icon = document.createElement('i');
-    icon.setAttribute('data-lucide', 'file-diff');
-    const filesLabel = document.createElement('span');
-    filesLabel.textContent = `${fileChanges.files.length} file${fileChanges.files.length === 1 ? '' : 's'}`;
-    const counts = document.createElement('span');
-    counts.className = 'nf-fc-counts';
-    const added = document.createElement('span');
-    added.className = 'nf-fc-added';
-    added.textContent = `+${tot.a}`;
-    const removed = document.createElement('span');
-    removed.className = 'nf-fc-removed';
-    removed.textContent = `−${tot.r}`;
-    counts.append(added, document.createTextNode(' '), removed);
-    chip.append(icon, filesLabel, counts);
-    createIconsIn(chip);
-    chip.addEventListener('click', () => { toggleDiffBatch(fileChanges); });
-    const headline = document.createElement('div');
-    headline.className = 'nf-diff-headline';
-    headline.append(label, chip);
-    bubble.appendChild(headline);
-  } else {
-    bubble.appendChild(label);
+    const note = document.createElement('button');
+    note.type = 'button';
+    note.className = 'nf-rcpt-note';
+    note.setAttribute('aria-pressed', 'false');
+    note.dataset.fcBatch = String(fileChanges.nodeId || fileChanges.generatedAt || 'adhoc');
+    note.textContent = `+${tot.a} −${tot.r}`;
+    note.addEventListener('click', () => { toggleDiffBatch(fileChanges); });
+    bubble.appendChild(note);
   }
   bubble.appendChild(content);
   row.appendChild(bubble);

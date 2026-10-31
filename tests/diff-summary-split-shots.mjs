@@ -173,15 +173,15 @@ for (const scheme of ['dark', 'light']) {
   // ① 摘要条形态（折叠态交付气泡）
   await injectBatch(page, PAYLOAD_A, 'DELEGATE · nebflow · diff-split · COMPLETED');
   await raf(page);
-  const chipVisible = await page.locator('.bubble.injected .nf-diff-chip').isVisible();
-  const chipText = (await page.locator('.bubble.injected .nf-diff-chip').innerText()).replace(/\s+/g, ' ').trim();
-  ok(`[${scheme}] ① 摘要条折叠态可见且含文件数/增删`, chipVisible && /5 files/.test(chipText) && /\+351/.test(chipText) && /−140/.test(chipText), chipText);
+  const chipVisible = await page.locator('.bubble.injected .nf-rcpt-note').isVisible();
+  const chipText = (await page.locator('.bubble.injected .nf-rcpt-note').innerText()).replace(/\s+/g, ' ').trim();
+  ok(`[${scheme}] ① 摘要条折叠态可见且含增删`, chipVisible && /\+351/.test(chipText) && /−140/.test(chipText), chipText);
   const hintGone = await page.locator('.nf-row-hint').count();
   ok(`[${scheme}] ① 旧标签内 hint 退役（零 .nf-row-hint）`, hintGone === 0);
   await page.locator('#chat').screenshot({ path: join(OUT, `1-chip-${scheme}.png`) });
 
   // ② 点击 → 左栏文件列表 + ③ canvas 阅读面（同帧双面板）
-  await page.locator('.bubble.injected .nf-diff-chip').click();
+  await page.locator('.bubble.injected .nf-rcpt-note').click();
   await page.waitForSelector('#panel-filechanges.active', { timeout: 8000 });
   await page.waitForSelector('.canvas-tab-pane[data-type="filechanges"] .fcv-filehead', { timeout: 8000 });
   await page.waitForTimeout(400); // 分块渲染排帧
@@ -189,7 +189,7 @@ for (const scheme of ['dark', 'light']) {
   const rows = await page.locator('#panel-filechanges .nfp-list .nf-fc').count();
   ok(`[${scheme}] ② 左栏面板激活且 5 行`, rows === 5, `rows=${rows}`);
   const metaTxt = (await page.locator('#panel-filechanges .nfp-meta').innerText()).replace(/\s+/g, ' ');
-  ok(`[${scheme}] ② 面板 meta 合计`, /5 files/.test(metaTxt) && /\+351/.test(metaTxt), metaTxt);
+  ok(`[${scheme}] ② 面板 meta 合计`, /\+351/.test(metaTxt) && /−140/.test(metaTxt), metaTxt);
   const navGone = await page.locator('.canvas-tab-pane .fcv-nav').count();
   const fcvGone = await page.locator('.canvas-tab-pane .fcv').count();
   ok(`[${scheme}] ④ 旧 master-detail 不在 DOM（.fcv/.fcv-nav = 0）`, navGone === 0 && fcvGone === 0);
@@ -208,21 +208,21 @@ for (const scheme of ['dark', 'light']) {
 
   // 多委托切换（批次 B）
   await injectBatch(page, PAYLOAD_B, 'DELEGATE · nebflow · batch-b · COMPLETED');
-  await page.locator('.bubble.injected .nf-diff-chip').nth(1).click();
+  await page.locator('.bubble.injected .nf-rcpt-note').nth(1).click();
   await page.waitForTimeout(300);
   const rowsB = await page.locator('#panel-filechanges .nfp-list .nf-fc').count();
   const headB = await page.locator('.canvas-tab-pane[data-type="filechanges"] .fcv-filehead').innerText();
   const paneCount = await page.locator('.canvas-tab-pane[data-type="filechanges"]').count();
   ok(`[${scheme}] ⑤ 批次切换：面板 2 行 + canvas 换焦点 + 面板恒 1`, rowsB === 2 && /diff-split\.md/.test(headB) && paneCount === 1, `rows=${rowsB} head=${headB.split('\n')[0]}`);
-  const chipStates = await page.locator('.bubble.injected .nf-diff-chip').evaluateAll((els) => els.map((e) => e.getAttribute('aria-pressed')));
-  ok(`[${scheme}] ⑤ chip 激活态随批走（false/true）`, chipStates.join(',') === 'false,true', chipStates.join(','));
+  const chipStates = await page.locator('.bubble.injected .nf-rcpt-note').evaluateAll((els) => els.map((e) => e.getAttribute('aria-pressed')));
+  ok(`[${scheme}] ⑤ 小注激活态随批走（false/true）`, chipStates.join(',') === 'false,true', chipStates.join(','));
   await page.screenshot({ path: join(OUT, `4-switch-batch-${scheme}.png`) });
 
   // 再点收起（现有面板 toggle 语义）
-  await page.locator('.bubble.injected .nf-diff-chip').nth(1).click();
+  await page.locator('.bubble.injected .nf-rcpt-note').nth(1).click();
   await page.waitForTimeout(250);
   const collapsed = await page.evaluate(() => document.body.classList.contains('sidebar-collapsed'));
-  ok(`[${scheme}] ⑥ 已打开批次再点 chip → 侧栏收起`, collapsed);
+  ok(`[${scheme}] ⑥ 已打开批次再点小注 → 侧栏收起`, collapsed);
   await page.screenshot({ path: join(OUT, `5-recollapse-${scheme}.png`) });
   await page.close();
 }
@@ -233,13 +233,13 @@ for (const scheme of ['dark', 'light']) {
   const page = await boot(390, 780, 'dark');
   await injectBatch(page, PAYLOAD_A, 'DELEGATE · nebflow · diff-split · COMPLETED');
   await raf(page);
-  const chipVisible = await page.locator('.bubble.injected .nf-diff-chip').isVisible();
+  const chipVisible = await page.locator('.bubble.injected .nf-rcpt-note').isVisible();
   ok(`[mobile] ⑦ chip 折叠态可见`, chipVisible);
   // 移动层「启动自动展开抑制」（layoutController.watchBootAutoOpen，r1 既定）：
   // 首触前 canvas-open 一律收起——既有形态（旧 master-detail 同此），非本批引入。
   // 证据脚本先标首触（等效真实用户先摸过移动层），再走 chip 打开链。
   await page.evaluate(() => import('/js/mobile/navController.js').then((m) => m.touchLayer()));
-  await page.locator('.bubble.injected .nf-diff-chip').click();
+  await page.locator('.bubble.injected .nf-rcpt-note').click();
   await page.waitForSelector('body.mf-cards-live', { timeout: 8000 });
   await page.waitForSelector('.canvas-tab-pane[data-type="filechanges"] .fcv-filestrip .nf-fc', { timeout: 8000 });
   await page.waitForTimeout(450); // 卡片层过渡

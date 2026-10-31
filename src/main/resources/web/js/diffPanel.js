@@ -135,11 +135,12 @@ function syncActiveRow(index) {
   });
 }
 
-/** Mirror the active batch onto every rendered chip (all chat views).
- *  Chips carry data-fc-batch (injectedRows builder); aria-pressed drives both
+/** Mirror the active batch onto every rendered note (all chat views).
+ *  Notes carry data-fc-batch (injectedRows builder; 2026-10-31 起 = 灰字小注
+ *  .nf-rcpt-note，旧 .nf-diff-chip 胶囊已退役）；aria-pressed drives both
  *  the a11y state and the pressed styling. */
 function syncChipActive(key) {
-  document.querySelectorAll('.nf-diff-chip').forEach((el) => {
+  document.querySelectorAll('.nf-rcpt-note').forEach((el) => {
     const chip = /** @type {HTMLElement} */ (el);
     const on = chip.dataset.fcBatch === key;
     chip.setAttribute('aria-pressed', on ? 'true' : 'false');
