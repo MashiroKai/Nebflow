@@ -286,7 +286,9 @@ async function legMarkdown(browser) {
   ok('B1 病态输入零 pageerror（renderer 永不抛 + 批护栏）', errors.length === 0, errors.slice(0, 2).join(' | '));
   ok('B2 中毒行回落纯文本可读（不消失、不白屏）', t.poisonPlain, JSON.stringify(t));
   ok('B3 中毒行之后消息照常渲染（修前全批滞留原始 markdown）', t.renderedAfter >= 7, `renderedAfter=${t.renderedAfter}/${t.total}`);
-  // bug⑦：消息列表左右留白 —— 行内容（气泡/工具行）两侧 ≥15px（#chat 16px 档）
+  // bug⑦ 换代（桌面边距还原批，2026-10-31 17:15 作者令「电脑端边距还原成靠
+  // 边形态」）：冷启动批⑦的 #chat 水平内距 16px 已整段回退为 0 —— 桌面消息
+  // 行贴边（行左缘 == #chat 左缘）；手机端 16px 由 mobile.css ≤768px 承接。
   const pad = await page.evaluate(() => {
     const chat = document.getElementById('chat').getBoundingClientRect();
     const first = document.querySelector('#chat .row');
@@ -294,8 +296,8 @@ async function legMarkdown(browser) {
     const cs = getComputedStyle(document.getElementById('chat'));
     return { chatX: chat.x, rowX: r ? r.x : 0, padL: cs.paddingLeft, padR: cs.paddingRight };
   });
-  ok('B4 消息列表左右留白（#chat 水平内距 16px 档，行不贴屏幕缘）',
-    parseFloat(pad.padL) === 16 && parseFloat(pad.padR) === 16, JSON.stringify(pad));
+  ok('B4 消息列表桌面靠边（#chat 水平内距 0px 档，行左缘贴 #chat 左缘）',
+    parseFloat(pad.padL) === 0 && parseFloat(pad.padR) === 0 && Math.abs(pad.rowX - pad.chatX) < 0.5, JSON.stringify(pad));
   await page.screenshot({ path: join(SHOTS_DIR, 'dark-B-markdown-resilience.png'), fullPage: false });
   await ctx.close();
 }
