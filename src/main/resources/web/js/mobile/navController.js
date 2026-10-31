@@ -978,7 +978,13 @@ function watchChatModal() {
     const ov = document.getElementById('fm-chat-overlay');
     const modal = ov?.querySelector('.fm-modal') || null;
     if (modal && chatAdopted?.modal !== modal) {
-      // 新窗建出：弃旧槽（旧节点已随旧 overlay 摘除）+ 收编新窗。
+      // 新窗建出：弃旧槽 + 收编新窗。
+      // 🔴 串窗根因修复（设备平级批 2026-10-31，截图②实锤）：旧收编窗被
+      // re-parent **出** overlay 进了页体 ⇒ 桌面 renderChatModal 整建时摘除的
+      // 只是空 overlay 壳，**旧窗体留在页体内**；此处若只弃引用不摘节点，
+      // 新窗 append 后页体里就是上下两个对话窗（各带各的输入条）。故弃槽
+      // 必须连同旧窗节点一起摘（节点已不在 DOM 时 remove() 为空操作）。
+      chatAdopted?.modal?.remove();
       chatAdopted = null;
       const body = bodyOf('conversation');
       if (!body) return;

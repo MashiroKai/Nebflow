@@ -542,6 +542,15 @@ body.mobile-layer .mobile-page-body {
   scrollbar-width: none;
 }
 body.mobile-layer .mobile-page-body::-webkit-scrollbar { display: none; }
+/* 设备平级批 2026-10-31（作者令：会话窗 = 单一固定对话窗「像微信聊天页」，禁横向
+   滚动——截图②实锤消息可左右滑）。根因：`.mobile-page-body` / `.fm-flow` 都只声明
+   `overflow-y:auto`，按 CSS 规范另一轴 visible 计算为 auto ⇒ 宽内容（长路径/宽卡/
+   pre 块）把整个页体/消息流变成横向可拖。处理 = 双容器显式 clamp（页体兜底页内
+   一切收编面）+ 气泡断词 any断长串（气泡面既有 word-break:break-word 之上补
+   anywhere 档，零内容丢失）；桌面零触碰。 */
+body.mobile-layer .mobile-page-body { overflow-x: hidden; }
+body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal .fm-flow { overflow-x: hidden; }
+body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal .fm-msg-bubble { overflow-wrap: anywhere; }
 body.mobile-layer #mobile-pages .canvas-tab-pane {
   display: flex !important;
   flex: 1;

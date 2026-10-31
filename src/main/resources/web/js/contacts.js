@@ -20,17 +20,19 @@ import { openChatWithFriend, fmtTime, isFriendTrusted, setFriendTrusted, deviceP
 // 唯一属主；本面板只挂入口（fail-closed，主卡 G-2）与入站群邀请区。
 import { openCreateGroupDialog, refreshGroups, groupsAvailable, groupErrToast } from './friendGroups.js';
 import { showPopupMenu } from './contextMenu.js';
-// ⑨-6（作者 2026-09-12 预授权令）：本模块两个裸键（已看请求 / 拉黑镜像）迁入
-// `key()` 品牌命名空间；存量值经 branding.js 的 LEGACY_IRREGULAR 启动即迁移。
-import { key } from './branding.js';
+
 // ⑥ 信任好友封存（作者裁定 2026-09-12）：静态常量，非配置读取、不过 latch。
 import { TRUST_SEALED } from './featureFlags.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 // 本模块三个面：搜索框 / 验证附言 / ⑦ 备注行内编辑器（新增面必须同批接入，
 // 否则就是第 16 个分叉点）。
-// 统一更新系统 M3 ④：本机统一更新卡（互联页·设备段顶部，DESIGN 开放问题 #11
-// 推荐落位；帧订阅在 updateCard.js 模块内，本面板只取渲染元素）。
-import { buildLocalUpdateCard } from './updateCard.js';
+// 设备平级批 2026-10-31（作者令）：设备段顶部的「本机 版本·通道·commit」更新卡
+// **整块退役**（版本读数设置侧栏脚已有：`sidebar.js` serverVersion 面）——本机
+// 改为以普通设备条目出现在设备分组（数据源 = `devicePeers()` 本机前置支，
+// `updateCard.js` 模块连同其 i18n 键组/CSS 规则一并删除，零死键死规则）。
+// ⑨-6（作者 2026-09-12 预授权令）：本模块两个裸键（已看请求 / 拉黑镜像）迁入
+// `key()` 品牌命名空间；存量值经 branding.js 的 LEGACY_IRREGULAR 启动即迁移。
+import { key } from './branding.js';
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 // 头像渲染单点（sessperf Phase B · 2026-09-20）：本文件此前的第二份 `avatarEl`
 // 已收敛到 `avatarRender.avatarNodeFor`（判据：两份实现必然漂移）。
@@ -346,10 +348,9 @@ function render() {
   //  请求列表与其所属的 nf 行隔开 ⇒ 请求列表落在设备行下方、与自己的行脱钩。
   //  故**展开态**顺序 = 新的朋友 → 请求列表（紧贴 nf）→ 设备 → 联系人列表；
   //  **收起态**展开体不在 DOM，设备行仍紧邻 nf 本体（顺序与改前逐字相同）。
-  // 统一更新系统 M3 ④：本机更新卡置设备段**最顶**（与设备行同屏，DESIGN §8
-  // 「面板更新卡」+ 开放问题 #11 推荐落位；快照未到 ⇒ 不出空壳）。
-  const updateCard = buildLocalUpdateCard();
-  if (updateCard) body.appendChild(updateCard);
+  // 设备平级批 2026-10-31：原「本机更新卡」行已退役（作者令——版本/commit 串不进
+  // 联系人页；本机设备行经 `devicePeers()` 本机前置支落在展开体内，与其它设备
+  // 同条目规格：在线态 + 系统 + 点进对话）。
   body.appendChild(buildDevicesEntry());
   if (devicesExpanded) body.appendChild(buildDeviceRows());
   // 设备行的更新回显按**状态机现读值**同步（面板每次 render 重建行 ⇒ 重开后不丢进度）。
@@ -484,7 +485,10 @@ function deviceRow(d) {
   });
   // 更新入口（G7 新形态 = **单按钮 + 统一进度面**），追加在模板尾（icon → name →
   // presence → status → 更新面），不动既有四件的位置与类名。
-  for (const node of deviceUpdateEntry(d)) row.appendChild(node);
+  // 设备平级批 2026-10-31：本机行**不挂**远程更新键组——`remoteUpdate` 是「远控
+  // 对端」语义，对本机无意义（本机更新归设置面/编排器自决），挂上去只会出一个
+  // 点了必错的键；行激活（点进对话）对本机照常成立。
+  if (!d.isLocal) for (const node of deviceUpdateEntry(d)) row.appendChild(node);
   return row;
 }
 
