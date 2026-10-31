@@ -247,6 +247,26 @@ function el(tag, cls, text) {
   return e;
 }
 
+// ── 登录失效块单例（作者补充批 2026-10-31 07:36：失效块重复挂载 → 单例）──────
+// 修前：同一 `listErrorKind/searchErrorKind === 'auth'` 会驱动**多个**区域各自渲染
+// 一整块「登录已失效 + 按钮」（好友列表区、新的朋友请求区、搜索错误卡同屏叠挂，
+// 作者截图同屏两块）——且列表区给的是「重试」（重拉接口，对已死会话毫无意义）。
+// 现收敛：每次面板 render 只允许**第一个**命中 auth 态的区域挂「重新登录」键，
+// 其余区域只留纯文案（失败仍可见，动作面单例）。登录动作本身 = 全局页面内
+// 登录卡（fm-auth-required 自动单飞链），此处按键只是同一卡的手势入口。
+let authActionMounted = false;
+
+/** 在 wrap 上挂「登录已失效」文案；本 render 回合首枚命中区再挂唯一「重新登录」键。 */
+function mountAuthExpired(wrap) {
+  wrap.appendChild(el('div', null, t('contacts.searchAuthError')));
+  if (authActionMounted) return;
+  authActionMounted = true;
+  const btn = el('button', 'glass-control fm-login-btn', t('contacts.relogin'));
+  btn.style.marginTop = '8px';
+  btn.addEventListener('click', () => openLoginModal());
+  wrap.appendChild(btn);
+}
+
 function avatarEl(person, size) {
   const a = el('span', `fm-avatar fm-avatar-${size}`);
   // sessperf Phase B（2026-09-20）：本文件此前是**第二份** `avatarEl` 实现
@@ -267,6 +287,7 @@ function render() {
   const body = document.getElementById('fm-contacts-body');
   if (!body) return;
   body.innerHTML = '';
+  authActionMounted = false; // 登录失效动作键单例：每个 render 回合重置
   updateBadge();
 
   if (!loggedIn()) {
@@ -348,16 +369,21 @@ function render() {
   if (friends.length === 0 && listErrorKind) {
     // F4（20260910）：加载失败且无缓存数据 → 错误态替代空态（复用搜索卡
     // 分态 keys：auth/neblinkOff 与搜索共用文案；retryable 走列表专属 key）。
-    const key = listErrorKind === 'auth' ? 'contacts.searchAuthError'
-      : listErrorKind === 'neblinkOff' ? 'contacts.neblinkOff'
-      : 'contacts.listError';
+    // auth 态（2026-10-31 单例批）：走 mountAuthExpired —— 失效文案 + 本回合唯一
+    // 「重新登录」键（不再给「重试」：对已死会话重拉接口无意义）；同回合其他
+    // 命中区只留文案。data-fm-list-error 断言契约保留。
     const errWrap = el('div', 'fm-empty');
     errWrap.setAttribute('data-fm-list-error', listErrorKind); // 断言契约（与视觉文案解耦）
-    errWrap.appendChild(el('div', null, t(key)));
-    const retry = el('button', 'glass-control', t('contacts.retry'));
-    retry.style.marginTop = '8px';
-    retry.addEventListener('click', () => { listErrorKind = null; refresh(); });
-    errWrap.appendChild(retry);
+    if (listErrorKind === 'auth') {
+      mountAuthExpired(errWrap);
+    } else {
+      const key = listErrorKind === 'neblinkOff' ? 'contacts.neblinkOff' : 'contacts.listError';
+      errWrap.appendChild(el('div', null, t(key)));
+      const retry = el('button', 'glass-control', t('contacts.retry'));
+      retry.style.marginTop = '8px';
+      retry.addEventListener('click', () => { listErrorKind = null; refresh(); });
+      errWrap.appendChild(retry);
+    }
     list.appendChild(errWrap);
   } else if (friends.length === 0) {
     list.appendChild(el('div', 'fm-empty', t('contacts.empty')));
@@ -813,12 +839,9 @@ function buildSearchError() {
   const card = el('div', 'fm-result-card fm-search-error');
   card.setAttribute('role', 'alert');
   if (searchErrorKind === 'auth') {
-    card.appendChild(el('div', 'fm-empty', t('contacts.searchAuthError')));
-    const foot = el('div', 'fm-result-foot');
-    const btn = el('button', 'glass-control fm-login-btn', t('contacts.relogin'));
-    btn.addEventListener('click', () => openLoginModal());
-    foot.appendChild(btn);
-    card.appendChild(foot);
+    // 单例批（2026-10-31）：同一 render 回合内全面板只挂一枚「重新登录」键
+    // （mountAuthExpired 首枚命中区独占）；搜索区非首枚时只剩文案。
+    mountAuthExpired(card);
   } else if (searchErrorKind === 'neblinkOff') {
     card.appendChild(el('div', 'fm-empty', t('contacts.neblinkOff')));
   } else {
@@ -1050,10 +1073,9 @@ function buildRequests() {
       const errWrap = el('div', 'fm-empty');
       errWrap.setAttribute('data-fm-req-error', listErrorKind); // 断言契约（与视觉文案解耦，镜像 data-fm-list-error）
       if (listErrorKind === 'auth') {
-        errWrap.appendChild(el('div', null, t('contacts.searchAuthError')));
-        const relogin = el('button', 'glass-control fm-login-btn', t('contacts.relogin'));
-        relogin.addEventListener('click', () => openLoginModal());
-        errWrap.appendChild(relogin);
+        // 单例批（2026-10-31）：与列表区共用 mountAuthExpired —— 同回合只首枚
+        // 命中区挂「重新登录」键，本区只留文案（修前同屏两块各自为政）。
+        mountAuthExpired(errWrap);
       } else if (listErrorKind === 'neblinkOff') {
         errWrap.appendChild(el('div', null, t('contacts.neblinkOff')));
       } else {
@@ -1217,7 +1239,10 @@ export function initContacts() {
   // friendship request, so it must not open an OAuth window per event
   // (repeat guard, 2026-09-15 OIDC fix; the 登录失效卡 itself stays the
   // visible manual retry surface).
-  window.addEventListener('fm-auth-required', () => { openLoginModal({ auto: true }); });
+  // `deferPopup:true`（作者根因批 2026-10-31）：自动链**零 window.open** ——
+  // 微信内置浏览器对非手势 window.open 弹系统拦截窗，401 轮询不停则弹窗循环；
+  // 登录卡页面内单飞，卡内「重新打开登录页面」键才是真手势的唯一点开入口。
+  window.addEventListener('fm-auth-required', () => { openLoginModal({ auto: true, deferPopup: true }); });
   window.addEventListener('fm-network-error', () => { window.__showToast?.(t('messages.networkError'), 'error'); });
   // `fm-friends-changed` 由**他模块**派发（`messages.js` 的 friend_accepted/friend_request
   // 分支、以及本模块自身 accept/unblock 之后）⇒ 同一条关系态判据必须同样生效，否则

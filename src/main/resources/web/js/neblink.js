@@ -351,6 +351,13 @@ export async function fetchNeblinkStatus() {
     // ⑨ 消息缓存账号分区（作者 2026-09-12 落盘口径）：登出/凭证失效 ⇒ 清缓存；
     // 分区键 = deviceId|email 复合（任一变化即「另一个账号」，跨账号绝不串数据）。
     if (wasLoggedIn && !neblinkState.loggedIn) { clearMessageCache(); clearDeviceMessageCache(); }
+    // 登录态单例闩复位（作者根因批 2026-10-31）：loggedIn 任意**翻转**（登入成功 /
+    // 被登出）= 一个失效回合的边界 ⇒ 派 `fm-auth-resolved` 给 `friendsApi.js` 的
+    // `notifyAuthRequired` 闩复位 —— 下一段失效仍会有且仅有一次登录卡，登录之后
+    // 旧闩不会把后续失效吞掉。
+    if (wasLoggedIn !== neblinkState.loggedIn) {
+      try { window.dispatchEvent(new CustomEvent('fm-auth-resolved')); } catch (_) { /* 永不反噬状态链 */ }
+    }
     setCacheAccount(neblinkState.device
       ? `${neblinkState.device.deviceId || ''}|${neblinkState.device.email || ''}`
       : '');

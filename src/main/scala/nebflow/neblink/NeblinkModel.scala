@@ -763,7 +763,11 @@ object LogtoConfig:
    * fallback and is scheduled for removal (beta.54).
    */
   val embeddedDefault: LogtoConfig = LogtoConfig(
-    endpoint = "https://auth.nebflow.space",
+    // REBRAND.md 裁定（官网登录双域灰度收尾）：现役托管登录域 = auth.mystand.space
+    // （旧域 auth.nebflow.space 仅保留为灰期回调别名）。登录失效路径曾因此把
+    // 用户跳去旧域（作者 2026-10-31 手机实测报障批）——内嵌默认必须与现役域一致；
+    // 显式 config.json `logto` 块仍永远优先（自托管场景）。
+    endpoint = "https://auth.mystand.space",
     clientId = "",
     pkceClientId = Some("csxh16cas0x03bgk6w7ej")
   )

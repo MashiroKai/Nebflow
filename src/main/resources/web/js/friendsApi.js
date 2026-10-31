@@ -89,6 +89,29 @@ function isDomainSemanticError(data) {
     || !!(data && typeof data === 'object' && FRIEND_TERMINAL_CODES.has(data.error));
 }
 
+// ── 登录失效单例（作者根因批 2026-10-31：一处失效、一处登录卡）──────────────
+// 修前形态：`req()` / `downloadAttachment()` 对**每一个** 401/403 都派一次
+// `fm-auth-required` —— 会话一过期，好友/联系人各接口轮询齐炸 ⇒ 事件流不停，
+// 两个自动消费方（messages.js / contacts.js 的 `{auto:true}` 监听）每 15s 守卫窗
+// 一过就再拉一次整条 PKCE 链 ⇒ 微信内置浏览器「attempting to open a pop-up」
+// 反复弹（作者 07:33 截图批）。本闩把**一个失效回合**收敛为恰好一次事件：
+// 首次 401/403 派发并上闩；上闩期间全部静默（面板 keep-last-known 错误态兜底），
+// 直到登录态发生**翻转**（`neblink.js` fetchNeblinkStatus 在 loggedIn 变迁时派
+// `fm-auth-resolved`）⇒ 重新武装。首派永远放行 ⇒ rcptcode spec 的
+// `authRequired === 1` 钉面不受影响。
+let authRequiredLatched = false;
+
+/** 全局唯一登录失效入口：首派放行 + 上闩；`fm-auth-resolved` 事件复位。 */
+export function notifyAuthRequired() {
+  if (authRequiredLatched) return;
+  authRequiredLatched = true;
+  window.dispatchEvent(new CustomEvent('fm-auth-required'));
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('fm-auth-resolved', () => { authRequiredLatched = false; });
+}
+
 // ── 群成员头像预览（正典 §A · 加性契约）────────────────────────
 // 🔴 **唯一 wire 常量**：键名 = 正典 §A.1 `memberAvatars`（wire 生产方 = 服务端
 // 正典；客户端适配服务端，禁反向）。改名 = 本行一处改动。
@@ -157,7 +180,7 @@ async function req(method, path, body) {
     // 状态码逐字透传 ⇒ 这些 403/400 会抵达本层，而它们**不是**「登录失效」
     // （派登录链 = 把语义终态误报成鉴权问题，且终态重试本就无效）。
     if (resp.status === 401 || resp.status === 403) {
-      if (!isDomainSemanticError(err.data)) window.dispatchEvent(new CustomEvent('fm-auth-required'));
+      if (!isDomainSemanticError(err.data)) notifyAuthRequired();
     }
     throw err;
   }
@@ -734,7 +757,7 @@ export async function downloadAttachment(attachmentId, opts = {}) {
     err.status = resp.status;
     try { err.data = await resp.json(); } catch { /* no body */ }
     if (resp.status === 401 || resp.status === 403) {
-      window.dispatchEvent(new CustomEvent('fm-auth-required'));
+      notifyAuthRequired();
     }
     throw err;
   }

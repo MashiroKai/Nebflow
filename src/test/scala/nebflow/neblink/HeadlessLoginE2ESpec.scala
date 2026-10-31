@@ -13,7 +13,7 @@ import munit.FunSuite
  *
  * 运行形态（作者侧）:
  *   STAND_E2E_LOGTO_ACCOUNT=... STAND_E2E_LOGTO_PASSWORD=... sbt 'testOnly *HeadlessLoginE2ESpec'
- * 可选: STAND_E2E_LOGTO_ENDPOINT（缺省 = 内嵌默认 https://auth.nebflow.space）
+ * 可选: STAND_E2E_LOGTO_ENDPOINT（缺省 = 内嵌默认 https://auth.mystand.space）
  *       STAND_E2E_LOGTO_CLIENT_ID（缺省 = 内嵌默认 AC app id）
  *
  * 注册腿（/api/device/register）不在本 spec 范围：它会向生产中继写设备记录 ——
@@ -34,7 +34,7 @@ class HeadlessLoginE2ESpec extends FunSuite:
       "[headless-login-e2e] SKIP — set STAND_E2E_LOGTO_ACCOUNT / STAND_E2E_LOGTO_PASSWORD " +
         "with a DEDICATED TEST ACCOUNT (never author credentials) to run the live chain."
     )
-    val endpoint = env("STAND_E2E_LOGTO_ENDPOINT").getOrElse("https://auth.nebflow.space")
+    val endpoint = env("STAND_E2E_LOGTO_ENDPOINT").getOrElse("https://auth.mystand.space")
     val clientId = env("STAND_E2E_LOGTO_CLIENT_ID").getOrElse("csxh16cas0x03bgk6w7ej")
     // RFC 8252 loopback：端口无关（部署租户接受任意本机端口，2026-08-28 实证）。
     val redirectUri = "http://127.0.0.1:6138/auth/callback"

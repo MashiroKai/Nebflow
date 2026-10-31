@@ -147,6 +147,10 @@ import { escapeHtml, statusIcon } from './utils.js';
 import { toggleHTML, setToggleState } from './toggle.js';
 import { key } from './branding.js';
 import { openLoginModal } from './activityBar.js';
+// 登录失效单例闩（作者根因批 2026-10-31）：插件面板的 401/403 与好友域共用
+// friendsApi.js 的全局闩 —— 同一失效回合全站只派一次 fm-auth-required，
+// 面板不再各自为政、不各自拉登录弹窗。
+import { notifyAuthRequired } from './friendsApi.js';
 
 // ── Helpers ────────────────────────────────────────────────
 function esc(s) { return escapeHtml(s); }
@@ -162,11 +166,11 @@ function esc(s) { return escapeHtml(s); }
  *  （🔴 本注释刻意**不**复写那个 legacy 字面量：R1 的判据 = 单引号包裹的 legacy
  *   token 键在**本文件** grep **零命中** —— 注释里留副本会污染读数。）
  *
- *  鉴权失败面（裁定 (c) 之①）：`status ∈ {401,403}` 时派 **既有** 全局事件
- *  `fm-auth-required`（写法照 `friendsApi.js:160/170` 与 `:690` 的
- *  `window.dispatchEvent(new CustomEvent('fm-auth-required'))`）——**不新造形态**，
- *  由既有两个消费方（`messages.js:4989` / `contacts.js:1207`）走
- *  `openLoginModal({ auto: true })`（带 15s burst 重复守卫）。
+  *  鉴权失败面（裁定 (c) 之①）：`status ∈ {401,403}` 时经 `friendsApi.js` 的
+  *  `notifyAuthRequired()` 派 **既有** 全局事件 `fm-auth-required`（单例闩 ——
+  *  一个失效回合全站只派一次，作者根因批 2026-10-31）——**不新造形态**，
+  *  由既有两个消费方（`messages.js` / `contacts.js` 的 fm-auth-required 监听）
+  *  开页面内登录卡（`{auto:true, deferPopup:true}`，零 window.open）。
  *  · 本函数**只**在 `!resp.ok && (401|403)` 时派事件：200 路径零触碰（不读 body、
  *    不改 headers、不改返回值），非鉴权错误（5xx / 404 / 网络错）**不派**事件。
  *  · ⚠ **不搬好友域码表**：`friendsApi.js` 的 `FRIEND_TERMINAL_CODES` /
@@ -178,7 +182,7 @@ async function api(path, opts = {}) {
   if (tok) opts.headers = { ...(opts.headers || {}), Authorization: `Bearer ${tok}` };
   const resp = await fetch(path, opts);
   if (!resp.ok && (resp.status === 401 || resp.status === 403)) {
-    window.dispatchEvent(new CustomEvent('fm-auth-required'));
+    notifyAuthRequired();
   }
   return resp;
 }
