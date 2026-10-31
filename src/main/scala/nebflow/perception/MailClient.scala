@@ -476,40 +476,78 @@ object MailClient:
 
   def rand6(): String = f"${java.util.concurrent.ThreadLocalRandom.current().nextLong(0xffffffL)}%06x"
 
-  /** Send via SMTP. Right(messageId) or Left(readable failure). */
-  def send(
-    smtpHost: String,
-    smtpPort: Int,
-    implicitTls: Boolean,
+  /**
+   * DATA 阶段（附件写出后等服务器最终回执）读超时分级：60s 底 + 每 100KB
+   * 载荷 +1s，封底 300s。报障 2026-10-31（「Host did not answer in time」）：
+   * 旧版对整个会话统一 20s soTimeout——大附件邮件的服务器侧扫描/入队确认
+   * 普遍 >20s ⇒ 信可能已入库而客户端报失败（误判 + 裸异常文案）。
+   */
+  def dataTimeoutMsFor(payloadBytes: Int): Int =
+    (60000L + payloadBytes.toLong / 102400L * 1000L).min(300000L).max(60000L).toInt
+
+  /**
+   * 自动重试判据（仅瞬时且「绝无已投递风险」者）：
+   * Timeout / Network 必是 DATA 写出之前（写出后的超时归 Ambiguous，见
+   * smtpTransact）；Rejected 仅 4xx（服务器明示未接收，可安全重发）。
+   * Ambiguous / AuthFailed / 5xx Rejected / 业务态一律不重试——Ambiguous
+   * 盲重试 = 重复投递，是幂等红线。
+   */
+  def isSendRetryable(f: PerceptionModel.SendFailure): Boolean = f match
+    case PerceptionModel.SendFailure.Timeout          => true
+    case PerceptionModel.SendFailure.Network(_)       => true
+    case PerceptionModel.SendFailure.Rejected(m)      => m.trim.startsWith("4")
+    case _                                            => false
+
+  /** 重试外壳：至多 maxAttempts 次（新鲜连接），重试判据见 isSendRetryable。 */
+  private[perception] def sendWithRetry(maxAttempts: Int)(
+    once: => Either[PerceptionModel.SendFailure, String]
+  ): Either[PerceptionModel.SendFailure, String] =
+    once match
+      case Left(f) if maxAttempts > 1 && isSendRetryable(f) => sendWithRetry(maxAttempts - 1)(once)
+      case r => r
+
+  /**
+   * SMTP 会话全协议腿（socket 腿之外的纯对话面，spec 以 loopback 明文
+   * socket + 脚本 mock 服务器直驱）：EHLO →（STARTTLS 升级回调）→ AUTH
+   * PLAIN → MAIL → RCPT×n → DATA → QUIT。socket 读超时的分层切换由调用方
+   * 经 onDataPhase 注入（DATA 前握手用小超时，DATA 后切分级大超时）。
+   *
+   * 报障批三处硬化：
+   *   1. DATA 最终回执不再丢弃——旧版 `_reply` 直接作废，服务器在报文提交后
+   *      的拒收（5xx 内容策略等）会被报成「发送成功」；
+   *   2. DATA 写出后（dataSent=true）一切网络失败归 Ambiguous（可能已投递，
+   *      盲重试会重复发信）；之前的超时归 Timeout（可安全重试）；
+   *   3. 服务器回执按码分类：2xx 成功 / 4xx Rejected（瞬时可重试）/ 其余 Rejected。
+   *
+   * @param data      预生成的 DATA 载荷（重试复用同一 Message-ID，服务端可去重）
+   * @param startTlsUpgrade None = 隐式 TLS（已加密）；Some = 587 轨的 STARTTLS 升级
+   */
+  private[perception] def smtpTransact(
+    in: java.io.BufferedReader,
+    out: OutputStream,
     user: String,
     authCode: String,
     mail: OutgoingMail,
-    timeoutMs: Int = 20000
+    data: String,
+    startTlsUpgrade: Option[() => (java.io.BufferedReader, OutputStream)] = None,
+    onDataPhase: () => Unit = () => ()
   ): Either[PerceptionModel.SendFailure, String] =
-    var socket: Socket = null
+    var reader = in
+    var writer = out
+    var dataSent = false
     try
-      socket =
-        if implicitTls then
-          val s = tlsFactory.createSocket()
-          s.setSoTimeout(timeoutMs)
-          s.connect(new InetSocketAddress(smtpHost, smtpPort), timeoutMs)
-          s
-        else
-          val s = new Socket()
-          s.setSoTimeout(timeoutMs)
-          s.connect(new InetSocketAddress(smtpHost, smtpPort), timeoutMs)
-          s
-      var in = new BufferedReader(new InputStreamReader(socket.getInputStream, StandardCharsets.ISO_8859_1))
-      var out: OutputStream = socket.getOutputStream
-
       def readReply(): Either[PerceptionModel.SendFailure, String] =
         val sb = new StringBuilder
-        var line = in.readLine()
+        var line = reader.readLine()
+        // 干净 EOF（首行即 null）= 对端断连：归入 IOException 分类腿
+        // （pre-DATA → Network 可重试；post-DATA → Ambiguous），而不是
+        // 落成空串 Rejected——「断连」与「服务器拒收」是两种处置。
+        if line == null then throw new java.io.IOException("SMTP connection closed by peer")
         var keep = Option(line)
         while keep.isDefined do
           val l = keep.get
           sb.append(l).append("\r\n")
-          if l.length > 3 && l.charAt(3) == '-' then keep = Option(in.readLine())
+          if l.length > 3 && l.charAt(3) == '-' then keep = Option(reader.readLine())
           else keep = None
         val resp = sb.toString
         if resp.startsWith("2") || resp.startsWith("3") then Right(resp)
@@ -518,9 +556,9 @@ object MailClient:
         else Left(PerceptionModel.SendFailure.Rejected(resp.trim.take(200)))
 
       def cmd(c: String): Either[PerceptionModel.SendFailure, String] =
-        out.write(c.getBytes(StandardCharsets.UTF_8))
-        out.write("\r\n".getBytes(StandardCharsets.ISO_8859_1))
-        out.flush()
+        writer.write(c.getBytes(StandardCharsets.UTF_8))
+        writer.write("\r\n".getBytes(StandardCharsets.ISO_8859_1))
+        writer.flush()
         readReply()
 
       val fromAddr = AngleAddr.findFirstMatchIn(mail.from).map(_.group(1)).getOrElse(mail.from.trim)
@@ -532,15 +570,15 @@ object MailClient:
         _ <- readReply() // 220 greeting
         _ <- cmd("EHLO perception.local")
         _ <-
-          if implicitTls then Right("tls-already")
+          if startTlsUpgrade.isEmpty then Right("tls-already")
           else
             cmd("STARTTLS").flatMap { _ =>
-              val ssl = tlsFactory.createSocket(socket, smtpHost, smtpPort, true).asInstanceOf[SSLSocket]
-              ssl.setSoTimeout(timeoutMs)
-              socket = ssl
-              in = new BufferedReader(new InputStreamReader(ssl.getInputStream, StandardCharsets.ISO_8859_1))
-              out = ssl.getOutputStream
-              cmd("EHLO perception.local")
+              startTlsUpgrade.map { upgrade =>
+                val (rin, wout) = upgrade()
+                reader = rin
+                writer = wout
+                cmd("EHLO perception.local")
+              }.getOrElse(Left(PerceptionModel.SendFailure.Network("STARTTLS unavailable")))
             }
         _ <- cmd("AUTH PLAIN " + Base64.getEncoder.encodeToString(s"\u0000$user\u0000$authCode".getBytes(StandardCharsets.UTF_8)))
         _ <- cmd(s"MAIL FROM:<$fromAddr>")
@@ -548,22 +586,80 @@ object MailClient:
           acc.flatMap(_ => cmd(s"RCPT TO:<$r>").map(_ => ()))
         }
         _ <- cmd("DATA")
-        data = SmtpCodec.buildData(mail)
+        _ = onDataPhase() // 调用方在此把 socket 读超时切到 dataTimeoutMsFor 分级值
         _ = {
-          out.write(data.getBytes(StandardCharsets.UTF_8))
-          out.write(".\r\n".getBytes(StandardCharsets.ISO_8859_1))
-          out.flush()
-          val _reply = readReply()
-          ()
+          dataSent = true // 写出即视为可能已投递——此后网络失败一律 Ambiguous
+          writer.write(data.getBytes(StandardCharsets.UTF_8))
+          writer.write(".\r\n".getBytes(StandardCharsets.ISO_8859_1))
+          writer.flush()
         }
-        _ = { val _q = cmd("QUIT"); () }
+        fin <- readReply() // DATA 最终回执（旧版丢弃——服务器拒收被报成成功，已修）
+        _ <-
+          if fin.startsWith("2") then Right(())
+          else Left(PerceptionModel.SendFailure.Rejected(fin.trim.take(200)))
+        _ = try { val _q = cmd("QUIT"); () } catch case _: Throwable => ()
       yield SmtpCodec.messageIdOf(data)
       result
     catch
+      case _: java.net.SocketTimeoutException =>
+        Left(if dataSent then PerceptionModel.SendFailure.Ambiguous else PerceptionModel.SendFailure.Timeout)
+      case e: java.io.IOException =>
+        if dataSent then Left(PerceptionModel.SendFailure.Ambiguous)
+        else Left(PerceptionModel.SendFailure.Network(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"))
       case e: Throwable =>
-        Left(PerceptionModel.SendFailure.Network(s"${e.getClass.getSimpleName}: ${e.getMessage}"))
-    finally
-      if socket != null then try socket.close() catch case _: Throwable => ()
+        Left(PerceptionModel.SendFailure.Network(e.getClass.getSimpleName))
+
+  /** Send via SMTP. Right(messageId) or Left(readable failure). */
+  def send(
+    smtpHost: String,
+    smtpPort: Int,
+    implicitTls: Boolean,
+    user: String,
+    authCode: String,
+    mail: OutgoingMail,
+    timeoutMs: Int = 20000
+  ): Either[PerceptionModel.SendFailure, String] =
+    // DATA 载荷预生成一次：重试复用同一 Message-ID（服务端可据此去重，
+    // 幂等第二道闸），且载荷字节数是 DATA 阶段分级超时的输入。
+    val data = SmtpCodec.buildData(mail)
+    val dataTimeout = dataTimeoutMsFor(data.getBytes(StandardCharsets.UTF_8).length)
+
+    def attempt(): Either[PerceptionModel.SendFailure, String] =
+      var socket: Socket = null
+      try
+        socket =
+          if implicitTls then
+            val s = tlsFactory.createSocket()
+            s.setSoTimeout(timeoutMs)
+            s.connect(new InetSocketAddress(smtpHost, smtpPort), timeoutMs)
+            s
+          else
+            val s = new Socket()
+            s.setSoTimeout(timeoutMs)
+            s.connect(new InetSocketAddress(smtpHost, smtpPort), timeoutMs)
+            s
+        val in = new BufferedReader(new InputStreamReader(socket.getInputStream, StandardCharsets.ISO_8859_1))
+        val upgrade =
+          if implicitTls then None
+          else Some(() =>
+            val ssl = tlsFactory.createSocket(socket, smtpHost, smtpPort, true).asInstanceOf[SSLSocket]
+            ssl.setSoTimeout(timeoutMs)
+            socket = ssl
+            (new BufferedReader(new InputStreamReader(ssl.getInputStream, StandardCharsets.ISO_8859_1)),
+              ssl.getOutputStream: OutputStream)
+          )
+        smtpTransact(
+          in, socket.getOutputStream, user, authCode, mail, data,
+          startTlsUpgrade = upgrade,
+          onDataPhase = () => socket.setSoTimeout(dataTimeout)
+        )
+      catch
+        case e: Throwable =>
+          Left(PerceptionModel.SendFailure.Network(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"))
+      finally
+        if socket != null then try socket.close() catch case _: Throwable => ()
+
+    sendWithRetry(maxAttempts = 2)(attempt())
 
   // ════════════════════════ TLS ════════════════════════
 

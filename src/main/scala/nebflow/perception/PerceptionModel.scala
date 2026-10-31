@@ -193,17 +193,22 @@ object PerceptionModel:
   enum SendFailure:
     case AuthFailed
     case Network(msg: String)
-    case Rejected(msg: String) // 收件方拒收（5xx）
+    case Rejected(msg: String) // 收件方拒收（5xx；4xx = 瞬时可重试，见 MailClient.isSendRetryable）
     case Stale // 快照过期（409）
     case MissingAttachment(paths: List[String])
     case NoAccount
     case Invalid(msg: String)
+    // 报障 2026-10-31（「Host did not answer in time」怒评批）新增两态：
+    case Timeout   // 服务器超时未响应（DATA 写出之前——绝无已投递风险，可安全自动重试）
+    case Ambiguous // 投递结果不明（DATA 已写出但未获服务器最终回执——可能已投递，禁盲重试防重复）
 
   object SendFailure:
     def readable(f: SendFailure): String = f match
       case AuthFailed              => "授权码已失效 · 需重新连接邮箱"
-      case Network(m)              => s"网络异常，稍后自动重试（$m）"
+      case Network(m)              => s"网络连接异常 · 请检查网络后重发（$m）"
       case Rejected(_)             => "收件方拒收 · 地址可能已失效"
+      case Timeout                 => "发送超时：服务器长时间未响应（大附件或慢网络时常见）· 已自动重试仍未成功，请稍后重发"
+      case Ambiguous               => "发送结果不明：未收到服务器最终确认，邮件可能已发出 · 请勿立即重发，请先确认收件人是否收到"
       case Stale                   => "草稿已在 Canvas 中修改，请以画布内容发送"
       case MissingAttachment(paths) => s"附件不存在：${paths.mkString("、")}"
       case NoAccount               => "尚未连接邮箱"
