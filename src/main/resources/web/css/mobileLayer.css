@@ -44,7 +44,8 @@
  *   聊天 root(桌面默认) < #header 悬浮层 40 < #settings/#usage/#search 等
  *   overlay 状态载体垫层 155 < #mobile-pages 156(页面容器，收编面随页面体)
  *   < #mobile-dock 200(常驻底栏，盖页面底缘) < 桌面模态族 310+/10000/11000
- *   (原样；daemon 配置 iframe 等页内子对话框仍居其上)。
+ *   （弹窗退场批 2026-10-31 之后：模态族在手机层全部转为铺满屏页面形态 +
+ *   左上返回钮，见文件尾「弹窗退场批」块；桌面模态 z 值原样不动）。
  */
 
 /* ── 视口链 html 层压点（bootstrap.js 同路径加/摘，桌面永不命中）──────
@@ -718,35 +719,34 @@ body.mobile-layer .mh-tpanel .tp-mem-more {
 body.mobile-layer #bgagent-dropdown {
   display: none !important;
 }
-/* 心跳配置浮层（daemonPanel.js 注入样式 + JS 内联定位）：页内子对话框保留
-   浮层形态（作者令退役对象 = 导航面，页内确认/配置子对话框 = 模态族原样），
-   水平居中 + 顶栏之下锚定。 */
-body.mobile-layer #daemon-config-overlay {
+/* 心跳配置浮层（daemonPanel.js）——弹窗退场批（2026-10-31 作者令②）换代：
+   旧「页内子对话框居中浮层」形态退役，改铺满屏 + 左上返回（JS 内联定位
+   由本块 !important 压平；返回钮 = popSheet.js 注入，语义 = closeDaemonConfig）。
+   规则只挂 .open 态——本元素静止态无静态 CSS 隐藏（display:none 来自
+   daemonPanel.js 运行时注入的 PANEL_CSS），无条件 100% 高会让空壳拦截
+   手机层全屏指针事件（回归实证：T3/T4/T5 全被它挡住）。 */
+body.mobile-layer #daemon-config-overlay.open {
+  top: 0 !important;
   left: 0 !important;
-  right: 0 !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-  top: calc(58px + env(safe-area-inset-top, 0px)) !important;
-  bottom: auto !important;
+  right: auto !important;
+  bottom: 0 !important;
   transform: none !important;
-  width: min(316px, calc(100vw - 24px)) !important;
+  width: 100% !important;
   min-width: 0 !important;
   max-width: none !important;
+  height: 100% !important;
+  max-height: none !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  border-left: none !important;
+  border-right: none !important;
+  padding-top: calc(64px + env(safe-area-inset-top, 0px));
+  z-index: 320;
 }
 body.mobile-layer #daemon-config-overlay .daemon-config-iframe {
-  height: 300px;
-}
-/* 规则/通用确认：居中浮层（模态族原样）。 */
-body.mobile-layer #rules-overlay,
-body.mobile-layer #modal-overlay {
-  left: 0;
-  right: 0;
-  padding: 0 10px;
-}
-body.mobile-layer #rules-modal {
-  width: 100%;
-  max-width: 420px;
-  max-height: 72vh;
+  height: auto;
+  flex: 1;
+  min-height: 40vh;
 }
 
 /* P2 搜索面（内容密度件；范围收窄/角色行/脚注 = searchFace.js 既有职责）：
@@ -2095,3 +2095,177 @@ body.mobile-layer #mobile-pages .mobile-page.mh-search-open[data-page="contacts"
   margin: 10px 0 0;
   animation: none;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   弹窗退场批（作者令 2026-10-31②「手机端不再有任何形式的弹窗界面：所有弹层
+   改铺满屏幕+左上角返回按钮」）——桌面模态族手机层页面化。
+   覆盖面：后台任务输出卡（.bgt）/ 后台+flow 智能体查看器（flow-agent
+   fullscreen）/ LLM 配置（#model-panel-overlay、#cfg-modal）/ dropbox /
+   通用确认族（#modal-overlay 三框）/ #rules-overlay / secrets / 工作区选择器 /
+   登录卡 / 长按上下文菜单（.fm-context-menu）/ 词条触屏气泡（.nf-term-tip）。
+   统一形态：overlay 吃不透明页面底（--color-bg，同 .mobile-page），内盒
+   全幅铺平（radius 0 / 左右 border 退役 / 顶带让位悬浮返回钮 = 16+48 几何），
+   返回钮由 js/mobile/popSheet.js 注入（.mfs-back，48px g2-fab 同页面壳「<」）。
+   点名例外：#takeover-box（强制二选一系统中断面）铺满屏但不带返回钮——
+   无「取消」语义可挂（modal.js 的返回处理按 takeoverBlocking 绕行同理）；
+   voiceMode 是输入卡原位形变（非弹层）、slash/mention 输入锚定下拉是
+   自动补全（非弹窗），均不在退场范围。桌面零变化：全部规则挂
+   body.mobile-layer；返回钮在非手机层 display:none。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* 注入返回钮：压内容层（内盒无 z 值，40 足够）；非手机层/拆层后零残留。 */
+body.mobile-layer .mfs-back { z-index: 40; }
+body:not(.mobile-layer) .mfs-back { display: none !important; }
+
+/* ── A 族：透明承接层 + 居中玻璃盒 ──  overlay 吃页面底 + 盒体拉伸铺平 ── */
+body.mobile-layer .bgt-overlay,
+body.mobile-layer #secrets-overlay,
+body.mobile-layer .wsp-overlay,
+body.mobile-layer #modal-overlay,
+body.mobile-layer #rules-overlay,
+body.mobile-layer .cfg-modal-overlay,
+body.mobile-layer .flow-agent-overlay.fullscreen {
+  background: var(--color-bg, #f5f6f8);
+  padding: 0;
+  align-items: stretch;
+  justify-content: stretch;
+}
+body.mobile-layer .bgt-overlay .bgt-modal,
+body.mobile-layer #secrets-modal,
+body.mobile-layer .wsp-panel,
+body.mobile-layer #modal-box,
+body.mobile-layer #delete-box,
+body.mobile-layer #conflict-box,
+body.mobile-layer #takeover-box,
+body.mobile-layer #rules-modal,
+body.mobile-layer .cfg-modal-overlay .cfg-modal,
+body.mobile-layer #model-panel-overlay .model-panel,
+body.mobile-layer #dropbox-overlay .dropbox-modal {
+  width: 100% !important;
+  max-width: none !important;
+  height: 100% !important;
+  max-height: none !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  border-left: none !important;
+  border-right: none !important;
+  transform: none !important;
+  animation: none !important;
+  padding-top: calc(64px + env(safe-area-inset-top, 0px));
+}
+/* flow-agent 查看器（bgAgentPopup/flowAgentPopup 共用 .fullscreen 族）：同上铺平。 */
+body.mobile-layer .flow-agent-overlay.fullscreen .flow-agent-modal {
+  width: 100% !important;
+  max-width: none !important;
+  height: 100% !important;
+  max-height: none !important;
+  margin: 0 !important;
+  border-radius: 0 !important;
+  border-left: none !important;
+  border-right: none !important;
+  padding-top: calc(64px + env(safe-area-inset-top, 0px));
+}
+/* 登录卡：自身即盒（无承接层），居中定位退为铺满屏。 */
+body.mobile-layer .nebflow-login-modal {
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  transform: none !important;
+  border-radius: 0 !important;
+  border-left: none !important;
+  border-right: none !important;
+  animation: none !important;
+  padding-top: calc(64px + env(safe-area-inset-top, 0px));
+}
+/* 盒体滚域让位返回钮后仍可滚到底（padding-top 进滚动区）。 */
+
+/* ── B 族：长按/右键上下文菜单 → 全屏动作表 ────────────────────────────
+   showPopupMenu 内联 left/top 由本块压平；菜单项 = 全宽玻璃行（44px 触击域）。 */
+body.mobile-layer .fm-context-menu {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  display: flex !important;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+  background: var(--color-bg, #f5f6f8);
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  padding: calc(72px + env(safe-area-inset-top, 0px)) 16px calc(24px + env(safe-area-inset-bottom, 0px));
+  z-index: 320;
+  overflow-y: auto;
+}
+body.mobile-layer .fm-context-menu button:not(.mfs-back) {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 12px;
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  color: var(--color-frame-text, var(--color-text));
+  font-size: 14px;
+  padding: 10px 14px;
+  text-align: center;
+}
+body.mobile-layer .fm-context-menu button.danger:not(.mfs-back) {
+  color: var(--status-word);
+}
+/* 注入的左上返回钮：保持 g2-fab 48px 几何（按钮行的全宽规则不得吞它）。 */
+body.mobile-layer .fm-context-menu > .mfs-back { flex: none; }
+
+/* ── C 族：词条触屏气泡 → 全屏词条卡 ────────────────────────────────────
+   paintTermTip 内联 left/top 由本块压平（仅 .touch 触屏腿；桌面 hover 泡不动）。 */
+body.mobile-layer .nf-term-tip.touch {
+  inset: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  display: flex !important;
+  flex-direction: column;
+  justify-content: center;
+  background: var(--color-bg, #f5f6f8);
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  padding: calc(72px + env(safe-area-inset-top, 0px)) 20px calc(24px + env(safe-area-inset-bottom, 0px));
+  z-index: 320;
+  overflow-y: auto;
+}
+body.mobile-layer .nf-term-tip.touch .tt { font-size: 17px; }
+body.mobile-layer .nf-term-tip.touch .ts {
+  -webkit-line-clamp: unset;
+  font-size: 14px;
+  margin-top: 8px;
+}
+
+/* ── D 族：灯箱（本就已全屏）——只补返回钮层级与触击安全。 ────────────── */
+body.mobile-layer .nf-lightbox { z-index: 320; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   弹窗退场批③ —— 设置页展开式配置退役：chevron 折叠体 → 层级子页。
+   入口行（.settings-collapse-toggle）手机层 = 下钻行（chevron 右转，与
+   mf-hub-row 同 affordance）；折叠体在设置页内一律不渲染（display:none），
+   子页收编节点不在 #settings-modal 子树 ⇒ 天然可见。桌面零变化。
+   ═══════════════════════════════════════════════════════════════════════ */
+body.mobile-layer #settings-modal .settings-collapse-body { display: none !important; }
+/* 入口行 chevron：下旋 90° 指右（层级导航 affordance；::after 字形同族不动）。 */
+body.mobile-layer #settings-modal .settings-collapse-chevron { transform: rotate(-90deg); }
+/* 收编进子页的折叠体：页体已带 72px 顶让位，补侧距与底距即可
+   （节点不在 #settings-modal 子树 ⇒ 上方的 display:none 不命中，零 important）。 */
+body.mobile-layer .mobile-page-body > .settings-collapse-body {
+  padding: 4px 16px calc(20px + env(safe-area-inset-bottom, 0px));
+}
+/* 接管模态在场：注入返回钮隐藏（强制二选一，无取消语义可挂）。 */
+body.mobile-layer #modal-overlay.takeover-live .mfs-back { display: none !important; }

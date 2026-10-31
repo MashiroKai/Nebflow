@@ -75,12 +75,16 @@ function show() {
   retakeBtn.hidden = false;
   box.style.display = 'block';
   if (overlay()) overlay().classList.add('on');
+  // 弹窗退场批：接管态隐藏 #modal-overlay 的注入返回钮（强制二选一，无返回
+  // 语义；handler 侧 takeoverBlocking 守卫同款判据的双保险）。
+  if (overlay()) overlay().classList.add('takeover-live');
   setBlur(true);
 }
 
 function hide() {
   const box = boxEl();
   if (box) box.style.display = 'none';
+  if (overlay()) overlay().classList.remove('takeover-live');
   setBlur(false);
   // 收起 = ownership 已回。不调 modal.js hideModals（那会连带清其他盒的回调态——
   // 本模态受强制二选一保护，只摘自己的 overlay 面）。

@@ -14,6 +14,9 @@
 //     ]);
 //   });
 
+// 弹窗退场批（作者令 2026-10-31②）：手机层右键/长按菜单 = 全屏动作表 + 左上返回。
+import { mobileSheetBack } from './mobile/popSheet.js';
+
 let menuEl = null;
 
 /** Hide the open menu (if any). Safe to call unconditionally. */
@@ -66,6 +69,11 @@ export function showPopupMenu(x, y, items, opts) {
     menuEl.appendChild(btn);
   }
   document.body.appendChild(menuEl);
+  // 弹窗退场批②：仅手机层注入左上返回钮（桌面 DOM 逐字节不变——friend-remark
+  // 等桌面 spec 按 button 数/textContent 精确断言）。
+  if (document.body.classList.contains('mobile-layer')) {
+    mobileSheetBack(menuEl, hidePopupMenu);
+  }
 
   // Keep on-screen (same adjustment as the explorer context menu).
   const rect = menuEl.getBoundingClientRect();

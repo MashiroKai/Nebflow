@@ -26,6 +26,8 @@ import { createIconsIn, escapeHtml, statusIcon } from './utils.js';
 import { getProfileUrl, standLockupSvg } from './brand.js';
 import { t } from './i18n.js';
 import { key } from './branding.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层登录卡铺满屏 + 左上返回（= close，桌面零变化）。
+import { mobileSheetBack } from './mobile/popSheet.js';
 
 let initialized = false;
 let statusPollTimer = null;
@@ -804,6 +806,7 @@ export function showLoginModal(opts = {}) {
     modal.remove();
   };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
+  mobileSheetBack(modal, close);
   document.addEventListener('keydown', onKey);
   // The recovery key's authorize-URL opener (2026-09-16 login-entry batch).
   // Behaviour is the pre-existing one, verbatim: open whatever the gateway

@@ -20,6 +20,8 @@ import { buildManageBar, bindManageActions, syncManageControls } from './manageP
 import { isErrorReason, errorTileText, errorIcon } from './errorRecovery.js';
 import { truncateMiddle, shouldFollowBottom, initScrollFollow, statusIcon } from './utils.js';
 import { cleanupCardIframes } from './cardRegistry.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层查看器铺满屏 + 左上返回（桌面零变化）。
+import { mobileSheetBack } from './mobile/popSheet.js';
 
 // ── Per-agent state ───────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -490,6 +492,7 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   }
 
   mountEl.appendChild(popupOverlay);
+  mobileSheetBack(popupOverlay, closeStepPopup);
 
   // Move the pre-rendered container from hidden root into the modal,
   // inserting it BEFORE the footer so the layout is header / chat / footer.

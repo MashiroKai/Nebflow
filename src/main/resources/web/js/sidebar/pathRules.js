@@ -5,6 +5,8 @@ import state from '../state.js';
 import { sendWs } from '../ws.js';
 import { t } from '../i18n.js';
 import { escapeHtml } from './providersUi.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层 rules 编辑窗铺满屏 + 左上返回（桌面零变化）。
+import { mobileSheetBack } from '../mobile/popSheet.js';
 
 // 主体侧回调注入(拆分批次二纪律):会话侧栏段(renderSessionSidebar)留守 sidebar.js,
 // 子模块不得反向 import 之,handleRulesSaved/handleRulesDeleted 的重渲由主体在模块
@@ -28,6 +30,8 @@ function openRulesEditor(folderId, folderName) {
   deleteBtn.textContent = t('rules.delete');
   document.getElementById('rules-overlay').classList.add('on');
   document.getElementById('rules-modal').classList.add('show');
+  // 弹窗退场批：跨档重排后补注左上返回（幂等；非手机层不注入）。
+  mobileSheetBack(document.getElementById('rules-overlay'), closeRulesEditor);
   // Fetch current content
   sendWs({ type: 'getRules', folderId });
   setTimeout(() => input.focus(), 50);
@@ -72,6 +76,7 @@ export function handleRulesDeleted(data) {
 // ----- Rules Modal wiring (called from modal.js initModals) -----
 export function initRulesModal() {
   document.getElementById('rules-modal-cancel').addEventListener('click', closeRulesEditor);
+  mobileSheetBack(document.getElementById('rules-overlay'), closeRulesEditor);
   document.getElementById('rules-overlay').addEventListener('click', (e) => {
     if (e.target.id === 'rules-overlay') closeRulesEditor();
   });

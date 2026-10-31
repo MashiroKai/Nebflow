@@ -30,6 +30,8 @@ import { brand } from './brand.js';
 import { key } from './branding.js';
 import { createIconsIn, statusIcon } from './utils.js';
 import { stripCredentialParams } from './nfTicket.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层配置面板铺满屏 + 左上返回（桌面零变化）。
+import { mobileSheetBack } from './mobile/popSheet.js';
 
 const PANEL_CSS = `
 <style id="daemon-panel-css">
@@ -140,6 +142,9 @@ function ensureOverlay() {
     // Appended to <body>: never inside #daemon-panel (overflow:hidden clips it).
     document.body.appendChild(overlay);
   }
+  // 返回 = 关闭（与窗头 X / Esc 同路径 closeDaemonConfig）。index.html 声明态
+  // 与兜底创建态都要注入（弹窗退场批②；幂等——popSheet 按标记去重）。
+  mobileSheetBack(overlay, () => closeDaemonConfig());
   return overlay;
 }
 
@@ -268,6 +273,8 @@ export async function openDaemonConfig(id, trigger) {
   renderOverlay();
   positionOverlay(trigger);
   overlay.classList.add('open');
+  // 弹窗退场批：跨档重排后补注左上返回（幂等；非手机层不注入）。
+  mobileSheetBack(overlay, () => closeDaemonConfig());
   const first = overlay.querySelector('input, select, textarea, button');
   if (first) first.focus();
   bindKeyHandler();

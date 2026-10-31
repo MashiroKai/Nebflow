@@ -88,6 +88,8 @@ import { getAuthToken } from './neblink.js';
 // evidence/20261022_secrets-eye-converge/）。providersUi 单向提供，无环
 // （其依赖 state/ws/i18n/providerModels 均不回指本面板；main.js 顶层装配）。
 import { eyeSvg, eyeOffSvg } from './sidebar/providersUi.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层 secrets 面板铺满屏 + 左上返回（桌面零变化）。
+import { mobileSheetBack } from './mobile/popSheet.js';
 
 // ── State ────────────────────────────────────────────────────────────────
 /** Last list truth read from the backend (metadata only — no value field
@@ -760,6 +762,8 @@ export function openSecretsPanel() {
   if (!ov) return;
   lastFocusedBeforeOpen = /** @type {HTMLElement|null} */ (document.activeElement);
   ov.classList.add('on');
+  // 弹窗退场批：跨档重排后补注左上返回（幂等；非手机层不注入）。
+  mobileSheetBack(ov, closeSecretsPanel);
   applyStaticText();
   const first = modal()?.querySelector('button, input, select');
   if (first && 'focus' in first) /** @type {HTMLElement} */ (first).focus();
@@ -947,6 +951,9 @@ export function initSecretsPanel() {
   document.addEventListener('keydown', onKeydown);
   document.addEventListener('input', onInput);
   overlay()?.addEventListener('click', onOverlayClick);
+  // 返回语义 = 面板关闭（含明文清场，与窗头 X/Esc 同路径）。
+  const ovBack = overlay();
+  if (ovBack) mobileSheetBack(ovBack, closeSecretsPanel);
   window.addEventListener('locale-changed', () => {
     applyStaticText();
     renderList();
