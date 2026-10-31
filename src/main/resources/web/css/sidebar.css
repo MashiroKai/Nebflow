@@ -714,6 +714,11 @@
   border-bottom: 1px solid var(--color-frame-border-light);
 }
 .settings-row:last-child { border-bottom: none; }
+/* 人话批 2026-10-31：档参数逐项覆盖 = 行 + 「改了会怎样」hint 的两件一组；
+   分隔线落在组上，hint 贴着控件行、不收进 settings-row 的 flex 行内。 */
+.profile-ov-item { border-bottom: 1px solid var(--color-frame-border-light); }
+.profile-ov-item .settings-row { border-bottom: none; }
+.profile-ov-hint { padding: 0 0 10px; margin-top: -2px; }
 .settings-label {
   font-size: 13px;
   color: var(--color-text, #1b1e26);

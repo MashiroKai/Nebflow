@@ -75,16 +75,26 @@ export function renderProfileSection() {
     const base = curDef ? curDef[param] : '';
     const overridden = ov[param] !== undefined;
     const display = overridden ? ov[param] : String(base);
+    // 数值上界跟引擎校验面（PresentationProfile.MaxLinesBound/KeyNumbersBound）：
+    // maxLines ≤20、keyNumbers ≤9——此前两框共用 max=20，keyNumbers 10..20 会被
+    // 引擎拒（人话批 2026-10-31 审计顺手修正，纯属性订正，不动生效逻辑）。
+    const numMax = param === 'keyNumbers' ? 9 : 20;
     const control = kind === 'number'
-      ? `<input type="number" class="cfg-input profile-ov-input" data-param="${param}" value="${display}" min="1" max="20" style="width:64px">`
+      ? `<input type="number" class="cfg-input profile-ov-input" data-param="${param}" value="${display}" min="1" max="${numMax}" style="width:64px">`
       : `<select class="cfg-select profile-ov-input" data-param="${param}" style="width:auto">` +
         values.map(v =>
           `<option value="${v}"${v === display ? ' selected' : ''}>${t('profile.param.' + param + '.' + v)}</option>`
         ).join('') + '</select>';
-    return `<div class="settings-row">
-      <span class="settings-label">${t('profile.param.' + param)}${overridden ? ' <em>' + t('profile.overridden') + '</em>' : ''}</span>
-      ${control}
-      ${overridden ? `<button class="cfg-btn profile-ov-reset" data-param="${param}" type="button">${t('profile.reset')}</button>` : ''}
+    // 每项一行「改了会怎样」人话（profile.hint.*）：一句作用面 + 改前改后例子；
+    // 未接线项的 hint 内文已如实标注（审计：七参数全部暂无行为消费面）。
+    const hint = t('profile.hint.' + param);
+    return `<div class="profile-ov-item">
+      <div class="settings-row">
+        <span class="settings-label">${t('profile.param.' + param)}${overridden ? ' <em>' + t('profile.overridden') + '</em>' : ''}</span>
+        ${control}
+        ${overridden ? `<button class="cfg-btn profile-ov-reset" data-param="${param}" type="button">${t('profile.reset')}</button>` : ''}
+      </div>
+      ${hint ? `<div class="cfg-hint profile-ov-hint">${hint}</div>` : ''}
     </div>`;
   }).join('');
 
@@ -101,7 +111,9 @@ export function renderProfileSection() {
     <div class="cfg-hint" id="profile-desc">${t('profile.desc.' + cur)}</div>
     <div class="cfg-hint">${secondaryHint}</div>
     <div class="settings-section-title" style="margin-top:10px">${t('profile.overridesTitle')}</div>
+    <div class="cfg-hint">${t('profile.overridesIntro')}</div>
     ${overrideRows}
+    <div class="cfg-hint">${t('profile.wiringNote')}</div>
     <div class="cfg-hint">${calNote}</div>
   </div>`;
 }
