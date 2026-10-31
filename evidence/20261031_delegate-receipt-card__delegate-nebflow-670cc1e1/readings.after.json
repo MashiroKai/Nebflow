@@ -1,0 +1,790 @@
+{
+  "phase": "after",
+  "tiers": {
+    "desktopDark": [
+      {
+        "name": "DELEGATE · INTERNAL",
+        "badge": "COMPLETED",
+        "summary": "委托完成：通知卡重设计 + 回归。",
+        "hash": "",
+        "noteText": "+908 −202",
+        "contentDisplay": "none",
+        "chipCount": 0,
+        "headlineCount": 0,
+        "labelCount": 0,
+        "badgeColor": "rgb(123, 126, 136)",
+        "noteLook": {
+          "border": "0px",
+          "bg": "rgba(0, 0, 0, 0)",
+          "pad": "0px",
+          "color": "rgb(123, 126, 136)",
+          "pressed": "false"
+        },
+        "geo": {
+          "head": {
+            "x": 631.84375,
+            "y": 100,
+            "width": 209.625,
+            "height": 17,
+            "top": 100,
+            "right": 841.46875,
+            "bottom": 117,
+            "left": 631.84375
+          },
+          "summary": {
+            "x": 631.84375,
+            "y": 119,
+            "width": 209.625,
+            "height": 18.59375,
+            "top": 119,
+            "right": 841.46875,
+            "bottom": 137.59375,
+            "left": 631.84375
+          },
+          "note": {
+            "x": 631.84375,
+            "y": 139.59375,
+            "width": 59.609375,
+            "height": 17.046875,
+            "top": 139.59375,
+            "right": 691.453125,
+            "bottom": 156.640625,
+            "left": 631.84375
+          },
+          "name": {
+            "x": 631.84375,
+            "y": 100.75,
+            "width": 121.015625,
+            "height": 15.5,
+            "top": 100.75,
+            "right": 752.859375,
+            "bottom": 116.25,
+            "left": 631.84375
+          },
+          "badge": {
+            "x": 760.859375,
+            "y": 100,
+            "width": 80.609375,
+            "height": 17,
+            "top": 100,
+            "right": 841.46875,
+            "bottom": 117,
+            "left": 760.859375
+          },
+          "stacked": true,
+          "badgeRight": true
+        }
+      },
+      {
+        "name": "DELEGATE · CLAUDE-CODE",
+        "badge": "COMPLETED",
+        "summary": "外部执行器委托完成。",
+        "hash": "",
+        "noteText": "",
+        "contentDisplay": "none",
+        "chipCount": 0,
+        "headlineCount": 0,
+        "labelCount": 0,
+        "badgeColor": "rgb(123, 126, 136)",
+        "noteLook": null,
+        "geo": {
+          "head": {
+            "x": 606.25,
+            "y": 209.640625,
+            "width": 235.21875,
+            "height": 17,
+            "top": 209.640625,
+            "right": 841.46875,
+            "bottom": 226.640625,
+            "left": 606.25
+          },
+          "summary": {
+            "x": 606.25,
+            "y": 228.640625,
+            "width": 235.21875,
+            "height": 18.59375,
+            "top": 228.640625,
+            "right": 841.46875,
+            "bottom": 247.234375,
+            "left": 606.25
+          },
+          "note": null,
+          "name": {
+            "x": 606.25,
+            "y": 210.390625,
+            "width": 146.609375,
+            "height": 15.5,
+            "top": 210.390625,
+            "right": 752.859375,
+            "bottom": 225.890625,
+            "left": 606.25
+          },
+          "badge": {
+            "x": 760.859375,
+            "y": 209.640625,
+            "width": 80.609375,
+            "height": 17,
+            "top": 209.640625,
+            "right": 841.46875,
+            "bottom": 226.640625,
+            "left": 760.859375
+          },
+          "stacked": true,
+          "badgeRight": true
+        }
+      },
+      {
+        "name": "DELEGATE · stand · diff-split",
+        "badge": "COMPLETED",
+        "summary": "旧历史行第一行",
+        "hash": "",
+        "noteText": "+908 −202",
+        "contentDisplay": "none",
+        "chipCount": 0,
+        "headlineCount": 0,
+        "labelCount": 0,
+        "badgeColor": "rgb(123, 126, 136)",
+        "noteLook": {
+          "border": "0px",
+          "bg": "rgba(0, 0, 0, 0)",
+          "pad": "0px",
+          "color": "rgb(123, 126, 136)",
+          "pressed": "false"
+        },
+        "geo": {
+          "head": {
+            "x": 578.609375,
+            "y": 300.234375,
+            "width": 262.859375,
+            "height": 17,
+            "top": 300.234375,
+            "right": 841.46875,
+            "bottom": 317.234375,
+            "left": 578.609375
+          },
+          "summary": {
+            "x": 578.609375,
+            "y": 319.234375,
+            "width": 262.859375,
+            "height": 18.59375,
+            "top": 319.234375,
+            "right": 841.46875,
+            "bottom": 337.828125,
+            "left": 578.609375
+          },
+          "note": {
+            "x": 578.609375,
+            "y": 339.828125,
+            "width": 59.609375,
+            "height": 17.046875,
+            "top": 339.828125,
+            "right": 638.21875,
+            "bottom": 356.875,
+            "left": 578.609375
+          },
+          "name": {
+            "x": 578.609375,
+            "y": 300.984375,
+            "width": 174.25,
+            "height": 15.5,
+            "top": 300.984375,
+            "right": 752.859375,
+            "bottom": 316.484375,
+            "left": 578.609375
+          },
+          "badge": {
+            "x": 760.859375,
+            "y": 300.234375,
+            "width": 80.609375,
+            "height": 17,
+            "top": 300.234375,
+            "right": 841.46875,
+            "bottom": 317.234375,
+            "left": 760.859375
+          },
+          "stacked": true,
+          "badgeRight": true
+        }
+      },
+      {
+        "name": "DELEGATE · NEBFLOW · EXPLORER",
+        "badge": "RESULT",
+        "summary": "自定义 agent 委托（sender = agentDef.name，非 executor id）。",
+        "hash": "",
+        "noteText": "",
+        "contentDisplay": "none",
+        "chipCount": 0,
+        "headlineCount": 0,
+        "labelCount": 0,
+        "badgeColor": "rgb(123, 126, 136)",
+        "noteLook": null,
+        "geo": {
+          "head": {
+            "x": 483.203125,
+            "y": 409.875,
+            "width": 358.265625,
+            "height": 17,
+            "top": 409.875,
+            "right": 841.46875,
+            "bottom": 426.875,
+            "left": 483.203125
+          },
+          "summary": {
+            "x": 483.203125,
+            "y": 428.875,
+            "width": 358.265625,
+            "height": 18.59375,
+            "top": 428.875,
+            "right": 841.46875,
+            "bottom": 447.46875,
+            "left": 483.203125
+          },
+          "note": null,
+          "name": {
+            "x": 483.203125,
+            "y": 410.625,
+            "width": 295.21875,
+            "height": 15.5,
+            "top": 410.625,
+            "right": 778.421875,
+            "bottom": 426.125,
+            "left": 483.203125
+          },
+          "badge": {
+            "x": 786.421875,
+            "y": 409.875,
+            "width": 55.046875,
+            "height": 17,
+            "top": 409.875,
+            "right": 841.46875,
+            "bottom": 426.875,
+            "left": 786.421875
+          },
+          "stacked": true,
+          "badgeRight": true
+        }
+      },
+      {
+        "name": "DELEGATE · INTERNAL",
+        "badge": "MERGED",
+        "summary": "merged --no-ff into maine633bcd",
+        "hash": "e633bcd",
+        "noteText": "",
+        "contentDisplay": "none",
+        "chipCount": 0,
+        "headlineCount": 0,
+        "labelCount": 0,
+        "badgeColor": "rgb(123, 126, 136)",
+        "noteLook": null,
+        "geo": {
+          "head": {
+            "x": 647.875,
+            "y": 500.46875,
+            "width": 193.59375,
+            "height": 17,
+            "top": 500.46875,
+            "right": 841.46875,
+            "bottom": 517.46875,
+            "left": 647.875
+          },
+          "summary": {
+            "x": 647.875,
+            "y": 519.46875,
+            "width": 193.59375,
+            "height": 18.59375,
+            "top": 519.46875,
+            "right": 841.46875,
+            "bottom": 538.0625,
+            "left": 647.875
+          },
+          "note": null,
+          "name": {
+            "x": 647.875,
+            "y": 501.21875,
+            "width": 126.03125,
+            "height": 15.5,
+            "top": 501.21875,
+            "right": 773.90625,
+            "bottom": 516.71875,
+            "left": 647.875
+          },
+          "badge": {
+            "x": 781.90625,
+            "y": 500.46875,
+            "width": 59.5625,
+            "height": 17,
+            "top": 500.46875,
+            "right": 841.46875,
+            "bottom": 517.46875,
+            "left": 781.90625
+          },
+          "stacked": true,
+          "badgeRight": true
+        }
+      },
+      {
+        "name": "DELEGATE · INTERNAL",
+        "badge": "FAILED",
+        "summary": "merge round aborted: lane occupied by another batch",
+        "hash": "",
+        "noteText": "",
+        "contentDisplay": "none",
+        "chipCount": 0,
+        "headlineCount": 0,
+        "labelCount": 0,
+        "badgeColor": "rgb(123, 126, 136)",
+        "noteLook": null,
+        "geo": {
+          "head": {
+            "x": 536.484375,
+            "y": 591.0625,
+            "width": 304.984375,
+            "height": 17,
+            "top": 591.0625,
+            "right": 841.46875,
+            "bottom": 608.0625,
+            "left": 536.484375
+          },
+          "summary": {
+            "x": 536.484375,
+            "y": 610.0625,
+            "width": 304.984375,
+            "height": 18.59375,
+            "top": 610.0625,
+            "right": 841.46875,
+            "bottom": 628.65625,
+            "left": 536.484375
+          },
+          "note": null,
+          "name": {
+            "x": 536.484375,
+            "y": 591.8125,
+            "width": 245.5,
+            "height": 15.5,
+            "top": 591.8125,
+            "right": 781.984375,
+            "bottom": 607.3125,
+            "left": 536.484375
+          },
+          "badge": {
+            "x": 789.984375,
+            "y": 591.0625,
+            "width": 51.484375,
+            "height": 17,
+            "top": 591.0625,
+            "right": 841.46875,
+            "bottom": 608.0625,
+            "left": 789.984375
+          },
+          "stacked": true,
+          "badgeRight": true
+        }
+      }
+    ],
+    "narrow200": {
+      "nameScroll": 174,
+      "nameClient": 83,
+      "badgeW": 80.609375,
+      "badgeRightDelta": 0
+    },
+    "desktopLight": [
+      {
+        "name": "DELEGATE · INTERNAL",
+        "badge": "COMPLETED",
+        "summary": "委托完成：通知卡重设计 + 回归。",
+        "hash": "",
+        "noteText": "+908 −202",
+        "contentDisplay": "none",
+        "chipCount": 0,
+        "headlineCount": 0,
+        "labelCount": 0,
+        "badgeColor": "rgb(139, 142, 150)",
+        "noteLook": {
+          "border": "0px",
+          "bg": "rgba(0, 0, 0, 0)",
+          "pad": "0px",
+          "color": "rgb(139, 142, 150)",
+          "pressed": "false"
+        },
+        "geo": {
+          "head": {
+            "x": 683.828125,
+            "y": 104,
+            "width": 209.625,
+            "height": 17,
+            "top": 104,
+            "right": 893.453125,
+            "bottom": 121,
+            "left": 683.828125
+          },
+          "summary": {
+            "x": 683.828125,
+            "y": 123,
+            "width": 209.625,
+            "height": 18.59375,
+            "top": 123,
+            "right": 893.453125,
+            "bottom": 141.59375,
+            "left": 683.828125
+          },
+          "note": {
+            "x": 683.828125,
+            "y": 143.59375,
+            "width": 59.609375,
+            "height": 17.046875,
+            "top": 143.59375,
+            "right": 743.4375,
+            "bottom": 160.640625,
+            "left": 683.828125
+          },
+          "name": {
+            "x": 683.828125,
+            "y": 104.75,
+            "width": 121.015625,
+            "height": 15.5,
+            "top": 104.75,
+            "right": 804.84375,
+            "bottom": 120.25,
+            "left": 683.828125
+          },
+          "badge": {
+            "x": 812.84375,
+            "y": 104,
+            "width": 80.609375,
+            "height": 17,
+            "top": 104,
+            "right": 893.453125,
+            "bottom": 121,
+            "left": 812.84375
+          },
+          "stacked": true,
+          "badgeRight": true
+        }
+      },
+      {
+        "name": "DELEGATE · CLAUDE-CODE",
+        "badge": "COMPLETED",
+        "summary": "外部执行器委托完成。",
+        "hash": "",
+        "noteText": "",
+        "contentDisplay": "none",
+        "chipCount": 0,
+        "headlineCount": 0,
+        "labelCount": 0,
+        "badgeColor": "rgb(139, 142, 150)",
+        "noteLook": null,
+        "geo": {
+          "head": {
+            "x": 658.234375,
+            "y": 213.640625,
+            "width": 235.21875,
+            "height": 17,
+            "top": 213.640625,
+            "right": 893.453125,
+            "bottom": 230.640625,
+            "left": 658.234375
+          },
+          "summary": {
+            "x": 658.234375,
+            "y": 232.640625,
+            "width": 235.21875,
+            "height": 18.59375,
+            "top": 232.640625,
+            "right": 893.453125,
+            "bottom": 251.234375,
+            "left": 658.234375
+          },
+          "note": null,
+          "name": {
+            "x": 658.234375,
+            "y": 214.390625,
+            "width": 146.609375,
+            "height": 15.5,
+            "top": 214.390625,
+            "right": 804.84375,
+            "bottom": 229.890625,
+            "left": 658.234375
+          },
+          "badge": {
+            "x": 812.84375,
+            "y": 213.640625,
+            "width": 80.609375,
+            "height": 17,
+            "top": 213.640625,
+            "right": 893.453125,
+            "bottom": 230.640625,
+            "left": 812.84375
+          },
+          "stacked": true,
+          "badgeRight": true
+        }
+      }
+    ],
+    "tablet768": [
+      {
+        "name": "DELEGATE · INTERNAL",
+        "badge": "COMPLETED",
+        "summary": "委托完成：通知卡重设计 + 回归。",
+        "hash": "",
+        "noteText": "+908 −202",
+        "contentDisplay": "none",
+        "chipCount": 0,
+        "headlineCount": 0,
+        "labelCount": 0,
+        "badgeColor": "rgb(123, 126, 136)",
+        "noteLook": {
+          "border": "0px",
+          "bg": "rgba(0, 0, 0, 0)",
+          "pad": "0px",
+          "color": "rgb(123, 126, 136)",
+          "pressed": "false"
+        },
+        "geo": {
+          "head": {
+            "x": 528.375,
+            "y": 193.89773559570312,
+            "width": 209.625,
+            "height": 17,
+            "top": 193.89773559570312,
+            "right": 738,
+            "bottom": 210.89773559570312,
+            "left": 528.375
+          },
+          "summary": {
+            "x": 528.375,
+            "y": 212.89773559570312,
+            "width": 209.625,
+            "height": 18.59375,
+            "top": 212.89773559570312,
+            "right": 738,
+            "bottom": 231.49148559570312,
+            "left": 528.375
+          },
+          "note": {
+            "x": 528.375,
+            "y": 233.49148559570312,
+            "width": 59.609375,
+            "height": 17.046875,
+            "top": 233.49148559570312,
+            "right": 587.984375,
+            "bottom": 250.53836059570312,
+            "left": 528.375
+          },
+          "name": {
+            "x": 528.375,
+            "y": 194.64773559570312,
+            "width": 121.015625,
+            "height": 15.5,
+            "top": 194.64773559570312,
+            "right": 649.390625,
+            "bottom": 210.14773559570312,
+            "left": 528.375
+          },
+          "badge": {
+            "x": 657.390625,
+            "y": 193.89773559570312,
+            "width": 80.609375,
+            "height": 17,
+            "top": 193.89773559570312,
+            "right": 738,
+            "bottom": 210.89773559570312,
+            "left": 657.390625
+          },
+          "stacked": true,
+          "badgeRight": true
+        }
+      },
+      {
+        "name": "DELEGATE · INTERNAL",
+        "badge": "MERGED",
+        "summary": "merged --no-ff into maine633bcd",
+        "hash": "e633bcd",
+        "noteText": "",
+        "contentDisplay": "none",
+        "chipCount": 0,
+        "headlineCount": 0,
+        "labelCount": 0,
+        "badgeColor": "rgb(123, 126, 136)",
+        "noteLook": null,
+        "geo": {
+          "head": {
+            "x": 544.40625,
+            "y": 303.640625,
+            "width": 193.59375,
+            "height": 17,
+            "top": 303.640625,
+            "right": 738,
+            "bottom": 320.640625,
+            "left": 544.40625
+          },
+          "summary": {
+            "x": 544.40625,
+            "y": 322.640625,
+            "width": 193.59375,
+            "height": 18.59375,
+            "top": 322.640625,
+            "right": 738,
+            "bottom": 341.234375,
+            "left": 544.40625
+          },
+          "note": null,
+          "name": {
+            "x": 544.40625,
+            "y": 304.390625,
+            "width": 126.03125,
+            "height": 15.5,
+            "top": 304.390625,
+            "right": 670.4375,
+            "bottom": 319.890625,
+            "left": 544.40625
+          },
+          "badge": {
+            "x": 678.4375,
+            "y": 303.640625,
+            "width": 59.5625,
+            "height": 17,
+            "top": 303.640625,
+            "right": 738,
+            "bottom": 320.640625,
+            "left": 678.4375
+          },
+          "stacked": true,
+          "badgeRight": true
+        }
+      }
+    ],
+    "mobile390": [
+      {
+        "name": "DELEGATE · INTERNAL",
+        "badge": "COMPLETED",
+        "summary": "委托完成：通知卡重设计 + 回归。",
+        "hash": "",
+        "noteText": "+908 −202",
+        "contentDisplay": "none",
+        "chipCount": 0,
+        "headlineCount": 0,
+        "labelCount": 0,
+        "badgeColor": "rgb(123, 126, 136)",
+        "noteLook": {
+          "border": "0px",
+          "bg": "rgba(0, 0, 0, 0)",
+          "pad": "0px",
+          "color": "rgb(123, 126, 136)",
+          "pressed": "false"
+        },
+        "geo": {
+          "head": {
+            "x": 150.375,
+            "y": 193.89801025390625,
+            "width": 209.625,
+            "height": 17,
+            "top": 193.89801025390625,
+            "right": 360,
+            "bottom": 210.89801025390625,
+            "left": 150.375
+          },
+          "summary": {
+            "x": 150.375,
+            "y": 212.89801025390625,
+            "width": 209.625,
+            "height": 18.59375,
+            "top": 212.89801025390625,
+            "right": 360,
+            "bottom": 231.49176025390625,
+            "left": 150.375
+          },
+          "note": {
+            "x": 150.375,
+            "y": 233.49176025390625,
+            "width": 59.609375,
+            "height": 17.046875,
+            "top": 233.49176025390625,
+            "right": 209.984375,
+            "bottom": 250.53863525390625,
+            "left": 150.375
+          },
+          "name": {
+            "x": 150.375,
+            "y": 194.64801025390625,
+            "width": 121.015625,
+            "height": 15.5,
+            "top": 194.64801025390625,
+            "right": 271.390625,
+            "bottom": 210.14801025390625,
+            "left": 150.375
+          },
+          "badge": {
+            "x": 279.390625,
+            "y": 193.89801025390625,
+            "width": 80.609375,
+            "height": 17,
+            "top": 193.89801025390625,
+            "right": 360,
+            "bottom": 210.89801025390625,
+            "left": 279.390625
+          },
+          "stacked": true,
+          "badgeRight": true
+        }
+      },
+      {
+        "name": "DELEGATE · INTERNAL",
+        "badge": "MERGED",
+        "summary": "merged --no-ff into maine633bcd",
+        "hash": "e633bcd",
+        "noteText": "",
+        "contentDisplay": "none",
+        "chipCount": 0,
+        "headlineCount": 0,
+        "labelCount": 0,
+        "badgeColor": "rgb(123, 126, 136)",
+        "noteLook": null,
+        "geo": {
+          "head": {
+            "x": 166.40625,
+            "y": 303.640625,
+            "width": 193.59375,
+            "height": 17,
+            "top": 303.640625,
+            "right": 360,
+            "bottom": 320.640625,
+            "left": 166.40625
+          },
+          "summary": {
+            "x": 166.40625,
+            "y": 322.640625,
+            "width": 193.59375,
+            "height": 18.59375,
+            "top": 322.640625,
+            "right": 360,
+            "bottom": 341.234375,
+            "left": 166.40625
+          },
+          "note": null,
+          "name": {
+            "x": 166.40625,
+            "y": 304.390625,
+            "width": 126.03125,
+            "height": 15.5,
+            "top": 304.390625,
+            "right": 292.4375,
+            "bottom": 319.890625,
+            "left": 166.40625
+          },
+          "badge": {
+            "x": 300.4375,
+            "y": 303.640625,
+            "width": 59.5625,
+            "height": 17,
+            "top": 303.640625,
+            "right": 360,
+            "bottom": 320.640625,
+            "left": 300.4375
+          },
+          "stacked": true,
+          "badgeRight": true
+        }
+      }
+    ]
+  }
+}

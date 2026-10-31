@@ -7,6 +7,11 @@
 //  同线微调（2026-10-22 作者令「计数与 COMPLETED 同行」+ 品牌归一 NEBFLOW→STAND）：
 //  header 与 chip 同 flex 行（.nf-diff-headline），常规宽一行、窄面板截断；
 //  夹具项目段 nebflow→stand（夹具即演示数据，与真实项目名无关）。
+//  完工通知卡重设计批（2026-10-31 作者令「diff 胶囊很丑」+ 设计决定）：diff 胶囊
+//  （.nf-diff-chip）**整体退役**——delegate 终态回执改三行卡面（批次短名+判词
+//  单色徽标 / 一句话摘要 / +x−y 灰字小注 .nf-rcpt-note）；T1/T2/T12 随批重钉
+//  （小注继承 chip 的 diff 面板入口职责：点击 → 左栏文件列表 + Canvas 阅读面），
+//  T3–T11、T13 面板/阅读面断言面零改动。
 //  回访三令（2026-10-22「居中+材质+动画节奏」）：Canvas 粘顶文件头标题胶囊
 //  ①水平居中（sticky 视矩形按滚动容器自身 padding 内缩 ⇒ 水平恒零 padding，
 //  胶囊在无 padding sticky 定心层内居中，T10 钉死居中几何与「钉住偏移随
@@ -19,22 +24,24 @@
 //  浮动带之下，宽度无关零重叠）+ pointer-events 不拦截下方命中（定心层
 //  none/胶囊 auto，T13 几何不相交 + elementFromPoint 双臂钉死）。
 //  谱系：bug #58 修 2026-10-09（file-diff → 委托结果行）→ 2026-10-10 裁定
-//  （展开改 Canvas master-detail）→ 本批（交付气泡顶部摘要 chip；文件列表迁
-//  左栏 #panel-filechanges；Canvas 只剩选中文件阅读面；旧一体大面板退役））。
+//  （展开改 Canvas master-detail）→ 2026-10-22（交付气泡顶部摘要 chip；文件列表迁
+//  左栏 #panel-filechanges；Canvas 只剩选中文件阅读面；旧一体大面板退役）
+//  → 2026-10-31（chip 胶囊退役，灰字小注承位；完工通知卡三行面）。
 //
 // 被测真实链路（无 mock 替身层跳过渲染链）：
 //   WS 帧 {type:'user', injected:true, fileChanges} → main.js onMessage('user')
-//   → renderInjectedBubble → injectedRows.buildInjectedRow（交付气泡 + 顶部摘要 chip）
-//   → 点 chip → diffPanel.toggleDiffBatch → 左栏面板渲染 + activityBar.showSidePanel
+//   → renderInjectedBubble → injectedRows.buildInjectedRow（交付气泡 + 卡面/小注）
+//   → 点小注 → diffPanel.toggleDiffBatch → 左栏面板渲染 + activityBar.showSidePanel
 //   → diffCanvas.openFileChangesCanvas → canvas.js openTab(type 'filechanges') 阅读面。
 //
 // 断言面：
-//   T1 摘要条渲染：折叠态交付气泡顶部 chip（`3 files · +20001 −5`、aria-pressed
-//     =false）；chip **靠右对齐**（右缘贴气泡内容右缘，2026-10-22 回访令）；
-//     标签行不再携带旧 hint（信息一处呈现）。
+//   T1 摘要条渲染：折叠态交付气泡内灰字小注（`+20001 −5`、aria-pressed=false、
+//     零背景零边框零 padding——「不是 chip 不是胶囊」的构造性断言）；卡头 =
+//     批次短名（DELEGATE · stand · diff-batch）+ 判词单色徽标（COMPLETED）；
+//     摘要行 = payload 首行。
 //   T2 气泡内零 diff 面：展开体零 .nf-filechanges / 零 details / 零 .nf-diff
 //      （旧展开体 Changes 段退役）。
-//   T3 点击联动：点 chip → #panel-filechanges 激活（3 行：徽标/路径/+/−/来源；
+//   T3 点击联动：点小注 → #panel-filechanges 激活（3 行：徽标/路径/+/−/来源；
 //      首行选中态；meta 合计）+ body.canvas-open + type=filechanges 面板，
 //      焦点文件 = 第一个。
 //   T4 旧面板不在 DOM：Canvas pane 零 .fcv / .fcv-head / .fcv-nav（master-detail
@@ -42,9 +49,9 @@
 //   T5 超大 diff 全量：20000 行 diff 全量渲染（行数精确 + 最后一行在场）。
 //   T6 降级面：legit 降级（binary-file）原因行仍在；退役字符串零出现。
 //   T7 面板行切换：点第二行 → Canvas 换文件；上一文件 460k 行从 DOM 卸载。
-//   T8 多委托切换：批次 B chip → 面板换 B 文件列表、Canvas 换 B 焦点文件、
-//      面板恒 1（preview 替换）；chip 激活态随批次走（A false / B true）。
-//   T9 再点收起：已打开批次再点 chip → 侧栏收起（现有面板 toggle 语义）；再点
+//   T8 多委托切换：批次 B 小注 → 面板换 B 文件列表、Canvas 换 B 焦点文件、
+//      面板恒 1（preview 替换）；小注激活态随批次走（A false / B true）。
+//   T9 再点收起：已打开批次再点小注 → 侧栏收起（现有面板 toggle 语义）；再点
 //      → 复原（面板激活 + 侧栏展开）。
 //   T10 粘顶文件头标题胶囊（回访三令）：材质 = 全量 frosted token（glass-bg 底/
 //      blur saturate/描边/frost-shadow/999 圆角；旧全宽实条分隔线+实底退役）；
@@ -56,7 +63,7 @@
 //   T13 零重叠（追加令）：文件头胶囊 vs 卡头胶囊（.canvas-header）/deck fab
 //      （#deck-fab）矩形双轴不相交；elementFromPoint 双臂——胶囊中心命中
 //      胶囊自身、定心层空区（pointer-events:none）不拦截下方内容命中。
-//   T12 暗亮两态：翻 light 后 chip/面板/阅读面样式仍成立（全部颜色走既有
+//   T12 暗亮两态：翻 light 后小注/面板/阅读面样式仍成立（全部颜色走既有
 //      --color-* / glass token，零新色值的构造性证明）。
 //
 // 运行：node node_modules/@playwright/test/cli.js test tests/chat-diff-canvas.spec.mjs
@@ -170,81 +177,70 @@ async function injectCompletion(page, payload, header) {
   }, { payload, header: header || 'DELEGATE · stand · diff-batch · COMPLETED' });
 }
 
-/** 批次 chip 的统一取用器（第 n 个交付摘要条）。 */
-const chip = (page, n = 0) => page.locator('.bubble.injected .nf-diff-chip').nth(n);
+/** 批次小注的统一取用器（第 n 个交付摘要条；2026-10-31 起 = 灰字小注，旧 chip 退役）。 */
+const note = (page, n = 0) => page.locator('.bubble.injected .nf-rcpt-note').nth(n);
 
 test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', () => {
-  test('T1+T2 摘要条渲染于交付气泡顶部、气泡内零 diff 面', async ({ page }) => {
+  test('T1+T2 摘要条渲染于交付气泡（2026-10-31 卡面形态）、气泡内零 diff 面', async ({ page }) => {
     await bootApp(page);
     await injectCompletion(page, PAYLOAD_A);
 
-    // T1 — 折叠态 chip 在场：紧凑摘要（文件数 · +X −Y）、可点击标识（button +
-    //      aria-pressed 初始 false）；标签行回落纯四段头（旧 hint 摘除 = 信息
-    //      一处呈现，不再重复）。
+    // T1 — 折叠态小注在场：灰字一行（+X −Y）、可点击标识（button + aria-pressed
+    //      初始 false）；「不是 chip 不是胶囊」构造性断言 = 零背景零边框零 padding。
     const bubble = page.locator('.bubble.injected').first();
-    const c = chip(page);
+    const c = note(page);
     await expect(c).toBeVisible();
-    await expect(c).toHaveText(/3 files/);
-    await expect(c).toContainText('+20001');
-    await expect(c).toContainText('−5');
+    await expect(c).toHaveText('+20001 −5');
     await expect(c).toHaveAttribute('aria-pressed', 'false');
-    // chip 位于交付气泡顶部（label 之后、正文 content 之前的同 bubble 内）。
-    await expect(bubble.locator('.nf-diff-chip')).toHaveCount(1);
-    await expect(bubble.locator('.injected-source-label')).toHaveText('DELEGATE · stand · diff-batch · COMPLETED');
-    // 同线（2026-10-22 回访令「计数与 COMPLETED 同行」）：header + chip 装进
-    // 同一 .nf-diff-headline flex 行——chip 接在 COMPLETED 段之后、右缘贴行右缘
-    // （右对齐批语义由 label 弹性占满自由空间天然成立，rightGap < 1px）；
-    // 常规宽必一行（label flex:1 + nowrap + ellipsis，行高 = max(label,chip) 高）。
-    await expect(bubble.locator('.nf-diff-headline')).toHaveCount(1);
-    const geo = await c.evaluate((el) => {
-      const row = el.closest('.nf-diff-headline');
-      const label = row.querySelector('.injected-source-label');
-      const lr = label.getBoundingClientRect();
-      const cr = el.getBoundingClientRect();
-      const rr = row.getBoundingClientRect();
-      const bubbleEl = el.closest('.bubble');
-      const bcs = getComputedStyle(bubbleEl);
-      const ls = getComputedStyle(label);
+    await expect(bubble.locator('.nf-rcpt-note')).toHaveCount(1);
+    // 旧胶囊彻底退役（零 .nf-diff-chip / 零 .nf-diff-headline 于 DOM）。
+    await expect(bubble.locator('.nf-diff-chip')).toHaveCount(0);
+    await expect(bubble.locator('.nf-diff-headline')).toHaveCount(0);
+    // 完工通知卡头（重设计批）：批次短名 = header 去判词段（sender 缺席逐字保留
+    // 中段）+ 判词单色徽标 + 一句话摘要行（payload 首行）。
+    await expect(bubble.locator('.nf-rcpt-name')).toHaveText('DELEGATE · stand · diff-batch');
+    await expect(bubble.locator('.nf-rcpt-badge')).toHaveText('COMPLETED');
+    await expect(bubble.locator('.nf-rcpt-summary')).toHaveText('batch finished');
+    // delegate 卡分支下无通用标签行（判词已从串尾段移入徽标）。
+    await expect(bubble.locator('.injected-source-label')).toHaveCount(0);
+    const noteLook = await c.evaluate((el) => {
+      const cs = getComputedStyle(el);
       return {
-        sameLineCenterDelta: Math.abs((lr.top + lr.height / 2) - (cr.top + cr.height / 2)),
-        // 单行判据（紧凑化批 2026-10-28 重钉）：旧代理「行高=chip 高」在 chip
-        // 不再撑行后失效（行高由 label 决定）——改钉「行高=max(label,chip) 高」，
-        // 语义不变（仍单行、零换行）。
-        rowOneLine: Math.abs(rr.height - Math.max(lr.height, cr.height)) < 1,
-        chipAfterLabel: cr.left > lr.left,
-        rightGap: bubbleEl.getBoundingClientRect().right - parseFloat(bcs.paddingRight) - cr.right,
-        labelTruncatable: ls.whiteSpace === 'nowrap' && ls.textOverflow === 'ellipsis',
+        borderTopWidth: cs.borderTopWidth,
+        backgroundColor: cs.backgroundColor,
+        paddingLeft: cs.paddingLeft,
+        color: cs.color,
+        fontFamily: cs.fontFamily,
       };
     });
-    expect(geo.sameLineCenterDelta).toBeLessThan(3);
-    expect(geo.rowOneLine).toBe(true);
-    expect(geo.chipAfterLabel).toBe(true);
-    expect(geo.labelTruncatable).toBe(true);
-    // chip 靠右对齐（2026-10-22 回访令「把diff胶囊靠右对齐」）：右缘贴气泡内容
-    // 右缘（rightGap < 1px），左缘留白 > 0（非撑满、非居中）。
-    const align = await c.evaluate((el) => {
-      const bubbleEl = el.closest('.bubble');
+    expect(noteLook.borderTopWidth).toBe('0px');
+    expect(noteLook.backgroundColor === 'rgba(0, 0, 0, 0)' || noteLook.backgroundColor === 'transparent').toBe(true);
+    expect(noteLook.paddingLeft).toBe('0px');
+    // 墨族灰字（--color-text-muted 面，双主题 token——暗亮两档由 T12 覆盖）。
+    expect(noteLook.color).not.toBe('');
+    expect(noteLook.fontFamily).toContain('monospace');
+    // 判词徽标墨族单色（hairline 边框 + muted 文字，无色相填充）。
+    const badgeLook = await bubble.locator('.nf-rcpt-badge').evaluate((el) => {
       const cs = getComputedStyle(el);
-      const gap = bubbleEl.getBoundingClientRect().right
-        - parseFloat(getComputedStyle(bubbleEl).paddingRight)
-        - el.getBoundingClientRect().right;
-      return { rightGap: gap, display: cs.display, width: cs.width };
+      return { borderTopWidth: cs.borderTopWidth, borderTopStyle: cs.borderTopStyle, color: cs.color, backgroundColor: cs.backgroundColor };
     });
-    expect(align.rightGap).toBeLessThan(1);
-    expect(align.display).toBe('flex');
-    expect(parseFloat(align.width)).toBeGreaterThan(0);
+    expect(badgeLook.borderTopWidth).toBe('1px');
+    expect(badgeLook.borderTopStyle).toBe('solid');
+    expect(badgeLook.backgroundColor === 'rgba(0, 0, 0, 0)' || badgeLook.backgroundColor === 'transparent').toBe(true);
 
-    // T2 — 展开体内零 diff 面（旧 Changes 段退役）。
-    await bubble.locator('.injected-source-label').click();
+    // T2 — 展开体内零 diff 面（旧 Changes 段退役）。展开点击面 = 卡头/摘要行
+    //（.nf-rcpt-top 绑定折叠语义，旧 .injected-source-label 在 delegate 卡下不存在）。
+    await bubble.locator('.nf-rcpt-top').click();
+    await expect(bubble.locator('.injected-content')).toBeVisible();
     await expect(bubble.locator('.nf-filechanges')).toHaveCount(0);
     await expect(bubble.locator('details')).toHaveCount(0);
     await expect(bubble.locator('.nf-diff')).toHaveCount(0);
   });
 
-  test('T3+T4+T5 点 chip → 左栏面板 + Canvas 阅读面；旧 master-detail 不在 DOM；超大 diff 全量', async ({ page }) => {
+  test('T3+T4+T5 点小注 → 左栏面板 + Canvas 阅读面；旧 master-detail 不在 DOM；超大 diff 全量', async ({ page }) => {
     await bootApp(page);
     await injectCompletion(page, PAYLOAD_A);
-    await chip(page).click();
+    await note(page).click();
 
     // T3 — 左栏面板激活：面板族语言（.panel.active）、3 行、首行选中、meta 合计。
     const panel = page.locator('#panel-filechanges');
@@ -283,7 +279,7 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
   test('T6+T7 降级原因行保留、退役字符串零出现；面板行切换即卸载上一 diff', async ({ page }) => {
     await bootApp(page);
     await injectCompletion(page, PAYLOAD_A);
-    await chip(page).click();
+    await note(page).click();
     const panel = page.locator('#panel-filechanges');
     const pane = page.locator('.canvas-tab-pane[data-type="filechanges"]');
     await expect(pane).toBeVisible();
@@ -304,22 +300,22 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     await expect(pane.locator('.nf-diff-row')).toHaveCount(3); // hunk + -old + +new（无尾换行 ⇒ 3 行）
   });
 
-  test('T8 多委托切换：面板换批、Canvas 换焦点、chip 激活态随批走、面板数恒 1', async ({ page }) => {
+  test('T8 多委托切换：面板换批、Canvas 换焦点、小注激活态随批走、面板数恒 1', async ({ page }) => {
     await bootApp(page);
     await injectCompletion(page, PAYLOAD_A);
     await injectCompletion(page, PAYLOAD_B, 'DELEGATE · stand · batch-b · COMPLETED');
-    await expect(page.locator('.bubble.injected .nf-diff-chip')).toHaveCount(2);
+    await expect(page.locator('.bubble.injected .nf-rcpt-note')).toHaveCount(2);
 
-    // 打开批次 A → 面板 3 行、chip A 激活。
-    await chip(page, 0).click();
+    // 打开批次 A → 面板 3 行、小注 A 激活。
+    await note(page, 0).click();
     const panel = page.locator('#panel-filechanges');
     await expect(panel.locator('.nfp-list .nf-fc')).toHaveCount(3);
-    await expect(chip(page, 0)).toHaveAttribute('aria-pressed', 'true');
-    await expect(chip(page, 1)).toHaveAttribute('aria-pressed', 'false');
+    await expect(note(page, 0)).toHaveAttribute('aria-pressed', 'true');
+    await expect(note(page, 1)).toHaveAttribute('aria-pressed', 'false');
 
-    // 点批次 B chip → 面板换 B 文件列表（A 路径不在场）、Canvas 换 B 焦点文件、
+    // 点批次 B 小注 → 面板换 B 文件列表（A 路径不在场）、Canvas 换 B 焦点文件、
     // 面板数恒 1（同 preview 组替换，无标签垃圾）、激活态易主。
-    await chip(page, 1).click();
+    await note(page, 1).click();
     await expect(panel.locator('.nfp-list .nf-fc')).toHaveCount(2);
     await expect(panel.locator('.nfp-list')).toContainText('docs/b.md');
     await expect(panel.locator('.nfp-list')).not.toContainText('src/big.js');
@@ -327,25 +323,25 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     await expect(pane).toHaveCount(1);
     await expect(pane.locator('.fcv-filehead')).toContainText('docs/b.md');
     await expect(pane.locator('.nf-diff-body')).toContainText('+c');
-    await expect(chip(page, 0)).toHaveAttribute('aria-pressed', 'false');
-    await expect(chip(page, 1)).toHaveAttribute('aria-pressed', 'true');
+    await expect(note(page, 0)).toHaveAttribute('aria-pressed', 'false');
+    await expect(note(page, 1)).toHaveAttribute('aria-pressed', 'true');
   });
 
-  test('T9 再点收起：已打开批次再点 chip → 侧栏收起；再点 → 复原', async ({ page }) => {
+  test('T9 再点收起：已打开批次再点小注 → 侧栏收起；再点 → 复原', async ({ page }) => {
     await bootApp(page);
     await injectCompletion(page, PAYLOAD_A);
-    await chip(page).click();
+    await note(page).click();
     const panel = page.locator('#panel-filechanges');
     await expect(panel).toBeVisible();
     await expect(page.locator('body')).not.toHaveClass(/sidebar-collapsed/);
 
     // 已打开（同批次 + 面板激活 + 侧栏展开）再点 → 收起侧栏（现有面板 toggle 语义）。
-    await chip(page).click();
+    await note(page).click();
     await expect(page.locator('body')).toHaveClass(/sidebar-collapsed/);
     await expect(panel).not.toBeVisible(); // 收起 ⇒ 面板族全体失活
 
     // 再点 → 复原：侧栏展开 + 面板重新激活（同批次仍在面板承载）。
-    await chip(page).click();
+    await note(page).click();
     await expect(page.locator('body')).not.toHaveClass(/sidebar-collapsed/);
     await expect(panel).toBeVisible();
     await expect(panel).toHaveClass(/active/);
@@ -355,7 +351,7 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
   test('T10 粘顶文件头标题胶囊：frosted token 材质 + 水平居中 + 钉住几何恒等 + 动画慢档', async ({ page }) => {
     await bootApp(page);
     await injectCompletion(page, PAYLOAD_A);
-    await chip(page).click();
+    await note(page).click();
     const pane = page.locator('.canvas-tab-pane[data-type="filechanges"]');
     const view = pane.locator('.fcv-view');
     const head = pane.locator('.fcv-filehead');
@@ -449,7 +445,7 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
   test('T11 出现动画中间帧：换文件重建头部 ⇒ 0.36s 缓入重放（半途帧 + 终态归位）', async ({ page }) => {
     await bootApp(page);
     await injectCompletion(page, PAYLOAD_A);
-    await chip(page).click();
+    await note(page).click();
     const pane = page.locator('.canvas-tab-pane[data-type="filechanges"]');
     await expect(pane.locator('.fcv-filehead')).toContainText('src/big.js');
     await page.waitForTimeout(600); // 首次出现动画走完，采干净基线
@@ -482,7 +478,7 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
   test('T13 零重叠（作者追加令）：文件头胶囊 vs 卡头胶囊/deck fab 不相交 + 命中穿透', async ({ page }) => {
     await bootApp(page);
     await injectCompletion(page, PAYLOAD_A);
-    await chip(page).click();
+    await note(page).click();
     const pane = page.locator('.canvas-tab-pane[data-type="filechanges"]');
     const pill = pane.locator('.fcv-headpill');
     await expect(pill).toHaveCount(1);
@@ -529,16 +525,16 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     expect(hitTest.sideHitsWrapper).toBe(false);
   });
 
-  test('T12 暗亮两态：翻 light 后 chip / 面板 / 阅读面样式仍成立（零新色值）', async ({ page }) => {
+  test('T12 暗亮两态：翻 light 后小注 / 面板 / 阅读面样式仍成立（零新色值）', async ({ page }) => {
     await bootApp(page);
     await injectCompletion(page, PAYLOAD_A);
-    await chip(page).click();
+    await note(page).click();
     const panel = page.locator('#panel-filechanges');
     const pane = page.locator('.canvas-tab-pane[data-type="filechanges"]');
     await expect(pane).toBeVisible();
 
     await page.emulateMedia({ colorScheme: 'light' });
-    await expect(chip(page)).toBeVisible();
+    await expect(note(page)).toBeVisible();
     await expect(panel).toBeVisible();
     await expect(pane).toBeVisible();
     // 阅读面 = 定心层 + 胶囊：胶囊材质 token 亮档成立（glass-bg 亮值）、定心层
@@ -549,15 +545,22 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     });
     expect(reads.bg).toBe('rgba(255, 255, 255, 0.55)');
     expect(reads.backdrop).toContain('saturate(1.15)');
-    // chip 次档描边族仍在（sapphire button.glass-control：1px 描边 + 胶囊圆角 +
-    // 非透明描边色；本代次档 = 透明底 + 描边，背景断言不适用）。
-    const chipStyles = await chip(page).evaluate((el) => {
+    // 小注墨族灰字在亮档同样成立：透明底 + 零边框 + 非透明文字色（「灰字小注」
+    // 形态双主题不漂移；旧 glass chip 的描边/999 圆角断言随胶囊退役移除）。
+    const noteStyles = await note(page).evaluate((el) => {
       const cs = getComputedStyle(el);
-      return { border: cs.borderTopWidth, style: cs.borderTopStyle, color: cs.borderTopColor, radius: cs.borderRadius };
+      return { border: cs.borderTopWidth, bg: cs.backgroundColor, color: cs.color };
     });
-    expect(chipStyles.border).toBe('1px');
-    expect(chipStyles.style).toBe('solid');
-    expect(chipStyles.color).not.toBe('rgba(0, 0, 0, 0)');
-    expect(chipStyles.radius).toBe('999px');
+    expect(noteStyles.border).toBe('0px');
+    expect(noteStyles.bg === 'rgba(0, 0, 0, 0)' || noteStyles.bg === 'transparent').toBe(true);
+    expect(noteStyles.color).not.toBe('rgba(0, 0, 0, 0)');
+    // 判词徽标 hairline 边框亮档成立（墨族单色，两档同形态）。
+    const badgeStyles = await page.locator('.bubble.injected .nf-rcpt-badge').evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { border: cs.borderTopWidth, style: cs.borderTopStyle, color: cs.color };
+    });
+    expect(badgeStyles.border).toBe('1px');
+    expect(badgeStyles.style).toBe('solid');
+    expect(badgeStyles.color).not.toBe('rgba(0, 0, 0, 0)');
   });
 });
