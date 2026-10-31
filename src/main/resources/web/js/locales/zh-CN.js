@@ -679,6 +679,7 @@ export default {
   // GET /api/projects（与项目面板同源），文案仅浮层无匹配态与 ARIA 标签。
   'mention.title': '项目',
   'mention.noMatch': '无匹配项目',
+  'slash.title': '斜杠命令',
   'modal.newSession': '新建会话',
   'modal.sessionName': '会话名称',
   'modal.cancel': '取消',

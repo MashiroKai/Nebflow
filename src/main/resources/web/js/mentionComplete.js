@@ -290,6 +290,13 @@ function renderDropdown(view, input, token, projects) {
   ctx = { view, input };
   selected = 0;
   dd.textContent = '';
+  // 分组标题（换装批 2026-10-31）：类别签纯呈现 —— aria-hidden 非 option，
+  // 行序/键盘导航（.mention-item 索引）零影响。
+  const title = document.createElement('div');
+  title.className = 'dd-group-title';
+  title.setAttribute('aria-hidden', 'true');
+  title.textContent = t('mention.title');
+  dd.appendChild(title);
   if (items.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'mention-empty';
