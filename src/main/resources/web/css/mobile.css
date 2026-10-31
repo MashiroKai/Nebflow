@@ -61,6 +61,14 @@
     flex: 1 1 auto;
   }
 
+  /* 桌面边距还原批（2026-10-31 17:15 作者令）：chat.css 主规则的水平内距已
+     回退为 0（桌面回归靠边），手机端现行 16px 不在本批范围 —— 由本媒体
+     查询承接，保持 ≤768px 视口的现行形态逐字节不变。 */
+  #chat {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
   /* Rich message content must scroll inside its box, never widen the page. */
   #main pre,
   #main table {
