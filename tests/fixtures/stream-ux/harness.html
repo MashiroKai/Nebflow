@@ -175,7 +175,8 @@
 
     // E6 shape (stream-ux redesign 2026-10-03): a turn whose ONLY process is
     // thinking — the feed ran on the line (pre-tucked bubble), so the line
-    // settles into its OWN `.turn-header` (思考 stats); the assertion lives in
+    // settles into its OWN `.turn-header` (2026-10-31 归因行瘦身批: model
+    // only, no 思考-duration segment); the assertion lives in
     // tests/stream-ux.spec.mjs.
     window.__thinkingOnlyTurn = async () => {
       chatMod.renderUserBubble('只想不答的一轮', [], Date.now());

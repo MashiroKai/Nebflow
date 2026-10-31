@@ -75,7 +75,7 @@
 // data-nf-turn-terminal read here, so the last bare tool card folds too.
 
 import { t } from './i18n.js';
-import { formatDuration, chevronSvg } from './chat.js';
+import { chevronSvg } from './chat.js';
 import { isNearBottom } from './utils.js';
 // stream-ux redesign (2026-10-03 author demo): the running turn's line and the
 // terminal badge are THE SAME node. At the terminal this module settles the
@@ -84,7 +84,7 @@ import { isNearBottom } from './utils.js';
 // buildHeader insert below is only the fallback for turns with no live line
 // (history rebuild, popup restores). One-way dependency: workline.js imports
 // i18n + utils only, so this adds no cycle (chat.js → workline.js ← here).
-import { settleWorklineAsHeader, removeWorkline, priorTurnBadgeSettled } from './workline.js';
+import { settleWorklineAsHeader, removeWorkline, priorTurnBadgeSettled, buildBadgeLabel } from './workline.js';
 
 /* ---------- row classification ---------- */
 
@@ -185,26 +185,33 @@ function computeTurnStats(scope) {
   return { tools, files: files.size, thinkingMs };
 }
 
-/** The header's text as one string: `✻ 字句 · <model> · 思考 <N>s · 工具
- *  <M> 次 · 读写 <K> 文件`. The leading ✻ phrase is the v1-designed
- *  cosmology copy (2026-09-06 restoration — 批② had dropped it); segments
- *  with no data are omitted (history turns have no thinking timing; a
- *  text+thinking turn has no tool segment; a turn without a done badge has
- *  no phrase). Written ONCE per terminal — toggling never rewrites it
- *  (数字常驻不闪). Both header faces consume this: buildHeader's span and
- *  the work-line's terminal morph. */
-function headerTextString(meta, stats) {
+/** The header's segments as an array: `['✻ 字句', '<model>', '工具 <M> 次',
+ *  '读写 <K> 文件']`. The leading ✻ phrase is the v1-designed cosmology copy
+ *  (2026-09-06 restoration — 批② had dropped it); segments with no data are
+ *  omitted (a text+thinking turn has no tool segment; a turn without a done
+ *  badge has no phrase). Written ONCE per terminal — toggling never rewrites
+ *  it (数字常驻不闪). Both header faces consume this: buildHeader's span and
+ *  the work-line's terminal morph (settleWorklineAsHeader).
+ *
+ *  2026-10-31 归因行瘦身批（作者 10-31 15:36 令）: the `思考 <N>s` segment is
+ *  REMOVED from the attribution line — 工具次数保留，思考耗时不再上摘要行。
+ *  `stats.thinkingMs` 仍由 computeTurnStats 统计（展开面/其它消费者可用），
+ *  只是不再成为摘要行的一段。 */
+function headerSegments(meta, stats) {
   const parts = [];
   if (meta.phrase) parts.push(meta.phrase);
   if (meta.model) parts.push(meta.model);
-  if (stats.thinkingMs > 0) parts.push(t('chat.turnHeaderThinking', { d: formatDuration(stats.thinkingMs) }));
   if (stats.tools > 0) parts.push(t(stats.tools === 1 ? 'chat.turnSummaryToolsOne' : 'chat.turnSummaryTools', { n: stats.tools }));
   if (stats.files > 0) parts.push(t('chat.turnHeaderFiles', { n: stats.files }));
-  return parts.join(' · ');
+  return parts;
 }
 
+/** Render the segments into the text span: one `.nf-th-seg` per segment, one
+ *  `.nf-th-sep` (' · ') per boundary — the wrap opportunities live ONLY at the
+ *  separator spaces (segments are nowrap; 作者令 10-31), never mid-word.
+ *  textContent stays `seg · seg`, so every existing reader is unchanged. */
 function fillHeaderText(textEl, meta, stats) {
-  textEl.textContent = headerTextString(meta, stats);
+  buildBadgeLabel(textEl, headerSegments(meta, stats));
 }
 
 /* ---------- tuck / untuck (instant — the static .nf-tucked class owns the
@@ -405,10 +412,10 @@ export function collapseTurn(view, meta = {}) {
   let header = null;
   if (tuckable.length > 0) {
     const stats = computeTurnStats(rows);
-    const text = headerTextString(meta, stats);
+    const segments = headerSegments(meta, stats);
     // Same-element settle first (「过程全部展示在这一行」): the live line rolls
     // its last item out and the stats badge in, then becomes the header.
-    header = settleWorklineAsHeader(view, text, meta.title || '');
+    header = settleWorklineAsHeader(view, segments, meta.title || '');
     if (header) {
       header.dataset.turnState = 'done';
       header.setAttribute('aria-expanded', 'false');
