@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<!--
+  液体玻璃设计语言 · 效果图样张 v2（liquid-glass effect mockup v2）
+  出处与配套文档（图谱接线）：
+  设计稿 [[20261031_084400_liquid-glass-effect-v2__delegate-nebflow-a9ba5eff.zh-CN]]
+  前版 [[20261031_082100_liquid-glass-effect__delegate-nebflow-764d8fb0.zh-CN]]（v1，已被本版取代）
+  · 前作 [[20261030_201846_button-system-monochrome-redesign__delegate-nebflow-fa3d4d6f.zh-CN]]
+  作者令 2026-10-31 08:43 对 v1 的裁定（逐字+参考图两张）：
+    1. 按钮形态不对：要参考图那样——圆形悬浮图标钮（hamburger 圈）与圆角药丸钮（Select），真液体玻璃质感
+    2. 顶部不要明确的顶栏：移动端无 header 容器，操作钮左右两边悬浮；
+       顶部边缘=内容区，文字滚动到顶边时逐渐模糊渐隐（scroll-under edge fade），不是一条 bar
+    3. 按钮样式全端通用；顶部无栏样式只考虑手机端
+  参考图（作者外截）：.stand/uploads/d7c3cb54-.../556425261168916_IMG_1634.jpg（暗 · 圆钮+Select 药丸）
+                     .stand/uploads/d7c3cb54-.../556425262604166_IMG_1632.jpg（亮 · Projects 页无顶栏）
+  本文件是设计演示，不属于产品实现；只设计不实施，作者拍板后另开实现批。
+  结构：A 参考图解剖 → B 手机端·亮版（聊天/联系人/项目 三屏）→ C 手机端·暗版（三屏）
+        → D 桌面端按钮族对照（顶栏维持现状）→ E 材质配方全表 + 动效 → F 兼容降级。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>液体玻璃设计语言 v2 · 效果图样张（无顶栏 + 悬浮圆钮/药丸钮）</title>
+<style>
+/* ═══════════ 样张页面自身骨架（非产品代码） ═══════════ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
+  background: #eef0f4; color: #1b1e26; padding: 32px 24px 80px;
+  -webkit-font-smoothing: antialiased;
+}
+.spec-title { max-width: 1280px; margin: 0 auto 8px; font-size: 22px; font-weight: 600; }
+.spec-sub { max-width: 1280px; margin: 0 auto 24px; font-size: 13px; color: #6b6e76; line-height: 1.75; }
+.spec-sub code, .sec-note code { background: rgba(0,0,0,.06); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+.verdict-note { max-width: 1280px; margin: 0 auto 20px; font-size: 12.5px; line-height: 1.8;
+  background: #eef4ff; border: 1px solid #c7d8f7; border-radius: 12px; padding: 12px 16px; color: #28436e; }
+.verdict-note strong { color: #1b3a6b; }
+.section { max-width: 1280px; margin: 44px auto 0; }
+.section > h2 { font-size: 17px; font-weight: 600; margin-bottom: 4px; }
+.sec-note { font-size: 12px; color: #6b6e76; margin-bottom: 18px; line-height: 1.7; }
+.phone-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+@media (max-width: 1120px) { .phone-row { grid-template-columns: 1fr; } }
+.panel-tag { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .04em;
+  padding: 3px 9px; border-radius: 999px; margin-bottom: 8px; }
+.tag-new { background: #111827; color: #fff; }
+.tag-cur { background: #e5e6e9; color: #3a3d45; }
+.stage-caption { font-size: 11px; color: #8b8e96; margin-top: 8px; line-height: 1.65; }
+.stage-caption code { background: rgba(0,0,0,.06); padding: 0 4px; border-radius: 3px; }
+
+/* ═══════════ 手机壳（typical mobile 屏，内容可滚动） ═══════════ */
+.phone {
+  position: relative; height: 660px; border-radius: 42px; overflow: hidden;
+  border: 1px solid rgba(0,0,0,.14);
+  box-shadow: 0 2px 6px rgba(0,0,0,.06), 0 18px 44px rgba(0,0,0,.12);
+  background: var(--ph-bg);
+}
+.p-body { height: 100%; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.p-body::-webkit-scrollbar { display: none; }
+.p-content { padding: 108px 18px 26px; display: flex; flex-direction: column; gap: 12px; }
+.p-title { font-size: 27px; font-weight: 600; letter-spacing: -.02em; color: var(--ph-ink); }
+.p-subtitle { font-size: 12px; color: var(--ph-muted); margin-top: -8px; }
+.p-scrollhint { font-size: 11px; color: var(--ph-muted); text-align: center; padding: 4px 0; }
+
+/* ── 顶部滚入渐隐区（scroll-under edge fade）：不是栏，是内容顶边的模糊渐隐 ── */
+.edge-fade {
+  position: absolute; top: 0; left: 0; right: 0; height: 88px; z-index: 25;
+  pointer-events: none;
+  background: var(--g2-veil);
+  -webkit-backdrop-filter: blur(var(--g2-fade-blur)) saturate(var(--g2-fade-sat));
+  backdrop-filter: blur(var(--g2-fade-blur)) saturate(var(--g2-fade-sat));
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, rgba(0,0,0,.55) 50%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, rgba(0,0,0,.55) 50%, transparent 100%);
+}
+
+/* ── 液体玻璃圆形悬浮钮（参考图 hamburger 圈；全端通用，移动 48 / 桌面 40） ── */
+.fab {
+  position: absolute; top: 16px; z-index: 30; width: 48px; height: 48px; border-radius: 50%;
+  display: grid; place-items: center; cursor: pointer;
+  background-color: var(--g2-fab-bg);
+  background-image: linear-gradient(to bottom, var(--g2-fab-specular) 0%, transparent 46%);
+  -webkit-backdrop-filter: blur(16px) saturate(1.8);
+  backdrop-filter: blur(16px) saturate(1.8);
+  border: 1px solid var(--g2-fab-border);
+  box-shadow:
+    inset 0 1px 0 var(--g2-fab-highlight),
+    inset 0 -2px 5px var(--g2-fab-underedge),
+    0 8px 24px var(--g2-fab-shadow),
+    0 1px 3px var(--g2-fab-shadow);
+  color: var(--ph-ink);
+  transition: transform .18s cubic-bezier(.34,1.56,.64,1), box-shadow .18s ease, background-color .18s ease;
+}
+.fab:hover { background-color: var(--g2-fab-bg-hover); }
+.fab:active { transform: scale(.88); box-shadow: inset 0 1px 0 var(--g2-fab-highlight), inset 0 -2px 5px var(--g2-fab-underedge), 0 3px 10px var(--g2-fab-shadow); }
+.fab svg { width: 20px; height: 20px; }
+.fab-left { left: 16px; }
+.fab-right { right: 16px; }
+
+/* ── 药丸钮族（999px 全圆角；参考图 Select 形态） ── */
+.pill {
+  height: 44px; padding: 0 26px; border-radius: 999px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  font-size: 14px; font-weight: 500; letter-spacing: .01em;
+  transition: transform .18s cubic-bezier(.34,1.56,.64,1), box-shadow .18s ease, background-color .18s ease;
+}
+/* 药丸·液体玻璃（Select 形态，次级/模式选择） */
+.pill-glass {
+  background-color: var(--g2-fab-bg);
+  background-image: linear-gradient(to bottom, var(--g2-fab-specular) 0%, transparent 46%);
+  -webkit-backdrop-filter: blur(16px) saturate(1.8);
+  backdrop-filter: blur(16px) saturate(1.8);
+  border: 1px solid var(--g2-fab-border);
+  box-shadow:
+    inset 0 1px 0 var(--g2-fab-highlight),
+    inset 0 -2px 5px var(--g2-fab-underedge),
+    0 6px 20px var(--g2-fab-shadow);
+  color: var(--ph-ink);
+}
+.pill-glass:hover { background-color: var(--g2-fab-bg-hover); }
+.pill-glass:active { transform: scale(.95); }
+/* 药丸·墨玻璃（主操作；墨族底色 + 镜面高光 + 浮影，10-30 单色语义保留） */
+.pill-primary {
+  background: var(--g2-ink-bg); border: 1px solid var(--g2-ink-bg); color: var(--g2-ink-ink);
+  box-shadow: inset 0 1px 0 var(--g2-ink-highlight), 0 6px 20px var(--g2-ink-shadow);
+}
+.pill-primary:hover { background: var(--g2-ink-bg-hover); border-color: var(--g2-ink-bg-hover); }
+.pill-primary:active { transform: scale(.95); background: var(--g2-ink-bg-active); border-color: var(--g2-ink-bg-active); }
+.pill:disabled { opacity: .5; pointer-events: none; }
+.pill-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+/* ── 聊天页内容件 ── */
+.msg { max-width: 80%; padding: 9px 13px; border-radius: 15px; font-size: 13px; line-height: 1.55; }
+.msg-user { align-self: flex-end; background: #95ec69; color: #10241a; border-bottom-right-radius: 4px; }
+.msg-agent { align-self: flex-start; background: var(--ph-card); border: 1px solid var(--ph-card-border); border-bottom-left-radius: 4px; }
+.msg-src { display: block; font-size: 10px; color: var(--ph-muted); margin-bottom: 3px; letter-spacing: .03em; }
+/* 聊天输入条（底部悬浮玻璃条，结构不动，发送键=药丸墨玻璃） */
+.chat-input {
+  position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 30;
+  border-radius: 24px; padding: 10px 12px 10px 16px;
+  display: flex; align-items: center; gap: 10px;
+  background: var(--g2-input-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+  backdrop-filter: blur(24px) saturate(1.6);
+  border: 1px solid var(--g2-input-border);
+  box-shadow: inset 0 1px 0 var(--g2-input-specular), 0 8px 24px var(--g2-input-shadow);
+  color: var(--ph-muted); font-size: 13px;
+}
+.chat-input .send {
+  margin-left: auto; height: 32px; padding: 0 16px; font-size: 12px;
+}
+
+/* ── 联系人/项目内容件（密集行卡保持平面，不玻璃化——v1 §6 结论沿用） ── */
+.row-card {
+  display: flex; align-items: center; gap: 11px; padding: 11px 13px;
+  border-radius: 14px; background: var(--ph-card); border: 1px solid var(--ph-card-border);
+}
+.avatar {
+  width: 38px; height: 38px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; font-size: 13px; font-weight: 600; color: #fff;
+}
+.row-card .r-name { font-size: 13.5px; font-weight: 500; color: var(--ph-ink); }
+.row-card .r-meta { font-size: 11px; color: var(--ph-muted); margin-top: 2px; }
+.sec-head { font-size: 13px; font-weight: 600; color: var(--ph-ink); margin-top: 8px; letter-spacing: .01em; }
+
+/* ═══════════ v2 token — 亮档 ═══════════ */
+.ph-light {
+  --ph-bg: #f5f6f8; --ph-ink: #1b1e26; --ph-muted: #6b6e76;
+  --ph-card: #ffffff; --ph-card-border: rgba(0,0,0,.05);
+  --g2-fab-bg: rgba(255,255,255,.6); --g2-fab-bg-hover: rgba(255,255,255,.74);
+  --g2-fab-specular: rgba(255,255,255,.9); --g2-fab-highlight: rgba(255,255,255,.95);
+  --g2-fab-border: rgba(255,255,255,.9); --g2-fab-underedge: rgba(0,0,0,.08);
+  --g2-fab-shadow: rgba(0,0,0,.12);
+  --g2-ink-bg: #111827; --g2-ink-bg-hover: #374151; --g2-ink-bg-active: #0b1220; --g2-ink-ink: #ffffff;
+  --g2-ink-highlight: rgba(255,255,255,.18); --g2-ink-shadow: rgba(17,24,39,.25);
+  --g2-fade-blur: 18px; --g2-fade-sat: 1.5;
+  --g2-veil: linear-gradient(to bottom, rgba(245,246,248,.92) 0%, rgba(245,246,248,.45) 45%, rgba(245,246,248,0) 100%);
+  --g2-input-bg: linear-gradient(to bottom, rgba(255,255,255,.74), rgba(255,255,255,.58));
+  --g2-input-border: rgba(255,255,255,.75); --g2-input-specular: rgba(255,255,255,.9);
+  --g2-input-shadow: rgba(0,0,0,.08);
+}
+/* ═══════════ v2 token — 暗档 ═══════════ */
+.ph-dark {
+  --ph-bg: #13161c; --ph-ink: #e8eaed; --ph-muted: #9ba0aa;
+  --ph-card: #1c1f27; --ph-card-border: rgba(255,255,255,.06);
+  --g2-fab-bg: rgba(255,255,255,.14); --g2-fab-bg-hover: rgba(255,255,255,.2);
+  --g2-fab-specular: rgba(255,255,255,.28); --g2-fab-highlight: rgba(255,255,255,.35);
+  --g2-fab-border: rgba(255,255,255,.32); --g2-fab-underedge: rgba(0,0,0,.4);
+  --g2-fab-shadow: rgba(0,0,0,.5);
+  --g2-ink-bg: #e6edf3; --g2-ink-bg-hover: #ffffff; --g2-ink-bg-active: #c9d1d9; --g2-ink-ink: #0d1117;
+  --g2-ink-highlight: rgba(255,255,255,.5); --g2-ink-shadow: rgba(0,0,0,.5);
+  --g2-fade-blur: 18px; --g2-fade-sat: 1.5;
+  --g2-veil: linear-gradient(to bottom, rgba(19,22,28,.9) 0%, rgba(19,22,28,.4) 45%, rgba(19,22,28,0) 100%);
+  --g2-input-bg: linear-gradient(to bottom, rgba(28,32,44,.8), rgba(24,28,38,.62));
+  --g2-input-border: rgba(255,255,255,.14); --g2-input-specular: rgba(255,255,255,.16);
+  --g2-input-shadow: rgba(0,0,0,.4);
+}
+.ph-dark .msg-user { background: #2e5d3f; color: #d9f2e3; }
+
+/* ═══════════ A. 参考图解剖 ═══════════ */
+.ref-grid { max-width: 1280px; margin: 0 auto; display: grid; grid-template-columns: 300px 300px 1fr; gap: 18px; align-items: start; }
+@media (max-width: 1120px) { .ref-grid { grid-template-columns: 1fr; } }
+.ref-img { width: 100%; border-radius: 12px; border: 1px solid rgba(0,0,0,.1); }
+table.recipe { width: 100%; border-collapse: collapse; font-size: 12.5px; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+table.recipe th, table.recipe td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #eef0f4; vertical-align: top; }
+table.recipe th { background: #f7f8fa; font-weight: 600; font-size: 12px; color: #3a3d45; white-space: nowrap; }
+table.recipe td code { background: rgba(0,0,0,.06); padding: 0 4px; border-radius: 3px; font-size: 11.5px; white-space: nowrap; }
+table.recipe td:first-child { font-weight: 500; white-space: nowrap; }
+
+/* ═══════════ D. 桌面端对照 ═══════════ */
+.compare-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 1120px) { .compare-row { grid-template-columns: 1fr; } }
+.desk-panel { background: #fff; border-radius: 14px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.05); }
+.desk-strip { border-radius: 12px; padding: 22px 18px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  background: linear-gradient(135deg, #dfe5ee, #cdd6e4); }
+.desk-strip .cap { width: 100%; font-size: 11px; color: #5b6472; margin-bottom: 2px; }
+/* 现状按钮（10-30 实现值，圆角矩形族） */
+.cur-btn { font-size: 12px; padding: 7px 14px; border-radius: 8px; cursor: pointer; font-weight: 500; }
+.cur-primary { border: 1px solid #111827; background: #111827; color: #fff; }
+.cur-secondary { border: 1px solid rgba(255,255,255,.4); background: rgba(255,255,255,.45);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2); backdrop-filter: blur(10px) saturate(1.2);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.5), inset 0 -1px 0 rgba(0,0,0,.08), 0 1px 3px rgba(0,0,0,.06), 0 2px 8px rgba(0,0,0,.04); color: #1b1e26; }
+.cur-icon { width: 36px; height: 36px; border-radius: 50%; padding: 0; display: grid; place-items: center;
+  border: 1px solid rgba(255,255,255,.4); background: rgba(255,255,255,.45);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2); backdrop-filter: blur(10px) saturate(1.2);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.5), inset 0 -1px 0 rgba(0,0,0,.08), 0 1px 3px rgba(0,0,0,.06), 0 2px 8px rgba(0,0,0,.04); color: #1b1e26; }
+/* v2 按钮（桌面尺寸：圆钮 40 / 药丸高 36；材质与手机端同一族） */
+.desk-strip .fab { position: static; width: 40px; height: 40px; }
+.desk-strip .fab svg { width: 17px; height: 17px; }
+.desk-strip .pill { height: 36px; padding: 0 20px; font-size: 13px; }
+
+.fallback-note { max-width: 1280px; margin: 32px auto 0; font-size: 12.5px; line-height: 1.8; background: #fff8e6; border: 1px solid #f0dfae; border-radius: 12px; padding: 12px 16px; color: #6b5d1f; }
+.fallback-note code { background: rgba(0,0,0,.06); padding: 0 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<h1 class="spec-title">液体玻璃设计语言 v2 · 效果图样张</h1>
+<p class="spec-sub">
+  v1 被作者 10-31 08:43 裁定打回后修订：① 按钮形态改为<strong>圆形悬浮钮 + 药丸钮</strong>（参考图质感）；
+  ② 手机端<strong>取消顶栏容器</strong>，操作钮左右悬浮，内容滚到顶边<strong>模糊渐隐</strong>；
+  ③ 按钮样式<strong>全端通用</strong>，无顶栏样式仅手机端。页面均为高保真演示，可滚动 / 可 hover / 可按压。
+</p>
+<div class="verdict-note">
+  <strong>作者裁定（10-31 08:43，逐字+参考图）：</strong>
+  1. 按钮形态不对：要参考图那样——圆形悬浮图标钮（hamburger 圈）与圆角药丸钮（Select），真液体玻璃质感。<br>
+  2. 顶部不要明确的顶栏：移动端无 header 容器，操作钮左右两边悬浮；顶部边缘=内容区，文字滚动到顶边时逐渐模糊渐隐（scroll-under edge fade），不是一条 bar。<br>
+  3. 按钮样式全端通用；顶部无栏样式只考虑手机端。
+</div>
+
+<!-- ═══════ A. 参考图解剖 ═══════ -->
+<div class="section">
+  <h2>A · 参考图解剖（作者 10-31 08:43 外截）</h2>
+  <p class="sec-note">左：暗档圆钮 + Select 药丸钮特写（液体玻璃质感基准）· 右：亮档 Projects 页（无顶栏、双悬浮圆钮、内容滚入顶边渐隐）· 表：从参考图读出的解剖值</p>
+  <div class="ref-grid">
+    <div>
+      <span class="panel-tag tag-new">参考图 ① 暗 · 圆钮 + 药丸</span>
+      <img class="ref-img" src="file:///Users/kaiyu/.stand/uploads/d7c3cb54-dd90-4f3f-bbf6-e7898c425cff/556425261168916_IMG_1634.jpg" alt="参考图①：圆形 hamburger 悬浮钮 + Select 药丸钮，液体玻璃">
+      <div class="stage-caption">圆钮 ≈48–52px 正圆，玻璃底 + 上半镜面高光 + 白图标；Select 为 999px 全药丸（高 ≈2.4× 字号），同材质、字重 500–600。</div>
+    </div>
+    <div>
+      <span class="panel-tag tag-new">参考图 ② 亮 · Projects 无顶栏</span>
+      <img class="ref-img" src="file:///Users/kaiyu/.stand/uploads/d7c3cb54-dd90-4f3f-bbf6-e7898c425cff/556425262604166_IMG_1632.jpg" alt="参考图②：Projects 页，左右悬浮圆钮，内容滚到顶边模糊渐隐">
+      <div class="stage-caption">无 header 容器；左右白玻璃圆钮悬浮顶缘两侧；「Created by you / Shared with you」滚到顶边时先强模糊再渐隐——即本稿的 edge-fade 区。</div>
+    </div>
+    <div>
+      <table class="recipe">
+        <tr><th>部位</th><th>参考图解剖值</th></tr>
+        <tr><td>圆钮</td><td>正圆 ≈48–52px；玻璃白 55–65%；<code>blur(14–18px) saturate(1.8)</code>；上半镜面高光层；<code>1px</code> 亮白边；底部 inset 折射；扩散浮影</td></tr>
+        <tr><td>药丸钮</td><td><code>border-radius:999px</code>；高 ≈2.4× 字号、padding 宽绰；材质与圆钮同族（Select 即玻璃药丸，非实心）</td></tr>
+        <tr><td>顶边渐隐</td><td>无栏；顶缘 <code>≈80–90px</code> 渐隐带：最顶强模糊 + 底色 veil 渐隐，ease-out；文字过顶边「先糊后没」</td></tr>
+        <tr><td>标题</td><td>页标题在内容流内（随滚动离开），非固定栏；<code>27px / 600</code> 量级</td></tr>
+        <tr><td>按压（推断）</td><td>整体收缩回弹（iOS Liquid Glass 语汇），<code>scale(.88–.95)</code>，spring ≈180ms</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ B. 手机端 · 亮版 ═══════ -->
+<div class="section">
+  <h2>B · 手机端 · 亮版 —— 无顶栏 · 左右悬浮圆钮 · 顶边滚入渐隐</h2>
+  <p class="sec-note">三屏（聊天 / 联系人 / 项目）同套规则：<strong>没有 header 容器</strong>；左右 48px 液体玻璃圆钮悬浮顶缘；
+  页标题在内容流内随滚动离开；内容滚入顶缘 88px 渐隐带（blur 18 + veil + mask ease-out）。请逐屏滚动查看。</p>
+  <div class="phone-row ph-light">
+
+    <!-- 聊天页 -->
+    <div>
+      <span class="panel-tag tag-new">聊天页（亮）</span>
+      <div class="phone">
+        <div class="p-body" id="demo-scroll-chat-light">
+          <div class="p-content">
+            <div class="p-title">会话</div>
+            <div class="p-subtitle">3 个项目 · 12 个进行中任务</div>
+            <div class="p-scrollhint">— 向上滚动：消息滚入顶边渐隐 —</div>
+            <div class="msg msg-agent"><span class="msg-src">NEBULA · AGENT · RESULT</span>部署日志：12 个 suite 全绿，截图证据已归档。</div>
+            <div class="msg msg-user">收到，把对比图发到设计频道。</div>
+            <div class="msg msg-agent"><span class="msg-src">TEAM · ALPHA · MESSAGE</span>周报草稿已同步到 docs/design/ 目录。</div>
+            <div class="msg msg-user">液体玻璃 v2 样张看了吗？顶栏取消了。</div>
+            <div class="msg msg-agent"><span class="msg-src">NEBULA · AGENT · RESULT</span>是的：无 header，左右圆钮悬浮，内容滚到顶边先模糊后渐隐。</div>
+            <div class="msg msg-user">按钮也都换成圆钮和药丸了，按压会回弹。</div>
+            <div class="msg msg-agent"><span class="msg-src">SYSTEM</span>这就是参考图 ② 的 Projects 页形态在聊天页的落地。</div>
+            <div class="p-scrollhint">— 到底了 —</div>
+          </div>
+        </div>
+        <div class="edge-fade"></div>
+        <button class="fab fab-left" aria-label="菜单"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
+        <button class="fab fab-right" aria-label="新建会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+        <div class="chat-input">输入消息…<button class="pill pill-primary send">发送</button></div>
+      </div>
+      <div class="stage-caption">聊天页：无顶栏；左☰右＋圆钮悬浮；消息滚入 88px 渐隐带（本屏已预滚一段，可直接看到「先糊后没」）；底部玻璃输入条，发送键=墨玻璃药丸（<code>h32 / r999</code>）。</div>
+    </div>
+
+    <!-- 联系人页 -->
+    <div>
+      <span class="panel-tag tag-new">联系人页（亮）</span>
+      <div class="phone">
+        <div class="p-body">
+          <div class="p-content">
+            <div class="p-title">联系人</div>
+            <div class="p-subtitle">常用协作者 6 人</div>
+            <div class="pill-row" style="margin:2px 0 4px">
+              <button class="pill pill-primary">添加联系人</button>
+              <button class="pill pill-glass">Select</button>
+            </div>
+            <div class="sec-head">常用</div>
+            <div class="row-card"><div class="avatar" style="background:#5b8def">K</div><div><div class="r-name">Kaiyu</div><div class="r-meta">在线 · 3 个共同项目</div></div></div>
+            <div class="row-card"><div class="avatar" style="background:#4aa88c">A</div><div><div class="r-name">Alpha Agent</div><div class="r-meta">团队空间 · 刚刚活跃</div></div></div>
+            <div class="row-card"><div class="avatar" style="background:#c2784a">N</div><div><div class="r-name">Nebula Root</div><div class="r-meta">调度器 · 在线</div></div></div>
+            <div class="sec-head">全部</div>
+            <div class="row-card"><div class="avatar" style="background:#8a6fd6">M</div><div><div class="r-name">Mashiro</div><div class="r-meta">2 个共同项目</div></div></div>
+            <div class="row-card"><div class="avatar" style="background:#4a90c2">B</div><div><div class="r-name">Beta Agent</div><div class="r-meta">团队空间 · 昨天活跃</div></div></div>
+            <div class="p-scrollhint">— 向上滚动看顶边渐隐 —</div>
+            <div class="row-card"><div class="avatar" style="background:#c24a6f">Q</div><div><div class="r-name">QA Runner</div><div class="r-meta">只读 · 离线</div></div></div>
+            <div class="row-card"><div class="avatar" style="background:#6f9c4a">D</div><div><div class="r-name">Docs Bot</div><div class="r-meta">服务账号</div></div></div>
+          </div>
+        </div>
+        <div class="edge-fade"></div>
+        <button class="fab fab-left" aria-label="菜单"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
+        <button class="fab fab-right" aria-label="添加"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>
+      <div class="stage-caption">联系人页：页标题与药丸操作组都在内容流内（随滚动离开顶边渐隐）；行卡保持平面不玻璃化；主操作=墨玻璃药丸，模式选择=玻璃药丸（参考图 Select 形态）。</div>
+    </div>
+
+    <!-- 项目页 -->
+    <div>
+      <span class="panel-tag tag-new">项目页（亮）</span>
+      <div class="phone">
+        <div class="p-body">
+          <div class="p-content">
+            <div class="p-title">项目</div>
+            <div class="p-subtitle">创建：stand · 排序：最近活跃</div>
+            <div class="sec-head">我创建的</div>
+            <div class="row-card"><div class="avatar" style="background:#111827">S</div><div><div class="r-name">Stand 控制台</div><div class="r-meta">12 节点 · 3 条活跃链 · 2 分钟前</div></div></div>
+            <div class="row-card"><div class="avatar" style="background:#374151">W</div><div><div class="r-name">wiki-docs 校验器</div><div class="r-meta">4 节点 · 昨天</div></div></div>
+            <div class="sec-head">协作项目</div>
+            <div class="row-card"><div class="avatar" style="background:#5b8def">F</div><div><div class="r-name">frontend-dev 插件</div><div class="r-meta">8 节点 · 1 小时前</div></div></div>
+            <div class="row-card"><div class="avatar" style="background:#4aa88c">Q</div><div><div class="r-name">QA harness</div><div class="r-meta">6 节点 · 周三</div></div></div>
+            <div class="row-card"><div class="avatar" style="background:#8a6fd6">M</div><div><div class="r-name">merge-queue 车道</div><div class="r-meta">5 节点 · 上周</div></div></div>
+            <div class="row-card"><div class="avatar" style="background:#c2784a">T</div><div><div class="r-name">triple-line 集成</div><div class="r-meta">9 节点 · 10-28</div></div></div>
+            <div class="row-card"><div class="avatar" style="background:#4a90c2">D</div><div><div class="r-name">design-cards 包</div><div class="r-meta">3 节点 · 10-26</div></div></div>
+            <div class="p-scrollhint">— 向上滚动：分区标题滚入顶边渐隐 —</div>
+            <div class="row-card"><div class="avatar" style="background:#c24a6f">L</div><div><div class="r-name">legacy 迁移</div><div class="r-meta">已归档 · 10-20</div></div></div>
+          </div>
+        </div>
+        <div class="edge-fade"></div>
+        <button class="fab fab-left" aria-label="菜单"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
+        <button class="fab fab-right" aria-label="新建项目"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>
+      <div class="stage-caption">项目页：对照参考图 ② 一一对应——Projects 标题在内容流内、「我创建的/协作项目」分区标题滚入顶边渐隐、左右圆钮悬浮。行卡平面（密集列表不玻璃化）。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ C. 手机端 · 暗版 ═══════ -->
+<div class="section">
+  <h2>C · 手机端 · 暗版 —— 同一套规则延展到暗档</h2>
+  <p class="sec-note">参考图无暗档，暗档为同配方延展：玻璃浓度上调（白 14%）、镜面高光 28%、投影 .5 维持浮起；渐隐带 veil 换暗底色。</p>
+  <div class="phone-row ph-dark">
+
+    <!-- 聊天页 暗 -->
+    <div>
+      <span class="panel-tag tag-new">聊天页（暗）</span>
+      <div class="phone">
+        <div class="p-body" id="demo-scroll-chat-dark">
+          <div class="p-content">
+            <div class="p-title">会话</div>
+            <div class="p-subtitle">3 个项目 · 12 个进行中任务</div>
+            <div class="p-scrollhint">— 向上滚动看渐隐 —</div>
+            <div class="msg msg-agent"><span class="msg-src">NEBULA · AGENT · RESULT</span>暗档液体玻璃：白 14% 玻璃底 + 28% 镜面高光层。</div>
+            <div class="msg msg-user">渐隐带在暗底上更含蓄，但高光边勾出层次。</div>
+            <div class="msg msg-agent"><span class="msg-src">TEAM · ALPHA · MESSAGE</span>投影加深 rgba(0,0,0,.5) 维持浮起感。</div>
+            <div class="msg msg-user">按压回弹两档主题一致：scale .88 / .95。</div>
+            <div class="msg msg-agent"><span class="msg-src">SYSTEM</span>发送键暗档翻浅灰墨玻璃，白 50% 顶高光。</div>
+            <div class="p-scrollhint">— 到底了 —</div>
+          </div>
+        </div>
+        <div class="edge-fade"></div>
+        <button class="fab fab-left" aria-label="菜单"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
+        <button class="fab fab-right" aria-label="新建会话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+        <div class="chat-input">输入消息…<button class="pill pill-primary send">发送</button></div>
+      </div>
+      <div class="stage-caption">暗档聊天页：无顶栏同亮档；玻璃浓度 14%、高光 28%、浮影 .5；输入条同族升级；发送键=暗档墨玻璃药丸。</div>
+    </div>
+
+    <!-- 联系人页 暗 -->
+    <div>
+      <span class="panel-tag tag-new">联系人页（暗）</span>
+      <div class="phone">
+        <div class="p-body">
+          <div class="p-content">
+            <div class="p-title">联系人</div>
+            <div class="p-subtitle">常用协作者 6 人</div>
+            <div class="pill-row" style="margin:2px 0 4px">
+              <button class="pill pill-primary">添加联系人</button>
+              <button class="pill pill-glass">Select</button>
+            </div>
+            <div class="sec-head">常用</div>
+            <div class="row-card"><div class="avatar" style="background:#5b8def">K</div><div><div class="r-name">Kaiyu</div><div class="r-meta">在线 · 3 个共同项目</div></div></div>
+            <div class="row-card"><div class="avatar" style="background:#4aa88c">A</div><div><div class="r-name">Alpha Agent</div><div class="r-meta">团队空间 · 刚刚活跃</div></div></div>
+            <div class="row-card"><div class="avatar" style="background:#c2784a">N</div><div><div class="r-name">Nebula Root</div><div class="r-meta">调度器 · 在线</div></div></div>
+            <div class="sec-head">全部</div>
+            <div class="row-card"><div class="avatar" style="background:#8a6fd6">M</div><div><div class="r-name">Mashiro</div><div class="r-meta">2 个共同项目</div></div></div>
+            <div class="row-card"><div class="avatar" style="background:#4a90c2">B</div><div><div class="r-name">Beta Agent</div><div class="r-meta">团队空间 · 昨天活跃</div></div></div>
+            <div class="p-scrollhint">— 向上滚动看顶边渐隐 —</div>
+            <div class="row-card"><div class="avatar" style="background:#c24a6f">Q</div><div><div class="r-name">QA Runner</div><div class="r-meta">只读 · 离线</div></div></div>
+          </div>
+        </div>
+        <div class="edge-fade"></div>
+        <button class="fab fab-left" aria-label="菜单"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
+        <button class="fab fab-right" aria-label="添加"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>
+      <div class="stage-caption">暗档联系人页：药丸双形态（墨玻璃主操作 / 玻璃模式选择）在暗底上的质感；行卡暗面平面。</div>
+    </div>
+
+    <!-- 项目页 暗 -->
+    <div>
+      <span class="panel-tag tag-new">项目页（暗）</span>
+      <div class="phone">
+        <div class="p-body">
+          <div class="p-content">
+            <div class="p-title">项目</div>
+            <div class="p-subtitle">创建：stand · 排序：最近活跃</div>
+            <div class="sec-head">我创建的</div>
+            <div class="row-card"><div class="avatar" style="background:#e6edf3;color:#0d1117">S</div><div><div class="r-name">Stand 控制台</div><div class="r-meta">12 节点 · 2 分钟前</div></div></div>
+            <div class="row-card"><div class="avatar" style="background:#374151">W</div><div><div class="r-name">wiki-docs 校验器</div><div class="r-meta">4 节点 · 昨天</div></div></div>
+            <div class="sec-head">协作项目</div>
+            <div class="row-card"><div class="avatar" style="background:#5b8def">F</div><div><div class="r-name">frontend-dev 插件</div><div class="r-meta">8 节点 · 1 小时前</div></div></div>
+            <div class="row-card"><div class="avatar" style="background:#4aa88c">Q</div><div><div class="r-name">QA harness</div><div class="r-meta">6 节点 · 周三</div></div></div>
+            <div class="row-card"><div class="avatar" style="background:#8a6fd6">M</div><div><div class="r-name">merge-queue 车道</div><div class="r-meta">5 节点 · 上周</div></div></div>
+            <div class="p-scrollhint">— 向上滚动：分区标题滚入顶边渐隐 —</div>
+            <div class="row-card"><div class="avatar" style="background:#c2784a">T</div><div><div class="r-name">triple-line 集成</div><div class="r-meta">9 节点 · 10-28</div></div></div>
+            <div class="row-card"><div class="avatar" style="background:#4a90c2">D</div><div><div class="r-name">design-cards 包</div><div class="r-meta">3 节点 · 10-26</div></div></div>
+          </div>
+        </div>
+        <div class="edge-fade"></div>
+        <button class="fab fab-left" aria-label="菜单"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
+        <button class="fab fab-right" aria-label="新建项目"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+      </div>
+      <div class="stage-caption">暗档项目页：与参考图 ② 同构（标题入流、分区标题滚入渐隐、双悬浮圆钮），材质按暗档配方上调浓度。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ D. 桌面端：仅按钮族对照（顶栏维持现状） ═══════ -->
+<div class="section">
+  <h2>D · 桌面端 —— 按钮族对照页（顶栏维持现状，不动）</h2>
+  <p class="sec-note">按作者裁定 ③：按钮样式全端通用（桌面尺寸圆钮 40 / 药丸高 36，材质同一族）；<strong>无顶栏样式只考虑手机端</strong>——桌面端
+  <code>#header</code> 容器维持 10-30 现状，不在本批范围。下列对照只覆盖按钮族。</p>
+  <div class="compare-row">
+    <div class="desk-panel">
+      <span class="panel-tag tag-cur">现状 · 桌面按钮族（10-30 实现值）</span>
+      <div class="desk-strip">
+        <span class="cap">圆角矩形族（r8）· 圆钮 36px · blur 10 / sat 1.2 · 无高光层 · 无按压回弹</span>
+        <button class="cur-btn cur-primary">主按钮</button>
+        <button class="cur-btn cur-secondary">次级按钮</button>
+        <button class="cur-btn cur-icon">＋</button>
+        <button class="cur-btn cur-primary" disabled style="opacity:.5">禁用</button>
+      </div>
+      <div class="stage-caption">sidebar.css:1219-1230 + sapphire.css:312-355 / 177-187：方角矩形、饱和低、按压无回弹。</div>
+    </div>
+    <div class="desk-panel">
+      <span class="panel-tag tag-new">v2 · 桌面按钮族（全端通用材质，桌面尺寸）</span>
+      <div class="desk-strip">
+        <span class="cap">药丸族（r999）· 圆钮 40px · blur 16 / sat 1.8 · 镜面高光层 · spring 按压回弹</span>
+        <button class="pill pill-primary">主按钮</button>
+        <button class="pill pill-glass">次级按钮</button>
+        <button class="fab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button class="pill pill-primary" disabled>禁用</button>
+        <span style="font-size:11px;color:#5b6472">← 可实际 hover / 按压</span>
+      </div>
+      <div class="stage-caption">与手机端同一 token 族：仅尺寸档位不同（移动 48 / 桌面 40；药丸高 44 / 36）；主按钮保留墨族语义升级为墨玻璃药丸。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ E. 材质配方全表 + 动效 ═══════ -->
+<div class="section">
+  <h2>E · 材质配方全表（v2 提案 token，亮档 / 暗档）</h2>
+  <p class="sec-note">相对 v1 的变化：顶栏容器退役（手机端）→ 渐隐带 token；按钮矩形族 → 圆钮/药丸族，blur 10→16、sat 1.2→1.8、新增镜面高光层与按压回弹。</p>
+  <table class="recipe">
+    <tr><th>token</th><th>亮档</th><th>暗档</th><th>用途</th></tr>
+    <tr><td>圆钮尺寸</td><td colspan="2"><code>移动 48px / 桌面 40px</code> 正圆；图标 20 / 17px</td><td>悬浮操作钮（全端通用）</td></tr>
+    <tr><td><code>--g2-fab-bg</code> / <code>-hover</code></td><td>白 <code>.60</code> / <code>.74</code></td><td>白 <code>.14</code> / <code>.20</code></td><td>液体玻璃填充（圆钮/玻璃药丸共用）</td></tr>
+    <tr><td><code>--g2-fab-blur</code> / <code>-sat</code></td><td colspan="2"><code>blur(16px) saturate(1.8)</code></td><td>折射强度（v1 为 14 / 1.8）</td></tr>
+    <tr><td><code>--g2-fab-specular</code> / <code>-highlight</code></td><td><code>.90</code> / <code>.95</code></td><td><code>.28</code> / <code>.35</code></td><td>上半镜面高光层 / inset 顶高光</td></tr>
+    <tr><td><code>--g2-fab-border</code></td><td><code>rgba(255,255,255,.90)</code></td><td><code>rgba(255,255,255,.32)</code></td><td>1px 亮边</td></tr>
+    <tr><td><code>--g2-fab-underedge</code> / <code>-shadow</code></td><td><code>rgba(0,0,0,.08)</code> / <code>rgba(0,0,0,.12)</code></td><td><code>rgba(0,0,0,.40)</code> / <code>rgba(0,0,0,.50)</code></td><td>底部 inset 折射 / 扩散浮影（0 8px 24px + 0 1px 3px）</td></tr>
+    <tr><td>药钮形态</td><td colspan="2"><code>border-radius:999px</code>；高 <code>44</code>（移动）/ <code>36</code>（桌面）；padding <code>0 26 / 0 20</code></td><td>主/次按钮统一药丸（参考图 Select）</td></tr>
+    <tr><td><code>--g2-ink-*</code>（墨玻璃药丸）</td><td>底 <code>#111827</code> 系 / 高光 <code>.18</code> / 影 <code>rgba(17,24,39,.25)</code></td><td>底 <code>#e6edf3</code> 系 / 高光 <code>.50</code> / 影 <code>rgba(0,0,0,.50)</code></td><td>主操作（10-30 墨族语义保留）</td></tr>
+    <tr><td><code>--g2-fade-height</code></td><td colspan="2"><code>88px</code>（≈ 圆钮底缘 + 26px 余量）</td><td>顶边滚入渐隐带高度（仅手机端，替代顶栏）</td></tr>
+    <tr><td><code>--g2-fade-blur</code> / <code>-sat</code></td><td colspan="2"><code>blur(18px) saturate(1.5)</code></td><td>渐隐带折射强度（强于栏体的顶缘聚焦）</td></tr>
+    <tr><td>渐隐曲线</td><td colspan="2"><code>mask: linear-gradient(#000 0%, rgba(0,0,0,.55) 50%, transparent 100%)</code>（ease-out 两段式）</td><td>内容过顶边「先糊后没」的衰减曲线</td></tr>
+    <tr><td><code>--g2-veil</code></td><td>底色 veil <code>rgba(245,246,248,.92→0)</code></td><td><code>rgba(19,22,28,.90→0)</code></td><td>渐隐带底色罩（同步被 mask 衰减）</td></tr>
+    <tr><td>输入条 / 发送键</td><td colspan="2"><code>blur(24px) saturate(1.6)</code> + 微渐层 + 镜面高光；发送键=墨玻璃药丸 <code>h32 r999</code></td><td>底部输入条（结构不动，仅材质+发送键形态）</td></tr>
+  </table>
+
+  <h2 style="margin-top:32px">E2 · 动效规范（沿 v1，形态参数随圆钮/药丸调整）</h2>
+  <table class="recipe">
+    <tr><th>项</th><th>值</th></tr>
+    <tr><td>按压回弹</td><td><code>transform .18s cubic-bezier(.34,1.56,.64,1)</code>（spring overshoot）</td></tr>
+    <tr><td>按压形变</td><td>圆钮 <code>scale(.88)</code>；药钮 <code>scale(.95)</code>；投影收短、高光收敛</td></tr>
+    <tr><td>材质过渡</td><td><code>background-color .18s ease, box-shadow .18s ease</code></td></tr>
+    <tr><td>渐隐带</td><td>静态无动效（跟随滚动自然显现/消失）；<code>prefers-reduced-motion</code> 下形变退化为透明度变化（实现批补）</td></tr>
+  </table>
+</div>
+
+<!-- ═══════ F. 兼容降级 ═══════ -->
+<div class="fallback-note">
+  <strong>兼容性与降级（详见 v2 设计稿 §6）。</strong>
+  ① <strong>backdrop-filter 降级</strong>：微信内置浏览器 / 旧 WebView（X5、Trident 系）不支持时按仓内既有口径（scrollUnderGlass.css:63-70）回落为
+  <strong>更高不透明度实色</strong>：圆钮亮 <code>.60→.78</code> 暗 <code>.14→.26</code>；渐隐带退化为纯 <code>linear-gradient</code> 底色罩（无折射仍有渐隐），
+  <code>mask-image</code> 双写 <code>-webkit-</code> 前缀（本样张已双写）。<br>
+  ② <strong>桌面端不动顶栏</strong>：无顶栏 + 渐隐带仅手机端；桌面 <code>#header</code> 维持 10-30 现状，本批只换按钮族。<br>
+  ③ <strong>历史裁定回写</strong>：10-22「Header 底缘零边界批」与 v1「顶栏渐隐尾批」均被 10-31 08:43 裁定取代——手机端直接无顶栏，
+  实现批以本稿为准；10-30 墨族单色批与 liquid glass 材质叠加不冲突（墨玻璃），继续有效。
+</div>
+
+<script>
+/* 演示辅助：把聊天页两屏预滚一段，让「内容滚入顶边渐隐」在打开样张时直接可见（非产品代码） */
+(function () {
+  var chatLight = document.getElementById('demo-scroll-chat-light');
+  var chatDark = document.getElementById('demo-scroll-chat-dark');
+  if (chatLight) chatLight.scrollTop = 150;
+  if (chatDark) chatDark.scrollTop = 150;
+})();
+</script>
+
+</body>
+</html>
