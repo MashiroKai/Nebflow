@@ -309,38 +309,71 @@ body.mobile-layer .g2-pill {
   font-size: 14px;
 }
 /* 页标题入流：聊天根内容流首的会话头（#agent-avatar-btn / #session-name /
-   #memory-btn 由 chatChrome.js 自 #header 迁入；摘胶囊形态 = 设计稿 §3.1
-   「页标题 27px/600 在内容流内，随滚动离开屏幕」） */
+   #memory-btn 由 chatChrome.js 自 #header 迁入）。形态 = 顶缘渐隐改造前原样
+   恢复（作者 10-31 11:38 令②：主对话中间的头像+agent 名被误删、恢复保留、
+   形态按改造前、桌面手机两端都要）：52px 正圆头像（glass-control 缘）+ 名称
+   玻璃胶囊（13px/600，max-width 180px 省略号）居中列 —— 逐值照抄改造前
+   mobileLayer.css「悬浮顶栏 · 中簇 = 会话头」块（d4cc8d189 删除面），选择器
+   换挂 .g2-chat-head（节点现居内容流首）。桌面 #header 自改造批起零改动，
+   桌面端即改造前形态，本块不碰（只挂在 body.mobile-layer 下）。 */
 body.mobile-layer .g2-chat-head {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 4px 2px 14px;
+  gap: 4px;
+  padding: 2px 2px 14px;
   flex: none;
 }
+/* 会话头头像（改造前 375 形：52px 圆 + glass-control 缘；预填渐变底与
+   桌面槽位 paint 链一致，换自定义头像后由 .agent-avatar-img 全覆盖） */
 body.mobile-layer .g2-chat-head #agent-avatar-btn {
-  width: 40px;
-  height: 40px;
-  font-size: 17px;
-}
-body.mobile-layer .g2-chat-head #agent-avatar-btn svg {
-  width: 19px;
-  height: 19px;
-}
-body.mobile-layer .g2-chat-head #session-name {
-  background: none;
-  border: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  box-shadow: none;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  flex: none;
   padding: 0;
-  max-width: none;
-  overflow: visible;
-  text-overflow: clip;
-  font-size: 27px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  cursor: pointer;
+  color: #fff;
+  font-size: 21px;
   font-weight: 600;
-  letter-spacing: -0.02em;
+  background: linear-gradient(145deg, #5b7fbf, #3c568c);
+  border: 1px solid var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    0 2px 8px var(--glass-control-shadow);
+  transition: transform 0.15s ease;
+}
+body.mobile-layer .g2-chat-head #agent-avatar-btn:active { transform: scale(0.94); }
+body.mobile-layer .g2-chat-head #agent-avatar-btn .agent-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+body.mobile-layer .g2-chat-head #agent-avatar-btn svg { width: 22px; height: 22px; }
+/* 名称玻璃胶囊（改造前「名称」一囊逐值恢复；零时间戳守护沿用） */
+body.mobile-layer .g2-chat-head #session-name {
+  font-size: 13px;
+  font-weight: 600;
   color: var(--color-frame-text-bright, var(--color-frame-text));
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow);
 }
 body.mobile-layer .g2-chat-head #memory-btn {
   width: 32px;

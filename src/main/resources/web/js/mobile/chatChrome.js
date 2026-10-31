@@ -9,8 +9,9 @@
 //     边缘光折射；liquid-glass.css），top:16px 左右 16px，z 高于顶缘渐隐带；
 //     任务键徽标 = taskBadgeCount 镜像（dock 批机制零变化）；
 //   · 页标题入流：原 #header .header-center 三节点（#agent-avatar-btn /
-//     #session-name / #memory-btn）整体迁入 #chat 内容流首的 .g2-chat-head
-//     （27px/600 页标题，随滚动离开屏幕 = 设计稿「页标题在内容流内」）——
+//     #session-name / #memory-btn）整体迁入 #chat 内容流首的 .g2-chat-head，
+//     形态 = 顶缘渐隐改造前原样恢复（作者 10-31 11:38 令②：52px 头像 + 名称
+//     玻璃胶囊居中列，见 liquid-glass.css .g2-chat-head 块注记）——
 //     节点迁移非复制：桌面 JS（agentProfile/sidebar 改名链）照写原节点，
 //     零镜像漂移；chatView.setSession 清空保留本层（chatView.js 同批注记）。
 //     功能谱系不动：头像 = profile 面板入口（PANEL 链全绿），记忆钮 hidden 常态。
