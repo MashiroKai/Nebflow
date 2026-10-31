@@ -1,9 +1,18 @@
 ---
 type: design
-status: implemented
+status: superseded
 ---
 
 # ask mode 只读工具设计清单（read_file_content）
+
+> ⚠ **superseded（2026-10-31 12:25 作者裁定，同日换装批取代）**：本清单的
+> read_file_content 单件路线整体退役（工具对象 + 注册 + spec 已删），ask 会话
+> 工具面换装为 **glob / grep / read / websearch / webfetch 只读五件**
+> （+ ask 原生两件 message_record_search / send_message_to_main_chat），思考强度
+> 同步调低档。取代路线见
+> [[20261031_124045_ask-readonly-five-tool-redesign__delegate-nebflow-6cf27f86.zh-CN]]。
+> 本文留档：v1 清单的防扩面思路（白名单封闭枚举、身份双保险、只读纪律）换装批
+> 全部继承，仅读通道形态从「专用绑定文件工具」改为「通用只读五件」。
 
 > ask 模式修复批 2026-10-31（作者令 10-31 10:43，证据截屏 3 张）第 ③ 件：
 > agent 报「无法读取文件」——ask 会话白名单缺只读文件工具。本清单 = 作者过目面

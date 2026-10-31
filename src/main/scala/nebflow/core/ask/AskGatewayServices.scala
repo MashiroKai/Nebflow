@@ -81,7 +81,7 @@ final case class AskServices(
     else
       val now = System.currentTimeMillis()
       AskContextAssembler.assemble(sources, binding.file, binding.fileName, now).flatMap { ctx =>
-        val prompt = AskContextAssembler.promptFor(binding.fileName, ctx.block)
+        val prompt = AskContextAssembler.promptFor(binding.fileName, binding.file, ctx.block)
         prompts.put(sessionId, prompt, now)
         registry.setAssemblyState(sessionId, AskCooldown.afterAssemble(now, ctx.fingerprint)) *>
           IO.pure(prompt)
@@ -107,7 +107,7 @@ final case class AskServices(
         case AskCooldown.Plan.Hold => IO.pure(None)
         case AskCooldown.Plan.Assemble | AskCooldown.Plan.Reassemble =>
           AskContextAssembler.assemble(sources, binding.file, binding.fileName, now).flatMap { ctx =>
-            val prompt = AskContextAssembler.promptFor(binding.fileName, ctx.block)
+            val prompt = AskContextAssembler.promptFor(binding.fileName, binding.file, ctx.block)
             prompts.put(sessionId, prompt, now)
             registry.setAssemblyState(sessionId, AskCooldown.afterAssemble(now, ctx.fingerprint)) *>
               IO.pure(Some(ctx.sources))

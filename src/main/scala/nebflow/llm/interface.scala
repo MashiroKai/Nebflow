@@ -535,6 +535,9 @@ object LlmInterface extends LlmRuntime:
            *
            * req.thinking 缺省（辅助面不走此处；LlmRequest 面恒 Some）→ None =
            * adapter 族启发兜底。
+           * 载体读数面：type/budget_tokens 之外，2026-10-31 起可读回请求构造点
+           * deepMerge 的 per-request `effort` 档（ask 会话思考低档腿）——键缺席 =
+           * 无低档诉求，三层继承语义不变。
            */
           def resolveThinkingFor(req: LlmRequest, candidate: ModelCandidate): Option[ResolvedThinking] =
             req.thinking.map { t =>
@@ -543,7 +546,11 @@ object LlmInterface extends LlmRuntime:
                 budgetTokens = t.hcursor
                   .get[Int]("budget_tokens")
                   .toOption
-                  .getOrElse(Defaults.SubagentThinkingBudgetCap)
+                  .getOrElse(Defaults.SubagentThinkingBudgetCap),
+                // ask 思考低档腿（2026-10-31 换装批）：请求构造点（AgentSessionExecution
+                // askThinkingJson）为 ask 会话 deepMerge 的 per-request effort 档——
+                // 键缺席（一切非 ask 会话）⇒ None，原三层继承语义逐字节不变。
+                effort = t.hcursor.get[nebflow.shared.ThinkingEffort]("effort").toOption
               )
               val resolved = nebflow.shared.ThinkingMode.resolveEffective(
                 candidate.thinking,

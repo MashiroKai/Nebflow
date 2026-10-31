@@ -1011,13 +1011,26 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           workerThinking =
             if depth > 0 then nebflow.shared.ThinkingConfig.cappedForSubagent(turnCtx.thinkingConfig)
             else turnCtx.thinkingConfig
+          // ask 思考低档（2026-10-31 换装批，作者令「思考强度低」）：ask 会话
+          // （ask- 前缀身份，AskSessions 单点）逐请求 effort 强制 low——经
+          // req.thinking 语义载体的 effort 键携带（toLlmJson 主面不变；非 ask
+          // 会话该键恒缺席 ⇒ 行为逐字节不变），interface.resolveThinkingFor 单点
+          // 读回后走 ThinkingEffortGate 族 gate 出口（GLM Toggle 族 / Kimi K3 顶层
+          // 族已点亮；Budget 族无 effort wire，原预算语义不受影响）。
+          askThinkingJson =
+            val base = nebflow.shared.ThinkingConfig.toLlmJson(workerThinking)
+            // 载体检修：enabled=false 时 base = Null（语义 off）——保持 off 不叠档。
+            if base.isNull then base
+            else if nebflow.core.ask.AskSessions.isAskSession(stateForLlm.sessionId) then
+              base.deepMerge(Json.obj("effort" -> nebflow.shared.ThinkingEffort.Low.wireName.asJson))
+            else base
           request = LlmRequest(
             messages =
               ttlCleanedMessages.getOrElse(stateWithReminder.messages) ++ contextMsg ++ branchMsg ++ maintenanceMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
             agentId = freshDef.name,
             tools = freshTools,
-            thinking = Some(nebflow.shared.ThinkingConfig.toLlmJson(workerThinking)),
+            thinking = Some(askThinkingJson),
             systemStable = Some(systemStable),
             agentModel = freshDef.model,
             // WebSearch P0: housekeeping turns (compact/ask) opt out of
@@ -2289,8 +2302,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     /** 双模式批：delegate 会话生效执行形态（None = 总闸关/未判定——本参数全部分叉即失效）。 */
     delegateMode: Option[String] = None
   ): Set[String] =
-    // Canvas ask mode（2026-10-28 实施批，机制稿 §5）：白名单**封闭枚举**早退——
-    // ask 会话工具面 = {message_record_search, send_message_to_main_chat}，
+    // Canvas ask mode（2026-10-28 实施批，机制稿 §5；2026-10-31 换装批）：白名单
+    // **封闭枚举**早退——ask 会话工具面 = AskSessions.AllowedTools（ask 专属两件
+    // + 只读五件 Read/Glob/Grep/WebSearch/WebFetch，后者与 Subagent 侦察面同源），
     // 白名单外一律不下发（含 bash/edit/write 等一切编辑与编排工具，作者令点名
     // 禁止）。早退在最前 ⇒ 声明面/fixed 面/plugin 面/尾段挂载全不触及；判据 =
     // 引擎侧会话身份（AskSessions 单点，`ask-` 前缀），与 delegateSession 同款
@@ -2513,10 +2527,11 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // 纪律不受扰——本授能只对 delegateSession 身份生效，Subagent/AgentFlow 步会话
     // 不经此腿。
     val withDelegateMail = if delegateSession then withDelegateFace + "Mail" else withDelegateFace
-    // ask 工具反剥（ask 早退的对偶防线）：这两件只对 ask 会话授能——其余身份
-    // 即便 agent.json 声明 "*" 也不得获得（the tool name IS the permission
-    // boundary，TeamTaskTools 剥离先例）。
-    val askStripped = withDelegateMail -- nebflow.core.ask.AskSessions.AllowedTools
+    // ask 工具反剥（ask 早退的对偶防线）：ask 专属两件只对 ask 会话授能——其余
+    // 身份即便 agent.json 声明 "*" 也不得获得（the tool name IS the permission
+    // boundary，TeamTaskTools 剥离先例）。**反剥集 = AskExclusiveTools（只两件）**：
+    // AllowedTools 里的只读五件是全员注册工具，进反剥集会连主会话读面一起剥掉。
+    val askStripped = withDelegateMail -- nebflow.core.ask.AskSessions.AskExclusiveTools
     if flowNodeSession then askStripped + nebflow.core.tools.NodeReportToolDef.Name else askStripped
 
   end buildAllowedToolSet
