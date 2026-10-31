@@ -108,8 +108,22 @@ final class RichFeishuAdapter(
         onDisk.filter(FileLongShot.isConvertible) match
           case Some(p) => deliverLongShot(p)
           case None =>
-            // onDisk 为空 = 原件不在盘上（路径不存在/非普通文件）⇒ [未送达] 面。
-            sendDegrade(RichDegrade.unknown(path, missing = onDisk.isEmpty), okDetail = "unknown-kind notice delivered")
+            // 压缩包直推面（pop-file-leg 飞书补齐，2026-10-31 社交腿文件出站
+            // 能力核查批 —— 与微信腿 2026-10-21 同一条作者令「压缩包=文件腿直推」
+            // 的飞书半边）：两张分类权威表都不收 zip/7z/rar/tar 族（
+            // [[FileLeg]] 文件头的结构决定：分类层表不因投递能力而扩表），
+            // 压缩包 Pop 今天在微信走 file_path 腿直推、在飞书却只落
+            // `[暂不支持]` 文本卡 —— 渠道能力不对称。飞书 im/v1/files 的
+            // file_type=STREAM 恰好就是「按字节直发」的 unnamed 面
+            // （[[RichFeishuAdapter.fileTypeOf]] 的 default 臂），压缩包与
+            // 文档腿同路：体积闸（[[AttachContract]]）→ 上传 → msg_type=file，
+            // 渠道拒绝照旧走既有保底降级，绝不静默。md/html 优先于本臂
+            // （上一分支），其余 off-table 扩展名维持 `[暂不支持]` 文本边界。
+            onDisk.filter(FileLeg.isPushable) match
+              case Some(p) => deliverDocument(p)
+              case None =>
+                // onDisk 为空 = 原件不在盘上（路径不存在/非普通文件）⇒ [未送达] 面。
+                sendDegrade(RichDegrade.unknown(path, missing = onDisk.isEmpty), okDetail = "unknown-kind notice delivered")
 
   /**
    * An event that classified into a rich kind but carried no usable path still

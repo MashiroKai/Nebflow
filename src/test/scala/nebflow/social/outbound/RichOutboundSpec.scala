@@ -973,6 +973,39 @@ class RichOutboundSpec extends CatsEffectSuite:
       }
   }
 
+  // W-4b pins the ARCHIVE exception to the W-4 boundary: zip/7z/rar/tar 族不在两张
+  // 分类权威表里（生产分类对 zip 给 Unknown，与 W-1 同样直接构造 Unknown 进入），
+  // 但 pop-file-leg 作者令（2026-10-21 微信半边 / 2026-10-31 本批飞书半边）裁定
+  // 压缩包 = 文件腿直推 —— 与 Document 腿完全同路（体积闸 → im/v1/files 上传 →
+  // msg_type=file），不落 [暂不支持] 文本卡。红-by-construction：摘掉
+  // RichFeishuAdapter.deliver 的 FileLeg.isPushable 臂，本测试退回文本卡即红。
+  test("W-4b an on-disk ARCHIVE rides the FILE leg (pop-file-leg Feishu parity, never the long-shot)") {
+    FileLongShot.Dedup.reset()
+    val rec = Recorder()
+    val zip = tmpDir() / "bundle.zip"
+    Files.write(zip.toNIO, Array[Byte](0x50, 0x4b, 0x03, 0x04))
+    val longshot = new RecordingLongShot(Right(tmpDir() / "never.png"))
+    adapter(rec, longshot = longshot)
+      .deliver(RichKind.Unknown("extension is in neither authority table: zip"), Some(zip))
+      .flatMap { results =>
+        for
+          calls <- longshot.calls.get
+          texts <- rec.texts.get
+          files <- rec.files.get
+          msgs  <- rec.msgs.get
+        yield
+          assertEquals(calls, 0, "an archive is NOT a convertible file class — the long-shot seam stays untouched")
+          assertEquals(texts, Nil, "no [暂不支持] text card — the archive itself is the deliverable")
+          assertEquals(files, List((zip, "bundle.zip")), "exactly one UploadFile call with the ORIGINAL bytes")
+          assertEquals(
+            msgs,
+            List(("file", RichFeishuAdapter.fileKeyBody("file_key_1"))),
+            "exactly one msg_type=file send carrying the file_key"
+          )
+          assert(results.forall(_.ok), results)
+      }
+  }
+
   test("W-5 the convertibility table and the offline detection face") {
     assert(FileLongShot.isConvertible(os.Path("/tmp/a/diagram.html", os.pwd)))
     assert(FileLongShot.isConvertible(os.Path("/tmp/a/x.htm", os.pwd)))
