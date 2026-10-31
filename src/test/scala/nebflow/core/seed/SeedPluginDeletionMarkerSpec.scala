@@ -30,8 +30,8 @@ class SeedPluginDeletionMarkerSpec extends FunSuite:
   private var prevRoot: os.Path = os.Path("/tmp")
   private var home: os.Path = os.Path("/tmp")
 
-  /** 默认集里的一个具体插件（#105 的生产实例就是它）。 */
-  private val Target = "nebflow-plugin-creator"
+  /** 默认集里的一个具体插件（原 #105 生产实例 nebflow-plugin-creator 已并入 stand-dev，2026-10-31 合并批换锚）。 */
+  private val Target = "stand-dev"
 
   override def beforeAll(): Unit =
     prevRoot = PathUtil.dataRoot
@@ -173,26 +173,12 @@ class SeedPluginDeletionMarkerSpec extends FunSuite:
 
     assert(!userRemoved.contains(Target), "③ 标记被清（依据信号 = <root>/plugins/<name> 再次存在）")
     assert(seen.contains(Target), "③ 台账回到「在位」态")
-    // 内容面（2026-10-21 诊断批合同翻转）：Target 是保留 `nebflow-` 前缀官方包——
-    // 装载层 OfficialPackages 只认当前分发 jar 的出厂 digest，手动装回 + 用户附件的
-    // 形态必然被官方闸拒载（正是 10-20 死锁实录的形态），旧口径「用户版本保留」在
-    // 这层 namespace 上保不住一个活包。修后：标记清理腿不变，digest 仲裁走出厂字节赢
-    // （种子镜像覆盖 + 重审）；被覆盖内容进 pre-sync 备份（回滚材料完整）。
-    // 非保留名包的「用户版本保留」语义不变（SeedPluginReconcileSpec ②/⑧ 仍在钉）。
-    assertEquals(treeAsText(pluginDir(Target)), treeAsText(seedDirOf(Target)), "③ 官方包镜像回出厂树（逐字节）")
-    val backups = os.list(home / "plugins-backups").filter(os.isDir).toList
-    val backup = backups.find(_.last.endsWith(s"_pre-sync-$Target"))
-    assert(backup.isDefined, s"③ 被覆盖的用户装回内容有 pre-sync 备份: ${backups.map(_.last)}")
-    val backupFiles = os
-      .walk(backup.get)
-      .filter(os.isFile)
-      .map(p => p.relativeTo(backup.get).toString -> os.read.bytes(p))
-      .toMap
-    assertEquals(backupFiles.keySet - "PRE-SHA256.txt", before.keySet, "③ 备份文件集 == 覆盖前装回形态")
-    assert(
-      backupFiles.get("USER-NOTES.md").exists(b => new String(b, UTF_8) == "user note\n"),
-      "③ 用户附件 USER-NOTES.md 在备份里逐字节保留（回滚材料）"
-    )
+    // 内容面（2026-10-31 stand-dev 合并批合同）：Target = stand-dev，非 `nebflow-` 保留前缀
+    // 包——手动装回 + 用户附件的形态按「用户版本保留」语义处理（无信任记录 ⇒ 种子不覆盖），
+    // 原 nebflow-plugin-creator 时代的「官方包镜像回出厂树」断言随该包并入 stand-dev 而
+    // 退役（官方 namespace 现无出厂包，见 SeedPluginReconcileSpec ②b 替代锁）。
+    assertEquals(treeAsText(pluginDir(Target)), before, "③ 非保留名包：手动装回的用户版本保留（内容零改写）")
+    assert(os.exists(pluginDir(Target) / "USER-NOTES.md"), "③ 用户附件仍在位")
 
     os.remove.all(pluginDir(Target)) // 再删一次（生命周期闭合）
     ensure()
@@ -243,7 +229,7 @@ class SeedPluginDeletionMarkerSpec extends FunSuite:
     ensure()
 
     assertEquals(seen, manifestPluginNames.toSet, "⑦ seen == manifest plugins:* 全集（逐包判定面）")
-    for name <- List("qa", "frontend-dev", "engineering-methods", "explorer-toolkit", "design-spec")
+    for name <- List("design-language", "design-cards", "engineering-methods", "explorer-toolkit", "design-spec")
     do assert(!seen.contains(name), s"⑦ 非默认集种子包 '$name' 不入台账（面积不扩张）")
 
   // ── ⑧ 容器规则（存储级重置）──────────────────────────────

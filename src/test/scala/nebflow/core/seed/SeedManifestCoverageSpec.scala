@@ -53,12 +53,14 @@ class SeedManifestCoverageSpec extends FunSuite:
    * 都不装它）。锚点仍是**精确集合相等**，方向未放宽。
    *
    * 作者裁定 2026-10-05 方案A：锚点 4→7 追认现状（09-26 restores / 10-03 定形）。
+   * 2026-10-31「开发插件统一批」：`nebflow-plugin-creator` 并入 `stand-dev`（六开发包合并，
+   * 能力零丢失），默认集条目同名替换——集合大小与语义不变。
    */
   private val ExpectedDefaultPlugins: Set[String] =
     Set(
       "slideblocks",
       "visual-report",
-      "nebflow-plugin-creator",
+      "stand-dev",
       "web-search-toolkit",
       "browser-use",
       "computer-use",
@@ -154,7 +156,7 @@ class SeedManifestCoverageSpec extends FunSuite:
 
   // ── c. 默认预装集恰为七条（写死锚点）────────────────────────
   test(
-    "K9-c: default preinstall set is exactly {slideblocks, visual-report, nebflow-plugin-creator, web-search-toolkit, browser-use, computer-use, document-production}"
+    "K9-c: default preinstall set is exactly {slideblocks, visual-report, stand-dev, web-search-toolkit, browser-use, computer-use, document-production}"
   ):
     val declared = declaredPluginNames()
     val added = (declared -- ExpectedDefaultPlugins).toList.sorted

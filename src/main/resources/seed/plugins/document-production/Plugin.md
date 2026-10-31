@@ -12,7 +12,7 @@ document-production 是文档制作包：节点获得 Word/PDF/PPT/Excel 四类�
 - `skills/xlsx/`——电子表格制作与分析：Pre-Flight 意图门（先确认真的需要表格）、Scene Router（创建/编辑/分析/转换/财务/VBA）、设计原则与质量门、能力矩阵；附 scenes/engines/templates/env_setup 配套件与 `xlsx.py` 工具。
 - `skills/visual-acceptance/`——成稿页级视觉验收：交付件先渲染成逐页 PNG，逐页判三项（视觉资产/版式构图/内容一致性），每页一行 JSON 判据；判据是用户验收线——程序化自检跑绿不能替代这一遍。
 
-**包纪律一句话**：四产线各走各的 skill，交付前一律过 `visual-acceptance` 页级过目；做 Slidev 演示另配 `slideblocks`、单图与可视化汇报另配 `visual-report`、插件封装另配 `nebflow-plugin-creator`——本包不管这三样。
+**包纪律一句话**：四产线各走各的 skill，交付前一律过 `visual-acceptance` 页级过目；做 Slidev 演示另配 `slideblocks`、单图与可视化汇报另配 `visual-report`、插件封装另配 `stand-dev 引擎章 plugin-creator`——本包不管这三样。
 
 ## 2. 安装与启用
 
@@ -80,7 +80,7 @@ document-production/                （包根）
 3. 目标是 **.pptx 幻灯片** → `pptx`；做 **Slidev 演示** → 不在本包：另配 `slideblocks`。
 4. 目标是 **.xlsx/.csv 表格**（新建、编辑、分析出表、格式互转）→ `xlsx`（先过意图门确认形态）。
 5. 交付件已成型、要**逐页过目验收** → `visual-acceptance`（只判不改稿、不重渲染、不修代码）。
-6. 要**单图/图表可视化汇报** → 不在本包：另配 `visual-report`；要**插件封装** → 另配 `nebflow-plugin-creator`。
+6. 要**单图/图表可视化汇报** → 不在本包：另配 `visual-report`；要**插件封装** → 另配 `stand-dev 引擎章 plugin-creator`。
 7. 代码与契约层审查 → 不在本包：归 `qa` 插件（visual-acceptance 边界原文）。
 8. 常连用：一次文档交付＝产线 skill 成稿 → visual-acceptance 页级过目 → fail 页回产线修→重渲染→再判。
 

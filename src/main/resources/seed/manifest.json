@@ -3,7 +3,7 @@
   "items": [
     "plugins:visual-report",
     "plugins:slideblocks",
-    "plugins:nebflow-plugin-creator",
+    "plugins:stand-dev",
     "plugins:web-search-toolkit",
     "plugins:browser-use",
     "plugins:computer-use",
