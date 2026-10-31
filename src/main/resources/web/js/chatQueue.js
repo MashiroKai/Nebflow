@@ -164,11 +164,21 @@ export function renderQueueBar(sessionId, handlers = {}) {
 
     // qattachvault：载荷丢失失败项 → 失败注记行 + 「立即发送」退场（对失败项再点
     // 只会重复拒绝）；撤回（回输入框重编、重新添加附件）与移除仍可达 = 可重传入口。
+    // 输入框错误态极简批（2026-10-31）：红唯一载体 = 行首图标（--status-error-icon，
+    // sessionGate 同款 circle-alert 内联件），注记词中性字（css 同步收敛）。
     if (item.failed) {
       const note = document.createElement('span');
       note.className = 'queue-item-failed-note';
-      note.textContent = t('input.queueAttachLostShort');
       note.title = t('input.queueAttachLost');
+      const ic = document.createElement('span');
+      ic.className = 'st-ic';
+      ic.setAttribute('aria-hidden', 'true');
+      ic.innerHTML =
+        '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor"' +
+        ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>' +
+        '<line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+      note.append(ic, document.createTextNode(t('input.queueAttachLostShort')));
       row.appendChild(note);
     }
 

@@ -401,8 +401,8 @@ test.describe('快照卡脸', () => {
       return { shown: !!el && el.classList.contains('show'), text: el?.textContent || '' };
     });
     expect(stale.shown, '409 后 stale 提示行显示').toBe(true);
-    expect(stale.text, '提示文案指回画布确认').toContain('画布');
-    // 出站帧：409 不作答（用户需先回画布）
+    expect(stale.text, '提示文案指回看板确认').toContain('看板');
+    // 出站帧：409 不作答（用户需先回看板）
     const sent = await page.evaluate(() => window.__sent);
     expect(sent.filter((f) => f.type === 'askUserAnswer'), '409 不出站作答帧').toEqual([]);
     expect(pageErrors).toEqual([]);

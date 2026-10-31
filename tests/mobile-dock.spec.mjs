@@ -184,7 +184,7 @@ test('D1 five-tab dock structure: author-order labels, chat-home center key, ico
   expect(dock.role).toBe('tablist');
   // 作者令逐字顺序：消息 / 联系人 / 对话 / canvas / 工作台（工作台批：设置
   // 自顶层导航降级为工作台成员，第五栏 = 工作台）。
-  expect(dock.keys.map((k) => k.label)).toEqual(['消息', '联系人', '对话', 'canvas', '工作台']);
+  expect(dock.keys.map((k) => k.label)).toEqual(['消息', '联系人', '对话', '看板', '工作台']);
   // 中键改版批：第三栏 = chat home 键（对话 = 进主对话输入框；非页面路由）。
   expect(dock.keys.map((k) => k.id)).toEqual(['messages', 'contacts', 'chat', 'canvas', 'workbench']);
   for (const k of dock.keys) {

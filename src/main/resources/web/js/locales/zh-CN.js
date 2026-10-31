@@ -24,7 +24,7 @@ export default {
   // 二次加载清剿批（2026-10-24）：diff 打开链的装载态 + 失败可见反馈（作者令
   // 「任何取数/渲染路径必须有 loading 态与失败可见反馈，禁止静默无响应」）。
   'panel.diffRendering': 'diff 渲染中…',
-  'panel.diffOpenFailed': 'Canvas 打开失败——点行重试。',
+  'panel.diffOpenFailed': '看板打开失败——点行重试。',
   // #27 Project 标签页 + Flow Map 标签页（方向调整：Canvas 标签页形态，参考 team 面板）
   'project.title': '项目',
   'project.loading': '加载项目…',
@@ -1373,7 +1373,7 @@ export default {
   // pop-upgrade 批(2026-10-03):Pop 工件面(叠卡/文件卡片)文案
   'chat.popExpand': '展开 {n}',
   'chat.popCollapse': '收起',
-  'chat.popOpenCanvas': '在 Canvas 打开',
+  'chat.popOpenCanvas': '在看板打开',
   'chat.popFailed': '{n} 个路径未能显示',
   // 媒体加载失败的占位说明行（缺陷 D 修复，2026-10-03）：Pop 行里的图片/视频加载失败
   // 此前**无任何可见提示**（chat.css 唯一的占位规则只命中 `.bubble.ai img`）。现补虚线
@@ -2333,7 +2333,7 @@ export default {
   'activity.openFolder': '打开文件夹',
   'header.voiceOutput': '语音输出',
   'header.scheduledTasks': '定时任务',
-  'header.canvas': '画布',
+  'header.canvas': '看板',
   'header.newTask': '新建任务',
   'subagents.panelTitle': '子智能体',
   'modal.close': '关闭',
@@ -2766,9 +2766,9 @@ export default {
   'perception.bodyPh': '正文…',
   'perception.send': '发送',
   'perception.sendAsIs': '照此发送',
-  'perception.openCanvas': '在画布中编辑',
+  'perception.openCanvas': '在看板中编辑',
   'perception.abandon': '放弃',
-  'perception.staleNote': '邮件已有更新，请回到画布确认后再发送。',
+  'perception.staleNote': '邮件已有更新，请回到看板确认后再发送。',
   'perception.sendFailed': '发送失败',
   'perception.draftGone': '草稿已不存在',
   'perception.newMail': '新邮件',
@@ -2789,7 +2789,7 @@ export default {
   'perception.tbLink': '链接',
   'perception.linkPrompt': '链接地址',
   'perception.removeAtt': '移除',
-  'perception.attMissingNote': '有附件文件不存在，发送已停用；可在画布点 × 移除后重试。',
+  'perception.attMissingNote': '有附件文件不存在，发送已停用；可在看板点 × 移除后重试。',
   'perception.removeAddr': '移除',
   'perception.toPh': '收件人地址，回车添加',
   'perception.addrPh': '输入地址，回车添加',

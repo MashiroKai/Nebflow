@@ -100,7 +100,7 @@ const HUB_ROWS = [
 export const PAGES = [
   { id: 'messages',      dock: true, icon: 'message-circle', zh: '消息',   en: 'Messages' },
   { id: 'contacts',      dock: true, icon: 'contact-round',  zh: '联系人', en: 'Contacts' },
-  { id: 'canvas',        dock: true, icon: 'layers',         zh: 'canvas', en: 'canvas' },
+  { id: 'canvas',        dock: true, icon: 'layers',         zh: '看板', en: 'canvas' },
   { id: 'workbench',     dock: true, icon: 'layout-grid',    zh: '工作台', en: 'Workspace' },
   { id: 'settings',      tabId: null,      icon: 'settings',  zh: '设置',   en: 'Settings' },
   { id: 'projects', tabId: 'projects', icon: 'folder-kanban',   zh: '项目',     en: 'Projects' },
@@ -635,18 +635,42 @@ export function switchDocCard(delta) {
   if (nb && nb.id !== id) setActiveTab(nb.id);
 }
 
-/** 活动文档 pane 收编进 canvas 页内容区（单槽锚点；换卡即归旧纳新）。 */
+/** 活动文档 pane 收编进 canvas 页内容区（单槽锚点；换卡即归旧纳新）。
+ *  双页叠开修复批①（2026-10-31 作者令 23:29 截图实证「两个标签页上下叠着」）：
+ *  修前只靠单锚点归还旧 pane——锚的邻位引用（a.next）若已被摘出画板内容区
+ *  （邻卡被关等树变），insertBefore 抛错被吞、锚又已清空 ⇒ 旧 pane 永久滞留
+ *  页体；再收编新 pane 后 host 内双 pane，叠加手机层 pane 通配 display:flex
+ *  !important（压掉桌面 .active 显隐），两页同屏上下叠开 = 截图 bug。修复三件：
+ *  ⑴ 归还腿 insertBefore 失败回退 appendChild（pane 可见性由 .active 驱动，
+ *  内容区内位置无语义，追加零副作用）；⑵ 收编前扫口：host 内一切非当前活动
+ *  pane（孤儿/历史滞留）一律送回画板内容区，单 pane 不变式机械保证；⑶ 离页
+ *  即归还（closePageFace 'canvas'，头注「canvas 页离开 = 面归还」的兑现）。 */
+function releaseDocPane(stale, home) {
+  // 横滑跟手可能残留的内联位姿一并清掉（换卡由 adopt 归位，滞留 pane 无腿清）。
+  stale.style.transition = '';
+  stale.style.transform = '';
+  stale.style.opacity = '';
+  if (home && home.isConnected) home.appendChild(stale);
+}
+
 function adoptActiveDoc() {
   const id = activeDocId();
   const pane = id ? getTabPane(id) : null;
   const host = canvasUI?.host;
   if (!host) return;
+  // ⑵ 收口扫口：host 内非当前活动 pane 全数归还（锚内 pane 交下方归还腿处理）。
+  const home = document.getElementById('canvas-content');
+  for (const stale of host.querySelectorAll(':scope > .canvas-tab-pane')) {
+    if (pane && stale === pane) continue;
+    if (canvasDocAnchor && canvasDocAnchor.pane === stale) continue;
+    releaseDocPane(stale, home);
+  }
   if (canvasDocAnchor && (!pane || canvasDocAnchor.pane !== pane)) {
     // 换卡/关卡：旧 pane 原位归还画板内容区。
     const a = canvasDocAnchor;
     canvasDocAnchor = null;
     if (a.pane.isConnected && a.parent && a.parent.isConnected) {
-      try { a.parent.insertBefore(a.pane, a.next); } catch { /* 树已变：放弃 */ }
+      try { a.parent.insertBefore(a.pane, a.next); } catch { releaseDocPane(a.pane, home); }
     }
   }
   if (pane && pane.parentElement !== host) {
@@ -853,7 +877,7 @@ function buildCanvasPage(body) {
   eIcon.setAttribute('data-lucide', 'layers');
   const eTitle = document.createElement('div');
   eTitle.className = 'mf-cv-empty-title';
-  eTitle.textContent = tt('画板暂无文档卡片', 'No document cards yet');
+  eTitle.textContent = tt('看板暂无文档卡片', 'No document cards yet');
   const eSub = document.createElement('div');
   eSub.className = 'mf-cv-empty-sub';
   eSub.textContent = tt('在聊天里打开文件或文档后会出现在这里', 'Documents opened from chat appear here');
@@ -1060,8 +1084,24 @@ function closePageFace(pageId) {
     case 'tasks':
       closeTaskPanel(true);
       break;
+    case 'canvas':
+      // 双页叠开修复批①（2026-10-31）：离页即归还活动文档 pane（头注既有契约
+      // 「canvas 页离开 = 面归还、文档保留」的兑现——修前默认 no-op，pane 滞留
+      // 隐藏页体直到下次换卡才归还，滞留窗内的树变即触发双页叠开）。
+      releaseAdoptedDoc();
+      break;
     default:
       break; // messages/contacts/canvas/panels/conversation：面态无需翻转
+  }
+}
+
+/** 活动文档 pane 归还画板内容区（单点：离页/层拆除共用；幂等）。 */
+function releaseAdoptedDoc() {
+  if (!canvasDocAnchor) return;
+  const a = canvasDocAnchor;
+  canvasDocAnchor = null;
+  if (a.pane.isConnected && a.parent && a.parent.isConnected) {
+    try { a.parent.insertBefore(a.pane, a.next); } catch { releaseDocPane(a.pane, document.getElementById('canvas-content')); }
   }
 }
 
@@ -1542,15 +1582,8 @@ export function activateNav() {
       } catch { /* 树已变：放弃归还 */ }
     }
     paneAnchors.length = 0;
-    // canvas 页活动文档 pane 归还。
-    if (canvasDocAnchor) {
-      try {
-        if (canvasDocAnchor.pane.isConnected && canvasDocAnchor.parent?.isConnected) {
-          canvasDocAnchor.parent.insertBefore(canvasDocAnchor.pane, canvasDocAnchor.next);
-        }
-      } catch { /* 放弃 */ }
-      canvasDocAnchor = null;
-    }
+    // canvas 页活动文档 pane 归还（双页叠开修复批①：与离页同一收口单点）。
+    releaseAdoptedDoc();
     // overlay 内容面原位归还。
     for (const id of [...overlayAnchors.keys()].reverse()) restoreOverlayFace(id);
     overlayAnchors.clear();

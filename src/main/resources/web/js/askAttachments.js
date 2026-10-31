@@ -271,24 +271,36 @@ function upload(c, item) {
   function fail() {
     if (item.xhr !== xhr) return;
     item.status = 'failed';
-    if (item.chip) item.chip.style.borderColor = 'color-mix(in srgb, var(--color-error,#f44336) 60%, transparent)';
+    // 输入框错误态极简批（2026-10-31 作者令「极简简约朴素」口径，10-29
+    // e12779943 对话框批的输入框面补齐）：红预算收敛 chip 描边 25% tint +
+    // 行首图标两处图案载体（fm-upload-failed/queue-item.failed 同范式）；
+    // 红字/实红进度块/下划线链接退役——错误词中性字，重试 = amber 字 chip。
+    if (item.chip) item.chip.style.borderColor = 'color-mix(in srgb, var(--status-error-icon,#f26b6b) 25%, transparent)';
     if (item.barFill) {
       item.barFill.style.width = '100%';
-      item.barFill.style.background = 'var(--color-error,#f44336)';
+      item.barFill.style.background = 'var(--glass-etched-border, rgba(128,128,128,0.25))';
     }
     if (item.sub) {
       item.sub.textContent = '';
+      const errIc = document.createElement('span');
+      errIc.setAttribute('aria-hidden', 'true');
+      errIc.style.cssText = 'display:inline-flex;flex-shrink:0;vertical-align:-2px;color:var(--status-error-icon,#f26b6b);';
+      errIc.innerHTML =
+        '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor"' +
+        ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+        '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/>' +
+        '<line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
       const errSpan = document.createElement('span');
       errSpan.textContent = t('askUser.attachUploadFailed');
-      errSpan.style.cssText = 'color:var(--color-error,#f44336);';
+      errSpan.style.cssText = 'color:var(--status-word,inherit);';
       const retry = document.createElement('button');
       retry.type = 'button';
       retry.textContent = t('askUser.attachRetry');
       retry.style.cssText =
         'border:none;background:none;color:var(--color-warning,#ff9800);font:inherit;font-size:11px;' +
-        'cursor:pointer;padding:0;text-decoration:underline;text-underline-offset:2px;';
+        'cursor:pointer;padding:0;';
       retry.addEventListener('click', () => { if (!c.locked) upload(c, item); });
-      item.sub.append(fmtSize(item.size) + ' · ', errSpan, ' ', retry);
+      item.sub.append(fmtSize(item.size) + ' · ', errIc, errSpan, ' ', retry);
     }
     toast(t('askUser.attachUploadFailedToast', { name: item.name }));
     c.onChange();

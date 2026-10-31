@@ -167,7 +167,7 @@ test('T1 five-tab dock: author-order keys, icon+label structure, switching, acti
   // 中键改版批（2026-10-29 23:36）：第三栏 = chat home 键 —— 中心键容器
   // （.dock-center，无常规 .dock-ic 图标位）；其余四键 = 常规 icon+label。
   const labels = await keys.evaluateAll((els) => els.map((b) => b.querySelector('.dock-label')?.textContent));
-  expect(labels).toEqual(['消息', '联系人', '对话', 'canvas', '工作台']);
+  expect(labels).toEqual(['消息', '联系人', '对话', '看板', '工作台']);
   for (let i = 0; i < 5; i++) {
     if (i === 2) await expect(keys.nth(i).locator('.dock-center')).toBeVisible();
     else {

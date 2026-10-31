@@ -302,7 +302,7 @@ test('T3c X closes the active card (neighbor settles; last card → in-page empt
   expect(st.toolbarHidden).toBe(true);
   expect(st.hostHidden).toBe(true);
   expect(st.emptyVisible).toBe(true);
-  expect(st.emptyTitle).toBe('画板暂无文档卡片');
+  expect(st.emptyTitle).toBe('看板暂无文档卡片');
   expect(errors).toEqual([]);
 });
 
@@ -357,5 +357,105 @@ test('T5 hit zones: toolbar prev/next/close ≥44px (pop ≥44 when visible)', a
   await page.waitForTimeout(400);
   const popGone = await page.evaluate(() => !document.querySelector('.mf-cv-pop'));
   expect(popGone).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+// ── 手机端 canvas 修复批（2026-10-31 作者令 23:29/23:35，五件）───────────
+// T6 = 批① 双页叠开收口；T7 = 批② chip 胶囊同族 + 批③ 条带让位浮钮；
+// T8 = 批③ ask 悬浮钮让位角落圆钮簇。
+
+test('T6 双页叠开收口（批①）：归还腿失效（锚邻位被摘）时 host 恒单 pane，旧 pane 归还内容区', async ({ page }) => {
+  const errors = watchErrors(page);
+  await openDocCards(page, [['doc-a', '卡甲', 'pg-a'], ['doc-b', '卡乙', 'pg-b']]);
+  expect(await activeChip(page)).toBe('doc-b');
+  // 切到卡甲：pane 甲收编进 host（锚 = {#canvas-content, next=乙 pane}）。
+  await page.locator('.mf-strip-chip[data-tab-id="doc-a"]').click();
+  await expect.poll(() => activeChip(page)).toBe('doc-a');
+  await expect(page.locator('.mf-cv-host > .canvas-tab-pane[data-tab-id="doc-a"]')).toHaveCount(1);
+  // 树变破坏锚邻位：内容区其余 pane 全摘（邻卡被关等真实腿的等效扰动）。
+  await page.evaluate(() => {
+    const c = document.getElementById('canvas-content');
+    for (const p of [...c.querySelectorAll(':scope > .canvas-tab-pane')]) p.remove();
+  });
+  // 换回卡乙：修前 insertBefore(已摘邻位) 抛错被吞 + 锚已清 ⇒ 甲 pane 永久滞留
+  // host、与乙上下叠开（作者截图实证）；修后归还腿回退追加 + 收口扫口双保险。
+  await page.locator('.mf-strip-chip[data-tab-id="doc-b"]').click();
+  await expect.poll(() => activeChip(page)).toBe('doc-b');
+  const hostPanes = await page.evaluate(() =>
+    [...document.querySelectorAll('.mf-cv-host > .canvas-tab-pane')].map((p) => p.dataset.tabId));
+  expect(hostPanes).toEqual(['doc-b']);
+  // 甲 pane 已归还画板内容区（不在页体内滞留；pane 显隐由 .active 驱动）。
+  const aBack = await page.evaluate(() =>
+    !!document.querySelector('#canvas-content > .canvas-tab-pane[data-tab-id="doc-a"]'));
+  expect(aBack).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('T7 chip 胶囊同族（批②：材质/圆角/选中态）+ 条带让位悬浮工具带（批③）', async ({ page }) => {
+  const errors = watchErrors(page);
+  await openDocCards(page, [['doc-a', '卡甲', 'pg-a'], ['doc-b', '卡乙', 'pg-b']]);
+  const m = await page.evaluate(() => {
+    const chip = document.querySelector('.mf-strip-chip.on');
+    const cs = getComputedStyle(chip);
+    const strip = getComputedStyle(document.querySelector('.mf-strip'));
+    const closeB = document.querySelector('.mf-cv-close').getBoundingClientRect();
+    const stackB = document.querySelector('.mf-cv-stack').getBoundingClientRect();
+    const chipR = chip.getBoundingClientRect();
+    const inter = (a, b) => !(a.right < b.left || b.right < a.left || a.bottom < b.top || b.bottom < a.top);
+    return {
+      radius: cs.borderRadius,
+      blur: `${cs.backdropFilter}${cs.webkitBackdropFilter || ''}`,
+      borderBottom: cs.borderBottomColor,
+      bgImage: cs.backgroundImage,
+      padL: strip.paddingLeft,
+      padR: strip.paddingRight,
+      chipHitsBtn: inter(chipR, closeB) || inter(chipR, stackB),
+    };
+  });
+  expect(m.radius).toBe('999px');                       // 圆角 = 胶囊同族
+  expect(m.blur).toContain('blur');                     // 材质 = 毛玻璃同族
+  expect(m.borderBottom).toBe('rgba(0, 0, 0, 0)');      // 底缘透明化（.canvas-header 同律）
+  expect(m.bgImage).toContain('linear-gradient');       // 顶缘折射线层（胶囊同源）
+  expect(m.padL).toBe('76px');                          // 让位 ✕/堆叠浮钮（48+16+12）
+  expect(m.padR).toBe('76px');
+  expect(m.chipHitsBtn).toBe(false);                    // chip 命中盒不进浮钮底下
+  expect(errors).toEqual([]);
+});
+
+test('T8 ask 悬浮钮让位文档角落圆钮簇（批③：不叠、避让正文边缘）', async ({ page }) => {
+  const errors = watchErrors(page);
+  await openDocCards(page, [['doc-md', '说明.md', 'markdown']]);
+  // 装簇（viewer 挂钮同几何：pane 内 absolute bottom:16，右 16/112）。
+  await page.evaluate(() => {
+    const pane = document.querySelector('.mf-cv-host > .canvas-tab-pane');
+    const src = document.createElement('button');
+    src.className = 'canvas-source-toggle';
+    src.style.cssText = 'position:absolute;right:16px;bottom:16px;width:40px;height:40px;';
+    const find = document.createElement('button');
+    find.className = 'canvas-find-toggle';
+    find.style.cssText = 'position:absolute;right:112px;bottom:16px;width:40px;height:40px;';
+    pane.append(find, src);
+  });
+  await page.waitForTimeout(400); // childList 观察 → rAF 合帧重算座位
+  const seat = await page.evaluate(() => {
+    const fab = document.querySelector('.ask-fab');
+    const cluster = document.querySelector('.mf-cv-host .canvas-source-toggle').getBoundingClientRect();
+    return { bottom: parseFloat(fab.style.bottom || ''), clusterTop: cluster.top, vh: window.innerHeight };
+  });
+  expect(seat.bottom).toBeCloseTo(seat.vh - seat.clusterTop + 12, 0);
+  expect(seat.bottom).toBeGreaterThan(64); // 高于 css 钉位（--dock-h 54 + 10）
+  // 撤簇 → 座位回落 css 钉位（内联 bottom 清空；输入条联动同清）。
+  await page.evaluate(() => {
+    for (const sel of ['.canvas-source-toggle', '.canvas-find-toggle']) {
+      document.querySelector('.mf-cv-host ' + sel)?.remove();
+    }
+  });
+  await page.waitForTimeout(400);
+  const cleared = await page.evaluate(() => ({
+    fab: document.querySelector('.ask-fab').style.bottom,
+    dock: document.querySelector('.ask-dock').style.bottom,
+  }));
+  expect(cleared.fab).toBe('');
+  expect(cleared.dock).toBe('');
   expect(errors).toEqual([]);
 });
