@@ -10,6 +10,7 @@ import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.ProviderConfig
 import nebflow.shared.{
   NebflowServiceConfig,
   ServiceLlmConfig
@@ -72,8 +73,13 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
    * Real SharedResources so the GET arm's candidate/health read faces run:
    * empty provider config => every chain ref resolves to nothing => current
    * = null, while the chain-face fields carry the assertions.
+   *
+   * `seededOverrides`（模型链热应用批 2026-10-31）：预置的会话驻留 pin
+   * （sessionModelOverrides）——PUT 热应用清除腿的判床。
    */
-  private def mkResources: nebflow.agent.SharedResources =
+  private def mkResources(
+    seededOverrides: Map[String, ModelCandidate] = Map.empty
+  ): nebflow.agent.SharedResources =
     val configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](
       NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
     )
@@ -90,7 +96,7 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
       taskStore = FileTaskStore,
       historyArchiver = HistoryArchiver.fileSystem(os.temp.dir() / "modelchain-spec-archives"),
       fileLockManager = FileLockManager.create.unsafeRunSync(),
-      sessionModelOverrides = cats.effect.Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty),
+      sessionModelOverrides = cats.effect.Ref.unsafe[IO, Map[String, ModelCandidate]](seededOverrides),
       providerRegistry = new nebflow.llm.ProviderRegistry(configRef, NullBackend),
       healthMonitor = nebflow.llm.ProviderHealthMonitor(null),
       actorSystem = null,
@@ -100,13 +106,13 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
 
   end mkResources
 
-  private def mkRoutes: HttpRoutes[IO] =
+  private def mkRoutes(res: nebflow.agent.SharedResources = mkResources()): HttpRoutes[IO] =
     val inner = new RestApiRoutes(
       tokenRef = cats.effect.Ref.unsafe[IO, String](TestToken),
       configRef = cats.effect.Ref.unsafe[IO, NebflowServiceConfig](
         NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))
       ),
-      sharedResources = mkResources,
+      sharedResources = res,
       sessionStore = null,
       wsRoutes = null
     )
@@ -116,13 +122,13 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
   private def getJson(path: String): IO[Response[IO]] =
     val req = Request[IO](Method.GET, Uri.unsafeFromString(path))
       .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
-    mkRoutes(req).value.map(_.getOrElse(fail(s"GET $path fell through")))
+    mkRoutes()(req).value.map(_.getOrElse(fail(s"GET $path fell through")))
 
   private def putJson(path: String, body: io.circe.Json): IO[Response[IO]] =
     val req = Request[IO](Method.PUT, Uri.unsafeFromString(path))
       .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
       .withEntity(body)
-    mkRoutes(req).value.map(_.getOrElse(fail(s"PUT $path fell through")))
+    mkRoutes()(req).value.map(_.getOrElse(fail(s"PUT $path fell through")))
 
   override def munitIOTimeout: scala.concurrent.duration.FiniteDuration =
     scala.concurrent.duration.DurationInt(60).seconds
@@ -205,6 +211,42 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
           json.hcursor.downField("chain").downField("preferred").as[String],
           Right("deepseek/deepseek-flash")
         )
+    }
+
+  test("PUT hot-applies: session-resident pins OUTSIDE the new chain are purged, in-chain pins survive"):
+    // 模型链热应用批（2026-10-31 作者报障②「fallback 链加了新模型不立即生效」）：
+    // 链面保存后，会话驻留的旧链引用（in-memory sessionModelOverrides；盘上
+    // modelRef 腿在本 spec 的 sessionStore=null 装配下按守卫跳过）按**新生效链
+    // 成员资格**清理——链外 pin 清除（下一请求即吃新链），链上 pin 保留。
+    withFixture { () =>
+      // null provider cast：清除判据只读 (providerId, model)——与 NullBackend 同款
+      // spec-only 形态，provider 对象永不解引用。
+      val nul = null.asInstanceOf[ProviderConfig]
+      val seeded = Map(
+        "s-in" -> ModelCandidate("kimi", nul, "kimi-k3"),
+        "s-out" -> ModelCandidate("anon", nul, "anon-gone")
+      )
+      val resources = mkResources(seeded)
+      val routes = mkRoutes(resources)
+      def put(body: io.circe.Json): IO[Response[IO]] =
+        val req = Request[IO](Method.PUT, Uri.unsafeFromString("/agents/Nebula/model"))
+          .withHeaders(Headers("Authorization" -> s"Bearer $TestToken"))
+          .withEntity(body)
+        routes(req).value.map(_.getOrElse(fail("PUT fell through")))
+      val newChain = io.circe.Json.obj(
+        "model" -> io.circe.Json.obj(
+          "preferred" -> "zhipu/GLM-5.3-Flash".asJson,
+          "fallbacks" -> List("kimi/kimi-k3").asJson
+        )
+      )
+      for
+        resp <- put(newChain)
+        _ = assertEquals(resp.status, Status.Ok)
+        overrides <- resources.sessionModelOverrides.get
+      yield
+        assert(!overrides.contains("s-out"), s"out-of-chain pin must be purged: ${overrides.keys}")
+        assert(overrides.contains("s-in"), s"in-chain pin must survive: ${overrides.keys}")
+      end for
     }
 
   test("PUT empty chain ({preferred: null, fallbacks: []}) normalizes to follow"):

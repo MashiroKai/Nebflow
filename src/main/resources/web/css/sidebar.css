@@ -940,6 +940,12 @@
 .settings-collapse-toggle[aria-expanded="true"] .settings-collapse-chevron {
   transform: rotate(180deg);
 }
+/* 配置面风格统一批（2026-10-31 作者令）：层级下钻入口行（JeV/生图）的
+   chevron 常驻右转 affordance——与手机层同款几何（手机层规则见
+   mobileLayer.css 弹窗退场批③块），STT/TTL 原地下旋语义不变。 */
+.settings-collapse-toggle.settings-drill-toggle .settings-collapse-chevron {
+  transform: rotate(-90deg);
+}
 .settings-collapse-body {
   padding: 4px 0 6px;
 }

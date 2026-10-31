@@ -1385,6 +1385,43 @@
   flex-direction: column;
   gap: 8px;
 }
+
+/* ── 层级下钻配置面（configDrill.js — 配置面风格统一批 2026-10-31 作者令：
+   JeV/生图配置面与 LLM 配置同款族）────────────────────────────────────
+   透明承接层复用 .cfg-modal-overlay（无压暗遮罩铁律）；玻璃盒复用 .cfg-modal
+   族（+440px 中档宽）；头部 = 15px/600 标题 + panel-btn 关闭（mp-header 同档）。
+   盒体 flex 纵排、内容区自滚——头部不随内容滚走。手机层：A 族铺平规则对
+   .cfg-modal-overlay 全族生效，且缩档时模块自关浮层（settingsSub 层级子页
+   接管），双保险零冲突。 */
+.config-drill-modal {
+  width: 440px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.config-drill-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px 12px 20px;
+  border-bottom: 1px solid var(--glass-border);
+  flex-shrink: 0;
+}
+.config-drill-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-frame-text-bright);
+}
+.config-drill-body {
+  padding: 12px 16px 16px;
+  overflow-y: auto;
+}
+/* 设置页回退链节（modelPanel.js mountModelChainSection 内容面）：编辑器行
+   满宽铺开，节内顶距归 0（节自带 hint 间距）。 */
+.chain-section-face .mp-editor { margin-top: 8px; }
+#model-chain-section-body .chain-section-error { padding: 24px 12px; }
+#model-chain-section-body:empty { display: none; }
 .mp-roleblock {
   border: 1px solid var(--glass-etched-border);
   border-radius: 12px;
@@ -1460,6 +1497,15 @@
 .mp-editor { display: flex; flex-direction: column; gap: 6px; }
 .mp-rows { display: flex; flex-direction: column; gap: 6px; }
 .mp-row-unavailable { opacity: 0.45; }
+/* 拖拽手柄（指针版拖拽，modelPanel.js）：touch-action:none 让触屏在手柄面
+   起拖不被浏览器手势接管；行体其余部分保留原生滚动（/model 配置面手机端
+   滚动/拖动修，2026-10-31 作者报障）。 */
+.mp-drag {
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
 /* 时段闸（model-schedule-unavailable 批 2026-10-29）：链行尾的窗口小注。 */
 .mp-window {
   font: 400 10px ui-monospace, SFMono-Regular, monospace;

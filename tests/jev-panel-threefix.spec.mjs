@@ -26,11 +26,20 @@
 //            #cfg-jev-keyref / #cfg-jev-key-value 明文直显行 + #jev-key-eye）；
 //   · 保存行 #btn-save-jev + #btn-test-jev + #jev-save-state。
 // 语义映射（三修意图逐条保留，锚换新）：
-//   R1 一行收起 → 头行 + hidden 折叠体 + aria-expanded/aria-controls + 徽标头行在场；
-//   R1b 行体开合 + 键盘 → #jev-advance-toggle（真 <button>，Enter 原生可开合）；
-//   R2 开关解耦 → 折叠体展开态下翻档不改变折叠体可见性 + 收展不清值；
+//   R1 一行收起 → 入口行 + hidden 折叠体 + aria-haspopup/aria-controls + 徽标头行在场；
+//   R1b 行体开合 + 键盘 → 点入口行开层级下钻浮层（configDrill.js 收编
+//       #jev-advance-body 整节点；×/点空白/Esc 归还），键盘 Enter 开 / Esc 关；
+//   R2 开关解耦 → 浮层开着翻档不改变内容面可见性 + 关开不清值（整节点收养，
+//       值随节点走）；
 //   R3/R3b 端点钉死 / 保存携带 → 锚 id 原样存活，断言零改动；
 //   R4 分配通道 legs 如实显示 → #settings-jev-health 锚存活，位迁头行。
+//
+// ── 配置面风格统一批判据换代（2026-10-31 作者令）────────────────
+// 「不再有展开式配置」贯彻到桌面：JeV 节头行从「同页展开折叠体」换代为「层级
+// 下钻」——桌面浮层玻璃面板（js/configDrill.js adopt/restore 锚点惯例），手机
+// push 层级子页（mobile/settingsSub.js settings-jev 路由，同一内容节点）。
+// R1/R1b/R2 的交互断言按新语义换代（hidden 语义与节点结构锚原样保留）；
+// R3/R3b/R4 只认字段/徽标锚，零改动。
 //
 // 截图（亮/暗双主题，零新色值核验）→ /tmp/nb-jev-threefix/shots/
 // SELF-CONTAINED（secrets-ui-redesign.spec.mjs 同款 harness）：静态服务器
@@ -128,14 +137,22 @@ async function openSettings(page) {
   await page.waitForSelector('#settings-content .settings-section', { timeout: 10000 });
 }
 
-/** Expand/collapse the JeV detail body through the head toggle (the C-batch
- *  restructure's single entry point — STT-advance-toggle 同款). */
+/** 打开/关闭 JeV 层级下钻浮层（配置面风格统一批 2026-10-31 判据换代：点入口
+ *  行 = 桌面浮层收编 #jev-advance-body——configDrill.js adopt/restore 锚点惯例；
+ *  hidden 语义不变：收编期 false、归还期 true；开态判据 = 节点住在
+ *  .config-drill-overlay 里）。开 = 点入口行；关 = 浮层自身的 ×——浮层
+ *  （z10000）盖着设置页，入口行在底下被承接层截胡、点不到。 */
 async function setJevExpanded(page, wantOpen) {
-  const expanded = await page.evaluate(() => document.getElementById('jev-advance-toggle')?.getAttribute('aria-expanded') === 'true');
-  if (expanded !== wantOpen) await page.click('#jev-advance-toggle');
+  const isOpen = await page.evaluate(() =>
+    !!document.getElementById('jev-advance-body')?.closest('.config-drill-overlay'));
+  if (isOpen !== wantOpen) {
+    if (wantOpen) await page.click('#jev-advance-toggle');
+    else await page.click('.config-drill-overlay .config-drill-close');
+  }
   await page.waitForFunction((want) => {
     const body = document.getElementById('jev-advance-body');
-    return body && body.hidden === !want;
+    if (!body) return false;
+    return !!body.closest('.config-drill-overlay') === want && body.hidden === !want;
   }, wantOpen, { timeout: 5000 });
 }
 
@@ -145,8 +162,12 @@ function jevSection(page) {
   return page.locator('.settings-section').filter({ has: page.locator('#jev-advance-toggle') });
 }
 
-// ══ R1 · 收起态一行 ══════════════════════════════════════════
-test('R1 collapsed by default (even enabled): one head row only — title + status slot, body hidden', async ({ page }) => {
+// ══ R1 · 收起态一行（层级下钻入口行）═════════════════════════
+// 配置面风格统一批（2026-10-31 作者令）判据换代：JeV 节不再有展开式配置——
+// 头行 = 下钻入口（桌面点按开浮层玻璃面板/手机 push 层级子页），折叠体在
+// 设置页内常驻 hidden、零内联渲染。三改①「一行收起」语义映射：入口行仍
+// 一行（标题 + 状态位 + 右转 chevron），内容面整节点收编、零副本。
+test('R1 collapsed by default (even enabled): one drill-entry row only — title + status slot, body hidden', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN' }); // jev.enabled=true in the mock
   await openSettings(page);
   const dump = await page.evaluate(() => {
@@ -158,10 +179,12 @@ test('R1 collapsed by default (even enabled): one head row only — title + stat
     return {
       title: head?.querySelector('.settings-label')?.textContent.trim() || '',
       bodyHidden: !!body && body.hidden === true,
-      ariaExpanded: head?.getAttribute('aria-expanded'),
+      bodyAdopted: !!body?.closest('.config-drill-overlay'),
+      overlayCount: document.querySelectorAll('.config-drill-overlay').length,
+      ariaHaspopup: head?.getAttribute('aria-haspopup'),
       controls: head?.getAttribute('aria-controls'),
       chev: head ? getComputedStyle(head.querySelector('.settings-collapse-chevron')).transform : null,
-      toggleInBody: !!document.querySelector('#jev-advance-body #toggle-jev'), // C-batch: gate moved INTO the body
+      toggleInBody: !!document.querySelector('#jev-advance-body #toggle-jev'), // 内容面整节点收编，结构原样
       statusInHead: !!statusHint && statusHint.closest('.stt-advance-toggle-row') === head?.closest('.stt-advance-toggle-row'),
       badgeVisible: !!badge && !!badge.offsetParent,
       sectionH: section?.getBoundingClientRect().height || 0,
@@ -169,64 +192,80 @@ test('R1 collapsed by default (even enabled): one head row only — title + stat
   });
   expect(dump.title, 'head row carries the Jev title').toBe('Jev（插件分配）');
   expect(dump.bodyHidden, '🔴 detail body collapsed by default even when enabled (hidden 属性)').toBe(true);
-  expect(dump.ariaExpanded, 'head toggle declares collapsed').toBe('false');
+  expect(dump.bodyAdopted, 'body not adopted before drill-in').toBe(false);
+  expect(dump.overlayCount, 'no drill overlay open').toBe(0);
+  expect(dump.ariaHaspopup, 'drill entry declares dialog semantics').toBe('dialog');
   expect(dump.controls, 'head toggle controls the detail body').toBe('jev-advance-body');
-  expect(dump.chev, 'chevron unrotated while collapsed').toBe('none');
-  expect(dump.toggleInBody, 'the usage gate rides the collapsed body first row (C-batch 迁入位)').toBe(true);
+  expect(dump.chev, 'chevron points right (层级导航 affordance)').toContain('matrix');
+  expect(dump.toggleInBody, 'the usage gate rides the adopted body first row').toBe(true);
   expect(dump.statusInHead, 'allocation-channel status slot lives in the HEAD row').toBe(true);
   expect(dump.badgeVisible, '🔴 health badge visible even collapsed — 状态行如实反映不再藏进细节').toBe(true);
   expect(dump.sectionH, `collapsed section is ONE row (${dump.sectionH}px < 60)`).toBeLessThan(60);
 });
 
-// ══ R1b · 点头行展开/收起 + 键盘 ══════════════════════════════
-test('R1b clicking the head toggle expands/collapses in place; keyboard operable', async ({ page }) => {
+// ══ R1b · 点入口行开浮层 + 键盘 ═══════════════════════════════
+// 判据换代：点按 = 浮层收编（不再是同页展开）；返回 = 浮层关闭归还（× / 点
+// 空白 / Esc 三路同语义）。
+test('R1b clicking the entry row opens the drill overlay (adopts the body); close restores it', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN' });
   await openSettings(page);
   await page.click('#jev-advance-toggle');
-  await page.waitForFunction(() => document.getElementById('jev-advance-body')?.hidden === false);
+  await page.waitForFunction(() => {
+    const body = document.getElementById('jev-advance-body');
+    return body && !body.hidden && !!body.closest('.config-drill-overlay');
+  });
   const open = await page.evaluate(() => ({
-    aria: document.getElementById('jev-advance-toggle').getAttribute('aria-expanded'),
-    chev: getComputedStyle(document.querySelector('#jev-advance-toggle .settings-collapse-chevron')).transform,
+    overlay: getComputedStyle(document.querySelector('.config-drill-overlay')).display,
+    title: document.querySelector('.config-drill-overlay .config-drill-title')?.textContent.trim(),
+    closeBtn: !!document.querySelector('.config-drill-overlay .config-drill-close'),
+    bodyInOverlay: !!document.getElementById('jev-advance-body')?.closest('.config-drill-overlay'),
     toggleRow: document.querySelector('#jev-advance-body .settings-row .settings-label')?.textContent.trim(),
     labels: [...document.querySelectorAll('#jev-advance-body .cfg-form-group .cfg-label')].map(l => l.textContent.trim()),
   }));
-  expect(open.aria, 'expanded → aria-expanded=true').toBe('true');
-  expect(open.chev, 'chevron rotates when expanded (rotate 180°)').toContain('matrix');
+  expect(open.overlay, 'overlay visible').not.toBe('none');
+  expect(open.title, 'overlay title = the section name').toBe('Jev（插件分配）');
+  expect(open.closeBtn, 'overlay carries a close button').toBe(true);
+  expect(open.bodyInOverlay, 'the whole body node is adopted into the overlay').toBe(true);
   expect(open.toggleRow, 'first body row = the usage-gate toggle row').toBe('用 Jev 分配插件');
-  expect(open.labels, 'expanded detail = 提供方 + 端点 + 密钥引用 + key 值（分配通道升入头行状态位）')
+  expect(open.labels, 'adopted detail = 提供方 + 端点 + 密钥引用 + key 值（分配通道升入头行状态位）')
     .toEqual(['提供方', '端点', 'API 密钥引用', 'key 值']);
 
-  await page.click('#jev-advance-toggle');
-  await page.waitForFunction(() => document.getElementById('jev-advance-body')?.hidden === true);
-  expect(await page.evaluate(() => document.getElementById('jev-advance-toggle').getAttribute('aria-expanded')), 're-click collapses').toBe('false');
+  // close via × → body restored to the settings DOM, hidden again
+  await page.click('.config-drill-overlay .config-drill-close');
+  await page.waitForFunction(() => {
+    const body = document.getElementById('jev-advance-body');
+    return body?.hidden === true && !body.closest('.config-drill-overlay')
+      && !document.querySelector('.config-drill-overlay');
+  });
 
-  // Keyboard: focus + Enter toggles (real <button> semantics).
+  // Keyboard: focus + Enter opens (real <button> semantics → delegation opens);
+  // Escape closes (overlay's own keydown).
   await page.focus('#jev-advance-toggle');
   await page.keyboard.press('Enter');
-  await page.waitForFunction(() => document.getElementById('jev-advance-body')?.hidden === false);
-  await page.keyboard.press('Enter');
-  await page.waitForFunction(() => document.getElementById('jev-advance-body')?.hidden === true);
+  await page.waitForFunction(() => !!document.getElementById('jev-advance-body')?.closest('.config-drill-overlay'));
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.config-drill-overlay'));
 });
 
-// ══ R2 · 开关解耦（toggle ≠ 展开）════════════════════════════
-// C-batch 后 gate 住在折叠体内——收起态不可达是设计态；解耦语义改在展开态钉：
-// 翻档（on/off 两个方向）都不改变折叠体可见性。
-test('R2 the toggle is only a usage gate — flipping it never changes the detail body', async ({ page }) => {
+// ══ R2 · 开关解耦（toggle ≠ 下钻面开合）════════════════════════
+// 下钻浮层开着时翻档（on/off 两个方向）都不改变浮层/内容面可见性；
+// 关浮层再开 ≠ 清值（内容节点整节点收编归还，值随节点走）。
+test('R2 the toggle is only a usage gate — flipping it never changes the drill face; close/reopen keeps values', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN' });
   await openSettings(page);
   await setJevExpanded(page, true);
-  // flip OFF then ON — body stays expanded throughout
+  // flip OFF then ON — the adopted body stays visible throughout
   await page.click('#toggle-jev');
   await page.waitForTimeout(80);
-  expect(await page.evaluate(() => document.getElementById('jev-advance-body').hidden), 'flip OFF while expanded stays expanded').toBe(false);
+  expect(await page.evaluate(() => document.getElementById('jev-advance-body').hidden), 'flip OFF while drilled-in stays visible').toBe(false);
   await page.click('#toggle-jev');
   await page.waitForTimeout(80);
-  expect(await page.evaluate(() => document.getElementById('jev-advance-body').hidden), 'flip ON again — still expanded').toBe(false);
-  // collapse ≠ clear: the configured values survive expand/collapse
+  expect(await page.evaluate(() => document.getElementById('jev-advance-body').hidden), 'flip ON again — still visible').toBe(false);
+  // close/reopen ≠ clear: the configured values survive (whole-node adoption)
   await page.fill('#cfg-jev-keyref', 'my-key-name');
   await setJevExpanded(page, false);
   await setJevExpanded(page, true);
-  expect(await page.inputValue('#cfg-jev-keyref'), 'collapse/expand keeps the input value').toBe('my-key-name');
+  expect(await page.inputValue('#cfg-jev-keyref'), 'close/reopen keeps the input value').toBe('my-key-name');
 });
 
 // ══ R3 · 端点钉死（typesafe-jev）═════════════════════════════
@@ -353,9 +392,9 @@ test('R4c legacy payload without legs → the tri-state display does not regress
   expect(dump.reason, 'legacy reason tail intact').toContain('decision API server error: 502');
 });
 
-// ══ 双主题截图（收起一行 / 展开细节，暗亮两态零新色值）════════
+// ══ 双主题截图（入口一行 / 下钻浮层，暗亮两态零新色值）════════
 async function shots(colorScheme, tag) {
-  test(`shots[${tag}] collapsed one-row section / expanded detail`, async ({ page }) => {
+  test(`shots[${tag}] collapsed one-row entry / drill overlay face`, async ({ page }) => {
     await bootPage(page, {
       locale: 'zh-CN', colorScheme,
       health: {
@@ -370,7 +409,7 @@ async function shots(colorScheme, tag) {
     await page.waitForFunction(() => (document.getElementById('settings-jev-health')?.textContent || '').length > 0);
     await jevSection(page).screenshot({ path: `${SHOTS}/jev-card-collapsed-${tag}.png` });
     await setJevExpanded(page, true);
-    await jevSection(page).screenshot({ path: `${SHOTS}/jev-card-expanded-${tag}.png` });
+    await page.locator('.config-drill-overlay .config-drill-modal').screenshot({ path: `${SHOTS}/jev-card-expanded-${tag}.png` });
   });
 }
 await shots('light', 'light');

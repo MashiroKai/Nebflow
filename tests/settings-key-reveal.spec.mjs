@@ -17,6 +17,14 @@
 // SELF-CONTAINED（secrets-readback.spec.mjs 同款 harness）：隔离静态服务器
 // 127.0.0.1:8237 + route mock API + routeWebSocket mock WS，零真实后端。
 // Run: node node_modules/@playwright/test/cli.js test tests/settings-key-reveal.spec.mjs --workers=1 --reporter=line
+//
+// ── 存量红清欠 + 配置面风格统一批判据换代（2026-10-31）───────────────────
+// T1/T4 旧锚（#jev-head / #jev-detail-body / #jev-keyref-eye）随 2026-10-28
+// settings-panel C 批重排已死（现树零命中，main 上即红）。换代：JeV 节为层级
+// 下钻面（configDrill.js 浮层收编 #jev-advance-body）——T1/T4 改走
+// 「点 #jev-advance-toggle 进浮层」路径；eye 锚 = 现树 #jev-key-eye
+// （key 值只读行，作者令 2026-10-28 21:30 明文直显面），并补 key 值回读路由
+// _mock（GET /api/secrets/<keyRef>/value）把「值明文直显」一起钉住。
 
 import { test, expect } from '@playwright/test';
 import { createServer } from 'node:http';
@@ -33,6 +41,7 @@ const KIMI_KEY = 'sk-real-kimi-reveal-1';
 const KIMI_KEY_ROTATED = 'sk-rotated-kimi-2026-reveal';
 const PINNED = 'https://api.typesafe.ai/v1/systemone';
 const JEV_KEYREF = 'typesafe-api-key';
+const JEV_KEY_VALUE = 'ts-real-jev-key-reveal-1';
 
 /** 静态配置底稿（configData 帧；apiKey 形态字段与引擎 getConfig 打码面同形 = "***"）。 */
 function makeCfg({ withKimiKey = true, withJevKeyRef = true } = {}) {
@@ -152,37 +161,49 @@ async function keyFieldState(page) {
 }
 
 // ══ T1 · JeV 配置节：进入即明文；眼睛 = 可选遮蔽（演示性切换不动值）═══════
-test('T1 jev keyRef shows plaintext on entry; the eye masks then reveals without touching the value', async ({ page }) => {
+// 配置面风格统一批判据换代（2026-10-31）：JeV 节为层级下钻面——点入口行开
+// 浮层收编 #jev-advance-body（旧 #jev-head/#jev-detail-body 锚随 10-28 C 批
+// 重排已死，本换代一并修红）；eye 锚 = 现树 #jev-key-eye（key 值只读行）。
+test('T1 jev key shows plaintext on entry; the eye masks then reveals without touching the value', async ({ page }) => {
   await bootPage(page);
+  // key 值回读面（owner 鉴权单读）——比 catch-all 更具体的路由后注册优先。
+  await page.route('**/api/secrets/*/value', (r) => r.fulfill({ json: { value: JEV_KEY_VALUE } }));
   await openSettings(page);
-  await page.click('#jev-head');
-  await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'block');
+  await page.click('#jev-advance-toggle');
+  await page.waitForFunction(() => !!document.getElementById('jev-advance-body')?.closest('.config-drill-overlay'));
 
   const initial = await page.evaluate(() => {
-    const input = document.getElementById('cfg-jev-keyref');
-    const eye = document.getElementById('jev-keyref-eye');
+    const keyRef = document.getElementById('cfg-jev-keyref');
+    const value = document.getElementById('cfg-jev-key-value');
+    const eye = document.getElementById('jev-key-eye');
     return {
-      value: input?.value || '',
-      security: input ? getComputedStyle(input).webkitTextSecurity : '',
+      keyRefValue: keyRef?.value || '',
+      keyRefSecurity: keyRef ? getComputedStyle(keyRef).webkitTextSecurity : '',
+      valueReadonly: value?.readOnly === true,
+      valueFace: value?.value || '',
+      valueSecurity: value ? (value.style.webkitTextSecurity || 'none') : '',
       pressed: eye?.getAttribute('aria-pressed'),
       label: eye?.getAttribute('aria-label'),
     };
   });
-  expect(initial.value, '🔴 已配置的 keyRef 进页即明文（不再是掩码）').toBe(JEV_KEYREF);
-  expect(initial.security, '🔴 default face = plaintext (none), not disc').toBe('none');
-  expect(initial.pressed, 'eye starts on the revealed face').toBe('true');
+  expect(initial.keyRefValue, '🔴 已配置的 keyRef 进页即明文（不再是掩码）').toBe(JEV_KEYREF);
+  expect(initial.keyRefSecurity, 'keyRef 字段面 = 明文').toBe('none');
+  expect(initial.valueReadonly, 'key 值行 = 只读直显行').toBe(true);
+  expect(initial.valueFace, '🔴 key 值回读真值明文直显').toBe(JEV_KEY_VALUE);
+  expect(initial.valueSecurity, '🔴 default face = plaintext (none), not disc').toBe('none');
+  expect(initial.pressed, 'eye starts on the revealed face').toBe('false');
   expect(initial.label, 'eye label names the hide action').toBe('隐藏密钥引用');
 
-  await page.click('#jev-keyref-eye');
+  await page.click('#jev-key-eye');
   const masked = await page.evaluate(() => ({
-    v: document.getElementById('cfg-jev-keyref').value,
-    s: getComputedStyle(document.getElementById('cfg-jev-keyref')).webkitTextSecurity,
+    v: document.getElementById('cfg-jev-key-value').value,
+    s: document.getElementById('cfg-jev-key-value').style.webkitTextSecurity,
   }));
   expect(masked.s, 'first eye click masks (disc)').toBe('disc');
-  expect(masked.v, 'masking is presentation-only — the value stays').toBe(JEV_KEYREF);
+  expect(masked.v, 'masking is presentation-only — the value stays').toBe(JEV_KEY_VALUE);
 
-  await page.click('#jev-keyref-eye');
-  const back = await page.evaluate(() => getComputedStyle(document.getElementById('cfg-jev-keyref')).webkitTextSecurity);
+  await page.click('#jev-key-eye');
+  const back = await page.evaluate(() => document.getElementById('cfg-jev-key-value').style.webkitTextSecurity);
   expect(back, 'second eye click reveals again').toBe('none');
 });
 
@@ -249,14 +270,21 @@ test('T4 unconfigured faces show the EMPTY state, not a mask: keyless provider �
   expect(anon.security, 'empty state is the plaintext face').toBe('none');
   await page.evaluate(() => document.getElementById('cfg-modal')?.remove());
 
-  await page.click('#jev-head');
-  await page.waitForFunction(() => document.getElementById('jev-detail-body')?.style.display === 'block');
+  // JeV 侧（配置面风格统一批：层级下钻浮层里断言——缺 keyRef = 空态非掩码）。
+  await page.click('#jev-advance-toggle');
+  await page.waitForFunction(() => !!document.getElementById('jev-advance-body')?.closest('.config-drill-overlay'));
   const jev = await page.evaluate(() => ({
-    v: document.getElementById('cfg-jev-keyref')?.value || '',
-    s: getComputedStyle(document.getElementById('cfg-jev-keyref')).webkitTextSecurity,
+    kr: document.getElementById('cfg-jev-keyref')?.value || '',
+    krS: getComputedStyle(document.getElementById('cfg-jev-keyref')).webkitTextSecurity,
+    kv: document.getElementById('cfg-jev-key-value')?.value || '',
+    kvPh: document.getElementById('cfg-jev-key-value')?.placeholder || '',
+    kvS: document.getElementById('cfg-jev-key-value')?.style.webkitTextSecurity || 'none',
   }));
-  expect(jev.v, 'missing jev keyRef → blank (empty state)').toBe('');
-  expect(jev.s, 'blank state is not a mask').toBe('none');
+  expect(jev.kr, 'missing jev keyRef → blank (empty state)').toBe('');
+  expect(jev.krS, 'blank state is not a mask').toBe('none');
+  expect(jev.kv, 'no keyRef ⇒ no value readback — stays blank').toBe('');
+  expect(jev.kvS, 'key value blank state is not a mask either').toBe('none');
+  expect(jev.kvPh.length, 'placeholder carries the no-ref explanation').toBeGreaterThan(0);
 });
 
 // ══ T5 · 回读被拒（403）→ 弹窗退回空态（不伪造、不崩）════════════════════

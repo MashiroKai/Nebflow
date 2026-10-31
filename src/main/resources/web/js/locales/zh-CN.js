@@ -1160,6 +1160,10 @@ export default {
   'settings.secretsNone': '尚无密钥',
   'settings.addProvider': '+ 添加服务商',
   'settings.modelChainHint': '在输入框输入 /model 命令，以统一/分开两种模式配置各角色的模型链。',
+  // 配置面风格统一批②（2026-10-31 作者令）：设置页回退链节（/model 回退链
+  // 编辑器同款内容面，两份共享同一状态/保存通道）。
+  'settings.modelChainTitle': '模型回退链',
+  'settings.modelChainSectionHint': '主链路模型与回退顺序；每次调整即时保存，与 /model 面板同一份状态、改哪边都即时同步。',
   // /model 面板文案（modelcfg Phase 1）
   'model.title': '模型配置',
   'model.modeUnified': '统一配置',
