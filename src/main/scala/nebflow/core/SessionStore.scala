@@ -1132,6 +1132,11 @@ class SessionStore(
             // 但磁盘上永久占着空间；一并删除保证「删干净」。
             val trd = PathUtil.dataRoot / "tool-results" / id
             if os.exists(trd) then os.remove.all(trd)
+            // 消息身份牌映射（msgtokens 批 2026-10-31）：<sid>/msg-tokens.jsonl 随会话
+            // 删除——映射以会话为权威载体，会话没了映射即孤儿（boot 对账兜底清，
+            // 此处删除面一次收净）。
+            val mt = sessionsDir / id / "msg-tokens.jsonl"
+            if os.exists(mt) then os.remove(mt)
           } *> deleteUiMessages(id) *> appendSemaphores.update(
             _ - id
           ) *> (if wasActive && newActiveId.nonEmpty then

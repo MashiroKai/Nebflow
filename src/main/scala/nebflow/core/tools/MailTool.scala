@@ -693,52 +693,71 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                   attachmentsPlan(input, ctx).flatMap {
                     case Left(err) => IO.pure(Left(err))
                     case Right(attachmentPaths) =>
-                      val effectiveMessage = withAttachmentsNote(message, attachmentPaths)
-                      val blocks = ImageInject.messageBlocks(effectiveMessage, attachments)
-                      ctx.actorSystem match
-                        case None =>
-                          IO.pure(Left(ToolError("No actor system available")))
-                        case Some(system) =>
-                          // R2 分层地址面（细则 + B1-a）：角色专属
-                          // 地址形态先在这一层定判——命中即处理（含**显式报错**），未命中
-                          // （= 该地址不属于本角色的分层面）才落回既有 team/短名瀑布。
-                          // 硬禁静默兜底与模糊匹配：认不出的地址一律显式报错并指明合法面。
-                          // `imagePaths` 一并下传：`project:` / `node:` 两条腿**结构上**
-                          // 只能收字符串 ⇒ `images` 在它们身上是显式拒绝（B6 静默丢修）。
-                          layeredRoute(
-                            address,
-                            effectiveMessage,
-                            blocks,
-                            imagePaths,
-                            chainId,
-                            ctx,
-                            system
-                          ) match
-                            case Some(action) => action
-                            case None =>
-                              // 案 C：本层原有一个 `delivery match`
-                              // —— 「`"immediate"`」与「陌生值 ⇒ 打 WARN 后收敛到 immediate」两支。
-                              // schema 键删除后**只剩一条投递路径**（immediate 是唯一形态），
-                              // 故该分支连同其 WARN 一并删除（设计件 §4.4(a)「其余值不再需要分支」），
-                              // 不再有任何按键值分派的逻辑。非 `queue` 的旧值由此与「键缺席」
-                              // **逐字同一结果**（残差读数见交付报告）。
-                              // the `type` parameter is retired with
-                              // the key —— eventType is now judged by the **leading `[INTERRUPT]`
-                              // literal of the body** (same single-point criterion as deliverToRoot):
-                              // a literal first line => `interrupt`, otherwise `info`. The dispatcher->root
-                              // leg's batching-window exemption uses the same judgment (see
-                              // deliverToRootAgent / isDispatcherMailInterrupt).
-                              val legacyEventType =
-                                if isDispatcherMailInterrupt(effectiveMessage) then "interrupt" else "info"
-                              if address.contains("://") then
-                                deliverToAddress(address, effectiveMessage, blocks, legacyEventType, ctx, system)
-                              else deliverToShortName(address, effectiveMessage, blocks, legacyEventType, ctx, system)
-                      end match
+                      // 消息身份牌消解（msgtokens 批 2026-10-31）：派发文本中的
+                      // {{msg:sid8-seq6}} 在一切路由/投递副作用前展开为消息全文（映射
+                      // 缺失 = 显式报错行注入——不静默错引、不回退路径引用；机制关 =
+                      // 原样透传）。此处单点覆盖 sendMail / deliverToDelegate / node: /
+                      // queue 全腿（各腿都吃 effectiveMessage）；blocks 由消解后文本
+                      // 构造 ⇒ 图像腿内嵌文本同解。接收方零工具调用。
+                      msgTokensResolve(ctx, message).flatMap { resolvedMessage =>
+                        val effectiveMessage = withAttachmentsNote(resolvedMessage, attachmentPaths)
+                        val blocks = ImageInject.messageBlocks(effectiveMessage, attachments)
+                        ctx.actorSystem match
+                          case None =>
+                            IO.pure(Left(ToolError("No actor system available")))
+                          case Some(system) =>
+                            // R2 分层地址面（细则 + B1-a）：角色专属
+                            // 地址形态先在这一层定判——命中即处理（含**显式报错**），未命中
+                            // （= 该地址不属于本角色的分层面）才落回既有 team/短名瀑布。
+                            // 硬禁静默兜底与模糊匹配：认不出的地址一律显式报错并指明合法面。
+                            // `imagePaths` 一并下传：`project:` / `node:` 两条腿**结构上**
+                            // 只能收字符串 ⇒ `images` 在它们身上是显式拒绝（B6 静默丢修）。
+                            layeredRoute(
+                              address,
+                              effectiveMessage,
+                              blocks,
+                              imagePaths,
+                              chainId,
+                              ctx,
+                              system
+                            ) match
+                              case Some(action) => action
+                              case None =>
+                                // 案 C：本层原有一个 `delivery match`
+                                // —— 「`"immediate"`」与「陌生值 ⇒ 打 WARN 后收敛到 immediate」两支。
+                                // schema 键删除后**只剩一条投递路径**（immediate 是唯一形态），
+                                // 故该分支连同其 WARN 一并删除（设计件 §4.4(a)「其余值不再需要分支」），
+                                // 不再有任何按键值分派的逻辑。非 `queue` 的旧值由此与「键缺席」
+                                // **逐字同一结果**（残差读数见交付报告）。
+                                // the `type` parameter is retired with
+                                // the key —— eventType is now judged by the **leading `[INTERRUPT]`
+                                // literal of the body** (same single-point criterion as deliverToRoot):
+                                // a literal first line => `interrupt`, otherwise `info`. The dispatcher->root
+                                // leg's batching-window exemption uses the same judgment (see
+                                // deliverToRootAgent / isDispatcherMailInterrupt).
+                                val legacyEventType =
+                                  if isDispatcherMailInterrupt(effectiveMessage) then "interrupt" else "info"
+                                if address.contains("://") then
+                                  deliverToAddress(address, effectiveMessage, blocks, legacyEventType, ctx, system)
+                                else deliverToShortName(address, effectiveMessage, blocks, legacyEventType, ctx, system)
+                        end match
+                      }
                   }
               }
       }
     end if
   end call
+
+  /**
+   * 消息身份牌消解入口（msgtokens 批）：ToolContext 未带共享资源（REST 直调/无装配
+   * 上下文）时退回全局单例——同一 dataRoot 下注册表对磁盘权威，两种取法结果一致
+   * （内存索引只是 JSONL 的缓存）。机制关 = 原样透传（resolve 内部判据）。
+   */
+  private def msgTokensResolve(ctx: ToolContext, text: String): IO[String] =
+    ctx.sharedResources
+      .map(_.msgTokens)
+      .getOrElse(nebflow.core.msgtokens.MsgTokenRegistry.global)
+      .resolve(text)
 
   // ============================================================
   // R2 分层地址面

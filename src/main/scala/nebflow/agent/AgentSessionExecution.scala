@@ -853,6 +853,17 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             // F-2 M1/M3：计数键 = 设备**成员集合**（与 `devInfo` 同帧的读数）。
             deviceMemberKey = deviceMemberKey
           )
+          // 消息身份牌宣告（msgtokens 批 2026-10-31）：真用户轮把本条消息的牌经
+          // 请求级 reminder 下发（context 族——非持久化，compact/ask 轮被下方注入闸
+          // 抑制；映射本体在会话级 JSONL，压缩/重启后仍可按文本反查）。未铸牌 = None =
+          // 零注入零噪声（机制关 / 旧会话无牌史）。铸牌点 = AgentIdle 直投腿 +
+          // AgentProcessing 两入队腿，均先于本 pipeLlmCall。
+          msgTokenReminder <-
+            if isRealUserTurn then
+              (stateForLlm.sessionId, lastMsgOpt.flatMap(_.content.swap.toOption)) match
+                case (Some(sid), Some(text)) => resources.msgTokens.reminderFor(sid, text)
+                case _ => IO.pure(None)
+            else IO.pure(None)
           // Branch change: persist synchronously (no async message needed)
           _ <- turnCtx.branchChange match
             case Some(_) =>
@@ -864,7 +875,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                   )
               )
             case None => IO.unit
-          loggedReminders <- SystemReminders.logAndReturn(reminders)
+          loggedReminders <- SystemReminders.logAndReturn(reminders ++ msgTokenReminder.toList)
           // The time reminder is PERSISTED as a real User message in the
           // session history: folded into the working state so it flows into
           // the persisted history (persistIfSession saves state.messages) and

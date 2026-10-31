@@ -704,8 +704,26 @@ case class NebflowServiceConfig(
    * 适配器形态按协议划分：`cogview` / `openai-images`（gpt-image-1 与一切 OpenAI
    * 兼容 images 端点，含豆包 Seedream/火山方舟兼容模式）/ `imagen`（预留位）。
    */
-  imagegen: Option[ImageGenConfig] = None
+  imagegen: Option[ImageGenConfig] = None,
+  /**
+   * 消息身份牌机制节（msgtokens 批 2026-10-31，作者拍板③）——顶层 `msgTokens` 块。
+   * `None` = 未配置 ⇒ 机制开（铸牌 / reminder 宣告 / 投递前消解全活）——与
+   * `plugins.enabled` 同向（缺席=开）：本机制是实例内引擎侧机制，安全面不依赖默认关；
+   * 运行时是热读（MsgTokenRegistry.enabledFromConfig，GlobalSafety 同款形态），本
+   * 类型化节主要服务 GET /api/config 透传可见与 PATCH 深合并可写。
+   */
+  msgTokens: Option[MsgTokensConfig] = None
 )
+
+/**
+ * 消息身份牌机制开关（msgtokens 批）——nebflow.json 顶层 `msgTokens` 块。
+ * 缺席 = 开（作者拍板③； contrast `jev.enabled`，那面朝机器外发 faces，安全方向相反）。
+ */
+case class MsgTokensConfig(enabled: Option[Boolean] = None):
+  def isEnabled: Boolean = enabled.getOrElse(true)
+
+object MsgTokensConfig:
+  given Decoder[MsgTokensConfig] = deriveDecoder
 
 object NebflowServiceConfig:
   given Decoder[NebflowServiceConfig] = deriveDecoder[NebflowServiceConfig]

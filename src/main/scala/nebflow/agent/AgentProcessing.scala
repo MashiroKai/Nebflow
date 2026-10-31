@@ -1574,9 +1574,13 @@ private[agent] object AgentProcessing:
           val updatedExec = state.execution.copy(
             pendingUserInputs = state.execution.pendingUserInputs :+ stamped
           )
-          IO.pure(
-            processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending)
-          )
+          // 消息身份牌铸牌（msgtokens 批）：busy 入队即铸（先于 turn 边界注入与映射
+          // 消费；dedup 丢弃在上，被丢件不铸）。idle 直投腿另有接线点——clientMessageId
+          // 幂等键保证转发回 idle 腿的同一消息不双铸。
+          mintUserMsgToken(resources, state.sessionId, msg.text, msg.fromUser, msg.blocks, msg.clientMessageId) *>
+            IO.pure(
+              processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending)
+            )
       case msg: AgentCommand.SkillActivate =>
         val updatedExec = state.execution.copy(
           pendingUserInputs = state.execution.pendingUserInputs :+ msg
@@ -1599,9 +1603,11 @@ private[agent] object AgentProcessing:
         val updatedExec = state.execution.copy(
           pendingImmediateInputs = state.execution.pendingImmediateInputs :+ msg
         )
-        persistQueues(state.sessionId, updatedExec) *> IO.pure(
-          processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending)
-        )
+        // 消息身份牌铸牌（msgtokens 批）：真人 ImmediateInput（WS 直发件）busy 入队即铸。
+        mintUserMsgToken(resources, state.sessionId, msg.text, msg.fromUser, msg.blocks) *>
+          persistQueues(state.sessionId, updatedExec) *> IO.pure(
+            processing(agentDef, resources, depth, parentRef, state.copy(execution = updatedExec), pending)
+          )
 
       // Queued mail arriving while busy — just count; actual content is on disk
       case AgentCommand.MailQueued(item, _) =>
