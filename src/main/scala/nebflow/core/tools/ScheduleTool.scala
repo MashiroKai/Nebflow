@@ -13,9 +13,17 @@ object ScheduleTool extends Tool:
 
   val description =
     """Schedule a task to fire at a specified time, optionally recurring — or keep a persistent
-todo (待办) that re-surfaces every morning until done — or manage existing entries
+todo (待办) on the USER's inbox until they write it off — or manage existing entries
 (list / cancel / done). At the scheduled time the content is injected into your conversation
 as an instruction — you then execute it.
+
+Semantic split (two faces, one ledger):
+- kind="task" = YOUR reminder: fires into your conversation at the time — the agent face
+  (unchanged semantics).
+- kind="todo" = the USER's face: it lands in the user's todo inbox (消息列表 → 待办事项),
+  surfaces in the daily morning digest on your side, and waits there until the user checks
+  it off or cancels it. The user answers WHEN FREE — never expect an immediate reply to a
+  todo. Non-blocking decisions/approvals belong here, NOT in an AskUser popup.
 
 ## When to Use
 
@@ -26,9 +34,12 @@ as an instruction — you then execute it.
 - 用户提醒 — remind the user about something at a future time
 - 待办 — the user says "记个待办/别忘了 X/记得做 X" (no fixed time): create with kind="todo".
   Stored engine-side (survives session compaction AND restarts, like scheduled tasks) and
-  re-injected every morning at 09:00 as one digest until you write it off with action="done"
-  (completed) or cancel it (no longer needed). Never let an unfinished todo rot in context
-  memory — persist it as a todo.
+  re-injected every morning at 09:00 as one digest until done/cancelled. Persist it — never
+  let an unfinished todo rot in context memory.
+- 待决策/待批准（非阻塞）— you need the user's decision or approval but CAN keep working
+  without it: create with kind="todo" (content = the decision to make). It appears in the
+  user's todo inbox; they batch-approve when free. Use AskUserQuestion ONLY when truly
+  blocked (the next step is impossible without the answer).
 
 ## Actions (optional `action` field, default "create")
 
@@ -45,6 +56,8 @@ as an instruction — you then execute it.
   task never fires; a cancelled todo never surfaces again. It disappears from list immediately.
 - **done**: write off a TODO by id after completing it (todos only — for a scheduled task
   use cancel). The written-off todo is removed from storage and never surfaces again.
+- **edit**: modify an existing entry by id — content and/or project label (字段级 patch,
+  提供的字段才改; project 传 "" 清空归属 = 未分组). Works across sessions, both kinds.
 
 ## Fields
 
@@ -96,7 +109,10 @@ as an instruction — you then execute it.
 - **name** (create, recommended): Stable identifier for upsert (within the same kind). Same
   name + kind replaces the old entry (across all sessions). Required practice for
   recurring/routine tasks; omit for one-offs.
-- **id** (cancel/done): Entry id — from action=list.
+- **project** (create/edit, optional): Project label the entry belongs to ("DOSTEL",
+  "stand"…) — the user's todo inbox groups and filters by it, so ALWAYS tag a todo with its
+  project when one is obvious from context. Omit = ungrouped; on edit, "" clears the label.
+- **id** (cancel/done/edit): Entry id — from action=list.
 
 ## Establish "now" before calling (top failure cause)
 
@@ -115,6 +131,8 @@ Your context does NOT show the current date/time — never invent an absolute da
 {"action":"create", "content":"提醒用户 review PR #42", "triggerAt":"2026-10-10T17:00:00+08:00", "name":"pr42-review-reminder"}
 {"action":"create", "content":"检查 CI 状态并向用户汇报", "triggerAt":"21:30", "repeat":"hourly", "condition":"test -f /tmp/ci-red && exit 0 || exit 1", "name":"ci-red-watch"}
 {"action":"create", "kind":"todo", "content":"用户说过要把周报模板整理进 memory", "name":"weekly-report-template"}
+{"action":"create", "kind":"todo", "content":"等 CI 绿后合并 release 分支（需用户批准）", "name":"release-merge-approval", "project":"stand"}
+{"action":"edit", "id":"af17698a", "content":"改为：整理周报模板进 design/", "project":"stand"}
 {"action":"list"}
 {"action":"done", "id":"af17698a"}
 {"action":"cancel", "id":"af17698a"}
@@ -147,7 +165,7 @@ Your context does NOT show the current date/time — never invent an absolute da
   idle turn. Todo persistence equals scheduled-task persistence (same engine storage)."""
 
   private val validRepeat = Set("hourly", "daily", "weekly")
-  private val validActions = Set("create", "list", "cancel", "done")
+  private val validActions = Set("create", "list", "cancel", "done", "edit")
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -155,8 +173,8 @@ Your context does NOT show the current date/time — never invent an absolute da
       "properties" -> Json.obj(
         "action" -> Json.obj(
           "type" -> "string".asJson,
-          "enum" -> Json.arr("create".asJson, "list".asJson, "cancel".asJson, "done".asJson),
-          "description" -> "create (default) = schedule a task or register a todo; list = show all pending entries across sessions; cancel = remove an entry by id; done = write off a completed todo by id".asJson
+          "enum" -> Json.arr("create".asJson, "list".asJson, "cancel".asJson, "done".asJson, "edit".asJson),
+          "description" -> "create (default) = schedule a task or register a todo; list = show all pending entries across sessions; cancel = remove an entry by id; done = write off a completed todo by id; edit = modify an existing entry by id (content/project)".asJson
         ),
         "kind" -> Json.obj(
           "type" -> "string".asJson,
@@ -181,13 +199,17 @@ Your context does NOT show the current date/time — never invent an absolute da
           "type" -> "string".asJson,
           "description" -> "(create) Stable identifier — same name + kind replaces the existing entry instead of stacking (upsert). Use a fixed name for routine/recurring tasks.".asJson
         ),
+        "project" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "(create/edit) Project label the entry belongs to (e.g. \"DOSTEL\", \"stand\") — the todo inbox groups and filters by it. Omit = ungrouped; on edit, pass \"\" to clear the label.".asJson
+        ),
         "condition" -> Json.obj(
           "type" -> "string".asJson,
           "description" -> "(create, kind=\"task\" only) conditional trigger — fires only when TRUE at trigger time. Forms: bare `sh -c` probe (exit 0 = true; fast, absolute paths, 60s timeout = unmet); \"git-tip:<repoPath>[#<branch>]\" (stateful sentinel — fires when branch tip changed since last check); \"task-terminal:<project>:<nodeId>\" (fires when that flow-map node reaches a terminal state). Unmet: repeating tasks skip silently to the next cycle; one-shots re-check every 30 min for up to 24h then auto-PAUSE. Nothing is injected while unmet.".asJson
         ),
         "id" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "(cancel/done) Entry id — from action=list.".asJson
+          "description" -> "(cancel/done/edit) Entry id — from action=list.".asJson
         )
       )
       // required 刻意留空（2026-09-06）：action=list/cancel 不携带 content/triggerAt，
@@ -203,6 +225,8 @@ Your context does NOT show the current date/time — never invent an absolute da
         s"Schedule(cancel ${input("id").flatMap(_.asString).getOrElse("?")})"
       case "done" =>
         s"Schedule(done ${input("id").flatMap(_.asString).getOrElse("?")})"
+      case "edit" =>
+        s"Schedule(edit ${input("id").flatMap(_.asString).getOrElse("?")})"
       case _ =>
         val content = input("content").flatMap(_.asString).getOrElse("")
         val kind = input("kind").flatMap(_.asString).getOrElse("task")
@@ -224,6 +248,7 @@ Your context does NOT show the current date/time — never invent an absolute da
         if result.startsWith("Pending") || result.toLowerCase.contains("no pending") then "listed" else "failed"
       case "cancel" => if result.startsWith("Cancelled") then "cancelled" else "failed"
       case "done" => if result.startsWith("Done") then "done" else "failed"
+      case "edit" => if result.startsWith("Updated") then "edited" else "failed"
       case _ =>
         if result.startsWith("Scheduled task") then if result.contains("replaced") then "replaced" else "scheduled"
         else if result.startsWith("Todo") then
@@ -253,6 +278,7 @@ Your context does NOT show the current date/time — never invent an absolute da
             case "list" => listAction(taskStore)
             case "cancel" => cancelAction(taskStore, taskService, input, ctx)
             case "done" => doneAction(taskStore, taskService, input, ctx)
+            case "edit" => editAction(taskStore, taskService, input, ctx)
             case "create" =>
               ctx.sessionId match
                 case None => IO.pure(Left(ToolError("No session ID available")))
@@ -303,7 +329,8 @@ Your context does NOT show the current date/time — never invent an absolute da
             val lines = todos.sortBy(t => (t.triggerAt, t.createdAt)).map { t =>
               val status = if t.enabled then "active" else "PAUSED"
               val nm = t.name.map(n => s" | name: $n").getOrElse("")
-              s"- ${t.id} | todo | created ${formatDate(t.createdAt)} | $status$nm | ${t.content.take(60)}"
+              val proj = t.project.map(p => s" | project: $p").getOrElse("")
+              s"- ${t.id} | todo | created ${formatDate(t.createdAt)} | $status$nm$proj | ${t.content.take(60)}"
             }
             Some(
               s"Todos (${todos.size}) — 无固定时间，每日 09:00 浮出直至处理；完成 → {action:\"done\", id:\"<id>\"} 销账，" +
@@ -454,6 +481,95 @@ Your context does NOT show the current date/time — never invent an absolute da
   end doneAction
 
   // ---------------------------------------------------------------------------
+  // action = edit — 增删改查补齐（改版批追加令 2026-10-31 23:14 ②）：按 id 改
+  // 内容 / 改项目分组（done/cancel 已覆盖改状态销账与删除两态）。字段级 patch：
+  // 提供的字段才改；project 传 "" = 清空归属（未分组）。跨会话（按 id 全库寻址）。
+  // ---------------------------------------------------------------------------
+
+  private def editAction(
+    taskStore: ScheduledTaskStore,
+    taskService: Option[ScheduledTaskService],
+    input: JsonObject,
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    val idOpt = input("id").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    idOpt match
+      case None =>
+        IO.pure(Left(ToolError("edit requires id — call Schedule {action:\"list\"} first, then pass the entry's id.")))
+      case Some(id) =>
+        taskStore.findTaskById(id).flatMap {
+          case None =>
+            taskStore.getAllPendingTasks.map { pending =>
+              val ids = if pending.isEmpty then "(none)" else pending.map(_.id).mkString(", ")
+              Left(
+                ToolError(
+                  s"No entry with id \"$id\". Pending ids: $ids — if this looks stale, call action=list to refresh."
+                )
+              )
+            }
+          case Some(t) =>
+            val contentOpt = input("content").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+            // project 提供即生效（"" = 清空归属）；缺席 = 不改。
+            val projectOpt: Option[Option[String]] =
+              input("project").flatMap(_.asString).map(raw => Some(raw.trim).filter(_.nonEmpty))
+            if contentOpt.isEmpty && projectOpt.isEmpty then
+              IO.pure(
+                Left(
+                  ToolError(
+                    "edit requires at least one field to change: content (new text) and/or project (new label; \"\" clears)."
+                  )
+                )
+              )
+            else
+              val updated = t.copy(
+                content = contentOpt.getOrElse(t.content),
+                project = projectOpt.getOrElse(t.project)
+              )
+              taskStore.updateTask(t.sessionId, id)(_ => updated).flatMap { changed =>
+                if !changed then
+                  IO.pure(Left(ToolError(s"Edit did not apply — entry $id vanished mid-flight; retry after action=list.")))
+                else
+                  for
+                    _ <- taskService match
+                      case Some(svc) => svc.notifyTaskChange()
+                      case None => IO.unit
+                    _ <- ctx.wsSend match
+                      case Some(send) =>
+                        send(
+                          Json.obj(
+                            "type" -> "scheduledTaskUpdated".asJson,
+                            "sessionId" -> t.sessionId.asJson,
+                            "task" -> Json.obj(
+                              "id" -> updated.id.asJson,
+                              "content" -> updated.content.asJson,
+                              "triggerAt" -> updated.triggerAt.asJson,
+                              "createdAt" -> updated.createdAt.asJson,
+                              "triggered" -> updated.triggered.asJson,
+                              "triggeredAt" -> updated.triggeredAt.asJson,
+                              "referencePath" -> updated.referencePath.asJson,
+                              "repeat" -> updated.repeat.asJson,
+                              "enabled" -> updated.enabled.asJson,
+                              "kind" -> updated.kind.asJson,
+                              "name" -> updated.name.asJson,
+                              "missCount" -> updated.missCount.asJson,
+                              "project" -> updated.project.asJson,
+                              "sessionId" -> updated.sessionId.asJson
+                            )
+                          )
+                        )
+                      case None => IO.unit
+                  yield
+                    val what = List(
+                      contentOpt.map(_ => "content").toList,
+                      projectOpt.map(p => s"project=${p.getOrElse("(none)")}" :: Nil).toList.flatten
+                    ).flatten.mkString(", ")
+                    Right(s"Updated ${if updated.isTodo then "todo" else "task"} $id ($what): ${updated.content.take(60)}")
+              }
+        }
+    end match
+  end editAction
+
+  // ---------------------------------------------------------------------------
   // action = create — legacy behavior + name upsert
   // ---------------------------------------------------------------------------
 
@@ -496,7 +612,8 @@ Your context does NOT show the current date/time — never invent an absolute da
             repeat,
             taskName,
             None,
-            input("condition").flatMap(_.asString)
+            input("condition").flatMap(_.asString),
+            input("project").flatMap(_.asString)
           )
           for
             removed <- taskName match
@@ -569,6 +686,7 @@ Your context does NOT show the current date/time — never invent an absolute da
   ): IO[Either[ToolError, String]] =
     val content = input("content").flatMap(_.asString).getOrElse("")
     val taskName = input("name").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    val project = input("project").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
     val now = System.currentTimeMillis()
     if content.isBlank then
       IO.pure(
@@ -581,7 +699,10 @@ Your context does NOT show the current date/time — never invent an absolute da
     else
       // triggerAt 不属于待办面（无固定触发时间）——首次浮出固定为下一次 09:00。
       val surfaceAt = ScheduledTask.nextTodoSurfaceAt(now, ZoneId.systemDefault())
-      val todo = ScheduledTask.create(sessionId, content, surfaceAt, None, None, taskName, Some(ScheduledTask.KindTodo))
+      val todo = ScheduledTask.create(
+        sessionId, content, surfaceAt, None, None, taskName,
+        Some(ScheduledTask.KindTodo), None, project
+      )
       for
         removed <- taskName match
           case Some(n) => taskStore.upsertTaskByName(todo)
@@ -616,7 +737,8 @@ Your context does NOT show the current date/time — never invent an absolute da
                   "referencePath" -> Json.Null,
                   "repeat" -> Json.Null,
                   "name" -> todo.name.asJson,
-                  "kind" -> ScheduledTask.KindTodo.asJson
+                  "kind" -> ScheduledTask.KindTodo.asJson,
+                  "project" -> todo.project.asJson
                 )
               )
             )

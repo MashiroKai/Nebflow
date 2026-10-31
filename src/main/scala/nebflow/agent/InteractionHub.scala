@@ -67,9 +67,10 @@ object InteractionHub:
    *   创建/收口随行记账；引擎 boot 时由 GatewayMain 清点过期关闭。`None`（缺省）=
    *   未接线 ⇒ 零记账（既有测试构造零改动，同 liveness 先例）。
    * @param todoBridge Ask→待办镜像桥（待办分家批 2026-10-30，作者令「待办接
-   *   AskUserQuestion」）：AskUser 挂起 ⇒ root 会话待办收件箱镜像一条 kind=todo；
-   *   任意终态 ⇒ 幂等销账。`None`（缺省）= 未接线 ⇒ 零镜像（既有测试构造零改动，
-   *   同 liveness/ledger 先例）。
+   *   AskUserQuestion」；改版批 2026-10-31 扩面）：AskUser / Permission /
+   *   McpPermission 挂起 ⇒ root 会话待办收件箱镜像一条 kind=todo（ask- / perm-
+   *   前缀）；任意终态 ⇒ 幂等销账。`None`（缺省）= 未接线 ⇒ 零镜像（既有测试构造
+   *   零改动，同 liveness/ledger 先例）。
    */
   def apply(
     liveness: Option[String => IO[Boolean]] = None,
@@ -93,12 +94,25 @@ object InteractionHub:
               val ledgerRecord = ledger.fold(IO.unit)(l =>
                 l.record(PendingAskLedger.Entry.of(req, firstQuestionExcerpt(req.payload)))
               )
-              // 待办分家批：AskUser 挂起 ⇒ 待办镜像（kind 闸——permission /
-              // mcpPermission 卡各有自身生命周期，不入待办面）。
+              // 待办分家批 + 改版批（2026-10-31）：AskUser 挂起 ⇒ ask- 待办镜像；
+              // Permission / McpPermission 挂起 ⇒ perm- 待批准镜像（用户面收件箱，
+              // 见设计稿 docs/20261031_222806_todo-inbox-redesign）。两类卡终态
+              // 销账共用 bridge.retire（双前缀幂等清）。
               val todoAttach = todoBridge.fold(IO.unit)(b =>
-                if req.kind == InteractionKind.AskUser then
-                  b.attach(req.rootSessionId, req.requestId, firstQuestionExcerpt(req.payload), req.sourceAgent)
-                else IO.unit
+                // InteractionKind 三值穷尽（Permission/AskUser/McpPermission）：
+                // 三类卡全镜像——AskUser → ask- 待决策，Permission/McpPermission →
+                // perm- 待批准（改版批 2026-10-31 用户面收件箱，见设计稿
+                // docs/20261031_222806_todo-inbox-redesign）。终态销账共用
+                // bridge.retire（双前缀幂等清）。
+                req.kind match
+                  case InteractionKind.AskUser =>
+                    b.attach(
+                      req.rootSessionId, req.requestId,
+                      firstQuestionExcerpt(req.payload), req.sourceAgent,
+                      nebflow.core.scheduler.AskTodoBridge.payloadProject(req.payload)
+                    )
+                  case InteractionKind.Permission | InteractionKind.McpPermission =>
+                    b.attachPermission(req.rootSessionId, req.requestId, req.payload, req.sourceAgent)
               )
               ctx.forkTurn(handleRequest(pending, rootWsSend, req) *> ledgerRecord *> todoAttach) *> IO.pure(behavior)
             case InteractionHubCommand.Answered(ans) =>
@@ -245,6 +259,13 @@ object InteractionHub:
   end handleRequest
 
   /** 审计用：问题首条 ≤200 字符（无内容时给 "-"；绝不抛）。 */
+  /** 待办镜像入面判据（改版批 2026-10-31 单点）：三类卡挂起时都会镜像进待办
+   *  收件箱（AskUser → ask-、Permission/McpPermission → perm-），四条终态销账
+   *  路按同一判据放行（bridge.retire 双前缀幂等清，单边缺失 = no-op）。
+   *  CancelRequest 路（#147 撤回）无条件 retire——同一幂等语义，不重复判。 */
+  private def todoBridged(kind: InteractionKind): Boolean =
+    kind == InteractionKind.AskUser || kind == InteractionKind.Permission || kind == InteractionKind.McpPermission
+
   private def firstQuestionExcerpt(payload: Json): String =
     val q = payload.hcursor.downField("items").downArray.downField("question").as[String].toOption
     q.map(s => if s.length > 200 then s.take(200) + "..." else s).getOrElse("-")
@@ -551,9 +572,9 @@ object InteractionHub:
     // 重启孤儿对账批：消费槽位随行销账（两条消费路同源——requestId 精确路 + 旧前端
     // FIFO 兜底路）。best-effort，绝不影响答复链。
     def ledgerRemove(rid: String): IO[Unit] = ledger.fold(IO.unit)(_.remove(rid))
-    // 待办分家批：作答收口随行销账（幂等；按槽位 kind 闸——只 AskUser 镜像入过面）。
+    // 待办分家批 + 改版批：作答收口随行销账（幂等；kind 闸——镜像入过面的三类槽位）。
     def todoRetire(rid: String, p: PendingRequest): IO[Unit] =
-      todoBridge.fold(IO.unit)(b => if p.kind == InteractionKind.AskUser then b.retire(rid) else IO.unit)
+      todoBridge.fold(IO.unit)(b => if todoBridged(p.kind) then b.retire(rid) else IO.unit)
     pending.modify { m =>
       if ans.requestId.nonEmpty then
         m.get(ans.requestId) match
@@ -740,11 +761,11 @@ object InteractionHub:
               s"CleanupForSession $sessionId: closing ${victims.size} pending ask(s) (source session died)"
             )
             // 重启孤儿对账批：批量回收随行销账（best-effort）。
-            // 待办分家批：AskUser 槽位的待办镜像随行销账（幂等；permission 类不入面）。
+            // 待办分家批 + 改版批：镜像入过面的槽位随行销账（幂等）。
             _ <- victims.traverse_ { case (rid, p) =>
               ledger.fold(IO.unit)(_.remove(rid)) *>
                 todoBridge.fold(IO.unit)(b =>
-                  if p.kind == InteractionKind.AskUser then b.retire(rid) else IO.unit
+                  if todoBridged(p.kind) then b.retire(rid) else IO.unit
                 )
             }
             sends <- rootWsSend.get
@@ -804,9 +825,9 @@ object InteractionHub:
               )
               // 重启孤儿对账批：精确回收随行销账（best-effort）。
               _ <- ledger.fold(IO.unit)(_.remove(requestId))
-              // 待办分家批：AskUser 槽位的待办镜像随行销账（幂等 no-op 容错）。
+              // 待办分家批 + 改版批：镜像入过面的槽位随行销账（幂等 no-op 容错）。
               _ <- todoBridge.fold(IO.unit)(b =>
-                if p.kind == InteractionKind.AskUser then b.retire(requestId) else IO.unit
+                if todoBridged(p.kind) then b.retire(requestId) else IO.unit
               )
               sends <- rootWsSend.get
               _ <- sends.toList.traverse_ { case (sid, ws) =>

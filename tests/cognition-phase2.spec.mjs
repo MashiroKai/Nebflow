@@ -108,6 +108,13 @@ async function boot(browser, captures) {
       }
       if (m.type === 'listScheduledTasks') {
         captures.listRequests.push(m);
+        // 改版批（2026-10-31）：scope:'all' = 跨会话待办收件箱（只回 kind=todo）；
+        // 无 scope = 单会话提醒面（原样全量）。
+        if (m.scope === 'all') {
+          return ws.send(JSON.stringify({ type: 'scheduledTaskList', sessionId: m.sessionId,
+            tasks: currentTasks.filter((t) => t.kind === 'todo').map((t) => ({ ...t, sessionId: t.sessionId || 'sess-1' })),
+            scope: 'all' }));
+        }
         return ws.send(JSON.stringify({ type: 'scheduledTaskList', sessionId: m.sessionId, tasks: currentTasks }));
       }
       if (m.type === 'completeTodo') captures.completeTodo.push(m);
@@ -137,51 +144,72 @@ const captures = { completeTodo: [], listRequests: [] };
 try {
   const { page, pageErrors, consoleErrors, push } = await boot(browser, captures);
 
-  // ── R1 打卡 UI：待办组置顶 + 缺卡建议 + 取消钮 ─────────────────────
+  // ── R1 打卡 UI：提醒面零待办（分家）+ 待办页打卡行 + 缺卡建议 + 取消钮 ──
+  // 改版批（2026-10-31）：待办面迁至 #todo-page（消息列表入口行 → 提醒事项页），
+  // 提醒面只留定时任务。两面各断各的，互不漏行。
   await page.click('#reminder-btn');
   await page.waitForSelector('#reminder-panel.open', { timeout: 5000 });
   await sleep(300);
-  const r1 = await page.evaluate(() => {
+  const r1reminder = await page.evaluate(() => {
     const body = document.querySelector('#reminder-panel .reminder-panel-body');
-    if (!body) return null;
-    const groupLabel = body.querySelector('.mh-rd-grp');
-    const rows = Array.from(body.querySelectorAll('.reminder-row'));
-    const todoRow = rows.find(r => r.dataset.id === 'td-0001');
+    const rows = body ? Array.from(body.querySelectorAll('.reminder-row')) : [];
     const timedRow = rows.find(r => r.dataset.id === 'tk-0002');
     return {
-      groupText: groupLabel ? groupLabel.textContent : '',
+      todoLeak: rows.some(r => r.dataset.id === 'td-0001'),
+      timedAction: timedRow ? (timedRow.querySelector('.reminder-circle') || {}).dataset.action : '',
+    };
+  });
+  ok(r1reminder && !r1reminder.todoLeak, 'R1a 提醒面零待办行（分家语义不回退）');
+  ok(r1reminder && r1reminder.timedAction === 'delete', 'R1b 定时任务圆钮仍走 delete（零回归）');
+
+  // 待办页：直接调开合臂（桌面 overlay 语义与入口行点击同路）。
+  await page.evaluate(async () => {
+    const m = await import('/js/scheduled-task.js');
+    m.openTodoPage();
+  });
+  await page.waitForSelector('#todo-page.open', { timeout: 5000 });
+  await sleep(300);
+  const r1 = await page.evaluate(() => {
+    const body = document.querySelector('#todo-page-body');
+    if (!body) return null;
+    const rows = Array.from(body.querySelectorAll('.reminder-row'));
+    const todoRow = rows.find(r => r.dataset.id === 'td-0001');
+    return {
       todoFirst: rows.length > 0 && rows[0].dataset.id === 'td-0001',
       hasCheckin: !!(todoRow && todoRow.querySelector('.reminder-circle[data-action="checkin"]')),
       hasCancel: !!(todoRow && todoRow.querySelector('.reminder-cancel')),
       missText: todoRow ? (todoRow.querySelector('.reminder-miss-suggest') || {}).textContent || '' : '',
-      timedHasCancel: !!(timedRow && timedRow.querySelector('.reminder-cancel')),
-      timedAction: timedRow ? (timedRow.querySelector('.reminder-circle') || {}).dataset.action : '',
+      timedLeak: rows.some(r => r.dataset.id === 'tk-0002'),
     };
   });
-  ok(r1 && r1.groupText.includes('打卡'), 'R1a 待办组签「打卡」在');
-  ok(r1 && r1.todoFirst, 'R1b 待办组置顶');
-  ok(r1 && r1.hasCheckin, 'R1c 待办圆钮 = 打卡销账（data-action=checkin）');
-  ok(r1 && r1.hasCancel && !r1.timedHasCancel, 'R1d 待办有取消 ×，定时任务无');
-  ok(r1 && r1.missText.includes('4') && r1.missText.includes('建议'), 'R1e 缺卡调整建议在（连续 4 次）');
-  ok(r1 && r1.timedAction === 'delete', 'R1f 定时任务圆钮仍走 delete（零回归）');
+  ok(r1 && r1.todoFirst, 'R1c 待办行在收件箱页（计划组）');
+  ok(r1 && r1.hasCheckin, 'R1d 待办圆钮 = 打卡销账（data-action=checkin）');
+  ok(r1 && r1.hasCancel, 'R1e 待办有取消 ×');
+  ok(r1 && r1.missText.includes('4') && r1.missText.includes('建议'), 'R1f 缺卡调整建议在（连续 4 次）');
+  ok(r1 && !r1.timedLeak, 'R1g 定时任务不混入待办页');
 
-  // ── R2 可行动徽标：未来任务不上徽标 ⇒ 1（仅待办），非 2 ─────────────
+  // ── R2 可行动徽标分面：提醒徽标 = 已超时定时任务（未来任务不上，=0）；
+  //      入口行徽标 = 待销账待办数（=1） ─────────────────────────────
   const badge = await page.evaluate(() => {
     const b = document.querySelector('#reminder-btn .reminder-badge');
-    return b ? b.textContent : '0';
+    const entry = document.querySelector('.fm-todo-entry .fm-row-badge');
+    return { reminder: b ? b.textContent : '0', entry: entry && !entry.hidden ? entry.textContent : '0' };
   });
-  ok(badge === '1', `R2 提醒徽标只报可行动量（=${badge}，未来定时任务排除）`);
+  ok(badge.reminder === '0', `R2a 提醒徽标 = 已超时定时任务数（=${badge.reminder}，未来定时任务排除）`);
+  ok(badge.entry === '1', `R2b 入口行徽标 = 待销账待办数（=${badge.entry}）`);
 
   // ── R3 打卡发送 completeTodo（留痕销账腿） ─────────────────────────
-  await page.click('.reminder-row[data-id="td-0001"] .reminder-circle');
+  await page.click('#todo-page-body .reminder-row[data-id="td-0001"] .reminder-circle');
   await sleep(400);
   ok(captures.completeTodo.length === 1 && captures.completeTodo[0].id === TODO_ID,
     'R3 completeTodo 帧带正确 id');
+  ok(captures.completeTodo.length === 1 && captures.completeTodo[0].sessionId === 'sess-1',
+    'R3b completeTodo 帧带行自身 sessionId（跨会话寻址）');
   const afterCheckin = await page.evaluate(() => {
-    const b = document.querySelector('#reminder-btn .reminder-badge');
-    return b ? b.textContent : '0';
+    const entry = document.querySelector('.fm-todo-entry .fm-row-badge');
+    return entry && !entry.hidden ? entry.textContent : '0';
   });
-  ok(afterCheckin === '0', `R3b 打卡后徽标归零（=${afterCheckin}）`);
+  ok(afterCheckin === '0', `R3c 打卡后入口行徽标归零（=${afterCheckin}）`);
 
   // ── R5 actionable.js 单件：提供者聚合 + 变更广播 ────────────────────
   const r5 = await page.evaluate(async () => {
@@ -208,23 +236,23 @@ try {
   await sleep(400);
   const r6 = await page.evaluate(() => {
     const notifs = Array.from(document.querySelectorAll('.notif-item')).map((i) => i.textContent || '');
-    const body = document.querySelector('#reminder-panel .reminder-panel-body');
+    const body = document.querySelector('#todo-page-body');
     const rows = body ? Array.from(body.querySelectorAll('.reminder-row')) : [];
     const weeklyRow = rows.find((r) => r.dataset.id === 'td-week');
-    const badge = document.querySelector('#reminder-btn .reminder-badge');
+    const badge = document.querySelector('.fm-todo-entry .fm-row-badge');
     return {
       notifs,
       weeklyFirst: rows.length > 0 && rows[0].dataset.id === 'td-week',
       weeklyCheckin: !!(weeklyRow && weeklyRow.querySelector('.reminder-circle[data-action="checkin"]')),
       weeklyCancel: !!(weeklyRow && weeklyRow.querySelector('.reminder-cancel')),
       weeklyText: weeklyRow ? weeklyRow.textContent || '' : '',
-      badge: badge ? badge.textContent : '0',
+      badge: badge && !badge.hidden ? badge.textContent : '0',
     };
   });
   ok(!r6.notifs.some((n) => n.includes('打卡周报')), 'R6a 零横幅（浮出面从横幅回填为收件箱）');
   ok(captures.listRequests.length > listsBefore,
     `R6b weeklyReportReady 触发收件箱刷新（listScheduledTasks ×${captures.listRequests.length - listsBefore}）`);
-  ok(r6.weeklyFirst, 'R6c 周报条目落待办组置顶');
+  ok(r6.weeklyFirst, 'R6c 周报条目落待办页（计划组）');
   ok(r6.weeklyCheckin && r6.weeklyCancel, 'R6d 周报条目带打卡销账钮 + 取消 ×（P2 闭合回路）');
   ok(r6.weeklyText.includes('打卡周报') && r6.weeklyText.includes('趋势↑'),
     'R6e 条目文案 = 反悬念结论（来源动作在）');

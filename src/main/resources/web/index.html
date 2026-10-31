@@ -56,6 +56,7 @@
   <link rel="stylesheet" href="css/taskList.css">
   <link rel="stylesheet" href="css/scrollUnderGlass.css">
   <link rel="stylesheet" href="css/reminder.css">
+  <link rel="stylesheet" href="css/todo-page.css">
   <link rel="stylesheet" href="css/neblink.css">
   <link rel="stylesheet" href="css/dropbox.css">
   <!-- #27 Project 面板 + Flow Map 视图（§3.5，试点期与旧面板并列） -->
@@ -392,11 +393,11 @@
          teams-btn/flows-btn）已整体删除（作者裁定「直接删除，不是封存」）；
          Projects 按钮沿用 Team/Flow 让出的槽位。 -->
     <button id="files-btn" class="activity-btn active" data-panel-btn="files" title="Files" aria-pressed="true"><i data-lucide="files"></i></button>
-    <!-- 待办分家批（2026-10-30 作者令）：待办从定时任务面拆出，侧边栏单独图标——
-         定时任务 = 给 agent 用（顶栏时钟，计划触发）；待办 = 给人（此处，等作者
-         处理）。徽标 = 待销账待办计数（AskUserQuestion 挂起自动入列，见
-         AskTodoBridge）。 -->
-    <button id="todo-btn" class="activity-btn" data-panel-btn="todo" title="待办" aria-pressed="false"><i data-lucide="list-checks"></i><span class="activity-badge" id="todo-badge" hidden></span></button>
+    <!-- 待办体系改版批（2026-10-31 作者令）：待办不占单独侧边栏槽位——退役
+         activity bar #todo-btn 与侧边栏 #panel-todo；入口 = 消息列表顶部
+         「待办事项」行（随 #fm-conversations 双端同现），内页 = #todo-page
+         提醒事项风格独立页（桌面玻璃 overlay ⇄ 手机 pushPage 收编，见
+         scheduled-task.js / navController.js / css/todo-page.css）。 -->
     <button id="projects-btn" class="activity-btn" title="Projects"><i data-lucide="folder-kanban"></i></button>
     <!-- Wiki document graph (wiki-graph batch, 2026-10-14; icon wiring batch,
          2026-10-15: lucide sparkles replaced by the C2 hub-spoke inline SVG —
@@ -446,21 +447,8 @@
         <div class="panel-header"><span class="panel-title" data-i18n="panel.messages">Messages</span></div>
         <div id="fm-conversations" role="listbox" aria-label="Messages"></div>
       </div>
-      <!-- 待办面板（待办分家批 2026-10-30）：行语言复用 reminder-row 族；面板
-           由 scheduled-task.js 的 todo 面渲染（打卡销账 + 待答镜像跳转行）。 -->
-      <div id="panel-todo" class="panel" data-panel-id="todo">
-        <div class="panel-header">
-          <span class="panel-title" data-i18n="todo.title">待办</span>
-          <div class="reminder-panel-header-right">
-            <span class="reminder-panel-count" id="todo-panel-count"></span>
-            <button class="reminder-create-btn" id="todo-create-btn" title="New">
-              <i data-lucide="plus"></i>
-            </button>
-          </div>
-        </div>
-        <div class="reminder-panel-body" id="todo-panel-body"></div>
-        <div class="reminder-panel-footer"></div>
-      </div>
+      <!-- 待办面板（待办分家批 2026-10-30）已随改版批（2026-10-31）退役：侧边栏
+           不再占槽，待办面迁至 #todo-page 提醒事项页（入口 = 消息列表顶部行）。 -->
       <div id="panel-contacts" class="panel" data-panel-id="contacts">
         <div class="panel-header"><span class="panel-title" data-i18n="panel.contacts">Contacts</span></div>
         <div id="fm-contacts-body"></div>
@@ -585,6 +573,27 @@
       </div>
       <div class="reminder-panel-body"></div>
       <div class="reminder-panel-footer"></div>
+    </div>
+    <!-- Todo Page — 提醒事项风格独立页（改版批 2026-10-31）：入口 = 消息列表
+         顶部「待办事项」行；桌面 = 玻璃 overlay 页开合（.open），手机层由
+         navController 收编进 pushPage 详情页。分组：已到期（浮顶）/待决策/
+         待批准/计划；圆钮打勾销账；跨会话收件箱（scope:all）。渲染核 =
+         scheduled-task.js。 -->
+    <div id="todo-page" class="scroll-under-glass">
+      <div class="todo-page-header">
+        <div class="todo-page-title" data-i18n="todo.entryTitle">待办事项</div>
+        <div class="todo-page-header-right">
+          <span class="todo-page-count" id="todo-page-count"></span>
+          <button class="todo-create-btn" id="todo-create-btn" title="New">
+            <i data-lucide="plus"></i>
+          </button>
+          <button class="todo-close-btn" id="todo-close-btn" title="Close">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+      </div>
+      <div class="todo-page-body" id="todo-page-body"></div>
+      <div class="todo-page-footer"></div>
     </div>
     <!-- Daemon Panel — floating dropdown from header button -->
     <div id="daemon-panel" class="scroll-under-glass">

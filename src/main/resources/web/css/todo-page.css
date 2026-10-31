@@ -1,0 +1,270 @@
+/* ===== Todo Page — 提醒事项风格独立页（改版批 2026-10-31） =====
+   入口 = 消息列表顶部「待办事项」行（.fm-todo-entry，friends.css fm-row 家族）；
+   本文件只管：页壳（桌面玻璃 overlay ⇄ 手机收编页）、分组签、待批准 chip、
+   入口行图标。行/圆钮/逾期/overdue 语言全部复用 reminder.css reminder-row 族
+   （含 completing/removing 动画），零复制。 */
+
+/* ── 页壳（桌面 = 玻璃 overlay 页；.open 开合，reminder-panel 同款语义） ── */
+#todo-page {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(560px, 94vw);
+  max-height: min(640px, 84vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border-radius: 20px;
+  border: 1px solid var(--sapphire-edge);
+  box-shadow:
+    inset 0 -1px 0 0 rgba(91, 127, 191, 0.025),
+    inset 1px 0 0 0 rgba(91, 127, 191, 0.02),
+    inset -1px 0 0 0 rgba(91, 127, 191, 0.02),
+    0px 0px 0px 1px rgba(0, 0, 0, 0.03),
+    0px 4px 16px rgba(0, 0, 0, 0.05),
+    0px 12px 48px rgba(0, 0, 0, 0.08);
+  z-index: 300;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+#todo-page.open {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  animation: todoPageIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes todoPageIn {
+  from { opacity: 0; transform: translate(-50%, -50%) translateY(8px) scale(0.97); }
+  to   { opacity: 1; transform: translate(-50%, -50%) translateY(0) scale(1); }
+}
+
+/* ── 页头 ─────────────────────────────────────────────────────────── */
+.todo-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  flex-shrink: 0;
+}
+.todo-page-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-frame-text);
+}
+.todo-page-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.todo-page-count {
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-frame-text-muted);
+  min-width: 12px;
+  text-align: right;
+}
+.todo-create-btn,
+.todo-close-btn {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.todo-create-btn:hover,
+.todo-close-btn:hover {
+  background: var(--glass-control-bg-hover);
+  color: var(--color-frame-text);
+}
+.todo-create-btn svg,
+.todo-close-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ── 页体（滚动面；scroll-under-glass 由 index.html 载体类承担） ────── */
+.todo-page-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px 12px 12px;
+  display: flex;
+  flex-direction: column;
+}
+.todo-page-footer {
+  flex-shrink: 0;
+}
+
+/* 空态：复用 reminder-empty 族（reminder.css）。 */
+.todo-page-body .reminder-empty {
+  margin: 24px 0;
+}
+
+/* ── 分组签（苹果提醒事项小标题语言：小号、淡、计数） ─────────────── */
+.todo-grp {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--color-frame-text-muted);
+  opacity: 0.75;
+  padding: 10px 6px 4px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.todo-grp .todo-grp-n {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+/* ── 待批准 chip（与 .todo-ask-chip 同构，amber 语系区分语义） ────── */
+.todo-perm-chip {
+  flex-shrink: 0;
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 6px;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: rgb(var(--st-amber));
+  background: rgba(var(--st-amber), 0.08);
+  border: 1px solid rgba(var(--st-amber), 0.22);
+}
+
+/* ── 入口行图标（消息列表「待办事项」行首圆形图标） ────────────────── */
+.fm-todo-icon {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(var(--sapphire), 0.08);
+  border: 1px solid rgba(var(--sapphire), 0.18);
+  color: rgb(var(--sapphire));
+}
+.fm-todo-icon svg {
+  width: 18px;
+  height: 18px;
+}
+.fm-todo-entry .fm-conv-summary {
+  color: var(--color-frame-text-muted);
+}
+
+/* ── 项目筛选行（追加令① 2026-10-31 23:14：分组/筛选主维度） ───────── */
+.todo-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 6px 4px;
+}
+.todo-filter-chip {
+  border: 1px solid var(--glass-control-border, rgba(91, 127, 191, 0.18));
+  background: none;
+  color: var(--color-frame-text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  padding: 0 9px;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.todo-filter-chip:hover {
+  background: var(--glass-control-bg-hover);
+  color: var(--color-frame-text);
+}
+.todo-filter-chip.active {
+  background: rgba(var(--sapphire), 0.1);
+  border-color: rgba(var(--sapphire), 0.35);
+  color: rgb(var(--sapphire));
+}
+
+/* ── 行内项目标签（与 repeat badge 同位语言，中性淡色） ─────────────── */
+.reminder-proj-tag {
+  flex-shrink: 0;
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: 6px;
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 14px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--color-frame-text-muted);
+  background: var(--glass-etched-bg, rgba(91, 127, 191, 0.06));
+  border: 1px solid var(--glass-etched-border, rgba(91, 127, 191, 0.14));
+}
+
+/* ── 行内编辑钮（追加令②：✎ = 改内容/改项目；同 reminder-cancel 位语言） ── */
+.reminder-cancel.reminder-edit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+}
+.reminder-cancel.reminder-edit svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* ── 表单项目输入行（创建/编辑共用；folder 图标 + 文本框） ──────────── */
+.reminder-inline-project {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px 10px 38px;
+  color: var(--color-frame-text-muted);
+}
+.reminder-inline-project svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.6;
+}
+.reminder-inline-project input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  color: var(--color-frame-text);
+  font-size: 11px;
+  outline: none;
+}
+.reminder-inline-project input::placeholder {
+  color: var(--color-frame-text-muted);
+  opacity: 0.6;
+}
+
+/* ── 手机层：收编进 pushPage 详情页 ⇒ 页壳语义退役为满铺页面体 ─────── */
+body.mobile-layer #todo-page {
+  position: static;
+  transform: none;
+  width: 100%;
+  max-height: none;
+  height: 100%;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  z-index: auto;
+}
+body.mobile-layer #todo-page.open {
+  animation: none;
+}
