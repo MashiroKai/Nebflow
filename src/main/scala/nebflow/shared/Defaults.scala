@@ -155,6 +155,20 @@ object Defaults:
       |ONLY the content you wrap in paired `<output>...</output>` tags is shown to the user — write it WeChat-style: short direct paragraphs, conclusion first, zero filler. Everything outside the tags (reasoning, tool narration, machine detail) stays in your message but is stripped from display; the user expands a badge to see the full raw text. Adjust tone/length to the user's profile (their `~/.stand/User.md` communication-style answers); with no profile, default to concise direct Chinese.""".stripMargin
 
   /**
+   * SendMessage/Pop 边界（作者 2026-10-31 22:10 令 + 22:30 追加令）：SendMessage
+   * 只发 NebLink 好友/群/设备；给用户走渠道（微信/飞书等社交腿）的消息与文件
+   * 一律 Pop 或正常回复，不经 SendMessage。追加令明示「不能只进画像记忆，要改在
+   * 提示词源」——order-375（OutputBlockRule 同源单点）同款机制：本常量为段体
+   * 单点，PromptSections order-376 条件段（isRootAgent）逐字引用；与
+   * `FriendMessageTool.FullDescription/SealedDescription` 的 Scope 节、
+   * `BuiltinAgents.NebulaPromptTemplate` Tool surface 行同口径三处并存
+   * （工具面 = 调用边界，提示词面 = 存在性保证）。
+   */
+  val SendMessageScopeRule: String =
+    """── SendMessage scope ──
+      |SendMessage reaches NebLink friends, NebLink groups, and your own devices ONLY — it is not a channel to the user. A message or file FOR THE USER over a social channel (WeChat / Feishu and the other channel legs) never goes through SendMessage: text rides a normal reply, and files are delivered with Pop — the channel legs carry Popped files/images out to the user's WeChat/Feishu automatically. Using SendMessage to reach the user is a boundary violation (author ruling 2026-10-31).""".stripMargin
+
+  /**
    * A 段（等待屏障）开关：delegate 会话结束回合时存在未结等待型后台作业 ⇒
    * 不终态化（hold + 完成通知唤醒 + 复检），对齐 Project node 完成闸语义。
    * 默认 **true**（作者令本体行为）；现读 prop `nebflow.delegate.bgWaitHold.enabled`

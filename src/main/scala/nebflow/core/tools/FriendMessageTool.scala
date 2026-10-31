@@ -115,6 +115,10 @@ object FriendMessageTool extends Tool:
 
   private val FullDescription =
     """Send a message on the user's behalf, or move files. Four target kinds are selected by the prefix of `to`:
+
+## Scope (author ruling 2026-10-31)
+SendMessage is the NebLink messaging tool: it reaches NebLink friends, NebLink groups, and the user's own devices — NOTHING else. Messages and files FOR THE USER over a social channel (WeChat / Feishu and the other channel legs) NEVER go through SendMessage: send text as a normal reply, and deliver files by Popping them (the channel legs carry Popped files/images out to the user's WeChat/Feishu automatically). A user-facing channel message or file routed through SendMessage is a boundary violation — do not use this tool to reach the user.
+
 1. A NebLink friend (bare name, or `friend:<remark|username|email|displayName>`) — delivered as the user over established friend relationships; text and/or files. Files ride the server's attachment channel (create session → chunked upload with per-chunk checksum + whole-file SHA-256 → sent as attachment ids), and the receiver downloads them over an authenticated in-app route. Subject to permission tiers and rate limits, and (depending on configuration) a confirmation card. Before uploading, the client probes whether the server even has the attachment route (no capability self-report exists): unsupported or unverifiable ⇒ the send is refused outright with a readable reason — attachments are never dropped silently.
 2. Another of the user's own devices (`device:<deviceName|deviceId>`) — **PURE TRANSPORT: files and text reach the peer MACHINE, and the peer's AGENT is NOT aware of either** (nothing is injected into the peer's agent session or its LLM context — the peer's agent cannot read it and will not act on it; only the machine and its user-facing device panel show it). Files are chunked+streamed over the Dropbox device channel (per-chunk checksum, whole-file SHA-256 both sides, resume), never enter the LLM context, and land in the peer's Downloads (auto-accept, visible in their device panel); the message text appears in the peer's device panel. This target kind is the face that carries file transfer (`attachments`) — including files moved to another machine. Not subject to the friend permission tiers/rate limits; size/count gated and audited. Requires an active peer roster — an unknown device fails with the available list (no silent fallback).
 3. `local` — copy `attachments` into `targetDir` on this machine (no network, no message delivered).
@@ -141,6 +145,10 @@ When the user's agent-messaging mode is `ask` (or the auto rate limit was hit), 
    */
   private val SealedDescription =
     """Send a message (or move files) to another of the user's own devices. One target kind is available, selected by the prefix of `to`:
+
+## Scope (author ruling 2026-10-31)
+SendMessage is the NebLink messaging tool — even unsealed it reaches NebLink friends, groups, and devices ONLY. Messages and files FOR THE USER over a social channel (WeChat / Feishu) never go through SendMessage: reply normally for text and Pop the files (the channel legs carry them out automatically). Never use this tool to reach the user.
+
 1. Another of the user's own devices (`device:<deviceName|deviceId>`) — **PURE TRANSPORT: files and text reach the peer MACHINE, and the peer's AGENT is NOT aware of either** (nothing is injected into the peer's agent session or its LLM context). Files are chunked+streamed over the Dropbox device channel (per-chunk checksum, whole-file SHA-256 both sides, resume), never enter the LLM context, and land in the peer's Downloads (auto-accept, visible in their device panel); the message text appears in the peer's device panel. Not subject to permission tiers/rate limits; size/count gated and audited. Requires an active peer roster — an unknown device fails with the available list (no silent fallback).
 
 The friend, group, and local targets this tool formerly offered are currently SEALED by configuration: calling any of them is an explicit `FRIENDS_SEALED` error (nothing is sent, nothing is queued) — do not retry them; the device target above is the only available kind. `to` must carry the `device:` prefix; anything else (a bare name, the literal `local`, or a `friend:`/`group:` prefix) is refused with `FRIENDS_SEALED`.
@@ -162,7 +170,7 @@ Device sends are not gated by any confirmation tier. Wait for the tool result �
     "properties" -> Json.obj(
       "to" -> Json.obj(
         "type" -> "string".asJson,
-        "description" -> """The target, selected by an explicit prefix (case-insensitive; anything else is a bare friend name):
+        "description" -> """The target, selected by an explicit prefix (case-insensitive; anything else is a bare friend name). SendMessage = NebLink targets ONLY — user-facing channel messages/files (WeChat / Feishu) go through a normal reply / Pop, never this tool (author ruling 2026-10-31):
 - `friend:<remark|username|email|displayName>` — one friend (a bare remark/username/email/displayName works too).
 - `device:<deviceName|deviceId>` — another of the user's own devices (pure transport: files land in the peer's Downloads, the text shows in the peer's device panel — the peer's agent is NOT aware of either).
 - `group:<groupName|groupId>` — a group conversation the user is a member of. Resolved by exact group id (`grp-…`), then exact group name, then unique group-name prefix. A group that does not exist, was disbanded, or that the user is not a member of fails with a readable reason; several/none matching come back as a candidate list. Text only (no `attachments`) in this phase.

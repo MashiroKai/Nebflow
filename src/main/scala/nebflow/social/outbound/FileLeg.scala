@@ -32,8 +32,13 @@ import scala.util.Try
 object FileLeg:
 
   /**
-   * 压缩包扩展名（小写、不带点）。文档权威表不收的「文件类交付物」缺口面——
-   * Pop 一个 zip/tar.gz 今天只落日志，作者令点名「压缩包=文件腿直推」。
+   * 压缩包扩展名（小写、不带点）。2026-10-21 批首批收编的「文件类交付物」缺口面
+   * （Pop 一个 zip/tar.gz 当时只落日志，作者令点名「压缩包=文件腿直推」）。
+   *
+   * 2026-10-31 渠道文件出站批作者实证（Pop 两个 .txt 测试文件、微信/飞书双双
+   * 未收，日志落「extension is in neither authority table: txt」）把直推面**从
+   * 压缩包表 widened 到一切在盘普通文件**（[[isPushable]]）——本表保留为具名
+   * 类目的权威（压缩包=file 腿，与 W-4b/WO-W7 钉同面），不再被 isPushable 读取。
    */
   val ArchiveExtensions: Set[String] = Set(
     "zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz", "zst"
@@ -46,8 +51,24 @@ object FileLeg:
       case -1 => ""
       case i  => lower.substring(i + 1)
 
-  /** 是否文件腿直推类（压缩包表；PDF/办公件走 Document 臂，不经这里）。 */
-  def isPushable(p: os.Path): Boolean = ArchiveExtensions.contains(extensionOf(p.toString))
+  /**
+   * 文件腿直推判据（2026-10-31 渠道文件出站批收口，作者令「Pop 触达的文件随
+   * 渠道腿出站到微信/飞书」）：**任何在盘普通文件**——分类层两张权威表
+   * （图片表 / 文档表）之外的全部扩展名（txt/log/csv/json、压缩包、其余一切）
+   * 一律文件腿直推。
+   *
+   * 分类层零扩表的结构决定不变（RichKind 两张表是控制台/渲染面的权威）；本判据
+   * 只在投递面被读取。md/markdown/html/htm 不经这里（长图臂优先）；图片不经
+   * 这里（组卡臂）。体积闸（[[MaxBytes]]）与去重（FileLongShot.Dedup，同台账）
+   * 在投递实现内，本判据只管「上不上腿」。
+   *
+   * 渠道能力边界（如实）：微信腿 = sidecar file_path（getuploadurl media_type=3
+   * → file_item，无公开类型白名单文档，渠道拒绝走可见降级卡）；飞书腿 =
+   * im/v1/files，file_type 枚举 opus/mp4/pdf/doc/xls/ppt/STREAM，off-table 件按
+   * STREAM「原字节直发」。文件不存在/非普通文件 ⇒ false（调用方维持 v1 日志/
+   * 降级文本边界，无件可发）。
+   */
+  def isPushable(p: os.Path): Boolean = Try(os.isFile(p)).getOrElse(false)
 
   /**
    * 引擎侧体积闸（字节）。依据见文件头：与 sidecar 发送腿 sanity 默认

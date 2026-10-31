@@ -26,6 +26,10 @@ import nebflow.shared.PathUtil
  *   100-199  — fixed foundational sections (env info)
  *   350      — 文档溯源规范（唯一权威面，always）
  *   370      — 根代理路由纪律（Nebula 根会话 only，条件 isRootAgent）
+ *   375      — output 块纪律（Nebula 根会话 only，条件 isRootAgent；同源单点
+ *              文本 = [[nebflow.shared.Defaults.OutputBlockRule]]）
+ *   376      — SendMessage/Pop 边界（Nebula 根会话 only，条件 isRootAgent；同源
+ *              单点文本 = [[nebflow.shared.Defaults.SendMessageScopeRule]]）
  *   400-499  — tool-dependent sections（阶段 2d §D.2：条件工具指南段已全部
  *              下迁进工具 description——AskUserQuestion/Read/Pop/TeamTask 三件，
  *              提示词层不再按「是否有该工具」注入用法段落）
@@ -368,6 +372,20 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
       370,
       condition = ctx => ctx.isRootAgent,
       body = rootRoutingDisciplineSection
+    ),
+
+    // --- SendMessage/Pop 边界（渠道文件出站+工具说明批 2026-10-31，作者 22:10
+    // 令 + 22:30 追加令「不能只进画像记忆，要改在提示词源」）：条件 isRootAgent ⇒
+    // 唯一注入面 = 根 Nebula 会话（SendMessage 的机制固定携带者 = Root 静态集，
+    // 正是会误用 SendMessage 给用户发渠道消息/文件的那张面）。段体逐字引用
+    // [[nebflow.shared.Defaults.SendMessageScopeRule]]（order-375 同源单点同款
+    // 机制）；与 FriendMessageTool description 的 Scope 节、NebulaPromptTemplate
+    // Tool surface 行同口径并存（工具面 = 调用边界，本段 = 存在性保证）。
+    // 段序 376 = 紧跟 order-375 后；stable 段，生命周期节点重建时携带。
+    PromptSection(
+      376,
+      condition = ctx => ctx.isRootAgent,
+      body = nebflow.shared.Defaults.SendMessageScopeRule
     ),
 
     // --- 轨道二 #5 identity clauses (before tool guides — who reads your

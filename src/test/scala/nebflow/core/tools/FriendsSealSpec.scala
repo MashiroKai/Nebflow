@@ -46,6 +46,8 @@ class FriendsSealSpec extends CatsEffectSuite:
     assert(d.contains("Four target kinds"), "the four-kind face is present")
     assert(d.contains("`friend:<remark|username|email|displayName>`"), "friend prefix doc")
     assert(d.contains("`group:<groupName|groupId>`"), "group prefix doc")
+    assert(d.contains("## Scope (author ruling 2026-10-31)"), "the SendMessage/Pop boundary scope section is present")
+    assert(d.contains("NEVER go through SendMessage"), "the channel-delivery ban is spelled out")
     assert(!d.contains("FRIENDS_SEALED"), "no seal wording in the open face")
     assert(!d.contains("use `Mail` with the `device` parameter"), "stale Mail-device pointer stays gone in both states")
     assert(!FriendsSeal.isSealed, "the flipped latch is open by default (no config in spec JVMs)")
@@ -122,6 +124,8 @@ class FriendsSealSpec extends CatsEffectSuite:
         d.contains("FRIENDS_SEALED"),
         "the seal is named (a model remembering the wider face understands the refusal)"
       )
+      assert(d.contains("## Scope (author ruling 2026-10-31)"), "the boundary scope section rides the sealed face too")
+      assert(d.contains("never go through SendMessage"), "the channel-delivery ban is spelled out on the sealed face")
       assert(!d.contains("use `Mail` with the `device` parameter"), "stale Mail-device pointer stays gone in both states")
     }
 
