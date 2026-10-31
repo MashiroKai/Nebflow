@@ -187,6 +187,24 @@ in full; presented folded since the human-face batch>
   docs, flow cards and report cards all present the same way. Streaming
   safety: the transform engages only after every fence is closed —
   mid-stream snapshots render as plain code blocks, nothing crashes.
+- Profile system retired (author order 2026-10-31 16:13, output-block
+  batch; design doc §6 marked deprecated): the five presentation tiers
+  and the seven per-tier parameters are gone from product AND storage —
+  figure density and length are decided by the report content itself
+  plus the long-term user profile, not by parameters. This human-face
+  template is the surviving discipline and stays mandatory.
+- `<output>…</output>` paired tags (same batch, revised to tag form at
+  16:16 to avoid markdown-syntax collision) mark user-visible content
+  in chat-facing deliverables: the product shows ONLY tagged content by
+  default — everything outside (reasoning, tool narration) is stripped
+  until the user expands the badge, and the expanded view shows the raw
+  full text with the tags verbatim; untagged legacy content renders
+  fully as before. Write tagged content WeChat-style (short direct
+  paragraphs, conclusion first); tone/length follow the user's
+  communication-style profile (`~/.stand/User.md`), defaulting to
+  concise direct Chinese. In vault documents the pipeline renders the
+  tags transparently (content shown, tags invisible). Spec: design doc
+  §11 (docs/design/20261030_human-readable-presentation.zh-CN.md).
 
 ## References (the graph's edges)
 

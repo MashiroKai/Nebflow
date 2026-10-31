@@ -1,6 +1,6 @@
 ---
 type: design-note
-status: approved（作者已批 2026-10-30 13:19 按推荐＋人面子强制/框外抽屉折叠；14:43 未决项⑧-⑬全部裁定，设计定稿）
+status: approved（作者已批 2026-10-30 13:19 按推荐＋人面子强制/框外抽屉折叠；14:43 未决项⑧-⑬全部裁定，设计定稿；2026-10-31 16:13 output 块语法批：§6 方案档案体系作废（§11），新增 <output> 标签规格章 §11——16:16 修订标签式）
 ---
 
 # 人类可读呈现——输出分层与汇报范式设计稿
@@ -14,7 +14,7 @@ status: approved（作者已批 2026-10-30 13:19 按推荐＋人面子强制/框
 - 看板存档面（board/archive face）— 产出物的扫视与考古层：结构化摘要卡片、可检索存档，消费方是作者日后回看与图谱视图（[[glossary#^graph-view]]）。 ^term-board-face
 - 过滤层（filter fence）— 呈现机制：agent 自由生成全文，但只有按指定围栏格式框起的内容默认呈现给用户，框外折叠为「细节」抽屉。 ^term-filter-fence
 - 关键数字（key numbers）— 人面子必备件：核心 ≤4±1 个量化读数（加严已批 2026-10-30 14:43，超出进 Findings），是作者判断「要不要展开细节」的依据。 ^term-key-numbers
-- 方案档案（profile）— 一组呈现参数的命名档：人面子长度、折叠默认、图密度、提醒节奏、监督颗粒度五参数（可扩）；agent 按档下笔，同一任务在不同档下呈现不同；作者核心裁定「方案不能单一」的落点（§6）。 ^term-profile
+- 方案档案（profile）— 一组呈现参数的命名档：人面子长度、折叠默认、图密度、提醒节奏、监督颗粒度五参数（可扩）；agent 按档下笔，同一任务在不同档下呈现不同；作者核心裁定「方案不能单一」的落点（§6）。 **【作废 2026-10-31 16:13】** 方案档案体系整体退役（§6 作废批注、§11）——本词条内容仅存档。 ^term-profile
 
 ## 1. 问题与依据
 
@@ -219,6 +219,8 @@ status: approved（作者已批 2026-10-30 13:19 按推荐＋人面子强制/框
 
 ## 6. 方案档案体系（作者令 2026-10-30 13:29 追加：核心裁定——方案不能单一）
 
+> **【作废批注 2026-10-31 16:13，作者令 output 块语法批】** 本章方案档案体系（五档预设＋七参数＋匹配两路＋校准采集面）**整体退役**：设置页「当前档/档参数覆盖」UI 拆除、引擎存储面清退（`PresentationProfileStore`/`ProfileCalibrationStore` 及四个 WS handler 全删，落地文件 `presentation-profiles.json`/`profile-calibration.json` 成孤儿不再读写）、引导选档题撤下。退役理由：七参数从未接到行为面（只存取与 UI），五档是未落地的复杂度；图放多少由报告内容自行决定＋长期用户画像驱动，**不再设参数**。本章留档存档，后续引用以 §11 为准。人面子模板（§3/附录 A/B/C 与 wiki-docs 条款⑤）**保留不动**——退役的是参数体系，不是人面子纪律。
+
 > 结论先行：认知原则的参数不能按单一画像定死。本章把 §2-§5 的呈现规范参数化为**方案档案（[[#^term-profile]]）**：命名档 = 一组呈现参数（人面子长度/折叠默认/图密度/提醒节奏/监督颗粒度）。五档（照单已批 2026-10-30 14:43：ADHD 友好/深度工作/快速浏览/专家极简/备考冲刺），差异见 §6.2 表；匹配走「显式选档 + 抱怨信号校准」两路（行为推断不做，理由 §6.3）；集成点全部落在既有机制——Schedule kind=todo（打卡/提醒）、待办收件箱（#1128 在飞批，只定接合面）、看板存档面；健身/学习计划跟踪用统一五段回路（§6.5）。档集与匹配主路已获作者裁定（§9-9/10，2026-10-30 14:43）。
 
 ### 6.1 为什么必须多档（裁定依据）
@@ -322,7 +324,7 @@ status: approved（作者已批 2026-10-30 13:19 按推荐＋人面子强制/框
 | 前端过滤层渲染 | `utils.js` 渲染管线加 ```human 围栏后处理（照 mermaid pass 形态）：框内卡片化、框外 `<details>` 抽屉；亮/暗主题。落点：`utils.js renderMarkdownWithMath` 单管线（`_humanFencesBalanced` 流式闸 → `_transformHumanFace` 卡片/抽屉变换），样式 `css/humanFace.css`（面中立组件，五面全收） | e2e 截图：框内卡片、抽屉开合、流式期围栏未闭合不炸；五面（气泡/Canvas/wiki/flow/report）同测 → `tests/human-face-render.spec.mjs`（含亮暗双截图） |
 | visual-report skill 约定修订 | wiki-docs SKILL.md 增「人面子条款」（条款⑤：报告头四段式 Impression→关键数字→Findings→遗留，附录 A 模板入 SKILL；术语禁入＋保留术语短形引用 hover 兜底）。**双副本纪律已执行**：引擎种子（[[glossary#^engine-seed]]，`src/main/resources/seed/plugins/visual-report/skills/wiki-docs/SKILL.md`）与运行时实例（[[glossary#^plugin-instance]]，`<dataRoot>/plugins/visual-report/...`）sha256 一致同步（plugin-repos 副本同对齐）；校验器存在性规则维持另议（§9#4） | check_wiki_docs 规则未增（另议）——存量零新增违规 trivially 成立；条款存在性由 `tests/wiki-docs-human-face.spec.mjs` 钉 |
 | hover 术语气泡 | 人面子术语用词条短形引用（双方括号包词条名，形态见 §7 与词条引用批裁定 3）→ hover 释义；接词条注册表既有 API。落点：气泡本体抽为共享件 `js/termTip.js`（原 viewers/markdown.js 机制零改动迁出，docs viewer 经 `setTermTipNav` 注入深链导航）；新 `js/termCite.js` 以 body 级 MutationObserver（mermaidRenderer 先例）把 ```human 卡内的词条短形引用接成 hover 引用，API 兜底腿 | hover 出气泡、跳转高亮 → `tests/human-face-render.spec.mjs` R6 组 + 既有 `tests/wiki-term-citation.spec.mjs` 全量回归 |
-| 选档器与档参数覆盖 | 侧栏选档 UI、档参数逐项覆盖（§6.2 表的产品化） | 切档即时生效，五面同测 |
+| 选档器与档参数覆盖 ~~（**已作废 2026-10-31 16:13**，随 §6 体系退役）~~ | ~~侧栏选档 UI、档参数逐项覆盖（§6.2 表的产品化）~~ | ~~切档即时生效，五面同测~~ |
 | 角标与浮出引擎化 | 徽章可行动判据数据源（P6）、批级聚合浮出节奏参数（接档参数） | e2e：更新数不上徽章；批完成一次聚合浮出 |
 | 打卡与缺卡调整流 | 打卡快捷 UI、缺卡调整建议流（§6.5 第 4 段产品面） | 打卡销账联动 Schedule done；调整建议呈确认 |
 | 周报生成器 | 数据从 Schedule done 记录聚合＋热力图渲染（一图一结论） | 周报零手工数据；图注=趋势结论句 |
@@ -350,6 +352,8 @@ status: approved（作者已批 2026-10-30 13:19 按推荐＋人面子强制/框
 13. **#1128 接合面回填时机**（§6.4）→ **裁定：授权**（2026-10-30 14:43）——待 #1128 落地后，由其实施批按 §6.4 接合面执行并回填本节。
 
 ## 10. 产品方向纠正批（2026-10-30 20:13 作者令，已实施）
+
+> **【2026-10-31 16:13 对冲】** 本条①（选档入口进引导）与②（校准数据面）随 §6 体系一并退役；③（围栏语义定案）保留有效，与 §11 output 标签制并行不悖。本节留档存档。
 
 > 本节为作者令 2026-10-30 20:13（「纠正产品方向」）的定案回填，实施规格与验收读数见 [[20261030_201300_presentation-entry-fence-semantics__delegate-nebflow-208b0e62.zh-CN]]。三条：
 
@@ -415,6 +419,47 @@ status: approved（作者已批 2026-10-30 13:19 按推荐＋人面子强制/框
 ~~~~
 
 周报落位已批（§9-12，2026-10-30 14:43）：引擎生成＋收件箱浮出，归档 reports/（纯过程文件）；趋势图存 docs/attachments/ 供 vault 图谱索引；备考冲刺档的周测与错题回炉复用本模板「发现」段，不新造模板。
+
+## 11. output 标签规格（作者令 2026-10-31 16:13「output 块语法批」；16:16 修订：标签式）
+
+> 结论先行：新增 `<output>内容</output>` **成对标签**作为「用户可见内容」的唯一包裹语法（作者 16:16 改口：不用 ```output 围栏——会与 markdown 语法冲突）。与现行 ```human 围栏**同机制、旁路并存**（human 管报告人面子卡，output 管聊天/交付的用户可见层）。四条令：①方案档案参数体系整体退役（§6 作废）；②派发 brief 与 agent 指令明确「只有 output 块包裹的内容用户才可见」，类微信输出，块内风格由用户画像调整（无画像默认中文简洁直白）；③引擎摘除：正常态只渲染 output 块内容，点 badge 展开看全文（含语法原样现形），未包裹旧内容照常全显；④引导采集「希望的交流方式」问答（≤3 问）落用户画像、驱动块内风格。
+
+### 11.1 语法与语义
+
+- **形态**：成对标签 `<output>…</output>`，纯 ASCII 定界，内容可多行 markdown；一文本可多块，按序拼接呈现。匹配为源文本级平衡判定（≥1 对且全部按序配对，禁嵌套）——与 ```human 的 `_humanFencesBalanced` 流式闸同构。
+- **语义**：标签内 = 写给人看的全部；标签外 = 机器面（推理、工具叙述、验收细节），照常生成不限制——变的是呈现默认值，不是 agent 自由度（§3.1 过滤层本质不变）。
+- **降级**：无渲染支持的面（纯文本/外发）标签只是一行标记，信息无损；**未包裹的历史内容照常全显，不吞历史消息**。
+
+### 11.2 双面落地（同管线、两处语义）
+
+| 面 | 行为 | 落点 |
+|---|---|---|
+| 管线透明面（canvas md viewer / wiki docs / flow 卡 / report 卡） | 标签不现形，块内照 markdown 渲染，框外内容照常显示（非聊天面不做摘除） | `utils.js renderMarkdownWithMath` 源级提取 pass（占位符先行 → 恢复渲染）；散标签（流式中间态/手误）转义为字面文本，防 marked 裸 HTML 块吞文 |
+| 聊天摘除面（聊天气泡） | 正常态**只渲染块内内容**（框外正文摘除；思考/工具过程行本就折叠）；点 turn-header badge 展开 ⇒ 过程行揭开＋气泡切**原文全量**（escapeHtml 纯文本，`<output>` 语法原样现形）；再点收回 | `js/outputTag.js`（applyOutputFace / setOutputExpanded）＋ `chat.js finishAi` ＋ `persistence.js` 历史重建两腿 ＋ `turnGroup.js`（toggle 换面；零过程行的 output 轮也立 header——badge 是框外原文唯一展开入口） |
+
+- 流式闸照 ```human「整段等闭合」口径：全部成对闭合才启用变换/摘除，中间态散标签字面化，不炸不跳版。
+- 图放多少：由报告内容自行决定＋长期用户画像驱动，**不设参数**（§6 作废的直接替代口径）。
+
+### 11.3 brief/seed 纪律双副本
+
+- **brief 面**（引擎注入，`Defaults.OutputBlockRule` 单点）：delegate brief（`DelegateTool.assembleBrief`）、节点 ProtocolFootnote（`NodeEngineContract.protocolFootnoteFor`）、subagent/workflow 步首条消息（`BlockingSubagent.promptWithRule`）三缝同源注入；root Nebula 提示词 Voice 节同文（`BuiltinAgents.NebulaPromptTemplate`）。
+- **seed 面**：visual-report wiki-docs SKILL.md 人面子节增 output 标签条款（seed/运行时/plugin-repos 三副本 sha256 一致，`tests/wiki-docs-human-face.spec.mjs` 钉）。
+- 纪律文案要点：只有 `<output>…</output>` 包裹内容会对用户呈现；类微信（短句、结论先行、零客套）；有画像按画像，无画像默认中文简洁直白。
+
+### 11.4 用户画像接入（②④的合流）
+
+- 引导新增「希望的交流方式」两题（≤3 问裁定内）：**交流篇幅**（只说结论/结论＋关键两句/来龙去脉，选项描述带类微信示例）＋**说话语气**（直白干练/轻松友好），可跳过、可自由输入——取代已退役的呈现风格五档题。
+- 答案落 `User.md`「交流方式（你希望的）」段（`OnboardingArtifacts.buildUser`），经既有画像注入面 `ContextRefresher.buildMemoryBlock` 进根会话提示词——**零新注入机制**，驱动 ② 的块内风格；delegate/节点会话无画像面，按纪律行默认（中文简洁直白）下笔。
+
+### 11.5 验收
+
+| 项 | 读数 |
+|---|---|
+| 摘除/展开语义 | `tests/output-tag.spec.mjs`：R1 只显块内＋框外摘除；R2 badge 展开原文全量＋语法现形＋过程揭开、再点收回；R3 无块旧内容全显；R4 零过程行 output 轮 header 在；R5 管线透明面＋散标签字面化；R6 亮暗双主题截图×4（正常态摘除/展开态现形）；R7 零错误 |
+| 参数体系退役 | 设置页无「当前档/档参数覆盖」；`src/main/scala/nebflow/core/profile/` 目录删；WS 四 handler（get/setPresentationProfile、setProfileParamOverride、recordCalibrationSignal）与聊天抱怨采集腿删；`cognition-phase2.spec.mjs` R4 组随批退役（余三件保留） |
+| brief 纪律 | `SleepPollStartupRuleSpec` 增 OutputBlockRule 五钉（文本要素/brief 位形/节点脚注/subagent 包装/root 同文） |
+| 引导采集 | `OnboardingV2Spec`：交流方式段落 User.md＋allSkipped 参与；`e2e-onboarding-v2-isolated.mjs` D4 源检查改钉新题＋无 setPresentationProfile 残留 |
+| 双副本 | `tests/wiki-docs-human-face.spec.mjs` C2/C3 sha256 一致 |
 
 ## 接入图谱
 

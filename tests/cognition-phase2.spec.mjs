@@ -2,9 +2,8 @@
 // 2026-10-30 14:43 入台账；设计锚 docs/design/20261030_human-readable-presentation
 // .zh-CN.md §6/§5 P6/§6.5）。
 //
-// 四件：
-//   ① 选档器 — 设置面板五档选档 + 档参数逐项覆盖；切档即时生效（human 过滤层
-//      折叠默认消费：备考冲刺档 Findings 默认展开，其余档折叠）
+// 四件（① 选档器已随方案档案体系整体退役——作者令 2026-10-31 16:13 output 块
+// 语法批；本 spec 现钉余下三件 + 回归面）：
 //   ② 角标可行动判据（P6）— 提醒徽标只报待办+已超时（未来任务不上徽标）；
 //      messages 徽标 = 可行动聚合（actionable.js 单件断言）
 //   ③ 打卡 UI — 待办组置顶 + 打卡圆钮发 completeTodo（留痕销账）+ 取消 × +
@@ -55,28 +54,6 @@ const WEEKLY_TODO = {
 };
 // listScheduledTasks 替身应答 = 可变列表（R6 切换为「周报入账后」的库态）。
 let currentTasks = FIXTURE_TASKS;
-
-const PROFILE_DEFS = [
-  { key: 'adhd-friendly', maxLines: 8, keyNumbers: 4, foldDefault: 'fold', imageDensity: 'high', reminderCadence: 'single', supervision: 'fine', pendingStyle: 'single', teachingAllowed: false },
-  { key: 'deep-work', maxLines: 4, keyNumbers: 3, foldDefault: 'all-fold', imageDensity: 'low', reminderCadence: 'quiet', supervision: 'weekly', pendingStyle: 'batch', teachingAllowed: false },
-  { key: 'quick-browse', maxLines: 3, keyNumbers: 4, foldDefault: 'strong', imageDensity: 'medium', reminderCadence: 'aggregate', supervision: 'coarse', pendingStyle: 'none', teachingAllowed: false },
-  { key: 'expert-minimal', maxLines: 3, keyNumbers: 2, foldDefault: 'anomaly-top', imageDensity: 'low', reminderCadence: 'quiet', supervision: 'exception', pendingStyle: 'blocking', teachingAllowed: false },
-  { key: 'exam-sprint', maxLines: 6, keyNumbers: 5, foldDefault: 'expand-findings', imageDensity: 'high', reminderCadence: 'single', supervision: 'fine', pendingStyle: 'deadline', teachingAllowed: true },
-];
-
-const FENCE_MD = [
-  '```human',
-  '## 印象',
-  '结论一句话。',
-  '',
-  '**关键数字**：打卡 3/4',
-  '```',
-  '',
-  '## 发现',
-  '',
-  '机器面细节：逐日记录与读数照常写全。',
-  '',
-].join('\n');
 
 /* ─────────────── 静态服务（真 web/ 树；自有端口） ─────────────── */
 const MIME = {
@@ -133,12 +110,7 @@ async function boot(browser, captures) {
         captures.listRequests.push(m);
         return ws.send(JSON.stringify({ type: 'scheduledTaskList', sessionId: m.sessionId, tasks: currentTasks }));
       }
-      if (m.type === 'getPresentationProfile') {
-        return ws.send(JSON.stringify({ type: 'presentationProfileData', profile: { current: 'expert-minimal', profiles: PROFILE_DEFS, overrides: {} } }));
-      }
       if (m.type === 'completeTodo') captures.completeTodo.push(m);
-      if (m.type === 'setPresentationProfile') captures.setProfile.push(m);
-      if (m.type === 'setProfileParamOverride') captures.setOverride.push(m);
     });
     ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
     ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: 'sess-1', agentName: 'Nebula', title: 'T', updatedAt: Date.now() }], activeId: 'sess-1', folders: [] }));
@@ -161,7 +133,7 @@ const ok = (cond, label) => {
 };
 
 const browser = await chromium.launch();
-const captures = { completeTodo: [], setProfile: [], setOverride: [], listRequests: [] };
+const captures = { completeTodo: [], listRequests: [] };
 try {
   const { page, pageErrors, consoleErrors, push } = await boot(browser, captures);
 
@@ -210,51 +182,6 @@ try {
     return b ? b.textContent : '0';
   });
   ok(afterCheckin === '0', `R3b 打卡后徽标归零（=${afterCheckin}）`);
-
-  // ── R4 选档器：设置面板区块 + 切档帧 + 渲染即时生效 ────────────────
-  await page.click('#settings-btn');
-  await page.waitForSelector('#profile-section', { timeout: 5000 });
-  const r4a = await page.evaluate(() => {
-    const sel = document.getElementById('cfg-profile-select');
-    const rows = document.querySelectorAll('#profile-section .settings-row').length;
-    return { options: sel ? sel.options.length : 0, rows };
-  });
-  ok(r4a.options === 5, `R4a 选档器五档（=${r4a.options}）`);
-  ok(r4a.rows >= 8, `R4b 档参数逐项覆盖行在（=${r4a.rows} 行）`);
-
-  await page.selectOption('#cfg-profile-select', 'exam-sprint');
-  await sleep(300);
-  ok(captures.setProfile.length === 1 && captures.setProfile[0].profile === 'exam-sprint',
-    'R4c 切档发 setPresentationProfile 帧');
-
-  // 引擎回执 ⇒ 渲染面即时生效。围栏语义定案（作者令 2026-10-30 20:13）：
-  // 围栏在时框外一律默认折叠（可展开），五档无渲染豁免——备考冲刺档
-  // foldDefault=expand-findings 的框外不折豁免退役。
-  push({ type: 'presentationProfileChanged', profile: { current: 'exam-sprint', profiles: PROFILE_DEFS, overrides: {} } });
-  await sleep(200);
-  const examRender = await page.evaluate(async (md) => {
-    const utils = await import('/js/utils.js');
-    const host = document.createElement('div');
-    document.body.appendChild(host);
-    host.innerHTML = utils.renderMarkdownWithMath(md);
-    return {
-      cards: host.querySelectorAll('.nf-human-card').length,
-      details: host.querySelectorAll('.nf-human-details').length,
-    };
-  }, FENCE_MD);
-  ok(examRender.cards === 1 && examRender.details === 1,
-    `R4d 备考冲刺档框外也折叠（卡=${examRender.cards} 抽屉=${examRender.details}）——围栏语义定案，无档豁免`);
-
-  push({ type: 'presentationProfileChanged', profile: { current: 'expert-minimal', profiles: PROFILE_DEFS, overrides: {} } });
-  await sleep(200);
-  const expertRender = await page.evaluate(async (md) => {
-    const utils = await import('/js/utils.js');
-    const host = document.createElement('div');
-    document.body.appendChild(host);
-    host.innerHTML = utils.renderMarkdownWithMath(md);
-    return host.querySelectorAll('.nf-human-details').length;
-  }, FENCE_MD);
-  ok(expertRender === 1, `R4e 专家极简档框外折叠（抽屉=${expertRender}）`);
 
   // ── R5 actionable.js 单件：提供者聚合 + 变更广播 ────────────────────
   const r5 = await page.evaluate(async () => {

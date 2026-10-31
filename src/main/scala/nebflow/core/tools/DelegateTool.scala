@@ -144,6 +144,7 @@ object DelegateTool extends Tool:
    * 布局：工作座行（+ 绑定行）→ reset 警示行（D12-b）→ delegate_report 纪律行
    * （[[BriefReportLine]]）→ 等待纪律铁律（[[Defaults.NoSleepPollRule]]）→
    * 插件能力查询行（[[Defaults.PluginDiscoveryLine]]，stand-plugins 批）→
+   * output 块纪律行（[[Defaults.OutputBlockRule]]，作者令 2026-10-31）→
    * 空行 → 任务全文（→ 插件注入块）。
    * 铁律置于任务正文之前：单 turn 会话的第一屏即见（747cd36a 形态的启动面
    * 防线——与其在长轮询后靠 LoopGuard 兜底，不如开局立规）。
@@ -163,7 +164,8 @@ ${BriefReportLine}
 
 ${Defaults.NoSleepPollRule}
 
-${Defaults.PluginDiscoveryLine}${dispatcherDiscipline.map(l => s"\n\n$l").getOrElse("")}
+${Defaults.PluginDiscoveryLine}
+${Defaults.OutputBlockRule}${dispatcherDiscipline.map(l => s"\n\n$l").getOrElse("")}
 
 $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
 

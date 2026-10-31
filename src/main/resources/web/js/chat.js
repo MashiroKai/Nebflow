@@ -70,6 +70,9 @@ function worklineLabel(rawLabel) {
 // 五簇实现迁至 ./chat/*.js。以下显式转发保持公共导出面不缩水(全部符号仍可自 ./chat.js 取得,
 // 含动态 import('./chat.js') 解构形态);import 方文件零改动。主体自用符号另行 import。
 import { createMsgFooterBadge, renderDurationBadge } from './chat/durationBadges.js';
+// output 块语法批（作者令 2026-10-31）：<output> 包裹内容 = 用户可见全部——
+// 正常态只渲染块内（框外正文摘除），turn-header 角标展开见 outputTag.js。
+import { applyOutputFace } from './outputTag.js';
 import { bindCollapsibleToggle } from './chat/collapsible.js';
 export { formatDuration, formatLiveDuration, pickThinkingPhrase, createMsgFooterBadge, createDurationBadgeElement, renderDurationBadge } from './chat/durationBadges.js';
 // Pop 族合流（A 侧 pop-upgrade 批单源化）：`popArtifactFromInput` / `openPopArtifact`
@@ -762,7 +765,11 @@ export function finishAi(durationMs, model) {
     if (askBox) askBox.remove();
     const bubble = activeView.stream.currentAiBubble;
     const firstPaint = !bubble._nfRendered;
-    bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '');
+    // output 块语法批：源文本有平衡 <output> 对 ⇒ 正常态只渲染块内内容（摘除
+    // 框外正文）；无块零改动（旧内容照常全显）。展开面在 turnGroup 角标 toggle。
+    if (!applyOutputFace(bubble, activeView.stream.aiText || '')) {
+      bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '');
+    }
     bubble._nfText = activeView.stream.aiText || '';
     bubble._nfRendered = true;
     if (askBox) bubble.appendChild(askBox);

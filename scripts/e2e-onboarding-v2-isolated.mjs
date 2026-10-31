@@ -729,33 +729,6 @@ try {
       probeUnknown.error.includes('no-such-model'),
     `ok=${probeUnknown.ok} error=${probeUnknown.error} provider=${probeUnknown.provider}`);
 
-  // ── H. 校准信号落盘（呈现档入口改造+围栏语义批，作者令 2026-10-30 20:13 ②）──
-  // 换档帧（onboarding 选档与设置面板次级入口同路）⇒ 引擎侧落 profile-switch
-  // 信号到 <HOME>/profile-calibration.json。只钉采集面：信号存在且 from→to 正确。
-  const profChanged = await ask(conn, { type: 'setPresentationProfile', profile: 'deep-work' },
-    'presentationProfileChanged', 8000);
-  check('H setPresentationProfile roundtrips the snapshot frame',
-    profChanged && profChanged.profile && profChanged.profile.current === 'deep-work',
-    `current=${profChanged && profChanged.profile && profChanged.profile.current}`);
-  const calFile = join(HOME, 'profile-calibration.json');
-  let calSignals = [];
-  try {
-    calSignals = JSON.parse(readFileSync(calFile, 'utf8')).signals || [];
-  } catch { /* 文件未写出 = 下方断言失败并给出路径 */ }
-  const switches = calSignals.filter((s) => s.kind === 'profile-switch');
-  check('H 换档落 profile-switch 校准信号（含 from→to）',
-    switches.length >= 1 && switches[switches.length - 1].data &&
-      switches[switches.length - 1].data.to === 'deep-work',
-    `file=${calFile} signals=${calSignals.length}`);
-  // 未知档被拒且不落信号。
-  const sigBeforeBad = calSignals.length;
-  await ask(conn, { type: 'setPresentationProfile', profile: 'nope' }, 'error', 8000)
-    .catch(() => ({}));
-  let calSignalsAfter = calSignals;
-  try { calSignalsAfter = JSON.parse(readFileSync(calFile, 'utf8')).signals || []; } catch { /* keep */ }
-  check('H 未知档被拒且不落校准信号', calSignalsAfter.length === sigBeforeBad,
-    `before=${sigBeforeBad} after=${calSignalsAfter.length}`);
-
   // ── D4. The FRONT END actually sends the window ────────────────────────
   // The frame contract above proves the engine honours `contextWindow`; this
   // proves the model question is wired to send it (the author's item ② asks for
@@ -793,14 +766,18 @@ try {
     check('D4 front end offers a retry for a refused terminal step',
       src.includes('data-retry-finish') && src.includes('ob2.finish.retry'),
       'retry control');
-    // 呈现风格题（作者令 2026-10-30 20:13）：五档选项带 profile 键映射，选定
-    // 即发 setPresentationProfile 主路；设置面板选档器降级次级入口。
-    check('D4 呈现风格题：五档选项映射 profile 键',
-      src.includes("id: 'presentation'") && /profile: 'exam-sprint'/.test(src) && /profile: 'expert-minimal'/.test(src),
-      'presentation question + five profile keys');
-    check('D4 呈现风格题：选定即发 setPresentationProfile',
-      /applyPresentationProfile\(o\.profile\)/.test(src) && /type: 'setPresentationProfile'/.test(src),
-      'applyPresentationProfile on pick');
+    // 希望的交流方式两题（作者令 2026-10-31 output 块语法批④）：取代呈现风格
+    // 五档题；答案落 User.md 交流方式段（OnboardingArtifacts），驱动 <output>
+    // 块内风格。方案档案/setPresentationProfile 主路已整体退役，不得残留。
+    check('D4 交流方式题：outshape/outtone 两题进 SCRIPT',
+      src.includes("id: 'outshape'") && src.includes("id: 'outtone'"),
+      'outshape + outtone questions present');
+    check('D4 交流方式题：类微信风格示例进选项描述',
+      /ob2\.opt\.outshape\.minDesc/.test(src) && /ob2\.opt\.outtone\.directDesc/.test(src),
+      'WeChat-style example descs wired');
+    check('D4 方案档案主路已退役（无 setPresentationProfile 残留）',
+      !/setPresentationProfile/.test(src) && !/applyPresentationProfile/.test(src),
+      'no profile-picker remnant');
   } else {
     check('D4 front-end source check', false, `E2E_ONBOARDING_JS not set or missing: ${jsPath}`);
   }

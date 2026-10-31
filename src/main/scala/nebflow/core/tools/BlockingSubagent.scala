@@ -221,11 +221,12 @@ object BlockingSubagent:
       }
 
   /**
-   * 步/子会话首条消息铁律包装（sleep-poll 禁令批 C 段单点；spec 判红锚）——
-   * 铁律前缀 + 空行 + 原始任务文本（子会话无历史，首条即全部上下文）。
+   * 步/子会话首条消息铁律包装（sleep-poll 禁令批 C 段单点 + output 块语法批
+   * 追加；spec 判红锚）——铁律前缀 + output 块纪律 + 空行 + 原始任务文本
+   * （子会话无历史，首条即全部上下文）。
    */
   private[tools] def promptWithRule(prompt: String): String =
-    s"${Defaults.NoSleepPollRule}\n\n$prompt"
+    s"${Defaults.NoSleepPollRule}\n\n${Defaults.OutputBlockRule}\n\n$prompt"
 
   /**
    * 叶子终态回收——镜像 [[BackoffSupervisor]]

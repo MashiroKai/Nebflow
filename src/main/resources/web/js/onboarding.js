@@ -17,12 +17,14 @@
 //   8  temper1    choice       Soul.md 语气基线
 //   9  temper2    choice       Soul.md 做事方式
 //   10 identity   choice       User.md 日常身份
-//   11 presentation choice     呈现风格五档（→ setPresentationProfile 主路；作者令
-//      2026-10-30 20:13：选档主入口进引导，设置面板选档器降级次级入口；可跳过
-//      走默认档，自由输入不改档）
-// (The v2 demo's 11th question — 「最近半年，你最想解决的一件事是什么？」 / focus —
+//   11 outshape   choice       User.md 交流方式·篇幅（希望的交流方式，output 块
+//      语法批④作者令 2026-10-31；选项描述带类微信风格示例；可跳过/自由输入）
+//   12 outtone    choice       User.md 交流方式·语气（同上）
+// (The v2 demo's focus question — 「最近半年，你最想解决的一件事是什么？」 —
 //  was removed whole (author 2026-10-05: 「不要这个问题」): no script entry, no
-//  locale keys, no User.md section, no test anchor.)
+//  locale keys, no User.md section, no test anchor. The 2026-10-30 presentation
+//  tier-picker went the same way with the profile system retirement, author order
+//  2026-10-31 16:13.)
 //
 // Discipline (task book §2 B):
 //   - every question carries 跳过这一题 (no exception — model / name / call too);
@@ -482,18 +484,26 @@ function SCRIPT() {
       label: t('ob2.label.identity'),
     },
     {
-      id: 'presentation', seg: t('onboarding.seg.expect'), scope: 'base', kind: 'choice',
-      lead: [t('ob2.lead.presentation1'), t('ob2.lead.presentation2')],
-      q: t('ob2.q.presentation'),
+      id: 'outshape', seg: t('onboarding.seg.expect'), scope: 'user', kind: 'choice',
+      lead: [t('ob2.lead.out1'), t('ob2.lead.out2')],
+      q: t('ob2.q.outshape'),
       options: [
-        { label: t('profile.name.adhd-friendly'), desc: t('ob2.opt.profile.adhd'), profile: 'adhd-friendly' },
-        { label: t('profile.name.deep-work'), desc: t('ob2.opt.profile.deep'), profile: 'deep-work' },
-        { label: t('profile.name.quick-browse'), desc: t('ob2.opt.profile.quick'), profile: 'quick-browse' },
-        { label: t('profile.name.expert-minimal'), desc: t('ob2.opt.profile.expert'), profile: 'expert-minimal' },
-        { label: t('profile.name.exam-sprint'), desc: t('ob2.opt.profile.exam'), profile: 'exam-sprint' },
+        { label: t('ob2.opt.outshape.min'), desc: t('ob2.opt.outshape.minDesc') },
+        { label: t('ob2.opt.outshape.std'), desc: t('ob2.opt.outshape.stdDesc') },
+        { label: t('ob2.opt.outshape.full'), desc: t('ob2.opt.outshape.fullDesc') },
       ],
-      freeHint: t('ob2.fh.presentation'),
-      label: t('ob2.label.presentation'),
+      freeHint: t('ob2.fh.outshape'),
+      label: t('ob2.label.outshape'),
+    },
+    {
+      id: 'outtone', seg: t('onboarding.seg.expect'), scope: 'user', kind: 'choice',
+      q: t('ob2.q.outtone'),
+      options: [
+        { label: t('ob2.opt.outtone.direct'), desc: t('ob2.opt.outtone.directDesc') },
+        { label: t('ob2.opt.outtone.easy'), desc: t('ob2.opt.outtone.easyDesc') },
+      ],
+      freeHint: t('ob2.fh.outtone'),
+      label: t('ob2.label.outtone'),
     },
   ];
 }
@@ -518,13 +528,6 @@ function record(def, kind, value, values) {
   collected.set(def.id, rec);
   persistAnswer({ ...rec });
   if (def.id === 'name' && kind !== 'skip' && rec.value) renameEverywhere(rec.value);
-}
-
-/** 呈现风格答案 → 方案档案主路：选定即发 setPresentationProfile（作者令
- *  2026-10-30 20:13：选档进引导，设置面板选档器为次级入口）。引擎侧同帧落
- *  profile-switch 校准信号。跳过/自由输入不调用本函数——走默认档不改档。 */
-function applyPresentationProfile(profileKey) {
-  try { sendWs({ type: 'setPresentationProfile', profile: profileKey }); } catch (_) { /* WS 未就绪：finishOnboarding 后设置面板可补选（次级入口） */ }
 }
 
 // ── Segment meta (from the design note: "第三幕 · 第 N / {total} 题"; total is
@@ -678,7 +681,6 @@ function askCard(def, bubble, total, idx) {
         } else {
           opts.querySelectorAll('.option-btn').forEach((x) => x.classList.remove('picked'));
           b.classList.add('picked');
-          if (def.id === 'presentation' && o.profile) applyPresentationProfile(o.profile);
           setTimeout(() => finish('choice', o.label, null, o.label), reducedMotion() ? 0 : 160);
         }
       });
