@@ -1929,6 +1929,17 @@ export default {
   'ref.exitSelect': 'Exit selection',
   'explorer.reference': 'Reference',
   'canvas.referenceCurrent': 'Reference current page/selection',
+  // Canvas overhaul batch (2026-10-31: full Chinese UI + header redesign) —
+  // previously hardcoded English chrome strings, now keyed.
+  'canvas.viewSource': 'View source',
+  'canvas.viewRendered': 'View rendered',
+  'canvas.zoomOut': 'Zoom out',
+  'canvas.zoomIn': 'Zoom in',
+  'canvas.zoomFit': 'Fit to view',
+  'canvas.pan': 'Pan (or hold Space)',
+  'canvas.imgFailed': 'Failed',
+  'canvas.closeTab': 'Close tab',
+  'canvas.stackToggle': 'Stacked cards (wheel / vertical drag to switch · click front card to bring in · swipe away to close)',
   'canvas.noRef': 'This tab cannot be referenced',
   // canvas top file fan (2026-10-30 author order: card-fan flip for file switching)
   'canvas.fanTagFile': 'File',

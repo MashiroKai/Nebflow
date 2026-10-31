@@ -1,0 +1,49 @@
+{
+  "dedupe": {
+    "firstHeadingDisplay": "none",
+    "tabTitle": "bravo.md"
+  },
+  "zhDesktop": {
+    "sourceToggleTitle": "查看源码",
+    "zoomBarTitles": [],
+    "closeTabTitle": "关闭标签页",
+    "deckFabTitle": "叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）",
+    "headCloseTitle": "关闭标签页"
+  },
+  "noGraphToggle": true,
+  "noPopChip": true,
+  "deckCount": "2/2",
+  "txtPlain": {
+    "txtScroll": true,
+    "epubZero": true
+  },
+  "epubReader": {
+    "readerMounted": true,
+    "fabVisible": true,
+    "fabAboveNav": true
+  },
+  "mobileToolbar": {
+    "close": true,
+    "stack": true,
+    "count": "2/2",
+    "popGone": true,
+    "backGone": true,
+    "g2fab": true,
+    "zhStackTitle": "堆叠视角",
+    "fabVisible": true,
+    "fabDebug": {
+      "top": "canvas",
+      "gateOff": false,
+      "display": "flex",
+      "mobileLayer": true
+    }
+  },
+  "stackView": {
+    "count": "2 张文档",
+    "cards": 2
+  },
+  "swipeRing": {
+    "ringPresent": true,
+    "paneTransform": "translate3d(60px, 0px, 0px)"
+  }
+}

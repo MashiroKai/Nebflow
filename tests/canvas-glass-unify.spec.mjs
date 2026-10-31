@@ -20,7 +20,7 @@
 //   GU2 玻璃 token 生效证明（spec钉②）—— 关键控件计算样式与聊天控件模板
 //      （#input-bar）逐项相等（bg / backdropFilter / borderTopColor / boxShadow）：
 //     GU2-1 标题胶囊；GU2-2 工具圆钮（source/find/refresh，base opacity=1）；
-//     GU2-3 堆叠钮 #deck-fab；GU2-4 查找条 .nf-findbar（+ top = 行下缘锚）；
+//     GU2-3 堆叠钮 #deck-fab（批②材质升 v2：g2-fab 底材断言）；GU2-4 查找条 .nf-findbar（+ top = 行下缘锚）；
 //     GU2-5 缩放条 .canvas-zoom-bar + 内钮 ghost（静默 transparent，非 chip 面）；
 //     GU2-6 hover 语言：source 钮 hover 后 background = --cv-hover-bg 计算值；
 //     GU2-7 token 单源静态面：sapphire.css 声明 --cv-* 档；split.css 查找条块
@@ -160,8 +160,28 @@ const probeSel = `(() => (sel) => {
       eqHdr(m) && m.opacity === '1');
   }
   const fabM = await page.evaluate(`(${probeSel})('#deck-fab')`);
-  ok('GU2-3 堆叠钮 #deck-fab = 模板逐项相等（修前 control 自绘 + opacity .6）',
-    eqHdr(fabM) && fabM.opacity === '1');
+  // 批② 2026-10-31：#deck-fab 材质升 v2 液体玻璃（JS 挂 .g2-fab 共享类）——断言
+  // 从「= --cv-* 聊天模板」改挂「= --g2-fab-* v2 底材 token」（底材继承面证明）。
+  const g2m = await page.evaluate(() => {
+    const el = document.getElementById('deck-fab');
+    const cs = getComputedStyle(el);
+    // g2-fab 底材：backdrop-filter 挂在 ::before 折射层（liquid-glass.css §①），
+    // 元素本体只承 background-color/border。
+    const b4 = getComputedStyle(el, '::before');
+    const root = getComputedStyle(document.documentElement);
+    return {
+      bg: cs.backgroundColor,
+      g2bg: root.getPropertyValue('--g2-fab-bg').trim(),
+      bf: b4.backdropFilter || b4.webkitBackdropFilter || '',
+      g2blur: root.getPropertyValue('--g2-fab-blur').trim(),
+      border: cs.borderTopColor,
+      g2border: root.getPropertyValue('--g2-fab-border').trim(),
+      opacity: cs.opacity
+    };
+  });
+  ok('GU2-3 堆叠钮 #deck-fab = v2 液体玻璃 g2-fab 底材（批②：--cv-* 模板断言换 --g2-fab-* token）',
+    g2m.bg === g2m.g2bg && g2m.border === g2m.g2border && g2m.bf.includes(g2m.g2blur) && g2m.opacity === '1',
+    JSON.stringify(g2m));
 
   /* ── GU1-1/1-2 开查找态排他 ── */
   await page.click('.canvas-find-toggle');
@@ -187,7 +207,7 @@ const probeSel = `(() => (sel) => {
     const band = { x: s.x, y: s.y, w: s.width, h: 46 };
     const rect = (sel) => { const el = document.querySelector(sel); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; };
     const hitl = (a, b) => !!a && !!b && a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-    const circles = ['.canvas-source-toggle', '.canvas-ref-select', '.canvas-find-toggle', '.canvas-graph-toggle', '.canvas-refresh-toggle']
+    const circles = ['.canvas-source-toggle', '.canvas-ref-select', '.canvas-find-toggle', '.canvas-refresh-toggle']
       .map((sel) => ({ sel, r: rect(sel) })).filter((o) => o.r);
     return { band, circles, zoom: rect('.canvas-zoom-bar'),
       hitCircle: circles.some((o) => hitl(o.r, band)), hitZoom: hitl(rect('.canvas-zoom-bar'), band) };
@@ -199,7 +219,10 @@ const probeSel = `(() => (sel) => {
 
   /* ── 独立态：真弹卡窗（GU1-3 + GU3）── */
   const popupP = ctx.waitForEvent('page', { timeout: 8000 });
-  await page.click('#canvas-pop-btn');
+  // 批⑤：标题头 #canvas-pop-btn 退役——独立窗出口 = 卡头右键菜单「在独立窗口打开」
+  await page.click('#canvas-panel .canvas-header', { button: 'right' });
+  await page.waitForSelector('.canvas-tab-context-menu', { timeout: 5000 });
+  await page.click('.canvas-tab-context-menu button:has-text("独立窗口")');
   const popup = await popupP;
   const popupErrors = [];
   popup.on('pageerror', (e) => popupErrors.push(String(e.message || e).slice(0, 200)));

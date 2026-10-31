@@ -226,12 +226,10 @@ test('D2 root switching: live page mirror, exclusive .live, active key, center k
   await expect(page.locator('.mobile-page.live')).toHaveCount(0);
   expect(await page.evaluate(() => window.__nfMobileNav)).toMatchObject({ home: 'chat', top: 'chat', stack: ['chat'] });
   expect(await page.evaluate(() => document.querySelector('#mobile-dock .dock-key[data-dock="chat"]')?.classList.contains('active'))).toBe(true);
-  // 根页「<」= 回聊天根（home 复位 + 中键激活）。
-  await dockTo(page, 'workbench');
-  await page.locator('.mobile-page[data-page="workbench"] .mobile-back-btn').click();
-  await expect(page.locator('.mobile-page.live')).toHaveCount(0);
-  expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('chat');
-  expect(await page.evaluate(() => document.querySelectorAll('#mobile-dock .dock-key.active').length)).toBe(1);
+  // 批② 2026-10-31（作者令「canvas/工作台/联系人/消息是 dock 一级面板，禁左上角
+  // 返回钮」）：dock 根页无「<」——回聊天根 = 点 dock 中键（上段已证）。原「根页
+  // < = 回聊天根」腿随返回钮退役删除。
+  expect(await page.evaluate(() => document.querySelectorAll('.mobile-page[data-page="workbench"] .mobile-back-btn').length)).toBe(0);
   expect(errors).toEqual([]);
 });
 
@@ -380,14 +378,16 @@ test('D4 canvas page: empty state on entry, doc cards via openTab (chips/stepper
     return {
       chips,
       count: pg.querySelector('.mf-cv-count').textContent,
-      prevDisabled: pg.querySelector('.mf-cv-prev').disabled,
+      stackBtn: !!pg.querySelector('.mf-cv-stack'),
+      popGone: !pg.querySelector('.mf-cv-pop') && !pg.querySelector('.mf-cv-prev'),
       adopted: pg.querySelectorAll('.mf-cv-host .canvas-tab-pane[data-tab-id="dock-b"]').length,
       emptyHidden: pg.querySelector('.mf-cv-empty').hidden,
     };
   });
   expect(st.chips).toEqual([{ id: 'dock-a', on: false }, { id: 'dock-b', on: true }]);
   expect(st.count).toBe('2/2');
-  expect(st.prevDisabled).toBe(false);
+  expect(st.stackBtn).toBe(true);
+  expect(st.popGone).toBe(true);   // 批⑤：独立窗/步进钮退役
   expect(st.adopted).toBe(1);
   expect(st.emptyHidden).toBe(true);
   // chip tap 切卡 + X 关卡。
@@ -812,9 +812,14 @@ test('D17 page switch animation retired: zero transition, zero transform, direct
 
 test('D18 top capsule language: floating header (no bar surface), capsule title, glass back disc, icon centered', async ({ page }) => {
   const errors = watchErrors(page);
+  // 批② 2026-10-31：工作台是 dock 根页、无返回钮——顶带语言判据载体改推设置
+  // 详情页（工作台 hub 行进；详情页保留「<」回弹）。页头无通栏底面/标题玻璃
+  // 胶囊/返回钮 glass-control 族/图标居中四族断言不变。
   await dockTo(page, 'workbench');
+  await page.locator('.mf-hub-row[data-hub-page="settings"]').click();
+  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
   const st = await page.evaluate(() => {
-    const head = document.querySelector('.mobile-page[data-page="workbench"] .mobile-page-header');
+    const head = document.querySelector('.mobile-page[data-page="settings"] .mobile-page-header');
     const title = head.querySelector('.mobile-page-title');
     const back = head.querySelector('.mobile-back-btn');
     const svg = back.querySelector('svg');
@@ -828,8 +833,9 @@ test('D18 top capsule language: floating header (no bar surface), capsule title,
     probe.remove();
     const br = back.getBoundingClientRect();
     const sr = svg.getBoundingClientRect();
-    const cr = chrome.getBoundingClientRect();
-    const csr = chromeSvg.getBoundingClientRect();
+    // 批②：chrome 键只在聊天根顶带——详情页判据载体无 chrome，探针改可选。
+    const cr = chrome ? chrome.getBoundingClientRect() : null;
+    const csr = chromeSvg ? chromeSvg.getBoundingClientRect() : null;
     const hs = getComputedStyle(head);
     const ts = getComputedStyle(title);
     const bs = getComputedStyle(back);
@@ -847,8 +853,8 @@ test('D18 top capsule language: floating header (no bar surface), capsule title,
       // 玻璃空间相对图标居中（水平+垂直 ≤1px）。
       backDx: Math.abs((sr.left + sr.width / 2) - (br.left + br.width / 2)),
       backDy: Math.abs((sr.top + sr.height / 2) - (br.top + br.height / 2)),
-      chromeDx: Math.abs((csr.left + csr.width / 2) - (cr.left + cr.width / 2)),
-      chromeDy: Math.abs((csr.top + csr.height / 2) - (cr.top + cr.height / 2)),
+      chromeDx: cr && csr ? Math.abs((csr.left + csr.width / 2) - (cr.left + cr.width / 2)) : null,
+      chromeDy: cr && csr ? Math.abs((csr.top + csr.height / 2) - (cr.top + cr.height / 2)) : null,
     };
   });
   expect(st.headBg).toBe('rgba(0, 0, 0, 0)');
@@ -859,8 +865,6 @@ test('D18 top capsule language: floating header (no bar surface), capsule title,
   expect(st.backRadius).toBe('50%');
   expect(st.backDx).toBeLessThanOrEqual(1);
   expect(st.backDy).toBeLessThanOrEqual(1);
-  expect(st.chromeDx).toBeLessThanOrEqual(1);
-  expect(st.chromeDy).toBeLessThanOrEqual(1);
   expect(errors).toEqual([]);
 });
 

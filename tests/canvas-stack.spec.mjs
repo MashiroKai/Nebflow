@@ -274,14 +274,14 @@ const browser = await chromium.launch();
   ok('A1-1 卡组层空且未 live', s.M === 0 && !/live/.test(s.deckLayerClass), `class="${s.deckLayerClass}"`);
   ok('A1-2 canvas 根无 stacked', !/\bstacked\b/.test(s.panelClass), `class="${s.panelClass}"`);
   ok('A1-3 deck-layer 非 canvas 根子节点', s.deckIsPanelChild === false);
-  ok('A1-4 浮钮非 canvas 根子节点（v5② 判据）', s.fabIsPanelChild === false);
+  ok('A1-4 浮钮非 canvas 根子节点（v5② 判据；批② 2026-10-31 曾试迁入胶囊右座，实证被 deck-layer 环卡吞命中——回退 body 层浮钮）', s.fabIsPanelChild === false);
   const pr = await panelRect(page);
   const fab = await page.evaluate(() => {
     const el = document.getElementById('deck-fab');
     const r = el.getBoundingClientRect();
     return { x: r.x, y: r.y, w: r.width, h: r.height, op: getComputedStyle(el).opacity };
   });
-  ok('A1-5 浮钮钉区右上 top10/right12/40px（回退批 2026-10-22：移位批右下 → 迁回顶右原位）',
+  ok('A1-5 浮钮钉区右上 top10/right12/40px（回退批 2026-10-22：移位批右下 → 迁回顶右原位；批② 2026-10-31 维持 body 层浮钮——迁胶囊实证被环卡吞命中）',
     approx(fab.y - pr.y, 10, 1.5) && approx(pr.right - (fab.x + fab.w), 12, 1.5) && fab.w === 40 && fab.h === 40,
     `dy=${(fab.y - pr.y).toFixed(1)} dr=${(pr.right - fab.x - fab.w).toFixed(1)} ${fab.w}x${fab.h}`);
   ok('A1-6 浮钮 rest opacity 1（件三统一批 2026-10-28：材质归一聊天模板 token、减淡退役 —— 材质到位不靠减淡，同 S4-2 口径）',
@@ -477,7 +477,7 @@ const browser = await chromium.launch();
   ok('A6-1 擦洗轮换中浮钮布局盒逐像素恒定（v5②；offset* 对 hover 缩放免疫）', same(r0, rMid) && same(r0, rEnd),
     `r0=(${r0.x},${r0.y}) rMid=(${rMid.x},${rMid.y}) rEnd=(${rEnd.x},${rEnd.y})`);
   const z = await page.evaluate(() => getComputedStyle(document.getElementById('deck-fab')).zIndex);
-  ok('A6-2 浮钮 z=250 恒在卡组与面板之上', z === '250', `z=${z}`);
+  ok('A6-2 浮钮 z=250 恒在卡组与面板之上（批②维持 body 层浮钮）', z === '250', `z=${z}`);
   await page.click('#deck-fab');      // 退出
   await settle(page);
   const s1 = await state(page);

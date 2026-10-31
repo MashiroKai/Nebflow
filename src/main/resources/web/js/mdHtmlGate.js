@@ -45,3 +45,17 @@ export function isMdHtmlFile(path) {
   if (!path || typeof path !== 'string') return false;
   return MD_HTML_EXTENSIONS.includes(extOf(path));
 }
+
+/* ── ask 可问面扩列（Canvas 改造批⑩，2026-10-31 作者令「对话按钮扩到电子书
+   格式（原仅 md/html）」）：md/html 四扩展名 + 电子书 epub/mobi/azw3。
+   注意判据分工：词条/wikilink 渲染面仍走 isMdHtmlFile（未扩）；ask 面走
+   本函数。后端镜像 = nebflow.core.ask.AskSessions.isAskable（同判据），
+   MdHtmlGate（scala）保持四扩展名不动——扩列是 ask 侧单裁定，词条侧不跟。 */
+export const ASKABLE_EBOOK_EXTENSIONS = ['.epub', '.mobi', '.azw3'];
+
+/** ask 可问判据：md/html 白名单 ∪ 电子书白名单（大小写不敏感，query/frag
+ *  剥离同 extOf 纪律）。 */
+export function isAskableFile(path) {
+  if (!path || typeof path !== 'string') return false;
+  return MD_HTML_EXTENSIONS.includes(extOf(path)) || ASKABLE_EBOOK_EXTENSIONS.includes(extOf(path));
+}

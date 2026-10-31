@@ -82,13 +82,22 @@ object AskSessions:
   val AskableExtensions: Set[String] = MdHtmlGate.Extensions
 
   /**
+   * ask 可问面电子书扩列（Canvas 改造批⑩，2026-10-31 作者令「对话按钮扩到
+   * 电子书格式（原仅 md/html）」）：epub/mobi/azw3 并入 ask 可问面；词条
+   * /wikilink 面不跟（仍 `MdHtmlGate` 四扩展名——扩列是 ask 侧单裁定）。
+   * 前端镜像 = `web/js/mdHtmlGate.js` 的 `ASKABLE_EBOOK_EXTENSIONS`（逐字对齐）。
+   */
+  val AskableEbookExtensions: Set[String] = Set(".epub", ".mobi", ".azw3")
+
+  /**
    * ask 侧判据门面：仅白名单扩展名可问（大小写不敏感，`?query`/`#frag` 由
    * [[MdHtmlGate.extOf]] 先剥离）。askOpen 拒答（WsAskHandlers）与 spawn 面
    * 深防（AskServices.agentDefFor/assembleNow 复问）全部经本判据——§9-8
    * 「仅闸新问题、不清理」：本判据只拒新问，不触碰既有绑定表。
    */
   def isAskable(path: String): Boolean =
-    MdHtmlGate.isMdHtml(path)
+    MdHtmlGate.isMdHtml(path) ||
+      AskableEbookExtensions.contains(MdHtmlGate.extOf(path))
 
   /** sha256 前 8 位 hex（会话 id 用；展示再截前 4 位）。 */
   def fileHash(canonicalPath: String): String =

@@ -18,6 +18,15 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installTicketMock } from './nf-ticket-mock.mjs';
 
+/** 批⑤：标题头 #canvas-pop-btn 退役——独立窗出口 = 卡头右键菜单「在独立窗口打开/
+ *  合并回主窗」（canvas.js capsuleMenuActions 同语义）。 */
+async function popoutViaHeaderMenu(page) {
+  await page.click('#canvas-panel .canvas-header', { button: 'right' });
+  await page.waitForSelector('.canvas-tab-context-menu', { timeout: 5000 });
+  await page.click('.canvas-tab-context-menu button:has-text("独立窗口")');
+}
+
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = resolve(HERE, process.env.WEB_DIR || '../src/main/resources/web');
 const PORT = Number(process.env.PORT || 8172);
@@ -125,7 +134,7 @@ for (const [tag, vp] of [['desktop', { width: 1440, height: 900 }], ['portal', {
     await page.screenshot({ path: join(SHOTS_DIR, `${tag}-3-cluster-html.png`), clip: { x: pb2.x, y: pb2.y + pb2.height - 120, width: pb2.width, height: 120 } });
     // 独立中态（件二：角标 + 堆叠钮同排）
     const popupP = ctx.waitForEvent('page', { timeout: 8000 });
-    await page.click('#canvas-pop-btn');
+    await popoutViaHeaderMenu(page);
     const popup = await popupP;
     await popup.waitForLoadState('domcontentloaded');
     await popup.waitForSelector('body.card-window', { timeout: 15000 });

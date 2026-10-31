@@ -37,11 +37,11 @@ import { key } from './branding.js';
 import state from './state.js';
 import { sendWs, setAskFrameSink, onReconnect } from './ws.js';
 import { activeCanvasEntry } from './canvas.js';
-import { isMdHtmlFile } from './mdHtmlGate.js';
 // 修复批 2026-10-31（作者令 ①）：ai 气泡渲染复用主会话渲染腿
 // utils.renderMarkdownWithMath（代码块/表格/列表/数学全套，含 marked+KaTeX
 // 护栏与 LRU）——渲染腿零重写；user 气泡维持 textContent 纯文本面。
 import { renderMarkdownWithMath } from './utils.js';
+import { isAskableFile } from './mdHtmlGate.js';
 
 // ── 文案（i18n 键 = key('locale')，navController tt 同源）─────────────────
 function tt(zh, en) {
@@ -112,11 +112,22 @@ async function ensureActiveSession() {
   return sessionFor(currentFile, entry ? entry.title : '');
 }
 
-// ── 挂载（幂等；#canvas-panel 内，右下角）─────────────────────────────────
+// ── 挂载（幂等；桌面 = #canvas-panel 内右下角；手机层 = body 级 fixed——
+//    Canvas 改造批⑨，2026-10-31 作者令「修 bug：标签页对话按钮消失」：
+//    #canvas-panel 手机层 display:none，旧挂载面让 FAB 连带隐身 = 消失 bug；
+//    手机层改挂 body（fixed 钉视口右下、底 dock 上方），层切换经 body class
+//    观察器自动迁移宿主，桌面/移动两腿同一对元素零重建）────────────────────
+
+/** 当前应挂载的宿主：手机层 = body（fixed 定位语境）；桌面 = #canvas-panel。 */
+function mountHost() {
+  return document.body.classList.contains('mobile-layer')
+    ? document.body
+    : document.getElementById('canvas-panel');
+}
 
 function mount() {
-  const panel = document.getElementById('canvas-panel');
-  if (!panel || panel.querySelector(':scope > .ask-fab')) return;
+  const host = mountHost();
+  if (!host || host.querySelector(':scope > .ask-fab')) return;
 
   const fab = document.createElement('button');
   fab.type = 'button';
@@ -136,8 +147,8 @@ function mount() {
     '<button type="button" class="ask-send" aria-label="' + tt('发送', 'Send') + '">' + ICONS.send + '</button>' +
     '</div>';
 
-  panel.appendChild(fab);
-  panel.appendChild(dock);
+  host.appendChild(fab);
+  host.appendChild(dock);
 
   el = {
     fab,
@@ -170,9 +181,28 @@ function mount() {
   document.addEventListener('canvas-tab-switched', onTabSwitch);
   document.addEventListener('canvas-tab-closed', onTabClosed);
   window.addEventListener('resize', syncSeat);
+  // 批⑨：手机层根页切换（nf:mobile-nav）重落可见性闸——离开 canvas 页即隐。
+  document.addEventListener('nf:mobile-nav', () => syncGate());
+  // 批⑩：阅读器底栏挂载完成 → 座位重算（底栏入角落浮件占用集，见 syncSeat）。
+  document.addEventListener('nf-reader-mounted', () => syncSeat());
+  // 批⑨：手机层开/关（body.mobile-layer 起落）迁移 FAB/dock 宿主——同一对
+  // 元素在 #canvas-panel（absolute 锚面板）与 body（fixed 钉视口）间搬移。
+  if (typeof MutationObserver === 'function') {
+    let mobileOn = document.body.classList.contains('mobile-layer');
+    new MutationObserver(() => {
+      const now = document.body.classList.contains('mobile-layer');
+      if (now === mobileOn || !el) return;
+      mobileOn = now;
+      const h = mountHost();
+      if (h && el.fab.parentElement !== h) { h.appendChild(el.fab); h.appendChild(el.dock); }
+      syncGate();
+      syncSeat();
+    }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  }
   if (typeof ResizeObserver === 'function') {
     // 画布开合（宽度过渡）会移动右下角座位——面板尺寸变化即重算。
-    new ResizeObserver(() => syncSeat()).observe(panel);
+    const panel = document.getElementById('canvas-panel');
+    if (panel) new ResizeObserver(() => syncSeat()).observe(panel);
   }
   onReconnect(() => {
     // WS 重连：会话状态标脏，下次打开时 askOpen 重新回放（服务端为权威）。
@@ -197,7 +227,12 @@ function isCanvasVisible() {
 // 不挂/隐藏，双层防呆之后端 isAskable 拒答）；白名单单点 = mdHtmlGate.js。
 function syncGate() {
   if (!el) return;
-  const off = !currentFile || readerPanelOpen;
+  const mobile = document.body.classList.contains('mobile-layer');
+  // 批⑨：手机层 FAB 只在 canvas 页在场时亮——active 文件卡不因根页切换而
+  // 变，缺本闸聊天根/工作台根会浮一颗无上下文对话钮。
+  const mobilePageOk = !mobile ||
+    !!(typeof window !== 'undefined' && window.__nfMobileNav && window.__nfMobileNav.top === 'canvas');
+  const off = !currentFile || readerPanelOpen || !mobilePageOk;
   el.fab.classList.toggle('gate-off', off);
   el.dock.classList.toggle('gate-off', off);
 }
@@ -214,8 +249,9 @@ document.addEventListener('nf-reader-panel-toggle', (e) => {
 
 function syncToActiveTab() {
   const entry = activeCanvasEntry();
-  // md/html 硬闸在赋值处生效（§7-A4）：非白名单扩展名 = 视同非文件卡（''）。
-  const file = entry && entry.absPath && isMdHtmlFile(entry.absPath) ? entry.absPath : '';
+  // 可问面硬闸在赋值处生效（批⑩ 2026-10-31：md/html + 电子书 epub/mobi/azw3；
+  // §7-A4 同律）：非白名单扩展名 = 视同非文件卡（''）。
+  const file = entry && entry.absPath && isAskableFile(entry.absPath) ? entry.absPath : '';
   const switched = file !== currentFile;
   currentFile = file;
   syncGate(); // 可见性闸每拍落位（幂等；含初始无卡态与切回文件卡复现）
@@ -250,32 +286,41 @@ function onTabClosed() {
 
 function syncSeat() {
   if (!el) return;
+  const mobile = document.body.classList.contains('mobile-layer');
+  if (mobile) {
+    // 批⑨：手机层 = body 级 fixed（ask.css 移动档钉位：底 dock 上方），
+    // 面板锚让位计算整腿退役。
+    // 批⑩：活动卡挂电子书阅读器时，底栏 ⋯ 右端与 fab 同角——fab 抬到底栏
+    // 上方（nf-reader-mounted 触发本重算；reader-p1 移动触滑腿实证拦截）。
+    const pane = document.querySelector('.canvas-tab-pane.active');
+    const nav = pane && pane.querySelector('.epub-reader-nav');
+    if (nav && nav.offsetParent !== null) {
+      const nr = nav.getBoundingClientRect();
+      if (nr.width > 0 && nr.height > 0) {
+        el.fab.style.bottom = Math.max(10, window.innerHeight - nr.top + 8) + 'px';
+        return;
+      }
+    }
+    el.fab.style.bottom = '';
+    return;
+  }
   const panel = document.getElementById('canvas-panel');
   if (!panel) return;
   const panelRect = panel.getBoundingClientRect();
   let bottomPx = 14;
-  const mobile = document.body.classList.contains('mobile-layer');
-  if (mobile) {
-    const bar = /** @type {HTMLElement|null} */ (panel.querySelector('.mobile-card-switchbar'));
-    if (bar && bar.offsetParent !== null) {
-      const r = bar.getBoundingClientRect();
-      bottomPx = Math.max(bottomPx, panelRect.bottom - r.top + 12);
-    } else {
-      bottomPx = 56;
-    }
-  } else {
-    // 角落浮件（可见者取最上沿）：缩放条 / 壳刷新钮 / pane 内源码-引用钮族。
-    const floats = panel.querySelectorAll('.canvas-zoom-bar, .canvas-refresh-toggle, .canvas-source-toggle, .canvas-ref-toggle');
-    let occupied = 0;
-    floats.forEach((f) => {
-      const h = /** @type {HTMLElement} */ (f);
-      if (!(h instanceof HTMLElement) || h.hidden || h.offsetParent === null) return;
-      const r = h.getBoundingClientRect();
-      if (r.width === 0 && r.height === 0) return;
-      occupied = Math.max(occupied, panelRect.bottom - r.top);
-    });
-    bottomPx = occupied > 0 ? occupied + 12 : 14;
-  }
+  // 角落浮件（可见者取最上沿）：缩放条 / 壳刷新钮 / pane 内源码-引用钮族 /
+  // 电子书阅读器底栏（批⑩ 2026-10-31：epub/mobi/azw3 并入可问面后 fab 同样上
+  // 阅读器页——底栏 ⋯ 钮在右端，fab 不抬必拦截其命中，reader-p1 A5 实证）。
+  const floats = panel.querySelectorAll('.canvas-zoom-bar, .canvas-refresh-toggle, .canvas-source-toggle, .canvas-ref-toggle, .epub-reader-nav');
+  let occupied = 0;
+  floats.forEach((f) => {
+    const h = /** @type {HTMLElement} */ (f);
+    if (!(h instanceof HTMLElement) || h.hidden || h.offsetParent === null) return;
+    const r = h.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) return;
+    occupied = Math.max(occupied, panelRect.bottom - r.top);
+  });
+  bottomPx = occupied > 0 ? occupied + 12 : 14;
   panel.style.setProperty('--ask-fab-bottom', bottomPx + 'px');
 }
 
@@ -295,8 +340,9 @@ function syncUnreadDot() {
 }
 
 async function open() {
-  // 非文件卡入口已被可见性闸摘除；md/html 硬闸复核（§7-A4 冗余守卫双层防呆）。
-  if (!currentFile || !isMdHtmlFile(currentFile)) return;
+  // 非文件卡入口已被可见性闸摘除；可问面硬闸复核（批⑩ 同律：md/html +
+  // 电子书扩展名白名单；§7-A4 冗余守卫双层防呆）。
+  if (!currentFile || !isAskableFile(currentFile)) return;
   const s = await ensureActiveSession();
   if (!s) return;
   s.unread = false; // 打开即读：通知点熄灭（ask 三修 2026-10-29 未读语义）
@@ -373,7 +419,7 @@ function askOpen(s) {
 }
 
 async function submit() {
-  if (!el || !currentFile || !isMdHtmlFile(currentFile)) return; // 硬闸复核（冗余守卫）
+  if (!el || !currentFile || !isAskableFile(currentFile)) return; // 硬闸复核（冗余守卫；批⑩ 判据 = md/html + 电子书并集）
   const s = await ensureActiveSession();
   if (!s) return;
   const v = el.input.value.trim();

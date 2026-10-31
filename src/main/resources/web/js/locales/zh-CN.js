@@ -1852,6 +1852,17 @@ export default {
   'ref.exitSelect': '退出选择',
   'explorer.reference': '引用',
   'canvas.referenceCurrent': '引用当前页/选区',
+  // Canvas 改造批①②（2026-10-31 作者令：canvas 全面中文化 + 顶栏换代）——
+  // 硬编码英文控件文案入键（源码钮/缩放条/抓手/图片失败/新顶栏双钮）。
+  'canvas.viewSource': '查看源码',
+  'canvas.viewRendered': '查看渲染',
+  'canvas.zoomOut': '缩小',
+  'canvas.zoomIn': '放大',
+  'canvas.zoomFit': '适应视图',
+  'canvas.pan': '抓手（或按住空格）',
+  'canvas.imgFailed': '加载失败',
+  'canvas.closeTab': '关闭标签页',
+  'canvas.stackToggle': '叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）',
   'canvas.noRef': '该标签页暂不支持引用',
   // canvas 顶部文件扇（2026-10-30 作者令：canvas 文件切换卡片扇翻批）——
   // 卡头中文签 + 扇顶操作提示（卡片名不裸英文，作者令）

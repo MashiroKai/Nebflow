@@ -4,7 +4,8 @@
 import { key } from '../branding.js';
 import { t } from '../i18n.js';
 import { mintTickets, nfFilePathsIn, injectTickets, decodePathParam } from '../nfTicket.js';
-import { noteAuthRejected } from '../sessionGate.js';
+// noteAuthRejected 随 wiki-graph 圆钮（addGraphToggle）批④一并退役——本件无
+// 其余 401/403 REST 直调面（2026-10-31 Canvas 改造批）。
 export function getToken() {
   return localStorage.getItem(key('token')) || '';
 }
@@ -635,7 +636,7 @@ export function addSourceToggle(pane, renderFn, ctx) {
   const btn = document.createElement('button');
   btn.className = 'canvas-source-toggle';
   btn.innerHTML = CODE_ICON_SVG;
-  btn.title = 'View source';
+  btn.title = t('canvas.viewSource');   // canvas 中文化批（2026-10-31 作者令①）：硬编码英文入 i18n
 
   let busy = false;  // guard against clicks during async Monaco load
   btn.addEventListener('click', async () => {
@@ -647,7 +648,7 @@ export function addSourceToggle(pane, renderFn, ctx) {
         // → Source mode
         pane.dataset.sourceMode = '1';
         btn.innerHTML = EYE_ICON_SVG;
-        btn.title = 'View rendered';
+        btn.title = t('canvas.viewRendered');
         if (pane._editorHandle) { pane._editorHandle.dispose(); pane._editorHandle = null; }
         pane.innerHTML = '';
         pane.classList.remove('scrollable');
@@ -757,13 +758,13 @@ export function addElementRefToggle(pane, opts) {
   return btn;
 }
 
-// ── In-file find + wiki graph toggles (2026-10-14 wiki-graph batch) ────
+// ── In-file find toggle (wiki-graph 圆钮已随 Canvas 改造批④退役：2026-10-31
+//    作者令「去知识图谱钮（无此面板）」——md 阅读面不再开图谱；图谱面仍走
+//    工作台/项目 vault 入口与 wiki-graph 标签页，圆钮-builder 与本图标一并
+//    删，i18n 键 wiki.openGraphForDoc/notInVault/graphUnavailable 无引用面
+//    残留即孤儿，词条标签页腿不受影响）──────────────────────────────────
 
 const FIND_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>';
-// Graph icon: C2 hub-spoke geometry (.nebflow/evidence/20261014_wiki-dx/icons/
-// c2-hub-spoke.svg, icon wiring batch 2026-10-15) — same wrapper spec as
-// FIND_ICON_SVG (18×18 · viewBox 24 · stroke 2), geometry unchanged.
-const GRAPH_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><circle cx="4.8" cy="4.8" r="2.2"/><circle cx="19.2" cy="4.8" r="2.2"/><circle cx="4.8" cy="19.2" r="2.2"/><circle cx="19.2" cy="19.2" r="2.2"/><line x1="9" y1="9" x2="7.1" y2="7.1"/><line x1="15" y1="9" x2="16.9" y2="7.1"/><line x1="9" y1="15" x2="7.1" y2="16.9"/><line x1="15" y1="15" x2="16.9" y2="16.9"/></svg>';
 
 /**
  * Floating "search in this file" toggle — the same glass material and corner
@@ -794,68 +795,14 @@ export function addFindToggle(pane, right = 112) {
   return btn;
 }
 
-/**
- * Floating "open in wiki graph" toggle (markdown tabs). Resolves this
- * document's graph node by matching absPath against the project vaults the
- * graph API reports, then opens the wiki-graph tab centered on the node.
- *  @param {HTMLElement} pane — canvas tab pane
- *  @param {string} [absPath] - absolute path of the open document
- *  @param {number} [right] - offset from the pane's right edge
- */
-export function addGraphToggle(pane, absPath, right = 160) {
-  pane.querySelector('.canvas-graph-toggle')?.remove();
-  if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
-
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'canvas-graph-toggle';
-  btn.innerHTML = GRAPH_ICON_SVG;
-  btn.title = t('wiki.openGraphForDoc');
-  btn.style.right = right + 'px';
-  btn.addEventListener('click', async () => {
-    if (!absPath) {
-      window.__showToast?.(t('wiki.notInVault'), 'info');
-      return;
-    }
-    try {
-      const { authHeaders } = await import('../flowHelpers.js');
-      const res = await fetch('/api/wiki/graph', { headers: { ...authHeaders() } });
-      // #762 图谱按钮 403 族（作者 2026-10-22 21:49 实报「文档图谱不可用」死
-      // toast）：长命标签页会话过期 ⇒ REST 直调被裸 403，这里只 toast 不自愈。
-      // 401/403 = 同源凭据被拒 ⇒ 交 sessionGate 统一重认证面（可见横幅 + 自愈
-      // reload，scan-bind-403 批 projects/social-scan 同一条路）；单飞 + 60s
-      // 冷却防环在本体。其余状态照旧落 graphUnavailable toast（真传输错的面）。
-      if (res.status === 401 || res.status === 403) {
-        noteAuthRejected('wiki-graph-toggle');
-        return;
-      }
-      if (!res.ok) throw new Error(String(res.status));
-      const data = await res.json();
-      const norm = String(absPath).replace(/\\/g, '/');
-      const proj = (data.projects || []).find((p) => {
-        const vault = String(p.vault || '').replace(/\\/g, '/').replace(/\/+$/, '');
-        return vault && norm.toLowerCase().startsWith(vault.toLowerCase() + '/');
-      });
-      if (!proj) { window.__showToast?.(t('wiki.notInVault'), 'info'); return; }
-      const vault = String(proj.vault).replace(/\\/g, '/').replace(/\/+$/, '');
-      const rel = norm.slice(vault.length + 1);
-      const { focusWikiNode } = await import('../wikiGraph.js');
-      focusWikiNode(proj.name, rel);
-    } catch (e) {
-      window.__showToast?.(t('wiki.graphUnavailable'), 'error');
-    }
-  });
-  pane.appendChild(btn);
-  return btn;
-}
-
 // ── File refresh button (canvas 文件刷新批, 作者令 2026-10-25) ──────────
 
 const REFRESH_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>';
-// Same corner family as source/ref/find/graph: 40px glass circles on a 48px
+// Same corner family as source/ref/find: 40px glass circles on a 48px
 // pitch, bottom:16 (split.css). The zoom bar is the one non-circle member —
-// its occupied span is measured, not assumed.
-const REFRESH_CIRCLE_SEL = '.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle, .canvas-graph-toggle';
+// its occupied span is measured, not assumed.（图谱圆钮批④退役后簇内只剩
+// 源码/引用/查找三圆钮 + 缩放条 + 壳刷新钮，簇内 48px 间距不变。）
+const REFRESH_CIRCLE_SEL = '.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle';
 const REFRESH_ROW_PITCH = 48;
 const REFRESH_ROW_BOTTOMS = [16, 64];
 

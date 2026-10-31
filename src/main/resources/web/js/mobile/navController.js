@@ -47,7 +47,6 @@
 
 import {
   getTabPane, setActiveTab, closeTab,
-  cardCanPop, isCardIndependent, mobileCardToggle,
 } from '../canvas.js';
 import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
@@ -191,13 +190,6 @@ function buildSection(def) {
 
   const head = document.createElement('div');
   head.className = 'mobile-page-header';
-  const back = document.createElement('button');
-  back.type = 'button';
-  back.className = 'mobile-back-btn';
-  back.title = backLabel();
-  back.setAttribute('aria-label', backLabel());
-  back.innerHTML = '<i data-lucide="chevron-left"></i>';
-  back.addEventListener('click', () => backOut());
   const title = document.createElement('span');
   title.className = 'mobile-page-title';
   title.tabIndex = -1; // push 后聚焦（读屏从头播报页名）
@@ -205,7 +197,21 @@ function buildSection(def) {
   const spacer = document.createElement('span');
   spacer.className = 'mobile-page-head-spacer';
   spacer.setAttribute('aria-hidden', 'true');
-  head.append(back, title, spacer);
+  // Canvas 改造批②（2026-10-31 作者令）：canvas/工作台/联系人/消息 = dock 一级
+  // 面板，禁左上角返回钮——返回语义由底 dock 承担（dock 根无「<」；详情页
+  // 保留「<」= pop 一层）。spacer 保留占位，标题胶囊居中不变。
+  if (!def.dock) {
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'mobile-back-btn';
+    back.title = backLabel();
+    back.setAttribute('aria-label', backLabel());
+    back.innerHTML = '<i data-lucide="chevron-left"></i>';
+    back.addEventListener('click', () => backOut());
+    head.append(back, title, spacer);
+  } else {
+    head.append(title, spacer);
+  }
   if (typeof lucide !== 'undefined') createIconsIn(head);
 
   const body = document.createElement('div');
@@ -571,25 +577,112 @@ function syncCanvasPage() {
   const idx = docs.findIndex((d) => d.id === activeId);
   const cnt = /** @type {HTMLElement|null} */ (canvasUI.toolbar.querySelector('.mf-cv-count'));
   if (cnt) cnt.textContent = docs.length > 1 && idx >= 0 ? `${idx + 1}/${docs.length}` : '';
-  const multi = docs.length > 1;
-  const prev = /** @type {HTMLButtonElement|null} */ (canvasUI.toolbar.querySelector('.mf-cv-prev'));
-  const next = /** @type {HTMLButtonElement|null} */ (canvasUI.toolbar.querySelector('.mf-cv-next'));
-  if (prev) prev.disabled = !multi;
-  if (next) next.disabled = !multi;
-  const pop = /** @type {HTMLButtonElement|null} */ (canvasUI.toolbar.querySelector('.mf-cv-pop'));
-  if (pop) {
-    const can = !!activeId && cardCanPop(activeId);
-    pop.hidden = !can;
-    if (can) pop.classList.toggle('is-independent', isCardIndependent(activeId));
-  }
+  // Canvas 改造批②⑤（2026-10-31 作者令）：工具条 = 左叉号 + 计数 + 右堆叠视角
+  // 钮；独立窗/步进钮退役（独立窗出口桌面保留；切卡走 chip/横滑/堆叠视角）。
+  const stackBtn = /** @type {HTMLButtonElement|null} */ (canvasUI.toolbar.querySelector('.mf-cv-stack'));
+  if (stackBtn) stackBtn.disabled = docs.length === 0;
   adoptActiveDoc();
   canvasUI.empty.hidden = docs.length > 0;
   canvasUI.strip.hidden = docs.length === 0;
   canvasUI.toolbar.hidden = docs.length === 0;
   canvasUI.host.hidden = docs.length === 0;
+  if (stackOpen) syncStackView();
 }
 
-/** canvas 页内容臂构建（一次；chip 条 + 工具条 + 文档区 + 空态）。 */
+/** 堆叠视角开关态（批②⑤：手机端「堆叠态」= 全卡堆叠列表面，顶部显示标签数）。 */
+let stackOpen = false;
+/** @type {{view: HTMLElement, list: HTMLElement, count: HTMLElement}|null} */
+let stackUI = null;
+
+/** 堆叠视角面构建（一次）：顶部「N 张文档」计数行 + 全卡堆叠列表（活动卡高亮；
+ *  点卡换入并收面；✕/下滑/Esc 收面）。毛玻璃浮层面，锚 canvas 页内。 */
+function buildStackView(wrap) {
+  const view = document.createElement('div');
+  view.className = 'mf-stack-view';
+  view.hidden = true;
+  const head = document.createElement('div');
+  head.className = 'mf-stack-head';
+  const count = document.createElement('span');
+  count.className = 'mf-stack-count';
+  const x = document.createElement('button');
+  x.type = 'button';
+  x.className = 'mf-stack-x g2-fab';
+  x.title = tt('关闭堆叠视角', 'Close stacked view');
+  x.setAttribute('aria-label', x.title);
+  x.innerHTML = '<i data-lucide="x"></i>';
+  x.addEventListener('click', () => toggleStackView(false));
+  head.append(count, x);
+  const list = document.createElement('div');
+  list.className = 'mf-stack-list';
+  view.append(head, list);
+  wrap.appendChild(view);
+  // 下滑收面（浮面自身纵滑手势；横滑无义不接管）。
+  let dy0 = null;
+  view.addEventListener('pointerdown', (e) => { dy0 = e.clientY; });
+  view.addEventListener('pointerup', (e) => {
+    if (dy0 === null) return;
+    const dy = e.clientY - dy0;
+    dy0 = null;
+    if (dy > 56) toggleStackView(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && stackOpen) toggleStackView(false);
+  });
+  stackUI = { view, list, count };
+  return view;
+}
+
+/** 堆叠视角开合 + 列表同步（open 省略 = 翻转）。 */
+function toggleStackView(open) {
+  if (!stackUI) return;
+  const next = open === undefined ? !stackOpen : !!open;
+  if (next === stackOpen) return;
+  stackOpen = next;
+  stackUI.view.hidden = !next;
+  logEvent('canvas-stack-' + (next ? 'open' : 'close'));
+  if (next) syncStackView();
+}
+
+/** 堆叠列表重建（签名闸同 chip 条纪律）：活动卡高亮，点卡 = 换入 + 收面。 */
+function syncStackView() {
+  if (!stackUI || !stackOpen) return;
+  const docs = docTabs();
+  const activeId = activeDocId();
+  stackUI.count.textContent = docs.length ? `${docs.length} 张文档` : '';
+  const sig = docs.map((d) => d.id).join('|') + '#' + (activeId || '');
+  if (stackUI.list.dataset.sig === sig) {
+    stackUI.list.querySelectorAll('.mf-stack-card').forEach((el) => {
+      el.classList.toggle('on', (/** @type {HTMLElement} */ (el)).dataset.tabId === activeId);
+    });
+    return;
+  }
+  stackUI.list.dataset.sig = sig;
+  stackUI.list.innerHTML = '';
+  docs.forEach((d, i) => {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'mf-stack-card' + (d.id === activeId ? ' on' : '');
+    card.dataset.tabId = d.id;
+    const num = document.createElement('span');
+    num.className = 'mf-stack-num';
+    num.textContent = String(i + 1);
+    const label = document.createElement('span');
+    label.className = 'mf-stack-label';
+    label.textContent = d.label;
+    card.append(num, label);
+    card.addEventListener('click', () => {
+      logEvent('card-switch', { via: 'stack-view', tab: d.id });
+      if (d.id !== activeDocId()) setActiveTab(d.id);
+      toggleStackView(false);
+    });
+    stackUI.list.appendChild(card);
+  });
+}
+
+/** canvas 页内容臂构建（一次；chip 条 + 工具条 + 文档区 + 空态 + 堆叠视角）。
+ *  Canvas 改造批②⑤（2026-10-31 作者令）：工具条换代 = 左叉号（液态玻璃悬浮
+ *  钮）+ 中部计数 + 右堆叠视角钮（.g2-fab 复用液体玻璃 v2 材质，零新造）。
+ *  退役：‹ › 步进（chip/横滑/堆叠视角三条换卡腿已足）、独立窗钮（批⑤）。 */
 function buildCanvasPage(body) {
   const wrap = document.createElement('div');
   wrap.className = 'mf-canvas-page';
@@ -600,46 +693,23 @@ function buildCanvasPage(body) {
 
   const toolbar = document.createElement('div');
   toolbar.className = 'mf-cv-toolbar';
-  const prev = document.createElement('button');
-  prev.type = 'button';
-  prev.className = 'mf-cv-btn mf-cv-prev';
-  prev.title = tt('上一张', 'Previous');
-  prev.setAttribute('aria-label', tt('上一张', 'Previous'));
-  prev.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>';
-  prev.addEventListener('click', () => { logEvent('card-switch', { via: 'pagebar', dir: -1 }); switchDocCard(-1); });
-  const count = document.createElement('span');
-  count.className = 'mf-cv-count';
-  const next = document.createElement('button');
-  next.type = 'button';
-  next.className = 'mf-cv-btn mf-cv-next';
-  next.title = tt('下一张', 'Next');
-  next.setAttribute('aria-label', tt('下一张', 'Next'));
-  next.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6 6-6 6"/></svg>';
-  next.addEventListener('click', () => { logEvent('card-switch', { via: 'pagebar', dir: 1 }); switchDocCard(1); });
-  const pop = document.createElement('button');
-  pop.type = 'button';
-  pop.className = 'mf-cv-btn mf-cv-pop';
-  pop.hidden = true;
-  pop.title = tt('独立窗口打开', 'Open in standalone window');
-  pop.setAttribute('aria-label', tt('独立窗口打开', 'Open in standalone window'));
-  pop.innerHTML =
-    '<svg class="pop-ic-pop" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>' +
-    '<svg class="pop-ic-merge" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><path d="M14 10 21 3"/><path d="M3 21l7-7"/></svg>';
-  pop.addEventListener('click', () => {
-    const id = activeDocId();
-    if (id && cardCanPop(id)) mobileCardToggle(id);
-  });
-  const sep = document.createElement('span');
-  sep.className = 'mf-cv-sep';
-  sep.setAttribute('aria-hidden', 'true');
   const close = document.createElement('button');
   close.type = 'button';
-  close.className = 'mf-cv-btn mf-cv-close';
+  close.className = 'mf-cv-close g2-fab';
   close.title = tt('关闭文档', 'Close document');
   close.setAttribute('aria-label', tt('关闭文档', 'Close document'));
   close.innerHTML = '<i data-lucide="x"></i>';
   close.addEventListener('click', () => closeCard());
-  toolbar.append(prev, count, next, sep, pop, close);
+  const count = document.createElement('span');
+  count.className = 'mf-cv-count';
+  const stack = document.createElement('button');
+  stack.type = 'button';
+  stack.className = 'mf-cv-stack g2-fab';
+  stack.title = tt('堆叠视角', 'Stacked view');
+  stack.setAttribute('aria-label', tt('堆叠视角', 'Stacked view'));
+  stack.innerHTML = '<i data-lucide="layers"></i>';
+  stack.addEventListener('click', () => { logEvent('canvas-stack-toggle'); toggleStackView(); });
+  toolbar.append(close, count, stack);
 
   const host = document.createElement('div');
   host.className = 'mf-cv-host';
@@ -655,20 +725,51 @@ function buildCanvasPage(body) {
   eSub.className = 'mf-cv-empty-sub';
   eSub.textContent = tt('在聊天里打开文件或文档后会出现在这里', 'Documents opened from chat appear here');
   empty.append(eIcon, eTitle, eSub);
+  const stackView = buildStackView(wrap);
   wrap.append(strip, toolbar, host, empty);
   body.appendChild(wrap);
   canvasUI = { strip, toolbar, host, empty };
   if (typeof lucide !== 'undefined') createIconsIn(wrap);
+  void stackView;
 }
 
-/** 文档区横滑切卡（轴锁 8px / 阈 48px；环式；纵滚零劫持 —— 卡头手势同参数）。 */
+/** 文档区横滑切卡（轴锁 8px / 阈 48px；环式；纵滚零劫持 —— 卡头手势同参数）。
+ *  Canvas 改造批③（2026-10-31 作者令「标签页手机端左右滑动，两边露圆环相邻
+ *  页 = 桌面上下滚动的横屏变体」）：横拖跟手位移 + 拖向侧露圆环（邻卡环露
+ *  指示，进深随拖距 0→1）+ 松手判定（过阈换卡滑出 / 不过阈弹簧回位）。
+ *  圆环 = 玻璃描边半露圆（CSS .mf-swipe-ring），只在横轴锁后出现，松手即退。 */
 function bindDocSwipe(host) {
   /** @type {{id: number, x0: number, y0: number, dx: number, dy: number, axis: string|null}|null} */
   let g = null;
+  /** @type {HTMLElement|null} 当前收编 pane（跟手位移对象；换卡由 adoptActiveDoc 归位）。 */
+  let paneEl = null;
+  /** @type {HTMLElement|null} */
+  let ringL = null;
+  /** @type {HTMLElement|null} */
+  let ringR = null;
+  const ensureChrome = () => {
+    if (!ringL) {
+      ringL = document.createElement('div');
+      ringL.className = 'mf-swipe-ring left';
+      ringL.setAttribute('aria-hidden', 'true');
+      ringR = document.createElement('div');
+      ringR.className = 'mf-swipe-ring right';
+      ringR.setAttribute('aria-hidden', 'true');
+      host.append(ringL, ringR);
+    }
+  };
+  const setRing = (side, k) => {
+    const el = side < 0 ? ringL : ringR;
+    if (!el) return;
+    const v = Math.max(0, Math.min(1, k));
+    el.style.opacity = v <= 0 ? '' : String(0.25 + 0.75 * v);
+    el.style.transform = `translateY(-50%) scale(${0.72 + 0.28 * v})`;
+  };
   host.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     if (/** @type {Element} */ (e.target).closest('button, input, textarea, select, a')) return;
     g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, axis: null };
+    paneEl = /** @type {HTMLElement|null} */ (host.querySelector(':scope > .canvas-tab-pane'));
     try { host.setPointerCapture(e.pointerId); } catch (_) {}
   });
   host.addEventListener('pointermove', (e) => {
@@ -677,16 +778,47 @@ function bindDocSwipe(host) {
     g.dy = e.clientY - g.y0;
     if (!g.axis && (Math.abs(g.dx) > SWIPE_AXIS_PX || Math.abs(g.dy) > SWIPE_AXIS_PX)) {
       g.axis = Math.abs(g.dx) > Math.abs(g.dy) ? 'x' : 'y';
+      if (g.axis === 'x') ensureChrome();
+    }
+    if (g.axis === 'x') {
+      const docs = docTabs();
+      if (paneEl && docs.length > 1) {
+        paneEl.style.transition = 'none';
+        paneEl.style.transform = `translate3d(${g.dx}px,0,0)`;
+      }
+      setRing(-1, docs.length > 1 && g.dx > 0 ? g.dx / SWIPE_SWITCH_PX : 0);
+      setRing(1, docs.length > 1 && g.dx < 0 ? -g.dx / SWIPE_SWITCH_PX : 0);
     }
   });
+  const clearRings = () => {
+    if (ringL) { ringL.style.opacity = ''; ringL.style.transform = ''; }
+    if (ringR) { ringR.style.opacity = ''; ringR.style.transform = ''; }
+  };
   const finish = (e) => {
     if (!g || e.pointerId !== g.id) return;
     const { dx, axis } = g;
     g = null;
-    if (axis !== 'x' || Math.abs(dx) <= SWIPE_SWITCH_PX) return;
-    if (!activeDocId()) return;
-    logEvent('card-switch', { via: 'page-swipe', dir: dx < 0 ? 1 : -1 });
-    switchDocCard(dx < 0 ? 1 : -1);
+    if (axis !== 'x') { paneEl = null; return; }
+    const docs = docTabs();
+    const hit = Math.abs(dx) > SWIPE_SWITCH_PX && docs.length > 1 && !!activeDocId();
+    if (hit) {
+      // 过阈：即刻换卡（adoptActiveDoc 归位旧 pane、纳新 pane——松手即切是
+      // 既有契约，spec T3 同步断言；跟手位移已发生在拖动段）。
+      logEvent('card-switch', { via: 'page-swipe', dir: dx < 0 ? 1 : -1 });
+      switchDocCard(dx < 0 ? 1 : -1);
+      if (paneEl) { paneEl.style.transition = ''; paneEl.style.transform = ''; paneEl.style.opacity = ''; paneEl = null; }
+      clearRings();
+    } else {
+      // 不过阈：弹簧回位（220ms 后清内联，避免遗留过渡影响后续纵滚）。
+      if (paneEl) {
+        paneEl.style.transition = 'transform 220ms cubic-bezier(0.16, 1, 0.3, 1)';
+        paneEl.style.transform = 'translate3d(0,0,0)';
+        const el = paneEl;
+        paneEl = null;
+        setTimeout(() => { el.style.transition = ''; el.style.transform = ''; }, 240);
+      } else paneEl = null;
+      clearRings();
+    }
   };
   host.addEventListener('pointerup', finish);
   host.addEventListener('pointercancel', finish);

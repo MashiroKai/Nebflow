@@ -16,6 +16,18 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installTicketMock } from './nf-ticket-mock.mjs';
 
+/** 批⑤：标题头 #canvas-pop-btn 退役——独立窗出口 = 卡头右键菜单「在独立窗口打开/
+ *  合并回主窗」（canvas.js capsuleMenuActions 同语义）。 */
+async function popoutViaHeaderMenu(page) {
+  await page.click('#canvas-panel .canvas-header', { button: 'right' });
+  await page.waitForSelector('.canvas-tab-context-menu', { timeout: 5000 });
+  // 弹出走「在独立窗口打开」，弹回走「合并回主窗」——两态同 helper（同
+  // canvas-card-window.spec clickHeaderPop 口径）。
+  await page.click('.canvas-tab-context-menu button:has-text("独立窗口"), .canvas-tab-context-menu button:has-text("合并回主窗")');
+  await sleep(120);
+}
+
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = resolve(HERE, '../src/main/resources/web');
 const PORT = Number(process.env.PORT || 8164);
@@ -111,7 +123,7 @@ const browser = await chromium.launch();
   await page.screenshot({ path: join(SHOTS_DIR, 'desktop-dark-1-toggle-normal.png'), clip: { x: hdr.x, y: hdr.y, width: hdr.width, height: hdr.height } });
   // 弹出 bravo（活动卡）
   const popupP = ctx.waitForEvent('page', { timeout: 8000 });
-  await page.click('#canvas-pop-btn');
+  await popoutViaHeaderMenu(page);
   const popup = await popupP;
   await popup.waitForLoadState('domcontentloaded');
   await popup.waitForSelector('body.card-window', { timeout: 15000 });
@@ -119,44 +131,17 @@ const browser = await chromium.launch();
   await page.screenshot({ path: join(SHOTS_DIR, 'desktop-dark-2-toggle-independent.png'), clip: { x: hdr.x, y: hdr.y, width: hdr.width, height: hdr.height } });
   await popup.screenshot({ path: join(SHOTS_DIR, 'desktop-dark-3-cardwin.png') });
   // 合并回主窗
-  await page.click('#canvas-pop-btn');
+  await popoutViaHeaderMenu(page);
   await sleep(1000);
   await page.screenshot({ path: join(SHOTS_DIR, 'desktop-dark-4-merged.png'), clip: { x: hdr.x, y: Math.max(0, hdr.y - 10), width: hdr.width, height: 380 } });
   console.log('[desktop] shots done, popup closed =', popup.isClosed());
   await ctx.close();
 }
 
-/* 430 / 375：手机卡片头 toggle（.mobile-card-pop）+ 弹出新标签页 */
-for (const [tag, vp] of [['w430', { width: 430, height: 932 }], ['w375', { width: 375, height: 812 }]]) {
-  const { ctx, page } = await boot({ viewport: vp, colorScheme: 'dark' });
-  for (const p of FILE_CONTENTS.keys()) {
-    const rec = FILE_CONTENTS.get(p);
-    await page.evaluate(({ p, c, t }) => {
-      window.dispatchEvent(new CustomEvent('workspace-open-item', {
-        detail: { id: 'file:' + p, itemType: 'markdown', title: t, content: c, absPath: p, pinned: true },
-      }));
-    }, { p, c: rec.content, t: p.split('/').pop() });
-    await sleep(200);
-  }
-  await page.evaluate(() => {
-    const key = document.querySelector('.mh-dd[data-dd="right"] [data-face="canvas"]');
-    if (key) key.click();
-  });
-  await sleep(1000);
-  await page.screenshot({ path: join(SHOTS_DIR, `${tag}-1-cardhead-normal.png`) });
-  const popupP = ctx.waitForEvent('page', { timeout: 8000 });
-  await page.click('.mobile-card-pop');
-  const popup = await popupP;
-  await popup.waitForLoadState('domcontentloaded');
-  await sleep(1800);
-  await page.screenshot({ path: join(SHOTS_DIR, `${tag}-2-cardhead-independent.png`) });
-  await popup.screenshot({ path: join(SHOTS_DIR, `${tag}-3-newtab-cardwin.png`) });
-  await page.click('.mobile-card-pop');
-  await sleep(900);
-  await page.screenshot({ path: join(SHOTS_DIR, `${tag}-4-cardhead-merged.png`) });
-  console.log(`[${tag}] popup closed =`, popup.isClosed());
-  await ctx.close();
-}
+/* 430 / 375 手机腿：批⑤（2026-10-31 作者令「去独立窗口钮」）手机卡头
+   .mobile-card-pop 随 .mf-cv-pop 同批退役——手机端独立窗出口整面摘除（桌面
+   保留卡头右键菜单/环卡 .deck-card-pop 两路）。手机 canvas 页形态证据见
+   canvas-batch10-shots.mjs（m02/m03 系），本脚本手机腿随退役删除。 */
 
 await browser.close();
 server.close();

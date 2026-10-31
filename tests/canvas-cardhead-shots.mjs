@@ -134,30 +134,16 @@ for (const W of [430, 375]) {
   await openFile(page, '/tmp/ch-shots/bravo.md');
   await page.evaluate(() => document.querySelector('.canvas-tab[data-tab-id="plugins"] .canvas-tab-close')?.click());
   await sleep(400);
-  await page.evaluate(() => {
-    const key = document.querySelector('.mh-dd[data-dd="right"] [data-face="canvas"]');
-    if (key) key.click();
-  });
+  // dock 批：canvas 整页走 dock 键（mh-dd 右抽屉随 v3 下拉列批退役）。
+  await page.click('#mobile-dock .dock-key[data-dock="canvas"]');
   await sleep(900);
   const tag = `w${W}`;
   await page.screenshot({ path: join(SHOTS_DIR, `${tag}-1-capsule.png`) });
 
   if (W === 375) {
-    // 长按触感 + 引用钮浮出
-    const lp = await page.evaluate(() => {
-      const head = document.querySelector('.mobile-card-head');
-      const r = head.getBoundingClientRect();
-      return { x: r.left + r.width * 0.35, y: r.top + r.height / 2 };
-    });
-    await page.dispatchEvent('.mobile-card-head', 'pointerdown', { pointerId: 9, pointerType: 'touch', isPrimary: true, button: 0, buttons: 1, clientX: lp.x, clientY: lp.y, bubbles: true });
-    await sleep(750);
-    await page.screenshot({ path: join(SHOTS_DIR, 'w375-2-longpress-ref.png') });
-    await page.dispatchEvent('.mobile-card-head', 'pointerup', { pointerId: 9, pointerType: 'touch', isPrimary: true, button: 0, buttons: 0, clientX: lp.x, clientY: lp.y, bubbles: true });
-    await sleep(300);
-    // 收掉引用钮后穿底滚动帧
+    // 穿底滚动帧（dock 批：卡片头长按引用钮随移动卡层退役——引用链走桌面
+    // 胶囊右键菜单同款，手机端判据见 canvas-cardhead-capsule CC 系）。
     await page.evaluate(() => {
-      const btn = document.querySelector('.mobile-card-ref-btn');
-      if (btn) btn.remove();
       const pane = document.querySelector('.canvas-tab-pane.active');
       const sc = [...pane.querySelectorAll('*')].filter((el) => el.scrollHeight > el.clientHeight + 4);
       if (sc.length) sc[0].scrollTop = 90;

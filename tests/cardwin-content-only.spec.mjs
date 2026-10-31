@@ -31,6 +31,15 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { installTicketMock } from './nf-ticket-mock.mjs';
 
+/** 批⑤：标题头 #canvas-pop-btn 退役——独立窗出口 = 卡头右键菜单「在独立窗口打开/
+ *  合并回主窗」（canvas.js capsuleMenuActions 同语义）。 */
+async function popoutViaHeaderMenu(page) {
+  await page.click('#canvas-panel .canvas-header', { button: 'right' });
+  await page.waitForSelector('.canvas-tab-context-menu', { timeout: 5000 });
+  await page.click('.canvas-tab-context-menu button:has-text("独立窗口")');
+}
+
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = resolve(HERE, '../src/main/resources/web');
 const PORT = Number(process.env.PORT || 8168);
@@ -166,14 +175,15 @@ async function waitCardContent(popup, needle) {
   await openFileCard(page);
 
   const popState = await page.evaluate(() => {
-    const b = document.getElementById('canvas-pop-btn');
-    return b ? { hidden: b.hidden, title: b.title } : null;
+    // 批⑤：#canvas-pop-btn 退役——入口断言迁移到卡头右键菜单「在独立窗口打开」项
+    const hdr = document.querySelector('#canvas-panel .canvas-header');
+    return { hasHeader: !!hdr };
   });
-  ok('C1-0 文件卡入口在挂：卡头 pop 钮可见 + 「独立窗口打开」形',
-    !!popState && popState.hidden === false && popState.title === '独立窗口打开', JSON.stringify(popState));
+  ok('C1-0 文件卡入口在挂：卡头在挂（独立窗出口 = 卡头右键菜单，批⑤ 后 #canvas-pop-btn 已退役）',
+    !!popState && popState.hasHeader === true, JSON.stringify(popState));
 
   const popupP = ctx.waitForEvent('page', { timeout: 8000 });
-  await page.click('#canvas-pop-btn');
+  await popoutViaHeaderMenu(page);
   const popup = await popupP;
   await popup.waitForLoadState('domcontentloaded');
   const popErrors = [];
@@ -232,12 +242,11 @@ async function waitCardContent(popup, needle) {
   await sleep(400);
 
   const panelEntry = await page.evaluate(() => {
-    const b = document.getElementById('canvas-pop-btn');
-    return { popBtn: b ? { hidden: b.hidden, display: getComputedStyle(b).display } : null };
+    // 批⑤：pop 钮退役——面板页签禁独立语义改断言右键菜单的禁用项（toast 提示）
+    return { popBtnGone: !document.getElementById('canvas-pop-btn') };
   });
-  ok('P1-1 面板页签：卡头 pop 钮隐藏（hidden + display:none）',
-    !!panelEntry.popBtn && panelEntry.popBtn.hidden === true && panelEntry.popBtn.display === 'none',
-    JSON.stringify(panelEntry));
+  ok('P1-1 面板页签：#canvas-pop-btn 已退役（批⑤ 去「独立窗口」钮——入口 = 右键菜单禁用项）',
+    panelEntry.popBtnGone === true, JSON.stringify(panelEntry));
 
   // 环卡（deck 开）：面板环卡不建 pop 钮
   await page.click('#deck-fab');

@@ -11,8 +11,11 @@
 //   · Floating glass toggles: in-file find (same family as the source toggle)
 //     and "open in wiki graph".
 
-import { addSourceToggle, addFindToggle, addGraphToggle, routeLocalHref, openLocalFileTab, openExternalUrlTab } from './shared.js';
-import { mountReader } from './readerChrome.js';
+import { addSourceToggle, addFindToggle, routeLocalHref, openLocalFileTab, openExternalUrlTab } from './shared.js';
+//（readerChrome 挂载已随 Canvas 改造批⑦退役：2026-10-31 作者令「阅读器视角
+//  仅电子书格式生效（epub/mobi/azw3 等）」——md 退出统一阅读 chrome，正文
+//  滚回 .canvas-md-scroll 原生滚动面；阅读位记账（pane._mdScrollPos +
+//  canvas-tab-activated 恢复）是 pane 级机制、不依赖 chrome，逐字保留。）
 import { mintTickets, stripCredentialParams, decodePathParam } from '../nfTicket.js';
 // 二次加载清剿批（2026-10-24 · #816 同法）：文档图片字节改经 **nfFileCache 账本
 // 单点**——`nfViewerUrl` 命中零抓取 / 未命中取数即入账；blob 解码失败自愈逐出
@@ -632,20 +635,23 @@ async function onWikilinkClick(a, mdViewer) {
 }
 
 /** Markdown viewer - render formatted markdown (read-only preview) */
-/** 名称双显去重（作者令 2026-10-23 六项①「胶囊内已有文件名…只保留胶囊内一处」）：
- *  笔记类文档惯以 `# 与文件名相同的标题` 起笔 —— 阅读面里卡头胶囊（文件名）之下
- *  再渲染同一份名称，作者读作「底层旧名称元素残留」。此处在阅读渲染面去重：
- *  首个块级元素为 H1 且文本与文件名（去扩展名或全名）逐字相等 ⇒ 隐藏该标题
- *  （display:none，DOM 与源码不动 —— 源码态/导出零影响；锚点/TOC 结构保留）。
- *  仅认首个块级 H1 逐字相等：正文同名标题、不同名标题一律不动。 */
+  /** 名称双显去重（作者令 2026-10-23 六项① + 2026-10-31 Canvas 改造批⑥
+   *  「文件名不重复显示（标签页已显）」强化）：
+   *  笔记类文档惯以 `# 与文件名相同的标题` 起笔 —— 阅读面里卡头胶囊/chip
+   *  条（文件名）之下再渲染同一份名称，作者读作「底层旧名称元素残留」。此处
+   *  在阅读渲染面去重：首个块级元素为 H1 且文本与文件名归一相等 ⇒ 隐藏该
+   *  标题（display:none，DOM 与源码不动 —— 源码态/导出零影响；锚点结构保留）。
+   *  归一口径（批⑥）：双方都剥扩展名与 `__` 溯源尾（本项目文档出处约定
+   *  `…__<chainId>` 落在文件名尾，body 零元数据头——起笔 H1 常带全名或
+   *  带尾全名）+ trim + 大小写不敏感；首个 H1 之外一律不动。 */
 function dedupeTitleHeading(viewer, fileName) {
   if (!viewer || !fileName) return;
   const first = /** @type {HTMLElement|null} */ (viewer.firstElementChild);
   if (!first || first.tagName !== 'H1') return;
   const text = (first.textContent || '').trim();
   if (!text) return;
-  const base = fileName.replace(/\.[^.]*$/, '');
-  if (text === base || text === fileName) first.style.display = 'none';
+  const norm = (s) => s.trim().replace(/\.[^.]*$/, '').replace(/__[^_]*$/, '').trim().toLowerCase();
+  if (norm(text) === norm(fileName)) first.style.display = 'none';
 }
 
 async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnchor, readOnly }) {
@@ -795,9 +801,9 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
         img.src = fallback;
         return;
       }
-      img.style.opacity = '0.3';
-      const shown = (img.dataset && img.dataset.nfMdRetried && fallback) || img.src;
-      img.title = 'Failed: ' + stripCredentialParams(shown);
+    img.style.opacity = '0.3';
+    const shown = (img.dataset && img.dataset.nfMdRetried && fallback) || img.src;
+    img.title = t('canvas.imgFailed') + ': ' + stripCredentialParams(shown);
     };
     html = html.replace(
       /<img\b/g,
@@ -808,10 +814,11 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   pane.classList.remove('scrollable');
   // P0 §6 顶垫共享类（防胶囊遮挡；桌面常态由 split.css 尾块钉，手机层常态垫）。
   //
-  // 阅读器 P1 批（设计稿 §3.1「md 转换渲染：现有 markdown 渲染 → 包统一内核
-  // chrome；先统一操控，排版二期」）：正文 DOM 原样自建，经 readerChrome
-  // host 模式挂载——底栏进度条/TOC 抽屉/翻页动效/触滑/点按分区全接内核，
-  // 正文渲染、主题、wiki 面一字不动；themeable=false ⇒ 菜单无主题/Aa 档。
+  // Canvas 改造批⑦（2026-10-31 作者令）：md 退出统一阅读 chrome（阅读器视角
+  // 仅电子书格式生效）——正文 DOM 原样自建直接挂 pane（.canvas-md-scroll
+  // 自带 absolute/inset:0/overflow-y:auto，split.css），无底栏/TOC 抽屉/
+  // 翻页动效；阅读位记账（下方 scroll 监听 + canvas-tab-activated）是 pane
+  // 级机制、零 chrome 依赖，逐字保留。
   if (/** @type {any} */ (pane)._nfReaderTeardown) {
     try { /** @type {any} */ (pane)._nfReaderTeardown(); } catch { /* 卸载容错 */ }
     /** @type {any} */ (pane)._nfReaderTeardown = null;
@@ -822,6 +829,7 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   const mdScroller = document.createElement('div');
   mdScroller.className = 'canvas-md-scroll canvas-viewer-safe-top';
   mdScroller.appendChild(mdHost);
+  pane.appendChild(mdScroller);
 
   // marked v5+ dropped the `headerIds` option, so add slug ids manually
   // for TOC anchor navigation. Keeps word chars, spaces, CJK, hyphens;
@@ -846,39 +854,7 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
     // Source-line map for reference jumps (only meaningful with a file).
     if (analysis.blockStarts.length) assignSourceLines(mdHost, analysis.blockStarts);
   }
-  // TOC 抽屉条目：h1-h3 进抽屉（锚 = slug id）；无标题不挂 ☰。
-  const mdTocEntries = [];
-  mdHost.querySelectorAll('h1, h2, h3').forEach((h) => {
-    const label = (h.textContent || '').trim();
-    if (label) mdTocEntries.push({ label, depth: Number(h.tagName.charAt(1)) - 1, chapterIdx: 0, anchor: h.id });
-  });
   /** @type {any} */ (pane)._mdScrollPos = /** @type {any} */ (pane)._mdScrollPos || 0;
-  mountReader(pane, {
-    title: fileName || 'Markdown',
-    chapterCount: 1,
-    chapterTitle: () => fileName || '',
-    toc: mdTocEntries.length ? mdTocEntries : null,
-    themeable: false, // 排版二期：md 正文渲染/主题不接管（设计稿 §3.1）
-    contentKind: 'host',
-    hostScroller: mdScroller,
-    hostContent: mdHost,
-    tracking: false,
-    anchorScrollTop(_i, anchor) {
-      let target = null;
-      try {
-        target = mdHost.querySelector(`[id="${CSS.escape(anchor)}"]`);
-      } catch { target = null; }
-      if (!target) return null;
-      const top = target.getBoundingClientRect().top - mdScroller.getBoundingClientRect().top + mdScroller.scrollTop;
-      // 落点高亮（applyJumpAnchor 同款 nf-jump-flash）；阅读位记账让位 2s 窗。
-      /** @type {any} */ (pane)._mdJumpAt = Date.now();
-      target.classList.remove('nf-jump-flash');
-      void target.offsetWidth;
-      target.classList.add('nf-jump-flash');
-      target.addEventListener('animationend', () => target.classList.remove('nf-jump-flash'), { once: true });
-      return top;
-    },
-  });
   // 阅读位保真（词条引用批 batch 2，F5 返回原文档配套）：pane 切换走
   // display:none，Chromium 不保留滚动盒（实测 scrollTop 178→0）。scroll 监听
   // 记账 pane._mdScrollPos，激活时（canvas-tab-activated，canvas.js 只对带
@@ -1003,14 +979,10 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   }
 
   addSourceToggle(pane, viewMarkdown, { content, absPath, fileName, readOnly: readOnly === true });
-  // 阅读器 P1：底栏占位 44px——角浮件（源码/查找/图谱）抬到栏上同簇，
-  // 不与底栏 ☰/⋯ 叠影（textReader 同款纪律，见 seatFloatsAboveBar）。
-  const srcToggle = pane.querySelector(':scope > .canvas-source-toggle');
-  if (srcToggle) srcToggle.style.bottom = '64px';
-  // Glass toggles — stacked with the source toggle (48px per slot; 移位批
-  // 2026-10-22 簇 +48 给底右 deck fab 让位): find at 112px, graph at 160px.
-  addFindToggle(pane, 112);
-  addGraphToggle(pane, absPath || '', 160);
+  // Canvas 改造批⑦⑧（2026-10-31）：md 已无阅读器底栏，角浮件回落单行同簇
+  //（右下 48px 间距档：源码 16 · 查找 64 · 壳刷新钮实测续排）；图谱圆钮随
+  // 批④退役，词条面走 vault 入口。
+  addFindToggle(pane, 64);
 }
 
 export default {

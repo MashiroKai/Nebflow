@@ -144,6 +144,29 @@ const paneText = (page, absPath) => page.evaluate((p) => {
   return pane ? pane.textContent : '';
 }, absPath);
 
+
+/* ── 批⑤（2026-10-31 Canvas 改造批） helpers：标题头 #canvas-pop-btn 退役——
+   独立窗出口 = 卡头右键菜单「在独立窗口打开 / 合并回主窗」（canvas.js
+   capsuleMenuActions 同语义，label 随 independent 态换形）。 */
+async function clickHeaderPop(page) {
+  await page.click('#canvas-panel .canvas-header', { button: 'right' });
+  await page.waitForSelector('.canvas-tab-context-menu', { timeout: 5000 });
+  await page.click('.canvas-tab-context-menu button:has-text("独立窗口"), .canvas-tab-context-menu button:has-text("合并回主窗")');
+  await sleep(120);
+}
+const headerPopForm = (page) => page.evaluate(() => {
+  const hdr = document.querySelector('#canvas-panel .canvas-header');
+  if (!hdr) return null;
+  const r = hdr.getBoundingClientRect();
+  hdr.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.x + 30, clientY: r.y + 12, button: 2 }));
+  const menu = document.querySelector('.canvas-tab-context-menu');
+  if (!menu) return null;
+  const pop = [...menu.querySelectorAll('button')].find((b) => /独立窗口|合并回主窗/.test(b.textContent));
+  const form = pop ? { label: pop.textContent.trim(), disabled: pop.classList.contains('disabled') } : null;
+  menu.remove();
+  return form;
+});
+
 const BRAVO = '/tmp/cw-fixture/bravo.md';
 const ALPHA = '/tmp/cw-fixture/alpha.md';
 
@@ -153,7 +176,7 @@ const ALPHA = '/tmp/cw-fixture/alpha.md';
   await openFile(page, ALPHA);
   await openFile(page, BRAVO);            // bravo = 活动页签 → 标题头 toggle 即其形
   const s0 = await stateOf(page);
-  const popup = await waitPopup(ctx, () => page.click('#canvas-pop-btn'));
+  const popup = await waitPopup(ctx, () => clickHeaderPop(page));
   const s1 = await stateOf(page);
   ok('CW1-1 独立窗弹出：同源 ?card-window=1&path=（真容路由）',
     popup.url().includes('card-window=1') && popup.url().includes(encodeURIComponent(BRAVO)),
@@ -178,30 +201,26 @@ const ALPHA = '/tmp/cw-fixture/alpha.md';
       paneIndep: !!(pane && pane.hasAttribute('data-independent')),
       slideIndep: !!(slide && slide.hasAttribute('data-independent')),
       chip: slide ? getComputedStyle(slide, '::after').content : '',
-      hdrTitle: document.getElementById('canvas-pop-btn')?.title || '',
-      hdrIndep: !!document.getElementById('canvas-pop-btn')?.classList.contains('is-independent'),
     };
   }, BRAVO);
-  ok('CW1-5 独立中轻态：页签 is-independent + 卡面「独立中」浮标（slide 壳层件二批）+ 标题头换「合并」形',
+  const popForm1 = await headerPopForm(page);
+  ok('CW1-5 独立中轻态：页签 is-independent + 卡面「独立中」浮标（slide 壳层件二批）+ 右键菜单换「合并」形（批⑤ 后 = 独立窗出口）',
     marks.tabIndep && marks.paneIndep && marks.slideIndep && marks.chip.includes('独立中') &&
-    marks.hdrTitle === '合并回主窗' && marks.hdrIndep,
-    JSON.stringify(marks));
+    !!popForm1 && popForm1.label === '合并回主窗' && !popForm1.disabled,
+    JSON.stringify({ ...marks, popForm1 }));
   /* toggle 同位换形（两形态）：切激活到未独立的 alpha → 标题头回「独立」形 */
   await page.evaluate((a) => { window.__canvasDeck.state(); }, ALPHA);
   await page.evaluate((a) => {
     document.querySelector(`.canvas-tab[data-tab-id="file:${a}"]`)?.click();
   }, ALPHA);
   await sleep(300);
-  const hdrForm2 = await page.evaluate(() => {
-    const b = document.getElementById('canvas-pop-btn');
-    return { title: b.title, indep: b.classList.contains('is-independent') };
-  });
+  const hdrForm2 = await headerPopForm(page) || {};
   await page.evaluate((b) => {
     document.querySelector(`.canvas-tab[data-tab-id="file:${b}"]`)?.click();
   }, BRAVO);
   await sleep(200);
-  ok('CW1-6 toggle 同位换形（两形态同钮）：独立中=「合并回主窗」，未独立=「独立窗口打开」',
-    hdrForm2.title === '独立窗口打开' && !hdrForm2.indep,
+  ok('CW1-6 菜单项同位换形（批⑤ 出口迁移）：独立中=「合并回主窗」，未独立=「独立窗口打开」',
+    hdrForm2.label === '在独立窗口打开' && !hdrForm2.disabled,
     JSON.stringify(hdrForm2));
   ok('R0 主文档零 JS 错误（CW1）', errors.length === 0, errors.slice(0, 2).join(' | '));
 
@@ -224,39 +243,39 @@ const ALPHA = '/tmp/cw-fixture/alpha.md';
 
   /* ════════ CW3 合并链 + 幂等 ════════ */
   const sSnap = await stateOf(page);
-  await page.click('#canvas-pop-btn');
+  await clickHeaderPop(page);
   await sleep(500);
   const s2 = await pollUntil(page, (s) => s.independent.length === 0);
   const popupClosedFast = popup.isClosed();
   const markersGone = await page.evaluate((p) => {
     const tab = document.querySelector(`.canvas-tab[data-tab-id="file:${p}"]`);
     const pane = document.querySelector(`.canvas-tab-pane[data-tab-id="file:${p}"]`);
-    const hdr = document.getElementById('canvas-pop-btn');
-    return !tab.classList.contains('is-independent') && !pane.hasAttribute('data-independent') &&
-      !!hdr && hdr.title === '独立窗口打开' && !hdr.classList.contains('is-independent');
+    return !tab.classList.contains('is-independent') && !pane.hasAttribute('data-independent');
   }, BRAVO);
-  ok('CW3-1 合并：卡窗关闭 + 标记清 + toggle 回「独立」形',
-    popupClosedFast && s2.independent.length === 0 && markersGone,
-    `closed=${popupClosedFast} indep=${JSON.stringify(s2.independent)} marks=${markersGone}`);
+  const popForm3 = await headerPopForm(page);
+  ok('CW3-1 合并：卡窗关闭 + 标记清 + 菜单项回「在独立窗口打开」形',
+    popupClosedFast && s2.independent.length === 0 && markersGone &&
+    !!popForm3 && popForm3.label === '在独立窗口打开' && !popForm3.disabled,
+    `closed=${popupClosedFast} indep=${JSON.stringify(s2.independent)} marks=${markersGone} pop=${JSON.stringify(popForm3)}`);
   ok('CW3-2 状态回笼 = 弹出前（tabCount/activeId/页签集合全等）',
     s2.tabCount === sSnap.tabCount && s2.activeId === sSnap.activeId &&
     JSON.stringify(s2.tabs) === JSON.stringify(sSnap.tabs),
     `n=${s2.tabCount}/${sSnap.tabCount} active=${s2.activeId}`);
   const nPages1 = ctx.pages().length;
   // 幂等：再弹再合
-  const popup2 = await waitPopup(ctx, () => page.click('#canvas-pop-btn'));
+  const popup2 = await waitPopup(ctx, () => clickHeaderPop(page));
   await sleep(300);
   // 在独立态重复点击 toggle = 幂等（直返，不新开窗）
-  await page.click('#canvas-pop-btn');   // 合并
+  await clickHeaderPop(page);   // 合并
   await sleep(400);
   const s3 = await pollUntil(page, (s) => s.independent.length === 0);
-  await page.click('#canvas-pop-btn');   // 未独立态重复合并语义 = 重弹（正常链）
+  await clickHeaderPop(page);   // 未独立态重复合并语义 = 重弹（正常链）
   await sleep(600);
   const s4 = await stateOf(page);
   const popup3open = !!(s4.independent.length === 1);
   // 收尾合并，回到干净态
   const p3 = ctx.pages().find((pg) => pg !== page && !pg.isClosed() && pg.url().includes('card-window'));
-  if (p3) { const pP = ctx.waitForEvent('page', { timeout: 1 }).catch(() => null); void pP; await page.click('#canvas-pop-btn'); await sleep(400); }
+  if (p3) { const pP = ctx.waitForEvent('page', { timeout: 1 }).catch(() => null); void pP; await clickHeaderPop(page); await sleep(400); }
   void popup2;
   const nPages2 = ctx.pages().length;
   ok('CW3-3 幂等：重复弹出/合并无窗泄漏（页数回落）+ 状态收敛',
@@ -266,7 +285,7 @@ const ALPHA = '/tmp/cw-fixture/alpha.md';
   ok('R0 主文档零 JS 错误（CW3）', errors.length === 0, errors.slice(0, 2).join(' | '));
 
   /* ════════ CW4 关窗等价（用户直接关卡窗 = 合并）════════ */
-  const popup4 = await waitPopup(ctx, () => page.click('#canvas-pop-btn'));
+  const popup4 = await waitPopup(ctx, () => clickHeaderPop(page));
   await sleep(400);
   const preClose = await stateOf(page);
   await popup4.close();                       // 用户 × 卡窗
@@ -288,14 +307,14 @@ const ALPHA = '/tmp/cw-fixture/alpha.md';
   const { ctx, page } = await boot({ colorScheme: 'light', reducedMotion: true });
   await openFile(page, ALPHA);
   await openFile(page, BRAVO);
-  const popup = await waitPopup(ctx, () => page.click('#canvas-pop-btn'));
+  const popup = await waitPopup(ctx, () => clickHeaderPop(page));
   const animClass = await page.evaluate((p) => {
     const pane = document.querySelector(`.canvas-tab-pane[data-tab-id="file:${p}"]`);
     return pane.className;
   }, BRAVO);
   ok('CW5-1 RM 独立直切：卡面无 pop 动画类', !animClass.includes('card-pop-anim'), animClass);
   const t0 = Date.now();
-  await page.click('#canvas-pop-btn');
+  await clickHeaderPop(page);
   const s = await pollUntil(page, (x) => x.independent.length === 0, 2500);
   const paneCls = await page.evaluate((p) => {
     const pane = document.querySelector(`.canvas-tab-pane[data-tab-id="file:${p}"]`);
@@ -308,46 +327,56 @@ const ALPHA = '/tmp/cw-fixture/alpha.md';
 }
 
 /* ════════ CW6 手机 375（canvas 页工具条腿：新标签页姿态直切）════════ */
-// 重锚 2026-10-30（存量红挂账清零批）：dock 批（894874bd8）换代——mh-dd 卡片
-// 层面整族退役（画布 = 独立整页），手机卡头 toggle 由 navController canvas 页
-// 工具条 .mf-cv-pop 承担（原 .mobile-card-pop 随 mh-dd 退场，split.css 仅余
-// 死规则）；开文件即自动进 canvas 页，钮形换「合并」= is-independent 类图标
-// 互换（title 恒「独立窗口打开」，形态由类承担）。
+// 批②⑤⑥重锚 2026-10-31（Canvas 改造批）：手机 canvas 页工具条换代 = 左 ✕ +
+// 计数 + 右堆叠视角钮（.g2-fab 液体玻璃）；「独立窗口」钮（.mf-cv-pop）随批⑤
+// 退役——手机端零独立窗入口（桌面出口 = 卡头右键菜单，CW1-CW5 已覆盖链路）。
+// 本腿改断言：新三件套在位 + 独立窗入口真退役 + 堆叠视角开合（批⑤ 顶部计数）。
 {
   const { ctx, page, errors } = await boot({ colorScheme: 'dark', viewport: { width: 375, height: 812 } });
   const mobile = await page.evaluate(() => document.body.classList.contains('mobile-layer'));
   await openFile(page, ALPHA);
   await openFile(page, BRAVO);
-  // 开文件 ⇒ 手机层自动进 canvas 页（启动抑制窗内未弹 ⇒ dock canvas 键补上）。
   await page.waitForSelector('.mobile-page[data-page="canvas"]', { state: 'attached', timeout: 8000 });
   const onCanvas = await page.evaluate(() =>
     document.querySelector('.mobile-page[data-page="canvas"]')?.classList.contains('live'));
   if (!onCanvas) await page.click('#mobile-dock .dock-key[data-dock="canvas"]');
-  await page.waitForSelector('.mf-cv-pop', { state: 'visible', timeout: 8000 });
-  const popVisible = await page.evaluate(() => {
-    const b = document.querySelector('.mf-cv-pop');
-    return !!b && b.hidden === false;
+  await page.waitForSelector('.mf-cv-close', { state: 'visible', timeout: 8000 });
+  const chrome = await page.evaluate(() => {
+    const q = (sel) => !!document.querySelector(sel);
+    return {
+      close: q('.mf-cv-close'), stack: q('.mf-cv-stack'),
+      count: (document.querySelector('.mf-cv-count') || {}).textContent || '',
+      popGone: !q('.mf-cv-pop') && !q('.mf-cv-prev') && !q('.mf-cv-next'),
+      g2fab: document.querySelector('.mf-cv-close')?.classList.contains('g2-fab') === true &&
+             document.querySelector('.mf-cv-stack')?.classList.contains('g2-fab') === true,
+    };
   });
-  ok('CW6-1 手机工具条 toggle 在位（文件卡活动 ⇒ .mf-cv-pop 可见）', mobile && popVisible, `mobile=${mobile} visible=${popVisible}`);
-  const popup = await waitPopup(ctx, () => page.click('.mf-cv-pop'));
+  ok('CW6-1 手机工具条三件套在位（批②：✕/计数/堆叠视角钮，g2-fab 液体玻璃）+ 独立窗/步进钮退役（批⑤）',
+    mobile && chrome.close && chrome.stack && chrome.count === '2/2' && chrome.popGone && chrome.g2fab,
+    `mobile=${mobile} ${JSON.stringify(chrome)}`);
+  // 批⑤：堆叠态顶部显示标签数——开堆叠视角 ⇒ 「N 张文档」计数在顶行。
+  await page.click('.mf-cv-stack');
+  await page.waitForSelector('.mf-stack-view:not([hidden])', { timeout: 5000 });
+  const stackView = await page.evaluate(() => ({
+    count: (document.querySelector('.mf-stack-count') || {}).textContent || '',
+    cards: document.querySelectorAll('.mf-stack-card').length,
+    on: document.querySelectorAll('.mf-stack-card.on').length,
+  }));
+  ok('CW6-2 堆叠视角：顶部「N 张文档」计数 + 全卡列表 + 活动卡高亮（批⑤）',
+    stackView.count === '2 张文档' && stackView.cards === 2 && stackView.on === 1,
+    JSON.stringify(stackView));
+  // 点卡换入 + 收面。
+  await page.evaluate(() => {
+    const cards = [...document.querySelectorAll('.mf-stack-card')];
+    (cards.find((c) => !c.classList.contains('on')) || cards[0]).click();
+  });
   await sleep(400);
-  const s6 = await stateOf(page);
-  const popShape = await page.evaluate(() => {
-    const b = document.querySelector('.mf-cv-pop');
-    if (!b) return null;
-    const disp = (sel) => { const el = b.querySelector(sel); return el ? getComputedStyle(el).display : 'missing'; };
-    // 钮形换「合并」= is-independent 类图标互换（pop 图标隐 / merge 图标显）。
-    return { indep: b.classList.contains('is-independent'), popIcon: disp('.pop-ic-pop'), mergeIcon: disp('.pop-ic-merge'), title: b.title };
-  });
-  ok('CW6-2 手机新标签页姿态：卡窗弹出 + 主窗标记 + 钮形换「合并」（is-independent 图标互换）',
-    popup.url().includes('card-window=1') && s6.independent.length === 1 &&
-    !!popShape && popShape.indep && popShape.popIcon === 'none' && popShape.mergeIcon !== 'none' && popShape.mergeIcon !== 'missing',
-    `url=${popup.url().slice(-40)} indep=${JSON.stringify(s6.independent)} btn=${JSON.stringify(popShape)}`);
-  await page.click('.mf-cv-pop');
-  await sleep(700);                        // 卡窗 out 动画 180ms + close 落定
-  const s7 = await pollUntil(page, (x) => x.independent.length === 0);
-  ok('CW6-3 手机合并回笼：卡窗关 + 标记清（同链路等价）',
-    s7.independent.length === 0 && popup.isClosed());
+  const afterPick = await page.evaluate(() => ({
+    stackHidden: document.querySelector('.mf-stack-view').hidden,
+    count: (document.querySelector('.mf-cv-count') || {}).textContent || '',
+  }));
+  ok('CW6-3 堆叠视角点卡换入并收面，工具条计数跟随（换入 alpha = 首卡 ⇒ 1/2）', afterPick.stackHidden && afterPick.count === '1/2',
+    JSON.stringify(afterPick));
   ok('R0 主文档零 JS 错误（CW6）', errors.length === 0, errors.slice(0, 2).join(' | '));
   await ctx.close();
 }
