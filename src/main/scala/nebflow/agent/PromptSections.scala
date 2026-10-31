@@ -26,6 +26,8 @@ import nebflow.shared.PathUtil
  *   100-199  — fixed foundational sections (env info)
  *   350      — 文档溯源规范（唯一权威面，always）
  *   370      — 根代理路由纪律（Nebula 根会话 only，条件 isRootAgent）
+ *   375      — output 块纪律（Nebula 根会话 only，条件 isRootAgent；同源单点
+ *              文本 = [[nebflow.shared.Defaults.OutputBlockRule]]）
  *   400-499  — tool-dependent sections（阶段 2d §D.2：条件工具指南段已全部
  *              下迁进工具 description——AskUserQuestion/Read/Pop/TeamTask 三件，
  *              提示词层不再按「是否有该工具」注入用法段落）
@@ -368,6 +370,37 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
       370,
       condition = ctx => ctx.isRootAgent,
       body = rootRoutingDisciplineSection
+    ),
+
+    // --- output 块纪律（output 块注入链核验批 2026-10-31，作者 21:44「怎么没看到
+    // 变化」追批）：条件 isRootAgent ⇒ 唯一注入面 = 根 Nebula 会话。段体**逐字引用**
+    // [[nebflow.shared.Defaults.OutputBlockRule]]（同源单点，勿复制改写）。
+    //
+    // 为什么单独立段而不是只靠 NebulaPromptTemplate `## Voice` 节里的一行 bullet：
+    // 注入链核验批实证——① 线上 jar（17:57 构建）已含 Voice bullet；② builtin 名
+    // 从代码解析（AgentLibrary.get 不走磁盘）；③ AgentState 不持久化、重启即
+    // lifecycle 重建（AgentSessionExecution `isLifecycleRebuild`）——三条链都通，
+    // 规则其实自 17:58 重启起就在根会话上下文里；④ 但根会话 17:59 之后的全部回复
+    // 实测零 `<output>` 包裹（sessions/<root>.json 逐条核验），且根自己给出的理由
+    // 是「我是重启前的老会话、规则没进我的上下文」——证明**单条 bullet 的显著性
+    // 不足以让模型感知并遵从**。本段把同一条规则提升为 systemStable 内的独立
+    // 段（紧跟根路由纪律段后，段序 375），存在性由引擎编译注入保证（与 order-360
+    // 节点申报段同款 belt 语义），不再依赖模型在 Voice 节里注意到那一行。
+    //
+    // 生效面：段随 systemStable 装配——新会话首 turn 即携带；既有会话在生命周期
+    // 节点（重启 / 压缩）重建时携带（AgentState 不持久化 ⇒ 重启即重建，「重启
+    // 恢复路径」与首装同缝，无单独恢复缝可断）；轮间复用缓存的 stable 串，中期
+    // 不逐 turn 重注（与全部 stable 段同语义，不为此段开逐 turn 提醒特例——
+    // 部署本修复必走引擎重启，重启即生命周期节点，老会话零等待）。
+    // 与 `## Voice` 节 bullet 的并存是刻意的：Voice 节管风格（类微信、画像驱动），
+    // 本段管行为契约（必须包裹）；同文本两处出现不构成冲突（与 order-370 路由
+    // 纪律段和 system.md 内「Recon: Read only」的显式优先级并存先例同形）。
+    // 分发器 / 节点会话（isRootAgent=false）收不到本段——它们的面已由
+    // DelegateTool brief / ProtocolFootnote / BlockingSubagent 首条消息承载。
+    PromptSection(
+      375,
+      condition = ctx => ctx.isRootAgent,
+      body = nebflow.shared.Defaults.OutputBlockRule
     ),
 
     // --- 轨道二 #5 identity clauses (before tool guides — who reads your

@@ -324,6 +324,45 @@ class PromptSectionsSpec extends munit.FunSuite:
     val blocks = buildConditionalBlocks(ctx)
     assert(!blocks.contains("# Mounted Projects"), "non-root agents must not see the mounted-projects section")
 
+  // ============================================================
+  // Output block discipline (output 块注入链核验批 2026-10-31):
+  // order-375 独立段，逐字承载 Defaults.OutputBlockRule，root-only。
+  // 钉因：注入链核验实证 Voice 节单 bullet 已在根上下文（builtin 代码解析 +
+  // 重启 lifecycle 重建），但根回复零 `<output>` 包裹、模型自述「规则没进我
+  // 的上下文」——显著性不足；本段为引擎编译注入的存在性保证。
+  // ============================================================
+
+  test("Output block discipline section injected for root agent (order 375, verbatim OutputBlockRule)"):
+    withIsolatedDataRoot {
+      val ctx = PromptContext(isRootAgent = true)
+      val blocks = buildConditionalBlocks(ctx)
+      assert(
+        blocks.contains(nebflow.shared.Defaults.OutputBlockRule),
+        "root agent systemStable must carry the output block rule as its own section"
+      )
+      assert(blocks.contains("<output>...</output>"), "section body is the tag-form rule text")
+      // 段序钉：必须排在 order-370 根路由纪律段之后、order-500 voice 段之前
+      assert(
+        blocks.indexOf("## Routing discipline (root agent)") < blocks.indexOf("── Output discipline ──"),
+        "output discipline section must follow the root routing discipline section (order 375 > 370)"
+      )
+    }
+
+  test("Output block discipline section NOT injected for non-root agents (dispatcher/node sessions)"):
+    withIsolatedDataRoot {
+      val dispatcher = buildConditionalBlocks(PromptContext(isRootAgent = false))
+      assert(
+        !dispatcher.contains(nebflow.shared.Defaults.OutputBlockRule),
+        "dispatcher/node sessions carry the rule via brief/footnote faces, not the systemStable section"
+      )
+      val nodeCtx = PromptContext(isRootAgent = false, availableTools = Set(nebflow.core.tools.NodeReportToolDef.Name))
+      val node = buildConditionalBlocks(nodeCtx)
+      assert(
+        !node.contains(nebflow.shared.Defaults.OutputBlockRule),
+        "flow-node sessions must not receive the root-only section"
+      )
+    }
+
   test("MountedProjectList.renderLines renders empty list as the explicit placeholder"):
     assertEquals(MountedProjectList.renderLines(Nil), MountedProjectList.EmptyText)
 

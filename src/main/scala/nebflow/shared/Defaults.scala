@@ -145,7 +145,10 @@ object Defaults:
    * 注入面（同源单点，勿散落复制）：delegate brief（`DelegateTool.assembleBrief`）、
    * 节点 ProtocolFootnote 前缀（`NodeEngineContract.protocolFootnoteFor`）、
    * subagent/workflow 步首条消息（`BlockingSubagent.promptWithRule`）；root 侧
-   * 同文在 `BuiltinAgents.NebulaPromptTemplate` 的 Voice 节（正文接线面）。
+   * 同文在两处——`BuiltinAgents.NebulaPromptTemplate` 的 Voice 节 bullet（风格面）
+   * 与 `PromptSections` order-375 独立段（systemStable 行为契约面，条件
+   * isRootAgent；output 块注入链核验批 2026-10-31：单 bullet 显著性不足被实证，
+   * 独立段为引擎编译注入的存在性保证）。
    * 风格面：块内写法类微信（短句、结论先行、零客套）；有用户画像
    * （`~/.stand/User.md` 交流方式段，经 ContextRefresher 注入）按画像调整，
    * 无画像默认中文简洁直白。
