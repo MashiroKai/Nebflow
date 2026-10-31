@@ -1,0 +1,25 @@
+{
+  "hostPaneCount": 1,
+  "chips": 5,
+  "chipCapsule": "999px",
+  "chipHitsToolbar": false,
+  "askFabBottom": "122px",
+  "clusterBox": {
+    "left": 334,
+    "top": 734,
+    "right": 374,
+    "bottom": 774,
+    "w": 40,
+    "h": 40
+  },
+  "askFabBox": {
+    "left": 326,
+    "top": 674,
+    "right": 374,
+    "bottom": 722,
+    "w": 48,
+    "h": 48
+  },
+  "fabOverlapsCluster": false,
+  "dockCanvasLabel": "看板"
+}

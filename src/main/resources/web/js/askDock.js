@@ -204,6 +204,16 @@ function mount() {
     const panel = document.getElementById('canvas-panel');
     if (panel) new ResizeObserver(() => syncSeat()).observe(panel);
   }
+  if (typeof MutationObserver === 'function') {
+    // 排布批③：角落圆钮簇晚于切卡事件挂载（readFile 异步渲染腿把查找/源码钮
+    // 插进 pane）——文档树 childList 观察兜底重算座位（rAF 合帧，一帧至多一
+    // 趟；座步行写入幂等同值，无回环面）。
+    let seatRaf = 0;
+    new MutationObserver(() => {
+      if (!document.body.classList.contains('mobile-layer') || seatRaf) return;
+      seatRaf = requestAnimationFrame(() => { seatRaf = 0; syncSeat(); });
+    }).observe(document.body, { childList: true, subtree: true });
+  }
   onReconnect(() => {
     // WS 重连：会话状态标脏，下次打开时 askOpen 重新回放（服务端为权威）。
     for (const s of sessions.values()) s.stateSent = false;
@@ -303,7 +313,29 @@ function syncSeat() {
         return;
       }
     }
+    // 悬浮控件排布批③（2026-10-31 作者令 23:35「两个浮动控件互相重叠」截图
+    // 实证）：文档 pane 角落圆钮簇（查找/源码/引用，pane 内 absolute bottom:16
+    // 右缘）与 body 级 fab（底 dock 上方 right:16）在手机层同角同带——fab 钉
+    // 位恰压住源码钮。桌面 occupied 同律换算视口系：簇可见时 fab 抬到簇上缘
+    // 之上 12px（输入条跟随同距，保持钮-条联动）；无簇回落 css 钉位。
+    const floats = pane
+      ? pane.querySelectorAll('.canvas-source-toggle, .canvas-find-toggle, .canvas-ref-select')
+      : [];
+    let occupied = 0;
+    floats.forEach((f) => {
+      const h = /** @type {HTMLElement} */ (f);
+      if (!(h instanceof HTMLElement) || h.hidden || h.offsetParent === null) return;
+      const r = h.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) return;
+      occupied = Math.max(occupied, window.innerHeight - r.top);
+    });
+    if (occupied > 0) {
+      el.fab.style.bottom = (occupied + 12) + 'px';
+      el.dock.style.bottom = (occupied + 12 + 48 + 10) + 'px';
+      return;
+    }
     el.fab.style.bottom = '';
+    el.dock.style.bottom = '';
     return;
   }
   const panel = document.getElementById('canvas-panel');

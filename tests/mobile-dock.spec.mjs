@@ -183,9 +183,10 @@ test('D1 five-tab dock structure: author-order labels, chat-home center key, ico
     };
   });
   expect(dock.role).toBe('tablist');
-  // 作者令逐字顺序：消息 / 联系人 / 对话 / canvas / 工作台（工作台批：设置
-  // 自顶层导航降级为工作台成员，第五栏 = 工作台）。
-  expect(dock.keys.map((k) => k.label)).toEqual(['消息', '联系人', null, 'canvas', '工作台']);
+  // 作者令逐字顺序：消息 / 联系人 / 对话 / 看板 / 工作台（工作台批：设置
+  // 自顶层导航降级为工作台成员，第五栏 = 工作台；④改名批 2026-10-31：canvas
+  // 中文面统一「看板」，route id = canvas 不变）。
+  expect(dock.keys.map((k) => k.label)).toEqual(['消息', '联系人', null, '看板', '工作台']);
   // 收形批②（作者令 10-31 22:50「中间对话钮只留图案」）：中键零可见标签，
   // 语义由 aria-label 承接（图标即语义）。
   expect(dock.keys.find((k) => k.id === 'chat')?.label ?? null).toBe(null);

@@ -606,9 +606,12 @@
    的紧凑高度对齐；hover 态沿用共用块「红底白 ✕」钉回（input.css 上方同段）。 */
 #attachment-preview .att-ref[data-ref-type="chat-message"] .fm-quote-remove { width: 13px; height: 13px; }
 #attachment-preview .att-ref[data-ref-type="chat-message"] .fm-quote-remove svg { width: 7px; height: 7px; }
+/* 附件内联错误行（输入框错误态极简批 2026-10-31：红底色块/红字退役 → 中性
+   etched 底 + 2px 红左缘唯一载体 + 中性字，同 error-escalation-card 极简范式）。 */
 .att-error {
-  background: rgba(244, 67, 54, 0.12);
-  color: var(--color-error);
+  background: var(--glass-etched-bg, var(--color-surface));
+  border-left: 2px solid var(--status-error-icon, var(--color-error));
+  color: var(--status-word, var(--color-text));
   padding: 3px 10px;
   border-radius: 6px;
   font-size: 12px;
@@ -1485,20 +1488,32 @@ html.no-backdrop #mention-dropdown {
   background: rgba(244, 67, 54, 0.08);
 }
 
-/* qattachvault 批：载荷丢失失败项 —— 红左缘 + 文本转红 + 失败注记（禁静默：失败
-   面留在屏上，撤回/移除入口照旧 = 可重传）。「立即发送」对失败项不渲染（chatQueue.js）。 */
+/* qattachvault 批：载荷丢失失败项 —— 红左缘 + 失败注记（禁静默：失败面留在
+   屏上，撤回/移除入口照旧 = 可重传）。「立即发送」对失败项不渲染（chatQueue.js）。
+   输入框错误态极简批（2026-10-31 作者令「极简简约朴素」口径补齐，10-29
+   e12779943 对话框批的输入框面续篇）：红预算收敛到左缘 2px 描边 + 注记行首
+   图标两处图案载体，正文/注记词转中性字（--status-word），色相即状态。 */
 .queue-item.failed {
-  box-shadow: inset 2px 0 0 0 var(--color-error);
+  box-shadow: inset 2px 0 0 0 var(--status-error-icon, var(--color-error));
 }
 .queue-item.failed .queue-item-text {
-  color: var(--color-error);
+  color: var(--status-word, var(--color-text));
   opacity: 0.85;
 }
 .queue-item-failed-note {
   font-size: 11px;
-  color: var(--color-error);
+  color: var(--status-word, var(--color-text));
   flex-shrink: 0;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.queue-item-failed-note .st-ic {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  color: var(--status-error-icon, var(--color-error));
 }
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */

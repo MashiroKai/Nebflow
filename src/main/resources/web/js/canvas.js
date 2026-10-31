@@ -2018,7 +2018,7 @@ function renderCanvasHeader() {
   const entry = activeTabId ? tabs.get(activeTabId) : null;
   const family = deckTypeFamily(entry);
   if (deckTitleIconEl) deckTitleIconEl.innerHTML = entry ? deckIconOf(family) : '';
-  if (deckTitleNameEl) deckTitleNameEl.textContent = entry ? (entry.title || entry.id) : '画板';
+  if (deckTitleNameEl) deckTitleNameEl.textContent = entry ? (entry.title || entry.id) : '看板';
   deckTitleEl.classList.toggle('is-dirty', !!(entry && isTabDirty(entry)));
   syncHeaderActions();
   syncRefBackButton();   // F5 返回原文档：随激活页签重sync可见性/座位
