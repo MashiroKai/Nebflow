@@ -24,8 +24,9 @@
 //   D5  封存态（features.friends 缺席）：消息/联系人两面 = 骨架空态卡
 //       （.mf-social-sealed）+ 消息页通知段恒渲染；无桌面社交面残留。
 //   D6  好友 LIVE（fm_api_mock + features.friends:true）：消息页 = 跟联系人的
-//       对话消息列表 → 会话页（.fm-modal 收编）→ 返回；联系人面 + 「手机接入」
-//       行 → social 页 → 返回；消息键气泡图标。
+//       对话消息列表 → 会话页（.fm-modal 收编）→ 返回；联系人页顶「手机接入」
+//       入口撤除（作者令 2026-10-31 22:55，仅手机端）：无入口行、social 详情页
+//       不注册、事件环外发无 push 路径；消息键气泡图标。
 //   D7  任务页：聊天根顶栏「任务」chrome 键 → 页面板收编（quick：live + 收编 +
 //       X 对账弹栈 —— 全量卡渲染见 mobile-v3 T2）。
 //   D8  工作台 push：设置根页 hub 行 → 项目页（pane 收编）→ 返回设置根。
@@ -631,7 +632,7 @@ test.describe('friends-ON social pages', () => {
     await bootApp(page, { friends: true });
   });
 
-  test('D6 friends-ON: messages page = contacts conversation list → conversation page; bubble icon; contacts face + phone-access row → social page', async ({ page }) => {
+  test('D6 friends-ON: messages page = contacts conversation list → conversation page; bubble icon; contacts face + phone-access entry withdrawn (no row, no social page)', async ({ page }) => {
     const errors = watchErrors(page);
     // 消息键图标 = 消息气泡（作者令 23:36「图标换位」：气泡自原中键迁入最左）。
     expect(await page.evaluate(
@@ -652,16 +653,16 @@ test.describe('friends-ON social pages', () => {
     await expect(page.locator('.mobile-page[data-page="conversation"]')).not.toHaveClass(/live/);
     await expect(page.locator('.mobile-page[data-page="messages"]')).toHaveClass(/live/);
 
-    // 联系人页：#fm-contacts-body 收编 + 「手机接入」行 → social 页 → 返回。
+    // 联系人页：#fm-contacts-body 收编 + 「手机接入」入口撤除批（作者令
+    // 2026-10-31 22:55，仅手机端；桌面 #social-btn/#social-overlay 不动）——
+    // 页顶无入口行、social 详情页不注册（PAGES 表无 social）、已撤事件环
+    // 外发不触发 push（监听腿随批摘除）。
     await dockTo(page, 'contacts');
     await expect(page.locator('.mobile-page[data-page="contacts"] .mobile-page-body #fm-contacts-body')).toHaveCount(1);
-    await page.locator('.mf-social-entry').click();
-    await expect(page.locator('.mobile-page[data-page="social"]')).toHaveClass(/live/);
-    await settlePage(page, 'social');
-    await expect(page.locator('.mobile-page[data-page="social"] .mobile-page-body #social-modal')).toHaveCount(1);
-    await page.locator('.mobile-page[data-page="social"] .mobile-back-btn').click();
-    await expect(page.locator('.mobile-page[data-page="social"]')).not.toHaveClass(/live/);
-    await expect(page.locator('.mobile-page[data-page="contacts"]')).toHaveClass(/live/);
+    await expect(page.locator('.mf-social-entry')).toHaveCount(0);
+    await expect(page.locator('.mobile-page[data-page="social"]')).toHaveCount(0);
+    await page.evaluate(() => document.dispatchEvent(new CustomEvent('nf:mobile-social-entry')));
+    await expect(page.locator('.mobile-page[data-page="social"]')).toHaveCount(0);
     expect(errors).toEqual([]);
   });
 });

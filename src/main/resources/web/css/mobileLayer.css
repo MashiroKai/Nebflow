@@ -31,8 +31,9 @@
  *      手机层恒不可见；文档 pane re-parent 进 canvas 页 —— 页内卡片式切换
  *      （chip 卡片列表 + ‹ › 步进 + 内容区横滑，环式）。桌面 canvas 零变化。
  *   ④ 社交页面（中键改版批修订）：消息 = 跟联系人的对话消息（会话列表收编 →
- *      会话窗收编进「会话」详情页）+ 通知段；联系人 = 联系人面收编 + 手机接入
- *      行。封存态 = 骨架空态卡（通知段不封存）。
+ *      会话窗收编进「会话」详情页）；联系人 = 联系人面收编。通知段（10-30 退役）
+ *      与页顶「手机接入」入口行（10-31 22:55 撤除批，手机端专属）均不再挂载。
+ *      封存态 = 骨架空态卡。
  *
  * 历史落位（r2-r4 / v3 沿革，语义仍生效部分保留）：
  *   r2 页面栈导航（#mobile-pages 互斥 .live）；r3 面板体系 app 化 + overlay 面
@@ -488,7 +489,7 @@ body.mobile-layer #mobile-pages .canvas-tab-pane {
 
 /* ── 收编面统一页面化几何（dock 批）─────────────────────────────────
    浮层/悬浮面板形态整体退役（作者令「不再跟其他界面重叠」）：设置/用量/搜索/
-   定时/心跳/后台/智能体/手机接入/任务/会话窗等收编面在页面体内一律 in-flow
+   定时/心跳/后台/智能体/任务/会话窗等收编面在页面体内一律 in-flow
    全幅（浮层 fixed 几何由本块同维度压平 —— 规则序在后 + 特异性更高）。
    overlay 载体节点原地保留为状态源（.on/.open/.hidden 对账观察者不变）。 */
 body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal,
@@ -498,7 +499,6 @@ body.mobile-layer #mobile-pages .mobile-page-body > #reminder-panel,
 body.mobile-layer #mobile-pages .mobile-page-body > #daemon-panel,
 body.mobile-layer #mobile-pages .mobile-page-body > #bg-dropdown,
 body.mobile-layer #mobile-pages .mobile-page-body > #memory-modal,
-body.mobile-layer #mobile-pages .mobile-page-body > #social-modal,
 body.mobile-layer #mobile-pages .mobile-page-body > #mobile-task-panel,
 body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal {
   position: static;
@@ -531,7 +531,6 @@ body.mobile-layer #memory-overlay,
 body.mobile-layer #settings-overlay,
 body.mobile-layer #search-overlay,
 body.mobile-layer #usage-overlay,
-body.mobile-layer #social-overlay,
 /* #fm-chat-overlay：桌面全屏遮罩（会话窗载体）。窗体已 re-parent 进「会话」
    页体，overlay 变空壳 —— 豁免防拦截页头返回钮点击（dock 批 D6 实证）。 */
 body.mobile-layer #fm-chat-overlay {
@@ -1286,13 +1285,12 @@ body.mobile-layer #usage-overlay.closing {
    钮的小 bug 清查修掉」）：收编进页面的桌面面自带窗头钮与页面壳返回钮构成双
    返回/双关闭——页面壳 .mobile-page-header 唯一「<」统管出页；桌面关闭路径
    本身保留（Escape/外部关闭 ⇒ 对账弹栈，见 navController）。
-   清查面：设置 X / 用量 X（沿袭）＋ 搜索 X / 心跳 X / 手机接入 X / 会话窗 ✕ /
+   清查面：设置 X / 用量 X（沿袭）＋ 搜索 X / 心跳 X / 会话窗 ✕ /
    任务面板 X / 项目页链视图返回条（返回条其余件——标题/摘要/视图筛选——保留）。 */
 body.mobile-layer #settings-modal-close,
 body.mobile-layer #usage-close,
 body.mobile-layer #search-modal-close,
 body.mobile-layer #daemon-close-btn,
-body.mobile-layer #social-modal-close,
 body.mobile-layer #mobile-pages .fm-modal-close,
 body.mobile-layer #mobile-pages .mh-tpanel .tp-x,
 body.mobile-layer #mobile-pages .flowmap-nav-bar .flowmap-back-btn {
@@ -1592,10 +1590,12 @@ body.mobile-layer .mf-social-sealed-sub {
   line-height: 1.5;
   color: var(--color-frame-text-muted, #98a2b3);
 }
-/* 联系人页「手机接入」入口行（作者令 2026-10-31 08:51）：行形态收编进桌面
-   .fm-nf-entry 家族（圆底淡色图标 + 标题 + 右箭头，与「设备」「发起群聊」
-   同栏），样式吃 friends.css:451-486；原 .mf-social-entry-* 专属五条样式随
-   旧形态整段摘除，零残留死样式。 */
+/* 联系人页「手机接入」入口行（作者令 2026-10-31 08:51 行形态批；22:55 撤除批）：
+   入口行 + 移动 social 详情页整链撤除（socialFaces.ensureSocialEntry /
+   navController PAGES 注册·overlay 收编·外部关闭对账·nf:mobile-social-entry
+   事件环腿全摘除；手机层 #social-overlay 永不可达——桌面活动栏整栏隐藏，
+   三条 mobile 作用域伴生规则——收编几何/遮罩 pointer-events/窗头钮退场——
+   随之零残留死样式一并清除）。桌面 #social-btn/#social-overlay 同入口不动。 */
 /* 消息页通知段退役（作者令 2026-10-30 08:29「这个图的消息的底部，通知是干嘛的，
    我觉得不用显示。就像微信一样就行了，有新消息在消息按钮的右上角加数字角标
    就行」）：.mf-notify-* / .mf-msgrow* 四条样式随段落一起摘除，零残留死样式。
@@ -1903,6 +1903,14 @@ body.mobile-layer .mobile-page.mh-search-open .mh-search-dock {
 body.mobile-layer #mobile-pages .mobile-page.mh-search-open[data-page="contacts"] .fm-search-block {
   max-height: 560px;
   opacity: 1;
+}
+/* 手机接入入口撤除批（作者令 2026-10-31 22:55）配套让位：入口行撤除后桌面
+   搜索块顶到页体首行，行右端的提交键（.fm-search-btn）落进右上浮搜索钮的
+   悬浮 footprint（top16+right16、48px，z20）⇒ 点按被 fab 截走（F3 几何探针
+   实证：btn y18 vs fab y16-64 全覆盖）。原 ~50px 下坠几何由入口行行高偶然
+   垫出，撤除后显式声明同款让位（fab 占位 64px + 8 呼吸）；桌面零改动。 */
+body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-block .fm-search {
+  padding-right: 72px;
 }
 body.mobile-layer .mh-search-dock {
   display: flex;

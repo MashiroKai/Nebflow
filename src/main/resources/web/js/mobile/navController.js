@@ -13,7 +13,7 @@
 //     无头像回落气泡字形）；消息键 = 跟联系人的对话消息（好友会话列表自原
 //     「对话」面迁入，气泡图标随迁）。
 //   · 栈模型 = `stack = [home, ...details]`：stack[0] ∈ 'chat' ∪ 五栏根；
-//     详情页（任务/搜索/定时/心跳/后台/智能体/手机接入/项目/图谱/插件/用量/
+//     详情页（任务/搜索/定时/心跳/后台/智能体/项目/图谱/插件/用量/
 //     设置/会话窗）push 在当前根之上；返回 pop 一层；根页「<」= 回聊天根。
 //   · 总原则（作者 13:38 逐字「各节目都是独立界面 不再像目前这样跟其他界面
 //     重叠」）：页面 = 全屏不透明 section（#mobile-pages 容器互斥 .live）；
@@ -30,7 +30,7 @@
 //
 // ── 面收编（沿用 paneAnchors / overlayAnchors 两套锚点惯例）─────────
 //   · 面板页（项目/图谱/插件）：桌面画板 pane re-parent 进页面体（不变）。
-//   · overlay 面（设置/用量/搜索/定时/心跳/后台/智能体/手机接入/任务）：
+//   · overlay 面（设置/用量/搜索/定时/心跳/后台/智能体/任务）：
 //     面节点 re-parent 进页面体；overlay 载体原地保留作状态源（外部关闭
 //     对账 = watchOverlayClose 扩展到全页面注册表）。
 //   · 会话窗（#fm-chat-overlay）：窗体节点 re-parent 进「会话」详情页；
@@ -112,9 +112,10 @@ export const PAGES = [
   { id: 'reminder', tabId: null,       icon: 'alarm-clock',     zh: '定时任务', en: 'Scheduled' },
   { id: 'daemon',   tabId: null,       icon: 'heart-pulse',     zh: '心跳',     en: 'Daemons' },
   { id: 'background', tabId: null,     icon: 'square-terminal', zh: '后台任务', en: 'Background' },
-  { id: 'profile',  tabId: null,       icon: 'bot',             zh: '智能体',   en: 'Agent' },
-  { id: 'social',   tabId: null,       icon: 'smartphone',      zh: '手机接入', en: 'Phone Access' },
-  { id: 'conversation', tabId: null,   icon: 'message-circle',  zh: '会话',     en: 'Conversation' },
+  { id: 'profile',  tabId: null,       icon: 'bot',             zh: '智能体', en: 'Agent' },
+  // 手机接入 social 详情页随联系人页顶入口行整链撤除（作者令 2026-10-31
+  // 22:55 撤除批，仅手机端；桌面 #social-btn/#social-overlay 不动）。
+  { id: 'conversation', tabId: null,   icon: 'message-circle',  zh: '会话',   en: 'Conversation' },
   // 手机顶栏批（2026-10-31 作者令④）：个人主页 + 层级配置子页（苹果层级式
   // 点进下一层铺满屏、左上返回 —— 复用既有详情页壳，返回钮/pop 语义零新建）。
   // 内容面 = 官网个人页字段的本地读数（/api/neblink/status：displayName/email/
@@ -451,7 +452,6 @@ const overlayFaceByPage = {
   daemon: '#daemon-panel',
   background: '#bg-dropdown',
   profile: '#memory-modal',
-  social: '#social-modal',
   tasks: '#mobile-task-panel',
 };
 
@@ -552,9 +552,6 @@ async function ensurePanelContent(pageId) {
         const ap = await modAgentProfile();
         if (ap.openProfilePanel) ap.openProfilePanel();
       } catch (e) { console.error('[mobile-layer] profile', e); }
-      break;
-    case 'social':
-      if (!document.querySelector('#social-overlay.on')) clickDesktopBtn('social-btn');
       break;
     case 'tasks':
       ensureTaskPanel();
@@ -1054,9 +1051,6 @@ function closePageFace(pageId) {
     case 'profile':
       import('../memory.js').then((m) => m.closeMemoryModal?.()).catch(() => { /* 未载即未开 */ });
       break;
-    case 'social':
-      document.getElementById('social-overlay')?.classList.remove('on');
-      break;
     case 'tasks':
       closeTaskPanel(true);
       break;
@@ -1186,7 +1180,6 @@ const CLOSE_WATCH = [
   { page: 'daemon', sel: '#daemon-panel', off: (el) => !el.classList.contains('open'), attr: ['class'] },
   { page: 'background', sel: '#bg-dropdown', off: (el) => el.classList.contains('hidden'), attr: ['class'] },
   { page: 'profile', sel: '#memory-overlay', off: (el) => !el.classList.contains('on'), attr: ['class'] },
-  { page: 'social', sel: '#social-overlay', off: (el) => !el.classList.contains('on'), attr: ['class'] },
 ];
 
 /** overlay 载体建出后才可挂观察者的页面（usage 面板首开建；taskPanel 惰性建）。 */
@@ -1488,8 +1481,8 @@ function watchCanvasEvents() {
   document.addEventListener('canvas-tab-switched', onSwitch);
   document.addEventListener('canvas-tab-closed', () => { syncCanvasPage(); maybeAdopt('tab-closed'); });
   document.addEventListener('canvas-independent-changed', onSwitch);
-  // 联系人页「手机接入」行 / 消息页聚合行（socialFaces 事件环外发腿）。
-  document.addEventListener('nf:mobile-social-entry', () => pushPage('social'));
+  // 「手机接入」入口行已撤除（作者令 2026-10-31 22:55）——nf:mobile-social-entry
+  // 事件环外发腿随之摘除，联系人页无 social 页 push 路径。
   document.addEventListener('nf:mobile-goto', (e) => {
     const page = (/** @type {CustomEvent<{page?: string}>} */ (e)).detail?.page;
     if (page && PAGE_BY_ID.get(page)?.dock) dockTo(page);
