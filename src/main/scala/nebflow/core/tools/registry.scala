@@ -179,16 +179,17 @@ object ToolRegistry:
       // RootOrchestrationTools 单点 + RootExclusiveTools 防声明逃逸；插件白名单
       // 与 remoteableTools 均不含本件。
       "TaskSearch" -> TaskSearchTool,
-      // ── Canvas ask mode（2026-10-28 实施批，机制稿 §5）─────────────────
-      // ask 会话白名单封闭枚举三件（2026-10-31 只读工具批增补 read_file_content）：
-      // 授能唯一来源 = buildAllowedToolSet 的
-      // askSession 早退集（引擎侧会话身份，机制固定零配置）；非 ask 身份在
-      // 同函数尾段反剥（声明 "*" 也不授能，TeamTaskTools 先例）；插件白名单
-      // 与 remoteableTools 均不含三件。工具内侧再用 ctx.sessionId 同判据
-      // 拒绝（AskTools 双保险，DelegateReportTool 先例）。
+      // ── Canvas ask mode（2026-10-28 实施批，机制稿 §5；2026-10-31 换装批）───
+      // ask 会话白名单封闭枚举（AskSessions.AllowedTools = ask 专属两件 + 只读
+      // 五件 Read/Glob/Grep/WebSearch/WebFetch——后者即 SubagentFixedTools 同源，
+      // 全员注册工具，本表前列在册）：授能唯一来源 = buildAllowedToolSet 的
+      // askSession 早退集（引擎侧会话身份，机制固定零配置）；ask 专属两件对其余
+      // 身份在同函数尾段反剥（AskSessions.AskExclusiveTools 反剥集——只剥两件，
+      // 只读五件是通用读面**不剥**；声明 "*" 也不授能，TeamTaskTools 先例）；
+      // 插件白名单与 remoteableTools 均不含 ask 专属两件。工具内侧再用
+      // ctx.sessionId 同判据拒绝（AskTools 双保险，DelegateReportTool 先例）。
       "message_record_search" -> MessageRecordSearchTool,
-      "send_message_to_main_chat" -> SendMessageToMainChatTool,
-      "read_file_content" -> ReadFileContentTool
+      "send_message_to_main_chat" -> SendMessageToMainChatTool
     )
     // imagegen 双层批（2026-10-24）+ 功能开放批（2026-10-30 作者令「直接开放
     // 出来」，缺省编入）：编译期 seal 门控保留为应急开关——显式 `STAND_IMAGEGEN=0`
