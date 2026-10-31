@@ -1,10 +1,15 @@
 /* liquid-glass.css — 液体玻璃 v2 按钮族 + 顶缘渐隐带 + 边缘光折射
- * （liquid-glass-v2 批 2026-10-31，作者 08:43 裁定 + 09:03 拍板 + 追加折射批）
+ * （liquid-glass-v2 批 2026-10-31，作者 08:43 裁定 + 09:03 拍板 + 追加折射批；
+ *   v3 实现批 2026-10-31 作者 12:32 点选：悬浮族升档 = F1 轻霜全透，控件族
+ *   退出玻璃族落 Apple 扁平 —— cfg-btn / #send-btn 的材质承接整块退役，
+ *   见 sidebar.css / input.css 的 --ctl-* 扁平族；canvas/ask 悬浮圆钮族并入
+ *   F1 配方，见本文件 ④ 块）
  *
  * 配方单一来源 = 设计稿 docs/design/20261031_084400_liquid-glass-effect-v2 §5
- * （token 落 stand-tokens.css --g2-*，本文件只组装），效果图
- * liquid-glass-effect-mockup-v2.html。加载序 = sapphire.css 之后：按钮族换代
- * 规则与 sapphire 同特异性时以本文件为准；桌面 #header 零触碰（chat.css 不动）。
+ * （token 落 stand-tokens.css --g2-*，本文件只组装；v3 F1 值 = v3 样张 §D），
+ * 效果图 liquid-glass-effect-mockup-v2/v3.html。加载序 = sapphire.css 之后：
+ * 按钮族换代规则与 sapphire 同特异性时以本文件为准；桌面 #header 零触碰
+ * （chat.css 不动）。
  *
  * 三件：
  *   ① 液体玻璃底材（共享 ::before 折射层 —— 见下「折射架构」）
@@ -19,72 +24,64 @@
  *   按钮文字/图标零畸变（作者令「折射强度克制，不能糊字」字面落地）。
  *   墨族（不透底）无折射意义：::before 只承担镜面高光层，不挂滤镜不采样背板。
  *   html.g2-refract-on = js/liquidGlass.js 能力探测类开关（CSS.supports + defs
- *   在场双判据）；无滤镜引擎 = 保留高光 + 浮影的直 blur，不裸断（设计稿 §7）。
- */
+ *   在场双判据）；无滤镜引擎 = 保留高光 + 浮影的直 blur，不裸断（设计稿 §7）。 */
 
 /* ── ① 液体玻璃底材（白玻璃族共用；墨族见 .g2-pill-primary 变体）────────── */
+/* v3 F1 组装（样张 §D）：rest = 顶缘镜面高光 + 0 10px 26px 单层投影（v2 的
+   底缘内影层与 0 1px 3px 接触影层按 F1 配方退役——underedge token 已置透明，
+   双层浮影收为单层柔影）。cfg-btn 已迁控件族（--ctl-* 扁平），不再共享本材质。 */
 .g2-fab,
 .g2-pill,
-.cfg-btn,
 .mh-chrome-btn {
   position: relative;
   isolation: isolate;
   background-color: var(--g2-fab-bg);
-  /* border 不并入共享块：cfg-btn-add 的 dashed 边型会被 shorthand 抹掉 ——
-     新类整边在各自几何块，存量类只换 border-color（见下） */
   box-shadow:
     inset 0 1px 0 var(--g2-fab-highlight),
-    inset 0 -2px 5px var(--g2-fab-underedge),
-    0 1px 3px var(--g2-fab-shadow),
-    0 8px 24px var(--g2-fab-shadow);
+    0 10px 26px var(--g2-fab-shadow);
   transition:
     transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
     box-shadow 0.18s ease,
     background-color 0.18s ease;
 }
-/* 折射层 + 上半镜面高光层（同源 ::before：高光在采样结果之上叠绘） */
+/* 折射层 + 上半镜面高光层（同源 ::before：高光在采样结果之上叠绘；F1 高光线性
+   .85/.22 → 0 @40%，样张 §D 逐值） */
 .g2-fab::before,
 .g2-pill::before,
-.cfg-btn:not(.cfg-btn-primary)::before,
 .mh-chrome-btn::before {
   content: '';
   position: absolute;
   inset: -1px;
   border-radius: inherit;
   z-index: -1;
-  background-image: linear-gradient(to bottom, var(--g2-fab-specular) 0%, transparent 46%);
+  background-image: linear-gradient(to bottom, var(--g2-fab-specular) 0%, transparent 40%);
   -webkit-backdrop-filter: blur(var(--g2-fab-blur)) saturate(var(--g2-fab-sat));
   backdrop-filter: blur(var(--g2-fab-blur)) saturate(var(--g2-fab-sat));
 }
 /* 边缘光折射畸变：探测类开关（设计稿 §7「@supports 探测 + 类开关」） */
 html.g2-refract-on .g2-fab::before,
 html.g2-refract-on .g2-pill:not(.g2-pill-primary)::before,
-html.g2-refract-on .cfg-btn:not(.cfg-btn-primary)::before,
 html.g2-refract-on .mh-chrome-btn::before {
   filter: url(#g2-refract);
 }
-/* 按压（spring 180ms 回弹 + 投影收短、高光收敛；设计稿 §4/§6） */
+/* 按压（spring 180ms 回弹 + 投影收短、高光收敛；设计稿 §4/§6；F1 active =
+   顶缘高光 + 0 3px 10px 投影，无底缘层） */
 .g2-fab:active,
 .mh-chrome-btn:active {
   transform: scale(0.88);
   box-shadow:
     inset 0 1px 0 var(--g2-fab-highlight),
-    inset 0 -2px 5px var(--g2-fab-underedge),
     0 3px 10px var(--g2-fab-shadow);
 }
-.g2-pill:active,
-.cfg-btn:not(.cfg-btn-primary):active {
+.g2-pill:active {
   transform: scale(0.95);
   box-shadow:
     inset 0 1px 0 var(--g2-fab-highlight),
-    inset 0 -2px 5px var(--g2-fab-underedge),
     0 3px 10px var(--g2-fab-shadow);
 }
-/* hover：只动填充（设计稿 §4：Δ≥14/255 可辨；token 档 .60→.74 / .14→.20） */
+/* hover：只动填充（设计稿 §4：Δ≥14/255 可辨；F1 档 .30→.44 / .10→.17） */
 .g2-fab:hover,
 .g2-pill:not(.g2-pill-primary):hover,
-.cfg-btn:not(.cfg-btn-primary):hover,
-.cfg-btn-add:hover,
 .mh-chrome-btn:hover {
   background-color: var(--g2-fab-bg-hover);
 }
@@ -92,7 +89,6 @@ html.g2-refract-on .mh-chrome-btn::before {
    由各自文件承担，本块只管玻璃族） */
 .g2-fab:focus-visible,
 .g2-pill:focus-visible,
-.cfg-btn:focus-visible,
 .mh-chrome-btn:focus-visible {
   outline: 2px solid var(--g2-fab-border);
   outline-offset: 2px;
@@ -100,7 +96,6 @@ html.g2-refract-on .mh-chrome-btn::before {
 /* 禁用：opacity .5 + 禁形变（设计稿 §4） */
 .g2-fab:disabled,
 .g2-pill:disabled,
-.cfg-btn:disabled,
 .mh-chrome-btn:disabled {
   opacity: 0.5; /* 禁形变：transition 无触发通道，按压类声明不作用于 disabled 时同样收束 */
 }
@@ -128,10 +123,6 @@ html.g2-refract-on .mh-chrome-btn::before {
 .g2-fab,
 .g2-pill {
   border: 1px solid var(--g2-fab-border);
-}
-/* 存量 cfg-btn 族只换边色：宽度/边型（含 cfg-btn-add dashed）归 sidebar.css 原值 */
-.cfg-btn:not(.cfg-btn-primary) {
-  border-color: var(--g2-fab-border);
 }
 /* 药丸：桌面 h36 r999（移动档 h44）；主/次按钮统一形态（设计稿 §5.2） */
 .g2-pill {
@@ -181,25 +172,9 @@ html.g2-refract-on .mh-chrome-btn::before {
     0 3px 10px var(--g2-ink-shadow);
 }
 
-/* ── cfg-btn 族药丸化材质衔接（几何档 radius/padding 在 sidebar.css 本批改；
-   发送键 #send-btn 的墨玻璃药丸在 input.css 本批改；此处承接共享底材与折射层）── */
-#send-btn {
-  position: relative;
-  isolation: isolate;
-  transition:
-    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
-    box-shadow 0.18s ease,
-    background-color 0.18s ease,
-    border-color 0.2s;
-}
-#send-btn::before {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  z-index: -1;
-  background-image: linear-gradient(to bottom, var(--g2-ink-highlight) 0%, transparent 46%);
-}
+/* ── cfg-btn 族 / #send-btn 材质承接（v3 实现批整块退役：两族迁控件族扁平
+   材质 --ctl-*，见 sidebar.css .cfg-btn 块 / input.css #send-btn 块）──────── */
+
 /* 输入条材质升级（设计稿 §5.2：blur(24px) saturate(1.6) + 微渐层 + 镜面高光；
    结构不动；frozen/disconnected 等高特异态在 input.css 原样保留） */
 #input-bar {
@@ -210,6 +185,39 @@ html.g2-refract-on .mh-chrome-btn::before {
   box-shadow:
     inset 0 1px 0 var(--g2-input-specular),
     0 8px 24px var(--g2-input-shadow);
+}
+
+/* ── ④ v3 F1 扩面：canvas / ask 悬浮圆钮族（作者 12:32 点选「悬浮族 = F1」
+   落地到全部悬浮钮）——ask-dock 开合钮 .ask-fab、canvas 堆叠钮 #deck-fab、
+   canvas 工具圆钮族（source/ref/find/graph/refresh）由 --cv-* 玻璃模板并入
+   F1 配方：填充/blur/sat/边/高光/投影全走 --g2-fab-* 单源。本条在本文件加载
+   （index.html 位于 split.css/ask.css 之后）⇒ 同特异度后写胜出；各钮自有状态
+   档（#deck-fab[aria-pressed] 的 sapphire tint / .ask-fab.pulse 动画 / disabled）
+   特异度更高或动画通道，零覆盖。按压/悬停缩放互动语言（--cv-hover-scale 族）
+   保留不动，只换材质。 */
+.ask-fab,
+#deck-fab,
+.canvas-source-toggle,
+.canvas-ref-select,
+.canvas-find-toggle,
+.canvas-graph-toggle,
+.canvas-refresh-toggle {
+  background: var(--g2-fab-bg);
+  -webkit-backdrop-filter: blur(var(--g2-fab-blur)) saturate(var(--g2-fab-sat));
+  backdrop-filter: blur(var(--g2-fab-blur)) saturate(var(--g2-fab-sat));
+  border: 1px solid var(--g2-fab-border);
+  box-shadow:
+    inset 0 1px 0 var(--g2-fab-highlight),
+    0 10px 26px var(--g2-fab-shadow);
+}
+.ask-fab:hover,
+#deck-fab:hover,
+.canvas-source-toggle:hover,
+.canvas-ref-select:hover,
+.canvas-find-toggle:hover,
+.canvas-graph-toggle:hover,
+.canvas-refresh-toggle:hover {
+  background: var(--g2-fab-bg-hover);
 }
 
 /* ── ③ 顶缘滚入渐隐带（替代手机端顶栏；设计稿 §3.1/§5.1）────────────────── */
@@ -239,17 +247,22 @@ body.mobile-layer #g2-edge-fade {
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   .g2-fab::before,
   .g2-pill::before,
-  .cfg-btn:not(.cfg-btn-primary)::before,
   .mh-chrome-btn::before {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-  /* 圆钮/药丸实色回落（亮 .78 / 暗 .26；高光/投影/按压保留） */
+  /* 圆钮/药丸实色回落（F1 档：亮 .55 / 暗 .20；高光/投影/按压保留） */
   .g2-fab,
   .g2-pill:not(.g2-pill-primary),
-  .cfg-btn:not(.cfg-btn-primary),
-  .mh-chrome-btn {
-    background-color: var(--g2-fab-solid);
+  .mh-chrome-btn,
+  .ask-fab,
+  #deck-fab,
+  .canvas-source-toggle,
+  .canvas-ref-select,
+  .canvas-find-toggle,
+  .canvas-graph-toggle,
+  .canvas-refresh-toggle {
+    background: var(--g2-fab-solid);
   }
   body.mobile-layer #g2-edge-fade {
     /* 渐隐带退化为纯底色罩：无折射仍有渐隐，视觉不破 */
@@ -259,16 +272,21 @@ body.mobile-layer #g2-edge-fade {
 }
 html.no-backdrop .g2-fab::before,
 html.no-backdrop .g2-pill::before,
-html.no-backdrop .cfg-btn:not(.cfg-btn-primary)::before,
 html.no-backdrop .mh-chrome-btn::before {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
 html.no-backdrop .g2-fab,
 html.no-backdrop .g2-pill:not(.g2-pill-primary),
-html.no-backdrop .cfg-btn:not(.cfg-btn-primary),
-html.no-backdrop .mh-chrome-btn {
-  background-color: var(--g2-fab-solid);
+html.no-backdrop .mh-chrome-btn,
+html.no-backdrop .ask-fab,
+html.no-backdrop #deck-fab,
+html.no-backdrop .canvas-source-toggle,
+html.no-backdrop .canvas-ref-select,
+html.no-backdrop .canvas-find-toggle,
+html.no-backdrop .canvas-graph-toggle,
+html.no-backdrop .canvas-refresh-toggle {
+  background: var(--g2-fab-solid);
 }
 html.no-backdrop body.mobile-layer #g2-edge-fade {
   -webkit-backdrop-filter: none !important;
@@ -279,16 +297,13 @@ html.no-backdrop body.mobile-layer #g2-edge-fade {
 @media (prefers-reduced-motion: reduce) {
   .g2-fab:active,
   .g2-pill:active,
-  .cfg-btn:not(.cfg-btn-primary):active,
   .mh-chrome-btn:active {
     transform: none;
     opacity: 0.8;
   }
   .g2-fab,
   .g2-pill,
-  .cfg-btn,
-  .mh-chrome-btn,
-  #send-btn {
+  .mh-chrome-btn {
     transition-duration: 0.01s;
   }
 }

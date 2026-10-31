@@ -214,32 +214,24 @@ html.no-backdrop .ask-colwrap .ask-veil {
   color: var(--color-text); caret-color: var(--color-primary);
 }
 .ask-input input::placeholder { color: var(--color-text-muted); }
-/* 发送钮 = 全站主操作墨族 token 单源（2026-10-30 按钮体系批：与 #send-btn 同
- * --btn-primary-* → --btn-ink-*；亮 #111827 近黑/暗 #e6edf3 浅墨随面板主题
- * ink-swap；hover/active 双档 token 自动解析，无暗档字面量分支） */
+/* 发送钮跟随主对话恢复微信绿（液体玻璃 v3 实现批 2026-10-31，作者 12:32 点选
+ * 「其它面板发送钮跟随主对话」）：10-30 墨族（--btn-primary-*）恢复为考古绿
+ * --ctl-send-* 三档（git c91de8456^ 本块原值 #07C160/#06AD56/#059A4C）；材质 =
+ * v3 C1 扁平实底（无 blur/高光/浮影，按压 = 色深一档）；几何 = 32px 正圆保留。 */
 .ask-input .ask-send {
   flex: none; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; padding: 0;
-  background: var(--btn-primary-bg); color: var(--btn-primary-ink);
-  border: 1px solid var(--btn-primary-bg-active);
+  background: var(--ctl-send-bg); color: var(--ctl-send-ink);
+  border: 1px solid var(--ctl-send-border);
   display: flex; align-items: center; justify-content: center;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.22),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.10),
-    0 1px 3px rgba(0, 0, 0, 0.10),
-    0 2px 8px rgba(0, 0, 0, 0.06);
-  transition: background 0.2s, box-shadow 0.2s;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 .ask-input .ask-send:hover {
-  background: var(--btn-primary-bg-hover);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.26),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.10),
-    0 2px 8px rgba(0, 0, 0, 0.12),
-    0 2px 12px rgba(0, 0, 0, 0.07);
+  background: var(--ctl-send-bg-hover);
+  border-color: var(--ctl-send-bg-hover);
 }
 .ask-input .ask-send:active {
-  background: var(--btn-primary-bg-active);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.18), 0 1px 2px rgba(0, 0, 0, 0.08);
+  background: var(--ctl-send-bg-active);
+  border-color: var(--ctl-send-bg-active);
 }
 .ask-input .ask-send svg { width: 14px; height: 14px; pointer-events: none; }
 

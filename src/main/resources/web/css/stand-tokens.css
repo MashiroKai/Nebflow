@@ -153,7 +153,11 @@ html[data-theme="dark"] {
 }
 
 /* ── 液体玻璃 v2 族（liquid-glass-v2 批 2026-10-31；设计稿
-   docs/design/20261031_084400_liquid-glass-effect-v2 §5.2 token 表逐值 + 追加折射批）
+   docs/design/20261031_084400_liquid-glass-effect-v2 §5.2 token 表逐值 + 追加折射批；
+   v3 实现批 2026-10-31 作者 12:32 点选：悬浮族升档 = v3 样张 §D「F1 轻霜全透」
+   （App Library 式——填充 .30/.44 亮、.10/.17 暗，blur 20 sat 2.2，hairline 亮边
+   .70/.26，高光线性 .85/.22→0@40%，投影 0 10px 26px 单层的 .12/.45；配方逐值 =
+   docs/design/liquid-glass-effect-mockup-v3.html §D 表）。
    圆钮/玻璃药丸/顶缘渐隐带/输入条材质三态双档：:root = 亮档默认（无 data-theme
    且系统亮时的解析面，与 --btn-ink-* 同构 —— 墨族 :root 亮档默认在 sapphire.css），
    html[data-theme] 强制档优先，无属性回退 prefers-color-scheme —— 勿复制
@@ -161,17 +165,18 @@ html[data-theme="dark"] {
    --g2-ink-* 墨玻璃药丸引用墨族单源（--btn-ink-*，墨族共存不换代，10-30 单色批
    继续有效）。 */
 :root {
-  --g2-fab-bg: rgba(255, 255, 255, 0.60);
-  --g2-fab-bg-hover: rgba(255, 255, 255, 0.74);
-  --g2-fab-blur: 16px;
-  --g2-fab-sat: 1.8;
-  --g2-fab-specular: rgba(255, 255, 255, 0.90);
-  --g2-fab-highlight: rgba(255, 255, 255, 0.95);
-  --g2-fab-border: rgba(255, 255, 255, 0.90);
-  --g2-fab-underedge: rgba(0, 0, 0, 0.08);
-  --g2-fab-shadow: rgba(0, 0, 0, 0.12);
-  /* no-backdrop 降级实色（设计稿 §7：亮 .60→.78，高光/投影/按压保留） */
-  --g2-fab-solid: rgba(255, 255, 255, 0.78);
+  --g2-fab-bg: rgba(255, 255, 255, 0.30);
+  --g2-fab-bg-hover: rgba(255, 255, 255, 0.44);
+  --g2-fab-blur: 20px;
+  --g2-fab-sat: 2.2;
+  --g2-fab-specular: rgba(255, 255, 255, 0.85);
+  --g2-fab-highlight: rgba(255, 255, 255, 0.55);
+  --g2-fab-border: rgba(255, 255, 255, 0.70);
+  /* F1 无底缘内影（v3 §D：单层投影 + 顶缘高光两层的干净玻璃） */
+  --g2-fab-underedge: rgba(0, 0, 0, 0);
+  --g2-fab-shadow: rgba(30, 40, 60, 0.12);
+  /* no-backdrop 降级实色（F1 最透档：无背板引擎时抬到 .55 保证可读） */
+  --g2-fab-solid: rgba(255, 255, 255, 0.55);
   /* 墨玻璃药丸（主操作；底色/字色引用墨族单源，高光/浮影为玻璃叠层增量） */
   --g2-ink-bg: var(--btn-ink-bg);
   --g2-ink-bg-hover: var(--btn-ink-bg-hover);
@@ -191,17 +196,18 @@ html[data-theme="dark"] {
   --g2-input-shadow: rgba(0, 0, 0, 0.08);
 }
 html[data-theme="light"] {
-  --g2-fab-bg: rgba(255, 255, 255, 0.60);
-  --g2-fab-bg-hover: rgba(255, 255, 255, 0.74);
-  --g2-fab-blur: 16px;
-  --g2-fab-sat: 1.8;
-  --g2-fab-specular: rgba(255, 255, 255, 0.90);
-  --g2-fab-highlight: rgba(255, 255, 255, 0.95);
-  --g2-fab-border: rgba(255, 255, 255, 0.90);
-  --g2-fab-underedge: rgba(0, 0, 0, 0.08);
-  --g2-fab-shadow: rgba(0, 0, 0, 0.12);
-  /* no-backdrop 降级实色（设计稿 §7：亮 .60→.78，高光/投影/按压保留） */
-  --g2-fab-solid: rgba(255, 255, 255, 0.78);
+  --g2-fab-bg: rgba(255, 255, 255, 0.30);
+  --g2-fab-bg-hover: rgba(255, 255, 255, 0.44);
+  --g2-fab-blur: 20px;
+  --g2-fab-sat: 2.2;
+  --g2-fab-specular: rgba(255, 255, 255, 0.85);
+  --g2-fab-highlight: rgba(255, 255, 255, 0.55);
+  --g2-fab-border: rgba(255, 255, 255, 0.70);
+  /* F1 无底缘内影（v3 §D：单层投影 + 顶缘高光两层的干净玻璃） */
+  --g2-fab-underedge: rgba(0, 0, 0, 0);
+  --g2-fab-shadow: rgba(30, 40, 60, 0.12);
+  /* no-backdrop 降级实色（F1 最透档：无背板引擎时抬到 .55 保证可读） */
+  --g2-fab-solid: rgba(255, 255, 255, 0.55);
   /* 墨玻璃药丸（主操作；底色/字色引用墨族单源，高光/浮影为玻璃叠层增量） */
   --g2-ink-bg: var(--btn-ink-bg);
   --g2-ink-bg-hover: var(--btn-ink-bg-hover);
@@ -221,16 +227,16 @@ html[data-theme="light"] {
   --g2-input-shadow: rgba(0, 0, 0, 0.08);
 }
 html[data-theme="dark"] {
-  --g2-fab-bg: rgba(255, 255, 255, 0.14);
-  --g2-fab-bg-hover: rgba(255, 255, 255, 0.20);
-  --g2-fab-blur: 16px;
-  --g2-fab-sat: 1.8;
-  --g2-fab-specular: rgba(255, 255, 255, 0.28);
-  --g2-fab-highlight: rgba(255, 255, 255, 0.35);
-  --g2-fab-border: rgba(255, 255, 255, 0.32);
-  --g2-fab-underedge: rgba(0, 0, 0, 0.40);
-  --g2-fab-shadow: rgba(0, 0, 0, 0.50);
-  --g2-fab-solid: rgba(255, 255, 255, 0.26);
+  --g2-fab-bg: rgba(255, 255, 255, 0.10);
+  --g2-fab-bg-hover: rgba(255, 255, 255, 0.17);
+  --g2-fab-blur: 20px;
+  --g2-fab-sat: 2.2;
+  --g2-fab-specular: rgba(255, 255, 255, 0.22);
+  --g2-fab-highlight: rgba(255, 255, 255, 0.26);
+  --g2-fab-border: rgba(255, 255, 255, 0.26);
+  --g2-fab-underedge: rgba(0, 0, 0, 0);
+  --g2-fab-shadow: rgba(0, 0, 0, 0.45);
+  --g2-fab-solid: rgba(255, 255, 255, 0.20);
   --g2-ink-bg: var(--btn-ink-bg);
   --g2-ink-bg-hover: var(--btn-ink-bg-hover);
   --g2-ink-bg-active: var(--btn-ink-bg-active);
@@ -248,16 +254,16 @@ html[data-theme="dark"] {
 }
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]):not([data-theme="dark"]) {
-    --g2-fab-bg: rgba(255, 255, 255, 0.14);
-    --g2-fab-bg-hover: rgba(255, 255, 255, 0.20);
-    --g2-fab-blur: 16px;
-    --g2-fab-sat: 1.8;
-    --g2-fab-specular: rgba(255, 255, 255, 0.28);
-    --g2-fab-highlight: rgba(255, 255, 255, 0.35);
-    --g2-fab-border: rgba(255, 255, 255, 0.32);
-    --g2-fab-underedge: rgba(0, 0, 0, 0.40);
-    --g2-fab-shadow: rgba(0, 0, 0, 0.50);
-    --g2-fab-solid: rgba(255, 255, 255, 0.26);
+    --g2-fab-bg: rgba(255, 255, 255, 0.10);
+    --g2-fab-bg-hover: rgba(255, 255, 255, 0.17);
+    --g2-fab-blur: 20px;
+    --g2-fab-sat: 2.2;
+    --g2-fab-specular: rgba(255, 255, 255, 0.22);
+    --g2-fab-highlight: rgba(255, 255, 255, 0.26);
+    --g2-fab-border: rgba(255, 255, 255, 0.26);
+    --g2-fab-underedge: rgba(0, 0, 0, 0);
+    --g2-fab-shadow: rgba(0, 0, 0, 0.45);
+    --g2-fab-solid: rgba(255, 255, 255, 0.20);
     --g2-ink-bg: var(--btn-ink-bg);
     --g2-ink-bg-hover: var(--btn-ink-bg-hover);
     --g2-ink-bg-active: var(--btn-ink-bg-active);
@@ -272,6 +278,58 @@ html[data-theme="dark"] {
     --g2-input-border: rgba(255, 255, 255, 0.14);
     --g2-input-specular: rgba(255, 255, 255, 0.16);
     --g2-input-shadow: rgba(0, 0, 0, 0.40);
+  }
+}
+
+/* ── 控件族 --ctl-*（液体玻璃 v3 实现批 2026-10-31，作者 12:32 点选逐字：
+   「按钮的配色风格使用简约的 stand 风格」——控件族 = v3 样张 Apple 扁平形态
+   （C1 实底主钮骨架：纯色/微圆角/无高光/无模糊/无浮影，按压 = 色深一档）+
+   Stand 墨族单色配色（墨黑实底主钮 / 中性灰次钮，不采用样张 System Blue 档）。
+   主钮 = 墨族单源引用（--btn-ink-*，双档随面板主题）；次钮 = v3 样张 §D C3
+   灰阶中性档逐值；发送钮 = 10-30 墨族换代前微信绿考古值（git c91de8456^
+   input.css：rest #07C160 / hover #06AD56 / active #059A4C / 缘 #06AD56，
+   白字，双主题同值——作者令「主对话窗口的发送按钮 改回之前的绿色」）。
+   三态解析结构同 --btn-ink-* 族：:root/html[data-theme=light] 亮档默认，
+   html[data-theme=dark] 强制档，无属性回退 prefers-color-scheme。 */
+:root,
+html[data-theme="light"] {
+  --ctl-primary-bg: var(--btn-ink-bg);
+  --ctl-primary-bg-hover: var(--btn-ink-bg-hover);
+  --ctl-primary-bg-active: var(--btn-ink-bg-active);
+  --ctl-primary-ink: var(--btn-ink-ink);
+  --ctl-neutral-bg: #ececee;
+  --ctl-neutral-bg-hover: #e0e0e4;
+  --ctl-neutral-bg-active: #d2d2d8;
+  --ctl-neutral-ink: #3a3a3f;
+  --ctl-send-bg: #07c160;
+  --ctl-send-bg-hover: #06ad56;
+  --ctl-send-bg-active: #059a4c;
+  --ctl-send-ink: #ffffff;
+  --ctl-send-border: #06ad56;
+}
+html[data-theme="dark"] {
+  --ctl-neutral-bg: #2c2c31;
+  --ctl-neutral-bg-hover: #35353b;
+  --ctl-neutral-bg-active: #404047;
+  --ctl-neutral-ink: #d9d9de;
+  /* 发送绿双主题同值（考古值 = 两主题同一枚实色键） */
+  --ctl-send-bg: #07c160;
+  --ctl-send-bg-hover: #06ad56;
+  --ctl-send-bg-active: #059a4c;
+  --ctl-send-ink: #ffffff;
+  --ctl-send-border: #06ad56;
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) {
+    --ctl-neutral-bg: #2c2c31;
+    --ctl-neutral-bg-hover: #35353b;
+    --ctl-neutral-bg-active: #404047;
+    --ctl-neutral-ink: #d9d9de;
+    --ctl-send-bg: #07c160;
+    --ctl-send-bg-hover: #06ad56;
+    --ctl-send-bg-active: #059a4c;
+    --ctl-send-ink: #ffffff;
+    --ctl-send-border: #06ad56;
   }
 }
 

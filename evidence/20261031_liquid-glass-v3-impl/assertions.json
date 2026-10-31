@@ -1,0 +1,271 @@
+{
+  "when": "2026-10-31T05:05:00.163Z",
+  "total": 44,
+  "failed": 0,
+  "results": [
+    {
+      "name": "light send rest",
+      "actual": "rgb(7, 193, 96)",
+      "expected": "rgb(7, 193, 96)",
+      "ok": true
+    },
+    {
+      "name": "light send hover",
+      "actual": "rgb(6, 173, 86)",
+      "expected": "rgb(6, 173, 86)",
+      "ok": true
+    },
+    {
+      "name": "light send active",
+      "actual": "rgb(5, 154, 76)",
+      "expected": "rgb(5, 154, 76)",
+      "ok": true
+    },
+    {
+      "name": "light family fm-send-btn bg",
+      "actual": "rgb(7, 193, 96)",
+      "expected": "rgb(7, 193, 96)",
+      "ok": true
+    },
+    {
+      "name": "light neutral cfg-btn bg",
+      "actual": "rgb(236, 236, 238)",
+      "expected": "rgb(236, 236, 238)",
+      "ok": true
+    },
+    {
+      "name": "light neutral cfg-btn no blur",
+      "actual": "none",
+      "expected": "none",
+      "ok": true
+    },
+    {
+      "name": "light primary cfg-btn ink",
+      "actual": "rgb(17, 24, 39)",
+      "expected": "rgb(17, 24, 39)",
+      "ok": true
+    },
+    {
+      "name": "light ask-send bg",
+      "actual": "rgb(7, 193, 96)",
+      "expected": "rgb(7, 193, 96)",
+      "ok": true
+    },
+    {
+      "name": "light fab F1 fill",
+      "actual": "rgba(255, 255, 255, 0.3)",
+      "expected": "rgba(255, 255, 255, 0.3)",
+      "ok": true
+    },
+    {
+      "name": "light fab F1 blur",
+      "actual": "blur(20px) saturate(2.2)",
+      "expected": "blur(20px) saturate(2.2)",
+      "ok": true
+    },
+    {
+      "name": "light canvas toggle F1 fill",
+      "actual": "rgba(255, 255, 255, 0.3)",
+      "expected": "rgba(255, 255, 255, 0.3)",
+      "ok": true
+    },
+    {
+      "name": "light canvas toggle F1 blur",
+      "actual": "blur(20px) saturate(2.2)",
+      "expected": "blur(20px) saturate(2.2)",
+      "ok": true
+    },
+    {
+      "name": "dark send rest",
+      "actual": "rgb(7, 193, 96)",
+      "expected": "rgb(7, 193, 96)",
+      "ok": true
+    },
+    {
+      "name": "dark send hover",
+      "actual": "rgb(6, 173, 86)",
+      "expected": "rgb(6, 173, 86)",
+      "ok": true
+    },
+    {
+      "name": "dark send active",
+      "actual": "rgb(5, 154, 76)",
+      "expected": "rgb(5, 154, 76)",
+      "ok": true
+    },
+    {
+      "name": "dark family fm-send-btn bg",
+      "actual": "rgb(7, 193, 96)",
+      "expected": "rgb(7, 193, 96)",
+      "ok": true
+    },
+    {
+      "name": "dark neutral cfg-btn bg",
+      "actual": "rgb(44, 44, 49)",
+      "expected": "rgb(44, 44, 49)",
+      "ok": true
+    },
+    {
+      "name": "dark neutral cfg-btn no blur",
+      "actual": "none",
+      "expected": "none",
+      "ok": true
+    },
+    {
+      "name": "dark primary cfg-btn ink",
+      "actual": "rgb(230, 237, 243)",
+      "expected": "rgb(230, 237, 243)",
+      "ok": true
+    },
+    {
+      "name": "dark ask-send bg",
+      "actual": "rgb(7, 193, 96)",
+      "expected": "rgb(7, 193, 96)",
+      "ok": true
+    },
+    {
+      "name": "dark fab F1 fill",
+      "actual": "rgba(255, 255, 255, 0.1)",
+      "expected": "rgba(255, 255, 255, 0.1)",
+      "ok": true
+    },
+    {
+      "name": "dark fab F1 blur",
+      "actual": "blur(20px) saturate(2.2)",
+      "expected": "blur(20px) saturate(2.2)",
+      "ok": true
+    },
+    {
+      "name": "dark canvas toggle F1 fill",
+      "actual": "rgba(255, 255, 255, 0.1)",
+      "expected": "rgba(255, 255, 255, 0.1)",
+      "ok": true
+    },
+    {
+      "name": "dark canvas toggle F1 blur",
+      "actual": "blur(20px) saturate(2.2)",
+      "expected": "blur(20px) saturate(2.2)",
+      "ok": true
+    },
+    {
+      "name": "light send rest",
+      "actual": "rgb(7, 193, 96)",
+      "expected": "rgb(7, 193, 96)",
+      "ok": true
+    },
+    {
+      "name": "light send hover",
+      "actual": "rgb(6, 173, 86)",
+      "expected": "rgb(6, 173, 86)",
+      "ok": true
+    },
+    {
+      "name": "light send active",
+      "actual": "rgb(5, 154, 76)",
+      "expected": "rgb(5, 154, 76)",
+      "ok": true
+    },
+    {
+      "name": "light family fm-send-btn bg",
+      "actual": "rgb(7, 193, 96)",
+      "expected": "rgb(7, 193, 96)",
+      "ok": true
+    },
+    {
+      "name": "light neutral cfg-btn bg",
+      "actual": "rgb(236, 236, 238)",
+      "expected": "rgb(236, 236, 238)",
+      "ok": true
+    },
+    {
+      "name": "light neutral cfg-btn no blur",
+      "actual": "none",
+      "expected": "none",
+      "ok": true
+    },
+    {
+      "name": "light primary cfg-btn ink",
+      "actual": "rgb(17, 24, 39)",
+      "expected": "rgb(17, 24, 39)",
+      "ok": true
+    },
+    {
+      "name": "light ask-send bg",
+      "actual": "rgb(7, 193, 96)",
+      "expected": "rgb(7, 193, 96)",
+      "ok": true
+    },
+    {
+      "name": "light canvas toggle F1 fill",
+      "actual": "rgba(255, 255, 255, 0.3)",
+      "expected": "rgba(255, 255, 255, 0.3)",
+      "ok": true
+    },
+    {
+      "name": "light canvas toggle F1 blur",
+      "actual": "blur(20px) saturate(2.2)",
+      "expected": "blur(20px) saturate(2.2)",
+      "ok": true
+    },
+    {
+      "name": "dark send rest",
+      "actual": "rgb(7, 193, 96)",
+      "expected": "rgb(7, 193, 96)",
+      "ok": true
+    },
+    {
+      "name": "dark send hover",
+      "actual": "rgb(6, 173, 86)",
+      "expected": "rgb(6, 173, 86)",
+      "ok": true
+    },
+    {
+      "name": "dark send active",
+      "actual": "rgb(5, 154, 76)",
+      "expected": "rgb(5, 154, 76)",
+      "ok": true
+    },
+    {
+      "name": "dark family fm-send-btn bg",
+      "actual": "rgb(7, 193, 96)",
+      "expected": "rgb(7, 193, 96)",
+      "ok": true
+    },
+    {
+      "name": "dark neutral cfg-btn bg",
+      "actual": "rgb(44, 44, 49)",
+      "expected": "rgb(44, 44, 49)",
+      "ok": true
+    },
+    {
+      "name": "dark neutral cfg-btn no blur",
+      "actual": "none",
+      "expected": "none",
+      "ok": true
+    },
+    {
+      "name": "dark primary cfg-btn ink",
+      "actual": "rgb(230, 237, 243)",
+      "expected": "rgb(230, 237, 243)",
+      "ok": true
+    },
+    {
+      "name": "dark ask-send bg",
+      "actual": "rgb(7, 193, 96)",
+      "expected": "rgb(7, 193, 96)",
+      "ok": true
+    },
+    {
+      "name": "dark canvas toggle F1 fill",
+      "actual": "rgba(255, 255, 255, 0.1)",
+      "expected": "rgba(255, 255, 255, 0.1)",
+      "ok": true
+    },
+    {
+      "name": "dark canvas toggle F1 blur",
+      "actual": "blur(20px) saturate(2.2)",
+      "expected": "blur(20px) saturate(2.2)",
+      "ok": true
+    }
+  ]
+}

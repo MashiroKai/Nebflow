@@ -1238,26 +1238,28 @@
    设计语言批 2026-10-21（账本 design-language §2/§4/§5/§7）：面板按钮档 =
    12px 字（11px 判偏整改）/ 6px 16px 栅格距（5px 判偏）；主档墨族实底
    （--btn-primary-* 墨族 token 单源，2026-10-30 按钮体系批：原绿实底
-   --color-primary 降级为身份/状态绿），几何与 ghost 档同值仅内距 6px 18px；
-   sm 档 12px 字 4px 12px。字色 --frame-text（原 dim 在 hover 前对比不足）。
-   transition 逐属性 + 时长 token（禁 all）。
-   liquid-glass-v2 批 2026-10-31（作者 08:43 裁定① + 09:03 拍板）：按钮形态
-   换代 = r8 矩形族 → 999px 全药丸（设计稿 §5.2「主/次按钮统一药丸」）；
-   水平内距加宽一档成药丸比例，垂直栅格距不动。材质（blur/sat 双档、镜面
-   高光、spring 按压回弹）在 liquid-glass.css 共享底材承接。 */
+   --color-primary 降级为身份/状态绿）；sm 档 12px 字 4px 12px。
+   liquid-glass-v2 批 2026-10-31：按钮形态换代 = r8 矩形族 → 999px 全药丸。
+   液体玻璃 v3 实现批（作者 10-31 12:32 点选）：次档退出玻璃族（liquid-glass.css
+   共享底材整块解绑）= 控件族 C3 中性扁平实底（--ctl-neutral-* 单源：纯色 /
+   无高光 / 无模糊 / 无浮影，按压 = 色深一档）；几何药丸化保留。
+   注：本文件先于 sapphire.css 加载，Pattern B 同值声明为实算胜出方（零冲突
+   双保险）；cfg-btn-add 虚线幽灵档由本条自管。 */
 .cfg-btn {
   font-size: 12px;
   padding: 6px 16px;
   border-radius: 999px;
-  border: 1px solid var(--color-frame-border);
-  background: none;
-  color: var(--color-frame-text);
+  border: 1px solid var(--ctl-neutral-bg);
+  background: var(--ctl-neutral-bg);
+  color: var(--ctl-neutral-ink);
   cursor: pointer;
   font-family: inherit;
   transition: background var(--dur-2) ease, color var(--dur-2) ease,
               border-color var(--dur-2) ease, box-shadow var(--dur-2) ease;
 }
-.cfg-btn:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
+.cfg-btn:hover { background: var(--ctl-neutral-bg-hover); color: var(--ctl-neutral-ink); }
+.cfg-btn:active { background: var(--ctl-neutral-bg-active); }
+.cfg-btn:focus-visible { outline: 2px solid var(--btn-focus-ring); outline-offset: 2px; }
 .cfg-btn-sm { font-size: 12px; padding: 4px 12px; border-radius: 999px; }
 .cfg-btn-primary {
   font-size: 12px; padding: 6px 18px; border-radius: 999px;
@@ -1271,10 +1273,13 @@
 }
 .cfg-btn-primary:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); opacity: 1; }
 .cfg-btn-primary:disabled { opacity: 0.5; cursor: default; }
+/* 虚线添加钮 = 幽灵档（v3：扁平族内唯一无实底者；dashed 边型 + muted 字，
+   hover 微垫 —— 与 C3 实底次钮拉开「新建」语义） */
 .cfg-btn-add {
   width: 100%;
   border-style: dashed;
   margin-top: 4px;
+  background: none;
   color: var(--color-frame-text-muted);
   border-color: var(--color-frame-border);
 }
@@ -1873,14 +1878,16 @@
   flex-shrink: 0;
   font: 500 12px -apple-system, sans-serif;
   padding: 5px 16px;
-  border: 1px solid var(--color-border);
+  border: 1px solid transparent;
   border-radius: 8px;
-  background: var(--color-surface);
-  color: var(--color-text);
+  background: var(--ctl-neutral-bg);
+  color: var(--ctl-neutral-ink);
   cursor: pointer;
   transition: all 0.15s;
 }
-.agent-detail-save-btn:hover { background: rgba(91,127,191,0.06); border-color: rgba(91,127,191,0.3); }
+/* v3 实现批：蓝 tint hover（rgba(91,127,191,…) 为 sapphire 玻璃结构色）退役 ——
+   控件族中性三档（--ctl-neutral-*，暗档随面板主题自动解析） */
+.agent-detail-save-btn:hover { background: var(--ctl-neutral-bg-hover); }
 
 /* System Prompt label row + render/source toggle */
 .agent-detail-label-row {
@@ -1964,7 +1971,7 @@
   .agent-mgr-standalone-badge { background: rgba(100,200,100,0.2); color: #8c8; }
   .agent-detail-model-row { background: rgba(255,255,255,0.03); }
   .agent-detail-prompt-edit { background: rgba(255,255,255,0.03); }
-  .agent-detail-save-btn { background: rgba(255,255,255,0.03); }
+  /* v3：save 键暗档走 --ctl-neutral-* token 双档（本行块退役） */
 }
 
 /* ---------- Work-schedule (freeze) segment editor — freeze-spec §3.2 -------
