@@ -1,5 +1,14 @@
 /* mobile/mobileLayer.css — 手机交互层样式（mobile-ui-refactor 批 → dock 批 2026-10-29）。
  *
+ * 悬浮钮统一+搜索批（2026-10-31 作者令 16:03；规格书
+ * docs/20261031_160300_mobile-fab-unify-search.md）：
+ *   ① 全部悬浮钮归 48px g2-fab 基准（聊天顶缘双钮规格；页面壳「<」/canvas 工具钮
+ *      浮入统一 chrome 带：top:16+safe，左右 16，标题胶囊带内居中，页体顶让位
+ *      72px+safe）；② 全钮按压 spring 同族（.88 + cubic-bezier(0.34,1.56,0.64,1)，
+ *      reduced-motion 退化透明度）；③ 消息/联系人页右上浮搜索钮 + 展开式搜索栏
+ *      （.mh-search-open 判据，max-height 220ms spring，自钮处生长）；④ 消息页
+ *      检索 = 按会话分组 + mark 高亮 + 跳转闪烁（.fm-reveal-flash）。文件尾批次块。
+ *
  * 铁律：本文件全部规则挂在 body.mobile-layer 之下 —— 该类只由 mobile/bootstrap.js
  * 在手机视口（≤768px，与既有 css/mobile.css 折叠点同源）激活。桌面窗口永远不
  * 命中任何一条规则（桌面渲染逐字节不变）；桌面对本文件的唯一感知是 index.html
@@ -353,25 +362,30 @@ body.mobile-layer .mobile-page.live {
   pointer-events: auto;
 }
 
-/* 页面头：左上角「<」返回钮（悬浮玻璃圆，glass-control 材质）＋居中标题胶囊。
-   顶部胶囊语言统一批（作者令 2026-10-30）：页头走聊天顶栏同款悬浮语言——
-   无通栏底面（背景/底缘分隔线/毛玻璃全退），控件各自悬浮；标题 = 玻璃胶囊
-   （与会话名胶囊 #session-name 同一 glass-control token 族）；按钮 = 悬浮
-   玻璃空间（glass-control 圆，材质与聊天顶栏 chrome 键同源）。
-   dock 根页「<」= 回聊天根；详情页「<」= pop 一层。 */
+/* 页面头：悬浮 chrome 带（悬浮钮统一批 2026-10-31 作者令 16:03——以聊天根顶缘
+   双钮为基准规格全局统一）。带几何 = 主对话 #mobile-fab-layer 同口径：48px 钮
+   面，起点 top: calc(16px + safe)，左右内距 16px；页头本体退零高透明带（无通栏
+   底面，顶部胶囊语言批口径沿用），控件各自悬浮、子件接事件。
+   布局：返回钮（详情页）左 16 悬浮；标题胶囊带内居中（垂直中心 = 钮中心）；
+   页面体 padding-top calc(72px + safe) 整体让位（72 = 16+48+8）。
+   dock 根页「<」缺席（dock 语义，批②沿用），标题/搜索钮同带语言。 */
 body.mobile-layer .mobile-page-header {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: calc(8px + env(safe-area-inset-top, 0px)) 10px 8px;
-  flex-shrink: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 0;
+  pointer-events: none; /* 带本体不拦截 —— 子件各自接事件（fab 层同源口径） */
+  z-index: 20;
 }
-/* 标题胶囊：环抱文案的玻璃药丸（margin-inline auto = 在返回钮与占位间居中）。 */
+/* 标题胶囊：带内水平居中，垂直中心与 48px 钮中心（16+24=40px）对齐。 */
 body.mobile-layer .mobile-page-title {
-  flex: 0 1 auto;
-  margin-inline: auto;
+  position: absolute;
+  top: calc(28px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
   min-width: 0;
-  max-width: calc(100% - 88px);
+  max-width: calc(100% - 160px);
   padding: 3px 12px;
   border-radius: 999px;
   background: var(--glass-control-bg);
@@ -389,43 +403,36 @@ body.mobile-layer .mobile-page-title {
   text-overflow: ellipsis;
   white-space: nowrap;
   outline: none;
+  pointer-events: auto;
 }
 body.mobile-layer .mobile-page-head-spacer {
-  width: 30px;
-  flex: none;
+  display: none; /* 带内绝对定位居中：占位退役 */
 }
-/* 悬浮玻璃「<」返回钮（glass-control 材质 = 聊天顶栏 chrome 键同源 token 族）。 */
+/* 悬浮「<」返回钮：48px g2-fab 液体玻璃（基准规格材质；JS 挂 .g2-fab 类），
+   悬浮位 = 左 16 / top 16+safe，与聊天根任务键同几何。 */
 body.mobile-layer .mobile-back-btn {
-  width: 30px;
-  height: 30px;
-  flex: none;
+  position: absolute;
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  left: 16px;
+  width: 48px;
+  height: 48px;
   padding: 0;
   border-radius: 50%;
-  border: 1px solid var(--glass-control-border);
-  background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow),
-    0 2px 8px var(--glass-control-shadow);
-  color: var(--color-frame-text, #e6e9ef);
+  color: var(--color-frame-text-bright, var(--color-frame-text));
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   touch-action: manipulation;
+  pointer-events: auto;
 }
 /* 玻璃空间相对按钮图标居中（统一批「全清查」）：图标块在圆内水平垂直居中，
-   svg 转块级消除行内基线隙——顶栏全部圆形玻璃键同口径。 */
+   svg 转块级消除行内基线隙——顶栏全部圆形玻璃键同口径。尺寸随 g2-fab 移动档
+   （20px，与 chrome 键同）；按压/材质 = g2-fab 既有块（scale .88 spring）。 */
 body.mobile-layer .mobile-back-btn svg {
   display: block;
-  width: 18px;
-  height: 18px;
-}
-body.mobile-layer .mobile-back-btn:active {
-  transform: scale(0.92);
+  width: 20px;
+  height: 20px;
 }
 /* 玻璃空间居中清查（顶部胶囊语言统一批「玻璃空间相对按钮图标居中…全清查」）：
    顶栏/页面族全部圆形玻璃键的图标块统一 display:block + flex 居中口径——
@@ -439,8 +446,8 @@ body.mobile-layer .mf-cv-btn i svg,
 body.mobile-layer .mh-tpanel .tp-x svg {
   display: block;
 }
-
-/* 页面体：纵向滚域（收编面自管内滚的以其自身为准；body 滚动兜底封面/空态）。 */
+/* 页面体：纵向滚域（收编面自管内滚的以其自身为准；body 滚动兜底封面/空态）。
+   悬浮钮统一批：页体顶让位悬浮 chrome 带（72 = 16+48+8，safe 同源）。 */
 body.mobile-layer .mobile-page-body {
   flex: 1;
   min-height: 0;
@@ -449,6 +456,7 @@ body.mobile-layer .mobile-page-body {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
+  padding-top: calc(72px + env(safe-area-inset-top, 0px));
 }
 body.mobile-layer .mobile-page-body::-webkit-scrollbar { display: none; }
 /* 设备平级批 2026-10-31（作者令：会话窗 = 单一固定对话窗「像微信聊天页」，禁横向
@@ -1018,33 +1026,47 @@ body.mobile-layer .mf-strip-chip.on {
   font-weight: 600;
 }
 body.mobile-layer .mf-strip-chip:active { transform: scale(0.95); }
-/* 工具条（Canvas 改造批②⑤，2026-10-31 作者令「顶栏换代：左叉号右堆叠视角
-   钮」）：✕ 左 · 计数居中 · 堆叠视角钮右——钮体 = 44px 液体玻璃悬浮圆
-   （.g2-fab 复用 v2 材质：blur/sat 双档 + 镜面高光 + spring 按压，零新造；
-   材质面见 liquid-glass.css）。批⑤退役：‹ › 步进 / 独立窗钮 / 分隔线。 */
+/* 工具条（Canvas 改造批②⑤ → 悬浮钮统一批 2026-10-31 作者令 16:03）：✕/堆叠视角钮
+   自通栏工具条退役为**悬浮 chrome 带**控件（与页面壳返回钮同带同几何：48px
+   g2-fab，top:16+safe，左 16 / 右 16；带本体零高透明不拦截）；计数文本带内居中。
+   材质 = g2-fab 液体玻璃 v2 单源（blur/sat 双档 + 镜面高光 + spring 按压 scale.88）。 */
 body.mobile-layer .mf-cv-toolbar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 2px;
-  padding: 4px 10px;
-  border-bottom: 1px solid var(--glass-border);
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 0;
+  z-index: 20;
+  pointer-events: none;
+  border-bottom: none;
+  padding: 0;
 }
 body.mobile-layer .mf-cv-toolbar[hidden] { display: none; }
 body.mobile-layer .mf-cv-toolbar .g2-fab {
-  width: 44px;
-  height: 44px;
+  position: absolute;
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  pointer-events: auto;
 }
-body.mobile-layer .mf-cv-toolbar .g2-fab svg { width: 17px; height: 17px; }
+body.mobile-layer .mf-cv-toolbar .mf-cv-close { left: 16px; }
+body.mobile-layer .mf-cv-toolbar .mf-cv-stack { right: 16px; }
+body.mobile-layer .mf-cv-toolbar .g2-fab svg { width: 20px; height: 20px; }
 body.mobile-layer .mf-cv-toolbar .g2-fab:disabled { opacity: 0.35; }
+/* 堆叠视角打开时浮带工具钮让位（堆叠面自带同位 ✕，零双键重叠）。 */
+body.mobile-layer .mobile-page[data-page="canvas"]:has(.mf-stack-view:not([hidden])) .mf-cv-toolbar {
+  display: none;
+}
 body.mobile-layer .mf-cv-count {
+  position: absolute;
+  top: calc(34px + env(safe-area-inset-top, 0px));
+  left: 50%;
+  transform: translateX(-50%);
   min-width: 40px;
   text-align: center;
   font-size: 12px;
   font-weight: 600;
   color: var(--color-frame-text-muted, #98a2b3);
   font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 /* 文档区横滑邻卡圆环（批③：横拖时拖向侧露玻璃描边圆环 = 桌面上下滚动的
    横屏变体；进深 = 拖距/换卡阈 0→1，松手即退）。半露圆（54px，缘外 20px），
@@ -1069,7 +1091,8 @@ body.mobile-layer .mf-swipe-ring {
 body.mobile-layer .mf-swipe-ring.left { left: -20px; }
 body.mobile-layer .mf-swipe-ring.right { right: -20px; }
 /* 堆叠视角面（批②⑤）：全卡堆叠列表浮层——顶行「N 张文档」计数（批⑤：堆叠
-   态顶部显示标签数）+ ✕ 收面；卡列毛玻璃卡面，活动卡活性蓝高亮。 */
+   态顶部显示标签数）+ ✕ 收面；卡列毛玻璃卡面，活动卡活性蓝高亮。
+   悬浮钮统一批：堆叠面 ✕ 同 48px g2-fab 基准，顶行几何对齐悬浮带。 */
 body.mobile-layer .mf-stack-view {
   position: absolute;
   inset: 0;
@@ -1086,7 +1109,7 @@ body.mobile-layer .mf-stack-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px 10px;
 }
 body.mobile-layer .mf-stack-count {
   font-size: 13px;
@@ -1094,8 +1117,8 @@ body.mobile-layer .mf-stack-count {
   color: var(--color-frame-text, #e6e9ef);
   font-variant-numeric: tabular-nums;
 }
-body.mobile-layer .mf-stack-x { width: 40px; height: 40px; }
-body.mobile-layer .mf-stack-x svg { width: 16px; height: 16px; }
+body.mobile-layer .mf-stack-x { width: 48px; height: 48px; }
+body.mobile-layer .mf-stack-x svg { width: 18px; height: 18px; }
 body.mobile-layer .mf-stack-list {
   flex: 1;
   min-height: 0;
@@ -1526,4 +1549,300 @@ body.mobile-layer #settings-modal .cfg-btn-primary:hover {
   body.mobile-layer #settings-modal .cfg-btn-primary:hover {
     background: #fff;
   }
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   悬浮钮统一批 + 消息/联系人页搜索批（2026-10-31 作者令 16:03，四件）
+   规格书：docs/20261031_160300_mobile-fab-unify-search.md（§2/§4/§5）。
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── ① 余量悬浮钮归位（尺寸 48 / 材质 g2 单源 / spring 按压同族）────────
+   ask 悬浮钮（输入卡锚定，位底右上——输入卡附件语义，不迁顶；位右 12 归 16 栅格）、
+   canvas 文档工具圆钮族（文档 pane 内底右簇，内容锚定不迁顶）、引用返回 chip。 */
+body.mobile-layer .ask-fab {
+  width: 48px;
+  height: 48px;
+  right: 16px;
+  transition:
+    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.18s ease,
+    background-color 0.18s ease;
+}
+body.mobile-layer .ask-fab:active { transform: scale(0.88); }
+body.mobile-layer .canvas-source-toggle,
+body.mobile-layer .canvas-ref-select,
+body.mobile-layer .canvas-find-toggle,
+body.mobile-layer .canvas-refresh-toggle {
+  width: 48px;
+  height: 48px;
+  transition:
+    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.18s ease,
+    background-color 0.18s ease;
+}
+body.mobile-layer .canvas-source-toggle:active,
+body.mobile-layer .canvas-ref-select:active,
+body.mobile-layer .canvas-find-toggle:active,
+body.mobile-layer .canvas-refresh-toggle:active { transform: scale(0.88); }
+/* 引用返回 chip：形状语义保留（chip 非圆钮），悬浮位对齐 16 栅格 + 顶带让位 +
+   按压并入 spring 族（原 brightness 档退役）。 */
+body.mobile-layer .canvas-refback-btn {
+  left: 16px;
+  top: calc(72px + env(safe-area-inset-top, 0px));
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+body.mobile-layer .canvas-refback-btn:active { transform: scale(0.92); }
+/* 记忆页编辑/完成药丸：按压并入 spring 族（in-flow 控件，尺寸形态保留）。 */
+body.mobile-layer .mh-memory-edit {
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.18s ease;
+}
+body.mobile-layer .mh-memory-edit:active { transform: scale(0.95); }
+/* reduced-motion：上方各钮形变退透明度（g2 降级块只罩 .g2-fab 族，本族补齐）。 */
+@media (prefers-reduced-motion: reduce) {
+  body.mobile-layer .ask-fab:active,
+  body.mobile-layer .canvas-source-toggle:active,
+  body.mobile-layer .canvas-ref-select:active,
+  body.mobile-layer .canvas-find-toggle:active,
+  body.mobile-layer .canvas-refresh-toggle:active,
+  body.mobile-layer .canvas-refback-btn:active,
+  body.mobile-layer .mh-memory-edit:active {
+    transform: none;
+    opacity: 0.8;
+  }
+  body.mobile-layer .ask-fab,
+  body.mobile-layer .canvas-source-toggle,
+  body.mobile-layer .canvas-ref-select,
+  body.mobile-layer .canvas-find-toggle,
+  body.mobile-layer .canvas-refresh-toggle,
+  body.mobile-layer .canvas-refback-btn,
+  body.mobile-layer .mh-memory-edit {
+    transition-duration: 0.01s;
+  }
+}
+
+/* ── ② 消息/联系人页右上浮搜索钮（.mh-fab-search；socialSearch.js 建）──
+   悬浮位与 chrome 搜索键同几何：48px g2-fab，top:16+safe，right:16。 */
+body.mobile-layer .mh-fab-search {
+  position: absolute;
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  right: 16px;
+  z-index: 20;
+}
+body.mobile-layer .mh-fab-search svg { width: 20px; height: 20px; }
+
+/* ── ③ 展开式搜索区（两页共用交互件；规格书 §2.2/§4）──────────────────
+   展开动效：max-height 0→目标高（容器弹簧展开 = 下方内容整体下拉让位）+ opacity；
+   消息页内栏另叠 scaleX origin right（自钮处向左生长）。220ms 克制 spring。
+   判据挂在页面 section 的 .mh-search-open 上（收编面重渲不丢态）。
+   收合实现取 max-height 而非 grid-rows：联系人页承载体 = 桌面重渲的
+   .fm-search-block（flex column 桌面形态不可动），两页统一同一条收合语汇。 */
+body.mobile-layer .mh-search-dock,
+body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-block {
+  flex: none;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition:
+    max-height 220ms cubic-bezier(0.34, 1.3, 0.64, 1),
+    opacity 180ms ease;
+}
+body.mobile-layer .mobile-page.mh-search-open .mh-search-dock {
+  max-height: 78vh;
+  opacity: 1;
+}
+/* 联系人页承载体带 #mobile-pages 锚（压收合规则的 ID 特异性，同维度对打）。 */
+body.mobile-layer #mobile-pages .mobile-page.mh-search-open[data-page="contacts"] .fm-search-block {
+  max-height: 560px;
+  opacity: 1;
+}
+body.mobile-layer .mh-search-dock {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+body.mobile-layer .mh-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 16px;
+  padding: 0 14px;
+  height: 44px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge),
+    0 1px 3px var(--glass-control-glow);
+  transform: scaleX(0.6);
+  transform-origin: right center;
+  transition: transform 220ms cubic-bezier(0.34, 1.3, 0.64, 1);
+}
+body.mobile-layer .mobile-page.mh-search-open .mh-search-bar { transform: scaleX(1); }
+body.mobile-layer .mh-search-bar > svg,
+body.mobile-layer .mh-search-bar > i svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--color-frame-text-muted, #98a2b3);
+  display: block;
+}
+body.mobile-layer .mh-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--color-frame-text, #e6e9ef);
+  font-size: 14px;
+  font-family: inherit;
+}
+body.mobile-layer .mh-search-input::placeholder { color: var(--color-frame-text-muted, #98a2b3); }
+body.mobile-layer .mh-search-clear {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(128, 128, 128, 0.18);
+  color: var(--color-frame-text-muted, #98a2b3);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+body.mobile-layer .mh-search-clear svg { width: 12px; height: 12px; display: block; }
+body.mobile-layer .mh-search-bar.has-text .mh-search-clear { display: flex; }
+/* 范围 chips（全部/好友/设备/群聊）：mf-strip-chip 语言同源。 */
+body.mobile-layer .mh-scope-row {
+  display: flex;
+  gap: 6px;
+  padding: 10px 16px 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+body.mobile-layer .mh-scope-row::-webkit-scrollbar { display: none; }
+body.mobile-layer .mh-scope-chip {
+  flex: none;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  color: var(--color-frame-text, #e6e9ef);
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+body.mobile-layer .mh-scope-chip.on {
+  background: rgba(var(--brand-green, 7 193 96), 0.14);
+  border-color: rgba(var(--brand-green, 7 193 96), 0.5);
+  color: var(--color-text-bright, var(--color-text));
+  font-weight: 600;
+}
+body.mobile-layer .mh-scope-chip:active { transform: scale(0.95); }
+/* 状态行（aria-live）与脚注。 */
+body.mobile-layer .mh-search-status {
+  padding: 8px 20px 0;
+  font-size: 12px;
+  color: var(--color-frame-text-muted, #98a2b3);
+  min-height: 26px;
+}
+body.mobile-layer .mh-search-status[hidden] { display: none; }
+body.mobile-layer .mh-search-note {
+  padding: 4px 20px 8px;
+  font-size: 11px;
+  color: var(--color-frame-text-muted, #98a2b3);
+}
+/* 结果流：按会话分组（微信「查找聊天内容」口径）。 */
+body.mobile-layer .mh-search-results {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  scrollbar-width: none;
+}
+body.mobile-layer .mh-search-results::-webkit-scrollbar { display: none; }
+body.mobile-layer .mh-sr-group {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-frame-text-muted, #98a2b3);
+  padding: 10px 10px 2px;
+  flex: none;
+}
+body.mobile-layer .mh-sr-row {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--color-frame-text, #e6e9ef);
+  font-family: inherit;
+  text-align: start;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+body.mobile-layer .mh-sr-row:active { transform: scale(0.97); }
+body.mobile-layer .mh-sr-row + .mh-sr-row { border-top: 1px solid var(--color-border, rgba(0, 0, 0, 0.06)); }
+body.mobile-layer .mh-sr-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--color-frame-text-muted, #98a2b3);
+}
+body.mobile-layer .mh-sr-sender { font-weight: 600; color: var(--color-frame-text, #e6e9ef); }
+body.mobile-layer .mh-sr-time { margin-left: auto; font-variant-numeric: tabular-nums; flex: none; }
+body.mobile-layer .mh-sr-snippet {
+  font-size: 14px;
+  line-height: 1.45;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+/* 命中高亮：sapphire 30%（先例 = chatSearch 手机层 mark 档，双主题单值）。 */
+body.mobile-layer .mh-sr-snippet mark {
+  background: rgb(var(--sapphire) / 0.30);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+/* 跳转定位闪烁：sapphire 底 1.6s 渐隐（消息行 reveal 缝）。 */
+@keyframes mhRevealFlash {
+  0% { background-color: rgb(var(--sapphire) / 0.30); }
+  100% { background-color: transparent; }
+}
+body.mobile-layer .fm-flow .fm-msg.fm-reveal-flash {
+  animation: mhRevealFlash 1.6s ease-out both;
+  border-radius: 10px;
+}
+@media (prefers-reduced-motion: reduce) {
+  body.mobile-layer .mh-search-dock,
+  body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-block,
+  body.mobile-layer .mh-search-bar { transition-duration: 0.01s; }
+  body.mobile-layer .fm-flow .fm-msg.fm-reveal-flash { animation-duration: 0.01s; }
+}
+
+/* ── ④ 联系人页搜索块承载（既有桌面逻辑零改动，手机层默认收合）──────────
+   收合/展开规则在 ③ 块（mh-search-open 判据）；本块只管承载形态：桌面
+   in-flow 块体在 open 态吃展开区位置，结果卡自然推挤下方好友列表。 */
+body.mobile-layer #mobile-pages .mobile-page.mh-search-open[data-page="contacts"] .fm-search-block {
+  margin: 10px 0 0;
+  animation: none;
 }

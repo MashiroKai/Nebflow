@@ -203,7 +203,9 @@ function buildSection(def) {
   if (!def.dock) {
     const back = document.createElement('button');
     back.type = 'button';
-    back.className = 'mobile-back-btn';
+    // 悬浮钮统一批（作者令 10-31 16:03）：「<」归 48px g2-fab 基准材质，
+    // 悬浮位/几何由 mobileLayer.css 页面悬浮带块承担。
+    back.className = 'mobile-back-btn g2-fab';
     back.title = backLabel();
     back.setAttribute('aria-label', backLabel());
     back.innerHTML = '<i data-lucide="chevron-left"></i>';
@@ -726,8 +728,11 @@ function buildCanvasPage(body) {
   eSub.textContent = tt('在聊天里打开文件或文档后会出现在这里', 'Documents opened from chat appear here');
   empty.append(eIcon, eTitle, eSub);
   const stackView = buildStackView(wrap);
-  wrap.append(strip, toolbar, host, empty);
+  wrap.append(strip, host, empty);
   body.appendChild(wrap);
+  // 悬浮钮统一批：工具条 = 页面悬浮 chrome 带控件 —— 挂 section 根（与页头带同
+  // 定位上下文，top:16+safe 落位），mf-canvas-page 只吃 chip 条/文档区/空态。
+  body.parentElement?.appendChild(toolbar);
   canvasUI = { strip, toolbar, host, empty };
   if (typeof lucide !== 'undefined') createIconsIn(wrap);
   void stackView;
@@ -1023,7 +1028,8 @@ function ensureInjectedBack(hostSel, pageId) {
   if (!host || host.querySelector('.mobile-back-injected')) return;
   const back = document.createElement('button');
   back.type = 'button';
-  back.className = 'mobile-back-btn mobile-back-injected';
+  // 统一批：注入返回钮同 g2-fab 基准（与页面壳「<」同材质同几何）。
+  back.className = 'mobile-back-btn mobile-back-injected g2-fab';
   back.dataset.page = pageId;
   back.title = backLabel();
   back.setAttribute('aria-label', backLabel());

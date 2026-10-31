@@ -130,12 +130,13 @@ test('T1 settings opens with NO profile entry row; agent surface lives in the me
   }));
   expect(head.first).toBe('settings-modal');
 
-  // 出页弹回工作台根（设置 = push 详情）→ 再「<」回聊天根（页为全屏独立界面，
-  // 顶栏头像只在聊天根可达）→ header 头像 = 唯一智能体入口：开合并面板。
+  // 出页弹回工作台根（设置 = push 详情）→ 回聊天根走 dock 中键（chat home；
+  // 工作台根 = dock 语义零「<」，Canvas 改造批②口径——原「工作台页头 <」
+  // 断言随该批退役，预存漂移已修）→ header 头像 = 唯一智能体入口：开合并面板。
   await page.locator('.mobile-page[data-page="settings"] .mobile-page-header .mobile-back-btn').click();
   await expect(page.locator('.mobile-page[data-page="settings"]')).not.toHaveClass(/live/);
   await expect(page.locator('.mobile-page[data-page="workbench"]')).toHaveClass(/live/);
-  await page.locator('.mobile-page[data-page="workbench"] .mobile-page-header .mobile-back-btn').click();
+  await page.locator('#mobile-dock .dock-key[data-dock="chat"]').click();
   await expect(page.locator('.mobile-page.live')).toHaveCount(0);
   await page.locator('#agent-avatar-btn').click();
   await expect(page.locator('#memory-overlay')).toHaveClass(/on/);
@@ -197,11 +198,12 @@ test('T3 name inline save on Enter via merged panel; settings groups follow desk
   await pushSettings(page);
 
   // 名称行内回车存（入口 = header 头像 → 合并面板智能体分区；saveName 写穿
-  // state.rootDisplayName + 播 root-name-change）。设置弹回工作台根后再「<」
-  // 回聊天根，顶栏头像只在聊天根可达（页 = 全屏独立界面）。
+  // state.rootDisplayName + 播 root-name-change）。设置弹回工作台根后经 dock
+  // 中键回聊天根（chat home；工作台根 = dock 语义零「<」，批②口径），顶栏
+  // 头像只在聊天根可达（页 = 全屏独立界面）。
   await page.locator('.mobile-page[data-page="settings"] .mobile-page-header .mobile-back-btn').click();
   await expect(page.locator('.mobile-page[data-page="settings"]')).not.toHaveClass(/live/);
-  await page.locator('.mobile-page[data-page="workbench"] .mobile-page-header .mobile-back-btn').click();
+  await page.locator('#mobile-dock .dock-key[data-dock="chat"]').click();
   await expect(page.locator('.mobile-page.live')).toHaveCount(0);
   await page.locator('#agent-avatar-btn').click();
   await expect(page.locator('#memory-overlay')).toHaveClass(/on/);

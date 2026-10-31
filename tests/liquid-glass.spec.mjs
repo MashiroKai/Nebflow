@@ -157,7 +157,7 @@ test.describe('手机视口（mobile-layer）', () => {
     expect(errors).toEqual([]);
   });
 
-  test('M3 §9-③ 悬浮圆钮正圆 48px（移动档）；折射层 blur 16 / sat 1.8；图标 20px', async ({ page }) => {
+  test('M3 §9-③ 悬浮圆钮正圆 48px（移动档）；折射层 blur 20 / sat 2.2（v3 §D）；图标 20px', async ({ page }) => {
     const errors = watchErrors(page);
     await bootApp(page);
     const r = await page.evaluate(() => {
@@ -179,8 +179,9 @@ test.describe('手机视口（mobile-layer）', () => {
     expect(r.radius).toBe('50%');
     expect(r.w).toBe('48px');
     expect(r.h).toBe('48px');
-    expect(String(r.blur)).toContain('blur(16px)');
-    expect(String(r.blur)).toContain('saturate(1.8)');
+    // v3 §D 令牌单源（stand-tokens.css --g2-fab-blur/sat）：20px / 2.2。
+    expect(String(r.blur)).toContain('blur(20px)');
+    expect(String(r.blur)).toContain('saturate(2.2)');
     expect(r.highlight).toContain('linear-gradient'); // 上半镜面高光层
     expect(r.svgW).toBe('20px');
     expect(errors).toEqual([]);
@@ -314,16 +315,17 @@ test.describe('三态 token 解析（§9-⑥）', () => {
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.waitForTimeout(120);
     const fallbackDark = await read();
-    expect(light).toContain('0.6');
-    expect(dark).toContain('0.14');
-    expect(fallbackDark).toContain('0.14');
+    // v3 §D：--g2-fab-bg 亮 0.30 / 暗 0.10（stand-tokens.css 三态块）。
+    expect(light).toContain('0.30');
+    expect(dark).toContain('0.10');
+    expect(fallbackDark).toContain('0.10');
     expect(light).not.toBe(dark);
     expect(errors).toEqual([]);
   });
 });
 
 test.describe('no-backdrop 降级（§9-⑦）', () => {
-  test('F1 圆钮实色回落：亮 alpha ≥ .78 / 暗 alpha ≥ .26，高光投影保留', async ({ page }) => {
+  test('F1 圆钮实色回落：亮 alpha ≥ .55 / 暗 alpha ≥ .20（v3 --g2-fab-solid），高光投影保留', async ({ page }) => {
     const errors = watchErrors(page);
     await bootApp(page, { width: 1280, height: 800, colorScheme: 'light' });
     const read = () => page.evaluate(() => {
@@ -340,13 +342,13 @@ test.describe('no-backdrop 降级（§9-⑦）', () => {
     });
     await page.evaluate(() => document.documentElement.classList.add('no-backdrop'));
     const light = await read();
-    expect(parseFloat(/,\s*([\d.]+)\)$/.exec(light.bg)[1])).toBeGreaterThanOrEqual(0.78 - 1e-6);
+    expect(parseFloat(/,\s*([\d.]+)\)$/.exec(light.bg)[1])).toBeGreaterThanOrEqual(0.55 - 1e-6);
     expect(light.shadow).toContain('inset'); // 高光/浮影保留（不裸断）
     await page.evaluate(() => {
       document.documentElement.setAttribute('data-theme', 'dark');
     });
     const dark = await read();
-    expect(parseFloat(/,\s*([\d.]+)\)$/.exec(dark.bg)[1])).toBeGreaterThanOrEqual(0.26 - 1e-6);
+    expect(parseFloat(/,\s*([\d.]+)\)$/.exec(dark.bg)[1])).toBeGreaterThanOrEqual(0.20 - 1e-6);
     expect(errors).toEqual([]);
   });
 });
@@ -372,8 +374,8 @@ test.describe('边缘光折射（追加批）', () => {
     // headless Chromium 支持 SVG 滤镜 ⇒ 类开关应挂上（defs 在场双判据）。
     expect(on.cls).toBe(true);
     expect(String(on.filter)).toContain('url(');
-    expect(String(on.backdrop)).toContain('blur(16px)');
-    expect(String(on.backdrop)).toContain('saturate(1.8)');
+    expect(String(on.backdrop)).toContain('blur(20px)');
+    expect(String(on.backdrop)).toContain('saturate(2.2)');
     expect(on.highlight).toContain('linear-gradient'); // 镜面高光层常驻
     // 摘除类 = 旧 WebView 降级面：滤镜消失、高光/直 blur 保留。
     const off = await page.evaluate(() => {
@@ -382,7 +384,7 @@ test.describe('边缘光折射（追加批）', () => {
       return { filter: before.filter, backdrop: before.backdropFilter || before.webkitBackdropFilter, highlight: before.backgroundImage };
     });
     expect(String(off.filter)).toBe('none');
-    expect(String(off.backdrop)).toContain('blur(16px)');
+    expect(String(off.backdrop)).toContain('blur(20px)');
     expect(off.highlight).toContain('linear-gradient');
     expect(errors).toEqual([]);
   });

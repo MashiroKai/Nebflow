@@ -2039,7 +2039,7 @@ function syncHeaderActions() {
     closeBtn = document.createElement('button');
     closeBtn.id = 'canvas-head-close';
     closeBtn.className = 'canvas-head-btn';
-    closeBtn.type = 'button';
+    (/** @type {HTMLButtonElement} */ (closeBtn)).type = 'button';
     closeBtn.innerHTML = HEAD_CLOSE_SVG;
     closeBtn.setAttribute('title', t('canvas.closeTab'));
     closeBtn.setAttribute('aria-label', t('canvas.closeTab'));

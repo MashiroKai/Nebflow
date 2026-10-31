@@ -810,59 +810,69 @@ test('D17 page switch animation retired: zero transition, zero transform, direct
   expect(errors).toEqual([]);
 });
 
-test('D18 top capsule language: floating header (no bar surface), capsule title, glass back disc, icon centered', async ({ page }) => {
+test('D18 floating chrome band: zero-height transparent band, capsule title centered, 48px g2-fab back at 16/16+safe, icon centered', async ({ page }) => {
   const errors = watchErrors(page);
-  // 批② 2026-10-31：工作台是 dock 根页、无返回钮——顶带语言判据载体改推设置
-  // 详情页（工作台 hub 行进；详情页保留「<」回弹）。页头无通栏底面/标题玻璃
-  // 胶囊/返回钮 glass-control 族/图标居中四族断言不变。
+  // 悬浮钮统一批 2026-10-31 作者令 16:03：页头 = 悬浮 chrome 带（零高透明不拦截），
+  // 返回钮归 48px g2-fab 基准（材质 --g2-fab-bg 探针同源），悬浮位 = 聊天根任务键
+  // 同几何（top 16+safe / left 16）；标题胶囊带内居中。判据载体 = 设置详情页。
   await dockTo(page, 'workbench');
   await page.locator('.mf-hub-row[data-hub-page="settings"]').click();
   await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
   const st = await page.evaluate(() => {
-    const head = document.querySelector('.mobile-page[data-page="settings"] .mobile-page-header');
+    const page = document.querySelector('.mobile-page[data-page="settings"]');
+    const head = page.querySelector('.mobile-page-header');
     const title = head.querySelector('.mobile-page-title');
     const back = head.querySelector('.mobile-back-btn');
     const svg = back.querySelector('svg');
-    const chrome = document.querySelector('.mh-chrome-btn[data-chrome="search"]');
-    const chromeSvg = chrome?.querySelector('svg');
     // token 同源探针（frontend-verification 口径）：等值判据取自同一 var()。
     const probe = document.createElement('span');
-    probe.style.background = 'var(--glass-control-bg)';
+    probe.style.background = 'var(--g2-fab-bg)';
     document.body.appendChild(probe);
-    const glassBg = getComputedStyle(probe).backgroundColor;
+    const fabBg = getComputedStyle(probe).backgroundColor;
     probe.remove();
+    const probe2 = document.createElement('span');
+    probe2.style.background = 'var(--glass-control-bg)';
+    document.body.appendChild(probe2);
+    const glassBg = getComputedStyle(probe2).backgroundColor;
+    probe2.remove();
+    const pr = page.getBoundingClientRect();
     const br = back.getBoundingClientRect();
     const sr = svg.getBoundingClientRect();
-    // 批②：chrome 键只在聊天根顶带——详情页判据载体无 chrome，探针改可选。
-    const cr = chrome ? chrome.getBoundingClientRect() : null;
-    const csr = chromeSvg ? chromeSvg.getBoundingClientRect() : null;
+    const tr = title.getBoundingClientRect();
     const hs = getComputedStyle(head);
     const ts = getComputedStyle(title);
     const bs = getComputedStyle(back);
     return {
-      // 页头无通栏底面：背景透明 + 零底边线。
+      // 带无通栏底面：零高透明、不拦截指针。
       headBg: hs.backgroundColor,
-      headBorderBottomWidth: hs.borderBottomWidth,
-      // 标题 = 玻璃胶囊。
+      headHeight: hs.height,
+      headPointerEvents: hs.pointerEvents,
+      // 标题 = 玻璃胶囊、带内水平居中（页面中心 ±2px）。
       titleRadius: ts.borderRadius,
       titleBg: ts.backgroundColor,
       titleGlassBg: glassBg,
-      // 返回钮 = glass-control 悬浮圆（材质与 chrome 键同源）。
+      titleCenterDx: Math.abs((tr.left + tr.width / 2) - (pr.left + pr.width / 2)),
+      // 返回钮 = 48px g2-fab（材质与 chrome 键同源 token 族），悬浮位同 chrome 几何。
       backBg: bs.backgroundColor,
+      backFabBg: fabBg,
       backRadius: bs.borderRadius,
+      backBox: { w: Math.round(br.width), h: Math.round(br.height) },
+      backPos: { top: Math.round(br.top), left: Math.round(br.left) },
       // 玻璃空间相对图标居中（水平+垂直 ≤1px）。
       backDx: Math.abs((sr.left + sr.width / 2) - (br.left + br.width / 2)),
       backDy: Math.abs((sr.top + sr.height / 2) - (br.top + br.height / 2)),
-      chromeDx: cr && csr ? Math.abs((csr.left + csr.width / 2) - (cr.left + cr.width / 2)) : null,
-      chromeDy: cr && csr ? Math.abs((csr.top + csr.height / 2) - (cr.top + cr.height / 2)) : null,
     };
   });
   expect(st.headBg).toBe('rgba(0, 0, 0, 0)');
-  expect(st.headBorderBottomWidth).toBe('0px');
+  expect(st.headHeight).toBe('0px');
+  expect(st.headPointerEvents).toBe('none');
   expect(st.titleRadius).toBe('999px');
   expect(st.titleBg).toBe(st.titleGlassBg);
-  expect(st.backBg).toBe(st.titleGlassBg); // 标题胶囊与返回钮同 glass-control 族
+  expect(st.titleCenterDx).toBeLessThanOrEqual(2);
+  expect(st.backBg).toBe(st.backFabBg); // 返回钮 = g2-fab 族（统一批新基准）
   expect(st.backRadius).toBe('50%');
+  expect(st.backBox).toEqual({ w: 48, h: 48 });
+  expect(st.backPos).toEqual({ top: 16, left: 16 }); // safe-area 测试视口 = 0
   expect(st.backDx).toBeLessThanOrEqual(1);
   expect(st.backDy).toBeLessThanOrEqual(1);
   expect(errors).toEqual([]);

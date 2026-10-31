@@ -231,7 +231,8 @@ function syncGate() {
   // 批⑨：手机层 FAB 只在 canvas 页在场时亮——active 文件卡不因根页切换而
   // 变，缺本闸聊天根/工作台根会浮一颗无上下文对话钮。
   const mobilePageOk = !mobile ||
-    !!(typeof window !== 'undefined' && window.__nfMobileNav && window.__nfMobileNav.top === 'canvas');
+    !!(typeof window !== 'undefined' && (/** @type {any} */ (window)).__nfMobileNav
+      && (/** @type {any} */ (window)).__nfMobileNav.top === 'canvas');
   const off = !currentFile || readerPanelOpen || !mobilePageOk;
   el.fab.classList.toggle('gate-off', off);
   el.dock.classList.toggle('gate-off', off);
@@ -243,7 +244,8 @@ function syncGate() {
 // 面板关/切书由 chrome 的对应 false 事件复位（其卸载路径必发）。
 let readerPanelOpen = false;
 document.addEventListener('nf-reader-panel-toggle', (e) => {
-  readerPanelOpen = !!(e && e.detail && e.detail.open);
+  const d = (/** @type {CustomEvent<{open?: boolean}>} */ (e)).detail;
+  readerPanelOpen = !!(d && d.open);
   syncGate();
 });
 
@@ -293,7 +295,7 @@ function syncSeat() {
     // 批⑩：活动卡挂电子书阅读器时，底栏 ⋯ 右端与 fab 同角——fab 抬到底栏
     // 上方（nf-reader-mounted 触发本重算；reader-p1 移动触滑腿实证拦截）。
     const pane = document.querySelector('.canvas-tab-pane.active');
-    const nav = pane && pane.querySelector('.epub-reader-nav');
+    const nav = pane && (/** @type {HTMLElement|null} */ (pane.querySelector('.epub-reader-nav')));
     if (nav && nav.offsetParent !== null) {
       const nr = nav.getBoundingClientRect();
       if (nr.width > 0 && nr.height > 0) {

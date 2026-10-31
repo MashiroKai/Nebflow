@@ -200,8 +200,10 @@ test('T1 five-tab dock: author-order keys, icon+label structure, switching, acti
   // 同根再点 = 清详情回根（栈已 1 → noop 不塌栈）。
   await page.locator('#mobile-dock .dock-key[data-dock="workbench"]').click();
   expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('workbench');
-  // 根页「<」= 回聊天根；中键激活。
-  await page.locator('.mobile-page[data-page="workbench"] .mobile-back-btn').click();
+  // Canvas 改造批②（2026-10-31）：dock 根页（消息/联系人/canvas/工作台）无「<」
+  // ——返回语义由底 dock 承担（中键 = chat home）。根页返回 = 点中键回聊天根。
+  expect(await page.locator('.mobile-page[data-page="workbench"] .mobile-back-btn')).toHaveCount(0);
+  await page.locator('#mobile-dock .dock-key[data-dock="chat"]').click();
   expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('chat');
   await expect(page.locator('#mobile-dock .dock-key.active')).toHaveCount(1);
   await expect(page.locator('#mobile-dock .dock-key[data-dock="chat"].active')).toHaveCount(1);
