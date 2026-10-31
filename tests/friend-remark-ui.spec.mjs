@@ -267,8 +267,8 @@ try {
   ok('R2-2 maxlength=64 + i18n 文案（placeholder/title/aria 非空且走 t()）',
     shape.maxLength === 64 && !!shape.placeholder && !!shape.title && shape.aria === '设置备注',
     JSON.stringify({ maxLength: shape.maxLength, placeholder: shape.placeholder, title: shape.title, aria: shape.aria }));
-  ok('R2-3 视觉同档：13px 字号 + 1px 边框（复用既有行内编辑形态）',
-    shape.fontSize === '13px' && parseFloat(shape.borderWidth) === 1, JSON.stringify({ fontSize: shape.fontSize, borderWidth: shape.borderWidth, lineHeight: shape.lineHeight }));
+  ok('R2-3 视觉同档：16px 字号（2026-10-31 条目字号放大批随 .fm-row-name 同档）+ 1px 边框（复用既有行内编辑形态）',
+    shape.fontSize === '16px' && parseFloat(shape.borderWidth) === 1, JSON.stringify({ fontSize: shape.fontSize, borderWidth: shape.borderWidth, lineHeight: shape.lineHeight }));
 
   // ── R3 提交（PUT 形状逐字；起点 idx 记录避免活体阶段 PUT 占位）──
   const idxSubmit = puts.length;

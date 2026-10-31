@@ -1,0 +1,68 @@
+{
+  "375-messages": {
+    "conv": {
+      "name": "16px",
+      "nameLH": "22.4px",
+      "summary": "14px",
+      "time": "12px",
+      "rowH": 60
+    },
+    "friend": {
+      "name": "16px",
+      "nameLH": "23.2px",
+      "sub": "13px",
+      "subLH": "18.85px",
+      "rowH": 0
+    }
+  },
+  "375-contacts": {
+    "conv": {
+      "name": "16px",
+      "nameLH": "22.4px",
+      "summary": "14px",
+      "time": "12px",
+      "rowH": 0
+    },
+    "friend": {
+      "name": "16px",
+      "nameLH": "23.2px",
+      "sub": "13px",
+      "subLH": "18.85px",
+      "rowH": 60
+    }
+  },
+  "375-pageErrors": [],
+  "1440-messages": {
+    "conv": {
+      "name": "16px",
+      "nameLH": "22.4px",
+      "summary": "14px",
+      "time": "12px",
+      "rowH": 60
+    },
+    "friend": {
+      "name": "16px",
+      "nameLH": "23.2px",
+      "sub": "13px",
+      "subLH": "18.85px",
+      "rowH": 0
+    }
+  },
+  "1440-contacts": {
+    "conv": {
+      "name": "16px",
+      "nameLH": "22.4px",
+      "summary": "14px",
+      "time": "12px",
+      "rowH": 0
+    },
+    "friend": {
+      "name": "16px",
+      "nameLH": "23.2px",
+      "sub": "13px",
+      "subLH": "18.85px",
+      "rowH": 60
+    }
+  },
+  "1440-pageErrors": []
+}
