@@ -221,7 +221,15 @@ case class SharedResources(
    * **禁**读本 Ref（口径③；静态判据见
    * `.nebflow/tools/20260915_ctxthresh_leak-check.sh`）。
    */
-  sessionCompactThreshold: Ref[IO, Map[String, Double]] = Ref.unsafe[IO, Map[String, Double]](Map.empty)
+  sessionCompactThreshold: Ref[IO, Map[String, Double]] = Ref.unsafe[IO, Map[String, Double]](Map.empty),
+  /**
+   * 消息身份牌注册表（msgtokens 批 2026-10-31）：真人用户消息到达时急切铸牌
+   * （先映射后会话数组双写序），五个投递组包点投递前消解牌为全文；会话级
+   * `<dataRoot>/sessions/<sid>/msg-tokens.jsonl`，压缩/重启存活。
+   * 默认 = 全局单例（惰性绑定 PathUtil.dataRoot，同 FileChangeLedger.unsafe 先例）
+   * ⇒ 存量测试构造零改动。置于参数表末尾——其后无参数，位置参数构造点零影响。
+   */
+  override val msgTokens: nebflow.core.msgtokens.MsgTokenRegistry = nebflow.core.msgtokens.MsgTokenRegistry.global
 ) extends AgentRuntimePort,
       SubAgentTaskPort:
 

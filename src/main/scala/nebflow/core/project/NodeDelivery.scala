@@ -231,37 +231,43 @@ private[project] trait NodeDelivery:
     message: String,
     attribution: Option[InjectionAttribution] = None
   ): IO[Either[String, String]] =
-    val text = message.trim
-    if text.isEmpty then IO.pure(Left(s"'message' must be non-empty (trim) — nothing to inject (NODE_MESSAGE_EMPTY)"))
+    val trimmed = message.trim
+    if trimmed.isEmpty then IO.pure(Left(s"'message' must be non-empty (trim) — nothing to inject (NODE_MESSAGE_EMPTY)"))
     else
-      store.findNode(nodeId).flatMap {
-        case None =>
-          IO.pure(
-            Left(
-              s"Node '$nodeId' not found in project '$projectName' (active or archived) — " +
-                s"check NodeList for the current topology (NODE_NOT_FOUND)"
+      // 消息身份牌消解（msgtokens 批 2026-10-31）：注入/附注文本里的 {{msg:sid8-seq6}}
+      // 在三条路由（injectRunning / appendToTaskRoute / appendUndelivered）前展开为
+      // 消息全文（映射缺失 = 显式报错行注入）。单点覆盖运行中注入与待启动补充两腿；
+      // 事件日志随消解后文本留痕。机制关 = 原样透传。
+      resources.msgTokens.resolve(trimmed).flatMap { text =>
+        store.findNode(nodeId).flatMap {
+          case None =>
+            IO.pure(
+              Left(
+                s"Node '$nodeId' not found in project '$projectName' (active or archived) — " +
+                  s"check NodeList for the current topology (NODE_NOT_FOUND)"
+              )
             )
-          )
-        case Some(n) if NodeLifecycle.Terminal.contains(n.status) =>
-          IO.pure(
-            Left(
-              s"Node '${n.name}' is terminal (status=${n.status}) — messages are refused: " +
-                "a finished node is never retro-edited; create a new node instead (NODE_TERMINAL_NO_MESSAGE)"
+          case Some(n) if NodeLifecycle.Terminal.contains(n.status) =>
+            IO.pure(
+              Left(
+                s"Node '${n.name}' is terminal (status=${n.status}) — messages are refused: " +
+                  "a finished node is never retro-edited; create a new node instead (NODE_TERMINAL_NO_MESSAGE)"
+              )
             )
-          )
-        case Some(n) if n.status == NodeLifecycle.Running =>
-          injectRunning(n, text, attribution)
-        // interrupted（中断恢复语义批 2026-09-13 spec §2.2 不变量第 4 条）：
-        // 节点非终态但「休眠」——**不得按终态拒收**（spec 原口径「现状即兼容」经实读
-        // 核验**不成立**：旧路由落到 appendToTaskRoute 的终态分支，会把 interrupted
-        // 误报成 terminal 并丢消息）。改走注入面：活会话（钩子窗口）→ ImmediateInput；
-        // 会话已死/未登记（重启后未认领 / crashRecovery=false 降级）→ injectRunning
-        // 的既有兜底 appendUndelivered（记录在 task 上「注入未达」，续跑/重跑经
-        // NodeList(detail) 可读）——与 spec §2.2 期望语义一致且零丢失。
-        case Some(n) if n.status == NodeLifecycle.Interrupted =>
-          injectRunning(n, text, attribution)
-        case Some(n) =>
-          appendToTaskRoute(n, text, retried = false, attribution)
+          case Some(n) if n.status == NodeLifecycle.Running =>
+            injectRunning(n, text, attribution)
+          // interrupted（中断恢复语义批 2026-09-13 spec §2.2 不变量第 4 条）：
+          // 节点非终态但「休眠」——**不得按终态拒收**（spec 原口径「现状即兼容」经实读
+          // 核验**不成立**：旧路由落到 appendToTaskRoute 的终态分支，会把 interrupted
+          // 误报成 terminal 并丢消息）。改走注入面：活会话（钩子窗口）→ ImmediateInput；
+          // 会话已死/未登记（重启后未认领 / crashRecovery=false 降级）→ injectRunning
+          // 的既有兜底 appendUndelivered（记录在 task 上「注入未达」，续跑/重跑经
+          // NodeList(detail) 可读）——与 spec §2.2 期望语义一致且零丢失。
+          case Some(n) if n.status == NodeLifecycle.Interrupted =>
+            injectRunning(n, text, attribution)
+          case Some(n) =>
+            appendToTaskRoute(n, text, retried = false, attribution)
+        }
       }
 
     end if

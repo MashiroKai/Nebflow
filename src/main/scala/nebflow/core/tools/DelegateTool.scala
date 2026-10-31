@@ -1009,6 +1009,11 @@ Executor: ${agentName}; workspace: $effectiveWs${project.map(p => s" (project '$
             .getOrElse("")}.
 It runs in session $subagentId with no project context and no memory; the brief is its entire context.
 You will be notified when it completes via a system message. Do NOT duplicate this task — wait for the result or work on something unrelated."""
+      // 消息身份牌消解（msgtokens 批 2026-10-31）：brief 里的 {{msg:sid8-seq6}} 在
+      // 进入子会话前展开为消息全文（映射缺失 = 显式报错行注入）。装配侧单点——
+      // assembleBrief 本体（spec 判红锚）逐字节不动；initialPrompt 与首条 UserInput
+      // 同吃消解后文本。机制关 = 原样透传。
+      resolvedBrief <- resources.msgTokens.resolve(brief)
       subagentRef <- NodeRunner.spawnAgentActor(system, params)
       adapterRef <- NodeRunner.spawnSupervisedAdapter(
         system = system,
@@ -1019,7 +1024,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
         agentName = agentName,
         subagentId = subagentId,
         parentSessionId = parentSessionId.getOrElse(""),
-        initialPrompt = brief,
+        initialPrompt = resolvedBrief,
         source = "delegate",
         wsSend = Some(childWsSend)
       )
@@ -1160,7 +1165,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
           ).attempt
             .void
         case None => IO.unit
-      _ <- subagentRef ! AgentCommand.UserInput(brief, Some(adapterRef))
+      _ <- subagentRef ! AgentCommand.UserInput(resolvedBrief, Some(adapterRef))
     yield Right((subagentId, ack))
     end for
   end spawnWithPlugins

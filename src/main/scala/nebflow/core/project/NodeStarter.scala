@@ -317,6 +317,10 @@ private[project] trait NodeStarter:
           (chainBlock ++ deviceBlock ++ List(boardBlock, ownTask).filter(_.nonEmpty) ++ upstream)
             .mkString("\n\n") + "\n\n" + NodeEngine.protocolFootnoteFor(Some(node.role))
         }
+        // 消息身份牌消解（msgtokens 批 2026-10-31）：节点 spawn 输入出口单点消解——
+        // task 正文（含「分发器补充」段）与上游 result 里的 {{msg:sid8-seq6}} 在投递前
+        // 展开为消息全文（映射缺失 = 显式报错行注入）。机制关 = 原样透传。
+        .flatMap(resources.msgTokens.resolve)
     }
 
   end buildInput

@@ -61,6 +61,13 @@ trait AgentRuntimePort extends AgentRegistryPort:
   /** 镜像 `SharedResources.scheduledTaskStore`(core.scheduler)。 */
   def scheduledTaskStore: ScheduledTaskStore
 
+  /**
+   * 镜像 `SharedResources.msgTokens`（消息身份牌注册表，msgtokens 批 2026-10-31）：
+   * 铸牌 / 投递前消解 / 牌 reminder 反查 / 启动对账的会话级 JSONL 存储。
+   * 默认 = 全局单例（匿名窄视图实现零改动；生产装配 = SharedResources 字段，同实例）。
+   */
+  def msgTokens: nebflow.core.msgtokens.MsgTokenRegistry = nebflow.core.msgtokens.MsgTokenRegistry.global
+
   /** 镜像 `SharedResources.doneRecordStore`（认知二期产品批：打卡 done 历史，周报数据源）。
    * 默认实例（SharedResources 覆盖为同一 dataRoot 路径；匿名窄视图实现零改动）。 */
   def doneRecordStore: nebflow.core.scheduler.DoneRecordStore =

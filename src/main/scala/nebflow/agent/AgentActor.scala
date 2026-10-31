@@ -511,6 +511,26 @@ object AgentActor extends AgentCore with AgentSession:
     ).copy(source = injectionSourceFor(ui.fromUser, ui.source))
 
   /**
+   * 消息身份牌铸牌（msgtokens 批 2026-10-31）：真人输入（`fromUser=true`、纯文本——
+   * blocks 在场时 text 非权威，不铸）在**入队 / 直投**时急切铸牌。牌不嵌入消息正文——
+   * 只写映射（先映射后会话数组的双写序；JSONL 在会话目录旁挂，压缩/重启存活），
+   * 随后经 system-reminder 管线向本会话宣告（pipeLlmCall 的 msgtoken reminder）。
+   * 接线点三处，每条到达恰走其一：idle 直投 UserInput 腿 / busy 入队 UserInput 腿 /
+   * busy 入队 ImmediateInput 腿（idle ImmediateInput fromUser 件转发 UserInput 后归第一腿）。
+   * 机制关 / 无会话号 / 空文本 = 静默无牌（mint 内部同判据）；失败只 WARN 不阻断输入链。
+   */
+  private[agent] def mintUserMsgToken(
+    resources: SharedResources,
+    sessionId: Option[String],
+    text: String,
+    fromUser: Boolean,
+    blocks: Option[List[ContentBlock]],
+    clientMessageId: Option[String] = None
+  ): IO[Unit] =
+    if fromUser && blocks.forall(_.isEmpty) then resources.msgTokens.mint(sessionId, text, clientMessageId).void
+    else IO.unit
+
+  /**
    * F1 (2026-08-30): drain the queues that were held back during the
    * compaction window (ToolsComplete guard keeps pendingImmediateInputs and
    * pendingEvents untouched while a job is pending; the processing handler

@@ -961,6 +961,17 @@ object GatewayMain extends IOApp:
                                         case Left(e) =>
                                           logger.warn(s"Merge-queue boot reconcile failed: ${e.getMessage}").void
                                       }
+                                  // 消息身份牌（msgtokens 批 2026-10-31）：启动对账——扫描
+                                  // sessions/*/msg-tokens.jsonl 全量载入内存索引（重启后铸牌
+                                  // 序号续走、派发引牌即解，无需等首次铸牌触发的惰性装载），
+                                  // 已删会话的映射文件清除（孤儿不收容）。排在 mergeQueueBootSweep
+                                  // 邻位；无映射文件 = 零动作；失败只 WARN 绝不阻塞启动。
+                                  val msgTokensBootReconcile: IO[Unit] =
+                                    nebflow.core.msgtokens.MsgTokenRegistry.global.reconcileAll().attempt.flatMap {
+                                      case Right(r) => logger.info(s"Msg-token boot reconcile: ${r.summary}").void
+                                      case Left(e) =>
+                                        logger.warn(s"Msg-token boot reconcile failed: ${e.getMessage}").void
+                                    }
                                   // #28 阶段 0：Project Flow Map **completed** 节点 TTL 扫描
                                   // （24h 显示消失 → 移归档 + WS nodeRemoved；failed/cancelled
                                   // 无 TTL 不过期——2026-09-07 裁定，死亡现场保留待上层裁决；
@@ -1061,7 +1072,7 @@ object GatewayMain extends IOApp:
                                   // daemonService autoStart 块（构造序：dock 依赖
                                   // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
                                   // 契约由 dock 腿逐字保持。
-                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
+                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {

@@ -198,6 +198,10 @@ private[agent] object AgentIdle:
             _ <- heldFlush.fold(IO.unit)(p => flushHeldSideEffects(agentDef, resources, depth, p))
             _ <- sessionBusyIO
             _ <- injectedEventIO
+            // 消息身份牌铸牌（msgtokens 批）：先于本 turn 的 pipeLlmCall——reminder
+            // 宣告与后续派发消解都依赖映射已落（先映射后会话数组双写序）。clientMessageId
+            // 为幂等键：busy 入队已铸的转发件在此命中去重（每条用户消息铸唯一牌）。
+            _ <- mintUserMsgToken(resources, stateWithFlush.sessionId, text, fromUser, blocks, clientMessageId)
             result <- pipeLlmCall(
               agentDef,
               resources,
