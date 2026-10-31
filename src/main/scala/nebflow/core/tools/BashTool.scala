@@ -533,9 +533,24 @@ Git safety:
           .forSession(sessionId, initialDir = sessionInitialDir, sandbox = sandboxOpt, secretEnv = secretEnv ++ otpEnv)
           .flatMap { shell =>
             if cancelBg then
-              shell.cancelBackgroundJob(jobId).map { cancelled =>
-                if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
-                else Right(s"[Background job not found] Job ID: $jobId")
+              shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
+                // #1193 收口腿：显式取消同样是终态——**取走 registry 行** +
+                // 输出留存区翻转。原实现只出会话任务图、不取行：行残留 →
+                // death-watch 下一拍以「owner lost: not owned by session」
+                // 二次收割，账本/通知留下「引擎埋任务」假证（10-31 实证
+                // f25b9f1f/8641d0d5：模型显式取消 5s 后 owner-lost 收割到）。
+                // first-terminal-wins：真完成竞态已先取走行 ⇒ no-op 幂等。
+                val takeRow =
+                  if cancelled then
+                    BgTaskRegistry.unregisterReturning(jobId).void *>
+                      BgTaskOutputStore
+                        .finalizeTask(jobId, "cancelled", None, Some("Cancelled by agent (tool call)"))
+                        .handleErrorWith(_ => IO.unit)
+                  else IO.unit
+                takeRow.as {
+                  if cancelled then Right(s"[Background job cancelled] Job ID: $jobId")
+                  else Right(s"[Background job not found] Job ID: $jobId")
+                }
               }
             else
               shell.getBackgroundResult(jobId).flatMap {

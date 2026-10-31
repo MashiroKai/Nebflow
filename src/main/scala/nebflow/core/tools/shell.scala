@@ -170,6 +170,27 @@ final class ShellSession private (
       last <- lastAccessed.get
     yield now - last > SessionTTL
 
+  /**
+   * #1193（death-watch 归属缺陷批）在飞后台工作探针：任务图内存在**终态未落**
+   * （deferred 未完成）的后台任务 ⇒ true。判据只看「终态腿是否结构性仍在」——
+   * 与 death-watch 的存活判据同口径（行在 + 会话在 ⇒ 终态腿可达），不探进程
+   * 活性（进程死活是 health-check/收割面的管辖）。
+   *
+   * 读面纪律同 [[probeJobLiveness]]：不 touch、不过 checkAlive、不取锁——
+   * 调用方是会话工厂的 staleness 判定，探针失败绝不拖垮被测会话。
+   */
+  private[tools] def hasLiveBackgroundWork: IO[Boolean] =
+    backgroundJobs.get.flatMap { jobs =>
+      jobs.values.toList.existsM(job => job.deferred.tryGet.map(_.isEmpty))
+    }
+
+  /**
+   * spec 缝（#1193 回归锚）：把 lastAccessed 回拨指定毫秒——模拟「回合 idle
+   * 长跑、零 Bash 调用」的 TTL 超时形态，无需真等 30 分钟。生产无调用方。
+   */
+  private[tools] def backdateLastAccessedForSpec(millis: Long): IO[Unit] =
+    lastAccessed.update(_ - millis)
+
   /** Cancel the cleanup fiber to prevent leaks when the session is evicted. */
   private[tools] def cancelCleanupFiber(): IO[Unit] =
     cleanupFiber.cancel.handleErrorWith(_ => IO.unit)
@@ -1528,7 +1549,10 @@ object ShellSession:
     secretEnv: Map[String, String]
   ): IO[ShellSession] =
     def replace(old: ShellSession): IO[ShellSession] =
-      old.cancelCleanupFiber() *> old.kill() *> sessions.update(_ - sessionId) *>
+      NebflowLogger
+        .forName("nebflow.shell")
+        .info(s"[bg-ownership] replacing session '$sessionId' (stale or dead) — killing its process trees") *>
+        old.cancelCleanupFiber() *> old.kill() *> sessions.update(_ - sessionId) *>
         ShellSession.create(sessionId, initialDir, sandbox, secretEnv).flatMap { newS =>
           sessions.update(_ + (sessionId -> newS)).as(newS)
         }
@@ -1537,8 +1561,27 @@ object ShellSession:
         case Some(s) =>
           s.isStale.flatMap {
             case true =>
-              // Cancel the old cleanup fiber before killing the session to prevent fiber leak
-              replace(s)
+              // #1193（death-watch 归属缺陷批）病灶收口：TTL 陈旧判定只看「Bash
+              // 调用活动」——delegate 回合结束 idle 等结果期间零调用，超时后会话
+              // 被判陈旧；下一回合首个 Bash 触发 replace：old.kill() 杀掉仍在跑
+              // 的后台进程树 + 清空任务图，registry 行残留 → death-watch 下拍以
+              // 「not owned by session」收割（10-31 实证：液态玻璃批全量回归
+              // 83907ab5 跑到 816/914 被埋，一小时内连埋两个）。idle ≠ 死亡：
+              // 名下有在飞后台工作 = 会话实体仍承担终态腿义务，**禁止回收**——
+              // 续约复用；真无在飞工作才走既有 replace。终态收殓语义不变
+              // （reclaimSession/destroySession 不经本判定，会话真死照杀照收）。
+              s.hasLiveBackgroundWork.flatMap {
+                case true =>
+                  NebflowLogger
+                    .forName("nebflow.shell")
+                    .info(
+                      s"[bg-ownership] session '$sessionId' hit the 30min idle TTL but owns live " +
+                        "background work — renewed in place (idle != dead, #1193)"
+                    ) *> s.touch.as(s)
+                case false =>
+                  // Cancel the old cleanup fiber before killing the session to prevent fiber leak
+                  replace(s)
+              }
             case false =>
               // restart 恢复修复：滞留注册表的死会话（isAlive=false，
               // 如 restart/Stop 杀进程后未出 map 的历史形态）不返回——自愈重建，

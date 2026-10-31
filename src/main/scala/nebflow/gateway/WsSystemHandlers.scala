@@ -235,7 +235,12 @@ private[gateway] object WsSystemHandlers:
               // 输出查看批（2026-09-09）：显式取消也是终态——输出留存区
               // 翻转为 cancelled，详情卡回看「取消时刻为止」的全部输出。
               // 幂等：若完成回调已先 finalize（竞态），此处 no-op。
+              // #1193 收口腿：**同步取走 registry 行**——原实现只出会话任务图
+              // 不取行，行残留 → death-watch 下拍以「owner lost: not owned by
+              // session」二次收割，账本/通知留下「引擎埋任务」假证。
+              // first-terminal-wins：竞态已取走 ⇒ no-op 幂等。
               (if cancelled then
+                 nebflow.core.tools.BgTaskRegistry.unregisterReturning(jobId).void *>
                  nebflow.core.tools.BgTaskOutputStore
                    .finalizeTask(jobId, "cancelled", None, Some("Cancelled by user"))
                    .handleErrorWith(e =>
