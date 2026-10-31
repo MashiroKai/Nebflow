@@ -1205,6 +1205,10 @@ export default {
   'settings.secretsNone': 'No secrets yet',
   'settings.addProvider': '+ Add Provider',
   'settings.modelChainHint': 'Type the /model command to configure per-role model chains in unified or per-role mode.',
+  // 配置面风格统一批②（2026-10-31 作者令）：设置页回退链节（/model 回退链
+  // 编辑器同款内容面，两份共享同一状态/保存通道）。
+  'settings.modelChainTitle': 'Model fallback chain',
+  'settings.modelChainSectionHint': 'Primary model and fallback order. Every change saves instantly and stays in sync with the /model panel.',
   // /model panel (modelcfg Phase 1)
   'model.title': 'Model Configuration',
   'model.modeUnified': 'Unified',

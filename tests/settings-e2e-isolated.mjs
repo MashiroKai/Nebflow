@@ -29,6 +29,10 @@ await page.click('#settings-btn');
 // provider 卡来自 state.parsedConfig（WS serverConfig 送达后 renderSettings
 // 才有内容；面板先开，再等数据到位——renderSettings 会在 echo 后重绘）
 await page.waitForFunction(() => document.querySelectorAll('#provider-list .cfg-card').length > 0, null, { timeout: 20000 });
+// 配置面风格统一批（2026-10-31）：生图/JeV 为层级下钻面——点入口行进浮层，
+// 内容节点收编进 .config-drill-overlay 后可见可交互。
+await page.click('#imagegen-advance-toggle');
+await page.waitForSelector('.config-drill-overlay #imagegen-advance-body', { timeout: 15000 });
 await page.waitForSelector('#imagegen-section-wrap .cfg-form-group, #imagegen-section-wrap .imagegen-notcompiled', { timeout: 15000 });
 await page.waitForTimeout(1000);
 

@@ -153,6 +153,30 @@ const ROLE_KEY = {
 /** Probed model ids per provider (dynamic layer, refreshed on demand). */
 const probedModels = new Map();
 
+// 配置面风格统一批②（2026-10-31 作者令）：设置页「模型回退链」节与 /model
+// 面板共享同一份状态/保存通道（本模块的 roleState + PUT /api/agents/:name/
+// model）——任一侧保存后 emitChainChange() 通知另一侧即时重渲，改哪边都
+// 即时同步（面板侧重渲走 refreshPanel，设置页节重渲走 mountModelChainSection
+// 注册的监听）。
+/** @type {Set<() => void>} */
+const chainListeners = new Set();
+/**
+ * 订阅链状态变化（任一角色保存 / 动态模型列表刷新后触发）。
+ * @param {() => void} fn
+ * @returns {() => void} 退订函数
+ */
+export function onModelChainChange(fn) {
+  chainListeners.add(fn);
+  return () => chainListeners.delete(fn);
+}
+function emitChainChange() {
+  for (const fn of [...chainListeners]) {
+    try { fn(); } catch { /* 单监听异常不阻断其余订阅者 */ }
+  }
+}
+
+let chainSectionSeq = 0;
+
 let panelEl = null; // the overlay element while the panel is open
 let panelMode = 'unified'; // 'unified' | 'separate'
 // 弹窗退场批③：手机层角色下钻态（点角色头进该角色全屏配置；返回回列表）。
@@ -225,9 +249,11 @@ async function putChain(role, chain) {
     // Live follow previews: re-read every role (the followers' effectiveChain
     // moves whenever the Nebula chain changes).
     await refreshPanel();
+    emitChainChange(); // 设置页回退链节同步腿（配置面风格统一批②）
   } catch (e) {
     window.__showToast?.(String(e.message || e), 'error');
     await refreshPanel(); // re-render from server state (reverts the local copy)
+    emitChainChange();
   }
 }
 
@@ -259,7 +285,10 @@ async function refreshModelList() {
     } catch (e) { /* per-provider failure: keep the static list for it */ }
   }));
   if (ok === 0) flashManualInput();
-  else renderPanel();
+  else {
+    renderPanel();
+    emitChainChange(); // 设置页节的「刷新列表」结果同步（配置面风格统一批②）
+  }
 }
 
 /** Refresh failed / nothing probeable — reveal the manual input as the fallback. */
@@ -301,8 +330,8 @@ function chainRowsHtml(refs, currentRef, restricted = null) {
     const resTitle = res ? t('model.scheduleRestrictedTitle', { windows: res.windows.join(', ') }) : '';
     const title = [dim ? t('model.unavailable', { reason: t('model.healthFiltered') }) : '', resTitle]
       .filter(Boolean).join('；');
-    return `<div class="agent-detail-model-row mp-row${dim || schedDim ? ' mp-row-unavailable' : ''}" draggable="true" data-idx="${i}"${title ? ` title="${esc(title)}"` : ''}>
-      <span class="agent-detail-grip">⠿</span>
+    return `<div class="agent-detail-model-row mp-row${dim || schedDim ? ' mp-row-unavailable' : ''}" data-idx="${i}"${title ? ` title="${esc(title)}"` : ''}>
+      <span class="agent-detail-grip mp-drag" aria-hidden="true">⠿</span>
       ${refPartsHtml(ref)}
       ${res ? `<span class="mp-window">${esc(res.windows.join(', '))}</span>` : ''}
       <span class="mp-pos">${i === 0 ? esc(t('model.chainHead')) : esc(t('model.chainFallback'))}</span>
@@ -362,32 +391,63 @@ function buildChainEditor(container, role, commit) {
     <div class="mp-inline-err" role="alert"></div>
     ${chain.length === 1 ? `<div class="mp-note">${esc(t('model.singleModelNote'))}</div>` : ''}`;
 
-  // Drag reorder (first = preferred)
+  // 拖拽排序（首行 = preferred）——指针事件版。HTML5 DnD（draggable=true）
+  // 触屏端从不派发 dragstart，且 iOS WebKit 上触点落在 draggable 行上连祖先
+  // 滚动都被吞（行铺满整面 ⇒ 2026-10-31 作者报障「/model 配置面手机端无法
+  // 推动」根因：滚动/拖动双双失效）。指针版语义：
+  //   · 手柄（.mp-drag，touch-action:none）pointerdown 起拖——行体其余部分
+  //     保留原生滚动；setPointerCapture 手指出框不丢事件；
+  //   · 6px 位移阈值后才算拖（点按手柄零动作）；拖行 .dragging、悬停目标
+  //     .drag-over——与旧 DnD 同类名，CSS 零变化；
+  //   · pointerup 落点 splice（与旧 drop 同语义）→ commit(role)。
   let dragIdx = null;
   editor.querySelectorAll('.mp-row').forEach(row => {
     const el = /** @type {HTMLElement} */ (row);
-    el.addEventListener('dragstart', (e) => {
+    const grip = el.querySelector('.mp-drag');
+    if (!grip) return;
+    let startY = 0;
+    let active = false;
+    const clearMarks = () => {
+      editor.querySelectorAll('.mp-row').forEach(r => r.classList.remove('drag-over'));
+    };
+    grip.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
       dragIdx = Number(el.dataset.idx);
+      startY = e.clientY;
+      active = false;
+      /** @type {HTMLElement} */ (grip).setPointerCapture(e.pointerId);
+      e.preventDefault(); // 手柄面不启原生滚动/文本选择
+    });
+    grip.addEventListener('pointermove', (e) => {
+      if (dragIdx === null) return;
+      if (!active && Math.abs(e.clientY - startY) < 6) return;
+      active = true;
       el.classList.add('dragging');
-      (/** @type {DragEvent} */ (e)).dataTransfer.effectAllowed = 'move';
+      clearMarks();
+      const over = document.elementFromPoint(e.clientX, e.clientY)?.closest('.mp-row') || null;
+      if (over && over !== el) over.classList.add('drag-over');
     });
-    el.addEventListener('dragend', () => {
+    grip.addEventListener('pointerup', (e) => {
+      if (dragIdx === null) return;
+      const over = active
+        ? (document.elementFromPoint(e.clientX, e.clientY)?.closest('.mp-row') || null)
+        : null;
+      const from = dragIdx;
+      dragIdx = null; active = false;
       el.classList.remove('dragging');
-      dragIdx = null;
-      editor.querySelectorAll('.mp-row').forEach(r => r.classList.remove('drag-over'));
-    });
-    el.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      editor.querySelectorAll('.mp-row').forEach(r => r.classList.remove('drag-over'));
-      el.classList.add('drag-over');
-    });
-    el.addEventListener('drop', (e) => {
-      e.preventDefault();
-      const over = Number(el.dataset.idx);
-      if (dragIdx === null || dragIdx === over) return;
-      const [moved] = chain.splice(dragIdx, 1);
-      chain.splice(over, 0, moved);
+      clearMarks();
+      if (!over || over === el) return;
+      const to = Number(over.dataset.idx);
+      if (to === from) return;
+      const [moved] = chain.splice(from, 1);
+      chain.splice(to, 0, moved);
       commit(role);
+    });
+    grip.addEventListener('pointercancel', () => {
+      if (dragIdx === null) return;
+      dragIdx = null; active = false;
+      el.classList.remove('dragging');
+      clearMarks();
     });
   });
 
@@ -470,8 +530,6 @@ function buildForkButton(body, role, commit) {
 function buildNebulaBlock(container, commit) {
   const block = document.createElement('div');
   block.className = 'mp-roleblock mp-roleblock-nebula';
-  const st = roleState.get('Nebula');
-  const noChain = (st?.chain || null) === null;
   block.innerHTML = `
     <div class="mp-role-head">
       <span class="mp-role-name">${esc(roleLabel('Nebula'))}</span>
@@ -479,6 +537,29 @@ function buildNebulaBlock(container, commit) {
     </div>
     <div class="mp-role-body"></div>`;
   const body = /** @type {HTMLElement} */ (block.querySelector('.mp-role-body'));
+
+  const noChain = (roleState.get('Nebula')?.chain || null) === null;
+  // Unified mode: the failover-order note + the line naming the followers.
+  // （面板 chrome——设置页回退链节不渲染这两行注记。）
+  if (!noChain && panelMode === 'unified') {
+    const foot = document.createElement('div');
+    foot.className = 'mp-foot';
+    foot.innerHTML = `
+      <div class="mp-note">${esc(t('model.orderNote'))}</div>
+      <div class="mp-note"><span class="mp-followers-label">${esc(t('model.followers'))}</span> ${esc(FOLLOWER_ROLES.map(roleLabel).join(' · '))}</div>`;
+    body.appendChild(foot);
+  }
+  buildNebulaChainFace(body, commit);
+
+  container.appendChild(block);
+}
+
+/** Nebula 链面共享体（配置面风格统一批②：/model 面板块与设置页回退链节的
+ *  同一内容面）——seed 态（seed 注记 + 生效链预览 + 独立配置钮）或显式态
+ *  （链编辑器 + 回退 seed 的清除钮）。两侧逐字节同款，样式与保存通道同源。 */
+function buildNebulaChainFace(body, commit) {
+  const st = roleState.get('Nebula');
+  const noChain = (st?.chain || null) === null;
 
   if (noChain) {
     // Seed state: the effective (seed) chain read-only + the action that
@@ -494,34 +575,23 @@ function buildNebulaBlock(container, commit) {
       body.appendChild(preview);
     }
     buildForkButton(body, 'Nebula', commit);
-  } else {
-    // Unified mode: the failover-order note + the line naming the followers.
-    if (panelMode === 'unified') {
-      const foot = document.createElement('div');
-      foot.className = 'mp-foot';
-      foot.innerHTML = `
-        <div class="mp-note">${esc(t('model.orderNote'))}</div>
-        <div class="mp-note"><span class="mp-followers-label">${esc(t('model.followers'))}</span> ${esc(FOLLOWER_ROLES.map(roleLabel).join(' · '))}</div>`;
-      body.appendChild(foot);
-    }
-    buildChainEditor(body, 'Nebula', commit);
-    // Explicit chain only: the way back to the seed state.
-    const foot = document.createElement('div');
-    foot.className = 'mp-foot';
-    const clearBtn = document.createElement('button');
-    clearBtn.type = 'button';
-    clearBtn.className = 'cfg-btn cfg-btn-sm mp-clear';
-    clearBtn.textContent = t('model.clearChain');
-    clearBtn.addEventListener('click', () => {
-      window.__showConfirm?.(t('model.clearChain'), t('model.clearChainConfirm'), async () => {
-        await putChain('Nebula', null);
-      }, { tone: 'neutral' });
-    });
-    foot.appendChild(clearBtn);
-    body.appendChild(foot);
+    return;
   }
-
-  container.appendChild(block);
+  buildChainEditor(body, 'Nebula', commit);
+  // Explicit chain only: the way back to the seed state.
+  const foot = document.createElement('div');
+  foot.className = 'mp-foot';
+  const clearBtn = document.createElement('button');
+  clearBtn.type = 'button';
+  clearBtn.className = 'cfg-btn cfg-btn-sm mp-clear';
+  clearBtn.textContent = t('model.clearChain');
+  clearBtn.addEventListener('click', () => {
+    window.__showConfirm?.(t('model.clearChain'), t('model.clearChainConfirm'), async () => {
+      await putChain('Nebula', null);
+    }, { tone: 'neutral' });
+  });
+  foot.appendChild(clearBtn);
+  body.appendChild(foot);
 }
 
 function buildFollowerBlock(container, role, commit) {
@@ -621,6 +691,80 @@ function buildFollowerBlock(container, role, commit) {
   head.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
   });
+}
+
+// ── 设置页回退链节（配置面风格统一批②，2026-10-31 作者令「/model 里的回退
+// 顺序调整页在设置页原样再放一份，两份共享同一份状态/保存通道，改哪边都
+// 即时同步」）────────────────────────────────────────────────────────────
+// 内容面 = buildNebulaChainFace 同款（seed 态 / 链编辑器，逐字节同源）；
+// 状态 = 本模块 roleState（与 /model 面板同一份）；保存通道 = putChain 单点。
+// 任一侧保存 ⇒ emitChainChange ⇒ 本节经 onModelChainChange 监听即时重渲。
+
+/**
+ * 节级渲染：Nebula 数据读数失败 ⇒ 台账 #937 同款显式降级面（节级缩小版），
+ * 不静默半死。
+ * @param {HTMLElement} container #model-chain-section-body
+ */
+function renderChainSectionBody(container) {
+  container.replaceChildren();
+  const st = roleState.get('Nebula');
+  if (!st?.data) {
+    const face = document.createElement('div');
+    face.className = 'mp-load-error chain-section-error';
+    face.setAttribute('role', 'alert');
+    const icon = document.createElement('div');
+    icon.className = 'mp-load-error-icon';
+    icon.innerHTML = statusIcon('circle-alert', 20, 'st-err');
+    const title = document.createElement('div');
+    title.className = 'mp-load-error-title';
+    title.textContent = t('model.loadFailed');
+    const hint = document.createElement('div');
+    hint.className = 'mp-load-error-hint';
+    hint.textContent = t('model.loadFailedHint');
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'cfg-btn cfg-btn-sm mp-load-error-retry';
+    retry.textContent = t('model.retry');
+    retry.addEventListener('click', () => {
+      retry.disabled = true;
+      void refreshChainSection(container);
+    });
+    face.append(icon, title, hint, retry);
+    container.appendChild(face);
+    return;
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'chain-section-face';
+  buildNebulaChainFace(wrap, saveChain);
+  container.appendChild(wrap);
+}
+
+/** 拉取 Nebula 最新读数 → 重绘节内容（seq 守卫丢弃陈旧响应）。 */
+async function refreshChainSection(container) {
+  const seq = ++chainSectionSeq;
+  const data = await fetchModelOf('Nebula');
+  if (seq !== chainSectionSeq) return;
+  const st = roleState.get('Nebula') || { chain: null, expanded: false };
+  st.data = data;
+  st.chain = data && data.mode === 'explicit' ? chainRefs(data.chain) : null;
+  roleState.set('Nebula', st);
+  if (container.isConnected) renderChainSectionBody(container);
+}
+
+/**
+ * 挂载设置页「模型回退链」节内容（sidebar.js renderSettings 尾调用；重渲前
+ * 先调上一任返回的卸载函数）。返回卸载函数。
+ * @param {HTMLElement|null} container #model-chain-section-body
+ * @returns {() => void}
+ */
+export function mountModelChainSection(container) {
+  if (!container) return () => {};
+  let alive = true;
+  void refreshChainSection(container);
+  const off = onModelChainChange(() => {
+    if (alive && container.isConnected) void refreshChainSection(container);
+  });
+  return () => { alive = false; off(); };
 }
 
 // ── Panel skeleton + render ────────────────────────────────

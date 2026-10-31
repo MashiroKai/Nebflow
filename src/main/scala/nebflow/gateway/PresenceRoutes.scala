@@ -1289,15 +1289,37 @@ private[gateway] object PresenceRoutes:
                           case true =>
                             val (effective, resolvedFrom) = nebflow.core.SchemePolicy.resolveModel(agentName, own)
                             val mode = if own.isDefined then "explicit" else "follow"
-                            Ok(
-                              Json.obj(
-                                "updated" -> true.asJson,
-                                "mode" -> mode.asJson,
-                                "chain" -> own.asJson,
-                                "effectiveChain" -> effective.asJson,
-                                "resolvedFrom" -> resolvedFrom.asJson
+                            // 模型链热应用（2026-10-31 作者报障②「fallback 链加了新模型
+                            // 不立即生效」）：链面保存后清掉**链外**的会话驻留旧链引用。
+                            // 驻留两面 = in-memory sessionModelOverrides（composer 会话级
+                            // pin，请求路径 overrides 前插 + 同 (provider,model) 链成员
+                            // 剔除 ⇒ 链改了 pin 恒赢）+ 盘上 SessionMeta.modelRef（重启
+                            // 后由 meta 恢复的同一 pin）。两面同步清（#33/#311 reloadConfig
+                            // 先例同形：内存腿 + 持久腿一致）。判据 = **新生效链成员资格**：
+                            // pin 的模型仍在链上 ⇒ 保留（选择器显式意图）；已不在链上 ⇒
+                            // 清除，该会话下一请求即吃新链。spec 守卫：部分 route spec 臂以
+                            // sessionStore=null 组装（ModelChainRoutesSpec.mkResources），
+                            // 持久腿 null 下跳过，内存腿恒跑。
+                            val chainRefs =
+                              (effective.preferred.toList ++ effective.fallbacks).toSet
+                            sharedResources.sessionModelOverrides.modify { overrides =>
+                              val (keep, drop) =
+                                overrides.partition((_, c) => chainRefs.contains(s"${c.providerId}/${c.model}"))
+                              (keep, drop.keys.toList)
+                            }.flatMap { droppedIds =>
+                              val persistedLeg =
+                                if sessionStore == null then IO.unit
+                                else droppedIds.traverse_(id => sessionStore.updateSessionModel(id, None))
+                              persistedLeg *> Ok(
+                                Json.obj(
+                                  "updated" -> true.asJson,
+                                  "mode" -> mode.asJson,
+                                  "chain" -> own.asJson,
+                                  "effectiveChain" -> effective.asJson,
+                                  "resolvedFrom" -> resolvedFrom.asJson
+                                )
                               )
-                            )
+                            }
                           case false =>
                             InternalServerError(Json.obj("error" -> "Failed to write agent.json".asJson))
                         }

@@ -59,6 +59,12 @@ import { protocolFormLabel, escapeHtml, flushConfigToServer, showProviderModal, 
 // 生图设置节（settings-panel 批 ②③件）与每模型连接性测试钮（B 件）——渲染/
 // 绑定单点在各自子模块，本文件只挂壳 + 转发调用（子模块不回指本文件）。
 import { bindImagegenSection } from './sidebar/imagegenSection.js';
+// 配置面风格统一批（2026-10-31 作者令）：JeV/生图层级下钻的桌面浮层半
+// （手机层级子页半在 mobile/settingsSub.js——同一内容节点、body class 互斥）。
+import { registerConfigDrill, syncConfigDrills } from './configDrill.js';
+// 同批②：设置页「模型回退链」节——/model 面板的回退链编辑器原样再放一份，
+// 内容面/状态/保存通道与面板同源（modelPanel.js 单点实现）。
+import { mountModelChainSection } from './modelPanel.js';
 // 连接性测试钮已随 settings-panel-fourfix 批 ②件（2026-10-29 作者令「连接性
 // 测试按钮应放到 LLM provider 配置页面里」）迁入 provider 编辑弹窗——设置页
 // provider 卡模型行不再携带测试钮；模块 = sidebar/modelTestButton.js（弹窗面
@@ -465,14 +471,14 @@ function buildSegmentRowHtml(s, i) {
  *  not persisted to storage on purpose). */
 let sttAdvanceExpanded = false;
 
-/** JeV 分配区开合态（settings-panel 批 C 件重排后沿用 STT 高级设置同款
- *  session-memory 语义：同会话保持，新会话收起）。 */
-let jevAdvanceExpanded = false;
-
 /** Tool result TTL panel — same session-memory collapse semantics as STT
  *  advance (#341): collapsed by default, expanded state survives re-renders
  *  but not fresh sessions. */
 let ttlAdvanceExpanded = false;
+
+/** 模型回退链节上一任卸载函数（配置面风格统一批②：renderSettings 重渲前
+ *  先卸上一任 mountModelChainSection 的监听，不叠订阅）。 */
+let modelChainUnmount = /** @type {(() => void)|null} */ (null);
 
 /** Backend defaults — mirrors ToolResultTtlConfig.parseStrict bounds. Used
  *  both for rendering before the first echo and for local pre-validation. */
@@ -922,6 +928,16 @@ export function renderSettings() {
       <button class="cfg-btn cfg-btn-add" id="btn-add-provider">${t('settings.addProvider')}</button>
     </div>
     <div class="cfg-hint" id="model-chain-hint">${t('settings.modelChainHint')}</div>
+    <div class="settings-section" id="model-chain-section">
+      <!-- 模型回退链节（配置面风格统一批②，2026-10-31 作者令：/model 里的回退
+           顺序调整页在设置页原样再放一份，不用打 /model；两份共享同一份状态/
+           保存通道，改哪边都即时同步）。内容面 = modelPanel.js 的
+           buildNebulaChainFace 同款（seed 态 / 拖拽排序链编辑器，逐动作即存）；
+           /model 原入口保留不动（上方 model-chain-hint 照旧指路）。 -->
+      <div class="settings-section-title">${t('settings.modelChainTitle')}</div>
+      <div class="cfg-hint">${t('settings.modelChainSectionHint')}</div>
+      <div id="model-chain-section-body"></div>
+    </div>
     <div class="settings-section">
       <!-- Jev allocation section — 风格统一重排（settings-panel 批 C 件，
            2026-10-28 作者令：「JeV 插件分配那部分的风格，与『STT 高级设置』区的
@@ -929,8 +945,7 @@ export function renderSettings() {
            样式逐项对齐）」）。组件族与 STT 高级设置逐项同源：
            · 头行   .settings-row.stt-advance-toggle-row + .settings-collapse-toggle
                     （标题+chevron）+ 右侧状态位（分配通道健康，同 stt-status 位）；
-           · 折叠体 .settings-collapse-body（session-memory 开合态
-                    jevAdvanceExpanded，同 sttAdvanceExpanded 语义）；
+           · 折叠体 .settings-collapse-body（层级下钻的收编内容面，见批注下）；
            · 开关行 .settings-row + .settings-label + toggleHTML（启用 JeV——
                     旧卡头行内开关随重排迁入折叠体首行，STT enabled 行同款）；
            · 字段组 .cfg-form-group 纵排 label+input（旧 cfg-row 横排退役）；
@@ -942,15 +957,19 @@ export function renderSettings() {
            打开即经 GET /api/secrets/<keyRef>/value（owner 鉴权）拉真值明文显示
            （默认态=明文，eye 仅作可选遮蔽——点首击上掩码；值零落日志/本地存
            储，面板关即烧）。缺 keyRef/读失败 ⇒ 占位说明，不造假数据。-->
+      <!-- 配置面风格统一批（2026-10-31 作者令）：本节改层级下钻——头行 =
+           下钻入口（chevron 右转），点按桌面开浮层玻璃面板（js/configDrill.js）
+           /手机 push 层级子页（mobile/settingsSub.js）；同一 #jev-advance-body
+           节点两端收编，内容面/绑定零副本。「展开式配置」退役后端内联不渲染。-->
       <div class="settings-row stt-advance-toggle-row">
-        <button type="button" class="settings-collapse-toggle" id="jev-advance-toggle"
-                aria-expanded="${jevAdvanceExpanded}" aria-controls="jev-advance-body">
+        <button type="button" class="settings-collapse-toggle settings-drill-toggle" id="jev-advance-toggle"
+                aria-haspopup="dialog" aria-controls="jev-advance-body">
           <span class="settings-label">${t('settings.jev')}</span>
           <span class="settings-collapse-chevron" aria-hidden="true"></span>
         </button>
         <span class="cfg-hint stt-status" id="jev-status-hint"><span class="st-badge" data-tone="mut" id="settings-jev-health">…</span></span>
       </div>
-      <div class="settings-collapse-body" id="jev-advance-body" ${jevAdvanceExpanded ? '' : 'hidden'}>
+      <div class="settings-collapse-body" id="jev-advance-body" hidden>
         <div class="settings-row">
           <span class="settings-label">${t('settings.jevEnabled')}</span>
           ${toggleHTML({ on: !!(cfg.jev && cfg.jev.enabled), id: 'toggle-jev', label: t('settings.jevEnabled') })}
@@ -984,11 +1003,23 @@ export function renderSettings() {
            功能开放批 2026-10-30：正式开放、调试中徽标退役）。
            两形态由 sidebar/imagegenSection.js 单点渲染：seal=OFF（显式剔除构建）
            → 「未编入（release 构建零痕迹）」提示位；seal=ON（缺省）→ 正常配置面
-           （enabled 开关 / provider/model 编辑 / key 状态与录入）。本处只落壳
-           （标题 + wrap），数据与绑定全在该模块（renderSettings 尾部
-           bindImagegenSection 拉取装配）。-->
-      <div class="settings-section-title">${t('settings.imagegenTitle')}</div>
-      <div id="imagegen-section-wrap"><div class="cfg-hint">${t('settings.imagegenLoading')}</div></div>
+           （enabled 开关 / provider/model 编辑 / key 状态与录入）。数据与绑定全
+           在该模块（renderSettings 尾部 bindImagegenSection 拉取装配）。
+           配置面风格统一批（2026-10-31 作者令）：本节与 JeV 节同款层级下钻——
+           头行 = 下钻入口（#imagegen-advance-toggle，chevron 右转），点按桌面开
+           浮层玻璃面板（js/configDrill.js）/手机 push 层级子页（mobile/
+           settingsSub.js settings-imagegen 路由）；同一 #imagegen-advance-body
+           节点两端收编，模块渲染面 #imagegen-section-wrap 住在其中随节点走。-->
+      <div class="settings-row stt-advance-toggle-row">
+        <button type="button" class="settings-collapse-toggle settings-drill-toggle" id="imagegen-advance-toggle"
+                aria-haspopup="dialog" aria-controls="imagegen-advance-body">
+          <span class="settings-label">${t('settings.imagegenTitle')}</span>
+          <span class="settings-collapse-chevron" aria-hidden="true"></span>
+        </button>
+      </div>
+      <div class="settings-collapse-body" id="imagegen-advance-body" hidden>
+        <div id="imagegen-section-wrap"><div class="cfg-hint">${t('settings.imagegenLoading')}</div></div>
+      </div>
     </div>
     <div class="settings-section">
       <!-- Secrets entry (secrets-frontend batch, 2026-09-27, author ruling
@@ -1063,6 +1094,17 @@ export function renderSettings() {
   // 原位绘制两形态之一（seal OFF 提示位 / ON 配置面）。失败 = 错误提示行，
   // 不造假数据。
   void bindImagegenSection();
+  // 配置面风格统一批（2026-10-31 作者令）：JeV/生图层级下钻注册（幂等；
+  // 桌面浮层委托在 configDrill.js，手机层级子页委托在 settingsSub.js）+
+  // 重渲后的浮层收编同步（开着的浮层内容节点被重渲换掉 ⇒ 按 id 重收编）。
+  registerConfigDrill({ toggleSel: '#jev-advance-toggle', bodyId: 'jev-advance-body', titleKey: 'settings.jev' });
+  registerConfigDrill({ toggleSel: '#imagegen-advance-toggle', bodyId: 'imagegen-advance-body', titleKey: 'settings.imagegenTitle' });
+  syncConfigDrills();
+  // 模型回退链节：挂载/重挂（与 /model 面板共享状态/保存通道，modelPanel.js
+  // 单点；先卸上一任监听再挂，重渲不叠订阅）。
+  modelChainUnmount?.();
+  modelChainUnmount = mountModelChainSection(
+    document.getElementById('model-chain-section-body'));
   // JeV key 值明文直显（本批①件）：按当前 keyRef 拉 GET /api/secrets/<name>/
   // value 填只读行（默认明文，eye 仅可选遮蔽）。失败/缺 keyRef = 占位说明。
   refreshJevKeyValue();
@@ -1333,19 +1375,12 @@ function bindSettingsEvents(content, cfg) {
 
   // ── Jev section: explicit save (whitelist keys only; PUT /api/config/jev).
   // keyRef is a NAME under ~/.nebflow/secrets/ — a pointer, never a value.
-  // 三改①（2026-10-09 用户反馈①）：开关只作用法闸——不联动展开/收起。C 件
-  // 重排（2026-10-28）：开合唯一入口 = #jev-advance-toggle（STT 高级设置同款
-  // settings-collapse-toggle + hidden 属性折叠体，session-memory 态
-  // jevAdvanceExpanded）。
+  // 三改①（2026-10-09 用户反馈①）：开关只作用法闸——不联动展开/收起。
+  // 配置面风格统一批（2026-10-31）：开合入口退役——#jev-advance-toggle 改
+  // 层级下钻入口（桌面浮层/手机子页收编），点按绑定在 js/configDrill.js +
+  // mobile/settingsSub.js 的 document 委托。
   document.getElementById('toggle-jev')?.addEventListener('click', function() {
     setToggleState(this, !this.classList.contains('on'));
-  });
-
-  document.getElementById('jev-advance-toggle')?.addEventListener('click', function() {
-    jevAdvanceExpanded = !jevAdvanceExpanded;
-    const body = document.getElementById('jev-advance-body');
-    if (body) body.hidden = !jevAdvanceExpanded;
-    this.setAttribute('aria-expanded', String(jevAdvanceExpanded));
   });
 
   // 三改②（2026-10-09 用户反馈②）：提供方切换联动端点钉死——typesafe-jev =

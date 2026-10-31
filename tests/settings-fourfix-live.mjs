@@ -40,7 +40,9 @@ await page.goto(`${BASE}/?ticket=${encodeURIComponent(ticket)}`);
 await page.waitForSelector('#settings-btn', { timeout: 20000 });
 await page.click('#settings-btn');
 await page.waitForFunction(() => document.querySelectorAll('#provider-list .cfg-card').length > 0, null, { timeout: 30000 });
-await page.waitForSelector('#imagegen-section-wrap .imagegen-face', { timeout: 15000 });
+// 配置面风格统一批（2026-10-31）：生图为层级下钻面——点入口行进浮层再断言。
+await page.click('#imagegen-advance-toggle');
+await page.waitForSelector('.config-drill-overlay #imagegen-advance-body #imagegen-section-wrap .imagegen-face', { timeout: 15000 });
 await page.waitForTimeout(1200);
 
 // ① 模型行面（收归全局后）：零思考下拉/徽标/测试钮。

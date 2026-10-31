@@ -5,7 +5,10 @@
 //      （secrets / workspacePicker / 通用确认 / 长按菜单）一律「铺满屏 + 左上
 //      返回」；桌面同弹层零变化（.mfs-back 隐藏、形态不拉伸）。
 //   ③ 设置页展开式配置退役：STT/TTL/JeV 三入口行点击 push 层级子页（折叠体
-//      节点收编进子页面体，设置页内 display:none）。
+//      节点收编进子页面体，设置页内 display:none）；配置面风格统一批
+//      （2026-10-31 作者令）把生图节并入同款层级子页（settings-imagegen，
+//      T4 末尾 legs 覆盖），桌面浮层半由 js/configDrill.js 承担（批内
+//      config-drill-unify.spec 守）。
 //
 // Run: playwright test tests/mobile-popup-retire.spec.mjs
 
@@ -280,6 +283,28 @@ test('T4 设置页 STT/TTL 入口行点击 push 层级子页（折叠体收编�
   await page.locator('#ttl-advance-toggle').click();
   await expect(page.locator('.mobile-page[data-page="settings-ttl"]')).toHaveClass(/live/);
   await expect(page.locator('.mobile-page[data-page="settings-ttl"] #ttl-advance-body')).toBeVisible();
+
+  // 生图入口行同下钻（配置面风格统一批 2026-10-31：第四枚层级子页
+  // settings-imagegen——与 JeV 同款的收编/归还链路）。
+  await page.locator('.mobile-page[data-page="settings-ttl"] .mobile-back-btn').click();
+  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
+  await page.locator('#imagegen-advance-toggle').click();
+  await expect(page.locator('.mobile-page[data-page="settings-imagegen"]')).toHaveClass(/live/);
+  await expect(page.locator('.mobile-page[data-page="settings-imagegen"] #imagegen-advance-body')).toBeVisible();
+  const imagegenAdopted = await page.evaluate(() => {
+    const sub = document.querySelector('.mobile-page[data-page="settings-imagegen"]');
+    const body = sub && sub.querySelector('.mobile-page-body #imagegen-advance-body');
+    return !!body && !body.hidden && getComputedStyle(body).display !== 'none';
+  });
+  expect(imagegenAdopted).toBe(true);
+  // 页壳「<」返回 → 设置页，折叠体归还隐藏。
+  await page.locator('.mobile-page[data-page="settings-imagegen"] .mobile-back-btn').click();
+  await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
+  const restored = await page.evaluate(() => {
+    const body = document.getElementById('imagegen-advance-body');
+    return !!body && body.hidden === true;
+  });
+  expect(restored).toBe(true);
   expect(errors).toEqual([]);
 });
 
