@@ -1128,46 +1128,73 @@ body.mobile-layer #mobile-pages .flowmap-nav-bar .flowmap-back-btn {
 }
 
 /* ── 设置根页「工作台」分组行（dock 批：下拉列退役后的功能面统一入口）─ */
+/* 分组卡片换装批 2026-10-31（作者令 12:33，参考 ChatGPT 设置页解剖）：灰底
+   页（--color-bg 系）+ 白色圆角大卡（r16、轻阴影堆叠）+ 行 = 左图标 + 主文案
+   + 右箭头；行间 hairline 分隔（左缩进对齐文案列、首末行不留线）；组标题 = tp
+   组标题语言（11px / 0.06em / uppercase / muted）；图标/文字墨族单色（currentColor
+   单源），暗档经 --color-surface / --color-text 双档自动解析。 */
 body.mobile-layer .mf-hub {
   flex: none;
-  padding: 12px 12px 4px;
+  padding: 14px 14px 8px;
 }
 body.mobile-layer .mf-hub-label {
   font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--color-frame-text-muted, #98a2b3);
-  padding: 0 4px 6px;
+  color: var(--color-text-muted, #8b8e96);
+  padding: 4px 10px 10px;
 }
 body.mobile-layer .mf-hub-rows {
   display: flex;
   flex-direction: column;
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  border-radius: 14px;
+  background: var(--color-surface, #ffffff);
+  border: none;
+  border-radius: 16px;
   overflow: hidden;
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.04),
+    0 8px 24px rgba(0, 0, 0, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  body.mobile-layer .mf-hub-rows {
+    box-shadow:
+      0 2px 8px rgba(0, 0, 0, 0.20),
+      0 8px 24px rgba(0, 0, 0, 0.35);
+  }
 }
 body.mobile-layer .mf-hub-row {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  padding: 0 14px;
+  gap: 12px;
+  min-height: 50px;
+  padding: 0 16px;
   border: none;
-  border-bottom: 1px solid var(--glass-control-border);
   background: transparent;
-  color: var(--color-frame-text, #e6e9ef);
-  font-size: 14px;
+  color: var(--color-text, #1b1e26);
+  font-size: 15px;
   cursor: pointer;
   text-align: left;
   touch-action: manipulation;
 }
-body.mobile-layer .mf-hub-row:last-child { border-bottom: none; }
-body.mobile-layer .mf-hub-row:active { background: rgba(255, 255, 255, 0.08); }
-body.mobile-layer .mf-hub-row > i svg { width: 17px; height: 17px; }
+/* 行间 hairline：左缩进对齐文案列（行内距 16 + 图标 18 + 间隙 12 = 46），
+   右收进行内距（16）；首末行不留线（末行 = :last-child 零线）。 */
+body.mobile-layer .mf-hub-row:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 46px;
+  right: 16px;
+  bottom: 0;
+  height: 1px;
+  background: var(--color-frame-border-light, #eeeff1);
+}
+body.mobile-layer .mf-hub-row:active {
+  background: color-mix(in srgb, var(--color-text, #1b1e26) 6%, transparent);
+}
+body.mobile-layer .mf-hub-row > i svg { width: 18px; height: 18px; }
 body.mobile-layer .mf-hub-row-label { flex: 1; min-width: 0; }
-body.mobile-layer .mf-hub-chev { opacity: 0.5; }
-body.mobile-layer .mf-hub-chev svg { width: 14px; height: 14px; }
+body.mobile-layer .mf-hub-chev { opacity: 0.45; color: var(--color-text-muted, #8b8e96); }
+body.mobile-layer .mf-hub-chev svg { width: 16px; height: 16px; }
 
 /* ── 社交页面（消息/联系人；socialFaces.js）────────────────────────── */
 /* 封存空态卡（features.friends 缺席；骨架占位 + 文案，不伪造数据）。 */
