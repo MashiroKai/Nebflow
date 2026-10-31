@@ -1,0 +1,74 @@
+{
+  "viewport": "1440x900",
+  "cards": 8,
+  "schemes": {
+    "dark": [
+      {
+        "label": "open(1.4s)",
+        "frames": 44,
+        "longFrames": 4,
+        "avgDelta": 36.6,
+        "p95Delta": 161.1,
+        "fps": 27.3
+      },
+      {
+        "label": "wheel-scrub(3s)",
+        "frames": 362,
+        "longFrames": 0,
+        "avgDelta": 8.3,
+        "p95Delta": 10.3,
+        "fps": 120.5
+      },
+      {
+        "label": "card-drag(1.6s)",
+        "frames": 422,
+        "longFrames": 0,
+        "avgDelta": 8.3,
+        "p95Delta": 10.3,
+        "fps": 120.5
+      },
+      {
+        "label": "close(0.7s)",
+        "frames": 255,
+        "longFrames": 0,
+        "avgDelta": 8.4,
+        "p95Delta": 10.3,
+        "fps": 119
+      }
+    ],
+    "light": [
+      {
+        "label": "open(1.4s)",
+        "frames": 154,
+        "longFrames": 1,
+        "avgDelta": 9.5,
+        "p95Delta": 10.2,
+        "fps": 105.3
+      },
+      {
+        "label": "wheel-scrub(3s)",
+        "frames": 362,
+        "longFrames": 0,
+        "avgDelta": 8.3,
+        "p95Delta": 10.2,
+        "fps": 120.5
+      },
+      {
+        "label": "card-drag(1.6s)",
+        "frames": 412,
+        "longFrames": 0,
+        "avgDelta": 8.4,
+        "p95Delta": 10.3,
+        "fps": 119
+      },
+      {
+        "label": "close(0.7s)",
+        "frames": 86,
+        "longFrames": 0,
+        "avgDelta": 8.3,
+        "p95Delta": 10.3,
+        "fps": 120.5
+      }
+    ]
+  }
+}

@@ -1864,11 +1864,6 @@ export default {
   'canvas.closeTab': '关闭标签页',
   'canvas.stackToggle': '叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）',
   'canvas.noRef': '该标签页暂不支持引用',
-  // canvas 顶部文件扇（2026-10-30 作者令：canvas 文件切换卡片扇翻批）——
-  // 卡头中文签 + 扇顶操作提示（卡片名不裸英文，作者令）
-  'canvas.fanTagFile': '文件',
-  'canvas.fanTagPanel': '面板',
-  'canvas.fanHint': '左右滑动或滚动翻页 · 点击卡片切换文件',
   'canvas.unreadableTitle': '文件不可读',
   'canvas.unreadableHint': '文件不存在或被清理，无法读取。',
   'canvas.unreadablePathHint': '路径非法，无法读取。',

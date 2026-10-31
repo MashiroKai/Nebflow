@@ -192,10 +192,9 @@ const activate = async (page, tabId) => { await page.evaluate((id) => document.q
   ok('C2b 短标题零截断：插件 全显示（修前 6.9px/24px 自然宽）', mPlugins.truncated === false, `w=${mPlugins.w}`);
   ok('C2c 短标题零截断：文档图谱 全显示（修前 21.8px/48px 自然宽）', mGraph.truncated === false, `w=${mGraph.w}`);
 
-  ok('C4 高度与 pop 钮解耦：文件卡 pop 在场、面板 pop hidden，高度仍全等',
-    mFile.popHidden === false && mPlugins.popHidden === true && mGraph.popHidden === true
-    && mFile.h === mPlugins.h && mFile.h === mGraph.h,
-    `popHidden file=${mFile.popHidden} plugins=${mPlugins.popHidden} graph=${mGraph.popHidden}`);
+  ok('C4 高度跨签种一致（原「与 pop 钮解耦」：#canvas-pop-btn 随 Canvas 改造批⑤ 2026-10-31 退役，pop 条件随删；三面高度仍全等）',
+    mFile.h === mPlugins.h && mFile.h === mGraph.h,
+    `file=${mFile.h} plugins=${mPlugins.h} graph=${mGraph.h}`);
 
   // C3 长文件名：按设计省略号截断且不溢出（面板 cap 内、右缘不出面板）
   await activate(page, 'file:/tmp/cu-fixture/long.md');
@@ -253,21 +252,18 @@ const activate = async (page, tabId) => { await page.evaluate((id) => document.q
   ok('C6 环开态高度不变（面板页签胶囊 hover 态 = 常态 36px）',
     ringOpenPinned && mRingOpen.h === 36, `open=${ringOpenPinned} h=${mRingOpen.h}`);
 
-  // F4 环卡固定几何（扇卡批 2026-10-30 重钉，作者令「canvas 顶部多文件 tab 视图
-  // 改为卡片式左右翻动（卡片扇翻）」—— 环胶囊 → 文件扇，卡面规格复用 Pop 扇卡
-  // 220×280）：hover 扇全卡（游标+邻位）220×280（作者令「强制放缩所有尺寸卡片
-  // 到一个大小」），offsetWidth/Height = 布局盒，对 rotate/translate 变换免疫 ——
-  // 扑克扇形的投影盒不是几何本体（canvas-stack.spec 同口径）。标题头胶囊
-  // 180×36 不变（C6/F4c 继续钉）。
+  // F4 环胶囊固定几何：hover 环全胶囊（中心+缘位）180×36，与主胶囊同 token 档
+  // （offsetWidth/Height = 布局盒，对 rotateX/translateZ/scale 变换免疫 ——
+  //   缘位 cover-flow 的投影盒不是几何本体，canvas-stack.spec 同口径）
   const ring = await page.evaluate(() => {
     const hdr = document.querySelector('#canvas-panel .canvas-header');
     const caps = [...document.querySelectorAll('#canvas-capsule-ring .cr-capsule')]
       .map((c) => ({ w: c.offsetWidth, h: c.offsetHeight, cls: c.className }));
     return { hdrW: hdr.offsetWidth, hdrH: hdr.offsetHeight, caps, n: caps.length };
   });
-  ok('F4a 环开且扇卡挂载（前置）', ring.n >= 3, `n=${ring.n}`);
-  ok('F4b 扇全卡固定 220×280（游标+邻位同卡面 —— 强制放缩到一个大小，Pop 扇卡同规格）',
-    ring.caps.every((c) => c.w === 220 && c.h === 280),
+  ok('F4a 环开且胶囊挂载（前置）', ring.n >= 3, `n=${ring.n}`);
+  ok('F4b 环全胶囊固定 180×36（中心+缘位同 token 档）',
+    ring.caps.every((c) => c.w === tokW && c.h === tokH),
     ring.caps.map((c) => `${c.w}x${c.h}`).join(' '));
   ok('F4c 中心环胶囊与标题头胶囊同盒（同位同尺寸无缝 morph 承诺）',
     Math.abs(ring.hdrW - tokW) <= 0.5 && Math.abs(ring.hdrH - tokH) <= 0.5,
@@ -276,7 +272,7 @@ const activate = async (page, tabId) => { await page.evaluate((id) => document.q
     path: join(HERE, '../evidence/20261025_capsule-fixed-size/shots/2-ring-open-36-dark.png'),
     clip: await page.evaluate(() => {
       const p = document.getElementById('canvas-panel').getBoundingClientRect();
-      return { x: Math.max(0, p.left), y: Math.max(0, p.top), width: p.width, height: 380 };
+      return { x: Math.max(0, p.left), y: Math.max(0, p.top - 56), width: p.width, height: 260 };
     }),
   });
   await page.mouse.move(cp.x, cp.y + 320);
@@ -325,12 +321,10 @@ const activate = async (page, tabId) => { await page.evaluate((id) => document.q
     (sap.match(/--capsule-h:\s*36px/g) || []).length === 1
     && (sap.match(/--capsule-w:\s*180px/g) || []).length === 1,
     `h=${(sap.match(/--capsule-h:\s*36px/g) || []).length} w=${(sap.match(/--capsule-w:\s*180px/g) || []).length}`);
-  // 合并注记：本批 w-ref 恒 3 锚写于其基线（ef25d4e3a，扇卡批未落）；合流树
-  // split.css 已被扇卡批重锚（.cr-capsule 卡面 220px 有意字面量、token 消费
-  // 5 处全回落 36px），故 F6b 取 main 侧锚（w-ref=1/h-ref=5 精确计数）。
-  ok('F6b 标题头胶囊消费 token（split.css：var(--capsule-w) 1 处〔标题头 width〕+ var(--capsule-h) 5 处〔标题头 height/卡窗胶囊/内容顶垫档〕—— 扇卡批 2026-10-30 后 .cr-capsule 卡面 220px 为有意字面量规格〔Pop 扇卡同套卡面，F4b 钉〕，不再消费胶囊 token）',
-    (split.match(/var\(--capsule-w/g) || []).length === 1
-    && (split.match(/var\(--capsule-h/g) || []).length === 5,
+  ok('F6b 两胶囊脸消费 token（split.css：var(--capsule-w) 3 处〔标题头 width + .cr-capsule width/max-width 护栏〕+ var(--capsule-h) 6 处〔标题头 height/环胶囊 height/卡窗胶囊/内容顶垫档等〕——竖环回退批 2026-10-31：环胶囊 height 消费随还原 +1〔扇卡期 220px 卡面为有意字面量，F6b 扇代锚 5 处作废〕，无第二字面量档）',
+    (split.match(/var\(--capsule-w/g) || []).length === 3
+    && (split.match(/var\(--capsule-h/g) || []).length === 6
+    && !/\.cr-capsule\s*\{[^}]*width:\s*\d+px/.test(split),
     `w-ref=${(split.match(/var\(--capsule-w/g) || []).length} h-ref=${(split.match(/var\(--capsule-h/g) || []).length}`);
   ok('F6c 标题头固定宽不再有 fit-content 桌面档（body:not(.mobile-layer) 规则内）',
     !/body:not\(\.mobile-layer\) \.canvas-header\s*\{[^}]*fit-content/.test(split),

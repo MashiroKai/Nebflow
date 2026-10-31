@@ -188,35 +188,41 @@ function buildSection(def) {
   section.dataset.page = def.id;
   section.setAttribute('aria-label', tt(def.zh, def.en));
 
-  const head = document.createElement('div');
-  head.className = 'mobile-page-header';
-  const title = document.createElement('span');
-  title.className = 'mobile-page-title';
-  title.tabIndex = -1; // push 后聚焦（读屏从头播报页名）
-  title.textContent = tt(def.zh, def.en);
-  const spacer = document.createElement('span');
-  spacer.className = 'mobile-page-head-spacer';
-  spacer.setAttribute('aria-hidden', 'true');
-  // Canvas 改造批②（2026-10-31 作者令）：canvas/工作台/联系人/消息 = dock 一级
-  // 面板，禁左上角返回钮——返回语义由底 dock 承担（dock 根无「<」；详情页
-  // 保留「<」= pop 一层）。spacer 保留占位，标题胶囊居中不变。
-  if (!def.dock) {
-    const back = document.createElement('button');
-    back.type = 'button';
-    back.className = 'mobile-back-btn';
-    back.title = backLabel();
-    back.setAttribute('aria-label', backLabel());
-    back.innerHTML = '<i data-lucide="chevron-left"></i>';
-    back.addEventListener('click', () => backOut());
-    head.append(back, title, spacer);
-  } else {
-    head.append(title, spacer);
-  }
-  if (typeof lucide !== 'undefined') createIconsIn(head);
-
   const body = document.createElement('div');
   body.className = 'mobile-page-body';
-  section.append(head, body);
+  // 手机端顶栏批（2026-10-31 作者令①）：canvas 页顶部「canvas」胶囊退役——
+  // 页头整体不建（安全区垫高随 .mf-strip 走，mobileLayer.css），文档标签条
+  // 上移就位顶带。其余页页头照旧。
+  if (def.id === 'canvas') {
+    section.append(body);
+  } else {
+    const head = document.createElement('div');
+    head.className = 'mobile-page-header';
+    const title = document.createElement('span');
+    title.className = 'mobile-page-title';
+    title.tabIndex = -1; // push 后聚焦（读屏从头播报页名）
+    title.textContent = tt(def.zh, def.en);
+    const spacer = document.createElement('span');
+    spacer.className = 'mobile-page-head-spacer';
+    spacer.setAttribute('aria-hidden', 'true');
+    // Canvas 改造批②（2026-10-31 作者令）：canvas/工作台/联系人/消息 = dock 一级
+    // 面板，禁左上角返回钮——返回语义由底 dock 承担（dock 根无「<」；详情页
+    // 保留「<」= pop 一层）。spacer 保留占位，标题胶囊居中不变。
+    if (!def.dock) {
+      const back = document.createElement('button');
+      back.type = 'button';
+      back.className = 'mobile-back-btn';
+      back.title = backLabel();
+      back.setAttribute('aria-label', backLabel());
+      back.innerHTML = '<i data-lucide="chevron-left"></i>';
+      back.addEventListener('click', () => backOut());
+      head.append(back, title, spacer);
+    } else {
+      head.append(title, spacer);
+    }
+    if (typeof lucide !== 'undefined') createIconsIn(head);
+    section.append(head, body);
+  }
   if (def.id === 'workbench') buildHub(body);
   if (def.id === 'canvas') buildCanvasPage(body);
   return section;
@@ -574,6 +580,7 @@ function syncCanvasPage() {
     // 活动 chip 滚入视野（切卡后一键可见）。
     canvasUI.strip.querySelector('.mf-strip-chip.on')?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
   }
+  syncStripFade();
   const idx = docs.findIndex((d) => d.id === activeId);
   const cnt = /** @type {HTMLElement|null} */ (canvasUI.toolbar.querySelector('.mf-cv-count'));
   if (cnt) cnt.textContent = docs.length > 1 && idx >= 0 ? `${idx + 1}/${docs.length}` : '';
@@ -587,6 +594,15 @@ function syncCanvasPage() {
   canvasUI.toolbar.hidden = docs.length === 0;
   canvasUI.host.hidden = docs.length === 0;
   if (stackOpen) syncStackView();
+}
+
+/** 标签条横向边缘渐隐门控（顶栏批② 2026-10-31）：内容横向溢出才挂 .fade
+ *  （左右两端 28px mask 渐隐，chat.css .nf-wl-clip 同配方双侧版）；不溢出
+ *  摘 mask 全清晰。chip 重建/横滚/视口变化三路都对账（签名闸零成本直过）。 */
+function syncStripFade() {
+  const strip = canvasUI?.strip;
+  if (!strip) return;
+  strip.classList.toggle('fade', strip.scrollWidth > strip.clientWidth + 1);
 }
 
 /** 堆叠视角开关态（批②⑤：手机端「堆叠态」= 全卡堆叠列表面，顶部显示标签数）。 */
@@ -632,15 +648,31 @@ function buildStackView(wrap) {
   return view;
 }
 
-/** 堆叠视角开合 + 列表同步（open 省略 = 翻转）。 */
+/** 堆叠视角开合 + 列表同步（open 省略 = 翻转）。
+ *  顶栏批④（2026-10-31 作者令「展开动画与电脑端类似」）：开合不再瞬时
+ *  display 切换——开 = 摘 hidden → 回流 → .open（浮面淡入 + 卡列自堆叠位
+ *  逐张弹簧升起，CSS .open/.mf-stack-card stagger 承载）；收 = 摘 .open 卡列
+ *  即时回落（.closing 清 stagger 递延，不拖尾）→ 淡出后 hidden。 */
 function toggleStackView(open) {
   if (!stackUI) return;
   const next = open === undefined ? !stackOpen : !!open;
   if (next === stackOpen) return;
   stackOpen = next;
-  stackUI.view.hidden = !next;
   logEvent('canvas-stack-' + (next ? 'open' : 'close'));
-  if (next) syncStackView();
+  const view = stackUI.view;
+  if (next) {
+    view.hidden = false;
+    view.classList.remove('closing');
+    syncStackView();                   // 先建列（卡生于收合落位态，:not(.open) 初始样式）
+    void view.offsetWidth;             // 回流：.open 自初始态（opacity 0/卡落位）起播
+    view.classList.add('open');        // 后开闸：stagger 从落位态逐张归位（建列在闸前 = 中段帧可取证）
+  } else {
+    view.classList.remove('open');
+    view.classList.add('closing');     // 收面零递延：卡列即时回落不逐张拖尾
+    setTimeout(() => {
+      if (!stackOpen) { view.hidden = true; view.classList.remove('closing'); }
+    }, 200);
+  }
 }
 
 /** 堆叠列表重建（签名闸同 chip 条纪律）：活动卡高亮，点卡 = 换入 + 收面。 */
@@ -729,6 +761,9 @@ function buildCanvasPage(body) {
   wrap.append(strip, toolbar, host, empty);
   body.appendChild(wrap);
   canvasUI = { strip, toolbar, host, empty };
+  // 顶栏批②：标签条渐隐门控的横滚/视口两路对账（chip 重建路在 syncCanvasPage）。
+  strip.addEventListener('scroll', syncStripFade, { passive: true });
+  window.addEventListener('resize', syncStripFade);
   if (typeof lucide !== 'undefined') createIconsIn(wrap);
   void stackView;
 }
