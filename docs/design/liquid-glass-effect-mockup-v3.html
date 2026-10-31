@@ -15,7 +15,9 @@
   结构：A 悬浮族·液态玻璃三变体（亮/暗对照）→ B 控件族·Apple 扁平三变体（亮/暗对照）
         → C 同屏混排示意图（手机亮/暗两屏）→ D 变体配方全表 + 场景映射。
   变体间差异肉眼可辨（填充透明度/色芯/边/高光/投影五维拉开），非微调。
-  本文件是设计演示，不属于产品实现；只设计不实施，作者拍板后另开实现批。
+  本文件是设计演示，不属于产品实现。作者 12:32 已点选（F1 + Stand 墨族配色 +
+  发送钮恢复绿色）→ 实现批已落地（见 §D 映射表「落地变体」列与设计稿 §5），
+  本文件保留呈批时原貌作对照（System Blue 档 = 被改点的未采用项）。
 -->
 <html lang="zh-CN">
 <head>
@@ -304,6 +306,11 @@ table.recipe td:first-child { font-weight: 500; white-space: nowrap; }
   ① 11:38 —— 上线版（v2）按钮仍未达预期，重新设计；先出效果图呈挑，点中哪个改哪个。<br>
   ② 11:43 —— <strong>悬浮按钮 = 液态玻璃；按钮控件 = Apple 扁平风格</strong>（纯色/微圆角/无高光无模糊，System Blue 档）；
   变体数量照原令：悬浮族 2–3 个 + 控件族 2–3 个；另给同屏混排示意图。<br>
+  ③ <strong>12:32 点选（implemented，本文件状态已更新）</strong>——逐字：「用F1 然后按钮的配色风格使用简约的stand 风格吧
+  然后主对话窗口的发送按钮 改回之前的绿色」⇒ 悬浮族 = <strong>F1 轻霜全透</strong>（落地到全部悬浮钮）；
+  控件族 = <strong>Apple 扁平形态 + Stand 墨族单色配色</strong>（墨黑实底主钮 / 中性灰次钮，本样张 System Blue 档不采用）；
+  发送钮 = <strong>恢复 10-30 前微信绿</strong>（#07C160 考古值，其它面板发送键跟随）。实施记录见设计稿 §5，回归证据
+  evidence/20261031_liquid-glass-v3-impl/。<br>
   参考图（v2 同批）：IMG_1632 亮 · App Library 式轻霜全透圆钮；IMG_1634 暗 · 深灰玻璃芯 + 亮边 Select 药丸。
 </div>
 
@@ -545,13 +552,15 @@ table.recipe td:first-child { font-weight: 500; white-space: nowrap; }
   </div>
   <div class="recipe-wrap" style="margin-top:14px;">
   <table class="recipe">
-    <tr><th>界面件</th><th>归属</th><th>建议变体</th><th>说明</th></tr>
-    <tr><td>顶缘悬浮圆钮（任务/搜索）</td><td>悬浮族</td><td>亮 F1 / 暗 F2（或全场统一 F1/F3）</td><td>悬浮于内容之上，必须玻璃；暗档 F1 过隐，推荐 F2</td></tr>
-    <tr><td>发送键</td><td>控件族</td><td>C1（实底主钮）</td><td>11:43 裁定：发送 = 内容区控件 = Apple 扁平，不再是墨玻璃药丸</td></tr>
-    <tr><td>确认 / 取消对</td><td>控件族</td><td>C1 / C3</td><td>主操作实底蓝，取消灰阶中性</td></tr>
-    <tr><td>卡片内动作（查看 diff 等）</td><td>控件族</td><td>C2（次强调）</td><td>浅底蓝字，不与主钮抢</td></tr>
-    <tr><td>列表行内小钮</td><td>控件族</td><td>sm 档 C1/C3</td><td>30px 微圆角 8px</td></tr>
-    <tr><td>输入条本体 / 顶缘渐隐带</td><td>（维持 v2）</td><td>—</td><td>玻璃件但非按钮，v2 已落地，不动</td></tr>
+    <tr><th>界面件</th><th>归属</th><th>落地变体（12:32 点选后实际）</th><th>说明</th></tr>
+    <tr><td>顶缘悬浮圆钮（任务/搜索）</td><td>悬浮族</td><td><strong>F1 双档</strong>（亮 .30/.44 · 暗 .10/.17，blur 20 sat 2.2）</td><td>12:32 点选 F1；手机顶缘双键 + canvas/ask 全部悬浮圆钮同档（liquid-glass.css ④ 块）</td></tr>
+    <tr><td>canvas/ask 悬浮圆钮（ask-dock 开合钮 / #deck-fab / source·ref·find·graph·refresh）</td><td>悬浮族</td><td><strong>F1 双档</strong>（并入 --g2-fab-* 单源）</td><td>「全部悬浮钮」字面落地；原 --cv-* 玻璃模板只留非悬浮件（findbar 等）</td></tr>
+    <tr><td>发送键（主对话 #send-btn）</td><td>控件族</td><td><strong>微信绿实底</strong>（--ctl-send-*：#07C160/#06AD56/#059A4C，白字）</td><td>12:32 令「改回之前的绿色」：10-30 前考古值（git c91de8456^）；药丸几何保留、C1 扁平材质</td></tr>
+    <tr><td>其它面板发送键（dropbox / 好友·群·设备 / 验证申请 / 群邀请 / 建群创建 / ask-dock）</td><td>控件族</td><td><strong>同 --ctl-send-* 绿三档</strong></td><td>「其它面板发送钮跟随主对话」；各自几何保留，掉线/禁用灰档不变</td></tr>
+    <tr><td>确认 / 取消对（面板次操作）</td><td>控件族</td><td><strong>C1 骨架 + 墨族/中性配色</strong>：主操作 = 墨族实底（--btn-ink-*），取消/次操作 = C3 中性（--ctl-neutral-*）</td><td>12:32 令配色改 Stand 墨族，样张 System Blue 档不采用</td></tr>
+    <tr><td>cfg-btn 族（侧栏配置钮次档）</td><td>控件族</td><td><strong>C3 中性扁平实底</strong>（药丸几何保留）；cfg-btn-add = 幽灵虚线档</td><td>退出 g2 玻璃族（v2 曾并入）；按压 = 色深一档无弹缩</td></tr>
+    <tr><td>列表行内小钮 / 卡片内动作（Pattern B roster）</td><td>控件族</td><td><strong>C3 中性扁平</strong>（option/epub/code-copy/modal-cancel 等全 roster）</td><td>sapphire.css Pattern B 玻璃底材整体退役；picked/copied accent 态不受影响</td></tr>
+    <tr><td>输入条本体 / 顶缘渐隐带</td><td>（维持 v2）</td><td>—</td><td>玻璃件但非按钮，v2 已落地，不动（原案同）</td></tr>
   </table>
   </div>
 </div>

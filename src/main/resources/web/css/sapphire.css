@@ -272,8 +272,9 @@
       reserves edge space, no layout shift), full glass on hover.
       Same pattern as .icon-btn / .nav-item / .activity-btn (227bede2).
 
-   B) Labeled / content buttons — glass material at rest, background
-      raises on hover. Same material as #send-btn / .glass-control.
+   B) Labeled / content buttons — v3 控件族扁平实底（--ctl-neutral-*，2026-10-31
+      作者 12:32 点选：Apple 扁平形态 + Stand 墨族配色，玻璃底材退役），hover
+      中性档递进、active 色深一档无弹缩。Same roster as #send-btn 之外的次操作钮。
 
    Excluded on purpose: solid primary/accent buttons (.cfg-btn-primary,
    .option-btn.picked, #modal-confirm, *-modal-save/danger — their accent
@@ -320,10 +321,12 @@
     0 8px 24px var(--glass-control-shadow-hover);
 }
 
-/* Pattern B — base (border-color only, no shorthand: preserves dashed
-   add-buttons and per-variant border styles; liquid-glass-v2 批：材质换代 +
-   镜面高光层） */
-.cfg-btn:not(.cfg-btn-primary),
+/* Pattern B — base（v3 实现批 2026-10-31 材质换代：玻璃底材 → 控件族 C3 中性
+   扁平实底（--ctl-neutral-*，stand-tokens 单源；纯色 / 无边 / 无高光 / 无模糊 /
+   无浮影 —— v3 §D 族纪律）。border-color 仍只换色不动 shorthand：保留各变体
+   自带边型；transparent = 同面色隐边（1px 边位保留，布局零漂移）。
+   cfg-btn-add（虚线添加钮）退回幽灵档由 sidebar.css 自管，不在本条。 */
+.cfg-btn:not(.cfg-btn-primary):not(.cfg-btn-add),
 .config-actions button,
 .agent-detail-save-btn,
 .option-btn,
@@ -335,22 +338,15 @@
 #delete-cancel,
 #memory-modal-actions button,
 #rules-modal-actions button {
-  background-color: var(--glass-control-bg);
-  background-image: linear-gradient(to bottom, var(--glass-control-specular) 0%, transparent 46%);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -2px 5px var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow),
-    0 8px 24px var(--glass-control-shadow);
-  transition: background-color 0.18s ease, color 0.15s, border-color 0.15s,
-              box-shadow 0.18s ease, opacity 0.15s, transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+  background-color: var(--ctl-neutral-bg);
+  border-color: transparent;
+  box-shadow: none;
+  transition: background-color 0.15s ease, color 0.15s, border-color 0.15s,
+              box-shadow 0.15s ease, opacity 0.15s;
 }
-/* Pattern B — hover（picked/copied states excluded: accent must survive;
-   liquid-glass-v2 批：hover 只动填充 —— 投影/高光与 rest 同档） */
-.cfg-btn:not(.cfg-btn-primary):hover,
+/* Pattern B — hover（中性 hover 档；picked/copied 态除外：accent 由各自更高
+   特异档承担） */
+.cfg-btn:not(.cfg-btn-primary):not(.cfg-btn-add):hover,
 .config-actions button:hover,
 .agent-detail-save-btn:hover,
 .option-btn:not(.picked):hover,
@@ -362,15 +358,11 @@
 #delete-cancel:hover,
 #memory-modal-actions button:hover,
 #rules-modal-actions button:hover {
-  background-color: var(--glass-control-bg-hover);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight-hover),
-    inset 0 -2px 5px var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow-hover),
-    0 8px 24px var(--glass-control-shadow-hover);
+  background-color: var(--ctl-neutral-bg-hover);
 }
-/* Pattern B — active（liquid-glass-v2 批补：spring 按压回弹，形变 + 投影收短） */
-.cfg-btn:not(.cfg-btn-primary):active,
+/* Pattern B — active（v3 §D：扁平按压 = 色深一档，无玻璃式弹缩 —— transform
+   形变与投影随本批退役） */
+.cfg-btn:not(.cfg-btn-primary):not(.cfg-btn-add):active,
 .config-actions button:active,
 .agent-detail-save-btn:active,
 .option-btn:not(.picked):active,
@@ -382,11 +374,7 @@
 #delete-cancel:active,
 #memory-modal-actions button:active,
 #rules-modal-actions button:active {
-  transform: scale(0.95);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -2px 5px var(--glass-control-underedge),
-    0 3px 10px var(--glass-control-shadow);
+  background-color: var(--ctl-neutral-bg-active);
 }
 
 /* ── 发送键族统一 — 正常绿 / 掉线灰（作者 2026-09-15 逐字令）──────────────
@@ -421,19 +409,20 @@
                                    登记偏离：建群面板**不产生** `.disconnected`
                                    （提交失败的可见分态走 `groupErrToast`，不做
                                    链路态键面）⇒ 该档对 ⑥ 无生产者，见本批报告 §⑥。
-   状态色（🔴 逐字取自主对话框基准，零自创、零新增字面量）：
-     rest   = var(--btn-primary-bg)        （= 墨族 --btn-ink-*；2026-10-30 起，原 --color-primary 绿降级为身份/状态色）
-     hover  = var(--btn-primary-bg-hover)  （= 墨族 hover 档，同左）
-     active = 描边递进 var(--glass-send-border-active)（既有档）。基准的 active 深绿
-              是个字面量 ⇒ 为守「git diff 零新增字面量色值」本批**不复制**它，改用
-              本族既有描边档表达按下（登记偏离，见报告 §③）。
+   状态色（v3 实现批 2026-10-31，作者 12:32 点选「发送钮跟随主对话」——主对话
+   #send-btn 恢复 10-30 前微信绿（git 考古 c91de8456^），本族四色同走
+   --ctl-send-* 绿阶单源；掉线/禁用灰档语义不变）：
+     rest   = var(--ctl-send-bg)        （#07c160 微信绿实底，白字）
+     hover  = var(--ctl-send-bg-hover)  （#06ad56，描边同色递进）
+     active = var(--ctl-send-bg-active)（#059a4c；v3 §D 扁平按压 = 色深一档）
      掉线   = 灰（`--glass-send-bg-active` + `--glass-send-border-active` + not-allowed）
      disabled = `--glass-send-bg-disabled`（发送键 = 空正文闸；建群创建键 = 未选人 ∨
                 未填群名闸 —— **档位与视觉语言同一套**，只有触发判据各按自身契约，
                 禁自创第二套禁用语义）
-   材质 = 全站 Glass Control standard（`.glass-control`，本文件 :139-157）的**同一批**
-     `--glass-control-*` token：blur(10px)+saturate + 1px whisper border + 双层 inset
-     边 + 双层投影。本块直接引用同一批变量，不复制任何字面量。
+   材质 = v3 控件族 C1 扁平实底（作者 12:32 点选：扁平形态 + Stand 墨族/绿配色
+     混血，不用 System Blue 也不用玻璃）：纯色 / 无 blur / 无高光 / 无浮影 ——
+     本块原 glass-control 材质（blur + inset 边 + 双层投影）与亮档投影反馈层
+     随本批整体退役（--glass-send-shadow* token 保留供既有禁用/掉线灰档引用）。
    墨色 = 取既有 `.cfg-btn-primary`（sidebar.css:1162-1170）的**主操作白墨声明**
      ⇒ 族成员带 `cfg-btn-primary` 类承接墨色（既有类名，**不是**新色值），本块只覆盖
      材质 / 几何 / 状态。
@@ -442,23 +431,15 @@
 :is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip, button.fm-create-submit) {
   /* 机制：`:is()` 取列表内最高特异度（= #id 档 1,0,0）⇒ 族内所有状态规则同档，
      一律压过 .cfg-btn / .cfg-btn-primary 的常态与 hover 声明（本文件最后加载）。 */
-  background: var(--btn-primary-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-  border: 1px solid var(--btn-primary-bg-hover);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow),
-    0 2px 8px var(--glass-control-shadow);
+  background: var(--ctl-send-bg);
+  border: 1px solid var(--ctl-send-border);
   border-radius: 10px;
   padding: 5px 12px;
   font-family: inherit;
   font-weight: 500;
   cursor: pointer;
   opacity: 1; /* 挡住 .cfg-btn-primary:hover/:disabled 的 opacity 反馈（本族用色表达） */
-  transition: background 0.15s ease, border-color 0.15s ease,
-              box-shadow 0.15s ease, opacity 0.15s ease;
+  transition: background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
 }
 
 :root {
@@ -511,53 +492,29 @@
   }
 }
 
-/* hover — 填充递进到主对话框同款 hover 绿（`--color-primary-hover`）+ 描边同色；
-   基准（input.css:827-836）的 fill 递进就是这样做的，本族照抄其**色值**（非自创）。 */
+/* hover — 绿阶深一档（--ctl-send-bg-hover）+ 描边同色（v3 扁平实底反馈语言）。 */
 :is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip, button.fm-create-submit):hover {
-  background: var(--btn-primary-bg-hover);
-  border-color: var(--btn-primary-bg-hover);
+  background: var(--ctl-send-bg-hover);
+  border-color: var(--ctl-send-bg-hover);
   opacity: 1;
 }
 
-/* active — 描边递进本族既有按下档（基准的 active 深绿是字面量，本批不复制） */
+/* active — 再深一档（--ctl-send-bg-active）；v3 §D 扁平按压 = 色深一档，无弹缩。 */
 :is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip, button.fm-create-submit):active {
-  border-color: var(--glass-send-border-active);
+  background: var(--ctl-send-bg-active);
+  border-color: var(--ctl-send-bg-active);
 }
 
-/* 掉线 / 禁用 / 亮档投影三档的**声明次序即契约**（三者可同时命中：掉线时输入框被
-   禁用 ⇒ 键同时 `:disabled` 且 `.disconnected`，且 `:hover` 也可能同档）：
-   同特异度 ⇒ 后声明者胜 ⇒ 序 = 亮档投影 → disabled → **disconnected（最后，胜出）**
-   ——「掉线灰」必须是用户看到的那个灰。 */
+/* 掉线 / 禁用两档的**声明次序即契约**（可同时命中：掉线时输入框被禁用 ⇒
+   键同时 `:disabled` 且 `.disconnected`，且 `:hover` 也可能同档）：
+   同特异度 ⇒ 后声明者胜 ⇒ 序 = disabled → **disconnected（最后，胜出）**
+   ——「掉线灰」必须是用户看到的那个灰。
+   （v3 实现批：2026-09-11 亮档投影反馈三规则随扁平材质退役——C1 实底无浮影，
+   --glass-send-shadow* 保留供本块与 disabled 的 --glass-send-stack 引用。） */
 
-/* Light-only shadow feedback (author ruling 2026-09-11, option B). Scoped to
-   `light` on purpose: `none` is only a legal box-shadow value on its own, so
-   it cannot be appended to the preserved glass stack in the shared rules —
-   scoping the layers keeps dark's inherited shadow (and every other dark
-   declaration) byte-for-byte untouched. The border half of the feedback is
-   already theme-split via --glass-send-border-hover/active above.
-   Specificity ledger (all four selectors outrank their competitors, and
-   sapphire.css is the last stylesheet, see index.html:47-50):
-   · `:is(…)` 取列表最高档 (1,0,0) ⇒ 本块与 rest 块同档 (1,0,0)、状态形
-     (1,1,0)，一律压过 `.cfg-btn` (0,1,0) / `.cfg-btn:hover` (0,2,0)
-     [sidebar.css:1149-1160] 与 Pattern B (0,2,0) [sapphire.css:219-229]；
-   · 与 friends.css:368 `.fm-verify-box .glass-control` (0,2,0) 不冲突——那条只
-     声明 flex-shrink / font-size / padding，本块不声明这三项（padding 除外，
-     本块显式 5px 12px 即为挡 `.cfg-btn-primary` 的 5px 14px）。 */
-@media (prefers-color-scheme: light) {
-  :is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip, button.fm-create-submit) {
-    box-shadow: var(--glass-send-stack), var(--glass-send-shadow);
-  }
-  :is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip, button.fm-create-submit):hover {
-    box-shadow: var(--glass-send-stack), var(--glass-send-shadow-hover);
-  }
-  :is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip, button.fm-create-submit):active {
-    box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
-  }
-}
-
-/* disabled — declared after the light block on purpose: :disabled may co-match
-   :hover（同特异度 ⇒ 按次序）。禁用材质 + `--color-text` 半透明文字（与 09-12
-   「同意」键同款禁用表达）+ not-allowed；**绝不**用元素级 opacity（P4 已退役表达）。 */
+/* disabled — :disabled may co-match :hover（同特异度 ⇒ 按次序）。禁用材质 +
+   `--color-text` 半透明文字（与 09-12「同意」键同款禁用表达）+ not-allowed；
+   **绝不**用元素级 opacity（P4 已退役表达）。 */
 :is(#dropbox-send-btn, .cfg-btn.fm-send-btn, button.fm-verify-send, button.fm-send-chip, button.fm-create-submit):disabled {
   background: var(--glass-send-bg-disabled);
   border-color: var(--glass-send-border-disabled);

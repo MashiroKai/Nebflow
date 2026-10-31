@@ -909,24 +909,19 @@
   .orb-ripple { display: none; }
 }
 #send-btn {
-  /* 2026-10-30 按钮体系单源重设计（作者令「按钮不要绿色…像 SpaceX」）：主发送键
-     从字面微信绿五态迁入墨族 token 单源（--btn-primary-* → --btn-ink-*，官网
-     --auth-btn-* 双档；亮 #111827 近黑/暗 #e6edf3 浅墨 ink-swap，主题跟随面板
-     html[data-theme]，三态解析见 stand-tokens.css）。阴影槽位（inset 顶折线/底缘/
-     接触影）本就是零绿中性槽位，逐槽保留；disabled 从褪绿 wash 改灰玻璃族
-     （--btn-disabled-*）。此前 hover/active 的暗档字面量（#22CE78/#0BA95A）随
-     token 双档化作废删除。
-     liquid-glass-v2 批 2026-10-31（作者 08:43 裁定① + 09:03 拍板）：发送键形态
-     换代 = 36px 圆 → 墨玻璃药丸 h32 r999（设计稿 §5.2；底色/字色/状态引用
-     --g2-ink-* 墨玻璃 token 单源 = 墨族单源 + 高光/浮影叠层）；spring 按压
-     scale(.95) 180ms 回弹；镜面高光层 ::before 在 liquid-glass.css 承接。 */
-  background-color: var(--g2-ink-bg);
-  color: var(--g2-ink-ink);
-  /* Edge: 药丸同底色描边（按压态递进 --g2-ink-bg-active）。 */
-  border: 1px solid var(--g2-ink-bg);
-  box-shadow:
-    inset 0 1px 0 var(--g2-ink-highlight),
-    0 6px 20px var(--g2-ink-shadow);
+  /* 液体玻璃 v3 实现批（作者 10-31 12:32 点选逐字：「主对话窗口的发送按钮
+     改回之前的绿色」）：配色恢复 10-30 墨族换代前的微信绿考古值（git
+     c91de8456^ 本块：rest #07C160 / hover #06AD56 / active #059A4C，白字，
+     1px 深绿缘 #06AD56）——全走 --ctl-send-* 单源（stand-tokens.css，双主题
+     同值）。形态 = v2 药丸几何（h32 r999）保留；材质换代 = C1 扁平实底
+     （v3 §D 族纪律：无 blur / 无镜面高光 / 无浮影 / 按压 = 色深一档无弹缩），
+     liquid-glass.css 的墨玻璃药丸承接块随本批退役；spring 按压与 ::before
+     高光层移除。禁用灰玻璃（--btn-disabled-*）与掉线灰档语义不变。
+     （10-30 批注释见 git 历史；本块自 v3 起只描述现态。） */
+  background: var(--ctl-send-bg);
+  color: var(--ctl-send-ink);
+  /* Edge: 药丸同底色描边（按压/悬停递进 --ctl-send-bg-hover/active）。 */
+  border: 1px solid var(--ctl-send-border);
   border-radius: 999px;
   height: 32px;
   padding: 0 14px;
@@ -937,32 +932,21 @@
   gap: 6px;
   flex-shrink: 0;
   transition:
-    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
-    box-shadow 0.18s ease,
-    background-color 0.18s ease,
-    border-color 0.2s;
+    background-color 0.15s ease,
+    border-color 0.15s ease;
 }
 #send-btn:hover {
-  /* 墨阶升一档（亮 #111827→#374151 / 暗 #e6edf3→#fff，token 双档自动）——
-     填充本身承担反馈；浮影抬短档匹配。 */
-  background-color: var(--g2-ink-bg-hover);
-  border-color: var(--g2-ink-bg-hover);
-  box-shadow:
-    inset 0 1px 0 var(--g2-ink-highlight),
-    0 3px 12px var(--g2-ink-shadow);
+  /* 绿阶深一档（C1 实底反馈）：hover = --ctl-send-bg-hover，描边同色。 */
+  background-color: var(--ctl-send-bg-hover);
+  border-color: var(--ctl-send-bg-hover);
 }
 #send-btn:active {
-  /* spring 按压回弹：形变 + 再深一档 + 投影收短（设计稿 §4/§6）。 */
-  transform: scale(0.95);
-  background-color: var(--g2-ink-bg-active);
-  border-color: var(--g2-ink-bg-active);
-  box-shadow:
-    inset 0 1px 0 var(--g2-ink-highlight),
-    0 3px 10px var(--g2-ink-shadow);
+  /* 再深一档（C2）；扁平按压 = 色深一档，无弹缩（v3 §D 族纪律）。 */
+  background-color: var(--ctl-send-bg-active);
+  border-color: var(--ctl-send-bg-active);
 }
 #send-btn:disabled {
-  /* 灰玻璃禁用档（褪绿 wash 作废）：材质与全站发送族禁用档同 token。
-     liquid-glass-v2 批：禁用档保持灰玻璃语义（--btn-disabled-*），药丸几何随本体。 */
+  /* 灰玻璃禁用档（--btn-disabled-*）：发送键 = 空正文闸，语义不变。 */
   background: var(--btn-disabled-bg);
   border-color: var(--btn-disabled-stroke);
   color: var(--btn-disabled-ink);
@@ -991,9 +975,8 @@
 }
 #send-btn.disconnected svg { opacity: 0.45; }
 #send-btn.disconnected:hover { background: var(--glass-send-bg-active); }
-/* 2026-10-30 按钮体系批：hover/active/禁用三档全部随墨族 token 双档自动解析
-  （亮 #374151 / 暗 #ffffff；禁用灰玻璃），原暗档字面量组（#22CE78/#0BA95A/
-  rgba 绿 wash）整块删除——主题跟随面板，不再按 prefers-color-scheme 分支。 */
+/* v3 实现批：hover/active = --ctl-send-* 绿阶（见本块头注）；10-30 墨族注释
+   与暗档绿字面量组已随换代移除（git 历史可查）。 */
 
 #stop-btn {
   background: var(--color-error);
@@ -1088,11 +1071,13 @@
    the #slash-dropdown glass recipe verbatim — one dropdown pattern, two hosts. */
 /* 换装批（作者令 2026-10-31「@ 与 / 候选浮层对齐现行设计语言」）：材质整体换代
    为液态玻璃悬浮件 token 单源（stand-tokens.css --g2-fab-* 族 = liquid-glass.css
-   共享底材同配方：白玻璃底 + 镜面高光 + 底缘内影 + 双层浮影），圆角 16px 对齐聊
-   天气泡族；行内缩圆角行（r10）+ hover 白玻璃 hover 档 + 选中行墨族 --g2-ink-*
-   墨玻璃高亮（ink-swap 双档随面板主题自动解析，字色随高亮翻转）。旧硬编码
-   #f0f0f0/#e8f5e9/#333 + @media 暗档字面量覆写整体退役（g2 token 自带
-   data-theme + media 双档解析，无主题裂缝）。 */
+   共享底材同配方），圆角 16px 对齐聊天气泡族；行内缩圆角行（r10）+ hover 白玻璃
+   hover 档 + 选中行墨族 --g2-ink-* 墨玻璃高亮（ink-swap 双档随面板主题自动解析，
+   字色随高亮翻转）。旧硬编码 #f0f0f0/#e8f5e9/#333 + @media 暗档字面量覆写
+   整体退役（g2 token 自带 data-theme + media 双档解析，无主题裂缝）。
+   v3 实现批：--g2-fab-* 升 F1 档（填充 .30/.10、blur 20 sat 2.2、边 .70/.26、
+   高光 .55/.26、投影 0 10px 26px）——本块浮影栈结构不动，底缘层 token 已置
+   透明（F1 无底缘内影），材质随单源自解析。 */
 #slash-dropdown,
 #mention-dropdown {
   position: absolute;
