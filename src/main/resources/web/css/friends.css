@@ -24,25 +24,40 @@
   box-sizing: border-box;
 }
 
-/* ── 条目字号放大批（作者 2026-10-31 12:50 令：联系人/消息列表条目内容全局
-   字号大一些，对标微信；只动这两个面的条目文字，聊天气泡内文字不动）。
-   档位（现行基准 → 微信对标档，主文案 16px 级）：
-     行名 .fm-row-name        13 → 16px（+line-height 1.4 呼吸感）
-     行副文案 .fm-row-sub     11 → 13px（+line-height 1.4）
-     会话摘要 .fm-conv-summary 12 → 14px
-     会话时间 .fm-conv-time   11 → 12px
-     行内垫  .fm-row          7px 10px → 9px 10px（行高呼吸感同步；横向保 10px
-                        ——180px 最窄侧栏下被拉黑行贴边临界，横向垫不能再涨）
-     同步随动件：.fm-remark-edit（与行名同档）、.fm-nf-label、
-     头像首字母 .fm-avatar-36/40。（.fm-status-text 状态词维持 11px ——
-     最窄侧栏贴边临界，且不在本批 named 范围。） */
+/* ── 条目字号放大批（作者 2026-10-31 12:50 令：联系人/消息列表条目内容
+   字号大一些，对标微信；只动这两个面的条目文字，聊天气泡内文字不动。
+   21:36 追加令口径修订：只放大手机端，电脑端还原放大前值——桌面规则
+   逐字回退 12:50 批前基准（见下方各基值），放大档收进 body.mobile-layer
+   覆盖块（手机层激活 = 手机端；窄桌面窗仍走桌面档，语义不随宽度漂移）。
+   档位（桌面基准 / 手机层档，主文案 16px 级）：
+     行名 .fm-row-name        13 / 16px（手机层 +line-height 1.4 呼吸感）
+     行副文案 .fm-row-sub     11 / 13px（手机层 +line-height 1.4）
+     会话摘要 .fm-conv-summary 12 / 14px
+     会话时间 .fm-conv-time   11 / 12px
+     行内垫  .fm-row          7px 10px / 9px 10px（手机层行高呼吸感同步；
+                        横向保 10px——180px 最窄侧栏下被拉黑行贴边临界）
+     同步随动件（手机层档）：.fm-remark-edit（与行名同档）、.fm-nf-label、
+     头像首字母 .fm-avatar-36/40。（.fm-status-text 状态词双档均 11px ——
+     最窄侧栏贴边临界，不在本批 named 范围。） */
+/* 手机层覆盖块（21:36 追加令）：以下逐条压上方桌面基值， specificity
+   （元素+双类）高于裸类规则，无需 !important；桌面与手机渲染互不越界。 */
+body.mobile-layer .fm-row { padding: 9px 10px; }
+body.mobile-layer .fm-avatar-36 { font-size: 16px; }
+body.mobile-layer .fm-avatar-40 { font-size: 17px; }
+body.mobile-layer .fm-row-name { font-size: 16px; line-height: 1.4; }
+body.mobile-layer .fm-row-sub { font-size: 13px; line-height: 1.4; }
+body.mobile-layer .fm-remark-edit { font-size: 16px; }
+body.mobile-layer .fm-nf-label { font-size: 16px; }
+body.mobile-layer .fm-conv-time { font-size: 12px; }
+body.mobile-layer .fm-conv-summary { font-size: 14px; }
+body.mobile-layer .fm-req-time { font-size: 12px; }
 
 /* ── Shared row/list primitives ─────────────────────────── */
 .fm-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 9px 10px;
+  padding: 7px 10px; /* 桌面档（12:50 批前基准；手机层 9px 见头部覆盖块） */
   border-radius: 10px;
   cursor: pointer;
   transition: background 0.15s ease;
@@ -74,8 +89,8 @@
 }
 
 .fm-avatar img { width: 100%; height: 100%; object-fit: cover; }
-.fm-avatar-36 { width: 36px; height: 36px; font-size: 16px; }
-.fm-avatar-40 { width: 40px; height: 40px; font-size: 17px; }
+.fm-avatar-36 { width: 36px; height: 36px; font-size: 14px; }
+.fm-avatar-40 { width: 40px; height: 40px; font-size: 15px; }
 
 /* ① 设备行头像（作者 2026-09-15：「设备在消息列表里的头像应该要和在联系人面板里
    一致」）：字形 = `platformDisplay` 单点（`neblink.js:401-414`）产出的平台 `<svg>`，
@@ -88,9 +103,8 @@
 .fm-row-meta { flex: 1; min-width: 0; }
 
 .fm-row-name {
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 500;
-  line-height: 1.4;
   color: var(--color-text, #000);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -98,8 +112,7 @@
 }
 
 .fm-row-sub {
-  font-size: 13px;
-  line-height: 1.4;
+  font-size: 11px;
   color: var(--color-text-muted, #888);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -173,14 +186,15 @@
 
 /* ⑦ 好友备注行内编辑器（2026-09-12 批）：行内把 .fm-row-name 换成输入框。
    形态对齐既有行内编辑惯例（.folder-new-input / .explorer-name-input）——
-   零新色值，全部走既有 token；字号/行高与 .fm-row-name 同档（2026-10-31 字号
-   放大批随动为 16px / 1.4），因此提交前后行高不变，只多出输入框的边框与内距。 */
+   零新色值，全部走既有 token；字号/行高与 .fm-row-name 同档（桌面 13px /
+   1.4；21:36 口径修订后手机层随动 16px / 1.4，见文件头覆盖块），因此提交
+   前后行高不变，只多出输入框的边框与内距。 */
 .fm-remark-edit {
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
   padding: 2px 6px;
-  font-size: 16px;
+  font-size: 13px;
   font-family: inherit;
   font-weight: 500;
   line-height: 1.4;
@@ -496,7 +510,7 @@ button.fm-verify-cancel:focus-visible {
 
 .fm-nf-icon svg { width: 17px; height: 17px; }
 
-.fm-nf-label { flex: 1; font-size: 16px; font-weight: 500; color: var(--color-text, #000); }
+.fm-nf-label { flex: 1; font-size: 13px; font-weight: 500; color: var(--color-text, #000); }
 
 .fm-nf-chevron { color: var(--color-text-muted, #888); display: flex; }
 .fm-nf-chevron svg { width: 14px; height: 14px; }
@@ -603,7 +617,7 @@ button.fm-req-decline:focus-visible {
 .fm-conv-time {
   flex-shrink: 0;
   margin-left: auto;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--color-text-muted, #888);
   font-variant-numeric: tabular-nums;
 }
@@ -613,7 +627,7 @@ button.fm-req-decline:focus-visible {
 .fm-conv-summary {
   flex: 1;
   min-width: 0;
-  font-size: 14px;
+  font-size: 12px;
   color: var(--color-text-muted, #888);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1634,7 +1648,7 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-req-time {
   flex-shrink: 0;
   align-self: center;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--color-text-muted, #888);
   margin-left: auto;
   padding-left: 8px;

@@ -2269,3 +2269,26 @@ body.mobile-layer .mobile-page-body > .settings-collapse-body {
 }
 /* 接管模态在场：注入返回钮隐藏（强制二选一，无取消语义可挂）。 */
 body.mobile-layer #modal-overlay.takeover-live .mfs-back { display: none !important; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   手机端 UI 急诊批（2026-10-31 20:14 作者报「手机端 UI 很不正常」）——
+   折射滤镜合成分诊：非 live 页面壳内的玻璃钮 ::before 中性化。
+   根因（本批实证链）：弹窗退场批把页面「<」返回钮升级为 48px g2-fab 后，
+   24 个隐藏页面壳（:not(.live)）内 20+ 枚 g2-fab 钮的 ::before（backdrop-
+   filter + filter:url(#g2-refract) 双层合成）即使 visibility:hidden 仍参与
+   合成层分配，污染全文档共享的滤镜资源 ⇒ 聊天根 chrome 双钮、消息/联系人页
+   搜索钮、canvas 工具钮等**所有可见** g2-fab 玻璃钮渲染成纯色垃圾块
+   （暗主题=纯蓝、亮主题=青白，图标被吞）。实证：①运行时摘除全部隐藏页面壳、
+   或仅摘除 20 枚返回钮 ⇒ 聊天根按钮立即痊愈；②摘 html.g2-refract-on 类
+   （设计稿 §7 降级语义）⇒ 痊愈；③bd07a09ec（返回钮尚为 30px 普通玻璃、
+   无折射层）同树同滤镜 ⇒ 正常。修法：非 live 页不可见，中和其玻璃钮
+   ::before 的 filter/backdrop-filter 零视觉代价；live 页、聊天根 chrome、
+   桌面全部不动（规则挂 body.mobile-layer）。
+   ═══════════════════════════════════════════════════════════════════════ */
+body.mobile-layer .mobile-page:not(.live) .g2-fab::before,
+body.mobile-layer .mobile-page:not(.live) .g2-pill::before,
+body.mobile-layer .mobile-page:not(.live) .mh-chrome-btn::before {
+  filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
