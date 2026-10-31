@@ -1208,8 +1208,12 @@ object MergeQueue:
    *   - 账实核对预检（只读）：`merge-base --is-ancestor` 已 0 ⇒ 合并已落地——
    *     不碰 base 立即收尾（delegate 侧纪律 #6 的引擎配对闸；复活/续投实例的
    *     陈旧重放在此被只读预检挡下）；
-   *   - 执行：单命令 `git -C <baseWs> merge --no-ff <branch>`；拒绝/冲突 = STOP
-   *     原文上报（无重试——failed 关账，处置归 dispatcher）。
+   *   - 执行：单命令 `git -C <baseWs> merge --no-ff <branch>`；冲突 = **就地解决**
+   *     （解完 `git add` + `git commit` 完成合并，含代码/测试文件须跑受影响面
+   *     测试），禁止 `merge --abort` 收尾或「rebase 后再合」推回人工（合并轮提示词
+   *     加固批 2026-10-31，Canvas 批撤摊事故反面教材）；真解不动才允许 abort 且
+   *     必须显式声明「未完成合并」——failed 关账；非冲突拒绝 = STOP 原文上报
+   *     （无重试——处置归 dispatcher）。
    */
   def mergeBriefFor(m: Member): String =
     val tip = m.grantedBaseTip.map(_.take(12)).getOrElse("unknown")
@@ -1220,9 +1224,15 @@ Read-only pre-check FIRST (zero writes): run `git -C ${m.baseWs} merge-base --is
 Otherwise execute the merge EXACTLY like this (single command, no flags beyond these):
   git -C ${m.baseWs} merge --no-ff ${m.branch}
 This merges your branch into the base branch `${m.baseBranch}`. Do NOT merge anywhere else, do NOT force-push, do NOT rebase, do NOT touch other branches or other sessions' work.
-Special case — YOUR OWN leftover merge state: if the merge refuses with "you have unmerged files" / "cannot merge ... unresolved conflicts" AND `git -C ${m.baseWs} rev-parse MERGE_HEAD` equals YOUR branch tip (an earlier conflicted attempt of your own round), recover IN THIS ROUND: run `git -C ${m.baseWs} merge --abort`, then re-run the single merge command above once. Never abort when MERGE_HEAD points at someone else's branch.
-If git refuses or reports conflicts: STOP — change nothing, resolve nothing; report the refusal/conflict verbatim in your final text, call delegate_report(category="finish", detail=<the refusal/conflict>), and end your turn (there is no blocked category — the refusal is your report's content, not a state; a lane-busy refusal re-queues your membership automatically — a genuine refusal closes it as failed, no automatic retries).
-On success, call delegate_report(category="finish", detail=<what the merge landed>) and end with your final report; the engine re-judges the merge round. Your final report must LEAD with the work result (what the task produced, artifacts, REPORT.md paths) and keep the merge info to one line — the parent session reads this report as the task's result.
+Special case — YOUR OWN leftover merge state: if the merge refuses with "you have unmerged files" / "cannot merge ... unresolved conflicts" AND `git -C ${m.baseWs} rev-parse MERGE_HEAD` equals YOUR branch tip (an earlier conflicted attempt of your own round), recover IN THIS ROUND: run `git -C ${m.baseWs} merge --abort`, then re-run the single merge command above once. Never abort when MERGE_HEAD points at someone else's branch. This abort only clears your own stale state — the merge itself must still COMPLETE in this round per the conflict rules below.
+If the merge reports CONFLICTS, they are YOURS to resolve IN THIS ROUND — hard rules (no deferral, no bail-out):
+  1. 冲突=必须就地解决：禁止以 merge --abort 收尾，也禁止「rebase 后再合」把冲突推回人工。逐个打开冲突文件完成融合（严禁整文件 ours/theirs 一刀切——两侧语义都必须保留），然后 git add 每个已解决文件并 git commit 完成合并，产出带双亲的 merge commit。
+  2. 合并后必测：解冲突涉及代码/测试文件时，合并完成后必须跑受影响面测试（至少冲突文件的相邻套件）再报完成；纯文档/证据文件冲突须在报告中显式声明免测理由。
+  3. 诚实申报闸：未真正合入（base 分支 HEAD 无第二亲本＝你的分支 tip）不得声称已合并——机械验收直接核对 git 实况，虚报＝整轮作废。
+  反面教材（Canvas 批，10-31）：合并轮撞 4 件冲突后 merge --abort 撤摊、报「需 rebase 后再合」且申报完成——解冲突被推回人工，该批作废重来。
+  Only if you genuinely cannot reconstruct the conflicting semantics: run `git -C ${m.baseWs} merge --abort`, and your final text MUST state 未完成合并 verbatim — you may not claim completion; the round closes as failed (no automatic retries).
+If git refuses for a NON-conflict reason: STOP — change nothing; report the refusal verbatim in your final text, call delegate_report(category="finish", detail=<the refusal>), and end your turn (there is no blocked category — the refusal is your report's content, not a state; a lane-busy refusal re-queues your membership automatically — a genuine refusal closes it as failed, no automatic retries).
+On success, call delegate_report(category="finish", detail=<what the merge landed>) and end with your final report; the engine re-judges the merge round (mechanical acceptance: the base HEAD must be a two-parent merge commit whose second parent is your branch tip). Your final report must LEAD with the work result (what the task produced, artifacts, REPORT.md paths) and keep the merge info to one line — the parent session reads this report as the task's result.
 </system-reminder>"""
   end mergeBriefFor
 
