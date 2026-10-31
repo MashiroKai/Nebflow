@@ -181,13 +181,14 @@ test('T1 canvas page presentation: full-bleed page, chip strip, toolbar, host, s
   expect(geo.chipOn).toBe(1);
   expect(geo.chipLabel).toBe('样例文档一');
   expect(geo.popGone).toBe(true);
-  expect(geo.stackBox).toEqual({ w: 44, h: 44 });
+  // 悬浮钮统一批（10-31 16:03 作者令）：工具钮归 48px g2-fab 基准。
+  expect(geo.stackBox).toEqual({ w: 48, h: 48 });
   // 批②：堆叠视角钮在挂（单卡亦可开面——计数 0 张）。
   expect(geo.stackBtn === undefined || geo.stackBtn === true).toBe(true);
   expect(geo.count).toBe('');           // 单卡无计数
   // 批⑤：.mf-cv-pop 已退役，popHidden 断言随钮移除（popGone 已钉在上）。
-  expect(geo.closeBox.w).toBe(44);      // X 热区 44×44
-  expect(geo.closeBox.h).toBe(44);
+  expect(geo.closeBox.w).toBe(48);      // X 热区 48×48（统一批基准规格）
+  expect(geo.closeBox.h).toBe(48);
   expect(geo.hostVisible).toBe(true);
   expect(geo.emptyHidden).toBe(true);
   // 收编是异步腿（openTab → pane 建出 → adoptActiveDoc），重试等 pane 落位；
@@ -339,7 +340,7 @@ test('T5 hit zones: toolbar prev/next/close ≥44px (pop ≥44 when visible)', a
       return { w: Math.round(r.width), h: Math.round(r.height), hidden: el.hidden };
     };
     return {
-      // 批②⑤：工具条 = ✕ + 堆叠视角钮（44px 液体玻璃圆）+ 计数。
+      // 批②⑤：工具条 = ✕ + 堆叠视角钮（统一批：48px 液体玻璃圆）+ 计数。
       stack: box('.mf-cv-stack'),
       close: box('.mf-cv-close'),
     };

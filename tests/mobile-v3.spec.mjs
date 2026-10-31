@@ -206,6 +206,7 @@ test('T1 five-tab dock: author-order keys, icon+label structure, switching, acti
   expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('workbench');
   // 回聊天根 = 中键（chat home 键）；批② + 顶栏批：dock 根页无「<」（顶栏退役），
   // 返回语义由底 dock 承担。
+  expect(await page.locator('.mobile-page[data-page="workbench"] .mobile-back-btn')).toHaveCount(0);
   await page.locator('#mobile-dock .dock-key[data-dock="chat"]').click();
   expect(await page.evaluate(() => window.__nfMobileNav?.home)).toBe('chat');
   await expect(page.locator('#mobile-dock .dock-key.active')).toHaveCount(1);

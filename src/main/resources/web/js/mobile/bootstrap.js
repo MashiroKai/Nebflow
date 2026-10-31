@@ -24,6 +24,9 @@
 //   · chatChrome = 聊天根顶栏双键（任务/搜索；液态下拉列退役后的常驻入口）；
 //   · searchFace / daemonFace / memoryFace = 桌面面的手机呈现附件（脚注/角色行/
 //     卡读态——面收编进页面后照常生效）；
+//   · socialSearch = 消息/联系人页右上浮搜索钮 + 展开式搜索栏（悬浮钮统一+搜索批
+//     2026-10-31 作者令 16:03；消息页=类微信跨会话检索+跳转定位，联系人页=既有
+//     搜好友逻辑承载，见 socialSearch.js 头注）；
 //   · taskPanel = 任务页面板（数据/卡渲染同源，呈现位=页面收编）。
 //   · msgLongPress = 消息长按 → 上下文菜单（附件批 2026-10-31：与桌面右键同一份
 //     菜单单点出口 msgQuote.openQuoteMenuForRow；手势契约见该文件头）。
@@ -54,7 +57,7 @@ async function activate() {
     // dock 批激活序：nav 先行（dock/页面壳就位，chrome/faces 才有栈可推）；
     // 拆除以**数组序**执行 ⇒ teardowns 倒排激活序：faces/chrome 先归还搬移
     // 节点，nav 最后拆（pane/overlay 面归还锚点在页面壳仍在场时执行）。
-    const [nav, socialFaces, chatChrome, searchFace, daemonFace, memoryFace, msgLongPress] = await Promise.all([
+    const [nav, socialFaces, chatChrome, searchFace, daemonFace, memoryFace, msgLongPress, socialSearch] = await Promise.all([
       import('./navController.js'),
       import('./socialFaces.js'),
       import('./chatChrome.js'),
@@ -62,6 +65,7 @@ async function activate() {
       import('./daemonFace.js'),
       import('./memoryFace.js'),
       import('./msgLongPress.js'),
+      import('./socialSearch.js'),
     ]);
     if (!active) return; // 激活期间已跨越回桌面 —— 直接拆除
     const navTeardown = nav.activateNav();
@@ -71,7 +75,8 @@ async function activate() {
     const tDaemonFace = daemonFace.activateDaemonFace();
     const tMemoryFace = memoryFace.activateMemoryFace();
     const tLongPress = msgLongPress.activateMsgLongPress();
-    teardowns = [tLongPress, tMemoryFace, tDaemonFace, tSearchFace, tChrome, tFaces, navTeardown];
+    const tSocialSearch = socialSearch.activateSocialSearch();
+    teardowns = [tSocialSearch, tLongPress, tMemoryFace, tDaemonFace, tSearchFace, tChrome, tFaces, navTeardown];
   } catch (err) {
     // 控制器加载失败：回到桌面形态（宁可退回可用桌面，不可半挂层）。
     console.error('[mobile-layer] activate failed', err);
