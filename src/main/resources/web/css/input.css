@@ -1086,50 +1086,77 @@
    #input-bar's backdrop root. */
 /* #mention-dropdown (@-mention project popup, mention-routing batch) shares
    the #slash-dropdown glass recipe verbatim — one dropdown pattern, two hosts. */
+/* 换装批（作者令 2026-10-31「@ 与 / 候选浮层对齐现行设计语言」）：材质整体换代
+   为液态玻璃悬浮件 token 单源（stand-tokens.css --g2-fab-* 族 = liquid-glass.css
+   共享底材同配方：白玻璃底 + 镜面高光 + 底缘内影 + 双层浮影），圆角 16px 对齐聊
+   天气泡族；行内缩圆角行（r10）+ hover 白玻璃 hover 档 + 选中行墨族 --g2-ink-*
+   墨玻璃高亮（ink-swap 双档随面板主题自动解析，字色随高亮翻转）。旧硬编码
+   #f0f0f0/#e8f5e9/#333 + @media 暗档字面量覆写整体退役（g2 token 自带
+   data-theme + media 双档解析，无主题裂缝）。 */
 #slash-dropdown,
 #mention-dropdown {
   position: absolute;
   bottom: 100%;
   left: 12px;
   right: 12px;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  border-radius: 20px;
+  background: var(--g2-fab-bg);
+  -webkit-backdrop-filter: blur(var(--g2-fab-blur)) saturate(var(--g2-fab-sat));
+  backdrop-filter: blur(var(--g2-fab-blur)) saturate(var(--g2-fab-sat));
+  border: 1px solid var(--g2-fab-border);
+  border-radius: 16px;
   box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
-  margin-bottom: 4px;
-  max-height: 200px;
+    inset 0 1px 0 var(--g2-fab-highlight),
+    inset 0 -2px 5px var(--g2-fab-underedge),
+    0 1px 3px var(--g2-fab-shadow),
+    0 8px 24px var(--g2-fab-shadow);
+  margin-bottom: 8px;
+  max-height: 240px;
   overflow-y: auto;
   display: none;
   z-index: 50;
   pointer-events: auto;
+  padding: 6px 0;
 }
 #slash-dropdown.on,
 #mention-dropdown.on { display: block; }
+/* 分组标题（换装批）：两浮层顶部的类别签，纯呈现（aria-hidden，非 listbox
+   option，键盘导航/行序零影响）；字号取元信息档 11px/500。 */
+.dd-group-title {
+  padding: 4px 16px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  user-select: none;
+}
 .slash-item {
-  padding: 10px 14px;
+  padding: 8px 12px;
+  margin: 0 6px;
+  border-radius: 10px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  border-bottom: 1px solid #f0f0f0;
   position: relative;
+  transition: background-color 0.15s ease;
 }
-.slash-item:last-child { border-bottom: none; }
-.slash-item:hover, .slash-item.active {
-  background: #f0f0f0;
-}
+.slash-item + .slash-item { margin-top: 2px; }
+.slash-item:hover { background: var(--g2-fab-bg-hover); }
 .slash-item.active {
-  background: #e8f5e9;
+  background: var(--g2-ink-bg);
 }
+.slash-item.active .slash-cmd { color: var(--g2-ink-ink); }
+.slash-item.active .slash-desc,
+.slash-item.active .slash-when {
+  color: var(--g2-ink-ink);
+  opacity: 0.72;
+}
+.slash-item.active .slash-delete { color: var(--g2-ink-ink); }
 .slash-cmd {
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 500;
-  color: #333;
+  line-height: 1.5;
+  color: var(--color-text);
 }
 .slash-desc {
   font-size: 12px;
@@ -1185,27 +1212,34 @@
    Item rows mirror the .slash-item family (same paddings, same hover/active
    treatment) so the two dropdowns read as one pattern. */
 .mention-item {
-  padding: 10px 14px;
+  padding: 8px 12px;
+  margin: 0 6px;
+  border-radius: 10px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  border-bottom: 1px solid #f0f0f0;
+  transition: background-color 0.15s ease;
 }
-.mention-item:last-child { border-bottom: none; }
-.mention-item:hover, .mention-item.active {
-  background: #f0f0f0;
-}
+.mention-item + .mention-item { margin-top: 2px; }
+.mention-item:hover { background: var(--g2-fab-bg-hover); }
 .mention-item.active {
-  background: #e8f5e9;
+  background: var(--g2-ink-bg);
+}
+.mention-item.active .mention-name { color: var(--g2-ink-ink); }
+.mention-item.active .mention-path {
+  color: var(--g2-ink-ink);
+  opacity: 0.72;
 }
 .mention-name {
-  font-size: 14px;
+  font-size: 14.5px;
   font-weight: 500;
-  color: #333;
+  line-height: 1.5;
+  color: var(--color-text);
 }
 .mention-path {
   font-size: 12px;
+  line-height: 1.5;
   color: var(--color-text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -1213,10 +1247,20 @@
 }
 /* Zero-match state: informational line, not a clickable row. */
 .mention-empty {
-  padding: 10px 14px;
-  font-size: 13px;
+  padding: 8px 16px;
+  font-size: 12px;
   color: var(--color-text-muted);
   cursor: default;
+}
+/* 降级（liquid-glass.css §7 同口径：@supports + html.no-backdrop 双保险）：
+   无 backdrop-filter 引擎时玻璃底退化为 --g2-fab-solid 实色档，浮影/高光保留。 */
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  #slash-dropdown,
+  #mention-dropdown { background: var(--g2-fab-solid); }
+}
+html.no-backdrop #slash-dropdown,
+html.no-backdrop #mention-dropdown {
+  background: var(--g2-fab-solid);
 }
 
 /* ── Queue Bar (messages typed while LLM is busy) ──────────────────────
@@ -1501,13 +1545,6 @@
   .icon-btn:active { background: rgba(255,255,255,0.10); transform: scale(0.96); }
   .icon-btn.recording { background: #07c160; }
 
-  #slash-dropdown {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0px 4px 16px rgba(0, 0, 0, 0.30),
-      0px 8px 32px rgba(0, 0, 0, 0.45);
-  }
-
   #queue-bar.visible {
     box-shadow:
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
@@ -1518,15 +1555,9 @@
     background: rgb(var(--sapphire) / 0.18);
   }
 
-  .slash-item { border-bottom-color: #2a2d35; }
-  .slash-item:hover, .slash-item.active { background: #282b33; }
-  .slash-item.active { background: rgba(7,193,96,0.12); }
-  .slash-cmd { color: #d8dae0; }
-
-  .mention-item { border-bottom-color: #2a2d35; }
-  .mention-item:hover, .mention-item.active { background: #282b33; }
-  .mention-item.active { background: rgba(7,193,96,0.12); }
-  .mention-name { color: #d8dae0; }
+  /* 换装批：slash/mention 浮层暗档覆写整体退役 —— 材质已换代 --g2-fab-*/
+  /* --g2-ink-* token，双档由 stand-tokens.css 自解析（data-theme + media）， */
+  /* 此处不再留字面量分支。 */
 
   .att-file { background: #282b33; }
 

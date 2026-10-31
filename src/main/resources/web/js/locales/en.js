@@ -1069,6 +1069,7 @@ export default {
   'ob2.input.ph': 'Say something to {name}…',
   'slash.onboarding': 'Replay the onboarding guide',
   'slash.model': '/model — View or edit model configuration',
+  'slash.title': 'Slash Commands',
   'settings.save': 'Save',
   'settings.saved': 'Saved ✓',
   'settings.saveFailed': 'Save failed',

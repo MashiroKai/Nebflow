@@ -137,6 +137,13 @@ export function updateSlashDropdown() {
   }
   const slashDropdown = activeView.dom.slashDropdown;
   slashDropdown.innerHTML = '';
+  // 分组标题（换装批 2026-10-31）：类别签纯呈现 —— aria-hidden 非 option，
+  // 行序/键盘导航（.slash-item 索引）零影响。
+  const ddTitle = document.createElement('div');
+  ddTitle.className = 'dd-group-title';
+  ddTitle.setAttribute('aria-hidden', 'true');
+  ddTitle.textContent = t('slash.title');
+  slashDropdown.appendChild(ddTitle);
   activeView.slashMatches.forEach((item, i) => {
     const div = document.createElement('div');
     div.className = 'slash-item' + (i === 0 ? ' active' : '');
