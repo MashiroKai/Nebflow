@@ -29,7 +29,8 @@ import scala.util.Try
  *
  * 消费点：内部腿 [[DelegateTerminal.onCompleted]]（mergeRound Release 尾注）＋
  * 外部腿 ExternalSessionRunner.settle（mergeRoundNow 投父前置）——同一构造器，
- * 两腿同一附页契约。
+ * 两腿同一附页契约。非 completed 终态的随投保 = [[preservedWorkSuffix]]
+ * （合并回执通知链修复批 2026-10-31——合并轮夭折形态的工作结果唯一回传面）。
  */
 object DelegateWorkReport:
 
@@ -50,11 +51,12 @@ object DelegateWorkReport:
    * 附页构造（fail-soft 全包：record 缺失 / git 不可读 / 文件读失败 → 对应段缺席
    * 或整体 ""——绝不抛、绝不阻断终态投递）。
    *
-   * 必达修复批 2026-10-29（恰一次去重腿）：ready-to-merge 停靠点已把工作结果全文
-   * 投父（BackoffSupervisor 停靠投递 + 交付回执），本附页的 work result 段只在该
-   * 投递**未被父确认**（回执缺席 / 未 ack——补投机器还可能补投全文）时才随行，
-   * 防同一工作结果两次进入父会话上下文；已确认 = 只带 merge status + report files
-   * （作者令 23:44「合并完成后可再补一行合并回执」）。
+   * 必达修复批 2026-10-29 的「停靠投递已被父确认 ⇒ 省略工作段」去重腿**保留**
+   * （存量回执面/防御面），但停靠投递本身已被合并回执通知链修复批 2026-10-31
+   * 撤销（作者裁定：对 dispatcher 恰一次通知 = 合并落地时的终态回执——停靠投递
+   * 与合并回执共用 correlationId 被父 intake 恰一次判重滤除，「work result 到了、
+   * 合并回执失踪」的断点正此）⇒ 常态下回执缺席/未 ack，**工作段随行**（单条合并
+   * 回执 = 判词行 + merge status + 工作结果全文，一次到齐）。
    */
   def appendixFor(record: Option[DelegateRegistry.Record]): String =
     Try {
@@ -79,10 +81,39 @@ object DelegateWorkReport:
   /**
    * 停靠投递是否已被父会话确认（回执在且已 ack）。回执缺席 = 未确认（保守——
    * 附页照常带工作段，宁重复不丢失）。fail-soft：读失败 = 未确认。
+   *
+   * 合并回执通知链修复批 2026-10-31：停靠投递撤销后本判据常态判「未确认」
+   * （工作段随合并回执随行）；保留 = 存量已 ack 回执（旧盘面）的恰一次面 + 未来
+   * 任何重新引入停靠投递形态时的去重锚。
    */
   private def workResultAlreadyDelivered(delegateId: String): Boolean =
     if !DelegateDeliveryReceipts.validId(delegateId) then false
     else DelegateDeliveryReceipts.find(delegateId).exists(_.ackedAt.isDefined)
+
+  /**
+   * 保真工作结果的**随投段**（合并回执通知链修复批 2026-10-31；纯函数，fail-soft
+   * 全包）：delegate 的**非 completed 终态**（合并轮夭折的 failed/cancelled——
+   * 合并窗超时 / 撞脏树 / 机械验收拒绝等）投父时，若 workReport 保真槽在场
+   * （该 delegate 到达过 ready-to-merge），随投保真工作结果全文——停靠不再投父
+   * 后，本段 = 该形态下工作结果的唯一回传面，工作成果绝不随夭折丢失。寻常失败
+   * 腿（未到过 ready-to-merge，槽缺席）= ""（零动作，逐字退化）。
+   *
+   * 消费点 = [[nebflow.agent.BackoffSupervisor]] 的 notifyParentAndStop 包装层
+   * （在 impl 前拼 payload；completed 终态的工作段由 [[appendixFor]] 附页承担，
+   * 此处只兜非完成腿，两段永不双投）。
+   */
+  def preservedWorkSuffix(delegateId: String, source: String, eventType: String): String =
+    if source != "delegate" || eventType == "completed" || !DelegateDeliveryReceipts.validId(delegateId) then ""
+    else
+      Try {
+        DelegateRegistry
+          .find(delegateId)
+          .flatMap(_.workReport)
+          .map(_.trim)
+          .filter(_.nonEmpty)
+          .map(w => s"\n\n$Marker work result (preserved from the work phase, before the merge round):\n${w.take(Bound.WorkChars)}")
+          .getOrElse("")
+      }.getOrElse("")
 
   /**
    * 纯组装（spec 判红锚）：三段全空 = ""（老 delegate 逐字退化现状——不产空附页）；

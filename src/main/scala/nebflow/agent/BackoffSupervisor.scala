@@ -168,8 +168,11 @@ object BackoffSupervisor:
             else s""""$description" (no text output)"""
           // worktree-judge-fifo 批（#1224）：delegate 轨的 Completed 先过终态
           // 判定机（三态判词）——completed/blocked 照常报父（payload 携带判词
-          // 行）；ready-to-merge **停靠**：不报父、不停 actor（合并轮需要
-          // delegate 活着自执行合并），预算重挂合并窗新 3600s，超时走下方既有
+          // 行）；ready-to-merge **停靠**：不报父、不停 actor（合并回执通知链修复批
+          // 2026-10-31：对父恰一次通知 = 合并落地时的终态回执——10-29「停靠即投」
+          // 因与合并回执共用 correlationId 被父 intake 恰一次判重滤除而撤销；工作
+          // 结果经保真槽随合并轮附页回传；不停 actor = 合并轮需要 delegate 活着自
+          // 执行合并），预算重挂合并窗新 3600s，超时走下方既有
           // Cancelled 链兜底。subtask 轨零变化。四修②：全会话工具调用计数随行
           // ——终态确定性预检（resultText 空＋零工具 ⇒ 直接判未完成）的输入。
           if source == "delegate" then
@@ -206,62 +209,31 @@ object BackoffSupervisor:
                     )
                   )
                 case Right(nebflow.core.delegate.DelegateTerminal.Outcome.HoldForMerge) =>
-                  // 必达修复（投递可靠性批 2026-10-29 · 断点 1，作者令 23:44「停靠
-                  // 等合并不再扣住报告」）：ready-to-merge 停靠**先投工作结果**——
-                  // 合并是引擎侧步骤，父会话有权先知道工作结果；合并完成后另有
-                  // 合并回执一行。投递走既有终态通道（source=delegate × completed
-                  // × correlationId=delegateId → 父 barrier 正确释放）+ 交付回执
-                  // 落盘（DelegateDeliveryReceipts——崩溃补投机器同覆盖；合并轮
-                  // Release 的附页据 ack 态去重工作段，恰一次）。**不停 actor、不动
-                  // MergeQueue 账、不覆写任务库状态**（ready-to-merge 停靠原样）。
-                  val parkPayload =
-                    s"""$payload
-
-[delegate-judge] verdict: ready-to-merge — the work is DONE and the branch is parked for the engine-side merge round (this message is the work result; a one-line merge receipt will follow when the merge lands)."""
-                  val parkDelivery = fileChangesMetadata().flatMap { fc =>
-                    val parkMeta = JsonObject(
-                      "description" -> description.asJson,
-                      "agentName" -> agentName.asJson
-                    ).deepMerge(extraMetadata).deepMerge(fc).deepMerge(
-                      JsonObject("parkedForMerge" -> true.asJson)
-                    )
-                    val deliver = parentRef match
-                      case Some(ref) =>
-                        ref ! AgentCommand.ExternalEvent(
-                          source = source,
-                          eventType = "completed",
-                          payload = parkPayload,
-                          metadata = parkMeta,
-                          correlationId = Some(subagentId)
-                        )
-                      case None =>
-                        logger.warn(
-                          s"[terminal-result-undelivered] delegate '$subagentId' reached ready-to-merge but no parent ref exists — " +
-                            s"park delivery falls back to the F2 persistent queue. Payload head: ${parkPayload.take(300)}"
-                        ) *> f2DeliveryBackstop(
-                          AgentCommand.ExternalEvent(source, "completed", parkPayload, parkMeta, Some(subagentId))
-                        )
-                    deliver *>
-                      nebflow.core.delegate.DelegateDeliveryReceipts.record(
-                        nebflow.core.delegate.DelegateDeliveryReceipts.Receipt(
-                          delegateId = subagentId,
-                          parentSessionId = parentSessionId,
-                          eventType = "completed",
-                          payload = parkPayload,
-                          metadata = parkMeta,
-                          deliveredAt = System.currentTimeMillis()
-                        )
-                      ) *>
-                      logger.info(
-                        s"BackoffSupervisor: delegate $subagentId ready-to-merge — work result delivered to the parent at park time (merge receipt to follow)"
-                      )
-                  }
+                  // 合并回执通知链修复批 2026-10-31（作者 08:38 裁定：「delegate 不是
+                  // 应该合并完成了才通知你吗——怎么还没合并就通知你了，然后合并完了
+                  // 也没通知你」）：ready-to-merge 停靠**不再向父投工作结果**——投递
+                  // 可靠性批 2026-10-29「停靠即投」就此撤销。
+                  // 断点定位（撤销理由）：停靠投递与合并轮终态回执**共用
+                  // correlationId=delegateId**，父 intake 的 DeliveredReceiptLedger 按
+                  // 身份键恰一次判重——停靠件注入即标记 delegateId 已投递 ⇒ 合并落地
+                  // 的终态回执被 intake 当重复件滤除（external-event-duplicate-
+                  // suppressed）：「work result 到了、合并回执失踪，只能自己去 git 查」
+                  // 的断点正此；停靠件还多减一次父屏障槽位。撤停靠投递后一个 delegate
+                  // 生命周期对父**恰一次**终态投递（合并落地时）——恰一次判重/屏障链
+                  // 全部归位；工作结果经 workReport 保真槽随合并轮 Release 附页回传
+                  // （DelegateWorkReport，零丢失——附页去重腿照旧：回执已 ack 才省略
+                  // 工作段）；合并轮夭折的 failed/cancelled 终态由 notifyParentAndStop
+                  // 的保真随投保兜底。**不停 actor、不动 MergeQueue 账、不覆写任务库
+                  // 状态**（ready-to-merge 停靠原样）。
+                  //
                   // 合并窗预算重挂（旧窗口随工作相终结释放；DelegateBudget ∈
                   // agent 层——core 钩子只回 Outcome，重挂留在本层，分层纪律）。
                   DelegateBudget
                     .release(subagentId)
                     .*>(
-                      parkDelivery
+                      logger.info(
+                        s"BackoffSupervisor: delegate $subagentId held for merge round (parent NOT notified — the single terminal receipt follows when the merge lands; fresh merge-window budget armed)"
+                      )
                     )
                     .*>(
                       DelegateBudget
@@ -1028,6 +1000,24 @@ object BackoffSupervisor:
         taskStatusOverride: Option[String] = None,
         mergeOutcome: Option[nebflow.core.delegate.MergeQueue.RoundOutcome] = None
       ): IO[Behavior[AgentEvent]] =
+        // 合并回执通知链修复批 2026-10-31：ready-to-merge 之后（workReport 保真槽
+        // 在场）的 failed/cancelled 终态 = 合并轮夭折形态——停靠不再投父后，本段 =
+        // 工作结果对该形态的唯一回传面：随投保真工作结果全文，工作成果绝不随夭折
+        // 丢失（completed 终态的工作段由合并轮 Release 附页承担，此处只兜非完成腿；
+        // 寻常失败腿 workReport 槽缺席 = 零动作，逐字退化）。fail-soft 内包。
+        IO.blocking(
+          payload + nebflow.core.delegate.DelegateWorkReport.preservedWorkSuffix(subagentId, source, eventType)
+        ).flatMap(payloadWithWork =>
+          notifyParentAndStopImpl(eventType, payloadWithWork, failureMetadata, taskStatusOverride, mergeOutcome)
+        )
+
+      private def notifyParentAndStopImpl(
+        eventType: String,
+        payload: String,
+        failureMetadata: JsonObject,
+        taskStatusOverride: Option[String] = None,
+        mergeOutcome: Option[nebflow.core.delegate.MergeQueue.RoundOutcome] = None
+      ): IO[Behavior[AgentEvent]] =
         val metadata = JsonObject(
           "description" -> description.asJson,
           "agentName" -> agentName.asJson
@@ -1137,7 +1127,7 @@ object BackoffSupervisor:
           IO.pure(Behaviors.stopped[AgentEvent]))
           .handleErrorWith(_ => IO.pure(Behaviors.stopped[AgentEvent]))
 
-      end notifyParentAndStop
+      end notifyParentAndStopImpl
 
       /**
        * 终态事件 F2 注入队持久兜底（监督链自动恢复批 2026-10-22）：parentRef=None
