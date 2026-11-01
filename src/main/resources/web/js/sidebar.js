@@ -1468,8 +1468,8 @@ function bindSettingsEvents(content, cfg) {
   // secrets-ui-redesign 2026-10-08: the bare word becomes a tri-state
   // .st-badge — activity(st-ok)=up · octagon-alert(st-err)=down + reason
   // (truncated inside the pill, full text on title) · circle-dashed(muted)=not
-  // configured. Same reading as secrets-mode-badge: the ICON carries the
-  // colour, the word stays neutral (--status-word). A fetch failure keeps the
+  // configured. Same reading as the (retired 2026-11-01) secrets-mode-badge: the
+  // ICON carries the colour, the word stays neutral (--status-word). A fetch failure keeps the
   // muted "…" placeholder — the unchanged silent-catch convention.)
   // Read-only probe = GET /api/decision/health (DecisionHealthMonitor; the
   // write legs are the plugin-allocation calls themselves).

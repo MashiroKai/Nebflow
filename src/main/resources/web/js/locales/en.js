@@ -2794,8 +2794,9 @@ export default {
   'secrets.delete': 'Delete',
   'secrets.save': 'Save',
   'secrets.saved': 'Saved ✓',
-  'secrets.state.ok': 'owner-only',
-  'secrets.state.permissive': 'permissions too open',
+  // The two-state permission badge keys are retired with the badge itself
+  // (层级收进批, author ruling 2026-11-01: the badge concept is gone; en/zh
+  // drop the same keys in the same batch).
   'secrets.referencedBy': 'Referenced by {refs}',
   'secrets.deleteTitle': 'Delete secret',
   'secrets.deleteConfirm': 'This cannot be undone. Delete "{name}"?',

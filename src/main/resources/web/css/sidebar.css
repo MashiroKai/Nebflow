@@ -820,7 +820,7 @@
   white-space: nowrap;
 }
 .inline-state .st-ic { width: 11px; height: 11px; }
-/* 状态徽标族（secrets-mode-badge 同读法：图案载彩色，字中性 --status-word）。 */
+/* 状态徽标族（图案载彩色，字中性 --status-word；原引 secrets-mode-badge 同读法——该徽标已退役，层级收进批 2026-11-01）。 */
 .st-badge {
   display: inline-flex;
   align-items: center;

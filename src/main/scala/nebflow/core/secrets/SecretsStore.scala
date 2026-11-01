@@ -242,7 +242,8 @@ class SecretsStore(
   /**
    * List everything under `secretsDir`. A missing directory is an empty list
    * (no secrets yet), not an error. Managed names are visible like any
-   * other; only writes distinguish them.
+   * other; only writes distinguish them. Archive/rollback backups
+   * ([[isArchiveBackup]]) are NOT listed — they are not credentials.
    *
    * Read-only by contract: it reads the metadata sidecar, and deliberately
    * does NOT refresh the catalogue — a list must never write.
@@ -251,7 +252,11 @@ class SecretsStore(
     IO.blocking {
       if !Files.isDirectory(secretsDir.toNIO) then Right(Nil)
       else
-        val names = os.list(secretsDir).filter(p => Files.isRegularFile(p.toNIO)).map(_.last).toList.sorted
+        val names = os.list(secretsDir)
+          .filter(p => Files.isRegularFile(p.toNIO))
+          .map(_.last)
+          .filterNot(isArchiveBackup)
+          .toList.sorted
         val refs = referencedByAll()
         val meta = SecretsCatalog.load(dataRoot)
         Right(
@@ -683,6 +688,21 @@ object SecretsStore:
   /** Name contract: lowercase start, `[a-z0-9._-]`, 1-64 chars. */
   val NamePattern: java.util.regex.Pattern = java.util.regex.Pattern.compile("^[a-z0-9][a-z0-9._-]{0,63}$")
   val MaxLen: Int = 64
+
+  /**
+   * Archive/rollback backups are NOT secrets（密钥面板清杂质件，作者实拍令
+   * 2026-11-01：「email-connector-rollback-*.json、logto-logout-rollback.json
+   * 这类回滚备份不是密钥，从密钥面板剔除」）: tooling (logto-email 闸等) has
+   * historically dropped rollback snapshots into the credential namespace, and
+   * the author's live panel showed them flagged as bogus secrets. The rule:
+   * any name carrying `rollback` (case-insensitive) is hidden from every LIST
+   * face — panel list, catalogue rows, consumption pointers, CLI list. 🔴 The
+   * file itself is untouched on disk (still deletable/readback by explicit
+   * name; its archival/move elsewhere is a separate decision, 不属本批). The
+   * credential namespace stays the single place every credential lives — we
+   * filter the VIEW, never relocate the bytes.
+   */
+  def isArchiveBackup(name: String): Boolean = name.toLowerCase.contains("rollback")
 
   /**
    * Largest accepted value: 64 KiB (超限 400 invalid_value — 防误贴大文件,
