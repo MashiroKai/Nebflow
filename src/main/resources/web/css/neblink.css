@@ -277,12 +277,16 @@
    —— 客户端不提供修改入口，Username 经官网账号中心设置。） */
 
 /* ── 设置账号段（auth-trim 批，2026-10-20 作者令）────────────────────────
-   「切换账号 / 退出登录」两键已退役（控制台不承担认证态管理，登出/切号只在
-   官网门户）。本段现只承载两类形态：
-   · `.neblink-account-actions` —— 未登录失败面「清理并重登」键的行容器（唯一住户）；
-   · `.neblink-switch-btn` 类名被该修复键沿用（绿玻璃配方不变），仅类名历史同源。
-   原 `.neblink-logout-btn` 行内覆写与整段切换账号弹窗样式（.neblink-switch-modal
-   族）已随 DOM 一并删除；只读登录态行 = `.neblink-account-ro`。 */
+   「切换账号 / 退出登录」两键于本批退役（控制台不承担认证态管理，登出/切号只在
+   官网门户）。本段现承载三类形态：
+   · `.neblink-account-actions` —— 键行容器（两处住户：「清理并重登」未登录失败面、
+     「退出登录」已登录面）；
+   · `.neblink-switch-btn` 类名被「清理并重登」修复键沿用（绿玻璃配方不变），
+     `#neblink-logout` 走次操作档 `.neblink-logout-btn`（几何同形、材质玻璃）；
+   · 只读登录态行 = `.neblink-account-ro`。
+   `#neblink-logout` = 2026-11「退出登录没有入口」修复批补回的登出入口（作者裁
+   「只修退不出」，豁免本批 auth-trim 的认证态管理裁定）；整段切换账号弹窗样式
+   （.neblink-switch-modal 族）仍随 DOM 一并删除、零残留。 */
 .neblink-account-actions {
   display: flex;
   gap: 8px;
@@ -306,6 +310,19 @@
 }
 .neblink-switch-btn:active { background: rgba(7, 193, 96, 0.28); }
 .neblink-switch-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* 「退出登录」次级键（2026-11「退出登录没有入口」修复批）——
+   🔴 本段**只补几何**（与「清理并重登」键逐值同形），材质/描边/墨色/hover/active/
+   disabled 全部来自既有 `button.glass-control` 次操作档（sapphire.css）⇒ 零新增
+   色值、零新增 token、零新视觉体系。档位 = 次操作（描边玻璃），不是「清理并重登」
+   那种绿实心主键（本键是退出，不是修复动作）。 */
+.neblink-logout-btn {
+  flex: 1;
+  padding: 8px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+}
 
 /* 只读登录态行（谁登录着，无动作入口）。 */
 .neblink-account-ro {

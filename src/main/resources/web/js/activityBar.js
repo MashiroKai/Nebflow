@@ -3,8 +3,9 @@
 // Layout (top → bottom):
 //   • Avatar — the NebLink login entry. Tap when logged out → opens the
 //     NebLink login modal (Logto OIDC, Authorization Code + PKCE; legacy
-//     device flow as fallback). Tap when logged in →
-//     opens the account profile page (brand.getProfileUrl) in a new tab.
+//     device flow as fallback). Tap when logged in → opens the account menu
+//     (「个人主页」/「退出登录」, 2026-11 sign-out-entry fix batch — the profile
+//     page path is unchanged, sign-out needs a second, explicit click).
 //   • Side Bar panel switch buttons (Files; future panels register the same way).
 //   • (spacer)
 //   • Projects / Plugins (Canvas tabs) and Settings.
@@ -26,6 +27,9 @@ import { createIconsIn, escapeHtml, statusIcon } from './utils.js';
 import { getProfileUrl, standLockupSvg } from './brand.js';
 import { t } from './i18n.js';
 import { key } from './branding.js';
+// 已登录态账号菜单壳（2026-11「退出登录没有入口」修复批）：复用既有右键/长按
+// 菜单组件（玻璃面板 + 手机层全屏动作表），零新弹层形态。
+import { showPopupMenu } from './contextMenu.js';
 // 弹窗退场批（作者令 2026-10-31②）：手机层登录卡铺满屏 + 左上返回（= close，桌面零变化）。
 import { mobileSheetBack } from './mobile/popSheet.js';
 
@@ -467,19 +471,22 @@ function observeSettingsModal() {
  * longer forwards a synthetic click — see bindSettingsAccountEntry).
  *
  * Logged out → the single click starts the PKCE flow (no second confirmation
- * step); logged in → open the account profile page.
+ * step); logged in → open the account menu (profile page + sign out).
+ *
+ * 2026-11「退出登录没有入口」修复批（作者裁「只修退不出」）：已登录态原先一点
+ * 就**直接打开**官网个人页 —— 作者踩坑点（想登出却进了个人页）。现改为一个
+ * 两选一菜单：**打开个人页这条路逐字保留**（同一个 `getProfileUrl()` +
+ * `window.open(..., 'noopener')`），退出登录是**菜单里的第二枚键**（需明确
+ * 点击两次：点头像 → 点「退出登录」）⇒ 不会误触。菜单壳 = 既有
+ * `contextMenu.js` (`showPopupMenu`)，零新视觉体系、零新弹层形态。
+ * @param {Element|null} [anchorEl] 菜单锚点（调用者传入自己那个入口元素；
+ *   缺省回退到活动条头像）。
  */
-export function activateAccountEntry() {
+export function activateAccountEntry(anchorEl) {
   const st = getNeblinkState();
   if (st.pairing) return; // pairing in progress — ignore
   if (st.loggedIn) {
-    // Logged in → open the account profile page. The URL comes from the
-    // brand contract (injected profileUrl, fallback in brand.js) — building
-    // it from brand.domain shipped a dead https://neblink.example/profile
-    // link, since domain is a display-only placeholder.
-    // 'noopener': the profile page must not get a window.opener handle back
-    // into the app window.
-    window.open(getProfileUrl(), '_blank', 'noopener');
+    openAccountMenu(anchorEl || null);
     return;
   }
   // Not logged in → start the NebLink login (PKCE hosted page).
@@ -487,10 +494,41 @@ export function activateAccountEntry() {
   showLoginModal();
 }
 
+/**
+ * Logged-in account menu (2026-11 sign-out-entry fix batch).
+ *
+ * 两枚键，都走既有实现，零新增链路：
+ *   · 打开个人页 → `brand.getProfileUrl()` + `window.open(..., 'noopener')`
+ *     （逐字沿用修复前 activateAccountEntry 的实现 —— 该路径不得删除）；
+ *   · 退出登录 → `openEndSessionHandoff(false)`（neblink.js；本地八步拆除 +
+ *     provider end-session + /auth/logged-out 落地页，与「清理并重登」同一链路，
+ *     仅入参 false = 不做强制登录）。
+ * 壳 = contextMenu.js `showPopupMenu`（玻璃面板；手机层自动转全屏动作表）。
+ * @param {Element|null} anchorEl */
+function openAccountMenu(anchorEl) {
+  const anchor = anchorEl instanceof Element ? anchorEl : document.getElementById('activity-avatar');
+  const r = anchor ? anchor.getBoundingClientRect() : null;
+  // 活动条在左缘 ⇒ 菜单向右展开、与锚点顶对齐；无锚点（异常面）则屏幕居中。
+  const x = r ? Math.round(r.right + 8) : Math.round(window.innerWidth / 2);
+  const y = r ? Math.round(r.top) : Math.round(window.innerHeight / 2);
+  showPopupMenu(x, y, [
+    {
+      // 打开个人页这条路径**保留**（修复前点头像的唯一行为）。
+      label: t('activity.profile'),
+      onClick: () => window.open(getProfileUrl(), '_blank', 'noopener'),
+    },
+    {
+      // 退出登录 = 明确第二次点击；危险档位不套 red（退出不是破坏性操作）。
+      label: t('neblink.logout'),
+      onClick: () => openEndSessionHandoff(false),
+    },
+  ]);
+}
+
 function bindAvatar() {
   const avatar = document.getElementById('activity-avatar');
   if (!avatar) return;
-  avatar.addEventListener('click', activateAccountEntry);
+  avatar.addEventListener('click', () => activateAccountEntry(avatar));
 }
 
 /**
@@ -508,7 +546,10 @@ function bindAvatar() {
 function bindSettingsAccountEntry() {
   document.addEventListener('click', (e) => {
     const target = e.target instanceof Element ? e.target : null;
-    if (target && target.closest('#settings-avatar-entry')) activateAccountEntry();
+    // 锚点 = 设置里那个头像入口本身（已登录态的账号菜单从它展开，见
+    // openAccountMenu）—— 行为与活动条头像一致，仅锚点不同。
+    const entry = target ? target.closest('#settings-avatar-entry') : null;
+    if (entry) activateAccountEntry(entry);
   });
 }
 
