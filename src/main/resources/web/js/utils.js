@@ -455,6 +455,53 @@ function _decodeHumanEntities(s) {
     .replace(/&amp;/g, '&');
 }
 
+// ── 代码块语法高亮（文档渲染批 2026-11-01）──────────────────────────────
+// 修前语义：markdown 围栏（```lang）走 marked 原样输出 `<pre><code class=
+// "language-x">`，除复制按钮外**没有任何着色**——vendor 里早就躺着
+// highlight.min.js 与两套 github 主题 CSS（index.html:48-49,1196），但只有
+// 工具调用正文（renderHighlightedContent）用它，文档/对话的代码块一直是裸
+// `<pre><code>`。本补丁把同一枚 hljs 接到围栏腿上：零新依赖、零新 vendor。
+//
+// 口径（三条刻意的收缩，都是为了成本与确定性）：
+//   1. 只高亮**带显式且 hljs 认识**的语言标签的围栏；无标签一律不动
+//      （highlightAuto 对长文是 O(N·语言数)，流式重渲下不可控）。
+//   2. 单块超过 [[FENCE_HIGHLIGHT_MAX_CHARS]] 字节直接放行原文——
+//      大块日志不该在渲染路径上做词法分析。
+//   3. 未知语言（hljs.getLanguage 返回假）同样放行原文：加个空 hljs 类只会
+//      让主题色错位，不如保持现状。
+//
+// 位置契约：本 pass 必须跑在 mermaid 占位替换（图表不是代码）、human 卡
+// 转换（卡不是代码）之后，`<pre>` 复制按钮包裹之前——包裹 pass 按 `<pre>`
+// 配对扫描，先包裹会把 `</code></pre>` 挤到新位置。
+const FENCE_HIGHLIGHT_MAX_CHARS = 20000;
+// marked v12 的围栏形状：`<pre><code class="language-<x>">正文</code></pre>`
+// （正文已 HTML 转义；mermaid.md 批的 RE_MERMAID_BLOCK 是同一形状的证据）。
+const RE_FENCE_BLOCK = /<pre><code class="language-([\w+#.-]+)"([^>]*)>([\s\S]*?)<\/code><\/pre>/g;
+
+/** 给带语言标签的围栏补 hljs 着色。纯函数：不认识的语言 / 超长 / hljs 缺席 /
+ *  无匹配 ⇒ 逐字节原样返回。 */
+function _highlightFencedCode(html) {
+  if (typeof hljs === 'undefined') return html;
+  RE_FENCE_BLOCK.lastIndex = 0;
+  const out = html.replace(RE_FENCE_BLOCK, (m, lang, attrs, body) => {
+    // 实体解码（marked 转义过一次）→ hljs 自己再转义一次，双向可逆；
+    // 不解码就高亮会把 `&lt;` 当字面量切词，token 边界全错。
+    const src = _decodeHumanEntities(body);
+    if (src.length > FENCE_HIGHLIGHT_MAX_CHARS) return m;
+    let res;
+    try {
+      if (!hljs.getLanguage(lang)) return m;
+      res = hljs.highlight(src, { language: lang, ignoreIllegals: true });
+    } catch (e) {
+      return m; // 任何 hljs 异常都退回原文：渲染器永不抛（冷启动批⑤ 同款纪律）
+    }
+    if (!res || !res.value) return m;
+    return `<pre><code class="language-${lang} hljs"${attrs}>${res.value}</code></pre>`;
+  });
+  RE_FENCE_BLOCK.lastIndex = 0;
+  return out;
+}
+
 /** Post-marked transform: split the HTML on closed ```human blocks; render each
  *  fence body as a markdown card; wrap every outside chunk that carries text
  *  in a <details> drawer (whitespace-only chunks pass through untouched). */
@@ -556,6 +603,10 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks)
   // markdown faces (chat bubbles, canvas md viewer, wiki docs, flow cards,
   // report cards) pick it up at once, same as the mermaid pass above.
   if (humanOn) html = _transformHumanFace(html);
+  // 代码块语法高亮（文档渲染批 2026-11-01）：图表占位与 human 卡都已出局，
+  // 此处剩下的围栏才是真正的代码。跑在复制按钮包裹之前（见 _highlightFencedCode
+  // 的位置契约）。
+  html = _highlightFencedCode(html);
   // Wrap <pre> blocks with a copy button and close the wrapper in the SAME pass
   // (修法 2: one whole-string scan instead of two). The alternation keeps the
   // original per-tag output byte-for-byte: every `<pre…>` gets the wrap opener +

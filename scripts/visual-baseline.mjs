@@ -92,6 +92,35 @@ const CANVAS_CODE = [
   '}',
 ].join('\n');
 
+// 代码块着色面（文档渲染批 2026-11-01）：markdown 围栏的 hljs 着色是新增面，
+// 上面那份 CANVAS_MD 夹具只有行内代码、没有围栏——所以另立一条场景，把
+// 「多语言围栏 + 无语言围栏（不高亮）+ 行内代码（另一种底色）」钉进基准图，
+// 主题切换下的 token 配色错位能被像素比对直接抓住。
+const CANVAS_MD_CODE = [
+  '# 代码块着色基线',
+  '',
+  '围栏带语言标签才着色，行内代码用另一套底色。',
+  '',
+  '```js',
+  'const cache = new Map();',
+  'export function put(k, v) {',
+  '  if (!cache.has(k)) cache.set(k, v);',
+  '  return cache.size;   // 注释也该有独立配色',
+  '}',
+  '```',
+  '',
+  '```python',
+  'def total(rows):',
+  '    return sum(r["n"] for r in rows)',
+  '```',
+  '',
+  '```',
+  '不加语言标签的围栏：保持原样，不做词法分析。',
+  '```',
+  '',
+  '行内代码 `const x = 1` 用于对照。',
+].join('\n');
+
 // ── 渲染器覆盖面补强（阅读/编辑体验优化批 2026-11-01）────────────────────
 // 修前 12 张基准只覆盖 14 个渲染器里的 2 个（markdown / monaco）。
 // 下面三条各自打在**不同的 viewer 模块 + 不同的 CSS 面**上：
@@ -245,6 +274,26 @@ const SCENARIOS = [
       }, CANVAS_MD);
       await paneReady(s.page, 'file:/tmp/visual-baseline-note.md');
       await s.page.waitForTimeout(900); // markdown 渲染 + 高亮批
+      await settle(s.page, 300);
+    },
+  },
+  {
+    name: 'canvas-markdown-code-tab',
+    why: 'canvas 页签 + markdown 代码块着色面（hljs token 配色 / 无语言围栏对照）—— 代码块渲染批的新增闸',
+    themes: ['dark', 'light'],
+    selector: '#canvas-panel',
+    setup: async (s) => {
+      await s.boot();
+      await s.page.evaluate((content) => {
+        window.dispatchEvent(new CustomEvent('workspace-open-item', {
+          detail: {
+            id: 'file:/tmp/visual-baseline-code-note.md', itemType: 'markdown', title: 'visual-baseline-code-note.md',
+            content, absPath: '/tmp/visual-baseline-code-note.md', size: content.length, mtimeMs: 1757000000000,
+          },
+        }));
+      }, CANVAS_MD_CODE);
+      await paneReady(s.page, 'file:/tmp/visual-baseline-code-note.md');
+      await s.page.waitForTimeout(900); // markdown 渲染 + hljs 着色
       await settle(s.page, 300);
     },
   },
