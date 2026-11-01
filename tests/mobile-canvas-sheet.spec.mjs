@@ -422,29 +422,47 @@ test('T7 chip 胶囊同族（批②：材质/圆角/选中态）+ 条带让位�
   expect(errors).toEqual([]);
 });
 
-test('T8 ask 悬浮钮让位文档角落圆钮簇（批③：不叠、避让正文边缘）', async ({ page }) => {
+test('T8 ask 悬浮钮单行同带（单行排布批 2026-11-01：簇左锚化，异侧零让位）', async ({ page }) => {
   const errors = watchErrors(page);
   await openDocCards(page, [['doc-md', '说明.md', 'markdown']]);
-  // 装簇（viewer 挂钮同几何：pane 内 absolute bottom:16，右 16/112）。
+  // 装簇（viewer 挂钮同几何：pane 内 absolute bottom:16，左 16/64——单行排布批
+  // 左锚镜像，槽值原样；尺寸 = 手机层 48px 档（mobileLayer 统一批），与 fab
+  // 同径共中线）。
   await page.evaluate(() => {
     const pane = document.querySelector('.mf-cv-host > .canvas-tab-pane');
     const src = document.createElement('button');
     src.className = 'canvas-source-toggle';
-    src.style.cssText = 'position:absolute;right:16px;bottom:16px;width:40px;height:40px;';
+    src.style.cssText = 'position:absolute;left:16px;bottom:16px;width:48px;height:48px;';
     const find = document.createElement('button');
     find.className = 'canvas-find-toggle';
-    find.style.cssText = 'position:absolute;right:112px;bottom:16px;width:40px;height:40px;';
+    find.style.cssText = 'position:absolute;left:64px;bottom:16px;width:48px;height:48px;';
     pane.append(find, src);
   });
   await page.waitForTimeout(400); // childList 观察 → rAF 合帧重算座位
   const seat = await page.evaluate(() => {
     const fab = document.querySelector('.ask-fab');
     const cluster = document.querySelector('.mf-cv-host .canvas-source-toggle').getBoundingClientRect();
-    return { bottom: parseFloat(fab.style.bottom || ''), clusterTop: cluster.top, vh: window.innerHeight };
+    const fr = fab.getBoundingClientRect();
+    return {
+      visible: fr.width > 0 && fr.height > 0,
+      bottomInline: fab.style.bottom,
+      bottomOffset: window.innerHeight - fr.bottom,
+      fabCenter: fr.top + fr.height / 2,
+      clusterCenter: cluster.top + cluster.height / 2,
+      fabRightGap: window.innerWidth - fr.right,
+      clusterLeftGap: cluster.left,
+    };
   });
-  expect(seat.bottom).toBeCloseTo(seat.vh - seat.clusterTop + 12, 0);
-  expect(seat.bottom).toBeGreaterThan(64); // 高于 css 钉位（--dock-h 54 + 10）
-  // 撤簇 → 座位回落 css 钉位（内联 bottom 清空；输入条联动同清）。
+  // 左锚簇与右缘 fab 异侧 → 让位腿零触发：fab 座位 = css 钉位 dock-h+16
+  // （内联 bottom 保持空 = 纯 css 钉；让位内联腿只在 epub 通栏底栏在场时写）。
+  expect(seat.bottomInline).toBe('');
+  // 单行同带（fab 可见时）：fab 中线 = 左锚簇中线（两端对齐），ask 独右、簇贴左。
+  if (seat.visible) {
+    expect(Math.abs(seat.fabCenter - seat.clusterCenter)).toBeLessThanOrEqual(3);
+    expect(seat.fabRightGap).toBeLessThanOrEqual(17);    // ask 独守右缘 16 栅格
+  }
+  expect(seat.clusterLeftGap).toBeLessThanOrEqual(17);   // 工具簇贴左缘
+  // 撤簇 → 座位不变（内联 bottom 本就为空；输入条联动同清）。
   await page.evaluate(() => {
     for (const sel of ['.canvas-source-toggle', '.canvas-find-toggle']) {
       document.querySelector('.mf-cv-host ' + sel)?.remove();
