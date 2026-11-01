@@ -2698,6 +2698,10 @@ onMessage('toolsList', (msg) => {
   if (msg.tools) state.availableTools = msg.tools;
 });
 onMessage('configData', (msg, view) => {
+  // 入场加载卡（接管/入场同族批 2026-11-01 作者令③）：「同步数据」项的真实完成
+  // 信号——首帧 configData 落地即数据面就位（揭幕随后同步发生，露出的是已
+  // 渲染完的壳）。迟到帧（重连/配置更新）经门脚本 revealed 旗标零副作用。
+  try { window.__nfEntry && window.__nfEntry.mark && window.__nfEntry.mark('data', 'done'); } catch (_) {}
   state.configText = msg.config || '';
   state._freshConfigText = state.configText; // Cache for slider's fetch-before-save
   try { state.parsedConfig = JSON.parse(state.configText); } catch { state.parsedConfig = null; }
@@ -4944,6 +4948,10 @@ emergencyCacheCleanup(); // Purge bloated localStorage cache before any writes
 // Fire-and-forget — the verdict re-renders the faces via
 // `nebflow-root-name-change` when it lands.
 initRootNameProbe();
+// 入场加载卡（接管/入场同族批 2026-11-01 作者令③）：「界面模块」项的真实完成
+// 信号——执行到这里 = 模块图 + vendor 全局 + 壳装配全部落地（本文件体顶端
+// await waitForGlobals 已把 vendor 面纳入同一门槛），入场揭幕等的就是这条。
+try { window.__nfEntry && window.__nfEntry.mark && window.__nfEntry.mark('ui', 'done'); } catch (_) {}
 connect();
 chatViews.primary.dom.input.focus();
 
