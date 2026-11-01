@@ -520,14 +520,17 @@ object ProjectCreateService:
                   )
                 // N2 project-tool 批单程语义（同 archive 先例形状，2026-10-25 去重收口时
                 // 自 ProjectTool 旧重复体并入服务面——此前 WS 面缺本分支，面板重挂会
-                // 静默复活硬卸载的项目）：幂等重挂不隐式复活硬卸载项目。
+                // 静默复活硬卸载的项目）；unmount-console 面板批 2026-11-02 起指路改
+                // remount 通路（create 面仍不隐式复活硬卸载项目——恢复必须走显式 remount）。
                 case Some(pd) if pd.unmounted.contains(true) =>
                   IO.pure(
                     Left(
                       ToolError(
                         s"Project '$resolvedName' is unmounted (hidden from the Projects panel; its in-flight " +
                           s"work was stopped when it was unmounted). " +
-                          s"Remove the 'unmounted'/'unmountedAt' keys in ${PathUtil.dataRootRenderValue}/projects/$resolvedName/project.json to restore it first."
+                          "Restore it first: Project(action=\"remount\", name=...) — the engine path shared with " +
+                          "the console's 重新加载 — or by hand remove the 'unmounted'/'unmountedAt' keys in " +
+                          s"${PathUtil.dataRootRenderValue}/projects/$resolvedName/project.json."
                       )
                     )
                   )

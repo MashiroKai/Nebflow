@@ -523,4 +523,265 @@ class ProjectUnmountSpec extends CatsEffectSuite:
     end for
   }
 
+  // ============================================================
+  // 6) remount 往返 + 卸载态可见性 + 审计行（unmount-console 面板批 2026-11-02）
+  // ============================================================
+
+  /** 读 flow-map-events.jsonl 全行（审计断言面）。 */
+  private def eventLines(ws: os.Path): List[String] =
+    val f = ws / ".nebflow" / "flow-map-events.jsonl"
+    if os.exists(f) then os.read.lines(f).toList else Nil
+
+  test("remount roundtrip: unmount → remount clears the keys and mounts again (list + registry + auto-mount eligible)") {
+    val ws = tempRoot / "ws-remount"
+    val system = ActorSystem(s"um-remount-${scala.util.Random.nextInt(100000)}")
+    val res = minimalResources(ws)
+    val frames = Ref.unsafe[IO, List[io.circe.Json]](List.empty)
+    for
+      _ <- mountProject("p-remount", ws, system, res)
+      _ <- seedUserFiles(ws)
+      // 卸载（控制台语义：actor=console）
+      report <- ProjectUnmount.unmount("p-remount", res.agentRegistry, _ => IO.unit, actor = "console")
+      goneFromList <- ProjectStore.list().map(!_.exists(_.name == "p-remount"))
+      unmountLines = eventLines(ws)
+      // —— 往返：remount（校验定义 → 摘两键 → 挂载 → 帧 → 审计）——
+      remount <- ProjectRemount.remount(
+        "p-remount",
+        system,
+        res,
+        "root-unmount",
+        Some(json => frames.update(_ :+ json)),
+        actor = "console"
+      )
+      backOnList <- ProjectStore.list().map(_.exists(_.name == "p-remount"))
+      remounted <- ProjectRuntimeRegistry.get("p-remount")
+      jsonAfter = projectJson("p-remount")
+      remountLines = eventLines(ws)
+      framesGot <- frames.get
+      listNow <- ProjectStore.list()
+      // 再自动挂载一遍（等价 startupMount 对 list() 的消费）= 幂等零新增
+      mountedAgain <- ProjectRuntimeRegistry.mountAll(listNow, "root-unmount", system, res)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      val r = report.getOrElse(throw new AssertionError(s"unmount must succeed: $report"))
+      assert(!r.alreadyUnmounted, "fixture: first unmount is the real one")
+      assert(goneFromList, "unmount removed it from the list face")
+      val m = remount.getOrElse(throw new AssertionError(s"remount must succeed: $remount"))
+      assert(!m.alreadyMounted, "fresh remount is not the idempotent leg")
+      assert(m.unmountedAt.isDefined, "report carries the original unmountedAt")
+      assert(backOnList, "remount restores the list face (panel + startup auto-mount 同源)")
+      assert(remounted.isDefined, "remount re-registers the runtime")
+      assertEquals(
+        jsonAfter.hcursor.downField("unmounted").as[Option[Boolean]].toOption.flatten,
+        None,
+        "unmount marker key removed"
+      )
+      assertEquals(
+        jsonAfter.hcursor.downField("unmountedAt").as[Option[Long]].toOption.flatten,
+        None,
+        "unmount timestamp key removed"
+      )
+      // 审计两行：project-unmounted（actor=console）→ project-remounted（actor=console）
+      assert(
+        unmountLines.exists(l => l.contains("\"project-unmounted\"") && l.contains("unmounted by console")),
+        s"unmount audit line with actor expected, got: ${unmountLines.mkString("|")}"
+      )
+      assert(
+        remountLines.exists(l => l.contains("\"project-remounted\"") && l.contains("remounted by console")),
+        s"remount audit line with actor expected, got: ${remountLines.mkString("|")}"
+      )
+      // 帧单点：projectRemounted 且 row 与 GET /api/projects 行同构（含 device 存储值）
+      assert(framesGot.exists(_.hcursor.downField("type").as[String].toOption.contains("projectRemounted")), s"remount frame expected: $framesGot")
+      assert(
+        framesGot.exists(f =>
+          f.hcursor.downField("row").downField("name").as[String].toOption.contains("p-remount") &&
+            f.hcursor.downField("row").downField("device").as[String].toOption.contains("self")
+        ),
+        "remount frame row must carry the GET /projects row shape"
+      )
+      assertEquals(mountedAgain, 0, "remount already mounted it — startupMount over list() is idempotent")
+  }
+
+  test("remount refuses archived and unknown names (archive stays single-way; zero writes)") {
+    val wsArch = tempRoot / "ws-remount-arch"
+    val system = ActorSystem(s"um-remarch-${scala.util.Random.nextInt(100000)}")
+    val res = minimalResources(wsArch)
+    for
+      _ <- ProjectStore.create("p-remarch", wsArch.toString, None, "")
+      _ <- ProjectStore.archive("p-remarch")
+      before = projectJson("p-remarch")
+      arch <- ProjectRemount.remount("p-remarch", system, res, "root-unmount", None, actor = "console")
+      unknown <- ProjectRemount.remount("p-nope", system, res, "root-unmount", None, actor = "console")
+      mounted <- ProjectRuntimeRegistry.get("p-remarch")
+      after = projectJson("p-remarch")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(arch.isLeft, "archived project must not be revived by remount")
+      assert(arch.swap.toOption.get.contains("archived"), s"refusal must name the state: $arch")
+      assert(unknown.isLeft, "unknown name must be refused")
+      assert(unknown.swap.toOption.get.contains("not found"), s"refusal must name the miss: $unknown")
+      assert(mounted.isEmpty, "refused remount mounts nothing")
+      assertEquals(after, before, "refusals write nothing")
+  }
+
+  test("remount is idempotent when the project is already mounted (no-op, keys untouched, no frame)") {
+    val ws = tempRoot / "ws-remount-idem"
+    val system = ActorSystem(s"um-remidem-${scala.util.Random.nextInt(100000)}")
+    val res = minimalResources(ws)
+    val frames = Ref.unsafe[IO, List[io.circe.Json]](List.empty)
+    for
+      _ <- mountProject("p-remidem", ws, system, res)
+      before = projectJson("p-remidem")
+      remount <- ProjectRemount.remount(
+        "p-remidem",
+        system,
+        res,
+        "root-unmount",
+        Some(json => frames.update(_ :+ json)),
+        actor = "console"
+      )
+      after = projectJson("p-remidem")
+      framesGot <- frames.get
+      stillMounted <- ProjectRuntimeRegistry.get("p-remidem")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      val m = remount.getOrElse(throw new AssertionError(s"remount must succeed: $remount"))
+      assert(m.alreadyMounted, "mounted project = idempotent no-op leg")
+      assertEquals(after, before, "no-op writes nothing (marker keys absent both sides)")
+      assertEquals(framesGot, Nil, "no-op emits no frame")
+      assert(stillMounted.isDefined, "no-op keeps the runtime")
+  }
+
+  test("clearUnmounted is surgical: only the two keys disappear, everything else byte-stable") {
+    val ws = tempRoot / "ws-clear"
+    for
+      _ <- ProjectStore.create("p-clear", ws.toString, None, "")
+      _ <- ProjectStore.markUnmounted("p-clear")
+      marked = projectJson("p-clear")
+      unknown <- ProjectStore.clearUnmounted("p-clear2") // 不存在的项目 = Left（零写）
+      cleared <- ProjectStore.clearUnmounted("p-clear")
+      after = projectJson("p-clear")
+      second <- ProjectStore.clearUnmounted("p-clear")
+      stillEligible <- ProjectStore.list().map(_.exists(_.name == "p-clear"))
+      _ <- ProjectStore.markUnmounted("p-clear") // 打标面在摘键后照常可用（对称往返）
+      remarked = projectJson("p-clear")
+    yield
+      val at = cleared.getOrElse(throw new AssertionError(s"clear must succeed: $cleared")).getOrElse(
+        throw new AssertionError("marked project must clear with a timestamp")
+      )
+      assert(at > 0, "clear returns a timestamp")
+      assert(unknown.isLeft, "clearing an unknown project is a Left")
+      // 摘键后 = 打标态 − 恰两键（strip 对账面与本文件 unmount 断言同款）
+      assertEquals(after, stripUnmountKeys(marked), "clear removes exactly the two keys")
+      val s2 = second.getOrElse(throw new AssertionError("second clear must succeed"))
+      assert(s2.isEmpty, "second clear = Right(None) idempotent zero-write leg")
+      assert(stillEligible, "cleared project is back on the list face")
+      assertEquals(remarked.hcursor.downField("unmounted").as[Boolean].toOption, Some(true), "re-mark works after clear")
+  }
+
+  test("unmount appends a project-unmounted audit line naming the actor (tool leg default)") {
+    val ws = tempRoot / "ws-audit"
+    val system = ActorSystem(s"um-audit-${scala.util.Random.nextInt(100000)}")
+    val res = minimalResources(ws)
+    for
+      _ <- mountProject("p-audit", ws, system, res)
+      linesBefore = eventLines(ws).count(_.contains("\"project-unmounted\""))
+      _ <- ProjectUnmount.unmount("p-audit", res.agentRegistry, _ => IO.unit) // actor 缺省 = tool
+      linesAfter = eventLines(ws)
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      val fresh = linesAfter.count(_.contains("\"project-unmounted\"")) - linesBefore
+      assertEquals(fresh, 1, "exactly one project-unmounted audit line appended")
+      assert(
+        linesAfter.exists(l => l.contains("unmounted by tool") && l.contains("p-audit")),
+        s"audit line must name actor + project: ${linesAfter.mkString("|")}"
+      )
+  }
+
+  test("inFlight counts chains / running nodes / dispatcher+delegate sessions (read-only, stop-target parity)") {
+    val ws = tempRoot / "ws-inflight"
+    val system = ActorSystem(s"um-inflight-${scala.util.Random.nextInt(100000)}")
+    val res = minimalResources(ws)
+    val t0 = System.currentTimeMillis()
+    for
+      rt <- mountProject("p-inflight", ws, system, res)
+      // 2 成员活动链 + 1 孤立 Running
+      _ <- seedNode(rt, "n-f1", "chain-head", NodeLifecycle.Running, createdAt = t0)
+      _ <- seedNode(rt, "n-f2", "chain-tail", NodeLifecycle.Pending, in = List("n-f1"), createdAt = t0 + 1)
+      _ <- seedNode(rt, "n-solo", "solo", NodeLifecycle.Running, createdAt = t0 + 2)
+      _ <- registerSession(
+        res.agentRegistry,
+        system,
+        "dispatcher-infl",
+        AgentKind.Flow,
+        Some("p-inflight"),
+        undyingSupervisor
+      )
+      _ <- IO.blocking {
+        DelegateRegistry.put(
+          DelegateRegistry.Record(
+            id = "delegate-infl",
+            executor = "nebflow",
+            cwd = ws.toString,
+            project = Some("p-inflight"),
+            taskId = None,
+            parentSessionId = "root-unmount",
+            title = "infl fixture",
+            createdAt = t0
+          )
+        )
+      }
+      _ <- registerSession(res.agentRegistry, system, "delegate-infl", AgentKind.Delegate, None, undyingSupervisor)
+      counted <- ProjectUnmount.inFlight("p-inflight", res.agentRegistry)
+      unknown <- ProjectUnmount.inFlight("p-never", res.agentRegistry)
+      // 只读：计数后快照/会话登记零变化
+      snapAfter <- rt.store.snapshot
+      regAfter <- res.agentRegistry.get.map(_.keySet)
+      _ <- res.agentRegistry.update(_ - "dispatcher-infl" - "delegate-infl")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      val f = counted.getOrElse(throw new AssertionError("mounted project must count"))
+      assertEquals(f.chains, List("chain-n-f1"), "active chain counted")
+      assertEquals(f.runningNodes.toSet, Set("n-solo"), "unchained Running counted (chain member rides the chain leg)")
+      assert(f.dispatcherSessions.contains("dispatcher-infl"), "dispatcher session counted")
+      assertEquals(f.delegateSessions, List("delegate-infl"), "attributed delegate session counted")
+      assertEquals(f.total, 4, "total = chains + unchained nodes + sessions (chain member rides the chain leg, no double count)")
+      assert(unknown.isEmpty, "unmounted/unknown project = None (REST 404 leg)")
+      assertEquals(
+        snapAfter.nodes("n-f1").status,
+        NodeLifecycle.Running,
+        "inFlight is read-only: node untouched"
+      )
+      assert(regAfter.contains("dispatcher-infl") && regAfter.contains("delegate-infl"), "inFlight is read-only: sessions untouched")
+  }
+
+  // 归档态卸载定义的拒挂（create 面）不受 remount 引入影响 —— 单程语义的回归锚点
+  test("create face still refuses an archived project after remount introduction (unchanged semantics)") {
+    val ws = tempRoot / "ws-arch-refuse"
+    val system = ActorSystem(s"um-archref-${scala.util.Random.nextInt(100000)}")
+    val res = minimalResources(ws)
+    for
+      _ <- ProjectStore.create("p-archref", ws.toString, None, "")
+      _ <- ProjectStore.archive("p-archref")
+      result <- ProjectTool.call(
+        io.circe.JsonObject(
+          "name" -> io.circe.Json.fromString("p-archref"),
+          "workspace" -> io.circe.Json.fromString(ws.toString)
+        ),
+        ToolContext(
+          projectRoot = tempRoot.toString,
+          sharedResources = Some(res),
+          actorSystem = Some(system),
+          rootSessionId = Some("root-unmount"),
+          sessionId = Some("root-unmount")
+        )
+      )
+      mounted <- ProjectRuntimeRegistry.get("p-archref")
+      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+    yield
+      assert(result.isLeft, "archived create/remount-via-create must stay refused")
+      assert(result.swap.toOption.get.message.contains("archived"), s"refusal names the state: $result")
+      assert(mounted.isEmpty, "refusal mounts nothing")
+  }
+
 end ProjectUnmountSpec

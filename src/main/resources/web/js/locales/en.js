@@ -61,6 +61,21 @@ export default {
   // N2 project-tool batch (2026-10-06): the Project tool's action="unmount" face replaced
   // the panel's manual archive button; the announce mirrors the archived one (aria-live row).
   'project.unmountedAnnounce': '"{name}" unmounted — in-flight work stopped, files kept',
+  // unmount-console panel batch 2026-11-02: unload button / remount / the "Unloaded"
+  // group (visible destination for unmounted projects; same engine path as the tool).
+  'project.unmountBtn': 'Unload',
+  'project.unmountTitle': 'Unload "{name}"?',
+  'project.unmountInflight': 'In-flight right now: {chains} chain(s), {nodes} node(s), {sessions} session(s) — unloading stops all of them first.',
+  'project.unmountConfirm': 'Once confirmed, "{name}" disappears from the Projects list and the agent context and can no longer receive dispatches; every local file is kept (zero deletion). You can reload it later from the "Unloaded" group.',
+  'project.unmountConfirmGo': 'Unload',
+  'project.unmountFail': 'Failed to unload "{name}": {detail}',
+  'project.unmountedGroup': 'Unloaded',
+  'project.unmountedGroupHint': 'Unloaded from context; local files kept as-is. Reload to restore.',
+  'project.unmountedRowTitle': '"{name}" unloaded at {at} (local files kept)',
+  'project.remountBtn': 'Reload',
+  'project.remounting': 'Reloading…',
+  'project.remountFail': 'Failed to reload "{name}": {detail}',
+  'project.remountedAnnounce': '"{name}" reloaded',
   // Projects-panel bottom-right "+" button + light dialog (projcreate batch, plan B:
   // submit = prefill the main chat input + focus; zero new endpoints, zero new write
   // face). The description box is the ONLY field — no path/name field: plan B never

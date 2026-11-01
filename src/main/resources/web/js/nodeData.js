@@ -56,6 +56,21 @@ export const API = {
   //   · 成功 200 → {saved:true}（幂等同值腿另带 unchanged:true，零写入不发帧）
   //   · 404 → {error}（项目不存在 / 名字非法）；成功腿广播 projectDescriptionUpdated 帧
   projectDescription: (name) => `/api/projects/${encodeURIComponent(name)}/description`,
+  // 项目硬卸载（unmount-console 面板批 2026-11-02，与 Project 工具 action="unmount"
+  // 同一条引擎通路）：POST /api/projects/<name>/unmount（零 body）
+  //   · 成功 200 → {project,chainsCancelled,nodesCancelled,sessionsCancelled,
+  //     delegatesCancelled,unmountedAt,alreadyUnmounted}；成功腿广播 projectUnmounted 帧
+  //   · 404 → {error}（不存在/未挂载/排空超时中止——挂载面零触碰，重试安全）
+  projectUnmount: (name) => `/api/projects/${encodeURIComponent(name)}/unmount`,
+  // 卸载态项目恢复挂载（同批，与 Project 工具 action="remount" 同一通路）：
+  // POST /api/projects/<name>/remount（零 body）
+  //   · 成功 200 → {project,remountedAt,alreadyMounted}；成功腿广播 projectRemounted 帧
+  //   · 404 → {error}（不存在/已归档/挂载失败——卸载态保持，重试安全）
+  projectRemount: (name) => `/api/projects/${encodeURIComponent(name)}/remount`,
+  // 在飞工作计数（同批）：GET /api/projects/<name>/inflight →
+  // {project,chains[],runningNodes[],dispatcherSessions[],delegateSessions[],total}
+  // 未挂载 → 404 {error}
+  projectInflight: (name) => `/api/projects/${encodeURIComponent(name)}/inflight`,
 };
 
 /** 链控合法动作（与引擎面三条端点一一对应；禁前端自造第四种）。 */
@@ -95,7 +110,7 @@ export const NODE_STATUS_CLS = {
  *  earlier batch's claim that "both sides can never read different payloads" no
  *  longer applies to any UI surface (keeping this function leaves taskList's
  *  fetch leg untouched).
- *  @returns {Promise<{projects: Array<any>, raw: string}>} */
+ *  @returns {Promise<{projects: Array<any>, unmounted: Array<any>, raw: string}>} */
 export async function fetchProjectsRaw() {
   const r = await fetch(API.projects, { headers: authHeaders() });
   if (!r.ok) {
@@ -109,7 +124,13 @@ export async function fetchProjectsRaw() {
   const raw = await r.text();
   let data = null;
   try { data = JSON.parse(raw); } catch (_) { data = null; }
-  return { projects: Array.isArray(data?.projects) ? data.projects : [], raw };
+  // unmount-console 面板批 2026-11-02：additive `unmounted` 数组（「已卸载」分组
+  // 数据源；旧后端无该键 ⇒ []，面板零分组——向后兼容零破坏）。
+  return {
+    projects: Array.isArray(data?.projects) ? data.projects : [],
+    unmounted: Array.isArray(data?.unmounted) ? data.unmounted : [],
+    raw,
+  };
 }
 
 /** 项目列表。GET /api/projects（需 auth）→ {projects:[...]} */
@@ -274,6 +295,78 @@ export async function updateProjectDescription(projectName, description) {
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ description: String(description ?? '') }),
     });
+    if (r.status === 401 || r.status === 403) noteAuthRejected('projects');
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
+  }
+}
+
+/**
+ * 项目硬卸载（unmount-console 面板批 2026-11-02）。POST /api/projects/<name>/unmount
+ * （零 body；引擎单点 = ProjectUnmount，先停飞后摘面，零工作区删除）。三态结果对象
+ * （与 updateProjectDescription 同族）：
+ *   ok      200（data.project / data.unmountedAt / data.alreadyUnmounted…）
+ *   http    非 2xx（404 = 不存在/未挂载/排空超时中止——挂载面零触碰，重试安全）
+ *   network fetch 拒绝
+ * @param {string} projectName
+ */
+export async function unmountProject(projectName) {
+  try {
+    const r = await fetch(API.projectUnmount(projectName), {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    if (r.status === 401 || r.status === 403) noteAuthRejected('projects');
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
+  }
+}
+
+/**
+ * 卸载态项目恢复挂载（unmount-console 面板批 2026-11-02）。POST
+ * /api/projects/<name>/remount（零 body；引擎单点 = ProjectRemount：校验盘面定义→
+ * 摘卸载标记→挂载）。三态结果对象同族：
+ *   ok      200（data.project / data.remountedAt / data.alreadyMounted）
+ *   http    非 2xx（404 = 不存在/已归档/挂载失败——卸载态保持，重试安全）
+ *   network fetch 拒绝
+ * @param {string} projectName
+ */
+export async function remountProject(projectName) {
+  try {
+    const r = await fetch(API.projectRemount(projectName), {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    if (r.status === 401 || r.status === 403) noteAuthRejected('projects');
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
+  }
+}
+
+/**
+ * 在飞工作计数（unmount-console 面板批 2026-11-02）。GET
+ * /api/projects/<name>/inflight → {chains[],runningNodes[],dispatcherSessions[],
+ * delegateSessions[],total}（确认卡「如实展示在飞工作」的数据源；只读零副作用）。
+ * 三态结果对象同族；404 = 项目未挂载/不存在。
+ * @param {string} projectName
+ */
+export async function fetchProjectInflight(projectName) {
+  try {
+    const r = await fetch(API.projectInflight(projectName), { headers: authHeaders() });
     if (r.status === 401 || r.status === 403) noteAuthRejected('projects');
     let data = null;
     try { data = await r.json(); } catch (_) { data = null; }
