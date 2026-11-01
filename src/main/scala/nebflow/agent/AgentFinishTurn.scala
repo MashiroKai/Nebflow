@@ -367,61 +367,76 @@ private[agent] object AgentFinishTurn:
         // so it will be processed with full metadata by the idle handler). The
         // tail is preserved for the next turn boundary drain.
         _ <- state.execution.pendingUserInputs.headOption.traverse_(msg => ctx.self ! msg)
-      yield
-        // Empty-queue safe tail (same guard style as TurnBoundaryDrains.drainHead):
-        // the REST /api/command turn-end path reaches this branch with an empty
-        // queue on every turn — a bare .tail threw "tail of empty list" there.
-        val remainingUserInputs =
-          val queued = state.execution.pendingUserInputs
-          if queued.isEmpty then queued else queued.tail
-        val keptInteraction = state.execution.interaction.filter(_.pendingPermission.isDefined)
-        // 乒乓换入腿落地（2026-10-09 一期）：landed ⇒ swapBase = 换入后状态
-        // （messages = S :: drop(forkMsgCount)，乒乓位全清，latestUsage 已清，缓存
-        // v2 已失效）；弃换/未挂 ⇒ swapBase = 原 state（行为逐字）。idle 底座与
-        // 队列字段全部取自 swapBase，保持同一谱系。
-        val swapBase = swapDone.map(_.state).getOrElse(state)
-        // redfix A3（2026-10-14，报告 #9）：**非换入腿**的 idle 底座消息必须是
-        // newMessages（含本轮 assistant 产出）——a0f2edfc7 误改为 swapBase.messages
-        // （= state.messages，assistant 从未回写其中，见 :176）⇒ 每个轮边界丢一条
-        // assistant 历史（LoopNodeSpec:302 实锤：round-2 worker 全请求有 round-1
-        // 用户注入、无 round-1 产出；弃换腿同病——盘存 newMessages、内存
-        // swapBase.messages，内存/盘分叉）。landed 腿的 swapBase.messages 经上方
-        // executeSwap 喂态修正后已含本轮产出（S+Δ），此处取它才与原意一致。
-        // 非乒乓会话（swapDone=None）⇒ newMessages，与乒乓前旧路径逐字节等价。
-        val baseMessages = (swapDone match
-          case Some(s) if s.landed => s.state.messages
-          case _ => newMessages
-        ) ++ bgAccounting.toList
-        val updatedState = swapBase
-          .copy(execution =
-            ExecutionContext
-              .idle(baseMessages, swapBase.execution.turnIdx)
-              .copy(
-                interaction = keptInteraction,
-                // Preserve queue when compaction is in progress — CompactionComplete drains it.
-                pendingImmediateInputs = swapBase.execution.pendingImmediateInputs,
-                pendingUserInputs = remainingUserInputs,
-                // Sub-agent barrier: held subtask/delegate results and the
-                // outstanding count survive the turn boundary (the batch may
-                // still be running — they are injected when it completes).
-                pendingEvents = swapBase.execution.pendingEvents,
-                outstandingSubagentResults = swapBase.execution.outstandingSubagentResults,
-                // #25: parked completion debt survives the turn boundary —
-                // paid off when a later turn ends with the barrier at 0.
-                owedCompletion = owedAfter,
-                // #10 (2026-08-27 mail-queue wedge): ExecutionContext.idle
-                // rebuilds pendingMailQueueCount to 0. This returnToIdle tail
-                // is ALSO reached by the queue drain branch's idle-gate
-                // deferral path (pendingMailQueueCount>0 but subtree busy) —
-                // without carrying the counter, the NEXT turn's drain branch
-                // (`pendingMailQueueCount > 0`) is permanently false and the
-                // disk queue wedges until another MailQueued arrives. The two
-                // earlier injection branches already carry it; this tail must too.
-                pendingMailQueueCount = swapBase.execution.pendingMailQueueCount
-              )
-          )
-          .withMailTurnCount(swapBase.mailTurnCount + 1)
-        idle(agentDef, resources, depth, parentRef, updatedState)
+        // P2 邮箱化批：yield 体的 val 装配提前为 IO 生成器——W3 收口的邮箱注入轮
+        // 本身是 IO[Option[Behavior]]，只能在生成器位组合；yield 收敛为单一结果。
+        updatedState <- IO:
+          // Empty-queue safe tail (same guard style as TurnBoundaryDrains.drainHead):
+          // the REST /api/command turn-end path reaches this branch with an empty
+          // queue on every turn — a bare .tail threw "tail of empty list" there.
+          val remainingUserInputs =
+            val queued = state.execution.pendingUserInputs
+            if queued.isEmpty then queued else queued.tail
+          val keptInteraction = state.execution.interaction.filter(_.pendingPermission.isDefined)
+          // 乒乓换入腿落地（2026-10-09 一期）：landed ⇒ swapBase = 换入后状态
+          // （messages = S :: drop(forkMsgCount)，乒乓位全清，latestUsage 已清，缓存
+          // v2 已失效）；弃换/未挂 ⇒ swapBase = 原 state（行为逐字）。idle 底座与
+          // 队列字段全部取自 swapBase，保持同一谱系。
+          val swapBase = swapDone.map(_.state).getOrElse(state)
+          // redfix A3（2026-10-14，报告 #9）：**非换入腿**的 idle 底座消息必须是
+          // newMessages（含本轮 assistant 产出）——a0f2edfc7 误改为 swapBase.messages
+          // （= state.messages，assistant 从未回写其中，见 :176）⇒ 每个轮边界丢一条
+          // assistant 历史（LoopNodeSpec:302 实锤：round-2 worker 全请求有 round-1
+          // 用户注入、无 round-1 产出；弃换腿同病——盘存 newMessages、内存
+          // swapBase.messages，内存/盘分叉）。landed 腿的 swapBase.messages 经上方
+          // executeSwap 喂态修正后已含本轮产出（S+Δ），此处取它才与原意一致。
+          // 非乒乓会话（swapDone=None）⇒ newMessages，与乒乓前旧路径逐字节等价。
+          val baseMessages = (swapDone match
+            case Some(s) if s.landed => s.state.messages
+            case _ => newMessages
+          ) ++ bgAccounting.toList
+          val swapBase2 = swapBase
+            .copy(execution =
+              ExecutionContext
+                .idle(baseMessages, swapBase.execution.turnIdx)
+                .copy(
+                  interaction = keptInteraction,
+                  // Preserve queue when compaction is in progress — CompactionComplete drains it.
+                  pendingImmediateInputs = swapBase.execution.pendingImmediateInputs,
+                  pendingUserInputs = remainingUserInputs,
+                  // Sub-agent barrier: held subtask/delegate results and the
+                  // outstanding count survive the turn boundary (the batch may
+                  // still be running — they are injected when it completes).
+                  pendingEvents = swapBase.execution.pendingEvents,
+                  outstandingSubagentResults = swapBase.execution.outstandingSubagentResults,
+                  // #25: parked completion debt survives the turn boundary —
+                  // paid off when a later turn ends with the barrier at 0.
+                  owedCompletion = owedAfter,
+                  // #10 (2026-08-27 mail-queue wedge): ExecutionContext.idle
+                  // rebuilds pendingMailQueueCount to 0. This returnToIdle tail
+                  // is ALSO reached by the queue drain branch's idle-gate
+                  // deferral path (pendingMailQueueCount>0 but subtree busy) —
+                  // without carrying the counter, the NEXT turn's drain branch
+                  // (`pendingMailQueueCount > 0`) is permanently false and the
+                  // disk queue wedges until another MailQueued arrives. The two
+                  // earlier injection branches already carry it; this tail must too.
+                  pendingMailQueueCount = swapBase.execution.pendingMailQueueCount
+                )
+            )
+            .withMailTurnCount(swapBase.mailTurnCount + 1)
+          swapBase2
+        // ═══ W3 idle 收口（P2 邮箱化批，设计 §3.4 唤醒点③）═════════════════════
+        // 回 idle 前最后一拍：邮箱 pending 全取（idle 面永不扣留已产出结果——#418
+        // 同判据）。非空 = 独立注入轮（取走拍屏障会计 + taken→unlink + 门铃轮）；
+        // 空箱 = 逐字现状回 idle。邮箱轮自身结束后的下一拍再收口一次（收敛：每轮
+        // 恰消费一箱）。
+        result <-
+          IO(MailboxDrain.drainIdleFaceSync(updatedState.sessionId.getOrElse("")))
+            .flatMap(mailboxIdleTaken =>
+              MailboxDrain
+                .injectIdleTurn(agentDef, resources, depth, parentRef, updatedState, mailboxIdleTaken)
+                .map(_.getOrElse(idle(agentDef, resources, depth, parentRef, updatedState)))
+            )
+      yield result
       end for
     end returnToIdle
     if subagentsInFlight && completionTargets.nonEmpty then
@@ -437,13 +452,22 @@ private[agent] object AgentFinishTurn:
     // subtask/delegate results stay held (worker blocking semantics) — they are
     // injected ALL together when the batch completes. Other event types keep
     // the existing serial one-at-a-time drain.
+    // ═══ W2 邮箱批门禁面（P2 邮箱化批，设计 §3.4 唤醒点②）═══════════════════
+    // 邮箱条目与本边界 pendingEvents drain 同拍合流：批未关成员条目留箱，
+    // 成员齐 ⇒ 全取随注入轮一回合注入。留箱件原地不动（唯一拷贝在盘、计入徽标）。
+    val (mailboxTaken, mailboxHeld) =
+      MailboxDrain.drainBarrierFaceSync(
+        state.sessionId.getOrElse(""),
+        state.execution.outstandingSubagentResults
+      )
     val (drainedEvents, remainingEvents) =
       TurnBoundaryDrains.drainBarrier(
         state.execution.pendingEvents,
         compactionPending = false,
         state.execution.outstandingSubagentResults
       )
-    if drainedEvents.nonEmpty then
+    val boundaryEvents = drainedEvents ++ mailboxTaken
+    if boundaryEvents.nonEmpty then
       val roundCompleteIO: IO[Unit] =
         if !isSubagent then
           state.sessionId.fold(IO.unit)(sid =>
@@ -456,7 +480,7 @@ private[agent] object AgentFinishTurn:
             )
           )
         else IO.unit
-      val eventMessages = List(buildEventReminder(drainedEvents))
+      val eventMessages = List(buildEventReminder(boundaryEvents))
       val messagesWithPending = newMessages ++ eventMessages
       logAgentEvent(
         agentDef,
@@ -464,7 +488,7 @@ private[agent] object AgentFinishTurn:
         state.sessionId,
         state.sessionName,
         "pending-messages-injected",
-        s"events=${drainedEvents.size} remaining=${remainingEvents.size}"
+        s"events=${boundaryEvents.size} remaining=${remainingEvents.size} mailbox=${mailboxTaken.size} mailboxHeld=${mailboxHeld}"
       )
       val updatedState = state
         .copy(execution =
@@ -475,7 +499,12 @@ private[agent] object AgentFinishTurn:
               pendingImmediateInputs = state.execution.pendingImmediateInputs,
               pendingMailQueueCount = state.execution.pendingMailQueueCount,
               pendingUserInputs = state.execution.pendingUserInputs,
-              outstandingSubagentResults = state.execution.outstandingSubagentResults,
+              // P2 邮箱化：本边界取走的子代理邮箱件各占一个已满足的槽（取走拍会计）。
+              outstandingSubagentResults =
+                math.max(
+                  0,
+                  state.execution.outstandingSubagentResults - MailboxDrain.takenSubagentSlots(mailboxTaken)
+                ),
               // #25: hold/replay the completion debt across this injection.
               owedCompletion = owedAfter
             )
@@ -493,6 +522,25 @@ private[agent] object AgentFinishTurn:
         _ <- nebflow.core.processor.DeliveredReceiptLedger.markDelivered(
           state.sessionId.getOrElse(""),
           nebflow.core.processor.DeliveredReceiptLedger.identityKeysOf(drainedEvents)
+        )
+        // P2 邮箱化：邮箱件消费完成清除（taken → unlink =「已投递」物理事实，幂等）
+        // + 气泡面（邮箱件没有 arrive 时点，注入点即可见面——与 W2a 同点）。
+        _ <- MailboxDrain.unlinkConsumed(state.sessionId.getOrElse(""), mailboxTaken)
+        _ <- mailboxTaken.traverse_(e =>
+          AgentActor.visibleExternalEventSource(e.source, e.eventType) match
+            case Some(src) =>
+              AgentActor.emitInjectedUserEvent(
+                resources,
+                state.wsSend,
+                state.sessionId,
+                e.payload,
+                src,
+                Some(e.eventType),
+                e.metadata("agentName").flatMap(_.asString),
+                fileChanges = e.metadata("fileChanges"),
+                sessionProject = state.projectName
+              )
+            case None => IO.unit
         )
         // 台账对账 + 徽标帧（平台修复批 fix 1/3）：drainBarrier 投递面——已投递回执
         // 出账、余件保簿记；held 计数下降随行。

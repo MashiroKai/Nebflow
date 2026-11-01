@@ -186,7 +186,13 @@ private[agent] object AgentFrozen:
                     isSubagent = depth > 0,
                     state.sessionId
                   ) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
-                    pipeLlmCall(agentDef, resources, depth, parentRef, state, replyTo)
+                    // ═══ W4 解冻扫箱（P2 邮箱化批，设计 §3.4 唤醒点④）═══════════
+                    // 解冻首拍必扫箱：冻结窗内落箱的条目（门铃在 frozen 态 no-op）
+                    // 在恢复轮**本体**注入——冻结窗不再吞投递（10-31 判红锚的机械化
+                    // 终点）。taken 残差重注 + pending 全取，空箱逐字现状。
+                    MailboxDrain.resumeSweep(agentDef, resources, depth, state).flatMap(resumedState =>
+                      pipeLlmCall(agentDef, resources, depth, parentRef, resumedState, replyTo)
+                    )
                 else
                   IO.pure(
                     frozen(
@@ -231,7 +237,11 @@ private[agent] object AgentFrozen:
                   state.sessionId
                 ) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
                   updateRegistryEscalation(resources, state.sessionId, None) *>
-                  pipeLlmCall(agentDef, resources, depth, parentRef, state.withEscalation(None), replyTo)
+                  // ═══ W4 解冻扫箱（P2 邮箱化批）——错误族恢复同拍（判红锚：
+                  // error-freeze 覆盖投递窗 ⇒ 解冻首拍终态必注入）══════════════
+                  MailboxDrain.resumeSweep(agentDef, resources, depth, state.withEscalation(None)).flatMap(
+                    resumedState => pipeLlmCall(agentDef, resources, depth, parentRef, resumedState, replyTo)
+                  )
               }
             else
               IO.pure(
@@ -299,7 +309,11 @@ private[agent] object AgentFrozen:
                 state.sessionId
               ) *> updateRegistryFrozenReason(resources, state.sessionId, None) *>
                 updateRegistryEscalation(resources, state.sessionId, None) *>
-                pipeLlmCall(agentDef, resources, depth, parentRef, wakeState, replyTo2, DispatchCause.UserWake)
+                // ═══ W4 用户唤醒扫箱（P2 邮箱化批）：用户决策出口同拍扫箱——冻结窗
+                // 内落箱条目随唤醒轮本体注入（先注箱再开工）。══════════════════
+                MailboxDrain.resumeSweep(agentDef, resources, depth, wakeState).flatMap(wokenState =>
+                  pipeLlmCall(agentDef, resources, depth, parentRef, wokenState, replyTo2, DispatchCause.UserWake)
+                )
             }
           end if
         else
@@ -723,6 +737,14 @@ private[agent] object AgentFrozen:
       // turn 边界 drainBarrier）兜投递；催注不穿透冻结门（调度器按 status==Idle
       // 过滤，此分支为竞态窗口的宽容面）。
       case AgentCommand.DrainHeldReceipts =>
+        IO.pure(
+          frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation)
+        )
+
+      // ── W5 邮箱门铃（P2 邮箱化批）：frozen 态 = 留任 no-op ────────────────
+      // 信已在盘上（冻结窗不再需要任何重投机器——这正是判红锚要终结的「冻结窗
+      // 吞投递」）；解冻首拍（CheckFreezeGate 两恢复腿 + 用户唤醒腿）必扫箱注入。
+      case AgentCommand.MailboxArrived =>
         IO.pure(
           frozen(agentDef, resources, depth, parentRef, state, replyTo, resumeAt, reason, retryCount, escalation)
         )

@@ -10,6 +10,7 @@ import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behavior, Behaviors}
 import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord, status}
 import nebflow.core.FileChangeTracker
+import nebflow.core.mail.SessionMailbox
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
@@ -121,6 +122,9 @@ class BackoffSupervisorCancelSpec extends CatsEffectSuite:
     val childSid = "delegate-cancel-1"
     for
       resources <- mkResources(system, tmp)
+      // P2 邮箱化：父会话必须登记在场（MailboxProducer.deliver 的父在场守卫——
+      // 会话已删 = 不产无人读的垃圾文件）。测试桩此前只建 actor 不建会话行。
+      _ <- resources.sessionStore.getOrCreateSession(parentSid, "cancel test parent")
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
       parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
       parentRef <- system.spawn(mkRecordingCmd(parentEvents), "parent-rec-1")
@@ -154,22 +158,30 @@ class BackoffSupervisorCancelSpec extends CatsEffectSuite:
       _ <- waitUntil(3.seconds)(
         resources.agentRegistry.get.map(!_.contains(childSid))
       )
-      _ <- waitUntil(3.seconds)(parentEvents.get.map(_.nonEmpty))
+      // P2 迁移后终态通知走持久邮箱（identity = subagentId）——不再 ref! 推送。
+      _ <- waitUntil(3.seconds)(SessionMailbox.scanPending(parentSid).map(_.nonEmpty))
       _ <- waitUntil(3.seconds)(childEvents.get.map(_.exists(_.isInstanceOf[AgentCommand.Stop])))
-      events <- parentEvents.get
+      mailed <- SessionMailbox.scanPending(parentSid)
       childCmds <- childEvents.get
       tasks <- resources.subAgentTaskStore.loadTasks(parentSid)
+      refEvents <- parentEvents.get
       _ <- system.stopAll
     yield
-      val ext = events.collect { case e: AgentCommand.ExternalEvent => e }
-      assertEquals(ext.size, 1, s"parent must receive exactly one ExternalEvent, got: $events")
-      assertEquals(ext.head.source, "delegate", "source must stay delegate so the wait barrier is released")
-      assertEquals(ext.head.eventType, "cancelled")
-      assert(ext.head.payload.contains("cancelled by Nebula via AgentControl"), s"payload: ${ext.head.payload}")
-      assert(ext.head.payload.contains("user lost patience"), s"reason must be carried: ${ext.head.payload}")
-      assertEquals(ext.head.metadata("cancelled").flatMap(_.asBoolean), Some(true))
-      assertEquals(ext.head.metadata("failureType").flatMap(_.asString), Some("cancelled"))
-      assertEquals(ext.head.correlationId, Some(childSid))
+      val ext = mailed.collect { case e if e.event.source == "delegate" => e }
+      assertEquals(ext.size, 1, s"mailbox must hold exactly one delegate terminal entry, got: ${mailed.map(_.identity)}")
+      assertEquals(ext.head.event.eventType, "cancelled")
+      assert(ext.head.event.payload.contains("cancelled by Nebula via AgentControl"), s"payload: ${ext.head.event.payload}")
+      assert(ext.head.event.payload.contains("user lost patience"), s"reason must be carried: ${ext.head.event.payload}")
+      assertEquals(ext.head.event.metadata("cancelled").flatMap(_.asBoolean), Some(true))
+      assertEquals(ext.head.event.metadata("failureType").flatMap(_.asString), Some("cancelled"))
+      assertEquals(ext.head.event.correlationId, Some(childSid))
+      assertEquals(ext.head.identity, childSid, "entry identity = subagentId (redelivery-proof idempotency key)")
+      // 红线（双发=事故）：迁移后 ref 消息流零 ExternalEvent——旧 push 链不再承载 delegate 终态。
+      assertEquals(
+        refEvents.collect { case e: AgentCommand.ExternalEvent => e }.size,
+        0,
+        s"delegate terminal MUST NOT ride the legacy push chain, got: $refEvents"
+      )
       // child 收到 Stop（终态清理路径）
       assert(childCmds.exists(_.isInstanceOf[AgentCommand.Stop]), s"child must be stopped, got: $childCmds")
       // task 文件：cancelled + lastError 留痕 + completedAt
@@ -187,6 +199,7 @@ class BackoffSupervisorCancelSpec extends CatsEffectSuite:
     val childSid = "delegate-cancel-2"
     for
       resources <- mkResources(system, tmp)
+      _ <- resources.sessionStore.getOrCreateSession(parentSid, "cancel test parent")
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
       parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
       parentRef <- system.spawn(mkRecordingCmd(parentEvents), "parent-rec-2")
@@ -216,14 +229,17 @@ class BackoffSupervisorCancelSpec extends CatsEffectSuite:
           .loadTasks(parentSid)
           .map(_.exists(t => t.taskId == childSid && t.status == "cancelled"))
       )
+      _ <- waitUntil(3.seconds)(SessionMailbox.scanPending(parentSid).map(_.nonEmpty))
       _ <- IO.sleep(500.millis) // 给迟到的 Completed 足够时间制造破坏（若有）
-      events <- parentEvents.get
+      mailed <- SessionMailbox.scanPending(parentSid)
       tasks <- resources.subAgentTaskStore.loadTasks(parentSid)
       _ <- system.stopAll
     yield
-      val ext = events.collect { case e: AgentCommand.ExternalEvent => e }
-      assertEquals(ext.size, 1, s"exactly one terminal notification expected, got: $events")
-      assertEquals(ext.head.eventType, "cancelled", "first terminal (cancelled) must win")
+      // P2 迁移后「single notification」语义 = 邮箱恰一条 cancelled 条目
+      // （identity=subagentId 幂等 + 首个终态胜出）；迟到 Completed 不新增条目。
+      val ext = mailed.collect { case e if e.event.eventType == "cancelled" => e }
+      assertEquals(ext.size, 1, s"exactly one terminal entry expected, got: ${mailed.map(e => (e.identity, e.event.eventType))}")
+      assertEquals(ext.head.event.eventType, "cancelled", "first terminal (cancelled) must win")
       val task = tasks.find(_.taskId == childSid).get
       assertEquals(task.status, "cancelled", "late Completed must NOT overwrite the cancelled status")
     end for

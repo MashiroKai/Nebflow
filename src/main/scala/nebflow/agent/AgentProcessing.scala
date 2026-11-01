@@ -656,13 +656,29 @@ private[agent] object AgentProcessing:
         // history is replaced by the summary, so an event drained here would be
         // consumed from the queue yet discarded with the pre-compaction
         // messages. CompactionComplete re-drains afterwards.
+        // ═══ W2 邮箱批门禁面（P2 邮箱化批，设计 §3.4 唤醒点②）═══════════════
+        // 邮箱条目与本边界 pendingEvents drain 同拍合流：批未关成员条目留箱
+        // （barrierPlan 在飞估算 = outstanding − 箱内件数），成员齐 ⇒ 全取随续轮
+        // 注入（一回合，呈现 = buildEventReminder 合批形）。条目已在盘上（取走
+        // = rename 进 taken），单拷贝纪律不受 pendingEvents 影响。
+        val (mailboxTaken, mailboxHeld) =
+          if state.pendingCompaction.isDefined then
+            // compaction 守卫（与 drainBarrier 同款）：注入进将被 summary 替换的
+            // 历史 = 消费即丢失——条目留箱，CompactionComplete/下个边界重扫。
+            (Nil, MailboxDrain.mailboxHeldCount(state.sessionId.getOrElse("")))
+          else
+            MailboxDrain.drainBarrierFaceSync(
+              state.sessionId.getOrElse(""),
+              state.execution.outstandingSubagentResults
+            )
         val (drainedEvents, remainingEvents) =
           TurnBoundaryDrains.drainBarrier(
             state.execution.pendingEvents,
             state.pendingCompaction.isDefined,
             state.execution.outstandingSubagentResults
           )
-        val eventMessages = drainedEvents match
+        val boundaryEvents = drainedEvents ++ mailboxTaken
+        val eventMessages = boundaryEvents match
           case Nil => Nil
           case events =>
             logAgentEvent(
@@ -671,7 +687,7 @@ private[agent] object AgentProcessing:
               state.sessionId,
               state.sessionName,
               "pending-events-injected-at-tools-complete",
-              s"events=${events.size} remaining=${remainingEvents.size}"
+              s"events=${events.size} remaining=${remainingEvents.size} mailbox=${mailboxTaken.size} mailboxHeld=${mailboxHeld}"
             )
             List(buildEventReminder(events))
         // 排队消息逐条注入（2026-09-15 ub 缺陷批）：本边界只消费队首**一件**
@@ -814,7 +830,13 @@ private[agent] object AgentProcessing:
         // never decrement. Counting them creates a phantom slot that permanently
         // holds every later ephemeral batch's results.
         val spawnedIncrement = TurnBoundaryDrains.countBarrierIncrements(tc.results)
-        val newOutstanding = state.execution.outstandingSubagentResults + spawnedIncrement
+        // P2 邮箱化：本边界取走的子代理邮箱件各占一个已满足的槽（取走拍会计，
+        // 恰一次——留箱件零会计，等批次真齐时的下个取走拍再减）。
+        val mailboxTakenSlots = MailboxDrain.takenSubagentSlots(mailboxTaken)
+        val newOutstanding = math.max(
+          0,
+          state.execution.outstandingSubagentResults - mailboxTakenSlots + spawnedIncrement
+        )
         val updatedState0 =
           state.copy(execution =
             state.execution
@@ -925,7 +947,7 @@ private[agent] object AgentProcessing:
               ) // F2@tools-complete：drain 后快照队列（崩溃重放禁重复注入已消费队首）
               _ <- immEventIO
               _ <- mailEventIO // #939：mail 件逐件注入气泡（呈现面归属不因合并抹平）
-              _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, remainingEvents.size)
+              _ <- touchBarrierSnapshot(resources, state.sessionId, newOutstanding, remainingEvents.size + mailboxHeld)
               // 台账对账 + 徽标帧（fix 1 补漏批，2026-10-22）：tools-complete 边界
               // drainBarrier 投递面——与 AgentFinishTurn 的 drainBarrier 对账（:483）
               // 同形。此前修复批只接了 finishTurn 面、漏本孪生面：边界投递成功的回执
@@ -944,6 +966,25 @@ private[agent] object AgentProcessing:
                     state.sessionId.getOrElse(""),
                     // 不过时批 2026-10-29：按身份键标记（重投件的原件 id 随行）。
                     nebflow.core.processor.DeliveredReceiptLedger.identityKeysOf(drainedEvents)
+                  )
+                  // P2 邮箱化：邮箱件消费完成清除（taken → unlink =「已投递」物理事实；
+                  // 幂等）；气泡面与既有 drainedEvents 同点补发（邮箱件没有 arrive 时点）。
+                  _ <- MailboxDrain.unlinkConsumed(state.sessionId.getOrElse(""), mailboxTaken)
+                  _ <- mailboxTaken.traverse_(e =>
+                    visibleExternalEventSource(e.source, e.eventType) match
+                      case Some(src) =>
+                        emitInjectedUserEvent(
+                          resources,
+                          state.wsSend,
+                          state.sessionId,
+                          e.payload,
+                          src,
+                          Some(e.eventType),
+                          e.metadata("agentName").flatMap(_.asString),
+                          fileChanges = e.metadata("fileChanges"),
+                          sessionProject = state.projectName
+                        )
+                      case None => IO.unit
                   )
               result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, tc.replyTo)
             yield result
@@ -1666,6 +1707,12 @@ private[agent] object AgentProcessing:
           "held-receipts-nudge-deferred",
           s"held=${state.execution.pendingEvents.size} outstanding=${state.execution.outstandingSubagentResults} turn-in-flight"
         )
+        IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
+
+      // ── W5 邮箱门铃（P2 邮箱化批）：processing 态 = 留任 no-op ──────────────
+      // 信已在盘上；条目由回合边界 drain（W2）或 idle 收口 drain（W3）兜住——
+      // 忙会话不被打断（投递不打断回合是邮箱化的本底收益）。
+      case AgentCommand.MailboxArrived =>
         IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
 
       case _ =>

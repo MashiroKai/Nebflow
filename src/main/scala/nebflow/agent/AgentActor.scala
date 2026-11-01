@@ -10,6 +10,7 @@ import nebflow.core.*
 import nebflow.core.ask.AskService
 import nebflow.core.compact.*
 import nebflow.core.flow.TeamSessionRegistry
+import nebflow.core.mail.SessionMailbox
 import nebflow.core.project.NotificationHeader
 import nebflow.core.tools.{AskUserQuestionTool, BgTaskRegistry}
 import nebflow.llm.*
@@ -1597,19 +1598,42 @@ object AgentActor extends AgentCore with AgentSession:
         .void
     sessionIdOfRef(resources, Some(parent)).flatMap {
       case Some(parentSid) =>
-        resources.escalationNotifyGate
-          .admit(parentSid)
-          .flatMap { verdict =>
-            if !verdict.allow then throttledLog(parentSid)
-            else if verdict.suppressed > 0 then
-              deliver(
-                s"[escalation-notify throttled: ${verdict.suppressed} earlier escalation notice(s) suppressed in the last window] " + payload
-              )
-            else deliver(payload)
-          }
-          .handleErrorWith(e =>
-            logger.warn(s"escalation notify gate failed (delivering ungated): ${e.getMessage}") *> deliver(payload)
+        // ═══ P2 邮箱化 + 风暴闸换轴（开放决策② 采纳推荐案：drop→合条）════════
+        // 升级通知改走**收件方持久邮箱**：每条落箱（写成功=必达），同因键
+        // （failed 会话）原位合条——最新 level/payload 胜出 + suppressedCount 累加，
+        // **一条不丢**（旧 admit 滑窗超限静默吞 = 23:32 五批冻结升级被吞的病灶，
+        // 物理拆除）。打断代价由 drain 合批吸收（忙父不打断、冻结父解冻首拍注入）。
+        // correlationId 每级唯一（escalation-<sid>-L<level>-<ts>）——多级升级永不
+        // 互杀；条目身份（escalation-<sid>）稳定，崩溃重放 ≤1 重复零丢失。
+        // EscalationNotifyGate 对象保留待 P3 退役（本投递口不再咨询 admit）。
+        val perLevelEvent = AgentCommand.ExternalEvent(
+          source = "team",
+          eventType = "error-escalated",
+          payload = payload,
+          metadata = metadata,
+          correlationId =
+            if sid.isEmpty then None
+            else Some(s"escalation-$sid-L$level-${System.currentTimeMillis()}")
+        )
+        MailboxProducer
+          .deliver(
+            resources,
+            parentSid,
+            perLevelEvent,
+            identity = nebflow.core.mail.SessionMailbox.escalationIdentity(sid),
+            kind = "escalation",
+            coalesce = true,
+            producer = "escalation-gate"
           )
+          .flatMap {
+            case SessionMailbox.MailResult.Failed(cause) if cause != "parent-session-gone" =>
+              // 落箱失败（磁盘面）= 这一条不在盘上 ⇒ 直接投兜底**无双发风险**；
+              // 响亮 WARN 留痕（升级面故障绝不静默）。
+              logger.warn(
+                s"[escalation-gate] mailbox enqueue failed for '$sid' L$level (parent=$parentSid cause=$cause) — falling back to direct delivery (entry NOT on disk, no double-send)"
+              ) *> deliver(payload)
+            case _ => IO.unit // Enqueued/Coalesced/AlreadyPresent/parent-gone：已按邮箱语义处置
+          }
       case None => deliver(payload)
     }
   end sendEscalationToParent

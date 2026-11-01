@@ -21,12 +21,11 @@ import nebflow.shared.{NebflowLogger, PathUtil, SubAgentTask}
  * parent session, containing a list of tasks. Completed/failed tasks are
  * retained for a short period for audit, then pruned.
  */
-class SubAgentTaskStore(baseDir: os.Path) extends SubAgentTaskStorePort:
+class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
 
   private val logger = NebflowLogger.forName("nebflow.subagent-task.store")
 
-  /**
-   * 并发写锁（2026-08-18 11:08 重放实证）：多个 Delegate 并发 spawn 时
+  /** 并发写锁（2026-08-18 11:08 重放实证）：多个 Delegate 并发 spawn 时
    * recordTask/updateStatus 同时 load→modify→save 同一文件——读-改-写竞态
    * 导致任务记录互相覆盖甚至被半写状态解析失败后写空（[]）。load-modify-save
    * 必须整体持锁串行化。ReentrantLock + IO.blocking：JVM 内进程级互斥，

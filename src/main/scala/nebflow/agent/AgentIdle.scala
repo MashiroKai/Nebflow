@@ -759,9 +759,24 @@ private[agent] object AgentIdle:
               syncHeldReceipts(resources, state.sessionId, exec.pendingEvents).flatMap((h, u) =>
                 emitHeldReceiptsBadge(state, h, u)
               ) *>
-                IO.pure(idle(agentDef, resources, depth, parentRef, state.copy(execution = exec)))
+                // ═══ W1 邮箱扫箱（P2 邮箱化批，设计 §3.4 唤醒点①）═════════════
+                // spawn/恢复点 = taken 残差重注（取走后注入前崩/注入后清前崩的恢复
+                // 面，≤1 重复零丢失）+ pending 全取注入。空箱 = None ⇒ 逐字现状。
+                MailboxDrain
+                  .recoverSweep(
+                    agentDef,
+                    resources,
+                    depth,
+                    parentRef,
+                    state.copy(execution = exec)
+                  )
+                  .map(_.getOrElse(idle(agentDef, resources, depth, parentRef, state.copy(execution = exec))))
             }
-          case _ => IO.pure(idle(agentDef, resources, depth, parentRef, state))
+          case _ =>
+            // ═══ W1 邮箱扫箱（空 F2 队列腿同扫——崩溃残留邮箱件不依赖 F2 快照存在）═
+            MailboxDrain
+              .recoverSweep(agentDef, resources, depth, parentRef, state)
+              .map(_.getOrElse(idle(agentDef, resources, depth, parentRef, state)))
         }
 
       // ── HeldDeliveryWatchdog 催注（平台修复批 fix 2 动作面，2026-10-21）────────
@@ -835,6 +850,15 @@ private[agent] object AgentIdle:
             end for
           end if
         }
+
+      // ═══ W5 邮箱门铃（P2 邮箱化批，设计 §3.4 唤醒点⑤）═════════════════════
+      // idle 即扫即注：信早已在盘上（mailOnce），门铃只是「请扫箱」的唤醒信号。
+      // 空箱（竞态迟到门铃/已被 W3 收口抢先消费）= 幂等 no-op 回 idle。
+      case AgentCommand.MailboxArrived =>
+        MailboxDrain
+          .drainIdleFace(state.sessionId.getOrElse(""))
+          .flatMap(events => MailboxDrain.injectIdleTurn(agentDef, resources, depth, parentRef, state, events))
+          .map(_.getOrElse(idle(agentDef, resources, depth, parentRef, state)))
 
       // Immediate input arriving in idle (turn already finished) — treat as normal UserInput
       // ② (2026-09-11): `fromUser` is carried across the conversion — dropping it

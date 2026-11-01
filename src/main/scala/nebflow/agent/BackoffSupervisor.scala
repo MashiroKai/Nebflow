@@ -5,6 +5,7 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
+import nebflow.core.mail.SessionMailbox
 import nebflow.shared.*
 
 import scala.concurrent.duration.*
@@ -1040,26 +1041,6 @@ object BackoffSupervisor:
               .handleErrorWith(e => logger.warn(s"delegate terminal cleanup failed: ${e.getMessage}").void)
           else IO.unit
 
-        // 诊断修复批 2026-10-24（delegate-nebflow-52308ee4 投递丢失）：终态交付
-        // 回执——`ref !` 是 mailbox offer 从不失败，父会话是否真注入回合此前零
-        // 确认。notify（直投 / parentRef=None 的 F2 持久兜底腿）过后落回执；
-        // 父注入时 ack（AgentIdle/AgentFinishTurn 挂点），超龄未确认由
-        // TaskStuckWatcher 扫描拍重投。fail-soft 绝不拖终态三清。
-        val receiptWrite: IO[Unit] =
-          if source == "delegate" then
-            nebflow.core.delegate.DelegateDeliveryReceipts
-              .record(
-                nebflow.core.delegate.DelegateDeliveryReceipts.Receipt(
-                  delegateId = subagentId,
-                  parentSessionId = parentSessionId,
-                  eventType = eventType,
-                  payload = payload,
-                  metadata = metadata,
-                  deliveredAt = System.currentTimeMillis()
-                )
-              )
-          else IO.unit
-
         val taskUpdate = resources.subAgentTaskStore
           .updateStatus(
             parentSessionId,
@@ -1077,50 +1058,95 @@ object BackoffSupervisor:
           metadata = metadata,
           correlationId = Some(subagentId)
         )
-        val notify = parentRef match
-          case Some(ref) => ref ! terminalEvent
-          case None =>
-            // mail-continuation delivery backstop（2026-10-09）：parentRef=None ⇒
-            // 本终态结果**没有任何投递对象**——历史分支是裸 IO.unit，结果在回传
-            // 环节静默蒸发（实测两起：Mail 续接的会话正常跑完、父会话零消息）。
-            // 兜底 = 绝不静默：响亮 WARN（带 payload 头部）＋ wsSend 在场时补一帧
-            // 显式终态事件。taskStore 状态写入（上方）照常落盘 ⇒ 面板仍见终态。
-            // 正常派发腿恒传活父引用（ctx.agentActorRef），本分支只在「Mail 续接
-            // 时父已不 live」或未来调用方漏传时触发——低频、且正是必须出声的形态。
-            // 监督链自动恢复批（2026-10-22）：WARN 之后追加**F2 注入队持久兜底**
-            // （correlationId 幂等，SubAgentStartupRecovery.notifyOnce 同机制）——
-            // 终态事件进父会话持久注入队，父会话下次 spawn 时
-            // RecoverPersistedQueues 重放。「结果不可投递」升级为「结果延迟可达」：
-            // boot 复活腿（DelegateRevival）重建的 delegate 在父会话尚未 live 时
-            // 完成工作，结果不再丢失。父会话已删 = 跳过（不产生无人读的垃圾文件，
-            // V2 收殓同款守卫）。
-            logger.warn(
-              s"[terminal-result-undelivered] $source session '$subagentId' reached '$eventType' but no parent ref exists " +
-                s"(parent session '$parentSessionId' not live at spawn) — the result was NOT delivered to any session. " +
-                s"Payload head: ${payload.take(500)}"
-            ) *>
-              (wsSend match
-                case Some(send) =>
-                  send(
-                    Json.obj(
-                      "type" -> "delegateResultUndelivered".asJson,
-                      "sessionId" -> subagentId.asJson,
-                      "rootSessionId" -> parentSessionId.asJson,
-                      "source" -> source.asJson,
-                      "eventType" -> eventType.asJson,
-                      "description" -> description.asJson
-                    )
-                  ).handleErrorWith(e => logger.warn(s"delegateResultUndelivered WS frame failed: ${e.getMessage}"))
-                case None => IO.unit) *>
-              // F2 持久兜底（监督链自动恢复批 2026-10-22，见上注）——WARN 之后
-              // 事件照常持久投递；append 失败只 WARN（父队列面故障不拖垮终态三清）。
-              f2DeliveryBackstop(terminalEvent)
+        // ═══ P2 邮箱化（终态通知 actor 邮箱化批，作者 11-01 批准实施）═════════
+        // delegate 轨终态（completed/failed/cancelled）改走**收件方持久邮箱**：
+        // mailOnce 幂等入队（写成功=必达）+ 门铃 best-effort——磁盘邮箱是唯一真源，
+        // actor 消息降为门铃。旧 push 机器三件随迁停用（本件对 delegate 轨零新写）：
+        //   ① `ref ! ExternalEvent` 直投（mailbox offer 从不失败也从不保证消费——
+        //      10-31 断链首环：父冻结/忙窗内 offer 从不失败也从不保证消费，12 次重投
+        //      0 次进门的判红现场）；
+        //   ② parentRef=None 腿的 F2 持久兜底 + delegateResultUndelivered 帧
+        //      （「终态无处投」形态随邮箱消亡——条目落在父会话盘上，父任何唤醒点
+        //      必扫出，与父此刻是否 live 无关）；
+        //   ③ DelegateDeliveryReceipts 回执（上方 receiptWrite 随迁拆除——「标记
+        //      已投/父未确认」整个状态类物理不存在，「已投递」= 条目已删除这一
+        //      物理事实；delivered-receipts 标记面照旧只服务旧链在飞件，P3 退役）。
+        // 双发红线：delegate 轨此后**不得**再走旧链（旧 push + 邮箱 = 事故）；
+        // subtask 轨逐字保持旧链（P3 全通知面迁移另批）。
+        val notify: IO[Unit] =
+          if source == "delegate" then
+            MailboxProducer
+              .deliver(
+                resources,
+                parentSessionId,
+                terminalEvent,
+                identity = subagentId, // 入队幂等键 = 子会话 id（每终态独立事件，永不合条）
+                kind = "delegate-terminal",
+                coalesce = false,
+                producer = "backoff-supervisor"
+              )
+              .flatMap {
+                case SessionMailbox.MailResult.AlreadyPresent =>
+                  logger.warn(
+                    s"[mailbox-producer] duplicate terminal for '$subagentId' already pending in parent '$parentSessionId' — idempotent no-op (single copy on disk)"
+                  )
+                case SessionMailbox.MailResult.Failed(cause) if cause == "parent-session-gone" =>
+                  // 交付腿已在生产者侧响亮留痕（不产垃圾文件）；终态三清照常。
+                  IO.unit
+                case SessionMailbox.MailResult.Failed(cause) =>
+                  logger.warn(
+                    s"[mailbox-producer] terminal for '$subagentId' NOT on disk after retries (parent='$parentSessionId' cause=$cause) — " +
+                      s"boot reconcile will synthesize a replacement entry from the task ledger"
+                  )
+                case _ => IO.unit // Enqueued / Coalesced：必达成立（门铃已发）
+              }
+          else
+            parentRef match
+              case Some(ref) => ref ! terminalEvent
+              case None =>
+                // mail-continuation delivery backstop（2026-10-09）：parentRef=None ⇒
+                // 本终态结果**没有任何投递对象**——历史分支是裸 IO.unit，结果在回传
+                // 环节静默蒸发（实测两起：Mail 续接的会话正常跑完、父会话零消息）。
+                // 兜底 = 绝不静默：响亮 WARN（带 payload 头部）＋ wsSend 在场时补一帧
+                // 显式终态事件。taskStore 状态写入（上方）照常落盘 ⇒ 面板仍见终态。
+                // 正常派发腿恒传活父引用（ctx.agentActorRef），本分支只在「Mail 续接
+                // 时父已不 live」或未来调用方漏传时触发——低频、且正是必须出声的形态。
+                // 监督链自动恢复批（2026-10-22）：WARN 之后追加**F2 注入队持久兜底**
+                // （correlationId 幂等，SubAgentStartupRecovery.notifyOnce 同机制）——
+                // 终态事件进父会话持久注入队，父会话下次 spawn 时
+                // RecoverPersistedQueues 重放。「结果不可投递」升级为「结果延迟可达」：
+                // boot 复活腿（DelegateRevival）重建的 delegate 在父会话尚未 live 时
+                // 完成工作，结果不再丢失。父会话已删 = 跳过（不产生无人读的垃圾文件，
+                // V2 收殓同款守卫）。
+                logger.warn(
+                  s"[terminal-result-undelivered] $source session '$subagentId' reached '$eventType' but no parent ref exists " +
+                    s"(parent session '$parentSessionId' not live at spawn) — the result was NOT delivered to any session. " +
+                    s"Payload head: ${payload.take(500)}"
+                ) *>
+                  (wsSend match
+                    case Some(send) =>
+                      send(
+                        Json.obj(
+                          "type" -> "delegateResultUndelivered".asJson,
+                          "sessionId" -> subagentId.asJson,
+                          "rootSessionId" -> parentSessionId.asJson,
+                          "source" -> source.asJson,
+                          "eventType" -> eventType.asJson,
+                          "description" -> description.asJson
+                        )
+                      ).handleErrorWith(e => logger.warn(s"delegateResultUndelivered WS frame failed: ${e.getMessage}"))
+                    case None => IO.unit) *>
+                  // F2 持久兜底（监督链自动恢复批 2026-10-22，见上注）——WARN 之后
+                  // 事件照常持久投递；append 失败只 WARN（父队列面故障不拖垮终态三清）。
+                  f2DeliveryBackstop(terminalEvent)
 
         // 终态三清（R2-c §7#4 + 本设计）：① hub 槽（僵尸 ask 卡：内核已死，
         // 卡片再没人能接——全仓唯一的其它清理入口是项目引擎，触及不到内核这种
         // 非项目会话）② 预算通道（不再计时）③ registry 行（既有）。
         // #1224：前置 delegate 清理（队列释放先行，再拆 actor）。
-        (delegateCleanup *> notify *> receiptWrite *> taskUpdate *> cleanupPendingAsks(resources, subagentId) *>
+        // P2 邮箱化：receiptWrite 腿随迁拆除（delegate 终态零新回执——*.receipt.json
+        // 对新终态零新写，验收红线②）。
+        (delegateCleanup *> notify *> taskUpdate *> cleanupPendingAsks(resources, subagentId) *>
           DelegateBudget.release(subagentId) *>
           resources.agentRegistry.update(_ - subagentId) *>
           (childRef ! AgentCommand.Stop(s"$source-complete")) *>

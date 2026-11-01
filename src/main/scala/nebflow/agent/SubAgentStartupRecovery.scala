@@ -180,7 +180,7 @@ object SubAgentStartupRecovery:
                           s"[task lost: crash] Delegate \"${t.description}\" (agent=${t.agentName}, session=${t.taskId}) " +
                             "had reached ready-to-merge but NO merge-queue membership survived the restart — " +
                             "the merge round can never run; the row is settled to interrupted (branch/worktree kept as-is)."
-                        recoverOne(store, sessionStore, t, head, "lostToCrash").handleErrorWith { e =>
+                        recoverOne(store, sessionStore, t, head, "lostToCrash", revival.map(_.resources)).handleErrorWith { e =>
                           logger.warn(s"[startup-recovery] rtm settle failed for ${t.taskId}: ${e.getMessage}").as(t.taskId)
                         }
                       }
@@ -195,7 +195,7 @@ object SubAgentStartupRecovery:
               )
               .as(()) *> tasks
               .traverse(t =>
-                recoverOne(store, sessionStore, t).handleErrorWith { e =>
+                recoverOne(store, sessionStore, t, revival.map(_.resources)).handleErrorWith { e =>
                   logger.warn(s"[startup-recovery] recovery failed for task ${t.taskId}: ${e.getMessage}").as(t.taskId)
                 }
               )
@@ -238,7 +238,7 @@ object SubAgentStartupRecovery:
                   DelegateRevival.reviveAll(
                     DelegateRevival.Deps(deps.resources, deps.system, deps.wsSend),
                     reviveSet,
-                    salvage = t => recoverOne(store, sessionStore, t).as(())
+                    salvage = t => recoverOne(store, sessionStore, t, revival.map(_.resources)).as(())
                   )
               // 同步段：复活集之外的孤儿收殓（F2 队列单写者纪律——复活 fork 零触碰
               // 队列文件，收殓全部在本同步段串行完成，无并发写）。
@@ -311,7 +311,8 @@ object SubAgentStartupRecovery:
     store: SubAgentTaskStore,
     agentRegistry: Ref[IO, Map[String, nebflow.actor.AgentRecord]],
     sessionStore: SessionStore,
-    stallMs: Long
+    stallMs: Long,
+    resources: Option[SharedResources] = None
   ): IO[List[String]] =
     for
       inFlight <- store.findRunningTasks
@@ -333,7 +334,7 @@ object SubAgentStartupRecovery:
             s"had an in-flight task row (status=${t.status}, retryCount=${t.retryCount}) but NO live actor for it " +
             s"for over ${stallMs / 1000}s — the restart-barrier watchdog is force-terminalizing it (the " +
             s"respawn barrier stalled or the actor was lost without a terminal event). You may re-delegate this task."
-        recoverOne(store, sessionStore, t, head, "lostToWatchdog").handleErrorWith { e =>
+        recoverOne(store, sessionStore, t, head, "lostToWatchdog", resources).handleErrorWith { e =>
           logger.warn(s"[restarting-watchdog] reap failed for task ${t.taskId}: ${e.getMessage}").as(t.taskId)
         }
       }
@@ -345,24 +346,32 @@ object SubAgentStartupRecovery:
    */
   def run(resources: SharedResources, interval: FiniteDuration, stallMs: Long): IO[Unit] =
     def loop: IO[Unit] =
-      watchdogSweep(resources.subAgentTaskStore, resources.agentRegistry, resources.sessionStore, stallMs)
+      watchdogSweep(resources.subAgentTaskStore, resources.agentRegistry, resources.sessionStore, stallMs, Some(resources))
         .handleErrorWith(e =>
           logger.warn(s"[restarting-watchdog] sweep failed (will retry next cycle): ${e.getMessage}").as(Nil)
         ) *> IO.sleep(interval) >> loop
     loop
 
-  private def recoverOne(store: SubAgentTaskStore, sessionStore: SessionStore, task: SubAgentTask): IO[String] =
+  private def recoverOne(
+    store: SubAgentTaskStore,
+    sessionStore: SessionStore,
+    task: SubAgentTask,
+    resources: Option[SharedResources] = None
+  ): IO[String] =
     val head =
       s"[task lost: crash] Delegate \"${task.description}\" (agent=${task.agentName}, session=${task.taskId}) " +
         s"was still in flight when the process restarted."
-    recoverOne(store, sessionStore, task, head, "lostToCrash")
+    recoverOne(store, sessionStore, task, head, "lostToCrash", resources)
 
   private def recoverOne(
     store: SubAgentTaskStore,
     sessionStore: SessionStore,
     task: SubAgentTask,
     head: String,
-    lostMarkerKey: String
+    lostMarkerKey: String,
+    // 无默认值：与 4 参重载并存时 Scala 禁止双默认参（调用歧义）；三处调用点
+    // （183/337/364）均显式传参，legacy 测试面走 4 参重载（= F2 回退）。
+    resources: Option[SharedResources]
   ): IO[String] =
     for
       now <- IO(System.currentTimeMillis())
@@ -416,7 +425,29 @@ object SubAgentStartupRecovery:
             // 形态与 resultProxyBehavior 的真终态件同构，宿主 handleResult 同一入口）。
             nebflow.core.delegate.DeviceDelegate.enqueueLostResultNotice(task, host, partial, head)
           case None =>
-            if parentExists then notifyOnce(task.parentSessionId, event) else IO.unit
+            // ═══ P2 邮箱化（终态通知 actor 邮箱化批）：收殓报父改走持久邮箱 ═══
+            // delegate 轨：mailOnce 幂等入箱（写成功=必达；门铃 best-effort）——
+            // 通知不再依赖父会话 F2 注入队（旧链保留给 subtask 轨与旧队列重放，
+            // delegate 轨双发=事故）。resources 缺席（legacy 无 SharedResources
+            // 载体场——既有测试形态）= 逐字回退 F2 老链。
+            if task.source != "subtask" && parentExists then
+              resources match
+                case Some(rs) =>
+                  MailboxProducer
+                    .deliver(
+                      rs,
+                      task.parentSessionId,
+                      event,
+                      identity = task.taskId,
+                      kind = "delegate-terminal",
+                      coalesce = false,
+                      producer = "startup-recovery"
+                    )
+                    .void
+                case None => notifyOnce(task.parentSessionId, event)
+            // subtask 轨：既有 F2 注入队通知腿逐字保持（P3 全通知面迁移另批）。
+            else if parentExists then notifyOnce(task.parentSessionId, event)
+            else IO.unit
       // 3. Terminalize — after the notify append, so a crash anywhere leaves
       // either (task running + event queued) [retry, no duplicate] or
       // (task failed + event queued) [done]. Never a lost notification.

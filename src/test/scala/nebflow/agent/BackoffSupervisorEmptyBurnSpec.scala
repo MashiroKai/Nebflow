@@ -8,6 +8,7 @@ import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behavior, Behaviors}
 import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord}
 import nebflow.core.FileChangeTracker
+import nebflow.core.mail.SessionMailbox
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.delegate.{ChainStore, DelegateJudge}
 import nebflow.core.task.FileTaskStore
@@ -194,6 +195,8 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
     val stubBrief = "画一个「鹦鹉骑自行车」的循环动画"
     for
       resources <- mkResources(system, tmp)
+      // P2 邮箱化：父会话登记在场（MailboxProducer.deliver 父在场守卫）。
+      _ <- resources.sessionStore.getOrCreateSession(parentSid, "empty-burn test parent")
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid, "delegate"))
       // 预存会话消息 ⇒ respawn 走 recovered 分支（nudge 注入可见）
       _ <- resources.sessionStore.saveMessagesForSession(childSid, thinkingOnlyMessages)
@@ -231,14 +234,13 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
       _ <- supervisor ! AgentEvent.Completed(childSid, stubMessages)
       _ <- waitUntil(10.seconds)(spawned.get.map(_ == 2))
       _ <- supervisor ! AgentEvent.Completed(childSid, stubMessages)
+      // P2 迁移后 delegate 终态通知走持久邮箱（不再 ref! 推送）——观察面换轴。
       _ <- waitUntil(10.seconds)(
-        parentEvents.get.map(_.exists {
-          case e: AgentCommand.ExternalEvent => e.eventType == "completed"
-          case _ => false
-        })
+        SessionMailbox.scanPending(parentSid).map(_.exists(_.event.eventType == "completed"))
       )
       _ <- IO.sleep(300.millis) // 终态清理链沉降
-      events <- parentEvents.get
+      mailed <- SessionMailbox.scanPending(parentSid)
+      refEvents <- parentEvents.get
       cmds <- childCmds.get
       tasks <- resources.subAgentTaskStore.loadTasks(parentSid)
       chainLines = ChainStore.listSync().flatMap(_.entries).filter(_.kind == "terminal-verdict")
@@ -249,25 +251,30 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
         .collect { case u: AgentCommand.UserInput => u.text }
         .filter(_.contains("NO output and NO tool calls"))
       assertEquals(nudges.size, 2, s"each empty-burn restart must inject the nudge, got: $nudges")
-      // 判定机不在场（端口未装）＋确定性预检 → 父收到的唯一完成报文携带 blocked 判词行
-      val ext = events.collect { case e: AgentCommand.ExternalEvent => e }
-      assertEquals(ext.size, 1, s"exactly one terminal notification, got: $events")
-      assertEquals(ext.head.eventType, "completed")
+      // 判定机不在场（端口未装）＋确定性预检 → 邮箱唯一完成条目携带 blocked 判词行
+      val ext = mailed.collect { case e if e.event.eventType == "completed" => e }
+      assertEquals(ext.size, 1, s"exactly one terminal entry, got: ${mailed.map(e => (e.identity, e.event.eventType))}")
       // #566 判词退役（2026-10-22 对齐；HEAD 基线同红——main 既有漂移，非本批回归）：
       // 空烧确定性预检的「判未完成」是 CompletedNote 交付注记而非 blocked 状态——wire
       // 编 completed，诚实性由「预检具名 + judged-incomplete 注记」承担，反假完成不变。
       assert(
-        ext.head.payload.contains("[delegate-judge] verdict: completed") &&
-          ext.head.payload.contains("judged incomplete"),
-        s"honest verdict line must reach the parent: ${ext.head.payload}"
+        ext.head.event.payload.contains("[delegate-judge] verdict: completed") &&
+          ext.head.event.payload.contains("judged incomplete"),
+        s"honest verdict line must reach the parent: ${ext.head.event.payload}"
       )
       assert(
-        ext.head.payload.contains("deterministic precheck"),
-        s"the precheck marker must be named: ${ext.head.payload}"
+        ext.head.event.payload.contains("deterministic precheck"),
+        s"the precheck marker must be named: ${ext.head.event.payload}"
       )
       assert(
-        !ext.head.payload.contains("(no text output)\n\n[delegate-judge] verdict: completed"),
+        !ext.head.event.payload.contains("(no text output)\n\n[delegate-judge] verdict: completed"),
         "the fake-completed form must be gone"
+      )
+      // 红线（双发=事故）：ref 消息流零 ExternalEvent。
+      assertEquals(
+        refEvents.collect { case e: AgentCommand.ExternalEvent => e }.size,
+        0,
+        s"delegate terminal MUST NOT ride the legacy push chain, got: $refEvents"
       )
       // 审计行：source=precheck
       val precheckLines = chainLines.filter(_.payload.hcursor.get[String]("source").toOption.contains("precheck"))
