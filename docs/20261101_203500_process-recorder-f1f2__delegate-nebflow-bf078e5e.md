@@ -102,11 +102,28 @@ topic: 进程级 ProcessRecorder 实施批（F1 recorder 上线 + F2 设备腿�
 
 ### 2.5 测试跑法声明（按批令单列）
 
-- 已跑：`testOnly` 分套执行（见 2.1/2.6），**未跑全量 `sbt test`**。
+- 已跑：`testOnly` 分套执行，**未跑全量 `sbt test`**。
 - **neblink 隧道组未跑**（`nebflow.neblink.*`，含 RelayTunnel 系列）：该组需真设备在线，
   2026-11-01 当日已挂死过一次，按批令「分套跑，隧道组单列注明」执行。本批改动不触及
   neblink 包（唯一相关面 = DeviceDelegate 的 neblink 数据通道收件装配，其 spec
   DeviceDelegateSpawnTrustSpec 已绿）。
+
+### 2.6 邻接面回归（合并树上串行全跑）
+
+- 范围 = `nebflow.gateway.* + nebflow.core.{project,tools,delegate,node}.*`：
+  **Total 3353 / Passed 3345 / Failed 7 / Skipped 1**。
+- **7 个失败全部为基线存量红，非本批引入**——判定性实验：把基线 commit `28f626564`
+  （不含本批任何提交）纯导出到临时目录跑同四套件，**同 7 个失败逐一复现**（失败集与
+  合并树完全一致）：
+  1. `RemoteableDeviceParamSpec` + `PresetCatalogInToolDocSpec`：Delegate LLM 面 schema
+     键集断言未随「面板命名批」（`name` 参数入 schema）更新——外部批遗留的测试侧重锚欠账；
+  2. `MailDelegateContinuationDeliverySpec`（(2)-(5) 四测，15/30s waitUntil 超时）与
+     `NodeReportReminderSpec`（R4 投递断言）：投递/完成判据面与基点内的状态矩阵批
+     （f62a1795c「完成判定改状态矩阵」）语义变更相关——该批自己的回归欠账。
+- 本批自测面（2.1 的 8 套件 62 测）在合并树复跑仍全绿。
+- 过程留痕：广回归首跑曾与本批合并树编译并行，同 target 目录双 sbt 竞态产生
+  `ClassNotFoundException(NodeStarter$)` 类加载污染——该首跑结果作废，已按串行重跑为准；
+  并行 sbt 属本批操作失误（对结果零影响，重跑已覆盖），记录防复发。
 
 ## 3. 与设计稿的差异清单
 
@@ -133,7 +150,10 @@ topic: 进程级 ProcessRecorder 实施批（F1 recorder 上线 + F2 设备腿�
 
 ## 5. 提交面
 
-- 分支 `delegate/delegate-nebflow-bf078e5e`（基于 main `28f626564`；合并最新 main 的 merge
-  commit hash 见分支头）。改动面：6 文件修改 + 3 文件新增（2 主源 + 3 测试 + 本报告），
-  `git diff --stat` 口径 119+/183-（外科式，无整文件重排噪音——scalafmt 整文件重排曾误开，
-  已回退为仅保留本批 hunks）。
+- 分支 `delegate/delegate-nebflow-bf078e5e`：码+spec = `bdfcea3b7`，批报告 = `eb8d7d424`
+  （+本次回归读数补注）；真实合并 main 两次均零冲突：`4683e3bfc`（并入 main
+  f320d93fd，output-block-gate/usage-scroll/bg-source-chain 等）与 `d47dc84ad`（并入 main
+  f026336e4，fm-att-card-unify/todo-face 等；入向零 Scala 主源触碰）。分支基点 =
+  `28f626564`。改动面：6 文件修改 + 4 文件新增（2 主源 + 3 测试 + 本报告），
+  码面 `git diff --stat` 口径 119+/183-（外科式，无整文件重排噪音——scalafmt 整文件
+  重排曾误开，已回退为仅保留本批 hunks）。
