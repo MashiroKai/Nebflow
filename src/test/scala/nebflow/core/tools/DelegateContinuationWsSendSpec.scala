@@ -14,8 +14,10 @@ import java.nio.file.{Files, Paths}
  *
  * 归因链（本 spec 钉的是链上的机械环节）：
  *   1. 子会话（delegate/subtask/flow）的 ai / tool / thinking 三类 `.ui.json` 行，
- *      **唯一**写者是根会话的录制层（`WebSocketRoutes#makeRecordingWsSend`：按帧内
- *      `nodeSessionId` 落盘）。该录制层是子代理链上 `wsSend` 的底座。
+ *      **唯一**写者是根会话的录制层（本批时点 = `WebSocketRoutes#makeRecordingWsSend`：
+ *      按帧内 `nodeSessionId` 落盘；process-recorder 批 2026-11-01 后该宿主迁至
+ *      进程级 `ProcessRecorder`，wsHub 监听者位——归属判据不变）。该录制层是
+ *      子代理链上 `wsSend` 的底座。
  *   2. `DelegateTool.routeWsSend`（spawn 唯一路由点）在 `wsSend = None` 时把底座退化成
  *      `(_) => IO.unit`（DelegateTool.scala 的 `wsSend.getOrElse` 行）⇒ 该子会话的
  *      **全部流帧在发射处被吞**：既无 live 广播，也到不了录制层 ⇒ ui.json 只剩注入行。
