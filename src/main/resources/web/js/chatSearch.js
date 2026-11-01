@@ -65,6 +65,9 @@ import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 import { chatViews } from './chatView.js';
 import { sendWs } from './ws.js';
 import { expandGroupContaining } from './turnGroup.js';
+// 跳转回位胶囊（作者令 2026-11-01）：样式逐字复用现役「↓ N 条新消息」胶囊
+// （.scroll-new-pill 同家族），锚点/降级/消失时机契约见 searchReturnPill.js 头注。
+import { captureReturnAnchor, armReturnPill } from './searchReturnPill.js';
 
 const MAX_RESULTS = 200;      // search-mode cap (v2.1 one-shot query)
 const FETCH_PAGE = 100;       // stream page size (spec §6.3 caps a page at ≤200;
@@ -2358,6 +2361,9 @@ const JUMP_MAX_PAGES = 40;        // 40 × 50 = 2000 messages of lookback
 const JUMP_DEADLINE_MS = 25000;   // overall budget
 
 function jumpToResult(res) {
+  // 跳转回位胶囊（作者令 2026-11-01）：先于任何 DOM/滚动变更捕获跳转前锚点
+  // （跨会话跳转在模块内主动清锚 = 不设胶囊，锚住在另一条会话流里无法保真）。
+  captureReturnAnchor(res);
   closeSearchModal();
   // 手机层：检索面收编在「搜索」页里——关闭后面回聊天根再定位（搜索页 CLOSE_WATCH
   // 对账弹栈在观察器微任务里跑；goHome 幂等先行清栈，观察器到来时 top 已非
@@ -2393,6 +2399,9 @@ function flashRow(el) {
     const top = Math.max(0, Math.min(max,
       scroller.scrollTop + (nr.top - fr.top) - Math.max(0, (scroller.clientHeight - nr.height) / 2)));
     scroller.scrollTo({ top, behavior: 'smooth' });
+    // 跳转回位胶囊（作者令 2026-11-01）：定位成功即落地出胶囊；top = 落地滚动的
+    // 目标位（searchReturnPill 的到位豁免用它区分「程序滚动」与「用户滚离」）。
+    armReturnPill(top);
   }
   el.classList.remove('search-hit-flash');
   void el.offsetWidth;   // restart the flash animation on repeat jumps
