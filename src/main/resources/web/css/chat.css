@@ -472,6 +472,10 @@
    走 active 绿脉冲。链全终态后覆写缺席 → 行回普通终态样式（既有 done 档）。 */
 .bg-task-state.bg-task-chain { color: var(--status-warn-icon); font-weight: 500; }
 .bg-task-state.bg-task-chain .st-ic { width: 11px; height: 11px; margin-right: 3px; color: var(--status-warn-icon); }
+/* 中性 chip 族（共用样式，零独立语义）：设备同级批（作者令 2026-11-01「本地/远程
+   这组徽标整对退役」）后，后台任务**行**不再用本类（原「本地/远程」kind chip 整对
+   删除，跑在哪由 .bg-task-origin.bg-origin-device 承载）；现值存消费方 = 同族任务
+   聚合组头（×N 计数）与子智能体行（main/bgAgents.js 的 agent kind 词）。 */
 .bg-task-kind {
   font-size: 10px;
   font-weight: 500;
@@ -515,7 +519,10 @@
    a different axis from nebula/dispatcher/node (谁开启). Same neutral chip
    family as dispatcher (one text notch brighter); the LABEL (device name,
    e.g. KAI) is the differentiator. No new color tokens — existing glass /
-   text tokens only (visual-style: reuse before inventing). */
+   text tokens only (visual-style: reuse before inventing).
+   设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：本类升格为**每行
+   恒在的设备名 chip**——远端 = 对端设备名，本机 = 本机设备名（同名同类，本机不再
+   有专属样式/不再是第二口径）；title 恒用 bg.runsOn（「跑在 X」）。零样式改动。 */
 .bg-task-origin.bg-origin-device {
   color: var(--color-frame-text);
 }

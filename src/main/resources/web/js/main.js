@@ -95,7 +95,7 @@ import { escapeHtml, isBgAgentId } from './utils.js';
 // 本机设备名登记（设备角标本名批 2026-10-27）：configData.selfDevice.name（引擎
 // 自身身份读数，加法字段）→ deviceRoster 本机显示名缓存——工具卡设备角标本机字面
 // （local/self）的解析第二源（花名册 self 为第一源），两源皆缺不渲染、绝不「local」。
-import { noteSelfDeviceName } from './deviceRoster.js';
+import { noteSelfDeviceName, currentSelfDeviceName } from './deviceRoster.js';
 import { showMemoryButton, handleMemoryData, handleMemoryChanged, initMemory, clearMemoryCache } from './memory.js';
 import { initBgMergedPanel } from './bgMergedPanel.js';
 import { addNotification } from './notificationBanner.js';
@@ -3208,6 +3208,22 @@ function bgDeviceFromDescription(desc) {
   return m ? m[1] : '';
 }
 
+/** 行设备名（设备同级批 · 作者令 2026-11-01「本地/远程这组徽标整对退役」）：每行
+ *  一律标注**跑在哪台设备**，本机与远端同级——远端 = 对端设备名（注册帧 originLabel，
+ *  旧快照回退描述 `[<设备>] ` 前缀）；本机 = 本机设备名（花名册 self /
+ *  configData.selfDevice 同源同步读数，剥隔离 `-iso-<hex8>` 后缀，见
+ *  deviceRoster.currentSelfDeviceName）。两源皆缺 ⇒ 空串 = 零渲染——**绝不回退
+ *  「本地/remote」字样**（与工具卡设备角标 deviceTagHtml 同纪律）。 */
+function bgTaskDeviceLabel(task) {
+  const isRemote = task.kind === 'remote' || task.origin === 'device';
+  if (isRemote) {
+    const fromOrigin = task.origin === 'device' ? String(task.originLabel || '').trim() : '';
+    return fromOrigin || bgDeviceFromDescription(task.description);
+  }
+  const self = currentSelfDeviceName();
+  return (self && self.display) ? self.display : '';
+}
+
 // ── #753 同族任务聚合（waiter N 递增族刷屏治理 · 面板侧）────────────────────
 // 实证：delegate-nebflow-59f171d8 八分钟造 88 个 waiter 刷爆面板（81 条同行）。
 // 同族判据 = description 去数字归一（"background waiter 67" → "background waiter
@@ -3309,13 +3325,24 @@ function renderBgDropdown() {
       : rowState === 'cancelling' || rowState === 'done' ? ' bg-state-done' : '';
     const endedClass = (rowState === 'done' || rowState === 'failed') ? ' bg-task-ended' : '';
     const { cat, label } = bgTaskOrigin(task);
-    // Device origin 的语义是「跑在哪」而非「谁开启」——title 用独立词（bg.runsOn），
-    // 其余类别沿用 bg.openedBy。
+    // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：行内一律带设备
+    // chip（本机也是普通设备——读设备名册现名，不再出现「本地」字样），原
+    // 本地/远程 kind chip 整对删除（读面 bgTaskDeviceLabel）。
+    const deviceLabel = bgTaskDeviceLabel(task);
+    const devicePart = deviceLabel
+      ? '<span class="bg-task-origin bg-origin-device" title="' +
+        escapeHtml(t('bg.runsOn', { origin: deviceLabel })) + '">' + escapeHtml(deviceLabel) + '</span>'
+      : '';
+    // 来源 chip（谁开启：delegate 短名 / nebula / dispatcher / node）。设备任务的
+    // 名称已由 devicePart 承载 ⇒ 此处零渲染（禁同一行双写设备名）；其余类别语义
+    // 不变——「跑在哪」（bg.runsOn）与「谁开启」（bg.openedBy）两轴仍分列。
     const originTitle = cat === 'device'
       ? t('bg.runsOn', { origin: label })
       : t('bg.openedBy', { origin: label });
-    const originPart = '<span class="bg-task-origin bg-origin-' + cat + '" title="' +
-      escapeHtml(originTitle) + '">' + escapeHtml(label) + '</span>';
+    const originPart = cat === 'device'
+      ? ''
+      : '<span class="bg-task-origin bg-origin-' + cat + '" title="' +
+        escapeHtml(originTitle) + '">' + escapeHtml(label) + '</span>';
     // 任务模式标注批（2026-10-30 作者令）：开启任务的 delegate 会话生效执行形态
     // （kernel 极简内核 / dispatcher 分发器，注册帧 + 快照帧 ownerMode 字段）。
     // 空/脏值（旧后端/非 delegate/双模式闸关）零渲染——与 origin chip 同纪律。
@@ -3324,9 +3351,6 @@ function renderBgDropdown() {
     const modePart = modeWord
       ? '<span class="bg-task-mode bg-mode-' + task.ownerMode + '" title="' +
         escapeHtml(t('bg.modeTitle', { mode: modeWord })) + '">' + escapeHtml(modeWord) + '</span>'
-      : '';
-    const kindPart = task.kind
-      ? '<span class="bg-task-kind">' + escapeHtml((task.kind === 'local' || task.kind === 'remote') ? t('bg.kind.' + task.kind) : task.kind) + '</span>'
       : '';
     // 健康色点（P0 面板投影批 · 设计稿 §3.4）：快照帧行内 health 字段派生——
     // 绿=healthy / 黄=suspect / 红=escalated；bgHealthNorm 双端容错（脏值回落
@@ -3373,7 +3397,7 @@ function renderBgDropdown() {
       '<div class="bg-task-info">' +
         '<div class="bg-task-line bg-task-meta">' +
           '<span class="bg-task-state' + stateClass + '">' + escapeHtml(statusLabel) + '</span>' +
-          originPart + modePart + kindPart + healthPart + linesPart + exitPart + uptimePart +
+          devicePart + originPart + modePart + healthPart + linesPart + exitPart + uptimePart +
         '</div>' +
         '<div class="bg-task-line bg-task-name-line">' +
           '<span class="bg-task-name" title="' + escapeHtml(nameTitle) + '">' + escapeHtml(desc) + '</span>' +

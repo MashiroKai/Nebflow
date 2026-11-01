@@ -1706,8 +1706,8 @@ export default {
   'bgws.moreTasks': '{count} more background tasks (see the main window panel)',
   'bg.sectionAgents': 'Sub-agents',
   'bg.empty': 'No background tasks running',
-  'bg.kind.local': 'local',
-  'bg.kind.remote': 'remote',
+  // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：bg.kind.local /
+  // bg.kind.remote 两键随徽标整对删除——跑在哪由设备名 chip 承载（bg.runsOn）。
   'bg.openedBy': 'Started by {origin}',
   'bg.runsOn': 'Runs on {origin}',
   // P0 面板投影批（设计稿 20261030_background-task-lifecycle §3.4）：后台任务

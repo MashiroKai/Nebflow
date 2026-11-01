@@ -1642,8 +1642,8 @@ export default {
   'bgws.moreTasks': '还有 {count} 个后台任务（主窗口面板查看）',
   'bg.sectionAgents': '智能体',
   'bg.empty': '当前无运行中的后台任务',
-  'bg.kind.local': '本地',
-  'bg.kind.remote': '远程',
+  // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：bg.kind.local /
+  // bg.kind.remote 两键随徽标整对删除——跑在哪由设备名 chip 承载（bg.runsOn）。
   'bg.openedBy': '由 {origin} 开启',
   'bg.runsOn': '跑在 {origin}',
   // P0 面板投影批（设计稿 20261030_background-task-lifecycle §3.4）：后台任务
