@@ -511,21 +511,21 @@ try {
         `exit=${ce.code} ${(ce.out.split('\n').find(l => l.includes('messages.js')) || '').trim()}`);
 
       // G4-3 允许清单内两行仍 PASS（且不被计入违规）
-      // （换代注记：input.js 增量后 view.composing 弃用绑定对漂至 1442-1443；
-      //   旧 1175-1176 的 keyCode 裸判定已被 imeGuard 元素级判定取代、整段不在。
+      // （换代注记：输入行为包批 2026-11-02 把 keydown 级联搬进 input/composer.js，
+      //   view.composing 弃用绑定对随漂至 1698-1699（旧 1442-1443）；
       //   工具按锚文本定位并回显活行号 —— spec 钉活行号即可，判据语义不变。）
       const al = runSentinel(buildFixture(null));
-      ok('G4-3 允许清单承载 input.js:1442-1443（view.composing 弃用绑定对）⇒ exit 0 且输出可见豁免条目',
-        al.code === 0 && al.out.includes('allowlisted occurrence: js/input.js:1442,1443'),
+      ok('G4-3 允许清单承载 input.js:1698-1699（view.composing 弃用绑定对）⇒ exit 0 且输出可见豁免条目',
+        al.code === 0 && al.out.includes('allowlisted occurrence: js/input.js:1698,1699'),
         `exit=${al.code} ${(al.out.split('\n').find(l => l.includes('allowlisted occurrence')) || '').trim()}`);
 
       // G4-4 反掩蔽：允许清单锚定的是**文本**——同两行被换成真代码（行号不变）⇒ 必红
       const swap = runSentinel(buildFixture((jsDir) => patchLines(join(jsDir, 'input.js'), (l) => {
-        l[1441] = '  if (e.isComposing || e.keyCode === 229) return;';
-        l[1442] = '  if (e.keyCode === 229) return;';
+        l[1697] = '  if (e.isComposing || e.keyCode === 229) return;';
+        l[1698] = '  if (e.keyCode === 229) return;';
       })));
       ok('G4-4 反掩蔽：允许清单同两行被换成手搓判定 ⇒ 仍红（豁免不得掩盖其替代者）',
-        swap.code === 1 && swap.out.includes('js/input.js:1442') && swap.out.includes('js/input.js:1443'),
+        swap.code === 1 && swap.out.includes('js/input.js:1698') && swap.out.includes('js/input.js:1699'),
         `exit=${swap.code} ${(swap.out.split('\n').filter(l => l.includes('input.js:')).join(' | ') || '').trim()}`);
 
       // G4-5 清单外新增裸判定（新文件）⇒ 必红
