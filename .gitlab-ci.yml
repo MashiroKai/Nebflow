@@ -1,0 +1,713 @@
+# ============================================================================
+# 主 CI —— USTC GitLab 自建 runner（shell executor）
+# 源面平移：.github/workflows/ci.yml（GitHub Actions，14 个 job 键 / matrix 展开
+# 16 个实体腿；评估报告口径按 §1.2 归 10 组。GitHub 面冻结只读，本文件是唯一活面）
+# + release.yml / auto-release.yml（发版链 → 本文件 release job）。
+# 施工图：docs/20261101_151034_ustc-cicd-migration-assessment__delegate-nebflow-7f8e8dec.md
+#   §1.3 依赖矩阵（checkout / upload-download-artifact / setup-java-node cache 的
+#   GitLab 对应物）与 §3.2 阶段 2。
+#
+# 触发裁定（本批）：
+#   · 分支 / MR pipeline 只跑 compile 级最小 = compile-mac + compile-windows 两腿
+#     （本批验证基准；存量内容门禁红被 rules 隔离在小面之外）。
+#   · main / beta / release 分支与 tag pipeline 跑全量 job 集。
+#   · release job（release.yml beta 链 / auto-release.yml stable 链的对应物）只在
+#     beta / release 分支 pipeline 跑，needs: assembly ⇒ 等全量面（含 test）齐绿才发
+#     ——比原文（release 链自跑一次 test）更严且省一次重复测试。
+#
+# runner 前提（自建，标签只允许 mac / windows 两枚）：
+#   tags: [mac]     = 构建宿主机：JDK23 + sbt 1.10.10 + node 20 + docker 29.1.3 在位，
+#                     shell executor，gitlab-runner 注册标签 mac。
+#   tags: [windows] = 16 核 Windows 机：JDK21 + node 20 + sbt 已备，注册标签 windows，
+#                     且必须 --shell bash（Git Bash 在 PATH）——本文件 windows 腿脚本
+#                     全部按 bash 方言写（GitLab windows runner 支持 bash shell）。
+#
+# 与 GitHub 原文的必要偏差（自建常驻机语义修正，就地注释）：
+#   1. 起服类 job（smoke / frontend-smoke / docker）原文跑在一次性 runner 上：
+#      fresh home、6138 空闲。本 runner 是生产宿主（常驻实例占 6138 与 ~/.stand），
+#      故起服一律 --home "$CI_PROJECT_DIR/.ci-home"（STAND_HOME 同步 export，服务端
+#      数据根第一优先级 env，见 src/main/scala/nebflow/shared/paths.scala）+
+#      --port 16138（CI 专用口）；相应 curl / BASE_URL / docker 端口映射全部钉 16138。
+#      换来的关键安全面：CI 冒烟永不触宿主真 token / 真会话 / 生产实例。
+#   2. frontend-smoke 的 token 桥接提前到任何 spec 之前。原文顺序在一次性机器上
+#      安全（spec 兜底读 fresh ~/.stand/auth.json）；常驻机上该兜底会读到宿主真
+#      auth.json —— 桥接先行（NEBFLOW_TOKEN 钉隔离实例的 fresh token）。
+#   3. checkout → GIT_STRATEGY: fetch + GIT_DEPTH: 1（版本取自 VERSION 文件，
+#      build.sbt 不依赖 git 历史；后续 release 面若需全史按 job 覆盖 GIT_DEPTH: 0）。
+#   4. setup-java / setup-node 直用宿主工具链（Mac JDK23/node20，Windows JDK21/node20；
+#      Windows 腿 JDK23→21：宿主基线，bytecode target 17 可由 21 编出）。
+#      sbt 走 Aliyun sbt-launch 自举：原 workflow 脚本照搬，仅
+#      `echo "/tmp/sbt-bin" >> $GITHUB_PATH` → `export PATH="/tmp/sbt-bin:$PATH"`
+#      等价替换（GitLab bash shell executor 一个 job 一个 shell 会话，export 存续）。
+#   5. cache 面：GitLab cache:paths 只能仓内相对路径（~ 开头路径不受支持）。
+#      sbt 依赖面用 COURSIER_CACHE 重定向进仓（.cache/coursier）后入 cache:；
+#      ~/.ivy2、~/.sbt、~/.npm 在自建常驻宿主上天然持久热缓存，不搬。
+#      npm 面按施工图声明 node_modules（注意 npm ci 会先清空重建它——真正提速面
+#      是宿主 ~/.npm；若实测 zip 往返开销大，可改 npm ci --cache .cache/npm 方案）。
+#
+# 原 job → 本文件 job 对照（后续文档引用）：
+#   js-types             → js-types               (tags mac)
+#   user-knowledge-gate  → user-knowledge-gate    (tags mac)
+#   dead-logging-gate    → dead-logging-gate      (tags mac)
+#   jdk-baseline-gate    → jdk-baseline-gate      (tags mac)
+#   installer-home-gate  → installer-home-gate    (tags mac)
+#   legacy-domain-gate   → legacy-domain-gate     (tags mac)
+#   lint                 → lint                   (tags mac)
+#   compile × matrix     → compile-mac            (tags mac)
+#     [ubuntu, windows]  → compile-windows        (tags windows)
+#   test                 → test                   (tags mac, -Xmx6g 单点)
+#   assembly             → assembly               (tags mac, artifacts: jar)
+#   smoke-test × matrix  → smoke-test-mac         (tags mac)
+#     [ubuntu, windows]  → smoke-test-windows     (tags windows)
+#   frontend-smoke       → frontend-smoke         (tags mac)
+#   frontend-specs       → frontend-specs         (tags mac, allow_failure)
+#   docker-test          → docker-test            (tags mac)
+#   release.yml (beta)   → release                (tags mac, branch=beta；stable 同 job)
+#   auto-release.yml     → release                （branch=release 分支内切换语义）
+# ============================================================================
+
+stages:
+  - gates
+  - lint
+  - compile
+  - test
+  - assembly
+  - smoke
+  - frontend
+  - docker
+  - release
+
+workflow:
+  rules:
+    # MR pipeline：compile 最小面
+    - if: "$CI_PIPELINE_SOURCE == 'merge_request_event'"
+    # 分支 push：pipeline 建；全量面由各 job rules 收窄到 main/beta/release
+    - if: "$CI_COMMIT_BRANCH"
+    # tag push：全量面
+    - if: "$CI_COMMIT_TAG"
+    # 手动跑（web）＝原 workflow_dispatch 等价物（发版 dry_run、单 job 重放）
+    - if: "$CI_PIPELINE_SOURCE == 'web'"
+
+variables:
+  # checkout 平移（原 actions/checkout@v4）：浅克隆（普通 job 够用；
+  # release 面需全史时按 job 覆盖 GIT_DEPTH: 0）
+  GIT_STRATEGY: fetch
+  GIT_DEPTH: "1"
+  # 原 workflow 顶层 env 钉值（2026-10-24 CI 迁移批：Metaspace OOM 治本组合）；
+  # fork 出的测试 JVM 不受此影响（build.sbt MaxRAMPercentage 单点管辖）。
+  SBT_OPTS: "-Xms512m -Xmx3g -XX:MaxMetaspaceSize=2g"
+  COURSIER_REPOSITORIES: "ivy2Local|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2"
+  # sbt 依赖缓存重定向进仓（GitLab cache:paths 只收仓内相对路径；
+  # 原默认面 ~/.cache/coursier / ~/Library/Caches/Coursier 不搬——宿主常驻即热缓存）
+  COURSIER_CACHE: "$CI_PROJECT_DIR/.cache/coursier"
+  # 品牌值（原各 job 运行时从 brand.conf bv() 解析 → $GITHUB_ENV；GitLab 静态
+  # variables 承接，单一真源仍是 brand.conf，凡消费品牌值的 job 由 brand-guard
+  # 校验两者一致，漂移即红）。
+  LOWER_NAME: "stand"
+  PRODUCT_NAME: "stand"
+
+# ── 共用 rules：全量面（main/beta/release 分支 + tag）───────────────────────
+# 其余分支 / MR pipeline 只剩无 rules 约束的 compile 两腿 = 最小验证面。
+.rules-full: &rules_full
+  rules:
+    - if: "$CI_COMMIT_TAG"
+    - if: "$CI_COMMIT_BRANCH =~ /^(main|beta|release)$/"
+
+# ── 共用 cache：sbt 依赖面（原 setup-java cache: sbt）───────────────────────
+# policy pull-push 对齐 setup-java 语义（restore + save）。key 按 ref + OS 分键，
+# 两 OS 缓存内容（JDK/平台位）不同，绝不共键。
+.cache-sbt-mac: &cache_sbt_mac
+  key: "$CI_COMMIT_REF_SLUG-sbt-mac"
+  paths:
+    - .cache/coursier
+  policy: pull-push
+
+.cache-sbt-windows: &cache_sbt_windows
+  key: "$CI_COMMIT_REF_SLUG-sbt-windows"
+  paths:
+    - .cache/coursier
+  policy: pull-push
+
+# ── 共用 script 片段 ────────────────────────────────────────────────────────
+# sbt 自举（原 workflow「Setup sbt」步照搬）：Aliyun sbt-launch，wrapper 经
+# SBT_OPTS 读全局钉值。唯二差异：$GITHUB_PATH → export PATH（等价），其余逐字节同。
+.sbt-bootstrap: &sbt_bootstrap |
+  curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
+  mkdir -p /tmp/sbt-bin
+  printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -XX:+ExitOnOutOfMemoryError -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+  chmod +x /tmp/sbt-bin/sbt
+  export PATH="/tmp/sbt-bin:$PATH"
+  echo "[info] sbt-launch.jar size: $(wc -c < /tmp/sbt-launch.jar) bytes"
+
+# 品牌一致性门（原「Brand values from brand.conf」步的 GitLab 形态）：bv() 解析
+# 结果必须与 variables 里声明的 LOWER_NAME / PRODUCT_NAME 一致，否则红——
+# 防 brand.conf 改名后 artifact 路径/镜像名静态声明漂移。
+.brand-guard: &brand_guard |
+  bv() { sed -n "s/^$1[[:space:]]*=[[:space:]]*//p" brand.conf | sed 's/[[:space:]]#.*$//; s/[[:space:]]*$//' | head -1; }
+  test "$(bv lowerName)" = "$LOWER_NAME" || { echo "FAIL: brand.conf lowerName='$(bv lowerName)' != LOWER_NAME='$LOWER_NAME'（改 brand.conf 时同步改 variables）"; exit 1; }
+  test "$(bv productName)" = "$PRODUCT_NAME" || { echo "FAIL: brand.conf productName='$(bv productName)' != PRODUCT_NAME='$PRODUCT_NAME'"; exit 1; }
+
+# 起服收尾（原 if: always()「Stop server」步 → after_script 恒跑语义；after_script
+# 是独立 shell，PID 经 .ci-server.pid 文件传递）。
+.stop-server: &stop_server |
+  if [ -f .ci-server.pid ]; then kill "$(cat .ci-server.pid)" 2>/dev/null || true; fi
+  echo "--- Server tests completed ---"
+
+.docker-cleanup: &docker_cleanup |
+  docker rm -f "${LOWER_NAME}-test" > /dev/null 2>&1 || true
+
+# ============================================================================
+# gates —— 六个 fail-fast 静态门禁（原 ubuntu 腿 → mac 宿主，node/bash 即跑）
+# ============================================================================
+
+js-types:
+  stage: gates
+  tags: [mac]
+  timeout: 10m
+  needs: []
+  <<: *rules_full
+  script:
+    # 原 setup-node node20 → 宿主 node。
+    - npm install --no-save --no-package-lock typescript@5.5
+    # A1 gate: 新文件带错 / (file,code) 计数增 / 总量超 tests/type-baseline.json 即红。
+    - node scripts/check-js-types.mjs
+    # P2-4 gate: 静态 import SCC 成环即红（dynamic import() 是豁免通道）。
+    - node scripts/check-circular.mjs
+    # ⑤ gate（作者裁 2026-09-12）：web/js 下直读 isComposing / keyCode 229 /
+    # 绑 compositionstart|compositionend 而不 import imeGuard.js 即红。
+    - node scripts/check-ime-guard.mjs
+    # ③-G gate：friend chat modal 与 dropbox modal 共享的消息面值唯一字面家 =
+    # css/sapphire.css，feature CSS 重抄即红。
+    - node scripts/check-msgstyle-single-source.mjs
+    # Provider model-list endpoint 必须由协议 face 声明，gateway 不得拼 baseUrl。
+    - node scripts/check-provider-modellist.mjs
+    # Gate #491：ship face 不带贡献者本机标识（运行时自推导执行机身份）。
+    - node scripts/check-local-coupling.mjs
+    # F3：release tag 无 v 前缀（扫 release 双 workflow + installer 双脚本）。
+    - node scripts/check-tag-format.mjs
+
+user-knowledge-gate:
+  stage: gates
+  tags: [mac]
+  timeout: 10m
+  needs: []
+  <<: *rules_full
+  script:
+    # Fail-fast：provider 网关 ID / 个人路径 / API key 不得漏进 src/main。
+    - bash scripts/check-user-knowledge.sh
+
+dead-logging-gate:
+  stage: gates
+  tags: [mac]
+  timeout: 10m
+  needs: []
+  <<: *rules_full
+  script:
+    # Fail-fast：NebflowLogger double-wrap（IO(IO[Unit])，内层永不执行）。
+    - bash scripts/check-dead-logging.sh
+
+jdk-baseline-gate:
+  stage: gates
+  tags: [mac]
+  timeout: 10m
+  needs: []
+  <<: *rules_full
+  script:
+    # 双常量：JDK_BASELINE=21（五个声明面）+ JDK_BYTECODE_TARGET=17（严格低于地板，
+    # 钉回 21 是 regression）。Java-17 运行半面（A-7b/A-6）在 docker-test 跑 --jar 模式。
+    - bash scripts/check-jdk-baseline.sh
+
+installer-home-gate:
+  stage: gates
+  tags: [mac]
+  timeout: 10m
+  needs: []
+  <<: *rules_full
+  script:
+    # 再生治本批 2026-10-22：安装器默认 home = STAND_HOME env → brand homeDirName，
+    # 永不落 legacy ~/.nebflow，setup_path 收编 legacy PATH 残留。
+    - bash scripts/check-installer-home.sh
+
+legacy-domain-gate:
+  stage: gates
+  tags: [mac]
+  timeout: 10m
+  needs: []
+  <<: *rules_full
+  script:
+    # #831 旧域清扫批：退役裸域名不得以浏览器入口字面重现（frozen 白名单在脚本内）。
+    - node scripts/check-legacy-domain.mjs
+
+# ============================================================================
+# lint —— scalafmt + scalafix + Scala 分层门禁（原 ubuntu → mac）
+# ============================================================================
+
+lint:
+  stage: lint
+  tags: [mac]
+  timeout: 25m
+  needs: []
+  <<: *rules_full
+  cache: *cache_sbt_mac
+  before_script:
+    - *sbt_bootstrap
+  script:
+    # 原 setup-java temurin 23 cache:sbt → 宿主 JDK23 + cache_sbt_mac。
+    - sbt scalafmtCheckAll "scalafix --check"
+    # Phase 5 分层门禁：反向边集合 ⊆ scripts/layer-exemptions.json 基线（只减不增），
+    # 非 import 正则（FQN 裸引用面）；exit 1 = 违规未豁免。需要 node。
+    - node scripts/check-scala-layers.mjs
+
+# ============================================================================
+# compile —— matrix 两腿拆 job：mac 腿（原 ubuntu-latest）/ windows 腿（原
+# windows-latest）。无 rules：一切 pipeline（含分支/MR 最小面）必跑 —— 本批
+# 验证基准；原 setup-java JDK23 → 宿主 JDK（mac 23 / windows 21，bytecode 17）。
+# ============================================================================
+
+compile-mac:
+  stage: compile
+  tags: [mac]
+  timeout: 30m
+  needs: []
+  cache: *cache_sbt_mac
+  before_script:
+    - *sbt_bootstrap
+  script:
+    - sbt compile
+
+compile-windows:
+  stage: compile
+  tags: [windows]
+  timeout: 30m
+  needs: []
+  # windows runner 须以 --shell bash 注册（Git Bash）；/tmp 走 MSYS TEMP 映射。
+  cache: *cache_sbt_windows
+  before_script:
+    - *sbt_bootstrap
+  script:
+    - sbt compile
+
+# ============================================================================
+# test —— 原 ubuntu 腿 → mac；needs 对齐原图（compile matrix 双腿齐绿才跑）。
+# SBT_OPTS 单点提到 6g：全局 3g 对 40min+ 长跑不够（二轮实测 ConsoleFastpathSpec
+# OOM 后 sbt 僵死；ExitOnOutOfMemoryError 保证 OOM 立红不烧满超时）。
+# ============================================================================
+
+test:
+  stage: test
+  tags: [mac]
+  timeout: 90m
+  needs: [compile-mac, compile-windows]
+  <<: *rules_full
+  cache: *cache_sbt_mac
+  variables:
+    SBT_OPTS: "-Xms512m -Xmx6g -XX:MaxMetaspaceSize=2g"
+  before_script:
+    - *sbt_bootstrap
+  script:
+    # 原「Install ripgrep」步：ubuntu 用 apt-get；mac 宿主日常机 rg 常备，缺失才补装。
+    - command -v rg >/dev/null 2>&1 || brew install ripgrep
+    - sbt test
+
+# ============================================================================
+# assembly —— web bundle + sbt assembly；产物经 artifacts:+needs 下传 smoke/
+# frontend/docker 三腿（原 upload/download-artifact 对应物）。expire 3 天对齐
+# 原 retention-days: 3。
+# ============================================================================
+
+assembly:
+  stage: assembly
+  tags: [mac]
+  timeout: 45m
+  needs: [compile-mac, compile-windows, test]
+  <<: *rules_full
+  cache:
+    # 原 setup-java cache:sbt + setup-node cache:npm 两面。
+    - *cache_sbt_mac
+    - key:
+        files:
+          - package-lock.json
+      paths:
+        - node_modules
+      policy: pull-push
+  before_script:
+    - *brand_guard
+    - *sbt_bootstrap
+  script:
+    # 原 setup-node node20 cache:npm → 宿主 node + node_modules cache 面。
+    # esbuild bundle → build/web-dist（orphan-guarded, warning-free）。
+    - npm ci
+    - node scripts/build-web.mjs
+    # Friends release-strip 断言（dual-form gate）：默认 web-dist 必须带未封 friends 面。
+    - node tests/release-strip-friends.static.mjs
+    # -D<lowerName>.webdist=1 把 build/web-dist 挂进 jar（opt-in，防 dev 机陈旧 dist）。
+    - sbt -D${LOWER_NAME}.webdist=1 assembly
+    # 原注（2026-09-07）：artifact 路径不做 shell 展开，静态声明用 variables 的
+    # $LOWER_NAME（brand-guard 已断言与 brand.conf 一致）。
+  artifacts:
+    name: "$LOWER_NAME-jar"
+    expire_in: 3 days
+    paths:
+      - "target/scala-3.5.2/${LOWER_NAME}-assembly-*.jar"
+
+# ============================================================================
+# smoke —— matrix 两腿拆 job。needs 携 assembly 产物：GitLab 把上游 artifacts
+# 解包回源路径（target/scala-3.5.2/），开头同步到原 ./dist 消费路径，脚本体
+# 与原文逐行同构。起服走 CI 隔离（fresh home + 16138，见文件头偏差 1）。
+# ============================================================================
+
+.smoke-script: &smoke_script |
+  # 原 download-artifact(path: ./dist) → needs 自带解包至源路径，此处对齐消费路径
+  mkdir -p dist && cp target/scala-3.5.2/${LOWER_NAME}-assembly-*.jar dist/
+  # 原「Find JAR」步（id: jar → GITHUB_OUTPUT）→ 同 shell 变量
+  JAR=$(ls dist/${LOWER_NAME}-assembly-*.jar | head -1)
+  java --add-opens java.base/java.lang=ALL-UNNAMED -jar "$JAR" version 2>&1 | head -5
+  java --add-opens java.base/java.lang=ALL-UNNAMED -jar "$JAR" status 2>&1 | head -5
+  java --add-opens java.base/java.lang=ALL-UNNAMED -jar "$JAR" doctor 2>&1 | head -20
+  java --add-opens java.base/java.lang=ALL-UNNAMED -jar "$JAR" help 2>&1 | head -20
+  # 原「Start server」步：fresh home + CI 专用口（自建常驻机隔离，见文件头偏差 1）
+  rm -rf .ci-home && mkdir -p .ci-home
+  export STAND_HOME="$CI_PROJECT_DIR/.ci-home"
+  java --add-opens java.base/java.lang=ALL-UNNAMED -jar "$JAR" --home "$STAND_HOME" --port 16138 -s &
+  SERVER_PID=$!
+  echo "$SERVER_PID" > .ci-server.pid
+  for i in $(seq 1 30); do
+    if curl -s http://localhost:16138/ > /dev/null 2>&1; then
+      echo "Server started after ${i}s"
+      break
+    fi
+    if [ $i -eq 30 ]; then
+      echo "ERROR: Server did not start within 30s"
+      kill $SERVER_PID 2>/dev/null || true
+      exit 1
+    fi
+    sleep 1
+  done
+  # 原「Test REST API」步
+  echo "--- Health check ---"
+  curl -sf http://localhost:16138/api/health && echo "" || echo "FAIL"
+  echo "--- Static assets ---"
+  curl -s -o /dev/null -w "GET / -> %{http_code}\n" http://localhost:16138/
+  echo "--- Config endpoint ---"
+  CONFIG=$(curl -sf http://localhost:16138/api/config 2>&1) && echo "${CONFIG:0:200}..." || echo "Config not available"
+  # 原「Verify web assets (C1 contract)」步：src/main/resources/web 全树 200；
+  # 原 setup-node node20 → 宿主 node。
+  node scripts/verify-web-assets.mjs http://localhost:16138
+
+smoke-test-mac:
+  stage: smoke
+  tags: [mac]
+  timeout: 20m
+  needs: [assembly]
+  <<: *rules_full
+  before_script:
+    - *brand_guard
+  script: [*smoke_script]
+  after_script: [*stop_server]
+
+smoke-test-windows:
+  stage: smoke
+  tags: [windows]
+  timeout: 20m
+  needs: [assembly]
+  <<: *rules_full
+  # 宿主 JDK21 起 jar（jar 地板 21）；Git Bash 供 curl/seq/kill。
+  before_script:
+    - *brand_guard
+  script: [*smoke_script]
+  after_script: [*stop_server]
+
+# ============================================================================
+# frontend-smoke —— Playwright + 真实后端（原 ubuntu → mac）。
+# ============================================================================
+
+frontend-smoke:
+  stage: frontend
+  tags: [mac]
+  timeout: 40m
+  needs: [assembly]
+  <<: *rules_full
+  before_script:
+    - *brand_guard
+  script:
+    # 原 download-artifact(path: ./dist) → needs 解包 + 消费路径对齐
+    - mkdir -p dist && cp target/scala-3.5.2/${LOWER_NAME}-assembly-*.jar dist/
+    # 原「Install Playwright」步
+    - npm install --no-save --no-package-lock @playwright/test@1.62.0
+    - npx playwright install --with-deps chromium
+    # 原「Start server (fresh home, real jar)」步 → CI 隔离 home + 16138
+    - rm -rf .ci-home && mkdir -p .ci-home
+    - export STAND_HOME="$CI_PROJECT_DIR/.ci-home"
+    - java --add-opens java.base/java.lang=ALL-UNNAMED -jar "$(ls dist/${LOWER_NAME}-assembly-*.jar | head -1)" --home "$STAND_HOME" --port 16138 -s &
+    - SERVER_PID=$!
+    - echo "$SERVER_PID" > .ci-server.pid
+    - |
+      for i in $(seq 1 60); do
+        if curl -s http://localhost:16138/api/health > /dev/null 2>&1; then
+          echo "Server started after ${i}s"
+          break
+        fi
+        if [ $i -eq 60 ]; then
+          echo "ERROR: Server did not start within 60s"
+          kill $SERVER_PID 2>/dev/null || true
+          exit 1
+        fi
+        sleep 1
+      done
+    # token 桥接（原「Bridge fresh-instance token」步）——【提前】到任何 spec 之前：
+    # 常驻机上 spec 兜底读 ~/.stand/auth.json 会命中宿主真 token（见文件头偏差 2）。
+    # 原 $GITHUB_ENV 五行 → 同 shell export（GitLab 一个 job 一个 shell 会话）。
+    - export NEBFLOW_TOKEN=$(cat "$STAND_HOME/auth.json")
+    - export NEBFLOW_HOME="$STAND_HOME"
+    - export NEBFLOW_HOME_DIR="$STAND_HOME"
+    - export BASE_URL=http://localhost:16138
+    - export NEBFLOW_URL=http://localhost:16138
+    # 原「Assert served index bytes」步：字节级断言（circe String-encoder 劫持
+    # 面 —— JSON 化 HTML 以双引号开头；brand 契约必须是裸引号形态）。
+    - |
+      BODY=$(curl -s http://localhost:16138/)
+      FIRST15=$(printf '%s' "$BODY" | head -c 15)
+      if [ "$FIRST15" != "<!DOCTYPE html>" ]; then
+        echo "FAIL: index does not start with <!DOCTYPE html> (got: $FIRST15)"
+        printf '%s' "$BODY" | head -c 200
+        exit 1
+      fi
+      if ! printf '%s' "$BODY" | grep -q '"productName":"'; then
+        echo "FAIL: raw-quote brand contract missing (possible JSON-escaped body)"
+        printf '%s' "$BODY" | grep -o 'window.__BRAND__.\{0,80\}' || true
+        exit 1
+      fi
+      echo "OK: index served as raw HTML with brand contract injected"
+    # 原「Run Playwright smoke suite」步（token 走上面桥接的 NEBFLOW_TOKEN）
+    - npx playwright test tests/smoke.spec.mjs
+    # Instance-backed specs（askuser / workspace-picker / plugins panels）
+    - npx playwright test tests/askuser.spec.mjs tests/askuser-attach.spec.mjs tests/workspace-picker.spec.mjs tests/plugins-panel-redesign.spec.mjs tests/plugins-panel-two-actions.spec.mjs
+    # Instance-backed spec（clientconn-wake，独立脚本）
+    - node tests/clientconn-wake.spec.mjs
+    # Instance-backed spec（session-rail，独立、破坏性 —— 故意排最后：轮换 token
+    # 并吊销全部会话，throwaway 隔离实例上无害）
+    - node tests/session-rail.spec.mjs
+    # 原「Verify web assets (C1, dist tree)」步：本地重建（确定性）取 dist 树做
+    # 遍历；运行实例服务的是 jar 内嵌副本。
+    - npm ci
+    - node scripts/build-web.mjs
+    - node scripts/verify-web-assets.mjs --root build/web-dist http://localhost:16138
+  after_script: [*stop_server]
+
+# ============================================================================
+# frontend-specs —— 自足 spec 全量（stub 服务 / page.route / WS 回放，零后端零
+# 外网）。原 continue-on-error: true → allow_failure: true（观察期，取真实基线
+# 后翻硬门禁 = 删此行）。原 job 无 needs → needs: [] 保持与全图并行起跑。
+# ============================================================================
+
+frontend-specs:
+  stage: frontend
+  tags: [mac]
+  timeout: 60m
+  needs: []
+  allow_failure: true
+  <<: *rules_full
+  cache: *cache_sbt_mac
+  before_script:
+    - *sbt_bootstrap
+  script:
+    # queuepos-detail.spec.mjs 硬契约：渲染面必须由引擎真实推导驱动，跑前先生成
+    # target/queuepos-payload.json（fresh checkout 必跑）。
+    - sbt "testOnly nebflow.core.project.MergeQueuePositionSpec"
+    # webkit：nffile-three-tier / nffile-503-backoff / imgcard-click-safari-compat /
+    # mdscroll-toc-scroll 四个 spec 显式 import webkit。
+    - npm install --no-save --no-package-lock @playwright/test@1.62.0
+    - npx playwright install --with-deps chromium webkit
+    # 原 runner.temp/archive-shots（mac 形态默认路径不可写才需要覆盖）→ 仓内可写目录。
+    - export ARCHIVE_SHOT_DIR="$CI_PROJECT_DIR/.tmp/archive-shots"
+    - PW_SELFCONTAINED_ONLY=1 npx playwright test
+    # （原 CI 迁移批 2026-10-24）失败 trace 上传已删：GitHub Artifact 配额耗尽存证；
+    # GitLab 面 trace 回传待后续批定夺（artifacts: when: on_failure 可挂）。
+
+# ============================================================================
+# docker-test —— 镜像构建 + Java-17 复现门禁（原 ubuntu → mac，docker 29 在位）。
+# ============================================================================
+
+docker-test:
+  stage: docker
+  tags: [mac]
+  timeout: 30m
+  needs: [assembly]
+  <<: *rules_full
+  before_script:
+    - *brand_guard
+  script:
+    # 原 download-artifact(path: ./target/scala-3.5.2) → needs 解包即此路径，零搬移。
+    - ls target/scala-3.5.2/${LOWER_NAME}-assembly-*.jar
+    - docker build --build-arg lower_name=${LOWER_NAME} -t ${LOWER_NAME}:test .
+    # 原「Test container starts」步：宿主映射口 16138→容器 6138（宿主 6138 被常驻
+    # 实例占用，见文件头偏差 1）；自建机防容器名残留，先 rm -f 再起。
+    - docker rm -f "${LOWER_NAME}-test" > /dev/null 2>&1 || true
+    - docker run -d --name ${LOWER_NAME}-test -p 16138:6138 ${LOWER_NAME}:test
+    - sleep 5
+    - docker logs ${LOWER_NAME}-test 2>&1 | head -20
+    - curl -sf http://localhost:16138/api/health || echo "Health check failed"
+    - docker stop ${LOWER_NAME}-test
+    # Java 17 reproduction（A-7b/A-6）：jar 内 Main.class 必须 major 61；裸启动必须
+    # 到达人类可读拒载（requires Java 21 + 升级指引 + Jar:/Java: 行，非零退出）；
+    # version/help/doctor/update 自修入口必须能跑；90s 后仍在跑 = FAILURE。
+    # 容器纪律在脚本内：--network none、无端口映射、命名容器 + EXIT trap 清理。
+    - bash scripts/check-jdk-baseline.sh --jar "$(ls target/scala-3.5.2/${LOWER_NAME}-assembly-*.jar | head -1)"
+  after_script: [*docker_cleanup]
+
+# ============================================================================
+# release —— 发版链（release.yml beta / auto-release.yml stable 的对应物，单 job
+# 分支内切语义）。只在 beta / release 分支 pipeline 跑，needs: assembly ⇒ 全量面
+# （含 test）齐绿才发；artifact 面直接拿 assembly 的 jar。
+# 凭据链：USTC_RELEASE_TOKEN（项目 CI/CD variable，masked；阶段 0 注入）优先，
+# 缺席时降级 CI_JOB_TOKEN（本仓 tag push / Generic Packages / Release API——
+# 实例若拒 job token 形态则该 job 红，错误信息带补救指引）。
+# 与原文的必要偏差（就地注释）：
+#   1. prerelease 语义：GitLab Release 无同名字段 → beta 在描述里标 Pre-release
+#      （评估报告 §2.3 口径：tag 命名约定 + 描述字段区分）。
+#   2. generate_release_notes：无直接等价 → PREV tag..HEAD 的 git log 区间生成
+#      分组说明（本 job GIT_DEPTH: 0 有全史）。
+#   3. OSS 腿（jar 镜像 + 指针文件 + deps 重灌 + 可达断言）原样平移，但 OSS keys
+#      未注入 CI variables 前自动 warn-skip（auto-release.yml 既有先例形态）；
+#      用户下载主面 OSS、GitLab Release/Generic Packages 是 GitLab 侧归档面。
+#   4. VERSION 回写 main（stable 专属）：gh api contents PUT → commits API
+#      POST repository/commits；无凭据直接红（fail loud，不发哑版）。
+#   5. skip 语义对齐原文：VERSION 对应 tag 已存在 → 整链绿跳过（exit 0）。
+# ============================================================================
+
+release:
+  stage: release
+  tags: [mac]
+  timeout: 30m
+  needs: [assembly]
+  # 规则：仅 beta / release 分支（显式 rules，不用 rules_full——tag pipeline 不发版）
+  rules:
+    - if: "$CI_COMMIT_BRANCH =~ /^(beta|release)$/"
+  variables:
+    GIT_DEPTH: "0"
+  cache: *cache_sbt_mac
+  before_script:
+    - *brand_guard
+  script:
+    - export VERSION=$(cat VERSION)
+    - echo "Releasing $VERSION from $CI_COMMIT_BRANCH @ $CI_COMMIT_SHORT_SHA"
+    # ── skip 语义（原文：tag 已存在 → 整链跳过）─────────────────────────────
+    - |
+      if git ls-remote --tags "$CI_REPOSITORY_URL" "refs/tags/$VERSION" | grep -q "refs/tags/$VERSION$"; then
+        echo "tag $VERSION already exists — release chain skipped (original semantics)"
+        exit 0
+      fi
+    # ── jar 收集（原文 download-artifact → needs 解包即此路径）──────────────
+    - mkdir -p release-assets && cp target/scala-3.5.2/${LOWER_NAME}-assembly-*.jar release-assets/
+    - ls -lh release-assets/
+    - test -n "$(ls -A release-assets)" || { echo "FAIL no release assets collected (pattern/brand mismatch)"; exit 1; }
+    - export JAR=$(ls release-assets/${LOWER_NAME}-assembly-*.jar | head -1)
+    # ── Generic Packages 归档（评估报告 §2.3：PUT packages/generic；JOB-TOKEN 认证）─
+    - |
+      curl --fail --silent --show-error -H "JOB-TOKEN: $CI_JOB_TOKEN" \
+        --upload-file "$JAR" \
+        "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${LOWER_NAME}/${VERSION}/$(basename "$JAR")" \
+        || { echo "FAIL: Generic Packages upload rejected（job token 无权限?）— 注入 USTC_RELEASE_TOKEN 后改用 PAT 重试"; exit 1; }
+      echo "  uploaded $(basename "$JAR") to Generic Packages"
+    - export PKG_URL="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/${LOWER_NAME}/${VERSION}/$(basename "$JAR")"
+    # ── release notes（原文 generate_release_notes 的 git log 区间替代）──────
+    - |
+      PREV=$(git ls-remote --tags "$CI_REPOSITORY_URL" \
+        | awk -F'\t' '/refs\/tags\//{sub("refs/tags/","",$2); print $2}' | sed 's/\^\{\}$//' \
+        | sort -uV | tail -1 || true)
+      if [ -n "$PREV" ]; then
+        LOG=$(git log --oneline "${PREV}..HEAD" | head -50)
+        CHG="### Changes since $PREV"$'\n'"$LOG"
+      else
+        CHG="### Initial release"
+      fi
+      if [ "$CI_COMMIT_BRANCH" = "beta" ]; then
+        export RELEASE_DESC="**Pre-release (beta channel).** Stable releases live on the \`release\` branch."$'\n'"$CHG"
+      else
+        export RELEASE_DESC="$CHG"
+      fi
+    # ── push tag（原文 git tag + push --tags）────────────────────────────────
+    - |
+      if [ -n "${USTC_RELEASE_TOKEN:-}" ]; then
+        PUSH_URL="https://oauth2:${USTC_RELEASE_TOKEN}@git.ustc.edu.cn/kaiyu/nebflow.git"
+      else
+        PUSH_URL="$CI_REPOSITORY_URL"
+        echo "INFO: USTC_RELEASE_TOKEN absent — falling back to CI_JOB_TOKEN for tag push"
+      fi
+      git tag "$VERSION"
+      git push "$PUSH_URL" "refs/tags/$VERSION" || { echo "FAIL: tag push rejected（job token 无 push 权限?）— 注入 USTC_RELEASE_TOKEN（masked）后重跑"; exit 1; }
+      echo "  pushed tag $VERSION"
+    # ── GitLab Release（原文 softprops/action-gh-release 对应物；asset link 指向
+    #    Generic Packages 稳定下载 URL，link_type=package）──────────────────────
+    - |
+      BODY=$(python3 -c 'import json,os; print(json.dumps({"tag_name": os.environ["VERSION"], "name": os.environ["VERSION"], "description": os.environ["RELEASE_DESC"], "assets": {"links": [{"name": os.path.basename(os.environ["JAR"]) + " (Generic Packages)", "url": os.environ["PKG_URL"], "link_type": "package"}]}}))')
+      REL_CODE=$(curl --silent -o /tmp/rel-resp.json -w '%{http_code}' -X POST \
+        -H "Content-Type: application/json" -H "JOB-TOKEN: $CI_JOB_TOKEN" \
+        -d "$BODY" "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases")
+      if [ "$REL_CODE" != "201" ] && [ -n "${USTC_RELEASE_TOKEN:-}" ]; then
+        echo "JOB-TOKEN rejected ($REL_CODE) — retrying with USTC_RELEASE_TOKEN"
+        REL_CODE=$(curl --silent -o /tmp/rel-resp.json -w '%{http_code}' -X POST \
+          -H "Content-Type: application/json" -H "PRIVATE-TOKEN: $USTC_RELEASE_TOKEN" \
+          -d "$BODY" "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases")
+      fi
+      if [ "$REL_CODE" != "201" ]; then
+        echo "FAIL: release create rejected (HTTP $REL_CODE)"; cat /tmp/rel-resp.json
+        echo "补救：项目 Settings→CI/CD→Variables 注入 USTC_RELEASE_TOKEN（masked，个人 PAT）"
+        exit 1
+      fi
+      echo "  release $VERSION created"
+    # ── OSS 腿（原文照搬；keys 未注入前 warn-skip，auto-release.yml 先例形态）─
+    - |
+      case "$CI_COMMIT_BRANCH" in
+        beta)   POINTER="latest-beta-version.txt" ;;
+        release) POINTER="latest-version.txt" ;;
+      esac
+      COS_BUCKET=$(bv cosBucket)
+      if [ -z "${OSS_ACCESS_KEY_ID:-}" ] || [ -z "${OSS_ACCESS_KEY_SECRET:-}" ]; then
+        echo "WARN: OSS secrets absent — China mirror NOT updated (Generic Packages/GitLab Release 已归档；注入 OSS_ACCESS_KEY_ID/SECRET 后此腿生效)"
+      else
+        curl -fsSL -o /tmp/ossutil.zip "https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-mac-arm64.zip" || curl -fsSL -o /tmp/ossutil.zip "https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-linux-amd64.zip"
+        unzip -q -j -o /tmp/ossutil.zip -d /tmp/ossutil-bin
+        OSSUTIL=$(ls /tmp/ossutil-bin/ossutil* | head -1)
+        chmod +x "$OSSUTIL"
+        "$OSSUTIL" config -e oss-cn-hangzhou.aliyuncs.com -i "$OSS_ACCESS_KEY_ID" -k "$OSS_ACCESS_KEY_SECRET" -L EN
+        for f in release-assets/*; do
+          "$OSSUTIL" cp "$f" "oss://${COS_BUCKET}/$(basename "$f")" -f
+          echo "  uploaded $(basename "$f") to OSS"
+        done
+        printf '%s' "$VERSION" > /tmp/pointer.txt
+        "$OSSUTIL" cp /tmp/pointer.txt "oss://${COS_BUCKET}/$POINTER" -f
+        echo "  uploaded $POINTER to OSS"
+        # deps/ 镜像重灌 + 可达断言（原文 release gate 原样；断言红 = 发版红）
+        bash scripts/upload-deps.sh --fetch
+        bash scripts/upload-deps.sh --upload
+        MIRROR_BASE="https://${COS_BUCKET}.oss-cn-hangzhou.aliyuncs.com"
+        curl -fsSL --connect-timeout 8 --max-time 30 -o /tmp/deps-checksums.txt "${MIRROR_BASE}/deps/checksums.txt"
+        rows=$(grep -cE '^[0-9a-f]{64}[[:space:]]+[^[:space:]]+$' /tmp/deps-checksums.txt || true)
+        test "${rows:-0}" -ge 9 || { echo "FAIL: deps/checksums.txt unusable (rows=${rows:-0}, need >= 9)"; exit 1; }
+        rc=0
+        while read -r hash name; do
+          out=$(curl -sL -r 0-0 -o /dev/null -w '%{http_code} %{size_download}' --connect-timeout 8 --max-time 30 "${MIRROR_BASE}/deps/${name}")
+          code=${out%% *}; bytes=${out##* }
+          if { [ "$code" = "200" ] || [ "$code" = "206" ]; } && [ "${bytes:-0}" -ge 1 ]; then
+            echo "  [ok] deps/${name} (HTTP ${code}, ${bytes}B)"
+          else
+            echo "FAIL: deps/${name} not fetchable (HTTP ${code:-none}, ${bytes:-0}B)"; rc=1
+          fi
+        done < /tmp/deps-checksums.txt
+        test "$rc" -eq 0 || exit 1
+      fi
+    # ── VERSION 回写 main（stable 专属；原文 gh api contents PUT → commits API）─
+    - |
+      if [ "$CI_COMMIT_BRANCH" != "release" ]; then exit 0; fi
+      if [ -z "${USTC_RELEASE_TOKEN:-}" ]; then
+        echo "FAIL: stable VERSION sync needs USTC_RELEASE_TOKEN（无凭据不发哑版；注入后重跑）"; exit 1
+      fi
+      BODY=$(python3 -c 'import json,os; print(json.dumps({"branch": "main", "commit_message": "chore: sync version to " + os.environ["VERSION"] + " after release", "actions": [{"action": "update", "file_path": "VERSION", "content": os.environ["VERSION"] + "\n"}]}))')
+      SYNC_CODE=$(curl --silent -o /tmp/sync-resp.json -w '%{http_code}' -X POST \
+        -H "Content-Type: application/json" -H "PRIVATE-TOKEN: $USTC_RELEASE_TOKEN" \
+        -d "$BODY" "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/repository/commits")
+      if [ "$SYNC_CODE" != "201" ]; then
+        echo "FAIL: VERSION sync to main rejected (HTTP $SYNC_CODE)"; cat /tmp/sync-resp.json; exit 1
+      fi
+      echo "  synced $VERSION back to main"
