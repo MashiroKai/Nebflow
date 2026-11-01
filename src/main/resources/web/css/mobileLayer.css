@@ -1,5 +1,18 @@
 /* mobile/mobileLayer.css — 手机交互层样式（mobile-ui-refactor 批 → dock 批 2026-10-29）。
  *
+ * 面板头标识 B 批（2026-11-01 作者 17:01 选型 B「iOS 大标题式」；样张
+ * design-explore/panel-label-variants/）落位 —— 中块 .mobile-page-title 系列改写
+ * + 收编面几何块 + 文件尾批次块：
+ *   ① 详情页顶部旧 glass-control 胶囊（悬浮钮统一批 L391-416）整族退役；
+ *   ② B 两态：展开态大标题入页体流（28px/600 · -0.01em 左对齐，28px = 作者令
+ *      有意破「页面级 20px」档）；收缩态小字 15px 居中 + 顶缘渐隐带承底
+ *      （--g2-veil/--g2-fade-height 现役 token）；160ms --ease-std 两态同速；
+ *   ③ 滚动探针 = navController.js bindRollProbe（捕获相位，主滚轴取目标到
+ *      section 间最外层纵向滚动器，阈值 56px 切 .rolled）；
+ *   ④ 收编面统一页面化几何块 height:100% → auto（大标题流内首件后 face 靠
+ *      flex 吃余量）+ #todo-page 同维补丁 + .todo-page-title/#usage-title
+ *      同名双标题退役 + reduced-motion 压 0.01ms。
+ *
  * 悬浮钮统一+搜索批（2026-10-31 作者令 16:03；规格书
  * docs/20261031_160300_mobile-fab-unify-search.md）：
  *   ① 全部悬浮钮归 48px g2-fab 基准（聊天顶缘双钮规格；页面壳「<」/canvas 工具钮
@@ -387,38 +400,77 @@ body.mobile-layer .mobile-page-header {
   pointer-events: none; /* 带本体不拦截 —— 子件各自接事件（fab 层同源口径） */
   z-index: 20;
 }
-/* 标题胶囊：带内水平居中，垂直中心与 48px 钮中心（16+24=40px）对齐。 */
+/* 面板头标识 B 形态（作者 2026-11-01 17:01 选型「iOS 大标题式」；样张
+   design-explore/panel-label-variants/ README B 条目 + token 实测账本）：
+   展开态大标题 = 页体流内首件（随滚走），左对齐 28px/600 · 字距 -0.01em
+   —— 28px 超出站内「页面级大标题 20px」档 = 作者令有意破档（仅限手机端
+   面板头，不回流桌面与卡片标题）；收缩态 = 15px/600 小字居中淡入 + 顶缘
+   渐隐带承底（--g2-veil / --g2-fade-height 现役 token，#g2-edge-fade 同
+   语言）。两态 160ms --ease-std（样张 §B 滚动建议），reduced-motion 压
+   0.01ms（文件尾批次块）。旧 glass-control 胶囊（悬浮钮统一批 L391-416）
+   材质整族随本批退役：玻璃底/亮边/blur/三重影不再出现在面板头。 */
 body.mobile-layer .mobile-page-title {
-  position: absolute;
-  top: calc(28px + env(safe-area-inset-top, 0px));
-  left: 50%;
-  transform: translateX(-50%);
-  min-width: 0;
-  max-width: calc(100% - 160px);
-  padding: 3px 12px;
-  border-radius: 999px;
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow);
-  font-size: 13px;
+  display: block;
+  margin: 0;
+  padding: 6px 16px 10px;
+  font-size: 28px;
   font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
   color: var(--color-frame-text-bright, var(--color-frame-text));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   outline: none;
-  pointer-events: auto;
+  transition:
+    opacity var(--dur-2, 160ms) var(--ease-std, ease),
+    transform var(--dur-2, 160ms) var(--ease-std, ease);
 }
-body.mobile-layer .mobile-page-head-spacer {
-  display: none; /* 带内绝对定位居中：占位退役 */
+/* 收缩态：大标题让位（pane 页体不滚的页面靠位移+淡出让出头位；流内滚页
+   自然滚走之上再淡出加速），余量由渐隐带承底读作「栏区」。 */
+body.mobile-layer .mobile-page.rolled .mobile-page-title {
+  opacity: 0;
+  transform: translateY(-14px);
+  pointer-events: none;
 }
+/* 收缩态小字：水平居中，垂直中心 = 48px 返回钮中心（16+24+safe）。 */
+body.mobile-layer .mobile-page-title-mini {
+  position: absolute;
+  top: calc(40px + env(safe-area-inset-top, 0px));
+  left: 0;
+  right: 0;
+  transform: translateY(-50%);
+  text-align: center;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-frame-text-bright, var(--color-frame-text));
+  opacity: 0;
+  transition: opacity var(--dur-2, 160ms) var(--ease-std, ease);
+  pointer-events: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.mobile-layer .mobile-page.rolled .mobile-page-title-mini { opacity: 1; }
+/* 顶缘渐隐带：页底色→透明（--g2-veil 账本值，深浅主题自随），承住滚入
+   内容与收缩态小字。z 序：带 4 < 小字 5 < 返回钮 6（均在 header(20) 层内，
+   header > 页面体 ⇒ 三件恒压在滚入内容之上）。 */
+body.mobile-layer .mobile-page-title-band {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: calc(var(--g2-fade-height, 88px) + env(safe-area-inset-top, 0px));
+  background: var(--g2-veil);
+  opacity: 0;
+  transition: opacity var(--dur-2, 160ms) var(--ease-std, ease);
+  pointer-events: none;
+}
+body.mobile-layer .mobile-page.rolled .mobile-page-title-band { opacity: 1; }
 /* 悬浮「<」返回钮：48px g2-fab 液体玻璃（基准规格材质；JS 挂 .g2-fab 类），
-   悬浮位 = 左 16 / top 16+safe，与聊天根任务键同几何。 */
+   悬浮位 = 左 16 / top 16+safe，与聊天根任务键同几何。
+   z 序（B 批补）：带 4 < 小字 5 < 本钮 6 —— 渐隐带承底不蒙返回钮。 */
 body.mobile-layer .mobile-back-btn {
   position: absolute;
   top: calc(16px + env(safe-area-inset-top, 0px));
@@ -434,6 +486,7 @@ body.mobile-layer .mobile-back-btn {
   cursor: pointer;
   touch-action: manipulation;
   pointer-events: auto;
+  z-index: 6;
 }
 /* 玻璃空间相对按钮图标居中（统一批「全清查」）：图标块在圆内水平垂直居中，
    svg 转块级消除行内基线隙——顶栏全部圆形玻璃键同口径。尺寸随 g2-fab 移动档
@@ -513,7 +566,10 @@ body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal {
   margin: 0;
   width: 100%;
   max-width: none;
-  height: 100%;
+  /* B 批（2026-11-01）改 height:100% → auto：面板头标识大标题现为页体流内
+     首件，face 作为其下唯一兄弟由 flex:1 1 auto 吃满余量；height:100% 会
+     按页体全高取基线 ⇒ 大标题把 face 顶出页体（页体假滚动）。 */
+  height: auto;
   min-height: 0;
   max-height: none;
   flex: 1 1 auto;
@@ -2425,4 +2481,41 @@ body.mobile-layer #chat .g2-chat-head #agent-avatar-btn {
 body.mobile-layer #chat .g2-chat-head #session-name {
   font-size: 14px;
   max-width: 220px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   面板头标识 B 批（2026-11-01 作者 17:01 选型 B「iOS 大标题式」）——
+   旧「奶片」胶囊（glass-control 配方，悬浮钮统一批 L391-416）退役，换两态
+   大标题（几何/材质/两态见上方 .mobile-page-title 系列块；滚动探针在
+   navController.js bindRollProbe，阈值 56px）。本块 = 三件配套：
+   ① #todo-page 几何补丁：todo-page.css 收编块 height:100% 是「无流内标题」
+     时代的取值——大标题入流后同维压成 auto（flex 吃满余量）。注：todo 基座
+     自带 overflow:hidden ⇒ min-height:auto 归零、#todo-page 仍收缩进余量，
+     .todo-page-body 维持内滚（与 settings 等收编面同一滚型：主滚轴在内，
+     壳层标题走位移+淡出收缩，见 navController.js bindRollProbe 主滚轴判定）。
+   ② 面内同名双标题退役：与壳层大标题逐字同名的面内标题（收编时代的
+     「浮标+面头」双显错位）只留壳层一份 —— #todo-page/.todo-page-title
+     （待办事项）、#usage-dashboard/#usage-title（token 用量）、
+     #settings-modal/#settings-modal-title（设置，i18n.js:212 zh 回填）、
+     #daemon-panel/#daemon-panel-title（心跳，scheduled-task.js 同源 i18n）。
+     桌面 DOM 零感知，规则挂 body.mobile-layer；计数/新建/关闭等功能钮全留。
+     异名面内头（会话窗联系人名、搜索面「搜索消息」、reminder 面
+     "Scheduled Tasks" EN 原文等）非同名双显，不动（盘点留档报告）。
+   ③ reduced-motion：两态过渡压 0.01ms（形态切换瞬时成立，不依赖位移）。
+   ═══════════════════════════════════════════════════════════════════════ */
+body.mobile-layer #mobile-pages .mobile-page-body > #todo-page {
+  height: auto;
+}
+body.mobile-layer .mobile-page-body .todo-page-title,
+body.mobile-layer .mobile-page-body #usage-title,
+body.mobile-layer .mobile-page-body #settings-modal-title,
+body.mobile-layer .mobile-page-body #daemon-panel-title {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  body.mobile-layer .mobile-page-title,
+  body.mobile-layer .mobile-page-title-mini,
+  body.mobile-layer .mobile-page-title-band {
+    transition-duration: 0.01ms;
+  }
 }

@@ -206,6 +206,27 @@ let unsubs = [];
 
 const backLabel = () => tt('返回', 'Back');
 
+// ── 面板头两态滚动探针（B 批 2026-11-01 作者 17:01 选型）───────────────
+// 收缩阈值：样张迷你比例 36px（258×470 壳）→ 真机 390 宽换算 ≈ 56px
+// （大标题文本行滑入顶缘渐隐带实底区、行将没入时小字接棒）。
+const ROLL_THRESHOLD = 56;
+/** 滚动收缩探针：section 上挂捕获相位监听（scroll 不冒泡但走捕获，页内一切
+ *  滚动容器——页体自身/pane 内部 .team-scroll、#settings-content、.todo-page-body
+ *  等——统一汇入，零逐面接线）。主滚轴判定 = 事件目标到 section 之间**最外层**
+ *  纵向可滚容器（getComputedStyle overflowY auto/scroll + 真实可滚余量）：
+ *  内层横滑 chip 条/嵌套小滚区的 scrollTop 不误触发、不误复位。 */
+function bindRollProbe(section) {
+  section.addEventListener('scroll', (e) => {
+    let primary = null;
+    for (let n = /** @type {Element} */ (e.target); n && n !== section; n = n.parentElement) {
+      const oy = getComputedStyle(n).overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight - n.clientHeight > 4) primary = n;
+    }
+    const sc = /** @type {HTMLElement} */ (primary || e.target);
+    section.classList.toggle('rolled', sc.scrollTop > ROLL_THRESHOLD);
+  }, { capture: true, passive: true });
+}
+
 // ── 页面壳构建 ───────────────────────────────────────────────────────
 
 function buildSection(def) {
@@ -221,18 +242,24 @@ function buildSection(def) {
   //  ∪ 顶栏环形模糊批①（canvas 胶囊退役，本批）：dock 根页（消息/联系人/
   //  canvas/工作台）顶栏整体退役——标题胶囊移除、内容上移吃回顶栏空间；
   //  安全区顶距改由页面壳自管（mobileLayer.css .mobile-page-nohead =
-  //  env(safe-area-inset-top)，真机不留刘海侵入、桌面视口零高）。详情页顶栏
-  //  不变（「<」+ 标题胶囊 = iOS 层级导航面）。
+  //  env(safe-area-inset-top)，真机不留刘海侵入、桌面视口零高）。
+  //  面板头标识 B 批（2026-11-01 作者 17:01 选型 B「iOS 大标题式」，样张
+  //  /Users/kaiyu/.stand/design-explore/panel-label-variants/）：详情页顶部
+  //  旧 glass-control 胶囊退役，换两态大标题 —— 展开态 = 大标题在页体流内
+  //  （随滚走；.mobile-page-title 类名不变，locale 重绘/ push 聚焦两个既有
+  //  查询点零改）；收缩态 = 小字居中 + 顶缘渐隐带承底（几何/材质在
+  //  mobileLayer.css）。dock 根页无页头不变。
   if (!def.dock) {
     const head = document.createElement('div');
     head.className = 'mobile-page-header';
-    const title = document.createElement('span');
-    title.className = 'mobile-page-title';
-    title.tabIndex = -1; // push 后聚焦（读屏从头播报页名）
-    title.textContent = tt(def.zh, def.en);
-    const spacer = document.createElement('span');
-    spacer.className = 'mobile-page-head-spacer';
-    spacer.setAttribute('aria-hidden', 'true');
+    // 收缩态两件（装饰副本，aria-hidden —— 页名播报与聚焦由流内大标题承接）。
+    const band = document.createElement('div');
+    band.className = 'mobile-page-title-band';
+    band.setAttribute('aria-hidden', 'true');
+    const mini = document.createElement('span');
+    mini.className = 'mobile-page-title-mini';
+    mini.setAttribute('aria-hidden', 'true');
+    mini.textContent = tt(def.zh, def.en);
     const back = document.createElement('button');
     back.type = 'button';
     // 悬浮钮统一批（作者令 10-31 16:03）：「<」归 48px g2-fab 基准材质，
@@ -242,9 +269,17 @@ function buildSection(def) {
     back.setAttribute('aria-label', backLabel());
     back.innerHTML = '<i data-lucide="chevron-left"></i>';
     back.addEventListener('click', () => backOut());
-    head.append(back, title, spacer);
+    head.append(back, band, mini);
     if (typeof lucide !== 'undefined') createIconsIn(head);
+    // 展开态大标题 = 页体流内首件（在一切收编面之前入列 —— 后续 pane/面
+    // adopt 全部 append，首件地位恒定）。
+    const title = document.createElement('span');
+    title.className = 'mobile-page-title';
+    title.tabIndex = -1; // push 后聚焦（读屏从头播报页名）
+    title.textContent = tt(def.zh, def.en);
+    body.appendChild(title);
     section.append(head, body);
+    bindRollProbe(section);
   } else {
     // 顶栏批：根页无页头 —— 壳级标记 = 安全区顶距由页面壳自管（mobileLayer.css）。
     section.classList.add('mobile-page-nohead');
@@ -404,8 +439,11 @@ function ensureContainer() {
     for (const def of PAGES) {
       const s = sections.get(def.id);
       if (!s) continue;
+      // B 批：展开态大标题与收缩态小字是同名双节点，locale 切换两处同步重绘。
       const t = s.querySelector('.mobile-page-title');
       if (t) t.textContent = tt(def.zh, def.en);
+      const tMini = s.querySelector('.mobile-page-title-mini');
+      if (tMini) tMini.textContent = tt(def.zh, def.en);
       const b = /** @type {HTMLElement|null} */ (s.querySelector('.mobile-back-btn'));
       if (b) { b.title = backLabel(); b.setAttribute('aria-label', backLabel()); }
     }
