@@ -105,17 +105,20 @@ function makeStopFocusable(el) {
 }
 
 /**
- * 中心区聚焦环：对话输入框 → 消息流 → 画布当前文档 → 回到输入框。
+ * 中心区聚焦环：消息流 → 画布当前文档。
  * 「调整中心会话框的聚焦位置」的落点：一次按键 = 焦点真的挪一格（画面上的
  * 焦点环跟着走）。若作者本意是「切换会话内容」，映射点同样只在这一处，二期
  * 接会话列表时改 `centerStops()` 即可，键位与仲裁规则不变。
+ *
+ * 🔴 不含对话输入框（刻意）：本层的不变式是「焦点落在输入框 ⇔ edit 态」，
+ * 若把输入框也做成环上的一站，`]` 一落进去就自动转 edit，随后 `[`/`]` 变成
+ * 打字符 —— 人在导航态被锁死。所以进输入框的**唯一门**是 Space（vim 里
+ * normal 态怎么走都不会进 insert，同一个道理）。
  * @returns {HTMLElement[]}
  */
 function centerStops() {
   /** @type {HTMLElement[]} */
   const stops = [];
-  const input = document.getElementById('input');
-  if (input) stops.push(input);
   const chat = document.getElementById('chat');
   if (chat) stops.push(makeStopFocusable(chat));
   const canvas = document.getElementById('canvas-panel');

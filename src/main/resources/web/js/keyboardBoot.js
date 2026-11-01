@@ -217,6 +217,9 @@ registerShortcut({
   allowInInput: true,
   preventDefault: false,
   stopPropagation: false,
+  // 观察者注册：Enter 的**所有权在 input.js**（它 preventDefault 并发 send，
+  // 见 input.js:1846-1856）。本项不抢键，只在发送那一拍之后补 edit→meta。
+  observe: true,
   group: '键盘',
   description: '发送并把焦点交回导航态',
   handler: () => {

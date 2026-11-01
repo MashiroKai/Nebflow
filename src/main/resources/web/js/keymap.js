@@ -45,6 +45,9 @@ import { isImeComposing } from './imeGuard.js';
  * @property {string} [group]      命令面板分组名
  * @property {string[]} [aliases]  额外 combo（同一 handler 的第二键位）
  * @property {boolean} [allowInInput] true = 焦点在输入框时也生效（默认 false）
+ * @property {boolean} [observe] true = 「观察者」注册：即使按键已被别处
+ *   preventDefault 仍要跑（用于监听一个**不归自己所有**的键，典型 = Enter 由
+ *   input.js 拥有发送权，本层只在它之后补一次模式切换）。不阻塞、不改默认行为。
  * @property {boolean} [preventDefault] 默认 true
  * @property {boolean} [stopPropagation] 默认 true
  */
@@ -147,7 +150,10 @@ export function isActivatableTarget(el) {
   if (el.tagName === 'BUTTON' || el.tagName === 'A') return true;
   const role = el.getAttribute('role');
   if (role === 'button' || role === 'checkbox' || role === 'menuitem' || role === 'option' || role === 'tab') return true;
-  return el.hasAttribute('tabindex');
+  // tabindex **>= 0** 才算：带 tabindex="-1" 的是程序化焦点落点（对话流容器、
+  // 侧边栏条目的导航标记），它们没有 Space 激活语义 —— 若算作激活控件，
+  // "Shift+] 走到侧栏条目 → Space 进输入" 就会被自己的标记挡死。
+  return el.tabIndex >= 0;
 }
 
 /**
@@ -331,8 +337,6 @@ function notifyChange() {
  * @returns {void}
  */
 function onKeydown(e) {
-  if (e.defaultPrevented) return; // 上层（capture 层栈 / 原生）已处理，让位
-
   const target = e.target;
   const editable = isEditableTarget(target);
   // ⑤ IME 收归（复用全仓唯一谓词 imeGuard.isImeComposing）：
@@ -351,6 +355,8 @@ function onKeydown(e) {
   if (!hits.length) return;
 
   for (const spec of hits) {
+    // 已被别人 preventDefault ⇒ 让位；observe 注册项为例外（见 ShortcutSpec.observe）
+    if (e.defaultPrevented && spec.observe !== true) continue;
     if (!isModeActive(spec.mode)) continue;
     if (!isScopeActive(spec.scope)) continue;
     if (editable && spec.allowInInput !== true) continue;
