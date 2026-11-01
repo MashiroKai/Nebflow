@@ -21,7 +21,11 @@ import { mobileSheetBack } from './mobile/popSheet.js';
 // takeoverModal.js 反向 import 会成环）。
 function takeoverBlocking() {
   const box = document.getElementById('takeover-box');
-  return !!box && box.style.display === 'block';
+  // 在场判别按 inline display 非空且非 none（形态无关）——卡片家族批（2026-11-01）
+  // 起面板为 .nfc 家族卡（css/cards.css flex 列），显式值已 'block'→'flex'，
+  // 本判别不再耦合具体形态字面量。
+  const d = box && box.style.display;
+  return !!box && d !== 'none' && d !== '';
 }
 
 export function showNewSessionModal() {
