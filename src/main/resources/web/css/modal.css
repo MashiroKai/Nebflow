@@ -1486,7 +1486,6 @@
   transition: border-color 0.15s;
 }
 .mp-add-select:focus { border-color: rgb(var(--sapphire) / 0.4); }
-.mp-manual { flex: 1; min-width: 150px; }
 /* ui-status-redesign（盘点 #38，S9 同族）：11.5px 红字 → 中性正文 + 行首
    circle-alert 红图标（modelPanel.js 注入）。 */
 .mp-inline-err {

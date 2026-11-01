@@ -1174,10 +1174,12 @@ export default {
   'settings.secretsNone': '尚无密钥',
   'settings.addProvider': '+ 添加服务商',
   'settings.modelChainHint': '在输入框输入 /model 命令，以统一/分开两种模式配置各角色的模型链。',
-  // 配置面风格统一批②（2026-10-31 作者令）：设置页回退链节（/model 回退链
-  // 编辑器同款内容面，两份共享同一状态/保存通道）。
-  'settings.modelChainTitle': '模型回退链',
-  'settings.modelChainSectionHint': '主链路模型与回退顺序；每次调整即时保存，与 /model 面板同一份状态、改哪边都即时同步。',
+  // 配置面风格统一批②（2026-10-31 作者令）：设置页顺序节（/model 顺序编辑器
+  // 同款内容面，两份共享同一状态/保存通道）。
+  // 精简批（作者令 2026-11-01）：标题「模型回退链」→「模型选择顺序」；说明
+  // 压到一行以内（超长删繁就简，不再折行）。
+  'settings.modelChainTitle': '模型选择顺序',
+  'settings.modelChainSectionHint': '首选在前，拖动排序即存，与 /model 同步。',
   // /model 面板文案（modelcfg Phase 1）
   'model.title': '模型配置',
   'model.modeUnified': '统一配置',
@@ -1187,10 +1189,6 @@ export default {
   'model.chainHead': '首选',
   'model.chainFallback': '备用',
   'model.addModel': '添加模型',
-  'model.refreshList': '刷新列表',
-  'model.refreshFailed': '刷新失败，可手动输入 provider/model',
-  'model.manualInput': '手动输入',
-  'model.manualPlaceholder': 'provider/model',
   'model.orderNote': '顺序 = 出错时自动切换的先后次序',
   'model.followers': '跟随方',
   'model.followsNebula': '跟随 {agent}',
@@ -1211,8 +1209,6 @@ export default {
   'model.divergedBar': '{roles} 已独立配置，不受主链影响',
   'model.divergedView': '查看',
   'model.seedNote': '未配置，将使用首个可用模型',
-  'model.clearChain': '清空链',
-  'model.clearChainConfirm': '清空后回落种子链（首个可用模型），该角色的自有链将被删除。继续？',
   'model.singleModelNote': '仅 1 个模型，无备用——出错将直接使用储备层',
   'model.loadFailed': '加载失败',
   // 台账 #937：面板级降级面（全角色读数失败 —— 静默僵面修复）。提示给全
