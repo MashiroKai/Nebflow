@@ -1877,11 +1877,15 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
    件三统一批（2026-10-28）：尺寸/阴影/hover-active 全部收进 --cv-* token 档
    （sapphire.css 单源）——尺寸 = --cv-size-circle 40、阴影 = --cv-shadow
    （= chat #header 现值，外投影退役）、hover = --cv-hover-bg + 
-   --cv-hover-scale、active = --cv-active-scale（聊天控件同款语言）。 */
+   --cv-hover-scale、active = --cv-active-scale（聊天控件同款语言）。
+   单行排布批（2026-11-01 作者令 16:18「浮钮组改单行：功能钮靠左、ask 靠右，
+   两端对齐」）：文档工具簇整体从底右角镜像到底左角（右锚 16 → 左锚 16，槽位
+   值原样=角缘序镜像保序），与右缘 ask-fab 同行（两端对齐）——ask 座位联动
+   见 askDock.js syncSeat / ask.css。纯排布改动，材质/尺寸零变。 */
 .canvas-source-toggle {
   position: absolute;
   bottom: 16px;
-  right: 16px;
+  left: 16px;
   width: var(--cv-size-circle, 40px);
   height: var(--cv-size-circle, 40px);
   border-radius: 50%;
@@ -1908,11 +1912,12 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
    toggle, seated 8px to its left.
    六项批（2026-10-23 六项③④）：右锚回原槽 64（= source 16 + 40 + 8 同排 sequel），
    材质同 source toggle 换 frosted 标准单源；件三统一批（2026-10-28）尺寸/阴影/
-   hover-active 收 --cv-* token 档。 */
+   hover-active 收 --cv-* token 档。单行排布批（2026-11-01）：左锚镜像同批
+   （右锚 64 → 左锚 64，槽值原样）。 */
 .canvas-ref-select {
   position: absolute;
   bottom: 16px;
-  right: 64px;
+  left: 64px;
   width: var(--cv-size-circle, 40px);
   height: var(--cv-size-circle, 40px);
   border-radius: 50%;
@@ -2784,12 +2789,14 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
    件三统一批（2026-10-28）：材质/尺寸收 --cv-* token 档 —— 面阴影 = 
    --cv-shadow（= chat #header 现值，修前 --frost-shadow 外投影退役）；内钮
    26px 档（修前 glass-control 实心 chip 面退役 —— zoom.js 去 .glass-control
-   类，与查找条内钮同语言：静默 ghost + hover 抬亮，聊天控件同款）。 */
+   类，与查找条内钮同语言：静默 ghost + hover 抬亮，聊天控件同款）。
+   单行排布批（2026-11-01）：左锚镜像同批（右锚 16 → 左锚 16，见
+   .canvas-source-toggle 注）——缩放条与文档工具簇同落左端，右端独行 ask。 */
 .canvas-zoom-bar {
   position: absolute;
   top: auto;
   bottom: 18px;
-  right: 16px;
+  left: 16px;
   z-index: 5;
   display: flex;
   align-items: center;
@@ -2861,27 +2868,28 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
 }
-/* HTML viewer: zoom bar joins the bottom-right chrome cluster. The default
+/* HTML viewer: zoom bar joins the bottom chrome cluster. The default
    spot floats over arbitrary HTML content — posters put interactive
    headers exactly there, blocking clicks on both sides. Scoped to html panes;
-   image/PDF keep the default bottom-right spot.
+   image/PDF keep the default bottom-left spot.
    Cluster slots (48px pitch, 40px circles；六项批 2026-10-23 簇回原槽 −48 ——
    移位批 +48 随 fab 回退一并失效，见 .canvas-source-toggle 注)：source 16 ·
    ref-select 64 · find 112 (html.js addFindToggle(pane, 112)) · zoom bar 160.
    The zoom bar used to sit at right:112 — the find toggle's slot since the
    wiki-graph batch — so the circle printed on top of the bar's Fit button
    (screenshot 2026-10-19). 160 keeps the 8px gap after the find circle
-   (ends at 152). */
+   (ends at 152).
+   单行排布批（2026-11-01）：左锚镜像（右 160 → 左 160），槽值原样。 */
 .canvas-tab-pane[data-type="html"] .canvas-zoom-bar {
   top: auto;
-  right: 160px;
+  left: 160px;
   bottom: 18px;
 }
 /* 窄面板（<356px 装不下 160 槽 + 140 条宽，拖拽下限 320）：条升到圆钮行上方
-   第二行（右 16 槽、行距 8px），与圆钮簇零交叠、完整落在 pane 内。 */
+   第二行（左 16 槽、行距 8px），与圆钮簇零交叠、完整落在 pane 内。 */
 @container nfpane (max-width: 355px) {
   .canvas-tab-pane[data-type="html"] .canvas-zoom-bar {
-    right: 16px;
+    left: 16px;
     bottom: 64px;
   }
 }

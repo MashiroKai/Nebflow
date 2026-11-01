@@ -768,16 +768,18 @@ const FIND_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="non
 
 /**
  * Floating "search in this file" toggle — the same glass material and corner
- * family as the source toggle; the button seats at `right` px (callers pass
+ * family as the source toggle; the button seats at `left` px (callers pass
  * the offset that keeps one 48px gap per stacked button). Clicking (or the
  * Ctrl/Cmd+F binding) routes through fileSearch.js: Monaco tabs get the
  * editor's own find widget, rendered md/html tabs get the glass find bar.
+ * 单行排布批（2026-11-01 作者令 16:18）：簇左锚化（作者令「功能钮靠左、ask
+ * 单独靠右，两端对齐」）——`left` 语义与旧 `right` 值一比一（槽值原样，
+ * 角缘序镜像）；css 同批 split.css .canvas-source-toggle 注。
  *  @param {HTMLElement} pane — canvas tab pane
- *  @param {number} [right] - offset from the pane's right edge (default 112;
- *    移位批 2026-10-22 簇 +48，圆钮簇整体让位；回退批同日 fab 迁回顶右原位、
- *    簇 +48 槽位维持不动)
+ *  @param {number} [left] - offset from the pane's left edge (default 112;
+ *    md 64 / html 112 / monaco 16 —— 调用方槽值零改）
  */
-export function addFindToggle(pane, right = 112) {
+export function addFindToggle(pane, left = 112) {
   pane.querySelector('.canvas-find-toggle')?.remove();
   if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
 
@@ -786,7 +788,7 @@ export function addFindToggle(pane, right = 112) {
   btn.className = 'canvas-find-toggle';
   btn.innerHTML = FIND_ICON_SVG;
   btn.title = t('find.openInFile');
-  btn.style.right = right + 'px';
+  btn.style.left = left + 'px';
   btn.addEventListener('click', () => {
     import('../fileSearch.js').then(({ openFindForPane }) => openFindForPane(pane))
       .catch(() => { /* module unavailable — no-op */ });
@@ -801,7 +803,8 @@ const REFRESH_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="
 // Same corner family as source/ref/find: 40px glass circles on a 48px
 // pitch, bottom:16 (split.css). The zoom bar is the one non-circle member —
 // its occupied span is measured, not assumed.（图谱圆钮批④退役后簇内只剩
-// 源码/引用/查找三圆钮 + 缩放条 + 壳刷新钮，簇内 48px 间距不变。）
+// 源码/引用/查找三圆钮 + 缩放条 + 壳刷新钮，簇内 48px 间距不变。
+// 单行排布批 2026-11-01：簇左锚化——座位计算同式镜像到 left 轴。）
 const REFRESH_CIRCLE_SEL = '.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle';
 const REFRESH_ROW_PITCH = 48;
 const REFRESH_ROW_BOTTOMS = [16, 64];
@@ -814,15 +817,16 @@ function _refreshCornerItems(pane) {
     if (cs.display === 'none' || cs.visibility === 'hidden') continue;
     // Inline style wins (find/graph seats are JS-written); CSS fallback covers
     // the source/ref circles and both zoom-bar variants.
-    const right = Number.isFinite(num(el.style.right)) ? num(el.style.right) : (num(cs.right) || 16);
+    // 单行排布批 2026-11-01：左锚轴（左端 16 起排，first-free-slot 同式镜像）。
+    const left = Number.isFinite(num(el.style.left)) ? num(el.style.left) : (num(cs.left) || 16);
     const bottom = num(cs.bottom) || 16;
     const isBar = el.classList.contains('canvas-zoom-bar');
-    items.push({ right, bottom, span: isBar ? (el.getBoundingClientRect().width || 140) + 8 : REFRESH_ROW_PITCH });
+    items.push({ left, bottom, span: isBar ? (el.getBoundingClientRect().width || 140) + 8 : REFRESH_ROW_PITCH });
   }
   return items;
 }
 
-/** First free seat on the bottom-right corner row for one more 40px circle.
+/** First free seat on the bottom-left corner row for one more 40px circle.
  *  Row 0 = bottom:16 (the circle row); when the measured seat would overflow
  *  the panel the button drops to row 1 = bottom:64 (same convention the narrow
  *  html zoom bar already uses). */
@@ -837,15 +841,15 @@ function _refreshSeat(pane) {
   const target = parseFloat(document.documentElement.style.getPropertyValue('--canvas-width')) || pane.clientWidth || 0;
   const widthKnown = target > 200;
   for (const bottom of REFRESH_ROW_BOTTOMS) {
-    let right = 16;
+    let left = 16;
     for (const it of items) {
       if (Math.abs(it.bottom - bottom) > 24) continue;  // different row
-      right = Math.max(right, it.right + it.span);
+      left = Math.max(left, it.left + it.span);
     }
-    if (bottom === REFRESH_ROW_BOTTOMS[0] && widthKnown && right + 40 > target - 8) continue;  // row 0 full
-    return { right, bottom };
+    if (bottom === REFRESH_ROW_BOTTOMS[0] && widthKnown && left + 40 > target - 8) continue;  // row 0 full
+    return { left, bottom };
   }
-  return { right: 16, bottom: REFRESH_ROW_BOTTOMS[1] };
+  return { left: 16, bottom: REFRESH_ROW_BOTTOMS[1] };
 }
 
 /** Seat one refresh button for `pane`'s corner cluster (used both at mount and
@@ -854,14 +858,15 @@ function _refreshSeat(pane) {
  *  padding: seat values are pane-visual margins (16px from the pane edge), and
  *  when the parent is the shell (#canvas-content, padding-bottom 8px) the abs
  *  child resolves against the padding box — add it back so the VISUAL margin
- *  stays 16px regardless of host. */
+ *  stays 16px regardless of host. 单行排布批 2026-11-01：left 轴同式（壳
+ *  padding-left 若有则同补）。 */
 export function seatRefreshButton(btn, pane) {
   const host = btn.parentElement || pane;
   const seat = _refreshSeat(pane);
   const hcs = getComputedStyle(host);
-  const padR = parseFloat(hcs.paddingRight) || 0;
+  const padL = parseFloat(hcs.paddingLeft) || 0;
   const padB = parseFloat(hcs.paddingBottom) || 0;
-  btn.style.right = (seat.right + padR) + 'px';
+  btn.style.left = (seat.left + padL) + 'px';
   btn.style.bottom = (seat.bottom + padB) + 'px';
 }
 

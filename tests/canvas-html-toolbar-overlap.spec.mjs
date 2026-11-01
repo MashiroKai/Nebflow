@@ -181,11 +181,16 @@ async function assertCluster(page, tag, { shot = null, expectOverlay = null } = 
   // 原位、簇槽位维持不动）后，窄面板（<356px）的 zoom bar 走圆钮行上方第二行
   // （split.css @container nfpane）——间距钉改为行感知：同行（矩形纵向相交）
   // 要求水平缝 ≥8px；异行要求垂直缝 ≥8px。
+  // 单行排布批（2026-11-01）：簇左锚化（右锚镜像，槽值原样）——find/bar 同行
+  // 相对位随镜像翻转（bar 在 find 右侧），缝计算改侧向无关（取矩形间最小缝）。
   const vOverlap = Math.min(rects.find.y + rects.find.height, rects.bar.y + rects.bar.height) -
     Math.max(rects.find.y, rects.bar.y);
   let gap;
-  if (vOverlap > 0) gap = rects.find.x - (rects.bar.x + rects.bar.width);
-  else gap = rects.find.y - (rects.bar.y + rects.bar.height);
+  if (vOverlap > 0) {
+    gap = Math.max(rects.find.x - (rects.bar.x + rects.bar.width), rects.bar.x - (rects.find.x + rects.find.width));
+  } else {
+    gap = rects.find.y - (rects.bar.y + rects.bar.height);
+  }
   ok(`${tag} O-gap zoom bar → find 圆钮缝 ≥8px（同行水平/异行垂直，48px 槽距节奏）`,
     gap >= 7.5, `gap=${gap.toFixed(1)}px row=${vOverlap > 0 ? 'same' : 'stacked'}`);
   // pane 内完整可见
