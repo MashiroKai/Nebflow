@@ -55,6 +55,30 @@ object PerceptionService:
   /** UIDVALIDITY 重建时的补拉上限（r1 §4.1：全量拉最近 N=200 封）。 */
   val RebuildFetchCap: Int = 200
 
+  // ── 拨号预算（报障 2026-10-31「Host did not answer in time」根治批）────
+  //
+  // 根因链（实锤）：作者面板经 neblink 隧道中转访问（relay `portal_ingress.rs`
+  // `DEFAULT_RESP_HEADER_TIMEOUT = 15s`——host 的 http_response 15s 未到 ⇒
+  // relay 直接回 504 `Host did not answer in time / portal_cycle_timeout`）。
+  // 旧 connectAccount 在 HTTP 周期里串行跑「拨号 15s + 问候 15s + LOGIN +
+  // SELECT + 首轮全量同步」——状态落进 uidvalidity≠0 ∧ lastSeenUid=0 的角落
+  // 时同步腿还会无上限回填（UID SEARCH UID 1:* 逐封 FETCH，数千封 = 分钟级）。
+  // 中转 15s 预算必先爆 ⇒ 浏览器永远只见 relay 的英文 504，引擎侧一切分类
+  // 文案到不了屏。治理三件：
+  //   ① 连接测试腿按预算紧值分阶段（dial 4s + 每命令读 3s ⇒ 最坏 ~13s < 15s，
+  //      引擎侧分类文案抢先回报）；
+  //   ② 同步踢出 HTTP 周期（后台 fiber，响应只等 LOGIN+SELECT 统计）；
+  //   ③ 非首连的基线丢失态（lastSeenUid=0）补拉同受 RebuildFetchCap 上限。
+  val ConnectDialTimeoutMs: Int = 4000
+  val ConnectSoTimeoutMs: Int = 3000
+  /** 后台腿（轮询/IDLE）不在任何 HTTP 周期预算里：读上限放宽到 30s，压「IMAP
+    * 响应超时」误报（state.json 实录：QQ 服务器偶发 >15s 停顿）。 */
+  val PollDialTimeoutMs: Int = 15000
+  val PollSoTimeoutMs: Int = 30000
+  /** 连接中重复点击的幂等面（按地址在飞单飞；不叠连接、不叠拨号）。 */
+  val ConnectInFlightMsg: String =
+    "正在连接该邮箱 · 请勿重复点击（connection already in progress）"
+
   /** 退避延迟（纯函数，spec 直测）：attempt 从 1 计，1s→2s→4s…上限 5min；±20% 抖动。 */
   def backoffDelaySec(attempt: Int, rand01: Double): Long =
     val base = math.min(BackoffBaseSec.toLong << math.min(math.max(attempt, 1) - 1, 20), BackoffMaxSec.toLong)
@@ -62,21 +86,69 @@ object PerceptionService:
     math.max(1L, math.round(base * jitter))
 
   /**
+   * 补拉选择（纯函数，spec 直测；根治批 2026-11-01）：uidReset（UIDVALIDITY
+   * 重建）**或基线丢失**（uidvalidity 在而 lastSeenUid=0——状态文件角落，
+   * 曾实录）⇒ 只取最近 `cap` 封；否则增量全取。旧行为对基线丢失态无上限
+   * `UID SEARCH UID 1:*` 逐封回填，数千封分钟级——曾在 connect 周期内拖爆
+   * 隧道中转 15s 预算（「Host did not answer in time」根因链③）。
+   */
+  def backfillSelection(uidReset: Boolean, lastSeenUid: Long, uids: List[Long], cap: Int = RebuildFetchCap): List[Long] =
+    if uidReset || lastSeenUid <= 0 then uids.takeRight(cap) else uids
+
+  /**
    * 连接失败的人类可读面（纯函数，spec 直测；报障 2026-10-28：SELECT 成功
    * 的 untagged 响应曾被当错误原样倾倒并 take(160) 半截截断上屏）。
    * 纪律：raw 线上数据永不透传 UI；授权码强制擦除（防任何回显路径）；
    * 输出恒为单行短句。
+   *
+   * v2（根治批 2026-11-01）：中文为主 + 英文阶段对照 + host:port 与阶段显式
+   * 上屏——「拨到哪、卡在哪」一句话说清，四种失败（DNS / TCP / TLS / 认证）
+   * 不再混成一句。`stage` 由 connectAccount 按腿注入：
+   *   ""=未知 / "connect"=建立连接(TCP+TLS) / "greeting"=等待问候 /
+   *   "login"=登录认证 / "select"=打开收件箱(SELECT INBOX)。
    */
-  def readableConnectError(err: String, imapHost: String, imapPort: Int, authCode: String = ""): String =
+  def readableConnectError(
+      err: String,
+      imapHost: String,
+      imapPort: Int,
+      authCode: String = "",
+      stage: String = ""
+  ): String =
     val scrubbed = if authCode.nonEmpty && err.contains(authCode) then err.replace(authCode, "••••") else err
     val e = scrubbed.toLowerCase
+    val at = s"$imapHost:$imapPort"
+    def stageZh: String = stage match
+      case "connect"  => "建立连接"
+      case "greeting" => "等待服务器问候"
+      case "login"    => "登录认证"
+      case "select"   => "打开收件箱"
+      case _          => ""
+    def stageEn: String = stage match
+      case "connect"  => "tcp/tls dial"
+      case "greeting" => "greeting"
+      case "login"    => "login"
+      case "select"   => "select inbox"
+      case _          => ""
+    def stageSuffix: String =
+      if stage.isEmpty then "" else s"（阶段：$stageZh · $stageEn）"
     if scrubbed.contains("AUTHENTICATIONFAILED") || scrubbed.contains("LOGIN")
       || e.contains("invalid") || scrubbed.contains("AUTH") then
-      "授权码无效 · 请确认已在邮箱设置开启 IMAP 服务并使用授权码（非登录密码）"
+      "授权码无效 · 请确认已在邮箱设置开启 IMAP 服务并使用授权码（非登录密码）(authentication failed)"
+    else if e.contains("ssl") || e.contains("handshake") then
+      s"TLS 握手失败 · $at 的加密方式或端口可能不匹配（阶段：TLS 握手 · tls handshake failed）· 请核对高级设置中的端口"
     else if e.contains("超时") || e.contains("timeout") || e.contains("timed out") then
-      s"连接 $imapHost:$imapPort 响应超时 · 请检查网络后重试"
+      stage match
+        // connect 腿内再分：「connect timed out」= TCP/TLS 拨号未通；
+        //「read timed out」= 已连上但 greeting/握手读超时（JVM 两种消息面）。
+        case "connect" if e.contains("read timed out") =>
+          s"已连上 $at，但服务器迟迟不应答（阶段：等待问候 · greeting timeout）· 请稍后重试"
+        case "connect" =>
+          s"连接 $at 超时：服务器未应答（阶段：建立连接 · dial timeout）· 请检查网络后重试"
+        case "login"  => s"登录 $at 超时：服务器响应缓慢（阶段：登录认证 · login timeout）· 请重试"
+        case "select" => s"登录成功，打开收件箱超时（阶段：SELECT INBOX · select timeout）· 请重试"
+        case _        => s"连接 $at 响应超时 · 请检查网络后重试"
     else if e.contains("unknownhost") || e.contains("unreachable") || e.contains("connect") then
-      s"无法连接 $imapHost:$imapPort · 请检查网络与服务器设置"
+      s"无法连接 $at（域名解析失败或网络不可达 · dns/network unreachable）$stageSuffix · 请检查网络与服务器设置"
     else if e.contains("imap no") || e.contains("imap bad") || e.contains("响应不完整") then
       "邮箱服务器拒绝了该操作 · 请确认已开启 IMAP 服务后重试"
     else
@@ -157,8 +229,14 @@ class PerceptionCore(
   broadcast: Json => IO[Unit],
   /** L1 判定 seam（None = LLM 判定关——行为等同 LLM 持续不可用，搁置 spool）。 */
   judge: MailIncomingJudge = None,
-  /** IMAP 连接 seam（spec 注本地明文 mock；生产 = MailClient.connectImap）。 */
-  imapConnect: (String, Int) => Either[String, MailClient.ImapSession] = ((h: String, p: Int) => MailClient.connectImap(h, p)),
+  /**
+   * IMAP 连接 seam（spec 注本地明文 mock；生产 = MailClient.connectImap）。
+   * 形参 = (host, port, dialTimeoutMs, soTimeoutMs)——拨号/读预算按调用腿
+   * 注入（连接测试腿紧值在 15s 隧道周期预算内回报；后台腿宽值），见
+   * [[ConnectDialTimeoutMs]] 注解块。
+   */
+  imapConnect: (String, Int, Int, Int) => Either[String, MailClient.ImapSession] =
+    ((h: String, p: Int, dialMs: Int, soMs: Int) => MailClient.connectImap(h, p, dialMs, soMs)),
   /**
    * 投递出域 seam（统一 daemon 批 2026-10-29）：信封出本进程的唯一出口——
    * daemon 进程 = 引擎 ingest HTTP 腿（引擎侧 resolveRoots + ImmediateInput，
@@ -178,6 +256,12 @@ class PerceptionCore(
   val windows: Ref[IO, Map[String, OtpWindow]] = Ref.unsafe(Map.empty)
   val drafts: Ref[IO, List[DraftRecord]] = Ref.unsafe(Nil)
   private val booted = Ref.unsafe[IO, Boolean](false)
+  /**
+   * 连接在飞闸（幂等批 2026-11-01）：按地址单飞——connectAccount check-and-set
+   * 原子占位，guarantee 释放；同地址连接中重复点击得 [[ConnectInFlightMsg]]，
+   * 不叠连接不叠拨号。
+   */
+  private val connecting: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
   /**
    * IDLE→轮询即取踢门槽（idleWatch 命中 EXISTS 时 complete；pollLoop 每轮放入
    * 新 Deferred 并限时等待——等待被提前唤醒 = 推送即取，轮询退化为兜底）。
@@ -328,7 +412,7 @@ class PerceptionCore(
           st0.session match
             case Some(sess) => idleStep(account, sess, freshLogin = false)
             case None =>
-              IO.blocking(imapConnect(account.imapHost, account.imapPort)).flatMap {
+              IO.blocking(imapConnect(account.imapHost, account.imapPort, PollDialTimeoutMs, PollSoTimeoutMs)).flatMap {
                 case Left(err) =>
                   audit("conn", "idle-connect-failed", s"id=${account.id} err=${err.take(120)}") *>
                     markIdle(account, st0.copy(cooldownUntil = System.currentTimeMillis() + IdleCooldownMs))
@@ -415,7 +499,9 @@ class PerceptionCore(
         case None => IO.raiseError(new java.lang.IllegalStateException("auth code missing"))
       }
       result <- IO.blocking {
-        val conn = imapConnect(account.imapHost, account.imapPort)
+        // 后台腿宽预算：拨 15s / 读 30s（不在任何 HTTP 周期预算里；压 QQ 服务器
+        // 偶发 >15s 停顿的「IMAP 响应超时」误报——state.json 2026-11-01 实录）。
+        val conn = imapConnect(account.imapHost, account.imapPort, PollDialTimeoutMs, PollSoTimeoutMs)
         conn.flatMap { session =>
           // pure Either flow inside the blocking lane (session is synchronous)
           val stateMap = store.loadState()
@@ -433,9 +519,9 @@ class PerceptionCore(
             _ = store.saveState(stateMap + (account.id -> st1))
             uids <- session.searchUids(st1.lastSeenUid)
             // 首连（无 UIDVALIDITY 基线）只记 maxUID 不回填历史（既有语义）；
-            // UIDVALIDITY 重建则补拉最近 N=200 封（台账去重防重投）。
+            // 重建/基线丢失的补拉上限见 backfillSelection（纯函数，spec 直测）。
             firstSync = st0.lastSeenUid <= 0 && st0.uidvalidity == 0L
-            selected = if uidReset then uids.takeRight(RebuildFetchCap) else uids
+            selected = backfillSelection(uidReset, st1.lastSeenUid, uids)
             toFetch = if firstSync then Nil else selected
             mails <- toFetch.foldLeft[Either[String, List[IncomingMail]]](Right(Nil)) { (acc, uid) =>
               acc.flatMap(list => session.fetchMessage(uid).map(raw => list :+ MailClient.toIncomingMail(uid, raw)))
@@ -851,6 +937,16 @@ $clipped"""
    * 成功 = Right((account, InboxStats))——统计供连接卡显示「已连接：收件箱
    * N 封、M 封未读」（报障 2026-10-28）。失败路径持久化零写入（secret/账户/
    * 状态均不动），重试幂等（同地址同 id 覆盖、secret overwrite）。
+   *
+   * 根治批 2026-11-01 四件：
+   *   ① 幂等在飞闸（per-address 单飞）：连接中重复点击不叠连接、不叠拨号，
+   *      第二击立即得可读提示（[[ConnectInFlightMsg]]）；
+   *   ② 分阶段紧预算（dial 4s / 每命令读 3s ⇒ 最坏 ~13s）——整个测试腿在
+   *      隧道中转 15s 周期预算内回报，引擎侧分类文案抢先于 relay 504 上屏；
+   *   ③ 每腿错误带阶段（connect/greeting/login/select）进
+   *      [[readableConnectError]]——「拨到哪、卡在哪」直说；
+   *   ④ 首轮同步后台化（pollAccount.start fiber）——HTTP 响应只等
+   *      LOGIN+SELECT 统计，全量回填不再押着浏览器。
    */
   def connectAccount(
     address: String,
@@ -867,59 +963,90 @@ $clipped"""
     if !DraftCodec.looksLikeAddress(addr) then IO.pure(Left("邮箱地址格式不正确"))
     else if authCode.isBlank then IO.pure(Left("请填写授权码"))
     else
-      val preset = MailboxPresets.forAddress(addr)
-      val imapH = imapHost.orElse(preset.map(_.imapHost)).getOrElse("")
-      val smtpH = smtpHost.orElse(preset.map(_.smtpHost)).getOrElse("")
-      val imapP = imapPort.orElse(preset.map(_.imapPort)).getOrElse(993)
-      val smtpP = smtpPort.orElse(preset.map(_.smtpPort)).getOrElse(465)
-      val implicitTls = smtpImplicitTls.orElse(preset.map(_.smtpImplicitTls)).getOrElse(true)
-      if imapH.isBlank || smtpH.isBlank then IO.pure(Left("无法识别邮箱服务商 · 请在高级设置中手填服务器"))
-      else
-        IO.blocking {
-          MailClient.connectImap(imapH, imapP).flatMap { session =>
+      // 幂等在飞闸：check-and-set 原子（modify），guarantee 释放（失败/异常/取消均泄闸）。
+      connecting.modify(s =>
+        if s.contains(addr) then (s, false) else (s + addr, true)
+      ).flatMap { acquired =>
+        if !acquired then IO.pure(Left(ConnectInFlightMsg))
+        else
+          connectAccountOnce(addr, authCode, imapHost, imapPort, smtpHost, smtpPort,
+            smtpImplicitTls, displayName, trustedSenders)
+            .guarantee(connecting.update(_ - addr))
+      }
+
+  private def connectAccountOnce(
+    addr: String,
+    authCode: String,
+    imapHost: Option[String],
+    imapPort: Option[Int],
+    smtpHost: Option[String],
+    smtpPort: Option[Int],
+    smtpImplicitTls: Option[Boolean],
+    displayName: Option[String],
+    trustedSenders: List[String]
+  ): IO[Either[String, (MailAccount, MailClient.InboxStats)]] =
+    val preset = MailboxPresets.forAddress(addr)
+    val imapH = imapHost.orElse(preset.map(_.imapHost)).getOrElse("")
+    val smtpH = smtpHost.orElse(preset.map(_.smtpHost)).getOrElse("")
+    val imapP = imapPort.orElse(preset.map(_.imapPort)).getOrElse(993)
+    val smtpP = smtpPort.orElse(preset.map(_.smtpPort)).getOrElse(465)
+    val implicitTls = smtpImplicitTls.orElse(preset.map(_.smtpImplicitTls)).getOrElse(true)
+    if imapH.isBlank || smtpH.isBlank then IO.pure(Left("无法识别邮箱服务商 · 请在高级设置中手填服务器"))
+    else
+      IO.blocking {
+        // ①② 分阶段紧预算：dial 4s + 命令读 3s（登录/开收件箱各 3s 上限）。
+        // 阶段标 = ("connect"|"login"|"select", rawErr)，交给 readableConnectError 出人话。
+        imapConnect(imapH, imapP, ConnectDialTimeoutMs, ConnectSoTimeoutMs).left.map(e => ("connect", e)).flatMap {
+          session =>
             val flow = for
-              _ <- session.login(addr, authCode)
-              stats <- session.selectInbox()
+              _ <- session.login(addr, authCode).left.map(e => ("login", e))
+              stats <- session.selectInbox().left.map(e => ("select", e))
             yield stats
-            flow match
-              case Right(stats) => Right((session, stats))
-              case Left(err) => session.close(); Left(err)
-          }
-        }.flatMap {
-          case Right((session, stats)) =>
-            session.close()
-            val secretName = MailAccount.secretNameFor(addr)
-            val account = MailAccount(
-              id = accountIdFor(addr),
-              address = addr,
-              provider = preset.map(_.provider).getOrElse(""),
-              imapHost = imapH,
-              imapPort = imapP,
-              smtpHost = smtpH,
-              smtpPort = smtpP,
-              smtpImplicitTls = implicitTls,
-              displayName = displayName,
-              trustedSenders = trustedSenders,
-              enabled = true,
-              authCodeSecret = secretName,
-              createdAt = System.currentTimeMillis()
-            )
-            saveSecret(secretName, authCode).flatMap {
-              case Left(err) => IO.pure(Left(err))
-              case Right(_) =>
-                for
-                  _ <- accounts.update(list => list.filterNot(_.id == account.id) :+ account)
-                  accs <- accounts.get
-                  _ <- IO.blocking(store.saveAccounts(accs))
-                  _ <- accountRuntime.update(m => m + (account.id -> AccountRuntime(EntryState.Idle)))
-                  _ <- audit("state", "connected", s"addr=$addr provider=${account.provider}")
-                  _ <- broadcastState()
-                  _ <- pollAccount(account).attempt.void // immediate first sync
-                yield Right((account, stats))
-            }
-          case Left(err) =>
-            IO.pure(Left(readableConnectError(err, imapH, imapP, authCode)))
+            // 左型显式钉为 (stage, err)：防 flatMap 统一左型成 union 触发
+            // 外层 match 非穷尽（-Werror）。
+            val staged: Either[(String, String), (MailClient.ImapSession, MailClient.InboxStats)] =
+              flow match
+                case Right(stats) => Right((session, stats))
+                case Left((stage, err)) => session.close(); Left((stage, err))
+            staged
         }
+      }.flatMap {
+        case Right((session, stats)) =>
+          session.close()
+          val secretName = MailAccount.secretNameFor(addr)
+          val account = MailAccount(
+            id = accountIdFor(addr),
+            address = addr,
+            provider = preset.map(_.provider).getOrElse(""),
+            imapHost = imapH,
+            imapPort = imapP,
+            smtpHost = smtpH,
+            smtpPort = smtpP,
+            smtpImplicitTls = implicitTls,
+            displayName = displayName,
+            trustedSenders = trustedSenders,
+            enabled = true,
+            authCodeSecret = secretName,
+            createdAt = System.currentTimeMillis()
+          )
+          saveSecret(secretName, authCode).flatMap {
+            case Left(err) => IO.pure(Left(err))
+            case Right(_) =>
+              for
+                _ <- accounts.update(list => list.filterNot(_.id == account.id) :+ account)
+                accs <- accounts.get
+                _ <- IO.blocking(store.saveAccounts(accs))
+                _ <- accountRuntime.update(m => m + (account.id -> AccountRuntime(EntryState.Idle)))
+                _ <- audit("state", "connected", s"addr=$addr provider=${account.provider}")
+                _ <- broadcastState()
+                // ④ 首轮同步后台化：fiber 承载，响应不等（失败由 recordFailure
+                // 落状态面，面板 entries 实时反映）。
+                _ <- pollAccount(account).attempt.start.void
+              yield Right((account, stats))
+          }
+        case Left((stage, err)) =>
+          IO.pure(Left(readableConnectError(err, imapH, imapP, authCode, stage = stage)))
+      }
 
   private def accountIdFor(address: String): String =
     address.toLowerCase.replaceAll("[^a-z0-9]", "").take(24)

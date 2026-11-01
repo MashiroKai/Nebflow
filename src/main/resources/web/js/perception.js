@@ -53,9 +53,18 @@ async function api(method, path, body) {
 
 /** 失败文案面：鉴权拒绝显示会话引导，不透传裸错误体——修前「Missing token」
  *  原样印进连接卡红字（报障 2026-10-26 12:43）；服务商测连失败等业务错误仍
- *  透传服务端 error 原文（要直达作者）。 */
+ *  透传服务端 error 原文（要直达作者）。
+ *  根治批 2026-11-01：隧道中转面的英文 504「Host did not answer in time」
+ *  （neblink relay portal_cycle_timeout，周期 15s 预算）不再裸上屏——分类成
+ *  中文提示（连接可能已在后台完成，引导看面板状态）；本机网络不可达（fetch
+ *  直接失败 status 0）同样分类。 */
 function authErrMsg(r, fallback) {
   if (r.status === 401 || r.status === 403) return t('perception.sessionExpired');
+  if (r.status === 504 || (r.data && (r.data.reason === 'portal_cycle_timeout' ||
+      /did not answer/i.test(String((r.data && r.data.error) || ''))))) {
+    return t('perception.relayTimeout');
+  }
+  if (r.status === 0) return t('perception.netFail');
   return (r.data && r.data.error) || fallback;
 }
 
@@ -429,7 +438,7 @@ function openConfigCard(existing) {
         </div>
         <div class="pp-auto-note">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/></svg>
-          <span>${esc(t('perception.cfgAutoNote'))}</span>
+          <span id="pp-cfg-autonote">${esc(t('perception.cfgAutoNote'))}</span>
         </div>
         <details class="pp-adv">
           <summary>
@@ -460,6 +469,55 @@ function openConfigCard(existing) {
   document.body.appendChild(overlay);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closeConfigCard(); });
   overlay.querySelector('#pp-cfg-cancel').addEventListener('click', closeConfigCard);
+  // 自动配置显形（根治批 2026-11-01）：地址可识别 ⇒ 即时回显将拨的 host:port
+  // （高级设置占位符同步预填）；不可识别 ⇒ 明说，引导高级手填。输 Mist. 300ms
+  // 防抖；同地址命中缓存不重复打。失败静默（说明行保持默认文案——识别腿只是
+  // 体验增强，连接本身以服务端 preset 为准）。
+  const autoNoteEl = overlay.querySelector('#pp-cfg-autonote');
+  const presetCache = new Map();
+  let presetTimer = null;
+  function updateAutoNote() {
+    const a = (overlay.querySelector('#pp-cfg-addr') || {}).value || '';
+    const addr = a.trim();
+    if (!addr || addr.indexOf('@') < 0) { autoNoteEl.textContent = t('perception.cfgAutoNote'); return; }
+    if (presetCache.has(addr)) { applyPreset(addr, presetCache.get(addr)); return; }
+    autoNoteEl.textContent = t('perception.cfgAutoNote');
+    api('GET', '/api/perception/mail/preset?address=' + encodeURIComponent(addr)).then((r) => {
+      presetCache.set(addr, r && r.ok ? r.data : null);
+      applyPreset(addr, presetCache.get(addr));
+    });
+  }
+  function applyPreset(addr, data) {
+    const cur = (overlay.querySelector('#pp-cfg-addr') || {}).value || '';
+    if (cur.trim() !== addr) return; // 地址已改：过期响应弃用
+    if (data && data.recognized) {
+      // 服务端解析面（根治批 2026-11-01）：preset 端点带 host:port/TLS——
+      // 显形与占位符预填以此为准；旧引擎无字段时降级为内置 QQ 映射。
+      const ih = data.imapHost || '', sh = data.smtpHost || '';
+      const ip = Number.isFinite(data.imapPort) ? String(data.imapPort) : '';
+      const sp = Number.isFinite(data.smtpPort) ? String(data.smtpPort) : '';
+      const tls = data.smtpImplicitTls === false ? 'STARTTLS' : 'SSL';
+      const resolved = ih && sh ? `${ih}:${ip || 993} · ${sh}:${sp || 465}（${tls}）` : '';
+      autoNoteEl.textContent = t('perception.cfgAutoResolved', { addr, resolved: resolved || t('perception.cfgAutoNote') });
+      const imapEl = overlay.querySelector('#pp-cfg-imap');
+      const smtpEl = overlay.querySelector('#pp-cfg-smtp');
+      const ipEl = overlay.querySelector('#pp-cfg-imapport');
+      const spEl = overlay.querySelector('#pp-cfg-smtpport');
+      const dom = addr.slice(addr.indexOf('@') + 1).toLowerCase();
+      const qqish = /^(qq|foxmail|vip\.qq)\.com$/.test(dom);
+      // 预填只填占位符不填值：显式手填优先于推断（权威识别在服务端）。
+      if (ih) { if (imapEl) imapEl.placeholder = ih; if (ipEl) ipEl.placeholder = ip || '993'; }
+      else if (qqish) { if (imapEl) imapEl.placeholder = 'imap.qq.com'; if (ipEl) ipEl.placeholder = '993'; }
+      if (sh) { if (smtpEl) smtpEl.placeholder = sh; if (spEl) spEl.placeholder = sp || '465'; }
+      else if (qqish) { if (smtpEl) smtpEl.placeholder = 'smtp.qq.com'; if (spEl) spEl.placeholder = '465'; }
+    } else {
+      autoNoteEl.textContent = t('perception.cfgAutoUnknown');
+    }
+  }
+  overlay.querySelector('#pp-cfg-addr').addEventListener('input', () => {
+    if (presetTimer) clearTimeout(presetTimer);
+    presetTimer = setTimeout(() => { presetTimer = null; updateAutoNote(); }, 300);
+  });
   overlay.querySelector('#pp-cfg-connect').addEventListener('click', async () => {
     const result = overlay.querySelector('#pp-cfg-result');
     const addrEl = overlay.querySelector('#pp-cfg-addr');

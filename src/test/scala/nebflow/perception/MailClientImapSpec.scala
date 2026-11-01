@@ -3,6 +3,7 @@ package nebflow.perception
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import munit.FunSuite
+import scala.concurrent.duration.*
 
 import java.net.{InetAddress, ServerSocket, Socket}
 import java.io.{BufferedReader, InputStreamReader, PrintStream}
@@ -148,6 +149,22 @@ class MailClientImapSpec extends FunSuite:
     def stop(): Unit =
       stopped.set(true)
       try server.close() catch case _: Throwable => ()
+
+
+  /** accept 后只连不说（根治批 2026-11-01 专用夹具）：拨号瞬间成功、greeting
+    * 永不到达——钉「读预算独立于拨号预算」与在飞闸的时间窗。 */
+  private final class SilentServer:
+    private val server = ServerSocket(0, 4, InetAddress.getLoopbackAddress)
+    val port: Int = server.getLocalPort
+    private val thread = new Thread(() =>
+      try
+        val conn = server.accept()
+        val _ = conn // 故意不写不关：greeting 永不到达
+      catch case _: Throwable => ()
+    )
+    thread.setDaemon(true)
+    thread.start()
+    def stop(): Unit = try server.close() catch case _: Throwable => ()
 
   private def withSession(server: ScriptedImap, soTimeoutMs: Int = 5000)(
     f: MailClient.ImapSession => Unit
@@ -316,4 +333,131 @@ class MailClientImapSpec extends FunSuite:
       assert(!os.exists(root / "state.json"), "失败路径不得写状态文件")
     finally
       os.remove.all(os.Path(tmp))
+  }
+
+  // ════════ 根治批 2026-11-01：分阶段预算 + 分类文案 + 幂等在飞闸 ════════
+  //
+  // 根因链（作者面板经 neblink 隧道中转）：relay portal_ingress 15s 周期预算
+  // 未等到 host 应答 ⇒ 504「Host did not answer in time」抢先上屏；引擎侧旧
+  // 路径拨号/读各 15s + 同步腿串行在 HTTP 周期里，坏路径最坏 30s+。本节钉：
+  // 分类文案按腿（dial/greeting/login/select）、紧预算下快速回报、重复点击
+  // 不叠连接。
+
+  test("readable: 阶段注入——拨号超时 vs 问候超时 vs 登录超时 vs 开箱超时 各归各文案") {
+    val h = "imap.qq.com"
+    val dial = PerceptionService.readableConnectError(
+      "IMAP connect SocketTimeoutException: connect timed out", h, 993, stage = "connect")
+    assert(dial.contains("建立连接") && dial.contains(h + ":993"), dial)
+    val greet = PerceptionService.readableConnectError(
+      "IMAP connect SocketTimeoutException: Read timed out", h, 993, stage = "connect")
+    assert(greet.contains("等待问候") && greet.contains("已连上"), greet)
+    val login = PerceptionService.readableConnectError(
+      "IMAP 响应超时 · 服务器长时间无响应", h, 993, stage = "login")
+    assert(login.contains("登录认证"), login)
+    val sel = PerceptionService.readableConnectError(
+      "IMAP 响应超时 · 服务器长时间无响应", h, 993, stage = "select")
+    assert(sel.contains("SELECT INBOX"), sel)
+    // 英文对照恒在（阶段标签双语的硬约束）
+    assert(dial.contains("dial timeout") && greet.contains("greeting timeout")
+      && login.contains("login timeout") && sel.contains("select timeout"))
+  }
+
+  test("readable: TLS 握手失败单列（不再混入泛化连接失败）") {
+    val msg = PerceptionService.readableConnectError(
+      "IMAP connect SSLHandshakeException: Remote host terminated the handshake", "imap.qq.com", 993, stage = "connect")
+    assert(msg.contains("TLS 握手失败"), msg)
+    assert(msg.contains("tls handshake failed"), msg)
+  }
+
+  test("connectImap: 拨号/读预算分离——静默服务器 greeting 腿在 soTimeoutMs 内回报（读超时，非挂死）") {
+    // accept 后一言不发：拨号瞬间成功，greeting 读必须按 soTimeoutMs 独立受限
+    val server = new SilentServer // 只连不说：greeting 永不到达
+    val t0 = System.currentTimeMillis()
+    val r = MailClient.connectImap("127.0.0.1", server.port, timeoutMs = 4000, soTimeoutMs = 700)
+    val dt = System.currentTimeMillis() - t0
+    server.stop()
+    val err = r.left.toOption.get
+    assert(err.contains("Read timed out"), s"greeting 读超时应以 Read timed out 形状回报: $err")
+    assert(dt < 3000, s"读预算应独立于拨号预算生效（实际 ${dt}ms）")
+  }
+
+  test("core: connectAccount 分阶段紧预算——greeting 静默 ⇒ ~SoTimeout 内 Left(等待问候)，不撞 15s 周期预算") {
+    val tmp = java.nio.file.Files.createTempDirectory("perception-stage-budget-spec")
+    val core = new PerceptionCore(
+      store = new PerceptionStore(os.Path(tmp)),
+      broadcast = _ => IO.unit,
+      deliverEnvelope = (_, _) => IO.pure(false)
+    )
+    core.bootInitialize.unsafeRunSync()
+    val server = new SilentServer // 只连不说：greeting 腿踩 SoTimeout
+    try
+      val t0 = System.currentTimeMillis()
+      val res = core.connectAccount(
+        address = "mock-user@qq.com",
+        authCode = "mock-code-not-real",
+        imapHost = Some("127.0.0.1"),
+        imapPort = Some(server.port),
+        smtpHost = Some("127.0.0.1"),
+        smtpPort = Some(2465)
+      ).unsafeRunSync()
+      val dt = System.currentTimeMillis() - t0
+      val err = res.left.toOption.get
+      assert(err.contains("等待问候"), s"greeting 停顿应映射问候阶段文案: $err")
+      assert(dt < 8000, s"连接测试腿须在隧道中转 15s 预算内回报（实际 ${dt}ms）")
+      assert(!os.exists(os.Path(tmp) / "accounts.json"), "失败路径零落盘")
+    finally
+      server.stop()
+      os.remove.all(os.Path(tmp))
+  }
+
+  test("core: 幂等在飞闸——连接中重复点击得可读提示，不叠连接；闸在结束后释放") {
+    val tmp = java.nio.file.Files.createTempDirectory("perception-guard-spec")
+    val core = new PerceptionCore(
+      store = new PerceptionStore(os.Path(tmp)),
+      broadcast = _ => IO.unit,
+      deliverEnvelope = (_, _) => IO.pure(false)
+    )
+    core.bootInitialize.unsafeRunSync()
+    val server = new SilentServer // 只连不说：第一击挂在 greeting 腿（窗口 ~3s）
+    try
+      val probe = for
+        // 第一击：起 fiber（挂在 greeting 读上）
+        fibA <- core.connectAccount(
+          address = "mock-user@qq.com", authCode = "mock-code-not-real",
+          imapHost = Some("127.0.0.1"), imapPort = Some(server.port),
+          smtpHost = Some("127.0.0.1"), smtpPort = Some(2465)).start
+        _ <- IO.sleep(500.millis) // 让 A 先占闸
+        // 第二击（同地址）：必须立即得「正在连接」，不得叠第二只拨号
+        rb <- core.connectAccount(
+          address = "mock-user@qq.com", authCode = "mock-code-not-real",
+          imapHost = Some("127.0.0.1"), imapPort = Some(server.port),
+          smtpHost = Some("127.0.0.1"), smtpPort = Some(2465))
+        ra <- fibA.joinWithNever
+        // 闸释放验证：A 结束后第三击照常进入拨号腿（端口 1 必拒 → 无法连接形状）
+        rc <- core.connectAccount(
+          address = "mock-user@qq.com", authCode = "mock-code-not-real",
+          imapHost = Some("127.0.0.1"), imapPort = Some(1),
+          smtpHost = Some("127.0.0.1"), smtpPort = Some(2465))
+      yield (ra, rb, rc)
+      val (ra, rb, rc) = probe.unsafeRunSync()
+      val errB = rb.left.toOption.get
+      assert(errB.contains("正在连接"), s"重复点击应得在飞提示: $errB")
+      val errA = ra.left.toOption.get
+      assert(errA.contains("等待问候"), s"第一击应落在 greeting 阶段: $errA")
+      val errC = rc.left.toOption.get
+      assert(errC.contains("无法连接"), s"闸释放后第三击应照常进入拨号腿: $errC")
+    finally
+      server.stop()
+      os.remove.all(os.Path(tmp))
+  }
+
+  test("backfillSelection: 基线丢失态（uidvalidity 在而 lastSeenUid=0）同受 N 上限——不再无上限回填") {
+    val uids = (1L to 5000L).toList
+    val sel = PerceptionService.backfillSelection(uidReset = false, lastSeenUid = 0L, uids)
+    assertEquals(sel.size, PerceptionService.RebuildFetchCap)
+    assertEquals(sel.last, 5000L) // 取最新（右端），不是最旧
+    // 正常增量腿（lastSeenUid>0）：透传（增量过滤在 searchUids 已完成）
+    assertEquals(PerceptionService.backfillSelection(false, 4999L, List(5000L)), List(5000L))
+    // 重建腿保持既有 N=200 语义
+    assertEquals(PerceptionService.backfillSelection(true, 4999L, uids).size, 200)
   }
