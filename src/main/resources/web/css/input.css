@@ -338,6 +338,12 @@
   white-space: nowrap;
   max-width: 140px;
 }
+/* 输入框附件图标化批（作者令 2026-11-02）·基座闸：新增的扩展名色块
+   （.att-file-icon，chat.js 挂 = fileIconStyle 的 `.fc-icon` 色族同源）**默认
+   不参与布局**——本批按令「手机层优先、桌面共组件先不动」，桌面层 chip 形态
+   逐像素原样（彩色块不上桌）；手机层由 css/mobileLayer.css 作用域规则把它翻
+   成 28×28 图标盒并隐藏文件名。display:none 在此 = 桌面零回归的唯一闸门。 */
+.att-file .att-file-icon { display: none; }
 
 /* v2 §5.2: task return reference chip — sapphire tint (distinct from the
    grey .att-file), zero new color tokens (sapphire alpha variants only).

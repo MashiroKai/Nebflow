@@ -916,7 +916,7 @@ export function finishAgent(agentId) {
 // imported from here — re-export, not redefinition (single source in
 // popArtifacts.js).
 export { openPopArtifact, popArtifactFromInput } from './popArtifacts.js';
-import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow, registerUserMediaRow, patchUserMediaRow, unifyUserMediaFace } from './popArtifacts.js';
+import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow, registerUserMediaRow, patchUserMediaRow, unifyUserMediaFace, fileIconStyle, extOf } from './popArtifacts.js';
 
 /** quote-message 一期：AskUser 卡首个 question 的纯文本（剥 HTML 标签；镜像
  *  persistence.js askUserQuestionText 的剥标签先例 —— chat.js 不反向 import
@@ -3765,13 +3765,24 @@ export function renderAttachmentPreview(target) {
       wrap.appendChild(rm);
       attPreview.appendChild(wrap);
     } else {
+      // 输入框附件图标化批（作者令 2026-11-02「输入框里的附件条不显示文件名，
+      // 用与图片附件缩略图一样大小的图标代替」）：
+      //  · `.att-file-icon` = 扩展名族色块（fileIconStyle/`.fc-icon` 既有色档单源：
+      //    文档蓝/表格绿/演示橙/PDF 红/压缩紫/代码灰），**手机层**由
+      //    css/mobileLayer.css 作用域规则接管为 28×28 图标盒（与 .att-thumb 逐值
+      //    同盒），文件名 span 在同层隐藏 —— 桌面层两件均不高亮（icon display:none
+      //    ⇒ 桌面 chip 逐像素原样，按令「桌面共组件先不动」）。
+      //  · 文件名信息不丢：名字进 chip 的 title（指针悬停）与 aria-label（读屏），
+      //    只褪出条面；✕ 删除角标与图片附件逐字同族。
       const wrap = document.createElement('div');
       wrap.className = 'att-file';
       wrap.style.position = 'relative';
-      // uifix 批 2026-10-22：文件名 span 改类挂样式（.att-file-name，input.css
-      // 统一 chip 语言段）—— 旧内联 max-width:100px 收 140px（+N 折叠在，长名
-      // 不再吃满条带宽）。
-      wrap.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg><span class="att-file-name">' + escapeHtml(att.name) + '</span>';
+      const nameText = String(att.name || '');
+      const iconSpec = fileIconStyle(extOf(nameText));
+      wrap.title = nameText;
+      wrap.innerHTML = '<svg class="att-file-glyph" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>'
+        + '<span class="att-file-icon fc-icon ' + iconSpec.cls + '" aria-hidden="true">' + escapeHtml(iconSpec.label) + '</span>'
+        + '<span class="att-file-name">' + escapeHtml(nameText) + '</span>';
       const rm = document.createElement('div');
       rm.className = 'att-remove';
       rm.innerHTML = CLOSE_X_SVG;   // 修正②：几何对称 ✕（同图片附件键）
