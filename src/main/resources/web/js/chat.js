@@ -2005,7 +2005,10 @@ function appendCompactCard(view, state, label) {
 
 /** Emergency hard-guard (0.95) card ONLY — the regular fallback-compaction
  *  done card is dismantled (zero-trace batch, 2026-10-28); main.js gates the
- *  call on msg.emergency. */
+ *  call on msg.emergency.
+ *  @param {object} [view]
+ *  @param {{before?: string, after?: string, detail?: string}} [opts] elapsed counts
+ *  carried by the emergency frame (all optional — the card renders without them) */
 export function renderCompactDoneCard(view = activeView, { before, after, detail } = {}) {
   // Elapsed used to ride on view.compactStartTs (stamped by main.js on
   // compactStart); that stamp is dismantled with the done card — emergency

@@ -61,8 +61,9 @@ export function initColResizers() {
     const leftId = ORDER[i];
     const rightId = ORDER[i + 1];
     if (!leftId || !rightId) return;
-    r.dataset.left = leftId;
-    r.dataset.right = rightId;
+    const resizer = /** @type {HTMLElement} */ (r);
+    resizer.dataset.left = leftId;
+    resizer.dataset.right = rightId;
     updateResizerVisibility(r, leftId, rightId);
   });
 

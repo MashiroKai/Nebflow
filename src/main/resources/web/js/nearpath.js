@@ -29,7 +29,7 @@ const RESULT_KEY = key('ws_nearpath_result');
 const PROBE_TIMEOUT_MS = 2500;
 const REFRACTORY_MS = 30000;
 
-/** @type {{ base: string, kind: 'loopback'|'lan', at: number } | null} */
+/** @type {{ base: string, kind: 'loopback'|'lan', at: number, selfId?: string } | null} */
 let active = null;
 
 function readStored() {
@@ -58,6 +58,7 @@ export function getNearPath() {
   }
   const stored = readStored();
   if (stored && stored.verified && typeof stored.verified.base === 'string') {
+    /** @type {{ base: string, kind: 'loopback'|'lan', selfId?: string }} */
     const out = { base: stored.verified.base, kind: stored.verified.kind === 'lan' ? 'lan' : 'loopback' };
     if (typeof stored.selfId === 'string' && stored.selfId) out.selfId = stored.selfId;
     return out;

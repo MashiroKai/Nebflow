@@ -24,6 +24,10 @@ import { openQuoteMenuForRow } from '../msgQuote.js';
 const LONG_PRESS_MS = 480;
 const MOVE_CANCEL_PX = 10;
 
+/** 触摸监听选项：注册/拆除两侧逐字同值（removeEventListener 只认 capture 位，
+ *  passive 在拆除侧被忽略——用同一个常量保证不会写出「注册 A、拆除 B」）。 */
+const TOUCH_LISTENER_OPTS = /** @type {AddEventListenerOptions} */ ({ passive: true });
+
 /** @type {boolean} */
 let active = false;
 /** @type {{row: Element, x: number, y: number, timer: number} | null} */
@@ -34,7 +38,7 @@ function rowOf(target) {
   // 引用块/附件卡等行内交互子面长按也归行菜单（微信口径：按在消息上就行）；
   // 行必须挂过引用菜单（__nfQuoteDesc 在场 = 可引用行）。
   const row = target.closest('#chat .row');
-  return row && row.__nfQuoteDesc ? row : null;
+  return row && (/** @type {{__nfQuoteDesc?: unknown}} */ (row)).__nfQuoteDesc ? row : null;
 }
 
 function cancelPending() {
@@ -79,20 +83,20 @@ export function activateMsgLongPress() {
   // 委托挂 document、过滤 #chat：手机层各页面互斥 .live，#chat 被 navController
   // 收编进页面体（节点同一，委托不丢）；弹窗/nf-static 副窗不在 #chat 下 ⇒ 手机层
   // 长按语义只落主聊天区（桌面右键口径不变，副窗不翻案）。
-  document.addEventListener('touchstart', onTouchStart, { passive: true });
-  document.addEventListener('touchmove', onTouchMove, { passive: true });
-  document.addEventListener('touchend', onTouchEnd, { passive: true });
-  document.addEventListener('touchcancel', onTouchEnd, { passive: true });
+  document.addEventListener('touchstart', onTouchStart, TOUCH_LISTENER_OPTS);
+  document.addEventListener('touchmove', onTouchMove, TOUCH_LISTENER_OPTS);
+  document.addEventListener('touchend', onTouchEnd, TOUCH_LISTENER_OPTS);
+  document.addEventListener('touchcancel', onTouchEnd, TOUCH_LISTENER_OPTS);
 
   (/** @type {any} */ (window)).__nfMobileLongPress = { get active() { return active; } };
 
   return () => {
     active = false;
     cancelPending();
-    document.removeEventListener('touchstart', onTouchStart, { passive: true });
-    document.removeEventListener('touchmove', onTouchMove, { passive: true });
-    document.removeEventListener('touchend', onTouchEnd, { passive: true });
-    document.removeEventListener('touchcancel', onTouchEnd, { passive: true });
+    document.removeEventListener('touchstart', onTouchStart, TOUCH_LISTENER_OPTS);
+    document.removeEventListener('touchmove', onTouchMove, TOUCH_LISTENER_OPTS);
+    document.removeEventListener('touchend', onTouchEnd, TOUCH_LISTENER_OPTS);
+    document.removeEventListener('touchcancel', onTouchEnd, TOUCH_LISTENER_OPTS);
     delete (/** @type {any} */ (window)).__nfMobileLongPress;
   };
 }

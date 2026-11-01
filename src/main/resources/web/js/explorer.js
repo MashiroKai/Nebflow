@@ -1277,9 +1277,10 @@ const pendingManual = new Set();
 
 // Listen for canvas tab restore requests — set pinned state before readFile
 window.addEventListener('explorer-preload-pinned', (e) => {
-  if (e.detail && e.detail.path) {
-    pendingPinned.set(e.detail.path, e.detail.pinned !== false);
-    if (e.detail.refresh) pendingRefresh.add(e.detail.path);
+  const detail = /** @type {CustomEvent<{path?: string, pinned?: boolean, refresh?: boolean, manual?: boolean}>} */ (e).detail;
+  if (detail && detail.path) {
+    pendingPinned.set(detail.path, detail.pinned !== false);
+    if (detail.refresh) pendingRefresh.add(detail.path);
     // (any-cast: this listener's `e.detail` lines are already in the checkJs
     // baseline — the new leg must not add to that count.)
     if (/** @type {any} */ (e).detail?.manual) pendingManual.add(/** @type {any} */ (e).detail.path);
@@ -1529,7 +1530,7 @@ export function initExplorer() {
   // Wire folder picker button — opens the unified directory picker
   // (workspacePicker.js) in callback mode: the picked path becomes the tree
   // root (persisted; tree collapses and re-renders from the new root).
-  const folderBtn = document.getElementById('explorer-folder-btn');
+  const folderBtn = /** @type {(HTMLElement & {_bound?: boolean})|null} */ (document.getElementById('explorer-folder-btn'));
   if (folderBtn && !folderBtn._bound) {
     folderBtn._bound = true;
     folderBtn.addEventListener('click', (e) => {
@@ -1553,7 +1554,7 @@ export function initExplorer() {
   }
 
   // New File button
-  const newFileBtn = document.getElementById('explorer-new-file-btn');
+  const newFileBtn = /** @type {(HTMLElement & {_bound?: boolean})|null} */ (document.getElementById('explorer-new-file-btn'));
   if (newFileBtn && !newFileBtn._bound) {
     newFileBtn._bound = true;
     newFileBtn.addEventListener('click', (e) => {
@@ -1563,7 +1564,7 @@ export function initExplorer() {
   }
 
   // New Folder button
-  const newFolderBtn = document.getElementById('explorer-new-folder-btn');
+  const newFolderBtn = /** @type {(HTMLElement & {_bound?: boolean})|null} */ (document.getElementById('explorer-new-folder-btn'));
   if (newFolderBtn && !newFolderBtn._bound) {
     newFolderBtn._bound = true;
     newFolderBtn.addEventListener('click', (e) => {
@@ -1573,7 +1574,7 @@ export function initExplorer() {
   }
 
   // Context menu — right-click on tree items
-  const tree = document.getElementById('explorer-tree');
+  const tree = /** @type {(HTMLElement & {_dragMoveBound?: boolean, _ctxBound?: boolean})|null} */ (document.getElementById('explorer-tree'));
 
   // Drag-to-move: delegated drop targets on folder rows + root blank area.
   if (tree && !tree._dragMoveBound) {
@@ -1592,11 +1593,11 @@ export function initExplorer() {
   if (tree && !tree._ctxBound) {
     tree._ctxBound = true;
     tree.addEventListener('contextmenu', (e) => {
-      const item = e.target.closest('.explorer-item');
+      const item = (/** @type {Element} */ (e.target)).closest('.explorer-item');
       if (item) {
         e.preventDefault();
         e.stopPropagation();
-        const p = item.dataset.path;
+        const p = (/** @type {HTMLElement} */ (item)).dataset.path;
         // Right-click on an unselected item → make it the sole selection
         // (menu falls back to single-path actions). Right-click on a selected
         // item keeps the selection (menu offers batch actions).
@@ -1606,7 +1607,7 @@ export function initExplorer() {
     });
     // Click on blank tree area → clear selection
     tree.addEventListener('click', (e) => {
-      if (!e.target.closest('.explorer-item')) clearSelection();
+      if (!(/** @type {Element} */ (e.target)).closest('.explorer-item')) clearSelection();
     });
   }
 
@@ -1614,7 +1615,7 @@ export function initExplorer() {
   if (!window.__explorerEscBound) {
     window.__explorerEscBound = true;
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && selectedPaths.size && !e.target.closest?.('.explorer-creating')) {
+      if (e.key === 'Escape' && selectedPaths.size && !(/** @type {Element|null} */ (e.target))?.closest('.explorer-creating')) {
         clearSelection();
       }
     });
@@ -1673,7 +1674,7 @@ function absPathFor(relPath) {
 
 /** Show inline input for creating a new file or folder in the tree.
  *  @param {boolean} isDir — true for folder, false for file
- *  @param {string} dirPath — directory to create in (relative to root). Defaults to currentDir. */
+ *  @param {string} [dirPath] directory to create in (relative to root). Defaults to currentDir. */
 function startCreateNode(isDir, dirPath) {
   if (refuseRemoteWrite()) return;
   // If no dirPath given, use the last expanded folder (currentDir)
@@ -1691,7 +1692,7 @@ function startCreateNode(isDir, dirPath) {
       if (!expandedDirs.has(dirPath)) {
         const row = wrapper.querySelector('.explorer-folder');
         const chevron = wrapper.querySelector('.explorer-chevron');
-        const children = wrapper.querySelector('.explorer-children');
+        const children = /** @type {HTMLElement|null} */ (wrapper.querySelector('.explorer-children'));
         if (row && chevron && children) {
           expandedDirs.add(dirPath);
           currentDir = dirPath;

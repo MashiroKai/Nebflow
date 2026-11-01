@@ -26,7 +26,7 @@ export function applySelectionClasses() {
   const tree = document.getElementById('explorer-tree');
   if (!tree) return;
   tree.querySelectorAll('.explorer-item.selected').forEach(el => {
-    if (!selectedPaths.has(el.dataset.path)) el.classList.remove('selected');
+    if (!selectedPaths.has((/** @type {HTMLElement} */ (el)).dataset.path)) el.classList.remove('selected');
   });
   for (const p of selectedPaths) {
     const el = tree.querySelector(`.explorer-item[data-path="${CSS.escape(p)}"]`);
@@ -67,7 +67,8 @@ function getSiblingPaths(parentDir) {
     const item = child.classList.contains('explorer-item')
       ? child
       : child.querySelector(':scope > .explorer-item');
-    if (item && item.dataset.path !== undefined) out.push(item.dataset.path);
+    const itemPath = item ? (/** @type {HTMLElement} */ (item)).dataset.path : undefined;
+    if (itemPath !== undefined) out.push(itemPath);
   }
   return out;
 }

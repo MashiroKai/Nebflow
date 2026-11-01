@@ -236,8 +236,8 @@ function wireProviderModelFetch() {
   const overlay = document.getElementById('cfg-modal');
   if (!overlay) return;
   providerModelChoices = null;
-  const baseInput = overlay.querySelector('[data-field="baseUrl"]');
-  const keyInput = overlay.querySelector('[data-field="apiKey"]');
+  const baseInput = /** @type {HTMLInputElement|null} */ (overlay.querySelector('[data-field="baseUrl"]'));
+  const keyInput = /** @type {HTMLInputElement|null} */ (overlay.querySelector('[data-field="apiKey"]'));
   const container = overlay.querySelector('[data-field="models"]');
   const group = container?.closest('.cfg-form-group');
   if (!baseInput || !container || !group) return;
@@ -246,7 +246,7 @@ function wireProviderModelFetch() {
   statusRow.className = 'cfg-fetch-status-row';
   statusRow.innerHTML = `<button type="button" class="cfg-fetch-models-btn">${t('provider.fetchModels')}</button><span class="cfg-fetch-status"></span>`;
   group.insertBefore(statusRow, container);
-  const fetchBtn = statusRow.querySelector('.cfg-fetch-models-btn');
+  const fetchBtn = /** @type {HTMLButtonElement} */ (statusRow.querySelector('.cfg-fetch-models-btn'));
   const status = statusRow.querySelector('.cfg-fetch-status');
 
   let fetchGen = 0; // race guard: stale responses (older trigger) are dropped
@@ -289,7 +289,8 @@ function wireProviderModelFetch() {
   // Delegated: picking a model from the dropdown auto-fills an empty
   // contextWindow from the fetched contextLength (never overwrites).
   container.addEventListener('change', (e) => {
-    if (e.target.matches('select.cfg-model-id')) fillContextIfEmpty(e.target.closest('.cfg-model-row'));
+    const hit = /** @type {Element} */ (e.target);
+    if (hit.matches('select.cfg-model-id')) fillContextIfEmpty(hit.closest('.cfg-model-row'));
   });
 }
 
@@ -562,7 +563,7 @@ function showModal({title, fields, onConfirm}) {
       row.innerHTML = renderModelRowContent();
       container.insertBefore(row, btn);
       row.querySelector('.cfg-model-remove').addEventListener('click', () => row.remove());
-      row.querySelector('.cfg-model-id').focus();
+      (/** @type {HTMLElement} */ (row.querySelector('.cfg-model-id'))).focus();
     });
   });
   overlay.querySelectorAll('.cfg-model-remove').forEach(btn => {
@@ -574,8 +575,9 @@ function showModal({title, fields, onConfirm}) {
   overlay.querySelectorAll('.cfg-eye-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const input = btn.parentElement.querySelector('input');
-      const isMasked = input.style.webkitTextSecurity === 'disc';
-      input.style.webkitTextSecurity = isMasked ? 'none' : 'disc';
+      const inputStyle = /** @type {{webkitTextSecurity?: string}} */ (input.style);
+      const isMasked = inputStyle.webkitTextSecurity === 'disc';
+      inputStyle.webkitTextSecurity = isMasked ? 'none' : 'disc';
       btn.innerHTML = isMasked ? eyeOffSvg : eyeSvg;
     });
   });
@@ -586,14 +588,15 @@ function showModal({title, fields, onConfirm}) {
   document.getElementById('cfg-modal-save').addEventListener('click', () => {
     const values = {};
     overlay.querySelectorAll('[data-field]:not([data-field="models"])').forEach(el => {
-      values[el.dataset.field] = el.value;
+      const field = /** @type {HTMLElement & {value: string}} */ (el);
+      values[field.dataset.field] = field.value;
     });
     // Collect models
     const modelsContainer = overlay.querySelector('[data-field="models"]');
     if (modelsContainer) {
       values.models = [];
       modelsContainer.querySelectorAll('.cfg-model-row').forEach(row => {
-        const id = row.querySelector('.cfg-model-id').value.trim();
+        const id = (/** @type {HTMLInputElement} */ (row.querySelector('.cfg-model-id'))).value.trim();
         if (!id) return;
         // chain-ctxbound: carry the RAW input string — no parseInt()||1000000
         // coercion here (that line silently saved absurd values, and

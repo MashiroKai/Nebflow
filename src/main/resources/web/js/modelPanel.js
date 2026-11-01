@@ -403,7 +403,7 @@ function buildChainEditor(container, role, commit) {
   let dragIdx = null;
   editor.querySelectorAll('.mp-row').forEach(row => {
     const el = /** @type {HTMLElement} */ (row);
-    const grip = el.querySelector('.mp-drag');
+    const grip = /** @type {HTMLElement|null} */ (el.querySelector('.mp-drag'));
     if (!grip) return;
     let startY = 0;
     let active = false;
@@ -437,7 +437,7 @@ function buildChainEditor(container, role, commit) {
       el.classList.remove('dragging');
       clearMarks();
       if (!over || over === el) return;
-      const to = Number(over.dataset.idx);
+      const to = Number((/** @type {HTMLElement} */ (over)).dataset.idx);
       if (to === from) return;
       const [moved] = chain.splice(from, 1);
       chain.splice(to, 0, moved);

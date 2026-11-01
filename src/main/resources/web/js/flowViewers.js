@@ -164,13 +164,13 @@ export async function openRules(teamName) {
         <p style="font: 400 11px -apple-system; color: var(--color-text-muted); margin: 0 0 8px;">${t('flowViewers.rulesHint')}</p>
         <textarea class="flow-def-edit" id="flow-rules-textarea" style="min-height: 320px; font-family: ui-monospace, SFMono-Regular, monospace;">${esc(data.content || '')}</textarea>
       </div>`;
-    const saveBtn = document.getElementById('flow-rules-save');
+    const saveBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('flow-rules-save'));
     const statusEl = document.getElementById('flow-rules-status');
     if (saveBtn) saveBtn.addEventListener('click', async () => {
       saveBtn.disabled = true;
       if (statusEl) statusEl.textContent = t('flowViewers.saving');
       try {
-        const text = document.getElementById('flow-rules-textarea')?.value || '';
+        const text = (/** @type {HTMLTextAreaElement|null} */ (document.getElementById('flow-rules-textarea')))?.value || '';
         const r = await fetch(`/api/team/rules/${encodeURIComponent(teamName)}`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ content: text }) });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         if (statusEl) statusEl.textContent = t('flowViewers.saved');
@@ -389,7 +389,7 @@ export async function openDefinition(flowName) {
 
     // Async-populate per-agent model config
     body.querySelectorAll('.flow-agent-model-container').forEach(el => {
-      populateAgentModel(el, el.dataset.agentName);
+      populateAgentModel(el, (/** @type {HTMLElement} */ (el)).dataset.agentName);
     });
   } catch (e) { body.innerHTML = `<div class="flow-mail-empty">Failed: ${esc(e.message)}</div>`; }
 }

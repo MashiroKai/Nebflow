@@ -2451,9 +2451,10 @@ onMessage('agentDone', (msg, view) => {
 
 // --- Session switch → explorer / task list refresh ---
 window.addEventListener('nebflow-session-change', (e) => {
-  refreshExplorer(e.detail.sessionId);
-  refreshScheduledTasks(e.detail.sessionId);
-  if (e.detail.sessionId) sendWs({ type: 'getTaskList', sessionId: e.detail.sessionId });
+  const { sessionId } = /** @type {CustomEvent<{sessionId: string}>} */ (e).detail;
+  refreshExplorer(sessionId);
+  refreshScheduledTasks(sessionId);
+  if (sessionId) sendWs({ type: 'getTaskList', sessionId });
   // ⑩ the frozen input-bar visual follows the newly activated session.
   applyLocalFreeze();
 });
@@ -2758,7 +2759,7 @@ onMessage('configData', (msg, view) => {
     if (wikiGraphEnabled()) enableWikiGraphEntry();
   }
   const editor = document.getElementById('config-editor');
-  if (editor) editor.value = state.configText;
+  if (editor) (/** @type {HTMLTextAreaElement} */ (editor)).value = state.configText;
   // Re-render settings if the modal is open
   const settingsOverlay = document.getElementById('settings-overlay');
   if (settingsOverlay && settingsOverlay.classList.contains('on')) {
@@ -3861,7 +3862,7 @@ onMessage('forkComplete', (msg, view) => {
     for (const sel of overlays) {
       const el = document.querySelector(sel);
       if (el && getComputedStyle(el).display !== 'none') {
-        el.click();
+        (/** @type {HTMLElement} */ (el)).click();
         e.preventDefault();
         e.stopPropagation();
         return;
@@ -4394,7 +4395,7 @@ initDropbox();
     }
     // Highlight active option in dropdown
     document.querySelectorAll('#bypass-menu button').forEach(b => {
-      b.classList.toggle('active', b.dataset.mode === mode);
+      b.classList.toggle('active', (/** @type {HTMLElement} */ (b)).dataset.mode === mode);
     });
   };
 
@@ -4447,7 +4448,7 @@ initDropbox();
     });
     // Close dropdown on outside click
     document.addEventListener('mousedown', (e) => {
-      if (!menu.contains(e.target) && e.target !== btn) {
+      if (!menu.contains(/** @type {Node} */ (e.target)) && e.target !== btn) {
         menu.classList.remove('show');
       }
     }, true);

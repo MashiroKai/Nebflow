@@ -94,7 +94,7 @@ export function setActiveFolder(folderId) {
   state.activeFolderId = folderId;
   // Update UI highlight
   document.querySelectorAll('.folder-item').forEach(el => {
-    el.classList.toggle('active', el.dataset.folderId === folderId);
+    el.classList.toggle('active', (/** @type {HTMLElement} */ (el)).dataset.folderId === folderId);
   });
 }
 
@@ -354,7 +354,7 @@ export function selectAgent(agentName) {
   }
   // Update nav bar active state
   document.querySelectorAll('#nav-agent-list .nav-agent').forEach(el => {
-    el.classList.toggle('active', el.dataset.name === agentName);
+    el.classList.toggle('active', (/** @type {HTMLElement} */ (el)).dataset.name === agentName);
   });
   // Exit batch mode and clear active folder when switching agents
   if (state.selectedSessionIds.size > 0) exitBatchMode();
@@ -712,8 +712,8 @@ function renderSttSection() {
 function collectSegments() {
   const rows = document.querySelectorAll('#segment-list .segment-row');
   return Array.from(rows).map(row => ({
-    start: row.querySelector('[data-role="start"]')?.value.trim() || '',
-    end: row.querySelector('[data-role="end"]')?.value.trim() || ''
+    start: (/** @type {HTMLInputElement|null} */ (row.querySelector('[data-role="start"]')))?.value.trim() || '',
+    end: (/** @type {HTMLInputElement|null} */ (row.querySelector('[data-role="end"]')))?.value.trim() || ''
   }));
 }
 
@@ -1135,7 +1135,7 @@ export function renderSettings() {
     const providerList = document.getElementById('provider-list');
     if (providerList) {
       providerList.querySelectorAll('.cfg-model-vision').forEach(el => {
-        const ref = el.closest('.cfg-model-row')?.dataset.modelRef;
+        const ref = (/** @type {HTMLElement|null} */ (el.closest('.cfg-model-row')))?.dataset.modelRef;
         if (ref) el.innerHTML = renderVisionBadge(ref);
       });
     }
@@ -1224,8 +1224,8 @@ function renderSettingsAvatar() {
   const entry = document.getElementById('settings-avatar-entry');
   if (!entry) return;
   const { url: validAvatarUrl, showPhoto } = avatarViewState();
-  const logoEl = entry.querySelector('.settings-avatar-logo');
-  const photoEl = entry.querySelector('.settings-avatar-photo');
+  const logoEl = /** @type {HTMLElement|null} */ (entry.querySelector('.settings-avatar-logo'));
+  const photoEl = /** @type {HTMLElement|null} */ (entry.querySelector('.settings-avatar-photo'));
   if (photoEl) {
     // Same shared, readiness-gated slot paint as the Activity Bar avatar
     // (neblink.js paintAvatarSlot, 2026-09-15 flicker fix): the logo holds the
@@ -1254,7 +1254,7 @@ onMessage('autostartStatusResult', (msg) => {
     supported: msg.supported !== false,
     reason: msg.reason || '',
   };
-  const toggle = document.getElementById('toggle-autostart');
+  const toggle = /** @type {HTMLButtonElement|null} */ (document.getElementById('toggle-autostart'));
   if (toggle) {
     setToggleState(toggle, state.autostartStatus.enabled);
     toggle.disabled = !state.autostartStatus.supported; // native button disabled — :disabled styling
@@ -1346,7 +1346,7 @@ function bindSettingsEvents(content, cfg) {
   // are displayed at their nearest level (no migration needed — saving
   // rewrites the canonical number for that level).
   const EFFORT_BUDGETS = { low: 2048, medium: 8192, high: 32768 };
-  document.getElementById('cfg-thinking-effort')?.addEventListener('change', function() {
+  document.getElementById('cfg-thinking-effort')?.addEventListener('change', /** @this {HTMLSelectElement} */ function() {
     if (this.value === 'off') {
       state.thinkingMode = null;
     } else {
@@ -1424,9 +1424,9 @@ function bindSettingsEvents(content, cfg) {
 
   document.getElementById('btn-save-jev')?.addEventListener('click', async function() {
     const enabled = document.getElementById('toggle-jev')?.classList.contains('on') || false;
-    const provider = document.getElementById('cfg-jev-provider')?.value || 'typesafe-jev';
-    const endpoint = document.getElementById('cfg-jev-endpoint')?.value.trim() || '';
-    const keyRef = document.getElementById('cfg-jev-keyref')?.value.trim() || '';
+    const provider = (/** @type {HTMLSelectElement|null} */ (document.getElementById('cfg-jev-provider')))?.value || 'typesafe-jev';
+    const endpoint = (/** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-endpoint')))?.value.trim() || '';
+    const keyRef = (/** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-keyref')))?.value.trim() || '';
     const body = { enabled, provider };
     if (endpoint) body.endpoint = endpoint;
     if (keyRef) body.keyRef = keyRef;
@@ -1458,9 +1458,9 @@ function bindSettingsEvents(content, cfg) {
   // 当前值即被测对象（点击时现读——未保存的 endpoint/keyRef 改动照样测）。
   bindJevTestButton(content, {
     getForm: () => ({
-      provider: document.getElementById('cfg-jev-provider')?.value || '',
-      endpoint: document.getElementById('cfg-jev-endpoint')?.value.trim() || '',
-      keyRef: document.getElementById('cfg-jev-keyref')?.value.trim() || '',
+      provider: (/** @type {HTMLSelectElement|null} */ (document.getElementById('cfg-jev-provider')))?.value || '',
+      endpoint: (/** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-endpoint')))?.value.trim() || '',
+      keyRef: (/** @type {HTMLInputElement|null} */ (document.getElementById('cfg-jev-keyref')))?.value.trim() || '',
     }),
   });
 
@@ -1551,7 +1551,7 @@ function bindSettingsEvents(content, cfg) {
     if (!list) return;
     const idx = list.children.length;
     list.insertAdjacentHTML('beforeend', buildSegmentRowHtml({ start: '', end: '' }, idx));
-    list.querySelector(`[data-seg-index="${idx}"] [data-role="start"]`)?.focus();
+    (/** @type {HTMLElement|null} */ (list.querySelector(`[data-seg-index="${idx}"] [data-role="start"]`)))?.focus();
     markScheduleDirty();
   });
 
@@ -1576,9 +1576,9 @@ function bindSettingsEvents(content, cfg) {
   // backend merge keeps the stored key (A2: an empty string would REPLACE
   // stt-config.json without the key and drop the service to unconfigured).
   function sendSttConfig(clear) {
-    const endpoint = clear ? '' : (document.getElementById('stt-endpoint')?.value.trim() || '');
-    const model = clear ? '' : (document.getElementById('stt-model')?.value.trim() || '');
-    const apiKey = clear ? '' : (document.getElementById('stt-apikey')?.value.trim() || '');
+    const endpoint = clear ? '' : ((/** @type {HTMLInputElement|null} */ (document.getElementById('stt-endpoint')))?.value.trim() || '');
+    const model = clear ? '' : ((/** @type {HTMLInputElement|null} */ (document.getElementById('stt-model')))?.value.trim() || '');
+    const apiKey = clear ? '' : ((/** @type {HTMLInputElement|null} */ (document.getElementById('stt-apikey')))?.value.trim() || '');
     // D 件（2026-10-28）：总开关随保存一起提交（显式布尔；后端三态合并——
     // 省略路径仅旧前端负载会出现）。关 = STT 整体停用：清空三串 + enabled=false
     // 时后端保留 {enabled:false} 文件（不再整体删档），停用态跨重启保持。
@@ -1625,7 +1625,7 @@ function bindSettingsEvents(content, cfg) {
   if (ORB_SETTINGS_VISIBLE) bindAppearanceEvents(content);
 
   // Language selector
-  document.getElementById('cfg-language')?.addEventListener('change', function() {
+  document.getElementById('cfg-language')?.addEventListener('change', /** @this {HTMLSelectElement} */ function() {
     setLocale(this.value);
     renderSettings();
   });
@@ -1701,7 +1701,7 @@ function bindSettingsEvents(content, cfg) {
   }
 
   document.getElementById('btn-save-config')?.addEventListener('click', () => {
-    const cfg = document.getElementById('config-editor').value;
+    const cfg = (/** @type {HTMLTextAreaElement} */ (document.getElementById('config-editor'))).value;
     try {
       JSON.parse(cfg);
       sendWs({type: 'updateConfig', config: cfg});
@@ -1915,11 +1915,11 @@ function renderOneSessionItem(s, container, opts = {}) {
     '</div>' +
     deleteBtnHtml;
   // Double-click to rename (only in normal mode)
-  const nameEl = item.querySelector('.session-name');
+  const nameEl = /** @type {HTMLElement} */ (item.querySelector('.session-name'));
   if (state.selectedSessionIds.size === 0) {
     nameEl.addEventListener('dblclick', (e) => {
       e.stopPropagation();
-      nameEl.contentEditable = true;
+      nameEl.contentEditable = 'true';
       nameEl.focus();
       const range = document.createRange();
       range.selectNodeContents(nameEl);
@@ -1928,7 +1928,7 @@ function renderOneSessionItem(s, container, opts = {}) {
       sel.addRange(range);
     });
     const finishRename = () => {
-      nameEl.contentEditable = false;
+      nameEl.contentEditable = 'false';
       const newName = nameEl.textContent.trim();
       if (newName && newName !== s.name) {
         sendWs({type: 'renameSession', sessionId: s.id, name: newName});
@@ -1947,14 +1947,14 @@ function renderOneSessionItem(s, container, opts = {}) {
     });
   }
   if (state.selectedSessionIds.size === 0) {
-    item.querySelector('.session-delete').onclick = (e) => {
+    (/** @type {HTMLElement} */ (item.querySelector('.session-delete'))).onclick = (e) => {
       e.stopPropagation();
       if (typeof window.__showDeleteModal === 'function') window.__showDeleteModal(s.id, s.name);
     };
   }
   item.onclick = (e) => {
-    if (e.target.closest('.session-name[contenteditable="true"]')) return;
-    if (e.target.closest('.session-delete')) return;
+    if ((/** @type {Element} */ (e.target)).closest('.session-name[contenteditable="true"]')) return;
+    if ((/** @type {Element} */ (e.target)).closest('.session-delete')) return;
     const hasSelection = state.selectedSessionIds.size > 0;
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
@@ -2623,7 +2623,7 @@ function showSessionCtxMenu(x, y, sessionId) {
 
   // Submenu interactions
   const subTrigger = menu.querySelector('[data-action="move-to-folder"]');
-  const subMenu = menu.querySelector('#ctx-folder-submenu');
+  const subMenu = /** @type {HTMLElement} */ (menu.querySelector('#ctx-folder-submenu'));
   let subTimer = null;
 
   subTrigger.addEventListener('mouseenter', () => {
@@ -2641,7 +2641,7 @@ function showSessionCtxMenu(x, y, sessionId) {
 
   subMenu.querySelectorAll('.ctx-sub').forEach(el => {
     el.addEventListener('click', () => {
-      const fid = el.dataset.folderId;
+      const fid = (/** @type {HTMLElement} */ (el)).dataset.folderId;
       sendWs({ type: 'moveSessionToFolder', sessionId, folderId: fid || null });
       dismissCtxMenu();
     });
@@ -2962,22 +2962,23 @@ function markSessionActivity(sessionId) {
 
 // Listen for state changes from other modules (dispatched via CustomEvent)
 window.addEventListener('session-busy', (e) => {
-  updateSessionStatus(e.detail.sessionId);
+  updateSessionStatus(/** @type {CustomEvent<{sessionId: string}>} */ (e).detail.sessionId);
   computeAgentStates();
 });
 
 window.addEventListener('session-attention', (e) => {
-  setSessionAttention(e.detail.sessionId, e.detail.attention);
+  const detail = /** @type {CustomEvent<{sessionId: string, attention: string}>} */ (e).detail;
+  setSessionAttention(detail.sessionId, detail.attention);
   computeAgentStates();
 });
 
 window.addEventListener('session-unread', (e) => {
-  updateSessionStatus(e.detail.sessionId);
-  markSessionActivity(e.detail.sessionId);
+  updateSessionStatus(/** @type {CustomEvent<{sessionId: string}>} */ (e).detail.sessionId);
+  markSessionActivity(/** @type {CustomEvent<{sessionId: string}>} */ (e).detail.sessionId);
 });
 
 window.addEventListener('session-compacting', (e) => {
-  updateSessionStatus(e.detail.sessionId);
+  updateSessionStatus(/** @type {CustomEvent<{sessionId: string}>} */ (e).detail.sessionId);
   computeAgentStates();
 });
 
@@ -3056,7 +3057,7 @@ export function createNewFolder(parentFolderId) {
     '</div>';
   container.insertBefore(row, container.firstChild);
 
-  const input = row.querySelector('.folder-new-input');
+  const input = /** @type {HTMLInputElement} */ (row.querySelector('.folder-new-input'));
   if (typeof lucide !== 'undefined') createIconsIn(row);
   input.focus();
 
@@ -3178,8 +3179,8 @@ function renderFolderItem(folder, sessions, container) {
 
   // VSCode-style: click selects folder + expand/collapse
   folderEl.addEventListener('click', (e) => {
-    if (e.target.closest('.folder-delete')) return;
-    if (e.target.closest('.folder-name[contenteditable="true"]')) return;
+    if ((/** @type {Element} */ (e.target)).closest('.folder-delete')) return;
+    if ((/** @type {Element} */ (e.target)).closest('.folder-name[contenteditable="true"]')) return;
     setActiveFolder(folder.id);
     toggleFolder(folder.id);
   });
@@ -3191,9 +3192,9 @@ function renderFolderItem(folder, sessions, container) {
   });
 
   // Double-click to rename folder (inline, same as session)
-  const folderNameEl = folderEl.querySelector('.folder-name');
+  const folderNameEl = /** @type {HTMLElement} */ (folderEl.querySelector('.folder-name'));
   const startFolderRename = () => {
-    folderNameEl.contentEditable = true;
+    folderNameEl.contentEditable = 'true';
     folderNameEl.focus();
     const range = document.createRange();
     range.selectNodeContents(folderNameEl);
@@ -3206,7 +3207,7 @@ function renderFolderItem(folder, sessions, container) {
     startFolderRename();
   });
   const finishFolderRename = () => {
-    folderNameEl.contentEditable = false;
+    folderNameEl.contentEditable = 'false';
     const newName = folderNameEl.textContent.trim();
     if (newName && newName !== folder.name) {
       sendWs({ type: 'renameFolder', folderId: folder.id, name: newName });
@@ -3280,7 +3281,7 @@ function renderFolderItem(folder, sessions, container) {
       folderEl.classList.add('drag-over');
     });
     childrenContainer.addEventListener('dragleave', (e) => {
-      if (!childrenContainer.contains(e.relatedTarget)) {
+      if (!childrenContainer.contains(/** @type {Node|null} */ (e.relatedTarget))) {
         folderEl.classList.remove('drag-over');
       }
     });
@@ -3343,7 +3344,7 @@ function showFolderCtxMenu(x, y, folderId) {
     const folderEl = state.dom.sessionList.querySelector(`.folder-item[data-folder-id="${folderId}"]`);
     const nameEl = folderEl ? folderEl.querySelector('.folder-name') : null;
     if (nameEl) {
-      nameEl.contentEditable = true;
+      nameEl.contentEditable = 'true';
       nameEl.focus();
       const range = document.createRange();
       range.selectNodeContents(nameEl);

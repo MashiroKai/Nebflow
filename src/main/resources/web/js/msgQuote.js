@@ -410,8 +410,8 @@ function renderQuoteAttStrip(atts) {
         cell.className = 'msg-quote-att-media';
         const media = document.createElement(a.type === 'video' ? 'video' : 'img');
         media.className = 'msg-quote-att-img';
-        if (a.type === 'video') { media.muted = true; media.playsInline = true; media.preload = 'metadata'; }
-        else { media.alt = a.name || ''; media.draggable = false; }
+        if (a.type === 'video') { const v = /** @type {HTMLVideoElement} */ (media); v.muted = true; v.playsInline = true; v.preload = 'metadata'; }
+        else { const img = /** @type {HTMLImageElement} */ (media); img.alt = a.name || ''; img.draggable = false; }
         pop.hydrateMedia(media, item, null);
         cell.appendChild(media);
         if (a.path) {

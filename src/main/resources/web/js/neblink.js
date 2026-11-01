@@ -50,7 +50,7 @@ let neblinkState = {
   // （`relay.available === true` 才算通道可用）。形状 = /api/neblink/status 的
   // `relay` 对象原文 {available, authRejected, lastRejectedStatusCode,
   // lastRejectedAt, selfHeal}（NeblinkRelayTunnel.statusJson）；未取到 = null。
-  relay: /** @type {{available?: boolean, authRejected?: boolean, lastRejectedStatusCode?: number|null, lastRejectedAt?: number|null, selfHeal?: string}|null} */ (null),
+  relay: /** @type {{available?: boolean, authRejected?: boolean, lastRejectedStatusCode?: number|null, lastRejectedAt?: number|null, selfHeal?: string, signedOutElsewhere?: boolean}|null} */ (null),
   // 缺陷 A（加法字段）：失败分类码（`/auth/state` 的 `code`）；'' = 无分类。
   pairErrorCode: '',
   // 缺陷 A（加法字段）：`/status` 的 `credentialIssue` 原文（{code, reason, action, error}）；

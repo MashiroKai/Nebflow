@@ -202,8 +202,8 @@ export function renderAgentManager() {
 
     // Bind card clicks (single = preview, double = pinned — VS Code style)
     content.querySelectorAll('.agent-mgr-card').forEach(card => {
-      card.addEventListener('click', () => openAgentDetail(card.dataset.agent));
-      card.addEventListener('dblclick', () => openAgentDetail(card.dataset.agent, true));
+      card.addEventListener('click', () => openAgentDetail((/** @type {HTMLElement} */ (card)).dataset.agent));
+      card.addEventListener('dblclick', () => openAgentDetail((/** @type {HTMLElement} */ (card)).dataset.agent, true));
     });
 
     // Async-populate model tags
@@ -414,7 +414,7 @@ export function isAgentsTabOpen() {
 //   • canvas-tab-restore 仍监听 'agents'：旧会话持久化的智能体标签页刷新后
 //     照常渲染（保留函数只藏入口，不悬挂已存在的标签页）。
 window.addEventListener('canvas-tab-restore', (e) => {
-  if (e.detail?.id === 'agents') {
+  if ((/** @type {CustomEvent<{id?: string}>} */ (e)).detail?.id === 'agents') {
     renderAgentManager();
   }
 });

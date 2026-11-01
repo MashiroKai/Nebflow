@@ -130,7 +130,7 @@ export function applyLocaleToHtml() {
     if (!el) continue;
     if (attr === 'text') el.textContent = t(key);
     else if (attr === 'title') el.title = t(key);
-    else if (attr === 'placeholder') el.placeholder = t(key);
+    else if (attr === 'placeholder') (/** @type {HTMLInputElement} */ (el)).placeholder = t(key);
   }
 
   // Buttons/titles not covered by the map above
@@ -157,7 +157,7 @@ export function applyLocaleToHtml() {
 
   // Agent modal field labels (by data-i18n attribute)
   document.querySelectorAll('[data-i18n]').forEach(el => {
-    el.textContent = t(el.dataset.i18n);
+    el.textContent = t((/** @type {HTMLElement} */ (el)).dataset.i18n);
   });
 
   // (The agent editor modal's placeholder/button localization was retired
@@ -166,7 +166,7 @@ export function applyLocaleToHtml() {
 
   // Memory tabs
   document.querySelectorAll('.memory-tab').forEach(tab => {
-    const scope = tab.dataset.scope;
+    const scope = (/** @type {HTMLElement} */ (tab)).dataset.scope;
     const key = 'memory.' + scope;
     tab.textContent = t(key);
   });
@@ -192,7 +192,7 @@ export function applyLocaleToHtml() {
     'auto-all': 'bypass.autoAll',
   };
   document.querySelectorAll('#bypass-menu button[data-mode]').forEach(btn => {
-    const key = bypassModeKeys[btn.dataset.mode];
+    const key = bypassModeKeys[(/** @type {HTMLElement} */ (btn)).dataset.mode];
     if (key) btn.textContent = t(key);
   });
 
@@ -202,7 +202,7 @@ export function applyLocaleToHtml() {
 
   // Settings nav item title
   const settingsNavItem = document.querySelector('.nav-item[data-tab="settings"]');
-  if (settingsNavItem) settingsNavItem.title = t('nav.settings');
+  if (settingsNavItem) (/** @type {HTMLElement} */ (settingsNavItem)).title = t('nav.settings');
 
   // Session panel title
   const sessionPanelTitle = document.querySelector('#panel-sessions .panel-title');

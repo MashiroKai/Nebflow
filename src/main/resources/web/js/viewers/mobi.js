@@ -246,7 +246,7 @@ export function mobiChaptersFromHtml(html, fallbackTitle) {
       if (child.nodeType === 1 && isSplit(child)) {
         groups.push([]);
         // h2 界 = 新章题，留在新章作首节点（段题来源）；mbp:pagebreak 丢弃。
-        if (child.tagName !== 'MBP:PAGEBREAK') groups[groups.length - 1].push(child);
+        if ((/** @type {Element} */ (child)).tagName !== 'MBP:PAGEBREAK') groups[groups.length - 1].push(child);
       } else {
         groups[groups.length - 1].push(child);
       }
@@ -359,7 +359,7 @@ async function viewMobi(pane, ctx) {
       unsupported: 'mobi.unsupported',
       'too-big': 'mobi.tooBig',
       invalid: 'mobi.invalid',
-    }[book.reason] || 'mobi.invalid';
+    }[/** @type {{ok:false, reason:string}} */ (book).reason] || 'mobi.invalid';
     renderDownloadOnly(pane, buffer, fileName, key);
     return;
   }
@@ -375,6 +375,7 @@ async function viewMobi(pane, ctx) {
     return text;
   };
 
+  /** @type {Parameters<typeof mountReader>[1]} 正文适配器（形由 readerChrome.mountReader 定） */
   const adapter = {
     title: bookTitle,
     chapterCount: chapters.length,
@@ -390,6 +391,7 @@ async function viewMobi(pane, ctx) {
       bookRef: absPath || ('attachment:' + (fileName || 'mobi')),
       chapterText,
     },
+    /** @param {HTMLElement} el @param {number} i */
     mountChapter(el, i) {
       const chapter = chapters[i];
       if (!chapter) return;

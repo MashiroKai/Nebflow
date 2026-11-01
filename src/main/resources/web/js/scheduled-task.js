@@ -114,7 +114,7 @@ function formatTriggerTime(epochMs) {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const diffDays = Math.round((target - today) / 86400000);
+  const diffDays = Math.round((target.getTime() - today.getTime()) / 86400000);
 
   const time = d.toLocaleTimeString(getLocale() === 'zh-CN' ? 'zh-CN' : 'en', {
     hour: '2-digit', minute: '2-digit', hour12: false
@@ -685,8 +685,8 @@ function buildInlineCreate() {
     </div>`;
 
   // Bind events
-  const input = wrap.querySelector('#reminder-inline-input');
-  const timeInput = wrap.querySelector('#reminder-time-input');
+  const input = /** @type {HTMLInputElement|null} */ (wrap.querySelector('#reminder-inline-input'));
+  const timeInput = /** @type {HTMLInputElement|null} */ (wrap.querySelector('#reminder-time-input'));
   const repeatSeg = wrap.querySelector('#reminder-repeat-seg');
 
   // Repeat segmented control — the active pill is currentRepeat; values match
@@ -1006,8 +1006,8 @@ function flushPendingCreates() {
 }
 
 function saveInlineTask() {
-  const input = document.querySelector('#reminder-inline-input');
-  const timeInput = document.querySelector('#reminder-time-input');
+  const input = /** @type {HTMLInputElement|null} */ (document.querySelector('#reminder-inline-input'));
+  const timeInput = /** @type {HTMLInputElement|null} */ (document.querySelector('#reminder-time-input'));
   if (!input || !timeInput) return;
 
   const content = input.value.trim();
@@ -1344,13 +1344,14 @@ export function initScheduledTask() {
     // 「面外点击」而误关面板（dock 批 2026-10-29 p3 T5 实测：创建态点分组签
     // 取消 → 重渲 → 面板被误关）。真·面外点击目标恒在树内，守卫不影响。
     if (!(e.target instanceof Node) || !e.target.isConnected) return;
-    if (panel && panelOpen && !panel.contains(e.target) && !e.target.closest('#reminder-btn')) {
+    const hit = /** @type {Element} */ (e.target);
+    if (panel && panelOpen && !panel.contains(hit) && !hit.closest('#reminder-btn')) {
       closePanel();
     }
     // 改版批：待办页同款 outside-close（手机层页被收编进页面体且满铺——
     // 页内点击恒 contains，不会误关；栈返回由 navController 管）。
     const todoPage = $('#todo-page');
-    if (todoPage && todoPageOpen && !todoPage.contains(e.target) && !e.target.closest('.fm-todo-entry')) {
+    if (todoPage && todoPageOpen && !todoPage.contains(hit) && !hit.closest('.fm-todo-entry')) {
       closeTodoPage();
     }
   });

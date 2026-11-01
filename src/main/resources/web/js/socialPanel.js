@@ -243,7 +243,9 @@ import {
 
 // ── State ────────────────────────────────────────────────────────────────
 /** Last config truth read from the backend, keyed by channel id.
- *  @type {Record<string, {enabled?: boolean, fields?: Record<string, string>}>} */
+ *  bindError = the last failed bind's rollback note (engine-written, bind-transactional
+ *  batch 2026-10-20) — rendered as an explicit failed state.
+ *  @type {Record<string, {enabled?: boolean, fields?: Record<string, string>, bindError?: string}>} */
 let configByChannel = {};
 /** Whether the last `fetchConfig()` SUCCEEDED (feishu-boot-seal, 2026-09-28).
  *  🔴 Without this flag an unready panel is indistinguishable from an empty

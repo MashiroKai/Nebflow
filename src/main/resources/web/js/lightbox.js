@@ -257,7 +257,7 @@ export function closeLightbox() {
 export function initLightbox() {
   // 1. Delegated click on tagged markdown images (chat + canvas md viewer)
   document.addEventListener('click', (e) => {
-    const img = e.target.closest('img.nf-zoom-img');
+    const img = /** @type {HTMLImageElement|null} */ ((/** @type {Element} */ (e.target)).closest('img.nf-zoom-img'));
     if (!img) return;
     e.preventDefault();
     openLightbox(img.currentSrc || img.src, img.alt);

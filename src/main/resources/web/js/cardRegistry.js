@@ -27,8 +27,9 @@ function buildThemeVarsCSS() {
   for (const sheet of document.styleSheets) {
     try {
       for (const rule of sheet.cssRules) {
-        if (rule.selectorText === ':root') {
-          for (const prop of rule.style) {
+        const styleRule = /** @type {CSSStyleRule} */ (rule);
+        if (styleRule.selectorText === ':root') {
+          for (const prop of styleRule.style) {
             if (prop.startsWith('--color-')) {
               const val = root.getPropertyValue(prop).trim();
               if (val) pairs.push(`${prop}:${val}`);
@@ -143,7 +144,7 @@ window.addEventListener('message', (e) => {
     return;
   }
   if (!e.data || !e.data._nfCardH) return;
-  const iframe = document.querySelector(`iframe[data-nf-card-id="${e.data.id}"]`);
+  const iframe = /** @type {HTMLIFrameElement|null} */ (document.querySelector(`iframe[data-nf-card-id="${e.data.id}"]`));
   if (iframe) {
     const isFirst = !_firstHeightDone.has(e.data.id);
     if (isFirst) {
@@ -444,7 +445,8 @@ function renderHtmlCard(container, html, title, warnings) {
   iframe.className = 'html-card-iframe';
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
   iframe.setAttribute('scrolling', 'no');
-  iframe.dataset.nfCardId = id;
+  // dataset is a DOMStringMap: assignment stringifies the numeric id.
+  iframe.dataset.nfCardId = String(id);
   wrap.appendChild(iframe);
 
   // Unresolved local references reported by the Card tool (carderr batch):
@@ -577,7 +579,7 @@ function renderHtmlCard(container, html, title, warnings) {
     // Register cleanup so mass DOM removal (session switch, history
     // reload) can release the observer + iframe browsing context instead
     // of leaking them (each leaked iframe keeps its own DOM+JS engine).
-    iframe._nfCleanup = () => {
+    (/** @type {{_nfCleanup?: () => void}} */ (iframe))._nfCleanup = () => {
       disposed = true;
       io.disconnect();
       widthObserver.disconnect();
@@ -667,9 +669,10 @@ export function renderWithRegistry(container, text, toolName) {
     if (!css) return;
     const vars = extractThemeVars(css);
     document.querySelectorAll('iframe[data-nf-card-id]').forEach(iframe => {
+      const frame = /** @type {HTMLIFrameElement} */ (iframe);
       try {
-        if (iframe.contentWindow) {
-          iframe.contentWindow.postMessage({ _nfThemeVars: vars }, '*');
+        if (frame.contentWindow) {
+          frame.contentWindow.postMessage({ _nfThemeVars: vars }, '*');
         }
       } catch (e) { /* cross-origin iframe, skip */ }
     });
