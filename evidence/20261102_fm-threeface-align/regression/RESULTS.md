@@ -92,7 +92,7 @@ FAIL  R4b 附件下载走既有鉴权路由 /api/friends/attachments/{id}  — c
 |---|---|---|---|
 | `imgmsg-send` | — | 17 条 | 全 `[]` |
 | `attcard-unify-shots` | 5 条 | 5 条 | 全 `[]` |
-| `msgmenu` | — | 10 条 | 全 `[]` |
+| `msgmenu` | — | 9 条 pageerror（无 console 门） | 全 `[]` |
 | `mvp2-device-client` | — | 3 条 | 全 `[]` |
 | `rcptcode-friendterminal` | — | 5 条 | 全 `[]` |
 | `busy-lifecycle` | — | 1 条 | `[]` |
@@ -110,3 +110,25 @@ FAIL  R4b 附件下载走既有鉴权路由 /api/friends/attachments/{id}  — c
 
 - 平台：macOS（darwin 25.4.0）· node + playwright 1.62.0 · `NODE_PATH=/opt/homebrew/lib/node_modules`（全局 playwright 供独立脚本解析）
 - 未起 sbt/java；未碰 main；证据仅落 `evidence/20261102_fm-threeface-align/`
+
+## 既有红的独立复验（合并前裁判复核，2026-11-02 07:0x）
+
+两处红先前由本批 worker 判为「三树对照相同 ⇒ 既有红」。合并前裁判用**官方 before-tree 开关**独立复验（`git archive main src/main/resources/web` 解到 `/tmp/main-web-tree`，同一支探针跑纯 main 树），结果：
+
+| spec | 开关 | main 树读数 | 本支读数 | 结论 |
+|---|---|---|---|---|
+| `msgmenu.spec.mjs` | `MM_WEB_ROOT=/tmp/main-web-tree/src/main/resources/web` | `=== msgmenu after: failures=1 ===`（同一 S6 光球挂载点） | failures=1（同一 S6） | **既有红确认**：纯 main 树同样红，与本批改动无关 |
+| `mvp2-device-client.spec.mjs` | `MVP2_WEB_ROOT=/tmp/main-web-tree/src/main/resources/web` | `[BEFORE-TREE] failures = 1`（R4b `count=2`） | failures=1（R4b `count=2`） | **既有红确认**：main 树同样红 |
+
+复跑命令（可独立复核）：
+
+```bash
+cd "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-c1142b9b"
+ln -sfn "/Users/kaiyu/Claude code/Stand/node_modules" node_modules
+rm -rf /tmp/main-web-tree && mkdir -p /tmp/main-web-tree
+git archive main src/main/resources/web | tar -x -C /tmp/main-web-tree
+MM_WEB_ROOT=/tmp/main-web-tree/src/main/resources/web NODE_PATH=/opt/homebrew/lib/node_modules node tests/msgmenu.spec.mjs
+MVP2_WEB_ROOT=/tmp/main-web-tree/src/main/resources/web NODE_PATH=/opt/homebrew/lib/node_modules node tests/mvp2-device-client.spec.mjs
+```
+
+⇒ 两处红**非本批引入**，不阻断合并；观测面与修法（收窄 spec 判据）留待另立批。

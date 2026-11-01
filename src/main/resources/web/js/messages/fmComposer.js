@@ -19,7 +19,7 @@
 // busy↔idle 中断键 swap、附件条带、排队/回执面）；三面是**轻量 composer**
 // （单行 input + 四键位），只有**视觉语言与主会话同款**：输入框 `.cfg-input`、
 // 图标键 `.icon-btn` 档、发送键族（sapphire.css 发送族块 `.cfg-btn.fm-send-btn`）。
-// 全部差异逐条列在批文档（docs/20261102_*_fm-three-face-align*.md）。
+// 全部差异逐条列在批文档（docs/20261102_234900_fm-threeface-align__delegate-nebflow-c1142b9b.md）。
 //
 // 依赖方向：i18n / voiceEngine / imeGuard / messages/elements —— 均不回指
 // messages.js（无环；voiceEngine 是既有单点，本模块禁新造第二套语音机制）。

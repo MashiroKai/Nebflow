@@ -1390,7 +1390,7 @@ function renderChatModal(conv) {
   // 三面零分叉）。本函数只传宿主钩子（发送 = `dispatchSend`、附件 = `dispatchFiles`、
   // 可用态收敛 = `syncComposerSend` —— 三者仍是各自单点，组件不复制任何分流判据）。
   // 与主会话输入组件只共享**视觉语言**、不共享实现（主会话 = input.js 全家桶），
-  // 差异清单见批文档 docs/20261102_*_fm-three-face-align*.md。
+  // 差异清单见批文档 docs/20261102_234900_fm-threeface-align__delegate-nebflow-c1142b9b.md。
   const composer = buildFmComposer({
     // 附件入口可用面 = **三面同源**：设备窗恒有（`sendDeviceFiles` 单点）；好友 / 群窗由
     // `attachAvailable(conv)` 判（寻址面在 `attachTargetOf` 单点）。不可用面不挂假入口。

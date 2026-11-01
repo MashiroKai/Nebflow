@@ -84,7 +84,7 @@ scope: 好友/群/设备三面 composer 收口单组件（messages/fmComposer.js
 | 13 | 输入历史 ↑↓ | ➖ 无（`messages.js` 全文零 `inputHistory` 引用） | ➖ 同左 | ➖ 同左 | △ `state.inputHistory` + `ArrowUp/ArrowDown` 召回（`input.js:505` 写入、`input.js:1840-1860` 召回） | 历史召回是「对同一 agent 反复下指令」的效率件；fm 窗多会话并行、召回会把 A 会话的话带进 B 会话（语义错误），故不做 |
 | 14 | slash + mention 菜单 | ➖ 无（`fmComposer.js` 只 import `i18n / voiceEngine / imeGuard / elements`，零 slash/mention 依赖，`fmComposer.js:27-30`） | ➖ 同左 | ➖ 同左 | △ `handleSlash` + `updateSlashDropdown`（`input.js:51-52`、`input.js:2205-2211`）+ `bindMention`（`input.js:2207-2211`，实现 `js/mentionComplete.js`） | slash 命令 = agent 会话操作（`/ask`、`/compact`、skill 激活）；mention = @项目/文件寻址，只在有 agent 上下文时成立。fm 三面无此语义，挂上即空菜单 |
 
-**结论（验收命题成立性）**：第 1–14 行中，**好友 / 群 / 设备三列逐格完全相同**（✅/➖ 对齐，无一处分叉）；与主会话的差异共 8 项（#2 多行、#4 语音形态、#5 录音态挂点、#6 附件几何、#7 发送键几何与族籍、#9 引用承载容器、#10 多选转发、#11 排队、#12 中断键、#13 输入历史、#14 菜单），**全部有产品面原因**，无一项是「漏做」。共享层：`imeGuard`（#3）、`voiceEngine`（#4 管线）、`formatFooterTime`（§3 footer）、发送族取色（#7）、`renderRefBlock`（#9）、`showPopupMenu`（#10 入口壳）均为**同一实现单源**。
+**结论（验收命题成立性）**：第 1–14 行中，**好友 / 群 / 设备三列逐格完全相同**（✅/➖ 对齐，无一处分叉）；与主会话的差异共 11 项（#2 多行、#4 语音形态、#5 录音态挂点、#6 附件几何、#7 发送键几何与族籍、#9 引用承载容器、#10 多选转发、#11 排队、#12 中断键、#13 输入历史、#14 菜单），**全部有产品面原因**，无一项是「漏做」。共享层：`imeGuard`（#3）、`voiceEngine`（#4 管线）、`formatFooterTime`（§3 footer）、发送族取色（#7）、`renderRefBlock`（#9）、`showPopupMenu`（#10 入口壳）均为**同一实现单源**。
 
 补充小项（不在 14 行内，一并申报）：Shift+Enter 换行（三面 ➖ / 主会话 ✅，`input/composer.js:22-23`）；附件条带预览（三面 ➖ / 主会话 ✅ `index.html:880`）；草稿持久化（三面 ➖ / 主会话 ✅ `input.js:394 saveInputDraft`）。
 
@@ -165,7 +165,7 @@ scope: 好友/群/设备三面 composer 收口单组件（messages/fmComposer.js
 - `msgmenu S6 单一光球挂载点`：读数 `{wrap:2, bubble:2, canvas:2, css:2, ripple:0, bound:true}`，谓词要求各恰 1（`msgmenu.spec.mjs:1155`）。根因 = `index.html:938-944` 的全双工 overlay `#vmo-orb-wrap` 同样带 `.mic-orb-wrap/.micbubble/.orb-canvas/.css-orb` 四类；该文件与本批零交集。三树读数逐字相同（85/1、还原树 85/1、main 82/1）。建议 spec 侧把计数收窄到 `#mic-orb-wrap` 子树。
 - `mvp2 R4b 附件下载走既有鉴权路由`：读数 `count=2`，要求 `attDownload===1`（`mvp2-device-client.spec.mjs:327`）。推断 = 一次点击腿 + 一次媒体面字节填充腿被同一 stub 计数两次；本批只去掉 `fm-att-media` 类（只作用叠卡组，`messages.js:1930`），不涉及设备单件卡下载键数量。三树同读数（43/1、43/1、main 34/1）。
 
-**零 console error 附加门**：imgmsg 17 条、attcard 5 条 console + 5 条 pageerror、msgmenu 10 条、mvp2 3 条、rcptcode 5 条、busy-lifecycle 1 条、friends-dev 3 条 —— 全 PASS，读数均为 `[]`。`file-bytes-single-fetch` 与 `ime-guard` 脚本内无 console/pageerror 门，**显式申报不适用**（非静默略过）。
+**零 console error 附加门**：imgmsg 17 条、attcard 5 条 console + 5 条 pageerror、msgmenu **9 条 pageerror**（该 spec 无 console-error 门，只采集 pageerror）、mvp2 3 条、rcptcode 5 条、busy-lifecycle 1 条、friends-dev 3 条 —— 全 PASS，读数均为 `[]`。`file-bytes-single-fetch` 与 `ime-guard` 脚本内无 console/pageerror 门，**显式申报不适用**（非静默略过）。
 
 ## §4 未做 / 申报项
 
