@@ -1,0 +1,1936 @@
+{
+  "web": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-c1142b9b/src/main/resources/web",
+  "out": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-c1142b9b/evidence/20261102_fm-threeface-align/shots",
+  "fixedClock": "2026-11-04T07:30:00.000Z",
+  "panels": {},
+  "schemes": {
+    "light": {
+      "composer": {
+        "friend": {
+          "hasBar": true,
+          "bar": {
+            "x": 361,
+            "y": 703,
+            "w": 558,
+            "h": 61,
+            "radius": "0px",
+            "display": "flex",
+            "cls": "fm-input-bar",
+            "tag": "DIV",
+            "disabled": false
+          },
+          "mic": {
+            "x": 377,
+            "y": 714,
+            "w": 36,
+            "h": 36,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn fm-mic-btn",
+            "tag": "BUTTON",
+            "disabled": false
+          },
+          "input": {
+            "x": 421,
+            "y": 714,
+            "w": 384,
+            "h": 36,
+            "radius": "8px",
+            "display": "block",
+            "cls": "cfg-input fm-input",
+            "tag": "INPUT",
+            "disabled": false
+          },
+          "attach": {
+            "x": 813,
+            "y": 714,
+            "w": 32,
+            "h": 32,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn dropbox-attach-btn fm-attach-btn",
+            "tag": "BUTTON",
+            "disabled": false
+          },
+          "send": {
+            "x": 853,
+            "y": 714,
+            "w": 50,
+            "h": 36,
+            "radius": "10px",
+            "display": "block",
+            "cls": "cfg-btn cfg-btn-primary fm-send-btn",
+            "tag": "BUTTON",
+            "disabled": true
+          },
+          "order": [
+            "BUTTON.icon-btn.fm-mic-btn",
+            "INPUT.cfg-input.fm-input",
+            "BUTTON.icon-btn.dropbox-attach-btn.fm-attach-btn",
+            "INPUT",
+            "BUTTON.cfg-btn.cfg-btn-primary.fm-send-btn"
+          ],
+          "inputCs": {
+            "radius": "8px",
+            "height": "36px",
+            "fontSize": "12px",
+            "bg": "rgba(0, 0, 0, 0.024)"
+          },
+          "sendFamilyMember": true,
+          "micIcon": true,
+          "attachIcon": true,
+          "sttDisabledBody": false
+        },
+        "group": {
+          "hasBar": true,
+          "bar": {
+            "x": 361,
+            "y": 703,
+            "w": 558,
+            "h": 61,
+            "radius": "0px",
+            "display": "flex",
+            "cls": "fm-input-bar",
+            "tag": "DIV",
+            "disabled": false
+          },
+          "mic": {
+            "x": 377,
+            "y": 714,
+            "w": 36,
+            "h": 36,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn fm-mic-btn",
+            "tag": "BUTTON",
+            "disabled": false
+          },
+          "input": {
+            "x": 421,
+            "y": 714,
+            "w": 384,
+            "h": 36,
+            "radius": "8px",
+            "display": "block",
+            "cls": "cfg-input fm-input",
+            "tag": "INPUT",
+            "disabled": false
+          },
+          "attach": {
+            "x": 813,
+            "y": 714,
+            "w": 32,
+            "h": 32,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn dropbox-attach-btn fm-attach-btn",
+            "tag": "BUTTON",
+            "disabled": false
+          },
+          "send": {
+            "x": 853,
+            "y": 714,
+            "w": 50,
+            "h": 36,
+            "radius": "10px",
+            "display": "block",
+            "cls": "cfg-btn cfg-btn-primary fm-send-btn",
+            "tag": "BUTTON",
+            "disabled": true
+          },
+          "order": [
+            "BUTTON.icon-btn.fm-mic-btn",
+            "INPUT.cfg-input.fm-input",
+            "BUTTON.icon-btn.dropbox-attach-btn.fm-attach-btn",
+            "INPUT",
+            "BUTTON.cfg-btn.cfg-btn-primary.fm-send-btn"
+          ],
+          "inputCs": {
+            "radius": "8px",
+            "height": "36px",
+            "fontSize": "12px",
+            "bg": "rgba(0, 0, 0, 0.024)"
+          },
+          "sendFamilyMember": true,
+          "micIcon": true,
+          "attachIcon": true,
+          "sttDisabledBody": false
+        },
+        "device": {
+          "hasBar": true,
+          "bar": {
+            "x": 361,
+            "y": 703,
+            "w": 558,
+            "h": 61,
+            "radius": "0px",
+            "display": "flex",
+            "cls": "fm-input-bar",
+            "tag": "DIV",
+            "disabled": false
+          },
+          "mic": {
+            "x": 377,
+            "y": 714,
+            "w": 36,
+            "h": 36,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn fm-mic-btn",
+            "tag": "BUTTON",
+            "disabled": false
+          },
+          "input": {
+            "x": 421,
+            "y": 714,
+            "w": 384,
+            "h": 36,
+            "radius": "8px",
+            "display": "block",
+            "cls": "cfg-input fm-input",
+            "tag": "INPUT",
+            "disabled": false
+          },
+          "attach": {
+            "x": 813,
+            "y": 714,
+            "w": 32,
+            "h": 32,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn dropbox-attach-btn fm-attach-btn",
+            "tag": "BUTTON",
+            "disabled": false
+          },
+          "send": {
+            "x": 853,
+            "y": 714,
+            "w": 50,
+            "h": 36,
+            "radius": "10px",
+            "display": "block",
+            "cls": "cfg-btn cfg-btn-primary fm-send-btn",
+            "tag": "BUTTON",
+            "disabled": true
+          },
+          "order": [
+            "BUTTON.icon-btn.fm-mic-btn",
+            "INPUT.cfg-input.fm-input",
+            "BUTTON.icon-btn.dropbox-attach-btn.fm-attach-btn",
+            "INPUT",
+            "BUTTON.cfg-btn.cfg-btn-primary.fm-send-btn"
+          ],
+          "inputCs": {
+            "radius": "8px",
+            "height": "36px",
+            "fontSize": "12px",
+            "bg": "rgba(0, 0, 0, 0.024)"
+          },
+          "sendFamilyMember": true,
+          "micIcon": true,
+          "attachIcon": true,
+          "sttDisabledBody": false
+        }
+      },
+      "attachVerdict": {
+        "friend": true,
+        "group": true,
+        "device": false,
+        "friendTarget": "u-p"
+      },
+      "b1": {
+        "fm": {
+          "hasBar": true,
+          "bar": {
+            "x": 361,
+            "y": 703,
+            "w": 558,
+            "h": 61,
+            "radius": "0px",
+            "display": "flex",
+            "cls": "fm-input-bar",
+            "tag": "DIV",
+            "disabled": false
+          },
+          "mic": {
+            "x": 377,
+            "y": 714,
+            "w": 36,
+            "h": 36,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn fm-mic-btn",
+            "tag": "BUTTON",
+            "disabled": false
+          },
+          "input": {
+            "x": 421,
+            "y": 714,
+            "w": 384,
+            "h": 36,
+            "radius": "8px",
+            "display": "block",
+            "cls": "cfg-input fm-input",
+            "tag": "INPUT",
+            "disabled": false
+          },
+          "attach": {
+            "x": 813,
+            "y": 714,
+            "w": 32,
+            "h": 32,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn dropbox-attach-btn fm-attach-btn",
+            "tag": "BUTTON",
+            "disabled": false
+          },
+          "send": {
+            "x": 853,
+            "y": 714,
+            "w": 50,
+            "h": 36,
+            "radius": "10px",
+            "display": "block",
+            "cls": "cfg-btn cfg-btn-primary fm-send-btn",
+            "tag": "BUTTON",
+            "disabled": true
+          },
+          "order": [
+            "BUTTON.icon-btn.fm-mic-btn",
+            "INPUT.cfg-input.fm-input",
+            "BUTTON.icon-btn.dropbox-attach-btn.fm-attach-btn",
+            "INPUT",
+            "BUTTON.cfg-btn.cfg-btn-primary.fm-send-btn"
+          ],
+          "inputCs": {
+            "radius": "8px",
+            "height": "36px",
+            "fontSize": "12px",
+            "bg": "rgba(0, 0, 0, 0.024)"
+          },
+          "sendFamilyMember": true,
+          "micIcon": true,
+          "attachIcon": true,
+          "sttDisabledBody": false
+        },
+        "fmSendOn": {
+          "disabled": false,
+          "bg": "rgb(7, 193, 96)",
+          "color": "rgb(255, 255, 255)",
+          "radius": "10px",
+          "borderColor": "rgb(6, 173, 86)"
+        },
+        "main": {
+          "hasBar": true,
+          "bar": {
+            "x": 310,
+            "y": 818,
+            "w": 468,
+            "h": 78,
+            "radius": "20px",
+            "display": "flex",
+            "cls": "",
+            "tag": "DIV",
+            "bg": "rgba(255, 255, 255, 0.55)"
+          },
+          "input": {
+            "x": 395,
+            "y": 841,
+            "w": 272,
+            "h": 32,
+            "radius": "18px",
+            "display": "block",
+            "cls": "",
+            "tag": "TEXTAREA",
+            "bg": "rgba(0, 0, 0, 0)"
+          },
+          "inputCs": {
+            "radius": "18px",
+            "height": "32px",
+            "fontSize": "14.5px",
+            "tag": "TEXTAREA"
+          },
+          "voice": {
+            "x": 323,
+            "y": 825,
+            "w": 64,
+            "h": 64,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "micbubble",
+            "tag": "BUTTON",
+            "bg": "rgba(0, 0, 0, 0)"
+          },
+          "attach": {
+            "x": 675,
+            "y": 839,
+            "w": 36,
+            "h": 36,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn",
+            "tag": "BUTTON",
+            "bg": "rgba(0, 0, 0, 0)"
+          },
+          "attachCs": {
+            "w": "36px",
+            "h": "36px",
+            "radius": "50%"
+          },
+          "send": {
+            "x": 719,
+            "y": 841,
+            "w": 46,
+            "h": 32,
+            "radius": "999px",
+            "display": "flex",
+            "cls": "",
+            "tag": "BUTTON",
+            "bg": "rgb(7, 193, 96)",
+            "familyMember": false,
+            "disabled": false
+          },
+          "barChildren": [
+            "mic-orb-wrap",
+            "input-wrap",
+            "attach-btn",
+            "send-btn"
+          ]
+        }
+      },
+      "b2": {
+        "fmIn": {
+          "label": "fm-in",
+          "rootClass": "fm-msg in fm-msg-atts",
+          "area": {
+            "x": 377,
+            "y": -568.5,
+            "w": 341.75,
+            "h": 280,
+            "right": 718.75
+          },
+          "pill": {
+            "x": 645,
+            "y": -447.5,
+            "w": 73.75,
+            "h": 38,
+            "right": 718.75
+          },
+          "view": {
+            "x": 377,
+            "y": -568.5,
+            "w": 220,
+            "h": 280,
+            "right": 597
+          },
+          "side": "right",
+          "gap": 48,
+          "pillCenterY": -428.5,
+          "viewCenterY": -428.5,
+          "vDelta": 0,
+          "areaFlexDirection": "row",
+          "areaAlignItems": "center",
+          "areaGap": "16px",
+          "pillOrder": "3",
+          "pillMarginLeft": "32px",
+          "pillMarginRight": "0px",
+          "hasFmAttMedia": false,
+          "hasFmAttStack": true,
+          "pillText": "展开 3"
+        },
+        "fmOut": {
+          "label": "fm-out",
+          "rootClass": "fm-msg out fm-msg-atts",
+          "area": {
+            "x": 561.25,
+            "y": 115,
+            "w": 341.75,
+            "h": 280,
+            "right": 903
+          },
+          "pill": {
+            "x": 561.25,
+            "y": 236,
+            "w": 73.75,
+            "h": 38,
+            "right": 635
+          },
+          "view": {
+            "x": 683,
+            "y": 115,
+            "w": 220,
+            "h": 280,
+            "right": 903
+          },
+          "side": "left",
+          "gap": 48,
+          "pillCenterY": 255,
+          "viewCenterY": 255,
+          "vDelta": 0,
+          "areaFlexDirection": "row",
+          "areaAlignItems": "center",
+          "areaGap": "16px",
+          "pillOrder": "0",
+          "pillMarginLeft": "0px",
+          "pillMarginRight": "32px",
+          "hasFmAttMedia": false,
+          "hasFmAttStack": true,
+          "pillText": "展开 3"
+        },
+        "mainIn": {
+          "label": "main-in",
+          "rootClass": "row pop-artifact",
+          "area": {
+            "x": 377,
+            "y": -935,
+            "w": 341.75,
+            "h": 280,
+            "right": 718.75
+          },
+          "pill": {
+            "x": 645,
+            "y": -814,
+            "w": 73.75,
+            "h": 38,
+            "right": 718.75
+          },
+          "view": {
+            "x": 377,
+            "y": -935,
+            "w": 220,
+            "h": 280,
+            "right": 597
+          },
+          "side": "right",
+          "gap": 48,
+          "pillCenterY": -795,
+          "viewCenterY": -795,
+          "vDelta": 0,
+          "areaFlexDirection": "row",
+          "areaAlignItems": "center",
+          "areaGap": "16px",
+          "pillOrder": "3",
+          "pillMarginLeft": "32px",
+          "pillMarginRight": "0px",
+          "hasFmAttMedia": false,
+          "hasFmAttStack": false,
+          "pillText": "展开 3"
+        },
+        "mainOut": {
+          "label": "main-out",
+          "rootClass": "row pop-artifact user user-media",
+          "area": {
+            "x": 561.25,
+            "y": -249.5,
+            "w": 341.75,
+            "h": 280,
+            "right": 903
+          },
+          "pill": {
+            "x": 561.25,
+            "y": -128.5,
+            "w": 73.75,
+            "h": 38,
+            "right": 635
+          },
+          "view": {
+            "x": 683,
+            "y": -249.5,
+            "w": 220,
+            "h": 280,
+            "right": 903
+          },
+          "side": "left",
+          "gap": 48,
+          "pillCenterY": -109.5,
+          "viewCenterY": -109.5,
+          "vDelta": 0,
+          "areaFlexDirection": "row",
+          "areaAlignItems": "center",
+          "areaGap": "16px",
+          "pillOrder": "0",
+          "pillMarginLeft": "0px",
+          "pillMarginRight": "32px",
+          "hasFmAttMedia": false,
+          "hasFmAttStack": false,
+          "pillText": "展开 3"
+        }
+      },
+      "b2red": {
+        "ok": true,
+        "before": {
+          "flexDirection": "row",
+          "vDelta": 0,
+          "hGap": 48
+        },
+        "mutated": {
+          "flexDirection": "column",
+          "vDelta": 161,
+          "hGap": -105.75
+        },
+        "restored": {
+          "flexDirection": "row",
+          "vDelta": 0,
+          "hGap": 48
+        }
+      },
+      "b3": {
+        "labels": {
+          "copy": "复制",
+          "forward": "转发给 agent"
+        },
+        "fm": {
+          "today": {
+            "found": true,
+            "ts": 1793773800000,
+            "text": "14:30",
+            "expected": "14:30",
+            "legacyFmtTime": "14:30",
+            "dataTsTextFormat": "day",
+            "dividerPresent": true,
+            "dividerIsElement": true,
+            "divider": {
+              "w": 1,
+              "h": 10,
+              "opacity": "0.2",
+              "flexShrink": "0",
+              "display": "block"
+            },
+            "metaPseudoBefore": "none",
+            "metaChildren": [
+              "fm-msg-time",
+              "fm-msg-divider",
+              "fm-msg-actions"
+            ],
+            "actionsChildren": [
+              {
+                "cls": "fm-msg-act",
+                "label": "复制",
+                "title": "复制",
+                "icon": "svg"
+              },
+              {
+                "cls": "fm-msg-act",
+                "label": "转发给 agent",
+                "title": "转发给 agent",
+                "icon": "svg"
+              }
+            ],
+            "gap": "6px"
+          },
+          "yesterday": {
+            "found": true,
+            "ts": 1793691000000,
+            "text": "昨天 15:30",
+            "expected": "昨天 15:30",
+            "legacyFmtTime": "昨天",
+            "dataTsTextFormat": "day",
+            "dividerPresent": true,
+            "dividerIsElement": true,
+            "divider": {
+              "w": 1,
+              "h": 10,
+              "opacity": "0.2",
+              "flexShrink": "0",
+              "display": "block"
+            },
+            "metaPseudoBefore": "none",
+            "metaChildren": [
+              "fm-msg-time",
+              "fm-msg-divider",
+              "fm-msg-actions"
+            ],
+            "actionsChildren": [
+              {
+                "cls": "fm-msg-act",
+                "label": "复制",
+                "title": "复制",
+                "icon": "svg"
+              },
+              {
+                "cls": "fm-msg-act",
+                "label": "转发给 agent",
+                "title": "转发给 agent",
+                "icon": "svg"
+              }
+            ],
+            "gap": "6px"
+          },
+          "week": {
+            "found": true,
+            "ts": 1793604600000,
+            "text": "星期一 15:30",
+            "expected": "星期一 15:30",
+            "legacyFmtTime": "11/2",
+            "dataTsTextFormat": "day",
+            "dividerPresent": true,
+            "dividerIsElement": true,
+            "divider": {
+              "w": 1,
+              "h": 10,
+              "opacity": "0.2",
+              "flexShrink": "0",
+              "display": "block"
+            },
+            "metaPseudoBefore": "none",
+            "metaChildren": [
+              "fm-msg-time",
+              "fm-msg-divider",
+              "fm-msg-actions"
+            ],
+            "actionsChildren": [
+              {
+                "cls": "fm-msg-act",
+                "label": "复制",
+                "title": "复制",
+                "icon": "svg"
+              },
+              {
+                "cls": "fm-msg-act",
+                "label": "转发给 agent",
+                "title": "转发给 agent",
+                "icon": "svg"
+              }
+            ],
+            "gap": "6px"
+          },
+          "earlier": {
+            "found": true,
+            "ts": 1790321400000,
+            "text": "9月25日 15:30",
+            "expected": "9月25日 15:30",
+            "legacyFmtTime": "9/25",
+            "dataTsTextFormat": "day",
+            "dividerPresent": true,
+            "dividerIsElement": true,
+            "divider": {
+              "w": 1,
+              "h": 10,
+              "opacity": "0.2",
+              "flexShrink": "0",
+              "display": "block"
+            },
+            "metaPseudoBefore": "none",
+            "metaChildren": [
+              "fm-msg-time",
+              "fm-msg-divider",
+              "fm-msg-actions"
+            ],
+            "actionsChildren": [
+              {
+                "cls": "fm-msg-act",
+                "label": "复制",
+                "title": "复制",
+                "icon": "svg"
+              },
+              {
+                "cls": "fm-msg-act",
+                "label": "转发给 agent",
+                "title": "转发给 agent",
+                "icon": "svg"
+              }
+            ],
+            "gap": "6px"
+          }
+        },
+        "main": {
+          "1793773800000": {
+            "text": "14:30",
+            "expected": "14:30",
+            "dividerPresent": true,
+            "divider": {
+              "w": 1,
+              "h": 10,
+              "opacity": "0.2",
+              "flexShrink": "0"
+            },
+            "children": [
+              "duration-badge-time",
+              "duration-badge-divider",
+              "msg-copy"
+            ],
+            "copyFirst": true,
+            "badgeBox": {
+              "w": 70.02,
+              "h": 17
+            },
+            "gap": "6px"
+          },
+          "1793691000000": {
+            "text": "昨天 15:30",
+            "expected": "昨天 15:30",
+            "dividerPresent": true,
+            "divider": {
+              "w": 1,
+              "h": 10,
+              "opacity": "0.2",
+              "flexShrink": "0"
+            },
+            "children": [
+              "duration-badge-time",
+              "duration-badge-divider",
+              "msg-copy"
+            ],
+            "copyFirst": true,
+            "badgeBox": {
+              "w": 96.02,
+              "h": 18
+            },
+            "gap": "6px"
+          },
+          "1793604600000": {
+            "text": "星期一 15:30",
+            "expected": "星期一 15:30",
+            "dividerPresent": true,
+            "divider": {
+              "w": 1,
+              "h": 10,
+              "opacity": "0.2",
+              "flexShrink": "0"
+            },
+            "children": [
+              "duration-badge-time",
+              "duration-badge-divider",
+              "msg-copy"
+            ],
+            "copyFirst": true,
+            "badgeBox": {
+              "w": 106.02,
+              "h": 18
+            },
+            "gap": "6px"
+          },
+          "1790321400000": {
+            "text": "9月25日 15:30",
+            "expected": "9月25日 15:30",
+            "dividerPresent": true,
+            "divider": {
+              "w": 1,
+              "h": 10,
+              "opacity": "0.2",
+              "flexShrink": "0"
+            },
+            "children": [
+              "duration-badge-time",
+              "duration-badge-divider",
+              "msg-copy"
+            ],
+            "copyFirst": true,
+            "badgeBox": {
+              "w": 114.02,
+              "h": 18
+            },
+            "gap": "6px"
+          }
+        },
+        "buckets": [
+          {
+            "bucket": "today",
+            "ts": 1793773800000,
+            "fm": "14:30",
+            "main": "14:30"
+          },
+          {
+            "bucket": "yesterday",
+            "ts": 1793691000000,
+            "fm": "昨天 15:30",
+            "main": "昨天 15:30"
+          },
+          {
+            "bucket": "week",
+            "ts": 1793604600000,
+            "fm": "星期一 15:30",
+            "main": "星期一 15:30"
+          },
+          {
+            "bucket": "earlier",
+            "ts": 1790321400000,
+            "fm": "9月25日 15:30",
+            "main": "9月25日 15:30"
+          }
+        ]
+      }
+    },
+    "dark": {
+      "composer": {
+        "friend": {
+          "hasBar": true,
+          "bar": {
+            "x": 361,
+            "y": 703,
+            "w": 558,
+            "h": 61,
+            "radius": "0px",
+            "display": "flex",
+            "cls": "fm-input-bar",
+            "tag": "DIV",
+            "disabled": false
+          },
+          "mic": {
+            "x": 377,
+            "y": 714,
+            "w": 36,
+            "h": 36,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn fm-mic-btn",
+            "tag": "BUTTON",
+            "disabled": false
+          },
+          "input": {
+            "x": 421,
+            "y": 714,
+            "w": 384,
+            "h": 36,
+            "radius": "8px",
+            "display": "block",
+            "cls": "cfg-input fm-input",
+            "tag": "INPUT",
+            "disabled": false
+          },
+          "attach": {
+            "x": 813,
+            "y": 714,
+            "w": 32,
+            "h": 32,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn dropbox-attach-btn fm-attach-btn",
+            "tag": "BUTTON",
+            "disabled": false
+          },
+          "send": {
+            "x": 853,
+            "y": 714,
+            "w": 50,
+            "h": 36,
+            "radius": "10px",
+            "display": "block",
+            "cls": "cfg-btn cfg-btn-primary fm-send-btn",
+            "tag": "BUTTON",
+            "disabled": true
+          },
+          "order": [
+            "BUTTON.icon-btn.fm-mic-btn",
+            "INPUT.cfg-input.fm-input",
+            "BUTTON.icon-btn.dropbox-attach-btn.fm-attach-btn",
+            "INPUT",
+            "BUTTON.cfg-btn.cfg-btn-primary.fm-send-btn"
+          ],
+          "inputCs": {
+            "radius": "8px",
+            "height": "36px",
+            "fontSize": "12px",
+            "bg": "rgba(255, 255, 255, 0.04)"
+          },
+          "sendFamilyMember": true,
+          "micIcon": true,
+          "attachIcon": true,
+          "sttDisabledBody": false
+        },
+        "group": {
+          "hasBar": true,
+          "bar": {
+            "x": 361,
+            "y": 703,
+            "w": 558,
+            "h": 61,
+            "radius": "0px",
+            "display": "flex",
+            "cls": "fm-input-bar",
+            "tag": "DIV",
+            "disabled": false
+          },
+          "mic": {
+            "x": 377,
+            "y": 714,
+            "w": 36,
+            "h": 36,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn fm-mic-btn",
+            "tag": "BUTTON",
+            "disabled": false
+          },
+          "input": {
+            "x": 421,
+            "y": 714,
+            "w": 384,
+            "h": 36,
+            "radius": "8px",
+            "display": "block",
+            "cls": "cfg-input fm-input",
+            "tag": "INPUT",
+            "disabled": false
+          },
+          "attach": {
+            "x": 813,
+            "y": 714,
+            "w": 32,
+            "h": 32,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn dropbox-attach-btn fm-attach-btn",
+            "tag": "BUTTON",
+            "disabled": false
+          },
+          "send": {
+            "x": 853,
+            "y": 714,
+            "w": 50,
+            "h": 36,
+            "radius": "10px",
+            "display": "block",
+            "cls": "cfg-btn cfg-btn-primary fm-send-btn",
+            "tag": "BUTTON",
+            "disabled": true
+          },
+          "order": [
+            "BUTTON.icon-btn.fm-mic-btn",
+            "INPUT.cfg-input.fm-input",
+            "BUTTON.icon-btn.dropbox-attach-btn.fm-attach-btn",
+            "INPUT",
+            "BUTTON.cfg-btn.cfg-btn-primary.fm-send-btn"
+          ],
+          "inputCs": {
+            "radius": "8px",
+            "height": "36px",
+            "fontSize": "12px",
+            "bg": "rgba(255, 255, 255, 0.04)"
+          },
+          "sendFamilyMember": true,
+          "micIcon": true,
+          "attachIcon": true,
+          "sttDisabledBody": false
+        },
+        "device": {
+          "hasBar": true,
+          "bar": {
+            "x": 361,
+            "y": 703,
+            "w": 558,
+            "h": 61,
+            "radius": "0px",
+            "display": "flex",
+            "cls": "fm-input-bar",
+            "tag": "DIV",
+            "disabled": false
+          },
+          "mic": {
+            "x": 377,
+            "y": 714,
+            "w": 36,
+            "h": 36,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn fm-mic-btn",
+            "tag": "BUTTON",
+            "disabled": false
+          },
+          "input": {
+            "x": 421,
+            "y": 714,
+            "w": 384,
+            "h": 36,
+            "radius": "8px",
+            "display": "block",
+            "cls": "cfg-input fm-input",
+            "tag": "INPUT",
+            "disabled": false
+          },
+          "attach": {
+            "x": 813,
+            "y": 714,
+            "w": 32,
+            "h": 32,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn dropbox-attach-btn fm-attach-btn",
+            "tag": "BUTTON",
+            "disabled": false
+          },
+          "send": {
+            "x": 853,
+            "y": 714,
+            "w": 50,
+            "h": 36,
+            "radius": "10px",
+            "display": "block",
+            "cls": "cfg-btn cfg-btn-primary fm-send-btn",
+            "tag": "BUTTON",
+            "disabled": true
+          },
+          "order": [
+            "BUTTON.icon-btn.fm-mic-btn",
+            "INPUT.cfg-input.fm-input",
+            "BUTTON.icon-btn.dropbox-attach-btn.fm-attach-btn",
+            "INPUT",
+            "BUTTON.cfg-btn.cfg-btn-primary.fm-send-btn"
+          ],
+          "inputCs": {
+            "radius": "8px",
+            "height": "36px",
+            "fontSize": "12px",
+            "bg": "rgba(255, 255, 255, 0.04)"
+          },
+          "sendFamilyMember": true,
+          "micIcon": true,
+          "attachIcon": true,
+          "sttDisabledBody": false
+        }
+      },
+      "attachVerdict": {
+        "friend": true,
+        "group": true,
+        "device": false,
+        "friendTarget": "u-p"
+      },
+      "b1": {
+        "fm": {
+          "hasBar": true,
+          "bar": {
+            "x": 361,
+            "y": 703,
+            "w": 558,
+            "h": 61,
+            "radius": "0px",
+            "display": "flex",
+            "cls": "fm-input-bar",
+            "tag": "DIV",
+            "disabled": false
+          },
+          "mic": {
+            "x": 377,
+            "y": 714,
+            "w": 36,
+            "h": 36,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn fm-mic-btn",
+            "tag": "BUTTON",
+            "disabled": false
+          },
+          "input": {
+            "x": 421,
+            "y": 714,
+            "w": 384,
+            "h": 36,
+            "radius": "8px",
+            "display": "block",
+            "cls": "cfg-input fm-input",
+            "tag": "INPUT",
+            "disabled": false
+          },
+          "attach": {
+            "x": 813,
+            "y": 714,
+            "w": 32,
+            "h": 32,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn dropbox-attach-btn fm-attach-btn",
+            "tag": "BUTTON",
+            "disabled": false
+          },
+          "send": {
+            "x": 853,
+            "y": 714,
+            "w": 50,
+            "h": 36,
+            "radius": "10px",
+            "display": "block",
+            "cls": "cfg-btn cfg-btn-primary fm-send-btn",
+            "tag": "BUTTON",
+            "disabled": true
+          },
+          "order": [
+            "BUTTON.icon-btn.fm-mic-btn",
+            "INPUT.cfg-input.fm-input",
+            "BUTTON.icon-btn.dropbox-attach-btn.fm-attach-btn",
+            "INPUT",
+            "BUTTON.cfg-btn.cfg-btn-primary.fm-send-btn"
+          ],
+          "inputCs": {
+            "radius": "8px",
+            "height": "36px",
+            "fontSize": "12px",
+            "bg": "rgba(255, 255, 255, 0.04)"
+          },
+          "sendFamilyMember": true,
+          "micIcon": true,
+          "attachIcon": true,
+          "sttDisabledBody": false
+        },
+        "fmSendOn": {
+          "disabled": false,
+          "bg": "rgb(7, 193, 96)",
+          "color": "rgb(13, 17, 23)",
+          "radius": "10px",
+          "borderColor": "rgb(6, 173, 86)"
+        },
+        "main": {
+          "hasBar": true,
+          "bar": {
+            "x": 310,
+            "y": 818,
+            "w": 468,
+            "h": 78,
+            "radius": "20px",
+            "display": "flex",
+            "cls": "",
+            "tag": "DIV",
+            "bg": "rgba(24, 28, 38, 0.68)"
+          },
+          "input": {
+            "x": 395,
+            "y": 841,
+            "w": 272,
+            "h": 32,
+            "radius": "18px",
+            "display": "block",
+            "cls": "",
+            "tag": "TEXTAREA",
+            "bg": "rgba(0, 0, 0, 0)"
+          },
+          "inputCs": {
+            "radius": "18px",
+            "height": "32px",
+            "fontSize": "14.5px",
+            "tag": "TEXTAREA"
+          },
+          "voice": {
+            "x": 323,
+            "y": 825,
+            "w": 64,
+            "h": 64,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "micbubble",
+            "tag": "BUTTON",
+            "bg": "rgba(0, 0, 0, 0)"
+          },
+          "attach": {
+            "x": 675,
+            "y": 839,
+            "w": 36,
+            "h": 36,
+            "radius": "50%",
+            "display": "flex",
+            "cls": "icon-btn",
+            "tag": "BUTTON",
+            "bg": "rgba(0, 0, 0, 0)"
+          },
+          "attachCs": {
+            "w": "36px",
+            "h": "36px",
+            "radius": "50%"
+          },
+          "send": {
+            "x": 719,
+            "y": 841,
+            "w": 46,
+            "h": 32,
+            "radius": "999px",
+            "display": "flex",
+            "cls": "",
+            "tag": "BUTTON",
+            "bg": "rgb(7, 193, 96)",
+            "familyMember": false,
+            "disabled": false
+          },
+          "barChildren": [
+            "mic-orb-wrap",
+            "input-wrap",
+            "attach-btn",
+            "send-btn"
+          ]
+        }
+      },
+      "b2": {
+        "fmIn": {
+          "label": "fm-in",
+          "rootClass": "fm-msg in fm-msg-atts",
+          "area": {
+            "x": 377,
+            "y": -568.5,
+            "w": 341.75,
+            "h": 280,
+            "right": 718.75
+          },
+          "pill": {
+            "x": 645,
+            "y": -447.5,
+            "w": 73.75,
+            "h": 38,
+            "right": 718.75
+          },
+          "view": {
+            "x": 377,
+            "y": -568.5,
+            "w": 220,
+            "h": 280,
+            "right": 597
+          },
+          "side": "right",
+          "gap": 48,
+          "pillCenterY": -428.5,
+          "viewCenterY": -428.5,
+          "vDelta": 0,
+          "areaFlexDirection": "row",
+          "areaAlignItems": "center",
+          "areaGap": "16px",
+          "pillOrder": "3",
+          "pillMarginLeft": "32px",
+          "pillMarginRight": "0px",
+          "hasFmAttMedia": false,
+          "hasFmAttStack": true,
+          "pillText": "展开 3"
+        },
+        "fmOut": {
+          "label": "fm-out",
+          "rootClass": "fm-msg out fm-msg-atts",
+          "area": {
+            "x": 561.25,
+            "y": 115,
+            "w": 341.75,
+            "h": 280,
+            "right": 903
+          },
+          "pill": {
+            "x": 561.25,
+            "y": 236,
+            "w": 73.75,
+            "h": 38,
+            "right": 635
+          },
+          "view": {
+            "x": 683,
+            "y": 115,
+            "w": 220,
+            "h": 280,
+            "right": 903
+          },
+          "side": "left",
+          "gap": 48,
+          "pillCenterY": 255,
+          "viewCenterY": 255,
+          "vDelta": 0,
+          "areaFlexDirection": "row",
+          "areaAlignItems": "center",
+          "areaGap": "16px",
+          "pillOrder": "0",
+          "pillMarginLeft": "0px",
+          "pillMarginRight": "32px",
+          "hasFmAttMedia": false,
+          "hasFmAttStack": true,
+          "pillText": "展开 3"
+        },
+        "mainIn": {
+          "label": "main-in",
+          "rootClass": "row pop-artifact",
+          "area": {
+            "x": 377,
+            "y": -935,
+            "w": 341.75,
+            "h": 280,
+            "right": 718.75
+          },
+          "pill": {
+            "x": 645,
+            "y": -814,
+            "w": 73.75,
+            "h": 38,
+            "right": 718.75
+          },
+          "view": {
+            "x": 377,
+            "y": -935,
+            "w": 220,
+            "h": 280,
+            "right": 597
+          },
+          "side": "right",
+          "gap": 48,
+          "pillCenterY": -795,
+          "viewCenterY": -795,
+          "vDelta": 0,
+          "areaFlexDirection": "row",
+          "areaAlignItems": "center",
+          "areaGap": "16px",
+          "pillOrder": "3",
+          "pillMarginLeft": "32px",
+          "pillMarginRight": "0px",
+          "hasFmAttMedia": false,
+          "hasFmAttStack": false,
+          "pillText": "展开 3"
+        },
+        "mainOut": {
+          "label": "main-out",
+          "rootClass": "row pop-artifact user user-media",
+          "area": {
+            "x": 561.25,
+            "y": -249.5,
+            "w": 341.75,
+            "h": 280,
+            "right": 903
+          },
+          "pill": {
+            "x": 561.25,
+            "y": -128.5,
+            "w": 73.75,
+            "h": 38,
+            "right": 635
+          },
+          "view": {
+            "x": 683,
+            "y": -249.5,
+            "w": 220,
+            "h": 280,
+            "right": 903
+          },
+          "side": "left",
+          "gap": 48,
+          "pillCenterY": -109.5,
+          "viewCenterY": -109.5,
+          "vDelta": 0,
+          "areaFlexDirection": "row",
+          "areaAlignItems": "center",
+          "areaGap": "16px",
+          "pillOrder": "0",
+          "pillMarginLeft": "0px",
+          "pillMarginRight": "32px",
+          "hasFmAttMedia": false,
+          "hasFmAttStack": false,
+          "pillText": "展开 3"
+        }
+      },
+      "b2red": {
+        "ok": true,
+        "before": {
+          "flexDirection": "row",
+          "vDelta": 0,
+          "hGap": 48
+        },
+        "mutated": {
+          "flexDirection": "column",
+          "vDelta": 161,
+          "hGap": -105.75
+        },
+        "restored": {
+          "flexDirection": "row",
+          "vDelta": 0,
+          "hGap": 48
+        }
+      },
+      "b3": {
+        "labels": {
+          "copy": "复制",
+          "forward": "转发给 agent"
+        },
+        "fm": {
+          "today": {
+            "found": true,
+            "ts": 1793773800000,
+            "text": "14:30",
+            "expected": "14:30",
+            "legacyFmtTime": "14:30",
+            "dataTsTextFormat": "day",
+            "dividerPresent": true,
+            "dividerIsElement": true,
+            "divider": {
+              "w": 1,
+              "h": 10,
+              "opacity": "0.2",
+              "flexShrink": "0",
+              "display": "block"
+            },
+            "metaPseudoBefore": "none",
+            "metaChildren": [
+              "fm-msg-time",
+              "fm-msg-divider",
+              "fm-msg-actions"
+            ],
+            "actionsChildren": [
+              {
+                "cls": "fm-msg-act",
+                "label": "复制",
+                "title": "复制",
+                "icon": "svg"
+              },
+              {
+                "cls": "fm-msg-act",
+                "label": "转发给 agent",
+                "title": "转发给 agent",
+                "icon": "svg"
+              }
+            ],
+            "gap": "6px"
+          },
+          "yesterday": {
+            "found": true,
+            "ts": 1793691000000,
+            "text": "昨天 15:30",
+            "expected": "昨天 15:30",
+            "legacyFmtTime": "昨天",
+            "dataTsTextFormat": "day",
+            "dividerPresent": true,
+            "dividerIsElement": true,
+            "divider": {
+              "w": 1,
+              "h": 10,
+              "opacity": "0.2",
+              "flexShrink": "0",
+              "display": "block"
+            },
+            "metaPseudoBefore": "none",
+            "metaChildren": [
+              "fm-msg-time",
+              "fm-msg-divider",
+              "fm-msg-actions"
+            ],
+            "actionsChildren": [
+              {
+                "cls": "fm-msg-act",
+                "label": "复制",
+                "title": "复制",
+                "icon": "svg"
+              },
+              {
+                "cls": "fm-msg-act",
+                "label": "转发给 agent",
+                "title": "转发给 agent",
+                "icon": "svg"
+              }
+            ],
+            "gap": "6px"
+          },
+          "week": {
+            "found": true,
+            "ts": 1793604600000,
+            "text": "星期一 15:30",
+            "expected": "星期一 15:30",
+            "legacyFmtTime": "11/2",
+            "dataTsTextFormat": "day",
+            "dividerPresent": true,
+            "dividerIsElement": true,
+            "divider": {
+              "w": 1,
+              "h": 10,
+              "opacity": "0.2",
+              "flexShrink": "0",
+              "display": "block"
+            },
+            "metaPseudoBefore": "none",
+            "metaChildren": [
+              "fm-msg-time",
+              "fm-msg-divider",
+              "fm-msg-actions"
+            ],
+            "actionsChildren": [
+              {
+                "cls": "fm-msg-act",
+                "label": "复制",
+                "title": "复制",
+                "icon": "svg"
+              },
+              {
+                "cls": "fm-msg-act",
+                "label": "转发给 agent",
+                "title": "转发给 agent",
+                "icon": "svg"
+              }
+            ],
+            "gap": "6px"
+          },
+          "earlier": {
+            "found": true,
+            "ts": 1790321400000,
+            "text": "9月25日 15:30",
+            "expected": "9月25日 15:30",
+            "legacyFmtTime": "9/25",
+            "dataTsTextFormat": "day",
+            "dividerPresent": true,
+            "dividerIsElement": true,
+            "divider": {
+              "w": 1,
+              "h": 10,
+              "opacity": "0.2",
+              "flexShrink": "0",
+              "display": "block"
+            },
+            "metaPseudoBefore": "none",
+            "metaChildren": [
+              "fm-msg-time",
+              "fm-msg-divider",
+              "fm-msg-actions"
+            ],
+            "actionsChildren": [
+              {
+                "cls": "fm-msg-act",
+                "label": "复制",
+                "title": "复制",
+                "icon": "svg"
+              },
+              {
+                "cls": "fm-msg-act",
+                "label": "转发给 agent",
+                "title": "转发给 agent",
+                "icon": "svg"
+              }
+            ],
+            "gap": "6px"
+          }
+        },
+        "main": {
+          "1793773800000": {
+            "text": "14:30",
+            "expected": "14:30",
+            "dividerPresent": true,
+            "divider": {
+              "w": 1,
+              "h": 10,
+              "opacity": "0.2",
+              "flexShrink": "0"
+            },
+            "children": [
+              "duration-badge-time",
+              "duration-badge-divider",
+              "msg-copy"
+            ],
+            "copyFirst": true,
+            "badgeBox": {
+              "w": 70.02,
+              "h": 17
+            },
+            "gap": "6px"
+          },
+          "1793691000000": {
+            "text": "昨天 15:30",
+            "expected": "昨天 15:30",
+            "dividerPresent": true,
+            "divider": {
+              "w": 1,
+              "h": 10,
+              "opacity": "0.2",
+              "flexShrink": "0"
+            },
+            "children": [
+              "duration-badge-time",
+              "duration-badge-divider",
+              "msg-copy"
+            ],
+            "copyFirst": true,
+            "badgeBox": {
+              "w": 96.02,
+              "h": 18
+            },
+            "gap": "6px"
+          },
+          "1793604600000": {
+            "text": "星期一 15:30",
+            "expected": "星期一 15:30",
+            "dividerPresent": true,
+            "divider": {
+              "w": 1,
+              "h": 10,
+              "opacity": "0.2",
+              "flexShrink": "0"
+            },
+            "children": [
+              "duration-badge-time",
+              "duration-badge-divider",
+              "msg-copy"
+            ],
+            "copyFirst": true,
+            "badgeBox": {
+              "w": 106.02,
+              "h": 18
+            },
+            "gap": "6px"
+          },
+          "1790321400000": {
+            "text": "9月25日 15:30",
+            "expected": "9月25日 15:30",
+            "dividerPresent": true,
+            "divider": {
+              "w": 1,
+              "h": 10,
+              "opacity": "0.2",
+              "flexShrink": "0"
+            },
+            "children": [
+              "duration-badge-time",
+              "duration-badge-divider",
+              "msg-copy"
+            ],
+            "copyFirst": true,
+            "badgeBox": {
+              "w": 114.02,
+              "h": 18
+            },
+            "gap": "6px"
+          }
+        },
+        "buckets": [
+          {
+            "bucket": "today",
+            "ts": 1793773800000,
+            "fm": "14:30",
+            "main": "14:30"
+          },
+          {
+            "bucket": "yesterday",
+            "ts": 1793691000000,
+            "fm": "昨天 15:30",
+            "main": "昨天 15:30"
+          },
+          {
+            "bucket": "week",
+            "ts": 1793604600000,
+            "fm": "星期一 15:30",
+            "main": "星期一 15:30"
+          },
+          {
+            "bucket": "earlier",
+            "ts": 1790321400000,
+            "fm": "9月25日 15:30",
+            "main": "9月25日 15:30"
+          }
+        ]
+      }
+    }
+  },
+  "frames": {
+    "total": 38,
+    "unique": 30,
+    "duplicates": 8,
+    "byGroup": {
+      "A0": {
+        "total": 6,
+        "unique": 6
+      },
+      "A1": {
+        "total": 6,
+        "unique": 2
+      },
+      "A2": {
+        "total": 6,
+        "unique": 6
+      },
+      "A3": {
+        "total": 6,
+        "unique": 4
+      },
+      "B1": {
+        "total": 4,
+        "unique": 4
+      },
+      "B2": {
+        "total": 4,
+        "unique": 4
+      },
+      "B3": {
+        "total": 6,
+        "unique": 6
+      }
+    },
+    "list": [
+      {
+        "name": "friend-A0-window-light.png",
+        "md5": "bc950da27dc0c6cc634028f9470c59d7",
+        "bytes": 284347
+      },
+      {
+        "name": "friend-A1-composer-light.png",
+        "md5": "d7203b1f4e33dc027528f398bcb4c053",
+        "bytes": 18140
+      },
+      {
+        "name": "friend-A2-stack-light.png",
+        "md5": "2e5903e39882d53994cf7c95a7aea12c",
+        "bytes": 38157
+      },
+      {
+        "name": "friend-A3-footer-light.png",
+        "md5": "689ae55e7002cb47b0c59194de087ec5",
+        "bytes": 3252
+      },
+      {
+        "name": "group-A0-window-light.png",
+        "md5": "c0090bab7fb5030183fac997b7685588",
+        "bytes": 284751
+      },
+      {
+        "name": "group-A1-composer-light.png",
+        "md5": "d7203b1f4e33dc027528f398bcb4c053",
+        "bytes": 18140
+      },
+      {
+        "name": "group-A2-stack-light.png",
+        "md5": "bfbd63cf0ec9083eaaebdb45ae0fc1dc",
+        "bytes": 38591
+      },
+      {
+        "name": "group-A3-footer-light.png",
+        "md5": "f4d74e2d947198aa10e340aa94b548be",
+        "bytes": 3194
+      },
+      {
+        "name": "device-A0-window-light.png",
+        "md5": "529ba9e9c98ffc1352c4b470bc4bc8a7",
+        "bytes": 288320
+      },
+      {
+        "name": "device-A1-composer-light.png",
+        "md5": "d7203b1f4e33dc027528f398bcb4c053",
+        "bytes": 18140
+      },
+      {
+        "name": "device-A2-stack-light.png",
+        "md5": "bbdfa3a141153a807b699193ca13eee0",
+        "bytes": 38641
+      },
+      {
+        "name": "device-A3-footer-light.png",
+        "md5": "689ae55e7002cb47b0c59194de087ec5",
+        "bytes": 3252
+      },
+      {
+        "name": "friend-A0-window-dark.png",
+        "md5": "ace06e5e52052c15b09391ce7aae4f4c",
+        "bytes": 282898
+      },
+      {
+        "name": "friend-A1-composer-dark.png",
+        "md5": "eb63888a2bbd3ef15d8f3a04290da0d5",
+        "bytes": 21517
+      },
+      {
+        "name": "friend-A2-stack-dark.png",
+        "md5": "7f1b28fb040702597f40f31cb61e2f10",
+        "bytes": 35914
+      },
+      {
+        "name": "friend-A3-footer-dark.png",
+        "md5": "04ddc2d4b41856d796133f126fd4068b",
+        "bytes": 3240
+      },
+      {
+        "name": "group-A0-window-dark.png",
+        "md5": "2c2ff3785ab9d8653b146b7578b83ebf",
+        "bytes": 283128
+      },
+      {
+        "name": "group-A1-composer-dark.png",
+        "md5": "eb63888a2bbd3ef15d8f3a04290da0d5",
+        "bytes": 21517
+      },
+      {
+        "name": "group-A2-stack-dark.png",
+        "md5": "2543c1007175499154e39e7ca966f95e",
+        "bytes": 36289
+      },
+      {
+        "name": "group-A3-footer-dark.png",
+        "md5": "87ab81a0263ce75297c551accc161c32",
+        "bytes": 3178
+      },
+      {
+        "name": "device-A0-window-dark.png",
+        "md5": "ab49b3b4dee760de7d17b98f9a95c107",
+        "bytes": 288869
+      },
+      {
+        "name": "device-A1-composer-dark.png",
+        "md5": "eb63888a2bbd3ef15d8f3a04290da0d5",
+        "bytes": 21517
+      },
+      {
+        "name": "device-A2-stack-dark.png",
+        "md5": "1ea792d790808bd02a7039d0f08b5b22",
+        "bytes": 36367
+      },
+      {
+        "name": "device-A3-footer-dark.png",
+        "md5": "04ddc2d4b41856d796133f126fd4068b",
+        "bytes": 3240
+      },
+      {
+        "name": "B1-fm-composer-light.png",
+        "md5": "088db1ffc26e8deb7c02ae36914699f4",
+        "bytes": 19190
+      },
+      {
+        "name": "B1-main-inputbar-light.png",
+        "md5": "6b6c081211094aa05365d5f876a74c67",
+        "bytes": 26753
+      },
+      {
+        "name": "B1-fm-composer-dark.png",
+        "md5": "4ea8311596ab250d5abc9ae7f5bbd2a7",
+        "bytes": 19669
+      },
+      {
+        "name": "B1-main-inputbar-dark.png",
+        "md5": "c45b42770c120b58b06af2d0bb03cdc2",
+        "bytes": 24458
+      },
+      {
+        "name": "B2-stack-pill-vs-main-in-light.png",
+        "md5": "133f8eb848e4a7e4de79a17d49567888",
+        "bytes": 48146
+      },
+      {
+        "name": "B2-stack-pill-vs-main-out-light.png",
+        "md5": "ba6c0cda3ea8b9516cf618d3c37ca6f0",
+        "bytes": 26717
+      },
+      {
+        "name": "B2-stack-pill-vs-main-in-dark.png",
+        "md5": "f9ae9287622f7cf01330d6b325122833",
+        "bytes": 48773
+      },
+      {
+        "name": "B2-stack-pill-vs-main-out-dark.png",
+        "md5": "eebfa4eee5baafaeee8f3b71c8efa312",
+        "bytes": 24587
+      },
+      {
+        "name": "B3-fm-footer-today-light.png",
+        "md5": "689ae55e7002cb47b0c59194de087ec5",
+        "bytes": 3252
+      },
+      {
+        "name": "B3-fm-footer-earlier-light.png",
+        "md5": "7ec47cc3a211277a05b6034298a098e2",
+        "bytes": 3938
+      },
+      {
+        "name": "B3-main-footer-light.png",
+        "md5": "074f9d7e5a083704eb45c93ce4fb587b",
+        "bytes": 35462
+      },
+      {
+        "name": "B3-fm-footer-today-dark.png",
+        "md5": "04ddc2d4b41856d796133f126fd4068b",
+        "bytes": 3240
+      },
+      {
+        "name": "B3-fm-footer-earlier-dark.png",
+        "md5": "0b130e38b74b82a0793734f20dd43a1b",
+        "bytes": 3992
+      },
+      {
+        "name": "B3-main-footer-dark.png",
+        "md5": "cd11397a47711fd2cd44ca7c6c1c8d4b",
+        "bytes": 30752
+      }
+    ]
+  },
+  "summary": {
+    "checks": 155,
+    "failures": 0,
+    "frames": 38
+  }
+}

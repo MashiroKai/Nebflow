@@ -1,6 +1,8 @@
 ---
-type: design
-status: implemented
+type: batch
+status: published
+date: 2026-11-01
+scope: 手机端 dock 悬浮胶囊化（css/mobileLayer.css + ask.css + glass.css，#mobile-dock 通栏底条换玻璃胶囊 + 输入卡呼吸缝）
 ---
 
 # dock 悬浮胶囊批（作者令 2026-11-01 21:07）—— 手机端底 dock 胶囊化 + 输入间隙
@@ -9,6 +11,12 @@ status: implemented
 > [[glossary#^front-matter]]，是 vault R1 校验的唯一存量违规（该批文档被 [[20261101_222500_composer-mobile-slim__delegate-nebflow-6e995fd9]]
 > 与 [[20261101_235748_chat-head-position-fix__delegate-nebflow-9c9ef879]] 双向引用，
 > 断链不受影响）。补 `type: design` / `status: implemented` 两行收口，正文一字未动。
+>
+> 合并说明（2026-11-02）：上述补注与本支 fm 三面输入条对齐批的补注是**同一次修复的两份独立记录**（两支各自发现同一 R1 违规）。合并取合集：frontmatter 保留信息量更大的四行（type/status/date/scope，与本文件既有的 `关联` 行并存），两条补注均保留。
+>
+> 关联：[[20261101_222500_composer-mobile-slim__delegate-nebflow-6e995fd9]]（后续输入卡收窄批，本批输入卡悬浮其上的同一 dock 谱系）。
+>
+> 🔧 frontmatter 由后续批（fm 三面输入条对齐批，2026-11-02）**仅补格式**：R1 要求所有文档带 type/status，本文件原缺；正文一字未改、文件未改名未移动。
 
 - 批次：delegate-nebflow-7fa8a6bb · 分支 `delegate/delegate-nebflow-7fa8a6bb`
 - 作者令：21:07 实拍（uploads/687436871179875_IMG_1672.jpg）两件——

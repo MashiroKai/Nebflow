@@ -1,0 +1,15 @@
+PASS  D1 #messages-btn attached (open default: dev 树缺席 = ON，功能开放批 2026-10-30)
+PASS  D1 #contacts-btn attached (open default)
+PASS  D1 #panel-messages/#panel-contacts attached (开放缺省回挂)
+PASS  D1 #social-btn stays mounted (friendseal ④ 不随封存摘挂)
+PASS  D1 no page errors
+PASS  D2 #messages-btn attached (explicit on)
+PASS  D2 #contacts-btn attached (explicit on)
+PASS  D2 entries before spacer, messages→contacts→social (W1)  — ["activity-avatar","","messages-btn","contacts-btn","social-btn","activity-spacer","files-btn","projects-btn","agents-btn","usage-btn","settings-btn"]
+PASS  D2 #panel-contacts activated on click
+PASS  D2 no page errors
+PASS  D3 #messages-btn absent (explicit off)
+PASS  D3 #contacts-btn absent (explicit off)
+PASS  D3 no page errors
+
+ALL PASS

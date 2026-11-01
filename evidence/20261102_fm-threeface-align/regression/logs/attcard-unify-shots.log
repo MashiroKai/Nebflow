@@ -1,0 +1,55 @@
+attcard-component-lib shots · WEB=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-c1142b9b/src/main/resources/web · OUT=/tmp/attcard-unify-shots
+PASS  shot attcard-friend-stack-light.png 形态判据（stack）  — {"stack":true,"w":220,"h":280,"layers":3,"pill":"展开 3","video":false,"chip":"","ring":false,"flat":false,"img":false,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-friend-video-light.png 形态判据（video）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":true,"chip":"0:01","ring":true,"flat":true,"img":false,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-friend-mixed-light.png 形态判据（mixed）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":false,"chip":"","ring":false,"flat":true,"img":true,"file":true,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-friend-single-light.png 形态判据（single）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":false,"chip":"","ring":false,"flat":true,"img":true,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-group-stack-light.png 形态判据（stack）  — {"stack":true,"w":220,"h":280,"layers":3,"pill":"展开 3","video":false,"chip":"","ring":false,"flat":false,"img":false,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-group-video-light.png 形态判据（video）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":true,"chip":"0:01","ring":true,"flat":true,"img":false,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-group-mixed-light.png 形态判据（mixed）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":false,"chip":"","ring":false,"flat":true,"img":true,"file":true,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-group-single-light.png 形态判据（single）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":false,"chip":"","ring":false,"flat":true,"img":true,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-device-stack-light.png 形态判据（stack）  — {"stack":true,"w":220,"h":280,"layers":3,"pill":"展开 3","video":false,"chip":"","ring":false,"flat":false,"img":false,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-device-video-light.png 形态判据（video）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":true,"chip":"0:01","ring":true,"flat":true,"img":false,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-device-mixed-light.png 形态判据（mixed）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":false,"chip":"","ring":false,"flat":true,"img":true,"file":true,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-device-single-light.png 形态判据（single）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":false,"chip":"","ring":false,"flat":true,"img":true,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  [light] 零 console error  — []
+PASS  [light] 零 pageerror  — []
+PASS  shot attcard-friend-stack-dark.png 形态判据（stack）  — {"stack":true,"w":220,"h":280,"layers":3,"pill":"展开 3","video":false,"chip":"","ring":false,"flat":false,"img":false,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-friend-video-dark.png 形态判据（video）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":true,"chip":"0:01","ring":true,"flat":true,"img":false,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-friend-mixed-dark.png 形态判据（mixed）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":false,"chip":"","ring":false,"flat":true,"img":true,"file":true,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-friend-single-dark.png 形态判据（single）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":false,"chip":"","ring":false,"flat":true,"img":true,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-group-stack-dark.png 形态判据（stack）  — {"stack":true,"w":220,"h":280,"layers":3,"pill":"展开 3","video":false,"chip":"","ring":false,"flat":false,"img":false,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-group-video-dark.png 形态判据（video）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":true,"chip":"0:01","ring":true,"flat":true,"img":false,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-group-mixed-dark.png 形态判据（mixed）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":false,"chip":"","ring":false,"flat":true,"img":true,"file":true,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-group-single-dark.png 形态判据（single）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":false,"chip":"","ring":false,"flat":true,"img":true,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-device-stack-dark.png 形态判据（stack）  — {"stack":true,"w":220,"h":280,"layers":3,"pill":"展开 3","video":false,"chip":"","ring":false,"flat":false,"img":false,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-device-video-dark.png 形态判据（video）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":true,"chip":"0:01","ring":true,"flat":true,"img":false,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-device-mixed-dark.png 形态判据（mixed）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":false,"chip":"","ring":false,"flat":true,"img":true,"file":true,"bubble":false,"border":"none","dl":true}
+PASS  shot attcard-device-single-dark.png 形态判据（single）  — {"stack":false,"w":null,"h":null,"layers":0,"pill":"","video":false,"chip":"","ring":false,"flat":true,"img":true,"file":false,"bubble":false,"border":"none","dl":true}
+PASS  [dark] 零 console error  — []
+PASS  [dark] 零 pageerror  — []
+PASS  对照帧：主会话行注入成功（入向 Pop 行 + 出向用户行）  — {"ok":true}
+PASS  [light] 边缘差异为零（入向）：fm 叠卡层 ↔ 主会话 LLM Pop 叠卡层 computed-style 全等  — {"fm":{"radius":"14px","borderStyle":"none","borderWidth":"0px","borderColor":"rgb(27, 30, 38)","shadow":"rgba(0, 0, 0, 0.16) 0px 5px 16px 0px","bg":"rgb(23, 25, 31)","w":220,"h":280},"main":{"radius":"14px","borderStyle":"none","borderWidth":"0px","borderColor":"rgb(27, 30, 38)","shadow":"rgba(0, 0, 0, 0.16) 0px 5px 16px 0px","bg":"rgb(23, 25, 31)","w":220,"h":280}}
+PASS  [light] 叠卡盒几何全等（220×280 同一面）  — {"fm":{"radius":"0px","borderStyle":"none","borderWidth":"0px","borderColor":"rgb(27, 30, 38)","shadow":"none","bg":"rgba(0, 0, 0, 0)","w":220,"h":280},"main":{"radius":"0px","borderStyle":"none","borderWidth":"0px","borderColor":"rgb(27, 30, 38)","shadow":"none","bg":"rgba(0, 0, 0, 0)","w":220,"h":280}}
+PASS  [light] 张数角标同款（「展开 3」同文）  — {"fm":"展开 3","main":"展开 3"}
+PASS  [light] 边缘差异为零（出向）：fm 叠卡层 ↔ 主会话用户媒体行叠卡层 computed-style 全等（气泡剪影族）  — {"fm":{"radius":"16px 16px 4px","borderStyle":"none","borderWidth":"0px","borderColor":"rgb(27, 30, 38)","shadow":"none","bg":"color(srgb 0.584314 0.92549 0.411765 / 0.9)","w":220,"h":280},"main":{"radius":"16px 16px 4px","borderStyle":"none","borderWidth":"0px","borderColor":"rgb(27, 30, 38)","shadow":"none","bg":"color(srgb 0.584314 0.92549 0.411765 / 0.9)","w":220,"h":280}}
+PASS  [light] 边缘差异为零：fm 入向文件卡 ↔ 主会话 Pop 文件卡 computed-style 全等  — {"fm":{"radius":"12px","borderStyle":"solid","borderWidth":"1px","borderColor":"rgba(0, 0, 0, 0.05)","shadow":"rgba(0, 0, 0, 0.04) 0px 1px 2px 0px","bg":"rgb(255, 255, 255)","w":300,"h":62},"main":{"radius":"12px","borderStyle":"solid","borderWidth":"1px","borderColor":"rgba(0, 0, 0, 0.05)","shadow":"rgba(0, 0, 0, 0.04) 0px 1px 2px 0px","bg":"rgb(255, 255, 255)","w":300,"h":62}}
+SHOT attcard-vs-main-in-light.png
+PASS  [light][vs-main] 零 console error  — []
+PASS  [light][vs-main] 零 pageerror  — []
+SHOT attcard-vs-main-out-light.png
+PASS  对照帧：主会话行注入成功（入向 Pop 行 + 出向用户行）  — {"ok":true}
+PASS  [dark] 边缘差异为零（入向）：fm 叠卡层 ↔ 主会话 LLM Pop 叠卡层 computed-style 全等  — {"fm":{"radius":"14px","borderStyle":"none","borderWidth":"0px","borderColor":"rgb(232, 234, 237)","shadow":"rgba(0, 0, 0, 0.5) 0px 5px 16px 0px","bg":"rgb(16, 19, 24)","w":220,"h":280},"main":{"radius":"14px","borderStyle":"none","borderWidth":"0px","borderColor":"rgb(232, 234, 237)","shadow":"rgba(0, 0, 0, 0.5) 0px 5px 16px 0px","bg":"rgb(16, 19, 24)","w":220,"h":280}}
+PASS  [dark] 叠卡盒几何全等（220×280 同一面）  — {"fm":{"radius":"0px","borderStyle":"none","borderWidth":"0px","borderColor":"rgb(232, 234, 237)","shadow":"none","bg":"rgba(0, 0, 0, 0)","w":220,"h":280},"main":{"radius":"0px","borderStyle":"none","borderWidth":"0px","borderColor":"rgb(232, 234, 237)","shadow":"none","bg":"rgba(0, 0, 0, 0)","w":220,"h":280}}
+PASS  [dark] 张数角标同款（「展开 3」同文）  — {"fm":"展开 3","main":"展开 3"}
+PASS  [dark] 边缘差异为零（出向）：fm 叠卡层 ↔ 主会话用户媒体行叠卡层 computed-style 全等（气泡剪影族）  — {"fm":{"radius":"16px 16px 4px","borderStyle":"none","borderWidth":"0px","borderColor":"rgb(232, 234, 237)","shadow":"none","bg":"color(srgb 0.584314 0.92549 0.411765 / 0.9)","w":220,"h":280},"main":{"radius":"16px 16px 4px","borderStyle":"none","borderWidth":"0px","borderColor":"rgb(232, 234, 237)","shadow":"none","bg":"color(srgb 0.584314 0.92549 0.411765 / 0.9)","w":220,"h":280}}
+PASS  [dark] 边缘差异为零：fm 入向文件卡 ↔ 主会话 Pop 文件卡 computed-style 全等  — {"fm":{"radius":"12px","borderStyle":"solid","borderWidth":"1px","borderColor":"rgb(42, 45, 53)","shadow":"rgba(0, 0, 0, 0.04) 0px 1px 2px 0px","bg":"rgb(28, 31, 39)","w":300,"h":62},"main":{"radius":"12px","borderStyle":"solid","borderWidth":"1px","borderColor":"rgb(42, 45, 53)","shadow":"rgba(0, 0, 0, 0.04) 0px 1px 2px 0px","bg":"rgb(28, 31, 39)","w":300,"h":62}}
+SHOT attcard-vs-main-in-dark.png
+PASS  [dark][vs-main] 零 console error  — []
+PASS  [dark][vs-main] 零 pageerror  — []
+SHOT attcard-vs-main-out-dark.png
+SHOT attcard-friend-mobile-375.png  cards={"stack":true,"stackW":220,"video":true,"mixed":true,"mobile":true,"hOverflow":false}
+PASS  shot attcard-friend-mobile-375.png 手机档四形态（叠卡 220 盒 + 视频 + 混合；零横向溢出）  — {"stack":true,"stackW":220,"video":true,"mixed":true,"mobile":true,"hOverflow":false}
+PASS  [mobile] 零 console error  — []
+PASS  [mobile] 零 pageerror  — []
+
+=== attcard-component-lib shots: failures=0 · OUT=/tmp/attcard-unify-shots ===

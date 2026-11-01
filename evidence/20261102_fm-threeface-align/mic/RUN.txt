@@ -1,0 +1,83 @@
+# RUN — fm-device-mic-live.mjs（设备面板 mic 真录音链路 · fm 三面输入条对齐批 2026-11-02）
+
+## 复跑命令（原样照抄即可）
+
+```
+cd "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-c1142b9b"
+ln -sfn "/Users/kaiyu/Claude code/Stand/node_modules" node_modules   # 幂等、gitignored、勿提交
+NODE_PATH=/opt/homebrew/lib/node_modules node tests/fm-device-mic-live.mjs
+```
+
+- 落盘目录缺省 = `evidence/20261102_fm-threeface-align/mic/`；`MIC_EVID=<dir>` 可改。
+- 退出码 = failures === 0 ? 0 : 1（本次 = **0**）。
+- 组件零依赖实例：内置静态 server 服务 `src/main/resources/web`；`/api/**` 用 page.route 契约镜像；
+  `/ws` 为桩，但 **transcribe 帧必须解码断言通过**才回文本（不是无条件回包）。
+- 真链路部分**未 mock**：Chromium `--use-file-for-fake-audio-capture` 吃现场合成的
+  16kHz/mono/16bit 语音型时变 WAV → `getUserMedia` 真采集 → `voiceEngine` 真切段 →
+  真编码 WAV → 真 WS 帧。
+- headless = true（在本机完全可行；`MIC_HEADED=1` 保留有头兜底开关）。
+- 复核跑时间：2026-11-01 23:39 本地 · 耗时 ≈ 12s · `readings.json` 同步覆盖。
+
+## 关键坑（务必保留）
+
+`getUserMedia` 的 AGC / 降噪会把**稳态单音**（如 440Hz 正弦）当噪声压掉：首版实测首段
+RMS 0.27、次段直落 0.025 跌进噪声底，证据变成「勉强过线」。改用**语音型时变信号**
+（音节包络 4.5/s + 基频滑动 185–267Hz + 谐波 + 词间静音，12s）后每段都是硬读数。
+
+## 复核方法（纯标准库复算 RMS，实测输出与 readings.json 一致）
+
+```
+python3 - <<'PY'
+import wave, struct, math
+p = "evidence/20261102_fm-threeface-align/mic/transcribe-seg1.wav"
+w = wave.open(p); n = w.getnframes()
+data = struct.unpack("<%dh" % n, w.readframes(n))
+print("%.5f" % math.sqrt(sum((s/32768.0)**2 for s in data)/n))
+PY
+```
+
+输出 `0.25490`（对应 `readings.json → segments[0].rms = 0.2549`，逐位一致；本条由收口节点实跑复核）。
+
+## 本次 stdout（原样）
+
+```
+fake mic wav · /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/fm-device-mic-live/fake-mic-16k-mono.wav · 384044B · 16000Hz/1ch/16bit · rms=0.1064 · dom=240Hz · modRatio=25.38
+launch · headless=true · args=["--use-fake-ui-for-media-stream","--use-fake-device-for-media-stream","--autoplay-policy=no-user-gesture-required","--use-file-for-fake-audio-capture=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/fm-device-mic-live/fake-mic-16k-mono.wav"]
+fm-device-mic-live · WEB=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-c1142b9b/src/main/resources/web · EVID=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-c1142b9b/evidence/20261102_fm-threeface-align/mic
+PASS  前置：云 STT 腿已激活（state.stt.sttConfigured === true）  — {"sttConfigured":true,"sttEnabled":true}
+PASS  M1 设备窗输入条存在 .fm-mic-btn（.icon-btn 族 + lucide mic + 可见）  — {"bar":true,"btn":true,"input":true,"cls":"icon-btn fm-mic-btn","isIconBtn":true,"ariaLabel":"语音输入","ariaPressed":"false","title":"语音输入","visible":true,"iconTag":"svg","iconSvgOrPlaceholder":true}
+PASS  M1 aria-label 在场 且 aria-pressed 初值 = "false"  — {"label":"语音输入","pressed":"false"}
+PASS  观测器：mic 态机探针已挂载
+PASS  M2 点击后 .fm-mic-btn 出现 recording 类且 aria-pressed=true  — {"cls":"icon-btn fm-mic-btn recording","pressed":"true","bg":"rgba(0, 0, 0, 0)","w":36}
+WS transcribe #1 · 68310B · RIFF/WAVE · 16000Hz/1ch/16bit · 34133 samples · 2133ms · rms=0.2549 · peak=1.000 · nonZero=33763 · dom=240Hz@0.0644 · mod=217.58 · VALID
+WS transcribe #2 · 68310B · RIFF/WAVE · 16000Hz/1ch/16bit · 34133 samples · 2133ms · rms=0.0968 · peak=0.408 · nonZero=33983 · dom=1235Hz@0.0083 · mod=196.87 · VALID
+SHOT mic-recording.png
+PASS  M3a 真收到 ≥1 条 WS transcribe 帧  — segments=2
+PASS  M3b 解码帧 = 合法 RIFF/WAVE · 16000Hz · 单声道 · 16bit · 样本非全零  — {"riff":"RIFF","wave":"WAVE","fmt":1,"rate":16000,"ch":1,"bits":16,"samples":34133,"nonZero":33763,"ms":2133}
+PASS  M3c 解码后采样 RMS > 0.01（真的在录：非静音、非桩）  — rms=0.25490 peak=0.9999
+PASS  M3d transcribe 帧带 language 字段（契约面 {type,audio,language}）  — [{"i":1,"lang":"zh-CN","bytes":68310,"rms":0.2549,"ms":2133},{"i":2,"lang":"zh-CN","bytes":68310,"rms":0.0968,"ms":2133}]
+PASS  M3e 首段主频落在喂入音源基频带 150..600Hz（非环境噪声）  — dominant=240Hz mag=0.0644（合成源基频 185..267Hz）
+PASS  M3f 段内能量随时间调制（音节包络：分段 RMS 高低差 ≥2×，证明非稳态真采集）  — 分段 RMS 比（max/min）= 217.58 · 分段读数=[0.383,0.454,0.307,0.43,0.17,0.128,0.216,0.386,0.26,0.337,0.292,0.034,0.002,0.069,0.261,0.133,0.251,0.11,0.195,0.091,0.144]
+WS transcribe #3 · 5504B · RIFF/WAVE · 16000Hz/1ch/16bit · 2730 samples · 171ms · rms=0.1064 · peak=0.285 · nonZero=2728 · dom=805Hz@0.0058 · mod=1 · VALID
+PASS  M4a 关闭瞬间出现 processing 类（转写中态）  — trace=["init:icon-btn fm-mic-btn|pressed=false","mut:icon-btn fm-mic-btn recording|pressed=true","mut:icon-btn fm-mic-btn recording|pressed=true","mut:icon-btn fm-mic-btn processing|pressed=false","mut:icon-btn fm-mic-btn|pressed=false"]
+PASS  M4b 态机收敛（recording/processing 双双摘除，aria-pressed 回 false）  — {"cls":"icon-btn fm-mic-btn","pressed":"false"}
+PASS  M4c 转写文本落到输入框 input.fm-input.value  — {"value":"设备面板语音实测设备面板语音实测设备面板语音实测 "}
+PASS  M5 发送键 .fm-send-btn 随 value 非空放开（非 disabled）  — {"btn":true,"disabled":false,"cls":"cfg-btn cfg-btn-primary fm-send-btn","valueLen":25}
+SHOT mic-transcribed.png
+PASS  M7 三面 .fm-mic-btn 同款在场（好友 cF / 群 g-1 / 设备 dev:peer-1）  — {"dev:peer-1":{"bar":true,"btn":true,"cls":"icon-btn fm-mic-btn","pressed":"false","ariaLabel":"语音输入","iconSvgOrPlaceholder":true},"cF":{"bar":true,"btn":true,"cls":"icon-btn fm-mic-btn","pressed":"false","ariaLabel":"语音输入","iconSvgOrPlaceholder":true},"g-1":{"bar":true,"btn":true,"cls":"icon-btn fm-mic-btn","pressed":"false","ariaLabel":"语音输入","iconSvgOrPlaceholder":true}}
+PASS  M6a 零 console error  — []
+PASS  M6b 零 pageerror  — []
+
+=== fm-device-mic-live: failures=0 · verdict=PASS · segments=3 · EVID=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-c1142b9b/evidence/20261102_fm-threeface-align/mic ===
+```
+
+## 证据清单（8 件，可独立复核）
+
+| 文件 | 内容 |
+|---|---|
+| `mic-recording.png` | 录音中态（mic 键绿 + 输入框 live interim 文本） |
+| `mic-transcribed.png` | 转写落字后（mic 回常态 + 全量文本 + 发送键变绿可用） |
+| `transcribe-seg1.wav` / `seg2` / `seg3` | 捕获的 WS 帧原始字节，可直接播放 |
+| `fake-input-16k-mono-speechlike.wav` | 喂进浏览器的音源（384044B / 16000Hz / mono / 16bit / 12000ms / rms 0.10639） |
+| `readings.json` | RMS / 段数 / 最终 value / 态机 trace / launch args / 各断言读数 |
+| `RUN.txt` | 本文件 |

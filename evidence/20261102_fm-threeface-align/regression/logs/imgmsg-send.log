@@ -1,0 +1,154 @@
+imgmsg-send spec · MODE=after · WEB=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-c1142b9b/src/main/resources/web
+
+── 场景 A · ③ 占位语义（改前/改后同一探针）· MODE=after
+READ  geom.recv.4:3 = {"pre":{"boxH":165,"imgH":165,"imgW":220,"natural":"0x0","src":"","nfRatio":"","gapToNext":204,"cardH":194},"pre2":{"boxH":165,"imgH":165,"imgW":220,"natural":"0x0","src":"","nfRatio":"","gapToNext":204,"cardH":194},"post":{"boxH":165,"imgH":165,"imgW":220,"natural":"1600x1200","src":"server","nfRatio":"1600x1200","gapToNext":204,"cardH":194},"post2":{"boxH":165,"imgH":165,"imgW":220,"natural":"1600x1200","src":"server","nfRatio":"1600x1200","gapToNext":204,"cardH":194},"deltaGap":0,"deltaPost":0,"trace":{"n":23,"distinctH":[165],"preH":[165],"postH":[165],"firstSrcIdx":9,"last":{"h":165,"w":220,"src":true}},"expectBeforeDelta":195,"predict":{"w":220,"h":165,"delta":0},"pageErrors":[]}
+PASS  A/③ 4:3 字节到达前 = 媒体卡回退盒已占位（高 165）  — {"boxH":165,"imgW":220,"imgH":165,"natural":"0x0"}
+PASS  A/③ 4:3 骨架期零抖动（未点 src 期间盒高唯一）  — {"preH":[165],"deltaInSkeleton":0}
+PASS  A/③ 4:3 真帧盒 = fitLayer 装箱预测值（自比例 1600/1200 ⇒ 220×165）  — {"boxH":165,"imgW":220,"predict":{"w":220,"h":165},"nfRatio":"1600x1200"}
+PASS  A/③ 4:3 单次几何变更 = 预测值（骨架 165 ⇒ 真帧 165，Δ=0；取值 ≤ 2 档）  — {"delta":0,"predDelta":0,"distinctH":[165],"predict":{"w":220,"h":165}}
+PASS  A/③ 4:3 真帧后零重排（凡已点 src 的帧盒高即最终值 + 帧后 Δ=0）  — {"postH":[165],"predH":165,"deltaPost":0,"n":23}
+PASS  A/③ 4:3 真图解码（真位图读数）  — {"natural":"1600x1200","boxH":165,"imgW":220,"imgH":165}
+PASS  A 无 pageerror  — []
+READ  geom.recv.16:9 = {"pre":{"boxH":165,"imgH":165,"imgW":220,"natural":"0x0","src":"","nfRatio":"","gapToNext":204,"cardH":194},"pre2":{"boxH":165,"imgH":165,"imgW":220,"natural":"0x0","src":"","nfRatio":"","gapToNext":204,"cardH":194},"post":{"boxH":123.75,"imgH":123.75,"imgW":220,"natural":"1600x900","src":"server","nfRatio":"1600x900","gapToNext":162.75,"cardH":152.75},"post2":{"boxH":123.75,"imgH":123.75,"imgW":220,"natural":"1600x900","src":"server","nfRatio":"1600x900","gapToNext":162.75,"cardH":152.75},"deltaGap":-41.25,"deltaPost":0,"trace":{"n":23,"distinctH":[165,123.75],"preH":[165],"postH":[123.75],"firstSrcIdx":9,"last":{"h":123.75,"w":220,"src":true}},"expectBeforeDelta":146.25,"predict":{"w":220,"h":123.75,"delta":-41.25},"pageErrors":[]}
+PASS  A/③ 16:9 字节到达前 = 媒体卡回退盒已占位（高 165）  — {"boxH":165,"imgW":220,"imgH":165,"natural":"0x0"}
+PASS  A/③ 16:9 骨架期零抖动（未点 src 期间盒高唯一）  — {"preH":[165],"deltaInSkeleton":0}
+PASS  A/③ 16:9 真帧盒 = fitLayer 装箱预测值（自比例 1600/900 ⇒ 220×123.75）  — {"boxH":123.75,"imgW":220,"predict":{"w":220,"h":123.75},"nfRatio":"1600x900"}
+PASS  A/③ 16:9 单次几何变更 = 预测值（骨架 165 ⇒ 真帧 123.75，Δ=-41.25；取值 ≤ 2 档）  — {"delta":-41.25,"predDelta":-41.25,"distinctH":[165,123.75],"predict":{"w":220,"h":123.75}}
+PASS  A/③ 16:9 真帧后零重排（凡已点 src 的帧盒高即最终值 + 帧后 Δ=0）  — {"postH":[123.75],"predH":123.75,"deltaPost":0,"n":23}
+PASS  A/③ 16:9 真图解码（真位图读数）  — {"natural":"1600x900","boxH":123.75,"imgW":220,"imgH":123.75}
+READ  geom.recv.16x9.finalBoxH = {"boxH":123.75,"imgH":123.75,"imgW":220}
+PASS  A 无 pageerror  — []
+
+── 场景 B · 发送侧（响应腿先到）· MODE=after
+READ  send.B = {"early":{"phase":"local-pending","id":"fm-tmp-1","boxH":165,"hasSrc":true,"src":"local-thumb","attNat":"1600x1200","attAr":"1600 / 1200","attBox":"220x165","boxAr":"640 / 480","nfRatio":"640x480","bars":0,"cards":0,"frameNatural":"640x480","frameBytes":1786,"bannerTextHosts":0,"cardRects":[],"listHidden":true,"sendingCount":1,"ring":{"content":"\"\"","animationName":"fm-send-spin","animationDuration":"0.8s","position":"absolute","left":"-22px","top":"11px","width":"14px","height":"14px","borderTopColor":"rgb(91, 127, 191)","borderRadius":"50%"}},"firstFrame":{"src":"local-thumb","url":"blob:http://127.0.0.1:59240/88f42a28-9ece-48bb-9257-1d03dfca0a8c","boxH":165,"boxW":220,"boxAr":"4 / 3","nfRatio":"","attNat":"1600x1200","attAr":"1600 / 1200","attBox":"220x165","frameNatural":null,"frameBytes":1786},"final":{"id":"501","token":"TOK-1","phase":"confirmed","src":"local-handle","boxH":165,"attAr":"640 / 480","attBox":"220x165","boxAr":"640 / 480","nfRatio":"640x480","nodeCount":1,"msgCount":2,"progressBars":0,"uploadCards":0,"sendingCount":0,"bannerTextHosts":0,"listHidden":true},"claimedBeforeResponse":null,"sourceFileBytes":9526,"sourceFilePixels":"1600x1200","timeline":{"placeholder":15,"frame":71,"confirm":1321,"bubble":15},"postResponseAt":669,"srcSeq":["local-thumb","local-handle"],"dupMax":1,"dupEvents":[{"t":1793547621440,"n":1,"dup":[]},{"t":1793547622105,"n":2,"dup":[]},{"t":1793547623411,"n":2,"dup":[]}],"idsFinal":["301","501"],"attachGets":[],"wirePost":{"body":"","attachments":["att-up-1"],"clientMsgId":"044473b2-605d-44a7-a7d3-14b5769dea90"},"postSent":[{"p":"/api/friends/u-q/messages","at":1793547622759,"body":{"body":"","attachments":["att-up-1"],"clientMsgId":"044473b2-605d-44a7-a7d3-14b5769dea90"}}],"postAll":["/api/conversations/cC/read","/api/attachments/preview","/api/attachments"],"pageErrors":[]}
+PASS  B/① 乐观面先于服务端确认在屏（+250ms 时已在屏且未确认）  — {"phase":"local-pending","id":"fm-tmp-1","boxH":165,"hasSrc":true,"src":"local-thumb","attNat":"1600x1200","attAr":"1600 / 1200","attBox":"220x165","boxAr":"640 / 480","nfRatio":"640x480","bars":0,"cards":0,"frameNatural":"640x480","frameBytes":1786,"bannerTextHosts":0,"cardRects":[],"listHidden":true,"sendingCount":1,"ring":{"content":"\"\"","animationName":"fm-send-spin","animationDuration":"0.8s","position":"absolute","left":"-22px","top":"11px","width":"14px","height":"14px","borderTopColor":"rgb(91, 127, 191)","borderRadius":"50%"}}
+PASS  B/① 乐观面上屏时点 < 发消息响应时点  — {"bubble":15,"postResponse":669}
+PASS  B/① 乐观面在屏时，机会窗口内**只有一个面**（无重复面）  — {"nodeCount":1,"dupMax":1,"dupEvents":[]}
+PASS  B/① 原地接管：节点身份（probeToken）在确认后仍在同一节点  — {"id":"501","token":"TOK-1"}
+PASS  B/① 确认面字节 = 本机句柄（零服务端往返）  — {"src":"local-handle","attachGets":[]}
+PASS  B/② 首帧 = 本地小图（非服务端字节）  — {"firstFrameSrc":"local-thumb","srcSeq":["local-thumb","local-handle"],"earlySrc":"local-thumb"}
+PASS  B/② 占位出现时点 ≤ 首帧时点（骨架先行）  — {"placeholder":15,"frame":71}
+PASS  B/② 首帧落地时媒体盒按**真实比**（原图 1600×1200 ⇒ 4:3）占住（fm-att-card-unify 批：盒 = 主会话媒体卡 220×4:3）  — {"boxH":165,"boxW":220,"boxAr":"4 / 3","attBox":"220x165","attAr":"1600 / 1200"}
+PASS  B/② 首帧 = **本地生成的小图**（真字节读数：像素已降采样且字节远小于原图）  — {"frameNatural":null,"frameBytes":1786,"sourceBytes":9526,"earlyNatural":"640x480"}
+PASS  B/③ 确认面接管后盒比/盒尺寸与首帧一致（原地换键不改几何：220×4:3 + 4:3 系 nfRatio 读数）  — {"boxH":165,"nfRatio":"640x480","boxAr":"640 / 480","attAr":"640 / 480"}
+PASS  B/④ 本路径上传期间**零百分比进度条**（反馈 = 乐观直显）  — {"barsDuring":0,"barsFinal":0}
+READ  banner.B = {"early":{"textHosts":0,"cards":0,"cardRects":[],"listHidden":true,"sendingCount":1,"ring":{"content":"\"\"","animationName":"fm-send-spin","animationDuration":"0.8s","position":"absolute","left":"-22px","top":"11px","width":"14px","height":"14px","borderTopColor":"rgb(91, 127, 191)","borderRadius":"50%"}},"final":{"textHosts":0,"uploadCards":0,"sendingCount":0,"listHidden":true}}
+PASS  B/条幅 发送中：旧「正在发送」条幅**不存在**（文本宿主 0 + 卡 0 + 容器隐藏）  — {"textHosts":0,"cards":0,"listHidden":true,"cardRects":[]}
+PASS  B/环 发送中：气泡左侧 14px 环在转（2px 描边 + sapphire 弧顶 + 0.8s/圈 + 绝对定位 -22px/11px）  — {"content":"\"\"","animationName":"fm-send-spin","animationDuration":"0.8s","position":"absolute","left":"-22px","top":"11px","width":"14px","height":"14px","borderTopColor":"rgb(91, 127, 191)","borderRadius":"50%"}
+PASS  B/环 发送中：时间戳脉冲**已退位**（一次只留一个载面）  — {"ringContent":"\"\""}
+PASS  B/无痕 成功：确认面接管后 `.fm-sending` **已摘**（无残留环）+ 无条幅残条  — {"sendingCount":0,"textHosts":0,"uploadCards":0}
+PASS  B wire 面：请求体带 attachments = 本机上传回执 id  — {"body":"","attachments":["att-up-1"],"clientMsgId":"044473b2-605d-44a7-a7d3-14b5769dea90"}
+PASS  B 无 pageerror  — []
+
+── 场景 B2 · 发送侧（回显腿先到）· MODE=after
+READ  send.B2 = {"early":{"phase":"local-pending","id":"fm-tmp-1","boxH":165,"hasSrc":true,"src":"local-thumb","attNat":"1600x1200","attAr":"1600 / 1200","attBox":"220x165","boxAr":"640 / 480","nfRatio":"640x480","bars":0,"cards":0,"frameNatural":"640x480","frameBytes":1786,"bannerTextHosts":0,"cardRects":[],"listHidden":true,"sendingCount":1,"ring":{"content":"\"\"","animationName":"fm-send-spin","animationDuration":"0.8s","position":"absolute","left":"-22px","top":"11px","width":"14px","height":"14px","borderTopColor":"rgb(91, 127, 191)","borderRadius":"50%"}},"firstFrame":{"src":"local-thumb","url":"blob:http://127.0.0.1:59240/e90d9931-f8f2-4835-bfe3-4a1439b9b709","boxH":165,"boxW":220,"boxAr":"4 / 3","nfRatio":"","attNat":"1600x1200","attAr":"1600 / 1200","attBox":"220x165","frameNatural":null,"frameBytes":1786},"final":{"id":"501","token":"TOK-1","phase":"confirmed","src":"local-handle","boxH":165,"attAr":"640 / 480","attBox":"220x165","boxAr":"640 / 480","nfRatio":"640x480","nodeCount":1,"msgCount":2,"progressBars":0,"uploadCards":0,"sendingCount":0,"bannerTextHosts":0,"listHidden":true},"claimedBeforeResponse":{"id":"501","phase":"local-pending"},"sourceFileBytes":9526,"sourceFilePixels":"1600x1200","timeline":{"placeholder":22,"frame":72,"confirm":1550,"bubble":22},"postResponseAt":663,"srcSeq":["local-thumb","local-handle"],"dupMax":1,"dupEvents":[{"t":1793547626680,"n":1,"dup":[]},{"t":1793547627353,"n":2,"dup":[]},{"t":1793547628019,"n":2,"dup":[]}],"idsFinal":["301","501"],"attachGets":[],"wirePost":{"body":"","attachments":["att-up-1"],"clientMsgId":"6290fda9-0672-496c-b39a-cc39efae5fb5"},"postSent":[{"p":"/api/friends/u-q/messages","at":1793547627994,"body":{"body":"","attachments":["att-up-1"],"clientMsgId":"6290fda9-0672-496c-b39a-cc39efae5fb5"}}],"postAll":["/api/conversations/cC/read","/api/attachments/preview","/api/attachments","/api/friends/u-q/messages"],"pageErrors":[]}
+PASS  B/① 乐观面先于服务端确认在屏（+250ms 时已在屏且未确认）  — {"phase":"local-pending","id":"fm-tmp-1","boxH":165,"hasSrc":true,"src":"local-thumb","attNat":"1600x1200","attAr":"1600 / 1200","attBox":"220x165","boxAr":"640 / 480","nfRatio":"640x480","bars":0,"cards":0,"frameNatural":"640x480","frameBytes":1786,"bannerTextHosts":0,"cardRects":[],"listHidden":true,"sendingCount":1,"ring":{"content":"\"\"","animationName":"fm-send-spin","animationDuration":"0.8s","position":"absolute","left":"-22px","top":"11px","width":"14px","height":"14px","borderTopColor":"rgb(91, 127, 191)","borderRadius":"50%"}}
+PASS  B/① 乐观面上屏时点 < 发消息响应时点  — {"bubble":22,"postResponse":663}
+PASS  B/① 乐观面在屏时，机会窗口内**只有一个面**（无重复面）  — {"nodeCount":1,"dupMax":1,"dupEvents":[]}
+PASS  B/① 原地接管：节点身份（probeToken）在确认后仍在同一节点  — {"id":"501","token":"TOK-1"}
+PASS  B/① 确认面字节 = 本机句柄（零服务端往返）  — {"src":"local-handle","attachGets":[]}
+PASS  B/② 首帧 = 本地小图（非服务端字节）  — {"firstFrameSrc":"local-thumb","srcSeq":["local-thumb","local-handle"],"earlySrc":"local-thumb"}
+PASS  B/② 占位出现时点 ≤ 首帧时点（骨架先行）  — {"placeholder":22,"frame":72}
+PASS  B/② 首帧落地时媒体盒按**真实比**（原图 1600×1200 ⇒ 4:3）占住（fm-att-card-unify 批：盒 = 主会话媒体卡 220×4:3）  — {"boxH":165,"boxW":220,"boxAr":"4 / 3","attBox":"220x165","attAr":"1600 / 1200"}
+PASS  B/② 首帧 = **本地生成的小图**（真字节读数：像素已降采样且字节远小于原图）  — {"frameNatural":null,"frameBytes":1786,"sourceBytes":9526,"earlyNatural":"640x480"}
+PASS  B/③ 确认面接管后盒比/盒尺寸与首帧一致（原地换键不改几何：220×4:3 + 4:3 系 nfRatio 读数）  — {"boxH":165,"nfRatio":"640x480","boxAr":"640 / 480","attAr":"640 / 480"}
+PASS  B/④ 本路径上传期间**零百分比进度条**（反馈 = 乐观直显）  — {"barsDuring":0,"barsFinal":0}
+READ  banner.B2 = {"early":{"textHosts":0,"cards":0,"cardRects":[],"listHidden":true,"sendingCount":1,"ring":{"content":"\"\"","animationName":"fm-send-spin","animationDuration":"0.8s","position":"absolute","left":"-22px","top":"11px","width":"14px","height":"14px","borderTopColor":"rgb(91, 127, 191)","borderRadius":"50%"}},"final":{"textHosts":0,"uploadCards":0,"sendingCount":0,"listHidden":true}}
+PASS  B/条幅 发送中：旧「正在发送」条幅**不存在**（文本宿主 0 + 卡 0 + 容器隐藏）  — {"textHosts":0,"cards":0,"listHidden":true,"cardRects":[]}
+PASS  B/环 发送中：气泡左侧 14px 环在转（2px 描边 + sapphire 弧顶 + 0.8s/圈 + 绝对定位 -22px/11px）  — {"content":"\"\"","animationName":"fm-send-spin","animationDuration":"0.8s","position":"absolute","left":"-22px","top":"11px","width":"14px","height":"14px","borderTopColor":"rgb(91, 127, 191)","borderRadius":"50%"}
+PASS  B/环 发送中：时间戳脉冲**已退位**（一次只留一个载面）  — {"ringContent":"\"\""}
+PASS  B/无痕 成功：确认面接管后 `.fm-sending` **已摘**（无残留环）+ 无条幅残条  — {"sendingCount":0,"textHosts":0,"uploadCards":0}
+PASS  B wire 面：请求体带 attachments = 本机上传回执 id  — {"body":"","attachments":["att-up-1"],"clientMsgId":"6290fda9-0672-496c-b39a-cc39efae5fb5"}
+PASS  B2/① 回显腿先到：帧到达即**原地认领**（响应前节点已换真 id，仍只有一个面）  — {"claimedBeforeResponse":{"id":"501","phase":"local-pending"},"token":"TOK-1"}
+PASS  B 无 pageerror  — []
+
+── 场景 C · 范围闸反例（非图片件）· MODE=after
+READ  scope.nonImage = {"mid":{"optimistic":false,"bars":1,"cards":1,"inline":0},"finalInline":0,"pageErrors":[]}
+PASS  C 非图片件 = 零乐观面（逐字走既有路径）  — {"optimistic":false,"bars":1,"cards":1,"inline":0}
+PASS  C 非图片件 = 上传卡在（既有呈现）+ 零图片直显槽  — {"cards":1,"inline":0,"finalInline":0}
+PASS  C 无 pageerror  — []
+
+── 场景 D · 接收侧零回归 + ⑤ 无过渡 · MODE=after
+READ  recv = {"recv":{"hasLocalFace":true,"sendPhase":"","src":"server","natural":"1600x1200","alt":"photo-4x3.png","dirOut":false},"attachGets":["/api/friends/attachments/att-in-1"],"txtSlot":0,"trans":{"box":{"transitionProperty":"all","transitionDuration":"0s","animationName":"none","aspectRatio":"1600 / 1200"},"img":{"transitionProperty":"all","transitionDuration":"0s","animationName":"none","aspectRatio":"auto"},"msg":{"transitionProperty":"all","transitionDuration":"0s","animationName":"none","aspectRatio":"auto"}},"pageErrors":[]}
+PASS  D 接收侧：入站图片走服务端字节腿（本批零语义）  — {"recv":{"hasLocalFace":true,"sendPhase":"","src":"server","natural":"1600x1200","alt":"photo-4x3.png","dirOut":false},"gets":["/api/friends/attachments/att-in-1"]}
+PASS  D 接收侧：无 data-send-phase（未挂发送侧语义）  — {"sendPhase":""}
+PASS  D 接收侧：非图片件零直显槽（非图片 ⇒ 零行为变化）  — {"txtSlot":0}
+PASS  D ⑤ 无过渡（内联槽与图片的计算样式 transition/animation）  — {"box":{"transitionProperty":"all","transitionDuration":"0s","animationName":"none","aspectRatio":"1600 / 1200"},"img":{"transitionProperty":"all","transitionDuration":"0s","animationName":"none","aspectRatio":"auto"},"msg":{"transitionProperty":"all","transitionDuration":"0s","animationName":"none","aspectRatio":"auto"}}
+PASS  D ③ 盒比读数（fm-att-card-unify 批：媒体盒比 = 真实比 4/3（fitLayer）；改前基线槽无比）  — {"aspectRatio":"1600 / 1200"}
+PASS  D 无 pageerror  — []
+
+── 场景 E · 失败红圈左移 + 点击同键重发 · MODE=after
+READ  fail.marker = {"marker":{"glyph":"!","tag":"BUTTON","position":"absolute","left":"-26px","top":"9px","marginTop":"0px","width":"18px","height":"18px","borderColor":"rgb(214, 69, 69)","radius":"50%","background":"rgb(229, 230, 233)","cursor":"pointer","pointerEvents":"auto","rect":{"x":788,"y":284.5,"w":18,"h":18},"bubbleRect":{"x":853,"y":275.5,"w":50,"h":35.5},"leftOfBubble":true,"belowBubble":false,"hit":"fm-retry","centerDeltaY":0.25},"after":{"mid":"501","nodeCount":1,"msgCount":2,"retryLeft":0,"failedLeft":0},"posts":["d544aa9e-01a0-4838-a029-399660294860","d544aa9e-01a0-4838-a029-399660294860"],"replays":1,"rowsForAction":[501],"dupMax":1,"dupEvents":[],"pageErrors":[]}
+PASS  E/B② 失败标识在**气泡左侧**（绝对定位 -26px/9px，18px 红圈，与气泡首行同心）  — {"glyph":"!","tag":"BUTTON","position":"absolute","left":"-26px","top":"9px","marginTop":"0px","width":"18px","height":"18px","borderColor":"rgb(214, 69, 69)","radius":"50%","background":"rgb(229, 230, 233)","cursor":"pointer","pointerEvents":"auto","rect":{"x":788,"y":284.5,"w":18,"h":18},"bubbleRect":{"x":853,"y":275.5,"w":50,"h":35.5},"leftOfBubble":true,"belowBubble":false,"hit":"fm-retry","centerDeltaY":0.25}
+PASS  E/B② 字形 = 既有红圈「!」（**非 emoji**）+ `--status-error-icon` 描边  — {"glyph":"!","borderColor":"rgb(214, 69, 69)","radius":"50%"}
+PASS  E/B② 可点：`elementFromPoint` 命中按钮本体 + hover 出既有 `--color-frame-hover` 底  — {"hit":"fm-retry","cursor":"pointer","background":"rgb(229, 230, 233)"}
+PASS  E/B② 点击重发走既有通道：2 次 POST **同一** `clientMsgId`（键复用）  — ["d544aa9e-01a0-4838-a029-399660294860","d544aa9e-01a0-4838-a029-399660294860"]
+PASS  E/B② 不多落一条：本动作落行 = 1（服务端按同键回放，replays ≥ 1）+ 气泡节点 = 1  — {"rows":[501],"replays":1,"nodeCount":1,"dupMax":1,"dupEvents":[]}
+PASS  E 点击后失败面收口（红圈与失败气泡一并退场）  — {"mid":"501","nodeCount":1,"msgCount":2,"retryLeft":0,"failedLeft":0}
+PASS  E 无 pageerror  — []
+
+── 场景 F · ③ 真实比出盒（light）· MODE=after
+READ  ratio.landscape-16x9.light = {"nat":"1600x900","natRatio":1.7778,"predict":{"box":"220x123.75","ar":1.7778},"nfRatio":"1600x900","boxAr":"1600 / 900","measured":{"w":220,"h":123.75,"ar":1.7778,"img":{"w":220,"h":123.75}},"overflow":{"card":0,"flow":0},"widths":{"msg":220,"card":220,"flowClient":558},"gapToNext":10,"pageErrors":[]}
+PASS  F/③ [light] landscape-16x9 真图解码 = 原图内禀 1600×900  — {"nat":"1600x900"}
+PASS  F/③ [light] landscape-16x9 盒按**真实比**出（无夹取：nfRatio=1600x900 · fitBox 装箱 220×123.75 · img 铺满盒）  — {"nfRatio":"1600x900","boxAr":"1600 / 900","measuredAr":1.7778,"predict":{"w":220,"h":123.75},"measured":{"w":220,"h":123.75},"img":{"w":220,"h":123.75}}
+PASS  F/③ [light] landscape-16x9 盒 ≤ 220×420（主会话卡装箱上限）  — {"w":220,"h":123.75}
+PASS  F/③ [light] landscape-16x9 不破版（卡内/流内无横向溢出 + 下方消息未被顶走）  — {"cardOverflow":0,"flowOverflow":0,"nextTop":371.75,"msgBottom":361.75}
+PASS  F [light] landscape-16x9 无 pageerror  — []
+READ  ratio.portrait-9x16.light = {"nat":"900x1600","natRatio":0.5625,"predict":{"box":"220x391.11","ar":0.5625},"nfRatio":"900x1600","boxAr":"900 / 1600","measured":{"w":220,"h":391.11,"ar":0.5625,"img":{"w":220,"h":391.11}},"overflow":{"card":0,"flow":0},"widths":{"msg":220,"card":220,"flowClient":558},"gapToNext":10,"pageErrors":[]}
+PASS  F/③ [light] portrait-9x16 真图解码 = 原图内禀 900×1600  — {"nat":"900x1600"}
+PASS  F/③ [light] portrait-9x16 盒按**真实比**出（无夹取：nfRatio=900x1600 · fitBox 装箱 220×391.11 · img 铺满盒）  — {"nfRatio":"900x1600","boxAr":"900 / 1600","measuredAr":0.5625,"predict":{"w":220,"h":391.11},"measured":{"w":220,"h":391.11},"img":{"w":220,"h":391.11}}
+PASS  F/③ [light] portrait-9x16 盒 ≤ 220×420（主会话卡装箱上限）  — {"w":220,"h":391.11}
+PASS  F/③ [light] portrait-9x16 不破版（卡内/流内无横向溢出 + 下方消息未被顶走）  — {"cardOverflow":0,"flowOverflow":0,"nextTop":639.11,"msgBottom":629.11}
+PASS  F [light] portrait-9x16 无 pageerror  — []
+READ  ratio.square-1x1.light = {"nat":"1200x1200","natRatio":1,"predict":{"box":"220x220","ar":1},"nfRatio":"1200x1200","boxAr":"1200 / 1200","measured":{"w":220,"h":220,"ar":1,"img":{"w":220,"h":220}},"overflow":{"card":0,"flow":0},"widths":{"msg":220,"card":220,"flowClient":558},"gapToNext":10,"pageErrors":[]}
+PASS  F/③ [light] square-1x1 真图解码 = 原图内禀 1200×1200  — {"nat":"1200x1200"}
+PASS  F/③ [light] square-1x1 盒按**真实比**出（无夹取：nfRatio=1200x1200 · fitBox 装箱 220×220 · img 铺满盒）  — {"nfRatio":"1200x1200","boxAr":"1200 / 1200","measuredAr":1,"predict":{"w":220,"h":220},"measured":{"w":220,"h":220},"img":{"w":220,"h":220}}
+PASS  F/③ [light] square-1x1 盒 ≤ 220×420（主会话卡装箱上限）  — {"w":220,"h":220}
+PASS  F/③ [light] square-1x1 不破版（卡内/流内无横向溢出 + 下方消息未被顶走）  — {"cardOverflow":0,"flowOverflow":0,"nextTop":468,"msgBottom":458}
+PASS  F [light] square-1x1 无 pageerror  — []
+READ  ratio.strip-20x1-extreme.light = {"nat":"4000x200","natRatio":20,"predict":{"box":"220x11","ar":20},"nfRatio":"4000x200","boxAr":"4000 / 200","measured":{"w":220,"h":11,"ar":20,"img":{"w":220,"h":11}},"overflow":{"card":0,"flow":0},"widths":{"msg":220,"card":220,"flowClient":558},"gapToNext":10,"pageErrors":[]}
+PASS  F/③ [light] strip-20x1-extreme 真图解码 = 原图内禀 4000×200  — {"nat":"4000x200"}
+PASS  F/③ [light] strip-20x1-extreme 盒按**真实比**出（无夹取：nfRatio=4000x200 · fitBox 装箱 220×11 · img 铺满盒）  — {"nfRatio":"4000x200","boxAr":"4000 / 200","measuredAr":20,"predict":{"w":220,"h":11},"measured":{"w":220,"h":11},"img":{"w":220,"h":11}}
+PASS  F/③ [light] strip-20x1-extreme 盒 ≤ 220×420（主会话卡装箱上限）  — {"w":220,"h":11}
+PASS  F/③ [light] strip-20x1-extreme 不破版（卡内/流内无横向溢出 + 下方消息未被顶走）  — {"cardOverflow":0,"flowOverflow":0,"nextTop":259,"msgBottom":249}
+PASS  F [light] strip-20x1-extreme 无 pageerror  — []
+READ  ratio.column-1x20-extreme.light = {"nat":"200x4000","natRatio":0.05,"predict":{"box":"21x420","ar":0.05},"nfRatio":"200x4000","boxAr":"200 / 4000","measured":{"w":21,"h":420,"ar":0.05,"img":{"w":21,"h":420}},"overflow":{"card":0,"flow":0},"widths":{"msg":89.02,"card":21,"flowClient":558},"gapToNext":10,"pageErrors":[]}
+PASS  F/③ [light] column-1x20-extreme 真图解码 = 原图内禀 200×4000  — {"nat":"200x4000"}
+PASS  F/③ [light] column-1x20-extreme 盒按**真实比**出（无夹取：nfRatio=200x4000 · fitBox 装箱 21×420 · img 铺满盒）  — {"nfRatio":"200x4000","boxAr":"200 / 4000","measuredAr":0.05,"predict":{"w":21,"h":420},"measured":{"w":21,"h":420},"img":{"w":21,"h":420}}
+PASS  F/③ [light] column-1x20-extreme 盒 ≤ 220×420（主会话卡装箱上限）  — {"w":21,"h":420}
+PASS  F/③ [light] column-1x20-extreme 不破版（卡内/流内无横向溢出 + 下方消息未被顶走）  — {"cardOverflow":0,"flowOverflow":0,"nextTop":668,"msgBottom":658}
+PASS  F [light] column-1x20-extreme 无 pageerror  — []
+
+── 场景 F · ③ 真实比出盒（dark）· MODE=after
+READ  ratio.landscape-16x9.dark = {"nat":"1600x900","natRatio":1.7778,"predict":{"box":"220x123.75","ar":1.7778},"nfRatio":"1600x900","boxAr":"1600 / 900","measured":{"w":220,"h":123.75,"ar":1.7778,"img":{"w":220,"h":123.75}},"overflow":{"card":0,"flow":0},"widths":{"msg":220,"card":220,"flowClient":558},"gapToNext":10,"pageErrors":[]}
+PASS  F/③ [dark] landscape-16x9 真图解码 = 原图内禀 1600×900  — {"nat":"1600x900"}
+PASS  F/③ [dark] landscape-16x9 盒按**真实比**出（无夹取：nfRatio=1600x900 · fitBox 装箱 220×123.75 · img 铺满盒）  — {"nfRatio":"1600x900","boxAr":"1600 / 900","measuredAr":1.7778,"predict":{"w":220,"h":123.75},"measured":{"w":220,"h":123.75},"img":{"w":220,"h":123.75}}
+PASS  F/③ [dark] landscape-16x9 盒 ≤ 220×420（主会话卡装箱上限）  — {"w":220,"h":123.75}
+PASS  F/③ [dark] landscape-16x9 不破版（卡内/流内无横向溢出 + 下方消息未被顶走）  — {"cardOverflow":0,"flowOverflow":0,"nextTop":371.75,"msgBottom":361.75}
+PASS  F [dark] landscape-16x9 无 pageerror  — []
+READ  ratio.portrait-9x16.dark = {"nat":"900x1600","natRatio":0.5625,"predict":{"box":"220x391.11","ar":0.5625},"nfRatio":"900x1600","boxAr":"900 / 1600","measured":{"w":220,"h":391.11,"ar":0.5625,"img":{"w":220,"h":391.11}},"overflow":{"card":0,"flow":0},"widths":{"msg":220,"card":220,"flowClient":558},"gapToNext":10,"pageErrors":[]}
+PASS  F/③ [dark] portrait-9x16 真图解码 = 原图内禀 900×1600  — {"nat":"900x1600"}
+PASS  F/③ [dark] portrait-9x16 盒按**真实比**出（无夹取：nfRatio=900x1600 · fitBox 装箱 220×391.11 · img 铺满盒）  — {"nfRatio":"900x1600","boxAr":"900 / 1600","measuredAr":0.5625,"predict":{"w":220,"h":391.11},"measured":{"w":220,"h":391.11},"img":{"w":220,"h":391.11}}
+PASS  F/③ [dark] portrait-9x16 盒 ≤ 220×420（主会话卡装箱上限）  — {"w":220,"h":391.11}
+PASS  F/③ [dark] portrait-9x16 不破版（卡内/流内无横向溢出 + 下方消息未被顶走）  — {"cardOverflow":0,"flowOverflow":0,"nextTop":639.11,"msgBottom":629.11}
+PASS  F [dark] portrait-9x16 无 pageerror  — []
+READ  ratio.square-1x1.dark = {"nat":"1200x1200","natRatio":1,"predict":{"box":"220x220","ar":1},"nfRatio":"1200x1200","boxAr":"1200 / 1200","measured":{"w":220,"h":220,"ar":1,"img":{"w":220,"h":220}},"overflow":{"card":0,"flow":0},"widths":{"msg":220,"card":220,"flowClient":558},"gapToNext":10,"pageErrors":[]}
+PASS  F/③ [dark] square-1x1 真图解码 = 原图内禀 1200×1200  — {"nat":"1200x1200"}
+PASS  F/③ [dark] square-1x1 盒按**真实比**出（无夹取：nfRatio=1200x1200 · fitBox 装箱 220×220 · img 铺满盒）  — {"nfRatio":"1200x1200","boxAr":"1200 / 1200","measuredAr":1,"predict":{"w":220,"h":220},"measured":{"w":220,"h":220},"img":{"w":220,"h":220}}
+PASS  F/③ [dark] square-1x1 盒 ≤ 220×420（主会话卡装箱上限）  — {"w":220,"h":220}
+PASS  F/③ [dark] square-1x1 不破版（卡内/流内无横向溢出 + 下方消息未被顶走）  — {"cardOverflow":0,"flowOverflow":0,"nextTop":468,"msgBottom":458}
+PASS  F [dark] square-1x1 无 pageerror  — []
+READ  ratio.strip-20x1-extreme.dark = {"nat":"4000x200","natRatio":20,"predict":{"box":"220x11","ar":20},"nfRatio":"4000x200","boxAr":"4000 / 200","measured":{"w":220,"h":11,"ar":20,"img":{"w":220,"h":11}},"overflow":{"card":0,"flow":0},"widths":{"msg":220,"card":220,"flowClient":558},"gapToNext":10,"pageErrors":[]}
+PASS  F/③ [dark] strip-20x1-extreme 真图解码 = 原图内禀 4000×200  — {"nat":"4000x200"}
+PASS  F/③ [dark] strip-20x1-extreme 盒按**真实比**出（无夹取：nfRatio=4000x200 · fitBox 装箱 220×11 · img 铺满盒）  — {"nfRatio":"4000x200","boxAr":"4000 / 200","measuredAr":20,"predict":{"w":220,"h":11},"measured":{"w":220,"h":11},"img":{"w":220,"h":11}}
+PASS  F/③ [dark] strip-20x1-extreme 盒 ≤ 220×420（主会话卡装箱上限）  — {"w":220,"h":11}
+PASS  F/③ [dark] strip-20x1-extreme 不破版（卡内/流内无横向溢出 + 下方消息未被顶走）  — {"cardOverflow":0,"flowOverflow":0,"nextTop":259,"msgBottom":249}
+PASS  F [dark] strip-20x1-extreme 无 pageerror  — []
+READ  ratio.column-1x20-extreme.dark = {"nat":"200x4000","natRatio":0.05,"predict":{"box":"21x420","ar":0.05},"nfRatio":"200x4000","boxAr":"200 / 4000","measured":{"w":21,"h":420,"ar":0.05,"img":{"w":21,"h":420}},"overflow":{"card":0,"flow":0},"widths":{"msg":89.02,"card":21,"flowClient":558},"gapToNext":10,"pageErrors":[]}
+PASS  F/③ [dark] column-1x20-extreme 真图解码 = 原图内禀 200×4000  — {"nat":"200x4000"}
+PASS  F/③ [dark] column-1x20-extreme 盒按**真实比**出（无夹取：nfRatio=200x4000 · fitBox 装箱 21×420 · img 铺满盒）  — {"nfRatio":"200x4000","boxAr":"200 / 4000","measuredAr":0.05,"predict":{"w":21,"h":420},"measured":{"w":21,"h":420},"img":{"w":21,"h":420}}
+PASS  F/③ [dark] column-1x20-extreme 盒 ≤ 220×420（主会话卡装箱上限）  — {"w":21,"h":420}
+PASS  F/③ [dark] column-1x20-extreme 不破版（卡内/流内无横向溢出 + 下方消息未被顶走）  — {"cardOverflow":0,"flowOverflow":0,"nextTop":668,"msgBottom":658}
+PASS  F [dark] column-1x20-extreme 无 pageerror  — []
+
+=== after: failures=0 ===
