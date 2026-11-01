@@ -13,6 +13,7 @@
 // 回不回得去。这三条靠人眼是验不出来的（尤其 IME），只能脚本化。
 
 import { loadPlaywright, launchBrowser, createSession, settle } from './lib/visual-harness.mjs';
+import { activeKey, countEvents, resetEvents, trackEvents } from './lib/keyboard-probes.mjs';
 
 const pw = loadPlaywright();
 const { browser, label } = await launchBrowser(pw.mod, {});
@@ -262,6 +263,122 @@ console.log('E 双模态');
   check('Enter 发送（产生帧）', afterSend.sent > sent, `${sent}→${afterSend.sent}`);
   check('Enter 后 edit → meta', afterSend.mode === 'meta', JSON.stringify(afterSend));
   check('Enter 后焦点离开输入框', afterSend.focus !== 'input', afterSend.focus);
+  await s.close();
+}
+
+// ── F 文件树键盘化（B1：**业务语义**断言，用 B0-5 的共享探针取证）──────────
+// 这一组是「断言终于问到业务」的分水岭：A–E 问的是「设施在不在」（注册器/面板/
+// 模态/焦点环/双模态），F 起问的是「按一下真的发生了什么」——焦点到了哪一行、
+// 目录真的开没开、Enter 真的发出取数帧没有、页签真的出现在画布上没有。
+console.log('F 文件树');
+{
+  const s = await fresh();
+  await trackEvents(s.page, ['workspace-open-item']);
+
+  // ① Tab 可达首行（并顺带证树容器 role="tree" 与行 role="treeitem"）
+  const treeShape = await s.page.evaluate(() => {
+    const t = document.getElementById('explorer-tree');
+    return {
+      role: t ? t.getAttribute('role') : null,
+      rows: t ? t.querySelectorAll('.explorer-item[role="treeitem"]').length : 0,
+    };
+  });
+  /** @type {string|null} */
+  let reached = null;
+  for (let i = 0; i < 40; i++) {
+    await s.page.keyboard.press('Tab');
+    const k = await activeKey(s.page);
+    if (k.startsWith('key:explorer:')) { reached = k; break; }
+  }
+  check('① Tab 可达文件树行（role=tree / treeitem）', !!reached && treeShape.role === 'tree' && treeShape.rows >= 4, `${reached} ${JSON.stringify(treeShape)}`);
+
+  // ② 同一时刻恰好一行 tabindex=0（roving 的不变量）
+  const zeroRows = await s.page.evaluate(() => [...document.querySelectorAll('#explorer-tree .explorer-item[role="treeitem"]')]
+    .filter((el) => el.tabIndex === 0).length);
+  check('② 同一时刻恰好 1 行 tabindex=0', zeroRows === 1, `zero=${zeroRows}`);
+
+  // ③ ↓ 逐行下移（连按三拍，每拍都换行）
+  await s.page.evaluate(() => {
+    const r = /** @type {HTMLElement} */ (document.querySelector('#explorer-tree .explorer-item[role="treeitem"]'));
+    if (r) r.focus();
+  });
+  /** @type {string[]} */
+  const downSeq = [];
+  for (let i = 0; i < 3; i++) {
+    await s.page.keyboard.press('ArrowDown');
+    await s.page.waitForTimeout(60);
+    downSeq.push(await activeKey(s.page));
+  }
+  const moved = downSeq.every((k, i) => k.startsWith('key:explorer:') && (i === 0 || k !== downSeq[i - 1]));
+  check('③ ↓ 逐行下移（焦点真的换行）', moved, JSON.stringify(downSeq));
+
+  // ④ → 展开目录：aria-expanded=true **且**子行真的出现
+  await s.page.evaluate(() => {
+    const r = /** @type {HTMLElement} */ (document.querySelector('#explorer-tree .explorer-folder[data-path="docs"]'));
+    if (r) r.focus();
+  });
+  const rowsBefore = await s.page.evaluate(() => document.querySelectorAll('#explorer-tree .explorer-item').length);
+  await s.page.keyboard.press('ArrowRight');
+  await s.page.waitForTimeout(400);
+  const expanded = await s.page.evaluate((n) => {
+    const row = document.querySelector('#explorer-tree .explorer-folder[data-path="docs"]');
+    const rows = document.querySelectorAll('#explorer-tree .explorer-item').length;
+    return { aria: row ? row.getAttribute('aria-expanded') : null, rows, added: rows - n };
+  }, rowsBefore);
+  check('④ → 展开目录（aria-expanded + 子行出现）', expanded.aria === 'true' && expanded.added > 0, JSON.stringify(expanded));
+
+  // ⑤ ← 收起
+  await s.page.evaluate(() => {
+    const r = /** @type {HTMLElement} */ (document.querySelector('#explorer-tree .explorer-folder[data-path="docs"]'));
+    if (r) r.focus();
+  });
+  await s.page.keyboard.press('ArrowLeft');
+  await s.page.waitForTimeout(300);
+  const collapsed = await s.page.evaluate(() => {
+    const row = document.querySelector('#explorer-tree .explorer-folder[data-path="docs"]');
+    return row ? row.getAttribute('aria-expanded') : null;
+  });
+  check('⑤ ← 收起目录', collapsed === 'false', String(collapsed));
+
+  // ⑥ Enter 在文件行 → 走**既有激活路径**（readFile 帧），不另造一条
+  await s.page.evaluate(() => {
+    const r = /** @type {HTMLElement} */ (document.querySelector('#explorer-tree .explorer-file[data-path="README.md"]'));
+    if (r) r.focus();
+  });
+  const sentBefore = await s.page.evaluate(() => (window.__wsSent || []).length);
+  await s.page.keyboard.press('Enter');
+  await s.page.waitForTimeout(300);
+  const readFiles = await s.page.evaluate((n) => (window.__wsSent || []).slice(n)
+    .filter((f) => f.type === 'readFile').map((f) => f.path), sentBefore);
+  check('⑥ Enter 在文件行发出 readFile（既有激活路径）', readFiles.includes('README.md'), JSON.stringify(readFiles));
+
+  // ⑦ 应答回灌 → workspace-open-item 计数 ≥1 **且** 画布出现该页签
+  await s.frame({
+    type: 'fileContent', path: 'README.md', absPath: '/proj/README.md',
+    content: '# readme\n\n键盘打开的。\n', size: 24, itemType: 'markdown', mtimeMs: 1757000000000,
+  });
+  await s.page.waitForTimeout(600);
+  const openedEv = await countEvents(s.page, 'workspace-open-item');
+  const tabShown = await s.page.evaluate(() => !!document.querySelector('#canvas-panel .canvas-tab-pane[data-tab-id="file:README.md"]'));
+  check('⑦ 打开后画布出现对应页签', openedEv >= 1 && tabShown === true, `events=${openedEv} tab=${tabShown}`);
+
+  // ⑧ `.explorer-creating` 不进 Tab 序（行本身不可聚焦、不是 treeitem；Tab 落在内部 input）
+  await s.page.click('#explorer-new-file-btn');
+  await s.page.waitForTimeout(250);
+  const creating = await s.page.evaluate(() => {
+    const row = document.querySelector('#explorer-tree .explorer-creating');
+    return {
+      exists: !!row,
+      role: row ? row.getAttribute('role') : null,
+      ti: row ? /** @type {HTMLElement} */ (row).tabIndex : null,
+      treeitems: row ? row.querySelectorAll('[role="treeitem"]').length : -1,
+      focusIn: !!(row && row.contains(document.activeElement)),
+    };
+  });
+  check('⑧ .explorer-creating 不进 Tab 序', creating.exists === true && creating.role === 'none'
+    && creating.ti === -1 && creating.treeitems === 0 && creating.focusIn === true, JSON.stringify(creating));
+  await s.page.keyboard.press('Escape');
+  await s.page.waitForTimeout(150);
   await s.close();
 }
 

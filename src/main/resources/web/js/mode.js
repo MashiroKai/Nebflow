@@ -155,9 +155,18 @@ export function stepCenter(dir) {
 
 /**
  * 侧边栏条目上一/下一。
- * Phase 1 只搬焦点：给非可聚焦条目临时补 `tabindex="-1"`（**不进 Tab 序**，
- * 因此不改变既有 Tab 链，也不改变任何像素）；Tab 序的整套治理（roving
- * tabindex + 方向键 + Enter 打开）是二期文件树键盘化那一批。
+ *
+ * B1-3（keyboard-first 二期）：**兼容腿按行收窄**。改造前这里给每个条目
+ * `setAttribute('tabindex','-1')`，结果是"焦点进得去、按不动"—— 行是裸 `div`，
+ * 没有 role、没有激活语义。B1-1 之后树行自带 roving tabindex 与
+ * `data-focus-key`（explorer.js `makeExplorerRow`），本模块**不得再改写**它的
+ * tabindex：那是行自己的不变量（同一时刻恰好一行 = 0）。
+ *
+ * 为什么不是整条删掉：面板里其他条目今天仍然没有可聚焦性（`.fm-conv-row` 是
+ * messages.js:637 的裸 `el('div', ...)`），删掉这一腿等于把它们的 Shift+] 变成
+ * 静默空操作 —— 那是退回，不是前进。所以兼容腿只留给**还没有可聚焦性的条目**，
+ * 树行（`[role="treeitem"]`）被显式排除；这些面各自补上 roving 后，这条腿会
+ * 逐个消失（B2 叠卡、B7 文档树）。
  * @param {1|-1} dir
  * @returns {void}
  */
@@ -165,22 +174,39 @@ export function stepSidebar(dir) {
   const panel = document.querySelector('#sidebar-panel .panel.active')
     || document.querySelector('#sidebar-panel');
   if (!(panel instanceof HTMLElement)) return;
+  /**
+   * 可见性判据（0 尺寸 = 折叠/未装配，不该成为落脚点）。
+   * @param {HTMLElement} el
+   * @returns {boolean}
+   */
+  const visible = (el) => {
+    if (el.closest('[hidden]')) return false;
+    const r = el.getBoundingClientRect();
+    return !!r.width && !!r.height;
+  };
   /** @type {HTMLElement[]} */
   const items = [];
   for (const el of panel.querySelectorAll(SIDEBAR_ITEM_SEL)) {
     if (!(el instanceof HTMLElement)) continue;
-    if (el.closest('[hidden]')) continue;
-    const r = el.getBoundingClientRect();
-    if (!r.width || !r.height) continue;
-    if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1');
+    if (!visible(el)) continue;
+    if (!el.hasAttribute('tabindex') && !el.matches('[role="treeitem"]')) {
+      el.setAttribute('tabindex', '-1');
+    }
     items.push(el);
   }
-  // 面板内的常驻按钮（新建文件 / 打开文件夹……）也算条目，否则空面板无从落脚
+  // 面板常驻按钮（新建文件 / 打开文件夹……）= **独立停靠段**，排在条目段之后；
+  // 且只收可见的（改造前只判 `tabIndex>=0`，隐藏按钮也会被算成落脚点）。
+  /** @type {HTMLElement[]} */
+  const buttons = [];
   for (const el of panel.querySelectorAll('button')) {
-    if (el instanceof HTMLElement && items.indexOf(el) < 0 && el.tabIndex >= 0) items.push(el);
+    if (!(el instanceof HTMLElement)) continue;
+    if (items.indexOf(el) >= 0) continue;
+    if (el.tabIndex < 0 || !visible(el)) continue;
+    buttons.push(el);
   }
-  if (!items.length) return;
-  stepFocus(items, dir);
+  const stops = items.concat(buttons);
+  if (!stops.length) return;
+  stepFocus(stops, dir);
 }
 
 /**

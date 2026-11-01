@@ -77,8 +77,11 @@ export async function trackEvents(page, names) {
       if (w.__nfProbeTracker[name]) continue;
       w.__nfProbeCounts[name] = w.__nfProbeCounts[name] || 0;
       const fn = () => { w.__nfProbeCounts[name] += 1; };
-      // capture 阶段计数：业务自己 stopPropagation 也不影响取证完整性
-      document.addEventListener(name, fn, true);
+      // 挂在 **window** 的 capture 阶段：① 产品大量事件是 `window.dispatchEvent(...)`
+      // 派发的（`workspace-open-item` 就是），挂在 document 上一条也收不到
+      // （实测：画布页签已出现，计数却是 0 —— 断言因此先红了一次）；
+      // ② 元素派发且 bubbles 的事件照样冒泡到 window。一处挂载覆盖两种形态。
+      w.addEventListener(name, fn, true);
       w.__nfProbeTracker[name] = fn;
     }
   }, names);

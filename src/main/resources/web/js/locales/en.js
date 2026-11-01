@@ -2242,6 +2242,8 @@ export default {
   'daemons.configSecretHint': 'Leave "***" to keep the stored value; an empty field does not modify it.',
   // === Explorer (file tree multi-select) ===
   'explorer.selectedCount': '{count} selected',
+  // B1-1: accessible name for the role="tree" container
+  'explorer.treeLabel': 'File tree',
   'explorer.delete': 'Delete',
   'explorer.deleteN': 'Delete {count} Selected Items',
   'explorer.deleteTitle': 'Delete Files',
