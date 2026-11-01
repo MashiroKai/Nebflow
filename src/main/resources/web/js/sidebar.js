@@ -12,7 +12,7 @@ function showBatchDeleteModalLazy() {
 import { renderMarkdownWithMath, smartScroll, stopSpinner, createIconsIn, statusIcon } from './utils.js';
 import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF, bindCollapsibleToggle } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
-import { renderTaskList } from './taskList.js';
+import { renderTodoTaskList } from './todoFace.js';
 import { clearMemoryCache } from './memory.js';
 // eyeSvg/eyeOffSvg（provider 密码域可见性切换图标）单源 = sidebar/providersUi.js（FE 拆分后
 // 迁入；JEV 密钥引用行本地批 2026-10-09 的新调用点自模块引入，禁第二份字面量）。
@@ -2449,7 +2449,10 @@ export function resetChatForActiveSession() {
 
   if (!isBusy) pv.dom.input.focus();
 
-  renderTaskList([], undefined, sid); // 首参占位——旧任务入参退役（2026-09-05 裁定纯节点视图）
+  // 任务面换血（ReminderIsland 复刻批 2026-11-02）：本槽位渲染 = 待办列表
+  //（renderTodoTaskList；旧 delegate 链块渲染 taskList.renderTaskList 代码零删除、
+  // 本面零触发——模块仍被 todoFace/mobile/taskPanel 引用，数据面活在别面）。
+  renderTodoTaskList(sid);
   if (state.updateBgTasksUI) state.updateBgTasksUI();
   if (state.updateBgAgentIndicator) state.updateBgAgentIndicator();
   if (state.updateBypassToggle) state.updateBypassToggle(pv);

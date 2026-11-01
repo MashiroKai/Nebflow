@@ -1,0 +1,733 @@
+/* ===== Todo Face — 任务列表换血：待办列表（ReminderIsland 复刻批 2026-11-02）=====
+   复刻对象 = ReminderIsland ReminderListView / ReminderRowView / NotchView。
+   主题映射（结构保持）：SwiftUI 白透明度层 → color-mix(in srgb, var(--color-text)
+   x%, transparent)；纯黑毛玻璃 → Stand 玻璃 token（--glass-bg/blur/border）。
+   复刻常量（SF 系统色/十色标签板/重要度四色）收敛在本文件 token 块，正文零裸值。 */
+
+:root {
+  /* 刘海圆角语言（NotchView：开 top 19 / bottom 24；胶囊 = pill） */
+  --tfl-rt: 16px;
+  --tfl-rb: 16px;
+  /* 复刻常量（SF 系统色等价值；数据面同源 todoStore.PRIORITY_COLORS） */
+  --tfl-red: rgb(255, 59, 48);
+  --tfl-red-o: rgba(255, 59, 48, 0.9);
+  --tfl-cyan: rgb(50, 173, 230);
+  --tfl-yellow: rgb(255, 204, 0);
+  --tfl-green: rgba(52, 199, 89, 0.85);
+  --tfl-green-solid: rgb(52, 199, 89);
+  /* 教学气泡（黑底胶囊保证浮在玻璃上的可读性——复刻，双主题同黑） */
+  --tfl-hint-bg: rgba(0, 0, 0, 0.75);
+  --tfl-hint-stroke: rgba(255, 255, 255, 0.12);
+  --tfl-hint-text: rgba(255, 255, 255, 0.6);
+  /* popover 近黑底（ReminderColors.popoverBg 0.82）——暗档直复刻，亮档玻璃 */
+  --tfl-pop-bg: rgba(0, 0, 0, 0.82);
+  /* 填充圆钮的镂空字形色（暗档 = 深色玻璃后透、亮档 = 白） */
+  --tfl-glyph: rgba(0, 0, 0, 0.55);
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --tfl-pop-bg: var(--glass-bg);
+    --tfl-glyph: rgba(255, 255, 255, 0.95);
+  }
+}
+
+/* ── 槽位（#task-list 老规则收口：高度预算移交本面弹簧）────────────────── */
+#task-list.has-tasks {
+  max-height: none;
+  padding: 0 8px;
+  display: block;
+  transition: none;
+}
+
+/* ── 卡容器（刘海形变载体：胶囊 ⇄ 面板 高度/圆角弹簧）──────────────────── */
+.tfl-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  /* 静默态 resting 高度 = 胶囊（面板 opacity 0 仍占位 → 收口在此） */
+  height: 30px;
+  border-radius: var(--tfl-rt) var(--tfl-rt) var(--tfl-rb) var(--tfl-rb);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
+    0 4px 16px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+}
+.tfl-card[data-state="open"] {
+  height: auto;
+  --tfl-rt: 19px;
+  --tfl-rb: 24px;
+}
+@media (prefers-color-scheme: dark) {
+  .tfl-card {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0 4px 16px rgba(0, 0, 0, 0.2);
+  }
+}
+
+/* ── 胶囊（静默态：紧凑摘要 = 提醒点 + 待办数 + 逾期数）────────────────── */
+.tfl-capsule {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  height: 30px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 15px;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-text, #000) 45%, transparent);
+  font: 500 11px/1 ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  text-align: left;
+  transition: opacity 0.2s ease;
+}
+.tfl-card[data-state="open"] .tfl-capsule {
+  display: none; /* 开态胶囊零占位（收起瞬换回——closed 内容即换的刘海语义） */
+}
+.tfl-capsule:hover { color: color-mix(in srgb, var(--color-text, #000) 70%, transparent); }
+.tfl-capsule-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-text, #000) 20%, transparent);
+}
+/* ReminderIsland closed 点语言：有活跃事项 → 亮点 + 柔光 */
+.tfl-capsule.has-overdue .tfl-capsule-dot {
+  background: color-mix(in srgb, var(--color-text, #000) 75%, transparent);
+  box-shadow: 0 0 3px color-mix(in srgb, var(--color-text, #000) 55%, transparent);
+}
+.tfl-capsule-overdue { color: var(--tfl-red-o); }
+
+/* ── 面板（展开态）─────────────────────────────────────────────────────── */
+.tfl-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s ease; /* 内容淡入随形变（spring 开合的 CSS 近似拍）*/
+}
+.tfl-panel.tfl-panel-in,
+.tfl-panel.tfl-panel-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ── 极简头（计数 / 筛选 / 收起；quit/settings 两键无 web 语义退场）────── */
+.tfl-header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-text, #000) 8%, transparent);
+  flex-shrink: 0;
+}
+.tfl-header-count {
+  font: 500 11px/1.2 ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text, #000) 40%, transparent);
+}
+.tfl-header-spacer { flex: 1; }
+.tfl-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-text, #000) 35%, transparent);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.tfl-icon-btn:hover {
+  background: var(--color-frame-hover, rgba(128, 128, 128, 0.08));
+  color: color-mix(in srgb, var(--color-text, #000) 75%, transparent);
+}
+.tfl-icon-btn.active { color: color-mix(in srgb, var(--color-text, #000) 70%, transparent); }
+.tfl-icon-btn svg { width: 11px; height: 11px; }
+
+/* ── 筛选栏（可折叠：All + 标签 chips + 新建 + 重要度四签）────────────── */
+.tfl-filter-wrap {
+  flex-shrink: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-text, #000) 8%, transparent);
+}
+.tfl-filterbar {
+  padding: 4px 10px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.tfl-filterbar:not([hidden]) { opacity: 1; transform: none; }
+.tfl-chips-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.tfl-chips-viewport {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+.tfl-chips-track {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  will-change: transform;
+}
+.tfl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  min-height: 26px;
+  border: 0.8px solid transparent;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 8%, transparent);
+  color: color-mix(in srgb, var(--color-text, #000) 45%, transparent);
+  font: 500 10px/1.2 -apple-system, BlinkMacSystemFont, sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: padding 0.32s cubic-bezier(0.34, 1.4, 0.64, 1),
+    background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s, font-size 0.32s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+.tfl-chip-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tag-color, color-mix(in srgb, var(--color-text, #000) 60%, transparent));
+  transition: width 0.32s cubic-bezier(0.34, 1.4, 0.64, 1), height 0.32s cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+.tfl-chip.selected {
+  background: color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 18%, transparent);
+  border-color: color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 45%, transparent);
+  color: color-mix(in srgb, var(--color-text, #000) 95%, transparent);
+  box-shadow: 0 0 3px color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 30%, transparent);
+}
+.tfl-chip-tag.selected {
+  background: color-mix(in srgb, var(--tag-color) 32%, transparent);
+  border-color: color-mix(in srgb, var(--tag-color) 60%, transparent);
+  box-shadow: 0 0 3px color-mix(in srgb, var(--tag-color) 55%, transparent);
+}
+.tfl-chip-tag .tfl-chip-dot { background: var(--tag-color); }
+.tfl-chip-all {
+  background: color-mix(in srgb, var(--color-text, #000) 7%, transparent);
+  border-color: transparent;
+  z-index: 1;
+}
+.tfl-chip-all.selected {
+  background: color-mix(in srgb, var(--color-text, #000) 18%, transparent);
+  border-color: color-mix(in srgb, var(--color-text, #000) 45%, transparent);
+  box-shadow: 0 0 3px color-mix(in srgb, var(--color-text, #000) 30%, transparent);
+}
+.tfl-chip-all i, .tfl-chip-all svg { width: 9px; height: 9px; }
+/* 悬停放大挤开（布局级：chip 变宽挤开两侧，spring 0.3/0.65 近似） */
+.tfl-chip-tag.hovered { padding: 3px 9px; }
+.tfl-chip-tag.hovered .tfl-chip-dot { width: 8px; height: 8px; }
+.tfl-chip-tag.hovered .tfl-chip-name { font-size: 11.5px; }
+.tfl-chip-tag.hovered { box-shadow: 0 0 4px color-mix(in srgb, var(--tag-color) 60%, transparent); }
+/* 拖拽中：源 chip 25% 透明（复刻 isDragged opacity） */
+.tfl-chip-tag.dragging { opacity: 0.25; }
+.tfl-chip-ghost {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+  opacity: 1;
+  background: color-mix(in srgb, var(--tag-color) 24%, var(--glass-bg));
+  border-color: color-mix(in srgb, var(--tag-color) 60%, transparent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+/* 上划/下划进行中的渐显指示（pencil/xmark 圆钮，cyan/red 辉光） */
+.tfl-chip { position: relative; }
+.tfl-chip-swipe-ic {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 11px;
+  height: 11px;
+  pointer-events: none;
+}
+.tfl-chip.swiping-up .tfl-chip-swipe-ic { color: var(--tfl-cyan); filter: drop-shadow(0 0 3px color-mix(in srgb, var(--tfl-cyan) 60%, transparent)); }
+.tfl-chip.swiping-down .tfl-chip-swipe-ic { color: var(--tfl-red); filter: drop-shadow(0 0 3px color-mix(in srgb, var(--tfl-red) 60%, transparent)); }
+/* 滚动切换箭头（溢出才显；盖在滚动区上） */
+.tfl-chip-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
+  cursor: pointer;
+  flex-shrink: 0;
+  z-index: 1;
+}
+.tfl-chip-arrow svg { width: 9px; height: 9px; }
+.tfl-chip-arrow:hover { color: color-mix(in srgb, var(--color-text, #000) 80%, transparent); }
+/* 新建标签钮（chips 行尾） */
+.tfl-chip-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--color-text, #000) 8%, transparent);
+  color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.tfl-chip-add svg { width: 10px; height: 10px; }
+.tfl-chip-add:hover { color: color-mix(in srgb, var(--color-text, #000) 80%, transparent); }
+/* 重要度四签行 */
+.tfl-prio-row { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+.tfl-chip-prio { background: color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 5%, transparent); }
+.tfl-chip-prio.selected {
+  background: color-mix(in srgb, var(--tag-color) 22%, transparent);
+  border-color: color-mix(in srgb, var(--tag-color) 50%, transparent);
+  box-shadow: 0 0 3px color-mix(in srgb, var(--tag-color) 45%, transparent);
+  color: color-mix(in srgb, var(--color-text, #000) 95%, transparent);
+}
+
+/* ── 悬停教学气泡（上↑改名 / 下↓删除 / 左右横箭头；450ms 延迟浮现）────── */
+.tfl-hint-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  pointer-events: none;
+}
+.tfl-hint {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--tfl-hint-bg);
+  border: 0.5px solid var(--tfl-hint-stroke);
+  color: var(--tfl-hint-text);
+  font: 500 10px/1.3 ui-monospace, SFMono-Regular, monospace;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+.tfl-hint-show .tfl-hint { opacity: 1; }
+.tfl-hint-ic { display: inline-flex; }
+.tfl-hint-ic svg { width: 10px; height: 10px; }
+.tfl-hint-ic.tfl-cyan { color: var(--tfl-cyan); filter: drop-shadow(0 0 3px color-mix(in srgb, var(--tfl-cyan) 60%, transparent)); }
+.tfl-hint-ic.tfl-red { color: var(--tfl-red); filter: drop-shadow(0 0 3px color-mix(in srgb, var(--tfl-red) 60%, transparent)); }
+.tfl-chev { width: 9px; height: 9px; color: var(--tfl-hint-text); }
+.tfl-chev.tfl-yellow { color: var(--tfl-yellow); }
+@keyframes tfl-hint-up { from { transform: translateY(-1.5px); } to { transform: translateY(1.5px); } }
+@keyframes tfl-hint-down { from { transform: translateY(1.5px); } to { transform: translateY(-1.5px); } }
+@keyframes tfl-hint-l { from { transform: translateX(-2px); } to { transform: translateX(2px); } }
+@keyframes tfl-hint-r { from { transform: translateX(2px); } to { transform: translateX(-2px); } }
+.tfl-hint-up { animation: tfl-hint-up 0.5s ease-in-out infinite alternate; }
+.tfl-hint-down { animation: tfl-hint-down 0.5s ease-in-out infinite alternate; }
+.tfl-hint-left { animation: tfl-hint-l 0.5s ease-in-out infinite alternate; }
+.tfl-hint-right { animation: tfl-hint-r 0.5s ease-in-out infinite alternate; }
+
+/* ── 标签 popover（名 + 十色 5 列网格；arrowEdge bottom 锚定）──────────── */
+.tfl-tag-popover {
+  position: fixed;
+  z-index: 10002;
+  width: 220px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--tfl-pop-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 0.6px solid color-mix(in srgb, var(--color-text, #fff) 20%, transparent);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  transform: translateY(-4px) scale(0.98);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.tfl-tag-popover.open { opacity: 1; transform: none; }
+.tfl-tag-name {
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--color-text, #fff) 10%, transparent);
+  color: var(--color-text, #fff);
+  font: 500 12px/1.3 ui-monospace, SFMono-Regular, monospace;
+  outline: none;
+}
+.tfl-tag-colors {
+  display: grid;
+  grid-template-columns: repeat(5, 26px);
+  gap: 6px;
+  justify-content: center;
+  margin-top: 8px;
+}
+.tfl-tag-color {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tfl-tag-color::before {
+  content: '';
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--tag-color);
+  border: 1.5px solid transparent;
+}
+.tfl-tag-color.selected::before {
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--color-text, #fff) 80%, transparent);
+}
+
+/* ── 列表 ─────────────────────────────────────────────────────────────── */
+.tfl-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 44vh;
+  overflow-y: auto;
+  scrollbar-width: none;
+  padding: 2px 6px 6px;
+  outline: none;
+}
+.tfl-list::-webkit-scrollbar { display: none; }
+.tfl-list-inner { display: flex; flex-direction: column; gap: 2px; }
+
+.tfl-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-text, #000) 4%, transparent);
+  border: 0.6px solid transparent;
+  transition: opacity 0.3s ease-out, transform 0.3s ease-out, background 0.15s, border-color 0.15s;
+}
+.tfl-row:hover { background: color-mix(in srgb, var(--color-text, #000) 7%, transparent); }
+.tfl-row.tfl-selected {
+  background: color-mix(in srgb, var(--color-text, #000) 13%, transparent);
+  border-color: color-mix(in srgb, var(--color-text, #000) 35%, transparent);
+}
+.tfl-row-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-top: 6px;
+}
+.tfl-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  cursor: default;
+}
+.tfl-row-titleline {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.tfl-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: 500 12px/1.35 ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text, #000);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.tfl-row-notes {
+  font: 400 10px/1.35 ui-monospace, SFMono-Regular, monospace;
+  color: color-mix(in srgb, var(--color-text, #000) 35%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tfl-row-due {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font: 400 10px/1.3 ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text, #000) 40%, transparent);
+}
+.tfl-row-due svg { width: 9px; height: 9px; opacity: 0.8; }
+.tfl-row-due.overdue, .tfl-row-due .overdue { color: var(--tfl-red-o); }
+.tfl-row-badge {
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 400 9px/1.4 ui-monospace, SFMono-Regular, monospace;
+  color: color-mix(in srgb, var(--color-text, #000) 55%, transparent);
+  padding: 1.5px 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 12%, transparent);
+  border: 0.5px solid color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 25%, transparent);
+}
+
+/* 完成钮三段动画（0s 绿填 spring ≈ / +0.15s 对勾 / +0.5s 行淡出） */
+.tfl-complete {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+.tfl-complete-ring {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--color-text, #000) 25%, transparent);
+  transition: border-color 0.15s;
+}
+.tfl-complete.filling .tfl-complete-ring { border-color: transparent; }
+.tfl-complete-fill {
+  position: absolute;
+  inset: 7px;
+  border-radius: 50%;
+  background: var(--tfl-green);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.4);
+  transition: transform 0.3s cubic-bezier(0.34, 1.3, 0.64, 1), opacity 0.2s ease;
+}
+.tfl-complete.filling .tfl-complete-fill { opacity: 1; transform: scale(1); }
+.tfl-complete-fill svg {
+  width: 8px;
+  height: 8px;
+  color: rgba(255, 255, 255, 0.95);
+  transform: scale(0.4);
+  opacity: 0;
+  transition: transform 0.2s cubic-bezier(0.34, 1.3, 0.64, 1), opacity 0.15s ease;
+}
+.tfl-complete.checked .tfl-complete-fill svg { transform: scale(1); opacity: 1; }
+.tfl-row-removing { opacity: 0; transform: translateY(-10px); }
+
+/* 行入场（新建/视图切换重渲不播——JS 侧 expandedJustRendered 门） */
+@keyframes tfl-row-enter {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+.tfl-row.tfl-row-enter { animation: tfl-row-enter 0.3s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
+
+/* ── 行内编辑面板（grid 0fr→1fr 高度过渡 = move(edge:.top)+opacity 近似）─ */
+.tfl-edit-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.tfl-edit-wrap.open { grid-template-rows: 1fr; opacity: 1; }
+.tfl-edit-wrap > .tfl-edit-panel { min-height: 0; overflow: hidden; }
+.tfl-edit-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 6px 6px 6px 16px;
+  margin-top: 2px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-text, #000) 5%, transparent);
+}
+.tfl-edit-notes {
+  border: none;
+  outline: none;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-text, #000) 6%, transparent);
+  padding: 3px 6px;
+  font: 400 10px/1.4 ui-monospace, SFMono-Regular, monospace;
+  color: color-mix(in srgb, var(--color-text, #000) 70%, transparent);
+}
+.tfl-edit-notes::placeholder { color: color-mix(in srgb, var(--color-text, #000) 35%, transparent); }
+.tfl-edit-prio { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+.tfl-edit-prio-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 6px;
+  min-height: 26px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-text, #000) 45%, transparent);
+  font: 400 10px/1.2 -apple-system, BlinkMacSystemFont, sans-serif;
+  cursor: pointer;
+}
+.tfl-edit-prio-btn.selected {
+  background: color-mix(in srgb, var(--color-text, #000) 14%, transparent);
+  color: var(--color-text, #000);
+  font-weight: 600;
+}
+.tfl-edit-prio-btn .tfl-chip-dot { width: 7px; height: 7px; }
+.tfl-edit-due { display: flex; align-items: center; gap: 5px; }
+.tfl-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+.tfl-switch-label {
+  font: 400 10px/1.3 ui-monospace, SFMono-Regular, monospace;
+  color: color-mix(in srgb, var(--color-text, #000) 55%, transparent);
+}
+.tfl-switch-knob-wrap {
+  width: 26px;
+  height: 15px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-text, #000) 20%, transparent);
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  transition: background 0.15s;
+}
+.tfl-switch-knob {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--color-text, #fff);
+  transition: transform 0.15s;
+}
+.tfl-switch.on .tfl-switch-knob-wrap { background: var(--tfl-green-solid); }
+.tfl-switch.on .tfl-switch-knob { transform: translateX(11px); }
+.tfl-due-input {
+  border-radius: 6px;
+  padding: 3px 8px;
+  font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text, #000);
+  background: var(--glass-etched-bg, rgba(128, 128, 128, 0.08));
+  border: 1px solid var(--glass-etched-border, rgba(128, 128, 128, 0.15));
+  outline: none;
+}
+.tfl-due-input:focus { border-color: var(--glass-etched-border-focus, rgba(91, 127, 191, 0.4)); }
+
+/* 行标题输入（编辑/创建共用） */
+.tfl-row-title-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 0;
+  font: 500 12px/1.35 ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text, #000);
+}
+.tfl-row-title-input::placeholder { color: color-mix(in srgb, var(--color-text, #000) 30%, transparent); }
+
+/* 行内创建行 */
+@keyframes tfl-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.tfl-create-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: tfl-fade-in 0.28s ease backwards;
+}
+.tfl-create-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-text, #000) 5%, transparent);
+}
+.tfl-create-panel { padding-left: 6px; }
+
+/* 空态 */
+.tfl-empty {
+  padding: 40px 0 36px;
+  text-align: center;
+  font: 400 11px/1.4 ui-monospace, SFMono-Regular, monospace;
+  color: color-mix(in srgb, var(--color-text, #000) 25%, transparent);
+  cursor: default;
+  user-select: none;
+}
+.tfl-empty:not(.tfl-empty-all) { color: color-mix(in srgb, var(--color-text, #000) 40%, transparent); cursor: pointer; }
+
+/* ── 底部 Add footer（单标签视图常驻创建入口）─────────────────────────── */
+.tfl-footer {
+  flex-shrink: 0;
+  padding: 6px 10px 8px;
+  border-top: 1px solid color-mix(in srgb, var(--color-text, #000) 8%, transparent);
+}
+.tfl-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 30px;
+  padding: 0;
+  border: 0.5px solid color-mix(in srgb, var(--color-text, #000) 10%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-text, #000) 8%, transparent);
+  color: color-mix(in srgb, var(--color-text, #000) 60%, transparent);
+  font: 500 11px/1 ui-monospace, SFMono-Regular, monospace;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.tfl-add-btn:hover {
+  background: color-mix(in srgb, var(--color-text, #000) 12%, transparent);
+  color: color-mix(in srgb, var(--color-text, #000) 85%, transparent);
+}
+.tfl-add-ic { display: inline-flex; color: color-mix(in srgb, var(--color-text, #000) 60%, transparent); }
+.tfl-add-ic svg { width: 13px; height: 13px; }
+.tfl-add-ic-done { color: var(--tfl-green); }
+.tfl-add-ic-done svg { stroke: var(--tfl-glyph); }
+
+/* ── 手机变体（页面即展开态：无胶囊、高度随页面体）────────────────────── */
+.tfl-mobile { border-radius: 16px; }
+.tfl-mobile .tfl-capsule { display: none; }
+.tfl-mobile .tfl-list { max-height: none; }
+.tfl-mobile .tfl-card, .tfl-mobile { height: auto; }
+
+/* ── 动效降级（prefers-reduced-motion 全静止——仓内既有纪律）──────────── */
+@media (prefers-reduced-motion: reduce) {
+  .tfl-card, .tfl-panel, .tfl-capsule, .tfl-chip, .tfl-chip-dot,
+  .tfl-row, .tfl-edit-wrap, .tfl-complete-fill, .tfl-complete-fill svg,
+  .tfl-filterbar, .tfl-tag-popover, .tfl-hint, .tfl-switch-knob,
+  .tfl-switch-knob-wrap { transition: none !important; animation: none !important; }
+  .tfl-row.tfl-row-enter, .tfl-create-row { animation: none !important; }
+}
