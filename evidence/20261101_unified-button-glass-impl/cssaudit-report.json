@@ -1,0 +1,6148 @@
+{
+  "summary": {
+    "files": 35,
+    "backdropDecls": 246,
+    "backdropStandard": 123,
+    "backdropWebkit": 123,
+    "backdropNotDual": 0,
+    "degradationRows": 36,
+    "varNamesDefined": 367,
+    "varRefsTotal": 1195,
+    "varRefsUndefinedNoFallback": [
+      "--color-surface-2",
+      "--font-mono",
+      "--color-text-secondary",
+      "--anno-",
+      "--mermaid-usecase-actor-font-family",
+      "--mermaid-usecase-actor-font-size",
+      "--mermaid-usecase-actor-font-weight",
+      "--mermaid-usecase-font-family",
+      "--mermaid-usecase-font-size",
+      "--mermaid-usecase-font-weight",
+      "--scale-factor"
+    ],
+    "varRefsUndefinedWithFallback": [
+      "--bg-secondary-translucent",
+      "--border-light",
+      "--bg-tertiary",
+      "--color-surface-2",
+      "--font-ui",
+      "--r-pill",
+      "--font-mono",
+      "--r-sm",
+      "--color-bg-hover",
+      "--color-info",
+      "--text-secondary",
+      "--border-color",
+      "--panel-bg",
+      "--accent-color",
+      "--text-primary",
+      "--ok",
+      "--color-text-bright",
+      "--sapphire-rgb",
+      "--color-frame-bg",
+      "--color-hover",
+      "--color-frame-muted",
+      "--status-warn-border",
+      "--color-accent"
+    ],
+    "classDefsTotal": 2469,
+    "btnLikeClasses": [
+      "abtns",
+      "activity-btn",
+      "agent-detail-prompt-toggle",
+      "agent-detail-save-btn",
+      "ask-fab-ic-close",
+      "ask-send",
+      "att-chip",
+      "btn-save",
+      "bypass-toggle",
+      "canvas-close-btn",
+      "canvas-find-toggle",
+      "canvas-graph-toggle",
+      "canvas-merge-btn",
+      "canvas-pan-toggle",
+      "canvas-refback-btn",
+      "canvas-refresh-toggle",
+      "canvas-source-toggle",
+      "canvas-tab-close",
+      "canvas-zoom-btn",
+      "card-actions",
+      "cc-toggle",
+      "cfg-btn",
+      "cfg-btn-add",
+      "cfg-btn-primary",
+      "cfg-btn-save",
+      "cfg-btn-sm",
+      "cfg-card-head-btn",
+      "cfg-eye-btn",
+      "cfg-fetch-models-btn",
+      "cfg-modal-actions",
+      "cfg-toggle",
+      "chip-row",
+      "close",
+      "closed",
+      "code-copy-btn",
+      "config-actions",
+      "daemon-actions",
+      "daemon-btn",
+      "dev-btn",
+      "dev-chip",
+      "dropbox-attach-btn",
+      "dropbox-close",
+      "dropbox-desc-actions",
+      "dur-chip",
+      "dvp-chip",
+      "dvp-e-chip",
+      "dvp-sink",
+      "dvp-sink-name",
+      "dvp-sink-sub",
+      "dvp-zone-toggle",
+      "epub-menu-btn",
+      "epub-menu-close",
+      "epub-nav-btn",
+      "error-abandon-btn",
+      "error-escalation-actions",
+      "error-restart-btn",
+      "error-retry-btn",
+      "error-wait-btn",
+      "explorer-action-btn",
+      "explorer-actions",
+      "explorer-folder-btn",
+      "flowmap-back-btn",
+      "fm-add-btn",
+      "fm-attach-btn",
+      "fm-detail-close",
+      "fm-device-desc-actions",
+      "fm-device-desc-btn",
+      "fm-fwd-chip",
+      "fm-fwd-chip-x",
+      "fm-fwd-chips",
+      "fm-gs-action",
+      "fm-gs-actions",
+      "fm-login-btn",
+      "fm-mic-btn",
+      "fm-modal-close",
+      "fm-modal-title-btn",
+      "fm-msg-actions",
+      "fm-msg-btn",
+      "fm-msg-sender",
+      "fm-panel-close",
+      "fm-req-btns",
+      "fm-search-btn",
+      "fm-send-btn",
+      "fm-send-chip",
+      "fm-sending",
+      "fm-verify-send",
+      "fwd-btn",
+      "global-perm-toast-actions",
+      "global-perm-toast-btn",
+      "icon-btn",
+      "link",
+      "login-modal-btn",
+      "login-modal-btn-secondary",
+      "mail-send-note",
+      "mchain-chip",
+      "mchip-window",
+      "memory-btn",
+      "mf-cv-btn",
+      "mf-cv-close",
+      "mf-strip-chip",
+      "mh-chrome-btn",
+      "mh-scope-chip",
+      "mh-sr-sender",
+      "mobile-back-btn",
+      "mp-close",
+      "mp-mode-btn",
+      "mp-role-head-toggle",
+      "msg-quote-sender",
+      "mt-btn",
+      "nb-toggle",
+      "nebflow-toast-link",
+      "neblink-account-actions",
+      "neblink-account-ro",
+      "neblink-ch-beta",
+      "neblink-ch-btn",
+      "neblink-ch-cancel",
+      "neblink-error",
+      "neblink-kicked-dot",
+      "neblink-kicked-notice",
+      "neblink-kicked-text",
+      "neblink-logged-in",
+      "neblink-logged-out-hint",
+      "neblink-login-btn",
+      "neblink-login-hint",
+      "neblink-login-section",
+      "neblink-paircode-btn",
+      "neblink-paircode-card",
+      "neblink-paircode-input",
+      "neblink-paircode-row",
+      "neblink-pairing-status",
+      "neblink-peer",
+      "neblink-peer-icon",
+      "neblink-peer-name",
+      "neblink-peer-offline",
+      "neblink-peer-status",
+      "neblink-peer-update-btn",
+      "neblink-peers-list",
+      "neblink-presence",
+      "neblink-row",
+      "neblink-switch-btn",
+      "neblink-update-inline",
+      "neblink-update-status",
+      "nf-backlink-anchor",
+      "nf-backlink-project",
+      "nf-backlinks",
+      "nf-findbar-btn",
+      "nf-lightbox-close",
+      "nf-mermaid-srcbtn",
+      "nf-wikilink",
+      "nf-wikilink-self",
+      "nf-wikilink-term",
+      "nf-wikilink-unresolved",
+      "nf-wl-think",
+      "notif-close",
+      "ob-actions",
+      "ob-compare-btn",
+      "ob-fetch-btn",
+      "onboarding-actions",
+      "openbtn",
+      "option-btn",
+      "option-btn-row",
+      "orb-theme-btn",
+      "otp-chip",
+      "panel-actions",
+      "panel-btn",
+      "panel-toggle-btn",
+      "path-chip",
+      "pill",
+      "plugins-item-actions",
+      "pp-actions",
+      "pp-btn",
+      "pp-icon-btn",
+      "pp-toggle",
+      "project-archive-btn",
+      "project-desc-edit-btn",
+      "project-link-btn",
+      "project-open-btn",
+      "queue-item-actions",
+      "queue-item-btn",
+      "reminder-create-btn",
+      "schedule-card-chip",
+      "search-media-linkbody",
+      "search-source-chip",
+      "secrets-add-actions",
+      "secrets-row-actions",
+      "settings-collapse-toggle",
+      "settings-drill-toggle",
+      "sh-sink",
+      "skip-freeze-btn",
+      "social-btn-danger",
+      "social-card-actions",
+      "stt-advance-toggle-row",
+      "t-sink",
+      "task-delegate-actions",
+      "task-delegate-btn",
+      "task-toggle",
+      "thinking-bubble",
+      "thinking-content",
+      "thinking-dot",
+      "thinking-indicator",
+      "thinking-indicator-label",
+      "thinking-label",
+      "thinking-row",
+      "thinking-timer",
+      "time-toggle",
+      "to-chip",
+      "todo-ask-chip",
+      "todo-close-btn",
+      "todo-create-btn",
+      "todo-filter-chip",
+      "todo-perm-chip",
+      "viewer-retry-btn",
+      "voice-toggle",
+      "wg-chip",
+      "wg-chips",
+      "wsp-foot-btns",
+      "wsp-goto-btn"
+    ]
+  },
+  "backdrop": [
+    {
+      "file": "ask.css",
+      "line": 69,
+      "selector": ".ask-fab",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "ask.css",
+      "line": 70,
+      "selector": ".ask-fab",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "ask.css",
+      "line": 155,
+      "selector": ".ask-colwrap .ask-veil",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--g2-fade-blur)) saturate(var(--g2-fade-sat))",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "ask.css",
+      "line": 156,
+      "selector": ".ask-colwrap .ask-veil",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--g2-fade-blur)) saturate(var(--g2-fade-sat))",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "ask.css",
+      "line": 163,
+      "selector": "html.no-backdrop .ask-colwrap .ask-veil",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "none !important",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "ask.css",
+      "line": 164,
+      "selector": "html.no-backdrop .ask-colwrap .ask-veil",
+      "context": "",
+      "kind": "standard",
+      "value": "none !important",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "ask.css",
+      "line": 174,
+      "selector": ".ask-bub",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "ask.css",
+      "line": 175,
+      "selector": ".ask-bub",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "ask.css",
+      "line": 209,
+      "selector": ".ask-input",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "ask.css",
+      "line": 210,
+      "selector": ".ask-input",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "base.css",
+      "line": 230,
+      "selector": ".panel-toggle-btn:hover",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "base.css",
+      "line": 231,
+      "selector": ".panel-toggle-btn:hover",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "base.css",
+      "line": 316,
+      "selector": ".bypass-toggle:hover",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "base.css",
+      "line": 317,
+      "selector": ".bypass-toggle:hover",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "base.css",
+      "line": 341,
+      "selector": ".header-dropdown-menu",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "base.css",
+      "line": 342,
+      "selector": ".header-dropdown-menu",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "base.css",
+      "line": 425,
+      "selector": ".global-perm-toast",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(16px) saturate(1.4)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "base.css",
+      "line": 426,
+      "selector": ".global-perm-toast",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(16px) saturate(1.4)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 48,
+      "selector": "#header",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 49,
+      "selector": "#header",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 132,
+      "selector": "#header .memory-btn:hover",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 133,
+      "selector": "#header .memory-btn:hover",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 163,
+      "selector": "#header #search-btn:hover",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 164,
+      "selector": "#header #search-btn:hover",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 269,
+      "selector": "#bgagent-dropdown",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 270,
+      "selector": "#bgagent-dropdown",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 753,
+      "selector": "#bg-dropdown",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 754,
+      "selector": "#bg-dropdown",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 2566,
+      "selector": ".glass-control.ob-ghost",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "chat.css",
+      "line": 2567,
+      "selector": ".glass-control.ob-ghost",
+      "context": "",
+      "kind": "standard",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "chat.css",
+      "line": 2786,
+      "selector": ".option-opts .option-btn,\n.ask-card .opt-row .option-btn",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "chat.css",
+      "line": 2787,
+      "selector": ".option-opts .option-btn,\n.ask-card .opt-row .option-btn",
+      "context": "",
+      "kind": "standard",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "chat.css",
+      "line": 2874,
+      "selector": ".chip-row .option-btn",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "chat.css",
+      "line": 2875,
+      "selector": ".chip-row .option-btn",
+      "context": "",
+      "kind": "standard",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "chat.css",
+      "line": 2968,
+      "selector": ".notif-item",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 2969,
+      "selector": ".notif-item",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 3075,
+      "selector": ".ask-pending-row,\n.ask-pending-next",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 3076,
+      "selector": ".ask-pending-row,\n.ask-pending-next",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 3806,
+      "selector": ".ws-pick-target",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 3807,
+      "selector": ".ws-pick-target",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 4180,
+      "selector": ".scroll-new-pill",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "chat.css",
+      "line": 4181,
+      "selector": ".scroll-new-pill",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "delegatePanorama.css",
+      "line": 232,
+      "selector": ".dvp-nd",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur, 24px)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "delegatePanorama.css",
+      "line": 233,
+      "selector": ".dvp-nd",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur, 24px)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "delegatePanorama.css",
+      "line": 255,
+      "selector": ".dvp-ghost",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "delegatePanorama.css",
+      "line": 256,
+      "selector": ".dvp-ghost",
+      "context": "",
+      "kind": "standard",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "diffView.css",
+      "line": 222,
+      "selector": ".fcv-headpill",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "diffView.css",
+      "line": 223,
+      "selector": ".fcv-headpill",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "flowMap.css",
+      "line": 734,
+      "selector": ".fm-fab",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "flowMap.css",
+      "line": 735,
+      "selector": ".fm-fab",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "flowMap.css",
+      "line": 779,
+      "selector": ".fm-archive-panel",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "flowMap.css",
+      "line": 780,
+      "selector": ".fm-archive-panel",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "flowMap.css",
+      "line": 928,
+      "selector": ".fm-detail",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "flowMap.css",
+      "line": 929,
+      "selector": ".fm-detail",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "input.css",
+      "line": 20,
+      "selector": "#input-bar",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "input.css",
+      "line": 21,
+      "selector": "#input-bar",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "input.css",
+      "line": 703,
+      "selector": ".icon-btn:hover",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "input.css",
+      "line": 704,
+      "selector": ".icon-btn:hover",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "input.css",
+      "line": 994,
+      "selector": "#stop-btn",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(8px) saturate(1.3)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "input.css",
+      "line": 995,
+      "selector": "#stop-btn",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(8px) saturate(1.3)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "input.css",
+      "line": 1020,
+      "selector": ".voice-overlay",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(20px) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "input.css",
+      "line": 1021,
+      "selector": ".voice-overlay",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(20px) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "input.css",
+      "line": 1082,
+      "selector": "#slash-dropdown,\n#mention-dropdown",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--g2-fab-blur)) saturate(var(--g2-fab-sat))",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "input.css",
+      "line": 1083,
+      "selector": "#slash-dropdown,\n#mention-dropdown",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--g2-fab-blur)) saturate(var(--g2-fab-sat))",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "input.css",
+      "line": 1286,
+      "selector": "#queue-bar.visible",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "input.css",
+      "line": 1287,
+      "selector": "#queue-bar.visible",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "lightbox.css",
+      "line": 17,
+      "selector": ".nf-lightbox",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(8px)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "lightbox.css",
+      "line": 18,
+      "selector": ".nf-lightbox",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(8px)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 54,
+      "selector": ".g2-fab::before,\n.g2-pill::before,\n.mh-chrome-btn::before",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--g2-fab-blur)) saturate(var(--g2-fab-sat))",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 55,
+      "selector": ".g2-fab::before,\n.g2-pill::before,\n.mh-chrome-btn::before",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--g2-fab-blur)) saturate(var(--g2-fab-sat))",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 176,
+      "selector": "#input-bar",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(24px) saturate(1.6)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 177,
+      "selector": "#input-bar",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(24px) saturate(1.6)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 191,
+      "selector": ".ask-fab,\n#deck-fab,\n.canvas-source-toggle,\n.canvas-ref-select,\n.canvas-find-toggle,\n.canvas-graph-toggle,\n.ca",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--g2-fab-blur)) saturate(var(--g2-fab-sat))",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 192,
+      "selector": ".ask-fab,\n#deck-fab,\n.canvas-source-toggle,\n.canvas-ref-select,\n.canvas-find-toggle,\n.canvas-graph-toggle,\n.ca",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--g2-fab-blur)) saturate(var(--g2-fab-sat))",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 238,
+      "selector": "body.mobile-layer #g2-edge-fade",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--g2-fade-blur)) saturate(var(--g2-fade-sat))",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 239,
+      "selector": "body.mobile-layer #g2-edge-fade",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--g2-fade-blur)) saturate(var(--g2-fade-sat))",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 249,
+      "selector": ".g2-fab::before,\n  .g2-pill::before,\n  .mh-chrome-btn::before",
+      "context": "@supports not ((-webkit-backdrop-filter: blur(1px)) or (back",
+      "kind": "-webkit-",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 250,
+      "selector": ".g2-fab::before,\n  .g2-pill::before,\n  .mh-chrome-btn::before",
+      "context": "@supports not ((-webkit-backdrop-filter: blur(1px)) or (back",
+      "kind": "standard",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 269,
+      "selector": "body.mobile-layer #g2-edge-fade",
+      "context": "@supports not ((-webkit-backdrop-filter: blur(1px)) or (back",
+      "kind": "-webkit-",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 270,
+      "selector": "body.mobile-layer #g2-edge-fade",
+      "context": "@supports not ((-webkit-backdrop-filter: blur(1px)) or (back",
+      "kind": "standard",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 274,
+      "selector": "html.no-backdrop .g2-fab::before,\nhtml.no-backdrop .g2-pill::before,\nhtml.no-backdrop .mh-chrome-btn::before",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "none !important",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 275,
+      "selector": "html.no-backdrop .g2-fab::before,\nhtml.no-backdrop .g2-pill::before,\nhtml.no-backdrop .mh-chrome-btn::before",
+      "context": "",
+      "kind": "standard",
+      "value": "none !important",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 292,
+      "selector": "html.no-backdrop body.mobile-layer #g2-edge-fade",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "none !important",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 293,
+      "selector": "html.no-backdrop body.mobile-layer #g2-edge-fade",
+      "context": "",
+      "kind": "standard",
+      "value": "none !important",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 385,
+      "selector": "body.mobile-layer .g2-chat-head #session-name",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "liquid-glass.css",
+      "line": 386,
+      "selector": "body.mobile-layer .g2-chat-head #session-name",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "liveness.css",
+      "line": 16,
+      "selector": "#conn-banner",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "liveness.css",
+      "line": 17,
+      "selector": "#conn-banner",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 401,
+      "selector": "body.mobile-layer .mobile-page-title",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 402,
+      "selector": "body.mobile-layer .mobile-page-title",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 513,
+      "selector": "body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal,\nbody.mobile-layer #mobile-pages .mobile-p",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 514,
+      "selector": "body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal,\nbody.mobile-layer #mobile-pages .mobile-p",
+      "context": "",
+      "kind": "standard",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 537,
+      "selector": "body.mobile-layer #memory-overlay,\nbody.mobile-layer #settings-overlay,\nbody.mobile-layer #search-overlay,\nbod",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "none !important",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 538,
+      "selector": "body.mobile-layer #memory-overlay,\nbody.mobile-layer #settings-overlay,\nbody.mobile-layer #search-overlay,\nbod",
+      "context": "",
+      "kind": "standard",
+      "value": "none !important",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 1017,
+      "selector": "body.mobile-layer .mf-strip",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 1018,
+      "selector": "body.mobile-layer .mf-strip",
+      "context": "",
+      "kind": "standard",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 1048,
+      "selector": "body.mobile-layer .mf-strip-chip",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 1049,
+      "selector": "body.mobile-layer .mf-strip-chip",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 1131,
+      "selector": "body.mobile-layer .mf-swipe-ring",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(8px) saturate(1.3)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 1132,
+      "selector": "body.mobile-layer .mf-swipe-ring",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(8px) saturate(1.3)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 1148,
+      "selector": "body.mobile-layer .mf-stack-view",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(18px) saturate(1.5)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 1149,
+      "selector": "body.mobile-layer .mf-stack-view",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(18px) saturate(1.5)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 1994,
+      "selector": "body.mobile-layer .mh-search-bar",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 1995,
+      "selector": "body.mobile-layer .mh-search-bar",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 2270,
+      "selector": "body.mobile-layer .fm-context-menu",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "none !important",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 2271,
+      "selector": "body.mobile-layer .fm-context-menu",
+      "context": "",
+      "kind": "standard",
+      "value": "none !important",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 2308,
+      "selector": "body.mobile-layer .nf-term-tip.touch",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "none !important",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 2309,
+      "selector": "body.mobile-layer .nf-term-tip.touch",
+      "context": "",
+      "kind": "standard",
+      "value": "none !important",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 2345,
+      "selector": "body.mobile-layer .mobile-page:not(.live) .g2-fab::before,\nbody.mobile-layer .mobile-page:not(.live) .g2-pill:",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "none !important",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "mobileLayer.css",
+      "line": 2346,
+      "selector": "body.mobile-layer .mobile-page:not(.live) .g2-fab::before,\nbody.mobile-layer .mobile-page:not(.live) .g2-pill:",
+      "context": "",
+      "kind": "standard",
+      "value": "none !important",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "modal.css",
+      "line": 34,
+      "selector": "#modal-box,\n#delete-box,\n#conflict-box,\n#takeover-box,\n#memory-modal,\n#rules-modal,\n#settings-modal,\n#search-m",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "modal.css",
+      "line": 35,
+      "selector": "#modal-box,\n#delete-box,\n#conflict-box,\n#takeover-box,\n#memory-modal,\n#rules-modal,\n#settings-modal,\n#search-m",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "modal.css",
+      "line": 240,
+      "selector": "#delete-box.confirm-neutral #delete-confirm",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "modal.css",
+      "line": 241,
+      "selector": "#delete-box.confirm-neutral #delete-confirm",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "modal.css",
+      "line": 462,
+      "selector": "#modal-overlay.takeover-blur",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--cv-blur)) saturate(var(--cv-saturate))",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "modal.css",
+      "line": 463,
+      "selector": "#modal-overlay.takeover-blur",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--cv-blur)) saturate(var(--cv-saturate))",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "modal.css",
+      "line": 816,
+      "selector": "#search-date-popover",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(24px) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "modal.css",
+      "line": 817,
+      "selector": "#search-date-popover",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(24px) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "modal.css",
+      "line": 888,
+      "selector": ".cal-pill-listbox",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(24px) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "modal.css",
+      "line": 889,
+      "selector": ".cal-pill-listbox",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(24px) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "modal.css",
+      "line": 1184,
+      "selector": ".nebflow-toast",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "modal.css",
+      "line": 1185,
+      "selector": ".nebflow-toast",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "nav.css",
+      "line": 54,
+      "selector": ".nav-agent:hover",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "nav.css",
+      "line": 55,
+      "selector": ".nav-agent:hover",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "nav.css",
+      "line": 140,
+      "selector": ".nav-item:hover",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "nav.css",
+      "line": 141,
+      "selector": ".nav-item:hover",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "nav.css",
+      "line": 163,
+      "selector": "#activity-bar",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "nav.css",
+      "line": 164,
+      "selector": "#activity-bar",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "nav.css",
+      "line": 284,
+      "selector": ".activity-btn:hover",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "nav.css",
+      "line": 285,
+      "selector": ".activity-btn:hover",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "perception.css",
+      "line": 36,
+      "selector": "#perception-btn:hover",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "perception.css",
+      "line": 37,
+      "selector": "#perception-btn:hover",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "perception.css",
+      "line": 51,
+      "selector": "#perception-panel",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--st-glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "perception.css",
+      "line": 52,
+      "selector": "#perception-panel",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--st-glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "perception.css",
+      "line": 88,
+      "selector": ".pp-icon-btn:hover",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--st-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "perception.css",
+      "line": 89,
+      "selector": ".pp-icon-btn:hover",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--st-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "perception.css",
+      "line": 130,
+      "selector": ".pp-btn",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--st-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "perception.css",
+      "line": 131,
+      "selector": ".pp-btn",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--st-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "perception.css",
+      "line": 199,
+      "selector": ".pp-cfg",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--st-glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "perception.css",
+      "line": 200,
+      "selector": ".pp-cfg",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--st-glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "projectPanel.css",
+      "line": 309,
+      "selector": ".proj-create-fab",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "projectPanel.css",
+      "line": 310,
+      "selector": ".proj-create-fab",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "projectPanel.css",
+      "line": 358,
+      "selector": ".proj-flowmap-fab",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "projectPanel.css",
+      "line": 359,
+      "selector": ".proj-flowmap-fab",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "projectPanel.css",
+      "line": 555,
+      "selector": ".dev-menu",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "projectPanel.css",
+      "line": 556,
+      "selector": ".dev-menu",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "reminder.css",
+      "line": 22,
+      "selector": "#reminder-btn:hover",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "reminder.css",
+      "line": 23,
+      "selector": "#reminder-btn:hover",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "reminder.css",
+      "line": 62,
+      "selector": "#reminder-panel",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "reminder.css",
+      "line": 63,
+      "selector": "#reminder-panel",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "reminder.css",
+      "line": 647,
+      "selector": ".bubble.schedule-card",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "reminder.css",
+      "line": 648,
+      "selector": ".bubble.schedule-card",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sapphire.css",
+      "line": 119,
+      "selector": ".glass",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sapphire.css",
+      "line": 120,
+      "selector": ".glass",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sapphire.css",
+      "line": 189,
+      "selector": ".glass-control",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(var(--glass-control",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sapphire.css",
+      "line": 190,
+      "selector": ".glass-control",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(var(--glass-control",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sapphire.css",
+      "line": 302,
+      "selector": ".panel-btn:hover,\n.activity-avatar:hover,\n.session-delete:hover,\n.folder-delete:hover,\n.explorer-folder-btn:ho",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(var(--glass-control",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sapphire.css",
+      "line": 303,
+      "selector": ".panel-btn:hover,\n.activity-avatar:hover,\n.session-delete:hover,\n.folder-delete:hover,\n.explorer-folder-btn:ho",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(var(--glass-control",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sapphire.css",
+      "line": 1178,
+      "selector": "#dropbox-send-btn,\n.cfg-btn.cfg-btn-primary,\nbutton.fm-send-btn,\nbutton.fm-verify-send,\nbutton.fm-send-chip,\nb",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(var(--glass-control",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sapphire.css",
+      "line": 1179,
+      "selector": "#dropbox-send-btn,\n.cfg-btn.cfg-btn-primary,\nbutton.fm-send-btn,\nbutton.fm-verify-send,\nbutton.fm-send-chip,\nb",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(var(--glass-control",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "scrollUnderGlass.css",
+      "line": 53,
+      "selector": ".scroll-under-glass::after",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--sug-blur)) saturate(var(--sug-sat))",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "scrollUnderGlass.css",
+      "line": 54,
+      "selector": ".scroll-under-glass::after",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--sug-blur)) saturate(var(--sug-sat))",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "scrollUnderGlass.css",
+      "line": 61,
+      "selector": "html.no-backdrop .scroll-under-glass::after,\nhtml.glass-degraded .scroll-under-glass::after",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "scrollUnderGlass.css",
+      "line": 62,
+      "selector": "html.no-backdrop .scroll-under-glass::after,\nhtml.glass-degraded .scroll-under-glass::after",
+      "context": "",
+      "kind": "standard",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "secrets.css",
+      "line": 67,
+      "selector": "#secrets-modal",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "secrets.css",
+      "line": 68,
+      "selector": "#secrets-modal",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sidebar.css",
+      "line": 12,
+      "selector": "#sidebar",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sidebar.css",
+      "line": 13,
+      "selector": "#sidebar",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sidebar.css",
+      "line": 185,
+      "selector": ".delete-drop-zone",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(16px)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sidebar.css",
+      "line": 186,
+      "selector": ".delete-drop-zone",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(16px)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sidebar.css",
+      "line": 337,
+      "selector": ".session-ctx-menu",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sidebar.css",
+      "line": 338,
+      "selector": ".session-ctx-menu",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sidebar.css",
+      "line": 1347,
+      "selector": ".cfg-modal",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sidebar.css",
+      "line": 1348,
+      "selector": ".cfg-modal",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sidebar.css",
+      "line": 1561,
+      "selector": ".cfg-toast",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sidebar.css",
+      "line": 1562,
+      "selector": ".cfg-toast",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sidebar.css",
+      "line": 2243,
+      "selector": ".plugins-card",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sidebar.css",
+      "line": 2244,
+      "selector": ".plugins-card",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sidebar.css",
+      "line": 2619,
+      "selector": ".nb-toggle",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "sidebar.css",
+      "line": 2620,
+      "selector": ".nb-toggle",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "social.css",
+      "line": 37,
+      "selector": "#social-modal",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "social.css",
+      "line": 38,
+      "selector": "#social-modal",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "social.css",
+      "line": 430,
+      "selector": ".social-card .social-item-line .social-item-unbind,\n.social-card .social-item-line .social-item-unbind:hover",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "social.css",
+      "line": 431,
+      "selector": ".social-card .social-item-line .social-item-unbind,\n.social-card .social-item-line .social-item-unbind:hover",
+      "context": "",
+      "kind": "standard",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "split.css",
+      "line": 96,
+      "selector": ".explorer-context-menu,\n.canvas-tab-context-menu,\n.fm-context-menu",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur, 20px)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 97,
+      "selector": ".explorer-context-menu,\n.canvas-tab-context-menu,\n.fm-context-menu",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur, 20px)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 229,
+      "selector": ".explorer-selection-bar",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur, 20px)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 230,
+      "selector": ".explorer-selection-bar",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur, 20px)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 491,
+      "selector": ".explorer-pickup-bar",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur, 20px)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 492,
+      "selector": ".explorer-pickup-bar",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur, 20px)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 565,
+      "selector": "#canvas-panel",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 566,
+      "selector": "#canvas-panel",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 677,
+      "selector": ".canvas-header",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 678,
+      "selector": ".canvas-header",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 941,
+      "selector": ".canvas-tab.active",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(12px) saturate(1.4)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 942,
+      "selector": ".canvas-tab.active",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(12px) saturate(1.4)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 1413,
+      "selector": ".cr-capsule",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(24px) saturate(1.6)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 1414,
+      "selector": ".cr-capsule",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(24px) saturate(1.6)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 1486,
+      "selector": ".cr-capsule.is-center",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "split.css",
+      "line": 1487,
+      "selector": ".cr-capsule.is-center",
+      "context": "",
+      "kind": "standard",
+      "value": "none",
+      "dualWritten": true,
+      "degradation": true
+    },
+    {
+      "file": "split.css",
+      "line": 1621,
+      "selector": ".deck-card",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(14px) saturate(1.1)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 1622,
+      "selector": ".deck-card",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(14px) saturate(1.1)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 1878,
+      "selector": ".canvas-source-toggle",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 1879,
+      "selector": ".canvas-source-toggle",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 1915,
+      "selector": ".canvas-ref-select",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 1916,
+      "selector": ".canvas-ref-select",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 1958,
+      "selector": ".canvas-refresh-toggle",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 1959,
+      "selector": ".canvas-refresh-toggle",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 2208,
+      "selector": ".epub-reader-menu",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 2209,
+      "selector": ".epub-reader-menu",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 2392,
+      "selector": ".epub-bar-menu",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 2393,
+      "selector": ".epub-bar-menu",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 2425,
+      "selector": ".epub-toc",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 2426,
+      "selector": ".epub-toc",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 2582,
+      "selector": ".epub-anno-bar",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 2583,
+      "selector": ".epub-anno-bar",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 2791,
+      "selector": ".canvas-zoom-bar",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 2792,
+      "selector": ".canvas-zoom-bar",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 3157,
+      "selector": ".canvas-find-toggle",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 3158,
+      "selector": ".canvas-find-toggle",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 3192,
+      "selector": ".nf-findbar",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 3193,
+      "selector": ".nf-findbar",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-sa",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 3346,
+      "selector": ".wg-tip",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur, 20px)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 3347,
+      "selector": ".wg-tip",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur, 20px)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 3385,
+      "selector": ".nf-term-tip",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur, 24px)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 3386,
+      "selector": ".nf-term-tip",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur, 24px)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 3435,
+      "selector": ".canvas-refback-btn",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 3436,
+      "selector": ".canvas-refback-btn",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 3519,
+      "selector": ".wg-switch-select",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 3520,
+      "selector": ".wg-switch-select",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 3541,
+      "selector": ".wg-search",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 3542,
+      "selector": ".wg-search",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 3561,
+      "selector": ".wg-chip",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "split.css",
+      "line": 3562,
+      "selector": ".wg-chip",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "taskList.css",
+      "line": 25,
+      "selector": ".task-card",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "taskList.css",
+      "line": 26,
+      "selector": ".task-card",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "todo-page.css",
+      "line": 12,
+      "selector": "#todo-page",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "todo-page.css",
+      "line": 13,
+      "selector": "#todo-page",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "usage.css",
+      "line": 26,
+      "selector": "#usage-dashboard",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "usage.css",
+      "line": 27,
+      "selector": "#usage-dashboard",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "usage.css",
+      "line": 485,
+      "selector": ".ud-tooltip",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "usage.css",
+      "line": 486,
+      "selector": ".ud-tooltip",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "voice.css",
+      "line": 46,
+      "selector": ".voice-toggle:hover",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "voice.css",
+      "line": 47,
+      "selector": ".voice-toggle:hover",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-control-blur)) saturate(1.2)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "voiceMode.css",
+      "line": 31,
+      "selector": "#voice-mode-overlay",
+      "context": "",
+      "kind": "-webkit-",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    },
+    {
+      "file": "voiceMode.css",
+      "line": 32,
+      "selector": "#voice-mode-overlay",
+      "context": "",
+      "kind": "standard",
+      "value": "blur(var(--glass-blur)) saturate(1.15)",
+      "dualWritten": true,
+      "degradation": false
+    }
+  ],
+  "undefinedRefs": {
+    "--color-surface-2": [
+      "js/askAttachments.js",
+      "js/askAttachments.js",
+      "js/askAttachments.js",
+      "js/askAttachments.js"
+    ],
+    "--font-mono": [
+      "js/canvas.js",
+      "js/canvas.js"
+    ],
+    "--color-text-secondary": [
+      "js/sidebar.js",
+      "js/sidebar.js",
+      "js/sidebar.js",
+      "js/sidebar.js"
+    ],
+    "--anno-": [
+      "js/viewers/annotations.js",
+      "js/viewers/annotations.js"
+    ],
+    "--mermaid-usecase-actor-font-family": [
+      "vendor/mermaid/mermaid.min.js"
+    ],
+    "--mermaid-usecase-actor-font-size": [
+      "vendor/mermaid/mermaid.min.js"
+    ],
+    "--mermaid-usecase-actor-font-weight": [
+      "vendor/mermaid/mermaid.min.js"
+    ],
+    "--mermaid-usecase-font-family": [
+      "vendor/mermaid/mermaid.min.js"
+    ],
+    "--mermaid-usecase-font-size": [
+      "vendor/mermaid/mermaid.min.js"
+    ],
+    "--mermaid-usecase-font-weight": [
+      "vendor/mermaid/mermaid.min.js"
+    ],
+    "--scale-factor": [
+      "vendor/pdfjs/pdf.min.js",
+      "vendor/pdfjs/pdf.min.js",
+      "vendor/pdfjs/pdf.min.js",
+      "vendor/pdfjs/pdf.min.js",
+      "vendor/pdfjs/pdf.min.js",
+      "vendor/pdfjs/pdf.min.js",
+      "vendor/pdfjs/pdf.min.js",
+      "vendor/pdfjs/pdf.min.js",
+      "vendor/pdfjs/pdf.min.js",
+      "vendor/pdfjs/pdf.min.js",
+      "vendor/pdfjs/pdf.min.js",
+      "vendor/pdfjs/pdf.worker.min.js",
+      "vendor/pdfjs/pdf.worker.min.js"
+    ]
+  },
+  "fallbackRefs": {
+    "--bg-secondary-translucent": [
+      "css/base.css:424"
+    ],
+    "--border-light": [
+      "css/base.css:427",
+      "css/base.css:450"
+    ],
+    "--bg-tertiary": [
+      "css/base.css:455"
+    ],
+    "--color-surface-2": [
+      "css/chat.css:4996"
+    ],
+    "--font-ui": [
+      "css/delegatePanorama.css:28",
+      "css/delegatePanorama.css:40",
+      "css/delegatePanorama.css:56",
+      "css/delegatePanorama.css:103",
+      "css/delegatePanorama.css:118",
+      "css/delegatePanorama.css:133",
+      "css/delegatePanorama.css:161",
+      "css/delegatePanorama.css:180",
+      "css/delegatePanorama.css:204",
+      "css/delegatePanorama.css:222",
+      "css/delegatePanorama.css:294",
+      "css/delegatePanorama.css:308",
+      "css/delegatePanorama.css:324",
+      "css/delegatePanorama.css:330",
+      "css/delegatePanorama.css:346",
+      "css/delegatePanorama.css:359",
+      "css/delegatePanorama.css:365",
+      "css/delegatePanorama.css:398",
+      "css/delegatePanorama.css:528",
+      "css/delegatePanorama.css:538",
+      "css/delegatePanorama.css:559",
+      "css/delegatePanorama.css:568",
+      "css/delegatePanorama.css:577"
+    ],
+    "--r-pill": [
+      "css/delegatePanorama.css:36",
+      "css/delegatePanorama.css:59",
+      "css/delegatePanorama.css:121",
+      "css/delegatePanorama.css:208",
+      "css/delegatePanorama.css:218",
+      "css/delegatePanorama.css:397",
+      "css/delegatePanorama.css:513"
+    ],
+    "--font-mono": [
+      "css/delegatePanorama.css:65",
+      "css/delegatePanorama.css:105",
+      "css/delegatePanorama.css:287",
+      "css/delegatePanorama.css:313",
+      "css/delegatePanorama.css:355",
+      "css/delegatePanorama.css:381",
+      "css/delegatePanorama.css:511",
+      "css/projectPanel.css:38"
+    ],
+    "--r-sm": [
+      "css/delegatePanorama.css:108"
+    ],
+    "--color-bg-hover": [
+      "css/diffView.css:40",
+      "css/diffView.css:277",
+      "css/diffView.css:496"
+    ],
+    "--color-info": [
+      "css/diffView.css:139"
+    ],
+    "--text-secondary": [
+      "css/executors.css:14",
+      "css/executors.css:22",
+      "css/executors.css:79",
+      "css/executors.css:89",
+      "css/executors.css:120",
+      "css/executors.css:130"
+    ],
+    "--border-color": [
+      "css/executors.css:37",
+      "css/executors.css:134"
+    ],
+    "--panel-bg": [
+      "css/executors.css:39"
+    ],
+    "--accent-color": [
+      "css/executors.css:44",
+      "css/executors.css:48",
+      "css/executors.css:144"
+    ],
+    "--text-primary": [
+      "css/executors.css:60",
+      "css/executors.css:136"
+    ],
+    "--ok": [
+      "css/mobileLayer.css:702"
+    ],
+    "--color-text-bright": [
+      "css/mobileLayer.css:2067"
+    ],
+    "--sapphire-rgb": [
+      "css/sidebar.css:1731"
+    ],
+    "--color-frame-bg": [
+      "css/sidebar.css:2742",
+      "css/sidebar.css:2777"
+    ],
+    "--color-hover": [
+      "css/split.css:47",
+      "css/split.css:71",
+      "css/split.css:127",
+      "css/split.css:557",
+      "css/split.css:2918"
+    ],
+    "--color-frame-muted": [
+      "css/split.css:543"
+    ],
+    "--status-warn-border": [
+      "css/split.css:548"
+    ],
+    "--color-accent": [
+      "css/split.css:2990"
+    ]
+  },
+  "jsClassUse": {
+    "nebflow-toast": [
+      "js/activityBar.js",
+      "js/modal.js",
+      "js/neblink.js"
+    ],
+    "nebflow-toast-info": [
+      "js/activityBar.js",
+      "js/neblink.js"
+    ],
+    "glass-control": [
+      "js/activityBar.js",
+      "js/chat.js",
+      "js/chatSearch.js",
+      "js/managePanel.js",
+      "js/messages.js",
+      "js/mobile/meFace.js",
+      "js/mobile/taskPanel.js",
+      "js/neblink.js",
+      "js/onboarding.js",
+      "js/projectTab.js",
+      "js/usageDashboard.js",
+      "js/viewers/html.js"
+    ],
+    "nebflow-toast-link": [
+      "js/activityBar.js",
+      "js/neblink.js"
+    ],
+    "nebflow-login-modal": [
+      "js/activityBar.js"
+    ],
+    "agent-avatar-btn": [
+      "js/agentProfile.js"
+    ],
+    "agent-avatar-stand-logo": [
+      "js/agentProfile.js",
+      "js/mobile/chatChrome.js"
+    ],
+    "agent-avatar-img": [
+      "js/agentProfile.js"
+    ],
+    "ap-pane": [
+      "js/agentProfile.js"
+    ],
+    "ap-avatar-box": [
+      "js/agentProfile.js"
+    ],
+    "ap-namerow": [
+      "js/agentProfile.js"
+    ],
+    "ap-name-label": [
+      "js/agentProfile.js"
+    ],
+    "ap-name-input": [
+      "js/agentProfile.js"
+    ],
+    "ap-note": [
+      "js/agentProfile.js"
+    ],
+    "ap-avatar-img": [
+      "js/agentProfile.js"
+    ],
+    "ask-answer-attach-chip": [
+      "js/askAttachments.js"
+    ],
+    "ask-answer-attach-name": [
+      "js/askAttachments.js"
+    ],
+    "ask-answer-attach-rm": [
+      "js/askAttachments.js"
+    ],
+    "ask-answer-attach-zone": [
+      "js/askAttachments.js"
+    ],
+    "ask-answer-attach-chips": [
+      "js/askAttachments.js"
+    ],
+    "ask-answer-attach-empty": [
+      "js/askAttachments.js"
+    ],
+    "ask-answer-drop-overlay": [
+      "js/askAttachments.js"
+    ],
+    "ask-answer-attach-badge": [
+      "js/askAttachments.js"
+    ],
+    "ask-fab": [
+      "js/askDock.js"
+    ],
+    "ask-dock": [
+      "js/askDock.js"
+    ],
+    "closed": [
+      "js/askDock.js"
+    ],
+    "ask-bub": [
+      "js/askDock.js"
+    ],
+    "": [
+      "js/askDock.js",
+      "js/delegatePanoramaView.js",
+      "js/diffPanel.js",
+      "js/flowMapArchive.js",
+      "js/micOrb.js",
+      "js/mobile/taskPanel.js",
+      "js/onboarding.js",
+      "js/perception.js",
+      "js/popArtifacts.js",
+      "js/reference.js",
+      "js/sidebar.js",
+      "js/taskList.js"
+    ],
+    "typing": [
+      "js/askDock.js"
+    ],
+    "ask-pending-row": [
+      "js/askPending.js"
+    ],
+    "ask-pending-source": [
+      "js/askPending.js"
+    ],
+    "ask-pending-summary": [
+      "js/askPending.js"
+    ],
+    "ask-pending-next": [
+      "js/askPending.js"
+    ],
+    "mh-att-more": [
+      "js/attachStripFold.js"
+    ],
+    "nf-progress-pane": [
+      "js/attachmentPreview.js"
+    ],
+    "canvas-loading-spinner": [
+      "js/attachmentPreview.js"
+    ],
+    "nf-progress-spinner": [
+      "js/attachmentPreview.js"
+    ],
+    "nf-progress-pct": [
+      "js/attachmentPreview.js"
+    ],
+    "nf-progress-label": [
+      "js/attachmentPreview.js"
+    ],
+    "canvas-error": [
+      "js/attachmentPreview.js",
+      "js/fileViewers.js",
+      "js/viewers/mobi.js"
+    ],
+    "nf-error-subject": [
+      "js/attachmentPreview.js"
+    ],
+    "viewer-retry-btn": [
+      "js/attachmentPreview.js",
+      "js/fileViewers.js",
+      "js/viewers/image.js",
+      "js/viewers/mobi.js"
+    ],
+    "bgagent-delegate-strip": [
+      "js/bgAgentPopup.js"
+    ],
+    "bgagent-strip-toggle": [
+      "js/bgAgentPopup.js"
+    ],
+    "bgagent-strip-chip": [
+      "js/bgAgentPopup.js"
+    ],
+    "bgagent-strip-briefline": [
+      "js/bgAgentPopup.js"
+    ],
+    "bgagent-strip-result": [
+      "js/bgAgentPopup.js"
+    ],
+    "bgagent-strip-chev": [
+      "js/bgAgentPopup.js"
+    ],
+    "bgagent-strip-body": [
+      "js/bgAgentPopup.js"
+    ],
+    "bgagent-strip-plugins": [
+      "js/bgAgentPopup.js"
+    ],
+    "bgagent-strip-sec": [
+      "js/bgAgentPopup.js"
+    ],
+    "bgagent-strip-sec-label": [
+      "js/bgAgentPopup.js"
+    ],
+    "bgagent-strip-tasktext": [
+      "js/bgAgentPopup.js"
+    ],
+    "bgagent-strip-verdict": [
+      "js/bgAgentPopup.js"
+    ],
+    "bgagent-strip-verdict-word": [
+      "js/bgAgentPopup.js"
+    ],
+    "bgagent-strip-verdict-reason": [
+      "js/bgAgentPopup.js"
+    ],
+    "bgagent-strip-report": [
+      "js/bgAgentPopup.js"
+    ],
+    "flow-agent-hidden": [
+      "js/bgAgentPopup.js",
+      "js/flowAgentPopup.js"
+    ],
+    "flow-agent-chat": [
+      "js/bgAgentPopup.js",
+      "js/flowAgentPopup.js"
+    ],
+    "flow-agent-overlay": [
+      "js/bgAgentPopup.js",
+      "js/flowAgentPopup.js"
+    ],
+    "fullscreen": [
+      "js/bgAgentPopup.js",
+      "js/flowAgentPopup.js"
+    ],
+    "bgws-row": [
+      "js/bgAgentWorkStrip.js"
+    ],
+    "bgws-label": [
+      "js/bgAgentWorkStrip.js"
+    ],
+    "bgws-value": [
+      "js/bgAgentWorkStrip.js"
+    ],
+    "bgws-idle": [
+      "js/bgAgentWorkStrip.js"
+    ],
+    "bgws-empty": [
+      "js/bgAgentWorkStrip.js"
+    ],
+    "bgws-task": [
+      "js/bgAgentWorkStrip.js"
+    ],
+    "bgws-task-name": [
+      "js/bgAgentWorkStrip.js"
+    ],
+    "bgws-task-meta": [
+      "js/bgAgentWorkStrip.js"
+    ],
+    "bgws": [
+      "js/bgAgentWorkStrip.js"
+    ],
+    "bg-section": [
+      "js/bgMergedPanel.js"
+    ],
+    "bg-section-tasks": [
+      "js/bgMergedPanel.js"
+    ],
+    "bg-section-agents": [
+      "js/bgMergedPanel.js"
+    ],
+    "mh-bg-grp": [
+      "js/bgMergedPanel.js"
+    ],
+    "bgt-state-label": [
+      "js/bgTaskOutputPopup.js"
+    ],
+    "bg-task-status": [
+      "js/bgTaskOutputPopup.js"
+    ],
+    "bg-status-error": [
+      "js/bgTaskOutputPopup.js"
+    ],
+    "bgt-dot": [
+      "js/bgTaskOutputPopup.js"
+    ],
+    "bg-status-done": [
+      "js/bgTaskOutputPopup.js"
+    ],
+    "bgt-overlay": [
+      "js/bgTaskOutputPopup.js"
+    ],
+    "canvas-tab-context-menu": [
+      "js/canvas.js"
+    ],
+    "danger": [
+      "js/canvas.js",
+      "js/contextMenu.js",
+      "js/explorer.js"
+    ],
+    "canvas-tab-pane": [
+      "js/canvas.js"
+    ],
+    "canvas-tab": [
+      "js/canvas.js"
+    ],
+    "file-unreadable": [
+      "js/canvas.js"
+    ],
+    "deck-fab": [
+      "js/canvas.js"
+    ],
+    "g2-fab": [
+      "js/canvas.js",
+      "js/mobile/chatChrome.js",
+      "js/mobile/navController.js",
+      "js/mobile/popSheet.js",
+      "js/mobile/socialSearch.js"
+    ],
+    "t-count": [
+      "js/canvas.js"
+    ],
+    "canvas-refback-btn": [
+      "js/canvas.js"
+    ],
+    "deck-card": [
+      "js/canvas.js"
+    ],
+    "deck-card-pop": [
+      "js/canvas.js"
+    ],
+    "card-snap": [
+      "js/canvas.js"
+    ],
+    "card-snap-inner": [
+      "js/canvas.js"
+    ],
+    "card-snap-img": [
+      "js/canvas.js"
+    ],
+    "capsule-ring": [
+      "js/canvas.js"
+    ],
+    "cr-capsule": [
+      "js/canvas.js"
+    ],
+    "nf-cw-dot": [
+      "js/canvas.js"
+    ],
+    "nf-cw-title": [
+      "js/canvas.js"
+    ],
+    "nf-cw-hint": [
+      "js/canvas.js"
+    ],
+    "nf-cw-retry": [
+      "js/canvas.js"
+    ],
+    "canvas-merge-btn": [
+      "js/canvas.js"
+    ],
+    "html-card-warning": [
+      "js/cardRegistry.js"
+    ],
+    "html-card-warning-head": [
+      "js/cardRegistry.js"
+    ],
+    "html-card-warning-list": [
+      "js/cardRegistry.js"
+    ],
+    "html-card-wrap": [
+      "js/cardRegistry.js"
+    ],
+    "html-card-iframe": [
+      "js/cardRegistry.js"
+    ],
+    "row": [
+      "js/chat/askBubbles.js",
+      "js/chat/historyReplay.js",
+      "js/chat/injectedRows.js",
+      "js/chat.js",
+      "js/main.js",
+      "js/onboarding.js",
+      "js/persistence.js",
+      "js/popArtifacts.js",
+      "js/sidebar.js",
+      "js/wikiGraph.js"
+    ],
+    "user": [
+      "js/chat/askBubbles.js",
+      "js/chat/injectedRows.js",
+      "js/chat.js",
+      "js/onboarding.js",
+      "js/persistence.js",
+      "js/popArtifacts.js"
+    ],
+    "bubble": [
+      "js/chat/askBubbles.js",
+      "js/chat/historyReplay.js",
+      "js/chat/injectedRows.js",
+      "js/chat.js",
+      "js/main.js",
+      "js/onboarding.js",
+      "js/persistence.js",
+      "js/sidebar.js"
+    ],
+    "ask-label": [
+      "js/chat/askBubbles.js",
+      "js/chat/historyReplay.js",
+      "js/chat/injectedRows.js",
+      "js/chat.js",
+      "js/persistence.js"
+    ],
+    "nf-chevron": [
+      "js/chat/collapsible.js",
+      "js/workline.js"
+    ],
+    "duration-badge": [
+      "js/chat/durationBadges.js"
+    ],
+    "duration-badge-time": [
+      "js/chat/durationBadges.js"
+    ],
+    "duration-badge-divider": [
+      "js/chat/durationBadges.js",
+      "js/popArtifacts.js"
+    ],
+    "ai": [
+      "js/chat/historyReplay.js",
+      "js/chat.js",
+      "js/main.js",
+      "js/onboarding.js",
+      "js/persistence.js",
+      "js/sidebar.js"
+    ],
+    "thinking-row": [
+      "js/chat/historyReplay.js",
+      "js/persistence.js",
+      "js/sidebar.js"
+    ],
+    "thinking-bubble": [
+      "js/chat/historyReplay.js",
+      "js/chat.js",
+      "js/persistence.js",
+      "js/sidebar.js"
+    ],
+    "thinking-label": [
+      "js/chat/historyReplay.js",
+      "js/chat.js",
+      "js/persistence.js",
+      "js/sidebar.js"
+    ],
+    "thinking-content": [
+      "js/chat/historyReplay.js",
+      "js/chat.js",
+      "js/persistence.js",
+      "js/sidebar.js"
+    ],
+    "delivery-badge": [
+      "js/chat/injectedRows.js"
+    ],
+    "delivery-${delivery}": [
+      "js/chat/injectedRows.js"
+    ],
+    "injected": [
+      "js/chat/injectedRows.js"
+    ],
+    "schedule-card": [
+      "js/chat/injectedRows.js"
+    ],
+    "schedule-card-head": [
+      "js/chat/injectedRows.js"
+    ],
+    "schedule-card-chip": [
+      "js/chat/injectedRows.js"
+    ],
+    "schedule-card-name": [
+      "js/chat/injectedRows.js"
+    ],
+    "schedule-card-repeat": [
+      "js/chat/injectedRows.js"
+    ],
+    "schedule-card-body": [
+      "js/chat/injectedRows.js"
+    ],
+    "schedule-card-ref": [
+      "js/chat/injectedRows.js"
+    ],
+    "schedule-card-time": [
+      "js/chat/injectedRows.js"
+    ],
+    "injected-source-label": [
+      "js/chat/injectedRows.js"
+    ],
+    "injected-content": [
+      "js/chat/injectedRows.js"
+    ],
+    "nf-rcpt-top": [
+      "js/chat/injectedRows.js"
+    ],
+    "nf-rcpt-head": [
+      "js/chat/injectedRows.js"
+    ],
+    "nf-rcpt-name": [
+      "js/chat/injectedRows.js"
+    ],
+    "nf-rcpt-seg": [
+      "js/chat/injectedRows.js"
+    ],
+    "nf-rcpt-badge": [
+      "js/chat/injectedRows.js"
+    ],
+    "nf-rcpt-pipe": [
+      "js/chat/injectedRows.js"
+    ],
+    "nf-rcpt-note": [
+      "js/chat/injectedRows.js"
+    ],
+    "nf-rcpt-note-add": [
+      "js/chat/injectedRows.js"
+    ],
+    "nf-rcpt-note-del": [
+      "js/chat/injectedRows.js"
+    ],
+    "nf-rcpt-summary": [
+      "js/chat/injectedRows.js"
+    ],
+    "nf-rcpt-summary-text": [
+      "js/chat/injectedRows.js"
+    ],
+    "nf-rcpt-hash": [
+      "js/chat/injectedRows.js"
+    ],
+    "retry-status": [
+      "js/chat.js"
+    ],
+    "msg-pending-mark": [
+      "js/chat.js"
+    ],
+    "msg-quote-composite": [
+      "js/chat.js",
+      "js/persistence.js"
+    ],
+    "att-bubble": [
+      "js/chat.js",
+      "js/persistence.js"
+    ],
+    "agent-row": [
+      "js/chat.js",
+      "js/persistence.js"
+    ],
+    "agent-badge": [
+      "js/chat.js",
+      "js/persistence.js"
+    ],
+    "tool-card": [
+      "js/chat.js",
+      "js/persistence.js"
+    ],
+    "card-content": [
+      "js/chat.js",
+      "js/persistence.js"
+    ],
+    "body": [
+      "js/chat.js",
+      "js/persistence.js"
+    ],
+    "open": [
+      "js/chat.js",
+      "js/perception.js",
+      "js/persistence.js"
+    ],
+    "tool-card--pending": [
+      "js/chat.js"
+    ],
+    "tool-stream-body": [
+      "js/chat.js"
+    ],
+    "error": [
+      "js/chat.js",
+      "js/lightbox.js"
+    ],
+    "error-card": [
+      "js/chat.js"
+    ],
+    "notice": [
+      "js/chat.js",
+      "js/onboarding.js",
+      "js/persistence.js"
+    ],
+    "still-processing-row": [
+      "js/chat.js"
+    ],
+    "notice-card": [
+      "js/chat.js",
+      "js/persistence.js"
+    ],
+    "notice-info": [
+      "js/chat.js",
+      "js/persistence.js"
+    ],
+    "still-processing-retry": [
+      "js/chat.js"
+    ],
+    "still-processing-interrupt": [
+      "js/chat.js"
+    ],
+    "compact-card": [
+      "js/chat.js"
+    ],
+    "option-box": [
+      "js/chat.js",
+      "js/persistence.js"
+    ],
+    "option-q-wrapper": [
+      "js/chat.js"
+    ],
+    "option-q": [
+      "js/chat.js",
+      "js/persistence.js"
+    ],
+    "option-secret-row": [
+      "js/chat.js"
+    ],
+    "option-secret-input": [
+      "js/chat.js"
+    ],
+    "option-secret-eye": [
+      "js/chat.js"
+    ],
+    "option-secret-hint": [
+      "js/chat.js"
+    ],
+    "ws-pick-target": [
+      "js/chat.js"
+    ],
+    "ws-pick-echo": [
+      "js/chat.js"
+    ],
+    "option-opts": [
+      "js/chat.js",
+      "js/persistence.js"
+    ],
+    "option-btn": [
+      "js/chat.js",
+      "js/onboarding.js",
+      "js/persistence.js"
+    ],
+    "option-custom-input": [
+      "js/chat.js"
+    ],
+    "opt-other": [
+      "js/chat.js"
+    ],
+    "option-btn-row": [
+      "js/chat.js"
+    ],
+    "option-cancel": [
+      "js/chat.js"
+    ],
+    "option-confirm": [
+      "js/chat.js"
+    ],
+    "option-answer": [
+      "js/chat.js"
+    ],
+    "ask-attachments-wrap": [
+      "js/chat.js"
+    ],
+    "ask-attachments-head": [
+      "js/chat.js"
+    ],
+    "ask-attachments-head-label": [
+      "js/chat.js"
+    ],
+    "ask-attachments-list": [
+      "js/chat.js"
+    ],
+    "ask-attachment-static": [
+      "js/chat.js"
+    ],
+    "ask-attachment-image": [
+      "js/chat.js"
+    ],
+    "ob-compare-btn": [
+      "js/chat.js"
+    ],
+    "ob-ghost-seat": [
+      "js/chat.js"
+    ],
+    "ask-user-source": [
+      "js/chat.js"
+    ],
+    "option-answer-pending": [
+      "js/chat.js"
+    ],
+    "perm-danger-banner": [
+      "js/chat.js",
+      "js/persistence.js"
+    ],
+    "perm-source-badge": [
+      "js/chat.js"
+    ],
+    "att-thumb": [
+      "js/chat.js"
+    ],
+    "att-remove": [
+      "js/chat.js"
+    ],
+    "att-file": [
+      "js/chat.js"
+    ],
+    "thinking-streaming": [
+      "js/chat.js"
+    ],
+    "collapsible": [
+      "js/chat.js",
+      "js/persistence.js"
+    ],
+    "expanded": [
+      "js/chat.js"
+    ],
+    "thinking-label-text": [
+      "js/chat.js"
+    ],
+    "thinking-dot": [
+      "js/chat.js",
+      "js/workline.js"
+    ],
+    "queue-bar-header": [
+      "js/chatQueue.js"
+    ],
+    "queue-bar-collapse": [
+      "js/chatQueue.js"
+    ],
+    "queue-bar-title": [
+      "js/chatQueue.js"
+    ],
+    "queue-item": [
+      "js/chatQueue.js"
+    ],
+    "queue-item-grip": [
+      "js/chatQueue.js"
+    ],
+    "queue-item-text": [
+      "js/chatQueue.js"
+    ],
+    "queue-item-att": [
+      "js/chatQueue.js"
+    ],
+    "queue-item-att-thumb": [
+      "js/chatQueue.js"
+    ],
+    "queue-item-att-file": [
+      "js/chatQueue.js"
+    ],
+    "queue-item-att-more": [
+      "js/chatQueue.js"
+    ],
+    "queue-item-failed-note": [
+      "js/chatQueue.js"
+    ],
+    "st-ic": [
+      "js/chatQueue.js"
+    ],
+    "queue-item-actions": [
+      "js/chatQueue.js"
+    ],
+    "queue-item-btn": [
+      "js/chatQueue.js"
+    ],
+    "immediate": [
+      "js/chatQueue.js"
+    ],
+    "recall": [
+      "js/chatQueue.js"
+    ],
+    "remove": [
+      "js/chatQueue.js"
+    ],
+    "cal-pill-listbox": [
+      "js/chatSearch.js"
+    ],
+    "cal-pill-option": [
+      "js/chatSearch.js"
+    ],
+    "search-group": [
+      "js/chatSearch.js"
+    ],
+    "search-group-header": [
+      "js/chatSearch.js"
+    ],
+    "search-sentinel": [
+      "js/chatSearch.js"
+    ],
+    "cfg-btn": [
+      "js/chatSearch.js",
+      "js/modelPanel.js"
+    ],
+    "cfg-btn-sm": [
+      "js/chatSearch.js",
+      "js/modelPanel.js"
+    ],
+    "search-result-card-warn": [
+      "js/chatSearch.js"
+    ],
+    "search-result-card": [
+      "js/chatSearch.js"
+    ],
+    "search-source-chip": [
+      "js/chatSearch.js"
+    ],
+    "search-media-card": [
+      "js/chatSearch.js"
+    ],
+    "search-media-thumb": [
+      "js/chatSearch.js"
+    ],
+    "search-media-dur": [
+      "js/chatSearch.js"
+    ],
+    "search-media-name": [
+      "js/chatSearch.js"
+    ],
+    "search-media-ext": [
+      "js/chatSearch.js"
+    ],
+    "link": [
+      "js/chatSearch.js"
+    ],
+    "search-media-linkbody": [
+      "js/chatSearch.js"
+    ],
+    "search-media-url": [
+      "js/chatSearch.js"
+    ],
+    "search-media-source": [
+      "js/chatSearch.js"
+    ],
+    "src-": [
+      "js/chatSearch.js"
+    ],
+    "search-media-time": [
+      "js/chatSearch.js"
+    ],
+    "search-media-group-header": [
+      "js/chatSearch.js"
+    ],
+    "search-media-grid": [
+      "js/chatSearch.js"
+    ],
+    "cfg-modal-overlay": [
+      "js/configDrill.js",
+      "js/dropbox.js",
+      "js/modelPanel.js",
+      "js/sidebar/providersUi.js"
+    ],
+    "config-drill-overlay": [
+      "js/configDrill.js"
+    ],
+    "fm-remark-edit": [
+      "js/contacts.js"
+    ],
+    "fm-search-input": [
+      "js/contacts.js"
+    ],
+    "fm-verify-input": [
+      "js/contacts.js"
+    ],
+    "fm-context-menu": [
+      "js/contextMenu.js"
+    ],
+    "daemon-config-field": [
+      "js/daemonPanel.js"
+    ],
+    "daemon-config-label": [
+      "js/daemonPanel.js"
+    ],
+    "daemon-config-input": [
+      "js/daemonPanel.js"
+    ],
+    "daemon-config-check": [
+      "js/daemonPanel.js"
+    ],
+    "daemon-config-select": [
+      "js/daemonPanel.js"
+    ],
+    "daemon-config-hint": [
+      "js/daemonPanel.js"
+    ],
+    "daemon-config-header": [
+      "js/daemonPanel.js"
+    ],
+    "daemon-config-title": [
+      "js/daemonPanel.js"
+    ],
+    "daemon-config-close": [
+      "js/daemonPanel.js"
+    ],
+    "daemon-config-body": [
+      "js/daemonPanel.js"
+    ],
+    "daemon-config-footer": [
+      "js/daemonPanel.js"
+    ],
+    "daemon-config-status": [
+      "js/daemonPanel.js"
+    ],
+    "daemon-config-btn": [
+      "js/daemonPanel.js"
+    ],
+    "primary": [
+      "js/daemonPanel.js"
+    ],
+    "daemon-config-iframe": [
+      "js/daemonPanel.js"
+    ],
+    "daemon-status": [
+      "js/daemons.js"
+    ],
+    "${status}": [
+      "js/daemons.js"
+    ],
+    "daemon-btn": [
+      "js/daemons.js"
+    ],
+    "stop": [
+      "js/daemons.js"
+    ],
+    "start": [
+      "js/daemons.js"
+    ],
+    "daemon-empty": [
+      "js/daemons.js"
+    ],
+    "daemon-row": [
+      "js/daemons.js"
+    ],
+    "delegate-chain-failsoft": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-flowmap-host": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-structure-head": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-structure-section": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-structure-label": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-structure-seat": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-seat-executor": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-chain-mono": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-chain-list": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-structure-tiles": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-structure-group": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-structure-seg": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-chain-card": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-archive-fab": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-archive-drawer": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-archive-toast": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-archive-toast-undo": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-archive-drawer-head": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-archive-drawer-close": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-archive-empty": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-archive-row": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-archive-row-main": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-archive-row-title": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-archive-row-meta": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-archive-row-actions": [
+      "js/delegateChainView.js"
+    ],
+    "delegate-archive-act": [
+      "js/delegateChainView.js"
+    ],
+    "dvp-root": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-empty": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-main": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-toolbar": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-stats": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-pills": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-pill": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-entry": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-band": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-band-head": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-band-dot": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-band-name": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-band-ws": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-band-counts": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-cnt": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-band-n": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-ribbon": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-rb-st${i": [
+      "js/delegatePanoramaView.js"
+    ],
+    "<": [
+      "js/delegatePanoramaView.js"
+    ],
+    "stage": [
+      "js/delegatePanoramaView.js"
+    ],
+    "?": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-rb-dot": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-rb-word": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-canvas": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-lane-label": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-lane-sep": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-zone-sep": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-zone-tag": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-zone-toggle": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-e-chip${c.cls": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-nd": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-ghost": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-done-block": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-root-card": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-task-top": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-chip": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-task-title": [
+      "js/delegatePanoramaView.js"
+    ],
+    "${meta.cls}": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-head": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-exec": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-title": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-st": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-st-dot": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-st-word": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-qbadge": [
+      "js/delegatePanoramaView.js"
+    ],
+    "rtm": [
+      "js/delegatePanoramaView.js"
+    ],
+    "mrg": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-meta": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-chip${cls": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-report": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-sub": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-sub-num": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-exec-sm": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-sub-title": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-sink": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-sink-name": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-sink-sub": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-legend": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-lg-group": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-lg-h": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-lg-item": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-lg-dot": [
+      "js/delegatePanoramaView.js"
+    ],
+    "${cls": [
+      "js/delegatePanoramaView.js"
+    ],
+    "||": [
+      "js/delegatePanoramaView.js",
+      "js/diffPanel.js"
+    ],
+    "dvp-lg-glyph": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-lg-line": [
+      "js/delegatePanoramaView.js"
+    ],
+    "dvp-lg-shape": [
+      "js/delegatePanoramaView.js"
+    ],
+    "${cls}": [
+      "js/delegatePanoramaView.js"
+    ],
+    "nf-diff": [
+      "js/diffCanvas.js"
+    ],
+    "nf-diff-body": [
+      "js/diffCanvas.js"
+    ],
+    "nf-diff-loading": [
+      "js/diffCanvas.js"
+    ],
+    "fcv-view": [
+      "js/diffCanvas.js"
+    ],
+    "fcv-filehead": [
+      "js/diffCanvas.js"
+    ],
+    "fcv-filestrip": [
+      "js/diffCanvas.js"
+    ],
+    "nf-fc": [
+      "js/diffCanvas.js",
+      "js/diffPanel.js"
+    ],
+    "nf-fc-row": [
+      "js/diffCanvas.js",
+      "js/diffPanel.js"
+    ],
+    "nf-fc-empty": [
+      "js/diffCanvas.js"
+    ],
+    "panel": [
+      "js/diffPanel.js"
+    ],
+    "nf-fc-badge": [
+      "js/diffPanel.js"
+    ],
+    "nf-fc-badge-${String(f?.changeType": [
+      "js/diffPanel.js"
+    ],
+    "nf-fc-path": [
+      "js/diffPanel.js"
+    ],
+    "nf-fc-counts": [
+      "js/diffPanel.js"
+    ],
+    "nf-fc-added": [
+      "js/diffPanel.js"
+    ],
+    "nf-fc-removed": [
+      "js/diffPanel.js"
+    ],
+    "nf-fc-src": [
+      "js/diffPanel.js"
+    ],
+    "dropbox-flow-status": [
+      "js/dropbox.js"
+    ],
+    "error-escalation-card": [
+      "js/errorRecovery.js"
+    ],
+    "error-escalation-header": [
+      "js/errorRecovery.js"
+    ],
+    "error-escalation-meta": [
+      "js/errorRecovery.js"
+    ],
+    "error-escalation-wait": [
+      "js/errorRecovery.js"
+    ],
+    "error-escalation-actions": [
+      "js/errorRecovery.js"
+    ],
+    "explorer-selection-bar": [
+      "js/explorer/selection.js"
+    ],
+    "explorer-selection-count": [
+      "js/explorer/selection.js"
+    ],
+    "explorer-selection-delete": [
+      "js/explorer/selection.js"
+    ],
+    "explorer-dev-anchor": [
+      "js/explorer.js"
+    ],
+    "dev-chip": [
+      "js/explorer.js"
+    ],
+    "dev-menu": [
+      "js/explorer.js"
+    ],
+    "warn-dot": [
+      "js/explorer.js",
+      "js/projectTab.js"
+    ],
+    "dev-item": [
+      "js/explorer.js",
+      "js/projectTab.js",
+      "js/workspacePicker.js"
+    ],
+    "dev-menu-foot": [
+      "js/explorer.js",
+      "js/projectTab.js",
+      "js/workspacePicker.js"
+    ],
+    "active": [
+      "js/explorer.js"
+    ],
+    "explorer-dir-wrapper": [
+      "js/explorer.js"
+    ],
+    "explorer-children": [
+      "js/explorer.js"
+    ],
+    "explorer-root-drop-margin": [
+      "js/explorer.js"
+    ],
+    "explorer-item": [
+      "js/explorer.js"
+    ],
+    "explorer-folder": [
+      "js/explorer.js"
+    ],
+    "explorer-chevron": [
+      "js/explorer.js"
+    ],
+    "explorer-icon": [
+      "js/explorer.js"
+    ],
+    "explorer-label": [
+      "js/explorer.js"
+    ],
+    "explorer-file": [
+      "js/explorer.js"
+    ],
+    "explorer-file-icon": [
+      "js/explorer.js"
+    ],
+    "${info.cls}": [
+      "js/explorer.js"
+    ],
+    "explorer-error": [
+      "js/explorer.js"
+    ],
+    "retry": [
+      "js/explorer.js"
+    ],
+    "explorer-loading": [
+      "js/explorer.js"
+    ],
+    "pickup-tag": [
+      "js/explorer.js"
+    ],
+    "fail-ic": [
+      "js/explorer.js"
+    ],
+    "explorer-pickup-bar": [
+      "js/explorer.js"
+    ],
+    "bar-ic": [
+      "js/explorer.js"
+    ],
+    "bar-msg": [
+      "js/explorer.js"
+    ],
+    "bar-act": [
+      "js/explorer.js"
+    ],
+    "explorer-pickup-progress": [
+      "js/explorer.js"
+    ],
+    "explorer-creating": [
+      "js/explorer.js"
+    ],
+    "explorer-name-input": [
+      "js/explorer.js"
+    ],
+    "explorer-context-menu": [
+      "js/explorer.js"
+    ],
+    "nf-findbar": [
+      "js/fileSearch.js"
+    ],
+    "nf-findbar-input": [
+      "js/fileSearch.js"
+    ],
+    "nf-findbar-count": [
+      "js/fileSearch.js"
+    ],
+    "nf-findbar-btn": [
+      "js/fileSearch.js"
+    ],
+    "nf-findbar-close": [
+      "js/fileSearch.js"
+    ],
+    "fm-detail-st": [
+      "js/flowMapArchive.js"
+    ],
+    "team-scroll": [
+      "js/flowMapTab.js",
+      "js/projectTab.js"
+    ],
+    "flow-viewer-overlay": [
+      "js/flowViewers.js"
+    ],
+    "cfg-input": [
+      "js/friendGroups.js",
+      "js/messages.js"
+    ],
+    "fm-gs-rename-input": [
+      "js/friendGroups.js"
+    ],
+    "att-error": [
+      "js/input/attachments.js"
+    ],
+    "dd-group-title": [
+      "js/input/slashCommands.js",
+      "js/mentionComplete.js"
+    ],
+    "slash-item": [
+      "js/input/slashCommands.js"
+    ],
+    "attachment-banner": [
+      "js/input.js"
+    ],
+    "nf-lightbox": [
+      "js/lightbox.js",
+      "js/popArtifacts.js"
+    ],
+    "nf-lightbox-close": [
+      "js/lightbox.js"
+    ],
+    "nf-lightbox-img": [
+      "js/lightbox.js"
+    ],
+    "nf-lightbox-status": [
+      "js/lightbox.js"
+    ],
+    "loading": [
+      "js/lightbox.js",
+      "js/sidebar/providersUi.js"
+    ],
+    "history-loader": [
+      "js/main/historyIndicators.js"
+    ],
+    "history-end": [
+      "js/main/historyIndicators.js"
+    ],
+    "chat-skeleton": [
+      "js/main/historyIndicators.js"
+    ],
+    "chat-sk-row": [
+      "js/main/historyIndicators.js"
+    ],
+    "chat-sk-bubble": [
+      "js/main/historyIndicators.js"
+    ],
+    "chat-sk-w": [
+      "js/main/historyIndicators.js"
+    ],
+    "global-perm-toast": [
+      "js/main/permToast.js"
+    ],
+    "global-perm-toast-title": [
+      "js/main/permToast.js"
+    ],
+    "global-perm-toast-body": [
+      "js/main/permToast.js"
+    ],
+    "global-perm-toast-actions": [
+      "js/main/permToast.js"
+    ],
+    "global-perm-toast-btn": [
+      "js/main/permToast.js"
+    ],
+    "deny": [
+      "js/main/permToast.js"
+    ],
+    "approve": [
+      "js/main/permToast.js"
+    ],
+    "agent-notif-dot": [
+      "js/main.js",
+      "js/sidebar.js"
+    ],
+    "thinking-placeholder": [
+      "js/main.js"
+    ],
+    "fa-manage": [
+      "js/managePanel.js"
+    ],
+    "fa-retries": [
+      "js/managePanel.js"
+    ],
+    "fa-uptime": [
+      "js/managePanel.js"
+    ],
+    "fa-mgmt-btn": [
+      "js/managePanel.js"
+    ],
+    "fa-mgmt-stop": [
+      "js/managePanel.js"
+    ],
+    "fa-mgmt-retry": [
+      "js/managePanel.js"
+    ],
+    "merged-tabs": [
+      "js/memory.js"
+    ],
+    "merged-tab": [
+      "js/memory.js"
+    ],
+    "mention-dropdown": [
+      "js/mentionComplete.js"
+    ],
+    "mention-item": [
+      "js/mentionComplete.js"
+    ],
+    "mention-name": [
+      "js/mentionComplete.js"
+    ],
+    "mention-path": [
+      "js/mentionComplete.js"
+    ],
+    "mention-empty": [
+      "js/mentionComplete.js"
+    ],
+    "nf-mermaid-ph": [
+      "js/mermaidRenderer.js"
+    ],
+    "nf-mermaid-errrow": [
+      "js/mermaidRenderer.js"
+    ],
+    "nf-mermaid-errlabel": [
+      "js/mermaidRenderer.js"
+    ],
+    "nf-mermaid-errdetail": [
+      "js/mermaidRenderer.js"
+    ],
+    "nf-mermaid-srcbtn": [
+      "js/mermaidRenderer.js"
+    ],
+    "nf-mermaid-src": [
+      "js/mermaidRenderer.js"
+    ],
+    "scroll-new-pill": [
+      "js/messages.js",
+      "js/utils.js"
+    ],
+    "hidden": [
+      "js/messages.js",
+      "js/utils.js"
+    ],
+    "fm-input": [
+      "js/messages.js"
+    ],
+    "fm-device-desc-btn": [
+      "js/messages.js"
+    ],
+    "fm-device-desc-input": [
+      "js/messages.js"
+    ],
+    "fm-device-desc-save": [
+      "js/messages.js"
+    ],
+    "fm-device-desc-cancel": [
+      "js/messages.js"
+    ],
+    "fm-fwd-note": [
+      "js/messages.js"
+    ],
+    "css-orb": [
+      "js/micOrb.js"
+    ],
+    "orb": [
+      "js/micOrb.js"
+    ],
+    "orb-ripple": [
+      "js/micOrb.js"
+    ],
+    "go": [
+      "js/micOrb.js"
+    ],
+    "g2-chat-head": [
+      "js/mobile/chatChrome.js"
+    ],
+    "mh-chrome-btn": [
+      "js/mobile/chatChrome.js"
+    ],
+    "mh-daemon-foot": [
+      "js/mobile/daemonFace.js"
+    ],
+    "mf-me-portal": [
+      "js/mobile/meFace.js"
+    ],
+    "mf-me-field-label": [
+      "js/mobile/meFace.js"
+    ],
+    "mf-me-field-value": [
+      "js/mobile/meFace.js"
+    ],
+    "mf-hub-row": [
+      "js/mobile/meFace.js",
+      "js/mobile/navController.js"
+    ],
+    "mf-me-login": [
+      "js/mobile/meFace.js"
+    ],
+    "mh-memory-empty": [
+      "js/mobile/memoryFace.js"
+    ],
+    "mh-memory-card": [
+      "js/mobile/memoryFace.js"
+    ],
+    "mh-memory-card-title": [
+      "js/mobile/memoryFace.js"
+    ],
+    "mh-memory-card-excerpt": [
+      "js/mobile/memoryFace.js"
+    ],
+    "mh-memory-card-foot": [
+      "js/mobile/memoryFace.js"
+    ],
+    "mh-memory-edit": [
+      "js/mobile/memoryFace.js"
+    ],
+    "mh-memory-cards": [
+      "js/mobile/memoryFace.js"
+    ],
+    "mobile-page": [
+      "js/mobile/navController.js"
+    ],
+    "mobile-page-body": [
+      "js/mobile/navController.js"
+    ],
+    "mobile-page-header": [
+      "js/mobile/navController.js"
+    ],
+    "mobile-page-title": [
+      "js/mobile/navController.js"
+    ],
+    "mobile-page-head-spacer": [
+      "js/mobile/navController.js"
+    ],
+    "mobile-back-btn": [
+      "js/mobile/navController.js",
+      "js/mobile/popSheet.js"
+    ],
+    "mf-hub": [
+      "js/mobile/navController.js"
+    ],
+    "mf-hub-label": [
+      "js/mobile/navController.js"
+    ],
+    "mf-hub-rows": [
+      "js/mobile/navController.js"
+    ],
+    "mf-me-entry": [
+      "js/mobile/navController.js"
+    ],
+    "mf-strip-chip": [
+      "js/mobile/navController.js"
+    ],
+    "mf-stack-view": [
+      "js/mobile/navController.js"
+    ],
+    "mf-stack-head": [
+      "js/mobile/navController.js"
+    ],
+    "mf-stack-count": [
+      "js/mobile/navController.js"
+    ],
+    "mf-stack-x": [
+      "js/mobile/navController.js"
+    ],
+    "mf-stack-list": [
+      "js/mobile/navController.js"
+    ],
+    "mf-stack-card": [
+      "js/mobile/navController.js"
+    ],
+    "mf-stack-num": [
+      "js/mobile/navController.js"
+    ],
+    "mf-stack-label": [
+      "js/mobile/navController.js"
+    ],
+    "mf-canvas-page": [
+      "js/mobile/navController.js"
+    ],
+    "mf-strip": [
+      "js/mobile/navController.js"
+    ],
+    "mf-cv-toolbar": [
+      "js/mobile/navController.js"
+    ],
+    "mf-cv-close": [
+      "js/mobile/navController.js"
+    ],
+    "mf-cv-count": [
+      "js/mobile/navController.js"
+    ],
+    "mf-cv-stack": [
+      "js/mobile/navController.js"
+    ],
+    "mf-cv-host": [
+      "js/mobile/navController.js"
+    ],
+    "mf-cv-empty": [
+      "js/mobile/navController.js"
+    ],
+    "mf-cv-empty-title": [
+      "js/mobile/navController.js"
+    ],
+    "mf-cv-empty-sub": [
+      "js/mobile/navController.js"
+    ],
+    "mf-swipe-ring": [
+      "js/mobile/navController.js"
+    ],
+    "left": [
+      "js/mobile/navController.js"
+    ],
+    "right": [
+      "js/mobile/navController.js"
+    ],
+    "mobile-back-injected": [
+      "js/mobile/navController.js"
+    ],
+    "dock-key": [
+      "js/mobile/navController.js"
+    ],
+    "dock-badge": [
+      "js/mobile/navController.js"
+    ],
+    "dock-center": [
+      "js/mobile/navController.js"
+    ],
+    "dock-label": [
+      "js/mobile/navController.js"
+    ],
+    "dock-ic": [
+      "js/mobile/navController.js"
+    ],
+    "dock-center-img": [
+      "js/mobile/navController.js"
+    ],
+    "mfs-back": [
+      "js/mobile/popSheet.js"
+    ],
+    "mh-search-head-ic": [
+      "js/mobile/searchFace.js"
+    ],
+    "mh-search-kindrow": [
+      "js/mobile/searchFace.js"
+    ],
+    "cfg-select": [
+      "js/mobile/searchFace.js"
+    ],
+    "mh-search-kind": [
+      "js/mobile/searchFace.js"
+    ],
+    "mh-search-foot": [
+      "js/mobile/searchFace.js"
+    ],
+    "mf-social-sealed": [
+      "js/mobile/socialFaces.js"
+    ],
+    "mf-social-sealed-skel": [
+      "js/mobile/socialFaces.js"
+    ],
+    "mf-social-sealed-note": [
+      "js/mobile/socialFaces.js"
+    ],
+    "mf-social-sealed-sub": [
+      "js/mobile/socialFaces.js"
+    ],
+    "mh-fab-search": [
+      "js/mobile/socialSearch.js"
+    ],
+    "mh-search-dock": [
+      "js/mobile/socialSearch.js"
+    ],
+    "mh-search-bar": [
+      "js/mobile/socialSearch.js"
+    ],
+    "mh-search-input": [
+      "js/mobile/socialSearch.js"
+    ],
+    "mh-search-clear": [
+      "js/mobile/socialSearch.js"
+    ],
+    "mh-scope-row": [
+      "js/mobile/socialSearch.js"
+    ],
+    "mh-scope-chip": [
+      "js/mobile/socialSearch.js"
+    ],
+    "mh-search-status": [
+      "js/mobile/socialSearch.js"
+    ],
+    "mh-search-results": [
+      "js/mobile/socialSearch.js"
+    ],
+    "mh-search-note": [
+      "js/mobile/socialSearch.js"
+    ],
+    "mh-sr-row": [
+      "js/mobile/socialSearch.js"
+    ],
+    "mh-sr-meta": [
+      "js/mobile/socialSearch.js"
+    ],
+    "mh-sr-sender": [
+      "js/mobile/socialSearch.js"
+    ],
+    "mh-sr-time": [
+      "js/mobile/socialSearch.js"
+    ],
+    "mh-sr-snippet": [
+      "js/mobile/socialSearch.js"
+    ],
+    "mh-sr-group": [
+      "js/mobile/socialSearch.js"
+    ],
+    "mh-tpanel": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-hd": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-stats": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-x": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-bd": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-glyph": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-g-${cls}": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-card": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-${grp}": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-c-hd": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-ttl": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-meta": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-word": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-members": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-mem": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-mem-spin": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-mem-mark${mst": [
+      "js/mobile/taskPanel.js"
+    ],
+    "===": [
+      "js/mobile/taskPanel.js",
+      "js/taskList.js"
+    ],
+    "tp-mem-hollow": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-mem-more": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-grp": [
+      "js/mobile/taskPanel.js"
+    ],
+    "tp-empty": [
+      "js/mobile/taskPanel.js"
+    ],
+    "session-item": [
+      "js/modal.js",
+      "js/sidebar.js"
+    ],
+    "creation-path": [
+      "js/modal.js"
+    ],
+    "new-session-input": [
+      "js/modal.js"
+    ],
+    "nebflow-toast-": [
+      "js/modal.js"
+    ],
+    "nebflow-toast-icon": [
+      "js/modal.js"
+    ],
+    "nebflow-toast-msg": [
+      "js/modal.js",
+      "js/neblink.js"
+    ],
+    "mp-editor": [
+      "js/modelPanel.js"
+    ],
+    "mp-roleblock": [
+      "js/modelPanel.js"
+    ],
+    "mp-roleblock-nebula": [
+      "js/modelPanel.js"
+    ],
+    "mp-foot": [
+      "js/modelPanel.js"
+    ],
+    "mp-note": [
+      "js/modelPanel.js"
+    ],
+    "mp-note-seed": [
+      "js/modelPanel.js"
+    ],
+    "mp-preview": [
+      "js/modelPanel.js"
+    ],
+    "mp-clear": [
+      "js/modelPanel.js"
+    ],
+    "mp-roleblock-follower": [
+      "js/modelPanel.js"
+    ],
+    "mp-restore": [
+      "js/modelPanel.js"
+    ],
+    "mp-load-error": [
+      "js/modelPanel.js"
+    ],
+    "chain-section-error": [
+      "js/modelPanel.js"
+    ],
+    "mp-load-error-icon": [
+      "js/modelPanel.js"
+    ],
+    "mp-load-error-title": [
+      "js/modelPanel.js"
+    ],
+    "mp-load-error-hint": [
+      "js/modelPanel.js"
+    ],
+    "mp-load-error-retry": [
+      "js/modelPanel.js"
+    ],
+    "chain-section-face": [
+      "js/modelPanel.js"
+    ],
+    "monaco-save-blocked": [
+      "js/monacoEditor.js"
+    ],
+    "msg-copy": [
+      "js/msgQuote.js",
+      "js/popArtifacts.js",
+      "js/utils.js"
+    ],
+    "msg-quote-btn": [
+      "js/msgQuote.js"
+    ],
+    "msg-quote-note": [
+      "js/msgQuote.js"
+    ],
+    "msg-quote-atts": [
+      "js/msgQuote.js"
+    ],
+    "msg-quote-att-media": [
+      "js/msgQuote.js"
+    ],
+    "msg-quote-att-img": [
+      "js/msgQuote.js"
+    ],
+    "msg-quote-att-file": [
+      "js/msgQuote.js"
+    ],
+    "msg-quote-att-file-icon": [
+      "js/msgQuote.js"
+    ],
+    "msg-quote-att-file-name": [
+      "js/msgQuote.js"
+    ],
+    "msg-quote-block": [
+      "js/msgQuote.js"
+    ],
+    "msg-quote-text": [
+      "js/msgQuote.js"
+    ],
+    "msg-quote-sender": [
+      "js/msgQuote.js"
+    ],
+    "ob-cursor": [
+      "js/onboarding.js"
+    ],
+    "ob-sim-bubble": [
+      "js/onboarding.js"
+    ],
+    "ob-body": [
+      "js/onboarding.js"
+    ],
+    "ob-para": [
+      "js/onboarding.js"
+    ],
+    "ob-skip": [
+      "js/onboarding.js"
+    ],
+    "ask-card": [
+      "js/onboarding.js"
+    ],
+    "ask-meta": [
+      "js/onboarding.js"
+    ],
+    "free-row": [
+      "js/onboarding.js"
+    ],
+    "option-input": [
+      "js/onboarding.js"
+    ],
+    "ob-primary": [
+      "js/onboarding.js"
+    ],
+    "ob-actions": [
+      "js/onboarding.js"
+    ],
+    "ob-ghost": [
+      "js/onboarding.js"
+    ],
+    "ob-spacer": [
+      "js/onboarding.js"
+    ],
+    "chip-row": [
+      "js/onboarding.js"
+    ],
+    "opt-row": [
+      "js/onboarding.js"
+    ],
+    "option-check": [
+      "js/onboarding.js"
+    ],
+    "option-text": [
+      "js/onboarding.js"
+    ],
+    "opt-ghost": [
+      "js/onboarding.js"
+    ],
+    "option-hint": [
+      "js/onboarding.js"
+    ],
+    "wide": [
+      "js/onboarding.js"
+    ],
+    "ctx-row": [
+      "js/onboarding.js"
+    ],
+    "ctx-label": [
+      "js/onboarding.js"
+    ],
+    "mono": [
+      "js/onboarding.js"
+    ],
+    "ob-fetch-row": [
+      "js/onboarding.js"
+    ],
+    "ob-fetch-btn": [
+      "js/onboarding.js"
+    ],
+    "ob-fetch-status": [
+      "js/onboarding.js"
+    ],
+    "ob-probing": [
+      "js/onboarding.js"
+    ],
+    "ob-flow-skip-wrap": [
+      "js/onboarding.js"
+    ],
+    "ob-flow-skip": [
+      "js/onboarding.js"
+    ],
+    "wl": [
+      "js/onboarding.js"
+    ],
+    "write-lines": [
+      "js/onboarding.js"
+    ],
+    "orb-preview-canvas": [
+      "js/orbSettingsUI.js"
+    ],
+    "pp-dot": [
+      "js/perception.js"
+    ],
+    "pp-overlay": [
+      "js/perception.js"
+    ],
+    "pp-cfg-result": [
+      "js/perception.js"
+    ],
+    "otp-chip": [
+      "js/perception.js"
+    ],
+    "code": [
+      "js/perception.js"
+    ],
+    "meta": [
+      "js/perception.js"
+    ],
+    "from": [
+      "js/perception.js"
+    ],
+    "fill-hint": [
+      "js/perception.js"
+    ],
+    "pdraft": [
+      "js/perception.js"
+    ],
+    "pdraft-body": [
+      "js/perception.js"
+    ],
+    "pdraft-stale": [
+      "js/perception.js"
+    ],
+    "pp-actions": [
+      "js/perception.js"
+    ],
+    "pdraft-foot": [
+      "js/perception.js"
+    ],
+    "mail-quote": [
+      "js/perception.js"
+    ],
+    "pdraft-receipt": [
+      "js/perception.js"
+    ],
+    "canvas-tools": [
+      "js/perception.js"
+    ],
+    "mailcompose": [
+      "js/perception.js"
+    ],
+    "cc-toggle": [
+      "js/perception.js"
+    ],
+    "crow": [
+      "js/perception.js"
+    ],
+    "subject-input": [
+      "js/perception.js"
+    ],
+    "cval": [
+      "js/perception.js"
+    ],
+    "mail-toolbar": [
+      "js/perception.js"
+    ],
+    "mail-body-edit": [
+      "js/perception.js"
+    ],
+    "att-row": [
+      "js/perception.js"
+    ],
+    "att-chip": [
+      "js/perception.js"
+    ],
+    "mail-send-note": [
+      "js/perception.js"
+    ],
+    "show": [
+      "js/perception.js"
+    ],
+    "err": [
+      "js/perception.js",
+      "js/sidebar/modelTestButton.js"
+    ],
+    "ok": [
+      "js/perception.js",
+      "js/sidebar/modelTestButton.js",
+      "js/sidebar/providersUi.js"
+    ],
+    "warn": [
+      "js/perception.js"
+    ],
+    "clabel": [
+      "js/perception.js"
+    ],
+    "to-line": [
+      "js/perception.js"
+    ],
+    "to-input": [
+      "js/perception.js"
+    ],
+    "to-chip": [
+      "js/perception.js"
+    ],
+    "x": [
+      "js/perception.js"
+    ],
+    "thinking-done": [
+      "js/persistence.js"
+    ],
+    "tool": [
+      "js/persistence.js"
+    ],
+    "permission-pending-box": [
+      "js/persistence.js"
+    ],
+    "plugins-state-pill": [
+      "js/plugins.js"
+    ],
+    "${pill.key}": [
+      "js/plugins.js"
+    ],
+    "plugins-card-hint": [
+      "js/plugins.js"
+    ],
+    "${kind}": [
+      "js/plugins.js"
+    ],
+    "nf-media-failed-note": [
+      "js/popArtifacts.js"
+    ],
+    "pop-media": [
+      "js/popArtifacts.js"
+    ],
+    "pop-audio": [
+      "js/popArtifacts.js"
+    ],
+    "pop-video": [
+      "js/popArtifacts.js"
+    ],
+    "play-ring": [
+      "js/popArtifacts.js"
+    ],
+    "dur-chip": [
+      "js/popArtifacts.js"
+    ],
+    "vd-progress": [
+      "js/popArtifacts.js"
+    ],
+    "pop-img": [
+      "js/popArtifacts.js"
+    ],
+    "nf-lightbox-stage": [
+      "js/popArtifacts.js"
+    ],
+    "nf-lightbox-head": [
+      "js/popArtifacts.js"
+    ],
+    "nf-lightbox-name": [
+      "js/popArtifacts.js"
+    ],
+    "nf-lightbox-canvas": [
+      "js/popArtifacts.js"
+    ],
+    "nf-lightbox-media": [
+      "js/popArtifacts.js"
+    ],
+    "pop-media-canvas": [
+      "js/popArtifacts.js"
+    ],
+    "pop-stack-area": [
+      "js/popArtifacts.js"
+    ],
+    "pill": [
+      "js/popArtifacts.js"
+    ],
+    "pop-stack-view": [
+      "js/popArtifacts.js"
+    ],
+    "pop-expand-view": [
+      "js/popArtifacts.js"
+    ],
+    "media-layer": [
+      "js/popArtifacts.js"
+    ],
+    "pop-media-flat": [
+      "js/popArtifacts.js"
+    ],
+    "file-card": [
+      "js/popArtifacts.js"
+    ],
+    "fc-meta": [
+      "js/popArtifacts.js",
+      "js/reference.js"
+    ],
+    "fc-name": [
+      "js/popArtifacts.js",
+      "js/reference.js"
+    ],
+    "fc-sub": [
+      "js/popArtifacts.js",
+      "js/reference.js"
+    ],
+    "fwd-btn": [
+      "js/popArtifacts.js"
+    ],
+    "fc-icon": [
+      "js/popArtifacts.js",
+      "js/reference.js"
+    ],
+    "pop-artifact": [
+      "js/popArtifacts.js"
+    ],
+    "user-media": [
+      "js/popArtifacts.js"
+    ],
+    "pop-group": [
+      "js/popArtifacts.js"
+    ],
+    "msg-dl": [
+      "js/popArtifacts.js"
+    ],
+    "pop-warn": [
+      "js/popArtifacts.js"
+    ],
+    "project-live-status": [
+      "js/projectTab.js"
+    ],
+    "wsp-overlay": [
+      "js/projectTab.js",
+      "js/workspacePicker.js"
+    ],
+    "${PROJECT_CREATE_OVERLAY}": [
+      "js/projectTab.js"
+    ],
+    "err-code": [
+      "js/projectTab.js"
+    ],
+    "err-acts": [
+      "js/projectTab.js"
+    ],
+    "err-act": [
+      "js/projectTab.js"
+    ],
+    "project-new-mark": [
+      "js/projectTab.js"
+    ],
+    "project-desc-editor": [
+      "js/projectTab.js"
+    ],
+    "project-desc-input": [
+      "js/projectTab.js"
+    ],
+    "modal-input": [
+      "js/projectTab.js"
+    ],
+    "project-desc-acts": [
+      "js/projectTab.js"
+    ],
+    "project-desc-save": [
+      "js/projectTab.js"
+    ],
+    "project-desc-cancel": [
+      "js/projectTab.js"
+    ],
+    "att-ref": [
+      "js/reference.js"
+    ],
+    "att-ref-fm": [
+      "js/reference.js"
+    ],
+    "att-ref-icon": [
+      "js/reference.js"
+    ],
+    "att-ref-fm-body": [
+      "js/reference.js"
+    ],
+    "att-ref-fm-head": [
+      "js/reference.js"
+    ],
+    "att-ref-fm-name": [
+      "js/reference.js"
+    ],
+    "att-ref-fm-date": [
+      "js/reference.js"
+    ],
+    "att-ref-fm-text": [
+      "js/reference.js"
+    ],
+    "att-ref-expand": [
+      "js/reference.js"
+    ],
+    "att-ref-body": [
+      "js/reference.js"
+    ],
+    "att-ref-label": [
+      "js/reference.js"
+    ],
+    "att-ref-meta": [
+      "js/reference.js"
+    ],
+    "att-task-line": [
+      "js/reference.js"
+    ],
+    "att-task-line-icon": [
+      "js/reference.js"
+    ],
+    "att-task-line-name": [
+      "js/reference.js"
+    ],
+    "att-task-line-opinion": [
+      "js/reference.js"
+    ],
+    "att-ref-card": [
+      "js/reference.js"
+    ],
+    "file-lang": [
+      "js/reference.js"
+    ],
+    "att-ref-card-source": [
+      "js/reference.js"
+    ],
+    "att-ref-card-content": [
+      "js/reference.js"
+    ],
+    "att-ref-card-head": [
+      "js/reference.js"
+    ],
+    "att-ref-card-icon": [
+      "js/reference.js"
+    ],
+    "att-ref-card-title": [
+      "js/reference.js"
+    ],
+    "att-ref-card-badge": [
+      "js/reference.js"
+    ],
+    "reminder-badge": [
+      "js/scheduled-task.js"
+    ],
+    "mh-rd-grp": [
+      "js/scheduled-task.js"
+    ],
+    "todo-grp": [
+      "js/scheduled-task.js"
+    ],
+    "todo-grp-n": [
+      "js/scheduled-task.js"
+    ],
+    "todo-filter-row": [
+      "js/scheduled-task.js"
+    ],
+    "todo-filter-chip": [
+      "js/scheduled-task.js"
+    ],
+    "reminder-empty": [
+      "js/scheduled-task.js"
+    ],
+    "reminder-row": [
+      "js/scheduled-task.js"
+    ],
+    "todo-ask-row": [
+      "js/scheduled-task.js"
+    ],
+    "todo-ask-chip": [
+      "js/scheduled-task.js"
+    ],
+    "reminder-row-content": [
+      "js/scheduled-task.js"
+    ],
+    "reminder-row-title": [
+      "js/scheduled-task.js"
+    ],
+    "reminder-row-text": [
+      "js/scheduled-task.js"
+    ],
+    "todo-perm-row": [
+      "js/scheduled-task.js"
+    ],
+    "todo-perm-chip": [
+      "js/scheduled-task.js"
+    ],
+    "reminder-circle": [
+      "js/scheduled-task.js"
+    ],
+    "reminder-proj-tag": [
+      "js/scheduled-task.js"
+    ],
+    "reminder-repeat-badge": [
+      "js/scheduled-task.js"
+    ],
+    "reminder-row-time": [
+      "js/scheduled-task.js"
+    ],
+    "reminder-overdue-tag": [
+      "js/scheduled-task.js"
+    ],
+    "reminder-row-last": [
+      "js/scheduled-task.js"
+    ],
+    "reminder-miss-suggest": [
+      "js/scheduled-task.js"
+    ],
+    "reminder-cancel": [
+      "js/scheduled-task.js"
+    ],
+    "reminder-edit": [
+      "js/scheduled-task.js"
+    ],
+    "reminder-inline-create": [
+      "js/scheduled-task.js"
+    ],
+    "todo-inline": [
+      "js/scheduled-task.js"
+    ],
+    "fm-row": [
+      "js/scheduled-task.js"
+    ],
+    "fm-todo-entry": [
+      "js/scheduled-task.js"
+    ],
+    "fm-avatar": [
+      "js/scheduled-task.js"
+    ],
+    "fm-avatar-40": [
+      "js/scheduled-task.js"
+    ],
+    "fm-todo-icon": [
+      "js/scheduled-task.js"
+    ],
+    "fm-row-meta": [
+      "js/scheduled-task.js"
+    ],
+    "fm-conv-top": [
+      "js/scheduled-task.js"
+    ],
+    "fm-row-name": [
+      "js/scheduled-task.js"
+    ],
+    "fm-row-badge": [
+      "js/scheduled-task.js"
+    ],
+    "fm-conv-bottom": [
+      "js/scheduled-task.js"
+    ],
+    "fm-conv-summary": [
+      "js/scheduled-task.js"
+    ],
+    "todo-entry-summary": [
+      "js/scheduled-task.js"
+    ],
+    "fm-retry": [
+      "js/sendState.js"
+    ],
+    "fm-msg-device-receipt": [
+      "js/sendState.js"
+    ],
+    "cfg-test-thumb": [
+      "js/sidebar/imagegenSection.js"
+    ],
+    "cfg-test-result-line": [
+      "js/sidebar/modelTestButton.js"
+    ],
+    "testing": [
+      "js/sidebar/modelTestButton.js"
+    ],
+    "pp-item": [
+      "js/sidebar/pathRules.js"
+    ],
+    "cfg-fetch-status-row": [
+      "js/sidebar/providersUi.js"
+    ],
+    "cfg-fetch-status": [
+      "js/sidebar/providersUi.js"
+    ],
+    "fail": [
+      "js/sidebar/providersUi.js"
+    ],
+    "cfg-hint": [
+      "js/sidebar/providersUi.js"
+    ],
+    "cfg-protocol-helper": [
+      "js/sidebar/providersUi.js"
+    ],
+    "cfg-model-row": [
+      "js/sidebar/providersUi.js"
+    ],
+    "nav-agent": [
+      "js/sidebar.js"
+    ],
+    "nav-agent-separator": [
+      "js/sidebar.js"
+    ],
+    "seg-cross-midnight": [
+      "js/sidebar.js"
+    ],
+    "cfg-toast": [
+      "js/sidebar.js"
+    ],
+    "cfg-toast-error": [
+      "js/sidebar.js"
+    ],
+    "agent-group-header": [
+      "js/sidebar.js"
+    ],
+    "session-divider": [
+      "js/sidebar.js"
+    ],
+    "session-draft": [
+      "js/sidebar.js"
+    ],
+    "session-time": [
+      "js/sidebar.js"
+    ],
+    "session-ctx-menu": [
+      "js/sidebar.js"
+    ],
+    "delete-drop-zone": [
+      "js/sidebar.js"
+    ],
+    "folder-status": [
+      "js/sidebar.js"
+    ],
+    "session-status": [
+      "js/sidebar.js"
+    ],
+    "folder-new-row": [
+      "js/sidebar.js"
+    ],
+    "folder-wrapper": [
+      "js/sidebar.js"
+    ],
+    "folder-item": [
+      "js/sidebar.js"
+    ],
+    "folder-children": [
+      "js/sidebar.js"
+    ],
+    "in-folder": [
+      "js/sidebar.js"
+    ],
+    "rules-item": [
+      "js/sidebar.js"
+    ],
+    "social-scan-canvas": [
+      "js/socialPanel.js"
+    ],
+    "social-scan-fallback": [
+      "js/socialPanel.js"
+    ],
+    "task-node-spin": [
+      "js/taskList.js"
+    ],
+    "task-node-dot": [
+      "js/taskList.js"
+    ],
+    "task-node-dot-${cls}": [
+      "js/taskList.js"
+    ],
+    "task-node-box": [
+      "js/taskList.js"
+    ],
+    "task-node-dot-neutral": [
+      "js/taskList.js"
+    ],
+    "task-node-time": [
+      "js/taskList.js"
+    ],
+    "task-node-word": [
+      "js/taskList.js"
+    ],
+    "task-node-meta": [
+      "js/taskList.js"
+    ],
+    "task-chain-twisty": [
+      "js/taskList.js"
+    ],
+    "task-node": [
+      "js/taskList.js"
+    ],
+    "task-delegate": [
+      "js/taskList.js"
+    ],
+    "task-chain-head": [
+      "js/taskList.js"
+    ],
+    "task-delegate-icon": [
+      "js/taskList.js"
+    ],
+    "task-node-text": [
+      "js/taskList.js"
+    ],
+    "task-node-label-row": [
+      "js/taskList.js"
+    ],
+    "task-delegate-no": [
+      "js/taskList.js"
+    ],
+    "task-node-label": [
+      "js/taskList.js"
+    ],
+    "task-delegate-badge": [
+      "js/taskList.js"
+    ],
+    "task-delegate-badge-interrupted": [
+      "js/taskList.js"
+    ],
+    "task-delegate-badge-mode": [
+      "js/taskList.js"
+    ],
+    "task-delegate-badge-mode-": [
+      "js/taskList.js"
+    ],
+    "task-chain-jump": [
+      "js/taskList.js"
+    ],
+    "task-chain-meta": [
+      "js/taskList.js"
+    ],
+    "task-delegate-rank": [
+      "js/taskList.js"
+    ],
+    "task-delegate-actions": [
+      "js/taskList.js"
+    ],
+    "task-delegate-btn": [
+      "js/taskList.js"
+    ],
+    "task-chain-folded": [
+      "js/taskList.js"
+    ],
+    "task-chain-folded-title": [
+      "js/taskList.js"
+    ],
+    "task-chain-folded-word": [
+      "js/taskList.js"
+    ],
+    "task-chain-mark": [
+      "js/taskList.js"
+    ],
+    "task-chain-member": [
+      "js/taskList.js"
+    ],
+    "task-chain-depth": [
+      "js/taskList.js"
+    ],
+    "task-chain-dot": [
+      "js/taskList.js"
+    ],
+    "t-${m.kind": [
+      "js/taskList.js"
+    ],
+    "task-chain-member-name": [
+      "js/taskList.js"
+    ],
+    "task-chain-member-word": [
+      "js/taskList.js"
+    ],
+    "task-chain-member-time": [
+      "js/taskList.js"
+    ],
+    "task-chain-block": [
+      "js/taskList.js"
+    ],
+    "task-chain-folds": [
+      "js/taskList.js"
+    ],
+    "task-chain-body": [
+      "js/taskList.js"
+    ],
+    "task-section": [
+      "js/taskList.js"
+    ],
+    "task-section-nodes": [
+      "js/taskList.js"
+    ],
+    "task-node-group": [
+      "js/taskList.js"
+    ],
+    "task-node-group-header": [
+      "js/taskList.js"
+    ],
+    "task-empty": [
+      "js/taskList.js"
+    ],
+    "task-card": [
+      "js/taskList.js"
+    ],
+    "task-header": [
+      "js/taskList.js"
+    ],
+    "task-toggle": [
+      "js/taskList.js"
+    ],
+    "task-stats": [
+      "js/taskList.js"
+    ],
+    "task-body": [
+      "js/taskList.js"
+    ],
+    "task-body-inner": [
+      "js/taskList.js"
+    ],
+    "nf-wikilink": [
+      "js/termCite.js",
+      "js/viewers/markdown.js"
+    ],
+    "nf-term-tip": [
+      "js/termTip.js"
+    ],
+    "turn-header": [
+      "js/turnGroup.js"
+    ],
+    "turn-header-text": [
+      "js/turnGroup.js",
+      "js/workline.js"
+    ],
+    "ud-select": [
+      "js/usageDashboard.js"
+    ],
+    "ud-table": [
+      "js/usageDashboard.js"
+    ],
+    "num": [
+      "js/usageDashboard.js"
+    ],
+    "mention-tag": [
+      "js/utils.js"
+    ],
+    "copy-failed-live": [
+      "js/utils.js"
+    ],
+    "nf-anno": [
+      "js/viewers/annotations.js"
+    ],
+    "epub-anno-bar": [
+      "js/viewers/annotations.js"
+    ],
+    "epub-reader-menu": [
+      "js/viewers/annotations.js"
+    ],
+    "epub-anno-note": [
+      "js/viewers/annotations.js"
+    ],
+    "epub-toc": [
+      "js/viewers/annotations.js"
+    ],
+    "epub-anno-list": [
+      "js/viewers/annotations.js"
+    ],
+    "epub-book-style": [
+      "js/viewers/epub.js"
+    ],
+    "nf-frame-nav-bar": [
+      "js/viewers/html.js"
+    ],
+    "nf-frame-nav-back": [
+      "js/viewers/html.js"
+    ],
+    "canvas-image-viewer": [
+      "js/viewers/image.js"
+    ],
+    "canvas-viewer-safe-top": [
+      "js/viewers/image.js",
+      "js/viewers/markdown.js",
+      "js/viewers/monaco.js",
+      "js/viewers/textReader.js"
+    ],
+    "canvas-image-viewport": [
+      "js/viewers/image.js"
+    ],
+    "canvas-zoom-btn": [
+      "js/viewers/image.js",
+      "js/viewers/zoom.js"
+    ],
+    "canvas-pan-toggle": [
+      "js/viewers/image.js"
+    ],
+    "lt-root": [
+      "js/viewers/largeText.js"
+    ],
+    "lt-toolbar": [
+      "js/viewers/largeText.js"
+    ],
+    "lt-badge": [
+      "js/viewers/largeText.js"
+    ],
+    "lt-meta": [
+      "js/viewers/largeText.js"
+    ],
+    "lt-search": [
+      "js/viewers/largeText.js"
+    ],
+    "lt-btn": [
+      "js/viewers/largeText.js"
+    ],
+    "lt-jump": [
+      "js/viewers/largeText.js"
+    ],
+    "lt-status": [
+      "js/viewers/largeText.js"
+    ],
+    "lt-main": [
+      "js/viewers/largeText.js"
+    ],
+    "lt-gutter": [
+      "js/viewers/largeText.js"
+    ],
+    "lt-gutter-inner": [
+      "js/viewers/largeText.js"
+    ],
+    "lt-scroll": [
+      "js/viewers/largeText.js"
+    ],
+    "lt-sizer": [
+      "js/viewers/largeText.js"
+    ],
+    "lt-rows": [
+      "js/viewers/largeText.js"
+    ],
+    "lt-num": [
+      "js/viewers/largeText.js"
+    ],
+    "lt-row": [
+      "js/viewers/largeText.js"
+    ],
+    "lt-retry": [
+      "js/viewers/largeText.js"
+    ],
+    "nf-backlinks": [
+      "js/viewers/markdown.js"
+    ],
+    "nf-backlink": [
+      "js/viewers/markdown.js"
+    ],
+    "nf-backlink-anchor": [
+      "js/viewers/markdown.js"
+    ],
+    "nf-backlink-project": [
+      "js/viewers/markdown.js"
+    ],
+    "canvas-md-viewer": [
+      "js/viewers/markdown.js",
+      "js/viewers/pptx.js"
+    ],
+    "canvas-md-scroll": [
+      "js/viewers/markdown.js"
+    ],
+    "canvas-monaco-container": [
+      "js/viewers/monaco.js",
+      "js/viewers/shared.js"
+    ],
+    "canvas-pdf-viewer": [
+      "js/viewers/pdf.js"
+    ],
+    "pdf-pages": [
+      "js/viewers/pdf.js"
+    ],
+    "pdf-loading": [
+      "js/viewers/pdf.js"
+    ],
+    "pdf-page": [
+      "js/viewers/pdf.js"
+    ],
+    "epub-reader-content": [
+      "js/viewers/readerChrome.js"
+    ],
+    "epub-flip-page": [
+      "js/viewers/readerChrome.js"
+    ],
+    "epub-flip-stage": [
+      "js/viewers/readerChrome.js"
+    ],
+    "epub-flip-layer": [
+      "js/viewers/readerChrome.js"
+    ],
+    "a": [
+      "js/viewers/readerChrome.js"
+    ],
+    "b": [
+      "js/viewers/readerChrome.js"
+    ],
+    "epub-flip-shadow": [
+      "js/viewers/readerChrome.js"
+    ],
+    "l": [
+      "js/viewers/readerChrome.js"
+    ],
+    "r": [
+      "js/viewers/readerChrome.js"
+    ],
+    "canvas-source-toggle": [
+      "js/viewers/shared.js"
+    ],
+    "canvas-ref-select": [
+      "js/viewers/shared.js"
+    ],
+    "canvas-find-toggle": [
+      "js/viewers/shared.js"
+    ],
+    "canvas-refresh-toggle": [
+      "js/viewers/shared.js"
+    ],
+    "canvas-txt-scroll": [
+      "js/viewers/textReader.js"
+    ],
+    "canvas-txt-seg-gap": [
+      "js/viewers/textReader.js"
+    ],
+    "canvas-txt-seg": [
+      "js/viewers/textReader.js"
+    ],
+    "canvas-video-viewer": [
+      "js/viewers/video.js"
+    ],
+    "canvas-video": [
+      "js/viewers/video.js"
+    ],
+    "canvas-zoom-bar": [
+      "js/viewers/zoom.js"
+    ],
+    "canvas-zoom-pct": [
+      "js/viewers/zoom.js"
+    ],
+    "wiki-canvas": [
+      "js/wikiGraph.js"
+    ],
+    "wg-tip": [
+      "js/wikiGraph.js"
+    ],
+    "wg-side": [
+      "js/wikiGraph.js"
+    ],
+    "wg-side-head": [
+      "js/wikiGraph.js"
+    ],
+    "wg-side-title": [
+      "js/wikiGraph.js"
+    ],
+    "wg-crumbs": [
+      "js/wikiGraph.js"
+    ],
+    "wg-detail": [
+      "js/wikiGraph.js"
+    ],
+    "wg-broken": [
+      "js/wikiGraph.js"
+    ],
+    "wg-stats": [
+      "js/wikiGraph.js"
+    ],
+    "wg-hint": [
+      "js/wikiGraph.js"
+    ],
+    "wg-switch": [
+      "js/wikiGraph.js"
+    ],
+    "wg-switch-select": [
+      "js/wikiGraph.js"
+    ],
+    "crumb": [
+      "js/wikiGraph.js"
+    ],
+    "cur": [
+      "js/wikiGraph.js"
+    ],
+    "wg-search": [
+      "js/wikiGraph.js"
+    ],
+    "wg-search-input": [
+      "js/wikiGraph.js"
+    ],
+    "wg-chips": [
+      "js/wikiGraph.js"
+    ],
+    "wg-detail-card": [
+      "js/wikiGraph.js"
+    ],
+    "wg-detail-empty": [
+      "js/wikiGraph.js"
+    ],
+    "wg-detail-body": [
+      "js/wikiGraph.js"
+    ],
+    "wg-panebar": [
+      "js/wikiGraph.js"
+    ],
+    "wg-chip": [
+      "js/wikiGraph.js"
+    ],
+    "more": [
+      "js/wikiGraph.js"
+    ],
+    "badge": [
+      "js/wikiGraph.js"
+    ],
+    "ref": [
+      "js/wikiGraph.js"
+    ],
+    "ref-anchor": [
+      "js/wikiGraph.js"
+    ],
+    "ghost": [
+      "js/wikiGraph.js"
+    ],
+    "nf-workline": [
+      "js/workline.js"
+    ],
+    "nf-wl-slot": [
+      "js/workline.js"
+    ],
+    "nf-wl-item": [
+      "js/workline.js"
+    ],
+    "nf-wl-icon": [
+      "js/workline.js"
+    ],
+    "nf-wl-x": [
+      "js/workline.js"
+    ],
+    "nf-wl-label": [
+      "js/workline.js"
+    ],
+    "nf-wl-dots": [
+      "js/workline.js"
+    ],
+    "nf-wl-hint": [
+      "js/workline.js"
+    ],
+    "nf-wl-detail": [
+      "js/workline.js"
+    ],
+    "nf-wl-think": [
+      "js/workline.js"
+    ],
+    "nf-th-sep": [
+      "js/workline.js"
+    ],
+    "nf-th-seg": [
+      "js/workline.js"
+    ],
+    "is-final": [
+      "js/workline.js"
+    ],
+    "wsp-title": [
+      "js/workspacePicker.js"
+    ],
+    "pick-note": [
+      "js/workspacePicker.js"
+    ],
+    "wsp-mkdir": [
+      "js/workspacePicker.js"
+    ],
+    "path-chip": [
+      "js/workspacePicker.js"
+    ],
+    "wsp-crumb": [
+      "js/workspacePicker.js"
+    ],
+    "wsp-row": [
+      "js/workspacePicker.js"
+    ],
+    "wsp-mkdir-row": [
+      "js/workspacePicker.js"
+    ],
+    "wsp-mkdir-input": [
+      "js/workspacePicker.js"
+    ],
+    "wsp-mkdir-ok": [
+      "js/workspacePicker.js"
+    ],
+    "wsp-mkdir-no": [
+      "js/workspacePicker.js"
+    ],
+    "wsp-dir": [
+      "js/workspacePicker.js"
+    ],
+    "wsp-up-row": [
+      "js/workspacePicker.js"
+    ],
+    "wsp-empty": [
+      "js/workspacePicker.js"
+    ],
+    "wsp-empty-hint": [
+      "js/workspacePicker.js"
+    ],
+    "nf-entry-item": [
+      "index.html"
+    ],
+    "nf-entry-dot": [
+      "index.html"
+    ],
+    "nf-entry-label": [
+      "index.html"
+    ],
+    "mord": [
+      "vendor/katex.min.js",
+      "vendor/mermaid/mermaid.min.js"
+    ],
+    "(?:[\\\\w-]|(?:\\\\\\\\": [
+      "vendor/mermaid/mermaid.min.js"
+    ],
+    "usecase-stereotype": [
+      "vendor/mermaid/mermaid.min.js"
+    ],
+    "altText": [
+      "vendor/pdfjs/pdf.min.js"
+    ],
+    "tooltip": [
+      "vendor/pdfjs/pdf.min.js"
+    ],
+    "internal": [
+      "vendor/pdfjs/pdf.min.js"
+    ],
+    "popup": [
+      "vendor/pdfjs/pdf.min.js"
+    ],
+    "header": [
+      "vendor/pdfjs/pdf.min.js"
+    ],
+    "inkEditorCanvas": [
+      "vendor/pdfjs/pdf.min.js"
+    ],
+    "pptx-math": [
+      "vendor/pptx-renderer/aiden0z-pptx-renderer.browser.es.js"
+    ],
+    "pptx-chart-custom-legend": [
+      "vendor/pptx-renderer/aiden0z-pptx-renderer.browser.es.js"
+    ],
+    "pptx-search-highlight": [
+      "vendor/pptx-renderer/aiden0z-pptx-renderer.browser.es.js"
+    ]
+  }
+}
