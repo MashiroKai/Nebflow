@@ -13,6 +13,11 @@ import { statusIcon } from './utils.js';
 // 返回语义 = 取消（与 Esc/遮罩点击同腿；接管模态在场时绕行，同 takeoverBlocking
 // 纪律）。桌面零变化。
 import { mobileSheetBack } from './mobile/popSheet.js';
+// keyboard-first 一期（2026-11-01）：确认/删除/新建会话/冲突五种模态统一入层栈 ——
+// 打开时落焦进模态、Tab 在模态内首尾相接、关闭后回焦到触发元素。接线点选在
+// bindModalSheetBack()（六个打开路径的共同尾部，且都在 classList.add('on') 之后）
+// 与 hideModals()（唯一关闭路径），因此**调用方零改动**。
+import { pushLayer } from './focusTrap.js';
 
 // ---------- Session Modals ----------
 // 控制台单实例批（2026-10-27）：接管模态（#takeover-box，takeoverModal.js 持渲染）
@@ -34,9 +39,30 @@ export function showNewSessionModal() {
   setTimeout(() => modalInput.focus(), 50);
 }
 
+/** @type {import('./focusTrap.js').Layer|null} */
+let modalLayer = null;
+
 export function hideModals() {
   if (takeoverBlocking()) return; // 接管模态在场：不让全局关闭路径摘它的面
   state.dom.modalOverlay.classList.remove('on');
+  // keyboard-first 一期：出栈即回焦（触发元素还在文档里就原样还给它；
+  // 已被重渲摘掉则按 id 在新树里找，见 focusTrap.popLayer）。
+  const l = modalLayer;
+  modalLayer = null;
+  if (l) l.release();
+}
+
+/**
+ * 模态入层栈（幂等）：只在遮罩处于 on 态时生效，重复调用不叠层。
+ * 落焦到遮罩容器本身而非首个控件 —— 确认类模态若默认落焦在确认钮上，
+ * 一个 Enter 就会执行破坏性动作；容器承接焦点后第一次 Tab 才进第一个控件。
+ * @returns {void}
+ */
+function armModalTrap() {
+  const overlay = state.dom.modalOverlay;
+  if (!overlay || !overlay.classList.contains('on')) return;
+  if (modalLayer) return;
+  modalLayer = pushLayer(overlay, { name: 'modal' });
 }
 
 export function confirmNewSession() {
@@ -390,6 +416,7 @@ export function initModals() {
 // 重复调用补注：跨档重排（桌面→手机层）后 initModals 那次注入不在场
 // （mobileSheetBack 非手机层直接不注入，桌面 DOM 零变化）。
 function bindModalSheetBack() {
+  armModalTrap(); // keyboard-first 一期：六个打开路径的共同尾部 = 模态层入口
   mobileSheetBack(state.dom.modalOverlay, () => {
     if (takeoverBlocking()) return;
     if (conflictCallbacks) resolveConflict('cancel');

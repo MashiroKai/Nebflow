@@ -82,6 +82,12 @@ import './delegateChainProvider.js';
 // 控制台单实例批（2026-10-27）：接管独占客户端腿——模块副作用 = 注册 takeover/
 // takeoverResult 帧消费 + 接管模态按钮接线（叶子模块，只依赖 ws.js/state/i18n）。
 import './takeoverModal.js';
+// keyboard-first 一期（2026-11-01）：键盘层引导 —— 模块副作用 = 建模式指示器 +
+// 注册 meta/edit 双模态直键 + 命令面板命令表（keymap.js / mode.js /
+// commandPalette.js / focusTrap.js 四件，入口仅此一行）。为什么走 import 而不是
+// index.html 第三个 module entry：scripts/build-web.mjs 只认 main.js 与
+// mobile/bootstrap.js 两个 entryPoint（第三个 entry 不进 bundle ⇒ 生产 404）。
+import './keyboardBoot.js';
 // delegate-ui 批（2026-10-08 · 定稿蓝本 §1.2）：面板两级化（C2/R6）经 stub 读取口
 // 取 G1 编排模式（rows）与 G3 星型子代理投影（children）——读 port 单缝，禁渲染面
 // 直连 WS/REST（数据权威恒在 provider 镜像）。

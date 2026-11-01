@@ -1,6 +1,6 @@
 {
   "generatedBy": "scripts/visual-baseline.mjs --update",
-  "generatedAt": "2026-11-01T09:22:10.968Z",
+  "generatedAt": "2026-11-01T09:25:18.267Z",
   "platform": "win32-msedge-156",
   "browser": {
     "label": "msedge-156",
@@ -16,9 +16,9 @@
       "tag": "app-empty-dark",
       "scenario": "app-empty",
       "theme": "dark",
-      "bytes": 58301,
-      "at": "2026-11-01T09:21:35.872Z",
-      "ms": 1344,
+      "bytes": 59384,
+      "at": "2026-11-01T09:24:54.660Z",
+      "ms": 1378,
       "mask": [
         ".mic-orb-wrap",
         ".mic-orb-wrap"
@@ -28,9 +28,9 @@
       "tag": "app-empty-light",
       "scenario": "app-empty",
       "theme": "light",
-      "bytes": 53674,
-      "at": "2026-11-01T09:21:36.927Z",
-      "ms": 1054,
+      "bytes": 54597,
+      "at": "2026-11-01T09:24:55.740Z",
+      "ms": 1078,
       "mask": [
         ".mic-orb-wrap",
         ".mic-orb-wrap"
@@ -40,9 +40,9 @@
       "tag": "chat-messages-dark",
       "scenario": "chat-messages",
       "theme": "dark",
-      "bytes": 90465,
-      "at": "2026-11-01T09:21:38.057Z",
-      "ms": 1130,
+      "bytes": 91452,
+      "at": "2026-11-01T09:24:56.811Z",
+      "ms": 1071,
       "mask": [
         ".mic-orb-wrap",
         ".mic-orb-wrap",
@@ -54,9 +54,9 @@
       "tag": "chat-messages-light",
       "scenario": "chat-messages",
       "theme": "light",
-      "bytes": 86288,
-      "at": "2026-11-01T09:21:39.211Z",
-      "ms": 1154,
+      "bytes": 87227,
+      "at": "2026-11-01T09:24:57.932Z",
+      "ms": 1119,
       "mask": [
         ".mic-orb-wrap",
         ".mic-orb-wrap",
@@ -68,9 +68,9 @@
       "tag": "settings-llm-empty-dark",
       "scenario": "settings-llm-empty",
       "theme": "dark",
-      "bytes": 108748,
-      "at": "2026-11-01T09:21:41.751Z",
-      "ms": 2539,
+      "bytes": 109762,
+      "at": "2026-11-01T09:25:00.411Z",
+      "ms": 2478,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -79,9 +79,9 @@
       "tag": "settings-llm-empty-light",
       "scenario": "settings-llm-empty",
       "theme": "light",
-      "bytes": 101806,
-      "at": "2026-11-01T09:21:44.231Z",
-      "ms": 2480,
+      "bytes": 102715,
+      "at": "2026-11-01T09:25:02.891Z",
+      "ms": 2479,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -91,8 +91,8 @@
       "scenario": "bgtask-panel",
       "theme": "dark",
       "bytes": 12106,
-      "at": "2026-11-01T09:21:46.013Z",
-      "ms": 1782,
+      "at": "2026-11-01T09:25:04.685Z",
+      "ms": 1794,
       "mask": [
         ".mic-orb-wrap",
         ".bg-task-uptime"
@@ -103,8 +103,8 @@
       "scenario": "bgtask-panel",
       "theme": "light",
       "bytes": 11552,
-      "at": "2026-11-01T09:21:47.781Z",
-      "ms": 1767,
+      "at": "2026-11-01T09:25:06.441Z",
+      "ms": 1756,
       "mask": [
         ".mic-orb-wrap",
         ".bg-task-uptime"
@@ -115,8 +115,8 @@
       "scenario": "canvas-markdown-tab",
       "theme": "dark",
       "bytes": 44614,
-      "at": "2026-11-01T09:21:50.185Z",
-      "ms": 2403,
+      "at": "2026-11-01T09:25:08.795Z",
+      "ms": 2354,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -126,8 +126,8 @@
       "scenario": "canvas-markdown-tab",
       "theme": "light",
       "bytes": 41999,
-      "at": "2026-11-01T09:21:52.569Z",
-      "ms": 2384,
+      "at": "2026-11-01T09:25:11.174Z",
+      "ms": 2378,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -137,8 +137,8 @@
       "scenario": "canvas-code-tab",
       "theme": "dark",
       "bytes": 42816,
-      "at": "2026-11-01T09:21:56.041Z",
-      "ms": 3472,
+      "at": "2026-11-01T09:25:14.617Z",
+      "ms": 3443,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -148,8 +148,8 @@
       "scenario": "canvas-code-tab",
       "theme": "light",
       "bytes": 40643,
-      "at": "2026-11-01T09:21:59.491Z",
-      "ms": 3450,
+      "at": "2026-11-01T09:25:18.055Z",
+      "ms": 3437,
       "mask": [
         ".mic-orb-wrap"
       ]
