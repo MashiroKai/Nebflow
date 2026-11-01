@@ -119,4 +119,56 @@ class OutputBlockSpec extends FunSuite:
     assertEquals(OutputBlock.extract("<output>ok\n```\n<output>x</output>\n```"), OutputBlock.Unbalanced)
   }
 
+  // ── the feature gate (output-block-gate 批，作者令「把 output 块相关的内容
+  //    先关闭……」：`outputBlock.enabled` 缺席 = 关） ──────────────────────────
+
+  test("OB-G1 extractGated(false) bypasses the whole face — raw text passes through as Extracted") {
+    // A balanced block ships RAW (tags verbatim), not the join.
+    assertEquals(
+      OutputBlock.extractGated("前叙述 <output>你好</output> 后叙述", gateOn = false),
+      OutputBlock.Extracted("前叙述 <output>你好</output> 后叙述")
+    )
+    // An unbalanced (would-HOLD) shape passes through too — the hold is bypassed.
+    assertEquals(
+      OutputBlock.extractGated("<output>未完", gateOn = false),
+      OutputBlock.Extracted("<output>未完")
+    )
+    // Empty buffer: Extracted("") = consumed, nothing sendable (same as today).
+    assertEquals(OutputBlock.extractGated("", gateOn = false), OutputBlock.Extracted(""))
+  }
+
+  test("OB-G2 extractGated(true) is verbatim extract") {
+    assertEquals(
+      OutputBlock.extractGated("前叙述 <output>你好</output> 后叙述", gateOn = true),
+      OutputBlock.extract("前叙述 <output>你好</output> 后叙述")
+    )
+    assertEquals(OutputBlock.extractGated("plain", gateOn = true), OutputBlock.NoBlocks)
+  }
+
+  test("OB-G3 enabledFromConfig: absent key ⇒ OFF; true ⇒ ON; wrong type / unparseable ⇒ OFF") {
+    val home = os.temp.dir(prefix = "nb-ob-gate-")
+    val prev = nebflow.shared.PathUtil.dataRoot
+    nebflow.shared.PathUtil.setDataRoot(home)
+    try
+      val cfg = nebflow.shared.PathUtil.configJsonReadPath(home)
+      // No config file at all ⇒ OFF (the shipped default).
+      assertEquals(OutputBlock.enabledFromConfig(), false, "absent config = OFF (作者令默认 false)")
+      // Config without the key ⇒ OFF.
+      os.write.over(cfg, """{"llm":{"providers":{}}}""")
+      assertEquals(OutputBlock.enabledFromConfig(), false, "absent key = OFF")
+      // Explicit false / true.
+      os.write.over(cfg, """{"outputBlock":{"enabled":true}}""")
+      assertEquals(OutputBlock.enabledFromConfig(), true, "explicit true = ON")
+      os.write.over(cfg, """{"outputBlock":{"enabled":false}}""")
+      assertEquals(OutputBlock.enabledFromConfig(), false, "explicit false = OFF")
+      // Wrong type / unparseable file ⇒ fail-safe OFF.
+      os.write.over(cfg, """{"outputBlock":{"enabled":"yes"}}""")
+      assertEquals(OutputBlock.enabledFromConfig(), false, "wrong type = OFF")
+      os.write.over(cfg, "not json at all")
+      assertEquals(OutputBlock.enabledFromConfig(), false, "unparseable = OFF")
+    finally
+      os.remove.all(home)
+      nebflow.shared.PathUtil.setDataRoot(prev)
+  }
+
 end OutputBlockSpec

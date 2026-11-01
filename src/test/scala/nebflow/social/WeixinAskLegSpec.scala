@@ -139,7 +139,9 @@ class WeixinAskLegSpec extends CatsEffectSuite:
 
   private def started(out: Out, sessions: List[SessionMeta]): IO[(WeixinIlinkBridgePlugin, AskCtx)] =
     val ctx = AskCtx(sessions)
-    val p = new WeixinIlinkBridgePlugin(tmpRoot(), pinnedAllowedIlinkUserIds = None, send = _ => out.seam)
+    val p = new WeixinIlinkBridgePlugin(tmpRoot(), pinnedAllowedIlinkUserIds = None,
+      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      send = _ => out.seam)
     p.start(ctx).as((p, ctx))
 
   /** A hub-shaped askUser frame (two questions, the first multi-select). */
@@ -440,7 +442,9 @@ class WeixinAskLegSpec extends CatsEffectSuite:
   test("WI-A7 the gate rules the ask legs: a non-member's digits are dropped BEFORE any ask leg") {
     val out = Out()
     val ctx = AskCtx(List(meta("wx_a")))
-    val p = new WeixinIlinkBridgePlugin(tmpRoot(), pinnedAllowedIlinkUserIds = Some(List("wx_a")), send = _ => out.seam)
+    val p = new WeixinIlinkBridgePlugin(tmpRoot(), pinnedAllowedIlinkUserIds = Some(List("wx_a")),
+      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      send = _ => out.seam)
     for
       _ <- p.start(ctx)
       _ <- p.onAgentEvent("s1", askFrame("rid-1", "s1", simpleItems))
@@ -499,6 +503,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       root,
       pinnedAllowedIlinkUserIds = None,
+      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       send = _ => out.seam,
       sendMedia = _ => mout.seam
     )
@@ -540,6 +545,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       root,
       pinnedAllowedIlinkUserIds = None,
+      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       send = _ => out.seam,
       sendMedia = _ => mout.seam
     )
@@ -563,6 +569,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       tmpRoot(),
       pinnedAllowedIlinkUserIds = None,
+      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       send = _ => out.seam,
       sendMedia = _ => mout.seam
     )

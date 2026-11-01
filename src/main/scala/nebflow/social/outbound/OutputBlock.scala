@@ -23,8 +23,50 @@ package nebflow.social.outbound
  *
  * 纯函数、零 IO、零 SDK —— 离线可判（[[OutputBlockSpec]] 钉死五张判定表，
  * 两条渠道各有一条管线级测试证明出站 payload 只含块内内容）。
+ *
+ * ==特性总闸（output-block-gate 批，作者令「把 output 块相关的内容先关闭，
+ * 因为我现在没有体会出来有什么区别」）==
+ *
+ * nebflow.json 顶层 `outputBlock.enabled`（**缺席 = 关**，作者令默认 false）是
+ * 本特性两面的同一开关：
+ *
+ *   - 渠道剥离面（本对象）：`[[extractGated]]` 是四个出站 seam（微信/飞书 ×
+ *     段/轮尾）的收口点——闸开 ⇒ 与 [[extract]] 逐字同判；闸关 ⇒ 原文以
+ *     `Extracted` 直通（提取、HOLD、不回退语义整体旁路，渠道回全量原样）。
+ *   - 前端渲染面：web/js/featureFlags.js `outputBlockEnabled()` 读同一键
+ *     （WS configData 透传），关 = 掩码/徽标/展开交互全旁路、全文直出。
+ *
+ * 热读：`[[enabledFromConfig]]` 每次 flush 执行期求值（MsgTokenRegistry
+ * .enabledFromConfig 同款形态）——配置改动下个 flush 即生效，无重启门槛。
  */
 object OutputBlock:
+
+  /**
+   * 热读 `outputBlock.enabled`（GlobalSafety.defaultMode / MsgTokenRegistry
+   * .enabledFromConfig 同款形态）：缺席 / 解析失败 / 类型不符 / 读盘异常 = 关
+   * （默认 OFF = 作者令；闸是**恢复今日行为**的入口，不是缺省面）。
+   */
+  def enabledFromConfig(): Boolean =
+    try
+      val p = nebflow.shared.PathUtil.configJsonReadPath(nebflow.shared.PathUtil.dataRoot)
+      if !os.exists(p) then false
+      else
+        io.circe.parser
+          .parse(os.read(p))
+          .toOption
+          .flatMap(_.hcursor.downField("outputBlock").downField("enabled").as[Boolean].toOption)
+          .getOrElse(false)
+    catch case _: Exception => false
+
+  /**
+   * The one GATE-AWARE extraction entry — the four channel outbound seams'
+   * single choke point. `gateOn = true` ⇒ identical to [[extract]]; `false`
+   * ⇒ the raw text passes through as `Extracted(text)` (the pre-feature
+   * behavior: full raw text ships, segment-by-segment — the strip, the HOLD
+   * and the no-full-text-fallback semantics are all bypassed together).
+   */
+  def extractGated(text: String, gateOn: Boolean): Verdict =
+    if gateOn then extract(text) else Extracted(text)
 
   private val OpenTag = "<output>"
   private val TagRe   = "</?output>".r

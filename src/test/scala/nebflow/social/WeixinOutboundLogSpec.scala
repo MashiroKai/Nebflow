@@ -256,7 +256,7 @@ class WeixinOutboundLogSpec extends CatsEffectSuite:
     withStub(502, ret502Body) { (_, port) =>
       armLeg(root, port).unsafeRunSync()
       // the PRODUCTION send factory (the constructor default) — no recorder
-      val p = new WeixinIlinkBridgePlugin(root)
+      val p = new WeixinIlinkBridgePlugin(root, outputBlockGate = () => true)
       // BOTH loggers: the adapter's canonical line lands on
       // `nebflow.social.weixin-outbound`, the bridge's per-leg context line on
       // `nebflow.social.weixin-ilink-bridge` — one appender hears both.

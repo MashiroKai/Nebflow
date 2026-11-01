@@ -147,6 +147,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       send = send,
       pinnedAllowedOpenIds = allowed,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
+        outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       fetchImage = fetch
     )
 
@@ -215,6 +216,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       root,
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
+        outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       fetchImage = fetch.fn
     )
     val image = inbound("oc_bound", None, messageType = "image", contentRaw = """{"image_key":"img_v3_abc"}""")
@@ -249,6 +251,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       root,
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
+        outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       fetchImage = fetch.fn
     )
     for
@@ -278,6 +281,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       root,
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
+        outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       fetchImage = fetch.fn
     )
     for
@@ -300,6 +304,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       root,
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
+        outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       fetchImage = fetch.fn
     )
     for
@@ -653,6 +658,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       tmpRoot(),
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
+        outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       readDefaultSession = _ => Some("s_default")
     )
     for
@@ -685,6 +691,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       tmpRoot(),
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
+        outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       readDefaultSession = _ => None
     )
     for
@@ -705,6 +712,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       send = RecordingSend().fn,
       pinnedAllowedOpenIds = Some(List("ou_member")),
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
+        outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       readDefaultSession = _ => Some("s_default")
     )
     val (ctxMember, injMember) = newCtx(Nil)
@@ -739,6 +747,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       root,
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
+        outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       readDefaultSession = _ => Some("s_default"),
       fetchImage = fetch.fn
     )
