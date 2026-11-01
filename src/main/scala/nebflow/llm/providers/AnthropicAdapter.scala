@@ -7,7 +7,7 @@ import fs2.Stream
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.llm.{AdapterResponse, ProviderAdapter, SendMessageParams}
+import nebflow.llm.{AdapterResponse, ProviderAdapter, ResolvedThinking, SendMessageParams}
 import nebflow.core.compact.TokenEstimator
 import nebflow.shared.*
 import sttp.capabilities.fs2.Fs2Streams
@@ -24,7 +24,23 @@ class AnthropicAdapter(
   // compatible endpoint requires thinking blocks to be passed back in thinking
   // mode; real Anthropic rejects them without a signature. Set per provider
   // in ProviderRegistry.createAdapter.
-  requireThinkingPassback: Boolean = false
+  requireThinkingPassback: Boolean = false,
+  /**
+   * provider-compat 批（2026-11-01）：本适配器服务的 provider 名。两个用途，
+   * 都不是行为开关：
+   *   1. **路由自述**——每请求把 `provider=<id> model=<id>` 写进 dynamic
+   *      system 段（[[WireShape.routeBanner]]），批自己就能读到自己在哪条腿上；
+   *   2. **诊断串**——形状类失败必须能说出"谁的腿"（作者实证：缺这两字段时
+   *      冒烟批只能答 provider=unknown model=unknown）。
+   * 缺省 "unknown" 保证既有构造点（测试 / 辅助面）源码兼容。
+   */
+  providerId: String = "unknown",
+  /**
+   * provider 级额外 HTTP 头（`ProviderConfig.headers`，protocol-compat 批）。
+   * 装配唯一一点 = [[HttpHeaders]]：引擎缺省必带 User-Agent，本参数覆盖/追加。
+   * 事故背景见 [[HttpHeaders]] 文件头（cmdcode 的 403/1010 = 无 UA 被 Cloudflare 挡）。
+   */
+  providerHeaders: Option[Map[String, String]] = None
 ) extends ProviderAdapter[IO]:
   private val base = baseUrl.replaceAll("/+$", "")
 
@@ -188,7 +204,13 @@ class AnthropicAdapter(
   /** Build the system field as content blocks with cache_control on the stable prefix. */
   private def buildSystemBlocks(params: SendMessageParams): Json =
     val stableOpt = params.systemStable.filter(_.nonEmpty)
-    val dynamicOpt = params.systemDynamic.filter(_.nonEmpty)
+    // 路由自述（protocol-compat 批）：`provider=<id> model=<id>` 拼在 dynamic
+    // 段尾部——稳定前缀（cache breakpoint）逐字节不变，换腿只改尾巴。
+    val dynamicOpt = Some(
+      List(params.systemDynamic.filter(_.nonEmpty), Some(WireShape.routeBanner(providerId, params.model)))
+        .flatten
+        .mkString("\n\n")
+    ).filter(_.nonEmpty)
     // Fallback: if systemParts not provided, extract from messages (backward compat)
     val fallbackSystem = params.messages.find(_.role == MessageRole.System).map(_.textContent).filter(_.nonEmpty)
 
@@ -236,12 +258,18 @@ class AnthropicAdapter(
   private[providers] def effectiveThinking(params: SendMessageParams): Option[Json] =
     params.thinking match
       case Some(t) if requireThinkingPassback && hasAssistantWithoutThinking(params.messages) =>
+        // protocol-compat 批（2026-11-01）：这条诊断原先是 `logger.warn(...)` 的
+        // IO 值——在纯函数里构造完就被丢弃，**从未落盘**（OpenAiAdapter:669 记
+        // 过同族教训："builds-but-never-runs the inner IO"）。deepseek Format
+        // 事故复盘时正是因为这行静默，才无法确认剥离腿有没有走过。改 warnSync
+        // 同步落盘，并带上形状指纹（哪条历史消息缺思考块）。
         nebflow.shared.NebflowLogger
           .forName("nebflow.llm.anthropic")
-          .warn(
-            s"thinking mode dropped for this request: ${params.model} requires thinking passback but " +
-              "session history contains assistant messages without thinking blocks (cross-provider replay) — " +
-              "replaying would 400 (audit 20260903 #4)"
+          .warnSync(
+            s"thinking mode dropped for this request: ${WireShape.routeLine(providerId, params.model)} " +
+              "requires thinking passback but session history contains assistant messages without " +
+              "thinking blocks (cross-provider replay) — replaying would 400 (audit 20260903 #4); " +
+              s"request=${WireShape.requestShape(params.messages)}"
           )
         None
       case other => other
@@ -286,14 +314,44 @@ class AnthropicAdapter(
 
   /**
    * 本请求的思考 wire 片段（deepMerge 进 body；空对象 = 不发任何思考键）。
-   * passback 剥离（effectiveThinking = None）→ 空片段 = 静默离开 thinking 模式
-   * （20260903 语义不变）。
+   *
+   * **protocol-compat 批（2026-11-01）——deepseek Format 事故的根因修复**：
+   * passback 剥离（`effectiveThinking = None`）旧实现发「空片段 = 省略 thinking
+   * 键」。对**默认思考**的模型族（DeepSeek）这是致命误判：缺键 ≠ 关思考，
+   * 缺键 = 进默认思考模式 ⇒ 上游要求回传历史思考块 ⇒ 400
+   * "The `content[].thinking` in the thinking mode must be passed back to the
+   * API" ⇒ 引擎 400 归 Format/Permanent ⇒ 候选判死 ⇒ 整批全灭。
+   *
+   * 实测（真端点，2026-11-01，deepseek anthropic 面）：
+   *   省略 thinking 键 + 无思考块历史 → **400**（正是事故报文）
+   *   thinking:{type:"disabled"} + 同一历史 → **200**
+   *   thinking:{type:"enabled"} + 回传思考块 → 200
+   * ⇒ 剥离腿必须发**该族可表达的关态**，不能靠省略键赌对方默认值。
+   * [[stripWire]] 就是这条判据：能表达关态的族发关态，不能的族才省略。
    */
   private[providers] def wireThinkingFragment(params: SendMessageParams): Json =
     effectiveThinking(params) match
-      case None => Json.obj()
+      case None => stripWire(kindOf(params))
       case Some(_) if !wireThinkingOn(params) => offWire(kindOf(params))
       case Some(t) => onWire(params, kindOf(params), t)
+
+  /**
+   * 剥离腿（passback 不可转换时的降级形态）：尽量**显式表达"不进思考模式"**。
+   *
+   *   - EffortAnthropic（DeepSeek 族）：`thinking:{type:"disabled"}`。省略键会
+   *     被对方当成默认思考（实测 400），必须显式关。
+   *   - Budget（官方 anthropic 面）：省略键——官方默认非思考，省略即关。
+   *   - Toggle（glm / kimi）：省略键。两族对 disabled 形态未核实（kimi 对非
+   *     enabled 形态 400 有记录），保持旧行为不引入新回归。
+   *   - EffortTopLevel（K3）：官方明示不得发 thinking 键 ⇒ 省略。
+   *
+   * 与 [[offWire]] 的差别：offWire 是"用户/配置显式关了思考"，stripWire 是
+   * "历史不可转换，本请求降级离开思考模式"。两者在 EffortAnthropic 上收敛到
+   * 同一形态（这正是对的：对默认思考的端点，"关"只有一种可信表达）。
+   */
+  private[providers] def stripWire(kind: ThinkingKind): Json = kind match
+    case ThinkingKind.EffortAnthropic => offWire(kind)
+    case _                             => Json.obj()
 
   private def offWire(kind: ThinkingKind): Json = kind match
     case ThinkingKind.Budget => Json.obj() // off → 省略键（旧形态 "thinking": null 由此消灭）
@@ -438,70 +496,157 @@ class AnthropicAdapter(
   /** Window-leg floor — the pre-raise serving cap (see [[windowOutputCap]]). */
   private val WindowFloorTokens = Defaults.ProbeMaxTokens
 
-  def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
+  /** 请求体裁剪：engine 侧唯一的 body 装配点（两发送面共用同一形状）。 */
+  private def bodyOf(params: SendMessageParams, streaming: Boolean): Json =
     val systemBlocks = buildSystemBlocks(params)
-    val body = Json.obj(
+    val base = Json.obj(
       "model" -> params.model.asJson,
       "messages" -> Json.fromValues(toAnthropicMessages(params.messages)),
       "max_tokens" -> maxTokensFor(params).asJson
     )
-    val bodyWithSystem =
-      if systemBlocks != Json.Null then body.deepMerge(Json.obj("system" -> systemBlocks))
-      else body
-    val bodyWithTools = params.tools.filter(_.nonEmpty) match
-      case Some(tools) => bodyWithSystem.deepMerge(Json.obj("tools" -> toAnthropicTools(tools)))
-      case None => bodyWithSystem
-    // thinking-config 批（2026-10-28）：wire 翻译单点——按能力类发参数/
-    // 省略键（off 不再是 "thinking": null；budget_tokens 只对 Budget 类上线）。
-    val bodyWithThinking = bodyWithTools.deepMerge(wireThinkingFragment(params))
-    val bodyWithMetadata = (params.sessionId, params.agentId) match
+    val withStream = if streaming then base.deepMerge(Json.obj("stream" -> true.asJson)) else base
+    val withSystem =
+      if systemBlocks != Json.Null then withStream.deepMerge(Json.obj("system" -> systemBlocks))
+      else withStream
+    val withTools = params.tools.filter(_.nonEmpty) match
+      case Some(tools) => withSystem.deepMerge(Json.obj("tools" -> toAnthropicTools(tools)))
+      case None => withSystem
+    // thinking-config 批（2026-10-28）+ protocol-compat 批（2026-11-01）：
+    // wire 翻译单点——按能力类发参数/省略键/显式关态（[[wireThinkingFragment]]）。
+    val withThinking = withTools.deepMerge(wireThinkingFragment(params))
+    (params.sessionId, params.agentId) match
       case (Some(sid), Some(aid)) =>
-        bodyWithThinking.deepMerge(
+        withThinking.deepMerge(
           Json.obj(
-            "metadata" -> Json.obj(
-              "session_id" -> sid.asJson,
-              "agent_id" -> aid.asJson
-            )
+            "metadata" -> Json.obj("session_id" -> sid.asJson, "agent_id" -> aid.asJson)
           )
         )
-      case (Some(sid), _) =>
-        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
-      case (_, Some(aid)) =>
-        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
-      case _ => bodyWithThinking
+      case (Some(sid), _) => withThinking.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
+      case (_, Some(aid)) => withThinking.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
+      case _              => withThinking
 
-    val request = basicRequest
-      .post(uri"$endpoint")
-      .header("x-api-key", apiKey)
-      .header("anthropic-version", "2023-06-01")
-      .header("content-type", "application/json")
-      .body(bodyWithMetadata.noSpaces)
+  /**
+   * 降级重试用的参数：**显式离开思考模式**。
+   *
+   * 只在"上游 400 且明确要求回传思考块"时使用（[[WireShape
+   * .isThinkingPassbackRejection]]）。`thinkingResolved.enabled=false` 让
+   * [[wireThinkingOn]] 为假 ⇒ 走该族的关态（EffortAnthropic → disabled），
+   * 这是我们实测唯一能让 DeepSeek 类端点放弃回传要求的形态。
+   */
+  private def thinkingOffParams(params: SendMessageParams): SendMessageParams =
+    params.copy(
+      thinkingResolved = Some(
+        params.thinkingResolved
+          .getOrElse(ResolvedThinking(ThinkingFamily.forModel(params.model)))
+          .copy(enabled = false)
+      )
+    )
 
-    backend.send(request).flatMap { response =>
-      response.body match
-        case Left(error) =>
-          // 审计 20260903 子项②：非 2xx 升格为结构化 HttpError（带状态码）——
-          // classifyError 的结构化分支据此区分 400 Format（不驱逐）与 Auth/404
-          // 等确证死亡（驱逐）。旧 RuntimeException 文案无状态码，400 只能落
-          // Unknown/Transient → 重试耗尽后照样 markDown（flap 主因）。
-          IO.raiseError(sttp.client4.HttpError(error, response.code))
-        case Right(bodyStr) =>
-          IO.defer {
-            parse(bodyStr) match
-              case Left(err) => IO.raiseError(new RuntimeException(s"Failed to parse response: ${err.message}"))
-              case Right(json) => IO.pure(parseNonStreamingResponse(json))
-          }
+  /** 形状类失败：带 provider/model + 请求形状 + 响应形状的 HttpError。 */
+  private def wireError(status: Int, body: String, params: SendMessageParams): sttp.client4.HttpError[String] =
+    new sttp.client4.HttpError(
+      s"${WireShape.diagnose(providerId, params.model, params.messages, Some(status), body)} " +
+        s"| upstream=${WireShape.upstreamExcerpt(body)}${edgeHint(status, body)} " +
+        s"| raw=${Option(body).getOrElse("").take(600)}",
+      sttp.model.StatusCode(status)
+    )
+
+  /**
+   * 本请求的头装配（唯一一点 = [[HttpHeaders]]）：引擎缺省（含必带 UA）+
+   * provider 级覆盖 + anthropic 面协议头。auth 头也经这里，保证"改头只改一处"。
+   */
+  private def applyHeaders[B](req: sttp.client4.Request[B]): sttp.client4.Request[B] =
+    HttpHeaders.applyTo(
+      req.header("x-api-key", apiKey).header("anthropic-version", "2023-06-01"),
+      providerHeaders
+    )
+
+  /**
+   * 边缘拦截（WAF）专用：鉴权失败长得一样，但处置完全不同——UA 问题是**我们
+   * 的请求头错了**，不该判 provider 死。命中时把 statusCode 挪成 400 并把话说
+   * 在诊断串里？不——那会掩盖真实状态码。这里只负责在诊断串尾部追加人话
+   * （[[HttpHeaders.edgeBlockHint]]），状态码原样保留供 classifyError 归类。
+   */
+  private def edgeHint(status: Int, body: String): String =
+    HttpHeaders.edgeBlockHint(status, body)
+
+  def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
+    def attempt(p: SendMessageParams): IO[AdapterResponse] =
+      val request = applyHeaders(
+        basicRequest
+          .post(uri"$endpoint")
+          .header("content-type", "application/json")
+          .body(bodyOf(p, streaming = false).noSpaces)
+      )
+
+      backend.send(request).flatMap { response =>
+        if response.code.isClientError then
+          val raw = response.body.fold(_.toString, identity)
+          IO.raiseError(wireError(response.code.code, raw, p))
+        else
+          response.body match
+            case Left(error) =>
+              // 审计 20260903 子项②：非 2xx 升格为结构化 HttpError（带状态码）——
+              // classifyError 的结构化分支据此区分 400 Format（不驱逐）与 Auth/404
+              // 等确证死亡（驱逐）。旧 RuntimeException 文案无状态码，400 只能落
+              // Unknown/Transient → 重试耗尽后照样 markDown（flap 主因）。
+              IO.raiseError(sttp.client4.HttpError(error, response.code))
+            case Right(bodyStr) =>
+              IO.defer {
+                parse(bodyStr) match
+                  case Left(err) =>
+                    IO.raiseError(
+                      new RuntimeException(
+                        s"Failed to parse response: ${err.message} | " +
+                          WireShape.diagnose(providerId, p.model, p.messages, Some(response.code.code), bodyStr)
+                      )
+                    )
+                  case Right(json) => IO.pure(parseNonStreamingResponse(json, p))
+              }
+      }
+
+    // 单 provider 失败不许打死整批（作者令 17:45 第 3 条）：形状可自愈的一类
+    // 失败先就地降级重试一次，再谈向上层抛（届时才轮到 fallback 换腿）。
+    attempt(params).handleErrorWith {
+      case e: sttp.client4.HttpError[?]
+          if WireShape.isThinkingPassbackRejection(e.statusCode.code, Option(e.body).map(_.toString).getOrElse("")) =>
+        nebflow.shared.NebflowLogger
+          .forName("nebflow.llm.anthropic")
+          .warn(
+            s"thinking-passback rejection — degraded retry with thinking disabled: " +
+              WireShape.routeLine(providerId, params.model)
+          ) *> attempt(thinkingOffParams(params))
+      case other => IO.raiseError(other)
     }
 
   end sendMessage
 
-  private def parseNonStreamingResponse(json: Json): AdapterResponse =
+  /**
+   * 非流式响应解析（**宽容口径**，protocol-compat 批 2026-11-01）。
+   *
+   * 旧实现按 `type == "text"` 精确筛块：provider 换一个块名（`output_text` /
+   * `redacted_thinking` / 各家自造的 reasoning 变体）正文就整段消失，下游只
+   * 看到空回复 → EmptyStream。现在正文收集对未知块走降级：带 `text` 的块一律
+   * 算正文，判不出类型的块跳过（不抛错、不影响其它块）。
+   *
+   * 取舍：tool_use / image / thinking 仍走各自的结构化分支（思考块不算正文——
+   * 它的语义是推理，混进 reply 会污染用户可见文本；由 ThinkingDelta 通道与
+   * 面板折叠面消费）。
+   */
+  private[providers] def parseNonStreamingResponse(json: Json, params: SendMessageParams): AdapterResponse =
     val content = json.hcursor.downField("content").as[List[Json]].getOrElse(Nil)
-    val textBlocks = content.filter(_.hcursor.downField("type").as[String].toOption.contains("text"))
     val toolUseBlocks = content.filter(_.hcursor.downField("type").as[String].toOption.contains("tool_use"))
-    val thinkingBlocks = content.filter(_.hcursor.downField("type").as[String].toOption.contains("thinking"))
+    val textParts = content.flatMap { b =>
+      val t = b.hcursor.downField("type").as[String].toOption
+      if t.contains("thinking") || t.contains("redacted_thinking") || t.contains("tool_use") ||
+        t.contains("image") || t.contains("tool_result")
+      then None
+      else
+        b.hcursor.downField("text").as[String].toOption
+          .orElse(b.hcursor.downField("content").focus.filter(_.isString).flatMap(_.asString))
+    }
 
-    val reply = textBlocks.flatMap(_.hcursor.downField("text").as[String].toOption).mkString("")
+    val reply = textParts.mkString("")
     val toolCalls = toolUseBlocks.map { b =>
       val id = b.hcursor.downField("id").as[String].getOrElse("")
       val name = b.hcursor.downField("name").as[String].getOrElse("")
@@ -529,65 +674,83 @@ class AnthropicAdapter(
       )
     }
 
+    // 可诊断（作者令 17:49）：正文与工具都空、但对方确实回了块 ⇒ 说清类型序列，
+    // 别让下游/面板只看到一句空回复。
+    if reply.isEmpty && toolCalls.isEmpty && !hasReadableThinking(content) then
+      val kinds = content.map(b => b.hcursor.downField("type").as[String].toOption.getOrElse("?")).mkString(">")
+      if kinds.nonEmpty then
+        nebflow.shared.NebflowLogger
+          .forName("nebflow.llm.anthropic")
+          .warnSync(
+            s"response produced no text/tool content: ${WireShape.routeLine(providerId, params.model)} " +
+              s"contentTypes=$kinds request=${WireShape.requestShape(params.messages)}"
+          )
+
     AdapterResponse(reply, toolCalls, usage)
 
   end parseNonStreamingResponse
 
+  /** 响应里是否有任何可读的思考内容（含未知 reasoning 变体）。 */
+  private[providers] def hasReadableThinking(content: List[Json]): Boolean =
+    content.exists { b =>
+      val t = b.hcursor.downField("type").as[String].toOption.getOrElse("")
+      (t.contains("thinking") || t.contains("reasoning")) &&
+      b.hcursor.downField("thinking").as[String].toOption
+        .orElse(b.hcursor.downField("reasoning_content").as[String].toOption)
+        .orElse(b.hcursor.downField("text").as[String].toOption)
+        .exists(_.trim.nonEmpty)
+    }
+
   def sendMessageStream(params: SendMessageParams): Stream[IO, StreamChunk] =
-    val systemBlocks = buildSystemBlocks(params)
-    val body = Json.obj(
-      "model" -> params.model.asJson,
-      "messages" -> Json.fromValues(toAnthropicMessages(params.messages)),
-      "max_tokens" -> maxTokensFor(params).asJson,
-      "stream" -> true.asJson
-    )
-    val bodyWithSystem =
-      if systemBlocks != Json.Null then body.deepMerge(Json.obj("system" -> systemBlocks))
-      else body
-    val bodyWithTools = params.tools.filter(_.nonEmpty) match
-      case Some(tools) => bodyWithSystem.deepMerge(Json.obj("tools" -> toAnthropicTools(tools)))
-      case None => bodyWithSystem
-    // 同 sendMessage：wire 翻译单点（两发送面同形态，AnthropicThinkingReplaySpec
-    // 只钉重放剥离腿 + wire spec 钉逐族形态）。
-    val bodyWithThinking = bodyWithTools.deepMerge(wireThinkingFragment(params))
-    val bodyWithMetadata = (params.sessionId, params.agentId) match
-      case (Some(sid), Some(aid)) =>
-        bodyWithThinking.deepMerge(
-          Json.obj(
-            "metadata" -> Json.obj(
-              "session_id" -> sid.asJson,
-              "agent_id" -> aid.asJson
-            )
-          )
-        )
-      case (Some(sid), _) =>
-        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("session_id" -> sid.asJson)))
-      case (_, Some(aid)) =>
-        bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
-      case _ => bodyWithThinking
+    def attempt(p: SendMessageParams): Stream[IO, StreamChunk] =
+      Stream.eval(IO.ref(Map.empty[Int, (String, String, StringBuilder)])).flatMap { toolCallState =>
+        Stream.eval(IO.ref(Tokens(0, None, None))).flatMap { tokenRef =>
+          // 头装配在 .response/.readTimeout 之前完成（后两者返回 StreamRequest，
+          // 不再是 Request[B]，header() 会丢响应体类型）。
+          val request = applyHeaders(
+            basicRequest
+              .post(uri"$endpoint")
+              .header("content-type", "application/json")
+              .body(bodyOf(p, streaming = true).noSpaces)
+          ).response(asStreamUnsafe(Fs2Streams[IO])).readTimeout(Defaults.LlmReadTimeoutSec.seconds)
 
-    Stream.eval(IO.ref(Map.empty[Int, (String, String, StringBuilder)])).flatMap { toolCallState =>
-      Stream.eval(IO.ref(Tokens(0, None, None))).flatMap { tokenRef =>
-        val request = basicRequest
-          .post(uri"$endpoint")
-          .header("x-api-key", apiKey)
-          .header("anthropic-version", "2023-06-01")
-          .header("content-type", "application/json")
-          .body(bodyWithMetadata.noSpaces)
-          .response(asStreamUnsafe(Fs2Streams[IO]))
-          .readTimeout(Defaults.LlmReadTimeoutSec.seconds)
-
-        // Hard-recovery P1: per-attempt backend when provided (per-request
-        // HttpClient whose shutdownNow aborts exactly this request).
-        Stream.eval(params.attemptBackend.getOrElse(backend).send(request)).flatMap { response =>
-          response.body match
-            case Left(error) =>
-              // 同 sendMessage：结构化 HttpError 携带状态码（子项②）。
-              Stream.eval(IO.raiseError(sttp.client4.HttpError(error, response.code)))
-            case Right(byteStream) =>
-              parseSseIncrementally(byteStream, toolCallState, tokenRef, params)
+          // Hard-recovery P1: per-attempt backend when provided (per-request
+          // HttpClient whose shutdownNow aborts exactly this request).
+          Stream.eval(p.attemptBackend.getOrElse(backend).send(request)).flatMap { response =>
+            if response.code.isClientError then
+              // 流式请求的 body 是字节流，错误页只在 Left 侧（sttp 对非 2xx 不建流）
+              val raw = response.body.fold(_.toString, _ => "(stream body not read: non-2xx)")
+              Stream.eval(IO.raiseError(wireError(response.code.code, raw, p)))
+            else
+              response.body match
+                case Left(error) =>
+                  // 同 sendMessage：结构化 HttpError 携带状态码（子项②）。
+                  Stream.eval(IO.raiseError(sttp.client4.HttpError(error, response.code)))
+                case Right(byteStream) =>
+                  parseSseIncrementally(byteStream, toolCallState, tokenRef, p)
+          }
         }
       }
+
+    // 降级重试（作者令 17:45 第 3 条）：400 + 上游明说"思考必须回传" ⇒ 就地
+    // 用 thinking:disabled 重试一次，别把整批判死。
+    //
+    // 接缝安全（seam guard）论证：该 400 在**响应头**就到了，`response.code`
+    // 是 4xx ⇒ 在流的第一个元素就抛，任何一个 StreamChunk 都没发出去过。所以
+    // 重试不可能产生"两家输出拼接"的重复内容（那正是 interface 层锁
+    // lockedRef 防的场景）。测试 AnthropicPassbackRepairSpec 钉住"重试前零块"。
+    attempt(params).handleErrorWith {
+      case e: sttp.client4.HttpError[?]
+          if WireShape.isThinkingPassbackRejection(e.statusCode.code, Option(e.body).map(_.toString).getOrElse("")) =>
+        Stream.eval(
+          nebflow.shared.NebflowLogger
+            .forName("nebflow.llm.anthropic")
+            .warn(
+              s"thinking-passback rejection — degraded retry with thinking disabled: " +
+                WireShape.routeLine(providerId, params.model)
+            )
+        ).drain ++ attempt(thinkingOffParams(params))
+      case other => Stream.raiseError(other)
     }
 
   end sendMessageStream
@@ -672,7 +835,27 @@ class AnthropicAdapter(
                 case Some("signature_delta") =>
                   val sig = json.hcursor.downField("delta").downField("signature").as[String].getOrElse("")
                   IO.pure(if sig.nonEmpty then List(StreamChunk.ThinkingSignature(sig)) else Nil)
-                case _ => IO.pure(Nil)
+                case other =>
+                  // 未知 delta 类型**不许丢正文**（protocol-compat 批 2026-11-01）。
+                  // provider 家目录是开放集（`reasoning_delta` / `output_text_delta`
+                  // / `summary_delta` / 各家自造派生名），引擎映射表是封闭的。
+                  // 旧实现一律 `IO.pure(Nil)`：只要对方改了 delta 名，正文整段
+                  // 静默消失 → 下游只见 "Stream completed with no content"。
+                  // 现在按内容字段降级：带 text → TextDelta，带
+                  // thinking/reasoning* → ThinkingDelta，都不带才真丢（记 WARN）。
+                  val delta = json.hcursor.downField("delta")
+                  val degraded = WireShape.classifyBlock(delta.focus.getOrElse(Json.obj())) match
+                    case WireShape.Block.Text(t)      => List(StreamChunk.TextDelta(t))
+                    case WireShape.Block.Thinking(t, _) => List(StreamChunk.ThinkingDelta(t))
+                    case WireShape.Block.Opaque(_) =>
+                      nebflow.shared.NebflowLogger
+                        .forName("nebflow.llm.anthropic")
+                        .warnSync(
+                          s"skipped unmodelled delta type '${other.getOrElse("(absent)")}' with no text/reasoning " +
+                            s"payload: ${WireShape.routeLine(providerId, params.model)}"
+                        )
+                      Nil
+                  IO.pure(degraded)
             case "content_block_start" =>
               json.hcursor.downField("content_block").downField("type").as[String].toOption match
                 case Some("tool_use") =>
@@ -682,13 +865,34 @@ class AnthropicAdapter(
                   toolCallState
                     .update(_ + (idx -> (id, name, new StringBuilder)))
                     .as(List(StreamChunk.ToolCallStart(name)))
-                case Some("thinking") =>
+                case Some("thinking") | Some("redacted_thinking") =>
                   // Some providers (DeepSeek) send empty signature in content_block_start
                   // and the real signature later via signature_delta. Filter out empty to avoid
                   // collectFirst in aggregateChunks picking the useless empty string.
-                  val sig = json.hcursor.downField("content_block").downField("signature").as[String].toOption
-                  IO.pure(sig.filter(_.nonEmpty).map(s => List(StreamChunk.ThinkingSignature(s))).getOrElse(Nil))
-                case _ => IO.pure(Nil)
+                  // redacted_thinking：签名/密文在 `data` 字段，思考正文不可读——只
+                  // 取签名位，不伪造正文（protocol-compat 批：认得它，别丢它）。
+                  val block = json.hcursor.downField("content_block")
+                  val sig = block.downField("signature").as[String].toOption.filter(_.nonEmpty)
+                  val text = block.downField("thinking").as[String].toOption.filter(_.trim.nonEmpty)
+                  IO.pure(
+                    sig.map(s => List(StreamChunk.ThinkingSignature(s))).getOrElse(Nil) ++
+                      text.map(t => List(StreamChunk.ThinkingDelta(t))).getOrElse(Nil)
+                  )
+                case other =>
+                  // 未知块类型：带正文就以 TextDelta 送出（保内容），
+                  // 其余跳过——**不抛错、不影响后续帧**。
+                  WireShape.classifyBlock(json.hcursor.downField("content_block").focus.getOrElse(Json.obj())) match
+                    case WireShape.Block.Text(t)        => IO.pure(List(StreamChunk.TextDelta(t)))
+                    case WireShape.Block.Thinking(t, s) =>
+                      IO.pure(StreamChunk.ThinkingDelta(t) :: s.toList.map(StreamChunk.ThinkingSignature.apply))
+                    case WireShape.Block.Opaque(k) =>
+                      nebflow.shared.NebflowLogger
+                        .forName("nebflow.llm.anthropic")
+                        .warnSync(
+                          s"skipped unmodelled content block type '$k' (no text/reasoning payload): " +
+                            WireShape.routeLine(providerId, params.model)
+                        )
+                      IO.pure(Nil)
             case "content_block_stop" =>
               val idx = json.hcursor.downField("index").as[Int].getOrElse(0)
               toolCallState.modify { m =>

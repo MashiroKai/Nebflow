@@ -144,16 +144,33 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
     assertEquals(f.hcursor.downField("output_config").focus, None, "effort gate closed → no output_config")
   }
 
-  // ── W8：passback 剥离 → 空 fragment ─────────────────────────────────────
+  // ── W8：passback 剥离 → **显式关态**（protocol-compat 批 2026-11-01 改口径）──
 
-  test("W8: passback strip (history without thinking blocks) → empty fragment") {
+  test("W8: passback strip on the deepseek family emits thinking:disabled (NOT an omitted key)") {
     val history = List(
       Message(MessageRole.User, Left("hi")),
       Message(MessageRole.Assistant, Right(List(ContentBlock.Text("answer")))),
       Message(MessageRole.User, Left("continue"))
     )
     val f = adapter(passback = true).wireThinkingFragment(params("deepseek-v4.1-flash", budgetOn, messages = history))
-    assertEquals(f, Json.obj(), "replay strip leaves thinking mode silently (audit 20260903 #4)")
+    // 旧口径（省略键）对 DeepSeek 类是致命的：缺键 = 默认进思考模式 = 400
+    // "The content[].thinking ... must be passed back"。实测（真端点）：
+    //   省略键 → 400，thinking:{type:disabled} → 200。
+    assertEquals(
+      f,
+      Json.obj("thinking" -> Json.obj("type" -> "disabled".asJson)),
+      "strip must express the off state explicitly for default-thinking families"
+    )
+  }
+
+  test("W8b: passback strip on the Budget family still omits the key (no regression)") {
+    val history = List(
+      Message(MessageRole.User, Left("hi")),
+      Message(MessageRole.Assistant, Right(List(ContentBlock.Text("answer")))),
+      Message(MessageRole.User, Left("continue"))
+    )
+    val f = adapter(passback = true).wireThinkingFragment(params("claude-opus-4", budgetOn, messages = history))
+    assertEquals(f, Json.obj(), "official Anthropic defaults to non-thinking: omission is the correct off")
   }
 
   // ── W9/W10/W11/W12：第二段点亮（effort 档位）────────────────────────────

@@ -170,7 +170,7 @@ class AnthropicThinkingReplaySpec extends CatsEffectSuite:
       _ <- release
     yield chunks).unsafeRunSync()
 
-  test("T5: E2E — zhipu-shaped history replayed to deepseek sends NO thinking param (no 400)") {
+  test("T5: E2E — zhipu-shaped history replayed to deepseek sends an EXPLICIT off, never an omitted key") {
     val captured = ConcurrentLinkedQueue[String]()
     var server: HttpServer = null
     try
@@ -179,12 +179,17 @@ class AnthropicThinkingReplaySpec extends CatsEffectSuite:
       result match
         case Right(chunks) =>
           val text = chunks.collect { case StreamChunk.TextDelta(d) => d }.mkString
-          assertEquals(text, "OK", "request must succeed once thinking mode is stripped")
+          assertEquals(text, "OK", "request must succeed once thinking mode is left")
         case Left(e) => fail(s"stripped thinking must not 400, got $e")
       val body = parse(captured.peek()).toOption.getOrElse(fail("captured body must be JSON"))
-      assert(
-        body.hcursor.downField("thinking").focus.isEmpty,
-        s"outgoing body must NOT carry a thinking field, got: ${body.noSpaces.take(400)}"
+      // protocol-compat 批（2026-11-01）口径变更：旧契约是"省略 thinking 键"，
+      // 但 DeepSeek 类端点**缺键 = 默认进思考模式** ⇒ 仍要回传思考块 ⇒ 400
+      // （真端点实测：省略键 400 / {type:disabled} 200）。现在的契约是"显式关"。
+      val thinkingType = body.hcursor.downField("thinking").downField("type").as[String].toOption
+      assertEquals(
+        thinkingType,
+        Some("disabled"),
+        s"passback strip must express an explicit off state, got: ${body.noSpaces.take(400)}"
       )
     finally if server != null then server.stop(0)
   }
