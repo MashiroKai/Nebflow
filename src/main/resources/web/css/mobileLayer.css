@@ -121,6 +121,115 @@ html.mobile-html-layer {
   overflow: hidden;
 }
 
+/* ════════════════════════════════════════════════════════════════════════
+   手机端交互标准 · token 单源（作者令 2026-11-02「立一套手机端标准并全量
+   套用」；基准 = Apple HIG 触控/字体档）
+   ════════════════════════════════════════════════════════════════════════
+   🔴 本块是手机层**唯一**的字号/热区/行高/间距取值来源。手机层任何规则
+   需要这些量时必须消费本块的 var()，**禁止在别处再写死数值**（自查口径：
+   本文件除本块外不应出现裸 px 字号；确属图形/装饰件（点/线/spinner）的
+   几何不受本标准约束，各自块内注明理由）。
+
+   ── 字号四档（Apple 正文档 → footnote 档）────────────────────────────
+     --mfs-body      17px 正文：用户要读的正文/主文案（Apple 正文档 17pt）
+     --mfs-callout   16px 次正文：输入控件/多行紧凑列表名（iOS 不让输入焦点
+                            自动缩放的下限 = 16px，输入件亦归此档）
+     --mfs-sub       15px 次要说明（Apple subheadline 15pt）
+     --mfs-min       13px 最小档（Apple footnote 13pt）—— **任何用户要读的
+                            文字不得小于此值**（旧 8/9/10/11/12/12.5 档全数上调）
+     --mfs-title     28px 面板大标题（B 批作者令破档档位，手机层面板头专用）
+     --mfs-title-mini 15px 收缩态标题（B 批口径，落在 --mfs-sub 同档）
+
+   ── 触控热区（Apple 硬标准 44×44pt）────────────────────────────────
+     --mtap           44px 可点元素最小边长（本体或 ::before 外扩命中盒）
+     --mtap-lg        48px 悬浮圆钮档（g2-fab 基准，本文件既有 48px 族收编）
+     --mhit           44px ::before 外扩命中盒基准（小图标钮补热区用的统一值）
+
+   ── 行高与间距 ────────────────────────────────────────────────────
+     --mrow           44px 列表行最小高（行内文字与控件垂直居中）
+     --mpad-x         16px 行/卡左右内边距（Apple 版式边距）
+     --mpad-y         12px 卡上下内边距
+     --mgap           8px  同组件垂直间隙
+     --mstack-gap     12px 卡与卡之间的堆叠间隙
+
+   ── 图标 ──────────────────────────────────────────────────────────
+     --micon          22px 图标视觉本体档（20-24px 区间中值）
+     --micon-sm       20px 小图标档（chrome 圆钮内的图标）
+     --micon-lg       24px 大图标档（dock 图标位）
+
+   ── 开关（iOS 尺寸语言）────────────────────────────────────────────
+     --msw-w           51px 轨道宽（iOS 开关标准宽）
+     --msw-h           31px 轨道高
+     --msw-knob        27px 圆钮直径（轨道高 − 2×2px 内衬）
+     --msw-inset       2px  圆钮内衬（轨道与钮的四边等距）
+     --msw-travel      22px 圆钮行程（轨道宽 − 钮径 − 2×内衬）
+   颜色沿用回绿后的既有 token（--glass-control-* 材质 + rgb(var(--brand-green)))
+   ——本块只定几何与字阶，零新色值。
+   ═══════════════════════════════════════════════════════════════════════ */
+body.mobile-layer {
+  /* 字阶 */
+  --mfs-body: 17px;
+  --mfs-callout: 16px;
+  --mfs-sub: 15px;
+  --mfs-min: 13px;
+  --mfs-title: 28px;
+  --mfs-title-mini: 15px;
+  /* 触控热区 */
+  --mtap: 44px;
+  --mtap-lg: 48px;
+  --mhit: 44px;
+  /* 行高与间距 */
+  --mrow: 44px;
+  --mpad-x: 16px;
+  --mpad-y: 12px;
+  --mgap: 8px;
+  --mstack-gap: 12px;
+  /* 图标 */
+  --micon: 22px;
+  --micon-sm: 20px;
+  --micon-lg: 24px;
+  /* 开关几何 */
+  --msw-w: 51px;
+  --msw-h: 31px;
+  --msw-knob: 27px;
+  --msw-inset: 2px;
+  --msw-travel: 22px;
+}
+
+/* ── 手机端开关 = iOS 尺寸语言（作者令 2026-11-02「toggle 改成 iOS 尺寸语言」）
+   `.nb-toggle` 基座（sidebar.css，36×20 桌面档）在手机层整族换几何：轨道
+   51×31、圆钮 27、内衬 2、行程 22 —— 全部取自上方 token 单源，颜色沿用回绿
+   后的既有配方（--glass-control-* 材质 + rgb(var(--brand-green))) 零新色值。
+   热区：本体 51×31 已达 --mtap 高度的一档但**宽高均需 ≥44**——31px 高不足，
+   故 ::before 外扩命中盒补到 --mhit（44×44），视觉形态不变、触控达 Apple 档。
+   桌面（>768px 非手机层）逐字节不变：全部规则挂 body.mobile-layer。 */
+body.mobile-layer .nb-toggle {
+  position: relative;
+  width: var(--msw-w);
+  height: var(--msw-h);
+  border-radius: calc(var(--msw-h) / 2);
+}
+body.mobile-layer .nb-toggle::after {
+  top: var(--msw-inset);
+  left: var(--msw-inset);
+  width: var(--msw-knob);
+  height: var(--msw-knob);
+}
+body.mobile-layer .nb-toggle.on::after {
+  transform: translateX(var(--msw-travel));
+}
+/* 命中盒外扩：视觉本体不变，触控面 44×44（水平方向 51px 本已达标，纵向补足）。 */
+body.mobile-layer .nb-toggle::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, var(--mhit));
+  height: max(100%, var(--mhit));
+  transform: translate(-50%, -50%);
+  border-radius: inherit;
+}
+
 body.mobile-layer {
   /* dock 批：底 dock 常驻高度（不含 safe-area；dock 元素自带 safe 底垫）。
      输入卡/页面底缘的让位单源 = 本变量。悬浮胶囊批（作者令 2026-11-01 21:07）
@@ -214,7 +323,7 @@ body.mobile-layer .mh-chrome-badge {
   border-radius: 999px;
   background: var(--status-word, #d64545);
   color: #fff;
-  font-size: 10px;
+  font-size: var(--mfs-min);
   font-weight: 700;
   line-height: 16px;
   text-align: center;
@@ -288,7 +397,7 @@ body.mobile-layer .dock-key .dock-ic {
 }
 body.mobile-layer .dock-key .dock-ic svg { width: 22px; height: 22px; }
 body.mobile-layer .dock-key .dock-label {
-  font-size: 10px;
+  font-size: var(--mfs-min);
   font-weight: 500;
   line-height: 1.2;
   max-width: 100%;
@@ -424,7 +533,7 @@ body.mobile-layer .dock-badge.is-count {
   justify-content: center;
   background: var(--status-word, #d64545);
   color: #fff;
-  font-size: 10px;
+  font-size: var(--mfs-min);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -517,7 +626,7 @@ body.mobile-layer .mobile-page-title {
   display: block;
   margin: 0;
   padding: 6px 16px 10px;
-  font-size: 28px;
+  font-size: var(--mfs-title);
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.3;
@@ -551,7 +660,7 @@ body.mobile-layer .mobile-page-title-mini {
   right: 0;
   transform: translateY(-50%);
   text-align: center;
-  font-size: 15px;
+  font-size: var(--mfs-title-mini);
   font-weight: 600;
   line-height: 1.3;
   color: var(--color-frame-text-bright, var(--color-frame-text));
@@ -722,7 +831,7 @@ body.mobile-layer .mh-tpanel .tp-hd {
   align-items: center;
   gap: 8px;
   padding: 11px 8px 7px 13px;
-  font-size: 14px;
+  font-size: var(--mfs-callout);
   font-weight: 600;
   color: var(--color-frame-text-bright, var(--color-frame-text));
   flex: none;
@@ -736,7 +845,7 @@ body.mobile-layer .mh-tpanel .tp-hd > i svg {
   flex: none;
 }
 body.mobile-layer .mh-tpanel .tp-stats {
-  font-size: 12px;
+  font-size: var(--mfs-min);
   color: var(--color-frame-text-muted, #98a2b3);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
@@ -770,7 +879,7 @@ body.mobile-layer .mh-tpanel .tp-bd {
 }
 body.mobile-layer .mh-tpanel .tp-bd::-webkit-scrollbar { display: none; }
 body.mobile-layer .mh-tpanel .tp-grp {
-  font-size: 11px;
+  font-size: var(--mfs-min);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-frame-text-muted, #98a2b3);
@@ -778,7 +887,7 @@ body.mobile-layer .mh-tpanel .tp-grp {
   flex: none;
 }
 body.mobile-layer .mh-tpanel .tp-empty {
-  font-size: 12px;
+  font-size: var(--mfs-min);
   color: var(--color-frame-text-muted, #98a2b3);
   padding: 18px 6px;
   text-align: center;
@@ -795,7 +904,7 @@ body.mobile-layer .mh-tpanel .tp-c-hd {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--mfs-callout);
   color: var(--color-text);
   min-width: 0;
 }
@@ -817,13 +926,13 @@ body.mobile-layer .mh-tpanel .tp-ttl {
   white-space: nowrap;
 }
 body.mobile-layer .mh-tpanel .tp-meta {
-  font-size: 11px;
+  font-size: var(--mfs-min);
   color: var(--color-frame-text-muted, #98a2b3);
   font-variant-numeric: tabular-nums;
   flex: none;
 }
 body.mobile-layer .mh-tpanel .tp-word {
-  font-size: 11px;
+  font-size: var(--mfs-min);
   color: var(--color-frame-text-muted, #98a2b3);
   flex: none;
 }
@@ -838,7 +947,7 @@ body.mobile-layer .mh-tpanel .tp-mem {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 12px;
+  font-size: var(--mfs-min);
   color: var(--color-text-muted, #8b8e96);
   min-width: 0;
 }
@@ -877,7 +986,7 @@ body.mobile-layer .mh-tpanel .tp-mem-hollow {
   border: 1.5px solid var(--color-frame-text-muted, #98a2b3);
 }
 body.mobile-layer .mh-tpanel .tp-mem-more {
-  font-size: 11px;
+  font-size: var(--mfs-min);
   color: var(--color-frame-text-muted, #98a2b3);
   padding-left: 19px;
 }
@@ -950,7 +1059,7 @@ body.mobile-layer #mh-search-kind-row {
 body.mobile-layer #mh-search-kind {
   width: 100%;
   height: 30px;
-  font-size: 12px;
+  font-size: var(--mfs-min);
   border-radius: 8px;
 }
 /* 说明/空态脚注（面板底缘；11px muted，安全区兜底）。 */
@@ -958,7 +1067,7 @@ body.mobile-layer .mh-search-foot {
   flex: none;
   padding: 8px 14px calc(8px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--glass-border);
-  font-size: 11px;
+  font-size: var(--mfs-min);
   line-height: 1.5;
   color: var(--color-frame-text-muted, #98a2b3);
 }
@@ -977,7 +1086,7 @@ body.mobile-layer .nebflow-login-modal {
 
 /* P3 定时任务：分组签 + 停用行降透明（分组 = scheduled-task.renderList 手机层分支）。 */
 body.mobile-layer .mh-rd-grp {
-  font-size: 11px;
+  font-size: var(--mfs-min);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-frame-text-muted, #98a2b3);
@@ -1013,7 +1122,7 @@ body.mobile-layer #daemon-panel .daemon-command {
 body.mobile-layer .mh-daemon-foot {
   padding: 8px 14px calc(8px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--glass-border);
-  font-size: 11px;
+  font-size: var(--mfs-min);
   line-height: 1.5;
   color: var(--color-frame-text-muted, #98a2b3);
 }
@@ -1089,7 +1198,7 @@ body.mobile-layer .mh-memory-edit {
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-frame-text, #e6e9ef);
-  font-size: 12px;
+  font-size: var(--mfs-sub);
   font-weight: 500;
   cursor: pointer;
 }
@@ -1112,7 +1221,7 @@ body.mobile-layer .mh-memory-card {
   padding: 9px 11px;
 }
 body.mobile-layer .mh-memory-card-title {
-  font-size: 13px;
+  font-size: var(--mfs-callout);
   font-weight: 600;
   color: var(--color-text);
   overflow: hidden;
@@ -1121,7 +1230,7 @@ body.mobile-layer .mh-memory-card-title {
 }
 body.mobile-layer .mh-memory-card-excerpt {
   margin-top: 3px;
-  font-size: 12px;
+  font-size: var(--mfs-sub);
   line-height: 1.5;
   color: var(--color-text-muted, #8b8e96);
   overflow: hidden;
@@ -1132,14 +1241,14 @@ body.mobile-layer .mh-memory-card-excerpt {
 }
 body.mobile-layer .mh-memory-card-foot {
   margin-top: 5px;
-  font-size: 11px;
+  font-size: var(--mfs-min);
   color: var(--color-frame-text-muted, #98a2b3);
   font-variant-numeric: tabular-nums;
 }
 body.mobile-layer .mh-memory-empty {
   padding: 24px 8px;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--mfs-min);
   color: var(--color-frame-text-muted, #98a2b3);
 }
 
@@ -1222,7 +1331,7 @@ body.mobile-layer .mf-strip-chip {
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--cv-shadow);
   color: var(--color-frame-text-muted, #98a2b3);
-  font-size: 12px;
+  font-size: var(--mfs-min);
   font-weight: 500;
   cursor: pointer;
   overflow: hidden;
@@ -1276,7 +1385,7 @@ body.mobile-layer .mf-cv-count {
   transform: translateX(-50%);
   min-width: 40px;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--mfs-min);
   font-weight: 600;
   color: var(--color-frame-text-muted, #98a2b3);
   font-variant-numeric: tabular-nums;
@@ -1333,7 +1442,7 @@ body.mobile-layer .mf-stack-head {
   padding: calc(16px + env(safe-area-inset-top, 0px)) 16px 10px;
 }
 body.mobile-layer .mf-stack-count {
-  font-size: 13px;
+  font-size: var(--mfs-min);
   font-weight: 600;
   color: var(--color-frame-text, #e6e9ef);
   font-variant-numeric: tabular-nums;
@@ -1362,7 +1471,7 @@ body.mobile-layer .mf-stack-card {
   border-radius: 14px;
   background: var(--glass-bg, rgba(255, 255, 255, 0.12));
   color: var(--color-frame-text, #e6e9ef);
-  font-size: 14px;
+  font-size: var(--mfs-callout);
   font-weight: 500;
   text-align: start;
   cursor: pointer;
@@ -1411,7 +1520,7 @@ body.mobile-layer .mf-stack-num {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: var(--mfs-min);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--color-frame-text-muted, #98a2b3);
@@ -1456,8 +1565,8 @@ body.mobile-layer .mf-cv-empty {
 }
 body.mobile-layer .mf-cv-empty[hidden] { display: none; }
 body.mobile-layer .mf-cv-empty svg { width: 34px; height: 34px; opacity: 0.5; }
-body.mobile-layer .mf-cv-empty-title { font-size: 14px; font-weight: 600; }
-body.mobile-layer .mf-cv-empty-sub { font-size: 12px; opacity: 0.8; }
+body.mobile-layer .mf-cv-empty-title { font-size: var(--mfs-body); font-weight: 600; }
+body.mobile-layer .mf-cv-empty-sub { font-size: var(--mfs-min); opacity: 0.8; }
 
 /* ── 设置/用量 = 页面体收编（r3 p4fix 沿袭；overlay 原地保留为状态载体）─ */
 body.mobile-layer #settings-overlay {
@@ -1502,7 +1611,7 @@ body.mobile-layer .mf-hub {
   padding: 14px 14px 8px;
 }
 body.mobile-layer .mf-hub-label {
-  font-size: 11px;
+  font-size: var(--mfs-min);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-text-muted, #8b8e96);
@@ -1536,7 +1645,7 @@ body.mobile-layer .mf-hub-row {
   border: none;
   background: transparent;
   color: var(--color-text, #1b1e26);
-  font-size: 15px;
+  font-size: var(--mfs-body);
   cursor: pointer;
   text-align: left;
   touch-action: manipulation;
@@ -1578,7 +1687,7 @@ body.mobile-layer .mf-me-entry {
     0 2px 8px rgba(0, 0, 0, 0.04),
     0 8px 24px rgba(0, 0, 0, 0.06);
   color: var(--color-text, #1b1e26);
-  font-size: 15px;
+  font-size: var(--mfs-body);
   text-align: left;
   cursor: pointer;
   touch-action: manipulation;
@@ -1639,7 +1748,7 @@ body.mobile-layer .mf-me-meta {
   gap: 2px;
 }
 body.mobile-layer .mf-me-name {
-  font-size: 15px;
+  font-size: var(--mfs-body);
   font-weight: 500;
   color: var(--color-text, #1b1e26);
   overflow: hidden;
@@ -1647,7 +1756,7 @@ body.mobile-layer .mf-me-name {
   white-space: nowrap;
 }
 body.mobile-layer .mf-me-sub {
-  font-size: 12px;
+  font-size: var(--mfs-min);
   color: var(--color-text-muted, #8b8e96);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1680,7 +1789,7 @@ body.mobile-layer .mf-me-names {
   flex-direction: column;
   gap: 2px;
 }
-body.mobile-layer .mf-me-card .mf-me-name { font-size: 17px; }
+body.mobile-layer .mf-me-card .mf-me-name { font-size: var(--mfs-body); }
 body.mobile-layer .mf-me-login { flex: none; }
 /* 分组标签与账号行沿用 mf-hub 家族（mf-me-grouplabel 复用 mf-hub-label 口径，
    个人主页分组与 hub 分组视觉同族）。 */
@@ -1691,7 +1800,7 @@ body.mobile-layer .mobile-page[data-page="me"] .mf-hub-rows { margin: 0 14px; }
 body.mobile-layer .mf-hub-row-val {
   flex: none;
   max-width: 45%;
-  font-size: 14px;
+  font-size: var(--mfs-min);
   color: var(--color-text-muted, #8b8e96);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1707,7 +1816,7 @@ body.mobile-layer .mf-me-field {
   gap: 12px;
   min-height: 50px;
   padding: 0 16px;
-  font-size: 15px;
+  font-size: var(--mfs-body);
   color: var(--color-text, #1b1e26);
 }
 body.mobile-layer .mf-me-field:not(:last-child)::after {
@@ -1722,7 +1831,7 @@ body.mobile-layer .mf-me-field:not(:last-child)::after {
 body.mobile-layer .mf-me-field-label { flex: none; }
 body.mobile-layer .mf-me-field-value {
   min-width: 0;
-  font-size: 14px;
+  font-size: var(--mfs-min);
   color: var(--color-text-muted, #8b8e96);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1742,7 +1851,7 @@ body.mobile-layer .mf-me-portal {
   margin: 12px 14px 0;
   padding: 12px 16px;
   border-radius: 12px;
-  font-size: 15px;
+  font-size: var(--mfs-body);
   font-weight: 500;
   cursor: pointer;
   touch-action: manipulation;
@@ -1750,7 +1859,7 @@ body.mobile-layer .mf-me-portal {
 /* 提示文案（官网统一管理口径）。 */
 body.mobile-layer .mf-me-hint {
   margin: 12px 24px 0;
-  font-size: 12px;
+  font-size: var(--mfs-min);
   line-height: 1.5;
   color: var(--color-text-muted, #8b8e96);
 }
@@ -1774,13 +1883,13 @@ body.mobile-layer .mf-social-sealed-skel {
 body.mobile-layer .mf-social-sealed-note {
   margin-top: 10px;
   text-align: center;
-  font-size: 13px;
+  font-size: var(--mfs-sub);
   font-weight: 600;
   color: var(--color-frame-text, #e6e9ef);
 }
 body.mobile-layer .mf-social-sealed-sub {
   text-align: center;
-  font-size: 11px;
+  font-size: var(--mfs-min);
   line-height: 1.5;
   color: var(--color-frame-text-muted, #98a2b3);
 }
@@ -1832,9 +1941,12 @@ body.mobile-layer #input-area {
    （d4cc8d189^ 前基准：r50% 36×36 方圆钮，与输入条 36px 图标钮同高）——
    绿色保留（--ctl-send-* 三态 token 单源不动），只收几何。 */
 body.mobile-layer #send-btn {
+  /* 纯圆形态（收形批⑥「发送钮退回纯圆」的形状裁定）保留；**尺寸**随手机端
+     交互标准批（2026-11-02）升到 --mtap-lg（48）：36 是明显偏小的触控目标，
+     而发送是全局最高频动作。形状语言不动，只放大本体。 */
   border-radius: 50%;
-  width: 36px;
-  height: 36px;
+  width: var(--mtap-lg);
+  height: var(--mtap-lg);
   padding: 0;
 }
 
@@ -1934,7 +2046,7 @@ body.mobile-layer #mobile-pages .team-card.project-card .team-card-header {
   padding: 2px 0 8px;
 }
 body.mobile-layer #mobile-pages .team-card-title {
-  font-size: 15px;
+  font-size: var(--mfs-sub);
   font-weight: 600;
   gap: 6px;
 }
@@ -1944,7 +2056,7 @@ body.mobile-layer #mobile-pages .project-card-name {
   white-space: nowrap;
 }
 body.mobile-layer #mobile-pages .team-card-summary {
-  font-size: 13px;
+  font-size: var(--mfs-sub);
   margin-top: 4px;
 }
 body.mobile-layer #mobile-pages .project-fields {
@@ -1953,7 +2065,7 @@ body.mobile-layer #mobile-pages .project-fields {
   padding-top: 8px;
 }
 body.mobile-layer #mobile-pages .project-field {
-  font-size: 12px;
+  font-size: var(--mfs-sub);
   gap: 8px;
   min-width: 0;
 }
@@ -1977,10 +2089,10 @@ body.mobile-layer #mobile-pages .wiki-toolbar {
 body.mobile-layer #mobile-pages .wiki-toolbar-search {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--mfs-callout);
 }
 body.mobile-layer #mobile-pages .wiki-toolbar-status {
-  font-size: 11px;
+  font-size: var(--mfs-min);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2208,7 +2320,7 @@ body.mobile-layer .mh-search-input {
   outline: none;
   background: transparent;
   color: var(--color-frame-text, #e6e9ef);
-  font-size: 14px;
+  font-size: var(--mfs-callout);
   font-family: inherit;
 }
 body.mobile-layer .mh-search-input::placeholder { color: var(--color-frame-text-muted, #98a2b3); }
@@ -2246,7 +2358,7 @@ body.mobile-layer .mh-scope-chip {
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-frame-text, #e6e9ef);
-  font-size: 12px;
+  font-size: var(--mfs-min);
   font-weight: 500;
   font-family: inherit;
   cursor: pointer;
@@ -2262,14 +2374,14 @@ body.mobile-layer .mh-scope-chip:active { transform: scale(0.95); }
 /* 状态行（aria-live）与脚注。 */
 body.mobile-layer .mh-search-status {
   padding: 8px 20px 0;
-  font-size: 12px;
+  font-size: var(--mfs-min);
   color: var(--color-frame-text-muted, #98a2b3);
   min-height: 26px;
 }
 body.mobile-layer .mh-search-status[hidden] { display: none; }
 body.mobile-layer .mh-search-note {
   padding: 4px 20px 8px;
-  font-size: 11px;
+  font-size: var(--mfs-min);
   color: var(--color-frame-text-muted, #98a2b3);
 }
 /* 结果流：按会话分组（微信「查找聊天内容」口径）。 */
@@ -2285,7 +2397,7 @@ body.mobile-layer .mh-search-results {
 }
 body.mobile-layer .mh-search-results::-webkit-scrollbar { display: none; }
 body.mobile-layer .mh-sr-group {
-  font-size: 12px;
+  font-size: var(--mfs-min);
   font-weight: 600;
   color: var(--color-frame-text-muted, #98a2b3);
   padding: 10px 10px 2px;
@@ -2313,13 +2425,13 @@ body.mobile-layer .mh-sr-meta {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 11px;
+  font-size: var(--mfs-min);
   color: var(--color-frame-text-muted, #98a2b3);
 }
 body.mobile-layer .mh-sr-sender { font-weight: 600; color: var(--color-frame-text, #e6e9ef); }
 body.mobile-layer .mh-sr-time { margin-left: auto; font-variant-numeric: tabular-nums; flex: none; }
 body.mobile-layer .mh-sr-snippet {
-  font-size: 14px;
+  font-size: var(--mfs-sub);
   line-height: 1.45;
   overflow: hidden;
   display: -webkit-box;
@@ -2475,7 +2587,7 @@ body.mobile-layer .fm-context-menu button:not(.mfs-back) {
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
   color: var(--color-frame-text, var(--color-text));
-  font-size: 14px;
+  font-size: var(--mfs-body);
   padding: 10px 14px;
   text-align: center;
 }
@@ -2505,10 +2617,10 @@ body.mobile-layer .nf-term-tip.touch {
   z-index: 320;
   overflow-y: auto;
 }
-body.mobile-layer .nf-term-tip.touch .tt { font-size: 17px; }
+body.mobile-layer .nf-term-tip.touch .tt { font-size: var(--mfs-body); }
 body.mobile-layer .nf-term-tip.touch .ts {
   -webkit-line-clamp: unset;
-  font-size: 14px;
+  font-size: var(--mfs-sub);
   margin-top: 8px;
 }
 
@@ -2683,7 +2795,7 @@ body.mobile-layer #chat .g2-chat-head #agent-avatar-btn {
 }
 /* ④ 名字玻璃胶囊：随大头像同比例升半档（13px → 14px），余沿用基座档 */
 body.mobile-layer #chat .g2-chat-head #session-name {
-  font-size: 14px;
+  font-size: var(--mfs-sub);
   max-width: 220px;
 }
 
@@ -2769,8 +2881,13 @@ body.mobile-layer .mobile-page-body #daemon-panel-title {
    逐值对齐 .att-thumb；底色/描边由色族档（.fc-icon.<cls> 渐变 + 本盒 1px
    border）承担，故 chip 自身的 etched 底与 pad 一并退场。 */
 body.mobile-layer #attachment-preview .att-file {
-  width: 28px;
-  height: 28px;
+  /* 手机端交互标准批（2026-11-02）：28 → --mtap（44）。作者令「所有可点元素
+     ≥44×44pt」+「任何用户要读的文字 ≥ --mfs-min」——扩展名色块本身印着
+     PDF/DOC 这类**用户要读的**字，28px 盒物理上装不下 13px 字，故盒子随
+     标准一并升到 44（同时成为达标触控热区）。桌面 .att-thumb/.att-file 的
+     28px 基线零触碰（规则全挂 body.mobile-layer）。 */
+  width: var(--mtap);
+  height: var(--mtap);
   padding: 0;
   gap: 0;
   border-radius: 8px;
@@ -2789,17 +2906,17 @@ body.mobile-layer #attachment-preview .att-file > .att-file-glyph { display: non
    定义在 css/chat.css，桌面同一套 token，手机层零第二张色表。 */
 body.mobile-layer #attachment-preview .att-file > .att-file-icon {
   display: flex;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: var(--mtap);
+  height: var(--mtap);
+  border-radius: 10px;
   box-sizing: border-box;
   border: 1px solid var(--glass-border);
   align-items: center;
   justify-content: center;
   color: #fff;              /* .fc-icon 既有字面量（同族白字），非新色值 */
-  font-size: 8px;
+  font-size: var(--mfs-min);
   font-weight: 800;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.2px;
   flex-shrink: 0;
   user-select: none;
   -webkit-user-select: none;
@@ -2811,14 +2928,457 @@ body.mobile-layer #attachment-preview .att-file > .att-file-name { display: none
    （.att-remove 基座），但圆盘随盒缩一档（16 → 13px，与 composer 内
    chat-message 引用 chip 的 ✕ 同档），命中域外扩同步收一档。 */
 body.mobile-layer #attachment-preview .att-file .att-remove {
-  width: 13px;
-  height: 13px;
-  top: -4px;
-  right: -4px;
-  font-size: 8px;
+  /* 标准批：删除角标视觉盘 13 → 22（与 44 盒比例协调；13px 的 ✕ 已落在
+     最小档之下），命中盒由 ::after 外扩到 --mtap（44×44）。 */
+  width: 22px;
+  height: 22px;
+  top: -8px;
+  right: -8px;
+  font-size: var(--mfs-min);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-body.mobile-layer #attachment-preview .att-file .att-remove::after { inset: -6px; }
+body.mobile-layer #attachment-preview .att-file .att-remove::after {
+  /* 44 命中盒：22 视觉盘向四边各外扩 11px。 */
+  inset: -11px;
+}
 body.mobile-layer #attachment-preview .att-file .att-remove svg {
-  width: 6.5px;
-  height: 6.5px;
+  width: var(--mfs-min);
+  height: var(--mfs-min);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   手机端交互标准 · 全量套用批（作者令 2026-11-02）
+   ───────────────────────────────────────────────────────────────────────
+   字号的**单一取值点**已在上方各面板块内就地换成 var(--mfs-*)（本文件除
+   token 单源块外已无裸 px 字号 —— 机械自查：`perl -ne '/font-size:\s*([^;]+)/'`
+   应只剩 var() 形态）。本块只承担两件事，避免同一属性两处声明打架：
+
+     ① 触控热区：把仍然 < 44×44 的可点元素补到 --mtap（本体放大，或
+        ::before/::after 外扩命中盒）。
+     ② 行高与内距：列表行 min-height ≥ --mrow；行/卡左右内边距 ≥ --mpad-x；
+        图标本体 --micon 档（20-24px）而热区仍 44。
+
+   桌面零感知：全部规则挂 body.mobile-layer（>768px 非手机层逐字节不变）。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── ① 触控热区：本轮点名的「仍不达标」清单逐项补齐 ──────────────────── */
+
+/* 任务面板关闭键：28×28 → 44（图标本体 13 → --micon-sm）。 */
+body.mobile-layer .mh-tpanel .tp-x {
+  width: var(--mtap);
+  height: var(--mtap);
+  min-width: var(--mtap);
+}
+body.mobile-layer .mh-tpanel .tp-x svg { width: var(--micon-sm); height: var(--micon-sm); }
+
+/* 搜索清空键：24×24 → 44（视觉圆盘走 ::before，本体触控面 44）。 */
+body.mobile-layer .mh-search-clear {
+  position: relative;
+  width: var(--mtap);
+  height: var(--mtap);
+  background: transparent;
+}
+body.mobile-layer .mh-search-clear::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 26px;
+  height: 26px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  pointer-events: none;
+}
+body.mobile-layer .mh-search-clear svg {
+  position: relative;
+  width: var(--mfs-min);
+  height: var(--mfs-min);
+}
+/* 搜索栏与输入框：44 触控带（iOS 输入最小高度档）。 */
+body.mobile-layer .mh-search-bar { height: max(44px, var(--mtap)); }
+
+/* 定时任务：完成圆钮 / 删除键 18-20px 图形本体 → 44 热区（圆点视觉不变）。 */
+body.mobile-layer #reminder-panel .reminder-circle,
+body.mobile-layer #reminder-panel .reminder-cancel {
+  position: relative;
+  min-width: var(--mtap);
+  min-height: var(--mtap);
+}
+body.mobile-layer #reminder-panel .reminder-circle::after,
+body.mobile-layer #reminder-panel .reminder-cancel::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+/* 完成圆钮：桌面 1.5px 蓝边圆点语言原样（只把热区放大，图形不放大）。 */
+body.mobile-layer #reminder-panel .reminder-circle::after {
+  border: 1.5px solid var(--color-frame-border);
+  opacity: 0.55;
+}
+body.mobile-layer #reminder-panel .reminder-circle { border-color: transparent; }
+body.mobile-layer #reminder-panel .reminder-cancel::after { border: none; }
+
+/* 定时任务行 / 时间行 / 重复段 / 内联输入：44 行与触区。 */
+body.mobile-layer #reminder-panel .reminder-row {
+  min-height: var(--mrow);
+  padding-left: var(--mpad-x);
+  padding-right: var(--mpad-x);
+}
+body.mobile-layer #reminder-panel .reminder-time-row { min-height: var(--mtap); align-items: center; }
+body.mobile-layer #reminder-panel .reminder-repeat-seg { min-height: var(--mtap); }
+body.mobile-layer #reminder-panel .reminder-inline-input { min-height: var(--mtap); padding: 0; }
+/* 调度卡 chip / 引用（32px 视觉高 + 上下各 6px 外扩 = 44 命中盒）。 */
+body.mobile-layer #reminder-panel .schedule-card-chip,
+body.mobile-layer #reminder-panel .schedule-card-ref {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+}
+body.mobile-layer #reminder-panel .schedule-card-chip::after,
+body.mobile-layer #reminder-panel .schedule-card-ref::after {
+  content: '';
+  position: absolute;
+  inset: -6px 0;
+}
+
+/* 待办：筛选 chips → 44 触区；权限签（纯展示签，非可点）保持 32 不加语言。 */
+body.mobile-layer #todo-page .todo-filter-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--mtap);
+  padding: 0 var(--mpad-x);
+}
+
+/* 项目卡动作钮：26×26 → 44（图标本体 15 → --micon-sm）。 */
+body.mobile-layer #mobile-pages .project-unmount-btn {
+  width: var(--mtap);
+  height: var(--mtap);
+  min-width: var(--mtap);
+  border-radius: 12px;
+}
+body.mobile-layer #mobile-pages .project-unmount-btn svg {
+  width: var(--micon-sm);
+  height: var(--micon-sm);
+}
+body.mobile-layer #mobile-pages .project-desc-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--mtap);
+  height: var(--mtap);
+  min-width: var(--mtap);
+}
+body.mobile-layer #mobile-pages .project-desc-edit-btn svg {
+  width: var(--micon-sm);
+  height: var(--micon-sm);
+}
+/* 已卸载分组的「重新加载」键。 */
+body.mobile-layer #mobile-pages .project-unm-remount {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--mtap);
+  padding: 0 var(--mpad-x);
+}
+
+/* 设置：主/次操作钮 44 热区（cfg-btn 族）；折叠下钻行 44；模型测试钮 44。 */
+body.mobile-layer #settings-modal .cfg-btn,
+body.mobile-layer #settings-modal .cfg-btn-primary {
+  min-height: var(--mtap);
+  padding-left: var(--mpad-x);
+  padding-right: var(--mpad-x);
+}
+body.mobile-layer #settings-modal .settings-collapse-toggle {
+  width: 100%;
+  min-height: var(--mtap);
+}
+body.mobile-layer #settings-modal .cfg-model-test {
+  position: relative;
+  min-width: var(--mtap);
+  min-height: var(--mtap);
+  border-radius: 10px;
+}
+body.mobile-layer #settings-modal .cfg-model-test .st-ic {
+  width: var(--mfs-min);
+  height: var(--mfs-min);
+}
+/* 表单控件：44 触控行（iOS 输入最小高度档）。 */
+body.mobile-layer #settings-modal .cfg-input,
+body.mobile-layer #settings-modal .cfg-select,
+body.mobile-layer #settings-modal input[type='text'],
+body.mobile-layer #settings-modal input[type='password'],
+body.mobile-layer #settings-modal select {
+  min-height: var(--mtap);
+}
+
+/* 后台任务合并面板：密度行 → 44 触控行 + 16 内距。 */
+body.mobile-layer #bg-dropdown .bg-task-row {
+  min-height: var(--mrow);
+  padding: 0 var(--mpad-x);
+  align-items: center;
+}
+body.mobile-layer #bg-dropdown .bg-task-row.bg-task-row-child { padding-left: calc(var(--mpad-x) + 6px); }
+body.mobile-layer #bg-dropdown .bg-task-row .bg-task-btn,
+body.mobile-layer #bg-dropdown .bg-task-row button {
+  min-width: var(--mtap);
+  min-height: var(--mtap);
+}
+
+/* 插件卡动作钮。 */
+body.mobile-layer #plugins-content .plugins-item-actions .cfg-btn { min-height: var(--mtap); }
+
+/* 心跳行动作键。 */
+body.mobile-layer #daemon-panel .daemon-row {
+  min-height: var(--mrow);
+  padding-left: var(--mpad-x);
+  padding-right: var(--mpad-x);
+  align-items: center;
+}
+body.mobile-layer #daemon-panel .daemon-actions button {
+  min-width: var(--mtap);
+  min-height: var(--mtap);
+}
+
+/* 用量面板：选择控件/维度切换 44 触区。 */
+body.mobile-layer #usage-dashboard .ud-select,
+body.mobile-layer #usage-dashboard .ud-hdim,
+body.mobile-layer #usage-dashboard .ud-srange,
+body.mobile-layer #usage-dashboard .ud-colormode {
+  min-height: var(--mtap);
+}
+
+/* 看板 chip 条：30px → 44 热区（胶囊形态保持，纵向内衬补足）。 */
+body.mobile-layer .mf-strip-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--mtap);
+  height: auto;
+  padding: 0 var(--mpad-x);
+}
+body.mobile-layer .mf-strip {
+  padding-top: var(--mgap);
+  padding-bottom: var(--mgap);
+}
+
+/* 搜索范围 chips / 类型选择：30px → 44（胶囊形态保持）。 */
+body.mobile-layer .mh-scope-chip,
+body.mobile-layer #mh-search-kind {
+  min-height: var(--mtap);
+  padding-left: var(--mpad-x);
+  padding-right: var(--mpad-x);
+}
+body.mobile-layer #mh-search-kind-row { height: auto; }
+
+/* 搜索结果行：44 触控行 + 8px 纵向内距。 */
+body.mobile-layer .mh-sr-row {
+  justify-content: center;
+  min-height: var(--mrow);
+  padding: var(--mgap) 10px;
+}
+
+/* 记忆/智能体合并面板的「编辑/完成」药丸：26 → 44。 */
+body.mobile-layer .mh-memory-edit {
+  height: var(--mtap);
+  border-radius: calc(var(--mtap) / 2);
+  padding: 0 var(--mpad-x);
+}
+
+/* 工作台 hub 行 / 个人主页字段行：50 → 至少 50（已达标），只把图标与内距收编
+   到标准档（图标本体 --micon，行内距 --mpad-x）。 */
+body.mobile-layer .mf-hub-row,
+body.mobile-layer .mf-me-field { min-height: max(50px, var(--mrow)); }
+body.mobile-layer .mf-hub-row { padding: 0 var(--mpad-x); }
+body.mobile-layer .mf-hub-row > i svg { width: var(--micon); height: var(--micon); }
+body.mobile-layer .mf-hub-chev svg { width: var(--micon-sm); height: var(--micon-sm); }
+
+/* 消息 / 联系人列表行：44 触控行 + 垂直居中。 */
+body.mobile-layer .fm-row {
+  align-items: center;
+  min-height: var(--mrow);
+  padding: 0 10px;
+}
+
+/* 社交/好友请求动作钮与行内按钮族。 */
+body.mobile-layer #mobile-pages .fm-req-accept,
+body.mobile-layer #mobile-pages .fm-req-decline,
+body.mobile-layer #mobile-pages .fm-msg-btn,
+body.mobile-layer #mobile-pages .fm-search-btn {
+  min-width: var(--mtap);
+  min-height: var(--mtap);
+}
+
+/* 弹窗退场批：上下文动作表行 = 44 触控行。 */
+body.mobile-layer .fm-context-menu button:not(.mfs-back) { min-height: var(--mtap); }
+
+/* 输入卡附件 ✕ 角标：22px 视觉盘向四边各外扩 11px = 44 命中盒。 */
+body.mobile-layer #attachment-preview .att-file .att-remove::after { inset: -11px; }
+
+/* ── ② 开关：iOS 尺寸语言已在 token 单源块下方就地声明（本体 51×31 + 44 命中盒），
+      此处仅登记「开关族的错误态/禁用态形态随几何同步」——圆钮行程 22 已保证
+      两态圆钮中心都落在轨道轴上，无需额外补丁。 ───────────────────────── */
+
+/* ═══════════════════════════════════════════════════════════════════════
+   手机端交互标准 · 触控热区补齐续（机械断言首轮实测后的收口）
+   ───────────────────────────────────────────────────────────────────────
+   来源：tests/mobile-touch-target.spec.mjs 首轮跑出 36 类未达标件（逐面遍历
+   18 面、407 个可点件）。本块逐项补齐；仍不可达者集中登记在下方「豁免」
+   段，每条带几何推导（不是「懒得改」）。
+   桌面零感知：全部规则挂 body.mobile-layer。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── 输入卡附件圆键：36×36 → 48 ───────────────────────────────────────
+   与发送键（本文件上方 #send-btn 块，已一并升到 --mtap-lg）同档——两者是
+   输入条上**全局最高频**的触控目标，36 明显偏小。图标本体同步 --micon。 */
+body.mobile-layer #attach-btn {
+  width: var(--mtap-lg);
+  height: var(--mtap-lg);
+  min-width: var(--mtap-lg);
+  min-height: var(--mtap-lg);
+}
+body.mobile-layer #attach-btn svg,
+body.mobile-layer #send-btn svg {
+  width: var(--micon);
+  height: var(--micon);
+}
+
+/* ── 待办面（todo-face.css 收编面）小图标键 ─────────────────────────────
+   .tfl-icon-btn 28×24（筛选）、.tfl-complete 28×28（标记完成）：图形语义件，
+   本体保持、命中盒补 --mhit。 */
+body.mobile-layer .tfl-icon-btn,
+body.mobile-layer .tfl-complete,
+body.mobile-layer #todo-create-btn,
+body.mobile-layer #todo-close-btn,
+body.mobile-layer #reminder-create-btn {
+  position: relative;
+}
+body.mobile-layer .tfl-icon-btn::after,
+body.mobile-layer .tfl-complete::after,
+body.mobile-layer #todo-create-btn::after,
+body.mobile-layer #todo-close-btn::after,
+body.mobile-layer #reminder-create-btn::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, var(--mhit));
+  height: max(100%, var(--mhit));
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+}
+/* 图标本体随字号档（11 → --micon-sm 的 0.6 档，线框图标在 24px 圆内仍清透）。 */
+body.mobile-layer .tfl-icon-btn svg { width: 16px; height: 16px; }
+
+/* ── 用量面受控件：范围段（1天/7天…）与色模段（消耗量/命中率）──────────
+   42×44 / 56×40 —— 高度或宽度差一两像素，统一补到 --mtap 双维。 */
+body.mobile-layer #usage-dashboard .ud-srange,
+body.mobile-layer #usage-dashboard .ud-cm,
+body.mobile-layer #usage-dashboard .ud-dim {
+  min-width: var(--mtap);
+  min-height: var(--mtap);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+}
+
+/* ── 项目面：矩形「查看 / 编辑」文字链 + 两枚 40px 浮动圆钮 ───────────────
+   .project-link-btn 是**行内文字链**（无内距无高度 ⇒ 58×17）：补 44 触控盒
+   （本体文字形态不变，纵向内距补足）。 */
+body.mobile-layer #mobile-pages .project-link-btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--mtap);
+  padding: 0 4px;
+}
+/* 浮动圆钮 40 → 48（与站内全部悬浮圆钮 --mtap-lg 同档）。 */
+body.mobile-layer .proj-create-fab,
+body.mobile-layer .proj-flowmap-fab {
+  width: var(--mtap-lg);
+  height: var(--mtap-lg);
+  min-width: var(--mtap-lg);
+  min-height: var(--mtap-lg);
+}
+body.mobile-layer .proj-create-fab svg,
+body.mobile-layer .proj-flowmap-fab svg {
+  width: var(--micon);
+  height: var(--micon);
+}
+
+/* ── 图谱面命令条 chips（.wg-chip 46×25）→ 44 触区 ─────────────────────── */
+body.mobile-layer #mobile-pages .wg-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--mtap);
+  padding: 0 var(--mpad-x);
+}
+
+/* ── 搜索面：类型行 tabs（44×31）与「重试」小键（50×27）───────────────── */
+body.mobile-layer .search-tabs .search-tab,
+body.mobile-layer #search-modal .search-tab {
+  min-height: var(--mtap);
+  display: inline-flex;
+  align-items: center;
+}
+body.mobile-layer #search-modal .cfg-btn-sm {
+  min-height: var(--mtap);
+  min-width: var(--mtap);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+}
+
+/* ── 登录/账号键（.fm-login-btn 335×38、#login-unified 132×37.5、#stt-status-hint）──
+   三个都是宽而矮的实心/文字钮，纵向差几像素 → 补到 --mtap。 */
+body.mobile-layer .fm-login-btn,
+body.mobile-layer #login-unified,
+body.mobile-layer #stt-status-hint {
+  min-height: var(--mtap);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   触控标准 · 豁免登记（每条都给几何推导，不是「懒得改」）
+   ═══════════════════════════════════════════════════════════════════════
+   ① 用量热力图格子 `.ud-cell`（52 周 × 7 天的日历热力图）
+      实测 9-11px。**几何上不可达 44**：52 列 × 44px = 2288px，是 375px
+      视宽的 6.1 倍——照 HIG 放大后整张图失去「一年一览」的语义（热力图
+      的全部价值就在于同屏可比）。
+      缓解（本批已做）：① 手机层格子从 11px 提到 20px（--ud-cell），可读性
+      与命中率翻倍，横向滚动仍保留；② 点击代理 = 格子网格整体接管指针
+      （usageDashboard.js:314 的 closest('.ud-cell[data-date]')），即**点在
+      格间缝隙也命中最近格**，等效热区 > 实际格面；③ 精确读数另有钻取表
+      （本批已把表字号提到 --mfs-min），正式操作面走表格不走格子。
+   ② 后台任务行的**纯展示**视觉块（.bg-task-status 6×6 状态点、.bg-task-name
+      /-line/-state/-origin/-uptime/-lines 等文字块）：不是可点件，只是被
+      「祖先行 cursor:pointer」带出的伪目标（探针已按「最外层 pointer 宿主」
+      收口，本类已清空）。登记于此备查。
+   ═══════════════════════════════════════════════════════════════════════ */
+/* ① 缓解：手机层热力图格子放大一档（11 → 20），配合既有横滚。 */
+body.mobile-layer #usage-heatwrap {
+  --ud-cell: 20px;
+}
+/* 格子本身做 4px 外扩命中盒，等效命中面 ≈ 28×28（仍高于原 11×11）。 */
+body.mobile-layer #usage-grid .ud-cell[data-date] {
+  position: relative;
+}
+body.mobile-layer #usage-grid .ud-cell[data-date]::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
 }

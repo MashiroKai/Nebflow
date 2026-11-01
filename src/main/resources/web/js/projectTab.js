@@ -971,10 +971,21 @@ function renderEmptyState(scroll) {
 // 不能派活 / 本地文件零删除）→ 确认才 POST。弹层复用既有 #delete-box
 // （window.__showConfirm，tone:'neutral'——卸载可逆有 remount，非 danger 红）。
 
-/** 卸载按钮（unplug 图标）SVG——卡头 inline，不引新图标面。 */
+/** 卸载按钮图标 SVG——卡头 inline，不引新图标面。
+ *
+ * 🔴 图标语义修正（作者报障 2026-11-02「取消加载按钮怎么是一个 wifi？」）：
+ * 旧值 4 段圆弧 + 底点 = **WiFi 信号字形**（与 lucide `wifi` 逐 path 同形：
+ * M2 8.5a14.5… / M5 12.5a10… / M8.5 16a5… / M12 20h.01），把「网络连接」
+ * 语义挂到了「卸载」动作上——注释写的是 unplug，路径却是 wifi，名实不符。
+ * 换成语义正确的 **unplug**（插头自插座拔出：插脚 + 插座缺口，lucide 同名
+ * 图标同形），对应「取消加载 = 项目从上下文里拔出来，本地文件全部保留」的
+ * 真实语义。 */
 const UNMOUNT_BTN_SVG =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-  '<path d="M2 8.5a14.5 14.5 0 0 1 20 0"/><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><path d="M12 20h.01"/></svg>';
+  '<path d="m19 5 3-3"/><path d="m2 22 3-3"/>' +
+  '<path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"/>' +
+  '<path d="M7.5 13.5 10 11"/><path d="M10.5 16.5 13 14"/>' +
+  '<path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"/></svg>';
 
 /** 「已卸载」分组容器（幂等创建：head 文案静态，rows 由 renderUnmountedGroup 管理）。 */
 function ensureUnmountedGroup(scroll) {
