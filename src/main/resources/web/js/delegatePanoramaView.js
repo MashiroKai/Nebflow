@@ -82,7 +82,7 @@ function topologyOf(r) {
     .filter((n) => n && n.kind === 'flow-step')
     .map((n) => ({
       id: String(n.id || ''),
-      label: String(n.label || n.name || ''),
+      label: String(n.label || (/** @type {{name?: string}} */ (n)).name || ''),
       status: String(n.status || ''),
       deps: Array.isArray(n.deps) ? n.deps.map((d) => String(d || '')) : [],
       description: String(n.description || ''),
@@ -229,7 +229,7 @@ function buildToolbar(rows) {
       UI.filter = val;
       const root = bar.closest('.dvp-root');
       if (root) {
-        root.dataset.filter = val;
+        (/** @type {HTMLElement} */ (root)).dataset.filter = val;
         applyFilter(root);
       }
     });
@@ -585,7 +585,7 @@ function buildCanvas(name, rows, lanes) {
   // 分列线高度 = 泳道区（下区之上）。
   const laneZoneH = Math.max(120, (zoneTop || canvasH) - 26 - 14);
   canvas.querySelectorAll('.dvp-lane-sep').forEach((s) => {
-    s.style.height = `${laneZoneH}px`;
+    (/** @type {HTMLElement} */ (s)).style.height = `${laneZoneH}px`;
   });
   return canvas;
 }

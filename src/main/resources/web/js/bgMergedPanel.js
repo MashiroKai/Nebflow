@@ -54,7 +54,7 @@ export function initBgMergedPanel() {
   carrier.appendChild(aSec);
   aSec.appendChild(grpLabel);
   aSec.appendChild(gList);
-  grpList = gList;
+  grpList = /** @type {HTMLElement} */ (gList);
 
   // 空节收签：列表 0 子 → 签 hidden（渲染面写 innerHTML/增删行都会触发）；
   // 计数随行数现算（签文案 = t('bg.sectionAgents') + ' · N'）。

@@ -83,7 +83,7 @@ export function createMsgFooterBadge(timestamp, copyText) {
     // data-ts-text = 时制刷新的显式声明（纯时钟文本节点，见 timeFormat.js 契约）；
     // data-ts-text-format="day" = 本节点文本走分层 footer label（formatFooterTime，
     // footer-time 批 2026-10-06）：时制切换就地重排仍与渲染时同一 formatter。
-    timeSpan.setAttribute('data-ts', timestamp);
+    timeSpan.setAttribute('data-ts', String(timestamp));
     timeSpan.setAttribute('data-ts-text', String(timestamp));
     timeSpan.setAttribute('data-ts-text-format', 'day');
     timeSpan.textContent = formatFooterTime(timestamp);
@@ -116,6 +116,7 @@ export function createMsgFooterBadge(timestamp, copyText) {
  * @param {string} [model]
  * @param {number} [seed]
  * @param {number} [timestamp] - epoch millis for display
+ * @param {string} [copyText] - copy button text; omit = footer carries no copy button
  * @returns {HTMLElement}
  */
 export function createDurationBadgeElement(durationMs, model, seed, timestamp, copyText) {
@@ -143,7 +144,7 @@ export function createDurationBadgeElement(durationMs, model, seed, timestamp, c
     // data-ts = jump anchor (chatSearch.js#scrollToMessage); data-ts-text = refresh target;
     // data-ts-text-format="day" = layered footer label (formatFooterTime —
     // footer-time batch 2026-10-06), same formatter on 12/24 in-place refresh.
-    timeSpan.setAttribute('data-ts', timestamp);
+    timeSpan.setAttribute('data-ts', String(timestamp));
     timeSpan.setAttribute('data-ts-text', String(timestamp));
     timeSpan.setAttribute('data-ts-text-format', 'day');
     timeSpan.textContent = formatFooterTime(timestamp);

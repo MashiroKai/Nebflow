@@ -38,8 +38,10 @@ import { clearHistoryIndicators } from '../main/historyIndicators.js';
  * per-session buffers — unless the frame is byte-identical to the one this
  * view already rendered (idempotent replay: keep the DOM as-is).
  *
- * @param {WSIncomingMessage} msg  historyPage frame (sessionId/messages/offset/total/hasMore)
- * @param {ChatView} view  the view the frame was routed to (ws.js dispatch)
+ * @param {{type: string, sessionId?: string} & Record<string, any>} msg  historyPage frame
+ *   (mirrors ws.js's WSIncomingMessage doc-type — a JSDoc typedef declared in a
+ *   module is not importable across files, so the consumed contract is restated here)
+ * @param {import('../chatView.js').ChatView} view  the view the frame was routed to (ws.js dispatch)
  */
 export function replayHistoryPageInitialLoad(msg, view) {
   const sid = msg.sessionId;

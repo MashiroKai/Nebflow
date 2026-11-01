@@ -92,7 +92,7 @@ function projectRow(entry) {
   if (v && typeof v === 'object' && String(v.verdict || '') === 'ready-to-merge') {
     out.status = 'ready-to-merge';
   }
-  out.verdict =
+  (/** @type {{verdict?: unknown}} */ (out)).verdict =
     v && typeof v === 'object'
       ? {
           verdict: String(v.verdict || ''),

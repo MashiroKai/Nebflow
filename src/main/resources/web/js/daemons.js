@@ -426,7 +426,7 @@ function buildRow(d, animate = false) {
   // no JS click handler needed (and none that Safari could block).
 
   // Auto-start toggle — optimistic flip + PUT, revert on failure.
-  const autoInput = row.querySelector('.daemon-autostart-input');
+  const autoInput = /** @type {HTMLInputElement} */ (row.querySelector('.daemon-autostart-input'));
   if (autoInput) {
     autoInput.addEventListener('change', async (e) => {
       e.stopPropagation();
@@ -455,7 +455,7 @@ function buildRow(d, animate = false) {
         // dialog-unify 2026-09-05: unified glass confirm (was bare native
         // window.confirm) — same #delete-box family as every other flow.
         window.__showConfirm?.(t('daemons.deleteTitle'), t('daemons.deleteConfirm', { name }), async () => {
-          btn.disabled = true;
+          (/** @type {HTMLButtonElement} */ (btn)).disabled = true;
           const resp = await apiCall('DELETE', `/api/daemons/${encodeURIComponent(id)}`);
           if (resp) {
             // Optimistic removal — no full re-render
@@ -464,7 +464,7 @@ function buildRow(d, animate = false) {
             row.remove();
             if (body && daemons.length === 0) body.appendChild(buildEmptyState());
           } else {
-            btn.disabled = false;
+            (/** @type {HTMLButtonElement} */ (btn)).disabled = false;
             fetchDaemons();
           }
         });
@@ -480,12 +480,12 @@ function buildRow(d, animate = false) {
       }
 
       if (act === 'restart') {
-        btn.disabled = true;
+        (/** @type {HTMLButtonElement} */ (btn)).disabled = true;
         // Optimistic: show starting state on this row
         const target = daemons.find(x => x.id === id);
         if (target) { target.status = 'starting'; updateRowState(row, target); }
         await apiCall('POST', `/api/daemons/${encodeURIComponent(id)}/restart`);
-        btn.disabled = false;
+        (/** @type {HTMLButtonElement} */ (btn)).disabled = false;
         await fetchDaemons(); // silent refresh — re-renders only if state differs
         return;
       }
@@ -556,7 +556,8 @@ export function initDaemons() {
   // Outside click: close panel
   document.addEventListener('click', (e) => {
     const panel = document.getElementById('daemon-panel');
-    if (panel && panelOpen && !panel.contains(e.target) && !e.target.closest('#daemon-btn')) {
+    const hit = /** @type {Element|null} */ (e.target);
+    if (panel && panelOpen && !panel.contains(hit) && !hit?.closest('#daemon-btn')) {
       closePanel();
     }
   });

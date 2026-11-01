@@ -11,7 +11,7 @@ import { t } from './i18n.js';
  * If queue is empty, the bar is hidden.
  *
  * @param {string} sessionId
- * @param {{ onImmediate:Function, onRemove:Function }} handlers
+ * @param {{ onImmediate?:Function, onRecall?:Function, onRemove?:Function }} handlers
  */
 export function renderQueueBar(sessionId, handlers = {}) {
   const view = findViewBySessionId(sessionId);

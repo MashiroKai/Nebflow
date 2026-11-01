@@ -76,10 +76,10 @@ export function closeMemoryModal() {
 
 /** Switch tab — cache current content first. */
 function switchTab(scope) {
-  cache[activeScope] = document.getElementById('memory-content-input').value;
+  cache[activeScope] = (/** @type {HTMLTextAreaElement} */ (document.getElementById('memory-content-input'))).value;
   activeScope = scope;
   document.querySelectorAll('.memory-tab').forEach(t => {
-    t.classList.toggle('active', t.dataset.scope === scope);
+    t.classList.toggle('active', (/** @type {HTMLElement} */ (t)).dataset.scope === scope);
   });
   loadTab(scope);
 }
@@ -95,7 +95,7 @@ function syncMobileFace() {
 
 /** Load content for a scope — use cache if hit, otherwise fetch from server. */
 function loadTab(scope) {
-  const input = document.getElementById('memory-content-input');
+  const input = /** @type {HTMLTextAreaElement} */ (document.getElementById('memory-content-input'));
   if (cache[scope] !== null) {
     input.value = cache[scope];
   } else {
@@ -115,7 +115,7 @@ function loadTab(scope) {
 export function handleMemoryData(data) {
   cache[data.scope] = data.content || '';
   if (data.scope === activeScope) {
-    document.getElementById('memory-content-input').value = data.content || '';
+    (/** @type {HTMLTextAreaElement} */ (document.getElementById('memory-content-input'))).value = data.content || '';
   }
   syncMobileFace();
 }
@@ -141,7 +141,7 @@ export function handleMemoryChanged(data) {
 
 /** Save the current tab's content. */
 export function saveMemory() {
-  const content = document.getElementById('memory-content-input').value;
+  const content = (/** @type {HTMLTextAreaElement} */ (document.getElementById('memory-content-input'))).value;
   cache[activeScope] = content;
   sendWs({ type: 'saveMemory', scope: activeScope, content, sessionId: memorySessionId });
 }
@@ -191,11 +191,11 @@ export function initMemory() {
   ensureMergedChrome();
   document.getElementById('memory-btn')?.addEventListener('click', () => openMergedPanel('memory'));
   document.querySelectorAll('.memory-tab').forEach(tab => {
-    tab.addEventListener('click', () => switchTab(tab.dataset.scope));
+    tab.addEventListener('click', () => switchTab((/** @type {HTMLElement} */ (tab)).dataset.scope));
   });
   document.getElementById('memory-modal-cancel')?.addEventListener('click', closeMemoryModal);
   document.getElementById('memory-modal-save')?.addEventListener('click', saveMemory);
   document.getElementById('memory-overlay')?.addEventListener('click', e => {
-    if (e.target.id === 'memory-overlay') closeMemoryModal();
+    if ((/** @type {Element} */ (e.target)).id === 'memory-overlay') closeMemoryModal();
   });
 }

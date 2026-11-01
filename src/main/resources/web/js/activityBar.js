@@ -813,7 +813,7 @@ export function showLoginModal(opts = {}) {
     document.addEventListener('click', function outside(e) {
       if (!document.body.contains(modal)) {
         document.removeEventListener('click', outside);
-      } else if (!modal.contains(e.target)) {
+      } else if (!modal.contains(/** @type {Node} */ (e.target))) {
         close();
         document.removeEventListener('click', outside);
       }
@@ -905,7 +905,7 @@ export function showLoginModal(opts = {}) {
         <button class="login-modal-close">&times;</button>
       </div>
       <div class="login-modal-body">${body}</div>`;
-    modal.querySelector('.login-modal-close').onclick = close;
+    (/** @type {HTMLElement} */ (modal.querySelector('.login-modal-close'))).onclick = close;
     modal.querySelector('#login-open-auth')?.addEventListener('click', openAuthPage);
     // Switch account (RP-logout fix, 2026-09-06): reserve the popup inside
     // THIS click gesture (same contract as the retry button below), then
@@ -1063,8 +1063,8 @@ function renderAvatar() {
   const st = getNeblinkState();
   const { url: validAvatarUrl, showPhoto } = avatarViewState();
   const logoEl = avatar.querySelector('.activity-avatar-logo');
-  const photoEl = avatar.querySelector('.activity-avatar-photo');
-  const letterEl = avatar.querySelector('.activity-avatar-letter');
+  const photoEl = /** @type {HTMLElement|null} */ (avatar.querySelector('.activity-avatar-photo'));
+  const letterEl = /** @type {HTMLElement|null} */ (avatar.querySelector('.activity-avatar-letter'));
 
   if (photoEl) {
     // Slot paint is shared with the settings account area and gated on the
@@ -1072,10 +1072,10 @@ function renderAvatar() {
     paintAvatarSlot(photoEl, logoEl, validAvatarUrl, showPhoto, () => {
       noteAvatarFailure(validAvatarUrl); // latch: stop re-showing the broken image
       photoEl.hidden = true;
-      if (logoEl) logoEl.hidden = false;
+      if (logoEl) (/** @type {HTMLElement} */ (logoEl)).hidden = false;
     });
   } else if (logoEl) {
-    logoEl.hidden = showPhoto;
+    (/** @type {HTMLElement} */ (logoEl)).hidden = showPhoto;
   }
   if (letterEl) letterEl.hidden = true; // account avatar replaces the letter
 

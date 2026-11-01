@@ -21,7 +21,7 @@ function openRulesEditor(folderId, folderName) {
   activeRulesFolderId = folderId;
   activeRulesExists = state.foldersWithRules && state.foldersWithRules.has(folderId);
   const title = document.getElementById('rules-modal-title');
-  const input = document.getElementById('rules-input');
+  const input = /** @type {HTMLInputElement} */ (document.getElementById('rules-input'));
   const deleteBtn = document.getElementById('rules-modal-delete');
   title.textContent = t('rules.title') + ' — ' + folderName;
   input.value = '';
@@ -46,7 +46,7 @@ function closeRulesEditor() {
 /** Handle rulesData from server. */
 export function handleRulesData(data) {
   if (activeRulesFolderId === data.folderId) {
-    const input = document.getElementById('rules-input');
+    const input = /** @type {HTMLInputElement} */ (document.getElementById('rules-input'));
     if (input) input.value = data.content || '';
   }
 }
@@ -78,10 +78,10 @@ export function initRulesModal() {
   document.getElementById('rules-modal-cancel').addEventListener('click', closeRulesEditor);
   mobileSheetBack(document.getElementById('rules-overlay'), closeRulesEditor);
   document.getElementById('rules-overlay').addEventListener('click', (e) => {
-    if (e.target.id === 'rules-overlay') closeRulesEditor();
+    if ((/** @type {Element} */ (e.target)).id === 'rules-overlay') closeRulesEditor();
   });
   document.getElementById('rules-modal-save').addEventListener('click', () => {
-    const content = document.getElementById('rules-input').value;
+    const content = (/** @type {HTMLInputElement} */ (document.getElementById('rules-input'))).value;
     sendWs({ type: 'saveRules', folderId: activeRulesFolderId, content });
   });
   document.getElementById('rules-modal-delete').addEventListener('click', () => {
@@ -156,7 +156,7 @@ function buildBreadcrumb(path) {
   });
   bc.innerHTML = html;
   bc.querySelectorAll('span[data-path]').forEach(span => {
-    span.addEventListener('click', () => browseTo(span.dataset.path));
+    span.addEventListener('click', () => browseTo((/** @type {HTMLElement} */ (span)).dataset.path));
   });
 }
 
@@ -206,7 +206,7 @@ export function handleBrowseResult(data) {
 export function initPathPicker() {
   document.getElementById('path-picker-cancel').addEventListener('click', closePathPicker);
   document.getElementById('path-picker-overlay').addEventListener('click', (e) => {
-    if (e.target.id === 'path-picker-overlay') closePathPicker();
+    if ((/** @type {Element} */ (e.target)).id === 'path-picker-overlay') closePathPicker();
   });
   document.getElementById('path-picker-select').addEventListener('click', () => {
     // Callback mode (Explorer folder picker)
