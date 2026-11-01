@@ -1,0 +1,20 @@
+[
+  {
+    "target": "chat",
+    "engine": "chromium",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "png": "/tmp/shots-mergeret/chat-chromium-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "chat",
+    "engine": "chromium",
+    "theme": "light",
+    "viewport": "1280x844",
+    "png": "/tmp/shots-mergeret/chat-chromium-light.png",
+    "consoleErrors": [],
+    "ok": true
+  }
+]

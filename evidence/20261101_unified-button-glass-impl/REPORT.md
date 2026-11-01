@@ -77,3 +77,11 @@
 `tools/`：`lib.cjs`（打桩 harness）、`probe.cjs`/`probe-after.cjs`（432 断言）、`shot.cjs`、
 `scrollfps.cjs`、`cssaudit.cjs`。复跑示例：
 `node tools/probe-after.cjs --engine chromium --theme both`。
+
+## 七、合并后回归（main a17090124 并入分支 4e3da662b 后）
+
+- 机械探针重跑：8 组合 × 54 断言全绿零 console error（`merge-regression/probe-mergeret-*.json`）。
+- 实拍抽查：chat 双主题（`merge-regression/shots/`）——气泡半透明实底/玻璃材质/发送键绿色强调档全部在位。
+- 冲突解法：index.html（glass.css+cards.css 双链共存，liquid-glass 不复活）、modal.css
+  （材质迁 glass.css 照旧 + 卡片批 #takeover-box 摘除裁定并入，glass.css 三处选择器
+  同步摘除 #takeover-box——cards.css M1 接管弹窗整面归卡片批，零越界）。
