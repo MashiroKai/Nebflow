@@ -26,6 +26,9 @@ import { createDurationBadgeElement, createMsgFooterBadge, buildInjectedRow, bin
 // (chat.js renderTool)与两条历史重放路共用本模块;popArtifacts 不 import chat.js
 // (chat.js 的 openPopArtifact/popArtifactFromInput 已移入该处再 re-export,无环)。
 import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow, unifyUserMediaFace } from './popArtifacts.js';
+// msgchip-provenance 批（2026-11-01）：渠道/平台来源注记剥离单点（与 live 腿 chat.js
+// renderUserBubble、牌窗 msgTokenChip 同一实现）。
+import { stripChannelProvenance } from './channelProvenance.js';
 import { buildTurnSummariesForHistory } from './turnGroup.js';
 import { renderRefBlock, normalizeTaskRef } from './reference.js';
 // quote-message 一期（2026-10-09，spec §7.5）：历史重放行挂 data-msg-id（页内
@@ -664,6 +667,10 @@ export function restoreFromStorage(opts = {}) {
       // 媒体统一适配批（2026-10-20）：存量「已存至」行级换算（单点
       // unifyUserMediaFace）——识别命中 ⇒ 媒体行接管、文本气泡隐去；否则逐字现状。
       const userUnified = unifyUserMediaFace(m.text, m.attachments);
+      // msgchip-provenance 批（2026-11-01）：显示面只留作者原生输入——渠道来源块 /
+      // 注入头 / 附件路径指针行剥除（单点 channelProvenance；与 live 腿 chat.js
+      // renderUserBubble 同一实现，两条恢复腿同源）。
+      userUnified.text = stripChannelProvenance(userUnified.text).text;
       if (userUnified.text) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';
@@ -672,7 +679,7 @@ export function restoreFromStorage(opts = {}) {
           label.className = 'ask-label';
           label.textContent = t('chat.skillLabel', { skill: skillName });
           const content = document.createElement('div');
-          content.textContent = m.text;
+          content.textContent = userUnified.text;
           bubble.appendChild(label);
           bubble.appendChild(content);
         } else {
@@ -688,7 +695,7 @@ export function restoreFromStorage(opts = {}) {
       const storageMediaRow = buildUserAttachmentRows(row, userUnified.atts, m.timestamp);
       // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
       if ((m.timestamp && m.timestamp > 0) || m.text) {
-        row.appendChild(createAiCopyBadge(m.timestamp, m.text));
+        row.appendChild(createAiCopyBadge(m.timestamp, userUnified.text));
       }
       chat.appendChild(row);
       // #491 主题三 (AC-S4): the independent media card row follows the user
@@ -1066,8 +1073,12 @@ function buildHistoryRow(m, i, ctx) {
       // quote-message 一期（spec §7.5）：重放行挂 h<index>-<mount> id + 右键菜单
       // （用户文本行 = 复制 + 引用；快照数据全在行内，重放腿引用零引擎依赖）。
       row.dataset.msgId = historyMsgId(i);
+      // msgchip-provenance 批（2026-11-01）：显示面只留作者原生输入——渠道来源块 /
+      // 注入头 / 附件路径指针行剥除（单点 channelProvenance）。剥离结果一并在本行
+      // 的引用菜单与复制钮上生效（显示/引用/复制三面同文，与 live 腿 chat.js 同读）。
+      const shownText = stripChannelProvenance(m.text || '').text;
       attachQuoteMenu(row, {
-        kind: 'text', text: m.text || '',
+        kind: 'text', text: shownText,
         sessionId: ownerSessionId || undefined, messageId: row.dataset.msgId,
         senderRole: 'user', senderName: t('chat.quoteSenderMe'), ts: m.timestamp || Date.now(),
       });
@@ -1100,6 +1111,10 @@ function buildHistoryRow(m, i, ctx) {
       // unifyUserMediaFace，与缓存恢复腿同源）——识别命中 ⇒ 媒体行接管、
       // 文本气泡隐去；否则逐字现状。
       const userUnified = unifyUserMediaFace(m.text, m.attachments);
+      // msgchip-provenance 批（2026-11-01）：显示面只留作者原生输入——渠道来源块 /
+      // 注入头 / 附件路径指针行剥除（单点 channelProvenance；与 live 腿 chat.js
+      // renderUserBubble 同一实现，两条恢复腿同源）。
+      userUnified.text = stripChannelProvenance(userUnified.text).text;
       if (userUnified.text) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';
@@ -1126,7 +1141,7 @@ function buildHistoryRow(m, i, ctx) {
       const backendMediaRow = buildUserAttachmentRows(row, userUnified.atts, m.timestamp);
       // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
       if ((m.timestamp && m.timestamp > 0) || m.text) {
-        row.appendChild(createAiCopyBadge(m.timestamp, m.text));
+        row.appendChild(createAiCopyBadge(m.timestamp, shownText));
       }
       fragment.appendChild(row);
       // #491 主题三 (AC-S4): media row into the fragment right after the user

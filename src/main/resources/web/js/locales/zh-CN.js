@@ -431,6 +431,10 @@ export default {
   'chat.msgTokenLoading': '读取中…',
   'chat.msgTokenExpand': '展开',
   'chat.msgTokenCollapse': '收起',
+  // ── msgchip-provenance 批（2026-11-01 作者令「msg 牌剥渠道前缀」）：附件指示 ──
+  // 牌窗正文剥掉附件路径指针行后，改由这条简短指示承载「这条消息带附件」这一事实
+  // （不显示路径/文件名噪声）。{n} = 附件件数。
+  'chat.msgTokenAttachNote': '含 {n} 个附件',
   'messages.multiSelect': '多选转发',
   'messages.selectedCount': '已选 {n} 条',
   'messages.forward': '转发',

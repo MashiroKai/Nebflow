@@ -25,6 +25,9 @@ import { t } from '../i18n.js';
 import state from '../state.js';
 import { authHeaders } from '../flowHelpers.js';
 import { formatFooterTime } from '../timeFormat.js';
+// 渠道来源注记剥离单点（msgchip-provenance 批 2026-11-01）：牌窗与主会话气泡共用
+// 同一实现——判据按位置+结构（渠道前缀有固定位置与固定模板），绝不按关键词。
+import { stripChannelProvenance } from '../channelProvenance.js';
 
 // ── 语法面 ──────────────────────────────────────────────────────────────────
 
@@ -220,9 +223,27 @@ function renderPopBody(data) {
   }
   popEl.dataset.state = 'ok';
   body.classList.remove('msg-token-pop-miss');
-  body.textContent = data.text;
-  // 长文截断 + 展开：超过阈值（≈12 行 / 400 字）先夹取，按钮展开/收起。
-  const long = data.text.length > 400 || data.text.split('\n').length > 12;
+  // msgchip-provenance 批（2026-11-01 作者令）：牌窗只显示**作者原生输入**——渠道来源
+  // 块（`<system-reminder>以下消息来自…`）、注入头行（`[NODE-MESSAGE]` / `[mail chainId:]`）、
+  // 附件路径指针行一律剥除（单点实现 channelProvenance.stripChannelProvenance，判据 =
+  // 位置+结构，正文里作者自己写的同类句子原样保留）。附件另起一条简短指示，不塞路径。
+  const stripped = stripChannelProvenance(data.text);
+  body.textContent = stripped.text;
+  // 附件指示（独立节点，在正文之外 ⇒ body.textContent 仍是纯正文，牌窗不出现路径噪声）。
+  let attachNote = popEl.querySelector('.msg-token-pop-attach');
+  if (stripped.attachments > 0) {
+    if (!attachNote) {
+      attachNote = document.createElement('div');
+      attachNote.className = 'msg-token-pop-attach';
+      body.insertAdjacentElement('afterend', attachNote);
+    }
+    attachNote.textContent = t('chat.msgTokenAttachNote', { n: stripped.attachments });
+    attachNote.hidden = false;
+  } else if (attachNote) {
+    attachNote.hidden = true;
+  }
+  // 长文截断 + 展开：超过阈值（≈12 行 / 400 字）先夹取，按钮展开/收起（按**剥后**正文量）。
+  const long = stripped.text.length > 400 || stripped.text.split('\n').length > 12;
   body.classList.toggle('clamped', long);
   if (toggleBtn) {
     toggleBtn.hidden = !long;

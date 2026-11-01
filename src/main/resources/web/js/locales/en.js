@@ -432,6 +432,8 @@ export default {
   'chat.msgTokenLoading': 'Loading…',
   'chat.msgTokenExpand': 'Expand',
   'chat.msgTokenCollapse': 'Collapse',
+  // ── msgchip-provenance batch (2026-11-01 author order: strip channel prefix): attach note ──
+  'chat.msgTokenAttachNote': '{n} attachment(s)',
   'messages.multiSelect': 'Multi-select',
   'messages.selectedCount': '{n} selected',
   'messages.forward': 'Forward',
