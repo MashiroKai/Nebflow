@@ -14,7 +14,7 @@ import { t } from './i18n.js';
 import { contentText } from './contentI18n.js';
 import { createIconsIn } from './utils.js';
 import { chainRefs, resolvedChainChipsHtml, modelSourceNoteKey, SETTABLE_ROLES } from './modelPanel.js';
-import { rootNameParams } from './rootName.js';
+import { rootNameParams, agentDisplayName, ROOT_AGENT_KEY } from './rootName.js';
 
 // ── Helpers ────────────────────────────────────────────────
 function getToken() { return localStorage.getItem(key('token')) || ''; }
@@ -73,17 +73,20 @@ export async function fetchAgentModel(name) {
 /** Render a single agent card HTML string. */
 function renderAgentCard(a) {
   const name = esc(a.name);
-  const display = esc(contentText('agent', a.name, 'name', a.displayName || a.name));
+  // Nebula 退役批：显示名走单一读点（根 agent = 用户起的名字，未命名 = 通用称呼；
+  // 其余 agent = 自身显示名）——机制名永不上屏。
+  const shown = agentDisplayName(a.name);
+  const display = esc(contentText('agent', a.name, 'name', shown));
   const desc = esc(contentText('agent', a.name, 'desc', a.description || ''));
-  const initial = esc((a.displayName || a.name || '?').charAt(0).toUpperCase());
-  const isNebula = a.name === 'Nebula';
+  const initial = esc((shown || '?').charAt(0).toUpperCase());
+  const isNebula = a.name === ROOT_AGENT_KEY;
   const isGlobalStandalone = (a.layer === 'global' || !a.layer) && (a.category || 'standalone') === 'standalone';
-  // Nebula is the orchestrator, not a delegatable standalone — never shows the badge.
+  // The root agent is the orchestrator, not a delegatable standalone — never shows the badge.
   const showBadge = isGlobalStandalone && !isNebula;
   const badge = showBadge
     ? '<span class="agent-mgr-standalone-badge">可直接委派</span>'
     : '';
-  // ⑧ Nebula: orbit icon avatar (identity must be stable — custom avatar not accepted)
+  // ⑧ Root agent: orbit icon avatar (identity must be stable — custom avatar not accepted)
   // + orchestrator badge pill. All other cards keep letter/custom-avatar logic.
   const avatar = isNebula
     ? '<span class="agent-mgr-avatar"><i data-lucide="orbit" style="width:16px;height:16px"></i></span>'
@@ -161,8 +164,8 @@ export function renderAgentManager() {
     // (entity-icons-visual-spec §3.2). Nebula is extracted from the global
     // standalone list: it understands intent / dispatches / accepts, it is
     // not a delegatable executor like the standalone agents below.
-    const nebula = global.find(a => a.name === 'Nebula');
-    const standalone = global.filter(a => a.name !== 'Nebula');
+    const nebula = global.find(a => a.name === ROOT_AGENT_KEY);
+    const standalone = global.filter(a => a.name !== ROOT_AGENT_KEY);
 
     if (nebula) {
       html += `<div class="agent-mgr-group agent-mgr-group-orchestrator">`;
@@ -272,7 +275,8 @@ function renderModelSection(pane, model) {
 }
 
 function renderAgentDetail(pane, name, detail, model) {
-  const displayName = detail?.displayName || detail?.name || name;
+  // Nebula 退役批：详情头同样走单一显示名读点（机制名不上屏）。
+  const displayName = agentDisplayName(detail?.name || name);
   const description = detail?.description || '';
   const extends_ = detail?.extends || '';
   // builtin-def 批（2026-10-03 作者令①）：代码定义的内置 agent 在详情页只读——

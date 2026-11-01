@@ -4,7 +4,9 @@ import { t } from '../i18n.js';
 import { createIconsIn, renderMarkdownWithMath, shouldFollowBottom } from '../utils.js';
 import { parseTaskReturnText, buildTaskRefLine } from '../reference.js';
 // Root agent DISPLAY name（单读点 rootName.js；A 侧 deviceMail 标签批本簇改动随簇迁入）。
-import { rootDisplayName } from '../rootName.js';
+// Nebula 退役批（作者令 2026-11-01）追加：ROOT_AGENT_KEY 用于把「机制名段」在显示层
+// 换成用户给它起的名字（引擎 header 的 PROJECT 段与 sender 都可能携带机制名）。
+import { rootDisplayName, ROOT_AGENT_KEY } from '../rootName.js';
 import { bindCollapsibleToggle } from './collapsible.js';
 import { createMsgFooterBadge } from './durationBadges.js';
 // diff 拆面板批（2026-10-22 作者令「摘要上移+左右分体」）：交付消息顶部摘要条
@@ -190,6 +192,17 @@ function delegateReceiptSummary(text, merged) {
  *  takes **presentation priority**; absent ⇒ the fallback path is byte-identical
  *  to before (old history rows without the field, node face, non-project Mail,
  *  dispatch notifications all render exactly as before). */
+/** 显示层身份段：机制名（root agent 的 key，大小写不敏感——引擎
+ *  `NotificationHeader` 会把 PROJECT 段全大写归一，`RootProject` 亦由此而来）⇒
+ *  用户给它起的名字；其余值（项目/节点/团队/设备/后台 agent 自身身份）原样。
+ *  Nebula 退役批（作者令 2026-11-01「界面里不该再有 Nebula 的身影」）：只换显示，
+ *  帧与落盘行上的字段一律不动（协议面零改动）。 */
+export function displayIdentitySegment(seg) {
+  const v = String(seg == null ? '' : seg).trim();
+  if (!v) return '';
+  return v.toLowerCase() === ROOT_AGENT_KEY.toLowerCase() ? rootDisplayName() : v;
+}
+
 export function injectedSourceLabel(source, eventType, sender, sourceTeam, intake) {
   // 未知/畸形 source 防御（全降级列表态批 2026-09-16，J6「未知 source 不得异常」）：
   // 非字符串来源（历史脏行 / 未来新源的畸形值）先串化，禁让下方 `charAt`/`slice`
@@ -230,7 +243,7 @@ export function injectedSourceLabel(source, eventType, sender, sourceTeam, intak
     const key = intake || source;
     const base = INJECTED_SOURCE_LABELS[key] || key.charAt(0).toUpperCase() + key.slice(1);
     parts.push(base);
-    if (sender) parts.push(sender);
+    if (sender) parts.push(displayIdentitySegment(sender));
   }
   if (eventType) {
     const et = EVENT_TYPE_LABELS[eventType] || eventType.charAt(0).toUpperCase() + eventType.slice(1);
@@ -464,8 +477,14 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   // 引擎单一来源优先（气泡四段式统一批 2026-09-15）：帧/落盘行带 `header` ⇒ 逐字
   // 渲染该串（**禁二次拼接**——引擎 `NotificationHeader` 是唯一格式化实现）；
   // 缺席 ⇒ 回落既有 `injectedSourceLabel`（旧历史行与词表外 source 逐字节不变）。
-  const renderedLabel =
-    (header && String(header).trim()) ? String(header) : injectedSourceLabel(source, eventType, sender, sourceTeam, intake);
+  // Nebula 退役批（作者令 2026-11-01）：引擎 header 逐字渲染的口径不变，唯一例外 =
+  // 携带机制名的段（PROJECT 段缺项目时会回落 `NotificationHeader.RootProject`）在
+  // 显示层换成用户给它起的名字——判据见 displayIdentitySegment（只认机制名，其余
+  // 段逐字保留：节点/链/团队/后台 agent 自身身份一律不动）。
+  const rawHeader = (header && String(header).trim()) ? String(header) : '';
+  const renderedLabel = rawHeader
+    ? rawHeader.split(' · ').map(displayIdentitySegment).join(' · ')
+    : injectedSourceLabel(source, eventType, sender, sourceTeam, intake);
 
   // ── Delegate 完工通知卡（2026-10-31 重设计批 → 22:29 单行化+hover 批 → 11-01
   //   完工卡 diff 统计恢复批，作者令版式四条）：

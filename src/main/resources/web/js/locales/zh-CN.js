@@ -693,7 +693,10 @@ export default {
   'modal.create': '创建',
   'modal.deleteSession': '删除会话',
   'modal.deleteConfirm': '删除',
-  // === 实体图标语义化 + Nebula 独立分区（20260824_entity-icons-visual-spec §6）===
+  // === 实体图标语义化 + 主 Agent 独立分区（20260824_entity-icons-visual-spec §6）===
+  // Nebula 退役批（作者令 2026-11-01）：未命名的根 agent 读通用称呼，机制名永不
+  // 作为显示回落（读点 = js/rootName.js#rootGenericName）。
+  'agent.rootGeneric': '主 Agent',
   'agents.group.orchestrator': '编排者',
   'agents.group.standalone': '独立智能体',
   'agents.badge.orchestrator': '编排者',
@@ -2563,15 +2566,15 @@ export default {
   'content.agent.general.name': 'general',
   'content.agent.general.desc': '通用执行 agent——能力由分配的 plugins 决定',
   'content.agent.kernel.name': 'kernel',
-  'content.agent.kernel.desc': '极简内核（Delegate 内核）：Nebula 经 Delegate 派发的一次性任务执行者——六件基础工具（Read/Write/Edit/Glob/Grep/Bash，均支持 device= 远端）+ AskUserQuestion，共七件；无项目上下文、无记忆、不派发子代理。用于「不属任何项目 ∧ 需实际执行动作 ∧ 单次」的任务。工具面为机制固定（AgentCore.KernelFixedTools = BaseTools + AskUserQuestion；本文件 tools/skills 声明因 ConvergedAgentNames 含 kernel 而整体失效）。',
+  'content.agent.kernel.desc': '极简内核（Delegate 内核）：主 Agent 经 Delegate 派发的一次性任务执行者——六件基础工具（Read/Write/Edit/Glob/Grep/Bash，均支持 device= 远端）+ AskUserQuestion，共七件；无项目上下文、无记忆、不派发子代理。用于「不属任何项目 ∧ 需实际执行动作 ∧ 单次」的任务。工具面为机制固定（AgentCore.KernelFixedTools = BaseTools + AskUserQuestion；本文件 tools/skills 声明因 ConvergedAgentNames 含 kernel 而整体失效）。',
   'content.plugin.visual-report.name': 'visual-report',
-  'content.plugin.visual-report.desc': '可视化汇报与人读化报告包——节点获得用专业工具（matplotlib/graphviz/plotly）出图、把人读化报告写成给人读的一屏结论、落盘交付并给绝对路径的能力（展示与打开归 Nebula，不调用 Pop）。适用于画图表、画架构图、画流程图、数据可视化、出图配图、做可视化汇报、写给人看的汇报、交付文档、验收报告、调研报告、复盘报告、写给项目负责人的总结、报告太长要压缩、过程件与交付件分开等任务。内含 skill：visual-report（图表/架构图/流程图生成规范：配色、排版、标注、布局审美、单文档 ≤3 图预算；人读交付体例：四段骨架、体量预算；md 规则：图片嵌入、可跳转目录、LaTeX 公式）。不适用于插件封装（另配 nebflow-plugin-creator）；HTML 卡片样式另配 design-cards。组件面：无 mcp.json、无工具扩展。',
+  'content.plugin.visual-report.desc': '可视化汇报与人读化报告包——节点获得用专业工具（matplotlib/graphviz/plotly）出图、把人读化报告写成给人读的一屏结论、落盘交付并给绝对路径的能力（展示与打开归主 Agent，不调用 Pop）。适用于画图表、画架构图、画流程图、数据可视化、出图配图、做可视化汇报、写给人看的汇报、交付文档、验收报告、调研报告、复盘报告、写给项目负责人的总结、报告太长要压缩、过程件与交付件分开等任务。内含 skill：visual-report（图表/架构图/流程图生成规范：配色、排版、标注、布局审美、单文档 ≤3 图预算；人读交付体例：四段骨架、体量预算；md 规则：图片嵌入、可跳转目录、LaTeX 公式）。不适用于插件封装（另配 nebflow-plugin-creator）；HTML 卡片样式另配 design-cards。组件面：无 mcp.json、无工具扩展。',
   'content.plugin.slideblocks.name': 'slideblocks',
   'content.plugin.slideblocks.desc': 'SlideBlocks 演示制作包——节点获得用 Slidev 从零制作/改进完整 PPT 演示（slides、deck、幻灯片）的全流程纪律。适用于做 PPT、写演示、出幻灯片、制作 slides、改进已有 deck、按 Slidev 重做演示等任务。内含 skill：slideblocks（Blocks/Decks/Recipes 全流程、执行锁、交付校验）。不适用于 HTML 卡片与社交图设计（另配 design-cards 插件）。组件面：无 mcp.json、无工具扩展。',
   'content.plugin.nebflow-plugin-creator.name': 'nebflow-plugin-creator',
   'content.plugin.nebflow-plugin-creator.desc': '插件封装器包——节点获得把能力需求封装为合规插件包的全流程执行能力（三输入分析→包生成→机械自检→落盘即生效的交付自检）。适用于把已有 skill 或能力封装成插件、做一个能 Y 的新插件、写 plugin.json 与 SKILL.md、插件描述质量体检、跑包校验脚本等任务。内含 skills：plugin-packaging（三输入→生成→自检→交付的封装主流程，含同名冲突与 digest 漂移等六分叉处置、交付前自检与来源/digest 报告口径）、description-quality（manifest 五段式描述规范：模板、好坏范例、M1-M15 判定口径与核心词表圈定法）。验证与质量审查任务另配 qa 插件。无 mcp.json、无工具扩展。',
   'content.project.general.name': 'general',
-  'content.project.general.desc': 'General-purpose project for executing general tasks: any domain, one-off or recurring; Nebula dispatches, nodes execute.',
+  'content.project.general.desc': 'General-purpose project for executing general tasks: any domain, one-off or recurring; 主 Agent 派发，节点执行。',
 
   // === Bundled-content localization — default-set SKILL descriptions
   // (skillsi18n batch, 2026-09-15; pure data, zero code change) ===
@@ -2587,7 +2590,7 @@ export default {
   'content.skill.nebflow-plugin-creator/description-quality.desc': '{brand} 插件 manifest 描述规范的操作手册——description 五段式唯一描述源口径、触发词核心词表圈定法（全命中判定）、M1-M15 判定口径与四例好坏对照；适用于撰写或体检 plugin.json description 时逐条对照执行。',
   'content.skill.nebflow-plugin-creator/plugin-packaging.desc': '把能力需求封装为合规 {brand} 插件包的执行手册——三输入形态判定（既有 skill 迁移 / MCP server 配置 / 口头能力描述）→生成→机械自检→交付全流程，含六分叉处置与「落盘即生效」的交付口径；适用于节点被分配「封装插件 / 做插件」类任务时按本手册执行。',
   'content.skill.slideblocks/slideblocks.desc': '用 SlideBlocks 自主制作或改进完整、精良的 Slidev 演示——输入可以是一条很短的请求，也可以是 PDF、Word、网页、Markdown、表格、图片、品牌素材、PowerPoint 源 deck 等混合材料。适用于：用户想做一份演示；想迁移到 Slidev；想重新设计、扩充或改进演示；需要为报告、路演、评审、授课、发布、决策或演讲做一份完整 deck；想要 SlideBlocks 的 Blocks、Decks 或 Recipes；或直接给材料说「做成 PPT」。不适用于：要求的最终交付物是任何 PPT/PPTX 或 Office 文件、通用 Office 编辑、或非 Slidev 的演示运行时。',
-  'content.skill.visual-report/visual-report.desc': '可视化汇报工具。用专业工具（matplotlib/graphviz/plotly 等）生成 SVG 图表，落盘后在交付文本里给绝对路径（展示权归 Nebula，节点不调用 Pop）。当需要制作图表、架构图、流程图、数据可视化、可视化报告时使用。',
+  'content.skill.visual-report/visual-report.desc': '可视化汇报工具。用专业工具（matplotlib/graphviz/plotly 等）生成 SVG 图表，落盘后在交付文本里给绝对路径（展示权归主 Agent，节点不调用 Pop）。当需要制作图表、架构图、流程图、数据可视化、可视化报告时使用。',
 
   // === Social interface cards (socpanel batch, 2026-09-19) — pure append ===
   // Definition/data lives in js/socialChannels.js (one array drives order,

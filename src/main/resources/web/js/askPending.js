@@ -27,7 +27,7 @@
 
 import { t } from './i18n.js';
 import { findViewBySessionId, activeView } from './chatView.js';
-import { isRootNamed } from './rootName.js';
+import { isRootNamed, rootDisplayName, agentDisplayName, ROOT_AGENT_KEY } from './rootName.js';
 
 /** requestId → { requestId, sessionId, agentName, project, nodeName, summary, ts } */
 const pending = new Map();
@@ -47,16 +47,20 @@ function summarizeItems(items) {
 }
 
 /** Badge/row source label: project context → "project · nodeName" (dispatcher
- *  asks carry nodeName="dispatcher" from the engine); otherwise the bare agent
- *  name (root self-ask / REPL — pre-F1 behavior).
- *  N5 (unnamed-state batch 2026-10-06): an UNNAMED root self-ask returns ''
+ *  asks carry nodeName="dispatcher" from the engine); otherwise the ASKER's own
+ *  display name (root self-ask / REPL — pre-F1 behavior).
+ *  Nebula 退役批（作者令 2026-11-01）: the label is resolved through the single
+ *  display-name read point — the root asker renders the user's name for it
+ *  (never the mechanism key), background askers render their own identity.
+ *  N5 (unnamed-state batch 2026-10-06) kept: an UNNAMED root self-ask returns ''
  *  (same single-point judgement as N1/N2/N4) so renderBar's existing
  *  `|| t('askUser.pendingTitle')` fallback naturally lands on 「待回答问题」 —
- *  the mechanism name is a key, never a display fallback. Named → unchanged. */
+ *  the mechanism name is a key, never a display fallback. Named → the name. */
 export function askSourceLabel(source) {
-  if (source && source.project) return `${source.project} · ${source.nodeName || source.agentName || ''}`;
-  if (!isRootNamed()) return '';
-  return (source && source.agentName) || '';
+  const asker = (source && source.agentName) || '';
+  if (source && source.project) return `${source.project} · ${source.nodeName || agentDisplayName(asker)}`;
+  if (!asker || asker === ROOT_AGENT_KEY) return isRootNamed() ? rootDisplayName() : '';
+  return agentDisplayName(asker);
 }
 
 /** askUser frame → mirror entry. `ts` is the local arrival stamp (the frame

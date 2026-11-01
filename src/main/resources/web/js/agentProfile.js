@@ -36,12 +36,12 @@ import { key } from './branding.js';
 import { brand } from './brand.js';
 import state from './state.js';
 import { avatarImgNode } from './avatarRender.js';
-import { rootDisplayName, isRootNamed } from './rootName.js';
+import { rootDisplayName, isRootNamed, agentDisplayName, ROOT_AGENT_KEY } from './rootName.js';
 import { t } from './i18n.js';
 import { onReconnect } from './ws.js';
 
 /** 头像存储键（镜像 avatarCache.js：branding 命名空间 + 按身份键一条目）。 */
-function avatarKey(agentName) { return key(`agent_avatar_${agentName || 'Nebula'}`); }
+function avatarKey(agentName) { return key(`agent_avatar_${agentName || ROOT_AGENT_KEY}`); }
 
 /** Bearer 文件令牌头（agentManager.js 同款镜像；控制台会话腿同源 cookie，双保险）。 */
 function authHeaders() {
@@ -102,7 +102,7 @@ const META_CHECK_THROTTLE_MS = 30000;
  * 引擎落盘后会外推到全部已配对设备（identity-sync 通道），另一台机器按戳收敛。
  */
 function pushAvatar(agentName, dataUrl) {
-  const path = `/api/agents/${encodeURIComponent(agentName || 'Nebula')}/avatar`;
+  const path = `/api/agents/${encodeURIComponent(agentName || ROOT_AGENT_KEY)}/avatar`;
   const opts = dataUrl
     ? { method: 'PUT', headers: { 'Content-Type': 'application/json', ...authHeaders() }, body: JSON.stringify({ dataUrl }) }
     : { method: 'DELETE', headers: authHeaders() };
@@ -116,7 +116,7 @@ function pushAvatar(agentName, dataUrl) {
  */
 const avatarSyncInFlight = new Set();
 function convergeAvatar(agentName, repaint, force) {
-  const name = agentName || 'Nebula';
+  const name = agentName || ROOT_AGENT_KEY;
   if (avatarSyncInFlight.has(name)) return;
   const wrote = localWriteAt.get(name) || 0;
   if (wrote && Date.now() - wrote < LOCAL_WRITE_GRACE_MS) return; // 自己的 PUT 在途
@@ -160,10 +160,10 @@ function convergeAvatar(agentName, repaint, force) {
 /** 上传图降采样上限（px）：localStorage 配额友好（avatarCache.js 同款配额纪律）。 */
 const MAX_DIM = 256;
 
-/** 当前会话头身份 = 活动会话的 agent（root 会话恒 'Nebula' 机制名）。 */
+/** 当前会话头身份 = 活动会话的 agent（root 会话恒 ROOT_AGENT_KEY 机制名）。 */
 export function currentAgentName() {
   const active = state.sessions ? state.sessions.find((s) => s.id === state.activeSessionId) : null;
-  return (active && active.agentName) || 'Nebula';
+  return (active && active.agentName) || ROOT_AGENT_KEY;
 }
 
 // ── dock 中键头像读数面（中键改版批 · 作者令 2026-10-29 23:36）────────
@@ -202,11 +202,10 @@ function notifyAvatarSubs() {
 
 /** 会话头显示名（与 sidebar.js updateHeaderSessionName 同一读链的本地镜像：
  *  root → rootName 单读点（未命名 = 空串，机制名永不作为显示回落）；
- *  非 root → agentsData displayName，机制名兜底。 */
+ *  非 root → 同一单读点 agentDisplayName（该 agent 自己的显示名）。 */
 function headerLabel(agentName) {
-  if (agentName === 'Nebula') return isRootNamed() ? rootDisplayName() : '';
-  const row = (state.agentsData || []).find((a) => a.name === agentName);
-  return (row && row.displayName) || agentName;
+  if (agentName === ROOT_AGENT_KEY) return isRootNamed() ? rootDisplayName() : '';
+  return agentDisplayName(agentName);
 }
 
 // ── 会话头头像槽（两端同一节点；css/chat.css 桌面形 / mobileLayer.css 手机形）──
@@ -425,9 +424,9 @@ function saveName() {
   if (!nameInput) return;
   const agentName = currentAgentName();
   const next = nameInput.value.trim();
-  if (agentName === 'Nebula') {
+  if (agentName === ROOT_AGENT_KEY) {
     state.rootDisplayName = next;
-    const self = (state.agentsData || []).find((x) => x.name === 'Nebula');
+    const self = (state.agentsData || []).find((x) => x.name === ROOT_AGENT_KEY);
     if (self) self.displayName = next;
   } else {
     const row = (state.agentsData || []).find((a) => a.name === agentName);

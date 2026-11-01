@@ -3191,9 +3191,14 @@ function bgTaskOrigin(task) {
       else cat = 'nebula';
     }
   }
+  // Nebula 退役批（作者令 2026-11-01「界面里不该再有 Nebula 的身影」）：主 agent
+  // 开启的任务一律标**用户给它起的名字**（单一显示名读点 rootDisplayName —— 未命名
+  // 读通用称呼）。后端 originLabel 携带的是机制名（BgTaskRegistry.originFor =
+  // RootAgentIdentity.Name），只作数据面标记，**不上屏** ⇒ 此分支整体覆盖 label。
+  // 后台 agent 的 chip 不变：delegate 短名 / dispatcher / node 名 / 设备名 = 自身身份。
+  if (cat === 'nebula') return { cat, label: rootDisplayName() };
   if (!label) {
-    label = cat === 'nebula' ? rootDisplayName()
-      : cat === 'dispatcher' ? (task.sessionId ? 'dispatcher' : 'dispatcher')
+    label = cat === 'dispatcher' ? (task.sessionId ? 'dispatcher' : 'dispatcher')
       : cat === 'device' ? (deviceFromDesc || 'device')
       : (task.sessionId || 'node');
   }

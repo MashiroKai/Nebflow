@@ -52,7 +52,7 @@ import { startWorklineItem, doneWorklineItem, failWorklineItem, thinkingWorkline
 // Root agent DISPLAY name (single read point — rootName.js). Leaf module
 // (state.js only) ⇒ no cycle. Used only on display faces; mechanism keys stay
 // the literal "Nebula".
-import { isRootNamed, rootDisplayName } from './rootName.js';
+import { isRootNamed, rootDisplayName, agentDisplayName } from './rootName.js';
 // askuser-dragdrop 实施批（2026-10-19，批 #551）：卡片作用域答复附件面（拖入即传
 // / 粘贴 / 点选；入口判据 = `answerAttachmentsAllowed`——只给开放题，secret/dirPicker/
 // 选择题卡一律静默无入口，作者修正①②）+ 历史卡「已回答 · 附 N 个文件」徽标。
@@ -3122,7 +3122,7 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
   row.dataset.msgId = nextChatMsgId();
   attachQuoteMenu(row, {
     kind: 'ask', question: askUserCardQuestionText(items),
-    senderRole: 'askUser', senderName: agentName || rootDisplayName(), ts: Date.now(),
+    senderRole: 'askUser', senderName: agentName ? agentDisplayName(agentName) : rootDisplayName(), ts: Date.now(),
   });
   // Ghost seat (askuser-hybrid 重皮 2026-10-06): this bubble's only payload is
   // the AskUser card (+ source badge / optional canvas button) — the bubble
@@ -3545,7 +3545,9 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     const sourceBadge = document.createElement('div');
     sourceBadge.className = 'perm-source-badge';
     const shortSession = sourceSession ? sourceSession.substring(0, 12) : '';
-    const agentLabel = sourceTeam ? `${sourceTeam}/${sourceAgent}` : sourceAgent;
+    // Nebula 退役批（作者令 2026-11-01）：来源 badge 的 agent 段走单一显示名读点
+    // （根会话 = 用户起的名字 / 未命名 = 通用称呼；后台 agent = 自身身份）。
+    const agentLabel = sourceTeam ? `${sourceTeam}/${sourceAgent}` : agentDisplayName(sourceAgent);
     sourceBadge.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17l9.2-9.2M17 17V7H7"/></svg>' +
       '<span>' + escapeHtml(t('chat.permSource', { agent: agentLabel, session: shortSession })) + '</span>';
     bubble.appendChild(sourceBadge);
