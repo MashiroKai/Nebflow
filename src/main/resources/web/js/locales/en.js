@@ -1222,10 +1222,12 @@ export default {
   'settings.secretsNone': 'No secrets yet',
   'settings.addProvider': '+ Add Provider',
   'settings.modelChainHint': 'Type the /model command to configure per-role model chains in unified or per-role mode.',
-  // 配置面风格统一批②（2026-10-31 作者令）：设置页回退链节（/model 回退链
-  // 编辑器同款内容面，两份共享同一状态/保存通道）。
-  'settings.modelChainTitle': 'Model fallback chain',
-  'settings.modelChainSectionHint': 'Primary model and fallback order. Every change saves instantly and stays in sync with the /model panel.',
+  // 配置面风格统一批②（2026-10-31 作者令）：设置页顺序节（/model 顺序编辑器
+  // 同款内容面，两份共享同一状态/保存通道）。
+  // 精简批（作者令 2026-11-01）：标题「模型回退链」→「模型选择顺序」；说明
+  // 压到一行以内（超长删繁就简，不再折行）。
+  'settings.modelChainTitle': 'Model selection order',
+  'settings.modelChainSectionHint': 'First row is primary — drag to reorder, saves on change.',
   // /model panel (modelcfg Phase 1)
   'model.title': 'Model Configuration',
   'model.modeUnified': 'Unified',
@@ -1235,10 +1237,6 @@ export default {
   'model.chainHead': 'Primary',
   'model.chainFallback': 'Fallback',
   'model.addModel': 'Add model',
-  'model.refreshList': 'Refresh list',
-  'model.refreshFailed': 'Refresh failed — you can type a provider/model manually',
-  'model.manualInput': 'Manual input',
-  'model.manualPlaceholder': 'provider/model',
   'model.orderNote': 'Order = automatic failover sequence',
   'model.followers': 'Followers',
   'model.followsNebula': 'Follows {agent}',
@@ -1259,8 +1257,6 @@ export default {
   'model.divergedBar': '{roles} configured independently; unaffected by the primary chain',
   'model.divergedView': 'View',
   'model.seedNote': 'Not configured — the first available model will be used',
-  'model.clearChain': 'Clear chain',
-  'model.clearChainConfirm': 'Clearing deletes this role\u2019s own chain and falls back to the seed chain (first available model). Continue?',
   'model.singleModelNote': 'Only 1 model and no fallback — errors go straight to the reserve tier',
   'model.loadFailed': 'Failed to load',
   // Ledger #937: panel-wide degraded face (all role reads failed — silent-dead

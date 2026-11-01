@@ -150,10 +150,7 @@ const ROLE_KEY = {
   'nebflow': 'model.roleExecutor',
 };
 
-/** Probed model ids per provider (dynamic layer, refreshed on demand). */
-const probedModels = new Map();
-
-// 配置面风格统一批②（2026-10-31 作者令）：设置页「模型回退链」节与 /model
+// 配置面风格统一批②（2026-10-31 作者令）：设置页「模型选择顺序」节与 /model
 // 面板共享同一份状态/保存通道（本模块的 roleState + PUT /api/agents/:name/
 // model）——任一侧保存后 emitChainChange() 通知另一侧即时重渲，改哪边都
 // 即时同步（面板侧重渲走 refreshPanel，设置页节重渲走 mountModelChainSection
@@ -259,44 +256,6 @@ async function putChain(role, chain) {
 
 const saveChain = (role) => putChain(role, roleState.get(role)?.chain || null);
 
-// ── Dynamic model list (POST /provider/models) ─────────────
-
-/**
- * Probe every configured provider for its live model list and merge the
- * results into the picker's dynamic layer. Failures degrade to the static
- * list + manual input (toast), mirroring the settings-page provider dialog.
- */
-async function refreshModelList() {
-  const providers = state.parsedConfig?.llm?.providers || {};
-  const names = Object.keys(providers).filter(n => providers[n]?.baseUrl);
-  if (names.length === 0) { flashManualInput(); return; }
-  let ok = 0;
-  await Promise.all(names.map(async n => {
-    try {
-      const resp = await fetch('/api/provider/models', {
-        method: 'POST',
-        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: n, baseUrl: providers[n].baseUrl }),
-      });
-      if (!resp.ok) return;
-      const data = await resp.json();
-      const models = (data.models || []).filter(m => typeof m === 'string' && m);
-      if (models.length) { probedModels.set(n, models); ok++; }
-    } catch (e) { /* per-provider failure: keep the static list for it */ }
-  }));
-  if (ok === 0) flashManualInput();
-  else {
-    renderPanel();
-    emitChainChange(); // 设置页节的「刷新列表」结果同步（配置面风格统一批②）
-  }
-}
-
-/** Refresh failed / nothing probeable — reveal the manual input as the fallback. */
-function flashManualInput() {
-  window.__showToast?.(t('model.refreshFailed'), 'error');
-  panelEl?.querySelectorAll('.mp-manual').forEach(el => { el.style.display = ''; });
-}
-
 // ── Inline error helper ────────────────────────────────────
 // ui-status-redesign（盘点 #38，S9 同族）：行首 circle-alert 红图标 + 中性正文。
 
@@ -364,9 +323,9 @@ function addSelectHtml(refs, chain, restricted = null) {
 
 /**
  * Editor for one role's working chain: rows (drag to reorder, remove) + the
- * provider-grouped add dropdown + refresh + manual input. Mutates
- * roleState[role].chain in place; every mutation calls `commit(role)` — the
- * per-action save. Appends itself to `container`.
+ * provider-grouped add dropdown. Mutates roleState[role].chain in place; every
+ * mutation calls `commit(role)` — the per-action save. Appends itself to
+ * `container`.
  */
 function buildChainEditor(container, role, commit) {
   const st = roleState.get(role);
@@ -375,18 +334,13 @@ function buildChainEditor(container, role, commit) {
 
   const editor = document.createElement('div');
   editor.className = 'mp-editor';
-  const probed = [];
-  probedModels.forEach((list, prov) => list.forEach(m => probed.push(`${prov}/${m}`)));
-  const allRefs = [...new Set([...getAllModelRefs(), ...probed])];
+  const allRefs = getAllModelRefs();
   const current = st.data?.current || '';
   const restricted = restrictedMapOf(st.data);
   editor.innerHTML = `
     <div class="mp-rows">${chainRowsHtml(chain, current, restricted)}</div>
     <div class="mp-addrow">
       ${addSelectHtml(allRefs, chain, restricted)}
-      <button type="button" class="cfg-btn cfg-btn-sm mp-refresh">${esc(t('model.refreshList'))}</button>
-      <button type="button" class="cfg-btn cfg-btn-sm mp-manual-toggle">${esc(t('model.manualInput'))}</button>
-      <input type="text" class="cfg-input mp-manual" style="display:none" placeholder="${esc(t('model.manualPlaceholder'))}">
     </div>
     <div class="mp-inline-err" role="alert"></div>
     ${chain.length === 1 ? `<div class="mp-note">${esc(t('model.singleModelNote'))}</div>` : ''}`;
@@ -452,8 +406,8 @@ function buildChainEditor(container, role, commit) {
   });
 
   // Remove — the last remaining row cannot be deleted (a chain keeps at least
-  // one model; the seed fallback is reachable through the explicit controls:
-  // clear-chain on Nebula, re-follow on followers).
+  // one model). 精简批 2026-11-01：清空链钮退役后，回 seed 态的入口只剩
+  // follower 侧的「恢复跟随」（Nebula 侧不再有清除钮）。
   editor.querySelectorAll('.mp-remove').forEach(btn => {
     (/** @type {HTMLElement} */ (btn)).addEventListener('click', (e) => {
       e.stopPropagation();
@@ -463,7 +417,8 @@ function buildChainEditor(container, role, commit) {
     });
   });
 
-  // Add from the provider-grouped dropdown
+  // Add from the provider-grouped dropdown — the single write action here
+  // (精简批 2026-11-01：刷新列表 / 手动输入 两路已退役，链行只管排序与删除)。
   const addSel = /** @type {HTMLSelectElement|null} */ (editor.querySelector('.mp-add-select'));
   addSel?.addEventListener('change', () => {
     const ref = addSel.value;
@@ -472,23 +427,6 @@ function buildChainEditor(container, role, commit) {
     chain.push(ref);
     commit(role);
   });
-
-  // Manual input fallback (revealed on refresh failure or on demand)
-  const manual = /** @type {HTMLInputElement|null} */ (editor.querySelector('.mp-manual'));
-  editor.querySelector('.mp-manual-toggle')?.addEventListener('click', () => {
-    if (manual) { manual.style.display = ''; manual.focus(); }
-  });
-  manual?.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    const ref = manual.value.trim();
-    if (!ref) return;
-    if (chain.includes(ref)) { flashInline(editor, t('model.errDuplicate')); return; }
-    chain.push(ref);
-    manual.value = '';
-    commit(role);
-  });
-
-  editor.querySelector('.mp-refresh')?.addEventListener('click', () => { refreshModelList(); });
 
   container.appendChild(editor);
   return editor;
@@ -554,9 +492,10 @@ function buildNebulaBlock(container, commit) {
   container.appendChild(block);
 }
 
-/** Nebula 链面共享体（配置面风格统一批②：/model 面板块与设置页回退链节的
+/** Nebula 链面共享体（配置面风格统一批②：/model 面板块与设置页顺序节的
  *  同一内容面）——seed 态（seed 注记 + 生效链预览 + 独立配置钮）或显式态
- *  （链编辑器 + 回退 seed 的清除钮）。两侧逐字节同款，样式与保存通道同源。 */
+ *  （链编辑器）。两侧逐字节同款，样式与保存通道同源。
+ *  精简批（作者令 2026-11-01）：「清空链」钮整块退役——链面只剩排序/加/删。 */
 function buildNebulaChainFace(body, commit) {
   const st = roleState.get('Nebula');
   const noChain = (st?.chain || null) === null;
@@ -578,20 +517,6 @@ function buildNebulaChainFace(body, commit) {
     return;
   }
   buildChainEditor(body, 'Nebula', commit);
-  // Explicit chain only: the way back to the seed state.
-  const foot = document.createElement('div');
-  foot.className = 'mp-foot';
-  const clearBtn = document.createElement('button');
-  clearBtn.type = 'button';
-  clearBtn.className = 'cfg-btn cfg-btn-sm mp-clear';
-  clearBtn.textContent = t('model.clearChain');
-  clearBtn.addEventListener('click', () => {
-    window.__showConfirm?.(t('model.clearChain'), t('model.clearChainConfirm'), async () => {
-      await putChain('Nebula', null);
-    }, { tone: 'neutral' });
-  });
-  foot.appendChild(clearBtn);
-  body.appendChild(foot);
 }
 
 function buildFollowerBlock(container, role, commit) {
