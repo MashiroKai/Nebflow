@@ -292,7 +292,7 @@
 .reminder-create-btn,
 .cfg-eye-btn,
 .agent-detail-prompt-toggle,
-.project-archive-btn {
+.project-unmount-btn {
   border: 1px solid transparent;
   transition: background 0.15s, color 0.15s, border-color 0.15s,
               box-shadow 0.15s, opacity 0.15s, transform 0.1s;
@@ -309,7 +309,7 @@
 .reminder-create-btn:hover,
 .cfg-eye-btn:hover,
 .agent-detail-prompt-toggle:hover,
-.project-archive-btn:hover {
+.project-unmount-btn:hover {
   background-color: var(--glass-control-bg-hover);
   background-image: linear-gradient(to bottom, var(--glass-control-specular) 0%, transparent 46%);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));

@@ -61,6 +61,20 @@ export default {
   // N2 project-tool 批（2026-10-06）：面板手动卸载（归档按钮）被 Project 工具
   // action="unmount" 工具面替代；播报镜像 archived（aria-live 状态行）。
   'project.unmountedAnnounce': '「{name}」已卸载——在飞任务已停，文件全部保留',
+  // unmount-console 面板批 2026-11-02：取消加载/重新加载 + 已卸载分组。
+  'project.unmountBtn': '取消加载',
+  'project.unmountTitle': '取消加载「{name}」？',
+  'project.unmountInflight': '当前在飞工作：{chains} 条链、{nodes} 个节点、{sessions} 个会话——取消加载会先把它们全部停止。',
+  'project.unmountConfirm': '确认后：「{name}」将从项目列表与 Agent 上下文中消失，不能再派活；本地文件全部保留（零删除）。之后可在「已卸载」分组里重新加载。',
+  'project.unmountConfirmGo': '取消加载',
+  'project.unmountFail': '取消加载「{name}」失败：{detail}',
+  'project.unmountedGroup': '已卸载',
+  'project.unmountedGroupHint': '项目已从上下文卸载，本地文件原样保留；重新加载即可恢复。',
+  'project.unmountedRowTitle': '「{name}」卸载于 {at}（本地文件保留）',
+  'project.remountBtn': '重新加载',
+  'project.remounting': '正在重新加载…',
+  'project.remountFail': '重新加载「{name}」失败：{detail}',
+  'project.remountedAnnounce': '「{name}」已重新加载',
   // Project-panel右下角「+」钮 + 轻弹层（projcreate 批 · 乙案：提交 = 预填主输入框 + 聚焦，
   // 零新端点、零新增写面 —— 描述框只收一段描述，不设路径/名称字段：乙案前端不写盘，
   // 放一个前端无从校验的路径框 = 假控件；路径由 Nebula 侧 ProjectCreate 自带路径面板解析）。
@@ -2761,6 +2775,31 @@ export default {
   'taskpanel.grpRunning': '运行中',
   'taskpanel.grpQueued': '排队',
   'taskpanel.empty': '暂无任务',
+  // ── 待办列表面（ReminderIsland 复刻批 2026-11-02；词条 = ReminderIsland L10n 逐对迁）──
+  'todoface.aria': '待办列表',
+  'todoface.capsuleCount': '{n} 待办',
+  'todoface.overdue': '{n} 逾期',
+  'todoface.filter': '筛选',
+  'todoface.collapse': '收起',
+  'todoface.all': '全部',
+  'todoface.add': '添加提醒',
+  'todoface.done': '完成',
+  'todoface.titlePh': '标题',
+  'todoface.notesPh': '备注（可选）',
+  'todoface.prioNone': '无',
+  'todoface.prioLow': '低',
+  'todoface.prioMed': '中',
+  'todoface.prioHigh': '高',
+  'todoface.hasDue': '有截止时间',
+  'todoface.noDue': '无截止时间',
+  'todoface.emptyAll': '暂无提醒',
+  'todoface.emptyAdd': '点按添加提醒',
+  'todoface.complete': '标记完成',
+  'todoface.tagName': '提醒标签',
+  'todoface.tagNew': '新建标签',
+  'todoface.tagRename': '重命名',
+  'todoface.tagDelete': '删除',
+  'todoface.colorN': '颜色 {n}',
   // ── 感知域（mail-perception-impl 批）──
   'perception.title': '感知',
   'perception.close': '关闭',

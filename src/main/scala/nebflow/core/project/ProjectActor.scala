@@ -415,6 +415,32 @@ object ProjectActor:
     )
 
   /**
+   * **remount 帧单点**（unmount-console 面板批 2026-11-02）：ProjectRemount 成功腿
+   * 广播的 `projectRemounted` 帧——row 与 GET /api/projects 行同构（projectCreated
+   * 帧的 row 形状逐字复用：name/workspace/agentFile/description/createdAt/origin/
+   * device）+ `unmountedAt`（卸载标记的既有时刻，纯展示）+ `remountedAt`。emit 点 =
+   * ProjectRemount 步③挂载成功后，经**既有** wsHub.broadcast 全连接下发（🔴 零第二
+   * 套推送面）。前端按名定点恢复卡片 + 摘「已卸载」分组的灰态行；幂等腿（已挂载）
+   * 不发帧（无状态变化）。
+   */
+  def projectRemountedFrame(pd: ProjectDef, remountedAt: Long): Json =
+    Json.obj(
+      "type" -> "projectRemounted".asJson,
+      "project" -> pd.name.asJson,
+      "row" -> Json.obj(
+        "name" -> pd.name.asJson,
+        "workspace" -> pd.workspace.asJson,
+        "agentFile" -> pd.agentFile.asJson,
+        "description" -> pd.description.asJson,
+        "createdAt" -> pd.createdAt.asJson,
+        "origin" -> pd.origin
+          .fold(Json.Null)(o => Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)),
+        "device" -> ProjectStore.effectiveDevice(pd).asJson
+      ),
+      "remountedAt" -> remountedAt.asJson
+    )
+
+  /**
    * **链控三态帧单点**（chainview 批 2026-10-01）：链 pause / resume / cancel 后广播的
    * `chainState` 帧 —— 与上文两个项目级帧同族（同一 [[Json]] 构造函数纪律：🔴 禁调用点
    * 各拼帧形）。推送面复用**既有** `wsHub.broadcast`（REST 腿）与 `engine.wsSendFn`

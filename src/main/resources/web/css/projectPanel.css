@@ -92,11 +92,12 @@
 
 .project-open-btn svg { width: 15px; height: 15px; }
 
-/* 归档按钮（迁移方案 v2 §6.1）：卡片头部显式人工归档入口，尺寸/形态对齐
-   .project-open-btn（26×26 icon 按钮，位于 header 摘要右侧）。归档可逆
-   （可取消归档）→ 不用 danger 红语义；静态 ghost、hover 全玻璃材质，
+/* 取消加载按钮（unmount-console 面板批 2026-11-02）：卡片头部显式人工卸载入口
+   （原 .project-archive-btn 面位回归，类名随语义更替）。尺寸/形态对齐
+   .project-open-btn（26×26 icon 按钮，位于 header 摘要右侧）。卸载可逆（「已卸载」
+   分组可重新加载）→ 中性玻璃，不用 danger 红语义；静态 ghost、hover 全玻璃材质，
    走 sapphire.css Pattern A（同 .session-delete 等 icon 控件族，2026-09-05）。 */
-.project-archive-btn {
+.project-unmount-btn {
   flex: 0 0 auto;
   width: 26px;
   height: 26px;
@@ -110,7 +111,78 @@
   cursor: pointer;
   transition: background 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
 }
-.project-archive-btn svg { width: 15px; height: 15px; }
+.project-unmount-btn svg { width: 15px; height: 15px; }
+.project-unmount-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); }
+
+/* ── 已卸载分组（unmount-console 面板批 2026-11-02）：卸载态项目的可见去处 ──
+   列表尾部一组灰态行（名字 + 工作区 + 「重新加载」）。灰态 = 减淡（muted），
+   不抢 mounted 卡的视觉权重；分组头一行小标题 + 语义提示。深浅主题全走
+   var(--color-*) token，零裸 hex。 */
+.project-unmounted-group {
+  margin: 14px 2px 4px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--color-border);
+}
+.project-unm-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0 12px 6px;
+  min-width: 0;
+}
+.project-unm-title {
+  flex: 0 0 auto;
+  font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  letter-spacing: 0.02em;
+}
+.project-unm-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  opacity: 0.75;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.project-unm-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+}
+.project-unm-row + .project-unm-row { margin-top: 2px; }
+.project-unm-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+.project-unm-ws {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+}
+.project-unm-remount {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  font: 500 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  cursor: pointer;
+}
+.project-unm-remount:disabled { opacity: 0.55; cursor: default; }
+.project-unm-remount:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); }
 
 /* ── Flow Map 就地视图（同标签页切换，projectTab.openFlowMapInPlace）────────── */
 

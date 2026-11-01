@@ -113,6 +113,11 @@ import { ticketUrl, queuedTicketUrl } from './nfTicket.js';
 // ——`nfCachedBlob` 查账 / `nfCachePut` 入账 / `nfViewerSource` 账本取数单点。
 import { fetchBlobWithProgress, nfCacheDrop, nfCachedBlob, nfCachePut, nfViewerSource } from './nfFileCache.js';
 import { MAX_INLINE_IMAGE_BYTES, isImageAttachmentName } from './attachmentPreview.js';
+// 附件卡渲染出口（fm-att-card-unify 批 2026-11-02 · 作者令「三面板全部改接主会话卡
+// 语言，不许各自维护一套样式」）：媒体面/文件面/下载键字形/扩展名单点全部取自
+// popArtifacts（主会话卡语言唯一家）。依赖方向安全：popArtifacts 及其依赖不回指本模块
+// （无环）。
+import { buildMediaFlat, buildFileCard, extOf, fitMediaBox, DOWNLOAD_SVG, DL_CHECK_SVG } from './popArtifacts.js';
 
 let conversations = [];
 let friendsCache = [];          // accepted friends — source of truth for §3.3 gate
@@ -1835,17 +1840,6 @@ const ATT_NOTE_KEY = {
   unreadable: 'messages.attachUnreadable',
 };
 
-/** 人类可读体积（十进制，与作者给定数的「1024 MB = 1 GiB = 1,073,741,824 B」同量纲）。 */
-function fmtBytes(n) {
-  const v = Number(n);
-  if (!isFinite(v) || v < 0) return '';
-  if (v < 1000) return `${v} B`;
-  const units = ['KB', 'MB', 'GB'];
-  let x = v / 1000, i = 0;
-  while (x >= 1000 && i < units.length - 1) { x /= 1000; i++; }
-  return `${x < 10 ? x.toFixed(1) : Math.round(x)} ${units[i]}`;
-}
-
 /** §B.4 占位正文的**逐字**复算（用于识别服务端生成的占位文本，见 `fillBubble`）。 */
 function attPlaceholderName(name) {
   const cp = Array.from(String(name == null ? '' : name));
@@ -1921,170 +1915,207 @@ async function ackAttachmentLanded(att, blob) {
   } catch { /* 静默：回执面永不影响用户 */ }
 }
 
-/** 单件卡片。`kind` 由元数据判定；下载失败**就地**改文案（可重试），
-  * 410（服务端权威）**就地**升级为已过期（终态）。 */
-function attachmentCard(att) {
+/** 单件卡片（fm-att-card-unify 批 2026-11-02 · 作者令「附件卡样式统一成主会话的附件卡
+ *  样式」）：**渲染出口 = popArtifacts 的主会话卡面**（媒体面 `buildMediaFlat` / 文件面
+ *  `buildFileCard`，全站唯一一家，禁第二套卡实现）。本函数只做三件事：
+ *   ① 判面（`mediaFaceKindOf` 单点）：图片且有可期字节 ⇒ 主会话媒体面（圆角卡、自比
+ *      例、点开 = 既有预览腿）；其余（文件 / 过期 / 上传中 / 不可读）⇒ 主会话文件面
+ *      （名称/大小/footer 信息行）。
+ *   ② 状态等价适配（申报）：`expired/uploading/unreadable` 无字节 ⇒ footer 信息行追加
+ *      状态段 + 灰态；设备传输五态 ⇒ 状态段/路径位/进度条原信息结构挂卡（`fm-att-*`
+ *      既有类零改名）。
+ *   ③ 交互腿零回归：点击 = 既有 Canvas 预览腿（`makeCardPreviewable` 原样复用）；下载
+ *      键 = 主会话 `.msg-copy.msg-dl` 键族（字节腿 = 既有 `downloadAttachment` /
+ *      `downloadDeviceSavedAttachment`，反馈改用主会话同款图标闪色——申报差异）。
+ *
+ *  `opts.noMediaFace`：字节失败就地降级腿（媒体面 swap 回文件面）的重建入参。
+ *  `export` = 测试 seam（file-bytes-single-fetch harness 同款纪律：驱动真实生产链）。 */
+export function attachmentCard(att, opts) {
   const kind = attStateOf(att);
-  const card = el('div', `fm-att fm-att-${kind}`);
+  const name = (att && att.name) || t('messages.attachUnnamed');
+  const src = kind === 'device' ? deviceByteSourceOf(att) : null;
+  const mediaKind = mediaFaceKindOf(att, kind, opts);
+  const card = mediaKind === 'media'
+    ? buildMediaAttachmentCard(att, kind, name, src)
+    : buildFileAttachmentCard(att, kind, name, src);
   card.dataset.attState = kind;
   card.dataset.attId = (att && att.id) || '';
+  return card;
+}
 
-  const name = el('span', 'fm-att-name', (att && att.name) || t('messages.attachUnnamed'));
-  card.appendChild(name);
-  const sizeText = fmtBytes(att && att.size);
-  if (sizeText) card.appendChild(el('span', 'fm-att-size', sizeText));
-
-  // ── 设备面文件卡（MVP-1 · 卡 D4「适配 attachmentCard + 气泡状态位保留传输态」）──
-  // 状态判据 = 设备腿 5 态（pending/accepted/transferring/completed/failed）。
-  // 📌 devattach 批 · 作者令 2026-09-17 12:31（逐字）：「设备对话窗口的附件行为和群聊/
-  //    好友的行为不一致。首先 ui/动画的行为上要一致，操作逻辑也要一致，群聊和好友发送的
-  //    附件，是可以直接点击在 canvas 打开的，但是设备对话框的就不行。」
-  //    ⇒ 本分支的**判据 = 与好友/群分支对齐**：
-  //      · 点击 ⇒ `previewBlob`（与好友面**同一条** Canvas 渲染腿）；
-  //      · 下载键 ⇒ 既有 `.fm-att-dl` 键族（同款呈现/动效）。
-  //    🔴 **旧登记已被本令推翻**：此处原注「设备面的落盘由接收端传输链负责…没有应用内
-  //    鉴权下载路由 ⇒ **不挂下载键**（禁「可点但点了报错」的假按钮，§B.7 ③）」——
-  //    本机落盘件**有**既有字节路由（`nfTicket.ticketUrl` ⇒ `/api/nf-file?path=…&ticket=…`，
-  //    即设备内联图片腿同一个字节源），故「无下载面」的前提不成立；键现按
-  //    `canFetchLocalBytes` 判据挂（§B.7 ③ 本身仍成立：票据路由不服务的类型不挂键）。
+/** 判面（**单点**，`fillBubble` 的媒体独占模式与 `attachmentCard` 共用同一判据）：
+ *  图片 ∧ 呈现态可出媒体面 ∧ 未被降级腿点名 ⇒ `'media'`；否则 `'file'`。
+ *  媒体面判据逐条：
+ *   · 类型 = `isImageAttachmentName`（与乐观范围闸同一张类型表，禁第二张）；
+ *   · 呈现态：`ready`（有 id 才有字节）/ `device`（blob 腿或可服务的本机路径）/
+ *     `uploading`（发送侧乐观面带 `localFace` 本机句柄——接收侧 uploading 无字节，不出面）；
+ *   · 内联预算 = 既有 `MAX_INLINE_IMAGE_BYTES`（超预算可见降级为文件面，原口径）；
+ *   · `opts.noMediaFace` = 字节失败降级腿的重建标记（防降级面再次出面成环）。 */
+function mediaFaceKindOf(att, kind, opts) {
+  if (opts && opts.noMediaFace) return 'file';
+  const name = (att && att.name) || '';
+  if (!isImageAttachmentName(String(name))) return 'file';
+  if (typeof att.size === 'number' && att.size > 0 && att.size > MAX_INLINE_IMAGE_BYTES) return 'file';
+  if (kind === 'ready') return att.id ? 'media' : 'file';
   if (kind === 'device') {
-    card.appendChild(el('span', 'fm-att-device-status', deviceTransferText(att)));
-    // 预览/下载两腿的**共同前提** = 本机有可读件（发出腿 user / 未完成 / 失败 ⇒ 无句柄无路径
-    // ⇒ 本地没有这件 ⇒ 不挂可点面、不挂键；状态位文案即用户可见的说明，§B.7 ③）。
-    // selfattach 批：判据收敛到**单点** `deviceByteSourceOf`（blob = 发送侧句柄 / path = 本机路径）。
-    const src = deviceByteSourceOf(att);
-    const srcPath = src.kind === 'path' ? src.path : '';
-    // ③ 下载键（作者令 2026-09-17 12:31「操作逻辑也要一致」）：位次紧跟状态位（同一行），
-    //    路径位/进度条仍各占整行 ⇒ 几何与改前一致，只多一枚键（与好友卡同名同类同款）。
-    //    挂键判据 = **能整件取回字节**：
-    //      · blob 腿（发送侧 `File` 在手）⇒ 恒可（`saveBlob` 只吃这枚 blob，无路由可拒）；
-    //      · path 腿 ⇒ 既有 `canFetchLocalBytes`（票据路由白名单；文本腿不挂键）逐字不变。
-    //    §B.7 ③「禁可点但点了报错」两条腿都成立。
-    if (src.kind === 'blob' || (src.kind === 'path' && canFetchLocalBytes(srcPath))) {
-      const note = el('span', 'fm-att-note', t('messages.attachDownload'));
-      note.classList.add('visually-hidden-note'); // 常态只显示键；失败/成功后就地显示文案
-      const btn = el('button', 'fm-att-dl', t('messages.attachDownload'));
-      btn.type = 'button';
-      btn.setAttribute('aria-label', `${t('messages.attachDownload')}: ${(att && att.name) || ''}`);
-      btn.addEventListener('click', () => downloadDeviceSavedAttachment(att, card, btn, note, src));
-      card.appendChild(btn);
-      card.appendChild(note);
-    }
-    if (att && att.deviceSavedPath) card.appendChild(el('span', 'fm-att-device-path', String(att.deviceSavedPath)));
-    // B′ 腿（agent 发）：把发送端本机真实路径显示在同一路径位（同一既有类名，零新样式）。
-    else if (att && att.deviceOutPath) card.appendChild(el('span', 'fm-att-device-path', String(att.deviceOutPath)));
-    const pct = att && att.devicePct;
-    if (typeof pct === 'number') {
-      const track = el('div', 'fm-att-device-progress');
-      const bar2 = el('div', 'fm-att-device-progress-bar');
-      bar2.style.width = `${Math.max(0, Math.min(100, pct))}%`;
-      track.appendChild(bar2);
-      card.appendChild(track);
-    }
-    // ④ 图片直显（设备端）：按字节源分派（blob = 本机句柄 / path = 既有票据链）。
-    attachInlineImage(card, att, kind, src);
-    // ① 点击 ⇒ Canvas 预览（与好友/群同路）。
-    //    可点判据按字节源：path 腿 = 既有 `canPreviewLocalPath`（逐字）；blob 腿 = `canPreviewName`
-    //    （同一判据源，收**真实名**）⇒ `.zip` 之类不挂假可点面（§B.7 ③）。
-    const previewable = src.kind === 'blob'
-      ? canPreviewName(String((att && att.name) || ''))
-      : (src.kind === 'path' && canPreviewLocalPath(srcPath));
-    if (previewable) {
-      makeCardPreviewable(card, att, () => previewDeviceSavedAttachment(att, card, src));
-    }
-    return card;
+    const s = deviceByteSourceOf(att);
+    return (s.kind === 'blob' || (s.kind === 'path' && canPreviewLocalPath(s.path))) ? 'media' : 'file';
   }
+  if (kind === 'uploading') return att.localFace ? 'media' : 'file';
+  return 'file';
+}
 
-  /** @type {HTMLElement} */
-  const note = el('span', 'fm-att-note',
-    kind === 'ready' ? t('messages.attachDownload') : t(ATT_NOTE_KEY[kind] || 'messages.attachUnreadable'));
-  if (kind === 'ready') {
-    const btn = el('button', 'fm-att-dl', t('messages.attachDownload'));
-    btn.type = 'button';
-    btn.setAttribute('aria-label', `${t('messages.attachDownload')}: ${(att && att.name) || ''}`);
-    btn.addEventListener('click', () => downloadAttachment(att, card, btn, note));
-    card.appendChild(btn);
-    card.appendChild(note);
-    note.classList.add('visually-hidden-note'); // 常态下只显示按钮；状态文案在失败/成功后就地显示
-    // 预览腿（作者令 2026-09-15）：**整卡可点 = 在 Canvas 里预览**；下载键是卡内
-    // 嵌套键，其点击不得冒泡成预览（见 `makeCardPreviewable` 的事件路由）。
-    // 只有 `ready` 态挂可点面：其余态无字节可取（§B.7 ③ 不造假按钮）。
-    // ④ 图片直显（好友端 / 群聊端 —— 两面共用本卡片单点渲染）。
-    attachInlineImage(card, att, kind);
-    makeCardPreviewable(card, att, () => previewFriendAttachment(att, card));
-  } else {
-    card.appendChild(note);
-    card.setAttribute('aria-disabled', 'true');
-    // ① 发送侧乐观面（imgmsg 批）：本机件在上传在飞时的**唯一出帧腿** ——
-    //    `att.localFace` 在场才挂（发送侧）；接收侧的 uploading/unreadable/expired 卡
-    //    照旧**零直显槽**（`attachInlineImage` 首行即返回 ⇒ 逐字现状）。
-    attachInlineImage(card, att, kind);
+/** 图片附件卡：主会话媒体面（`.pop-media-flat`，220px 自比例圆角卡）+ 面角下载键
+ *  （复用主会话 `.pop-media-canvas` 角标位——主会话角标 = Canvas 打开（其次级动作），
+ *  三窗整卡点击 = 打开（首要动作），角标位空出来承载下载，同一角标语言，申报差异）。
+ *  字节 = 既有腿（`attachInlineImage`，账本/LRU/预览字段/票据链全保留），出帧目标 =
+ *  面内 `.pop-img`；取字节失败 ⇒ `swapMediaCardToFileCard` 可见降级（不造破图）。 */
+function buildMediaAttachmentCard(att, kind, name, src) {
+  const card = el('div', `fm-att fm-att-${kind} fm-att-media`);
+  const item = { kind: 'image', name, dry: true };
+  const downloadable = kind === 'ready'
+    || (kind === 'device' && src && (src.kind === 'blob' || (src.kind === 'path' && canFetchLocalBytes(src.path))));
+  const dlBtn = downloadable ? buildDownloadKey(att, card, kind, src) : null;
+  const face = buildMediaFlat(item, { onClick: null, corner: dlBtn });
+  card.appendChild(face);
+  if (kind === 'device') appendDeviceExtras(card, att, kind);
+  const img = face.querySelector('img');
+  attachInlineImage(card, att, kind, src, img);
+  // 可点判据（与改前逐字同表）：`ready` / 设备有本机件；`uploading` 乐观面**不挂**
+  // 可点面（与改前一致——上传在飞无预览腿）。
+  const previewable = kind === 'ready'
+    || (kind === 'device' && src && (src.kind === 'blob'
+      ? canPreviewName(String(name))
+      : canPreviewLocalPath(src.path)));
+  if (previewable) {
+    makeCardPreviewable(card, att, () => previewAttachmentOf(att, card, kind, src));
   }
   return card;
 }
 
-// ── ③ 气泡预览盒几何（**唯一算术落点**）· visup-ratio 批 · 作者 2026-09-19 01:29 令 ──
-// 「气泡预览图尺寸按图片**真实宽高比**（禁写死固定比）；微信做法 = 按原图尺寸决定预览框
-//  宽高比；实现侧自定 min/max 夹取防极端长宽比破版；参数按视觉定并在卡面申报。」
-// ⇒ 本段四个常数即**申报的参数**（卡片同款：`css/friends.css` 的 `.fm-att-inline img` 段），
-//    CSS 侧只消费 `--fm-att-w` / `--fm-att-ar`，**禁**第二处比例算术（禁两套并行实现）。
-/** 上限盒宽（px）。沿用既有档（`.fm-att` 卡内容宽同量级）⇒ **零新增几何档**。 */
-const ATT_INLINE_BOX_W = 260;
-/** 上限盒高（px）。同上：既有档，盒永不大于 `260 × 200`。 */
-const ATT_INLINE_BOX_H = 200;
-/** 比夹取下界（1:2）：更竖的图按 1:2 出盒并**居中裁切**（防超长条把版撑破）。 */
-const ATT_INLINE_AR_MIN = 1 / 2;
-/** 比夹取上界（2:1）：更扁的图按 2:1 出盒并**居中裁切**（防超扁条把版撑破）。 */
-const ATT_INLINE_AR_MAX = 2;
-
-/** 由**原图内禀尺寸**算预览盒（**单点**：`W/H` 夹取 + 上限盒 contain + 禁放大）。
- *
- *  规则（与 CSS 段逐条对齐）：
- *   ① 比夹取：`r = clamp(nw / nh, AR_MIN, AR_MAX)`——越界图按界内比出盒（`cover` 居中裁切）；
- *   ② 上限盒：把 `r` 按 contain 装进 `260 × 200` ⇒ `r ≥ 260/200` 时定宽 260、否则定高 200；
- *   ③ 禁放大：盒不超过原图自身尺寸（小图按原尺寸出，不被拉大糊掉）。
- *  `ar` 回传**比率 token**：界内图直接用**所测字节源**的 `nw / nh`，越界图用夹取界
- *  （`2 / 1`、`1 / 2`）。⚠ 语义 = 「token 的**数值** == 目标比」而**非**「token 逐字恒定」：
- *  Chromium 对 `aspect-ratio` 的计算值**不约分**（`1600 / 900` 原样回读），且确认面按
- *  **小图**字节复量（`640 / 480` = 同比、不同 token）⇒ 断言一律走**数值比**（见 spec）。
- *  @param {number} nw 原图宽（px，>0） @param {number} nh 原图高（px，>0）
- *  @returns {{w:number, h:number, apx:number, ar:string, clamped:boolean}|null} 尺寸无效 ⇒ null */
-function inlineBoxFor(nw, nh) {
-  const W = Number(nw) || 0;
-  const H = Number(nh) || 0;
-  if (!(W > 0) || !(H > 0)) return null;
-  const raw = W / H;
-  let apx = raw;                    // 夹取后的**比值**（算术用）
-  let ar = `${W} / ${H}`;           // 夹取后的**比率 token**（CSS 用 + 读数面）
-  let clamped = false;
-  if (raw > ATT_INLINE_AR_MAX) { apx = ATT_INLINE_AR_MAX; ar = '2 / 1'; clamped = true; }
-  else if (raw < ATT_INLINE_AR_MIN) { apx = ATT_INLINE_AR_MIN; ar = '1 / 2'; clamped = true; }
-  const boxApx = ATT_INLINE_BOX_W / ATT_INLINE_BOX_H;
-  let bw = apx >= boxApx ? ATT_INLINE_BOX_W : ATT_INLINE_BOX_H * apx;
-  let bh = bw / apx;
-  if (bw > W) { bw = W; bh = bw / apx; }   // 禁放大（横向量）
-  if (bh > H) { bh = H; bw = bh * apx; }   // 禁放大（纵向量）
-  // 向下取整写宽（`ceil`/`round` 会把高度反向顶破 200px 上限：`h = w / r` 随 w 单调增）。
-  const wi = Math.floor(bw);
-  return { w: wi, h: Math.round((wi / apx) * 100) / 100, apx, ar, clamped };
+/** 文件/状态附件卡：主会话文件面（`.file-card`：图标 + 名称 + footer 信息行）。
+ *  footer 信息行 = `[类型, 大小, 状态段]`（状态段 = 过期/上传中/不可读/设备传输态——
+ *  信息结构等价适配，申报）。可下载（ready / 设备有本机件）⇒ 卡尾主会话下载键；
+ *  不可下载态不挂键（§B.7 ③ 禁可点但点了报错，逐字保留）。 */
+function buildFileAttachmentCard(att, kind, name, src) {
+  const card = buildFileCard(
+    { kind: 'file', name, ext: extOf(name), size: (att && att.size) || 0 },
+    {
+      onClick: null,
+      trailing: null,
+      subNote: kind === 'ready' ? '' : kind === 'device'
+        ? deviceTransferText(att)
+        : t(ATT_NOTE_KEY[kind] || 'messages.attachUnreadable'),
+    },
+  );
+  card.classList.add('fm-att', `fm-att-${kind}`);
+  const downloadable = kind === 'ready'
+    || (kind === 'device' && src && (src.kind === 'blob' || (src.kind === 'path' && canFetchLocalBytes(src.path))));
+  if (downloadable) {
+    card.appendChild(buildDownloadKey(att, card, kind, src));
+  } else {
+    card.setAttribute('aria-disabled', 'true');
+  }
+  if (kind === 'device') appendDeviceExtras(card, att, kind);
+  const previewable = kind === 'ready'
+    || (kind === 'device' && src && (src.kind === 'blob'
+      ? canPreviewName(String(name))
+      : canPreviewLocalPath(src.path)));
+  if (previewable) {
+    makeCardPreviewable(card, att, () => previewAttachmentOf(att, card, kind, src));
+  }
+  return card;
 }
 
-/** 把预览盒写进槽 `<img>`（**单点写面**）：CSS 只读这两个变量 + 三个读数面。
+/** 点击 ⇒ Canvas 预览（既有腿，判据与改前逐字同表）：好友/群 = `previewFriendAttachment`
+ *  （鉴权路由流式开）；设备 = `previewDeviceSavedAttachment`（blob/票据双腿）。 */
+function previewAttachmentOf(att, card, kind, src) {
+  return kind === 'device'
+    ? previewDeviceSavedAttachment(att, card, src)
+    : previewFriendAttachment(att, card);
+}
+
+/** 字节失败的就地降级腿：媒体面整卡换成文件面卡（名称/大小/下载键全保留）——
+ *  与改前「摘直显槽、卡片原样」同一语义，卡语言换成本批统一后的文件面。 */
+function swapMediaCardToFileCard(card, att) {
+  if (!card || !card.isConnected) return;
+  const fresh = attachmentCard(att, { noMediaFace: true });
+  card.replaceWith(fresh);
+}
+
+/** 下载键（主会话 `.msg-copy.msg-dl` 键族，唯一字形源 = popArtifacts 的 DOWNLOAD_SVG）：
+ *  点击 = 既有下载腿；反馈 = 主会话同款图标闪色（成功绿勾 1.5s / 失败红键 2s，
+ *  `.copied` / `.copy-failed` 既有规则——文案注记位由此退役，申报差异）。
+ *  键挂 `fm-att-dl` 标记类：卡级预览的嵌套控件豁免判据与既有 QA 钩子同源。 */
+function buildDownloadKey(att, card, kind, src) {
+  const btn = el('button', 'fm-att-dl msg-copy msg-dl');
+  btn.type = 'button';
+  const label = t('messages.attachDownload');
+  btn.title = label;
+  btn.setAttribute('aria-label', `${label}: ${(att && att.name) || ''}`);
+  btn.innerHTML = DOWNLOAD_SVG;
+  btn.addEventListener('click', () => {
+    if (kind === 'device') void downloadDeviceSavedAttachment(att, card, btn, src);
+    else void downloadAttachment(att, card, btn);
+  });
+  return btn;
+}
+
+/** 下载键闪色反馈（`.copied` 绿勾 / `.copy-failed` 红键，主会话同节奏）。 */
+function flashDownloadKey(btn, ok) {
+  if (!btn || !btn.isConnected) return;
+  btn.innerHTML = ok ? DL_CHECK_SVG : DOWNLOAD_SVG;
+  btn.classList.add(ok ? 'copied' : 'copy-failed');
+  setTimeout(() => {
+    if (!btn.isConnected) return;
+    btn.innerHTML = DOWNLOAD_SVG;
+    btn.classList.remove(ok ? 'copied' : 'copy-failed');
+  }, ok ? 1500 : 2000);
+}
+
+/** 设备卡的状态挂件（信息结构等价适配，申报）：传输态文案、路径位、进度条 ——
+ *  既有类名零改名（`.fm-att-device-status/path/progress`），媒体卡挂面下、文件卡挂行内
+ *  （CSS `flex-basis:100%` 通吃两种宿主）。 */
+function appendDeviceExtras(card, att, kind) {
+  if (kind !== 'device') return;
+  // 传输态文案：文件卡已并入 footer 信息行（subNote）⇒ 这里只给媒体卡补一行。
+  if (card.classList.contains('fm-att-media')) {
+    card.appendChild(el('span', 'fm-att-device-status', deviceTransferText(att)));
+  }
+  if (att && att.deviceSavedPath) card.appendChild(el('span', 'fm-att-device-path', String(att.deviceSavedPath)));
+  // B′ 腿（agent 发）：把发送端本机真实路径显示在同一路径位（同一既有类名，零新样式）。
+  else if (att && att.deviceOutPath) card.appendChild(el('span', 'fm-att-device-path', String(att.deviceOutPath)));
+  const pct = att && att.devicePct;
+  if (typeof pct === 'number') {
+    const track = el('div', 'fm-att-device-progress');
+    const bar2 = el('div', 'fm-att-device-progress-bar');
+    bar2.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+    track.appendChild(bar2);
+    card.appendChild(track);
+  }
+}
+
+// ── ③ 气泡预览盒几何 · 读数面（fm-att-card-unify 批 2026-11-02 判据换代）─────────
+// 「气泡预览图尺寸按图片**真实宽高比**」的算术**唯一属主 = popArtifacts 卡语言**
+// （`fitLayer`/`fitMediaBox`：真实比 + ≤220×420 装箱，无夹取）。本模块**不再持有
+// 任何比例算术**——旧 visup-ratio 批的 `[1:2, 2:1]` 夹取 + 260×200 上限盒随旧
+// `.fm-att-inline` 槽一并退役；`applyInlineRatio` 只把同一份装箱算术镜像到
+// `data-att-*` 读数面（禁第二套实现 = 禁读数与可见几何互相矛盾）。 */
+/** 把统一卡的盒读数写进出帧 `<img>`（**单点写面**，算术 = popArtifacts `fitMediaBox`）：
  *  `data-att-nat` = **本次所测字节源**的内禀尺寸（发送侧乐观面 = 原图；确认面按小图复量，
- *  同比不同 token）——它是读数面，不是「原图恒等式」的断言面。
+ *  同比不同 token）——它是读数面，不是「原图恒等式」的断言面；
+ *  `data-att-ar` / `data-att-box` = 同源镜像读数（不参与任何行为分支）。
  *  @param {HTMLImageElement} img @param {number} nw @param {number} nh
- *  @returns {{w:number, h:number, apx:number, ar:string, clamped:boolean}|null} */
+ *  @returns {{w:number, h:number, ar:string}|null} 尺寸无效 ⇒ null */
 function applyInlineRatio(img, nw, nh) {
-  const g = inlineBoxFor(nw, nh);
-  if (!img || !g) return null;
-  img.style.setProperty('--fm-att-w', `${g.w}px`);
-  img.style.setProperty('--fm-att-ar', g.ar);
-  // 读数面（不参与任何行为分支；与既有 `data-att-src` 同族）：
-  //   `data-att-nat` 原图内禀尺寸 · `data-att-ar` 夹取后比率 token · `data-att-box` 计算盒。
-  img.dataset.attNat = `${nw}x${nh}`;
-  img.dataset.attAr = g.ar;
-  img.dataset.attBox = `${g.w}x${g.h}`;
-  return g;
+  const W = Number(nw) || 0;
+  const H = Number(nh) || 0;
+  if (!img || !(W > 0) || !(H > 0)) return null;
+  const box = fitMediaBox(W, H);
+  img.dataset.attNat = `${W}x${H}`;
+  img.dataset.attAr = `${W} / ${H}`;
+  img.dataset.attBox = `${box.w}x${box.h}`;
+  return { w: box.w, h: box.h, ar: `${W} / ${H}` };
 }
 
 /** 取 URL 的内禀尺寸（解码一次；失败 ⇒ `null`，绝不阻断出帧）。
@@ -2168,13 +2199,15 @@ function paintInlineFrame(img, url, dims) {
  *    （调用方 `attachmentCard` 已算好；缺席时本函数自算，**同一单点**）
  *  @returns {boolean} 是否挂了直显槽
  *
- *  ── ③ 预览盒（作者 2026-09-19 01:29 令：**按原图真实宽高比** + min/max 夹取）──
- *  · **预留**：`<img>` 元素在**字节请求发出之前**入 DOM（无 `src` ⇒ 只渲染 CSS 盒 =
- *    可见骨架）。盒比 = 原图真实比（夹取后），由 `inlineBoxFor` 单点算出（见上段常数）。
- *  · **新占位语义（显式申报，非静默变更）**：骨架期 CSS 回退盒 = 既有上限盒
- *    （`260 / 200`）；比例可知的**同一帧**里换成真实比 —— 本函数/`fillLocalThumbs`
- *    **先解码后点 `src`** ⇒ 图片从不以错误比例被绘制、绘制后**零重排**；骨架 ↔ 真帧
- *    之间恰好**一次**几何变更，量值 = 由原图 `W×H` 精确算出的预测值。
+ *  ── ③ 预览盒（作者 2026-09-19 01:29 令：**按原图真实宽高比**；fm-att-card-unify 批
+ *     2026-11-02 判据换代：算术唯一属主 = popArtifacts 卡语言，**夹取退役**）──
+ *  · **预留**：媒体面 `<img>` 在**字节请求发出之前**入 DOM（无 `src` ⇒ 只渲染
+ *    `.pop-media-flat` CSS 回退盒 = 220×4:3 骨架）。字节就绪的**同一帧**换真实比
+ *    （popArtifacts `fitLayer` 单点写盒；`dataset.nfRatio` 读数）。
+ *  · **占位语义**：骨架期零抖动；比例可知的**同一帧**里换成真实比 —— 本函数/
+ *    `fillLocalThumbs` **先解码后点 `src`** ⇒ 图片从不以错误比例被绘制、绘制后
+ *    **零重排**；骨架 ↔ 真帧之间恰好**一次**几何变更，量值 = 装箱预测值
+ *    （`fitMediaBox`，≤220×420、无夹取——极值图按真实比出极值盒）。
  *  · 📌 **取代关系（勿回退）**：imgmsg 批（2026-09-18）的「`aspect-ratio: 13/10` 固定盒 ⇒
  *    字节到达前后零位移（Δ=0）」**已被 01:29 令取代** ⇒ 真实比与 Δ=0 在数学上互斥
  *    （骨架期不可能预知真实比），故「零位移」改由「真帧后零重排 + 单次变更 = 预测值」
@@ -2187,22 +2220,23 @@ function paintInlineFrame(img, url, dims) {
  *  `data-att-nat` / `data-att-ar` / `data-att-box` 是几何读数面（同上，非行为分支）。
  *
  *  `export` = 测试 seam（二次加载清剿批 2026-10-24：单取数 spec 驱动真实生产链；
- *  零行为变化——函数体一字未改，只是多了一个模块出口）。 */
-export function attachInlineImage(card, att, kind, src) {
-  if (!card || !att) return false;
+ *  零行为变化——函数体一字未改，只是多了一个模块出口）。
+ *
+ *  📌 **fm-att-card-unify 批（2026-11-02）口径更新**：出帧槽 = **调用方提供的媒体面
+ *  `<img>`**（`imgEl`，popArtifacts `buildMediaFlat` 面内那枚）——本函数不再自建
+ *  `.fm-att-inline` 槽（旧槽随卡语言统一退役）；取字节腿（账本/LRU/预览字段/本机
+ *  句柄/票据链）**逐字保留**，终态失败由「摘槽」改为「整卡降级为文件面」（同一可见
+ *  降级语义，卡语言换成本批统一后的文件面）。 */
+export function attachInlineImage(card, att, kind, src, imgEl) {
+  if (!card || !att || !imgEl) return false;
   /** 发送侧乐观面（本批唯一新腿）：本机字节句柄。 */
   const localFace = att.localFace || null;
   if (!localFace && kind !== 'ready' && kind !== 'device') return false;
-  if (card.querySelector('.fm-att-inline')) return false; // 幂等（防同卡重入）
+  const img = imgEl;
+  if (img.dataset.attSrc) return false; // 幂等（防同卡重入：字节源读数已在场）
   const name = (att && att.name) ? String(att.name) : '';
   if (!isImageAttachmentName(name)) return false; // 非图片 ⇒ 零行为变化
 
-  const box = el('div', 'fm-att-inline');
-  box.dataset.attInline = '1';
-  // ③ 骨架 = 这个 `<img>` 自身（无 `src` ⇒ 无内容，只剩 CSS 盒的底色/描边 ⇒ 可见骨架）。
-  const img = document.createElement('img');
-  img.alt = ''; // 骨架期无内容 ⇒ 装饰性（真名在字节就位时补上）
-  box.appendChild(img);
   let mounted = false;
   /** 账本 blob 解码失败的自愈腿（#816 同族语义，二次加载清剿批）：只由账本腿
    *  （设备 path 腿）在场——坏字节先逐出账本，再走既有票腿恰一次重挂。 */
@@ -2227,16 +2261,16 @@ export function attachInlineImage(card, att, kind, src) {
     // 账本腿（blob: URL）解码失败 = 手上这份缓存字节坏了（#816 同族语义）：
     // 先把该键逐出账本，再走既有票腿恰一次（`legacyRetry` 只由账本腿设置）——
     // 坏字节不粘死账本（否则 TTL 内每次渲染都命中同一份坏字节）。其余失败
-    // （含自愈后的第二次失败）照旧摘槽（`box.remove` 幂等，摘 detached 节点 = 无操作）。
+    // （含自愈后的第二次失败）照旧可见降级（fm-att-card-unify 批：整卡换文件面，
+    // 名称/大小/下载键全保留——与改前「摘槽、卡片原样」同一语义）。
     if (legacyRetry && img.src && img.src.startsWith('blob:') && !img.dataset.nfBlobRetried) {
       img.dataset.nfBlobRetried = '1';
       mounted = false; // 允许自愈腿重挂同一枚 img
       legacyRetry();
       return;
     }
-    box.remove();
+    swapMediaCardToFileCard(card, att);
   });
-  card.insertBefore(box, card.firstChild);
 
   if (kind === 'device') {
     // 设备面：字节 = **按字节源分派**（selfattach 批单点）——
@@ -2245,7 +2279,7 @@ export function attachInlineImage(card, att, kind, src) {
     //   · path 腿（收侧落点 / B′ 腿发送端路径）：既有 `nfTicket` ⇒ `/api/nf-file` 链**逐字保留**；
     //   · none（未完成 / 失败 / 无本机件）：不挂槽（状态位文案即说明面）。
     const s = src || deviceByteSourceOf(att);
-    if (s.kind === 'none') { box.remove(); return false; }
+    if (s.kind === 'none') { swapMediaCardToFileCard(card, att); return false; }
     if (s.kind === 'blob') {
       bindOutHandleEvicted();
       const key = String((att && att.deviceTransferId) || (att && att.name) || '');
@@ -2265,8 +2299,8 @@ export function attachInlineImage(card, att, kind, src) {
     legacyRetry = () => {
       void nfCacheDrop('nf:' + s.path).catch(() => {});
       queuedTicketUrl(s.path)
-        .then((url) => { if (url) mount(url, 'server-ticket'); else box.remove(); })
-        .catch(() => box.remove());
+        .then((url) => { if (url) mount(url, 'server-ticket'); else swapMediaCardToFileCard(card, att); })
+        .catch(() => swapMediaCardToFileCard(card, att));
     };
     // 二次加载清剿批修订（spec T6 验红钉出）：本腿**不挂会话内 objectURL 复用表**
     // （曾用 devnf: 键早退）——LRU 早退在账本**之前**，`nf-cache-invalidate` 只逐出
@@ -2279,8 +2313,8 @@ export function attachInlineImage(card, att, kind, src) {
       })
       .catch(() => {
         queuedTicketUrl(s.path)
-          .then((url) => { if (url) mount(url, 'server-ticket'); else box.remove(); })
-          .catch(() => box.remove());
+          .then((url) => { if (url) mount(url, 'server-ticket'); else swapMediaCardToFileCard(card, att); })
+          .catch(() => swapMediaCardToFileCard(card, att));
       });
     return true;
   }
@@ -2300,9 +2334,9 @@ export function attachInlineImage(card, att, kind, src) {
 
   // 好友 / 群聊：字节 = 既有鉴权下载路由。
   const id = att.id ? String(att.id) : '';
-  if (!id) { box.remove(); return false; }
+  if (!id) { swapMediaCardToFileCard(card, att); return false; }
   if (typeof att.size === 'number' && att.size > 0 && att.size > MAX_INLINE_IMAGE_BYTES) {
-    box.remove(); // 超内联预算 ⇒ 可见降级（卡片原样）
+    swapMediaCardToFileCard(card, att); // 超内联预算 ⇒ 可见降级（卡片原样）
     return false;
   }
   const cached = inlineObjectUrlOf(id);
@@ -2316,8 +2350,9 @@ export function attachInlineImage(card, att, kind, src) {
   //     `{mime,w,h,size,b64}` 与六键 `{fmt,w,h,bytes,sha256,b64}` **都认**；第三种未知
   //     方言 / 缺键 / `null` / 形状不全 / 越上限 ⇒ null ⇒ 走下面今天的「拉原件」路，逐字现状）；
   //   · `data:` 合成只经 `previewDataUrlOf`（全仓唯一合成点；wire 面零 `data:` 前缀）；
-  //   · 盒比协同（visup-ratio 批唯一算术落点）：尺寸已知 ⇒ 归一化 `w/h` 经
-  //     `mount`→`paintInlineFrame` 直通**同一个** `inlineBoxFor`（禁另立宽高逻辑），
+  //   · 盒比协同（fm-att-card-unify 批：算术唯一属主 = popArtifacts 卡语言）：
+  //     尺寸已知 ⇒ 归一化 `w/h` 经 `mount`→`paintInlineFrame` 直通**同一份**
+  //     `fitMediaBox` 装箱（读数面镜像，禁另立宽高逻辑），
   //     骨架→真帧同帧落地、且**零解码取尺寸**（连内禀尺寸探测都省了）；
   //   · 读数面：`data-att-src="inline-preview"` + `data-att-preview="1"`（免往返的机械读数
   //     = 本腿 `return` ⇒ `api.downloadAttachment` 调用计数 **0**）+ `data-att-dialect`
@@ -2340,7 +2375,7 @@ export function attachInlineImage(card, att, kind, src) {
   nfCachedBlob(attachKey)
     .then((hit) => {
       if (hit) {
-        if (typeof hit.size === 'number' && hit.size > MAX_INLINE_IMAGE_BYTES) { box.remove(); return; }
+        if (typeof hit.size === 'number' && hit.size > MAX_INLINE_IMAGE_BYTES) { swapMediaCardToFileCard(card, att); return; }
         mount(rememberInlineObjectUrl(id, URL.createObjectURL(hit)), 'server-cached');
         return;
       }
@@ -2350,14 +2385,14 @@ export function attachInlineImage(card, att, kind, src) {
         // 直显腿恒不可达。判据保留在上游（`isImageAttachmentName(name)`）+ 体积上限。
         if (!blob
           || (typeof blob.size === 'number' && blob.size > MAX_INLINE_IMAGE_BYTES)) {
-          box.remove();
+          swapMediaCardToFileCard(card, att);
           return;
         }
         void nfCachePut(attachKey, blob);
         mount(rememberInlineObjectUrl(id, URL.createObjectURL(blob)), 'server');
       });
     })
-    .catch(() => box.remove()); // 410 过期 / 网络 / 鉴权：卡片本身即降级面
+    .catch(() => swapMediaCardToFileCard(card, att)); // 410 过期 / 网络 / 鉴权：卡片本身即降级面
   return true;
 }
 
@@ -2385,7 +2420,10 @@ function rememberInlineObjectUrl(id, url) {
     if (oldest.done) break;
     const victim = inlineObjectUrls.get(oldest.value);
     inlineObjectUrls.delete(oldest.value);
-    const stillUsed = document.querySelector(`.fm-att-inline img[src="${victim}"]`);
+    // 「仍在屏上 ⇒ 不淘汰」的挂载面探针：fm-att-card-unify 批起出帧 img 挂在
+    // `.fm-att-media .pop-img`（旧 `.fm-att-inline` 槽退役）——判据面收窄为
+    // `.fm-msg img[src]`（消息卡作用域不变，覆盖现在与未来的消息内挂载腿）。
+    const stillUsed = document.querySelector(`.fm-msg img[src="${victim}"]`);
     if (!stillUsed) { try { URL.revokeObjectURL(victim); } catch { /* non-critical */ } }
     else { inlineObjectUrls.set(oldest.value, victim); break; } // 仍在屏上 ⇒ 不淘汰它
   }
@@ -2414,7 +2452,7 @@ function bindOutHandleEvicted() {
     const url = outInlineUrls.get(key);
     if (!url) return;
     outInlineUrls.delete(key);
-    const stillUsed = document.querySelector(`.fm-att-inline img[src="${url}"]`);
+    const stillUsed = document.querySelector(`.fm-msg img[src="${url}"]`);
     if (!stillUsed) { try { URL.revokeObjectURL(url); } catch { /* non-critical */ } }
     else { outInlineUrls.set(key, url); } // 仍在屏上 ⇒ 不淘汰它
   });
@@ -2438,7 +2476,7 @@ function rememberOutInlineUrl(key, url) {
     if (oldest.done) break;
     const victim = outInlineUrls.get(oldest.value);
     outInlineUrls.delete(oldest.value);
-    const stillUsed = document.querySelector(`.fm-att-inline img[src="${victim}"]`);
+    const stillUsed = document.querySelector(`.fm-msg img[src="${victim}"]`);
     if (!stillUsed) { try { URL.revokeObjectURL(victim); } catch { /* non-critical */ } }
     else { outInlineUrls.set(oldest.value, victim); break; } // 仍在屏上 ⇒ 不淘汰它
   }
@@ -2601,17 +2639,18 @@ async function previewFriendAttachment(att, card) {
 }
 
 /** 取字节：**只走应用内鉴权路由**（`/api/friends/attachments/{id}`，裁定②）。
-  * 🔴 前端不拼任何静态/公开 URL（服务端附件目录不挂 Caddy）。 */
-async function downloadAttachment(att, card, btn, note) {
+ *  🔴 前端不拼任何静态/公开 URL（服务端附件目录不挂 Caddy）。
+ *  fm-att-card-unify 批：反馈 = 主会话同款**图标闪色**（成功绿勾 1.5s / 失败红键 2s，
+ *  `.copied`/`.copy-failed` 既有规则）；410（服务端权威「已过期」终态）⇒ 整卡就地
+ *  重渲为过期文件面卡（状态段 + 灰态，与改前「就地升级终态」同一语义）。 */
+async function downloadAttachment(att, card, btn) {
   if (card.dataset.busy === '1') return;
   card.dataset.busy = '1';
   btn.disabled = true;
-  note.classList.remove('visually-hidden-note');
-  note.textContent = t('messages.attachDownloading');
   try {
     const { blob, filename } = await api.downloadAttachment(att.id);
     saveBlob(blob, filename || (att && att.name));
-    note.textContent = t('messages.attachDownloaded');
+    flashDownloadKey(btn, true);
     // 4b1 · E4（§F.1b）：**落盘尝试完成之后**才取证回执（saveBlob 抛 ⇒ 走下面的 catch ⇒ 零 E4）。
     // 🔴 `void` = 故意 **不 await**：回执面绝不阻塞/影响下载与 UI（失败静默容忍）。
     void ackAttachmentLanded(att, blob);
@@ -2621,17 +2660,11 @@ async function downloadAttachment(att, card, btn, note) {
       // **就地升级为终态**，并撤掉重试可能（不是「下载失败」）。
       // M2 账本 410 对账：终态过期 ⇒ 账本条目同步淘汰（同预览腿）。
       void nfCacheDrop(`attach:${att.id}`).catch(() => {});
-      card.dataset.attState = 'expired';
-      card.classList.remove('fm-att-ready');
-      card.classList.add('fm-att-expired');
-      btn.remove();
-      note.textContent = t('messages.attachExpired');
-      card.setAttribute('aria-disabled', 'true');
+      card.replaceWith(attachmentCard({ ...att, state: 'expired' }, { noMediaFace: true }));
       return;
     }
     // 传输/本地失败：**可重试**（§B.7 ③ 表第二行），绝不标成「已过期」。
-    card.dataset.attState = 'failed';
-    note.textContent = t('messages.attachDownloadFailed');
+    flashDownloadKey(btn, false);
     window.dispatchEvent(new CustomEvent('fm-attachment-failed'));
   } finally {
     card.dataset.busy = '0';
@@ -2733,7 +2766,7 @@ async function previewDeviceSavedAttachment(att, card, src) {
   }
 }
 
-/** 设备面（legacy）下载键：与好友面同款键/同款就地反馈，字节 = 同一条票据路由。
+/** 设备面（legacy）下载键：主会话键族（`.msg-copy.msg-dl`）+ 图标闪色反馈，字节 = 同一条票据路由。
  *
  *  与好友面 `downloadAttachment` 的**两处有意差异**（各有依据，非两套逻辑）：
  *   · **无 410 分支**：410 = 服务端附件的「已过期」终态语义（好友面远端件）；本机落盘件
@@ -2743,36 +2776,41 @@ async function previewDeviceSavedAttachment(att, card, src) {
  *    legacy 行**两者皆无** ⇒ 不发回执（禁造无 id 的回执）。
  *  📌 selfattach 批（片 2 · A 腿）：**新增 blob 支**（发送侧 `File` 直接交 `saveBlob`，
  *    与好友面**同一条**保存腿）；path 支（票据路由）**逐字保留**。
- *  @param {HTMLElement} card @param {HTMLButtonElement} btn @param {HTMLElement} note
+ *  fm-att-card-unify 批：反馈 = 主会话同款图标闪色（同好友面，申报差异）。
+ *  @param {HTMLElement} card @param {HTMLButtonElement} btn
  *  @param {{kind:'blob',file:File}|{kind:'path',path:string}|{kind:'none'}} src */
-async function downloadDeviceSavedAttachment(att, card, btn, note, src) {
+async function downloadDeviceSavedAttachment(att, card, btn, src) {
   const s = src || { kind: 'none' };
   if (s.kind === 'none') return;
   if (card.dataset.busy === '1') return;
   card.dataset.busy = '1';
   btn.disabled = true;
-  note.classList.remove('visually-hidden-note');
-  note.textContent = t('messages.attachDownloading');
   try {
     if (s.kind === 'blob') {
       saveBlob(s.file, (att && att.name) || '');
-      note.textContent = t('messages.attachDownloaded');
+      flashDownloadKey(btn, true);
       return;
     }
     const blob = await savedPathBlob(s.path);
     if (!blob) throw new Error('nf-file refused');
     saveBlob(blob, (att && att.name) || String(s.path).split('/').pop());
-    note.textContent = t('messages.attachDownloaded');
+    flashDownloadKey(btn, true);
   } catch {
-    // 可重试（就地文案，不升终态、不动传输状态位：下载面与传输面互不覆盖）。
-    note.textContent = t('messages.attachDownloadFailed');
+    // 可重试（图标红态，不升终态、不动传输状态位：下载面与传输面互不覆盖）。
+    flashDownloadKey(btn, false);
   } finally {
     card.dataset.busy = '0';
     btn.disabled = false;
   }
 }
 
-/** 气泡内容填充（**单点**：新建与就地升级共用，禁两套渲染）。 */
+/** 气泡内容填充（**单点**：新建与就地升级共用，禁两套渲染）。
+ *
+ *  fm-att-card-unify 批（2026-11-02）：**媒体独占模式** —— 消息无可见正文（占位正文
+ *  被隐藏）且全部附件都出媒体面 ⇒ 气泡去 chrome（`.fm-msg-bubble-media`：无 padding/
+ *  底色/描边），媒体卡**就是气泡**（与主会话 `.row.user-media` 同一形态——图片消息的
+ *  圆角气泡形态，作者令基准件）。有正文/引用块/任一文件卡 ⇒ 照旧带 chrome 气泡，
+ *  卡在泡内（声明差异：三窗一消息一行，媒体不拆独立行）。 */
 function fillBubble(bubble, m, conv) {
   bubble.innerHTML = '';
   const atts = m && Array.isArray(m.attachments) ? m.attachments : [];
@@ -2786,10 +2824,15 @@ function fillBubble(bubble, m, conv) {
   // §B.4：附件消息的 `body` 是服务端生成的占位正文 —— 只有当它与「本消息附件的
   // 占位文本」**逐字相等**时才隐藏（否则照旧显示用户原文，不误吞任何真实文本）。
   const hidePlaceholder = atts.length > 0 && body !== '' && body === attPlaceholderBody(atts);
+  const cards = atts.map(att => attachmentCard(att));
+  // 媒体独占判据 = 与卡片实际渲染**同一单点**（`mediaFaceKindOf`）：任一卡非媒体面 ⇒
+  // 不进独占模式（防「判据一套、渲染另一套」的漂移形态）。
+  const mediaOnly = hidePlaceholder && cards.every(c => c.classList.contains('fm-att-media'));
+  bubble.classList.toggle('fm-msg-bubble-media', mediaOnly);
   if (body && !hidePlaceholder) bubble.appendChild(el('div', 'fm-msg-text', body));
   if (atts.length > 0) {
     const list = el('div', 'fm-att-list');
-    atts.forEach(att => list.appendChild(attachmentCard(att)));
+    cards.forEach(card => list.appendChild(card));
     bubble.appendChild(list);
   }
 }
@@ -4686,7 +4729,7 @@ function rollbackOptimisticAttach(pending, text) {
   (pending.faces || []).forEach((face) => {
     face.settled = true;
     if (!face.url) return;
-    const stillUsed = document.querySelector(`.fm-att-inline img[src="${face.url}"]`);
+    const stillUsed = document.querySelector(`.fm-msg img[src="${face.url}"]`);
     if (!stillUsed) { try { URL.revokeObjectURL(face.url); } catch { /* non-critical */ } }
   });
   if (modalEls && text && !modalEls.input.value) {

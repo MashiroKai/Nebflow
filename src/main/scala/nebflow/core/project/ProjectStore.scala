@@ -296,6 +296,41 @@ object ProjectStore:
       }
 
   /**
+   * 卸载标记摘除（unmount-console 面板批 2026-11-02，remount 通路 · 打标面的对称
+   * 摘键腿）：与 [[markUnmounted]] 同一手术式原位写形状——读原始 Json → **删**
+   * unmounted + unmountedAt 两键（[[updateDescription]] 清空腿的 JsonObject.remove
+   * 同法；deepMerge 无法删键）→ AtomicJson 原子写回。零删除零移动：只重写这一个
+   * 文件，workspace 与目录不动；其余字段逐字节稳定（不走 ProjectDef re-encode）。
+   * 幂等：本就未卸载（无 unmounted=true）⇒ Right(None) 零写入。
+   * 返回 Right(Some(摘除时刻))＝写盘成功；Right(None)＝本来就没卸载（零写）；
+   * 项目不存在/名字非法/JSON 损坏 → Left。调用方纪律：摘键必须由**重挂面**
+   * （ProjectRemount）在前置校验（定义在盘、未归档）后调用——直接摘键等于绕过
+   * 挂载预检（禁）。
+   */
+  def clearUnmounted(name: String): IO[Either[String, Option[Long]]] =
+    if name.isEmpty || name.contains("/") || name.contains("\\") || name == "." || name == ".." then
+      IO.pure(Left(s"Invalid project name: '$name'"))
+    else
+      IO.blocking {
+        val p = projectJsonPath(name)
+        if !os.exists(p) then Left(s"Project '$name' not found")
+        else
+          jsonParse(os.read(p)) match
+            case Left(e) => Left(s"Corrupt project.json for '$name': $e")
+            case Right(json) =>
+              val marked = json.hcursor.downField("unmounted").as[Boolean].toOption.contains(true)
+              if !marked then Right(None)
+              else
+                val ts = System.currentTimeMillis()
+                val obj = json.asObject.getOrElse(io.circe.JsonObject.empty)
+                val updated = io.circe.Json.fromJsonObject(obj.remove("unmounted").remove("unmountedAt"))
+                AtomicJson.writeSync(p, updated.noSpaces)
+                logger.infoSync(s"Project '$name' unmount marker cleared (remount face; files untouched)")
+                Right(Some(ts))
+        end if
+      }
+
+  /**
    * description 更新（台账 #913 ④，2026-10-26）：**只改 description 一个字段**
    * 的手术式原位写（读原始 Json → deepMerge/删键 → AtomicJson 原子写回——与
    * [[archive]] 同形状，不走 ProjectDef 全量 re-encode：其余字段逐字节稳定）。

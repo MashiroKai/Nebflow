@@ -265,14 +265,17 @@ const GLOBAL_MSG_TYPES = new Set([
   //   projectCreated  {type,project,row{name,workspace,agentFile,description,createdAt},mounted}
   //   projectArchived {type,project,archivedAt}
   //   projectUnmounted {type,project,unmountedAt}   （N2 project-tool 批 2026-10-06：
-  //     Project 工具 action="unmount" 成功腿；载荷镜像 archived 三键形状）
+  //     Project 工具/控制台 unmount 成功腿；载荷镜像 archived 三键形状）
+  //   projectRemounted {type,project,row{...},remountedAt}（unmount-console 面板批
+  //     2026-11-02：remount 成功腿——row 与 projectCreated 同构 + remountedAt；
+  //     前端据它定点恢复卡片 + 摘「已卸载」灰态行）
   //   projectDescriptionUpdated {type,project,description,updatedAt}（台账 #920 2026-10-27：
   //     REST POST /projects/<name>/description 成功腿；面板侧描述写穿的实时回声）
   // 同族：无 sessionId 的全应用广播（后端 emit 点 = Project 创建腿 / 归档 REST 腿 /
-  // unmount 工具腿 / 描述写穿 REST 腿，经同一 wsHub.broadcast 面）。🔴 必须入 GLOBAL
+  // unmount 单点 / remount 单点 / 描述写穿 REST 腿，经同一 wsHub.broadcast 面）。🔴 必须入 GLOBAL
   // ——否则 :485-494 会把无 sessionId 的非 GLOBAL 帧当会话内事件 ⇒ setActiveView(primary)，
   // 把用户正在看的会话/面板视图抢走。
-  'projectCreated', 'projectArchived', 'projectUnmounted', 'projectDescriptionUpdated',
+  'projectCreated', 'projectArchived', 'projectUnmounted', 'projectRemounted', 'projectDescriptionUpdated',
   // 应用内工作区浏览器（workspace-picker Route C 兜底）响应帧：无 sessionId 的
   // 弹窗私有请求-响应。必须 GLOBAL——无 sessionId 时 GLOBAL 保视图不换（:457 语义），
   // TERMINAL 会把 activeView 换成 primary。

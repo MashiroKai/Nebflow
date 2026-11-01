@@ -19,6 +19,14 @@
 //         × 亮/暗双主题 ⇒ 四列读数（原图 W×H / 原图比 / 计算后盒 WxH / 夹取后目标比）+
 //         实测渲染框 + 夹取边界 + 不溢出/不顶走下方消息。
 //
+// 🔴📌 **③ 的再取代（fm-att-card-unify 批 2026-11-02 · 作者令：三窗附件卡统一成主会话卡）**
+//   主会话媒体卡（popArtifacts.buildMediaFlat）**没有夹取语言**：盒比 = 原图真实比，
+//   fitLayer 装箱 ≤220×≤420（STACK_MAX.w × EXPAND_MAX.h）。visup-ratio 批的
+//   `[1:2, 2:1]` 夹取 + 260×200 上限盒随旧 `.fm-att-inline` 槽一并退役——社交窗不再
+//   各持一套。场景 A/B/D/F 的探针与预测值全部换到 `.fm-att-media .pop-media-flat`
+//   （盒上 `dataset.nfRatio`）；场景 F 的两个「越界样本」改读新语义 =「按真实比出
+//   极值盒、不破版」（超扁条 ⇒ 220×11，超长条 ⇒ 21×420）。
+//
 // 运行（双向红绿钉 —— 同一 harness，两份被测树）：
 //   IM_MODE=after  node tests/imgmsg-send.spec.mjs                       # 改后（本批）
 //   IM_MODE=before IM_WEB_ROOT=<纯 main 的 web 树> node tests/imgmsg-send.spec.mjs  # 改前（撤修法）
@@ -118,11 +126,12 @@ function pngBytes(w, h) {
 // 4:3（1600×1200 · 主流照片）与 16:9（1600×900 · 宽幅）各一份真实位图。
 const PNG_4x3 = pngBytes(1600, 1200);
 const PNG_16x9 = pngBytes(1600, 900);
-// visup-ratio 批（2026-09-19）：③ 三形态 + **两个越界样本**（夹取边界取证）。
-const PNG_TALL = pngBytes(900, 1600);      // 竖图（9:16 ⇒ 比 0.5625，界内）
-const PNG_SQ = pngBytes(1200, 1200);       // 方图（1:1，界内）
-const PNG_STRIP = pngBytes(4000, 200);     // **超扁条**（20:1 ⇒ 夹取到 2:1）
-const PNG_COLUMN = pngBytes(200, 4000);    // **超长条**（1:20 ⇒ 夹取到 1:2）
+// visup-ratio 批（2026-09-19）：③ 三形态样本（fm-att-card-unify 批判据换代：主会话
+// 卡语言无夹取——「越界」样本改称**极值样本**，按真实比出极值盒、不破版）。
+const PNG_TALL = pngBytes(900, 1600);      // 竖图（9:16）
+const PNG_SQ = pngBytes(1200, 1200);       // 方图（1:1）
+const PNG_STRIP = pngBytes(4000, 200);     // **超扁条**（20:1 ⇒ 真实比出 220×11 盒）
+const PNG_COLUMN = pngBytes(200, 4000);    // **超长条**（1:20 ⇒ 真实比出 21×420 盒）
 const PNG_TXT = Buffer.from('hello nebflow\n', 'utf8'); // 非图片件（范围闸反例）
 
 // ── REST 契约镜像（唯一「服务端」）─────────────────────────
@@ -131,15 +140,16 @@ const iso = s => new Date(s * 1000).toISOString();
 const IN_ATT = { id: 'att-in-1', name: 'photo-4x3.png', size: PNG_4x3.length, mime: 'image/png', state: 'ready' };
 const IN_ATT_TXT = { id: 'att-in-2', name: 'notes.txt', size: PNG_TXT.length, mime: 'text/plain', state: 'ready' };
 
-/** visup-ratio 批 · 场景 F 的五个形态样本（③ 三形态 + 两个越界样本）。
- *  `ar` = 夹取后**目标比**的期望 token（界内 = 原图比本身，越界 = 夹取界）；
- *  上限盒 `260 × 200` 与夹取界 `[1:2, 2:1]` = `messages.js` 申报参数（本表是它的镜像判据）。 */
+/** fm-att-card-unify 批 · 场景 F 的五个形态样本（③ 三形态 + 两个极值样本）。
+ *  主会话卡语言**无夹取**：盒比 = 原图真实比，fitLayer 装箱 ≤220×≤420
+ *  （`popArtifacts.js` STACK_MAX.w × EXPAND_MAX.h——预测值走场景 A 的 fitBox 复算）。
+ *  旧 visup-ratio 批的 `ar`/`clamped`/`boxH` 期望字段随夹取语言一并退役。 */
 const RATIO_CASES = [
-  { tag: 'landscape-16x9', conv: 'cR1', mid: 401, w: 1600, h: 900, attId: 'att-r-16x9', png: PNG_16x9, ar: '16 / 9', clamped: false, boxH: 146.25 },
-  { tag: 'portrait-9x16', conv: 'cR2', mid: 411, w: 900, h: 1600, attId: 'att-r-tall', png: PNG_TALL, ar: '9 / 16', clamped: false, boxH: 199.11 },
-  { tag: 'square-1x1', conv: 'cR3', mid: 421, w: 1200, h: 1200, attId: 'att-r-sq', png: PNG_SQ, ar: '1 / 1', clamped: false, boxH: 200 },
-  { tag: 'strip-20x1-clamped', conv: 'cR4', mid: 431, w: 4000, h: 200, attId: 'att-r-strip', png: PNG_STRIP, ar: '2 / 1', clamped: true, boxH: 130 },
-  { tag: 'column-1x20-clamped', conv: 'cR5', mid: 441, w: 200, h: 4000, attId: 'att-r-column', png: PNG_COLUMN, ar: '1 / 2', clamped: true, boxH: 200 },
+  { tag: 'landscape-16x9', conv: 'cR1', mid: 401, w: 1600, h: 900, attId: 'att-r-16x9', png: PNG_16x9 },
+  { tag: 'portrait-9x16', conv: 'cR2', mid: 411, w: 900, h: 1600, attId: 'att-r-tall', png: PNG_TALL },
+  { tag: 'square-1x1', conv: 'cR3', mid: 421, w: 1200, h: 1200, attId: 'att-r-sq', png: PNG_SQ },
+  { tag: 'strip-20x1-extreme', conv: 'cR4', mid: 431, w: 4000, h: 200, attId: 'att-r-strip', png: PNG_STRIP },
+  { tag: 'column-1x20-extreme', conv: 'cR5', mid: 441, w: 200, h: 4000, attId: 'att-r-column', png: PNG_COLUMN },
 ];
 /** attachmentId → 真实字节（**唯一**字节源；越界样本也走真位图，禁 mock 图）。 */
 const ATT_BYTES = new Map([
@@ -364,9 +374,11 @@ async function bootPage({ colorScheme = null } = {}) {
   await page.addInitScript(() => {
     const S = { placeholder: 0, frame: 0, confirm: 0, bubble: 0, srcs: [], dup: [], dupMax: 0, ids: [], clickAt: 0, samples: 0 };
     window.__IM = S;
+    // fm-att-card-unify 批（2026-11-02）判据换代：出帧槽 = 主会话媒体卡
+    // （`.fm-att-media` 根 + `.pop-media-flat` 盒 + `.pop-img`）。
     const frameInfo = (m) => {
-      const box = m.querySelector('.fm-att-inline');
-      const img = m.querySelector('.fm-att-inline img');
+      const box = m.querySelector('.fm-att-media .pop-media-flat');
+      const img = m.querySelector('.fm-att-media .pop-img');
       return {
         boxH: box ? +box.getBoundingClientRect().height.toFixed(2) : null,
         hasSrc: !!(img && img.getAttribute('src')),
@@ -416,13 +428,15 @@ async function setFiles(page, files) { await page.setInputFiles('.fm-modal input
 const imgFile = (name, buf) => ({ name, mimeType: 'image/png', buffer: buf });
 const txtFile = (name, buf) => ({ name, mimeType: 'text/plain', buffer: buf });
 
-/** 几何探针（滚动无关：量的是「图片气泡 → 下一条」的**相对**间距）。 */
+/** 几何探针（滚动无关：量的是「图片气泡 → 下一条」的**相对**间距）。
+ *  fm-att-card-unify 批判据换代：盒 = 主会话媒体卡 `.pop-media-flat`（fitLayer 写入
+ *  自比例），img 铺满盒；几何读数（dataset.nfRatio）在盒上。 */
 async function geom(page, id) {
   return page.evaluate((mid) => {
     const msgs = [...document.querySelectorAll('.fm-flow .fm-msg')];
     const m = msgs.find(x => String(x.dataset.messageId) === String(mid));
     if (!m) return null;
-    const box = m.querySelector('.fm-att-inline');
+    const box = m.querySelector('.fm-att-media .pop-media-flat');
     const img = box ? box.querySelector('img') : null;
     const idx = msgs.indexOf(m);
     const next = msgs[idx + 1] || null;
@@ -432,6 +446,7 @@ async function geom(page, id) {
       imgW: img ? +img.getBoundingClientRect().width.toFixed(2) : null,
       natural: img ? `${img.naturalWidth}x${img.naturalHeight}` : null,
       src: img ? (img.dataset.attSrc || '') : '',
+      nfRatio: box ? (box.dataset.nfRatio || '') : '',
       gapToNext: next ? +(next.getBoundingClientRect().top - m.getBoundingClientRect().top).toFixed(2) : null,
       cardH: +m.getBoundingClientRect().height.toFixed(2),
     };
@@ -440,21 +455,21 @@ async function geom(page, id) {
 const waitImgLoaded = (page, id) => page.waitForFunction((mid) => {
   const msgs = [...document.querySelectorAll('.fm-flow .fm-msg')];
   const m = msgs.find(x => String(x.dataset.messageId) === String(mid));
-  const img = m && m.querySelector('.fm-att-inline img');
+  const img = m && m.querySelector('.fm-att-media .pop-img');
   return !!(img && img.getAttribute('src') && img.complete && img.naturalWidth > 0);
 }, id, { timeout: 15000 });
 
-/** 逐帧几何轨迹（**visup-ratio 批**：③ 新占位语义的机械判据面）。
- *  每个 rAF 记一次槽盒高 + 「是否已点 src」；Node 侧据此判：
- *    · 骨架期（未点 src）盒高**唯一** ⇒ 零抖动；
- *    · 全生命周期盒高**恰好两个取值** ⇒ 「骨架 ↔ 真帧」只发生**一次**几何变更；
- *    · **凡已点 src 的帧，盒高即最终值** ⇒ 图片从不以错误比例被绘制、绘制后零重排。 */
+/** 逐帧几何轨迹（fm-att-card-unify 批判据换代：③ 新占位语义的机械判据面）。
+ *  每个 rAF 记一次媒体盒（`.pop-media-flat`）宽高 + 「是否已点 src」；Node 侧据此判：
+ *    · 骨架期（未点 src）盒高**唯一** ⇒ 零抖动（骨架 = 媒体卡 CSS 回退盒 220×4:3）；
+ *    · 全生命周期盒高取值 ≤ 2 ⇒ 「骨架 ↔ 真帧」至多**一次**几何变更；
+ *    · **凡已点 src 的帧，盒高即最终值** ⇒ 真帧后零重排。 */
 const startFrameTrace = (page, mid) => page.evaluate((id) => {
   const w = /** @type {any} */ (window);
   w.__RT = { all: [], done: false };
   const rec = () => {
     const m = document.querySelector(`.fm-flow .fm-msg[data-message-id="${id}"]`);
-    const box = m ? m.querySelector('.fm-att-inline') : null;
+    const box = m ? m.querySelector('.fm-att-media .pop-media-flat') : null;
     const img = box ? box.querySelector('img') : null;
     if (box) {
       const r = box.getBoundingClientRect();
@@ -485,11 +500,17 @@ const stopFrameTrace = (page) => page.evaluate(() => {
 
 // ══════════════════════════════════════════════════════════════════════
 // 场景 A · ③ 占位语义（**接收侧**几何探针：图片出现在历史中段，下方还有一条消息）
-//   改前（无槽）⇒ 下方消息被顶走 w/h×260；
-//   2026-09-18 基线（固定 13:10）⇒ Δ=0（下方消息完全不动）；
-//   2026-09-19 visup-ratio（真实比 + 夹取）⇒ **新占位语义**：骨架期零抖动，
-//     骨架 ↔ 真帧**恰好一次**几何变更且量值 = 预测值，真帧后零重排。
+//   fm-att-card-unify 批（2026-11-02）判据换代：出帧槽 = 主会话媒体卡。
+//   新占位语义：骨架期 = 媒体卡 CSS 回退盒（220×4:3 ⇒ 高 165）零抖动；字节到达后
+//   fitLayer 把盒换到**原图自身比例**（≤220×420 装箱）——骨架 ↔ 真帧至多**一次**
+//   几何变更（4:3 图与回退盒同比 ⇒ 变更量 0），真帧后零重排。
 // ══════════════════════════════════════════════════════════════════════
+const MEDIA_FALLBACK_H = 165; // 220px × 4:3（chat.css .pop-media-flat 回退盒）
+/** fitLayer 装箱复算（与 popArtifacts fitLayer 同式，独立复算 ⇒ 禁实现自证）。 */
+const fitBox = (w, h) => {
+  const scale = Math.min(220 / w, 420 / h, 1);
+  return { w: Math.round(w * scale), h: +(h * scale).toFixed(2) };
+};
 async function scenarioA() {
   console.log(`\n── 场景 A · ③ 占位语义（改前/改后同一探针）· MODE=${MODE}`);
   for (const [label, convId, mid, w, h] of [
@@ -502,10 +523,8 @@ async function scenarioA() {
     try {
       await openPanel(page);
       await openConv(page, convId);
-      // 等图片气泡的直显槽出现（此刻字节被闸住 ⇒ 这一采样点在「字节到达前」）
-      // ⚠ 必须用 `attached`：改前树的空槽**零高度**（= 不可见）——「不可见」本身
-      //   就是 ③ 的症状读数，故不能等 visible（实测踩到）。
-      await page.waitForSelector(`.fm-flow .fm-msg[data-message-id="${mid}"] .fm-att-inline`, { state: 'attached', timeout: 15000 });
+      // 等媒体卡出现（此刻字节被闸住 ⇒ 这一采样点在「字节到达前」）
+      await page.waitForSelector(`.fm-flow .fm-msg[data-message-id="${mid}"] .fm-att-media .pop-media-flat`, { state: 'attached', timeout: 15000 });
       await startFrameTrace(page, mid);
       await sleep(120);
       const g1 = await geom(page, mid);
@@ -523,30 +542,30 @@ async function scenarioA() {
       const deltaPost = (g2 && g2.gapToNext !== null && g3 && g3.gapToNext !== null)
         ? +(g3.gapToNext - g2.gapToNext).toFixed(2) : null;
       const expectBefore = Math.round(260 * h / w * 100) / 100;
-      // ③ 新语义预测值：真帧盒高 = floor(min(260, 200·r) …) —— 与 `messages.js::inlineBoxFor` 同式。
-      const r = w / h;
-      const rc = Math.min(2, Math.max(0.5, r));
-      const predW = Math.floor(rc >= 260 / 200 ? 260 : 200 * rc);
-      const predH = Math.round((predW / rc) * 100) / 100;
-      const predDelta = +(predH - 200).toFixed(2); // 骨架盒（上限盒）高 200 ⇒ 变更量
+      // 新语义预测值：fitLayer 装箱（≤220×≤420，比例 = 原图比）。
+      const pred = fitBox(w, h);
+      const predDelta = +(pred.h - MEDIA_FALLBACK_H).toFixed(2);
       put(`geom.recv.${label}`, {
         pre: g1, pre2: g1b, post: g2, post2: g3, deltaGap: delta, deltaPost, trace,
-        expectBeforeDelta: expectBefore, predict: { r: Math.round(rc * 1e4) / 1e4, w: predW, h: predH, delta: predDelta }, pageErrors,
+        expectBeforeDelta: expectBefore, predict: { w: pred.w, h: pred.h, delta: predDelta }, pageErrors,
       });
-      ok(`A/③ ${label} 字节到达前 = 预留槽已占位（改前 0 / 改后 200）`,
-        AFTER ? (g1.boxH === 200) : (g1.boxH === 0),
-        JSON.stringify({ boxH: g1.boxH, imgH: g1.imgH, natural: g1.natural }));
+      ok(`A/③ ${label} 字节到达前 = 媒体卡回退盒已占位（高 ${MEDIA_FALLBACK_H}）`,
+        AFTER ? (g1.boxH === MEDIA_FALLBACK_H && g1.imgW === 220) : (g1.boxH === 0),
+        JSON.stringify({ boxH: g1.boxH, imgW: g1.imgW, imgH: g1.imgH, natural: g1.natural }));
       if (AFTER) {
-        // ── ③ 新占位语义三条（取代旧「占位→真帧 Δ=0」；真实比与 Δ=0 数学互斥）──
         ok(`A/③ ${label} 骨架期零抖动（未点 src 期间盒高唯一）`,
-          trace.preH.length === 1 && trace.preH[0] === 200,
+          trace.preH.length === 1 && trace.preH[0] === MEDIA_FALLBACK_H,
           JSON.stringify({ preH: trace.preH, deltaInSkeleton: g1b && g1 && +(g1b.boxH - g1.boxH).toFixed(2) }));
-        ok(`A/③ ${label} 单次几何变更 = 预测值（骨架 ${200} ⇒ 真帧 ${predH}，Δ=${predDelta}）`,
-          delta !== null && Math.abs(delta - predDelta) <= 0.6 && trace.distinctH.length === 2,
-          JSON.stringify({ delta, predDelta, distinctH: trace.distinctH, predict: { w: predW, h: predH } }));
+        ok(`A/③ ${label} 真帧盒 = fitLayer 装箱预测值（自比例 ${w}/${h} ⇒ ${pred.w}×${pred.h}）`,
+          Math.abs(g2.boxH - pred.h) <= 1 && Math.abs(g2.imgW - pred.w) <= 1
+          && g2.nfRatio === `${w}x${h}`,
+          JSON.stringify({ boxH: g2.boxH, imgW: g2.imgW, predict: pred, nfRatio: g2.nfRatio }));
+        ok(`A/③ ${label} 单次几何变更 = 预测值（骨架 ${MEDIA_FALLBACK_H} ⇒ 真帧 ${pred.h}，Δ=${predDelta}；取值 ≤ 2 档）`,
+          delta !== null && Math.abs(delta - predDelta) <= 0.6 && trace.distinctH.length <= 2,
+          JSON.stringify({ delta, predDelta, distinctH: trace.distinctH, predict: pred }));
         ok(`A/③ ${label} 真帧后零重排（凡已点 src 的帧盒高即最终值 + 帧后 Δ=0）`,
-          trace.postH.length === 1 && trace.postH[0] === predH && deltaPost === 0,
-          JSON.stringify({ postH: trace.postH, predH, deltaPost, n: trace.n }));
+          trace.postH.length === 1 && Math.abs(trace.postH[0] - pred.h) <= 1 && deltaPost === 0,
+          JSON.stringify({ postH: trace.postH, predH: pred.h, deltaPost, n: trace.n }));
       } else {
         ok(`A/③ ${label} 症状复现（改前）：下方消息被顶走 ≈${expectBefore}px`,
           delta !== null && Math.abs(delta - expectBefore) <= 3,
@@ -582,17 +601,21 @@ async function scenarioB({ postFrame = false, tag = 'B' } = {}) {
     await setFiles(page, [imgFile('harbor-4x3.png', PNG_4x3)]);
     // ③ 首帧读数（**确定性采样点**：帧一落地即取，不靠 +250ms 竞速——「机会窗口」面
     //    （进度条/条幅/环）仍固定 +250ms 采样；本探针先起跑、后取值，**不推迟**那次采样）。
+    //    fm-att-card-unify 批判据换代：盒 = `.pop-media-flat`（fitLayer 写自比例 +
+    //    `dataset.nfRatio` 读数）；`attNat/attAr/attBox` = 发送侧小图腿的惰性读数（保留对账）。
     const firstFrameP = page.waitForFunction(() => {
       const m = document.querySelector('.fm-flow .fm-msg[data-send-phase]')
         || document.querySelector('.fm-flow .fm-msg');
-      const img = m ? m.querySelector('.fm-att-inline img') : null;
+      const box = m ? m.querySelector('.fm-att-media .pop-media-flat') : null;
+      const img = m ? m.querySelector('.fm-att-media .pop-img') : null;
       if (!img || !img.getAttribute('src')) return null;
-      const r = img.getBoundingClientRect();
+      const r = box ? box.getBoundingClientRect() : null;
       return {
         src: img.dataset.attSrc || '',
         url: img.src,   // 帧字节读数在**同一 URL** 上后置取（确定性采样点不变）
-        boxH: +r.height.toFixed(2), boxW: +r.width.toFixed(2),
-        boxAr: getComputedStyle(img).aspectRatio,
+        boxH: r ? +r.height.toFixed(2) : null, boxW: r ? +r.width.toFixed(2) : null,
+        boxAr: box ? getComputedStyle(box).aspectRatio : '',
+        nfRatio: box ? (box.dataset.nfRatio || '') : '',
         attNat: img.dataset.attNat || '', attAr: img.dataset.attAr || '', attBox: img.dataset.attBox || '',
         frameNatural: img.naturalWidth ? `${img.naturalWidth}x${img.naturalHeight}` : null,
       };
@@ -605,8 +628,9 @@ async function scenarioB({ postFrame = false, tag = 'B' } = {}) {
       const cards = document.querySelectorAll('.fm-upload').length;
       if (!m) return { bars, cards, phase: null };
       m.dataset.probeToken = 'TOK-1'; // 节点身份标记（「原地接管」判据）
-      const box = m.querySelector('.fm-att-inline');
-      const img = box ? box.querySelector('img') : null;
+      const box = m.querySelector('.fm-att-media .pop-media-flat');
+      const img = m.querySelector('.fm-att-media .pop-img');
+      const br = box ? box.getBoundingClientRect() : null;
       // ── sendstate 批读数面（发送态载面 = 气泡左侧环 / 旧条幅退场）──────────────
       const sending = document.querySelector('.fm-flow .fm-msg.fm-sending');
       const ring = sending ? getComputedStyle(sending, '::before') : null;
@@ -614,14 +638,15 @@ async function scenarioB({ postFrame = false, tag = 'B' } = {}) {
       const out = {
         phase: m.dataset.sendPhase,
         id: m.dataset.messageId,
-        boxH: box ? +box.getBoundingClientRect().height.toFixed(2) : null,
+        boxH: br ? +br.height.toFixed(2) : null,
         hasSrc: !!(img && img.getAttribute('src')),
         src: img ? (img.dataset.attSrc || '') : '',
-        // ③ 读数面（visup-ratio 批）：原图内禀尺寸 / 夹取后比率 token / 计算盒 / 计算样式比。
+        // ③ 读数面：盒比（fitLayer）+ 发送侧惰性读数（attNat/attAr/attBox）。
         attNat: img ? (img.dataset.attNat || '') : '',
         attAr: img ? (img.dataset.attAr || '') : '',
         attBox: img ? (img.dataset.attBox || '') : '',
-        boxAr: img ? getComputedStyle(img).aspectRatio : '',
+        boxAr: box ? getComputedStyle(box).aspectRatio : '',
+        nfRatio: box ? (box.dataset.nfRatio || '') : '',
         bars,
         cards,
         frameNatural: img ? `${img.naturalWidth}x${img.naturalHeight}` : null,
@@ -679,18 +704,19 @@ async function scenarioB({ postFrame = false, tag = 'B' } = {}) {
     const final = await page.evaluate(() => {
       const msgs = [...document.querySelectorAll('.fm-flow .fm-msg')];
       const m = msgs.find(x => x.dataset.probeToken || (x.querySelector('.fm-att') && x.dataset.messageId === '501')) || msgs[msgs.length - 1];
-      const box = m.querySelector('.fm-att-inline');
-      const img = box ? box.querySelector('img') : null;
+      const box = m.querySelector('.fm-att-media .pop-media-flat');
+      const img = m.querySelector('.fm-att-media .pop-img');
       return {
         id: m.dataset.messageId,
         token: m.dataset.probeToken || '',
         phase: m.dataset.sendPhase || '',
         src: img ? (img.dataset.attSrc || '') : '',
         boxH: box ? +box.getBoundingClientRect().height.toFixed(2) : null,
-        // ③ 读数面（visup-ratio 批）：确认面接管后盒比**必须**与首帧一致（原地换键不改几何）。
+        // ③ 读数面（fm-att-card-unify 批）：确认面接管后盒比**必须**与首帧一致（原地换键不改几何）。
         attAr: img ? (img.dataset.attAr || '') : '',
         attBox: img ? (img.dataset.attBox || '') : '',
-        boxAr: img ? getComputedStyle(img).aspectRatio : '',
+        boxAr: box ? getComputedStyle(box).aspectRatio : '',
+        nfRatio: box ? (box.dataset.nfRatio || '') : '',
         nodeCount: msgs.filter(x => x.dataset.messageId === m.dataset.messageId).length,
         msgCount: msgs.length,
         progressBars: document.querySelectorAll('.fm-upload-progress').length,
@@ -730,19 +756,29 @@ async function scenarioB({ postFrame = false, tag = 'B' } = {}) {
       ok('B/② 占位出现时点 ≤ 首帧时点（骨架先行）',
         S.placeholder > 0 && S.frame > 0 && S.placeholder <= S.frame + 1,
         JSON.stringify({ placeholder: rel(S.placeholder), frame: rel(S.frame) }));
-      ok('B/② 首帧落地时占位槽已按**真实比**占住高度（③ 2026-09-19 令：原图 1600×1200 ⇒ 4:3 ⇒ 盒 260×195）',
-        !!firstFrame && firstFrame.boxH === 195 && firstFrame.attBox === '260x195' && firstFrame.attAr === '1600 / 1200'
+      ok('B/② 首帧落地时媒体盒按**真实比**（原图 1600×1200 ⇒ 4:3）占住（fm-att-card-unify 批：盒 = 主会话媒体卡 220×4:3）',
+        !!firstFrame && firstFrame.boxH === 165 && firstFrame.boxW === 220
         && Math.abs(ratioVal(firstFrame.boxAr) - 4 / 3) <= 1e-4,
-        JSON.stringify({ boxH: firstFrame && firstFrame.boxH, boxW: firstFrame && firstFrame.boxW, attBox: firstFrame && firstFrame.attBox, attAr: firstFrame && firstFrame.attAr, boxAr: firstFrame && firstFrame.boxAr, attNat: firstFrame && firstFrame.attNat }));
+        JSON.stringify({ boxH: firstFrame && firstFrame.boxH, boxW: firstFrame && firstFrame.boxW, boxAr: firstFrame && firstFrame.boxAr, attBox: firstFrame && firstFrame.attBox, attAr: firstFrame && firstFrame.attAr }));
+      // 🔴 判据注记（fm-att-card-unify 批 2026-11-02 实测换代）：统一卡的首帧探针在
+      //   `src` 落点的**那一拍**取值，img 尚未解码完 ⇒ `naturalWidth` 可为 0（旧
+      //   `.fm-att-inline` 槽先解码后点 src ⇒ 读数恒在 —— 探针时序差异，非行为差异）。
+      //   「非原图整帧」的证据链 = ①首帧字节 < 原图（本地降采样）+ ②早窗（+250ms）
+      //   已解码的内禀读数 ≠ 原图。
       ok('B/② 首帧 = **本地生成的小图**（真字节读数：像素已降采样且字节远小于原图）',
-        !!firstFrame && firstFrame.frameNatural !== null && firstFrame.frameNatural !== '1600x1200'
+        !!firstFrame && firstFrame.frameNatural !== '1600x1200'
+        && !!early && !!early.frameNatural && early.frameNatural !== '1600x1200'
         && typeof firstFrame.frameBytes === 'number' && firstFrame.frameBytes > 0 && firstFrame.frameBytes < PNG_4x3.length,
         JSON.stringify({ frameNatural: firstFrame && firstFrame.frameNatural, frameBytes: firstFrame && firstFrame.frameBytes, sourceBytes: PNG_4x3.length, earlyNatural: early && early.frameNatural }));
-      // ③ 确认面**原地接管**不得改变几何（字节源换成本机句柄 = 同一份图、同一比）。
-      ok('B/③ 确认面接管后盒比/盒尺寸与首帧一致（原地换键不改几何）',
-        !!final && final.boxH === 195 && final.attBox === '260x195'
-        && Math.abs(ratioVal(final.boxAr) - 4 / 3) <= 1e-4,
-        JSON.stringify({ boxH: final.boxH, attBox: final.attBox, boxAr: final.boxAr, attAr: final.attAr }));
+      // ③ 确认面**原地接管**不得改变几何（字节源换成登记的本机句柄；发送侧登记的
+      //    face.url = 降采样小图的 object URL ⇒ `nfRatio` 读**挂载面**的内禀值
+      //    （640x480），与原图同比 4:3 —— 盒比/盒尺寸不变才是本断言的不变量；
+      //    旧口径硬编码 `1600x1200` 系对新链挂载源的过度指定，随统一卡换代）。
+      ok('B/③ 确认面接管后盒比/盒尺寸与首帧一致（原地换键不改几何：220×4:3 + 4:3 系 nfRatio 读数）',
+        !!final && final.boxH === 165 && final.nfRatio !== ''
+        && Math.abs(ratioVal(final.boxAr) - 4 / 3) <= 1e-4
+        && Math.abs(ratioVal(final.nfRatio.replace('x', ' / ')) - 4 / 3) <= 5e-3,
+        JSON.stringify({ boxH: final.boxH, nfRatio: final.nfRatio, boxAr: final.boxAr, attAr: final.attAr }));
       ok('B/④ 本路径上传期间**零百分比进度条**（反馈 = 乐观直显）', early && early.bars === 0 && final.progressBars === 0,
         JSON.stringify({ barsDuring: early && early.bars, barsFinal: final.progressBars }));
       // ── sendstate 批（2026-09-18 · 作者设计令）新增契约：发送态载面 = 气泡左侧环，
@@ -821,11 +857,11 @@ async function scenarioC() {
         optimistic: !!m,
         bars: document.querySelectorAll('.fm-upload-progress').length,
         cards: document.querySelectorAll('.fm-upload').length,
-        inline: document.querySelectorAll('.fm-msg .fm-att-inline').length,
+        inline: document.querySelectorAll('.fm-msg .fm-att-media').length,
       };
     });
     await sleep(2200);
-    const finalInline = await page.evaluate(() => document.querySelectorAll('.fm-msg .fm-att-inline').length);
+    const finalInline = await page.evaluate(() => document.querySelectorAll('.fm-msg .fm-att-media').length);
     put('scope.nonImage', { mid, finalInline, pageErrors });
     ok('C 非图片件 = 零乐观面（逐字走既有路径）', mid.optimistic === false, JSON.stringify(mid));
     ok('C 非图片件 = 上传卡在（既有呈现）+ 零图片直显槽', mid.cards >= 1 && mid.inline === 0 && finalInline === 0,
@@ -850,7 +886,7 @@ async function scenarioD() {
     await waitImgLoaded(page, 101).catch(() => {});
     const recv = await page.evaluate(() => {
       const m = document.querySelector('.fm-flow .fm-msg[data-message-id="101"]');
-      const img = m && m.querySelector('.fm-att-inline img');
+      const img = m && m.querySelector('.fm-att-media .pop-img');
       return {
         hasLocalFace: !!m && m.classList.contains('out') === false && m.dataset.sendPhase === undefined,
         sendPhase: m ? (m.dataset.sendPhase || '') : null,
@@ -861,9 +897,9 @@ async function scenarioD() {
       };
     });
     const gets = callsOf(c => c.method === 'GET' && /^\/api\/friends\/attachments\//.test(c.p));
-    // ⑤ 无过渡 + ③ aspect-ratio 读数（在**含直显槽**的会话上取计算样式）
+    // ⑤ 无过渡 + ③ 盒比读数（fm-att-card-unify 批：盒 = `.pop-media-flat`，比 = fitLayer 自比例）
     const trans = await page.evaluate(() => {
-      const box = document.querySelector('.fm-msg .fm-att-inline');
+      const box = document.querySelector('.fm-msg .fm-att-media .pop-media-flat');
       const img = box ? box.querySelector('img') : null;
       const cs = (e) => { const s = getComputedStyle(e); return { transitionProperty: s.transitionProperty, transitionDuration: s.transitionDuration, animationName: s.animationName, aspectRatio: s.aspectRatio }; };
       return { box: box ? cs(box) : null, img: img ? cs(img) : null, msg: cs(document.querySelector('.fm-msg')) };
@@ -874,7 +910,7 @@ async function scenarioD() {
     await sleep(400);
     await openConv(page, 'cC');
     await sleep(900);
-    const txtSlot = await page.evaluate(() => document.querySelectorAll('.fm-msg .fm-att-inline').length);
+    const txtSlot = await page.evaluate(() => document.querySelectorAll('.fm-msg .fm-att-media').length);
     put('recv', { recv, attachGets: gets.map(c => c.p), txtSlot, trans, pageErrors });
     ok('D 接收侧：入站图片走服务端字节腿（本批零语义）',
       (AFTER ? recv.src === 'server' : recv.src === '') && gets.length === 1
@@ -888,9 +924,9 @@ async function scenarioD() {
       && !!trans.img && trans.img.transitionDuration === '0s' && trans.img.animationName === 'none'
       && trans.msg.transitionDuration === '0s',
       JSON.stringify(trans));
-    ok('D ③ aspect-ratio 读数（**visup-ratio 批**：改后 = 真实比 4/3；改前基线 auto）',
-      !!trans.img && (AFTER ? Math.abs(ratioVal(trans.img.aspectRatio) - 4 / 3) <= 1e-4 : (trans.img.aspectRatio === 'auto')),
-      JSON.stringify({ aspectRatio: trans.img && trans.img.aspectRatio }));
+    ok('D ③ 盒比读数（fm-att-card-unify 批：媒体盒比 = 真实比 4/3（fitLayer）；改前基线槽无比）',
+      !!trans.box && (AFTER ? Math.abs(ratioVal(trans.box.aspectRatio) - 4 / 3) <= 1e-4 : (trans.box.aspectRatio === 'auto')),
+      JSON.stringify({ aspectRatio: trans.box && trans.box.aspectRatio }));
     ok('D 无 pageerror', pageErrors.length === 0, JSON.stringify(pageErrors));
   } finally {
     await ctx.close();
@@ -1004,24 +1040,22 @@ async function scenarioE() {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// 场景 F · ③ **真实宽高比 + min/max 夹取**（visup-ratio 批 · 作者 2026-09-19 01:29 令）
+// 场景 F · ③ **真实宽高比出盒**（fm-att-card-unify 批 2026-11-02 判据换代）
 //
-//   三形态（横 16:9 / 竖 9:16 / 方 1:1）+ **两个越界样本**（超扁条 20:1 / 超长条 1:20），
-//   亮 / 暗**双主题**逐形态同拍。逐形态给四列读数：
-//     原图 W×H · 原图比 · 计算后盒 WxH（JS 单点写入的 `data-att-box`）· 夹取后目标比，
-//   外加**实测渲染框**（`getBoundingClientRect`，与声明面交叉验证）。
-//   边界判据：盒 ≤ 上限盒 260×200（不溢出容器、不顶走下方消息）；越界样本必须被夹到
-//   界内（`2 / 1` / `1 / 2`）且**不破版**。
-//   改前（`IM_MODE=before`）= 症状组：盒比恒为固定 13:10，与图无关。
-//   ⚠ **已知伴随读数（本批显式申报，非静默）**：`.fm-msg` 是 flex 列里的 `fit-content`
-//     项，附件卡 max-content ≈ 「文件名行 + 图片盒宽 + 18px」且被上限盒档 384.27px 截顶
-//     ⇒ 盒宽 < ~150px 时气泡比改前**变窄**（实测竖图样本 −29.58px）。
-//     **不变量**：气泡**永不大于**改前（改前各形态恒 384.27）、卡内/流内零横向溢出、
-//     下方消息不被顶走（本场景逐形态断言）。是否把气泡宽钉死留待视觉向（B 段）裁定。
+//   作者令：好友/群/设备三窗附件卡统一成**主会话附件卡样式** —— 图片消息的
+//   圆角气泡形态基准 = 主会话媒体卡（`.fm-att-media .pop-media-flat`）。主会话卡
+//   **无夹取**（visup-ratio 批的 [1:2, 2:1] 夹取 + 260×200 上限盒随旧
+//   `.fm-att-inline` 槽退役）：盒比 = 原图真实比，fitLayer 装箱 ≤220×≤420。
+//   三形态（横 16:9 / 竖 9:16 / 方 1:1）+ **两个极值样本**（超扁条 20:1 / 超长条
+//   1:20 =「按真实比出极值盒、不破版」），亮 / 暗**双主题**逐形态同拍。读数：
+//     原图 W×H · 原图比 · fitBox 装箱预测（独立复算，禁实现自证）· 实测盒
+//     （`getBoundingClientRect` + 盒上 `dataset.nfRatio`）。
+//   边界判据：盒 ≤ 220×420（不溢出容器、不顶走下方消息）。
+//   改前（`IM_MODE=before`）= 症状组：改前树无媒体卡面（探针落空 = 各持旧槽语言，
+//   非主会话卡）——「改前必红」语义保留。
 // ══════════════════════════════════════════════════════════════════════
-const CEIL_W = 260, CEIL_H = 200, AR_MIN = 0.5, AR_MAX = 2;
 async function scenarioF(scheme) {
-  console.log(`\n── 场景 F · ③ 真实比 + 夹取（${scheme}）· MODE=${MODE}`);
+  console.log(`\n── 场景 F · ③ 真实比出盒（${scheme}）· MODE=${MODE}`);
   if (IM_SHOTS) { try { mkdirSync(IM_SHOTS, { recursive: true }); } catch { /* non-critical */ } }
   for (const c of RATIO_CASES) {
     resetServer({ dlDelay: 200 });
@@ -1033,84 +1067,67 @@ async function scenarioF(scheme) {
       await sleep(200);
       const r = await page.evaluate((mid) => {
         const m = document.querySelector(`.fm-flow .fm-msg[data-message-id="${mid}"]`);
-        const box = m ? m.querySelector('.fm-att-inline') : null;
-        const img = box ? box.querySelector('img') : null;
-        const i = img ? img.getBoundingClientRect() : null;
+        // 主会话卡语言：盒 = `.pop-media-flat`（fitLayer 写宽 + aspect-ratio +
+        // `dataset.nfRatio`），img 100% 铺满盒。
+        const box = m ? m.querySelector('.fm-att-media .pop-media-flat') : null;
+        const img = box ? box.querySelector('img.pop-img') : null;
         const b = box ? box.getBoundingClientRect() : null;
+        const i = img ? img.getBoundingClientRect() : null;
         const cm = m ? m.getBoundingClientRect() : null;
         const nx = m && m.nextElementSibling ? m.nextElementSibling.getBoundingClientRect() : null;
         const flow = document.querySelector('.fm-flow');
         return {
           natW: img ? img.naturalWidth : 0, natH: img ? img.naturalHeight : 0,
-          // **预览框** = `<img>` 自身（`.fm-att-inline` 是 `flex:1 1 100%` 的满宽容器 ⇒ 量它无意义）。
-          boxW: i ? +i.width.toFixed(2) : null, boxH: i ? +i.height.toFixed(2) : null,
-          slotW: b ? +b.width.toFixed(2) : null,
-          ar: img ? getComputedStyle(img).aspectRatio : '',
-          cssWidth: img ? getComputedStyle(img).width : '',
-          attNat: img ? (img.dataset.attNat || '') : '',
-          attAr: img ? (img.dataset.attAr || '') : '',
-          attBox: img ? (img.dataset.attBox || '') : '',
+          boxW: b ? +b.width.toFixed(2) : null, boxH: b ? +b.height.toFixed(2) : null,
+          imgW: i ? +i.width.toFixed(2) : null, imgH: i ? +i.height.toFixed(2) : null,
+          boxAr: box ? getComputedStyle(box).aspectRatio : '',
+          nfRatio: box ? (box.dataset.nfRatio || '') : '',
           cardScrollW: m ? m.scrollWidth : null, cardClientW: m ? m.clientWidth : null,
           msgW: cm ? +cm.width.toFixed(2) : null,
           cardW: (() => { const c = m && m.querySelector('.fm-att'); return c ? +c.getBoundingClientRect().width.toFixed(2) : null; })(),
-          cardBoxW: (() => { const c = m && m.querySelector('.fm-att'); return c ? +c.scrollWidth.toFixed(2) : null; })(),
           flowScrollW: flow ? flow.scrollWidth : null, flowClientW: flow ? flow.clientWidth : null,
-          flowOffsetW: flow ? flow.offsetWidth : null,
-          msgOffsetW: m ? m.offsetWidth : null,
-          bubbleW: (() => { const b = m && m.querySelector('.fm-bubble, .fm-msg-body'); return b ? +b.getBoundingClientRect().width.toFixed(2) : null; })(),
-          bubbleMaxW: (() => { const b = m && m.querySelector('.fm-bubble, .fm-msg-body'); return b ? getComputedStyle(b).maxWidth : ''; })(),
-          nameW: (() => { const n = m && m.querySelector('.fm-att-name'); return n ? +n.getBoundingClientRect().width.toFixed(2) : null; })(),
-          attMaxW: (() => { const c2 = m && m.querySelector('.fm-att'); return c2 ? getComputedStyle(c2).maxWidth : ''; })(),
           nextTop: nx ? +nx.top.toFixed(2) : null,
           msgBottom: cm ? +cm.bottom.toFixed(2) : null,
         };
       }, c.mid);
-      // 预测值（与 `messages.js::inlineBoxFor` **同式**，独立复算 ⇒ 禁「实现自证自己」）。
+      // 预测值（与 popArtifacts `fitLayer` 同式独立复算 ⇒ 禁「实现自证自己」；
+      // 装箱上限 = STACK_MAX.w 220 × EXPAND_MAX.h 420 —— 场景 A 同一份 fitBox）。
       const raw = c.w / c.h;
-      const apx = Math.min(AR_MAX, Math.max(AR_MIN, raw));
-      const predW = Math.floor(apx >= CEIL_W / CEIL_H ? CEIL_W : CEIL_H * apx);
-      const predH = Math.round((predW / apx) * 100) / 100;
+      const pred = fitBox(c.w, c.h);
       const measuredAr = r.boxW && r.boxH ? +(r.boxW / r.boxH).toFixed(4) : null;
-      const expectToken = c.clamped ? (apx === AR_MAX ? '2 / 1' : '1 / 2') : `${c.w} / ${c.h}`;
       put(`ratio.${c.tag}.${scheme}`, {
-        nat: `${c.w}x${c.h}`, natRatio: +(raw.toFixed(4)), clamp: { min: AR_MIN, max: AR_MAX },
-        clamped: c.clamped, target: { ar: c.ar, apx: +(apx.toFixed(4)), token: expectToken },
-        calcBox: `${predW}x${predH}`, declared: r.attBox, measured: { w: r.boxW, h: r.boxH, ar: measuredAr },
-        cssWidth: r.cssWidth, computedAr: r.ar, attNat: r.attNat, attAr: r.attAr, slotW: r.slotW,
+        nat: `${c.w}x${c.h}`, natRatio: +(raw.toFixed(4)),
+        predict: { box: `${pred.w}x${pred.h}`, ar: +raw.toFixed(4) },
+        nfRatio: r.nfRatio, boxAr: r.boxAr,
+        measured: { w: r.boxW, h: r.boxH, ar: measuredAr, img: { w: r.imgW, h: r.imgH } },
         overflow: { card: (r.cardScrollW || 0) - (r.cardClientW || 0), flow: (r.flowScrollW || 0) - (r.flowClientW || 0) },
-        widths: { msg: r.msgW, msgOffset: r.msgOffsetW, card: r.cardW, cardScroll: r.cardBoxW, slot: r.slotW, bubbleW: r.bubbleW, bubbleMaxW: r.bubbleMaxW, nameW: r.nameW, attMaxW: r.attMaxW, flowClient: r.flowClientW, flowOffset: r.flowOffsetW },
+        widths: { msg: r.msgW, card: r.cardW, flowClient: r.flowClientW },
         gapToNext: (r.nextTop !== null && r.msgBottom !== null) ? +(r.nextTop - r.msgBottom).toFixed(2) : null,
         pageErrors,
       });
-      const norm = (s) => normRatio(s);
       if (AFTER) {
         ok(`F/③ [${scheme}] ${c.tag} 真图解码 = 原图内禀 ${c.w}×${c.h}`,
           r.natW === c.w && r.natH === c.h, JSON.stringify({ nat: `${r.natW}x${r.natH}` }));
-        ok(`F/③ [${scheme}] ${c.tag} 盒比 == 原图比夹取后值（声明 ${c.ar} · 实测框 ${r.boxW}×${r.boxH}）`,
-          Math.abs(ratioVal(r.ar) - apx) <= 5e-4 && norm(r.attAr) === norm(expectToken)
-          && measuredAr !== null && Math.abs(measuredAr - apx) <= 5e-3,
-          JSON.stringify({ computedAr: r.ar, attAr: r.attAr, expectToken, measuredAr, target: apx }));
-        ok(`F/③ [${scheme}] ${c.tag} 计算盒 == 独立复算 ${predW}x${predH}（宽高均 ≤ 上限盒 260×200）`,
-          r.attBox === `${predW}x${predH}` && Math.abs(r.boxW - predW) <= 1 && Math.abs(r.boxH - predH) <= 1
-          && r.boxW <= CEIL_W + 0.01 && r.boxH <= CEIL_H + 0.01,
-          JSON.stringify({ declared: r.attBox, predict: `${predW}x${predH}`, measured: { w: r.boxW, h: r.boxH }, cssWidth: r.cssWidth }));
+        ok(`F/③ [${scheme}] ${c.tag} 盒按**真实比**出（无夹取：nfRatio=${c.w}x${c.h} · fitBox 装箱 ${pred.w}×${pred.h} · img 铺满盒）`,
+          r.nfRatio === `${c.w}x${c.h}`
+          && Math.abs(ratioVal(r.boxAr) - raw) <= 5e-3
+          && measuredAr !== null && Math.abs(measuredAr - raw) <= 5e-3
+          && Math.abs(r.boxW - pred.w) <= 1 && Math.abs(r.boxH - pred.h) <= 1
+          && Math.abs(r.imgW - r.boxW) <= 1 && Math.abs(r.imgH - r.boxH) <= 1,
+          JSON.stringify({ nfRatio: r.nfRatio, boxAr: r.boxAr, measuredAr, predict: pred, measured: { w: r.boxW, h: r.boxH }, img: { w: r.imgW, h: r.imgH } }));
+        ok(`F/③ [${scheme}] ${c.tag} 盒 ≤ 220×420（主会话卡装箱上限）`,
+          r.boxW <= 220.01 && r.boxH <= 420.01,
+          JSON.stringify({ w: r.boxW, h: r.boxH }));
         ok(`F/③ [${scheme}] ${c.tag} 不破版（卡内/流内无横向溢出 + 下方消息未被顶走）`,
           ((r.cardScrollW || 0) - (r.cardClientW || 0)) <= 0 && ((r.flowScrollW || 0) - (r.flowClientW || 0)) <= 0
           && r.nextTop !== null && r.msgBottom !== null && r.nextTop >= r.msgBottom - 0.01,
           JSON.stringify({ cardOverflow: (r.cardScrollW || 0) - (r.cardClientW || 0), flowOverflow: (r.flowScrollW || 0) - (r.flowClientW || 0), nextTop: r.nextTop, msgBottom: r.msgBottom }));
-        if (c.clamped) {
-          ok(`F/③ [${scheme}] ${c.tag} **越界样本被夹到界内**（原图比 ${raw.toFixed(2)} ⇒ ${c.ar}）且不破版`,
-            Math.abs(apx - (norm(c.ar) === '2/1' ? AR_MAX : AR_MIN)) <= 1e-9
-            && Math.abs(ratioVal(r.ar) - apx) <= 5e-4 && r.boxH <= CEIL_H + 0.01,
-            JSON.stringify({ rawRatio: raw, clampedTo: c.ar, attAr: r.attAr, box: r.attBox, boxH: r.boxH }));
-        }
       } else {
-        // 红组（改前）**双基线**：本批的「改前」= 2026-09-18 imgmsg 基线（固定 13:10 盒，
-        // 与图无关）；更早基线（imgmsg 之前）= 槽根本没有比例（盒高 0 / `auto`）。
-        const prev13 = norm(r.ar) === '13/10';
-        ok(`F/③ [${scheme}] ${c.tag} 症状复现（改前）：盒比与图无关（13:10 固定盒 / 更早基线 = 槽未占位）`,
-          prev13 ? ((c.w / c.h) !== (13 / 10) ? r.boxH === 200 : true) : (norm(r.ar) === '' && (r.boxH || 0) === 0),
-          JSON.stringify({ computedAr: r.ar, boxH: r.boxH, natRatio: +raw.toFixed(4), baseline: prev13 ? 'imgmsg-13:10' : 'pre-imgmsg' }));
+        // 红组（改前）：改前树**没有媒体卡面**（`.fm-att-media .pop-media-flat` 不存在
+        // ⇒ 探针落空）——症状本身 = 社交窗各持旧槽语言（非主会话同一卡语言）。
+        ok(`F [${scheme}] ${c.tag} 症状复现（改前）：主会话媒体卡缺席（旧槽语言，各自维护）`,
+          r.boxW === null && r.boxH === null && !r.nfRatio && !r.boxAr,
+          JSON.stringify({ boxW: r.boxW, boxH: r.boxH, nfRatio: r.nfRatio, boxAr: r.boxAr }));
       }
       if (IM_SHOTS) {
         const el = await page.$(`.fm-flow .fm-msg[data-message-id="${c.mid}"]`);
