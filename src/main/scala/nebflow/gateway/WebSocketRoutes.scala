@@ -3368,7 +3368,8 @@ object WebSocketRoutes:
     delegateTitle: Option[String] = None, // 显示名契约批 2026-10-22: delegate/SubTask 行批次标题（delegateDisplayTitle 解析）
     delegateName: Option[String] = None, // 面板命名批 2026-10-31: 批次短名（DelegateRegistry.Record.name，≤12 字）——行首扫读名
     bgWaiting: List[(String, String, Long, String, String)] =
-      Nil // #752: (jobId, description, startedAtMs, health, ownerName) — the session's own waiting-type bg tasks; ownerName = 开启会话的 delegate 批次短名（归属批 2026-10-31，空 = 非 delegate/无名）
+      Nil, // #752: (jobId, description, startedAtMs, health, ownerName) — the session's own waiting-type bg tasks; ownerName = 开启会话的 delegate 批次短名（归属批 2026-10-31，空 = 非 delegate/无名）
+    standbySince: Option[Long] = None // 案A 待命批 2026-10-31（状态矩阵批收编）: delegate 待命停靠时刻（DelegateRegistry.standbySince）——快照行「待命」徽标数据源；None = 非待命（缺省，旧调用方逐字节兼容）
   ): Json =
     Json.obj(
       "sessionId" -> rec.sessionId.asJson,
@@ -3407,6 +3408,11 @@ object WebSocketRoutes:
       "status" -> rec.status.toString.asJson,
       "startedAt" -> rec.startedAt.asJson,
       "retryCount" -> retryCount.getOrElse(0).asJson,
+      // 案A 待命批 2026-10-31（状态矩阵批收编）：delegate 待命停靠时刻（epoch ms；
+      // null = 非待命）。快照行的「待命」徽标数据源——delegateWaiting 实时帧
+      // （mode=standby）在浏览器刷新后靠本字段复原（delegateTitle 同款读面一次
+      // lookup 带出）。
+      "standbySince" -> standbySince.asJson,
       // #752 空闲细分（快照恢复路径的数据源；live 行由实时帧写 currentTool，快照
       // 字段合并时不降级实时值——前端 merge 规则）。currentTool = 在飞/最后工具名
       // （最近动作摘要）、lastActivityMs = agent 侧最近活动戳（长空闲徽标判据）。

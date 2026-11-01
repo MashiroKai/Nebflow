@@ -91,6 +91,15 @@ object DelegateRevival:
               Some(
                 s"cancel tombstone present (cancelled by ${rec.cancelRequestedBy.getOrElse("?")} at ${rec.cancelRequestedAt.get}) — a cancelled delegate is never revived"
               )
+            else if rec.standbySince.isDefined then
+              // 案A 批 2026-10-31（状态矩阵批收编）：重启时停靠待命 ≠ 在飞工作——
+              // 会话已死不 live，「续跑」语义不成立（复活的 nudge 是「继续干活」，
+              // 而待命 delegate 在等作者事件）。不复活 ⇒ 落收殓链（failed + 父通知，
+              // 诚实终态、绝不 completed 假终态）；作者 Mail `delegate:<id>` 续聊腿
+              // 照常可唤醒（continueDelegate 以补充信息起新会话）。
+              Some(
+                "standby at engine restart — the delegate was parked awaiting the author, not working; not revivable (Mail the delegate continuation address to wake a fresh session)"
+              )
             else if rec.archivedAt.isDefined then Some("record archived")
             else if !seatExists(rec.cwd) then Some(s"seat directory missing: ${rec.cwd}")
             else if !parentExists then Some(s"parent session '${task.parentSessionId}' no longer exists")

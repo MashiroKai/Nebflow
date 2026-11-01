@@ -911,7 +911,11 @@ function bgTaskRowHtml(id, info, opts = {}) {
   // 既有形态——零报错、零占位、零 console 噪音。
   let waitingText = '';
   let waitingTip = '';
-  if (rowState === 'waiting') {
+  // 案A 待命批 2026-10-31（状态矩阵批收编）：mode=standby 行（delegateWaiting 帧 /
+  // 快照 standbySince 复原）跳过 merge-queue 查询——「待命」不是合并态；徽标词换
+  // subagents.status.standby（tooltip = 申报的「在等什么」）。
+  const waitingMode = (info && info.waiting && info.waiting.mode) || '';
+  if (rowState === 'waiting' && waitingMode !== 'standby') {
     const mq = mergeQueueEntryFor(String((info && info.sessionId) || '').replace(/^team-/, ''));
     if (mq) {
       const segs = [];
@@ -927,8 +931,12 @@ function bgTaskRowHtml(id, info, opts = {}) {
     }
   }
   const waitingPart = (rowState === 'waiting')
-    ? '<span class="bg-task-waiting"' + (waitingTip ? ' title="' + escapeHtml(waitingTip) + '"' : '') + '>'
-      + escapeHtml(t('subagents.status.waitingMerge') + waitingText) + '</span>'
+    ? (waitingMode === 'standby'
+      ? '<span class="bg-task-waiting"'
+        + (info.waiting.detail ? ' title="' + escapeHtml(info.waiting.detail) + '"' : '')
+        + '>' + escapeHtml(t('subagents.status.standby')) + '</span>'
+      : '<span class="bg-task-waiting"' + (waitingTip ? ' title="' + escapeHtml(waitingTip) + '"' : '') + '>'
+        + escapeHtml(t('subagents.status.waitingMerge') + waitingText) + '</span>')
     : '';
   // #752 空闲细分注记：idle/waiting 行显示「在等什么」（等后台任务名+时长+健康色 /
   // 等子代理回执 N 条 / 长空闲提醒徽标）。仅在停靠态出现，active 行零变化。

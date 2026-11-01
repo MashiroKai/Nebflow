@@ -153,7 +153,7 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       .lastOption
 
   test(
-    "① fallback chain: judge absent + no self-report → completed (legacy); self-report finish → completed; self-report blocked (retired) → completed + note"
+    "① matrix (2026-11-01): judge absent + no self-report ⇒ NudgeIdle (complete×idle = remind, never complete); self-report finish → completed; self-report blocked (retired) → completed + note"
   ) {
     val system = ActorSystem(s"dt-1-${scala.util.Random.nextInt(100000)}")
     for
@@ -178,10 +178,15 @@ class DelegateTerminalSpec extends CatsEffectSuite:
       v3 = verdictLine("delegate-nebflow-f3")
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield
-      assert(r1.isInstanceOf[DelegateTerminal.Outcome.Release], "no judge + no report ⇒ legacy completed release")
-      assert(r1.toString.contains("completed"))
+      // 状态矩阵批（作者令 2026-11-01）：complete × 未申报 = 提醒调整状态，绝不
+      // 判完成——NudgeIdle、零判词行、零父投递形态（旧「no judge + no report ⇒
+      // legacy completed」回落就此退役）。
+      assert(
+        r1.isInstanceOf[DelegateTerminal.Outcome.NudgeIdle],
+        s"undeclared turn end must be reminded (NudgeIdle), never completed: $r1"
+      )
+      assertEquals(v1, None, "an undeclared turn writes NO verdict line")
       assert(r2.isInstanceOf[DelegateTerminal.Outcome.Release])
-      assertEquals(v1, Some("completed"), "the verdict line lands in ChainStore even on the fallback leg")
       assertEquals(v2, Some("completed"))
       // #566：退役 blocked 申报 → completed＋注记（wire 无 blocked；注记走尾注+reason）。
       assert(
@@ -295,6 +300,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         (child, sup) <- noopRefs(system)
         // branch = None（非 git 工作区形态）——无可并之物
         _ = seedRecord("delegate-nebflow-nobranch", Some("61"), branch = None)
+        // 状态矩阵批：判词链门票 = finish 申报（未申报回合被槽位闸接去提醒腿）。
+        _ = DelegateRegistry.updateReport("delegate-nebflow-nobranch", "finish", "declared", "")
         outcome <- DelegateTerminal.onCompleted(
           res,
           "delegate-nebflow-nobranch",
@@ -338,6 +345,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
           branch = Some("delegate/delegate-nebflow-zero"),
           cwd = zeroRepo
         )
+        // 状态矩阵批：finish 申报 = 判词链门票。
+        _ = DelegateRegistry.updateReport("delegate-nebflow-zero", "finish", "declared", "")
         outcome <- DelegateTerminal.onCompleted(
           res,
           "delegate-nebflow-zero",
@@ -496,6 +505,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         advance = "direct"
       )
       _ = seedRecord("delegate-nebflow-dg1", Some("91"), branch = Some("delegate/delegate-nebflow-dg1"), cwd = repo)
+      // 状态矩阵批：finish 申报 = 判词链门票（漂移闸在链内照常先于判定机）。
+      _ = DelegateRegistry.updateReport("delegate-nebflow-dg1", "finish", "declared", "")
       outcome <- withJudgeAbsent(
         DelegateTerminal.onCompleted(
           res,
@@ -557,6 +568,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         )
       )
       _ = seedRecord("delegate-nebflow-dg2", Some("92"), branch = Some("delegate/delegate-nebflow-dg2"), cwd = repo)
+      // 状态矩阵批：finish 申报 = 判词链门票。
+      _ = DelegateRegistry.updateReport("delegate-nebflow-dg2", "finish", "declared", "")
       outcome <- withJudgeAbsent(
         DelegateTerminal.onCompleted(
           res,
@@ -697,6 +710,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         .proc("git", "-C", repo.toString, "branch", "-D", "delegate/delegate-nebflow-dg4")
         .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
       _ = seedRecord("delegate-nebflow-dg4", Some("94"), branch = Some("delegate/delegate-nebflow-dg4"), cwd = repo)
+      // 状态矩阵批：finish 申报 = 判词链门票。
+      _ = DelegateRegistry.updateReport("delegate-nebflow-dg4", "finish", "declared", "")
       outcome <- withJudgeAbsent(
         DelegateTerminal.onCompleted(res, "delegate-nebflow-dg4", "nebula-root", "t", "brief", "done", child, sup)
       )
@@ -705,7 +720,10 @@ class DelegateTerminalSpec extends CatsEffectSuite:
     yield
       assert(warned.isInstanceOf[DelegateTerminal.DriftResult.Warn], s"missing anchor reading ⇒ Warn, got: $warned")
       assertEquals(rows.map(_._1).lastOption, Some("completed"), "unverifiable git readings must NOT block (fail-open)")
-      assertEquals(rows.map(_._2).lastOption, Some("unjudged"), "the fallback leg keeps the honest unjudged source")
+      // 矩阵批：finish 申报在场 ⇒ 自申报背书——平线 source=judge（纯 unjudged 角
+      // = 未申报 × ahead>0 × 无 worktree，归 DelegateTerminalPrecheckSpec③）。
+      assertEquals(rows.map(_._2).lastOption, Some("judge"), "self-report backed: no unjudged marker")
+      assert(!outcome.toString.contains("unjudged"), s"got: $outcome")
       assert(outcome.toString.contains("completed"), s"got: $outcome")
     end for
   }
@@ -734,6 +752,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
           worktree = Some(wt),
           projectWorkspace = Some(repo)
         )
+        // 状态矩阵批：finish 申报 = 判词链门票。
+        _ = DelegateRegistry.updateReport("delegate-nebflow-dg5", "finish", "declared", "")
         outcome <- DelegateTerminal.onCompleted(
           res,
           "delegate-nebflow-dg5",
@@ -991,6 +1011,8 @@ class DelegateTerminalSpec extends CatsEffectSuite:
             projectWorkspace = Some(tempRoot.toString)
           )
         )
+        // 状态矩阵批：finish 申报 = 判词链门票。
+        _ = DelegateRegistry.updateReport("delegate-nebflow-nobase", "finish", "declared", "")
         outcome <- DelegateTerminal.onCompleted(
           res,
           "delegate-nebflow-nobase",

@@ -50,10 +50,12 @@ object DelegateTool extends Tool:
    * 零 node_report；文本内容 = 原 spawnWithPlugins 局部 `reportLine`，#566 起两态：
    * blocked 类别退役——报不了的腿照常 finish，阻塞事实写进终稿）。
    * S7/S8「node 同款提醒（防忘记调用）」的最小形态——delegate 常为单 turn 会话，
-   * 提醒落在 brief 而非中途 ladder；未申报不阻断终态。
+   * 提醒落在 brief 而非中途 ladder；状态矩阵批 2026-11-01 起「未申报」不再是
+   * 静默放行——引擎以 system reminder 提醒补报（standby 或 finish），finish 是
+   * 引擎唯一可判完成的申报。
    */
   val BriefReportLine: String =
-    """[report] when your work reaches its end state, call delegate_report(category="finish"|"merge", detail=…) right before your final text — "merge" = your deliverable commits sit on your working branch and need the merge queue (you keep working until the merge reminder arrives); "finish" = done for good (pure read / no file changes, the merge has landed, or the task could not be completed — state the blocker plainly in your final text; there is no separate blocked state). The report updates your status record; your final text remains the deliverable."""
+    """[report] when your work reaches its end state, call delegate_report(category="finish"|"merge"|"standby", detail=…) right before your final text — "merge" = your deliverable commits sit on your working branch and need the merge queue (you keep working until the merge reminder arrives); "finish" = done for good (pure read / no file changes, the merge has landed, or the task could not be completed — state the blocker plainly in your final text; there is no separate blocked state); "standby" = you are waiting for orders/events and NOT done (the turn ends with no terminal verdict and no delivery to the dispatcher — the task row stays running, your session parks in the explicit standby state until the next Mail wakes you; refused while unmerged deliverable commits sit on the branch — merge obligations come first). ALWAYS declare before ending a turn: an undeclared turn end is not judged complete — the engine reminds you to declare instead. The report updates your status record; your final text remains the deliverable."""
 
   /**
    * D12-b reset 警示行（delegate reset 零闸治理，作者裁定 2026-10-23）：就地腿

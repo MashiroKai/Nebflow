@@ -26,9 +26,12 @@ import scala.concurrent.duration.*
  *  - 判据纯函数：`sessionToolCalls`（全会话 tool_use 计数）＋
  *    `isEmptyBurnCompletion`（零工具 ∧（终文空 ∨ max_tokens 空烧 stub））；
  *  - 两级处置（作者荐形态）：有重启预算 → 既有 respawn 续推（"restarting"
- *    库态＋subagentRetry＋continue nudge 注入）；预算耗尽 → delegate 轨照常
- *    过终态判定机（确定性预检判 blocked，[[DelegateTerminalPrecheckSpec]] 钉
- *    core 侧），subtask 轨 failed 终态（failureType=empty-burn）。
+ *    库态＋subagentRetry＋continue nudge 注入）；预算耗尽 → **状态矩阵批
+ *    （2026-11-01 · 作者令「complete × 未申报 ⇒ 提醒，不终判」）**：delegate 轨
+ *    挂进未申报提醒腿（Outcome.NudgeIdle——零终态报父、零判词行、任务行回
+ *    running，DelegateStandbyCare.IdleNudge 承担 system-reminder 退避提醒，
+ *    [[DelegateTerminalPrecheckSpec]] 钉 core 侧），subtask 轨 failed 终态
+ *    （failureType=empty-burn）。
  *
  * 现场回归：鹦鹉骑自行车 delegate——thinking-only 空烧，supervisor 把
  * "(no text output)" 当完成报父，假 completed。本件钉死：空烧 Completed 一律
@@ -186,13 +189,16 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
   // ── 行为面：delegate 轨两级处置 ─────────────────────────────────────────
 
   test(
-    "delegate track: empty Completed restarts (nudge injected, restarting status); budget exhausted ⇒ deterministic precheck honest note (#566), never a fake completion"
+    "delegate track: empty Completed restarts (nudge injected, restarting status); budget exhausted ⇒ matrix complete×idle (NudgeIdle): reminder armed, NO terminal, NO parent delivery, task row honest running — never a fake completion"
   ) {
     val system = ActorSystem(s"bsup-eb-1-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-bsup-eb-")
     val parentSid = "eb-parent-1"
     val childSid = "delegate-eb-1"
     val stubBrief = "画一个「鹦鹉骑自行车」的循环动画"
+    // 状态矩阵批：待命提醒关（确定性——caretaker 的 10s 首催与本轮断言无关；
+    // IdleNudge 注入形态由 DelegateStandbyCareSpec 钉）。
+    val prevNudge = sys.props.put("nebflow.delegate.standby.nudgeEnabled", "false")
     for
       resources <- mkResources(system, tmp)
       // P2 邮箱化：父会话登记在场（MailboxProducer.deliver 父在场守卫）。
@@ -228,67 +234,47 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
         ),
         "eb-supervisor-1"
       )
-      // 空烧 ×3：第 1/2 次吃掉重启预算，第 3 次预算耗尽 → 确定性预检 blocked
+      // 空烧 ×3：第 1/2 次吃掉重启预算，第 3 次预算耗尽 → 矩阵未申报腿（提醒不终判）
       _ <- supervisor ! AgentEvent.Completed(childSid, thinkingOnlyMessages)
       _ <- waitUntil(10.seconds)(spawned.get.map(_ == 1))
       _ <- supervisor ! AgentEvent.Completed(childSid, stubMessages)
       _ <- waitUntil(10.seconds)(spawned.get.map(_ == 2))
       _ <- supervisor ! AgentEvent.Completed(childSid, stubMessages)
-      // P2 迁移后 delegate 终态通知走持久邮箱（不再 ref! 推送）——观察面换轴。
-      _ <- waitUntil(10.seconds)(
-        SessionMailbox.scanPending(parentSid).map(_.exists(_.event.eventType == "completed"))
-      )
-      _ <- IO.sleep(300.millis) // 终态清理链沉降
+      _ <- IO.sleep(500.millis) // 观察停靠沉降（无终态可等——纯断言 reminder 形态）
       mailed <- SessionMailbox.scanPending(parentSid)
       refEvents <- parentEvents.get
       cmds <- childCmds.get
       tasks <- resources.subAgentTaskStore.loadTasks(parentSid)
       chainLines = ChainStore.listSync().flatMap(_.entries).filter(_.kind == "terminal-verdict")
       _ <- system.stopAll
+      _ <- IO {
+        prevNudge.fold(sys.props.remove("nebflow.delegate.standby.nudgeEnabled"))(v =>
+          sys.props.put("nebflow.delegate.standby.nudgeEnabled", v)
+        )
+        ()
+      }
     yield
       // 两次续推：新 child 各收到一次「空烧 nudge」（非旧 completed 报文）
       val nudges = cmds
         .collect { case u: AgentCommand.UserInput => u.text }
         .filter(_.contains("NO output and NO tool calls"))
       assertEquals(nudges.size, 2, s"each empty-burn restart must inject the nudge, got: $nudges")
-      // 判定机不在场（端口未装）＋确定性预检 → 邮箱唯一完成条目携带 blocked 判词行
+      // 状态矩阵锚演进（作者令 2026-11-01「不给 completed 假终态」）：预算耗尽 ⇒
+      // 未申报腿——零终态投递（原预检 completed+note 报父形态退役），提醒面接管。
       val ext = mailed.collect { case e if e.event.eventType == "completed" => e }
-      assertEquals(ext.size, 1, s"exactly one terminal entry, got: ${mailed.map(e => (e.identity, e.event.eventType))}")
-      // #566 判词退役（2026-10-22 对齐；HEAD 基线同红——main 既有漂移，非本批回归）：
-      // 空烧确定性预检的「判未完成」是 CompletedNote 交付注记而非 blocked 状态——wire
-      // 编 completed，诚实性由「预检具名 + judged-incomplete 注记」承担，反假完成不变。
-      assert(
-        ext.head.event.payload.contains("[delegate-judge] verdict: completed") &&
-          ext.head.event.payload.contains("judged incomplete"),
-        s"honest verdict line must reach the parent: ${ext.head.event.payload}"
-      )
-      assert(
-        ext.head.event.payload.contains("deterministic precheck"),
-        s"the precheck marker must be named: ${ext.head.event.payload}"
-      )
-      assert(
-        !ext.head.event.payload.contains("(no text output)\n\n[delegate-judge] verdict: completed"),
-        "the fake-completed form must be gone"
-      )
+      assertEquals(ext.size, 0, s"an observed empty burn must NOT reach the parent as any terminal, got: ${mailed.map(e => e.event.eventType)}")
+      assertEquals(chainLines.size, 0, s"no terminal-verdict line may be written, got: $chainLines")
       // 红线（双发=事故）：ref 消息流零 ExternalEvent。
       assertEquals(
         refEvents.collect { case e: AgentCommand.ExternalEvent => e }.size,
         0,
         s"delegate terminal MUST NOT ride the legacy push chain, got: $refEvents"
       )
-      // 审计行：source=precheck
-      val precheckLines = chainLines.filter(_.payload.hcursor.get[String]("source").toOption.contains("precheck"))
-      assertEquals(precheckLines.size, 1, s"exactly one precheck verdict line, got: $chainLines")
-      // #566：预检审计行的 verdict 字段同样折 CompletedNote（wire=completed），注记随行。
-      assertEquals(precheckLines.head.payload.hcursor.get[String]("verdict").toOption, Some("completed"))
-      // 断点续推痕迹：任务库历经 restarting（retryCount 1→2）后落 completed（blocked 判词行的既有报父语义）
+      // 停靠面：任务行诚实回 running（respawn 的 restarting 不滞留——行诚实：
+      // 活着、待提醒、未完工）。
       val task = tasks.find(_.taskId == childSid).get
       assertEquals(task.retryCount, 2, "two empty-burn restarts must be counted")
-      assertEquals(
-        task.status,
-        "completed",
-        "the blocked-verdict release rides the completed eventType (existing judge semantics)"
-      )
+      assertEquals(task.status, "running", "the reminded delegate is parked awaiting its declaration, NOT completed")
     end for
   }
 
