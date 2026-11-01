@@ -343,7 +343,7 @@ try {
   await sleep(400);
   let g2 = await geo(page);
   const fabOpen = await page.evaluate(() => document.querySelector('.ask-fab').classList.contains('open'));
-  const inputFocused = await page.evaluate(() => document.activeElement === document.querySelector('.ask-dock input'));
+  const inputFocused = await page.evaluate(() => document.activeElement === document.querySelector('.ask-dock textarea'));
   ok('T2a 点击入口开：dock 摘 .closed + fab.open + 输入聚焦', !g2.dockClosed && fabOpen && inputFocused, `closed=${g2.dockClosed} open=${fabOpen} focus=${inputFocused}`);
   const anchored = await page.evaluate(() => {
     const d = document.querySelector('.ask-dock');
@@ -367,8 +367,8 @@ try {
   inbound.length = 0;
   await page.click('.ask-fab');
   await sleep(350);
-  await page.fill('.ask-dock input', 'τ 为什么取 30 天？');
-  await page.press('.ask-dock input', 'Enter');
+  await page.fill('.ask-dock textarea', 'τ 为什么取 30 天？');
+  await page.press('.ask-dock textarea', 'Enter');
   await sleep(200);
   const askOpenIdx = inbound.findIndex((m) => m.type === 'askOpen');
   const askQ = inbound.find((m) => m.type === 'askQuestion');
@@ -418,8 +418,8 @@ try {
   //    saturate(--g2-fade-sat) + 两段式 mask；列顶留白 = fade-h（首条不入带）。
   inbound.length = 0;
   const aiCountBefore = await page.evaluate(() => document.querySelectorAll('.ask-dock .ask-bub.ai').length);
-  await page.fill('.ask-dock input', '## 结构\n\n- 甲\n- 乙\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```js\ncode\n```');
-  await page.press('.ask-dock input', 'Enter');
+  await page.fill('.ask-dock textarea', '## 结构\n\n- 甲\n- 乙\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```js\ncode\n```');
+  await page.press('.ask-dock textarea', 'Enter');
   await sleep(250);
   const f1 = await page.evaluate((prevAi) => ({
     user: document.querySelectorAll('.ask-dock .ask-bub.user').length,
@@ -563,10 +563,21 @@ try {
   const t6a = await page.evaluate(() => {
     const row = document.querySelector('.ask-dock .ask-input');
     const btns = row ? [...row.querySelectorAll('button')] : [];
-    return { n: btns.length, cls: btns.map((b) => b.className), hasHandoff: !!document.querySelector('.ask-dock .ask-handoff') };
+    const stop = /** @type {HTMLElement|null} */ (row && row.querySelector('.ask-stop'));
+    return {
+      n: btns.filter((b) => getComputedStyle(/** @type {HTMLElement} */ (b)).display !== 'none').length,
+      cls: btns.map((b) => b.className),
+      hasHandoff: !!document.querySelector('.ask-dock .ask-handoff'),
+      stopHidden: !!stop && getComputedStyle(stop).display === 'none',
+    };
   });
-  ok('T6a v2.1 单箭头：转交钮退场，输入条右侧唯一按钮 = .ask-send',
-    !t6a.hasHandoff && t6a.n === 1 && t6a.cls[0] === 'ask-send', JSON.stringify(t6a));
+  // 输入行为包批（2026-11-02 作者令「给 ask 也加一个 interrupt 的状态」）：
+  // 输入条按钮面 = 发送 + 中断两枚（中断钮 idle 态 display:none 隐着，busy 才
+  // 上位）——转交钮退场契约（v2.1 减法）由 hasHandoff=false + idle 可见按钮唯一
+  // （.ask-send）共同钉住；T-IX 批（ask-input-composer.spec）另有 busy 互换全断言。
+  ok('T6a v2.1 单箭头 + 中断钮对：转交钮退场，idle 可见按钮唯一 = .ask-send（.ask-stop 隐）',
+    !t6a.hasHandoff && t6a.n === 1 && t6a.cls[0] === 'ask-send' && t6a.stopHidden === true,
+    JSON.stringify(t6a));
   // 转交回执（服务端 ack 帧）收进不可见处：零 sys 气泡、气泡总数不变
   const before6b = await page.evaluate(() => document.querySelectorAll('.ask-dock .ask-bub').length);
   wsSend({ type: 'askHandoffAck', sessionId: askedSid, ok: true, question: 'τ 为什么取 30 天？' });

@@ -1,0 +1,76 @@
+{
+  "engine": "webkit",
+  "theme": "dark",
+  "assertions": [
+    {
+      "name": "K1 组字期 Enter：不发送 + defaultPrevented=false + 文本保留",
+      "cond": true,
+      "detail": "{\"flag\":\"1\",\"prevented\":false,\"value\":\"人工智能的延迟是\",\"frames\":23}"
+    },
+    {
+      "name": "K2 同块尾随 Enter（确认候选）：不发送",
+      "cond": true,
+      "detail": "{\"prevented\":false,\"value\":\"人工智能的延迟是\",\"flag\":\"1\"}"
+    },
+    {
+      "name": "K3 组字结束后 Enter：发送（帧出 + 值清 + user 泡上屏）",
+      "cond": true,
+      "detail": "{\"flag\":null,\"prevented\":true,\"value\":\"\",\"frame\":true,\"userBubs\":1}"
+    },
+    {
+      "name": "K4 英文直接回车发送（真键盘路径不变）",
+      "cond": true,
+      "detail": "{\"frame\":true,\"value\":\"\"}"
+    },
+    {
+      "name": "K5a Shift+Enter：换行入 textarea、不发送",
+      "cond": true,
+      "detail": "{\"value\":\"\\\"多行提问第一行\\\\n\\\"\"}"
+    },
+    {
+      "name": "K5b 随后裸 Enter：带换行正文发送",
+      "cond": true,
+      "detail": "{\"content\":\"多行提问第一行\\n第二行\"}"
+    },
+    {
+      "name": "K6a 组字期 Esc：dock 不收起（Esc 属于输入法，主会话同律）",
+      "cond": true,
+      "detail": "{\"dockClosed\":false}"
+    },
+    {
+      "name": "K6b 非组字 Esc：dock 收起（既有通路回归不破）",
+      "cond": true,
+      "detail": "{\"dockClosed\":true}"
+    },
+    {
+      "name": "I1 发问 → busy 臂：发送钮隐、中断钮上位、typing 在场",
+      "cond": true,
+      "detail": "{\"frame\":true,\"send\":\"none\",\"stop\":\"flex\",\"typing\":1}"
+    },
+    {
+      "name": "I2 流中：部分 ai 泡在场 + 中断钮持续在位",
+      "cond": true,
+      "detail": "{\"ai\":\"部分回答：检索按近因加权…\\n\",\"stop\":\"flex\",\"send\":\"none\"}"
+    },
+    {
+      "name": "I3 点中断：interrupt 帧出 + typing 撤 + 已生成部分保留 + 发送钮回归",
+      "cond": true,
+      "detail": "{\"frame\":{\"type\":\"interrupt\",\"sessionId\":\"ask-9661a794\"},\"typing\":0,\"aiKept\":\"部分回答：检索按近因加权…\\n\",\"send\":\"flex\",\"stop\":\"none\"}"
+    },
+    {
+      "name": "I4 interrupted 帧幂等收口 + 可继续追问（新 askQuestion 帧出）",
+      "cond": true,
+      "detail": "{\"settledIdle\":\"flex\",\"frame2\":true,\"userBubs\":5}"
+    },
+    {
+      "name": "I5 续问 done：typing 撤 + 发送钮在位（自然终态收口）",
+      "cond": true,
+      "detail": "{\"typing\":0,\"send\":\"flex\",\"ai\":5}"
+    },
+    {
+      "name": "E 零 pageerror",
+      "cond": true,
+      "detail": "(no detail)"
+    }
+  ]
+}

@@ -207,12 +207,15 @@ html.no-backdrop .ask-colwrap .ask-veil {
   display: flex; align-items: center; gap: 6px; padding: 7px 7px 7px 6px;
 }
 .ask-input:focus-within { border-color: rgb(var(--sapphire) / 0.45); }
-.ask-input input {
+/* 输入行为包批（2026-11-02 作者令）：input → textarea（rows=1）——Shift+Enter
+ * 换行键位契约与主会话逐一对齐；单行视觉不变，超行自动长高（JS 封顶 120px）。 */
+.ask-input textarea {
   flex: 1; min-width: 0; border: none; outline: none; background: transparent;
+  resize: none; overflow: hidden; display: block; padding: 0; margin: 0;
   font: 400 13.5px -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', Roboto, sans-serif;
-  color: var(--color-text); caret-color: var(--color-primary);
+  line-height: 1.4; color: var(--color-text); caret-color: var(--color-primary);
 }
-.ask-input input::placeholder { color: var(--color-text-muted); }
+.ask-input textarea::placeholder { color: var(--color-text-muted); }
 /* 发送钮跟随主对话恢复微信绿（液体玻璃 v3 实现批 2026-10-31，作者 12:32 点选
  * 「其它面板发送钮跟随主对话」）：10-30 墨族（--btn-primary-*）恢复为考古绿
  * --ctl-send-* 三档（git c91de8456^ 本块原值 #07C160/#06AD56/#059A4C）；材质 =
@@ -233,6 +236,21 @@ html.no-backdrop .ask-colwrap .ask-veil {
   border-color: var(--ctl-send-bg-active);
 }
 .ask-input .ask-send svg { width: 14px; height: 14px; pointer-events: none; }
+
+/* 中断钮（输入行为包批 2026-11-02）：busy 态与发送钮互换（包状态机驱动显隐，
+ * 与主会话 #send-btn/#stop-btn 互换同律）。材质 = 主会话 #stop-btn 同源——
+ * --color-error 红实底白标，hover 色深一档（input.css #stop-btn 同式 color-mix）；
+ * 几何沿用 .ask-send 32px 正圆档（dock 单行形态不因态互换跳变）。 */
+.ask-input .ask-stop {
+  flex: none; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; padding: 0;
+  background: var(--color-error); color: #fff;
+  border: 1px solid transparent;
+  display: none; /* 默认隐（idle 态发送钮上位）；busy 由包置 flex */
+  align-items: center; justify-content: center;
+  transition: background-color 0.15s ease;
+}
+.ask-input .ask-stop:hover { background: color-mix(in srgb, var(--color-error) 88%, black); }
+.ask-input .ask-stop svg { width: 14px; height: 14px; pointer-events: none; }
 
 /* ═══ 移动档（body.mobile-layer；E-2 移动列 + #988 命中盒纪律）═══
    Canvas 改造批⑨（2026-10-31 作者令「修 bug：标签页对话按钮消失」）：手机层
@@ -260,4 +278,4 @@ body.mobile-layer .ask-dock {
   z-index: 260;
 }
 body.mobile-layer .ask-bub { font-size: 13px; padding: 8px 12px; }
-body.mobile-layer .ask-input input { font-size: 15px; } /* iOS 聚焦不缩放 */
+body.mobile-layer .ask-input textarea { font-size: 15px; } /* iOS 聚焦不缩放（输入行为包批：input→textarea 同律） */

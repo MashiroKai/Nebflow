@@ -74,6 +74,9 @@ import { createMsgFooterBadge, renderDurationBadge } from './chat/durationBadges
 // 正常态只渲染块内（框外正文摘除），turn-header 角标展开见 outputTag.js。
 import { applyOutputFace } from './outputTag.js';
 import { bindCollapsibleToggle } from './chat/collapsible.js';
+// 输入行为包批（2026-11-02 作者令）：busy↔idle 按钮 chrome = input/composer.js
+// 统一状态机（主会话 setBusy/clearBusy 与 canvas ask 共用同一实现）。
+import { applyTurnChrome } from './input/composer.js';
 export { formatDuration, formatLiveDuration, pickThinkingPhrase, createMsgFooterBadge, createDurationBadgeElement, renderDurationBadge } from './chat/durationBadges.js';
 // Pop 族合流（A 侧 pop-upgrade 批单源化）：`popArtifactFromInput` / `openPopArtifact`
 // 的再导出改由下方 A 侧 `./popArtifacts.js` 单源承担（chatSearch.js 既有 import 面
@@ -400,10 +403,10 @@ export function setBusy(sessionId) {
   if (sessionId) state.busySessionIds.add(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: true } }));
   if (activeView && activeView.sessionId === sessionId) {
-    const { sendBtn, stopBtn, statusWrap } = activeView.dom;
-    if (sendBtn) sendBtn.style.display = 'none';
-    if (stopBtn) stopBtn.style.display = 'flex';
-    if (statusWrap) statusWrap.classList.add('on');
+    // 输入行为包批（2026-11-02 作者令「文字输入框的逻辑做成一个包」）：按钮
+    // chrome 互换收进包实现 applyTurnChrome（与 canvas ask .ask-stop 同一状态机
+    // ——语句与顺序逐字保留，仅实现搬位）。
+    applyTurnChrome(activeView.dom, true);
   }
 }
 
@@ -414,10 +417,9 @@ export function clearBusy(sessionId) {
   removeStillProcessingNotice(sessionId);
   window.dispatchEvent(new CustomEvent('session-busy', { detail: { sessionId, busy: false } }));
   if (activeView && activeView.sessionId === sessionId) {
-    const { input, sendBtn, stopBtn, statusWrap } = activeView.dom;
-    if (sendBtn) sendBtn.style.display = 'flex';
-    if (stopBtn) stopBtn.style.display = 'none';
-    if (statusWrap) statusWrap.classList.remove('on');
+    const { input } = activeView.dom;
+    // 输入行为包批：按钮 chrome 互换收进包实现（搬位律同 setBusy）。
+    applyTurnChrome(activeView.dom, false);
     // 不夺进行中的输入焦点（2026-09-15 作者现场报 · 件②）：本函数由全部 turn 终态帧
     // 调用（clearBusyFor ← done/error/interrupted/timeout/maxTokens/compactFailed，
     // 以及 sessionBusy{busy:false}），而引擎在「AskUser 卡 park 住 turn」时**成对**

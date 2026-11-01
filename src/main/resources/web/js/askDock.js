@@ -54,6 +54,11 @@ import { activeCanvasEntry } from './canvas.js';
 // 护栏与 LRU）——渲染腿零重写；user 气泡维持 textContent 纯文本面。
 import { renderMarkdownWithMath } from './utils.js';
 import { isAskableFile } from './mdHtmlGate.js';
+// 输入行为包批（2026-11-02 作者令「文字输入框的逻辑做成一个包，参考主 agent
+// 会话窗口的输入模式」）：键盘/IME 组字态/发送判定/中断状态机 = input/composer.js
+// 统一实现（主会话同源）——组字期 Enter 只确认候选不发送、组字结束后才发送、
+// Shift+Enter 换行；生成中发送钮转中断钮（与主会话 send/stop 同律）。
+import { bindComposerKeys, createTurnToggle, requestTurnInterrupt, isImeComposing } from './input/composer.js';
 
 // ── 文案（i18n 键 = key('locale')，navController tt 同源）─────────────────
 function tt(zh, en) {
@@ -67,11 +72,14 @@ const ICONS = {
   chat: '<svg class="ask-fab-ic-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>',
   close: '<svg class="ask-fab-ic-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
+  // 中断钮（输入行为包批）：与主会话 #stop-btn 同语（lucide square 族）——红圆白方停标。
+  stop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
 };
 
-/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean}>} */
+/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, lastFrameAt?: number}>} */
 const sessions = new Map(); // key: absPath
-let el = null; // { fab, dock, col, input, send }（v2.1：ghost/sess/handoff 件随减法退场）
+let el = null; // { fab, dock, col, input, send, stop }（v2.1：ghost/sess/handoff 件随减法退场；输入行为包批 + stop）
+let turnToggle = null; // 中断状态机（createTurnToggle；mount 时建，单 dock 对）
 let currentFile = ''; // absPath of the active file entry ('' = 非文件卡)
 let inited = false;
 
@@ -208,13 +216,17 @@ function mount() {
 
   const dock = document.createElement('div');
   dock.className = 'ask-dock closed';
-  // v2.1 减法（作者令 2026-10-28 22:42）：输入条只留右侧一枚发送钮；ghost 提示
+  // v2.1 减法（作者令 2026-10-28 22:42）：输入条只留右侧发送钮；ghost 提示
   // 行 / session 徽标不渲染（显示面删掉不必要的消息）。
+  // 输入行为包批（2026-11-02）：① <textarea rows=1> 承载 Shift+Enter 换行（键位
+  // 契约与主会话逐一对齐；单行视觉不变，超行自动长高封顶）；② + 中断钮
+  // .ask-stop（busy 态与发送钮互换，主会话 #stop-btn 同律；包状态机驱动）。
   dock.innerHTML =
     '<div class="ask-colwrap"><div class="ask-col"></div><div class="ask-veil" aria-hidden="true"></div></div>' +
     '<div class="ask-input">' +
-    '<input type="text" placeholder="' + tt('针对这份文件提问…', 'Ask about this file…') + '" aria-label="' + tt('提问', 'Question') + '">' +
+    '<textarea rows="1" placeholder="' + tt('针对这份文件提问…', 'Ask about this file…') + '" aria-label="' + tt('提问', 'Question') + '"></textarea>' +
     '<button type="button" class="ask-send" aria-label="' + tt('发送', 'Send') + '">' + ICONS.send + '</button>' +
+    '<button type="button" class="ask-stop" aria-label="' + tt('停止回答', 'Stop answering') + '">' + ICONS.stop + '</button>' +
     '</div>';
 
   host.appendChild(fab);
@@ -224,15 +236,29 @@ function mount() {
     fab,
     dock,
     col: dock.querySelector('.ask-col'),
-    input: dock.querySelector('input'),
+    input: dock.querySelector('textarea'),
     send: dock.querySelector('.ask-send'),
+    stop: dock.querySelector('.ask-stop'),
   };
 
   fab.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
   dock.addEventListener('click', (e) => e.stopPropagation());
   dock.addEventListener('pointerdown', (e) => e.stopPropagation());
+  // 中断状态机实例（包工厂）：busy()/idle() 驱动发送↔中断钮互换（applyTurnChrome
+  // 与主会话 setBusy/clearBusy 同一实现）。
+  turnToggle = createTurnToggle({
+    sendBtn: /** @type {HTMLElement} */ (el.send),
+    stopBtn: /** @type {HTMLElement} */ (el.stop),
+  });
   el.send.addEventListener('click', () => submit());
-  el.input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  el.stop.addEventListener('click', () => stopAsk());
+  // 多行草稿自动长高（主会话 textarea 同式：auto → scrollHeight，封顶留 dock 紧凑形态）。
+  el.input.addEventListener('input', () => {
+    el.input.style.height = 'auto';
+    el.input.style.height = Math.min(el.input.scrollHeight, 120) + 'px';
+  });
+  // 键盘/IME/发送判定 = 主会话同一实现（包装配；组字期 Enter 只确认候选）。
+  bindComposerKeys(el.input, { onSend: () => { submit(); } });
   el.input.addEventListener('focus', syncSeat);
 
   // 收起三通路之一：点击画布空白（#canvas-content 本体 = 无浮层处；卡片内
@@ -243,8 +269,10 @@ function mount() {
       if (e.target === content && isOpen()) close();
     });
   }
-  // 收起三通路之二：Esc。
+  // 收起三通路之二：Esc。（输入行为包批：组字期 Esc = 输入法取消候选——键属
+  // 输入法，不收起 dock；键位契约与主会话一致——主会话 Esc 同样让渡组字键。）
   document.addEventListener('keydown', (e) => {
+    if (el && isImeComposing(e, el.input)) return;
     if (e.key === 'Escape' && isOpen() && isCanvasVisible()) { close(); }
   });
 
@@ -518,6 +546,7 @@ async function submit() {
   const v = el.input.value.trim();
   if (!v) return;
   el.input.value = '';
+  el.input.style.height = 'auto'; // 多行草稿发送后回落单行（主会话 send 同律）
   // ④ 双泡修复批 2026-10-31（作者截图：等待小气泡上方叠多余空泡）：发问时
   // **不再预压空 ai 泡**——等待期只有 typing 一件；首个 textDelta 落 ai 泡时
   // removeTyping() 单点换泡（双泡根因 = 空 ai 泡 + typing 泡并存）。
@@ -525,9 +554,52 @@ async function submit() {
   persistSession(s); // 发问即落盘（持久批：重载/竞态现场问题不丢）
   render();
   appendTyping();
+  armTurn(s); // 中断状态机：生成中 = 发送钮让位中断钮（输入行为包批）
   if (!s.stateSent) askOpen(s); // 未绑定先补一拍（历史回放与流式都依赖 askState）
   sendWs({ type: 'askQuestion', sessionId: s.sid, content: v, mainSessionId: state.activeSessionId || '' });
 }
+
+// ── 中断状态机（输入行为包批 2026-11-02；与主会话 send/stop 同律）────────────
+// busy 面 = 发送钮让位中断钮（包 applyTurnChrome 语句同源）；臂点 = submit 与
+// 首个流帧（他机发问现场——本页没发过 askQuestion 也可能收到 textDelta）；收点 =
+// done / error / interrupted 终态帧 + 用户点停（本地先收，终态帧幂等再收）+
+// askState 回放见「转录已答完」（断线中 turn 已终了的形态）+ 静默看门（终态帧
+// 丢失兜底——纯 UI 收口，不掐服务端，主会话看门同哲学）。已生成部分保留、可
+// 继续追问（主会话中断后 UI 态同律）。
+
+/** 臂：该会话 turn 在飞 → 中断钮上位（活动会话才动 chrome；幂等）。 */
+function armTurn(s) {
+  s.busy = true;
+  s.lastFrameAt = Date.now();
+  if (s === activeSession() && turnToggle) turnToggle.busy();
+}
+
+/** 收：终态（busy 清 + 中断钮让位；幂等——重复终态帧/重复点击零副作用）。 */
+function settleTurn(s) {
+  if (!s) return;
+  s.busy = false;
+  if (s === activeSession() && turnToggle) turnToggle.idle();
+}
+
+/** 用户点停：帧出口走包单点（与主会话 #stop-btn 逐字节同帧）；UI 即刻收口
+ *  （主会话 stop 同律「reset UI immediately」）——typing 撤除、已生成 ai 泡保留。 */
+function stopAsk() {
+  const s = activeSession();
+  if (!s || !s.busy) return;
+  requestTurnInterrupt(s.sid);
+  settleTurn(s);
+  if (isOpen()) removeTyping();
+}
+
+// 静默看门：busy 期间 180s 无任何流帧 ⇒ 本地收口（终态帧丢失形态）。帧到即续臂
+// （lastFrameAt 刷新），活跃流永不误收；不 server-interrupt（freezetimeout B2
+// 「到点只呈现，不发 interrupt」同哲学——这里连呈现都不用，只还按钮）。
+setInterval(() => {
+  const now = Date.now();
+  for (const s of sessions.values()) {
+    if (s.busy && now - (s.lastFrameAt || 0) > 180000) settleTurn(s);
+  }
+}, 5000);
 
 let typingNode = null;
 let streamPersistAt = 0; // 流式落盘节流拍（持久批；800ms 一写，done 终局兜底）
@@ -591,6 +663,9 @@ function consumeFrame(msg) {
         entry.msgs = entry.msgs.concat([localLastUser]);
       }
       persistSession(entry);
+      // 断线中 turn 已终了的形态（输入行为包批）：回放转录末条已是 ai 答复而本地
+      // 仍臂着 busy ⇒ 服务端为权威，即刻收口（幂等；turn 真在飞时转录末条是 user 问）。
+      if (entry.busy && adopted.length && adopted[adopted.length - 1].role === 'ai') settleTurn(entry);
       if (file === currentFile) {
         // 回放即读（用户此刻正看着该会话）：未读清零 + 通知点落位。
         if (isOpen()) { entry.unread = false; removeTyping(); render(); }
@@ -601,6 +676,7 @@ function consumeFrame(msg) {
     case 'textDelta': {
       // 未读判定（ask 三修②）：到达时用户不在看着（dock 收起 ∨ 后台文件）即记未读。
       if (!(entry === activeSession() && isOpen())) entry.unread = true;
+      armTurn(entry); // 流帧即活性（臂 + 看门续臂；他机发问现场也臂上中断态）
       const last = entry.msgs[entry.msgs.length - 1];
       if (!last || last.role !== 'ai') {
         entry.msgs.push({ role: 'ai', text: '' });
@@ -618,8 +694,22 @@ function consumeFrame(msg) {
     }
     case 'done': {
       if (!(entry === activeSession() && isOpen())) entry.unread = true;
+      settleTurn(entry); // 终态收口（输入行为包批：中断钮让位，幂等）
       const last = entry.msgs[entry.msgs.length - 1];
       if (last && last.role === 'ai' && !last.text && msg.finalText) last.text = msg.finalText;
+      persistSession(entry);
+      if (entry === activeSession()) {
+        if (isOpen()) { removeTyping(); render(); }
+        syncUnreadDot();
+      }
+      break;
+    }
+    case 'interrupted': {
+      // 中断终态（输入行为包批）：点停后服务端回执到达——本地多半已收口（幂等
+      // 再收）；已生成部分保留（partial ai 泡在转录里，不撤不重置），可继续追问
+      // （主会话中断后 UI 态同律）。非在看点收未读（部分答案也值得唤回）。
+      if (!(entry === activeSession() && isOpen())) entry.unread = true;
+      settleTurn(entry);
       persistSession(entry);
       if (entry === activeSession()) {
         if (isOpen()) { removeTyping(); render(); }
@@ -630,6 +720,7 @@ function consumeFrame(msg) {
     case 'error': {
       // v2.1：错误不再起 sys 气泡——文本落助手气泡槽（问答面只出两族）。
       if (!(entry === activeSession() && isOpen())) entry.unread = true;
+      settleTurn(entry); // 终态收口（同 done）
       const last = entry.msgs[entry.msgs.length - 1];
       const errText = tt('出错了：', 'Error: ') + (msg.message || 'unknown');
       if (last && last.role === 'ai' && !last.text) last.text = errText;
