@@ -261,10 +261,21 @@ object MailClient:
     else if startsWithWord("BAD") then Left(s"IMAP BAD ${completion.drop(tag.length + 1).trim.take(200)}")
     else Left("IMAP 响应不完整：未收到完成行 · 请重试")
 
-  def connectImap(host: String, port: Int, timeoutMs: Int = 15000): Either[String, ImapSession] =
+  /**
+   * 拨号与读超时分离（报障 2026-10-31「Host did not answer in time」根治批）：
+   * 旧版 dial/SoTimeout 同值——两段各 15s ⇒ 坏路径最坏 30s+ 才回报，必然先撞
+   * 隧道中转的 15s portal 周期预算（relay 504「Host did not answer in time」
+   * 抢先上屏，引擎侧的分类文案永远到不了浏览器）。现在：
+   *   - timeoutMs    = TCP/TLS 拨号上限（connect）
+   *   - soTimeoutMs  = greeting/命令读上限（默认仍 = timeoutMs，向后兼容）
+   * 调用方按所处链路选值：连接测试腿（面板 connect，须在 15s 预算内回报）
+   * 用紧值；后台轮询/IDLE 腿用宽值（不在任何 HTTP 周期预算里）。
+   */
+  def connectImap(host: String, port: Int, timeoutMs: Int = 15000, soTimeoutMs: Int = 0): Either[String, ImapSession] =
+    val soMs = if soTimeoutMs <= 0 then timeoutMs else soTimeoutMs
     try
       val socket = tlsFactory.createSocket().asInstanceOf[SSLSocket]
-      socket.setSoTimeout(timeoutMs)
+      socket.setSoTimeout(soMs)
       socket.connect(new InetSocketAddress(host, port), timeoutMs)
       val s = new ImapSession(socket)
       s.readGreeting().map(_ => s) match
@@ -272,7 +283,7 @@ object MailClient:
         case Left(err) =>
           s.close()
           Left(err)
-    catch case e: Throwable => Left(s"IMAP connect ${e.getClass.getSimpleName}: ${e.getMessage}")
+    catch case e: Throwable => Left(s"IMAP connect ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
 
   // ════════════════════ RFC822 / MIME 解析（纯函数）════════════════════
 
@@ -609,7 +620,11 @@ object MailClient:
       case e: Throwable =>
         Left(PerceptionModel.SendFailure.Network(e.getClass.getSimpleName))
 
-  /** Send via SMTP. Right(messageId) or Left(readable failure). */
+  /** Send via SMTP. Right(messageId) or Left(readable failure).
+    *
+    * 拨号/读上限分离（根治批 2026-11-01）：拨号 5s（正常 <0.3s；坏 host 快速
+    * 回报，不再让 20s 拨号撞隧道中转 15s 周期预算）、握手期读 12s；DATA 阶段
+    * 仍按 dataTimeoutMsFor 分级切换（语义不变）。 */
   def send(
     smtpHost: String,
     smtpPort: Int,
@@ -617,7 +632,8 @@ object MailClient:
     user: String,
     authCode: String,
     mail: OutgoingMail,
-    timeoutMs: Int = 20000
+    timeoutMs: Int = 12000,
+    connectTimeoutMs: Int = 5000
   ): Either[PerceptionModel.SendFailure, String] =
     // DATA 载荷预生成一次：重试复用同一 Message-ID（服务端可据此去重，
     // 幂等第二道闸），且载荷字节数是 DATA 阶段分级超时的输入。
@@ -631,12 +647,12 @@ object MailClient:
           if implicitTls then
             val s = tlsFactory.createSocket()
             s.setSoTimeout(timeoutMs)
-            s.connect(new InetSocketAddress(smtpHost, smtpPort), timeoutMs)
+            s.connect(new InetSocketAddress(smtpHost, smtpPort), connectTimeoutMs)
             s
           else
             val s = new Socket()
             s.setSoTimeout(timeoutMs)
-            s.connect(new InetSocketAddress(smtpHost, smtpPort), timeoutMs)
+            s.connect(new InetSocketAddress(smtpHost, smtpPort), connectTimeoutMs)
             s
         val in = new BufferedReader(new InputStreamReader(socket.getInputStream, StandardCharsets.ISO_8859_1))
         val upgrade =
