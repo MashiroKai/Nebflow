@@ -142,24 +142,20 @@
   letter-spacing: 0.02em;
   white-space: nowrap;
   color: rgb(var(--st-amber));
-  background: rgba(var(--st-amber), 0.08);
-  border: 1px solid rgba(var(--st-amber), 0.22);
+  background: rgb(var(--st-amber) / 0.08);
+  border: 1px solid rgb(var(--st-amber) / 0.22);
 }
 
 /* ── 入口行图标（消息列表「待办事项」行首圆形图标） ────────────────── */
-.fm-todo-icon {
-  flex-shrink: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(var(--sapphire), 0.08);
-  border: 1px solid rgba(var(--sapphire), 0.18);
+/* 圆框统一批（2026-11-01，作者实拍指认）：容器 = `.fm-avatar` 家族（JS 侧挂
+   `fm-avatar fm-avatar-40`）——尺寸/圆角/底色/描边与设备行、好友行圆框逐字同源
+   （glass-etched tokens），本文件不再自带第二份圆框几何（旧自绘 rgba(var(--sapphire),a)
+   逗号形态非法被静默丢弃，正是「裸图标」根因）。本条只管字形着色与落点尺寸；
+   双类选择器压过 friends.css `.fm-avatar` 的 muted 色（该表后载，单类不够）。 */
+.fm-avatar.fm-todo-icon {
   color: rgb(var(--sapphire));
 }
-.fm-todo-icon svg {
+.fm-avatar.fm-todo-icon svg {
   width: 18px;
   height: 18px;
 }
@@ -191,8 +187,8 @@
   color: var(--color-frame-text);
 }
 .todo-filter-chip.active {
-  background: rgba(var(--sapphire), 0.1);
-  border-color: rgba(var(--sapphire), 0.35);
+  background: rgb(var(--sapphire) / 0.1);
+  border-color: rgb(var(--sapphire) / 0.35);
   color: rgb(var(--sapphire));
 }
 
@@ -253,8 +249,15 @@
   opacity: 0.6;
 }
 
-/* ── 手机层：收编进 pushPage 详情页 ⇒ 页壳语义退役为满铺页面体 ─────── */
-body.mobile-layer #todo-page {
+/* ── 手机层：收编进 pushPage 详情页 ⇒ 页壳语义退役为满铺页面体 ───────
+   🔴 收编作用域（2026-11-01 手机消息区空白急诊批，作者 12:03 实拍）：铺平规则
+   必须钉在**收编后**的落点（#mobile-pages .mobile-page-body > #todo-page）——
+   改版批原形 `body.mobile-layer #todo-page` 在手机层**恒真**：面板未收编时仍
+   住在桌面家 #main（chat.css #main = flex column），`position:static; height:100%`
+   把它变成 702px 在流块，把 #chat（flex:1）挤成 142px 残条 ⇒ 聊天根消息流
+   整片空白（桌面不受影响 = 规则挂 mobile-layer；与 dock 批 mobileLayer.css
+   「收编面统一页面化几何」的 `> ` 作用域先例对齐）。 */
+body.mobile-layer #mobile-pages .mobile-page-body > #todo-page {
   position: static;
   transform: none;
   width: 100%;
@@ -265,6 +268,15 @@ body.mobile-layer #todo-page {
   box-shadow: none;
   z-index: auto;
 }
-body.mobile-layer #todo-page.open {
+body.mobile-layer #mobile-pages .mobile-page-body > #todo-page.open {
   animation: none;
+}
+/* 未开态不占流（手机端长按退役批 2026-11-01 顺带面，截图实证缺陷）：
+   手机层收编语义把本面改 static 入流——未开（无 .open）时 visibility:hidden
+   仍占满 #main 一整档流高，把聊天列挤成贴底 142px 窄条（evidence/
+   mobile-longpress-retire 诊断链）。pushPage('todo') 必经 openTodoPage 加
+   .open（scheduled-task.js openTodoPage），未开 ⇒ 页面体语义下本就不渲染，
+   display:none 语义等价且修复占流。桌面不受影响（规则挂 body.mobile-layer）。 */
+body.mobile-layer #todo-page:not(.open) {
+  display: none;
 }

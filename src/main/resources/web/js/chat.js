@@ -561,7 +561,7 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
   // The independent media/file card row (same .row.pop-artifact family the Pop
   // faces use) — time order = message order: user row, then its cards, then
   // whatever the conversation appends next (AC-S4's DOM shape).
-  const mediaRow = buildUserMediaRow(mediaAtts);
+  const mediaRow = buildUserMediaRow(mediaAtts, { ts });
   if (mediaRow) {
     // f1-send-queue：媒体卡随行挂同一 msgId —— 离线乐观气泡被撤回/移除/溢出丢弃时
     // 「消息行 + 媒体卡」两排一起收（input.js removeOfflineBubble 的寻址面）。
@@ -570,8 +570,9 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
     // path —— 媒体整面点击只能落到 pathless 灯箱、文件卡点击是死的。把行登记进
     // popArtifacts 的待补表，`attachmentsSaved` 帧（后端 ui.json 落盘后回传）到达
     // 后用同一套 builders 原位重渲：item 带 path ⇒ 点击 = openPopArtifact 单点
-    // （与 Pop 三修 ② 整面点击开 Canvas、与历史恢复腿三者同构）。
-    registerUserMediaRow(activeView.sessionId, mediaRow, mediaAtts);
+    // （与 Pop 三修 ② 整面点击开 Canvas、与历史恢复腿三者同构）。ts 同传——补丁
+    // 腿重渲的 footer 信息条时间档与 live 腿同值（手机端长按退役批 2026-10-31）。
+    registerUserMediaRow(activeView.sessionId, mediaRow, mediaAtts, ts);
     appendChatRow(chat, mediaRow);
   }
   // quote-message 一期：可点性收敛（引用块挂载时目标行可能尚未渲染 ⇒ 追加后

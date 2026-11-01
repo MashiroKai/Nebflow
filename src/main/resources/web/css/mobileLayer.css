@@ -909,7 +909,8 @@ body.mobile-layer #memory-modal .ap-pane {
 }
 body.mobile-layer #memory-modal .ap-pane::-webkit-scrollbar { display: none; }
 body.mobile-layer #memory-modal .ap-pane .ap-avatar-img,
-body.mobile-layer #memory-modal .ap-pane .ap-avatar-initial {
+body.mobile-layer #memory-modal .ap-pane .ap-avatar-initial,
+body.mobile-layer #memory-modal .ap-pane .ap-avatar-box .agent-avatar-stand-logo {
   width: 64px;
   height: 64px;
 }
@@ -1712,9 +1713,10 @@ body.mobile-layer #chat .g2-msg-name {
   white-space: nowrap;
   max-width: 60vw;
 }
-/* 会话头头像空态回落 stand logo（批③；节点由 chatChrome.js 注入 —— 未命名
-   root 原显示中性 user 人形字形，随批换 stand logo；已命名无头像的首字母牌
-   是身份标记，保留不动。图标随槽尺寸缩放，中心对齐同 user 字形档）。 */
+/* 会话头头像空态回落 stand logo（批③注入档；2026-11-01 起为兜底腿——桌面腿
+   补齐后 agentProfile.paintSlot 直接自绘同名 picture（作者令「agent没设置头像
+   之前 用我们stand的logo」两端统一，原「首字母牌保留」分档作废）。本条尺寸档
+   对注入档与自绘档同样生效（同类名）。图标随槽尺寸缩放，中心对齐）。 */
 body.mobile-layer #agent-avatar-btn .agent-avatar-stand-logo {
   display: flex;
   align-items: center;

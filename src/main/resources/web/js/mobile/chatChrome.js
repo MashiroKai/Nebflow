@@ -33,7 +33,7 @@ import { createIconsIn } from '../utils.js';
 import state from '../state.js';
 import { taskBadgeCount } from './taskPanel.js';
 import { pushPage, logEvent, touchLayer } from './navController.js';
-import { agentAvatarDataUrl, onAgentAvatarChange } from '../agentProfile.js';
+import { agentAvatarDataUrl, onAgentAvatarChange, paintSlot } from '../agentProfile.js';
 import { avatarImgNode } from '../avatarRender.js';
 import { rootDisplayName } from '../rootName.js';
 import { brand } from '../brand.js';
@@ -108,25 +108,23 @@ function repaintAllMsgMeta(chat) {
   for (const meta of chat.querySelectorAll('.g2-msg-meta')) paintMsgMeta(meta);
 }
 
-/* ── 会话头头像空态回落 stand logo（批③：不显示空白/默认人形）──────────────
- *  #agent-avatar-btn 是两端共享节点（agentProfile.paintSlot 自绘：有头像 = 图、
- *  未命名 = 中性 user 人形字形、已命名无头像 = 首字母牌）。手机层只接管
- *  **人形字形** 这一档 —— 换 stand logo（brand 双主题 picture）；首字母牌是
- *  身份标记（非空白/非人形），保留。实现 = slot childList 守望：paintSlot 的
- *  replaceChildren 每次重绘都把注入节点抹掉，守望在场即随绘随补（teardown
- *  摘除注入 + 断守望，桌面 DOM 逐字节还原）。 */
-/** @type {MutationObserver|null} 会话头头像槽守望（空态 logo 注入）。 */
+/* ── 会话头头像空态回落 stand logo（批③；2026-11-01 起为**兜底腿**）────────────
+ *  #agent-avatar-btn 两端共享节点。桌面腿补齐批（2026-11-01，作者令 10-31 22:50
+ *  「agent没设置头像之前 用我们stand的logo」）后，agentProfile.paintSlot 自绘
+ *  stand logo（同名 .agent-avatar-stand-logo）——本守望退为兜底：仅当槽内既无
+ *  头像图也无 logo 时（理论不可达，防时序空窗）补注入。原先「首字母牌保留」的
+ *  分档随作者令口径作废：无头像一律 logo（首字母牌/人形字形两档均已退役）。 */
+/** @type {MutationObserver|null} 会话头头像槽守望（空态 logo 兜底注入）。 */
 let avatarSlotMo = null;
-/** 给会话头槽注入 stand logo（空态判定幂等；有图/首字母牌时摘除注入）。 */
+/** 给会话头槽注入 stand logo（空态判定幂等；有图/有 logo 时摘除注入）。 */
 function paintAgentSlotLogo(slot) {
   const hasImg = !!slot.querySelector('.agent-avatar-img');
-  const hasInitial = !!slot.querySelector('.agent-avatar-initial');
+  const hasLogo = !!slot.querySelector('.agent-avatar-stand-logo');
   const injected = slot.querySelector('.agent-avatar-stand-logo');
-  if (hasImg || hasInitial) {
-    if (injected) injected.remove();
+  if (hasImg || hasLogo) {
+    if (injected && hasImg) injected.remove(); // 有真头像：注入档让位（自绘档不在此列）
     return;
   }
-  if (injected) return; // 已注入（幂等）
   const pic = document.createElement('picture');
   pic.className = 'agent-avatar-stand-logo';
   pic.innerHTML =
@@ -262,6 +260,9 @@ export function activateChatChrome() {
     // 消息流身份头全量摘除 ⇒ 桌面 #chat DOM 逐字节还原（批①手机层专属装饰）。
     document.querySelectorAll('#chat .g2-msg-meta').forEach((m) => m.remove());
     document.querySelectorAll('#agent-avatar-btn .agent-avatar-stand-logo').forEach((n) => n.remove());
+    // 归位重绘（桌面腿 2026-11-01）：摘除走的是同名类（注入档 + paintSlot 自绘档
+    // 一并中招）——归还桌面形态前必须补一次 paintSlot，否则空槽挂到下一个事件。
+    try { paintSlot(); } catch { /* 绘制失败不阻断其余归还 */ }
     taskBtn?.remove();
     searchBtn?.remove();
     taskBtn = null;

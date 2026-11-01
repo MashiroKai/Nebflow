@@ -1,6 +1,6 @@
 {
   "generatedBy": "scripts/visual-baseline.mjs --update",
-  "generatedAt": "2026-11-01T07:10:22.862Z",
+  "generatedAt": "2026-11-01T08:06:42.858Z",
   "platform": "win32-msedge-156",
   "browser": {
     "label": "msedge-156",
@@ -10,15 +10,15 @@
     "deviceScaleFactor": 1
   },
   "tolerance": 0,
-  "maxRatio": 0.003,
+  "maxRatio": 0,
   "entries": [
     {
       "tag": "app-empty-dark",
       "scenario": "app-empty",
       "theme": "dark",
-      "bytes": 58255,
-      "at": "2026-11-01T07:09:55.740Z",
-      "ms": 1396,
+      "bytes": 58301,
+      "at": "2026-11-01T08:06:19.018Z",
+      "ms": 1405,
       "mask": [
         ".mic-orb-wrap",
         ".mic-orb-wrap"
@@ -28,9 +28,9 @@
       "tag": "app-empty-light",
       "scenario": "app-empty",
       "theme": "light",
-      "bytes": 53627,
-      "at": "2026-11-01T07:09:56.824Z",
-      "ms": 1083,
+      "bytes": 53674,
+      "at": "2026-11-01T08:06:20.094Z",
+      "ms": 1076,
       "mask": [
         ".mic-orb-wrap",
         ".mic-orb-wrap"
@@ -40,9 +40,9 @@
       "tag": "chat-messages-dark",
       "scenario": "chat-messages",
       "theme": "dark",
-      "bytes": 90405,
-      "at": "2026-11-01T07:09:57.921Z",
-      "ms": 1095,
+      "bytes": 90465,
+      "at": "2026-11-01T08:06:21.209Z",
+      "ms": 1113,
       "mask": [
         ".mic-orb-wrap",
         ".mic-orb-wrap",
@@ -54,9 +54,9 @@
       "tag": "chat-messages-light",
       "scenario": "chat-messages",
       "theme": "light",
-      "bytes": 86243,
-      "at": "2026-11-01T07:09:59.061Z",
-      "ms": 1139,
+      "bytes": 86288,
+      "at": "2026-11-01T08:06:22.313Z",
+      "ms": 1104,
       "mask": [
         ".mic-orb-wrap",
         ".mic-orb-wrap",
@@ -68,9 +68,9 @@
       "tag": "settings-llm-empty-dark",
       "scenario": "settings-llm-empty",
       "theme": "dark",
-      "bytes": 108707,
-      "at": "2026-11-01T07:10:01.560Z",
-      "ms": 2498,
+      "bytes": 108748,
+      "at": "2026-11-01T08:06:24.802Z",
+      "ms": 2489,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -79,9 +79,9 @@
       "tag": "settings-llm-empty-light",
       "scenario": "settings-llm-empty",
       "theme": "light",
-      "bytes": 101757,
-      "at": "2026-11-01T07:10:04.026Z",
-      "ms": 2466,
+      "bytes": 101806,
+      "at": "2026-11-01T08:06:27.266Z",
+      "ms": 2462,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -91,8 +91,8 @@
       "scenario": "bgtask-panel",
       "theme": "dark",
       "bytes": 12106,
-      "at": "2026-11-01T07:10:05.787Z",
-      "ms": 1761,
+      "at": "2026-11-01T08:06:29.093Z",
+      "ms": 1827,
       "mask": [
         ".mic-orb-wrap",
         ".bg-task-uptime"
@@ -103,8 +103,8 @@
       "scenario": "bgtask-panel",
       "theme": "light",
       "bytes": 11552,
-      "at": "2026-11-01T07:10:07.593Z",
-      "ms": 1805,
+      "at": "2026-11-01T08:06:30.868Z",
+      "ms": 1773,
       "mask": [
         ".mic-orb-wrap",
         ".bg-task-uptime"
@@ -115,8 +115,8 @@
       "scenario": "canvas-markdown-tab",
       "theme": "dark",
       "bytes": 44614,
-      "at": "2026-11-01T07:10:09.969Z",
-      "ms": 2376,
+      "at": "2026-11-01T08:06:33.272Z",
+      "ms": 2403,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -126,8 +126,8 @@
       "scenario": "canvas-markdown-tab",
       "theme": "light",
       "bytes": 41999,
-      "at": "2026-11-01T07:10:12.383Z",
-      "ms": 2414,
+      "at": "2026-11-01T08:06:35.708Z",
+      "ms": 2435,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -137,8 +137,8 @@
       "scenario": "canvas-code-tab",
       "theme": "dark",
       "bytes": 42816,
-      "at": "2026-11-01T07:10:15.821Z",
-      "ms": 3438,
+      "at": "2026-11-01T08:06:39.181Z",
+      "ms": 3473,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -148,8 +148,8 @@
       "scenario": "canvas-code-tab",
       "theme": "light",
       "bytes": 40643,
-      "at": "2026-11-01T07:10:19.223Z",
-      "ms": 3401,
+      "at": "2026-11-01T08:06:42.651Z",
+      "ms": 3470,
       "mask": [
         ".mic-orb-wrap"
       ]
