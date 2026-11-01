@@ -1018,144 +1018,77 @@ button.fm-req-decline:focus-visible {
 /* 好友消息正文保留换行语义（dropbox 面走纯文本渲染，不共享此条） */
 .fm-msg-bubble { white-space: pre-wrap; }
 
-/* ── 附件卡片（4b 腿 A-2）─────────────────────────────────────────────
-   取色只用既有主题 token（`--glass-etched-* / --color-frame-* / --color-error`，
-   亮/暗同源 ⇒ 无新字面量色值）。三态必须**视觉可区分**（§B.7 ②1）：
-     · ready     —— 可点下载（正常前景 + 下载按钮）
-     · expired   —— 灰态卡片，真名/大小保留，明示「附件已过期」，**无按钮**
-     · uploading / unreadable —— 灰态，无按钮（不可下载者绝不渲染成可点按钮）
-   断行规则：长文件名必须能折行（`min-width:0` + `word-break`），否则窄视口溢出。 */
+/* ── 附件卡（fm-att-card-unify 批 2026-11-02 · 作者令「三面板附件卡统一成主会话的
+   附件卡样式」）──────────────────────────────────────────────────────────────────
+   卡面本体 = 主会话卡语言（chat.css 的 `.file-card` / `.pop-media-flat` 家族），渲染
+   出口 = popArtifacts 的 `buildFileCard` / `buildMediaFlat`（JS 单点，禁第二套卡实现）。
+   本段只留三窗专有声明：
+     · `.fm-att` = 卡根**标记类**（QA/spec 钩子 + 状态位挂点），零视觉（旧卡 chrome
+       已随统一退役——「不锈死旧样式」纪律：死 CSS 不留）；
+     · 状态等价适配：`expired`（终态：灰态 + 名字划线，真名/大小保留，无键）/
+       `uploading` / `unreadable`（灰态，无键——不可下载者绝不渲染成可点按钮）；
+     · 媒体独占模式：`.fm-msg-bubble-media` 气泡去 chrome（媒体卡就是气泡，与主会话
+       `.row.user-media` 同形态）；特异性 (0,4,0) 压过 sapphire.css 的方向底色 (0,3,0)。 */
 .fm-att-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
   margin-top: 4px;
-}
-
-.fm-att {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
   min-width: 0;
-  padding: 4px 8px;
-  border: 1px solid var(--glass-etched-border);
-  border-radius: 6px;
-  background: var(--glass-etched-bg);
-  font-size: 12px;
-  line-height: 1.5;
 }
+.fm-msg-bubble.fm-msg-bubble-media .fm-att-list { margin-top: 0; }
 
-.fm-att-name {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: var(--color-text, #000);
-}
-
-.fm-att-size,
-.fm-att-note {
-  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
-  white-space: nowrap;
-}
-
-.fm-att-expired,
-.fm-att-uploading,
-.fm-att-unreadable {
-  opacity: 0.72; /* 「已过期」态：灰态卡片（§B.7 ②1），真名与大小仍在 DOM 上 */
-}
-
-.fm-att-expired .fm-att-name { text-decoration: line-through; }
-
-/* ── 图片附件对话框内直显（uifix 批 · 作者令 2026-09-17：「如果传的附件是图片的话，
-   要支持直接在对话框显示，（好友、群聊、设备）」）─────────────────────────────
-   落点 = 附件卡的**第一行**（`.fm-att-inline`，由 `messages.js::attachInlineImage`
-   插在卡首）⇒ 图片在上、名称/体积/下载键在下，与既有卡内 `flex-wrap` 布局同族。
-   尺寸纪律（零新色值、零内联像素算术）：
-     · 上限宽 `260px`（气泡宽 ≤ 560px 档，留出正文留白）——与既有 `.fm-att` 卡的
-       内容宽度同量级；`max-width:100%` 兜住窄窗/375px 档不溢出。
-     · 上限盒 = 既有 `260 × 200`（`--fm-att-w` 的上限，**不新增几何档**）；盒比 =
-       **原图真实宽高比（夹取后）**，由 **JS 单点**算出并写入本规则消费的两个变量：
-         `--fm-att-w`（盒宽 px，已含「禁放大」钳制）、`--fm-att-ar`（盒比 `<ratio>`）。
-       算术与常数（上限盒 / 比夹取界 / 禁放大）**唯一落点** =
-       `messages.js::inlineBoxFor` + `applyInlineRatio` ⇒ 本文件禁第二处比例算术。
-       圆角随卡（6px = `.fm-att` 既有档），描边用既有 `--glass-etched-border`。
-     · 骨架屏：**槽本身**先于字节在位（`<img>` 元素在字节请求发出**之前**入 DOM，
-       无 `src` ⇒ 只有自身 `background`/描边可辨 = 可见骨架；
-       见 `messages.js:attachInlineImage`）。
-     · ⚠ 该规则对**两侧**（发送/接收）的同一条规则生效（同一个槽渲染器）——这是 ③ 的
-       本意（跳动是接收侧症状之一），不是接收侧回归。
-   🔴 决策点 ③（**作者 2026-09-19 01:29 令**）：预览盒按**原图真实宽高比**（微信做法 =
-   按原图尺寸决定预览框宽高比），**禁写死固定比**；实现侧自定 min/max 夹取防极端长宽比
-   破版。参数（按视觉定，与本段同批申报）：
-     · 上限盒 `260 × 200`（**沿用既有档，零新增几何档**）
-     · 比夹取界 `min = 1:2`（`.5`）/ `max = 2:1`（`2`）—— 越界图按界内比**居中裁切**
-       （`object-fit: cover` 仅在越界时真正裁切；界内图盒比 == 原图比 ⇒ cover 等同于不裁）
-     · 禁放大：盒不超过原图自身尺寸（小图按原尺寸出，不被拉大糊掉）
-   ⚠ **新占位语义（显式申报，非静默变更）**：骨架期（字节/比例均未到达）预留
-   `--fm-att-ar` 的**回退值 = 既有上限盒自身**（`260 / 200`）⇒ 高度照旧先占住；
-   比例可知的**同一帧**里换成真实比 —— JS **先解码后点 `src`** ⇒ 图片从不以错误比例
-   被绘制、绘制之后**零重排**。骨架 ↔ 真帧之间恰好发生**一次**几何变更，量值 = 由原图
-   `W×H` 精确算出的预测值（读数见 `tests/imgmsg-send.spec.mjs` 场景 A/F）。
-   📌 **取代关系（勿回退）**：作者 2026-09-18 裁定的「预留比 = 固定 13:10 + 同一盒
-   `cover` 填满」已被上述 01:29 令取代（旧裁定记 provisional / archived）。旧代价条
-   （「16:9 类宽幅图比改前多占约 54px，换来零位移」）随固定比一并作废 ——
-   **禁**再按它描述行为（新旧口径不得两段并存）。 */
-.fm-att-inline {
-  flex: 1 1 100%;
-  min-width: 0;
-  display: flex;
-  margin-bottom: 2px;
-}
-.fm-att-inline img {
-  display: block;
-  /* 窄窗/375px 档：宽度随容器（比例由 `aspect-ratio` 保 ⇒ 高度同步缩，不溢出、不拉长）。 */
-  max-width: 100%;
-  /* ③ 盒宽 + 盒比 = JS 单点写入；回退值 = 骨架期预留盒（见上注，非比例裁定）。 */
-  width: var(--fm-att-w, 260px);
-  aspect-ratio: var(--fm-att-ar, 260 / 200);
-  /* 仅**越界夹取**的图真正裁切；界内图盒比 == 原图比 ⇒ 无裁切。 */
-  object-fit: cover;
-  border-radius: 6px;
-  border: 1px solid var(--glass-etched-border);
-  /* 无 `src` 期间 = 骨架底色（`<img>` 无内禀内容时按 CSS 盒渲染本行背景）。 */
-  background: var(--glass-etched-bg);
-}
-/* 窄窗（手机档）与 375px 档：不做固定 260px 溢出。
-   ⚠ 本档**不得**改写成 `width: 100%`（旧形态）：那会把小图放大、并让盒高越过 200px
-   上限（盒宽被容器撑大而高度按比同步长）⇒ 破版。比夹取/禁放大/盒宽已是 JS 单点，
-   这里只兜住容器宽 —— 与基础规则同值的显式声明，不是第二处几何。 */
-@media (max-width: 420px) {
-  .fm-att-inline img { max-width: 100%; }
-}
-
-/* ui-status-redesign（盘点 #42 / S5）：边 = 图案载体保留；失败注记词转中性字，
-   红由词前图标（messages.js 注入 circle-x）承载。 */
-.fm-att-failed { border-color: var(--status-error-icon); }
-.fm-att-failed .fm-att-note { color: var(--status-word); }
-.fm-att-failed .fm-att-note .st-ic { width: 11px; height: 11px; margin-right: 4px; vertical-align: -1px; }
-
-.fm-att-dl {
-  border: 1px solid var(--glass-control-border);
-  border-radius: 5px;
+.fm-msg.out .fm-msg-bubble.fm-msg-bubble-media,
+.fm-msg.in .fm-msg-bubble.fm-msg-bubble-media {
+  padding: 0;
   background: transparent;
-  color: var(--color-text, #000);
-  font-size: 11px;
-  padding: 1px 8px;
-  cursor: pointer;
+  border: none;
+  border-radius: 0;
 }
 
-.fm-att-dl:hover { background: var(--color-frame-hover); }
-.fm-att-dl:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
-.fm-att-dl:disabled { opacity: 0.5; cursor: default; }
+/* 状态态（视觉判据沿用 §B.7 ②1 既有口径：真名/大小保留、灰态、无键）。 */
+.fm-att.fm-att-expired .fc-name { text-decoration: line-through; }
+.fm-att.fm-att-expired,
+.fm-att.fm-att-uploading,
+.fm-att.fm-att-unreadable { opacity: 0.72; }
 
-/* 预览可点面（作者令 2026-09-15：点击附件 ⇒ Canvas 预览）。
-   仅 `ready` 态 / 有本机落盘件的设备卡挂本类（无字节可取者不挂 ⇒ 不造假按钮）。 */
-.fm-att-previewable { cursor: pointer; }
-.fm-att-previewable:hover { background: var(--color-frame-hover); }
+/* 媒体卡根（`.fm-att-media`）= 媒体面 + 设备挂件的列容器（零自有 chrome —— 卡语言
+   全在面内）；文件卡挂设备挂件需要整行折行。 */
+.fm-att.fm-att-media {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+.file-card.fm-att { flex-wrap: wrap; }
+
+/* 下载键（主会话 `.msg-copy.msg-dl` 键族；字形 = popArtifacts 单点导出）：
+   文件卡卡尾 = `.fwd-btn` 位（margin-left:auto）；媒体卡 = `.pop-media-canvas` 角标位。
+   `fm-att-dl` 同时是卡级预览的嵌套控件豁免判据（messages.makeCardPreviewable）与
+   既有 QA 钩子——只作标记，不再带自有 chrome（旧文本键样式随统一退役）。 */
+.file-card .fm-att-dl {
+  margin-left: auto;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+}
+.file-card .fm-att-dl svg { width: 16px; height: 16px; }
+.fm-att-dl:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
+
+/* 可点面（点击 = Canvas 预览）：cursor 由卡面自带（file-card/pop-media-flat 既有
+   pointer），这里只保留键盘焦点环（可达性与改前同档）。 */
 .fm-att-previewable:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
 
-/* 尚未有状态文案时收起（避免卡片里并排两个同义词；失败/成功后解除） */
-.visually-hidden-note { display: none; }
+/* ── 图片附件直显槽（`.fm-att-inline` 旧段）已随 fm-att-card-unify 批退役 ──────────
+   图片附件的出帧面 = 主会话媒体卡（chat.css `.pop-media-flat` + popArtifacts
+   `buildMediaFlat`，渲染出口单点）；字节腿仍在 `messages.js::attachInlineImage`
+   （账本/LRU/预览字段/本机句柄/票据链逐字保留），骨架期 = 媒体卡的既有 CSS 回退盒
+   （220px 4/3），真帧比例由面内 `fitLayer` 于 load 时落地（主会话同款节奏）。
+   旧槽的 260×200 上限盒 / 比夹取（`inlineBoxFor`）/ 禁放大算术随槽退役；
+   `applyInlineRatio` 仍由发送侧小图腿调用（变量写入成惰性读数，无消费者即无视觉面）。 */
+
+.fm-att-dl:disabled { opacity: 0.5; cursor: default; }
 
 /* ── 附件发送上传卡（attachcl 批，2026-09-16）──────────────────────────
    好友窗与群窗**共用**同一枚渲染器（`attachUpload.renderUploadCards`），故本段规则
@@ -1171,31 +1104,26 @@ button.fm-req-decline:focus-visible {
 .fm-upload-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
   margin: 0 16px 6px;
 }
 .fm-upload-list[hidden] { display: none; }
 
+/* 卡语言统一（fm-att-card-unify 批）：`.fm-upload` 卡本体 = 主会话文件面
+   （`.file-card`，chat.css 单点），本段只留上传态专有声明 —— wrap（进度条/注记行
+   需要整行折行）、状态注记取色、取消/重试键位。全部 `fm-upload-*` 类名保留
+   （QA/spec 取件面零变化）。 */
 .fm-upload {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   flex-wrap: wrap;
   min-width: 0;
-  padding: 4px 8px;
-  border: 1px solid var(--glass-etched-border);
-  border-radius: 6px;
-  background: var(--glass-etched-bg);
-  font-size: 12px;
-  line-height: 1.5;
 }
+.fm-upload .fc-meta { flex: 1; min-width: 0; }
 .fm-upload-name {
   min-width: 0;
   overflow-wrap: anywhere;
-  color: var(--color-text, #000);
 }
-.fm-upload-size,
 .fm-upload-note {
+  flex-basis: 100%;
   color: var(--color-frame-text-muted, var(--color-text-muted, #888));
 }
 .fm-upload-sent .fm-upload-note { color: var(--color-frame-text-muted, var(--color-text-muted, #888)); }
@@ -1218,6 +1146,9 @@ button.fm-req-decline:focus-visible {
   transition: width 0.2s ease-out;
 }
 .fm-upload-cancel {
+  margin-left: auto;
+  flex-shrink: 0;
+  align-self: center;
   border: 1px solid var(--glass-control-border);
   border-radius: 5px;
   background: transparent;
@@ -2058,8 +1989,10 @@ body > .fm-context-menu { z-index: 10001; }
 /* 设备会话行 chip（与群 chip 同形，换语义色不改几何） */
 .fm-device-tag { background: rgb(var(--sapphire) / 0.18); }
 
-/* 设备文件卡状态位（卡 D4：适配 .fm-att 基类 + 传输态在位） */
-.fm-att-device-status { font-size: 11px; color: var(--color-text-muted, #888); }
+/* 设备文件卡状态位（卡 D4 语义保留；fm-att-card-unify 批：宿主 = 主会话卡面 ——
+   文件卡/媒体卡都是 flex 容器，整行挂件用 `flex-basis:100%` 通吃两种宿主；
+   媒体卡的状态行落媒体面下方（上缘 4px 呼吸）。类名零改名（QA 钩子同源）。 */
+.fm-att-device-status { flex-basis: 100%; margin-top: 2px; font-size: 11px; color: var(--color-text-muted, #888); }
 .fm-att-device-path {
   flex-basis: 100%;
   font-size: 11px;

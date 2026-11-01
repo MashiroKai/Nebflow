@@ -41,6 +41,9 @@ import { ATTACH_MAX_FILE_BYTES, ATTACH_MAX_PER_MESSAGE, ATTACH_MAX_FILE_LABEL } 
 // `preview` 键 = 静默无预览回落，本模块零额外分支。
 import { makePreviewFrame } from './attachImagePreview.js';
 import { declarePreviewOf, wireFieldOf, DEFAULT_SEND_DIALECT_ID } from './attachPreviewField.js';
+// 卡语言统一（fm-att-card-unify 批 2026-11-02）：上传卡改接主会话文件面 —— 图标规格
+// 与扩展名单点取自 popArtifacts（唯一家；popArtifacts 不回指本模块，无环）。
+import { fileIconStyle, extOf } from './popArtifacts.js';
 
 /**
  * **本端发送时说的方言**（唯一旋钮，不是判据）—— 取值 = 契约件那一个默认值的同源引用
@@ -220,7 +223,11 @@ function uploadCardEl(item) {
   // `quiet` 的唯一来源 = 好友**图片乐观腿**（`messages.js::sendAttachCurrent` 的
   // `quiet: true`）；其余腿（群窗 / 混批 / 非图片 / 设备面）逐字走下方既有分支 ⇒ 零行为变化。
   if (item.quiet && (item.state === UPLOAD_STATE.UPLOADING || item.state === UPLOAD_STATE.SENT)) return null;
-  const card = el('div', `fm-upload fm-upload-${item.state}`);
+  // ── 卡语言统一（fm-att-card-unify 批 2026-11-02）：上传卡改接**主会话文件面**
+  // （`.file-card`：图标 + 名称 + footer 信息行），与已发出的附件卡同一卡语言；
+  // 进度条/取消/重试 = 上传态专有挂件（信息结构等价适配，申报）。全部既有 dataset
+  // 钩子与 `fm-upload-*` 类名保留（QA/spec 取件面零变化）。
+  const card = el('div', `file-card fm-upload fm-upload-${item.state}`);
   card.dataset.uploadState = item.state;
   card.dataset.uploadId = item.uploadId;
   card.dataset.uploadName = item.name;
@@ -228,12 +235,17 @@ function uploadCardEl(item) {
   card.dataset.uploadTotalBytes = String(item.totalBytes || item.size || 0);
   if (item.code) card.dataset.uploadCode = item.code;
 
-  card.appendChild(el('span', 'fm-upload-name', item.name));
-  card.appendChild(el('span', 'fm-upload-size', fmtBytes(item.size)));
+  const icon = fileIconStyle(extOf(item.name || ''));
+  const iconEl = el('div', `fc-icon ${icon.cls}`, icon.label);
+  const meta = el('div', 'fc-meta');
+  meta.appendChild(el('div', 'fc-name fm-upload-name', item.name));
+  meta.appendChild(el('div', 'fc-sub fm-upload-size', fmtBytes(item.size)));
+  card.appendChild(iconEl);
+  card.appendChild(meta);
 
   // 🔴 此处原为 quiet 腿（图片乐观腿）的**发送中条幅**装配分支（「正在发送」文案 +
-  //    取消键）——已按作者设计令**整条删除**（含其 i18n 键 `messages.attachSending`）。
-  //    发送中/成功态在函数头 `return null`（不出卡），终态走下方既有分支。
+  // 取消键）——已按作者设计令**整条删除**（含其 i18n 键 `messages.attachSending`）。
+  // 发送中/成功态在函数头 `return null`（不出卡），终态走下方既有分支。
 
   // 进度条**只在真实推进中出现**（宽度 = 服务端已确认的字节 / 总字节）。
   const total = item.totalBytes || item.size || 0;
@@ -245,7 +257,7 @@ function uploadCardEl(item) {
     // 取消键 = 仅**外部腿**（设备，`onCancel` 在场）挂 —— 其语义 = 「未 offer 件移出
     // FIFO」（§5 R7-device）；网页腿（好友 / 群）的件集在第一个 await 前**已开始**串行
     // 上传，其取消面仍是既有 `UPLOADING` 档那一枚键（逐字不变，禁在此新增第二套）。
-    card.appendChild(el('span', 'fm-upload-note', t('input.queued')));
+    card.appendChild(el('div', 'fc-sub fm-upload-note', t('input.queued')));
     if (typeof item.onCancel === 'function') appendCardCancel(card, item);
   } else if (item.state === UPLOAD_STATE.UPLOADING) {
     const track = el('div', 'fm-upload-progress');
@@ -253,14 +265,14 @@ function uploadCardEl(item) {
     bar.style.width = `${pct}%`;
     track.appendChild(bar);
     card.appendChild(track);
-    card.appendChild(el('span', 'fm-upload-note', t('messages.attachProgress').replace('{pct}', String(pct))));
+    card.appendChild(el('div', 'fc-sub fm-upload-note', t('messages.attachProgress').replace('{pct}', String(pct))));
     appendCardCancel(card, item);
   } else if (item.state === UPLOAD_STATE.SENT) {
-    card.appendChild(el('span', 'fm-upload-note', t('messages.attachSent')));
+    card.appendChild(el('div', 'fc-sub fm-upload-note', t('messages.attachSent')));
   } else {
     // 失败 / 取消 / 未发（fail-closed 可见：**终态文案就在卡上**，不靠 toast 兜底）。
     // ui-status-redesign（盘点 #42 / S5）：失败注记词转中性字 + 词前 circle-x 红图标。
-    const failNote = el('span', 'fm-upload-note');
+    const failNote = el('div', 'fc-sub fm-upload-note');
     failNote.innerHTML = statusIcon('circle-x', 11, 'st-err') + '<span>' + escapeHtml(item.error || t('messages.attachFailed')) + '</span>';
     card.appendChild(failNote);
     // ── S4/S8 后的重试键（§5 R3-device + R4-device）──────────────────────
@@ -318,14 +330,19 @@ function appendCardCancel(card, item) {
  * 识别钩子（两个 harness 都按它取件）＝ `[data-hint-retry]`（按钮）/ `.fm-upload[data-upload-hint]`（卡）。
  */
 function uploadRetryEl(hint) {
-  const card = el('div', 'fm-upload fm-upload-failed');
+  // 卡语言统一（fm-att-card-unify 批）：可重试提示与上传卡同一张主会话文件面。
+  const card = el('div', 'file-card fm-upload fm-upload-failed');
   card.dataset.uploadState = 'retry';
   card.dataset.uploadHint = '1';
   card.dataset.hintKey = hint.clientMsgId;
   card.dataset.hintCount = String(hint.fileNames.length);
   card.dataset.hintName = hint.fileNames[0] || '';
-  card.appendChild(el('span', 'fm-upload-name', hint.fileNames[0] || ''));
-  card.appendChild(el('span', 'fm-upload-note', hint.message));
+  const icon = fileIconStyle(extOf(hint.fileNames[0] || ''));
+  card.appendChild(el('div', `fc-icon ${icon.cls}`, icon.label));
+  const meta = el('div', 'fc-meta');
+  meta.appendChild(el('div', 'fc-name fm-upload-name', hint.fileNames[0] || ''));
+  meta.appendChild(el('div', 'fc-sub fm-upload-note', hint.message));
+  card.appendChild(meta);
   // 文案取**既有** key（本批允许面不含 locales 文件 ⇒ 零新增 i18n key；`contacts.retry`
   // 与另两处 `*.retry` 逐字同形 = 既有的通用「重试 / Retry」词条）。
   const retry = el('button', 'fm-upload-cancel', t('contacts.retry'));
