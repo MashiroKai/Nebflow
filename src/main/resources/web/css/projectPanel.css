@@ -65,7 +65,6 @@
   transition: opacity 150ms ease;
 }
 .project-link-btn:hover { opacity: 0.75; text-decoration: underline; }
-.project-link-btn:focus { outline: none; }
 .project-link-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); border-radius: 4px; }
 
 .project-open-btn {
@@ -382,7 +381,6 @@
   opacity: 1;
   transform: scale(1.05);
 }
-.proj-flowmap-fab:focus { outline: none; }
 .proj-flowmap-fab:focus-visible {
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
@@ -747,7 +745,6 @@
   border-color: rgb(var(--sapphire) / 0.45);
   background: rgb(var(--sapphire) / 0.08);
 }
-.project-desc-edit-btn:focus { outline: none; }
 .project-desc-edit-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); }
 .project-desc-editor {
   display: flex;
@@ -778,7 +775,6 @@
   transition: color 150ms ease;
 }
 .project-desc-cancel:hover { color: var(--color-text); }
-.project-desc-cancel:focus { outline: none; }
 .project-desc-cancel:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); border-radius: 6px; }
 
 /* ── 减动效降级（🔴 本文件首个 `prefers-reduced-motion` 块；取证 §E 实测本文件此前无覆盖）──

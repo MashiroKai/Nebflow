@@ -16,7 +16,10 @@
 //   node scripts/visual-baseline.mjs --check --filter canvas   # 只跑名字含 canvas 的场景
 //   node scripts/visual-baseline.mjs --check --determinism     # 同轮双拍自比对（验确定性）
 //   node scripts/visual-baseline.mjs --list              # 列场景
+//   NEBFLOW_WEB_ROOT=build/web-dist node scripts/visual-baseline.mjs --check
+//                                                        # 验证**产物形态**（B0-3）
 //   选项：--theme dark|light  --tolerance <0-255>  --max-ratio <0-1>  --platform <key>
+//         --web-root <dir>   # 静态根覆盖（等价 NEBFLOW_WEB_ROOT，CLI 优先）
 //
 // 产物：
 //   基准（入库）  tests/visual/baseline/<platform>/<scenario>-<theme>.png + manifest.json
@@ -26,7 +29,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { ROOT, WEB, loadPlaywright, launchBrowser, createSession, settle, applyMasks, shoot } from './lib/visual-harness.mjs';
+import { ROOT, webRoot, setWebRoot, loadPlaywright, launchBrowser, createSession, settle, applyMasks, shoot } from './lib/visual-harness.mjs';
 import { comparePng } from './lib/png-diff.mjs';
 
 // ── 参数 ───────────────────────────────────────────────────────────────
@@ -43,6 +46,10 @@ const TOLERANCE = Number(valOf('--tolerance', '0'));
 const MAX_RATIO = Number(valOf('--max-ratio', '0'));
 const DETERMINISM = hasFlag('--determinism');
 const PLATFORM_OVERRIDE = valOf('--platform');
+// B0-3（G3）：验证对象可切换。显式 `--web-root` 优先于 NEBFLOW_WEB_ROOT（后者
+// 在 visual-harness.mjs 加载时已消费）。缺省 = 源树，与改造前逐字节相同。
+const WEB_ROOT_OVERRIDE = valOf('--web-root');
+if (WEB_ROOT_OVERRIDE) setWebRoot(WEB_ROOT_OVERRIDE);
 
 // ── 场景表 ─────────────────────────────────────────────────────────────
 // 选取口径：(a) 改动后最该「看起来一模一样」的三类面 —— 主壳/对话流/设置；
@@ -233,6 +240,10 @@ const SCENARIOS = [
     why: '后台任务下拉（来源标签 + 状态阶梯）—— 面板/角标改动的闸',
     themes: ['dark', 'light'],
     selector: '#bg-dropdown',
+    // G1 真修（B0-1）：uptime 文本 = now - startedAt，**字符数**随墙上时钟增长
+    // （9m → 10m、9h → 10h、9d → 10d），该行 min-content 变宽 ⇒ 整块下拉变宽；
+    // `mask: ['.bg-task-uptime']` 只涂像素、不遮布局。所以钉的是时钟，不是基准图。
+    clock: 1757000553000, // = startedAt + 9m13s（t1 显示 9分13秒 / t2 9分12秒）
     setup: async (s) => {
       const sid = await s.boot();
       const agents = [
@@ -255,7 +266,7 @@ const SCENARIOS = [
       await s.page.waitForSelector('#bg-dropdown:not(.hidden) .bg-task-row', { timeout: 8000 });
       await settle(s.page, 250);
     },
-    mask: ['.bg-task-uptime'], // uptime = now - startedAt，实时钟
+    mask: ['.bg-task-uptime'], // 真修是 clock（见上）；遮罩保留 = 第二道保险（uptime 区不进像素比）
   },
   {
     name: 'canvas-markdown-tab',
@@ -386,6 +397,78 @@ const SCENARIOS = [
       await settle(s.page, 250);
     },
   },
+
+  // ── B0-2（G2）：改前零覆盖的三个面 + 设置面常态 ───────────────────────
+  // 这四条存在的理由不是"多拍几张"，而是**B1/B2/B4 要改的正是这三个面**：
+  // `explorer.js` 的行构造（div → role=treeitem + roving tabindex）、
+  // `canvas.js:2253` 的环卡壳、`index.html` 的 9 个 overlay 壳。没有改前基线，
+  // 「只改了该改的」这句话就无法成立（必改像素会被当成回归，或反过来把回归
+  // 当成必改像素）。每条都用夹具数据，不依赖真实文件系统内容。
+  {
+    name: 'explorer-tree',
+    why: '文件树：项目根 + 两级展开 + 文件行（B1 行构造/缩进的改前对照物）',
+    themes: ['dark', 'light'],
+    setup: async (s) => {
+      await s.boot();
+      // 根列表（MockWS 的 listDir 固定应答 docs/src/README.md/CONTRIBUTING.md）
+      await s.page.waitForSelector('#explorer-tree .explorer-item', { timeout: 10000 });
+      // 一级展开：docs（目录行 → 子列表，子项路径前缀 docs/）
+      await s.page.click('#explorer-tree .explorer-folder[data-path="docs"]');
+      await s.page.waitForSelector('.explorer-dir-wrapper[data-path="docs"] .explorer-children .explorer-item', { timeout: 10000 });
+      // 二级展开：docs/docs（缩进第三档 —— B1 要动的正是这条 padding 阶梯）
+      await s.page.click('.explorer-dir-wrapper[data-path="docs"] .explorer-children .explorer-folder[data-path="docs/docs"]');
+      await s.page.waitForSelector('.explorer-dir-wrapper[data-path="docs/docs"] .explorer-children .explorer-item', { timeout: 10000 });
+      await settle(s.page, 300);
+    },
+  },
+  {
+    name: 'deck-cards',
+    why: '叠卡环（≥2 张卡 + fab）—— B2 卡壳 a11y 与中心环的改前对照物',
+    themes: ['dark', 'light'],
+    setup: async (s) => {
+      await s.boot();
+      for (const [id, title, content] of [
+        ['file:/tmp/deck-a.md', 'deck-a.md', CANVAS_MD],
+        ['file:/tmp/deck-b.txt', 'deck-b.txt', CANVAS_TXT],
+        ['file:/tmp/deck-c.txt', 'deck-c.txt', CANVAS_TXT],
+      ]) {
+        await s.page.evaluate((d) => {
+          window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: d }));
+        }, { id, itemType: 'markdown', title, content, absPath: id.replace('file:', ''), size: content.length, mtimeMs: 1757000000000 });
+        await paneReady(s.page, id);
+      }
+      await s.page.click('#deck-fab');
+      // 环卡弹簧动画收敛后才算稳定（settled ⇒ deckLoop 停帧）
+      await s.page.waitForSelector('#deck-layer .deck-card', { timeout: 15000 });
+      await s.page.waitForTimeout(1600);
+      await settle(s.page, 400);
+    },
+  },
+  {
+    name: 'modal-confirm',
+    why: '确认模态（#modal-overlay.on：遮罩 + 玻璃卡 + 两枚按钮）—— B4 层栈的改前对照物',
+    themes: ['dark', 'light'],
+    setup: async (s) => {
+      await s.boot();
+      await s.page.evaluate(() => {
+        window.__showConfirm('删除后不可恢复，确定要删除这 3 个文件吗？', '删除确认', () => {}, {});
+      });
+      await s.page.waitForSelector('#modal-overlay.on', { timeout: 8000 });
+      await settle(s.page, 300);
+    },
+  },
+  {
+    name: 'settings-panel',
+    why: '设置面板壳常态（#settings-overlay.on 顶部）—— B4 壳入层栈的改前对照物',
+    themes: ['dark', 'light'],
+    setup: async (s) => {
+      await s.boot({ config: { llm: { providers: {} }, features: { friends: false } } });
+      await s.page.click('#settings-btn');
+      await s.page.waitForSelector('#settings-overlay:not(.hidden)', { timeout: 10000 }).catch(() => {});
+      await s.page.waitForTimeout(700);
+      await settle(s.page, 300);
+    },
+  },
 ];
 
 /**
@@ -429,7 +512,7 @@ async function captureAll() {
   if (MODE === 'update') mkdirSync(baseDir, { recursive: true });
 
   console.log(`visual-baseline [${MODE}] playwright=${pwRes.from} browser=${label} (${version}) platform=${platform}`);
-  console.log(`  web    : ${relative(ROOT, WEB)}`);
+  console.log(`  web    : ${relative(ROOT, webRoot())}  (root = ${webRoot()})`);
   console.log(`  baseline: ${relative(ROOT, baseDir)}`);
   console.log(`  out    : ${relative(ROOT, outDir)}\n`);
 
@@ -440,7 +523,7 @@ async function captureAll() {
     for (const theme of sc.themes) {
       const tag = `${sc.name}-${theme}`;
       const t0 = Date.now();
-      const session = await createSession(browser, { colorScheme: theme, apiStubs: { ...BASE_STUBS, ...(sc.apiStubs || {}) } });
+      const session = await createSession(browser, { colorScheme: theme, clock: sc.clock, apiStubs: { ...BASE_STUBS, ...(sc.apiStubs || {}) } });
       let buf;
       let second = null;
       const masks = [...BASE_MASK, ...(sc.mask || [])];

@@ -1556,8 +1556,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   opacity: 0.5;
 }
 
-
-
 .tool-card {
   background: #f0f0f0;
   border-radius: 10px;
@@ -2168,7 +2166,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: var(--glass-control-bg-hover);
   border-color: var(--glass-control-border);
 }
-.option-secret-eye:focus { outline: none; }
 .option-secret-eye:focus-visible { border-color: var(--glass-control-border); }
 .option-secret-hint {
   margin-top: 8px;
@@ -3394,7 +3391,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   box-shadow: 0 1px 4px rgba(0,0,0,0.1);
 }
 
-
 /* ===== NebLink tool row ===== */
 .row.tool.neblink-row {
   position: relative;
@@ -3793,7 +3789,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
     transition: none;
   }
 }
-
 
 /* ---------- Workspace dir picker（ProjectCreate「选择工作区」卡 + Route C 应用内浏览器，workspace-picker 批次） ---------- */
 /* 卡片大目标：整行点击区，SVG 描边文件夹图标 + 标题 + 提示。毛玻璃、克制专业感。 */

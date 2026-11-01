@@ -340,7 +340,6 @@ html[data-theme="dark"] #perception-panel {
   color: var(--st-text); word-break: break-word;
 }
 .mail-body-edit:empty::before { content: attr(data-placeholder); color: var(--st-text-dim); }
-.mail-body-edit:focus { outline: none; }
 .mail-body-edit p { margin: 0 0 .6em; }
 .mail-body-edit ul, .mail-body-edit ol { margin: 0 0 .6em; padding-left: 1.5em; }
 .mail-body-edit blockquote {

@@ -713,11 +713,179 @@ function $(sel) { return document.querySelector(sel); }
 
 // FILE_ICONS/HIDDEN_DIRS/getFileInfo/shouldHide 已迁 ./explorer/fileRules.js(FE组件化批次五,行为保持)。
 
+// ── 行构造收口 + 键盘漫游（B1-1/B1-2，keyboard-first 二期）──────────────
+// 改造前的事实（本批实测）：`.explorer-item` 是 `<div>`，`role`/`tabindex` 命中 0；
+// `mode.js:170-177` 只是给它们**临时**补了 `tabindex="-1"`，所以焦点进得去、
+// 按不动 —— "键盘打不开文件"的准确表述就是这四个字。
+//
+// 本段建立三个不变量：
+//   ① 每行都有稳定身份：`role="treeitem"` + `aria-level` + `data-focus-key="explorer:<path>"`
+//      （后者同时是全树 `data-focus-key` 标记通道的**首批生产者**，B3-2 的保焦协议
+//      从此不再只有 `#id` 与 DOM 路径两级）。
+//   ② 同一时刻**恰好一行** `tabindex=0`（roving）；行的 tabindex 由本模块独占，
+//      其他模块（mode.js）不得再改写它。
+//   ③ 键位语义由 `onTreeKeydown` 一处定义：↑↓ 相邻行 / ←→ 收展 / Home End 两端 /
+//      Enter 激活（目录=收展，文件=走既有打开路径）。
+
+/**
+ * 树行工厂：三处行（目录 / 文件 / 新建输入行）共用同一份 a11y + 缩进契约。
+ * 收口前三个构造各写一遍 `className` 与 `paddingLeft`，A11y 属性一处都没有 ——
+ * 这正是"三处行构造"必须收成一个函数的原因：漏一处就等于漏一类行。
+ * @param {'folder'|'file'|'creating'} kind
+ * @param {string} path 树内相对路径（creating 行没有路径）
+ * @param {number} depth 缩进档位（0 = 根列表项）
+ * @returns {HTMLElement}
+ */
+function makeExplorerRow(kind, path, depth) {
+  const row = document.createElement('div');
+  row.className = kind === 'folder'
+    ? 'explorer-item explorer-folder'
+    : kind === 'file' ? 'explorer-item explorer-file' : 'explorer-item explorer-creating';
+  if (path) row.dataset.path = path;
+  // 文件行多留一格箭头位（既有视觉口径，逐像素不变）
+  row.style.paddingLeft = `${depth * 14 + (kind === 'file' ? 22 : 8)}px`;
+  if (kind === 'creating') {
+    // 新建行 = 输入框宿主：行本身不可聚焦、不进 Tab 序（Tab 落在内部 input 上）
+    row.setAttribute('role', 'none');
+    return row;
+  }
+  row.setAttribute('role', 'treeitem');
+  row.setAttribute('aria-level', String(depth + 1));
+  row.tabIndex = -1; // roving：由 syncRoving() 把"当前行"改回 0
+  row.dataset.focusKey = `explorer:${path}`; // data-focus-key 生产者（B3-2 的输入）
+  if (kind === 'folder') row.setAttribute('aria-expanded', 'false');
+  return row;
+}
+
+/** 当前树里可漫游的行（可见 = 非 0 尺寸；DOM 序 = 视觉序）。 @returns {HTMLElement[]} */
+function treeRows() {
+  const tree = document.getElementById('explorer-tree');
+  if (!tree) return [];
+  /** @type {HTMLElement[]} */
+  const out = [];
+  for (const el of tree.querySelectorAll('.explorer-item[role="treeitem"]')) {
+    if (!(el instanceof HTMLElement)) continue;
+    if (!el.offsetWidth && !el.offsetHeight) continue; // 折叠子树里的行
+    out.push(el);
+  }
+  return out;
+}
+
+/** 记住的漫游锚点（重渲/重载后仍指向同一路径）。 */
+let treeFocusPath = '';
+
+/**
+ * 让「恰好一行 tabindex=0」成立，并返回该行。
+ * @param {string} [preferPath] 想落在哪一行（缺省沿用记录的锚点，锚点消失则首行）
+ * @returns {HTMLElement|null}
+ */
+function syncRoving(preferPath) {
+  const rows = treeRows();
+  if (!rows.length) return null;
+  const want = preferPath === undefined ? treeFocusPath : preferPath;
+  let target = /** @type {HTMLElement|null} */ (null);
+  for (const el of rows) if (el.dataset.path === want) { target = el; break; }
+  if (!target) target = rows[0];
+  for (const el of rows) el.tabIndex = el === target ? 0 : -1;
+  treeFocusPath = target.dataset.path || '';
+  return target;
+}
+
+/**
+ * 把焦点搬到某行（并同步 roving）。
+ * @param {HTMLElement|null} el
+ * @returns {void}
+ */
+function focusTreeRow(el) {
+  if (!(el instanceof HTMLElement)) return;
+  treeFocusPath = el.dataset.path || '';
+  syncRoving(treeFocusPath);
+  el.focus({ preventScroll: true });
+  el.scrollIntoView({ block: 'nearest' });
+}
+
+/** 行所属的父目录行（← 在收起态/文件行上退一层用）。 @param {HTMLElement} row @returns {HTMLElement|null} */
+function parentTreeRow(row) {
+  const wrapper = row.closest('.explorer-dir-wrapper');
+  const parentWrapper = wrapper?.parentElement?.closest('.explorer-dir-wrapper');
+  const parentRow = parentWrapper?.querySelector(':scope > .explorer-folder');
+  return parentRow instanceof HTMLElement ? parentRow : null;
+}
+
+/**
+ * 树上的按键语义（一处定义，事件委托到容器 —— 行是重渲即换的，绑在行上会漏）。
+ * @param {KeyboardEvent} e
+ * @returns {void}
+ */
+function onTreeKeydown(e) {
+  const t = e.target;
+  // 新建/重命名输入行：键归输入法与该输入自己的监听，不抢
+  if (t instanceof HTMLElement && t.closest('input, textarea, [contenteditable="true"]')) return;
+  const row = t instanceof HTMLElement ? t.closest('.explorer-item[role="treeitem"]') : null;
+  if (!(row instanceof HTMLElement)) return;
+  const rows = treeRows();
+  const i = rows.indexOf(row);
+  const isFolder = row.classList.contains('explorer-folder');
+
+  switch (e.key) {
+    case 'ArrowDown':
+      e.preventDefault();
+      focusTreeRow(i + 1 < rows.length ? rows[i + 1] : row);
+      return;
+    case 'ArrowUp':
+      e.preventDefault();
+      focusTreeRow(i > 0 ? rows[i - 1] : row);
+      return;
+    case 'Home':
+      e.preventDefault();
+      focusTreeRow(rows[0] || row);
+      return;
+    case 'End':
+      e.preventDefault();
+      focusTreeRow(rows[rows.length - 1] || row);
+      return;
+    case 'ArrowRight':
+      e.preventDefault();
+      if (!isFolder) return;
+      if (row.getAttribute('aria-expanded') !== 'true') {
+        // 展开 = 复用既有 click 语义（handleSelectClick 在无修饰键时返回 false，
+        // 随后 toggleDir 走原来的深度与加载管线），不另写一份展开逻辑。
+        row.click();
+      } else {
+        focusTreeRow(rows[i + 1] || row); // 已展开 → 进第一个子行
+      }
+      return;
+    case 'ArrowLeft': {
+      e.preventDefault();
+      if (isFolder && row.getAttribute('aria-expanded') === 'true') {
+        row.click(); // 收起（同一份 click 语义）
+        return;
+      }
+      focusTreeRow(parentTreeRow(row));
+      return;
+    }
+    case 'Enter': {
+      e.preventDefault();
+      if (isFolder) { row.click(); return; }
+      // 文件行：与 :835 的单击监听**同一条激活路径**（openFile → readFile →
+      // fileContent → workspace-open-item），不直接派发事件绕过取数腿。
+      const path = row.dataset.path || '';
+      openFile(path, path.split('/').pop() || path);
+      return;
+    }
+    default:
+  }
+}
+
 // ── Render ─────────────────────────────────────────────────────────────
 
 function renderTree() {
   const body = $('#explorer-tree');
   if (!body) return;
+  // B1-1：容器补 `role="tree"`（行补 treeitem）。写在 JS 而不是 index.html：
+  // index.html 是 B4 的独占文件（计划 §四），树语义归本模块。
+  body.setAttribute('role', 'tree');
+  body.setAttribute('aria-label', t('explorer.title') || 'Files');
   clearSelection();
   body.innerHTML = '';
   // Root-level listing — path "" means project root
@@ -746,10 +914,7 @@ function buildDirNode(path, isRoot, depth) {
   }
 
   const name = path.split('/').pop();
-  const row = document.createElement('div');
-  row.className = 'explorer-item explorer-folder';
-  row.dataset.path = path;
-  row.style.paddingLeft = `${depth * 14 + 8}px`;
+  const row = makeExplorerRow('folder', path, depth);
 
   const chevron = document.createElement('span');
   chevron.className = 'explorer-chevron';
@@ -788,7 +953,7 @@ function buildDirNode(path, isRoot, depth) {
     e.stopPropagation();
     // Cmd/Ctrl or Shift click = selection only — never expand/collapse
     if (handleSelectClick(e, path)) return;
-    toggleDir(path, chevron, children, depth);
+    toggleDir(path, chevron, children, depth, row);
   });
 
   wrapper.appendChild(row);
@@ -798,10 +963,7 @@ function buildDirNode(path, isRoot, depth) {
 
 function buildFileNode(path, depth) {
   const name = path.split('/').pop();
-  const node = document.createElement('div');
-  node.className = 'explorer-item explorer-file';
-  node.dataset.path = path;
-  node.style.paddingLeft = `${depth * 14 + 22}px`; // extra indent for chevron space
+  const node = makeExplorerRow('file', path, depth);
 
   const info = getFileInfo(name);
   const icon = document.createElement('span');
@@ -859,12 +1021,22 @@ function buildFileNode(path, depth) {
 
 // ── Actions ────────────────────────────────────────────────────────────
 
-function toggleDir(path, chevronEl, childrenEl, depth) {
+/**
+ * 展开/收起一个目录行。`rowEl` 给了就同步 `aria-expanded`（键盘/读屏同源事实）。
+ * @param {string} path
+ * @param {Element} chevronEl
+ * @param {HTMLElement} childrenEl
+ * @param {number} depth
+ * @param {HTMLElement|null} [rowEl]
+ * @returns {void}
+ */
+function toggleDir(path, chevronEl, childrenEl, depth, rowEl = null) {
   if (expandedDirs.has(path)) {
     // Collapse
     expandedDirs.delete(path);
     chevronEl.classList.remove('expanded');
     childrenEl.style.display = 'none';
+    if (rowEl) rowEl.setAttribute('aria-expanded', 'false');
   } else {
     // Expand — always reload to pick up file system changes
     expandedDirs.add(path);
@@ -872,6 +1044,7 @@ function toggleDir(path, chevronEl, childrenEl, depth) {
     chevronEl.classList.add('expanded');
     childrenEl.style.display = '';
     childrenEl.innerHTML = '';
+    if (rowEl) rowEl.setAttribute('aria-expanded', 'true');
     loadDir(path, childrenEl, depth);
   }
   // The visible-dir set changed — the watch subscription follows it (throttled).
@@ -1392,6 +1565,10 @@ onMessage('dirListing', (msg) => {
     const kids = child.querySelector('.explorer-children');
     if (chevron && kids) {
       chevron.classList.add('expanded');
+      // 重渲后的行是新节点：aria-expanded 必须跟着恢复，否则读屏/断言看到的
+      // 是"已展开的子树 + 收起的语义"这种自相矛盾的状态。
+      const fRow = child.querySelector(':scope > .explorer-folder');
+      if (fRow instanceof HTMLElement) fRow.setAttribute('aria-expanded', 'true');
       kids.style.display = '';
       kids.innerHTML = '';
       loadDir(p, kids, p.split('/').length);
@@ -1400,6 +1577,10 @@ onMessage('dirListing', (msg) => {
 
   // Directory re-rendered — restore .selected classes from the selection model
   applySelectionClasses();
+
+  // roving 锚点跟随重渲（新行是全新节点：不重算就"没有一行 tabindex=0"，
+  // Tab 再也进不来 —— 这正是"重渲后键盘失灵"的形态）。
+  syncRoving();
 
   if (typeof lucide !== 'undefined') createIconsIn(pending.container);
 });
@@ -1611,6 +1792,19 @@ export function initExplorer() {
     });
   }
 
+  // ── 键盘腿（B1-2）：一次绑定，事件委托（行是重渲即换的）───────────────
+  const kbdTree = /** @type {(HTMLElement & {_kbdBound?: boolean})|null} */ (document.getElementById('explorer-tree'));
+  if (kbdTree && !kbdTree._kbdBound) {
+    kbdTree._kbdBound = true;
+    kbdTree.addEventListener('keydown', onTreeKeydown);
+    // 谁搬的焦点都算数（Tab / ↓↑ / mode.js 的 Shift+]）—— roving 锚点跟随
+    // focusin 更新，于是"恰好一行 tabindex=0"在任何来源下都成立。
+    kbdTree.addEventListener('focusin', (e) => {
+      const row = (/** @type {Element} */ (e.target)).closest?.('.explorer-item[role="treeitem"]');
+      if (row instanceof HTMLElement && row.dataset.path) syncRoving(row.dataset.path);
+    });
+  }
+
   // Esc clears the selection (unless an inline create input has focus)
   if (!window.__explorerEscBound) {
     window.__explorerEscBound = true;
@@ -1717,9 +1911,7 @@ function startCreateNode(isDir, dirPath) {
 
   // Create inline input row
   const depth = dirPath ? dirPath.split('/').length + 1 : 1;
-  const inputRow = document.createElement('div');
-  inputRow.className = 'explorer-item explorer-creating';
-  inputRow.style.paddingLeft = `${depth * 14 + 8}px`;
+  const inputRow = makeExplorerRow('creating', '', depth);
 
   const icon = document.createElement('span');
   icon.className = 'explorer-icon';

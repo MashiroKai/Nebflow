@@ -2164,6 +2164,8 @@ export default {
   'daemons.configSecretHint': '保留「***」表示沿用已存值；留空则不修改。',
   // === Explorer（文件浏览器多选） ===
   'explorer.selectedCount': '已选 {count} 项',
+  // B1-1：树容器 role="tree" 的可及名（读屏与键盘断言共用的稳定标签）
+  'explorer.treeLabel': '文件树',
   'explorer.delete': '删除',
   'explorer.deleteN': '删除 {count} 个所选项',
   'explorer.deleteTitle': '删除文件',

@@ -1,0 +1,31 @@
+{
+  "_why": "B3-1 显式豁免表（照 build-web.mjs ORPHAN_EXEMPTIONS 的惯例：每条必须写理由）。判据不是「有没有写 outline:none」，而是「键盘聚焦时该元素有没有**别的**可见聚焦视觉」——只有自带 glow/border 的才允许无环；纯删环一律走 keyboard.css:28 的 :focus-visible 兜底。",
+  "_consumedBy": "scripts/keyboard-check.mjs ⑬（css/ 内 :focus 规则里未配对 :focus-visible 的 outline:none 条数 − 本表 = 0）",
+  "exemptions": [
+    {
+      "file": "css/modal.css",
+      "selector": ".modal-input:focus, #modal-input:focus, #memory-content-input:focus, #rules-input:focus",
+      "reason": "Sapphire focus glow：2px+4px 双层 box-shadow + border-color 变化，键盘聚焦时有比 2px 描边更强的可见反馈（模态输入框内再套一圈描边会与呼吸态冲突）。"
+    },
+    {
+      "file": "css/neblink.css",
+      "selector": ".neblink-paircode-input:focus",
+      "reason": "配对码输入框聚焦有 border-color: var(--color-primary) 变色，属于该组件的既定聚焦语言。"
+    },
+    {
+      "file": "css/secrets.css",
+      "selector": ".secrets-input:focus",
+      "reason": "border-color + 2px sapphire 外发光（与 secrets 面其余控件同族），键盘/鼠标同一视觉。"
+    },
+    {
+      "file": "css/social.css",
+      "selector": ".social-input:focus",
+      "reason": "border-color + 2px sapphire 外发光，同 secrets-input 口径。"
+    },
+    {
+      "file": "css/sidebar.css",
+      "selector": "#config-editor:focus",
+      "reason": "配置编辑器（monaco）自管聚焦视觉；DOM 侧描边会被编辑器内部选区/光标顶掉，属计划书 §5.2 明列的「monaco 内部键位不接管」。"
+    }
+  ]
+}
