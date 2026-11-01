@@ -15,10 +15,13 @@
 #     beta / release 分支 pipeline 跑，needs: assembly ⇒ 等全量面（含 test）齐绿才发
 #     ——比原文（release 链自跑一次 test）更严且省一次重复测试。
 #
-# runner 前提（自建，标签只允许 mac / windows 两枚）：
-#   tags: [mac]     = 构建宿主机：JDK23 + sbt 1.10.10 + node 20 + docker 29.1.3 在位，
-#                     shell executor，gitlab-runner 注册标签 mac。
-#   tags: [windows] = 16 核 Windows 机：JDK21 + node 20 + sbt 已备，注册标签 windows，
+# runner 前提（自建，标签只允许 mac / windows 两枚；工具链为 2026-11-01 注册日实测）：
+#   tags: [mac]     = 构建宿主机：JDK23 + sbt 1.10.10 + node 23.9 + docker 29.1.3 在位，
+#                     shell executor，gitlab-runner 注册标签 mac（runner id=100，
+#                     brew LaunchAgent 用户态常驻，concurrent=1）。
+#   tags: [windows] = 16 核 Windows 机（DESKTOP-IJBBEOT）：JDK21 + Git Bash 在位
+#                     （node 未装：compile 腿零依赖 node 可跑；smoke 腿起服后要跑
+#                     verify-web-assets.mjs，装机后全量面才完整），注册标签 windows，
 #                     且必须 --shell bash（Git Bash 在 PATH）——本文件 windows 腿脚本
 #                     全部按 bash 方言写（GitLab windows runner 支持 bash shell）。
 #
