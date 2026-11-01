@@ -18,6 +18,10 @@ import { listDelegateRows, listDelegateChildren, getChainByTask } from '../deleg
 // panel-merge-status 批（2026-10-25）：候合并行队列细节（位次/重试/拒绝摘要）——
 // /api/merge-queue 只读状态面单点（叶子模块，事件驱动 + 节流退避，禁空转轮询）。
 import { ensureMergeQueueStatus, mergeQueueEntryFor } from '../mergeQueueStatus.js';
+// 来源链批（作者令 2026-11-01 19:23）：孤儿行来源角标升级为名字链——父不可见行的
+// 「挂在谁下面」标注读上层 delegate 名字（bgSourceChain 单点解析；解析不到回退
+// 既有类型词）。
+import { upperChainOf, chainNameOf, chainLabel } from '../bgSourceChain.js';
 
 // --- Multi-agent events ---
 // Background sub-agent activity shows a header indicator (like Bash background tasks).
@@ -723,20 +727,30 @@ function bgGenericName(name, sid) {
 
 /** 孤儿来源角标（面板树批 2026-10-29 ①）：父不可见行的「来自 …」标注（中性 muted
  *  chip 族 = .bg-task-origin 同款；tooltip 承载完整父会话 id）。入参 = 行 opts
- *  （orphanFrom/orphanTitle——bgDelegateGroups.orphanBy 下传形）。 */
-function bgOrphanChipHtml(orphan) {
+ *  （orphanFrom/orphanTitle——bgDelegateGroups.orphanBy 下传形）。
+ *  来源链批（作者令 2026-11-01 19:23）：链级都是**名字**不是 type——父链可解析
+ *  （bgSourceChain 既有镜像读数）⇒ chip = 上层名字链（「上层 · 父」，子行自己
+ *  的名字已在行首主名位，角标只补「挂在谁下面」）；解析不到（父无名/旧数据）⇒
+ *  既有类型词逐字回退（零臆造）。 */
+function bgOrphanChipHtml(orphan, bucketSid) {
   const o = orphan && typeof orphan === 'object' ? orphan : {};
   const parentSid = String(o.orphanFrom || '');
   if (!parentSid) return '';
+  const chainSegs = parentSid
+    ? [...upperChainOf(parentSid, bucketSid), chainNameOf(parentSid)].filter(Boolean)
+    : [];
+  const chainText = chainLabel(chainSegs);
   let label;
-  if (/^(node-|dag-|dispatcher-)/.test(parentSid)) label = t('subagents.fromFlowNode');
+  if (chainText) label = chainText;
+  else if (/^(node-|dag-|dispatcher-)/.test(parentSid)) label = t('subagents.fromFlowNode');
   else if (/^(subagent-|subtask-|workflow-)/.test(parentSid)) label = t('subagents.fromSubagent');
   else {
     const title = bgFirstLine(o.orphanTitle);
     label = title || t('subagents.fromDelegate');
   }
   return '<span class="bg-task-origin bg-task-orphan" title="' +
-    escapeHtml(t('subagents.orphanTip', { sid: parentSid })) + '">' + escapeHtml(label) + '</span>';
+    escapeHtml(t('subagents.orphanTip', { sid: parentSid }) +
+      (chainText ? ' · ' + chainText : '')) + '">' + escapeHtml(label) + '</span>';
 }
 
 /**
@@ -761,7 +775,7 @@ function bgOrphanChipHtml(orphan) {
  * 图标 + status-warn token，tooltip 带链会话数），状态点改 active 绿脉冲（活链
  * ≠ 死行），行不加 .done 灰化（链活着）；链全终态后覆写入参自然缺席 → 行回
  * 普通终态样式（既有 done 灰化/点形）。
- * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string, rowTitle?: string, shortName?: string, childCount?: number, collapsed?: boolean, orphanFrom?: string, orphanTitle?: string, chainContinued?: boolean, chainCount?: number}} [opts]
+ * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string, rowTitle?: string, shortName?: string, childCount?: number, collapsed?: boolean, orphanFrom?: string, orphanTitle?: string, bucketSid?: string, chainContinued?: boolean, chainCount?: number}} [opts]
  * @returns {string}
  */
 function bgTaskRowHtml(id, info, opts = {}) {
@@ -816,7 +830,8 @@ function bgTaskRowHtml(id, info, opts = {}) {
       + escapeHtml(taskBadgeText) + '</span>'
     : '';
   // 孤儿来源角标（面板树批 2026-10-29 ①）：父不可见行提升顶层后仍标注来源。
-  const orphanPart = (opts && opts.orphanFrom) ? bgOrphanChipHtml(opts) : '';
+  // 来源链批（2026-11-01 19:23）：桶键随 opts 下传——角标名字链解析的父判据输入。
+  const orphanPart = (opts && opts.orphanFrom) ? bgOrphanChipHtml(opts, opts.bucketSid) : '';
   // ── 显示名契约（2026-10-22 · 作者「先长名后收缩成 sessionId」批）────────────
   // 症状根因：恢复脸（activeAgents 快照）对 delegate 会话 meta/displayName 恒缺席
   // ⇒ agentName 回落 sessionId；live 脸 agentId == sessionId，同 key 合并「快照为准」
@@ -1166,7 +1181,9 @@ export function renderBgAgentDropdown() {
   }
   for (const [id, info] of leftovers) {
     const orphan = orphanBy.get(String((info && info.sessionId) || id || '').replace(/^team-/, ''));
-    htmlParts.push(bgTaskRowHtml(id, info, orphan ? { orphanFrom: orphan.parentSid, orphanTitle: orphan.parentTitle } : {}));
+    htmlParts.push(bgTaskRowHtml(id, info, orphan
+      ? { orphanFrom: orphan.parentSid, orphanTitle: orphan.parentTitle, bucketSid: sid }
+      : {}));
   }
   // 台账 #929：远端投影行缀尾（本地行为主的合并语义——本地空时本组独立成面）。
   htmlParts.push(remoteHtml);

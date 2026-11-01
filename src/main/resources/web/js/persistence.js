@@ -647,7 +647,8 @@ export function restoreFromStorage(opts = {}) {
         //（main.js saveMsg 落缓存；缺席 ⇒ undefined = 旧行为逐字不变）。
         // schedule（schedcard 批 2026-10-29）：定时任务卡片载荷同字段透传——
         // `m.source==='schedule'` 的行在 builder 内走专属卡分支（缺席 = 旧行为）。
-        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam, undefined, m.delivery, m.intake, m.header, m.fileChanges, m.schedule));
+        // 来源链批（2026-11-01 19:23）：收件会话 id 末参下传（同上方历史分页腿）。
+        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam, undefined, m.delivery, m.intake, m.header, m.fileChanges, m.schedule, ownerSessionId));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,
@@ -1049,8 +1050,10 @@ function buildHistoryRow(m, i, ctx) {
         // fileChanges（bug #58 修）：后端历史分页行同字段透传（缺席 = 旧行为）。
         // schedule（schedcard 批 2026-10-29）：定时任务卡片载荷同字段透传——
         // `m.source==='schedule'` 的行在 builder 内走专属卡分支（缺席 = 旧行为）。
+        // 来源链批（2026-11-01 19:23）：收件会话 id 末参下传（完工卡归属链上层段；
+        // live 路径 renderInjectedBubble 同键）。
         fragment.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam,
-          (el, text) => deferMd(el, text, false), m.delivery, m.intake, m.header, m.fileChanges, m.schedule));
+          (el, text) => deferMd(el, text, false), m.delivery, m.intake, m.header, m.fileChanges, m.schedule, ownerSessionId));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,
