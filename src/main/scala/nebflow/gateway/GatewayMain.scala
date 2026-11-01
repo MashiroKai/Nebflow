@@ -1070,6 +1070,22 @@ object GatewayMain extends IOApp:
                                   // 幂等 + fail-soft（见 SeedService
                                   // 注释），失败仅告警不阻塞启动（与 seedDefaults/startupMount 同构）。
                                   val seedMinimalSet: IO[Unit] = SeedService.ensureSeeded()
+                                  // 源化插件自愈（作者令 2026-11-01 22:55「stand-dev 不进 seed，
+                                  // 运行时插件要能热更新」）：seed 只分发「随引擎发布」的出厂集；
+                                  // 自研插件（来源在我们自己的仓）由 PluginSourceCatalog 的指针
+                                  // 声明 + 本行按声明拉取装回——**只在本地缺失时动作**（在位零触碰，
+                                  // 不覆盖用户态），远端不可达 ⇒ 该包保持缺失 + 点名 WARN，绝不阻断
+                                  // 启动、绝不影响其他包。幂等：装回后下次 boot 走 "already present"。
+                                  // 用户显式卸载（plugins.removed 标记）优先，不自愈装回。
+                                  val sourcePluginHeal: IO[Unit] =
+                                    nebflow.core.plugin.PluginSourceSync.selfHeal().void
+                                      .handleErrorWith(e =>
+                                        IO(
+                                          nebflow.shared.NebflowLogger
+                                            .forName("nebflow.plugin.sync")
+                                            .warnSync(s"source plugin self-heal skipped: ${e.getMessage}")
+                                        )
+                                      )
                                   // 热重启编排器（hot-restart 批）：触发器无关——WS restart
                                   // 命令（P1）经 sharedResources.hotRestart 触发；REST/桌面菜单
                                   // 后续批次接同一入口。broadcast 接 wsHub（restartStatus 帧）。
@@ -1125,7 +1141,7 @@ object GatewayMain extends IOApp:
                                   // daemonService autoStart 块（构造序：dock 依赖
                                   // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
                                   // 契约由 dock 腿逐字保持。
-                                  hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
+                                  hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> taskIndexBackfill                                   *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {

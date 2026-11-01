@@ -25,7 +25,7 @@ import io.circe.syntax.*
 object PluginCommand extends CliCommand:
   def name = "plugin"
   def description = "Manage plugins (installed = trusted; block/unblock a package)"
-  def subcommands = List(PluginList, PluginAdd, PluginSources, PluginApprove, PluginRevoke, PluginUnblock, PluginRemove, PluginEnable, PluginDisable)
+  def subcommands = List(PluginList, PluginAdd, PluginSources, PluginUpdates, PluginUpdate, PluginApprove, PluginRevoke, PluginUnblock, PluginRemove, PluginEnable, PluginDisable)
 
   def examples = List(
     "stand plugin list",
@@ -35,6 +35,8 @@ object PluginCommand extends CliCommand:
     "stand plugin add https://github.com/o/r.git#v1.2.0",
     "stand plugin add --from /path/to/source-spec.json",
     "stand plugin sources",
+    "stand plugin updates",
+    "stand plugin update stand-dev",
     "stand plugin revoke web-research",
     "stand plugin unblock web-research",
     "stand plugin remove web-research",
@@ -163,6 +165,82 @@ object PluginCommand extends CliCommand:
           }
 
   end PluginSources
+
+  /**
+   * `stand plugin updates` —— 源化插件的更新面（作者令 2026-11-01 22:55「运行时插件不是应该
+   * 要能热更新吗，立即使用我们最新的版本」）。逐包给出源 / 已装版本 / 远端版本 / 状态；
+   * 有新版的行带 `[update]` 提示。**用户驱动**：本命令就是触发点（每包一次 ls-remote +
+   * 浅克隆读版本号），无后台轮询。远端不可达 ⇒ `unreachable` + 原因，包照常可用。
+   */
+  private object PluginUpdates extends CliSubcommand:
+    def name = "updates"
+    def description = "Check the declared plugin sources for newer versions (source-managed plugins only; zero background polling)"
+    def params = Nil
+
+    def run(ctx: CliContext): IO[CliResult] =
+      ctx.client match
+        case None => IO.pure(CliResult.Error("Gateway not running"))
+        case Some(client) =>
+          client.get("/api/plugins/updates").map { resp =>
+            if ctx.json then CliResult.Json(resp)
+            else
+              val sources = resp.hcursor.downField("sources").as[List[Json]].getOrElse(Nil)
+              val updatable = resp.hcursor.downField("updatable").as[Int].toOption.getOrElse(0)
+              val lines = sources.map { s =>
+                val name = s.hcursor.downField("name").as[String].getOrElse("?")
+                val state = s.hcursor.downField("state").as[String].getOrElse("?")
+                val src = s.hcursor.downField("source").as[String].getOrElse("")
+                val inst = s.hcursor.downField("installedVersion").as[String].toOption.getOrElse("")
+                val remote = s.hcursor.downField("remoteVersion").as[String].toOption.getOrElse("")
+                val mark = if s.hcursor.downField("updateAvailable").as[Boolean].toOption.getOrElse(false) then "  [update]" else ""
+                val ver =
+                  if remote.nonEmpty then s"v${if inst.isEmpty then "?" else inst} → v$remote"
+                  else s"v$inst"
+                s"  $name  ($ver, $state)$mark  ← $src"
+              }
+              if lines.isEmpty then CliResult.text("No source-managed plugins declared (nebflow.json → plugins.sources)")
+              else CliResult.Text(s"Plugin sources ($updatable update(s) available):" :: lines)
+          }
+
+  end PluginUpdates
+
+  /**
+   * `stand plugin update <name> [--commit <40-hex>]` —— 拉取更新并生效。
+   * 落盘语义 = 暂存拉取 → 校验 → 备份旧版 → 原子换装 → 账本落 pin → 审计行；
+   * **零重启**（装载读面是 mtime 缓存，换装后下一条读命令即见新内容）。
+   * 失败 ⇒ Error + 人读原因，在位版本零变化（远端不可达不是事故，是「保持本地版本」）。
+   */
+  private object PluginUpdate extends CliSubcommand:
+    def name = "update"
+    def description =
+      "Pull the latest version of a source-managed plugin and activate it (zero restart; keeps the old version if the source is unreachable)"
+    def params = List(
+      CliParam("name", None, "Plugin name (must have a source declaration)", required = true),
+      CliParam("commit", None, "Pin the update to a specific 40-hex commit instead of the branch tip")
+    )
+
+    def run(ctx: CliContext): IO[CliResult] =
+      val name = ctx.positionalArgs.headOption.getOrElse("")
+      val commit = ctx.args.get("commit").map(_.trim).filter(_.nonEmpty).filterNot(_ == "true")
+      if name.isEmpty then IO.pure(CliResult.Error("Plugin name required — stand plugin update <name>"))
+      else
+        ctx.client match
+          case None => IO.pure(CliResult.Error("Gateway not running"))
+          case Some(client) =>
+            val body = commit.fold(Json.obj())(c => Json.obj("commit" -> Json.fromString(c)))
+            client.post("/api/plugins/" + name + "/source/update", body).map { resp =>
+              val msg = resp.hcursor
+                .downField("message")
+                .as[String]
+                .toOption
+                .orElse(resp.hcursor.downField("error").as[String].toOption)
+                .getOrElse(resp.noSpaces)
+              if resp.hcursor.downField("ok").as[Boolean].toOption.contains(true) then CliResult.text(msg)
+              else CliResult.Error(msg)
+            }
+    end run
+
+  end PluginUpdate
 
   private object PluginApprove extends CliSubcommand:
     def name = "approve"

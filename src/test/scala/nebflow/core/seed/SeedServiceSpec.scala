@@ -47,10 +47,11 @@ class SeedServiceSpec extends FunSuite:
 
   private def dataRoot: os.Path = PathUtil.dataRoot
 
+  // 2026-11-01 源化批：`stand-dev` 迁出 seed（自研插件走远端源，见 PluginSourceCatalog /
+  // PluginSourceSync）⇒ 默认预装集 7 → 6。集合判据不变（精确小写名对照），只少一条。
   private val DefaultPlugins = List(
     "visual-report",
     "slideblocks",
-    "stand-dev",
     "web-search-toolkit",
     "browser-use",
     "computer-use",
@@ -59,7 +60,7 @@ class SeedServiceSpec extends FunSuite:
 
   // ── ① fresh home：完整播种（plugin）+ agent 面零播种 ────────
   test(
-    "fresh home seeds the seven default plugins and NOTHING on the agent face (four agents are code-defined, builtin-def 2026-10-03)"
+    "fresh home seeds the six default plugins and NOTHING on the agent face (four agents are code-defined, builtin-def 2026-10-03)"
   ):
     ensure()
 
@@ -71,7 +72,7 @@ class SeedServiceSpec extends FunSuite:
       "fresh home must NOT create the agents/ tree at all (agent seeding retired, builtin-def 2026-10-03 — the four agents are code-defined)"
     )
 
-    // Default preinstall set = the manifest's seven plugin items. Directory in place + trusted.
+    // Default preinstall set = the manifest's six plugin items. Directory in place + trusted.
     for name <- DefaultPlugins
     do
       assert(os.exists(home / "plugins" / name / "plugin.json"), s"plugin '$name'/plugin.json present")
@@ -118,14 +119,15 @@ class SeedServiceSpec extends FunSuite:
     val state = io.circe.parser.parse(os.read(marker)).toOption.get
     assert(state.hcursor.downField("version").as[String].toOption.contains("1.0.0"))
     assert(state.hcursor.downField("items").as[List[String]].toOption.exists(_.nonEmpty), "items recorded")
-    // Marker count = items actually written this run = **7** = the seven default
-    // plugins (builtin-def batch 2026-10-03: the four agents are code-defined, the
-    // manifest carries zero agents:/project: items). History: 7 (pre-kernelgen, with
+    // Marker count = items actually written this run = **6** = the six seed-distributed
+    // default plugins (builtin-def batch 2026-10-03: the four agents are code-defined, the
+    // manifest carries zero agents:/project: items; source batch 2026-11-01: stand-dev left
+    // the seed tree for its USTC remote source, 7 → 6). History: 7 (pre-kernelgen, with
     // the project:general entry) -> 8 (ext: +agents:kernel) -> 11 (manifestfix union)
-    // -> 7 (builtin-def: all agents: items retired).
+    // -> 7 (builtin-def: all agents: items retired) -> 6 (source batch).
     assert(
-      state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 7),
-      "marker records 7 items (the seven default plugins, zero agent/project items)"
+      state.hcursor.downField("items").as[List[String]].toOption.exists(_.size == 6),
+      "marker records 6 items (the six seed-distributed default plugins, zero agent/project items)"
     )
     assert(
       state.hcursor
@@ -133,7 +135,7 @@ class SeedServiceSpec extends FunSuite:
         .as[List[String]]
         .toOption
         .exists(items => DefaultPlugins.map("plugins:" + _).forall(items.contains)),
-      "marker records the seven plugin items"
+      "marker records the six seed-distributed plugin items"
     )
     assert(
       state.hcursor.downField("items").as[List[String]].toOption.exists(!_.exists(_.startsWith("agents:"))),
@@ -256,7 +258,7 @@ class SeedServiceSpec extends FunSuite:
       os.list(home / "agents").map(_.last).sorted == List("general"),
       "the agents/ tree keeps exactly the user's pre-existing entry — nothing added"
     )
-    // Upgrade add-only replants the full current default set = seven plugins.
+    // Upgrade add-only replants the full current default set = six seed-distributed plugins.
     for name <- DefaultPlugins
     do assert(os.exists(home / "plugins" / name / "plugin.json"), s"missing plugin '$name' added")
     for name <- List("explorer-toolkit", "design-spec")
@@ -378,7 +380,7 @@ class SeedServiceSpec extends FunSuite:
     PluginRegistry.invalidateCache()
 
   test("approve guard: default-set package with runtime≠seed must trip the gate; seed-identical and non-default must not"):
-    ensure() // 默认集七包就位（digest 与种子一致）
+    ensure() // 默认集六包就位（digest 与种子一致）
     // ① 默认集 + runtime == seed ⇒ 闸不开（approve 是干净的基准记录）
     val target = "visual-report"
     val seedDigest = SeedService.seedPluginDigest(target).getOrElse(fail("seed digest must resolve for default-set plugin"))
