@@ -511,7 +511,7 @@ test('D5 sealed state: messages/contacts pages show skeleton empty cards; messag
   expect(errors).toEqual([]);
 });
 
-test('D10 center chat-home key form: themed chip circle 44×44 inside dock bounds, stand-logo fallback (dark scheme; 收形批 10-31 22:50 → 头像芯片批 11-01 20:42)', async ({ page }) => {
+test('D10 center chat-home key form: themed chip circle 44×44 inside dock bounds, stand-logo fallback (dark scheme; 收形批 10-31 22:50 → 头像芯片批 11-01 20:42 → 边缘统一批 11-01 22:3x)', async ({ page }) => {
   const errors = watchErrors(page);
   const st = await page.evaluate(() => {
     const key = document.querySelector('#mobile-dock .dock-key[data-dock="chat"]');
@@ -523,12 +523,29 @@ test('D10 center chat-home key form: themed chip circle 44×44 inside dock bound
     // token 同源探针（frontend-verification 口径）：等色判据来自同一 var()，
     // 断言与 token 定义解耦。头像芯片批（2026-11-01 20:42「浅色=白底黑 logo/
     // 深色=黑底白 logo」）：logo 回落态 fill 换主题芯片 token（:has(.dock-
-    // center-logo) 限定；自定义头像态仍 sapphire 环，D11 另钉）—— 本用例
+    // center-logo) 限定；自定义头像态仍 sapphire 底，D11 另钉）—— 本用例
     // 无头像种子 = logo 态，fill 判据随批换 --agent-avatar-chip-bg。
     const probe = document.createElement('span');
     probe.style.background = 'var(--agent-avatar-chip-bg)';
     document.body.appendChild(probe);
     const tokenColor = getComputedStyle(probe).backgroundColor;
+    // 边缘统一批（作者令 11-01 22:3x「dock 的 agent 头像边缘和顶部 agent 头像的
+    // 边缘保持一致」）：收形批④ shadow=='none' 契约随批退役 —— 中键边缘换顶部
+    // 头像同款（chat.css #agent-avatar-btn 逐字同 token 组合）；判据 = 同一
+    // var() 组合探针的计算值逐字等值，与 token 定义/主题档解耦。
+    probe.style.border = '1px solid var(--glass-control-border)';
+    probe.style.boxShadow = 'inset 0 1px 0 var(--glass-control-highlight), 0 2px 8px var(--glass-control-shadow)';
+    const pcs = getComputedStyle(probe);
+    const edge = {
+      borderW: cs.borderTopWidth,
+      borderStyle: cs.borderTopStyle,
+      borderColor: cs.borderColor,
+      shadow: cs.boxShadow,
+      probeBorderW: pcs.borderTopWidth,
+      probeBorderStyle: pcs.borderTopStyle,
+      probeBorderColor: pcs.borderColor,
+      probeShadow: pcs.boxShadow,
+    };
     probe.remove();
     return {
       present: true,
@@ -537,19 +554,22 @@ test('D10 center chat-home key form: themed chip circle 44×44 inside dock bound
       circleTop: r.top,
       dockTop: dockR.top,
       inside: r.top >= dockR.top - 0.5,      // 收形批⑤：圆顶不探出 dock 顶缘
-      shadow: cs.boxShadow,
       radius: cs.borderRadius,
       bg: cs.backgroundColor,
       tokenColor,
+      ...edge,
       logo: !!circle.querySelector('img.dock-center-logo'), // 收形批③：回落 = stand logo
       hasAvatarClass: circle.classList.contains('has-avatar'),
     };
   });
   expect(st.present).toBe(true);
-  expect(st.w).toBe(44);                  // --dock-center-size（冷启动批⑧ 2026-10-30「缩小一档」50→44）
+  expect(st.w).toBe(44);                  // --dock-center-size（冷启动批⑧ 2026-10-30「缩小一档」50→44；border-box ⇒ 描边收进 44 足印）
   expect(st.h).toBe(44);
   expect(st.inside).toBe(true);           // 收形批⑤：中键收回 dock 边界内（lift=0）
-  expect(st.shadow).toBe('none');         // 收形批④：边缘收简 = 纯色零浮影零光环
+  expect(st.borderW).toBe('1px');         // 边缘统一批：描边宽 = 顶部头像同款 1px
+  expect(st.borderStyle).toBe('solid');
+  expect(st.borderColor).toBe(st.probeBorderColor); // 描边色 = --glass-control-border 本值（双主题同源映射）
+  expect(st.shadow).toBe(st.probeShadow); // 光环 = inset 高光 + 0 2px 8px 浮影（逐字同 token；收形批④ zero-shadow 契约退役）
   expect(st.radius).toBe('50%');
   expect(st.bg).toBe(st.tokenColor);      // 暗档 logo 态 fill = 芯片 token 本值（头像芯片批）
   expect(st.logo).toBe(true);             // 无头像回落 = stand logo（不显示空白/默认人形）
