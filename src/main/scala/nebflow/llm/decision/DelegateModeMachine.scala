@@ -7,6 +7,7 @@ import nebflow.core.delegate.{DualModeConfig, ModeDecision, DelegateModeAllocato
 import nebflow.core.jev.{JevAllocation, JevConfigReader, JevFallback, JevFallbackKind, JevGateOutcome}
 import nebflow.llm.{ModelCandidate, ProviderRegistry, SendMessageParams}
 import nebflow.shared.{Defaults, Message, MessageRole, NebflowLogger}
+import nebflow.prompts.PromptCatalog
 
 /**
  * DelegateModeMachine —— **delegate 模式选择器执行体**（双模式批 2026-10-28；设计
@@ -214,10 +215,7 @@ object DelegateModeMachine:
   /**
    * 固定前导（§3.2 选择依据骨架——判据文字单点，mode-decision 台账行是回归锚）。
    */
-  val StatePreamble: String =
-    "You are auditing task dispatch in an agent-orchestration platform. Below is one dispatched task brief, " +
-      "verbatim. It may contain platform boilerplate (default-clause templates, citation paths, workspace " +
-      "footers) - ignore boilerplate; judge the task's substantive purpose. Judge from the task text alone."
+  val StatePreamble: String = PromptCatalog.Classifiers.ModeStatePreamble
 
   /**
    * 生产装配（注册点 = `agent.SharedResources` 构造行，PluginAllocatorMachine.face

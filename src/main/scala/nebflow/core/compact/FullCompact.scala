@@ -4,6 +4,7 @@ import cats.effect.IO
 import io.circe.syntax.*
 import nebflow.shared.given
 import nebflow.shared.{NebflowLogger, ReadTracker, *}
+import nebflow.prompts.PromptCatalog
 
 import java.nio.file.{Files, Paths}
 
@@ -13,12 +14,7 @@ object FullCompact:
 
   // Continuation prompt — appended after the summary to prevent the model from
   // apologizing, recapping, or asking the user what to do.
-  private val ContinuationPrompt =
-    """
-      |Continue the conversation from where it left off without asking the user any further questions.
-      |Resume directly — do not acknowledge the summary, do not recap what was happening,
-      |do not preface with "I'll continue" or similar. Pick up the last task as if the break never happened.
-      |""".stripMargin.trim
+  private val ContinuationPrompt = PromptCatalog.Compact.ContinuationPrompt
 
   /**
    * Outcome of a successful full-compaction parse.

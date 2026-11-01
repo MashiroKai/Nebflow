@@ -1,6 +1,7 @@
 package nebflow.shared
 
 import scala.concurrent.duration.*
+import nebflow.prompts.PromptCatalog
 
 /**
  * Default configuration values used across the codebase.
@@ -114,9 +115,7 @@ object Defaults:
    * （文字面禁字面量散落——三消费点只引本常量）。措辞三要素：禁止 +
    * 正确姿势（run_in_background + 结束回合）+ 作者门控事件（重启/批准）处置。
    */
-  val NoSleepPollRule: String =
-    """── Waiting discipline (iron rule) ──
-      |NEVER wait with `sleep` or polling loops — sleeping in the foreground burns the turn, the context and hours of wall-clock. The correct pattern: start the long-running work with Bash `run_in_background: true`, then END YOUR TURN immediately — Nebflow's background-task notification wakes this session automatically with the job's output. Same when waiting for an author-gated event (engine restart, approval, merge reminder): deliver your current report and end your turn; you will be woken when it happens.""".stripMargin
+  val NoSleepPollRule: String = PromptCatalog.Shared.NoSleepPollRule
 
   /**
    * 插件能力查询行（stand-plugins 批，作者令 2026-10-23：像记忆检索一样把插件
@@ -133,8 +132,7 @@ object Defaults:
    * 单行形态与 ResetHazardLine 的 `[reset hazard]` 同族（`[plugin discovery]` 前缀戳，
    * 模型扫读即识别）。
    */
-  val PluginDiscoveryLine: String =
-    "[plugin discovery] Query installed plugin capabilities anytime (read-only, zero side effects): `tools/stand-plugins list` / `tools/stand-plugins search <keyword>` / `tools/stand-plugins mounts [--project <name>]` (repo-root CLI). If the current task lacks a capability, declare the needed plugin(s) and the intended use in your result — mounting authority stays with the dispatch side (you cannot hot-mount plugins yourself)."
+  val PluginDiscoveryLine: String = PromptCatalog.Shared.PluginDiscoveryLine
 
   /**
    * output 块语法批（作者令 2026-10-31 16:13，16:16 修订标签式）：用户可见输出
@@ -153,9 +151,7 @@ object Defaults:
    * （`~/.stand/User.md` 交流方式段，经 ContextRefresher 注入）按画像调整，
    * 无画像默认中文简洁直白。
    */
-  val OutputBlockRule: String =
-    """── Output discipline ──
-      |ONLY the content you wrap in paired `<output>...</output>` tags is shown to the user — write it WeChat-style: short direct paragraphs, conclusion first, zero filler. Everything outside the tags (reasoning, tool narration, machine detail) stays in your message but is stripped from display; the user expands a badge to see the full raw text. Adjust tone/length to the user's profile (their `~/.stand/User.md` communication-style answers); with no profile, default to concise direct Chinese.""".stripMargin
+  val OutputBlockRule: String = PromptCatalog.Shared.OutputBlockRule
 
   /**
    * SendMessage/Pop 边界（作者 2026-10-31 22:10 令 + 22:30 追加令）：SendMessage
@@ -167,9 +163,7 @@ object Defaults:
    * `BuiltinAgents.NebulaPromptTemplate` Tool surface 行同口径三处并存
    * （工具面 = 调用边界，提示词面 = 存在性保证）。
    */
-  val SendMessageScopeRule: String =
-    """── SendMessage scope ──
-      |SendMessage reaches NebLink friends, NebLink groups, and your own devices ONLY — it is not a channel to the user. A message or file FOR THE USER over a social channel (WeChat / Feishu and the other channel legs) never goes through SendMessage: text rides a normal reply, and files are delivered with Pop — the channel legs carry Popped files/images out to the user's WeChat/Feishu automatically. Using SendMessage to reach the user is a boundary violation (author ruling 2026-10-31).""".stripMargin
+  val SendMessageScopeRule: String = PromptCatalog.Shared.SendMessageScopeRule
 
   /**
    * A 段（等待屏障）开关：delegate 会话结束回合时存在未结等待型后台作业 ⇒
