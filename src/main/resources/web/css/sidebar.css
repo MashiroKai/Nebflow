@@ -1182,9 +1182,12 @@
   background: #fff;
   transition: transform 0.2s;
 }
-/* 开关 ON 档（2026-10-30 按钮体系批 B9：绿填充 → 墨 tint，--btn-primary-tint
-   重定墨族后自动跟随亮暗双档；开关本体豁免按钮四态，既有设计不动结构） */
-.cfg-toggle.on { background: var(--btn-primary-tint); }
+/* 开关 ON 档回绿（2026-11-01 作者令「toggle 重新回到绿色」，随 nb-toggle 一并
+   撤销 2026-10-30 按钮体系批 B9 的墨 tint 改写）：恢复原绿实心填充（原
+   var(--color-primary)=#07c160，现值冻结留作身份/状态色，故直取 --brand-green
+   三元组同值）。注意：.cfg-toggle 已无 JS 用点（toggle.js 头注），本规则仅退役
+   留档——若复活请改走共享 nb-toggle，不再续写本块。 */
+.cfg-toggle.on { background: rgb(var(--brand-green)); }
 .cfg-toggle.on::after { transform: translateX(16px); }
 .cfg-card-sub {
   font-size: 11px;
@@ -2616,7 +2619,8 @@
    role="switch", so Space/Enter click is native; knob drawn by ::after.
    TOKEN DISCIPLINE: track = glass-control material, accent = brand green
    (--brand-green triplet, sapphire.css — author-ruled 2026-09-06; was
-   sapphire), motion = the app-wide 0.15s control-transition convention,
+   sapphire; 2026-11-01 author order reverted the 10-30 B9 ink-tint detour,
+   original recipe restored), motion = the app-wide 0.15s control-transition convention,
    enter/exit = the shared --panel-ease curve. Zero hand-made color values;
    both themes auto-adapt (sapphire.css / base.css dark blocks).
    GEOMETRY (2026-09-06): border-box track 36×20 with 1px border → padding
@@ -2653,15 +2657,16 @@
   transition: transform 0.15s ease, background 0.15s;
 }
 .nb-toggle.on {
-  /* 开关 ON 档墨 tint（2026-10-30 按钮体系批 B9：原 brand-green 35%/50% 随绿
-     降级改墨族；亮 rgb(17 24 39 / .35) / 暗 rgb(230 237 243 / .35) 双档自动） */
-  background: var(--btn-primary-tint);
-  border-color: color-mix(in srgb, var(--btn-ink-bg) 50%, transparent);
+  /* 开关 ON 档回归品牌绿（2026-11-01 作者令「toggle 重新回到绿色」：撤销
+     2026-10-30 按钮体系批 B9 的墨族改写，恢复 09-06 作者裁定的原配方——
+     轨道 brand-green 35% tint + 描边 50%，圆钮实心 brand-green；几何不动） */
+  background: rgb(var(--brand-green) / 0.35);
+  border-color: rgb(var(--brand-green) / 0.5);
 }
 .nb-toggle.on::after {
   transform: translateX(14px);
-  /* 圆钮实心墨（亮近黑 / 暗浅墨），与轨道 tint 同族 ink-swap */
-  background: var(--btn-ink-bg);
+  /* 圆钮实心品牌绿（--brand-green = #07c160，亮暗主题单值，09-06 原设计） */
+  background: rgb(var(--brand-green));
 }
 .nb-toggle:focus-visible {
   outline: 2px solid rgb(var(--brand-green) / 0.5);
