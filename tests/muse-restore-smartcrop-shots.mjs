@@ -18,7 +18,9 @@
 //
 // 探针：
 //   A① Muse 形态回归：.g2-chat-head display:flex/column/center；头像 78px 水平
-//      居中（与 #chat 同心 ±2px）；名字在头像正下方且居中；sticky 顶锚 + 压流
+//      居中（与 #chat 同心 ±2px）；名字在头像正下方且居中；sticky 顶锚 + 压流；
+//      静止态落位 = 组顶 64px（悬浮双键行下缘；位置批 2026-11-01 23:0x 作者报障
+//      重钉——原判据 `组顶 >= chatTop + 88` 钉的正是病灶「头像上方一大块空白」）
 //   A② 名字扁平毛玻璃：background = --glass-bg 真值（亮 rgba(255,255,255,.55) /
 //      暗 rgba(24,28,38,.68)）；border-width 0（无立体边框）；box-shadow none；
 //      backdrop-filter 含 blur；999px 胶囊圆角
@@ -273,7 +275,8 @@ async function runMobile(engineKind, scheme) {
     await page.waitForTimeout(250);
     const rest = await probeHead(page, scheme);
     assertMuse(tag, rest, scheme);
-    ok(`${tag} A① 静止态：锚在流内原位（未锚定）`, !rest.pinnedNow && rest.head.top >= rest.chat.top + 88,
+    ok(`${tag} A① 静止态：组顶进顶带（= 悬浮双键行下缘 64px，未锚定）`,
+      !rest.pinnedNow && Math.abs(rest.head.top - rest.chat.top - 64) <= 2,
       `headTop-chatTop=${(rest.head.top - rest.chat.top).toFixed(1)}`);
     await page.screenshot({ path: join(OUT, `muse-${tag}-rest.png`) });
 
