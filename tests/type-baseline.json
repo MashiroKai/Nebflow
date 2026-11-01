@@ -1,6 +1,6 @@
 {
   "generatedBy": "scripts/check-js-types.mjs --update",
-  "total": 350,
+  "total": 345,
   "files": {
     "src/main/resources/web/js/activityBar.js": {
       "TS2345": 1,
@@ -88,10 +88,6 @@
     },
     "src/main/resources/web/js/memory.js": {
       "TS2339": 8
-    },
-    "src/main/resources/web/js/mobile/msgLongPress.js": {
-      "TS2339": 1,
-      "TS2769": 4
     },
     "src/main/resources/web/js/modal.js": {
       "TS2339": 1

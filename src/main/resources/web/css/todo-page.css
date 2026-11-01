@@ -268,3 +268,12 @@ body.mobile-layer #todo-page {
 body.mobile-layer #todo-page.open {
   animation: none;
 }
+/* 未开态不占流（手机端长按退役批 2026-11-01 顺带面，截图实证缺陷）：
+   手机层收编语义把本面改 static 入流——未开（无 .open）时 visibility:hidden
+   仍占满 #main 一整档流高，把聊天列挤成贴底 142px 窄条（evidence/
+   mobile-longpress-retire 诊断链）。pushPage('todo') 必经 openTodoPage 加
+   .open（scheduled-task.js openTodoPage），未开 ⇒ 页面体语义下本就不渲染，
+   display:none 语义等价且修复占流。桌面不受影响（规则挂 body.mobile-layer）。 */
+body.mobile-layer #todo-page:not(.open) {
+  display: none;
+}
