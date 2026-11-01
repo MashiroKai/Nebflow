@@ -1,47 +1,54 @@
-// delegate-receipt-card.spec.mjs — delegate 完工通知卡**单行化+hover 批**验收
-// （2026-10-31 22:29 作者令三件套，承继 2026-10-31 重设计批 / 语义色批）：
+// delegate-receipt-card.spec.mjs — delegate 完工通知卡**diff 统计恢复+版式批**验收
+// （2026-11-01 作者令版式四条，承继 10-31 重设计批 / 语义色批 / 单行化+hover 批）：
 //
-//   作者令（逐字）：
-//     ① 蓝色完工卡（DELEGATE · INTERNAL · COMPLETED | +366 −43 那行）就这么一行
-//        显示——卡内多行内容收成单行呈现（照现字面结构：类型·范围·状态 |
-//        diff 计数），不展开不换行溢出省略；
-//     ② hover 可点击感：整条 hover 有明确的可点击反馈（背景/描边微变+手型）；
-//     ③ 分块 hover 效果：卡内分段（DELEGATE 段 / INTERNAL 段 / COMPLETED 段 /
-//        diff 计数段）各自的 hover 高亮分块显示——鼠标移到哪个块哪个块亮。
-//   约束：双端一致；现有点击行为（点开详情）不动；截图取证。
+//   作者令（逐字四条）：
+//     ① 恢复 diff 统计：完工卡显示该批**合并**的代码量变化（+新增 −删除）。数据
+//        源 = 载荷 `merge` 锚键（后端 DelegateWorkReport.mergeDiffStat 现算的合并
+//        提交第一亲 diff 统计）优先，files 加删和回落（旧历史行）；无统计的批只
+//        出归因块（两种卡面形态）。
+//     ② 版式：归因+状态「DELEGATE · INTERNAL · COMPLETED」合成**一个块**（一颗
+//        胶囊芯片 .nf-rcpt-pill）；diff 统计**旁边单独一颗块**（.nf-rcpt-note），
+//        两块之间用「|」分隔（.nf-rcpt-pipe）。
+//     ③ diff 块内部：+N 和 −M 在同一颗块里，+ 与 − 颜色区分（+ 绿 / − 红，
+//        --status-success-icon / --status-error-icon 语义 token，双主题达标）。
+//     ④ hover：块要有 hover 态（本批样式家族：块底 sapphire tint + 描边微变）。
+//   验收：真实渲染两种形态（有 diff 的批 + 无 diff 的批——真实完工行载荷），
+//   深浅双主题 × 双引擎（Chromium+WebKit），零 console error；手机档同组件自查。
 //
 // 断言面（目标全绿）：
-//   A1 批次短名 = KIND · EXECUTOR 口径（内置 nebflow→INTERNAL、外部各自 id 全
-//      大写、自定义 agent/sender 缺席去判词段逐字保留）——分段 span 承载后
-//      textContent 逐字节保持；
-//   A2 判词徽标：completed/failed 同色（墨族单色构造性断言）；merged 推导；
-//   A3 摘要行收进展开态：折叠 display:none（卡面恒单行），点卡头展开后
-//      摘要/短哈希可见（点开详情语义不动）；
-//   A4 灰字小注：+x/−y、零背景零边框零 padding（rest 构造性断言）、右缘组
-//      （note 右缘贴卡内容盒右缘 ±1px）、aria-pressed 初始 false；
+//   A1 批次短名 = KIND · EXECUTOR 口径（分段 span textContent 逐字）；
+//   A2 判词徽标：completed/failed 同色（墨族单色）；merged 推导；
+//   A3 摘要行收进展开态：折叠 display:none，点卡头展开（点开详情语义不动）；
+//   A4 diff 统计块：合并统计优先（+445 −51，真实合并提交 b6ceb9d0e 实数）；
+//      files 和回落（+908 −202）；merge-only 载荷 = span 静态块（无 aria-pressed
+//      无点击面）；零载荷帧无 pipe 无块；
 //   A5 旧胶囊彻底退役：DOM 零 .nf-diff-chip / 零 .nf-diff-headline；
-//   B1 单行化：卡面行高 = 一行（≤24px，含行 padding）；名字/徽标/pipe/小注
-//      同处一行带内不重叠、字面次序「类型·范围·状态 | diff 计数」；窄 320/200px
-//      短名省略号截断且徽标/小注不坠行；
-//   B2 整条 hover 可点击感：cursor:pointer + 背景透明→sapphire 微底 + inset
-//      描边微变（rest vs hover 构造性对比）；
-//   B3 分块 hover：hover 短名段 ⇒ 仅该段底色变深、徽标/小注底色不变；hover
-//      徽标 ⇒ 仅徽标变；hover 小注 ⇒ 仅小注变（块间隔离断言 + 各块态截图）；
-//   A7/A8 几何/双主题：768/390 响应式档同构；暗/亮两档结构同构 + hover 反馈
-//      双档在场。
+//   A6 胶囊构造：pill/note 均为胶囊（hairline 边框 + 999px 圆角 + 横向 padding
+//      ——版式批「单独一颗块」口径；22:29 批零构造/右缘贴卡口径随批退役）；
+//   B1 单行化：卡面行高 ≤24px；pill/pipe/note 同带不坠行；字面次序
+//      「胶囊 | 统计块」相邻（pipe 无 auto 边距——右对齐口径退役）；
+//   B2 整条 hover 可点击感：cursor:pointer + sapphire 微底 + inset 描边微变；
+//   B3 块级 hover 隔离：hover pill ⇒ 仅 pill 亮、note 不亮；hover note ⇒ 仅 note
+//      亮、pill 不亮；hover 不褪 +/− 语义色（恒驻——22:29 批褪色口径退役）；
+//   A7 窄 200px：短名省略号截断、pipe/note 不坠行；
+//   A8 亮档对照：结构同构 + hover 双档在场；
+//   A9 双引擎：WebKit 腿结构同构（真实链路逐字同测）+ 双主题 + 零 console；
+//   A10 手机档 390 同组件自查。
 //
 // 被测真实链路（零伪造 state）：WS 帧 → main.js onMessage('user') →
 //   renderInjectedBubble → injectedRows.buildInjectedRow。
-// 谱系：delegate-bubble-compact.spec.mjs（2026-10-28 退役）→ 本 spec 前身
-//   （2026-10-31 重设计批）→ 本批（单行化+hover）随批重钉。
+// 真实载荷：REAL_ROW_1437 = 宿主 11-01 14:37 stand-dev 二批完工行（13 文件真实
+//   载荷 + 真实合并提交 b6ceb9d0e numstat +445 −51）；REAL_ROW_1503 = 宿主
+//   11-01 15:03 按钮设计系统包完工行（零 fileChanges——作者实拍的「无 diff」形态）。
+// 谱系：delegate-bubble-compact.spec.mjs（2026-10-28 退役）→ 重设计批前身 →
+//   单行化+hover 批（2026-10-31）→ 本批（diff 统计恢复+版式）随批重钉。
 //
 // 用法：
 //   PHASE=before node tests/delegate-receipt-card.spec.mjs  # 改前取证（预期红）
 //   PHASE=after  node tests/delegate-receipt-card.spec.mjs  # 改后验收（预期全绿）
-// 产物：evidence/20261031_delegate-rcpt-singleline-hover__delegate-nebflow-c2937ee7/
-//   shots/<phase>-*.png（常态单行 + 分块 hover 各块态 + 展开 + 窄省略 + 双主题
-//   + 响应式档）+ readings.<phase>.json。
-import { chromium } from 'playwright';
+// 产物：evidence/20261101_delegate-rcpt-diffstat__delegate-nebflow-6043f217/
+//   shots/<phase>-*.png + readings.<phase>.json。
+import { chromium, webkit } from 'playwright';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,7 +56,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = join(HERE, '..', 'src', 'main', 'resources', 'web');
 const PHASE = process.env.PHASE === 'before' ? 'before' : 'after';
-const OUT = join(HERE, '..', 'evidence', '20261031_delegate-rcpt-singleline-hover__delegate-nebflow-c2937ee7');
+const OUT = join(HERE, '..', 'evidence', '20261101_delegate-rcpt-diffstat__delegate-nebflow-6043f217');
 const SHOTS = join(OUT, 'shots');
 mkdirSync(SHOTS, { recursive: true });
 const MIME = {
@@ -58,6 +65,10 @@ const MIME = {
   '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff',
 };
 const SID = 'delegate-receipt-root';
+// mock 源端口：路由层全量拦截（不发起真连接），端口本身任意。**不可用 1**——
+// WebKit/Safari bad-port 保护封禁低危端口表（1=tcpmux 在列），导航直接不发出
+// （A9 双引擎腿 TimeoutError 实证）；8899 不在封禁表，双引擎同源。
+const ORIGIN = 'http://localhost:8899';
 
 let failures = 0;
 const ok = (name, cond, extra = '') => {
@@ -77,7 +88,7 @@ const watchErrors = (page) => {
   });
 };
 
-// 12 files +908 −202（与作者报障胶囊读数一致；diffText 不需要——本 spec 不点开 diff）。
+// 12 files +908 −202（files 回落链的合成夹具；与作者报障胶囊读数同族口径）。
 const PAYLOAD_12 = {
   nodeId: 'deleg-receipt-12', generatedAt: 1793167000000,
   root: '/Users/kaiyu/Claude code/Stand',
@@ -89,6 +100,33 @@ const PAYLOAD_12 = {
   })),
 };
 
+// 真实载荷（宿主 11-01 14:37 完工行，13 文件，diffText 略——本 spec 不点开面板）；
+// merge 锚键 = 该批真实合并提交 b6ceb9d0e 的第一亲 diff numstat 实数 +445 −51
+// （旧链 files 和 +449 −51 与之有差 ⇒ 合并统计优先读数在本帧可构造性区分）。
+const REAL_MERGE_COMMIT = 'b6ceb9d0e';
+const REAL_ROW_1437 = {
+  nodeId: 'delegate-nebflow-cc246cd7', generatedAt: 1793515065507,
+  root: '/Users/kaiyu/Claude code/Stand',
+  // 真 13 文件（宿主 .ui.json 实载荷，diffText 略），加删和 = +449 −51——与合并
+  // 统计 +445 −51 同帧不同值，合并统计优先读数在本帧可构造性区分。
+  files: [
+    { path: "docs/20261101_143000_stand-dev-methods-design-merge__delegate-nebflow-cc246cd7.md", changeType: "added", added: 58, removed: 0, source: "tool-ledger" },
+    { path: "src/main/resources/seed/plugins/stand-dev/Plugin.md", changeType: "modified", added: 23, removed: 11, source: "tool-ledger" },
+    { path: "src/main/resources/seed/plugins/stand-dev/plugin.json", changeType: "modified", added: 9, removed: 3, source: "tool-ledger" },
+    { path: "src/main/resources/seed/plugins/stand-dev/skills/stand-dev/SKILL.md", changeType: "modified", added: 76, removed: 34, source: "tool-ledger" },
+    { path: "src/main/resources/seed/plugins/stand-dev/skills/stand-dev/references/backend/nebflow-backend.md", changeType: "modified", added: 2, removed: 1, source: "tool-ledger" },
+    { path: "src/main/resources/seed/plugins/stand-dev/skills/stand-dev/references/design/design-spec.md", changeType: "added", added: 90, removed: 0, source: "tool-ledger" },
+    { path: "src/main/resources/seed/plugins/stand-dev/skills/stand-dev/references/engine/nebflow-docs.md", changeType: "modified", added: 1, removed: 0, source: "tool-ledger" },
+    { path: "src/main/resources/seed/plugins/stand-dev/skills/stand-dev/references/engine/review.md", changeType: "modified", added: 1, removed: 1, source: "tool-ledger" },
+    { path: "src/main/resources/seed/plugins/stand-dev/skills/stand-dev/references/frontend/design-system.md", changeType: "modified", added: 2, removed: 0, source: "tool-ledger" },
+    { path: "src/main/resources/seed/plugins/stand-dev/skills/stand-dev/references/frontend/nebflow-frontend.md", changeType: "modified", added: 3, removed: 1, source: "tool-ledger" },
+    { path: "src/main/resources/seed/plugins/stand-dev/skills/stand-dev/references/methods/grill.md", changeType: "added", added: 117, removed: 0, source: "tool-ledger" },
+    { path: "src/main/resources/seed/plugins/stand-dev/skills/stand-dev/references/methods/parallel-research.md", changeType: "added", added: 65, removed: 0, source: "tool-ledger" },
+    { path: "src/main/resources/seed/plugins/stand-dev/skills/stand-dev/references/qa/nebflow-qa-frontend.md", changeType: "modified", added: 2, removed: 0, source: "tool-ledger" },
+  ],
+  merge: { commit: REAL_MERGE_COMMIT, added: 445, removed: 51 },
+};
+
 const MERGE_TEXT = [
   '工作结果全文：通知卡重设计实现 + 回归。',
   '',
@@ -98,17 +136,45 @@ const MERGE_TEXT = [
   '（工作段……）',
 ].join('\n');
 
+// 真实完工行（宿主 11-01 15:03 按钮设计系统包批——作者实拍的无 diff 形态原文）。
+const REAL_TEXT_1503 = '"统一按钮设计从稿变实施：建**按钮设计系统包**，全控制台按钮收编。作者令原文要点：\u300c把这个按钮设计变成一个包，让...\u300d:\n阶段〇已排进计划，全链已启动。\n\n<output>\n收到追加令，玻璃包已排为阶段〇，排最前、按钮包直接消费它。';
+
 const FRAMES = [
   {
     key: 'internal',
     msg: {
       source: 'delegate', eventType: 'completed', sender: 'nebflow',
       header: 'DELEGATE · NEBULA · NEBFLOW · COMPLETED',
-      text: '委托完成：通知卡重设计 + 回归。', fileChanges: PAYLOAD_12,
+      text: '委托完成：通知卡重设计 + 回归。', fileChanges: REAL_ROW_1437,
     },
     expectName: 'DELEGATE · INTERNAL', expectBadge: 'COMPLETED',
     expectSummary: '委托完成：通知卡重设计 + 回归。', expectHash: false,
-    expectNote: '+908 −202',
+    // 合并统计优先（真实合并提交实数），不是 files 和 +449 −51。
+    expectNote: '+445 −51', expectNoteTag: 'BUTTON',
+  },
+  {
+    key: 'mergeOnly',
+    msg: {
+      source: 'delegate', eventType: 'completed', sender: 'nebflow',
+      header: 'DELEGATE · NEBULA · NEBFLOW · COMPLETED',
+      text: '合并落地（纯收尾批——仓内文件零改动，合并提交统计随行）。',
+      fileChanges: { nodeId: 'deleg-merge-only', generatedAt: 1793515065507, root: '/Users/kaiyu/Claude code/Stand', files: [], merge: { commit: 'b6ceb9d0e', added: 123, removed: 45 } },
+    },
+    expectName: 'DELEGATE · INTERNAL', expectBadge: 'COMPLETED',
+    expectSummary: '合并落地（纯收尾批——仓内文件零改动，合并提交统计随行）。', expectHash: false,
+    expectNote: '+123 −45', expectNoteTag: 'SPAN',
+  },
+  {
+    key: 'filesOnly',
+    msg: {
+      source: 'delegate', eventType: 'completed', sender: 'nebflow',
+      header: 'DELEGATE · NEBULA · NEBFLOW · COMPLETED',
+      text: '非合并轮完成（旧数据链回落：files 加删和）。',
+      fileChanges: PAYLOAD_12,
+    },
+    expectName: 'DELEGATE · INTERNAL', expectBadge: 'COMPLETED',
+    expectSummary: '非合并轮完成（旧数据链回落：files 加删和）。', expectHash: false,
+    expectNote: '+908 −202', expectNoteTag: 'BUTTON',
   },
   {
     key: 'external',
@@ -130,17 +196,7 @@ const FRAMES = [
     },
     // sender 缺席 ⇒ 无法判定执行器 ⇒ header 去判词段逐字保留。
     expectName: 'DELEGATE · stand · diff-split', expectBadge: 'COMPLETED',
-    expectSummary: '旧历史行第一行', expectHash: false, expectNote: '+908 −202',
-  },
-  {
-    key: 'agentDelegate',
-    msg: {
-      source: 'delegate', eventType: 'result', sender: 'Explorer',
-      header: 'DELEGATE · NEBFLOW · EXPLORER · RESULT',
-      text: '自定义 agent 委托（sender = agentDef.name，非 executor id）。',
-    },
-    expectName: 'DELEGATE · NEBFLOW · EXPLORER', expectBadge: 'RESULT',
-    expectSummary: '自定义 agent 委托（sender = agentDef.name，非 executor id）。', expectHash: false, expectNote: '',
+    expectSummary: '旧历史行第一行', expectHash: false, expectNote: '+908 −202', expectNoteTag: 'BUTTON',
   },
   {
     key: 'merged',
@@ -162,14 +218,25 @@ const FRAMES = [
     expectName: 'DELEGATE · INTERNAL', expectBadge: 'FAILED',
     expectSummary: 'merge round aborted: lane occupied by another batch', expectHash: false, expectNote: '',
   },
+  {
+    // 作者实拍形态（真实完工行）：无 fileChanges ⇒ 归因胶囊单块，无 pipe 无统计块。
+    key: 'realNoDiff',
+    msg: {
+      source: 'delegate', eventType: 'completed', sender: 'nebflow',
+      header: 'DELEGATE · NEBULA · NEBFLOW · COMPLETED',
+      text: REAL_TEXT_1503,
+    },
+    expectName: 'DELEGATE · INTERNAL', expectBadge: 'COMPLETED',
+    expectSummary: '"统一按钮设计从稿变实施', expectHash: false, expectNote: '',
+  },
 ];
 
 const browser = await chromium.launch();
 
-async function boot(width, height, scheme = 'dark') {
-  const page = await (await browser.newContext({
+async function boot(width, height, scheme = 'dark', engine = chromium) {
+  const page = await (await engine.launch()).newContext({
     viewport: { width, height }, colorScheme: scheme, deviceScaleFactor: 2,
-  })).newPage();
+  }).then((ctx) => ctx.newPage());
   watchErrors(page);
   await page.addInitScript(() => {
     localStorage.setItem('nebflow_token', 'e2e-token');
@@ -201,7 +268,7 @@ async function boot(width, height, scheme = 'dark') {
       else if (m.type === 'ping') ws.send(JSON.stringify({ type: 'pong' }));
     });
   });
-  await page.goto('http://localhost:1/');
+  await page.goto(`${ORIGIN}/`);
   await page.waitForSelector('#input', { state: 'visible', timeout: 20000 });
   await page.waitForFunction(async (rootSid) => {
     const s = (await import('/js/state.js')).default;
@@ -212,8 +279,8 @@ async function boot(width, height, scheme = 'dark') {
 
 const raf = (page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 
-/** hover 过渡沉降等时：分块 hover 底色有 0.15s transition——hover 后读数前必须
- *  等过渡走完（否则读到鼠标路径途经块的返程中值，隔离断言假性失败）。 */
+/** hover 过渡沉降等时：块 hover 底色有 0.15s transition——hover 后读数前必须
+ *  等过渡走完（否则读到返程中值，隔离断言假性失败）。 */
 const settle = (page) => page.waitForTimeout(280);
 
 const inject = (page, msg) => page.evaluate((m) => import('/js/state.js').then((mod) => {
@@ -232,20 +299,32 @@ const measureAll = (page) => page.evaluate(() => {
     const q = (sel) => bubble.querySelector(sel);
     const r = (el) => (el ? el.getBoundingClientRect() : null);
     const badge = q('.nf-rcpt-badge');
+    const pill = q('.nf-rcpt-pill');
     const note = q('.nf-rcpt-note');
     const pipe = q('.nf-rcpt-pipe');
     const head = q('.nf-rcpt-head');
     const summary = q('.nf-rcpt-summary');
+    const look = (el) => {
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return {
+        border: cs.borderTopWidth, radius: cs.borderRadius,
+        padX: cs.paddingLeft, bg: cs.backgroundColor, color: cs.color,
+        marginLeft: cs.marginLeft,
+      };
+    };
     const bcs = getComputedStyle(bubble);
     const bubbleContentRight = bubble.getBoundingClientRect().right - parseFloat(bcs.paddingRight);
-    // 单行化：所有段与卡面行带**实质重叠**（同处一行——容纳各行本征行高差，
-    // 不用包含断言：徽标 line-height 1.3 与名字行盒高差 >±1px 属正常铅空）。
+    // 单行化：所有段与卡面行带**实质重叠**（同处一行——容纳各行本征行高差）。
     const inBand = (rr) => {
       const hr = r(head);
       return !!rr && !!hr && rr.top < hr.bottom - 2 && rr.bottom > hr.top + 2;
     };
+    const addEl = q('.nf-rcpt-note-add');
+    const delEl = q('.nf-rcpt-note-del');
     return {
       name: q('.nf-rcpt-name')?.textContent || '',
+      pillText: pill?.textContent.trim() || '',
       segs: [...(q('.nf-rcpt-name')?.querySelectorAll('.nf-rcpt-seg') || [])].map((s) => s.textContent),
       badge: badge?.textContent || '',
       summary: summary?.textContent.trim() || '',
@@ -253,36 +332,34 @@ const measureAll = (page) => page.evaluate(() => {
       hash: q('.nf-rcpt-hash')?.textContent || '',
       pipe: pipe?.textContent || '',
       noteText: note?.textContent.trim() || '',
+      noteTag: note ? note.tagName : '',
+      notePressed: note?.getAttribute('aria-pressed') ?? null,
       contentDisplay: getComputedStyle(q('.injected-content')).display,
       chipCount: bubble.querySelectorAll('.nf-diff-chip').length,
       headlineCount: bubble.querySelectorAll('.nf-diff-headline').length,
-      labelCount: bubble.querySelectorAll('.injected-source-label').length,
       badgeColor: badge ? getComputedStyle(badge).color : '',
-      noteLook: note ? (() => {
-        const cs = getComputedStyle(note);
-        return {
-          border: cs.borderTopWidth, bg: cs.backgroundColor, pad: cs.paddingLeft,
-          color: cs.color,
-          pressed: note.getAttribute('aria-pressed'),
-        };
-      })() : null,
+      addColor: addEl ? getComputedStyle(addEl).color : '',
+      delColor: delEl ? getComputedStyle(delEl).color : '',
+      pillLook: look(pill),
+      noteLook: look(note),
       geo: (() => {
         const hr = r(head);
-        const nameR = r(q('.nf-rcpt-name'));
-        const badgeR = r(badge);
+        const pillR = r(pill);
         const pipeR = r(pipe);
         const noteR = r(note);
+        const nameR = r(q('.nf-rcpt-name'));
         return {
-          head: hr, name: nameR, badge: badgeR, pipe: pipeR, note: noteR,
+          head: hr, pill: pillR, pipe: pipeR, note: noteR, name: nameR,
           headH: hr ? hr.height : null,
-          // 单行化：所有在场段同处卡面行带（不坠行；缺席段——零载荷帧无
-          // pipe/小注——不算违例）。
-          oneLine: [nameR, badgeR, pipeR, noteR].every((rr) => rr === null || inBand(rr)),
-          // 字面次序「类型·范围·状态 | diff 计数」。
-          order: nameR && badgeR && (!pipeR || (badgeR.left < pipeR.left)) && (!noteR || (!pipeR || pipeR.left < noteR.left)),
-          noteRight: noteR ? Math.abs(noteR.right - bubbleContentRight) : null,
+          // 单行化：所有在场段同处卡面行带（缺席段不算违例）。
+          oneLine: [pillR, pipeR, noteR].every((rr) => rr === null || inBand(rr)),
+          // 字面次序「胶囊 | 统计块」+ 相邻（各缝 ≤12px）。
+          order: pillR && (!pipeR || pipeR.left >= pillR.left) && (!noteR || (!pipeR || pipeR.left < noteR.left)),
+          gapPillPipe: pillR && pipeR ? pipeR.left - pillR.right : null,
+          gapPipeNote: pipeR && noteR ? noteR.left - pipeR.right : null,
           nameScroll: q('.nf-rcpt-name') ? q('.nf-rcpt-name').scrollWidth : null,
           nameClient: q('.nf-rcpt-name') ? q('.nf-rcpt-name').clientWidth : null,
+          noteRightDelta: noteR ? noteR.right - bubbleContentRight : null,
         };
       })(),
     };
@@ -290,27 +367,27 @@ const measureAll = (page) => page.evaluate(() => {
   return [...document.querySelectorAll('.bubble.injected')].map(read);
 });
 
-/** rest/hover 对比读数（B2 整条 hover 可点击感 + B3 分块 hover 隔离）。 */
-const hoverReads = (page, n) => page.evaluate((idx) => {
+/** rest/hover 块级读数（B2 整条 + B3 块级隔离）。 */
+const blockReads = (page, n) => page.evaluate((idx) => {
   const bubble = document.querySelectorAll('.bubble.injected')[idx];
-  const head = bubble.querySelector('.nf-rcpt-head');
-  const segs = [...bubble.querySelectorAll('.nf-rcpt-name .nf-rcpt-seg')];
-  const badge = bubble.querySelector('.nf-rcpt-badge');
-  const note = bubble.querySelector('.nf-rcpt-note');
   const bg = (el) => (el ? getComputedStyle(el).backgroundColor : 'absent');
+  const bd = (el) => (el ? getComputedStyle(el).borderTopColor : 'absent');
+  const head = bubble.querySelector('.nf-rcpt-head');
+  const pill = bubble.querySelector('.nf-rcpt-pill');
+  const note = bubble.querySelector('.nf-rcpt-note');
+  const add = bubble.querySelector('.nf-rcpt-note-add');
   const hcs = getComputedStyle(head);
   return {
-    rest: {
-      headCursor: hcs.cursor, headBg: hcs.backgroundColor, headShadow: hcs.boxShadow,
-      segBgs: segs.map(bg), badgeBg: bg(badge), noteBg: bg(note),
-    },
-    // 以下三组由调用方在 hover 各目标后分别覆写。
+    headCursor: hcs.cursor, headBg: hcs.backgroundColor, headShadow: hcs.boxShadow,
+    pillBg: bg(pill), pillBorder: bd(pill), noteBg: bg(note), noteBorder: bd(note),
+    addColor: add ? getComputedStyle(add).color : 'absent',
   };
 }, n);
 
 const readings = { phase: PHASE, tiers: {} };
+const TRANSPARENT = (v) => v === 'rgba(0, 0, 0, 0)' || v === 'transparent';
 
-// ── 主档：1440 桌面，六帧 × 暗色 ─────────────────────────────────────────
+// ── 主档：1440 桌面，八帧 × 暗色（Chromium）───────────────────────────────
 {
   const page = await boot(1440, 900, 'dark');
   for (const f of FRAMES) await inject(page, f.msg);
@@ -326,6 +403,9 @@ const readings = { phase: PHASE, tiers: {} };
     ok(`A1 [${f.key}] 短名分段 span 拼接一致`, b.segs.join(' · ') === f.expectName,
       `segs=${JSON.stringify(b.segs)}`);
     ok(`A2 [${f.key}] 判词徽标 = ${f.expectBadge}`, b.badge === f.expectBadge, `actual="${b.badge}"`);
+    // 版式②：归因+状态一颗胶囊块，textContent 逐字「KIND · EXECUTOR · 判词」。
+    ok(`版式② [${f.key}] 归因+状态胶囊块字面 = 「${f.expectName} · ${f.expectBadge}」`,
+      b.pillText === `${f.expectName} · ${f.expectBadge}`, `actual="${b.pillText}"`);
     // A3 摘要行收进展开态：折叠态 display:none（文本仍在，展开后可见）。
     ok(`A3 [${f.key}] 折叠态摘要行隐藏（卡面恒单行）`, b.summaryDisplay === 'none',
       `display=${b.summaryDisplay}`);
@@ -335,38 +415,65 @@ const readings = { phase: PHASE, tiers: {} };
   // A2 墨族单色：completed 与 failed 徽标同色（无色相语义）。
   ok('A2 判词徽标墨族单色（completed == failed 同色）', byKey.internal.badgeColor === byKey.failed.badgeColor,
     `completed=${byKey.internal.badgeColor} failed=${byKey.failed.badgeColor}`);
-  // A4 灰字小注（internal/legacy 两帧带载荷）。
-  for (const key of ['internal', 'legacy']) {
+
+  // ①③ diff 统计块：合并统计优先 / files 和回落 / merge-only span / 零载荷无块。
+  for (const f of FRAMES.filter((x) => x.expectNote)) {
+    const key = f.key;
     const b = byKey[key];
-    ok(`A4 [${key}] 小注 = +908 −202 计数`, b.noteText === '+908 −202', `actual="${b.noteText}"`);
-    ok(`A4 [${key}] 小注零背景零边框零 padding（rest 构造性）`,
-      b.noteLook && b.noteLook.border === '0px' && (b.noteLook.bg === 'rgba(0, 0, 0, 0)' || b.noteLook.bg === 'transparent') && b.noteLook.pad === '0px',
-      JSON.stringify(b.noteLook));
-    ok(`A4 [${key}] 小注 aria-pressed 初始 false`, b.noteLook?.pressed === 'false');
-    ok(`A4 [${key}] 「|」字面分隔段在场`, b.pipe === '|');
-    ok(`A4 [${key}] 小注右缘贴卡内容盒右缘（±1px）`, b.geo.noteRight !== null && b.geo.noteRight < 1,
-      `delta=${b.geo.noteRight}`);
+    ok(`① [${key}] diff 统计块 = ${f.expectNote}`, b.noteText === f.expectNote, `actual="${b.noteText}"`);
+    ok(`① [${key}] pipe「|」在场`, b.pipe === '|', `actual="${b.pipe}"`);
+    ok(`① [${key}] 块标签 = ${f.expectNoteTag}${f.expectNoteTag === 'SPAN' ? '（merge-only 无点击面）' : ''}`,
+      b.noteTag === f.expectNoteTag, `tag=${b.noteTag}`);
+    if (b.noteTag === 'BUTTON') {
+      ok(`① [${key}] aria-pressed 初始 false`, b.notePressed === 'false');
+    } else {
+      ok(`① [${key}] merge-only 无 aria-pressed`, b.notePressed === null, `pressed=${b.notePressed}`);
+    }
+    // ③ 同块异色：+ 绿 / − 红且互不相同、非透明（语义 token 双主题读数）。
+    ok(`③ [${key}] +/− 同块异色（add≠del 且非透明）`,
+      b.addColor !== '' && b.delColor !== '' && b.addColor !== b.delColor
+      && b.addColor !== 'rgba(0, 0, 0, 0)' && b.delColor !== 'rgba(0, 0, 0, 0)',
+      `add=${b.addColor} del=${b.delColor}`);
   }
-  // 零载荷帧（external/agentDelegate/merged/failed）⇒ 无小注无 pipe。
-  for (const key of ['external', 'agentDelegate', 'merged', 'failed']) {
-    ok(`A4 [${key}] 零载荷 ⇒ 无小注无 pipe`, byKey[key].noteText === '' && byKey[key].pipe === '');
+  for (const key of ['external', 'merged', 'failed', 'realNoDiff']) {
+    ok(`① [${key}] 零统计载荷 ⇒ 无 pipe 无统计块（无 diff 形态）`,
+      byKey[key].noteText === '' && byKey[key].pipe === '');
   }
   // A5 旧胶囊彻底退役。
   ok('A5 DOM 零 .nf-diff-chip', m.every((b) => b.chipCount === 0));
   ok('A5 DOM 零 .nf-diff-headline', m.every((b) => b.headlineCount === 0));
   // A6 折叠默认（正文 + 摘要 display:none 在场）。
-  ok('A6 六帧折叠态默认（正文 display:none）', m.every((b) => b.contentDisplay === 'none'));
-  // B1 单行化：六帧卡面行高 = 一行、分段同带、字面次序。
-  ok('B1 六帧卡面行高 = 单行（≤24px）', m.every((b) => b.geo.headH !== null && b.geo.headH <= 24),
+  ok('A6 八帧折叠态默认（正文 display:none）', m.every((b) => b.contentDisplay === 'none'));
+  // A6 胶囊构造：pill/note 均为胶囊（hairline 边框 + 999px 圆角 + 横向 padding）。
+  for (const key of ['internal', 'mergeOnly', 'filesOnly']) {
+    const p = byKey[key].pillLook; const n = byKey[key].noteLook;
+    ok(`A6 [${key}] pill 胶囊构造（边框 1px + 999px 圆角 + 横向 padding）`,
+      p && p.border === '1px' && p.radius.includes('999') && parseFloat(p.padX) > 0,
+      JSON.stringify(p));
+    ok(`A6 [${key}] note 胶囊构造（边框 1px + 999px 圆角 + 横向 padding）`,
+      n && n.border === '1px' && n.radius.includes('999') && parseFloat(n.padX) > 0,
+      JSON.stringify(n));
+  }
+  // B1 单行化：八帧卡面行高 = 一行、同带、字面次序 + 相邻 + pipe 无 auto 边距。
+  ok('B1 八帧卡面行高 = 单行（≤24px）', m.every((b) => b.geo.headH !== null && b.geo.headH <= 24),
     m.map((b) => b.geo.headH).join(','));
-  ok('B1 六帧名字/徽标/pipe/小注同处一行带（不坠行）', m.every((b) => b.geo.oneLine));
-  ok('B1 六帧字面次序「类型·范围·状态 | diff 计数」', m.every((b) => b.geo.order));
+  ok('B1 八帧 pill/pipe/note 同处一行带（不坠行）', m.every((b) => b.geo.oneLine));
+  ok('B1 八帧字面次序「胶囊 | 统计块」', m.every((b) => b.geo.order));
+  ok('B1 有统计帧两块相邻（pill-|、|-note 各缝 ≤12px）',
+    ['internal', 'mergeOnly', 'filesOnly', 'legacy'].every((k) =>
+      byKey[k].geo.gapPillPipe !== null && byKey[k].geo.gapPillPipe >= -1 && byKey[k].geo.gapPillPipe <= 12
+      && byKey[k].geo.gapPipeNote !== null && byKey[k].geo.gapPipeNote >= -1 && byKey[k].geo.gapPipeNote <= 12),
+    JSON.stringify(['internal', 'mergeOnly', 'filesOnly', 'legacy'].map((k) => [byKey[k].geo.gapPillPipe, byKey[k].geo.gapPipeNote])));
+  const pipeMargins = await page.evaluate(() => [...document.querySelectorAll('.nf-rcpt-pipe')].map((el) => getComputedStyle(el).marginLeft));
+  ok('B1 pipe margin-left 恒 0px（非 auto，右缘贴卡口径退役）',
+    pipeMargins.every((v) => v === '0px'), pipeMargins.join(','));
 
   await page.locator('#chat').screenshot({ path: join(SHOTS, `${PHASE}-1-desktop-dark.png`) });
-  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-2-internal-singleline-dark.png`) });
+  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-2-internal-dark.png`) });
+  await page.locator('.bubble.injected').nth(7).screenshot({ path: join(SHOTS, `${PHASE}-3-realtrow-nodiff-dark.png`) });
 
   // ── B2 整条 hover 可点击感（internal 帧）───────────────────────────────
-  const rest = (await hoverReads(page, 0)).rest;
+  const rest = await blockReads(page, 0);
   ok('B2 rest 行底透明/无描边（反馈纯 hover 态）',
     (rest.headBg === 'rgba(0, 0, 0, 0)' || rest.headBg === 'transparent') && rest.headShadow === 'none',
     `bg=${rest.headBg} shadow=${rest.headShadow.slice(0, 40)}`);
@@ -382,67 +489,33 @@ const readings = { phase: PHASE, tiers: {} };
     rowHover.bg !== rest.headBg && rowHover.bg !== 'rgba(0, 0, 0, 0)' && rowHover.bg !== 'transparent',
     `rest=${rest.headBg} hover=${rowHover.bg}`);
   ok('B2 行 hover 描边微变（inset hairline 出场）', rowHover.shadow !== 'none', `shadow=${rowHover.shadow.slice(0, 60)}`);
-  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-3-hover-row-dark.png`) });
+  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-4-hover-row-dark.png`) });
 
-  // ── B3 分块 hover：hover 哪个块哪个块亮（块间隔离）────────────────────
-  const segBgOf = async (which) => {
-    await page.locator('.bubble.injected').nth(0).locator(`.nf-rcpt-name .nf-rcpt-seg`).nth(which).hover();
-    await settle(page);
-    return page.locator('.bubble.injected').nth(0).evaluate(() => {
-      const bubble = document.querySelectorAll('.bubble.injected')[0];
-      const bg = (el) => (el ? getComputedStyle(el).backgroundColor : 'absent');
-      return {
-        seg0: bg(bubble.querySelectorAll('.nf-rcpt-name .nf-rcpt-seg')[0]),
-        seg1: bg(bubble.querySelectorAll('.nf-rcpt-name .nf-rcpt-seg')[1]),
-        badge: bg(bubble.querySelector('.nf-rcpt-badge')),
-        note: bg(bubble.querySelector('.nf-rcpt-note')),
-      };
-    });
-  };
-  const TRANSPARENT = (v) => v === 'rgba(0, 0, 0, 0)' || v === 'transparent';
-  const bSeg0 = await segBgOf(0);
-  ok('B3 hover DELEGATE 段 ⇒ 仅该段亮', !TRANSPARENT(bSeg0.seg0) && TRANSPARENT(bSeg0.seg1) && TRANSPARENT(bSeg0.badge) && TRANSPARENT(bSeg0.note),
-    JSON.stringify(bSeg0));
-  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-4-hover-seg-delegate-dark.png`) });
-  const bSeg1 = await segBgOf(1);
-  ok('B3 hover INTERNAL 段 ⇒ 仅该段亮', TRANSPARENT(bSeg1.seg0) && !TRANSPARENT(bSeg1.seg1) && TRANSPARENT(bSeg1.badge) && TRANSPARENT(bSeg1.note),
-    JSON.stringify(bSeg1));
-  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-5-hover-seg-internal-dark.png`) });
-  const badgeBg = await (async () => {
-    await page.locator('.bubble.injected').nth(0).locator('.nf-rcpt-badge').hover();
-    await settle(page);
-    return page.locator('.bubble.injected').nth(0).evaluate(() => {
-      const bubble = document.querySelectorAll('.bubble.injected')[0];
-      const bg = (el) => (el ? getComputedStyle(el).backgroundColor : 'absent');
-      return {
-        seg0: bg(bubble.querySelectorAll('.nf-rcpt-name .nf-rcpt-seg')[0]),
-        badge: bg(bubble.querySelector('.nf-rcpt-badge')),
-        note: bg(bubble.querySelector('.nf-rcpt-note')),
-      };
-    });
-  })();
-  ok('B3 hover COMPLETED 徽标 ⇒ 仅徽标亮', TRANSPARENT(badgeBg.seg0) && !TRANSPARENT(badgeBg.badge) && TRANSPARENT(badgeBg.note),
-    JSON.stringify(badgeBg));
-  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-6-hover-seg-completed-dark.png`) });
-  const noteBg = await (async () => {
-    await page.locator('.bubble.injected').nth(0).locator('.nf-rcpt-note').hover();
-    await settle(page);
-    return page.locator('.bubble.injected').nth(0).evaluate(() => {
-      const bubble = document.querySelectorAll('.bubble.injected')[0];
-      const bg = (el) => (el ? getComputedStyle(el).backgroundColor : 'absent');
-      return {
-        seg0: bg(bubble.querySelectorAll('.nf-rcpt-name .nf-rcpt-seg')[0]),
-        badge: bg(bubble.querySelector('.nf-rcpt-badge')),
-        note: bg(bubble.querySelector('.nf-rcpt-note')),
-      };
-    });
-  })();
-  ok('B3 hover diff 计数段 ⇒ 仅小注亮', TRANSPARENT(noteBg.seg0) && TRANSPARENT(noteBg.badge) && !TRANSPARENT(noteBg.note),
-    JSON.stringify(noteBg));
-  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-7-hover-seg-diffnote-dark.png`) });
+  // ── B3 块级 hover 隔离（版式④）：hover 胶囊 ⇒ 仅胶囊亮；hover 统计块 ⇒ 仅块亮；
+  //    hover 不褪 +/− 语义色。 ────────────────────────────────────────────
+  await page.mouse.move(2, 2); await settle(page);
+  const restBlocks = await blockReads(page, 0);
+  ok('B3 rest 两块零底（hover 反馈纯 hover 态）',
+    TRANSPARENT(restBlocks.pillBg) && TRANSPARENT(restBlocks.noteBg), JSON.stringify(restBlocks));
+  await page.locator('.bubble.injected').nth(0).locator('.nf-rcpt-pill').hover();
+  await settle(page);
+  const pillHover = await blockReads(page, 0);
+  ok('B3 hover 胶囊 ⇒ 仅胶囊亮（块底+描边微变，统计块不亮）',
+    !TRANSPARENT(pillHover.pillBg) && pillHover.pillBorder !== restBlocks.pillBorder && TRANSPARENT(pillHover.noteBg),
+    JSON.stringify(pillHover));
+  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-5-hover-pill-dark.png`) });
+  await page.locator('.bubble.injected').nth(0).locator('.nf-rcpt-note').hover();
+  await settle(page);
+  const noteHover = await blockReads(page, 0);
+  ok('B3 hover 统计块 ⇒ 仅块亮（胶囊不亮）',
+    !TRANSPARENT(noteHover.noteBg) && TRANSPARENT(noteHover.pillBg),
+    JSON.stringify(noteHover));
+  ok('B3 hover 不褪 +/− 语义色（恒驻）', noteHover.addColor === restBlocks.addColor,
+    `rest=${restBlocks.addColor} hover=${noteHover.addColor}`);
+  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-6-hover-note-dark.png`) });
 
   // ── A6 展开语义：点卡头 ⇒ 正文 + 摘要出（点开详情行为不动）─────────────
-  await page.mouse.move(2, 2); // 移开 hover，拍展开前净态。
+  await page.mouse.move(2, 2);
   await page.locator('.bubble.injected .nf-rcpt-top').nth(0).click();
   await raf(page);
   const expanded = await page.evaluate(() => ({
@@ -453,22 +526,23 @@ const readings = { phase: PHASE, tiers: {} };
   ok('A6 点卡头展开正文', expanded.content !== 'none', `display=${expanded.content}`);
   ok('A6 展开后摘要行可见', expanded.summary !== 'none', `display=${expanded.summary}`);
   ok('A6 展开后摘要文本 = payload 首行', expanded.summaryText.startsWith('委托完成'), `actual="${expanded.summaryText.slice(0, 40)}"`);
-  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-8-internal-expanded-dark.png`) });
-  // 点小注不触发折叠切换（stopPropagation 新冒泡面收口）。
+  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-7-internal-expanded-dark.png`) });
+  // 点统计块（button 形态）不触发折叠切换（stopPropagation 收口）。
   await page.locator('.bubble.injected .nf-rcpt-note').nth(0).click();
   await raf(page);
   const afterNoteClick = await page.evaluate(() => getComputedStyle(document.querySelectorAll('.bubble.injected .injected-content')[0]).display);
-  ok('A6 点小注不叠加触发卡头折叠（stopPropagation）', afterNoteClick === expanded.content,
+  ok('A6 点统计块不叠加触发卡头折叠（stopPropagation）', afterNoteClick === expanded.content,
     `content=${afterNoteClick}`);
 
   // A7 窄面板：legacy 帧短名（DELEGATE · stand · diff-split）压 200px 泡宽 ⇒
-  // 省略号截断；徽标/小注仍处一行带、小注仍贴右缘。
-  await page.locator('.bubble.injected').nth(2).evaluate((el) => { el.style.maxWidth = '200px'; });
+  // 省略号截断；pipe/统计块仍处一行带。
+  await page.locator('.bubble.injected').nth(4).evaluate((el) => { el.style.maxWidth = '200px'; });
   await raf(page);
-  const narrow = await page.locator('.bubble.injected').nth(2).evaluate((bubble) => {
+  const narrow = await page.locator('.bubble.injected').nth(4).evaluate((bubble) => {
     const name = bubble.querySelector('.nf-rcpt-name');
-    const badge = bubble.querySelector('.nf-rcpt-badge');
+    const pill = bubble.querySelector('.nf-rcpt-pill');
     const note = bubble.querySelector('.nf-rcpt-note');
+    const pipe = bubble.querySelector('.nf-rcpt-pipe');
     const head = bubble.querySelector('.nf-rcpt-head');
     const inBand = (el) => {
       const rr = el.getBoundingClientRect();
@@ -477,34 +551,34 @@ const readings = { phase: PHASE, tiers: {} };
     };
     return {
       nameScroll: name.scrollWidth, nameClient: name.clientWidth,
-      oneLine: inBand(badge) && (!note || inBand(note)),
-      noteRight: note ? Math.abs(note.getBoundingClientRect().right - (bubble.getBoundingClientRect().right - parseFloat(getComputedStyle(bubble).paddingRight))) : null,
+      oneLine: inBand(pill) && (!pipe || inBand(pipe)) && (!note || inBand(note)),
     };
   });
   readings.tiers.narrow200 = narrow;
   ok('A7/B1 窄200px 短名省略号截断生效', narrow.nameScroll > narrow.nameClient,
     `scroll=${narrow.nameScroll} client=${narrow.nameClient}`);
-  ok('A7/B1 窄200px 徽标/小注不坠行', narrow.oneLine);
-  ok('A7/A4 窄200px 小注仍贴卡缘', narrow.noteRight !== null && narrow.noteRight < 1, `delta=${narrow.noteRight}`);
-  await page.locator('.bubble.injected').nth(2).screenshot({ path: join(SHOTS, `${PHASE}-9-narrow200-dark.png`) });
+  ok('A7/B1 窄200px 胶囊/pipe/统计块不坠行', narrow.oneLine);
+  await page.locator('.bubble.injected').nth(4).screenshot({ path: join(SHOTS, `${PHASE}-8-narrow200-dark.png`) });
   await page.close();
 }
 
 // ── A8 亮档对照：1440 × light，结构同构 + hover 反馈双档在场 ─────────────
 {
   const page = await boot(1440, 900, 'light');
-  for (const f of FRAMES.slice(0, 2)) await inject(page, f.msg);
+  for (const f of [FRAMES[0], FRAMES[1], FRAMES[7]]) await inject(page, f.msg);
   await raf(page);
   const m = await measureAll(page);
   readings.tiers.desktopLight = m;
-  ok('A8 亮档结构同构（短名/判词/小注逐字一致 + 单行化）',
-    m[0].name === FRAMES[0].expectName && m[0].badge === 'COMPLETED'
-    && m[0].summary.startsWith(FRAMES[0].expectSummary.slice(0, 12))
-    && /^\+\d+ −\d+$/.test(m[0].noteText) && m[0].geo.oneLine && m[0].summaryDisplay === 'none',
-    `${m[0].name} | ${m[0].badge} | ${m[0].summary.slice(0, 24)} | ${m[0].noteText}`);
-  ok('A8 亮档徽标/小注颜色非透明（双档可读）',
-    m[0].badgeColor !== '' && m[0].badgeColor !== 'rgba(0, 0, 0, 0)' && m[0].noteLook && m[0].noteLook.color !== 'rgba(0, 0, 0, 0)');
-  await page.locator('#chat').screenshot({ path: join(SHOTS, `${PHASE}-10-desktop-light.png`) });
+  ok('A8 亮档结构同构（胶囊/判词/统计逐字一致 + 单行化 + 合并统计优先）',
+    m[0].pillText === 'DELEGATE · INTERNAL · COMPLETED' && m[0].badge === 'COMPLETED'
+    && m[0].noteText === '+445 −51' && m[0].geo.oneLine && m[0].summaryDisplay === 'none',
+    `${m[0].pillText} | ${m[0].noteText}`);
+  ok('A8 亮档 merge-only span 形态在场', m[1].noteTag === 'SPAN' && m[1].noteText === '+123 −45');
+  ok('A8 亮档无 diff 形态（真实 15:03 行）单块无 pipe', m[2].pipe === '' && m[2].noteText === '');
+  ok('A8 亮档 +/− 颜色非透明（双档可读）',
+    m[0].addColor !== 'rgba(0, 0, 0, 0)' && m[0].delColor !== 'rgba(0, 0, 0, 0)' && m[0].addColor !== m[0].delColor,
+    `add=${m[0].addColor} del=${m[0].delColor}`);
+  await page.locator('#chat').screenshot({ path: join(SHOTS, `${PHASE}-9-desktop-light.png`) });
   // 亮档 hover 反馈在场（B2 双主题）。
   await page.locator('.bubble.injected').nth(0).locator('.nf-rcpt-head').hover();
   await settle(page);
@@ -515,31 +589,57 @@ const readings = { phase: PHASE, tiers: {} };
   ok('A8/B2 亮档行 hover 反馈在场（手型+微底+描边）',
     lightHover.cursor === 'pointer' && lightHover.bg !== 'rgba(0, 0, 0, 0)' && lightHover.bg !== 'transparent' && lightHover.shadow !== 'none',
     JSON.stringify(lightHover));
-  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-11-hover-row-light.png`) });
-  await page.locator('.bubble.injected').nth(0).locator('.nf-rcpt-note').hover();
+  await page.locator('.bubble.injected').nth(0).locator('.nf-rcpt-pill').hover();
   await settle(page);
-  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-12-hover-seg-diffnote-light.png`) });
+  const lightPillHover = await blockReads(page, 0);
+  ok('A8/B3 亮档胶囊 hover 态在场', !TRANSPARENT(lightPillHover.pillBg), JSON.stringify(lightPillHover));
+  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-10-hover-pill-light.png`) });
   await page.close();
 }
 
-// ── 响应式另两档：768 / 390（internal+merged 帧，暗色；双端一致面）────────
+// ── 响应式另两档：768 / 390（internal+merged 帧，暗色；手机档同组件自查）──
 for (const [tier, width, height] of [['tablet768', 768, 1024], ['mobile390', 390, 844]]) {
   const page = await boot(width, height, 'dark');
   await inject(page, FRAMES[0].msg);
-  await inject(page, FRAMES[4].msg);
+  await inject(page, FRAMES[5].msg);
   await raf(page);
   const m = await measureAll(page);
   readings.tiers[tier] = m;
-  ok(`[${tier}] 卡面单行化 + 判词/小注齐备`,
-    m[0].name === FRAMES[0].expectName && m[0].badge === 'COMPLETED' && m[0].noteText !== ''
+  ok(`[${tier}] 卡面单行化 + 胶囊/统计齐备（合并统计优先）`,
+    m[0].pillText === 'DELEGATE · INTERNAL · COMPLETED' && m[0].noteText === '+445 −51'
     && m[0].geo.oneLine && m[0].geo.headH <= 24,
     `oneLine=${m.map((b) => b.geo.oneLine).join(',')} headH=${m.map((b) => b.geo.headH).join(',')}`);
-  ok(`[${tier}] merged 帧判词齐备（无小注无 pipe，单行不坠）`,
+  ok(`[${tier}] merged 帧判词齐备（无 pipe 无统计块，单行不坠）`,
     m[1].badge === 'MERGED' && m[1].noteText === '' && m[1].pipe === '' && m[1].geo.oneLine,
     `oneLine=${m[1].geo.oneLine} headH=${m[1].geo.headH}`);
   ok(`[${tier}] 折叠态摘要/正文隐藏`, m.every((b) => b.summaryDisplay === 'none' && b.contentDisplay === 'none'));
-  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-13-${tier}-dark.png`) });
+  await page.locator('.bubble.injected').nth(0).screenshot({ path: join(SHOTS, `${PHASE}-11-${tier}-dark.png`) });
   await page.close();
+}
+
+// ── A9 双引擎：WebKit 腿——核心结构同构（真实链路逐字同测）+ 双主题 ──────
+{
+  for (const [scheme, tag] of [['dark', 'webkit-dark'], ['light', 'webkit-light']]) {
+    const page = await boot(1440, 900, scheme, webkit);
+    for (const f of [FRAMES[0], FRAMES[1], FRAMES[7]]) await inject(page, f.msg);
+    await raf(page);
+    const m = await measureAll(page);
+    readings.tiers[tag] = m;
+    ok(`A9 [${tag}] 胶囊字面/判词/合并统计优先同构`,
+      m[0].pillText === 'DELEGATE · INTERNAL · COMPLETED' && m[0].badge === 'COMPLETED'
+      && m[0].noteText === '+445 −51' && m[0].pipe === '|' && m[0].geo.oneLine);
+    ok(`A9 [${tag}] merge-only span + 无 diff 形态同构`,
+      m[1].noteTag === 'SPAN' && m[1].noteText === '+123 −45' && m[2].pipe === '' && m[2].noteText === '');
+    ok(`A9 [${tag}] +/− 同块异色非透明`,
+      m[0].addColor !== m[0].delColor && m[0].addColor !== 'rgba(0, 0, 0, 0)');
+    await page.locator('.bubble.injected').nth(0).locator('.nf-rcpt-pill').hover();
+    await settle(page);
+    const wkPillHover = await blockReads(page, 0);
+    ok(`A9 [${tag}] 胶囊 hover 态在场（版式④双引擎）`, !TRANSPARENT(wkPillHover.pillBg),
+      JSON.stringify(wkPillHover));
+    await page.locator('#chat').screenshot({ path: join(SHOTS, `${PHASE}-12-${tag}.png`) });
+    await page.close();
+  }
 }
 
 await browser.close();
