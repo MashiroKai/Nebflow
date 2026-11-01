@@ -930,7 +930,7 @@ button.glass-control.fm-login-btn:disabled {
   --btn-primary-bg-hover: var(--btn-ink-bg-hover);
   --btn-primary-bg-active: var(--btn-ink-bg-active);
   --btn-primary-ink: var(--btn-ink-ink);
-  --btn-primary-tint: rgb(17 24 39 / 0.35); /* 开关 ON 档墨 tint（原 brand-green 35%；暗档见 stand-tokens.css） */
+  --btn-primary-tint: rgb(17 24 39 / 0.35); /* 墨族 35% tint（2026-10-30 按钮体系批设立，原承担开关 ON 档；2026-11-01 开关回绿后暂无消费者，留作墨 tint 语义位；暗档见 stand-tokens.css） */
   /* 次操作（描边；fill 档 = 开关等非文本控件保留的既有中性玻璃填充） */
   --btn-secondary-bg: transparent;
   --btn-secondary-stroke: var(--glass-send-border-active);
@@ -1249,18 +1249,22 @@ button.glass-control.fm-req-accept:active {
 /* 开关本体（`.nb-toggle`，js/toggle.js）在方向 A 下的口径：
    · 形态**保持**既有开关语言（轨道填充 + 圆钮）—— 铁律 2 与「开关不是按钮」的
      设计系统既有排除条款（本文件 :170-172）优先，本批**不改其填充/几何**；
-   · 只补两件：① 状态反馈（hover / active：亮档走投影、暗档走填充递进，与次操作同
-     一族语言）；② 显式墨色（`color` 此前落 UA 默认，暗档 = 1.38:1 —— 无文本控件
-     仍按可读性口径给值，避免「读数为黑却是继承而来」的隐性缺陷）。
+   · 只补两件：① 状态反馈（hover 描边递进，与次操作同一族语言）；② 显式墨色
+     （`color` 此前落 UA 默认，暗档 = 1.38:1 —— 无文本控件仍按可读性口径给值，
+     避免「读数为黑却是继承而来」的隐性缺陷）。
    注：轨道填充值 = `--btn-secondary-fill`（既有 `--glass-control-bg`），ON 档 =
-   `--btn-primary-tint`（2026-10-30 起 = 墨族 35% tint，原 brand-green 三元组随绿
-   一并降级为身份/状态色）⇒ 分类仍只依赖 token。 */
+   品牌绿 35% tint + 描边 50%（2026-11-01 作者令「toggle 重新回到绿色」恢复
+   09-06 原配方，撤销 2026-10-30 按钮体系批 B9 的墨 tint 改写；「绿降级为身份/
+   状态色」的总裁定不含开关这一豁免点，开关 ON 档以本口径为准）。
+   hover 描边递进以 `:not(.on)` 限定在 OFF 档——ON 档悬停保持绿描边（原配方
+   行为），否则同特异性后者（本文件最后加载）会把绿描边洗回玻璃描边。
+   ⇒ 分类仍只依赖 token。 */
 .nb-toggle {
   color: var(--btn-secondary-ink);
   border-color: var(--btn-secondary-fill-stroke); /* 具名化（值 = 既有 --glass-control-border，零视觉变化） */
   transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s;
 }
-.nb-toggle:hover { border-color: var(--btn-secondary-stroke-hover); }
+.nb-toggle:not(.on):hover { border-color: var(--btn-secondary-stroke-hover); }
 .nb-toggle.on { color: var(--btn-secondary-ink); }
 
 /* ── 禁用 / 掉线档（R2′/J3：具名 token `--glass-send-bg-disabled` + not-allowed；
