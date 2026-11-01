@@ -61,6 +61,20 @@ export default {
   // N2 project-tool 批（2026-10-06）：面板手动卸载（归档按钮）被 Project 工具
   // action="unmount" 工具面替代；播报镜像 archived（aria-live 状态行）。
   'project.unmountedAnnounce': '「{name}」已卸载——在飞任务已停，文件全部保留',
+  // unmount-console 面板批 2026-11-02：取消加载/重新加载 + 已卸载分组。
+  'project.unmountBtn': '取消加载',
+  'project.unmountTitle': '取消加载「{name}」？',
+  'project.unmountInflight': '当前在飞工作：{chains} 条链、{nodes} 个节点、{sessions} 个会话——取消加载会先把它们全部停止。',
+  'project.unmountConfirm': '确认后：「{name}」将从项目列表与 Agent 上下文中消失，不能再派活；本地文件全部保留（零删除）。之后可在「已卸载」分组里重新加载。',
+  'project.unmountConfirmGo': '取消加载',
+  'project.unmountFail': '取消加载「{name}」失败：{detail}',
+  'project.unmountedGroup': '已卸载',
+  'project.unmountedGroupHint': '项目已从上下文卸载，本地文件原样保留；重新加载即可恢复。',
+  'project.unmountedRowTitle': '「{name}」卸载于 {at}（本地文件保留）',
+  'project.remountBtn': '重新加载',
+  'project.remounting': '正在重新加载…',
+  'project.remountFail': '重新加载「{name}」失败：{detail}',
+  'project.remountedAnnounce': '「{name}」已重新加载',
   // Project-panel右下角「+」钮 + 轻弹层（projcreate 批 · 乙案：提交 = 预填主输入框 + 聚焦，
   // 零新端点、零新增写面 —— 描述框只收一段描述，不设路径/名称字段：乙案前端不写盘，
   // 放一个前端无从校验的路径框 = 假控件；路径由 Nebula 侧 ProjectCreate 自带路径面板解析）。

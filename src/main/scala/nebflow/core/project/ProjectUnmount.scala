@@ -82,6 +82,12 @@ object ProjectUnmount:
   val UnmountReason: String =
     "project unmount (Project tool action=\"unmount\"): in-flight work stopped first; workspace files are kept"
 
+  /** 审计事件类型（unmount-console 面板批 2026-11-02）：卸载动作本体的一行留痕。 */
+  val AuditTypeUnmounted: String = "project-unmounted"
+
+  /** 审计事件类型：重挂（remount）动作本体的一行留痕（ProjectRemount 写入）。 */
+  val AuditTypeRemounted: String = "project-remounted"
+
   /** unmount 结果读数（工具结果句与 spec 断言共用）。 */
   final case class UnmountReport(
     project: String,
@@ -95,6 +101,70 @@ object ProjectUnmount:
   )
 
   /**
+   * 在飞工作计数读数（unmount-console 面板批 2026-11-02）：控制台确认卡的数据源
+   * ——「点卸载前先让作者看到在飞工作有几条链/几个节点/几个会话」。计数判据与
+   * [[stopInFlight]] 的取消靶集合同源，只读不写——零副作用面。
+   */
+  final case class InFlight(
+    project: String,
+    chains: List[String],
+    runningNodes: List[String],
+    dispatcherSessions: List[String],
+    delegateSessions: List[String]
+  ):
+    def total: Int = chains.size + runningNodes.size + dispatcherSessions.size + delegateSessions.size
+
+  /**
+   * 在飞计数（只读，unmount-console 面板批 2026-11-02）：项目未挂载 ⇒ None（REST
+   * 404 面）。canonical 化与 [[unmount]] 同法（equalsIgnoreCase 兜底）；四组计数的
+   * 判据与 [[stopInFlight]] 的取消靶集合同源（同链谓词 / 同 Running 过滤 / 同会话
+   * 过滤），确认卡上的读数因此与「点确认后真会被停的东西」一致。
+   * 链计数与报告的 chainsCancelled 同口径：**只数多成员活动链**——单成员链在 stop
+   * 步走 CHAIN_SINGLE_MEMBER 跳过、由节点腿兜底（其 Running 已入 runningNodes），
+   * 计数若把它算进链数就会与报告对不上（spec parity 断言钉住）。`runningNodes`
+   * 相应排除已计入 chains 的链成员（链腿级联停，节点腿对其 AlreadyCancelled 零
+   * 实作）——计数面因此 = 链归链、孤立/单成员链 Running 归节点，同一件工作不在
+   * 两组里双计。
+   */
+  def inFlight(name: String, agentRegistry: Ref[IO, Map[String, AgentRecord]]): IO[Option[InFlight]] =
+    ProjectRuntimeRegistry.get(name).flatMap {
+      case None => IO.pure(None)
+      case Some(rt) =>
+        val canonical = rt.project.name
+        for
+          chainCandidates <- activeChainsToCancel(rt)
+          chains <- chainCandidates.filterA { cid =>
+            rt.store.chainMembersOf(cid).map(cm => cm.exists(_.members.size >= 2))
+          }
+          // 计入 chains 的链，其成员由链腿级联停——不再重复计入 runningNodes
+          //（单成员链不在 chains，其 Running 成员仍走节点腿 = 保留在 runningNodes）
+          chainMemberIds <- chains.flatTraverse { cid =>
+            rt.store.chainMembersOf(cid).map(_.fold(List.empty[String])(_.members.map(_.id)))
+          }
+          snap <- rt.store.snapshot
+          running = snap.nodes.values
+            .filter(n => n.status == NodeLifecycle.Running && !chainMemberIds.contains(n.id))
+            .map(_.id).toList
+          recs <- agentRegistry.get
+          dispatchers = recs.values
+            .filter(r =>
+              r.kind == AgentKind.Flow &&
+                r.project.exists(_.equalsIgnoreCase(canonical)) &&
+                r.sessionId.startsWith(ProjectActor.DispatcherSessionPrefix)
+            )
+            .map(_.sessionId)
+            .toList
+          delegateIds <- IO.blocking {
+            DelegateRegistry.list().iterator.filter(_.project.exists(_.equalsIgnoreCase(canonical))).map(_.id).toSet
+          }
+          delegates = recs.values
+            .filter(r => r.kind == AgentKind.Delegate && delegateIds.contains(r.sessionId))
+            .map(_.sessionId)
+            .toList
+        yield Some(InFlight(canonical, chains, running, dispatchers, delegates))
+    }
+
+  /**
    * 三步序入口。`name` 大小写不敏感解析到 canonical 名（与 ProjectRuntimeRegistry.get
    * 的 equalsIgnoreCase 兜底同源）。返回 Left(可行动错误) ⇒ 挂载面零触碰。
    *
@@ -102,11 +172,15 @@ object ProjectUnmount:
    * @param agentRegistry  统一会话登记表（stop 步 dispatcher/delegate 腿 + 会话排空）
    * @param broadcastFrame 既有广播通道的投递函数（无连接上下文 = no-op，与 emit 面
    *                       fold(IO.unit) 同款语义；帧形由调用方经 projectUnmountedFrame 生产）
+   * @param actor          审计留痕的动作方（unmount-console 面板批：控制台 REST 腿传
+   *                       "console"，工具腿传调用会话 id；进 flow-map-events.jsonl 的
+   *                       summary，回答「谁卸的」）
    */
   def unmount(
     name: String,
     agentRegistry: Ref[IO, Map[String, AgentRecord]],
-    broadcastFrame: Json => IO[Unit]
+    broadcastFrame: Json => IO[Unit],
+    actor: String = "tool"
   ): IO[Either[String, UnmountReport]] =
     ProjectStore.listAll().flatMap { defs =>
       defs.find(d => d.name.equalsIgnoreCase(name)) match
@@ -131,7 +205,7 @@ object ProjectUnmount:
                 stopInFlight(canonical, rt, agentRegistry).flatMap {
                   case Left(err) => IO.pure(Left(err))
                   case Right(counts) =>
-                    removeMountFace(canonical, rt, broadcastFrame).map {
+                    removeMountFace(canonical, rt, broadcastFrame, actor).map {
                       case Left(err) => Left(err)
                       case Right(at) =>
                         Right(
@@ -303,13 +377,14 @@ object ProjectUnmount:
     loop()
 
   // ============================================================
-  // ② 挂载面移除（先打标过滤面，再拆运行时）
+  // ② 挂载面移除（先打标过滤面，再拆运行时；成功腿追加审计一行）
   // ============================================================
 
   private def removeMountFace(
     canonical: String,
     rt: ProjectRuntime,
-    broadcastFrame: Json => IO[Unit]
+    broadcastFrame: Json => IO[Unit],
+    actor: String
   ): IO[Either[String, Long]] =
     ProjectStore.markUnmounted(canonical).flatMap {
       case Left(err) => IO.pure(Left(s"unmount aborted (step 2): $err"))
@@ -321,6 +396,21 @@ object ProjectUnmount:
           _ <- broadcastFrame(ProjectActor.projectUnmountedFrame(canonical, at)).handleErrorWith(e =>
             logger.warn(s"[$canonical] unmount: projectUnmounted broadcast failed: ${e.getMessage}")
           )
+          // 审计一行（unmount-console 面板批 2026-11-02）：卸载动作本体进
+          // flow-map-events.jsonl（「谁 / 何时 / 哪个项目」——项目名是行的 project
+          // 字段、ts 是行 ts、actor 进 summary）。写点在工作区 .nebflow 内（零删除
+          // 红线不涉——append 是合法副作用，spec 头注同口径）；失败只 WARN 不回滚
+          // （卸载本体已成功，审计面 best-effort 与链族写点同纪律）。
+          _ <- FlowMapEventLog
+            .append(
+              ProjectStore.brainWorkspace(rt.project),
+              canonical,
+              "",
+              AuditTypeUnmounted,
+              s"unmounted by $actor at $at " +
+                s"(in-flight stopped: chains/expected-counts see unmount report; workspace files kept byte-for-byte)"
+            )
+            .handleErrorWith(e => IO(logger.warn(s"[$canonical] unmount audit append failed: ${e.getMessage}")))
         yield Right(at)
     }
 
