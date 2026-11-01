@@ -142,8 +142,10 @@ export const MAX_QUOTE_ATTS = 8;
 //
 // 原则：**按钮 ⊆ footer**。引用按钮只长在**已有 footer 徽章**（.duration-badge，
 // 复制钮右侧、同族 .msg-copy 材质）里；右键可用但无 footer 的行（工具卡 / AskUser
-// 活卡 / 媒体行 —— beta.56 裁定「footer 仅消息类」，本批不翻案、相邻族零新增视觉）
-// 保持右键单入口。挂点复用 attachQuoteMenu（「右键在哪可用」的同一收口），零新挂点。
+// 活卡）保持右键单入口。媒体行原也无徽章（beta.56 裁定「footer 仅消息类」）——
+// 手机端长按退役批（2026-10-31 作者令）翻案该面：媒体行补 footer 信息条
+// （popArtifacts.buildUserMediaRow，时间/下载/引用钮同族），触屏触达不再依赖
+// 已退役的长按。挂点复用 attachQuoteMenu（「右键在哪可用」的同一收口），零新挂点。
 //
 // 时序契约：attachQuoteMenu 挂菜单时徽章可能尚未入行（persistence.js 历史腿与
 // finishAi 都是先挂菜单后补徽章，但都在**同一个同步任务**内）⇒ 挂钮走 rAF 延迟
@@ -182,7 +184,7 @@ export function createMsgQuoteButton() {
 }
 
 /** 徽章收敛：行内每个直属 footer 徽章补一枚引用按钮（复制钮右侧；徽章级幂等）。
- *  无徽章的行（工具卡/AskUser 活卡/媒体行）不动 —— 按钮 ⊆ footer（见文件头顶注）。 */
+ *  无徽章的行（工具卡/AskUser 活卡）不动 —— 按钮 ⊆ footer（见文件头顶注）。 */
 export function mountQuoteFooterButton(rowEl) {
   if (!rowEl || !rowEl.__nfQuoteDesc) return;
   rowEl.querySelectorAll(':scope > .duration-badge').forEach((badge) => {
@@ -265,7 +267,7 @@ export function renderQuoteStrip(target) {
 // ── 右键菜单 ────────────────────────────────────────────────────────────
 
 /** 兄弟媒体行附件合入（附件批 2026-10-31）：用户文本行与它的媒体卡行共用同一
- *  data-msg-id（chat.js renderUserBubble 随行挂），长按/右键**文本行**时把媒体行
+ *  data-msg-id（chat.js renderUserBubble 随行挂），右键**文本行**时把媒体行
  *  描述符里的附件并入引用 —— 引用对象 = 整条消息（微信语义），不是半条。 */
 function siblingMediaAttsOf(rowEl) {
   const id = rowEl && rowEl.dataset ? rowEl.dataset.msgId : '';
@@ -288,11 +290,11 @@ function resolveQuoteDesc(rowEl, d) {
   };
 }
 
-/** 行上下文菜单的**单点出口**（附件批 2026-10-31）：桌面 contextmenu 与手机端
- *  长按（js/mobile/msgLongPress.js）构建**同一份**菜单 —— 有正文 ⇒ 复制 + 引用，
- *  其余 ⇒ 仅引用；壳 = showPopupMenu（好友窗/联系人行同一玻璃面板）。
- *  opts 透传 showPopupMenu（长按腿传 swallowTouchClick 吞合成 click）。 */
-export function openQuoteMenuForRow(rowEl, x, y, opts) {
+/** 行上下文菜单的**单点出口**（桌面右键；手机端长按腿已随手机端长按退役批
+ *  2026-10-31 作者令整条退役——触屏触达改走消息 footer 信息条：时间/下载/引用钮）：
+ *  有正文 ⇒ 复制 + 引用，其余 ⇒ 仅引用；壳 = showPopupMenu（好友窗/联系人行
+ *  同一玻璃面板）。 */
+export function openQuoteMenuForRow(rowEl, x, y) {
   const d = (rowEl && rowEl.__nfQuoteDesc) || null;
   if (!rowEl || !d) return false;
   const items = [];
@@ -301,7 +303,7 @@ export function openQuoteMenuForRow(rowEl, x, y, opts) {
     items.push({ label: t('messages.copy'), onClick: () => { navigator.clipboard?.writeText(body).catch(() => {}); } });
   }
   items.push({ label: t('messages.quote'), onClick: () => startQuote(resolveQuoteDesc(rowEl, d)) });
-  showPopupMenu(x, y, items, opts);
+  showPopupMenu(x, y, items);
   return true;
 }
 
@@ -320,6 +322,10 @@ export function attachQuoteMenu(rowEl, d) {
   scheduleQuoteButtonMount(rowEl);
   rowEl.addEventListener('contextmenu', (e) => {
     e.preventDefault();
+    // 手机端长按退役批（2026-10-31 作者令）：触屏长按不再弹引用/复制菜单——
+    // Android/iOS 长按会原生补发 contextmenu，这里按**事件时**判手机层直接放行
+    // （视口跨档重排也零误伤）；桌面视口逐字不动（含 preventDefault 抑制原生菜单）。
+    if (document.body.classList.contains('mobile-layer')) return;
     openQuoteMenuForRow(rowEl, e.clientX, e.clientY);
   });
 }

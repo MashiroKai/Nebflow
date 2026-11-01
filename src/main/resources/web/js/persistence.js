@@ -497,16 +497,17 @@ export function appendAttachmentBubble(row, att) {
  *  attachments become the one independent `.row.pop-artifact.user-media` row
  *  that follows it. Images without an inline preview resolve from the uploads
  *  route via `path` (G1) — passed here as the resolver so the Pop face builders
- *  never touch the ticket leg for user bytes. Returns null when nothing
- *  displayable remains outside the row. */
-export function buildUserAttachmentRows(row, atts) {
+ *  never touch the ticket leg for user bytes. ts = the message timestamp for the
+ *  media row's footer badge (时间档与文本行同值；手机端长按退役批 2026-10-31).
+ *  Returns null when nothing displayable remains outside the row. */
+export function buildUserAttachmentRows(row, atts, ts) {
   const mediaAtts = [];
   (atts || []).forEach(att => {
     if (att && (att.type === 'ref' || att.type === 'taskRef')) appendAttachmentBubble(row, att);
     else mediaAtts.push(att);
   });
   if (!mediaAtts.length) return null;
-  const mediaRow = buildUserMediaRow(mediaAtts, { resolver: attachmentImageUrl });
+  const mediaRow = buildUserMediaRow(mediaAtts, { resolver: attachmentImageUrl, ts });
   // live 腿（chat.js renderUserBubble）媒体卡随行挂**同一** msgId —— 重放腿同形
   // 对齐（附件批 2026-10-31）：引用寻址/兄弟行合入判据（msgQuote.siblingMediaAttsOf
   // 按同 msgId 找 .row.user-media）两条腿一致，此前重放腿媒体行拿独立 c- id ⇒
@@ -683,7 +684,7 @@ export function restoreFromStorage(opts = {}) {
         }
         row.appendChild(bubble);
       }
-      const storageMediaRow = buildUserAttachmentRows(row, userUnified.atts);
+      const storageMediaRow = buildUserAttachmentRows(row, userUnified.atts, m.timestamp);
       // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
       if ((m.timestamp && m.timestamp > 0) || m.text) {
         row.appendChild(createAiCopyBadge(m.timestamp, m.text));
@@ -1113,7 +1114,7 @@ function buildHistoryRow(m, i, ctx) {
         }
         (composite || row).appendChild(bubble);
       }
-      const backendMediaRow = buildUserAttachmentRows(row, userUnified.atts);
+      const backendMediaRow = buildUserAttachmentRows(row, userUnified.atts, m.timestamp);
       // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
       if ((m.timestamp && m.timestamp > 0) || m.text) {
         row.appendChild(createAiCopyBadge(m.timestamp, m.text));

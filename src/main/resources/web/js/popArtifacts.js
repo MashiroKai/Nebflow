@@ -57,13 +57,17 @@ import { escapeHtml, smartScroll, localizeToolLabel, localizeToolSummary } from 
 import { ticketUrl, reMint } from './nfTicket.js';
 // imgdoor 二次加载批（2026-10-24）：图片脸字节进 nfFileCache 账本——预览取数即入账，
 // Canvas 打开账本命中零取数（预览 + 打开 = 恰一次网络抓取）。账本模块只 import
-// state/branding，本边不成环。
-import { nfViewerUrl, nfCacheDrop } from './nfFileCache.js';
+// state/branding，本边不成环。nfViewerSource = 取字节单点（手机端长按退役批的
+// footer 下载键同腿复用，零新增取字节路）。
+import { nfViewerUrl, nfCacheDrop, nfViewerSource } from './nfFileCache.js';
 // quote-message 一期（2026-10-09）：用户媒体/文件卡行挂消息 id + 右键「引用」。
 // 摘要 = [图片]/[文件] 文件名（spec §2.5 表）。挂点在本 builder ⇒ live 发送、
 // 历史恢复（persistence.buildUserAttachmentRows）、attachmentsSaved 原位重渲
 // （patchUserMediaRow 走 replaceWith ⇒ 重建后仍带 id/菜单）三路同构。
 import { attachQuoteMenu, nextChatMsgId } from './msgQuote.js';
+// footer 信息条族（手机端长按退役批 2026-10-31 作者令）：媒体行 footer 与文本
+// 消息底部信息条同族徽章（时间 + 常用操作），durationBadges 是唯一 builder。
+import { createMsgFooterBadge } from './chat/durationBadges.js';
 
 export const POP_SENTINEL = '___POP_JSON___';
 
@@ -913,9 +917,12 @@ export function popItemFromAttachment(att, resolver) {
  *  exact same row shape a Pop payload builds (`.row.pop-artifact` + faces), so
  *  「与 LLM Pop 卡片同层同形」 holds by construction. The `user-media` marker
  *  class is the QA/spec hook. Returns null when nothing displayable remains
- *  (refs-only messages keep the plain user row). */
+ *  (refs-only messages keep the plain user row).
+ *  opts.ts = 所属消息时间戳（footer 信息条时间档；live/重放/补丁三腿各自传入，
+ *  0/缺席 ⇒ 无时间档——防御门，正常链路恒带）。 */
 export function buildUserMediaRow(attachments, opts) {
   const resolver = opts && typeof opts.resolver === 'function' ? opts.resolver : undefined;
+  const ts = opts && Number(opts.ts) > 0 ? Number(opts.ts) : 0;
   const items = (attachments || [])
     .map(a => popItemFromAttachment(a, resolver))
     .filter(Boolean);
@@ -948,7 +955,7 @@ export function buildUserMediaRow(attachments, opts) {
         path: it.path || '',
         preview: it.src || undefined,
       })),
-      senderRole: 'user', senderName: t('chat.quoteSenderMe'), ts: Date.now(),
+      senderRole: 'user', senderName: t('chat.quoteSenderMe'), ts: ts || Date.now(),
     });
   }
   const group = document.createElement('div');
@@ -957,7 +964,83 @@ export function buildUserMediaRow(attachments, opts) {
   if (media.length === 1) group.appendChild(buildMediaFlat(media[0]));
   else if (media.length > 1) group.appendChild(buildMediaStack(media));
   files.forEach(f => group.appendChild(buildFileCard(f)));
+  // footer 信息条（手机端长按退役批 2026-10-31 作者令）：与文本消息底部信息条
+  // 同族 .duration-badge——时间 + 下载（常用操作），触屏触达不再依赖长按；
+  // 引用钮由 mountQuoteFooterButton（attachQuoteMenu 的 rAF 收敛）挂进同一徽章。
+  // 下载键只在**单件行**挂：一枚键对叠卡/多文件里哪一件负责说不清，宁缺毋假
+  // （多件行 footer 仍带时间档 + 引用钮）。字节两腿（path / 内联 data:）皆缺
+  // ⇒ 不挂键（零假按钮；attachmentsSaved 补丁腿重渲后 path 到位即补挂）。
+  const single = items.length === 1 ? items[0] : null;
+  const badge = createMsgFooterBadge(ts, '');
+  const dlBtn = createMediaDownloadButton(single);
+  if (dlBtn) {
+    if (badge.childElementCount > 0) {
+      const div = document.createElement('span');
+      div.className = 'duration-badge-divider';
+      badge.appendChild(div);
+    }
+    badge.appendChild(dlBtn);
+  }
+  if (badge.childElementCount > 0) row.appendChild(badge);
   return row;
+}
+
+/* ── footer 下载键（手机端长按退役批 2026-10-31）──────────────────────────
+ * 视觉族复用 .msg-copy（复制/引用钮同档 12px 灰键；.copied 绿勾 / .copy-failed
+ * 红态规则全站既有 ⇒ 零新 CSS），.msg-dl 标记类作探针/特化钩。字节腿 =
+ * nfViewerSource 账本单点（path 腿，零新增取字节路）/ 内联 data: 腿（未落盘的
+ * live 图直接落盘为本地文件）；两腿皆缺 ⇒ 不挂键（零假按钮）。 */
+const DOWNLOAD_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+const DL_CHECK_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+
+/** 下载键工厂（单件行专用；不可下载 ⇒ null）。成功态复用 .copied 绿勾 1.5s
+ *  自清（复制钮同节奏）；失败态复用 .copy-failed 红键 2s 自清 + console 取证。 */
+function createMediaDownloadButton(item) {
+  if (!item) return null;
+  const hasInline = typeof item.src === 'string' && item.src.startsWith('data:');
+  if (!item.path && !hasInline) return null;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'msg-copy msg-dl';
+  const label = t('messages.attachDownload');
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+  btn.innerHTML = DOWNLOAD_SVG;
+  let busy = false;
+  btn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (busy) return;
+    busy = true;
+    const flash = (cls, svg, ms) => {
+      btn.innerHTML = svg;
+      btn.classList.add(cls);
+      setTimeout(() => { btn.innerHTML = DOWNLOAD_SVG; btn.classList.remove(cls); }, ms);
+    };
+    let url = '';
+    try {
+      if (item.path) {
+        ({ url } = await nfViewerSource({ absPath: item.path, objectUrl: null, pane: null }));
+      } else {
+        url = URL.createObjectURL(await (await fetch(item.src)).blob());
+      }
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = item.name || String(item.path || '').split('/').pop() || 'file';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      // blob URL 由下载侧消费；延迟回收（nfViewerSource 腿的 URL 挂 document.body
+      // 不会被 canvas-tab-closed 回收，这里就是它的清理点）。
+      setTimeout(() => { try { URL.revokeObjectURL(url); } catch { /* already dead */ } }, 60_000);
+      flash('copied', DL_CHECK_SVG, 1500);
+    } catch (err) {
+      console.warn('[popArtifacts] media download failed', err);
+      flash('copy-failed', DOWNLOAD_SVG, 2000);
+    } finally {
+      busy = false;
+    }
+  });
+  return btn;
 }
 
 /* ── imageref-media（2026-10-09 修复批）：图片文件引用的消息内面 ─────────────
@@ -993,17 +1076,18 @@ export function buildImageRefMediaFace(ref) {
  * 重渲该行：补丁后的行与历史恢复腿、与 Pop 行逐字节同构，打开动作仍是
  * openPopArtifact 单点，零第二套开法。 */
 
-/** sessionId → [{row, atts}] FIFO（上限 8）：等待落盘路径的 live 行。上限只是
+/** sessionId → [{row, atts, ts}] FIFO（上限 8）：等待落盘路径的 live 行。上限只是
  *  防御性保鲜——正常流里帧在发送后毫秒级到达即消费掉条目；帧丢失（旧后端）时
  *  条目随上限滚动，且 att 对象本就被在 DOM 的行闭包持有，登记不放大保留面。 */
 const pendingUserMediaRows = new Map();
 const PENDING_MEDIA_ROWS_CAP = 8;
 
-/** Live 渲染登记钩子（chat.js renderUserBubble 唯一调用方）。 */
-export function registerUserMediaRow(sessionId, row, atts) {
+/** Live 渲染登记钩子（chat.js renderUserBubble 唯一调用方）。ts = 消息时间戳，
+ *  补丁腿重渲 footer 信息条时间档与 live 腿同值（手机端长按退役批 2026-10-31）。 */
+export function registerUserMediaRow(sessionId, row, atts, ts) {
   if (!sessionId || !row || !Array.isArray(atts) || !atts.length) return;
   const list = pendingUserMediaRows.get(sessionId) || [];
-  list.push({ row, atts });
+  list.push({ row, atts, ts: Number(ts) > 0 ? Number(ts) : 0 });
   if (list.length > PENDING_MEDIA_ROWS_CAP) list.splice(0, list.length - PENDING_MEDIA_ROWS_CAP);
   pendingUserMediaRows.set(sessionId, list);
 }
@@ -1022,8 +1106,14 @@ export function patchUserMediaRow(sessionId, saved) {
   saved.forEach((s, k) => {
     if (s && typeof s.path === 'string' && s.path) entry.atts[k].path = s.path;
   });
-  const fresh = buildUserMediaRow(entry.atts);
-  if (fresh && entry.row.isConnected) entry.row.replaceWith(fresh);
+  const fresh = buildUserMediaRow(entry.atts, { ts: entry.ts });
+  if (fresh && entry.row.isConnected) {
+    // 重放腿同形对齐（附件批 2026-10-31 口径的重放侧补齐）：原位重渲不换消息身份——
+    // 替换行继承原行的 data-msg-id，引用寻址/兄弟行合入判据（按同 msgId 找
+    // .row.user-media）在补丁后仍然成立。
+    fresh.dataset.msgId = entry.row.dataset.msgId || fresh.dataset.msgId;
+    entry.row.replaceWith(fresh);
+  }
 }
 
 /**
