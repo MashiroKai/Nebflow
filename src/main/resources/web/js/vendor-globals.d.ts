@@ -197,6 +197,47 @@ interface Window {
   };
 }
 
+/** 下游反适配面（R1 门面化 2026-11-02；由 js/nfAdaptApi.js 在模块体末尾注册，
+ *  消费方 = **跨仓** triple-star 镜像内的 `ui/js/nf-adapt.js`）。存在理由：镜像
+ *  装的 UI 是产物树 build/web-dist（assets/*.js，**没有 js/ 目录**），下游那份
+ *  脚本跑在 bundle 之外，任何 `import('./ws.js')` 都不解析 —— 它只能从这里取。
+ *
+ *  契约纪律：字段名即契约。改名会静默打断镜像侧（跨仓 grep 不到），必须先给
+ *  下游留降级期。懒加载两族是函数（保持 import() 的 chunk 边界）。 */
+interface NfAdaptApi {
+  readonly ws: {
+    readonly sendWs: (msg: unknown) => void;
+    readonly onMessage: (type: string, handler: (msg: any) => void) => () => void;
+  };
+  readonly state: Record<string, any>;
+  readonly sidebar: {
+    readonly renderSessionSidebar: (sessionData: any, activeId: string | null) => void;
+    readonly saveNewProvider: (name: string, data: any) => void;
+  };
+  readonly modelPanel: {
+    readonly getAllModelRefs: () => string[];
+  };
+  readonly providersUi: {
+    readonly showProviderModal: (
+      existingName: string | null,
+      existingData: any,
+      onSave: (name: string, data: any) => void
+    ) => void;
+  };
+  readonly loadFlowMapTab: () => Promise<{ openFlowMapTab(projectName: string): void }>;
+  readonly loadDelegateChainView: () => Promise<{
+    openDelegateChainTask(
+      taskKey: string,
+      meta?: Record<string, any>,
+      opts?: Record<string, any>
+    ): void;
+  }>;
+}
+
+interface Window {
+  __nfAdaptApi?: NfAdaptApi;
+}
+
 /** 遗留的跨模块 API 面（main.js 末尾一次性装配 window.Nebflow = {...}：卡片渲染
  *  / 主题 / 注入消息等几十个入口）。逐项类型化是独立的迁移工作，本闸只需承认
  *  这个装配点的存在，故按不透明字典声明（消费方当前仅测试脚本）。 */
