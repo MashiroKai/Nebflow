@@ -57,6 +57,19 @@
  *   （.agent-avatar-img 同构）。收形批④「零浮影零光环」边缘收简随批退役；
  *   border-box ⇒ 44px 外径/dock 胶囊几何零变化。
  *
+ * 会话身份组位置批（作者报障 2026-11-01 23:0x「中间 agent 头像和 agent name
+ * 的位置这么奇怪」）落位 —— 文件尾 ②-b/②-c 新块：
+ *   ① 位置下沉：.g2-chat-head 是 #chat 内容流首项（chatChrome.js:98）⇒ 静止态
+ *      组顶 = #chat padding-top（顶让位常态 96px = 渐隐带 88 + 基线 8），96px
+ *      纯空带把「会话身份头」推到视觉中段（作者「头像浮在页面中央、上方一大块
+ *      空白」）。②-b 以负 margin-top 上提回顶带，落点 = 悬浮双键行下缘 64px
+ *      （16+48，见 #mobile-fab-layer 块），取值纯 CSS 派生自 --muse-head-top +
+ *      env(safe-area-inset-top) ⇒ 让位带变化同帧跟随、零新 JS 状态；sticky
+ *      锚定阈值不变（滚动态仍锚窗口顶）。
+ *   ② 幽灵胶囊：未命名 root 下 sidebar.js:2017-2018 写空串但保留 display:''，
+ *      空 span 仍吃胶囊 padding 画出 28×6px 玻璃条（作者实拍「头像下的暗条」）。
+ *      ②-c `#session-name:empty { display:none }` 收口，名字一到即恢复。
+ *
  * 铁律：本文件全部规则挂在 body.mobile-layer 之下 —— 该类只由 mobile/bootstrap.js
  * 在手机视口（≤768px，与既有 css/mobile.css 折叠点同源）激活。桌面窗口永远不
  * 命中任何一条规则（桌面渲染逐字节不变）；桌面对本文件的唯一感知是 index.html
