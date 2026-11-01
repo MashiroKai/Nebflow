@@ -68,6 +68,9 @@ import { attachQuoteMenu, nextChatMsgId } from './msgQuote.js';
 // footer 信息条族（手机端长按退役批 2026-10-31 作者令）：媒体行 footer 与文本
 // 消息底部信息条同族徽章（时间 + 常用操作），durationBadges 是唯一 builder。
 import { createMsgFooterBadge } from './chat/durationBadges.js';
+// Pop 交付卡 footer 批（作者令 2026-11-01 16:19）：行引用描述符的 senderName
+// 与 AI 文本行同源（rootName.js 叶子模块，零环风险）。
+import { rootDisplayName } from './rootName.js';
 
 export const POP_SENTINEL = '___POP_JSON___';
 
@@ -967,10 +970,23 @@ export function buildUserMediaRow(attachments, opts) {
   // footer 信息条（手机端长按退役批 2026-10-31 作者令）：与文本消息底部信息条
   // 同族 .duration-badge——时间 + 下载（常用操作），触屏触达不再依赖长按；
   // 引用钮由 mountQuoteFooterButton（attachQuoteMenu 的 rAF 收敛）挂进同一徽章。
-  // 下载键只在**单件行**挂：一枚键对叠卡/多文件里哪一件负责说不清，宁缺毋假
-  // （多件行 footer 仍带时间档 + 引用钮）。字节两腿（path / 内联 data:）皆缺
-  // ⇒ 不挂键（零假按钮；attachmentsSaved 补丁腿重渲后 path 到位即补挂）。
-  const single = items.length === 1 ? items[0] : null;
+  // 装配单点 = buildMediaRowFooterBadge（Pop 交付卡 footer 批 2026-11-01 起，
+  // 用户媒体行与 LLM Pop 行同一装配器——零第二套装配）。
+  const badge = buildMediaRowFooterBadge(items, ts);
+  if (badge) row.appendChild(badge);
+  return row;
+}
+
+/* ── footer 信息条装配单点（Pop 交付卡 footer 批 2026-11-01 作者令）─────────
+ * 用户媒体行（buildUserMediaRow）与 LLM Pop 交付行（buildPopArtifactRow）共用：
+ * 时间档 + 下载键，视觉逐字同族（.duration-badge / .duration-badge-divider /
+ * .msg-copy.msg-dl 全站既有规则，零新 CSS）。引用钮不在此装配——由
+ * attachQuoteMenu 的 rAF 收敛（mountQuoteFooterButton）挂进已入行的徽章。
+ * 下载键只在**单件行**挂：一枚键对叠卡/多文件里哪一件负责说不清，宁缺毋假
+ * （多件行 footer 仍带时间档）。字节两腿（path / 内联 data:）皆缺 ⇒ 不挂键
+ * （零假按钮；attachmentsSaved 补丁腿重渲后 path 到位即补挂）。 */
+function buildMediaRowFooterBadge(items, ts) {
+  const single = items && items.length === 1 ? items[0] : null;
   const badge = createMsgFooterBadge(ts, '');
   const dlBtn = createMediaDownloadButton(single);
   if (dlBtn) {
@@ -981,8 +997,7 @@ export function buildUserMediaRow(attachments, opts) {
     }
     badge.appendChild(dlBtn);
   }
-  if (badge.childElementCount > 0) row.appendChild(badge);
-  return row;
+  return badge.childElementCount > 0 ? badge : null;
 }
 
 /* ── footer 下载键（手机端长按退役批 2026-10-31）──────────────────────────
@@ -1120,12 +1135,22 @@ export function patchUserMediaRow(sessionId, saved) {
  * Build the artifact row for one Pop payload: media group (stack or flat) on
  * top, file cards under it, the failed-paths chip last. Returns null when the
  * payload carries no displayable item (callers keep the plain tool row).
+ *
+ * opts.ts = 所属工具消息时间戳（footer 信息条时间档；live 腿 Date.now() /
+ * 重放两腿 m.timestamp，0/缺席 ⇒ 无时间档——防御门）。footer/引用批（作者令
+ * 2026-11-01 16:19）：LLM Pop 交付行补与文件/图片消息同族的 footer 信息条——
+ * 时间档 + 下载键（单件行，装配单点 buildMediaRowFooterBadge）+ 引用钮
+ * （attachQuoteMenu 同一挂点，rAF 收敛进徽章；描述符 = 首项 kind/文件名/path，
+ * 全量 items 随带 ⇒ 引用块渲染缩略带，与用户媒体行同语义）。行挂自己的
+ * msgId（live nextChatMsgId；重放腿由调用方覆写为 historyMsgId(i)+'-pop'）——
+ * 引用寻址落卡行本体，不串到同轮的工具行。
  */
 /** The payload kinds that ride the MEDIA face (stack / flat); everything else
  *  is a file card. canvas-media Wave2 adds `audio` beside image/video. */
 const MEDIA_KINDS = new Set(['image', 'video', 'audio']);
 
-export function buildPopArtifactRow(payload) {
+export function buildPopArtifactRow(payload, opts) {
+  const ts = opts && Number(opts.ts) > 0 ? Number(opts.ts) : 0;
   const items = (payload.items || []).filter(it => it && typeof it.path === 'string');
   if (!items.length) return null;
   const media = items.filter(it => MEDIA_KINDS.has(it.kind));
@@ -1133,6 +1158,26 @@ export function buildPopArtifactRow(payload) {
 
   const row = document.createElement('div');
   row.className = 'row pop-artifact';
+  // quote-message 语义（Pop 交付卡 footer 批 2026-11-01）：行可引用 + footer
+  // 信息条引用钮。摘要 = [图片]/[文件] 首项文件名（§2.5 表，媒体行同款）；
+  // attachments 随带全量 items ⇒ 引用块缩略带与用户媒体行同构。
+  row.dataset.msgId = nextChatMsgId();
+  {
+    const first = items[0] || {};
+    const d = MEDIA_KINDS.has(first.kind)
+      ? { kind: 'image', fileName: first.name, path: first.path }
+      : { kind: 'file', fileName: first.name || (first.path || '').split('/').pop(), path: first.path };
+    attachQuoteMenu(row, {
+      ...d,
+      attachments: items.map(it => ({
+        type: MEDIA_KINDS.has(it.kind) && it.kind !== 'audio' ? it.kind : 'file',
+        name: it.name || (it.path || '').split('/').pop() || '',
+        path: it.path || '',
+        preview: (typeof it.src === 'string' && it.src.startsWith('data:')) ? it.src : undefined,
+      })),
+      senderRole: 'ai', senderName: rootDisplayName(), ts: ts || Date.now(),
+    });
+  }
   const group = document.createElement('div');
   group.className = 'pop-group';
   row.appendChild(group);
@@ -1153,6 +1198,10 @@ export function buildPopArtifactRow(payload) {
     warn.textContent = t('chat.popFailed', { n: Number(payload.fileRefs.failed) }) + (reasons ? ' — ' + reasons : '');
     group.appendChild(warn);
   }
+  // footer 信息条（作者令 2026-11-01 16:19）：与文件/图片消息同族徽章，装配
+  // 单点 buildMediaRowFooterBadge（用户媒体行同一装配器）。
+  const badge = buildMediaRowFooterBadge(items, ts);
+  if (badge) row.appendChild(badge);
   return row;
 }
 

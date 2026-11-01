@@ -4543,6 +4543,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    ═════════════════════════════════════════════════════════════════════════ */
 
 .row.pop-artifact { display: flex; justify-content: flex-start; margin: 8px 0 10px; }
+/* footer 信息条落位（Pop 交付卡 footer 批，作者令 2026-11-01 16:19）：LLM Pop 行
+   转**列向**——徽章（.duration-badge，buildPopArtifactRow 行尾追加）落卡片组下方、
+   左缘对齐（AI 行族同侧；用户侧 .row.user-media 经 .row.user 的 column+flex-end
+   本就列向+右对齐，:not(.user) 闸保证不触）。改前该行只有 .pop-group 一个子元素，
+   行/列向视觉逐字等价——本规则只服务于徽章落位，零既有面迁移。 */
+.row.pop-artifact:not(.user) { flex-direction: column; align-items: flex-start; }
 .pop-group {
   display: flex; flex-direction: column; align-items: flex-start;
   gap: 10px; min-width: 0;
