@@ -1,6 +1,6 @@
 # 贡献指南
 
-本指南面向为本仓库提交变更的开发者，覆盖环境准备、构建、测试与分支/提交/PR 规范。仓库当前为私有，不存在外部贡献流程。
+本指南面向为本仓库提交变更的开发者，覆盖环境准备、构建、测试与分支/提交/PR 规范。开发在内部 USTC Git 实例（`https://git.ustc.edu.cn/kaiyu/nebflow`）上进行，不接受外部 PR；GitHub 仓（`github.com/MashiroKai/Nebflow`）就地冻结为只读历史存档，不再接收推送、issue 与 PR。
 
 ## 环境准备
 
