@@ -41,7 +41,7 @@ related: "[[20261101_151034_ustc-cicd-migration-assessment__delegate-nebflow-7f8
 - 废 runner（101/102 未验证、103 token 已因 API 回显进上下文作废）：**PAT 缺 Runner 管理权限删不掉**（DELETE 404），留作者 UI（Settings→CI/CD→Runners）一键清。
 - Windows 二进制来源：S3 直连龟速（11KB/s）→ Mac 经 Clash 代理 26s 下完 → tailnet 单发传输（同一套一次性端点机制）。
 
-## 4. 站方新发现 + 自建 runner 实装踩坑（两条都是真的新知识）
+## 4. 站方新发现 + 自建 runner 实装踩坑（三条都是真的新知识）
 
 ### 4.1 校外 runner API 按 IP 门禁
 
@@ -57,6 +57,18 @@ related: "[[20261101_151034_ustc-cicd-migration-assessment__delegate-nebflow-7f8
 - **正解：`builds_dir = "builds"` / `cache_dir = "cache"`（相对形态，落 `C:\GitLab-Runner\builds`）** → 相对值 + `$PWD` 拼出合法路径，双腿真跑。
 - 附带坑：该机 PATH 里 Nebflow 客户端自带的 Cygwin bash 排在 Git Bash 之前（`bash --version` = `x86_64-pc-cygwin`），故 Startup 启动器与持久任务显式钉 `PATH=C:\Program Files\Git\usr\bin;...` + `JAVA_HOME=jdk-21.0.11.10-hotspot`（Startup 自启环境没有 JDK，不加则 sbt 起不来）。
 
+### 4.3 shell executor + 仓内缓存的三连击：长路径删除失败 / 冷缓存出网抖动 / runner 被前台命令带走
+
+全量面首跑（pipeline 8507，合并后 main push 触发）暴露三处**基础设施级**（非代码级）红，逐条实证并修：
+
+1. **Windows get_sources 长路径红**：`compile-windows` 60s 速红，日志无编译痕迹，实为 get_sources 末尾 `git clean -ffdx` 删仓内 coursier 缓存时 `Filename too long`（`…/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar` >260 字符）→ clean 非零退出 → job 红。8506 当时缓存还没长到那个深度，故偶然绿。
+   - 修：宿主侧 `git config --global core.longPaths true`（进程 HOME 不确定，故同时写 `C:/Users/PC/.gitconfig` 与 build 仓 repo 级 config——repo 级是决定性那条，git clean 在仓内执行）；系统级 `C:\Program Files\Git\etc\gitconfig` 需 admin，被拒，交由 repo 级兜底。
+   - 更根本的修（进 yml）：`GIT_CLEAN_FLAGS: "-ffdx -e .cache"` —— 不让 clean 碰仓内缓存目录，长路径删除面直接消失。
+2. **冷缓存 + 出网抖动 = 依赖解析红**：`compile-mac` 32s 速红，`sbt update` 报 `SSLHandshakeException (Remote host terminated the handshake)` 下载 `repo1.maven.org/…/jawn-fs2_3-2.4.0.pom`。当场复测阿里云与 repo1 双双 200 → 瞬时抖动，非配置错。
+   - 修①（性能面同源）：保留 `.cache` 不删 = 依赖缓存跨 job 恒热，正常轮次零下载。
+   - 修②（韧性面）：compile 双腿 `retry: {max: 1, when: [script_failure]}`——出网抖一次即重试；真编译错照旧二次红，不掩盖内容问题。
+3. **runner 别用前台/限时命令托管**：Windows runner 早期由一条一次性远程命令起，1 小时上限到点即被杀，正在跑的 job 变孤儿（服务端仍显 running 直到 job 超时）。处置：改用 Nebflow **持久任务**（`persistent: true`，超时/空闲守卫豁免）托跑 + Startup 文件夹兜底；孤儿 job 手动 cancel 后由下一轮 pipeline 复验。
+
 ## 5. pipeline 存证（compile 级达标）
 
 | pipeline | sha | 结论 |
@@ -65,6 +77,7 @@ related: "[[20261101_151034_ustc-cicd-migration-assessment__delegate-nebflow-7f8
 | 8493 | fa856ebfd | 双腿红：mac 腿 `17 is not a valid choice for -java-output-version`（JVM 落 1.8）；windows 腿 `.tmp` 路径双拼 |
 | 8494/8496/8499/8501/8502/8503/8504/8505 | fa856ebfd | 修复取证链（JAVA_HOME 移段、builds_dir 两形态、FF_USE_LEGACY_SHELL、runner 17.8、CWD 判别、Cygwin 剥离）——每轮一条红证 |
 | **8506** | **fa856ebfd** | **success ✓ compile-mac 398s（runner#100）+ compile-windows 441s（runner#104）**，https://git.ustc.edu.cn/kaiyu/stand/-/pipelines/8506 |
+| 8507 | 6d964ba67（合并 main 后 push 触发，全量面首跑） | 基础设施级红三枚（见 §4.3：windows 长路径 clean / mac 冷缓存 TLS 抖动 / runner 被杀）+ 存量内容门禁红（见 §6.6）——yml 加固后交下一轮复验 |
 
 - 触发面：分支 push 走 compile 最小面（按设计）；后续各轮用 `POST /pipeline?ref=` 触发，顺带验证 workflow `web` 源规则（= 原 workflow_dispatch 等价物）。
 - 修复后 windows 腿实跑证据：get_sources → `Initialized empty Git repository in C:/gitlab-runner/builds/VMj_fNn_d/0/kaiyu/stand/.git/`（相对 builds_dir 拼出合法路径）→ sbt bootstrap → compile 441s 绿。
@@ -76,7 +89,11 @@ related: "[[20261101_151034_ustc-cicd-migration-assessment__delegate-nebflow-7f8
 3. windows 机 node 未装：smoke 腿（全量面）需先装 node。
 4. windows 机 runner 的 admin 服务安装（`gitlab-runner install`）：现走 Startup 文件夹 + Nebflow 持久任务托跑，admin 一次到位更稳。
 5. 站方问询清单（评估报告 §4）追加一条：runner API 校外 IP 豁免。
-6. 存量内容门禁红（lint scalafmt / dead-logging / user-knowledge / circular / test）仍在全量面待清——本批按设计隔离在最小面之外。
+6. 存量内容门禁红——**main 全量面首跑（8507）实测清单**（本批 diff 只有 `.gitlab-ci.yml` + README/CONTRIBUTING×2 + 本文件，以下文件一个没碰，属既有内容债，需各自批次清）：
+   - `js-types` → circular-deps：SCC[3] `popArtifacts.js ↔ reference.js ↔ msgQuote.js`；SCC[2] `mobile/navController.js ↔ mobile/taskPanel.js`
+   - `lint` → scalafmt：`src/main/scala/nebflow/perception/PerceptionService.scala:1084`（`if exists then try … catch case _: Throwable => 0L else 0L` 在 scala3 方言下解析歧义）+ `src/test/scala/nebflow/gateway/PerceptionDaemonLifecycleSpec.scala:62`（`(000, "")` 前导零），另 `GatewaySessionStorePersistSpec` / `AssetsRoutesSpec` / `UploadsRoutesSpec` 未格式化
+   - `dead-logging-gate`（纯表达式位包了 IO 包装）/ `user-knowledge-gate`（个人路径·API key 类命中）/ `legacy-domain-gate`（`docs/20261031_074500_login-expiry-singleflight__delegate-nebflow-25c36738.md` 正文引 `nebflow.space` 比白名单更宽）
+   - 处置纪律：**不放宽白名单、不静默扩 whitelist**——按各门禁自己的提示逐条修；修完 main 全量面自然转绿。
 
 ## 7. 密钥纪律执行记录
 
