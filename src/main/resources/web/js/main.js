@@ -174,6 +174,12 @@ import { updateBgAgentIndicator, bgAgentKindFromSession, renderBgAgentDropdown, 
 // uifix 批（2026-10-22 作者令「附件放在对话框上面，不要遮挡文字」）：附件条 in-flow
 // 独立行的溢出折叠腿（+N 收展）—— 桌面/手机层共用单点，桌面启动即挂观察链（幂等）。
 import { watchAttachmentStrip } from './attachStripFold.js';
+// R1 门面化（2026-11-02）：下游反适配脚本的公开扩展面。模块副作用 = 装配
+// window.__nfAdaptApi（镜像内 ui/js/nf-adapt.js 跑在 bundle 之外、产物树没有
+// js/ 目录 ⇒ 它只能读 window，不能相对 import）。尾部位置：所有被发布的符号
+// 模块都先于本文件求值。写完即被 esbuild 视为有副作用的入口成员（bare import
+// 不会被摇掉——产物 grep `__nfAdaptApi` 可验）。
+import './nfAdaptApi.js';
 
 // Friends release gating latch (2026-09-08): false until the first configData
 // of the boot decides the flag (see the configData handler below).
@@ -2465,9 +2471,10 @@ onMessage('agentDone', (msg, view) => {
 
 // --- Session switch → explorer / task list refresh ---
 window.addEventListener('nebflow-session-change', (e) => {
-  refreshExplorer(e.detail.sessionId);
-  refreshScheduledTasks(e.detail.sessionId);
-  if (e.detail.sessionId) sendWs({ type: 'getTaskList', sessionId: e.detail.sessionId });
+  const { sessionId } = /** @type {CustomEvent<{sessionId: string}>} */ (e).detail;
+  refreshExplorer(sessionId);
+  refreshScheduledTasks(sessionId);
+  if (sessionId) sendWs({ type: 'getTaskList', sessionId });
   // ⑩ the frozen input-bar visual follows the newly activated session.
   applyLocalFreeze();
 });
@@ -2772,7 +2779,7 @@ onMessage('configData', (msg, view) => {
     if (wikiGraphEnabled()) enableWikiGraphEntry();
   }
   const editor = document.getElementById('config-editor');
-  if (editor) editor.value = state.configText;
+  if (editor) (/** @type {HTMLTextAreaElement} */ (editor)).value = state.configText;
   // Re-render settings if the modal is open
   const settingsOverlay = document.getElementById('settings-overlay');
   if (settingsOverlay && settingsOverlay.classList.contains('on')) {
@@ -3875,7 +3882,7 @@ onMessage('forkComplete', (msg, view) => {
     for (const sel of overlays) {
       const el = document.querySelector(sel);
       if (el && getComputedStyle(el).display !== 'none') {
-        el.click();
+        (/** @type {HTMLElement} */ (el)).click();
         e.preventDefault();
         e.stopPropagation();
         return;
@@ -4408,7 +4415,7 @@ initDropbox();
     }
     // Highlight active option in dropdown
     document.querySelectorAll('#bypass-menu button').forEach(b => {
-      b.classList.toggle('active', b.dataset.mode === mode);
+      b.classList.toggle('active', (/** @type {HTMLElement} */ (b)).dataset.mode === mode);
     });
   };
 
@@ -4461,7 +4468,7 @@ initDropbox();
     });
     // Close dropdown on outside click
     document.addEventListener('mousedown', (e) => {
-      if (!menu.contains(e.target) && e.target !== btn) {
+      if (!menu.contains(/** @type {Node} */ (e.target)) && e.target !== btn) {
         menu.classList.remove('show');
       }
     }, true);

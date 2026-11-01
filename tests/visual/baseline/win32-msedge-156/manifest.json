@@ -1,0 +1,158 @@
+{
+  "generatedBy": "scripts/visual-baseline.mjs --update",
+  "generatedAt": "2026-11-01T08:06:42.858Z",
+  "platform": "win32-msedge-156",
+  "browser": {
+    "label": "msedge-156",
+    "version": "156.0.4314.42"
+  },
+  "viewport": {
+    "deviceScaleFactor": 1
+  },
+  "tolerance": 0,
+  "maxRatio": 0,
+  "entries": [
+    {
+      "tag": "app-empty-dark",
+      "scenario": "app-empty",
+      "theme": "dark",
+      "bytes": 58301,
+      "at": "2026-11-01T08:06:19.018Z",
+      "ms": 1405,
+      "mask": [
+        ".mic-orb-wrap",
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "app-empty-light",
+      "scenario": "app-empty",
+      "theme": "light",
+      "bytes": 53674,
+      "at": "2026-11-01T08:06:20.094Z",
+      "ms": 1076,
+      "mask": [
+        ".mic-orb-wrap",
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "chat-messages-dark",
+      "scenario": "chat-messages",
+      "theme": "dark",
+      "bytes": 90465,
+      "at": "2026-11-01T08:06:21.209Z",
+      "ms": 1113,
+      "mask": [
+        ".mic-orb-wrap",
+        ".mic-orb-wrap",
+        ".msg-time",
+        "[data-relative-time]"
+      ]
+    },
+    {
+      "tag": "chat-messages-light",
+      "scenario": "chat-messages",
+      "theme": "light",
+      "bytes": 86288,
+      "at": "2026-11-01T08:06:22.313Z",
+      "ms": 1104,
+      "mask": [
+        ".mic-orb-wrap",
+        ".mic-orb-wrap",
+        ".msg-time",
+        "[data-relative-time]"
+      ]
+    },
+    {
+      "tag": "settings-llm-empty-dark",
+      "scenario": "settings-llm-empty",
+      "theme": "dark",
+      "bytes": 108748,
+      "at": "2026-11-01T08:06:24.802Z",
+      "ms": 2489,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "settings-llm-empty-light",
+      "scenario": "settings-llm-empty",
+      "theme": "light",
+      "bytes": 101806,
+      "at": "2026-11-01T08:06:27.266Z",
+      "ms": 2462,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "bgtask-panel-dark",
+      "scenario": "bgtask-panel",
+      "theme": "dark",
+      "bytes": 12106,
+      "at": "2026-11-01T08:06:29.093Z",
+      "ms": 1827,
+      "mask": [
+        ".mic-orb-wrap",
+        ".bg-task-uptime"
+      ]
+    },
+    {
+      "tag": "bgtask-panel-light",
+      "scenario": "bgtask-panel",
+      "theme": "light",
+      "bytes": 11552,
+      "at": "2026-11-01T08:06:30.868Z",
+      "ms": 1773,
+      "mask": [
+        ".mic-orb-wrap",
+        ".bg-task-uptime"
+      ]
+    },
+    {
+      "tag": "canvas-markdown-tab-dark",
+      "scenario": "canvas-markdown-tab",
+      "theme": "dark",
+      "bytes": 44614,
+      "at": "2026-11-01T08:06:33.272Z",
+      "ms": 2403,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-markdown-tab-light",
+      "scenario": "canvas-markdown-tab",
+      "theme": "light",
+      "bytes": 41999,
+      "at": "2026-11-01T08:06:35.708Z",
+      "ms": 2435,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-code-tab-dark",
+      "scenario": "canvas-code-tab",
+      "theme": "dark",
+      "bytes": 42816,
+      "at": "2026-11-01T08:06:39.181Z",
+      "ms": 3473,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-code-tab-light",
+      "scenario": "canvas-code-tab",
+      "theme": "light",
+      "bytes": 40643,
+      "at": "2026-11-01T08:06:42.651Z",
+      "ms": 3470,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    }
+  ]
+}

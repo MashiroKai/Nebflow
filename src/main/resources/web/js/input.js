@@ -854,7 +854,7 @@ function refreshQueue(sessionId) {
 
 // Re-render queue bar when user switches to a different session
 window.addEventListener('queuebar-refresh', (e) => {
-  refreshQueue(e.detail.sessionId);
+  refreshQueue(/** @type {CustomEvent<{sessionId: string}>} */ (e).detail.sessionId);
 });
 
 function queueMessage(view, text, attachments, skillName, mode, extra) {
@@ -1862,7 +1862,7 @@ export function initInput(view) {
     f.style.display = 'none';
     document.body.appendChild(f);
     f.onchange = (e) => {
-      const files = Array.from(e.target.files);
+      const files = Array.from(/** @type {HTMLInputElement} */ (e.target).files);
       files.forEach(file => addFileAttachment(file));
       f.remove();
     };

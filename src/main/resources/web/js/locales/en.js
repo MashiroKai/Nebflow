@@ -2140,6 +2140,10 @@ export default {
   // logout/loggingOut/useOtherAccount/currentTag) is removed with the two buttons —
   // sign-out and account switching live on the website portal only.
   'neblink.loggedInAs': 'Signed in as: {name}',
+  // Sign-out key (2026-11 "no way out" fix batch, author ruling "fix only the
+  // sign-out"): shared by the settings account secondary key and the avatar
+  // menu item. Account switching still lives on the website portal only.
+  'neblink.logout': 'Sign out',
 
   // Dropbox
   'dropbox.tabChat': 'Chat',

@@ -513,7 +513,7 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   updateFooterStatus(entry);
 
   popupOverlay.addEventListener('click', (e) => {
-    if (e.target === popupOverlay || e.target.id === 'flow-agent-close') closeStepPopup();
+    if (e.target === popupOverlay || (/** @type {Element} */ (e.target)).id === 'flow-agent-close') closeStepPopup();
   });
 
   // Auto-scroll / follow-intent latch. B4 (2026-10-04): the follow decision is

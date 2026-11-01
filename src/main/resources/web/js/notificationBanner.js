@@ -8,9 +8,9 @@ import { statusIcon } from './utils.js';
 let notificationIdCounter = 0;
 
 /** Add a notification to the persistent banner.
- *  @param type  'skill' | 'reminder'
- *  @param text  Notification message text
- *  @param opts  { dismissAfter: ms (0 = no auto-dismiss) }
+ *  @param {string} type  family tag — 'skill' | 'reminder' | 'task' | 'conn' | 'device-mail' (styling + dedup key, values are open)
+ *  @param {string} text  Notification message text
+ *  @param {{ dismissAfter?: number }} [opts]  auto-dismiss delay in ms (0 = never)
  */
 export function addNotification(type, text, opts = {}) {
   const id = 'notif-' + (++notificationIdCounter);
@@ -86,7 +86,7 @@ function renderNotifications() {
   banner.querySelectorAll('.notif-close').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        dismissNotification(btn.dataset.id);
+        dismissNotification((/** @type {HTMLElement} */ (btn)).dataset.id);
       });
     });
 }

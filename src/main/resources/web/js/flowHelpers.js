@@ -16,7 +16,7 @@ export function authHeaders() {
 export function fmtTime(ts) {
   if (!ts) return '';
   const d = new Date(ts);
-  if (isNaN(d)) return '';
+  if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleString();
 }
 
@@ -63,7 +63,7 @@ export function overlayRoot() {
     || document.querySelector('.canvas-tab-pane[data-tab-id="teams"]')
     || document.querySelector('.canvas-tab-pane[data-tab-id="flows"]');
   if (candidate) {
-    let root = candidate.querySelector('#flow-overlay-root');
+    let root = /** @type {HTMLElement|null} */ (candidate.querySelector('#flow-overlay-root'));
     if (!root) {
       root = document.createElement('div');
       root.id = 'flow-overlay-root';

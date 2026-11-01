@@ -158,7 +158,7 @@ export function updateSlashDropdown() {
     if (deleteHtml) {
       const delBtn = div.querySelector('.slash-delete');
       if (delBtn) {
-        delBtn.onclick = (e) => {
+        (/** @type {HTMLElement} */ (delBtn)).onclick = (e) => {
           e.stopPropagation();
           handleDeleteSkill(item.skillName);
         };

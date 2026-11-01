@@ -617,6 +617,7 @@ function renderEpubReader(pane, chapters, tocEntries, bookTitle, opts) {
   /** 章纯文本缓存（标注定位/回渲用，懒算）。 */
   const chapterTextCache = new Map();
 
+  /** @type {Parameters<typeof mountReader>[1]} 正文适配器（形由 readerChrome.mountReader 定） */
   const adapter = {
     title: bookTitle,
     chapterCount: chapters.length,
@@ -637,6 +638,7 @@ function renderEpubReader(pane, chapters, tocEntries, bookTitle, opts) {
         return text;
       },
     },
+    /** @param {HTMLElement} el @param {number} i */
     mountChapter(el, i) {
       const chapter = chapters[i];
       if (!chapter) return;
@@ -653,6 +655,7 @@ function renderEpubReader(pane, chapters, tocEntries, bookTitle, opts) {
       }
       currentContentEl = el;
     },
+    /** @param {number} i */
     onChapterChanged(i) {
       const chapter = chapters[i];
       // 缺失资源一次性 toast（可见降级纪律：不阻塞渲染，N = 该章 miss 计数）
@@ -660,6 +663,7 @@ function renderEpubReader(pane, chapters, tocEntries, bookTitle, opts) {
         window.__showToast(t('epub.resMissing', { count: chapter.missCount }), 'info');
       }
     },
+    /** @param {number} _i @param {string} anchor */
     anchorScrollTop(_i, anchor) {
       if (!anchor || !currentContentEl) return null;
       let target = null;

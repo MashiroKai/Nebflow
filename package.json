@@ -3,7 +3,10 @@
   "private": true,
   "description": "Nebflow web frontend build tooling (P1 esbuild pipeline). Runtime is vanilla JS served from src/main/resources/web; this package exists ONLY for the production bundle build (scripts/build-web.mjs) and the checkJs type gate (scripts/check-js-types.mjs). Dev workflow: run `npm install` once so scripts resolve esbuild + typescript locally.",
   "scripts": {
-    "build": "node scripts/build-web.mjs"
+    "build": "node scripts/build-web.mjs",
+    "visual:baseline": "node scripts/visual-baseline.mjs --update",
+    "visual:check": "node scripts/visual-baseline.mjs --check",
+    "visual:list": "node scripts/visual-baseline.mjs --list"
   },
   "devDependencies": {
     "esbuild": "0.25.9",
