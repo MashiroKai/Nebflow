@@ -2532,6 +2532,16 @@ export default {
   'plugins.builtinBadge': 'built-in',
   'plugins.builtinTitle': 'Built-in agent: defined in code (BuiltinAgents); the panel is read-only',
   'plugins.detail': 'Details',
+  // Source-managed plugins (2026-11-01 source batch: "runtime plugins should hot-update").
+  // Rendered only for packages that carry a source declaration — seed packages are unchanged.
+  'plugins.sourceLabel': 'Source {source} · v{version} · {state}',
+  'plugins.sourceCurrent': 'up to date',
+  'plugins.sourceOutdated': 'update available',
+  'plugins.sourceUnreachable': 'source unreachable, keeping the local version',
+  'plugins.sourceNotInstalled': 'not installed',
+  'plugins.sourceUpdate': 'Update',
+  'plugins.sourceUpdateTitle': 'Pull and activate: v{from} → v{to} (zero restart; the local version stays if this fails)',
+  'plugins.sourceUpdated': '{name} updated',
   'explorer.loading': 'Loading...',
   'explorer.empty': 'Empty',
   'flowViewers.saving': 'Saving…',

@@ -2446,6 +2446,16 @@ export default {
   'plugins.builtinBadge': '内置',
   'plugins.builtinTitle': '内置 agent：定义在代码中（BuiltinAgents），面板只读',
   'plugins.detail': '详情',
+  // 源化插件（2026-11-01 源化批，作者令「运行时插件要能热更新、立即用最新版本」）：
+  // 面板每卡的「来源 + 版本」行与「更新」钮。仅对**有源声明**的包渲染（seed 包零变化）。
+  'plugins.sourceLabel': '来源 {source} · v{version} · {state}',
+  'plugins.sourceCurrent': '已是最新',
+  'plugins.sourceOutdated': '有新版本',
+  'plugins.sourceUnreachable': '远端不可达，保持本地版本',
+  'plugins.sourceNotInstalled': '未安装',
+  'plugins.sourceUpdate': '更新',
+  'plugins.sourceUpdateTitle': '拉取并生效：v{from} → v{to}（零重启；失败则本地版本不变）',
+  'plugins.sourceUpdated': '{name} 已更新',
   'explorer.loading': '加载中...',
   'explorer.empty': '空',
   'flowViewers.saving': '保存中…',

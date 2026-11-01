@@ -203,6 +203,31 @@ async function fetchPluginRegistry() {
   return resp.json();
 }
 
+/** GET /api/plugins/updates — **源化插件的更新面**（作者令 2026-11-01 22:55「运行时插件
+ *  不是应该要能热更新吗，立即使用我们最新的版本」）。
+ *  Response: { sources: [{name, state, kind, source, installedVersion, installedCommit,
+ *             remoteVersion, remoteCommit, updateAvailable, checkedAt, detail}], updatable }
+ *
+ *  **只在面板整页渲染（打开/切回/手动刷新）时拉一次**——每包一次 ls-remote + 浅克隆，
+ *  绝不进 6s 轮询（PLUGINS_POLL_MS 那一拍只读本地注册表）。失败**不抛**：更新面是
+ *  增量可见性，取不到 = 本页不显示来源行（注册表主体照常呈现，零静默降级到底线之上）。 */
+async function fetchPluginUpdates() {
+  try {
+    const resp = await api('/api/plugins/updates');
+    if (!resp.ok) return { sources: [], updatable: 0, error: `HTTP ${resp.status}` };
+    return await resp.json();
+  } catch (e) {
+    return { sources: [], updatable: 0, error: String(e?.message || e) };
+  }
+}
+
+/** Index the update payload by package name (cards look themselves up). */
+function updatesByName(payload) {
+  const map = new Map();
+  for (const s of (payload?.sources || [])) map.set(s.name, s);
+  return map;
+}
+
 /** Classify a manifest's CONTENT state — 2026-10-21 作者令④：「变更」提示退役后
  *  本页唯一内容态 = blocked（面板 change 提示逻辑整体退役；payload 的
  *  `contentChanged` 字段仍在契约里，本页不再消费）。
@@ -280,10 +305,16 @@ function dispatchState(manifest, blocked) {
  * Load everything the page needs in one pass.
  * （2026-10-21 作者令①「只看纯插件」：agents 枚举整段退役——本页数据面只剩
  *  插件注册表一个端点。）
- * @returns {Promise<{registry: object}>}
+ * （2026-11-01 源化批：+ 更新面 `/api/plugins/updates`——**用户驱动的单次拉取**，
+ *  与注册表并行发起；更新面失败只降级「来源行不显示」，注册表主体照常渲染。）
+ * @returns {Promise<{registry: object, updates: object}>}
  */
 async function loadPluginsData() {
-  return { registry: await fetchPluginRegistry() };
+  const [registry, updates] = await Promise.all([
+    fetchPluginRegistry(),
+    fetchPluginUpdates(),
+  ]);
+  return { registry, updates };
 }
 
 // ── Rendering ──────────────────────────────────────────────
@@ -407,7 +438,42 @@ const ITEM_CHEVRON_SVG = '<svg class="plugins-item-chevron" width="14" height="1
  *     直接呈现（2026-10-07 前的面板形态见 git 历史）。
  *  🔴 旧「skill 条目内联渲染」（`.plugins-skill-item` 族 + `.plugins-skill-preview`）
  *     随 2026-10-21 作者令⑥退场——skills 改胶囊深链（见上 [data-skill-doc]）。 */
-function renderPluginCard(manifest) {
+/** 源化插件的「来源 + 版本」行（作者令 2026-11-01 22:55：面板要显示当前版本与源、
+ *  有新版本时提示、并给一个用户驱动的更新动作）。
+ *  只在 `updates.sources` 里出现过的包渲染本行（seed 分发的包 = 无源声明 ⇒ 零变化，
+ *  面板文案与旧版逐字节一致）；三种态各自的可见形状：
+ *    • `current`      「来源: <src> · v1.2.0（已是最新）」——无按钮
+ *    • `outdated`     「来源: <src> · v1.1.0 → v1.2.0」+「更新」按钮（[data-plugin-update]）
+ *    • `unreachable`  「来源: <src> · v1.1.0（远端不可达，保持本地版本）」+ detail 原因
+ *                     ——**可行动**信号（检查源/网络），不是把包标成坏了：包照常在位。
+ *    • `not-installed`「来源: <src> · 未安装」+「更新」按钮（= 首次安装腿）
+ *  数据全部来自 `GET /api/plugins/updates`（payload 形状在 `fetchPluginUpdates` 注释里）；
+ *  🔴 文案走 locale 键，禁在 JS 里写死中文。 */
+function sourceRowHtml(name, updates) {
+  const st = updates?.get?.(name);
+  if (!st) return '';
+  const ver = st.remoteVersion && st.remoteVersion !== st.installedVersion
+    ? `${st.installedVersion || '—'} → ${st.remoteVersion}`
+    : (st.installedVersion || st.remoteVersion || '—');
+  const stateText = {
+    current: t('plugins.sourceCurrent'),
+    outdated: t('plugins.sourceOutdated'),
+    unreachable: t('plugins.sourceUnreachable'),
+    'not-installed': t('plugins.sourceNotInstalled'),
+  }[st.state] || '';
+  const action = st.updateAvailable
+    ? `<button type="button" class="plugins-item-update" data-plugin-update="${esc(name)}"
+         title="${esc(t('plugins.sourceUpdateTitle', { from: st.installedVersion || '—', to: st.remoteVersion || '—' }))}">
+         ${statusIcon('arrow-down-circle', 12, '')}${esc(t('plugins.sourceUpdate'))}</button>`
+    : '';
+  return `<div class="plugins-source-row" data-plugin-source="${esc(name)}" data-source-state="${esc(st.state)}">
+    <span class="plugins-source-text">${esc(t('plugins.sourceLabel', { source: st.source || '—', version: ver, state: stateText }))}</span>
+    ${action}
+    <span class="plugins-source-detail"${st.state === 'unreachable' ? '' : ' hidden'}>${esc(st.detail || '')}</span>
+  </div>`;
+}
+
+function renderPluginCard(manifest, updates) {
   const status = pluginStatus(manifest);
   const disp = dispatchState(manifest, status.blocked);
   const pill = pillOf(status);
@@ -447,6 +513,7 @@ function renderPluginCard(manifest) {
       <div class="plugins-dispatch-note"${disp.note ? '' : ' hidden'}>${esc(disp.note)}</div>
       ${status.blocked ? `<div class="plugins-card-hint blocked">${esc(t('plugins.blockedHint'))}</div>` : ''}
       ${composition ? `<div class="plugins-card-composition">${composition}</div>` : ''}
+      ${sourceRowHtml(name, updates)}
       <button type="button" class="plugins-item-doc" data-plugin-doc="${esc(name)}" hidden>${statusIcon('file-text', 12, '')}Plugin.md</button>
       <div class="plugins-item-actions">
         <span class="plugins-card-dispatch">
@@ -519,11 +586,12 @@ export function renderPlugins() {
   if (!content) return;
   content.innerHTML = `<div class="plugins-loading">${esc(t('plugins.loading'))}</div>`;
 
-  loadPluginsData().then(async ({ registry }) => {
+  loadPluginsData().then(async ({ registry, updates }) => {
     if (!content.isConnected) return; // tab closed while fetching
 
     const plugins = (registry.plugins || []).slice().sort((a, b) => a.name.localeCompare(b.name));
     const rejected = (registry.rejected || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+    const updateMap = updatesByName(updates);
 
     // 纯插件视角（2026-10-21 作者令①）：单一插件区块；顶部统计 = skill + MCP 口径。
     const listHtml = `
@@ -531,7 +599,7 @@ export function renderPlugins() {
         <div class="plugins-section-title">${esc(t('plugins.list'))}</div>
         <div class="plugins-section-hint">${esc(t('plugins.listHint'))}</div>
         <div class="plugins-card-list">${(plugins.length || rejected.length)
-          ? plugins.map(renderPluginCard).join('') + rejected.map(renderRejectedCard).join('')
+          ? plugins.map(p => renderPluginCard(p, updateMap)).join('') + rejected.map(renderRejectedCard).join('')
           : `<span class="plugins-none">${esc(t('plugins.empty'))}</span>`}</div>
       </div>`;
 
@@ -670,6 +738,34 @@ async function uninstallPlugin(name, deleteDir) {
     renderPlugins(); // 出册 = 注册表不可见；重渲即消失（轮询收敛同样会摘卡）
   } catch (e) {
     window.__showToast?.(String(e?.message || e), 'error');
+  }
+}
+
+// ── Source update（2026-11-01 源化批，作者令「立即使用我们最新的版本」）────────
+// 面板上的第二个真动作（第一个 = 派发开关）：把「远端源上的最新版本」拉到本机并
+// **零重启生效**（引擎侧装载读面是 mtime 缓存，换装后下一条读命令即见新内容）。
+// 语义边界（与卸载/开关同族垂直分工）：
+//   • 只对**有源声明**的包在位（`GET /api/plugins/updates` 列出的那些）；seed 分发的
+//     包没有源行，也就没有本钮——面板对它们逐字节零变化。
+//   • 失败（远端不可达 / 分支不存在 / 布局不符）⇒ 引擎侧**原子换装**保证在位版本零
+//     变化；本函数只 toast 原始错误（F1 纪律），不需要任何 UI 回滚。
+//   • 成功后整页重渲：版本号（→ 前后对比）、来源行状态、审计都在引擎侧，前端不猜。
+
+/** POST /api/plugins/:name/source/update → toast + 整页重渲。 */
+async function runPluginUpdate(name) {
+  try {
+    const resp = await api(`/api/plugins/${encodeURIComponent(name)}/source/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok || body.error) throw new Error(body.error || `HTTP ${resp.status}`);
+    window.__showToast?.(body.message || t('plugins.sourceUpdated', { name }), 'success');
+    renderPlugins(); // 版本号/来源行随注册表 + 更新面刷新
+  } catch (e) {
+    window.__showToast?.(String(e?.message || e), 'error');
+    renderPlugins(); // 重新拉一次更新面（远端态可能刚变化）；在位版本由引擎保证未动
   }
 }
 
@@ -991,6 +1087,8 @@ async function openSkillDoc(pluginName, skillId) {
  *  accordion toggle。） */
 const boundDispatchSwitches = new WeakSet();
 const boundItemRows = new WeakSet();
+/** 源化插件「更新」钮的绑定台账（2026-11-01 源化批；与上面两个 WeakSet 同款纪律）。 */
+const boundUpdateButtons = new WeakSet();
 
 function bindCardEvents(card) {
   // 条目行 accordion（2026-10-07 条目式批）：点击/Enter/Space 展开⇄收回详情区，
@@ -1029,6 +1127,20 @@ function bindCardEvents(card) {
     });
     dsw.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
+    });
+  }
+  // 源化插件的「更新」钮（作者令 2026-11-01 22:55）：POST /api/plugins/:name/source/update
+  // → 成功后整页重渲（版本号/来源行随注册表 + 更新面刷新，用户直接看到 → 后的版本）。
+  // 失败 toast 原始错误（F1「零静默、可行动」同族）——最常见的失败就是远端不可达，
+  // 此时**不会有任何落盘变化**（原子换装），所以报错即可、无需回滚 UI。
+  const upd = card.querySelector('[data-plugin-update]');
+  if (upd && !boundUpdateButtons.has(upd)) {
+    boundUpdateButtons.add(upd);
+    upd.addEventListener('click', (e) => {
+      e.stopPropagation(); // 详情区控件：冒泡不得翻整行 accordion
+      if (upd.disabled) return;
+      upd.disabled = true; // in-flight guard（拉取可能数十秒）
+      runPluginUpdate(upd.getAttribute('data-plugin-update') || '');
     });
   }
   // skill 胶囊（2026-10-21 作者令⑥）：点击取 SKILL.md 进 Canvas（浅绑定即可——

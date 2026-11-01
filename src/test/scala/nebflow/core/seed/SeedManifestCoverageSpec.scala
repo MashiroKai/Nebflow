@@ -55,12 +55,17 @@ class SeedManifestCoverageSpec extends FunSuite:
    * 作者裁定 2026-10-05 方案A：锚点 4→7 追认现状（09-26 restores / 10-03 定形）。
    * 2026-10-31「开发插件统一批」：`nebflow-plugin-creator` 并入 `stand-dev`（六开发包合并，
    * 能力零丢失），默认集条目同名替换——集合大小与语义不变。
+   *
+   * **2026-11-01 源化批（作者令「stand-dev 插件应该不进 seed 吧？运行时插件不是应该要能
+   * 热更新吗」）**：`stand-dev` 迁出 seed（7 → 6）——自研插件走**远端源**
+   * （`PluginSourceCatalog.Builtins`，git@git.ustc.edu.cn:kaiyu/stand-dev.git）由
+   * `PluginSourceSync.selfHeal()` 在 boot 期按需拉取，不再随引擎分发。判据不变：本锚点
+   * 仍是**精确集合相等**，只是面积收缩一条；「自研包不得进 seed」由下方 K9-d 单独钉死。
    */
   private val ExpectedDefaultPlugins: Set[String] =
     Set(
       "slideblocks",
       "visual-report",
-      "stand-dev",
       "web-search-toolkit",
       "browser-use",
       "computer-use",
@@ -154,9 +159,9 @@ class SeedManifestCoverageSpec extends FunSuite:
         malformed.mkString(", ")
     )
 
-  // ── c. 默认预装集恰为七条（写死锚点）────────────────────────
+  // ── c. 默认预装集恰为六条（写死锚点）────────────────────────
   test(
-    "K9-c: default preinstall set is exactly {slideblocks, visual-report, stand-dev, web-search-toolkit, browser-use, computer-use, document-production}"
+    "K9-c: default preinstall set is exactly {slideblocks, visual-report, web-search-toolkit, browser-use, computer-use, document-production}"
   ):
     val declared = declaredPluginNames()
     val added = (declared -- ExpectedDefaultPlugins).toList.sorted
@@ -170,6 +175,42 @@ class SeedManifestCoverageSpec extends FunSuite:
         s"missing: ${if removed.isEmpty then "∅" else removed.mkString(", ")}). " +
         "manifest items = 默认预装/播种集（fresh home 预装面 + reconcile 迭代面）；" +
         "增删条目会直接改变新装 home 与既有 home 的默认插件面积——改动前需作者裁定。"
+    )
+
+  // ── d. 自研插件（源化）不得进 seed 树 / manifest（2026-11-01 源化批）──
+  /**
+   * 作者令 2026-11-01 22:55「stand-dev 插件应该不进 seed 吧？运行时插件不是应该要能热更新吗」。
+   * 本规则把判定**机械钉死**：`PluginSourceCatalog.Builtins`（自研、来源在我们自己的仓）
+   * 里的任何包名，都不得出现在 `seed/manifest.json` 或 `seed/plugins/` 资源树里。
+   *
+   * 为什么必须是一条断言而不是注释：两套分发面并存时会立刻产生「谁覆盖谁」的仲裁问题
+   * （seed 的 digest 仲裁 vs 源化的 commit 换装，两条腿都能写 `plugins/<name>/`），
+   * 且 seed 那份永远滞后于仓里那一份——这正是本批要消除的病灶。往 seed 里加回一个自研包
+   * ⇒ 本条即红，且错误信息点名「走源、别走 seed」。
+   */
+  test("K9-d: source-managed builtins never appear in the seed tree or the seed manifest (self-authored packages ride the remote source)"):
+    val sourced = nebflow.core.plugin.PluginSourceCatalog.builtinNames
+    assert(sourced.nonEmpty, "PluginSourceCatalog.Builtins must declare at least the self-authored packages")
+    val inTree = sourced.intersect(seedPluginNames())
+    val inManifest = sourced.intersect(declaredPluginNames())
+    assert(
+      inTree.isEmpty,
+      s"source-managed package(s) found in the seed plugin tree: ${inTree.toList.sorted.mkString(", ")} — " +
+        "self-authored plugins ride their remote source (PluginSourceCatalog + PluginSourceSync), never the seed " +
+        "tree; two distribution faces would fight over plugins/<name>/ and the seed copy is always stale. " +
+        "Remove the directory from src/main/resources/seed/plugins/."
+    )
+    assert(
+      inManifest.isEmpty,
+      s"source-managed package(s) declared in seed/manifest.json: ${inManifest.toList.sorted.mkString(", ")} — " +
+        "manifest items are the seed preinstall set; source-managed packages are installed by " +
+        "PluginSourceSync.selfHeal() from their declaration instead."
+    )
+    // 反向锁：stand-dev（本批迁出的那个包）确实还在源声明里——防止「两边都删了」的静默丢失。
+    assert(
+      sourced.contains("stand-dev"),
+      "stand-dev must be a source-managed builtin (it left the seed tree on 2026-11-01 — it is fetched from " +
+        "git@git.ustc.edu.cn:kaiyu/stand-dev.git, not shipped in the jar)"
     )
 
 end SeedManifestCoverageSpec

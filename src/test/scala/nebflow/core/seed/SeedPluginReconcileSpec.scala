@@ -333,26 +333,26 @@ class SeedPluginReconcileSpec extends FunSuite:
     val myproj = home / "projects" / "myproj"
     os.makeDir.all(myproj)
     os.write.over(myproj / "project.json", """{"name":"myproj"}""")
-    // 既有形态：装了一部分默认集（visual-report），另两包（含 stand-dev）缺失
+    // 既有形态：装了一部分默认集（visual-report），另两包（browser-use / document-production）缺失
     copySeedPlugin("visual-report")
-    assert(!os.exists(home / "plugins" / "stand-dev"), "precondition: stand-dev absent")
+    assert(!os.exists(home / "plugins" / "browser-use"), "precondition: browser-use absent")
     assert(!os.exists(home / "plugins" / "slideblocks"), "precondition: slideblocks absent")
 
     ensure()
 
     // ① 缺失的默认集插件被自愈安装（整目录实件 + trusted）——author home 的缺口机制解
-    for name <- List("stand-dev", "slideblocks")
+    for name <- List("browser-use", "slideblocks")
     do
       assert(os.exists(home / "plugins" / name / "plugin.json"), s"default-set plugin '$name' self-healed")
       assert(PluginRegistry.resolve(name).unsafeRunSync().isRight, s"self-healed '$name' is trusted (approved)")
     assert(
-      treeAsText(home / "plugins" / "stand-dev") == treeAsText(seedDirOf("stand-dev")),
+      treeAsText(home / "plugins" / "browser-use") == treeAsText(seedDirOf("browser-use")),
       "self-healed content == seed tree (byte-level)"
     )
     // ② 幂等：第二次 ensure 对该目录零动作（digest 已与种子一致）
-    val healed = dirDigest(home / "plugins" / "stand-dev")
+    val healed = dirDigest(home / "plugins" / "browser-use")
     ensure()
-    assert(dirDigest(home / "plugins" / "stand-dev") == healed, "second ensure is a no-op")
+    assert(dirDigest(home / "plugins" / "browser-use") == healed, "second ensure is a no-op")
 
   // ── ⑦ 自愈面 = 默认集（不向种子树全集扩张）───────────────
   test("self-heal installs only the default set — never the whole seed tree"):
@@ -363,15 +363,17 @@ class SeedPluginReconcileSpec extends FunSuite:
 
     ensure()
 
-    // 种子树里但不在默认集的 5 包：零安装（种子文件保留可手动装；
-    // 默认集 = 7 包：作者裁定 2026-10-05 方案A 锚点 4→7 追认现状）
+    // 种子树里但不在默认集的 6 包：零安装（种子文件保留可手动装；
+    // 默认集 = 6 包：作者裁定 2026-10-05 方案A 锚点 4→7，2026-11-01 源化批 stand-dev 迁出 seed ⇒ 6）
     for name <- List("design-language", "design-cards", "engineering-methods", "explorer-toolkit", "design-spec")
     do
       assert(
         !os.exists(home / "plugins" / name),
         s"non-default seed plugin '$name' NOT installed by self-heal (no area expansion)"
       )
-    // 落盘面积恰为默认集七条（枚举目录，防「遍历种子树全集」式实现）
+    // 落盘面积恰为默认集六条（枚举目录，防「遍历种子树全集」式实现）。
+    // 🔴 stand-dev 恒不在种子自愈面（2026-11-01 源化批）：它由 PluginSourceSync 按源声明
+    // 装回，两条分发面互不越界——这里同时钉死「seed 侧不装它」。
     val installed = os.list(home / "plugins").filter(os.isDir).map(_.last).toList.sorted
     assert(
       installed == List(
@@ -379,11 +381,10 @@ class SeedPluginReconcileSpec extends FunSuite:
         "computer-use",
         "document-production",
         "slideblocks",
-        "stand-dev",
         "visual-report",
         "web-search-toolkit"
       ),
-      s"existing-home plugin area == default preinstall set (7), got: ${installed.mkString(", ")}"
+      s"existing-home plugin area == default preinstall set (6), got: ${installed.mkString(", ")}"
     )
 
   // ── ⑧ 已存在目录零覆盖（自愈不改既有目录）─────────────────

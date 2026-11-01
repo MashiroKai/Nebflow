@@ -1569,6 +1569,62 @@ private[gateway] object PresenceRoutes:
           }
         }
 
+      // GET /plugins/updates — **源化插件的更新面**（作者令 2026-11-01 22:55「运行时插件
+      // 不是应该要能热更新吗，立即使用我们最新的版本」）。逐包（= 源声明表，
+      // `nebflow.json → plugins.sources` ∪ 代码内建 [[PluginSourceCatalog.Builtins]]）
+      // 给出安装版本 / 远端版本 / 状态。**用户驱动**：只在面板打开或点「检查更新」时跑
+      // （每包一次 ls-remote + 一次浅克隆读版本号），无后台轮询、无定时器。
+      // 远端不可达 ⇒ `state=unreachable` + 原因，**包照常可用**（本地那一份在位即信任）。
+      case req @ GET -> Root / "plugins" / "updates" =>
+        withAuth(req) {
+          nebflow.core.plugin.PluginSourceSync.checkAll().flatMap { statuses =>
+            val entries = statuses.map(nebflow.core.plugin.PluginSourceSync.statusJson)
+            Ok(
+              Json.obj(
+                "sources" -> entries.asJson,
+                "updatable" -> statuses.count(_.updateAvailable).asJson
+              )
+            )
+          }
+        }
+
+      // POST /plugins/:name/source/update — **拉取更新并生效**（body 可选：
+      // {"commit": "<40-hex>"} 钉到指定 commit，缺省跟声明分支 tip）。
+      // 落盘语义 = 暂存拉取 → 布局/身份校验 → 备份旧版 → **原子换装** → 账本落 pin
+      // → 审计行。零重启：装载读面是 mtime 缓存（PluginRegistry.snapshot），换装后
+      // 下一条读命令即见新内容；已在飞节点保持其注入内容（新派发生效）。
+      // 失败 ⇒ 400 + 人读原因（含稳定错误码），**在位版本零变化**（远端不可达不是事故，
+      // 是「保持本地版本」的正常结局）。
+      case req @ POST -> Root / "plugins" / name / "source" / "update" =>
+        withAuth(req) {
+          if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+          else
+            req.as[Json].attempt.map(_.getOrElse(Json.obj())).flatMap { body =>
+              val commit = body.hcursor.downField("commit").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+              nebflow.core.plugin.PluginSourceSync.update(name, commit, "panel/rest").flatMap {
+                case Right(r) =>
+                  Ok(
+                    ApiJson.okMessage(
+                      s"Plugin '$name' updated: v${r.fromVersion} → v${r.toVersion} (commit ${r.commit.take(12)}…, " +
+                        s"digest ${r.digest.take(12)}…). ${r.effective}" +
+                        r.backupDir.fold("")(b => s" Previous version backed up at $b.")
+                    )
+                  )
+                case Left(err) => BadRequest(Json.obj("error" -> err.asJson))
+              }
+            }
+        }
+
+      // GET /plugins/:name/source — 单包源状态（面板卡片的「来源 + 版本」行数据源）。
+      case req @ GET -> Root / "plugins" / name / "source" =>
+        withAuth(req) {
+          if !isValidAgentName(name) then BadRequest(Json.obj("error" -> "Invalid plugin name".asJson))
+          else
+            nebflow.core.plugin.PluginSourceSync.check(name).flatMap { st =>
+              Ok(Json.obj("source" -> nebflow.core.plugin.PluginSourceSync.statusJson(st)))
+            }
+        }
+
       // POST /plugins/:name/approve — **兼容保留**（无审批批 2026-09-13 起 UI 主线不再调用）：
       // 写一条审批审计记录（digest + 逐文件快照）到 `plugins.trust`。⚠️ 该记录**不再决定
       // 装载**（在位即信任），但它是 seed 覆盖的**仲裁基准**（`trustRecordDigest`）⇒ 手动
