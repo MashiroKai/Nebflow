@@ -43,7 +43,7 @@ status: implemented
 
 ### 1.3 修法（纯 CSS 派生，零新 JS 状态）
 
-`src/main/resources/web/css/mobileLayer.css` 新增 **②-b** 块（L2634-2655）：
+`src/main/resources/web/css/mobileLayer.css` 新增 **②-b** 块（L2647-2669）：
 
 ```css
 body.mobile-layer #chat .g2-chat-head {
@@ -90,7 +90,7 @@ sessionNameEl.style.display = '';    // ← 但不隐藏
 
 这是 2026-10-06 N1 的既有裁定（无名 root 标题区为空串，机制名永不作显示回落），
 在桌面 `#header` 上是对的（保留中槽布局不跳）。但手机层的 `#session-name` 有胶囊样式
-（`mobileLayer.css:2571` `padding: 3px 14px` + `border-radius: 999px` +
+（`mobileLayer.css:2584` `padding: 3px 14px` + `border-radius: 999px` +
 `background: var(--glass-bg)`）—— **空串 span 仍吃 padding**，于是画出一枚
 28×6px 的幽灵玻璃条挂在头像下方：作者实拍里「头像下的小暗条」，既不是名字也不是间距，
 所以读成「看不到名字」。
@@ -100,7 +100,7 @@ sessionNameEl.style.display = '';    // ← 但不隐藏
 
 ### 2.2 修法
 
-`mobileLayer.css` 新增 **②-c** 块（L2657-2664）：
+`mobileLayer.css` 新增 **②-c** 块（L2670-2678）：
 
 ```css
 body.mobile-layer #chat .g2-chat-head #session-name:empty {
@@ -144,7 +144,7 @@ body.mobile-layer #chat .g2-chat-head #session-name:empty {
 
 | 目标 | 结果 |
 |------|------|
-| `tests/chat-head-position-shots.mjs`（新增） | **ALL PASS**（27 断言） |
+| `tests/chat-head-position-shots.mjs`（新增） | **ALL PASS**（25 断言） |
 | `tests/mobile-muse-avatar-shots.mjs` | **ALL PASS**（原 6 既有红一并转绿，见 §4） |
 | `tests/muse-restore-smartcrop-shots.mjs` | **ALL PASS** |
 | `tests/mobile-dock.spec.mjs` | **21 passed** |
@@ -162,6 +162,12 @@ body.mobile-layer #chat .g2-chat-head #session-name:empty {
 | `tests/composer-mobile-slim-shots.mjs` | 6 FAIL：`G[before]` 条高，期望 78 实测 58；padding 期望 6px 实测 4px；光球足印期望 64 实测 48 | 这是 **"before" 夹具**，它把收窄前的旧值（78/6px/64）钉成断言，而今天的实值已被收窄批改掉 —— 该夹具按定义会随每次运行失败（[[20261101_222500_composer-mobile-slim__delegate-nebflow-6e995fd9]] 的 before 腿） |
 | `tests/mobile-v3.spec.mjs` | T2 失败：任务键徽标期望 `'10'` 实测 `'8'` | 徽标读数依赖当日在册任务数（运行/排队链），与手机层几何无关 |
 | `tests/mobile-muse-avatar-shots.mjs` | 原 6 FAIL（静止态判据 + `rowsBehind=0`） | 本批处理，见 §4 |
+| `tests/liquid-glass.spec.mjs` | 5 FAIL：M3 圆钮 48px / M4 CSSOM `:active scale` 过渡 / D3 亮档 hover Δ / T1 `--g2-fab-bg` 三态 / R1 折射层滤镜契约 | 同一基线工作树复跑**逐条同报**（5 failed / 6 passed）—— 液体玻璃 token 族与手机圆钮探针的存量漂移，本批只动 `.g2-chat-head` / `#session-name`，不触这些 token |
+| `tests/chat-header-crossing-shots.mjs` | 2 FAIL（`无蒙层压字②：顶带对穿顶行零像素贡献` 等，drift=41.67） | 同一基线工作树复跑**同值同报** —— 顶带像素探针的存量红 |
+
+> 复跑基线：`/tmp/verify-main-baseline`（`git worktree` 检出 `7fabc3eb6`，与本批共同祖先，
+> 未含本批任何改动；`node_modules` 符号链接到主检出）。判定口径 = 同树同命令复跑，
+> 结果逐字一致即判存量红。
 
 ---
 
@@ -201,8 +207,8 @@ const rowsBehind = [...chat.querySelectorAll('.row.ai')]...
 
 | 现象 | 归因行 | 提交 | 修法落点 |
 |------|--------|------|----------|
-| **位置下沉**（头像浮在页面中部、上方一大块空白） | `js/mobile/chatChrome.js:98` 把 `.g2-chat-head` 插成 `#chat` 流内首项 + `js/main.js:4286/4295` 写入 `padding-top: 96px` | `d4cc8d189`（chatChrome 建层）/ `a1853f9ff`（顶让位 reserve） | `css/mobileLayer.css` ②-b（L2634-2655） |
-| **名字消失**（实为幽灵玻璃条） | `js/sidebar.js:2017-2018` 未命名 root 写空串但保留 `display:''` + `css/mobileLayer.css:2571` 胶囊 `padding: 3px 14px` | 命名裁定批 / 基座回归批 `b4b6d8745` | `css/mobileLayer.css` ②-c（L2657-2664） |
+| **位置下沉**（头像浮在页面中部、上方一大块空白） | `js/mobile/chatChrome.js:98` 把 `.g2-chat-head` 插成 `#chat` 流内首项 + `js/main.js:4286/4295` 写入 `padding-top: 96px` | `d4cc8d189`（chatChrome 建层）/ `a1853f9ff`（顶让位 reserve） | `css/mobileLayer.css` ②-b（L2647-2669） |
+| **名字消失**（实为幽灵玻璃条） | `js/sidebar.js:2017-2018` 未命名 root 写空串但保留 `display:''` + `css/mobileLayer.css:2584` 胶囊 `padding: 3px 14px` | 命名裁定批 / 基座回归批 `b4b6d8745` | `css/mobileLayer.css` ②-c（L2670-2678） |
 
 ## 6. 交叉引用
 
