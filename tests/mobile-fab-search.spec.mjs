@@ -4,7 +4,8 @@
 // 覆盖（规格书 §8 A1-A8）：
 //   F1 钮规统一：消息/联系人页 .mh-fab-search 48px @ top16+safe/right16；详情页
 //      返回钮 48px g2-fab @ top16+safe/left16；canvas 页 ✕/堆叠钮 48px 同带；
-//      材质 --g2-fab-bg token 探针同源；按压 spring 曲线断言。
+//      材质探针同源（统一按钮玻璃批 2026-11-01 单源换代：--g2-fab-bg 随族
+//      退役，探针随 D18 同款修复改读 --glass-bg）；按压 spring 曲线断言。
 //   F2 展开交互：点搜索钮 → .mh-search-open + aria-expanded + 焦点入输入框；
 //      再点/Esc 收合；展开动效 transition 断言（max-height 220ms spring）。
 //   F3 联系人承载：展开后 .fm-search-block 可见，既有搜好友逻辑出结果卡
@@ -173,7 +174,8 @@ test('F1 button unification: 48px g2-fab geometry + material + spring press (A1/
   await page.waitForTimeout(400);
   const geo = await page.evaluate(() => {
     const fabBgProbe = document.createElement('span');
-    fabBgProbe.style.background = 'var(--g2-fab-bg)';
+    // 统一按钮玻璃批单源（.g2-fab = var(--cv-bg, var(--glass-bg))；页面壳无 --cv-bg）。
+    fabBgProbe.style.background = 'var(--glass-bg)';
     document.body.appendChild(fabBgProbe);
     const fabBg = getComputedStyle(fabBgProbe).backgroundColor;
     fabBgProbe.remove();
@@ -217,7 +219,7 @@ test('F1 button unification: 48px g2-fab geometry + material + spring press (A1/
   // 与聊天根 chrome 任务键同高同材质族（基准规格不动它们本身）。
   expect(geo.chrome.box).toEqual({ w: 48, h: 48 });
   expect(geo.chrome.top).toBe(16);
-  // A2 材质：全部 = --g2-fab-bg 探针同源。
+  // A2 材质：全部 = --glass-bg 探针同源（统一按钮玻璃批单源）。
   for (const [k, v] of Object.entries({ msgFab: geo.msgFab, ctFab: geo.ctFab, back: geo.back, cvClose: geo.cvClose, cvStack: geo.cvStack })) {
     expect(v.bg, k).toBe(geo.fabBg);
     expect(v.radius, k).toBe('50%');

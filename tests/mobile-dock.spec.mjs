@@ -555,23 +555,53 @@ test('D10 center chat-home key form: sapphire circle 44×44 inside dock bounds, 
 });
 
 // D13 冷启动批⑧（2026-10-30 作者令「输入框与 dock 无缝贴合」）→ 收形批⑤
-//（10-31 22:50「中键收回 dock + 间隙收窄」）：lift 归 0，输入卡底缘与 dock
-// 顶缘的缝 = lift = 0（修前 12px 抬升缝随收形收窄为零）。
-// 几何恒等式：gap = (dock-h + lift + safe) − (dock-h + safe) = lift。
-test('D13 input card flush-fit above dock: gap == --dock-center-lift (lift=0, no protrusion seam)', async ({ page }) => {
+//（10-31 22:50「中键收回 dock + 间隙收窄」lift 归 0）→ 悬浮胶囊批（2026-11-01
+// 21:07 作者令「呼吸间隙 + 胶囊化」）：输入卡与 dock 上缘的缝 = --dock-gap
+// 常量呼吸缝（收形批的零缝契约随批退役）；dock 本体换胶囊契约 —— 左右
+// inset-x / 底 inset-b + safe / 高 = --dock-h / r999 全圆角 / 面级毛玻璃材质
+//（--glass-bg + blur，#input-bar 同配方单源）。
+// 几何恒等式：gap = dock.top − bar.bottom = --dock-gap（lift 恒 0 不参与）。
+test('D13 capsule dock geometry: breathing gap == --dock-gap, side/bottom insets, pill radius, frosted-glass material, lift stays 0', async ({ page }) => {
   const errors = watchErrors(page);
   const g = await page.evaluate(() => {
     const bar = document.getElementById('input-bar').getBoundingClientRect();
     const dock = document.getElementById('mobile-dock').getBoundingClientRect();
-    const probe = document.createElement('span');
-    probe.style.marginTop = 'var(--dock-center-lift, 0px)';
-    document.body.appendChild(probe);
-    const lift = parseFloat(getComputedStyle(probe).marginTop) || 0;
-    probe.remove();
-    return { gap: dock.top - bar.bottom, lift, barBottom: bar.bottom, dockTop: dock.top };
+    const probe = (v) => {
+      const s = document.createElement('span');
+      s.style.marginTop = `var(${v}, 0px)`;
+      document.body.appendChild(s);
+      const val = parseFloat(getComputedStyle(s).marginTop) || 0;
+      s.remove();
+      return val;
+    };
+    const cs = getComputedStyle(document.getElementById('mobile-dock'));
+    return {
+      gap: dock.top - bar.bottom,
+      gapToken: probe('--dock-gap'),
+      lift: probe('--dock-center-lift'),
+      insetX: probe('--dock-inset-x'),
+      insetB: probe('--dock-inset-b'),
+      vw: window.innerWidth,
+      vh: window.innerHeight,
+      dockLeft: dock.left,
+      dockRight: dock.right,
+      dockFromBottom: window.innerHeight - dock.bottom,
+      dockH: dock.height,
+      radius: cs.borderRadius,
+      backdrop: cs.backdropFilter || cs.webkitBackdropFilter || '',
+    };
   });
-  expect(g.lift).toBe(0);
-  expect(Math.abs(g.gap - g.lift)).toBeLessThanOrEqual(1.5); // 亚像素容差
+  expect(g.lift).toBe(0);                                  // 收形批语义不变：中键零探出
+  expect(g.gapToken).toBeGreaterThan(0);                   // 呼吸缝常量（零缝贴死退役）
+  expect(Math.abs(g.gap - g.gapToken)).toBeLessThanOrEqual(1.5); // 亚像素容差
+  // 胶囊悬浮形态（测试视口 safe=0 ⇒ 底距 == inset-b）：三边边距 + 本体高
+  // + 全圆角 + 毛玻璃 blur 材质。
+  expect(Math.abs(g.dockLeft - g.insetX)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs((g.vw - g.dockRight) - g.insetX)).toBeLessThanOrEqual(0.5);
+  expect(Math.abs(g.dockFromBottom - g.insetB)).toBeLessThanOrEqual(0.5);
+  expect(g.dockH).toBe(54);                                // --dock-h（safe 垫已外置）
+  expect(g.radius).toBe('999px');
+  expect(g.backdrop).toContain('blur');
   expect(errors).toEqual([]);
 });
 
@@ -822,35 +852,35 @@ test('D17 page switch animation retired: zero transition, zero transform, direct
   expect(errors).toEqual([]);
 });
 
-test('D18 floating chrome band: zero-height transparent band, capsule title centered, 48px g2-fab back at 16/16+safe, icon centered', async ({ page }) => {
+test('D18 floating chrome band: zero-height transparent band, back 48px g2-fab at 16/16+safe, icon centered, title in flow (B批)', async ({ page }) => {
   const errors = watchErrors(page);
   // 悬浮钮统一批 2026-10-31 作者令 16:03：页头 = 悬浮 chrome 带（零高透明不拦截），
   // 返回钮归 48px g2-fab 基准（材质 --g2-fab-bg 探针同源），悬浮位 = 聊天根任务键
-  // 同几何（top 16+safe / left 16）；标题胶囊带内居中。判据载体 = 设置详情页。
+  // 同几何（top 16+safe / left 16）。判据载体 = 设置详情页。
+  // 面板头标识 B 批（2026-11-01 作者 17:01 选型 B「iOS 大标题式」）把标题自
+  // 页头胶囊改流内大标题（页体首件）——本探针随批改读流内标题（左缘 16px
+  // 流内左对齐；28px/字重/两态滚动等深判据归 mobile-panel-title.spec.mjs 单源，
+  // 此处不复制）。
   await dockTo(page, 'workbench');
   await page.locator('.mf-hub-row[data-hub-page="settings"]').click();
   await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
   const st = await page.evaluate(() => {
     const page = document.querySelector('.mobile-page[data-page="settings"]');
     const head = page.querySelector('.mobile-page-header');
-    const title = head.querySelector('.mobile-page-title');
+    const title = page.querySelector('.mobile-page-title');
     const back = head.querySelector('.mobile-back-btn');
     const svg = back.querySelector('svg');
     // token 同源探针（frontend-verification 口径）：等值判据取自同一 var()。
+    // 统一按钮玻璃批（2026-11-01）：.g2-fab 材质单源换 --glass-bg 族（原
+    // --g2-fab-bg 随族退役）—— 探针随批改读现役单源（canvas 面 --cv-bg 不在
+    // 页面壳作用域，按钮计算值即 --glass-bg）。
     const probe = document.createElement('span');
-    probe.style.background = 'var(--g2-fab-bg)';
+    probe.style.background = 'var(--glass-bg)';
     document.body.appendChild(probe);
     const fabBg = getComputedStyle(probe).backgroundColor;
     probe.remove();
-    const probe2 = document.createElement('span');
-    probe2.style.background = 'var(--glass-control-bg)';
-    document.body.appendChild(probe2);
-    const glassBg = getComputedStyle(probe2).backgroundColor;
-    probe2.remove();
-    const pr = page.getBoundingClientRect();
     const br = back.getBoundingClientRect();
     const sr = svg.getBoundingClientRect();
-    const tr = title.getBoundingClientRect();
     const hs = getComputedStyle(head);
     const ts = getComputedStyle(title);
     const bs = getComputedStyle(back);
@@ -859,11 +889,11 @@ test('D18 floating chrome band: zero-height transparent band, capsule title cent
       headBg: hs.backgroundColor,
       headHeight: hs.height,
       headPointerEvents: hs.pointerEvents,
-      // 标题 = 玻璃胶囊、带内水平居中（页面中心 ±2px）。
-      titleRadius: ts.borderRadius,
-      titleBg: ts.backgroundColor,
-      titleGlassBg: glassBg,
-      titleCenterDx: Math.abs((tr.left + tr.width / 2) - (pr.left + pr.width / 2)),
+      // 标题（B批）：流内块、页体首件、文本左缩进 = 16px（块通栏，缩进在
+      // padding 上 —— 盒左与页左重合，探针读 padding 不读盒）。
+      titlePosition: ts.position,
+      titleIsBodyFirst: page.querySelector('.mobile-page-body')?.firstElementChild === title,
+      titlePadLeft: ts.paddingLeft,
       // 返回钮 = 48px g2-fab（材质与 chrome 键同源 token 族），悬浮位同 chrome 几何。
       backBg: bs.backgroundColor,
       backFabBg: fabBg,
@@ -878,9 +908,9 @@ test('D18 floating chrome band: zero-height transparent band, capsule title cent
   expect(st.headBg).toBe('rgba(0, 0, 0, 0)');
   expect(st.headHeight).toBe('0px');
   expect(st.headPointerEvents).toBe('none');
-  expect(st.titleRadius).toBe('999px');
-  expect(st.titleBg).toBe(st.titleGlassBg);
-  expect(st.titleCenterDx).toBeLessThanOrEqual(2);
+  expect(st.titlePosition).toBe('static');
+  expect(st.titleIsBodyFirst).toBe(true);
+  expect(st.titlePadLeft).toBe('16px');
   expect(st.backBg).toBe(st.backFabBg); // 返回钮 = g2-fab 族（统一批新基准）
   expect(st.backRadius).toBe('50%');
   expect(st.backBox).toEqual({ w: 48, h: 48 });

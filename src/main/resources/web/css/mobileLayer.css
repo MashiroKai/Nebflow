@@ -35,6 +35,17 @@
  *   ⑥ 发送钮退回纯圆：36×36 r50%（考古 d4cc8d189^ 基准），绿保留
  *      （--ctl-send-* 不动，#send-btn 手机层覆盖块）。
  *
+ * dock 悬浮胶囊批（作者令 2026-11-01 21:07 两件）落位 —— dock 块 + 页面容器
+ * 块 + #input-area 块 + 文件尾批次块：
+ *   ① 呼吸间隙：输入卡底缘与 dock 上缘恢复常量缝 --dock-gap（10px；收形批
+ *      归零的贴死形态随批退役）；
+ *   ② 胶囊化：通栏贴边白条 → Apple 风格悬浮胶囊（左右下三边屏幕边距
+ *      --dock-inset-x 12 / --dock-inset-b 8、r999 全圆角、safe-area 避让照旧），
+ *      材质 = glass.css 面级毛玻璃档（--glass-bg + blur24 + --cv-shadow，
+ *      #input-bar 同配方单源，双主题自适应）；页面/输入卡让位面扩为胶囊
+ *      全带，#mobile-pages::before 承载面背板防带区透出聊天根。五栏位/中键/
+ *      选中态/切换逻辑/角标行为零变化（几何契约随批钉进 mobile-dock.spec D13）。
+ *
  * 铁律：本文件全部规则挂在 body.mobile-layer 之下 —— 该类只由 mobile/bootstrap.js
  * 在手机视口（≤768px，与既有 css/mobile.css 折叠点同源）激活。桌面窗口永远不
  * 命中任何一条规则（桌面渲染逐字节不变）；桌面对本文件的唯一感知是 index.html
@@ -70,7 +81,7 @@
  * z 层序（手机层内约定，桌面值不被本文件改动）：
  *   聊天 root(桌面默认) < #header 悬浮层 40 < #settings/#usage/#search 等
  *   overlay 状态载体垫层 155 < #mobile-pages 156(页面容器，收编面随页面体)
- *   < #mobile-dock 200(常驻底栏，盖页面底缘) < 桌面模态族 310+/10000/11000
+ *   < #mobile-dock 200(悬浮胶囊，作者令 2026-11-01 胶囊化) < 桌面模态族 310+/10000/11000
  *   （弹窗退场批 2026-10-31 之后：模态族在手机层全部转为铺满屏页面形态 +
  *   左上返回钮，见文件尾「弹窗退场批」块；桌面模态 z 值原样不动）。
  */
@@ -88,8 +99,17 @@ html.mobile-html-layer {
 
 body.mobile-layer {
   /* dock 批：底 dock 常驻高度（不含 safe-area；dock 元素自带 safe 底垫）。
-     输入卡/页面底缘的让位单源 = 本变量。 */
+     输入卡/页面底缘的让位单源 = 本变量。悬浮胶囊批（作者令 2026-11-01 21:07）
+     起该高度 = 胶囊本体高；safe-area 净空与左右/底边距外置成三枚新 token：
+     · --dock-inset-x  胶囊左右屏幕边距（悬浮形态的留白源）；
+     · --dock-inset-b  胶囊底缘距 safe-area（home indicator）上缘的净空 ——
+                       胶囊整体悬在 home 区之上，避让语义保留；
+     · --dock-gap      胶囊上缘与上方输入卡底缘的呼吸间隙（收形批曾归零的
+                       缝，本批按令恢复为常量缝）。 */
   --dock-h: 54px;
+  --dock-inset-x: 12px;
+  --dock-inset-b: 8px;
+  --dock-gap: 10px;
   /* 悬浮面板底距（心跳配置浮层仍锚输入卡上方）。 */
   --mobile-float-bottom: 92px;
   /* ④ 动态视口：100vh（base.css）在浏览器工具栏展开时把输入卡压到底栏之下
@@ -178,41 +198,45 @@ body.mobile-layer .mh-chrome-badge {
 }
 body.mobile-layer .mh-chrome-badge[hidden] { display: none; }
 
-/* ── 五栏底 dock（作者令 2026-10-29 小红书样式基准）──────────────────
-   白底固定底栏（亮暗 = 不透明 surface token，非玻璃 —— 参考图为实心底栏），
-   图标在上 + 文字标签在下，五等分 grid；active = 品牌绿 icon/label（克制形态）；
-   未读红点 = 桌面徽标读数镜像。safe-area 底垫内置。
-   中键改版批（同日 23:36）：中键 = 小红书中心键 —— sapphire 主色实心大圆
-   （亮档深档 --accent-agent-light / 暗档 --sapphire，unified panel design §6.2
-   同款双档，不新造色）、高出常规 tab 基线（--dock-center-lift），图标 = agent
-   头像（圆裁 + 主色细环 = 底色露边）或气泡字形回落；输入卡底距同步让位。 */
+/* ── 五栏底 dock（作者令 2026-10-29 小红书样式基准 → 悬浮胶囊批 2026-11-01）
+   五栏根页切换器：图标在上 + 文字标签在下，五等分 grid；active = 品牌绿
+   icon/label（克制形态）；未读红点 = 桌面徽标读数镜像。中键 = agent 头像
+   大圆（无头像回落 stand logo）。safe-area 避让内置（胶囊底距）。
+   悬浮胶囊批（作者令 2026-11-01 21:07 两件）：通栏贴边白条 → **Apple 风格
+   悬浮胶囊** —— 左右下三边屏幕边距（--dock-inset-x/-b）、全圆角（r999 胶囊）、
+   材质换 css/glass.css 面级浮件档毛玻璃（--glass-bg + blur24 sat1.15 双写 +
+   --glass-border + --cv-shadow 三档栈，与 #input-bar 同一配方单源；亮暗双
+   主题走既有 token 自适应，不新造色）；通栏 border-top 与暗档 #16181d 实底
+   字面随批退役（暗档底色字面唯一残留消费方 = .dock-badge.is-count 描边，
+   徽标行为零变化照旧）。五栏位/中键/选中态/切换逻辑/角标零变化。
+   no-backdrop 降级（微信/X5）与 @supports 双保险在 glass.css 文件尾两块
+   同步列名（实底档 = --glass-bg 原值，blur 摘除）。
+   dock 承载面（胶囊身后到底缘的带区）由 #mobile-pages::before 背景带承底
+   （下块）—— 收编根页的带区不再露出聊天根；胶囊毛玻璃即采样该平坦底。 */
 /* 冷启动批⑧（2026-10-30 作者令「dock 中间对话钮缩小一档」）：50 → 44
    （4px 栅格下一档）。收形批⑤（作者令 10-31 22:50）：lift 12 → 0 —— 中键圆
-   收回 dock 边界内（不再探出顶缘，悬浮感收口），输入卡底距同步 -12px，
-   输入框与 dock 之间的间隙随收形收窄（输入卡底缘直接贴合 dock 顶缘）。 */
+   收回 dock 边界内（不再探出顶缘，悬浮感收口）。悬浮胶囊批：输入卡底距
+   恢复缝 = --dock-gap（呼吸间隙，#input-area 块）。 */
 body.mobile-layer {
   --dock-center-size: 44px;
   --dock-center-lift: 0px;
 }
 body.mobile-layer #mobile-dock {
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  left: var(--dock-inset-x);
+  right: var(--dock-inset-x);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--dock-inset-b));
   z-index: 200;
-  height: calc(var(--dock-h) + env(safe-area-inset-bottom, 0px));
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  height: var(--dock-h);
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   align-items: stretch;
-  background: var(--color-bg, #f5f6f8);
-  border-top: 1px solid var(--glass-border, rgba(0, 0, 0, 0.08));
-}
-@media (prefers-color-scheme: dark) {
-  body.mobile-layer #mobile-dock {
-    background: #16181d;
-    border-top-color: rgba(255, 255, 255, 0.10);
-  }
+  border-radius: 999px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--cv-shadow);
 }
 body.mobile-layer .dock-key {
   position: relative;
@@ -365,12 +389,15 @@ body.mobile-layer .dock-badge.is-count {
 }
 @media (prefers-color-scheme: dark) {
   body.mobile-layer .dock-badge.is-count {
-    border-color: #16181d; /* = #mobile-dock 暗档底（同块内 --dock bg 字面） */
+    /* 悬浮胶囊批（2026-11-01）：dock 通栏暗档实底字面 #16181d 随批退役，
+       本描边值原样保留（徽标行为零变化；字面 ≈ 毛玻璃下承底带色，视觉无差）。 */
+    border-color: #16181d;
   }
 }
 
 /* ── 页面容器 + 页面 section（互斥 .live；微信式无动画直切）──────────
-   dock 批：页面底缘让位常驻 dock（--dock-h 单源）。
+   dock 批：页面底缘让位常驻 dock（--dock-h 单源）。悬浮胶囊批：让位面
+   扩为「胶囊底距 + 胶囊高」全带 = 新 dock 顶缘（页面内容止于胶囊上缘）。
    页面切换动画退役批（作者令 2026-10-30「去掉页面切换右拉入动画…无动画直切，
    参考微信」）：删 translateX(102%) 滑入 + 0.26s 过渡 + visibility 延迟——
    隐藏 = visibility:hidden 直切，live = 直切可见，零过渡零位移。 */
@@ -380,10 +407,24 @@ body.mobile-layer #mobile-pages {
   z-index: 156;
   pointer-events: none; /* 容器永不拦截 —— 只有 .live 页面接收事件 */
 }
+/* dock 承载面背板（悬浮胶囊批）：胶囊身后到底缘的整条带区补一层页面底色 ——
+   收编根页（.mobile-page 止于胶囊上缘）的带区不再透出下层聊天根；聊天根页
+   本底同 token，视觉零差。胶囊毛玻璃 backdrop 即采样该平坦底（浅暗双主题
+   自适应）。::before 先于子节点绘制（页 section 几何上不与本带重叠），
+   pointer-events 随容器继承 none，零交互感知。 */
+body.mobile-layer #mobile-pages::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: calc(var(--dock-h) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px));
+  background: var(--color-bg, #f5f6f8);
+}
 body.mobile-layer .mobile-page {
   position: absolute;
   top: 0;
-  bottom: calc(var(--dock-h) + env(safe-area-inset-bottom, 0px));
+  bottom: calc(var(--dock-h) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px));
   left: 0;
   right: 0;
   display: flex;
@@ -1727,17 +1768,20 @@ body.mobile-layer #memory-btn { display: none; }
 body.mobile-layer #header .header-center {
   max-width: none !important;
 }
-/* ── 输入卡：视口链末端压点 + dock 无缝贴合（冷启动批⑧ 2026-10-30；收形批⑤
-   2026-10-31 22:50 修订）──────────────────────────────────────────────
-   输入卡 bottom = 0、自身 padding-bottom = dock 高 + safe-area（lift 已归 0：
-   中键收回 dock 内，输入卡与 dock 之间不再留 12px 抬升缝 —— 间隙随收形收窄
-   为零，输入框底缘直接贴合 dock 顶缘）。
+/* ── 输入卡：视口链末端压点 + dock 上方呼吸间隙（悬浮胶囊批 2026-11-01
+   21:07 作者令「dock 上缘和上方消息输入框之间保留一点呼吸间隙」修订）────
+   输入卡 bottom = 0、自身 padding-bottom = 胶囊顶缘（dock-h + inset-b +
+   safe）+ 呼吸缝 --dock-gap（收形批曾把缝收窄为零 = 贴死，本批按令恢复为
+   常量缝；lift 保留在公式里 = 0，中键收形语义不变）。
    两件套语义：① 输入卡悬浮在 dock 之上；② main.js 的 #chat padding-bottom
    让位逻辑读 #input-area.offsetHeight（含本 padding）⇒ 最后一条消息自动让出
-   dock 带，桌面 JS 零改动。 */
+   dock 带 + 间隙，桌面 JS 零改动。 */
 body.mobile-layer #input-area {
   bottom: 0;
-  padding-bottom: calc(var(--dock-h) + var(--dock-center-lift, 0px) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(
+    var(--dock-h) + var(--dock-center-lift, 0px) + var(--dock-inset-b, 0px) +
+    var(--dock-gap, 0px) + env(safe-area-inset-bottom, 0px)
+  );
 }
 
 /* ── 发送钮退回纯圆（收形批⑥，作者令 10-31 22:50）──────────────────────
