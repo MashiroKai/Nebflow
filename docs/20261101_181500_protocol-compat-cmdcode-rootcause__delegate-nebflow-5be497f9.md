@@ -445,3 +445,67 @@ PluginRemove 1=1、SubAgentInboxMirror 1=1、PendingAskLedger 1=1、BgWaitCapLed
 
 **回归纪律新增（建议进 AGENTS）：** 判定"是否本批回归"必须做**干净基线同序重跑差集**，
 不得用"安静环境抽检若干套件变绿"作判据——本批 §7.2 的误判即是反例。
+
+---
+
+## 10. 合并轮（2026-11-01 23:21–23:35，收轮自主合并）
+
+作者令：等待合并提醒会把回合撑爆（今日已两次被强制收轮），按纪律直接自行执行合并轮，
+不再等提醒、不再重跑全量。
+
+### 10.1 合并结果
+
+| 项 | 值 |
+|---|---|
+| 合并 commit | `2ee65fc35ef260663e6732cb73897f7f4278fca4`（`--no-ff`，main 7fabc3eb6 ← delegate/delegate-nebflow-5be497f9 ba375fe65） |
+| 冲突 | **零**（`git diff --name-only merge-base..main` ∩ 本批文件 = 空集；本批 16 文件全在 `src/main/scala|test/scala/nebflow/{llm,shared}`，main 侧 7d18dabb0..7fabc3eb6 只动 mobile/css/evidence） |
+| 合并后一致性 | `git diff --stat ba375fe65 2ee65fc35 -- <本批 16 文件>` 为空 ⇒ 逐字节原样落入 main |
+| 批文档 | 本文件以 `-f` 越过 `.gitignore` 的 `docs/`（仓内 178 篇批文档同例）入库，commit `9a98ca136` |
+
+### 10.2 合并后在 main 树上的复跑（域内，不跑全量）
+
+| 命令 | 结果 |
+|---|---|
+| `testOnly nebflow.llm.providers.* nebflow.llm.FormatErrorNoEvictSpec nebflow.shared.FallbackExhaustedMessageSpec` | **159 passed / 0 failed**（18 spec 套，40s）——与批内验收逐数相等 |
+| `testOnly nebflow.shared.*` | **174 passed / 0 failed**（20 spec 套） |
+| `testOnly nebflow.llm.*` | **467 passed / 2 failed**（57 spec 套，469 total）；2 红 = `PluginCatalogLayerSpec` T4a/T4b，见 §10.3 |
+
+**全量未跑完的原因（如实）**：①本日全量已在 §7/§8 走过五次分相（含两次死跑），
+44 红基线的双向差集已在 §8.3 定案，判回归的判据已由该对照给出，重跑全量不增加信息量；
+②942 套同 JVM 数小时后台作业会被会话收轮杀死（§7.1/§9-3 已实证），与本令「不再重跑
+全量」一致；③宿主 sbt（PID 30450，13:23 起、已跑 10h）占用同一 `target/`，并发全量会
+互相踩编译产物。
+
+### 10.3 合并轮新定位的第三处既有缺陷（`PluginCatalogLayerSpec`）
+
+`T4a C17` / `T4b C18` 两条红：该 spec 以子进程真跑校验脚本，路径写死为
+
+```
+src/main/resources/seed/plugins/nebflow-plugin-creator/skills/plugin-packaging/scripts/validate_plugin.py
+```
+
+而该 seed 包已在 **2026-10-31「开发插件统一批」`c9dff9829`** 六包合并为 `stand-dev` 时删除
+（`git merge-base --is-ancestor c9dff9829 7fabc3eb6` 为真 ⇒ 合并前 main 就没有该路径；
+脚本现落在 `seed/plugins/stand-dev/skills/stand-dev/scripts/validate_plugin.py`，C17/C18
+实现逐条在位）。⇒ **既有红，与本批零交集**（`git diff --name-only` 本批不触
+`llm/decision/` 与 `seed/plugins/`）；且与 §8.3 基线对照的「PluginCatalogLayer 2=2」
+**逐数相等**，两处证据互证。修法（独立批）：spec 里改指新路径，或按包名 glob 定位脚本。
+
+### 10.4 三处既有缺陷交接（独立批，本批不修）
+
+| # | 缺陷 | 归属 | 证据 |
+|---|---|---|---|
+| 1 | 同 JVM 跨套件状态污染（`BgTaskRegistry.waitingTasks` 残留） | 自身测试隔离缺陷 | §8.3：基线同序 44 红 vs HotRestart 排最前 25/25 绿 |
+| 2 | `NeblinkPresence` roster 会话隔离不严（抓到同机其它 delegate 的 java 进程） | 自身测试隔离缺陷 | §8.3.1-4 `[hb-roster]` 抓到 `delegate-nebflow-c58a5*` |
+| 3 | `PluginCatalogLayerSpec` 校验脚本路径随 `c9dff9829` 六包合并失联（C17/C18 双红） | 上游批遗留（非测试设计问题） | §10.3 |
+
+第 4 项（`HealthMonitor` DOWN 行无 cause 链）仍是低优先观察项，未升级为交接缺陷。
+
+### 10.5 回归纪律建议（提级）
+
+1. **判「是否本批回归」只认干净基线同序差集**，不认「安静环境抽检若干套件变绿」（§7.2 反例）。
+2. **全量回归默认分块、每块独立 JVM**；单块超 30min 即视为跑序风险信号而非负载抖动。
+3. **域内验收前置**：提交前先跑改动域全包（本次 `nebflow.llm.*` 57 套 / 469 断言 + `nebflow.shared.*` 20 套 / 174 断言 = 77 套 / 643 断言，
+   实测 36s + 3s），域内有红先逐个定性再进全量——本批 2 红就是这样在合并轮被一眼定位成既有红的。
+4. **spec 里写死的仓库内路径是脆的**：随包搬迁/合并即失联且静默变红，建议加一条
+   「spec 引用 `src/main/resources/**` 路径必须存在」的静态门（可与 §10.4-3 同批做）。
