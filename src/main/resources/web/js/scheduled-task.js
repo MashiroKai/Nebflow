@@ -1408,7 +1408,10 @@ export function buildTodoEntryRow() {
   row.dataset.todoEntry = '1';
 
   const icon = document.createElement('span');
-  icon.className = 'fm-todo-icon';
+  // 圆框统一批（2026-11-01，作者实拍指认）：入口行圆框 = `.fm-avatar` 家族
+  // （与设备行 `fm-avatar-device` / 好友行同规格：40px + glass-etched 底描边），
+  // 本类（.fm-todo-icon）只管字形着色与落点尺寸——禁自带第二份圆框几何。
+  icon.className = 'fm-avatar fm-avatar-40 fm-todo-icon';
   icon.innerHTML = '<i data-lucide="list-checks"></i>';
   row.appendChild(icon);
 

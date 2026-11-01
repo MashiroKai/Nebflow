@@ -33,8 +33,8 @@
 //     ——另一台机器改完，这台在会话恢复/重连后即可见。
 
 import { key } from './branding.js';
+import { brand } from './brand.js';
 import state from './state.js';
-import { createIconsIn } from './utils.js';
 import { avatarImgNode } from './avatarRender.js';
 import { rootDisplayName, isRootNamed } from './rootName.js';
 import { t } from './i18n.js';
@@ -224,17 +224,34 @@ function buildSlot() {
   return btn;
 }
 
-/** 首字母圆牌字形（缺省回落；与 agentManager/设置页命名牌同源的首字大写）。 */
-function initialOf(label) {
-  const ch = (label || '').trim().charAt(0);
-  return ch ? ch.toUpperCase() : '';
+/**
+ * stand logo 回落节点（作者令 2026-10-31 22:50「agent没设置头像之前 用我们stand
+ * 的logo」）。brand 双主题 picture（亮档 logoUrl / 暗档 logoDarkUrl），与手机层
+ * 三面（chatChrome 会话头注入档 / .g2-msg-logo / dock .dock-center-logo）同货源
+ * 同类——零新图。桌面腿 2026-11-01 补齐：原实现只落了手机层，桌面 paintSlot 的
+ * 首字母牌/人形字形两档未覆盖（主 agent Spider 有名无头像 ⇒ 显示「S」首字母牌，
+ * 作者实指不生效点）；今两端统一：无自定义头像一律回退 stand logo。
+ * 类名 = `agent-avatar-stand-logo`（chatChrome 空态注入档同名 ⇒ 手机层守望见
+ * logo 已在场即跳过注入，两端互不叠绘；尺寸档 chat.css 桌面 / mobileLayer.css 手机）。
+ */
+function standLogoNode() {
+  const pic = document.createElement('picture');
+  pic.className = 'agent-avatar-stand-logo';
+  pic.innerHTML =
+    `<source media="(prefers-color-scheme: dark)" srcset="${brand.logoDarkUrl}">` +
+    `<img class="agent-avatar-logo-img" src="${brand.logoUrl}" alt="">`;
+  return pic;
 }
 
-function paintSlot() {
+/**
+ * 会话头头像槽重绘（export：mobile/chatChrome.js teardown 摘除注入档后归位重绘
+ * ——注入档与自绘 logo 同类名，摘除会连自绘件一并拿走，归还桌面形态时必须补一
+ * 次绘；桌面事件链照旧内部调用）。
+ */
+export function paintSlot() {
   notifyAvatarSubs(); // 先广播再自绘：订阅面（dock 中键）与会话头同帧同像
   if (!slot) return;
   const agentName = currentAgentName();
-  const label = headerLabel(agentName);
   slot.setAttribute('aria-label', t('profile.openAria'));
   slot.title = t('profile.openAria');
   const entry = readEntry(agentName);
@@ -250,22 +267,10 @@ function paintSlot() {
     slot.classList.add('has-img');
     return;
   }
+  // 无自定义头像 ⇒ stand logo（作者令 2026-10-31 22:50；原首字母牌/人形字形
+  // 两档随桌面腿补齐一并退役——机制名不作显示回落的口径不变，只是回落件换了）。
   slot.classList.remove('has-img');
-  const initial = initialOf(label);
-  if (initial) {
-    const plate = document.createElement('span');
-    plate.className = 'agent-avatar-initial';
-    plate.textContent = initial;
-    plate.setAttribute('aria-hidden', 'true');
-    slot.replaceChildren(plate);
-  } else {
-    // 未命名 root：无名字 ⇒ 无字母，中性 user 字形占位（机制名不作显示回落）。
-    slot.replaceChildren();
-    const glyph = document.createElement('i');
-    glyph.setAttribute('data-lucide', 'user');
-    slot.appendChild(glyph);
-    if (typeof lucide !== 'undefined') createIconsIn(slot);
-  }
+  slot.replaceChildren(standLogoNode());
 }
 
 // ── 智能体分区（.ap-pane 一件式；注入合并面板 memory-modal，见 memory.js）──
@@ -387,7 +392,6 @@ function downscaleToFile(file) {
 function paintPreview() {
   if (!previewBox) return;
   const agentName = currentAgentName();
-  const label = headerLabel(agentName);
   const entry = readEntry(agentName);
   const dataUrl = (entry && entry.dataUrl) || '';
   if (!dataUrl || !entry.sha) convergeAvatar(agentName, paintPreview, false); // 同 paintSlot：缺值/未对账
@@ -398,12 +402,10 @@ function paintPreview() {
     previewBox.classList.add('has-img');
     return;
   }
+  // 无自定义头像 ⇒ stand logo（作者令 2026-10-31 22:50；原首字母牌档退役，
+  // 与会话头 paintSlot 同源回落——点击本体换头像的交互不变）。
   previewBox.classList.remove('has-img');
-  previewBox.replaceChildren();
-  const plate = document.createElement('span');
-  plate.className = 'ap-avatar-initial';
-  plate.textContent = initialOf(label) || '·';
-  previewBox.appendChild(plate);
+  previewBox.replaceChildren(standLogoNode());
 }
 
 function fillName() {

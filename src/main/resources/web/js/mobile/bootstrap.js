@@ -28,11 +28,11 @@
 //     2026-10-31 作者令 16:03；消息页=类微信跨会话检索+跳转定位，联系人页=既有
 //     搜好友逻辑承载，见 socialSearch.js 头注）；
 //   · taskPanel = 任务页面板（数据/卡渲染同源，呈现位=页面收编）。
-//   · msgLongPress = 消息长按 → 上下文菜单（附件批 2026-10-31：与桌面右键同一份
-//     菜单单点出口 msgQuote.openQuoteMenuForRow；手势契约见该文件头）。
 //   · 退役（随批摘除激活）：headerController（双液态下拉列）、layoutController
 //     （右列页面键）、floatController（左列键+二级 morph）、morphPanel、
-//     canvasGestures（bottom sheet 手势）、bgStatusFace（键拦截 morph）。
+//     canvasGestures（bottom sheet 手势）、bgStatusFace（键拦截 morph）、
+//     msgLongPress（消息长按菜单——手机端长按退役批 2026-10-31 作者令整条退役，
+//     触屏触达改走消息 footer 信息条：时间/下载/引用钮同族；桌面右键不动）。
 //
 // QA 探针：window.__nfMobileLayer = { active, version } —— 采集脚本用它确认
 // 交互层已激活（结构读数），不依赖任何视觉推断。导航探针：window.__nfMobileNav。
@@ -57,14 +57,13 @@ async function activate() {
     // dock 批激活序：nav 先行（dock/页面壳就位，chrome/faces 才有栈可推）；
     // 拆除以**数组序**执行 ⇒ teardowns 倒排激活序：faces/chrome 先归还搬移
     // 节点，nav 最后拆（pane/overlay 面归还锚点在页面壳仍在场时执行）。
-    const [nav, socialFaces, chatChrome, searchFace, daemonFace, memoryFace, msgLongPress, socialSearch] = await Promise.all([
+    const [nav, socialFaces, chatChrome, searchFace, daemonFace, memoryFace, socialSearch] = await Promise.all([
       import('./navController.js'),
       import('./socialFaces.js'),
       import('./chatChrome.js'),
       import('./searchFace.js'),
       import('./daemonFace.js'),
       import('./memoryFace.js'),
-      import('./msgLongPress.js'),
       import('./socialSearch.js'),
     ]);
     if (!active) return; // 激活期间已跨越回桌面 —— 直接拆除
@@ -74,9 +73,8 @@ async function activate() {
     const tSearchFace = searchFace.activateSearchFace();
     const tDaemonFace = daemonFace.activateDaemonFace();
     const tMemoryFace = memoryFace.activateMemoryFace();
-    const tLongPress = msgLongPress.activateMsgLongPress();
     const tSocialSearch = socialSearch.activateSocialSearch();
-    teardowns = [tSocialSearch, tLongPress, tMemoryFace, tDaemonFace, tSearchFace, tChrome, tFaces, navTeardown];
+    teardowns = [tSocialSearch, tMemoryFace, tDaemonFace, tSearchFace, tChrome, tFaces, navTeardown];
   } catch (err) {
     // 控制器加载失败：回到桌面形态（宁可退回可用桌面，不可半挂层）。
     console.error('[mobile-layer] activate failed', err);
