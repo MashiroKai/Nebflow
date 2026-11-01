@@ -1,0 +1,9 @@
+# served bytes vs build/web-dist (isolated instance :6157 = NEW jar)
+fa260ae4ac59f03eab78a1197510e6291a5a7456fe28c7fb8cfc6c41a144405a *served-app.js
+fa260ae4ac59f03eab78a1197510e6291a5a7456fe28c7fb8cfc6c41a144405a */d/workspace@zcode/nebflow/nebflow-stand/build/web-dist/assets/app-75C3M6MD.js
+cb060ba9dc90979fb9ffa6e5277cb389b8ece5520c0815ac6f3a26a2e5e9a93d *served-app.css
+cb060ba9dc90979fb9ffa6e5277cb389b8ece5520c0815ac6f3a26a2e5e9a93d */d/workspace@zcode/nebflow/nebflow-stand/build/web-dist/assets/app-cb060ba9.css
+
+# served bytes vs old jar content (isolated instance :6158 = OLD jar control)
+c5e60c1534a11530cee902fba0068d048b247aa7780d09d6d42283993f1546f5 *served-old-app.js
+c5e60c1534a11530cee902fba0068d048b247aa7780d09d6d42283993f1546f5 *old/web-dist/assets/app-UVYBGY6J.js
