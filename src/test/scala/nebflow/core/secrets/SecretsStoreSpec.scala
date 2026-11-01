@@ -553,6 +553,34 @@ class SecretsStoreSpec extends FunSuite:
     }
   }
 
+  test("V5 · 清杂质: rollback backups are hidden from the list face, file untouched on disk") {
+    withStore { (store, root) =>
+      assert(store.create("mock-secret", MockValue1).unsafeRunSync().isRight)
+      // The exact families from the author's 2026-11-01 live-panel look:
+      // tool-dropped rollback snapshots inside the credential namespace.
+      val backups = List(
+        "email-connector-rollback-2026-10-20-0342.json",
+        "logto-logout-rollback.json",
+        "vercel-domain-mashiro-redirect-rollback.json"
+      )
+      os.makeDir.all(root / "secrets")
+      backups.foreach(b => os.write(root / "secrets" / b, MockValue1))
+      store.list().unsafeRunSync() match
+        case Right(list) =>
+          assertEquals(list.map(_.name), List("mock-secret"), "every *rollback* name must be hidden from the list")
+        case other => fail(s"expected Right(list), got $other")
+      // 🔴 The view filter never relocates or deletes the bytes: the files
+      // stay exactly where the tooling dropped them (archival is a separate
+      // decision — 归档目录另论).
+      backups.foreach(b => assert(os.exists(root / "secrets" / b), s"$b must stay on disk untouched"))
+      // And the predicate itself is the narrow rule (no overreach): ordinary
+      // names never match.
+      assert(!SecretsStore.isArchiveBackup("mock-secret"))
+      assert(!SecretsStore.isArchiveBackup("social-feishu-app-secret"))
+      assert(SecretsStore.isArchiveBackup("Logto-Logout-Rollback.json"), "case-insensitive")
+    }
+  }
+
   // ── referencedBy: the two-source pure scan ──────────────────────────────
 
   test("R1 · channel face: a stored `_ref` path string claims its channel id") {

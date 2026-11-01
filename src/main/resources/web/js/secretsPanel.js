@@ -47,6 +47,23 @@
 //   · Delete: unchanged (in-detail control, hover danger tint, glass confirm,
 //     DELETE ?confirm=<name>).
 //
+// 层级收进批（作者实拍令 2026-11-01 15:36「修弹层层级：密钥子面板现在比父级
+// 设置面板还大还压外层（实拍可见溢出），子面板尺寸必须收进父面板内，层级视觉
+// 服从父级」＋「删掉全部『权限过宽』红标——这徽标整概念退役」＋「布局重排：
+// 键名列/元信息列网格化、间距统一」＋「清杂质：rollback 回滚备份不是密钥，
+// 从密钥面板剔除」）四件：
+//   · 层级：专用弹窗架构不变（2026-09-27 裁定），但几何**服从父级**——
+//     openSecretsPanel 现读 #settings-modal 实矩形，把本面板钳进父面板内
+//     （每侧 24px 收进带；CSS 兜底 512px ≤ 父 560px），两壳同为视口居中 ⇒
+//     子框恒在父框内；手机层铺满屏形态不受影响（body.mobile-layer 跳过）。
+//   · 红标退役：rest 行不再有 permission badge（ok/permissive 两态俱退，
+//     locale 键同批删除）；wire 的 mode 字段原样保留（后端零改动）。
+//   · 网格化：rest 行改两列 grid——键名列（左，省略号）＋元信息列（右对齐，
+//     size · mtime，tabular-nums 列对齐）；元信息自展开详情上移到 rest 面，
+//     详情只剩值域 + 引用行 + 操作行；行行同形，别一行一个样。
+//   · 清杂质：`*rollback*` 名单面剔除是后端单点（SecretsStore.isArchiveBackup，
+//     列表/目录/指针/CLI 四面同源），本面板零前端过滤。
+//
 // 🔴 SECURITY DISCIPLINE (plan card §二, readback ruling 2026-10-09 07:03,
 //   unchanged in spirit by 行内化):
 //   · The list carries METADATA ONLY (name/size/mtime/mode/refs) and the
@@ -93,7 +110,9 @@ import { mobileSheetBack } from './mobile/popSheet.js';
 
 // ── State ────────────────────────────────────────────────────────────────
 /** Last list truth read from the backend (metadata only — no value field
- *  exists on the wire shape; anything unexpected is dropped below).
+ *  exists on the wire shape; anything unexpected is dropped below). `mode`
+ *  is still shaped (the wire field exists) but NO LONGER RENDERED — the
+ *  permission badge is retired (层级收进批 2026-11-01).
  *  @type {{name: string, size: number, mtime: number|null, mode: string, refs: string[]}[]} */
 let secrets = [];
 /** Monotonic reveal token source. Each eye-driven fetch takes the next
@@ -393,53 +412,51 @@ async function collapseRow(row, opts = {}) {
 
 // ── Rendering ────────────────────────────────────────────────────────────
 /**
- * One row's RESTING face (行内化二轮 2026-10-09; 三轮 2026-10-09 23:06 drops
- * the dots). ONE minimal line: name (left) + permission badge (only when
- * permissive — the security signal stays visible without expanding) + the
- * transient saved-flash slot. NO field, NO eye, NO delete, NO metadata, and
- * since 三轮 NO value dots — the resting row carries no value face at all.
- * The head is a real button: the whole row is the tap target (Reminders row
- * affordance). Those controls are built lazily by detailHTML on expansion,
- * so the resting DOM carries neither an edit control nor a button. METADATA
- * ONLY ever crosses the wire; no value face exists in either face of this
- * template.
+ * One row's RESTING face (层级收进批 2026-11-01 网格化重排). ONE two-column
+ * grid line per row: 键名列 (name, left, ellipsis) + 元信息列 (size · mtime,
+ * right-aligned, tabular-nums — the metadata moved here from the expanded
+ * detail, so every row carries the same shape and the columns align across
+ * rows). The permission badge is RETIRED (author ruling 2026-11-01:「不要提示
+ * 什么权限过宽…这徽标整概念退役」— both states gone; the wire `mode` field is
+ * simply not read anymore). NO field, NO eye, NO delete — the transient
+ * saved-flash overlays the meta column (data-flashing). The head is a real
+ * button: the whole row is the tap target (Reminders row affordance). The
+ * edit controls are built lazily by detailHTML on expansion. METADATA ONLY
+ * ever crosses the wire; no value face exists in either face of this template.
  * @param {{name: string, size: number, mtime: number|null, mode: string, refs: string[]}} s
  * @returns {string}
  */
 function rowHTML(s) {
-  const permissive = s.mode !== '0600';
-  const modeBadge = permissive
-    // ui-status-redesign（S13 / 盘点 #36）：pill 字转中性，词前 octagon-alert 红
-    // 图标（权限档形状语义）；红底红边图案由 secrets.css 保留。
-    ? `<span class="secrets-mode-badge" data-mode="permissive">${statusIcon('octagon-alert', 10, 'st-err')}${escapeHtml(t('secrets.state.permissive'))}</span>`
-    : `<span class="secrets-mode-badge" data-mode="ok">${escapeHtml(t('secrets.state.ok'))}</span>`;
   const name = escapeHtml(s.name);
+  const meta = [
+    `<span class="m">${statusIcon('box', 10)}${escapeHtml(formatSize(s.size))}</span>`,
+    `<span class="m">${statusIcon('clock', 10)}${escapeHtml(formatMtime(s.mtime))}</span>`,
+  ].join('');
   return `<div class="secrets-row" data-name="${name}">
       <button type="button" class="secrets-row-head" data-row-head="${name}" aria-expanded="false" aria-controls="secrets-detail-${name}" title="${escapeHtml(t('secrets.rowHint'))}">
         <span class="secrets-row-name">${name}</span>
-        ${modeBadge}
-        <span class="secrets-row-status" role="status" aria-live="polite"></span>
+        <span class="secrets-row-side">
+          <span class="secrets-row-meta">${meta}</span>
+          <span class="secrets-row-status" role="status" aria-live="polite"></span>
+        </span>
       </button>
     </div>`;
 }
 
 /**
  * One row's EXPANDED detail (原位展开编辑): the value field (empty at rest,
- * placeholder dots, masked) + eye + the iconized metadata line + the
- * 保存/删除 actions, rendered INSIDE the row — rows below shift naturally.
- * The eye on a masked-and-empty field is the ONE value fetch; the meta
- * items (size/mtime/refs) moved here from the old resting face (二轮极简).
+ * placeholder dots, masked) + eye + the 保存/删除 actions, rendered INSIDE the
+ * row — rows below shift naturally. size/mtime live on the resting head now
+ * (网格化批: the meta column is always visible right above), so the detail
+ * carries only the referenced-by line (when refs exist). The eye on a
+ * masked-and-empty field is the ONE value fetch.
  * @param {{name: string, size: number, mtime: number|null, mode: string, refs: string[]}} s
  * @returns {string}
  */
 function detailHTML(s) {
-  const metaItems = [
-    `<span class="m">${statusIcon('box', 10)}${escapeHtml(formatSize(s.size))}</span>`,
-    `<span class="m">${statusIcon('clock', 10)}${escapeHtml(formatMtime(s.mtime))}</span>`,
-    s.refs.length
-      ? `<span class="m">${statusIcon('link', 10)}${escapeHtml(t('secrets.referencedBy', { refs: s.refs.join(', ') }))}</span>`
-      : '',
-  ];
+  const metaLine = s.refs.length
+    ? `<div class="secrets-row-meta"><span class="m">${statusIcon('link', 10)}${escapeHtml(t('secrets.referencedBy', { refs: s.refs.join(', ') }))}</span></div>`
+    : '';
   const name = escapeHtml(s.name);
   // The inline edit field: EMPTY when the detail opens. The placeholder is
   // the LENGTH-FAITHFUL mask (maskPlaceholder: one dot per stored byte from
@@ -451,7 +468,7 @@ function detailHTML(s) {
   const eye = `<button type="button" class="secrets-value-eye" data-eye="${name}" aria-label="${escapeHtml(t('secrets.showValue'))}" aria-pressed="false" title="${escapeHtml(t('secrets.showValue'))}">${eyeSvg}</button>`;
   return `<div class="secrets-row-detail" id="secrets-detail-${name}" data-detail="${name}">
       <div class="secrets-row-value">${field}${eye}</div>
-      <div class="secrets-row-meta">${metaItems.join('')}</div>
+      ${metaLine}
       <div class="secrets-row-actions">
         <button type="button" class="glass-control cfg-btn cfg-btn-sm" data-delete="${name}">${escapeHtml(t('secrets.delete'))}</button>
         <button type="button" class="cfg-btn cfg-btn-primary cfg-btn-sm" data-save="${name}">${escapeHtml(t('secrets.save'))}</button>
@@ -622,16 +639,25 @@ function validName(name) {
   return /^[a-z0-9][a-z0-9._-]{0,63}$/.test(name) && !name.endsWith('.tmp');
 }
 
-/** Flash「已保存 ✓」into a row's status slot (jev card save-state precedent:
- *  role=status live region, ~1.6s decay, cleared only if still connected).
- *  The slot lives on the row's RESTING head — the flash lands after the
- *  commit's re-read has already collapsed the detail. */
+/**
+ * Flash「已保存 ✓」into a row's status slot (jev card save-state precedent:
+ * role=status live region, ~1.6s decay, cleared only if still connected).
+ * The slot overlays the row's meta column (grid 批: same cell, absolutely
+ * positioned; the meta hides via [data-flashing] so the flash never shifts
+ * the row) on the RESTING head — the flash lands after the commit's re-read
+ * has already collapsed the detail.
+ */
 function paintRowSaved(name) {
   const row = listEl()?.querySelector(`.secrets-row[data-name="${CSS.escape(name)}"]`);
   const st = row?.querySelector('.secrets-row-status');
-  if (!(st instanceof HTMLElement)) return;
+  if (!(row instanceof HTMLElement) || !(st instanceof HTMLElement)) return;
   st.innerHTML = statusIcon('circle-check', 11, 'st-ok') + escapeHtml(t('secrets.saved'));
-  setTimeout(() => { if (st.isConnected) st.innerHTML = ''; }, 1600);
+  row.setAttribute('data-flashing', '');
+  setTimeout(() => {
+    if (!st.isConnected) return;
+    st.innerHTML = '';
+    row.removeAttribute('data-flashing');
+  }, 1600);
 }
 
 // ── Create draft (tail row) ──────────────────────────────────────────────
@@ -757,6 +783,36 @@ function requestDelete(name) {
 }
 
 // ── Open / close / focus ─────────────────────────────────────────────────
+/**
+ * 层级收进批 (author ruling 2026-11-01:「子面板尺寸必须收进父面板内，层级视觉
+ * 服从父级」): clamp this dialog INTO the parent settings modal's live rect,
+ * inset 24px per side. Both shells are viewport-centered flex children, so a
+ * strictly smaller centered box is geometrically contained — no positioning
+ * math needed, only the size clamp. CSS already carries the static fallback
+ * (512px ≤ parent 560px, max-height 85vh−48px ≤ parent 85vh); this refines the
+ * height to the parent's ACTUAL (content-driven) height so a short settings
+ * panel can never be overspilled by a taller child. Mobile layer: skipped —
+ * body.mobile-layer stretches both to fullscreen (铺满屏批), containment
+ * already holds there. Re-fit on viewport resize while open; inline styles
+ * are cleared on close so a later non-settings open (defensive) starts clean.
+ */
+function fitToParent() {
+  const ov = overlay();
+  const m = modal();
+  if (!ov || !ov.classList.contains('on') || !m) return;
+  if (document.body.classList.contains('mobile-layer')) return;
+  const parent = document.getElementById('settings-modal');
+  if (!parent) return;
+  const r = parent.getBoundingClientRect();
+  if (r.width < 80 || r.height < 80) return; // parent unmeasurable (anomaly) → leave CSS fallback
+  const inset = 24;
+  m.style.maxWidth = `${Math.max(320, Math.round(r.width - inset * 2))}px`;
+  m.style.maxHeight = `${Math.max(280, Math.round(r.height - inset * 2))}px`;
+}
+
+/** Resize listener while the dialog is open (removed on close). */
+function onWindowResizeFit() { fitToParent(); }
+
 export function openSecretsPanel() {
   const ov = overlay();
   if (!ov) return;
@@ -765,6 +821,8 @@ export function openSecretsPanel() {
   // 弹窗退场批：跨档重排后补注左上返回（幂等；非手机层不注入）。
   mobileSheetBack(ov, closeSecretsPanel);
   applyStaticText();
+  fitToParent();
+  window.addEventListener('resize', onWindowResizeFit);
   const first = modal()?.querySelector('button, input, select');
   if (first && 'focus' in first) /** @type {HTMLElement} */ (first).focus();
   loadAll();
@@ -783,6 +841,9 @@ export function closeSecretsPanel() {
   pendingOpen = '';
   savedFlashName = '';
   ov.classList.remove('on');
+  window.removeEventListener('resize', onWindowResizeFit);
+  const m = modal();
+  if (m) { m.style.maxWidth = ''; m.style.maxHeight = ''; }
   // Focus back to the settings entry row button (or wherever we came from).
   const btn = document.getElementById('btn-open-secrets');
   if (btn) btn.focus();

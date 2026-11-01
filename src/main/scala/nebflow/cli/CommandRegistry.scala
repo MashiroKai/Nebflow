@@ -55,10 +55,14 @@ object CommandRegistry:
       // un-reformatted — add-only is the only accepted shape in this file.
       TokenCommand,
       SessionsCommand,
-      // Phase 3c D6-guard batch: append-only one line — `bind` (confirm: the
-      // binding-transfer confirmation code minted on the OLD host; gateway
-      // and relay required, never offline-classified). Same add-only shape.
-      BindCommand
+    // Phase 3c D6-guard batch: append-only one line — `bind` (confirm: the
+    // binding-transfer confirmation code minted on the OLD host; gateway
+    // and relay required, never offline-classified). Same add-only shape.
+    BindCommand,
+    // 密钥 CLI 批（密钥能力三件套 A 件，作者令 2026-11-01）：append-only 一行
+    // —— `secrets`（`stand secrets list` = 元数据清单零值；bare = 用法提示）。
+    // 同 phase 3b token/sessions 族：密钥域 CLI 读面，离线归类见 CliRouter。
+    SecretsCommand
     ).map(c => c.name -> c).toMap
 
   def get(name: String): Option[CliCommand] = commands.get(name)

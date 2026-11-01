@@ -32,6 +32,8 @@ import nebflow.shared.PathUtil
  *              文本 = [[nebflow.shared.Defaults.OutputBlockRule]]）
  *   376      — SendMessage/Pop 边界（Nebula 根会话 only，条件 isRootAgent；同源
  *              单点文本 = [[nebflow.shared.Defaults.SendMessageScopeRule]]）
+ *   377      — 密钥教义（所有 agent 会话，always；同源单点文本 =
+ *              [[nebflow.shared.Defaults.SecretsRule]]）
  *   400-499  — tool-dependent sections（阶段 2d §D.2：条件工具指南段已全部
  *              下迁进工具 description——AskUserQuestion/Read/Pop/TeamTask 三件，
  *              提示词层不再按「是否有该工具」注入用法段落）
@@ -419,6 +421,20 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
       376,
       condition = ctx => ctx.isRootAgent,
       body = nebflow.shared.Defaults.SendMessageScopeRule
+    ),
+
+    // --- 密钥教义（密钥能力三件套批 B 件，作者令 2026-11-01「agent/分发器提示词
+    // 加一节『密钥的使用与创建』」）：条件 **always** —— 与 order-375/376 的
+    // root-only 刻意不同：凭证经任务文本与指针回执流进**每张面**（分发器把它
+    // 写进 brief、节点在 Bash 里消费它），纪律只护根会话等于没护。段体逐字引用
+    // [[nebflow.shared.Defaults.SecretsRule]]（同源单点，勿复制改写）；机制细节
+    // 的单一权威 = AskUserQuestion 工具 description（引牌不引文）。段序 377 =
+    // 紧跟 order-376 后，静态体落在 systemStable（生命周期节点重建时携带，
+    // 前缀缓存友好——与 order-350 溯源段同读数）。
+    PromptSection(
+      377,
+      condition = _ => true,
+      body = nebflow.shared.Defaults.SecretsRule
     ),
 
     // --- 轨道二 #5 identity clauses (before tool guides — who reads your
