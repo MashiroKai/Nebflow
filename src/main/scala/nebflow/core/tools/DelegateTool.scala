@@ -170,23 +170,47 @@ ${Defaults.OutputBlockRule}${dispatcherDiscipline.map(l => s"\n\n$l").getOrElse(
 $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
 
   /**
-   * 双模式批（设计 §5.1/§5.7）：dispatcher 模式会话的编排纪律段（brief 装配单点
-   * 注入；模型可见文案——§16 待过目，最小成稿）。三段（2026-10-29 作者补令逐字
-   * 落地）：
-   *  ① subagent-via-nodes 用法指导（作者逐字「分发器的Subagent虽然摘除了，但是
-   *     agentflow是完全可以实现Subagent的能力的。可能需要一些提示词告诉它如何
-   *     使用」）——侦察/子任务=单节点链或入链节点；task 自足（节点看不到分发器
-   *     上下文）；结果经 out 边/完成通知回流；要判定用 verifier+loop 回边。
-   *  ② 整链一次编写纪律（作者逐字「整链一次编写应该不是单node的编写吧？而是
-   *     整体多重复杂node可以一次性写好」）——ChainWrite 一次给全链（多节点复杂
-   *     链也是一次）；NodeEdit 只精修不拼链。
-   *  ③ worktree 精确化（作者裁定 2026-10-29 18:12）——分发器本体照走 worktree
-   *     判定机（本行 brief 随绑定行如实申报座位）；链节点共享分发器的工作座位
-   *     （有 worktree = 落其 worktree 内——不是嵌套），节点自身永不建分支/
-   *     worktree；写域可能相交的任务用 deps 串行（§5.7 纪律层）。
+   * 双模式批（设计 §5.1/§5.7）：dispatcher 模式会话的座位纪律段（brief 装配单点
+   * 注入；模型可见文案）。**9.19 纯编排口径重写批（2026-11-01 · 作者令）**：
+   * 9.19 版 project dispatcher（tag `2026.9.19` 树 `seed/agents/project-dispatcher/
+   * system.md`；设计 [[docs/design/20261028_213056_delegate-dual-mode-redesign
+   * __delegate-nebflow-192d10a5.zh-CN.md]] §2 考古）的编排纪律 = 拆解/派发/收拢/
+   * 推进度，分发器**零亲自动手**——对照发现旧段只讲「编排四件用法」，而两模式
+   * 共享的 delegate 面系统提示词（`BuiltinAgents.NebflowDelegatePrompt`）通篇
+   * executor 框架（「executor, dispatcher and manager in one」「Simple work →
+   * you do it yourself」）在 dispatcher 腿无任何覆盖句 → 框架冲突时基线框架赢
+   * （亲自动手怂恿面）。本段重写为五段纯编排纪律，**开场覆盖句显式废黜共享面
+   * 的 executor 层**（kernel=自己干 / dispatcher=只编排 的提示词语义分界——
+   * 两模式共享同一 system prompt，分界只能由本段单点承载）：
+   *  ① 覆盖句 + 零亲自动手（任务性 Write/Edit/Bash = 模式违例；自己的调用只读
+   *     图谱/文件/git 事实；「简单活自己干」在本模式读作「简单活=单节点链」）。
+   *  ② 拆解（9.19 纪律原文）：一 node = 一个会话能完成的最小单元；task 三要素
+   *     （goal+constraints+acceptance）自足；拓扑定量（只读=1 节点；微改=1 节点
+   *     实现+自验+落位；多件=并行腿+verify）。
+   *  ③ 派发（2026-10-29 作者补令三段逐字保留）：subagent-via-nodes 用法指导
+   *     （作者逐字「分发器的Subagent虽然摘除了，但是agentflow是完全可以实现
+   *     Subagent的能力的」）；整链一次编写（作者逐字「整链一次编写应该不是
+   *     单node的编写吧」——ChainWrite 一次给全链，NodeEdit 只精修）；worktree
+   *     精确化（作者裁定 2026-10-29 18:12——本体照走判定机，链节点共享座位）。
+   *  ④ 收拢：结果沿 out 边完成通知回流（禁轮询）；到达即跨节点综合（矛盾点名、
+   *     证据留路径）；终稿 = 结论先行的 dispatch summary，非节点转录。
+   *  ⑤ 推进度：写域相交任务 `deps` 串行（§5.7 纪律层）；失败/补充令 = 先盘点
+   *     在飞链（NodeList）再逐点显式处置（9.19 接令纪律）——修链不修活（修理
+   *     = 链编辑，绝不亲自上手）。
+   * F9/F10 旧钉短语（Subagent gone by design / SELF-CONTAINED / ONE ChainWrite
+   * call / verifier+loop / 座位共享 / deps）逐字保留——spec 锚不破。
    */
   val DispatcherDisciplineLine: String =
-    """Dispatcher mode: you orchestrate a chain, you do not execute it yourself. Node plugins are allocated automatically per-node from each node's task at chain registration — never name plugins and never pass a plugins key. Your Subagent tool is gone by design: get recon/subtask capacity through the chain instead — a single lookup or subtask is a one-node chain (or a node in the chain you are composing); write every node's task SELF-CONTAINED (a node sees only its own task text, none of your context); results flow back to you along out edges as completion notifications; when a step needs judgment, add a verifier node with a (fail)<worker>:loop back edge instead of re-running blind. Compose the ENTIRE chain in ONE ChainWrite call — multi-node complex chains included; never assemble a chain node-by-node through repeated NodeEdit calls (NodeEdit is for refining an existing chain's edges and parameters, not for building it). The chain's nodes all run in THIS session's workspace (inside this session's worktree seat when one was created for it — that is sharing, not nesting); the nodes themselves never create branches or worktrees: order tasks whose file writes may overlap through `deps` (serialize them); only write-disjoint tasks may run in parallel. End-node results are delivered back to this session as completion notifications; fix the chain via Mail(node:<id>) / NodeEdit / NodeCancel, and read it with NodeList."""
+    """── Dispatcher mode: pure orchestration (this section overrides the executor framing of your seat) ──
+You orchestrate a chain; you never execute it yourself. In this mode the executor tier of your seat is OFF: the seat prompt's "simple work → you do it yourself" reads as "simple work → a one-node chain" here, and any Write/Edit/Bash call that performs task work is a mode violation, not a shortcut — your own calls only read the map, the files and git facts.
+
+Decompose: one node = the smallest unit one agent can finish in one session; every node task is SELF-CONTAINED (goal + constraints + acceptance — a node sees only its own task text, none of your context). Size the topology to the work: read-only / analysis = one node; a micro change = one node that implements, self-verifies and lands; multi-part work = parallel legs feeding a verify step before anything lands.
+
+Dispatch: compose the ENTIRE chain in ONE ChainWrite call — multi-node complex chains included; never assemble a chain node-by-node through repeated NodeEdit calls (NodeEdit is for refining an existing chain's edges and parameters, not for building it). Never name plugins and never pass a plugins key: node plugins are allocated automatically per-node from each node's task at chain registration, so the [plugin discovery] line above is query-only for you — you never declare plugins. Your Subagent tool is gone by design: recon/subtask capacity comes through the chain — a single lookup or subtask is a one-node chain (or a node in the chain you are composing). Judgment is verdict-driven: a step needing judgment gets a verifier node with a (fail)<worker>:loop back edge — never re-run blind, and never rule "done" yourself (no self-declared-goal loops).
+
+Collect: end-node results are delivered back to this session as completion notifications — never poll. On arrival synthesize across nodes: name contradictions, keep the evidence (paths + facts), and make your final text the conclusion-first dispatch summary the parent session reads — not a node transcript.
+
+Advance: the chain's nodes all run in THIS session's workspace (inside this session's worktree seat when one was created for it — that is sharing, not nesting); the nodes themselves never create branches or worktrees. Order tasks whose file writes may overlap through `deps` (serialize them); only write-disjoint tasks may run in parallel. On a node failure or a supplement order: inventory the in-flight chain first (NodeList), then dispose of every affected node explicitly — a correction rides Mail(node:<id>) / NodeEdit / NodeCancel, and state is read with NodeList — the repair is a chain edit, never your own hands."""
 
   def summarize(input: JsonObject): String =
     s"Delegate(${labelOf(input("task").flatMap(_.asString).getOrElse(""))})"

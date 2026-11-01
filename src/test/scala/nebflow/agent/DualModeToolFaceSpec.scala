@@ -195,6 +195,53 @@ class DualModeToolFaceSpec extends FunSuite:
     assert(line.contains("`deps`"), "the write-scope serialization discipline stays")
   }
 
+  // ── 9.19 纯编排口径重写批（2026-11-01 · 作者令「它自己不干活」）──────────────
+  // 考古：tag 2026.9.19 树 seed/agents/project-dispatcher/system.md —— 分发器纪律
+  // = 拆解/派发/收拢/推进度，零亲自动手（9.19 工具面本无写工具，机制级零动手；
+  // delegate 双模式腿共享 executor 工具面 ⇒ 零动手纪律只能由本段提示词承载）。
+
+  test("F11a 分发器纪律段（9.19 口径）：纯编排身份句 + 覆盖句——共享 delegate 面的 executor 框架必须被显式废黜") {
+    val line = nebflow.core.tools.DelegateTool.DispatcherDisciplineLine
+    assert(line.contains("pure orchestration"), s"identity header names the doctrine: $line")
+    assert(line.contains("you never execute it yourself"), "zero-hands-on identity clause")
+    // kernel=自己干 / dispatcher=只编排 的语义分界：两模式共享同一 system prompt
+    //（NebflowDelegatePrompt 通篇 executor 框架——「Simple work → you do it
+    // yourself」），分界只能由本段的开场覆盖句承载。
+    assert(line.contains("overrides the executor framing"), "the shared-seat executor framing must be explicitly overridden")
+    assert(line.contains("simple work → you do it yourself"), "the overridden seat phrase is quoted verbatim (unambiguous target)")
+    assert(line.contains("executor tier of your seat is OFF"), "the executor tier is named as off in this mode")
+    assert(line.contains("mode violation, not a shortcut"), "task-work Write/Edit/Bash is a violation clause")
+    assert(line.contains("only read the map, the files and git facts"), "the dispatcher's own calls stay read-only")
+    assert(line.contains("simple work → a one-node chain"), "the fallback for simple work is a chain node, never personal work")
+  }
+
+  test("F11b 分发器纪律段（9.19 口径）：拆解/接令盘点/收拢/推进度四段逐点在案") {
+    val line = nebflow.core.tools.DelegateTool.DispatcherDisciplineLine
+    // 拆解（9.19 纪律原文「一 node＝一个会话能完成的最小单元」+ task 三要素 + 拓扑定量）
+    assert(line.contains("smallest unit one agent can finish in one session"), "node granularity (9.19 拆解纪律)")
+    assert(line.contains("goal + constraints + acceptance"), "node task = goal+constraints+acceptance, self-contained")
+    assert(line.contains("Size the topology to the work"), "topology sizing discipline")
+    // 接令/处置（9.19 order intake：先盘点在飞，再显式处置）
+    assert(line.contains("inventory the in-flight chain first"), "supplement/failure intake starts with an inventory")
+    assert(line.contains("dispose of every affected node explicitly"), "explicit per-node disposal duty")
+    // 收拢（到达即综合；终稿=dispatch summary）
+    assert(line.contains("synthesize across nodes"), "collection = cross-node synthesis on arrival")
+    assert(line.contains("dispatch summary"), "final text = conclusion-first dispatch summary, not a transcript")
+    // 推进度（修链不修活）
+    assert(line.contains("the repair is a chain edit, never your own hands"), "advancement = chain edit, zero hands-on repair")
+    // 插件发现行消解（PluginDiscoveryLine 的 declare 邀请对 dispatcher 不适用）
+    assert(line.contains("query-only for you"), "the [plugin discovery] declare invitation is neutralized for the dispatcher")
+  }
+
+  test("F11c 两模式提示词语义分界：kernel 腿无模式段（brief 零 dispatcher 文本），语义差异由工具面 + 本段承载") {
+    // kernel 腿：组装走缺省参数（dispatcherDiscipline=None）——模式段零泄漏；
+    // 注入面逐字节锚在 core.tools 侧 DualModeBriefInjectionSpec（assembleBrief
+    // 为 private[tools]，跨包不可及——本条钉常量面身份）。
+    val line = nebflow.core.tools.DelegateTool.DispatcherDisciplineLine
+    assert(!line.contains("kernel"), "the dispatcher section never mentions the kernel mode (modes must not cross-reference)")
+    assert(line.contains("Dispatcher mode"), "the section is unmistakably labeled for the dispatcher mode")
+  }
+
 
   test("F8 SubAgentTask mode 字段：缺键容忍（旧盘面照读解码 None）；在键透传") {
     val legacy = """{"taskId":"delegate-nebflow-f8","parentSessionId":"p","agentName":"nebflow","prompt":"p",
