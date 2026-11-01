@@ -1,0 +1,9 @@
+file-bytes-single-fetch export=0
+imgmsg-send export=0
+attcard-unify-shots export=0
+msgmenu export=1
+ime-guard export=0
+busy-lifecycle export=0
+mvp2-device-client export=1
+rcptcode-friendterminal export=0
+friends-dev-default-on export=0

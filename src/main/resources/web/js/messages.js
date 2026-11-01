@@ -42,15 +42,16 @@ import { buildTodoEntryRow } from './scheduled-task.js';
 // 本模块的好友会话输入框（作者点名的面）此前**零组字判定** —— 组字 Enter 会
 // 直接 doSend()。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
-// voicefix 批 腿 B（作者 2026-09-21 14:0x ③）：好友/群聊会话窗的**简单麦克风**
-// 复用主窗同一语音管线 —— 识别流/双模（Web Speech / 云 STT）/态机全在
-// voiceEngine.js 单点，本模块只做「按钮 ⇄ 本窗输入框」的回调接线，零新造机制。
-import { startDictation, stopDictation, sttEnabled } from './voiceEngine.js';
+// voicefix 批 腿 B（作者 2026-09-21 14:0x ③）→ 三面-composer 统一批（2026-11-02）：
+// 好友/群聊/设备三面输入条的**装配单点**上收到 `messages/fmComposer.js`（语音腿
+// 复用主窗同一管线 —— 识别流/双模/态机全在 voiceEngine.js，组件只做「键 ⇄ 输入框」
+// 接线）。本模块不再持任何输入条装配语句（三面零分叉；设备面本批补齐语音）。
+import { buildFmComposer } from './messages/fmComposer.js';
 // 字段方言双兼容批：预览字段的**收面单点**（方言登记表判读 + `data:` 合成全仓唯一落点；
 // 该模块零 import ⇒ 无环）。
 import { readPreviewField, previewDataUrlOf } from './attachPreviewField.js';
 // 时制（12h/24h）：与主对话框/设备对话框共享同一偏好与同一实现。
-import { formatHm, bindTimeToggle, TIME_FORMAT_CHANGED } from './timeFormat.js';
+import { formatHm, formatFooterTime, bindTimeToggle, TIME_FORMAT_CHANGED } from './timeFormat.js';
 // ⑩ 合并期滚动位保持（与 Dropbox 面**共用一份实现**，无第二个公式）。
 // follow 批（2026-10-08）：贴底判定 `isAtBottom`（AT_BOTTOM_PX 单源）也从这一份
 // 实现出 —— 到达跟随、锚点补偿、回底胶囊三处共用同一判据，本面内禁第二个数。
@@ -327,7 +328,7 @@ function hasFiles(e) {
 
 import { el, avatarEl, deviceAvatarEl } from './messages/elements.js';
 
-import { toEpochMs, fmtTime, isSameDayMs } from './messages/timeFmt.js';
+import { toEpochMs, fmtTime } from './messages/timeFmt.js';
 export { fmtTime } from './messages/timeFmt.js';
 
 // #290: origin column (R2=A, contract-first with the Rust batch) - a message
@@ -1382,146 +1383,26 @@ function renderChatModal(conv) {
     exitSelection();
   });
 
-  // input bar
-  const bar = el('div', 'fm-input-bar');
-  const input = document.createElement('input');
-  input.className = 'cfg-input fm-input';
-  input.type = 'text';
-  input.placeholder = t('messages.inputPlaceholder');
-  input.maxLength = 2000;
-  input.autocomplete = 'off';
-  // ── 简单麦克风语音输入（voicefix 批 腿 B，作者 2026-09-21 14:0x ③）──────────
-  //   好友（conv 无 kind 键）/ 群聊（kind='group'）会话窗各挂**一枚简单麦克风键**
-  //   （禁气泡形态 —— 气泡是主窗光球的形态，不进本窗）；设备窗不挂。
-  //   形态 = 主窗既有 `.icon-btn` 族 + lucide `mic`（与纸夹同族）；位置 = 输入条
-  //   最左（微信参照稿同位）。接线复用主窗既有管线：同一 voiceEngine 识别流、
-  //   同一回调契约（onInterim 占位刷新 / onText 落终稿 / onState 态机）、同一
-  //   「点一下开、再点一下关」交互（作者 2026-08-25 21:34 令，与主窗一致）。
-  //   反馈 = 主窗既有 `.icon-btn.recording`（微信绿 + voicePulse）+ 转写中
-  //   `.fm-mic-btn.processing`（既有 sapphire）；出错 = modalToast 可见提示。
-  let fmVoiceActive = false;
-  let fmVoiceAnchor = 0;      // 当前语音段插入锚点（字符偏移）
-  let fmVoiceInterimLen = 0;  // 当前占位 interim 文本长度
-  let fmStopVoice = null;
-  if (conv.kind !== 'device') {
-    const micBtn = el('button', 'icon-btn fm-mic-btn');
-    micBtn.type = 'button';
-    micBtn.title = t('messages.voiceInput');
-    micBtn.setAttribute('aria-label', t('messages.voiceInput'));
-    micBtn.setAttribute('aria-pressed', 'false');
-    micBtn.innerHTML = '<i data-lucide="mic"></i>';
-    const fmSetMicState = (s) => {
-      micBtn.classList.toggle('recording', s === 'listening' || s === 'speaking');
-      micBtn.classList.toggle('processing', s === 'processing');
-      micBtn.setAttribute('aria-pressed', String(s === 'listening' || s === 'speaking'));
-    };
-    fmStopVoice = () => {
-      if (!fmVoiceActive) return;
-      fmVoiceActive = false;
-      // 丢弃未落定的 interim 占位（与主窗 stopVoice 同一约定）
-      if (fmVoiceInterimLen > 0) {
-        input.value = input.value.substring(0, fmVoiceAnchor) + input.value.substring(fmVoiceAnchor + fmVoiceInterimLen);
-        fmVoiceInterimLen = 0;
-      }
-      // 尾段转写在飞 ⇒ processing；引擎随后的 onState('idle') 收敛回常态
-      fmSetMicState('processing');
-      stopDictation();
-      syncComposerSend();
-    };
-    micBtn.addEventListener('click', () => {
-      if (input.disabled) return; // 拉黑/断连等禁用态不挂假入口行为
-      // settings-panel 批 D 件（2026-10-28）：STT 停用态好友消息 mic 入口一并
-      // 收口（toast；引擎闸 voiceEngine.startDictation 是纵深第二层）。
-      if (!sttEnabled()) {
-        window.__showToast?.(t('stt.disabled'), 'error');
-        return;
-      }
-      if (fmVoiceActive) { fmStopVoice(); return; }
-      fmVoiceActive = true;
-      fmVoiceAnchor = input.selectionStart ?? input.value.length;
-      fmVoiceInterimLen = 0;
-      // 与主窗 startVoice 同一约定：锚点前字符非空白 ⇒ 补一个分隔空格
-      if (fmVoiceAnchor > 0) {
-        const ch = input.value[fmVoiceAnchor - 1];
-        if (ch && ch !== ' ') {
-          input.value = input.value.substring(0, fmVoiceAnchor) + ' ' + input.value.substring(fmVoiceAnchor);
-          fmVoiceAnchor++;
-        }
-      }
-      fmSetMicState('listening');
-      input.focus();
-      startDictation({
-        onInterim: (text) => {
-          // [anchor, anchor+interimLen) 占位槽原位刷新（同主窗契约）
-          const before = input.value.substring(0, fmVoiceAnchor);
-          const after = input.value.substring(fmVoiceAnchor + fmVoiceInterimLen);
-          input.value = before + text + after;
-          fmVoiceInterimLen = text.length;
-          input.setSelectionRange(fmVoiceAnchor + text.length, fmVoiceAnchor + text.length);
-        },
-        onText: (text) => {
-          // 终稿落定 = 占位槽换终稿 + 尾随空格，锚点随移（同主窗契约）
-          const before = input.value.substring(0, fmVoiceAnchor);
-          const after = input.value.substring(fmVoiceAnchor + fmVoiceInterimLen);
-          const insert = text + ' ';
-          input.value = before + insert + after;
-          fmVoiceInterimLen = 0;
-          fmVoiceAnchor = before.length + insert.length;
-          input.setSelectionRange(fmVoiceAnchor, fmVoiceAnchor);
-          syncComposerSend(); // 程序化写入不触发 input 事件 ⇒ 发送键可用态就地同步
-        },
-        onState: (s, data) => {
-          if (s === 'error') {
-            // data = 引擎内已分类、已 i18n 的文案；错误必须用户可见（同 #stt-hotfix 纪律）
-            fmSetMicState('idle');
-            modalToast(String(data || t('messages.voiceInput')));
-            console.warn('[voice] friend/group mic error:', data);
-            return;
-          }
-          fmSetMicState(s);
-        },
-      });
-    });
-    bar.appendChild(micBtn);
-  }
-  // ③ 发送键族统一批（作者 2026-09-15「正常绿 / 掉线灰」）：本键与全站发送键共用
-  //   同一套状态色（`sapphire.css` 的发送族块）。`cfg-btn-primary` 只为**承接既有
-  //   墨色**（`sidebar.css:1162-1170` 的主操作白墨声明，既有类名 ⇒ 零新增字面量色值）；
-  //   材质/几何/状态一律由发送族块覆盖，不取 `.cfg-btn` 的灰档。
-  const sendBtn = el('button', 'cfg-btn cfg-btn-primary fm-send-btn', t('messages.send'));
-  bar.appendChild(input);
-  // 附件发送入口。两种形态**共用同一枚纸夹**（`fm-attach-btn` + `paperclip` 图标），
-  // 靠会话面而非两套控件区分（attachcl 批，作者 2026-09-16 07:36）：
-  //   · 设备面（既有，**零行为变化**）：闸位/队列/传输全走 dropbox.js 单点；
-  //   · 好友 / 群面（本批**放开**）：整件一次请求 → 网关 → 复用桌面分块驱动
-  //     （唯一实现 = attachUpload.js；闸位常量同源 = dropbox.js 导出的同一组）。
-  // 🔴 两面各写一套入口/渲染器是本批明令禁止的形态 ⇒ 下面按 `attachAvailable(conv)`
-  //    一个判据分流，二者互斥，设备面走不到新腿。
-  // uxconsist Phase B（§4.1-#2 三面入口收敛）：纸夹 = **一枚键 + 一个 input + 一个分派口**。
-  // 改前按 `conv.kind` **二分建两套控件**（两个 input、两枚键、两个 handler）——同一动作
-  // 三面各有实现，闸位/上限/受理面的差异正是从这类分叉里长出来的。现在入口只有一个，
-  // 面间差异全部收在 `dispatchFiles`（闸位/上限/受理面**三面同源**）。
-  const attachInput = document.createElement('input');
-  attachInput.type = 'file';
-  attachInput.multiple = true;
-  attachInput.style.display = 'none';
-  attachInput.addEventListener('change', () => {
-    if (attachInput.files && attachInput.files.length > 0) dispatchFiles(conv, attachInput.files);
-    attachInput.value = '';
+  // input bar —— 三面**同款**轻量 composer（三面-composer 统一批 2026-11-02 · 作者令
+  // 「好友/群/设备的 composer 收口为同一组件（同布局同能力同行为）」；现状设备面板缺
+  // 语音输入 ⇒ 以能力最全的面为基准补齐，三面能力清单一致）。
+  // 装配单点 = `messages/fmComposer.js`（文本 + 语音 + 附件 + 发送 + 录音中可停止态，
+  // 三面零分叉）。本函数只传宿主钩子（发送 = `dispatchSend`、附件 = `dispatchFiles`、
+  // 可用态收敛 = `syncComposerSend` —— 三者仍是各自单点，组件不复制任何分流判据）。
+  // 与主会话输入组件只共享**视觉语言**、不共享实现（主会话 = input.js 全家桶），
+  // 差异清单见批文档 docs/20261102_*_fm-three-face-align*.md。
+  const composer = buildFmComposer({
+    // 附件入口可用面 = **三面同源**：设备窗恒有（`sendDeviceFiles` 单点）；好友 / 群窗由
+    // `attachAvailable(conv)` 判（寻址面在 `attachTargetOf` 单点）。不可用面不挂假入口。
+    canAttach: conv.kind === 'device' || attachAvailable(conv),
+    onSend: () => dispatchSend(conv),
+    onFiles: (files) => dispatchFiles(conv, files),
+    onTextChange: syncComposerSend,
+    toast: modalToast,
   });
-  const attachBtn = el('button', 'icon-btn dropbox-attach-btn fm-attach-btn');
-  attachBtn.type = 'button';
-  attachBtn.title = t('dropbox.attachFile');
-  attachBtn.setAttribute('aria-label', t('dropbox.attachFile'));
-  attachBtn.innerHTML = '<i data-lucide="paperclip"></i>';
-  attachBtn.addEventListener('click', () => attachInput.click());
-  // 入口可用面 = **三面同源**：设备窗恒有（`sendDeviceFiles` 单点）；好友 / 群窗由
-  // `attachAvailable(conv)` 判（寻址面在 `attachTargetOf` 单点）。不可用面**不挂假入口**。
-  if (conv.kind === 'device' || attachAvailable(conv)) {
-    bar.appendChild(attachBtn);
-    bar.appendChild(attachInput);
-  }
-  bar.appendChild(sendBtn);
+  const bar = composer.bar;
+  const input = composer.input;
+  const sendBtn = composer.sendBtn;
   modal.appendChild(bar);
 
   // 引用态条宿主（**D2**：挂载点 = 输入条**之后** ⇒ DOM 序 header→flow→input-bar→strip，
@@ -1532,7 +1413,7 @@ function renderChatModal(conv) {
 
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
-  modalEls = { overlay, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge, stopVoice: fmStopVoice };
+  modalEls = { overlay, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge, stopVoice: composer.stopVoice };
   // Fresh modal → reset history-window state (a stale older conversation's
   // tail must never leak into this one).
   chatMsgs = [];
@@ -1571,18 +1452,9 @@ function renderChatModal(conv) {
     dispatchFiles(conv, e.dataTransfer.files);
   });
 
-  // ── 发送入口**单一分派**（§4.1-#1）：`conv.kind` 的适配器选择只在本函数内出现一次 ──
-  const doSend = () => dispatchSend(conv);
-  sendBtn.addEventListener('click', doSend);
-  // ③ 输入非空 ↔ 发送键可用态即时同步（含发送后清空 ⇒ 回禁用态；禁两态分叉）
-  input.addEventListener('input', syncComposerSend);
-  // ⑤ 中文输入（作者点名的面）：组字期间 Enter 属于输入法（确认候选），不得
-  // 触发 doSend()；组字结束后的 Enter 照旧发送（⑤A3）。
-  bindImeGuard(input);
-  input.addEventListener('keydown', (e) => {
-    if (isImeComposing(e, input)) return;
-    if (e.key === 'Enter') { e.preventDefault(); doSend(); }
-  });
+  // 发送入口**单一分派**（§4.1-#1）：`conv.kind` 的适配器选择只在本函数内出现一次 ——
+  // 键位/Enter 的接线随 composer 组件（`buildFmComposer` 的 onSend 钩子），本函数
+  // 只保留分派单点本身（组件不复制分流判据）。
 
   applyBlockState(conv);
   updateTrustBadge(conv);
@@ -2027,7 +1899,13 @@ function buildMediaAttachmentCard(att, kind, name, src) {
  *   · 字节：`popFaces` 句柄逐件直填（折叠层 + 展开层同件共享同一枚 URL——账本/LRU
  *     单点，零第二份抓取）；层内字节失败 = 组件失败占位（`markMediaFailed`，主会话
  *     同款虚线盒 + 注记），**不**整组换面（其余件照常出帧）；
- *   · QA 标记：`.fm-att`/`.fm-att-media`/`.fm-att-stack` 标记类 + `data-att-ids` 读数。
+ *   · QA 标记：`.fm-att`/`.fm-att-stack` 标记类 + `data-att-ids` 读数。🔴 **禁挂
+ *     `fm-att-media`**（fm-stack-pill-align 批 2026-11-02）：该类是**平面媒体卡根**
+ *     的语义（媒体面 + 设备挂件的列容器，friends.css `.fm-att.fm-att-media` 的
+ *     `flex-direction: column`）——叠卡组不是它，挂上即被宿主卡根规则把组件的
+ *     flex 行几何（`.pop-stack-area` = [展开 N 钮 | 叠卡视口] 横排）压成竖排，
+ *     展开钮从「栈卡左侧/右侧、垂直居中」（主会话同款）掉到栈卡下方 ⇒ 作者所指
+ *     「展开钮位置与主会话不同」。组件默认几何 = 主会话逐字同款，宿主零覆盖。
  *  数据能力申报（非视觉）：好友/群视频字节腿 = 鉴权路由**整件**下载（`/api/friends/
  *  attachments/{id}` 无 Range 流式），设备 path 腿 = 票据 URL 流式——形态两腿同款。 */
 function buildMediaStackGroup(entrys) {
@@ -2046,7 +1924,10 @@ function buildMediaStackGroup(entrys) {
       return buildDownloadKey(e.att, e.kind, e.src, { corner: true });
     },
   });
-  area.classList.add('fm-att', 'fm-att-media', 'fm-att-stack');
+  // 🔴 只挂 fm-att（QA/下载键宿主）+ fm-att-stack（叠卡标记）；禁挂 fm-att-media
+  // （平面媒体卡根语义 —— 见本函数头注 fm-stack-pill-align 批口径：挂上即被宿主
+  // 卡根列向规则压掉组件行向几何，「展开 N」钮会掉到栈卡下方）。
+  area.classList.add('fm-att', 'fm-att-stack');
   area.dataset.attIds = entrys.map(e => (e.att && e.att.id) || '').join(',');
   entrys.forEach((e, i) => {
     const faces = area.popFaces && area.popFaces[i];
@@ -3169,11 +3050,20 @@ function bubbleEl(m, conv) {
   }
   if (hasForwarded(fwdKeyOf(conv, m.id))) meta.appendChild(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
   const timeMs = toEpochMs(m.createdAt);
-  const timeSpan = el('span', 'fm-msg-time', fmtTime(m.createdAt));
-  // 仅同日分支（纯时钟文本）参与 12/24 切换：挂 data-ts-text 即声明「本节点文本
-  // 整体 = formatHm(ts)」。「昨天」/「M/D」带日期语义，挂上会被刷新覆写成裸时钟。
-  if (timeMs && isSameDayMs(timeMs)) {
+  // 时间档 = 主会话 footer **同一 formatter**（footer-time 批 2026-10-06 的分层
+  // label：今天 = 纯时钟 / 昨天 = 「昨天 hh:mm」/ 本周 = 星期 + 时钟 / 更早 = 日期
+  // + 时钟）—— fm-footer-align 批 2026-11-02（作者令「消息 footer 参考主会话设计
+  // 对齐：同构同语言」）。与主会话 `.duration-badge-time` 逐项同款：
+  //   · 文本来源 = `formatFooterTime`（**非**列表行用的 `fmtTime` 薄版）；
+  //   · `data-ts-text` + `data-ts-text-format="day"` = 12/24 切换按**同一**分层
+  //     formatter 就地重排（旧形态只在同日的裸时钟上挂 data-ts-text，昨天的
+  //     「昨天」文本切制后就与 renderer 脱钩）；
+  //   · `bindTimeToggle` 恒绑（主会话恒绑 ⇒ 热区/键盘/aria 语义三面同款）。
+  const timeSpan = el('span', 'fm-msg-time', timeMs ? formatFooterTime(timeMs) : '');
+  if (timeMs) {
+    timeSpan.setAttribute('data-ts', String(timeMs));
     timeSpan.setAttribute('data-ts-text', String(timeMs));
+    timeSpan.setAttribute('data-ts-text-format', 'day');
     bindTimeToggle(timeSpan);
   }
   meta.appendChild(timeSpan);
@@ -3214,6 +3104,12 @@ function bubbleEl(m, conv) {
   fwd.addEventListener('click', () => forwardBubble(wrap, conv));
   actions.appendChild(copyBtn);
   actions.appendChild(fwd);
+  // 分隔符 = 主会话**真节点**（`.duration-badge-divider` / 设备面 `.dropbox-msg-divider`
+  // 同族；本面口径类 = `.fm-msg-divider`，sapphire.css 既有定义 1px×10px currentColor
+  // @.2 + flex-shrink:0）—— fm-footer-align 批 2026-11-02：旧形态用
+  // `.fm-msg-actions::before` 伪元素（视觉等价、结构不同），现与主会话同构：真节点、
+  // 同几何、同间距档（pill gap 6 + 1 + 6 = 13px，主会话实测同档）。
+  meta.appendChild(el('span', 'fm-msg-divider'));
   meta.appendChild(actions);
 
   wrap.appendChild(meta);

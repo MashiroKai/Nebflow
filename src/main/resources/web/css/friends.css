@@ -1051,8 +1051,14 @@ button.fm-req-decline:focus-visible {
 .fm-att.fm-att-uploading,
 .fm-att.fm-att-unreadable { opacity: 0.72; }
 
-/* 媒体卡根（`.fm-att-media`）= 媒体面 + 设备挂件的列容器（零自有 chrome —— 卡语言
-   全在面内）；文件卡挂设备挂件需要整行折行。 */
+/* 媒体卡根（`.fm-att-media`）= **平面媒体卡**（单件媒体面）的列容器：媒体面 + 设备
+   挂件（零自有 chrome —— 卡语言全在面内）；文件卡挂设备挂件需要整行折行。
+   🔴 fm-stack-pill-align 批 2026-11-02 作用域钉：本规则**只**覆盖平面媒体卡根
+   （`messages.js::attachmentCard` 的卡根）。叠卡组（`.fm-att-stack`）**不是**本类
+   —— 叠卡组若挂上 `fm-att-media`，这里的 `flex-direction: column` 会把组件
+   `.pop-stack-area` 的横排行几何压成竖排，「展开 N」钮从「栈卡侧方、垂直居中」
+   掉到栈卡下方（＝作者所指「展开钮位置与主会话不同」的根因）。标记类口径以
+   `messages.js::buildMediaStackGroup` 头注为准：叠卡组只挂 `.fm-att` + `.fm-att-stack`。 */
 .fm-att.fm-att-media {
   display: flex;
   flex-direction: column;
@@ -1062,12 +1068,15 @@ button.fm-req-decline:focus-visible {
 }
 .file-card.fm-att { flex-wrap: wrap; }
 
-/* 叠卡宿主绑定（fm-att-component-lib 批 2026-11-02）：叠卡形态/几何全部属组件
-   （chat.css `.pop-stack-area`/`.media-layer` 单点）；此处只做**宿主侧别镜像**——
-   主会话由 `.row.pop-artifact.user`（出向 = 扇形朝左 + 角标在左）与
-   `.row.pop-artifact:not(.user)`（入向 = 扇形朝右 + 角标在右）承载，三窗行类是
+/* 叠卡宿主绑定（fm-att-component-lib 批 2026-11-02；fm-stack-pill-align 批同日校正）：
+   叠卡形态/几何全部属组件（chat.css `.pop-stack-area`/`.media-layer` 单点）；此处只做
+   **宿主侧别镜像**——主会话由 `.row.pop-artifact.user`（出向 = 扇形朝左 + 钮在左）
+   与 `.row.pop-artifact:not(.user)`（入向 = 扇形朝右 + 钮在右）承载，三窗行类是
    `.fm-msg.out/in` ⇒ 同值常量镜像到本宿主（非第二套算术：translate/rotate/pill
-   间距逐值取自 chat.css:4960-4963 / 4916-4930 既有规则）。 */
+   间距逐值取自 chat.css:4960-4963 / 4916-4930 既有规则）。
+   🔴 组件默认位 = 主会话逐字同款（钮恒在栈卡**朝会话中轴**一侧、垂直居中、盒间距
+   48px = pill margin 32 + flex gap 16）；本段只是把「哪侧朝中轴」按行侧镜像过来 ——
+   fm 调用点**不传**任何位置类 opts（见 popArtifacts.buildMediaStack 头注）。 */
 .fm-msg .pop-stack-area { width: max-content; max-width: 100%; }
 .fm-msg.out .pop-stack-area > .pill { margin-right: 32px; }
 .fm-msg.in .pop-stack-area > .pill { order: 3; margin-left: 32px; }
@@ -1201,17 +1210,12 @@ button.fm-req-decline:focus-visible {
   transition: opacity 0.15s;   /* S20：现状 .12s ease → 归一 .15s（全站动画 150-300ms 纪律） */
 }
 
-/* 时间与按钮之间的分隔线 1px×10px currentColor @ .2（主对话框 chat.css:1150-1156）
-   S16：方向 A 保留伪元素（视觉等价），但补主对话的 `flex-shrink:0`
-   （现状未声明 = 默认 1，窄档下可能被压缩）。 */
-.fm-msg-actions::before {
-  content: '';
-  width: 1px;
-  height: 10px;
-  background: currentColor;
-  opacity: 0.2;
-  flex-shrink: 0;
-}
+/* 时间与按钮之间的分隔线 = 主会话**真节点**同族（`.duration-badge-divider` /
+   设备面 `.dropbox-msg-divider` / 本面 `.fm-msg-divider`，单一几何定义在
+   sapphire.css:865-872：1px×10px currentColor @ .2 + flex-shrink:0）。
+   fm-footer-align 批 2026-11-02：旧形态的 `.fm-msg-actions::before` 伪元素
+   （「视觉等价、结构不同」）随真节点上场退役 —— 主会话/设备面/好友面三处
+   同构同款，死规则不留。 */
 
 /* 触摸端兜底（全仓首个 (hover: none) 分支）：常显档下天然可见，本规则为零成本
    显式声明，防将来回退到揭示式显隐时触摸端不可达。S13：随三面复制键统一扩为
@@ -1252,8 +1256,11 @@ button.fm-req-decline:focus-visible {
 .fm-msg-act.copied { color: #34c759; opacity: 1; }
 
 /* S15/R4：复制失败就地提示态（图标转错误色；文案由 utils.js 的
-   `markCopyFailed()` 以 `aria-live` 行注入，不用 toast）。 */
-.fm-msg-act.copy-failed { color: var(--color-error); opacity: 1; }
+   `markCopyFailed()` 以 `aria-live` 行注入，不用 toast）。
+   fm-footer-align 批 2026-11-02：取色对齐主会话同一规则（chat.css:1065
+   `.msg-copy.copy-failed { color: var(--status-error-icon) }`）—— 同 token、
+   同失败色（旧值 `--color-error` 是另一档红族，取色单源）。 */
+.fm-msg-act.copy-failed { color: var(--status-error-icon); opacity: 1; }
 
 /* 焦点环补齐（现状 = 浏览器默认蓝环）：与 .fm-row:focus-visible 同款 */
 .fm-msg-act:focus-visible {

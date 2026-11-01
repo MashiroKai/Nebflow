@@ -1,4 +1,15 @@
+---
+type: batch
+status: published
+date: 2026-11-01
+scope: 手机端 dock 悬浮胶囊化（css/mobileLayer.css + ask.css + glass.css，#mobile-dock 通栏底条换玻璃胶囊 + 输入卡呼吸缝）
+---
+
 # dock 悬浮胶囊批（作者令 2026-11-01 21:07）—— 手机端底 dock 胶囊化 + 输入间隙
+
+> 关联：[[20261101_222500_composer-mobile-slim__delegate-nebflow-6e995fd9]]（后续输入卡收窄批，本批输入卡悬浮其上的同一 dock 谱系）。
+>
+> 🔧 frontmatter 由后续批（fm 三面输入条对齐批，2026-11-02）**仅补格式**：R1 要求所有文档带 type/status，本文件原缺；正文一字未改、文件未改名未移动。
 
 - 批次：delegate-nebflow-7fa8a6bb · 分支 `delegate/delegate-nebflow-7fa8a6bb`
 - 作者令：21:07 实拍（uploads/687436871179875_IMG_1672.jpg）两件——

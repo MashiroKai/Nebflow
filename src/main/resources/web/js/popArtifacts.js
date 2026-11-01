@@ -632,7 +632,21 @@ const POP_SWIPE_QUIET_MS = 160;  // 动量窗：翻页后事件流静默 ≥160m
  *     （Canvas 次级入口）；返回 null/undefined = 该行不挂角标。
  *   · `area.popFaces`：字节填充句柄（dry 腿宿主用）——`[{item, index, els}]`，
  *     `els` = 该件的全部媒体元素（折叠层 + 展开层各一枚，文档序），调用方按序
- *     直填 `el.src`（`item.dry` 约定不变，见 hydrateMedia 头注）。 */
+ *     直填 `el.src`（`item.dry` 约定不变，见 hydrateMedia 头注）。
+ *
+ *  🔴 **「展开 N」钮的位置不是 API 参数位**（fm-stack-pill-align 批 2026-11-02 ·
+ *  作者令「把 buildMediaStack 的展开钮默认位改回与主会话逐字同款（同角、同边距、
+ *  同形态），fm 调用点不许传位置类 opts 覆盖」）：钮的**默认位 = 主会话逐字同款**
+ *  —— 组件默认 DOM 序 [pill, view] 即「钮在栈卡**朝会话中轴**一侧、垂直居中」，
+ *  侧别镜像（用户侧/出向 = 钮在左 + margin-right 32px + 扇形朝左；LLM 侧/入向 =
+ *  `order:3` + 钮在右 + margin-left 32px + 扇形朝右）与 220×280 卡面几何**全部**
+ *  在 chat.css 单源（`.pop-stack-area` / `.row.pop-artifact.user` /
+ *  `.row.pop-artifact:not(.user)` 族），宿主面板只做**同值镜像**（friends.css 的
+ *  `.fm-msg.out/.in` 族）。⇒ 本组件的 opts **不得**长出位置类键（如 pillSide /
+ *  钮角位 / 边距覆盖）——面板「钮位置不对」的修法是修宿主镜像或组件默认，绝不
+ *  在调用点传覆盖参数（那会重新长出第二套几何算术，正是本批要挡的漂移形态）。
+ *  fm 三窗（好友/群聊/设备）的调用点 = `messages.js::buildMediaStackGroup`，只传
+ *  `onOpen` + `cornerFor`（动作 + 角标），零位置类键。 */
 function buildMediaStack(items, opts) {
   const openItem = (opts && typeof opts.onOpen === 'function') ? opts.onOpen : openMediaItemClick;
   const cornerFor = (opts && typeof opts.cornerFor === 'function') ? opts.cornerFor : null;

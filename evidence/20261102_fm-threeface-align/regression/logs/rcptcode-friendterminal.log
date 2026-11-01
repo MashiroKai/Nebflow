@@ -1,0 +1,31 @@
+READ  arm.A1.after = {"arm":"A1","label":"403 not_friends","before":1,"msgCount":1,"failedCount":0,"retryCount":0,"toastVisible":true,"toastText":"你们已不是好友，消息未发送","errCodes":[],"authRequired":0,"inputValue":"rcptcode A1"}
+PASS  A1 终态：无重试键  — retry=0
+PASS  A1 终态：气泡已撤  — msg=1/1
+PASS  A1 终态：分态原因可见  — toast="你们已不是好友，消息未发送"
+PASS  A1 终态：正文退回输入框（不丢）  — "rcptcode A1"
+PASS  A1 终态：不派登录链  — auth=0
+PASS  A1 零 pageerror  — []
+READ  arm.A2.after = {"arm":"A2","label":"403 not_blocker","before":1,"msgCount":1,"failedCount":0,"retryCount":0,"toastVisible":true,"toastText":"你并未拉黑对方，该操作不可用","errCodes":[],"authRequired":0,"inputValue":"rcptcode A2"}
+PASS  A2 终态：无重试键  — retry=0
+PASS  A2 终态：气泡已撤  — msg=1/1
+PASS  A2 终态：分态原因可见  — toast="你并未拉黑对方，该操作不可用"
+PASS  A2 终态：正文退回输入框（不丢）  — "rcptcode A2"
+PASS  A2 终态：不派登录链  — auth=0
+PASS  A2 零 pageerror  — []
+READ  arm.A3.after = {"arm":"A3","label":"400 REPLY_TARGET_INVALID","before":1,"msgCount":1,"failedCount":0,"retryCount":0,"toastVisible":true,"toastText":"被引用的消息已不可用，消息未发送","errCodes":[],"authRequired":0,"inputValue":"rcptcode A3"}
+PASS  A3 终态：无重试键  — retry=0
+PASS  A3 终态：气泡已撤  — msg=1/1
+PASS  A3 终态：分态原因可见  — toast="被引用的消息已不可用，消息未发送"
+PASS  A3 终态：正文退回输入框（不丢）  — "rcptcode A3"
+PASS  A3 终态：不派登录链  — auth=0
+PASS  A3 零 pageerror  — []
+READ  arm.A4.after = {"arm":"A4","label":"500 未知码","before":1,"msgCount":2,"failedCount":1,"retryCount":1,"toastVisible":true,"toastText":"发送失败（boom_code_unknown）","errCodes":["boom_code_unknown"],"authRequired":0,"inputValue":""}
+PASS  A4 未知码：保留重试键  — retry=1
+PASS  A4 未知码：码原样展示  — ["boom_code_unknown"]
+PASS  A4 未知码：不派登录链  — auth=0
+PASS  A4 零 pageerror  — []
+READ  arm.A5.after = {"arm":"A5","label":"403 被踢会话（无语义码）","before":1,"msgCount":2,"failedCount":1,"retryCount":1,"toastVisible":true,"toastText":"发送失败（Missing or invalid token）","errCodes":["Missing or invalid token"],"authRequired":1,"inputValue":""}
+PASS  A5 被踢 403：派登录链  — auth=1
+PASS  A5 零 pageerror  — []
+
+==== rcptcode-friendterminal after : ALL PASS ====
