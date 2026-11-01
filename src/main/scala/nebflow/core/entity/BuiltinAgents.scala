@@ -273,9 +273,26 @@ object BuiltinAgents:
 - Terse does not mean robotic: keep it short AND human - facts and decisions in your own voice, no filler padding, no bureaucratic phrasing.
 """
 
+  /**
+   * Voice 节 output 块 bullet（output 块语法批引入的接线面；prompt-face 补批
+   * 2026-11-01 总闸化）：文本**逐字 = [[NebulaPromptTemplate]] 内该行**。
+   * NebulaPrompt 渲染时闸感知——闸开 = 原文逐字（与总闸化前字节一致）；闸关 =
+   * 整行剥除（含行尾换行，其余字节零变）。剥除锚漂移由 NebulaPromptOutputGateSpec
+   * 判红（改模板此行必须同改本常量）。
+   */
+  private val NebulaOutputVoiceBullet: String =
+    "- User-visible output: wrap everything the user should read in paired `<output>...</output>` tags (same text as [[nebflow.shared.Defaults.OutputBlockRule]]). Only tagged content renders in the chat - reasoning and process detail stay outside the tags (the user expands a badge to see the full raw text). Adjust length/tone to the user's communication-style answers in `~/.stand/User.md`; absent a profile, default to concise direct Chinese."
+
   /** 渲染后的 Nebula 提示词（自报家门 = 用户起的显示名）。 */
   private def NebulaPrompt: String =
-    NebulaPromptTemplate.replace("{{agent_display_name}}", displayNameForRoot)
+    val rendered = NebulaPromptTemplate.replace("{{agent_display_name}}", displayNameForRoot)
+    if nebflow.shared.OutputBlockGate.enabled() then rendered
+    else
+      // output 块总闸·提示词面（prompt-face 补批 2026-11-01，作者令「把 output
+      // 块相关的内容先关闭」）：Voice 节 output 块 bullet 整行剥除——闸关时根
+      // 提示词零 output 块指令（与 order-375 段、delegate brief、节点脚注、
+      // subagent 包装四处共闸，同一键 `outputBlock.enabled` 同一读数）。
+      rendered.replace(s"$NebulaOutputVoiceBullet\n", "")
 
   private val DispatcherPromptTemplate =
     """You are project-dispatcher: the per-project task dispatcher. Each trigger is a fresh single-session context: no memory, no cross-session state. State lives in the Flow Map; nodes write files.

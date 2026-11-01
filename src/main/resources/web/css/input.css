@@ -1061,9 +1061,13 @@
 /* 换装批（作者令 2026-10-31「@ 与 / 候选浮层对齐现行设计语言」）：材质换代
    为悬浮件玻璃单源。统一按钮玻璃批 2026-11-01：面板材质迁 css/glass.css 面
    级浮件档（--glass-bg + blur24 sat1.15 双写 + --cv-shadow；原 --g2-fab-*
-   F1 档随族退役，设计稿 §4 遗产处置表），本块只留几何。行内缩圆角行（r10）
-   + hover 玻璃抬亮档 + 选中行墨族 --btn-ink-* 墨面高亮（ink-swap 双档随面板
-   主题自动解析，字色随高亮翻转；原 --g2-ink-* 中转层退役）。 */
+   F1 档随族退役，设计稿 §4 遗产处置表），本块只留几何。行内缩圆角行（r10）。
+   选中/hover 高亮换代（作者令 2026-11-01 20:03「选中项的高亮从现在的黑色
+   改成浅灰色」）：原选中行墨族 --btn-ink-* 墨面黑块退役，改浅灰 wash 三态
+   （本块 --dd-row-* 双变量，随面板主题解析）——选中 = 浅灰 wash（亮档墨灰
+   低透明 / 暗档白低透明 wash 等价映射，避免刺眼白块），字色保持本档不翻转
+   （亮档深字 / 暗档浅字对比度不变）；hover 同语言淡一档；键盘 active 与鼠标
+   hover 同一视觉语言。@ 项目浮层与 / 命令浮层共用同一套。 */
 #slash-dropdown,
 #mention-dropdown {
   position: absolute;
@@ -1078,6 +1082,23 @@
   z-index: 50;
   pointer-events: auto;
   padding: 6px 0;
+  /* 行态 wash 双变量（亮档默认；暗档双写见下方两组选择器） */
+  --dd-row-active: rgba(17, 24, 39, 0.08);
+  --dd-row-hover: rgba(17, 24, 39, 0.04);
+}
+/* 行态 wash 三态解析（结构同 stand-tokens.css --btn-ink-* 族：面板强制暗
+   优先，无 data-theme 回退 prefers-color-scheme） */
+html[data-theme="dark"] #slash-dropdown,
+html[data-theme="dark"] #mention-dropdown {
+  --dd-row-active: rgba(255, 255, 255, 0.12);
+  --dd-row-hover: rgba(255, 255, 255, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) #slash-dropdown,
+  html:not([data-theme="light"]):not([data-theme="dark"]) #mention-dropdown {
+    --dd-row-active: rgba(255, 255, 255, 0.12);
+    --dd-row-hover: rgba(255, 255, 255, 0.06);
+  }
 }
 #slash-dropdown.on,
 #mention-dropdown.on { display: block; }
@@ -1103,17 +1124,10 @@
   transition: background-color 0.15s ease;
 }
 .slash-item + .slash-item { margin-top: 2px; }
-.slash-item:hover { background: var(--cv-hover-bg, var(--glass-control-bg-hover)); }
+.slash-item:hover { background: var(--dd-row-hover); }
 .slash-item.active {
-  background: var(--btn-ink-bg);
+  background: var(--dd-row-active);
 }
-.slash-item.active .slash-cmd { color: var(--btn-ink-ink); }
-.slash-item.active .slash-desc,
-.slash-item.active .slash-when {
-  color: var(--btn-ink-ink);
-  opacity: 0.72;
-}
-.slash-item.active .slash-delete { color: var(--btn-ink-ink); }
 .slash-cmd {
   font-size: 14.5px;
   font-weight: 500;
@@ -1184,14 +1198,9 @@
   transition: background-color 0.15s ease;
 }
 .mention-item + .mention-item { margin-top: 2px; }
-.mention-item:hover { background: var(--cv-hover-bg, var(--glass-control-bg-hover)); }
+.mention-item:hover { background: var(--dd-row-hover); }
 .mention-item.active {
-  background: var(--btn-ink-bg);
-}
-.mention-item.active .mention-name { color: var(--btn-ink-ink); }
-.mention-item.active .mention-path {
-  color: var(--btn-ink-ink);
-  opacity: 0.72;
+  background: var(--dd-row-active);
 }
 .mention-name {
   font-size: 14.5px;

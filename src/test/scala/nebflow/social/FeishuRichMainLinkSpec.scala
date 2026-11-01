@@ -170,6 +170,7 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
       send = send.fn,
       pinnedAllowedOpenIds = None,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
+      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
       buildRichAdapter = (_, _, _) =>
         new RichFeishuAdapter(
           rec.uploadImage,

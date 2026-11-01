@@ -7,6 +7,10 @@ import { currentSelfDeviceName } from './deviceRoster.js';
 // 一起封存，漏网」）：<voice> TTS 输出族与全双工同 flag（voiceEnabled，缺席封存）。
 // featureFlags 只依赖 state.js，无导入环。
 import { voiceEnabled } from './featureFlags.js';
+// output-block-gate 批（作者令「把 output 块相关的内容先关闭……」）：
+// outputBlockEnabled 读 nebflow.json `outputBlock.enabled`（缺席 = 关），
+// 与渠道剥离面同一键。同模块、无导入环。
+import { outputBlockEnabled } from './featureFlags.js';
 
 // ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
 
@@ -250,10 +254,11 @@ function restoreMentions(html, blocks) {
 // Bounded LRU cache for rendered markdown HTML. History restore and session
 // switching re-render identical content; caching avoids repeated
 // marked.parse + KaTeX.renderToString work.
-// - Key: `${parseVoice}${markedLoaded}${katexLoaded}${locale}|${mentionGen}|${text}` —
+// - Key: `${parseVoice}${markedLoaded}${katexLoaded}${locale}|${outputBlock}${mentionGen}|${text}` —
 //   captures every factor that changes the output (voice parsing, library
-//   load state, i18n locale used by the copy button, the @-mention project
-//   list generation (mention-render batch: a list change must not let cached
+//   load state, i18n locale used by the copy button, the output-block gate
+//   (output-block-gate 批: a gate flip must not serve pre-flip cached HTML),
+//   the @-mention project list generation (mention-render batch: a list change must not let cached
 //   HTML contradict the current list), and the raw text).
 // - Capacity: 200 entries. Map preserves insertion order; on get we
 //   delete+set to move the entry to the end (most recent); on set we evict
@@ -300,7 +305,7 @@ export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   // renderers pass { cache:false } and go straight to the parser; only
   // finish*/history renders (stable text) populate the cache.
   if (opts && opts.cache === false) return _renderMarkdownWithMath(text, parseVoice);
-  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${mentionListState().gen}|${text}`;
+  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${outputBlockEnabled() ? 1 : 0}${mentionListState().gen}|${text}`;
   const hit = _mdCache.get(key);
   if (hit !== undefined) {
     _mdCache.delete(key);
@@ -341,6 +346,10 @@ function _renderMarkdownWithMath(text, parseVoice) {
   // 成对闭合才提取，散标签（流式中间态/手误）转义为字面文本：marked 会把裸
   // `<output>` 当 HTML 块把后续内容整段吞掉，必须先行掐断。无标签文本零改动
   // （降级语义：未包裹的旧内容照常全显，不吞历史消息）。
+  // output-block-gate 批（作者令「把 output 块相关的内容先关闭……」）：总闸
+  // `outputBlock.enabled`（缺席 = 关）关闭 ⇒ 提取分支整体旁路，全部标签走
+  // 散标签同一转义腿（字面现形，内容零丢失）＝全文直出，无掩码；与渠道剥离
+  // 面同一键（scala OutputBlock.enabledFromConfig）。闸一开提取路径原样回归。
   const outputBlocks = [];
   if (text.indexOf('<output>') !== -1 || text.indexOf('</output>') !== -1) {
     // 围栏安全批（作者令：块形态就是为了避开 md 语法冲突，提取器不能反被
@@ -348,7 +357,7 @@ function _renderMarkdownWithMath(text, parseVoice) {
     // 是代码内容，不触发剥离，也吃不到转义（转义会腐蚀围栏体）。与渠道侧
     // 单一实现源（scala nebflow.social.outbound.OutputBlock）同一条规则。
     const masked = _maskCodeFences(text);
-    if (_outputTagsBalancedOn(masked)) {
+    if (outputBlockEnabled() && _outputTagsBalancedOn(masked)) {
       // 成对闭合 ⇒ 占位替换只落在围栏外的对上：掩码串上找对、按 1:1 偏移
       // 回原文 splice（尾→头，偏移保持有效；块序 = 出现序）。
       const pairs = [];
@@ -457,8 +466,12 @@ function _maskCodeFences(text) {
 
 /** Shared inner-content joiner: every balanced pair's body, blank-line joined —
  *  the chat face (outputTag.js) renders this as the whole visible message.
- *  围栏安全：对掩码串找对、按偏移回原文切片（围栏内的字面标签永不入块）。 */
+ *  围栏安全：对掩码串找对、按偏移回原文切片（围栏内的字面标签永不入块）。
+ *  output-block-gate 批：总闸关闭 ⇒ null（=「无平衡块」）——hasOutputBlock /
+ *  applyOutputFace / defer-output 标记整条链随之熄灭，聊天气泡回全文渲染；
+ *  与管线提取面（renderMarkdownWithMath）同一开关。 */
 export function extractOutputInner(text) {
+  if (!outputBlockEnabled()) return null; // 缺席 = 关（默认 OFF，作者令）
   const masked = _maskCodeFences(text);
   if (!_outputTagsBalancedOn(masked)) return null;
   const parts = [];

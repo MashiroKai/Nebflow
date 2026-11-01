@@ -22,6 +22,9 @@
 
 import { t } from './i18n.js';
 import { rootDisplayName } from './rootName.js';
+// 来源链批（作者令 2026-11-01 19:23）：详情卡来源行与面板行同走一条链解析
+// （bgSourceChain 单点——「上层 · 下层」名字链；纯显示层既有镜像读数）。
+import { chainForTask, chainLabel } from './bgSourceChain.js';
 import { key } from './branding.js';
 import { statusIcon, escapeHtml } from './utils.js';
 // 弹窗退场批（作者令 2026-10-31②）：手机层输出卡铺满屏 + 左上返回（桌面零变化）。
@@ -724,12 +727,21 @@ function copyButtonHtml() {
 
 // ── Open / close ──────────────────────────────────────────
 
-export function openBgTaskOutput(task) {
+export function openBgTaskOutput(task, bucketSid) {
   if (!task || !task.taskId) return;
   closeBgTaskOutput();
   ensureCss();
 
   const restoreFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  // 来源链批（作者令 2026-11-01 19:23）：卡面来源行 = 面板行同源链解析（「上层 ·
+  // 下层」名字链）——delegate 批显短名链、节点/分发器链带所属 delegate、根会话件
+  // 显主 agent 显示名（既有口径）。空链（设备任务/解析不出）= 旧读数逐字节回退
+  // （此前 delegate 件在此误显 root 名——origin='nebula' 走 rootDisplayName 分支，
+  // 本链顺修：ownerName 在场即短名链）。
+  const taskChain = chainLabel(chainForTask(task, bucketSid));
+  const legacyOrigin = task.origin === 'nebula'
+    ? rootDisplayName()
+    : String(task.originLabel || '').trim();
   cur = {
     taskId: task.taskId,
     offset: 0,
@@ -752,9 +764,7 @@ export function openBgTaskOutput(task) {
     // 设备名）已在，跑在哪由面板行设备 chip 承载（禁残留第二口径）。
     // Nebula 退役批（同令）：来源行与面板行同口径——delegate 批次显短名，主 agent
     // 开启的件显**用户给它起的名字**（后端 originLabel 的机制名不上屏）。
-    originText: task.origin === 'nebula'
-      ? rootDisplayName()
-      : String(task.originLabel || '').trim(),
+    originText: taskChain || legacyOrigin,
     // 远端模式面（输出查看补全批）：remoteMode = 轮询 /remote-output 的整窗渲染
     // 分叉；outputPath = 对端日志路径（引擎逐拍回带）；deviceName = 设备名
     // （origin chip 的 label，拉取中占位文案用）。

@@ -1672,7 +1672,16 @@ object NodeEngine:
 
   val VerifierVerdictFootnote: String = NodeEngineContract.VerifierVerdictFootnote
 
-  def protocolFootnoteFor(role: Option[String]): String = NodeEngineContract.protocolFootnoteFor(role)
+  /**
+   * 公开再导出（NodeEngineContract 为 private[project]）：转发 + output 块总闸
+   * 参数（prompt-face 补批 2026-11-01）。`includeOutputRule` 缺省 = 组装期热读
+   * `OutputBlockGate.enabled()`——`NodeStarter` 等既有单参调用零波及；离线 spec
+   * 显式传参两态判定。
+   */
+  def protocolFootnoteFor(
+    role: Option[String],
+    includeOutputRule: Boolean = nebflow.shared.OutputBlockGate.enabled()
+  ): String = NodeEngineContract.protocolFootnoteFor(role, includeOutputRule)
 
   type NodeChainContext = NodeEngineContract.NodeChainContext
   val NodeChainContext: NodeEngineContract.NodeChainContext.type = NodeEngineContract.NodeChainContext

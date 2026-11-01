@@ -98,6 +98,13 @@ final class WeixinIlinkBridgePlugin(
    */
   pinnedAllowedIlinkUserIds: Option[List[String]] = None,
   /**
+   * output 块总闸缝（output-block-gate 批，作者令「把 output 块相关的内容先
+   * 关闭……」）：每次出站 flush 执行期求值。生产缺省 = 热读 nebflow.json 顶层
+   * `outputBlock.enabled`（缺席 = 关 ⇒ 渠道回全量原样）；离线 spec 注入常值
+   * （true = 剥离行为，false = 原文直出），与机器上的真实配置解耦。
+   */
+  outputBlockGate: () => Boolean = OutputBlock.enabledFromConfig,
+  /**
    * Outbound send seam factory (weixin-outbound batch, 2026-10-07). Production
    * = [[WeixinOutboundAdapter.sendLive]] (the authenticated side-car `POST
    * /send` face); the offline spec injects a recorder so no test opens a
@@ -1169,7 +1176,8 @@ final class WeixinIlinkBridgePlugin(
    *
    * output 块纪律渠道接线批（2026-11-01，作者令「微信端…也要做 output 块剥
    * 离，只显示 output 块内部的内容」）：段文本先过单一提取源
-   * [[OutputBlock.extract]]——Extracted ⇒ 只推块内拼接（块外叙述不出站，空块
+   * [[OutputBlock.extractGated]]（output-block-gate 批起闸感知——闸开=提取，
+   * 闸关=原文直通）——Extracted ⇒ 只推块内拼接（块外叙述不出站，空块
    * 消费不推）；NoBlocks ⇒ 消费不推（整段无块 ⇒ 无可投递文本，**不回退成发
    * 全文**）；Unbalanced（`<output>` 开而未闭的流式中间态/散标签）⇒ **HOLD**：
    * 不消费不推——块可能在后续 delta 里闭合成形，此刻弹出即永远丢失（控制台
@@ -1179,7 +1187,7 @@ final class WeixinIlinkBridgePlugin(
   private def flushSegment(sessionId: String): IO[Unit] =
     pendingRef.modify { m =>
       val text = m.getOrElse(sessionId, "")
-      OutputBlock.extract(text) match
+      OutputBlock.extractGated(text, outputBlockGate()) match
         case OutputBlock.Unbalanced => (m, IO.unit)
         case OutputBlock.NoBlocks   => (m - sessionId, IO.unit)
         case OutputBlock.Extracted(inner) =>
@@ -1532,12 +1540,13 @@ final class WeixinIlinkBridgePlugin(
    * the media exactly as the pre-group leg did.
    *
    * output 块纪律渠道接线批（2026-11-01）：轮尾文本先过单一提取源
-   * [[OutputBlock.extract]]——文字腿与 caption 都只吃块内拼接（块外叙述不出
-   * 站）；无块 / 围栏内标签 / 散标签轮 ⇒ 无可投递文本，文字腿与 caption 同熄
-   * （**不回退成发全文** —— 作者令），纯媒体轮照发。
+   * [[OutputBlock.extractGated]]（闸感知；闸关 = 原文直出）——文字腿与
+   * caption 都只吃块内拼接（块外叙述不出站）；无块 / 围栏内标签 / 散标签轮 ⇒
+   * 无可投递文本，文字腿与 caption 同熄（**不回退成发全文** —— 作者令），
+   * 纯媒体轮照发。
    */
   private def flushTurnEnd(sessionId: String, text: String, richs: List[RichProduct]): IO[Unit] =
-    val visible = OutputBlock.extract(text) match
+    val visible = OutputBlock.extractGated(text, outputBlockGate()) match
       case OutputBlock.Extracted(inner) => inner
       case _                            => ""
     if richs.isEmpty then

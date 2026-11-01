@@ -150,6 +150,13 @@ object DelegateTool extends Tool:
    * 空行 → 任务全文（→ 插件注入块）。
    * 铁律置于任务正文之前：单 turn 会话的第一屏即见（747cd36a 形态的启动面
    * 防线——与其在长轮询后靠 LoopGuard 兜底，不如开局立规）。
+   *
+   * output 块总闸·提示词面（prompt-face 补批 2026-11-01，作者令「把 output 块
+   * 相关的内容先关闭」）：`includeOutputRule=false` ⇒ OutputBlockRule 行整行
+   * 不进 brief（含其行首换行，行距字节零残留——plugin 行与任务正文间保持恰一
+   * 空行）。生产缺省 = **组装期热读** `nebflow.shared.OutputBlockGate.enabled()`
+   * （每次派发求值，翻闸后新派发即翻面）；离线 spec 注入常值，与机器真实配置
+   * 解耦（渠道面 outputBlockGate 构造缝同款形态）。
    */
   private[tools] def assembleBrief(
     workspaceLine: String,
@@ -157,8 +164,11 @@ object DelegateTool extends Tool:
     task: String,
     injectedBlock: String,
     /** 双模式批：dispatcher 腿编排纪律段（None = brief 逐字节不变——spec 判红锚）。 */
-    dispatcherDiscipline: Option[String] = None
+    dispatcherDiscipline: Option[String] = None,
+    /** output 块总闸（prompt-face 补批）：true = brief 携带 OutputBlockRule 行。 */
+    includeOutputRule: Boolean = nebflow.shared.OutputBlockGate.enabled()
   ): String =
+    val outputRuleBlock = if includeOutputRule then s"\n${Defaults.OutputBlockRule}" else ""
     s"""$workspaceLine${bindingLine.map(l => s"\n$l").getOrElse("")}
 ${ResetHazardLine}
 
@@ -166,8 +176,7 @@ ${BriefReportLine}
 
 ${Defaults.NoSleepPollRule}
 
-${Defaults.PluginDiscoveryLine}
-${Defaults.OutputBlockRule}${dispatcherDiscipline.map(l => s"\n\n$l").getOrElse("")}
+${Defaults.PluginDiscoveryLine}${outputRuleBlock}${dispatcherDiscipline.map(l => s"\n\n$l").getOrElse("")}
 
 $task${if injectedBlock.isEmpty then "" else s"\n\n$injectedBlock"}"""
 

@@ -214,3 +214,31 @@ export function consoleInputMode() {
 export function wikiGraphEnabled() {
   return state.parsedConfig?.features?.wikiGraph === true; // 缺席 = 封存（默认 OFF）
 }
+
+/**
+ * outputBlockEnabled — `<output>` 用户可见块**特性总闸**（output-block-gate 批，
+ * 作者令逐字：「把 output 块相关的内容先关闭，因为我现在没有体会出来有什么
+ * 区别」）。
+ *
+ * 与后端同一开关（一个键两面收口）：nebflow.json 顶层
+ * `"outputBlock": { "enabled": true }` —— 经既有 configData 通道（WS getConfig →
+ * ConfigService.getConfig 原样透传，configUpdated 广播即重拉）到达
+ * `state.parsedConfig`；**缺席/非 true = 关（默认 OFF，作者令）**。
+ *
+ * 关 = 两面全旁路（代码零删除，闸一开行为全回来）：
+ *   · 前端渲染面（utils.js 管线提取 pass + outputTag.js 聊天摘除面 +
+ *     turnGroup 角标/展开）——全文直出，无掩码无徽标无折叠；`<output>` 字面
+ *     标签按散标签同一规则转义为字面文本（marked 会把裸 `<output>` 当 HTML
+ *     块吞掉后续内容，掐断必须保留）；
+ *   · 渠道剥离面（微信/飞书出站，scala OutputBlock.extractGated 同一热读键）
+ *     —— 渠道消息回全量原样。
+ *
+ * 读取形态 = 实时读 `state.parsedConfig`（consoleInputMode 同款，不 latch）：
+ * configData 帧一到即生效；已渲染完成的旧气泡不追溯重渲染（刷新页面即全量
+ * 翻面）。生效路径：dev 树改 nebflow.json → 刷新页面即生效；面板 JSON 编辑
+ * 保存（configUpdated 广播）后新渲染即生效。热读：引擎侧每次渠道 flush 现读
+ * 同一文件键——PATCH 下个 flush 即生效，无重启门槛。
+ */
+export function outputBlockEnabled() {
+  return state.parsedConfig?.outputBlock?.enabled === true; // 缺席 = 关（默认 OFF）
+}
