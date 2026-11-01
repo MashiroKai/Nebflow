@@ -1018,33 +1018,32 @@ button.fm-req-decline:focus-visible {
 /* 好友消息正文保留换行语义（dropbox 面走纯文本渲染，不共享此条） */
 .fm-msg-bubble { white-space: pre-wrap; }
 
-/* ── 附件卡（fm-att-card-unify 批 2026-11-02 · 作者令「三面板附件卡统一成主会话的
-   附件卡样式」）──────────────────────────────────────────────────────────────────
-   卡面本体 = 主会话卡语言（chat.css 的 `.file-card` / `.pop-media-flat` 家族），渲染
-   出口 = popArtifacts 的 `buildFileCard` / `buildMediaFlat`（JS 单点，禁第二套卡实现）。
-   本段只留三窗专有声明：
-     · `.fm-att` = 卡根**标记类**（QA/spec 钩子 + 状态位挂点），零视觉（旧卡 chrome
-       已随统一退役——「不锈死旧样式」纪律：死 CSS 不留）；
+/* ── 附件卡（fm-att-card-unify 批 2026-11-02 · fm-att-component-lib 批同日换代）─────
+   卡面本体 = 主会话卡语言（chat.css 的 `.file-card` / `.pop-media-flat` /
+   `.pop-stack-area` 家族），渲染出口 = popArtifacts 标准组件（`buildMediaFlat` /
+   `buildMediaStack` / `buildFileCard`，JS 单点，禁第二套卡实现/描边/几何算术）。
+   本段只留三窗宿主绑定声明：
+     · `.fm-att` = 卡根**标记类**（QA/spec 钩子 + 状态位挂点），零视觉；
+     · **卡出泡**（component-lib 批 · 作者令「卡不带边缘」）：附件组 = 消息行的兄弟
+       节点（自由卡区，主会话 `.row.user-media` 同构）——卡不进 `.fm-msg-bubble`，
+       泡只装正文/引用块；媒体独占消息泡不渲染（旧 `.fm-msg-bubble-media` 去 chrome
+       特例随结构退役，死 CSS 不留）；
      · 状态等价适配：`expired`（终态：灰态 + 名字划线，真名/大小保留，无键）/
-       `uploading` / `unreadable`（灰态，无键——不可下载者绝不渲染成可点按钮）；
-     · 媒体独占模式：`.fm-msg-bubble-media` 气泡去 chrome（媒体卡就是气泡，与主会话
-       `.row.user-media` 同形态）；特异性 (0,4,0) 压过 sapphire.css 的方向底色 (0,3,0)。 */
+       `uploading` / `unreadable`（灰态，无键——不可下载者绝不渲染成可点按钮）。 */
 .fm-att-list {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 8px;
-  margin-top: 4px;
+  margin-top: 8px;
   min-width: 0;
+  max-width: 100%;
 }
-.fm-msg-bubble.fm-msg-bubble-media .fm-att-list { margin-top: 0; }
-
-.fm-msg.out .fm-msg-bubble.fm-msg-bubble-media,
-.fm-msg.in .fm-msg-bubble.fm-msg-bubble-media {
-  padding: 0;
-  background: transparent;
-  border: none;
-  border-radius: 0;
-}
+.fm-msg.out .fm-att-list { align-items: flex-end; }
+.fm-msg.in .fm-att-list { align-items: flex-start; }
+/* 卡区加宽标记（messages.js 挂）：叠卡盒 220 + 扇形出画 + 「展开 N」角标 ≈ 350px，
+   行 78% 上限放不下 ⇒ 带卡区的行放开 max-width（泡宽 = 内容自适应，不受影响）。 */
+.fm-msg.fm-msg-atts { max-width: 100%; }
 
 /* 状态态（视觉判据沿用 §B.7 ②1 既有口径：真名/大小保留、灰态、无键）。 */
 .fm-att.fm-att-expired .fc-name { text-decoration: line-through; }
@@ -1062,6 +1061,18 @@ button.fm-req-decline:focus-visible {
   min-width: 0;
 }
 .file-card.fm-att { flex-wrap: wrap; }
+
+/* 叠卡宿主绑定（fm-att-component-lib 批 2026-11-02）：叠卡形态/几何全部属组件
+   （chat.css `.pop-stack-area`/`.media-layer` 单点）；此处只做**宿主侧别镜像**——
+   主会话由 `.row.pop-artifact.user`（出向 = 扇形朝左 + 角标在左）与
+   `.row.pop-artifact:not(.user)`（入向 = 扇形朝右 + 角标在右）承载，三窗行类是
+   `.fm-msg.out/in` ⇒ 同值常量镜像到本宿主（非第二套算术：translate/rotate/pill
+   间距逐值取自 chat.css:4960-4963 / 4916-4930 既有规则）。 */
+.fm-msg .pop-stack-area { width: max-content; max-width: 100%; }
+.fm-msg.out .pop-stack-area > .pill { margin-right: 32px; }
+.fm-msg.in .pop-stack-area > .pill { order: 3; margin-left: 32px; }
+.fm-msg.out .pop-stack-view .media-layer.layer-mid { transform: translateX(-14px) rotate(-2deg); }
+.fm-msg.out .pop-stack-view .media-layer.layer-back { transform: translateX(-26px) rotate(-3.5deg); }
 
 /* 下载键（主会话 `.msg-copy.msg-dl` 键族；字形 = popArtifacts 单点导出）：
    文件卡卡尾 = `.fwd-btn` 位（margin-left:auto）；媒体卡 = `.pop-media-canvas` 角标位。

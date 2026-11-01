@@ -4986,20 +4986,27 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    bubble color (visible while bytes load, under the transparent media, and in
    the failed face); the media element itself goes transparent so the bubble
    color carries. Letterboxing is a non-issue: the renderer pins the box to the
-   media's own ratio (zcode-484 D1/D3). */
-.row.user-media .pop-media-flat {
+   media's own ratio (zcode-484 D1/D3).
+   fm-att-component-lib 批（2026-11-02）：社交通道**出向**（.fm-msg.out 卡区）逐字
+   并入同一条规则（选择器扩列，值单源零第二套——fm 出向附件 = 用户侧，同一「附件是
+   气泡的一部分」语言；入向保持 LLM Pop 板卡族不动）。 */
+.row.user-media .pop-media-flat,
+.fm-msg.out .fm-att-list .pop-media-flat {
   border-radius: 16px;
   border-bottom-right-radius: 4px;
   box-shadow: none;
   background: var(--glass-bub-user-bg);
 }
 .row.user-media .pop-img,
-.row.user-media .pop-video { background: transparent; }
+.row.user-media .pop-video,
+.fm-msg.out .fm-att-list .pop-img,
+.fm-msg.out .fm-att-list .pop-video { background: transparent; }
 
 /* Multi-image stack: front AND the two peeking layers carry the same bubble
    silhouette. Peek transforms / drag axis / pill geometry stay the uifix3 ①
-   mirrored forms — only the paint changes. */
-.row.user-media .pop-stack-view .media-layer {
+   mirrored forms — only the paint changes. (fm 出向同规则，同上批注。) */
+.row.user-media .pop-stack-view .media-layer,
+.fm-msg.out .fm-att-list .pop-stack-view .media-layer {
   border-radius: 16px;
   border-bottom-right-radius: 4px;
   box-shadow: none;
@@ -5013,7 +5020,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    .att-thumb/.att-file）、文件名+大小。修前形态（#491 主题三的气泡绿底无边框
    大卡 = 大绿块）随本令退役；用户文本气泡本体颜色不在本批范围（媒体图片/视频面
    保持既有气泡剪影不动）。 */
-.row.user-media .file-card {
+.row.user-media .file-card,
+.fm-msg.out .fm-att-list .file-card {
   width: auto;
   max-width: 264px;
   gap: 9px;
@@ -5023,20 +5031,24 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-radius: 10px;
   box-shadow: none;
 }
-.row.user-media .file-card .fc-icon {
+.row.user-media .file-card .fc-icon,
+.fm-msg.out .fm-att-list .file-card .fc-icon {
   width: 28px; height: 28px;
   border-radius: 8px;
   font-size: 8.5px;
 }
-.row.user-media .fc-name {
+.row.user-media .fc-name,
+.fm-msg.out .fm-att-list .fc-name {
   color: var(--color-text);
   font-size: 12.5px;
   max-width: 150px;
 }
-.row.user-media .fc-sub { color: var(--color-text-muted); font-size: 10.5px; margin-top: 2px; }
+.row.user-media .fc-sub,
+.fm-msg.out .fm-att-list .fc-sub { color: var(--color-text-muted); font-size: 10.5px; margin-top: 2px; }
 /* Click affordance survives the de-chrome: the standing shadow is gone, the
    hover shadow stays (matches the artifact family's hover feedback). */
-.row.user-media .file-card:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); }
+.row.user-media .file-card:hover,
+.fm-msg.out .fm-att-list .file-card:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    #491 pop-media 主题二 (2026-10-05 author ruling 「微信的这样的设计来进行分类
