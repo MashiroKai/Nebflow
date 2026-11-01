@@ -396,6 +396,9 @@ function ensureContainer() {
     sections.set(def.id, section);
     container.appendChild(section);
   }
+  // 次级面板边缘返回（作者令 2026-11-01 ③）：容器级捕获相位手势，建容器即绑
+  // （详情页进出零重绑；范围 = stack.length > 1 的详情面，见 bindEdgeBack 头注）。
+  bindEdgeBack(container);
   document.body.appendChild(container);
   const onLocale = () => {
     for (const def of PAGES) {
@@ -606,6 +609,21 @@ const PANEL_TAB_IDS = new Set(PAGES.filter((p) => p.tabId).map((p) => p.tabId));
 
 const SWIPE_AXIS_PX = 8;
 const SWIPE_SWITCH_PX = 48;
+
+// ── 手势仲裁（内容操作优先，作者令 2026-11-01「拖动图谱、调整图片大小这类
+//    内容操作，会和左右滑动切换卡片的手势冲突……内容区起手的横滑归内容操作，
+//    不触发切卡；切卡手势限定在非交互内容区」）────────────────────────
+/** 内容手势面选择器：这些面上起手的指针序列归内容操作（拖图/调尺寸/拖图谱/
+ *  流程图平移），切卡手势**永不接管**，也不许 host 抢 pointer capture（修前
+ *  capture 把 viewport 自己的 pointermove/pointerup 拦走 —— 图片抓手开了也
+ *  拖不动 + .panning 类泄漏）。逃逸口 = [data-nf-content-gesture] 标记。
+ *  判据走 closest 委托：内容面内的子元素（img/文字层）同享仲裁。 */
+const CONTENT_GESTURE_SELECTOR =
+  '.canvas-image-viewport, .wiki-canvas, .fm-viewport, [data-nf-content-gesture]';
+
+/** 边缘返回手势（bindEdgeBack）认领横滑后的抑制旗：bindDocSwipe 在 move/finish
+ *  查它 —— 认领期内切卡手势整体让路（同模块直读，零 DOM 事件戏法）。 */
+let swipeSuppressed = false;
 
 /** @type {{strip: HTMLElement, toolbar: HTMLElement, host: HTMLElement, empty: HTMLElement}|null} */
 let canvasUI = null;
@@ -909,7 +927,12 @@ function buildCanvasPage(body) {
  *  Canvas 改造批③（2026-10-31 作者令「标签页手机端左右滑动，两边露圆环相邻
  *  页 = 桌面上下滚动的横屏变体」）：横拖跟手位移 + 拖向侧露圆环（邻卡环露
  *  指示，进深随拖距 0→1）+ 松手判定（过阈换卡滑出 / 不过阈弹簧回位）。
- *  圆环 = 玻璃描边半露圆（CSS .mf-swipe-ring），只在横轴锁后出现，松手即退。 */
+ *  圆环 = 玻璃描边半露圆（CSS .mf-swipe-ring），只在横轴锁后出现，松手即退。
+ *  手势仲裁批（2026-11-01 作者令②「内容操作优先、误切率趋零」）三闸：
+ *   ① 内容手势面（CONTENT_GESTURE_SELECTOR）起手 = 内容操作，不接管、不抢
+ *     capture（图片拖动/双指调尺寸、图谱/流程图平移全链原生）；
+ *   ② 双指 = pinch：第二指落地即解除已武装的切卡手势（调尺寸永不误切卡）；
+ *   ③ 边缘返回认领期（swipeSuppressed）整体让路。 */
 function bindDocSwipe(host) {
   /** @type {{id: number, x0: number, y0: number, dx: number, dy: number, axis: string|null}|null} */
   let g = null;
@@ -937,15 +960,37 @@ function bindDocSwipe(host) {
     el.style.opacity = v <= 0 ? '' : String(0.25 + 0.75 * v);
     el.style.transform = `translateY(-50%) scale(${0.72 + 0.28 * v})`;
   };
+  const clearRings = () => {
+    if (ringL) { ringL.style.opacity = ''; ringL.style.transform = ''; }
+    if (ringR) { ringR.style.opacity = ''; ringR.style.transform = ''; }
+  };
+  /** 解除武装时把跟手位移一并清掉（仲裁②③让位路径 —— pane 不能带着
+   *  translate3d 滞留，否则下一拍渲染就是叠影卡）。 */
+  const dropSwipePane = () => {
+    if (paneEl) { paneEl.style.transition = ''; paneEl.style.transform = ''; paneEl.style.opacity = ''; }
+    paneEl = null;
+  };
   host.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    if (/** @type {Element} */ (e.target).closest('button, input, textarea, select, a')) return;
+    const target = /** @type {Element} */ (e.target);
+    // 自愈：抑制旗在场但边缘手势已不在（pointerup 丢失的极端路径）→ 复位。
+    if (swipeSuppressed && !edgeBack) swipeSuppressed = false;
+    // 仲裁②前置：已武装 + 新触点 = 双指（调尺寸）——解除切卡手势，让位 pinch。
+    if (g && e.pointerId !== g.id) { g = null; dropSwipePane(); clearRings(); return; }
+    if (target.closest('button, input, textarea, select, a')) return;
+    // 仲裁①：内容手势面起手 = 内容操作（拖图/调尺寸/拖图谱），切卡零接管、
+    // 零 capture —— viewport/画布自己的 pointer 管线全链保活。
+    if (target.closest(CONTENT_GESTURE_SELECTOR)) return;
     g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, axis: null };
     paneEl = /** @type {HTMLElement|null} */ (host.querySelector(':scope > .canvas-tab-pane'));
     try { host.setPointerCapture(e.pointerId); } catch (_) {}
   });
   host.addEventListener('pointermove', (e) => {
     if (!g || e.pointerId !== g.id) return;
+    // 仲裁②：第二触点落地 = pinch（调尺寸）—— 已武装的切卡手势立即解除。
+    if (e.isPrimary === false) { g = null; dropSwipePane(); clearRings(); return; }
+    // 仲裁③：边缘返回认领期，切卡手势整体让路。
+    if (swipeSuppressed) { g = null; dropSwipePane(); clearRings(); return; }
     g.dx = e.clientX - g.x0;
     g.dy = e.clientY - g.y0;
     if (!g.axis && (Math.abs(g.dx) > SWIPE_AXIS_PX || Math.abs(g.dy) > SWIPE_AXIS_PX)) {
@@ -962,10 +1007,6 @@ function bindDocSwipe(host) {
       setRing(1, docs.length > 1 && g.dx < 0 ? -g.dx / SWIPE_SWITCH_PX : 0);
     }
   });
-  const clearRings = () => {
-    if (ringL) { ringL.style.opacity = ''; ringL.style.transform = ''; }
-    if (ringR) { ringR.style.opacity = ''; ringR.style.transform = ''; }
-  };
   const finish = (e) => {
     if (!g || e.pointerId !== g.id) return;
     const { dx, axis } = g;
@@ -994,6 +1035,159 @@ function bindDocSwipe(host) {
   };
   host.addEventListener('pointerup', finish);
   host.addEventListener('pointercancel', finish);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// 次级面板边缘返回（作者令 2026-11-01 ③「所有手机端次级面板统一支持从左边缘
+// 向右滑的返回手势，iOS 同款；边缘判定带宽度合适，不干扰正常横滑与内容操作」）
+// ══════════════════════════════════════════════════════════════════════
+// 范围 = 详情页（stack.length > 1）——下钻页/设置/图谱/项目/插件/用量/任务/
+// 待办/会话/个人主页层级/设置子层级全在页面栈上，一枚手势统一覆盖；dock 根页
+// （消息/联系人/看板/工作台）与聊天根 = 一级面，无返回语义，手势不认领
+// （「<」钮契约不变，本手势是加法不是替换）。
+// 交互形态 = iOS 同款跟手：横轴锁后整页随指右移（越带阻尼），松手过阈
+// （宽 22% 或快弹）即 pop（无动画直切语义不变——页面壳零过渡，滑出只发生在
+// 手势进行中），不过阈弹簧回位。认领即仲裁：swipeSuppressed 压住切卡手势，
+// 并向起手目标派发合成 pointercancel（内容手势面/切卡手势按浏览器同款契约
+// 「指针已被系统手势收走」收尾），带内纵滑照旧让给原生滚动/画布纵拖。
+// 带宽 20px：iOS 边缘带同档；正常横滑/内容操作起手几乎不落带内。
+
+const EDGE_BAND_PX = 20;    // 左缘判定带宽
+const EDGE_AXIS_PX = 8;     // 轴锁阈值（与切卡手势同参）
+const EDGE_FLICK_MS = 200;  // 快弹判定窗（短距快滑也提交）
+
+/** @type {{id: number, x0: number, y0: number, t0: number, claimed: boolean,
+ *          target: EventTarget | null, pageEl: HTMLElement | null} | null} */
+let edgeBack = null;
+
+/** 活动页面 section（跟手位移对象）。 */
+function livePageEl() {
+  const top = stack[stack.length - 1];
+  return top ? (sections.get(top) || null) : null;
+}
+
+/** 阻尼映射：40% 视口宽内 1:1 跟手，超出部分 0.35 递推（iOS 橡皮筋手感）。 */
+function edgeDamp(dx, w) {
+  const cap = w * 0.4;
+  return dx <= cap ? dx : cap + (dx - cap) * 0.35;
+}
+
+function bindEdgeBack(root) {
+  root.addEventListener('pointerdown', (e) => {
+    if (edgeBack) {
+      // 双指 = pinch/内容操作：解除已武装的边缘手势（调尺寸永不误触发返回）；
+      // 认领态不解除（第一根手指独占返回手势，后续触点无关）。
+      if (!edgeBack.claimed && e.pointerId !== edgeBack.id) disarmEdgeBack();
+      return;
+    }
+    if (!document.body.classList.contains('mobile-layer')) return;
+    if (stack.length <= 1) return;                       // 一级面（dock 根/聊天根）不认领
+    if (e.clientX > EDGE_BAND_PX) return;
+    if (/** @type {Element} */ (e.target).closest('button, input, textarea, select, a')) return;
+    edgeBack = {
+      id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: Date.now(),
+      claimed: false, target: e.target, pageEl: livePageEl(),
+    };
+  }, true);   // 捕获相位：先于内容面/切卡手势（认领权在带内最高）
+
+  root.addEventListener('pointermove', (e) => {
+    if (!edgeBack || e.pointerId !== edgeBack.id) return;
+    const dx = e.clientX - edgeBack.x0;
+    const dy = e.clientY - edgeBack.y0;
+    if (!edgeBack.claimed) {
+      if (Math.abs(dx) <= EDGE_AXIS_PX && Math.abs(dy) <= EDGE_AXIS_PX) return;
+      if (Math.abs(dy) >= Math.abs(dx)) { disarmEdgeBack(); return; }   // 纵向意图：让给滚动/内容
+      if (dx <= 0) { disarmEdgeBack(); return; }                        // 只认右滑
+      claimEdgeBack(e);
+    }
+    if (!edgeBack.claimed) return;
+    const page = edgeBack.pageEl;
+    if (page && page.isConnected) {
+      const w = page.getBoundingClientRect().width || window.innerWidth;
+      page.style.transition = 'none';
+      page.style.transform = `translate3d(${Math.max(0, edgeDamp(dx, w))}px,0,0)`;
+    }
+  }, true);
+
+  const settle = (e) => {
+    if (!e.isTrusted) return;   // 合成 pointercancel（claimEdgeBack 收走内容面用）不进本手势收尾
+    if (!edgeBack || e.pointerId !== edgeBack.id) return;
+    const st = edgeBack;
+    edgeBack = null;
+    if (!st.claimed) return;
+    swipeSuppressed = false;
+    const dx = e.clientX - st.x0;
+    const dt = Date.now() - st.t0;
+    const page = st.pageEl;
+    const w = (page && page.isConnected ? page.getBoundingClientRect().width : 0) || window.innerWidth;
+    const commit = dx > Math.max(80, w * 0.22) || (dx > 28 && dt < EDGE_FLICK_MS);
+    if (commit) {
+      logEvent('edge-back', { page: stack[stack.length - 1], dx: Math.round(dx) });
+      if (page) { page.style.transition = ''; page.style.transform = ''; delete page.dataset.edgeSpring; }
+      backOut();   // 详情 pop 一层（栈语义与「<」同源；根页永不进来）
+    } else if (page && page.isConnected) {
+      // 弹簧回位（复用切卡手势回位曲线；token 防新认领后清理定时器误擦跟手位）。
+      page.dataset.edgeSpring = '1';
+      page.style.transition = 'transform 220ms cubic-bezier(0.16, 1, 0.3, 1)';
+      page.style.transform = 'translate3d(0,0,0)';
+      setTimeout(() => {
+        if (page.dataset.edgeSpring !== '1') return;
+        delete page.dataset.edgeSpring;
+        page.style.transition = '';
+        page.style.transform = '';
+      }, 240);
+    }
+  };
+  root.addEventListener('pointerup', settle, true);
+  root.addEventListener('pointercancel', settle, true);
+
+  // 横向意图的 touchmove 一律 preventDefault（capture + 非被动）：修前可滚动
+  // 详情页（用量/列表族）带内右滑会被浏览器滚动接管 → pointercancel 掐断指针
+  // 流 → 返回手势死（settings 等无滚页面不复现，T3b 只红在滚动面）。横意图
+  // 才拦 —— 带内纵滑照旧让位原生滚动（JS 判横先于浏览器滚动接管竞速，
+  // touchmove preventDefault 是唯一可靠截流点）。鼠标腿零影响（无 touch 事件）。
+  document.addEventListener('touchmove', (e) => {
+    if (!edgeBack) return;
+    const t = e.changedTouches && e.changedTouches[0];
+    if (!t) return;
+    const dx = t.clientX - edgeBack.x0;
+    const dy = t.clientY - edgeBack.y0;
+    if (Math.abs(dx) > Math.abs(dy) && dx > 0) e.preventDefault();
+  }, { passive: false, capture: true });
+}
+
+/** 认领：压住切卡手势 + 收走内容面指针（合成 pointercancel = 浏览器同款契约）。
+ *  触屏指针自带对起手目标的隐式 capture，pointer 流天然续到 pointerup ——
+ *  无需（也不可）显式 setPointerCapture（容器 pointer-events:none 无效且多余）；
+ *  浏览器滚动接管由 bindEdgeBack 尾部的横向 touchmove preventDefault 截流。 */
+function claimEdgeBack(e) {
+  if (!edgeBack) return;
+  edgeBack.claimed = true;
+  swipeSuppressed = true;
+  logEvent('edge-back-claim', { page: stack[stack.length - 1] });
+  const page = edgeBack.pageEl;
+  if (page) delete page.dataset.edgeSpring;   // 新认领即夺回清理权（防回位定时器误擦）
+  // 收走起手目标的手势链：内容手势面（图谱/图片/流程图）与切卡手势按
+  // 「指针被系统手势收走」收尾（合成事件 isTrusted=false，消费端不查）。
+  if (edgeBack.target && /** @type {Element} */ (edgeBack.target).isConnected) {
+    const ev = new PointerEvent('pointercancel', {
+      bubbles: true, cancelable: false, pointerId: e.pointerId,
+      pointerType: e.pointerType, isPrimary: e.isPrimary,
+      clientX: e.clientX, clientY: e.clientY,
+    });
+    /** @type {Element} */ (edgeBack.target).dispatchEvent(ev);
+  }
+  // 切卡手势可能已写下的少量跟手位移清零（认领后视觉归边缘返回手势所有）。
+  const host = canvasUI?.host;
+  const pane = host?.querySelector(':scope > .canvas-tab-pane');
+  if (pane) { pane.style.transition = ''; pane.style.transform = ''; pane.style.opacity = ''; }
+}
+
+/** 解除武装（纵滑/左滑/双指）：未认领态零副作用；认领态不可解除（唯一出口
+ *  = settle 的 commit/spring 收尾，swipeSuppressed 只在那里复位）。 */
+function disarmEdgeBack() {
+  if (!edgeBack || edgeBack.claimed) return;
+  edgeBack = null;
 }
 
 /** 关闭当前文档（工具条 X）：关单卡；关后落相邻文档卡，无文档卡则保持空态。 */

@@ -3337,6 +3337,12 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   display: block;
   cursor: default;
   background: transparent;
+  /* 触摸即拖批（2026-11-01 作者令「图谱默认可直接拖动/平移，不需要模式切换」）：
+     画布无滚动语义，touch-action 收归指针管线 —— 修前默认 auto 让浏览器手势
+     接管触屏拖动（≈2 个 move 后 pointercancel），手机端图谱永远拖不动；
+     桌面鼠标路径零影响（touch-action 只约束触屏/滚轮默认行为，wheel 已
+     preventDefault）。双指捏合缩放走 wikiGraph.js pinch 管线。 */
+  touch-action: none;
 }
 .wiki-canvas.grabbing { cursor: grabbing; }
 .wiki-canvas.hovering { cursor: pointer; }
