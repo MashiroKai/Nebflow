@@ -424,6 +424,13 @@ export default {
   'chat.quoteTypeTool': '[工具]',
   'chat.quoteTypeAsk': '[提问]',
   'chat.quoteTypeSystem': '[系统]',
+  // ── msgchip 批（消息身份牌带短名引用，作者令 2026-11-01）新增键 ─────────────
+  'chat.msgTokenChipHint': '查看原消息',
+  'chat.msgTokenPopTitle': '原消息',
+  'chat.msgTokenUnreachable': '原消息不可达',
+  'chat.msgTokenLoading': '读取中…',
+  'chat.msgTokenExpand': '展开',
+  'chat.msgTokenCollapse': '收起',
   'messages.multiSelect': '多选转发',
   'messages.selectedCount': '已选 {n} 条',
   'messages.forward': '转发',

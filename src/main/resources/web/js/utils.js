@@ -286,6 +286,16 @@ const RE_OUTPUT_RESTORE = /OUTPUTBLOCK(\d+)END/g;
 const RE_OUTPUT_PAIR = /<output>([\s\S]*?)<\/output>/g;
 const RE_OUTPUT_ANY_TAG = /<\/?output>/g;
 const RE_MENTION_RESTORE = /MENTIONBLOCK(\d+)END/g;
+// msgchip 批（2026-11-01 作者令「消息身份牌系统升级」）：带短名引用形态
+// {{msg:sid8-seq6|短名}} → 渲染成可点小牌 chip（牌面 = 短名；点击弹小窗看原消息）。
+// 语法与引擎侧单一实现源（scala nebflow.core.msgtokens.MsgTokenRegistry.TokenRegex）
+// 同一条规则：sid8 = 8 位 hex、seq = 6 位、短名 = 除 `{` `}` `|` 换行外 1..40 字。
+// 🔴 只匹配**带名**形态——旧裸牌 {{msg:sid8-seq6}} 不入本正则（现状渲染逐字节不变）。
+// 畸形/超长/空名 = 不匹配 = 原样字面透传（零解析豁免、零崩溃面）；占位符恢复与
+// MATHBLOCK 同构（marked 前提取、marked 后恢复；提取只在非代码段——RE_CODE_SPLIT
+// 奇偶分段内做，围栏/行内代码里的牌是代码内容，保持字面）。
+const RE_MSG_TOKEN_NAMED = /\{\{msg:([0-9a-f]{8})-(\d{6})\|([^{}\n|]{1,40})\}\}/g;
+const RE_MSGTOKEN_RESTORE = /MSGTOKENBLOCK(\d+)END/g;
 const RE_IMG_TAG = /<img\b(?![^>]*\bclass=)/g;
 // mermaid-md batch: marked v12 emits fenced ```mermaid exactly as this shape
 // (plain `<pre>`, single language class, escaped body). The body is captured
@@ -393,14 +403,15 @@ function _renderMarkdownWithMath(text, parseVoice) {
   }
   // Extract <voice>...</voice> blocks before any markdown processing (only for AI output, not thinking)
   const voiceBlocks = [];
+  const msgTokens = [];
   if (parseVoice && voiceEnabled()) {
     let vp = text.replace(RE_VOICE, (m, content) => {
       voiceBlocks.push(content.trim());
       return `VOICEBLOCK${voiceBlocks.length - 1}END`;
     });
-    return _renderMarkdownInternal(vp, voiceBlocks, false, outputBlocks);
+    return _renderMarkdownInternal(vp, voiceBlocks, false, outputBlocks, msgTokens);
   }
-  return _renderMarkdownInternal(text, voiceBlocks, false, outputBlocks);
+  return _renderMarkdownInternal(text, voiceBlocks, false, outputBlocks, msgTokens);
 }
 
 // ── <output> user-visible block (output 块语法批 2026-10-31) ────────────────
@@ -542,7 +553,7 @@ function _transformHumanFace(html) {
     if (p.kind === 'card') {
       // Inner render with noHuman=true: a nested ```human fence inside a card
       // stays a plain code block (no unbounded recursion).
-      const inner = _renderMarkdownInternal(_decodeHumanEntities(p.code), [], true);
+      const inner = _renderMarkdownInternal(_decodeHumanEntities(p.code), [], true, undefined, []);
       result += '<div class="nf-human-card">' + inner + '</div>';
     } else {
       const text = p.html.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').trim();
@@ -563,7 +574,22 @@ function _transformHumanFace(html) {
   return result;
 }
 
-function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks) {
+/**
+ * msg-token chip 提取（msgchip 批）：非代码段内的带短名引用形态
+ * {{msg:sid8-seq6|短名}} → MSGTOKENBLOCK<i>END 占位符（marked 前提取，尾部恢复）。
+ * 只在 prose 分段调用（RE_CODE_SPLIT 奇偶分段，同 math/mentions 保护缝）——围栏与
+ * 行内代码里的牌是代码内容，保持字面。store 缺席（理论不可达，防御）= 原样返回。
+ */
+function protectMsgTokens(seg, store) {
+  if (!store || seg.indexOf('{{msg:') === -1) return seg;
+  return seg.replace(RE_MSG_TOKEN_NAMED, (m, sid8, seq, name) => {
+    store.push({ token: m, name });
+    return `MSGTOKENBLOCK${store.length - 1}END`;
+  });
+}
+
+function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks, msgTokens) {
+  if (!msgTokens) msgTokens = [];
   // human-face batch (2026-10-30): the ```human filter fence renders ONLY when
   // every fence in the source is closed (streaming gate, 设计稿 §7.5 落地口径
   // 「整段等闭合」). An unclosed fence (mid-stream snapshot) falls through to
@@ -599,7 +625,7 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks)
   };
   protected_ = protected_
     .split(RE_CODE_SPLIT)
-    .map((seg, i) => (i % 2 === 1 ? seg : protectMentions(protectMath(seg), mentionBlocks)))
+    .map((seg, i) => (i % 2 === 1 ? seg : protectMentions(protectMath(protectMsgTokens(seg, msgTokens)), mentionBlocks)))
     .join('');
   let html = marked.parse(protected_, { headerIds: false });
   // Mermaid blocks (mermaid-md batch, 2026-10-23): a ```mermaid fence is a
@@ -638,7 +664,7 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks)
   if (outputBlocks && outputBlocks.length) {
     html = html.replace(RE_OUTPUT_RESTORE, (m, idx) => {
       const inner = outputBlocks[parseInt(idx, 10)] || '';
-      return '<div class="nf-output">' + _renderMarkdownInternal(inner, [], true) + '</div>';
+      return '<div class="nf-output">' + _renderMarkdownInternal(inner, [], true, undefined, []) + '</div>';
     });
   }
   // Restore math blocks as KaTeX
@@ -668,6 +694,18 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks)
   });
   // Restore mention blocks as clickable blue spans (shared-list longest match).
   html = restoreMentions(html, mentionBlocks);
+  // Restore msg-token chips (msgchip 批): 带短名引用形态 → 可点小牌（牌面 = 短名）。
+  // 交互面（popover/取数）单点在 js/chat/msgTokenChip.js —— 文档级事件委托，不在此绑
+  // （innerHTML 重建会掉 listener；委托天然存活于流式/历史/重放全渲染腿）。
+  if (msgTokens.length) {
+    html = html.replace(RE_MSGTOKEN_RESTORE, (m, idx) => {
+      const tok = msgTokens[parseInt(idx, 10)];
+      if (!tok) return m;
+      return '<span class="msg-token-chip" data-msg-token="' + escapeHtml(tok.token)
+        + '" role="button" tabindex="0" aria-label="' + escapeHtml(tok.name + ' · ' + t('chat.msgTokenChipHint'))
+        + '" title="' + escapeHtml(t('chat.msgTokenChipHint')) + '">' + escapeHtml(tok.name) + '</span>';
+    });
+  }
   // Tag images for lightbox zoom (click → full preview). Skip imgs that
   // already carry a class (raw HTML in markdown) to avoid duplicate attrs.
   html = html.replace(RE_IMG_TAG, '<img class="nf-zoom-img"');

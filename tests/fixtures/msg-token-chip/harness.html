@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<!-- msg-token-chip harness.html — 消息身份牌「带短名引用」chip（msgchip 批，作者令
+     2026-11-01 20:17）的静态测试 harness。
+
+     驱动**真实前端模块**（chatView.js / chat.js / utils.js / i18n.js / state.js /
+     chat/msgTokenChip.js —— 无 stub、无打包），覆盖本批前端三落点：
+       ① 渲染面：renderMarkdownWithMath 单管线把 {{msg:sid8-seq6|短名}} 渲染成
+          .msg-token-chip（牌面 = 短名）；旧裸牌 / 畸形形态 / 代码围栏内 = 字面原样
+       ② 交互面：文档级点击委托（installMsgTokenChip）→ .msg-token-pop 玻璃小窗
+          （无 overlay 遮罩；点外关闭 / Esc / resize 关闭）
+       ③ 取数腿：同会话本地查（聊天 DOM 用户行 seq 对位）优先上屏 → 引擎只读端点
+          GET /api/sessions/msg-token/{core} 权威覆盖 → 双腿皆 miss = 不可达降级
+
+     引擎端点由 spec 侧 page.route 拦截（可编程延迟/载荷/失败）；服务端兜底应答
+     保证 WebKit fetch 泄漏也零 404。会话号由 spec 经 ?sid= 注入（spec 侧用同号
+     计算 sid8 铸牌面，令本地腿命中）。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>msg-token-chip harness</title>
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/sapphire.css">
+  <link rel="stylesheet" href="/css/chat.css">
+  <!-- marked/katex = renderMarkdownWithMath 管线的真依赖（与 index.html 同款 vendor
+       经典脚本先行加载；缺席时管线退化为 escapeHtml 纯文本，chip 提取腿不达 ⇒ 必须
+       在场才能测真实提取/恢复面）。 -->
+  <script src="/vendor/marked.min.js"></script>
+  <script src="/vendor/katex.min.js"></script>
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #f5f6f8); }
+    #wrap { position: absolute; inset: 0; display: flex; flex-direction: column; }
+    #chat { flex: 1; width: 680px; max-width: 96vw; margin: 0 auto; padding: 16px 0 36px; overflow-y: auto; }
+  </style>
+</head>
+<body>
+  <div id="wrap"><div id="chat"></div></div>
+  <script type="module">
+    const params = new URLSearchParams(location.search);
+    const SID = params.get('sid') || 'msgchip-harness-session';
+
+    const { chatViews, ChatView, setActiveView } = await import('/js/chatView.js');
+    const state = (await import('/js/state.js')).default;
+    const { renderMarkdownWithMath, escapeHtml } = await import('/js/utils.js');
+    const chatMod = await import('/js/chat.js');
+    const chipMod = await import('/js/chat/msgTokenChip.js');
+    const { installMsgTokenChip } = chipMod;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    chatViews.primary.setSession(SID);
+    state.activeSessionId = SID;
+    state.ws = { readyState: 1, send: () => {} };
+    installMsgTokenChip();
+
+    const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    /* ── 渲染入口（真实模块） ── */
+    // 作者（用户）行：真实 renderUserBubble —— 本地取数腿的内存对位源（__nfQuoteDesc / data-ts）。
+    window.__renderUserRow = (text, ts) => {
+      chatMod.renderUserBubble(text, [], ts || Date.now(), {});
+      return chatEl.lastElementChild?.dataset.msgId || null;
+    };
+    // 助手行：真实 renderMarkdownWithMath 管线（chip 提取/恢复面）。
+    window.__renderAI = async (text) => {
+      const row = document.createElement('div');
+      row.className = 'row ai';
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble ai';
+      bubble.innerHTML = renderMarkdownWithMath(text);
+      row.appendChild(bubble);
+      chatEl.appendChild(row);
+      await raf2();
+      return row;
+    };
+
+    /* ── 读数 ── */
+    window.__chips = () => Array.from(chatEl.querySelectorAll('.msg-token-chip')).map(c => ({
+      token: c.dataset.msgToken || '',
+      name: c.textContent || '',
+      role: c.getAttribute('role') || '',
+      tabindex: c.getAttribute('tabindex') || '',
+      title: c.getAttribute('title') || '',
+    }));
+    window.__chipTexts = () => Array.from(document.querySelectorAll('.msg-token-chip')).map(c => c.textContent);
+    window.__bubbleText = (row) => (row.querySelector('.bubble.ai') || {}).textContent || '';
+    window.__pop = () => {
+      const p = document.querySelector('.msg-token-pop');
+      if (!p) return null;
+      const body = p.querySelector('.msg-token-pop-body');
+      const toggle = p.querySelector('.msg-token-pop-toggle');
+      const foot = p.querySelector('.msg-token-pop-foot');
+      const r = p.getBoundingClientRect();
+      return {
+        state: p.dataset.state || '',
+        token: p.dataset.token || '',
+        sender: (p.querySelector('.msg-token-pop-sender') || {}).textContent || '',
+        session: (p.querySelector('.msg-token-pop-session') || {}).textContent || '',
+        sessionHidden: (p.querySelector('.msg-token-pop-session') || {}).hidden,
+        time: (p.querySelector('.msg-token-pop-time') || {}).textContent || '',
+        body: body ? body.textContent : '',
+        clamped: !!(body && body.classList.contains('clamped')),
+        toggleHidden: !!(toggle && toggle.hidden),
+        toggleText: toggle ? (toggle.textContent || '') : '',
+        foot: foot ? (foot.textContent || '') : '',
+        footHidden: !!(foot && foot.hidden),
+        miss: !!(body && body.classList.contains('msg-token-pop-miss')),
+        rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height },
+      };
+    };
+    // 取数腿直探（spec 用；与 popover 同一入口 resolveMsgToken）。
+    window.__resolve = (token) => chipMod.resolveMsgToken(token);
+    window.__lookupLocal = (token) => chipMod.lookupLocal(token);
+    window.__resetCache = () => chipMod.resetResolveCacheForTest();
+    window.__sid8 = () => chipMod.sid8Of(SID);
+    window.__localUserMessages = () => chipMod.localUserMessages().map(r => ({ text: r.text, ts: r.ts }));
+    window.__raf2 = raf2;
+    window.__SID = SID;
+    document.title = 'harness-ready';
+  </script>
+</body>
+</html>
