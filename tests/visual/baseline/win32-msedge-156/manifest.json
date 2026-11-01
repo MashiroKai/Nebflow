@@ -133,6 +133,28 @@
       ]
     },
     {
+      "tag": "canvas-markdown-code-tab-dark",
+      "scenario": "canvas-markdown-code-tab",
+      "theme": "dark",
+      "bytes": 44659,
+      "at": "2026-11-01T09:35:32.990Z",
+      "ms": 2686,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-markdown-code-tab-light",
+      "scenario": "canvas-markdown-code-tab",
+      "theme": "light",
+      "bytes": 41919,
+      "at": "2026-11-01T09:35:35.352Z",
+      "ms": 2362,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
       "tag": "canvas-code-tab-dark",
       "scenario": "canvas-code-tab",
       "theme": "dark",
