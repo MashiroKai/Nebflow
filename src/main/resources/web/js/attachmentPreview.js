@@ -87,6 +87,14 @@ export function isImageAttachmentName(fileName) {
   return itemTypeForFileName(fileName) === 'image';
 }
 
+/** 「这件附件是不是视频」——与 `isImageAttachmentName` 同一判据族（fm-att-component-lib
+ *  批 2026-11-02：视频附件出主会话视频卡面，判据 = `itemTypeForFileName` 的 'video'
+ *  档（fileViewers video viewer 自报扩展名单点：mp4/webm/ogv/ogg/mov），禁第二张表）。
+ *  @param {string} fileName @returns {boolean} */
+export function isVideoAttachmentName(fileName) {
+  return itemTypeForFileName(fileName) === 'video';
+}
+
 /** 内容嗅探窗口（首 4KB）。 */
 const SNIFF_BYTES = 4096;
 
