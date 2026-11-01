@@ -50,6 +50,7 @@
 import state from './state.js';
 import { key } from './branding.js';
 import { t, getLocale } from './i18n.js';
+import { pushLayer, popLayer } from './focusTrap.js';
 import { escapeHtml, statusIcon } from './utils.js';
 import { popArtifactFromInput, openPopArtifact } from './chat.js';
 import { indexMedia, entryMatchesTab, entryMatchesKeyword, groupEntriesByTime } from './popMediaIndex.js';
@@ -369,6 +370,9 @@ export function openSearchModal() {
   renderStaticLabels();
   syncTabsUI();
   overlay.classList.add('on');
+  // B4：搜索模态入层栈。本壳自己有 capture 键盘契约（onModalKeydown，含 Tab 陷阱），
+  // 它先于层栈处理器注册 ⇒ Tab 仍由它独占；层提供的是「栈内身份 + 关闭回焦」。
+  pushLayer(overlay, { name: 'search' });
   const kw = inputById('search-keyword');
   if (kw) { kw.value = ''; kw.focus(); }
   triggerSearch();      // open-into-browse: no idle hint state anymore
@@ -388,7 +392,9 @@ export function closeSearchModal() {
   // re-renders the list from scratch).
   const resultsEl = document.getElementById('search-results');
   if (resultsEl) cleanupCardIframes(resultsEl);
-  document.getElementById('search-overlay')?.classList.remove('on');
+  const ov = document.getElementById('search-overlay');
+  if (ov) popLayer(ov); // B4：出栈 + 回焦（同一落点：打开它的按钮）
+  ov?.classList.remove('on');
   document.getElementById('search-btn')?.focus();   // return focus to the opener
 }
 

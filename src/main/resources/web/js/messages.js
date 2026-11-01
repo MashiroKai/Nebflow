@@ -42,6 +42,7 @@ import { buildTodoEntryRow } from './scheduled-task.js';
 // 本模块的好友会话输入框（作者点名的面）此前**零组字判定** —— 组字 Enter 会
 // 直接 doSend()。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+import { withFocusKey } from './focusTrap.js';
 // voicefix 批 腿 B（作者 2026-09-21 14:0x ③）：好友/群聊会话窗的**简单麦克风**
 // 复用主窗同一语音管线 —— 识别流/双模（Web Speech / 云 STT）/态机全在
 // voiceEngine.js 单点，本模块只做「按钮 ⇄ 本窗输入框」的回调接线，零新造机制。
@@ -596,6 +597,14 @@ function seedConversationsFromStore() {
 }
 
 function renderList() {
+  // B3-2：会话列表 = `innerHTML` 全量重建（行节点整批换掉）。行自带
+  // `data-focus-key="conv:<id>"`（本批补上的生产者），重渲前后按 key 回焦 ——
+  // 键盘用户在名册刷新 / 收到消息时不再被踢回 body。
+  return withFocusKey(document.getElementById('fm-conversations'), renderListInner);
+}
+
+/** 列表重建本体（重渲保焦包装见 renderList）。 */
+function renderListInner() {
   const box = document.getElementById('fm-conversations');
   if (!box) return;
   box.innerHTML = '';
@@ -639,6 +648,9 @@ function convRow(conv) {
   row.setAttribute('tabindex', '0');
   row.setAttribute('aria-selected', String(conv.conversationId === openConvId));
   row.dataset.conversationId = conv.conversationId;
+  // B3-2 生产者：会话行的跨重渲稳定 key（保焦协议第二级）。行是可聚焦选项
+  // （role=option + tabindex=0），但重渲后是**另一个节点**，只有 key 找得回来。
+  row.dataset.focusKey = `conv:${conv.conversationId}`;
   if (isGroup) row.dataset.group = '1'; // QA 断言面：群行可机械定位
   if (isDevice) row.dataset.device = '1'; // QA 断言面：设备行可机械定位（同族口径）
 

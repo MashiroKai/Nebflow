@@ -233,6 +233,30 @@ registerShortcut({
   },
 });
 
-// ── ④ 启动 ─────────────────────────────────────────────────────────────
+// ── ④ 保焦协议的可观测面（B3-2）────────────────────────────────────────
+//
+// `restoreFocusKey` / `popLayer` 在「按 key 找不回焦点」时会派发
+// `nf-focus-fallback`。改造前这个事件**一个监听者都没有** —— 协议在派发，
+// 业务永远不知道「焦点救不回来」这件事发生过，于是这类丢失只能靠人眼撞见。
+//
+// 消费者只做两件事（判断：不弹 toast）：
+//   · 计数 `window.__nfFocusFallback`（验收断言读它，见 keyboard-check ⑯）；
+//   · `console.warn` 一条带 key 的告警（DevTools 可定位到具体是哪个 key 丢了）。
+// 为什么不弹可见 toast：能走到这里的情形（列表行被删、DOM 路径变了）本身是
+// 可自愈的，焦点已经安全落在容器上；把它做成用户噪音，反而会训练用户忽略提示。
+/** @type {{total:number, last:any, byKind:Record<string,number>}} */
+const fallbackTrace = { total: 0, last: null, byKind: {} };
+(/** @type {any} */ (window)).__nfFocusFallback = fallbackTrace;
+
+document.addEventListener('nf-focus-fallback', (e) => {
+  const detail = /** @type {CustomEvent} */ (e).detail || {};
+  const kind = detail?.key?.kind || 'unknown';
+  fallbackTrace.total += 1;
+  fallbackTrace.last = { kind, value: detail?.key?.value ?? null, from: detail?.from ?? null };
+  fallbackTrace.byKind[kind] = (fallbackTrace.byKind[kind] || 0) + 1;
+  console.warn('[nf-focus] 焦点无法按 key 恢复，已回退到容器', fallbackTrace.last);
+});
+
+// ── ⑤ 启动 ─────────────────────────────────────────────────────────────
 
 initMode();

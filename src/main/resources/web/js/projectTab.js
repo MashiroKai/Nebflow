@@ -40,6 +40,7 @@ import { fetchProjects, fetchFlowMap, summarize } from './nodeData.js';
 import { openAgentFile } from './agentFileViewer.js';
 import { playFlip, prefersReducedMotion, snapshotRects } from './listFlip.js';
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+import { withFocusKey } from './focusTrap.js';
 import state from './state.js';
 
 // 两段动画取值（🔴 逐字对齐取证报告 §F「统一取值」表，零新造）：
@@ -816,6 +817,13 @@ function clearPlaceholders(scroll) {
  *  ③ 顺序漂移只搬动漂移的那张卡自身（身份/实例不变）。
  *  其余卡片一律不重建：不进 innerHTML、不重绑事件（重绑会叠监听器）。 */
 function reconcileProjectCards(scroll, projects) {
+  // B3-2：名单差集重建（语言切换时还会整表重建）会摘掉/换掉卡内节点。卡内按钮
+  // 没有 id 也没有 data-focus-key ⇒ 走协议的第三级 DOM 路径（同形重建位序不变）。
+  return withFocusKey(scroll, () => reconcileProjectCardsInner(scroll, projects));
+}
+
+/** 卡阵差集重建本体（重渲保焦包装见 reconcileProjectCards）。 */
+function reconcileProjectCardsInner(scroll, projects) {
   if (rebuildCardsOnce) {
     // 语言切换一次性重建（见文末 locale-changed）：卡内文案（含 contentI18n 的项目名/
     // 描述）必须整体重写，定点刷新覆盖不到全部静态标签 ⇒ 只此一路径允许重建，

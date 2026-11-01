@@ -77,6 +77,7 @@
 // batch.
 
 import { t } from './i18n.js';
+import { pushLayer, popLayer } from './focusTrap.js';
 import { escapeHtml, createIconsIn, statusIcon } from './utils.js';
 import { getAuthToken } from './neblink.js';
 // ── Eye toggle glyphs: SINGLE SOURCE = sidebar/providersUi.js ────────────
@@ -762,6 +763,9 @@ export function openSecretsPanel() {
   if (!ov) return;
   lastFocusedBeforeOpen = /** @type {HTMLElement|null} */ (document.activeElement);
   ov.classList.add('on');
+  // B4：密钥面板入层栈。本壳的 Esc 三段契约（草稿 / 展开行 / 关闭）由它自己的
+  // capture 盾独占 ⇒ 层不加 onEscape（否则草稿态会被直接关窗吞掉）。
+  pushLayer(ov, { name: 'secrets' });
   // 弹窗退场批：跨档重排后补注左上返回（幂等；非手机层不注入）。
   mobileSheetBack(ov, closeSecretsPanel);
   applyStaticText();
@@ -782,6 +786,7 @@ export function closeSecretsPanel() {
   openName = '';
   pendingOpen = '';
   savedFlashName = '';
+  popLayer(ov); // B4：出栈 + 回焦
   ov.classList.remove('on');
   // Focus back to the settings entry row button (or wherever we came from).
   const btn = document.getElementById('btn-open-secrets');
