@@ -1,0 +1,19 @@
+visual-baseline [check] playwright=playwright browser=chromium-151 (151.0.7922.34) platform=darwin-chromium-151
+  web    : src/main/resources/web
+  baseline: tests/visual/baseline/darwin-chromium-151
+  out    : .nebflow/visual-baseline/darwin-chromium-151
+
+  SAME   app-empty-dark                         1440x900 (2413ms) 
+  SAME   app-empty-light                        1440x900 (2643ms) 
+  SAME   chat-messages-dark                     1440x900 (1958ms) 
+  SAME   chat-messages-light                    1440x900 (3096ms) 
+  SAME   settings-llm-empty-dark                1440x900 (3503ms) 
+  SAME   settings-llm-empty-light               1440x900 (3349ms) 
+  SAME   bgtask-panel-dark                      378x146 (2770ms) 
+  SAME   bgtask-panel-light                     378x146 (3171ms) 
+  SAME   canvas-markdown-tab-dark               552x874 (3510ms) 
+  PASS   canvas-markdown-tab-light              diff=12px (0.002%) bbox={"x0":1,"y0":1,"x1":550,"y1":864}  → .nebflow/visual-baseline/darwin-chromium-151/canvas-markdown-tab-light-diff.png 
+  PASS   canvas-code-tab-dark                   diff=16px (0.003%) bbox={"x0":1,"y0":1,"x1":550,"y1":864}  → .nebflow/visual-baseline/darwin-chromium-151/canvas-code-tab-dark-diff.png 
+  PASS   canvas-code-tab-light                  diff=12px (0.002%) bbox={"x0":1,"y0":1,"x1":550,"y1":864}  → .nebflow/visual-baseline/darwin-chromium-151/canvas-code-tab-light-diff.png 
+
+VISUAL BASELINE PASS

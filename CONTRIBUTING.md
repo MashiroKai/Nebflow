@@ -96,3 +96,16 @@ node scripts/check-provider-modellist.mjs   # provider model-list endpoints stay
 ```
 
 `check-js-types.mjs --update` regenerates the baseline after intentional type fixes. Dynamic `import()` is the sanctioned way to break a genuine cycle; static import cycles fail the gate. `check-provider-modellist.mjs` is hermetic (`--live` adds the environment/proxy, provider and gateway layers; see its header comment and the `ModelListFaces` scaladoc).
+
+### Visual regression baseline
+
+`tests/visual/` + `scripts/visual-baseline.mjs` (adopted 2026-11-01) render six scenarios (`--list`) in dark and light through a **zero-port** harness — `page.route` serves `src/main/resources/web` from disk with a MockWS injection, so it structurally cannot reach a running instance (or the host gateway port) — and pixel-compare each shot against a committed baseline PNG.
+
+```bash
+make check-visual              # = node scripts/visual-baseline.mjs --check --max-ratio 0.0005 (gate)
+make check-visual VISUAL_MAX_RATIO=0   # strict zero-diff run
+make visual-baseline          # = node scripts/visual-baseline.mjs --update  (re-record)
+node scripts/visual-baseline.mjs --check --filter canvas --determinism
+```
+
+Baselines are stored **per host platform key**: `tests/visual/baseline/<process.platform>-<browserLabel>/` (e.g. `win32-msedge-156`, `darwin-chromium-151`). Pixels are not comparable across OS/browser builds, so a host without its own baseline directory reports `MISS` on every shot — a red, never a silent pass. `win32-msedge-156/` was recorded on the author's Windows + Edge host and belongs to the **Windows runner leg**; on another host record your own set with `make visual-baseline`, eyeball the shots under `.nebflow/visual-baseline/<platform>/`, then commit `tests/visual/baseline/<platform>/`. Tolerances are strict zero by default in the script (`--tolerance` / `--max-ratio` widen them explicitly — loosening a baseline is not a fix for a real pixel change); `make check-visual` passes `--max-ratio 0.0005` because both recorded hosts showed 12–16 px of random antialiasing drift on the 1 px pane border of the two monaco scenarios (0.002–0.003%, deterministic within a run, so it is host rendering noise rather than product jitter). Use `make check-visual VISUAL_MAX_RATIO=0` for a strict zero-diff run — recommended on the Windows runner leg, whose baselines were captured noise-free. Run it after frontend changes that can move layout; the GitHub CI legs do not carry it yet (no matching platform baselines there).
