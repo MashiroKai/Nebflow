@@ -192,3 +192,26 @@ exit code = **0**。首跑曾有 1 条 R1 违规（前批 `docs/20261101_212200_
 ### §5.2 提交
 
 单次提交，分支 `delegate/delegate-nebflow-c1142b9b`，**未** push、**未** merge main、**未** amend。add 走显式路径（非 `git add -A`）。
+
+## §6 合并落地（2026-11-02 07:1x，裁判复核后收口）
+
+### §6.1 合并前独立复验
+
+| 项 | 做法 | 结果 |
+|---|---|---|
+| 字节链硬门 | 亲跑 `file-bytes-single-fetch` | **7 passed / exit 0**，T1–T7 逐条绿 |
+| mic 真录音 | **独立用 python `wave` 解码**三段 `transcribe-seg*.wav` | `16000Hz / mono / 16bit`，RMS **0.25490 / 0.09684 / 0.10642**（门槛 0.01），与 `readings.json` 逐位一致 ⇒ 确为真采集字节，非桩 |
+| 两处既有红 | 用官方 **before-tree 开关**跑纯 main web 树（`git archive main`） | `msgmenu` failures=1（同一 S6）、`mvp2` `[BEFORE-TREE] failures=1`（同一 R4b `count=2`），与本支读数逐字相同 ⇒ **既有红确认，非本批引入** |
+
+复跑命令见 `evidence/20261102_fm-threeface-align/regression/RESULTS.md` 末节「既有红的独立复验」。
+
+### §6.2 合并
+
+- 合入提交：`91c48ab0c`（`Merge branch 'delegate/delegate-nebflow-c1142b9b'`，parents = `eec3feb60` + `c9579e415`），`--no-ff` 保留批形态。
+- 本支提交链：`cdf3ef77f`（主批）+ `c9579e415`（判据校订 + 既有红复验归档）。
+- **一处合并冲突及解法**：`docs/20261101_212200_mobile-dock-capsule__delegate-nebflow-7fa8a6bb.md` —— 两支各自独立发现并修补了同一处 R1 违规（缺 frontmatter）。取**合集**：frontmatter 保留信息量更大的四行（type/status/date/scope），两条补注均保留并追加一行合并说明；正文一字未改。
+- 合并后 `node --check` 三个改动 JS 全通过、全仓零冲突标记残留；main 上复跑字节链 _（见下条）_。
+
+### §6.3 合并后复核
+
+main 树 `git status` clean；`docs` vault 在**仓根**口径下仍有 29 条既有 `orphan-doc` 违规（全部集中在 `design/` 等历史目录，**不含**本批两份文档），该存量面非本批范围。
