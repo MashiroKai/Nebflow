@@ -193,6 +193,11 @@ export function hydrateMedia(el, item, onFail) {
     el.src = item.src;
     return;
   }
+  // dry 腿（fm-att-card-unify 批 2026-11-02）：`item.dry` = 面先出、字节由调用方自填
+  // （社交三窗的鉴权 id 路由 / 设备字节源都是异步腿，拿不到同步 URL）——本函数对
+  // dry 面**零动作**（不挂 error 监听、不进任何取字节路），调用方随后直填 `el.src`；
+  // load 事件照常驱动 `natural` 上报（fitLayer 出真比）。主会话链路零命中本分支。
+  if (item.dry) return;
   const path = item.path;
   const fail = () => {
     // 终态闩：双腿各有一次出场机会，fail 只落一次（appendFailureNote 已有
@@ -396,6 +401,20 @@ function mediaFace(item, interactive, natural) {
   return wrap;
 }
 
+/** The card language's ONE ratio arithmetic — pure packing of `w×h` into
+ *  `maxW×maxH`, never upscaled (fm-att-card-unify 批 2026-11-02 导出：社交三窗的
+ *  读数面复用同一份算术，禁第二套比例实现。`fitLayer` 是唯一行为消费方）。 */
+export function fitBoxNum(w, h, maxW, maxH) {
+  const scale = Math.min(maxW / w, maxH / h, 1);
+  return { w: Math.round(w * scale), h: +(h * scale).toFixed(2) };
+}
+/** The flat single's packing, bound to the card language's own allowances
+ *  (STACK_MAX.w × EXPAND_MAX.h) — the shape a `.pop-media-flat` takes once its
+ *  bytes report. Exported for the social windows' reading face. */
+export function fitMediaBox(w, h) {
+  return fitBoxNum(w, h, STACK_MAX.w, EXPAND_MAX.h);
+}
+
 /** Give `layer` the media's OWN aspect ratio, scaled to fit `maxW`×`maxH`. The
  *  box ratio then equals the media ratio exactly, so the un-cropped
  *  `object-fit: contain` face is flush — no letterbox bars, no crop. Called
@@ -403,8 +422,8 @@ function mediaFace(item, interactive, natural) {
  *  a definite size even before its bytes are in (the CSS fallback ratio holds
  *  until then). */
 function fitLayer(layer, w, h, maxW, maxH) {
-  const scale = Math.min(maxW / w, maxH / h, 1);
-  layer.style.width = Math.round(w * scale) + 'px';
+  const box = fitBoxNum(w, h, maxW, maxH);
+  layer.style.width = box.w + 'px';
   layer.style.aspectRatio = w + ' / ' + h;
   layer.dataset.nfRatio = w + 'x' + h;
 }
@@ -783,19 +802,38 @@ function buildMediaStack(items) {
  *  CANVAS (openMediaItemClick = the file card's single point when a path
  *  exists, the 主题三 lightbox for pathless inline bytes). The corner button
  *  stays as the explicit entry — same handler, same single point. */
-function buildMediaFlat(item) {
+/** Single media item — flat, no stack, no switching. (Rendering出口：fm-att-card-unify
+ *  批 2026-11-02 起好友/群/设备三窗的图片附件卡同接本面 —— 主会话卡语言的**唯一**家，
+ *  禁第二套媒体卡实现。)
+ *  `opts`（可省；省略/无键 = 主会话既有行为**逐字不变**）：
+ *   · `opts.onClick(item)`：整面点击动作。缺省 = `openMediaItemClick`（Canvas/灯箱单点）；
+ *     传 `null` = 不挂面内点击（调用方自己在宿主根上挂，如社交三窗的可点面）；
+ *   · `opts.corner`：面角标元素（替代默认 Canvas 角标）；`null` = 不挂角标。 */
+function buildMediaFlat(item, opts) {
   const box = document.createElement('div');
   box.className = 'pop-media-flat' + (item.kind === 'audio' ? ' is-audio' : '');
   box.appendChild(mediaFace(item, 'expanded', (w, h) => fitLayer(box, w, h, STACK_MAX.w, EXPAND_MAX.h)));
-  box.addEventListener('click', () => openMediaItemClick(item));
-  const canvasBtn = canvasCornerButton(item);
-  if (canvasBtn) box.appendChild(canvasBtn);
+  const click = opts && 'onClick' in opts ? opts.onClick : undefined;
+  if (typeof click === 'function') box.addEventListener('click', () => click(item));
+  else if (click === undefined) box.addEventListener('click', () => openMediaItemClick(item));
+  let corner = opts && 'corner' in opts ? opts.corner : undefined;
+  if (corner === undefined) corner = canvasCornerButton(item);
+  if (corner) box.appendChild(corner);
   return box;
 }
+export { buildMediaFlat };
 
 /* ─────────────── file-card face ─────────────── */
 
-function buildFileCard(item) {
+/** File card（渲染出口：fm-att-card-unify 批 2026-11-02 起三窗文件附件卡同接本面 ——
+ *  名称/大小/footer 信息行与打开交互的**唯一**家，禁第二套文件卡实现。）
+ *  `opts`（可省；省略/无键 = 主会话既有行为**逐字不变**）：
+ *   · `opts.onClick(item)`：整卡点击动作。缺省 = 有 path 即 `openPopArtifact`（无 path
+ *     渲染但不动作，#491 主题三口径）；传 `null` = 不挂卡级点击（调用方自管）；
+ *   · `opts.trailing`：卡尾元素（替代默认「在 Canvas 打开」圆键）；`null` = 不挂卡尾；
+ *   · `opts.subNote`：footer 信息行的**追加段**（状态语义，如「已过期」）——信息结构
+ *     等价适配（fm-att-card-unify 批申报）：`[类型, 大小, 追加段] · join`。 */
+function buildFileCard(item, opts) {
   const card = document.createElement('div');
   card.className = 'file-card';
   const icon = fileIconStyle(item.ext);
@@ -803,34 +841,42 @@ function buildFileCard(item) {
   meta.className = 'fc-meta';
   const name = document.createElement('div');
   name.className = 'fc-name';
-  name.textContent = item.name || item.path.split('/').pop() || item.path;
+  name.textContent = item.name || (item.path || '').split('/').pop() || item.path || '';
   name.title = item.path || '';
   const sub = document.createElement('div');
   sub.className = 'fc-sub';
   const sizeText = humanSize(item.size);
-  sub.textContent = [String(icon.label), sizeText].filter(Boolean).join(' · ');
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'fwd-btn';
-  btn.setAttribute('aria-label', t('chat.popOpenCanvas'));
-  btn.innerHTML = FWD_ICON + '<span class="fwd-tip">' + escapeHtml(t('chat.popOpenCanvas')) + '</span>';
-  // #491 主题三: a card without an absolute path (a live user attachment whose
-  // bytes ride inline, path unknown until the backend resolves it) renders but
-  // opens nothing — never a bogus workspace-open-item with an empty path.
-  if (item.path) {
+  sub.textContent = [String(icon.label), sizeText, (opts && opts.subNote) || ''].filter(Boolean).join(' · ');
+  const trailing = opts && 'trailing' in opts ? opts.trailing : undefined;
+  const click = opts && 'onClick' in opts ? opts.onClick : undefined;
+  /** 默认点击动作（主会话口径）：有 path 才动作；无 path 渲染但不动作。 */
+  const defaultOpen = () => { if (item.path) openPopArtifact(item.path, item.name); };
+  if (typeof click === 'function') card.addEventListener('click', () => click(item));
+  else if (click === undefined) card.addEventListener('click', defaultOpen);
+  let btn = trailing;
+  if (btn === undefined) {
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'fwd-btn';
+    btn.setAttribute('aria-label', t('chat.popOpenCanvas'));
+    btn.innerHTML = FWD_ICON + '<span class="fwd-tip">' + escapeHtml(t('chat.popOpenCanvas')) + '</span>';
+    // #491 主题三: a card without an absolute path (a live user attachment whose
+    // bytes ride inline, path unknown until the backend resolves it) renders but
+    // opens nothing — never a bogus workspace-open-item with an empty path.
     btn.addEventListener('click', e => {
       e.stopPropagation();
-      openPopArtifact(item.path, item.name);
+      defaultOpen();
     });
-    card.addEventListener('click', () => openPopArtifact(item.path, item.name));
   }
   const iconEl = document.createElement('div');
   iconEl.className = 'fc-icon ' + icon.cls;
   iconEl.textContent = icon.label;
-  card.append(iconEl, meta, btn);
+  card.append(iconEl, meta);
+  if (btn) card.appendChild(btn);
   meta.append(name, sub);
   return card;
 }
+export { buildFileCard };
 
 /* ── 存量「已存至」兼容渲染（媒体统一适配批 2026-10-20）──────────────────
  * 社交通道入站媒体统一前的存量行是**纯文本**注入：「[图片] 已存至 <path>
@@ -881,8 +927,9 @@ export function unifyUserMediaFace(text, attachments) {
  * Pop的那样是单独的卡片」). One mapping + one row builder, both sharing the
  * exact face builders above, so the two sides cannot drift apart. */
 
-/** File-name → extension (no dot → ''). */
-function extOf(name) {
+/** File-name → extension (no dot → ''). (导出：fm-att-card-unify 批 —— 三窗文件卡
+ *  同一扩展名单点，禁第二份 ext 解析。) */
+export function extOf(name) {
   const n = String(name || '');
   const i = n.lastIndexOf('.');
   return i > 0 ? n.slice(i + 1).toLowerCase() : '';
@@ -1007,6 +1054,9 @@ function buildMediaRowFooterBadge(items, ts) {
  * live 图直接落盘为本地文件）；两腿皆缺 ⇒ 不挂键（零假按钮）。 */
 const DOWNLOAD_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 const DL_CHECK_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+// 字形导出（fm-att-card-unify 批 2026-11-02）：三窗下载键与主会话 footer 下载键
+// 同一枚 SVG 单点（禁第二份拷贝——字形漂移即第二套样式）。
+export { DOWNLOAD_SVG, DL_CHECK_SVG };
 
 /** 下载键工厂（单件行专用；不可下载 ⇒ null）。成功态复用 .copied 绿勾 1.5s
  *  自清（复制钮同节奏）；失败态复用 .copy-failed 红键 2s 自清 + console 取证。 */
