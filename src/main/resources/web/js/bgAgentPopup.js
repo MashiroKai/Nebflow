@@ -376,7 +376,7 @@ function ensureStepView(sessionId) {
   // 工具卡裸行可见（9.19 同形），弹窗内不建 turn-line；终态收拢（turn-header
   // + tuckRows）与主窗同一 9.19 统一面（883712c40），零变化。chat.js / main.js
   // 各在飞渲染点读此标志分流；主窗与 flow 弹窗不置位 ⇒ 呈现零触碰。
-  view.nfBareProcessRows = true;
+  (/** @type {{nfBareProcessRows?: boolean}} */ (view)).nfBareProcessRows = true;
   // Hidden until the popup opens — ws.js gates DOM rendering while false.
   view.visible = false;
   // Register in the global view registry so findViewBySessionId() can route

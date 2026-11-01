@@ -1,0 +1,20 @@
+visual-baseline [check] playwright=playwright browser=chromium-151 (151.0.7922.34) platform=darwin-chromium-151
+  web    : src/main/resources/web
+  baseline: tests/visual/baseline/darwin-chromium-151
+  out    : .nebflow/visual-baseline/darwin-chromium-151
+
+  SAME   app-empty-dark                         1440x900 (4382ms) deterministic
+  SAME   app-empty-light                        1440x900 (3044ms) deterministic
+  SAME   chat-messages-dark                     1440x900 (3890ms) deterministic
+  SAME   chat-messages-light                    1440x900 (4356ms) deterministic
+  SAME   settings-llm-empty-dark                1440x900 (5018ms) deterministic
+  SAME   settings-llm-empty-light               1440x900 (4953ms) deterministic
+  SAME   bgtask-panel-dark                      378x146 (3601ms) deterministic
+  SAME   bgtask-panel-light                     378x146 (4027ms) deterministic
+  DIFF   canvas-markdown-tab-dark               diff=16px (0.003%) bbox={"x0":1,"y0":1,"x1":550,"y1":864}  → .nebflow/visual-baseline/darwin-chromium-151/canvas-markdown-tab-dark-diff.png deterministic
+  SAME   canvas-markdown-tab-light              552x874 (4858ms) deterministic
+  SAME   canvas-code-tab-dark                   552x874 (5320ms) deterministic
+  DIFF   canvas-code-tab-light                  diff=12px (0.002%) bbox={"x0":1,"y0":1,"x1":550,"y1":864}  → .nebflow/visual-baseline/darwin-chromium-151/canvas-code-tab-light-diff.png deterministic
+
+VISUAL BASELINE FAIL: 2 项超阈值/缺失
+  阈值：单通道容差 0，差异像素占比上限 0.00%

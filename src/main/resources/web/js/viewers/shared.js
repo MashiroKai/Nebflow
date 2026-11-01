@@ -32,8 +32,9 @@ export function buildThemeVarsCSS() {
   for (const sheet of document.styleSheets) {
     try {
       for (const rule of sheet.cssRules) {
-        if (rule.selectorText === ':root') {
-          for (const prop of rule.style) {
+        const styleRule = /** @type {CSSStyleRule} */ (rule);
+        if (styleRule.selectorText === ':root') {
+          for (const prop of styleRule.style) {
             if (prop.startsWith('--color-') || prop.startsWith('--glass') || prop.startsWith('--sapphire')) {
               const val = root.getPropertyValue(prop).trim();
               if (val) pairs.push(`${prop}:${val}`);
@@ -624,7 +625,8 @@ const CROSSHAIR_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill
  *  Source → rendered: pull the latest content from the Monaco model (survives
  *  edits), dispose the editor, re-run the viewer — which re-attaches this
  *  toggle with the updated ctx.
- *  @param {HTMLElement} pane — canvas tab pane
+ *  @param {HTMLElement & {_editorHandle?: any, _dirty?: boolean}} pane — canvas tab pane
+ *    (the expando pair is this toggle's own per-pane bookkeeping)
  *  @param {Function} renderFn — viewer function (viewMarkdown / viewHtml)
  *  @param {Object} ctx — { content, absPath, fileName } */
 export function addSourceToggle(pane, renderFn, ctx) {

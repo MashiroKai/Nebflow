@@ -1,0 +1,3 @@
+[info] Passed: Total 34, Failed 0, Errors 0, Passed 34
+[success] Total time: 299 s (0:04:59.0), completed 2026年11月1日 17:50:30
+SBT_EXIT=0

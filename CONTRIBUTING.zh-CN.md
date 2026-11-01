@@ -87,3 +87,16 @@ node scripts/check-circular.mjs    # 静态 import 循环依赖门禁
 ```
 
 有意修复类型问题后用 `check-js-types.mjs --update` 重新生成基线。动态 `import()` 是打破真实循环依赖的正规手段；静态 import 循环会挂门禁。
+
+### 视觉回归基线
+
+`tests/visual/` + `scripts/visual-baseline.mjs`（2026-11-01 采纳）以**零端口**装置渲染 6 个场景（`--list` 可列）的暗/亮两态——`page.route` 从磁盘供给 `src/main/resources/web` + MockWS 注入，结构上碰不到运行中的实例（更碰不到宿主 gateway 端口）——并把每张截图与入库基准图逐像素比对。
+
+```bash
+make check-visual              # = node scripts/visual-baseline.mjs --check --max-ratio 0.0005（门禁）
+make check-visual VISUAL_MAX_RATIO=0   # 零差异严格把关
+make visual-baseline           # = node scripts/visual-baseline.mjs --update  （重录基准）
+node scripts/visual-baseline.mjs --check --filter canvas --determinism
+```
+
+基准图**按宿主平台键**分目录：`tests/visual/baseline/<process.platform>-<browserLabel>/`（如 `win32-msedge-156`、`darwin-chromium-151`）。像素跨 OS/浏览器构建不可比，因此没有本平台基准目录的宿主会逐张报 `MISS`——是红，绝不静默通过。`win32-msedge-156/` 是作者 Windows + Edge 宿主采集的那套，归属 **Windows runner 腿**；在别的宿主上先用 `make visual-baseline` 录一套自己的，人眼过一遍 `.nebflow/visual-baseline/<platform>/` 再提交 `tests/visual/baseline/<platform>/`。脚本默认严格零差异（`--tolerance` / `--max-ratio` 是显式放宽——真出现像素变化时放宽基线不是修法）；`make check-visual` 显式带 `--max-ratio 0.0005`，依据是两套已录宿主上两个 monaco 场景的 1px 页签边框存在 12–16 px 随机反走样漂移（0.002–0.003%，同轮双拍自身一致 ⇒ 宿主渲染噪声，非产品抖动）。要零差异把关跑 `make check-visual VISUAL_MAX_RATIO=0`（Windows runner 腿建议如此，那套基准是无噪声采集的）。前端改动可能动布局时在受影响 spec 之外加跑这一腿；GitHub CI 侧暂不跑（那边没有对应平台基准）。

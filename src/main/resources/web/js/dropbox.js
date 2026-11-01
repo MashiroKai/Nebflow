@@ -352,8 +352,8 @@ function renderModal(device) {
 
 function bindTabs() {
   document.querySelectorAll('.dropbox-tab').forEach(tab => {
-    tab.onclick = () => {
-      const target = tab.dataset.tab;
+    (/** @type {HTMLElement} */ (tab)).onclick = () => {
+      const target = (/** @type {HTMLElement} */ (tab)).dataset.tab;
       document.querySelectorAll('.dropbox-tab').forEach(t => t.classList.toggle('active', t === tab));
       document.querySelectorAll('.dropbox-tab-content').forEach(c => {
         c.classList.toggle('active', c.id === `dropbox-tab-${target}`);
@@ -397,7 +397,7 @@ export async function saveDeviceDescription(device, userDescription) {
 
 function bindDescEditor(device) {
   const saveBtn = document.getElementById('dropbox-desc-save');
-  const input = document.getElementById('dropbox-desc-input');
+  const input = /** @type {HTMLInputElement} */ (document.getElementById('dropbox-desc-input'));
 
   const doSave = async () => {
     const desc = input.value.trim();

@@ -1217,7 +1217,10 @@ function claimEdgeBack(e) {
   }
   // 切卡手势可能已写下的少量跟手位移清零（认领后视觉归边缘返回手势所有）。
   const host = canvasUI?.host;
-  const pane = host?.querySelector(':scope > .canvas-tab-pane');
+  // 类型标注：querySelector 静态返回 Element，纯样式清零需要 HTMLElement 上的
+  // style 面（2026-11-02 合并批 checkJs 归零：zhang 烧平基线 total=0，本批
+  // 不得把新错带进来，故就地窄化而非抬高基线）。
+  const pane = /** @type {HTMLElement|null|undefined} */ (host?.querySelector(':scope > .canvas-tab-pane'));
   if (pane) { pane.style.transition = ''; pane.style.transform = ''; pane.style.opacity = ''; }
 }
 

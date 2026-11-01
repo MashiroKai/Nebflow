@@ -50,7 +50,7 @@ let neblinkState = {
   // （`relay.available === true` 才算通道可用）。形状 = /api/neblink/status 的
   // `relay` 对象原文 {available, authRejected, lastRejectedStatusCode,
   // lastRejectedAt, selfHeal}（NeblinkRelayTunnel.statusJson）；未取到 = null。
-  relay: /** @type {{available?: boolean, authRejected?: boolean, lastRejectedStatusCode?: number|null, lastRejectedAt?: number|null, selfHeal?: string}|null} */ (null),
+  relay: /** @type {{available?: boolean, authRejected?: boolean, lastRejectedStatusCode?: number|null, lastRejectedAt?: number|null, selfHeal?: string, signedOutElsewhere?: boolean}|null} */ (null),
   // 缺陷 A（加法字段）：失败分类码（`/auth/state` 的 `code`）；'' = 无分类。
   pairErrorCode: '',
   // 缺陷 A（加法字段）：`/status` 的 `credentialIssue` 原文（{code, reason, action, error}）；
@@ -481,6 +481,7 @@ export function neblinkSettingsHTML() {
   // 退出登录」两键整体退役（登出/切号只在官网门户操作）。本块降为**只读登录态展示**：
   //   · `kickedLine`（2026-09-14 作者令 C+B 的被动可见状态行，语义不变，保留）；
   //   · `whoLine`（谁登录着，只读 — `neblink.loggedInAs`，无任何动作入口）。
+  //   · `logoutLine`（新增，2026-11「退出登录没有入口」修复批，见下方块注）。
   // 历史备注：切换账号弹窗（knownAccounts.js 账号记忆 + 单窗续登链
   // `switchLogoutAndLogin`/`watchSwitchHandoff`/`openSwitchAccountModal`）随两键
   // 整体删除；RP end-session 链本体（`openEndSessionHandoff`）仍服务「清理并重登」
@@ -513,10 +514,30 @@ export function neblinkSettingsHTML() {
     ? `<div class="neblink-account-ro" role="status">${escapeHtml(t('neblink.loggedInAs', { name: who }))}</div>`
     : '';
 
+  // ── 退出登录入口（2026-11「退出登录没有入口」修复批，作者裁「只修退不出」）──
+  // auth-trim 批（2026-10-20）把「切换账号 / 退出登录」两键整体退役后，**已登录态
+  // 零登出入口**：链路（本地八步拆除 + provider end-session + /auth/logged-out
+  // 落地）一直在，缺的只是入口。本键 = 那枚补回的入口，点击走**既有**完整链路
+  // `openEndSessionHandoff(false)`（绑定见 `bindNeblinkEvents` 的 `#neblink-logout`；
+  // 🔴 禁新写任何拆除逻辑——重复实现必然与既有链路分叉）。
+  // `false` = 不做强制登录/单窗续登（那是「清理并重登」的语义，本键只退出）。
+  // 样式：材质/描边/墨色全部来自既有 `button.glass-control` 次操作档 + 几何取未登录面
+  // 「清理并重登」键同值（css/neblink.css `.neblink-logout-btn`）⇒ 零新视觉体系。
+  // 命名辨析（本批不改名，作者令 2026-11-01）——本键 id = `#neblink-logout`，是已
+  // 登录态设置账号段的**主登出入口**。⚠️ 别与 `#neblink-logout-btn` 混为一谈：那是
+  // auth-trim 批（2026-10-20）退役的旧 id，现源码零命中，只被 settings-cleanup.spec
+  // 的零残留断言钉着 —— 不得复活；未登录面「清理并重登」键的 id 是
+  // `#neblink-cleanup-btn`。`.neblink-logout-btn` 今天只是一个 CSS 类（本键的几何档），
+  // 不是 id。
+  const logoutLine = `<div class="neblink-account-actions">
+        <button class="glass-control neblink-logout-btn" id="neblink-logout" type="button">${t('neblink.logout')}</button>
+      </div>`;
+
   return `
     <div class="neblink-logged-in">
       ${kickedLine}
       ${whoLine}
+      ${logoutLine}
     </div>`;
 }
 
@@ -832,6 +853,24 @@ export function bindNeblinkEvents(rerender) {
     cleanupBtn.addEventListener('click', () => {
       cleanupBtn.disabled = true;
       openEndSessionHandoff(true);
+    });
+  }
+
+  // 「退出登录」（2026-11「退出登录没有入口」修复批）：已登录态设置账号段的次级键
+  // （`neblinkSettingsHTML` 的 `#neblink-logout`，只在登录分支渲染）。点击 = **复用**
+  // 既有完整链路 `openEndSessionHandoff(false)`：本地八步拆除 → provider end-session
+  // → /auth/logged-out 落地页；`false` = 不做强制登录/单窗续登（那是「清理并重登」的
+  // `true` 语义）。跳转必须在手势栈里同步发生（popup-blocker），故直接调用。
+  // 🔴 零新增拆除逻辑：本键与「清理并重登」共用同一条链路，只是入参不同。
+  const logoutBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('neblink-logout'));
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', () => {
+      logoutBtn.disabled = true;
+      openEndSessionHandoff(false);
+      // 失败支兜底：链路失败时面板不重渲染（成功支由 `afterTeardown` 的 `_rerender`
+      // 整段重建）⇒ 本键会一直 disabled。5 秒后若元素仍在树上则解锁（重渲染后元素
+      // 已 detach，`isConnected === false` ⇒ 空操作）。
+      setTimeout(() => { if (logoutBtn.isConnected) logoutBtn.disabled = false; }, 5000);
     });
   }
 

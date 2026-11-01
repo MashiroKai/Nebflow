@@ -99,11 +99,12 @@ const MAX_TICKS = 48;
  * @param {Array<{label: string, depth: number, chapterIdx: number, anchor: string}>|null} adapter.toc
  * @param {boolean} adapter.themeable —— 主题/Aa 档（md = false，排版二期）
  * @param {'flow'|'host'} adapter.contentKind —— host = 正文自带滚动盒（markdown）
- * @param {HTMLElement|null} adapter.hostScroller
- * @param {HTMLElement|null} adapter.hostContent —— flip 层克隆源（host 模式）
+ * @param {HTMLElement|null} [adapter.hostScroller] 仅在 contentKind='host' 时提供
+ * @param {HTMLElement|null} [adapter.hostContent] flip 层克隆源（host 模式）
  * @param {(i: number) => void} [adapter.onChapterChanged]
- * @param {boolean} [adapter.tracking] —— 派发 epub-page-change（epub 专属，既有事件名）
- * @param {(i: number, anchor: string) => number|null} [adapter.anchorScrollTop] —— TOC 锚点像素
+ * @param {boolean} [adapter.tracking] 派发 epub-page-change（epub 专属，既有事件名）
+ * @param {(i: number, anchor: string) => number|null} [adapter.anchorScrollTop] TOC 锚点像素
+ * @param {object|null} [adapter.annotatable] 标注适配器（设计稿 §4.2；epub 腿提供，md 腿缺席）
  * @returns {object} controller
  */
 export function mountReader(pane, adapter) {
@@ -143,23 +144,23 @@ export function mountReader(pane, adapter) {
       </div>
     </div>`;
 
-  const reader = pane.querySelector('.epub-reader');
-  const viewport = pane.querySelector('.epub-reader-viewport');
-  const menu = pane.querySelector('.epub-reader-menu');
-  const tocEl = pane.querySelector('.epub-toc');
+  const reader = /** @type {HTMLElement} */ (pane.querySelector('.epub-reader'));
+  const viewport = /** @type {HTMLElement} */ (pane.querySelector('.epub-reader-viewport'));
+  const menu = /** @type {HTMLElement} */ (pane.querySelector('.epub-reader-menu'));
+  const tocEl = /** @type {HTMLElement} */ (pane.querySelector('.epub-toc'));
   const tocList = pane.querySelector('.epub-toc-list');
   const chapterTitleEl = pane.querySelector('.epub-chapter-title');
   const infoEl = pane.querySelector('.epub-nav-info');
-  const prevBtn = pane.querySelector('.epub-prev');
-  const nextBtn = pane.querySelector('.epub-next');
-  const aaBtn = pane.querySelector('.epub-aa');
-  const tocBtn = pane.querySelector('.epub-toc-btn');
-  const moreBtn = pane.querySelector('.epub-more-btn');
-  const barMenu = pane.querySelector('.epub-bar-menu');
+  const prevBtn = /** @type {HTMLButtonElement} */ (pane.querySelector('.epub-prev'));
+  const nextBtn = /** @type {HTMLButtonElement} */ (pane.querySelector('.epub-next'));
+  const aaBtn = /** @type {HTMLElement} */ (pane.querySelector('.epub-aa'));
+  const tocBtn = /** @type {HTMLElement} */ (pane.querySelector('.epub-toc-btn'));
+  const moreBtn = /** @type {HTMLElement} */ (pane.querySelector('.epub-more-btn'));
+  const barMenu = /** @type {HTMLElement} */ (pane.querySelector('.epub-bar-menu'));
   const progress = pane.querySelector('.epub-progress');
-  const range = pane.querySelector('.epub-progress-range');
+  const range = /** @type {HTMLInputElement} */ (pane.querySelector('.epub-progress-range'));
   const ticksEl = pane.querySelector('.epub-progress-ticks');
-  const tipEl = pane.querySelector('.epub-progress-tip');
+  const tipEl = /** @type {HTMLElement} */ (pane.querySelector('.epub-progress-tip'));
 
   // ── 滚动模型：flow = chrome 自管 scroller + .epub-reader-content；host = md 自带 ──
   /** @type {HTMLElement} 真正滚动的盒子 */
@@ -338,7 +339,7 @@ export function mountReader(pane, adapter) {
     ).join('');
     tocList.querySelectorAll('[data-epub-toc-item]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const e = items[Number(btn.dataset.epubTocItem)];
+        const e = items[Number((/** @type {HTMLElement} */ (btn)).dataset.epubTocItem)];
         if (!e) return;
         closeToc();
         jumpToPosition01(e.chapterIdx / N, e.anchor);
@@ -351,7 +352,7 @@ export function mountReader(pane, adapter) {
     let active = -1;
     adapter.toc.forEach((e, i) => { if (e.chapterIdx <= chapterIdx) active = i; });
     tocList.querySelectorAll('[data-epub-toc-item]').forEach((btn) => {
-      const on = Number(btn.dataset.epubTocItem) === active;
+      const on = Number((/** @type {HTMLElement} */ (btn)).dataset.epubTocItem) === active;
       btn.classList.toggle('on', on);
       btn.setAttribute('aria-selected', on ? 'true' : 'false');
     });
@@ -382,7 +383,7 @@ export function mountReader(pane, adapter) {
     closeMenu();
     closeBarMenu();
     // 有壳层钮就点它（桌面原位不动），无钮（预览组等）退化为画布请求事件。
-    const shellBtn = document.querySelector('#canvas-content > .canvas-refresh-toggle:not([hidden])');
+    const shellBtn = /** @type {HTMLElement|null} */ (document.querySelector('#canvas-content > .canvas-refresh-toggle:not([hidden])'));
     if (shellBtn) shellBtn.click();
     else pane.dispatchEvent(new CustomEvent('canvas-request-refresh', { bubbles: true }));
   }
@@ -455,27 +456,27 @@ export function mountReader(pane, adapter) {
       <button type="button" class="epub-menu-btn epub-menu-close" data-epub-close>${escapeHtml(t('epub.menu.close'))}</button>`;
 
     menu.querySelectorAll('[data-epub-theme-pick]').forEach((btn) => {
-      btn.addEventListener('click', () => setPrefs({ theme: btn.dataset.epubThemePick }));
+      btn.addEventListener('click', () => setPrefs({ theme: (/** @type {HTMLElement} */ (btn)).dataset.epubThemePick }));
     });
     menu.querySelectorAll('[data-epub-step]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const [key, dirRaw] = btn.dataset.epubStep.split(':');
+        const [key, dirRaw] = (/** @type {HTMLElement} */ (btn)).dataset.epubStep.split(':');
         const dir = Number(dirRaw);
         if (key === 'fontSize') setPrefs({ fontSize: cycle(FONT_SIZE_STEPS, prefs.fontSize, dir) });
         else setPrefs({ lineHeight: cycle(LINE_HEIGHT_STEPS, prefs.lineHeight, dir) });
       });
     });
     menu.querySelectorAll('[data-epub-para]').forEach((btn) => {
-      btn.addEventListener('click', () => setPrefs({ paraSpace: btn.dataset.epubPara }));
+      btn.addEventListener('click', () => setPrefs({ paraSpace: (/** @type {HTMLElement} */ (btn)).dataset.epubPara }));
     });
     menu.querySelectorAll('[data-epub-font]').forEach((btn) => {
-      btn.addEventListener('click', () => setPrefs({ fontFamily: btn.dataset.epubFont }));
+      btn.addEventListener('click', () => setPrefs({ fontFamily: (/** @type {HTMLElement} */ (btn)).dataset.epubFont }));
     });
     const tocBtnRow = menu.querySelector('[data-reader-toc]');
     if (tocBtnRow) tocBtnRow.addEventListener('click', () => { closeMenu(); openToc(); });
     const annoBtnRow = menu.querySelector('[data-reader-anno]');
     if (annoBtnRow && annoFace) annoBtnRow.addEventListener('click', () => { closeMenu(); annoFace.openDrawer(); });
-    const jumpInput = menu.querySelector('[data-reader-jump-input]');
+    const jumpInput = /** @type {HTMLInputElement} */ (menu.querySelector('[data-reader-jump-input]'));
     const doJump = () => {
       const v = Math.min(100, Math.max(0, parseInt(jumpInput.value, 10) || 0));
       closeMenu();
@@ -484,7 +485,7 @@ export function mountReader(pane, adapter) {
     menu.querySelector('[data-reader-jump]').addEventListener('click', doJump);
     jumpInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doJump(); } });
     menu.querySelectorAll('[data-reader-mode]').forEach((btn) => {
-      btn.addEventListener('click', () => setPrefs({ mode: btn.dataset.readerMode }));
+      btn.addEventListener('click', () => setPrefs({ mode: (/** @type {HTMLElement} */ (btn)).dataset.readerMode }));
     });
     const menuRefresh = menu.querySelector('[data-reader-refresh]');
     if (menuRefresh) menuRefresh.addEventListener('click', requestRefresh);
@@ -523,7 +524,7 @@ export function mountReader(pane, adapter) {
     barMenu.querySelectorAll('[data-reader-mode]').forEach((btn) => {
       // 先关菜单再落档：setPrefs→applyPrefs 会同步重渲染开着的菜单，
       // 被点钮会在点击派发中途被摘除（人无碍，自动化稳定性检查会咬）。
-      btn.addEventListener('click', () => { closeBarMenu(); setPrefs({ mode: btn.dataset.readerMode }); });
+      btn.addEventListener('click', () => { closeBarMenu(); setPrefs({ mode: (/** @type {HTMLElement} */ (btn)).dataset.readerMode }); });
     });
   }
 
@@ -668,7 +669,7 @@ export function mountReader(pane, adapter) {
     const page = document.createElement('div');
     page.className = 'epub-flip-page';
     page.style.width = W + 'px';
-    const body = buildLayerContent(target);
+    const body = /** @type {HTMLElement} */ (buildLayerContent(target));
     page.appendChild(body);
     layer.appendChild(page);
     // 先落地再量高：页盒定高 = 内容总高（至少一屏），防翻页中内容抖动。
@@ -945,15 +946,16 @@ export function mountReader(pane, adapter) {
 
   // 点按 1/3-1/3-1/3 分区（P0 A4 既定）：菜单/抽屉开时正文点按仅收面板不翻页。
   scroller.addEventListener('click', (e) => {
-    const anchor = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    const hit = /** @type {Element|null} */ (e.target);
+    const anchor = hit && hit.closest ? hit.closest('a[href]') : null;
     if (anchor) e.preventDefault(); // 单页应用守卫：锚/外链不触发应用页导航
     if (menuOpen()) { closeMenu(); return; }
     if (tocOpen()) { closeToc(); return; }
     if (barMenuOpen()) { closeBarMenu(); return; }
     // 链接/表单控件/既有高亮交还原语义（md 链接路由、菜单钮、标注编辑条等），
     // 不进点按分区。
-    const interactive = e.target && e.target.closest
-      ? e.target.closest('a[href], button, input, select, textarea, summary, label, mark.nf-anno')
+    const interactive = hit && hit.closest
+      ? hit.closest('a[href], button, input, select, textarea, summary, label, mark.nf-anno')
       : null;
     if (interactive) return;
     if (flipBusy()) return;

@@ -194,7 +194,7 @@ function buildTextIndex(root) {
   let node;
   while ((node = walker.nextNode())) {
     const len = node.nodeValue.length;
-    if (len > 0) { nodes.push({ node, start: total, len }); total += len; }
+    if (len > 0) { nodes.push({ node: /** @type {Text} */ (node), start: total, len }); total += len; }
   }
   return { nodes, total };
 }
@@ -258,7 +258,8 @@ function selectionOffset(index, range) {
  * @param {(i:number)=>void} deps.jumpToChapter 跳章（落位由本面接管）
  * @param {(open: boolean)=>void} deps.setPanelGate 面板开闭 ⇒ fab 让位联动
  * @returns {{renderChapter: (i:number)=>void, count: ()=>number, openDrawer: ()=>void,
- *           closeDrawer: ()=>void, drawerOpen: ()=>boolean, destroy: ()=>void}}
+ *           closeDrawer: ()=>void, drawerOpen: ()=>boolean, destroy: ()=>void,
+ *           closeNoteEditor: ()=>void, noteEditorOpen: ()=>boolean}}
  */
 export function mountAnnotationFace(deps) {
   const { pane, reader, scroller, getContentEl, annotatable, chapterTitle, jumpToChapter, setPanelGate } = deps;
@@ -302,7 +303,8 @@ export function mountAnnotationFace(deps) {
     bar.innerHTML = barForAnno
       ? `${noteBtn}${delBtn}<button type="button" class="epub-menu-btn" data-anno-bar-close>×</button>`
       : `${colors}${noteBtn}`;
-    bar.querySelectorAll('[data-anno-color]').forEach((btn) => {
+    bar.querySelectorAll('[data-anno-color]').forEach((rawBtn) => {
+      const btn = /** @type {HTMLElement} */ (rawBtn);
       btn.style.background = `var(--anno-${btn.dataset.annoColor})`;
       btn.addEventListener('click', () => createFromSelection(btn.dataset.annoColor, false));
     });
@@ -353,8 +355,8 @@ export function mountAnnotationFace(deps) {
       if (!got) { hideBar(); return; }
       const mark = got.range.startContainer.nodeType === 3
         ? got.range.startContainer.parentElement && got.range.startContainer.parentElement.closest('mark.nf-anno')
-        : got.range.startContainer.closest && got.range.startContainer.closest('mark.nf-anno');
-      const existing = mark ? bookAnnos.find((a) => a.id === mark.dataset.annoId) : null;
+        : (/** @type {Element} */ (got.range.startContainer)).closest('mark.nf-anno');
+      const existing = mark ? bookAnnos.find((a) => a.id === (/** @type {HTMLElement} */ (mark)).dataset.annoId) : null;
       barForAnno = existing || null;
       showBarAt(got.range.getBoundingClientRect());
     });
@@ -401,7 +403,7 @@ export function mountAnnotationFace(deps) {
         <button type="button" class="epub-menu-btn" data-anno-edel>${escapeHtml(t('reader.anno.del'))}</button>
         <button type="button" class="epub-menu-btn" data-anno-eclose>${escapeHtml(t('reader.anno.close'))}</button>
       </div>`;
-    const ta = editor.querySelector('.epub-anno-textarea');
+    const ta = /** @type {HTMLTextAreaElement} */ (editor.querySelector('.epub-anno-textarea'));
     ta.value = anno.note || '';
     editor.querySelector('[data-anno-save]').addEventListener('click', () => {
       if (editorAnno) upsertAnnotation({ ...editorAnno, note: ta.value.trim() });
@@ -457,7 +459,7 @@ export function mountAnnotationFace(deps) {
     drawer.querySelector('.epub-anno-list-body').innerHTML = body || '';
     drawer.querySelectorAll('[data-anno-jump]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const anno = bookAnnos.find((a) => a.id === btn.dataset.annoJump);
+        const anno = bookAnnos.find((a) => a.id === (/** @type {HTMLElement} */ (btn)).dataset.annoJump);
         if (!anno) return;
         closeDrawer();
         pendingJumpId = anno.id;
@@ -513,7 +515,7 @@ export function mountAnnotationFace(deps) {
       if (!mark) return;
       mark.scrollIntoView({ block: 'center' });
       mark.classList.remove('nf-jump-flash');
-      void mark.offsetWidth;
+      void (/** @type {HTMLElement} */ (mark)).offsetWidth;
       mark.classList.add('nf-jump-flash');
       mark.addEventListener('animationend', () => mark.classList.remove('nf-jump-flash'), { once: true });
     });
