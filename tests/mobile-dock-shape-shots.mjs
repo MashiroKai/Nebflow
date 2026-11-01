@@ -1,13 +1,20 @@
 #!/usr/bin/env node
 // mobile-dock-shape-shots.mjs — dock 收形批（作者令 10-31 22:50 六件）双主题截图取证
-// + 六项机械探针。产出 → evidence/20261031_mobile-dock-shape/：
+// + 机械探针。产出 → evidence/20261101_dock-shape-post-muse/：
 //   dock-<scheme>.png         聊天根 dock 全景（中键 = agent 头像图、无文字、收进 dock 内）
-//   msgflow-<scheme>.png      消息流带头像样张（每条 agent 消息 = 圆头像 + agent 名）
-//   logo-fallback-<scheme>.png 无头像回落样张（dock 中键 + 消息流身份头 = stand logo）
-// 六项探针（与令逐条对齐）：
-//   ① 每条 .row.ai（非代发行）带 .g2-msg-meta：名非空 + 头像 img 可绘
+//   msgflow-<scheme>.png      消息流样张（Muse 悬浮头像批后：零身份头 + 顶部 sticky 悬浮锚）
+//   logo-fallback-<scheme>.png 无头像回落样张（dock 中键 + 会话头 = stand logo）
+// 🔴 Muse 式悬浮头像批（作者令 2026-11-01 13:33）重跑档：批①「消息流头像+名」
+//    已整批退役（.g2-msg-meta 摘除）—— 探针①翻转为「零身份头」断言；探针③
+//    的消息流 logo 腿随退役摘除（保 dock 中键 + 会话头两腿）。②④⑤⑥ 原样
+//    （dock 收形其余四件不受本批影响）。原批次证据 evidence/20261031_mobile-dock-shape/
+//    留档不动，本目录 = 退役后复跑快照。
+// 六项探针（与令逐条对齐 · Muse 批修订）：
+//   ① 消息流零身份头：#chat 内 .g2-msg-meta 计数 == 0（作者令「去掉每条消息
+//      头部的 agent 头像+名字行」字面落地）
 //   ② 中键零文字标签（.dock-label 不存在）+ aria-label 承接
-//   ③ 无头像回落 = stand logo（.dock-center-logo / .g2-msg-logo，双面）
+//   ③ 无头像回落 = stand logo（.dock-center-logo 中键 + 会话头
+//      .agent-avatar-stand-logo，双面；消息流腿随退役摘除）
 //   ④ 中键圆 box-shadow == none（边缘收简：纯色零浮影零光环）
 //   ⑤ 中键圆不探出 dock 顶缘（inside）+ 输入卡底缘与 dock 顶缘缝 ≤1.5px
 //   ⑥ #send-btn = 36×36 r50% 纯圆（绿保留，颜色探针跟查 --ctl-send-bg）
@@ -20,7 +27,7 @@ import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
-const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'evidence', '20261031_mobile-dock-shape');
+const OUT = join(dirname(fileURLToPath(import.meta.url)), '..', 'evidence', '20261101_dock-shape-post-muse');
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf' };
 const SID = 'dock-root-session';
 
@@ -29,7 +36,7 @@ const SID = 'dock-root-session';
 const AVATAR_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e8804f"/><stop offset="1" stop-color="#d64545"/></linearGradient></defs><rect width="96" height="96" rx="48" fill="url(#g)"/><text x="48" y="63" font-family="-apple-system,sans-serif" font-size="40" font-weight="600" text-anchor="middle" fill="#fff">S</text></svg>';
 const AV = 'data:image/svg+xml;utf8,' + encodeURIComponent(AVATAR_SVG);
 
-// 历史夹具：两轮 user/ai 对话（ai 行 = 身份头装饰面）。
+// 历史夹具：两轮 user/ai 对话（Muse 批后 ai 行零装饰，纯气泡）。
 const HISTORY = [
   { type: 'user', text: '收形批六件看一下效果', timestamp: Date.now() - 300e3 },
   { type: 'ai', text: '收到。六件都落在手机层：消息流头像+名、中键去文字、logo 回落、边缘收简、中键收进 dock、发送钮回圆。', timestamp: Date.now() - 240e3 },
@@ -115,16 +122,9 @@ for (const scheme of ['dark', 'light']) {
       const sendCs = getComputedStyle(send);
       const metas = [...document.querySelectorAll('#chat .row.ai')]
         .filter((row) => !row.querySelector(':scope > .agent-badge'))
-        .map((row) => {
-          const meta = row.querySelector(':scope > .g2-msg-meta');
-          const img = meta?.querySelector('img');
-          return {
-            hasMeta: !!meta,
-            name: meta?.querySelector('.g2-msg-name')?.textContent || '',
-            imgPainted: !!img && img.complete && img.naturalWidth > 0,
-            isLogo: !!meta?.querySelector('img.g2-msg-logo'),
-          };
-        });
+        .map((row) => ({
+          hasMeta: !!row.querySelector(':scope > .g2-msg-meta'),
+        }));
       const centerImg = center?.querySelector('img');
       const avatarSlot = document.getElementById('agent-avatar-btn');
       return {
@@ -139,29 +139,27 @@ for (const scheme of ['dark', 'light']) {
         slotImg: !!avatarSlot?.querySelector('.agent-avatar-img'),
         slotLogo: !!avatarSlot?.querySelector('.agent-avatar-stand-logo'),
         slotGlyph: !!avatarSlot?.querySelector('svg.lucide-user, i[data-lucide="user"]'),
-        metas,
+        metaRows: document.querySelectorAll('#chat .g2-msg-meta').length,
         aiRows: document.querySelectorAll('#chat .row.ai').length,
-        metaRows: document.querySelectorAll('#chat .row.ai .g2-msg-meta').length,
-        agentBadgeRows: document.querySelectorAll('#chat .row.ai:scope, #chat .row.ai > .agent-badge').length,
       };
     });
 
-    // ① 消息流头像 + agent 名
-    ok(`${tag} ① ai 行全带身份头（含可绘头像+非空名）`,
-      probe.aiRows > 0 && probe.metas.length > 0 && probe.metas.every((m) => m.hasMeta && m.name && m.imgPainted),
-      `aiRows=${probe.aiRows} metas=${JSON.stringify(probe.metas)}`);
+    // ① 消息流零身份头（Muse 批令①字面：每条消息头部不再有头像+名字行）
+    ok(`${tag} ① 消息流零身份头（.g2-msg-meta == 0）`,
+      probe.aiRows > 0 && probe.metaRows === 0,
+      `aiRows=${probe.aiRows} metaRows=${probe.metaRows}`);
     // ② 中键去文字
     ok(`${tag} ② 中键零文字标签 + aria-label=对话`,
       !probe.centerLabel && probe.centerAria === '对话',
       `label=${probe.centerLabel} aria=${probe.centerAria}`);
-    // ③ 无头像回落 = stand logo（dock 中键 + 消息流身份头 + 会话头空态）
+    // ③ 无头像回落 = stand logo（dock 中键 + 会话头；消息流腿随 Muse 批退役）
     if (withAvatar) {
       ok(`${tag} ③ 有头像：中键/会话头 = 头像图（非 logo）`,
         probe.centerHasImg && !probe.centerIsLogo && probe.slotImg && !probe.slotLogo,
         `isLogo=${probe.centerIsLogo} slotImg=${probe.slotImg}`);
     } else {
-      ok(`${tag} ③ 无头像：中键+消息流身份头+会话头 = stand logo（零默认人形）`,
-        probe.centerIsLogo && probe.metas.every((m) => m.isLogo) && probe.slotLogo && !probe.slotGlyph,
+      ok(`${tag} ③ 无头像：中键+会话头 = stand logo（零默认人形）`,
+        probe.centerIsLogo && probe.slotLogo && !probe.slotGlyph,
         `centerLogo=${probe.centerIsLogo} slotLogo=${probe.slotLogo} glyph=${probe.slotGlyph}`);
     }
     // ④ 边缘收简
@@ -179,7 +177,7 @@ for (const scheme of ['dark', 'light']) {
     // ── 截图 ──────────────────────────────────────────────────────
     await page.screenshot({ path: join(OUT, `dock-${tag}.png`) });
     if (withAvatar) {
-      // 消息流样张：滚到底（最后一条 ai 行的身份头入画）。
+      // 消息流样张：滚到底（Muse 批后 = sticky 悬浮锚锚定窗口顶 + 消息行零身份头）。
       await page.evaluate(() => { const c = document.getElementById('chat'); c.scrollTop = c.scrollHeight; });
       await page.waitForTimeout(300);
       await page.screenshot({ path: join(OUT, `msgflow-${tag}.png`) });

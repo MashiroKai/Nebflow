@@ -1669,50 +1669,12 @@ body.mobile-layer #send-btn {
   padding: 0;
 }
 
-/* ── 消息流头像 + agent 名（收形批①③，作者令 10-31 22:50）──────────────
-   主对话每条 agent 消息（.row.ai 直子 .bubble.ai）泡上方补一行身份头：
-   圆头像（28px）+ agent 名（12px 弱色）—— 微信式两元件行，由
-   chatChrome.js 挂出/摘除（手机层专属，teardown 全量摘除 ⇒ 桌面 DOM
-   零变化）。无头像回落 stand logo（缩 72% 居中，不显示空白/默认人形）。 */
-body.mobile-layer #chat .row.ai .g2-msg-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0 0 5px 2px;
-  flex: none;
-}
-body.mobile-layer #chat .g2-msg-avatar-slot {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  overflow: hidden;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-body.mobile-layer #chat .g2-msg-avatar-slot picture { display: flex; }
-body.mobile-layer #chat .g2-msg-avatar {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-body.mobile-layer #chat .g2-msg-avatar.g2-msg-logo {
-  width: 72%;
-  height: 72%;
-  object-fit: contain;
-}
-body.mobile-layer #chat .g2-msg-name {
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.2;
-  color: var(--color-frame-text-muted, #98a2b3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 60vw;
-}
+/* ── 消息流头像 + agent 名（收形批①③）随 Muse 式悬浮头像批退役
+   （作者令 2026-11-01 13:33 ①「去掉每条消息头部的 agent 头像+名字行」）：
+   .g2-msg-meta / .g2-msg-avatar-slot / .g2-msg-avatar / .g2-msg-logo /
+   .g2-msg-name 六条样式整组摘除，挂出链（chatChrome.js）同步退役 ——
+   消息行回归与桌面同构的零装饰形态，会话级身份由 .g2-chat-head 悬浮锚
+   一处承载（本文件尾 Muse 式悬浮头像批块）。 */
 /* 会话头头像空态回落 stand logo（批③注入档；2026-11-01 起为兜底腿——桌面腿
    补齐后 agentProfile.paintSlot 直接自绘同名 picture（作者令「agent没设置头像
    之前 用我们stand的logo」两端统一，原「首字母牌保留」分档作废）。本条尺寸档
@@ -2400,4 +2362,67 @@ body.mobile-layer .mobile-page:not(.live) .mh-chrome-btn::before {
   filter: none !important;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Muse 式悬浮头像批（2026-11-01 13:33 作者令，附 Muse/stand 两张参考实拍）
+   ═══════════════════════════════════════════════════════════════════════
+   令①「去掉每条消息头部的 agent 头像+名字行」：.g2-msg-meta 六条样式随
+   挂出链（chatChrome.js）整批退役（上方退役块），消息分组/时间戳/footer
+   信息条不动。
+   令② Muse 式：会话窗口顶部居中悬浮**大号**圆形头像（对方 agent 头像），
+   头像正下方居中显示 agent 名字；悬浮态 = 随内容滚动的固定锚 —— 贴窗口
+   顶部、压在消息流上缘。实现 = .g2-chat-head（chatChrome.js 自 #header
+   迁入 #chat 内容流首的三节点层，节点仍是桌面共享的那三个 —— 头像货源
+   走 agentProfile.paintSlot 现役身份链：自定义头像优先，无头像回退 stand
+   logo（2963aeac0 同货源），名字走 sidebar.updateHeaderSessionName 现役
+   读链 —— 所有 agent 会话通用，零第二数据源）：
+
+   · position: sticky; top: var(--muse-head-top)（chatChrome.js 同步的负
+     padding 补偿）—— 随内容滚动（静止态在流内原位：main.js 顶让位之下），
+     滚动即锚定在 #chat 可视顶缘（= 窗口顶），后续消息从其上缘穿过（压在
+     消息流上缘）。纯 CSS 锚定 + 一条轻量变量同步，滚动往返零跳动。
+   · z-index: 26 > 渐隐带 25 —— 锚定后头像本体不被 #g2-edge-fade 的
+     veil/blur 蒙住（Muse 样张：头像清晰压在流上，穿过的消息才进渐隐带
+     「先糊后没」）。26 < 悬浮圆钮层 30 < push 页 156 < dock 200，层级
+     契约不变。
+   · #chat mask 释放（下方第一条）：chat.css 给 #chat 挂的顶部消失点
+     mask（--chat-top-clip）非 none ⇒ #chat 自成堆叠上下文，其内 z-index
+     出不了 #chat —— sticky 锚会被渐隐带（z 25，#main 兄弟层）盖住。手机
+     层 clip 恒 0（main.js 手机端白屏批），mask 在手机层本就零视觉作用，
+     本批在手机层显式摘除 ⇒ #chat 回归非堆叠上下文，锚的 z 26 直接参与
+     #main 层级对比。桌面 mask 不动（顶部消失点机制桌面现役）。
+   · 大号头像 78px（Muse 样张 ≈ 视宽 20-23% 取 78）+ 名字玻璃胶囊下置
+     （liquid-glass.css .g2-chat-head 基座列式布局原样，只放大几何）；
+     头像自带不透明底/描边/浮影，名字胶囊 = 玻璃控制件 token —— 与现有
+     玻璃/白底卡片语言同源，深浅主题走既有 token 双档自然成立。
+   · 头像货源 = 会话头现役链（自定义头像优先/stand logo 回退/记忆钮
+     hidden 常态均不感知本批）；桌面端 #header 形态零触碰（全部规则挂
+     body.mobile-layer）。
+   ═══════════════════════════════════════════════════════════════════════ */
+/* ① #chat mask 释放（堆叠上下文解锁；语义依据见上注记） */
+body.mobile-layer #chat {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+/* ② 悬浮锚本体：sticky 顶锚 + 让头像/名字（而非整条带）当浮层。
+   top 走 var(--muse-head-top)（chatChrome.js 同步 = -(#chat padding-top)）：
+   sticky 锚定矩形 = scrollport 内缩 padding，top:0 只能锚到 padding 缘
+   （main.js 顶让位常态 96px）——负值补偿后锚定阈值恒等窗口顶。 */
+body.mobile-layer #chat .g2-chat-head {
+  position: sticky;
+  top: var(--muse-head-top, 0px);
+  z-index: 26;
+  gap: 6px;
+  padding: 8px 2px 12px;
+}
+/* ③ 大号圆头像（基座 52px → 78px；底/描边/浮影/glass-control 缘沿用基座档） */
+body.mobile-layer #chat .g2-chat-head #agent-avatar-btn {
+  width: 78px;
+  height: 78px;
+}
+/* ④ 名字玻璃胶囊：随大头像同比例升半档（13px → 14px），余沿用基座档 */
+body.mobile-layer #chat .g2-chat-head #session-name {
+  font-size: 14px;
+  max-width: 220px;
 }
