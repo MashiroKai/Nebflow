@@ -44,7 +44,9 @@ import scala.concurrent.duration.*
  * S1 = 吞帧机制（None ⇒ 帧零落点）；S2 = 落盘键盖章 + 两处消费面（wsSendFn /
  * emitScopeEvent）到点；S3 = 既有覆盖契约 + 挂载幂等不破；S4 = 防复活钉（源码钉：
  * 重挂腿禁用 None，GatewayMain 必须给真实广播）；S5 = 证据存在性钉（暂存普查件）。
- * S6 = 同类可疑点①（DeviceDelegate）「不修」判定留痕钉。
+ * S6 = 同类可疑点①（DeviceDelegate）判定留痕钉——**F2 落地改写**（process-recorder
+ * 批 2026-11-01）：原「不修」判定钉已随 F2 接入失效，现钉代码-注释一致性
+ * （设备腿已接进程级广播面，帧必录；禁反向漂移）。
  */
 class DelegateScopeRecoveryWsSendSpec extends CatsEffectSuite:
 
@@ -296,17 +298,21 @@ class DelegateScopeRecoveryWsSendSpec extends CatsEffectSuite:
     assert(body.contains("ai"), "普查脚本必须统计 ai 行")
   }
 
-  // ── S6 同类可疑点①：DeviceDelegate「不修」判定留痕钉 ────────────────────────
+  // ── S6 同类可疑点①：DeviceDelegate 设备腿（F2 落地改写）────────────────────
+  // 原钉（wsSend 桥接批）＝「不修」判定留痕：设备腿 wsSend=None 必须带判据注释。
+  // process-recorder 批 F2（2026-11-01）接入进程级广播面后，原判据与代码状态矛盾
+  // ⇒ 本钉改写为一致性钉：代码必须传广播面、注释必须陈述 F2 落地现实——禁
+  // 「代码已修、注释仍说未修」或反向漂移（设计稿 P3）。
 
-  test("S6 判定留痕：DeviceDelegate 设备腿 wsSend=None 必须带本批判定注释（禁含糊放过）") {
+  test("S6 判定留痕（F2 落地改写）：DeviceDelegate 设备腿必须接进程级广播面（帧必录），注释与代码一致") {
     val src = Files.readString(Paths.get("src/main/scala/nebflow/core/delegate/DeviceDelegate.scala"))
     val spawnAt = src.indexOf("private[delegate] def spawnLocalDelegate")
     assert(spawnAt >= 0, "spawnLocalDelegate 不在 DeviceDelegate.scala —— 本钉需随源码结构重锚")
     val body = src.substring(spawnAt, math.min(src.length, spawnAt + 6000))
-    val noneAt = body.indexOf("wsSend = None")
-    assert(noneAt >= 0, "设备腿当前形态 = wsSend = None（本批判定为不修，须留注释说明）")
-    val head = body.substring(math.max(0, noneAt - 2000), noneAt)
-    assert(head.contains("同类可疑点"), "None 处缺失判定标注（『同类可疑点①』）")
-    assert(head.contains("不修"), "None 处缺失判定结论（『不修』）")
-    assert(head.contains("recorder"), "None 处缺失根治方向（进程级 recorder）")
+    val at = body.indexOf("wsSend = processBroadcast")
+    assert(at >= 0, "设备腿必须传进程级广播面（F2；回退 None = 帧「出进程就没人录」复活）")
+    val head = body.substring(math.max(0, at - 2400), at)
+    assert(head.contains("F2 已接入"), "接线处注释必须标注 F2 落地现实（注释-代码一致性）")
+    assert(head.contains("recorder"), "接线处注释必须指认录制写者（进程级 recorder）")
+    assert(!body.contains("＝**不修**"), "旧「不修」判定头必须已改写（禁已修却留未修判据——P3 反向漂移）")
   }

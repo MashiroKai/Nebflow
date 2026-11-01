@@ -279,10 +279,12 @@ object ProjectCrashRecovery:
      * [[nebflow.gateway.GatewayMain]] boot 链传**真实广播**（`wsHub.broadcast`），
      * 与 startupMount 的 #28 接线同源。
      *
-     * 🔴 诚实边界（本参数不覆盖的面，见批报告开放项）：`wsHub.broadcast` 是**广播**
-     * 不是**录制**——重挂会话的 ai/tool 行仍不会落 `.ui.json`（这是项目引擎普遍
-     * 持有的同一形态，非遗漏：boot 挂载的面板历史缺口属「缺进程级 recorder」这条
-     * 更大口径，需另批引入连接无关的录制腿；本批只消除「帧根本不出进程」这一段）。
+     * 录制面（process-recorder 批 2026-11-01 F1 收口，P4 注记）：本参数桥出的
+     * 广播面上，node-* 帧由进程级 ProcessRecorder（挂 `wsHub.registerListener`，
+     * GatewayMain boot 链 `recorderSetup`——先于 startupMount）按 nodeSessionId
+     * 落 `.ui.json`——重挂会话自恢复第一帧起就有录制，「本参数只给 live、录制
+     * 无人管」的缺口随 recorder 落地关闭。本参数职责自此收窄为 **live 广播面**
+     * （流帧 live + emitScopeEvent 作用域事件）；录制不再依赖任何腿自带录制 send。
      */
     wsSend: Option[Json => IO[Unit]] = None
   ): IO[Int] =

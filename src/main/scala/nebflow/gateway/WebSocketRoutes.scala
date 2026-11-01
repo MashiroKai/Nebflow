@@ -2763,31 +2763,32 @@ class WebSocketRoutes(
   // ============================================================
   // UI Message recording — wraps wsSend to persist frontend-renderable history
   // ============================================================
+  // process-recorder 批（2026-11-01）：本包装自此只承载 **root 帧族**（textDelta /
+  // thinking / toolStart / roundComplete / done / toolEnd / askUser / …，按 ctor
+  // `sessionId` 落盘）。agent* 帧族（按帧内 nodeSessionId 落盘）已整体移交
+  // `ProcessRecorder`（wsHub.registerListener 监听者位，单写者）——见下方 P1 注记。
+  // 下述三缓冲的键自此只有 root sessionId（node-* 键的缓冲在 recorder，含孤儿扫）。
 
-  /** Per-session accumulator for text deltas (emitted one-by-one, saved on textDone). */
+  /** Per-session accumulator for text deltas (emitted one-by-one, saved on textDone). Root-frame family only — node-* keys live in ProcessRecorder. */
   private val sessionTextBuffers: Ref[IO, Map[String, String]] =
     Ref.unsafe[IO, Map[String, String]](Map.empty)
 
-  /** Per-session accumulator for thinking deltas. */
+  /** Per-session accumulator for thinking deltas. Root-frame family only. */
   private val sessionThinkingBuffers: Ref[IO, Map[String, String]] =
     Ref.unsafe[IO, Map[String, String]](Map.empty)
 
-  /** Per-session turn start time — set on first streaming event, consumed on done. */
+  /** Per-session turn start time — set on first streaming event, consumed on done. Root-frame family only. */
   private val sessionTurnStarts: Ref[IO, Map[String, Long]] =
     Ref.unsafe[IO, Map[String, Long]](Map.empty)
 
-  private def makeRecordingWsSend(
+  // `private[gateway]`：Test seam（ProcessRecorderSpec S5 root 零漂移行为钉直调；
+  // 类外无生产调用点——生产仅本类 :183/:498 两处自用）。
+  private[gateway] def makeRecordingWsSend(
     sessionId: String,
     underlying: io.circe.Json => IO[Unit]
   ): io.circe.Json => IO[Unit] = json =>
     val hc = json.hcursor
     val eventType = hc.downField("type").as[String].getOrElse("")
-    // "team-" is a frontend routing marker injected by MailTool.activateAgent,
-    // not a real session id. Strip it so Mail-activated team agent streams
-    // persist to the team session's own ui.json instead of a phantom
-    // "team-<id>" session.
-    def normalizeNodeSessionId(nsid: String): String =
-      if nsid.startsWith("team-") then nsid.drop(5) else nsid
     val record = eventType match
       case "thinkingDelta" =>
         val delta = hc.downField("delta").as[String].getOrElse("")
@@ -2940,134 +2941,16 @@ class WebSocketRoutes(
         // We'll record a minimal agent entry for history if needed.
         IO.unit
 
-      // ── Flow agent session persistence ───────────────────────────────
-      // Flow agent events carry an injected nodeSessionId.
-      // Accumulate/flush them into that session's .ui.json
-      // so the agent popup shows full history on reopen.
-      case "agentTextDelta" =>
-        val nodeSessionId =
-          hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId)
-        val delta = hc.downField("delta").as[String].getOrElse("")
-        nodeSessionId match
-          case Some(nsid) if delta.nonEmpty =>
-            // Record turn start for this flow agent so agentDone can compute a
-            // duration for the ✻ duration badge on its final AI message.
-            sessionTurnStarts
-              .update(m => if m.contains(nsid) then m else m.updated(nsid, System.currentTimeMillis())) *>
-              sessionTextBuffers.update(m => m.updatedWith(nsid)(_.map(_ + delta).orElse(Some(delta))))
-          case _ => IO.unit
-
-      case "agentThinking" =>
-        // Mark turn start on the first thinking token too (some turns emit
-        // thinking before any text). Also accumulate the delta into the
-        // sub-agent's own sessionThinkingBuffers so agentToolEnd/agentDone
-        // can persist thinking into ui.json.
-        hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId) match
-          case Some(nsid) =>
-            val delta = hc.downField("delta").as[String].getOrElse("")
-            val recordThinking =
-              if delta.nonEmpty then
-                sessionThinkingBuffers.update(m => m.updatedWith(nsid)(_.map(_ + delta).orElse(Some(delta))))
-              else IO.unit
-            recordThinking *> sessionTurnStarts
-              .update(m => if m.contains(nsid) then m else m.updated(nsid, System.currentTimeMillis()))
-          case None => IO.unit
-
-      case "agentToolEnd" =>
-        val nodeSessionId =
-          hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId)
-        val label = hc.downField("label").as[String].getOrElse("")
-        nodeSessionId match
-          case Some(nsid) if label.nonEmpty =>
-            val summary = hc.downField("summary").as[String].getOrElse("")
-            val content = hc.downField("content").as[String].getOrElse("")
-            val isError = hc.downField("isError").as[Boolean].getOrElse(false)
-            val input = hc.downField("input").as[io.circe.Json].getOrElse(io.circe.Json.Null).noSpaces
-            // Flush any accumulated text + thinking before recording the tool, so the AI
-            // message bubble (with thinking) appears above the tool card in history.
-            sessionTextBuffers
-              .modify(m => (m - nsid, m.getOrElse(nsid, "")))
-              .flatMap { text =>
-                sessionThinkingBuffers
-                  .modify(m => (m - nsid, m.getOrElse(nsid, "")))
-                  .flatMap { thinking =>
-                    val flushMsg =
-                      if text.nonEmpty then
-                        sharedResources.sessionStore.appendUiMessages(
-                          nsid,
-                          List(
-                            UiMessage.Ai(
-                              text,
-                              None,
-                              None,
-                              Option.when(thinking.nonEmpty)(thinking),
-                              System.currentTimeMillis()
-                            )
-                          )
-                        )
-                      else IO.unit
-                    flushMsg *> sharedResources.sessionStore.appendUiMessages(
-                      nsid,
-                      List(UiMessage.Tool(label, summary, content, isError, input))
-                    )
-                  }
-              }
-          case _ => IO.unit
-        end match
-
-      case "agentDone" =>
-        val nodeSessionId =
-          hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId)
-        nodeSessionId match
-          case Some(nsid) =>
-            // Flush any remaining accumulated text + thinking as a final AI bubble, with
-            // duration (from the turn start) and model so the popup renders the
-            // ✻ duration badge on the agent's last reply.
-            val model = hc.downField("model").as[Option[String]].getOrElse(None)
-            sessionTurnStarts
-              .modify(m => (m - nsid, m.getOrElse(nsid, 0L)))
-              .flatMap { startTime =>
-                val durationMs = if startTime > 0 then Some(System.currentTimeMillis() - startTime) else None
-                sessionTextBuffers
-                  .modify(m => (m - nsid, m.getOrElse(nsid, "")))
-                  .flatMap { text =>
-                    sessionThinkingBuffers
-                      .modify(m => (m - nsid, m.getOrElse(nsid, "")))
-                      .flatMap { thinking =>
-                        val thinkingOpt = Option.when(thinking.nonEmpty)(thinking)
-                        if text.nonEmpty || thinkingOpt.isDefined then
-                          sharedResources.sessionStore.appendUiMessages(
-                            nsid,
-                            // replay-terminal 批（2026-10-28，案一「A 根治」）：
-                            // agentDone = 节点会话轮终态——terminal=true 与
-                            // durationMs 同批落盘（弹窗回放腿同判据）。
-                            List(UiMessage.Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis(), terminal = Some(true)))
-                          )
-                        else
-                          // No text (flushed earlier by agentToolEnd) — backfill
-                          // model + timestamp onto the round's last carrier. We no
-                          // longer gate on durationMs.isDefined: when sessionTurnStarts
-                          // was never set (startTime=0 → durationMs=None), team agent
-                          // AI messages still need model and timestamp so the popup
-                          // renders the badge (model name + time). durationMs stays
-                          // None when unknown; the frontend falls back to a simpler
-                          // badge (model + timestamp, no thinking phrase).
-                          // replay-terminal 批：agentDone 亦为轮终态——回填批一律
-                          // 盖 terminal=true。卫生批（2026-10-28，残余①根治）：改走
-                          // 段感知 markRoundTerminal——段内零 ai 行的退化全工具轮盖
-                          // 末行 Tool（等价终态面），不再越段改写上一轮的行。
-                          sharedResources.sessionStore.markRoundTerminal(
-                            nsid,
-                            durationMs,
-                            model,
-                            System.currentTimeMillis()
-                          )
-                        end if
-                      }
-                  }
-              }
-          case _ => IO.unit
-        end match
+      // ── Flow agent session persistence：已整体移交 ProcessRecorder ─────────
+      // process-recorder 批（2026-11-01，设计稿
+      // docs/design/20261101_192000_process-recorder-design）：agent* 四分支
+      // （agentTextDelta / agentThinking / agentToolEnd / agentDone）的落盘语义
+      // 逐字迁入 `ProcessRecorder`（挂 wsHub.registerListener 的进程级录制），
+      // 本 wrapper **不再**持有 agent* 分支——单写者移交，禁共存（共存 = 同一帧
+      // 落两次 ⇒ 面板双气泡）。agent* 帧经本包装的 underlying 广播进 hub 后由
+      // recorder 接住，行为严格超集（有录制腿零损失，无录制腿④⑤⑥开始有录制）。
+      // 🔴 P1 防复活钉：本 match 内禁再现 `case "agentTextDelta"` 等四个 agent*
+      // 分支（回潮 = 双写复活；ProcessRecorderSpec 钉红）。
 
       case "askUser" =>
         // 案 B（双开缺陷批 2026-09-21，chain-askuserdup）：随行落盘 requestId ⇒ 历史

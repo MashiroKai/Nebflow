@@ -43,6 +43,19 @@ object DeviceDelegate:
 
   private val logger = NebflowLogger.forName("nebflow.device-delegate")
 
+  /**
+   * 进程级广播面（process-recorder 批 2026-11-01 F2，设计稿 §2.7 窄端口）：
+   * GatewayMain 在 [[initialize]] 注入 `wsHub.broadcast` **函数值**——禁传 WsHub
+   * 本体（core 层禁 import gateway，scripts/check-scala-layers.mjs 门禁）。设备腿
+   * spawn 的本地会话经 [[spawnLocalDelegate]] 把它交给 spawnBackground 的 wsSend，
+   * 帧盖 nodeSessionId 后进 hub：live 广播 + ProcessRecorder 落盘同源。
+   * `None`（缺省/未接线）= 逐字旧形态（帧 no-op）。
+   */
+  private var processBroadcast: Option[io.circe.Json => IO[Unit]] = None
+
+  /** 测试/装配面读数：当前注入的进程级广播面。 */
+  private[delegate] def currentBroadcast: Option[io.circe.Json => IO[Unit]] = processBroadcast
+
   /** 数据通道名（informational——presence 监听器剥离 channel，判别靠 payload.kind）。 */
   val ChannelName = "delegate"
 
@@ -325,7 +338,15 @@ object DeviceDelegate:
    * 通道 handler。同一二进制跑在两端——spawn（本设备作为执行设备）与 result/accept
    * （本设备作为编排权威）都在本入口分派。
    */
-  def initialize(resources: AgentRuntimePort): Unit =
+  def initialize(
+    resources: AgentRuntimePort,
+    // 进程级广播面（process-recorder 批 F2）：GatewayMain boot 传 wsHub.broadcast
+    // 函数值；缺省 None = 旧形态（未接线调用点 / spec 桩零改动）。
+    broadcast: Option[io.circe.Json => IO[Unit]] = None
+  ): Unit =
+    // 广播面注册与 neblink 配置正交：NebLink 未配置时本设备不收 spawn（fail-soft
+    // 门照旧），但注入面先落——装配缝单一（GatewayMain 启动单点）。
+    processBroadcast = broadcast
     resources.neblinkService match
       case None =>
         // P6 诊断探针批（2026-10-14 步2 · 可观测性修复⑥）：两分支原 logger 均为
@@ -528,31 +549,23 @@ $task"""
         resources = resources,
         parentDepth = 0,
         parentRef = Some(proxyRef),
-        // ── wsSend 判定（wsSend 桥接批 2026-11-01 · 同类可疑点①）＝**不修**，理由三条 ──
-        // 参照系 = 已修好的三条腿：续聊腿（MailTool.continueDelegate → ctx.wsSend）、
-        // 新鲜派发腿（DelegateTool.spawnKernel → ctx.wsSend）、外置执行器续聊腿
-        // （ExternalSessionRunner.continueExternal → ctx.wsSend）——三者桥的都是**一条
-        // WebSocket 连接上的录制 send**（`makeRecordingWsSend`：按帧内 nodeSessionId 落盘
-        // ＋ wsHub 广播）。本腿没有这个对象可桥：
-        //  ① **无连接上下文**：spawn 由对端经 Neblink 数据通道（presence `sendData` /
-        //     relay 兜底）投来，本进程侧根本没有「发起 spawn 的会话连接」——`ctx.wsSend`
-        //     这个桥的两端缺一端，桥不出来。
-        //  ② **进程内无全局广播单例可替代**：`WsHub` 由 GatewayMain 局部构造（只有那一层
-        //     有 `wsHub`），本对象的装配缝 `initialize(resources)` 只拿到
-        //     AgentRuntimePort（core 端口，无 broadcast 成员；core 层禁 import gateway，
-        //     scripts/check-scala-layers.mjs 门禁）。要让它持有进程级 sink = 新增一条
-        //     全局广播面（贯通 GatewayMain → initialize → 本处），而换来的只有 live 流：
-        //     广播不是录制，设备侧会话的 ai/tool 行照样不落 `.ui.json` ⇒ **报障形态
-        //     （面板正文空白）不会因此消失**，只是从「完全空白」变成「live 可见、重开
-        //     仍空白」。半修比不修更难判读。
-        //  ③ **无消费者证据**：`~/.stand/delegates/*.json` 990 条记录中 `delegatedBy`
-        //     命中 **0**（本机从未收到过设备派活）⇒ 无实盘样本、无报障面；该会话的
-        //     结果面经 `resultProxyBehavior` 折成 delegate-result 回投 host，host 面板渲染
-        //     的是**父会话**，不是这条设备侧会话。
-        // ⇒ 真正能根治的修法 = 连接无关的进程级 recorder（按帧内 nodeSessionId 落盘 ＋
-        //   广播），届时本处与 boot 重挂腿（ProjectCrashRecovery）一并接上——列为本批
-        //   开放项 F2，禁含糊放过：本注释即判据，改动前先读它。
-        wsSend = None,
+        // ── wsSend 判定（wsSend 桥接批 2026-11-01 同类可疑点① → **F2 已接入**，
+        //    process-recorder 批 2026-11-01）＝桥**进程级广播函数值**，帧必录 ──
+        // 参照系（与既有三腿同构）：spawn/续聊腿桥的 `ctx.wsSend` 是「一条 WebSocket
+        // 连接上的录制 send」；本腿没有连接可桥，改桥**进程级广播面**
+        // （[[processBroadcast]] = GatewayMain 在 initialize 注入的 `wsHub.broadcast`
+        // 函数值——窄端口，禁传 WsHub 本体，scripts/check-scala-layers.mjs core 禁
+        // import gateway 门禁）。帧出本口后的链路：`DelegateTool.routeWsSend` 盖
+        // nodeSessionId → wsHub 广播 → **ProcessRecorder**（同批 F1 挂
+        // registerListener 的进程级录制）按 nodeSessionId 落 `.ui.json` ＋ live 广播
+        // 到前端——录制与 live 同源，设备侧本地会话详情面板/排障取证的正文不再空白。
+        // 诚实边界（沿用取证批口径）：本腿改善的是**本机**的录制与 live；host 面板
+        // 渲染的仍是父会话（结果面经 resultProxyBehavior 折回）。
+        // 历史注记：wsSend 桥接批曾判「不修」（无连接上下文 / 进程内无全局广播单例 /
+        // 零实盘样本三判据）——前两条随「initialize 注入进程级广播面 + recorder 落地」
+        // 同时消失，第三条（零样本）随本接入开始积累；故本批接入。缺省 None
+        // （initialize 未接线）= 逐字旧形态。
+        wsSend = processBroadcast,
         parentSessionId = Some(parentSessionId),
         rootSessionId = rootSessionId,
         // origin 标记（验收 #2）：对端 DelegateRegistry 记 delegated-by:<host>。

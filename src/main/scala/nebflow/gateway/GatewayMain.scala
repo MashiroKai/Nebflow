@@ -718,6 +718,15 @@ object GatewayMain extends IOApp:
                                   // （前向引用禁令：同块内 val 不得后引，故 wsHub 必须
                                   // 先于 hubSetup 出现；wsHub 无依赖，再三提前仍零副作用）。
                                   val wsHub = new WsHub()
+                                  // 进程级 ProcessRecorder（process-recorder 批 2026-11-01 F1，设计稿
+                                  // docs/design/20261101_192000_process-recorder-design）：录制从
+                                  // 「腿的行李」升格为「进程的基础设施」——挂 wsHub.registerListener
+                                  // （全部腿的帧唯一汇聚点），按帧内 nodeSessionId 懒建缓冲落
+                                  // .ui.json。agent* 四分支已从 makeRecordingWsSend 整体移交至此
+                                  // （单写者，禁共存）；注册点 = 下方 recorderSetup（boot 链先于
+                                  // startupMount ⇒ 腿④ startupMount / 腿⑤ boot 重挂 / 腿⑥ 设备腿
+                                  // 的帧从恢复第一帧起即有录制）。进程生命周期，永不注销。
+                                  val processRecorder = new ProcessRecorder(sharedResources.sessionStore)
                                   // 重启孤儿对账批（2026-10-22「Header 待答徽标僵尸态」批）：
                                   // 接线 PendingAskLedger —— 槽位创建/四条收口路径随行记账，
                                   // boot 清点过期关闭（见下方 pendingAskBootSweep）。
@@ -746,6 +755,14 @@ object GatewayMain extends IOApp:
                                       .flatMap { hubRef =>
                                         sharedResources.interactionHubRef.set(Some(hubRef))
                                       }
+                                  // recorderSetup（process-recorder 批 F1）：recorder 上 hub 监听者位
+                                  // ＋ 孤儿缓冲扫描纤维起跑（24h idle 冲刷+清除，设计稿 §2.2；TTL 值
+                                  // 采纳设计稿建议，开放项 #3 留作者调）。🔴 链序契约（P2）：必须
+                                  // **先于 startupMount**——腿④ startupMount / 腿⑤ boot 重挂的帧
+                                  // 从恢复第一帧起即有录制；注册于进程生命周期，永不注销。
+                                  val recorderSetup: IO[Unit] =
+                                    wsHub.registerListener(json => processRecorder.apply(json)) *>
+                                      processRecorder.launchOrphanSweep(1.hour, 24.hours).start.void
                                   // 任务 TTL 启动扫描（任务工具重做 2026-08-30）：扫
                                   // tasks/ 全目录（session+team）物理删除过期任务——
                                   // 判据=磁盘持久化的 createdAt/completedAt，重启后
@@ -933,8 +950,12 @@ object GatewayMain extends IOApp:
                                   // 录制层）、Flow Map 面板零事件。传 `wsHub.broadcast` 与
                                   // startupMount（上方 mountAll 的 #28 接线）**同源同契约**：boot
                                   // 期无控制台连接可桥（无 ctx.wsSend），进程级广播就是这条腿
-                                  // 的正确出口。诚实边界：广播不是录制——重挂会话的 ai/tool 行
-                                  // 仍需进程级 recorder 才会落 .ui.json（开放项，见批报告）。
+                                  // 的正确出口。录制面（process-recorder 批 2026-11-01 F1 收口，
+                                  // P4 注记）：wsHub 上挂进程级 ProcessRecorder（`recorderSetup`，
+                                  // boot 链先于 startupMount）——本腿重挂会话的 node-* 帧经广播
+                                  // 到 hub 即按 nodeSessionId 落 `.ui.json`，自恢复第一帧起就有
+                                  // 录制；「广播≠录制」缺口关闭，广播（live）与录制（落盘）自此
+                                  // 同源，不再依赖任何腿自带录制 send。
                                   val delegateScopeCrashSweep: IO[Unit] =
                                     if nebflow.shared.Defaults.CrashRecoveryEnabled then
                                       nebflow.core.project.ProjectCrashRecovery
@@ -1104,7 +1125,7 @@ object GatewayMain extends IOApp:
                                   // daemonService autoStart 块（构造序：dock 依赖
                                   // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
                                   // 契约由 dock 腿逐字保持。
-                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
+                                  hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {
@@ -1592,7 +1613,16 @@ object GatewayMain extends IOApp:
                                               // 通道 handler。与 DeviceMailInbox 同缝同序（先例）；
                                               // 未接线（NebLink 未配置）⇒ initialize 内显式 WARN +
                                               // 跳过（DeviceDelegate.initialize 自带 fail-soft 门）。
-                                              nebflow.core.delegate.DeviceDelegate.initialize(sharedResourcesFinal)
+                                              // F2 接线（process-recorder 批 2026-11-01）：第二参传
+                                              // **进程级广播函数值**（`wsHub.broadcast`，窄端口——禁传
+                                              // WsHub 本体，core 禁 import gateway 门禁）⇒ 设备腿
+                                              // （腿⑥）spawn 的本地会话帧经 routeWsSend 盖
+                                              // nodeSessionId 后进 hub：live 广播 + ProcessRecorder
+                                              // 落盘同源，设备侧会话面板正文不再空白。
+                                              nebflow.core.delegate.DeviceDelegate.initialize(
+                                                sharedResourcesFinal,
+                                                Some((json: io.circe.Json) => wsHub.broadcast(json))
+                                              )
 
                                               // identity-sync 批（2026-10-23）：智能体名称/头像
                                               // 跨引擎收敛通道的收件面装配——数据通道 handler +
