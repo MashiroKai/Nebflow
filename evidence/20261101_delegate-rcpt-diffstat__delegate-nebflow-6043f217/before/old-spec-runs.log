@@ -1,0 +1,77 @@
+PASS  A1 [internal] 批次短名 = DELEGATE · INTERNAL  — actual="DELEGATE · INTERNAL"
+PASS  A1 [internal] 短名分段 span 拼接一致  — segs=["DELEGATE","INTERNAL"]
+PASS  A2 [internal] 判词徽标 = COMPLETED  — actual="COMPLETED"
+PASS  A3 [internal] 折叠态摘要行隐藏（卡面恒单行）  — display=none
+PASS  A3 [internal] 摘要文本在场（展开后可见）  — actual="委托完成：通知卡重设计 + 回归。"
+PASS  A1 [external] 批次短名 = DELEGATE · CLAUDE-CODE  — actual="DELEGATE · CLAUDE-CODE"
+PASS  A1 [external] 短名分段 span 拼接一致  — segs=["DELEGATE","CLAUDE-CODE"]
+PASS  A2 [external] 判词徽标 = COMPLETED  — actual="COMPLETED"
+PASS  A3 [external] 折叠态摘要行隐藏（卡面恒单行）  — display=none
+PASS  A3 [external] 摘要文本在场（展开后可见）  — actual="外部执行器委托完成。"
+PASS  A1 [legacy] 批次短名 = DELEGATE · stand · diff-split  — actual="DELEGATE · stand · diff-split"
+PASS  A1 [legacy] 短名分段 span 拼接一致  — segs=["DELEGATE","stand","diff-split"]
+PASS  A2 [legacy] 判词徽标 = COMPLETED  — actual="COMPLETED"
+PASS  A3 [legacy] 折叠态摘要行隐藏（卡面恒单行）  — display=none
+PASS  A3 [legacy] 摘要文本在场（展开后可见）  — actual="旧历史行第一行"
+PASS  A1 [agentDelegate] 批次短名 = DELEGATE · NEBFLOW · EXPLORER  — actual="DELEGATE · NEBFLOW · EXPLORER"
+PASS  A1 [agentDelegate] 短名分段 span 拼接一致  — segs=["DELEGATE","NEBFLOW","EXPLORER"]
+PASS  A2 [agentDelegate] 判词徽标 = RESULT  — actual="RESULT"
+PASS  A3 [agentDelegate] 折叠态摘要行隐藏（卡面恒单行）  — display=none
+PASS  A3 [agentDelegate] 摘要文本在场（展开后可见）  — actual="自定义 agent 委托（sender = agentDef.name，非 executor i"
+PASS  A1 [merged] 批次短名 = DELEGATE · INTERNAL  — actual="DELEGATE · INTERNAL"
+PASS  A1 [merged] 短名分段 span 拼接一致  — segs=["DELEGATE","INTERNAL"]
+PASS  A2 [merged] 判词徽标 = MERGED  — actual="MERGED"
+PASS  A3 [merged] 折叠态摘要行隐藏（卡面恒单行）  — display=none
+PASS  A3 [merged] 摘要文本在场（展开后可见）  — actual="merged --no-ff into maine633bcd"
+PASS  A1 [failed] 批次短名 = DELEGATE · INTERNAL  — actual="DELEGATE · INTERNAL"
+PASS  A1 [failed] 短名分段 span 拼接一致  — segs=["DELEGATE","INTERNAL"]
+PASS  A2 [failed] 判词徽标 = FAILED  — actual="FAILED"
+PASS  A3 [failed] 折叠态摘要行隐藏（卡面恒单行）  — display=none
+PASS  A3 [failed] 摘要文本在场（展开后可见）  — actual="merge round aborted: lane occupied by another ba"
+PASS  A2 判词徽标墨族单色（completed == failed 同色）  — completed=rgb(123, 126, 136) failed=rgb(123, 126, 136)
+PASS  A4 [internal] 小注 = +908 −202 计数  — actual="+908 −202"
+FAIL  A4 [internal] 小注零背景零边框零 padding（rest 构造性）  — {"border":"1px","bg":"rgba(0, 0, 0, 0)","pad":"9px","color":"rgb(123, 126, 136)","pressed":"false"}
+PASS  A4 [internal] 小注 aria-pressed 初始 false
+PASS  A4 [internal] 「|」字面分隔段在场
+PASS  A4 [internal] 小注右缘贴卡内容盒右缘（±1px）  — delta=0
+PASS  A4 [legacy] 小注 = +908 −202 计数  — actual="+908 −202"
+FAIL  A4 [legacy] 小注零背景零边框零 padding（rest 构造性）  — {"border":"1px","bg":"rgba(0, 0, 0, 0)","pad":"9px","color":"rgb(123, 126, 136)","pressed":"false"}
+PASS  A4 [legacy] 小注 aria-pressed 初始 false
+PASS  A4 [legacy] 「|」字面分隔段在场
+PASS  A4 [legacy] 小注右缘贴卡内容盒右缘（±1px）  — delta=0
+PASS  A4 [external] 零载荷 ⇒ 无小注无 pipe
+PASS  A4 [agentDelegate] 零载荷 ⇒ 无小注无 pipe
+PASS  A4 [merged] 零载荷 ⇒ 无小注无 pipe
+PASS  A4 [failed] 零载荷 ⇒ 无小注无 pipe
+PASS  A5 DOM 零 .nf-diff-chip
+PASS  A5 DOM 零 .nf-diff-headline
+PASS  A6 六帧折叠态默认（正文 display:none）
+PASS  B1 六帧卡面行高 = 单行（≤24px）  — 22.296875,21,22.296875,21,21,21
+PASS  B1 六帧名字/徽标/pipe/小注同处一行带（不坠行）
+PASS  B1 六帧字面次序「类型·范围·状态 | diff 计数」
+PASS  B2 rest 行底透明/无描边（反馈纯 hover 态）  — bg=rgba(0, 0, 0, 0) shadow=none
+PASS  B2 行 hover 手型（cursor:pointer）  — cursor=pointer
+PASS  B2 行 hover 背景微变（透明 → sapphire 微底）  — rest=rgba(0, 0, 0, 0) hover=rgba(91, 127, 191, 0.08)
+PASS  B2 行 hover 描边微变（inset hairline 出场）  — shadow=rgba(91, 127, 191, 0.22) 0px 0px 0px 1px inset
+FAIL  B3 hover DELEGATE 段 ⇒ 仅该段亮  — {"seg0":"rgba(0, 0, 0, 0)","seg1":"rgba(0, 0, 0, 0)","badge":"rgba(0, 0, 0, 0)","note":"rgba(0, 0, 0, 0)"}
+FAIL  B3 hover INTERNAL 段 ⇒ 仅该段亮  — {"seg0":"rgba(0, 0, 0, 0)","seg1":"rgba(0, 0, 0, 0)","badge":"rgba(0, 0, 0, 0)","note":"rgba(0, 0, 0, 0)"}
+FAIL  B3 hover COMPLETED 徽标 ⇒ 仅徽标亮  — {"seg0":"rgba(0, 0, 0, 0)","badge":"rgba(0, 0, 0, 0)","note":"rgba(0, 0, 0, 0)"}
+PASS  B3 hover diff 计数段 ⇒ 仅小注亮  — {"seg0":"rgba(0, 0, 0, 0)","badge":"rgba(0, 0, 0, 0)","note":"rgba(91, 127, 191, 0.18)"}
+PASS  A6 点卡头展开正文  — display=block
+PASS  A6 展开后摘要行可见  — display=flex
+PASS  A6 展开后摘要文本 = payload 首行  — actual="委托完成：通知卡重设计 + 回归。"
+PASS  A6 点小注不叠加触发卡头折叠（stopPropagation）  — content=block
+PASS  A7/B1 窄200px 短名省略号截断生效  — scroll=174 client=0
+PASS  A7/B1 窄200px 徽标/小注不坠行
+PASS  A7/A4 窄200px 小注仍贴卡缘  — delta=0
+PASS  A8 亮档结构同构（短名/判词/小注逐字一致 + 单行化）  — DELEGATE · INTERNAL | COMPLETED | 委托完成：通知卡重设计 + 回归。 | +908 −202
+PASS  A8 亮档徽标/小注颜色非透明（双档可读）
+PASS  A8/B2 亮档行 hover 反馈在场（手型+微底+描边）  — {"cursor":"pointer","bg":"rgba(91, 127, 191, 0.08)","shadow":"rgba(91, 127, 191, 0.22) 0px 0px 0px 1px inset"}
+PASS  [tablet768] 卡面单行化 + 判词/小注齐备  — oneLine=true,true headH=22.296875,21
+PASS  [tablet768] merged 帧判词齐备（无小注无 pipe，单行不坠）  — oneLine=true headH=21
+PASS  [tablet768] 折叠态摘要/正文隐藏
+PASS  [mobile390] 卡面单行化 + 判词/小注齐备  — oneLine=true,true headH=22.296875,21
+PASS  [mobile390] merged 帧判词齐备（无小注无 pipe，单行不坠）  — oneLine=true headH=21
+PASS  [mobile390] 折叠态摘要/正文隐藏
+PASS  console/pageerror 零新增错误
+5 FAILURES
