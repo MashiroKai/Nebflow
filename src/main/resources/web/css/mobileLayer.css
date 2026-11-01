@@ -1874,8 +1874,17 @@ body.mobile-layer #mobile-pages .plugins-card.blocked {
 }
 
 /* ── P11 用量：摘要卡 2 列 + 热力图横滚 + 条带满宽 ────────────────────── */
-body.mobile-layer #mobile-pages #usage-dashboard {
+/* 手机滚动修复批（2026-11-02）：选择器升到 .mobile-page-body > 直子形 ——
+   与上方「收编面统一页面化几何」块同特异性 (2 id + 2 class)、源序在后胜出。
+   修前本规则的 overflow-y:auto 被几何块的 overflow:hidden 压死（特异性
+   (2,1,1) < (2,2,1)）⇒ 面板零滚动，且 flex:1 1 auto + min-height:0 把超屏
+   内容挤进页体可视高（页体零余量）⇒ 底部（明细表末行）永不可达。验红实证：
+   触屏拖拽 scrollTop 0→0、面板 surplus 503px 全截断。overscroll-behavior:
+   contain 防滚动链逸出（页体兜底封面/空态不受影响）。桌面零触碰（规则全挂
+   body.mobile-layer）。 */
+body.mobile-layer #mobile-pages .mobile-page-body > #usage-dashboard {
   overflow-y: auto;
+  overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
   padding: 12px 12px calc(24px + env(safe-area-inset-bottom, 0px));
