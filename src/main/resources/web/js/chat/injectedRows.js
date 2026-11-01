@@ -20,6 +20,17 @@ import { attachQuoteMenu, nextChatMsgId } from '../msgQuote.js';
 // schedcard 批（2026-10-29）：卡片「预定时间」读全局时钟偏好面（12h/24h + 日分层
 // ——今天纯时钟、昨天/星期/日期分层），与消息 footer 同一实现（timeFormat 单源）。
 import { formatFooterTime } from '../timeFormat.js';
+// 来源链批（作者令 2026-11-01 19:23）：完工卡归属链上层段读数（bgSourceChain
+// 单点——收件 delegate 的批次短名；解析不到 = ''，卡面零变化）。
+import { chainNameOf } from '../bgSourceChain.js';
+
+/** 完工卡上层段（来源链批）：收件会话是 delegate（注册行镜像有批次短名）⇒ 该短名
+ *  =「挂在谁下面」上层段；根会话/无名旧记录 ⇒ ''（链不造空段——卡面逐字节不变）。 */
+function receiptUpperName(receiverSid) {
+  const nm = chainNameOf(String(receiverSid || ''));
+  const sid = String(receiverSid || '').replace(/^team-/, '');
+  return (/^delegate-/.test(sid) && nm) ? nm : '';
+}
 
 // ---------- Injected bubble (task P+Q: tool-injected prompts & result notifications) ----------
 // Mail/Delegate/SubTask/Skill/Flow/ExternalEvent injections arrive as WS
@@ -416,8 +427,12 @@ function buildScheduleCardRow(row, text, timestamp, deferFn, schedule) {
  *  schedule (optional, schedcard 批 2026-10-29): 定时任务触发行的卡片载荷
  *  （引擎 `UiMessage.User.schedule` 同源：{id, name?, triggerAt, repeat?,
  *  referencePath?}）。`source==='schedule'` ⇒ 走**专属卡分支**（见下），载荷
- *  缺席（旧历史行）也能渲染卡（降级：无 name/无重复标/时间回落行 timestamp）。 */
-export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery, intake, header, fileChanges, schedule) {
+ *  缺席（旧历史行）也能渲染卡（降级：无 name/无重复标/时间回落行 timestamp）。
+ *  receiverSid (optional, 来源链批 2026-11-01 19:23 作者令): 收件会话 id——完工卡
+ *  归属链的上层段判据：收件会话是 delegate（有批次短名）⇒ 该 delegate 名即
+ *  「挂在谁下面」的上层段（pill 首段前插「父短名 · DELEGATE · INTERNAL」形）；
+ *  根会话收件 = 无上层链（作者令「不造空段」）⇒ 缺省/空 = 卡面逐字节不变。 */
+export function buildInjectedRow(text, source, timestamp, eventType, sender, sourceTeam, deferFn, delivery, intake, header, fileChanges, schedule, receiverSid) {
   const row = document.createElement('div');
   row.className = 'row user';
 
@@ -523,8 +538,14 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
     pill.className = 'nf-rcpt-pill';
     const name = document.createElement('span');
     name.className = 'nf-rcpt-name';
+    // 来源链批（作者令 2026-11-01 19:23）：收件会话是 delegate ⇒ 上层段 =
+    // 该 delegate 批次短名（bgSourceChain 单点读数）——嵌套 delegate 的完工卡
+    // 「挂在谁下面」上屏；根会话收件（无链）⇒ 段缺席，卡面逐字节不变。
     // 分段 span 承载：textContent 逐字节维持「KIND · EXECUTOR」口径（A1 契约面）。
-    delegateReceiptName(renderedLabel, sender, eventType).split(' · ').forEach((segText, i) => {
+    const upperSeg = receiptUpperName(receiverSid);
+    const receiptSegs = delegateReceiptName(renderedLabel, sender, eventType).split(' · ');
+    const pillSegs = upperSeg ? [upperSeg, ...receiptSegs] : receiptSegs;
+    pillSegs.forEach((segText, i) => {
       if (i > 0) name.appendChild(document.createTextNode(' · '));
       const seg = document.createElement('span');
       seg.className = 'nf-rcpt-seg';
@@ -646,7 +667,8 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
  *  与历史恢复（persistence.js）走同一 builder，渲染逐字同构。 */
 export function renderInjectedBubble(text, source, timestamp, eventType, sender, sourceTeam, delivery, intake, header, fileChanges, schedule) {
   const chat = activeView.dom.chat;
-  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery, intake, header, fileChanges, schedule);
+  // 来源链批（2026-11-01 19:23）：收件会话 id 随 builder 下传（完工卡归属链上层段）。
+  const row = buildInjectedRow(text, source, timestamp || Date.now(), eventType, sender, sourceTeam, undefined, delivery, intake, header, fileChanges, schedule, activeView?.sessionId);
   // A 侧 #491 单点落序（chat.js appendChatRow = `chat.append(row)`）随簇同位落此：
   // 纯 doc-order 追加，等价语义、同为唯一追加语义（禁反向 import chat.js 成环）。
   chat.append(row);

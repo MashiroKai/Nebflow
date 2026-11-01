@@ -85,6 +85,10 @@ import './takeoverModal.js';
 // 取 G1 编排模式（rows）与 G3 星型子代理投影（children）——读 port 单缝，禁渲染面
 // 直连 WS/REST（数据权威恒在 provider 镜像）。
 import { listDelegateRows, listDelegateChildren, getChainByTask } from './delegateChainStub.js';
+// 来源链批（作者令 2026-11-01 19:23）：后台 agent badge 标注来源链——「上层 · 下层」
+// 名字链（delegate 短名/subagent 名/node 名）。解析 = 纯显示层既有镜像读数
+// （bgSourceChain 单点；引擎侧 id 生成与协议字段零触碰）。
+import { chainForTask, chainLabel } from './bgSourceChain.js';
 // taskList.js 引用已随旧任务区退役移除（2026-09-05 10:54 裁定）：面板渲染
 // 由 taskList.js 自包含节点订阅驱动，session 切换重渲走 sidebar.js。
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
@@ -3345,16 +3349,28 @@ function renderBgDropdown() {
       ? '<span class="bg-task-origin bg-origin-device" title="' +
         escapeHtml(t('bg.runsOn', { origin: deviceLabel })) + '">' + escapeHtml(deviceLabel) + '</span>'
       : '';
+    // 来源链批（作者令 2026-11-01 19:23「后台 agent badge 标注来源链」）：来源 chip
+    // 升级为「上层 · 下层」名字链（delegate 短名 → 其下 subagent/node 名；链级全
+    // 名字，悬浮 title 给全链，过长走 .bg-task-origin 既有省略规则）。解析不到
+    // （chainForTask 空链/单段）= 既有单名显示逐字节不变——根直派 delegate 恰单段
+    // （「只显示自己」）、根会话自开单段（主 agent 显示名）、设备任务链不掺轴。
+    // 链在场时 chip 样式走 bg-origin-delegate 归属槽位（链本质 = 归属标注）。
+    const chainText = chainLabel(chainForTask(task, bucketSid));
     // 来源 chip（谁开启：delegate 短名 / nebula / dispatcher / node）。设备任务的
     // 名称已由 devicePart 承载 ⇒ 此处零渲染（禁同一行双写设备名）；其余类别语义
     // 不变——「跑在哪」（bg.runsOn）与「谁开启」（bg.openedBy）两轴仍分列。
-    const originTitle = cat === 'device'
-      ? t('bg.runsOn', { origin: label })
-      : t('bg.openedBy', { origin: label });
+    const originTitle = chainText
+      ? t('bg.openedBy', { origin: chainText })
+      : cat === 'device'
+        ? t('bg.runsOn', { origin: label })
+        : t('bg.openedBy', { origin: label });
     const originPart = cat === 'device'
       ? ''
-      : '<span class="bg-task-origin bg-origin-' + cat + '" title="' +
-        escapeHtml(originTitle) + '">' + escapeHtml(label) + '</span>';
+      : chainText
+        ? '<span class="bg-task-origin bg-origin-delegate" title="' +
+          escapeHtml(originTitle) + '">' + escapeHtml(chainText) + '</span>'
+        : '<span class="bg-task-origin bg-origin-' + cat + '" title="' +
+          escapeHtml(originTitle) + '">' + escapeHtml(label) + '</span>';
     // 任务模式标注批（2026-10-30 作者令）：开启任务的 delegate 会话生效执行形态
     // （kernel 极简内核 / dispatcher 分发器，注册帧 + 快照帧 ownerMode 字段）。
     // 空/脏值（旧后端/非 delegate/双模式闸关）零渲染——与 origin chip 同纪律。
@@ -3520,9 +3536,10 @@ function renderBgDropdown() {
     // Row click target (2026-09-09 output viewing): open the glass detail card.
     // Cancel button stopPropagation above; a click anywhere else on a terminal
     // OR running row opens the card. Remote tasks degrade in the card itself.
+    // 来源链批（2026-11-01 19:23）：桶键随行传入详情卡——卡面来源行走同一条链解析。
     row.addEventListener('click', (e) => {
       if (e.target.closest('.bg-task-cancel')) return; // belt — cancel already stopsPropagation
-      openBgTaskOutput(task);
+      openBgTaskOutput(task, bucketSid);
     });
     // Keyboard parity (APG listbox precedent): Enter/Space on a focused row
     // opens the detail card; ArrowUp/Down navigation stays in the shared handler.
@@ -3530,7 +3547,7 @@ function renderBgDropdown() {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         e.stopPropagation();
-        openBgTaskOutput(task);
+        openBgTaskOutput(task, bucketSid);
       }
     });
   });
