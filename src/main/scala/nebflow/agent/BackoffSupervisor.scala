@@ -201,11 +201,11 @@ object BackoffSupervisor:
                   // （merged / failed；回合外 = None → 账实核对回落 owner-gone）
                   // ——无留队待重试语义。
                   val note = bgWaitNote.fold("")(n => s"\n[delegate-bg-wait] $n")
-                  fileChangesMetadata().flatMap(fc =>
+                  terminalDiffMetadata().flatMap(diff =>
                     notifyParentAndStop(
                       "completed",
                       payload + suffix + note,
-                      fc,
+                      diff,
                       mergeOutcome = mergeOutcome
                     )
                   )
@@ -374,7 +374,7 @@ object BackoffSupervisor:
                   logger.warn(
                     s"BackoffSupervisor: terminal judge hook failed for $subagentId: ${err.getMessage} — legacy completed path"
                   )
-                  fileChangesMetadata().flatMap(fc => notifyParentAndStop("completed", payload, fc))
+                  terminalDiffMetadata().flatMap(diff => notifyParentAndStop("completed", payload, diff))
               }
           else notifyParentAndStop("completed", payload, JsonObject.empty)
           end if
@@ -627,9 +627,10 @@ object BackoffSupervisor:
               "failureType" -> error.errorType.toString.asJson
             )
             // file-diff → 委托结果行（同完成腿）：失败前已写入的文件同样出 diff
-            // 载荷（用户预期 = 任何改了文件的委托批；失败批看「写到哪里了」同价）。
+            // 载荷（用户预期 = 任何改了文件的委托批；失败批看「写到哪里了」同价）；
+            // 合并提交统计同面随行（合并轮夭折形态下锚定多半不可读 ⇒ None = 不带键）。
             val withFc =
-              if source == "delegate" then fileChangesMetadata().map(_.deepMerge(failureMeta))
+              if source == "delegate" then terminalDiffMetadata().map(_.deepMerge(failureMeta))
               else IO.pure(failureMeta)
             withFc.flatMap(fc => notifyParentAndStop("failed", s""""$description": ${error.message}$sessionInfo""", fc))
 
@@ -991,6 +992,45 @@ object BackoffSupervisor:
                 case None => JsonObject.empty
               }
           case None => IO.pure(JsonObject.empty)
+        }
+
+      /**
+       * 合并提交 diff 统计（完工卡 diff 统计恢复批 2026-11-01，作者令：完工卡显示
+       * 该批**合并**的代码量变化 +新增 −删除）：`DelegateWorkReport.mergeDiffStat`
+       * 现算——锚定合并提交第一亲 diff（与卡片摘要哈希段同源同值），修旧数据链的
+       * 两处盲区（worktree 提交后 git status 面看不见已提交工作；Bash 侧写盘 ledger
+       * 记不到）。None = 非合并轮 / 锚定不可读（fail-soft，绝不拖垮终态投递）。
+       */
+      private def mergeDiffStatJson(): IO[Option[Json]] =
+        IO.blocking(nebflow.core.delegate.DelegateRegistry.find(subagentId)).flatMap {
+          case Some(rec) =>
+            IO
+              .blocking(nebflow.core.delegate.DelegateWorkReport.mergeDiffStat(rec))
+              .handleErrorWith(e =>
+                logger.warn(s"delegate merge diff-stat failed for $subagentId: ${e.getMessage}").as(None)
+              )
+              .map(_.map(s =>
+                Json.obj("commit" -> s.commit.asJson, "added" -> s.added.asJson, "removed" -> s.removed.asJson)
+              ))
+          case None => IO.pure(None)
+        }
+
+      /**
+       * 终态 diff 载荷 = 既有 fileChanges（worktree/ledger 面——diff 面板数据源）
+       * + 合并提交统计（`fileChanges.merge` 键内嵌——线形状纯增量，引擎不解释内部
+       * 字段原样落盘原样下发，UiMessageFileChangesSpec 契约不破；消费面/diff 面板/
+       * 历史行零改动）。载荷整体缺席而统计在场 ⇒ 合成最小载荷 `{merge}` 单键——
+       * 卡面按 merge 键独立渲染「+新增 −删除」（该批合并的代码量），diff 面板入口
+       * 仅在 files 面在场时保持可点。
+       */
+      private def terminalDiffMetadata(): IO[JsonObject] =
+        fileChangesMetadata().flatMap { fc =>
+          mergeDiffStatJson().map {
+            case None => fc
+            case Some(stat) =>
+              val existing = fc("fileChanges").getOrElse(Json.obj())
+              fc.remove("fileChanges").add("fileChanges", existing.deepMerge(Json.obj("merge" -> stat)))
+          }
         }
 
       /** Notify parent via ExternalEvent, clean up registry, stop self. */

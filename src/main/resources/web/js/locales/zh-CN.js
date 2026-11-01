@@ -2717,8 +2717,8 @@ export default {
   'secrets.delete': '删除',
   'secrets.save': '保存',
   'secrets.saved': '已保存 ✓',
-  'secrets.state.ok': '仅所有者可读写',
-  'secrets.state.permissive': '权限过宽',
+  // 「权限过宽/仅所有者可读写」两态徽标键已随徽标概念退役（层级收进批，
+  // 作者令 2026-11-01：红标整概念退役，en/zh 同批同删，键集两边一致）。
   'secrets.referencedBy': '被引用：{refs}',
   'secrets.deleteTitle': '删除密钥',
   'secrets.deleteConfirm': '删除后不可恢复，确定删除「{name}」？',

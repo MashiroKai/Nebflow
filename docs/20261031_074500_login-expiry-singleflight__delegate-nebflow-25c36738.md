@@ -36,4 +36,4 @@ scope: 登录失效弹窗循环 / 全局登录态单例 / 旧域 auth 残留
 - 既有回归：`rcptcode-friendterminal`（authRequired===1 钉面）、`cardwin-session-scenarios`（11 断言）、`mobile-v3` + `settings-cleanup`（17 断言）、`check-legacy-domain.mjs` 门禁、`npm run build` 全绿。
 - `check-circular.mjs` 报的两个 import 环（popArtifacts 族 / mobile navController 族）为**改动前既有**，与本批无关，未动。
 
-相关：[[glossary]]、[[20261030_211200_coldstart-batch-8fixes__delegate-nebflow-7ceafc0d]]（同域登录护栏）、[[20261025_030145_legacy-domain-sweep]]（旧域清扫前批，见 reports/）。
+相关：[[glossary]]、[[20261030_211200_coldstart-batch-8fixes__delegate-nebflow-7ceafc0d]]（同域登录护栏）、旧域清扫前批 2026-10-25（见 reports/，库外存目）。

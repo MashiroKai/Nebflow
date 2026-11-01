@@ -27,6 +27,11 @@
 //   缩放（0.1x–4x），中键拖拽 = 平移（CAD 核心手势，拦浏览器中键自动滚动），
 //   左键语义不变；触控板不劣化：双指滚动仍 = 平移（横分量/小帧/分数 delta
 //   判定，见 wheelIsPan），捏合仍 = 缩放；约定在左栏 .wg-hint 图例注明。
+// 作者令 2026-11-01（手机端图谱触摸即拖批）：触屏零显式开关——触摸即拖（单指
+//   空白拖 = 平移 / 节点上起拖 = 拖节点，走既有 pointer 管线；画布
+//   touch-action:none 不再让浏览器手势接管 → pointercancel 病根拔除），
+//   双指捏合 = 缩放（同一 damped zoomTarget 管线，锚点 = 双指中点）；
+//   **禁做任何 pan-mode/拉手式显式模式切换**（spec 防复活钉）。
 //   亮暗双主题：canvas 沿用 --wg-* 石墨双主题表；左栏面板吃侧栏玻璃卡既有的
 //     --color-frame-* / --glass-* token（prefers-color-scheme 自动双主题）；
 //     窄面板（container query，wgside）压缩内距与徽标
@@ -1268,11 +1273,47 @@ function ensureLoop() {
 function bindCanvas(canvasEl) {
   let moved = false;
   let downButton = 0;   // 0 左键 / 1 中键（CAD 平移手势——松手不触发点选）
+  // 触摸即拖批（2026-11-01）：触屏双指捏合态。pointers = 活跃触点表（pointerId
+  // → 画布内坐标）；两指在场 = pinch（取消拖节点/平移，缩放锚 = 双指中点，
+  // 走与滚轮捏合同一条 damped zoomTarget 管线）；收指退 pinch 时把 lastPointer
+  // 重置到残留触点，防平移跳变；pinch 过的松手不触发点选（moved 钉死）。
+  /** @type {Map<number, {px: number, py: number}>} */
+  const pointers = new Map();
+  let pinch = null;     // {baseDist, baseScale, mid: {px, py}}
+  let pinched = false;  // 本次按序发生过 pinch ⇒ 收尾不做点选
+  const pinchMid = () => {
+    const pts = [...pointers.values()];
+    return {
+      px: (pts[0].px + pts[1].px) / 2,
+      py: (pts[0].py + pts[1].py) / 2,
+    };
+  };
+  const canvasXY = (e) => {
+    const rect = canvasEl.getBoundingClientRect();
+    return { px: e.clientX - rect.left, py: e.clientY - rect.top };
+  };
   canvasEl.addEventListener('pointerdown', (e) => {
     if (!view) return;
     canvasEl.setPointerCapture(e.pointerId);
-    const rect = canvasEl.getBoundingClientRect();
-    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    const { px, py } = canvasXY(e);
+    pointers.set(e.pointerId, { px, py });
+    if (pointers.size === 2) {
+      // 双指落地 = pinch 接管：单指已起的拖节点/平移全部撤销（防松指跳变）。
+      const pts = [...pointers.values()];
+      pinch = {
+        baseDist: Math.hypot(pts[0].px - pts[1].px, pts[0].py - pts[1].py) || 1,
+        baseScale: view.zoomTarget,
+        mid: { px: (pts[0].px + pts[1].px) / 2, py: (pts[0].py + pts[1].py) / 2 },
+      };
+      pinched = true;
+      view.dragging = null;
+      view.panning = false;
+      view.lastPointer = null;
+      view.zoomAnchor = pinch.mid;
+      ensureLoop();
+      return;
+    }
+    if (pointers.size > 2) return;   // 三指及以上不再改变手势语义
     const middle = e.button === 1;
     if (middle) e.preventDefault();  // 拦浏览器中键自动滚动（取消 pointerdown ⇒ 兼容 mousedown 不起）
     downButton = middle ? 1 : 0;
@@ -1285,8 +1326,19 @@ function bindCanvas(canvasEl) {
   });
   canvasEl.addEventListener('pointermove', (e) => {
     if (!view) return;
-    const rect = canvasEl.getBoundingClientRect();
-    const px = e.clientX - rect.left, py = e.clientY - rect.top;
+    const { px, py } = canvasXY(e);
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { px, py });
+    if (pinch && pointers.size >= 2) {
+      // 捏合帧：距离比 → zoomTarget（阻尼追帧），锚点跟随双指中点。
+      const pts = [...pointers.values()];
+      const dist = Math.hypot(pts[0].px - pts[1].px, pts[0].py - pts[1].py) || 1;
+      pinch.mid = pinchMid();
+      view.zoomAnchor = pinch.mid;
+      view.zoomTarget = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, pinch.baseScale * (dist / pinch.baseDist)));
+      ensureLoop();
+      view.lastPointer = null;
+      return;
+    }
     const last = view.lastPointer || { px, py };
     const dx = px - last.px, dy = py - last.py;
     if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
@@ -1334,6 +1386,17 @@ function bindCanvas(canvasEl) {
   });
   const endDrag = (e) => {
     if (!view) return;
+    pointers.delete(e.pointerId);
+    // 双指 → 单指收指：pinch 退出，残留触点接管平移（lastPointer 重置防跳变；
+    // pinch 撤销过 panning —— 这里恢复，收指后单指继续拖 = 继续平移）。
+    if (pointers.size < 2) pinch = null;
+    if (pointers.size === 1) {
+      view.lastPointer = { px: [...pointers.values()][0].px, py: [...pointers.values()][0].py };
+      view.dragging = null;
+      view.panning = true;
+      canvasEl.classList.add('grabbing');
+      return;   // pinch 收指不做点选收尾（pinched 已在 moved 语义上钉死点选）
+    }
     const wasDragging = view.dragging;
     const wasPanning = view.panning;
     view.dragging = null;
@@ -1341,16 +1404,16 @@ function bindCanvas(canvasEl) {
     view.lastPointer = null;
     canvasEl.classList.remove('grabbing');
     hideTip();
-    if (moved) return;
+    if (moved || pinched) { pinched = false; return; }
     if (wasDragging) { select(wasDragging, false); return; }
     if (!wasPanning) return;
     if (downButton === 1) return;   // 中键松手 = 纯平移收尾，不做点选
-    const rect = canvasEl.getBoundingClientRect();
-    const hit = pick(e.clientX - rect.left, e.clientY - rect.top);
+    const { px, py } = canvasXY(e);
+    const hit = pick(px, py);
     if (hit) { select(hit, false); return; }
     // Edge click (段落级引用批): anchored edge → open the target doc at that
     // paragraph (scroll + flash highlight); plain edge → select its target.
-    const eh = pickEdge(e.clientX - rect.left, e.clientY - rect.top);
+    const eh = pickEdge(px, py);
     if (eh) {
       if (eh.anchor) { void openDoc(eh.b.ref, eh.anchor); return; }
       select(eh.b, true);

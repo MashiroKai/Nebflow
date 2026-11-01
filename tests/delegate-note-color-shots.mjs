@@ -144,9 +144,10 @@ for (const [scheme, label] of [['dark', 'dark'], ['light', 'light']]) {
   const m = await measure(page);
   readings.tiers[label] = m;
   ok(`[${label}] 小注 textContent = +99 −99（字面空格保留）`, m.noteText === '+99 −99', `actual="${m.noteText}"`);
-  ok(`[${label}] 小注零背景零边框零 padding 不加粗（低调语义保持）`,
-    m.noteBorder === '0px' && (m.noteBg === 'rgba(0, 0, 0, 0)' || m.noteBg === 'transparent')
-    && m.notePad === '0px' && (m.noteFontWeight === '400' || m.noteFontWeight === 'normal'),
+  ok(`[${label}] 小注胶囊构造 + 不加粗（版式批 2026-11-01「单独一颗块」：hairline 边框 + 横向 padding；零构造口径随版式批②退役）`,
+    m.noteBorder === '1px' && parseFloat(m.notePad) > 0
+    && (m.noteBg === 'rgba(0, 0, 0, 0)' || m.noteBg === 'transparent')
+    && (m.noteFontWeight === '400' || m.noteFontWeight === 'normal'),
     JSON.stringify({ bg: m.noteBg, border: m.noteBorder, pad: m.notePad, w: m.noteFontWeight }));
   ok(`[${label}] +/− 两段语义色在场`, !!m.addColor && !!m.delColor, `add=${m.addColor} del=${m.delColor}`);
   ok(`[${label}] 小注右缘贴卡缘（±1px）`, m.rightDelta !== null && m.rightDelta < 1, `delta=${m.rightDelta}`);

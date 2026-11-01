@@ -20,7 +20,7 @@ tags: [mobile, askuser, chat-top-clip, mask, 白屏]
 `header.top − chat.top` 写入（桌面：内容在 Header 顶缘处消失、穿玻璃下缘而过）。
 
 手机层（`body.mobile-layer`）下桌面 `#header` 是 `display:none`（液体玻璃 v2 批
-顶栏退役，[[20261031_liquid-glass-v2]] 语义），其 `getBoundingClientRect()` 全零、
+顶栏退役，[[design/20261031_084400_liquid-glass-effect-v2__delegate-nebflow-a9ba5eff.zh-CN]] 语义），其 `getBoundingClientRect()` 全零、
 无锚意义。此时任何让 `#chat` 盒**瞬态上移**的读数——iOS 固定层橡皮筋回弹、键盘
 位移等（`getBoundingClientRect` 含 transform）——都会把 clip 写成数百 px 的垃圾
 值；而观察器只挂在 header/overlays 的 resize 上，瞬态结束后没有重测来源 ⇒ 垃圾

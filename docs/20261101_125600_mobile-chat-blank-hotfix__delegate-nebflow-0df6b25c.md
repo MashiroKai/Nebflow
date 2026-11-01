@@ -7,7 +7,7 @@ topic: 手机端消息区空白急诊批——#todo-page 手机层铺平规则�
 
 # 手机端消息区空白急诊批（2026-11-01，作者 12:03 实拍 IMG_1660）
 
-关联：作者 12:03 报障（手机端停在消息 tab，中部整片空白，桌面同账号正常）；待办体系改版批 `e51dabcdd`（引入 #todo-page 与本条铺平规则）；dock 批 mobileLayer.css「收编面统一页面化几何」的 `> ` 收编作用域先例；手机急诊批巡检 harness `tests/mobile-emergency-shots.mjs`（本次复现/复验主工具）；证据目录 `evidence/20261101_mobile-chat-blank-hotfix/`。
+关联：作者 12:03 报障（手机端停在消息 tab，中部整片空白，桌面同账号正常）；待办体系改版批 `e51dabcdd`（引入 #todo-page 与本条铺平规则）；dock 批 mobileLayer.css「收编面统一页面化几何」的 `> ` 收编作用域先例（[[20261030_084500_dock-message-badge__delegate-nebflow-12dfb591]]）；手机急诊批巡检 harness `tests/mobile-emergency-shots.mjs`（本次复现/复验主工具）；证据目录 `evidence/20261101_mobile-chat-blank-hotfix/`。
 
 ## 根因（文件：行）
 

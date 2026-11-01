@@ -9,7 +9,7 @@ tags: [cardwin, nearpath, loopback, tunnel, console]
 
 # 独立窗口 origin 解析规则钉
 
-> 图谱接线：本批是 [[turn-liveness-spec]] 同族的隧道腿治理；判据复用本地加速批的
+> 图谱接线：本批是 turn 存活语义规格（turn-liveness-spec，库外存目）同族的隧道腿治理；判据复用本地加速批的
 > 环回锚（`/api/health` deviceId 键）与设备快速通道（nearpath 主动探测）；词表见
 > [[glossary]]，库入口 [[index]]。
 

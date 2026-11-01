@@ -172,6 +172,23 @@ object Defaults:
       |SendMessage reaches NebLink friends, NebLink groups, and your own devices ONLY — it is not a channel to the user. A message or file FOR THE USER over a social channel (WeChat / Feishu and the other channel legs) never goes through SendMessage: text rides a normal reply, and files are delivered with Pop — the channel legs carry Popped files/images out to the user's WeChat/Feishu automatically. Using SendMessage to reach the user is a boundary violation (author ruling 2026-10-31).""".stripMargin
 
   /**
+   * 密钥教义节（密钥能力三件套批 B 件，作者令 2026-11-01「agent/分发器提示词加
+   * 『密钥的使用与创建』一节」）：跨会话凭证纪律单点。段体 = 本常量；
+   * 注入面 = `PromptSections` order-377 **always 段**（所有 agent 会话——root /
+   * 分发器 / delegate / 节点 / team 成员一视同仁：凭证经任务文本流进每张面，
+   * 纪律就必须在每张面上，不按 isRootAgent 收窄）。与 order-375/376（root-only）
+   * 同族同体例：`── 标题 ──` 头 + 条款行，引牌不引文——机制细节（secret 问题
+   * 字段、指针回执形状）的单一权威 = AskUserQuestion 工具 description，本节
+   * 不复述；清单面 = `stand secrets list`（元数据面，零值）。
+   */
+  val SecretsRule: String =
+    """── Secrets (credentials) ──
+      |Credentials (API keys, tokens, passwords) live ONLY in the secrets store — never in chat text, files, logs or commits.
+      |- CREATE — credential-class items only, via an AskUserQuestion secret question (`secret: true`): the author pastes the value, the engine stores it owner-only, and you receive ONLY a pointer receipt. Name = lowercase-hyphen with a purpose prefix (`<service>-<purpose>`, e.g. `aliyun-oss`); never type a value into any file, command line or log.
+      |- CONSUME — the receipt's `location` is a PATH: interpolate `"$(cat <location>)"` inside a Bash sub-shell so the value exists only in that command, or use `$VARIABLE` when the secret is allowlisted in nebflow.json (`secrets.inject`). Mechanics: the AskUserQuestion tool description; inventory: `stand secrets list` (metadata only, never values).
+      |- IRON RULES — never print or echo a value, never write one to disk, never commit one, never forward one in a message: a value is a service input only.""".stripMargin
+
+  /**
    * A 段（等待屏障）开关：delegate 会话结束回合时存在未结等待型后台作业 ⇒
    * 不终态化（hold + 完成通知唤醒 + 复检），对齐 Project node 完成闸语义。
    * 默认 **true**（作者令本体行为）；现读 prop `nebflow.delegate.bgWaitHold.enabled`
