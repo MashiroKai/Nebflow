@@ -51,9 +51,11 @@ scope: dock 中键 agent 头像边缘与顶部 Muse 会话头像边缘统一（�
 回归（全部 PASS）：
 - `tests/mobile-dock.spec.mjs` 21/21（D10 判据换新边缘 token 探针；D11 头像/回落链、D12 亮档 fill、D13 胶囊几何照旧）
 - `tests/mobile-dock-shape-shots.mjs` ALL PASS（探针④ 翻转为「中键边缘 = 顶部同款」逐字等值；余五项原样）
+- `tests/mobile-dock-capsule-shots.mjs` ALL PASS（探针⑥ 判据 `centerShadow === 'none'` → `!== 'none'`，几何三值 44×44/inside/gap 原样；同批旧契约第三处持有方）
 - `tests/mobile-avatar-chip-title-gap.spec.mjs` ALL PASS（双引擎 × 双主题：dock 芯片底/logo 居中/墨迹扫描/自定义头像态 sapphire 底零回归 + 桌面腿 56px 原值）
 - `tests/cs1030-coldstart-batch.mjs` 31 PASS / 0 FAIL（腿D 44×44 + gap 10 照旧）
 - `tests/mobile-v3.spec.mjs` 6 passed / 1 failed —— T2「任务键徽标 10 vs 8」为**既有红**：main（bba413fc0）同树同测同报错，与本批 diff 无交集（本批不触 JS/任务链），留档不修。
+- `tests/mobile-muse-avatar-shots.mjs` 6 FAIL —— 「滚动态压在消息流上缘」六腿亦为**既有红**（main 同树同报错），本批不触 Muse 锚几何；该轮的证据再生产物已回退不收编。
 
 零 console error：新证据脚本四条腿全 `R0 零 JS/console 错误`（每条腿独立监听 pageerror + console.error）。
 
