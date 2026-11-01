@@ -115,6 +115,7 @@ related: "[[20261101_172033_ustc-git-survey__kernel]]"
 
 - **三树对照法**：每条红都在 `pristine`（`7d18dabb0`，`git archive` 解包）与需要时 `base`（`f8bd1f0d4`）上重跑，逐字比对输出后再下「存量 / 新引入」判定；check-circular 与 locale 键集用 `diff`/键集差集做同法对账。
 - **spec 串行跑**：`PORT` 固定端口的自足 spec 不可并行（仓内既有训诫），本批单进程顺序执行 20 条。
+- **文档库校验**：`check_wiki_docs.py --root docs` 收尾为 `通过（113 篇文档，零违规）`——顺手补齐了 17:25 批文档的一处 R3 首现未释（「样张」链到 `[[glossary#^mockup-sample]]`）与孤儿链（补两条正文引用），属文档库面卫生，不改任何批结论。
 - 证据：`evidence/20261101_175329_ustc-zhang-merge__delegate-nebflow-eed3ad45/`（`checkjs-before/after.txt`、`circular.txt` + `circular-PRE.txt`、`sbt-seed-summary.txt`、`spec-results.txt`、`attribution/` 六份对照日志）。
 
 ## 相关件
