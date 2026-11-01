@@ -241,3 +241,46 @@ flowchart LR
 - [[delegate-supervision-revival-design.zh-CN]]（监督链复活——门铃激活件复用面）
 - [[20261030_background-task-lifecycle.zh-CN]]（bg 生命周期——bg-task 通知面迁移细节）
 - [[20261031_112344_delegate-standby-semantics-audit__delegate-nebflow-c0a2b939]]（停靠语义盘点——§2.6 时间线的账面依据）
+
+## 10. 实现纪要（P1+P2，2026-11-01）
+
+本批由 delegate `delegate-nebflow-b42b77bf` 在工作分支实施，开放决策按 §8 推荐案全部落地：①per-entry 文件存储 ✓ ②风暴闸 drop→合条 ✓ ④用户域注入不迁 ✓ ⑤积压零墙钟无 TTL 无自动丢弃 ✓；③节点打包窗留 P3。
+
+### 10.1 文件清单
+
+**新建（3 件）**
+
+| 文件 | 职责 |
+|---|---|
+| `nebflow/core/mail/SessionMailbox.scala` | 邮箱存储本体（core 层，零 agent 依赖）：per-entry 文件箱 `sessions/<sid>/mailbox/{pending,taken,quarantine}`，文件名 `<seq012>-<safeId>.json`；mailOnce（幂等/合条）、take/takeSync、scanPending(Sync)、scanTaken(Sync)、unlinkTaken+delivered.json 消费墓碑（cap 1024 drop-oldest）、sweepTmpAll、depth 徽标面、手写 ExternalEvent codec（与 CompactionQueueStore 同形同键，迁移期字节兼容） |
+| `nebflow/agent/MailboxDrain.scala` | 唯一消费口：barrierPlan 批门禁纯函数（W2）、drain 三面（idle/barrier/replay）各带 Sync 版、injectIdleTurn 注入轮装配、recoverSweep（W1）/resumeSweep（W4）、doorbell、mailboxMessage 呈现组装、viaMailbox metadata 打标 |
+| `nebflow/agent/MailboxProducer.scala` | 唯一入队编排：父会话在场守卫（gone=Failed，不产垃圾文件）→ mailOnce 3 次重试（200ms）→ 穷尽响亮 ERROR+Failed（**绝不回退旧 push 链**）→ Enqueued/Coalesced 后门铃 |
+
+**改造（11 点）**：`AgentCommand` 新增 `MailboxArrived` 门铃件；`BackoffSupervisor.notifyParentAndStopImpl` delegate 轨改走 Producer（identity=subagentId，receiptWrite 拆除=零新回执），subtask 轨旧链逐字保留；`SubAgentStartupRecovery` 收殓 delegate 轨改走 Producer（resources=None 的 legacy 调用点保留 F2 回退）；`MergeQueueBootSweep.notifyParent` 改走 Producer（identity=`mq-recovery-<id>`）；`AgentIdle.RecoverPersistedQueues` 尾部接 recoverSweep（W1）+ idle 新增 MailboxArrived 分支（W5）；`AgentProcessing` ToolsComplete 接 drainBarrierFaceSync（W2a，compaction 挂起时守卫）；`AgentFinishTurn.returnToIdle` 尾部接 W3 收口 + drainBarrier 分支前接 W2b；`AgentFrozen` 三条恢复腿接 resumeSweep（W4）；`AgentActor.sendEscalationToParent` 换轴（identity=escalationIdentity(sid) 合条入箱，correlationId 每级唯一；Failed≠parent-gone 时旧链兜底仅当条目不在盘——无双发）；`HeldDeliveryWatchdog` 徽标数据源换轴（unread = 台账 exhausted + 邮箱深度）；`GatewayMain` boot 链插入 `mailboxBootSweep`（W6 账面对账）；`SubAgentTaskStore.baseDir` 公开（对账直扫账面）。
+
+### 10.2 实现期敲定的关键决策（设计未细写、代码定案）
+
+1. **drain 直接装配回合，不 self-! 回投**——taken 文件就是取走后条目的唯一持久载体；屏障会计在**取走拍**恰一次（`takenSubagentSlots` 扣 outstanding）；unlink 在 pipeLlmCall 装配点（旧机器 markDelivered 同邻域）。崩溃窗=taken 残差 → W1/W4 重注，≤1 重复零丢失（§6 表逐窗兑现）。
+2. **viaMailbox metadata 在 drain 时打标**——旧链注入点（markDelivered/ackEvent/intake 判重）**零改动**：带标事件永不经过它们；旧链（subtask 轨/F2 重放）逐字不动，迁移期共存安全。
+3. **两道 boot 对账防重闸**——boot 纪元文件 `<dataRoot>/mailbox-reconcile.json` 双时间戳滚动（对账窗=`(lastBootMs, thisBootMs]`，本批激活前的旧账不追）；`delivered.json` 消费墓碑。诚实残差窗口：上一窗落终+当窗已消费+墓碑被 1024 次后续消费挤出+本拍才对账 ⇒ 同一条目至多假重投一次（内容为幂等终态通知）。
+4. **Sync 面双轨**——behavior 的 receiveMessage 分支存在纯值装配位（不能起 IO 链），故每个 drain 面都提供 Sync 版（进程内锁串行化），IO 版供异步编排点；两版共享同一物理原语。
+5. **门铃三态处置**——空 sid / registry 无记录（会话未 spawn）＝零动作（信已在盘，等下次 spawn 的 W1 扫箱；BgSessionActivator 接线留 P3）；live=`ref ! MailboxArrived` 尽力而为，失败仅 WARN。
+6. **升级条目合条身份**——`escalationIdentity(parentSid)` 为合条键（同父升级风暴原位合条），correlationId=`escalation-<sid>-L<level>-<ts>` 每级唯一（观测面不丢层级）。
+7. **偏差说明（诚实账）**——processing/frozen 态收到 MailboxArrived 为 no-op（条目留箱等 W2b/W3/W4 消费）：门铃与消费拍竞态无害，只是注入拍后移到回合边界，与既有 turn-end drain 节奏一致，零信息丢失；P2 验收红线⑥（merge 队列账对账告警）属 MergeQueue drain 侧迁移面，随 P3。
+
+## 11. 验证纪要（P1+P2，2026-11-01）
+
+**编译**：`sbt compile` + `Test/compile` 在 `-Werror`（fatal warnings）下全绿（含全部既有源面，无任何 warning 豁免）。
+
+**新增 spec（4 件 32 用例，全部纯桩驱动零墙钟）**：
+
+| spec | 用例数 | 钉住的验收面 |
+|---|---|---|
+| `core/mail/SessionMailboxSpec` | 12 | §7 P1 验收②（mailOnce 幂等+**100 并发同 identity 恰 1 条**）、③（**100 条 FIFO 序**）、④（坏形条目入 quarantine 不阻塞后件）、§6 kill -9 四窗矩阵（窗1 tmp 清理/窗2 取走前崩/窗3+4 taken 重注→unlink 墓碑）、合条原位合条计数（风暴闸②）、消费后同 identity 合法再投（防写重≠防读重）、墓碑 cap 1024 drop-oldest、depth 徽标、空收件方显式 Failed |
+| `agent/MailboxDrainSpec` | 10 | §7 P2 验收③：barrierPlan 六面（末成员到齐放行/在飞 hold/整批放行/升级件恒放行/**放行集保 seq 相对序**/零 outstanding 防御面）、drainBarrierFaceSync（留箱件原地不动+徽标深度一致）、taken 重注幂等、takenSubagentSlots 取走拍会计、呈现三形（单件直投/**retryable 提示**/多件 reminder 合批） |
+| `agent/MailboxRedAnchorSpec` | 3 | **§7 P2 验收红线①（10-31 事故判红锚重放）**：锚① 冻结窗内 mailOnce 完工条目→W4 resumeSweep 解冻首拍**完工原文逐字注入**+屏障会计恰一次+墓碑落账+**红线② 零新标记**（delivered-receipts.json 与 delegates 回执计数前后不变，旧 ledger 全程零创建）；锚② taken 残差（取走后注入前崩）解冻首拍重注零丢失；锚③ 空箱解冻逐字现状（零幻影消息零会计）。红线④ 同窗覆盖 |
+| `agent/MailboxBootSweepSpec` | 7 | §7 P2 验收⑤（面板行终态化不依赖父消费——账面真源合成补投）：首 boot 空窗零合成（激活前旧账不追）、窗内缺失条目合成（identity=taskId 同幂等键+payload 诚实标注 recoveredBy）、**墓碑闸**（已消费不重合成）、账信相符闸、父不在场闸、running/subtask 行永不合成、tmp 清理、同 boot 二次 run 窗闸防重 |
+
+红线逐条对照：①判红锚 ✓（对照事故形态「12 次重投 0 次进门」→ 现为解冻首拍必进门）②零新写 ✓ ③批聚合+徽标 ✓ ④kill -9 零丢失 ✓（四窗 spec+锚②）⑤账面 settle ✓；⑥归 P3（§10.2 偏差说明）。「delegate 终态不再走旧链（双发=事故）」：BackoffSupervisor delegate 轨零 `ref ! ExternalEvent`、零新回执，spec 断言旧标记文件零新增。
+
+**回归（受影响面 16 spec）**：BackoffSupervisor 四件套（Cancel/EmptyBurn/RestartDelay/Tombstone）、恢复族（RestartRecovery/SubagentCrashRecovery/OrphanDelegateRecovery/RestartingWatchdog/CrashResume）、HeldDelivery 族（Watchdog/Flush/HeldReceiptStore）、DelegateTerminalDelivery、MergeQueue、CompactionQueueStore、DeviceResultOutbox。**迁移配套修正（观察面换轴）**：BackoffSupervisor 三件（Cancel/EmptyBurn delegate 轨/Tombstone R1）的父通知断言从「父 actor 收到 ExternalEvent」换轴为「父会话邮箱持有终态条目 + **ref 消息流零 ExternalEvent（双发=事故红线的反向断言）**」，测试桩补登记父会话（Producer 父在场守卫的合法输入）。MergeQueueSpec ①（sleep 80ms 时序脆弱用例）批量跑偶发、单独跑绿（基线与改动后各 17/17 全绿），非本批语义回归。

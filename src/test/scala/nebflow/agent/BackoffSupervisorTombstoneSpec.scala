@@ -9,6 +9,7 @@ import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behavior, Behaviors}
 import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord}
 import nebflow.core.FileChangeTracker
+import nebflow.core.mail.SessionMailbox
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, ToolContext}
@@ -134,6 +135,8 @@ class BackoffSupervisorTombstoneSpec extends CatsEffectSuite:
     val io =
       for
         resources <- mkResources(system, tmp)
+        // P2 邮箱化：父会话登记在场（MailboxProducer.deliver 父在场守卫）。
+        _ <- resources.sessionStore.getOrCreateSession(parentSid, "tombstone test parent")
         _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
         // 墓碑先行（doCancel 同序：意图落盘先于任何复活窗口）。
         _ <- IO {
@@ -185,22 +188,26 @@ class BackoffSupervisorTombstoneSpec extends CatsEffectSuite:
         // 闸若缺席，100ms backoff 后 spawn 必已发生——给足破坏窗口再断言零 spawn。
         _ <- IO.sleep(700.millis)
         spawns <- spawnCalls.get
-        events <- parentEvents.get
+        // P2 迁移后终态通知走持久邮箱（不再 ref! 推送）——观察面换轴。
+        mailed <- SessionMailbox.scanPending(parentSid)
+        refEvents <- parentEvents.get
         tasks <- resources.subAgentTaskStore.loadTasks(parentSid)
         _ <- system.stopAll
       yield
         assertEquals(spawns, 0, "a tombstoned delegate must never be respawned in-process")
         val task = tasks.find(_.taskId == childSid).get
         assertEquals(task.status, "cancelled", "row must settle cancelled, never back to restarting")
-        val ext = events.collect { case e: AgentCommand.ExternalEvent => e }
-        assert(ext.nonEmpty, "parent must be notified of the refused-respawn cancel settle")
+        val ext = mailed.collect { case e if e.event.eventType == "cancelled" => e }
+        assert(ext.nonEmpty, "parent mailbox must hold the refused-respawn cancel settle entry")
         assert(
-          ext.exists(_.eventType == "cancelled"),
-          s"terminal event must be cancelled: ${ext.map(_.eventType)}"
+          ext.exists(_.event.payload.contains("cancel tombstone")),
+          s"payload must name the tombstone refusal: ${mailed.map(_.event.payload)}"
         )
-        assert(
-          ext.exists(_.payload.contains("cancel tombstone")),
-          s"payload must name the tombstone refusal: ${ext.map(_.payload)}"
+        // 红线（双发=事故）：ref 消息流零 ExternalEvent。
+        assertEquals(
+          refEvents.collect { case e: AgentCommand.ExternalEvent => e }.size,
+          0,
+          s"terminal must NOT ride the legacy push chain, got: $refEvents"
         )
     try io.unsafeRunSync()
     finally

@@ -55,18 +55,25 @@ object HeldDeliveryWatchdog:
    *   - 到期且下一次催注将超 HeldDeliveryMaxAttempts → 终态置旗（不再催注）；
    *   - unread 快照与现值不一致 → 徽标对账。
    * 非到期 / 空台账 / 已穷尽（不再重复置旗）→ 零动作。
+   *
+   * P2 邮箱化（终态通知 actor 邮箱化批）：`mailboxDepth` = 收件方会话持久邮箱
+   * pending 深度（[[nebflow.core.mail.SessionMailbox]]）——delegate 终态迁邮箱后
+   * 不再进 held 台账，徽标数据源换轴 = **台账 exhausted 数 + 邮箱深度**（两者都是
+   * 「已产出未注入」的回执，逐拍一致；设计 §2.3 徽标换数据源）。默认 0 =
+   * 既有 spec 调用面零改动。
    */
   def scanCore(
     sessionId: String,
     ref: nebflow.actor.ActorRef[AgentCommand],
     entries: List[HeldReceiptStore.HeldReceipt],
     unreadSnapshot: Int,
-    now: Long
+    now: Long,
+    mailboxDepth: Int = 0
   ): List[ScanAction] =
     val active = entries.filterNot(_.exhausted)
     val due = active.filter(e => HeldDeliveryPolicy.isDue(e, now))
     val (exhaust, nudge) = due.partition(HeldDeliveryPolicy.shouldExhaust)
-    val unreadNow = entries.count(_.exhausted) + exhaust.size
+    val unreadNow = entries.count(_.exhausted) + exhaust.size + mailboxDepth
     val nudgeAct = if nudge.isEmpty then Nil else List(Nudge(sessionId, nudge.map(_.id), ref))
     val exhaustAct = if exhaust.isEmpty then Nil else List(Exhaust(sessionId, exhaust.map(_.id), exhaust.map(_.summary)))
     val badgeAct = if unreadNow == unreadSnapshot then Nil else List(BadgeSync(sessionId, unreadNow, unreadSnapshot))
@@ -91,8 +98,12 @@ object HeldDeliveryWatchdog:
     resources.agentRegistry.get.flatMap { registry =>
       val idleSessions = registry.values.toList.filter(_.status == AgentStatus.Idle)
       idleSessions.traverse_ { rec =>
-        HeldReceiptStore.load(rec.sessionId).flatMap { entries =>
-          execute(resources, wsHub, scanCore(rec.sessionId, rec.ref, entries, rec.unreadReceiptCount, now))
+        // P2 邮箱化：徽标数据源换轴——unread = held 台账 exhausted 数 + 邮箱
+        // pending 深度（delegate 终态迁邮箱后经此腿逐拍可见；徽标帧协议不变）。
+        nebflow.core.mail.SessionMailbox.depth(rec.sessionId).flatMap { mboxDepth =>
+          HeldReceiptStore.load(rec.sessionId).flatMap { entries =>
+            execute(resources, wsHub, scanCore(rec.sessionId, rec.ref, entries, rec.unreadReceiptCount, now, mboxDepth))
+          }
         }
       }
     }

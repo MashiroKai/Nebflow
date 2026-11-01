@@ -800,6 +800,24 @@ object GatewayMain extends IOApp:
                                             .void
                                         case _ => IO.unit
                                       }
+                                  // ═══ 邮箱 boot 对账（终态通知 actor 邮箱化批 P1/P2）═══
+                                  // tmp 残片清理 + 账面合成缺失条目（mailbox-reconcile
+                                  // 纪元窗内的「账已终、信没到」delegate 终态行）+ 积压
+                                  // 可见性。排在 subagentCrashSweep 之后（收殓先行落账，
+                                  // 对账读到的行集才完整）、startupMount 之前（任何会话
+                                  // actor spawn 之前 = 单写者窗口）。失败只 WARN。
+                                  val mailboxBootSweep: IO[Unit] =
+                                    nebflow.agent.MailboxBootSweep
+                                      .run(sharedResources.subAgentTaskStore, sessionStore)
+                                      .attempt
+                                      .flatMap {
+                                        case Right(r) =>
+                                          if r.tmpSwept > 0 || r.synthesized.nonEmpty || r.boxesNonEmpty > 0 then
+                                            logger.info(s"Mailbox boot reconcile: ${r.summary}").void
+                                          else IO.unit
+                                        case Left(e) =>
+                                          logger.warn(s"Mailbox boot reconcile failed: ${e.getMessage}").void
+                                      }
                                   // M2 缓存一致性（v1 §6.1）：注册引擎侧失效广播面
                                   // （core 写路径工具 / WS 文件操作经 NfCacheInvalidator
                                   // 发射，此处注入 wsHub.broadcast——窄端口倒置先例同款）。
@@ -1072,7 +1090,7 @@ object GatewayMain extends IOApp:
                                   // daemonService autoStart 块（构造序：dock 依赖
                                   // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
                                   // 契约由 dock 腿逐字保持。
-                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
+                                  hubSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> taskIndexBackfill *> seedMinimalSet *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {

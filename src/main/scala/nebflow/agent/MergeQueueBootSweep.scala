@@ -270,8 +270,10 @@ object MergeQueueBootSweep:
     )
 
   /**
-   * 父通知（F2 注入队文件，correlationId 幂等——SubAgentStartupRecovery 同机制；
-   * 父会话已删 = 跳过通知，账本行仍在）。
+   * 父通知（P2 邮箱化批：delegate 轨改走**收件方持久邮箱**——mailOnce 幂等入队
+   * + 门铃；写成功=必达，不再依赖父会话 live。identity = 本通知的 correlationId
+   * （`mq-recovery-<id>` 等专用键，与旧 F2 队列的幂等键同串——迁移期两 surface
+   * 判重互不误伤）。父会话已删 = 跳过通知，账本行仍在）。
    */
   private def notifyParent(
     resources: AgentRuntimePort,
@@ -284,36 +286,39 @@ object MergeQueueBootSweep:
       .flatMap { sessions =>
         if !sessions.exists(_.id == rec.parentSessionId) then IO.unit
         else
-          CompactionQueueStore.load(rec.parentSessionId).flatMap { existing =>
-            val correlationId = s"mq-recovery-${rec.id}"
-            val already = existing.exists(_.events.exists(_.correlationId.contains(correlationId)))
-            if already then IO.unit
-            else
-              val metadata =
-                if blockedStyle then
-                  io.circe.JsonObject(
-                    "description" -> rec.title.asJson,
-                    "agentName" -> rec.executor.asJson,
-                    "failureType" -> "blocked".asJson,
-                    "recoveredBy" -> "merge-queue-boot-sweep".asJson
-                  )
-                else
-                  io.circe.JsonObject(
-                    "description" -> rec.title.asJson,
-                    "agentName" -> rec.executor.asJson,
-                    "recoveredBy" -> "merge-queue-boot-sweep".asJson
-                  )
-              val event = AgentCommand.ExternalEvent(
-                source = "delegate",
-                eventType = eventType,
-                payload = payload,
-                metadata = metadata,
-                correlationId = Some(correlationId)
+          val correlationId = s"mq-recovery-${rec.id}"
+          val metadata =
+            if blockedStyle then
+              io.circe.JsonObject(
+                "description" -> rec.title.asJson,
+                "agentName" -> rec.executor.asJson,
+                "failureType" -> "blocked".asJson,
+                "recoveredBy" -> "merge-queue-boot-sweep".asJson
               )
-              val q = existing.getOrElse(CompactionQueueStore.PersistedQueues())
-              CompactionQueueStore.save(rec.parentSessionId, q.copy(events = q.events :+ event))
-            end if
-          }
+            else
+              io.circe.JsonObject(
+                "description" -> rec.title.asJson,
+                "agentName" -> rec.executor.asJson,
+                "recoveredBy" -> "merge-queue-boot-sweep".asJson
+              )
+          val event = AgentCommand.ExternalEvent(
+            source = "delegate",
+            eventType = eventType,
+            payload = payload,
+            metadata = metadata,
+            correlationId = Some(correlationId)
+          )
+          MailboxProducer
+            .deliver(
+              resources,
+              rec.parentSessionId,
+              event,
+              identity = correlationId,
+              kind = "delegate-terminal",
+              coalesce = false,
+              producer = "merge-queue-boot-sweep"
+            )
+            .void
       }
       .handleErrorWith(e => logger.warn(s"merge-queue recovery parent notify failed for ${rec.id}: ${e.getMessage}"))
 

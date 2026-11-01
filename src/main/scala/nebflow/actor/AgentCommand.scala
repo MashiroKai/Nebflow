@@ -507,6 +507,20 @@ object AgentCommand:
    */
   case object DrainHeldReceipts extends AgentCommand
 
+  /**
+   * 邮箱门铃（终态通知 actor 邮箱化批 P1/P2；设计 §3.1「磁盘邮箱是投递、actor
+   * 消息只是门铃」）。语义 = **尽力而为的唤醒信号，不是投递**：信已在收件方会话的
+   * 持久邮箱盘上（`sessions/<sid>/mailbox/pending/`），本命令只是请会话「扫箱」。
+   *
+   * 各 behavior 处置：
+   *   - idle：即扫即注（MailboxDrain.drainIdleFace → 注入轮）；
+   *   - processing / frozen：no-op 留任——条目留箱，由回合边界 drain（W2）、idle
+   *     收口 drain（W3）、解冻 drain（W4）兜住（冻结窗不再吞投递：解冻首拍必扫箱）。
+   *
+   * 投给死会话蒸发零影响——会话任何 spawn 的 RecoverPersistedQueues 扫箱兜底（W1）。
+   */
+  case object MailboxArrived extends AgentCommand
+
   case class UpdateContextWindow(window: Int) extends AgentCommand
 
   /**
