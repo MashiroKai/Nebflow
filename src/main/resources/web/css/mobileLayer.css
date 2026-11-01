@@ -1795,6 +1795,33 @@ body.mobile-layer #send-btn {
   padding: 0;
 }
 
+/* ── 输入卡垂直收窄批（2026-11-01 22:1x 作者令「收窄输入框的上下高度，
+   给内容腾显示空间」；上批 = 2026-10-31 composer-slim 已到 6px 档）──────
+   手机优先、桌面零触碰：本块全部 body.mobile-layer 作用域，桌面（含 ≤768px
+   窄窗非手机层档）逐字节原值（tests/composer-mobile-slim-shots.mjs D 腿钉）。
+   只收**上下**两刀，横向与钮件零触碰（作者令「横向布局、头像/附件/发送钮
+   尺寸不动」）：
+   ① #input-bar 垂直内 padding 6 → 4px（4px 栅格档；横向 12px 不动）；
+   ② #mic-orb-wrap 上下对称负边距 -8px —— 光球 64px 画布的**布局足印**收到
+      48px，条单行高 78（64 + 12 + 2 border）→ 58，省 20px 给消息列
+      （#chat 让位读 #input-area.offsetHeight ⇒ 消息列让位自动跟收，JS 零改）。
+      球体本身零触碰：canvas 尺寸/渲染分辨率不变 = 球面可见径（~40px）零缩放
+      零模糊，只是布局盒与条解耦；溢出的 8px 上下缘是画布透明角（球光晕最大
+      半径不出 content 盒），下方落 dock 呼吸缝、上方落消息列底 4px 空气带。
+   保全语义：多行自动长高（textarea scrollHeight 增长 + 200px 封顶）零触碰
+   —— 长高后 #input-wrap 接管条高，光球足印 48 恒小于行高不参与驱动；
+   发送/附件/中断钮 36px 档不动，flex align-items:center 在更矮条里垂直居中
+   不变；触控热区全数原值（36/36/64 ≥ 可用下限）。
+   几何契约钉 + 双主题实拍：tests/composer-mobile-slim-shots.mjs（G 腿
+   before 78 / after 58）。canvas 页 ask 输入条为独立组件（ask.css .ask-input
+   自带几何，与主会话不共组件/几何 token）——按令分开实现先不动。 */
+body.mobile-layer #input-bar {
+  padding: 4px 12px;
+}
+body.mobile-layer #mic-orb-wrap {
+  margin: -8px 0;
+}
+
 /* ── 消息流头像 + agent 名（收形批①③）随 Muse 式悬浮头像批退役
    （作者令 2026-11-01 13:33 ①「去掉每条消息头部的 agent 头像+名字行」）：
    .g2-msg-meta / .g2-msg-avatar-slot / .g2-msg-avatar / .g2-msg-logo /
