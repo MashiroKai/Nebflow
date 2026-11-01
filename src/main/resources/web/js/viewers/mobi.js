@@ -410,4 +410,15 @@ export default {
   binary: true,
   priority: 0,
   render: viewMobi,
+  /** Protocol teardown (阅读/编辑体验优化批 2026-11-01): same reader-chrome hooks
+   *  as epub (document keydown / MutationObserver / matchMedia / ResizeObserver)
+   *  plus the book's object-URL ledger, all previously released only on re-render. */
+  dispose: (pane) => {
+    const slot = /** @type {any} */ (pane);
+    if (typeof slot._nfReaderTeardown === 'function') {
+      try { slot._nfReaderTeardown(); } catch { /* 卸载容错 */ }
+    }
+    slot._nfReaderTeardown = null;
+    resetBookBlobUrls(/** @type {HTMLElement} */ (pane));
+  },
 };

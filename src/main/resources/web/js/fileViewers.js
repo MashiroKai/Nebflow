@@ -35,6 +35,40 @@ export function registerViewer(viewer) {
   registry.set(viewer.name, viewer);
 }
 
+// ── Viewer teardown (阅读/编辑体验优化批 2026-11-01) ──────────────────────
+// 修前形态：ViewerProtocol 只有 render（utils.js:43-50），注册表唯一的入口
+// renderFile 也不留任何「谁渲染了这个 pane」的账 —— 页签关闭时 canvas.js 只
+// 调 disposeTabEditor（Monaco/流式客户端）+ paneEl.remove()，阅读器挂在
+// document/window 上的钩子、observer、pdf.js 文档与 worker 全部继续存活
+// （勘察：readerChrome 每实例 1 keydown + 1 MutationObserver + 1 ResizeObserver，
+// pdf.js 每档 1 个永不 destroy 的 PDFDocumentProxy）。本批先补协议与调用点。
+//
+// 账记在 pane 上（`_nfViewerDispose`）而不是 WeakMap：canvas.js 的
+// disposeTabEditor 是同步函数、且不 import 本模块（modal 化前的既有纪律：
+// canvas 只做动态 import，静态边会成环），一个属性免掉一次动态 import。
+/** @type {string} */
+const DISPOSE_SLOT = '_nfViewerDispose';
+
+/**
+ * 卸载某个 pane 上当前 viewer 的资源（幂等：调过即清账）。
+ * 调用点两条：本文件的 renderFile（重渲前）与 canvas.js disposeTabEditor
+ * （关闭页签的所有路径）。
+ * @param {HTMLElement|null|undefined} pane
+ */
+export function disposeViewer(pane) {
+  if (!pane) return;
+  const slot = /** @type {any} */ (pane);
+  const fn = slot[DISPOSE_SLOT];
+  if (typeof fn !== 'function') return;
+  slot[DISPOSE_SLOT] = null;
+  try {
+    fn();
+  } catch (err) {
+    // 卸载失败不得阻断渲染/关闭链路（与 renderFile 的 catch 同族纪律）。
+    console.warn('Viewer dispose error:', err);
+  }
+}
+
 function registerBuiltIns() {
   for (const viewer of [
     codeViewer, jsonViewer, csvViewer,
@@ -111,6 +145,9 @@ function renderViewerError(pane, ctx, err) {
  * @param {import('./utils.js').ViewerContext} ctx
  */
 export async function renderFile(pane, ctx) {
+  // 上一个 viewer 的资源先卸（重渲/切格式都会走到这里）：协议新增的可选
+  // dispose(pane) 是唯一出口，未实现的 viewer 等于「pane 之外无残留」。
+  disposeViewer(pane);
   // ── Single-point stream branch (project rule: unified factory + one renderer) ──
   // A file opened through the streaming descriptor carries NO content: it is
   // rendered by the read-only virtual-scroll view and fed by on-demand windows.
@@ -127,6 +164,11 @@ export async function renderFile(pane, ctx) {
       ? textReaderViewer
       : (registry.get(ctx.itemType) || registry.get('code'));
   try {
+    // 记账：本 viewer 声明了 dispose 才记（否则 pane 之外无残留，无事可做）。
+    const withDispose = /** @type {any} */ (viewer);
+    if (typeof withDispose.dispose === 'function') {
+      /** @type {any} */ (pane)[DISPOSE_SLOT] = () => withDispose.dispose(pane);
+    }
     await viewer.render(pane, ctx);
   } catch (err) {
     console.warn('Viewer error:', err);

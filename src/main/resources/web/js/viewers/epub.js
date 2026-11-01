@@ -687,4 +687,18 @@ export default {
   binary: true,
   priority: 0,
   render: viewEpub,
+  /** Protocol teardown (阅读/编辑体验优化批 2026-11-01): the reader chrome hangs a
+   *  document keydown, a documentElement MutationObserver, a matchMedia listener
+   *  and a ResizeObserver that all outlive the pane — readerChrome exposes its
+   *  remover as pane._nfReaderTeardown and the blob ledger is revoked here too
+   *  (closing the tab was previously the one exit that never revoked the book's
+   *  object URLs). */
+  dispose: (pane) => {
+    const slot = /** @type {any} */ (pane);
+    if (typeof slot._nfReaderTeardown === 'function') {
+      try { slot._nfReaderTeardown(); } catch { /* 卸载容错 */ }
+    }
+    slot._nfReaderTeardown = null;
+    resetBookBlobUrls(/** @type {HTMLElement} */ (pane));
+  },
 };
