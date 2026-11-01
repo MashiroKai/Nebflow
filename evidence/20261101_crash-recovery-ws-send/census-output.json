@@ -1,0 +1,117 @@
+{
+  "A_node_ui_scan": {
+    "sessions_with_ui": 4071,
+    "zero_ai_tool": 3899,
+    "zero_with_work": 3872,
+    "with_ai_tool": 172,
+    "samples_blank_with_work": [
+      {
+        "session": "node-e5dd9022",
+        "ui_rows": 2,
+        "user_rows": 2,
+        "transcript_msgs": 135
+      },
+      {
+        "session": "node-e7eb502b",
+        "ui_rows": 1,
+        "user_rows": 1,
+        "transcript_msgs": 232
+      },
+      {
+        "session": "node-a411eebe",
+        "ui_rows": 1,
+        "user_rows": 1,
+        "transcript_msgs": 110
+      },
+      {
+        "session": "node-7e3dd576",
+        "ui_rows": 1,
+        "user_rows": 1,
+        "transcript_msgs": 210
+      },
+      {
+        "session": "node-70ae565e",
+        "ui_rows": 1,
+        "user_rows": 1,
+        "transcript_msgs": 48
+      }
+    ]
+  },
+  "B_boot_recovery_window": {
+    "claims": 7,
+    "resume": 4,
+    "failed": 3,
+    "blank_after_claim": 2,
+    "inject_only_after_claim": 1,
+    "measurable": 3,
+    "rows": [
+      {
+        "session": "node-cd843ea1",
+        "claim": "claimed (resume): resume (sessionRef=node-cd843ea1 msgs=51)",
+        "transcript_msgs": 67,
+        "post_claim_msgs": 16,
+        "post_claim_rows": 0,
+        "post_claim_ai_tool": 0,
+        "post_claim_user": 0
+      },
+      {
+        "session": "node-412b07cf",
+        "claim": "failed (class c): crash recovery: session transcript lost/corrupt (sessionRef=no",
+        "transcript_msgs": 0,
+        "post_claim_msgs": 0,
+        "post_claim_rows": 0,
+        "post_claim_ai_tool": 0,
+        "post_claim_user": 0
+      },
+      {
+        "session": "node-2811e86e",
+        "claim": "failed (class c): crash recovery: session transcript lost/corrupt (sessionRef=no",
+        "transcript_msgs": 0,
+        "post_claim_msgs": 0,
+        "post_claim_rows": 0,
+        "post_claim_ai_tool": 0,
+        "post_claim_user": 0
+      },
+      {
+        "session": "node-2b0afd87",
+        "claim": "claimed (resume): resume (sessionRef=node-2b0afd87 msgs=55)",
+        "transcript_msgs": 186,
+        "post_claim_msgs": 186,
+        "post_claim_rows": 9,
+        "post_claim_ai_tool": 0,
+        "post_claim_user": 9
+      },
+      {
+        "session": "node-b03f8134",
+        "claim": "failed (class c): crash recovery: session transcript lost/corrupt (sessionRef=no",
+        "transcript_msgs": 0,
+        "post_claim_msgs": 0,
+        "post_claim_rows": 0,
+        "post_claim_ai_tool": 0,
+        "post_claim_user": 0
+      },
+      {
+        "session": "node-dd601e74",
+        "claim": "claimed (resume): resume (sessionRef=node-dd601e74 msgs=335, bgWait cleared: 5 b",
+        "transcript_msgs": 335,
+        "post_claim_msgs": 0,
+        "post_claim_rows": 0,
+        "post_claim_ai_tool": 0,
+        "post_claim_user": 0
+      },
+      {
+        "session": "node-b0fb86a4",
+        "claim": "claimed (resume): resume (sessionRef=node-b0fb86a4 msgs=81)",
+        "transcript_msgs": 131,
+        "post_claim_msgs": 50,
+        "post_claim_rows": 0,
+        "post_claim_ai_tool": 0,
+        "post_claim_user": 0
+      }
+    ]
+  },
+  "C_device_leg_samples": {
+    "delegate_records": 990,
+    "delegated_by_hits": 0
+  }
+}

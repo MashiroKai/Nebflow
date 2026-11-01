@@ -528,6 +528,30 @@ $task"""
         resources = resources,
         parentDepth = 0,
         parentRef = Some(proxyRef),
+        // ── wsSend 判定（wsSend 桥接批 2026-11-01 · 同类可疑点①）＝**不修**，理由三条 ──
+        // 参照系 = 已修好的三条腿：续聊腿（MailTool.continueDelegate → ctx.wsSend）、
+        // 新鲜派发腿（DelegateTool.spawnKernel → ctx.wsSend）、外置执行器续聊腿
+        // （ExternalSessionRunner.continueExternal → ctx.wsSend）——三者桥的都是**一条
+        // WebSocket 连接上的录制 send**（`makeRecordingWsSend`：按帧内 nodeSessionId 落盘
+        // ＋ wsHub 广播）。本腿没有这个对象可桥：
+        //  ① **无连接上下文**：spawn 由对端经 Neblink 数据通道（presence `sendData` /
+        //     relay 兜底）投来，本进程侧根本没有「发起 spawn 的会话连接」——`ctx.wsSend`
+        //     这个桥的两端缺一端，桥不出来。
+        //  ② **进程内无全局广播单例可替代**：`WsHub` 由 GatewayMain 局部构造（只有那一层
+        //     有 `wsHub`），本对象的装配缝 `initialize(resources)` 只拿到
+        //     AgentRuntimePort（core 端口，无 broadcast 成员；core 层禁 import gateway，
+        //     scripts/check-scala-layers.mjs 门禁）。要让它持有进程级 sink = 新增一条
+        //     全局广播面（贯通 GatewayMain → initialize → 本处），而换来的只有 live 流：
+        //     广播不是录制，设备侧会话的 ai/tool 行照样不落 `.ui.json` ⇒ **报障形态
+        //     （面板正文空白）不会因此消失**，只是从「完全空白」变成「live 可见、重开
+        //     仍空白」。半修比不修更难判读。
+        //  ③ **无消费者证据**：`~/.stand/delegates/*.json` 990 条记录中 `delegatedBy`
+        //     命中 **0**（本机从未收到过设备派活）⇒ 无实盘样本、无报障面；该会话的
+        //     结果面经 `resultProxyBehavior` 折成 delegate-result 回投 host，host 面板渲染
+        //     的是**父会话**，不是这条设备侧会话。
+        // ⇒ 真正能根治的修法 = 连接无关的进程级 recorder（按帧内 nodeSessionId 落盘 ＋
+        //   广播），届时本处与 boot 重挂腿（ProjectCrashRecovery）一并接上——列为本批
+        //   开放项 F2，禁含糊放过：本注释即判据，改动前先读它。
         wsSend = None,
         parentSessionId = Some(parentSessionId),
         rootSessionId = rootSessionId,

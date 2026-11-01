@@ -3,6 +3,7 @@ package nebflow.core.project
 import cats.effect.IO
 import cats.effect.std.Semaphore
 import cats.syntax.all.*
+import io.circe.Json
 import nebflow.core.delegate.DelegateRegistry
 import nebflow.shared.{Defaults, NebflowLogger}
 
@@ -258,14 +259,39 @@ object ProjectCrashRecovery:
     // 本工程测试 JVM 下 sys.props 注入静默失效（BootCrashRecoverySpec 先例），重挂宿主
     // 的确定性腿经显式参数注入。
     reportGateHold: Option[Boolean] = None,
-    rootNotifyQuietMs: Option[Long] = None
+    rootNotifyQuietMs: Option[Long] = None,
+    /**
+     * 重挂宿主的流帧出口（**wsSend 桥接批 2026-11-01**；与 `startupMount` 的
+     * `mountAll(wsSend = …)` 同一契约、同一缺省语义）。
+     *
+     * 为什么必须由调用方给：本 sweep 在 **boot 期**跑，进程里没有任何控制台连接
+     * （无 `ctx.wsSend` 可桥——那是 continueDelegate 的形态）。改前此处（经
+     * `recoverDelegateScopeOn`）恒传 `None` ⇒ `DelegateFlowHosts.mount` 把
+     * `NodeEngine.wsSendFn` 退化成 `(_) => IO.unit`（DelegateFlowHosts.scala:165）⇒
+     * 恢复窗口里 node-* 会话的**全部流帧在发射处被吞**：既无 live 广播，也到不了
+     * 录制层（`WebSocketRoutes#makeRecordingWsSend` 按帧内 `nodeSessionId` 落盘）⇒
+     * 重挂作用域的节点会话面板只剩注入行。同一退化的第二处损失 = `emitScopeEvent`
+     * （DelegateFlowHosts.scala:396 的方法，内部 :400 的 `wsSend.fold(IO.unit)`）——
+     * 作用域 flow-map 事件（nodeUpdated/nodeCompleted 等）同样静默丢失，恢复期间
+     * Flow Map 面板零事件。
+     *
+     * 缺省 `None` = 逐字旧形态（无广播载体的调用方/spec 桩面零改动）；生产唯一调用点
+     * [[nebflow.gateway.GatewayMain]] boot 链传**真实广播**（`wsHub.broadcast`），
+     * 与 startupMount 的 #28 接线同源。
+     *
+     * 🔴 诚实边界（本参数不覆盖的面，见批报告开放项）：`wsHub.broadcast` 是**广播**
+     * 不是**录制**——重挂会话的 ai/tool 行仍不会落 `.ui.json`（这是项目引擎普遍
+     * 持有的同一形态，非遗漏：boot 挂载的面板历史缺口属「缺进程级 recorder」这条
+     * 更大口径，需另批引入连接无关的录制腿；本批只消除「帧根本不出进程」这一段）。
+     */
+    wsSend: Option[Json => IO[Unit]] = None
   ): IO[Int] =
     DelegateFlowHosts.sweepRoots.flatMap { roots =>
       roots
         .traverse { ws =>
           DelegateFlowHosts.scopeDirs(ws).flatMap { dirs =>
             dirs.traverse { dir =>
-              recoverDelegateScope(ws, dir.last, concurrency, reportGateHold, rootNotifyQuietMs)
+              recoverDelegateScope(ws, dir.last, concurrency, reportGateHold, rootNotifyQuietMs, wsSend)
                 .handleErrorWith(e =>
                   logger
                     .error(
@@ -285,7 +311,8 @@ object ProjectCrashRecovery:
     scope: String,
     concurrency: Int,
     reportGateHold: Option[Boolean],
-    rootNotifyQuietMs: Option[Long]
+    rootNotifyQuietMs: Option[Long],
+    wsSend: Option[Json => IO[Unit]]
   ): IO[Int] =
     DelegateRegistry.find(scope) match
       case None =>
@@ -296,7 +323,8 @@ object ProjectCrashRecovery:
           engineCwd = baseWorkspace,
           concurrency,
           reportGateHold,
-          rootNotifyQuietMs
+          rootNotifyQuietMs,
+          wsSend
         )
       case Some(rec) =>
         recoverDelegateScopeOn(
@@ -306,7 +334,8 @@ object ProjectCrashRecovery:
           engineCwd = scala.util.Try(os.Path(rec.cwd)).map(_.toString).getOrElse(baseWorkspace),
           concurrency,
           reportGateHold,
-          rootNotifyQuietMs
+          rootNotifyQuietMs,
+          wsSend
         )
 
   private def recoverDelegateScopeOn(
@@ -316,7 +345,8 @@ object ProjectCrashRecovery:
     engineCwd: String,
     concurrency: Int,
     reportGateHold: Option[Boolean],
-    rootNotifyQuietMs: Option[Long]
+    rootNotifyQuietMs: Option[Long],
+    wsSend: Option[Json => IO[Unit]]
   ): IO[Int] =
     // system/resources 载体：启动挂载后的任一项目 runtime（boot 链序 = startupMount 先行；
     // 零项目挂载 = 无 ActorSystem 载体 → WARN 跳过，宿主扫描器 +30s 兜底重试面不存在
@@ -335,7 +365,14 @@ object ProjectCrashRecovery:
             engineCwd = engineCwd,
             system = system,
             resources = resources,
-            wsSend = None,
+            // wsSend 桥接批（2026-11-01，续聊面板空白批的同类点②）：**改前此处恒 None**。
+            // None ⇒ delegate 作用域引擎的 wsSendFn = no-op（DelegateFlowHosts.scala:165
+            // 的 getOrElse）+ emitScopeEvent 的 fold(IO.unit) ⇒ 恢复窗口里 node-* 会话
+            // 的流帧在发射处被吞（无 live、无录制），作用域 flow-map 事件同样静默——
+            // 与「spawn 腿传真实 wsSend、只有 boot 重挂腿传 None」的形态差异即本行。
+            // 现按调用方给的 wsSend 逐字透传（生产 = GatewayMain boot 链的 wsHub 广播，
+            // 与 startupMount 的 #28 接线同源；None = 旧形态，spec 桩面零改动）。
+            wsSend = wsSend,
             reportGateHold = reportGateHold,
             rootNotifyQuietMs = rootNotifyQuietMs
           )
