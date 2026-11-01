@@ -13,8 +13,14 @@
 //      （auth-trim 批 2026-10-20 改写：设置页「切换账号/退出登录」两键退役，
 //      登录态 = 只读身份行 .neblink-account-ro；键组 switchAccount/logout 族已删。）
 //   T4 ④ 设置页头像双态 — 未登录 → logo 可见/photo 隐藏，点击弹登录 modal；
-//      mock 登录+avatarUrl → photo 可见/logo 隐藏，点击 window.open 个人主页
-//      （与 Activity Bar 头像共用行为：#settings-avatar-entry 转发原生 click）。
+//      mock 登录+avatarUrl → photo 可见/logo 隐藏，点击**只开账号菜单、零跳转**，
+//      再点菜单里的「个人主页」才 window.open（与 Activity Bar 头像共用行为：
+//      #settings-avatar-entry 转发原生 click）。
+//   T4c 已登录态登出入口 — 账号段渲染 #neblink-logout，点击走既有
+//      openEndSessionHandoff(false)（POST /api/neblink/auth/end-session，不带
+//      scenario=switch），点击瞬间按钮 disabled。
+//   🔴 2026-11-01 作者豁免：T3 的 `neblink.logout` 键黑名单与 T4b 的「一点即跳」
+//      断言都是 2026-10-20 auth-trim 口径，作者已豁免 ⇒ 改为「键该在」+「两击才跳」。
 //   T5 ⑤ 更新功能退役（auth-trim 批 2026-10-20 作者令）— 设置页无 检查更新/立即更新/
 //      进度面/绿点任何残留；不发 checkUpdate/doUpdate 帧；updateCheck.js 模块已删；
 //      update.* 键组双语已删；重启服务键与其状态行保留。
@@ -215,6 +221,8 @@ test('T3 NL-ID entry gone (logged-in view), auth buttons removed with read-only 
       // auth-trim（2026-10-20）：两键零残留 + 只读身份行在位。
       switchBtn: !!content.querySelector('#neblink-switch-btn'),
       switchModal: !!content.querySelector('.neblink-switch-modal, #nebflow-switch-account-modal'),
+      // 旧 id `#neblink-logout-btn`（10-20 退役的那枚）不得复活；2026-11 补回的登出
+      // 入口是**另一个 id** `#neblink-logout`（见 T4c），两者不是一回事。
       logout: !!content.querySelector('#neblink-logout-btn'),
       accountBlock: !!content.querySelector('.neblink-logged-in'),
       roLine: content.querySelector('.neblink-account-ro')?.textContent || '',
@@ -236,8 +244,10 @@ test('T3 NL-ID entry gone (logged-in view), auth buttons removed with read-only 
     const zh = (await import('/js/locales/zh-CN.js')).default;
     const en = (await import('/js/locales/en.js')).default;
     const nlKeys = (m) => Object.keys(m).filter(k => k.startsWith('neblink.nlId'));
+    // 2026-11-01 作者豁免：neblink.logout 已从黑名单移出（该键随已登录态退出登录
+    // 入口补回而该存在：账号段次级键 + 头像菜单项共用同一文案）。
     const authKeys = (m) => Object.keys(m).filter(k =>
-      ['neblink.switchAccount', 'neblink.logout', 'neblink.loggingOut', 'neblink.useOtherAccount', 'neblink.currentTag'].includes(k));
+      ['neblink.switchAccount', 'neblink.loggingOut', 'neblink.useOtherAccount', 'neblink.currentTag'].includes(k));
     const raw = await (await fetch('/js/friendsApi.js')).text();
     // strip block comments + line comments, then match code only.
     const apiSrc = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
@@ -285,7 +295,11 @@ test('T4a avatar section logged-out → logo + login modal on click', async ({ p
   expect(modalOn, 'click (logged out) must open the same login modal as the bar avatar').toBe(true);
 });
 
-test('T4b avatar section logged-in → photo + profile window.open on click', async ({ page }) => {
+// 2026-11-01 新口径（作者裁「只修退不出」）：已登录态点头像 = **开账号菜单**，
+// 不再直接跳个人页；「个人主页」是菜单里的第一枚键（第二击才 window.open），
+// 「退出登录」是第二枚键（两击防误触）。**两个阶段都断言** —— 只测第二阶段就
+// 测不出「一点就跳」这个回退。
+test('T4b avatar section logged-in → photo + two-step account menu (first click must not jump)', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN', loggedIn: true, avatarUrl: AVATAR_URL });
   await openSettings(page);
   await page.evaluate(() => {
@@ -306,10 +320,74 @@ test('T4b avatar section logged-in → photo + profile window.open on click', as
   expect(state.src, 'photo src = account avatarUrl').toBe(AVATAR_URL);
   expect(state.textSpan, 'in-area text span must stay removed (avatar-only entry, author 2026-09-06)').toBe(false);
 
+  // ── 阶段 1：点一次 = 只开账号菜单，零跳转（专测「一点就跳」这个回退）──────
   await page.click('#settings-avatar-entry');
+  await page.waitForSelector('.fm-context-menu', { timeout: 5000 });
+  const stage1 = await page.evaluate(() => ({
+    opens: window.__openCalls.length,
+    labels: [...document.querySelectorAll('.fm-context-menu button[role="menuitem"]')].map(b => b.textContent.trim()),
+  }));
+  expect(stage1.opens, 'stage 1: one click must NOT window.open (it only opens the account menu)').toBe(0);
+  expect(stage1.labels, 'account menu must offer exactly [个人主页, 退出登录]').toEqual(['个人主页', '退出登录']);
+
+  // ── 阶段 2：菜单里点「个人主页」= window.open 恰好 1 次（旧路径逐字保留）────
+  const profileUrl = await page.evaluate(async () => (await import('/js/brand.js')).getProfileUrl());
+  await page.locator('.fm-context-menu button[role="menuitem"]', { hasText: '个人主页' }).click();
   await page.waitForTimeout(300);
-  const opens = await page.evaluate(() => window.__openCalls?.length || 0);
-  expect(opens, 'click (logged in) must open the profile page like the bar avatar').toBe(1);
+  const stage2 = await page.evaluate(() => ({
+    opens: window.__openCalls.length,
+    firstUrl: String(window.__openCalls[0]?.[0] ?? ''),
+    menuGone: !document.querySelector('.fm-context-menu'),
+  }));
+  expect(stage2.opens, 'stage 2:「个人主页」must window.open exactly once (the pre-fix path kept verbatim)').toBe(1);
+  expect(stage2.firstUrl, 'profile URL must come from brand.getProfileUrl()').toBe(profileUrl);
+  expect(stage2.menuGone, 'the menu closes after the item click').toBe(true);
+});
+
+// ══ T4c · 已登录态登出入口（2026-11-01「退出登录没有入口」修复批）═════════════
+// 10-20 auth-trim 把「切换账号/退出登录」两键整体退役后，已登录态零登出入口；
+// 本批补回的正是那枚入口 = #neblink-logout（账号段次级键），点击复用既有
+// openEndSessionHandoff(false)。e2e 层能钉到的事实：① 按钮存在且文案 = neblink.logout；
+// ② 点击瞬间 disabled；③ 点击真的发出 POST /api/neblink/auth/end-session，且 body
+// 不带 scenario=switch（带那条 = 「清理并重登」的 continueToLogin=true，语义不同）。
+test('T4c settings account block (logged in) carries the sign-out entry → openEndSessionHandoff(false)', async ({ page }) => {
+  await bootPage(page, { locale: 'zh-CN', loggedIn: true, avatarUrl: AVATAR_URL });
+  // 具体路由注册在 bootPage 的 catch-all '**/api/**' 之后 ⇒ 优先命中（Playwright
+  // 后注册者先匹配），用它证伪「按钮只置了 disabled、没走链路」。
+  const endSession = [];
+  await page.route('**/api/neblink/auth/end-session', async (r) => {
+    endSession.push({ method: r.request().method(), body: r.request().postData() || '' });
+    await r.fulfill({ json: {} });
+  });
+  await openSettings(page);
+  await page.waitForSelector('.neblink-logged-in', { timeout: 8000 });
+  const dump = await page.evaluate(() => {
+    const content = document.getElementById('settings-content');
+    const btn = content.querySelector('#neblink-logout');
+    return {
+      exists: !!btn,
+      text: btn?.textContent?.trim() || '',
+      disabledBefore: btn?.disabled === true,
+      // 旧 id 不得复活（与新 id 是两件事，见 js/neblink.js 该按钮处的命名注）。
+      retiredId: !!content.querySelector('#neblink-logout-btn'),
+    };
+  });
+  expect(dump.exists, 'logged in → #neblink-logout must render in the settings account block').toBe(true);
+  expect(dump.text, 'sign-out key text must be neblink.logout (退出登录)').toBe('退出登录');
+  expect(dump.disabledBefore, 'the sign-out button starts enabled').toBe(false);
+  expect(dump.retiredId, 'the retired #neblink-logout-btn id must stay zero-hit').toBe(false);
+
+  // 打桩 window.open：end-session 的预约窗（about:blank）在静态 harness 里没意义，
+  // 返回 null ⇒ 只走「popup 被拦」的可见提示支，不开真页。
+  await page.evaluate(() => { window.open = () => null; });
+  await page.click('#neblink-logout');
+  // 失败支 5s 后解锁 ⇒ 必须在 5s 内取样。
+  expect(await page.evaluate(() => document.getElementById('neblink-logout')?.disabled === true),
+    'click must flip the button to disabled while the handoff is in flight').toBe(true);
+  await page.waitForTimeout(400);
+  expect(endSession.length, 'click must POST /api/neblink/auth/end-session (the existing openEndSessionHandoff chain)').toBe(1);
+  expect(endSession[0].method, 'end-session is a POST').toBe('POST');
+  expect(endSession[0].body, 'sign-out must not carry scenario=switch (continueToLogin=false)').not.toContain('scenario');
 });
 
 // ══ T5 · ⑤ 更新功能退役（auth-trim 批 2026-10-20 作者令）═══════════════════

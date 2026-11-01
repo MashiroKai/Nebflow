@@ -2049,6 +2049,10 @@ export default {
   // 原「切换账号 / 退出登录」键组（switchAccount/logout/loggingOut/useOtherAccount/
   // currentTag）已随两键退役删除 —— 登出/切号只在官网门户操作。
   'neblink.loggedInAs': '登录账号：{name}',
+  // 退出登录键（2026-11「退出登录没有入口」修复批，作者裁「只修退不出」——本批
+  // 豁免 auth-trim 批「控制台不承担认证态管理」那条裁定的范围，仅限退出）：设置
+  // 账号段的次级键 + 头像菜单项共用同一条文案。切号仍只在官网门户操作。
+  'neblink.logout': '退出登录',
 
   // Dropbox
   'dropbox.tabChat': '对话',
