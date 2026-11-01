@@ -58,7 +58,7 @@ status: open
 
 ## 4. 腿② 阻塞面
 
-- 插件包 `plugins/imagegen/`（**seed 外**——发版产物默认不存在本件）：plugin.json
+- 插件包（能力包目录，见 [[glossary]]）`plugins/imagegen/`（**seed 外**——发版产物默认不存在本件）：plugin.json
   （描述首段「调试中」标记）+ SKILL.md（纪律）+ mcp.json（stdio）+
   `scripts/imagegen_mcp_server.py`（纯 stdlib，MCP 2025-06-18 子集）。
 - MCP server 把 `generate_image` 翻译成本机环回 `POST /api/imagegen`（引擎侧

@@ -26,7 +26,7 @@ scope: 手机端「项目」页布局（mobileLayer.css P8 块）/ Flow Map 无�
 | M1 单列 | ≥5 卡同 x、y 严格递增（列数=1） |
 | M2 零横向 overflow | `scroll.scrollWidth ≤ clientWidth` ∧ 文档不横滚 ∧ 计算值 `nowrap` ∧ `overflow-x: hidden` |
 | M3 卡片全宽 | 每卡宽 = 滚动容器内容宽（390−2×12=366） |
-| M4 字段行 | 超长 workspace ellipsis 收敛不撑卡；描述 = 样张 §6 口径单行省略（P8 既批设计非新截断），行盒收敛视口内 |
+| M4 字段行 | 超长 workspace ellipsis 收敛不撑卡；描述 = 样张（设计演示样例，见 [[glossary]]）§6 口径单行省略（P8 既批设计非新截断），行盒收敛视口内 |
 | D1 桌面回归 | 1720 视口 `.team-scroll` 保持 `row`+`wrap`、双卡同排（桌面网格原样，本批零触碰） |
 
 ## 证据与回归读数
