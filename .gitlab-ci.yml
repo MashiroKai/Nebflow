@@ -96,6 +96,14 @@ variables:
   # release 面需全史时按 job 覆盖 GIT_DEPTH: 0）
   GIT_STRATEGY: fetch
   GIT_DEPTH: "1"
+  # checkout 清理面收窄（默认 -ffdx 会删 noindex 的一切，含仓内 cache 目录）：
+  #   · 保留 .cache/（COURSIER_CACHE 落点）→ 依赖缓存跨 job 恒热，compile 腿不再
+  #     每次全量重下（实测 8507：冷缓存时 repo1.maven.org SSL handshake 被掐即红）。
+  #   · 顺带根治 Windows shell executor 的长路径红：git clean 删 coursier 深路径
+  #     （…/listenablefuture-9999.0-empty-to-avoid-conflict-with-guava.jar，>260 字符）
+  #     在 Windows 上 Filename too long → clean 非零退出 → job 在 get_sources 就红。
+  #     保留不删 = 该失败面消失（宿主侧同时已设 git core.longPaths=true 兜底）。
+  GIT_CLEAN_FLAGS: "-ffdx -e .cache"
   # 原 workflow 顶层 env 钉值（2026-10-24 CI 迁移批：Metaspace OOM 治本组合）；
   # fork 出的测试 JVM 不受此影响（build.sbt MaxRAMPercentage 单点管辖）。
   SBT_OPTS: "-Xms512m -Xmx3g -XX:MaxMetaspaceSize=2g"
@@ -273,6 +281,11 @@ compile-mac:
   timeout: 30m
   needs: []
   cache: *cache_sbt_mac
+  # 依赖面出网抖动（实测 8507：repo1.maven.org SSL handshake 被掐，冷缓存时必红）
+  # → 单腿重试一次；真编译错照旧二次红。
+  retry:
+    max: 1
+    when: [script_failure]
   before_script:
     - *sbt_bootstrap
   script:
@@ -285,6 +298,9 @@ compile-windows:
   needs: []
   # windows runner 须以 --shell bash 注册（Git Bash）；/tmp 走 MSYS TEMP 映射。
   cache: *cache_sbt_windows
+  retry:
+    max: 1
+    when: [script_failure]
   before_script:
     - *sbt_bootstrap
   script:
