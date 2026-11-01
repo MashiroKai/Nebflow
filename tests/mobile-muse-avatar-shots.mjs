@@ -14,8 +14,13 @@
 //      25，头像本体不被 veil 蒙住）；#chat mask 已在手机层释放（堆叠上下文解锁）
 //   ③ Muse 几何：大号圆头像 78px、水平居中（与 #chat 可视盒同心）、名字玻璃
 //      胶囊在头像正下方居中、名字 = 当前会话对方 agent 身份（Spider 腿实文）
+//   ③-b 静止态落位（位置批 2026-11-01 23:0x 作者报障重钉）：组顶进顶带、落点 =
+//      悬浮双键行下缘 64px（16+48，组自带 8px 上内距作呼吸缝）±2px —— 原判据
+//      `组顶 >= chatTop + 88`（渐隐带之下）钉的正是病灶（组被 96px 让位推到视觉
+//      中段，「头像上方一大块空白、像浮在页面中央」）；sticky 未锚定判定保留
 //   ④ 压流锚定（滚动态）：锚顶 ≈ #chat 可视顶（±1.5px）且消息行矩形与锚矩形
-//      相交（行从锚上缘穿过）；渐隐带仍在场（88px，未被本批破坏）
+//      相交（行从锚上缘穿过；判据数全部 .row —— 原口径只数 .row.ai 是存量红，
+//      落底时穿锚的是 user 行，见 probeState 注记）；渐隐带仍在场（88px，未被本批破坏）
 //   ⑤ 头像货源：自定义头像腿 = .agent-avatar-img 可绘（现役身份链）；无头像腿
 //      = .agent-avatar-stand-logo 可绘（2963aeac0 同货源回落，零默认人形）
 //   R0 双引擎双主题零 console error + 桌面腿零 console error
@@ -140,9 +145,18 @@ async function runMobile(engineKind, scheme, withAvatar) {
     await page.waitForTimeout(250);
     const rest = await probeState(page);
     assertCommon(tag, rest, withAvatar);
-    ok(`${tag} 静止态：锚在流内原位（顶让位之下，未锚定）`,
-      !rest.pinnedNow && rest.head.top >= rest.chat.top + 88,
+    /* 静止态几何契约（位置批 2026-11-01 23:0x 作者报障重钉）：原判据
+       `headTop >= chatTop + 88`（= 组顶在渐隐带之下）钉的是**病灶本身** ——
+       组顶 = #chat padding-top 让位（96）把会话身份头推到视觉中段，作者所见
+       「头像上方一大块空白、像浮在页面中央」。重钉为「组顶进顶带、落点 = 悬浮
+       双键行下缘」：组顶 = 64px（16+48，组自带 8px 上内距作呼吸缝），容差 ±2。
+       未锚定判定保留（组在流内原位，非 sticky 锚定格）。 */
+    ok(`${tag} 静止态：组顶进顶带（= 悬浮双键行下缘 64px，不再浮在页面中部）`,
+      !rest.pinnedNow && Math.abs(rest.head.top - rest.chat.top - 64) <= 2,
       `headTop-chatTop=${(rest.head.top - rest.chat.top).toFixed(1)}`);
+    ok(`${tag} 静止态：头像+名字成组居顶（头像顶 = 组顶 + 8px 呼吸缝，名字在其正下）`,
+      Math.abs(rest.head.top - rest.chat.top - 64) <= 2 && rest.av.top - rest.head.top >= 6 && rest.av.top - rest.head.top <= 10,
+      `avTop-headTop=${(rest.av.top - rest.head.top).toFixed(1)}`);
     await page.screenshot({ path: join(OUT, `${tag}-rest.png`) });
 
     // ── 滚动态（Muse 形态）探针 + 实拍 ────────────────────────────
@@ -186,7 +200,13 @@ async function probeState(page) {
     const chatBox = r(chat);
     const headBox = r(head);
     const intersect = (a, b) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
-    const rowsBehind = [...chat.querySelectorAll('.row.ai')]
+    /* 压流探针口径修正（位置批 2026-11-01 23:0x，**存量红非本批引入**）：
+       原探针只数 `.row.ai` ⇒ 落底时穿锚的那一行恰好是 user 行就恒判 0（main
+       同树复跑同样 0，实证在批报告）。判据本意是「消息行从锚上缘穿过」，行类型
+       与语义无关 ⇒ 数全部 `.row`（ai 计数单列备查）。 */
+    const rowsBehind = [...chat.querySelectorAll('.row')]
+      .filter((row) => intersect(r(row), headBox) > 4).length;
+    const aiRowsBehind = [...chat.querySelectorAll('.row.ai')]
       .filter((row) => intersect(r(row), headBox) > 4).length;
     return {
       mobileLayer: document.body.classList.contains('mobile-layer'),
@@ -209,8 +229,10 @@ async function probeState(page) {
       logoFallback: (() => { const img = avatarBtn?.querySelector('.agent-avatar-stand-logo img'); return !!img && img.complete && img.naturalWidth > 0; })(),
       glyphFallback: !!avatarBtn?.querySelector('svg.lucide-user, i[data-lucide="user"], .agent-avatar-initial'),
       head: headBox, chat: chatBox,
+      av: av,
       pinnedNow: Math.abs(headBox.top - chatBox.top) <= 1.5,
       rowsBehind,
+      aiRowsBehind,
       fadeH: r(fade).height,
     };
   });

@@ -57,6 +57,19 @@
  *   （.agent-avatar-img 同构）。收形批④「零浮影零光环」边缘收简随批退役；
  *   border-box ⇒ 44px 外径/dock 胶囊几何零变化。
  *
+ * 会话身份组位置批（作者报障 2026-11-01 23:0x「中间 agent 头像和 agent name
+ * 的位置这么奇怪」）落位 —— 文件尾 ②-b/②-c 新块：
+ *   ① 位置下沉：.g2-chat-head 是 #chat 内容流首项（chatChrome.js:98）⇒ 静止态
+ *      组顶 = #chat padding-top（顶让位常态 96px = 渐隐带 88 + 基线 8），96px
+ *      纯空带把「会话身份头」推到视觉中段（作者「头像浮在页面中央、上方一大块
+ *      空白」）。②-b 以负 margin-top 上提回顶带，落点 = 悬浮双键行下缘 64px
+ *      （16+48，见 #mobile-fab-layer 块），取值纯 CSS 派生自 --muse-head-top +
+ *      env(safe-area-inset-top) ⇒ 让位带变化同帧跟随、零新 JS 状态；sticky
+ *      锚定阈值不变（滚动态仍锚窗口顶）。
+ *   ② 幽灵胶囊：未命名 root 下 sidebar.js:2017-2018 写空串但保留 display:''，
+ *      空 span 仍吃胶囊 padding 画出 28×6px 玻璃条（作者实拍「头像下的暗条」）。
+ *      ②-c `#session-name:empty { display:none }` 收口，名字一到即恢复。
+ *
  * 铁律：本文件全部规则挂在 body.mobile-layer 之下 —— 该类只由 mobile/bootstrap.js
  * 在手机视口（≤768px，与既有 css/mobile.css 折叠点同源）激活。桌面窗口永远不
  * 命中任何一条规则（桌面渲染逐字节不变）；桌面对本文件的唯一感知是 index.html
@@ -2630,6 +2643,38 @@ body.mobile-layer #chat .g2-chat-head {
   z-index: 26;
   gap: 6px;
   padding: 8px 2px 12px;
+}
+/* ②-b 会话身份组上提进顶带（位置批 2026-11-01 23:0x 作者报障「头像和 agent name
+   的位置这么奇怪…头像上方留了一大块空白、像浮在页面中央」）。
+   病灶：.g2-chat-head 是 #chat 内容流首项 ⇒ 静止态组顶 = #chat padding-top（顶让位
+   常态 96px = 渐隐带 88 + 基线 8），组顶之下才是头像 —— 96px 的纯空带把「会话身份
+   头」推到了视觉中段，读成浮在页面中部而不是「顶部居中的会话头」。
+   修法：负 margin-top 把组上提回顶带，落点 = 悬浮双键行下缘（16 + 48 = 64，见下方
+   #mobile-fab-layer 块）—— 组自带 padding-top 8 即成为与双键的呼吸缝，组顶贴着,
+   头像右落 8px；正下方 name 顺次上提，消息列整体随流上移同等距离（负 margin 参与
+   流内布局 ⇒ 后续内容跟动，不留叠压也不产生空洞）。
+   取值纯 CSS 派生、零新 JS 状态：--muse-head-top 已知 = -(#chat padding-top)，故
+   「组顶 = 64 + safe」⇔ margin-top = var(--muse-head-top) + 64px + safe。让位带随
+   横幅/键盘变化时 JS 重写该变量，上提量同一帧跟随（不增量叠加、不写死 96）。
+   回退值 -8px 与 chat.css `#chat { padding: 8px 0 36px }` 的基线让位同值 ⇒ CSS 先于
+   JS 落地的首帧即已正确落位（-8 + 64 = 56，加基线 padding 8 = 组顶 64），不产生
+   「先下推再上收」的跳变；--muse-head-top 由 chatChrome.activateChatChrome 建层后
+   同帧写入，随后 RO 与让位带变化同步（横幅/键盘档同一帧跟随）。
+   安全区：悬浮双键同为 top: calc(16px + safe)（见 #mobile-fab-layer 块），故上提量
+   同加 env(safe-area-inset-top) —— 刘海档组顶与双键下缘的 8px 关系逐像素保持。
+   sticky 语义不变：上提只改静止态落点，滚动时 top 仍由 --muse-head-top 锚窗口顶
+   （负 margin 不改 sticky 锚定阈值，实测滚动态组顶仍 = #chat 顶）。 */
+body.mobile-layer #chat .g2-chat-head {
+  margin-top: calc(var(--muse-head-top, -8px) + 64px + env(safe-area-inset-top, 0px));
+}
+/* ②-c 无名档幽灵胶囊收口（同批）：#session-name 在「root 未命名」态由
+   sidebar.updateHeaderSessionName 写空串（2026-10-06 N1 裁定：无名 root 标题区为空
+   串，机制名永不作显示回落）。空串 span 仍吃本块胶囊的 padding（3px 14px）⇒ 画出一枚
+   28×6px 的幽灵玻璃条挂在头像下方（作者实拍所见头像下的小暗条），既不是名字也不是
+   间距。空名时整枚胶囊退出渲染 ⇒ 组收敛为「头像 + 克制下白」，名字一到即恢复（:empty
+   仅命中无子节点无文本节点，故不吃「加载中」态）。 */
+body.mobile-layer #chat .g2-chat-head #session-name:empty {
+  display: none;
 }
 /* ③ 大号圆头像（基座 52px → 78px；底/描边/浮影/glass-control 缘沿用基座档） */
 body.mobile-layer #chat .g2-chat-head #agent-avatar-btn {

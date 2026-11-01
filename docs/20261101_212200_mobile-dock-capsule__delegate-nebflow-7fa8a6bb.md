@@ -1,4 +1,14 @@
+---
+type: design
+status: implemented
+---
+
 # dock 悬浮胶囊批（作者令 2026-11-01 21:07）—— 手机端底 dock 胶囊化 + 输入间隙
+
+> 位置批补注（2026-11-01 23:5x，`delegate-nebflow-9c9ef879`）：本文件原缺
+> [[glossary#^front-matter]]，是 vault R1 校验的唯一存量违规（该批文档被 [[20261101_222500_composer-mobile-slim__delegate-nebflow-6e995fd9]]
+> 与 [[20261101_235748_chat-head-position-fix__delegate-nebflow-9c9ef879]] 双向引用，
+> 断链不受影响）。补 `type: design` / `status: implemented` 两行收口，正文一字未动。
 
 - 批次：delegate-nebflow-7fa8a6bb · 分支 `delegate/delegate-nebflow-7fa8a6bb`
 - 作者令：21:07 实拍（uploads/687436871179875_IMG_1672.jpg）两件——
