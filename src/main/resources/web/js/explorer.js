@@ -16,6 +16,7 @@ import { appendRefToActiveView } from './input.js';
 import { showSidePanel } from './activityBar.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+import { withFocusKey } from './focusTrap.js';
 
 // explorer.js 拆分(FE组件化批次五 2026-09-28):选择状态族与文件规则小簇迁至 js/explorer/
 // 子模块 —— selection.js(多选模型族,簇私态 selectedPaths/anchorPath 整态随迁)、
@@ -886,10 +887,15 @@ function renderTree() {
   // index.html 是 B4 的独占文件（计划 §四），树语义归本模块。
   body.setAttribute('role', 'tree');
   body.setAttribute('aria-label', t('explorer.title') || 'Files');
-  clearSelection();
-  body.innerHTML = '';
-  // Root-level listing — path "" means project root
-  body.appendChild(buildDirNode('', true, 0));
+  // B3-2：整树重建是「重渲丢焦点」最典型的一面 —— 旧行节点全被换掉。行自带
+  // `data-focus-key="explorer:<path>"`（B1-1 的生产者），所以按 key 就能把焦点
+  // 送回**同一路径的新行**；没有这条接线时，刷新一次树焦点就掉回 body。
+  withFocusKey(body, () => {
+    clearSelection();
+    body.innerHTML = '';
+    // Root-level listing — path "" means project root
+    body.appendChild(buildDirNode('', true, 0));
+  });
   syncWatch();
 }
 

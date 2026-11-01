@@ -13,6 +13,7 @@
 import state from './state.js';
 import { sendWs } from './ws.js';
 import { t } from './i18n.js';
+import { pushLayer, popLayer } from './focusTrap.js';
 import { buildProfilePane } from './agentProfile.js';
 
 /** Currently active tab scope. */
@@ -64,14 +65,19 @@ export function openMergedPanel(pane = 'memory') {
   memorySessionId = state.activeSessionId;
   clearMemoryCache();
   document.getElementById('memory-modal').classList.add('show');
-  document.getElementById('memory-overlay').classList.add('on');
+  const ov = /** @type {HTMLElement} */ (document.getElementById('memory-overlay'));
+  ov.classList.add('on');
+  // B4：合并面板（记忆 / 档案）入层栈，Tab 不再跑到层外。
+  pushLayer(ov, { name: 'memory' });
   switchPane(pane);
 }
 
 /** Close the memory modal. */
 export function closeMemoryModal() {
   document.getElementById('memory-modal').classList.remove('show');
-  document.getElementById('memory-overlay').classList.remove('on');
+  const ov = document.getElementById('memory-overlay');
+  if (ov) popLayer(ov); // B4：出栈 + 回焦
+  document.getElementById('memory-overlay')?.classList.remove('on');
 }
 
 /** Switch tab — cache current content first. */

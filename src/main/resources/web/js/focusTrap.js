@@ -106,22 +106,23 @@ export function focusables(container) {
  */
 export function captureFocusKey(root) {
   const el = document.activeElement;
-  if (!(el instanceof HTMLElement) || !root.contains(el)) return null;
+  if (!(el instanceof HTMLElement) || el === document.body || !root.contains(el)) return null;
   if (el.id) return { kind: 'id', value: el.id };
   const dk = el.getAttribute('data-focus-key');
   if (dk) return { kind: 'data', value: dk };
-  return { kind: 'path', value: domPath(el, root) };
+  const path = domPath(el, root);
+  return path ? { kind: 'path', value: path } : null; // 根节点自身没有 key（无从恢复）
 }
 
 /**
- * 重渲之后按 key 找回新树里的对应节点并落焦。
- * 找不到 → 回退到 root 本身（并派发 `nf-focus-fallback` 供业务观察）。
+ * 按 key 在 root 现有树里定位节点（**纯查询**，不落焦、不派发事件）。
+ * 三级降级：`#id` → `[data-focus-key]` → DOM 路径，与 captureFocusKey 的产出逐级对应。
  * @param {HTMLElement} root
  * @param {FocusKey|null} key
- * @returns {boolean} 精确命中 true / 走了回退 false
+ * @returns {HTMLElement|null}
  */
-export function restoreFocusKey(root, key) {
-  if (!key) return false;
+function locateFocusKey(root, key) {
+  if (!key) return null;
   /** @type {HTMLElement|null} */
   let hit = null;
   if (key.kind === 'id') {
@@ -133,7 +134,20 @@ export function restoreFocusKey(root, key) {
   } else {
     hit = byPath(root, key.value);
   }
-  if (hit && hit.isConnected) {
+  return hit && hit.isConnected ? hit : null;
+}
+
+/**
+ * 重渲之后按 key 找回新树里的对应节点并落焦。
+ * 找不到 → 回退到 root 本身（并派发 `nf-focus-fallback` 供业务观察）。
+ * @param {HTMLElement} root
+ * @param {FocusKey|null} key
+ * @returns {boolean} 精确命中 true / 走了回退 false
+ */
+export function restoreFocusKey(root, key) {
+  if (!key) return false;
+  const hit = locateFocusKey(root, key);
+  if (hit) {
     hit.focus({ preventScroll: true });
     return true;
   }
@@ -141,6 +155,37 @@ export function restoreFocusKey(root, key) {
   root.focus({ preventScroll: true });
   root.dispatchEvent(new CustomEvent('nf-focus-fallback', { bubbles: true, detail: { key } }));
   return false;
+}
+
+/**
+ * 重渲保焦的标准接线：**重渲前 capture → 重渲 → 重渲后 restore**。
+ *
+ * 为什么要有这个包装而不是各业务自己写两行：B3-2 之前 `captureFocusKey` /
+ * `restoreFocusKey` 协议齐全但**外部调用点 0**，真正在跑的只有 popLayer 里另一份
+ * 只认 `#id` 的内联逻辑 —— 协议写好了没人调，等于没做。收成一个函数之后，
+ * 每个业务面只有一处接线点，`keyboard-check` 的静态断言（接线点数）与运行时断言
+ * （重渲后 activeElement 的 key 不变）都指得着同一个东西。
+ *
+ * 时序：同步重渲（innerHTML 重建）当场就能命中；异步渲染（数据回来再画）走一帧
+ * rAF 二次尝试。**只在两次都失败时**才派发 `nf-focus-fallback`（否则异步面会刷出
+ * 一串假告警，把真告警淹掉）。
+ * @template T
+ * @param {HTMLElement|null} root
+ * @param {() => T} mutate 重渲动作
+ * @returns {T} mutate 的返回值（接线点不改变原函数契约）
+ */
+export function withFocusKey(root, mutate) {
+  if (!root) return mutate();
+  const key = captureFocusKey(root);
+  const out = mutate();
+  if (!key) return out;
+  const hit = locateFocusKey(root, key);
+  if (hit) {
+    hit.focus({ preventScroll: true });
+    return out;
+  }
+  requestAnimationFrame(() => { restoreFocusKey(root, key); });
+  return out;
 }
 
 /**
@@ -195,11 +240,23 @@ function cssEscape(s) {
  * @returns {Layer}
  */
 export function pushLayer(container, opts = {}) {
+  // 幂等：同一个容器重复打开（壳有多个入口：命令面板 / 活动栏 / 侧栏 / 移动层）
+  // 不得压出第二层 —— 那会让 layerDepth 失真、两个 Tab 陷阱互相打架。已在栈内
+  // 则复用那一层（刷新 opts 并重新落焦）。
+  const already = stack.find((l) => l.container === container);
+  if (already) {
+    already.opts = opts;
+    const again = opts.initial || container;
+    ensureFocusable(container);
+    again.focus({ preventScroll: true });
+    return { container, name: already.name, release: () => { popLayer(container); } };
+  }
   const prev = document.activeElement;
   const restoreEl = prev instanceof HTMLElement ? prev : null;
-  const restoreKey = restoreEl && restoreEl.id
-    ? /** @type {FocusKey} */ ({ kind: 'id', value: restoreEl.id })
-    : null;
+  // B3-2：回焦 key 从「只认 #id」换成协议的**三级 key**（`#id` → `data-focus-key`
+  // → DOM 路径）。改造前这里只有 id 一支 —— 打开层的那个按钮若没有 id（叠卡、
+  // 树行、会话行都是这种），关闭时就回不去。协议早已写好，缺的正是这条接线。
+  const restoreKey = captureFocusKey(document.body);
 
   /** @type {LayerEntry} */
   const entry = {
@@ -230,14 +287,16 @@ export function popLayer(container) {
   const i = stack.findIndex((l) => l.container === container);
   if (i < 0) return false;
   const [entry] = stack.splice(i, 1);
-  // 回焦：优先「元素还在文档里」，否则按 id 在新树里找（重渲场景）
+  // 回焦：① 打开时那个元素还在文档里就还给原节点；② 否则按**同一个 key 协议**
+  // 在新树里找（重渲把旧节点换掉了的场景 —— 改造前这条腿只认 id）；③ 都失败
+  // 才派发 `nf-focus-fallback`（与 restoreFocusKey 同一事件、同一语义）。
   /** @type {HTMLElement|null} */
   let target = entry.restoreEl && entry.restoreEl.isConnected ? entry.restoreEl : null;
-  if (!target && entry.restoreKey && entry.restoreKey.kind === 'id') {
-    const el = document.getElementById(entry.restoreKey.value);
-    if (el instanceof HTMLElement) target = el;
-  }
+  if (!target && entry.restoreKey) target = locateFocusKey(document.body, entry.restoreKey);
   if (target) target.focus({ preventScroll: true });
+  else if (entry.restoreKey) {
+    document.body.dispatchEvent(new CustomEvent('nf-focus-fallback', { bubbles: true, detail: { key: entry.restoreKey, from: entry.name } }));
+  }
   if (!stack.length) uninstall();
   return true;
 }

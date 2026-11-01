@@ -545,6 +545,233 @@ console.log('G 叠卡 + 中心环');
   await s.close();
 }
 
+// ── H 保焦协议接线（B3-2：**生产者/消费者计数**断言）───────────────────────
+// 这一组是本计划 §7.3 那条纪律的落地：不测「协议函数存不存在」，测「有几个地方
+// 在调它 / 在写这个键 / 在听这个事件」。`captureFocusKey` 用「外部调用点 0」
+// 钉了整整一天，就是「代码存在」被当成「接上了」的代价。
+console.log('H 保焦协议接线');
+{
+  const { readFileSync: rf, readdirSync: rd } = await import('node:fs');
+  const { join: jn } = await import('node:path');
+  const { fileURLToPath: f2p } = await import('node:url');
+  const jsDir = jn(f2p(new URL('..', import.meta.url)), 'src', 'main', 'resources', 'web', 'js');
+  /** 递归收集 js/ 全部源文件 */
+  const walk = (/** @type {string} */ dir) => rd(dir, { withFileTypes: true })
+    .flatMap((e) => (e.isDirectory() ? walk(jn(dir, e.name)) : (e.name.endsWith('.js') ? [jn(dir, e.name)] : [])));
+  const files = walk(jsDir);
+  /** @param {RegExp} re @param {string} [skipBase] */
+  const count = (re, skipBase) => files
+    .filter((f) => !(skipBase && f.endsWith(skipBase)))
+    .map((f) => ({ f, n: (rf(f, 'utf8').match(re) || []).length }))
+    .filter((x) => x.n > 0);
+
+  // ⑭ 六个业务面接上了（withFocusKey 调用点；定义在 focusTrap.js，不算接线）
+  const wired = count(/withFocusKey\s*\(/g, 'focusTrap.js');
+  const wiredSites = wired.reduce((s, x) => s + x.n, 0);
+  check('⑭ withFocusKey 外部接线点 ≥ 6（6 个业务面）', wiredSites >= 6,
+    `${wiredSites} 处：${wired.map((x) => x.f.split(/[\\/]/).pop() + '×' + x.n).join(', ')}`);
+
+  // ⑮ data-focus-key 生产者 ≥ 4（树行 / 叠卡 / 会话行 / 侧栏会话行）——
+  //    改造前这条通道「读者齐全、生产者 0」
+  const producers = count(/dataset\.focusKey\s*=|setAttribute\(\s*['"]data-focus-key['"]/g);
+  const prodSites = producers.reduce((s, x) => s + x.n, 0);
+  check('⑮ data-focus-key 生产者 ≥ 4（读/写两侧都非 0）', prodSites >= 4,
+    `${prodSites} 处：${producers.map((x) => x.f.split(/[\\/]/).pop() + '×' + x.n).join(', ')}`);
+
+  // ⑯ nf-focus-fallback 消费者 ≥ 1 + _pptxTeardown 赋值 ≥ 1（改造前两者都是 0）
+  const listeners = count(/addEventListener\(\s*['"]nf-focus-fallback['"]/g);
+  const assignments = count(/\._pptxTeardown\s*=(?!=)/g);
+  const listenersN = listeners.reduce((s, x) => s + x.n, 0);
+  const assignN = assignments.reduce((s, x) => s + x.n, 0);
+  check('⑯ nf-focus-fallback 监听者 ≥ 1 且 _pptxTeardown 有赋值来源',
+    listenersN >= 1 && assignN >= 1,
+    `listeners=${listenersN}(${listeners.map((x) => x.f.split(/[\\/]/).pop()).join(',')}) assignments=${assignN}(${assignments.map((x) => x.f.split(/[\\/]/).pop()).join(',')})`);
+}
+{
+  // ⑰ 运行时：文件树整树重渲后，焦点回到**同一 key 的新行**（节点身份变了）
+  const s = await fresh();
+  const before = await s.page.evaluate(() => {
+    const r = /** @type {HTMLElement|null} */ (document.querySelector('#explorer-tree .explorer-item[role="treeitem"]'));
+    if (!r) return null;
+    r.focus();
+    /** @type {any} */ (r).__probeOld = '1';
+    return { key: r.getAttribute('data-focus-key') };
+  });
+  await s.page.evaluate(async () => {
+    const m = await import('/js/explorer.js');
+    m.refreshExplorer('probe-session'); // 导出入口 → renderTree()（整树重建）
+  });
+  await s.page.waitForTimeout(400);
+  const after = await s.page.evaluate(() => {
+    const el = /** @type {any} */ (document.activeElement);
+    return { key: el?.getAttribute?.('data-focus-key') || null, stillOldNode: el?.__probeOld === '1' };
+  });
+  check('⑰ 整树重渲后焦点回到同一 key 的新行（旧节点已被替换）',
+    !!before && !!before.key && after.key === before.key && after.stillOldNode === false,
+    `key ${before && before.key} → ${after.key}（旧节点=${after.stillOldNode}）`);
+  await s.close();
+}
+{
+  // ⑱ 层栈回焦走**三级 key**（改造前 popLayer 只认 #id）：打开层时焦点在一个
+  //    没有 id、只有 data-focus-key 的按钮上，重渲把该节点换掉后再弹层。
+  const s = await fresh();
+  const r = await s.page.evaluate(async () => {
+    const ft = await import('/js/focusTrap.js');
+    const opener = document.createElement('button');
+    opener.setAttribute('data-focus-key', 'probe:opener');
+    opener.textContent = 'opener';
+    document.body.appendChild(opener);
+    opener.focus();
+    const ov = document.createElement('div');
+    ov.innerHTML = '<button>inside</button>';
+    document.body.appendChild(ov);
+    ft.pushLayer(ov, { name: 'probe-layer' });
+    const freshBtn = document.createElement('button');
+    freshBtn.setAttribute('data-focus-key', 'probe:opener');
+    freshBtn.textContent = 'opener';
+    opener.replaceWith(freshBtn); // 模拟业务重渲：旧节点脱离文档
+    ft.popLayer(ov);
+    const el = document.activeElement;
+    const out = { key: el?.getAttribute?.('data-focus-key') || null, isNewNode: el === freshBtn, depth: ft.layerDepth() };
+    ov.remove(); freshBtn.remove();
+    return out;
+  });
+  check('⑱ popLayer 按 data-focus-key 回焦到新节点（旧内联逻辑只认 #id 会落空）',
+    r.key === 'probe:opener' && r.isNewNode === true && r.depth === 0, JSON.stringify(r));
+  await s.close();
+}
+{
+  // ⑲ 运行时：nf-focus-fallback 真的被业务消费（计数器 +1，且带得上 key）
+  const s = await fresh();
+  const r = await s.page.evaluate(async () => {
+    const ft = await import('/js/focusTrap.js');
+    const before = window.__nfFocusFallback?.total ?? -1;
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    ft.restoreFocusKey(root, { kind: 'data', value: 'probe:vanished' });
+    const mid = window.__nfFocusFallback?.total ?? -1;
+    // popLayer 腿：打开层时的元素被摘掉，回焦失败也要能观测到
+    const opener = document.createElement('button');
+    opener.setAttribute('data-focus-key', 'probe:gone');
+    document.body.appendChild(opener);
+    opener.focus();
+    const ov = document.createElement('div');
+    document.body.appendChild(ov);
+    ft.pushLayer(ov, { name: 'probe-layer2' });
+    opener.remove();
+    ft.popLayer(ov);
+    const after = window.__nfFocusFallback?.total ?? -1;
+    const last = window.__nfFocusFallback?.last || null;
+    root.remove(); ov.remove();
+    return { before, mid, after, last };
+  });
+  check('⑲ nf-focus-fallback 被消费（restore + popLayer 两条腿各计一次）',
+    r.mid === r.before + 1 && r.after === r.before + 2 && r.last && r.last.kind === 'data',
+    JSON.stringify(r));
+  await s.close();
+}
+
+// ── I 九个弹层壳入层栈（B4：每壳三判 —— 入栈 / Tab 不逃出 / 关闭出栈且焦点逃出壳）
+// 为什么是这三条：壳以前也在「显示/隐藏」自己，缺的是**栈内身份**（layerDepth 看得见
+// 它）与**关闭回焦**。只测「面板打开了」等于什么也没测 —— 那件事改造前就成立。
+console.log('I 弹层壳入层栈');
+{
+  const { readFileSync: rf2, readdirSync: rd2 } = await import('node:fs');
+  const { join: jn2 } = await import('node:path');
+  const { fileURLToPath: f2p2 } = await import('node:url');
+  const webRoot = jn2(f2p2(new URL('..', import.meta.url)), 'src', 'main', 'resources', 'web', 'js');
+  const pushSites = [];
+  const walk2 = (/** @type {string} */ d) => rd2(d, { withFileTypes: true })
+    .flatMap((e) => (e.isDirectory() ? walk2(jn2(d, e.name)) : (e.name.endsWith('.js') ? [jn2(d, e.name)] : [])));
+  for (const f of walk2(webRoot)) {
+    // 定义文件不算入口（focusTrap.js 的 release/pushLayer 自身）；import 行里是
+    // `pushLayer,` 不带括号 ⇒ 天然不命中。
+    if (f.endsWith('focusTrap.js')) continue;
+    const n = (rf2(f, 'utf8').match(/pushLayer\(/g) || []).length;
+    if (n) pushSites.push(f.split(/[\\/]/).pop() + '×' + n);
+  }
+  const total = pushSites.reduce((s, x) => s + Number(x.split('×')[1]), 0);
+  check('㉑ 层栈入口数 3 → ≥ 12（原 3 + 9 个壳）', total >= 12, `${total} 处：${pushSites.join(', ')}`);
+
+  const voiceWired = /pushLayer\(el\.overlay/.test(rf2(jn2(webRoot, 'voiceMode.js'), 'utf8'));
+  check('㉒ 语音面（flag 封存、无法运行期打开）静态接线在 enterVoiceMode 内', voiceWired === true);
+}
+
+/** 9 个壳的运行期验收表（open = 各自的**真实导出入口**，不是手工 classList.add）。 */
+const SHELLS = [
+  { key: 'settings', mod: '/js/sidebar.js', fn: 'openSettingsPanel', args: [], sel: '#settings-overlay', openFlag: 'on', layer: 'settings', expectOpener: true },
+  { key: 'memory', mod: '/js/memory.js', fn: 'openMergedPanel', args: ['memory'], sel: '#memory-overlay', openFlag: 'on', layer: 'memory', expectOpener: true },
+  { key: 'rules', mod: '/js/sidebar/pathRules.js', fn: 'openRulesEditor', args: ['probe-folder', 'probe'], sel: '#rules-overlay', openFlag: 'on', layer: 'rules', expectOpener: true },
+  { key: 'search', mod: '/js/chatSearch.js', fn: 'openSearchModal', args: [], sel: '#search-overlay', openFlag: 'on', layer: 'search', expectOpener: false },
+  { key: 'social', mod: '/js/socialPanel.js', fn: 'openSocialPanel', args: [], sel: '#social-overlay', openFlag: 'on', layer: 'social', expectOpener: false },
+  { key: 'secrets', mod: '/js/secretsPanel.js', fn: 'openSecretsPanel', args: [], sel: '#secrets-overlay', openFlag: 'on', layer: 'secrets', expectOpener: false },
+  { key: 'daemon-config', mod: '/js/daemonPanel.js', fn: 'openDaemonConfig', args: ['probe', null], sel: '#daemon-config-overlay', openFlag: 'open', layer: 'daemon-config', expectOpener: true },
+  { key: 'lightbox', mod: '/js/lightbox.js', fn: 'openLightbox', args: ['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'probe', ''], sel: '.nf-lightbox', openFlag: 'on', layer: 'lightbox', expectOpener: false },
+];
+
+for (const sh of SHELLS) {
+  const s = await fresh({ apiStubs: { '/api/agents': { body: { agents: [] } }, '/api/daemons': { body: { title: 'probe', fields: [] } } } });
+  // 打开器：一个无 id 的按钮 —— 只有层栈的回焦 key 协议能找回来（id 腿不存在）
+  await s.page.evaluate(() => {
+    const b = document.createElement('button');
+    b.id = 'nf-shell-opener';
+    b.textContent = 'opener';
+    document.body.appendChild(b);
+    b.focus();
+    if (window.__nfFocusFallback) window.__nfFocusFallback.total = 0;
+  });
+  const opened = await s.page.evaluate(async ([mod, fn, args]) => {
+    const m = await import(mod);
+    if (typeof m[fn] !== 'function') return { err: 'missing export ' + fn };
+    await m[fn](...(args || []));
+    return { ok: true };
+  }, [sh.mod, sh.fn, sh.args]);
+  await s.page.waitForTimeout(450);
+  const st = await s.page.evaluate(([sel, flag]) => {
+    const shell = document.querySelector(sel);
+    return {
+      exists: !!shell,
+      shown: !!shell && shell.classList.contains(flag),
+      inside: !!shell && shell.contains(document.activeElement),
+    };
+  }, [sh.sel, sh.openFlag]);
+  const depth1 = await layerDepth(s.page);
+  check(`${sh.key}：打开即入层栈（depth=1，焦点在壳内）`,
+    opened.ok === true && st.exists && st.shown && st.inside && depth1 === 1,
+    `${JSON.stringify(opened)} ${JSON.stringify(st)} depth=${depth1}`);
+
+  // Tab ×30 一次不逃出（焦点被抢到壳外的那一拍就是逃逸）
+  let escapedTab = 0;
+  for (let i = 0; i < 30; i++) {
+    await s.page.keyboard.press('Tab');
+    const inside = await s.page.evaluate((sel) => {
+      const shell = document.querySelector(sel);
+      return !!shell && shell.contains(document.activeElement);
+    }, sh.sel);
+    if (!inside) escapedTab++;
+  }
+  check(`${sh.key}：Tab ×30 不逃出壳`, escapedTab === 0, `逃出 ${escapedTab} 次`);
+
+  // Esc 关闭：出栈 + 壳收起 + 焦点离开壳（回焦落点见 expectOpener）
+  await s.page.keyboard.press('Escape');
+  await s.page.waitForTimeout(450);
+  const after = await s.page.evaluate(([sel, flag]) => {
+    const shell = document.querySelector(sel);
+    const el = document.activeElement;
+    return {
+      shown: !!shell && shell.classList.contains(flag),
+      insideShell: !!shell && shell.contains(el),
+      activeId: el && el.id ? el.id : (el ? el.tagName : 'none'),
+    };
+  }, [sh.sel, sh.openFlag]);
+  const depth2 = await layerDepth(s.page);
+  const focusOk = after.insideShell === false && (!sh.expectOpener || after.activeId === 'nf-shell-opener');
+  check(`${sh.key}：Esc 关闭 → 出栈且焦点离开壳${sh.expectOpener ? '（回打开器）' : ''}`,
+    after.shown === false && depth2 === 0 && focusOk,
+    `shown=${after.shown} depth=${depth2} active=${after.activeId}`);
+  await s.close();
+}
+
 await browser.close();
 
 console.log(`\nkeyboard-check: ${pass} passed, ${fail} failed`);

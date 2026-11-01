@@ -36,6 +36,7 @@ import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.j
 import { showChatSkeleton, hideChatSkeleton } from './main/historyIndicators.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+import { withFocusKey, pushLayer, popLayer } from './focusTrap.js';
 // Root agent's DISPLAY name — the single read point shared with onboarding /
 // micOrb / chat / modelPanel (leaf module; no cycle risk).
 import { rootDisplayName, isRootNamed } from './rootName.js';
@@ -117,7 +118,11 @@ export function showPanel(tab) {
  * and render. Shared by the Activity Bar settings button.
  */
 export function openSettingsPanel() {
-  document.getElementById('settings-overlay')?.classList.add('on');
+  const ov = document.getElementById('settings-overlay');
+  ov?.classList.add('on');
+  // B4：设置面板入层栈（本壳有 6 个打开入口：活动栏 / 命令面板 / 会话头 / 移动层，
+  // 全部汇到本函数 ⇒ 单点接线）。Esc 仍由本模块既有 document keydown 收口。
+  if (ov) pushLayer(ov, { name: 'settings' });
   sendWs({type: 'getConfig'});
   sendWs({type: 'getToolResultTtl'}); // #341: fresh TTL echo every open
   renderSettings();
@@ -125,7 +130,9 @@ export function openSettingsPanel() {
 
 /** Close the Settings modal and stop its periodic NebLink refresh. */
 export function closeSettingsPanel() {
-  document.getElementById('settings-overlay')?.classList.remove('on');
+  const ov = document.getElementById('settings-overlay');
+  if (ov) popLayer(ov); // B4：出栈 + 回焦
+  ov?.classList.remove('on');
   scheduleDraft = null;   // #334: closing the panel discards unsaved edits
   if (window._neblinkRefreshTimer) {
     clearInterval(window._neblinkRefreshTimer);
@@ -1879,6 +1886,8 @@ function renderOneSessionItem(s, container, opts = {}) {
     + (state.pinnedSessions.has(s.id) ? ' pinned' : '')
     + (isSelected ? ' selected' : '');
   item.dataset.id = s.id;
+  // B3-2 生产者：会话行的跨重渲稳定 key（重渲后按 key 回焦，见 renderSessionSidebar）。
+  item.dataset.focusKey = `session:${s.id}`;
   item.draggable = true;
   item.addEventListener('dragstart', (e) => {
     const selected = state.selectedSessionIds;
@@ -2026,6 +2035,14 @@ function updateHeaderSessionName() {
 window.addEventListener('nebflow-root-name-change', () => { updateHeaderSessionName(); });
 
 export function renderSessionSidebar(sessionData, activeId) {
+  // B3-2：侧栏整表重建（`sessionList.innerHTML = ''` + 全量重排）会换掉当前聚焦的
+  // `.session-item` / `.folder-item`。重渲前后按 key 回焦，Shift+] 的落脚点不再丢。
+  const list = state.dom.sessionList;
+  return withFocusKey(list instanceof HTMLElement ? list : null, () => renderSessionSidebarInner(sessionData, activeId));
+}
+
+/** 侧栏重建本体（重渲保焦包装见 renderSessionSidebar）。 */
+function renderSessionSidebarInner(sessionData, activeId) {
   state.sessions = sessionData || [];
   const prevActiveId = state.activeSessionId;
   if (activeId) {

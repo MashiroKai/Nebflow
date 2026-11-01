@@ -74,6 +74,7 @@ import { createMsgFooterBadge, renderDurationBadge } from './chat/durationBadges
 // 正常态只渲染块内（框外正文摘除），turn-header 角标展开见 outputTag.js。
 import { applyOutputFace } from './outputTag.js';
 import { bindCollapsibleToggle } from './chat/collapsible.js';
+import { withFocusKey } from './focusTrap.js';
 export { formatDuration, formatLiveDuration, pickThinkingPhrase, createMsgFooterBadge, createDurationBadgeElement, renderDurationBadge } from './chat/durationBadges.js';
 // Pop 族合流（A 侧 pop-upgrade 批单源化）：`popArtifactFromInput` / `openPopArtifact`
 // 的再导出改由下方 A 侧 `./popArtifacts.js` 单源承担（chatSearch.js 既有 import 面
@@ -3705,6 +3706,15 @@ export function clearAttachmentStripAnimated(target) {
 }
 
 export function renderAttachmentPreview(target) {
+  // B3-2：附件条 = `innerHTML` 全量重建 + 每 chip 一个 ✕ 按钮的面 —— 键盘用户正在
+  // 某个 chip 的 ✕ 上按 Enter 时，任何一次重渲都会把节点换掉。重渲前后按 key 回焦
+  // （chips 无 id ⇒ 走协议第三级 DOM 路径：同形重建时结构位序不变）。
+  const box = (target && target.attPreviewEl) || activeView.dom.attPreview;
+  return withFocusKey(box instanceof HTMLElement ? box : null, () => renderAttachmentPreviewInner(target));
+}
+
+/** 附件条重建本体（重渲保焦包装见 renderAttachmentPreview）。 */
+function renderAttachmentPreviewInner(target) {
   // target: optional { attPreviewEl, attachments } for non-primary windows.
   // Defaults to the primary window's attPreview + pendingAttachments so existing
   // call sites are unaffected.
