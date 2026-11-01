@@ -11,6 +11,7 @@ import nebflow.social.outbound.{
   AskPromptCodec,
   FileLeg,
   FileLongShot,
+  OutputBlock,
   PromptAction,
   PromptView,
   RichDegrade,
@@ -1165,12 +1166,29 @@ final class WeixinIlinkBridgePlugin(
    * 逐段即时推送批：把该会话当前缓冲的文本段作为一条独立消息推出。空段
    * （纯工具过程、无正文）不推；推送经 [[pacer]] 排队（段间 ≥1s 按序发）且
    * `.start` 后台跑——绝不阻塞流式事件面（wsHub 广播监听是内联执行）。
+   *
+   * output 块纪律渠道接线批（2026-11-01，作者令「微信端…也要做 output 块剥
+   * 离，只显示 output 块内部的内容」）：段文本先过单一提取源
+   * [[OutputBlock.extract]]——Extracted ⇒ 只推块内拼接（块外叙述不出站，空块
+   * 消费不推）；NoBlocks ⇒ 消费不推（整段无块 ⇒ 无可投递文本，**不回退成发
+   * 全文**）；Unbalanced（`<output>` 开而未闭的流式中间态/散标签）⇒ **HOLD**：
+   * 不消费不推——块可能在后续 delta 里闭合成形，此刻弹出即永远丢失（控制台
+   * 流式纪律「不炸不吞」的渠道面）。判定在 modify 内原子完成，并发 delta 与
+   * 弹窗互不吞段。
    */
   private def flushSegment(sessionId: String): IO[Unit] =
-    pendingRef.modify { m => (m - sessionId, m.getOrElse(sessionId, "")) }.flatMap { text =>
-      if text.trim.isEmpty then IO.unit
-      else pacer.enqueueAsync(reply(sessionId, text, isSegment = true))
-    }
+    pendingRef.modify { m =>
+      val text = m.getOrElse(sessionId, "")
+      OutputBlock.extract(text) match
+        case OutputBlock.Unbalanced => (m, IO.unit)
+        case OutputBlock.NoBlocks   => (m - sessionId, IO.unit)
+        case OutputBlock.Extracted(inner) =>
+          (
+            m - sessionId,
+            if inner.trim.isEmpty then IO.unit
+            else pacer.enqueueAsync(reply(sessionId, inner, isSegment = true))
+          )
+    }.flatten
 
   /**
    * 逐段即时推送批：段级失败的「注明」腿。既有频控/重发边界不动——ret=-2
@@ -1512,10 +1530,18 @@ final class WeixinIlinkBridgePlugin(
    * (媒体等满整轮；纯媒体轮照发，无文字可等也不空等). A session with no bound
    * sender keeps the text leg (its [no-return-address] machinery) and drops
    * the media exactly as the pre-group leg did.
+   *
+   * output 块纪律渠道接线批（2026-11-01）：轮尾文本先过单一提取源
+   * [[OutputBlock.extract]]——文字腿与 caption 都只吃块内拼接（块外叙述不出
+   * 站）；无块 / 围栏内标签 / 散标签轮 ⇒ 无可投递文本，文字腿与 caption 同熄
+   * （**不回退成发全文** —— 作者令），纯媒体轮照发。
    */
   private def flushTurnEnd(sessionId: String, text: String, richs: List[RichProduct]): IO[Unit] =
+    val visible = OutputBlock.extract(text) match
+      case OutputBlock.Extracted(inner) => inner
+      case _                            => ""
     if richs.isEmpty then
-      val textLeg = if text.trim.isEmpty then IO.unit else pacer.enqueue(reply(sessionId, text))
+      val textLeg = if visible.trim.isEmpty then IO.unit else pacer.enqueue(reply(sessionId, visible))
       textLeg
     else
       routesRef.get.flatMap { routes =>
@@ -1524,7 +1550,7 @@ final class WeixinIlinkBridgePlugin(
             // No return address: the text leg owns the WARN/strike/redelivery
             // machinery; the media passes (the pre-group leg's own rule — the
             // text reply logs the same WARN for this session).
-            val textLeg = if text.trim.isEmpty then IO.unit else pacer.enqueue(reply(sessionId, text))
+            val textLeg = if visible.trim.isEmpty then IO.unit else pacer.enqueue(reply(sessionId, visible))
             textLeg
           case Some(sender) =>
             // CARD 产品的 v1 边界日志（内容承载卡 HTML，媒体腿不可转码——正文
@@ -1537,7 +1563,7 @@ final class WeixinIlinkBridgePlugin(
                     "(a card payload is not transcodable); the text reply carries the turn"
                 )
             }
-            val plain = nebflow.social.outbound.OutboundText.toPlain(text)
+            val plain = nebflow.social.outbound.OutboundText.toPlain(visible)
             mediaRuns(richs).flatMap { runs =>
               val captionMode =
                 plain.trim.nonEmpty && plain.length <= WeixinAskLeg.FullTextThreshold &&
@@ -1546,8 +1572,8 @@ final class WeixinIlinkBridgePlugin(
                     case ItemRun(_, _) => false
                   }
               val textLeg =
-                if captionMode || text.trim.isEmpty then IO.unit
-                else pacer.enqueue(reply(sessionId, text))
+                if captionMode || visible.trim.isEmpty then IO.unit
+                else pacer.enqueue(reply(sessionId, visible))
               val mediaLeg =
                 pacer.enqueue(deliverRuns(sender, runs, caption = if captionMode then Some(plain) else None))
               textLeg *> mediaLeg

@@ -335,7 +335,7 @@ val x = 1
 
     for
       _ <- p.rebuildRoutes(BridgeCtx(List(boundMeta("s1", "oc_bound"))))
-      _ <- p.onAgentEvent("s1", delta(raw))
+      _ <- p.onAgentEvent("s1", delta(s"<output>$raw</output>"))
       _ <- p.onAgentEvent("s1", done("s1"))
     yield
       val wire = sent.get().headOption.getOrElse(fail("nothing reached the send seam"))

@@ -216,14 +216,18 @@ class WeixinOutboundSpec extends CatsEffectSuite:
   }
 
   // ───────────────────────── reply flush shape ─────────────────────────
+  //
+  // output 块纪律渠道接线批（2026-11-01）：渠道出站只投 `<output>` 块内拼接
+  // （作者令「不要回退成发全文」）——本节起的轮文本夹具一律裹块，块内内容
+  // 即断言值；裸叙述轮在改后是零出站（WO-GT3 纯媒体轮照发的口径不变）。
 
   test("WO-F1 textDelta accumulates and `done` flushes ONE plain-text send to the bound sender") {
     val rec = RecordingSend(okResult)
     val p = plugin(tmpRoot(), rec.factory)
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "你好".asJson))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "，世界".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>你好".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "，世界</output>".asJson))
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
       calls <- rec.calls.get
       after <- p.pendingRef.get
@@ -239,7 +243,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
       _ <- p.onAgentEvent(
         "s1",
-        Json.obj("type" -> "textDelta".asJson, "delta" -> "**bold** and a [link](https://example.com)".asJson)
+        Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>**bold** and a [link](https://example.com)</output>".asJson)
       )
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
       calls <- rec.calls.get
@@ -295,7 +299,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     val p = plugin(tmpRoot(), rec.factory)
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")), meta("s2", Some("wx_bob")))))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "for alice".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>for alice</output>".asJson))
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
       calls <- rec.calls.get
     yield assertEquals(calls, List(("wx_alice", "for alice")), "s2's buffer is untouched by s1's flush")
@@ -318,7 +322,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     val p = plugin(tmpRoot(), failing.factory)
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "hi".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>hi</output>".asJson))
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
       calls <- failing.calls.get
     yield
@@ -379,12 +383,12 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     val p = plugin(tmpRoot(), rec.factory)
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
-      _ <- p.onAgentEvent("s1", wxDelta("s1", "第一段"))
-      _ <- p.onAgentEvent("s1", wxDelta("s1", "①"))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>第一段"))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "①</output>"))
       _ <- p.onAgentEvent("s1", wxToolStart) // 分段提交边界 1：第一段即推
-      _ <- p.onAgentEvent("s1", wxDelta("s1", "第二段"))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>第二段</output>"))
       _ <- p.onAgentEvent("s1", wxRoundComplete) // 分段提交边界 2：第二段即推
-      _ <- p.onAgentEvent("s1", wxDelta("s1", "第三段"))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>第三段</output>"))
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson)) // 只补发尾段
       calls <- rec.calls.get
       after <- p.pendingRef.get
@@ -404,9 +408,9 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       (_, _) => IO.monotonic.flatMap(d => stamps.update(_ :+ d.toMillis)).as(okResult))
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
-      _ <- p.onAgentEvent("s1", wxDelta("s1", "seg one"))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>seg one</output>"))
       _ <- p.onAgentEvent("s1", wxToolStart)
-      _ <- p.onAgentEvent("s1", wxDelta("s1", "seg two"))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>seg two</output>"))
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
       ss <- stamps.get
     yield
@@ -423,11 +427,11 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     val p = plugin(tmpRoot(), rec.factory)
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
-      _ <- p.onAgentEvent("s1", wxDelta("s1", "第一段"))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>第一段</output>"))
       _ <- p.onAgentEvent("s1", wxToolStart)
       _ <- p.onAgentEvent("s1", wxToolStart) // 空缓冲：纯工具过程不推
       _ <- p.onAgentEvent("s1", wxRoundComplete) // 仍空：不推
-      _ <- p.onAgentEvent("s1", wxDelta("s1", "尾段"))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>尾段</output>"))
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
       calls <- rec.calls.get
     yield
@@ -444,7 +448,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     val p = plugin(tmpRoot(), rec.factory)
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
-      _ <- p.onAgentEvent("s1", wxDelta("s1", "已推段"))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>已推段</output>"))
       _ <- p.onAgentEvent("s1", wxToolStart)
       _ <- p.onAgentEvent("s1", wxDelta("s1", "torn tail"))
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "interrupted".asJson))
@@ -477,11 +481,11 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     val p = plugin(tmpRoot(), failing.factory)
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
-      _ <- p.onAgentEvent("s1", wxDelta("s1", "段一"))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>段一</output>"))
       _ <- p.onAgentEvent("s1", wxToolStart) // 段一失败 → 注明 #1
-      _ <- p.onAgentEvent("s1", wxDelta("s1", "段二"))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>段二</output>"))
       _ <- p.onAgentEvent("s1", wxRoundComplete) // 段二失败 → 连续失败只注明一次
-      _ <- p.onAgentEvent("s1", wxDelta("s1", "尾"))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>尾</output>"))
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson)) // 尾失败：轮终腿保持既有仅 WARN
       calls <- awaitCalls(failing.calls, 4).timeout(10.seconds)
     yield
@@ -636,7 +640,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
       _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", img))))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "图好了".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>图好了</output>".asJson))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       mediaCalls <- media.calls.get
       calls <- rec.calls.get
@@ -679,7 +683,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
       _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", img))))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "正文".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>正文</output>".asJson))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       mediaCalls <- media.calls.get
       calls <- rec.calls.get
@@ -739,7 +743,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
       _ <- p.onAgentEvent("s1", toolEnd(card))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "卡片说明".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>卡片说明</output>".asJson))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       mediaCalls <- media.calls.get
       calls <- rec.calls.get
@@ -864,7 +868,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
       _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", md))))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "正文照发".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>正文照发</output>".asJson))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       mediaCalls <- media.calls.get
       calls <- rec.calls.get
@@ -1091,7 +1095,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
       _ <- p.onAgentEvent("s1", toolEnd(popPayload(imgs.map(i => popItem("image", i))*)))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "十一张都好了".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>十一张都好了</output>".asJson))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       groupCalls <- group.calls.get
       mediaCalls <- media.calls.get
@@ -1155,7 +1159,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
       _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", i1), popItem("image", i2), popItem("image", i3))))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "正文".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>正文</output>".asJson))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       groupCalls <- group.calls.get
       calls <- rec.calls.get
@@ -1226,7 +1230,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     val p = plugin(tmpRoot(), rec.factory, RecordingMedia(okResult).factory, group.factory)
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "两张图如下".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>两张图如下</output>".asJson))
       _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", a), popItem("image", b))))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       order <- wire.get
@@ -1250,7 +1254,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     val p = plugin(tmpRoot(), rec.factory, RecordingMedia(okResult).factory, group.factory)
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> long.asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> s"<output>$long</output>".asJson))
       _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", a), popItem("image", b))))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       order <- wire.get
@@ -1273,7 +1277,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     val p = plugin(tmpRoot(), rec.factory, RecordingMedia(okResult).factory, group.factory)
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "正文照发".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>正文照发</output>".asJson))
       _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", a), popItem("image", b), popItem("image", c))))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       calls <- rec.calls.get
@@ -1302,7 +1306,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     val p = plugin(tmpRoot(), rec.factory, media.factory, group.factory)
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "正文照发".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>正文照发</output>".asJson))
       _ <- p.onAgentEvent(
         "s1",
         toolEnd(popPayload(popItem("image", a), popItem("file", bad), popItem("image", b)))
@@ -1346,7 +1350,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
       // media FIRST (remembered at toolEnd), the text only afterwards
       _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", a), popItem("image", b))))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "看这两张".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>看这两张</output>".asJson))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       order <- wire.get
     yield
@@ -1371,7 +1375,7 @@ class WeixinOutboundSpec extends CatsEffectSuite:
     for
       _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
       // text FIRST, the media only afterwards (files never group — sequential form)
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "正文".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>正文</output>".asJson))
       _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", doc1))))
       _ <- p.onAgentEvent("s1", doneEv("s1"))
       order <- wire.get
