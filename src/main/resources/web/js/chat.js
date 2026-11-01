@@ -16,6 +16,8 @@ import { activeView, setActiveView, findViewBySessionId, chatViews } from './cha
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
+// msgchip-provenance 批（2026-11-01）：渠道/平台来源注记剥离单点（牌窗与气泡共用）。
+import { stripChannelProvenance } from './channelProvenance.js';
 import { sendWs, onMessage } from './ws.js';
 import { askSourceLabel, removePendingAsk } from './askPending.js';
 import { renderRefBlock, normalizeTaskRef, parseTaskReturnText, buildTaskRefLine, CLOSE_X_SVG } from './reference.js';
@@ -474,6 +476,15 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
   // 新登记行同一张媒体气泡面；附件在场（新登记/控制台）⇒ 逐字原样。换算命中
   // ⇒ 文本气泡隐去（媒体行接管，控制台纯图发送同形）。
   ({ text, atts: attachments } = unifyUserMediaFace(text, attachments));
+  // msgchip-provenance 批（2026-11-01 作者令「msg 身份牌剥渠道前缀」④）：用户气泡显示面
+  // 同样只留作者原生输入——渠道来源块（`<system-reminder>以下消息来自…`，社交通道入站行
+  // 的 .ui.json 里是真存了这个块的）、注入头行、附件路径指针行在此剥除。依据：
+  //   ① author 早前既裁「system reminder 永远不显示在会话中」（BridgeOrigin.faces 原律），
+  //      存量飞书入站行破例落盘带块 ⇒ 显示面本就是漂移，剥 = 回到裁定；
+  //   ② 判据 = 位置+结构（channelProvenance 单点），作者正文里自己写的同类句子原样保留。
+  // 注入气泡（buildInjectedRow / NODE-MESSAGE / mail 头那族）**不动**：那是引擎自己的
+  // 投递面展示（带 sender/header 行，语义不同），本批不碰它的视觉。
+  text = stripChannelProvenance(text).text;
   const row = document.createElement('div');
   row.className = 'row user';
   row.dataset.msgId = (opts && opts.msgId) || nextChatMsgId();

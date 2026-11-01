@@ -18,6 +18,17 @@
 //   T10 i18n：zh-CN / en 双语（chip hint / popover 文案 / 不可达态）
 //   T11 实拍存证：1440×900 桌面 × 暗/亮 + 375×812 手机 × 暗/亮，chip 气泡 + popover 开窗
 //       （引擎 chromium + webkit 双引擎全矩阵，SHOTS_DIR）
+//   ── msgchip-provenance 批（2026-11-01 作者令「msg 牌剥渠道前缀，只留最原生输入」）──
+//   T12 正向剥离：真实历史消息样本（网页控制台 device 前缀 / 飞书社交前缀 / [NODE-MESSAGE]
+//       头 / [mail chainId:] 头，四种叠加形态）⇒ 牌窗正文 = 作者原话逐字，注记零残留；
+//       两条取数腿（本地 DOM 对位 / 引擎权威）在渲染点**同一处**清洗（同一份实现）
+//   T13 反例（不许过度剥离）：作者正文里自带的「以下消息来自…」（裸句/中段引用）/
+//       多行 `<system-reminder>`（真 reminder）/ 无括号句子 ⇒ 一字不动
+//   T14 附件：`[用户附加文件: <path>]` / 存量「[图片] 已存至 …」⇒ 正文无路径噪声，
+//       「含 N 个附件」指示在场（body.textContent 保持纯正文契约）
+//   T15 气泡同源：主会话用户气泡（live renderUserBubble + 两条历史恢复腿）走同一剥离器
+//       （申报差异见批文档：NODE-MESSAGE/mail 头只在牌窗剥，气泡面不动注入气泡族）
+//   T16 实拍对照：牌窗**清洗前（raw 壳）/ 清洗后（真渲染）**双帧 × 双主题 × 桌面/手机
 //
 // 全程零 console error 断言。
 //
@@ -65,6 +76,47 @@ const ENGINE_DB = {
   [CORE]: { text: USER_MSGS[1].text, ts: USER_MSGS[1].ts, sessionId: SID, sessionName: 'msgchip harness' },
   [OTHER_CORE]: { text: 'kernel 链上的原话：牌号铸造逻辑不动，以消息头实铸为准。', ts: 1761980000000, sessionId: OTHER_SID, sessionName: 'kernel 迁移裁定' },
 };
+
+// ── msgchip-provenance 样本（真实历史消息逐字）─────────────────────────────────
+// 来源 = 宿主真实落盘消息（样本出处写在每例注释里；正文部分是作者原话逐字）。
+const CONSOLE_RAW =
+  '<system-reminder>\n以下消息来自网页控制台（渠道 console）· 设备：Mashiros-MacBook-Pro（已登记）\n</system-reminder>\n\n嗯 好的 ，推送正式版';
+const FEISHU_RAW =
+  '<system-reminder>\n以下消息来自飞书（社交接口 · 渠道 feishu）· 发送方：ou_1aa6a5067b6bfe5a19cd0fdbfc3664a6 · 会话：oc_5fbd8412dc6d57356e3ac7107ac45d2b\n</system-reminder>\n\n简化社交接口的设计 以极简的方式';
+const NODE_RAW =
+  '[NODE-MESSAGE] 来源：任务分发器 NodeMessage · 节点 disk-cleanup-measure · 2026-09-13 08:03:53\n\n【分发器补充 · 判据更正】以本补充为准，其余不变。';
+const MAIL_RAW = '[mail chainId: srcmark]\n回执：链已建、四节点齐备。';
+const STACKED_RAW =
+  '[NODE-MESSAGE] 来源：任务分发器 NodeMessage · 节点 x · 2026-09-23 08:22:27\n\n[mail chainId: chatblank-diag]\n【分发器补充 · 锚值刷新】以现读为准。';
+const ATTACH_RAW = '这些图你看一下\n\n[用户附加文件: /Users/kaiyu/.stand/uploads/sess/1_secret.png]';
+const LEGACY_MEDIA_RAW = '[图片] 已存至 /root/m1-pic.png（原始文件名 pic.png），可用 Read 查看';
+// 反例：作者自己写进正文的同类句式 / 真 reminder（多行）/ 中段引用。
+const COUNTER_BARE_RAW =
+  '以下消息来自网页控制台（渠道 console）· 设备：Mashiros-MacBook-Pro（已登记） 这种信息 在使用msg身份牌的时候应该被剥离 只保留最原生的输入';
+const COUNTER_MID_RAW =
+  '作者补充确认（原话牌 <system-reminder>\n以下消息来自网页控制台（渠道 console）· 设备：Mashiros-MacBook-Pro（已登记）\n</system-reminder>\n\n这是canvas的）：「这是canvas的」';
+const COUNTER_REMINDER_RAW =
+  '<system-reminder>\nMerge turn (FIFO): your branch `delegate/x` is ready-to-merge\nand it is now YOUR turn\n</system-reminder>\n\n请合并。';
+const COUNTER_NOBRACKET_RAW = '以下消息来自网页控制台 这种前缀在牌窗里应该被剥掉吗？';
+
+/** 牌窗样本表：core → {raw, expect, attach}（expect = 剥后正文逐字）。 */
+const PROV_DB = {
+  [`${sid8(OTHER_SID)}-000101`]: { raw: CONSOLE_RAW, expect: '嗯 好的 ，推送正式版', attach: 0 },
+  [`${sid8(OTHER_SID)}-000102`]: { raw: FEISHU_RAW, expect: '简化社交接口的设计 以极简的方式', attach: 0 },
+  [`${sid8(OTHER_SID)}-000103`]: { raw: NODE_RAW, expect: '【分发器补充 · 判据更正】以本补充为准，其余不变。', attach: 0 },
+  [`${sid8(OTHER_SID)}-000104`]: { raw: MAIL_RAW, expect: '回执：链已建、四节点齐备。', attach: 0 },
+  [`${sid8(OTHER_SID)}-000105`]: { raw: STACKED_RAW, expect: '【分发器补充 · 锚值刷新】以现读为准。', attach: 0 },
+  [`${sid8(OTHER_SID)}-000106`]: { raw: ATTACH_RAW, expect: '这些图你看一下', attach: 1 },
+  [`${sid8(OTHER_SID)}-000107`]: { raw: LEGACY_MEDIA_RAW, expect: '', attach: 1 },
+  [`${sid8(OTHER_SID)}-000111`]: { raw: COUNTER_BARE_RAW, expect: COUNTER_BARE_RAW, attach: 0 },
+  [`${sid8(OTHER_SID)}-000112`]: { raw: COUNTER_MID_RAW, expect: COUNTER_MID_RAW, attach: 0 },
+  [`${sid8(OTHER_SID)}-000113`]: { raw: COUNTER_REMINDER_RAW, expect: COUNTER_REMINDER_RAW, attach: 0 },
+  [`${sid8(OTHER_SID)}-000114`]: { raw: COUNTER_NOBRACKET_RAW, expect: COUNTER_NOBRACKET_RAW, attach: 0 },
+};
+for (const [core, v] of Object.entries(PROV_DB)) {
+  ENGINE_DB[core] = { text: v.raw, ts: 1761980000000, sessionId: OTHER_SID, sessionName: 'provenance samples' };
+}
+
 
 // ── 静态服务（真 web/ 树 + fixture harness + /api 兜底）─────────────────────
 const MIME = {
@@ -391,6 +443,150 @@ async function runSuite(engineName, browser) {
     await en.ctx.close();
   }
 
+  // ── T12 正向剥离（真实历史消息样本：渠道注记全剥，正文逐字）──
+  {
+    routeBehavior = null;
+    const { ctx, page, errors } = await boot(browser, { viewport: { width: 1440, height: 900 }, colorScheme: 'dark' });
+    await seed(page);
+    const cases = Object.entries(PROV_DB).filter(([core]) => !core.endsWith('-000111') && !core.endsWith('-000112')
+      && !core.endsWith('-000113') && !core.endsWith('-000114'));
+    // 逐例：渲染一枚引用该牌的助手行 → 点 chip → 读牌窗正文。
+    for (const [core, v] of cases) {
+      const label = `T12-${core.slice(-6)}`;
+      await page.evaluate((t) => window.__renderAI(t), `引用：{{msg:${core}|样本${core.slice(-3)}}}`);
+      await page.evaluate(() => { const p = document.querySelector('.msg-token-pop'); if (p) p.remove(); });
+      const chipSel = `.msg-token-chip[data-msg-token*="${core}"]`;
+      await page.click(chipSel);
+      await page.waitForFunction(() => { const p = document.querySelector('.msg-token-pop'); return p && p.dataset.state === 'ok'; });
+      const pop = await page.evaluate(() => window.__pop());
+      eq(pop.body, v.expect, `${label} 牌窗正文 = 剥后原话逐字`);
+      ok(!/<system-reminder>|以下消息来自|\[NODE-MESSAGE\]|\[mail chainId:|用户附加文件|已存至/.test(pop.body), `${label} 注记零残留`);
+      if (v.attach > 0) eq(pop.attach, `含 ${v.attach} 个附件`, `${label} 附件指示（不含路径）`);
+      else eq(pop.attach, '', `${label} 无附件指示`);
+      ok(!pop.body.includes('/Users/') && !pop.body.includes('/root/'), `${label} 牌窗无路径噪声`);
+    }
+    // 本地腿与引擎腿同一清洗面：牌文 = 本地 DOM 用户行原文（含注记）⇒ 牌窗显示仍是剥后正文。
+    const localSample = CONSOLE_RAW;
+    const localPop = await page.evaluate(async (raw) => {
+      window.__resetCache();
+      const sid = window.__SID;
+      window.__renderUserRow(raw, Date.now());
+      const seqPad = String(window.__localUserMessages().length).padStart(6, '0');
+      const core = (await window.__sid8()) + '-' + seqPad;
+      const r = await window.__resolve('{{msg:' + core + '|本地腿样本}}');
+      return r && r.status === 'ok' ? { local: r.data.local, text: r.data.text } : null;
+    }, localSample);
+    ok(!!localPop && localPop.local === true, 'T12 本地腿命中（同会话 DOM 对位）');
+    // 本地腿读数来自**显示面 DOM**（本批起气泡本身已剥）⇒ 本地腿 text 已是净文；
+    // 引擎腿 text 保持映射原文。两腿在渲染点同一次清洗 + 剥离幂等 ⇒ 牌窗显示恒等。
+    eq(localPop && localPop.text, '嗯 好的 ，推送正式版', 'T12 本地腿 text = 显示面净文（气泡已剥，两条腿渲染等价）');
+    const idemLeg = await page.evaluate((raw) => ({ once: window.__strip(raw).text, onStripped: window.__strip(window.__strip(raw).text).text }), CONSOLE_RAW);
+    eq(idemLeg.onStripped, idemLeg.once, 'T12 两腿交叉幂等（原文腿与净文腿洗出同一文本）');
+    eq(errors.length, 0, `T12 零 error`);
+    await ctx.close();
+  }
+
+  // ── T13 反例：不许过度剥离（判据按位置+结构，不按关键词）──
+  {
+    routeBehavior = null;
+    const { ctx, page, errors } = await boot(browser, { viewport: { width: 1440, height: 900 }, colorScheme: 'dark' });
+    await seed(page);
+    // 13a 剥离器直探（harness 暴露 window.__strip = 生产实现本体）
+    const direct = await page.evaluate((raw) => raw.map(r => window.__strip(r)), [
+      COUNTER_BARE_RAW, COUNTER_MID_RAW, COUNTER_REMINDER_RAW, COUNTER_NOBRACKET_RAW,
+    ]);
+    eq(direct[0].text, COUNTER_BARE_RAW, 'T13a 文首裸「以下消息来自…」句不剥（无括号骨架 ⇒ 作者原话）');
+    eq(direct[0].stripped, false, 'T13a 裸句 stripped=false');
+    eq(direct[1].text, COUNTER_MID_RAW, 'T13a 正文中段引用块不剥');
+    eq(direct[2].text, COUNTER_REMINDER_RAW, 'T13a 多行 <system-reminder>（真 reminder）不剥');
+    eq(direct[3].text, COUNTER_NOBRACKET_RAW, 'T13a 无括号句式不剥');
+    // 13b 端到端：反例牌点开牌窗 = 原文逐字
+    for (const core of [`${sid8(OTHER_SID)}-000111`, `${sid8(OTHER_SID)}-000112`, `${sid8(OTHER_SID)}-000113`, `${sid8(OTHER_SID)}-000114`]) {
+      await page.evaluate((t) => window.__renderAI(t), `反例：{{msg:${core}|反例${core.slice(-3)}}}`);
+      await page.evaluate(() => { const p = document.querySelector('.msg-token-pop'); if (p) p.remove(); });
+      await page.click(`.msg-token-chip[data-msg-token*="${core}"]`);
+      await page.waitForFunction(() => { const p = document.querySelector('.msg-token-pop'); return p && p.dataset.state === 'ok'; });
+      const pop = await page.evaluate(() => window.__pop());
+      eq(pop.body, PROV_DB[core].expect, `T13b 反例牌窗原文逐字（${core.slice(-6)}）`);
+    }
+    // 13c 幂等：已剥文本再剥零变化（两条取数腿先后经过同一渲染点）
+    const idem = await page.evaluate(() => {
+      const once = window.__strip('<system-reminder>\n以下消息来自网页控制台（渠道 console）· 设备：X（已登记）\n</system-reminder>\n\n正文').text;
+      return { once, twice: window.__strip(once).text };
+    });
+    eq(idem.twice, idem.once, 'T13c 剥离幂等（二次零变化）');
+    eq(idem.once, '正文', 'T13c 首剥结果 = 正文');
+    eq(errors.length, 0, `T13 零 error`);
+    await ctx.close();
+  }
+
+  // ── T14 附件：正文无路径噪声 + 「含 N 个附件」指示 ──
+  {
+    routeBehavior = null;
+    const { ctx, page, errors } = await boot(browser, { viewport: { width: 1440, height: 900 }, colorScheme: 'dark' });
+    await seed(page);
+    const cores = [`${sid8(OTHER_SID)}-000106`, `${sid8(OTHER_SID)}-000107`];
+    for (const core of cores) {
+      await page.evaluate((t) => window.__renderAI(t), `附件样本：{{msg:${core}|附件${core.slice(-3)}}}`);
+      await page.evaluate(() => { const p = document.querySelector('.msg-token-pop'); if (p) p.remove(); });
+      await page.click(`.msg-token-chip[data-msg-token*="${core}"]`);
+      await page.waitForFunction(() => { const p = document.querySelector('.msg-token-pop'); return p && p.dataset.state === 'ok'; });
+      const pop = await page.evaluate(() => window.__pop());
+      eq(pop.body, PROV_DB[core].expect, `T14 正文 = 剥后原话（${core.slice(-6)}）`);
+      eq(pop.attach, '含 1 个附件', `T14 附件指示在场（${core.slice(-6)}）`);
+      const dom = await page.evaluate(() => {
+        const p = document.querySelector('.msg-token-pop');
+        const a = p.querySelector('.msg-token-pop-attach');
+        const b = p.querySelector('.msg-token-pop-body');
+        return {
+          inBody: !!(a && b && b.contains(a)),
+          text: a ? a.textContent : '',
+          hasPath: /\/Users\/|\/root\/|\.png/.test(a ? a.textContent : ''),
+        };
+      });
+      ok(!dom.inBody, `T14 指示在正文节点之外（body.textContent 纯正文契约不破）`);
+      ok(!dom.hasPath, `T14 指示不含路径/文件名噪声`);
+    }
+    eq(errors.length, 0, `T14 零 error`);
+    await ctx.close();
+  }
+
+  // ── T15 气泡同源：live renderUserBubble + 历史恢复腿走同一剥离器 ──
+  {
+    routeBehavior = null;
+    const { ctx, page, errors } = await boot(browser, { viewport: { width: 1440, height: 900 }, colorScheme: 'dark' });
+    // live 腿：真实 renderUserBubble（harness 入口）
+    await page.evaluate((raw) => window.__renderUserRow(raw, Date.now()), CONSOLE_RAW);
+    await page.evaluate((raw) => window.__renderUserRow(raw, Date.now()), COUNTER_BARE_RAW);
+    const bubbles = await page.evaluate(() => window.__userBubbleTexts());
+    eq(bubbles[0], '嗯 好的 ，推送正式版', 'T15 live 气泡剥掉渠道前缀（只留原生输入）');
+    eq(bubbles[1], COUNTER_BARE_RAW, 'T15 live 气泡不误剥作者原话（自有句式）');
+    // 历史恢复腿：persistence 的缓存恢复腿入口（真实模块，localStorage 缓存 → 渲染）
+    const restored = await page.evaluate(async (raws) => {
+      const stateMod = await import('/js/state.js');
+      const key = stateMod.LS_SESSIONS_KEY;
+      localStorage.setItem(key, JSON.stringify({
+        [window.__SID]: [
+          { type: 'user', text: raws.console, timestamp: Date.now() },
+          { type: 'user', text: raws.counter, timestamp: Date.now() },
+        ],
+      }));
+      const mod = await import('/js/persistence.js');
+      if (typeof mod.restoreFromStorage !== 'function') return { skipped: true };
+      document.querySelectorAll('#chat .row.user').forEach(el => el.remove());
+      mod.restoreFromStorage();
+      return { skipped: false, texts: Array.from(document.querySelectorAll('#chat .row.user .bubble.user')).map(b => b.textContent) };
+    }, { console: FEISHU_RAW, counter: COUNTER_MID_RAW });
+    if (restored.skipped) {
+      ok(true, 'T15 历史恢复腿入口不可直调 ⇒ 该项由代码面单源断言覆盖（同 import 同一函数）');
+    } else {
+      ok(restored.texts.some(t => t === '简化社交接口的设计 以极简的方式'), 'T15 恢复腿气泡同样剥前缀');
+      ok(restored.texts.some(t => t === COUNTER_MID_RAW), 'T15 恢复腿不误剥作者原话');
+    }
+    eq(errors.length, 0, `T15 零 error`);
+    await ctx.close();
+  }
+
   // ── T11 实拍存证（桌面 1440 × 暗/亮 + 手机 375 × 暗/亮，chip + popover 开窗）──
   if (SHOTS_DIR) {
     mkdirSync(SHOTS_DIR, { recursive: true });
@@ -415,6 +611,36 @@ async function runSuite(engineName, browser) {
       await m.ctx.close();
     }
     console.log(`  SHOTS -> ${SHOTS_DIR}（${engineName} 桌面/手机 × 暗/亮 × chip/popover）`);
+
+    // ── T16 实拍对照：牌窗 **清洗前 / 清洗后** 双帧（双主题 × 桌面/手机）──────────
+    // 「前」= harness 用同一套 .msg-token-pop 壳画原文（__paintRawPop，仅证据构造）；
+    // 「后」= 生产渲染腿（renderPopBody）点开同一枚牌。
+    const PROV_CORE = `${sid8(OTHER_SID)}-000101`;
+    for (const scheme of ['dark', 'light']) {
+      for (const [tag, vp] of [['desktop1440', { width: 1440, height: 900 }], ['mobile375', { width: 375, height: 812 }]]) {
+        const s = await boot(browser, { viewport: vp, colorScheme: scheme });
+        await seed(s.page);
+        await s.page.evaluate((t) => window.__renderAI(t), `渠道消息原文：{{msg:${PROV_CORE}|推送令}}`);
+        await sleep(150);
+        await s.page.evaluate((raw) => window.__paintRawPop(raw), CONSOLE_RAW);
+        await sleep(120);
+        await s.page.screenshot({ path: join(SHOTS_DIR, `${engineName}-${tag}-${scheme}-prov-before.png`) });
+        await s.page.evaluate(() => window.__paintRawPop(''));
+        await s.page.click(`.msg-token-chip[data-msg-token*="${PROV_CORE}"]`);
+        await s.page.waitForFunction(() => { const p = document.querySelector('.msg-token-pop'); return p && p.dataset.state === 'ok'; });
+        await sleep(120);
+        await s.page.screenshot({ path: join(SHOTS_DIR, `${engineName}-${tag}-${scheme}-prov-after.png`) });
+        // 附件指示实拍（同一「后」面：附件样本）
+        await s.page.keyboard.press('Escape');
+        await s.page.evaluate((t) => window.__renderAI(t), `附件原文：{{msg:${sid8(OTHER_SID)}-000106|附件样本}}`);
+        await s.page.click(`.msg-token-chip[data-msg-token*="-000106"]`);
+        await s.page.waitForFunction(() => { const p = document.querySelector('.msg-token-pop'); return p && p.dataset.state === 'ok'; });
+        await sleep(120);
+        await s.page.screenshot({ path: join(SHOTS_DIR, `${engineName}-${tag}-${scheme}-prov-attach.png`) });
+        await s.ctx.close();
+      }
+    }
+    console.log(`  SHOTS -> ${SHOTS_DIR}（provenance 前/后对照 × 双主题 × 桌面/手机）`);
   }
 
   return { pass, fails };

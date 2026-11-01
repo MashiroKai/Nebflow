@@ -5578,6 +5578,15 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   color: var(--color-frame-text-muted, #98a2b3);
   font-size: 12px;
 }
+/* 附件指示（msgchip-provenance 批 2026-11-01）：正文剥掉附件路径指针行后，用它承载
+   「这条消息带附件」这一事实。视觉 = 头部 muted 小字同档（不抢正文，也不出现在
+   body.textContent 里——正文面保持纯文本契约）。 */
+.msg-token-pop-attach {
+  color: var(--color-frame-text-muted, #98a2b3);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.msg-token-pop-attach[hidden] { display: none; }
 .msg-token-pop-toggle {
   align-self: flex-start;
   border: none;
