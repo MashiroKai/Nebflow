@@ -272,12 +272,12 @@ flowchart LR
 
 **编译**：`sbt compile` + `Test/compile` 在 `-Werror`（fatal warnings）下全绿（含全部既有源面，无任何 warning 豁免）。
 
-**新增 spec（4 件 32 用例，全部纯桩驱动零墙钟）**：
+**新增 spec（4 件 36 用例，全部纯桩驱动零墙钟）**：
 
 | spec | 用例数 | 钉住的验收面 |
 |---|---|---|
 | `core/mail/SessionMailboxSpec` | 12 | §7 P1 验收②（mailOnce 幂等+**100 并发同 identity 恰 1 条**）、③（**100 条 FIFO 序**）、④（坏形条目入 quarantine 不阻塞后件）、§6 kill -9 四窗矩阵（窗1 tmp 清理/窗2 取走前崩/窗3+4 taken 重注→unlink 墓碑）、合条原位合条计数（风暴闸②）、消费后同 identity 合法再投（防写重≠防读重）、墓碑 cap 1024 drop-oldest、depth 徽标、空收件方显式 Failed |
-| `agent/MailboxDrainSpec` | 10 | §7 P2 验收③：barrierPlan 六面（末成员到齐放行/在飞 hold/整批放行/升级件恒放行/**放行集保 seq 相对序**/零 outstanding 防御面）、drainBarrierFaceSync（留箱件原地不动+徽标深度一致）、taken 重注幂等、takenSubagentSlots 取走拍会计、呈现三形（单件直投/**retryable 提示**/多件 reminder 合批） |
+| `agent/MailboxDrainSpec` | 14 | §7 P2 验收③：barrierPlan 六面（末成员到齐放行/在飞 hold/整批放行/升级件恒放行/**放行集保 seq 相对序**/零 outstanding 防御面）、drainBarrierFaceSync（留箱件原地不动+徽标深度一致）、taken 重注幂等、takenSubagentSlots 取走拍会计、呈现三形（单件直投/**retryable 提示**/多件 reminder 合批） |
 | `agent/MailboxRedAnchorSpec` | 3 | **§7 P2 验收红线①（10-31 事故判红锚重放）**：锚① 冻结窗内 mailOnce 完工条目→W4 resumeSweep 解冻首拍**完工原文逐字注入**+屏障会计恰一次+墓碑落账+**红线② 零新标记**（delivered-receipts.json 与 delegates 回执计数前后不变，旧 ledger 全程零创建）；锚② taken 残差（取走后注入前崩）解冻首拍重注零丢失；锚③ 空箱解冻逐字现状（零幻影消息零会计）。红线④ 同窗覆盖 |
 | `agent/MailboxBootSweepSpec` | 7 | §7 P2 验收⑤（面板行终态化不依赖父消费——账面真源合成补投）：首 boot 空窗零合成（激活前旧账不追）、窗内缺失条目合成（identity=taskId 同幂等键+payload 诚实标注 recoveredBy）、**墓碑闸**（已消费不重合成）、账信相符闸、父不在场闸、running/subtask 行永不合成、tmp 清理、同 boot 二次 run 窗闸防重 |
 
