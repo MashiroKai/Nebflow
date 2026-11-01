@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>时间段滚轮选择器 · 交互样张（只设计不实现）</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════
+   时间段滚轮选择器 交互样张 — 自包含，浏览器直开即试（样张纪律：
+   数据真实、交互可点，不进产品代码）。双主题 token 值 = 现役
+   sapphire.css/base.css 实测值逐字（亮/暗两档），不依赖任何在飞批。
+   URL 参数（截图/演示定态用）：
+     ?theme=light|dark        强制主题（默认跟随 prefers-color-scheme）
+     ?form=popover|sheet      强制形态（默认桌面 popover / ≤768px sheet）
+     ?open=freeze|provider    载入即打开对应落点的选择器
+     ?state=cross|equal       预置跨零点值 / 起止相等错误态
+     ?hint=digits             预展开精确输入行
+   ═══════════════════════════════════════════════════════════════════ */
+:root {
+  /* 现役 token（亮档）— sapphire.css:37-56,155-159 + base.css:8,47-48 */
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-blur: 24px;
+  --glass-border: rgba(255, 255, 255, 0.35);
+  --glass-etched-bg: rgba(0, 0, 0, 0.025);
+  --glass-control-bg: rgba(255, 255, 255, 0.60);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.74);
+  --glass-control-border: rgba(255, 255, 255, 0.90);
+  --sapphire: 91 127 191;
+  --color-primary: #07c160;
+  --color-text: #1b1e26;
+  --color-text-muted: #8b8e96;
+  --page-bg: #e9ecf2;
+  --page-bg2: #f4f6fa;
+  --card-bg: rgba(255, 255, 255, 0.72);
+  --hairline: rgba(0, 0, 0, 0.06);
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.14), 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-ctl: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --danger: #e5484d;
+}
+html[data-theme="dark"] {
+  /* 现役 token（暗档）— sapphire.css:99-109 */
+  --glass-bg: rgba(24, 28, 38, 0.68);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass-etched-bg: rgba(255, 255, 255, 0.04);
+  --glass-control-bg: rgba(255, 255, 255, 0.05);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.10);
+  --glass-control-border: rgba(255, 255, 255, 0.08);
+  --color-text: #e8eaed;
+  --color-text-muted: #7b7e88;
+  --page-bg: #14161d;
+  --page-bg2: #1b1e28;
+  --card-bg: rgba(28, 32, 44, 0.72);
+  --hairline: rgba(255, 255, 255, 0.07);
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-ctl: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+  font-weight: 400;
+  color: var(--color-text);
+  background:
+    radial-gradient(1200px 600px at 15% -10%, rgb(var(--sapphire) / 0.10), transparent 60%),
+    radial-gradient(900px 500px at 110% 110%, rgb(var(--sapphire) / 0.08), transparent 55%),
+    linear-gradient(180deg, var(--page-bg2), var(--page-bg));
+  -webkit-tap-highlight-color: transparent;
+}
+button { font-family: inherit; cursor: pointer; }
+
+/* ── 演示页外框（模拟设置面板环境，给毛玻璃提供可折射的底层） ── */
+.demo-topbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 16px; max-width: 720px; margin: 0 auto;
+}
+.demo-topbar h1 { font-size: 15px; font-weight: 600; margin-right: auto; }
+.demo-topbar .tb-note { font-size: 12px; color: var(--color-text-muted); }
+.tbtn {
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  color: var(--color-text);
+  font-size: 12px; font-weight: 500;
+  padding: 5px 10px; border-radius: 8px;
+  box-shadow: var(--shadow-ctl);
+}
+.tbtn:hover { background: var(--glass-control-bg-hover); }
+.tbtn.on { border-color: rgb(var(--sapphire) / 0.45); background: rgb(var(--sapphire) / 0.12); color: rgb(var(--sapphire)); }
+html[data-theme="dark"] .tbtn.on { color: rgb(var(--sapphire) / 0.9); }
+
+.demo-wrap { max-width: 720px; margin: 0 auto; padding: 0 16px 120px; }
+.demo-card {
+  background: var(--card-bg);
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  padding: 16px;
+  margin-top: 14px;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.demo-card > h2 { font-size: 13px; font-weight: 600; color: var(--color-text-muted); margin-bottom: 12px; letter-spacing: 0.02em; }
+.demo-hint { font-size: 12px; line-height: 1.7; color: var(--color-text-muted); margin-top: 10px; }
+.demo-hint b { color: var(--color-text); font-weight: 500; }
+
+/* ── 落点 L1：冻结时间（非工作时间）段行 — 现役形态复刻 ── */
+.seg-row { display: flex; align-items: center; gap: 8px; padding: 7px 0; flex-wrap: wrap; }
+.seg-label { font-size: 13px; color: var(--color-text-muted); }
+.seg-sep { font-size: 13px; color: var(--color-text-muted); }
+.seg-remove {
+  border: none; background: transparent; color: var(--color-text-muted);
+  font-size: 15px; line-height: 1; padding: 4px 7px; border-radius: 6px;
+}
+.seg-remove:hover { color: var(--color-text); background: var(--glass-etched-bg); }
+.seg-cross {
+  font-size: 11px; color: rgb(var(--sapphire)); font-weight: 500;
+  background: rgb(var(--sapphire) / 0.10);
+  border: 1px solid rgb(var(--sapphire) / 0.18);
+  border-radius: 6px; padding: 2px 7px;
+}
+.cfg-btn {
+  margin-top: 8px;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  color: var(--color-text);
+  font-size: 12.5px; font-weight: 500;
+  padding: 6px 12px; border-radius: 8px;
+}
+.cfg-hint { font-size: 12px; color: var(--color-text-muted); margin-top: 8px; line-height: 1.6; }
+
+/* ── 落点 L2：provider 不可用时段（段列表形态，收编逗号文本框） ── */
+.uw-chip-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+.uw-days-badge {
+  font-size: 10.5px; color: var(--color-text-muted);
+  border: 1px solid var(--hairline); border-radius: 5px; padding: 1px 5px;
+}
+.uw-empty { font-size: 12.5px; color: var(--color-text-muted); padding: 6px 0; }
+
+/* ═══════════════════════════════════════════════════════════════
+   触发字段（trigger）— 本设计稿的新字形：值 + 时钟 glyph + 点击弹窗。
+   数据形状不变（HH:mm 文本 → {from,to} wire 契约零改）。
+   ═══════════════════════════════════════════════════════════════ */
+.tw-trigger {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-width: 86px;
+  font-size: 13.5px; font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  border-radius: 8px; padding: 6px 10px;
+  box-shadow: var(--shadow-ctl);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.tw-trigger:hover { background: var(--glass-control-bg-hover); }
+.tw-trigger:focus-visible,
+.tw-trigger.open {
+  outline: none;
+  border-color: rgb(var(--sapphire) / 0.6);
+  box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12);
+}
+.tw-trigger svg { width: 13px; height: 13px; color: var(--color-text-muted); flex: none; }
+
+/* ═══════════════════════════════════════════════════════════════
+   选择器本体（popover / sheet 两皮共用一颗滚轮核心）
+   ═══════════════════════════════════════════════════════════════ */
+.tw-panel {
+  position: fixed; z-index: 10001;           /* provider modal(10000) 之上；sheet 11000 由类覆写 */
+  display: none;                             /* 关闭即隐（in/out 动画态才可见） */
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-pop);
+}
+.tw-panel.in, .tw-panel.out { display: block; }
+html.no-backdrop .tw-panel {                                 /* 降级纪律：无 blur 引擎=实色 */
+  background: var(--page-bg2);
+}
+.tw-panel.popover {
+  width: 300px; border-radius: 16px;
+  padding: 10px 14px 12px;
+  transform-origin: top left;
+}
+.tw-panel.popover.in  { animation: tw-pop-in 160ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.tw-panel.popover.out { animation: tw-pop-out 120ms cubic-bezier(0.4, 0, 1, 1) both; }
+@keyframes tw-pop-in  { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: scale(1); } }
+@keyframes tw-pop-out { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.96); } }
+
+.tw-panel.sheet {
+  left: 0; right: 0; bottom: 0; z-index: 11000;
+  width: auto;
+  border-radius: 20px 20px 0 0;
+  border-bottom: none;
+  padding: 6px 16px calc(14px + env(safe-area-inset-bottom));
+  transform-origin: bottom center;
+}
+.tw-panel.sheet.in  { animation: tw-sheet-in 280ms cubic-bezier(0.32, 0.72, 0, 1) both; }
+.tw-panel.sheet.out { animation: tw-sheet-out 200ms cubic-bezier(0.4, 0, 1, 1) both; }
+@keyframes tw-sheet-in  { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes tw-sheet-out { from { transform: translateY(0); } to { transform: translateY(100%); } }
+.tw-grabber {
+  width: 36px; height: 5px; border-radius: 3px;
+  background: var(--color-text-muted); opacity: 0.45;
+  margin: 2px auto 6px;
+  touch-action: none;
+}
+
+.tw-head { display: flex; align-items: center; gap: 8px; padding: 2px 0 8px; }
+.tw-title { font-size: 15px; font-weight: 600; margin: 0 auto; }
+.tw-btn {
+  border: none; background: transparent;
+  font-size: 13.5px; font-weight: 500;
+  color: var(--color-text-muted);
+  padding: 5px 8px; border-radius: 8px;
+}
+.tw-btn:hover { background: var(--glass-etched-bg); color: var(--color-text); }
+.tw-btn.confirm { color: var(--color-primary); font-weight: 600; }
+.tw-btn.confirm:disabled { opacity: 0.35; cursor: not-allowed; }
+html[data-theme="dark"] .tw-btn.confirm { color: #34c77b; }
+
+/* 滚轮区 */
+.tw-wheel-row {
+  display: flex; align-items: center; justify-content: center;
+  gap: 2px;
+  position: relative;
+  padding: 0 2px;
+}
+.tw-col {
+  position: relative;
+  width: 54px; height: 200px;
+  overflow: hidden;
+  border-radius: 10px;
+  touch-action: none;                    /* 触摸拨轮：吃掉原生滚动 */
+  user-select: none; -webkit-user-select: none;
+  outline: none;
+  cursor: grab;
+}
+.tw-col:active { cursor: grabbing; }
+.tw-col:focus-visible { box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.35); }
+.tw-strip { position: absolute; left: 0; right: 0; top: 0; will-change: transform; }
+.tw-item {
+  height: 40px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  opacity: 0.15;
+  transform: scale(0.94);
+  pointer-events: none;                  /* 命中面恒在列上，行不截指针 */
+}
+.tw-band {
+  position: absolute; left: 0; right: 0; top: 50%;
+  height: 40px; margin-top: -20px;
+  border-radius: 10px;
+  background: var(--glass-etched-bg);
+  pointer-events: none;
+  z-index: 2;
+}
+.tw-fade {
+  position: absolute; left: -6px; right: -6px; top: 0; bottom: 0;
+  pointer-events: none; z-index: 3;
+  /* 上下渐隐 = 参考实拍的边缘衰减 */
+  -webkit-mask-image: linear-gradient(180deg, transparent 4%, #000 30%, #000 70%, transparent 96%);
+  mask-image: linear-gradient(180deg, transparent 4%, #000 30%, #000 70%, transparent 96%);
+}
+.tw-sep {
+  font-size: 13px; font-weight: 500; color: var(--color-text-muted);
+  padding: 0 6px; flex: none;
+}
+
+/* 快捷档 chips */
+.tw-chips { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 0 2px; }
+.tw-chip {
+  font-size: 12px; font-weight: 500;
+  color: var(--color-text-muted);
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+.tw-chip:hover { color: var(--color-text); background: var(--glass-control-bg-hover); }
+
+/* 状态行：跨零点提示 / 起止相等错误（类型类静态 + show 开关类） */
+.tw-status {
+  font-size: 12px; font-weight: 500;
+  border-radius: 8px;
+  padding: 6px 10px; margin-top: 8px;
+  display: none;
+}
+.tw-status.show { display: block; }
+.tw-status-cross.show {
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.10);
+  border: 1px solid rgb(var(--sapphire) / 0.18);
+}
+html[data-theme="dark"] .tw-status-cross.show { color: rgb(var(--sapphire) / 0.95); }
+.tw-status-equal.show {
+  color: var(--danger);
+  background: rgb(229 72 77 / 0.08);
+  border: 1px solid rgb(229 72 77 / 0.22);
+}
+
+/* 键盘直输回退行（保留键盘通道：纯键盘 / 精确分钟都从这里进） */
+.tw-input-row {
+  display: none;
+  align-items: center; gap: 8px;
+  margin-top: 8px;
+}
+.tw-input-row.show { display: flex; }
+.tw-input-row input {
+  flex: 1; min-width: 0;
+  font: inherit; font-size: 13.5px; font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  border-radius: 8px; padding: 6px 9px;
+}
+.tw-input-row input:focus { outline: none; border-color: rgb(var(--sapphire) / 0.6); box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12); }
+.tw-input-row input.err { border-color: rgb(229 72 77 / 0.55); box-shadow: 0 0 0 2px rgb(229 72 77 / 0.10); }
+.tw-input-toggle {
+  border: none; background: transparent;
+  font-size: 11.5px; font-weight: 500; color: var(--color-text-muted);
+  padding: 4px 6px; border-radius: 6px; margin-top: 4px;
+}
+.tw-input-toggle:hover { color: var(--color-text); background: var(--glass-etched-bg); }
+
+/* 演示用 toast */
+#demo-toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  color: var(--color-text);
+  font-size: 12.5px; font-weight: 500;
+  border-radius: 10px; padding: 8px 14px;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 12000;
+}
+#demo-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+@media (max-width: 768px) {
+  .demo-wrap { padding-bottom: 60px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tw-panel.popover.in, .tw-panel.popover.out,
+  .tw-panel.sheet.in, .tw-panel.sheet.out { animation: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="demo-topbar">
+  <h1>时间段滚轮选择器 · 样张</h1>
+  <span class="tb-note">只设计不实现 · 数据形状 = 现役 wire 契约</span>
+  <button class="tbtn" id="theme-light">亮</button>
+  <button class="tbtn" id="theme-dark">暗</button>
+  <button class="tbtn" id="form-toggle">形态: 自动</button>
+</div>
+
+<div class="demo-wrap">
+  <!-- 落点 L1 复刻：设置 → 冻结时间（非工作时间） -->
+  <div class="demo-card" id="freeze-card">
+    <h2>设置 · 冻结时间（非工作时间）&nbsp;[开]</h2>
+    <div id="freeze-rows"></div>
+    <button class="cfg-btn" id="freeze-add">＋ 添加冻结时段</button>
+    <div class="cfg-hint">在冻结时段内，agent 在工具执行完成后自动冻结，到点自动恢复继续。收编后：两个 HH:mm 文本框 → 时间段滚轮（本样张触发字段）。</div>
+  </div>
+
+  <!-- 落点 L2 复刻：provider 编辑弹窗 · 不可用时段 -->
+  <div class="demo-card" id="provider-card">
+    <h2>模型服务商 · 不可用时段（provider 级）</h2>
+    <div id="uw-rows"></div>
+    <button class="cfg-btn" id="uw-add">＋ 添加不可用时段</button>
+    <div class="cfg-hint">收编后：「14:00-18:00, 23:00-07:00」逗号文本框 → 段列表（每段一颗滚轮触发字段）。含 days 的手编规则只读徽标保真，不经弹窗覆盖。</div>
+  </div>
+
+  <div class="demo-card">
+    <h2>试玩指南</h2>
+    <div class="demo-hint">
+      <b>拨轮</b>：拖拽（触摸/鼠标按住上下拨）· 桌面滚轮/触控板滚动 · 聚焦列后 ↑↓ 逐档、Shift+↑↓ 大步、Home/End 归零/到底、直接敲数字键入值 + Enter。<br>
+      <b>直输回退</b>：面板底部「精确输入」切 HH:mm 键入行——纯鼠标用户走滚轮与拖拽，键盘通道永不锁死。<br>
+      <b>校验</b>：起止相等 → 确认钮禁用 + 错误行；起&gt;止 → 跨零点合法（sapphire 提示条，同现役跨午夜语义）。<br>
+      <b>URL 定态</b>：<code>?theme=dark&amp;form=sheet&amp;open=freeze&amp;state=cross</code>（截图用）。
+    </div>
+  </div>
+</div>
+
+<div id="demo-toast"></div>
+
+<script>
+'use strict';
+/* ═══════════════════════════════════════════════════════════════
+   Wheel — 单列滚轮核心（样张参考实现，非产品代码）。
+   虚拟环形：值数组 ×3 份循环回收；pos 为浮点条目位（中份坐标系），
+   拖拽 1:1 跟手 → 释放动量衰减（τ=325ms）→ 低于阈值吸附最近档。
+   桌面滚轮事件按阈值步进 + idle 吸附；键盘 spinbutton 语义；
+   数字直输走最短路径旋转。
+   ═══════════════════════════════════════════════════════════════ */
+const ITEM_H = 40;
+const REP = 3;
+const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+
+class Wheel {
+  /**
+   * @param {HTMLElement} host   .tw-col 容器
+   * @param {{values:string[], label:string, unit:string, onChange:Function}} opts
+   */
+  constructor(host, opts) {
+    this.host = host; this.values = opts.values; this.N = this.values.length;
+    this.label = opts.label; this.unit = opts.unit || '';
+    this.onChange = opts.onChange || (() => {});
+    this.pos = this.N;                      // 中份第 0 档
+    this.state = 'idle';                    // idle | drag | coast | snap
+    this.v = 0;                             // items/ms
+    this.raf = null;
+    this.digitBuf = ''; this.digitTimer = null;
+
+    const strip = document.createElement('div');
+    strip.className = 'tw-strip';
+    this.items = [];
+    for (let r = 0; r < REP; r++) {
+      for (let i = 0; i < this.N; i++) {
+        const it = document.createElement('div');
+        it.className = 'tw-item';
+        it.textContent = this.values[i];
+        strip.appendChild(it);
+        this.items.push(it);
+      }
+    }
+    host.appendChild(strip);
+    this.strip = strip;
+
+    host.setAttribute('role', 'spinbutton');
+    host.setAttribute('tabindex', '0');
+    host.setAttribute('aria-label', this.label);
+    host.setAttribute('aria-valuemin', '0');
+    host.setAttribute('aria-valuemax', String(this.N - 1));
+
+    host.addEventListener('pointerdown', e => this.onDown(e));
+    host.addEventListener('pointermove', e => this.onMove(e));
+    host.addEventListener('pointerup',   e => this.onUp(e));
+    host.addEventListener('pointercancel', () => this.onUp(null));
+    host.addEventListener('wheel', e => this.onWheel(e), { passive: false });
+    host.addEventListener('keydown', e => this.onKey(e));
+    this.render();
+  }
+
+  mod(i) { return ((i % this.N) + this.N) % this.N; }
+  value() { return this.values[this.mod(Math.round(this.pos))]; }
+  valueIdx() { return this.mod(Math.round(this.pos)); }
+
+  yFor(p) { return 100 - (p + this.N + 0.5) * ITEM_H; }   // 容器高 200，中点 100
+
+  render() {
+    this.strip.style.transform = 'translateY(' + this.yFor(this.pos).toFixed(2) + 'px)';
+    const center = this.pos + this.N;
+    for (let s = 0; s < this.items.length; s++) {
+      const d = Math.abs(s - center);                     // 条目序距
+      let tier;
+      if (d < 0.5) tier = 0;
+      else if (d < 1.5) tier = 1;
+      else if (d < 2.5) tier = 2;
+      else if (d < 3.5) tier = 3;
+      else tier = 4;
+      if (this.items[s]._tier !== tier) {
+        this.items[s]._tier = tier;
+        const conf = [
+          { o: 1,    sc: 1    },
+          { o: 0.55, sc: 0.97 },
+          { o: 0.3,  sc: 0.95 },
+          { o: 0.15, sc: 0.94 },
+          { o: 0.06, sc: 0.94 },
+        ][tier];
+        this.items[s].style.opacity = conf.o;
+        this.items[s].style.transform = 'scale(' + conf.sc + ')';
+      }
+    }
+    const idx = this.valueIdx();
+    if (this._a11yIdx !== idx) {
+      this._a11yIdx = idx;
+      this.host.setAttribute('aria-valuenow', String(idx));
+      this.host.setAttribute('aria-valuetext', this.value() + ' ' + this.unit);
+    }
+  }
+
+  emit() {
+    if (this._lastEmitted !== this.valueIdx()) {
+      this._lastEmitted = this.valueIdx();
+      this.onChange();
+    }
+  }
+
+  /* ── 动画状态机 ── */
+  kick() {
+    if (this.raf == null) {
+      this._lastTs = performance.now();
+      this.raf = requestAnimationFrame(ts => this.tick(ts));
+    }
+  }
+  tick(ts) {
+    const dt = Math.min(48, ts - this._lastTs);
+    this._lastTs = ts;
+    if (this.state === 'coast') {
+      this.pos += this.v * dt;
+      this.v *= Math.exp(-dt / 325);
+      if (Math.abs(this.v) < 0.0015) this.snapTo(Math.round(this.pos), 200);
+    } else if (this.state === 'snap') {
+      const t = Math.min(1, (ts - this.snapT0) / this.snapDur);
+      this.pos = this.snapFrom + (this.snapTo_ - this.snapFrom) * easeOutCubic(t);
+      if (t >= 1) { this.state = 'idle'; this.pos = this.snapTo_; this.emit(); }
+    }
+    this.render();
+    if (this.state === 'idle') { this.raf = null; this.normalize(); }
+    else this.raf = requestAnimationFrame(t2 => this.tick(t2));
+  }
+  /** pos 归位到中份邻域，防长会话漂移 */
+  normalize() {
+    const n = this.N;
+    if (this.pos < n * 0.5) this.pos += n;
+    else if (this.pos >= n * 1.5) this.pos -= n;
+    this.render();
+  }
+  snapTo(target, dur) {
+    const n = this.N;
+    while (target - this.pos > n / 2) target -= n;
+    while (this.pos - target > n / 2) target += n;
+    this.state = 'snap';
+    this.snapFrom = this.pos; this.snapTo_ = target;
+    this.snapDur = Math.max(90, Math.min(280, dur));
+    this.snapT0 = performance.now();
+    this.kick();
+  }
+
+  /* ── 指针（触摸/鼠标拖拽） ── */
+  onDown(e) {
+    if (this.locked) return;
+    this.host.setPointerCapture(e.pointerId);
+    this.state = 'drag';
+    this._samples = [ [e.clientY, performance.now()] ];
+    this._lastY = e.clientY;
+    this.digitBuf = '';
+    this.kick();
+    e.preventDefault();
+  }
+  onMove(e) {
+    if (this.state !== 'drag') return;
+    const dy = e.clientY - this._lastY;
+    this._lastY = e.clientY;
+    this.pos -= dy / ITEM_H;
+    this._samples.push([e.clientY, performance.now()]);
+    while (this._samples.length > 2 && performance.now() - this._samples[0][1] > 100) this._samples.shift();
+    this.render(); this.emit();
+  }
+  onUp() {
+    if (this.state !== 'drag') return;
+    const s = this._samples;
+    let v = 0;
+    if (s && s.length >= 2) {
+      const dy = s[0][0] - s[s.length - 1][0];
+      const dt = Math.max(1, s[s.length - 1][1] - s[0][1]);
+      v = (dy / ITEM_H) / dt;               // items/ms，上拨为正
+      v = Math.max(-2.5, Math.min(2.5, v)); // 防甩飞
+    }
+    if (Math.abs(v) < 0.004) this.snapTo(Math.round(this.pos), 180);
+    else { this.state = 'coast'; this.v = v; }
+    this.kick();
+  }
+
+  /* ── 桌面滚轮/触控板 ── */
+  onWheel(e) {
+    e.preventDefault();
+    if (this.state === 'drag') return;
+    if (this.state === 'coast') this.snapTo(Math.round(this.pos), 120);  // 滚轮打断惯性→吸附
+    this._acc = (this._acc || 0) + e.deltaY;
+    if (Math.abs(this._acc) >= 30) {
+      const dir = this._acc > 0 ? 1 : -1;
+      this._acc = 0;
+      this.snapTo(Math.round(this.pos) + dir, 110);
+    }
+    clearTimeout(this._wheelIdle);
+    this._wheelIdle = setTimeout(() => {
+      if (this.state === 'idle') this.snapTo(Math.round(this.pos), 120);
+    }, 160);
+    this.kick();
+  }
+
+  /* ── 键盘（spinbutton 语义 + 数字直输） ── */
+  onKey(e) {
+    const big = this.N === 24 ? 6 : 12;     // 时列 6 小时 / 分列 1 小时
+    let step = 0;
+    if (e.key === 'ArrowDown') step = e.shiftKey ? big : 1;
+    else if (e.key === 'ArrowUp') step = e.shiftKey ? -big : -1;
+    else if (e.key === 'PageDown') step = big;
+    else if (e.key === 'PageUp') step = -big;
+    else if (e.key === 'Home') { this.snapToNearest(0); e.preventDefault(); return; }
+    else if (e.key === 'End') { this.snapToNearest(this.N - 1); e.preventDefault(); return; }
+    else if (e.key === 'Enter' && this.digitBuf) { this.applyDigits(); e.preventDefault(); return; }
+    else if (/^[0-9]$/.test(e.key)) {
+      this.digitBuf += e.key;
+      clearTimeout(this.digitTimer);
+      this.digitTimer = setTimeout(() => this.applyDigits(), 900);
+      if (this.digitBuf.length >= 2) this.applyDigits();
+      e.preventDefault(); return;
+    }
+    if (step) {
+      e.preventDefault();
+      this.digitBuf = '';
+      this.snapTo(Math.round(this.pos) + step, 140);
+    }
+  }
+  snapToNearest(valIdx) {
+    let cand = this.N + valIdx;
+    if (cand - this.pos > this.N / 2) cand -= this.N;
+    if (this.pos - cand > this.N / 2) cand += this.N;
+    this.snapTo(cand, 220);
+  }
+  applyDigits() {
+    clearTimeout(this.digitTimer);
+    const buf = this.digitBuf; this.digitBuf = '';
+    if (!buf) return;
+    let val = parseInt(buf, 10);
+    if (isNaN(val)) return;
+    if (this.N !== 24) {
+      val = Math.round(val / 5) * 5;        // 分钟列就近 5 分钟档
+      if (val > 55) val = 55;
+    } else if (val > 23) val = 23;
+    this.snapToNearest(this.N === 24 ? val : val / 5);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TimeRangePicker — 四列（起 时/分 · 至 时/分）+ 校验 + 快捷档 +
+   直输回退。两皮（popover / sheet）共用，open(trigger) 决定皮。
+   校验契约 = 后端双真源逐字：start≠end（相等拒绝）、start>end=
+   跨零点合法（提示不阻止）。
+   ═══════════════════════════════════════════════════════════════ */
+const HOURS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
+const MINS  = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, '0'));
+
+class TimeRangePicker {
+  constructor() {
+    this.el = document.createElement('div');
+    this.el.className = 'tw-panel';
+    this.el.setAttribute('role', 'dialog');
+    this.el.setAttribute('aria-label', '选择时间段');
+    this.el.innerHTML = `
+      <div class="tw-head">
+        <button class="tw-btn cancel">取消</button>
+        <div class="tw-title">选择时间段</div>
+        <button class="tw-btn confirm">确定</button>
+      </div>
+      <div class="tw-wheel-row">
+        <div class="tw-band"></div>
+        <div class="tw-col" data-role="h1"></div>
+        <div class="tw-col" data-role="m1"></div>
+        <div class="tw-sep">至</div>
+        <div class="tw-col" data-role="h2"></div>
+        <div class="tw-col" data-role="m2"></div>
+        <div class="tw-fade"></div>
+      </div>
+      <div class="tw-chips">
+        <button class="tw-chip" data-preset="00:00,23:59">全天</button>
+        <button class="tw-chip" data-preset="23:00,08:00">深夜 23–08</button>
+        <button class="tw-chip" data-preset="09:00,18:00">白天 09–18</button>
+        <button class="tw-chip" data-preset="14:00,18:00">午后 14–18</button>
+      </div>
+      <div class="tw-status tw-status-cross">跨零点时段：至次日 <b class="tw-cross-to"></b> 结束（合法，同现役跨午夜语义）</div>
+      <div class="tw-status tw-status-equal">起止不能相同（零长度时段无意义，后端 validate 拒绝）</div>
+      <div class="tw-input-row">
+        <input class="tw-in-h1" maxlength="5" inputmode="numeric" aria-label="开始时间 HH:mm" placeholder="HH:mm">
+        <span class="tw-sep">至</span>
+        <input class="tw-in-h2" maxlength="5" inputmode="numeric" aria-label="结束时间 HH:mm" placeholder="HH:mm">
+      </div>
+      <button class="tw-input-toggle">精确输入 HH:mm</button>
+    `;
+    document.body.appendChild(this.el);
+    const col = r => this.el.querySelector('.tw-col[data-role="' + r + '"]');
+    const self = this;
+    this.wheels = {
+      h1: new Wheel(col('h1'), { values: HOURS, label: '开始·时', unit: '时', onChange: () => self.onChange() }),
+      m1: new Wheel(col('m1'), { values: MINS,  label: '开始·分', unit: '分', onChange: () => self.onChange() }),
+      h2: new Wheel(col('h2'), { values: HOURS, label: '结束·时', unit: '时', onChange: () => self.onChange() }),
+      m2: new Wheel(col('m2'), { values: MINS,  label: '结束·分', unit: '分', onChange: () => self.onChange() }),
+    };
+    for (const k of ['h1', 'm1', 'h2', 'm2']) this.wheels[k].locked = false;
+
+    this.el.querySelector('.cancel').addEventListener('click', () => this.close(false));
+    this.el.querySelector('.confirm').addEventListener('click', () => this.close(true));
+    this.el.addEventListener('keydown', e => { if (e.key === 'Escape') this.close(false); });
+    this.el.querySelectorAll('.tw-chip').forEach(ch =>
+      ch.addEventListener('click', () => this.setValue(ch.dataset.preset, true)));
+    const inH1 = this.el.querySelector('.tw-in-h1'), inH2 = this.el.querySelector('.tw-in-h2');
+    const applyInput = () => {
+      const ok1 = this.eatInput(inH1, 'h1', 'm1'), ok2 = this.eatInput(inH2, 'h2', 'm2');
+      if (ok1 && ok2) this.onChange();
+    };
+    [inH1, inH2].forEach(inp => {
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') { applyInput(); inp.blur(); } });
+      inp.addEventListener('blur', applyInput);
+    });
+    this.el.querySelector('.tw-input-toggle').addEventListener('click', () => {
+      const row = this.el.querySelector('.tw-input-row');
+      row.classList.toggle('show');
+      if (row.classList.contains('show')) {
+        inH1.value = this.hm(true); inH2.value = this.hm(false);
+        inH1.focus(); inH1.select();
+      }
+    });
+    if (new URLSearchParams(location.search).get('hint') === 'digits') {
+      this.el.querySelector('.tw-input-row').classList.add('show');
+    }
+    this.isOpen = false;
+  }
+
+  hm(start) {
+    const h = this.wheels[start ? 'h1' : 'h2'].value();
+    const m = this.wheels[start ? 'm1' : 'm2'].value();
+    return h + ':' + m;
+  }
+  toMin(hm) { const [h, m] = hm.split(':').map(Number); return h * 60 + m; }
+
+  setValue(v, animate) {
+    const [s, e] = v.split(',');
+    const parts = s.split(':').map(Number).concat(e.split(':').map(Number));
+    const self = this;
+    const set = (w, val) => {
+      let cand = w.N + val;
+      if (cand - w.pos > w.N / 2) cand -= w.N;
+      if (w.pos - cand > w.N / 2) cand += w.N;
+      if (animate) w.snapTo(cand, 260); else { w.pos = cand; w._a11yIdx = null; w.render(); w.emit(); }
+    };
+    set(this.wheels.h1, parts[0]); set(this.wheels.m1, Math.min(55, Math.round(parts[1] / 5) * 5) / 5);
+    set(this.wheels.h2, parts[2]); set(this.wheels.m2, Math.min(55, Math.round(parts[3] / 5) * 5) / 5);
+    this.onChange();
+  }
+
+  onChange() {
+    const a = this.toMin(this.hm(true)), b = this.toMin(this.hm(false));
+    const cross = a > b, equal = a === b;
+    this.el.querySelector('.tw-status-cross').classList.toggle('show', cross && !equal);
+    this.el.querySelector('.tw-status-equal').classList.toggle('show', equal);
+    if (cross && !equal) {
+      this.el.querySelector('.tw-cross-to').textContent = this.hm(false);
+    }
+    this.el.querySelector('.confirm').disabled = equal;
+  }
+
+  eatInput(inp, hKey, mKey) {
+    const mm = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(inp.value.trim());
+    inp.classList.toggle('err', !mm);
+    if (!mm) return false;
+    this.wheels[hKey].snapToNearest(Number(mm[1]));
+    this.wheels[mKey].snapToNearest(Math.round(Number(mm[2]) / 5) % 12);
+    return true;
+  }
+
+  /** 打开：trigger=触发字段钮，initial="HH:mm,HH:mm"，opts={onConfirm} */
+  open(trigger, initial, opts) {
+    this.trigger = trigger; this.opts = opts || {};
+    this.sheetMode = this.detectSheet();
+    this.el.classList.toggle('popover', !this.sheetMode);
+    this.el.classList.toggle('sheet', this.sheetMode);
+    this.el.classList.remove('in', 'out');
+    void this.el.offsetWidth;               // 重启动画
+
+    // grabber 仅 sheet 皮
+    let grab = this.el.querySelector('.tw-grabber');
+    if (this.sheetMode && !grab) {
+      grab = document.createElement('div');
+      grab.className = 'tw-grabber';
+      this.el.prepend(grab);
+      this.bindGrabber(grab);
+    } else if (!this.sheetMode && grab) grab.remove();
+
+    this.setValue(initial, false);
+    this.isOpen = true;
+    trigger.classList.add('open');
+    trigger.setAttribute('aria-expanded', 'true');
+
+    if (this.sheetMode) {
+      this.el.style.left = ''; this.el.style.top = '';
+    } else {
+      const r = trigger.getBoundingClientRect();
+      const W = 300;
+      const x = Math.min(Math.max(8, r.left), window.innerWidth - W - 8);
+      let y = r.bottom + 6;
+      const ph = 380;
+      if (y + ph > window.innerHeight - 8) y = Math.max(8, r.top - ph - 6);
+      this.el.style.left = x + 'px';
+      this.el.style.top = y + 'px';
+    }
+    this.el.classList.add('in');
+    this.outsideCloser = ev => {
+      if (!this.isOpen) return;
+      if (this.el.contains(ev.target) || trigger.contains(ev.target)) return;
+      this.close(false);
+    };
+    document.addEventListener('pointerdown', this.outsideCloser, true);
+    setTimeout(() => this.wheels.h1.host.focus({ preventScroll: true }), this.sheetMode ? 300 : 170);
+  }
+
+  detectSheet() {
+    const f = new URLSearchParams(location.search).get('form');
+    if (f === 'sheet') return true;
+    if (f === 'popover') return false;
+    return window.matchMedia('(max-width: 768px)').matches;
+  }
+
+  bindGrabber(grab) {
+    let y0 = 0, dy = 0, t0 = 0, dragging = false;
+    const self = this;
+    grab.addEventListener('pointerdown', e => {
+      dragging = true; y0 = e.clientY; dy = 0; t0 = performance.now();
+      grab.setPointerCapture(e.pointerId);
+    });
+    grab.addEventListener('pointermove', e => {
+      if (!dragging) return;
+      dy = Math.max(0, e.clientY - y0);
+      self.el.style.animation = 'none';
+      self.el.style.transform = 'translateY(' + dy + 'px)';
+    });
+    const end = () => {
+      if (!dragging) return;
+      dragging = false;
+      const v = dy / Math.max(1, performance.now() - t0);
+      self.el.style.transform = '';
+      if (dy > 120 || v > 0.5) self.close(false);
+      else self.el.style.animation = '';
+    };
+    grab.addEventListener('pointerup', end);
+    grab.addEventListener('pointercancel', end);
+  }
+
+  close(commit) {
+    if (!this.isOpen) return;
+    this.isOpen = false;
+    document.removeEventListener('pointerdown', this.outsideCloser, true);
+    this.trigger.classList.remove('open');
+    this.trigger.setAttribute('aria-expanded', 'false');
+    if (commit) {
+      const val = this.hm(true) + ',' + this.hm(false);
+      this.opts.onConfirm && this.opts.onConfirm(val);
+    }
+    this.el.classList.add('out');
+    setTimeout(() => {
+      this.el.classList.remove('in', 'out');
+      this.el.style.transform = ''; this.el.style.animation = '';
+    }, 240);
+    this.trigger.focus({ preventScroll: true });
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   演示页装配：两个落点的复刻 + 主题/形态切换 + URL 定态
+   ═══════════════════════════════════════════════════════════════ */
+const picker = new TimeRangePicker();
+const qs = new URLSearchParams(location.search);
+
+function toast(msg) {
+  const t = document.getElementById('demo-toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast._tm);
+  toast._tm = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+const clockSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
+function toMin2(hm) { const [h, m] = hm.split(':').map(Number); return h * 60 + m; }
+
+/* 落点 L1：冻结段行（数据形状 = {start,end} HH:mm，与 FreezeSchedule 一致） */
+const freezeSegs = [{ start: '09:00', end: '12:00' }];
+function renderFreeze() {
+  const host = document.getElementById('freeze-rows');
+  host.innerHTML = '';
+  freezeSegs.forEach((seg, i) => {
+    const row = document.createElement('div');
+    row.className = 'seg-row';
+    row.innerHTML =
+      '<span class="seg-label">时段 ' + (i + 1) + '</span>' +
+      '<button class="tw-trigger" data-side="start">' + clockSvg + '<span class="tv"></span></button>' +
+      '<span class="seg-sep">至</span>' +
+      '<button class="tw-trigger" data-side="end">' + clockSvg + '<span class="tv"></span></button>' +
+      '<span class="seg-cross" hidden>跨零点</span>' +
+      '<button class="seg-remove" aria-label="删除该时段">×</button>';
+    row.querySelector('.seg-remove').addEventListener('click', () => {
+      freezeSegs.splice(i, 1); renderFreeze();
+    });
+    row.querySelectorAll('.tw-trigger').forEach(btn => {
+      const side = btn.dataset.side;
+      const tv = btn.querySelector('.tv');
+      tv.textContent = seg[side];
+      btn.setAttribute('aria-haspopup', 'dialog');
+      btn.addEventListener('click', () => {
+        picker.open(btn, seg.start + ',' + seg.end, {
+          onConfirm(val) {
+            const [s2, e2] = val.split(',');
+            if (s2 === e2) { toast('起止不能相同'); return; }
+            seg.start = s2; seg.end = e2;
+            renderFreeze();
+            toast('冻结时段已更新（演示：显式保存语义不变）');
+          }
+        });
+      });
+    });
+    host.appendChild(row);
+  });
+  // 跨零点徽标（行级，同现役 seg-cross-midnight）
+  document.querySelectorAll('#freeze-rows .seg-row').forEach((rowEl, i) => {
+    const s = freezeSegs[i];
+    rowEl.querySelector('.seg-cross').hidden = !(toMin2(s.start) > toMin2(s.end));
+  });
+}
+document.getElementById('freeze-add').addEventListener('click', () => {
+  freezeSegs.push({ start: '09:00', end: '12:00' });
+  renderFreeze();
+});
+
+/* 落点 L2：provider 不可用时段段列表（数据形状 = {from,to}（,days?）） */
+const uwWindows = [
+  { from: '14:00', to: '18:00' },
+  { from: '23:00', to: '07:00', days: [6, 7] },   // 手编 days 规则 → 只读徽标
+];
+function bindUwChip(chip, w) {
+  chip.addEventListener('click', () => {
+    if (w.days) { toast('手编 days 规则：本稿只读保真，编辑面=开放项'); return; }
+    picker.open(chip, w.from + ',' + w.to, {
+      onConfirm(val) {
+        const [f2, t2] = val.split(',');
+        if (f2 === t2) { toast('起止不能相同'); return; }
+        w.from = f2; w.to = t2;
+        renderUw();
+      }
+    });
+  });
+}
+function renderUw() {
+  const host = document.getElementById('uw-rows');
+  host.innerHTML = '';
+  if (!uwWindows.length) {
+    host.innerHTML = '<div class="uw-empty">无限制（留空 = 不限制，现役语义）</div>';
+    return;
+  }
+  uwWindows.forEach(w => {
+    const row = document.createElement('div');
+    row.className = 'uw-chip-row';
+    const chip = document.createElement('button');
+    chip.className = 'tw-trigger';
+    chip.innerHTML = clockSvg + '<span class="tv">' + w.from + '–' + w.to + '</span>';
+    chip.setAttribute('aria-haspopup', 'dialog');
+    bindUwChip(chip, w);
+    row.appendChild(chip);
+    if (w.days) {
+      const b = document.createElement('span');
+      b.className = 'uw-days-badge';
+      b.textContent = '按星期 · 手编只读';
+      row.appendChild(b);
+    }
+    const x = document.createElement('button');
+    x.className = 'seg-remove'; x.textContent = '×'; x.setAttribute('aria-label', '删除该时段');
+    x.addEventListener('click', () => {
+      const idx = uwWindows.indexOf(w);
+      if (idx >= 0) { uwWindows.splice(idx, 1); renderUw(); }
+    });
+    row.appendChild(x);
+    host.appendChild(row);
+  });
+}
+document.getElementById('uw-add').addEventListener('click', () => {
+  const w = { from: '14:00', to: '18:00' };
+  uwWindows.push(w); renderUw();
+  const rows = document.querySelectorAll('#uw-rows .tw-trigger');
+  const chip = rows[rows.length - 1];
+  picker.open(chip, w.from + ',' + w.to, {
+    onConfirm(val) {
+      const [f2, t2] = val.split(',');
+      if (f2 === t2) { toast('起止不能相同'); return; }
+      w.from = f2; w.to = t2; renderUw();
+    }
+  });
+});
+
+/* 主题 / 形态 */
+function setTheme(mode) {
+  if (mode) document.documentElement.dataset.theme = mode;
+  else delete document.documentElement.dataset.theme;
+  document.getElementById('theme-light').classList.toggle('on', mode === 'light');
+  document.getElementById('theme-dark').classList.toggle('on', mode === 'dark');
+}
+document.getElementById('theme-light').addEventListener('click', () => setTheme('light'));
+document.getElementById('theme-dark').addEventListener('click', () => setTheme('dark'));
+setTheme(qs.get('theme'));
+
+const formNames = { auto: '形态: 自动', popover: '形态: popover', sheet: '形态: sheet' };
+let formMode = qs.get('form') || 'auto';
+const formBtn = document.getElementById('form-toggle');
+function applyFormBtn() {
+  formBtn.textContent = formNames[formMode] || formNames.auto;
+  formBtn.classList.toggle('on', formMode !== 'auto');
+}
+formBtn.addEventListener('click', () => {
+  formMode = formMode === 'auto' ? 'popover' : formMode === 'popover' ? 'sheet' : 'auto';
+  applyFormBtn();
+  toast(formNames[formMode] + '（≤768px 自动 sheet）');
+});
+applyFormBtn();
+if (formMode !== 'auto') {
+  picker.detectSheet = () => formMode === 'sheet';
+}
+
+/* 装配 */
+renderFreeze(); renderUw();
+
+/* URL 定态（截图/演示） */
+const openTarget = qs.get('open');
+const presetState = qs.get('state');
+if (openTarget) {
+  setTimeout(() => {
+    let btn = null, init = '09:00,12:00';
+    if (openTarget === 'freeze') {
+      btn = document.querySelector('#freeze-rows .tw-trigger');
+      init = freezeSegs[0].start + ',' + freezeSegs[0].end;
+    } else if (openTarget === 'provider') {
+      btn = document.querySelector('#uw-rows .tw-trigger');
+      init = uwWindows[0] ? uwWindows[0].from + ',' + uwWindows[0].to : '14:00,18:00';
+    }
+    if (!btn) return;
+    picker.open(btn, init, { onConfirm() {} });
+    if (presetState === 'cross') picker.setValue('23:00,08:00', false);
+    if (presetState === 'equal') picker.setValue('14:00,14:00', false);
+  }, 350);
+}
+</script>
+</body>
+</html>
