@@ -53,6 +53,25 @@ jobs:
         # miss the other" drift that ③A1/③A3/③A5 exist to prevent).
         # Same logic locally: node scripts/check-msgstyle-single-source.mjs
         run: node scripts/check-msgstyle-single-source.mjs
+      - name: Prompt single source (one home for prompt text)
+        # Prompt-catalog gate (author order 2026-11-01, "把上下文集中到一个 scala
+        # 文件中"): every prompt body lives in nebflow/prompts/PromptCatalog.scala
+        # and nowhere else. Same RULES shape as the message-style gate - a
+        # distinctive literal per prompt family, equal-count per file, any other
+        # src/main/scala file hitting it fails the job.
+        # Known limit (documented in the script): verbatim copies only - an
+        # already-reworded copy is not caught.
+        # Same logic locally: node scripts/check-prompt-single-source.mjs
+        run: node scripts/check-prompt-single-source.mjs
+      - name: Prompt catalog has zero business deps (Scala has no cycle check)
+        # Cycle gate for the prompt catalog. Scala 3 does NOT diagnose reference
+        # cycles: prompts <-> core.tools compiles green and yields a silent
+        # runtime `null` (spike evidence E3d). check-circular.mjs only scans web
+        # JS, so this is the missing Scala-side gate: nebflow/prompts/** may
+        # import nothing outside scala.*/java.* - hence cycle-impossible by
+        # construction.
+        # Same logic locally: node scripts/check-prompt-catalog-imports.mjs
+        run: node scripts/check-prompt-catalog-imports.mjs
       - name: Provider model-list endpoints (per-face declaration)
         # Gate: the provider model-list endpoint must be declared by each
         # protocol face (`ModelListFaces` + the adapters), never built in the
