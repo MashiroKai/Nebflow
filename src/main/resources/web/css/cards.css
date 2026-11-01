@@ -1,0 +1,277 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   cards.css — 卡片家族统一样式包（cards 模块，2026-11-01 作者 16:05 令）
+
+   基准 = stand 官网首次启动过渡卡（mystand.space auth/link 域实色面卡）：
+   居中 STAND lockup + 粗黑标题 + 灰说明文 + 极简文字动作 + 大留白 +
+   白卡大圆角软阴影。设计稿 = docs/design/20261101_162000_cards-family-design__*
+   （§1 考古四证据源 / §2 token 逐值出处 / §4 迁移清单）。
+
+   与 sapphire.css（玻璃）/ liquid-glass.css（g2 药丸）/ stand-tokens.css
+   （--st-*）同族的设计系统成员——本文件只管**卡片家族**：
+     · 家族 token --nfc-*（官网 auth 域 chunk 逐值转录，三腿主题解析
+       同构 --st-*：:root 亮档默认 / html[data-theme=dark] 强制档 /
+       prefers-color-scheme 回退档——门面 boot 期无 data-theme 走第三腿）；
+     · 组件类 .nfc 基准卡体 + 面具名变体。
+   边界（协作纪律）：glass/buttons 批归 liquid-glass.css / sapphire.css，
+   本文件零触碰对方文件；按钮语（.g2-pill）只引用不定义。
+   消费面：接管弹窗 #takeover-box、门入场加载卡 .nf-entry-card（该面只在
+   CSS 窗全 ok 后显示，样式体可安全外迁；门失败卡 .nf-boot-card 因零请求
+   纪律留 index.html 内联字面量，值与本表逐值同步——改动两侧同落）。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── 家族 token（亮档 = 官网 auth 域 :root 逐值；出处见设计稿 §2 表）────── */
+:root {
+  --nfc-bg: #ffffff;                    /* --auth-card-bg */
+  --nfc-border: #e5e7eb;                /* --auth-card-border */
+  --nfc-heading: #111827;               /* --auth-heading（基准图标题墨色实测对上）*/
+  --nfc-subtle: #9ca3af;                /* --auth-subtle（基准正文灰实测对上）*/
+  --nfc-link: #6b7280;                  /* --auth-link（基准动作灰实测对上）*/
+  --nfc-link-hover: #374151;            /* --auth-link-hover */
+  --nfc-link-deco: #e5e7eb;             /* --auth-link-deco（基准动作下划线色）*/
+  --nfc-page: #f9fafb;                  /* --auth-page-from（整页引导面页底）*/
+  /* 亮档阴影 = 站内官方三档栈外影两档（sapphire/input 官方转录档）——基准
+     实拍软影（最深处 ≈3.5%）同档；无 inset（实色卡非玻璃，无顶缘高光）。 */
+  --nfc-shadow: 0 2px 8px rgba(17, 24, 39, 0.04), 0 8px 24px rgba(17, 24, 39, 0.06);
+  /* 几何（基准实拍实测 → 4px 栅格档；双主题同值） */
+  --nfc-radius: 18px;                   /* 实测弧 16–18 + 接管/入场同族档 18 */
+  --nfc-width: 384px;                   /* 实测卡宽 385 */
+  --nfc-pad-top: 32px;                  /* 实测 34 */
+  --nfc-pad-x: 32px;                    /* 实测 36（正文换行宽 310 反推）*/
+  --nfc-pad-bottom: 40px;               /* 实测 40 */
+  --nfc-gap-block: 40px;                /* 字标→标题 / 正文→动作（实测 39/41）*/
+  --nfc-gap-title: 16px;                /* 标题→正文（实测 16）*/
+  --nfc-lockup-h: 24px;                 /* 基准字标 S 高 24（lockup 4:1 ⇒ 宽 96）*/
+  /* 字阶（官方 email 品牌卡标题档 21/600/-0.2px + 基准实测正文 14×1.5） */
+  --nfc-title-size: 21px;
+  --nfc-title-weight: 600;
+  --nfc-title-ls: -0.2px;
+  --nfc-body-size: 14px;
+  --nfc-body-lh: 1.5;
+  --nfc-body-max: 320px;                /* 基准正文换行宽 ≈310 */
+  --nfc-link-size: 14px;
+}
+
+/* ── 暗档 = 官网 auth 域 dark 块逐值（html[data-theme] 强制档优先）───────── */
+html[data-theme="dark"] {
+  --nfc-bg: #161b22;                    /* --auth-card-bg = --color-card */
+  --nfc-border: #2d333b;                /* --auth-card-border = --color-card-border */
+  --nfc-heading: #e6edf3;               /* --auth-heading = --color-foreground */
+  --nfc-subtle: #6e7681;                /* --auth-subtle */
+  --nfc-link: #98a0aa;                  /* --auth-link = --color-muted */
+  --nfc-link-hover: #e6edf3;            /* --auth-link-hover */
+  --nfc-link-deco: #2d333b;             /* --auth-link-deco = --color-card-border */
+  --nfc-page: #0d1117;                  /* --color-background */
+  /* 官方 --auth-panel-shadow 逐值：0 8px 32px #00000080, 0 2px 8px #00000059 */
+  --nfc-shadow: 0 8px 32px rgba(0, 0, 0, 0.50), 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+/* 系统回退腿（无 data-theme 属性时；门面 boot 期即此形态） */
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) {
+    --nfc-bg: #161b22;
+    --nfc-border: #2d333b;
+    --nfc-heading: #e6edf3;
+    --nfc-subtle: #6e7681;
+    --nfc-link: #98a0aa;
+    --nfc-link-hover: #e6edf3;
+    --nfc-link-deco: #2d333b;
+    --nfc-page: #0d1117;
+    --nfc-shadow: 0 8px 32px rgba(0, 0, 0, 0.50), 0 2px 8px rgba(0, 0, 0, 0.35);
+  }
+}
+
+/* ── 基准卡体 .nfc ────────────────────────────────────────────────────────
+   居中列 + 大留白 + 实色面 + 1px 边 + 大圆角 + 软投影（基准 DNA 全表）。 */
+.nfc {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-sizing: border-box;
+  width: var(--nfc-width);
+  max-width: 86vw;
+  padding: var(--nfc-pad-top) var(--nfc-pad-x) var(--nfc-pad-bottom);
+  text-align: center;
+  background: var(--nfc-bg);
+  border: 1px solid var(--nfc-border);
+  border-radius: var(--nfc-radius);
+  box-shadow: var(--nfc-shadow);
+  color: var(--nfc-heading);
+}
+
+/* ── 官方横排字标 lockup（双档显隐；禁 filter 反色——email 件同法）───────── */
+.nfc-lockup {
+  display: block;
+  height: var(--nfc-lockup-h);
+  width: auto;
+}
+.nfc-lockup-dark { display: none; }
+html[data-theme="dark"] .nfc-lockup-light { display: none; }
+html[data-theme="dark"] .nfc-lockup-dark { display: block; }
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .nfc-lockup-light { display: none; }
+  html:not([data-theme="light"]) .nfc-lockup-dark { display: block; }
+}
+
+/* ── 家族字阶 ──────────────────────────────────────────────────────────── */
+.nfc-title {
+  margin: var(--nfc-gap-block) 0 0;
+  font-size: var(--nfc-title-size);
+  font-weight: var(--nfc-title-weight);
+  letter-spacing: var(--nfc-title-ls);
+  line-height: 1.4;
+  color: var(--nfc-heading);
+}
+.nfc-body {
+  margin: var(--nfc-gap-title) 0 0;
+  max-width: var(--nfc-body-max);
+  font-size: var(--nfc-body-size);
+  line-height: var(--nfc-body-lh);
+  color: var(--nfc-subtle);
+}
+
+/* ── 动作行（弹窗卡默认右对齐双按钮行；.is-center 居中变体）──────────────── */
+.nfc-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  width: 100%;
+  margin: var(--nfc-gap-block) 0 0;
+}
+.nfc-actions.is-center { justify-content: center; }
+/* 卡内 g2 药丸部件级档（按钮语材质/形态单源 liquid-glass.css，本块只调
+   窄卡内的尺寸档——接管/入场同族批既有档承继） */
+.nfc-actions .g2-pill {
+  height: 34px;
+  padding: 0 18px;
+  font-size: 13px;
+}
+.nfc-actions .g2-pill:disabled { cursor: not-allowed; }
+
+/* ── 极简文字动作（基准「账号设置」同款：下划线文字链）────────────────────── */
+.nfc-link {
+  margin: var(--nfc-gap-block) 0 0;
+  padding: 0;
+  background: none;
+  border: none;
+  font-size: var(--nfc-link-size);
+  font-weight: 500;
+  color: var(--nfc-link);
+  text-decoration: underline;
+  text-decoration-color: var(--nfc-link-deco);
+  text-underline-offset: 3px;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+.nfc-link:hover { color: var(--nfc-link-hover); }
+.nfc-link:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── 错误行（S9 同族配方自 modal.css 迁入：中性字 + 红左缘 + 淡红底；
+   语义色单源 --status-* 不变）────────────────────────────────────────── */
+.nfc-error {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 16px 0 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  color: var(--status-word);
+  background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
+  border-left: 2px solid var(--status-error-icon);
+  word-break: break-word;
+}
+.nfc-error[hidden] { display: none; }
+/* 错误行在场时动作行贴随（错误是对动作的解释面，不吃 40px 块距——
+   用家族标题距档 16px）。 */
+.nfc-error + .nfc-actions { margin-top: var(--nfc-gap-title); }
+
+/* ── 加载步骤清单形态 .nfc-steps（左对齐行 + 四态点；行样式消费方 =
+   门入场卡 .nf-entry-item）───────────────────────────────────────────── */
+.nfc-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  margin: var(--nfc-gap-title) 0 0;
+  text-align: left;
+}
+.nfc-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--nfc-body-size);
+  line-height: 1.5;
+  color: var(--nfc-subtle);
+  transition: color 0.2s ease;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   面迁移（本批落点，设计稿 §4 M1/M2）
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── M1 接管弹窗 #takeover-box（原 modal.css 玻璃族段落退役，样式归本件）──
+   家族卡 + 字标 + 标题/正文/错误行/动作行（DOM 见 index.html；
+   id 选择器只保留显隐/动画这两个弹窗机制面，视觉全走 .nfc 家族）。 */
+#takeover-box {
+  display: none;
+  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ── M2 门入场加载卡 .nf-entry-card（样式体自 index.html 门内联块迁入——
+   该面只在门脚本置 data-entry="on"（CSS 窗全 ok）后显示，外迁安全；
+   display:none 预藏线留门内联块（防慢载窗空卡裸浮），ID 特异性胜本行）。
+   机制零回翻：真实加载项清单（window.__nfEntry.mark 四态）+ 就绪揭幕。
+   面结构（index.html DOM）：.nfc 卡体 + 字标双档 + .nfc-title（动态标题，
+   跟随活动项动作文案）+ .nfc-steps（.nf-entry-item 行 + 四态点）。 */
+.nf-entry-card { display: none; }
+#nf-boot-gate[data-entry="on"] .nf-entry-card { display: flex; }
+#nf-boot-gate[data-entry="on"] .nf-boot-ring { display: none; } /* 清单自带活动环，门环退役 */
+#nf-boot-gate[data-state="failed"] .nf-entry-card { display: none; } /* 失败面换失败卡 */
+/* 清单行状态色（机制类 .nf-entry-item 原名保留——门脚本 paintEntry /
+   entry-veil.spec 的消费面；行基样式走 .nfc-step，行类由门脚本双挂） */
+.nf-entry-item[data-state="active"] { color: var(--nfc-heading); }
+.nf-entry-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  /* pending 环 = 中性 18%（亮近似原 rgba(0,0,0,.18) / 暗近似 rgba(255,255,255,.25)，
+     随 heading token 换色，零新字面量） */
+  border: 2px solid color-mix(in srgb, var(--nfc-heading) 18%, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 600;
+}
+/* 活跃/完成腿：亮档 sapphire 族、暗档 glow 变体（原门内联暗档 (120,155,220,.55/.9)
+   即 --sapphire-glow 邻值——升格为设计系统 token 单源） */
+.nf-entry-item[data-state="active"] .nf-entry-dot {
+  border-color: rgb(var(--sapphire) / 0.35);
+  border-top-color: transparent;
+  animation: nf-boot-spin 0.8s linear infinite;
+}
+.nf-entry-item[data-state="done"] .nf-entry-dot { border-color: rgb(var(--sapphire) / 0.9); }
+.nf-entry-item[data-state="done"] .nf-entry-dot::after { content: '✓'; color: rgb(var(--sapphire)); }
+.nf-entry-item[data-state="fail"] { color: var(--nfc-heading); }
+.nf-entry-item[data-state="fail"] .nf-entry-dot { border-color: rgba(209, 36, 47, 0.65); }
+.nf-entry-item[data-state="fail"] .nf-entry-dot::after { content: '×'; color: #d1242f; font-size: 11px; }
+html[data-theme="dark"] .nf-entry-item[data-state="active"] .nf-entry-dot {
+  border-color: rgb(var(--sapphire-glow) / 0.55);
+}
+html[data-theme="dark"] .nf-entry-item[data-state="done"] .nf-entry-dot { border-color: rgb(var(--sapphire-glow) / 0.9); }
+html[data-theme="dark"] .nf-entry-item[data-state="done"] .nf-entry-dot::after { color: rgb(var(--sapphire-glow)); }
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) .nf-entry-item[data-state="active"] .nf-entry-dot {
+    border-color: rgb(var(--sapphire-glow) / 0.55);
+  }
+  html:not([data-theme="light"]):not([data-theme="dark"]) .nf-entry-item[data-state="done"] .nf-entry-dot { border-color: rgb(var(--sapphire-glow) / 0.9); }
+  html:not([data-theme="light"]):not([data-theme="dark"]) .nf-entry-item[data-state="done"] .nf-entry-dot::after { color: rgb(var(--sapphire-glow)); }
+}

@@ -131,7 +131,7 @@ html[data-theme="light"] {
   --btn-ink-bg-active: #0b1220;
   --btn-ink-ink: #ffffff;
   --btn-focus-ring: #3b82f6;            /* 官网 --color-primary 蓝：focus/链接专用 */
-  --btn-primary-tint: rgb(17 24 39 / 0.35);  /* 开关 ON 档墨 tint（原 brand-green 35%） */
+  --btn-primary-tint: rgb(17 24 39 / 0.35);  /* 墨族 35% tint（2026-11-01 开关回绿后暂无消费者，留作语义位） */
 }
 html[data-theme="dark"] {
   --btn-ink-bg: #e6edf3;

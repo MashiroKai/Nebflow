@@ -1435,6 +1435,11 @@ export default {
   // A-branch scroll-follow convergence: new-message pill (N = message rows
   // added since the user left the bottom).
   'chat.newMessages': '↓ {n} new messages',
+  // Search jump return pill (author order 2026-11-01, searchReturnPill.js):
+  // anchor live => back to the pre-jump reading spot; anchor gone => honest
+  // degrade to the latest message.
+  'chat.backToPrevPosition': 'Back to where you were',
+  'chat.backToLatest': 'Back to latest',
   'chat.confirm': 'Confirm',
   'chat.answeredViaChatInput': 'Answered via chat input',
   'chat.cancel': 'Cancel',

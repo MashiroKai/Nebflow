@@ -15,6 +15,10 @@
 //      过期/总闸关闭/拒绝各自有明确文案）。
 //   ② 卡面同族重做：按钮语换代 g2 药丸族（次级白玻璃药丸 / 主动作墨玻璃药丸），
 //      与入场加载卡同材质/版式/按钮语（css/modal.css + index.html DOM）。
+//      —— 卡片家族批（2026-11-01 作者 16:05 令）再基准化：面板 = css/cards.css
+//      .nfc 实色家族卡 + 官方字标双档（index.html DOM；玻璃面板档退役，
+//      [USER-RULING] 申报见 docs/design/20261101_162000_cards-family-design__* §5）。
+//      本文件逻辑零改动（DOM id 面不变）。
 //   ③ 入场加载卡在 index.html 门脚本（window.__nfEntry 同族面）。
 //
 // 设计稿：reports/20261027_231456_console-single-instance/DESIGN.md（§6 前端落点；
@@ -99,7 +103,9 @@ function show() {
   retakeBtn.textContent = t('takeover.retake');
   exitBtn.hidden = false;
   retakeBtn.hidden = false;
-  box.style.display = 'block';
+  // 卡片家族批：面 = .nfc 家族卡（flex 列布局，css/cards.css）——显式 display
+  // 须为 flex（旧行为 'block' 会压掉家族列布局，字标/标题归位失效）。
+  box.style.display = 'flex';
   if (overlay()) overlay().classList.add('on');
   // 弹窗退场批：接管态隐藏 #modal-overlay 的注入返回钮（强制二选一，无返回
   // 语义；handler 侧 takeoverBlocking 守卫同款判据的双保险）。

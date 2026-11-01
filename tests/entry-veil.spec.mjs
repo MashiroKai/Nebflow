@@ -29,7 +29,9 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = join(ROOT, 'src', 'main', 'resources', 'web');
-const SHOTS = join(ROOT, 'evidence', '20261101_103300_takeover-entry__delegate-nebflow-ce004aa9', 'after');
+// 卡片家族批（2026-11-01 作者 16:05 令）起截图随本 spec 落本批证据目录
+// （原接管批目录 evidence/20261101_103300_takeover-entry__* 定格为历史，不复写）。
+const SHOTS = join(ROOT, 'evidence', '20261101_cards-family__delegate-nebflow-67f23d42', 'after');
 
 let failures = 0;
 function ok(name, cond, extra = '') {
@@ -141,6 +143,20 @@ try {
     ok('V2 真实进度：data 仍 pending（configData 未落地 = 无假完成）',
       mid.states.data !== 'done', JSON.stringify(mid.states));
     ok('V2 活动项 = data（同步数据）', mid.activeItem === 'data', mid.activeItem);
+    // 卡片家族批（作者 16:05 令）重钉：入场卡 = .nfc 家族实色卡 + 官方字标 +
+    // 家族字阶（白底/1px 边/radius 18/宽 384/标题 21px/600，官网 auth 域 DNA）。
+    const fam = await page.locator('.nf-entry-card').evaluate(el => {
+      const s = getComputedStyle(el);
+      return { bg: s.backgroundColor, radius: s.borderRadius, width: s.width, border: `${s.borderWidth} ${s.borderColor}` };
+    });
+    ok('V1 家族卡材质（bg #fff 实色 + radius 18 + width 384 + 边 #e5e7eb）',
+      fam.bg === 'rgb(255, 255, 255)' && fam.radius === '18px' && fam.width === '384px'
+      && fam.border === '1px rgb(229, 231, 235)', JSON.stringify(fam));
+    ok('V1 家族字标在场（官方 lockup，alt=STAND）',
+      await page.locator('.nf-entry-card .nfc-lockup-light').isVisible()
+      && (await page.locator('.nf-entry-card .nfc-lockup-light').getAttribute('alt')) === 'STAND');
+    const titleSt = await page.locator('.nf-entry-title').evaluate(el => getComputedStyle(el).fontSize + '/' + getComputedStyle(el).fontWeight);
+    ok('V1 家族标题档（21px/600）', titleSt === '21px/600', titleSt);
     await page.screenshot({ path: join(SHOTS, 'entry-progress-light.png') });
     stub.releaseConfig = true; // 观察窗收：帧落地 ⇒ 四项全 done ⇒ 揭幕（门摘 + 壳可见）
     await page.waitForSelector('#input', { state: 'visible', timeout: 15000 });
@@ -204,6 +220,16 @@ try {
     })();
     const st = await gateState(dark);
     ok('V5 暗档入场卡在场（四项清单）', st.entry && st.labels.length === 4, JSON.stringify(st.labels));
+    // 卡片家族批重钉：暗档 = 官网 auth 域 dark 值 + 暗字标切换。
+    const darkFam = await dark.locator('.nf-entry-card').evaluate(el => {
+      const s = getComputedStyle(el);
+      return { bg: s.backgroundColor, border: `${s.borderWidth} ${s.borderColor}` };
+    });
+    ok('V5 家族暗档（bg #161b22 + 边 #2d333b）',
+      darkFam.bg === 'rgb(22, 27, 34)' && darkFam.border === '1px rgb(45, 51, 59)', JSON.stringify(darkFam));
+    ok('V5 暗字标切换（dark lockup 可见/亮档隐）',
+      await dark.locator('.nf-entry-card .nfc-lockup-dark').isVisible()
+      && !(await dark.locator('.nf-entry-card .nfc-lockup-light').isVisible()));
     await dark.screenshot({ path: join(SHOTS, 'entry-progress-dark.png') });
     await darkCtx.close();
   }

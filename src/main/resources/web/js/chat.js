@@ -1076,7 +1076,9 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     renderPopToolRow(card, label, summary, isError);
     const popPayload = parsePopPayload(content);
     if (popPayload) {
-      const artifactRow = buildPopArtifactRow(popPayload);
+      // Pop 交付卡 footer 批（作者令 2026-11-01 16:19）：ts 随传——交付行 footer
+      // 信息条时间档 live 腿 = 到达时刻（重放两腿 = m.timestamp，同一三腿口径）。
+      const artifactRow = buildPopArtifactRow(popPayload, { ts: Date.now() });
       if (artifactRow) {
         row.after(artifactRow);
         smartScroll();

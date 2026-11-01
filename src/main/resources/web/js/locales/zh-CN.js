@@ -1379,6 +1379,10 @@ export default {
   'chat.retry': '重试',
   // A 支 · 滚动跟随收敛：新增消息胶囊（计数 = 自离开底部以来新增的消息行数）
   'chat.newMessages': '↓ {n} 条新消息',
+  // 搜索跳转回位胶囊（作者令 2026-11-01，searchReturnPill.js）：锚在 ⇒ 回跳转前
+  // 位置；锚失 ⇒ 诚实降级回最新。
+  'chat.backToPrevPosition': '回到跳转前位置',
+  'chat.backToLatest': '回到最新',
   'chat.confirm': '确认',
   'chat.answeredViaChatInput': '已通过输入框回答',
   'chat.cancel': '取消',

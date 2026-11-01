@@ -105,6 +105,11 @@
        紧随 sapphire 加载：同特异性材质平局以本文件为准；桌面 #header
        （chat.css 基准件 B）零触碰。 -->
   <link rel="stylesheet" href="css/glass.css">
+  <!-- 卡片家族统一样式包（2026-11-01 作者 16:05 令）：基准=官网过渡卡的 cards
+       模块（token --nfc-* + .nfc 族类）。消费面 = 接管弹窗 #takeover-box +
+       门入场加载卡 .nf-entry-card；设计稿 docs/design/20261101_162000_cards-family-design__*
+       （DNA 出处/迁移清单）。置于 mobile 层之前：mobile 覆写同特异性时仍最后胜出。 -->
+  <link rel="stylesheet" href="css/cards.css">
   <link rel="stylesheet" href="css/mobile.css">
   <!-- mobile-ui-refactor 批：手机交互层（独立层，非响应式补丁）。全部规则挂在
        body.mobile-layer 之下 —— 该类只由 js/mobile/bootstrap.js 在 ≤768px 视口
@@ -146,8 +151,10 @@
     #nf-boot-gate {
       position: fixed; inset: 0; z-index: 9999;
       display: none; align-items: center; justify-content: center;
-      background: #f2f3f5;
-      font: 13px/1.6 -apple-system, 'Segoe UI', sans-serif;
+      /* 页底 = 官网 auth 域 --auth-page-from 档（cards 家族 --nfc-page 同源单值；
+         门内联手抄——本面零请求纪律，css/cards.css 的 token 不作依赖） */
+      background: #f9fafb;
+      font: 14px/1.5 -apple-system, 'Segoe UI', sans-serif;
     }
     html.nf-boot-gate #nf-boot-gate { display: flex; }
     .nf-boot-ring {
@@ -158,100 +165,60 @@
     @media (prefers-color-scheme: reduce) { .nf-boot-ring { animation: none; } }
     @keyframes nf-boot-spin { to { transform: rotate(360deg); } }
     #nf-boot-gate[data-state="failed"] .nf-boot-ring { display: none; }
+    /* 失败卡 = 卡片家族 hint/错误卡面具的**内联手抄档**（css/cards.css .nfc
+       家族值的字面量同值——它是 CSS 失败脸，永不外迁不依赖任何请求；家族表
+       改值时两侧同落，出处 docs/design/20261101_162000_cards-family-design__* §2）：
+       bg #fff / border #e5e7eb / radius 18 / 影两档 / 标题 21/600 #111827 /
+       hint 14px #9ca3af（均 = 官网 auth 域 token 逐值）。 */
     .nf-boot-card {
-      display: flex; flex-direction: column; align-items: center; gap: 8px;
-      max-width: 78vw; padding: 26px 34px; text-align: center;
-      background: #fff; color: #1b1e26;
-      border: 1px solid #e0e1e4; border-radius: 14px;
-      box-shadow: 0 2px 14px rgba(0, 0, 0, 0.08);
+      display: flex; flex-direction: column; align-items: center; gap: 16px;
+      width: 384px; max-width: 86vw; box-sizing: border-box;
+      padding: 32px 32px 40px; text-align: center;
+      background: #fff; color: #111827;
+      border: 1px solid #e5e7eb; border-radius: 18px;
+      box-shadow: 0 2px 8px rgba(17, 24, 39, 0.04), 0 8px 24px rgba(17, 24, 39, 0.06);
     }
-    .nf-boot-card-title { font-size: 14px; font-weight: 600; }
-    .nf-boot-card-hint { font-size: 12px; color: #6a737d; max-width: 340px; }
-    .nf-boot-card-actions { display: flex; gap: 10px; margin-top: 6px; }
+    .nf-boot-card-title { font-size: 21px; font-weight: 600; letter-spacing: -0.2px; }
+    .nf-boot-card-hint { font-size: 14px; line-height: 1.5; color: #9ca3af; max-width: 320px; }
+    .nf-boot-card-actions { display: flex; gap: 10px; margin-top: 24px; }
     .nf-boot-card-actions button {
-      padding: 6px 18px; border-radius: 8px; font-size: 12px; cursor: pointer;
-      border: 1px solid #d8d9dd; background: transparent; color: inherit;
+      padding: 6px 18px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer;
+      border: 1px solid #e5e7eb; background: transparent; color: inherit;
     }
-    .nf-boot-card-actions button:hover { border-color: #b9bcc2; }
+    .nf-boot-card-actions button:hover { border-color: #d1d5db; }
     /* 本盒的 display:flex 会压过 UA 的 [hidden]{display:none}（作者声明胜 UA 默认）
        ——入场卡批实拍抓到空失败卡在慢载窗裸浮。此条恢复 hidden 语义（展示仍由
        showFailedFace 的 card.hidden=false 驱动）。 */
     .nf-boot-card[hidden] { display: none; }
-    /* ── 入场卡（接管/入场同族批 2026-11-01 作者令③）：进控制台的加载期整面
-       同族卡片覆盖 + 真实加载项清单——样式表/界面模块/连接主机/同步数据四项，
-       进度只由各阶段真实信号驱动（window.__nfEntry.mark），无假进度；全部就绪
-       才揭幕（crossfade 让位给已渲染完整的壳）。材质 = 接管模态卡同族配方
-       （毛玻璃 + 1px 边 + 柔影，radius 18 同档）；此面必须零请求依赖（样式面
-       缺席时它就是唯一的遮羞面），故玻璃配方内联自持、双主题自持。 ── */
-    .nf-entry-card {
-      display: none; /* 门脚本在 CSS 窗落定后置 data-entry="on" 才显——纯 CSS 窗保持现状（环 + 空门） */
-      flex-direction: column; align-items: center; gap: 14px;
-      width: 320px; max-width: 86vw; padding: 26px 28px 22px; text-align: left;
-      background: rgba(255, 255, 255, 0.72);
-      -webkit-backdrop-filter: blur(24px) saturate(1.15);
-      backdrop-filter: blur(24px) saturate(1.15);
-      border: 1px solid #e0e1e4; border-radius: 18px;
-      box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, 0.25),
-        0 2px 8px rgba(0, 0, 0, 0.04),
-        0 8px 24px rgba(0, 0, 0, 0.08);
-      color: #1b1e26;
-    }
-    #nf-boot-gate[data-entry="on"] .nf-entry-card { display: flex; }
-    #nf-boot-gate[data-entry="on"] .nf-boot-ring { display: none; } /* 清单自带活动环，门环退役 */
-    #nf-boot-gate[data-state="failed"] .nf-entry-card { display: none; } /* 失败面换失败卡 */
-    .nf-entry-title { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; text-align: center; }
-    .nf-entry-items { display: flex; flex-direction: column; gap: 8px; width: 100%; }
-    .nf-entry-item {
-      display: flex; align-items: center; gap: 10px;
-      font-size: 13px; line-height: 1.5; color: #6a737d;
-      transition: color 0.2s ease;
-    }
-    .nf-entry-item[data-state="active"] { color: #1b1e26; }
-    .nf-entry-dot {
-      width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; box-sizing: border-box;
-      border: 2px solid rgba(0, 0, 0, 0.18);
-      display: inline-flex; align-items: center; justify-content: center;
-      font-size: 10px; line-height: 1; font-weight: 600;
-    }
-    .nf-entry-item[data-state="active"] .nf-entry-dot {
-      border-color: rgba(91, 127, 191, 0.35); border-top-color: transparent;
-      animation: nf-boot-spin 0.8s linear infinite;
-    }
-    .nf-entry-item[data-state="done"] .nf-entry-dot { border-color: rgba(91, 127, 191, 0.9); }
-    .nf-entry-item[data-state="done"] .nf-entry-dot::after { content: '✓'; color: rgb(91, 127, 191); }
-    .nf-entry-item[data-state="fail"] { color: #1b1e26; }
-    .nf-entry-item[data-state="fail"] .nf-entry-dot { border-color: rgba(209, 36, 47, 0.65); }
-    .nf-entry-item[data-state="fail"] .nf-entry-dot::after { content: '×'; color: #d1242f; font-size: 11px; }
+    /* ── 入场卡（接管/入场同族批 2026-11-01 作者令③；卡片家族批 16:05 迁移）──
+       进控制台的加载期整面同族卡片 + 真实加载项清单（四项，真实信号驱动，
+       window.__nfEntry.mark 回报；就绪才揭幕）。**样式体已迁 css/cards.css**
+       （.nf-entry-card 面具 + 家族 .nfc 值；该面只在门脚本置 data-entry="on"
+       ——CSS 窗全 ok——后才显示，外迁安全）。本内联块只留一条预藏线：cards.css
+       尚未落地的慢载窗里空卡不裸浮（ID 特异性胜 cards.css 的 display:flex，
+       语义与迁移前逐字一致）。 ── */
+    .nf-entry-card { display: none; }
     /* 揭幕（就绪门槛过后的 crossfade）：body 先行可见（揭的是已就绪的壳），
        门面整体淡出让位；纯 CSS 窗（卡窗脸）不走本机制，行为不变。 */
     #nf-boot-gate { transition: opacity 0.22s ease; }
     html.nf-boot-reveal body { visibility: visible; }
     html.nf-boot-reveal #nf-boot-gate { opacity: 0; }
     @media (prefers-reduced-motion: reduce) { #nf-boot-gate { transition: none; } }
-    /* 暗色覆写必须在基态之后（同特异性序胜）——放本块尾。 */
+    /* 暗色覆写必须在基态之后（同特异性序胜）——放本块尾。暗档值 = 官网 auth 域
+       dark 块逐值（family token --nfc-* 同源单值；门内联手抄，失败卡同步纪律
+       同亮档批注）：bg #0d1117 / card #161b22 / border #2d333b / heading #e6edf3 /
+       hint #6e7681 / shadow = 官方 --auth-panel-shadow 逐值。入场卡暗档不再内联
+       （样式体在 cards.css，token 三腿自持）。 */
     @media (prefers-color-scheme: dark) {
-      #nf-boot-gate { background: #141519; }
-      .nf-boot-card { background: #1e2025; color: #e6e8ec; border-color: #33363d; }
-      .nf-boot-card-hint { color: #9aa0a8; }
-      .nf-boot-card-actions button { border-color: #3a3e46; }
-      .nf-boot-card-actions button:hover { border-color: #4c525c; }
+      #nf-boot-gate { background: #0d1117; }
+      .nf-boot-card {
+        background: #161b22; color: #e6edf3; border-color: #2d333b;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.50), 0 2px 8px rgba(0, 0, 0, 0.35);
+      }
+      .nf-boot-card-hint { color: #6e7681; }
+      .nf-boot-card-actions button { border-color: #2d333b; }
+      .nf-boot-card-actions button:hover { border-color: #3d444d; }
       .nf-boot-ring { border-color: rgba(255, 255, 255, 0.3); border-top-color: transparent; }
-      .nf-entry-card {
-        background: rgba(30, 32, 37, 0.82); border-color: #33363d; color: #e6e8ec;
-        box-shadow:
-          inset 0 1px 0 rgba(255, 255, 255, 0.04),
-          0 2px 8px rgba(0, 0, 0, 0.2),
-          0 8px 24px rgba(0, 0, 0, 0.35);
-      }
-      .nf-entry-item { color: #9aa0a8; }
-      .nf-entry-item[data-state="active"], .nf-entry-item[data-state="fail"] { color: #e6e8ec; }
-      .nf-entry-dot { border-color: rgba(255, 255, 255, 0.25); }
-      .nf-entry-item[data-state="active"] .nf-entry-dot {
-        border-color: rgba(120, 155, 220, 0.55); border-top-color: transparent;
-      }
-      .nf-entry-item[data-state="done"] .nf-entry-dot { border-color: rgba(120, 155, 220, 0.9); }
-      .nf-entry-item[data-state="done"] .nf-entry-dot::after { color: rgb(120, 155, 220); }
     }
   </style>
   <script>
@@ -358,7 +325,9 @@
         for (var i = 0; i < entry.order.length; i++) {
           var id = entry.order[i];
           var row = document.createElement('div');
-          row.className = 'nf-entry-item';
+          // 行类双挂：.nf-entry-item = 机制名（paintEntry/spec 消费），
+          // .nfc-step = 卡片家族行基样式（css/cards.css）。
+          row.className = 'nf-entry-item nfc-step';
           row.setAttribute('data-item', id);
           row.setAttribute('data-state', 'pending');
           var dot = document.createElement('span');
@@ -561,12 +530,16 @@
        依赖——它报告的正是样式面缺席，自身绝不能再依赖任何请求。
        接管/入场同族批（2026-11-01 作者令③）追加 .nf-entry-card：主脸的入场
        延长门面（真实加载项清单 + 就绪揭幕，门脚本置 data-entry="on" 才显；
-       卡窗脸与 CSS 窗不显，行为不变）。 -->
+       卡窗脸与 CSS 窗不显，行为不变）。
+       卡片家族批（作者 16:05 令）基准化：入场卡挂 .nfc 家族卡体 + 官方字标
+       双档（web/brand/stand/lockup-*.png）+ 家族字阶类；样式体在 css/cards.css。 -->
   <div id="nf-boot-gate" role="status" aria-live="polite">
     <div class="nf-boot-ring" aria-hidden="true"></div>
-    <div class="nf-entry-card" role="status" aria-live="polite">
-      <div class="nf-entry-title"></div>
-      <div class="nf-entry-items"></div>
+    <div class="nf-entry-card nfc" role="status" aria-live="polite">
+      <img class="nfc-lockup nfc-lockup-light" src="/brand/stand/lockup-light.png" alt="STAND">
+      <img class="nfc-lockup nfc-lockup-dark" src="/brand/stand/lockup-dark.png" alt="" aria-hidden="true">
+      <div class="nf-entry-title nfc-title"></div>
+      <div class="nf-entry-items nfc-steps"></div>
     </div>
     <div class="nf-boot-card" hidden>
       <div class="nf-boot-card-title"></div>
@@ -778,7 +751,8 @@
       </div>
     </div>
     <!-- 顶缘滚入渐隐带（液体玻璃 v2 批 2026-10-31）：手机端替代顶栏的 88px
-         「先糊后没」层（blur 18 / sat 1.5 + veil + 两段式 mask；liquid-glass.css）。
+         「先糊后没」层（blur 18 / sat 1.5 + veil + 两段式 mask；样式随
+         统一按钮玻璃批逐字迁 glass.css，待裁项 M9 维持现状）。
          桌面恒隐；不是栏——pointer-events:none、无背景容器/边框/固定标题
          （作者裁定 ② 逐字）。层级：内容 < 渐隐带 25 < 悬浮圆钮层 30。 -->
     <div id="g2-edge-fade" aria-hidden="true"></div>
@@ -1007,14 +981,19 @@
     </div>
     <!-- 控制台单实例接管模态（2026-10-27 批；四修批 2026-10-29：极简卡 + 毛玻璃背景
          + 退出直达官网个人主页；接管/入场同族批 2026-11-01 作者令②：按钮语换代
-         g2 药丸族（次级白玻璃药丸 / 主动作墨玻璃药丸），卡面与入场加载卡同族——
-         同材质/版式/按钮语）。语义与既有模态族不同——Escape/遮罩点击不关闭
-         （互斥权的裁决点不可误关）。渲染单点 = takeoverModal.js。 -->
-    <div id="takeover-box">
-      <div id="takeover-title">Console opened elsewhere</div>
-      <div id="takeover-msg"></div>
-      <div id="takeover-error" role="alert" hidden></div>
-      <div id="takeover-actions">
+         g2 药丸族。卡片家族批 2026-11-01 作者 16:05 令：面板基准化 = .nfc 家族
+         实色卡（白底/1px 边/radius 18/软影）+ 官方字标双档 + 家族字阶——原玻璃
+         面板档随本批退役（[USER-RULING] 申报见设计稿 §5）；.takeover-blur 整页
+         背景模糊裁定维持）。视觉单源 = css/cards.css（.nfc 家族 + #takeover-box
+         显隐/动画）；语义与既有模态族不同——Escape/遮罩点击不关闭（互斥权的
+         裁决点不可误关）。渲染单点 = takeoverModal.js。 -->
+    <div id="takeover-box" class="nfc">
+      <img class="nfc-lockup nfc-lockup-light" src="/brand/stand/lockup-light.png" alt="STAND">
+      <img class="nfc-lockup nfc-lockup-dark" src="/brand/stand/lockup-dark.png" alt="" aria-hidden="true">
+      <div id="takeover-title" class="nfc-title">Console opened elsewhere</div>
+      <div id="takeover-msg" class="nfc-body"></div>
+      <div id="takeover-error" class="nfc-error" role="alert" hidden></div>
+      <div id="takeover-actions" class="nfc-actions">
         <button id="takeover-exit" class="g2-pill">Exit</button>
         <button id="takeover-retake" class="g2-pill g2-pill-primary">Retake Control</button>
       </div>
