@@ -330,10 +330,24 @@ class PromptSectionsSpec extends munit.FunSuite:
   // 钉因：注入链核验实证 Voice 节单 bullet 已在根上下文（builtin 代码解析 +
   // 重启 lifecycle 重建），但根回复零 `<output>` 包裹、模型自述「规则没进我
   // 的上下文」——显著性不足；本段为引擎编译注入的存在性保证。
+  //
+  // output 块总闸·提示词面（prompt-face 补批 2026-11-01，同一作者令「把 output
+  // 块相关的内容先关闭」）：段条件加闸 OutputBlockGate.enabled()——闸关（缺席
+  // 配置 = 默认）整段不进组装，闸开恢复今日行为。两态经隔离数据根写键参数化，
+  // 与机器真实配置解耦。
   // ============================================================
 
-  test("Output block discipline section injected for root agent (order 375, verbatim OutputBlockRule)"):
+  /** 隔离数据根 + 写 `outputBlock.enabled`（OB-G3 同款形态）。 */
+  private def withIsolatedDataRootWithGate[A](enabled: Boolean)(body: => A): A =
     withIsolatedDataRoot {
+      val cfg  = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+      val json = s"""{"outputBlock":{"enabled":$enabled}}"""
+      if os.exists(cfg) then os.write.over(cfg, json) else os.write(cfg, json)
+      body
+    }
+
+  test("Output block discipline section injected for root agent when the gate is ON (order 375, verbatim OutputBlockRule)"):
+    withIsolatedDataRootWithGate(enabled = true) {
       val ctx = PromptContext(isRootAgent = true)
       val blocks = buildConditionalBlocks(ctx)
       assert(
@@ -348,8 +362,21 @@ class PromptSectionsSpec extends munit.FunSuite:
       )
     }
 
-  test("Output block discipline section NOT injected for non-root agents (dispatcher/node sessions)"):
+  test("Output block gate OFF (default = absent config): root agent systemStable carries NO output-block instruction"):
     withIsolatedDataRoot {
+      val blocks = buildConditionalBlocks(PromptContext(isRootAgent = true))
+      assert(
+        !blocks.contains(nebflow.shared.Defaults.OutputBlockRule),
+        "gate off = the whole order-375 section stays out of the assembly"
+      )
+      assert(!blocks.contains("── Output discipline ──") && !blocks.contains("<output>"),
+        "no output-block instruction text may leak via any other section")
+      // 邻段零波及
+      assert(blocks.contains("## Routing discipline (root agent)"), "order-370 routing section unaffected")
+    }
+
+  test("Output block discipline section NOT injected for non-root agents (root scoping holds with the gate ON)"):
+    withIsolatedDataRootWithGate(enabled = true) {
       val dispatcher = buildConditionalBlocks(PromptContext(isRootAgent = false))
       assert(
         !dispatcher.contains(nebflow.shared.Defaults.OutputBlockRule),
@@ -361,6 +388,23 @@ class PromptSectionsSpec extends munit.FunSuite:
         !node.contains(nebflow.shared.Defaults.OutputBlockRule),
         "flow-node sessions must not receive the root-only section"
       )
+    }
+
+  test("Output block gate OFF: the JOINED root prompt (base + sections) carries no output-block instruction anywhere"):
+    withIsolatedDataRoot {
+      val base = nebflow.core.entity.BuiltinAgents.entry("Nebula").map(_.systemPrompt).getOrElse("")
+      val joined = PromptSections.assembleSystemPrompt(base, buildConditionalBlocks(PromptContext(isRootAgent = true)))
+      assert(!joined.contains("<output>"), s"no literal tag teaching anywhere: ${joined.linesIterator.filter(_.contains("output")).mkString("\n")}")
+      assert(!joined.contains("Output discipline"), "no output discipline header anywhere")
+      assert(!joined.contains("wrap everything"), "Voice bullet stripped from the base prompt")
+    }
+
+  test("Output block gate ON: the joined root prompt restores the rule (base Voice bullet + order-375 section)"):
+    withIsolatedDataRootWithGate(enabled = true) {
+      val base = nebflow.core.entity.BuiltinAgents.entry("Nebula").map(_.systemPrompt).getOrElse("")
+      val joined = PromptSections.assembleSystemPrompt(base, buildConditionalBlocks(PromptContext(isRootAgent = true)))
+      assert(joined.contains(nebflow.shared.Defaults.OutputBlockRule), "order-375 section back in the assembly")
+      assert(joined.contains("User-visible output: wrap everything"), "Voice bullet back in the base prompt")
     }
 
   test("MountedProjectList.renderLines renders empty list as the explicit placeholder"):

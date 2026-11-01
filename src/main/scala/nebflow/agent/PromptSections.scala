@@ -403,9 +403,17 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
     // 纪律段和 system.md 内「Recon: Read only」的显式优先级并存先例同形）。
     // 分发器 / 节点会话（isRootAgent=false）收不到本段——它们的面已由
     // DelegateTool brief / ProtocolFootnote / BlockingSubagent 首条消息承载。
+    //
+    // output 块总闸·提示词面（prompt-face 补批 2026-11-01，同一作者令「把
+    // output 块相关的内容先关闭」）：条件加闸 `nebflow.shared.OutputBlockGate
+    // .enabled()`——闸关 = 本段整段不进组装（`&&` 短路，非根会话连读数都不发生，
+    // 其余段零波及）。组装期求值：段条件在 buildConditionalBlocks（会话
+    // lifecycle 组装点）求值，翻闸后新装配即翻面；已在飞的旧上下文不回改
+    // （下个生命周期节点自然刷新）。与 Voice 节 bullet、brief、脚注、subagent
+    // 包装四处共闸（同一键同一读数）。
     PromptSection(
       375,
-      condition = ctx => ctx.isRootAgent,
+      condition = ctx => ctx.isRootAgent && nebflow.shared.OutputBlockGate.enabled(),
       body = nebflow.shared.Defaults.OutputBlockRule
     ),
 

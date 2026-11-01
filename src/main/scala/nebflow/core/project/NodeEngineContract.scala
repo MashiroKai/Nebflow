@@ -664,13 +664,25 @@ private[project] object NodeEngineContract:
    * output 块语法批（作者令 2026-10-31）：查询行之后再同缝注入 output 块纪律行
    * （[[Defaults.OutputBlockRule]]）——节点终稿亦只显 `<output>` 包裹内容；
    * 仍前缀注入位形（endsWith 断言零波及）。
+   *
+   * output 块总闸·提示词面（prompt-face 补批 2026-11-01，作者令「把 output 块
+   * 相关的内容先关闭」）：`includeOutputRule=false` ⇒ 纪律行整段不进脚注（含其
+   * 前导空行分隔，行距字节零残留）。生产缺省 = **组装期热读**
+   * `nebflow.shared.OutputBlockGate.enabled()`（每次节点 spawn 求值，翻闸后新
+   * 节点即翻面）；离线 spec 注入常值与机器配置解耦（渠道面 outputBlockGate
+   * 构造缝同款形态）。
    */
-  def protocolFootnoteFor(role: Option[String]): String =
+  def protocolFootnoteFor(
+    role: Option[String],
+    /** output 块总闸（prompt-face 补批）：true = 脚注携带 OutputBlockRule 行。 */
+    includeOutputRule: Boolean = nebflow.shared.OutputBlockGate.enabled()
+  ): String =
     val base =
       if NodeRoles.normalize(role.getOrElse("")) == NodeRoles.Verifier then
         ProtocolFootnote + "\n" + VerifierVerdictFootnote
       else ProtocolFootnote
-    Defaults.NoSleepPollRule + "\n\n" + Defaults.PluginDiscoveryLine + "\n\n" + Defaults.OutputBlockRule + "\n\n" + base
+    val outputRuleBlock = if includeOutputRule then "\n\n" + Defaults.OutputBlockRule else ""
+    Defaults.NoSleepPollRule + "\n\n" + Defaults.PluginDiscoveryLine + outputRuleBlock + "\n\n" + base
 
   // ── 链级抽象 P2：链上下文透传（过程文档溯源 §9.2）──
 
