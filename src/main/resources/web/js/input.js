@@ -1648,7 +1648,7 @@ export function initInput(view) {
     // placeholder 位（#531 作者令 2026-10-18：不新增独立占位行；清空附件/输入附言
     // 后由下方分支恢复原文案）。
     if (isRefOnlyFrame(view)) { input.placeholder = t('input.refOnlyHint'); return; }
-    if (n > 0) { input.placeholder = t('input.ph.attachments').replace('%n', String(n)); return; }
+    if (n > 0) { input.placeholder = attachmentPlaceholder(n); return; }
     input.placeholder = t('input.placeholder');
   }
 
@@ -2149,9 +2149,7 @@ export function initInput(view) {
     // 纯引用帧分支同 updateInputPlaceholder：闸文案落在输入框自身 placeholder
     // （#531，2026-10-18；无独立提示行）。
     if (isRefOnlyFrame(view)) { input.placeholder = t('input.refOnlyHint'); return; }
-    input.placeholder = n > 0
-      ? t('input.ph.attachments').replace('%n', String(n))
-      : t('input.placeholder');
+    input.placeholder = n > 0 ? attachmentPlaceholder(n) : t('input.placeholder');
   };
   voiceBtn.addEventListener('pointerdown', (e) => {
     // #513 纠正：拖动手势 = 全双工入口（面 A），默认封存态整个 dead ——
@@ -2325,4 +2323,25 @@ async function addPathAttachment({ path, rootPath }, view, target) {
   }
   const file = new File([detail.content], name, { type: 'text/plain' });
   addFileAttachment(file, null, target);
+}
+
+/* ── 附件态占位文案（输入框附件图标化批，作者令 2026-11-02）─────────────
+   **模块级单点**：initInput 的 updateInputPlaceholder 与 voice 作用域的
+   refreshPlaceholder 两处消费（零第二份判据）。
+
+   令文口径：「添加附件后占位提示文字不变，仍是『请输入消息...』」。手机层
+   （body.mobile-layer）附件条已改为扩展名族图标盒 —— 附件不再以文字占名，
+   「已附加文件——输入一句话一起发送」这条文字提示在手机层随之退场，占位恒为
+   通用文案 `input.placeholder`（=「输入消息...」）；桌面层逐字沿用既有
+   `input.ph.attachments`（%n 计数），按令「桌面共组件先不动」。
+
+   🔴 放置纪律：本函数刻意追加在**文件尾**（函数声明提升 ⇒ 两处消费点照常可用）
+   —— 上方 1698-1699 是 ime-guard 哨兵允许清单的锚行（scripts/check-ime-guard.mjs
+   ALLOWLIST 的 lines 元数据 + tests/ime-guard.spec.mjs 的 G4 组），正文插入会把
+   该对逐行下推打红哨兵；追加尾部 = 行号零漂移（本批实证：1698/1699 原值）。 */
+function attachmentPlaceholder(n) {
+  const mobile = typeof document !== 'undefined'
+    && document.body && document.body.classList.contains('mobile-layer');
+  if (mobile) return t('input.placeholder');
+  return t('input.ph.attachments').replace('%n', String(n));
 }

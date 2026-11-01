@@ -4763,6 +4763,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .fc-icon.xls  { background: linear-gradient(135deg, #4db874, #2e9e57); }
 .fc-icon.ppt  { background: linear-gradient(135deg, #ff9a62, #f07030); }
 .fc-icon.epub { background: linear-gradient(135deg, #b08af0, #8a5cd6); }
+/* 归档族（输入框附件图标化批 2026-11-02）：压缩包此前落 .code 灰档 ⇒ 独立
+   琥珀-棕档（与 ppt 橙、md 蓝紫均异）。色值取既有 sapphire --amber 族亮档
+   #ff9800 / 暗档 #ffa83c 的邻近梯度值，非新语义 token（同族文件卡单点）。 */
+.fc-icon.zip  { background: linear-gradient(135deg, #d7a05a, #a8743a); }
 .fc-icon.data, .fc-icon.code { background: linear-gradient(135deg, #9aa2b1, #6f7684); }
 .fc-meta { min-width: 0; }
 .fc-name { font-size: 13.5px; font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

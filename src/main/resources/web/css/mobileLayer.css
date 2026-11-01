@@ -2678,3 +2678,72 @@ body.mobile-layer .mobile-page-body #daemon-panel-title {
     transition-duration: 0.01ms;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   输入框附件图标化批（作者令 2026-11-02）—— 手机层输入条的文件附件 chip
+   从「图标+文件名胶囊」改为**扩展名族图标盒**：盒子与图片附件缩略图
+   （.att-thumb）**逐值同盒**（28×28 · border-radius 8px · 1px 同描边 ·
+   border-box · 条带基线同档），名字文字褪出条面；多附件并排同规则。
+   桌面层零触碰：色块基座在 css/input.css 为 display:none，本块全部挂在
+   body.mobile-layer 作用域 —— 桌面（含 ≤768px 非手机层窄窗）chip 逐像素
+   原样（tests/composer-mobile-slim-shots.mjs 同族 D 腿口径）。
+   ═══════════════════════════════════════════════════════════════════════ */
+/* 展开态残留的 .mh-att-expanded 横向滚动条带在图标形态下依然成立（折叠腿
+   js/attachStripFold.js 读实测 offsetWidth，盒子变小 ⇒ 一行装得下更多）。 */
+/* ① 图标盒接管 chip 本体：外形即图片缩略图盒 —— 尺寸/圆角/描边/内边距
+   逐值对齐 .att-thumb；底色/描边由色族档（.fc-icon.<cls> 渐变 + 本盒 1px
+   border）承担，故 chip 自身的 etched 底与 pad 一并退场。 */
+body.mobile-layer #attachment-preview .att-file {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  gap: 0;
+  border-radius: 8px;
+  background: transparent;
+  border: none;
+  justify-content: center;
+  cursor: default;
+  flex: none;               /* 图标形态不再弹性伸缩（与固定 28px 缩略图同盒语义） */
+  /* 不设 overflow:hidden —— ✕ 角标悬出 -4px 是既有形态（.att-remove 基座），
+     圆角剪影由色块自身的 8px 圆角承担，与 .att-thumb 同剪影。 */
+}
+/* ② 旧内联 glyph（12px 线框文件图标）退场：色块自身即图标语言。 */
+body.mobile-layer #attachment-preview .att-file > .att-file-glyph { display: none; }
+/* ③ 色块 = 28×28 图标盒（.fc-icon 色族单源；这里补满格几何与角标字级）。
+   色族档（.fc-icon.pdf/.doc/.xls/.ppt/.zip/.code/.data/.epub/.html/.md）
+   定义在 css/chat.css，桌面同一套 token，手机层零第二张色表。 */
+body.mobile-layer #attachment-preview .att-file > .att-file-icon {
+  display: flex;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  box-sizing: border-box;
+  border: 1px solid var(--glass-border);
+  align-items: center;
+  justify-content: center;
+  color: #fff;              /* .fc-icon 既有字面量（同族白字），非新色值 */
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* ④ 文件名文字褪出条面（信息不丢：chip title + 色块 aria-hidden 的面文本
+   仍在 DOM，读屏走 chip 的 title；发送链零触碰 —— 名字不出 UI 面即本令）。 */
+body.mobile-layer #attachment-preview .att-file > .att-file-name { display: none; }
+/* ⑤ ✕ 删除角标：盒子从「胶囊」缩成 28px 方盒后沿用既有 -4px 悬出位
+   （.att-remove 基座），但圆盘随盒缩一档（16 → 13px，与 composer 内
+   chat-message 引用 chip 的 ✕ 同档），命中域外扩同步收一档。 */
+body.mobile-layer #attachment-preview .att-file .att-remove {
+  width: 13px;
+  height: 13px;
+  top: -4px;
+  right: -4px;
+  font-size: 8px;
+}
+body.mobile-layer #attachment-preview .att-file .att-remove::after { inset: -6px; }
+body.mobile-layer #attachment-preview .att-file .att-remove svg {
+  width: 6.5px;
+  height: 6.5px;
+}

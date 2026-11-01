@@ -157,7 +157,15 @@ function humanSize(bytes) {
 
 /** Icon glyph + color family for a file-card icon (by extension). Exported for
  *  the att-ref-card 语言统一批 (2026-10-26): the user-side ref card reuses the
- *  SAME icon spec — one family, zero second source. */
+ *  SAME icon spec — one family, zero second source.
+ *
+ *  输入框附件图标化批（作者令 2026-11-02：「输入框里的附件条不显示文件名，
+ *  用与图片附件缩略图一样大小的图标代替」）：本表即附件 icon chip 的**唯一**
+ *  色族/角标来源（composer 文件附件 chip 复用本函数，零第二张扩展名表）；
+ *  `cls` 直接落 CSS `.fc-icon.<cls>` 既有色档（chat.css 单点）。
+ *  归档族（zip/rar/7z/tar/gz/tgz/bz2/xz）本批**补入** —— 此前落 'code' 灰档，
+ *  作者令要求「压缩」独立色族；补入是纯增项（既有 pop 卡/引用卡的同扩展名
+ *  文件随之从灰档变归档紫档，语义更准，形态无回归）。 */
 export function fileIconStyle(ext) {
   const e = (ext || '').toLowerCase();
   if (e === 'pdf') return { label: 'PDF', cls: 'pdf' };
@@ -167,6 +175,7 @@ export function fileIconStyle(ext) {
   if (['xls', 'xlsx', 'xlsm', 'csv', 'tsv'].includes(e)) return { label: 'XLS', cls: 'xls' };
   if (['ppt', 'pptx'].includes(e)) return { label: 'PPT', cls: 'ppt' };
   if (e === 'epub') return { label: 'EPUB', cls: 'epub' };
+  if (['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz'].includes(e)) return { label: e.toUpperCase().slice(0, 4), cls: 'zip' };
   if (['json', 'yaml', 'yml'].includes(e)) return { label: e.toUpperCase(), cls: 'data' };
   if (e) return { label: e.toUpperCase().slice(0, 4), cls: 'code' };
   return { label: 'FILE', cls: 'code' };
