@@ -511,7 +511,7 @@ test('D5 sealed state: messages/contacts pages show skeleton empty cards; messag
   expect(errors).toEqual([]);
 });
 
-test('D10 center chat-home key form: sapphire circle 44×44 inside dock bounds, stand-logo fallback (dark scheme; 收形批 10-31 22:50)', async ({ page }) => {
+test('D10 center chat-home key form: themed chip circle 44×44 inside dock bounds, stand-logo fallback (dark scheme; 收形批 10-31 22:50 → 头像芯片批 11-01 20:42)', async ({ page }) => {
   const errors = watchErrors(page);
   const st = await page.evaluate(() => {
     const key = document.querySelector('#mobile-dock .dock-key[data-dock="chat"]');
@@ -521,9 +521,12 @@ test('D10 center chat-home key form: sapphire circle 44×44 inside dock bounds, 
     const dockR = document.getElementById('mobile-dock').getBoundingClientRect();
     const cs = getComputedStyle(circle);
     // token 同源探针（frontend-verification 口径）：等色判据来自同一 var()，
-    // 断言与 token 定义解耦 —— fill 恒等于 rgb(var(--sapphire)) 计算值。
+    // 断言与 token 定义解耦。头像芯片批（2026-11-01 20:42「浅色=白底黑 logo/
+    // 深色=黑底白 logo」）：logo 回落态 fill 换主题芯片 token（:has(.dock-
+    // center-logo) 限定；自定义头像态仍 sapphire 环，D11 另钉）—— 本用例
+    // 无头像种子 = logo 态，fill 判据随批换 --agent-avatar-chip-bg。
     const probe = document.createElement('span');
-    probe.style.background = 'rgb(var(--sapphire))';
+    probe.style.background = 'var(--agent-avatar-chip-bg)';
     document.body.appendChild(probe);
     const tokenColor = getComputedStyle(probe).backgroundColor;
     probe.remove();
@@ -548,7 +551,7 @@ test('D10 center chat-home key form: sapphire circle 44×44 inside dock bounds, 
   expect(st.inside).toBe(true);           // 收形批⑤：中键收回 dock 边界内（lift=0）
   expect(st.shadow).toBe('none');         // 收形批④：边缘收简 = 纯色零浮影零光环
   expect(st.radius).toBe('50%');
-  expect(st.bg).toBe(st.tokenColor);      // 暗档 fill = --sapphire 本值（不新造色）
+  expect(st.bg).toBe(st.tokenColor);      // 暗档 logo 态 fill = 芯片 token 本值（头像芯片批）
   expect(st.logo).toBe(true);             // 无头像回落 = stand logo（不显示空白/默认人形）
   expect(st.hasAvatarClass).toBe(false);
   expect(errors).toEqual([]);
@@ -650,18 +653,20 @@ test('D11 center key avatar: seeded agent avatar paints circular img; live repai
 test.describe('center key light scheme', () => {
   test.use({ colorScheme: 'light' });
 
-  test('D12 center fill = light-deep sapphire token (--accent-agent-light); regular keys unchanged', async ({ page }) => {
+  test('D12 center fill (light) = themed chip token --agent-avatar-chip-bg (logo-fallback; 头像芯片批 11-01 20:42)', async ({ page }) => {
     const errors = watchErrors(page);
     const st = await page.evaluate(() => {
       const circle = document.querySelector('#mobile-dock .dock-key[data-dock="chat"] .dock-center');
       const probe = document.createElement('span');
-      probe.style.background = 'rgb(var(--accent-agent-light))';
+      // 头像芯片批（作者令 20:42「浅色主题=白底黑 logo」）：logo 回落态 fill =
+      // 亮档芯片 token（白底黑 logo；--accent-agent-light 深档留给自定义头像态）。
+      probe.style.background = 'var(--agent-avatar-chip-bg)';
       document.body.appendChild(probe);
       const token = getComputedStyle(probe).backgroundColor;
       probe.remove();
       return { bg: getComputedStyle(circle).backgroundColor, token };
     });
-    expect(st.bg).toBe(st.token); // 亮档深档（unified panel design §6.2 同款双档）
+    expect(st.bg).toBe(st.token); // 亮档 logo 态 = 芯片 token 本值
     expect(errors).toEqual([]);
   });
 });
