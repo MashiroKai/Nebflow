@@ -246,7 +246,7 @@ html[data-theme="dark"] {
    浅色主题 = 白底黑 logo / 深色主题 = 黑底白 logo —— 配对逐值对齐 brand
    app-icon 双主题档（stand-app-icon-light.svg = #FFFFFF 底 + #000000 形 /
    stand-app-icon-dark.svg = #000000 底 + #FFFFFF 形）。消费者：会话头
-   #agent-avatar-btn（chat.css，桌面 28px / 手机 78px 同规则）、档案预览盒
+   #agent-avatar-btn（chat.css，桌面 28px / 手机 56px 同规则）、档案预览盒
    .ap-avatar-box .agent-avatar-stand-logo（chat.css）、dock 中键 logo 态
    （mobileLayer.css :has(.dock-center-logo) 限定 —— 自定义头像态保持
    sapphire 底描边零回归）。三态解析结构同 --ctl-* 族：:root/

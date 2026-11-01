@@ -70,6 +70,13 @@
  *      空 span 仍吃胶囊 padding 画出 28×6px 玻璃条（作者实拍「头像下的暗条」）。
  *      ②-c `#session-name:empty { display:none }` 收口，名字一到即恢复。
  *
+ * 会话头头像收小批（作者令 2026-11-02 06:58「手机端会话顶部居中的 Muse 头像
+ * 调小一点」，实拍 IMG_1674）落位 —— 文件尾 ③ 块：78px → **56px** 一档。
+ *   位置/间距/语义零触碰：成组贴顶 64px 锚（②-b）、头像-名字 gap 6px、水平居中、
+ *   sticky 锚窗口顶（--muse-head-top）全部保持；名字字号留 14px（字身比 4.0，
+ *   仍「头像为主、名字为辅」）；dock 中键 44px 与桌面 28px 零触碰。取值理由与
+ *   验收读数见 docs/20261102_muse-avatar-shrink__delegate-nebflow-d616c46a.md。
+ *
  * 铁律：本文件全部规则挂在 body.mobile-layer 之下 —— 该类只由 mobile/bootstrap.js
  * 在手机视口（≤768px，与既有 css/mobile.css 折叠点同源）激活。桌面窗口永远不
  * 命中任何一条规则（桌面渲染逐字节不变）；桌面对本文件的唯一感知是 index.html
@@ -312,7 +319,7 @@ body.mobile-layer .dock-key.active .dock-label { font-weight: 600; }
    inset 1px 高光 --glass-control-highlight + 0 2px 8px 浮影
    --glass-control-shadow（glass-control 族双主题映射 sapphire.css :root /
    prefers-color-scheme:dark 两档本值，深浅自适应零新造色）。尺寸可不同
-   （44 vs 顶 78）但边缘规格逐字一致；自定义头像态 = .agent-avatar-img 同构
+   （44 vs 顶 56）但边缘规格逐字一致；自定义头像态 = .agent-avatar-img 同构
    （img 铺满 content 盒，见下块）；box-sizing:border-box（base.css 全局）
    ⇒ 描边收进 44px 足印内，中键外径/dock 胶囊几何零变化。 */
 body.mobile-layer .dock-key.dock-key-center {
@@ -2557,17 +2564,17 @@ body.mobile-layer #modal-overlay.takeover-live .mfs-back { display: none !import
    考古结论：Muse 形态的基座块（列式居中布局 + 头像圆 + 名字玻璃胶囊）原居
    liquid-glass.css:330-402（b4b6d8745 落地、49e2e7477 合入）；统一按钮玻璃批
    （dd78d5d05，同日 17:22）整文件退役 liquid-glass.css 时把基座一并带走 ——
-   下方 Muse 批覆盖块（sticky/78px/名字字号）失去基座后，头像+名字塌成
+   下方 Muse 批覆盖块（sticky/大头像尺寸/名字字号）失去基座后，头像+名字塌成
    「左对齐行内」形态随流滚动（作者 21:37 实拍 IMG_1673 所见 = 本病）。
    本块按**当前 UI 语言**重建基座（不复活 liquid-glass.css）：
    · 布局：列式 flex + 水平居中 + flex:none（原基座逐值，选择器原样）——
-     下方 Muse 批覆盖块在同文件更后方，gap/padding/头像 78px 仍由其接管；
+     下方 Muse 批覆盖块在同文件更后方，gap/padding/头像尺寸仍由其接管；
    · 名字 = **扁平毛玻璃**（作者令③「不再用胶囊立体感边框」）：玻璃单源包
      token（sapphire.css --glass-bg / --glass-blur / --cv-saturate，与全站
      悬浮控件同一材质族），**零 border、零立体 box-shadow**（原胶囊的
      glass-control 双 inset 高光/阴影档不移植）；兜底字色/省略号沿用原基座。
    · 头像本体零触碰：28px 圆 + 芯片底 = chat.css 全局 #agent-avatar-btn 现役
-     档（含 2026-11-01 主题化芯片），78px 放大由下方 Muse 覆盖块承担。
+     档（含 2026-11-01 主题化芯片），56px 放大由下方 Muse 覆盖块承担。
    桌面零感知（规则全挂 body.mobile-layer）。 */
 body.mobile-layer .g2-chat-head {
   display: flex;
@@ -2620,7 +2627,9 @@ body.mobile-layer .g2-chat-head #memory-btn {
      层 clip 恒 0（main.js 手机端白屏批），mask 在手机层本就零视觉作用，
      本批在手机层显式摘除 ⇒ #chat 回归非堆叠上下文，锚的 z 26 直接参与
      #main 层级对比。桌面 mask 不动（顶部消失点机制桌面现役）。
-   · 大号头像 78px（Muse 样张 ≈ 视宽 20-23% 取 78）+ 名字玻璃胶囊下置
+   · 大号头像 56px（Muse 样张原取 ≈ 视宽 20-23% 的 78；2026-11-02 06:58 作者令
+     「调小一点」收一档到 56 = 视宽 14.9%，取值与理由见下方 ③ 块）+ 名字玻璃
+     胶囊下置
      （liquid-glass.css .g2-chat-head 基座列式布局原样，只放大几何）；
      头像自带不透明底/描边/浮影，名字胶囊 = 玻璃控制件 token —— 与现有
      玻璃/白底卡片语言同源，深浅主题走既有 token 双档自然成立。
@@ -2676,10 +2685,17 @@ body.mobile-layer #chat .g2-chat-head {
 body.mobile-layer #chat .g2-chat-head #session-name:empty {
   display: none;
 }
-/* ③ 大号圆头像（基座 52px → 78px；底/描边/浮影/glass-control 缘沿用基座档） */
+/* ③ 大号圆头像（基座 52px → 78px → **56px**；底/描边/浮影/glass-control 缘沿用
+   基座档）——收小批（作者令 2026-11-02 06:58，实拍 IMG_1674「手机端会话顶部居中
+   的 Muse 头像调小一点」）：78 一档收到 56（视宽 375 的 14.9%；原 78 = 20.8%），
+   成组贴顶 64px 锚 / 头像-名字 6px 间距 / sticky 与居中语义零触碰。
+   56 的取法：78 与名字 14px 的字身比 5.57，56 档下同一视觉重量落在 14px（4.0）——
+   仍在「头像为主、名字为辅」的量级内，而 52-54 会把头像压到接近两倍字高的
+   「小号图标」观感；故取 56 而非区间下沿（详见批文档「取值理由」）。
+   桌面 28px 与 dock 中键 44px 零触碰（规则挂 body.mobile-layer + #chat 子树）。 */
 body.mobile-layer #chat .g2-chat-head #agent-avatar-btn {
-  width: 78px;
-  height: 78px;
+  width: 56px;
+  height: 56px;
 }
 /* ④ 名字玻璃胶囊：随大头像同比例升半档（13px → 14px），余沿用基座档 */
 body.mobile-layer #chat .g2-chat-head #session-name {

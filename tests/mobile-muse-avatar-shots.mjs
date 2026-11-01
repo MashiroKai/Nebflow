@@ -12,7 +12,8 @@
 //      计数 == 0（消息分组/时间戳/footer 不在本批面 —— 以 ai 行数>0 佐证在演戏台）
 //   ② 悬浮锚形态：.g2-chat-head position:sticky / top:0 / z-index:26（> 渐隐带
 //      25，头像本体不被 veil 蒙住）；#chat mask 已在手机层释放（堆叠上下文解锁）
-//   ③ Muse 几何：大号圆头像 78px、水平居中（与 #chat 可视盒同心）、名字玻璃
+//   ③ Muse 几何：大号圆头像 56px（原 78，2026-11-02 06:58 作者令收一档）、水平
+//      居中（与 #chat 可视盒同心）、名字玻璃
 //      胶囊在头像正下方居中、名字 = 当前会话对方 agent 身份（Spider 腿实文）
 //   ③-b 静止态落位（位置批 2026-11-01 23:0x 作者报障重钉）：组顶进顶带、落点 =
 //      悬浮双键行下缘 64px（16+48，组自带 8px 上内距作呼吸缝）±2px —— 原判据
@@ -247,8 +248,8 @@ function assertCommon(tag, p, withAvatar) {
     `position=${p.position} top=${p.stickyTop} pad=${p.padTop} z=${p.zIndex}`);
   ok(`${tag} ② #chat mask 已释放（手机层堆叠上下文解锁）`, p.maskImage === 'none', p.maskImage);
   ok(`${tag} ② 手机层在场 + #header 退场`, p.mobileLayer && p.headerHidden, '');
-  ok(`${tag} ③ 大号圆头像 78px`,
-    Math.abs(p.avW - 78) <= 0.8 && Math.abs(p.avH - 78) <= 0.8, `${p.avW.toFixed(1)}×${p.avH.toFixed(1)}`);
+  ok(`${tag} ③ 大号圆头像 56px`,
+    Math.abs(p.avW - 56) <= 0.8 && Math.abs(p.avH - 56) <= 0.8, `${p.avW.toFixed(1)}×${p.avH.toFixed(1)}`);
   ok(`${tag} ③ 头像水平居中（与 #chat 同心 ±2px）`, Math.abs(p.avCx - p.chatCx) <= 2,
     `avCx=${p.avCx.toFixed(1)} chatCx=${p.chatCx.toFixed(1)}`);
   ok(`${tag} ③ 名字在头像正下方且居中`, p.nameBelow && Math.abs(p.nameCx - p.avCx) <= 2,
