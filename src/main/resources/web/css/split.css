@@ -3420,6 +3420,16 @@ a.nf-wikilink.nf-wikilink-term {
   text-underline-offset: 3px;
 }
 
+/* 正文裸词识别（B5-1）：自动链接的词条取同一套点线底纹，但不改字色 ——
+   作者手写的引用是「信号」，自动生成的是「提示」：密度高一个量级，视觉必须
+   更轻；字色继承正文，只有底纹在标识可点。 */
+a.nf-term {
+  color: inherit;
+  text-decoration: underline dotted currentColor 1px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
 /* ── 返回原文档按钮（词条引用批 batch 2, F5；作者令 2026-10-29 11:49
    「返回按钮放左上角」）─────────────────────────────────────────────
    仅「经引用跳转打开」的页签渲染（canvas.js syncRefBackButton），钉在

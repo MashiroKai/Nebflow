@@ -308,15 +308,45 @@ function resolveTermHit(target, data, currentProject) {
   const key = String(target || '').trim().replace(/\\/g, '/')
     .replace(/\.markdown$/i, '').replace(/\.md$/i, '').toLowerCase();
   if (!key) return null;
-  const candidates = [];
+  return resolveTermKey(key, data, currentProject);
+}
+
+// 词条键索引（B5-1）：`key → [{node, term}]` 只建一次，按 data 对象弱引用缓存。
+// 正文裸词识别要为每个落点做一次消解，逐次全量扫描 nodes×terms 在万级词条库
+// 上就是 O(链接数 × 词条数)；索引把这一步压成一次建表 + O(1) 查表。
+/** @type {WeakMap<object, Map<string, any[]>>} */
+const termKeyIndexCache = new WeakMap();
+
+function termKeyIndex(data) {
+  let idx = termKeyIndexCache.get(data);
+  if (idx) return idx;
+  /** @type {Map<string, any[]>} */
+  idx = new Map();
   for (const n of data.nodes) {
-    if (n.stub || !Array.isArray(n.terms)) continue;
+    if (!n || n.stub || !Array.isArray(n.terms)) continue;
     for (const term of n.terms) {
       const keys = [term.name].concat(term.aliases || [])
-        .map((k) => String(k || '').trim().toLowerCase());
-      if (keys.includes(key)) candidates.push({ node: n, term });
+        .map((k) => String(k || '').trim().toLowerCase())
+        .filter(Boolean);
+      for (const k of new Set(keys)) {
+        if (!idx.has(k)) idx.set(k, []);
+        idx.get(k).push({ node: n, term });
+      }
     }
   }
+  termKeyIndexCache.set(data, idx);
+  return idx;
+}
+
+/**
+ * 一个已归一化的词条键 → 消解结果（`[[词条]]` 与正文裸词两条路共用同一套
+ * 消解裁定：唯一 glossary 命中优先于 doc-intro；同级多命中永不猜）。
+ * @param {string} key 小写键
+ * @param {any} data graph 载荷
+ * @param {string|null} currentProject 作用域工程
+ */
+function resolveTermKey(key, data, currentProject) {
+  const candidates = termKeyIndex(data).get(key) || [];
   if (!candidates.length) return null;
   const scoped = currentProject
     ? candidates.filter((c) => c.node.project === currentProject)
@@ -353,6 +383,99 @@ function resolveTermHit(target, data, currentProject) {
 import { attachTermFace, termTapExpand, hideTermTip, setTermTipNav } from '../termTip.js';
 // onWikilinkClick 是函数声明（提升），模块装载时即可注入气泡的深链导航回调。
 setTermTipNav(onWikilinkClick);
+// 正文裸词识别（B5-1）：匹配规则是纯函数（零依赖、可离线断言），DOM 面的排除
+// 判据仍在本文件的 TreeWalker 里 —— 下面 renderAutoTerms 与 renderWikilinks 用
+// 同一套 acceptNode 纪律（CODE/PRE/A/.katex 一律不进）。
+import { termsForScope, buildTermMatcher } from '../termLexicon.js';
+
+/**
+ * 正文裸词识别（B5-1，2026-11-01 文档增强腿）。
+ *
+ * 与 `[[词条]]` 的关系：显式引用原本就通篇可点（五件已有设施），缺的是**作者
+ * 没写括号的裸词**。本 pass 把已注册词条在正文里的**首次出现**变成 `.nf-term`
+ * 链接，消解走同一套裁定（`resolveTermKey`），气泡/深链/触屏首击全部复用
+ * `attachTermFace` 与既有点击委派 —— 零新机制、零新请求。
+ *
+ * 排除面（缺一条就会静默出错，见 verify-md-term.mjs 的「0 命中」四条）：
+ *   · 代码围栏 / 行内代码（CODE、PRE 子树）—— 把代码里的符号标成链接是最坏坏法；
+ *   · 既有链接（A 子树）—— 输出 `<a>` 套 `<a>` 是非法 HTML；
+ *   · KaTeX 公式（`.katex` 子树，含其 TeX 源 `<annotation>`）；
+ *   · 标题（h1–h6）—— 标题是结构面，词条首现留在正文段落；
+ *   · 词条自己的声明文档 —— glossary 里 `- GCR — …` 不加自指链接。
+ *
+ * @param {HTMLElement} mdViewer
+ * @param {any} data graph 载荷（`nodes[].terms[]` = 正文块锚段落派生）
+ * @param {string|null} projectName 作用域工程
+ * @param {string} [absPath] 当前文档路径（用于剔除「自己的声明文档」）
+ * @returns {number} 实际生成的链接数（断言面用）
+ */
+function renderAutoTerms(mdViewer, data, projectName, absPath) {
+  if (!data || !mdViewer) return 0;
+  const selfKey = normVaultPath(absPath);
+  const terms = termsForScope(data, projectName).filter((term) => {
+    // 自己的声明文档不链自己：把 term.rel 还原成绝对路径比较（工程 vault + rel）。
+    if (!selfKey || !term.rel) return true;
+    const proj = (data.projects || []).find((p) => p.name === term.project);
+    if (!proj || !proj.vault) return true;
+    return normVaultPath(String(proj.vault).replace(/[\\/]+$/, '') + '/' + term.rel) !== selfKey;
+  });
+  if (!terms.length) return 0;
+  const matcher = buildTermMatcher(terms);
+  if (!matcher.size) return 0;
+
+  const walker = document.createTreeWalker(mdViewer, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => {
+      const p = node.parentElement;
+      if (!p) return NodeFilter.FILTER_REJECT;
+      const tag = p.tagName;
+      if (tag === 'CODE' || tag === 'PRE' || tag === 'SCRIPT' || tag === 'STYLE' || tag === 'A') return NodeFilter.FILTER_REJECT;
+      if (/^H[1-6]$/.test(tag)) return NodeFilter.FILTER_REJECT;
+      if (p.closest('pre, code, a, .katex, .nf-term')) return NodeFilter.FILTER_REJECT;
+      return node.nodeValue && node.nodeValue.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+  const textNodes = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+  let made = 0;
+  for (const node of textNodes) {
+    const value = node.nodeValue || '';
+    const hits = matcher.find(value);
+    if (!hits.length) continue;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    for (const hit of hits) {
+      if (hit.start > last) frag.appendChild(document.createTextNode(value.slice(last, hit.start)));
+      const a = document.createElement('a');
+      a.className = 'nf-term';
+      a.href = '#';
+      a.textContent = hit.text;              // 保留原文大小写
+      a.dataset.term = hit.term.name;        // 消解在下面统一做（一次建表，O(1)/命中）
+      frag.appendChild(a);
+      made++;
+      last = hit.end;
+    }
+    if (last < value.length) frag.appendChild(document.createTextNode(value.slice(last)));
+    node.parentNode?.replaceChild(frag, node);
+  }
+
+  // 消解 + 挂面：命中才留链接（歧义/越界 = 退回裸文本，绝不猜）。
+  mdViewer.querySelectorAll('a.nf-term').forEach((el) => {
+    const a = /** @type {HTMLAnchorElement} */ (el);
+    const key = String(a.dataset.term || '').trim().toLowerCase();
+    const hit = key ? resolveTermKey(key, data, projectName || null) : null;
+    if (!hit) {
+      a.replaceWith(document.createTextNode(a.textContent || key));
+      made--;
+      return;
+    }
+    a.dataset.wikiResolved = JSON.stringify(hit);
+    a.dataset.wikiTarget = String(a.dataset.term || '');   // 非空 ⇒ 点击腿走 resolved.absPath 深链（不是本文自锚）
+    if (hit.anchor && hit.anchor.kind === 'block' && hit.anchor.id) a.dataset.wikiAnchor = '^' + hit.anchor.id;
+    if (hit.term) attachTermFace(a, mdViewer, { term: hit.term });
+  });
+  return made;
+}
 
 /** The canvas tab id hosting this viewer — the single-layer source a reference
  *  jump records (F5 返回原文档；canvas.js openWorkspaceItem 消费). */
@@ -446,6 +569,10 @@ async function renderWikilinks(mdViewer, baseDir, absPath) {
       if (!anchorRaw) attachTermFace(a, mdViewer, { fallbackName: target });
     }
   });
+  // 正文裸词识别（B5-1）：显式 `[[词条]]` 全部就位后再跑（walker 已拒 A 子树，
+  // 这里是顺序兜底：绝不把刚生成的 wikilink 文本再链一次）。无词条 ⇒ 零开销、
+  // 输出与改造前逐字节相同。
+  if (data) renderAutoTerms(mdViewer, data, currentProject, absPath);
 }
 
 // ── Backlinks (KG audit ②, 2026-10-28) ────────────────────────────────
@@ -917,7 +1044,7 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
     // deliverable is the same authored-markup surface as an HTML one and gets
     // the same browser-grade link behaviour.
     mdViewer.addEventListener('click', (e) => {
-      const wikilink = e.target instanceof Element ? e.target.closest('a.nf-wikilink') : null;
+      const wikilink = e.target instanceof Element ? e.target.closest('a.nf-wikilink, a.nf-term') : null;
       if (wikilink) {
         // 触屏首击开泡（词条引用批 batch 2，移动惯例）：(hover:none) 环境里
         // 词条面的第一次轻点只展开气泡不导航，再点（链接或气泡内）才跳转。
