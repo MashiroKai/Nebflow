@@ -1,6 +1,6 @@
 # Contributing
 
-This guide is for developers preparing changes to this repository. It covers environment setup, building, testing, and the branch/commit/PR conventions. The repository is currently private — there is no external contribution process.
+This guide is for developers preparing changes to this repository. It covers environment setup, building, testing, and the branch/commit/PR conventions. Development happens on an internal USTC Git instance (`https://git.ustc.edu.cn/kaiyu/nebflow`) — external pull requests are not accepted. The GitHub repository (`github.com/MashiroKai/Nebflow`) stays frozen read-only as the historical archive; it no longer receives pushes, issues, or pull requests.
 
 ## Prerequisites
 
