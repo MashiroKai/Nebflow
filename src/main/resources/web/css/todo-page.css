@@ -142,24 +142,20 @@
   letter-spacing: 0.02em;
   white-space: nowrap;
   color: rgb(var(--st-amber));
-  background: rgba(var(--st-amber), 0.08);
-  border: 1px solid rgba(var(--st-amber), 0.22);
+  background: rgb(var(--st-amber) / 0.08);
+  border: 1px solid rgb(var(--st-amber) / 0.22);
 }
 
 /* ── 入口行图标（消息列表「待办事项」行首圆形图标） ────────────────── */
-.fm-todo-icon {
-  flex-shrink: 0;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(var(--sapphire), 0.08);
-  border: 1px solid rgba(var(--sapphire), 0.18);
+/* 圆框统一批（2026-11-01，作者实拍指认）：容器 = `.fm-avatar` 家族（JS 侧挂
+   `fm-avatar fm-avatar-40`）——尺寸/圆角/底色/描边与设备行、好友行圆框逐字同源
+   （glass-etched tokens），本文件不再自带第二份圆框几何（旧自绘 rgba(var(--sapphire),a)
+   逗号形态非法被静默丢弃，正是「裸图标」根因）。本条只管字形着色与落点尺寸；
+   双类选择器压过 friends.css `.fm-avatar` 的 muted 色（该表后载，单类不够）。 */
+.fm-avatar.fm-todo-icon {
   color: rgb(var(--sapphire));
 }
-.fm-todo-icon svg {
+.fm-avatar.fm-todo-icon svg {
   width: 18px;
   height: 18px;
 }
@@ -191,8 +187,8 @@
   color: var(--color-frame-text);
 }
 .todo-filter-chip.active {
-  background: rgba(var(--sapphire), 0.1);
-  border-color: rgba(var(--sapphire), 0.35);
+  background: rgb(var(--sapphire) / 0.1);
+  border-color: rgb(var(--sapphire) / 0.35);
   color: rgb(var(--sapphire));
 }
 
