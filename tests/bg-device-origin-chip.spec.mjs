@@ -6,11 +6,18 @@
 //   · 设备通道后台任务（Bash device=KAI + run_in_background）的 origin chip =
 //     设备名（如「KAI」），类 .bg-origin-device，title 用独立词「跑在 KAI」
 //     （bg.runsOn——「跑在哪」轴 ≠ nebula/dispatcher/node 的「谁开启」轴）；
-//   · 与子代理/本地任务芯片并列可辨：同一行内 origin chip（设备名）+ kind chip
-//     （远程）并存，样式沿用既有中性 chip 族（无新色令牌）；
 //   · 旧后端快照回退：origin 字段缺席时从描述 `[<设备>] ` 前缀提取设备名
 //     （RemoteExecutor 描述形态），兜底 'device'；
 //   · 对照行：nebula 行 chip 逐字回归（Nebula / 由 Nebula 开启）。
+//
+// 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）契约变更：
+//   · 「本地/远程」kind chip（.bg-task-kind）整对删除——本批前 T1/T3 曾断言
+//     「远程」/「本地」字面现场，现改为「零渲染」断言；
+//   · 设备名 chip 升格为每行恒在：远端 = 对端设备名（同前），本机 = 本机设备名
+//     （deviceRoster 花名册 self / configData.selfDevice，剥 -iso-<hex8> 后缀，
+//     绝不回退「本地」字样）；
+//   · 设备任务的 origin chip 与设备 chip 合体（单 chip，不再双写设备名）；
+//     nebula/dispatcher/node 的「谁开启」chip 不变，与设备 chip 并列。
 //
 // 数据面 = WS activeBgTasks 快照直种，零后端、零 sbt。
 // Run: node <stand>/node_modules/@playwright/test/cli.js test tests/bg-device-origin-chip.spec.mjs
@@ -73,6 +80,9 @@ async function bootApp(page) {
   await page.routeWebSocket(/\/ws/, (ws) => {
     const sendConfig = () => ws.send(JSON.stringify({
       type: 'configData', config: '{}', configured: true, onboarding: 'done',
+      // 设备同级批：本机设备名第二源（引擎自身身份读数）——本机任务行设备 chip
+      // 取本机设备名（隔离实例名带 -iso-<hex8> 后缀，显示面剥掉）。
+      selfDevice: { id: 'self-dev-1', name: 'Mashiros-MacBook-Pro-iso-a659864a' },
     }));
     const sendSessions = () => ws.send(JSON.stringify({
       type: 'sessionList',
@@ -113,7 +123,7 @@ test.beforeEach(async ({ page }) => {
   await bootApp(page);
 });
 
-test('T1 device-origin row: chip = device name, bg-origin-device class, 「跑在」title, remote kind chip', async ({ page }) => {
+test('T1 device-origin row: chip = device name, bg-origin-device class, 「跑在」title, no local/remote kind chip', async ({ page }) => {
   const errors = watchErrors(page);
   await page.click('#bg-indicator');
   await expect(page.locator('#bg-dropdown')).toBeVisible();
@@ -121,12 +131,14 @@ test('T1 device-origin row: chip = device name, bg-origin-device class, 「跑�
     .locator('.bg-task-row[data-task-id="job-kai"]');
   await expect(row).toHaveCount(1);
   const chip = row.locator('.bg-task-origin');
+  await expect(chip).toHaveCount(1);
   await expect(chip).toHaveText('KAI');
   await expect(chip).toHaveClass(/bg-origin-device/);
   // title 用独立词（bg.runsOn）——设备 chip 回答「跑在哪」，非「谁开启」。
   await expect(chip).toHaveAttribute('title', '跑在 KAI');
-  // 与 kind chip 并列可辨：同一行内 origin chip（设备名）+ kind chip（远程）。
-  await expect(row.locator('.bg-task-kind')).toHaveText('远程');
+  // 设备同级批：本地/远程 kind chip 整对退役 ⇒ 行内零渲染。
+  await expect(row.locator('.bg-task-kind')).toHaveCount(0);
+  await expect(row.locator('.bg-task-meta')).not.toContainText('远程');
   expect(errors).toEqual([]);
 });
 
@@ -140,21 +152,29 @@ test('T2 legacy snapshot fallback: no origin fields → device name extracted fr
   const chip = row.locator('.bg-task-origin');
   await expect(chip).toHaveText('DESKTOP-IJBBEOT');
   await expect(chip).toHaveClass(/bg-origin-device/);
+  await expect(row.locator('.bg-task-kind')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
-test('T3 control: nebula-origin row chip unchanged (Started-by semantics intact)', async ({ page }) => {
+test('T3 control: nebula-origin row keeps Started-by chip AND gains the local device-name chip', async ({ page }) => {
   const errors = watchErrors(page);
   await page.click('#bg-indicator');
   await expect(page.locator('#bg-dropdown')).toBeVisible();
   const row = page.locator('#bg-dropdown .bg-section-tasks .bg-dropdown-list').first()
     .locator('.bg-task-row[data-task-id="job-local"]');
   await expect(row).toHaveCount(1);
-  const chip = row.locator('.bg-task-origin');
+  // 设备名 chip（本机 = 本机设备名，剥 -iso-<hex8> 后缀；绝不出现「本地」字样）。
+  const dev = row.locator('.bg-origin-device');
+  await expect(dev).toHaveCount(1);
+  await expect(dev).toHaveText('Mashiros-MacBook-Pro');
+  await expect(dev).toHaveAttribute('title', '跑在 Mashiros-MacBook-Pro');
+  // 「谁开启」chip 并列不变（Started-by 语义逐字回归）。
+  const chip = row.locator('.bg-origin-nebula');
   await expect(chip).toHaveText('Nebula');
-  await expect(chip).toHaveClass(/bg-origin-nebula/);
   await expect(chip).not.toHaveClass(/bg-origin-device/);
   await expect(chip).toHaveAttribute('title', '由 Nebula 开启');
-  await expect(row.locator('.bg-task-kind')).toHaveText('本地');
+  // 本地/远程 kind chip 整对退役。
+  await expect(row.locator('.bg-task-kind')).toHaveCount(0);
+  await expect(row.locator('.bg-task-meta')).not.toContainText('本地');
   expect(errors).toEqual([]);
 });
