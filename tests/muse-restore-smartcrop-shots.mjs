@@ -17,7 +17,7 @@
 //   desktop-<engine>-<scheme>.png        桌面 1280 回归（#header 头像行原样+叠卡取景）
 //
 // 探针：
-//   A① Muse 形态回归：.g2-chat-head display:flex/column/center；头像 78px 水平
+//   A① Muse 形态回归：.g2-chat-head display:flex/column/center；头像 56px 水平
 //      居中（与 #chat 同心 ±2px）；名字在头像正下方且居中；sticky 顶锚 + 压流；
 //      静止态落位 = 组顶 64px（悬浮双键行下缘；位置批 2026-11-01 23:0x 作者报障
 //      重钉——原判据 `组顶 >= chatTop + 88` 钉的正是病灶「头像上方一大块空白」）
@@ -404,7 +404,7 @@ function assertMuse(tag, p, scheme) {
   ok(`${tag} A① 头部列式居中基座在场（flex/column/center）`,
     p.display === 'flex' && p.flexDir === 'column' && p.alignItems === 'center',
     `${p.display}/${p.flexDir}/${p.alignItems}`);
-  ok(`${tag} A① 大号圆头像 78px`, Math.abs(p.avW - 78) <= 0.8 && Math.abs(p.avH - 78) <= 0.8,
+  ok(`${tag} A① 大号圆头像 56px`, Math.abs(p.avW - 56) <= 0.8 && Math.abs(p.avH - 56) <= 0.8,
     `${p.avW.toFixed(1)}×${p.avH.toFixed(1)}`);
   ok(`${tag} A① 头像水平居中（与 #chat 同心 ±2px）`, Math.abs(p.avCx - p.chatCx) <= 2,
     `avCx=${p.avCx.toFixed(1)} chatCx=${p.chatCx.toFixed(1)}`);

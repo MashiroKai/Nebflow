@@ -3,7 +3,7 @@
 // 「dock 的 agent 头像边缘和顶部 agent 头像的边缘保持一致」）双主题 × 双头像态
 // 截图取证 + 机械探针。产出 → evidence/20261101_dock-avatar-edge-unify/：
 //   edge-sameframe-<scheme>-<state>.png  同帧实拍（聊天根 375×812：顶部 Muse
-//                                        悬浮大头像 78px + dock 中键 44px 同框）
+//                                        悬浮大头像 56px + dock 中键 44px 同框）
 //   zoom-dock-<scheme>-<state>.png       并排帧·dock 中键特写（元素级截图）
 //   zoom-top-<scheme>-<state>.png        并排帧·顶部头像特写（元素级截图）
 // 探针（与令逐条对齐）：
@@ -17,7 +17,7 @@
 //   ④ 两态成立：自定义头像态（img 铺满 content 盒 ≈42px，旧 2.5px 蓝环退役）
 //      / 默认态（stand logo 回落）各跑一轮。
 //   ⑤ dock 其余形态零触碰：中键外径恒 44×44（border-box 描边收进足印）、
-//      圆不探出胶囊顶缘、呼吸缝 == --dock-gap 10px、顶部头像 78px 形态不动。
+//      圆不探出胶囊顶缘、呼吸缝 == --dock-gap 10px、顶部头像 56px 形态不动。
 //   R0 零 console error 门。
 // 走 mobile-dock-shape-shots / mobile-dock.spec 同款静态 harness（无后端）。
 // Run: node tests/dock-avatar-edge-unify-shots.mjs
@@ -183,8 +183,8 @@ for (const scheme of ['dark', 'light']) {
         && probe.centerTop >= probe.dockTop - 0.5 && probe.centerBottom <= probe.dockBottom + 0.5,
       `${probe.centerW}×${probe.centerH} top=${probe.centerTop.toFixed(1)} dockTop=${probe.dockTop.toFixed(1)}`);
     ok(`${tag} ⑤ 呼吸缝 == --dock-gap 10px（胶囊形态零触碰）`, Math.abs(probe.gap - 10) <= 1.5, `gap=${probe.gap.toFixed(2)}`);
-    ok(`${tag} ⑤ 顶部 Muse 大头像 78px 形态零触碰 + 同帧可见`,
-      Math.abs(probe.topW - 78) <= 0.6 && Math.abs(probe.topH - 78) <= 0.6
+    ok(`${tag} ⑤ 顶部 Muse 大头像 56px 形态零触碰 + 同帧可见`,
+      Math.abs(probe.topW - 56) <= 0.6 && Math.abs(probe.topH - 56) <= 0.6
         && probe.topInViewport && probe.centerInViewport,
       `top=${probe.topW}×${probe.topH} inFrame=${probe.topInViewport && probe.centerInViewport}`);
 

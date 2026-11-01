@@ -5339,7 +5339,7 @@ object.search-media-thumb { object-fit: initial; }
    「顶部会话（区）同列只显示头像+名字（其余信息退场），确保塞得进 header，
    记忆按钮放旁边」。column 纵排（头像 40 + 名称行）会让 header 随内容生长、
    挤占 right 链空间；恢复横排行后 header 恒定 50px（10×2 padding + 28 头像
-   + 2 border）。手机 375 形态在 mobileLayer.css（52px 大头像 + 纵排），零触碰。 */
+   + 2 border）。手机 375 形态在 mobileLayer.css（56px 大头像 + 纵排），零触碰。 */
 body:not(.mobile-layer) #header .header-center {
   flex-direction: row;
   gap: 6px;
