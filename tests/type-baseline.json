@@ -1,9 +1,5 @@
 {
   "generatedBy": "scripts/check-js-types.mjs --update",
-  "total": 2,
-  "files": {
-    "src/main/resources/web/js/delegatePanoramaView.js": {
-      "TS2339": 2
-    }
-  }
+  "total": 0,
+  "files": {}
 }

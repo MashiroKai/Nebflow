@@ -261,7 +261,9 @@ object StaticRoutes:
     // 与此处注入值恒同源），serverConfig 帧下行新值后 ws/main 面比对不等 ⇒ 顶栏
     // 提示刷新。指纹源 = 当前 static tree 的规范 index 源字节（**非本请求的 html**：
     // 隧道内联打包脸的字节与之不同，按请求算指纹会让同引擎各脸互判陈旧——假阳）。
-    val served = injectBeforeHeadClose(html, brandScriptTag + fingerprintScriptTag).getOrElse(html)
+    // 三个注入件同点同载体：__BRAND__（品牌契约）、__WEB_FINGERPRINT__（陈旧
+    // 标签页判据）、NF_HOME（家目录缩写的取值来源，见 [[homeScriptTag]]）。
+    val served = injectBeforeHeadClose(html, brandScriptTag + fingerprintScriptTag + homeScriptTag).getOrElse(html)
     val bytes = served.getBytes(java.nio.charset.StandardCharsets.UTF_8)
     IO.pure(
       Response[IO](Status.Ok)
@@ -304,6 +306,48 @@ object StaticRoutes:
     val fp = webFingerprint
     if fp.isEmpty then ""
     else s"""<script>window.__WEB_FINGERPRINT__="$fp";</script>"""
+
+  // ── 家目录注入（NF_HOME 补注入批，2026-11）────────────────────────────────
+  //
+  // 事故面：web/js/delegatePanoramaView.js 的 shortPath() 一直读 window.NF_HOME
+  // 把家目录缩成 `~`，但**全仓从无注入点**——功能自落地起从未生效（取值恒 null
+  // ⇒ 原样回显）。本批补上服务端注入，形态照抄 __WEB_FINGERPRINT__（同点、
+  // 同 `window.X = <literal>;` 载体、同 <head> 末尾锚点），值随页面下发而非
+  // 硬编码（任何用户的实例都拿到自己的家目录）。
+  //
+  // 取值纪律（作者裁定：**数据根所在的 home，不是 CWD**）：
+  //   - 来源 = `os.home`（JVM `user.home`，即进程所属真实家目录）——默认安装
+  //     下数据根恒为 `<os.home>/<brand.homeDirName>`，两者同源；
+  //   - 绝不用 `os.pwd`：引擎 CWD 是仓/dist 目录（dev 与安装态还不同），把它
+  //     当家目录会把整个工作区路径缩成 `~`；
+  //   - `--home`/`STAND_HOME` 换根的隔离实例**也不跟着走**：`dataRoot` 可能是
+  //     /tmp/xxx 这类临时目录，把它当家目录会把无关的 /tmp 路径误缩成 `~`；
+  //     被缩的目标是工作区路径，其归属 home 就是操作者真实家目录。
+  //   - 尾部（反）斜杠一律剥掉：比对侧做前缀拼接，`/Users/x/` 会拼出 `//`。
+  //   - 空值不注入（user.home 缺失的异常环境 ⇒ 客户端真值守卫静默跳过）。
+
+  /** 注入值：服务端真实家目录（无尾分隔符）。 */
+  private[gateway] def homeDirValue: String = normalizeHomeDir(os.home.toString)
+
+  /** 去尾分隔符（`/` 与 `\`，含连续多个）；纯函数供 spec 直读。 */
+  private[gateway] def normalizeHomeDir(raw: String): String =
+    val s = raw.trim
+    val end = s.lastIndexWhere(c => c != '/' && c != '\\')
+    s.substring(0, end + 1)
+
+  /**
+   * 家目录注入脚本（与 [[brandScriptTag]] / [[fingerprintScriptTag]] 同点）。
+   * 值走 circe 字符串编码（Windows 反斜杠在这里转义，JS 侧解出来仍是原生形态），
+   * 并同样把 `</` 转成 `<\/` 做 script 标签突破加固。
+   */
+  private[gateway] def homeScriptTag: String = homeScriptTagOf(homeDirValue)
+
+  private[gateway] def homeScriptTagOf(home: String): String =
+    val h = normalizeHomeDir(home)
+    if h.isEmpty then ""
+    else
+      val literal = Json.fromString(h).noSpaces.replace("</", "<\\/")
+      s"<script>window.NF_HOME=$literal;</script>"
 
   /**
    * W1: the "/" entry point dispatching on [[staticSource]] — bundled

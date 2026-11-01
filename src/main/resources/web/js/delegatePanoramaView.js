@@ -598,11 +598,41 @@ function firstNonEmpty(arr) {
   return '';
 }
 
-/** 工作区路径短显（/Users/<name> → ~；纯显示）。 */
+/** 去尾部路径分隔符（`/` 与 `\` 都算，含连续多个）。 */
+function trimTrailingSlashes(p) {
+  let end = p.length;
+  while (end > 0 && (p[end - 1] === '/' || p[end - 1] === '\\')) end -= 1;
+  return p.slice(0, end);
+}
+
+/**
+ * 工作区路径短显（家目录 → `~`；纯显示）。
+ *
+ * 取值来源：服务端 serve index 时注入的 `window.NF_HOME`
+ * （gateway/StaticRoutes.scala homeScriptTag，值 = 该实例所在机器的真实家目录）。
+ * 缺席（旧引擎 / 静态测试树 / user.home 不可得）⇒ 原样返回，绝不猜。
+ *
+ * 三条隐患修正（原实现 `p.startsWith(home)` + 裸 slice 全部踩中）：
+ *   1. 分隔符：注入值在 Windows 上是反斜杠形态，路径也可能两种混用 ⇒ 两侧统一
+ *      折成正斜杠再比，输出后缀也走正斜杠（`~\workspace\x` 这种混形不出现）；
+ *   2. 前缀边界：必须整段命中（等值，或 home 后紧跟 `/`）——原实现会把
+ *      `C:\Users\ab` 误缩 `C:\Users\abc`（无边界判断的半截前缀命中）；
+ *   3. 大小写：盘符形态（`X:/…`）按 NTFS 语义忽略大小写，其余形态按原样比
+ *      （POSIX 敏感）；家目录若是根/盘根（trim 后长度 ≤ 2）不缩，否则会把
+ *      整台机器的路径都缩成 `~`。
+ */
 function shortPath(p) {
-  const home = typeof window !== 'undefined' && window.NF_HOME ? window.NF_HOME : null;
-  if (home && p.startsWith(home)) return `~${p.slice(home.length)}`;
-  return p;
+  const raw = typeof p === 'string' ? p : String(p ?? '');
+  const injected = typeof window !== 'undefined' && typeof window.NF_HOME === 'string' ? window.NF_HOME : '';
+  const home = trimTrailingSlashes(injected.trim()).replace(/\\/g, '/');
+  if (!home || home.length <= 2) return raw;
+  const normalized = raw.replace(/\\/g, '/');
+  const driveForm = /^[A-Za-z]:\//.test(home);
+  const target = driveForm ? normalized.toLowerCase() : normalized;
+  const base = driveForm ? home.toLowerCase() : home;
+  if (target === base) return '~';
+  if (!target.startsWith(`${base}/`)) return raw;
+  return `~${normalized.slice(home.length)}`;
 }
 
 // ── 任务根幽卡 ───────────────────────────────────────────────────────────────
