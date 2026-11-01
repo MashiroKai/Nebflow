@@ -1,5 +1,12 @@
 // mobile/taskPanel.js — 任务面（dock 批改写：浮层 → 「任务」详情页面板）。
 //
+// ★ 任务面换血（ReminderIsland 复刻批 · 作者令 2026-11-02 20:02）：本面板体 =
+//   待办列表（todoFace.mountTodoFaceInto——手机端入口维持本文件接线的「任务」
+//   左侧悬浮圆钮不变，内容换血为 ReminderIsland 复刻待办列表）。旧 delegate 卡
+//   渲染核（buildCard/renderDelegateCards 等）**代码零删除**保留于本文件（别面
+//   数据缝 collectChains/DELEGATE_WORD_KEY/chainProgressMeta 照旧导出），仅本面
+//   不再触发——render() 收敛为徽标数刷新。
+//
 // dock 批（作者令 2026-10-29「各节目都是独立界面 不再跟其他界面重叠」）：
 // v3⑤ 的「圆钮二级液态形变任务浮层」形态退役（morph 腿随 floatController/
 // morphPanel 一并退场）；本文件保留**数据面与卡渲染面全部原样**（12 卡六级
@@ -8,24 +15,12 @@
 //
 // 形态沿革：下拉列中点「任务」→ 六键液态收回 → 圆钮原地形变加宽成任务浮层
 //（40→308 / 40→560）→ dock 批改「任务」键（聊天头左槽）push 任务页。
-// 活跃过滤批（作者令 2026-10-31 11:49「手机端任务列表不要显示全部历史（含已完成），
-// 只显示进行中的」）：已完成组（completed/failed/cancelled 终态行呈现层补组）整组
-// 退役——手机端列表面 = collectChains 现役行（pending/running/ready-to-merge/
-// interrupted，未归档），与桌面面板现役窗同口径；终态行仍可从桌面结构视图/归档
-// 抽屉到达。interrupted（重启打断灰态）保留在运行组内以灰点显形（重启对账批语义
-// 不变：尸体系可见、禁借 done 勾绿）。
-// 卡信息层级（六级，样张⑤口径）：
-//   ① 状态点（运行绿 / 排队灰 / 中断灰）
-//   ② 标题（#taskNo + 名）
-//   ③ 进度 n/m（tabular-nums，chainProgressMeta 同源）
-//   ④ 状态词（DELEGATE_WORD_KEY 同源键）
-//   ⑤ 成员预览（仅运行中卡，限 2 行 +「+n」溢出计数）
-//   ⑥ 分组序：运行中 → 排队（分组标签 = 站内小写字号语言，无装饰条）。
+// 活跃过滤批（作者令 2026-10-31 11:49）与 interrupted 灰态语义随旧渲染核保留
+// 在 renderDelegateCards（代码存档）；现役面 = 待办列表（内存态 mock，
+// 接自有待办工具为下一步）。
 //
-// 数据面（任务书：功能逻辑不重造）：与 taskList.js **同一**读取口
-//（collectChains 导出缝——活跃行直接吃 collectChains 现值（与面板行同源））。
-// 渲染触发 = delegate-chain-mirror-updated + 会话切换（与 taskList 同族事件），
-// Nebula 统一面会话门同源（sessionShowsNodeEntries）。
+// 数据面：待办 = todoStore（todoStore.js 内存仓）；旧 delegate 读取口 imports
+// 保留（renderDelegateCards 存档依赖 + 别面导出缝）。
 
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
@@ -33,6 +28,8 @@ import state from '../state.js';
 import {
   collectChains, DELEGATE_WORD_KEY, chainProgressMeta, rowMetaOf, sessionShowsNodeEntries,
 } from '../taskList.js';
+import { mountTodoFaceInto } from '../todoFace.js';
+import { todoStore } from '../todoStore.js';
 import { logEvent } from './navController.js';
 
 const CHECK_SVG = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.6 6.2l1.7 1.7 3.1-3.6"/></svg>';
@@ -76,21 +73,23 @@ function ensurePanel() {
   const bd = document.createElement('div');
   bd.className = 'tp-bd';
   listEl = bd;
+  // 换血批：面板体 = 待办列表（页面即展开态；face 自订阅 todoStore 自重渲）。
+  mountTodoFaceInto(bd);
 
   panel.append(head, bd);
   document.body.appendChild(panel);
   if (typeof lucide !== 'undefined') createIconsIn(panel);
 
-  // 与 taskList 同族的重渲触发：镜像刷新 + 会话切换（开着的浮层跟数据走）。
+  // 与 taskList 同族的重渲触发（换血批：镜像/会话事件只刷徽标数——列表自订阅）。
   window.addEventListener('delegate-chain-mirror-updated', () => { if (isTaskPanelOpen()) render(); });
   window.addEventListener('nebflow-session-change', () => { if (isTaskPanelOpen()) render(); });
   return panel;
 }
 
-/** 任务键徽标读数 = 在册任务数（与面板 stats 同一数据面，浮层关着也跟新）。 */
+/** 任务键徽标读数 = 待办数（换血批：todoStore 单源；浮层关着也跟新）。 */
 export function taskBadgeCount() {
   if (!sessionShowsNodeEntries(state.activeSessionId)) return 0;
-  return collectChains().length;
+  return todoStore.openCount();
 }
 
 /** 状态域二分（活跃过滤批）：ready-to-merge → 排队；其余现役行（pending/running/
@@ -197,7 +196,18 @@ function groupLabel(grp, n) {
   return `${t(key)} · ${n}`;
 }
 
+/** 现役 render（换血批）：面板体已由 todoFace 自管，这里只刷面板头徽标数。 */
 function render() {
+  if (!statsEl) return;
+  statsEl.textContent = t('todoface.capsuleCount', { n: String(todoStore.openCount()) });
+}
+
+// ── 旧 delegate 卡渲染核（换血批存档：代码零删除、本面零触发）──────────────
+// 以下 buildCard/groupOf/glyph/renderDelegateCards 为 dock 批的 delegate 卡渲染
+// 链（数据面 = taskList.collectChains 同源缝，别面照旧消费其导出）。任务列表面
+// 换血为待办列表后本链不再被任何路径调用——保留作「旧渲染路径」对照与回切件。
+
+function renderDelegateCards() {
   if (!listEl || !statsEl) return;
   const chains = collectChains();
   const running = chains.filter((c) => groupOf(String(c.row.status)) === 'running');
