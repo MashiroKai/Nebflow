@@ -1367,7 +1367,24 @@ $message"""
         // 必须拿到原父会话的活引用，终态 ExternalEvent 才有投递对象——此前恒 None，
         // 续聊结果在 notifyParentAndStop 的 None 分支被静默丢弃。
         parentRef = parentRef,
-        wsSend = None,
+        // 续聊腿 wsSend 桥接批（2026-11-01 报障「delegate 会话详情面板部分会话正文空白，
+        // 只剩归因徽章行」）——**判别变量 = 该会话由本腿（Mail 续聊）起的**：
+        //   此前恒传 `None` ⇒ `DelegateTool.routeWsSend` 的 base 退化成
+        //   `(_) => IO.unit`（DelegateTool.scala:229）⇒ 该会话的**全部流帧在发射处即被
+        //   吞掉**：既无 live 广播，也到不了根会话的录制层
+        //   （`WebSocketRoutes#makeRecordingWsSend`，ai/tool/thinking 三类 .ui.json 行的
+        //   **唯一**写者），于是该会话 ui.json 只剩注入行——注入行由
+        //   `AgentActor#emitInjectedUserEvent` 直写 SessionStore（不经 wsSend，见该处
+        //   bluebubble 批注释），所以面板里「归因徽章行」（注入行 = DELEGATE · NEBULA）
+        //   照常渲染，正文（助手文本 / 工具过程 / 思考块）一条都没有。
+        //   修法 = 与同族腿对齐：外置执行器续聊腿
+        //   （本文件上方 `ExternalSessionRunner.continueExternal(wsSend = ctx.wsSend)`）
+        //   与新鲜派发腿（`DelegateTool.spawnKernel(wsSend = ctx.wsSend)`）都传调用方
+        //   wsSend；续聊腿传 ctx.wsSend 后 spawnBackground 内的 routeWsSend 照旧给帧盖
+        //   nodeSessionId = 新会话 id，录制层按该 id 落盘，live 广播同时恢复。
+        //   数据实证（2026-11-01 实盘）：105/105 条 `[continuation of delegate …]` 会话
+        //   ui.json 的 ai+tool 行数 = 0；非续聊会话 1021/1021 有行。
+        wsSend = ctx.wsSend,
         parentSessionId = Some(record.parentSessionId),
         rootSessionId = record.parentSessionId
       )
