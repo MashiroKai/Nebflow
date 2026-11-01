@@ -38,7 +38,7 @@ import { showChatSkeleton, hideChatSkeleton } from './main/historyIndicators.js'
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 // Root agent's DISPLAY name — the single read point shared with onboarding /
 // micOrb / chat / modelPanel (leaf module; no cycle risk).
-import { rootDisplayName, isRootNamed } from './rootName.js';
+import { rootDisplayName, isRootNamed, agentDisplayName, ROOT_AGENT_KEY } from './rootName.js';
 // 文件缓存设置行（M2 · 设计 v1 §6.4/§7 表5）：占用读数/清空 seam 单源 = nfFileCache.js。
 // 依赖纪律安全：nfFileCache 只 import state.js/branding.js（后者为叶子），本边不成环。
 import { nfCacheStats, nfCacheReset } from './nfFileCache.js';
@@ -210,30 +210,33 @@ export function initNavTabs() {
 }
 
 // ---------- Agent icons in Nav Bar ----------
-/** DISPLAY name of an agent by mechanism name: `agentList` carries
- *  `displayName || name`, so the root agent renders the user's chosen name.
- *  Judgement keys (`a.name === 'Nebula'` below) stay untouched — display only. */
+/** DISPLAY name of an agent by mechanism name — delegates to the SINGLE display
+ *  read point (rootName.js#agentDisplayName), so the root agent renders the
+ *  user's chosen name (generic appellation while unnamed — never the mechanism
+ *  key) and background agents render their own name. Judgement keys
+ *  (`a.name === ROOT_AGENT_KEY` below) stay untouched — display only. */
 function agentDisplayLabel(agentName) {
-  const a = (state.agentsData || []).find(x => x.name === agentName);
-  return a ? (a.displayName || a.name || agentName) : agentName;
+  return agentDisplayName(agentName);
 }
 
 export function renderAgentList() {
   const list = document.getElementById('nav-agent-list');
   if (!list) return;
   list.innerHTML = '';
-  // ⑧ Nebula (orchestrator) pinned first with a separator before the rest
-  // (entity-icons-visual-spec §3.3). Nebula always renders the orbit icon —
+  // ⑧ root agent (orchestrator) pinned first with a separator before the rest
+  // (entity-icons-visual-spec §3.3). It always renders the orbit icon —
   // its identity marker must stay stable, so custom avatars are ignored.
   const ordered = [...state.agentsData].sort((a, b) =>
-    (b.name === 'Nebula' ? 1 : 0) - (a.name === 'Nebula' ? 1 : 0));
+    (b.name === ROOT_AGENT_KEY ? 1 : 0) - (a.name === ROOT_AGENT_KEY ? 1 : 0));
   ordered.forEach((a, idx) => {
-    const isNebula = a.name === 'Nebula';
+    const isNebula = a.name === ROOT_AGENT_KEY;
     const el = document.createElement('div');
     const isActive = state.selectedAgent === a.name;
     el.className = 'nav-agent' + (isActive ? ' active' : '') + (isNebula ? ' nav-agent-orchestrator' : '');
     const avatar = a.avatar || '';
-    const displayName = a.displayName || a.name;
+    // Display name = the single read point (named root → its name; unnamed root →
+    // generic appellation; every other agent → its own name).
+    const displayName = agentDisplayLabel(a.name);
     el.dataset.name = a.name;
     el.title = displayName;
     const iconHtml = isNebula
@@ -1996,7 +1999,7 @@ function updateHeaderSessionName() {
   const sessionNameEl = chatViews.primary?.dom?.sessionNameEl;
   const active = state.sessions.find(s => s.id === state.activeSessionId);
   if (active) {
-    const agentName = active.agentName || 'Nebula';
+    const agentName = active.agentName || ROOT_AGENT_KEY;
     // Show agent display name in center (session name is redundant when there's only one session).
     if (sessionNameEl) {
       // Root agent reads the SINGLE display-name read point (rootName.js): both
@@ -2008,9 +2011,9 @@ function updateHeaderSessionName() {
       // EMPTY string — the mechanism name is a key, not a display fallback, and
       // the empty <span> keeps the header's center-slot layout intact (no jump).
       // Named root → display name as before; non-root agents keep their own name.
-      const label = agentName === 'Nebula'
+      const label = agentName === ROOT_AGENT_KEY
         ? (isRootNamed() ? rootDisplayName() : '')
-        : (state.agentsData.find(a => a.name === agentName)?.displayName || agentName);
+        : agentDisplayName(agentName);
       sessionNameEl.textContent = label;
       sessionNameEl.style.display = '';
     }
@@ -2143,12 +2146,12 @@ export function renderSessionSidebar(sessionData, activeId) {
   const allFolders = state.folders || [];
   const agentGroups = {};
   visibleSessions.forEach(s => {
-    const agent = s.agentName || 'Nebula';
+    const agent = s.agentName || ROOT_AGENT_KEY;
     if (!agentGroups[agent]) agentGroups[agent] = { sessions: [], folders: [] };
     agentGroups[agent].sessions.push(s);
   });
   allFolders.forEach(f => {
-    const agent = f.agentName || 'Nebula';
+    const agent = f.agentName || ROOT_AGENT_KEY;
     if (!agentGroups[agent]) agentGroups[agent] = { sessions: [], folders: [] };
     agentGroups[agent].folders.push(f);
   });
@@ -2998,7 +3001,7 @@ export function getTargetAgent() {
   // 2. Active session
   const active = (state.sessions || []).find(s => s.id === state.activeSessionId);
   if (active?.agentName) return active.agentName;
-  return 'Nebula';
+  return ROOT_AGENT_KEY;
 }
 
 /** Resolve the target folder ID for creating new sessions/folders, based on context.

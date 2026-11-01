@@ -14,6 +14,8 @@ import { sendWs, onMessage, setFlowStepInterceptor, setTeamMetaApplier } from '.
 import { restoreFromBackendHistory } from './persistence.js';
 import { authHeaders } from './flowHelpers.js';
 import state from './state.js';
+// Nebula 退役批（作者令 2026-11-01）：浮窗标题的 agent 名走单一显示名读点。
+import { agentDisplayName } from './rootName.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
 import { buildManageBar, bindManageActions, syncManageControls } from './managePanel.js';
@@ -474,7 +476,7 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   popupOverlay.innerHTML = `
     <div class="flow-agent-modal">
       <div class="flow-agent-header">
-        <span class="flow-agent-name">${esc(agentName || entry.meta.agentName || '')}</span>
+        <span class="flow-agent-name">${esc(agentDisplayName(agentName || entry.meta.agentName || ''))}</span>
         <span class="flow-agent-subtitle">${esc(flowName || '')}</span>
         <span class="flow-agent-model" id="flow-agent-model"></span>
         <div class="flow-agent-close" id="flow-agent-close">✕</div>
