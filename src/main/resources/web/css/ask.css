@@ -258,14 +258,17 @@ html.no-backdrop .ask-colwrap .ask-veil {
    上方（--dock-h 单源 + 10px 缝），z 260（> dock 200 / 移动页 156，< 模态 300+）；
    可见性闸 = 文件卡 ∧ canvas 页在场（askDock.syncGate）。
    单行排布批（2026-11-01）：dock 缝 10 → 16 + env(safe-area-inset-bottom)——
-   与左锚文档工具簇行（pane 内 bottom:16，pane 底 = 页底 = dock-h+env）同带
-   共中线（两端同 48px 钮同带），ask 单独靠右；dock 输入条钉按钮行上一行。 */
+   与左锚文档工具簇行（pane 内 bottom:16，pane 底 = 页底）同带共中线（两端同
+   48px 钮同带），ask 单独靠右；dock 输入条钉按钮行上一行。
+   dock 悬浮胶囊批（作者令 2026-11-01 21:07）：底距加 var(--dock-inset-b)——
+   dock 顶缘自 dock-h+env 上移 inset-b（胶囊底距），FAB/输入条与左锚工具簇
+   「同带共中线」的 16px 对齐关系原样保留（pane 底 = 页底 = 新顶缘，同批扩面）。 */
 body.mobile-layer .ask-fab {
   --ask-fab-gap: 12px;
   width: 44px; height: 44px;
   position: fixed;
   right: var(--ask-fab-gap);
-  bottom: calc(var(--dock-h, 54px) + env(safe-area-inset-bottom, 0px) + 16px);
+  bottom: calc(var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px) + 16px);
   z-index: 260;
 }
 body.mobile-layer .ask-dock {
@@ -274,7 +277,7 @@ body.mobile-layer .ask-dock {
   --ask-fade-h: 56px;
   position: fixed;
   right: var(--ask-fab-gap);
-  bottom: calc(var(--dock-h, 54px) + env(safe-area-inset-bottom, 0px) + 16px + var(--ask-fab-size) + 10px);
+  bottom: calc(var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px) + 16px + var(--ask-fab-size) + 10px);
   z-index: 260;
 }
 body.mobile-layer .ask-bub { font-size: 13px; padding: 8px 12px; }

@@ -16,7 +16,8 @@
 //   ③ 无头像回落 = stand logo（.dock-center-logo 中键 + 会话头
 //      .agent-avatar-stand-logo，双面；消息流腿随退役摘除）
 //   ④ 中键圆 box-shadow == none（边缘收简：纯色零浮影零光环）
-//   ⑤ 中键圆不探出 dock 顶缘（inside）+ 输入卡底缘与 dock 顶缘缝 ≤1.5px
+//   ⑤ 中键圆不探出 dock 顶缘（inside）+ 输入卡-胶囊呼吸缝 == 10px
+//      （--dock-gap 常量；悬浮胶囊批 2026-11-01 21:07 作者令修订，原零缝契约退役）
 //   ⑥ #send-btn = 36×36 r50% 纯圆（绿保留，颜色探针跟查 --ctl-send-bg）
 // 走 mobile-dock.spec / tmp-dock-center-evidence 同款静态 harness（无后端）。
 // Run: node tests/mobile-dock-shape-shots.mjs
@@ -164,11 +165,11 @@ for (const scheme of ['dark', 'light']) {
     }
     // ④ 边缘收简
     ok(`${tag} ④ 中键 box-shadow == none`, probe.centerShadow === 'none', probe.centerShadow);
-    // ⑤ 中键不探出 dock + 输入卡间隙收窄
+    // ⑤ 中键不探出 dock + 输入卡-胶囊呼吸缝（悬浮胶囊批：缝 = --dock-gap = 10px）
     const inside = probe.circle.top >= probe.dockRect.top - 0.5 && probe.circle.bottom <= probe.dockRect.bottom + 0.5;
     const gap = probe.dockRect.top - probe.barRect.bottom;
     ok(`${tag} ⑤ 中键收进 dock 边界内`, inside, `circleTop=${probe.circle.top.toFixed(1)} dockTop=${probe.dockRect.top.toFixed(1)}`);
-    ok(`${tag} ⑤ 输入卡-dock 缝 ≤1.5px`, Math.abs(gap) <= 1.5, `gap=${gap.toFixed(2)}`);
+    ok(`${tag} ⑤ 输入卡-胶囊呼吸缝 == 10px（--dock-gap）`, Math.abs(gap - 10) <= 1.5, `gap=${gap.toFixed(2)}`);
     // ⑥ 发送钮纯圆
     ok(`${tag} ⑥ 发送钮 36×36 r50% 纯圆 + 绿保留`,
       probe.sendRadius === '50%' && Math.abs(probe.sendW - 36) <= 0.6 && Math.abs(probe.sendH - 36) <= 0.6 && probe.sendBg === 'rgb(7, 193, 96)',
