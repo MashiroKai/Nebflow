@@ -45,18 +45,12 @@ object OutputBlock:
    * 热读 `outputBlock.enabled`（GlobalSafety.defaultMode / MsgTokenRegistry
    * .enabledFromConfig 同款形态）：缺席 / 解析失败 / 类型不符 / 读盘异常 = 关
    * （默认 OFF = 作者令；闸是**恢复今日行为**的入口，不是缺省面）。
+   *
+   * prompt-face 补批 2026-11-01 起读实现收拢到
+   * `nebflow.shared.OutputBlockGate.enabled()`（提示词组装面同用此读数——一个
+   * 键，一份读实现；本方法保留为渠道出站 seam 的缺省构造缝别名）。
    */
-  def enabledFromConfig(): Boolean =
-    try
-      val p = nebflow.shared.PathUtil.configJsonReadPath(nebflow.shared.PathUtil.dataRoot)
-      if !os.exists(p) then false
-      else
-        io.circe.parser
-          .parse(os.read(p))
-          .toOption
-          .flatMap(_.hcursor.downField("outputBlock").downField("enabled").as[Boolean].toOption)
-          .getOrElse(false)
-    catch case _: Exception => false
+  def enabledFromConfig(): Boolean = nebflow.shared.OutputBlockGate.enabled()
 
   /**
    * The one GATE-AWARE extraction entry — the four channel outbound seams'
