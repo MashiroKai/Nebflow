@@ -526,6 +526,43 @@ class PromptSectionsSpec extends munit.FunSuite:
     assertEquals(sec.render(PromptContext()), nebflow.shared.Defaults.SecretsRule, "static body = the constant")
 
   // ============================================================
+  // 引牌教义·带短名引用（msgchip 批，作者令 2026-11-01「消息身份牌系统升级」
+  // 第 4 条）：order-378 **always** 段，逐字承载 Defaults.MsgQuoteRule。与
+  // order-377 同判据（牌流进每张面）；随下个生命周期生效（systemStable）。
+  // ============================================================
+
+  test("Msg quote doctrine section injected for EVERY agent session (order 378, always, verbatim MsgQuoteRule)"):
+    withIsolatedDataRoot {
+      val root = buildConditionalBlocks(PromptContext(isRootAgent = true))
+      val dispatcher = buildConditionalBlocks(PromptContext(isRootAgent = false))
+      for (who, blocks) <- Seq("root" -> root, "dispatcher" -> dispatcher) do
+        assert(
+          blocks.contains(nebflow.shared.Defaults.MsgQuoteRule),
+          s"$who session systemStable must carry the msg quote doctrine section"
+        )
+        assert(blocks.contains("── Quote with message cards"), s"$who: section body is the msg quote rule text")
+      // 段序钉：紧跟 order-377 Secrets 段之后
+      assert(
+        root.indexOf("── Secrets (credentials) ──") < root.indexOf("── Quote with message cards"),
+        "msg quote section must follow the secrets section (order 378 > 377)"
+      )
+      // 条款面齐：牌+短名形态 / 逐条引用 / 不整段复述 三要素都在段体里
+      val body = nebflow.shared.Defaults.MsgQuoteRule
+      assert(
+        body.contains("{{msg:<sid8>-<seq>|<short-name>}}") && body.contains("cites each one separately")
+          && body.contains("do NOT restate the original text"),
+        body
+      )
+    }
+
+  test("Msg quote doctrine section is a static always-on section (stable-prefix reading)"):
+    val s378 = PromptSections.all.filter(_.order == 378)
+    assertEquals(s378.size, 1, "registry carries exactly one order-378 section")
+    val sec = s378.head
+    assert(sec.shouldInclude(PromptContext()), "always: included on the minimal context")
+    assertEquals(sec.render(PromptContext()), nebflow.shared.Defaults.MsgQuoteRule, "static body = the constant")
+
+  // ============================================================
   // 文档溯源规范（order 350，always 段；作者 2026-09-11 裁定 / 方案 #165）
   //
   // 系统提示词 = 唯一权威面。运行时（~/.nebflow/**）9 处本地重述删除由

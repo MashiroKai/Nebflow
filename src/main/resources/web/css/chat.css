@@ -5465,3 +5465,121 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   border-top: 1px solid var(--glass-border);
 }
 
+
+/* ── msg-token chip（msgchip 批 2026-11-01，作者令「消息身份牌系统升级」②）────
+   带短名引用形态 {{msg:sid8-seq6|短名}} 在气泡内的可点小牌：牌面 = 短名。家族
+   = .msg-quote-block 同族的克制填充面（引用面是全场最暗一层的 D1 裁定同读数），
+   不加 accent bar、不用彩色强调；hover 只动边框与底色 alpha（亮档「边框+投影」
+   反馈口径）。旧裸牌 {{msg:...}} 不产生该元素（现状渲染逐字节不变）。 */
+.msg-token-chip {
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 8px;
+  margin: 0 1px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-etched-border, rgba(91, 127, 191, 0.08));
+  background: rgba(0, 0, 0, 0.045);
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: baseline;
+  transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.msg-token-chip:hover {
+  border-color: var(--glass-etched-border-focus, rgba(91, 127, 191, 0.3));
+  background: rgba(0, 0, 0, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  .msg-token-chip { background: rgba(255, 255, 255, 0.07); }
+  .msg-token-chip:hover { background: rgba(255, 255, 255, 0.1); }
+}
+.msg-token-chip:focus-visible {
+  outline: 2px solid var(--glass-etched-border-focus, rgba(91, 127, 191, 0.3));
+  outline-offset: 1px;
+}
+
+/* ── msg-token popover（原消息小窗；🔴 无 overlay 遮罩层——visual-style 铁律 1：
+   面板本身毛玻璃（.glass），点外关闭走文档级 pointerdown 判定，零背景暗化/模糊）─ */
+.msg-token-pop {
+  position: fixed;
+  z-index: 10002; /* contextMenu 面板族同档（body > .fm-context-menu = 10001）之上 */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
+  font-size: 13px;
+  color: var(--color-text);
+}
+.msg-token-pop-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+}
+.msg-token-pop-sender {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.msg-token-pop-session {
+  color: var(--color-frame-text-muted, #98a2b3);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.msg-token-pop-time {
+  margin-left: auto;
+  color: var(--color-frame-text-muted, #98a2b3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.msg-token-pop-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+  font-size: 13px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+.msg-token-pop-body.clamped {
+  max-height: 9.5em;
+  overflow: hidden;
+}
+.msg-token-pop-body.msg-token-pop-miss {
+  color: var(--color-frame-text-muted, #98a2b3);
+  font-size: 12px;
+}
+.msg-token-pop-toggle {
+  align-self: flex-start;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted, #6b7280);
+  cursor: pointer;
+}
+.msg-token-pop-toggle:hover { color: var(--color-text); }
+.msg-token-pop-foot {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  color: var(--color-frame-text-muted, #98a2b3);
+  opacity: 0.75;
+  word-break: break-all;
+  border-top: 1px solid var(--glass-border);
+  padding-top: 6px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .msg-token-chip { transition: none; }
+}

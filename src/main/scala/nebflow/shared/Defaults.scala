@@ -189,6 +189,29 @@ object Defaults:
       |- IRON RULES — never print or echo a value, never write one to disk, never commit one, never forward one in a message: a value is a service input only.""".stripMargin
 
   /**
+   * 引牌教义·带短名引用（msgchip 批，作者令 2026-11-01 20:17「消息身份牌系统升级」
+   * 第 4 条）：回复作者消息时的引用形态单点。与既有「引牌不引文」口径同源收口——
+   * 引用 = 牌（`{{msg:牌号|短名}}`）+ 要点转述，**不整段复述原文**；一次回复对应
+   * 多条消息时逐条各引一枚（每条消息一枚牌，短名各自起名），不合并复述。
+   *
+   * 语法（与 `nebflow.core.msgtokens.MsgTokenRegistry.TokenRegex` 同一条规则）：
+   * 牌面 `{{msg:sid8-seq6}}` 后接「|短名」；短名 = 2-12 字为宜（硬上限 40，字符集
+   * 禁 `{` `}` `|` 换行），给被引消息起的功能性名字（如「输入统一令」「迁移三裁定」）。
+   * 短名是**纯展示注记**：前端把带名牌渲染成显示短名的小牌（点击看原文）；派发
+   * 消解时名剥除、投递的仍是全文——派发文本里不需要也不应该带短名。
+   *
+   * 注入面：`PromptSections` order-378 **always 段**（所有 agent 会话——牌经 Mail /
+   * delegate brief / node 消息流进每张面，任何面上都可能引用上游消息；同
+   * order-377 SecretsRule 的收窄判据，不按 isRootAgent 收窄）。静态体落
+   * systemStable（生命周期节点重建时携带，前缀缓存友好）；**随下个生命周期生效**
+   * （在飞旧上下文不回改）。机制细节（铸造/消解管线）的单一权威 =
+   * MsgTokenRegistry 文件头 + msgtoken reminder，本节不复述。
+   */
+  val MsgQuoteRule: String =
+    """── Quote with message cards (引牌不引文) ──
+      |When your reply answers the author's (user's) message(s), cite each quoted message with its card plus a short name — do NOT restate the original text in full. Form: `{{msg:<sid8>-<seq>|<short-name>}}` (a `|` + short name right after the card face). The short name is the replyer's compact functional label for that message (2-12 chars ideal; no `{` `}` `|` or newlines), e.g. 输入统一令 / 迁移三裁定. One card per answered message: a reply that corresponds to several messages cites each one separately. Say the POINT in your own words next to the card; the full text already lives behind the card (click the chip in the chat to see it). Cards without a short name keep their plain form; delivery resolution strips short names — never add one in Mail/delegate/node dispatch text.""".stripMargin
+
+  /**
    * A 段（等待屏障）开关：delegate 会话结束回合时存在未结等待型后台作业 ⇒
    * 不终态化（hold + 完成通知唤醒 + 复检），对齐 Project node 完成闸语义。
    * 默认 **true**（作者令本体行为）；现读 prop `nebflow.delegate.bgWaitHold.enabled`

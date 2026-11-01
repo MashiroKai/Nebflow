@@ -410,6 +410,13 @@ export default {
   'chat.quoteTypeTool': '[Tool]',
   'chat.quoteTypeAsk': '[Q&A]',
   'chat.quoteTypeSystem': '[System]',
+  // ── msgchip batch (msg-token short-name quote, author order 2026-11-01): new keys ──
+  'chat.msgTokenChipHint': 'View original message',
+  'chat.msgTokenPopTitle': 'Original message',
+  'chat.msgTokenUnreachable': 'Original message unavailable',
+  'chat.msgTokenLoading': 'Loading…',
+  'chat.msgTokenExpand': 'Expand',
+  'chat.msgTokenCollapse': 'Collapse',
   'messages.multiSelect': 'Multi-select',
   'messages.selectedCount': '{n} selected',
   'messages.forward': 'Forward',

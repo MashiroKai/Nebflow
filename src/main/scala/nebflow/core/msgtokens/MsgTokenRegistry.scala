@@ -3,6 +3,15 @@
  *   序号6 = 会话内零填充 6 位）②映射缺失 = 显式报错行注入（不静默错引、不回退路径引用）
  * ③msgTokens.enabled 默认开 ④社交腿（微信/飞书出站）整腿二期，本批只做引擎内。
  *
+ * 带短名引用形态（msgchip 批，2026-11-01 作者令「消息身份牌系统升级」）：回复者可在
+ * 牌面后接「|短名」写作 {{msg:sid8-seq6|短名}}——短名 = 回复者给该消息起的简短名字，
+ * **纯展示面注记**（前端渲染成小牌 chip 的牌面文字），不进映射键、不参与消解语义：
+ *   - 消解：带名形态与裸形态同值替换（目标 = 映射全文；短名在替换物中**剥除**——
+ *     投递文本 = 源消息全文，短名只是聊天窗内的呈现 affordance）。
+ *   - 语法：短名字符集 = 除 `{` `}` `|` 换行外任意可见字符，1..40 字；超长/空名/
+ *     坏 sid8/坏 seq = 不匹配正则 = 原样字面透传（零解析豁免、零崩溃面）。
+ *   - 旧裸形态 {{msg:sid8-seq6}} 行为逐字节不变（铸造/消解/报错行/reminder 全链）。
+ *
  * 引擎侧纯机制：agent 拿不到任何消解工具——铸牌（真人输入入队/直投时急切铸）、
  * 经 system-reminder 管线向本会话宣告、五个投递组包点（MailTool 派发 / DelegateTool
  * brief / NodeDelivery 运行中注入+待启动补充 / NodeStarter.buildInput）投递前消解为全文。
@@ -135,11 +144,41 @@ final class MsgTokenRegistry(
             finally st.lock.unlock()
         }
 
+  // ── 查询（msgchip 批：GET /api/sessions/msg-token/{core} 只读端点的引擎腿）──
+
+  /**
+   * 按牌取映射（**只读**，铸牌零涉入）：入参接受裸核心 `sid8-seq6` 或完整牌面
+   * `{{msg:sid8-seq6(|短名)?}}`——两种形态都剥到核心再查。惰性装载与消解同缝
+   * （sessionStateFor miss 扫描 + loadSessionLocked），未铸/已删/畸形 = None。
+   * 前端 chip popover 的跨会话取数腿走此查询（同会话前端本地优先，本查询是权威回退）。
+   */
+  def lookup(tokenOrCore: String): IO[Option[MsgTokenMapping]] =
+    val core = tokenOrCore.trim match
+      case MsgTokenRegistry.CoreRegex(sid8, seq) => s"$sid8-$seq"
+      case _ =>
+        MsgTokenRegistry.TokenRegex.findFirstMatchIn(tokenOrCore).flatMap { m =>
+          for sid8 <- Option(m.group(1)); seq <- Option(m.group(2)) yield s"$sid8-$seq"
+        }.getOrElse("")
+    if core.isEmpty then IO.pure(None)
+    else
+      IO.blocking {
+        sessionStateFor(core.take(8)) match
+          case Some((sid, st)) =>
+            st.lock.lock()
+            try
+              if !st.loaded then loadSessionLocked(sid, st)
+              st.byToken.get(s"{{msg:$core}}")
+            finally st.lock.unlock()
+          case None => None
+      }
+
   // ── 消解（五个投递组包点共用）─────────────────────────────────────────────
 
   /**
-   * 投递前消解：文中出现的每枚 {{msg:sid8-seq6}} 替换为映射全文；映射缺失 = 原地注入
-   * 显式报错行（[[MsgTokenRegistry.missingErrorLine]]）——不静默错引、不回退路径引用。
+   * 投递前消解：文中出现的每枚 {{msg:sid8-seq6}}（或带短名形态 {{msg:…|短名}}）
+   * 替换为映射全文；映射缺失 = 原地注入显式报错行（[[MsgTokenRegistry.missingErrorLine]]，
+   * 报错行引用**写入原文**——带名形态连同短名一并现形，便于回复者定位笔误）——
+   * 不静默错引、不回退路径引用。短名是纯展示注记：替换物 = 源消息全文（名剥除）。
    * 机制关闭 = 原样透传（零行为变化）。接收方零工具调用。
    */
   def resolve(text: String): IO[String] =
@@ -152,7 +191,10 @@ final class MsgTokenRegistry(
 
   private def resolveSync(text: String): String =
     MsgTokenRegistry.TokenRegex.replaceAllIn(text, m =>
-      val token = m.matched
+      // 查键 = 裸牌面（组1+组2 重组；m.matched 在带名形态下含「|短名」后缀，而
+      // byToken 的键恒为裸牌面——短名不进映射键）。报错行仍引**写入原文**（含名）。
+      val token = s"{{msg:${m.group(1)}-${m.group(2)}}}"
+      val written = m.matched
       val sid8 = m.group(1)
       val mappingOpt = sessionStateFor(sid8) match
         case Some((sid, st)) =>
@@ -165,8 +207,8 @@ final class MsgTokenRegistry(
       mappingOpt match
         case Some(mapping) => mapping.text
         case None =>
-          logger.warn(s"msg-token resolve MISS for $token — injecting explicit error line")
-          MsgTokenRegistry.missingErrorLine(token)
+          logger.warn(s"msg-token resolve MISS for $written — injecting explicit error line")
+          MsgTokenRegistry.missingErrorLine(written)
     )
 
   /**
@@ -300,8 +342,19 @@ end MsgTokenRegistry
 
 object MsgTokenRegistry:
 
-  /** 牌面：{{msg:<sid8 hex8>-<seq 6 位>}}。 */
-  val TokenRegex: Regex = """\{\{msg:([0-9a-f]{8})-(\d{6})\}\}""".r
+  /**
+   * 牌面：{{msg:<sid8 hex8>-<seq 6 位>}}（msgchip 批起容忍可选「|短名」后缀——
+   * 短名字符集 = 除 `{` `}` `|` 换行外 1..40 字，空名/超长/坏牌面不匹配 = 原样
+   * 字面透传）。组1 = sid8，组2 = seq，组3 = 短名（可缺席）。裸牌面是本正则的
+   * 严格子形 ⇒ 既有铸牌/消解/报错行为逐字节不变。
+   */
+  val TokenRegex: Regex = """\{\{msg:([0-9a-f]{8})-(\d{6})(?:\|([^{}\n|]{1,40}))?\}\}""".r
+
+  /** 裸核心（sid8-seq6）：[[MsgTokenRegistry.lookup]] 的入参形态之一。 */
+  val CoreRegex: Regex = """^([0-9a-f]{8})-(\d{6})$""".r
+
+  /** 短名上限（与正则 {1,40} 同源；前端牌面显示层再自行截断）。 */
+  val ShortNameMaxLen: Int = 40
 
   /** reminder 类别（context 族：请求级、非持久化、compact/ask 轮被注入闸抑制）。 */
   val ReminderCategory: String = "msgtoken"
@@ -329,9 +382,12 @@ object MsgTokenRegistry:
   def missingErrorLine(token: String): String =
     s"[msg-token 解析失败] $token：映射缺失——该身份牌不存在、所属会话已删除，或铸牌后映射已被清理。请改贴消息全文。"
 
-  /** 真用户轮的牌宣告文本（system-reminder content）。 */
+  /** 真用户轮的牌宣告文本（system-reminder content）。msgchip 批：补一句短名引用
+    * 形态的教学（回复引用时牌面后接「|短名」，前端渲染成可点小牌）。 */
   def reminderContent(token: String): String =
     s"消息身份牌：本条用户消息已铸牌 $token。向其它会话派发（Mail / Delegate / node 消息）时在文本中写入该牌，" +
-      s"接收方会在投递前自动展开为消息全文；映射缺失时接收方看到显式报错行。牌仅在本实例内有效，随会话归档保存。"
+      s"接收方会在投递前自动展开为消息全文；映射缺失时接收方看到显式报错行。牌仅在本实例内有效，随会话归档保存。" +
+      s"在本会话回复里引用这条消息时，可在牌面后接「|短名」起个简短名字（如 {{msg:abcd1234-000001|输入统一令}}）——" +
+      s"前端会把它渲染成显示短名的小牌，点击可看原文；派发文本中无需带短名。"
 
 end MsgTokenRegistry

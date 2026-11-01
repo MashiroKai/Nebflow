@@ -55,6 +55,7 @@ import {
 // ON the turn line (dots + live timer), not in a bubble row.
 import { startWorklineDots, beginRound } from './workline.js';
 import { replayHistoryPageInitialLoad } from './chat/historyReplay.js';
+import { installMsgTokenChip } from './chat/msgTokenChip.js'; // msgchip 批：带短名引用小牌交互/取数腿
 import { notePendingAsk, removePendingAsk, applyPendingAskSnapshot, pendingSnapshotFailed, initPendingAsks, requestPendingAskSync, startPendingAskSync } from './askPending.js';
 import { initScrollUnderGlass } from './scrollUnderGlass.js'; // uifix ⑤
 import {
@@ -4139,6 +4140,9 @@ initNavTabs();
 initModals();
 initRulesModal();
 initInput(chatViews.primary);
+// msgchip 批（2026-11-01 作者令「消息身份牌系统升级」）：带短名引用小牌的点击委托
+// 单点安装（幂等；渲染面在 utils.js 单管线内，取数/popover 在 chat/msgTokenChip.js）。
+installMsgTokenChip();
 // 会话头头像 + profile 面板（mobile-mockup-375 v3 批 · 扩展③）：头像/名称两端
 // 同款 —— 同一 DOM 节点（.header-center 首位），形态差异全在 CSS 层。
 initAgentProfile();

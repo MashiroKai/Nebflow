@@ -445,6 +445,19 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
       body = nebflow.shared.Defaults.SecretsRule
     ),
 
+    // --- 引牌教义·带短名引用（msgchip 批，作者令 2026-11-01「消息身份牌系统升级」
+    // 第 4 条）：回复作者消息用「牌+短名」引用要点、不整段复述原文。条件 always——
+    // 与 order-377 同判据：牌经 Mail / brief / node 消息流进每张面，任何面上都可能
+    // 引用上游消息。段体逐字引用 [[nebflow.shared.Defaults.MsgQuoteRule]]（同源单点，
+    // 勿复制改写）；语法机制的单一权威 = MsgTokenRegistry（TokenRegex + msgtoken
+    // reminder）。段序 378 = 紧跟 order-377 后；静态体落在 systemStable（生命周期
+    // 节点重建时携带）——随下个生命周期生效，在飞旧上下文不回改。
+    PromptSection(
+      378,
+      condition = _ => true,
+      body = nebflow.shared.Defaults.MsgQuoteRule
+    ),
+
     // --- 轨道二 #5 identity clauses (before tool guides — who reads your
     // output comes first). Only when dedicatedAgents guardrails are enabled:
     // T1 flow nodes get the strict machine-consumer clause (or its

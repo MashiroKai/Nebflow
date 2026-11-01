@@ -1,6 +1,7 @@
 package nebflow.core.msgtokens
 
 import cats.effect.IO
+import cats.syntax.all.*
 import munit.CatsEffectSuite
 
 import java.nio.file.Files
@@ -200,6 +201,107 @@ class MsgTokenRegistrySpec extends CatsEffectSuite:
         reg2 = new MsgTokenRegistry(sessions, () => true)
         out <- reg2.resolve(s"引用 $token")
         _ = assert(out.contains("正常消息"), "坏行不得影响正常映射")
+      yield ()
+    }
+  }
+
+  // ── msgchip 批（2026-11-01 作者令「消息身份牌系统升级」）：带短名引用形态 ────
+
+  test("带短名引用形态：{{msg:sid8-seq6|短名}} 消解展开为全文（短名剥除，不进替换物）") {
+    withRegistry() { (reg, _) =>
+      val userText = "把这份月报总结一下，周五前给我"
+      for
+        m <- reg.mint(Some(Sid1), userText)
+        core = m.get.token.stripPrefix("{{msg:").stripSuffix("}}")
+        named = s"{{msg:$core|输入统一令}}"
+        // 正则自洽：组3 = 短名
+        _ = assert(MsgTokenRegistry.TokenRegex.findFirstMatchIn(named).isDefined)
+        mm = MsgTokenRegistry.TokenRegex.findFirstMatchIn(named).get
+        _ = assertEquals(mm.group(3), "输入统一令")
+        // 消解：带名形态与裸形态同值替换（目标 = 全文；名不进替换物）
+        expanded <- reg.resolve(s"先看这条：$named —— 再办下一条")
+        _ = assert(expanded.contains(userText), "带名形态应展开为消息全文")
+        _ = assert(!expanded.contains("输入统一令"), "短名是纯展示注记，替换物中剥除")
+        _ = assert(!expanded.contains(core), "展开后不应残留牌面核心")
+        // 裸形态混合在场的双牌全消解
+        m2 <- reg.mint(Some(Sid1), "第二条消息")
+        mixed = s"$named 与 ${m2.get.token}"
+        out2 <- reg.resolve(mixed)
+        _ = assert(out2.contains(userText) && out2.contains("第二条消息"))
+        _ = assert(!out2.contains("{{msg:"), "两种形态都不残留牌面")
+      yield ()
+    }
+  }
+
+  test("带短名映射缺失：报错行引用写入原文（连同短名现形，便于定位笔误）") {
+    withRegistry() { (reg, _) =>
+      val bad = s"{{msg:${reg.shortCode(Sid1)}-009999|不存在的牌}}"
+      for
+        out <- reg.resolve(s"前缀 $bad 后缀")
+        _ = assert(out.contains(MsgTokenRegistry.missingErrorLine(bad)), "报错行必须引用写入原文（含短名）")
+        _ = assert(out.contains("前缀") && out.contains("后缀"))
+      yield ()
+    }
+  }
+
+  test("畸形带名形态不匹配正则 = 字面透传（零解析豁免、零崩溃面）") {
+    withRegistry() { (reg, _) =>
+      val malformed = List(
+        "{{msg:zzzzzzzz-000001|坏sid8}}",            // sid8 非 hex
+        s"{{msg:${reg.shortCode(Sid1)}-0001|短序号}}",   // seq 非 6 位
+        s"{{msg:${reg.shortCode(Sid1)}-000001|}}",       // 空短名
+        s"{{msg:${reg.shortCode(Sid1)}-000001|${"长" * 41}}}", // 超 40 字
+        s"{{msg:${reg.shortCode(Sid1)}-000001|a|b}}",    // 名内含竖线（整体不成牌）
+        s"{{msg:${reg.shortCode(Sid1)}-000001|a{b}}}",   // 名内含花括号
+        s"{{msg:${reg.shortCode(Sid1)}-000001|名\n换行}}", // 名内换行
+        "{{msg|无核心}}",
+        "{{msg:abc-1|x}}}}"
+      )
+      for
+        outs <- malformed.map(s => reg.resolve(s"保持${s}原样")).sequence
+        _ = outs.zip(malformed).foreach { case (out, raw) =>
+              assert(out.contains(raw), s"畸形形态必须字面透传: $raw")
+            }
+        // 真牌带空名整体不匹配 ⇒ 不消解也不报错（就是普通文本）
+        m <- reg.mint(Some(Sid1), "真消息")
+        coreOfM = m.get.token.stripSuffix("}}")
+        emptyName = s"{{msg:$coreOfM|}}"
+        outEmpty <- reg.resolve(s"看$emptyName")
+        _ = assert(outEmpty.contains(emptyName))
+      yield ()
+    }
+  }
+
+  test("enabled=false：带名形态原样透传（机制关 = 零行为变化）") {
+    withRegistry(enabled = false) { (reg, _) =>
+      val named = s"{{msg:${reg.shortCode(Sid1)}-000001|输入统一令}}"
+      for
+        out <- reg.resolve(s"包裹${named}文本")
+        _ = assertEquals(out, s"包裹${named}文本")
+      yield ()
+    }
+  }
+
+  test("lookup：裸核心 / 完整牌面 / 带名牌面三形态同值命中；未铸/畸形 = None") {
+    withRegistry() { (reg, _) =>
+      for
+        m <- reg.mint(Some(Sid1), "查询目标消息")
+        token = m.get.token
+        core = token.stripPrefix("{{msg:").stripSuffix("}}")
+        byCore <- reg.lookup(core)
+        byToken <- reg.lookup(token)
+        byNamed <- reg.lookup(s"{{msg:$core|输入统一令}}")
+        _ = assert(byCore.isDefined && byToken.isDefined && byNamed.isDefined)
+        _ = assertEquals(byCore.get.text, "查询目标消息")
+        _ = assertEquals(byToken.get.token, token)
+        _ = assertEquals(byNamed.get.token, token)
+        // 未铸序号 / 未知 sid8 / 畸形入参 = None
+        miss <- reg.lookup(s"${reg.shortCode(Sid1)}-999999")
+        unknown <- reg.lookup("deadbeef-000001")
+        malformed <- reg.lookup("not-a-token")
+        _ = assert(miss.isEmpty)
+        _ = assert(unknown.isEmpty)
+        _ = assert(malformed.isEmpty)
       yield ()
     }
   }
