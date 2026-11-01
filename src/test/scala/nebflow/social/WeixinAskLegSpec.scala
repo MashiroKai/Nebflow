@@ -609,7 +609,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     for
       (p, ctx) <- started(out, List(meta("wx_a")))
       long = "好" * (WeixinAskLeg.FullTextThreshold + 500)
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> long.asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> s"<output>$long</output>".asJson))
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
       sent <- out.sent.get
       v0 <- p.intake(ctx, WeixinIlinkBridgePlugin.Inbound(Some("wx_a"), Some("随便聊聊"), Some("m0")))
@@ -639,7 +639,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     val out = Out()
     for
       (p, _) <- started(out, List(meta("wx_a")))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "正常回复".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>正常回复</output>".asJson))
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
       sent <- out.sent.get
     yield assertEquals(sent, List(("wx_a", "正常回复")))

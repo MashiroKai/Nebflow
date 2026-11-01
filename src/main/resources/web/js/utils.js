@@ -343,14 +343,43 @@ function _renderMarkdownWithMath(text, parseVoice) {
   // （降级语义：未包裹的旧内容照常全显，不吞历史消息）。
   const outputBlocks = [];
   if (text.indexOf('<output>') !== -1 || text.indexOf('</output>') !== -1) {
-    if (_outputTagsBalanced(text)) {
-      text = text.replace(RE_OUTPUT_PAIR, (m, inner) => {
-        outputBlocks.push(inner.trim());
-        return `OUTPUTBLOCK${outputBlocks.length - 1}END`;
-      });
+    // 围栏安全批（作者令：块形态就是为了避开 md 语法冲突，提取器不能反被
+    // 围栏骗了）：扫描/提取都先过 _maskCodeFences 掩码——围栏内的字面标签
+    // 是代码内容，不触发剥离，也吃不到转义（转义会腐蚀围栏体）。与渠道侧
+    // 单一实现源（scala nebflow.social.outbound.OutputBlock）同一条规则。
+    const masked = _maskCodeFences(text);
+    if (_outputTagsBalancedOn(masked)) {
+      // 成对闭合 ⇒ 占位替换只落在围栏外的对上：掩码串上找对、按 1:1 偏移
+      // 回原文 splice（尾→头，偏移保持有效；块序 = 出现序）。
+      const pairs = [];
+      RE_OUTPUT_PAIR.lastIndex = 0;
+      let pm;
+      while ((pm = RE_OUTPUT_PAIR.exec(masked)) !== null) {
+        pairs.push({
+          start: pm.index,
+          end: pm.index + pm[0].length,
+          inner: text.slice(pm.index + 8, pm.index + pm[0].length - 9).trim()
+        });
+      }
+      for (let i = pairs.length - 1; i >= 0; i--) {
+        const p = pairs[i];
+        outputBlocks[i] = p.inner;
+        text = text.slice(0, p.start) + `OUTPUTBLOCK${i}END` + text.slice(p.end);
+      }
     } else {
-      text = text.replace(RE_OUTPUT_ANY_TAG, (tag) =>
-        tag === '<output>' ? '&lt;output&gt;' : '&lt;/output&gt;');
+      // 散标签（流式中间态/手误）只在围栏外转义为字面文本：marked 会把裸
+      // `<output>` 当 HTML 块把后续内容整段吞掉，必须先行掐断。
+      const tags = [];
+      RE_OUTPUT_ANY_TAG.lastIndex = 0;
+      let tm;
+      while ((tm = RE_OUTPUT_ANY_TAG.exec(masked)) !== null) {
+        tags.push({ start: tm.index, end: tm.index + tm[0].length, tag: tm[0] });
+      }
+      for (let i = tags.length - 1; i >= 0; i--) {
+        const s = tags[i];
+        text =
+          text.slice(0, s.start) + (s.tag === '<output>' ? '&lt;output&gt;' : '&lt;/output&gt;') + text.slice(s.end);
+      }
     }
   }
   // Extract <voice>...</voice> blocks before any markdown processing (only for AI output, not thinking)
@@ -376,14 +405,21 @@ function _renderMarkdownWithMath(text, parseVoice) {
  *  AND every tag is properly paired in order (no stray close, no nesting). The
  *  fast indexOf pre-check keeps the per-frame streaming hot path at one cheap
  *  scan for the overwhelmingly common no-tag case (same shape as
- *  _humanFencesBalanced). */
+ *  _humanFencesBalanced). 围栏安全：扫描前先过 _maskCodeFences——围栏内的字面
+ *  标签是内容不是结构。 */
 function _outputTagsBalanced(text) {
-  if (text.indexOf('<output>') === -1) return false;
+  return _outputTagsBalancedOn(_maskCodeFences(text));
+}
+
+/** The balance walk on an ALREADY-masked text (fence regions are NUL runs, so
+ *  their literal tags are invisible to the scan). */
+function _outputTagsBalancedOn(masked) {
+  if (masked.indexOf('<output>') === -1) return false;
   let open = false;
   let saw = false;
   const re = /<\/?output>/g;
   let m;
-  while ((m = re.exec(text)) !== null) {
+  while ((m = re.exec(masked)) !== null) {
     if (m[0] === '<output>') {
       if (open) return false; // nesting = not the agreed shape
       open = true;
@@ -396,15 +432,41 @@ function _outputTagsBalanced(text) {
   return saw && !open;
 }
 
+/** 同长掩码：``` 围栏区逐字符替换为 NUL（换行保留 ⇒ 偏移与原文 1:1）。围栏
+ *  安全批（作者令原文：块形态当初就是为了避开 md 语法冲突，提取器不能反被
+ *  围栏骗了）：围栏内字面 <output> 是内容不是结构。开栏 = trim 后以 ```
+ *  开头的行；关栏 = trim 后仅 ≥3 个反引号的行（CommonMark；同 ```human 闸的
+ *  读法）；未闭合围栏跑到底。与渠道侧单一实现源（scala
+ *  nebflow.social.outbound.OutputBlock.maskFences）同一条规则。 */
+function _maskCodeFences(text) {
+  if (text.indexOf('```') === -1) return text;
+  const lines = text.split('\n');
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (inFence) {
+      lines[i] = '\u0000'.repeat(lines[i].length);
+      if (t.length >= 3 && /^`+$/.test(t)) inFence = false;
+    } else if (t.startsWith('```')) {
+      lines[i] = '\u0000'.repeat(lines[i].length);
+      inFence = true;
+    }
+  }
+  return lines.join('\n');
+}
+
 /** Shared inner-content joiner: every balanced pair's body, blank-line joined —
- *  the chat face (outputTag.js) renders this as the whole visible message. */
+ *  the chat face (outputTag.js) renders this as the whole visible message.
+ *  围栏安全：对掩码串找对、按偏移回原文切片（围栏内的字面标签永不入块）。 */
 export function extractOutputInner(text) {
-  if (!_outputTagsBalanced(text)) return null;
+  const masked = _maskCodeFences(text);
+  if (!_outputTagsBalancedOn(masked)) return null;
   const parts = [];
-  text.replace(RE_OUTPUT_PAIR, (m, inner) => {
-    parts.push(inner.trim());
-    return m;
-  });
+  RE_OUTPUT_PAIR.lastIndex = 0;
+  let m;
+  while ((m = RE_OUTPUT_PAIR.exec(masked)) !== null) {
+    parts.push(text.slice(m.index + 8, m.index + m[0].length - 9).trim());
+  }
   return parts.length ? parts.join('\n\n') : null;
 }
 

@@ -8,6 +8,7 @@ import io.circe.syntax.*
 import nebflow.bridge.{AskAnswerReceipt, BridgeContext, BridgeManager, BridgePlugin}
 import nebflow.social.outbound.{
   AskPromptCodec,
+  OutputBlock,
   PromptAction,
   PromptFallback,
   PromptView,
@@ -721,7 +722,14 @@ final class FeishuBridgePlugin(
           val richLeg = richs match
             case Nil => IO.unit
             case rs  => pacer.enqueue(deliverRichAll(sessionId, rs))
-          val textLeg = if text.trim.isEmpty then IO.unit else pacer.enqueue(reply(sessionId, text))
+          // output 块纪律渠道接线批（2026-11-01，作者令「飞书端收到的消息也要
+          // 做 output 块剥离，只显示 output 块内部的内容」）：轮尾只吃单一提取
+          // 源 [[OutputBlock.extract]] 的块内拼接——块外叙述不出站；无块/散标签
+          // 轮 ⇒ 无可投递文本，文字腿熄灭（**不回退成发全文**）。
+          val visible = OutputBlock.extract(text) match
+            case OutputBlock.Extracted(inner) => inner
+            case _                            => ""
+          val textLeg = if visible.trim.isEmpty then IO.unit else pacer.enqueue(reply(sessionId, visible))
           richLeg *> textLeg
         }
       // 逐段即时批：分段提交边界——缓冲段即推即清（空段不推），后台排队不
@@ -1243,12 +1251,28 @@ final class FeishuBridgePlugin(
    * 逐段即时推送批：把该会话当前缓冲的文本段作为一条独立渠道消息推出。
    * 空段（纯工具过程、无正文）不推；推送经 [[pacer]] 排队（段间 ≥1s 按序发）
    * 且 `.start` 后台跑——绝不阻塞流式事件面（wsHub 广播监听是内联执行）。
+   *
+   * output 块纪律渠道接线批（2026-11-01）：段文本先过单一提取源
+   * [[OutputBlock.extract]]——Extracted ⇒ 只推块内拼接（块外叙述不出站，空块
+   * 消费不推）；NoBlocks ⇒ 消费不推（整段无块 ⇒ 无可投递文本，**不回退成发
+   * 全文**）；Unbalanced（`<output>` 开而未闭的流式中间态/散标签）⇒ **HOLD**：
+   * 不消费不推——块可能在后续 delta 里闭合成形，此刻弹出即永远丢失（控制台
+   * 流式纪律「不炸不吞」的渠道面）。判定在 modify 内原子完成。微信腿同款
+   * 语义，同一实现源。
    */
   private def flushSegment(sessionId: String): IO[Unit] =
-    pendingRef.modify { m => (m - sessionId, m.getOrElse(sessionId, "")) }.flatMap { text =>
-      if text.trim.isEmpty then IO.unit
-      else pacer.enqueueAsync(reply(sessionId, text, isSegment = true))
-    }
+    pendingRef.modify { m =>
+      val text = m.getOrElse(sessionId, "")
+      OutputBlock.extract(text) match
+        case OutputBlock.Unbalanced => (m, IO.unit)
+        case OutputBlock.NoBlocks   => (m - sessionId, IO.unit)
+        case OutputBlock.Extracted(inner) =>
+          (
+            m - sessionId,
+            if inner.trim.isEmpty then IO.unit
+            else pacer.enqueueAsync(reply(sessionId, inner, isSegment = true))
+          )
+    }.flatten
 
   /**
    * 逐段即时推送批：段级失败的「注明」腿——失败的段不补发（超时可能已送达，
