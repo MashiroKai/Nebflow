@@ -924,16 +924,30 @@ object GatewayMain extends IOApp:
                                   // 两腿同关回现状）；零汇总通知（⑷不旁路，事件面留痕）。存量
                                   // per-project flow-map 归档不迁移（v3-⑧：本 sweep 只读
                                   // flow-maps/ 作用域族，旧路径族零触碰）。
+                                  //
+                                  // wsSend 桥接批（2026-11-01，续聊面板空白批的同类点②）：
+                                  // 本腿要**重挂** delegate 作用域宿主，而宿主 wsSend 决定两件事
+                                  // ——engine.wsSendFn（node-* 会话流帧）与 emitScopeEvent（作用域
+                                  // flow-map 事件）。改前此处零传参 ⇒ 两者都是 no-op ⇒ 恢复窗口
+                                  // 里重挂作用域的节点会话帧在发射处被吞（无 live 广播、也到不了
+                                  // 录制层）、Flow Map 面板零事件。传 `wsHub.broadcast` 与
+                                  // startupMount（上方 mountAll 的 #28 接线）**同源同契约**：boot
+                                  // 期无控制台连接可桥（无 ctx.wsSend），进程级广播就是这条腿
+                                  // 的正确出口。诚实边界：广播不是录制——重挂会话的 ai/tool 行
+                                  // 仍需进程级 recorder 才会落 .ui.json（开放项，见批报告）。
                                   val delegateScopeCrashSweep: IO[Unit] =
                                     if nebflow.shared.Defaults.CrashRecoveryEnabled then
-                                      nebflow.core.project.ProjectCrashRecovery.recoverDelegateScopes().flatMap {
-                                        scopes =>
+                                      nebflow.core.project.ProjectCrashRecovery
+                                        .recoverDelegateScopes(
+                                          wsSend = Some((json: io.circe.Json) => wsHub.broadcast(json))
+                                        )
+                                        .flatMap { scopes =>
                                           if scopes > 0 then
                                             logger.info(
                                               s"Boot delegate-scope sweep: $scopes scope(s) had crashed nodes claimed (rehydrate/failed)"
                                             )
                                           else IO.unit
-                                      }
+                                        }
                                     else IO.unit
                                   // 宿主启动自动重入（boot-wake 批 2026-09-13，方案件 A 档 A1；
                                   // 作者 09-13 裁定「重启后唤醒源 = 直接上 A」）：**独立于
