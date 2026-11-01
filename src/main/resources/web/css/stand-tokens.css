@@ -241,6 +241,31 @@ html[data-theme="dark"] {
   }
 }
 
+/* ── agent 默认头像芯片 --agent-avatar-chip-*（作者令 2026-11-01 20:42）──
+   agent 无自定义头像时的兜底 stand logo 芯片配色，随主题翻转：
+   浅色主题 = 白底黑 logo / 深色主题 = 黑底白 logo —— 配对逐值对齐 brand
+   app-icon 双主题档（stand-app-icon-light.svg = #FFFFFF 底 + #000000 形 /
+   stand-app-icon-dark.svg = #000000 底 + #FFFFFF 形）。消费者：会话头
+   #agent-avatar-btn（chat.css，桌面 28px / 手机 78px 同规则）、档案预览盒
+   .ap-avatar-box .agent-avatar-stand-logo（chat.css）、dock 中键 logo 态
+   （mobileLayer.css :has(.dock-center-logo) 限定 —— 自定义头像态保持
+   sapphire 底描边零回归）。三态解析结构同 --ctl-* 族：:root/
+   html[data-theme=light] 亮档默认，html[data-theme=dark] 强制档，无属性
+   回退 prefers-color-scheme。logo 本体的黑白翻面 = brand 双主题 picture
+   （prefers-color-scheme source，与面板主题同一解析面），本 token 只管底色。 */
+:root,
+html[data-theme="light"] {
+  --agent-avatar-chip-bg: #ffffff;
+}
+html[data-theme="dark"] {
+  --agent-avatar-chip-bg: #000000;
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) {
+    --agent-avatar-chip-bg: #000000;
+  }
+}
+
 /* 派生组合面（感知域消费；值全部来自上表，零新色值） */
 :root {
   --st-mail-panel-bg: var(--st-glass-bg);

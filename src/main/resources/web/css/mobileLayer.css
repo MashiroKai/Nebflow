@@ -287,12 +287,32 @@ body.mobile-layer .dock-key.dock-key-center .dock-center .dock-center-img {
   border-radius: 50%;
   object-fit: cover;
 }
-/* stand logo 回落（批③）：彩色 fill 上缩 62% 居中（符号本体即图案，不铺底）。 */
-body.mobile-layer .dock-key.dock-key-center .dock-center .dock-center-logo {
+/* stand logo 回落（批③）：彩色 fill 上缩 62% 居中（符号本体即图案，不铺底）。
+   居中修正批（作者令 2026-11-01 20:42「图案没居中」像素实证：img 盒 left=0 /
+   right=16.7 —— 裸 inline <picture> 包裹下 img 的百分比宽高双基准不一致，62% 宽
+   解析成功、62% 高落回固有比，弹性布局把裸 picture 件顶到主轴起点 ⇒ 图案整体
+   偏左 7.8px（修前 screenshot 墨迹扫描 left 2 / right 17.5 在案）。修法 = 会话头
+   .agent-avatar-stand-logo 同款成熟模式：尺寸上移到 picture（62% 盒）+ picture
+   flex 双轴居中，img 100%×100% contain —— 双引擎实测盒边距四向等分。 */
+body.mobile-layer .dock-key.dock-key-center .dock-center picture {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 62%;
   height: 62%;
+}
+body.mobile-layer .dock-key.dock-key-center .dock-center .dock-center-logo {
+  width: 100%;
+  height: 100%;
   object-fit: contain;
   display: block;
+}
+/* 芯片配色随主题翻转（作者令 2026-11-01 20:42「浅色主题=白底黑 logo，深色主题=
+   黑底白 logo」）：:has 限定 logo 回落态 —— 自定义头像态保持 sapphire 底
+   （.dock-center-img 内缩 2.5px 的 sapphire 描边环零回归），logo 态换双主题
+   芯片 token（stand-tokens.css，配对 = brand app-icon 亮/暗档）。 */
+body.mobile-layer .dock-key.dock-key-center .dock-center:has(.dock-center-logo) {
+  background: var(--agent-avatar-chip-bg);
 }
 body.mobile-layer .dock-key.dock-key-center:active .dock-center { transform: scale(0.94); }
 body.mobile-layer .dock-key.dock-key-center.active {
@@ -422,6 +442,12 @@ body.mobile-layer .mobile-page-title {
   text-overflow: ellipsis;
   white-space: nowrap;
   outline: none;
+  /* 大标题恒全额占位（标题-内容间距修整批 2026-11-01 20:42）：页面体是 flex
+     column，收编面（#settings-modal 等定高 overlay adoptee）弹性吃满后与标题
+     争抢收缩 —— 实测设置页标题盒被压到 31px（28px 字面裁顶裁底，B 批验收照
+     chromium-light-settings-expanded 在案）。flex:none 钉死标题基座，收缩全额
+     归 min-height:0 的滚动面（与 B 批「主滚轴在内」同一滚型）。 */
+  flex: none;
   transition:
     opacity var(--dur-2, 160ms) var(--ease-std, ease),
     transform var(--dur-2, 160ms) var(--ease-std, ease);
@@ -1887,7 +1913,13 @@ body.mobile-layer #mobile-pages .mobile-page-body > #usage-dashboard {
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
-  padding: 12px 12px calc(24px + env(safe-area-inset-bottom, 0px));
+  /* 顶距 0（标题-内容间距修整批 2026-11-01 20:42）：大标题入流后壳层标题
+     padding-bottom 10px 已承担呼吸，面板自身再垫 12px 会叠出面外双空（实测
+     标题→筛选行 24px = 姊妹面板标准节奏 12px 的两倍，双层垫导致）。
+     面内节奏由既有 gap:12px（ud-header h=0 空头 → ud-filters）承担，改后
+     标题→首块 = 12px 与 daemon/settings/reminder 全站一致。滚入态顶缘由
+     --g2-veil 渐隐带承底（settings/daemon 同型），零裸贴。 */
+  padding: 0 12px calc(24px + env(safe-area-inset-bottom, 0px));
   gap: 12px;
 }
 body.mobile-layer #mobile-pages #usage-dashboard::-webkit-scrollbar { display: none; }
@@ -2490,6 +2522,36 @@ body.mobile-layer #chat .g2-chat-head #session-name {
    ═══════════════════════════════════════════════════════════════════════ */
 body.mobile-layer #mobile-pages .mobile-page-body > #todo-page {
   height: auto;
+}
+/* ④ 项目面旧胶囊让位带收编（标题-内容间距修整批 2026-11-01 20:42）：
+   projectPanel.css 桌面规则 .canvas-tab-pane[data-type="projects"] 的
+   padding-top:56px + .team-scroll top:56px 是「桌面悬浮胶囊带」的纯定位让位
+   （原注释：absolute 列表体锚 padding box，pane padding 与 top 须同带改）。
+   手机详情页大标题入流后这 56px 成为标题→首卡的纯增量空带（实测 68px vs
+   全站标准 12px；B 批验收照 chromium-light-projects-expanded 在案）——手机层
+   双维归零，首卡节奏交 .team-scroll 自带 padding 12px 承担（与其他面板一致）。
+   桌面零感知（规则全挂 body.mobile-layer + #mobile-pages 页面体限定，桌面
+   projects pane 不在页面体子树）。 */
+body.mobile-layer #mobile-pages .mobile-page-body > .canvas-tab-pane[data-type='projects'] {
+  padding-top: 0;
+}
+body.mobile-layer #mobile-pages .mobile-page-body > .canvas-tab-pane[data-type='projects'] .team-scroll {
+  top: 0;
+}
+/* ⑤ 设置面头占位退役（标题-内容间距修整批 2026-11-01 20:42）：手机档设置面头
+   两子件全隐（#settings-modal-title B 批同名退役 + #settings-modal-close 双返回
+   清查批隐，见上方 L1394 块）⇒ 头成 25px 纯空带（子件全隐实测在案，对照：
+   daemon/reminder/todo 面头均有可见异名题行/计数钮属功能件保留）——手机档整头
+   摘除，首卡间距 = 标题 pb10 + #settings-content pt16 = 16px，与全站 sweep 档
+   一致。桌面零感知（规则挂 body.mobile-layer 页面体链）。 */
+body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal .settings-modal-header {
+  display: none;
+}
+/* 首分组节顶距归零（同批⑤续）：settings-section 首节自带 mt24（节间距节奏
+   的首节份），叠在 content pt16 上 = 标题下 40px 空带；首节归零后 = 16px。
+   节间 mt40 节奏不动，桌面零感知。 */
+body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal #settings-content .settings-section:first-child {
+  margin-top: 0;
 }
 body.mobile-layer .mobile-page-body .todo-page-title,
 body.mobile-layer .mobile-page-body #usage-title,
