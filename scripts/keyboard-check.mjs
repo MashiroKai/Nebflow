@@ -1,26 +1,54 @@
 #!/usr/bin/env node
 // keyboard-check.mjs — 键盘层验收门禁（keyboard-first 一期，2026-11-01）。
 //
-// 用法：NEBFLOW_PW_PATH=<playwright-core> node scripts/keyboard-check.mjs
+// 用法：
+//   NEBFLOW_PW_PATH=<playwright-core> node scripts/keyboard-check.mjs
+//   node scripts/keyboard-check.mjs --web-root build/web-dist        # 产物形态
+//   NEBFLOW_WEB_ROOT=build/web-dist node scripts/keyboard-check.mjs  # 等价写法
 // 退出码：0 全绿；1 有断言失败；2 装置错误（无浏览器 / playwright 不可解析）。
 //
 // 装置同 visual-baseline（scripts/lib/visual-harness.mjs）：page.route 从磁盘
-// 服务 src/main/resources/web + MockWS 走真实 ws.js 分发 ⇒ **零端口零进程**，
-// 结构上不可能碰到宿主实例。
+// 服务静态根 + MockWS 走真实 ws.js 分发 ⇒ **零端口零进程**，结构上不可能碰到
+// 宿主实例。
+//
+// 验证对象可切换（G6，2026-11-01 装置批，**先修装置再继续 B7**）：
+//   改造前本脚本按**源路径**取模块句柄（`import('/js/keymap.js')`），而运行实例吃
+//   的是 jar 里的 `web-dist` —— 那里没有 `/js/` 路由（模块合进 entry chunk、导出名
+//   压成单字母别名），实测直接 `Failed to fetch dynamically imported module`。
+//   含义很直白：**视觉闸做到了「验的 = 跑的」，键盘闸没做到**，键盘侧所有结论只在
+//   源树上成立，一重打包就可能全变。
+//   现在：根走**同一套** `webRoot()/setWebRoot()`（G3 已建好，不另造第二套）；模块
+//   句柄走产品侧登记表 `window.__nfProbeSurface`（js/probeSurface.js）⇒ 两种形态
+//   拿到的都是**产品正在用的那一份实例**；静态扫描在产物形态下改读产物自带的
+//   sourcemap sourcesContent 与 app-*.css bundle ⇒ 扫的是「打进产物那份字节」。
+//   跑不了的断言一律 `SKIP` 并给原因（不是静默跳过，也不是通过）：分母与分子都
+//   打在末行汇总里。
 //
 // 为什么必须是自动化的：本批的核心风险不在「按键能不能触发」，而在三件看不见的
 // 事 —— ① IME 合成态的 Enter 会不会误发；② Tab 会不会逃出模态；③ 关闭后焦点
 // 回不回得去。这三条靠人眼是验不出来的（尤其 IME），只能脚本化。
 
-import { loadPlaywright, launchBrowser, createSession, settle } from './lib/visual-harness.mjs';
+import { loadPlaywright, launchBrowser, createSession, settle, webRoot, setWebRoot } from './lib/visual-harness.mjs';
 import { activeKey, countEvents, resetEvents, trackEvents, tabOrderIndex, layerDepth } from './lib/keyboard-probes.mjs';
+import { describeWebRoot, webForm, installModuleResolver, jsSources, cssSources, shippedVsWorktree, surfaceHint } from './lib/probe-surface.mjs';
+
+// 验证对象切换（G6）：CLI `--web-root` 优先，其次 NEBFLOW_WEB_ROOT（模块加载时由
+// visual-harness 读取），缺省源树 —— 与 visual-baseline 逐字同一条口径。
+const argVal = (/** @type {string} */ name) => {
+  const i = process.argv.indexOf(name);
+  return i >= 0 ? (process.argv[i + 1] || null) : null;
+};
+const WEB_ROOT_OVERRIDE = argVal('--web-root');
+if (WEB_ROOT_OVERRIDE) setWebRoot(WEB_ROOT_OVERRIDE);
 
 const pw = loadPlaywright();
 const { browser, label } = await launchBrowser(pw.mod, {});
 
 let pass = 0;
 let fail = 0;
+let skipsN = 0;
 const failures = [];
+const skips = [];
 
 /**
  * @param {string} name
@@ -32,11 +60,25 @@ function check(name, cond, detail = '') {
   else { fail++; failures.push(name + (detail ? ` — ${detail}` : '')); console.log(`  FAIL  ${name}${detail ? ' — ' + detail : ''}`); }
 }
 
+/**
+ * 断言**未执行**（不是通过）：只用于「当前形态下取证对象根本取不到」的情形。
+ * 名字照样进汇总分母，原因进明细表 —— 静默跳过是本项目反复栽的那件事。
+ * @param {string} name
+ * @param {string} reason
+ */
+function skip(name, reason) {
+  skipsN++;
+  skips.push(`${name} — ${reason}`);
+  console.log(`  SKIP  ${name} — ${reason}`);
+}
+
 async function fresh(opts = {}) {
   const s = await createSession(browser, {
     apiStubs: { '/api/agents': { body: { agents: [] } } },
     ...opts,
   });
+  // 模块句柄解析器必须在 goto 之前装（addInitScript 语义）。
+  await installModuleResolver(s.page);
   await s.boot({ config: {}, messages: [] });
   await s.page.waitForTimeout(400);
   return s;
@@ -50,15 +92,30 @@ const active = (page) => page.evaluate(`(() => {
 
 const mode = (page) => page.evaluate(() => (document.getElementById('nf-mode-chip') || {}).dataset?.mode || 'none');
 
-console.log(`keyboard-check — browser=${label}\n`);
+const FORM = webForm();
+const JS_FACE = jsSources();
+const CSS_FACE = cssSources();
+console.log(`keyboard-check — browser=${label}`);
+console.log(`  ${describeWebRoot()}`);
+console.log(`  js face: via=${JS_FACE.via} files=${JS_FACE.entries.length}${JS_FACE.notes.length ? ' | ' + JS_FACE.notes.join(' | ') : ''}`);
+console.log(`  css face: via=${CSS_FACE.via} files=${CSS_FACE.entries.length}${CSS_FACE.notes.length ? ' | ' + CSS_FACE.notes.join(' | ') : ''}`);
+if (FORM === 'dist') {
+  const stale = shippedVsWorktree(JS_FACE);
+  console.log(`  shipped vs worktree: same=${stale.same} diff=${stale.diff.length} missing=${stale.missing}`
+    + (stale.diff.length ? ` | 差异文件（产物陈旧 ⇒ 产物形态读数只能归因于产物）：${stale.diff.slice(0, 6).join(', ')}${stale.diff.length > 6 ? ' …' : ''}` : ''));
+}
+console.log('');
 
 // ── A 注册器（纯逻辑，不经 UI） ─────────────────────────────────────────
 console.log('A 注册器');
 {
   const s = await fresh();
   const r = await s.page.evaluate(async () => {
-    const km = await import('/js/keymap.js');
+    const probe = await window.__nfProbeModule('/js/keymap.js');
+    if (!probe.ok) return { unavailable: probe.reason };
+    const km = probe.ns;
     const out = {};
+    out.via = probe.via;
     // 冲突：同 scope 同 combo 同模式 ⇒ 必须抛
     km.registerShortcut({ id: 't.dup1', combo: 'Mod+J', mode: 'meta', description: 'x', handler: () => {} });
     try {
@@ -84,10 +141,18 @@ console.log('A 注册器');
     out.fired = fired;
     return out;
   });
-  check('重复注册同一 combo 抛错（注册期硬错）', r.dupThrows === true);
-  check('同一 combo 在不同 mode 下可共存', r.modeSplitOk === true);
-  check('注销后从注册表消失', r.listedBefore === true && r.listedAfter === false);
-  check('场景启停生效', r.scopeOff === true && r.scopeOn === true);
+  if (r.unavailable) {
+    const why = `${surfaceHint()}（${r.unavailable}）`;
+    skip('重复注册同一 combo 抛错（注册期硬错）', why);
+    skip('同一 combo 在不同 mode 下可共存', why);
+    skip('注销后从注册表消失', why);
+    skip('场景启停生效', why);
+  } else {
+    check('重复注册同一 combo 抛错（注册期硬错）', r.dupThrows === true, `via=${r.via}`);
+    check('同一 combo 在不同 mode 下可共存', r.modeSplitOk === true);
+    check('注销后从注册表消失', r.listedBefore === true && r.listedAfter === false);
+    check('场景启停生效', r.scopeOff === true && r.scopeOn === true);
+  }
   await s.close();
 }
 
@@ -220,18 +285,21 @@ for (const scheme of ['dark', 'light']) {
 }
 
 // ── ⑬ css/ 无未配对的 outline:none（离线读 CSS 文本，不开浏览器）──────────
+// 产物形态下扫的是 **app-*.css bundle 里按分段标记还原出来的每文件段**（见
+// probe-surface.cssSources）—— 那正是浏览器真正解析的那份字节；源树形态仍扫磁盘。
 {
-  const { readFileSync: rf, readdirSync: rd } = await import('node:fs');
+  const { readFileSync: rf } = await import('node:fs');
   const { join: jn } = await import('node:path');
   const { fileURLToPath: f2p } = await import('node:url');
-  const cssDir = jn(f2p(new URL('..', import.meta.url)), 'src', 'main', 'resources', 'web', 'css');
   const exemptions = JSON.parse(rf(jn(f2p(new URL('..', import.meta.url)), 'scripts', 'focus-ring-exemptions.json'), 'utf8')).exemptions;
   /** @type {string[]} */
   const unpaired = [];
-  for (const f of rd(cssDir).filter((x) => x.endsWith('.css'))) {
+  // 产物形态下文件身份不可用（CSS 注释被压缩删掉）⇒ 豁免按**选择器**比对；
+  // 源树形态仍按 (file, selector) 严格比对。这个差异写进 detail，不藏着。
+  let exemptBySelectorOnly = 0;
+  for (const { rel, text: txt } of CSS_FACE.entries) {
     // B3-1 之前：`outline:none` 若挂在 `:focus` 规则里、又没有 `:focus-visible` 配对，
     // 就会以 (0,2,0) 压掉 keyboard.css:28 的 (0,1,0) 兜底 —— 键盘聚焦无环。
-    const txt = rf(jn(cssDir, f), 'utf8');
     const re = /([^{}]+)\{([^{}]*)\}/g;
     const rules = [];
     let m;
@@ -255,12 +323,22 @@ for (const scheme of ['dark', 'light']) {
       if (!/outline\s*:\s*(none|0)/.test(r.body)) continue;
       const bases = r.sel.split(',').map((x) => x.replace(/:focus(-visible)?\b/g, '').trim());
       if (bases.every((b) => paired.has(b))) continue; // 有 :focus-visible 兄弟 = 合法范式
-      const exempt = exemptions.some((e) => e.file === `css/${f}` && e.selector.replace(/\s+/g, ' ') === r.sel);
-      if (!exempt) unpaired.push(`css/${f} :: ${r.sel}`);
+      // 选择器归一化：产物 bundle 是压缩过的（逗号后无空格、可能被重排），拿原文比对
+      // 会在产物形态下把**已豁免**的条目误判成未豁免 —— 实测就这样多出一条假 FAIL。
+      // 归一口径：折叠空白 → 按逗号切分 → 逐项 trim → 排序 → 重连。
+      const normSel = (x) => x.replace(/\s+/g, ' ').split(',').map((t) => t.trim()).sort().join(', ');
+      const selKey = normSel(r.sel);
+      const byFile = exemptions.some((e) => e.file === rel && normSel(e.selector) === selKey);
+      const bySelector = !byFile && exemptions.some((e) => normSel(e.selector) === selKey);
+      if (bySelector) exemptBySelectorOnly++;
+      const exempt = byFile || (CSS_FACE.via === 'bundle' && bySelector);
+      if (!exempt) unpaired.push(`${rel} :: ${r.sel}`);
     }
   }
   check('⑬ css/ 内 :focus{outline:none} 未配对 :focus-visible 的条数 − 豁免 = 0',
-    unpaired.length === 0, `${unpaired.length} 条：${unpaired.slice(0, 4).join(' | ')}`);
+    CSS_FACE.entries.length > 0 && unpaired.length === 0,
+    `${CSS_FACE.entries.length} 个单元（via=${CSS_FACE.via}）${unpaired.length} 条：${unpaired.slice(0, 4).join(' | ')}`
+    + (exemptBySelectorOnly ? ` | 按选择器豁免 ${exemptBySelectorOnly} 条（产物无文件身份）` : ''));
 }
 
 // ── E meta/edit 双模态 ────────────────────────────────────────────────
@@ -529,7 +607,7 @@ console.log('G 叠卡 + 中心环');
     `card ${target.tab} x ${target.x}→${now ? now.x : 'gone'} w ${target.w}→${now ? now.w : 'gone'} cards ${before.length}→${after.length}`);
 
   // ⑫ Delete 关掉当前卡，且**不进层栈**（layerDepth 不变）
-  const depthBefore = await layerDepth(s.page);
+  const dB = await layerDepth(s.page);
   const countBefore = (await geo()).length;
   await s.page.evaluate(() => {
     const card = /** @type {HTMLElement} */ (document.querySelector('#deck-layer .deck-card[tabindex="0"]'));
@@ -538,10 +616,18 @@ console.log('G 叠卡 + 中心环');
   await s.page.keyboard.press('Delete');
   await s.page.waitForTimeout(1000);
   const countAfter = (await geo()).length;
-  const depthAfter = await layerDepth(s.page);
-  check('⑫ Delete 关当前卡且 layerDepth 不变',
-    countAfter === countBefore - 1 && depthAfter === depthBefore,
-    `cards ${countBefore}→${countAfter} depth ${depthBefore}→${depthAfter}`);
+  const dA = await layerDepth(s.page);
+  if (!dB.ok || !dA.ok) {
+    // 叠卡**不得进层栈**这件事没有 DOM 观测量（层栈深度就是它的唯一证据），
+    // 取不到深度时这条断言只能记未执行 —— 但卡片真的关掉了这个是可观测的，
+    // 单独留痕，免得「SKIP 了」被读成「什么都没发生」。
+    skip('⑫ Delete 关当前卡且 layerDepth 不变',
+      `${dB.ok ? dA.reason : dB.reason}（本次卡片数 ${countBefore}→${countAfter} 仍已记录）`);
+  } else {
+    check('⑫ Delete 关当前卡且 layerDepth 不变',
+      countAfter === countBefore - 1 && dA.depth === dB.depth,
+      `cards ${countBefore}→${countAfter} depth ${dB.depth}→${dA.depth}`);
+  }
   await s.close();
 }
 
@@ -551,32 +637,29 @@ console.log('G 叠卡 + 中心环');
 // 钉了整整一天，就是「代码存在」被当成「接上了」的代价。
 console.log('H 保焦协议接线');
 {
-  const { readFileSync: rf, readdirSync: rd } = await import('node:fs');
-  const { join: jn } = await import('node:path');
-  const { fileURLToPath: f2p } = await import('node:url');
-  const jsDir = jn(f2p(new URL('..', import.meta.url)), 'src', 'main', 'resources', 'web', 'js');
-  /** 递归收集 js/ 全部源文件 */
-  const walk = (/** @type {string} */ dir) => rd(dir, { withFileTypes: true })
-    .flatMap((e) => (e.isDirectory() ? walk(jn(dir, e.name)) : (e.name.endsWith('.js') ? [jn(dir, e.name)] : [])));
-  const files = walk(jsDir);
+  // 扫描面：源树形态 = 磁盘源文件；产物形态 = 产物 sourcemap 的 sourcesContent
+  // （= 打进 bundle 的那份字节）。两种形态扫的都是「跑的那份代码」，不是「旁边
+  // 那份源码」—— 产物陈旧时这里会红，而那个红点正是本闸要报的东西。
+  const files = JS_FACE.entries;
   /** @param {RegExp} re @param {string} [skipBase] */
   const count = (re, skipBase) => files
-    .filter((f) => !(skipBase && f.endsWith(skipBase)))
-    .map((f) => ({ f, n: (rf(f, 'utf8').match(re) || []).length }))
+    .filter((x) => !(skipBase && x.rel.endsWith(skipBase)))
+    .map((x) => ({ f: x.rel, n: (x.text.match(re) || []).length }))
     .filter((x) => x.n > 0);
+  const shortName = (/** @type {string} */ f) => f.split('/').pop();
 
   // ⑭ 六个业务面接上了（withFocusKey 调用点；定义在 focusTrap.js，不算接线）
   const wired = count(/withFocusKey\s*\(/g, 'focusTrap.js');
   const wiredSites = wired.reduce((s, x) => s + x.n, 0);
   check('⑭ withFocusKey 外部接线点 ≥ 6（6 个业务面）', wiredSites >= 6,
-    `${wiredSites} 处：${wired.map((x) => x.f.split(/[\\/]/).pop() + '×' + x.n).join(', ')}`);
+    `${wiredSites} 处（via=${JS_FACE.via}）：${wired.map((x) => shortName(x.f) + '×' + x.n).join(', ')}`);
 
   // ⑮ data-focus-key 生产者 ≥ 4（树行 / 叠卡 / 会话行 / 侧栏会话行）——
   //    改造前这条通道「读者齐全、生产者 0」
   const producers = count(/dataset\.focusKey\s*=|setAttribute\(\s*['"]data-focus-key['"]/g);
   const prodSites = producers.reduce((s, x) => s + x.n, 0);
   check('⑮ data-focus-key 生产者 ≥ 4（读/写两侧都非 0）', prodSites >= 4,
-    `${prodSites} 处：${producers.map((x) => x.f.split(/[\\/]/).pop() + '×' + x.n).join(', ')}`);
+    `${prodSites} 处：${producers.map((x) => shortName(x.f) + '×' + x.n).join(', ')}`);
 
   // ⑯ nf-focus-fallback 消费者 ≥ 1 + _pptxTeardown 赋值 ≥ 1（改造前两者都是 0）
   const listeners = count(/addEventListener\(\s*['"]nf-focus-fallback['"]/g);
@@ -585,30 +668,40 @@ console.log('H 保焦协议接线');
   const assignN = assignments.reduce((s, x) => s + x.n, 0);
   check('⑯ nf-focus-fallback 监听者 ≥ 1 且 _pptxTeardown 有赋值来源',
     listenersN >= 1 && assignN >= 1,
-    `listeners=${listenersN}(${listeners.map((x) => x.f.split(/[\\/]/).pop()).join(',')}) assignments=${assignN}(${assignments.map((x) => x.f.split(/[\\/]/).pop()).join(',')})`);
+    `listeners=${listenersN}(${listeners.map((x) => shortName(x.f)).join(',')}) assignments=${assignN}(${assignments.map((x) => shortName(x.f)).join(',')})`);
 }
 {
   // ⑰ 运行时：文件树整树重渲后，焦点回到**同一 key 的新行**（节点身份变了）
   const s = await fresh();
-  const before = await s.page.evaluate(() => {
-    const r = /** @type {HTMLElement|null} */ (document.querySelector('#explorer-tree .explorer-item[role="treeitem"]'));
-    if (!r) return null;
-    r.focus();
-    /** @type {any} */ (r).__probeOld = '1';
-    return { key: r.getAttribute('data-focus-key') };
+  const pre = await s.page.evaluate(async () => {
+    const probe = await window.__nfProbeModule('/js/explorer.js');
+    if (!probe.ok) return { unavailable: probe.reason };
+    const row = /** @type {any} */ (document.querySelector('#explorer-tree .explorer-item[role="treeitem"]'));
+    if (!row) return { unavailable: '文件树没有行（夹具未就绪）' };
+    row.focus();
+    row.__probeOld = '1';
+    return { via: probe.via, key: row.getAttribute('data-focus-key') };
   });
+  // 刷新必须落在**另一个 task** 里：focus 与整树重渲挤在同一个 evaluate 里时，
+  // 保焦捕获读到的还是「容器」而不是那一行（实测 surface 句柄是微任务级、
+  // `await import()` 是网络级 —— 后者天然隔了一拍，前者没有）。这条不是凑绿：
+  // 真实用户点击与后续网格重渲之间本来就隔着任务边界。
   await s.page.evaluate(async () => {
-    const m = await import('/js/explorer.js');
-    m.refreshExplorer('probe-session'); // 导出入口 → renderTree()（整树重建）
+    const probe = await window.__nfProbeModule('/js/explorer.js');
+    if (probe.ok) probe.ns.refreshExplorer('probe-session'); // 导出入口 → renderTree()（整树重建）
   });
-  await s.page.waitForTimeout(400);
-  const after = await s.page.evaluate(() => {
-    const el = /** @type {any} */ (document.activeElement);
-    return { key: el?.getAttribute?.('data-focus-key') || null, stillOldNode: el?.__probeOld === '1' };
-  });
-  check('⑰ 整树重渲后焦点回到同一 key 的新行（旧节点已被替换）',
-    !!before && !!before.key && after.key === before.key && after.stillOldNode === false,
-    `key ${before && before.key} → ${after.key}（旧节点=${after.stillOldNode}）`);
+  await s.page.waitForTimeout(600); // 重渲是异步的（listDir 应答 → renderTree → 保焦）
+  if (pre.unavailable) {
+    skip('⑰ 整树重渲后焦点回到同一 key 的新行（旧节点已被替换）', `${surfaceHint()}（${pre.unavailable}）`);
+  } else {
+    const after = await s.page.evaluate(() => {
+      const el = /** @type {any} */ (document.activeElement);
+      return { key: el?.getAttribute?.('data-focus-key') || null, stillOldNode: el?.__probeOld === '1' };
+    });
+    check('⑰ 整树重渲后焦点回到同一 key 的新行（旧节点已被替换）',
+      !!pre.key && after.key === pre.key && after.stillOldNode === false,
+      `key ${pre.key} → ${after.key}（旧节点=${after.stillOldNode}, via=${pre.via}）`);
+  }
   await s.close();
 }
 {
@@ -616,7 +709,9 @@ console.log('H 保焦协议接线');
   //    没有 id、只有 data-focus-key 的按钮上，重渲把该节点换掉后再弹层。
   const s = await fresh();
   const r = await s.page.evaluate(async () => {
-    const ft = await import('/js/focusTrap.js');
+    const probe = await window.__nfProbeModule('/js/focusTrap.js');
+    if (!probe.ok) return { unavailable: probe.reason };
+    const ft = probe.ns;
     const opener = document.createElement('button');
     opener.setAttribute('data-focus-key', 'probe:opener');
     opener.textContent = 'opener';
@@ -632,19 +727,25 @@ console.log('H 保焦协议接线');
     opener.replaceWith(freshBtn); // 模拟业务重渲：旧节点脱离文档
     ft.popLayer(ov);
     const el = document.activeElement;
-    const out = { key: el?.getAttribute?.('data-focus-key') || null, isNewNode: el === freshBtn, depth: ft.layerDepth() };
+    const out = { via: probe.via, key: el?.getAttribute?.('data-focus-key') || null, isNewNode: el === freshBtn, depth: ft.layerDepth() };
     ov.remove(); freshBtn.remove();
     return out;
   });
-  check('⑱ popLayer 按 data-focus-key 回焦到新节点（旧内联逻辑只认 #id 会落空）',
-    r.key === 'probe:opener' && r.isNewNode === true && r.depth === 0, JSON.stringify(r));
+  if (r.unavailable) {
+    skip('⑱ popLayer 按 data-focus-key 回焦到新节点（旧内联逻辑只认 #id 会落空）', `${surfaceHint()}（${r.unavailable}）`);
+  } else {
+    check('⑱ popLayer 按 data-focus-key 回焦到新节点（旧内联逻辑只认 #id 会落空）',
+      r.key === 'probe:opener' && r.isNewNode === true && r.depth === 0, JSON.stringify(r));
+  }
   await s.close();
 }
 {
   // ⑲ 运行时：nf-focus-fallback 真的被业务消费（计数器 +1，且带得上 key）
   const s = await fresh();
   const r = await s.page.evaluate(async () => {
-    const ft = await import('/js/focusTrap.js');
+    const probe = await window.__nfProbeModule('/js/focusTrap.js');
+    if (!probe.ok) return { unavailable: probe.reason };
+    const ft = probe.ns;
     const before = window.__nfFocusFallback?.total ?? -1;
     const root = document.createElement('div');
     document.body.appendChild(root);
@@ -663,11 +764,15 @@ console.log('H 保焦协议接线');
     const after = window.__nfFocusFallback?.total ?? -1;
     const last = window.__nfFocusFallback?.last || null;
     root.remove(); ov.remove();
-    return { before, mid, after, last };
+    return { via: probe.via, before, mid, after, last };
   });
-  check('⑲ nf-focus-fallback 被消费（restore + popLayer 两条腿各计一次）',
-    r.mid === r.before + 1 && r.after === r.before + 2 && r.last && r.last.kind === 'data',
-    JSON.stringify(r));
+  if (r.unavailable) {
+    skip('⑲ nf-focus-fallback 被消费（restore + popLayer 两条腿各计一次）', `${surfaceHint()}（${r.unavailable}）`);
+  } else {
+    check('⑲ nf-focus-fallback 被消费（restore + popLayer 两条腿各计一次）',
+      r.mid === r.before + 1 && r.after === r.before + 2 && r.last && r.last.kind === 'data',
+      JSON.stringify(r));
+  }
   await s.close();
 }
 
@@ -676,25 +781,22 @@ console.log('H 保焦协议接线');
 // 它）与**关闭回焦**。只测「面板打开了」等于什么也没测 —— 那件事改造前就成立。
 console.log('I 弹层壳入层栈');
 {
-  const { readFileSync: rf2, readdirSync: rd2 } = await import('node:fs');
-  const { join: jn2 } = await import('node:path');
-  const { fileURLToPath: f2p2 } = await import('node:url');
-  const webRoot = jn2(f2p2(new URL('..', import.meta.url)), 'src', 'main', 'resources', 'web', 'js');
   const pushSites = [];
-  const walk2 = (/** @type {string} */ d) => rd2(d, { withFileTypes: true })
-    .flatMap((e) => (e.isDirectory() ? walk2(jn2(d, e.name)) : (e.name.endsWith('.js') ? [jn2(d, e.name)] : [])));
-  for (const f of walk2(webRoot)) {
+  for (const f of JS_FACE.entries) {
     // 定义文件不算入口（focusTrap.js 的 release/pushLayer 自身）；import 行里是
     // `pushLayer,` 不带括号 ⇒ 天然不命中。
-    if (f.endsWith('focusTrap.js')) continue;
-    const n = (rf2(f, 'utf8').match(/pushLayer\(/g) || []).length;
-    if (n) pushSites.push(f.split(/[\\/]/).pop() + '×' + n);
+    if (f.rel.endsWith('focusTrap.js')) continue;
+    const n = (f.text.match(/pushLayer\(/g) || []).length;
+    if (n) pushSites.push(`${f.rel.split('/').pop()}×${n}`);
   }
   const total = pushSites.reduce((s, x) => s + Number(x.split('×')[1]), 0);
-  check('㉑ 层栈入口数 3 → ≥ 12（原 3 + 9 个壳）', total >= 12, `${total} 处：${pushSites.join(', ')}`);
+  check('㉑ 层栈入口数 3 → ≥ 12（原 3 + 9 个壳）', total >= 12,
+    `${total} 处（via=${JS_FACE.via}）：${pushSites.slice(0, 20).join(', ')}`);
 
-  const voiceWired = /pushLayer\(el\.overlay/.test(rf2(jn2(webRoot, 'voiceMode.js'), 'utf8'));
-  check('㉒ 语音面（flag 封存、无法运行期打开）静态接线在 enterVoiceMode 内', voiceWired === true);
+  const voice = JS_FACE.entries.find((f) => f.rel === 'js/voiceMode.js');
+  const voiceWired = !!voice && /pushLayer\(el\.overlay/.test(voice.text);
+  check('㉒ 语音面（flag 封存、无法运行期打开）静态接线在 enterVoiceMode 内', voiceWired === true,
+    voice ? `via=${JS_FACE.via}` : 'js/voiceMode.js 不在扫描面内（产物 sourcemap 缺该源）');
 }
 
 /** 9 个壳的运行期验收表（open = 各自的**真实导出入口**，不是手工 classList.add）。 */
@@ -721,11 +823,23 @@ for (const sh of SHELLS) {
     if (window.__nfFocusFallback) window.__nfFocusFallback.total = 0;
   });
   const opened = await s.page.evaluate(async ([mod, fn, args]) => {
-    const m = await import(mod);
+    const probe = await window.__nfProbeModule(mod);
+    if (!probe.ok) return { unavailable: probe.reason };
+    const m = probe.ns;
     if (typeof m[fn] !== 'function') return { err: 'missing export ' + fn };
     await m[fn](...(args || []));
-    return { ok: true };
+    return { ok: true, via: probe.via };
   }, [sh.mod, sh.fn, sh.args]);
+  if (opened.unavailable) {
+    // 壳的**真实导出入口**取不到 ⇒ 三判都没有对象（不是「壳坏了」）。三条一起记
+    // 未执行，原因写在第一条上，另两条指向它，避免同一条原因重复刷屏。
+    const why = `${opened.unavailable} ⇒ 打不开壳（不是壳的缺陷）`;
+    skip(`${sh.key}：打开即入层栈（depth=1，焦点在壳内）`, `${why}；${surfaceHint()}`);
+    skip(`${sh.key}：Tab ×30 不逃出壳`, `同上（壳未打开）`);
+    skip(`${sh.key}：Esc 关闭 → 出栈且焦点离开壳${sh.expectOpener ? '（回打开器）' : ''}`, `同上（壳未打开）`);
+    await s.close();
+    continue;
+  }
   await s.page.waitForTimeout(450);
   const st = await s.page.evaluate(([sel, flag]) => {
     const shell = document.querySelector(sel);
@@ -737,8 +851,8 @@ for (const sh of SHELLS) {
   }, [sh.sel, sh.openFlag]);
   const depth1 = await layerDepth(s.page);
   check(`${sh.key}：打开即入层栈（depth=1，焦点在壳内）`,
-    opened.ok === true && st.exists && st.shown && st.inside && depth1 === 1,
-    `${JSON.stringify(opened)} ${JSON.stringify(st)} depth=${depth1}`);
+    opened.ok === true && st.exists && st.shown && st.inside && depth1.ok && depth1.depth === 1,
+    `${JSON.stringify(opened)} ${JSON.stringify(st)} depth=${depth1.ok ? depth1.depth : 'unavailable(' + depth1.reason + ')'}`);
 
   // Tab ×30 一次不逃出（焦点被抢到壳外的那一拍就是逃逸）
   let escapedTab = 0;
@@ -767,13 +881,18 @@ for (const sh of SHELLS) {
   const depth2 = await layerDepth(s.page);
   const focusOk = after.insideShell === false && (!sh.expectOpener || after.activeId === 'nf-shell-opener');
   check(`${sh.key}：Esc 关闭 → 出栈且焦点离开壳${sh.expectOpener ? '（回打开器）' : ''}`,
-    after.shown === false && depth2 === 0 && focusOk,
-    `shown=${after.shown} depth=${depth2} active=${after.activeId}`);
+    after.shown === false && depth2.ok && depth2.depth === 0 && focusOk,
+    `shown=${after.shown} depth=${depth2.ok ? depth2.depth : 'unavailable(' + depth2.reason + ')'} active=${after.activeId}`);
   await s.close();
 }
 
 await browser.close();
 
-console.log(`\nkeyboard-check: ${pass} passed, ${fail} failed`);
+const total = pass + fail + skipsN;
+console.log(`\nkeyboard-check: ${pass} passed, ${fail} failed, ${skipsN} skipped — 共 ${total} 条`);
+if (FORM === 'source') console.log('  形态：源树（src/main/resources/web）—— 这是开发树，不是运行实例吃的那份字节');
+else console.log(`  形态：产物（${webRoot()}）—— 断言直接跑在打包产物上`);
+if (skipsN) console.log(`SKIPPED（未执行，不是通过）：\n  - ${skips.join('\n  - ')}`);
 if (fail) { console.log('FAILURES:\n  - ' + failures.join('\n  - ')); process.exit(1); }
-console.log('KEYBOARD CHECK PASS');
+if (skipsN) console.log(`KEYBOARD CHECK PASS (${pass}/${total} 条已验；${skipsN} 条未执行，原因见上)`);
+else console.log('KEYBOARD CHECK PASS');

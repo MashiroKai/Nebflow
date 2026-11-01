@@ -826,10 +826,28 @@ function teardownTab(id, opts = {}) {
 /** Close a single tab and switch to an adjacent one.
  *  If the closed tab was the last one, closes the entire panel.
  *  Dispatches 'canvas-tab-closed' so external code (e.g. flowCanvas) can clean up.
- *  @param {string} id — Tab identifier. */
-export function closeTab(id) {
+ *  @param {string} id — Tab identifier.
+ *  @param {{discardDirty?: boolean}} [opts] 关闭确认之后的内部腿专用
+ *    （用户已经点过「关闭并丢弃」），外部调用一律不传。 */
+export function closeTab(id, opts = {}) {
   const entry = tabs.get(id);
   if (!entry) return;
+
+  // B7-1（文档后续批，2026-11-01）：脏页签关闭要一次确认。
+  // 改造前这条路径**直接丢编辑**：`beforeunload` 只管整页卸载，页签关闭不走它
+  // （实测命中 0），而叠卡 Delete / 卡头 ✕ / cmd-W 三条入口全部汇聚到这里。
+  // 确认框复用既有 `__showConfirm`：modal.js 早就 `pushLayer(overlay,{name:'modal'})`
+  // —— 走 B4 层栈，不新造第二个栈外模态（计划 §B7 风险条）。
+  // 取消 / Esc ⇒ 什么都不做：页签与编辑原样留着。
+  if (!opts.discardDirty && isTabDirty(entry) && typeof window.__showConfirm === 'function') {
+    window.__showConfirm(
+      t('canvas.closeDirtyTitle'),
+      t('canvas.closeDirtyMsg', { name: entry.title || entry.id }),
+      () => closeTab(id, { discardDirty: true }),
+      { tone: 'danger', confirmLabel: t('canvas.closeDirtyConfirm') },
+    );
+    return;
+  }
 
   // UI 批⑧：独立中的卡先静默收窗（merge 等价腿，无动画）再走关闭 —— 主窗卡
   // 关闭时独立窗绝不残留（cmd-W 卡窗自己会 bye，这里管主窗主动关的顺序）。
@@ -952,12 +970,12 @@ function scheduleFileRefresh(entry) {
  *  as every other refresh path) and drops the nf-file blob-ledger entry first —
  *  a ledger hit renders cached bytes with zero fetch, which would make the
  *  button silently lie for image/pdf tabs. */
-function refreshFileTab(entry) {
+function refreshFileTab(entry, opts = {}) {
   if (!entry || !entry.absPath) return;
   const pane = entry.paneEl;
   if (!pane || !pane.isConnected) return;
   if (pane.dataset.sourceMode === '1') return;  // button hidden there (CSS); programmatic guard
-  if (isTabDirty(entry)) {
+  if (isTabDirty(entry) && !opts.force) {
     window.__showToast?.(t('canvas.refreshDirty'), 'info');
     return;
   }
@@ -991,6 +1009,76 @@ function settleFileRefresh(entry) {
   // 壳层单例：busy 类挂在共享按钮上，代表「任一在飞刷新」——清它即可
   if (fileRefreshBtn && fileRefreshBtn.isConnected) fileRefreshBtn.classList.remove('busy');
 }
+
+// ── B7-2 外部改动冲突条（文档后续批，2026-11-01）─────────────────────────
+// 病灶（计划 §B7-2）：`nf-cache-invalidate` 只喂 nf-file 账本，从不触达编辑器；
+// 而 `scheduleFileRefresh` 在脏页签上**静默 return** —— 合计效果是「文件被改过」
+// 这件事对正在编辑的人完全不可见，用户接着保存就把别人的改动覆盖掉。
+//
+// 现在的语义（冲突条二选一，两条各自改状态）：
+//   干净页签 → 照旧走 scheduleFileRefresh（读回新内容，不打扰人）；
+//   脏页签   → 出一条冲突条：**保留**（继续编辑，什么都不做）/ **重载**（丢弃本地
+//              编辑，强制重读）。条子内联样式、零 CSS 依赖 —— 与 staleTabHint.js
+//              （2026-10-28 作者令④）同一先例，本批不改 css/ 一字，`app-*.css`
+//              哈希因此不动。
+// 不进层栈：它不是模态，不加遮罩、不抢焦点、不拦 Tab（壳契约逐字保留）。
+const CONFLICT_BAR_CLASS = 'nf-file-conflict';
+
+/** 渲染（或刷新）某页签上的外部改动冲突条。幂等。 */
+function showExternalConflict(entry) {
+  const pane = entry && entry.paneEl;
+  if (!pane || !pane.isConnected) return;
+  const old = pane.querySelector('.' + CONFLICT_BAR_CLASS);
+  if (old) old.remove();
+  const bar = document.createElement('div');
+  bar.className = CONFLICT_BAR_CLASS;
+  bar.setAttribute('role', 'status');
+  bar.dataset.path = entry.absPath || '';
+  bar.setAttribute('style', [
+    'display:flex', 'align-items:center', 'gap:10px',
+    'margin:8px 10px', 'padding:8px 10px 8px 12px',
+    'border-radius:10px',
+    'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
+    'font:12.5px/1.4 -apple-system,"Segoe UI",sans-serif',
+    'border:1px solid rgba(255,255,255,0.12)',
+    'box-shadow:0 4px 14px rgba(0,0,0,0.22)',
+  ].join(';'));
+  const text = document.createElement('span');
+  text.className = 'nf-file-conflict-text';
+  text.textContent = t('canvas.conflictDirty');
+  text.setAttribute('style', 'flex:1 1 auto;');
+  const keep = document.createElement('button');
+  keep.className = 'nf-file-conflict-keep';
+  keep.textContent = t('canvas.conflictKeep');
+  keep.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:transparent;color:inherit;font:inherit;');
+  keep.onclick = () => { entry._externalConflict = null; bar.remove(); };
+  const reload = document.createElement('button');
+  reload.className = 'nf-file-conflict-reload';
+  reload.textContent = t('canvas.conflictReload');
+  reload.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
+  reload.onclick = () => { entry._externalConflict = null; bar.remove(); refreshFileTab(entry, { force: true }); };
+  bar.append(text, keep, reload);
+  pane.prepend(bar);
+}
+
+/** Which live file tab owns this absolute path (null when none is open). */
+function tabForPath(absPath) {
+  if (!absPath) return null;
+  for (const entry of tabs.values()) if (entry.absPath === absPath) return entry;
+  return null;
+}
+
+// 外部改动广播（main.js 的 nf-cache-invalidate 处理器转派，见 main.js 同批注释）。
+// 挂在 **window** 上：转派方就是 `window.dispatchEvent`，而事件不向下传播到
+// document —— 挂 document 收不到（首版就是这么静默丢的，实测 bar 恒 false）。
+window.addEventListener('nf-file-external-change', (e) => {
+  const path = /** @type {any} */ (e).detail?.path;
+  const entry = tabForPath(path);
+  if (!entry) return;                      // 没开这个文件 ⇒ 无事可做（账本已由 main.js 淘汰）
+  entry._externalConflict = Date.now();
+  if (isTabDirty(entry)) showExternalConflict(entry);
+  else scheduleFileRefresh(entry);
+});
 
 // ── 文件刷新钮 · 壳层挂载（定位修复，作者报障 2026-10-27「刷新钮悬浮在正文
 // 中间」）────────────────────────────────────────────────────────────────

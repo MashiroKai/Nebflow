@@ -107,21 +107,30 @@ export async function resetEvents(page) {
 
 /**
  * 层栈深度：**读真实模块单例**，不是从 DOM 推测。
- * `/js/focusTrap.js` 与产品自己 import 的是同一份 URL ⇒ 同一实例（源树模式下；
- * 产物模式下模块被合并进 entry chunk，此腿会取到一份独立副本 —— 所以本探针
- * 只在源树根下有意义，在 `NEBFLOW_WEB_ROOT=build/web-dist` 下会返回 null，
- * 断言须显式处理该分支，不得静默当成 0）。
+ *
+ * G6（2026-11-01 装置批）之后这条腿不再靠「源路径 == 模块 URL」这个巧合：
+ * 句柄一律走页面内的 `window.__nfProbeModule(path)` —— 先读产品侧登记表
+ * `window.__nfProbeSurface`（js/probeSurface.js），再回退 `import(path)`。
+ * 源树形态下两条路等价（同一 URL ⇒ 同一实例）；产物形态下只有登记表那条路
+ * 能取到**产品正在用的那一份实例**（dist 里没有 /js/* 路由）。
+ *
+ * 取不到时返回 `{ ok:false, depth:null, reason }` —— 调用方必须显式处理（记 SKIP
+ * 并写出原因），**不得当成 0**：把「取不到」读成「深度为 0」，正是
+ * 「没验」被当成「验过了」的那条老路。
  * @param {import('playwright-core').Page} page
- * @returns {Promise<number|null>}
+ * @returns {Promise<{ok: boolean, depth: number|null, via?: string, reason?: string}>}
  */
 export async function layerDepth(page) {
   return page.evaluate(async () => {
-    try {
-      const mod = await import('/js/focusTrap.js');
-      return typeof mod.layerDepth === 'function' ? mod.layerDepth() : null;
-    } catch {
-      return null;
+    if (typeof (/** @type {any} */ (window).__nfProbeModule) !== 'function') {
+      return { ok: false, depth: null, reason: '页面没有 __nfProbeModule（解析器未安装）' };
     }
+    const probe = await /** @type {any} */ (window).__nfProbeModule('/js/focusTrap.js');
+    if (!probe.ok) return { ok: false, depth: null, reason: probe.reason };
+    const d = typeof probe.ns.layerDepth === 'function' ? probe.ns.layerDepth() : null;
+    return typeof d === 'number'
+      ? { ok: true, depth: d, via: probe.via }
+      : { ok: false, depth: null, reason: 'focusTrap.layerDepth 不可用' };
   });
 }
 
