@@ -120,7 +120,15 @@ final class FeishuBridgePlugin(
    * names why the bytes could not be obtained — the image arm turns it into
    * an honest session-visible failure line, never a silent drop.
    */
-  fetchImage: FeishuBridgePlugin.FetchImage = FeishuBridgePlugin.defaultFetchImage
+  fetchImage: FeishuBridgePlugin.FetchImage = FeishuBridgePlugin.defaultFetchImage,
+  /**
+   * output 块总闸缝（output-block-gate 批，作者令「把 output 块相关的内容先
+   * 关闭……」）：每次出站 flush 执行期求值。生产缺省 = 热读 nebflow.json 顶层
+   * `outputBlock.enabled`（缺席 = 关 ⇒ 渠道回全量原样）；离线 spec 注入常值
+   * （true = 剥离行为，false = 原文直出），与机器上的真实配置解耦。微信腿
+   * 同款缝，同一实现源 [[OutputBlock.extractGated]]。
+   */
+  outputBlockGate: () => Boolean = OutputBlock.enabledFromConfig
 ) extends BridgePlugin:
 
   private val logger = NebflowLogger.forName("nebflow.social.feishu-bridge")
@@ -724,9 +732,10 @@ final class FeishuBridgePlugin(
             case rs  => pacer.enqueue(deliverRichAll(sessionId, rs))
           // output 块纪律渠道接线批（2026-11-01，作者令「飞书端收到的消息也要
           // 做 output 块剥离，只显示 output 块内部的内容」）：轮尾只吃单一提取
-          // 源 [[OutputBlock.extract]] 的块内拼接——块外叙述不出站；无块/散标签
+          // 源 [[OutputBlock.extractGated]]（output-block-gate 批起闸感知——闸开
+          // =提取，闸关=原文直通）的块内拼接——块外叙述不出站；无块/散标签
           // 轮 ⇒ 无可投递文本，文字腿熄灭（**不回退成发全文**）。
-          val visible = OutputBlock.extract(text) match
+          val visible = OutputBlock.extractGated(text, outputBlockGate()) match
             case OutputBlock.Extracted(inner) => inner
             case _                            => ""
           val textLeg = if visible.trim.isEmpty then IO.unit else pacer.enqueue(reply(sessionId, visible))
@@ -1253,7 +1262,8 @@ final class FeishuBridgePlugin(
    * 且 `.start` 后台跑——绝不阻塞流式事件面（wsHub 广播监听是内联执行）。
    *
    * output 块纪律渠道接线批（2026-11-01）：段文本先过单一提取源
-   * [[OutputBlock.extract]]——Extracted ⇒ 只推块内拼接（块外叙述不出站，空块
+   * [[OutputBlock.extractGated]]（闸感知；闸关 = 原文直通，HOLD 旁路）——
+   * Extracted ⇒ 只推块内拼接（块外叙述不出站，空块
    * 消费不推）；NoBlocks ⇒ 消费不推（整段无块 ⇒ 无可投递文本，**不回退成发
    * 全文**）；Unbalanced（`<output>` 开而未闭的流式中间态/散标签）⇒ **HOLD**：
    * 不消费不推——块可能在后续 delta 里闭合成形，此刻弹出即永远丢失（控制台
@@ -1263,7 +1273,7 @@ final class FeishuBridgePlugin(
   private def flushSegment(sessionId: String): IO[Unit] =
     pendingRef.modify { m =>
       val text = m.getOrElse(sessionId, "")
-      OutputBlock.extract(text) match
+      OutputBlock.extractGated(text, outputBlockGate()) match
         case OutputBlock.Unbalanced => (m, IO.unit)
         case OutputBlock.NoBlocks   => (m - sessionId, IO.unit)
         case OutputBlock.Extracted(inner) =>

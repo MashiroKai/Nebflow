@@ -14,6 +14,12 @@
 // 散标签由 utils.js 转义为字面文本，不炸不吞。平衡闸 = utils.js
 // _outputTagsBalanced（单点，extractOutputInner 复用之）。
 //
+// 特性总闸（output-block-gate 批，作者令「把 output 块相关的内容先关闭……」）：
+// utils.extractOutputInner 头部读 outputBlockEnabled()（nebflow.json
+// `outputBlock.enabled`，缺席 = 关）——关 ⇒ 本模块全链熄灭（hasOutputBlock=false、
+// applyOutputFace=false、data-nf-*-output 不落标、setOutputExpanded 无操作），
+// 气泡回全文渲染；本文件零改动即随闸翻面（闸 = utils.js 单点 + 渠道侧同一键）。
+//
 // 依赖方向：本模块只 import utils.js（单向）；turnGroup.js / chat.js /
 // persistence.js import 本模块。utils.js 不得反向 import（无环）。
 
