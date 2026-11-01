@@ -47,6 +47,15 @@ import { voiceEnabled } from './featureFlags.js';
  * @property {boolean} binary - true when the backend sends no text content
  * @property {number} priority - higher wins on extension conflicts
  * @property {(pane: HTMLElement, ctx: ViewerContext) => (void | Promise<void>)} render
+ * @property {(pane: HTMLElement) => void} [dispose] - OPTIONAL teardown (阅读/
+ *   编辑体验优化批 2026-11-01). Called by fileViewers.disposeViewer() exactly
+ *   once per mount: before the same pane is re-rendered and when the tab is
+ *   torn down (canvas.js disposeTabEditor → every close path). Implement it
+ *   for anything a pane does NOT own: document/window listeners, timers,
+ *   ResizeObserver/IntersectionObserver/MutationObserver, pdf.js documents and
+ *   workers, viewer-created object URLs. Element-scoped listeners (including
+ *   pane descendants) die with the DOM and need no cleanup. Omitting it is
+ *   legal and means "nothing outside the pane survives".
  */
 
 // === Lottie spinner JSON (rotating ring) ===

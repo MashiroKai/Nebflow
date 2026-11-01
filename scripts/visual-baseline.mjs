@@ -92,6 +92,59 @@ const CANVAS_CODE = [
   '}',
 ].join('\n');
 
+// ── 渲染器覆盖面补强（阅读/编辑体验优化批 2026-11-01）────────────────────
+// 修前 12 张基准只覆盖 14 个渲染器里的 2 个（markdown / monaco）。
+// 下面三条各自打在**不同的 viewer 模块 + 不同的 CSS 面**上：
+//   txt   → viewers/textReader.js（.canvas-txt-scroll，纯文本段落面）
+//   html  → viewers/html.js（srcdoc 沙箱 iframe + 主题变量注入）
+//   image → viewers/image.js + viewers/zoom.js（缩放引擎工具条 + fit 几何）
+// 三者都由 openWorkspaceItem 的既有入口驱动（与 canvas-markdown-tab 同路），
+// 无一需要新的打桩端点：txt/html 走纯文本内容，image 走 data: URI 的
+// `objectUrl` 腿（nfFileCache.nfViewerSource 命中 objectUrl 即短路取数）。
+const CANVAS_TXT = [
+  '视觉基线夹具 — 纯文本阅读面',
+  '',
+  '这一段用来验证 .txt 阅读视图的排版：段落分隔、空行、段距。',
+  '',
+  '- 阅读面：viewers/textReader.js（.canvas-txt-scroll）',
+  '- 段落：行 → <p>，textContent 防 XSS，空白 pre-wrap 保留',
+  '',
+  '\f',
+  '第二段（\\f 章界之后）：只做段距，不进任何操控件。',
+  '这是第三行，用来给视觉基线一个稳定的行高读数。',
+].join('\n');
+
+const CANVAS_HTML = `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  body{margin:0;padding:18px;font:14px/1.7 system-ui,-apple-system,"Segoe UI",sans-serif;color:#c9d3e0;background:#0f1420}
+  h1{font-size:17px;margin:0 0 10px;font-weight:600}
+  p{margin:0 0 10px}
+  .card{border:1px solid #2a3648;border-radius:10px;padding:10px 12px;margin:10px 0}
+  ul{margin:0;padding-left:18px}
+  li{margin:3px 0}
+  code{background:#1b2434;border-radius:4px;padding:1px 5px}
+</style></head><body>
+  <h1>HTML viewer fixture</h1>
+  <p>srcdoc 沙箱渲染：样式、列表、卡片 —— 主题变量由父页注入。</p>
+  <div class="card"><ul>
+    <li>缩放引擎用 transform 作用在整帧上，不改帧内 DOM</li>
+    <li>引用选择 / 查找条挂在本面之外的壳层</li>
+    <li>行内代码：<code>viewers/html.js</code></li>
+  </ul></div>
+</body></html>`;
+
+// 图片夹具用 data: URI 的 SVG（无外部取数、无字体依赖、无随机像素）。
+// 形状/纯色块在截图里的抗锯齿是稳定的（与主题无关 —— 画面颜色由夹具自定）。
+const CANVAS_IMAGE_URI = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="300" viewBox="0 0 480 300">'
+  + '<rect width="480" height="300" fill="#1b2434"/>'
+  + '<rect x="24" y="24" width="200" height="120" rx="12" fill="#3b6ea5"/>'
+  + '<circle cx="356" cy="196" r="72" fill="#7f5ad4"/>'
+  + '<rect x="24" y="196" width="120" height="80" rx="10" fill="#2f9e6f"/>'
+  + '<rect x="176" y="196" width="120" height="80" rx="10" fill="#c9a227"/>'
+  + '</svg>',
+);
+
 // 全场景共用桩：只桩「会在画面上留下随机/报错残影」的两条端点。
 //   · /api/plugins   —— 画布面板默认页签就是插件清单（boot 即开），404 会让面板
 //                      顶一条「加载失败」并每 6s 重试（plugins.js:127）。桩成空
@@ -215,6 +268,74 @@ const SCENARIOS = [
       await settle(s.page, 400);
     },
     mask: [], // 光标已由 shoot() 的 caret:'hide' 藏掉；当前行高亮是静态装饰，无需遮罩
+  },
+  {
+    name: 'canvas-txt-tab',
+    why: 'canvas 页签 + 纯文本阅读面（viewers/textReader.js）—— .txt 排版面的闸',
+    themes: ['dark', 'light'],
+    selector: '#canvas-panel',
+    setup: async (s) => {
+      await s.boot();
+      await s.page.evaluate((content) => {
+        window.dispatchEvent(new CustomEvent('workspace-open-item', {
+          detail: {
+            id: 'file:/tmp/visual-baseline-note.txt', itemType: 'code', title: 'visual-baseline-note.txt',
+            content, absPath: '/tmp/visual-baseline-note.txt', size: content.length, mtimeMs: 1757000000000,
+          },
+        }));
+      }, CANVAS_TXT);
+      await paneReady(s.page, 'file:/tmp/visual-baseline-note.txt');
+      await s.page.waitForTimeout(400);
+      await settle(s.page, 250);
+    },
+  },
+  {
+    name: 'canvas-html-tab',
+    why: 'canvas 页签 + HTML viewer（srcdoc 沙箱 iframe + 主题变量注入）—— html.js 的闸',
+    themes: ['dark', 'light'],
+    selector: '#canvas-panel',
+    setup: async (s) => {
+      await s.boot();
+      await s.page.evaluate((content) => {
+        window.dispatchEvent(new CustomEvent('workspace-open-item', {
+          detail: {
+            id: 'file:/tmp/visual-baseline-page.html', itemType: 'html', title: 'visual-baseline-page.html',
+            content, absPath: '/tmp/visual-baseline-page.html', size: content.length, mtimeMs: 1757000000000,
+          },
+        }));
+      }, CANVAS_HTML);
+      await paneReady(s.page, 'file:/tmp/visual-baseline-page.html');
+      // iframe srcdoc 的 load 是异步的：等帧内 document 真的画出来再拍。
+      await s.page.waitForFunction(() => {
+        const f = document.querySelector('#canvas-panel .canvas-tab-pane[data-tab-id="file:/tmp/visual-baseline-page.html"] iframe');
+        try { return !!(f && f.contentDocument && f.contentDocument.body && f.contentDocument.body.children.length); } catch { return false; }
+      }, null, { timeout: 15000 });
+      await s.page.waitForTimeout(400);
+      await settle(s.page, 250);
+    },
+  },
+  {
+    name: 'canvas-image-tab',
+    why: 'canvas 页签 + 图片查看器与缩放引擎（image.js + zoom.js 工具条/fit 几何）—— 缩放面的闸',
+    themes: ['dark', 'light'],
+    selector: '#canvas-panel',
+    setup: async (s) => {
+      await s.boot();
+      await s.page.evaluate((objectUrl) => {
+        window.dispatchEvent(new CustomEvent('workspace-open-item', {
+          detail: {
+            id: 'file:/tmp/visual-baseline-image.svg', itemType: 'image', title: 'visual-baseline-image.svg',
+            content: '', absPath: '/tmp/visual-baseline-image.svg', size: 0, mtimeMs: 1757000000000,
+            objectUrl, // 字节已在手：nfViewerSource 短路，零取数（打桩下也不碰票据链）
+          },
+        }));
+      }, CANVAS_IMAGE_URI);
+      await paneReady(s.page, 'file:/tmp/visual-baseline-image.svg');
+      // 图片 decode → onload → 几何 fit 后才出现 .canvas-image-viewport 与缩放条。
+      await s.page.waitForSelector('#canvas-panel .canvas-tab-pane[data-tab-id="file:/tmp/visual-baseline-image.svg"] .canvas-zoom-bar', { timeout: 15000 });
+      await s.page.waitForTimeout(500);
+      await settle(s.page, 250);
+    },
   },
 ];
 

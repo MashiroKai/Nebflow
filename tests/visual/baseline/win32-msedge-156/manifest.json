@@ -1,6 +1,6 @@
 {
   "generatedBy": "scripts/visual-baseline.mjs --update",
-  "generatedAt": "2026-11-01T08:06:42.858Z",
+  "generatedAt": "2026-11-01T09:22:10.968Z",
   "platform": "win32-msedge-156",
   "browser": {
     "label": "msedge-156",
@@ -17,8 +17,8 @@
       "scenario": "app-empty",
       "theme": "dark",
       "bytes": 58301,
-      "at": "2026-11-01T08:06:19.018Z",
-      "ms": 1405,
+      "at": "2026-11-01T09:21:35.872Z",
+      "ms": 1344,
       "mask": [
         ".mic-orb-wrap",
         ".mic-orb-wrap"
@@ -29,8 +29,8 @@
       "scenario": "app-empty",
       "theme": "light",
       "bytes": 53674,
-      "at": "2026-11-01T08:06:20.094Z",
-      "ms": 1076,
+      "at": "2026-11-01T09:21:36.927Z",
+      "ms": 1054,
       "mask": [
         ".mic-orb-wrap",
         ".mic-orb-wrap"
@@ -41,8 +41,8 @@
       "scenario": "chat-messages",
       "theme": "dark",
       "bytes": 90465,
-      "at": "2026-11-01T08:06:21.209Z",
-      "ms": 1113,
+      "at": "2026-11-01T09:21:38.057Z",
+      "ms": 1130,
       "mask": [
         ".mic-orb-wrap",
         ".mic-orb-wrap",
@@ -55,8 +55,8 @@
       "scenario": "chat-messages",
       "theme": "light",
       "bytes": 86288,
-      "at": "2026-11-01T08:06:22.313Z",
-      "ms": 1104,
+      "at": "2026-11-01T09:21:39.211Z",
+      "ms": 1154,
       "mask": [
         ".mic-orb-wrap",
         ".mic-orb-wrap",
@@ -69,8 +69,8 @@
       "scenario": "settings-llm-empty",
       "theme": "dark",
       "bytes": 108748,
-      "at": "2026-11-01T08:06:24.802Z",
-      "ms": 2489,
+      "at": "2026-11-01T09:21:41.751Z",
+      "ms": 2539,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -80,8 +80,8 @@
       "scenario": "settings-llm-empty",
       "theme": "light",
       "bytes": 101806,
-      "at": "2026-11-01T08:06:27.266Z",
-      "ms": 2462,
+      "at": "2026-11-01T09:21:44.231Z",
+      "ms": 2480,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -91,8 +91,8 @@
       "scenario": "bgtask-panel",
       "theme": "dark",
       "bytes": 12106,
-      "at": "2026-11-01T08:06:29.093Z",
-      "ms": 1827,
+      "at": "2026-11-01T09:21:46.013Z",
+      "ms": 1782,
       "mask": [
         ".mic-orb-wrap",
         ".bg-task-uptime"
@@ -103,8 +103,8 @@
       "scenario": "bgtask-panel",
       "theme": "light",
       "bytes": 11552,
-      "at": "2026-11-01T08:06:30.868Z",
-      "ms": 1773,
+      "at": "2026-11-01T09:21:47.781Z",
+      "ms": 1767,
       "mask": [
         ".mic-orb-wrap",
         ".bg-task-uptime"
@@ -115,7 +115,7 @@
       "scenario": "canvas-markdown-tab",
       "theme": "dark",
       "bytes": 44614,
-      "at": "2026-11-01T08:06:33.272Z",
+      "at": "2026-11-01T09:21:50.185Z",
       "ms": 2403,
       "mask": [
         ".mic-orb-wrap"
@@ -126,8 +126,8 @@
       "scenario": "canvas-markdown-tab",
       "theme": "light",
       "bytes": 41999,
-      "at": "2026-11-01T08:06:35.708Z",
-      "ms": 2435,
+      "at": "2026-11-01T09:21:52.569Z",
+      "ms": 2384,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -137,8 +137,8 @@
       "scenario": "canvas-code-tab",
       "theme": "dark",
       "bytes": 42816,
-      "at": "2026-11-01T08:06:39.181Z",
-      "ms": 3473,
+      "at": "2026-11-01T09:21:56.041Z",
+      "ms": 3472,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -148,8 +148,74 @@
       "scenario": "canvas-code-tab",
       "theme": "light",
       "bytes": 40643,
-      "at": "2026-11-01T08:06:42.651Z",
-      "ms": 3470,
+      "at": "2026-11-01T09:21:59.491Z",
+      "ms": 3450,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-txt-tab-dark",
+      "scenario": "canvas-txt-tab",
+      "theme": "dark",
+      "bytes": 41516,
+      "at": "2026-11-01T09:22:01.344Z",
+      "ms": 1852,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-txt-tab-light",
+      "scenario": "canvas-txt-tab",
+      "theme": "light",
+      "bytes": 38764,
+      "at": "2026-11-01T09:22:03.200Z",
+      "ms": 1855,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-html-tab-dark",
+      "scenario": "canvas-html-tab",
+      "theme": "dark",
+      "bytes": 44606,
+      "at": "2026-11-01T09:22:05.054Z",
+      "ms": 1853,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-html-tab-light",
+      "scenario": "canvas-html-tab",
+      "theme": "light",
+      "bytes": 42277,
+      "at": "2026-11-01T09:22:06.893Z",
+      "ms": 1838,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-image-tab-dark",
+      "scenario": "canvas-image-tab",
+      "theme": "dark",
+      "bytes": 25056,
+      "at": "2026-11-01T09:22:08.827Z",
+      "ms": 1933,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-image-tab-light",
+      "scenario": "canvas-image-tab",
+      "theme": "light",
+      "bytes": 22561,
+      "at": "2026-11-01T09:22:10.749Z",
+      "ms": 1922,
       "mask": [
         ".mic-orb-wrap"
       ]

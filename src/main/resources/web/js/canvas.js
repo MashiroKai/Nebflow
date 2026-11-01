@@ -643,6 +643,21 @@ function syncCanvasPanelButtons() {
  *  (markdown source toggle) have no mounted handle; their cached model is
  *  released by path instead. Safe for panes that never had an editor. */
 function disposeTabEditor(entry) {
+  // Viewer-protocol teardown (阅读/编辑体验优化批 2026-11-01): a viewer that
+  // declares dispose(pane) records it on the pane (fileViewers.js renderFile);
+  // 关闭页签的全部路径都汇到这里 —— closeTab / 预览顶替 / 叠卡关闭 / 迟到墓碑
+  // 清扫 —— 所以一个调用点覆盖全部分支。属性读取不引 import 边（canvas.js 对
+  // 文件查看器的既有纪律是动态 import）。
+  const paneSlot = /** @type {any} */ (entry.paneEl);
+  const viewerDispose = paneSlot ? paneSlot._nfViewerDispose : null;
+  if (typeof viewerDispose === 'function') {
+    paneSlot._nfViewerDispose = null;
+    try {
+      viewerDispose();
+    } catch (err) {
+      console.warn('Viewer dispose error:', err);
+    }
+  }
   // Text-stream tabs hold a live client (windows / index / server-side scan):
   // closing the tab releases the server side too (卡 §三.5 textCancel).
   const streamView = entry.paneEl?._streamClient;
@@ -1070,7 +1085,14 @@ export function setActiveTab(id) {
     // position (_mdScrollPos, viewers/markdown.js) and restores it here,
     // because Chromium does NOT preserve the scroll box across a display
     // flip (measured 178 → 0 in the harness).
-    if (t.id === id && (t.paneEl._editorHandle || t.paneEl._mdScrollPos !== undefined)) {
+    // 阅读/编辑体验优化批 2026-11-01: 同一条判据再收两个记账者 ——
+    // `.txt` 阅读面（viewers/textReader.js `_nfTxtScrollPos`）与 epub/mobi 阅读
+    // 器（viewers/readerChrome.js `_nfReaderScrollPos`）。判据是「该 pane 有人
+    // 声明了滚动记账」，不是某种格式的白名单。
+    if (t.id === id && (t.paneEl._editorHandle
+        || t.paneEl._mdScrollPos !== undefined
+        || (/** @type {any} */ (t.paneEl))._nfTxtScrollPos !== undefined
+        || (/** @type {any} */ (t.paneEl))._nfReaderScrollPos !== undefined)) {
       t.paneEl.dispatchEvent(new CustomEvent('canvas-tab-activated'));
     }
   });

@@ -731,4 +731,16 @@ export default {
   binary: false,
   priority: 0,
   render: viewHtml,
+  /** Protocol teardown (阅读/编辑体验优化批 2026-11-01): the zoom engine owns a
+   *  document-level ⌘±/0 keydown plus a module-level hovered entry — dropping the
+   *  pane's listeners alone would leave the hover record behind. htmlRefSel /
+   *  the search bar self-sweep on their next use (bounded, unchanged). */
+  dispose: (pane) => {
+    const slot = /** @type {any} */ (pane);
+    if (typeof slot._nfZoomDestroy === 'function') {
+      try { slot._nfZoomDestroy(); } catch { /* 引擎已卸 */ }
+    }
+    slot._nfZoomDestroy = null;
+    slot._nfHtmlZoom = null;
+  },
 };

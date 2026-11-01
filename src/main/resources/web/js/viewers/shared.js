@@ -685,6 +685,16 @@ export function addSourceToggle(pane, renderFn, ctx) {
           pane._dirty = dirty;
           pane.dispatchEvent(new CustomEvent('editor-dirty-change', { detail: { dirty } }));
         });
+        // 脏点往返修复（阅读/编辑体验优化批 2026-11-01）：上一次「源码→渲染」
+        // 若带着未落盘编辑离开，渲染面把最新内容当文本内容带走了，再回源码态时
+        // createEditor 以该内容为 originalContent ⇒ 脏点消失、⌘S 被拒、外部刷新
+        // 可覆盖未保存编辑。判据带内容指纹（`_nfSourceDirtyFor === ctx.content`）：
+        // 期间若磁盘重渲换了正文，则不再补脏（那是另一份文本，不该标脏）。
+        const paneAny = /** @type {any} */ (pane);
+        if (paneAny._nfSourceDirtyFor != null && paneAny._nfSourceDirtyFor === (ctx.content || '')) {
+          handle.markDirty();
+        }
+        paneAny._nfSourceDirtyFor = null;
         pane.addEventListener('canvas-tab-activated', () => {
           if (pane._editorHandle !== handle) return;  // stale editor from an old toggle cycle
           setActiveEditor(handle);
@@ -696,11 +706,16 @@ export function addSourceToggle(pane, renderFn, ctx) {
         // unsaved edits survive the round-trip (createEditor reuses the cached
         // model — passing stale ctx.content would wipe them).
         let latest = ctx.content;
+        let carriedDirty = false;
         if (pane._editorHandle) {
           latest = pane._editorHandle.model.getValue();
+          carriedDirty = pane._editorHandle.getDirty();
           pane._editorHandle.dispose();
           pane._editorHandle = null;
         }
+        // 脏点往返修复（见 → Source mode 的对应块）：把「离开时是脏的」连同
+        // 当时的内容指纹留在 pane 上，回源码态时补回脏态。
+        /** @type {any} */ (pane)._nfSourceDirtyFor = carriedDirty ? latest : null;
         delete pane.dataset.sourceMode;
         // renderFn clears the pane and re-attaches the toggle via its own
         // addSourceToggle call, carrying the updated content forward.
