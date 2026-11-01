@@ -388,16 +388,18 @@ function buildScheduleCardRow(row, text, timestamp, deferFn, schedule) {
  *  `injectedSourceLabel` above, byte-identical to before.
  *  fileChanges (optional, file-diff → 委托结果行 bug #58 修 2026-10-09；2026-10-10
  *  展开改 Canvas；2026-10-22 拆面板批「摘要上移+左右分体」换代；2026-10-31 完工
- *  通知卡重设计批改形态「diff 胶囊退役，灰字小注承位」): the per-batch
- *  changed-file diff payload carried by delegate terminal events (engine
- *  `FileChangeReport.delegateBatchMetadata` — same wire shape as the REST
- *  file-changes face). Present with files ⇒ a quiet +a −r gray NOTE line mounts
- *  under the receipt head (folded-state visible; NOT a chip/capsule per author
- *  ruling) — click reveals the diff file list in the LEFT Side Bar panel
+ *  通知卡重设计批 + 22:29 单行化批改形态「diff 胶囊退役；+a −r 灰字小注入单卡面
+ *  行右缘组（字面「| +a −r」）」): the per-batch changed-file diff payload carried
+ *  by delegate terminal events (engine `FileChangeReport.delegateBatchMetadata` —
+ *  same wire shape as the REST file-changes face). Present with files ⇒ the quiet
+ *  +a −r gray note joins the single-line receipt face at the card's right edge
+ *  (folded-state visible; NOT a chip/capsule per author ruling; its own block-hover
+ *  segment) — click reveals the diff file list in the LEFT Side Bar panel
  *  (#panel-filechanges) and the focused file's diff in the Canvas reader
  *  (diffPanel.js / diffCanvas.js); re-clicking an open batch collapses the
- *  Side Bar (existing panel toggle semantics). The bubble body keeps zero
- *  diff rows. Absent (zero-change batch / old history) ⇒ no note.
+ *  Side Bar (existing panel toggle semantics); click/keydown stopPropagation so
+ *  the in-line note never double-fires the head's collapse toggle. The bubble
+ *  body keeps zero diff rows. Absent (zero-change batch / old history) ⇒ no note.
  *  schedule (optional, schedcard 批 2026-10-29): 定时任务触发行的卡片载荷
  *  （引擎 `UiMessage.User.schedule` 同源：{id, name?, triggerAt, repeat?,
  *  referencePath?}）。`source==='schedule'` ⇒ 走**专属卡分支**（见下），载荷
@@ -465,15 +467,19 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   const renderedLabel =
     (header && String(header).trim()) ? String(header) : injectedSourceLabel(source, eventType, sender, sourceTeam, intake);
 
-  // ── Delegate 完工通知卡（2026-10-31 重设计批，作者令「diff 胶囊很丑」+ 设计决定）
-  //   首行  批次短名（KIND · EXECUTOR 口径同信息提纯批）+ 判词**单色墨族徽标**
-  //         （completed / merged / failed 同族无彩色相；右缘对齐）
-  //   次行  一句话结果摘要（merge 轮给 merge status 行 + merge commit 短哈希——
-  //         哈希独立右缘 mono 段，不随省略号截断；失败给原因首行）
-  //   三行  +x/−y **灰字小注**（不是 chip 不是胶囊；点击唤起 diff 面板的入口保留，
-  //         行为与旧胶囊同——左栏文件列表 + Canvas 阅读面）
-  // 点击卡头/摘要行 = 展开正文（折叠语义与旧 label 同）；非 delegate 源 ⇒
-  // 下方通用 label 路径逐字节不动。投递内容（帧字段/payload）零改动。
+  // ── Delegate 完工通知卡（2026-10-31 重设计批 → 22:29 单行化+hover 批承继，作者令
+  //   三件套：①完工卡单行化——卡面多行收成单行「KIND · EXECUTOR · 判词 | +x/−y」
+  //   （字面照现读数「DELEGATE · INTERNAL · COMPLETED | +366 −43」），不换行、溢出
+  //   省略；②整条 hover 可点击感（背景/描边微变+手型）；③分块 hover——批次短名
+  //   各段/判词徽标/diff 小注各是独立 hover 块，点块亮块不整条糊一片）
+  //   首行  单行卡面 = 批次短名（拆 .nf-rcpt-seg 分段 span，' · ' 字面分隔逐字节
+  //         保留）+ 判词单色徽标（同 seg）+「|」分隔段 + +x/−y 灰字小注（右缘组）
+  //   摘要  一句话结果摘要收进**展开态**（点开详情语义不动：点卡头行展开正文+
+  //         摘要；折叠卡面恒单行）；merge 轮给 merge status 行 + 短哈希右缘段
+  //   小注  点击 = diff 面板入口（行为与旧胶囊同——左栏文件列表 + Canvas 阅读面）；
+  //         stopPropagation ⇒ 不触发卡头展开（小注现已与卡头同行，事件会冒泡到
+  //         .nf-rcpt-top 的折叠切换）；键盘 Enter/Space 同理不冒泡成卡头展开。
+  // 非 delegate 源 ⇒ 下方通用 label 路径逐字节不动。投递内容（帧字段/payload）零改动。
   let receiptTop = null;
   if (source === 'delegate') {
     // 判词段 = eventType 词表（[[nodeStatusLabel]] 面同引擎 NotificationHeader
@@ -486,15 +492,58 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
     head.className = 'nf-rcpt-head';
     const name = document.createElement('span');
     name.className = 'nf-rcpt-name';
-    name.textContent = delegateReceiptName(renderedLabel, sender, eventType);
+    // 分块 hover 单元：短名按 ' · ' 拆成分段 span（各段独立高亮块）；分隔符保留
+    // 字面文本节点 ⇒ .nf-rcpt-name textContent 逐字节维持「KIND · EXECUTOR」口径。
+    delegateReceiptName(renderedLabel, sender, eventType).split(' · ').forEach((segText, i) => {
+      if (i > 0) name.appendChild(document.createTextNode(' · '));
+      const seg = document.createElement('span');
+      seg.className = 'nf-rcpt-seg';
+      seg.textContent = segText;
+      name.appendChild(seg);
+    });
     head.appendChild(name);
     if (verdict) {
       const badge = document.createElement('span');
-      badge.className = 'nf-rcpt-badge';
+      badge.className = 'nf-rcpt-badge nf-rcpt-seg';
       badge.textContent = verdict;
       head.appendChild(badge);
     }
+    // +x/−y 灰字小注（diff 拆面板批入口语义承继；2026-10-31 14:14 语义色批构造
+    // 逐字保持：零背景零边框零 padding 不加粗，+a/−r 双 span、字面空格文本节点
+    // ⇒ textContent 逐字节「+a −r」）：载荷在场 ⇒ 进单行右缘组——「|」字面分隔段
+    // （aria-hidden——纯视觉分隔，可及名零感知）+ 小注；margin-left:auto 在 pipe 上
+    // ⇒「| +a −r」贴卡缘、判词徽标与短名相邻成「类型·范围·状态」连续段。缺载荷
+    // （零改动批 / 旧历史）⇒ 无 pipe 无小注。点击 → 左栏 #panel-filechanges 出该
+    // 批次文件列表 + Canvas 出选中文件 diff；本批已在面板时再点 → 收起侧栏
+    // （diffPanel.toggleDiffBatch 现有面板 toggle 语义）；stopPropagation（click）
+    // + 键盘 keydown 不冒泡 ⇒ 小注交互不叠加触发卡头折叠切换（同行后新冒泡面）。
+    if (Array.isArray(fileChanges?.files) && fileChanges.files.length) {
+      const tot = fileChanges.files.reduce((acc, f) => {
+        acc.a += Number(f?.added) || 0; acc.r += Number(f?.removed) || 0; return acc;
+      }, { a: 0, r: 0 });
+      const pipe = document.createElement('span');
+      pipe.className = 'nf-rcpt-pipe';
+      pipe.setAttribute('aria-hidden', 'true');
+      pipe.textContent = '|';
+      head.appendChild(pipe);
+      const note = document.createElement('button');
+      note.type = 'button';
+      note.className = 'nf-rcpt-note';
+      note.setAttribute('aria-pressed', 'false');
+      note.dataset.fcBatch = String(fileChanges.nodeId || fileChanges.generatedAt || 'adhoc');
+      const add = document.createElement('span');
+      add.className = 'nf-rcpt-note-add';
+      add.textContent = `+${tot.a}`;
+      const del = document.createElement('span');
+      del.className = 'nf-rcpt-note-del';
+      del.textContent = `−${tot.r}`;
+      note.append(add, document.createTextNode(' '), del);
+      note.addEventListener('click', (e) => { e.stopPropagation(); toggleDiffBatch(fileChanges); });
+      note.addEventListener('keydown', (e) => e.stopPropagation());
+      head.appendChild(note);
+    }
     receiptTop.appendChild(head);
+    bubble.appendChild(receiptTop);
     const summary = delegateReceiptSummary(trimmed, verdict === 'MERGED');
     if (summary.text) {
       const line = document.createElement('div');
@@ -509,9 +558,10 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
         hash.textContent = summary.hash;
         line.appendChild(hash);
       }
-      receiptTop.appendChild(line);
+      // 摘要行收进展开态：紧随卡头行挂（CSS [aria-expanded='true'] + 相邻兄弟
+      // 选择器驱动显隐）；折叠 display:none ⇒ 零高度贡献（卡面恒单行）。
+      bubble.appendChild(line);
     }
-    bubble.appendChild(receiptTop);
   } else {
     label.appendChild(document.createTextNode(renderedLabel));
     appendDeliveryBadge(label, delivery);
@@ -520,36 +570,8 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
   if (collapsible) {
     bindCollapsibleToggle(source === 'delegate' ? receiptTop : label, () => content);
   }
-  // diff 拆面板批入口（2026-10-22 建、2026-10-31 改形态；10-31 14:14 作者令批
-  // 「diff 计数用颜色区分并且靠右对齐」）：fileChanges 载荷在场 ⇒ +a −r 小注一行
-  // ——+数绿 −数红语义色（span 承载）、整体右对齐卡缘；形态仍零背景零边框零
-  // padding 不加粗（只上色不加重，低调语义逐字保持）——点击 → 左栏
-  // #panel-filechanges 出该批次文件列表 + Canvas 出选中文件 diff；本批已在面板时
-  // 再点 → 收起侧栏（diffPanel.toggleDiffBatch 现有面板 toggle 语义）。缺载荷
-  // （零改动批 / 旧历史）⇒ 零渲染。非 delegate 源携载荷的形态历史上不存在（载荷
-  // 只由 delegate 终态事件携带），故注记只在 delegate 卡分支下挂载。两段各走
-  // 独立 span（CSS 语义色上在 span 上），字面空格文本节点保留 ⇒ textContent
-  // 逐字节维持旧口径「+a −r」（flex 容器内空白匿名项不渲染，视觉间距由 CSS
-  // gap 承担，消费方/可及名零感知）。
-  if (source === 'delegate' && Array.isArray(fileChanges?.files) && fileChanges.files.length) {
-    const tot = fileChanges.files.reduce((acc, f) => {
-      acc.a += Number(f?.added) || 0; acc.r += Number(f?.removed) || 0; return acc;
-    }, { a: 0, r: 0 });
-    const note = document.createElement('button');
-    note.type = 'button';
-    note.className = 'nf-rcpt-note';
-    note.setAttribute('aria-pressed', 'false');
-    note.dataset.fcBatch = String(fileChanges.nodeId || fileChanges.generatedAt || 'adhoc');
-    const add = document.createElement('span');
-    add.className = 'nf-rcpt-note-add';
-    add.textContent = `+${tot.a}`;
-    const del = document.createElement('span');
-    del.className = 'nf-rcpt-note-del';
-    del.textContent = `−${tot.r}`;
-    note.append(add, document.createTextNode(' '), del);
-    note.addEventListener('click', () => { toggleDiffBatch(fileChanges); });
-    bubble.appendChild(note);
-  }
+  // （diff 小注挂载点已随 22:29 单行化批迁入 delegate 卡分支内的单行右缘组——
+  // 见上「+x/−y 灰字小注」段；载荷/点击/aria-pressed 语义逐字承继。）
   bubble.appendChild(content);
   row.appendChild(bubble);
 

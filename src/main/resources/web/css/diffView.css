@@ -278,26 +278,54 @@
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
 
-/* ── 完工通知卡（2026-10-31 重设计批：diff 胶囊退役，卡头/摘要/小注三行面）──
-   作者令：「首行=批次短名+判词（completed/merged/failed 单色徽标，墨族语言）；
-   次行=一句话结果摘要（merge 给短哈希，无 merge 给失败原因一行）；
-   文件改动数（+x/−y）允许保留为一行灰字小注，不做 chip 不做胶囊」。
+/* ── 完工通知卡（2026-10-31 22:29 单行化+hover 批，承继重设计批墨族语言）──────
+   作者令三件套：① 完工卡单行化——折叠卡面 = 单行「KIND · EXECUTOR · 判词 |
+   +x/−y」（字面照现读数「DELEGATE · INTERNAL · COMPLETED | +366 −43」），不换
+   行、溢出省略；② 整条 hover 可点击感（背景/描边微变+手型）；③ 分块 hover——
+   短名各段/判词徽标/diff 小注各是独立 hover 块，点块亮块、不整条糊一片。
    视觉语言逐字对齐现行注入泡：卡头来源名同 .injected-source-label 族（10px
    小号大写、sapphire 0.85）；判词徽标与摘要/小注全走墨族（--color-text-muted /
    --color-text + hairline 边框）——completed/merged/failed 三色相同，无色相语义。
-   展开态正文与卡面的间距只在正文可见时计费（折叠 display:none ⇒ 零高度）。 */
+   摘要行收进展开态（点开详情语义不动）；展开态正文与卡面的间距只在正文可见时
+   计费（折叠 display:none ⇒ 零高度）。 */
 .nf-rcpt-top {
   min-width: 0;
+  /* 卡头行 = 折叠切换面（role=button 由 bindCollapsibleToggle 打上）：手型常驻
+     提示可点（hover 视觉反馈在下层 .nf-rcpt-head 上，避免展开态摘要区也泛蓝）。 */
+  cursor: pointer;
 }
-/* 卡头行：批次短名弹性收缩 + 省略号；判词徽标右缘贴行（flex 0 0 auto 本征宽）。 */
+.nf-rcpt-top:focus-visible {
+  outline: 2px solid var(--btn-focus-ring);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+/* 单行卡面行：弹性一行不换行；整条 hover = 可点击反馈——sapphire 微底 +
+   inset hairline 描边微变（克制档，给分块高亮留层次；不糊满整条）。负边距补偿
+   内边距 ⇒ 布局零位移；行底延伸进泡 padding 缘构成整行热区感。 */
 .nf-rcpt-head {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
+  margin: -2px -6px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
 }
+.nf-rcpt-head:hover {
+  background: rgb(var(--sapphire) / 0.08);
+  box-shadow: inset 0 0 0 1px rgb(var(--sapphire) / 0.22);
+}
+.nf-rcpt-head:focus-visible {
+  outline: 2px solid var(--btn-focus-ring);
+  outline-offset: 1px;
+}
+/* 批次短名：收缩省略号段（flex 0 1 auto——短名让位判词/小注组，过长时尾段省略；
+   名字数短时各行相邻成字面「类型·范围·状态 | diff 计数」）。字面 ' · ' 分隔
+   保留为文本节点，textContent 逐字节维持「KIND · EXECUTOR」口径。 */
 .nf-rcpt-name {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -310,8 +338,20 @@
   letter-spacing: 0.4px;
   color: rgb(var(--sapphire) / 0.85);
 }
+/* 分块 hover 单元：padding + 负边距 ⇒ 高亮块不位移布局；hover 底（0.18）比行
+   hover 底（0.08）深一档 ⇒ 行反馈与块反馈同屏可辨——鼠标移到哪个块哪个块亮。 */
+.nf-rcpt-seg {
+  padding: 1px 5px;
+  margin: -1px -5px;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}
+.nf-rcpt-seg:hover {
+  background: rgb(var(--sapphire) / 0.18);
+}
 /* 判词徽标：单色墨族（hairline 边框 + muted 文字，零填充零色相——failed 不红、
-   completed 不绿，判词差语义全在字面）。 */
+   completed 不绿，判词差语义全在字面）；兼为分块 hover 单元（.nf-rcpt-seg，
+   padding 6px 横档覆盖 seg 的 5px——徽标构造逐字保持）。 */
 .nf-rcpt-badge {
   flex: 0 0 auto;
   padding: 1px 6px;
@@ -323,16 +363,31 @@
   letter-spacing: 0.04em;
   color: var(--color-text-muted);
 }
-/* 摘要行：一句话结果（flex 收缩省略号）+ merge commit 短哈希（mono 右缘段，
-   不随省略号截断——判词摘要恒带得到短哈希是作者令的硬判据）。 */
+/* 单行字面「|」分隔段（只在小注在场时出现）：margin-left:auto 把「| +a −r」
+   推到卡缘右对齐组（语义色批的右对齐口径承继），判词徽标与短名相邻成连续段。
+   aria-hidden——纯视觉分隔，可及名零感知。 */
+.nf-rcpt-pipe {
+  flex: 0 0 auto;
+  margin-left: auto;
+  margin-right: -2px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+/* 摘要行：收进展开态——默认 display:none（折叠卡面恒单行），.nf-rcpt-top 的
+   aria-expanded（bindCollapsibleToggle 维护）驱动显隐。展开后面 = 一句话结果
+   （flex 收缩省略号）+ merge commit 短哈希（mono 右缘段，不随省略号截断——
+   判词摘要恒带得到短哈希是作者令的硬判据）。 */
 .nf-rcpt-summary {
-  display: flex;
+  display: none;
   align-items: baseline;
   gap: 6px;
-  margin-top: 2px;
   min-width: 0;
   font-size: 12px;
   color: var(--color-text);
+}
+.nf-rcpt-top[aria-expanded='true'] + .nf-rcpt-summary {
+  display: flex;
+  margin-top: 4px;
 }
 .nf-rcpt-summary-text {
   flex: 1 1 auto;
@@ -347,22 +402,21 @@
   font-size: 11px;
   color: var(--color-text-muted);
 }
-/* 文件改动数小注（2026-10-31 14:14 作者令批：+数绿 −数红、整体右对齐卡缘）：
-   语义色双主题可读、零新色值——复用 ui-status-redesign 批的亮暗双档图标 token
-   对（--status-success-icon 亮 #2e7d32 ~5.1:1 / 暗 #66bb6a ~7.0:1；
-   --status-error-icon 亮 #d64545 ~5.4:1 / 暗 #f26b6b ~5.6:1，泡底 12% sapphire
-   上两档均 ≥4.5:1）；非 --color-success（亮档 #4caf50 亮底 ~2.9:1，判红不上字）。
-   形态逐字不动：零背景零边框零 padding 不加粗（只上色不加重）；+a/−r 两段各
-   走 span，字面空格文本节点不渲染（flex 空白匿名项），视觉间距由 gap 承担，
-   textContent 逐字节维持旧口径。右对齐 = margin-left:auto（fit-content 本征宽
-   贴卡内 content box 右缘）。pressed 态 = 该批次已在左栏面板承载（sapphire
-   文字 tint 上在 span 上，低调不抢眼）。 */
+/* 文件改动数小注（2026-10-31 14:14 语义色批构造逐字保持：+数绿 −数红、零背景
+   零边框零 padding 不加粗——只上色不加重，低调语义；非 --color-success（亮档
+   亮底对比不足，判红不上字），复用 ui-status-redesign 批亮暗双档图标 token 对
+   （--status-success-icon / --status-error-icon，双主题 ≥4.5:1））：单行化批起
+   为右缘组末位（右对齐由 .nf-rcpt-pipe 的 auto 边距承担），rest 形态逐字不动；
+   分块 hover 单元——hover 只上底色 + 圆角（padding 恒 0，构造性读数不破）。
+   +a/−r 两段各走 span，字面空格文本节点保留 ⇒ textContent 逐字节「+a −r」。
+   点击 = diff 面板入口（toggleDiffBatch）；pressed 态 = 该批次已在左栏面板承载
+   （sapphire 文字 tint 上在 span 上，低调不抢眼）。 */
 .nf-rcpt-note {
   display: flex;
+  flex: 0 0 auto;
   gap: 4px;
-  width: fit-content;
-  margin: 2px 0 0 auto;
   padding: 0;
+  margin: 0;
   border: 0;
   background: none;
   font: inherit;
@@ -370,7 +424,12 @@
   font-size: 11px;
   color: var(--color-text-muted);
   cursor: pointer;
-  transition: color 0.15s;
+  border-radius: 4px;
+  white-space: nowrap;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.nf-rcpt-note:hover {
+  background: rgb(var(--sapphire) / 0.18);
 }
 .nf-rcpt-note-add { color: var(--status-success-icon); }
 .nf-rcpt-note-del { color: var(--status-error-icon); }
@@ -387,9 +446,9 @@
 .nf-rcpt-note[aria-pressed='true'] .nf-rcpt-note-del {
   color: rgb(var(--sapphire, 88, 166, 255) / 0.95);
 }
-/* 展开态正文与卡面/小注的间距：只在正文可见时计费（折叠 display:none ⇒ 零高）。 */
-.nf-rcpt-top + .injected-content,
-.nf-rcpt-note + .injected-content {
+/* 展开态间距：摘要/正文只在可见时计费（折叠 display:none ⇒ 零高度贡献）。 */
+.nf-rcpt-summary + .injected-content,
+.nf-rcpt-top[aria-expanded='true'] + .injected-content {
   margin-top: 6px;
 }
 
