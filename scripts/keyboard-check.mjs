@@ -171,21 +171,96 @@ console.log('C 模态');
   await s.close();
 }
 
-// ── D 焦点环（暗/亮两套主题都可见） ────────────────────────────────────
-console.log('D 焦点环');
+// ── D 焦点环矩阵（B3-1：选择器 × 双主题）────────────────────────────────
+// 改造前只有 2 条（拍两次 Tab 看到谁算谁）。B3-1 删掉 12 条纯 `:focus{outline:none}`
+// 之后，兜底要逐个控件证明真的生效 —— 否则「删了但被别处 (0,2,0) 压掉」是不可
+// 观测的。判据：outline-width = 2px 且颜色非透明且 style !== none。
+console.log('D 焦点环矩阵');
+const RING_TARGETS = ['.activity-btn', '.nav-agent', '.icon-btn', '#send-btn', '.explorer-item', '.deck-card'];
 for (const scheme of ['dark', 'light']) {
   const s = await fresh({ colorScheme: scheme });
+  // 叠卡卡要在环里才有得验：先开两个文档再开叠卡（与 G 组同一通道）
+  for (const [id, title] of [['file:/tmp/ring-a.md', 'ring-a.md'], ['file:/tmp/ring-b.md', 'ring-b.md']]) {
+    await s.page.evaluate((d) => {
+      window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: d }));
+    }, { id, itemType: 'markdown', title, content: '# r\n', absPath: id.replace('file:', ''), size: 4, mtimeMs: 1757000000000 });
+    await s.page.waitForSelector(`#canvas-panel .canvas-tab-pane[data-tab-id="${id}"]`, { state: 'visible', timeout: 15000 });
+  }
+  await s.page.click('#deck-fab');
+  await s.page.waitForSelector('#deck-layer .deck-card', { timeout: 15000 });
+  await s.page.waitForTimeout(1500);
+  // 键盘模态：先按一次 Tab，让随后的 focus() 落在 :focus-visible 口径上
   await s.page.keyboard.press('Tab');
-  await s.page.keyboard.press('Tab');
-  const ring = await s.page.evaluate(() => {
-    const el = document.activeElement;
-    const cs = getComputedStyle(el);
-    return { tag: el?.tagName, id: el?.id, w: cs.outlineWidth, color: cs.outlineColor, style: cs.outlineStyle };
-  });
-  const visible = ring.w === '2px' && ring.style !== 'none'
-    && !!ring.color && ring.color !== 'rgba(0, 0, 0, 0)' && ring.color !== 'transparent';
-  check(`焦点环可见（${scheme}）`, visible, JSON.stringify(ring));
+  for (const sel of RING_TARGETS) {
+    const ring = await s.page.evaluate((q) => {
+      let el = /** @type {HTMLElement|null} */ (document.querySelector(q));
+      let synthetic = false;
+      if (!el && q === '.nav-agent') {
+        // 夹具里没有 agent 段（apiStubs 给的是空名册）⇒ 造一个同 class 的节点。
+        // 本条验的是 **CSS 面**（该选择器上有没有能压掉兜底的 (0,2,0) 规则），
+        // 不是 nav 段的装配逻辑，所以合成节点是合法探针；detail 里会标 synthetic。
+        const host = document.getElementById('nav-agent-list') || document.body;
+        el = document.createElement('div');
+        el.className = 'nav-agent';
+        el.tabIndex = -1;          // divisor 默认不可聚焦 ⇒ 不设它 focus() 是空操作
+        el.textContent = 'probe';
+        host.appendChild(el);
+        synthetic = true;
+      }
+      if (!el) return { missing: true };
+      el.focus({ preventScroll: true });
+      const cs = getComputedStyle(el);
+      return { w: cs.outlineWidth, color: cs.outlineColor, style: cs.outlineStyle, fv: el.matches(':focus-visible'), synthetic };
+    }, sel);
+    const visible = !ring.missing && ring.w === '2px' && ring.style !== 'none'
+      && !!ring.color && ring.color !== 'rgba(0, 0, 0, 0)' && ring.color !== 'transparent';
+    check(`焦点环 ${sel}（${scheme}）`, visible, JSON.stringify(ring));
+  }
   await s.close();
+}
+
+// ── ⑬ css/ 无未配对的 outline:none（离线读 CSS 文本，不开浏览器）──────────
+{
+  const { readFileSync: rf, readdirSync: rd } = await import('node:fs');
+  const { join: jn } = await import('node:path');
+  const { fileURLToPath: f2p } = await import('node:url');
+  const cssDir = jn(f2p(new URL('..', import.meta.url)), 'src', 'main', 'resources', 'web', 'css');
+  const exemptions = JSON.parse(rf(jn(f2p(new URL('..', import.meta.url)), 'scripts', 'focus-ring-exemptions.json'), 'utf8')).exemptions;
+  /** @type {string[]} */
+  const unpaired = [];
+  for (const f of rd(cssDir).filter((x) => x.endsWith('.css'))) {
+    // B3-1 之前：`outline:none` 若挂在 `:focus` 规则里、又没有 `:focus-visible` 配对，
+    // 就会以 (0,2,0) 压掉 keyboard.css:28 的 (0,1,0) 兜底 —— 键盘聚焦无环。
+    const txt = rf(jn(cssDir, f), 'utf8');
+    const re = /([^{}]+)\{([^{}]*)\}/g;
+    const rules = [];
+    let m;
+    while ((m = re.exec(txt))) {
+      // 选择器里可能带前置注释（/* Sapphire focus glow */ .x:focus）—— 归一化前先剥掉，
+      // 否则豁免表按选择器比对会永远差一个注释前缀（首版就是这么红的）。
+      const sel = m[1].replace(/\/\*[\s\S]*?\*\//g, '').trim().replace(/\s+/g, ' ');
+      rules.push({ sel, body: m[2] });
+    }
+    // 同一文件里带 `:focus-visible` 的基选择器集合 = 「已配对」。
+    // 正确范式是：`:focus { outline: none }` + `:focus-visible { <显式环> }`（例如
+    // projectPanel.css:340-345），此时鼠标聚焦无环、键盘聚焦有环 —— 这不是缺陷。
+    // 缺陷是**只有 :focus{outline:none} 而没有 :focus-visible 兄弟**：那一条以
+    // (0,2,0) 把 keyboard.css:28 的 (0,1,0) 兜底压掉，键盘聚焦彻底无环。
+    const base = (s) => s.split(',').map((x) => x.replace(/:focus-visible\b/g, '').trim());
+    /** @type {Set<string>} */
+    const paired = new Set();
+    for (const r of rules) if (/:focus-visible/.test(r.sel)) for (const b of base(r.sel)) paired.add(b);
+    for (const r of rules) {
+      if (!/:focus\b/.test(r.sel) || /:focus-visible/.test(r.sel)) continue;
+      if (!/outline\s*:\s*(none|0)/.test(r.body)) continue;
+      const bases = r.sel.split(',').map((x) => x.replace(/:focus(-visible)?\b/g, '').trim());
+      if (bases.every((b) => paired.has(b))) continue; // 有 :focus-visible 兄弟 = 合法范式
+      const exempt = exemptions.some((e) => e.file === `css/${f}` && e.selector.replace(/\s+/g, ' ') === r.sel);
+      if (!exempt) unpaired.push(`css/${f} :: ${r.sel}`);
+    }
+  }
+  check('⑬ css/ 内 :focus{outline:none} 未配对 :focus-visible 的条数 − 豁免 = 0',
+    unpaired.length === 0, `${unpaired.length} 条：${unpaired.slice(0, 4).join(' | ')}`);
 }
 
 // ── E meta/edit 双模态 ────────────────────────────────────────────────

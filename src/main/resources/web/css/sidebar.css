@@ -81,7 +81,6 @@
 
 /* Session list styles (within panel-sessions) */
 
-
 .panel-actions {
   display: flex;
   gap: 4px;
@@ -302,7 +301,6 @@
   border-radius: 50%;
   background: var(--color-primary);
 }
-
 
 @keyframes statusPulse {
   0%, 100% { opacity: 0.4; }
@@ -588,7 +586,6 @@
   border-left: 1.5px solid var(--color-frame-border-light);
 }
 
-
 /* Inline folder input (new folder, subfolder) */
 .folder-new-row {
   padding: 6px 12px;
@@ -646,7 +643,6 @@
 .session-item > .creation-path {
   padding: 0 0 4px;
 }
-
 
 /* ---------- Settings Modal content (scrollable region inside #settings-modal) ----------
    分组卡片换装批 2026-10-31（作者令 12:33，参考 ChatGPT 设置页解剖；手机端设置
@@ -761,7 +757,6 @@
   text-align: left;
   cursor: pointer;
 }
-.cfg-card-head-btn:focus { outline: none; }
 .cfg-card-head-btn:focus-visible { box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12); }
 .cfg-head-chev {
   margin-left: auto;
@@ -908,7 +903,6 @@
   font-variant-numeric: tabular-nums;
   flex: none;
 }
-
 
 /* STT 高级设置折叠面板（用户 2026-08-20 打回：默认收起，免费路径为默认）——
    复用 settings-row 基线，chevron 旋转表达开合，无新增颜色 token。 */
@@ -1237,8 +1231,6 @@
   font: 400 11.5px -apple-system, sans-serif;
   color: var(--color-text-muted);
 }
-
-
 
 /* ── Config Buttons ────────────────────────────────────────────────────────
    设计语言批 2026-10-21（账本 design-language §2/§4/§5/§7）：面板按钮档 =
