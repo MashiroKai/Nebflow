@@ -153,7 +153,7 @@ class FormatErrorNoEvictSpec extends CatsEffectSuite:
       _ <- release
     yield (chunks, states, 0)
 
-  test("T1: 400 (thinking-passback shape) does NOT evict the provider — request skips to next") {
+  test("T1: 400 (thinking-passback shape) gets ONE in-place degrade retry then skips — provider NOT evicted") {
     val hitsA = new java.util.concurrent.atomic.AtomicInteger(0)
     val hitsB = new java.util.concurrent.atomic.AtomicInteger(0)
     var serverA: HttpServer = null
@@ -177,7 +177,16 @@ class FormatErrorNoEvictSpec extends CatsEffectSuite:
         !states.contains("a/m1"),
         s"400 Format must NOT evict the provider (audit #2), got ${states.get("a/m1")}"
       )
-      assertEquals(hitsA.get(), 1, "Permanent-class 400 skips without same-provider retry (1 hit)")
+      // protocol-compat 批 2026-11-01 口径变更（降级旁路 §4.4）：passback 形状 400
+      // 先就地降级重试一次（thinking 显式关态），换腿前零块已发（接缝安全）。
+      // mock 恒 400 ⇒ 第二发仍 400 才跳 b。hits==2 同时钉死两面：
+      // ①降级重试确实发生了（旧行为 = 1）②重试有界、绝不循环（≠ 3+）。
+      // 可观测结论与旧行为一致：b 服务 "BB"、a/m1 不驱逐（Format 不参与驱逐）。
+      assertEquals(
+        hitsA.get(),
+        2,
+        "passback-shaped 400 gets exactly ONE in-place degrade retry, then skips (bounded: 2 hits)"
+      )
     finally
       if serverA != null then serverA.stop(0)
       if serverB != null then serverB.stop(0)

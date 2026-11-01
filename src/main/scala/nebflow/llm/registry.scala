@@ -55,8 +55,21 @@ class ProviderRegistry(
   private[llm] val throttle: AdaptiveThrottle = new AdaptiveThrottle(configRef)
 
   private def createAdapter(providerId: String, provider: ProviderConfig): ProviderAdapter[IO] =
+    // 思考回传判据（单点 = ThinkingFamily.requiresPassback）：**两面都要拿到**。
+    // protocol-compat 批（2026-11-01）前这里只把开关交给 AnthropicAdapter，
+    // openai 面收到同样配置（cmdcode 就显式写了 requireThinkingPassback:true）
+    // 时是个哑开关——配置说了要回传，代码从不回传。
+    val passback = ThinkingFamily.requiresPassback(providerId, provider)
     provider.protocol match
-      case LlmProtocol.OpenAI => OpenAiAdapter(provider.baseUrl, provider.apiKey, backend)
+      case LlmProtocol.OpenAI =>
+        OpenAiAdapter(
+          provider.baseUrl,
+          provider.apiKey,
+          backend,
+          requireThinkingPassback = passback,
+          providerId = providerId,
+          providerHeaders = provider.headers
+        )
       case LlmProtocol.Anthropic =>
         AnthropicAdapter(
           provider.baseUrl,
@@ -69,7 +82,9 @@ class ProviderRegistry(
           // providerId=="deepseek" 扩为「providerId 或任一模型 id 命中 DeepSeek
           // 模型族」（判定单点 = ThinkingFamily.requiresPassback，spec 钉）——
           // 代码面根治 + live 配置显式补键 = 双保险。
-          requireThinkingPassback = ThinkingFamily.requiresPassback(providerId, provider)
+          requireThinkingPassback = passback,
+          providerId = providerId,
+          providerHeaders = provider.headers
         )
 
   /**

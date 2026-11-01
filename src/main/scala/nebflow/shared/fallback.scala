@@ -90,10 +90,37 @@ class FallbackExhaustedError(
 ) extends Exception:
 
   override def getMessage: String =
+    // 可诊断（protocol-compat 批，作者令 2026-11-01 17:49 第 3 条）：
+    // 旧文案是一句话 `All providers failed:` + 每行 `provider/model: Reason`——
+    // 配额耗尽（429 计划额度）与形状/格式失败（400 Format）混成同一个词，
+    // 读的人分不出"等一会儿会好"还是"我们的请求形状错了"。现在每行前置一个
+    // **失败族标签**，并把上游原话（截断）带出来。
+    def familyOf(a: FallbackAttempt): String =
+      a.reason match
+        case Some(FailoverReason.RateLimit)       => "quota"    // 额度/频率闸：等得来
+        case Some(FailoverReason.Overloaded)      => "overload"
+        case Some(FailoverReason.Auth)            => "auth"     // key/权限问题：等不来
+        case Some(FailoverReason.ModelNotFound)   => "model"
+        case Some(FailoverReason.Format)          => "format"   // 请求/响应形状 vs 契约
+        case Some(FailoverReason.Timeout)         => "timeout"
+        case Some(FailoverReason.ConnectionReset) => "conn-reset"
+        case Some(FailoverReason.NetworkUnreachable) => "network"
+        case Some(FailoverReason.ServerError)     => "server"
+        case Some(FailoverReason.EmptyStream)     => "empty"
+        case Some(FailoverReason.ProviderError)   => "provider"
+        case _                                    => "unknown"
+    val families = attempts.map(familyOf).distinct
     val summary = attempts
       .map { a =>
-        s"  ${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}"
+        val detail = a.message.map(m => s" — ${m.replaceAll("\\s+", " ").take(300)}").getOrElse("")
+        s"  [${familyOf(a)}] ${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}$detail"
       }
       .mkString("\n")
-    s"All providers failed:\n$summary"
+    val verdict =
+      if families == List("quota") || families == List("quota", "overload") then
+        "\nquota-class failure: upstream quota/rate window exhausted — waits are meaningful, the request shape is not at fault"
+      else if families.contains("format") then
+        "\nformat-class failure: at least one provider rejected the request/response shape (400) — see the [wire] line for provider, model, request block sequence and response types"
+      else ""
+    s"All providers failed (${attempts.size} attempt(s); families: ${families.mkString(",")}):\n$summary$verdict"
 end FallbackExhaustedError

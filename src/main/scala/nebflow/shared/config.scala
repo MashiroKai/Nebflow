@@ -152,7 +152,27 @@ case class ProviderConfig(
    * 🔴 深合并存活面：同上方 unavailableWindows——provider 对象键，
    * `ConfigService.mergeConfig` 天然保留。
    */
-  disabled: Option[Boolean] = None
+  disabled: Option[Boolean] = None,
+  /**
+   * provider 级额外 HTTP 头（protocol-compat 批，2026-11-01，作者实测令）。
+   *
+   * 事故：cmdcode 端点挂在 Cloudflare 后面，**无 User-Agent 的请求被边缘直接
+   * 挡掉**——`HTTP 403 error code 1010`（Cloudflare 的 browser-signature 封禁），
+   * 引擎侧只看到 403 → 判 Auth/永久 → provider 被摘除 → 归档注释写成「厂家重置
+   * key 后启用」。**key 从来没死过**：同一请求换成 curl（自带 UA）立刻 200。
+   *
+   * 由此的硬纪律（[[nebflow.llm.providers.HttpHeaders]] 收口）：
+   *   1. 所有协议路径的**每一个请求**都必须带一个诚实的 User-Agent；
+   *   2. provider 可用本键追加/覆盖任意头（有的网关要 accept / anthropic-version
+   *      / 自定义鉴权头）；
+   *   3. 头的装配只有一处（两面共用），不允许某个 adapter 私自 header()。
+   *
+   * 形状：`{"user-agent":"...","accept":"application/json"}`。键大小写不敏感
+   * （装配时归一为小写去重，provider 配置覆盖引擎缺省）。缺省 None = 只带引擎
+   * 缺省头（零行为变化）。
+   * 🔴 形状纪律同上：Option 形（deriveDecoder 不认默认值）。
+   */
+  headers: Option[Map[String, String]] = None
 )
 
 object ProviderConfig:
