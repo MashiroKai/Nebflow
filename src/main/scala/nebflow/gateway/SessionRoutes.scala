@@ -50,13 +50,26 @@ private[gateway] object SessionRoutes:
         }
 
       // Session list. `includeUnindexed=1` (search scope) unions in on-disk-only
-      // .ui.json sessions (delegate/subtask/dag sub-agents) that never enter the
-      // index. The sidebar consumes this endpoint WITHOUT the param and must stay
-      // index-only — that isolation is the reason this is a query param.
+      // .ui.json sessions that never enter the index. The sidebar consumes this
+      // endpoint WITHOUT the param and must stay index-only — that isolation is
+      // the reason this is a query param.
+      //
+      // 会话搜索范围收窄批（2026-11-01，作者 17:29 令「主 agent 的聊天记录搜索只搜
+      // 主会话，后台 agent 产生的消息一条不出」）：`includeUnindexed=1` 现在只返回
+      // **主会话**（listSearchScopeSessions——判据单点 = SessionScope），后台 agent
+      // 族（delegate/subtask/subagent/workflow/node/dispatcher/external/dag）一条
+      // 不进。旧全扫引擎（chatSearch.js 的 fetchSessionList → 逐会话 history）因此
+      // 与索引引擎（/api/search/chat）自动同一范围，前端零事后剔除。
+      //
+      // `includeBgAgents=1` 是**显式取全量**的旧形态口子（仅 bg-agent / flow 弹窗
+      // 需要看自己的家族）：`includeUnindexed=1&includeBgAgents=1` ⇒ 旧的全量并集。
       case req @ GET -> Root / "sessions" =>
         withAuth(req) {
+          val includeUnindexed = req.params.get("includeUnindexed").contains("1")
+          val includeBgAgents  = req.params.get("includeBgAgents").contains("1")
           val list =
-            if req.params.get("includeUnindexed").contains("1") then sessionStore.listSessionsIncludeUnindexed
+            if includeUnindexed && includeBgAgents then sessionStore.listSessionsIncludeUnindexed
+            else if includeUnindexed then sessionStore.listSearchScopeSessions
             else sessionStore.listSessions
           list.flatMap { sessions =>
             sessionStore.getActiveId.flatMap { activeId =>

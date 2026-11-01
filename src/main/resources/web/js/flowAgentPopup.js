@@ -376,9 +376,11 @@ export async function resolveFlowNodeSession(flowName, nodeId) {
   if (best) return best.sid;
   // REST fallback: includeUnindexed scans .ui.json files on disk (dag-*
   // sessions never enter the session index), sorted by -updatedAt — the first
-  // match is the latest run.
+  // match is the latest run. `includeBgAgents=1` 会话搜索范围收窄批 2026-11-01：
+  // includeUnindexed 的缺省形态已收窄到**主会话**（搜索面用）；本弹窗要看的是
+  // dag- 后台族自己的会话 ⇒ 显式取全量（同端点另一档，非前端过滤）。
   try {
-    const resp = await fetch('/api/sessions?includeUnindexed=1', { headers: authHeaders() });
+    const resp = await fetch('/api/sessions?includeUnindexed=1&includeBgAgents=1', { headers: authHeaders() });
     if (resp.ok) {
       const data = await resp.json();
       const hit = (data.sessions || []).find(s => isDagSessionOf(s.id || '', flowName, nodeId));

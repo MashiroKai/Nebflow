@@ -31,44 +31,78 @@ import java.time.{Instant, LocalDate, ZoneId}
  * 时间锚：tool/ask/agent 行无 ts → 取向前最近一条带 ts 的行（popMediaIndex
  * 同款「回复锚」语义，media/file/link 条目仍消费）；行级 ts=0 且无前锚 ⇒ 0
  * （排未日期尾部）。
+ *
+ * **会话范围（会话搜索范围收窄批 2026-11-01，作者 17:29 令）**：本 adapter 只收
+ * **主会话**（[[nebflow.shared.SessionScope]] 单点判据）；后台 agent 会话
+ * （delegate/subtask/subagent/workflow/node/dispatcher/external/dag）不抽取、不
+ * 指纹、不入库，详见 [[excludedSidPrefixes]]。
  */
 final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
 
   override val face: String = "chat"
 
+  /**
+   * 检索面会话范围（会话搜索范围收窄批 2026-11-01，作者 17:29 令「只搜主会话，
+   * 后台 agent 产生的消息一条不出」）：后台 agent 会话族（delegate/subtask/
+   * subagent/workflow/node/dispatcher/external/dag——判据单点 =
+   * [[nebflow.shared.SessionScope]]）**不入索引**。
+   *
+   * 收口形态（不是前端事后剔除，是数据源层）：
+   *   - `extractSession` ⇒ None（索引侧走「删旧行」分支 ⇒ 本批之前入库的后台
+   *     会话文档随首次同步清零）；
+   *   - `sessionFingerprint` / `sessionMtime` ⇒ None（`upToDate` 恒 false ⇒ 一定
+   *     走到删旧分支，不被「指纹未变」快路卡住）；
+   *   - 查询侧同前缀兜底见 [[SearchIndexService]] 的 `excludedSidPrefixes`。
+   */
+  override def excludedSidPrefixes: List[String] = SessionScope.BackgroundAgentPrefixes
+
+  /** 检索面准入（主会话才入库；判据单点见 [[SessionScope]]）。 */
+  private def inScope(sid: String): Boolean = SessionScope.isMainSession(sid)
+
   private def uiFile(sid: String): os.Path = sessionsDir / s"$sid.ui.json"
 
   def sessionMtime(sid: String): Option[Long] =
-    val f = uiFile(sid)
-    if os.exists(f) then Some(os.mtime(f)) else None
+    if !inScope(sid) then None
+    else
+      val f = uiFile(sid)
+      if os.exists(f) then Some(os.mtime(f)) else None
 
   override def sessionMtimeOpt(sid: String): Option[Long] = sessionMtime(sid)
 
   /** 月桶键（§4.2）：文件 mtime 落桶；当月 = "current"（开口增量桶）。 */
   override def monthKey(sid: String): String =
-    sessionMtime(sid) match
-      case None => ""
-      case Some(ms) =>
-        val now = LocalDate.now()
-        val d   = LocalDate.ofInstant(Instant.ofEpochMilli(ms), ZoneId.systemDefault())
-        if d.getYear == now.getYear && d.getMonth == now.getMonth then "current"
-        else f"${d.getYear}%04d${d.getMonthValue}%02d"
+    if !inScope(sid) then ""
+    else
+      sessionMtime(sid) match
+        case None => ""
+        case Some(ms) =>
+          val now = LocalDate.now()
+          val d   = LocalDate.ofInstant(Instant.ofEpochMilli(ms), ZoneId.systemDefault())
+          if d.getYear == now.getYear && d.getMonth == now.getMonth then "current"
+          else f"${d.getYear}%04d${d.getMonthValue}%02d"
 
   /**
    * 会话指纹（对账键）：mtime + size。廉价且「漏重建方向安全」——mtime 前进
    * 必触发重建；时钟回拨最坏 = 本批次漏更，由下一次前进/惰性对账收敛（§4.3）。
+   *
+   * 检索面外的会话恒 None（见 [[excludedSidPrefixes]]）：指纹 None ⇒ 索引侧
+   * `upToDate` 恒 false ⇒ 必走 `extractSession`（也恒 None）⇒ 旧行清零。
    */
   override def sessionFingerprint(sid: String): Option[String] =
-    val f = uiFile(sid)
-    if os.exists(f) then Some(s"${os.mtime(f)}:${os.size(f)}") else None
+    if !inScope(sid) then None
+    else
+      val f = uiFile(sid)
+      if os.exists(f) then Some(s"${os.mtime(f)}:${os.size(f)}") else None
 
   override def extractSession(sid: String, forceFull: Boolean): Option[List[SearchIndexService.IndexDoc]] =
-    val f = uiFile(sid)
-    if !os.exists(f) then None
+    if !inScope(sid) then None
     else
-      val msgs = decode[List[UiMessage]](os.read(f)).getOrElse(Nil)
-      if msgs.isEmpty then None
-      else Some(extractDocs(sid, msgs))
+      val f = uiFile(sid)
+      if !os.exists(f) then None
+      else
+        val msgs = decode[List[UiMessage]](os.read(f)).getOrElse(Nil)
+        if msgs.isEmpty then None
+        else Some(extractDocs(sid, msgs))
 
   // ── 抽取（与 chatSearch.js/popMediaIndex.js 同源口径）────────────────────
 

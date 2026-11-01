@@ -903,8 +903,12 @@ function authHeaders() {
 }
 
 async function fetchSessionList(signal) {
-  // includeUnindexed=1: also returns delegate-*/subtask-*/dag-* sessions whose
-  // ui.json exists on disk but which never entered the session index.
+  // includeUnindexed=1：会话搜索范围收窄批（2026-11-01，作者 17:29 令）之后，
+  // 服务端只回**主会话**（索引会话 ∪ 盘上主会话；后台 agent 族 delegate/subtask/
+  // subagent/workflow/node/dispatcher/external/dag 一条不回——判据单点 =
+  // nebflow.shared.SessionScope）。范围收口在服务端数据源层（+ 索引库
+  // /api/search/chat 同判据），所以本文件与手机层、搜索浮钮等所有入口**零过滤
+  // 代码**即自动一致；禁在前端追加事后剔除。
   const resp = await fetch('/api/sessions?includeUnindexed=1', { headers: authHeaders(), signal });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const data = await resp.json();

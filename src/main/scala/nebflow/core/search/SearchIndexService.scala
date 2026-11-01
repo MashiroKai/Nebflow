@@ -397,6 +397,14 @@ object SearchIndexService:
           params ++= q.kinds
         q.since.foreach { v => where.append(" AND d.ts>=?"); params += v }
         q.until.foreach { v => where.append(" AND d.ts<=?"); params += v }
+        // 检索面会话范围（会话搜索范围收窄批 2026-11-01，作者令「只搜主会话」）：
+        // adapter 声明的排除前缀落进 WHERE —— 本批之前入库的后台 agent 会话
+        // 文档在任何查询形状（current 档 / all 档 / 各类型片 / 分页）下都不出
+        // 结果，且 total 用同一谓词计数（不虚高）；残留随会话重建清零。
+        fs.adapter.excludedSidPrefixes.foreach { prefix =>
+          where.append(" AND d.sid NOT LIKE ? ESCAPE '\\'")
+          params += (escapeLike(prefix) + "%")
+        }
         monthPreFilter(q).foreach { mk =>
           // 粗筛保守：空 month_key = 未知/旧桶行，保留（精确 ts 谓词收口正确性）。
           where.append(" AND (d.month_key=? OR d.month_key='current' OR d.month_key='')")
