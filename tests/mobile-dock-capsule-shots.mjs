@@ -133,8 +133,8 @@ for (const scheme of ['dark', 'light']) {
   ok(`${scheme} ④ 呼吸缝 == 10px（--dock-gap）`,
     Math.abs((msg.dockTop - msg.barBottom) - msg.gap) <= 1.5 && msg.gap > 0,
     `gap=${(msg.dockTop - msg.barBottom).toFixed(2)} token=${msg.gap}`);
-  ok(`${scheme} ⑥ 中键收形零回归（44×44 收进胶囊 + 零浮影）`,
-    Math.abs(msg.centerW - 44) <= 0.5 && Math.abs(msg.centerH - 44) <= 0.5 && msg.centerInside && msg.centerShadow === 'none',
+  ok(`${scheme} ⑥ 中键几何零回归（44×44 收进胶囊；边缘随边缘统一批 = 顶部头像同款非零光环）`,
+    Math.abs(msg.centerW - 44) <= 0.5 && Math.abs(msg.centerH - 44) <= 0.5 && msg.centerInside && msg.centerShadow !== 'none',
     `w=${msg.centerW} h=${msg.centerH} inside=${msg.centerInside} shadow=${msg.centerShadow}`);
   await page.screenshot({ path: join(OUT, `msg-${scheme}.png`) });
 
