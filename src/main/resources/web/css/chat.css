@@ -466,6 +466,12 @@
 .bg-task-state .st-ic { width: 11px; height: 11px; margin-right: 3px; }
 .bg-task-state.bg-state-frozen { color: rgb(var(--accent-agent-light)); }
 .bg-task-state.bg-state-done { color: var(--color-frame-text-dim); }
+/* 延续态徽标（Flow 会话可见性批 2026-11-01）：delegate 已终态而链仍在跑的组头行
+   ——琥珀「链运行中」（--status-warn-icon 既有 token，同长空闲/离线徽标族；词前
+   workflow 图标同档），行不加 .done 灰化（活链 ≠ 死行——行体无 0.6 透明），状态点
+   走 active 绿脉冲。链全终态后覆写缺席 → 行回普通终态样式（既有 done 档）。 */
+.bg-task-state.bg-task-chain { color: var(--status-warn-icon); font-weight: 500; }
+.bg-task-state.bg-task-chain .st-ic { width: 11px; height: 11px; margin-right: 3px; color: var(--status-warn-icon); }
 .bg-task-kind {
   font-size: 10px;
   font-weight: 500;

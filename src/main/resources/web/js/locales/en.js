@@ -865,6 +865,15 @@ export default {
   // text (flips with the collapsed state).
   'subagents.collapseGroup': 'Collapse subtasks',
   'subagents.expandGroup': 'Expand subtasks',
+  // Flow-session visibility batch (2026-11-01): kind chips for dispatcher-*/
+  // node-* rows (the engine protocol kind is uniformly "Flow" — display words
+  // are resolved per session-id prefix) + the continuation badge for a
+  // terminal delegate whose chain is still running (amber word + workflow
+  // icon; tooltip carries the live session count).
+  'subagents.kindDispatcher': 'Dispatcher',
+  'subagents.kindNode': 'Node',
+  'subagents.chainRunning': 'Chain running',
+  'subagents.chainRunningTip': 'Delegate delivered, chain still running · {n} session(s)',
   // Task attribution badge (2026-09-27 taskbadge batch): hover tooltip of the
   // per-row `#id · title` badge
   'subagents.taskBadge': 'Task: {text}',

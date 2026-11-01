@@ -171,7 +171,7 @@ import { stopThinkingTimer } from './main/thinkingTimer.js';
 import { applyLocalFreeze, setFrozenBarState, skipCurrentFreeze } from './main/freeze.js';
 import { showHistoryLoader, hideHistoryLoader, showHistoryEnd, clearHistoryIndicators, hideChatSkeleton } from './main/historyIndicators.js';
 import { showGlobalPermissionToast, dismissGlobalPermissionToasts } from './main/permToast.js';
-import { updateBgAgentIndicator, bgAgentKindFromSession, renderBgAgentDropdown, armBgUptimeTick, fetchActiveAgentsOnOpen, clearBgStuck } from './main/bgAgents.js';
+import { updateBgAgentIndicator, bgAgentKindFromSession, renderBgAgentDropdown, armBgUptimeTick, fetchActiveAgentsOnOpen, clearBgStuck, bgScopeRootForBucket, refreshAllBgAgentIndicators } from './main/bgAgents.js';
 // uifix 批（2026-10-22 作者令「附件放在对话框上面，不要遮挡文字」）：附件条 in-flow
 // 独立行的溢出折叠腿（+N 收展）—— 桌面/手机层共用单点，桌面启动即挂观察链（幂等）。
 import { watchAttachmentStrip } from './attachStripFold.js';
@@ -1341,13 +1341,29 @@ onMessage('done', (msg, view) => {
     // 视图是拦截器切入的弹窗视图（ws.js bg/flow interceptor），须临时切到归属
     // 视图渲染再还原（与 agentDone 2s 收尾同款模式）；后端取消链路补发的
     // agentDone 帧先经 ws.js 转换为会话级 done 到达此处。
+    // Flow 会话可见性批（2026-11-01）：桶键两步解析——① 直查（主桶键=视图会话，
+    // 既有形态）；② delegate 作用域桶键经 bgScopeRootForBucket 反查宿主主桶（链行
+    // 挂主桶组头下，宿主视图才持有指示器）。判读与 updateBgAgentIndicator 同款
+    // 「无可刷新视图」口径：拦截器为先建的 step 视图（无指示器）不得终止解析，
+    // 否则开面板场景的终态重渲染在第一拍短路（B1 实证——头行滞留「链运行中」）。
+    // ③ 全视图重算兜底：链全终态拍作用域桶整桶清空，桶键再无可反查的行——延续
+    // 态组头消失的同一拍，徽标必须归零回收（「链运行中」绝不滞留死链）。
+    const resolveTargetView = (sid) => {
+      let v = findViewBySessionId(sid);
+      if (!v || !v.dom || !v.dom.bgagentIndicatorEl) {
+        v = findViewBySessionId(bgScopeRootForBucket(sid));
+      }
+      return v && v.dom && v.dom.bgagentIndicatorEl ? v : null;
+    };
     for (const root of touchedRoots) {
-      const targetView = findViewBySessionId(root);
+      const targetView = resolveTargetView(root);
       if (targetView) {
         const savedView = activeView;
         setActiveView(targetView);
         updateBgAgentIndicator();
         setActiveView(savedView);
+      } else {
+        refreshAllBgAgentIndicators();
       }
     }
   }

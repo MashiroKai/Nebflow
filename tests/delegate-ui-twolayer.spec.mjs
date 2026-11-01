@@ -191,7 +191,7 @@ test('T1 stub schema 加宽（G1 mode/G5 队列键/G6 archivedAt）＋旧行缺�
   expect(pageErrors).toEqual([]);
 });
 
-test('T2 面板两级化（C2/R6）：delegate 组头徽标=row.mode（kernel）；G3 store 子行 ∪ live 子行缩进一格；C1 dispatcher/node 零渲染', async ({ page }) => {
+test('T2 面板两级化（C2/R6）：delegate 组头徽标=row.mode（kernel）；G3 store 子行 ∪ live 子行缩进一格；C1 退役后 dispatcher/node 顶层直显（分发器/节点徽标）', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
   await bootApp(page);
@@ -214,14 +214,27 @@ test('T2 面板两级化（C2/R6）：delegate 组头徽标=row.mode（kernel）
 
   const list = page.locator('#bg-dropdown .bg-section-agents .bg-dropdown-list');
   const rows = page.locator('#bg-dropdown .bg-section-agents .bg-dropdown-list .bg-task-row');
-  // 两级共 3 行：组头 + live 子 + store 子；dispatcher/node 被 C1 过滤零渲染。
-  await expect(rows).toHaveCount(3);
-  await expect(page.locator('#bg-dropdown .bg-section-agents .bg-dropdown-list .bg-task-row[data-node-session-id="dispatcher-zz9"]')).toHaveCount(0);
-  await expect(page.locator('#bg-dropdown .bg-section-agents .bg-dropdown-list .bg-task-row[data-node-session-id="node-aa8"]')).toHaveCount(0);
+  // Flow 会话可见性批（2026-11-01）：C1 过滤退役——dispatcher/node 无主行（无
+  // parentSessionId、作用域桶缺席）顶层直显并标 kind；两级共 5 行：组头 + live 子
+  // + store 子 + dispatcher + node。
+  await expect(rows).toHaveCount(5);
+  const dispRow = page.locator('#bg-dropdown .bg-section-agents .bg-dropdown-list .bg-task-row[data-node-session-id="dispatcher-zz9"]');
+  const nodeRow = page.locator('#bg-dropdown .bg-section-agents .bg-dropdown-list .bg-task-row[data-node-session-id="node-aa8"]');
+  await expect(dispRow).toHaveCount(1);
+  await expect(nodeRow).toHaveCount(1);
+  // 无主行 = 顶层（非组头非子行）+ kind 徽标（分发器/节点——引擎协议 kind 一律
+  // "Flow" 无区分度，显示词按前缀单点判读）。
+  await expect(dispRow).not.toHaveClass(/bg-task-row-head/);
+  await expect(dispRow).not.toHaveClass(/bg-task-row-child/);
+  await expect(dispRow.locator('.bg-task-kind')).toHaveText('分发器');
+  await expect(nodeRow).not.toHaveClass(/bg-task-row-head/);
+  await expect(nodeRow).not.toHaveClass(/bg-task-row-child/);
+  await expect(nodeRow.locator('.bg-task-kind')).toHaveText('节点');
 
   // 一级 = delegate 组头：bg-task-row-head + 徽标 = delegate 执行形态 row.mode
   // （徽标归位批 2026-10-31 23:02 作者裁定：顶层只标 kernel/dispatcher，编排模式
-  //  词 Subagent/Flow 是历史类型残留，一律不上顶层）。
+  //  词 Subagent/Flow 是历史类型残留，一律不上顶层；分发器/节点是 Flow 会话
+  //  正向 kind 徽标，不受此限）。
   const head = page.locator('#bg-dropdown .bg-section-agents .bg-dropdown-list .bg-task-row.bg-task-row-head');
   await expect(head).toHaveCount(1);
   await expect(head).toHaveAttribute('data-node-session-id', 'delegate-nebflow-w1');
@@ -237,8 +250,9 @@ test('T2 面板两级化（C2/R6）：delegate 组头徽标=row.mode（kernel）
   await expect(storeChild.locator('.bg-task-kind')).toHaveText('Delegate');
   await expect(storeChild.locator('.bg-task-state')).toHaveText('已完成');
 
-  // 徽标计数 = 可见 entries（delegate + live 子；store 子不是 WS 条目不计）。
-  await expect(page.locator('#bgagent-indicator .bgagent-count')).toHaveText('2');
+  // 徽标计数 = 可见 entries（delegate + live 子 + dispatcher + node；store 子不是
+  // WS 条目不计）。
+  await expect(page.locator('#bgagent-indicator .bgagent-count')).toHaveText('4');
   expect(pageErrors).toEqual([]);
 });
 

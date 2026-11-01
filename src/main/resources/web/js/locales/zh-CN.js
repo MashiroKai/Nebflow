@@ -817,6 +817,13 @@ export default {
   // 面板层级批（2026-10-31 ①）：组头折叠 caret 的无障碍/悬停文案（随折叠态翻转）。
   'subagents.collapseGroup': '收起子任务',
   'subagents.expandGroup': '展开子任务',
+  // Flow 会话可见性批（2026-11-01）：dispatcher-*/node-* 行 kind 徽标（引擎协议
+  // kind 一律 "Flow" 无区分度——显示词按前缀单点判读）＋ delegate 已终态而链仍在
+  // 跑的延续态徽标（琥珀词 + workflow 图标；tooltip 带链会话数）。
+  'subagents.kindDispatcher': '分发器',
+  'subagents.kindNode': '节点',
+  'subagents.chainRunning': '链运行中',
+  'subagents.chainRunningTip': '委托已交付，链仍在运行 · {n} 个会话',
   // 面板行说明批（2026-10-29 ②）：任务摘要次行无文案键（原文上屏）。
   // 任务归属徽标（2026-09-27 taskbadge 批）：行内 `#号 · 标题` 徽标的悬停提示
   'subagents.taskBadge': '所属任务：{text}',
