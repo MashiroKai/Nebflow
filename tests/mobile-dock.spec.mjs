@@ -698,12 +698,14 @@ test.describe('friends-ON unread chain', () => {
     await expect(page.locator('.mobile-page[data-page="conversation"]')).toHaveClass(/live/);
     await expect(page.locator(badgeSel)).toBeHidden({ timeout: 8000 });
     // 返回消息页：会话列表未读数同步归零（角标与行徽标同一条读数额），
-    // 且页面无通知段（退役面不复活）。
+    // 且页面无通知段（退役面不复活）。行徽标判据收窄到 .fm-conv-row ——
+    // 待办改版批（e51dabcdd）在 #fm-conversations 顶加了入口行（自带恒在
+    // DOM 的 hidden .fm-row-badge，不挂 .fm-conv-row），页级宽选会误计。
     await page.locator('.mobile-page[data-page="conversation"] .mobile-back-btn').click();
     await expect(page.locator('.mobile-page[data-page="messages"]')).toHaveClass(/live/);
     expect(await page.evaluate(() => ({
       sec: document.querySelectorAll('.mobile-page[data-page="messages"] .mf-notify-sec').length,
-      rowBadge: document.querySelectorAll('.mobile-page[data-page="messages"] .fm-row-badge').length,
+      rowBadge: document.querySelectorAll('.mobile-page[data-page="messages"] .fm-conv-row .fm-row-badge').length,
     }))).toEqual({ sec: 0, rowBadge: 0 });
     expect(errors).toEqual([]);
   });
@@ -718,8 +720,8 @@ test.describe('friends-ON unread chain', () => {
     await dockTo(page, 'messages');
     const row = page.locator('.mobile-page[data-page="messages"] .mobile-page-body #fm-conversations .fm-conv-row').first();
     await expect(row).toBeVisible({ timeout: 8000 });
-    await expect(page.locator('.mobile-page[data-page="messages"] .fm-row-badge')).toHaveCount(1);
-    await expect(page.locator('.mobile-page[data-page="messages"] .fm-row-badge')).toHaveText('1');
+    await expect(page.locator('.mobile-page[data-page="messages"] .fm-conv-row .fm-row-badge')).toHaveCount(1);
+    await expect(page.locator('.mobile-page[data-page="messages"] .fm-conv-row .fm-row-badge')).toHaveText('1');
     expect(errors).toEqual([]);
   });
 });
