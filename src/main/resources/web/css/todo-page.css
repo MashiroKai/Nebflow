@@ -249,8 +249,15 @@
   opacity: 0.6;
 }
 
-/* ── 手机层：收编进 pushPage 详情页 ⇒ 页壳语义退役为满铺页面体 ─────── */
-body.mobile-layer #todo-page {
+/* ── 手机层：收编进 pushPage 详情页 ⇒ 页壳语义退役为满铺页面体 ───────
+   🔴 收编作用域（2026-11-01 手机消息区空白急诊批，作者 12:03 实拍）：铺平规则
+   必须钉在**收编后**的落点（#mobile-pages .mobile-page-body > #todo-page）——
+   改版批原形 `body.mobile-layer #todo-page` 在手机层**恒真**：面板未收编时仍
+   住在桌面家 #main（chat.css #main = flex column），`position:static; height:100%`
+   把它变成 702px 在流块，把 #chat（flex:1）挤成 142px 残条 ⇒ 聊天根消息流
+   整片空白（桌面不受影响 = 规则挂 mobile-layer；与 dock 批 mobileLayer.css
+   「收编面统一页面化几何」的 `> ` 作用域先例对齐）。 */
+body.mobile-layer #mobile-pages .mobile-page-body > #todo-page {
   position: static;
   transform: none;
   width: 100%;
@@ -261,7 +268,7 @@ body.mobile-layer #todo-page {
   box-shadow: none;
   z-index: auto;
 }
-body.mobile-layer #todo-page.open {
+body.mobile-layer #mobile-pages .mobile-page-body > #todo-page.open {
   animation: none;
 }
 /* 未开态不占流（手机端长按退役批 2026-11-01 顺带面，截图实证缺陷）：
