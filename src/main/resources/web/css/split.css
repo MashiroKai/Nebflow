@@ -410,9 +410,13 @@
   color: var(--color-frame-text-muted);
 }
 /* picker-device-switch 批（2026-10-30）：chip 升级为常驻设备切换钮——锚包裹
-   （.dev-menu absolute 定位锚）+ 按钮态重置（.dev-chip 原为 span 徽标）。 */
+   （原 .dev-menu absolute 定位锚）+ 按钮态重置（.dev-chip 原为 span 徽标）。
+   弹层浮出批（2026-11-01）：菜单体升出锚、改 body 级 fixed（JS 按 chip rect
+   锚定）——修在链内被 #sidebar→#explorer-section 全链 overflow:hidden 几何
+   裁切、毛玻璃采样被 #sidebar 自带 backdrop-filter 困死的双根病；chip 放得
+   下就全显（max-width 100%），受挤才在 .dev-nm 上省略（title 悬浮全名）。 */
 .explorer-dev-anchor {
-  position: relative; /* .dev-menu 的锚 */
+  position: relative;
   display: inline-flex;
   margin-left: 7px;
   min-width: 0;
@@ -421,7 +425,13 @@
 .explorer-dev-anchor .dev-chip {
   margin-left: 0;
   cursor: pointer;
-  max-width: 110px; /* 窄栏头部纪律：超长设备名省略，不挤动作排 */
+  max-width: 100%; /* 替代旧 110px 硬截：放得下全显，放不下 .dev-nm 省略 */
+  min-width: 0;
+}
+.dev-chip .dev-nm {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 button.dev-chip {
   border: none;
@@ -434,8 +444,20 @@ button.dev-chip {
   flex: 0 0 auto;
   opacity: 0.7;
 }
-.explorer-dev-anchor .dev-menu {
-  min-width: 220px;
+/* 文件浏览器设备菜单（body 级浮层）：材质 = glass.css 面级浮件档单源
+   （--glass-bg/--glass-blur/--glass-border + --cv-shadow，glass.css 消费方
+   名录在册）；本块只管几何——层带 = 共用右键菜单同款 5000（modal 族之下）。
+   宽度自适应最长设备名：max-content 直追最宽行，上限 320px 再宽才折行
+   （.nm 摘 nowrap，不省略号）。 */
+.dev-menu.explorer-dev-menu {
+  position: fixed;
+  z-index: 5000;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+}
+.dev-menu.explorer-dev-menu .dev-item .nm {
+  white-space: normal; /* 基类 nowrap+省略号摘除：超上限折行，不省略 */
+  overflow-wrap: anywhere;
 }
 /* 远端加载行：sapphire spinner（减动效停转见文件尾降级块）。 */
 .explorer-loading .spin {

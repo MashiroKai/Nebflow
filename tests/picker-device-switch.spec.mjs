@@ -353,11 +353,11 @@ test('R-E 文件浏览器：常驻设备钮 + 切设备 listDir 带 device + 只
   // ── 菜单切到 Studio-M2 ──
   await page.click('#explorer-device-btn');
   await page.waitForFunction(
-    () => document.querySelectorAll('.explorer-dev-anchor .dev-item').length >= 3,
+    () => document.querySelectorAll('.dev-menu.explorer-dev-menu .dev-item').length >= 3,
     null, { timeout: 5000 },
   );
   const menu = await page.evaluate(() => {
-    const items = [...document.querySelectorAll('.explorer-dev-anchor .dev-item')];
+    const items = [...document.querySelectorAll('.dev-menu.explorer-dev-menu .dev-item')];
     const off = items.find((el) => el.classList.contains('disabled'));
     return {
       names: items.map((el) => el.querySelector('.nm')?.textContent ?? ''),
@@ -366,7 +366,7 @@ test('R-E 文件浏览器：常驻设备钮 + 切设备 listDir 带 device + 只
     };
   });
   const listDirBefore = h.frames('listDir').length;
-  await page.click('.explorer-dev-anchor .dev-item:has-text("Studio-M2")');
+  await page.click('.dev-menu.explorer-dev-menu .dev-item:has-text("Studio-M2")');
   await page.waitForSelector('.explorer-item[data-path="docs"]', { timeout: 5000 });
   // chip 同步先画 deviceId、花名册名异步补写——等读数稳定再断言显示名。
   await page.waitForFunction(
@@ -390,11 +390,11 @@ test('R-E 文件浏览器：常驻设备钮 + 切设备 listDir 带 device + 只
   // ── 切回 self ──
   await page.click('#explorer-device-btn');
   await page.waitForFunction(
-    () => document.querySelectorAll('.explorer-dev-anchor .dev-item').length >= 3,
+    () => document.querySelectorAll('.dev-menu.explorer-dev-menu .dev-item').length >= 3,
     null, { timeout: 5000 },
   );
   const listDirBeforeBack = h.frames('listDir').length;
-  await page.click('.explorer-dev-anchor .dev-item:has-text("This-Mac")');
+  await page.click('.dev-menu.explorer-dev-menu .dev-item:has-text("This-Mac")');
   await page.waitForSelector('.explorer-item[data-path="local-dir"]', { timeout: 5000 });
   const backFrames = h.frames('listDir').slice(listDirBeforeBack);
   const back = await page.evaluate(() => ({
@@ -406,10 +406,10 @@ test('R-E 文件浏览器：常驻设备钮 + 切设备 listDir 带 device + 只
   // ── R-E4：远端根下「换根」（folder 钮）在同一设备盘上打开选择器 ──
   await page.click('#explorer-device-btn');
   await page.waitForFunction(
-    () => document.querySelectorAll('.explorer-dev-anchor .dev-item').length >= 3,
+    () => document.querySelectorAll('.dev-menu.explorer-dev-menu .dev-item').length >= 3,
     null, { timeout: 5000 },
   );
-  await page.click('.explorer-dev-anchor .dev-item:has-text("Studio-M2")');
+  await page.click('.dev-menu.explorer-dev-menu .dev-item:has-text("Studio-M2")');
   await page.waitForSelector('.explorer-item[data-path="docs"]', { timeout: 5000 });
   // chip 同步先画 deviceId、花名册名异步补写——等读数稳定再断言显示名。
   await page.waitForFunction(

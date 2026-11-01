@@ -167,9 +167,12 @@ html[data-theme="light"] {
 }
 
 /* slash/mention 下拉（input.css 保留几何/列表行；F1 材质换血 = 悬浮面板归
-   面级档。原 --g2-fab-* 消费随族退役，设计稿 §4 遗产处置表） */
+   面级档。原 --g2-fab-* 消费随族退役，设计稿 §4 遗产处置表）。文件浏览器
+   设备菜单（弹层浮出批 2026-11-01）同档在册：body 级 fixed 浮层，几何/层带
+   在 split.css（.dev-menu 基类的私有阴影字面量由 --cv-shadow 单源覆盖）。 */
 #slash-dropdown,
-#mention-dropdown {
+#mention-dropdown,
+.dev-menu.explorer-dev-menu {
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
   backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
@@ -501,6 +504,7 @@ body.mobile-layer #g2-edge-fade {
   .ask-input,
   #slash-dropdown,
   #mention-dropdown,
+  .dev-menu.explorer-dev-menu,
   .canvas-source-toggle,
   .canvas-ref-select,
   .canvas-find-toggle,
@@ -534,6 +538,7 @@ html.no-backdrop .wsp-panel,
 html.no-backdrop .ask-input,
 html.no-backdrop #slash-dropdown,
 html.no-backdrop #mention-dropdown,
+html.no-backdrop .dev-menu.explorer-dev-menu,
 html.no-backdrop .canvas-source-toggle,
 html.no-backdrop .canvas-ref-select,
 html.no-backdrop .canvas-find-toggle,
