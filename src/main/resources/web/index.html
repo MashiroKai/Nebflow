@@ -173,6 +173,62 @@
       border: 1px solid #d8d9dd; background: transparent; color: inherit;
     }
     .nf-boot-card-actions button:hover { border-color: #b9bcc2; }
+    /* 本盒的 display:flex 会压过 UA 的 [hidden]{display:none}（作者声明胜 UA 默认）
+       ——入场卡批实拍抓到空失败卡在慢载窗裸浮。此条恢复 hidden 语义（展示仍由
+       showFailedFace 的 card.hidden=false 驱动）。 */
+    .nf-boot-card[hidden] { display: none; }
+    /* ── 入场卡（接管/入场同族批 2026-11-01 作者令③）：进控制台的加载期整面
+       同族卡片覆盖 + 真实加载项清单——样式表/界面模块/连接主机/同步数据四项，
+       进度只由各阶段真实信号驱动（window.__nfEntry.mark），无假进度；全部就绪
+       才揭幕（crossfade 让位给已渲染完整的壳）。材质 = 接管模态卡同族配方
+       （毛玻璃 + 1px 边 + 柔影，radius 18 同档）；此面必须零请求依赖（样式面
+       缺席时它就是唯一的遮羞面），故玻璃配方内联自持、双主题自持。 ── */
+    .nf-entry-card {
+      display: none; /* 门脚本在 CSS 窗落定后置 data-entry="on" 才显——纯 CSS 窗保持现状（环 + 空门） */
+      flex-direction: column; align-items: center; gap: 14px;
+      width: 320px; max-width: 86vw; padding: 26px 28px 22px; text-align: left;
+      background: rgba(255, 255, 255, 0.72);
+      -webkit-backdrop-filter: blur(24px) saturate(1.15);
+      backdrop-filter: blur(24px) saturate(1.15);
+      border: 1px solid #e0e1e4; border-radius: 18px;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.25),
+        0 2px 8px rgba(0, 0, 0, 0.04),
+        0 8px 24px rgba(0, 0, 0, 0.08);
+      color: #1b1e26;
+    }
+    #nf-boot-gate[data-entry="on"] .nf-entry-card { display: flex; }
+    #nf-boot-gate[data-entry="on"] .nf-boot-ring { display: none; } /* 清单自带活动环，门环退役 */
+    #nf-boot-gate[data-state="failed"] .nf-entry-card { display: none; } /* 失败面换失败卡 */
+    .nf-entry-title { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; text-align: center; }
+    .nf-entry-items { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+    .nf-entry-item {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 13px; line-height: 1.5; color: #6a737d;
+      transition: color 0.2s ease;
+    }
+    .nf-entry-item[data-state="active"] { color: #1b1e26; }
+    .nf-entry-dot {
+      width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; box-sizing: border-box;
+      border: 2px solid rgba(0, 0, 0, 0.18);
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 10px; line-height: 1; font-weight: 600;
+    }
+    .nf-entry-item[data-state="active"] .nf-entry-dot {
+      border-color: rgba(91, 127, 191, 0.35); border-top-color: transparent;
+      animation: nf-boot-spin 0.8s linear infinite;
+    }
+    .nf-entry-item[data-state="done"] .nf-entry-dot { border-color: rgba(91, 127, 191, 0.9); }
+    .nf-entry-item[data-state="done"] .nf-entry-dot::after { content: '✓'; color: rgb(91, 127, 191); }
+    .nf-entry-item[data-state="fail"] { color: #1b1e26; }
+    .nf-entry-item[data-state="fail"] .nf-entry-dot { border-color: rgba(209, 36, 47, 0.65); }
+    .nf-entry-item[data-state="fail"] .nf-entry-dot::after { content: '×'; color: #d1242f; font-size: 11px; }
+    /* 揭幕（就绪门槛过后的 crossfade）：body 先行可见（揭的是已就绪的壳），
+       门面整体淡出让位；纯 CSS 窗（卡窗脸）不走本机制，行为不变。 */
+    #nf-boot-gate { transition: opacity 0.22s ease; }
+    html.nf-boot-reveal body { visibility: visible; }
+    html.nf-boot-reveal #nf-boot-gate { opacity: 0; }
+    @media (prefers-reduced-motion: reduce) { #nf-boot-gate { transition: none; } }
     /* 暗色覆写必须在基态之后（同特异性序胜）——放本块尾。 */
     @media (prefers-color-scheme: dark) {
       #nf-boot-gate { background: #141519; }
@@ -181,6 +237,21 @@
       .nf-boot-card-actions button { border-color: #3a3e46; }
       .nf-boot-card-actions button:hover { border-color: #4c525c; }
       .nf-boot-ring { border-color: rgba(255, 255, 255, 0.3); border-top-color: transparent; }
+      .nf-entry-card {
+        background: rgba(30, 32, 37, 0.82); border-color: #33363d; color: #e6e8ec;
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.04),
+          0 2px 8px rgba(0, 0, 0, 0.2),
+          0 8px 24px rgba(0, 0, 0, 0.35);
+      }
+      .nf-entry-item { color: #9aa0a8; }
+      .nf-entry-item[data-state="active"], .nf-entry-item[data-state="fail"] { color: #e6e8ec; }
+      .nf-entry-dot { border-color: rgba(255, 255, 255, 0.25); }
+      .nf-entry-item[data-state="active"] .nf-entry-dot {
+        border-color: rgba(120, 155, 220, 0.55); border-top-color: transparent;
+      }
+      .nf-entry-item[data-state="done"] .nf-entry-dot { border-color: rgba(120, 155, 220, 0.9); }
+      .nf-entry-item[data-state="done"] .nf-entry-dot::after { color: rgb(120, 155, 220); }
     }
   </style>
   <script>
@@ -201,6 +272,159 @@
       // 与卡窗静态看门狗同档预算：判定「永远到不了」，不是性能超时。
       var WATCHDOG_MS = 15000;
       var watchdog = null;
+
+      // ── 入场卡（接管/入场同族批 2026-11-01 作者令③）────────────────────────
+      // 进控制台的加载期整面同族卡片 + 真实加载项清单（作者令：进度走真实加载项
+      // 不是假进度条，就绪才揭幕）。四项：css（本门脚本自己的三态判定）/ ui（
+      // main.js 模块图+壳装配完成）/ host（ws.js 首次握手成功；握手被拒 = fail 腿
+      // 立即揭幕让位给登录/重连面）/ data（首帧 configData 落地）。信号源在
+      // ws.js / main.js，经 window.__nfEntry.mark 回报——本脚本零请求依赖不变，
+      // API 先于一切模块存在，回报点只做 typeof 防御。
+      // 卡窗脸不进延长门（其就绪语义不同、自带静态看门狗）：CSS 窗落定即摘门，
+      // 行为与接管批之前逐字一致。
+      var isCardWindow = root.classList.contains('card-window-boot');
+      var failedHard = false; // CSS 失败面已落（fail()）：一票否决入场揭幕——裸渲染批
+                              // 「任一样式失败 ⇒ 永不摘门」的铁律不被 fail 腿击穿
+                              //（CSS 全断时模块图仍会跑、ws 仍会握手被拒）。
+      var entry = {
+        order: ['css', 'ui', 'host', 'data'],
+        states: {},     // id -> 'pending'|'active'|'done'|'fail'
+        armed: false,   // 入场面已建（DOMContentLoaded 后）
+        revealed: false,
+        watchdog: null
+      };
+      var dataGrace = null; // 数据宽限定时器（见 maybeReveal）
+      // 面文案随既存 locale 偏好（品牌命名空间键优先，nebflow_ 旧拼法回退——
+      // modal.js 顶部经典脚本同款读法）。
+      var loc = 'zh-CN';
+      try {
+        var lb = (window.__BRAND__ && window.__BRAND__.lowerName) || 'nebflow';
+        loc = localStorage.getItem(lb + '_locale') || localStorage.getItem('nebflow_locale') || 'zh-CN';
+      } catch (e) { /* 存储不可用：中文缺省 */ }
+      var zh = String(loc).indexOf('zh') === 0;
+      var T = zh ? {
+        cardTitle: '正在进入控制台',
+        ready: '就绪',
+        items: {
+          css:  ['样式表', '正在准备样式…'],
+          ui:   ['界面模块', '正在装载界面…'],
+          host: ['连接主机', '正在检查主机…'],
+          data: ['同步数据', '正在同步数据…']
+        }
+      } : {
+        cardTitle: 'Entering console',
+        ready: 'Ready',
+        items: {
+          css:  ['Styles', 'Preparing styles…'],
+          ui:   ['Interface', 'Loading interface…'],
+          host: ['Checking host', 'Checking host…'],
+          data: ['Syncing data', 'Syncing data…']
+        }
+      };
+
+      function entryRows() {
+        var face = document.getElementById('nf-boot-gate');
+        if (!face) return null;
+        var items = face.querySelector('.nf-entry-items');
+        var title = face.querySelector('.nf-entry-title');
+        if (!items || !title) return null;
+        return { face: face, items: items, title: title };
+      }
+
+      function paintEntry() {
+        var el = entryRows();
+        if (!el) return;
+        // 活动项 = 顺序面上第一个未完成项；标题跟随它的动作文案（「正在检查主机…」
+        // 即入场族同名位的出处），全部完成 = 就绪。活动行 data-state=active
+        // （与样式表的 active 强调位同源——先行项之后仍未到的行保持 pending）。
+        var active = null;
+        for (var i = 0; i < entry.order.length; i++) {
+          var id = entry.order[i];
+          var st = entry.states[id] || 'pending';
+          var row = el.items.querySelector('[data-item="' + id + '"]');
+          if (!active && st !== 'done' && st !== 'fail') { active = id; st = 'active'; }
+          if (row) row.setAttribute('data-state', st);
+        }
+        el.title.textContent = active ? T.items[active][1] : T.ready;
+      }
+
+      function buildEntryFace() {
+        if (entry.revealed) return; // 揭幕先到（如握手在 DCL 前被拒）：面已收走，零补画零看门狗
+        var el = entryRows();
+        if (!el) return;
+        el.face.setAttribute('data-entry', 'on');
+        el.title.textContent = T.cardTitle;
+        var frag = document.createDocumentFragment();
+        for (var i = 0; i < entry.order.length; i++) {
+          var id = entry.order[i];
+          var row = document.createElement('div');
+          row.className = 'nf-entry-item';
+          row.setAttribute('data-item', id);
+          row.setAttribute('data-state', 'pending');
+          var dot = document.createElement('span');
+          dot.className = 'nf-entry-dot';
+          dot.setAttribute('aria-hidden', 'true');
+          var label = document.createElement('span');
+          label.className = 'nf-entry-label';
+          label.textContent = T.items[id][0];
+          row.appendChild(dot);
+          row.appendChild(label);
+          frag.appendChild(row);
+        }
+        el.items.appendChild(frag);
+        entry.armed = true;
+        paintEntry();
+        // 安全阀：入场项 20s 仍未齐（TCP 黑洞/挂死握手形状）——揭幕让位给应用
+        // 自身的活性面（conn-banner/登录门），绝不无限期扣住入口。
+        entry.watchdog = setTimeout(function () { reveal(true); }, 20000);
+      }
+
+      function reveal(fade) {
+        if (entry.revealed || failedHard) return;
+        entry.revealed = true;
+        if (entry.watchdog !== null) { clearTimeout(entry.watchdog); entry.watchdog = null; }
+        if (dataGrace !== null) { clearTimeout(dataGrace); dataGrace = null; }
+        var face = document.getElementById('nf-boot-gate');
+        var finish = function () {
+          root.classList.remove('nf-boot-gate');
+          root.classList.remove('nf-boot-reveal');
+          if (face) face.style.display = 'none';
+        };
+        if (fade && face) {
+          // crossfade：body 先行可见（揭的是已就绪/已让位的壳），门面淡出后收走。
+          face.setAttribute('data-state', 'ready');
+          root.classList.add('nf-boot-reveal');
+          setTimeout(finish, 260);
+        } else finish();
+      }
+
+      function maybeReveal() {
+        if (entry.revealed || !entry.armed) return;
+        var missing = [];
+        for (var i = 0; i < entry.order.length; i++) {
+          if (entry.states[entry.order[i]] !== 'done') missing.push(entry.order[i]);
+        }
+        if (!missing.length) { reveal(true); return; }
+        // 数据宽限（css/ui/host 齐、唯 data 未到）：3s 有界等待后让位——真实引擎
+        // 在 connect 即推 configData（生产形态零感知）；替身/病态服务端不扣入口。
+        if (missing.length === 1 && missing[0] === 'data' && dataGrace === null) {
+          dataGrace = setTimeout(function () { dataGrace = null; reveal(true); }, 3000);
+        }
+      }
+
+      function markEntry(id, state) {
+        if (entry.revealed || failedHard) return; // 已揭幕 / CSS 失败面：迟到回报零副作用
+        if (entry.order.indexOf(id) < 0) return;
+        entry.states[id] = state;
+        try { (window.__nfEntryState = window.__nfEntryState || {})[id] = state; } catch (e) { /* 永不抛 */ }
+        paintEntry();
+        // fail 腿（host 握手被拒 = 入场无法继续）：立即揭幕让位给登录/重连面。
+        if (state === 'fail' && id !== 'css') reveal(true);
+        else maybeReveal();
+      }
+
+      // 信号回报单缝（ws.js / main.js 消费点只做 typeof 防御调用）。
+      window.__nfEntry = { mark: markEntry };
 
       // 三态判定（逐链终态性自知）：本脚本被**script-blocking 表**（媒体条件
       // 命中或无媒体条件的 render-blocking 表）阻塞——执行到此处时这类表必已
@@ -231,16 +455,30 @@
         if (watchdog !== null) { clearTimeout(watchdog); watchdog = null; }
       }
 
+      // CSS 窗落定（全 ok）——接管/入场同族批改语义：主脸不再就地摘门，转入场
+      // 延长门（清单四项全 done 才揭幕）；卡窗脸保持现行为（就地摘门）。原「摘门」
+      // 职责收进 reveal()/本函数，失败路径（fail → 失败面、永不揭幕）逐字不变。
       function lift() {
         if (done) return;
         done = true;
         cleanup();
-        root.classList.remove('nf-boot-gate');
+        if (isCardWindow) {
+          // 卡窗脸：就绪语义不同（canvas.js 自带引导态面 + 静态看门狗），CSS 窗
+          // 即门——接管批之前的行为逐字保留（同任务 add+lift，零闪现不受入场卡影响）。
+          root.classList.remove('nf-boot-gate');
+          return;
+        }
+        markEntry('css', 'done');
+        // 面元素在 body 首元素——CSS 窗落定可能先于 body 解析完成，两拍收口：
+        // 已解析即建面，否则挂 DOMContentLoaded（此窗内信号先到的，建面后补画）。
+        if (document.getElementById('nf-boot-gate')) buildEntryFace();
+        else document.addEventListener('DOMContentLoaded', buildEntryFace, { once: true });
       }
 
       function fail() {
         if (done) return;
         done = true;
+        failedHard = true; // 一票否决入场揭幕（见上）——失败面永在，绝不回落裸壳
         window.__nfBootGateFailed = true; // 卡窗静态看门狗去重锚（下方）
         cleanup();
         // error 可在 body 解析完成前到达（首帧前失败）——面元素在 body 首元素，
@@ -320,9 +558,16 @@
 <body>
   <!-- 偶发裸渲染修复批（2026-10-30）：加载/失败引导面，body 首元素。常态
        display:none（html.nf-boot-gate 下才显）；纯 CSS 环 + 文本卡，零资产
-       依赖——它报告的正是样式面缺席，自身绝不能再依赖任何请求。 -->
+       依赖——它报告的正是样式面缺席，自身绝不能再依赖任何请求。
+       接管/入场同族批（2026-11-01 作者令③）追加 .nf-entry-card：主脸的入场
+       延长门面（真实加载项清单 + 就绪揭幕，门脚本置 data-entry="on" 才显；
+       卡窗脸与 CSS 窗不显，行为不变）。 -->
   <div id="nf-boot-gate" role="status" aria-live="polite">
     <div class="nf-boot-ring" aria-hidden="true"></div>
+    <div class="nf-entry-card" role="status" aria-live="polite">
+      <div class="nf-entry-title"></div>
+      <div class="nf-entry-items"></div>
+    </div>
     <div class="nf-boot-card" hidden>
       <div class="nf-boot-card-title"></div>
       <div class="nf-boot-card-hint"></div>
@@ -768,14 +1013,17 @@
       </div>
     </div>
     <!-- 控制台单实例接管模态（2026-10-27 批；四修批 2026-10-29：极简卡 + 毛玻璃背景
-         + 退出直达官网个人主页）。语义与既有模态族不同——Escape/遮罩点击不关闭
+         + 退出直达官网个人主页；接管/入场同族批 2026-11-01 作者令②：按钮语换代
+         g2 药丸族（次级白玻璃药丸 / 主动作墨玻璃药丸），卡面与入场加载卡同族——
+         同材质/版式/按钮语）。语义与既有模态族不同——Escape/遮罩点击不关闭
          （互斥权的裁决点不可误关）。渲染单点 = takeoverModal.js。 -->
     <div id="takeover-box">
       <div id="takeover-title">Console opened elsewhere</div>
       <div id="takeover-msg"></div>
+      <div id="takeover-error" role="alert" hidden></div>
       <div id="takeover-actions">
-        <button id="takeover-exit">Exit</button>
-        <button id="takeover-retake">Retake Control</button>
+        <button id="takeover-exit" class="g2-pill">Exit</button>
+        <button id="takeover-retake" class="g2-pill g2-pill-primary">Retake Control</button>
       </div>
     </div>
   </div>

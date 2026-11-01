@@ -394,17 +394,22 @@
 }
 
 /* ---------- Console Takeover Modal（控制台单实例批 2026-10-27；四修批
-   2026-10-29 作者令）：极简口径对齐 errorfrozen-dialog-minimal 批——一行标题 +
-   一行说明 + 操作 chip 行（skip-freeze-btn 同族：无底无框，色只落在字上，
-   主操作 sapphire 字，次级中性字，hover 才起淡底）。语义差异面不变：
+   2026-10-29 作者令；接管/入场同族批 2026-11-01 作者令②）──────────────────
+   同族重做（作者令②「参照首次进入控制台的跳转卡同族——同材质/版式/按钮语」）：
+   · 材质：毛玻璃卡不变（模态族共享 --glass-* 卡 + 顶缘折射线），背景毛玻璃
+     模糊（.takeover-blur）维持四修批裁定；
+   · 版式：与入场加载卡同档——标题 15/600 + 正文 13 + 动作行右对齐（radius 18
+     同档、内距升 24px 档）；
+   · 按钮语：g2 药丸族换代（liquid-glass.css 单源材质）——次级【退出】白玻璃
+     药丸 .g2-pill、主动作【重新接管】墨玻璃药丸 .g2-pill-primary；旧「无底
+     无框 chip」口径随本批退役。入场加载卡（index.html 门脚本）为同族第三件。
+   语义差异面不变：
    · 强制二选一——本盒在场时 modal.js 的 Escape/遮罩点击收口路径必须绕行
-     （modal.js 按 DOM 在场判别），不得被全局关闭钩子误收。
-   · 毛玻璃背景 = overlay 的 .takeover-blur 态（--cv-* 玻璃族同源材质，
-     takeoverModal.js 随弹窗开关）。 */
+     （modal.js 按 DOM 在场判别），不得被全局关闭钩子误收。 */
 #takeover-box {
   border-radius: 18px;
-  padding: 20px 22px;
-  width: 320px;
+  padding: 24px;
+  width: 360px;
   display: none;
   animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
@@ -412,47 +417,45 @@
   font-size: 15px;
   font-weight: 600;
   color: var(--color-frame-text-bright);
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 #takeover-msg {
   font-size: 13px;
   color: var(--color-frame-text-muted);
-  line-height: 1.5;
+  line-height: 1.55;
   margin-bottom: 16px;
   word-break: break-word;
 }
+/* 卡面错误行（接管必达批①「失败要给明确报错不许静默」）：S9 同族——中性
+   正文 + 红由左缘 2px 描边 + 淡红底承载（onboarding-error 同配方）。 */
+#takeover-error {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--status-word);
+  word-break: break-word;
+  margin: -6px 0 16px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
+  border-left: 2px solid var(--status-error-icon);
+}
+#takeover-error[hidden] { display: none; }
 #takeover-actions {
   display: flex;
-  gap: 4px;
+  gap: 10px;
   justify-content: flex-end;
   align-items: center;
 }
-#takeover-actions button {
-  padding: 6px 12px;
-  border: none;
-  border-radius: 6px;
+/* 按钮语 = g2 药丸族（材质/形态单源 liquid-glass.css；本块只管动作行的
+   部件级微调——药丸在窄卡内的档位与字色）。主动作墨玻璃药丸的字色随墨族
+   token（.g2-pill-primary 自带），次级白玻璃药丸字随面板字档。 */
+#takeover-actions .g2-pill {
+  height: 34px;
+  padding: 0 18px;
   font-size: 13px;
-  font-weight: 500;
-  font-family: inherit;
-  background: transparent;
-  color: var(--color-frame-text-muted);
-  cursor: pointer;
-  transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
-    color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
-#takeover-actions button:hover:not(:disabled) {
-  background: var(--color-frame-hover);
-}
-/* 主动作 = 【重新接管】：sapphire 字（唯一主色载体）。 */
-#takeover-retake {
-  color: rgb(var(--sapphire));
-}
-#takeover-retake:hover:not(:disabled) {
-  background: rgb(var(--sapphire) / 0.12);
-}
-#takeover-actions button:disabled {
+#takeover-actions .g2-pill:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
 }
 
 /* 毛玻璃背景（四修批 2026-10-29 作者令）：被顶出弹窗在场时整页模糊——

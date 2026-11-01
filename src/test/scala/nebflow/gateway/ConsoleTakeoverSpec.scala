@@ -82,6 +82,21 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
       assertEquals(ownerAfterResume, Some(sidA))
       assertEquals(typesAfterResume, Nil, "同会话重连静默续位——抖动误踢结构上不可表达")
 
+  // ── A3b 连接账按键隔离（接管必达批 2026-11-01 作者令①的账本面根因回归钉）：
+  // 任一会话断连只摘自己的键，其他会话的连接账原样保留（旧实现 m.collect 把
+  // 未命中键整键丢弃 ⇒ 反向踢读空集 ⇒ 旧端无感继续看 =「重新接管不一定生效」）。
+
+  test("A3b a session's disconnect must not wipe other sessions' conn ledger (reverse-kick targets survive)"):
+    for (reg, _) <- fixture()
+      _ <- reg.onConnect(sidA, "conn-a1")
+      _ <- reg.onConnect(sidB, "conn-b1")
+      _ <- reg.onDisconnect("conn-a1") // A 掉线（其键应整键摘除）
+      bConns <- reg.connCount(sidB)
+      aConns <- reg.connCount(sidA)
+    yield
+      assertEquals(bConns, 1, "B 的连接账不受 A 断连影响（反向踢目标必须存活）")
+      assertEquals(aConns, 0, "A 自身键照常摘净")
+
   // ── A4 重新接管反向踢 ──
 
   test("A4 retake flips ownership back and reverse-kicks the new owner"):
@@ -144,6 +159,56 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
       assertEquals(types, Nil)
       assertEquals(count, 0, "连接账已摘净")
 
+  // ── A4b HTTP 腿（接管必达批 2026-11-01 作者令①）：retakeBySession 同核翻位+反向踢 ──
+
+  test("A4b http-leg retakeBySession flips ownership and reverse-kicks (same core as ws leg)"):
+    for (reg, sent) <- fixture()
+      _ <- reg.onConnect(sidA, "conn-a1")
+      _ <- reg.onConnect(sidB, "conn-b1") // B 接管，A 落 superseded
+      outcome <- reg.retakeBySession(sidA)
+      ownerNow <- reg.owner
+      bFrames <- framesTo(sent, "conn-b1")
+    yield
+      assert(outcome == ConsoleTakeover.RetakeOutcome.Ok(1), s"ok 且反向踢送达 1 连接（实际 $outcome）")
+      assertEquals(ownerNow, Some(sidA), "HTTP 腿与 ws 腿同核：owner 翻回")
+      assertEquals(
+        bFrames.map(_.hcursor.downField("type").as[String].getOrElse("?")),
+        List("takeover"),
+        "反向踢：B 的活跃连接收 takeover 帧"
+      )
+
+  // ── A4c HTTP 腿必达语义：本会话零活连接（ws 死/僵尸/重连窗）照样夺回 ──
+
+  test("A4c http-leg retake lands even with NO live conn for the retaking session"):
+    for (reg, sent) <- fixture()
+      _ <- reg.onConnect(sidA, "conn-a1")
+      _ <- reg.onConnect(sidB, "conn-b1") // B 接管
+      _ <- reg.onDisconnect("conn-a1") // A 的 ws 死了（后台标签/僵尸回收）
+      outcome <- reg.retakeBySession(sidA) // 页面还在（HTTP 同源可达）⇒ 必达
+      ownerNow <- reg.owner
+      bFrames <- framesTo(sent, "conn-b1")
+    yield
+      assert(outcome == ConsoleTakeover.RetakeOutcome.Ok(1), s"ok（实际 $outcome）")
+      assertEquals(ownerNow, Some(sidA), "ws 死 ≠ 夺不回：所有权翻回（帧腿结构性缺口的本修）")
+      assertEquals(
+        bFrames.map(_.hcursor.downField("type").as[String].getOrElse("?")),
+        List("takeover"),
+        "旧主活连接照常被反向踢"
+      )
+
+  // ── A4d already-owner 竞态腿：幂等成功零帧 ──
+
+  test("A4d http-leg retake when already owner is idempotent Ok(0) with zero frames"):
+    for (reg, sent) <- fixture()
+      _ <- reg.onConnect(sidA, "conn-a1") // A 即 owner
+      outcome <- reg.retakeBySession(sidA)
+      ownerNow <- reg.owner
+      types <- typesOf(sent)
+    yield
+      assert(outcome == ConsoleTakeover.RetakeOutcome.Ok(0), s"幂等 ok、零踢（实际 $outcome）")
+      assertEquals(ownerNow, Some(sidA))
+      assertEquals(types, Nil, "already-owner：零帧")
+
   // ── A7 总闸关闭 = 现行为零漂移 ──
 
   test("A7 master switch off: registry is a full no-op (no claims, no frames)"):
@@ -155,10 +220,18 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
       ownerNow <- reg.owner
       types <- typesOf(sent)
       replyList <- replies.get
+      // HTTP 腿同闸：Disabled 裁决、零记账零帧。
+      httpOutcome <- reg.retakeBySession(sidA)
+      httpOwner <- reg.owner
+      httpTypes <- typesOf(sent)
     yield
       assertEquals(ownerNow, None, "总闸关闭不记账")
       assertEquals(types, Nil, "零帧")
       assertEquals(replyList, Nil, "retake 亦 no-op（路由侧关闭时根本不拦截，双保险）")
+      assertEquals(httpOutcome, ConsoleTakeover.RetakeOutcome.Disabled: ConsoleTakeover.RetakeOutcome,
+        "总闸关闭 ⇒ HTTP 腿 Disabled")
+      assertEquals(httpOwner, None)
+      assertEquals(httpTypes, Nil, "HTTP 腿零帧零记账")
 
   // ── A8 Bearer 直通 + 帧形/判别函数钉 ──
 

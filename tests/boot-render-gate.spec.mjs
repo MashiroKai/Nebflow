@@ -89,7 +89,12 @@ function timelineInit(delayedMs) {
   };
   arm();
   document.addEventListener('load', (e) => {
-    if (e.target && e.target.tagName === 'LINK') log('link-load');
+    if (e.target && e.target.tagName === 'LINK') {
+      const media = e.target.getAttribute('media') || '';
+      // 媒体条件表（highlight 双主题对）不阻塞脚本——其 load 可能晚于门类落定，
+      // 带上 media 供 T3 的「script-blocking 收口」过滤（无 media = 阻塞表）。
+      log(media ? `link-load media=${media}` : 'link-load');
+    }
   }, true);
   document.addEventListener('error', (e) => {
     if (e.target && e.target.tagName === 'LINK') log('link-ERROR');
@@ -199,24 +204,40 @@ async function run() {
       html.indexOf('.nf-boot-ring') > 0 && html.indexOf('#nf-boot-gate[data-state="failed"] .nf-boot-ring') > 0);
   }
 
-  // ── T1 正常冷载（无注入）：首帧前摘门（时间线首样即未门态）────────────
+  // ── T1 正常冷载（无注入）：CSS 窗落定后转入场延长门（接管/入场同族批
+  //    2026-11-01 作者令③），真实加载项齐了才揭幕——本静态替身无 WS，握手
+  //    被拒走 fail 腿立即揭幕（fail ≠ 失败面：CSS 失败才失败面）。原「首帧前
+  //    摘门/零闪现」钉随入场卡语义退役（主脸现在合法在场一段入场窗）。
   {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
     await page.addInitScript(timelineInit, 0);
     await page.goto(BASE + '/', { waitUntil: 'load' });
+    // 等揭幕（host-fail 腿：握手被拒即 reveal，预算放宽到 12s）。
+    let entryFaceSeen = false;
+    const t0 = Date.now();
+    while (Date.now() - t0 < 12000) {
+      const st = await page.evaluate(() => {
+        const f = document.getElementById('nf-boot-gate');
+        return {
+          gated: document.documentElement.classList.contains('nf-boot-gate'),
+          entry: !!f && f.getAttribute('data-entry') === 'on',
+          rows: f ? f.querySelectorAll('.nf-entry-item').length : 0,
+        };
+      }).catch(() => null);
+      if (st && st.entry && st.rows === 4) entryFaceSeen = true;
+      if (st && !st.gated) break;
+      await new Promise((r) => setTimeout(r, 120));
+    }
     const s = await gateSnapshot(page);
-    ok('T1 门已摘（nf-boot-gate 移除）', !s.gated, `faceShown=${s.faceShown}`);
-    // 零闪现的强语义：门态从未存活过一个微任务检查点（add+lift 同任务完成 ⇒
-    // MutationObserver 合并不记录）⇒ 从未可被绘制。若有 class 记录反而 FAIL。
-    ok('T1 门态未存活过任务边界（不可绘制 = 零闪现钉）',
-      !s.tl.some((l) => l.startsWith('class=') && l.includes('nf-boot-gate')),
-      s.tl.filter((l) => l.startsWith('class=')).join(' | ') || 'no-class-mutations');
+    ok('T1 门已摘（入场项收口/fail 腿揭幕）', !s.gated, `faceShown=${s.faceShown}`);
+    ok('T1 入场卡曾真实在场（四项清单 + data-entry=on）', entryFaceSeen,
+      s.tl.filter((l) => l.startsWith('face=')).join(' | ') || 'no-face-marks');
     ok('T1 工作台壳可见（sidebar/main/activity-bar/canvas）',
       s.sidebarVis === 'visible' && s.mainVis === 'visible' && s.barVis === 'visible' && s.canvasVis === 'visible');
     ok('T1 全部样式表有规则体（零缺席）', s.sheetsOk === s.sheetsTotal && s.sheetsTotal >= 10,
       `${s.sheetsOk}/${s.sheetsTotal}`);
-    ok('T1 无失败面残留', !s.failed && !s.faceShown);
+    ok('T1 无失败面残留（fail 腿揭幕 ≠ CSS 失败面）', !s.failed && !s.flag);
     await page.screenshot({ path: join(SHOTS, 't1-normal-lifted.png') });
     await ctx.close();
   }
@@ -276,18 +297,40 @@ async function run() {
       });
     });
     await page.goto(BASE + '/', { waitUntil: 'load' });
+    // 等揭幕（无 WS 替身 ⇒ host-fail 腿，预算 12s），再做终态快照。
+    await (async () => {
+      const t0 = Date.now();
+      for (;;) {
+        const gated = await page.evaluate(() => document.documentElement.classList.contains('nf-boot-gate')).catch(() => false);
+        if (!gated || Date.now() - t0 > 12000) return;
+        await new Promise((r) => setTimeout(r, 120));
+      }
+    })();
     const s = await gateSnapshot(page);
-    const lastLoad = s.tl.filter((l) => l.includes('link-load')).pop() || '';
+    // script-blocking 收口锚 = 无 media 表（阻塞族）的末条 load——媒体条件表
+    // （highlight 双主题对）不阻塞脚本，其迟到 load 不参与本判定。
+    const lastLoadTs = (() => {
+      const loads = s.tl.filter((l) => l.includes('link-load') && !l.includes('media='));
+      return loads.length ? parseInt(loads[loads.length - 1], 10) : -1;
+    })();
     // 纯慢路径语义（script-blocking）：门脚本自身被未决表阻塞，门类直至 CSS
-    // 全 settle 才落、同刻摘——同任务 add+lift 无 JS 可观测痕（这正是零闪现
-    // 的机理）；裸露由浏览器首帧阻塞天然兜底（白窗非裸）。本腿钉「慢 ≠ 败」
-    // 与「全体 settle」。
-    ok('T3 纯慢路径门态不中途可见（脚本阻塞语义，无半途门样本）',
-      !s.samples.some((l) => l.includes('gated=true')),
-      `first=${s.samples[0] || ''}`);
+    // 全 settle 才落（此后转入场延长门——接管/入场同族批，门类合法在场）。
+    // 本腿钉「慢 ≠ 败」与「门类不早于全体 settle」：任何 gated=true 样本不得
+    // 早于无 media（阻塞族）末条 load 减事件派发容差（表就绪与 load 事件派发
+    // 是两个排队任务，样本定时器可落在两者之间——800ms 容差只豁免这层抖动，
+    // 仍可判「慢载窗中途（>800ms 前置）门态可见」的真违例）。
+    const EARLY_GATE_TOLERANCE_MS = 800;
+    const earlyGate = s.samples.some((l) => {
+      const m = l.match(/^(\d+) gated=true/);
+      return m && parseInt(m[1], 10) < lastLoadTs - EARLY_GATE_TOLERANCE_MS;
+    });
+    ok('T3 纯慢路径门态不早于全体 settle（脚本阻塞语义，无早落门样本）',
+      !earlyGate && lastLoadTs >= 0,
+      `first=${s.samples[0] || ''}, lastLoad@${lastLoadTs}, ` +
+        s.samples.filter((l) => l.includes('gated=true')).join(' ; '));
     ok('T3 全体样式 settle（末条 load 在场）且终态摘门、样式全在场',
-      lastLoad !== '' && !s.gated && s.sheetsOk === s.sheetsTotal,
-      `${s.sheetsOk}/${s.sheetsTotal}, last-load@${lastLoad.split(' ')[0]}`);
+      lastLoadTs >= 0 && !s.gated && s.sheetsOk === s.sheetsTotal,
+      `${s.sheetsOk}/${s.sheetsTotal}, last-load@${lastLoadTs}`);
     ok('T3 全程无失败态（慢 ≠ 败）', !s.samples.some((l) => l.includes('state=failed')) && !s.failed);
     ok('T3 放行后壳可见', s.sidebarVis === 'visible');
     await ctx.close();

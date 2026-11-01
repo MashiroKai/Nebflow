@@ -29,8 +29,14 @@ import nebflow.shared.{Branding, NebflowLogger}
  * == claim 规则（互斥权写入点只有两个） ==
  *   1. fresh claim：owner==None ⇒ 即位；owner==他会话 且 本会话 ∉ pastOwners ⇒
  *      接管（owner 翻位 + 向旧主全部活跃连接推 `takeover` 帧，尽力送达）。
- *   2. retake：被踢面用户点【重新接管】（`takeoverRetake` 帧）⇒ owner 翻回 +
- *      向前主活跃连接推帧（反向踢）+ 回 `takeoverResult(ok)`。
+ *   2. retake：被踢面用户点【重新接管】⇒ owner 翻回 + 向前主活跃连接推帧（反向踢）
+ *      + 回执。两腿同核（[[ConsoleTakeover.claimAndReverseKick]] 单源）：
+ *        · ws 腿：`takeoverRetake` 帧（WebSocketRoutes 收流管拦截）——回执经本连接
+ *          出站队列（连接活时零跳）；
+ *        · HTTP 腿（接管必达批 2026-11-01 作者令①）：`POST /api/takeover/retake`
+ *          （[[ConsoleTakeoverRoutes]]，session-rail only）——回执同步随 HTTP 响应
+ *          必达，不依赖本会话 ws 存活（死连接/僵尸/重连窗口上的帧腿结构性缺口，
+ *          「重新接管不一定成功」的根因面）。
  * 旧主回连（owner==他会话 且 本会话 ∈ pastOwners）**不自动反抢**：回连是机器自动
  * 行为（休眠唤醒/抖动重连），不携带用户意图；若回连即反抢，则 B 操作中 A 的后台
  * 标签醒来即可隐身夺权——正是要防的误踢。回连方落被踢面（本连接收 `takeover`
@@ -154,11 +160,21 @@ final class ConsoleTakeover(
   /**
    * 连接出账（`onFinalize` 与 `wsHub.unregister` 同拍——关闭/EOF/异常/#960 判死回收
    * 四途同归）。只摘连接账：**掉线 ≠ 让位**，owner 不动、零出帧（僵尸回收不触发提示）。
+   *
+   * 接管必达批（2026-11-01 作者令①）修账：原实现 `m.collect { case (sid, ids) if
+   * ids.contains(connId) => … }` 的 collect 只保留命中键——**任一会话断连都会把
+   * 其他会话的连接账整键抹掉**（B 活着但账没了）⇒ 之后 fresh-claim/retake 的反向
+   * 踢读 `connsRef(旧主)` 恒空集 ⇒ 旧端收不到 takeover 帧、页面毫无感知地继续看
+   * ——「重新接管不一定生效」的账本面根因（A4c 回归钉）。修后只重写被触碰的键，
+   * 其余键原样保留。
    */
   def onDisconnect(connId: String): IO[Unit] =
     if !enabled then IO.unit
-    else connsRef.update(m => m.collect { case (sid, ids) if ids.contains(connId) => sid -> (ids - connId) }
-      .filterNot(_._2.isEmpty))
+    else
+      connsRef.update { m =>
+        val touched = m.collect { case (sid, ids) if ids.contains(connId) => sid -> (ids - connId) }
+        touched.foldLeft(m) { case (acc, (sid, ids)) => if ids.isEmpty then acc - sid else acc.updated(sid, ids) }
+      }
 
   /**
    * 【重新接管】（收流管拦截 `takeoverRetake` 帧后调用）：owner 翻回本连接的会话 +
@@ -181,14 +197,10 @@ final class ConsoleTakeover(
                   IO.unit
                 case _ =>
                   for
-                    // 推送面在翻位前定死（旧主此刻的活跃连接集）。
-                    targets <- cur.traverse(p => connsRef.get.map(_.getOrElse(p, Set.empty).toList)).map(_.getOrElse(Nil))
-                    now <- nowMs()
-                    _ <- claim(sid)
-                    _ <- targets.traverse_(cid => sendTo(cid, ConsoleTakeover.takeoverFrame(now)))
+                    _ <- claimAndReverseKick(sid, cur)
                     _ <- logger.info(
-                      s"console-takeover: session ${mask(sid)} retook console control — reverse takeover" +
-                        cur.fold("")(p => s" pushed to ${mask(p)} (${targets.size} conn(s))")
+                      s"console-takeover: session ${mask(sid)} retook console control (ws leg)" +
+                        cur.fold("")(p => s" — reverse takeover pushed to ${mask(p)}")
                     )
                   yield ()
               // 统一回执（already-owner 竞态腿同为幂等 ok；ok:false 只在未注册腿发）。
@@ -197,10 +209,58 @@ final class ConsoleTakeover(
           }
       }
 
+  /**
+   * 【重新接管】HTTP 腿（接管必达批 2026-11-01 作者令①）：会话身份直接来自
+   * HttpOnly cookie（`ConsoleTakeoverRoutes`，session-rail only）——**不要求本
+   * 会话在连接账上有活连接**。修的是 ws 腿的结构性缺口：
+   *   · 被顶出页面的 ws 可能已死（后台标签心跳断喂/僵尸回收/重连窗口）——帧腿
+   *     的 sendWs 静默入队死 socket、回执可被出站队列溢出拆连吞掉；
+   *   · HTTP 响应同步返回 = 回执必达（无队列、无心跳竞态面）。
+   * 所有权翻面 + 反向踢语义与 ws 腿逐字一致（同一 [[claimAndReverseKick]] 单源）；
+   * 被踢端推送尽力而为 + 重连补推（pastOwners 规则）兜底，最终一致不变。
+   */
+  def retakeBySession(sessionId: String): IO[ConsoleTakeover.RetakeOutcome] =
+    if !enabled then IO.pure(ConsoleTakeover.RetakeOutcome.Disabled)
+    else
+      IO.uncancelable { _ =>
+        for
+          cur <- ownerRef.get
+          kicked <- cur match
+            case Some(c) if c == sessionId =>
+              // 已是 owner（竞态窗：模态未收时所有权已回）——幂等成功，零帧。
+              IO.pure(0)
+            case _ =>
+              for
+                kicked <- claimAndReverseKick(sessionId, cur)
+                _ <- logger.info(
+                  s"console-takeover: session ${mask(sessionId)} retook console control (http leg) — " +
+                    s"reverse takeover pushed to ${kicked} conn(s)" +
+                    cur.fold("")(p => s" of ${mask(p)}")
+                )
+              yield kicked
+        yield ConsoleTakeover.RetakeOutcome.Ok(kicked)
+      }
+
   // ── 内部 ────────────────────────────────────────────────────────────────
 
   private def addConn(sessionId: String, connId: String): IO[Unit] =
     connsRef.update(m => m.updated(sessionId, m.getOrElse(sessionId, Set.empty) + connId))
+
+  /**
+   * 翻位 + 反向踢共享核（ws 腿 / HTTP 腿单源，接管必达批抽出）：推送面在翻位前
+   * 定死（旧主此刻的活跃连接集），claim 后对旧主全部活跃连接尽力送达 takeover 帧。
+   * 返回送达连接数（无旧主/无活连接 = 0；旧主下次重连按 pastOwners 规则落被踢面
+   * ——最终一致，A9 同款兜底）。
+   */
+  private def claimAndReverseKick(sessionId: String, prevOwner: Option[String]): IO[Int] =
+    for
+      targets <- prevOwner
+        .traverse(p => connsRef.get.map(_.getOrElse(p, Set.empty).toList))
+        .map(_.getOrElse(Nil))
+      now <- nowMs()
+      _ <- claim(sessionId)
+      _ <- targets.traverse_(cid => sendTo(cid, ConsoleTakeover.takeoverFrame(now)))
+    yield targets.size
 
   private def sessionOf(connId: String): IO[Option[String]] =
     connsRef.get.map(_.collectFirst { case (sid, ids) if ids.contains(connId) => sid })
@@ -223,6 +283,12 @@ final class ConsoleTakeover(
 end ConsoleTakeover
 
 object ConsoleTakeover:
+
+  /** 【重新接管】HTTP 腿的裁决（`retakeBySession`）：Ok 带反向踢送达连接数；Disabled = 总闸关。 */
+  sealed trait RetakeOutcome extends Product with Serializable
+  object RetakeOutcome:
+    final case class Ok(kickedConns: Int) extends RetakeOutcome
+    case object Disabled extends RetakeOutcome
 
   /** pastOwners 账帽（淘汰最旧）：内存态、会话 ≤30d 寿命，64 富余。 */
   val PastOwnerCap: Int = 64

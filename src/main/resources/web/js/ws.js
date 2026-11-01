@@ -1084,6 +1084,9 @@ export function connect() {
   let opened = false;
   state.ws.onopen = () => {
     opened = true;
+    // 入场加载卡（接管/入场同族批 2026-11-01 作者令③）：「连接主机」项的真实
+    // 完成信号（index.html 门脚本定义；typeof 防御——面不在场即零副作用）。
+    try { window.__nfEntry && window.__nfEntry.mark && window.__nfEntry.mark('host', 'done'); } catch (_) {}
     reconnectAttempts = 0;
     state.connected = true;
     hbMisses = 0;             // freezetimeout B2: 新连接从零计 miss
@@ -1143,6 +1146,10 @@ export function connect() {
       // doesn't serve the portal routes — direct-LAN consoles) does the
       // unified login entry appear; the reconnect loop continues behind it.
       console.warn('[ws] connect failed - attempting silent console-session re-establishment');
+      // 入场加载卡 fail 腿（接管/入场同族批 2026-11-01 作者令③）：握手被拒 =
+      // 入场无法继续——「连接主机」项标 fail 并立即揭幕，让位给既有的
+      // 自愈重登/登录门面（绝不扣住入口）。typeof 防御同 onopen 腿。
+      try { window.__nfEntry && window.__nfEntry.mark && window.__nfEntry.mark('host', 'fail'); } catch (_) {}
       // 卡窗白屏修复批（2026-10-22）：握手拒绝即广播（卡窗引导态面的快失败
       // 钩子 —— 无会话开窗在秒级落「登录过期」引导卡，不等 12s 通用超时）。
       try { document.dispatchEvent(new CustomEvent('nebflow-ws-rejected')); } catch (_) { /* 早于 document 就绪等 */ }

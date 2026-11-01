@@ -649,12 +649,19 @@ export default {
   // 控制台单实例批（2026-10-27）：接管独占模态（takeoverModal.js）；
   // 四修批（2026-10-29 作者令）：退出面/重入门作废（退出直达官网个人主页），
   // 新增接管 loading 态 + 失败提示。
+  // 接管必达批（2026-11-01 作者令①）：接管改 HTTP 腿（回执随响应必达，不依赖
+  // 本页 ws 存活），失败面错误码分类落卡面错误行 + toast——明确报错不许静默。
   'takeover.title': '控制台已在其他位置打开',
   'takeover.msg': '您在其他地方登录了控制台，此窗口已让出控制权。可退出，或重新接管。',
   'takeover.retake': '重新接管',
   'takeover.exit': '退出',
   'takeover.retaking': '接管中…',
   'takeover.retakeFailed': '接管失败，请重试',
+  'takeover.errNetwork': '无法连接主机——请检查网络后重试',
+  'takeover.errTimeout': '主机无响应（超时）——请稍后重试',
+  'takeover.errAuth': '登录状态已过期——重新登录后再试',
+  'takeover.errDisabled': '单实例开关已关闭，此窗口无需接管',
+  'takeover.errRefused': '主机拒绝了本次接管',
   // f1-send-queue（2026-10-19）：断线入队的待送达小标 tooltip + 队列溢出告警。
   'chat.pendingSend': '待送达 · 重连后自动补发',
   'input.queueOverflow': '消息队列已满（100 条）：最早的一条已丢弃',

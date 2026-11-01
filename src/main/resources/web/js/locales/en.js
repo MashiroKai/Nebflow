@@ -689,12 +689,20 @@ export default {
   // Console single-instance batch (2026-10-27): takeover modal (takeoverModal.js);
   // four-fix batch (2026-10-29 author ruling): exit-face/re-enter retired (exit now
   // navigates to the website profile); retake loading + failure hint added.
+  // Retake-must-land batch (2026-11-01 author ruling ①): retake rides the HTTP leg
+  // (verdict rides the response itself — no dependency on this page's ws), and
+  // failures surface a classified reason on the card + toast (never silent).
   'takeover.title': 'Console opened elsewhere',
   'takeover.msg': 'You signed in to the console somewhere else. This window has yielded control — exit, or retake it.',
   'takeover.retake': 'Retake Control',
   'takeover.exit': 'Exit',
   'takeover.retaking': 'Retaking…',
   'takeover.retakeFailed': 'Retake failed — please try again',
+  'takeover.errNetwork': 'Cannot reach the host — check the network and retry',
+  'takeover.errTimeout': 'Host not responding (timeout) — retry shortly',
+  'takeover.errAuth': 'Session expired — sign in again, then retry',
+  'takeover.errDisabled': 'Single-instance switch is off — this window needs no retake',
+  'takeover.errRefused': 'The host refused this retake',
   // f1-send-queue (2026-10-19): pending-mark tooltip for offline-queued bubbles + queue overflow toast.
   'chat.pendingSend': 'Pending - auto-resends on reconnect',
   'input.queueOverflow': 'Message queue full (100): oldest message dropped',
