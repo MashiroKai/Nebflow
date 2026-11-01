@@ -111,6 +111,39 @@ class DelegateReportToolSpec extends CatsEffectSuite:
     yield assert(res.left.exists(_.contains("no registry record")))
   }
 
+  test("状态矩阵批 (2026-11-01): the standby category is accepted — status slot single-write with the waiting-for detail, confirm names the parked semantics") {
+    val id = "delegate-nebflow-standby"
+    seed(id)
+    for
+      res <- call(sessionId = Some(id))("category" -> "standby".asJson, "detail" -> "等作者下一条 Mail".asJson)
+      rec = DelegateRegistry.find(id)
+    yield
+      assert(res.isRight, s"standby report must succeed, got: $res")
+      assert(
+        res.getOrElse("").contains("standby recorded") && res.getOrElse("").contains("park"),
+        "the confirm must name the parked-standby semantics (no terminal verdict, no delivery)"
+      )
+      assertEquals(rec.map(_.reportStatus), Some(Some("standby")))
+      assertEquals(rec.map(_.reportDetail), Some(Some("等作者下一条 Mail")))
+      // 其余字段原样保真（仅状态单写）。
+      assertEquals(rec.map(_.cwd), Some(tempRoot.toString))
+    end for
+  }
+
+  test("状态矩阵批: a standby declaration on a branch with unmerged commits carries the soft warning (the authoritative gate runs at turn end)") {
+    val id = "delegate-nebflow-standby-warn"
+    seed(id)
+    // 软预检读 git 面：查无分支/非 git 座位 ⇒ 无警告（此处只钉「不炸、写成功」——
+    // 有 ahead 的真仓形态由 DelegateTerminalStandbySpec② 的权威闸钉死）。
+    for
+      res <- call(sessionId = Some(id))("category" -> "standby".asJson, "detail" -> "等上游".asJson)
+      rec = DelegateRegistry.find(id)
+    yield
+      assert(res.isRight, s"got: $res")
+      assertEquals(rec.map(_.reportStatus), Some(Some("standby")))
+    end for
+  }
+
   test(
     "backward-compatible decode: a legacy record JSON without the new fields still decodes (deriveDecoder would drop it)"
   ) {

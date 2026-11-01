@@ -935,6 +935,49 @@ object Defaults:
   def BgLifecycleNudgeMaxBackoffMs: Long =
     sys.props.getOrElse("nebflow.bglifecycle.nudgeMaxBackoffMs", (40 * 60 * 1000L).toString).toLong
 
+  // ── Delegate 待命态看护（案A 批 2026-10-31：delegate_report 扩 standby 申报 +
+  //    显式待命停靠；状态矩阵批 2026-11-01 收编：complete×standby 停靠看护 +
+  //    complete×idle（未申报）提醒腿——作者令「system reminder 提醒它调整状态，
+  //    不终判」；JeV 判断注入（案B2）作者本轮未点名，由提醒腿承担。退避档
+  //    10s→30s→60s 各一次后转 10min 档对齐现有提醒哲学）。
+  //    全部提醒类动作，零 wall-clock 判死（「无超时」红线照旧——待命/空等挂起
+  //    绝不因超时被终态化；提醒穷尽后回纯事件驱动，Mail 随时唤醒）。
+
+  /**
+   * 待命提醒总闸：`nebflow.delegate.standby.nudgeEnabled`，缺省 true；false =
+   * 待命/空等挂起期零提醒（纯事件驱动回退——行为对齐总闸开前的矩阵主干语义）。
+   */
+  def DelegateStandbyNudgeEnabled: Boolean =
+    sys.props.getOrElse("nebflow.delegate.standby.nudgeEnabled", "true").toBoolean
+
+  /**
+   * 短档退避序列（ms）——审计草案 B1 档 10s→30s→60s 各一次。prop 覆写
+   * （`nebflow.delegate.standby.nudgeDelaysMs`）= 逗号分隔毫秒清单（spec 即时翻转
+   * 小档做确定性测试——caretaker 每拍现读，新停靠轮自动拾取）；解析失败/空清单 =
+   * 缺省档。
+   */
+  def DelegateStandbyNudgeDelaysMs: List[Long] =
+    sys.props
+      .get("nebflow.delegate.standby.nudgeDelaysMs")
+      .map { raw =>
+        val parsed = raw.split(",").toList.map(_.trim).filter(_.nonEmpty).flatMap(s => scala.util.Try(s.toLong).toOption)
+        if parsed.nonEmpty then parsed else List(10_000L, 30_000L, 60_000L)
+      }
+      .getOrElse(List(10_000L, 30_000L, 60_000L))
+
+  /** 短档穷尽后的长档间隔（ms，缺省 10min——对齐 held/bg-lifecycle 首催档哲学）。 */
+  def DelegateStandbyNudgeLongMs: Long =
+    sys.props.getOrElse("nebflow.delegate.standby.nudgeLongMs", (10 * 60 * 1000L).toString).toLong
+
+  /**
+   * 长档重复次数（缺省 3——BgLifecycleMaxNudges 同款哲学）。短档各一次 + 长档 N 次
+   * 穷尽后停催（回纯事件驱动；Mail 到达照常唤醒——🔴 绝不因提醒穷尽给待命会话
+   * 安任何 wall-clock 终判——状态矩阵批：complete×standby/complete×idle 都不是
+   * 终态组合）。
+   */
+  def DelegateStandbyNudgeLongMax: Int =
+    sys.props.getOrElse("nebflow.delegate.standby.nudgeLongMax", "3").toInt
+
   // ── death-watch 误报修复批（2026-10-31 作者令「修」，根因 docs/20261031_owner-lost.md
   //    §4 修法清单 ①②③⑤⑥ 的参数面；全部现读 prop，spec 可即时翻转边界）──────────
 

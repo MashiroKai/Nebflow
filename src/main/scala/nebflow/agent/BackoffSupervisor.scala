@@ -369,6 +369,130 @@ object BackoffSupervisor:
                         bgWaitCapFired
                       )
                     )
+                case Right(nebflow.core.delegate.DelegateTerminal.Outcome.Standby(detail, declared)) =>
+                  // 待命停靠（案A 批 2026-10-31 · 状态矩阵批 2026-11-01 收编为矩阵
+                  // 组合 complete×standby）：回合收尾不终判——不报父、不停 actor、
+                  // 不动任务库终态（任务行保持 running——待命≠完工）；registry
+                  // 状态快照置 Waiting（复用 merge 停靠的等待屏障语义：TaskStuckWatcher
+                  // 豁免 / MailIdleGate 可投递 / 面板透出 "Waiting"）；WS 帧
+                  // delegateWaiting mode="standby" 让前端即时换「待命」徽标；
+                  // DelegateStandbyCare 武装退避看护（system-reminder 催续报，
+                  // Mail 到达唤醒——clearStandby 即 caretaker 的自取消信号）。
+                  // 防退化：终态判定机内已闸拒「分支有未并提交」的 standby——本腿
+                  // 收到的 Standby 必然是可停靠形态（declared 恒 true），不重复检查。
+                  nebflow.core.delegate.DelegateStandbyCare
+                    .arm(
+                      subagentId,
+                      childRef,
+                      ctx.self,
+                      resources,
+                      nebflow.core.delegate.DelegateStandbyCare.Declared
+                    )
+                    .*>(logger.info(
+                      s"BackoffSupervisor: delegate $subagentId parked in standby (matrix complete×standby — task row stays running, parent NOT notified): ${detail.take(200)}"
+                    ))
+                    .*>(resources.agentRegistry.modify { m =>
+                      m.get(subagentId) match
+                        case Some(rec) if rec.status != AgentStatus.Waiting =>
+                          (m.updated(subagentId, rec.copy(status = AgentStatus.Waiting)), ())
+                        case _ => (m, ())
+                    })
+                    .*>(resources.subAgentTaskStore
+                      .updateStatus(parentSessionId, subagentId, "running")
+                      .handleErrorWith(e => logger.warn(s"standby task-row reset failed: ${e.getMessage}")))
+                    .*>(wsSend match
+                      case Some(send) =>
+                        send(
+                          Json.obj(
+                            "type" -> "delegateWaiting".asJson,
+                            "sessionId" -> subagentId.asJson,
+                            "rootSessionId" -> parentSessionId.asJson,
+                            "mode" -> "standby".asJson,
+                            "detail" -> detail.take(500).asJson
+                          )
+                        ).handleErrorWith(e => logger.warn(s"delegateWaiting(standby) WS frame failed: ${e.getMessage}"))
+                      case None => IO.unit
+                    )
+                    .as(
+                      active(
+                        childRef,
+                        childSpawnFn,
+                        childName,
+                        parentRef,
+                        description,
+                        agentName,
+                        subagentId,
+                        parentSessionId,
+                        resources,
+                        initialPrompt,
+                        source,
+                        extraMetadata,
+                        wsSend,
+                        restartCount,
+                        restartHistory,
+                        minBackoff,
+                        maxBackoff,
+                        maxRestarts,
+                        withinTimeRange,
+                        bgWaitCapMs,
+                        bgWaitHeld,
+                        bgWaitCapFiber,
+                        bgWaitCapFired
+                      )
+                    )
+                case Right(nebflow.core.delegate.DelegateTerminal.Outcome.NudgeIdle(chainsInFlight, emptyTurn)) =>
+                  // 未申报空等提醒（状态矩阵批 2026-11-01 · 作者令「complete ×
+                  // idle（未申报）⇒ system reminder 提醒其调整状态，不终判」）：
+                  // 零终态报父、零判词行、不停 actor；任务行诚实回 running（空烧
+                  // 重启后的 restarting 不滞留）；DelegateStandbyCare 以 IdleNudge
+                  // 型武装退避提醒（补报 standby 或 finish）。registry Waiting 不置
+                  // （未申报空等≠申报待命——「待命」徽标只归显式申报；行外观零变化，
+                  // 提醒面承担可见性；补报 standby 的下一轮收尾自然换停靠腿）。
+                  nebflow.core.delegate.DelegateStandbyCare
+                    .arm(
+                      subagentId,
+                      childRef,
+                      ctx.self,
+                      resources,
+                      nebflow.core.delegate.DelegateStandbyCare.IdleNudge,
+                      chainsInFlight = chainsInFlight,
+                      emptyTurn = emptyTurn
+                    )
+                    .*>(logger.info(
+                      s"BackoffSupervisor: delegate $subagentId ended its turn WITHOUT a delegate_report " +
+                        s"(matrix complete×idle: chainsInFlight=$chainsInFlight, emptyTurn=$emptyTurn) — " +
+                        "reminder armed, NO terminal verdict, parent NOT notified"
+                    ))
+                    .*>(resources.subAgentTaskStore
+                      .updateStatus(parentSessionId, subagentId, "running")
+                      .handleErrorWith(e => logger.warn(s"nudge-idle task-row reset failed: ${e.getMessage}")))
+                    .as(
+                      active(
+                        childRef,
+                        childSpawnFn,
+                        childName,
+                        parentRef,
+                        description,
+                        agentName,
+                        subagentId,
+                        parentSessionId,
+                        resources,
+                        initialPrompt,
+                        source,
+                        extraMetadata,
+                        wsSend,
+                        restartCount,
+                        restartHistory,
+                        minBackoff,
+                        maxBackoff,
+                        maxRestarts,
+                        withinTimeRange,
+                        bgWaitCapMs,
+                        bgWaitHeld,
+                        bgWaitCapFiber,
+                        bgWaitCapFired
+                      )
+                    )
                 case Left(err) =>
                   // 判定钩子自身缺陷绝不吞终态：按既有完成语义报父（fail-open）。
                   logger.warn(

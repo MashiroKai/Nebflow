@@ -798,6 +798,9 @@ export default {
   // 钉住的可见状态词——面板行状态位直显「候合并」。
   'subagents.status.waiting': '候合并',
   'subagents.status.waitingMerge': '等待合并轮',
+  // 案A 待命批 2026-10-31（状态矩阵批收编）：delegate 显式待命态（delegate_report
+  // standby）——行状态位直显「待命」，区别于候合并（tooltip = 申报的「在等什么」）。
+  'subagents.status.standby': '待命（等作者）',
   'subagents.status.idle': '空闲',
   // panel-merge-status 批（2026-10-25）：候合并行队列细节段（/api/merge-queue 只读
   // 状态面；位次只渲染不派生，API 未生效 ⇒ 段全缺 = 静态「等待合并轮」降级）。

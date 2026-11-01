@@ -2405,7 +2405,9 @@ onMessage('delegateWaiting', (msg) => {
     for (const info of Object.values(agents)) {
       const entrySid = (info.sessionId || '').replace(/^team-/, '');
       if (entrySid !== bare) continue;
-      info.waiting = { mode: msg.mode || 'merge' };
+      // 案A 待命批 2026-10-31（状态矩阵批收编）：mode 扩 standby（待命≠候合并）；
+      // detail = 申报的「在等什么」（徽标 tooltip）。mode 缺席缺省 'merge'（旧帧兼容）。
+      info.waiting = { mode: msg.mode || 'merge', detail: msg.detail || '' };
       updateBgAgentIndicator(rootSid);
     }
   }
@@ -4753,6 +4755,10 @@ onMessage('activeAgents', (msg) => {
       taskTitle: a.taskTitle || '',
       startedAt: a.startedAt || (prev && prev.startedAt) || null,
       status: a.status || '',
+      // 案A 待命批 2026-10-31（状态矩阵批收编）：快照行带 standbySince（DelegateRegistry
+      // 待命停靠时刻）⇒ 待命徽标随刷新复原（delegateWaiting 实时帧的恢复脸；快照缺席
+      // ⇒ 保留本地 waiting 值，不降级已渲染行）。
+      waiting: (prev && prev.waiting) || (a.standbySince ? { mode: 'standby', detail: '' } : undefined),
       retryCount: typeof a.retryCount === 'number' ? a.retryCount : ((prev && prev.retryCount) || 0),
       // 只由实时帧写入的字段：快照不表态 ⇒ 保留本地值（不降级已渲染行）。
       // currentTool 例外面：实时值优先，实时缺席时快照 currentToolName 兜底

@@ -10,16 +10,23 @@ import nebflow.shared.{Defaults, LlmHandle, LlmRequest, LlmResponse, PathUtil, S
 import scala.concurrent.duration.*
 
 /**
- * 四修②（2026-10-07 修复令「判词诚实化」）判读：
+ * 四修②（2026-10-07 修复令「判词诚实化」）判读 + 状态矩阵批锚演进（2026-11-01 ·
+ * 作者令「complete × 未申报/idle ⇒ system reminder 提醒其调整状态，不终判」；
+ * 审计基线
+ * `docs/20261031_112344_delegate-standby-semantics-audit__delegate-nebflow-c0a2b939.md`）：
  *
- *  - 确定性预检（不依赖 LLM 判）：`sessionToolCalls = Some(0)` 且终文空/空烧
- *    stub ⇒ 判 completed＋注记（#566：原 blocked 退役——判定机两层连问都不问，
- *    fake judge 在场即炸，证明 LLM 判零消耗）；ChainStore 行 source=`precheck`；
- *  - 诚实未判：判定机两层全败＋自申报缺失 ⇒ 仍 completed（fail-open 既有语义
- *    不变），但判词行 = `completed (unjudged — judge unavailable)`，ChainStore
- *    行 source=`unjudged`；
- *  - 不误伤：有工具调用（Some(3)）／调用方未计数（None）／真实终文 —— 预检
- *    全部让路；自申报在场时不算 unjudged（自申报背书）。
+ *  - **锚演进（未申报空回合）**：`sessionToolCalls = Some(0)` 且终文空/空烧 stub
+ *    且**无申报** ⇒ 状态矩阵未申报腿——Outcome.NudgeIdle（提醒补报，绝不终判）：
+ *    零终判、零父投递、零 terminal-verdict 行、零 standbySince（「待命」徽标只归
+ *    显式申报——未申报空等≠申报待命）；「提醒进入 standby 或报 finish」由
+ *    DelegateStandbyCare.IdleNudge 承担（判定机零 LLM 消耗不变——ExplodingJudge 钉）。
+ *  - 诚实未判：判定机两层全败＋**无申报 × ahead>0 防退化**（矩阵下判词链的
+ *    唯一未申报门票角——就地座位，无 worktree ⇒ Release＋unmerged-work note，
+ *    不翻转）⇒ 仍 completed（fail-open 既有语义不变），但判词行 =
+ *    `completed (unjudged — judge unavailable)`，ChainStore 行 source=`unjudged`；
+ *  - 不误伤：有工具调用（Some(3)）／调用方未计数（None）／真实终文的**未申报**
+ *    回合同样归未申报腿（提醒），只有 finish/merge 申报（或合并轮/防退化回落）
+ *    才进判词链；自申报在场时不算 unjudged（自申报背书——平线 source=judge）。
  *
  * 现场：鹦鹉骑自行车 delegate——空烧 stub 终文＋零工具调用，判定机两腿全败
  * （jev 无凭据 403＋SmallJudge 静默 None），旧回落链报了假 completed。
@@ -80,6 +87,42 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
       )
     )
 
+  /** 真仓夹具：main init + branch 领先 ahead 个提交（防退化角需真实 ahead）。 */
+  private def mkRealRepo(dir: os.Path, branch: String, ahead: Int): os.Path =
+    os.remove.all(dir)
+    os.makeDir.all(dir)
+    os.proc("git", "init", "-b", "main", dir.toString).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+    os.proc("git", "-C", dir.toString, "config", "user.email", "spec@nebflow.local").call(check = true)
+    os.proc("git", "-C", dir.toString, "config", "user.name", "spec").call(check = true)
+    os.proc("git", "-C", dir.toString, "commit", "--allow-empty", "-m", "init")
+      .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+    os.proc("git", "-C", dir.toString, "checkout", "-b", branch).call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+    (1 to ahead).foreach { i =>
+      os.write(dir / f"deliverable-$i.txt", s"deliverable $i")
+      os.proc("git", "-C", dir.toString, "add", ".").call(check = true)
+      os.proc("git", "-C", dir.toString, "commit", "-m", s"deliverable $i")
+        .call(check = true, stdout = os.Pipe, stderr = os.Pipe)
+    }
+    dir
+
+  /** 落在真仓座位上的记录（cwd=repo、branch=工作分支、无 worktree——就地座位）。 */
+  private def seedRealRecord(id: String, taskId: String, repo: os.Path, branch: String): Unit =
+    DelegateRegistry.put(
+      DelegateRegistry.Record(
+        id = id,
+        executor = "nebflow",
+        cwd = repo.toString,
+        project = None,
+        taskId = Some(taskId),
+        parentSessionId = "nebula-root",
+        title = "seeded-real",
+        createdAt = 1L,
+        branch = Some(branch),
+        baseBranch = Some("main"),
+        projectWorkspace = Some(repo.toString)
+      )
+    )
+
   private def noopRefs(system: ActorSystem): IO[(ActorRef[AgentCommand], ActorRef[AgentEvent])] =
     for
       child <- system.spawn(
@@ -111,7 +154,7 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
   private def lastVerdict(delegateId: String): Option[(String, String)] = verdictLines(delegateId).lastOption
 
   test(
-    "① deterministic precheck: zero tool calls + empty resultText ⇒ completed+note WITHOUT consulting the judge (source=precheck; #566 no blocked state)"
+    "① matrix complete×idle (empty-burn form): zero tool calls + empty resultText + no report ⇒ NudgeIdle WITHOUT consulting the judge — no verdict line, no terminal, no standby badge"
   ) {
     val system = ActorSystem(s"dtp-1-${scala.util.Random.nextInt(100000)}")
     try
@@ -132,20 +175,30 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
           sessionToolCalls = Some(0)
         )
         v = lastVerdict("delegate-precheck-empty")
+        rec = DelegateRegistry.find("delegate-precheck-empty")
+        standbyLines = ChainStore.listSync().flatMap(_.entries).filter(_.kind == "standby")
+          .filter(_.payload.hcursor.get[String]("delegateId").toOption.contains("delegate-precheck-empty"))
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
-        assert(outcome.isInstanceOf[DelegateTerminal.Outcome.Release], s"got: $outcome")
-        val line = outcome.toString
-        assert(line.contains("verdict: completed"), s"the verdict line must read completed (#566): $line")
-        assert(line.contains("[delegate-judge] note:"), s"the precheck note must ride the note channel: $line")
-        assert(line.contains("deterministic precheck"), s"the precheck marker must be named: $line")
-        assertEquals(v, Some(("completed", "precheck")), "the chain line carries verdict=completed source=precheck")
+        // 状态矩阵未申报腿（空烧形态）：Outcome.NudgeIdle——提醒补报，绝不终判
+        // （ExplodingJudge 在场即炸证明零 LLM 消耗）。
+        outcome match
+          case DelegateTerminal.Outcome.NudgeIdle(chainsInFlight, emptyTurn) =>
+            assert(!chainsInFlight, "no flow host in the fixture ⇒ zero chains in flight")
+            assert(emptyTurn, "the empty-burn form must be named to the reminder")
+          case other => fail(s"expected Outcome.NudgeIdle (matrix idle leg), got: $other")
+        // 🔴 不给 completed 假终态：零 terminal-verdict 行、零父投递（Release 形态）。
+        assertEquals(v, None, "no terminal verdict line may be written for an undeclared empty turn")
+        // 「待命」徽标只归显式申报：未申报腿不落 standbySince、不补种申报槽。
+        assertEquals(rec.flatMap(_.standbySince), None, "the standby badge is declared-only")
+        assertEquals(rec.flatMap(_.reportStatus), None, "the declaration slot stays untouched (still undeclared)")
+        assertEquals(standbyLines, Nil, "no standby audit line for the undeclared leg")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
     end try
   }
 
-  test("② the max_tokens empty-burn stub is NOT real output: stub + zero tools ⇒ completed+note (the incident form)") {
+  test("② the max_tokens empty-burn stub is NOT real output either: stub + zero tools + no report ⇒ the same NudgeIdle (the incident form, no fake completion)") {
     val system = ActorSystem(s"dtp-2-${scala.util.Random.nextInt(100000)}")
     try
       for
@@ -165,29 +218,35 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
           sessionToolCalls = Some(0)
         )
         v = lastVerdict("delegate-precheck-stub")
+        rec = DelegateRegistry.find("delegate-precheck-stub")
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
-        assert(
-          outcome.toString.contains("verdict: completed") && outcome.toString.contains("note"),
-          s"stub-only output must be judged completed+note (#566): $outcome"
-        )
-        assertEquals(v, Some(("completed", "precheck")))
+        outcome match
+          case DelegateTerminal.Outcome.NudgeIdle(_, emptyTurn) => assert(emptyTurn)
+          case other => fail(s"stub-only output must land in the reminder leg, not a verdict: $other")
+        assertEquals(v, None, "no terminal verdict for the undeclared stub-only turn")
+        assert(rec.flatMap(_.standbySince).isEmpty)
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
     end try
   }
 
   test(
-    "③ honesty when both judge legs fail AND no self-report: legacy completed semantics stay, but the line reads (unjudged — judge unavailable)"
+    "③ honesty when both judge legs fail AND no self-report: the matrix's unjudged corner (undeclared × ahead>0 anti-degradation) keeps legacy completed semantics, but the line reads (unjudged — judge unavailable)"
   ) {
     val system = ActorSystem(s"dtp-3-${scala.util.Random.nextInt(100000)}")
+    val repo = tempRoot / "unjudged-repo"
     try
       for
         res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
         // 判定机不可用 = 端口卸载（两层全败的测试形态）。
         _ = DelegateJudge.DelegateJudgePort.clear()
         (child, sup) <- noopRefs(system)
-        _ = seedRecord("delegate-unjudged", Some("83"))
+        _ = mkRealRepo(repo, "delegate/unjudged-1", ahead = 1)
+        _ = seedRealRecord("delegate-unjudged", "83", repo, "delegate/unjudged-1")
+        // 状态矩阵下 unjudged 的唯一可达角：**无申报** × 防退化（ahead>0 拒停靠）
+        // ⇒ 槽位闸放行进判词链；判定机缺席 ⇒ fail-open completed 但标 unjudged。
+        // （finish 申报在场时是自申报背书——平线 source=judge，见④(b)。）
         outcome <- DelegateTerminal.onCompleted(
           res,
           "delegate-unjudged",
@@ -200,6 +259,10 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
           sessionToolCalls = Some(0)
         )
         v = lastVerdict("delegate-unjudged")
+        rec = DelegateRegistry.find("delegate-unjudged")
+        unmergedNote = ChainStore.listSync().flatMap(_.entries)
+          .filter(_.kind == "unmerged-work")
+          .filter(_.payload.hcursor.get[String]("delegateId").toOption.contains("delegate-unjudged"))
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
         // fail-open 不变：verdict 仍是 completed（既有语义/下游零迁移）……
@@ -208,13 +271,20 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         assertEquals(v.map(_._2), Some("unjudged"), "the chain line must mark the unjudged form")
         val line = outcome.toString
         assert(line.contains("(unjudged — judge unavailable)"), s"the honest marker must be in the verdict line: $line")
+        // 未申报 + ahead>0 + 无 worktree ⇒ 就地座位角：Release；零 queueFlip
+        // （翻转只认 worktree 座位）、零停靠。unmerged-work 注记行在此形态不可达
+        // （aheadOfBase 只对 worktree/ReadyToMerge 座位计算——既有语义，非本批面）。
+        assert(outcome.isInstanceOf[DelegateTerminal.Outcome.Release], s"got: $outcome")
+        assertEquals(unmergedNote, Nil, "the in-place-seat corner carries no unmerged-work audit row (existing semantics)")
+        assert(rec.flatMap(_.standbySince).isEmpty, "no standby parking on the anti-degradation leg")
+        assert(MergeQueue.snapshot.isEmpty, "no worktree ⇒ no queue flip")
       end for
     finally DelegateJudge.DelegateJudgePort.clear()
     end try
   }
 
   test(
-    "④ no false positives: real text, counted tools, or uncounted sessions all bypass the precheck; a self-report is never 'unjudged'"
+    "④ no false positives (matrix): substantive-but-undeclared turns (tools counted or uncounted) are REMINDED too (NudgeIdle — only finish/merge declarations reach the chain); a self-reported finish is never 'unjudged'"
   ) {
     val system = ActorSystem(s"dtp-4-${scala.util.Random.nextInt(100000)}")
     try
@@ -222,9 +292,7 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
         _ = DelegateJudge.DelegateJudgePort.install(new ExplodingJudge)
         (child, sup) <- noopRefs(system)
-        // (a) Some(3)（有工具）＋空终文 ⇒ 预检不中 → 判定机会被问 → 炸 ⇒ 端口
-        //     在场证明「未计零」不走预检。此处换卸载端口走 unjudged 腿验证。
-        _ = DelegateJudge.DelegateJudgePort.clear()
+        // (a) Some(3)（有工具）＋空终文＋未申报 ⇒ 未申报腿（提醒），不进判词链。
         _ = seedRecord("delegate-tools3", Some("84"))
         r1 <- DelegateTerminal.onCompleted(
           res,
@@ -249,7 +317,21 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
           sup,
           sessionToolCalls = None
         )
-        // (b) 自申报在场 ⇒ 不是 unjudged（自申报背书完成）。
+        _ = seedRecord("delegate-substantive", Some("87"))
+        r2b <- DelegateTerminal.onCompleted(
+          res,
+          "delegate-substantive",
+          "nebula-root",
+          "t",
+          "brief",
+          resultText = "a full substantive report with no declaration",
+          child,
+          sup,
+          sessionToolCalls = Some(7)
+        )
+        // (b) finish 自申报在场 ⇒ 判词链（判定机缺席 ⇒ 自申报背书——卸载端口，
+        //     否则 ExplodingJudge 会被真实咨询而炸——链门票语义的另一面证明）。
+        _ = DelegateJudge.DelegateJudgePort.clear()
         _ = seedRecord("delegate-selfrep", Some("86"))
         _ = DelegateRegistry.updateReport("delegate-selfrep", "finish", "declared", "")
         r3 <- DelegateTerminal.onCompleted(
@@ -265,17 +347,18 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
         )
         v1 = lastVerdict("delegate-tools3")
         v2 = lastVerdict("delegate-uncounted")
+        v2b = lastVerdict("delegate-substantive")
         v3 = lastVerdict("delegate-selfrep")
         _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
       yield
-        // 有工具/未计数 → 预检让路（判定机缺席 → unjudged completed，非 blocked）
-        assertEquals(v1, Some(("completed", "unjudged")), "tools present ⇒ not an empty burn even with empty text")
-        assertEquals(v2, Some(("completed", "unjudged")), "uncounted sessions bypass the precheck (no invented data)")
-        assert(
-          r1.toString.contains("(unjudged — judge unavailable)"),
-          s"tools+no-text with the judge down is honestly unjudged: $r1"
-        )
-        // 自申报背书 → source 仍是 judge 口径，行不带 unjudged 标注
+        // 未申报（无论产出形态）= 提醒腿：零判词行、零终态。
+        assertEquals(v1, None, "undeclared + tools ⇒ reminded, not unjudged-completed")
+        assertEquals(v2, None, "undeclared + uncounted ⇒ reminded, not judged")
+        assertEquals(v2b, None, "a substantive report WITHOUT a declaration is still just reminded (finish is the only judged-complete combination)")
+        assert(r1.isInstanceOf[DelegateTerminal.Outcome.NudgeIdle], s"got: $r1")
+        assert(r2.isInstanceOf[DelegateTerminal.Outcome.NudgeIdle], s"got: $r2")
+        assert(r2b.isInstanceOf[DelegateTerminal.Outcome.NudgeIdle], "substantive but undeclared ⇒ remind (matrix), s got: $r2b")
+        // finish 自申报 → 判词链（判定机缺席 → 自申报背书 completed，source=judge）
         assertEquals(v3.map(_._1), Some("completed"))
         assertEquals(v3.map(_._2), Some("judge"), "a self-reported finish is NOT the unjudged form")
         assert(!r3.toString.contains("unjudged"), s"self-report backed completions keep the plain line: $r3")

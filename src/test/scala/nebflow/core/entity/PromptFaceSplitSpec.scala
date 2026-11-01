@@ -88,9 +88,11 @@ class PromptFaceSplitSpec extends FunSuite:
       val viaDelegate = nebflow.core.entity.BuiltinAgents.delegateEntry(name).map(_.systemPrompt)
       assertEquals(viaDelegate, viaEntry, s"'$name' 无 delegate 面变体（回落 entry）")
 
-  test("brief 申报行（DelegateTool.BriefReportLine）= delegate_report 纪律、零 node_report（#566 起两态）"):
+  test("brief 申报行（DelegateTool.BriefReportLine）= delegate_report 纪律、零 node_report（状态矩阵起三态 finish|merge|standby）"):
     val line = nebflow.core.tools.DelegateTool.BriefReportLine
-    assert(line.contains("delegate_report(category=\"finish\"|\"merge\", detail=…)"), "brief 申报行的两态调用形态在位")
+    assert(line.contains("delegate_report(category=\"finish\"|\"merge\"|\"standby\", detail=…)"), "brief 申报行的三态调用形态在位")
+    assert(line.contains("\"standby\" = you are waiting for orders/events and NOT done"), "standby 语义钉：待命≠完工、不终判不投父")
+    assert(line.contains("an undeclared turn end is not judged complete"), "矩阵钉：未申报回合绝不静默判完成（提醒补报）")
     assert(!line.contains("|\"blocked\""), "brief 申报行零 blocked 类别（delegate 面无 blocked 态——作者令）")
     assert(!line.contains("node_report"), "brief 申报行零 node_report（delegate brief 面同判据）")
     assert(line.contains("your final text remains the deliverable"), "末条输出 = 交付物语义在位")

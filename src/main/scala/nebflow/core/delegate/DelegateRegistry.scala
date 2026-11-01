@@ -160,7 +160,22 @@ object DelegateRegistry:
      * 缺省解码见 [[modeFaceOf]]：`None` = 未判定（总闸关时代的存量记录/外部腿），
      * 消费方按 kernel 折叠（存量零迁移）。缺省 None：旧盘面照常解码。
      */
-    mode: Option[String] = None
+    mode: Option[String] = None,
+    /**
+     * 待命停靠时刻（案A 批 2026-10-31 · 作者 11:40 拍板显式待命态为主干；审计基线
+     * `docs/20261031_112344_delegate-standby-semantics-audit__delegate-nebflow-c0a2b939.md`；
+     * 状态矩阵批 2026-11-01 收编为矩阵组合 complete×standby）：
+     * delegate_report 申报 `standby` 且回合收尾被判定机采纳 ⇒ 停靠写时刻（epoch
+     * millis）——任务行保持 running、会话置 Waiting、不终判不投父；面板/快照面
+     * 据此透出「待命（等作者）」。**写点 = 回合收尾采纳点**（非申报点——同回合
+     * 后续 finish/merge 覆写申报时本槽不脏）；消费三态：Some = 在待命、None =
+     * 非待命。**申报槽（reportStatus=standby）与停靠槽（standbySince）分立**：
+     * 申报是回合内意图、停靠是回合收尾裁决——唤醒（Mail 注入，MailTool
+     * deliverToDelegate live 腿）清两槽，唤醒轮新申报照常走矩阵（finish ⇒ 终判、
+     * standby ⇒ 再停靠、未申报 ⇒ 提醒）。缺省 None：旧盘面照常解码（cliSessionId
+     * 同款纪律）。
+     */
+    standbySince: Option[Long] = None
   )
 
   private def dir: os.Path = PathUtil.dataRoot / "delegates"
@@ -228,12 +243,19 @@ object DelegateRegistry:
                 val old = rec.reportDetail.getOrElse("")
                 if old.trim.nonEmpty && old != detail then Some(old) else None
               }
+              // 案A 批 2026-10-31：新申报非 standby ⇒ 清待命停靠槽（新申报覆旧申报，
+              // standby 是旧轮的意图——唤醒/重申报后轮收尾不再误认待命）。standby
+              // 申报本身不动槽（停靠时刻由回合收尾采纳点单写，见 [[parkStandby]]）。
+              val standbyCleared =
+                if status != nebflow.core.tools.DelegateReportTool.StandbyValue then None
+                else rec.standbySince
               put(
                 rec.copy(
                   reportStatus = Some(status),
                   reportDetail = Some(detail),
                   reportSuggestion = if suggestion.nonEmpty then Some(suggestion) else None,
-                  workReport = preservedWorkReport
+                  workReport = preservedWorkReport,
+                  standbySince = standbyCleared
                 )
               )
               Right(())
@@ -265,6 +287,55 @@ object DelegateRegistry:
 
   /** 进程内读-改-写串行化（updateReport 临界区；与 ChainStore.writeLock 各管各件）。 */
   private val writeLock = new Object
+
+  /**
+   * 待命停靠单写（案A 批 2026-10-31）：`standbySince = now`——回合收尾采纳 standby
+   * 申报时由 [[nebflow.core.delegate.DelegateTerminal]] 调用。查无记录 = `Left`
+   * （只对真实 spawn 生效，updateReport 同纪律）。写锁同缝串行；每次停靠刷新时刻
+   * （新一轮待命 = 新时刻，caretaker 退避序从头发）。
+   */
+  def parkStandby(id: String): Either[String, Long] =
+    if !validId(id) then Left(s"parkStandby: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"parkStandby: no registry record for '$id'")
+          case Some(rec) =>
+            val ts = System.currentTimeMillis()
+            try
+              put(rec.copy(standbySince = Some(ts)))
+              Right(ts)
+            catch case e: Throwable => Left(s"parkStandby: write failed: ${e.getMessage}")
+      }
+
+  /**
+   * 待命唤醒单写（案A 批 2026-10-31）：Mail 注入待命会话（[[nebflow.core.tools
+   * .MailTool]] deliverToDelegate live 腿）时调用——`standbySince = None` 且
+   * report* 三槽一并清空（申报已被该回合消费；唤醒轮若无新申报，矩阵按未申报
+   * 分流——提醒补报，绝不静默判完成）。**workReport 槽不动**（工作结果保真面
+   * 与待命语义正交）。查无记录 = `Left`。写锁同缝串行。
+   */
+  def clearStandby(id: String): Either[String, Unit] =
+    if !validId(id) then Left(s"clearStandby: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"clearStandby: no registry record for '$id'")
+          case Some(rec) =>
+            if rec.standbySince.isEmpty && rec.reportStatus.isEmpty then Right(()) // 幂等：非待命零写
+            else
+              try
+                put(
+                  rec.copy(
+                    standbySince = None,
+                    reportStatus = None,
+                    reportDetail = None,
+                    reportSuggestion = None
+                  )
+                )
+                Right(())
+              catch case e: Throwable => Left(s"clearStandby: write failed: ${e.getMessage}")
+      }
 
   // ── 编排模式值域（G1，delegate-ui 批 2026-10-08）────────────────────────
 
@@ -426,6 +497,7 @@ object DelegateRegistry:
       cancelRequestedAt <- c.get[Option[Long]]("cancelRequestedAt")
       cancelRequestedBy <- c.get[Option[String]]("cancelRequestedBy")
       mode <- c.get[Option[String]]("mode")
+      standbySince <- c.get[Option[Long]]("standbySince")
     yield Record(
       id,
       executor,
@@ -453,7 +525,8 @@ object DelegateRegistry:
       restartInterruptedAt,
       cancelRequestedAt,
       cancelRequestedBy,
-      mode
+      mode,
+      standbySince
     )
 
   /**

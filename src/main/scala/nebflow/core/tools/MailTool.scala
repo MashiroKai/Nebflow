@@ -1280,6 +1280,12 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
               res.agentRegistry.get.flatMap { reg =>
                 reg.get(id) match
                   case Some(rec) if rec.kind == AgentKind.Delegate =>
+                    // 案A 待命唤醒（2026-10-31 批 · 状态矩阵批收编）：live delegate
+                    // 收到 Mail ⇒ 待命宣告消费——清 standbySince + 申报槽
+                    // （clearStandby）。唤醒轮若无新申报，回合收尾按矩阵未申报腿
+                    // 分流（提醒补报，绝不静默判完成）；standby-care caretaker 以
+                    // standbySince 清零为自取消信号，绝不在 Mail 唤醒轮中途再注入
+                    // 提醒。fail-soft：清槽失败只 WARN，绝不阻断 Mail 投递。
                     (rec.ref ! AgentCommand.UserInput(
                       text = message,
                       replyTo = rec.supervisorRef,
@@ -1289,6 +1295,14 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                       blocks = blocks,
                       fromUser = false
                     )).void *>
+                      IO
+                        .blocking(nebflow.core.delegate.DelegateRegistry.clearStandby(id))
+                        .attempt
+                        .flatMap {
+                          case Left(e) =>
+                            logger.warn(s"clearStandby on mail wake failed for $id: ${e.getMessage}")
+                          case Right(_) => IO.unit
+                        } *>
                       nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse("")) *>
                       IO.pure(
                         Right(

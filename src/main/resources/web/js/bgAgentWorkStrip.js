@@ -143,8 +143,17 @@ function renderStrip(stripEl, nodeSessionId) {
   } else if (status === 'Waiting') {
     // statusIcon 返回的是 lucide 生成的 SVG 字符串（库内模板，非用户数据）——
     // 与 bgAgents.js 行渲染同一注入姿势：innerHTML 承载图标，动态文本走 textContent。
+    // 案A 待命批 2026-10-31（状态矩阵批收编）：Waiting 面两型——mode=standby 行显示
+    // 「待命」（tooltip = 申报的「在等什么」）；其余（候合并/道忙停靠）照旧
+    // 「等待合并轮」。
+    const waitingMode = (info && info.waiting && info.waiting.mode) || '';
     actValue.innerHTML = statusIcon('pause', 11);
-    actValue.appendChild(document.createTextNode(t('subagents.status.waitingMerge')));
+    actValue.appendChild(document.createTextNode(
+      waitingMode === 'standby' ? t('subagents.status.standby') : t('subagents.status.waitingMerge')
+    ));
+    if (waitingMode === 'standby' && info.waiting.detail) {
+      actValue.title = String(info.waiting.detail);
+    }
   } else if (status === 'Idle' || status === 'WaitingForUser' || status === 'idle') {
     // 空闲细分：等什么（bgWaiting / 回执）或长空闲徽标——与面板行同判据。
     const bgWaiting = Array.isArray(info?.bgWaiting) ? info.bgWaiting : [];

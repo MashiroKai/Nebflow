@@ -1113,8 +1113,18 @@ private[gateway] object WsSessionChatHandlers:
                           else None
                         }
                         .handleErrorWith(_ => IO.pure(None))
+                    // 案A 待命批（2026-10-31 · 状态矩阵批收编）：快照行待命徽标——
+                    // 与 delegateTitle 同款单次 lookup 带出（Delegate kind 才查；
+                    // fail-soft None = 非待命）。
+                    val standbySinceIO: IO[Option[Long]] =
+                      if rec.kind == AgentKind.Delegate then
+                        IO
+                          .blocking(nebflow.core.delegate.DelegateRegistry.find(rec.sessionId).flatMap(_.standbySince))
+                          .handleErrorWith(_ => IO.pure(None))
+                      else IO.pure(None)
                     delegateTitleIO.flatMap { delegateTitle =>
                       delegateNameIO.flatMap { delegateName =>
+                      standbySinceIO.flatMap { standbySince =>
                       sessionStore.getSessionMeta(rec.sessionId).map { meta =>
                         WebSocketRoutes.activeAgentEntryJson(
                           rec,
@@ -1125,8 +1135,10 @@ private[gateway] object WsSessionChatHandlers:
                           delegateName = delegateName,
                           bgWaiting = waitingBySession
                             .getOrElse(rec.sessionId, Nil)
-                            .map(t => (t.jobId, t.description, t.startedAtMs, nebflow.core.tools.BgHealth.of(t), t.ownerName))
+                            .map(t => (t.jobId, t.description, t.startedAtMs, nebflow.core.tools.BgHealth.of(t), t.ownerName)),
+                          standbySince = standbySince
                         )
+                      }
                       }
                       }
                     }
