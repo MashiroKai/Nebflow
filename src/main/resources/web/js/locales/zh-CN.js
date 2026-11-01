@@ -839,6 +839,24 @@ export default {
   'subagents.status.stuck': '卡死',
   'subagents.status.error': '失败',
   'subagents.status.frozen': '已冻结',
+  // 错误冻结批（2026-11-01 · 作者令「冻结态方便被唤醒 接着做」）：**错误冻结**
+  // （delegate 因 LLM/工具/引擎故障或配额取消就地停住）的行面文案——徽标带原因
+  // 短名、tooltip 说明「不是失败判词」、唤醒按钮 = 显式唤醒动作（同会话续跑）。
+  // 与 standby（待命·等作者）/ waitingMerge（候合并）显式区分：三者都是「停」，
+  // 但只有本族是**异常停**且**必须有人唤醒才会继续**。
+  'subagents.frozenBadgeWithReason': '已冻结 · {reason}',
+  'subagents.frozenTip': '已冻结：引擎/上游故障导致就地停住，这不是失败判词。会话历史、工作区与未提交改动、台账行、合并队列位全部保留；点「唤醒」或 Mail 它的地址即在原会话上下文上继续（已完成的不重做）。',
+  'subagents.frozenReason': '原因：{reason}',
+  'subagents.frozenDormantTip': '已冻结 {hours} 小时仍无人唤醒（超保留期会归档记录，转录与工作区保留）。',
+  'subagents.wake': '唤醒',
+  'subagents.wakeTip': '在原会话上下文上继续（同一会话、历史在场，已完成的不重做）',
+  'subagents.wakeFailed': '唤醒失败：记录与转录已保留，可稍后重试',
+  // 冻结原因四类短名（快照恢复路径按线值 `delegate-frozen:<code>` 本地映射；与
+  // DelegateFreeze.reasonLabelZh 逐字一致）。
+  'subagents.frozenReasonLlm': '模型层故障',
+  'subagents.frozenReasonTool': '工具层故障',
+  'subagents.frozenReasonEngine': '引擎侧故障',
+  'subagents.frozenReasonQuota': '配额耗尽取消',
   'subagents.status.done': '已完成',
   // 面板树批（2026-10-29 ①）：孤儿行来源角标（父不可见提升顶层的「来自 …」标注）。
   'subagents.fromDelegate': '来自已结束的委托',

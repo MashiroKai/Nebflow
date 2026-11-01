@@ -84,9 +84,20 @@ object TurnBoundaryDrains:
       case (Some(head), tail) => (expand(head), tail)
       case (None, tail) => (Nil, tail)
 
-  /** True for ExternalEvents carrying a Delegate/SubTask result. */
+  /**
+   * True for ExternalEvents carrying a Delegate/SubTask **result**.
+   *
+   * 错误冻结批（2026-11-01）：`eventType="frozen"` 的冻结回执**不是**子代理结果——
+   * 冻结方只是停住并上报（后续还会被唤醒续做、还可能再上报），把它当结果扣
+   * `outstandingSubagentResults` 会让父会话的屏障槽位提前归还、批次语义错位。
+   * 判据单点在此（`MailboxDrain.isSubagentEvent` 与其同源）。
+   */
   def isSubagentResult(e: AgentCommand.ExternalEvent): Boolean =
-    e.source == "subtask" || e.source == "delegate"
+    !isFreezeReceipt(e) && (e.source == "subtask" || e.source == "delegate")
+
+  /** 冻结回执判据（错误冻结批 2026-11-01；source=delegate × eventType=frozen）。 */
+  def isFreezeReceipt(e: AgentCommand.ExternalEvent): Boolean =
+    e.source == "delegate" && e.eventType == "frozen"
 
   /**
    * Count how many sub-agent barrier slots a batch of tool results should add.

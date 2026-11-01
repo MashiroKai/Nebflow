@@ -885,6 +885,18 @@ export default {
   'subagents.status.stuck': 'Stuck',
   'subagents.status.error': 'Failed',
   'subagents.status.frozen': 'Frozen',
+  // 错误冻结批（2026-11-01）：delegate 错误冻结行面文案（徽标/原因 tooltip/唤醒）。
+  'subagents.frozenBadgeWithReason': 'Frozen · {reason}',
+  'subagents.frozenTip': 'Frozen: an engine/upstream fault stopped it in place — this is NOT a failure verdict. The session history, workspace with uncommitted changes, task-ledger row and merge-queue slot are all kept; press Wake (or mail its address) to continue in the SAME session (finished work is not redone).',
+  'subagents.frozenReason': 'Reason: {reason}',
+  'subagents.frozenDormantTip': 'Frozen for {hours}h with no wake (past the retention window the record is archived; transcript and workspace are kept).',
+  'subagents.wake': 'Wake',
+  'subagents.wakeTip': 'Continue in the same session context (history in place, finished work is not redone)',
+  'subagents.wakeFailed': 'Wake failed — record and transcript are kept; retry later',
+  'subagents.frozenReasonLlm': 'LLM-layer failure',
+  'subagents.frozenReasonTool': 'tool-layer failure',
+  'subagents.frozenReasonEngine': 'engine fault',
+  'subagents.frozenReasonQuota': 'quota-exhausted cancel',
   'subagents.status.done': 'Done',
   // Panel-tree batch (2026-10-29 ①): orphan-row origin chips (parent invisible,
   // row promoted top-level — "from …" attribution).

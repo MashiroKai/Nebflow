@@ -867,6 +867,12 @@ object TaskStuckWatcher:
   ): IO[Unit] =
     registry.values.toList
       .filter(rec => scannedKinds.contains(rec.kind) && rec.status == AgentStatus.Waiting)
+      // 错误冻结批（2026-11-01）：记录带**本批冻结线值**（`delegate-frozen:*`）的
+      // 行天然豁免停靠看护——冻结是**故意的停**（监督者可能已自停），不是「停靠
+      // 会话死亡」；把冻结行按死体终态化会把冻结点上的工作判成 failed（作者令
+      // 「保留状态 方便被唤醒」被正面违反）。冻结行的兜底归
+      // `DelegateFreeze.dormantSweep`（提示/超期归档），不归本看护。
+      .filterNot(_.frozenReason.exists(nebflow.core.delegate.DelegateFreeze.isFreezeWire))
       .traverse_ { rec =>
         resources.actorSystem.isAlive(rec.ref.path).flatMap {
           case true => IO.unit

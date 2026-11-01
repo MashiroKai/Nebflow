@@ -175,7 +175,36 @@ object DelegateRegistry:
      * standby ⇒ 再停靠、未申报 ⇒ 提醒）。缺省 None：旧盘面照常解码（cliSessionId
      * 同款纪律）。
      */
-    standbySince: Option[Long] = None
+    standbySince: Option[Long] = None,
+    /**
+     * 冻结时刻（错误冻结批 2026-11-01 · 作者令「所有因错误状态的 delegate 应该上报
+     * 之后要能保留状态 冻结态 方便被唤醒 接着做」）：delegate 因**错误**结束（LLM 层
+     * 故障 / 工具层不可恢复 / 引擎侧异常 / 外部执行器崩溃 / 配额取消）⇒ 不再走 failed
+     * 终止，而是**原地冻结**——会话上下文（transcript）、工作区/worktree 与未提交
+     * 改动、任务台账条目、ahead 提交指针、失败原因与最后错误上下文全部保留在盘上，
+     * 重启后仍在；`frozenSince = 冻结时刻`（epoch millis）。
+     *
+     * 与 [[standbySince]] 的分工（两者互斥语义，不共用槽）：standby = **自愿待命**
+     * （delegate_report 申报，回合正常收尾，等作者给活）；frozen = **异常冻结**（回合
+     * 异常中断，等唤醒续做）。写点 = 监督者冻结腿（[[nebflow.core.delegate
+     * .DelegateFreeze.park]]），清点 = 唤醒（Mail live 注入 / 面板唤醒 / boot 原地复活）
+     * 与真正终态（[[nebflow.core.delegate.DelegateTerminal.onTerminalCleanup]]）。
+     * 缺省 None：旧盘面照常解码（cliSessionId 同款纪律）。
+     */
+    frozenSince: Option[Long] = None,
+    /**
+     * 冻结原因词表值（错误冻结批 2026-11-01）：`llm-failure` | `tool-failure` |
+     * `engine-fault` | `cancelled-by-quota`（[[DelegateFreeze.Reason.wire]]）。面板
+     * 详情卡与唤醒回执的「为什么」数据源；None = 非冻结。
+     */
+    frozenReason: Option[String] = None,
+    /**
+     * 冻结上下文摘要（错误冻结批 2026-11-01）：最后一次错误的可读全文（含
+     * provider/model 线索）+ 保留面清单摘要——「谁冻了、为什么、保留了什么、
+     * 怎么唤醒」四项回执里「为什么/保留了什么」的持久承载面（回执只是一条消息，
+     * 本槽是它的盘上真源）。None = 非冻结。
+     */
+    frozenDetail: Option[String] = None
   )
 
   private def dir: os.Path = PathUtil.dataRoot / "delegates"
@@ -336,6 +365,63 @@ object DelegateRegistry:
                 Right(())
               catch case e: Throwable => Left(s"clearStandby: write failed: ${e.getMessage}")
       }
+
+  // ── 错误冻结槽（错误冻结批 2026-11-01）────────────────────────────────────
+
+  /**
+   * 冻结单写（错误冻结批 2026-11-01）：`frozenSince = now` + 原因词表值 + 详情。
+   * 「冻结即停」——本槽只记事实，不做任何处置；不知原因的重复冻结（同一波故障反复
+   * 冻结）刷新时刻与详情，但**保留首个原因**（`frozenReason` 已存在时零改——
+   * 根因比症状重要）。查无记录 = `Left`（只对真实 spawn 生效，parkStandby 同纪律）。
+   * 写锁同缝串行。
+   */
+  def parkFrozen(id: String, reason: String, detail: String): Either[String, Long] =
+    if !validId(id) then Left(s"parkFrozen: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"parkFrozen: no registry record for '$id'")
+          case Some(rec) =>
+            val ts = System.currentTimeMillis()
+            try
+              put(
+                rec.copy(
+                  frozenSince = Some(ts),
+                  frozenReason = rec.frozenReason.orElse(Some(reason)),
+                  frozenDetail = if detail.trim.nonEmpty then Some(detail) else rec.frozenDetail
+                )
+              )
+              Right(ts)
+            catch case e: Throwable => Left(s"parkFrozen: write failed: ${e.getMessage}")
+      }
+
+  /**
+   * 冻结槽唤醒单写（错误冻结批 2026-11-01）：Mail 唤醒 / 面板唤醒 / boot 原地复活
+   * 三腿调用——三槽一并清空（`frozenSince` / `frozenReason` / `frozenDetail`）。
+   * **不动** standby 槽与 workReport 槽（正交面）。幂等：非冻结 = `Right` 零写。
+   * 查无记录 = `Left`。
+   */
+  def clearFrozen(id: String): Either[String, Unit] =
+    if !validId(id) then Left(s"clearFrozen: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"clearFrozen: no registry record for '$id'")
+          case Some(rec) =>
+            if rec.frozenSince.isEmpty && rec.frozenReason.isEmpty && rec.frozenDetail.isEmpty then Right(())
+            else
+              try
+                put(rec.copy(frozenSince = None, frozenReason = None, frozenDetail = None))
+                Right(())
+              catch case e: Throwable => Left(s"clearFrozen: write failed: ${e.getMessage}")
+      }
+
+  /** 冻结态读数（纯查盘；面板快照 / Mail 腿 / 复活资格共用单点判据）。 */
+  def frozenOf(id: String): Option[(Long, String, String)] =
+    find(id).flatMap(r => r.frozenSince.map(ts => (ts, r.frozenReason.getOrElse(""), r.frozenDetail.getOrElse(""))))
+
+  /** 是否处于冻结态（`frozenSince` 在场）。 */
+  def isFrozen(id: String): Boolean = find(id).exists(_.frozenSince.isDefined)
 
   // ── 编排模式值域（G1，delegate-ui 批 2026-10-08）────────────────────────
 
@@ -498,6 +584,9 @@ object DelegateRegistry:
       cancelRequestedBy <- c.get[Option[String]]("cancelRequestedBy")
       mode <- c.get[Option[String]]("mode")
       standbySince <- c.get[Option[Long]]("standbySince")
+      frozenSince <- c.get[Option[Long]]("frozenSince")
+      frozenReason <- c.get[Option[String]]("frozenReason")
+      frozenDetail <- c.get[Option[String]]("frozenDetail")
     yield Record(
       id,
       executor,
@@ -526,7 +615,10 @@ object DelegateRegistry:
       cancelRequestedAt,
       cancelRequestedBy,
       mode,
-      standbySince
+      standbySince,
+      frozenSince,
+      frozenReason,
+      frozenDetail
     )
 
   /**

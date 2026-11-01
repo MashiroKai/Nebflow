@@ -54,7 +54,8 @@ object DelegateRevival:
 
   /** 复活依赖（GatewayMain boot 装配点传入；None = 复活腿整体旁路——测试/无载体场）。 */
   final case class Deps(
-    resources: SharedResources,
+    /** 运行期依赖面（boot 装配点与 Mail/面板唤醒腿共用；窄端口 ⇒ core 侧可构造）。 */
+    resources: nebflow.core.AgentRuntimePort,
     system: ActorSystem,
     /** 子会话 WS 事件面（boot 链 = wsHub broadcast；None = 静默）。 */
     wsSend: Option[Json => IO[Unit]]
@@ -80,6 +81,18 @@ object DelegateRevival:
         case Some(rec) =>
           val budgetLeft = task.revivalCount.getOrElse(0) < Defaults.DelegateRevivalMaxPerTask
           val ageOk = java.lang.System.currentTimeMillis() - task.spawnedAt <= Defaults.DelegateRevivalMaxAgeMs
+          // 错误冻结批（2026-11-01）：冻结记录 = **异常冻结待唤醒**——与 standby
+          // （自愿待命、不复活）相反，冻结**正是**要复活的对象（同 id 续原上下文；
+          // 冻结期的现场全在盘上）。冻结腿的年龄判据走冻结保留期
+          // （`Defaults.DelegateFreezeRetentionDays`）而非在飞年龄预算——保留期内
+          // 的冻结一律可复活（超保留期的由 `DelegateFreeze.dormantSweep` 归档，
+          // 归档记录在此被 archived 闸拒绝）。
+          val frozen = rec.frozenSince
+          val ageBudget = frozen
+            .map(_ => nebflow.core.delegate.DelegateFreeze.retentionMs)
+            .filter(_ > 0L)
+            .getOrElse(Defaults.DelegateRevivalMaxAgeMs)
+          val ageOkFrozen = frozen.forall(ts => java.lang.System.currentTimeMillis() - ts <= ageBudget)
           val parentExistsIo = sessionStore.listSessions.map(_.exists(_.id == task.parentSessionId))
           parentExistsIo.map { parentExists =>
             if rec.executor != ExecutorRegistry.DefaultId then
@@ -91,12 +104,13 @@ object DelegateRevival:
               Some(
                 s"cancel tombstone present (cancelled by ${rec.cancelRequestedBy.getOrElse("?")} at ${rec.cancelRequestedAt.get}) — a cancelled delegate is never revived"
               )
-            else if rec.standbySince.isDefined then
+            else if rec.standbySince.isDefined && frozen.isEmpty then
               // 案A 批 2026-10-31（状态矩阵批收编）：重启时停靠待命 ≠ 在飞工作——
               // 会话已死不 live，「续跑」语义不成立（复活的 nudge 是「继续干活」，
               // 而待命 delegate 在等作者事件）。不复活 ⇒ 落收殓链（failed + 父通知，
               // 诚实终态、绝不 completed 假终态）；作者 Mail `delegate:<id>` 续聊腿
               // 照常可唤醒（continueDelegate 以补充信息起新会话）。
+              // 错误冻结批：**带冻结槽者走复活腿**（本闸只拦纯待命）。
               Some(
                 "standby at engine restart — the delegate was parked awaiting the author, not working; not revivable (Mail the delegate continuation address to wake a fresh session)"
               )
@@ -105,8 +119,10 @@ object DelegateRevival:
             else if !parentExists then Some(s"parent session '${task.parentSessionId}' no longer exists")
             else if !budgetLeft then
               Some(s"revival budget exhausted (${task.revivalCount.getOrElse(0)}/${Defaults.DelegateRevivalMaxPerTask})")
-            else if !ageOk then
+            else if frozen.isEmpty && !ageOk then
               Some(s"orphan older than revival age budget (${Defaults.DelegateRevivalMaxAgeMs}ms) — stale, salvage only")
+            else if !ageOkFrozen then
+              Some(s"frozen longer than the freeze retention window (${ageBudget}ms) — salvage only")
             else None
           }
       }
@@ -121,14 +137,60 @@ object DelegateRevival:
         logger.warn(s"[delegate-revival] revival errored for ${task.taskId}: ${e.getMessage}").as(Left(s"revival error: ${e.getMessage}"))
       )
 
-  /** spawn 链本体（镜像 `BackoffSupervisor.respawn` 的跨进程版；设计 §2.3 ①–⑨）。 */
-  private def reviveImpl(deps: Deps, task: SubAgentTask): IO[Either[String, Unit]] =
+  /**
+   * **运行期冻结唤醒腿**（错误冻结批 2026-11-01）：非 boot 场景（Mail
+   * `delegate:<id>` 唤醒 / 面板「唤醒」按钮）下，冻结的记录在统一注册表里**没有
+   * 活体 actor**（`childAlive=false` 的冻结 = 监督者已自停），旧续聊腿会起**新会话**
+   * （`continueDelegate`）——那正是作者令「别丢上下文」要禁止的形态。本腿以
+   * [[reviveImpl]] 的单条路径重建**同 id** 会话（transcript checkpoint 续跑），
+   * 与 boot 复活腿共用全部 spawn/注册/插件/pending 处置，唯一增量 = 唤醒者指令
+   * 拼在唤醒横幅之后（`instruction` 非空时）。
+   *
+   * 资格：记录在册 ∧ 带冻结线值（`frozenReason` 是本批词表）∧ 未归档。其余
+   * （非冻结记录 / 外部执行器 / 已归档）⇒ Left(reason)，调用方落既有腿。
+   *
+   * @param instruction 唤醒者的一句指令（Mail 正文 / 面板输入框）；空 = 纯唤醒。
+   */
+  def wakeFrozen(
+    deps: Deps,
+    delegateId: String,
+    instruction: String
+  ): IO[Either[String, Unit]] =
+    IO.blocking(DelegateRegistry.find(delegateId)).flatMap {
+      case None => IO.pure(Left(s"No delegate instance '$delegateId' on record"))
+      case Some(rec) if rec.frozenSince.isEmpty || !nebflow.core.delegate.DelegateFreeze.isFreezeWire(rec.frozenReason.getOrElse("")) =>
+        IO.pure(Left("record is not in the delegate-error frozen state"))
+      case Some(rec) if rec.archivedAt.isDefined =>
+        IO.pure(Left("record is archived (freeze retention expired) — dispatch a fresh delegate instead"))
+      case Some(rec) if rec.executor != ExecutorRegistry.DefaultId =>
+        IO.pure(Left(s"external executor '${rec.executor}' — use the Mail continuation leg"))
+      case Some(rec) =>
+        deps.resources.subAgentTaskStore.findByTaskId(delegateId).flatMap {
+          case Some(task) => reviveImpl(deps, task, instruction).map(_.left.map(r => s"frozen wake failed: $r"))
+          case None =>
+            IO.pure(Left("no task-ledger row for the frozen delegate — cannot rebuild the execution window"))
+        }
+    }
+
+  /** spawn 链本体（镜像 `BackoffSupervisor.respawn` 的跨进程版；设计 §2.3 ①–⑨）。
+    *
+    * @param instruction 唤醒者指令（运行期唤醒腿传入；boot 复活腿恒空）——拼在唤醒
+    *                    横幅之后成为本窗口的首条指令；空 = 纯「从冻结点继续」。
+    */
+  private def reviveImpl(deps: Deps, task: SubAgentTask, instruction: String = ""): IO[Either[String, Unit]] =
     IO.blocking(DelegateRegistry.find(task.taskId)).flatMap {
       case None => IO.pure(Left("no DelegateRegistry record — cannot rebuild the seat"))
       case Some(record) =>
         val now = java.lang.System.currentTimeMillis()
         val nextCount = task.revivalCount.getOrElse(0) + 1
         val parentSid = task.parentSessionId
+        // 错误冻结批（2026-11-01）：本腿同时是**冻结唤醒腿**（冻结记录在 boot 后
+        // 不 live ⇒ 同 id 续原上下文）。两形态共用 spawn 链，只有三处随 frozen 分叉：
+        // nudge 文案（「从冻结点继续，已完成的不重做，别从头重规划」）、唤醒后清冻结
+        // 槽（DelegateFreeze.onWoken）、ChainStore 审计行 kind（frozen-revived）。
+        val frozen = record.frozenSince
+        val frozenReason = record.frozenReason.getOrElse("")
+        val frozenDetail = record.frozenDetail.getOrElse("")
         for
           // ① 任务行先行：running + 预算记账 + 旧错清空（复活 = 新执行窗口）。
           //    先写行再 spawn——复活半途再崩，下一 boot 看到的是诚实的 running 行。
@@ -170,7 +232,13 @@ object DelegateRevival:
             parentRef = parentRef,
             wsSend = childWsSend,
             projectRoot = Some(record.cwd),
-            rootSessionId = parentSid // 根归属以 parent 估计（registry 不存根 id，设计 §2.6）
+            rootSessionId = parentSid, // 根归属以 parent 估计（registry 不存根 id，设计 §2.6）
+            // **上下文到场**（错误冻结批 2026-11-01 · 作者令逐字「别丢上下文」）：
+            // spawn 的 initialMessages 必须逐字节喂入复活前的 transcript——否则新
+            // actor 以空历史起跑（日志 msgs=0），首个回合收尾的
+            // `saveMessagesForSession(sid, newMessages)` 会把盘上的历史**整段覆盖**
+            // 成「唤醒横幅 + 残留 1 条」= 唤醒即焚毁现场。冻结唤醒与 boot 复活同源。
+            initialMessages = transcript
           )
           // ⑤ spawn 双件套（spawnWithPlugins 同点）+ 活体回写。
           subagentRef <- deps.resources.spawnAgentActor(deps.system, params)
@@ -226,11 +294,11 @@ object DelegateRevival:
             .blocking(
               ChainStore.appendSync(
                 ChainStore.keyFor(record.taskId, task.taskId),
-                "delegate-revival",
+                if frozen.isDefined then "delegate-frozen-revived" else "delegate-revival",
                 Json.obj(
                   "action" -> "revived".asJson,
                   "delegateId" -> task.taskId.asJson,
-                  "phase" -> "boot-recovery".asJson,
+                  "phase" -> (if frozen.isDefined then "frozen-wake" else "boot-recovery").asJson,
                   "revivalCount" -> nextCount.asJson,
                   "workspace" -> record.cwd.asJson,
                   "branch" -> record.branch.asJson,
@@ -242,15 +310,34 @@ object DelegateRevival:
               logger.warn(s"[delegate-revival] ChainStore row failed for ${task.taskId}: ${e.getMessage}").void
             )
           // ⑨ nudge 注入：转录非空 = checkpoint 续跑；空 = 原 prompt 重注（respawn
-          //    fresh-start fallback 同款）。
+          //    fresh-start fallback 同款）。冻结腿（frozen 在场）：文案换成冻结唤醒
+          //    横幅（原因在场、明确「已完成的不重做、别从头重规划」），并在注入之后
+          //    清冻结槽 + 合并队列重排（[[DelegateFreeze.onWoken]]）——唤醒 = 冻结
+          //    生命周期的唯一出口。
           nudge =
-            if transcript.nonEmpty then
-              s"[system] The engine process restarted while your task was in flight. Your work so far (${transcript.size} transcript messages) is loaded below — continue the task from where you left off."
-            else task.prompt
+            val wakeInstr = if instruction.trim.isEmpty then "" else s"\n\n$instruction"
+            if frozen.isDefined then
+              val banner =
+                nebflow.core.delegate.DelegateFreeze.wakeBanner(task.taskId, frozenReason, frozenDetail)
+              if transcript.nonEmpty then
+                s"$banner\n\nYour work so far (${transcript.size} transcript messages) is loaded above — continue from there.$wakeInstr"
+              else s"$banner\n\n${task.prompt}$wakeInstr"
+            else if transcript.nonEmpty then
+              s"[system] The engine process restarted while your task was in flight. Your work so far (${transcript.size} transcript messages) is loaded below — continue the task from where you left off.$wakeInstr"
+            else s"${task.prompt}$wakeInstr"
           _ <- subagentRef ! AgentCommand.UserInput(nudge, Some(adapterRef))
+          _ <-
+            if frozen.isDefined then
+              nebflow.core.delegate.DelegateFreeze.onWoken(
+                deps.resources,
+                task.taskId,
+                if instruction.trim.isEmpty then "boot-revival" else "frozen-wake"
+              )
+            else IO.unit
           _ <- logger.info(
             s"[delegate-revival] revived ${task.taskId} (agent=${task.agentName}, revival #$nextCount, " +
-              s"seat=${record.cwd}, transcript=${transcript.size} msgs, parentLive=${parentRef.isDefined}) — " +
+              s"seat=${record.cwd}, transcript=${transcript.size} msgs, parentLive=${parentRef.isDefined}" +
+              (if frozen.isDefined then s", FROZEN-WAKE reason=${frozenReason}" else "") + ") — " +
               "supervision chain rebuilt (BackoffSupervisor watching again)"
           )
         yield Right(())
@@ -259,7 +346,7 @@ object DelegateRevival:
   /** 插件 best-effort 重挂：registry 记录的 plugins 集逐名 resolve → MCP 授予 +
     * builtin 工具并集 → effectiveDef。零分配/全失败 = 原 def（fail-open）。 */
   private def regrantPlugins(
-    resources: SharedResources,
+    resources: nebflow.core.AgentRuntimePort,
     sessionId: String,
     record: DelegateRegistry.Record,
     baseDef: AgentDef
@@ -296,7 +383,7 @@ object DelegateRevival:
         }
 
   /** 父会话活引用（Mail 续聊腿同款判读：统一注册表现查——重启后一律视为不 live）。 */
-  private def resolveParentRef(resources: SharedResources, parentSessionId: String): IO[Option[ActorRef[AgentCommand]]] =
+  private def resolveParentRef(resources: nebflow.core.AgentRuntimePort, parentSessionId: String): IO[Option[ActorRef[AgentCommand]]] =
     if parentSessionId.isEmpty then IO.pure(None)
     else resources.agentRegistry.get.map(_.get(parentSessionId).map(_.ref))
 

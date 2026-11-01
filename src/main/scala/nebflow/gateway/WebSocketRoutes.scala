@@ -3252,7 +3252,10 @@ object WebSocketRoutes:
     delegateName: Option[String] = None, // 面板命名批 2026-10-31: 批次短名（DelegateRegistry.Record.name，≤12 字）——行首扫读名
     bgWaiting: List[(String, String, Long, String, String)] =
       Nil, // #752: (jobId, description, startedAtMs, health, ownerName) — the session's own waiting-type bg tasks; ownerName = 开启会话的 delegate 批次短名（归属批 2026-10-31，空 = 非 delegate/无名）
-    standbySince: Option[Long] = None // 案A 待命批 2026-10-31（状态矩阵批收编）: delegate 待命停靠时刻（DelegateRegistry.standbySince）——快照行「待命」徽标数据源；None = 非待命（缺省，旧调用方逐字节兼容）
+    standbySince: Option[Long] = None, // 案A 待命批 2026-10-31（状态矩阵批收编）: delegate 待命停靠时刻（DelegateRegistry.standbySince）——快照行「待命」徽标数据源；None = 非待命（缺省，旧调用方逐字节兼容）
+    frozenSince: Option[Long] = None, // 错误冻结批 2026-11-01: 冻结时刻（DelegateRegistry.frozenSince）——快照行「已冻结」徽标数据源（与 standby 的「待命」显式区分）；None = 非冻结
+    frozenReason: Option[String] = None, // 错误冻结批 2026-11-01: 冻结原因线值（`delegate-frozen:<reason>`）——徽标 tooltip / 详情卡原因行
+    wakeAddress: Option[String] = None // 错误冻结批 2026-11-01: 唤醒地址（`delegate:<id>`）——详情卡「唤醒」按钮的动作载荷
   ): Json =
     Json.obj(
       "sessionId" -> rec.sessionId.asJson,
@@ -3296,6 +3299,13 @@ object WebSocketRoutes:
       // （mode=standby）在浏览器刷新后靠本字段复原（delegateTitle 同款读面一次
       // lookup 带出）。
       "standbySince" -> standbySince.asJson,
+      // 错误冻结批（2026-11-01）：冻结三字段随快照出帧——`frozenSince`（epoch ms，
+      // null = 非冻结）驱动行徽标「已冻结」，`frozenReason`（线值）给徽标 tooltip /
+      // 详情卡原因行，`wakeAddress` 是详情卡「唤醒」按钮的投递地址。三者缺省 None
+      // ⇒ 旧调用方逐字节兼容（null = falsy，前端零徽标）。
+      "frozenSince" -> frozenSince.asJson,
+      "frozenReason" -> frozenReason.asJson,
+      "wakeAddress" -> wakeAddress.asJson,
       // #752 空闲细分（快照恢复路径的数据源；live 行由实时帧写 currentTool，快照
       // 字段合并时不降级实时值——前端 merge 规则）。currentTool = 在飞/最后工具名
       // （最近动作摘要）、lastActivityMs = agent 侧最近活动戳（长空闲徽标判据）。

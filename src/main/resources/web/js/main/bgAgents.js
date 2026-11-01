@@ -181,8 +181,11 @@ export function bgAgentKindFromSession(sessionId) {
 function bgRowState(info) {
   if (info.done) return 'done';
   if (info.stuck) return 'stuck';
-  if (info.waiting || info.status === 'Waiting') return 'waiting';
+  // 错误冻结批（2026-11-01）：**错误冻结**优先于 waiting/idle——冻结 = 就地停住
+  // 等唤醒，落成「候合并/待命/空闲」会误导成自愿停靠语义。判据 = info.frozen
+  // （delegateFrozen 帧 / 快照 frozenSince 复原）。
   if (info.frozen) return 'frozen';
+  if (info.waiting || info.status === 'Waiting') return 'waiting';
   if (isFailedSnapshotStatus(info.status)) return 'error';
   const st = info.status || '';
   if (st === 'Idle' || st === 'WaitingForUser' || st === 'idle') return 'idle';
@@ -945,6 +948,35 @@ function bgTaskRowHtml(id, info, opts = {}) {
       }
     }
   }
+  // 错误冻结批（2026-11-01 · 作者令「冻结态方便被唤醒 接着做」）：冻结行的
+  // **原因徽标 + 唤醒入口**。与 waitingPart（候合并/待命，自愿停靠）显式分家：
+  //   · 徽标词 = subagents.status.frozen（已冻结），tooltip = 冻结原因（中文短名 /
+  //     详情原文）+「这不是失败判词」的说明 + 长期冻结龄（dormantHours）；
+  //   · 「唤醒」按钮 = 面板显式唤醒动作（WS `delegateWake`）——后端 live 腿注入原
+  //     actor（同 session 续跑）/ 不 live 腿同 id 复活；绝不新建会话。
+  // 数据源 = info.frozen / frozenReason / frozenReasonLabel / frozenDetail /
+  // dormantHours（delegateFrozen / delegateFrozenDormant 帧与快照 frozenSince）。
+  const frozenPart = (rowState === 'frozen')
+    ? (() => {
+      const why = info.frozenReasonLabel || '';
+      const detail = String(info.frozenDetail || '');
+      const hours = Number(info.dormantHours) || 0;
+      const tipLines = [];
+      tipLines.push(t('subagents.frozenTip'));
+      if (why) tipLines.push(t('subagents.frozenReason', { reason: why }));
+      if (detail) tipLines.push(detail);
+      if (hours > 0) tipLines.push(t('subagents.frozenDormantTip', { hours: String(hours) }));
+      const tip = tipLines.join('\n');
+      return '<span class="bg-task-frozen" role="status" title="' + escapeHtml(tip) + '">'
+        + statusIcon('snowflake', 11, 'st-warn')
+        + escapeHtml(why ? t('subagents.frozenBadgeWithReason', { reason: why }) : t('subagents.status.frozen'))
+        + '</span>'
+        + '<button class="bg-task-wake" type="button" data-bg-wake="'
+        + escapeHtml(String((info && info.sessionId) || '').replace(/^team-/, ''))
+        + '" title="' + escapeHtml(t('subagents.wakeTip')) + '">'
+        + escapeHtml(t('subagents.wake')) + '</button>';
+    })()
+    : '';
   const waitingPart = (rowState === 'waiting')
     ? (waitingMode === 'standby'
       ? '<span class="bg-task-waiting"'
@@ -1022,7 +1054,7 @@ function bgTaskRowHtml(id, info, opts = {}) {
         ? '<div class="bg-task-line bg-task-subline"><span class="bg-task-sub" title="' +
           escapeHtml(String(info.task || '')) + '">' + escapeHtml(taskSummary) + '</span></div>'
         : '') +
-      stuckPart + waitingPart + idlePart + toolPart +
+      stuckPart + waitingPart + frozenPart + idlePart + toolPart +
     '</div>' +
   '</div>';
 }
@@ -1239,6 +1271,19 @@ export function renderBgAgentDropdown() {
       if (!headSid) return;
       bgHeadCollapsePref.set(headSid, !caret.classList.contains('is-collapsed'));
       renderBgAgentDropdown();
+    });
+  });
+
+  // 错误冻结批（2026-11-01）：冻结行的「唤醒」按钮 = 显式唤醒动作（WS
+  // `delegateWake`）。停冒泡（不触发行体开详情）；后端回 `delegateWakeResult`
+  // 由 main.js 收口（成功撤冻结标记，失败保留 + toast）。
+  listEl.querySelectorAll('[data-bg-wake]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const sid = btn.getAttribute('data-bg-wake');
+      if (!sid) return;
+      btn.disabled = true;
+      sendWs({ type: 'delegateWake', sessionId: sid });
     });
   });
 

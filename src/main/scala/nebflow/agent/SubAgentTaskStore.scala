@@ -223,7 +223,7 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
    * 签名零扩，避免 defaulted 参数前缀重载的二义性）。行翻 running + 复活预算
    * +1 + 复活时刻 + `clearLastError` 清掉旧错误（复活 = 新执行窗口，旧错不随行）。
    */
-  def markRevived(
+  override def markRevived(
     parentSessionId: String,
     taskId: String,
     revivalCount: Int,

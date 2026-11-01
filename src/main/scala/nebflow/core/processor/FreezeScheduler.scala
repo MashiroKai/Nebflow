@@ -29,12 +29,27 @@ object FreezeScheduler:
 
   private val logger = NebflowLogger.forName("nebflow.core.processor.freeze")
 
-  /** 周期扫描循环：scan → sleep(interval) → 递归。由 GatewayMain 以 fiber 启动。 */
-  def run(resources: AgentRuntimePort, interval: FiniteDuration): IO[Unit] =
+  /**
+   * 周期扫描循环：scan → sleep(interval) → 递归。由 GatewayMain 以 fiber 启动。
+   *
+   * 错误冻结批（2026-11-01）：每拍尾部挂 [[nebflow.core.delegate.DelegateFreeze.dormantSweep]]
+   * ——长期无人唤醒的冻结 delegate 在此得面板提示（`delegateFrozenDormant`，缺省
+   * 24h 起）/ 超保留期归档（缺省 14 天），零新增定时器（本拍即兜底拍）。
+   * `wsSend` 缺省 None ⇒ 只写 WARN（静默面不丢，只是没有实时帧）。
+   */
+  def run(
+    resources: AgentRuntimePort,
+    interval: FiniteDuration,
+    wsSend: Option[io.circe.Json => IO[Unit]] = None
+  ): IO[Unit] =
     def loop: IO[Unit] =
       scan(resources).handleErrorWith(e =>
         logger.warn(s"FreezeScheduler scan failed (will retry next cycle): ${e.getMessage}")
-      ) *> IO.sleep(interval) >> loop
+      ) *>
+        nebflow.core.delegate.DelegateFreeze
+          .dormantSweep(resources, wsSend)
+          .handleErrorWith(e => logger.warn(s"FreezeScheduler dormant sweep failed: ${e.getMessage}")) *>
+        IO.sleep(interval) >> loop
     loop
 
   /**

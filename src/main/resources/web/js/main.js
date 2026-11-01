@@ -2418,6 +2418,79 @@ onMessage('delegateWaiting', (msg) => {
   }
 });
 
+// ═══ 错误冻结批（2026-11-01）：delegate 错误冻结态的前端面 ═══════════════════
+// backend `delegateFrozen` 帧（BackoffSupervisor.freezeAndHold）→ 面板行置冻结标记。
+// 与 agentFrozen（时间表/错误族冻结，sapphire/琥珀点）显式区分：本族是**错误冻结**
+// = 就地停住等唤醒（可唤醒续做，不是失败也不是「待命」）。字段隔离：frozen/
+// frozenSince/frozenReason/wakeAddress（不与 freezeReason 混用——后者是
+// error-recovery 归因色的输入）。
+function applyDelegateFrozen(rootSid, sid, patch) {
+  if (!sid) return false;
+  let touched = false;
+  for (const agents of Object.values(state.sessionBgAgents)) {
+    for (const info of Object.values(agents || {})) {
+      const entrySid = (info && info.sessionId || '').replace(/^team-/, '');
+      if (entrySid !== sid) continue;
+      Object.assign(info, patch);
+      touched = true;
+    }
+  }
+  const view = rootSid ? findViewBySessionId(rootSid) : null;
+  if (view) renderBgAgentDropdown && renderBgAgentDropdown();
+  return touched;
+}
+
+onMessage('delegateFrozen', (msg) => {
+  const sid = String(msg.sessionId || msg.agentId || '').replace(/^team-/, '');
+  if (!sid) return;
+  applyDelegateFrozen(msg.rootSessionId, sid, {
+    frozen: true,
+    frozenSince: msg.frozenSince || Date.now(),
+    frozenReason: msg.frozenReason || '',
+    frozenReasonLabel: msg.frozenReasonLabel || '',
+    frozenDetail: msg.frozenDetail || '',
+    wakeAddress: msg.wakeAddress || ('delegate:' + sid),
+  });
+  // 同一行上残留的 waiting（候合并/待命）语义被冻结覆盖——冻结是更硬的停态。
+  for (const agents of Object.values(state.sessionBgAgents)) {
+    for (const info of Object.values(agents || {})) {
+      if ((info && info.sessionId || '').replace(/^team-/, '') === sid) info.waiting = undefined;
+    }
+  }
+  renderBgAgentDropdown && renderBgAgentDropdown();
+});
+
+// 长期无人唤醒提示（dormantSweep，缺省冻结满 24h 起）：行上追加「长期冻结」警示
+// ——与 delegateFrozen 同字段面，只多一个 dormantHours 读数（tooltip 用）。
+onMessage('delegateFrozenDormant', (msg) => {
+  const sid = String(msg.sessionId || '').replace(/^team-/, '');
+  if (!sid) return;
+  applyDelegateFrozen(msg.rootSessionId, sid, {
+    frozen: true,
+    frozenSince: msg.frozenSince || null,
+    frozenReason: msg.frozenReason || '',
+    dormantHours: Number(msg.ageHours) || 0,
+    wakeAddress: msg.wakeAddress || ('delegate:' + sid),
+  });
+  renderBgAgentDropdown && renderBgAgentDropdown();
+});
+
+// 面板「唤醒」动作回执（delegateWakeResult）：成功 ⇒ 撤掉冻结标记（同一会话续跑，
+// 行回到普通进行中）；失败 ⇒ 保留冻结标记并抛出可见告警（绝不静默）。
+onMessage('delegateWakeResult', (msg) => {
+  const sid = String(msg.sessionId || '').replace(/^team-/, '');
+  if (!sid) return;
+  const ok = !!msg.ok;
+  applyDelegateFrozen(null, sid, ok
+    ? { frozen: false, frozenSince: null, frozenReason: '', frozenDetail: '', dormantHours: 0 }
+    : {});
+  if (!ok) {
+    console.warn('[delegateWake] failed for', sid, msg.error || '');
+    window.__showToast?.(msg.error || t('subagents.wakeFailed'), 'error');
+  }
+  renderBgAgentDropdown && renderBgAgentDropdown();
+});
+
 onMessage('agentDone', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
   // composer-resync（2026-10-28）：agentDone 若直接携带会话 id（无 nodeSessionId
@@ -4789,6 +4862,36 @@ onMessage('activeAgents', (msg) => {
       frozen: (prev && prev.frozen) || false,
       freezeResumeAt: (prev && prev.freezeResumeAt) || null,
       freezeReason: (prev && prev.freezeReason) || null,
+      // 错误冻结批（2026-11-01）：**delegate 错误冻结**的刷新恢复面——快照
+      // frozenSince / frozenReason（DelegateRegistry 冻结槽，线值 `delegate-frozen:<reason>`）
+      // 在场 ⇒ 行「已冻结」徽标 + 原因 tooltip + 唤醒按钮随刷新复原（delegateFrozen
+      // 实时帧的恢复脸）；快照缺席 ⇒ 保留本地值（不降级已渲染行，同 standbySince
+      // 合并类）。`delegateFrozen` 判别位把错误冻结与时间表冻结（agentFrozen 帧的
+      // sapphire 点）分开——只有本族渲染原因徽标与唤醒入口。
+      ...(() => {
+        const wire = String(a.frozenReason || '');
+        const isErr = wire.indexOf('delegate-frozen') === 0;
+        const prevErr = !!(prev && prev.delegateFrozen);
+        if (!isErr && !prevErr) return { delegateFrozen: false };
+        const code = wire.indexOf('delegate-frozen:') === 0 ? wire.slice('delegate-frozen:'.length) : '';
+        return {
+          delegateFrozen: true,
+          frozen: true,
+          frozenSince: a.frozenSince || (prev && prev.frozenSince) || null,
+          frozenReason: wire || ((prev && prev.frozenReason) || ''),
+          // 后端实时帧带来的中文短名优先；快照恢复路径按线值本地映射（双语文案
+          // 同下表——与 DelegateFreeze.reasonLabelZh 逐字一致，缺词回落原文）。
+          frozenReasonLabel: (prev && prev.frozenReasonLabel) || ({
+            'llm-failure': t('subagents.frozenReasonLlm'),
+            'tool-failure': t('subagents.frozenReasonTool'),
+            'engine-fault': t('subagents.frozenReasonEngine'),
+            'cancelled-by-quota': t('subagents.frozenReasonQuota'),
+          }[code] || code),
+          frozenDetail: (prev && prev.frozenDetail) || '',
+          wakeAddress: a.wakeAddress || ((prev && prev.wakeAddress) || ('delegate:' + String(a.sessionId || ''))),
+          dormantHours: (prev && prev.dormantHours) || 0,
+        };
+      })(),
       // `done` 单调：本地已收到的终态事件优先于快照行（其 2s 清理随后自会移除）。
       done: !!(prev && prev.done),
       // #752 空闲细分（快照为权威——引擎 bg-wait 屏障 / actor 回执快照的单点）：

@@ -2121,7 +2121,11 @@ object GatewayMain extends IOApp:
                                                             .run(
                                                               sharedResourcesWithDaemon,
                                                               interval =
-                                                                nebflow.shared.Defaults.FreezeCheckIntervalSec.seconds
+                                                                nebflow.shared.Defaults.FreezeCheckIntervalSec.seconds,
+                                                              // 错误冻结批（2026-11-01）：长期无人唤醒的冻结
+                                                              // delegate 兜底面（dormant 提醒帧 / 保留期归档）
+                                                              // 挂在本既有拍上，零新增定时器。
+                                                              wsSend = Some(json => wsHub.broadcast(json))
                                                             )
                                                             .start
                                                           // --- Background: RestartingWatchdog (#692 修批 2026-10-21) ---
