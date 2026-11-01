@@ -114,6 +114,10 @@
   <link rel="stylesheet" href="css/mobileLayer.css">
   <!-- 对话层活性批（2026-10-22）：回合活动流条 + 断连横幅 -->
   <link rel="stylesheet" href="css/liveness.css">
+  <!-- 键盘层（keyboard-first 一期，2026-11-01）：焦点环基线 + meta/edit 模式
+       指示器 + 命令面板。放最后 = 兜底环压得住前面 26 个文件里的 `outline:none`
+       （特异性与颜色单源见该文件头注）。 -->
+  <link rel="stylesheet" href="css/keyboard.css">
   <!-- 偶发裸渲染修复批（2026-10-30，作者 20:03 截图实证：冷启动实例「有时候」
        右侧面板整面无样式、工作台列表以原文竖排裸露）。根因面：stylesheet 是
        渲染阻塞资源，但若任一 CSS 请求**失败**（实例重启在途请求被掐断 / 隧道

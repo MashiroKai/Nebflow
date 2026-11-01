@@ -1,0 +1,232 @@
+/* keyboard.css — 键盘层：焦点环基线 / 模式指示器 / 命令面板（keyboard-first 一期，2026-11-01）
+   ══════════════════════════════════════════════════════════════════════════
+   为什么是一个独立文件而不是散进既有 26 个 CSS：
+   改造前全树 26 个文件写了 60+ 条 focus 规则，却**没有一条兜底基线** ——
+   任何没被单独点到的控件键盘聚焦时完全无视觉反馈（设计文档 §1.2）。
+   基线必须是「一条规则 + 一个单源 token」，否则下一次又会漏。
+
+   颜色纪律：零裸 hex。焦点环 = --btn-focus-ring（蓝族单源，亮 #3b82f6 /
+   暗 #60a5fa 双档，已由 sapphire.css:927 与 stand-tokens.css:133/141 定义），
+   因此暗/亮两套主题下都可见，且不引入新色。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --nf-focus-ring: var(--btn-focus-ring, currentColor);
+  --nf-focus-ring-w: 2px;
+  --nf-focus-ring-offset: 2px;
+  --nf-chip-bg: rgb(var(--sapphire) / 0.10);
+  --nf-chip-border: rgb(var(--sapphire) / 0.32);
+  --nf-chip-bg-on: rgb(var(--sapphire) / 0.20);
+  --nf-chip-border-on: rgb(var(--sapphire) / 0.62);
+}
+
+/* ── 1 焦点环基线 ────────────────────────────────────────────────────────
+   只在 :focus-visible（键盘 / 程序化键盘态）出现，鼠标点击不出环；用 outline
+   而非 box-shadow —— box-shadow 会和组件既有投影互相覆盖，outline 不会。
+   特异性 (0,1,0)：组件自己写过更具体的环规则时以组件为准（既有 26 处的环
+   一个都不被推翻），没写的才由本条兜底。 */
+:focus-visible {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: var(--nf-focus-ring-offset);
+}
+
+/* 组件把 outline 压成 none 却没补环的既有面（nav.css:61/291、sidebar.css:764/987、
+   modal.css:130/147/604/724/1307/1558 一族）——这里统一补回来。 */
+.activity-btn:focus-visible,
+.nav-agent:focus-visible,
+.cfg-card-head-btn:focus-visible,
+.explorer-action-btn:focus-visible,
+.explorer-folder-btn:focus-visible,
+.panel-toggle-btn:focus-visible,
+.icon-btn:focus-visible,
+.save-btn:focus-visible,
+#send-btn:focus-visible,
+#search-btn:focus-visible,
+#sidebar-toggle:focus-visible,
+#canvas-toggle-btn:focus-visible,
+#deck-fab:focus-visible {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: var(--nf-focus-ring-offset);
+}
+
+/* 输入框：既有 `#input { outline: none }`（input.css）把环压掉了，这里按键盘
+   语义显式补回 —— 键盘优先的输入框必须让人看见「字会进这里」。 */
+#input:focus-visible,
+.nf-palette-input:focus-visible {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: var(--nf-focus-ring-offset);
+}
+
+/* 程序化焦点落点（对话流容器 / 画布面板）：环走内描边，避免被父级
+   overflow 裁掉。 */
+.nf-nav-stop:focus-visible {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: -3px;
+}
+
+/* 层容器（陷阱宿主）自身不出环：它是「盒子」不是「控件」。 */
+.nf-trap-root:focus,
+.nf-trap-root:focus-visible {
+  outline: none;
+}
+
+/* ── 2 模式指示器（meta / edit 双模态的状态面） ──────────────────────────
+   宿主 = #input-wrap 内绝对定位（与既有 #ask-indicator / #skill-indicator /
+   #compact-indicator 同一宿主），靠右放置 —— 那三个都在 left:8px，互不遮挡。
+   绝对定位 = **零布局位移**：不挤动输入框、不改行高、不动任何既有元素盒。
+   形态 = 符号 + 单词两段纯文本，任何主题/字体下都能被视觉基线截图捕捉。 */
+.nf-mode-chip {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--nf-chip-border);
+  background: var(--nf-chip-bg);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+  color: var(--color-text-muted);
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.nf-mode-chip .nf-mode-chip-glyph {
+  font-weight: 500;
+  letter-spacing: 0;
+  opacity: 0.85;
+}
+
+/* edit = 输入态：蓝族填充，一眼可辨（对应焦点真的在输入框里）。 */
+.nf-mode-chip[data-mode="edit"] {
+  border-color: var(--nf-chip-border-on);
+  background: var(--nf-chip-bg-on);
+  color: var(--nf-focus-ring);
+}
+
+/* meta = 导航态：描边淡显，不抢注意力。 */
+.nf-mode-chip[data-mode="meta"] {
+  border-color: var(--nf-chip-border);
+  background: var(--nf-chip-bg);
+  color: var(--color-text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nf-mode-chip { transition: none; }
+}
+
+/* ── 3 命令面板 ──────────────────────────────────────────────────────────
+   玻璃面板 + 居中偏上，材质直接复用既有玻璃族 token（--glass-bg /
+   --glass-blur / --glass-border，sapphire.css:37-41 与 :99-100 双档）。 */
+.nf-palette-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+}
+
+.nf-palette-overlay[hidden] {
+  display: none;
+}
+
+.nf-palette {
+  width: min(620px, 88vw);
+  max-height: 62vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.4);
+  backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.4);
+  box-shadow: 0 18px 48px var(--nf-chip-bg-on);
+}
+
+.nf-palette-head {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--nf-chip-border);
+}
+
+.nf-palette-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--nf-chip-border);
+  background: var(--nf-chip-bg);
+  color: var(--color-text);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+}
+
+.nf-palette-list {
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.nf-palette-group {
+  padding: 8px 10px 4px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  opacity: 0.75;
+}
+
+.nf-palette-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--color-text);
+  font-size: 13px;
+}
+
+.nf-palette-row[aria-selected="true"] {
+  background: var(--nf-chip-bg-on);
+  outline: 1px solid var(--nf-chip-border-on);
+  outline-offset: -1px;
+}
+
+.nf-palette-row.is-disabled {
+  color: var(--color-text-muted);
+  opacity: 0.62;
+  cursor: default;
+}
+
+.nf-palette-key {
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--color-text-muted);
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+.nf-palette-empty {
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.nf-palette-empty[hidden] {
+  display: none;
+}
