@@ -38,6 +38,7 @@ last_verified: 2026-09-14
 ## 产出路径纪律
 
 - 文档产出落 `~/.nebflow/docs/<域>/`（Nebflow 项目域为 `docs/Nebflow/`），禁止 /tmp。
+- **方法章同守本节纪律（2026-11-01 二批并入）**：方法章 `parallel-research` 调研报告落盘（`{{data_root}}/docs/<域>/`）与 `grill` 双文档交付（`_ARCH_SUMMARY.md` / `_ARCH_SPEC.md`）落盘同守「落 docs/<域>/、禁 /tmp」，不另立口径。
 
 ## 交付口径
 
