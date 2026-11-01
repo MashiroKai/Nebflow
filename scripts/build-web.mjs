@@ -153,13 +153,19 @@ const jsEntryUrl = entryOutputUrl('/js/main.js');
 // the second <script type="module"> tag below.
 const mobileEntryUrl = entryOutputUrl('/js/mobile/bootstrap.js');
 
-// ── 4. Orphan guard: every web/js/**/*.js must be in metafile inputs ──
+// ── 4. Orphan guard: every source module under web/js must be in metafile inputs ──
+// B0-4（G4）：改造前这里只认 `.js`（`e.name.endsWith('.js')`），任何 `.mjs` /
+// `.ts` / `.vue` 会**静默掉出**「每个源文件必须在打包图里」的保护 —— 一个未来
+// 引入的 `.ts` 被谁 import 都无所谓，因为它压根不在被审计的集合里。现在按
+// 源扩展名清单收，声明文件（`*.d.ts`）除外：它没有运行时实体，天然不进图。
+const SOURCE_EXTS = ['.js', '.mjs', '.cjs', '.ts', '.tsx', '.vue'];
+const isSourceModule = (name) => SOURCE_EXTS.some((x) => name.endsWith(x)) && !name.endsWith('.d.ts');
 const jsFiles = [];
 (function walk(d) {
   for (const e of readdirSync(d, { withFileTypes: true })) {
     const p = join(d, e.name);
     if (e.isDirectory()) walk(p);
-    else if (e.name.endsWith('.js')) jsFiles.push(relative(SRC, p).split('\\').join('/'));
+    else if (isSourceModule(e.name)) jsFiles.push(relative(SRC, p).split('\\').join('/'));
   }
 })(join(SRC, 'js'));
 const inputs = new Set(
@@ -172,9 +178,34 @@ const inputs = new Set(
 );
 const orphans = jsFiles.filter(f => !inputs.has(f) && !ORPHAN_EXEMPTIONS.has(f));
 if (orphans.length > 0) {
-  console.error('ORPHAN JS FILES (reachable from dev server but NOT in the bundle):');
+  console.error('ORPHAN SOURCE FILES (reachable from dev server but NOT in the bundle):');
   for (const f of orphans) console.error('  ' + f);
   console.error('Fix: import it from the graph, delete it, or add an explicit ORPHAN_EXEMPTIONS entry with a reason.');
+  process.exit(1);
+}
+
+// 反向审计（B0-4 第二半）：产物里**每一个** JS 都必须能在 metafile 里找到自己的
+// 登记。正向审计只保证「源文件都进了图」，管不住「产物里多出一个没人登记的
+// 文件」（历史遗留、手工拷贝、构建半途而废留下的残渣）。范围限定 assets/：
+// copy-through 的 vendor/ 与 sw.js 不经过打包图，属于另一条纪律。
+const emitted = new Set(
+  Object.keys(result.metafile.outputs).map(k => relative(OUT, join(ROOT, k)).split('\\').join('/'))
+);
+const strays = [];
+(function walkOut(d) {
+  for (const e of readdirSync(d, { withFileTypes: true })) {
+    const p = join(d, e.name);
+    if (e.isDirectory()) walkOut(p);
+    else if (e.name.endsWith('.js')) {
+      const rel = relative(OUT, p).split('\\').join('/');
+      if (!emitted.has(rel)) strays.push(rel);
+    }
+  }
+})(join(OUT, 'assets'));
+if (strays.length > 0) {
+  console.error('UNREGISTERED JS IN DIST (present in build output but absent from the esbuild metafile):');
+  for (const f of strays) console.error('  ' + f);
+  console.error('Fix: remove the stale file or make the build emit it — dist must be explainable by the metafile.');
   process.exit(1);
 }
 
@@ -230,6 +261,7 @@ console.log(`  js entry : ${jsEntryUrl}`);
 console.log(`  mobile   : ${mobileEntryUrl} (bootstrap hook, #510)`);
 console.log(`  chunks   : ${chunks.length} lazy chunks (dynamic import boundaries preserved)`);
 console.log(`  css      : assets/${cssName} (${appCss.length} files concatenated in source link order)`);
-console.log(`  js files : ${jsFiles.length} sources, all in bundle graph (orphans: 0, exemptions: ${ORPHAN_EXEMPTIONS.size})`);
+console.log(`  js files : ${jsFiles.length} sources (${SOURCE_EXTS.join('/')}), all in bundle graph (orphans: 0, exemptions: ${ORPHAN_EXEMPTIONS.size})`);
+console.log(`  reverse  : ${emitted.size} registered outputs, 0 unregistered js under assets/`);
 console.log(`  vendor   : copied through (${vendorCss.length} vendor css links kept separate)`);
 console.log(`  form     : ${STRIP_FRIENDS ? 'SEALED (--strip-friends: release marker injected, dev branch DCE-stripped)' : 'UNSEALED (default: no release marker, friends visible)'}`);
