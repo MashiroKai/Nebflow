@@ -357,6 +357,13 @@ const TERMINAL_MSG_TYPES = new Set([
   // 往往不是用户正在看的会话）——不入门面过滤集就会被入口过滤器静默丢弃，
   // 处理器饥饿。taskStuck 同律先例。
   'delegateWaiting', // delegate ready-to-merge 停靠态（平台修复批 fix 4；对话层活性批 2026-10-22 补路由）
+  // 错误冻结批（2026-11-01）：delegate 错误冻结三帧——sessionId = 被冻结的子会话
+  // 自身（几乎总不是用户正在看的会话），不入门面过滤集就会被入口过滤器静默丢弃，
+  // 面板的「已冻结」徽标/原因 tooltip 与唤醒回执永远不出现（delegateWaiting 同律）。
+  //   delegateFrozen        冻结发生（徽标上线 + 详情卡原因/唤醒入口）
+  //   delegateFrozenDormant 长期无人唤醒提示（dormantSweep 的 24h 提醒）
+  //   delegateWakeResult    面板「唤醒」动作回执
+  'delegateFrozen', 'delegateFrozenDormant', 'delegateWakeResult',
   'heldReceipts', // held-receipt 投递可靠性批（2026-10-21）：父会话积压/未读计数
   // #753 速率闸熔断告警帧：{sessionId, rootSessionId, count, windowSec,
   // cooldownSec}——sessionId = 被熔断的（往往非活跃）会话。不入门面过滤集会被

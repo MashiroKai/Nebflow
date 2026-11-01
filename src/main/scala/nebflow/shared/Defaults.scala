@@ -1001,6 +1001,48 @@ object Defaults:
   def DelegateStandbyNudgeLongMax: Int =
     sys.props.getOrElse("nebflow.delegate.standby.nudgeLongMax", "3").toInt
 
+  // ── Delegate 错误冻结（错误冻结批 2026-11-01 · 作者令「所有因错误状态的
+  //    delegate 应该上报之后 要能保留状态 冻结态 方便被唤醒 接着做」）────────
+  //    语义：delegate 因错误结束 ⇒ **冻结**（frozen）而非 failed 终止——同会话
+  //    就地停住、状态落盘跨重启存活、上报一条冻结回执（不是失败回执），唤醒
+  //    （Mail `delegate:<id>` / 面板「唤醒」）即**在原会话上下文上继续**。
+  //    与 standby（自愿待命）显式分工：standby = 回合正常收尾等活，
+  //    frozen = 异常冻结等唤醒；引擎不自动重试（冻结即停，唤醒才是重试）。
+  //    全部现读 prop（spec 可即时翻转边界）。
+
+  /**
+   * 错误冻结总闸：`nebflow.delegate.freeze.enabled`，缺省 true；false =
+   * 错误路径回既有 failed 终止链（逐字节回本批前现状——冻结腿、回执、面板
+   * 徽标、长期兜底扫描一并旁路）。
+   */
+  def DelegateFreezeEnabled: Boolean =
+    sys.props.getOrElse("nebflow.delegate.freeze.enabled", "true").toBoolean
+
+  /**
+   * 冻结保留期（天，缺省 14）：长期无人唤醒的冻结记录超此期后归档 registry
+   * 记录（`archivedAt` 旗，历史窗仍可查；转录/worktree/台账行原样留存）＋
+   * 面板留痕——**绝不静默删除**。0 = 关闭归档（永久保留，只做提示）。
+   * prop `nebflow.delegate.freeze.retentionDays`。
+   */
+  def DelegateFreezeRetentionDays: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.retentionDays", "14").toLong
+
+  /**
+   * 长期无人唤醒的首次面板提示窗（ms，缺省 24h）：冻结超此龄 ⇒
+   * `delegateFrozenDormant` 帧 + WARN（一次，进程内去重）。prop
+   * `nebflow.delegate.freeze.dormantRemindMs`。
+   */
+  def DelegateFreezeDormantRemindMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.dormantRemindMs", (24L * 3600 * 1000).toString).toLong
+
+  /**
+   * 单 delegate 冻结-唤醒循环次数上限（缺省 3）：超过则后续错误按既有 failed 终态
+   * 收殓（反复冻结-唤醒死循环的护栏——「冻结即停」不等于无限循环）。0 = 不限。
+   * prop `nebflow.delegate.freeze.maxRevives`。
+   */
+  def DelegateFreezeMaxRevives: Int =
+    sys.props.getOrElse("nebflow.delegate.freeze.maxRevives", "3").toInt
+
   // ── death-watch 误报修复批（2026-10-31 作者令「修」，根因 docs/20261031_owner-lost.md
   //    §4 修法清单 ①②③⑤⑥ 的参数面；全部现读 prop，spec 可即时翻转边界）──────────
 

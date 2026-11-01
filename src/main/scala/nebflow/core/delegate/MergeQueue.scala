@@ -330,6 +330,24 @@ object MergeQueue:
     try livenessProbe.get.apply(ref).unsafeRunSync()
     catch case _: Throwable => true
 
+  /**
+   * 冻结豁免（错误冻结批 2026-11-01 · 任务书「合并队列里批次冻结时的处置写明」）：
+   * 成员属主的 registry 记录带**本批冻结线值**（`delegate-frozen:*`）⇒ 属主不是
+   * 「死灭」而是**冻结待唤醒**——窗绝不能被判成 owner-gone 关账（关了就等于把
+   * 冻结点上的工作判死，唤醒回来发现合并台账已销账）。冻结期的窗口处置：
+   *   - 持窗成员：冻结拍已由 [[DelegateFreeze.requeueMergeMember]] 退回 waiting
+   *     （FIFO 位保留）——本拍若仍看到 turn-granted（冻结拍与授窗拍竞态），同样
+   *     退回 waiting 而非 owner-gone；
+   *   - 在队等待成员：原地留队（唤醒后 [[DelegateFreeze.onWoken]] 的 careTick 自然
+   *     重排）。
+   * 判据只读 registry 记录（零进程态依赖、跨重启成立）；读失败 ⇒ 不豁免（保守）。
+   */
+  private def frozenAwaitingWake(delegateId: String): Boolean =
+    try
+      val rec = DelegateRegistry.find(delegateId)
+      rec.exists(r => r.frozenSince.isDefined && DelegateFreeze.isFreezeWire(r.frozenReason.getOrElse("")))
+    catch case _: Throwable => false
+
   // ── 属主失联升级端口（M2 注册器形态：core 只见面，agent 侧装配实现） ──
 
   object OwnerGonePort:
@@ -1140,10 +1158,19 @@ object MergeQueue:
           s"[merge-queue] care-tick fact-check: '${m.delegateId}' branch already merged into base — closing the window without waiting for the owner (stale-holder release)"
         )
         closeMerged(m.delegateId, via = "fact-check-care-tick", closeReason = Some("merge landed (care-tick fact-check; owner did not report back)"), cleanup = true)
+      else if frozenAwaitingWake(m.delegateId) then
+        // 错误冻结批（2026-11-01）：持窗而属主冻结 ⇒ 窗口退回 waiting（FIFO 位保留），
+        // **绝不**判 owner-gone（冻结待唤醒≠死灭；唤醒后 careTick 自然重排）。
+        requeueForLane(m.delegateId, "delegate frozen while holding the merge window — slot returned, membership kept (awaiting wake)")
       else
         m.internal match
           case Some(leg) if !childAlive(leg.childRef) =>
-            markOwnerGone(m.delegateId, "merge-round holder session is no longer live — needs dispatcher handling")
+            // 冻结豁免二次闸：actor 已停但记录带冻结线值（监督者自停的冻结形态）
+            // ⇒ 同样不关账（childAlive 判据只认 actor 存活，冻结是故意的停）。
+            if frozenAwaitingWake(m.delegateId) then
+              requeueForLane(m.delegateId, "delegate frozen (supervisor stopped) while holding the merge window — membership kept (awaiting wake)")
+            else
+              markOwnerGone(m.delegateId, "merge-round holder session is no longer live — needs dispatcher handling")
           case _ => ()
     }
     snapshot.map(_.projectKey).distinct.foreach(pump)

@@ -741,42 +741,74 @@ object BackoffSupervisor:
           case AgentEvent.Failed(sessionId, error) =>
             val sessionInfo =
               if sessionId.nonEmpty then s" [session=$sessionId]" else ""
-            val retryable = error.errorType match
-              case AgentErrorType.LlmFailed => true
-              case AgentErrorType.Timeout => true
-              case _ => false
-            val failureMeta = JsonObject(
-              "failedSessionId" -> subagentId.asJson,
-              "retryable" -> retryable.asJson,
-              "failureType" -> error.errorType.toString.asJson
-            )
-            // file-diff → 委托结果行（同完成腿）：失败前已写入的文件同样出 diff
-            // 载荷（用户预期 = 任何改了文件的委托批；失败批看「写到哪里了」同价）；
-            // 合并提交统计同面随行（合并轮夭折形态下锚定多半不可读 ⇒ None = 不带键）。
-            val withFc =
-              if source == "delegate" then terminalDiffMetadata().map(_.deepMerge(failureMeta))
-              else IO.pure(failureMeta)
-            withFc.flatMap(fc => notifyParentAndStop("failed", s""""$description": ${error.message}$sessionInfo""", fc))
+            // ═══ 错误冻结腿（错误冻结批 2026-11-01 · 作者令逐字「所有因错误状态的
+            // delegate 应该上报之后 要能保留状态 冻结态 方便被唤醒 接着做」）═══
+            // delegate 轨的回合级失败不再走 failed 终止：同一会话（同 id、同历史、
+            // 同 worktree、同合并队列位）**就地冻结**——registry 置 Frozen + 冻结槽落
+            // 盘 + 台账行 status=frozen + 一条**冻结回执**（eventType="frozen"，不是
+            // failed）入父会话持久邮箱 + 面板 delegateFrozen 帧；actor 保持 active
+            // 行为等待唤醒（唤醒才是重试，引擎不做无限重试）。判词诚实：引擎/上游
+            // 故障绝不写成 agent 的失败。subtask 轨逐字保持既有 failed 终态（重派成本
+            // 低，无留态价值）。
+            if source == "delegate" && nebflow.shared.Defaults.DelegateFreezeEnabled then
+              val fzReason = nebflow.core.delegate.DelegateFreeze.classify(
+                error.errorType.toString,
+                error.message
+              )
+              freezeAndHold(s"${error.message}$sessionInfo", fzReason)
+            else
+              val retryable = error.errorType match
+                case AgentErrorType.LlmFailed => true
+                case AgentErrorType.Timeout => true
+                case _ => false
+              val failureMeta = JsonObject(
+                "failedSessionId" -> subagentId.asJson,
+                "retryable" -> retryable.asJson,
+                "failureType" -> error.errorType.toString.asJson
+              )
+              // file-diff → 委托结果行（同完成腿）：失败前已写入的文件同样出 diff
+              // 载荷（用户预期 = 任何改了文件的委托批；失败批看「写到哪里了」同价）；
+              // 合并提交统计同面随行（合并轮夭折形态下锚定多半不可读 ⇒ None = 不带键）。
+              val withFc =
+                if source == "delegate" then terminalDiffMetadata().map(_.deepMerge(failureMeta))
+                else IO.pure(failureMeta)
+              withFc.flatMap(fc => notifyParentAndStop("failed", s""""$description": ${error.message}$sessionInfo""", fc))
+            end if
 
           case AgentEvent.Cancelled(_, reason) =>
-            // AgentControl cancel（spec §3.2）：与自然终态同路清理——父
-            // ExternalEvent(source 保持 delegate/subtask → barrier 正确释放)
-            // + taskStore cancelled + registry 移除 + child Stop + 自停。
-            // 与 Completed/Failed 竞态：mailbox 串行，首个终态胜出，supervisor
-            // 停止后其余消息被丢弃（actor 语义），无双重通知。
-            val reasonSuffix = if reason.nonEmpty then s" — $reason" else ""
-            notifyParentAndStop(
-              "cancelled",
-              s""""$description": cancelled by Nebula via AgentControl$reasonSuffix""",
-              JsonObject(
-                "failedSessionId" -> subagentId.asJson,
-                "retryable" -> false.asJson,
-                "failureType" -> "cancelled".asJson,
-                "cancelled" -> true.asJson,
-                "reason" -> reason.asJson
-              ),
-              taskStatusOverride = Some("cancelled")
-            )
+            // 错误冻结批（2026-11-01）：**配额/额度类取消**是「外部条件不足」而非作者
+            // 意图——delegate 轨就地冻结（可等额度恢复后唤醒续做），显式取消（作者
+            // AgentControl cancel / 项目卸载 / 父会话删除 / 卡死硬取消）仍走 cancelled
+            // 终态逐字不变（取消意图必须落地成终态，绝不被冻结漂移）。空依赖
+            // （resource-empty / 孤儿空烧）同归冻结腿——它们是「转不动了」而非
+            // 「不要了」。
+            if source == "delegate" && nebflow.shared.Defaults.DelegateFreezeEnabled &&
+              isQuotaLikeCancel(reason)
+            then
+              freezeAndHold(
+                s"cancelled by the engine: ${if reason.nonEmpty then reason else "quota/budget exhausted"}",
+                nebflow.core.delegate.DelegateFreeze.Reason.CancelledByQuota
+              )
+            else
+              // AgentControl cancel（spec §3.2）：与自然终态同路清理——父
+              // ExternalEvent(source 保持 delegate/subtask → barrier 正确释放)
+              // + taskStore cancelled + registry 移除 + child Stop + 自停。
+              // 与 Completed/Failed 竞态：mailbox 串行，首个终态胜出，supervisor
+              // 停止后其余消息被丢弃（actor 语义），无双重通知。
+              val reasonSuffix = if reason.nonEmpty then s" — $reason" else ""
+              notifyParentAndStop(
+                "cancelled",
+                s""""$description": cancelled by Nebula via AgentControl$reasonSuffix""",
+                JsonObject(
+                  "failedSessionId" -> subagentId.asJson,
+                  "retryable" -> false.asJson,
+                  "failureType" -> "cancelled".asJson,
+                  "cancelled" -> true.asJson,
+                  "reason" -> reason.asJson
+                ),
+                taskStatusOverride = Some("cancelled")
+              )
+            end if
         end match
       end receive
 
@@ -796,16 +828,163 @@ object BackoffSupervisor:
                 s"BackoffSupervisor: child $childName exceeded maxRestarts " +
                   s"($maxRestarts in ${withinTimeRange}), giving up"
               ) *>
-                notifyParentAndStop(
-                  "failed",
-                  s""""$description": agent crashed and could not recover after $maxRestarts restarts""",
-                  JsonObject(
-                    "failedSessionId" -> subagentId.asJson,
-                    "retryable" -> false.asJson,
-                    "failureType" -> "supervision-exhausted".asJson
-                  )
+                (if source == "delegate" && Defaults.DelegateFreezeEnabled then
+                   // 错误冻结批（2026-11-01）：监督耗尽 = **引擎侧故障**——delegate 轨
+                   // 不再落 failed（工作现场/分支/worktree 全在，重派即整段白干），
+                   // 就地冻结等唤醒（唤醒 = 同 id 复活，见 DelegateRevival 冻结腿）。
+                   // child 已死（Terminated 触发）⇒ 冻结后本监督者自停（registry 记录
+                   // 保留 = 面板与 Mail 唤醒的地址锚）。
+                   freezeAndHold(
+                     s"the agent crashed and could not recover after $maxRestarts restarts",
+                     nebflow.core.delegate.DelegateFreeze.Reason.EngineFault,
+                     childAlive = false
+                   )
+                 else
+                   notifyParentAndStop(
+                     "failed",
+                     s""""$description": agent crashed and could not recover after $maxRestarts restarts""",
+                     JsonObject(
+                       "failedSessionId" -> subagentId.asJson,
+                       "retryable" -> false.asJson,
+                       "failureType" -> "supervision-exhausted".asJson
+                     )
+                   )
                 )
             end if
+
+      /**
+       * 错误冻结腿（错误冻结批 2026-11-01 · 作者令「所有因错误状态的 delegate 应该
+       * 上报之后 要能保留状态 冻结态 方便被唤醒 接着做」）。
+       *
+       * 语义（判词诚实铁律）：错误 = **冻结态**，不是终止态。本腿做四件事、四件都
+       * 不出终态判词：
+       *   ① 冻结落盘 —— [[nebflow.core.delegate.DelegateFreeze.park]]：registry 冻结槽
+       *      （frozenSince/frozenReason/frozenDetail）+ 台账行 status=frozen（不进 boot
+       *      收殓视野，见 SubAgentStartupRecovery.InFlightStatuses）；
+       *   ② registry 状态 = `AgentStatus.Frozen`（面板徽标/`freezeReason` 面；与
+       *      standby 的 Waiting 显式区分）+ 合并队列处置（持窗成员 requeueForLane 退回
+       *      waiting、**保留 FIFO 位**）；
+       *   ③ 冻结回执入父会话**持久邮箱**（`eventType="frozen"` —— **不是**
+       *      failed/completed/cancelled：不抢终态幂等键、不与后续真终态互吞）+
+       *      `delegateFrozen` WS 帧（面板实时徽标 + 原因 tooltip）；
+       *   ④ **不**调 notifyParentAndStop —— 不写判词行、不关合并队列账、不拆 registry
+       *      行、不发 child Stop（child 若已死则本监督者自停，registry 记录保留 = 唤醒
+       *      地址锚）。
+       *
+       * @param childAlive child actor 是否仍在（Failed/Cancelled 事件 = 在；Terminated /
+       *                   respawn 失败 = 不在——后者冻结后本监督者自停）
+       */
+      private def freezeAndHold(
+        detail: String,
+        reason: nebflow.core.delegate.DelegateFreeze.Reason,
+        childAlive: Boolean = true
+      ): IO[Behavior[AgentEvent]] =
+        val d = nebflow.core.delegate.DelegateFreeze.compactDetail(detail)
+        val workspace = nebflow.core.delegate.DelegateRegistry
+          .find(subagentId)
+          .map(r => r.worktree.getOrElse(r.cwd))
+          .getOrElse("")
+        val receipt =
+          nebflow.core.delegate.DelegateFreeze.receiptText(
+            delegateId = subagentId,
+            description = description,
+            reason = reason,
+            detail = d,
+            workspace = workspace
+          )
+        val frozenEvent = AgentCommand.ExternalEvent(
+          source = "delegate",
+          eventType = "frozen",
+          payload = receipt,
+          metadata = JsonObject(
+            "description" -> description.asJson,
+            "agentName" -> agentName.asJson,
+            "frozenDelegateId" -> subagentId.asJson,
+            "frozenReason" -> nebflow.core.delegate.DelegateFreeze.wire(reason).asJson,
+            "frozenReasonLabel" -> nebflow.core.delegate.DelegateFreeze.reasonLabelZh(reason).asJson,
+            "frozenDetail" -> d.asJson,
+            "wakeAddress" -> s"delegate:$subagentId".asJson,
+            "retryable" -> true.asJson,
+            "frozen" -> true.asJson
+          ).deepMerge(extraMetadata),
+          // 身份键带冻结序号（`restartHistory.size`）：同一 delegate 二次冻结是**另
+          // 一份回执**（唤醒后又冻了一次必须让父会话看见），若沿用裸 id 会被
+          // `DeliveredReceiptLedger` 的不过时 intake 闸当重复件吞掉，父会话永远
+          // 不知道第二次冻结。seq=0（首冻）与既有形态同长。
+          correlationId = Some(s"delegate-frozen-$subagentId-${restartHistory.size}")
+        )
+        val persistAndAnnounce =
+          nebflow.core.delegate.DelegateFreeze
+            .park(resources, subagentId, parentSessionId, reason, d)
+            .flatMap { frozenAt =>
+              nebflow.core.delegate.DelegateFreeze.markRegistryState(resources, subagentId, reason) *>
+                IO(nebflow.core.delegate.DelegateFreeze.requeueMergeMember(subagentId, d)) *>
+                DelegateBudget.release(subagentId) *>
+                MailboxProducer
+                  .deliver(
+                    resources,
+                    parentSessionId,
+                    frozenEvent,
+                    identity = s"frozen-$subagentId-${frozenAt.getOrElse(0L)}",
+                    kind = "delegate-frozen",
+                    coalesce = false,
+                    producer = "backoff-supervisor"
+                  )
+                  .handleErrorWith(e =>
+                    logger.warn(s"[delegate-freeze] frozen receipt delivery failed for $subagentId: ${e.getMessage}")
+                  ) *>
+                wsSend.fold(IO.unit) { send =>
+                  send(
+                    Json.obj(
+                      "type" -> "delegateFrozen".asJson,
+                      "sessionId" -> subagentId.asJson,
+                      "rootSessionId" -> parentSessionId.asJson,
+                      "agentId" -> subagentId.asJson,
+                      "frozenSince" -> frozenAt.getOrElse(System.currentTimeMillis()).asJson,
+                      "frozenReason" -> nebflow.core.delegate.DelegateFreeze.wire(reason).asJson,
+                      "frozenReasonLabel" -> nebflow.core.delegate.DelegateFreeze.reasonLabelZh(reason).asJson,
+                      "frozenDetail" -> d.asJson,
+                      "wakeAddress" -> s"delegate:$subagentId".asJson,
+                      "childAlive" -> childAlive.asJson
+                    )
+                  ).handleErrorWith(e => logger.warn(s"delegateFrozen WS frame failed: ${e.getMessage}"))
+                }
+            }
+        persistAndAnnounce *>
+          logger
+            .warn(
+              s"[delegate-freeze] delegate $subagentId FROZEN (reason=${nebflow.core.delegate.DelegateFreeze
+                  .wire(reason)}, childAlive=$childAlive) — no failure verdict; wake via `delegate:$subagentId` or the panel: $d"
+            )
+            .as(
+              if !childAlive then Behaviors.stopped[AgentEvent]
+              else
+                active(
+                  childRef,
+                  childSpawnFn,
+                  childName,
+                  parentRef,
+                  description,
+                  agentName,
+                  subagentId,
+                  parentSessionId,
+                  resources,
+                  initialPrompt,
+                  source,
+                  extraMetadata,
+                  wsSend,
+                  restartCount,
+                  restartHistory,
+                  minBackoff,
+                  maxBackoff,
+                  maxRestarts,
+                  withinTimeRange,
+                  bgWaitCapMs,
+                  bgWaitHeld,
+                  bgWaitCapFiber,
+                  bgWaitCapFired
+                )
+            )
 
       /**
        * #692 修批（重启屏障健壮化）：respawn 链的崩溃安全壳。respawn 本体是长
@@ -827,18 +1006,31 @@ object BackoffSupervisor:
           logger
             .error(
               s"BackoffSupervisor: respawn chain FAILED for $childName ($trigger): ${e.getMessage} — " +
-                "falling back to an honest failed terminal (a stuck 'restarting' row is never left behind)"
+                "falling back to an honest terminal (a stuck 'restarting' row is never left behind)"
             )
             .as(()) *>
-            notifyParentAndStop(
-              "failed",
-              s""""$description": supervisor respawn failed mid-restart ($trigger): ${Option(e.getMessage)
-                  .getOrElse(e.getClass.getSimpleName)} — task force-failed instead of stalling in 'restarting'""",
-              JsonObject(
-                "failedSessionId" -> subagentId.asJson,
-                "retryable" -> true.asJson,
-                "failureType" -> "respawn-failed".asJson
-              )
+            (if source == "delegate" && Defaults.DelegateFreezeEnabled then
+               // 错误冻结批（2026-11-01）：respawn 链中途失败 = **引擎侧故障**（spawn
+               // 工厂异常 / session store 读炸 / registry 写失败）——delegate 轨就地
+               // 冻结（可唤醒续做），绝不把引擎故障写成 agent 的 failed；subtask 轨
+               // 逐字保持既有 failed 终态。
+               freezeAndHold(
+                 s"supervisor respawn failed mid-restart ($trigger): ${Option(e.getMessage)
+                     .getOrElse(e.getClass.getSimpleName)}",
+                 nebflow.core.delegate.DelegateFreeze.Reason.EngineFault,
+                 childAlive = false
+               )
+             else
+               notifyParentAndStop(
+                 "failed",
+                 s""""$description": supervisor respawn failed mid-restart ($trigger): ${Option(e.getMessage)
+                     .getOrElse(e.getClass.getSimpleName)} — task force-failed instead of stalling in 'restarting'""",
+                 JsonObject(
+                   "failedSessionId" -> subagentId.asJson,
+                   "retryable" -> true.asJson,
+                   "failureType" -> "respawn-failed".asJson
+                 )
+               )
             )
         }
 
@@ -1412,5 +1604,16 @@ object BackoffSupervisor:
     else
       val last = extractLastAssistantText(messages)
       last.isEmpty || last.trim == Defaults.MaxTokensStubText
+
+  /**
+   * 配额/额度类取消判据（错误冻结批 2026-11-01，纯函数判红锚）：`AgentEvent.Cancelled`
+   * 的 reason 属「外部条件不足」而非「不要了」⇒ delegate 轨就地冻结（可等额度恢复
+   * 后唤醒续做）。显式取消（作者 AgentControl cancel / 父会话删除 / 项目卸载 /
+   * 卡死硬取消）**不在**此列——取消意图必须落地成终态。
+   */
+  private[agent] def isQuotaLikeCancel(reason: String): Boolean =
+    val r = Option(reason).getOrElse("").toLowerCase
+    r.contains("quota") || r.contains("额度") || r.contains("budget") || r.contains("rate limit") ||
+      r.contains("insufficient_quota")
 
 end BackoffSupervisor

@@ -1286,8 +1286,27 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                     // 分流（提醒补报，绝不静默判完成）；standby-care caretaker 以
                     // standbySince 清零为自取消信号，绝不在 Mail 唤醒轮中途再注入
                     // 提醒。fail-soft：清槽失败只 WARN，绝不阻断 Mail 投递。
+                    //
+                    // ═══ 错误冻结唤醒腿（错误冻结批 2026-11-01 · 作者令「冻结态
+                    // 方便被唤醒 接着做」「别丢上下文」）═══
+                    // live 且 registry 记录带**本批冻结线值**（`delegate-frozen:*`）⇒
+                    // 注入的正文前缀换成冻结唤醒横幅（原因在场、明说「历史在场、
+                    // 已完成的不重做、从冻结点继续」），注入后清冻结槽 + 台账行翻
+                    // running + 合并队列重排（[[DelegateFreeze.onWoken]]）。
+                    // **同一 actor、同一 session id、同一历史**——绝不新建会话。
+                    // replyTo 仍取 supervisorRef（醒来后终态照旧回投父会话）。
+                    val frozenWire =
+                      record.frozenReason.filter(nebflow.core.delegate.DelegateFreeze.isFreezeWire)
+                    val wakeText = frozenWire match
+                      case Some(w) =>
+                        nebflow.core.delegate.DelegateFreeze.wakeBanner(
+                          id,
+                          w,
+                          record.frozenDetail.getOrElse("")
+                        ) + "\n\n" + message
+                      case None => message
                     (rec.ref ! AgentCommand.UserInput(
-                      text = message,
+                      text = wakeText,
                       replyTo = rec.supervisorRef,
                       source = Some("mail"),
                       sender = ctx.agentDef.map(_.name),
@@ -1303,12 +1322,48 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                             logger.warn(s"clearStandby on mail wake failed for $id: ${e.getMessage}")
                           case Right(_) => IO.unit
                         } *>
+                      (if frozenWire.isDefined then
+                         nebflow.core.delegate.DelegateFreeze.onWoken(res, id, "mail-live-wake")
+                       else IO.unit) *>
                       nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse("")) *>
                       IO.pure(
                         Right(
-                          s"[delegate #$id] Message injected into the live instance — it will process it at its next turn boundary; its next result is delivered back to your session."
+                          if frozenWire.isDefined then
+                            s"[delegate #$id] This instance was FROZEN (${frozenWire.get}) — the message woke it **in the same session** " +
+                              "(full history in place, finished work is not redone). It continues from the freeze point at its next turn boundary; " +
+                              "the next result is delivered back to your session."
+                          else
+                            s"[delegate #$id] Message injected into the live instance — it will process it at its next turn boundary; its next result is delivered back to your session."
                         )
                       )
+                  case _ if nebflow.core.delegate.DelegateFreeze.isFreezeWire(record.frozenReason.getOrElse("")) &&
+                      record.executor == nebflow.core.executor.ExecutorRegistry.DefaultId =>
+                    // ═══ 不 live 的**冻结记录**（错误冻结批 2026-11-01）═══
+                    // 冻结记录在统一注册表里没有活体 = 监督者已自停（Terminated /
+                    // respawn 失败腿）或引擎重启过。**绝不可**走下面的续起腿
+                    // （`continueDelegate` 起新会话 = 丢上下文，作者硬否）。判据走
+                    // 同 id 复活腿：transcript checkpoint 续跑、同一 session 身份、
+                    // 唤醒横幅 + 唤醒者指令作首条输入。
+                    nebflow.agent.DelegateRevival
+                      .wakeFrozen(
+                        nebflow.agent.DelegateRevival.Deps(res, system, ctx.wsSend),
+                        id,
+                        message
+                      )
+                      .map {
+                        case Right(()) =>
+                          nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse(""))
+                          Right(
+                            s"[delegate #$id] The frozen instance was WOKEN in the SAME session (history resumed from the checkpoint, " +
+                              "finished work is not redone) and is running again; its result is delivered back to your session when it finishes."
+                          )
+                        case Left(reason) =>
+                          Left(
+                            ToolError(
+                              s"DELEGATE_FROZEN_WAKE_FAILED: could not wake frozen delegate '$id': $reason — the record and its transcript are kept (the panel 唤醒 action and a later boot revival both retry the same path)"
+                            )
+                          )
+                      }
                   case _ =>
                     // 不 live：外部执行器 ⇒ resume 续聊 / mailbox 排队（external-executors 真通路替换 DELEGATE_EXECUTOR_PENDING 墓碑——同一
                     // `delegate:<id>` 地址面零新面，S15 注入通道）；内置执行器 ⇒ 续起。

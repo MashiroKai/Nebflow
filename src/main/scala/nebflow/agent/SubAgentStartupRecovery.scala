@@ -92,6 +92,14 @@ object SubAgentStartupRecovery:
   /** 在飞孤儿资格：running ＋ restarting（supervisor 退避态——进程死亡时同样在飞）。 */
   private val InFlightStatuses = Set("running", "restarting")
 
+  /**
+   * 冻结行状态值（错误冻结批 2026-11-01，与 [[nebflow.core.delegate.DelegateFreeze.TaskStatus]]
+   * 同串）：冻结行**单独分诊**——不进在飞收殓视野（不能把冻结当在飞孤儿终态化），
+   * 有复活腿 ⇒ 判复活（同 id 续原上下文）；无复活腿 ⇒ 原样留着（用户仍可 Mail
+   * `delegate:<id>` 唤醒；长期无人唤醒由 DelegateFreeze.dormantSweep 兜底提示/归档）。
+   */
+  private val FrozenStatus = "frozen"
+
   // ── 监督链自动恢复批（2026-10-22 作者令）：boot 复活腿 ────────────────────
   //
   // 孤儿处置从「一律收殓」升级为「先判复活资格，不合格才收殓」（设计
@@ -147,7 +155,43 @@ object SubAgentStartupRecovery:
         //  ② 无成员 =「ready 前被杀连账本条目都没有」的僵尸形态（报告二 R5 后半
         //     的行面后果）→ 本 sweep 直接落终态（recoverOne：interrupted 指纹 +
         //     F2 幂等父通知 + registry 重启打断旗——与墓碑同族持久性面）。
-        val (rtmRows, orphans) = allOrphans.partition(_.status == "ready-to-merge")
+        val (rtmRows, rest1) = allOrphans.partition(_.status == "ready-to-merge")
+        // 错误冻结批（2026-11-01）：冻结行单独分诊——**绝不进收殓链**（冻结不是
+        // 在飞孤儿，忠实终态化 = 把作者要保留的现场判死）。有复活腿 ⇒ 与在飞孤儿
+        // 走同一判据（`DelegateRevival.eligibility` 的冻结腿放开预算/年龄闸）；复活
+        // 不成的冻结行原样留着（作者仍可 Mail `delegate:<id>` 唤醒；长期无人唤醒由
+        // `DelegateFreeze.dormantSweep` 提示/归档兜底）。
+        val (frozenRows, orphans) = rest1.partition(_.status == FrozenStatus)
+        val frozenNote: IO[Unit] =
+          if frozenRows.isEmpty then IO.unit
+          else
+            logger.info(
+              s"[startup-recovery] ${frozenRows.size} FROZEN delegate row(s) survived the restart — kept as-is awaiting a wake " +
+                s"(never terminalized): ${frozenRows.map(_.taskId).mkString(", ")}"
+            )
+        // 冻结行的复活 = 可选腿（有 deps 才做）：冻结行不参与「在飞孤儿」的收殓分流，
+        // 复活失败也只回原状（行仍 frozen、待作者唤醒）。
+        def reviveFrozen(): IO[List[String]] =
+          if frozenRows.isEmpty || revival.isEmpty || !Defaults.DelegateRevivalEnabled then IO.pure(Nil)
+          else
+            frozenRows
+              .traverse(t =>
+                DelegateRevival.eligibility(sessionStore, t).flatMap {
+                  case Some(_) => IO.pure(None)
+                  case None =>
+                    DelegateRevival
+                      .revive(DelegateRevival.Deps(revival.get.resources, revival.get.system, revival.get.wsSend), t)
+                      .map {
+                        case Right(()) => Some(t.taskId)
+                        case Left(err) =>
+                          logger.warn(s"[startup-recovery] frozen wake failed for ${t.taskId}: $err — left frozen")
+                          None
+                      }
+                }.handleErrorWith(e =>
+                  logger.warn(s"[startup-recovery] frozen wake errored for ${t.taskId}: ${e.getMessage}").as(None)
+                )
+              )
+              .map(_.flatten)
         val rtmSettled: IO[List[String]] =
           if rtmRows.isEmpty then IO.pure(Nil)
           else
@@ -199,9 +243,11 @@ object SubAgentStartupRecovery:
                   logger.warn(s"[startup-recovery] recovery failed for task ${t.taskId}: ${e.getMessage}").as(t.taskId)
                 }
               )
-        revival match
+        frozenNote *> (revival match
           case None =>
-            salvageAll(orphans).flatMap(ids => rtmSettled.flatMap(rtm => settle().as(Report(terminalized = rtm ++ ids))))
+            salvageAll(orphans).flatMap(ids =>
+              rtmSettled.flatMap(rtm => settle().as(Report(terminalized = rtm ++ ids)))
+            )
           case Some(deps) if !Defaults.DelegateRevivalEnabled =>
             logger
               .info("[delegate-revival] kill-switch off — all orphans fall through to the salvage chain")
@@ -214,6 +260,9 @@ object SubAgentStartupRecovery:
           case Some(deps) =>
             for
               rtm <- rtmSettled
+              // 冻结行复活腿（错误冻结批）：先于在飞孤儿判据——冻结行的 eligibility
+              // 走冻结预算/保留期，与在飞孤儿的年龄预算分道。
+              revivedFrozen <- reviveFrozen()
               judged <- orphans.traverse { t =>
                 DelegateRevival.eligibility(sessionStore, t).map(reason => (t, reason))
               }
@@ -247,7 +296,12 @@ object SubAgentStartupRecovery:
               terminalized <- salvageAll(rest)
               _ <- settle()
               revivedNow <- revivedRef.get
-            yield Report(terminalized = rtm ++ terminalized, revived = revivedNow, revivalSkipped = skipped)
+            yield Report(
+              terminalized = rtm ++ terminalized,
+              revived = revivedNow ++ revivedFrozen,
+              revivalSkipped = skipped
+            )
+        )
     }
 
   /** 在飞任务全量（running/restarting/ready-to-merge；单遍 findAllTasks 后过滤——boot 一次性）。
@@ -258,7 +312,7 @@ object SubAgentStartupRecovery:
     * sweep 内按「有无开放合并队列成员」分诊（见 sweep 注）。 */
   private def inFlightTasks(store: SubAgentTaskStore): IO[List[SubAgentTask]] =
     store.findAllTasks()
-      .map(_.filter(t => InFlightStatuses.contains(t.status) || t.status == "ready-to-merge"))
+      .map(_.filter(t => InFlightStatuses.contains(t.status) || t.status == "ready-to-merge" || t.status == FrozenStatus))
       .handleErrorWith(e => logger.warn(s"[startup-recovery] in-flight scan failed: ${e.getMessage}").as(Nil))
 
   /**

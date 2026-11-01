@@ -190,6 +190,22 @@ trait SubAgentTaskStorePort:
   ): IO[Unit]
   def findRunningTasks: IO[List[SubAgentTask]]
   def findByTaskId(taskId: String): IO[Option[SubAgentTask]]
+
+  /**
+   * boot 复活记账（监督链自动恢复批 2026-10-22；窄口补位 = 错误冻结批 2026-11-01）：
+   * 行翻 running + 复活预算 +1 + 复活时刻 + 清旧错。`DelegateRevival` 的
+   * `Deps.resources` 收窄为 [[AgentRuntimePort]] 后（Mail/面板唤醒腿需要 core 侧可
+   * 构造），本成员必须上端口——语义与 `agent.SubAgentTaskStore.markRevived` 逐字一致
+   * （后者原地 satisfies 本抽象）。默认实现 = 退化为 updateStatus（端口外实现零破坏，
+   * 但预算记账缺席；生产实现恒为 store 本体）。
+   */
+  def markRevived(
+    parentSessionId: String,
+    taskId: String,
+    revivalCount: Int,
+    revivedAt: Long
+  ): IO[Unit] =
+    updateStatus(parentSessionId, taskId, "running", retryCount = Some(revivalCount))
 end SubAgentTaskStorePort
 
 // ── M3:AgentLibrary 窄视图 ─────────────────────────────────────────────────

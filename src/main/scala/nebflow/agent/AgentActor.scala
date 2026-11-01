@@ -225,6 +225,11 @@ object AgentActor extends AgentCore with AgentSession:
    */
   private[agent] def visibleExternalEventSource(source: String, eventType: String): Option[String] =
     if eventType == "inject" then Some(source)
+    // 错误冻结批（2026-11-01）：冻结回执**不是**失败/完成结果——气泡来源单独成
+    // 一格 `delegate-frozen`（前端按它渲染「已冻结」来源标注与原因徽标；沿用
+    // "delegate" 会让冻结回执长得像一份委托完成报告）。判据与
+    // `TurnBoundaryDrains.isFreezeReceipt` 同源同形（source=delegate × type=frozen）。
+    else if source == "delegate" && eventType == "frozen" then Some("delegate-frozen")
     else if source == "delegate" then Some("delegate")
     else if source == "subtask" then Some("subtask")
     else if source == "background-task" then Some("background")
