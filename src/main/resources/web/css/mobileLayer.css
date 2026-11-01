@@ -2482,6 +2482,47 @@ body.mobile-layer #modal-overlay.takeover-live .mfs-back { display: none !import
    （统一后玻璃在元素本体直挂 backdrop-filter，glass.css 圆钮档）。 */
 
 /* ═══════════════════════════════════════════════════════════════════════
+   .g2-chat-head 基座回归块（考古适配批 2026-11-01 21:40 作者令②③）
+   ═══════════════════════════════════════════════════════════════════════
+   考古结论：Muse 形态的基座块（列式居中布局 + 头像圆 + 名字玻璃胶囊）原居
+   liquid-glass.css:330-402（b4b6d8745 落地、49e2e7477 合入）；统一按钮玻璃批
+   （dd78d5d05，同日 17:22）整文件退役 liquid-glass.css 时把基座一并带走 ——
+   下方 Muse 批覆盖块（sticky/78px/名字字号）失去基座后，头像+名字塌成
+   「左对齐行内」形态随流滚动（作者 21:37 实拍 IMG_1673 所见 = 本病）。
+   本块按**当前 UI 语言**重建基座（不复活 liquid-glass.css）：
+   · 布局：列式 flex + 水平居中 + flex:none（原基座逐值，选择器原样）——
+     下方 Muse 批覆盖块在同文件更后方，gap/padding/头像 78px 仍由其接管；
+   · 名字 = **扁平毛玻璃**（作者令③「不再用胶囊立体感边框」）：玻璃单源包
+     token（sapphire.css --glass-bg / --glass-blur / --cv-saturate，与全站
+     悬浮控件同一材质族），**零 border、零立体 box-shadow**（原胶囊的
+     glass-control 双 inset 高光/阴影档不移植）；兜底字色/省略号沿用原基座。
+   · 头像本体零触碰：28px 圆 + 芯片底 = chat.css 全局 #agent-avatar-btn 现役
+     档（含 2026-11-01 主题化芯片），78px 放大由下方 Muse 覆盖块承担。
+   桌面零感知（规则全挂 body.mobile-layer）。 */
+body.mobile-layer .g2-chat-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: none;
+}
+body.mobile-layer .g2-chat-head #session-name {
+  font-weight: 600;
+  color: var(--color-frame-text-bright, var(--color-frame-text));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 3px 14px;
+  border-radius: 999px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+}
+body.mobile-layer .g2-chat-head #memory-btn {
+  width: 32px;
+  height: 32px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
    Muse 式悬浮头像批（2026-11-01 13:33 作者令，附 Muse/stand 两张参考实拍）
    ═══════════════════════════════════════════════════════════════════════
    令①「去掉每条消息头部的 agent 头像+名字行」：.g2-msg-meta 六条样式随

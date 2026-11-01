@@ -71,6 +71,11 @@ import { createMsgFooterBadge } from './chat/durationBadges.js';
 // Pop 交付卡 footer 批（作者令 2026-11-01 16:19）：行引用描述符的 senderName
 // 与 AI 文本行同源（rootName.js 叶子模块，零环风险）。
 import { rootDisplayName } from './rootName.js';
+// 叠卡封面内容感知取景批（作者令 2026-11-01 21:40 ①）：收拢卡脸 cover 裁剪
+// 改显著区域滑窗择优（熵/方差/边缘密度 + 截图类顶部偏置，按 src 缓存，失败
+// 回落几何中心）。叶子模块（零 import）不成环；只挂叠卡收拢层，平铺/展开行
+// （contain 真实比）与视频脸零感知。
+import { applySmartCrop } from './smartCrop.js';
 
 export const POP_SENTINEL = '___POP_JSON___';
 
@@ -656,6 +661,15 @@ function buildMediaStack(items, opts) {
     layer.appendChild(mediaFace(item, 'stack', (w, h) => {
       fitLayer(expandLayers[i], w, h, EXPAND_MAX.w, EXPAND_MAX.h);
       if (expanded) settleExpandHeight();
+      // 内容感知取景（作者令 2026-11-01 21:40 ①）：图片脸 load 报告点即取景点
+      // —— 卡脸实测同比喂给滑窗择优 object-position（首报时盒子可能未布局，
+      // 兜底 220/280 设计比）；视频脸无 img，零感知。中心回落与缓存都在
+      // applySmartCrop 内（跨域污染/解码失败 = 不写内联样式 = 原几何中心）。
+      const face = /** @type {HTMLImageElement|null} */ (layer.querySelector('img.pop-img'));
+      if (face) {
+        const box = view.getBoundingClientRect();
+        applySmartCrop(face, box.height > 4 ? box.width / box.height : 220 / 280);
+      }
     }));
     view.appendChild(layer);
     return layer;
