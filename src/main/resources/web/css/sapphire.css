@@ -197,14 +197,15 @@
     0 8px 24px var(--glass-control-shadow);
 }
 
-/* ── Canvas 控件玻璃 token（2026-10-28 canvas 三件 UI/UX 修 · 件三）─────────
+/* ── 悬浮控件玻璃 token（2026-10-28 canvas 三件 UI/UX 修 · 件三立族；2026-11-01
+   统一按钮玻璃批按设计稿 §2.4 收编升格 = **全站悬浮控件单源**）─────────
    唯一风格模板 = 聊天窗口控件现用毛玻璃（chat.css #header 玻璃面 + .memory-btn
    hover-active 语言；面阴影模板 2026-10-30 冷启动批改锚 #input-bar —— 作者令
-   「查看器顶栏/控件条玻璃对齐主对话输入框那款」），逐值同源转录；canvas 里
-   创建的一切控件（标题胶囊/环胶囊/
-   堆叠钮 #deck-fab/工具圆钮 source·ref·refresh·find·graph/文件内查找条
-   .nf-findbar/图片缩放条 .canvas-zoom-bar/独立-合并钮）只准引用本块变量，
+   「查看器顶栏/控件条玻璃对齐主对话输入框那款」），逐值同源转录；全站一切
+   悬浮控件（canvas 圆钮族/标题胶囊/环胶囊/堆叠钮/查找条/缩放条/ask-fab/
+   .g2-fab 基准类 + 面级浮件玻璃卡）只准引用本块变量，
    禁自带材质/尺寸字面量（一个 token 单源，作者令「禁止各控件自带尺寸」）。
+   配方组装单源 = css/glass.css（气泡/面级/圆钮三档 + no-backdrop 降级）。
    面阴影取 #input-bar 现值（顶缘 inset 高光 + 两档外投影 —— 与主对话输入框
    同款；修前取 #header inset-only 档，控件条在内容面上「飘不住」）。 */
 :root {
@@ -634,7 +635,9 @@ button.glass-control.fm-login-btn {
 button.glass-control.fm-login-btn {
   background: var(--btn-primary-bg);
   border: 1px solid var(--btn-primary-bg-hover);
-  box-shadow: var(--glass-send-stack), var(--glass-send-shadow);
+  box-shadow:
+    inset 0 1px 0 var(--ig-highlight),
+    var(--ig-shadow); /* 统一玻璃批：墨面浮影归 --ig-* 包档 */
   display: block;
   width: 100%;
   box-sizing: border-box;
@@ -659,7 +662,9 @@ button.glass-control.fm-login-btn:hover {
 :is(.fm-login-btn, .login-modal-btn):active,
 button.glass-control.fm-login-btn:active {
   border-color: var(--glass-send-border-active);
-  box-shadow: var(--glass-send-stack), var(--glass-send-shadow-active);
+  box-shadow:
+    inset 0 1px 0 var(--ig-highlight),
+    var(--ig-shadow-press);
 }
 :is(.fm-login-btn, .login-modal-btn):disabled,
 button.glass-control.fm-login-btn:disabled {
@@ -1175,7 +1180,10 @@ button.fm-req-decline:active,
 /* ── 主操作 — 墨族实心（声明在四类之后 ⇒ 同名元素归属以本节胜出：族内
    `.glass-control.fm-gs-save` / `.glass-control.fm-req-accept` 的特异度
    (0,2,1) 高于次操作档 (0,1,1)；2026-10-30 起绿实心底退役，墨族双档见
-   stand-tokens.css「按钮三态解析」块）────────────────────────────────── */
+   stand-tokens.css「按钮三态解析」块；2026-11-01 统一按钮玻璃批：材质归
+   非悬浮墨玻璃包 = 镜面高光 + 浮影（glass.css --ig-*，变体⑤定稿）——
+   不透底墨面上原 v2 残留的 backdrop-filter blur16（采样不可见的死层）与
+   --glass-send-stack 四层栈退役，零 backdrop-filter）──────────────────── */
 #dropbox-send-btn,
 .cfg-btn.cfg-btn-primary,
 button.fm-send-btn,
@@ -1187,9 +1195,9 @@ button.glass-control.fm-req-accept {
   background: var(--btn-primary-bg);
   border-color: var(--btn-primary-bg-hover);
   color: var(--btn-primary-ink);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(var(--glass-control-sat));
-  box-shadow: var(--glass-send-stack);
+  box-shadow:
+    inset 0 1px 0 var(--ig-highlight),
+    var(--ig-shadow);
   cursor: pointer;
   opacity: 1;
 }
@@ -1215,8 +1223,9 @@ button.fm-create-submit:active,
 button.glass-control.fm-gs-save:active,
 button.glass-control.fm-req-accept:active {
   border-color: var(--glass-send-border-active);
-  box-shadow: var(--glass-send-stack),
-              inset 0 1px 3px var(--glass-control-underedge);
+  box-shadow:
+    inset 0 1px 0 var(--ig-highlight),
+    var(--ig-shadow-press);
 }
 @media (prefers-color-scheme: light) {
   #dropbox-send-btn:active,

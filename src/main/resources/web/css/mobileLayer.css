@@ -146,7 +146,7 @@ body.mobile-layer .mh-chrome-btn {
 body.mobile-layer .mh-chrome-btn[data-chrome='tasks'] { left: 16px; }
 body.mobile-layer .mh-chrome-btn[data-chrome='search'] { right: 16px; }
 body.mobile-layer .mh-chrome-btn svg { width: 20px; height: 20px; }
-body.mobile-layer .mh-chrome-btn:active { transform: scale(0.88); }
+/* 按压弹簧随统一按钮玻璃批迁 glass.css 手机弹簧档（.g2-fab 基准类共档）。 */
 body.mobile-layer .mh-chrome-badge {
   position: absolute;
   top: -2px;
@@ -1098,7 +1098,7 @@ body.mobile-layer .mf-cv-toolbar .g2-fab {
 body.mobile-layer .mf-cv-toolbar .mf-cv-close { left: 16px; }
 body.mobile-layer .mf-cv-toolbar .mf-cv-stack { right: 16px; }
 body.mobile-layer .mf-cv-toolbar .g2-fab svg { width: 20px; height: 20px; }
-body.mobile-layer .mf-cv-toolbar .g2-fab:disabled { opacity: 0.35; }
+/* 禁用 opacity .35 档随统一按钮玻璃批迁 glass.css 圆钮禁用档（.g2-fab 共档）。 */
 /* 堆叠视角打开时浮带工具钮让位（堆叠面自带同位 ✕，零双键重叠）。 */
 body.mobile-layer .mobile-page[data-page="canvas"]:has(.mf-stack-view:not([hidden])) .mf-cv-toolbar {
   display: none;
@@ -1875,27 +1875,16 @@ body.mobile-layer .ask-fab {
   width: 48px;
   height: 48px;
   right: 16px;
-  transition:
-    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
-    box-shadow 0.18s ease,
-    background-color 0.18s ease;
 }
-body.mobile-layer .ask-fab:active { transform: scale(0.88); }
 body.mobile-layer .canvas-source-toggle,
 body.mobile-layer .canvas-ref-select,
 body.mobile-layer .canvas-find-toggle,
 body.mobile-layer .canvas-refresh-toggle {
   width: 48px;
   height: 48px;
-  transition:
-    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
-    box-shadow 0.18s ease,
-    background-color 0.18s ease;
 }
-body.mobile-layer .canvas-source-toggle:active,
-body.mobile-layer .canvas-ref-select:active,
-body.mobile-layer .canvas-find-toggle:active,
-body.mobile-layer .canvas-refresh-toggle:active { transform: scale(0.88); }
+/* 弹簧按压（0.88 + spring 曲线 + reduced-motion 退化）随统一按钮玻璃批迁
+   css/glass.css 手机弹簧档单源（圆钮族共档）；本块只留尺寸几何。 */
 /* 引用返回 chip：形状语义保留（chip 非圆钮），悬浮位对齐 16 栅格 + 顶带让位 +
    按压并入 spring 族（原 brightness 档退役）。 */
 body.mobile-layer .canvas-refback-btn {
@@ -1909,23 +1898,14 @@ body.mobile-layer .mh-memory-edit {
   transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.18s ease;
 }
 body.mobile-layer .mh-memory-edit:active { transform: scale(0.95); }
-/* reduced-motion：上方各钮形变退透明度（g2 降级块只罩 .g2-fab 族，本族补齐）。 */
+/* reduced-motion：chip/药丸形变退透明度（圆钮族退化档已随弹簧迁 glass.css；
+   返回 chip 与记忆页药丸非圆钮档，留本文件）。 */
 @media (prefers-reduced-motion: reduce) {
-  body.mobile-layer .ask-fab:active,
-  body.mobile-layer .canvas-source-toggle:active,
-  body.mobile-layer .canvas-ref-select:active,
-  body.mobile-layer .canvas-find-toggle:active,
-  body.mobile-layer .canvas-refresh-toggle:active,
   body.mobile-layer .canvas-refback-btn:active,
   body.mobile-layer .mh-memory-edit:active {
     transform: none;
     opacity: 0.8;
   }
-  body.mobile-layer .ask-fab,
-  body.mobile-layer .canvas-source-toggle,
-  body.mobile-layer .canvas-ref-select,
-  body.mobile-layer .canvas-find-toggle,
-  body.mobile-layer .canvas-refresh-toggle,
   body.mobile-layer .canvas-refback-btn,
   body.mobile-layer .mh-memory-edit {
     transition-duration: 0.01s;
@@ -2356,13 +2336,9 @@ body.mobile-layer #modal-overlay.takeover-live .mfs-back { display: none !import
    ::before 的 filter/backdrop-filter 零视觉代价；live 页、聊天根 chrome、
    桌面全部不动（规则挂 body.mobile-layer）。
    ═══════════════════════════════════════════════════════════════════════ */
-body.mobile-layer .mobile-page:not(.live) .g2-fab::before,
-body.mobile-layer .mobile-page:not(.live) .g2-pill::before,
-body.mobile-layer .mobile-page:not(.live) .mh-chrome-btn::before {
-  filter: none !important;
-  -webkit-backdrop-filter: none !important;
-  backdrop-filter: none !important;
-}
+/* 统一按钮玻璃批 2026-11-01：F1 ::before 折射层随 liquid-glass.css 退役，
+   「非 live 页 g2 玻璃钮渲染垃圾块」的中和块随之失去对象——整块退役
+   （统一后玻璃在元素本体直挂 backdrop-filter，glass.css 圆钮档）。 */
 
 /* ═══════════════════════════════════════════════════════════════════════
    Muse 式悬浮头像批（2026-11-01 13:33 作者令，附 Muse/stand 两张参考实拍）

@@ -1,0 +1,182 @@
+[
+  {
+    "target": "all",
+    "engine": "chromium",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "png": "../shots-after/all-chromium-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "all",
+    "engine": "chromium",
+    "theme": "light",
+    "viewport": "1280x844",
+    "png": "../shots-after/all-chromium-light.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "all",
+    "engine": "webkit",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "png": "../shots-after/all-webkit-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "all",
+    "engine": "webkit",
+    "theme": "light",
+    "viewport": "1280x844",
+    "png": "../shots-after/all-webkit-light.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "chat",
+    "engine": "chromium",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "png": "../shots-after/chat-chromium-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "chat",
+    "engine": "chromium",
+    "theme": "light",
+    "viewport": "1280x844",
+    "png": "../shots-after/chat-chromium-light.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "chat",
+    "engine": "webkit",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "png": "../shots-after/chat-webkit-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "chat",
+    "engine": "webkit",
+    "theme": "light",
+    "viewport": "1280x844",
+    "png": "../shots-after/chat-webkit-light.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "canvas",
+    "engine": "chromium",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "png": "../shots-after/canvas-chromium-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "canvas",
+    "engine": "chromium",
+    "theme": "light",
+    "viewport": "1280x844",
+    "png": "../shots-after/canvas-chromium-light.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "canvas",
+    "engine": "webkit",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "png": "../shots-after/canvas-webkit-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "canvas",
+    "engine": "webkit",
+    "theme": "light",
+    "viewport": "1280x844",
+    "png": "../shots-after/canvas-webkit-light.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "mobile",
+    "engine": "chromium",
+    "theme": "dark",
+    "viewport": "390x844",
+    "png": "../shots-after/mobile-chromium-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "mobile",
+    "engine": "chromium",
+    "theme": "light",
+    "viewport": "390x844",
+    "png": "../shots-after/mobile-chromium-light.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "mobile",
+    "engine": "webkit",
+    "theme": "dark",
+    "viewport": "390x844",
+    "png": "../shots-after/mobile-webkit-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "mobile",
+    "engine": "webkit",
+    "theme": "light",
+    "viewport": "390x844",
+    "png": "../shots-after/mobile-webkit-light.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "dialog",
+    "engine": "chromium",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "png": "../shots-after/dialog-chromium-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "dialog",
+    "engine": "chromium",
+    "theme": "light",
+    "viewport": "1280x844",
+    "png": "../shots-after/dialog-chromium-light.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "dialog",
+    "engine": "webkit",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "png": "../shots-after/dialog-webkit-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "dialog",
+    "engine": "webkit",
+    "theme": "light",
+    "viewport": "1280x844",
+    "png": "../shots-after/dialog-webkit-light.png",
+    "consoleErrors": [],
+    "ok": true
+  }
+]

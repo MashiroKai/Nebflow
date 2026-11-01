@@ -982,13 +982,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   max-width: 80%;
   border-radius: 16px;
   border-bottom-left-radius: 4px;
-  background-color: var(--color-bubble-ai);
+  background-color: var(--glass-bub-ai-bg);
   background-image: linear-gradient(90deg,
     rgb(var(--sapphire) / 0.05) 25%, rgb(var(--sapphire) / 0.13) 50%, rgb(var(--sapphire) / 0.05) 75%);
   background-size: 200% 100%;
   animation: chat-sk-shimmer 1.4s ease-in-out infinite;
 }
-.chat-sk-row-me .chat-sk-bubble { border-bottom-left-radius: 16px; border-bottom-right-radius: 4px; background-color: var(--color-bubble-user); }
+.chat-sk-row-me .chat-sk-bubble { border-bottom-left-radius: 16px; border-bottom-right-radius: 4px; background-color: var(--glass-bub-user-bg); }
 .chat-sk-w62 { width: 62%; }
 .chat-sk-w38 { width: 38%; }
 .chat-sk-w76 { width: 76%; }
@@ -1114,7 +1114,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   word-break: break-word;
 }
 .bubble.user {
-  background: var(--color-bubble-user);
+  /* 统一按钮玻璃批 2026-11-01：气泡禁独立 backdrop-filter ⇒ 消费 glass.css
+     半透明实底档（--glass-bub-user-bg = color-mix(--color-bubble-user 90%)，
+     色相单源不变、主题自适应、滚动零 backdrop 成本） */
+  background: var(--glass-bub-user-bg);
   color: var(--color-text);
   border-bottom-right-radius: 4px;
 }
@@ -1333,12 +1336,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 
 .bubble.ai {
-  background: var(--color-bubble-ai);
+  /* 统一按钮玻璃批 2026-11-01：面/边/柔影走 glass.css 气泡档 token（亮暗
+     双档随包解析；底色仍以 --color-bubble-ai 为色相单源 color-mix 出 α） */
+  background: var(--glass-bub-ai-bg);
   color: var(--color-text);
   /* Whisper edge — separates bubble from background without feeling deliberate */
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--glass-bub-ai-border);
   border-bottom-left-radius: 4px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--glass-bub-ai-shadow);
 }
 .bubble.ai img, .bubble.injected img, .ask-bub.ai img { max-width: 220px; max-height: 220px; border-radius: 8px; display: block; margin-top: 4px; }
 /* 件① 失败占位（2026-09-15 作者现场报）：思考流里的图片节点跨帧存活后，加载失败的
@@ -2765,11 +2770,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    旧「15px 内容轴」对齐（HYBRID §4.2）随题文入泡让位（作者令优先）。 */
 .bubble.ai.ob-ghost-seat .ob-body {
   padding: 10px 14px;
-  background: var(--color-bubble-ai);
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background: var(--glass-bub-ai-bg);
+  border: 1px solid var(--glass-bub-ai-border);
   border-radius: 16px;
   border-bottom-left-radius: 4px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--glass-bub-ai-shadow);
 }
 /* 题干（卡引言）在浮层语言里抬一档：15px/600（BRIEF §4.4 下限之上） */
 .bubble.ai.ob-ghost-seat .ob-para.ob-question {
@@ -4948,15 +4953,16 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    attach-bubble-unify (2026-10-20 author ruling 「用户发送附件与气泡设计语言统一
    ——微信式：附件是气泡的一部分而非独立异形卡」): the USER side's media/file
    faces join the USER BUBBLE family — same radius (16px + the 4px bottom-right
-   tail of .bubble/.bubble.user), same backing color (var(--color-bubble-user)),
+   tail of .bubble/.bubble.user), same backing color (var(--glass-bub-user-bg),
+   统一玻璃批起 = 气泡档 token，与 .bubble.user 逐值同源),
    same column cap (80%, .bubble), no standing card chrome (border/drop shadow
    go). Strictly scoped to the user row (.row.user-media); LLM Pop rows keep
    their faces verbatim (「agent 发的媒体卡维持现设计不动」). Geometry the authored
    rulings pin — 220px stack/flat boxes, peek transforms, pill clearances
    (uifix3 ① above) — is deliberately untouched: only the PAINT changes.
-   Theme note: --color-bubble-user has no dark override (base.css), so the
-   unified face is the same green in light and dark — identical to the user
-   text bubble on both themes by construction.
+   Theme note: the hue single-source --color-bubble-user has no dark override
+   (base.css), so the unified face is the same green in light and dark —
+   identical to the user text bubble on both themes by construction.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* Width cap = the bubble's own cap (.bubble max-width 80%), not the artifact
@@ -4972,7 +4978,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-radius: 16px;
   border-bottom-right-radius: 4px;
   box-shadow: none;
-  background: var(--color-bubble-user);
+  background: var(--glass-bub-user-bg);
 }
 .row.user-media .pop-img,
 .row.user-media .pop-video { background: transparent; }
@@ -4984,7 +4990,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-radius: 16px;
   border-bottom-right-radius: 4px;
   box-shadow: none;
-  background: var(--color-bubble-user);
+  background: var(--glass-bub-user-bg);
 }
 
 /* File card — 统一 chip 族（2026-10-22 作者令「附件卡=统一 chip 族」：与 AskUser

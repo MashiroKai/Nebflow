@@ -255,3 +255,59 @@ dock 顶（待办/搜索）✓ · 会话页（ask-fab、会话头）✓ · canva
 - 液态玻璃批（降级为参考）：[[20261031_084400_liquid-glass-effect-v2__delegate-nebflow-a9ba5eff.zh-CN]] · [[20261031_121500_liquid-glass-effect-v3__delegate-nebflow-9e155df5.zh-CN]] · [[20261031_170000_liquid-glass-ab-final__delegate-nebflow-a1031f13]]
 - 单源旧令出处：`sapphire.css:44-49`（2026-10-22 全站一套毛玻璃）、`split.css:1877`（件三统一批注）、`sapphire.css:200-209`（--cv-* 族立族注）。
 - 术语：[[glossary]]。
+
+## §9 非悬浮墨玻璃包 token 定稿（实施批 2026-11-01 增章）
+
+> 本增章由实施批补入（§0 作者令范围内的「变体⑤非悬浮墨玻璃包」token 定稿）。
+> 样张出处：`/Users/kaiyu/.stand/design-explore/liquid-glass-buttons/`（变体⑤，
+> `demo.html` + `FINDINGS.md` + shots/）。落点 = `css/glass.css` 第④层。
+
+### 9.1 定稿原则
+
+主操作墨面 = **不透底高反差墨色 + 镜面高光 + 浮影**——玻璃感来自高光与影，
+不来自透明度；**零 backdrop-filter**（不透底无采样意义）。底色/字色复用墨族
+单源 `--btn-ink-*`（`stand-tokens.css` 三态，亮 #111827 系 / 暗 #e6edf3 反转），
+不新造颜色常量。**发送键绿色 = 强调档**：维持 `--ctl-send-*` 扁平实底不回翻
+墨玻璃（v3 拍板沿用，绿色是品牌强调色，不吃墨面材质）。
+
+### 9.2 token 值表（glass.css:341-364，唯一来源）
+
+| token | 亮档 | 暗档 | 用途 |
+|---|---|---|---|
+| `--ig-highlight` | `rgba(255,255,255,.18)` | `rgba(255,255,255,.50)` | 顶缘 inset 高光（`inset 0 1px 0`） |
+| `--ig-specular` | `rgba(255,255,255,.30)` | `rgba(255,255,255,.60)` | 上半镜面高光层（`linear-gradient(to bottom, … 46%)`） |
+| `--ig-shadow` | `0 6px 20px rgba(17,24,39,.28)` | `0 6px 20px rgba(0,0,0,.50)` | 浮影（hover 抬升不变） |
+| `--ig-shadow-press` | `0 3px 10px rgba(17,24,39,.28)` | `0 3px 10px rgba(0,0,0,.50)` | active 按压落影 |
+| `--ig-radius` / `--ig-radius-pill` | `10px` / `999px` | 同左 | 09-14「圆角 10px 常例」 |
+| `--ig-fs` / `--ig-fw` | `13px` / `500` | 同左 | 字号字重 |
+
+暗档走 `html[data-theme="dark"]` + `@media (prefers-color-scheme: dark)` 双写
+（与全站主题机制一致，显式 `data-theme="light"` 不吃 media 暗值）。
+
+### 9.3 迁移落点清单（配方逐面，全部已落）
+
+| 落点 | 面 | 出处 |
+|---|---|---|
+| `.g2-pill-primary` / `#memory-modal-save` | 配方基准件（底色+镜面+浮影+hover/active/focus 全态） | `glass.css:367-397` |
+| 主操作块：`#dropbox-send-btn`（非绿色位）、`.cfg-btn-primary`、`.fm-*` 主钮、`#fm-gs-save`、`#fm-req-accept` | 原 backdrop blur16 + glass-send-stack 字面量退役 → `--ig-highlight`/`--ig-shadow`（active→`--ig-shadow-press`） | `sapphire.css:630-670` 一带 |
+| 登录键族 `.fm-login-btn` / `.login-modal-btn` | 同上墨玻璃化 | `sapphire.css:1195-1230` 一带 |
+| `#memory-modal-save` hover | 原 hover 浮影字面量 → 包 token（`!important` 保留原级） | `modal.css:180-192` |
+| `.g2-pill-primary`（takeover 卡 Retake） | 配方基准件同块 | `glass.css:367` |
+| `#stop-btn` | 扁平化裁定：去 blur8 孤儿玻璃底，hover 走 color-mix 抬亮（stop 非主操作，不吃墨面） | `input.css` |
+| slash/mention 下拉选中行 | 墨高亮 `--g2-ink-*` → `--btn-ink-*`（墨族单源收口，`--g2-ink-*` 退役） | `input.css:1059-1090` 一带 |
+
+### 9.4 状态矩阵（墨面件，供 QA 转断言）
+
+| 状态 | background | shadow | transform |
+|---|---|---|---|
+| rest | `--btn-primary-bg` + specular 镜面层 | `inset … --ig-highlight, --ig-shadow` | none |
+| hover | `--btn-primary-bg-hover` | 同 rest | none |
+| active | `--btn-primary-bg-active` | `inset … --ig-highlight, --ig-shadow-press` | none |
+| focus-visible | rest | rest | outline 2px `--btn-focus-ring` |
+| backdrop-filter | **恒 none**（双写显式摘除，防 `.g2-pill` 基材继承） | — | — |
+
+### 9.5 验收增补（并入 §7 账本）
+
+8. `.g2-pill-primary` / `#memory-modal-save` computed：backdrop-filter = none、
+   box-shadow 含 `--ig-highlight` inset 顶缘与 `--ig-shadow` 外影、background-image
+   含 specular 线性层（已落 `probe-after.cjs` B3 组断言）。

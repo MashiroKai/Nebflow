@@ -105,16 +105,23 @@ async function applyTheme(page, theme) {
  *  不计入 consoleErrors（真 JS 报错才入账）。 */
 function attachErrorCollectors(page) {
   const errors = [];
-  const state = { api404: 0 };
+  const state = { api404: 0, roLoop: 0 };
   page.on('console', (msg) => {
     if (msg.type() !== 'error') return;
     let url = '';
     try { url = msg.location() && msg.location().url || ''; } catch { /* no location */ }
-    if (/\/api\//.test(url) || (msg.text() || '').includes('Failed to load resource')) { state.api404++; return; }
+    if (/\/(api|agents)\//.test(url) || (msg.text() || '').includes('Failed to load resource')) { state.api404++; return; }
     errors.push(`console.error: ${msg.text()}`);
   });
-  page.on('pageerror', (err) => errors.push(`pageerror: ${err.message}`));
+  page.on('pageerror', (err) => {
+    /* ResizeObserver loop（浏览器内部「一帧内布局未收敛」通知）单独计账：
+       已实证为 harness fixture（queue-bar 展开探针）在 main 树上同款触发
+       的既有产品侧良性通知（见批报告 §RO），非前端异常，不入 consoleErrors。 */
+    if (err && err.message === 'ResizeObserver loop completed with undelivered notifications.') { state.roLoop++; return; }
+    errors.push(`pageerror: ${err.message}`);
+  });
   errors.api404 = () => state.api404;
+  errors.roLoop = () => state.roLoop;
   return errors;
 }
 

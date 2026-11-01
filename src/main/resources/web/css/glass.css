@@ -1,0 +1,556 @@
+/* glass.css — 全站玻璃单源包（统一按钮+玻璃批 2026-11-01）
+ * ═══════════════════════════════════════════════════════════════════════
+ * 设计单源 = docs/design/20261101_141229_unified-button-design__cc28a33e.md
+ * （作者已批）+ 本批 token 定稿增章（§9）。本文件取代 css/liquid-glass.css
+ * （液态玻璃 v2/v3 悬浮族 F1 配方整体退役，设计稿 §4 遗产处置表）。
+ *
+ * 配方（基准件 B/C 逐字，全站唯一悬浮/面板玻璃语言）：
+ *   · 材质   --glass-bg + blur(var(--glass-blur)) saturate(var(--cv-saturate))
+ *            = blur(24px) saturate(1.15)，-webkit- 双写（iOS Safari/旧内核）
+ *   · 阴影   --cv-shadow 三档栈（顶缘 inset 高光 + 两档外投影；暗档另值，
+ *            sapphire.css 单源）
+ *   · 折射线 面级浮件 ::before 顶缘 sapphire 渐变细线（80%×1px）；
+ *            圆钮级浮件不加（40/48px 圆上放 1px 细线不可读，设计稿 §3.1）
+ *   · 气泡   气泡禁独立 backdrop-filter（滚动性能纪律）——消费「半透明实底
+ *            变体」（--glass-bub-*，color-mix 出 α，主题自适应零字面量）
+ *
+ * 四层结构：
+ *   ① 气泡半透明实底档（.bubble/.ask-bub 消费；无 blur）
+ *   ② 面级浮件档（#input-bar/#queue-bar/对话框共享卡/.ask-input；带折射线）
+ *   ③ 圆钮级浮件档（canvas 圆钮族/ask-fab/deck-fab/关签钮/.g2-fab 全族；
+ *      hover 抬亮+scale · active 0.96 · 手机弹簧 0.88 · 选中 sapphire 档 ·
+ *      disabled .35 · focus-visible 蓝紫 2px 外描——设计稿 §3.4 状态矩阵）
+ *   ④ 非悬浮墨玻璃包（变体⑤：主操作墨面 = 镜面高光 + 浮影，零 backdrop；
+ *      发送键绿色 = 强调档维持 --ctl-send-* 扁平不回翻）
+ *
+ * 降级双保险（设计稿 §3.5）：@supports not + html.no-backdrop（js/
+ * scrollUnderGlass.js 挂类）→ 回落实色档 = --glass-bg 原值（亮 .55/暗 .68
+ * 半透明已够读；F1 时代 --g2-fab-solid 随族退役，不再新造常量）。
+ *
+ * 加载序 = sapphire.css 之后、mobile.css 之前（原 liquid-glass.css 位）：
+ * 同特异度材质平局由本文件胜出（split/ask/input/modal/chat 之后）；手机层
+ * 几何覆盖（mobileLayer.css）在本文件之后照旧生效。#header（chat.css 基准
+ * 件 B）零触碰。
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── ① 气泡半透明实底档（气泡禁独立 backdrop-filter）────────────────────
+   聊天气泡全族（主会话 .bubble.* + canvas ask 列 .ask-bub.*）消费本档：
+   实底以 color-mix 从既有单源色 token 出 α（零新色值、双主题自适应——
+   --color-bubble-user 亮暗同值 / --color-bubble-ai 暗档走 base.css 翻色），
+   阅读对比度 ≈ 原实色（90%+ 不透明度），滚动零 backdrop 成本。
+   --glass-bub-active-bg = canvas 活性语言用户侧变体（sapphire tint 复合层
+   压在半透明实底上——tint 无 blur 时直接裸铺会漏底纹，复合保证可读）。 */
+:root {
+  --glass-bub-user-bg: color-mix(in srgb, var(--color-bubble-user) 90%, transparent);
+  --glass-bub-ai-bg: color-mix(in srgb, var(--color-bubble-ai) 92%, transparent);
+  --glass-bub-ai-border: rgba(0, 0, 0, 0.04);
+  --glass-bub-ai-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --glass-bub-active-bg:
+    linear-gradient(rgb(var(--sapphire) / 0.18), rgb(var(--sapphire) / 0.18)),
+    var(--glass-bub-ai-bg);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --glass-bub-ai-border: rgba(255, 255, 255, 0.06);
+    --glass-bub-ai-shadow: 0 1px 2px rgba(0, 0, 0, 0.20);
+  }
+}
+html[data-theme="dark"] {
+  --glass-bub-ai-border: rgba(255, 255, 255, 0.06);
+  --glass-bub-ai-shadow: 0 1px 2px rgba(0, 0, 0, 0.20);
+}
+html[data-theme="light"] {
+  /* 显式亮档（用户手选亮主题时不吃 media 暗值）——值 = :root 亮档 */
+  --glass-bub-ai-border: rgba(0, 0, 0, 0.04);
+  --glass-bub-ai-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+/* 主会话气泡（chat.css 保留几何/字号；材质面走本包 token） */
+.bubble.user {
+  background: var(--glass-bub-user-bg);
+}
+.bubble.ai {
+  background: var(--glass-bub-ai-bg);
+  border-color: var(--glass-bub-ai-border);
+  box-shadow: var(--glass-bub-ai-shadow);
+}
+
+/* canvas ask 列气泡（ask.css 保留几何；原 --cv-* 玻璃档退役：独立
+   backdrop-filter 随气泡禁令摘除，浮影保留 --cv-shadow 三档栈） */
+.ask-bub {
+  background: var(--glass-bub-ai-bg);
+  border-color: var(--glass-bub-ai-border);
+}
+.ask-bub.user {
+  background: var(--glass-bub-active-bg);
+  border-color: rgb(var(--sapphire) / 0.35);
+}
+
+/* ── ② 面级浮件档（材质三件套 + 顶缘折射线）──────────────────────────── */
+
+/* 主会话输入框（基准件 C 原配方回归 = v2 改皮撤销，设计稿 D10；几何/状态
+   过渡留在 input.css，frozen/disconnected/voice 高特异态不受影响） */
+#input-bar {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--cv-shadow);
+}
+#input-bar::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 10%,
+    var(--sapphire-refraction) 50%,
+    transparent 90%
+  );
+  pointer-events: none;
+  z-index: 1;
+  border-radius: inherit;
+}
+
+/* 队列条（镜像 #input-bar 材质；几何在 input.css） */
+#queue-bar.visible {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--cv-shadow);
+}
+#queue-bar.visible::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 10%,
+    var(--sapphire-refraction) 50%,
+    transparent 90%
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* 对话框共享玻璃卡（modal.css 整块迁入；遮罩模糊 .takeover-blur 仍在
+   modal.css —— 消费 --cv-* 同源配方） */
+#modal-box,
+#delete-box,
+#conflict-box,
+#takeover-box,
+#memory-modal,
+#rules-modal,
+#settings-modal,
+#search-modal,
+#onboarding-panel,
+.model-panel,
+.wsp-panel {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--cv-shadow);
+}
+
+/* canvas ask 输入条（ask.css 保留几何与 focus-within 活性描边） */
+.ask-input {
+  background: var(--cv-bg, var(--glass-bg));
+  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  border: 1px solid var(--cv-border, var(--glass-border));
+  box-shadow: var(--cv-shadow);
+}
+
+/* slash/mention 下拉（input.css 保留几何/列表行；F1 材质换血 = 悬浮面板归
+   面级档。原 --g2-fab-* 消费随族退役，设计稿 §4 遗产处置表） */
+#slash-dropdown,
+#mention-dropdown {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--cv-shadow);
+}
+
+/* ── ③ 圆钮级浮件档（收编升格：--cv-* 全站悬浮控件单源，设计稿 §2.4）─────
+   成员 = canvas 工具圆钮族（source/ref/find/refresh）+ ask-fab + deck-fab +
+   关签钮 #canvas-head-close + .g2-fab 基准类（dock 待办/搜索、页面壳返回钮、
+   mf-cv-close/stack、mf-stack-x、mh-fab-search 等 JS 挂类面，类名零改动）。
+   材质/状态归本包；几何/落位留在各面（split/ask/mobileLayer）。
+   图谱钮 .canvas-graph-toggle 已随 Canvas 改造批④ 退役（JS 零创建），本块
+   不再列名——F1 时代死选择器随之消失。 */
+.canvas-source-toggle,
+.canvas-ref-select,
+.canvas-find-toggle,
+.canvas-refresh-toggle,
+.ask-fab,
+#deck-fab,
+#canvas-head-close,
+.g2-fab {
+  background: var(--cv-bg, var(--glass-bg));
+  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  border: 1px solid var(--cv-border, var(--glass-border));
+  box-shadow: var(--cv-shadow);
+}
+
+/* hover：抬亮 + 1.05（触屏无 hover；split/ask 原逐面 hover 档随收编归一） */
+.canvas-source-toggle:hover,
+.canvas-ref-select:hover,
+.canvas-find-toggle:hover,
+.canvas-refresh-toggle:hover,
+.ask-fab:hover,
+#deck-fab:hover,
+#canvas-head-close:hover,
+.g2-fab:hover {
+  background: var(--cv-hover-bg, var(--glass-control-bg-hover));
+  transform: scale(var(--cv-hover-scale, 1.05));
+}
+
+/* active：桌面按压 0.96（手机弹簧见下方 mobile 块；原 F1 全端 0.88 退役） */
+.canvas-source-toggle:active,
+.canvas-ref-select:active,
+.canvas-find-toggle:active,
+.canvas-refresh-toggle:active,
+.ask-fab:active,
+#deck-fab:active,
+#canvas-head-close:active,
+.g2-fab:active {
+  transform: scale(var(--cv-active-scale, 0.96));
+}
+
+/* 选中/接通档（全站选中标准 = ref-select 档：sapphire 12% 底 / 35% 边 /
+   primary 字；#deck-fab pressed 14% 并入本档，设计稿 D5） */
+.canvas-ref-select.active,
+#deck-fab[aria-pressed="true"] {
+  color: var(--color-primary);
+  border-color: rgb(var(--sapphire) / 0.35);
+  background: rgb(var(--sapphire) / 0.12);
+}
+
+/* 禁用：opacity .35 + not-allowed + hover 不形变不换底（设计稿 §3.4） */
+.canvas-source-toggle:disabled,
+.canvas-ref-select:disabled,
+.canvas-find-toggle:disabled,
+.canvas-refresh-toggle:disabled,
+.ask-fab:disabled,
+#deck-fab:disabled,
+#canvas-head-close:disabled,
+.g2-fab:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+.canvas-source-toggle:disabled:hover,
+.canvas-ref-select:disabled:hover,
+.canvas-find-toggle:disabled:hover,
+.canvas-refresh-toggle:disabled:hover,
+.ask-fab:disabled:hover,
+#deck-fab:disabled:hover,
+#canvas-head-close:disabled:hover,
+.g2-fab:disabled:hover {
+  transform: none;
+  background: var(--cv-bg, var(--glass-bg));
+}
+
+/* 键盘焦点（设计稿 §3.4 新增建议——基准件 A 原无焦点态，补 a11y 缺口） */
+.canvas-source-toggle:focus-visible,
+.canvas-ref-select:focus-visible,
+.canvas-find-toggle:focus-visible,
+.canvas-refresh-toggle:focus-visible,
+.ask-fab:focus-visible,
+#deck-fab:focus-visible,
+#canvas-head-close:focus-visible,
+.g2-fab:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 2px;
+}
+
+/* .g2-fab 基准几何（40px 圆 / 图标 18——原 17px 对齐 --cv-icon 单源） */
+.g2-fab {
+  width: var(--cv-size-circle, 40px);
+  height: var(--cv-size-circle, 40px);
+  padding: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text);
+  cursor: pointer;
+  font-family: inherit;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.18s ease,
+    background-color 0.18s ease;
+}
+.g2-fab svg {
+  width: var(--cv-icon, 18px);
+  height: var(--cv-icon, 18px);
+}
+
+/* 玻璃药丸 .g2-pill（消费方 = 接管卡次级【退出】；类名零改动，材质归包）：
+   面级配方收窄为药丸（无折射线）；几何 h36 r999 沿用 */
+.g2-pill {
+  position: relative;
+  isolation: isolate;
+  height: 36px;
+  padding: 0 20px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  font-family: inherit;
+  color: var(--color-text);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  background: var(--cv-bg, var(--glass-bg));
+  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  border: 1px solid var(--cv-border, var(--glass-border));
+  box-shadow: var(--cv-shadow);
+  transition:
+    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.18s ease,
+    background-color 0.18s ease;
+}
+.g2-pill:hover { background: var(--cv-hover-bg, var(--glass-control-bg-hover)); }
+.g2-pill:active { transform: scale(0.95); }
+.g2-pill:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 2px;
+}
+.g2-pill:disabled { cursor: not-allowed; opacity: 0.5; }
+
+/* ── ④ 非悬浮墨玻璃包（设计稿增章 §9；样张 = design-explore 变体⑤）────────
+   主操作墨面 = 不透底高反差墨色 + 镜面高光 + 浮影（玻璃感来自高光与影，
+   不来自透明度）；零 backdrop-filter（不透底无采样意义）。底色/字色走墨族
+   单源 --btn-ink-*（亮 #111827 系 / 暗 #e6edf3 反转，stand-tokens 三态）。
+   发送键绿色 = 强调档，维持 --ctl-send-* 扁平实底不回翻（v3 拍板）。 */
+:root {
+  --ig-highlight: rgba(255, 255, 255, 0.18);       /* 顶缘 inset 高光 */
+  --ig-specular: rgba(255, 255, 255, 0.30);        /* 上半镜面高光层 */
+  --ig-shadow: 0 6px 20px rgba(17, 24, 39, 0.28);  /* 浮影 */
+  --ig-shadow-press: 0 3px 10px rgba(17, 24, 39, 0.28);
+  --ig-radius: 10px;                                /* 09-14「圆角 10px 常例」 */
+  --ig-radius-pill: 999px;
+  --ig-fs: 13px;
+  --ig-fw: 500;
+}
+html[data-theme="dark"] {
+  --ig-highlight: rgba(255, 255, 255, 0.50);
+  --ig-specular: rgba(255, 255, 255, 0.60);
+  --ig-shadow: 0 6px 20px rgba(0, 0, 0, 0.50);
+  --ig-shadow-press: 0 3px 10px rgba(0, 0, 0, 0.50);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) {
+    --ig-highlight: rgba(255, 255, 255, 0.50);
+    --ig-specular: rgba(255, 255, 255, 0.60);
+    --ig-shadow: 0 6px 20px rgba(0, 0, 0, 0.50);
+    --ig-shadow-press: 0 3px 10px rgba(0, 0, 0, 0.50);
+  }
+}
+
+/* 墨玻璃配方（键 = 既有主操作件；逐面迁移清单见设计稿增章 §9.3） */
+.g2-pill-primary,
+#memory-modal-save {
+  background: var(--btn-primary-bg);
+  border-color: var(--btn-primary-bg);
+  color: var(--btn-primary-ink);
+  background-image: linear-gradient(to bottom, var(--ig-specular) 0%, transparent 46%);
+  box-shadow:
+    inset 0 1px 0 var(--ig-highlight),
+    var(--ig-shadow);
+  /* 不透底墨面零 backdrop（.g2-pill 基材的玻璃采样对墨面无意义，显式摘除） */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.g2-pill-primary:hover,
+#memory-modal-save:hover {
+  background-color: var(--btn-primary-bg-hover);
+  border-color: var(--btn-primary-bg-hover);
+}
+.g2-pill-primary:active,
+#memory-modal-save:active {
+  background-color: var(--btn-primary-bg-active);
+  border-color: var(--btn-primary-bg-active);
+  box-shadow:
+    inset 0 1px 0 var(--ig-highlight),
+    var(--ig-shadow-press);
+}
+.g2-pill-primary:focus-visible,
+#memory-modal-save:focus-visible {
+  outline: 2px solid var(--btn-focus-ring);
+  outline-offset: 2px;
+}
+
+/* ── 手机尺寸/弹簧档（body.mobile-layer 总开关，桌面零命中）────────────── */
+body.mobile-layer .g2-fab {
+  width: 48px;
+  height: 48px;
+}
+body.mobile-layer .g2-fab svg {
+  width: 20px;
+  height: 20px;
+}
+body.mobile-layer .g2-pill {
+  height: 44px;
+  padding: 0 26px;
+  font-size: 14px;
+}
+/* 弹簧按压 0.88 + spring 曲线（180ms；设计稿 §3.4 手机档）——原 mobileLayer
+   逐面弹簧块归一本包；mobileLayer 只留几何落位 */
+body.mobile-layer .canvas-source-toggle,
+body.mobile-layer .canvas-ref-select,
+body.mobile-layer .canvas-find-toggle,
+body.mobile-layer .canvas-refresh-toggle,
+body.mobile-layer .ask-fab,
+body.mobile-layer .g2-fab {
+  transition:
+    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.18s ease,
+    background-color 0.18s ease;
+}
+body.mobile-layer .canvas-source-toggle:active,
+body.mobile-layer .canvas-ref-select:active,
+body.mobile-layer .canvas-find-toggle:active,
+body.mobile-layer .canvas-refresh-toggle:active,
+body.mobile-layer .ask-fab:active,
+body.mobile-layer .g2-fab:active {
+  transform: scale(0.88);
+}
+@media (prefers-reduced-motion: reduce) {
+  body.mobile-layer .canvas-source-toggle:active,
+  body.mobile-layer .canvas-ref-select:active,
+  body.mobile-layer .canvas-find-toggle:active,
+  body.mobile-layer .canvas-refresh-toggle:active,
+  body.mobile-layer .ask-fab:active,
+  body.mobile-layer .g2-fab:active {
+    transform: none;
+    opacity: 0.8;
+  }
+  body.mobile-layer .canvas-source-toggle,
+  body.mobile-layer .canvas-ref-select,
+  body.mobile-layer .canvas-find-toggle,
+  body.mobile-layer .canvas-refresh-toggle,
+  body.mobile-layer .ask-fab,
+  body.mobile-layer .g2-fab {
+    transition-duration: 0.01s;
+  }
+  .g2-fab:active,
+  .g2-pill:active {
+    transform: none;
+    opacity: 0.8;
+  }
+  .g2-fab,
+  .g2-pill {
+    transition-duration: 0.01s;
+  }
+}
+
+/* ── 顶缘滚入渐隐带 #g2-edge-fade（M9：待作者裁项，维持现状逐字保留）──────
+   桌面恒隐；材质 = --g2-veil + blur 18 sat 1.5 + 两段式 mask（veil 子族
+   token 随渐隐带保留在 stand-tokens.css，不随 --g2-fab-* 退役） */
+#g2-edge-fade {
+  display: none;
+}
+body.mobile-layer #g2-edge-fade {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--g2-fade-height);
+  z-index: 25; /* 内容(0) < 渐隐带 25 < 悬浮圆钮层 30 < 页面栈 156 < dock 200 */
+  pointer-events: none; /* 不是栏：不拦截任何交互 */
+  background: var(--g2-veil);
+  -webkit-backdrop-filter: blur(var(--g2-fade-blur)) saturate(var(--g2-fade-sat));
+  backdrop-filter: blur(var(--g2-fade-blur)) saturate(var(--g2-fade-sat));
+  /* 两段式 ease-out 衰减：内容滚入「先糊后没」（mask 双写 -webkit-） */
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.55) 50%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.55) 50%, transparent 100%);
+}
+
+/* ── 降级（微信内置浏览器 / 旧 WebView / X5 无 backdrop-filter）────────────
+   双保险：@supports 媒体查询 + html.no-backdrop 类（js/scrollUnderGlass.js）。
+   回落实色档 = --glass-bg 原值（设计稿 §3.5.2）；渐隐带退化纯渐层罩。 */
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  #input-bar,
+  #queue-bar.visible,
+  #modal-box,
+  #delete-box,
+  #conflict-box,
+  #takeover-box,
+  #memory-modal,
+  #rules-modal,
+  #settings-modal,
+  #search-modal,
+  #onboarding-panel,
+  .model-panel,
+  .wsp-panel,
+  .ask-input,
+  #slash-dropdown,
+  #mention-dropdown,
+  .canvas-source-toggle,
+  .canvas-ref-select,
+  .canvas-find-toggle,
+  .canvas-refresh-toggle,
+  .ask-fab,
+  #deck-fab,
+  #canvas-head-close,
+  .g2-fab,
+  .g2-pill:not(.g2-pill-primary) {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--glass-bg);
+  }
+  body.mobile-layer #g2-edge-fade {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+html.no-backdrop #input-bar,
+html.no-backdrop #queue-bar.visible,
+html.no-backdrop #modal-box,
+html.no-backdrop #delete-box,
+html.no-backdrop #conflict-box,
+html.no-backdrop #takeover-box,
+html.no-backdrop #memory-modal,
+html.no-backdrop #rules-modal,
+html.no-backdrop #settings-modal,
+html.no-backdrop #search-modal,
+html.no-backdrop #onboarding-panel,
+html.no-backdrop .model-panel,
+html.no-backdrop .wsp-panel,
+html.no-backdrop .ask-input,
+html.no-backdrop #slash-dropdown,
+html.no-backdrop #mention-dropdown,
+html.no-backdrop .canvas-source-toggle,
+html.no-backdrop .canvas-ref-select,
+html.no-backdrop .canvas-find-toggle,
+html.no-backdrop .canvas-refresh-toggle,
+html.no-backdrop .ask-fab,
+html.no-backdrop #deck-fab,
+html.no-backdrop #canvas-head-close,
+html.no-backdrop .g2-fab,
+html.no-backdrop .g2-pill:not(.g2-pill-primary) {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  background: var(--glass-bg);
+}
+html.no-backdrop body.mobile-layer #g2-edge-fade {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
