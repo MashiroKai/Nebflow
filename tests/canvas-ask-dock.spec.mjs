@@ -26,8 +26,8 @@
 //   T9  移动档（§8-3）：44×44 命中盒、座位在切换条上方、列 max-h 250、
 //       气泡列表面横滑零切卡（.mobile-card-peek 不亮起，surface 归属制）
 //   T10 v2.1 减法纪律（作者令 2026-10-28 22:42「简约一点…」）：ghost 提示行/
-//       session 徽标/转交钮零残留；服务端转录中的 sys 帧渲染面永久过滤
-//       （收进不可见处——转录数据仍存、气泡面只出 user/ai 两族）
+//       session 徽标/转交钮零残留；旧 T10b 短快照 sys 过滤面由 T14e 长快照腿
+//       接棒（持久批合并律改「永不缩水」后，短快照保留本地不再换血）
 //   T11 可见性闸（作者缺陷报 2026-10-29「Askmode怎么在插件面板里也有？」）：
 //       入口钮只在文件型标签页（有真实文件 backing 的 canvas tab）挂载显示；
 //       插件面板等非文件型 surface 零残留（display:none 出命中盒），切卡离开
@@ -44,11 +44,24 @@
 //       F3 ⑤顶带渐隐按液体玻璃 v2（--g2-veil + blur(18) saturate(1.5) + 两段式
 //          mask）且列顶留白 64px 首条不入带。
 //   T12 风格统一（三修③ 作者令 2026-10-29「ask 输入条/气泡对齐 canvas 统一风格，
-//       不新造风格」）：入口钮/输入条/气泡三面计算材质（backgroundColor /
-//       borderTopColor / backdropFilter）与聊天 #header 玻璃模板（--cv-* 单源）
-//       逐项相等；发送钮 = 全站墨族主操作单源（--btn-primary-* → --btn-ink-*，
-//       2026-10-30 按钮体系批，暗档 #e6edf3）；通知点底色 = --color-primary（身份/
-//       状态绿，绿降级冻结保留）
+//       不新造风格」）：输入条/气泡三面计算材质与聊天 #header 玻璃模板（--cv-* 单源）
+//       逐项相等；入口钮材质随液体玻璃 v3 F1 扩面批（2026-10-31 作者 12:32 点选
+//       「悬浮族 = F1」，liquid-glass.css ④）归 --g2-fab-* 单源 = #deck-fab 同族
+//       （本批实测对齐——旧断言比 #header 为 v3 批欠账，main 快照同红）；
+//       发送钮 = 微信绿跟随主对话（v3 实现批 2026-10-31 作者 12:32「其它面板发送钮
+//       跟随主对话」，--ctl-send-* 考古绿 #07C160——10-30 墨族档退役，旧断言欠账同批）；
+//       通知点底色 = --color-primary（身份/状态绿，绿降级冻结保留）
+//   T14 文档会话持久（2026-11-01 作者令「切文档之后会消失」批①）：
+//       a 切卡往返 A→B→A 转录双份保留（页内 Map 面，T4 孪生加 B 转录）；
+//       b 重载页面后开 dock：本地注水即时呈现（不等回放——mock 回放延迟 2s，
+//         注水面先出）；
+//       c 过期快照不缩水：askState 快照比本地短（重连重放竞态现场）⇒ 保留本地
+//         （AI 答不丢），快照更长 ⇒ 采纳（他机续问对账）；
+//       d localStorage 键在场（nebflow_ask:sess:<sid>，write-through 面实证）
+//   T15 对话区与输入条同宽（2026-11-01 作者令批②「对话的宽度要和下面输入框
+//       保持一致」）：气泡列内容盒左右缘 = 输入条左右缘（逐像素，≤1px）；宽
+//       气泡（长表格/长行）span 到列满档（306px 帽退役）；窄气泡仍右贴自然宽。
+//   T16 双主题截图取证（本批验收面：暗/亮两档 dock 全景存证 evidence/）
 //
 // 运行：node tests/canvas-ask-dock.spec.mjs
 // 可选 env：PORT（默认 8216，避开在跑 spec 的固定端口）、ASK_SHOTS_DIR（截图目录）。
@@ -109,12 +122,13 @@ function ok(name, cond, detail = '') {
 // ── ask 会话 mock 面（routeWebSocket 的 server 侧）──
 /** @type {any} */ let askWs = null;               // 活跃 page 的 ws 句柄（单页 spec）
 const inbound = [];                                // page → server 帧留档（协议断言面）
+let replayDelay = 0;                               // askState 回放延迟（T14 注水先行面；0 = 即时）
 function wsSend(obj) { if (askWs) askWs.send(JSON.stringify(obj)); }
 function askStateReply(m, fileName, messages) {
   // askOpen 帧不携 sessionId（服务端按文件派生）——回放帧带同式派生 sid。
   const sid = m.sessionId || sidOf((m.file && m.file.absPath) || '');
   const key = 'ask:' + sid.slice(4, 8);
-  wsSend({
+  const deliver = () => wsSend({
     type: 'askState',
     sessionId: sid,
     sessionKey: key,
@@ -122,6 +136,8 @@ function askStateReply(m, fileName, messages) {
     fileName: fileName,
     messages: messages || [],
   });
+  if (replayDelay > 0) setTimeout(deliver, replayDelay);
+  else deliver();
 }
 
 function nfFileRoute() {
@@ -571,31 +587,11 @@ try {
   }));
   ok('T10a v2.1 退场件零残留（ghost 提示行 / session 徽标 / 转交钮）',
     t10a.ghost === 0 && t10a.sess === 0 && t10a.handoff === 0, JSON.stringify(t10a));
-  // 服务端转录仍含 sys 帧（askState 重放）→ 渲染面永久过滤（收进不可见处）
-  wsSend({
-    type: 'askState', sessionId: askedSid, sessionKey: 'ask:' + askedSid.slice(4, 8),
-    file: '/tmp/canvas-ask-fixture/记忆检索调优笔记.md', fileName: '记忆检索调优笔记.md',
-    messages: [
-      { role: 'user', text: 'τ 为什么取 30 天？' },
-      { role: 'ai', text: '半衰期 ≈21 天。' },
-      { role: 'sys', text: '↗ 已发送到主会话 · τ 为什么取 30 天？' },
-      { role: 'sys', text: '状态噪声类示例' },
-    ],
-  });
-  await sleep(300);
-  const t10b = await page.evaluate(() => {
-    const col = document.querySelector('.ask-dock .ask-col');
-    return {
-      sys: col.querySelectorAll('.ask-bub.sys').length,
-      user: col.querySelectorAll('.ask-bub.user').length,
-      ai: col.querySelectorAll('.ask-bub.ai').length,
-      hasReceiptText: col.textContent.includes('已发送到主会话') || col.textContent.includes('状态噪声类'),
-    };
-  });
-  ok('T10b 服务端转录 sys 帧渲染面永久过滤（气泡面只出 user/ai 两族）',
-    // user=2：回放转录 1 问 + F 批新问经 askState 合并守卫补挂（回放快照早于
-    // 新问落账时问题不消失——服务端为权威、本地新问保留）；sys 两帧收进不可见处。
-    t10b.sys === 0 && t10b.user === 2 && t10b.ai === 1 && !t10b.hasReceiptText, JSON.stringify(t10b));
+  // 旧 T10b「短快照回放过滤 sys」退役（持久批 2026-11-01）：askState 合并改
+  // 「永不缩水」后，比本地短的快照保留本地（不再换血）——sys 过滤面由 T14e
+  // 以「长快照含 sys」强断言接棒（可见行逐字重建 + 两条 sys，采纳后面仍只出
+  // user/ai 两族）。
+  // 服务端转录 sys 帧过滤面 → T14e（长快照腿）接棒，见 T14 段。
 
   // T12 风格统一（三修③ 作者令 2026-10-29「对齐 canvas 统一风格，不新造风格」）：
   // 三面（fab/输入条/气泡）计算材质与聊天 #header 玻璃模板逐项相等——GU2-7
@@ -611,23 +607,29 @@ try {
       const cs = getComputedStyle(el);
       return { bg: cs.backgroundColor, border: cs.borderTopColor, blur: cs.backdropFilter };
     };
-    const ref = document.getElementById('header') || document.getElementById('deck-fab');
     return {
       fab: pick(document.querySelector('.ask-fab')),
       input: pick(document.querySelector('.ask-input')),
       bub: pick(document.querySelector('.ask-bub.ai')),
-      ref: pick(ref),
+      // 悬浮族 F1 参照（v3 批 liquid-glass.css ④：ask-fab 与 deck-fab 同族配方）
+      deck: pick(document.getElementById('deck-fab')),
+      header: pick(document.getElementById('header')),
     };
   });
   const matSame = (a, b) => !!a && !!b && a.bg === b.bg && a.border === b.border && a.blur === b.blur;
-  ok('T12a 入口钮材质 = #header 玻璃模板（--cv-* 单源逐项相等）', matSame(mat.fab, mat.ref), JSON.stringify({ fab: mat.fab, ref: mat.ref }));
-  ok('T12b 输入条材质 = #header 玻璃模板', matSame(mat.input, mat.ref), JSON.stringify({ input: mat.input, ref: mat.ref }));
-  ok('T12c 气泡材质 = #header 玻璃模板', matSame(mat.bub, mat.ref), JSON.stringify({ bub: mat.bub, ref: mat.ref }));
+  // v3 F1 扩面批（作者 12:32「悬浮族 = F1」）：入口钮材质归 --g2-fab-* 单源 =
+  // #deck-fab 同族（旧「= #header」断言为 v3 批欠账——ask.css 三修③ 的 --cv-*
+  // 基础档被 liquid-glass.css ④ 后写胜出，#deck-fab 同吃同配方，两者计算样式相等）。
+  ok('T12a 入口钮材质 = 悬浮族 F1 单源（#deck-fab 同配方逐项相等）', matSame(mat.fab, mat.deck), JSON.stringify({ fab: mat.fab, deck: mat.deck }));
+  ok('T12b 输入条材质 = #header 玻璃模板', matSame(mat.input, mat.header), JSON.stringify({ input: mat.input, ref: mat.header }));
+  ok('T12c 气泡材质 = #header 玻璃模板', matSame(mat.bub, mat.header), JSON.stringify({ bub: mat.bub, ref: mat.header }));
   const greenFaces = await page.evaluate(() => ({
     send: getComputedStyle(document.querySelector('.ask-input .ask-send')).backgroundColor,
     dot: getComputedStyle(document.querySelector('.ask-fab .ask-sess-dot')).backgroundColor,
   }));
-  ok('T12d 发送钮 = 墨族主操作单源（--btn-primary-* → --btn-ink-*，暗档 #e6edf3）', greenFaces.send === 'rgb(230, 237, 243)', greenFaces.send);
+  // v3 实现批（作者 12:32「其它面板发送钮跟随主对话」）：墨族档退役，考古绿
+  // --ctl-send-bg（#07C160）回归——与主对话发送键同源（input.css 基准）。
+  ok('T12d 发送钮 = 微信绿跟随主对话（--ctl-send-*，#07C160）', greenFaces.send === 'rgb(7, 193, 96)', greenFaces.send);
   ok('T12e 通知点底色 = --color-primary 品牌绿（#07c160，身份/状态色冻结保留）', greenFaces.dot === 'rgb(7, 193, 96)', greenFaces.dot);
   await shot(page, 't12-unified-style');
 
@@ -697,6 +699,132 @@ try {
   ok('T13h 全程（含 .txt/.scala 切卡）零 askOpen 帧外发', askOpens().length === 0, JSON.stringify(askOpens().map((m) => m.file)));
   void absTxt; void absReadme;
 
+  // ── T14 文档会话持久（2026-11-01 作者令「切文档之后会消失」批①）──────────
+  // 页内 Map + localStorage write-through 双面：切卡往返、重载重启、迟到/过期
+  // 回放三现场转录都不丢（头注动机链：重连置脏 → 发问补发 askOpen → 旧合并
+  // 守卫用短快照整表换血 = AI 答消失；本批改「永不缩水」合并 + 本地注水）。
+  await page.click('.ask-fab'); // T13g 留下的 active = A；开 dock（A 转录在页内账）
+  await sleep(450);
+  await openFile(page, 'wiki-graph-redesign-design.md'); // A→B（dock 开着即切 session）
+  await sleep(450);
+  const t14aB = await page.evaluate(() => (document.querySelector('.ask-dock .ask-bub.user') || {}).textContent || '');
+  ok('T14a 切 B：B 转录在（每文档各账）', t14aB.includes('引用边是从哪来的'), t14aB.slice(0, 30));
+  await openFile(page, '记忆检索调优笔记.md'); // B→A
+  await sleep(450);
+  const t14aA = await page.evaluate(() => ({
+    users: [...document.querySelectorAll('.ask-dock .ask-bub.user')].map((b) => b.textContent),
+    ais: document.querySelectorAll('.ask-dock .ask-bub.ai').length,
+  }));
+  ok('T14a′ 切回 A：A 转录整列复现（往返不丢）',
+    t14aA.users.some((u) => u.includes('τ 为什么取 30 天')) && t14aA.users.some((u) => u.includes('主会话回问')) && t14aA.ais >= 2,
+    JSON.stringify({ users: t14aA.users.length, ais: t14aA.ais }));
+  // T14b 本地持久键在场（write-through 实证）
+  const t14d = await page.evaluate(() => Object.keys(localStorage).filter((k) => /ask:sess:ask-[0-9a-f]{8}$/.test(k)));
+  ok('T14d 每文档持久键在场（<brand>_ask:sess:<sid>）', t14d.length >= 2, JSON.stringify(t14d));
+  // T14c 过期快照不缩水：推一个比本地短的 askState（重连重放竞态现场）——
+  // 旧守卫会整表换血（AI 答消失），新合并律保留本地。
+  const beforeShrink = await page.evaluate(() => ({
+    users: document.querySelectorAll('.ask-dock .ask-bub.user').length,
+    ais: document.querySelectorAll('.ask-dock .ask-bub.ai').length,
+  }));
+  wsSend({
+    type: 'askState', sessionId: askedSid, sessionKey: 'ask:' + askedSid.slice(4, 8),
+    file: '/tmp/canvas-ask-fixture/记忆检索调优笔记.md', fileName: '记忆检索调优笔记.md',
+    messages: [{ role: 'user', text: 'τ 为什么取 30 天？' }], // 1 行 << 本地
+  });
+  await sleep(350);
+  const afterShrink = await page.evaluate(() => ({
+    users: document.querySelectorAll('.ask-dock .ask-bub.user').length,
+    ais: document.querySelectorAll('.ask-dock .ask-bub.ai').length,
+  }));
+  ok('T14c 过期短快照不缩水（本地问答保留，AI 答不丢）',
+    afterShrink.users === beforeShrink.users && afterShrink.ais === beforeShrink.ais && afterShrink.users >= 2,
+    JSON.stringify({ before: beforeShrink, after: afterShrink }));
+  // T14e 更长快照采纳 + sys 帧渲染面永久过滤（接棒旧 T10b 面快照=
+  // 眼前可见 user/ai 行逐字重建 + 两条 sys —— 长于本地 ⇒ 对账采纳；sys 不呈现）。
+  const rebuild = await page.evaluate(() => [...document.querySelectorAll('.ask-dock .ask-bub')]
+    .map((b) => ({ role: b.classList.contains('user') ? 'user' : 'ai', text: b.textContent })));
+  wsSend({
+    type: 'askState', sessionId: askedSid, sessionKey: 'ask:' + askedSid.slice(4, 8),
+    file: '/tmp/canvas-ask-fixture/记忆检索调优笔记.md', fileName: '记忆检索调优笔记.md',
+    messages: rebuild.concat([
+      { role: 'sys', text: '↗ 已发送到主会话 · 应被过滤' },
+      { role: 'sys', text: '状态噪声类示例' },
+    ]),
+  });
+  await sleep(350);
+  const t14e = await page.evaluate(() => {
+    const col = document.querySelector('.ask-dock .ask-col');
+    return {
+      users: col.querySelectorAll('.ask-bub.user').length,
+      ais: col.querySelectorAll('.ask-bub.ai').length,
+      sys: col.querySelectorAll('.ask-bub.sys').length,
+      leak: col.textContent.includes('应被过滤') || col.textContent.includes('状态噪声类'),
+    };
+  });
+  ok('T14e 更长快照采纳（对账追平）+ sys 帧永久过滤（气泡面只出两族）',
+    t14e.sys === 0 && !t14e.leak && t14e.users === rebuild.filter((r) => r.role === 'user').length &&
+      t14e.ais === rebuild.filter((r) => r.role === 'ai').length,
+    JSON.stringify(t14e));
+  // T14b 重载注水：回放延迟 2s——dock 记录先由本地注水呈现（不等回放），
+  // 回放到达后对账不缩水。
+  replayDelay = 2000;
+  await page.reload();
+  await sleep(1200);
+  // 重载后 canvas tabs 恢复是异步腿——闸随恢复落位；显式再激活 A 收敛 active。
+  await openFile(page, '记忆检索调优笔记.md');
+  await page.click('.ask-fab');
+  await sleep(700); // < 2000ms 回放——此刻呈现面只能来自 localStorage 注水
+  const t14bEarly = await page.evaluate(() => ({
+    users: [...document.querySelectorAll('.ask-dock .ask-bub.user')].map((b) => b.textContent),
+  }));
+  ok('T14b 重载后开 dock：本地注水即时呈现（回放未到先出账）',
+    t14bEarly.users.some((u) => u.includes('τ 为什么取 30 天')),
+    JSON.stringify(t14bEarly).slice(0, 120));
+  await sleep(2300); // 回放到达
+  const t14bLate = await page.evaluate(() => ({
+    users: document.querySelectorAll('.ask-dock .ask-bub.user').length,
+    ais: document.querySelectorAll('.ask-dock .ask-bub.ai').length,
+  }));
+  ok('T14b′ 回放到达对账不缩水（记录保持）',
+    t14bLate.users >= t14bEarly.users.length && t14bLate.ais >= 1, JSON.stringify(t14bLate));
+  replayDelay = 0;
+  await shot(page, 't14-doc-session-persist');
+
+  // ── T15 对话区与输入条同宽（2026-11-01 作者令批②）────────────────────────
+  // 注入一条超长 user 行（注入族腿 = 真实 user 族呈现路径）制造宽气泡。
+  wsSend({ type: 'user', sessionId: askedSid, injected: true, text: 'W'.repeat(160) });
+  await sleep(400);
+  const t15 = await page.evaluate(() => {
+    const input = document.querySelector('.ask-dock .ask-input');
+    const col = document.querySelector('.ask-dock .ask-col');
+    const ir = input.getBoundingClientRect();
+    const cr = col.getBoundingClientRect();
+    const bubs = [...col.querySelectorAll('.ask-bub.user')];
+    const wide = bubs[bubs.length - 1];
+    const wr = wide ? wide.getBoundingClientRect() : null;
+    return {
+      leftGap: Math.abs(ir.left - cr.left),
+      rightGap: Math.abs(ir.right - cr.right),
+      wideW: wr ? wr.width : 0,
+      wideLeftGap: wr ? Math.abs(wr.left - cr.left) : 999,
+      inputW: ir.width,
+    };
+  });
+  ok('T15a 气泡列与输入条左右缘一致（≤1px）', t15.leftGap <= 1 && t15.rightGap <= 1, JSON.stringify({ left: t15.leftGap, right: t15.rightGap }));
+  ok('T15b 宽气泡 span 到列满档（306px 帽退役；窄气泡仍右贴自然宽）',
+    t15.wideW >= t15.inputW - 6 && t15.wideLeftGap <= 1, JSON.stringify({ wide: t15.wideW, input: t15.inputW, leftGap: t15.wideLeftGap }));
+  await shot(page, 't16-dark-dock-wide');
+
+  // ── T16 亮档取证（暗档已在上方 shot；亮档独立 context 全景一张）────────────
+  const lite = await bootPage(browser, { colorScheme: 'light' });
+  await openFile(lite.page, '记忆检索调优笔记.md');
+  await lite.page.click('.ask-fab');
+  await sleep(900); // askOpen 回放（mock 转录）到位
+  await shot(lite.page, 't16-light-dock');
+  ok('T16 双主题截图取证（t16-dark-dock-wide / t16-light-dock）', true, 'evidence/canvas-ask-dock/shots/');
+  await lite.page.close();
+
   await page.close();
 
   // ── 移动档（body.mobile-layer 自举，#988 手势纪律）──
@@ -715,22 +843,41 @@ try {
     await sleep(400);
     const m1 = await mob.page.evaluate(() => {
       // 批⑨ 2026-10-31：手机层 FAB = body 级 fixed（canvas 整页制，切换条/
-      // #canvas-panel 手机层退役）——座位判据改视口径：底 = dock 高 + 10、右 12。
+      // #canvas-panel 手机层退役）——座位判据改视口径。悬浮钮统一批（同日 16:03
+      // 作者令）：48px g2-fab 基准 + right 16 栅格；座位 = max(dock-h+10, 角簇
+      // 占用+12)（askDock.syncSeat 手机腿，座步行写入幂等）。
       const fab = document.querySelector('.ask-fab');
       if (!fab) return null;
       const fr = fab.getBoundingClientRect();
       const dock = document.getElementById('mobile-dock');
       const dr = dock ? dock.getBoundingClientRect() : null;
+      // 镜像 syncSeat 的占用扫描（角簇可见者取最上沿）——期望座位同式推导。
+      const pane = document.querySelector('.canvas-tab-pane.active');
+      const floats = pane
+        ? pane.querySelectorAll('.canvas-source-toggle, .canvas-find-toggle, .canvas-ref-select')
+        : [];
+      let occupied = 0;
+      floats.forEach((f) => {
+        const h = /** @type {HTMLElement} */ (f);
+        if (h.hidden || h.offsetParent === null) return;
+        const r = h.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) return;
+        occupied = Math.max(occupied, innerHeight - r.top);
+      });
       return {
         w: fr.width, h: fr.height,
         fabBottomToDock: dr ? dr.top - fr.bottom : null,
         dockH: dr ? dr.height : null,
-        fabRightToViewport: window.innerWidth - fr.right,
+        fabRightToViewport: innerWidth - fr.right,
+        fabBottomOffset: innerHeight - fr.bottom,
+        seatExpect: Math.max(54 + 10, occupied > 0 ? occupied + 12 : 0),
         colMaxH: getComputedStyle(document.querySelector('.ask-col')).maxHeight,
       };
     });
-    ok('T9a 移动入口钮 44×44', !!m1 && Math.abs(m1.w - 44) < 1.5 && Math.abs(m1.h - 44) < 1.5, JSON.stringify(m1));
-    ok('T9b 座位钉底 dock 上方 +10（body fixed 视口径 · 批⑨）', !!m1 && m1.fabBottomToDock !== null && Math.abs(m1.fabBottomToDock - 10) < 2 && m1.fabRightToViewport <= 14, JSON.stringify(m1));
+    ok('T9a 移动入口钮 48×48（悬浮钮统一批 g2-fab 基准）', !!m1 && Math.abs(m1.w - 48) < 1.5 && Math.abs(m1.h - 48) < 1.5, JSON.stringify(m1));
+    ok('T9b 座位 = max(dock-h+10, 角簇占用+12)（body fixed 视口径 · 批⑨+统一批）',
+      !!m1 && m1.fabBottomToDock !== null && Math.abs(m1.fabBottomOffset - m1.seatExpect) < 3 && m1.fabRightToViewport <= 17,
+      JSON.stringify({ offset: m1 && m1.fabBottomOffset, expect: m1 && m1.seatExpect, right: m1 && m1.fabRightToViewport }));
     // F3-b 批后口径：列可视高 = 总档 − 带档（⑤带净空在 colwrap，E-2 移动 250−56=194）。
     ok('T9c 列可视 max-h = 总档 250 − 带档 56 = 194（E-2 移动档，⑤带净空口径）', m1 && m1.colMaxH === '194px', m1 && m1.colMaxH);
     // 气泡列表面横滑零切卡（surface 归属制：peek 不亮）

@@ -1,6 +1,18 @@
 // askDock.js — Canvas 文件 ask mode（2026-10-28 实施批；同日 22:42 v2.1 简化修订；
 // 2026-10-29 三修批②：FAB 通知点改绿点未读条件显示）。
 //
+// 文档会话持久批（2026-11-01 作者令「现在文档的会话 我切文档之后会消失」）：
+// 每文档转录 localStorage write-through（键 = branding 命名空间 + ask:sess:<sid>），
+// 建账即注水（切回即现，不等回放）。动机链：会话 Map 是页内内存态，重载/重连
+// 后只剩 askOpen 回放一条恢复腿；而重连置脏 stateSent ⇒ 发问补发 askOpen ⇒ 回放
+// 快照与本地问答竞态，旧合并守卫只保最后一条 user 问 —— AI 答与更早轮次被快照
+// 整表抹掉（「切文档再切回来记录没了」的实感 = 被抹后的页内存态随切卡一路呈现）。
+// 修复双件：① 本地持久（重载/切卡往返零依赖回放时序）；② askState 合并改
+// 「永不缩水」——ask 转录是只追加流（dock 面零编辑零删除），本地比快照长 ⇒
+// 快照必是过期残影，保留本地；服务端真源仍由 textDelta/done 与下一次完整回放
+// 追平。持久化是体验加速不是正确性依赖（私密模式 try/catch 静默；服务端
+// .ui.json 仍是权威）。
+//
 // 三修②（作者令 2026-10-29「小点应为绿色通知点，只在有（未读）消息时显示」）：
 // 旧「has-sess = 会话有过消息 → 紫点常显」退役。新口径 = 未读通知：AI/注入帧
 // 到达时用户不在看着（dock 收起 ∨ 非当前文件）→ session.unread 置位 → 绿点
@@ -57,11 +69,67 @@ const ICONS = {
   send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
 };
 
-/** @type {Map<string, {sid: string, key: string, fileName: string, msgs: Array<{role: string, text: string, receipt?: boolean}>, stateSent: boolean, unread: boolean}>} */
+/** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean}>} */
 const sessions = new Map(); // key: absPath
 let el = null; // { fab, dock, col, input, send }（v2.1：ghost/sess/handoff 件随减法退场）
 let currentFile = ''; // absPath of the active file entry ('' = 非文件卡)
 let inited = false;
+
+// ── 每文档会话持久（2026-11-01 作者令批；头注「文档会话持久批」）────────────
+// 键形 = key('ask:sess:<sid>')（branding 命名空间同源）；值 = {ts, msgs:[user/ai]}。
+// 容量闸：每会话尾留 60 行（= 服务端回放档 200 的常用子集，localStorage 行小）、
+// 全局至多 24 份会话（ts 最旧先淘汰——切卡即触碰，活跃文档自然留驻）。
+const SESS_STORE_PREFIX = 'ask:sess:';
+const SESS_MAX_MSGS = 60;
+const SESS_MAX_SESSIONS = 24;
+
+/** 读某会话的本地转录（无/坏/私密模式 ⇒ null——调用方回落空账）。 */
+function loadPersisted(sid) {
+  if (!sid) return null;
+  try {
+    const raw = localStorage.getItem(key(SESS_STORE_PREFIX + sid));
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    if (!v || !Array.isArray(v.msgs)) return null;
+    const msgs = v.msgs
+      .filter((m) => m && typeof m.text === 'string' && (m.role === 'user' || m.role === 'ai'))
+      .map((m) => ({ role: m.role, text: m.text }));
+    return msgs;
+  } catch { return null; }
+}
+
+/** 写某会话的本地转录（write-through 单点；任何突变后调用）。 */
+function persistSession(s) {
+  if (!s || !s.sid) return;
+  try {
+    const rows = s.msgs
+      .filter((m) => m.role === 'user' || m.role === 'ai')
+      .slice(-SESS_MAX_MSGS)
+      .map((m) => ({ role: m.role, text: m.text }));
+    localStorage.setItem(key(SESS_STORE_PREFIX + s.sid), JSON.stringify({ ts: Date.now(), msgs: rows }));
+    pruneSessionStore();
+  } catch { /* 私密模式 / quota —— 体验加速面，静默降级 */ }
+}
+
+/** 超额淘汰：ts 最旧的会话先出（活跃文档写时即触碰 = ts 刷新，自然留驻）。 */
+function pruneSessionStore() {
+  try {
+    const found = [];
+    const prefix = key(SESS_STORE_PREFIX);
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(prefix)) continue;
+      let ts = 0;
+      try { const v = JSON.parse(localStorage.getItem(k)); if (v && typeof v.ts === 'number') ts = v.ts; } catch { /* 坏行按最旧算 */ }
+      found.push({ k, ts });
+    }
+    if (found.length <= SESS_MAX_SESSIONS) return;
+    found.sort((a, b) => a.ts - b.ts);
+    for (const e of found.slice(0, found.length - SESS_MAX_SESSIONS)) {
+      try { localStorage.removeItem(e.k); } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+}
 
 // 会话 id = 后端 AskSessions 单点（sha256(absPath) 前 8 hex，前缀 ask-）——
 // 客户端同式派生（crypto.subtle），绑定面零额外往返。
@@ -85,11 +153,13 @@ function ensureSid(absPath) {
 async function sessionFor(absPath, fileName) {
   let s = sessions.get(absPath);
   if (!s) {
+    // 建账即注水（持久批 2026-11-01）：本地转录先上台，切回即现——askOpen 回放
+    // 只是后续对账（服务端为权威），不再是恢复的唯一腿。
+    const sid = await ensureSid(absPath);
     s = {
-      sid: await ensureSid(absPath),
-      key: 'ask:' + (await ensureSid(absPath)).slice(4, 8),
+      sid,
       fileName: fileName || absPath.split('/').pop() || absPath,
-      msgs: [],
+      msgs: loadPersisted(sid) || [],
       stateSent: false,
       unread: false,
     };
@@ -463,6 +533,7 @@ async function submit() {
   // **不再预压空 ai 泡**——等待期只有 typing 一件；首个 textDelta 落 ai 泡时
   // removeTyping() 单点换泡（双泡根因 = 空 ai 泡 + typing 泡并存）。
   s.msgs.push({ role: 'user', text: v });
+  persistSession(s); // 发问即落盘（持久批：重载/竞态现场问题不丢）
   render();
   appendTyping();
   if (!s.stateSent) askOpen(s); // 未绑定先补一拍（历史回放与流式都依赖 askState）
@@ -470,6 +541,7 @@ async function submit() {
 }
 
 let typingNode = null;
+let streamPersistAt = 0; // 流式落盘节流拍（持久批；800ms 一写，done 终局兜底）
 function appendTyping() {
   if (!el) return;
   removeTyping();
@@ -499,31 +571,37 @@ function consumeFrame(msg) {
   switch (msg.type) {
     case 'askState': {
       entry.sid = msg.sessionId || entry.sid;
-      entry.key = msg.sessionKey || '';
       entry.fileName = msg.fileName || entry.fileName;
       // ④ 双泡修复批伴随守卫：submit 先 askOpen 后 askQuestion，回放帧快照可能
-      // 早于本拍提问落账——整表替换会把刚发的 user 泡抹掉（视觉丢问）。合并律：
-      // 本地末条为 user 且服务端历史末条 user 文本不同 ⇒ 本地该问是回放快照后
-      // 的新问，补挂到回放尾（幂等：下帧回放已含它时自然 dedup）。
-      const pendingLocal = entry.msgs.filter((m) => m.role === 'user').slice(-1)[0];
+      // 早于本拍提问落账——整表替换会把刚发的 user 泡抹掉（视觉丢问）。
+      // 持久批 2026-11-01 升级为「永不缩水」合并（头注动机链）：ask 转录是
+      // 只追加流，本地比快照长 ⇒ 快照必是过期/竞态残影（WS 重连重放 + 发问
+      // 竞态现场），保留本地不换血；本地空或快照更长 ⇒ 采纳快照（服务端对账
+      // 追平，含他机续问）。旧守卫「只保最后一条 user 问」的 AI 答整表抹除
+      // 即本批根治点。
       const serverMsgs = Array.isArray(msg.messages)
         ? msg.messages
             .filter((m) => m && typeof m.text === 'string')
             .map((m) => ({
               role: m.role === 'user' ? 'user' : m.role === 'sys' ? 'sys' : 'ai',
               text: m.text,
-              receipt: false,
             }))
         : entry.msgs;
-      const serverLastUser = serverMsgs.filter((m) => m.role === 'user').slice(-1)[0];
-      entry.msgs = serverMsgs;
+      const localLastUser = entry.msgs.filter((m) => m.role === 'user').slice(-1)[0];
+      const adopted = serverMsgs.length >= entry.msgs.length ? serverMsgs : entry.msgs;
+      const adoptedLastUser = adopted.filter((m) => m.role === 'user').slice(-1)[0];
+      entry.msgs = adopted;
+      // 本地发问尚不在账（回放快照早于本拍提问落账）⇒ 补挂到尾。幂等双闸：
+      // 末位问文本相同不挂；问已在账内任意位（服务端已落账）不挂。
       if (
-        pendingLocal &&
-        pendingLocal.role === 'user' &&
-        (!serverLastUser || serverLastUser.text !== pendingLocal.text)
+        localLastUser &&
+        localLastUser.role === 'user' &&
+        (!adoptedLastUser || adoptedLastUser.text !== localLastUser.text) &&
+        !entry.msgs.some((m) => m.role === 'user' && m.text === localLastUser.text)
       ) {
-        entry.msgs = entry.msgs.concat([pendingLocal]);
+        entry.msgs = entry.msgs.concat([localLastUser]);
       }
+      persistSession(entry);
       if (file === currentFile) {
         // 回放即读（用户此刻正看着该会话）：未读清零 + 通知点落位。
         if (isOpen()) { entry.unread = false; removeTyping(); render(); }
@@ -541,6 +619,10 @@ function consumeFrame(msg) {
       }
       const ai = entry.msgs[entry.msgs.length - 1];
       ai.text += msg.delta || '';
+      // 流式落盘节流（持久批）：textDelta 高频，800ms 一拍写 localStorage；
+      // 终局由 done 全量落盘兜底。
+      const nowMs = Date.now();
+      if (nowMs - streamPersistAt > 800) { streamPersistAt = nowMs; persistSession(entry); }
       if (entry === activeSession()) updateStreamingBubble(entry);
       if (entry === activeSession()) syncUnreadDot();
       break;
@@ -549,6 +631,7 @@ function consumeFrame(msg) {
       if (!(entry === activeSession() && isOpen())) entry.unread = true;
       const last = entry.msgs[entry.msgs.length - 1];
       if (last && last.role === 'ai' && !last.text && msg.finalText) last.text = msg.finalText;
+      persistSession(entry);
       if (entry === activeSession()) {
         if (isOpen()) { removeTyping(); render(); }
         syncUnreadDot();
@@ -562,6 +645,7 @@ function consumeFrame(msg) {
       const errText = tt('出错了：', 'Error: ') + (msg.message || 'unknown');
       if (last && last.role === 'ai' && !last.text) last.text = errText;
       else entry.msgs.push({ role: 'ai', text: errText });
+      persistSession(entry);
       if (entry === activeSession()) {
         if (isOpen()) { removeTyping(); render(); }
         syncUnreadDot();
@@ -581,6 +665,7 @@ function consumeFrame(msg) {
       if (msg.injected) {
         if (!(entry === activeSession() && isOpen())) entry.unread = true;
         entry.msgs.push({ role: 'user', text: msg.text || '' });
+        persistSession(entry);
         if (entry === activeSession()) {
           if (isOpen()) { removeTyping(); render(); }
           syncUnreadDot();

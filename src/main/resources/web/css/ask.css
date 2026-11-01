@@ -1,5 +1,8 @@
 /* ask.css — Canvas 文件 ask mode（2026-10-28 实施批；同日 22:42 v2.1 简化修订；
- * 2026-10-29 三修批②③：FAB 通知点绿点未读条件显示 + 风格并入 canvas 统一档）。
+ * 2026-10-29 三修批②③：FAB 通知点绿点未读条件显示 + 风格并入 canvas 统一档；
+ * 2026-11-01 文档会话批②：对话区与输入条同宽（气泡 max-width 306 档退役 =
+ * 列满档 + 列横 padding 归零，左右缘与 .ask-input 逐像素一致——作者令「对话的
+ * 宽度要和下面输入框保持一致」）。
  *
  * 形态 = 样张 v2.1（docs/design/20261028_canvas-ask-mode-mockup-v2.html，作者八条令
  * 2026-10-28 17:5x + v2.1 减法令 22:42「简约一点。不需要两个箭头，就右侧一个发送
@@ -34,7 +37,6 @@
   --ask-dock-w: 372px;           /* 覆盖层宽（= 输入框档宽） */
   --ask-col-maxh: 316px;         /* 气泡列 max-height（小巧不占 canvas） */
   --ask-fade-h: 64px;            /* 顶部液体玻璃 v2 渐隐带高（列顶留白同值，首条不入带） */
-  --ask-bub-maxw: 306px;         /* 气泡 max-width */
   --z-ask-dock: 24;              /* < 顶行 30（排他 z 序：永不入顶行） */
   --ask-dot-ring: rgba(255, 255, 255, 0.9);  /* 通知点描边圈（暗档翻 #0b0e14） */
   --ask-link: #1d4ed8;           /* cite 徽标链色（亮档） */
@@ -140,7 +142,9 @@ html[data-theme='light'] {
   /* 列可视高 = 总档 − 带档（E-2：桌面 316−64=252 / 移动 250−56=194）。 */
   width: 100%; max-height: calc(var(--ask-col-maxh) - var(--ask-fade-h)); overflow-y: auto;
   display: flex; flex-direction: column; gap: 7px; align-items: flex-end;
-  padding: 6px 2px 2px;
+  /* 文档会话批②（2026-11-01）：横 padding 归零 —— 气泡区左右缘与输入条
+   * 逐像素对齐（同宽同缘）；纵向 6/2 呼吸留白保留。 */
+  padding: 6px 0 2px;
   scrollbar-width: none; touch-action: pan-y; /* #988：列内纵滚原生，手势零劫持 */
 }
 .ask-col::-webkit-scrollbar { display: none; }
@@ -163,9 +167,12 @@ html.no-backdrop .ask-colwrap .ask-veil {
 
 /* 玻璃气泡（三修③：材质 = canvas --cv-* 单源，与聊天 #header / canvas 控件
  * 计算样式同源；自造 rgba 白面 + 自带外投影退役）。两族制不变——品牌蓝换
- * 活性蓝 sapphire 档（canvas aria-pressed 活性语言既有词汇）= 用户侧 */
+ * 活性蓝 sapphire 档（canvas aria-pressed 活性语言既有词汇）= 用户侧。
+ * 文档会话批②（2026-11-01）：max-width 306 档退役 = 100%（列满档）——宽内容
+ * （表格/代码块/长行）左右缘与输入条一致；窄内容仍右贴自然宽（两族气泡形态
+ * 不变，只是不再被 306px 帽压窄）。 */
 .ask-bub {
-  max-width: var(--ask-bub-maxw);
+  max-width: 100%;
   padding: 9px 13px; border-radius: 15px;
   font-size: 13.5px; line-height: 1.6; word-break: break-word;
   color: var(--color-text);
@@ -251,7 +258,6 @@ body.mobile-layer .ask-fab {
 body.mobile-layer .ask-dock {
   --ask-dock-w: calc(100% - 24px);
   --ask-col-maxh: 250px;
-  --ask-bub-maxw: 252px;
   --ask-fade-h: 56px;
   position: fixed;
   right: var(--ask-fab-gap);
