@@ -57,7 +57,6 @@ import { startWorklineDots, beginRound } from './workline.js';
 import { replayHistoryPageInitialLoad } from './chat/historyReplay.js';
 import { notePendingAsk, removePendingAsk, applyPendingAskSnapshot, pendingSnapshotFailed, initPendingAsks, requestPendingAskSync, startPendingAskSync } from './askPending.js';
 import { initScrollUnderGlass } from './scrollUnderGlass.js'; // uifix ⑤
-import { initLiquidGlass } from './liquidGlass.js'; // 液体玻璃 v2：折射能力探测类开关
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   deleteSession, formatSessionTime, setSessionAttention,
@@ -273,7 +272,6 @@ initPendingAsks();
 // 可见期节拍与页面重新可见共用一个 requestPendingAskSync，镜像不再只靠重连自愈。
 startPendingAskSync(sendWs);
 initScrollUnderGlass(); // uifix ⑤：浮层毛玻璃裙边降级探测器
-initLiquidGlass(); // 液体玻璃 v2 批：边缘折射能力探测（html.g2-refract-on 类开关）
 initServiceWorker(); // console-load-perf 批：温访问秒开（/sw.js 未上线的引擎上为静默空转）
 initHotStampWatch(); // 台账 #919：热更新地基——stamp 轮询自愈（/api/nf-asset-stamp 缺席的引擎上为静默空转）
 

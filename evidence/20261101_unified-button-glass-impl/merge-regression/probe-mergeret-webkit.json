@@ -1,0 +1,1138 @@
+[
+  {
+    "engine": "webkit",
+    "theme": "dark",
+    "mobile": false,
+    "errors": 0,
+    "errorTexts": [],
+    "api404": 20,
+    "checks": [
+      {
+        "id": "A1/source",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/source",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/source",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A1/ref",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/ref",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/ref",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A1/find",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/find",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/find",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A1/refresh",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/refresh",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/refresh",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A1/deck",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/deck",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/deck",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A1/headclose",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/headclose",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/headclose",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A1/askfab",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/askfab",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/askfab",
+        "pass": true,
+        "detail": "44x44 want=44"
+      },
+      {
+        "id": "A1/chrome",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/chrome",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/chrome",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A1/mfstackx",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/mfstackx",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/mfstackx",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A1/g2fab",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/g2fab",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/g2fab",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A3/ref",
+        "pass": true,
+        "detail": "bg=rgba(91, 127, 191, 0.12) border=rgba(91, 127, 191, 0.35) color=rgb(7, 193, 96) want=rgb(7, 193, 96)"
+      },
+      {
+        "id": "A3/deck",
+        "pass": true,
+        "detail": "bg=rgba(91, 127, 191, 0.12) border=rgba(91, 127, 191, 0.35) color=rgb(7, 193, 96)"
+      },
+      {
+        "id": "A6/input-bg",
+        "pass": true,
+        "detail": "bgi=none bd=blur(24px) saturate(1.15)"
+      },
+      {
+        "id": "A6/input-shadow",
+        "pass": true,
+        "detail": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px"
+      },
+      {
+        "id": "B2/input-win",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "B2/queue-win",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "B2/modal-win",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "B2/askinput-win",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "B1/bubble-user",
+        "pass": true,
+        "detail": "bd=none bg=color(srgb 0.584314 0.92549 0.411765 / 0.9)"
+      },
+      {
+        "id": "B1/bubble-ai",
+        "pass": true,
+        "detail": "bd=none bg=color(srgb 0.109804 0.121569 0.152941 / 0.92)"
+      },
+      {
+        "id": "B1/ask-bub",
+        "pass": true,
+        "detail": "bd=none winBd=null"
+      },
+      {
+        "id": "B1/ask-bub-user",
+        "pass": true,
+        "detail": "bd=none bgi=linear-gradient(rgba(91, 127, 191, 0.18), rgba(91, 127, 191, 0.18)), none"
+      },
+      {
+        "id": "B3/pill-primary",
+        "pass": true,
+        "detail": "bd=none bg=rgb(230, 237, 243) shadow=rgba(255, 255, 255, 0.5) 0px 1px 0px 0px inset, rgba(0, 0, 0 want=rgba(255, 255, 255, 0.5) 0px 1px 0px 0px inset, rgba(0, 0, 0"
+      },
+      {
+        "id": "B3/memory-save",
+        "pass": true,
+        "detail": "bd=none bg=rgb(230, 237, 243) want=rgb(230, 237, 243)"
+      },
+      {
+        "id": "B4/no-g2-fab-token",
+        "pass": true,
+        "detail": "--g2-fab-bg=\"\""
+      },
+      {
+        "id": "B4/no-liquid-glass-css",
+        "pass": true,
+        "detail": "katex.min.css,highlight-github.min.css,highlight-github-dark.min.css,base.css,nav.css,sidebar.css,chat.css,modal.css,input.css,taskList.css,scrollUnderGlass.css,reminder.css,todo-page.css,neblink.css,dropbox.css,projectP"
+      },
+      {
+        "id": "B5/edge-fade",
+        "pass": true,
+        "detail": "display=none"
+      },
+      {
+        "id": "D9/header-untouched",
+        "pass": true,
+        "detail": "chat.css :: #header"
+      },
+      {
+        "id": "A4/disabled-opacity",
+        "pass": true,
+        "detail": "0.35"
+      },
+      {
+        "id": "A4/disabled-hover-notransform",
+        "pass": true,
+        "detail": "none"
+      },
+      {
+        "id": "A4/disabled-hover-bg-unchanged",
+        "pass": true,
+        "detail": "rgba(24, 28, 38, 0.68)"
+      },
+      {
+        "id": "A5/no-backdrop-bd-none",
+        "pass": true,
+        "detail": "none"
+      },
+      {
+        "id": "A5/no-backdrop-bg-glass",
+        "pass": true,
+        "detail": "rgba(24, 28, 38, 0.68) vs rgba(24, 28, 38, 0.68)"
+      },
+      {
+        "id": "A7/reduced-motion-applied",
+        "pass": true,
+        "detail": "mq=true hoverT=none"
+      }
+    ],
+    "summary": {
+      "pass": 54,
+      "total": 54
+    }
+  },
+  {
+    "engine": "webkit",
+    "theme": "dark",
+    "mobile": true,
+    "errors": 0,
+    "errorTexts": [],
+    "api404": 21,
+    "checks": [
+      {
+        "id": "A1/source",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/source",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/source",
+        "pass": true,
+        "detail": "48x48 want=48"
+      },
+      {
+        "id": "A1/ref",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/ref",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/ref",
+        "pass": true,
+        "detail": "48x48 want=48"
+      },
+      {
+        "id": "A1/find",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/find",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/find",
+        "pass": true,
+        "detail": "48x48 want=48"
+      },
+      {
+        "id": "A1/refresh",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/refresh",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/refresh",
+        "pass": true,
+        "detail": "48x48 want=48"
+      },
+      {
+        "id": "A1/deck",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/deck",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/deck",
+        "pass": true,
+        "detail": "display=none (桌面专属件手机隐藏)"
+      },
+      {
+        "id": "A1/headclose",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/headclose",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/headclose",
+        "pass": true,
+        "detail": "display=none (桌面专属件手机隐藏)"
+      },
+      {
+        "id": "A1/askfab",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/askfab",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/askfab",
+        "pass": true,
+        "detail": "48x48 want=48"
+      },
+      {
+        "id": "A1/chrome",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/chrome",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/chrome",
+        "pass": true,
+        "detail": "48x48 want=48"
+      },
+      {
+        "id": "A1/mfstackx",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/mfstackx",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/mfstackx",
+        "pass": true,
+        "detail": "48x48 want=48"
+      },
+      {
+        "id": "A1/g2fab",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/g2fab",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/g2fab",
+        "pass": true,
+        "detail": "48x48 want=48"
+      },
+      {
+        "id": "A3/ref",
+        "pass": true,
+        "detail": "bg=rgba(91, 127, 191, 0.12) border=rgba(91, 127, 191, 0.35) color=rgb(7, 193, 96) want=rgb(7, 193, 96)"
+      },
+      {
+        "id": "A3/deck",
+        "pass": true,
+        "detail": "bg=rgba(91, 127, 191, 0.12) border=rgba(91, 127, 191, 0.35) color=rgb(7, 193, 96)"
+      },
+      {
+        "id": "A6/input-bg",
+        "pass": true,
+        "detail": "bgi=none bd=blur(24px) saturate(1.15)"
+      },
+      {
+        "id": "A6/input-shadow",
+        "pass": true,
+        "detail": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px"
+      },
+      {
+        "id": "B2/input-win",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "B2/queue-win",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "B2/modal-win",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "B2/askinput-win",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "B1/bubble-user",
+        "pass": true,
+        "detail": "bd=none bg=color(srgb 0.584314 0.92549 0.411765 / 0.9)"
+      },
+      {
+        "id": "B1/bubble-ai",
+        "pass": true,
+        "detail": "bd=none bg=color(srgb 0.109804 0.121569 0.152941 / 0.92)"
+      },
+      {
+        "id": "B1/ask-bub",
+        "pass": true,
+        "detail": "bd=none winBd=null"
+      },
+      {
+        "id": "B1/ask-bub-user",
+        "pass": true,
+        "detail": "bd=none bgi=linear-gradient(rgba(91, 127, 191, 0.18), rgba(91, 127, 191, 0.18)), none"
+      },
+      {
+        "id": "B3/pill-primary",
+        "pass": true,
+        "detail": "bd=none bg=rgb(230, 237, 243) shadow=rgba(255, 255, 255, 0.5) 0px 1px 0px 0px inset, rgba(0, 0, 0 want=rgba(255, 255, 255, 0.5) 0px 1px 0px 0px inset, rgba(0, 0, 0"
+      },
+      {
+        "id": "B3/memory-save",
+        "pass": true,
+        "detail": "bd=none bg=rgb(230, 237, 243) want=rgb(230, 237, 243)"
+      },
+      {
+        "id": "B4/no-g2-fab-token",
+        "pass": true,
+        "detail": "--g2-fab-bg=\"\""
+      },
+      {
+        "id": "B4/no-liquid-glass-css",
+        "pass": true,
+        "detail": "katex.min.css,highlight-github.min.css,highlight-github-dark.min.css,base.css,nav.css,sidebar.css,chat.css,modal.css,input.css,taskList.css,scrollUnderGlass.css,reminder.css,todo-page.css,neblink.css,dropbox.css,projectP"
+      },
+      {
+        "id": "B5/edge-fade",
+        "pass": true,
+        "detail": "display=block"
+      },
+      {
+        "id": "D9/header-untouched",
+        "pass": true,
+        "detail": "chat.css :: #header"
+      },
+      {
+        "id": "A4/disabled-opacity",
+        "pass": true,
+        "detail": "0.35"
+      },
+      {
+        "id": "A4/disabled-hover-notransform",
+        "pass": true,
+        "detail": "none"
+      },
+      {
+        "id": "A4/disabled-hover-bg-unchanged",
+        "pass": true,
+        "detail": "rgba(24, 28, 38, 0.68)"
+      },
+      {
+        "id": "A5/no-backdrop-bd-none",
+        "pass": true,
+        "detail": "none"
+      },
+      {
+        "id": "A5/no-backdrop-bg-glass",
+        "pass": true,
+        "detail": "rgba(24, 28, 38, 0.68) vs rgba(24, 28, 38, 0.68)"
+      },
+      {
+        "id": "A7/reduced-motion-applied",
+        "pass": true,
+        "detail": "mq=true hoverT=none"
+      }
+    ],
+    "summary": {
+      "pass": 54,
+      "total": 54
+    }
+  },
+  {
+    "engine": "webkit",
+    "theme": "light",
+    "mobile": false,
+    "errors": 0,
+    "errorTexts": [],
+    "api404": 20,
+    "checks": [
+      {
+        "id": "A1/source",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/source",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/source",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A1/ref",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/ref",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/ref",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A1/find",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/find",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/find",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A1/refresh",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/refresh",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/refresh",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A1/deck",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/deck",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/deck",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A1/headclose",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/headclose",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/headclose",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A1/askfab",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/askfab",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/askfab",
+        "pass": true,
+        "detail": "44x44 want=44"
+      },
+      {
+        "id": "A1/chrome",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/chrome",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/chrome",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A1/mfstackx",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/mfstackx",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/mfstackx",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A1/g2fab",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/g2fab",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/g2fab",
+        "pass": true,
+        "detail": "40x40 want=40"
+      },
+      {
+        "id": "A3/ref",
+        "pass": true,
+        "detail": "bg=rgba(91, 127, 191, 0.12) border=rgba(91, 127, 191, 0.35) color=rgb(7, 193, 96) want=rgb(7, 193, 96)"
+      },
+      {
+        "id": "A3/deck",
+        "pass": true,
+        "detail": "bg=rgba(91, 127, 191, 0.12) border=rgba(91, 127, 191, 0.35) color=rgb(7, 193, 96)"
+      },
+      {
+        "id": "A6/input-bg",
+        "pass": true,
+        "detail": "bgi=none bd=blur(24px) saturate(1.15)"
+      },
+      {
+        "id": "A6/input-shadow",
+        "pass": true,
+        "detail": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px"
+      },
+      {
+        "id": "B2/input-win",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "B2/queue-win",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "B2/modal-win",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "B2/askinput-win",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "B1/bubble-user",
+        "pass": true,
+        "detail": "bd=none bg=color(srgb 0.584314 0.92549 0.411765 / 0.9)"
+      },
+      {
+        "id": "B1/bubble-ai",
+        "pass": true,
+        "detail": "bd=none bg=color(srgb 1 1 1 / 0.92)"
+      },
+      {
+        "id": "B1/ask-bub",
+        "pass": true,
+        "detail": "bd=none winBd=null"
+      },
+      {
+        "id": "B1/ask-bub-user",
+        "pass": true,
+        "detail": "bd=none bgi=linear-gradient(rgba(91, 127, 191, 0.18), rgba(91, 127, 191, 0.18)), none"
+      },
+      {
+        "id": "B3/pill-primary",
+        "pass": true,
+        "detail": "bd=none bg=rgb(17, 24, 39) shadow=rgba(255, 255, 255, 0.18) 0px 1px 0px 0px inset, rgba(17, 24 want=rgba(255, 255, 255, 0.18) 0px 1px 0px 0px inset, rgba(17, 24"
+      },
+      {
+        "id": "B3/memory-save",
+        "pass": true,
+        "detail": "bd=none bg=rgb(17, 24, 39) want=rgb(17, 24, 39)"
+      },
+      {
+        "id": "B4/no-g2-fab-token",
+        "pass": true,
+        "detail": "--g2-fab-bg=\"\""
+      },
+      {
+        "id": "B4/no-liquid-glass-css",
+        "pass": true,
+        "detail": "katex.min.css,highlight-github.min.css,highlight-github-dark.min.css,base.css,nav.css,sidebar.css,chat.css,modal.css,input.css,taskList.css,scrollUnderGlass.css,reminder.css,todo-page.css,neblink.css,dropbox.css,projectP"
+      },
+      {
+        "id": "B5/edge-fade",
+        "pass": true,
+        "detail": "display=none"
+      },
+      {
+        "id": "D9/header-untouched",
+        "pass": true,
+        "detail": "chat.css :: #header"
+      },
+      {
+        "id": "A4/disabled-opacity",
+        "pass": true,
+        "detail": "0.35"
+      },
+      {
+        "id": "A4/disabled-hover-notransform",
+        "pass": true,
+        "detail": "none"
+      },
+      {
+        "id": "A4/disabled-hover-bg-unchanged",
+        "pass": true,
+        "detail": "rgba(255, 255, 255, 0.55)"
+      },
+      {
+        "id": "A5/no-backdrop-bd-none",
+        "pass": true,
+        "detail": "none"
+      },
+      {
+        "id": "A5/no-backdrop-bg-glass",
+        "pass": true,
+        "detail": "rgba(255, 255, 255, 0.55) vs rgba(255, 255, 255, 0.55)"
+      },
+      {
+        "id": "A7/reduced-motion-applied",
+        "pass": true,
+        "detail": "mq=true hoverT=none"
+      }
+    ],
+    "summary": {
+      "pass": 54,
+      "total": 54
+    }
+  },
+  {
+    "engine": "webkit",
+    "theme": "light",
+    "mobile": true,
+    "errors": 0,
+    "errorTexts": [],
+    "api404": 21,
+    "checks": [
+      {
+        "id": "A1/source",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/source",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/source",
+        "pass": true,
+        "detail": "48x48 want=48"
+      },
+      {
+        "id": "A1/ref",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/ref",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/ref",
+        "pass": true,
+        "detail": "48x48 want=48"
+      },
+      {
+        "id": "A1/find",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/find",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/find",
+        "pass": true,
+        "detail": "48x48 want=48"
+      },
+      {
+        "id": "A1/refresh",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/refresh",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/refresh",
+        "pass": true,
+        "detail": "48x48 want=48"
+      },
+      {
+        "id": "A1/deck",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/deck",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/deck",
+        "pass": true,
+        "detail": "display=none (桌面专属件手机隐藏)"
+      },
+      {
+        "id": "A1/headclose",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/headclose",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/headclose",
+        "pass": true,
+        "detail": "display=none (桌面专属件手机隐藏)"
+      },
+      {
+        "id": "A1/askfab",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/askfab",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/askfab",
+        "pass": true,
+        "detail": "48x48 want=48"
+      },
+      {
+        "id": "A1/chrome",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/chrome",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/chrome",
+        "pass": true,
+        "detail": "48x48 want=48"
+      },
+      {
+        "id": "A1/mfstackx",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/mfstackx",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/mfstackx",
+        "pass": true,
+        "detail": "48x48 want=48"
+      },
+      {
+        "id": "A1/g2fab",
+        "pass": true,
+        "detail": "bd=\"blur(24px) saturate(1.15)\" wbd=\"blur(24px) saturate(1.15)\""
+      },
+      {
+        "id": "A1win/g2fab",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "A2/g2fab",
+        "pass": true,
+        "detail": "48x48 want=48"
+      },
+      {
+        "id": "A3/ref",
+        "pass": true,
+        "detail": "bg=rgba(91, 127, 191, 0.12) border=rgba(91, 127, 191, 0.35) color=rgb(7, 193, 96) want=rgb(7, 193, 96)"
+      },
+      {
+        "id": "A3/deck",
+        "pass": true,
+        "detail": "bg=rgba(91, 127, 191, 0.12) border=rgba(91, 127, 191, 0.35) color=rgb(7, 193, 96)"
+      },
+      {
+        "id": "A6/input-bg",
+        "pass": true,
+        "detail": "bgi=none bd=blur(24px) saturate(1.15)"
+      },
+      {
+        "id": "A6/input-shadow",
+        "pass": true,
+        "detail": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px"
+      },
+      {
+        "id": "B2/input-win",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "B2/queue-win",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "B2/modal-win",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "B2/askinput-win",
+        "pass": true,
+        "detail": "glass.css :: #input-bar, #queue-bar.visible, #modal-box, #delete-box, #conflict-box, #memory-modal, #rules-modal, #settings-modal, #search-modal, #onboarding-panel, .model-panel, .wsp-panel, .ask-input, #slash-dropdown, "
+      },
+      {
+        "id": "B1/bubble-user",
+        "pass": true,
+        "detail": "bd=none bg=color(srgb 0.584314 0.92549 0.411765 / 0.9)"
+      },
+      {
+        "id": "B1/bubble-ai",
+        "pass": true,
+        "detail": "bd=none bg=color(srgb 1 1 1 / 0.92)"
+      },
+      {
+        "id": "B1/ask-bub",
+        "pass": true,
+        "detail": "bd=none winBd=null"
+      },
+      {
+        "id": "B1/ask-bub-user",
+        "pass": true,
+        "detail": "bd=none bgi=linear-gradient(rgba(91, 127, 191, 0.18), rgba(91, 127, 191, 0.18)), none"
+      },
+      {
+        "id": "B3/pill-primary",
+        "pass": true,
+        "detail": "bd=none bg=rgb(17, 24, 39) shadow=rgba(255, 255, 255, 0.18) 0px 1px 0px 0px inset, rgba(17, 24 want=rgba(255, 255, 255, 0.18) 0px 1px 0px 0px inset, rgba(17, 24"
+      },
+      {
+        "id": "B3/memory-save",
+        "pass": true,
+        "detail": "bd=none bg=rgb(17, 24, 39) want=rgb(17, 24, 39)"
+      },
+      {
+        "id": "B4/no-g2-fab-token",
+        "pass": true,
+        "detail": "--g2-fab-bg=\"\""
+      },
+      {
+        "id": "B4/no-liquid-glass-css",
+        "pass": true,
+        "detail": "katex.min.css,highlight-github.min.css,highlight-github-dark.min.css,base.css,nav.css,sidebar.css,chat.css,modal.css,input.css,taskList.css,scrollUnderGlass.css,reminder.css,todo-page.css,neblink.css,dropbox.css,projectP"
+      },
+      {
+        "id": "B5/edge-fade",
+        "pass": true,
+        "detail": "display=block"
+      },
+      {
+        "id": "D9/header-untouched",
+        "pass": true,
+        "detail": "chat.css :: #header"
+      },
+      {
+        "id": "A4/disabled-opacity",
+        "pass": true,
+        "detail": "0.35"
+      },
+      {
+        "id": "A4/disabled-hover-notransform",
+        "pass": true,
+        "detail": "none"
+      },
+      {
+        "id": "A4/disabled-hover-bg-unchanged",
+        "pass": true,
+        "detail": "rgba(255, 255, 255, 0.55)"
+      },
+      {
+        "id": "A5/no-backdrop-bd-none",
+        "pass": true,
+        "detail": "none"
+      },
+      {
+        "id": "A5/no-backdrop-bg-glass",
+        "pass": true,
+        "detail": "rgba(255, 255, 255, 0.55) vs rgba(255, 255, 255, 0.55)"
+      },
+      {
+        "id": "A7/reduced-motion-applied",
+        "pass": true,
+        "detail": "mq=true hoverT=none"
+      }
+    ],
+    "summary": {
+      "pass": 54,
+      "total": 54
+    }
+  }
+]

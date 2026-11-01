@@ -1535,12 +1535,10 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
 }
 body.canvas-open:not(.mobile-layer) #deck-fab { display: inline-flex; }
 #deck-fab svg { width: 18px; height: 18px; }
-/* 堆叠态活性语义的活性蓝档（canvas aria-pressed 既有词汇；id+attr 特异性高于
-   .g2-fab:hover 的 hover 档，活性态不被 hover 填充盖掉） */
-#deck-fab[aria-pressed="true"] {
-  background-color: rgb(var(--sapphire) / 0.14);
-  color: rgb(var(--sapphire));
-}
+/* 堆叠态活性档（canvas aria-pressed 既有词汇）随统一按钮玻璃批迁 glass.css
+   选中档单源（D5：pressed sapphire 14% → 12%/35% + primary 字，与
+   .canvas-ref-select.active 同一条规则 = 全站选中标准）。本文件留显隐与
+   禁用命中面。 */
 #deck-fab[disabled] { pointer-events: none; }
 
 /* ── 左移批（作者令 2026-10-31 21:37「电脑端关签钮左移，与堆叠钮左右对称」）：
@@ -1889,11 +1887,6 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   width: var(--cv-size-circle, 40px);
   height: var(--cv-size-circle, 40px);
   border-radius: 50%;
-  border: 1px solid var(--cv-border, var(--glass-border));
-  background: var(--cv-bg, var(--glass-bg));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  box-shadow: var(--cv-shadow);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1901,12 +1894,11 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   z-index: 10;
   color: var(--color-text);
   transition: all 0.2s ease;
+  /* 统一按钮玻璃批 2026-11-01（设计稿 D1 基准件）：材质（cv 玻璃配方）与
+     状态档（hover 抬亮+scale / active / 选中 / disabled / focus-visible）
+     迁 css/glass.css 圆钮级浮件档单源——F1 覆盖层随 liquid-glass.css 退役，
+     cv 档直读。几何/落位留本文件。 */
 }
-.canvas-source-toggle:hover {
-  background: var(--cv-hover-bg);
-  transform: scale(var(--cv-hover-scale, 1.05));
-}
-.canvas-source-toggle:active { transform: scale(var(--cv-active-scale, 0.96)); }
 
 /* #303 B6: element-select toggle — same floating-glass style as the source
    toggle, seated 8px to its left.
@@ -1921,11 +1913,6 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   width: var(--cv-size-circle, 40px);
   height: var(--cv-size-circle, 40px);
   border-radius: 50%;
-  border: 1px solid var(--cv-border, var(--glass-border));
-  background: var(--cv-bg, var(--glass-bg));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  box-shadow: var(--cv-shadow);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1933,25 +1920,8 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   z-index: 10;
   color: var(--color-text);
   transition: all 0.2s ease;
-}
-.canvas-ref-select:hover {
-  background: var(--cv-hover-bg);
-  transform: scale(var(--cv-hover-scale, 1.05));
-}
-.canvas-ref-select:active { transform: scale(var(--cv-active-scale, 0.96)); }
-/* Active (select mode engaged): sapphire-leaning accent tint */
-.canvas-ref-select.active {
-  color: var(--color-primary);
-  border-color: rgb(var(--sapphire) / 0.35);
-  background: rgb(var(--sapphire) / 0.12);
-}
-.canvas-ref-select:disabled {
-  cursor: not-allowed;
-  opacity: 0.35;
-}
-.canvas-ref-select:disabled:hover {
-  transform: none;
-  background: var(--cv-bg, var(--glass-bg));
+  /* 材质/状态档迁 glass.css 圆钮级浮件档（D2）；selected sapphire 档升格为
+     全站选中标准（glass.css .canvas-ref-select.active 共档块）。 */
 }
 
 /* canvas 文件刷新批（作者令 2026-10-25）：文件页签右下「重新读盘」钮。
@@ -1974,11 +1944,6 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   width: var(--cv-size-circle, 40px);
   height: var(--cv-size-circle, 40px);
   border-radius: 50%;
-  border: 1px solid var(--cv-border, var(--glass-border));
-  background: var(--cv-bg, var(--glass-bg));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  box-shadow: var(--cv-shadow);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1986,12 +1951,8 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   z-index: 10;
   color: var(--color-text);
   transition: all 0.2s ease;
+  /* 材质/状态档迁 glass.css 圆钮级浮件档（D3，busy 旋转动画保留下方）。 */
 }
-.canvas-refresh-toggle:hover {
-  background: var(--cv-hover-bg);
-  transform: scale(var(--cv-hover-scale, 1.05));
-}
-.canvas-refresh-toggle:active { transform: scale(var(--cv-active-scale, 0.96)); }
 .canvas-refresh-toggle.busy svg {
   animation: canvasRefreshSpin 1s linear infinite;
 }
@@ -3177,19 +3138,11 @@ body.col-resizing #canvas-panel { transition: none; }
 .canvas-find-toggle {
   position: absolute; bottom: 16px;
   width: var(--cv-size-circle, 40px); height: var(--cv-size-circle, 40px); border-radius: 50%;
-  border: 1px solid var(--cv-border, var(--glass-border));
-  background: var(--cv-bg, var(--glass-bg));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  box-shadow: var(--cv-shadow);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; z-index: 10; color: var(--color-text);
   transition: all .2s ease;
+  /* 材质/状态档迁 glass.css 圆钮级浮件档（D4；图谱钮已退役不在成员面）。 */
 }
-.canvas-find-toggle:hover {
-  background: var(--cv-hover-bg); transform: scale(var(--cv-hover-scale, 1.05));
-}
-.canvas-find-toggle:active { transform: scale(var(--cv-active-scale, 0.96)); }
 
 /* ── Glass find bar (fileSearch.js) ───────────────────────────────
    件三统一批（2026-10-28）：材质整族归一聊天模板 token（修前 --glass-control-*

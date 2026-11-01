@@ -29,8 +29,12 @@
 #settings-overlay.on,
 #search-overlay.on { display: flex; }
 
-/* ── Shared Modal Glass Card ───────────────────────────────────────────── */
-/* （卡片家族批 2026-11-01：#takeover-box 摘出本列表——其面板已基准化为
+/* ── Shared Modal Glass Card ─────────────────────────────────────────────
+   统一按钮玻璃批 2026-11-01：卡面材质（--glass-bg + blur24 sat1.15 双写 +
+   三档栈阴影，亮暗双档）整块迁 css/glass.css 面级浮件档单源（迁移前
+   modal.css 与 #header/#input-bar 三处同值三档栈字面量并存——收归后改一处
+   全站生效）；本文件只留卡片几何（position/padding/overflow）。
+   （卡片家族批 2026-11-01：#takeover-box 摘出本列表——其面板已基准化为
    cards.css 实色家族卡 .nfc，非玻璃材质；玻璃族规则对它不再适用。） */
 #modal-box,
 #delete-box,
@@ -43,34 +47,9 @@
 .model-panel,
 .wsp-panel {
   position: relative;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
 
   padding: 20px;
   overflow-y: auto;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
-}
-@media (prefers-color-scheme: dark) {
-  #modal-box,
-  #delete-box,
-  #conflict-box,
-  #memory-modal,
-  #rules-modal,
-  #settings-modal,
-  #search-modal,
-  #onboarding-panel,
-  .model-panel,
-  .wsp-panel {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0px 2px 8px rgba(0, 0, 0, 0.20),
-      0px 8px 24px rgba(0, 0, 0, 0.35);
-  }
 }
 
 /* Top-edge refraction line — sapphire crystal dome */
@@ -197,7 +176,9 @@
 #delete-alt[hidden] { display: none; }
 
 /* Primary / Save button — 墨族主操作（2026-10-30 按钮体系批：save = 主操作语义，
-   蓝幽灵退出，与 #modal-confirm 同 --btn-primary-* 墨族 token 单源） */
+   蓝幽灵退出，与 #modal-confirm 同 --btn-primary-* 墨族 token 单源）。
+   统一按钮玻璃批 2026-11-01：hover 浮影字面量归非悬浮墨玻璃包 --ig-shadow
+   （glass.css ④ 档，变体⑤定稿；底色/字色仍走 --btn-primary-* 墨族单源）。 */
 #memory-modal-save {
   border-color: var(--btn-primary-bg) !important;
   color: var(--btn-primary-ink) !important;
@@ -207,8 +188,8 @@
   background: var(--btn-primary-bg-hover) !important;
   border-color: var(--btn-primary-bg-hover) !important;
   box-shadow:
-    0 2px 8px rgba(0, 0, 0, 0.12),
-    0 2px 12px rgba(0, 0, 0, 0.07) !important;
+    inset 0 1px 0 var(--ig-highlight),
+    var(--ig-shadow) !important;
   color: var(--btn-primary-ink) !important;
 }
 
