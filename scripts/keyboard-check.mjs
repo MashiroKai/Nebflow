@@ -13,7 +13,7 @@
 // 回不回得去。这三条靠人眼是验不出来的（尤其 IME），只能脚本化。
 
 import { loadPlaywright, launchBrowser, createSession, settle } from './lib/visual-harness.mjs';
-import { activeKey, countEvents, resetEvents, trackEvents } from './lib/keyboard-probes.mjs';
+import { activeKey, countEvents, resetEvents, trackEvents, tabOrderIndex, layerDepth } from './lib/keyboard-probes.mjs';
 
 const pw = loadPlaywright();
 const { browser, label } = await launchBrowser(pw.mod, {});
@@ -379,6 +379,94 @@ console.log('F 文件树');
     && creating.ti === -1 && creating.treeitems === 0 && creating.focusIn === true, JSON.stringify(creating));
   await s.page.keyboard.press('Escape');
   await s.page.waitForTimeout(150);
+  await s.close();
+}
+
+// ── G 叠卡 + 中心环（B2：卡壳可达 + 中心环 3 段）────────────────────────
+console.log('G 叠卡 + 中心环');
+{
+  const s = await fresh();
+  // 打开两个文档（与 visual-baseline 的 deck-cards 同一条打开通道），再开叠卡环
+  for (const [id, title, content] of [
+    ['file:/tmp/kb-a.md', 'kb-a.md', '# A\n\n键盘验收。\n'],
+    ['file:/tmp/kb-b.md', 'kb-b.md', '# B\n\n键盘验收。\n'],
+  ]) {
+    await s.page.evaluate((d) => {
+      window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: d }));
+    }, { id, itemType: 'markdown', title, content, absPath: id.replace('file:', ''), size: content.length, mtimeMs: 1757000000000 });
+    await s.page.waitForSelector(`#canvas-panel .canvas-tab-pane[data-tab-id="${id}"]`, { state: 'visible', timeout: 15000 });
+  }
+  await s.page.click('#deck-fab');
+  await s.page.waitForSelector('#deck-layer .deck-card', { timeout: 15000 });
+  await s.page.waitForTimeout(1500);
+  /* 取证口径全部走 **DOM**，不读模块单例：`__canvasDeck.state()` 在本装置里有
+     一份与 DOM 不同步的副本（实测 state().M=0 而同页有 2 张卡），拿它做断言等于
+     测了个影子。DOM 事实 = 用户事实。 */
+  const cardsInfo = () => s.page.evaluate(() => [...document.querySelectorAll('#deck-layer .deck-card:not(.ghost)')]
+    .map((el) => ({
+      tab: /** @type {HTMLElement} */ (el).dataset.tab,
+      name: /** @type {HTMLElement} */ (el).querySelector('.n-text').textContent,
+      w: +/** @type {HTMLElement} */ (el).getBoundingClientRect().width.toFixed(1),
+      ti: /** @type {HTMLElement} */ (el).tabIndex,
+    })));
+
+  // ⑨ `.deck-card` 在 Tab 序里（不靠 fab 才碰得到）
+  const idx = await tabOrderIndex(s.page, '#deck-layer .deck-card[tabindex="0"]', { steps: 40 });
+  check('⑨ .deck-card 在 Tab 序（role=tab + roving）', idx >= 0, `tabIndexInOrder=${idx}`);
+  await s.page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
+
+  // ⑩ `]` 在 3 个停靠点循环（首拍从环外进场 = 消息流，之后 卡 → 画布 → 消息流）
+  /** @type {string[]} */
+  const ring = [];
+  for (let i = 0; i < 4; i++) {
+    await s.page.keyboard.press('BracketRight');
+    await s.page.waitForTimeout(150);
+    ring.push(await activeKey(s.page));
+  }
+  const cycle = ring.slice(1);
+  const distinct = new Set(cycle).size;
+  check('⑩ `]` 中心环 3 段循环回到起点',
+    distinct === 3 && cycle[0].startsWith('key:deck:') && cycle[1] === '#canvas-panel' && cycle[2] === '#chat',
+    JSON.stringify(ring));
+
+  // ⑪ Enter 在**非前景**卡上 → 环翻到该卡（.deck-card 既有 click 语义）
+  // 前景判据 = `data-r`（环位 0 = 前景，deck.pos 开环即为 0）。宽度不可作判据：
+  // 两张卡宽度接近，取宽度差会挑中前景卡本身 —— 而对前景卡按 Enter 的语义是
+  // **关闭叠卡**（设计如此），实测会把 ⑫ 也一起带红（首版断言就是这么红的）。
+  const geo = () => s.page.evaluate(() => [...document.querySelectorAll('#deck-layer .deck-card:not(.ghost)')]
+    .map((el) => {
+      const r = /** @type {HTMLElement} */ (el).getBoundingClientRect();
+      return { tab: (/** @type {HTMLElement} */ (el)).dataset.tab, ring: /** @type {HTMLElement} */ (el).dataset.r, x: +r.left.toFixed(1), w: +r.width.toFixed(1) };
+    }));
+  const before = await geo();
+  const target = before.find((c) => c.ring !== '0') || before[before.length - 1];
+  await s.page.evaluate((tab) => {
+    const el = /** @type {HTMLElement} */ (document.querySelector(`#deck-layer .deck-card[data-tab="${tab}"]`));
+    if (el) el.focus({ preventScroll: true });
+  }, target.tab);
+  await s.page.keyboard.press('Enter');
+  await s.page.waitForTimeout(1400);
+  const after = await geo();
+  const now = after.find((c) => c.tab === target.tab);
+  const moved = !!now && (Math.abs(now.x - target.x) > 5 || Math.abs(now.w - target.w) > 5);
+  check('⑪ Enter 在非前景卡 → 环翻到该卡（位形变化、叠卡未关）',
+    moved && after.length === before.length,
+    `card ${target.tab} x ${target.x}→${now ? now.x : 'gone'} w ${target.w}→${now ? now.w : 'gone'} cards ${before.length}→${after.length}`);
+
+  // ⑫ Delete 关掉当前卡，且**不进层栈**（layerDepth 不变）
+  const depthBefore = await layerDepth(s.page);
+  const countBefore = (await geo()).length;
+  await s.page.evaluate(() => {
+    const card = /** @type {HTMLElement} */ (document.querySelector('#deck-layer .deck-card[tabindex="0"]'));
+    if (card) card.focus({ preventScroll: true });
+  });
+  await s.page.keyboard.press('Delete');
+  await s.page.waitForTimeout(1000);
+  const countAfter = (await geo()).length;
+  const depthAfter = await layerDepth(s.page);
+  check('⑫ Delete 关当前卡且 layerDepth 不变',
+    countAfter === countBefore - 1 && depthAfter === depthBefore,
+    `cards ${countBefore}→${countAfter} depth ${depthBefore}→${depthAfter}`);
   await s.close();
 }
 

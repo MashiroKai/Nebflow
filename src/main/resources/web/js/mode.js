@@ -121,6 +121,18 @@ function centerStops() {
   const stops = [];
   const chat = document.getElementById('chat');
   if (chat) stops.push(makeStopFocusable(chat));
+  // B2-2（keyboard-first 二期）：叠卡层进入中心环。改造前只有 2 个停靠点
+  // （#chat + #canvas-panel），叠卡层不在环上 ⇒「键盘切不了文档页签」。
+  // 条件 = 环真的开着（`.over` 飞行中 / `.live` 已就位）且当前卡可见：环没开时
+  // 它不是一个可见停靠点，混进环里只会让 `]` 落进虚空。
+  // 落点 = 当前卡；卡的 tabindex 由 canvas.js deckSyncCardA11y() 独占分配，
+  // 本模块只读不改（与树行同一条纪律）。
+  const deckLayer = document.getElementById('deck-layer');
+  if (deckLayer && (deckLayer.classList.contains('over') || deckLayer.classList.contains('live'))) {
+    const card = deckLayer.querySelector('.deck-card[tabindex="0"]')
+      || deckLayer.querySelector('.deck-card:not(.ghost)');
+    if (card instanceof HTMLElement && card.offsetWidth > 0) stops.push(makeStopFocusable(card));
+  }
   const canvas = document.getElementById('canvas-panel');
   if (canvas && canvas.offsetWidth > 0) stops.push(makeStopFocusable(canvas));
   return stops;

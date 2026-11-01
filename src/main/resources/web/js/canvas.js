@@ -1991,6 +1991,32 @@ function initDeck() {
   });
   deckLayer.addEventListener('contextmenu', (e) => { if (e.target === deckLayer) e.preventDefault(); });
 
+  /* B2-1：环卡键盘语义（委托到层，卡是重挂即换的）。
+     Enter/Space = 复用 `.deck-card` 的既有 click 语义（前景卡放大换入 / 深处卡
+     翻到该卡），**不另写一份换签逻辑**；Delete = 复用 deckRequestClose（与卡面
+     × 钮、右键菜单同一条腿）。拖划期 suppressCardClick 会吞掉 click —— 键盘路径
+     不设置它，因此不受影响。 */
+  deckLayer.addEventListener('keydown', (e) => {
+    const card = e.target instanceof Element ? e.target.closest('.deck-card') : null;
+    if (!(card instanceof HTMLElement)) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      // 🔴 必须先 stopPropagation：产品已有的**文档级** Enter（本文件 :3344）
+      // 会对「当前前景卡」再来一次 deckSelectCard ⇒ 一次按键两次动作（实测：
+      // 在非前景卡上按 Enter，环刚翻过去就被文档级那一下收场关掉叠卡）。
+      // 逐卡激活凌驾于「对前景卡激活」之上，所以在这里截断冒泡。
+      e.stopPropagation();
+      card.click();
+      return;
+    }
+    if (e.key === 'Delete') {
+      e.preventDefault();
+      e.stopPropagation();
+      const id = card.dataset.tab;
+      if (id) deckRequestClose(id);
+    }
+  });
+
   bindDeckInput();
   // 左移批收口：面板 flex-basis 开合过渡（0.32s，左缘从右缘向左展开）期间
   // offset 盒逐帧漂移 —— 浮钮盒必须在过渡尾重同步。右锚 #deck-fab 被「面板右缘
@@ -2253,6 +2279,18 @@ function deckMakeCardEl(entry, r, cls) {
   card.className = 'deck-card' + (isTabDirty(entry) ? ' is-dirty' : '') + (cls ? ' ' + cls : '');
   card.dataset.r = String(r);
   card.dataset.tab = entry.id;
+  /* B2-1（keyboard-first 二期）：卡壳成为**键盘可及件**。改造前这里是裸 div ——
+     role / tabIndex 命中 0，只有卡内的 `.deck-card-x` 能被 Tab 到，于是
+     「键盘切不了文档页签」。三个属性分工：
+       · role="tab" + aria-selected —— 卡在语义上就是页签，与 #canvas-tabs 同族；
+       · data-focus-key="deck:<tabId>" —— 保焦协议的第二个生产者（B3-2 的输入）；
+       · tabindex 由 deckSyncCardA11y() 统一分配（恰好一张 = 0）。 */
+  if (cls !== 'ghost') {
+    card.setAttribute('role', 'tab');
+    card.setAttribute('aria-selected', 'false');
+    card.dataset.focusKey = `deck:${entry.id}`;
+    card.tabIndex = -1;
+  }
   card.innerHTML =
     '<div class="card-top">' +
       '<span class="n-icon">' + deckIconOf(family) + '</span>' +
@@ -2640,11 +2678,32 @@ function deckMountRing() {
   deck.M = deck.ring.length;
   deck.ring.forEach((entry, r) => deckLayer.appendChild(deckMakeCardEl(entry, r)));
   deck.ringActiveId = activeTabId;
+  deckSyncCardA11y();
   deck.selfCardEl = deck.M
     ? deckLayer.querySelector('.deck-card[data-tab="' + cssEscapeV(activeTabId || '') + '"]')
     : null;
   deckCardsDirty();                      // 性能批⑤：全量重建 = 卡列表置脏
 }
+/**
+ * B2-1：卡壳 roving tabindex + aria-selected 的**唯一分配点**。
+ * 不变量与文件树一致：同一时刻恰好一张卡 `tabindex=0`（= 当前活动页签的卡；
+ * 活动页签不在环里时取环首）。卡 DOM 在每次重挂环时整批换血，所以必须是
+ * "挂完再算"，而不是建卡时各算一次（各算各的 = 多张 0 或零张 0）。
+ * @returns {void}
+ */
+function deckSyncCardA11y() {
+  if (!deckLayer) return;
+  const cards = [...deckLayer.querySelectorAll('.deck-card:not(.ghost)')].filter((el) => el instanceof HTMLElement);
+  if (!cards.length) return;
+  const wanted = deck.ringActiveId || activeTabId || '';
+  const target = cards.find((el) => el.dataset.tab === wanted) || cards[0];
+  for (const el of cards) {
+    const on = el === target;
+    el.tabIndex = on ? 0 : -1;
+    el.setAttribute('aria-selected', on ? 'true' : 'false');
+  }
+}
+
 /** 外部换签收敛：环重置到新 active 的前景位（pos=0）。 */
 function deckRemountForActive() {
   deck.cardDrag = null;                  // UI 批 ②：重挂环 = 全卡换血，在途拖划随旧卡失效
