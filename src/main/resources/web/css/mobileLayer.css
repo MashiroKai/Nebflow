@@ -46,6 +46,15 @@
  *      全带，#mobile-pages::before 承载面背板防带区透出聊天根。五栏位/中键/
  *      选中态/切换逻辑/角标行为零变化（几何契约随批钉进 mobile-dock.spec D13）。
  *
+ * dock 头像边缘统一批（作者令 2026-11-01 22:3x）落位 —— 中键块改写：
+ *   dock 中键 agent 头像边缘换顶部（Muse 式会话顶栏）头像同款边缘语言
+ *   （chat.css #agent-avatar-btn 逐字同 token）：1px --glass-control-border
+ *   描边 + inset 高光 --glass-control-highlight + 0 2px 8px 浮影
+ *   --glass-control-shadow，深浅双主题走 glass-control 族既有映射；旧 2.5px
+ *   sapphire 蓝描边环（.dock-center-img 内缩机制）随批退役，img 换 100% 铺满
+ *   （.agent-avatar-img 同构）。收形批④「零浮影零光环」边缘收简随批退役；
+ *   border-box ⇒ 44px 外径/dock 胶囊几何零变化。
+ *
  * 铁律：本文件全部规则挂在 body.mobile-layer 之下 —— 该类只由 mobile/bootstrap.js
  * 在手机视口（≤768px，与既有 css/mobile.css 折叠点同源）激活。桌面窗口永远不
  * 命中任何一条规则（桌面渲染逐字节不变）；桌面对本文件的唯一感知是 index.html
@@ -279,10 +288,18 @@ body.mobile-layer .dock-key.active {
 body.mobile-layer .dock-key.active .dock-label { font-weight: 600; }
 /* ── 中键 = 对话 home 键（作者令 23:36 小红书中心键；收形批 10-31 22:50）──
    实心圆收进 dock 边界内（lift=0，零探出）；fill 双档 = sapphire 族既有 token
-   对（暗 --sapphire / 亮 --accent-agent-light 深档）；边缘收简（批④）：纯色
-   零浮影零光环 —— 原 rest/active 两档 box-shadow（外投光 + active 3px 光环）
-   随批摘除，「只留图案」：无文字标签（批②）、无头像回落 = stand logo
-   （批③，气泡字形已退役）。 */
+   对（暗 --sapphire / 亮 --accent-agent-light 深档）；「只留图案」：无文字
+   标签（批②）、无头像回落 = stand logo（批③，气泡字形已退役）。
+   头像边缘统一批（作者令 2026-11-01 22:3x「dock 的 agent 头像边缘和顶部 agent
+   头像的边缘保持一致」）：收形批④「纯色零浮影零光环」的边缘收简随批退役 ——
+   中键边缘换 **顶部（Muse 式会话顶栏）头像同款边缘语言**（chat.css
+   #agent-avatar-btn 逐字同 token 同值）：1px --glass-control-border 描边 +
+   inset 1px 高光 --glass-control-highlight + 0 2px 8px 浮影
+   --glass-control-shadow（glass-control 族双主题映射 sapphire.css :root /
+   prefers-color-scheme:dark 两档本值，深浅自适应零新造色）。尺寸可不同
+   （44 vs 顶 78）但边缘规格逐字一致；自定义头像态 = .agent-avatar-img 同构
+   （img 铺满 content 盒，见下块）；box-sizing:border-box（base.css 全局）
+   ⇒ 描边收进 44px 足印内，中键外径/dock 胶囊几何零变化。 */
 body.mobile-layer .dock-key.dock-key-center {
   justify-content: center;
   padding: 2px;
@@ -299,15 +316,25 @@ body.mobile-layer .dock-key.dock-key-center .dock-center {
   color: #fff;
   transition: transform 0.12s ease;
   overflow: hidden;
+  /* 边缘统一批：与 #agent-avatar-btn（chat.css）逐字同款边缘 */
+  border: 1px solid var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    0 2px 8px var(--glass-control-shadow);
 }
 @media (prefers-color-scheme: light) {
   body.mobile-layer .dock-key.dock-key-center .dock-center {
     background: rgb(var(--accent-agent-light));
   }
 }
+/* 头像边缘统一批：img 铺满 content 盒（border-box 内缩即 1px 描边环内缘），
+   与会话头 #agent-avatar-btn .agent-avatar-img（chat.css，100% cover）同构
+   —— 旧「内缩 2.5px 露 sapphire 底成蓝描边环」机制随批退役（旧环自带头像
+   边缘一套语言，违统一令；环职责移交 .dock-center 的 1px glass-control 描
+   边，上块）。sapphire/深档 fill 保留为 img 缺载兜底底色（铺满后常态不可见）。 */
 body.mobile-layer .dock-key.dock-key-center .dock-center .dock-center-img {
-  width: calc(100% - 5px);
-  height: calc(100% - 5px);
+  width: 100%;
+  height: 100%;
   border-radius: 50%;
   object-fit: cover;
 }
@@ -333,8 +360,9 @@ body.mobile-layer .dock-key.dock-key-center .dock-center .dock-center-logo {
 }
 /* 芯片配色随主题翻转（作者令 2026-11-01 20:42「浅色主题=白底黑 logo，深色主题=
    黑底白 logo」）：:has 限定 logo 回落态 —— 自定义头像态保持 sapphire 底
-   （.dock-center-img 内缩 2.5px 的 sapphire 描边环零回归），logo 态换双主题
-   芯片 token（stand-tokens.css，配对 = brand app-icon 亮/暗档）。 */
+   （铺满态不可见，仅 img 缺载兜底；原 2.5px 蓝描边环职责已移交 1px
+   glass-control 描边，见上块），logo 态换双主题芯片 token（stand-tokens.css，
+   配对 = brand app-icon 亮/暗档）。 */
 body.mobile-layer .dock-key.dock-key-center .dock-center:has(.dock-center-logo) {
   background: var(--agent-avatar-chip-bg);
 }
