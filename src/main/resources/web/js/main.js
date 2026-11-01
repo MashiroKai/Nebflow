@@ -175,6 +175,12 @@ import { updateBgAgentIndicator, bgAgentKindFromSession, renderBgAgentDropdown, 
 // uifix 批（2026-10-22 作者令「附件放在对话框上面，不要遮挡文字」）：附件条 in-flow
 // 独立行的溢出折叠腿（+N 收展）—— 桌面/手机层共用单点，桌面启动即挂观察链（幂等）。
 import { watchAttachmentStrip } from './attachStripFold.js';
+// R1 门面化（2026-11-02）：下游反适配脚本的公开扩展面。模块副作用 = 装配
+// window.__nfAdaptApi（镜像内 ui/js/nf-adapt.js 跑在 bundle 之外、产物树没有
+// js/ 目录 ⇒ 它只能读 window，不能相对 import）。尾部位置：所有被发布的符号
+// 模块都先于本文件求值。写完即被 esbuild 视为有副作用的入口成员（bare import
+// 不会被摇掉——产物 grep `__nfAdaptApi` 可验）。
+import './nfAdaptApi.js';
 
 // Friends release gating latch (2026-09-08): false until the first configData
 // of the boot decides the flag (see the configData handler below).
