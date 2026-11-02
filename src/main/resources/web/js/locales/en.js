@@ -421,6 +421,9 @@ export default {
   'chat.quoteDeletedSnapshot': 'Original message deleted · snapshot kept',
   'chat.quoteSenderMe': 'Me',
   'chat.quoteTypeImage': '[Image]',
+  // Stack-card per-image quote batch (2026-11-02): position label on a quote chip.
+  'chat.quoteImagePos': 'Image {n}/{total}',
+  'chat.quoteItemAria': 'Quote image {n}',
   'chat.quoteTypeFile': '[File]',
   'chat.quoteTypeTool': '[Tool]',
   'chat.quoteTypeAsk': '[Q&A]',
