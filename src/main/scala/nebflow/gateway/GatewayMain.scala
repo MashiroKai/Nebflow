@@ -1420,6 +1420,19 @@ object GatewayMain extends IOApp:
                                               ) *> IO.pure(Map.empty[String, String])
                                             }
                                             .unsafeRunSync()
+                                        // 件一（2026-11-02）：双描述本地态（好友 bio 缓存 /
+                                        // 群备注 / 群介绍缓存 / selfBio）的 boot 读——与
+                                        // `friendRemarks` 逐行同形（同一 IO 链装配段、同样的
+                                        // 「读失败折空 + WARN」口径：描述是**可丢弃的本地态**，
+                                        // 最坏情况 = 用户重写一次，绝不允许掀翻 boot 装配链）。
+                                        val profileDescriptions =
+                                          nebflow.neblink.ProfileDescriptionStore.load
+                                            .handleErrorWith { e =>
+                                              logger.warn(
+                                                s"profile-descriptions load failed (falling back to empty): ${e.getMessage}"
+                                              ) *> IO.pure(nebflow.neblink.ProfileDescriptions.empty)
+                                            }
+                                            .unsafeRunSync()
                                         val friendService = nebflow.neblink.NeblinkWiring.friendService(
                                           tsDiscovery.currentClient,
                                           amConfig,
@@ -1474,7 +1487,9 @@ object GatewayMain extends IOApp:
                                               neblinkService.relayTunnelOpt,
                                               eventId
                                             )
-                                          }
+                                          },
+                                          // 件一（2026-11-02）：双描述本地态（boot 读出的一份）。
+                                          descriptions = profileDescriptions
                                         )
                                         // A2A 一期（#290 域 A）：SendMessage 工具接线——
                                         // 授权仅 Nebula agent.json 声明（作者特批 2026-08-28），

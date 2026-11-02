@@ -126,6 +126,13 @@ end PeerInfo
  *  由 `FriendService.applyRemarks` 在出站口注入。**上游永不带该键**（协议零变更）：
  *  Decoder 不读它，Encoder 恒出该键（`None` ⇒ `null`，⑦-D8 加性最简形态）。
  *  形参置末且有默认值 ⇒ 既有构造点（含位置实参）零改动。
+ *
+ *  `bio`（2026-11-02 件一「好友/群 Profile 双描述」）：**对方的自我介绍**——与
+ *  `remark`（我给对方写的备注）**语义正交**，不可混用。真源在**上游**（neblink-server
+ *  目前**尚无**该字段）⇒ 本仓这份是**本地缓存 + 回显**（`profile-descriptions.json`
+ *  的 `friendBio`，见 `nebflow.neblink.ProfileDescriptions`），UI 必须显式标注
+ *  「本地缓存·未同步」。加性纪律与 `remark` 逐字同形：形参置末 + 默认值 ⇒ 既有
+ *  构造点零改动；Decoder 上游带了就吃，Encoder 恒出该键（`None` ⇒ `null`）。
  */
 case class FriendSummary(
   userId: String,
@@ -134,7 +141,8 @@ case class FriendSummary(
   avatar: Option[String] = None,
   since: Option[Long] = None,
   blocked: Option[Boolean] = None,
-  remark: Option[String] = None
+  remark: Option[String] = None,
+  bio: Option[String] = None
 )
 
 /**
@@ -191,5 +199,18 @@ case class GroupSummary(
   unreadCount: Int = 0,
   lastMessageId: Long = 0L,
   createdAt: Long = 0L,
-  selfUserId: String = ""
+  selfUserId: String = "",
+  /**
+   * 群介绍（2026-11-02 件一「双描述」）：真源在**上游群管理**（neblink-server 的
+   * `GroupSummary` 目前**无**该键）⇒ 本仓这份是**本地缓存 + 回显**
+   * （`profile-descriptions.json` 的 `groupDescription`），UI 必须标「本地缓存·未同步」。
+   * 加性纪律：形参置末带默认值 ⇒ 既有构造点零改动；Decoder 上游带了就吃。
+   */
+  description: Option[String] = None,
+  /**
+   * 我的群备注（2026-11-02 件一）：**纯本地真源**（`profile-descriptions.json` 的
+   * `groupRemark`，键 = `groupId`），与好友 `remark` 同族同形（trim 后空串 = 清除）。
+   * 与 `description`（群自己的介绍）语义正交：一个是「群说它自己」，一个是「我给它起的名」。
+   */
+  remark: Option[String] = None
 )

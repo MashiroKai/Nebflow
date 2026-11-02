@@ -37,6 +37,9 @@ import {
 } from '../messages.js';
 import { groupTitleOf } from '../friendGroups.js';
 import { logEvent } from './navController.js';
+// 件一（2026-11-02）「描述进检索」：谓词唯一实现 = 零依赖叶子 `descSearch.js`
+// （桌面联系人本地过滤与手机常驻条共用同一份，禁各写一套 includes）。
+import { descMatches, convDescribeFields } from '../descSearch.js';
 
 /** 检索纪律（沿用旧批 §2.3）：每会话前向翻页上限 / 页大小 / 单会话命中上限。 */
 const PAGE_CAP = 20;
@@ -198,7 +201,12 @@ function fillContactsBar(dock, parts) {
   parts.input.addEventListener('input', () => {
     const q = parts.input.value.trim();
     dock.classList.toggle('has-query', q.length > 0);
-    if (contactTimer) clearTimeout(contactTimer);
+    if (contactTimer) { clearTimeout(contactTimer); contactTimer = null; }
+    // 清空 = **立即**回列表（去抖只服务远程查号：空串零请求、零反爬代价）。
+    // 件一（2026-11-02）起 `searchQ` 同时是好友列表**本地过滤**的输入源（描述进
+    // 检索）⇒ 清空若还等 450ms，列表会停在被过滤的旧态一瞬（微信式「清空即回列表」
+    // 的语义硬要求；消息页 P4 同款）。
+    if (!q) { runContactsSearch(''); return; }
     contactTimer = setTimeout(() => { contactTimer = null; runContactsSearch(q); }, CONTACTS_DEBOUNCE_MS);
   });
   parts.input.addEventListener('keydown', (e) => {
@@ -214,13 +222,23 @@ function fillContactsBar(dock, parts) {
   });
 }
 
+/** contacts.js 模块句柄缓存（**同步复用**的关键，件一 2026-11-02）。
+ *  动态 import 是为了不造 `socialSearch → contacts → messages → socialSearch`
+ *  静态环；但 `await import()` 每次都在微任务后交付 ⇒ 调用方若在同一事件回合里
+ *  先探测 DOM（`mobile-pinned-search.spec.mjs` P6「清空后首行回位」就是同步读），
+ *  会读到**上一拍**的列表。首次 import 后把句柄记住，之后同步调用 —— 首拍仍异步
+ *  （那时 DOM 里还没有任何查询态，无人探测）。 */
+let contactsMod = null;
+
 /** 联系人页检索腿：查询串写回 contacts.js 单一源（searchQ）并走同一提交流水
- *  （节流关 = 输入已在上游去抖；空串 = 清场回列表）。 */
-async function runContactsSearch(q) {
-  try {
-    const m = await import('../contacts.js');
-    m.submitSearch(q, { throttle: false });
-  } catch { /* 模块未载（好友域未初始化）——静默，桌面逻辑缺席即无票可投 */ }
+ *  （节流关 = 输入已在上游去抖；空串 = 清场回列表）。
+ *  🔴 空串必须**同回合**重渲（微信式「清空即回列表」；列表本地过滤的输入源就是
+ *  同一个 `searchQ`，晚一拍的代价是用户看见「暂无联系人和搜索卡并存」的中间态）。 */
+function runContactsSearch(q) {
+  if (contactsMod) { contactsMod.submitSearch(q, { throttle: false }); return; }
+  import('../contacts.js')
+    .then((m) => { contactsMod = m; m.submitSearch(q, { throttle: false }); })
+    .catch(() => { /* 模块未载（好友域未初始化）——静默，桌面逻辑缺席即无票可投 */ });
 }
 
 /** 建一条常驻条（幂等；页面体首件）。 */
@@ -427,6 +445,45 @@ async function runSearch() {
   }
   if (mySeq !== seq) return;
   convs = convs.filter(scopeFilter);
+
+  // ── 描述命中段（件一 2026-11-02）─────────────────────────────────────
+  // 定案（勘察报告 §7.2）：会话的**档案描述**（好友 remark/bio、群 remark/description）
+  // 不进消息正文检索，而是作为**会话级命中**单独成组（组名 = 会话标签 · 「资料命中」），
+  // 点击 = 直接开会话。这样「按描述找联系人/群」与「按正文找消息」两个语义面不互相
+  // 污染（不然一条描述命中的会话会显示成「0 条消息」的空组）。
+  const descHits = convs.filter((c) => descMatches(q, convDescribeFields(c)));
+  if (descHits.length && msgResults) {
+    const g = document.createElement('div');
+    g.className = 'mh-sr-group mh-sr-group-desc';
+    g.textContent = `${t('mhsearch.descHits', { n: descHits.length })}`;
+    msgResults.appendChild(g);
+    for (const conv of descHits) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'mh-sr-row mh-sr-row-desc';
+      row.dataset.mhDesc = '1';
+      const meta = document.createElement('div');
+      meta.className = 'mh-sr-meta';
+      const name = document.createElement('span');
+      name.className = 'mh-sr-sender';
+      name.textContent = convLabel(conv);
+      meta.appendChild(name);
+      const kind = document.createElement('span');
+      kind.className = 'mh-sr-time';
+      kind.textContent = conv.kind === 'group'
+        ? (conv.remark ? t('profile.groupRemarkLabel') : t('profile.groupDescriptionLabel'))
+        : (conv.friend && conv.friend.remark ? t('profile.friendRemarkLabel') : t('profile.friendBioLabel'));
+      meta.appendChild(kind);
+      row.appendChild(meta);
+      row.addEventListener('click', () => {
+        logEvent('mh-desc-hit-jump', { conv: String(conv.conversationId) });
+        openConversation(conv.conversationId, null).catch(() => {
+          window.__showToast?.(t('mhsearch.jumpFail'), 'error');
+        });
+      });
+      msgResults.appendChild(row);
+    }
+  }
 
   let total = 0;
   let cursor = 0;

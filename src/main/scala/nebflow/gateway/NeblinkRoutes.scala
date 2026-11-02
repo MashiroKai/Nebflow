@@ -259,6 +259,13 @@ private[gateway] object NeblinkRoutes:
             friendPull <- sharedResources.friendService match
               case Some(fs) => fs.pullCountersJson
               case None => IO.pure(Json.Null)
+            // 件一（2026-11-02）：我给自己写的介绍（`selfBio`，本地真源，落
+            // `profile-descriptions.json`）。**加性键**，与 `device.userDescription`
+            // 刻意分家（后者 = 设备描述，Agent 选设备用；勘察报告 §6.2 定案 (b)）。
+            // 未装配 friendService ⇒ 空串（不是 null：该字段的「没有」就是空介绍）。
+            selfBio <- sharedResources.friendService match
+              case Some(fs) => fs.descriptions.map(_.selfBio)
+              case None => IO.pure("")
             r <- Ok(
               Json.obj(
                 "loggedIn" -> loggedIn.asJson,
@@ -268,6 +275,9 @@ private[gateway] object NeblinkRoutes:
                 // `null` = 读干净（有/无凭据都是正常态）；非 null = 出过事，带
                 // `code`/`reason`/`action` 三段（**零路径、零异常类名**，判据 G2/G3）。
                 "credentialIssue" -> credentialIssue.fold(Json.Null)(_.toJson),
+                // 件一（2026-11-02）：自我介绍（本地真源；空串 = 未设置）。
+                // 🔴 与 `device.userDescription`（设备描述）**两个字段两个语义**，禁混用。
+                "selfBio" -> selfBio.asJson,
                 "device" -> Json.obj(
                   "id" -> id.deviceId.asJson,
                   "name" -> id.deviceName.asJson,

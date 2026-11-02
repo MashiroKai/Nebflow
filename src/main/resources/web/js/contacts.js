@@ -20,6 +20,10 @@ import { openChatWithFriend, fmtTime, isFriendTrusted, setFriendTrusted, deviceP
 // 唯一属主；本面板只挂入口（fail-closed，主卡 G-2）与入站群邀请区。
 import { openCreateGroupDialog, refreshGroups, groupsAvailable, groupErrToast } from './friendGroups.js';
 import { showPopupMenu } from './contextMenu.js';
+// 件一（2026-11-02）「好友/群 Profile 双描述」：Profile 面唯一属主 + 检索谓词叶子。
+// 谓词单开在 `descSearch.js`（零依赖叶子）—— 三个过滤面共用一份，禁各写一套 includes。
+import { openFriendProfile } from './profileFace.js';
+import { descMatches } from './descSearch.js';
 
 // ⑥ 信任好友封存（作者裁定 2026-09-12）：静态常量，非配置读取、不过 latch。
 import { TRUST_SEALED } from './featureFlags.js';
@@ -387,7 +391,24 @@ function render() {
   } else if (friends.length === 0) {
     list.appendChild(el('div', 'fm-empty', t('contacts.empty')));
   } else {
-    for (const f of friends) list.appendChild(friendRow(f));
+    // 件一（2026-11-02）「描述进检索」（作者令「这样你查询的时候，可以根据描述来做
+    // 判断」）：`searchQ` 同时驱动 (a) 后端查号结果卡（既有）+ (b) 好友列表**本地
+    // 过滤**（本段新增）。匹配面 = 备注 `remark` + 对方自我介绍 `bio` + 常规渲染面
+    // （显示名 / NL 号）——三者任一命中即保留条目。
+    // 🔴 谓词唯一实现 = `descSearch.descMatches`（禁在此另写 includes）；
+    // 🔴 过滤**不改搜索结果卡**（那是「加好友」的精确查号面，语义不同）；
+    // 🔴 命中为空时给可读空态（复用 `contacts.empty` 同族），禁静默空白。
+    const q = String(searchQ || '').trim();
+    const shown = q
+      ? friends.filter((f) => descMatches(q, [f.remark, f.bio, f.name, f.neblinkId]))
+      : friends;
+    if (shown.length === 0 && q) {
+      const empty = el('div', 'fm-empty', t('contacts.empty'));
+      empty.dataset.fmDescFilterEmpty = '1';
+      list.appendChild(empty);
+    } else {
+      for (const f of shown) list.appendChild(friendRow(f));
+    }
   }
   body.appendChild(list);
   createIconsIn(body);
@@ -548,6 +569,10 @@ function friendRow(f) {
     e.preventDefault();
     const items = [];
     items.push({ label: t('contacts.menuSetRemark'), onClick: () => startRemarkEdit(f, row) });
+    // 件一：微信式 Profile 面（备注 + 对方自我介绍两个描述字段并排可编辑）。
+    // 入口不止这一处（会话窗头的「右上三点」由 profileFace 的独立函数承担入口；
+    // 两入口共用同一个 `openFriendProfile`，禁第二套 Profile 实现）。
+    items.push({ label: t('profile.open'), onClick: () => { void openFriendProfile(f); } });
     // SEALED (author ruling 2026-09-12): 信任好友入口隐藏——`TRUST_SEALED`
     // 为 true（默认）时菜单项不推入；整块代码保留原样，回退 = featureFlags.js
     // 把常量改回 false（回退步骤见该文件注释）。
@@ -696,9 +721,14 @@ async function unblockFriend(f) {
  */
 export async function submitSearch(rawQ, opts = {}) {
   const q = String(rawQ || '').trim();
+  const prevQ = searchQ;
   searchQ = String(rawQ || '');
   if (!q) {
-    if (searchResult || searchErrorKind) { searchResult = null; searchErrorKind = null; render(); }
+    // 件一（2026-11-02）：空串 = 清场回列表 —— `searchQ` 现在同时是**好友列表本地
+    // 过滤**的输入源（描述进检索）⇒ 这里必须重渲一次把过滤解除，否则清空搜索后
+    // 列表会停在「过滤后为空」的旧态（手机常驻条清空键踩的就是这条）。
+    searchQ = '';
+    if (searchResult || searchErrorKind || prevQ) { searchResult = null; searchErrorKind = null; render(); }
     return;
   }
   if (searching) return;
