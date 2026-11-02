@@ -56,11 +56,26 @@ rem   console is destroyed). exit code 0 = serving.
 rem ===========================================================================
 setlocal EnableExtensions
 
-rem --- 0) remember the console code page, then switch to UTF-8 ---------------
+rem --- 0) code page: switch to UTF-8 only when it is not already, and do NOT
+rem    switch back by default  (residency rule, 2026-11-01).
+rem
+rem    Why this changed: in Windows Terminal every chcp resets the scrollback
+rem    and repaints the screen. The old wrapper did 936 -> 65001 -> 936 on
+rem    EVERY invocation, so each stand command wiped what was already visible
+rem    above it. Measured: `chcp & stand version & chcp` printed 936 both
+rem    times, i.e. two code-page changes per run.
+rem
+rem    New rule: if the console already speaks UTF-8, touch nothing at all;
+rem    otherwise switch once and LEAVE it switched (the window stays UTF-8
+rem    for the rest of the session, so later runs cause no repaint).
+rem    Opt back into the old restore behaviour with:  set STAND_RESTORE_CP=1
+rem -------------------------------------------------------------------------
 set "_STAND_OLDCP="
 for /f "tokens=2 delims=:" %%c in ('chcp') do set "_STAND_OLDCP=%%c"
 set "_STAND_OLDCP=%_STAND_OLDCP: =%"
+if "%_STAND_OLDCP%"=="65001" goto :stand_cp_ready
 chcp 65001 >nul 2>&1
+:stand_cp_ready
 
 set "_STAND_RC=1"
 
@@ -96,7 +111,9 @@ rem --- 3) run the jar (no subcommand is interpreted here) -------------------
 set "_STAND_RC=%ERRORLEVEL%"
 
 :stand_done
-if defined _STAND_OLDCP chcp %_STAND_OLDCP% >nul 2>&1
+rem Residency rule: do not move the code page back unless explicitly asked
+rem (a second chcp is the repaint that used to eat the freshly printed output).
+if /i "%STAND_RESTORE_CP%"=="1" if defined _STAND_OLDCP chcp %_STAND_OLDCP% >nul 2>&1
 endlocal & exit /b %_STAND_RC%
 
 rem --- helpers --------------------------------------------------------------
