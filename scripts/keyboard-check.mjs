@@ -156,48 +156,110 @@ console.log('A 注册器');
   await s.close();
 }
 
-// ── B 命令面板 ─────────────────────────────────────────────────────────
-console.log('B 命令面板');
+// ── B 命令面板（Monaco QuickInput 内核） ────────────────────────────────
+console.log('B 命令面板（Monaco QuickInput）');
 {
   const s = await fresh();
-  await s.page.evaluate(() => document.getElementById('files-btn').focus());
-  const before = await active(s.page);
-  await s.page.keyboard.press('Control+k');
-  await s.page.waitForTimeout(250);
-  const open = await s.page.evaluate(() => {
-    const o = document.getElementById('nf-palette-overlay');
-    return { visible: !!o && !o.hidden, focusInInput: document.activeElement?.id === 'nf-palette-input' };
-  });
-  check('Ctrl+K 打开面板', open.visible === true);
-  check('打开后焦点在搜索框', open.focusInInput === true);
-
-  // 搜 + ↑↓ + Enter：搜「设置」→ 执行 → 设置面板应当出现（可观察后果）
-  await s.page.keyboard.type('设置');
-  await s.page.waitForTimeout(200);
-  const rows = await s.page.evaluate(() => document.querySelectorAll('#nf-palette-list .nf-palette-row').length);
-  check('输入即搜（有命中）', rows > 0, `rows=${rows}`);
-
-  await s.page.keyboard.press('Enter');
-  await s.page.waitForTimeout(600);
-  const afterRun = await s.page.evaluate(() => {
+  const W = '#nf-quickinput-host';
+  /** 面板的 DOM 事实（行文本 / 分组标识 / 焦点 / 设置面是否打开）。 */
+  const st = () => s.page.evaluate((w) => {
+    const wd = document.querySelector(w + ' .quick-input-widget');
+    const inp = document.querySelector(w + ' .quick-input-box input');
+    const rows = [...document.querySelectorAll(w + ' .monaco-list-row')];
     const ov = document.getElementById('settings-overlay');
-    return { closed: document.getElementById('nf-palette-overlay').hidden, settingsOpen: !!ov && (ov.style.display !== 'none' && !ov.hidden) };
-  });
-  check('Enter 执行命令（打开了设置面）', afterRun.settingsOpen === true);
-  check('执行后面板关闭', afterRun.closed === true);
+    return {
+      visible: !!wd && getComputedStyle(wd).display !== 'none' && wd.getBoundingClientRect().height > 20,
+      focusInInput: !!inp && document.activeElement === inp,
+      rows: rows.map((r) => (r.textContent || '').trim()),
+      labels: rows.map((r) => r.getAttribute('aria-label') || ''),
+      seps: [...document.querySelectorAll(w + ' .quick-input-list-separator')].map((e) => (e.textContent || '').trim()).filter(Boolean),
+      settingsOpen: !!ov && !ov.hidden && getComputedStyle(ov).display !== 'none',
+      active: document.activeElement ? (document.activeElement.id || document.activeElement.tagName) : 'none',
+    };
+  }, W);
+  const waitOpen = async () => {
+    for (let i = 0; i < 60; i++) { const v = await st(); if (v.visible && v.focusInInput) return v; await s.page.waitForTimeout(100); }
+    return st();
+  };
 
-  // Esc 关闭 + 回焦
-  await s.page.evaluate(() => { const o = document.getElementById('settings-overlay'); if (o) { o.hidden = true; o.style.display = 'none'; } });
   await s.page.evaluate(() => document.getElementById('settings-btn').focus());
   const opener = await active(s.page);
   await s.page.keyboard.press('Control+k');
-  await s.page.waitForTimeout(200);
+  const opened = await waitOpen();
+  check('Ctrl+K 打开面板（Monaco quick input 壳）', opened.visible === true);
+  check('打开后焦点在搜索框', opened.focusInInput === true);
+  check('命令表可列（可视行 ≥ 12）', opened.rows.length >= 12, `rows=${opened.rows.length}`);
+  check('分组标识 ≥ 3 组（分隔行仍在）', opened.seps.length >= 3, JSON.stringify(opened.seps));
+
+  // 输入即搜（子串口径，与旧面板同一条 score）
+  await s.page.keyboard.type('设置');
+  await s.page.waitForTimeout(350);
+  const hit = await st();
+  check('输入即搜（命中「设置」）', hit.labels.some((t) => t.includes('设置')), JSON.stringify(hit.labels.slice(0, 3)));
+
+  // 分组名可搜（旧面板能力：「布局」筛出整组，而不是只筛含「布局」的命令名）
+  await s.page.keyboard.press('Control+a');
+  await s.page.keyboard.type('布局');
+  await s.page.waitForTimeout(350);
+  const byGroup = await st();
+  check('分组名可搜（「布局」→ 整组≥2 条，含名称不含「布局」的行）',
+    byGroup.labels.length >= 2 && byGroup.labels.some((t) => !t.includes('布局')),
+    JSON.stringify(byGroup.labels));
+
+  // 键位提示可搜（旧面板能力：敲 Ctrl+K 找到「命令面板」那条）
+  await s.page.keyboard.press('Control+a');
+  await s.page.keyboard.type('Ctrl+K');
+  await s.page.waitForTimeout(350);
+  const byKey = await st();
+  check('键位提示可搜（「Ctrl+K」→ 面板命令）', byKey.labels.some((t) => t.includes('命令面板')), JSON.stringify(byKey.labels));
+
+  // Enter 执行 → 可观察后果（设置面打开）+ 面板自己关掉
+  await s.page.keyboard.press('Control+a');
+  await s.page.keyboard.type('设置');
+  await s.page.waitForTimeout(300);
+  await s.page.keyboard.press('Enter');
+  await s.page.waitForTimeout(800);
+  const ran = await st();
+  check('Enter 执行命令（打开了设置面）', ran.settingsOpen === true);
+  check('执行后面板关闭', ran.visible === false);
+
+  // 无命中：占位行（非命令）+ Enter 不执行也不关面板
+  await s.page.evaluate(() => { const o = document.getElementById('settings-overlay'); if (o) { o.hidden = true; o.style.display = 'none'; } });
+  await s.page.evaluate(() => document.getElementById('settings-btn').focus());
+  await s.page.keyboard.press('Control+k');
+  await waitOpen();
+  await s.page.keyboard.press('Control+a');
+  await s.page.keyboard.type('zzzz');
+  await s.page.waitForTimeout(400);
+  const none = await st();
+  check('无命中给出占位行', none.labels.length === 1 && none.labels[0].includes('没有匹配的命令'), JSON.stringify(none.labels));
+  await s.page.keyboard.press('Enter');
+  await s.page.waitForTimeout(500);
+  const stillOpen = await st();
+  check('占位行按 Enter 不执行、不关面板', stillOpen.visible === true && stillOpen.settingsOpen === false);
+
+  // 只读直键行仍列出（旧面板同样只展示不执行）
+  await s.page.keyboard.press('Control+a');
+  await s.page.keyboard.type('快捷键');
+  await s.page.waitForTimeout(400);
+  const ro = await st();
+  check('只读直键行仍列出（含键位提示）', ro.labels.length >= 5 && ro.labels.some((t) => /Escape|Ctrl\+|Arrow|Enter/.test(t)),
+    `n=${ro.labels.length} ${JSON.stringify(ro.labels.slice(0, 3))}`);
+
+  // Esc 关闭 + 焦点回到打开前的元素
   await s.page.keyboard.press('Escape');
-  await s.page.waitForTimeout(250);
-  const st = await s.page.evaluate(() => ({ hidden: document.getElementById('nf-palette-overlay').hidden }));
+  await s.page.waitForTimeout(400);
+  const closed = await st();
+  check('Esc 关闭面板', closed.visible === false);
   const restored = await active(s.page);
-  check('Esc 关闭面板', st.hidden === true);
   check('关闭后回焦到打开前元素', restored === opener, `${restored} vs ${opener}`);
+
+  // 键位提示列渲染（未过滤时至少一条行文本带「Ctrl+K」）
+  await s.page.keyboard.press('Control+k');
+  await waitOpen();
+  const full = await st();
+  check('行内显示键位提示（combo 列）', full.rows.some((t) => t.includes('Ctrl+K')) && full.rows.some((t) => t.includes('Ctrl+/')),
+    JSON.stringify(full.rows.slice(0, 3)));
   await s.close();
 }
 
@@ -884,6 +946,275 @@ for (const sh of SHELLS) {
     after.shown === false && depth2.ok && depth2.depth === 0 && focusOk,
     `shown=${after.shown} depth=${depth2.ok ? depth2.depth : 'unavailable(' + depth2.reason + ')'} active=${after.activeId}`);
   await s.close();
+}
+
+// ── J 规则表（when 闸门 + 模式挂到上下文键） ────────────────────────────
+// 三期把「哪个键、在什么状态下、干什么」变成一张数据表。这一组问的是表本身的
+// 三条不变量：① 条数在量级上（不是八条手写调用的换皮）② **每条都有非空 when**
+// （空 when 会让「EDIT 不穿透」无法被证明）③ 每个表达式都能编译，且模式真的
+// 落在上下文键上（不是又一个模块内变量）。
+console.log('J 规则表');
+{
+  const s = await fresh();
+  const r = await s.page.evaluate(async () => {
+    const kr = await window.__nfProbeModule('/js/keyRules.js');
+    const kc = await window.__nfProbeModule('/js/keyContext.js');
+    const km = await window.__nfProbeModule('/js/keymap.js');
+    if (!kr.ok || !kc.ok || !km.ok) return { unavailable: (kr.reason || kc.reason || km.reason) };
+    const rules = kr.ns.listKeyRules();
+    /** @type {string[]} */
+    const bad = [];
+    for (const rule of rules) {
+      if (!rule.when || !String(rule.when).trim()) { bad.push(rule.id + ':空 when'); continue; }
+      try {
+        const fn = kc.ns.compileWhen(rule.when);
+        if (typeof fn !== 'function') bad.push(rule.id + ':编译返回非函数');
+        else if (typeof fn(() => undefined) !== 'boolean') bad.push(rule.id + ':求值返回非布尔');
+      } catch (e) { bad.push(rule.id + ':' + ((e && e.message) || e)); }
+      if (!rule.key) bad.push(rule.id + ':无 combo');
+    }
+    km.ns.setMode('edit');
+    const inEdit = kc.ns.getContextKey('keyboardMode');
+    km.ns.setMode('meta');
+    const inMeta = kc.ns.getContextKey('keyboardMode');
+    // 注册表里也能看到 when（面板/速查视图消费同一份）
+    const registered = km.ns.listShortcuts().filter((x) => x.id && x.id.indexOf('explorer.') === 0);
+    return {
+      count: rules.length, bad, inEdit, inMeta,
+      groups: [...new Set(rules.map((x) => x.group))],
+      ids: rules.map((x) => x.id),
+      regWithWhen: registered.map((x) => ({ id: x.id, when: x.when || '' })),
+    };
+  });
+  if (r.unavailable) {
+    const why = `${surfaceHint()}（${r.unavailable}）`;
+    for (const n of ['规则表条数（本批目标 10–20，实测 24 = 22 业务 + 2 键盘层）', '每条规则都有非空 when', '每个 when 都能编译并返回布尔', '模式挂在上下文键 keyboardMode 上', '注册表对外暴露 when']) skip(n, why);
+  } else {
+    check('规则表条数（本批目标 10–20；实测 24 = 22 业务 + 2 键盘层）', r.count >= 10 && r.count <= 30, `count=${r.count}`);
+    check('每条规则都有非空 when 且 combo 非空', r.bad.length === 0, r.bad.join(' | '));
+    check('模式挂在上下文键 keyboardMode 上（setMode → contextKey）', r.inEdit === 'edit' && r.inMeta === 'meta', `edit=${r.inEdit} meta=${r.inMeta}`);
+    check('注册表对外暴露 when（面板/速查共用一份真相）',
+      r.regWithWhen.length >= 5 && r.regWithWhen.every((x) => x.when && x.when.trim()),
+      JSON.stringify(r.regWithWhen.slice(0, 3)));
+    check('分组覆盖键盘层/导航/文件树/叠卡',
+      ['键盘', '导航', '文件树'].every((g) => r.groups.indexOf(g) >= 0), JSON.stringify(r.groups));
+  }
+  await s.close();
+}
+
+// ── K EDIT 模式不穿透（逐条实测） ──────────────────────────────────────
+// 本批的核心目标就是这一组：**在 EDIT 模式的对话输入框里，业务键不许穿透**。
+// 每条都成对取证 —— 「输入框里按 → 什么都不发生」+「输入框外按 → 照常发生」，
+// 只测前者会让「功能被删掉」看起来也像通过。
+console.log('K EDIT 模式不穿透');
+{
+  const s = await fresh();
+  const setMode = (m) => s.page.evaluate(async (mm) => {
+    const km = await window.__nfProbeModule('/js/keymap.js');
+    if (!km.ok) return 'unavailable';
+    km.ns.setMode(mm);
+    return document.getElementById('nf-mode-chip') && document.getElementById('nf-mode-chip').dataset.mode;
+  }, m);
+  const selCount = () => s.page.evaluate(() => document.querySelectorAll('#explorer-tree .explorer-item.selected').length);
+  const focusInput = () => s.page.evaluate(() => document.getElementById('input')?.focus());
+  const blurAll = () => s.page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
+
+  await s.page.waitForTimeout(300);
+  const editMode = await setMode('edit');
+  check('模式切到 EDIT（模式芯片读数）', editMode === 'edit', `chip=${editMode}`);
+
+  // ① 输入框聚焦时 Esc 不清文件树选择
+  await s.page.evaluate(() => {
+    const row = /** @type {HTMLElement} */ (document.querySelector('#explorer-tree .explorer-item[role="treeitem"]'));
+    if (row) row.click();
+  });
+  await s.page.waitForTimeout(150);
+  const sel0 = await selCount();
+  await focusInput();
+  await s.page.keyboard.press('Escape');
+  await s.page.waitForTimeout(200);
+  const sel1 = await selCount();
+  check('① EDIT + 输入框聚焦：Esc 不清树选择（不穿透）', sel0 >= 1 && sel1 === sel0, `sel ${sel0}→${sel1}`);
+
+  // ② 输入框失焦后 Esc 照常清（正向能力没被删掉）
+  await blurAll();
+  await s.page.keyboard.press('Escape');
+  await s.page.waitForTimeout(250);
+  const sel2 = await selCount();
+  check('② 输入框失焦：Esc 照常清树选择（正向）', sel2 === 0, `sel=${sel2}`);
+
+  // ③ 输入框聚焦时 `]` 不搬走焦点（导航不接管）
+  await focusInput();
+  const beforeNav = await active(s.page);
+  await s.page.keyboard.press('BracketRight');
+  await s.page.waitForTimeout(200);
+  const afterNav = await active(s.page);
+  check('③ EDIT + 输入框聚焦：`]` 不搬焦点（导航不穿透）', afterNav === beforeNav, `${beforeNav}→${afterNav}`);
+  await blurAll();
+
+  // ③b 胶囊环：改造前两条画布 Esc 是**无条件**文档级监听（在输入框里敲 Esc 会
+  // 顺手收掉环）——规则化时补了 `!textInputFocus`，这里逐条验「输入框里不收 / 失焦后收」。
+  for (const [id, title, content] of [
+    ['file:/tmp/kb-r1.md', 'kb-r1.md', '# R1\n\n环验收。\n'],
+    ['file:/tmp/kb-r2.md', 'kb-r2.md', '# R2\n\n环验收。\n'],
+  ]) {
+    await s.page.evaluate((d) => { window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: d })); },
+      { id, itemType: 'markdown', title, content, absPath: id.replace('file:', ''), size: content.length, mtimeMs: 1757000000000 });
+    await s.page.waitForSelector(`#canvas-panel .canvas-tab-pane[data-tab-id="${id}"]`, { state: 'visible', timeout: 15000 });
+  }
+  const ringOpen = () => s.page.evaluate(() => {
+    const hdr = document.querySelector('#canvas-panel .canvas-header');
+    return !!hdr && hdr.classList.contains('ring-open');
+  });
+  await s.page.hover('#canvas-panel .canvas-header');
+  await s.page.waitForTimeout(700);
+  const ring0 = await ringOpen();
+  await focusInput();
+  await s.page.keyboard.press('Escape');
+  await s.page.waitForTimeout(350);
+  const ring1 = await ringOpen();
+  check('③b EDIT + 输入框聚焦：Esc 不收胶囊环（不穿透）', ring0 === true && ring1 === true, `ring ${ring0}→${ring1}`);
+  await blurAll();
+  await s.page.keyboard.press('Escape');
+  await s.page.waitForTimeout(350);
+  const ring2 = await ringOpen();
+  check('③c 失焦：Esc 照常收胶囊环（正向）', ring2 === false, `ring=${ring2}`);
+
+  // ④⑤⑥ 叠卡打开后，输入框聚焦时方向键不擦洗、Esc 不关叠卡
+  for (const [id, title, content] of [
+    ['file:/tmp/kb-k1.md', 'kb-k1.md', '# K1\n\n穿透验收。\n'],
+    ['file:/tmp/kb-k2.md', 'kb-k2.md', '# K2\n\n穿透验收。\n'],
+  ]) {
+    await s.page.evaluate((d) => { window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: d })); },
+      { id, itemType: 'markdown', title, content, absPath: id.replace('file:', ''), size: content.length, mtimeMs: 1757000000000 });
+    await s.page.waitForSelector(`#canvas-panel .canvas-tab-pane[data-tab-id="${id}"]`, { state: 'visible', timeout: 15000 });
+  }
+  await s.page.click('#deck-fab');
+  await s.page.waitForSelector('#deck-layer .deck-card', { timeout: 15000 });
+  await s.page.waitForTimeout(1500);
+  const geo = () => s.page.evaluate(() => [...document.querySelectorAll('#deck-layer .deck-card:not(.ghost)')]
+    .map((el) => {
+      const r = /** @type {HTMLElement} */ (el).getBoundingClientRect();
+      return { tab: (/** @type {HTMLElement} */ (el)).dataset.tab, ring: (/** @type {HTMLElement} */ (el)).dataset.r, x: +r.left.toFixed(1), w: +r.width.toFixed(1) };
+    }));
+  const deckOpen = () => s.page.evaluate(() => document.querySelectorAll('#deck-layer .deck-card:not(.ghost)').length);
+
+  await blurAll();
+  const g0 = await geo();
+  await focusInput();
+  await s.page.keyboard.press('ArrowDown');
+  await s.page.waitForTimeout(400);
+  const g1 = await geo();
+  const same = JSON.stringify(g0) === JSON.stringify(g1);
+  check('④ EDIT + 输入框聚焦：↓ 不擦洗叠卡（位形不变）', same, `${JSON.stringify(g0)} → ${JSON.stringify(g1)}`);
+
+  await s.page.keyboard.press('Escape');
+  await s.page.waitForTimeout(400);
+  check('⑤ EDIT + 输入框聚焦：Esc 不关叠卡', (await deckOpen()) === g0.length && (await deckOpen()) > 0, `cards=${await deckOpen()}`);
+
+  // ⑥ 失焦后方向键与 Esc 照常（正向能力）
+  await blurAll();
+  await s.page.keyboard.press('ArrowDown');
+  await s.page.waitForTimeout(900);
+  const g2 = await geo();
+  check('⑥ 失焦：↓ 照常擦洗叠卡（位形变化）', JSON.stringify(g2) !== JSON.stringify(g1), `${JSON.stringify(g1)} → ${JSON.stringify(g2)}`);
+  await s.page.keyboard.press('Escape');
+  await s.page.waitForTimeout(500);
+  check('⑦ 失焦：Esc 照常关叠卡（正向）', (await deckOpen()) === 0, `cards=${await deckOpen()}`);
+  await s.close();
+}
+
+// ── L when 求值器 ≡ Monaco ContextKeyExpr（真值表逐格比对）───────────────
+// 为什么不是「看起来一样」：`when` 的语法与语义都照 Monaco 抄的，那么验收就该
+// 拿 Monaco 当**判据**而不是当参考 —— 同一条表达式 × 同一批上下文状态，两边
+// 求值必须逐格相等。差一格就是「我们自己发明了一套方言」。
+console.log('L when ≡ ContextKeyExpr');
+{
+  const s = await fresh();
+  await s.page.evaluate(() => document.getElementById('files-btn').focus());
+  await s.page.keyboard.press('Control+k');
+  await s.page.waitForTimeout(400);
+  const r = await s.page.evaluate(async () => {
+    const kc = await window.__nfProbeModule('/js/keyContext.js');
+    const kr = await window.__nfProbeModule('/js/keyRules.js');
+    if (!kc.ok || !kr.ok) return { unavailable: (kc.reason || kr.reason) };
+    let tries = 0;
+    while (!window.monaco && tries++ < 150) await new Promise((res) => setTimeout(res, 100));
+    if (!window.monaco) return { unavailable: 'monaco 未在 15s 内加载' };
+    // AMD 回调的实参形状随 loader 而异（单模块直传 / 数组）——两种都接住。
+    const amd = (deps) => new Promise((res, rej) => {
+      try {
+        window.require(deps, (/** @type {any} */ ...mods) => res(mods.length === 1 && Array.isArray(mods[0]) ? mods[0] : mods), rej);
+      } catch (e) { rej(e); }
+    });
+    const mods = await amd(['vs/platform/contextkey/common/contextkey']);
+    const ck = (mods || []).find((m) => m && m.ContextKeyExpr) || null;
+    if (!ck || !ck.ContextKeyExpr) return { unavailable: 'ContextKeyExpr 取不到: ' + JSON.stringify((mods || []).map((m) => Object.keys(m || {}).slice(0, 4))) };
+
+    const rules = kr.ns.listKeyRules();
+    const keys = ['keyboardMode', 'textInputFocus', 'activatableFocus', 'explorerTreeFocus',
+      'explorerSelection', 'deckCardFocus', 'deckOpen', 'canvasRingOpen', 'cardWindow', 'paletteOpen'];
+    /** @type {Record<string, any>[]} */
+    const states = [{}];
+    for (const k of keys) states.push({ [k]: k === 'keyboardMode' ? 'edit' : true });
+    for (const k of keys) states.push({ [k]: k === 'keyboardMode' ? 'meta' : true });
+    states.push({ keyboardMode: 'edit', textInputFocus: true, deckOpen: true, explorerSelection: true });
+    states.push({ keyboardMode: 'meta', activatableFocus: false, deckOpen: false, explorerTreeFocus: false });
+    states.push({ keyboardMode: 'edit', textInputFocus: false, deckOpen: true, deckCardFocus: true });
+    states.push({ keyboardMode: 'edit', explorerTreeFocus: true, explorerSelection: true });
+    states.push({ keyboardMode: 'meta', cardWindow: true, canvasRingOpen: true });
+
+    /** @type {string[]} */
+    const mismatches = [];
+    let cells = 0;
+    for (const rule of rules) {
+      let ours;
+      try { ours = kc.ns.compileWhen(rule.when); } catch (e) { mismatches.push(rule.id + ':本地编译失败 ' + ((e && e.message) || e)); continue; }
+      const theirs = ck.ContextKeyExpr.deserialize(rule.when);
+      if (!theirs) { mismatches.push(rule.id + ':Monaco 反序列化失败'); continue; }
+      for (const st of states) {
+        const a = ours((/** @type {string} */ k) => /** @type {any} */ (st)[k]);
+        const b = theirs.evaluate({ getValue: (/** @type {string} */ k) => /** @type {any} */ (st)[k] });
+        cells++;
+        if (a !== b) mismatches.push(`${rule.id} 「${rule.when}」 ${JSON.stringify(st)}: 本地=${a} monaco=${b}`);
+      }
+    }
+    return { cells, mismatches, rules: rules.length, states: states.length };
+  });
+  if (r.unavailable) {
+    skip('每条 when 与 Monaco ContextKeyExpr 逐格同值', `${surfaceHint()}（${r.unavailable}）`);
+  } else {
+    check('每条 when 与 Monaco ContextKeyExpr 逐格同值（真值表比对）',
+      r.mismatches.length === 0 && r.cells >= 100,
+      `cells=${r.cells} rules=${r.rules} states=${r.states} ${r.mismatches.slice(0, 3).join(' | ')}`);
+  }
+  await s.close();
+}
+
+// ── M 裸监听收编（静态扫描：数的是「打进产物的那份字节」）───────────────
+// 这一组不测行为，测**账本**：收编前 121 处裸 `keydown`，本批收编 canvas.js
+// 全部 + explorer.js 的导航/清除腿。断言盯两件事：目标模块真的归零（不是搬进
+// 另一个文件）、全仓总数真的下降（不是换个地方又长出来）。
+console.log('M 裸监听收编');
+{
+  const stripComments = (/** @type {string} */ t) => t.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+  const countIn = (/** @type {string} */ t) => {
+    const body = stripComments(t);
+    return (body.match(/addEventListener\(\s*['"]keydown['"]/g) || []).length
+      + (body.match(/onkeydown\s*=/g) || []).length;
+  };
+  const files = JS_FACE.entries.map((e) => ({ rel: String(e.rel).replace(/\\/g, '/'), text: e.text }));
+  const pick = (/** @type {string} */ name) => files.filter((f) => f.rel === 'js/' + name || f.rel.endsWith('/js/' + name))[0] || null;
+  const canvas = pick('canvas.js');
+  const explorer = pick('explorer.js');
+  const isInfra = (/** @type {string} */ rel) => /\/(keymap|keyRules|keyContext)\.js$/.test(rel);
+  const business = files.filter((f) => f.rel.indexOf('/js/') >= 0 || f.rel.indexOf('js/') === 0).filter((f) => !isInfra(f.rel));
+  const total = business.reduce((n, f) => n + countIn(f.text), 0);
+  const BASELINE = 121; // 改造前同一口径的实测值（grep 见交付文档）
+  check('canvas.js 裸 keydown 归零', !!canvas && countIn(canvas.text) === 0, canvas ? `n=${countIn(canvas.text)}` : 'canvas.js 不在扫描面内');
+  check('explorer.js 文档级 keydown 归零', !!explorer && !/document\s*\.\s*addEventListener\(\s*['"]keydown/.test(stripComments(explorer.text)),
+    explorer ? 'ok' : 'explorer.js 不在扫描面内');
+  check(`业务面裸 keydown 总数下降（≤ ${BASELINE - 5}，改造前 ${BASELINE}）`, total > 0 && total <= BASELINE - 5, `now=${total}`);
 }
 
 await browser.close();

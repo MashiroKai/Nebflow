@@ -20,6 +20,10 @@ import { makeReference } from './reference.js';
 import { initCanvasDrop } from './canvasDrop.js';
 import { authHeaders } from './flowHelpers.js'; // Bearer token for REST withAuth (/api/canvas-tabs)
 import { setSideBarCollapsed, isMobileViewport } from './activityBar.js';
+// keyboard-first 三期：叠卡/胶囊环/卡窗的键位搬进规则表（keyRules.js），本模块
+// 提供三件事——① 状态 → 上下文键（派生，无推送）② 动作函数（deckKeyAction 等）
+// ③ 不再持有任何 document 级 keydown 监听。
+import { provideContextKey, KEYS } from './keyContext.js';
 // 独立窗口本机加速批：直连开窗计划 + 导航腿 + PM origin 记账（零环：本模块
 // 只消费，cardwinDirect 不回import canvas/ws）。
 import {
@@ -1933,6 +1937,15 @@ function deckThumbMock(family) {
   }
 }
 
+// ── 上下文键（keyboard-first 三期）──────────────────────────────────────────
+// 三条**派生**键：值现场从本模块的状态读，不推送、不重复赋值。
+// 为什么不用「改了状态就 setContextKey」：`deck.open = false` 在本文件出现三处
+// （收场/换入/兜底），漏一处就会让键盘层拿旧状态做判决 —— 派生键把这类 bug 从
+// 「靠自觉」变成「结构上不可能」。
+provideContextKey(KEYS.deckOpen, () => deck.open === true);
+provideContextKey(KEYS.canvasRingOpen, () => !!ringState);
+provideContextKey(KEYS.cardWindow, () => cardWindowMode === true);
+
 // ── 引擎状态 ──
 const deck = {
   open: false,
@@ -2079,31 +2092,11 @@ function initDeck() {
   });
   deckLayer.addEventListener('contextmenu', (e) => { if (e.target === deckLayer) e.preventDefault(); });
 
-  /* B2-1：环卡键盘语义（委托到层，卡是重挂即换的）。
-     Enter/Space = 复用 `.deck-card` 的既有 click 语义（前景卡放大换入 / 深处卡
-     翻到该卡），**不另写一份换签逻辑**；Delete = 复用 deckRequestClose（与卡面
-     × 钮、右键菜单同一条腿）。拖划期 suppressCardClick 会吞掉 click —— 键盘路径
-     不设置它，因此不受影响。 */
-  deckLayer.addEventListener('keydown', (e) => {
-    const card = e.target instanceof Element ? e.target.closest('.deck-card') : null;
-    if (!(card instanceof HTMLElement)) return;
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      // 🔴 必须先 stopPropagation：产品已有的**文档级** Enter（本文件 :3344）
-      // 会对「当前前景卡」再来一次 deckSelectCard ⇒ 一次按键两次动作（实测：
-      // 在非前景卡上按 Enter，环刚翻过去就被文档级那一下收场关掉叠卡）。
-      // 逐卡激活凌驾于「对前景卡激活」之上，所以在这里截断冒泡。
-      e.stopPropagation();
-      card.click();
-      return;
-    }
-    if (e.key === 'Delete') {
-      e.preventDefault();
-      e.stopPropagation();
-      const id = card.dataset.tab;
-      if (id) deckRequestClose(id);
-    }
-  });
+  /* B2-1 → 三期：环卡键盘语义（Enter/Space = 复用 `.deck-card` 的既有 click
+     语义；Delete = deckRequestClose）**搬进规则表**（keyRules.js 的 deck.card.*），
+     条件 = `deckOpen && deckCardFocus`。改造前这里挂的是层内 keydown 委托，并且
+     必须 `e.stopPropagation()` 才能压住本文档级那条 Enter —— 现在两条动作由同一张
+     表按 when 互斥（卡内 vs 环级），不再靠冒泡顺序博弈。 */
 
   bindDeckInput();
   // 左移批收口：面板 flex-basis 开合过渡（0.32s，左缘从右缘向左展开）期间
@@ -3332,6 +3325,64 @@ function deckRequestClose(id) {
   }
   deckStartLoop();
 }
+/**
+ * 收环动作的模块级句柄：真正的 `closeRing` 是画布头部装配函数里的局部 const
+ * （canvas.js 环形滚轮段），模块作用域够不着 —— 用一个登记位把它接到规则表。
+ * @type {(() => void)|null}
+ */
+let ringCloseFn = null;
+
+/**
+ * 叠卡/环的键位动作（三期：**唯一的键盘入口**，由 keyRules.js 的 deck.* /
+ * canvas.* 规则按 when 条件转发进来）。
+ *
+ * 为什么动作留在本模块而不是搬进规则表：动作要读 `deck.pos`/`ringState` 这些
+ * 就地状态，搬走只会制造第二份真相。规则表拥有的是「键位 + 条件」这层横切关注点，
+ * 本函数拥有的是「点下去发生什么」。
+ * @param {'next'|'prev'|'close'|'select'|'activateCard'|'closeCard'|'closeRing'|'mergeSelf'} action
+ * @param {KeyboardEvent} [e]
+ * @returns {void}
+ */
+export function deckKeyAction(action, e) {
+  switch (action) {
+    case 'next':
+      if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx) return;
+      if (deck.M > 1) { wheelGlideV = 0; deck.target += 1; deckStartLoop(); }
+      return;
+    case 'prev':
+      if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx) return;
+      if (deck.M > 1) { wheelGlideV = 0; deck.target -= 1; deckStartLoop(); }
+      return;
+    case 'close':
+      closeDeck();
+      return;
+    case 'select':
+      if (!deck.open || !deck.M) return;
+      deckSelectCard(deckMod(Math.round(deck.pos), deck.M));
+      return;
+    case 'activateCard': {
+      // 复用 `.deck-card` 的既有 click 语义（前景卡放大换入 / 深处卡翻到该卡），
+      // 不另写一份换签逻辑。
+      const card = e && e.target instanceof Element ? e.target.closest('.deck-card') : null;
+      if (card instanceof HTMLElement) card.click();
+      return;
+    }
+    case 'closeCard': {
+      const card = e && e.target instanceof Element ? e.target.closest('.deck-card') : null;
+      const id = card instanceof HTMLElement ? card.dataset.tab : '';
+      if (id) deckRequestClose(id);
+      return;
+    }
+    case 'closeRing':
+      if (ringState && ringCloseFn) ringCloseFn();
+      return;
+    case 'mergeSelf':
+      requestMergeSelf();
+      return;
+    default:
+  }
+}
+
 function deckCloseOthers(keepId) {
   if (!deck.open || deck.finalizing) return;
   for (const [id, entry] of [...tabs]) {
@@ -3427,16 +3478,10 @@ function bindDeckInput() {
     deckStartLoop();
   }, { passive: false });
 
-  // 键盘：↑↓ 连续擦洗 ±1；Enter 选中前景卡（= 换入；canvas 前景时 = 收回）；Esc 收回。
-  document.addEventListener('keydown', (e) => {
-    if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx) return;
-    const tgt = e.target;
-    if (tgt instanceof Element && (tgt.closest('input, textarea, select, [contenteditable="true"], .monaco-editor, .cm-editor'))) return;
-    if (e.key === 'Escape') { e.preventDefault(); closeDeck(); }
-    else if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); if (deck.M > 1) { wheelGlideV = 0; deck.target += 1; deckStartLoop(); } }
-    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); if (deck.M > 1) { wheelGlideV = 0; deck.target -= 1; deckStartLoop(); } }
-    else if (e.key === 'Enter') { e.preventDefault(); if (deck.M) deckSelectCard(deckMod(Math.round(deck.pos), deck.M)); }
-  });
+  // 键盘（三期：搬进规则表 —— 见 deckKeyAction / keyRules.js 的 deck.* 组）。
+  // 改造前是文档级 keydown + 手写 `closest('input, textarea, …')` 早退：
+  // 那条早退只覆盖「焦点在输入类元素里」，读不出「叠卡开没开 / 是否在卡上」，
+  // 而这正是 when 上下文要表达的东西（`deckOpen && !textInputFocus && !deckCardFocus`）。
 
   // 缩放态面板拖划（v4⑥ + 竖拖补充令）：主导轴分工 —— 横向主导 = 跟手划走，越阈
   // 甩出关闭 / 不足弹回；纵向主导 = dy 增量喂 scrub 引擎换卡（跟手连续，松手惯性+
@@ -4141,6 +4186,8 @@ function initCapsuleRing() {
     document.removeEventListener('pointerleave', onDocPointerLeft);
     if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = 0; }
   };
+  // 三期：登记给规则表（canvas.ring.close → deckKeyAction('closeRing')）。
+  ringCloseFn = closeRing;
 
   hdr.addEventListener('pointerenter', (e) => {
     if (isMobileLayer() || e.pointerType === 'touch') return;
@@ -4154,7 +4201,7 @@ function initCapsuleRing() {
   // 作者令③：从胶囊发起的原生拖拽一律拦下（文字/链接拖拽；OS 文件拖入 =
   // drop 落区不受影响）。文字多选已被全头 user-select:none 封死（CSS）。
   hdr.addEventListener('dragstart', (e) => e.preventDefault());
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ringState) closeRing(); });
+  // 三期：Esc 收环搬进规则表（`canvas.ring.close`，when = canvasRingOpen）。
   // 生命周期：换签不再无条件收环（作者报障 2026-10-25「hover 滚动连续性丧失」：
   // 「如果滚动，切换了其他卡片，那么就无法再次滚动，需要重新hover触发」）——
   // 旧腿 canvas-tab-switched → closeRing() 无条件收环，滚轮监听随环拆走，而
@@ -4806,7 +4853,7 @@ function initCardWindowMode() {
     if (Date.now() - cardLastMainBeat > 20000) requestMergeSelf({ silent: true });
   }, 2000);
   window.addEventListener('pagehide', () => cardBcPost({ kind: 'bye', tabId: currentCardTabId() }));
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') requestMergeSelf(); });
+  // 三期：卡窗 Esc 合并搬进规则表（`canvas.mergeSelf`，when = cardWindow）。
   // 卡头「合并」钮（.canvas-header 内，panel 关闭钮在卡窗态 CSS 隐藏）
   const hdr = document.querySelector('#canvas-panel .canvas-header');
   if (hdr && !hdr.querySelector('.canvas-merge-btn')) {
