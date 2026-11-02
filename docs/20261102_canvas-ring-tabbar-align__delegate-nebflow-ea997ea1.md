@@ -77,6 +77,7 @@ scope: 手机端 canvas 顶部标签环对齐修正（同一水平线 / 中签�
 
 - **spec 全绿**：`mobile-canvas-sheet` **15 passed**（含 T13）、`mobile-dock` 21 passed、`canvas-cardhead-capsule` 28 PASS、`canvas-card-window` 23 PASS、`mobile-gesture-tribunal` 52 PASS、`mobile-touch-target` 全 18 面板 PASS（canvas 15/15，exit 0）、`mobile-pinned-search` 11 passed、`mobile-panel-title` ALL PASS、`mobile-topbar` 3 passed、`capture-topbar-batch` 24 PASS。
 - **实拍**：375×812 双主题 9 帧（a1 2签 / a2 3签 / a3 5签 / a4 8签+长标题 / a5 三签长标题 / a6 中签放大对照 / a7 拖动中帧 / a8 展开全名 / a9 边缘极限）+ z1 改前帧与上下对照图；每帧 JSON 探针 `cySpread=0`、`allClip=true`、`anyEllipsis=false`、`minHit=44`、`wRatio` 见 §3，**零 console error**。
+- **vault 校验**：`python3 check_wiki_docs.py --root docs` → **通过（152 篇文档，零违规，exit 0）**。注：主仓工作目录另有 29 篇 2026-10-22 的**未入库**历史文章被判 orphan —— 对 `git archive HEAD docs` 的**已入库集合**重跑同一脚本同样零违规，那 29 篇与任何批次无关（`docs/` 在 `.gitignore` 内，仅白名单文件入库）。
 - **两条既有红，已用干净基线复现证明非本批引入**：
   1. `make check-visual` 在本机因 GNU Make 3.81 解析 `Makefile:27`（`$(shell sed … #.*$$`）报 `unterminated call to function 'shell'` —— 主仓同报。直接跑 `node scripts/visual-baseline.mjs --check --max-ratio 0.0005` → 8 项 DIFF（app-empty / chat-messages / settings-llm-empty / bgtask-panel ×亮暗），把本批两个源文件 stash 后**逐字节同样 8 项**；canvas-* 四场景 SAME。
   2. `node scripts/check-js-types.mjs` → 25 错（`chat/msgTokenChip.js` 2 / `messages.js` 7 / `perception.js` 10 / `popArtifacts.js` 2 / `todoFace.js` 1 / `todoStore.js` 3），`navController.js` **0 错**；stash 后计数完全相同。
