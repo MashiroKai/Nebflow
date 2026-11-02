@@ -682,6 +682,11 @@ export default {
   'messages.ariaUnread': '{n} unread messages',
   'messages.ariaActionable': '{n} items need you',
   'messages.copy': 'Copy',
+  // fm-md-social batch (2026-11-02): markdown external links in friend/group/device
+  // messages need a second confirmation — the body comes from a peer, not from us.
+  'messages.mdLinkTitle': 'Open external link',
+  'messages.mdLinkConfirm': 'This message came from outside. The link points to {host}. Open it in a new window?',
+  'messages.mdLinkOpen': 'Open',
   'contacts.searching': 'Searching…',
   'contacts.notFoundHint': 'The user may not have set a Username yet, or the input may be wrong',
   'contacts.cancelVerify': 'Cancel',

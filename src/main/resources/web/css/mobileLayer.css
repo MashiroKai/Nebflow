@@ -989,6 +989,21 @@ body.mobile-layer .mobile-page-body::-webkit-scrollbar { display: none; }
 body.mobile-layer .mobile-page-body { overflow-x: hidden; }
 body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal .fm-flow { overflow-x: hidden; }
 body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal .fm-msg-bubble { overflow-wrap: anywhere; }
+/* 正文 markdown 面（fm-md-social 批 · 2026-11-02）：手机层把**正文**字号提到 Apple
+   正文档 —— 气泡里的 markdown 正文 = 用户真正要读的字，落 `--mfs-body`（17px）；
+   纯文本腿 `.fm-msg-text`（无 md 语法）不在此列（本批不改既有纯文本排版）。
+   行内代码/代码块/表格同抬一档（13px → 15px，仍 ≥ footnote 13px 下限），
+   热区仍是 44×44（friends.css 的 ::before 外扩在手机层同样生效）。 */
+body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal .fm-msg-md { font-size: var(--mfs-body); }
+body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal .fm-msg-md code,
+body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal .fm-msg-md pre code { font-size: var(--mfs-sub); }
+body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal .fm-msg-md table { font-size: var(--mfs-sub); }
+body.mobile-layer #mobile-pages .mobile-page-body > .fm-modal .fm-msg-md .code-copy-btn {
+  /* 触控档：常显 + 不小于 44 的可点面（本体 24 视觉 + ::before 外扩到 44）。 */
+  opacity: 1;
+  min-width: 32px;
+  min-height: 24px;
+}
 /* 双页叠开修复批①（2026-10-31 作者令 23:29 截图实证）：通配改「两合法宿主
    直子」限定——收编 pane 只落在文档区 .mf-cv-host（canvas 页）与页面体
    （面板页 adoptPane）两处；直子限定后，任何滞留/孤儿 pane（JS 收口之外的

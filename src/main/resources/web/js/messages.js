@@ -3,7 +3,8 @@
 // cfg-modal chat window (560px glass), forward-to-agent (one-way), agent-sent
 // chips, pure-badge notifications (no sound/banner/title — [U3]).
 import { t } from './i18n.js';
-import { createIconsIn, markCopyFailed, escapeHtml } from './utils.js';
+import { createIconsIn, markCopyFailed, escapeHtml, renderMarkdownWithMath, looksLikeMarkdown } from './utils.js';
+import { bindMdExtGate } from './mdLinkGate.js';
 import state from './state.js';
 import { onMessage, onReconnect, onDisconnect } from './ws.js';
 import { getNeblinkState, onNeblinkStatus, presenceBadgeHTML, platformDisplay } from './neblink.js';
@@ -2969,7 +2970,22 @@ async function downloadDeviceSavedAttachment(att, card, btn, src) {
  *  `mediaFaceKindOf` 单点）≥2 ⇒ 叠卡媒体组（`buildMediaStack` 逐字调用）；=1 ⇒ 媒体
  *  平面卡（`attachmentCard`）；文件/状态件 ⇒ 文件卡逐件（`attachmentCard`）。混合消息
  *  = 叠卡/媒体卡 + 文件卡同一卡区纵排（主会话 `.pop-group` 同构：媒体组在前、文件卡
- *  随后）。 */
+ *  随后）。
+ *
+ *  fm-md-social 批（2026-11-02 19:30 作者令「好友/群聊/设备里的聊天也要支持渲染
+ *  markdown」）——**挂同一套渲染器，不新建第二形态**：
+ *   · 渲染器 = 主会话那条 `utils.renderMarkdownWithMath`（同一 marked+KaTeX+hljs 管线、
+ *     同一套 `.code-block-wrap`/`.md-ext` 产物），本面只多传 `{ safe:true }`；
+ *   · `safe` = **外部输入信任档**：对端来的消息比 agent 自己的输出风险高一个量级 ⇒
+ *     原始 HTML 一律转义成字面文本、链接 scheme 白名单（http/https/mailto）、图片不
+ *     自动取远端字节（降级成外链小牌）、KaTeX trust 关、```human 卡族关闭。安全策略
+ *     落在渲染器单点（utils.js），本面零 sanitize 第二实现；
+ *   · **纯文本走原路**（`looksLikeMarkdown` 判据）：无任何 md 语法的普通一句话仍走
+ *     改前的 `el('div','fm-msg-text',body)` 纯文本装载 ⇒ 间距/行高/字色逐字节不变
+ *     （A3 回归门的实现基础）；
+ *   · 收发两侧同档（同一函数、同一样式）——本面不做不对称。
+ *  元素壳：md 态的类名 = `.fm-msg-text.fm-msg-md`（保留 `.fm-msg-text` ⇒ 既有
+ *  `:not(:last-child)` 边距与移动端换行规则照旧命中，只多一层 md 元素样式作用域）。 */
 function fillBubble(bubble, m, conv) {
   bubble.innerHTML = '';
   const atts = m && Array.isArray(m.attachments) ? m.attachments : [];
@@ -2983,8 +2999,22 @@ function fillBubble(bubble, m, conv) {
   // §B.4：附件消息的 `body` 是服务端生成的占位正文 —— 只有当它与「本消息附件的
   // 占位文本」**逐字相等**时才隐藏（否则照旧显示用户原文，不误吞任何真实文本）。
   const hidePlaceholder = atts.length > 0 && body !== '' && body === attPlaceholderBody(atts);
-  if (body && !hidePlaceholder) bubble.appendChild(el('div', 'fm-msg-text', body));
+  if (body && !hidePlaceholder) bubble.appendChild(bodyEl(body));
   return atts.length > 0 ? attachmentGroup(atts) : null;
+}
+
+/** 正文单点（fm-md-social 批）：md 语法 ⇒ 共享管线 safe 档；否则原样纯文本节点。
+ *  **禁第二套渲染形态**——md 腿只调 `renderMarkdownWithMath`，本函数不做任何
+ *  markdown 解析、不拼 HTML 标签、不碰内联样式（安全策略全在渲染器单点）。 */
+function bodyEl(body) {
+  if (!looksLikeMarkdown(body)) return el('div', 'fm-msg-text', body);
+  const wrap = el('div', 'fm-msg-text fm-msg-md');
+  // cache:true（稳定文本：历史/增量/首帧一次渲染一次缓存；本面无流式腿）。
+  wrap.innerHTML = renderMarkdownWithMath(body, false, { safe: true });
+  // 外链二次确认（A5）：md-ext 锚（只有 safe 档会产出）走单一处置点
+  // mdLinkGate.js（委托挂容器 ⇒ innerHTML 重建不掉 listener）。
+  bindMdExtGate(wrap);
+  return wrap;
 }
 
 /** 附件组装配（**单点**，fm-att-component-lib 批）：媒体分组 → 叠卡/平面卡/文件卡，
