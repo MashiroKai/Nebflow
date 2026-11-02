@@ -194,6 +194,24 @@ jobs:
       - name: Assert no bare retired-domain literal outside the whitelist
         run: node scripts/check-legacy-domain.mjs
 
+  no-tracked-artifacts-gate:
+    name: No Tracked Artifacts Gate (过程产物不入库)
+    timeout-minutes: 10
+    # 与协作方对齐批 2026-11-03 (Mashiro 提，作者批准): docs/ reports/ evidence/
+    # reports-evidence/ 是过程产物目录，只存在于工作区，绝不进索引。它们曾靠
+    # `git add -f` 被强塞成跟踪态（162 + 504 + 2140 文件），与 .gitignore 规则
+    # 自相矛盾 —— 每次与协作方合并都要拉锯一遍。本门禁就是防回归：索引里再出现
+    # 任何一条产物路径即红。
+    # 探针先行：脚本先证明 git ls-files 在本 checkout 真的能列出东西（探 src），
+    # 否则「零命中」只是假绿 —— 检测器瞎了必须红，不能静默放行。
+    # 退出码非 0 = 有产物被跟踪（或 git 面不可信）。
+    # Same logic locally: bash scripts/check-no-tracked-artifacts.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert no process-artifact directory is tracked
+        run: bash scripts/check-no-tracked-artifacts.sh
+
   lint:
     name: Lint (scalafmt + scalafix)
     timeout-minutes: 25

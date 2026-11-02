@@ -55,6 +55,7 @@
 #   jdk-baseline-gate    → jdk-baseline-gate      (tags mac)
 #   installer-home-gate  → installer-home-gate    (tags mac)
 #   legacy-domain-gate   → legacy-domain-gate     (tags mac)
+#   ——（无原 job；2026-11-03 新设门禁）→ no-tracked-artifacts-gate (tags mac)
 #   lint                 → lint                   (tags mac)
 #   compile × matrix     → compile-mac            (tags mac)
 #     [ubuntu, windows]  → compile-windows        (tags windows)
@@ -168,7 +169,7 @@ variables:
   docker rm -f "${LOWER_NAME}-test" > /dev/null 2>&1 || true
 
 # ============================================================================
-# gates —— 六个 fail-fast 静态门禁（原 ubuntu 腿 → mac 宿主，node/bash 即跑）
+# gates —— 七个 fail-fast 静态门禁（原 ubuntu 腿 → mac 宿主，node/bash 即跑）
 # ============================================================================
 
 js-types:
@@ -248,6 +249,22 @@ legacy-domain-gate:
   script:
     # #831 旧域清扫批：退役裸域名不得以浏览器入口字面重现（frozen 白名单在脚本内）。
     - node scripts/check-legacy-domain.mjs
+
+no-tracked-artifacts-gate:
+  stage: gates
+  tags: [mac]
+  timeout: 10m
+  needs: []
+  <<: *rules_full
+  script:
+    # 与协作方对齐批 2026-11-03（Mashiro 提，作者批准）：docs/ reports/ evidence/
+    # reports-evidence/ 是过程产物目录，只存在于工作区，绝不进索引。它们曾靠
+    # `git add -f` 被强塞成跟踪态（162 + 504 + 2140 文件），与 .gitignore 规则
+    # 自相矛盾 —— 每次与协作方合并都要拉锯一遍。索引里再出现任何一条即红。
+    # 探针先行：先证 git ls-files 在本 checkout 真能列出东西（探 src），否则
+    # 「零命中」只是假绿 —— 检测器瞎了必须红，不能静默放行。
+    # 本地等价：bash scripts/check-no-tracked-artifacts.sh
+    - bash scripts/check-no-tracked-artifacts.sh
 
 # ============================================================================
 # lint —— scalafmt + scalafix + Scala 分层门禁（原 ubuntu → mac）
