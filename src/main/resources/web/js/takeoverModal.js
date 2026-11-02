@@ -39,6 +39,7 @@ import { onMessage } from './ws.js';
 import { t } from './i18n.js';
 import { showToast } from './modal.js';
 import { getProfileUrl } from './brand.js';
+import { deviceClientId } from './deviceIdentity.js';
 
 /** HTTP 腿中止预算：响应本身即裁决（无队列面），10s 只防主机挂死形状。 */
 const RETAKE_TIMEOUT_MS = 10000;
@@ -152,6 +153,11 @@ export async function takeoverRetake() {
   if (!btn || btn.disabled) return; // 单飞：loading 期间再点忽略
   setRetakeLoading(true);
   setTakeoverError(null);
+  // 误报根修批（2026-11-02）：随请求带上浏览器稳定身份 clientId——服务端用它
+  // 定实例键（与本页 ws 握手的 `?clientId=` 同一个值），否则「接管 ⇒ reload ⇒
+  // 新连接」会被自己认成另一个实例，再弹一次同一张卡。
+  let clientId = '';
+  try { clientId = deviceClientId() || ''; } catch (_) { clientId = ''; }
   let resp = null;
   let json = null;
   try {
@@ -159,6 +165,7 @@ export async function takeoverRetake() {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(clientId ? { clientId } : {}),
       signal: AbortSignal.timeout(RETAKE_TIMEOUT_MS),
     });
     json = await resp.json().catch(() => null);

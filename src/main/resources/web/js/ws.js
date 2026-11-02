@@ -17,7 +17,9 @@ import { probeNearPath } from './nearpath.js';
 // 消息设备标注全自动批（2026-10-26 作者令）：来源识别自动判定——绑定读数
 // （花名册 self）在每连 onopen 刷新（与近路探测同拍；deviceIdentity.js 只依赖
 // deviceRoster/branding，无 ws.js 回边——零环）。
-import { refreshAutoBinding } from './deviceIdentity.js';
+// 接管误报根修批（2026-11-02）：同一模块的 deviceClientId 也是 ws 握手要带的
+// 实例身份（`?clientId=`）——同一条零环依赖，不新增边。
+import { refreshAutoBinding, deviceClientId } from './deviceIdentity.js';
 
 // Long-lived token cookie name follows the brand namespace. This is one of
 // the legacy credential copies the B' hook retires (purgeLongLivedCopies
@@ -1089,7 +1091,14 @@ export function connect() {
   attemptLanNearPathJump();
   // Session-only connect: the handshake rides the HttpOnly session cookie
   // (gateway WsAuth). A rejected handshake lands on the paste-ticket entry.
-  const wsUrl = `${proto}//${location.host}/ws`;
+  // 接管误报根修批（2026-11-02）：随握手带上浏览器稳定身份 clientId——服务端
+  // 单实例注册表以它为实例键（会话 id 会变：过期/静默重座/换设备，clientId 不变）。
+  // 无鉴权含义（鉴权仍是会话 cookie）：它只决定「是不是同一个人」，伪造最坏
+  // 只是不弹接管提示。取不到 id（storage 全禁）时省略该参数 ⇒ 服务端落会话退路。
+  let clientIdParam = '';
+  try { clientIdParam = deviceClientId() || ''; } catch (_) { clientIdParam = ''; }
+  const wsUrl = `${proto}//${location.host}/ws` +
+    (clientIdParam ? `?clientId=${encodeURIComponent(clientIdParam)}` : '');
   try {
     state.ws = new WebSocket(wsUrl);
   } catch (e) {
