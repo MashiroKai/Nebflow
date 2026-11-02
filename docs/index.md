@@ -19,6 +19,7 @@ status: current
 - delegate 子系统现状审计 — [[20261101_174600_delegate-status-audit__kernel]]（2026-11-01 17:46 快照：十面架构盘点 + 今日实案卷宗 + 已落/未落对账 + 运行时读数 + 优先级表；引 [[20261101_165531_dispatcher-chain-lifecycle-rca__kernel]] 的 RCA，不重查其归因）。
 - 运维报告 — [[20261029_175151_plugin-repo-registry]]（2026-10-29 插件建仓批：23 插件一仓一包、v tag 打在导入 commit、7 public／16 private、种子 vs 实例内容源裁定与三包实例直改差异申报、GitHub 二次限流全程读数）。
 - 启动加载卡品牌图标批 — [[20261102_084500_bootcard-brandicon-and-emoji-audit__delegate-nebflow-f555a161]]（2026-11-02 08:16 作者实拍报障的根因与修复：蓝底问号 = `/brand/stand/lockup-*.png` 在生产脸 404（classpath 与 disk dist 两个 serving 面错位），非 emoji 回落；字标改单档内联 SVG、状态点改纯 CSS 几何；附 emoji/字形当图标全仓清单 119 处与旧 spec 漏检归因）。
+- 待办胶囊重做批 — [[20261102_todo-capsule__delegate-nebflow-35eeaf1e]]（2026-11-02 11:52 作者令：待办从顶带通栏收成输入框下方 71.2×26 小胶囊（占输入区 15.2%，居中偏差 0px），逾期翻面「1 逾期」且两态外框构造上等宽，点击展开 420px 玻璃面板；附改前 450×11 通栏读数、九条机械断言 187/0、既有红归因）。
 
 ## 存目（v1.0.0 清仓移出，git 史可考）
 

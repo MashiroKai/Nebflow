@@ -1,0 +1,12 @@
+visual-baseline [check] playwright=playwright browser=chromium-151 (151.0.7922.34) platform=darwin-chromium-151
+  web    : src/main/resources/web
+  baseline: tests/visual/baseline/darwin-chromium-151
+  out    : .nebflow/visual-baseline/darwin-chromium-151
+
+  DIFF   canvas-markdown-tab-dark               diff=63px (0.013%) bbox={"x0":0,"y0":791,"x1":0,"y1":855}  → .nebflow/visual-baseline/darwin-chromium-151/canvas-markdown-tab-dark-diff.png 
+  SAME   canvas-markdown-tab-light              552x874 (2374ms) 
+  DIFF   canvas-code-tab-dark                   diff=63px (0.013%) bbox={"x0":0,"y0":791,"x1":0,"y1":855}  → .nebflow/visual-baseline/darwin-chromium-151/canvas-code-tab-dark-diff.png 
+  SAME   canvas-code-tab-light                  552x874 (3528ms) 
+
+VISUAL BASELINE FAIL: 2 项超阈值/缺失
+  阈值：单通道容差 0，差异像素占比上限 0.00%

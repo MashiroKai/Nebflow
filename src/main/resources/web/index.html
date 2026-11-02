@@ -836,7 +836,13 @@
          穿顶内容 = Header 玻璃自身磨砂（盒内）+ 带下零蒙层；带下过渡 = 纯硬边界
          （任务卡玻璃 blur 仍在卡上，裙边渐隐本体退役）。五面浮层面板裙边照旧。 -->
     <div id="top-overlays">
-      <div id="task-list"></div>
+      <!-- 待办胶囊重做批（作者令 2026-11-02 11:52「收缩到只显示 8 待办 这么几个
+           文字的大小程度的一个在对话框下方的一个胶囊……点击的时候就是从这么个小
+           胶囊拓展到一个大的界面」）：#task-list 槽位从顶带 #top-overlays 迁到
+           #input-area 内、#input-bar 之后 —— 静默态 = 输入框下方居中小胶囊，
+           展开态 = 锚在输入区上方 8px 的浮层面板（见 css/todo-face.css 槽位块）。
+           顶带让位公式（js/main.js bandBottom）只读 #header/#top-overlays 的盒子，
+           本节点离场后自带收缩，无需改动。 -->
       <!-- D6 批 F2: pending-AskUser persistent bar (one row per unanswered
            question: source · summary, click = scroll to card + highlight) -->
       <div id="ask-pending-bar" class="hidden" role="list" aria-live="polite"></div>
@@ -903,6 +909,12 @@
       <button class="icon-btn" id="quote-item-btn" type="button" hidden><span class="quote-item-btn-glyph"></span></button>
       <button id="send-btn"><i data-lucide="send"></i></button>
       <button id="stop-btn"><i data-lucide="square"></i></button>
+      </div>
+      <!-- 待办胶囊槽位（重做批 2026-11-02 11:52；从 #top-overlays 迁入，见上方
+           顶带块注记）：静默态 = 输入框正下方居中小胶囊；展开态 = 自胶囊位置向上
+           生长的浮层面板（position:absolute; bottom:calc(100% + 8px)，不占输入区
+           高度、不与输入框打架）。`has-tasks` 门照旧由 js/todoFace.js 挂。 -->
+      <div id="task-list"></div>
     </div>
   </div>
   </div>
