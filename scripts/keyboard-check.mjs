@@ -156,48 +156,110 @@ console.log('A 注册器');
   await s.close();
 }
 
-// ── B 命令面板 ─────────────────────────────────────────────────────────
-console.log('B 命令面板');
+// ── B 命令面板（Monaco QuickInput 内核） ────────────────────────────────
+console.log('B 命令面板（Monaco QuickInput）');
 {
   const s = await fresh();
-  await s.page.evaluate(() => document.getElementById('files-btn').focus());
-  const before = await active(s.page);
-  await s.page.keyboard.press('Control+k');
-  await s.page.waitForTimeout(250);
-  const open = await s.page.evaluate(() => {
-    const o = document.getElementById('nf-palette-overlay');
-    return { visible: !!o && !o.hidden, focusInInput: document.activeElement?.id === 'nf-palette-input' };
-  });
-  check('Ctrl+K 打开面板', open.visible === true);
-  check('打开后焦点在搜索框', open.focusInInput === true);
-
-  // 搜 + ↑↓ + Enter：搜「设置」→ 执行 → 设置面板应当出现（可观察后果）
-  await s.page.keyboard.type('设置');
-  await s.page.waitForTimeout(200);
-  const rows = await s.page.evaluate(() => document.querySelectorAll('#nf-palette-list .nf-palette-row').length);
-  check('输入即搜（有命中）', rows > 0, `rows=${rows}`);
-
-  await s.page.keyboard.press('Enter');
-  await s.page.waitForTimeout(600);
-  const afterRun = await s.page.evaluate(() => {
+  const W = '#nf-quickinput-host';
+  /** 面板的 DOM 事实（行文本 / 分组标识 / 焦点 / 设置面是否打开）。 */
+  const st = () => s.page.evaluate((w) => {
+    const wd = document.querySelector(w + ' .quick-input-widget');
+    const inp = document.querySelector(w + ' .quick-input-box input');
+    const rows = [...document.querySelectorAll(w + ' .monaco-list-row')];
     const ov = document.getElementById('settings-overlay');
-    return { closed: document.getElementById('nf-palette-overlay').hidden, settingsOpen: !!ov && (ov.style.display !== 'none' && !ov.hidden) };
-  });
-  check('Enter 执行命令（打开了设置面）', afterRun.settingsOpen === true);
-  check('执行后面板关闭', afterRun.closed === true);
+    return {
+      visible: !!wd && getComputedStyle(wd).display !== 'none' && wd.getBoundingClientRect().height > 20,
+      focusInInput: !!inp && document.activeElement === inp,
+      rows: rows.map((r) => (r.textContent || '').trim()),
+      labels: rows.map((r) => r.getAttribute('aria-label') || ''),
+      seps: [...document.querySelectorAll(w + ' .quick-input-list-separator')].map((e) => (e.textContent || '').trim()).filter(Boolean),
+      settingsOpen: !!ov && !ov.hidden && getComputedStyle(ov).display !== 'none',
+      active: document.activeElement ? (document.activeElement.id || document.activeElement.tagName) : 'none',
+    };
+  }, W);
+  const waitOpen = async () => {
+    for (let i = 0; i < 60; i++) { const v = await st(); if (v.visible && v.focusInInput) return v; await s.page.waitForTimeout(100); }
+    return st();
+  };
 
-  // Esc 关闭 + 回焦
-  await s.page.evaluate(() => { const o = document.getElementById('settings-overlay'); if (o) { o.hidden = true; o.style.display = 'none'; } });
   await s.page.evaluate(() => document.getElementById('settings-btn').focus());
   const opener = await active(s.page);
   await s.page.keyboard.press('Control+k');
-  await s.page.waitForTimeout(200);
+  const opened = await waitOpen();
+  check('Ctrl+K 打开面板（Monaco quick input 壳）', opened.visible === true);
+  check('打开后焦点在搜索框', opened.focusInInput === true);
+  check('命令表可列（可视行 ≥ 12）', opened.rows.length >= 12, `rows=${opened.rows.length}`);
+  check('分组标识 ≥ 3 组（分隔行仍在）', opened.seps.length >= 3, JSON.stringify(opened.seps));
+
+  // 输入即搜（子串口径，与旧面板同一条 score）
+  await s.page.keyboard.type('设置');
+  await s.page.waitForTimeout(350);
+  const hit = await st();
+  check('输入即搜（命中「设置」）', hit.labels.some((t) => t.includes('设置')), JSON.stringify(hit.labels.slice(0, 3)));
+
+  // 分组名可搜（旧面板能力：「布局」筛出整组，而不是只筛含「布局」的命令名）
+  await s.page.keyboard.press('Control+a');
+  await s.page.keyboard.type('布局');
+  await s.page.waitForTimeout(350);
+  const byGroup = await st();
+  check('分组名可搜（「布局」→ 整组≥2 条，含名称不含「布局」的行）',
+    byGroup.labels.length >= 2 && byGroup.labels.some((t) => !t.includes('布局')),
+    JSON.stringify(byGroup.labels));
+
+  // 键位提示可搜（旧面板能力：敲 Ctrl+K 找到「命令面板」那条）
+  await s.page.keyboard.press('Control+a');
+  await s.page.keyboard.type('Ctrl+K');
+  await s.page.waitForTimeout(350);
+  const byKey = await st();
+  check('键位提示可搜（「Ctrl+K」→ 面板命令）', byKey.labels.some((t) => t.includes('命令面板')), JSON.stringify(byKey.labels));
+
+  // Enter 执行 → 可观察后果（设置面打开）+ 面板自己关掉
+  await s.page.keyboard.press('Control+a');
+  await s.page.keyboard.type('设置');
+  await s.page.waitForTimeout(300);
+  await s.page.keyboard.press('Enter');
+  await s.page.waitForTimeout(800);
+  const ran = await st();
+  check('Enter 执行命令（打开了设置面）', ran.settingsOpen === true);
+  check('执行后面板关闭', ran.visible === false);
+
+  // 无命中：占位行（非命令）+ Enter 不执行也不关面板
+  await s.page.evaluate(() => { const o = document.getElementById('settings-overlay'); if (o) { o.hidden = true; o.style.display = 'none'; } });
+  await s.page.evaluate(() => document.getElementById('settings-btn').focus());
+  await s.page.keyboard.press('Control+k');
+  await waitOpen();
+  await s.page.keyboard.press('Control+a');
+  await s.page.keyboard.type('zzzz');
+  await s.page.waitForTimeout(400);
+  const none = await st();
+  check('无命中给出占位行', none.labels.length === 1 && none.labels[0].includes('没有匹配的命令'), JSON.stringify(none.labels));
+  await s.page.keyboard.press('Enter');
+  await s.page.waitForTimeout(500);
+  const stillOpen = await st();
+  check('占位行按 Enter 不执行、不关面板', stillOpen.visible === true && stillOpen.settingsOpen === false);
+
+  // 只读直键行仍列出（旧面板同样只展示不执行）
+  await s.page.keyboard.press('Control+a');
+  await s.page.keyboard.type('快捷键');
+  await s.page.waitForTimeout(400);
+  const ro = await st();
+  check('只读直键行仍列出（含键位提示）', ro.labels.length >= 5 && ro.labels.some((t) => /Escape|Ctrl\+|Arrow|Enter/.test(t)),
+    `n=${ro.labels.length} ${JSON.stringify(ro.labels.slice(0, 3))}`);
+
+  // Esc 关闭 + 焦点回到打开前的元素
   await s.page.keyboard.press('Escape');
-  await s.page.waitForTimeout(250);
-  const st = await s.page.evaluate(() => ({ hidden: document.getElementById('nf-palette-overlay').hidden }));
+  await s.page.waitForTimeout(400);
+  const closed = await st();
+  check('Esc 关闭面板', closed.visible === false);
   const restored = await active(s.page);
-  check('Esc 关闭面板', st.hidden === true);
   check('关闭后回焦到打开前元素', restored === opener, `${restored} vs ${opener}`);
+
+  // 键位提示列渲染（未过滤时至少一条行文本带「Ctrl+K」）
+  await s.page.keyboard.press('Control+k');
+  await waitOpen();
+  const full = await st();
+  check('行内显示键位提示（combo 列）', full.rows.some((t) => t.includes('Ctrl+K')) && full.rows.some((t) => t.includes('Ctrl+/')),
+    JSON.stringify(full.rows.slice(0, 3)));
   await s.close();
 }
 

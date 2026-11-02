@@ -23,6 +23,9 @@
 //   · 台账口径：它不是 feature flag —— 没有开关，因为它没有行为副作用；关掉它
 //     只会让验证面消失，等于把「验的 ≠ 跑的」重新打开。
 import * as keymap from './keymap.js';
+import * as keyContext from './keyContext.js';
+import * as keyRules from './keyRules.js';
+import * as commandPalette from './commandPalette.js';
 import * as focusTrap from './focusTrap.js';
 import * as explorer from './explorer.js';
 import * as sidebar from './sidebar.js';
@@ -48,6 +51,9 @@ export function installProbeSurface() {
   /** @type {Record<string, object>} */
   const modules = Object.freeze({
     '/js/keymap.js': keymap,
+    '/js/keyContext.js': keyContext,
+    '/js/keyRules.js': keyRules,
+    '/js/commandPalette.js': commandPalette,
     '/js/focusTrap.js': focusTrap,
     '/js/explorer.js': explorer,
     '/js/sidebar.js': sidebar,
