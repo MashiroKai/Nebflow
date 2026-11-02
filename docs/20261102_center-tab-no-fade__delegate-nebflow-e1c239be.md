@@ -72,7 +72,7 @@ scope: 手机端 canvas 顶部标签环「中签两端零虚化渐隐」（只�
 - **`make check-visual` 不可用（申报）**：本机 GNU Make 3.81 解析 `Makefile:27`（`$(shell sed … #.*$$`）报 `unterminated call to function 'shell'`，主仓同报。改跑 `node scripts/visual-baseline.mjs --check --max-ratio 0.0005`。
 - **合并 main 后复跑**（main 已含 canvas 控件 48 统一批 `73c305f81` 与会话身份头同行批 `00c9eb926`）：`mobile-canvas-sheet` **15 passed**（T13 三类读数与合并前逐项相同）、`mobile-dock` **21 passed**、`mobile-pinned-search` **11 passed**、`canvas-chrome-size-align`（同区域在飞批的验收脚本）**63 PASS / 0 FAIL**（含 ⑥「环带签 / 小点 / 左右浮钮 / ask 钮渲染盒零相交」—— 本批改的是 label 内部绘制宽，签盒与外框几何零变化）；实拍脚本按合并后当前树重抓一过，全部读数不变（PNG 仅文字抗锯齿亚像素差，b5 帧 0.5%）。
 - **visual-baseline 8 项既有 DIFF，与本批无关（已用干净基线复现）**：`app-empty-{dark,light}` / `chat-messages-{dark,light}` / `settings-llm-empty-{dark,light}` / `bgtask-panel-{dark,light}`（尺寸不一致 base 378×146 vs cur 338×144）。把本批两个源文件 stash 后**逐项读数完全相同**（16963 / 17003 / 126043 / 126986 / 78803 / 79182 px、bgtask 同尺寸差）；`canvas-markdown-tab-*` 与 `canvas-code-tab-*` 四场景 **SAME**（本批动的正是 canvas 环带，这四项是它的视觉基线门 —— 说明环带在基线视口（桌面 552×874）零影响）。
-- **vault 校验**：`python3 check_wiki_docs.py --root docs` → **通过（153 篇文档，零违规，exit 0）**。主仓工作目录直跑会因既有的**未入库**历史文章被判 orphan（`docs/` 在 `.gitignore` 内，仅白名单入库）—— 口径见 §6.4。
+- **vault 校验**：`python3 check_wiki_docs.py --root docs`（本 worktree 的 `docs/`）→ **通过（155 篇文档，零违规，exit 0）**；另按批约对已入库快照复验 `git archive HEAD docs` → `/tmp/vaultchk/docs` 同脚本 → **通过（155 篇，零违规，exit 0）**。口径说明见 §6.4（主仓工作目录里另有 2026-10-22 的**未入库**历史文章，直跑会被判 orphan，与本批无关）。
 
 ## §6 申报（取舍与已知边界）
 
