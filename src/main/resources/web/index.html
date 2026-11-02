@@ -893,6 +893,14 @@
       </div>
       <button class="skip-freeze-btn" id="skip-freeze-btn" type="button"><i data-lucide="skip-forward"></i><span id="skip-freeze-label">跳过本次</span></button>
       <button class="icon-btn" id="attach-btn"><i data-lucide="paperclip"></i></button>
+      <!-- 引用入口移入 footer（2026-11-02 11:00 作者令「图片引用在footer显示就行了。
+           不需要hover图片的时候也显示一个图标」）：单图/单张引用入口 = composer
+           footer 动作行的一枚键（与附件键同族 .icon-btn），动作对象 = 当前会话里
+           最近一条叠卡的**当前张**（拖动/横滑翻到的那张，见 popArtifacts
+           `.pop-stack-area`.popQuoteState）。默认 hidden：没有叠卡就没有可引单张
+           （零死入口，见 js/msgQuote.js initQuoteItemButton）。字形 = lucide
+           `quote`（内联 SVG，vendor 里没有该图标，见 js/msgQuote.js QUOTE_SVG）。 -->
+      <button class="icon-btn" id="quote-item-btn" type="button" hidden><span class="quote-item-btn-glyph"></span></button>
       <button id="send-btn"><i data-lucide="send"></i></button>
       <button id="stop-btn"><i data-lucide="square"></i></button>
     </div>

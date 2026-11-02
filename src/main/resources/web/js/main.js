@@ -121,6 +121,8 @@ import { initFileSearch } from './fileSearch.js';
 import { initUsageDashboard } from './usageDashboard.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
+// 引用入口移入 footer 批（2026-11-02 11:00）：叠卡单张引用的 composer 入口装配。
+import { initQuoteItemButton } from './msgQuote.js';
 // 回合活动流条（turnActivity.js，对话层活性批 2026-10-22）已整链退役 ——
 // 2026-10-23 作者令逐字「这个活动面板我不是让删掉吗，就是对话框上面这个」。
 // 防复活钉：tests/turn-activity-stream.spec.mjs。
@@ -279,6 +281,12 @@ initChatView(
     sessionNameEl: document.getElementById('session-name'),
   }
 );
+
+// 引用入口移入 footer（2026-11-02 11:00 作者令「图片引用在footer显示就行了。不
+// 需要hover图片的时候也显示一个图标」）：叠卡单张引用的唯一入口 = composer footer
+// 动作行里的一枚键（#quote-item-btn）。装配挂在 primary 视图上（它拥有 #input-bar；
+// 其余窗口/面板无该条 ⇒ 无从装配，叠卡面上也不再长按钮）。
+initQuoteItemButton(chatViews.primary);
 
 // D6 批 F2: pending-ask bar + header badge wiring (click = jump to oldest ask).
 initPendingAsks();

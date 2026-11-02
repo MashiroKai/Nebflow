@@ -18,6 +18,9 @@ import { t } from './i18n.js';
 // 卡片语言统一批（2026-10-26）：文件引用卡再复用同一 `fileIconStyle` 图标规范
 // （扩展名色块档 = 引擎侧 .file-card 同源，零第二套图标语言）。
 import { buildImageRefMediaFace, fileIconStyle } from './popArtifacts.js';
+// 引用牌图标化批（2026-11-02 11:00 作者令）：composer 引用 chip 的类型图标与气泡
+// 引用块同源（quoteLogo.js 单点 —— 图片=真缩略 / 文档=.fc-icon 原图标 / 文字=新 logo）。
+import { quoteTypeIcon } from './quoteLogo.js';
 
 /** Stable-ish ref id (内部用，非用户可见) — refType + monotonic counter. */
 let _refSeq = 0;
@@ -528,7 +531,20 @@ function renderInputRef(ref, onRemove, closeStyle) {
 
   const icon = document.createElement('span');
   icon.className = 'att-ref-icon';
-  icon.innerHTML = chipIcon(ref);
+  // 引用牌图标化批（2026-11-02 11:00 作者令「引用的消息也需要图标化，文档和图片就是
+  // 原图标和图片缩略，文字的话就单独设计一个logo」）：**只**改 chat-message 分支
+  // （主聊天区的消息引用），其余 refType（file/document/task/html-element）逐字节
+  // 原样 —— 本函数同时被历史 ref 卡（persistence.js mode:'message' 不走这里，但
+  // 好友窗 pending chip messages.js:4020 走）消费，作用域收在 refType 上。
+  // 类型判定/字形/缩略取用同一单点 = quoteLogo.quoteTypeIcon（与气泡引用块同源）。
+  if (ref.refType === 'chat-message') {
+    icon.appendChild(quoteTypeIcon(
+      { excerpt: ref.content?.excerpt, attachments: ref.content?.attachments, itemIndex: ref.content?.itemIndex },
+      'att-ref-qicon',
+    ));
+  } else {
+    icon.innerHTML = chipIcon(ref);
+  }
   icon.setAttribute('aria-hidden', 'true');
 
   const body = document.createElement('span');
