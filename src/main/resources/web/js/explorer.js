@@ -17,6 +17,9 @@ import { showSidePanel } from './activityBar.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 import { withFocusKey } from './focusTrap.js';
+// keyboard-first 三期：树键位搬进规则表（keyRules.js 的 explorer.tree.*），
+// 本模块只提供动作函数 + 一个派生上下文键（选中态）。
+import { provideContextKey, KEYS } from './keyContext.js';
 
 // explorer.js 拆分(FE组件化批次五 2026-09-28):选择状态族与文件规则小簇迁至 js/explorer/
 // 子模块 —— selection.js(多选模型族,簇私态 selectedPaths/anchorPath 整态随迁)、
@@ -725,8 +728,9 @@ function $(sel) { return document.querySelector(sel); }
 //      从此不再只有 `#id` 与 DOM 路径两级）。
 //   ② 同一时刻**恰好一行** `tabindex=0`（roving）；行的 tabindex 由本模块独占，
 //      其他模块（mode.js）不得再改写它。
-//   ③ 键位语义由 `onTreeKeydown` 一处定义：↑↓ 相邻行 / ←→ 收展 / Home End 两端 /
-//      Enter 激活（目录=收展，文件=走既有打开路径）。
+//   ③ 键位语义由 `treeKeyAction` 一处定义：↑↓ 相邻行 / ←→ 收展 / Home End 两端 /
+//      Enter 激活（目录=收展，文件=走既有打开路径）；**哪个键触发哪个动作**在
+//      keyRules.js 的规则表里（三期起，本文件不留键名字面量）。
 
 /**
  * 树行工厂：三处行（目录 / 文件 / 新建输入行）共用同一份 a11y + 缩进契约。
@@ -818,35 +822,41 @@ function parentTreeRow(row) {
  * @param {KeyboardEvent} e
  * @returns {void}
  */
-function onTreeKeydown(e) {
-  const t = e.target;
-  // 新建/重命名输入行：键归输入法与该输入自己的监听，不抢
-  if (t instanceof HTMLElement && t.closest('input, textarea, [contenteditable="true"]')) return;
+/**
+ * 文件树键盘动作（keyboard-first 三期：唯一的键盘入口）。
+ *
+ * 改造前 = `onTreeKeydown(e)`：一个挂在树容器上的 keydown 监听，串 `switch (e.key)`
+ * 直接把键名与动作写死，并自带 `closest('input, textarea, …')` 早退。三期把
+ * 「是哪个键」搬到规则表（keyRules.js 的 explorer.tree.*，条件
+ * `explorerTreeFocus`），本函数只保留「哪个动作、作用在谁身上」——键名在这里
+ * 一个字面量都不留。
+ *
+ * @param {'down'|'up'|'home'|'end'|'expand'|'collapse'|'activate'} action
+ * @returns {void}
+ */
+export function treeKeyAction(action) {
+  const t = document.activeElement;
   const row = t instanceof HTMLElement ? t.closest('.explorer-item[role="treeitem"]') : null;
   if (!(row instanceof HTMLElement)) return;
   const rows = treeRows();
   const i = rows.indexOf(row);
+  if (i < 0) return;
   const isFolder = row.classList.contains('explorer-folder');
 
-  switch (e.key) {
-    case 'ArrowDown':
-      e.preventDefault();
+  switch (action) {
+    case 'down':
       focusTreeRow(i + 1 < rows.length ? rows[i + 1] : row);
       return;
-    case 'ArrowUp':
-      e.preventDefault();
+    case 'up':
       focusTreeRow(i > 0 ? rows[i - 1] : row);
       return;
-    case 'Home':
-      e.preventDefault();
+    case 'home':
       focusTreeRow(rows[0] || row);
       return;
-    case 'End':
-      e.preventDefault();
+    case 'end':
       focusTreeRow(rows[rows.length - 1] || row);
       return;
-    case 'ArrowRight':
-      e.preventDefault();
+    case 'expand':
       if (!isFolder) return;
       if (row.getAttribute('aria-expanded') !== 'true') {
         // 展开 = 复用既有 click 语义（handleSelectClick 在无修饰键时返回 false，
@@ -856,19 +866,16 @@ function onTreeKeydown(e) {
         focusTreeRow(rows[i + 1] || row); // 已展开 → 进第一个子行
       }
       return;
-    case 'ArrowLeft': {
-      e.preventDefault();
+    case 'collapse':
       if (isFolder && row.getAttribute('aria-expanded') === 'true') {
         row.click(); // 收起（同一份 click 语义）
         return;
       }
       focusTreeRow(parentTreeRow(row));
       return;
-    }
-    case 'Enter': {
-      e.preventDefault();
+    case 'activate': {
       if (isFolder) { row.click(); return; }
-      // 文件行：与 :835 的单击监听**同一条激活路径**（openFile → readFile →
+      // 文件行：与单击监听**同一条激活路径**（openFile → readFile →
       // fileContent → workspace-open-item），不直接派发事件绕过取数腿。
       const path = row.dataset.path || '';
       openFile(path, path.split('/').pop() || path);
@@ -876,6 +883,18 @@ function onTreeKeydown(e) {
     }
     default:
   }
+}
+
+/**
+ * 清除文件树选中（三期：规则 `explorer.selection.clear` 的唯一动作入口）。
+ *
+ * 改造前这是文档级 keydown 里的一句 `clearSelection()`，条件是「有选中 + 焦点不在
+ * 新建输入行」。**那条腿在 EDIT 模式下也会穿透**（在对话输入框里按 Esc 同样清空
+ * 选中项）—— 三期把条件写进规则的 `when`：`explorerSelection && !textInputFocus`。
+ * @returns {void}
+ */
+export function clearTreeSelection() {
+  clearSelection();
 }
 
 // ── Render ─────────────────────────────────────────────────────────────
@@ -1994,28 +2013,22 @@ export function initExplorer() {
     });
   }
 
-  // ── 键盘腿（B1-2）：一次绑定，事件委托（行是重渲即换的）───────────────
+  // ── 键盘腿（B1-2 → 三期）─────────────────────────────────────────────
+  // 改造前这里挂 `kbdTree.addEventListener('keydown', onTreeKeydown)`；三期键位搬进
+  // 规则表（条件 = `explorerTreeFocus`，由 keyContext 从 focus 现算），容器只留
+  // **roving 锚点**这一件与键盘无关的事（谁搬的焦点都算数）。
   const kbdTree = /** @type {(HTMLElement & {_kbdBound?: boolean})|null} */ (document.getElementById('explorer-tree'));
   if (kbdTree && !kbdTree._kbdBound) {
     kbdTree._kbdBound = true;
-    kbdTree.addEventListener('keydown', onTreeKeydown);
-    // 谁搬的焦点都算数（Tab / ↓↑ / mode.js 的 Shift+]）—— roving 锚点跟随
-    // focusin 更新，于是"恰好一行 tabindex=0"在任何来源下都成立。
     kbdTree.addEventListener('focusin', (e) => {
       const row = (/** @type {Element} */ (e.target)).closest?.('.explorer-item[role="treeitem"]');
       if (row instanceof HTMLElement && row.dataset.path) syncRoving(row.dataset.path);
     });
   }
 
-  // Esc clears the selection (unless an inline create input has focus)
-  if (!window.__explorerEscBound) {
-    window.__explorerEscBound = true;
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && selectedPaths.size && !(/** @type {Element|null} */ (e.target))?.closest('.explorer-creating')) {
-        clearSelection();
-      }
-    });
-  }
+  // 选中态 → 上下文键（派生：值现场读 selectedPaths，不推送）。
+  // 规则的 `when` 直接引用它（`explorerSelection && !textInputFocus`）。
+  provideContextKey(KEYS.explorerSelection, () => selectedPaths.size > 0);
 
   // Close context menu on any interaction outside the menu.
   // Use mousedown + capture so it fires BEFORE child stopPropagation calls.
