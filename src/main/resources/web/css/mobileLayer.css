@@ -2242,53 +2242,24 @@ body.mobile-layer .mh-memory-edit:active { transform: scale(0.95); }
   }
 }
 
-/* ── ② 消息/联系人页右上浮搜索钮（.mh-fab-search；socialSearch.js 建）──
-   悬浮位与 chrome 搜索键同几何：48px g2-fab，top:16+safe，right:16。 */
-body.mobile-layer .mh-fab-search {
-  position: absolute;
-  top: calc(16px + env(safe-area-inset-top, 0px));
-  right: 16px;
-  z-index: 20;
-}
-body.mobile-layer .mh-fab-search svg { width: 20px; height: 20px; }
-
-/* ── ③ 展开式搜索区（两页共用交互件；规格书 §2.2/§4）──────────────────
-   展开动效：max-height 0→目标高（容器弹簧展开 = 下方内容整体下拉让位）+ opacity；
-   消息页内栏另叠 scaleX origin right（自钮处向左生长）。220ms 克制 spring。
-   判据挂在页面 section 的 .mh-search-open 上（收编面重渲不丢态）。
-   收合实现取 max-height 而非 grid-rows：联系人页承载体 = 桌面重渲的
-   .fm-search-block（flex column 桌面形态不可动），两页统一同一条收合语汇。 */
-body.mobile-layer .mh-search-dock,
-body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-block {
-  flex: none;
-  max-height: 0;
-  opacity: 0;
-  overflow: hidden;
-  transition:
-    max-height 220ms cubic-bezier(0.34, 1.3, 0.64, 1),
-    opacity 180ms ease;
-}
-body.mobile-layer .mobile-page.mh-search-open .mh-search-dock {
-  max-height: 78vh;
-  opacity: 1;
-}
-/* 联系人页承载体带 #mobile-pages 锚（压收合规则的 ID 特异性，同维度对打）。 */
-body.mobile-layer #mobile-pages .mobile-page.mh-search-open[data-page="contacts"] .fm-search-block {
-  max-height: 560px;
-  opacity: 1;
-}
-/* 手机接入入口撤除批（作者令 2026-10-31 22:55）配套让位：入口行撤除后桌面
-   搜索块顶到页体首行，行右端的提交键（.fm-search-btn）落进右上浮搜索钮的
-   悬浮 footprint（top16+right16、48px，z20）⇒ 点按被 fab 截走（F3 几何探针
-   实证：btn y18 vs fab y16-64 全覆盖）。原 ~50px 下坠几何由入口行行高偶然
-   垫出，撤除后显式声明同款让位（fab 占位 64px + 8 呼吸）；桌面零改动。 */
-body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-block .fm-search {
-  padding-right: 72px;
-}
+/* ── ② 常驻顶部搜索条（消息/联系人两页；js/mobile/socialSearch.js 建）──────
+   作者令 2026-11-02 07:13：两个 tab 的搜索框**固定在页面顶部**，不再用右上角
+   悬浮钮控制搜索。形态换代（旧「浮钮呼出 + 展开式搜索区」整件退役）：
+   · 搜索条 = 页面体流内**首件常驻**（.mh-search-dock > .mh-search-bar），静止
+     态即在位、无呼出/收合过渡（.mh-fab-search / .mobile-page.mh-search-open /
+     max-height 弹簧语汇全数退役，无遗留判据）；
+   · 材质仍走既有玻璃包单源（--glass-control-*，sapphire.css 深浅双主题；
+     本块零新色值）；
+   · 其它面的搜索入口零触碰（聊天根 chrome 搜索键 mobileLayer.css 上段、
+     详情页搜索页 navController 均不动）：本块选择器全部限定在两页内。
+   让位（不遮挡首条消息）：条在流内占位 ⇒ 列表在其下自然起排；消息页有查询时
+   `.has-query` 让整块会话列表退场、结果区吃满余量自滚（见下）。 */
 body.mobile-layer .mh-search-dock {
+  flex: none;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  padding: 8px 0 0;
 }
 body.mobile-layer .mh-search-bar {
   display: flex;
@@ -2307,11 +2278,7 @@ body.mobile-layer .mh-search-bar {
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge),
     0 1px 3px var(--glass-control-glow);
-  transform: scaleX(0.6);
-  transform-origin: right center;
-  transition: transform 220ms cubic-bezier(0.34, 1.3, 0.64, 1);
 }
-body.mobile-layer .mobile-page.mh-search-open .mh-search-bar { transform: scaleX(1); }
 body.mobile-layer .mh-search-bar > svg,
 body.mobile-layer .mh-search-bar > i svg {
   width: 16px;
@@ -2348,6 +2315,23 @@ body.mobile-layer .mh-search-clear {
 }
 body.mobile-layer .mh-search-clear svg { width: 12px; height: 12px; display: block; }
 body.mobile-layer .mh-search-bar.has-text .mh-search-clear { display: flex; }
+/* 范围 chips / 状态行 / 脚注只在有查询时入场（静止态 = 一条纯净搜索条，
+   列表起排位不下移）；有查询时条吃满余量、结果流自滚。判据 = 条上的 .has-query
+   （JS 单点驱动，页面 section 不再有 .mh-search-open 态）。 */
+body.mobile-layer .mh-search-dock:not(.has-query) .mh-scope-row,
+body.mobile-layer .mh-search-dock:not(.has-query) .mh-search-note,
+body.mobile-layer .mh-search-dock:not(.has-query) .mh-search-status {
+  display: none;
+}
+body.mobile-layer .mobile-page[data-page="messages"] .mh-search-dock.has-query {
+  flex: 1;
+  min-height: 0;
+  padding-bottom: 0;
+}
+/* 有查询 ⇒ 会话列表整块让位（结果区吃满余量，首条结果不被列表压住）。 */
+body.mobile-layer .mobile-page[data-page="messages"] .mh-search-dock.has-query ~ #fm-conversations {
+  display: none;
+}
 /* 范围 chips（全部/好友/设备/群聊）：mf-strip-chip 语言同源。 */
 body.mobile-layer .mh-scope-row {
   display: flex;
@@ -2463,19 +2447,32 @@ body.mobile-layer .fm-flow .fm-msg.fm-reveal-flash {
   border-radius: 10px;
 }
 @media (prefers-reduced-motion: reduce) {
-  body.mobile-layer .mh-search-dock,
-  body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-block,
-  body.mobile-layer .mh-search-bar { transition-duration: 0.01s; }
   body.mobile-layer .fm-flow .fm-msg.fm-reveal-flash { animation-duration: 0.01s; }
 }
 
-/* ── ④ 联系人页搜索块承载（既有桌面逻辑零改动，手机层默认收合）──────────
-   收合/展开规则在 ③ 块（mh-search-open 判据）；本块只管承载形态：桌面
-   in-flow 块体在 open 态吃展开区位置，结果卡自然推挤下方好友列表。 */
-body.mobile-layer #mobile-pages .mobile-page.mh-search-open[data-page="contacts"] .fm-search-block {
-  margin: 10px 0 0;
-  animation: none;
+/* ── ③ 联系人页承载（桌面搜索块逻辑零改动；常驻条 = 该页唯一搜索入口）────
+   现状联系人页是**单条流**（搜索块 → 新的朋友 → 设备 → 群入口 → 好友列表），
+   页面无「好友/群/设备」切面控件 ⇒ 常驻条覆盖该页全部内容段（不存在「切面
+   重建输入内容」：唯一输入框住在收编面之外的页面体首件，面板重渲零触碰）。
+   为免同页两枚输入框并存，手机层把桌面块内输入行（.fm-search）收起，只保留
+   其结果卡（.fm-result-card，in-flow 推挤下方好友列表）；桌面零改动。 */
+body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-block {
+  padding: 10px 2px 0;
 }
+body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-block > .fm-search {
+  display: none;
+}
+/* 无结果卡时整块不留空档（块本体只承载结果卡；输入行已收起）——列表首行
+   紧贴常驻条。:has 判据在仓内已有先例（本文件 dock-center 块）。 */
+body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-block:not(:has(.fm-result-card)) {
+  display: none;
+}
+
+/* ── ④ 搜索回跳胶囊的手机层抬层（js/searchReturnPill.js）─────────────────
+   胶囊挂 #main（桌面聊天根），手机层页面容器 #mobile-pages（156）整层压在它
+   上面 ⇒ 会话页（收编窗）里胶囊被页面遮住。抬到 170：> 页面容器 156、< dock
+   200 与桌面模态族 310+（层序表见文件头注释）。桌面零改动。 */
+body.mobile-layer #main [data-nf-search-return="1"] { z-index: 170; }
 
 /* ═══════════════════════════════════════════════════════════════════════
    弹窗退场批（作者令 2026-10-31②「手机端不再有任何形式的弹窗界面：所有弹层

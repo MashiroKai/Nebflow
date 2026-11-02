@@ -757,6 +757,45 @@ async function unblockFriend(f) {
   } catch (err) { friendErrToast(err); }
 }
 
+/**
+ * 搜索提交（唯一流水：桌面提交键 / Enter / 手机常驻搜索条 三处同源）。
+ * 常驻搜索条批（作者令 2026-11-02 07:13）：手机消息/联系人两页搜索框固定页顶、
+ * 输入即搜 ⇒ 手机侧调用带 `{ throttle: false }`（输入去抖已在上游做），桌面键
+ * 保持 1s 反爬最小间隔。空串 = 清场回列表（结果卡/错误卡一并收起，与「点外面
+ * 收起搜索卡」同一语义面）。
+ * @param {string} rawQ
+ * @param {{ throttle?: boolean }} [opts]
+ */
+export async function submitSearch(rawQ, opts = {}) {
+  const q = String(rawQ || '').trim();
+  searchQ = String(rawQ || '');
+  if (!q) {
+    if (searchResult || searchErrorKind) { searchResult = null; searchErrorKind = null; render(); }
+    return;
+  }
+  if (searching) return;
+  const now = Date.now();
+  if (opts.throttle !== false && now - lastSearchAt < 1000) return; // anti-crawl min interval
+  lastSearchAt = now;
+  verifyFor = null;
+  searching = true;
+  searchErrorKind = null;
+  render(); // button → loading state (input value survives via searchQ)
+  try {
+    searchResult = await api.searchUser(q);
+    searchErrorKind = null;
+  } catch (err) {
+    // 失败分态（09-06 作者令拆分「未找到」；0908 作者令再按 err.status 三分）：
+    // 401/403→登录失效卡+重登按钮（fm-auth-required 全局链保留，卡片为兜底
+    // 可见反馈）；404→「Neblink 未启用」（≠「未找到」，found:false 恒 200）；
+    // 5xx/422/429/网络/窗口期→可重试卡。
+    searchResult = null;
+    searchErrorKind = api.errKind(err);
+  }
+  searching = false;
+  render();
+}
+
 // ── Search (submit-style, 1s min interval) ───────────────
 // 0906 布局修复（作者反馈「结果在同一行，把其他内容挤到一边」）：搜索块
 // .fm-search-block 为列布局——输入行 .fm-search 只承载 input+按钮，结果区
@@ -772,36 +811,12 @@ function buildSearch() {
   input.value = searchQ; // preserved across panel re-renders
   input.addEventListener('input', () => { searchQ = input.value; });
   const btn = el('button', 'glass-control fm-search-btn', t('contacts.search'));
-  const submit = async () => {
-    const q = input.value.trim();
-    if (!q || searching) return;
-    const now = Date.now();
-    if (now - lastSearchAt < 1000) return; // anti-crawl min interval
-    lastSearchAt = now;
-    verifyFor = null;
-    searching = true;
-    searchErrorKind = null;
-    render(); // button → loading state (input value survives via searchQ)
-    try {
-      searchResult = await api.searchUser(searchQ.trim());
-      searchErrorKind = null;
-    } catch (err) {
-      // 失败分态（09-06 作者令拆分「未找到」；0908 作者令再按 err.status 三分）：
-      // 401/403→登录失效卡+重登按钮（fm-auth-required 全局链保留，卡片为兜底
-      // 可见反馈）；404→「Neblink 未启用」（≠「未找到」，found:false 恒 200）；
-      // 5xx/422/429/网络/窗口期→可重试卡。
-      searchResult = null;
-      searchErrorKind = api.errKind(err);
-    }
-    searching = false;
-    render();
-  };
-  btn.addEventListener('click', submit);
+  btn.addEventListener('click', () => { submitSearch(input.value.trim()); });
   // ⑤ A4：搜索框组字 Enter 不得提交（此前零判定）。
   bindImeGuard(input);
   input.addEventListener('keydown', (e) => {
     if (isImeComposing(e, input)) return;
-    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    if (e.key === 'Enter') { e.preventDefault(); submitSearch(input.value.trim()); }
   });
   if (searching) {
     // ④-P5：加载态**不换文案**（label 保持「搜索/Search」），只走禁用材质 +
