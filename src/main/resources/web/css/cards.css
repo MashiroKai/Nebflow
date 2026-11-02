@@ -40,7 +40,8 @@
   --nfc-pad-bottom: 40px;               /* 实测 40 */
   --nfc-gap-block: 40px;                /* 字标→标题 / 正文→动作（实测 39/41）*/
   --nfc-gap-title: 16px;                /* 标题→正文（实测 16）*/
-  --nfc-lockup-h: 24px;                 /* 基准字标 S 高 24（lockup 4:1 ⇒ 宽 96）*/
+  --nfc-lockup-h: 24px;                 /* 基准字标 S 高 24（内联 SVG 几何 1375.18×343.15 ≈ 4:1）*/
+  --nfc-lockup-w: 96px;                 /* 同源宽度（24 × 4.0075 ≈ 96）*/
   /* 字阶（官方 email 品牌卡标题档 21/600/-0.2px + 基准实测正文 14×1.5） */
   --nfc-title-size: 21px;
   --nfc-title-weight: 600;
@@ -97,18 +98,27 @@ html[data-theme="dark"] {
   color: var(--nfc-heading);
 }
 
-/* ── 官方横排字标 lockup（双档显隐；禁 filter 反色——email 件同法）───────── */
+/* ── 官方横排字标 lockup（内联 SVG 单档，currentColor 随主题）──────────────
+   品牌图标缺字形批（2026-11-02 作者 08:16 报障）：原双档 = 两张 PNG `<img>`
+   （/brand/stand/lockup-{light,dark}.png）+ 主题显隐切换。崩因 = 那两张图在
+   实跑实例上 404（实测 naturalWidth 0，见 evidence/20261102_bootcard-brandicon__*
+   §1）：`/brand/` 路由只读 **classpath** 树（StaticRoutes.brandSubtree →
+   StaticFile.fromResource("web/brand/…")），而 index/资源走 **disk dist**
+   ——cards-family 批（11-01 16:43）新加的 lockup PNG 晚于最后一次 Scala 编译
+   （11-01 13:23），于是 dist 脸引用了一张只在「未来 classpath」里的图 ⇒
+   浏览器回落成蓝底问号破图块（作者实拍原样）。
+   本批契约：字标改**内联 SVG**（几何 = 仓内集中源
+   brand/stand/illustrator/svg/stand-horizontal-black.svg 逐 path 内联，
+   fill 换 currentColor）——零网络请求（与门面「零资产」纪律同源）、零第二份
+   资产、双主题由 --nfc-heading 单值解析（不再有两档显隐腿）。硬约束：
+   规则体与标记内**零字面量色值**（机械判据 = 新增行不含 #hex）。
+   尺寸：几何 1375.18×343.15 ≈ 4:1，S 高 24 ⇒ 宽 96（--nfc-lockup-w 同源）。 */
 .nfc-lockup {
   display: block;
+  width: var(--nfc-lockup-w);
   height: var(--nfc-lockup-h);
-  width: auto;
-}
-.nfc-lockup-dark { display: none; }
-html[data-theme="dark"] .nfc-lockup-light { display: none; }
-html[data-theme="dark"] .nfc-lockup-dark { display: block; }
-@media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) .nfc-lockup-light { display: none; }
-  html:not([data-theme="light"]) .nfc-lockup-dark { display: block; }
+  color: var(--nfc-heading); /* 品牌图形跟家族标题墨色走：亮 #111827 / 暗 #e6edf3 */
+  flex-shrink: 0;
 }
 
 /* ── 家族字阶 ──────────────────────────────────────────────────────────── */
@@ -235,21 +245,28 @@ html[data-theme="dark"] .nfc-lockup-dark { display: block; }
 /* 清单行状态色（机制类 .nf-entry-item 原名保留——门脚本 paintEntry /
    entry-veil.spec 的消费面；行基样式走 .nfc-step，行类由门脚本双挂） */
 .nf-entry-item[data-state="active"] { color: var(--nfc-heading); }
+/* ── 三态点：全部**纯 CSS 几何**（无字体字形、无 emoji、无图片）───────────────
+   品牌图标缺字形批（2026-11-02）：原 done 勾 = `content:'✓'`、fail 叉 =
+   `content:'×'` —— **字体字形当图标**，与本次报障的破图同属「字形回落」类
+   （缺字形环境必坏、且字形形态随系统字体漂移）。本批改为 border/background
+   画出的几何勾叉：零字形依赖、零色值字面量（全部走 token / color-mix）。
+   三态视觉清晰度（本批验收项②）：未开始 = 中性 18% 空环 + --nfc-subtle 字；
+   进行中 = sapphire 弧环**旋转** + --nfc-heading 字（最亮）；
+   已完成 = sapphire 实环 + 几何勾 + --nfc-link 字（中间档）。
+   三档字色单调递进（subtle → link → heading），状态不靠单一通道辨识。 */
 .nf-entry-dot {
   width: 14px;
   height: 14px;
   border-radius: 50%;
   flex-shrink: 0;
   box-sizing: border-box;
+  position: relative; /* 勾/叉的绝对定位基座 */
   /* pending 环 = 中性 18%（亮近似原 rgba(0,0,0,.18) / 暗近似 rgba(255,255,255,.25)，
      随 heading token 换色，零新字面量） */
   border: 2px solid color-mix(in srgb, var(--nfc-heading) 18%, transparent);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
-  line-height: 1;
-  font-weight: 600;
 }
 /* 活跃/完成腿：亮档 sapphire 族、暗档 glow 变体（原门内联暗档 (120,155,220,.55/.9)
    即 --sapphire-glow 邻值——升格为设计系统 token 单源） */
@@ -258,20 +275,52 @@ html[data-theme="dark"] .nfc-lockup-dark { display: block; }
   border-top-color: transparent;
   animation: nf-boot-spin 0.8s linear infinite;
 }
+.nf-entry-item[data-state="done"] { color: var(--nfc-link); }
 .nf-entry-item[data-state="done"] .nf-entry-dot { border-color: rgb(var(--sapphire) / 0.9); }
-.nf-entry-item[data-state="done"] .nf-entry-dot::after { content: '✓'; color: rgb(var(--sapphire)); }
+/* 勾 = 三边框小矩形转 45°（2px 笔画像 ≡ 环的描边档） */
+.nf-entry-item[data-state="done"] .nf-entry-dot::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 7px;
+  border: solid rgb(var(--sapphire));
+  border-width: 0 2px 2px 0;
+  transform: translate(-50%, -58%) rotate(45deg);
+}
 .nf-entry-item[data-state="fail"] { color: var(--nfc-heading); }
-.nf-entry-item[data-state="fail"] .nf-entry-dot { border-color: rgba(209, 36, 47, 0.65); }
-.nf-entry-item[data-state="fail"] .nf-entry-dot::after { content: '×'; color: #d1242f; font-size: 11px; }
+.nf-entry-item[data-state="fail"] .nf-entry-dot {
+  border-color: color-mix(in srgb, var(--status-error-icon) 65%, transparent);
+}
+/* 叉 = 两根 45°/-45° 圆头短杆（::before + ::after 各一根） */
+.nf-entry-item[data-state="fail"] .nf-entry-dot::before,
+.nf-entry-item[data-state="fail"] .nf-entry-dot::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 7px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--status-error-icon);
+}
+.nf-entry-item[data-state="fail"] .nf-entry-dot::before { transform: translate(-50%, -50%) rotate(45deg); }
+.nf-entry-item[data-state="fail"] .nf-entry-dot::after { transform: translate(-50%, -50%) rotate(-45deg); }
 html[data-theme="dark"] .nf-entry-item[data-state="active"] .nf-entry-dot {
   border-color: rgb(var(--sapphire-glow) / 0.55);
 }
 html[data-theme="dark"] .nf-entry-item[data-state="done"] .nf-entry-dot { border-color: rgb(var(--sapphire-glow) / 0.9); }
-html[data-theme="dark"] .nf-entry-item[data-state="done"] .nf-entry-dot::after { color: rgb(var(--sapphire-glow)); }
+html[data-theme="dark"] .nf-entry-item[data-state="done"] .nf-entry-dot::after { border-color: rgb(var(--sapphire-glow)); }
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]):not([data-theme="dark"]) .nf-entry-item[data-state="active"] .nf-entry-dot {
     border-color: rgb(var(--sapphire-glow) / 0.55);
   }
   html:not([data-theme="light"]):not([data-theme="dark"]) .nf-entry-item[data-state="done"] .nf-entry-dot { border-color: rgb(var(--sapphire-glow) / 0.9); }
-  html:not([data-theme="light"]):not([data-theme="dark"]) .nf-entry-item[data-state="done"] .nf-entry-dot::after { color: rgb(var(--sapphire-glow)); }
+  html:not([data-theme="light"]):not([data-theme="dark"]) .nf-entry-item[data-state="done"] .nf-entry-dot::after { border-color: rgb(var(--sapphire-glow)); }
+}
+/* 减少动效偏好：保住「进行中」的辨识（静态弧环已是非对称几何）——只停旋转，
+   不改变三态可辨性。 */
+@media (prefers-reduced-motion: reduce) {
+  .nf-entry-item[data-state="active"] .nf-entry-dot { animation: none; }
 }
