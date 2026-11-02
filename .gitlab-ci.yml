@@ -3,6 +3,8 @@
 # 源面平移：.github/workflows/ci.yml（GitHub Actions，14 个 job 键 / matrix 展开
 # 16 个实体腿；评估报告口径按 §1.2 归 10 组。GitHub 面冻结只读，本文件是唯一活面）
 # + release.yml / auto-release.yml（发版链 → 本文件 release job）。
+# 平移之外本文件另有 1 个 GitHub 面无对应的原生 job：process-artifacts-gate
+# （2026-11-02 过程产物停跟踪门禁，见下方对照表与 gates 段注释）。
 # 施工图：docs/20261101_151034_ustc-cicd-migration-assessment__delegate-nebflow-7f8e8dec.md
 #   §1.3 依赖矩阵（checkout / upload-download-artifact / setup-java-node cache 的
 #   GitLab 对应物）与 §3.2 阶段 2。
@@ -55,6 +57,9 @@
 #   jdk-baseline-gate    → jdk-baseline-gate      (tags mac)
 #   installer-home-gate  → installer-home-gate    (tags mac)
 #   legacy-domain-gate   → legacy-domain-gate     (tags mac)
+#   —（GitHub 面无对应）→ process-artifacts-gate  (tags mac；2026-11-02 新增，非平移件。
+#                        过程产物停跟踪门禁：evidence/ reports/ docs/ 归零断言；
+#                        GitHub 面已冻结只读，该门禁只活在 GitLab 面)
 #   lint                 → lint                   (tags mac)
 #   compile × matrix     → compile-mac            (tags mac)
 #     [ubuntu, windows]  → compile-windows        (tags windows)
@@ -168,7 +173,8 @@ variables:
   docker rm -f "${LOWER_NAME}-test" > /dev/null 2>&1 || true
 
 # ============================================================================
-# gates —— 六个 fail-fast 静态门禁（原 ubuntu 腿 → mac 宿主，node/bash 即跑）
+# gates —— 七个 fail-fast 静态门禁（原 ubuntu 腿 → mac 宿主，node/bash 即跑；
+# 六道为 GitHub 面平移，process-artifacts-gate 为 2026-11-02 新增）
 # ============================================================================
 
 js-types:
@@ -248,6 +254,27 @@ legacy-domain-gate:
   script:
     # #831 旧域清扫批：退役裸域名不得以浏览器入口字面重现（frozen 白名单在脚本内）。
     - node scripts/check-legacy-domain.mjs
+
+process-artifacts-gate:
+  stage: gates
+  tags: [mac]
+  timeout: 10m
+  needs: []
+  <<: *rules_full
+  script:
+    # 过程产物停跟踪门禁（作者裁定 2026-11-02 16:20）：git ls-files evidence/
+    # reports/ docs/ 必须为空；违规即红，逐条打印违规路径 + git rm -r --cached
+    # 修复命令。判据面是**索引**（不是工作区文件），浅克隆 checkout 即可判定。
+    #
+    # 为什么必须有这道门：复发路径实测是**双向合并**——对方分支上这些文件仍
+    # tracked，合并进来会（a）重新出现在 git ls-files（b）物理删除本地磁盘实体
+    # 文件。git 原生阻止不了 `git add -f` 绕过 .gitignore（真阻断只能靠服务端
+    # pre-receive，本仓无权限），所以这道的定位就是**合并/提交后机器检测**。
+    # rules_full = main/beta/release 分支 push + tag ⇒「合并进 main 后的那次
+    # push」被覆盖；MR 面不作例外收窄，与其余六道静态门禁同口径（见文件头触发裁定）。
+    # 白名单：scripts/process-artifacts-allowlist.txt（默认空 = 三目录全停）。
+    # Same logic locally: sh scripts/check-process-artifacts.sh
+    - sh scripts/check-process-artifacts.sh
 
 # ============================================================================
 # lint —— scalafmt + scalafix + Scala 分层门禁（原 ubuntu → mac）
