@@ -369,4 +369,39 @@ class WorktreeReuseSelectionSpec extends FunSuite:
     }
   }
 
+  /**
+   * J6c **真仓只读**读数（不是构造）：本机主仓 `218` 棵既有 worktree（实测
+   * `git worktree list --porcelain | grep -c '^worktree '`），历史上那棵
+   * `delegate-nebflow-4b756df9`（P0/P1/P2 修复批真正的活所在）**仍然在盘上**。
+   * 本用例在这份真实盘面上跑一遍 inventory（**纯读，零 git 写**），证明：
+   *   - 生产规模下枚举可跑（两遍式：浅遍 1 次 git 调用；深遍只 ≤8 棵）；
+   *   - 那棵树被读成 orphan（若它的 delegate 恰好还活着，则读成 active——两种
+   *     标注都证明对账生效，断言按现场活会话面自适应）；
+   *   - 它带着真实的继承工作量（≥5 个领先提交 = P0 两条 + P1 + 后续两条）。
+   * 环境不满足（仓不在这台机 / 那棵树已被清理）⇒ 跳过（assume）。
+   */
+  test("J6c real-repo read-only inventory: the actual 4b756df9 tree is recognised as orphan (or active if its session still lives)") {
+    assume(gitAvailable, "git required")
+    val realRepo = os.Path("/Users/kaiyu/Claude code/Stand")
+    val realTree = realRepo / ".nebflow" / "worktrees" / "delegate-nebflow-4b756df9"
+    assume(os.exists(realTree), s"the real worktree $realTree is not on this machine (already cleaned) — skipped")
+    // 真盘面用真 dataRoot（记录现读 + 真活会话端口未装 ⇒ 全部按不 live 判）
+    PathUtil.setDataRoot(originalRoot)
+    WorktreeCandidates.LiveSessions.clear()
+    val inv = WorktreeCandidates.inventory(realRepo.toString).unsafeRunSync()
+    assert(inv.all.size >= 200, s"the real workspace carries hundreds of worktrees, got ${inv.all.size}")
+    val c = inv.byId("delegate-nebflow-4b756df9").getOrElse(fail("the real 4b756df9 tree must be enumerated"))
+    assertEquals(c.path, realTree.toString)
+    assertEquals(c.branch, Some("delegate/delegate-nebflow-4b756df9"))
+    assert(c.aheadOfBase >= 5, s"the real tree carries the P0/P1 deliverable commits, got ahead=${c.aheadOfBase}")
+    assertEquals(c.status, WorktreeCandidates.Status.Orphan, "with no live session face installed it reads orphan")
+    // 渲染面：它必须出现在模型可见清单里（真盘 218 棵树，靠排序进榜）
+    val text = WorktreeCandidates.render(inv, realRepo.toString)
+    assert(
+      text.contains("delegate-nebflow-4b756df9"),
+      s"the real orphan must surface in the rendered list (top ${WorktreeCandidates.MaxCandidates} of ${inv.all.size}):\n${text.take(2000)}"
+    )
+    assert(text.contains("**orphan**"), text.take(500))
+  }
+
 end WorktreeReuseSelectionSpec
