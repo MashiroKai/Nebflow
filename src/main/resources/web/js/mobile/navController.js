@@ -207,18 +207,18 @@ let unsubs = [];
 
 const backLabel = () => tt('返回', 'Back');
 
-// ── 面板头两段式标题滚动探针（两段式标题批 2026-11-02 作者令）──────────
+// ── 面板头标题「大标题 → 胶囊」滚动探针（两段式标题批 2026-11-02 作者令，
+//    标题单元素化批 2026-11-02 22:32 沿用同一进度源）──────────────────
 // 承接 B 批（2026-11-01 17:01 选型）的 56px 吸附阈值，并把它由「布尔切换」
-// 升级为**连续进度**：大标题 → 悬浮胶囊之间的全部形态量（大标题透明度/位移/
-// 收高、胶囊透明度）都由 CSS 侧的 --mtitle-p 0→1 插值，逐帧跟手。胶囊几何
-// 不参与插值（高 32 / 中心 40 恒定 —— 几何契约要有单一真值，见 mobileLayer.css）。
+// 升级为**连续进度**：同一元素（.mobile-page-title）的全部形态量（字号/盒高/
+// 内距/外边距/字距/壳层 alpha）都由 CSS 侧的 --mtitle-p 0→1 插值，逐帧跟手。
 //   进度区间：[ROLL_START, ROLL_THRESHOLD] = [8, 56]（区间外钳死在 0/1）——
-//   8 起算 = 手指一动即开始收，56 到位 = 大标题整行没入胶囊位（样张换算档）。
+//   8 起算 = 手指一动即开始收，56 到位 = 字形缩到胶囊档、壳层显影到满。
 //   .rolled 保留为「进度到顶」的布尔判据（spec 与兼容读者用；阈值仍 56）。
 const ROLL_START = 8;
 const ROLL_THRESHOLD = 56;
-/** reduced-motion：形态二值切换（进度只在 0/1 两值；配 CSS 侧摘除唯一位移量
- *  = 切换瞬时成立、零动画）。 */
+/** reduced-motion：形态二值切换（进度只在 0/1 两值 —— 本形态零 transition、
+ *  零位移量，故二值即「瞬时换形、不卡中间」，无额外摘除）。 */
 const reducedMotion = () => typeof window.matchMedia === 'function'
   && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 /** 事件目标到 section 之间**最外层**纵向可滚容器（getComputedStyle overflowY
@@ -245,6 +245,11 @@ function applyRoll(section, scroller) {
   section.classList.toggle('rolled', st > ROLL_THRESHOLD);
   const body = section.querySelector('.mobile-page-body');
   section.classList.toggle('mpt-pane-scroll', !!scroller && scroller !== body);
+  // 长页名右缘渐隐（标题单元素化批 2026-11-02，省略号退役）：钳宽态才挂
+  // .mtitle-clip 蒙版。进度写盘后同帧读 scrollWidth（样式落定后读布局量会
+  // 同步重排，无滞后帧），不误伤装得下的页名。
+  const title = section.querySelector('.mobile-page-title');
+  if (title) title.classList.toggle('mtitle-clip', title.scrollWidth > title.clientWidth + 1);
 }
 /** 滚动收缩探针：section 上挂捕获相位监听（scroll 不冒泡但走捕获，页内一切
  *  滚动容器——页体自身/pane 内部 .team-scroll、#settings-content、.todo-page-body
@@ -310,29 +315,25 @@ function buildSection(def) {
   if (!def.dock) {
     const head = document.createElement('div');
     head.className = 'mobile-page-header';
-    // 吸附态装饰副本（aria-hidden —— 页名播报与聚焦由流内大标题承接）。
-    // 两段式标题批 2026-11-02：本节点 = 悬浮毛玻璃胶囊（材质/几何在
-    // mobileLayer.css），顶缘渐隐带 .mobile-page-title-band 随批退役
-    // （固定高度渐隐罩正是作者所指「顶区占一条不走内容」，胶囊自带毛玻璃
-    // 底已承担压住滚入内容的读作）——DOM 侧不再建该节点。
-    const mini = document.createElement('span');
-    mini.className = 'mobile-page-title-mini';
-    mini.setAttribute('aria-hidden', 'true');
-    mini.textContent = tt(def.zh, def.en);
+    // 标题单元素化批（2026-11-02 22:32 作者令「两个割裂的形态…一直是同一个的
+    // 形式」）：吸附态装饰副本 .mobile-page-title-mini **退役**（DOM 不再建节点）。
+    // 双影根因 = 两套元素同屏交接（大标题盒收高的同时胶囊元素登场，交接区间内
+    // 两者同时可见）。现在页名只有一个节点 .mobile-page-title，吸附态由它自身的
+    // ::before 壳层（玻璃底/圆角/描边）连续渐显承担 —— 原理与读数见
+    // mobileLayer.css「面板头标题单元素连续变形」块。
     const back = document.createElement('button');
     back.type = 'button';
     // 悬浮钮统一批（作者令 10-31 16:03）：「<」归 48px g2-fab 基准材质，
-    // 悬浮位/几何由 mobileLayer.css 页面悬浮带块承担；两段式标题批后仍在
-    // 胶囊左侧（左 16 / 钮 48 / 缝 8 = 胶囊左缘 72），吸附态保持可点。
+    // 悬浮位/几何由 mobileLayer.css 页面悬浮带块承担；单元素化批后吸附态几何
+    // 不变（标题左缘恒 72 = 钮右缘 64 + 缝 8），吸附态保持可点。
     back.className = 'mobile-back-btn g2-fab';
     back.title = backLabel();
     back.setAttribute('aria-label', backLabel());
     back.innerHTML = '<i data-lucide="chevron-left"></i>';
     back.addEventListener('click', () => backOut());
-    head.append(back, mini);
+    head.append(back);
     if (typeof lucide !== 'undefined') createIconsIn(head);
-    // 展开态大标题 = 页体流内首件（在一切收编面之前入列 —— 后续 pane/面
-    // adopt 全部 append，首件地位恒定）。
+    // 唯一页名节点：静止态 = 流内大标题，吸附态 = 同一件的胶囊形态（无第二份）。
     const title = document.createElement('span');
     title.className = 'mobile-page-title';
     title.tabIndex = -1; // push 后聚焦（读屏从头播报页名）
@@ -499,11 +500,10 @@ function ensureContainer() {
     for (const def of PAGES) {
       const s = sections.get(def.id);
       if (!s) continue;
-      // B 批：展开态大标题与收缩态小字是同名双节点，locale 切换两处同步重绘。
+      // 标题单元素化批（2026-11-02）：页名只有 .mobile-page-title 一个节点
+      // （装饰副本已退役），locale 重绘单点。
       const t = s.querySelector('.mobile-page-title');
       if (t) t.textContent = tt(def.zh, def.en);
-      const tMini = s.querySelector('.mobile-page-title-mini');
-      if (tMini) tMini.textContent = tt(def.zh, def.en);
       const b = /** @type {HTMLElement|null} */ (s.querySelector('.mobile-back-btn'));
       if (b) { b.title = backLabel(); b.setAttribute('aria-label', backLabel()); }
     }

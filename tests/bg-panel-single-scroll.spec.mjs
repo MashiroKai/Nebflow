@@ -243,17 +243,18 @@ const STRUCT_JS = `(() => {
 })()`;
 
 /** 标题行为读数（固定 / 随滚走）。
- *  titleLayoutTop = 大标题**布局流内**位置（页体盒顶 + offsetTop），不含两段式
- *  标题的 translateY 形态量（那是吸附过程的位移插值，不是滚动位移）；滚动若真
- *  把标题带走，页面体会先自己滚（页面体 scrollTop > 0）。 */
+ *  titleLayoutTop = 大标题**布局流内**位置（页体盒顶 + offsetTop），不含 sticky
+ *  钉住位移（那是吸附过程的钉扎形态量，不是滚动位移）；滚动若真把标题带走，
+ *  页面体会先自己滚（页面体 scrollTop > 0）。
+ *  标题单元素化批 2026-11-02：吸附胶囊 = .mobile-page-title 自身（装饰副本
+ *  .mobile-page-title-mini 退役）—— 壳层读数改探 ::before（玻璃层 opacity）。 */
 const TITLE_JS = `(() => {
   const sec = document.querySelector('.mobile-page[data-page="background"]');
   const title = sec.querySelector('.mobile-page-title');
-  const mini = sec.querySelector('.mobile-page-title-mini');
   const bodyEl = sec.querySelector('.mobile-page-body');
   const tb = title.getBoundingClientRect();
-  const mb = mini.getBoundingClientRect();
   const bb = bodyEl.getBoundingClientRect();
+  const before = getComputedStyle(title, '::before');
   return {
     paneScroll: sec.classList.contains('mpt-pane-scroll'),
     rolled: sec.classList.contains('rolled'),
@@ -264,8 +265,8 @@ const TITLE_JS = `(() => {
     bodyScrollTop: bodyEl.scrollTop,
     bodySurplus: bodyEl.scrollHeight - bodyEl.clientHeight,
     titleOpacity: Math.round(parseFloat(getComputedStyle(title).opacity) * 100) / 100,
-    miniOpacity: Math.round(parseFloat(getComputedStyle(mini).opacity) * 100) / 100,
-    miniTop: Math.round(mb.top), miniH: Math.round(mb.height),
+    shellOpacity: Math.round(parseFloat(before.opacity) * 100) / 100,
+    shellTop: Math.round(tb.top), shellH: Math.round(tb.height),
     scrollTop: (() => {
       const c = sec.querySelector('.mobile-page-body > #bg-dropdown');
       return c ? c.scrollTop : -1;
@@ -378,7 +379,9 @@ test.describe('mobile 375', () => {
     // （navController.js:246），故这里按真实用户动作取样：静止 → 小幅滚动 → 触底
     // → 回顶，逐态读标题几何（标题盒顶是否随内容位移）。
     const tRest = await page.evaluate(TITLE_JS);
-    expect(tRest.titlePos, '标题腿：大标题在流内（static）').toBe('static');
+    // 标题单元素化批 2026-11-02：载体 = 同一元素 sticky 原地收缩（旧两段式的
+    // 「流内 static 大标题 + 绝对装饰副本」退役），故钉的是 sticky。
+    expect(tRest.titlePos, '标题腿：大标题钉在原位（sticky）').toBe('sticky');
     expect(tRest.titleH, '标题腿：静止态大标题盒高 52').toBe(52);
     await page.evaluate(() => {
       const c = document.querySelector('.mobile-page[data-page="background"] .mobile-page-body > #bg-dropdown');
@@ -388,7 +391,11 @@ test.describe('mobile 375', () => {
     await page.waitForTimeout(200);
     const t0 = await page.evaluate(TITLE_JS);
     expect(t0.paneScroll, '标题腿：.mpt-pane-scroll 成立（主滚轴在面板内，不是页面体）').toBe(true);
-    expect(t0.titleLayoutTop, '标题腿：面板滚动时大标题仍在文档流原位（不随内容滚走）').toBe(tRest.titleLayoutTop);
+    // 标题单元素化批 2026-11-02：标题的**流内**位置随形态量移动（margin-top
+    // 0→4px 的插值，p≈0.46 ⇒ +2px），那不是滚动位移 —— 判据改为「流内位移
+    // 只能 ≤ 形态量上限 4px」：真若随内容滚走，scrollTop 30 会带来 ≥30px 的位移。
+    const flowShift = Math.abs(t0.titleLayoutTop - tRest.titleLayoutTop);
+    expect(flowShift, `标题腿：面板滚动时大标题不随内容滚走（流内位移 ${flowShift}px 只能来自形态量 ≤4px）`).toBeLessThanOrEqual(4);
     expect(t0.bodyScrollTop, '标题腿：页面体自身不滚（scrollTop 恒 0）').toBe(0);
 
     // ── V2/V3 连贯滚动到底 + 不遮挡 ──
@@ -409,13 +416,16 @@ test.describe('mobile 375', () => {
     expect(b.carrierPadBottom, '安全区：载体底内距 ≥ 12px').toBeGreaterThanOrEqual(12);
     expect(b.minRowH, `热区：行最小高 ≥ 44px（实得 ${b.minRowH}px）`).toBeGreaterThanOrEqual(44);
 
-    // ── 标题腿（滚到底）：大标题不随内容滚走、吸附态由胶囊接棒 ──
+    // ── 标题腿（滚到底）：大标题不随内容滚走、吸附态由同一元素胶囊档接棒 ──
     const t1 = await page.evaluate(TITLE_JS);
     console.log('[title] rest=' + JSON.stringify(tRest) + ' mid=' + JSON.stringify(t0) + ' bottom=' + JSON.stringify(t1));
-    expect(t1.titleLayoutTop, '标题腿：滚到底后大标题仍在文档流原位（不随内容滚走）').toBe(tRest.titleLayoutTop);
+    // 标题单元素化批 2026-11-02：流内位置含形态量（margin-top 0→4p），判据 =
+    // 位移 ≤ 4px 上限（随内容滚走会是 ≥ 滚距的量级）。
+    const flowShift1 = Math.abs(t1.titleLayoutTop - tRest.titleLayoutTop);
+    expect(flowShift1, `标题腿：滚到底后大标题不随内容滚走（位移 ${flowShift1}px ≤ 形态量上限 4px）`).toBeLessThanOrEqual(4);
     expect(t1.p, '标题腿：滚到底进度 p = 1').toBe(1);
     expect(t1.rolled, '标题腿：吸附判据 .rolled 成立').toBe(true);
-    expect(t1.miniOpacity, '标题腿：吸附胶囊 opacity = 1').toBe(1);
+    expect(t1.shellOpacity, '标题腿：吸附壳层（同一元素 ::before 玻璃层）opacity = 1').toBe(1);
 
     // ── V5 分组卡片仍在 ──
     expect(b.groupTitles.some((x) => /智能体/.test(x)), `V5 分组标题「智能体 · N」应仍渲染（实得 ${JSON.stringify(b.groupTitles)}）`).toBe(true);

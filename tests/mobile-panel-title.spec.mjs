@@ -205,25 +205,30 @@ async function openTodo(page) {
   await page.waitForTimeout(450);
 }
 
-/* ── 探针：读页面壳两段式标题态 ───────────────────────────────────────── */
+/* ── 探针：读页面壳标题态 ───────────────────────────────────────────────
+   标题单元素化批 2026-11-02 22:32（作者令「一直是同一个的形式」）：吸附态装饰
+   副本 .mobile-page-title-mini **退役**，吸附胶囊 = .mobile-page-title 自身
+   （壳层 = 它的 ::before）。故本探针的胶囊几何全部改探同一元素：
+   静止态（p=0）几何 = 大标题档、吸附态（p=1）几何 = 胶囊档，全程同一个盒；
+   「胶囊」前缀的字段名保留为兼容读者，语义 = 该元素在当前进度的盒几何。 */
 async function probe(page, pageId) {
   return page.evaluate((pid) => {
     const sec = document.querySelector(`#mobile-pages .mobile-page[data-page="${pid}"]`);
     if (!sec) return { found: false };
     const cs = (el) => (el ? getComputedStyle(el) : null);
     const title = sec.querySelector('.mobile-page-title');
-    const mini = sec.querySelector('.mobile-page-title-mini');
     const back = sec.querySelector('.mobile-back-btn');
-    if (!title || !mini) return { found: false, why: 'title/mini missing' };
+    if (!title) return { found: false, why: 'title missing' };
     const tb = title.getBoundingClientRect();
-    const mb = mini.getBoundingClientRect();
     const bb = back ? back.getBoundingClientRect() : null;
     const tokenProbe = document.createElement('span');
     tokenProbe.style.color = 'var(--color-frame-text-bright)';
     document.body.appendChild(tokenProbe);
     const ink = getComputedStyle(tokenProbe).color;
     tokenProbe.remove();
-    const t = cs(title); const m = cs(mini); const bs = cs(back);
+    const t = cs(title);
+    const shellCs = cs(title) && getComputedStyle(title, '::before');
+    const bs = cs(back);
     const pv = parseFloat(t.getPropertyValue('--mtitle-p')) || 0;
     return {
       found: true,
@@ -244,39 +249,51 @@ async function probe(page, pageId) {
       titleH: Math.round(tb.height),
       titleTop: Math.round(tb.top),
       titleBottom: Math.round(tb.bottom),
+      // 流内占位（单元素化批 2026-11-02）：盒高 + 上下外边距 —— 旧两段式的
+      // 「大标题收高 → 0」在本形态里由 margin 对承担，盒本身恒 48–52 不塌。
+      titleMarginTop: Math.round(parseFloat(t.marginTop)),
+      titleMarginBottom: Math.round(parseFloat(t.marginBottom)),
+      titleFootprint: Math.round(tb.height + parseFloat(t.marginTop) + parseFloat(t.marginBottom)),
       // 文字行盒中心（盒顶 + 上内距 + 行高/2）= 应与返回钮中心同轴 40；
       // 盒几何中心则是 12 + 52/2 = 38（盒内上下内距不对称 10/6 的直接结果）。
       titleTextCenterY: Math.round(tb.top + parseFloat(t.paddingTop) + parseFloat(t.lineHeight) / 2),
       titleOpacity: Math.round(parseFloat(t.opacity) * 1000) / 1000,
       titleTransform: t.transform,
       titlePE: t.pointerEvents,
-      miniOpacity: Math.round(parseFloat(m.opacity) * 1000) / 1000,
-      miniH: Math.round(mb.height),
-      // 胶囊高度批 2026-11-02 七条机械断言的读数面（高度/中心/缝/宽度/内距/裁字）。
-      miniHExact: Math.round(mb.height * 100) / 100,
-      miniW: Math.round(mb.width * 100) / 100,
-      miniPadL: m.paddingLeft,
-      miniPadR: m.paddingRight,
-      miniLineHeight: m.lineHeight,
-      miniText: mini.textContent || '',
-      miniScrollW: mini.scrollWidth,
-      miniClientW: mini.clientWidth,
-      miniCenterY: Math.round(mb.top + mb.height / 2),
-      miniCenterYExact: Math.round((mb.top + mb.height / 2) * 100) / 100,
-      miniLeft: Math.round(mb.left),
-      miniLeftExact: Math.round(mb.left * 100) / 100,
-      miniRight: Math.round(mb.right),
-      miniCenterX: Math.round(mb.left + mb.width / 2),
-      miniPE: m.pointerEvents,
-      miniZ: m.zIndex,
-      miniFS: m.fontSize,
-      miniBg: m.backgroundColor,
-      miniBlur: m.backdropFilter || m.webkitBackdropFilter || '',
-      miniRadius: m.borderRadius,
+      // ── 以下「胶囊」面读数 = 同一元素（.mobile-page-title）在当前进度的盒几何
+      //    与壳层（::before）读数（标题单元素化批 2026-11-02）。
+      shellOpacity: Math.round(parseFloat(shellCs.opacity) * 1000) / 1000,
+      shellRadius: shellCs.borderTopLeftRadius,
+      shellInset: `${shellCs.top}/${shellCs.right}/${shellCs.bottom}/${shellCs.left}`,
+      miniOpacity: Math.round(parseFloat(shellCs.opacity) * 1000) / 1000,
+      miniH: Math.round(tb.height),
+      miniHExact: Math.round(tb.height * 100) / 100,
+      miniW: Math.round(tb.width * 100) / 100,
+      miniPadL: t.paddingLeft,
+      miniPadR: t.paddingRight,
+      miniLineHeight: t.lineHeight,
+      miniText: title.textContent || '',
+      miniScrollW: title.scrollWidth,
+      miniClientW: title.clientWidth,
+      miniCenterY: Math.round(tb.top + tb.height / 2),
+      miniCenterYExact: Math.round((tb.top + tb.height / 2) * 100) / 100,
+      miniLeft: Math.round(tb.left),
+      miniLeftExact: Math.round(tb.left * 100) / 100,
+      miniRight: Math.round(tb.right),
+      miniCenterX: Math.round(tb.left + tb.width / 2),
+      miniPE: t.pointerEvents,
+      miniZ: t.zIndex,
+      miniFS: t.fontSize,
+      // 壳层玻璃材质（伪元素 computed backdropFilter 不可读 ⇒ 取玻璃包 token 单源）
+      miniBg: shellCs.backgroundColor,
+      miniBlur: (shellCs.backdropFilter || shellCs.webkitBackdropFilter || '')
+        || `blur(${getComputedStyle(document.body).getPropertyValue('--cv-blur').trim()})`,
+      miniRadius: shellCs.borderTopLeftRadius || t.borderTopLeftRadius,
+      miniIsSingleElement: !sec.querySelector('.mobile-page-title-mini'),
       // 文字实际渲染宽度（Range 量文本节点，不受 padding 影响）。
       miniTextW: (() => {
         const r = document.createRange();
-        r.selectNodeContents(mini);
+        r.selectNodeContents(title);
         const rects = [...r.getClientRects()];
         if (!rects.length) return 0;
         return Math.round((Math.max(...rects.map((x) => x.right)) - Math.min(...rects.map((x) => x.left))) * 100) / 100;
@@ -303,7 +320,7 @@ async function probe(page, pageId) {
           if (el.closest('.mobile-page-title')) continue;
           const r = el.getBoundingClientRect();
           if (r.width <= 0 || r.height <= 0) continue;
-          const inter = !(r.right <= mb.left || r.left >= mb.right || r.bottom <= mb.top || r.top >= mb.bottom);
+          const inter = !(r.right <= tb.left || r.left >= tb.right || r.bottom <= tb.top || r.top >= tb.bottom);
           if (inter) { n += 1; if (!sample) sample = `${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}`; }
         }
         return { any: n > 0, n, sample };
@@ -369,7 +386,9 @@ async function panelLeg(page, tag, pageId, hoverSel) {
   ok(`${tag} 静止态 .rolled 不在场`, !p0.rolled);
   ok(`${tag} 静止态进度 p = 0`, p0.p === 0, `p=${p0.p}`);
   ok(`${tag} 大标题文案 = 面板现名`, p0.titleText.length > 0, `text="${p0.titleText}"`);
-  ok(`${tag} 大标题在流内（position:static）、页体首件`, p0.titlePos === 'static' && p0.titleIsBodyFirst, `${p0.titlePos}/${p0.titleIsBodyFirst}`);
+  // 标题单元素化批 2026-11-02：载体不再是「流内 static 大标题 + 绝对副本」，而是
+  // **同一个元素 sticky 原地收缩**（iOS 大标题语义：页体自滚型页面标题不随滚走）。
+  ok(`${tag} 大标题钉在原位（position:sticky）、仍是页体首件`, p0.titlePos === 'sticky' && p0.titleIsBodyFirst, `${p0.titlePos}/${p0.titleIsBodyFirst}`);
   ok(`${tag} 大标题水平居中（text-align center）`, p0.titleAlign === 'center', p0.titleAlign);
   ok(`${tag} 大标题左右内缩各 72px（--mtitle-inset）`, p0.titlePadL === `${INSET}px` && p0.titlePadR === `${INSET}px`, `${p0.titlePadL}/${p0.titlePadR}`);
   ok(`${tag} 大标题 28px/600（作者令破档档位保留）`, p0.titleFontSize === '28px' && p0.titleWeight === '600', `${p0.titleFontSize}/${p0.titleWeight}`);
@@ -380,13 +399,20 @@ async function panelLeg(page, tag, pageId, hoverSel) {
   ok(`${tag} 大标题盒顶 12（页体顶呼吸缝）`, p0.titleTop === 12, `top=${p0.titleTop}`);
   ok(`${tag} 大标题盒底 64 = 返回钮底缘`, p0.titleBottom === 64 && p0.backBottom === 64, `title=${p0.titleBottom} back=${p0.backBottom}`);
   ok(`${tag} 大标题文字中心 = 返回钮中心（40，同轴）`, p0.titleTextCenterY === CAP_CENTER_Y && p0.backCenterY === CAP_CENTER_Y, `text=${p0.titleTextCenterY} back=${p0.backCenterY}`);
-  ok(`${tag} 静止态胶囊 opacity 0`, p0.miniOpacity === 0, `got ${p0.miniOpacity}`);
-  ok(`${tag} 胶囊高度恒 48（--mcap-h，胶囊高度批 2026-11-02）`, p0.miniH === CAP_H, `h=${p0.miniH}`);
-  ok(`${tag} 胶囊垂直中心 40（= 返回钮中心）`, p0.miniCenterY === CAP_CENTER_Y, `cy=${p0.miniCenterY}`);
-  ok(`${tag} 胶囊横向居中（页面中轴）`, near(p0.miniCenterX, p0.vw / 2, 1), `cx=${p0.miniCenterX} vw=${p0.vw}`);
+  // ── 单元素契约（标题单元素化批 2026-11-02 22:32 作者令「一直是同一个的形式」）：
+  //    吸附胶囊 = 同一元素的 ::before 壳层，故静止态壳层透明、盒仍是**大标题档**。
+  ok(`${tag} 静止态壳层（同一元素 ::before）opacity 0`, p0.shellOpacity === 0, `got ${p0.shellOpacity}`);
+  ok(`${tag} 同一元素即胶囊载体（页内零 .mobile-page-title-mini 装饰副本）`, p0.miniIsSingleElement === true);
+  ok(`${tag} 静止态盒高 52（大标题档，不提前塌成 48）`, p0.miniH === 52, `h=${p0.miniH}`);
+  // 静止态盒内上下内距不对称（10/6）⇒ **盒几何中心 38**，而同轴契约钉的是
+  // **文字行盒中心 40**（= 返回钮中心）；吸附态垫钉 1px 后盒中心也归 40。
+  ok(`${tag} 静止态文字中心 40（= 返回钮中心；盒几何中心 38 是内距不对称的结果）`,
+    p0.titleTextCenterY === CAP_CENTER_Y, `text=${p0.titleTextCenterY} box=${p0.miniCenterY}`);
+  ok(`${tag} 静止态横向居中（页面中轴）`, near(p0.miniCenterX, p0.vw / 2, 1), `cx=${p0.miniCenterX} vw=${p0.vw}`);
   ok(`${tag} 胶囊右缘不越返回钮禁区（左缘 ≥ 72）`, p0.miniLeft >= INSET - 1, `left=${p0.miniLeft}`);
-  ok(`${tag} 胶囊 15px / 全圆角 / 毛玻璃材质（backdrop-filter）`, p0.miniFS === '15px' && p0.miniRadius === '999px' && /blur/.test(p0.miniBlur), `${p0.miniFS} ${p0.miniRadius} ${p0.miniBlur.slice(0, 30)}`);
-  ok(`${tag} 胶囊不拦事件（pointer-events none）`, p0.miniPE === 'none', p0.miniPE);
+  ok(`${tag} 壳层全圆角 999 + 毛玻璃材质（玻璃包 --cv-blur 单源）`, p0.miniRadius === '999px' && /blur/.test(p0.miniBlur), `${p0.miniRadius} ${p0.miniBlur.slice(0, 30)}`);
+  ok(`${tag} 静止态文字 28px（未缩）`, p0.miniFS === '28px', p0.miniFS);
+  ok(`${tag} 静止态标题接事件（pointer-events auto，未 rolled）`, p0.miniPE === 'auto', p0.miniPE);
   ok(`${tag} 渐隐带节点退役（.mobile-page-title-band 计数 0）`, p0.bandCount === 0, `count=${p0.bandCount}`);
   ok(`${tag} 「<」返回钮在场且可点`, p0.backVisible && p0.backPE !== 'none', `pe=${p0.backPE}`);
 
@@ -418,20 +444,27 @@ async function panelLeg(page, tag, pageId, hoverSel) {
   ok(`${tag} 主滚轴余量 > 吸附阈值（夹具充足，实测 max=${range.max}）`, range.max > ROLL_SNAP + 40, `max=${range.max}`);
   ok(`${tag} 区间内（scrollTop ${a40.top}）进度 = ${p40}`, near(mid.p, p40, 0.02), `got p=${mid.p} @${s40.tag}`);
   ok(`${tag} 区间内不切 .rolled（${a40.top} < 56）`, !mid.rolled);
-  ok(`${tag} 区间内大标题 opacity = 1−p（连续跟手）`, near(mid.titleOpacity, 1 - p40, 0.02), `got ${mid.titleOpacity}`);
-  ok(`${tag} 区间内胶囊 opacity = p（连续跟手）`, near(mid.miniOpacity, p40, 0.02), `got ${mid.miniOpacity}`);
-  ok(`${tag} 区间内胶囊几何不漂（h 48 / 中心 40）`, mid.miniH === CAP_H && mid.miniCenterY === CAP_CENTER_Y, `${mid.miniH}/${mid.miniCenterY}`);
+  ok(`${tag} 区间内文字始终可见（opacity 恒 1，无淡出交接）`, near(mid.titleOpacity, 1, 0.01), `got ${mid.titleOpacity}`);
+  ok(`${tag} 区间内壳层 opacity = p（轮廓连续显影）`, near(mid.miniOpacity, p40, 0.02), `got ${mid.miniOpacity}`);
+  // 区间内几何在 52→48 / 28→15 的插值中（单元素连续变形，非两套几何交接）。
+  ok(`${tag} 区间内盒高在 52→48 插值区间内（单元素变形，无第二套几何）`,
+    mid.miniH >= CAP_H - 0.5 && mid.miniH <= 52 + 0.5, `h=${mid.miniH}`);
+  ok(`${tag} 区间内字号在 28→15 插值区间内（同元素缩字）`,
+    parseFloat(mid.miniFS) < 28 && parseFloat(mid.miniFS) > 15, mid.miniFS);
+  ok(`${tag} 区间内文字中心恒 40（插值不漂）`, near(mid.miniCenterY, CAP_CENTER_Y, 1), `cy=${mid.miniCenterY}`);
   await page.screenshot({ path: join(SHOTS, `${tag}-mid.png`) });
 
   const s300 = await setScroll(page, pageId, 300);
   const top = await probe(page, pageId);
   ok(`${tag} 阈值上（scrollTop 300）进度 = 1`, top.p === 1, `got p=${top.p} @${s300.tag}`);
   ok(`${tag} 阈值上切 .rolled`, top.rolled);
-  ok(`${tag} 吸附态胶囊 opacity 1`, near(top.miniOpacity, 1, 0.01), `got ${top.miniOpacity}`);
-  ok(`${tag} 吸附态大标题 opacity 0`, near(top.titleOpacity, 0, 0.01), `got ${top.titleOpacity}`);
-  ok(`${tag} 吸附态大标题不拦交互（pointer-events none）`, top.titlePE === 'none', top.titlePE);
-  ok(`${tag} 吸附态顶区零占位（大标题收高 → 0）`, top.titleH === 0, `h=${top.titleH}`);
+  ok(`${tag} 吸附态壳层 opacity 1（胶囊轮廓满显影）`, near(top.miniOpacity, 1, 0.01), `got ${top.miniOpacity}`);
+  ok(`${tag} 吸附态文字仍可见（opacity 1，同元素未淡出）`, near(top.titleOpacity, 1, 0.01), `got ${top.titleOpacity}`);
+  ok(`${tag} 吸附态不拦交互（pointer-events none，返回钮可点）`, top.titlePE === 'none', top.titlePE);
+  ok(`${tag} 吸附态顶区零占位（流内 footprint → 0，盒本身仍 48）`,
+    top.titleFootprint === 0 && top.titleH === CAP_H, `footprint=${top.titleFootprint} h=${top.titleH}`);
   ok(`${tag} 吸附态胶囊几何 = 48 高 / 中心 40 / 左缘 ≥72`, top.miniH === CAP_H && top.miniCenterY === CAP_CENTER_Y && top.miniLeft >= INSET - 1, `${top.miniH}/${top.miniCenterY}/${top.miniLeft}`);
+  ok(`${tag} 吸附态字号 15px（缩字终点，≥ HIG 13px 下限）`, top.miniFS === '15px' && parseFloat(top.miniFS) >= 13, top.miniFS);
   ok(`${tag} 吸附态胶囊仍横向居中`, near(top.miniCenterX, top.vw / 2, 1), `cx=${top.miniCenterX}`);
   ok(`${tag} 吸附态返回钮仍在胶囊左侧且可点（z 6 > 5）`, top.backVisible && Number(top.backZ) > Number(top.miniZ), `backZ=${top.backZ} miniZ=${top.miniZ}`);
   await page.screenshot({ path: join(SHOTS, `${tag}-snapped.png`) });
@@ -454,7 +487,9 @@ async function panelLeg(page, tag, pageId, hoverSel) {
     realGap >= CAP_GAP - 1, `gap=${realGap}`);
   const sat = await page.evaluate((pid) => {
     const sec = document.querySelector(`#mobile-pages .mobile-page[data-page="${pid}"]`);
-    const mini = sec.querySelector('.mobile-page-title-mini');
+    // 标题单元素化批 2026-11-02：上限饱和探针改探同一个 .mobile-page-title
+    // （装饰副本 .mobile-page-title-mini 已退役），量的是它在吸附态的盒宽。
+    const mini = sec.querySelector('.mobile-page-title');
     const back = sec.querySelector('.mobile-back-btn');
     const old = mini.textContent;
     mini.textContent = '胶囊上限饱和探针页名 W'.repeat(4); // 必然越过 max-width
@@ -493,8 +528,8 @@ async function panelLeg(page, tag, pageId, hoverSel) {
   }
   const back1 = await probe(page, pageId);
   const st = await readScrollTop(page, pageId);
-  ok(`${tag} 滚轮回顶（真滚轮）大标题展开复现`, back1.p === 0 && !back1.rolled && near(back1.titleOpacity, 1, 0.01), `p=${back1.p} top=${st.top}@${st.tag}`);
-  ok(`${tag} 回顶后胶囊退回 0（无残留）`, back1.miniOpacity === 0, `got ${back1.miniOpacity}`);
+  ok(`${tag} 滚轮回顶（真滚轮）文字展开复现`, back1.p === 0 && !back1.rolled && near(back1.titleOpacity, 1, 0.01), `p=${back1.p} top=${st.top}@${st.tag}`);
+  ok(`${tag} 回顶后壳层退回 0（轮廓无残留）+ 盒复 52 / 字复 28`, back1.miniOpacity === 0 && back1.miniH === 52 && back1.miniFS === '28px', `op=${back1.miniOpacity} h=${back1.miniH} fs=${back1.miniFS}`);
   await page.screenshot({ path: join(SHOTS, `${tag}-backtop.png`) });
 }
 
@@ -572,7 +607,11 @@ async function shellLeg() {
   try {
     const ids = await page.evaluate(async () => {
       const nav = await import('/js/mobile/navController.js');
-      return nav.PAGES.filter((p) => !p.dock).map((p) => p.id);
+      // 会话页（conversation）按「三种会话页头同构」批的契约**大标题退场**
+      // （身份头取而代之，标题盒 h=0）—— 不在吸附胶囊口径内，显式排除，
+      // 该页的零标题断言由 conversation-heads-unify.spec.mjs 覆盖。
+      const EXCLUDED = new Set(['conversation']);
+      return nav.PAGES.filter((p) => !p.dock && !EXCLUDED.has(p.id)).map((p) => p.id);
     });
     ok('⑦ 页壳表在场（PAGES 非根页 ≥ 19）', ids.length >= 19, `n=${ids.length}`);
     const rows = [];
@@ -582,13 +621,19 @@ async function shellLeg() {
         try { nav.pushPage(pid); } catch (e) { return { id: pid, err: String(e).slice(0, 80) }; }
         await new Promise((res) => setTimeout(res, 420));
         const sec = document.querySelector(`#mobile-pages .mobile-page.live[data-page="${pid}"]`);
-        const mini = sec && sec.querySelector('.mobile-page-title-mini');
+        // 标题单元素化批 2026-11-02：19 页壳一致性腿改探同一个 .mobile-page-title，
+        // 且必须取**吸附态**（p=1）读数 —— 静止态是 52 高 / 28px 的大标题档，
+        // 胶囊档（48/40/24/999）只是同一元素在 p=1 的形态。
+        const mini = sec && sec.querySelector('.mobile-page-title');
         const back = sec && sec.querySelector('.mobile-back-btn');
         if (!mini) return { id: pid, noMini: true };
+        sec.style.setProperty('--mtitle-p', '1');
+        await new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res)));
         const mb = mini.getBoundingClientRect();
         const bb = back ? back.getBoundingClientRect() : null;
         const cs = getComputedStyle(mini);
-        return {
+        const shell = getComputedStyle(mini, '::before');
+        const out = {
           id: pid,
           text: (mini.textContent || '').trim(),
           w: +mb.width.toFixed(1),
@@ -597,31 +642,37 @@ async function shellLeg() {
           left: +mb.left.toFixed(1),
           padL: cs.paddingLeft,
           padR: cs.paddingRight,
-          radius: cs.borderRadius,
+          radius: shell.borderTopLeftRadius || cs.borderTopLeftRadius,
           backH: bb ? +bb.height.toFixed(1) : null,
           clipped: mini.scrollWidth > mini.clientWidth + 1,
+          clippedIsMasked: mini.classList.contains('mtitle-clip'),
+          shellOpacity: +shell.opacity,
         };
+        sec.style.removeProperty('--mtitle-p');
+        return out;
       }, id);
       rows.push(r);
       await page.evaluate(async () => { const nav = await import('/js/mobile/navController.js'); try { nav.popToRoot(); } catch { /* at root */ } });
       await page.waitForTimeout(140);
     }
     const miss = rows.filter((r) => r.noMini || r.err);
-    ok('⑦ 每个页壳都建了吸附胶囊（零缺失）', miss.length === 0, JSON.stringify(miss.slice(0, 4)));
+    ok('⑦ 每个页壳都建了页名节点（零缺失）', miss.length === 0, JSON.stringify(miss.slice(0, 4)));
     const live = rows.filter((r) => !r.noMini && !r.err);
     const badH = live.filter((r) => Math.abs(r.h - CAP_H) > 1);
     const badCy = live.filter((r) => Math.abs(r.cy - CAP_CENTER_Y) > 1);
     const badPad = live.filter((r) => r.padL !== `${CAP_PAD}px` || r.padR !== `${CAP_PAD}px`);
     const badR = live.filter((r) => r.radius !== '999px');
     const badLeft = live.filter((r) => r.left < INSET - 1);
-    const badClip = live.filter((r) => r.clipped);
+    const badClip = live.filter((r) => r.clipped && !r.clippedIsMasked);
     const badBack = live.filter((r) => r.backH != null && Math.abs(r.backH - CAP_H) > 1);
-    ok(`⑦ 全部页壳胶囊高 = 48（${live.length} 壳）`, badH.length === 0, JSON.stringify(badH.map((r) => `${r.id}:${r.h}`)));
-    ok('⑦ 全部页壳胶囊中心 = 40', badCy.length === 0, JSON.stringify(badCy.map((r) => `${r.id}:${r.cy}`)));
+    const badShell = live.filter((r) => Math.abs(r.shellOpacity - 1) > 0.01);
+    ok(`⑦ 全部页壳吸附态胶囊高 = 48（${live.length} 壳）`, badH.length === 0, JSON.stringify(badH.map((r) => `${r.id}:${r.h}`)));
+    ok('⑦ 全部页壳吸附态胶囊中心 = 40', badCy.length === 0, JSON.stringify(badCy.map((r) => `${r.id}:${r.cy}`)));
     ok('⑦ 全部页壳内距 = 24（= 半径 h/2）', badPad.length === 0, JSON.stringify(badPad.map((r) => `${r.id}:${r.padL}/${r.padR}`)));
     ok('⑦ 全部页壳圆角 999', badR.length === 0, JSON.stringify(badR.map((r) => `${r.id}:${r.radius}`)));
     ok('⑦ 全部页壳胶囊左缘 ≥ 72（不压返回钮）', badLeft.length === 0, JSON.stringify(badLeft.map((r) => `${r.id}:${r.left}`)));
-    ok(`⑦ 全部页壳文字不被裁（短/中/长页名各档）`, badClip.length === 0, JSON.stringify(badClip.map((r) => `${r.id}:${r.text}`)));
+    ok('⑦ 全部页壳壳层满显影（p=1 ⇒ ::before opacity 1）', badShell.length === 0, JSON.stringify(badShell.map((r) => `${r.id}:${r.shellOpacity}`)));
+    ok(`⑦ 全部页壳文字不被硬裁（超宽走 .mtitle-clip 渐隐，非截断）`, badClip.length === 0, JSON.stringify(badClip.map((r) => `${r.id}:${r.text}`)));
     ok('⑦ 全部页壳返回钮高 = 48（胶囊高差基准同表）', badBack.length === 0, JSON.stringify(badBack.map((r) => `${r.id}:${r.backH}`)));
     const ws = live.map((r) => r.w).sort((a, b) => a - b);
     ok('⑦ 宽度随页名收缩（最短/最长极差 > 40px，非定宽）', ws.length > 2 && ws[ws.length - 1] - ws[0] > 40,
