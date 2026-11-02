@@ -100,6 +100,13 @@
   <!-- sapphire.css loads LAST: it is the design-system standard layer.
        Its grouped glass-control rules must win equal-specificity ties
        against feature CSS hover/base states. -->
+  <!-- 设计体系令牌层 + 组件类层（`.ds-*`，本批 design-system-token-batch）：
+       规范权威 = seed/plugins/design-language SKILL.md 八节表；本文件把
+       「圆角 8 档 / 字号 5 档 / 4px 间距 / 热区档」第一次落成具名令牌，
+       供门禁 scripts/check-design-tokens.mjs 判定。只新增 `--ds-*` 命名空间，
+       不覆盖任何既有 token ⇒ 零回归面。置于 sapphire 之前（sapphire 仍是
+       最后加载的设计系统标准层）。 -->
+  <link rel="stylesheet" href="css/design-system.css">
   <link rel="stylesheet" href="css/sapphire.css">
   <!-- 全站玻璃单源包（统一按钮+玻璃批 2026-11-01，设计稿 cc28a33e §3/§4）：
        取代 liquid-glass.css（F1 配方退役）——玻璃配方单文件（气泡半透明实底

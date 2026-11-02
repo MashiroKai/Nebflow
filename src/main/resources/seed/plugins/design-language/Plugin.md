@@ -38,7 +38,7 @@ design-language/                 （包根）
 | components.css | 组件原型参考实现 | 新建组件前先查有没有等价原型，有则按档套用 |
 
 - **与客户端实现的关系**：客户端 `src/main/resources/web/css/`（base.css 中性阶 / sapphire.css 玻璃体系）是 token 的**运行时单源**；本包 tokens.css 是同值镜像账本。改值先改客户端 CSS，再回填本包（两处必须同值，发现漂移以客户端为准并回改本包）。
-- **与其他包的分工**：只设计不实现（规格书/视觉评审流程）另配 `design-spec`；用户视觉裁定（弹窗无遮罩、玻璃质感、字重方案 B 等硬规则）在 `frontend-dev` 的 visual-style——**裁定冲突时以 visual-style 为准**；本包管「值与档」，visual-style 管「能与不能」。
+- **包内分工**：本包自包含——值/档（取值取形）在本包 SKILL.md + tokens.css + components.css；「能与不能」的硬裁定（弹窗禁 overlay 遮罩、面板必须毛玻璃、控件统一玻璃质感、主操作实色族、字重方案 B）同在本包 §2「视觉硬裁定」节，冲突时以该节为准。
 
 ## 5. 各技能总目录
 
@@ -50,7 +50,7 @@ design-language/                 （包根）
 
 - 改/写任何 Stand 客户端 UI（面板、弹窗、卡片、按钮、列表、动效、文案）→ `design-language`。
 - 新建组件 → 先查 `components.css` 原型表，有等价物按档复用；没有 → 按 token 表补一套，并把原型回填 components.css。
-- 出设计规格书 / 做视觉评审 → 另配 `design-spec`；本包为其提供「视觉规格」节的全部取值。
+- 出设计规格书 / 做视觉评审 → 按 SKILL.md §10 使用流三步（取值 → 取形 → 截图验证）执行；规格书的「视觉规格」节全部取值来自本包 token 表。
 
 ## 7. 共享件专节
 
