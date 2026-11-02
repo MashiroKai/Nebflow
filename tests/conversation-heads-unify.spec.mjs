@@ -290,7 +290,9 @@ async function headReadings(page) {
           .filter((el) => getComputedStyle(el).display !== 'none').length,
       },
       pageTitleVisible: (() => {
-        const t = page_?.querySelector('.mobile-page-title, .mobile-page-title-mini');
+        // 标题单元素化批 2026-11-02：吸附态装饰副本 .mobile-page-title-mini 退役
+        // （页名只剩 .mobile-page-title 一个节点），这里只探主标题。
+        const t = page_?.querySelector('.mobile-page-title');
         return t ? getComputedStyle(t).display !== 'none' : false;
       })(),
       flow: r(page_?.querySelector('.fm-flow')),

@@ -191,7 +191,9 @@ const PROBE = `(() => {
     closeBtn: box(document.querySelector('.mf-cv-close')),
     stackBtn: box(document.querySelector('.mf-cv-stack')),
     askFab: box(document.querySelector('.ask-fab')),
-    capsule: box(document.querySelector('.mobile-page-title-mini')),
+    // 标题单元素化批 2026-11-02：吸附胶囊 = .mobile-page-title 自身（装饰副本
+    // .mobile-page-title-mini 退役）——钮高对照仍取「页名元素在吸附态的高」。
+    capsule: box(document.querySelector('.mobile-page-title')),
     pane: box(pane),
     panel: box(panel),
   };
@@ -225,8 +227,11 @@ function assertLeg(tag, m, leg) {
   ok(`${tag} ③ 钮高 = 钮宽 ±1（正方/正圆，${boxes.length} 件）`, square.length === 0, square.join(' ') || 'all square');
 
   // ④ 钮高 = 尺寸真值档（手机：吸附胶囊实测高；桌面：--cv-size-circle-lg）
+  // 标题单元素化批 2026-11-02：吸附胶囊 = .mobile-page-title 自身，静止态它的盒
+  // 是**大标题档 52**（胶囊档 48 只是 p=1 的形态）；故档高真值取 token
+  // `--mcap-h`（单源），不再读静止态盒高（那会读成 52）。
   const tierVal = leg === 'mobile'
-    ? (m.capsule ? m.capsule.h : parseFloat(m.tier.mcapH))
+    ? parseFloat(m.tier.mcapH)
     : parseFloat(m.tier.cvCircleLg);
   const heights = boxes.map((b) => b.r.h);
   ok(`${tag} ④ 钮高 = 档高（${leg === 'mobile' ? '吸附胶囊 --mcap-h' : '--cv-size-circle-lg'} = ${tierVal}）|差| ≤2px`,

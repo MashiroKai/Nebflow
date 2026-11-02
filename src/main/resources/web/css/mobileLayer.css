@@ -253,9 +253,12 @@ html.mobile-html-layer {
      --mcap-pad      24px 胶囊左右内距（= 圆角半径 h/2 —— 48 高下两端半圆各占
                         24px，内距取同值使文字整段落在直段内、不被圆弧压边；
                         原 16 是 32 高（半径 16）时代的同口径取值）
+     --mcap-vpad     1px 胶囊上下内距（= 壳层 1px 描边内衬：内容盒高 48 − 2×1，
+                        行高吃满后文字垂直中心 = 16 + 1 + 23 = 40 = 返回钮中心）
      --mcap-radius  999px 胶囊全圆角
-     --mcap-top      40px 胶囊垂直中心 = 返回钮中心（16 + 48/2）；高度只向上下
-                        对称生长，中心不动 ⇒ 与返回钮同轴的 40 轴线永不破
+     --mcap-top      40px 胶囊垂直中心 = 返回钮中心（16 + 48/2）；**单元素化批
+                        2026-11-02 起为派生读数**（盒顶 16 + 内距 1 + 行高/2 23），
+                        不再作为定位量使用 —— 恒等式由上面几条共同维持
 
    ── 触控热区（Apple 硬标准 44×44pt）────────────────────────────────
      --mtap           44px 可点元素最小边长（本体或 ::before 外扩命中盒）
@@ -304,6 +307,7 @@ body.mobile-layer {
   --mtitle-snap: 56px;
   --mcap-h: 48px;
   --mcap-pad: 24px;
+  --mcap-vpad: 1px;
   --mcap-radius: 999px;
   --mcap-top: 40px;
   /* 收起进度：0 = 静止大标题 / 1 = 吸附胶囊（navController.bindRollProbe 写，
@@ -791,127 +795,121 @@ body.mobile-layer .mobile-page-header {
   pointer-events: none; /* 带本体不拦截 —— 子件各自接事件（fab 层同源口径） */
   z-index: 20;
 }
-/* ═══ 面板头两段式标题（两段式标题批 2026-11-02 作者令，实拍 IMG_1677/1678）
-   承接「面板头标识 B 形态（2026-11-01 17:01 选型 B · iOS 大标题式）」，
-   **形态两段化、字号档与内容布局零触碰**：
+/* ═══ 面板头标题「大标题 → 胶囊」**单元素连续变形**（标题单元素化批
+   2026-11-02 22:32 作者令，实拍双影：「我们现在面板的这个胶囊态 是两个割裂的
+   形态 所以会出现两个重叠的现象 但是我想要的是文字逐渐缩小 然后胶囊轮廓逐渐
+   显现的这种 两种形态平滑过渡 且一直是同一个的形式」）
 
-   ① 静止态 = 页体流内首件大标题，**水平居中**（B 批左对齐退役）。字号仍取
-      --mfs-title（28px/600 · 字距 -0.01em —— 28px 是作者令有意破「页面级
-      20px」档的档位，保留不动）；左右内缩 --mtitle-inset（72 = 返回钮左 16
-      + 钮宽 48 + 缝 8）⇒ 居中大标题与左上返回钮**横向零重叠**、视觉重心落在
-      面板中轴；盒高 --mtitle-h（52 = 上 10 + 行 36 + 下 6，行高 36 = 1.286×28）
-      ⇒ 文字垂直中心 = 12 + 10 + 18 = 40 = 返回钮中心（16 + 48/2），两件同轴。
+   承接「面板头两段式标题批」（下方留档）：旧实现 = 大标题盒收高淡出 ∪ 同名
+   装饰副本（.mobile-page-title-mini）胶囊浮层各自按 --mtitle-p 交叉淡入淡出
+   —— 两套 DOM 交接，交接区间两份同名文字同屏（作者实拍双影）。本批并一套：
 
-   ② 吸附态 = 同一份页名的**装饰副本**（.mobile-page-title-mini）收成一颗
-      毛玻璃胶囊：高 --mcap-h 48（= 返回钮高；胶囊高度批 2026-11-02 作者令
-      「胶囊大小要和返回按钮上下宽度差不多大」——原 32 比 48 的返回钮矮 16，
-      两件并排时胶囊显得轻飘。高度只向上下对称生长，垂直中心仍 --mcap-top 40）、
-      全圆角 --mcap-radius 999 ⇒ 48 高下两端半径 = 24 的半圆，故左右内距
-      --mcap-pad 同步取 24（= 半径，文字整段落在直段内、不被圆弧压边；原 16
-      是 32 高时代半径 16 的同口径取值）、左右外缩同 --mtitle-inset（胶囊左缘
-      72 = 返回钮右缘 64 + 8 缝；高度变大不改横向，缝恒 8）、垂直中心
-      --mcap-top 40（= 返回钮中心）。**绝对悬浮在零高页头带里**，不占页面体
-      任何高度 ⇒ 内容继续从胶囊下方流过（不是被胶囊压下去）。材质走玻璃样式包
-      **单源**：--cv-bg / --cv-blur / --cv-saturate / --cv-border / --cv-shadow
-      （sapphire.css 全站悬浮控件 token 块 → glass.css 组装，--glass-* 双主题
-      自随），本文件零新色值；no-backdrop 降级（旧 WebView/X5）在 glass.css
-      同族名单补登实底。
+   ① 唯一元素 = 页体流内首件大标题（.mobile-page-title；DOM/聚焦/locale 重绘
+      既有查询点零改）。装饰副本节点退役（navController.js 不再建）。
 
-   ③ 两段之间 = **滚动跟随的连续插值**：进度 --mtitle-p 0→1（navController.js
-      bindRollProbe 按主滚轴 scrollTop 写，区间 --mtitle-start 8 → --mtitle-snap
-      56）。大标题 opacity/位移/收高按 (1−p) 递减，胶囊 opacity 按 p 递增
-      —— 手感随指，无阈值跳变；回滚反向插值即平滑展开。reduced-motion 由 JS
-      写二值进度（0/1，瞬时换形）+ 文件尾摘掉唯一位移量 ⇒ 无动画。
+   ② 同一元素全量插值（全部挂 --mtitle-p；无 transition —— 逐帧跟手，禁止
+      插值滞后于手指）：
+      · 文字：font-size 28 → 15px（--mfs-title → --mfs-title-mini，全程 ≥
+        13px HIG 下限）、字距 −0.01em → 0、行高 36 → 46（盒高公式自然带出）；
+      · 盒：高 52 → 48（**底缘恒 64** = 返回钮底缘；盒顶 12 → 16）、左右内距
+        72 → 24（= --mcap-pad 半径档）、宽度 max-content 随字收缩（零固定宽，
+        无宽度跳变）、水平 margin auto 居中不变；
+      · 流内占位：margin-top +4p ∪ margin-bottom −52p ⇒ 占位 52 → 0 连续归零
+        （旧 .mpt-pane-scroll 收高特例退役 —— pane 内滚型与页体自滚型同公式）；
+      · 轮廓：壳层 = 同一元素的 ::before（inset:0 / radius inherit / 玻璃样式
+        包材质单源），opacity = --mtitle-p 从 0 连续显影 —— 背景/描边/圆角/
+        阴影/毛玻璃**整层一起从无到有**，与字号插值同驱动、载体解耦（结构上
+        天然两套曲线互不牵制）；圆角恒 999（透明盒的圆角不可感知，半径不插值）；
+      · 钉住：position: sticky、top 随进度 12 → 16+safe —— 页体自身是主滚轴
+        的页面大标题不再随滚走，原地收缩成胶囊（iOS 大标题语义）；pane 型页面
+        页体不滚，sticky 恒不触发，同一公式两条滚型同形。
 
-   ④ 页体顶留白 72px 整条退役（B 批为悬浮 chrome 带留的让位）：改由标题盒
-      自身承担 —— 页体 padding-top = --mtitle-lead 12（标题盒顶距，盒顶 12、
-      盒底 64 = 返回钮底缘）；标题→首块间距仍由收编面自带 padding-top 12 档
-      承担（本批零新增间距），故首块（项目页首卡实测）自 76 起算，第一屏比
-      修前多出 60px 内容（修前 72 + 52 + 12 = 136）。
+   ③ 几何契约不变式（全程恒真，机械读数见 tests/mobile-title-morph.spec.mjs）：
+      文字垂直中心恒 40 = 返回钮中心（盒顶 +12+4p、文字中心 +28−4p，和恒 40）；
+      盒底缘恒 64 = 返回钮底缘；吸附态左缘 ≥ 72（不压返回钮）。
 
-   ⑤ 顶缘渐隐带（.mobile-page-title-band）随批退役 —— 胶囊自带毛玻璃底承担
-      「压住滚入内容」的读作，固定高度的渐隐罩正是作者所指「顶区占一整条」
-      的浪费；DOM 侧同步不再建该节点（navController.js）。 */
+   ④ 长页名：max-width = 100% − 2×72 钳宽，溢出走**右缘渐隐**（.mtitle-clip
+      蒙版，navController.applyRoll 按 scrollWidth 翻写）—— 省略号退役。
+
+   ⑤ reduced-motion：形态量二值（JS 写 p ∈ {0,1}，navController.reducedMotion）
+      ⇒ 瞬时换形，不卡中间；本形态无 transition/无位移量，零额外摘除。
+
+   ── 旧两段式批留档（2026-11-02 作者令，实拍 IMG_1677/1678）：静止态居中
+   大标题 28px/600/内缩 72、吸附胶囊 48 高/左缘 72/中心 40、进度区间 8→56
+   —— 数值契约全部沿用，只是载体从两套元素并为一套。 */
 body.mobile-layer .mobile-page-title {
+  /* 钉住：top 只带**形态量** 0 → 4px（= 盒高差的增量），页体顶呼吸缝
+     --mtitle-lead + safe 由页体自身 padding 承担，**不在这里重复写** ——
+     sticky 吸附参照系是滚动容器的内容盒（= padding 之后），把 lead/safe
+     再叠进 top 会让标题整体下移一条 lead（实测 12px，盒顶 24、文字中心 50）。 */
+  position: sticky;
+  top: calc((var(--mtitle-h) - var(--mcap-h)) * var(--mtitle-p));
   display: block;
-  /* 盒下不留 margin —— 标题→首块的 12px 呼吸缝由收编面自带 padding-top 承担
-     （.team-scroll / #settings-content 等全站 12px 档，B 批实测账本同口径）；
-     这里再加 margin 会叠成 24，破坏既有 gap 断言与视觉节奏。 */
-  margin: 0;
-  padding: var(--mtitle-pad-t) var(--mtitle-inset) var(--mtitle-pad-b);
-  height: var(--mtitle-h);
-  font-size: var(--mfs-title);
+  /* 宽度由内容撑（max-content + 水平 auto 居中）—— 缩字后盒宽连续跟随，
+     零留白跳变；超宽被 max-width 钳到 inset 带。 */
+  width: max-content;
+  max-width: calc(100% - 2 * var(--mtitle-inset));
+  /* 盒下呼吸缝由收编面自带 padding-top 承担（B 批口径不变）。上下外边距承担
+     流内占位收缩：52 → 0 连续归零 —— 顶 +4p 把盒底缘钉在 64，底 −52p 把占位
+     还给页体（吸附态内容满铺到胶囊之下，与旧收高终态同布局）。 */
+  margin: calc((var(--mtitle-h) - var(--mcap-h)) * var(--mtitle-p)) auto
+    calc(var(--mtitle-h) * var(--mtitle-p) * -1);
+  padding: calc(var(--mtitle-pad-t) + (var(--mcap-vpad) - var(--mtitle-pad-t)) * var(--mtitle-p))
+    calc(var(--mtitle-inset) + (var(--mcap-pad) - var(--mtitle-inset)) * var(--mtitle-p))
+    calc(var(--mtitle-pad-b) + (var(--mcap-vpad) - var(--mtitle-pad-b)) * var(--mtitle-p));
+  height: calc(var(--mtitle-h) + (var(--mcap-h) - var(--mtitle-h)) * var(--mtitle-p));
+  font-size: calc(var(--mfs-title) + (var(--mfs-title-mini) - var(--mfs-title)) * var(--mtitle-p));
   font-weight: 600;
-  letter-spacing: -0.01em;
-  /* 行高吃满盒内高（52 − 10 − 6 = 36 = 1.286 × 28）——盒高即命中盒，零裁字。 */
-  line-height: calc(var(--mtitle-h) - var(--mtitle-pad-t) - var(--mtitle-pad-b));
+  letter-spacing: calc(-0.01em * (1 - var(--mtitle-p)));
+  /* 行高吃满盒内高（52 − 10 − 6 = 36 → 48 − 1 − 1 = 46）—— 同一组进度量
+     自然带出，文字垂直中心恒 40 不漂。 */
+  line-height: calc(var(--mtitle-h) - var(--mtitle-pad-t) - var(--mtitle-pad-b)
+    + ((var(--mcap-h) - var(--mtitle-h))
+      - ((var(--mcap-vpad) - var(--mtitle-pad-t)) + (var(--mcap-vpad) - var(--mtitle-pad-b)))) * var(--mtitle-p));
   text-align: center;
   color: var(--color-frame-text-bright, var(--color-frame-text));
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
   white-space: nowrap;
   outline: none;
-  /* 大标题恒全额占位（标题-内容间距修整批 2026-11-01 20:42）：页面体是 flex
-     column，收编面（#settings-modal 等定高 overlay adoptee）弹性吃满后与标题
-     争抢收缩 —— 实测设置页标题盒被压到 31px（28px 字面裁顶裁底，B 批验收照
-     chromium-light-settings-expanded 在案）。flex:none 钉死标题基座，收缩全额
-     归 min-height:0 的滚动面（与 B 批「主滚轴在内」同一滚型）。 */
-  flex: none;
-  /* 滚动跟随插值（无 transition —— 逐帧跟手，禁止插值滞后于手指）。 */
-  opacity: calc(1 - var(--mtitle-p));
-  transform: translateY(calc(var(--mtitle-p) * -8px));
-}
-/* 吸附成立（布尔判据，spec/兼容读者用）：大标题让位，不再拦交互。 */
-body.mobile-layer .mobile-page.rolled .mobile-page-title { pointer-events: none; }
-/* 页体自身不滚的页面（pane 收编面内滚：项目/图谱/插件等，主滚轴在面板内部）：
-   大标题不会随滚走，故随进度**收高**（52 → 0）把整条顶带还给下面那个
-   flex:1 的收编面 ⇒ 吸附态顶区零占位、内容满铺到胶囊之下。页体自身是主
-   滚轴的页面（待办/设置内容面等）不加此收高：标题由滚动自然送出视口，收高
-   只会造成内容上跳。判据 .mpt-pane-scroll 由 bindRollProbe 每次滚动按主滚轴
-   归属翻写。 */
-body.mobile-layer .mobile-page.mpt-pane-scroll .mobile-page-title {
-  height: calc(var(--mtitle-h) * (1 - var(--mtitle-p)));
-  padding-top: calc(var(--mtitle-pad-t) * (1 - var(--mtitle-p)));
-  padding-bottom: calc(var(--mtitle-pad-b) * (1 - var(--mtitle-p)));
-}
-/* 吸附态胶囊（页面名装饰副本，aria-hidden）：绝对悬浮，垂直中心 = 返回钮中心。
-   几何恒定（不做缩放插值 —— 胶囊一旦缩放，48px 高/15px 字号在吸附中的读数
-   就随进度漂移，几何契约与验收读数都失去单一真值；两段的「生长」由透明度
-   插值 + 大标题收高承担，已在手感上足够）。
-   胶囊高度批 2026-11-02（作者令「胶囊大小要和返回按钮上下宽度差不多大」）：
-   高 32 → 48 = 返回钮高，上下各长 8（中心 40 不动）；圆角 999 在 48 高下
-   两端半径 24，左右内距同步 16 → 24（= 半径）保证文字落在直段内。宽度策略
-   不变（max-content 随页名收缩，非通栏）。 */
-body.mobile-layer .mobile-page-title-mini {
-  position: absolute;
-  top: calc(var(--mcap-top) + env(safe-area-inset-top, 0px));
-  left: 50%;
-  transform: translate(-50%, -50%);
-  display: block;
-  width: max-content;
-  max-width: calc(100% - 2 * var(--mtitle-inset));
-  height: var(--mcap-h);
-  line-height: calc(var(--mcap-h) - 2px); /* 内容盒高 = 48 − 2×1px 描边 */
-  padding: 0 var(--mcap-pad);
-  box-sizing: border-box;
+  /* 全圆角恒在（壳层透明时不可感知）；**文字层透明度恒 1** —— 同一元素始终
+     可见，只缩字不淡出（交叉淡出 = 双影根因，退役）。 */
   border-radius: var(--mcap-radius);
-  font-size: var(--mfs-title-mini);
-  font-weight: 600;
-  text-align: center;
-  color: var(--color-frame-text-bright, var(--color-frame-text));
-  /* 材质单源（玻璃样式包；本文件零新色值，深浅主题自随）。 */
+  /* 吸附过程浮在流内内容之上（旧装饰副本同层 5 < 返回钮 6，z 序契约沿用）。 */
+  z-index: 5;
+  /* 大标题恒全额占位（标题-内容间距修整批 2026-11-01 20:42）：页面体是 flex
+     column，收编面弹性吃满后与标题争抢收缩 —— flex:none 钉死标题基座，收缩
+     全额归 min-height:0 的滚动面（流内占位的进退由上面的 margin 对承担）。 */
+  flex: none;
+}
+/* 超宽页名钳宽后的右缘渐隐（省略号退役，作者令「走模糊淡出，不用省略号」）：
+   蒙版色走 currentColor（标题墨色）⇒ 零新色值；类由 applyRoll 按
+   scrollWidth > clientWidth 翻写（钳宽态才挂，不误伤正常短页名）。 */
+body.mobile-layer .mobile-page-title.mtitle-clip {
+  -webkit-mask-image: linear-gradient(to right, currentColor 78%, transparent 97%);
+  mask-image: linear-gradient(to right, currentColor 78%, transparent 97%);
+}
+/* 胶囊壳层 = **同一元素**的 ::before：玻璃样式包材质单源（--cv-* → glass.css，
+   --glass-* 双主题自随），整层 opacity = --mtitle-p —— 背景/描边/阴影/毛玻璃
+   从无到有连续显影。z-index −1 落在元素自持 stacking context 内（sticky +
+   z-index 5 ⇒ 上下文成立）= 垫在文字下、浮在流内内容上；no-backdrop 降级
+   （旧 WebView/X5）在文件尾同族名单补登实底。 */
+body.mobile-layer .mobile-page-title::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
   background: var(--cv-bg, var(--glass-bg));
   -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
   backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
   border: 1px solid var(--cv-border, var(--glass-border));
   box-shadow: var(--cv-shadow);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   opacity: var(--mtitle-p);
+  z-index: -1;
   pointer-events: none;
-  z-index: 5; /* 页头带 20 层内：胶囊 5 < 返回钮 6（返回钮始终可点） */
 }
+/* 吸附成立（布尔判据，spec/兼容读者用）：标题胶囊不拦交互（返回钮始终可点）。 */
+body.mobile-layer .mobile-page.rolled .mobile-page-title { pointer-events: none; }
 /* 悬浮「<」返回钮：48px g2-fab 液体玻璃（基准规格材质；JS 挂 .g2-fab 类），
    悬浮位 = 左 16 / top 16+safe，与聊天根任务键同几何。
    z 序（B 批补）：带 4 < 小字 5 < 本钮 6 —— 渐隐带承底不蒙返回钮。 */
@@ -3464,26 +3462,31 @@ body.mobile-layer .mobile-page-body #settings-modal-title,
 body.mobile-layer .mobile-page-body #daemon-panel-title {
   display: none;
 }
-/* 两段式的 movement 只有一处（大标题 translateY 上浮）—— reduced-motion 下
-   把它摘掉，形态量只剩透明度/高度两条不含位移的量；进度二值化由 JS 写
-   （navController.js reducedMotion()），故两段成立时机也同步为瞬时。 */
+/* reduced-motion（标题单元素化批 2026-11-02）：本形态无 transition、无位移量
+   （形态量全部是「进度一旦给定即静态」的插值式：字号/盒高/内距/外边距/壳层
+   alpha），故**无需摘除任何量** —— 瞬时换形由 JS 写二值进度承担
+   （navController.js reducedMotion()：p ∈ {0,1}，不卡中间）。本块留作显式口径：
+   reduced-motion 下不得为此形态补任何 transition/animation。 */
 @media (prefers-reduced-motion: reduce) {
-  body.mobile-layer .mobile-page-title {
-    transform: none;
+  body.mobile-layer .mobile-page-title,
+  body.mobile-layer .mobile-page-title::before {
+    transition: none;
+    animation: none;
   }
 }
-/* 两段式标题批 2026-11-02 · 降级：毛玻璃胶囊在不支持 backdrop-filter 的
-   WebView（微信/X5）与 html.no-backdrop 实底档下补登 —— 材质仍取 --cv-bg
-   （= --glass-bg，双主题自随），仅摘采样层；与 glass.css 降级块同字面、
-   挂本文件（mobileLayer.css 在 glass.css 之后加载，避免反向改玻璃包序）。 */
+/* 标题单元素化批 2026-11-02 · 降级：胶囊壳层（.mobile-page-title::before）在
+   不支持 backdrop-filter 的 WebView（微信/X5）与 html.no-backdrop 实底档下
+   补登实底 —— 材质仍取 --cv-bg（= --glass-bg，双主题自随），仅摘采样层；
+   与 glass.css 降级块同字面、挂本文件（mobileLayer.css 在 glass.css 之后
+   加载，避免反向改玻璃包序）。 */
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  body.mobile-layer .mobile-page-title-mini {
+  body.mobile-layer .mobile-page-title::before {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
     background: var(--cv-bg, var(--glass-bg));
   }
 }
-html.no-backdrop body.mobile-layer .mobile-page-title-mini {
+html.no-backdrop body.mobile-layer .mobile-page-title::before {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
   background: var(--cv-bg, var(--glass-bg));
@@ -4150,10 +4153,10 @@ body.mobile-layer :is(.mh-idhead-name, .mh-idhead > #session-name) {
 body.mobile-layer :is(.mh-idhead-name, .mh-idhead > #session-name):empty {
   display: none;
 }
-/* ④ 会话页（好友/群/设备）：页面壳大标题与吸附胶囊退场 —— 页头只余左上返回 +
-   右上三点 + 悬浮身份头（主对话无页面壳标题，天然同形）。 */
-body.mobile-layer .mobile-page[data-page='conversation'] .mobile-page-title,
-body.mobile-layer .mobile-page[data-page='conversation'] .mobile-page-title-mini {
+/* ④ 会话页（好友/群/设备）：页面壳大标题（单元素胶囊本体）退场 —— 页头只余
+   左上返回 + 右上三点 + 悬浮身份头（主对话无页面壳标题，天然同形）。
+   （标题单元素化批 2026-11-02：装饰副本选择器随节点退役摘除。） */
+body.mobile-layer .mobile-page[data-page='conversation'] .mobile-page-title {
   display: none;
 }
 /* 页体顶让位 = 身份头的可视足迹（8 头顶 + 56 头像 + 6 缝 + 24 名字胶囊 ≈ 94）
