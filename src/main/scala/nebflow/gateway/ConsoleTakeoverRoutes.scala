@@ -26,8 +26,16 @@ import org.http4s.dsl.io.*
  *   200 {"ok":false,"error":"disabled"}   —— 单实例总闸关闭（无接管语义可言）
  *   403 {"error":"Unauthorized"} + X-Nf-Reason: credential-required —— 会话轨
  *     拒绝（与 RestApiCtx.authRejected 同形，前端 sessionGate 分流判据不变）。
+ *
+ * 误报根修批（2026-11-02）：实例身份 = 请求体声明的 `clientId`（前端
+ * `deviceIdentity.js` 的稳定 id，与本页 ws 握手的 `?clientId=` 同一个值）+ 会话
+ * 退路——**必须与 ws 入账同键**，否则「点重新接管 ⇒ reload ⇒ 新连接」会被自己
+ * 认成另一个实例再弹一次提示。clientId 缺失 = 老缓存页 ⇒ 落会话退路（既有行为）。
  */
 object ConsoleTakeoverRoutes:
+
+  /** 请求体 clientId 上限（防御性；前端值是 UUID）。 */
+  private val ClientIdMax = 128
 
   def routes(
     sessions: GatewaySessionStore,
@@ -40,14 +48,29 @@ object ConsoleTakeoverRoutes:
       // 该值不进任何比较（GatewayAuth.bearerLeg 首闸即 rails 检查）。
       GatewayAuth.authenticate(req, "", sessions, GatewayAuth.Rails.StaticAuth).flatMap {
         case Some(Credential.ViaSession(record)) =>
-          takeover.retakeBySession(record.sessionId).flatMap {
-            case ConsoleTakeover.RetakeOutcome.Ok(kicked) =>
-              logger.info(
-                s"console-takeover: http retake ok (session ${record.sessionId.take(8)}…, kicked=$kicked)"
-              ) *> Ok(Json.obj("ok" -> true.asJson, "kicked" -> kicked.asJson))
-            case ConsoleTakeover.RetakeOutcome.Disabled =>
-              logger.warn(s"console-takeover: http retake refused — master switch off") *>
-                Ok(Json.obj("ok" -> false.asJson, "error" -> "disabled".asJson))
+          // 声明面 clientId（可选；解析失败按缺席走会话退路，绝不因坏体 500）。
+          val clientIdF: IO[Option[String]] =
+            req.attemptAs[Json].value.map {
+              case Right(json) =>
+                json.hcursor
+                  .downField("clientId")
+                  .as[String]
+                  .toOption
+                  .map(_.trim)
+                  .filter(id => id.nonEmpty && id.length <= ClientIdMax)
+              case Left(_) => None
+            }
+          clientIdF.flatMap { clientId =>
+            takeover.retakeBySession(record.sessionId, clientId).flatMap {
+              case ConsoleTakeover.RetakeOutcome.Ok(kicked) =>
+                logger.info(
+                  s"console-takeover: http retake ok (session ${record.sessionId.take(8)}…, " +
+                    s"client=${clientId.map(_.take(8)).getOrElse("-")}, kicked=$kicked)"
+                ) *> Ok(Json.obj("ok" -> true.asJson, "kicked" -> kicked.asJson))
+              case ConsoleTakeover.RetakeOutcome.Disabled =>
+                logger.warn(s"console-takeover: http retake refused — master switch off") *>
+                  Ok(Json.obj("ok" -> false.asJson, "error" -> "disabled".asJson))
+            }
           }
         case _ =>
           logger.warn(s"console-takeover: http retake rejected — no session credential") *>

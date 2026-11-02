@@ -3002,22 +3002,27 @@ body.mobile-layer #main [data-nf-search-return="1"] { z-index: 170; }
    统一形态：overlay 吃不透明页面底（--color-bg，同 .mobile-page），内盒
    全幅铺平（radius 0 / 左右 border 退役 / 顶带让位悬浮返回钮 = 16+48 几何），
    返回钮由 js/mobile/popSheet.js 注入（.mfs-back，48px g2-fab 同页面壳「<」）。
-   点名例外：#takeover-box（强制二选一系统中断面）铺满屏但不带返回钮——
-   无「取消」语义可挂（modal.js 的返回处理按 takeoverBlocking 绕行同理）；
-   voiceMode 是输入卡原位形变（非弹层）、slash/mention 输入锚定下拉是
-   自动补全（非弹窗），均不在退场范围。桌面零变化：全部规则挂
-   body.mobile-layer；返回钮在非手机层 display:none。
+   点名例外：#takeover-box（强制二选一系统中断面）**不在本族**——接管提示
+   卡片化批（2026-11-02 作者令①）起它回到居中浮层卡（不铺满、不带返回钮：
+   无「取消」语义可挂，modal.js 的返回处理按 takeoverBlocking 绕行同理；
+   见下方「接管卡手机形态」块）；voiceMode 是输入卡原位形变（非弹层）、
+   slash/mention 输入锚定下拉是自动补全（非弹窗），均不在退场范围。
+   桌面零变化：全部规则挂 body.mobile-layer；返回钮在非手机层 display:none。
    ═══════════════════════════════════════════════════════════════════════ */
 
 /* 注入返回钮：压内容层（内盒无 z 值，40 足够）；非手机层/拆层后零残留。 */
 body.mobile-layer .mfs-back { z-index: 40; }
 body:not(.mobile-layer) .mfs-back { display: none !important; }
 
-/* ── A 族：透明承接层 + 居中玻璃盒 ──  overlay 吃页面底 + 盒体拉伸铺平 ── */
+/* ── A 族：透明承接层 + 居中玻璃盒 ──  overlay 吃页面底 + 盒体拉伸铺平 ──
+   接管提示卡片化批（2026-11-02 作者令①）：#takeover-box 自本族**摘出**——它是
+   强制二选一的系统中断卡（一个组件，桌面/手机只差卡宽与内边距），不是页面化
+   面板；铺平会把它变成「裸文字铺满整页、下方三分之二空白」（作者实拍形态）。
+   其手机形态单列在本文件「接管卡手机形态」块（居中浮层卡）。 */
 body.mobile-layer .bgt-overlay,
 body.mobile-layer #secrets-overlay,
 body.mobile-layer .wsp-overlay,
-body.mobile-layer #modal-overlay,
+body.mobile-layer #modal-overlay:not(.takeover-live),
 body.mobile-layer #rules-overlay,
 body.mobile-layer .cfg-modal-overlay,
 body.mobile-layer .flow-agent-overlay.fullscreen {
@@ -3032,7 +3037,6 @@ body.mobile-layer .wsp-panel,
 body.mobile-layer #modal-box,
 body.mobile-layer #delete-box,
 body.mobile-layer #conflict-box,
-body.mobile-layer #takeover-box,
 body.mobile-layer #rules-modal,
 body.mobile-layer .cfg-modal-overlay .cfg-modal,
 body.mobile-layer #model-panel-overlay .model-panel,
@@ -3165,6 +3169,69 @@ body.mobile-layer .mobile-page-body > .settings-collapse-body {
 }
 /* 接管模态在场：注入返回钮隐藏（强制二选一，无取消语义可挂）。 */
 body.mobile-layer #modal-overlay.takeover-live .mfs-back { display: none !important; }
+
+/* ── 接管卡手机形态（接管提示卡片化批 2026-11-02 作者令①）───────────────
+   作者报障：「手机端这个应该是一个卡片 现在显示很不好看」——实拍：标题+正文+
+   两钮全部挤在屏幕上部 1/3，下面 2/3 全空、无卡片容器、无边框、无背景区隔，
+   就是裸文字铺在整页深色底上。成因 = 上面的 A 族「弹窗退场」规则把
+   #takeover-box 与其余桌面模态同批铺平（width/height 100% + radius 0 +
+   border 退役 + padding-top 64）、并且 #modal-overlay 拿到不透明页面底。
+   裁定：接管提示是**系统中断卡**（强制二选一），不是页面化面板——它是**一个
+   组件**，桌面/手机只差卡片最大宽度与内边距，不是两套实现。故本块把该盒从 A 族
+   里摘出来（:not 排除），回到「居中浮层卡」：实色卡片底 + 圆角 + 边框 + 软影，
+   四周留白 ≥16px，内容垂直居中（下方不再有 2/3 空白）。
+   移动端规范：热区 ≥44px、正文字号 ≥17px、可读小字 ≥13px；两钮等宽平分一行
+   （主次只靠材质区分——保留 g2 药丸族的主/次墨白两档，不改成两枚小胶囊）。 */
+body.mobile-layer #modal-overlay #takeover-box {
+  width: min(var(--nfc-width), calc(100vw - 32px)) !important;
+  max-width: none !important;
+  height: auto !important;
+  max-height: calc(100vh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) !important;
+  margin: auto !important;
+  border-radius: var(--nfc-radius) !important;
+  border: 1px solid var(--nfc-border) !important;
+  transform: none !important;
+  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  padding: 32px 24px 28px !important;
+  overflow-y: auto;
+}
+/* 手机档字阶（家族 token 的移动档：标题 21→20 收一档，正文 14→17 抬到可读线）。 */
+body.mobile-layer #takeover-box .nfc-title { font-size: 20px; }
+body.mobile-layer #takeover-box .nfc-body {
+  font-size: 17px;
+  line-height: 1.45;
+  max-width: none;
+}
+body.mobile-layer #takeover-box .nfc-error { font-size: 13px; }
+/* 动作行：等宽双钮一行（窄屏不挤压），热区 48px ≥ 44px 规范线。 */
+body.mobile-layer #takeover-box .nfc-actions {
+  justify-content: stretch;
+  gap: 12px;
+  margin-top: 28px;
+}
+body.mobile-layer #takeover-box .nfc-actions .g2-pill {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 48px;
+  min-height: 48px;
+  padding: 0 12px;
+  font-size: 15px;
+}
+/* 承接层：卡片四周留白（不贴边）+ 内容垂直居中（消灭下方 2/3 空白）。 */
+body.mobile-layer #modal-overlay.takeover-live {
+  background: var(--color-bg, #f5f6f8);
+  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px
+    calc(16px + env(safe-area-inset-bottom, 0px)) !important;
+  align-items: center;
+  justify-content: center;
+}
+/* 超窄屏兜底（<360px）：两钮改纵向全宽，仍 ≥44px 热区。 */
+@media (max-width: 359px) {
+  body.mobile-layer #takeover-box .nfc-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
    手机端 UI 急诊批（2026-10-31 20:14 作者报「手机端 UI 很不正常」）——

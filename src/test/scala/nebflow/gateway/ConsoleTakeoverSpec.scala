@@ -37,18 +37,25 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
   private val sidA = "session-aaaa-1111"
   private val sidB = "session-bbbb-2222"
   private val sidC = "session-cccc-3333"
+  // 浏览器实例身份（误报根修批：真抢占必须「双方身份都可证且不同」才成立，
+  // 故 A1/A4/A5/A9/A10/B1/B5 这些真抢占用例一律显式声明不同 clientId）。
+  private val cidA = "client-aaaa-1111"
+  private val cidB = "client-bbbb-2222"
+  private val cidC = "client-cccc-3333"
+  private val hA = "c:" + cidA
+  private val hB = "c:" + cidB
 
   // ── A1 二进一踢：B fresh claim ⇒ owner 翻位 + A 活跃连接收 takeover 帧 ──
 
   test("A1 second fresh session takes over: owner flips, old owner's live conns get takeover frame"):
     for (reg, sent) <- fixture()
-      _ <- reg.onConnect(sidA, "conn-a1")
-      _ <- reg.onConnect(sidB, "conn-b1")
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidB, "conn-b1", Some(cidB))
       ownerNow <- reg.owner
       aFrames <- framesTo(sent, "conn-a1")
       types <- typesOf(sent)
     yield
-      assertEquals(ownerNow, Some(sidB), "fresh claim 必胜（互斥权最后写入者胜）")
+      assertEquals(ownerNow, Some(hB), "fresh claim 必胜（互斥权最后写入者胜）")
       assertEquals(aFrames.map(_.hcursor.downField("type").as[String].getOrElse("?")), List("takeover"))
       assert(aFrames.head.hcursor.downField("at").as[Long].isRight, "takeover 帧带 at 戳")
       assertEquals(types, List(("conn-a1", "takeover")), "唯一一帧 = 推给旧主连接；新实例侧零帧（它是接管方，不被踢）")
@@ -57,29 +64,29 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
 
   test("A2 same-session reconnect (refresh) silently resumes: no frame, owner unchanged"):
     for (reg, sent) <- fixture()
-      _ <- reg.onConnect(sidA, "conn-a1")
-      _ <- reg.onConnect(sidA, "conn-a2") // 刷新后新连接（旧连接未及离场也无妨）
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidA, "conn-a2", Some(cidA)) // 刷新后新连接（旧连接未及离场也无妨）
       ownerNow <- reg.owner
       types <- typesOf(sent)
     yield
-      assertEquals(ownerNow, Some(sidA))
+      assertEquals(ownerNow, Some(hA))
       assertEquals(types, Nil, "同会话新连接 = 静默续位，任何方向都零帧")
 
   // ── A3 断线宽限不误踢：owner 掉线不摘位；同会话重连零帧 ──
 
   test("A3 owner drop never yields: disconnect keeps ownership, resume is silent"):
     for (reg, sent) <- fixture()
-      _ <- reg.onConnect(sidA, "conn-a1")
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
       _ <- reg.onDisconnect("conn-a1") // 掉线（含 #960 判死回收路径）
       ownerAfterDrop <- reg.owner
       typesAfterDrop <- typesOf(sent)
-      _ <- reg.onConnect(sidA, "conn-a2") // 宽限内重连（同会话）
+      _ <- reg.onConnect(sidA, "conn-a2", Some(cidA)) // 宽限内重连（同实例）
       ownerAfterResume <- reg.owner
       typesAfterResume <- typesOf(sent)
     yield
-      assertEquals(ownerAfterDrop, Some(sidA), "掉线 ≠ 让位：owner 按会话持久")
+      assertEquals(ownerAfterDrop, Some(hA), "掉线 ≠ 让位：owner 按实例持久")
       assertEquals(typesAfterDrop, Nil, "断线路径零出帧（僵尸回收不触发提示）")
-      assertEquals(ownerAfterResume, Some(sidA))
+      assertEquals(ownerAfterResume, Some(hA))
       assertEquals(typesAfterResume, Nil, "同会话重连静默续位——抖动误踢结构上不可表达")
 
   // ── A3b 连接账按键隔离（接管必达批 2026-11-01 作者令①的账本面根因回归钉）：
@@ -88,8 +95,8 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
 
   test("A3b a session's disconnect must not wipe other sessions' conn ledger (reverse-kick targets survive)"):
     for (reg, _) <- fixture()
-      _ <- reg.onConnect(sidA, "conn-a1")
-      _ <- reg.onConnect(sidB, "conn-b1")
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidB, "conn-b1", Some(cidB))
       _ <- reg.onDisconnect("conn-a1") // A 掉线（其键应整键摘除）
       bConns <- reg.connCount(sidB)
       aConns <- reg.connCount(sidA)
@@ -101,15 +108,15 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
 
   test("A4 retake flips ownership back and reverse-kicks the new owner"):
     for (reg, sent) <- fixture()
-      _ <- reg.onConnect(sidA, "conn-a1")
-      _ <- reg.onConnect(sidB, "conn-b1") // B 接管，A 落 superseded
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidB, "conn-b1", Some(cidB)) // B 接管，A 落 superseded
       replies <- Ref.of[IO, List[Json]](Nil)
       _ <- reg.handleRetake("conn-a1", j => replies.update(_.prepended(j)))
       ownerNow <- reg.owner
       replyList <- replies.get.map(_.reverse)
       bFrames <- framesTo(sent, "conn-b1")
     yield
-      assertEquals(ownerNow, Some(sidA), "retake ⇒ owner 翻回")
+      assertEquals(ownerNow, Some(hA), "retake ⇒ owner 翻回")
       assertEquals(
         replyList.map(_.hcursor.downField("ok").as[Boolean].getOrElse(false)),
         List(true),
@@ -125,37 +132,37 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
 
   test("A5 past-owner reconnect does NOT auto-reclaim: it lands superseded, owner untouched"):
     for (reg, sent) <- fixture()
-      _ <- reg.onConnect(sidA, "conn-a1")
-      _ <- reg.onConnect(sidB, "conn-b1") // B 接管
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidB, "conn-b1", Some(cidB)) // B 接管
       _ <- reg.onDisconnect("conn-a1")
-      _ <- reg.onConnect(sidA, "conn-a2") // A 旧主回连（机器自动重连，无用户意图）
+      _ <- reg.onConnect(sidA, "conn-a2", Some(cidA)) // A 旧主回连（机器自动重连，无用户意图）
       ownerNow <- reg.owner
       a2Frames <- framesTo(sent, "conn-a2")
       b1Frames <- framesTo(sent, "conn-b1")
       _ <- reg.handleRetake("conn-a2", _ => IO.unit) // 回连方 retake 即回 active（被踢面的出路）
       ownerAfterRetake <- reg.owner
     yield
-      assertEquals(ownerNow, Some(sidB), "回连不反抢：B 的所有权不动（防后台标签隐身夺权）")
+      assertEquals(ownerNow, Some(hB), "回连不反抢：B 的所有权不动（防后台标签隐身夺权）")
       assertEquals(
         a2Frames.map(_.hcursor.downField("type").as[String].getOrElse("?")),
         List("takeover"),
         "回连方本连接收 superseded 通知（被踢面，一键 retake）"
       )
       assertEquals(b1Frames.map(_.hcursor.downField("type").as[String].getOrElse("?")), Nil, "B 零打扰")
-      assertEquals(ownerAfterRetake, Some(sidA))
+      assertEquals(ownerAfterRetake, Some(hA))
 
   // ── A6 僵尸回收不触发提示：回收只摘连接账、无任何帧 ──
 
   test("A6 zombie recycle (disconnect of every conn) emits zero frames and keeps ownership"):
     for (reg, sent) <- fixture()
-      _ <- reg.onConnect(sidA, "conn-a1")
-      _ <- reg.onConnect(sidA, "conn-a2")
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidA, "conn-a2", Some(cidA))
       _ <- reg.onDisconnect("conn-a1") *> reg.onDisconnect("conn-a2") // 判死回收全场连接
       ownerNow <- reg.owner
       types <- typesOf(sent)
       count <- reg.connCount(sidA)
     yield
-      assertEquals(ownerNow, Some(sidA), "全场掉线 owner 仍持久（takeover 唯一发射点 = claim/retake）")
+      assertEquals(ownerNow, Some(hA), "全场掉线 owner 仍持久（takeover 唯一发射点 = claim/retake）")
       assertEquals(types, Nil)
       assertEquals(count, 0, "连接账已摘净")
 
@@ -163,14 +170,14 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
 
   test("A4b http-leg retakeBySession flips ownership and reverse-kicks (same core as ws leg)"):
     for (reg, sent) <- fixture()
-      _ <- reg.onConnect(sidA, "conn-a1")
-      _ <- reg.onConnect(sidB, "conn-b1") // B 接管，A 落 superseded
-      outcome <- reg.retakeBySession(sidA)
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidB, "conn-b1", Some(cidB)) // B 接管，A 落 superseded
+      outcome <- reg.retakeBySession(sidA, Some(cidA))
       ownerNow <- reg.owner
       bFrames <- framesTo(sent, "conn-b1")
     yield
       assert(outcome == ConsoleTakeover.RetakeOutcome.Ok(1), s"ok 且反向踢送达 1 连接（实际 $outcome）")
-      assertEquals(ownerNow, Some(sidA), "HTTP 腿与 ws 腿同核：owner 翻回")
+      assertEquals(ownerNow, Some(hA), "HTTP 腿与 ws 腿同核：owner 翻回")
       assertEquals(
         bFrames.map(_.hcursor.downField("type").as[String].getOrElse("?")),
         List("takeover"),
@@ -181,15 +188,15 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
 
   test("A4c http-leg retake lands even with NO live conn for the retaking session"):
     for (reg, sent) <- fixture()
-      _ <- reg.onConnect(sidA, "conn-a1")
-      _ <- reg.onConnect(sidB, "conn-b1") // B 接管
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidB, "conn-b1", Some(cidB)) // B 接管
       _ <- reg.onDisconnect("conn-a1") // A 的 ws 死了（后台标签/僵尸回收）
-      outcome <- reg.retakeBySession(sidA) // 页面还在（HTTP 同源可达）⇒ 必达
+      outcome <- reg.retakeBySession(sidA, Some(cidA)) // 页面还在（HTTP 同源可达）⇒ 必达
       ownerNow <- reg.owner
       bFrames <- framesTo(sent, "conn-b1")
     yield
       assert(outcome == ConsoleTakeover.RetakeOutcome.Ok(1), s"ok（实际 $outcome）")
-      assertEquals(ownerNow, Some(sidA), "ws 死 ≠ 夺不回：所有权翻回（帧腿结构性缺口的本修）")
+      assertEquals(ownerNow, Some(hA), "ws 死 ≠ 夺不回：所有权翻回（帧腿结构性缺口的本修）")
       assertEquals(
         bFrames.map(_.hcursor.downField("type").as[String].getOrElse("?")),
         List("takeover"),
@@ -200,28 +207,28 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
 
   test("A4d http-leg retake when already owner is idempotent Ok(0) with zero frames"):
     for (reg, sent) <- fixture()
-      _ <- reg.onConnect(sidA, "conn-a1") // A 即 owner
-      outcome <- reg.retakeBySession(sidA)
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA)) // A 即 owner
+      outcome <- reg.retakeBySession(sidA, Some(cidA))
       ownerNow <- reg.owner
       types <- typesOf(sent)
     yield
       assert(outcome == ConsoleTakeover.RetakeOutcome.Ok(0), s"幂等 ok、零踢（实际 $outcome）")
-      assertEquals(ownerNow, Some(sidA))
+      assertEquals(ownerNow, Some(hA))
       assertEquals(types, Nil, "already-owner：零帧")
 
   // ── A7 总闸关闭 = 现行为零漂移 ──
 
   test("A7 master switch off: registry is a full no-op (no claims, no frames)"):
     for (reg, sent) <- fixture(enabled = false)
-      _ <- reg.onConnect(sidA, "conn-a1")
-      _ <- reg.onConnect(sidB, "conn-b1")
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidB, "conn-b1", Some(cidB))
       replies <- Ref.of[IO, List[Json]](Nil)
       _ <- reg.handleRetake("conn-a1", j => replies.update(_.prepended(j)))
       ownerNow <- reg.owner
       types <- typesOf(sent)
       replyList <- replies.get
       // HTTP 腿同闸：Disabled 裁决、零记账零帧。
-      httpOutcome <- reg.retakeBySession(sidA)
+      httpOutcome <- reg.retakeBySession(sidA, Some(cidA))
       httpOwner <- reg.owner
       httpTypes <- typesOf(sent)
     yield
@@ -237,7 +244,7 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
 
   test("A8 unregistered conn (bearer rail bypass) retake is refused; frame shapes pinned"):
     for (reg, sent) <- fixture()
-      _ <- reg.onConnect(sidA, "conn-a1")
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
       replies <- Ref.of[IO, List[Json]](Nil)
       _ <- reg.handleRetake("conn-ghost", j => replies.update(_.prepended(j))) // 未注册连接
       replyList <- replies.get.map(_.reverse)
@@ -263,22 +270,22 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
 
   test("A9 fresh claim wins even when the incumbent has no live conn (best-effort push)"):
     for (reg, sent) <- fixture()
-      _ <- reg.onConnect(sidA, "conn-a1")
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
       _ <- reg.onDisconnect("conn-a1") // 旧主已死（休眠/回收）
-      _ <- reg.onConnect(sidC, "conn-c1") // 第三台进入
+      _ <- reg.onConnect(sidC, "conn-c1", Some(cidC)) // 第三台进入
       ownerNow <- reg.owner
       types <- typesOf(sent)
     yield
-      assertEquals(ownerNow, Some(sidC), "入口不被旧主僵尸挡住（第二台先弹「已在别处打开」= 语义反了）")
+      assertEquals(ownerNow, Some("c:" + cidC), "入口不被旧主僵尸挡住（第二台先弹「已在别处打开」= 语义反了）")
       assertEquals(types, Nil, "无活连接 ⇒ 零帧，旧主下次重连按 pastOwners 落被踢面（最终一致）")
 
   // ── A10 多标签同会话集体被踢 + retake 面向全会话广播 ──
 
   test("A10 takeover pushes reach every live conn of the displaced session"):
     for (reg, sent) <- fixture()
-      _ <- reg.onConnect(sidA, "conn-a1")
-      _ <- reg.onConnect(sidA, "conn-a2") // 同浏览器第二标签
-      _ <- reg.onConnect(sidB, "conn-b1")
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidA, "conn-a2", Some(cidA)) // 同浏览器第二标签
+      _ <- reg.onConnect(sidB, "conn-b1", Some(cidB))
       aFrames <- framesTo(sent, "conn-a1")
       a2Frames <- framesTo(sent, "conn-a2")
     yield
@@ -290,14 +297,14 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
 
   test("B1 content gate: superseded session stops receiving data frames; takeover protocol still passes"):
     for (reg, _) <- fixture()
-      _ <- reg.onConnect(sidA, "conn-a1")
-      _ <- reg.onConnect(sidB, "conn-b1") // B 接管，A 落 superseded
-      msgOk   <- reg.gateFrame(sidA, """{"type":"message","text":"hi"}""")
-      deltaOk <- reg.gateFrame(sidA, """{"type":"textDelta","text":"hi"}""")
-      listOk  <- reg.gateFrame(sidA, """{"type":"sessionList","sessions":[]}""")
-      takeOk  <- reg.gateFrame(sidA, """{"type":"takeover","at":1}""")
-      resOk   <- reg.gateFrame(sidA, """{"type":"takeoverResult","ok":true}""")
-      badOk   <- reg.gateFrame(sidA, "not-json")
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidB, "conn-b1", Some(cidB)) // B 接管，A 落 superseded
+      msgOk   <- reg.gateFrame(hA, """{"type":"message","text":"hi"}""")
+      deltaOk <- reg.gateFrame(hA, """{"type":"textDelta","text":"hi"}""")
+      listOk  <- reg.gateFrame(hA, """{"type":"sessionList","sessions":[]}""")
+      takeOk  <- reg.gateFrame(hA, """{"type":"takeover","at":1}""")
+      resOk   <- reg.gateFrame(hA, """{"type":"takeoverResult","ok":true}""")
+      badOk   <- reg.gateFrame(hA, "not-json")
     yield
       assert(!msgOk && !deltaOk && !listOk, "superseded：消息/流式/数据面帧一律断喂（隐私面）")
       assert(takeOk && resOk, "接管协议帧放行（重弹 superseded / retake 裁决回执）")
@@ -305,9 +312,9 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
 
   test("B2 content gate: owner session passes every frame"):
     for (reg, _) <- fixture()
-      _ <- reg.onConnect(sidA, "conn-a1")
-      _ <- reg.onConnect(sidB, "conn-b1") // B 接管，但 A 仍问 B 自己的帧
-      bMsg <- reg.gateFrame(sidB, """{"type":"textDelta","text":"hi"}""")
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidB, "conn-b1", Some(cidB)) // B 接管，但 A 仍问 B 自己的帧
+      bMsg <- reg.gateFrame(hB, """{"type":"textDelta","text":"hi"}""")
     yield assert(bMsg, "owner 会话全放行（热路径零解析）")
 
   test("B3 content gate: master switch off is identity (zero drift)"):
@@ -335,10 +342,10 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
             case true  => inbox.update(_ :+ text)
             case false => IO.unit
           }
-      _ <- reg.onConnect(sidA, "conn-a1")
-      _ <- reg.onConnect(sidB, "conn-b1") // B fresh claim ⇒ A superseded
-      connA <- hub.register(gated(sidA, aInbox))
-      connB <- hub.register(gated(sidB, bInbox))
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidB, "conn-b1", Some(cidB)) // B fresh claim ⇒ A superseded
+      connA <- hub.register(gated(hA, aInbox))
+      connB <- hub.register(gated(hB, bInbox))
       _ <- hub.broadcast(Json.obj("type" -> "textDelta".asJson, "text" -> "secret-1".asJson))
       _ <- hub.sendTo(connA, ConsoleTakeover.takeoverFrame(1L)) // 反向踢/重弹必须可达
       a1 <- aInbox.get
@@ -354,5 +361,137 @@ class ConsoleTakeoverSpec extends CatsEffectSuite:
       assertEquals(b1.length, 1, "owner（B）照常收到内容帧")
       assert(a2.exists(_.contains("secret-2")), "retake 后 owner 闸自动放开（A 收到新内容帧）")
       assert(b2.length == 1, "B 被反向踢后断喂（第二帧未达 B）")
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // 接管误报根修批（2026-11-02 作者报障「没人挤我，也显示被挤」）
+  // 日志实证链：同一台设备同一账号，会话过期/静默重座 ⇒ 新 sessionId ⇒ 旧口径
+  // 把「自己的新连接」当第二实例，连续 19 次 `took over from <上一次自己> —
+  // takeover pushed to 0 conn(s)`（stand.2026-11-02.0.log 12:29–12:53）。
+  // 修法 = 实例身份改为浏览器 clientId（会话仅作退路）+ 陈旧账及时清扫。
+  // 下列 A11–A16 逐条钉死「宁可少提示，不可误报」。
+  // ═══════════════════════════════════════════════════════════════════════
+
+  test("A11 single instance never sees a takeover frame (no self-conflict)"):
+    for (reg, sent) <- fixture()
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      ownerNow <- reg.owner
+      types <- typesOf(sent)
+    yield
+      assertEquals(ownerNow, Some("c:" + cidA), "实例键 = clientId（带 c: 前缀）")
+      assertEquals(types, Nil, "单实例零帧——不提示")
+
+  // ── A12 静默重座：同 clientId + **新会话 id** ⇒ 静默续位（旧口径的误报主链）──
+
+  test("A12 silent reseat (same clientId, NEW session id) resumes silently — the false-positive root"):
+    for (reg, sent) <- fixture()
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      // 会话过期 ⇒ ws.js remintHostSessionAndReload ⇒ 新会话兑换 ⇒ 同一浏览器新连接
+      _ <- reg.onDisconnect("conn-a1")
+      _ <- reg.onConnect(sidB, "conn-a2", Some(cidA))
+      ownerNow <- reg.owner
+      types <- typesOf(sent)
+    yield
+      assertEquals(ownerNow, Some("c:" + cidA), "同 clientId ⇒ 同一实例，owner 不动")
+      assertEquals(types, Nil, "换会话不弹提示（旧口径在此连续自踢 19 次）")
+
+  // ── A13 后台恢复/刷新：同 clientId 重连、旧连接尚未离场 ⇒ 零帧 ──
+
+  test("A13 background resume / refresh: same clientId reconnect with stale conn alive stays silent"):
+    for (reg, sent) <- fixture()
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidA, "conn-a2", Some(cidA)) // 旧连接未及离场（刷新竞态窗）
+      ownerNow <- reg.owner
+      types <- typesOf(sent)
+      n <- reg.connCount(sidA)
+    yield
+      assertEquals(ownerNow, Some("c:" + cidA))
+      assertEquals(types, Nil, "多标签/刷新竞态窗零帧")
+      assertEquals(n, 2, "两条连接都在账上（同会话求和）")
+
+  // ── A14 真抢占：两个可证不同的 clientId ⇒ 必须提示，且让出的是**旧的**那个 ──
+
+  test("A14 genuine takeover: two distinct clientIds ⇒ takeover frame to the OLD client only"):
+    for (reg, sent) <- fixture()
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidB, "conn-b1", Some(cidB)) // 另一台浏览器
+      ownerNow <- reg.owner
+      aFrames <- framesTo(sent, "conn-a1")
+      bFrames <- framesTo(sent, "conn-b1")
+    yield
+      assertEquals(ownerNow, Some("c:" + cidB), "最后写入者胜")
+      assertEquals(aFrames.map(_.hcursor.downField("type").as[String].getOrElse("?")), List("takeover"),
+        "被让出的是旧客户端（A 收 takeover 帧）")
+      assertEquals(bFrames, Nil, "接管方零帧（它不是被踢的一方）")
+
+  // ── A15 身份不可证 ⇒ 不提示不踢（假阴性可接受，假阳性不可接受）──
+
+  test("A15 undecidable identity (either side without clientId) never prompts and never kicks"):
+    for (reg, sent) <- fixture()
+      // ① 新任一方无 clientId（老缓存页）
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidB, "conn-b1", None)
+      ownerAfterLegacyJoiner <- reg.owner
+      frames1 <- framesTo(sent, "conn-a1")
+      // ② 旧任一方无 clientId（升级前就在位的页）
+      (reg2, sent2) <- fixture()
+      _ <- reg2.onConnect(sidA, "conn-a1", None)
+      _ <- reg2.onConnect(sidB, "conn-b1", Some(cidB))
+      ownerAfterLegacyIncumbent <- reg2.owner
+      frames2 <- framesTo(sent2, "conn-a1")
+    yield
+      assertEquals(ownerAfterLegacyJoiner, Some("c:" + cidA), "身份不可证 ⇒ owner 不动（不误踢）")
+      assertEquals(frames1, Nil, "身份不可证 ⇒ 零提示")
+      assertEquals(ownerAfterLegacyIncumbent, Some(sidA), "旧任无身份 ⇒ 同样不翻位")
+      assertEquals(frames2, Nil, "零提示")
+
+  // ── A16 陈旧账清理：零连接 + 超窗 ⇒ 摘账并清 owner（下一个连接零提示即位）──
+
+  test("A16 stale instance is swept on next connect: owner cleared, zero takeover frame"):
+    // staleTtlMs = -1 ⇒ 「任何零连接的实例在下一次入账时即被清扫」，与时钟粒度无关
+    // （判据形态不变：零活连接 + 超窗；这里把窗压到 0 以下只为让用例确定）。
+    val staleLogger = nebflow.shared.NebflowLogger.forName("test.console-takeover.stale")
+    for
+      sent <- Ref.of[IO, List[(String, Json)]](Nil)
+      reg = new ConsoleTakeover(
+        (connId, json) => sent.update(_.prepended((connId, json))),
+        staleLogger,
+        enabled = true,
+        staleTtlMs = -1L
+      )
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onDisconnect("conn-a1") // 零活连接
+      // 下一位客户端入账时先清扫 ⇒ 旧 owner 已不存在 ⇒ fresh claim（零帧）
+      _ <- reg.onConnect(sidB, "conn-b1", Some(cidB))
+      ownerNow <- reg.owner
+      types <- sent.get.map(_.reverse.map { case (c, j) => c -> j.hcursor.downField("type").as[String].getOrElse("?") })
+    yield
+      assertEquals(ownerNow, Some("c:" + cidB), "清扫后 owner 是新的首位实例")
+      assertEquals(types, Nil, "向一个已不存在的持有者接管 = 零帧零提示（旧口径会把僵尸当活人）")
+
+  // ── A17 内容帧闸跟身份走：可证不同才断喂；不可证照常放行 ──
+
+  test("A17 content gate follows identity: proven-different gated, unprovable passes"):
+    for (reg, _) <- fixture()
+      _ <- reg.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- reg.onConnect(sidB, "conn-b1", Some(cidB)) // B 接管，A superseded（可证不同）
+      aMsg <- reg.gateFrame("c:" + cidA, """{"type":"textDelta","text":"hi"}""")
+      aTake <- reg.gateFrame("c:" + cidA, """{"type":"takeover","at":1}""")
+      bMsg <- reg.gateFrame("c:" + cidB, """{"type":"textDelta","text":"hi"}""")
+      // 身份不可证的一端（老缓存页）不得被「无提示但全白」掐死。两种不可证形态
+      // 各造一次：owner 无身份（A 有身份）/ 本端无身份（owner 有身份）。
+      legacy1 <- fixture().map(_._1)
+      _ <- legacy1.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- legacy1.onConnect(sidB, "conn-b1", None) // owner 换成了无身份实例
+      legacyOwnerNoId <- legacy1.gateFrame("c:" + cidA, """{"type":"textDelta","text":"hi"}""")
+      legacy2 <- fixture().map(_._1)
+      _ <- legacy2.onConnect(sidA, "conn-a1", Some(cidA))
+      _ <- legacy2.onConnect(sidA, "conn-legacy", None) // 本端无身份、owner 是有身份的同会话
+      legacySelfNoId <- legacy2.gateFrame(sidA, """{"type":"textDelta","text":"hi"}""")
+    yield
+      assert(!aMsg, "可证不同的被顶出端断喂内容帧（隐私面保持）")
+      assert(aTake, "接管协议帧放行（重弹/回执可达）")
+      assert(bMsg, "owner 全放行")
+      assert(legacyOwnerNoId, "owner 无身份 ⇒ 放行（不可证不同就不判 superseded）")
+      assert(legacySelfNoId, "本端无身份 ⇒ 放行（宁可少断喂，不可把同一个人误判成闯入者）")
 
 end ConsoleTakeoverSpec

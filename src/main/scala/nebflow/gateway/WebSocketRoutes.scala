@@ -1089,6 +1089,13 @@ class WebSocketRoutes(
               val takeoverSession: Option[String] = cred match
                 case Credential.ViaSession(record) => Some(record.sessionId)
                 case _ => None
+              // 接管误报根修批（2026-11-02）：浏览器稳定身份（`deviceIdentity.js` 的
+              // localStorage clientId，随 `/ws?clientId=` 带上）。会话 id 会变（过期/
+              // 重座/换浏览器），clientId 不会——接管身份必须以 clientId 为准，会话只
+              // 作退路（老缓存页不带参时的既有行为）。无鉴权含义：鉴权仍由上面
+              // GatewayAuth 的会话 cookie 决定，伪造 clientId 最坏只是不弹提示。
+              val takeoverClient: Option[String] =
+                req.params.get("clientId").map(_.trim).filter(id => id.nonEmpty && id.length <= 128)
               // 门户身份透传批（方案 A1，2026-10-28）：会话身份快照——session 轨
               // 连接把 SessionRecord 投影（accountSub/origin/sessionId）随接管入账
               // 一起穿进收流管（下方 receivePipe 同一闭包作用域）；Bearer 轨连接恒
@@ -1171,15 +1178,18 @@ class WebSocketRoutes(
                               outboundOverflowClosed.complete(()).void
                         }
                     // 单实例四修批（2026-10-29 作者令 · 隐私面）：被顶出连接的
-                    // 内容帧闸——ConsoleTakeover.gateFrame 按会话裁决（owner 非本会话
-                    // ⇒ 只放行 takeover/takeoverResult 接管协议帧，对话内容帧断喂）。
+                    // 内容帧闸——ConsoleTakeover.gateFrame 按**实例**裁决（owner 非本
+                    // 实例 ⇒ 只放行 takeover/takeoverResult 接管协议帧，对话内容帧
+                    // 断喂）。误报根修批（2026-11-02）：闸键与入账键同为 holder
+                    // （clientId 优先），否则同浏览器换会话后自己的新连接会被自己掐死。
                     // Bearer 轨（takeoverSession=None）与总闸关闭 ⇒ 恒放行（零漂移）。
                     // 心跳面不受影响：pong 走 perConnJsonSend 旁路，不经本闸。
                     gatedWsSend = (text: String, isStream: Boolean) =>
                       takeoverSession match
                         case None => perConnWsSend(text, isStream)
                         case Some(sid) =>
-                          takeover.gateFrame(sid, text).flatMap {
+                          val holder = ConsoleTakeover.holderOf(sid, takeoverClient)
+                          takeover.gateFrame(holder, text).flatMap {
                             case true  => perConnWsSend(text, isStream)
                             case false => IO.unit
                           }
@@ -1364,7 +1374,7 @@ class WebSocketRoutes(
                     // takeoverSession=None 直通。事件面只有 fresh-claim 翻位与旧主回连
                     // superseded 通知；断线/判死回收路径（onFinalize ⇒ onDisconnect）
                     // 零出帧——掉线 ≠ 让位（设计稿 §7 边界）。
-                    _ <- takeoverSession.traverse_(sid => takeover.onConnect(sid, hubConnId))
+                    _ <- takeoverSession.traverse_(sid => takeover.onConnect(sid, hubConnId, takeoverClient))
                     // R-960：入账/回减已移入收流管会话 scope（上方 guardedReceive）——
                     // build 前不再预占槽位；升级会话未起跑 ⇒ 计数未发生（幽灵洞封死）。
                     ws <- wsb.build(sendStream, receivePipe)
