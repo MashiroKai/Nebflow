@@ -102,6 +102,18 @@ related: "[[20261102_085500_mobile-two-stage-title__delegate-nebflow-1bae7308]]"
 
 ## 7. 测试（分块、各自独立进程）
 
+**合入 main 后复跑（commit `5ed0b3940`，工作区 `/Users/kaiyu/Claude code/Stand`）**：
+
+| 块 | 结果 |
+|---|---|
+| `node tests/mobile-chrome-clearance.spec.mjs`（双引擎×双主题×全 25 页） | **ALL PASS** |
+| `npx playwright test mobile-p10-plugins + plugins-panel-itemize + plugins-panel-pure-plugins + sidebar-plugins` | 22 passed |
+| `npx playwright test mobile-dock + mobile-pinned-search + mobile-topbar` | 35 passed |
+| `node tests/mobile-panel-title.spec.mjs` | ALL PASS |
+| `node tests/ime-guard.spec.mjs` | ALL PASS |
+
+分支上（已合并 main、尚未合入 main 时）的同批读数为 21 + 36 passed + ALL PASS ×3，与上表一致。
+
 | 块 | 命令 | 结果 |
 |---|---|---|
 | 本批验收 spec | `node tests/mobile-chrome-clearance.spec.mjs` | **285 PASS / 0 FAIL**（双引擎×双主题×全页） |
@@ -133,7 +145,11 @@ related: "[[20261102_085500_mobile-two-stage-title__delegate-nebflow-1bae7308]]"
 
 ## 10. 校验
 
+在干净 vault 上跑（本批分支工作区，含本篇 149 篇）：
+
 ```
-$ python3 /Users/kaiyu/.stand/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --root "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-f1fc2f78/docs"
-wiki-docs 校验：通过（.../docs，149 篇文档，零违规）
+$ python3 /Users/kaiyu/.stand/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --root "…/worktrees/delegate-nebflow-f1fc2f78/docs"
+wiki-docs 校验：通过（…/docs，149 篇文档，零违规）
 ```
+
+主工作区（`/Users/kaiyu/Claude code/Stand/docs`）报 29 条 `orphan-doc`，逐条核对 **全部是未跟踪的本地遗留文件**（`design/design.md`、`actor-mailbox-pattern-review.md` 等，`git ls-files` 零命中）；干净 main worktree 上同一脚本 **零违规**，本篇不在违规清单内。该 29 条与本批无关，属工作区卫生问题（未跟踪的旧设计稿本子）。
