@@ -50,9 +50,12 @@ function resolvePath(p, mustWrite = false) {
     return abs;
 }
 function walk(base, sink) {
-    for (const entry of fs.readdirSync(base, { withFileTypes: true })) {
-        if (entry.name.startsWith('.'))
-            continue;
+    // 稳定序遍历（目录名/文件名均排序）+ 点开头条目（文件与目录）一律跳过——
+    // 与 ptc-python 的 _walk_files 逐条同义（缺陷⑤）。
+    const entries = fs.readdirSync(base, { withFileTypes: true })
+        .filter((e) => !e.name.startsWith('.'))
+        .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    for (const entry of entries) {
         const full = path.join(base, entry.name);
         if (entry.isDirectory())
             walk(full, sink);
@@ -60,10 +63,55 @@ function walk(base, sink) {
             sink.push(full);
     }
 }
-function globToRe(glob) {
-    const esc = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
-    return new RegExp(`^${esc}$`);
+/** 段式 shell glob：`**` 跨段（含零段），`*`/`?`/`[...]` 段内（与 python _glob_match 同义）。 */
+function segToRe(seg) {
+    let out = '';
+    for (let i = 0; i < seg.length; i += 1) {
+        const c = seg[i];
+        if (c === '*')
+            out += '[^/]*';
+        else if (c === '?')
+            out += '[^/]';
+        else if (c === '[') {
+            const j = seg.indexOf(']', i + 1);
+            if (j < 0)
+                out += '\\[';
+            else {
+                const body = seg.slice(i + 1, j);
+                out += `[${body.startsWith('!') ? `^${body.slice(1)}` : body}]`;
+                i = j;
+            }
+        }
+        else
+            out += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    }
+    return new RegExp(`^${out}$`);
 }
+function globMatch(pattern, rel) {
+    const pats = pattern.replace(/\\/g, '/').split('/').filter((s) => s !== '' && s !== '.');
+    const segs = rel.split('/');
+    const walkMatch = (pi, si) => {
+        let p = pi;
+        let s = si;
+        while (p < pats.length) {
+            if (pats[p] === '**') {
+                if (p === pats.length - 1)
+                    return true;
+                for (let k = s; k <= segs.length; k += 1)
+                    if (walkMatch(p + 1, k))
+                        return true;
+                return false;
+            }
+            if (s >= segs.length || !segToRe(pats[p]).test(segs[s]))
+                return false;
+            p += 1;
+            s += 1;
+        }
+        return s === segs.length;
+    };
+    return walkMatch(0, 0);
+}
+const GLOB_MAX = 200;
 const TOOLS = {
     read: {
         desc: 'Read a UTF-8 text file inside the authorised roots.',
@@ -74,17 +122,23 @@ const TOOLS = {
             let buf = fs.readFileSync(p).subarray(0, MAX_READ_BYTES + 1);
             let truncated = buf.length > MAX_READ_BYTES;
             buf = buf.subarray(0, MAX_READ_BYTES);
-            let lines = buf.toString('utf8').split(/\r?\n/);
-            if (a.offset)
-                lines = lines.slice(Number(a.offset));
-            if (a.limit)
-                lines = lines.slice(0, Number(a.limit));
-            let text = lines.join('\n');
+            const full = buf.toString('utf8');
+            // 契约：text = 按行切片后的**原始子串**（行终止符随行保留）。按 "\n" 切（保留
+            // 行内 "\r"），末元素在文件以 "\n" 结尾时是空串——与 python 版逐字同义。
+            const pieces = full.split('\n');
+            const endsNl = full.endsWith('\n');
+            const total = endsNl && full !== '' ? pieces.length - 1 : pieces.length;
+            const start = Math.min(Number(a.offset || 0) > 0 ? Number(a.offset) : 0, total);
+            const end = Number(a.limit || 0) <= 0 ? total : Math.min(total, start + Number(a.limit));
+            const selected = pieces.slice(start, end);
+            let text = selected.join('\n');
+            if (end === total && endsNl && total > 0)
+                text += '\n';
             if (Buffer.byteLength(text, 'utf8') > MAX_VALUE_BYTES) {
                 text = Buffer.from(text, 'utf8').subarray(0, MAX_VALUE_BYTES).toString('utf8');
                 truncated = true;
             }
-            return ok({ path: p, text, lines: lines.length }, truncated);
+            return ok({ path: p, text, lines: selected.length }, truncated);
         },
     },
     write: {
@@ -131,12 +185,13 @@ const TOOLS = {
         required: ['pattern'],
         run: (a) => {
             const base = resolvePath(a.path ?? '.');
-            const rx = globToRe(String(a.pattern ?? '*'));
+            const root = fs.statSync(base).isDirectory() ? base : path.dirname(base);
             const files = [];
-            walk(fs.statSync(base).isDirectory() ? base : path.dirname(base), files);
-            const rel = files.map((f) => path.relative(base, f).split(path.sep).join('/'));
-            const hits = rel.filter((r) => rx.test(r) || rx.test(path.basename(r))).slice(0, 200);
-            return ok({ paths: hits.sort(), base }, rel.length > 200);
+            walk(root, files);
+            const rel = files.map((f) => path.relative(root, f).split(path.sep).join('/'));
+            const hits = rel.filter((r) => globMatch(String(a.pattern ?? '*'), r)).sort();
+            const truncated = hits.length > GLOB_MAX;
+            return ok({ paths: hits.slice(0, GLOB_MAX), base: root }, truncated);
         },
     },
     grep: {
@@ -155,13 +210,18 @@ const TOOLS = {
             }
             const base = resolvePath(a.path ?? '.');
             const max = Number(a.max_results ?? 50);
-            const files = [];
-            if (fs.statSync(base).isDirectory())
+            const isDir = fs.statSync(base).isDirectory();
+            const targets = [];
+            if (isDir) {
+                const files = [];
                 walk(base, files);
+                for (const full of files)
+                    targets.push({ rel: path.relative(base, full).split(path.sep).join('/'), full });
+            }
             else
-                files.push(base);
+                targets.push({ rel: path.basename(base), full: base });
             const matches = [];
-            for (const full of files) {
+            for (const { rel, full } of targets) {
                 let text;
                 try {
                     if (fs.statSync(full).size > MAX_READ_BYTES)
@@ -171,16 +231,18 @@ const TOOLS = {
                 catch {
                     continue;
                 }
-                const lines = text.split(/\r?\n/);
+                const lines = text.split('\n');
                 for (let i = 0; i < lines.length; i += 1) {
-                    if (rx.test(lines[i])) {
-                        matches.push({ path: path.relative(base, full).split(path.sep).join('/'), line: i + 1, text: lines[i].slice(0, MAX_VALUE_BYTES) });
-                        if (matches.length >= max)
-                            return ok({ matches, count: matches.length }, true);
-                    }
+                    if (!rx.test(lines[i]))
+                        continue;
+                    const shown = lines[i].endsWith('\r') ? lines[i].slice(0, -1) : lines[i];
+                    matches.push({ path: rel, line: i + 1, text: shown.slice(0, MAX_VALUE_BYTES) });
                 }
             }
-            return ok({ matches, count: matches.length });
+            matches.sort((x, y) => (x.path < y.path ? -1 : x.path > y.path ? 1 : x.line - y.line));
+            const truncated = matches.length > max;
+            const kept = matches.slice(0, max);
+            return ok({ matches: kept, count: kept.length }, truncated);
         },
     },
     stat: {

@@ -208,7 +208,10 @@ Usage:
 
     args += searchRoot
 
-    RgHelper.runRg(args.toList, workDir) match
+    // 缺陷⑥（2026-11-02）：子进程 cwd 钉到**已 canonicalize 的搜索根**（GlobTool
+    // :217-221 早就是这条口径），不再把未校验的 JVM `user.dir` 交给 CreateProcess
+    // ——后者在 Windows 上直接 error=267（分离启动/启动目录被改名删除的实例必踩）。
+    RgHelper.runRg(args.toList, workDir, processCwd = Some(searchRoot)) match
       case Left(err) => Left(err)
       case Right((stdoutStr, stderrStr, exitCode, _)) =>
         if exitCode == 2 then

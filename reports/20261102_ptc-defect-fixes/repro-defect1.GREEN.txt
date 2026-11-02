@@ -1,0 +1,49 @@
+VERDICT: GREEN —— 缺陷① 的对照（本批新编译 jar），与 repro-defect1.RED.txt 同机同参数
+================================================================
+命令序列（与 RED 完全相同的实例/数据根/端口/假模型延迟，只把 --jar 换成新编译的那份）
+  1) java --add-opens=java.base/java.lang=ALL-UNNAMED \
+       -cp <worktree>/target/scala-3.5.2/stand-assembly-2026.10.26-beta.2.jar nebflow.Main \
+       --home D:/ptc-e2e/home3 --port 18125 --daemon-child
+  2) node scripts/ptc/mock-llm.mjs --port 18124 --out D:/ptc-e2e/evidence/mock-green \
+       --alloc-delay 70000 --workspace D:/ptc-e2e/home3/general      # 全新的 mock 状态（一次性）
+  3) node scripts/ptc/ptc-e2e-drive.mjs --base http://127.0.0.1:18125 --home D:/ptc-e2e/home3 \
+       --mock D:/ptc-e2e/evidence/mock-green --workspace D:/ptc-e2e/home3/general --timeout 200
+
+一、实例日志 <dataRoot>/logs/stand.log（原文）
+----------------------------------------------------------------
+18:09:16.940 INFO  nebflow.llm.plugin-alloc - plugin allocation 'delegate-nebflow-fb7a4b6c': llm fallback leg (jev gate off (jev block absent))
+18:10:26.979 INFO  nebflow.core.plugin.injection - plugin allocation 'delegate-nebflow-fb7a4b6c': via=llm-fallback plugins=[ptc-python,ptc-javascript] duty=Allocated(false)
+18:10:27.008 INFO  nebflow.mcp - MCP server 'plugin_ptc-python_ptc' tools/call budget: 600000ms (from config timeoutMs)
+18:10:27.057 INFO  nebflow.mcp - MCP server 'plugin_ptc-javascript_ptc' tools/call budget: 600000ms (from config timeoutMs)
+18:10:27.234 INFO  nebflow.handlers - Nebula ptc-e2e-2 Tool Delegate(用 ptc-python 与 ptc-javascript 两个插件的 ptc_run_rw 在 notes/ 下...) OK (70332ms)
+18:10:27.298 INFO  nebflow.handlers - ... Tool Grep("TODO")
+18:10:27.298 INFO  nebflow.handlers -   (path="D:/ptc-e2e/home3/general") OK (32ms)
+18:10:27.365 INFO  nebflow.handlers - ... Tool [MCP] ptc_run_rw OK (88ms)
+18:10:27.387 INFO  nebflow.handlers - ... Tool [MCP] ptc_run_rw OK (110ms)
+18:10:27.395 INFO  nebflow.handlers - ... Tool [MCP] ptc_run_rw OK (118ms)
+
+★ 70,039ms：18:09:16.940 → 18:10:26.979。同一条腿在 RED 里 60,025ms 就断了——
+  差的这 10s 就是被 sttp 缺省 readTimeout 吃掉的那一段；本批 jar 上它不再存在。
+★ 分配成功后立刻带出两个插件的 MCP server，且预算 600000ms 真的到了调用面（缺陷②）。
+
+二、假模型侧 <evidence>/mock-green/requests.jsonl（原文）
+----------------------------------------------------------------
+{"at":2560,"phase":"alloc-delay-start","delayMs":70000}
+（同样的 70s 延迟；与 RED 不同的是这次引擎等到了回包，没有提前放弃）
+
+三、工作区物证（两个插件同一份编排、各自落一份结果）
+----------------------------------------------------------------
+D:/ptc-e2e/home3/general/notes/ptc-python.json
+D:/ptc-e2e/home3/general/notes/ptc-js.json
+内容比对（python 侧 json.load 后逐字段）：equal = True，3 行，键序同为 path/chars/todo
+  [{"path":"notes/a.md","chars":43,"todo":1},
+   {"path":"notes/sub/b.md","chars":23,"todo":0},
+   {"path":"notes/sub/c.md","chars":45,"todo":2}]
+★ 这是缺陷⑤在**实例内**的同用例证据（不只是抽屉里的契约脚本）；
+★ 同时是缺陷③的证据：相对路径 `notes/…` 落在 delegate 自己的工作区，不是插件进程的 cwd。
+
+四、结论
+----------------------------------------------------------------
+同一脚本、同一数据根、同一端口、同一 70s 慢分配，唯一变量是 jar：
+  改动前 ⇒ RED（60s 超时 + plugins=[] + 工具面 tools:15 + 上层仍报 OK）
+  本  批 ⇒ GREEN（70s 等到底 + plugins=[ptc-python,ptc-javascript] + 三次 ptc_run_rw 全部 OK）

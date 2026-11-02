@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 编译 ptc-typescript 的 TypeScript 源到 dist/。
+ * 编译 ptc-javascript 的 TypeScript 源到 dist/（**源码是 TS，产物是 JS**；插件运行期不转译）。
  * 依赖临时安装（typescript + @types/node），编译完即清理；产物（dist/*.js）随包提交，
  * 装载侧不需要 npm / 构建步骤。
  *
@@ -13,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const PKG = path.join(ROOT, 'plugins/ptc-typescript/skills/ptc-typescript');
+const PKG = path.join(ROOT, 'plugins/ptc-javascript/skills/ptc-javascript');
 const work = fs.mkdtempSync(path.join(os.tmpdir(), 'ptc-tsc-'));
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 

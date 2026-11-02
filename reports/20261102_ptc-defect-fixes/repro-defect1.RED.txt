@@ -1,0 +1,41 @@
+VERDICT: RED  —— 缺陷① 的复现（改动前的 jar）
+================================================================
+命令
+  bash scripts/ptc/repro-defect1.sh \
+    --jar D:/workspace@zcode/nebflow/nebflow-stand/target/prereq4-rw/stand-assembly-2026.10.26-beta.2-prereq4-20261101-203330.jar \
+    --home D:/ptc-e2e/home3 --port 18125 --workspace D:/ptc-e2e/home3/general --alloc-delay 70000
+  （home3 = home2 的副本，sessions/logs/delegates 已清空；假模型 alloc-delay=70s）
+
+数据根   D:/ptc-e2e/home3      端口 18125      假模型 127.0.0.1:18124
+
+一、实例日志 <dataRoot>/logs/stand.log（原文）
+----------------------------------------------------------------
+18:05:25.192 INFO  nebflow.llm.plugin-alloc - plugin allocation 'delegate-nebflow-6c8e2844': llm fallback leg (jev gate off (jev block absent))
+18:06:25.217 WARN  nebflow.llm.plugin-alloc - llm allocator: candidate MOCK/mock-slow errored (TimeoutException) — trying next candidate
+18:06:25.218 WARN  nebflow.jev - jev allocation llm-error for 'delegate-nebflow-6c8e2844' (llm allocator: call failed (candidate chain exhausted — see per-candidate WARN lines)) — falling back to the dispatcher default mount so dispatch never blocks
+18:06:25.221 INFO  nebflow.core.plugin.injection - plugin allocation 'delegate-nebflow-6c8e2844': via=- plugins=[] duty=AllocatedViaFallback(llm allocator: call failed (candidate chain exhausted — see per-candidate WARN lines))
+18:06:25.267 INFO  nebflow.agent.lifecycle - .../delegate event=spawn detail=parent=...
+18:06:25.376 INFO  nebflow.handlers - Nebula ptc-e2e-2 Tool Delegate(用 ptc-python 与 ptc-javascript 两个插件的 ptc_run_rw 在 notes/ 下...) OK (60234ms)
+
+★ 60, 025ms 后失败：18:05:25.192 → 18:06:25.217，恰好是 sttp 的 60s 缺省 readTimeout，
+  而假模型在 70s 才回包（见二）。差值 10s 就是被吃掉的那一段。
+★ 失败被记成 AllocatedViaFallback + plugins=[]，外层 Tool Delegate 仍然是 **OK (60234ms)** ——
+  用户/上层看不到任何失败，只看到「插件没生效」。
+
+二、假模型侧 <evidence>/mock-red/requests.jsonl（原文）
+----------------------------------------------------------------
+{"at":2319,"model":"mock-slow","isAlloc":true,"isDelegate":false,"messages":1,"tools":0,"phase":"request","textHead":"user:You are auditing task dispatch in an
+{"at":2320,"phase":"alloc-delay-start","delayMs":70000}
+{"at":62511,"model":"mock-slow","isAlloc":false,"isDelegate":true,"messages":2,"tools":15,"phase":"request","textHead":"system:You are a task node running insid
+{"at":62512,"phase":"response","isAlloc":false,"finish":"stop","message":"No PTC tool available; task finished with builtin tools."}
+
+★ 分配请求在 at=2319 到达、延迟 70s 开始；到 at=62511 引擎已经**放弃分配**、改用内置工具派发
+  —— 于是 delegate 那次 spawn 的工具面只有 tools:15（没有任何 ptc_* 工具）。
+★ 这不是假模型的假设：它只是如实执行「有什么工具就怎么跑」，而当时**没有任何** PTC 工具可调。
+
+三、为什么这条能验红
+----------------------------------------------------------------
+根因（见 docs §1.2）有两处，本脚本正好同时踩中：
+  (a) OpenAiAdapter/AnthropicAdapter 的非流式请求没有设 readTimeout ⇒ sttp 缺省 60s ⇒ 70s 的分配必被掐；
+  (b) PluginInjection 把 llm-error 静默转成 plugins=[] ⇒ 派发照常继续（旧语义 fail-open）。
+任一未修，本脚本都会 RED。本批 jar 上重跑同一脚本 ⇒ GREEN（见 repro-defect1.GREEN.txt）。

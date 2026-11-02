@@ -33,8 +33,11 @@ _MAX_READ_BYTES = 262144
 
 # ── 结果封装 ────────────────────────────────────────────────────────────────
 def ok(value, truncated=False, extra=None):
+    # bytes = value 的**紧凑 JSON** 字节数（缺陷⑤）：与 ptc-javascript 的
+    # `JSON.stringify(value)` 逐字节同义——旧实现用 json.dumps 缺省分隔符（", " / ": "），
+    # 同一份 value 两侧字节数恒差几个空格，模型拿 bytes 做预算会得到两套数。
     payload = {"ok": True, "value": value, "truncated": bool(truncated),
-               "bytes": len(json.dumps(value, ensure_ascii=False).encode("utf-8"))}
+               "bytes": len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))}
     if extra:
         payload.update(extra)
     return payload
@@ -61,6 +64,94 @@ def _resolve(path, must_write=False):
 
 
 # ── 工具实现 ────────────────────────────────────────────────────────────────
+# 语义契约（缺陷⑤，2026-11-02——**与 ptc-javascript 的 ptc_tools_fs 逐字同义**，
+# 两侧共同由 scripts/ptc/fs-contract.mjs 逐字比对；改一侧必须同时改另一侧）：
+#   read   text = 按行切片后的**原始子串**（行终止符随行保留 ⇒ 读整文件与文件内容
+#          逐字相等；旧实现用 str.splitlines() 吃掉了行尾换行 ⇒ 138 vs 141）
+#   glob   pattern 按 "/" 切段匹配；`**` = 跨段（含零段），`*` = 段内，`?` = 单字符；
+#          返回相对 base 的 "/" 路径，**排序后**取前 200，truncated = 命中数>200
+#   grep   path 相对 base、按 (path, line) 排序、line 从 1 起、text 去掉行终止符
+#          （含尾随 "\r"），命中数进 max_results 截断
+_GLOB_MAX = 200
+
+
+def _seg_regex(seg):
+    import re
+    out, i = [], 0
+    while i < len(seg):
+        c = seg[i]
+        if c == "*":
+            out.append("[^/]*")
+        elif c == "?":
+            out.append("[^/]")
+        elif c == "[":
+            j = seg.find("]", i + 1)
+            if j < 0:
+                out.append(re.escape(c))
+            else:
+                body = seg[i + 1:j]
+                if body.startswith("!"):
+                    body = "^" + body[1:]
+                out.append("[" + body + "]")
+                i = j
+        else:
+            out.append(re.escape(c))
+        i += 1
+    return re.compile("".join(out) + r"\Z")
+
+
+_SEG_CACHE = {}
+
+
+def _seg_match(seg, name):
+    rx = _SEG_CACHE.get(seg)
+    if rx is None:
+        rx = _seg_regex(seg)
+        _SEG_CACHE[seg] = rx
+    return rx.match(name) is not None
+
+
+def _glob_match(pattern, rel):
+    """段式 shell glob：`**` 跨段（含零段），`*`/`?` 段内。"""
+    pats = [s for s in pattern.replace("\\", "/").split("/") if s not in ("", ".")]
+    segs = rel.split("/")
+
+    def walk(pi, si):
+        while pi < len(pats):
+            if pats[pi] == "**":
+                if pi == len(pats) - 1:
+                    return True
+                for k in range(si, len(segs) + 1):
+                    if walk(pi + 1, k):
+                        return True
+                return False
+            if si >= len(segs) or not _seg_match(pats[pi], segs[si]):
+                return False
+            pi += 1
+            si += 1
+        return si == len(segs)
+
+    return walk(0, 0)
+
+
+def _walk_files(base):
+    """稳定序遍历：目录名/文件名均排序，点开头条目（文件与目录）一律跳过。"""
+    out = []
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        for name in sorted(filenames):
+            if name.startswith("."):
+                continue
+            full = os.path.join(dirpath, name)
+            out.append(os.path.relpath(full, base).replace(os.sep, "/"))
+    return out
+
+
+def _lines_of(text):
+    """按 "\n" 切行（保留每行以外的终止符信息）：(行列表, 是否以 "\n" 结尾)。"""
+    return text.split("\n"), text.endswith("\n")
+
+
 def t_read(a):
     p = _resolve(a.get("path"))
     offset = int(a.get("offset", 0) or 0)
@@ -70,16 +161,21 @@ def t_read(a):
     truncated = len(raw) > _MAX_READ_BYTES
     raw = raw[:_MAX_READ_BYTES]
     text = raw.decode("utf-8", errors="replace")
-    lines = text.splitlines()
-    if offset:
-        lines = lines[offset:]
-    if limit:
-        lines = lines[:limit]
-    body = "\n".join(lines)
+    pieces, ends_nl = _lines_of(text)
+    total = len(pieces) - 1 if ends_nl and text != "" else len(pieces)
+    start = offset if offset > 0 else 0
+    if start > total:
+        start = total
+    end = total if limit <= 0 else min(total, start + limit)
+    selected = pieces[start:end]
+    body = "\n".join(selected)
+    # 切片触到文件尾且原文件以 "\n" 结尾 ⇒ 尾行终止符属于被选内容（逐字保留）。
+    if end == total and ends_nl and total > 0:
+        body += "\n"
     if len(body.encode("utf-8")) > _MAX_VALUE_BYTES:
         body = body.encode("utf-8")[:_MAX_VALUE_BYTES].decode("utf-8", errors="replace")
         truncated = True
-    return ok({"path": p, "text": body, "lines": len(lines)}, truncated)
+    return ok({"path": p, "text": body, "lines": len(selected)}, truncated)
 
 
 def t_write(a):
@@ -112,20 +208,13 @@ def t_edit(a):
 
 
 def t_glob(a):
-    import fnmatch
-    pattern = a.get("pattern", "*")
+    pattern = str(a.get("pattern") or "*")
     base = _resolve(a.get("path", "."))
-    out = []
-    for dirpath, dirnames, filenames in os.walk(base):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-        for name in filenames:
-            full = os.path.join(dirpath, name)
-            rel = os.path.relpath(full, base).replace(os.sep, "/")
-            if fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(name, pattern):
-                out.append(rel)
-                if len(out) >= 200:
-                    return ok({"paths": out, "base": base}, truncated=True)
-    return ok({"paths": sorted(out), "base": base})
+    root = base if os.path.isdir(base) else os.path.dirname(base)
+    hits = [r for r in _walk_files(root) if _glob_match(pattern, r)]
+    hits.sort()
+    truncated = len(hits) > _GLOB_MAX
+    return ok({"paths": hits[:_GLOB_MAX], "base": root}, truncated=truncated)
 
 
 def t_grep(a):
@@ -139,28 +228,27 @@ def t_grep(a):
         return err("PTC_TOOL_ERROR", "grep: invalid regex: %s" % e)
     base = _resolve(a.get("path", "."))
     max_results = int(a.get("max_results", 50) or 50)
-    matches = []
-    if os.path.isfile(base):
-        files = [base]
+    if os.path.isdir(base):
+        targets = [(rel, os.path.join(base, rel.replace("/", os.sep))) for rel in _walk_files(base)]
     else:
-        files = []
-        for dirpath, dirnames, filenames in os.walk(base):
-            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-            files.extend(os.path.join(dirpath, f) for f in filenames)
-    for full in files:
+        targets = [(os.path.basename(base), base)]
+    matches = []
+    for rel, full in targets:
         try:
             if os.path.getsize(full) > _MAX_READ_BYTES:
                 continue
             with open(full, "r", encoding="utf-8", errors="replace") as f:
                 for i, line in enumerate(f, 1):
                     if rx.search(line):
-                        matches.append({"path": os.path.relpath(full, base).replace(os.sep, "/"),
-                                        "line": i, "text": line.rstrip("\n")[:_MAX_VALUE_BYTES]})
-                        if len(matches) >= max_results:
-                            return ok({"matches": matches, "count": len(matches)}, truncated=True)
+                        shown = line[:-1] if line.endswith("\n") else line
+                        if shown.endswith("\r"):
+                            shown = shown[:-1]
+                        matches.append({"path": rel, "line": i, "text": shown[:_MAX_VALUE_BYTES]})
         except (OSError, UnicodeError):
             continue
-    return ok({"matches": matches, "count": len(matches)})
+    matches.sort(key=lambda m: (m["path"], m["line"]))
+    truncated = len(matches) > max_results
+    return ok({"matches": matches[:max_results], "count": min(len(matches), max_results)}, truncated=truncated)
 
 
 def t_stat(a):

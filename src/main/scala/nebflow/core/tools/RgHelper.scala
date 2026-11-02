@@ -47,10 +47,26 @@ object RgHelper:
       sys.props("user.home") + File.separator + ".nebflow" + File.separator + "bin" + File.separator + rgBinName
     ).distinct
 
-  private val rgWinInstallPath: Option[String] =
+  /**
+   * Windows install-dir legs (%LOCALAPPDATA%\<productName>\rg.exe)。
+   *
+   * 缺陷⑥（2026-11-02）：此处曾硬编码 `Nebflow`——**rebrand 漏网**（install.ps1
+   * 自 REBRAND 后写的是 `$env:LOCALAPPDATA\stand\rg.exe`，见 release/install.ps1
+   * 的 `ExtractToFile(... Join-Path $InstallDir "rg.exe")` + brand.conf productName）。
+   * 后果两条：(a) 新装机的正确位置**从不被探测**；(b) 只有旧名残留物才被选中，
+   * 于是一个孤儿二进制反而优先于「找不到」——错误消息还指着 pre-rebrand 路径，
+   * 把「找不到 rg」误读成「发行包漏了 rg」。现在按品牌名探（`stand`），旧名
+   * `Nebflow` 保留为次选（旧装机不破）。
+   */
+  private val rgWinInstallPaths: List[String] =
     if isWindows then
-      Option(System.getenv("LOCALAPPDATA")).map(_ + File.separator + "Nebflow" + File.separator + rgBinName)
-    else None
+      Option(System.getenv("LOCALAPPDATA")).toList.flatMap { local =>
+        List(
+          local + File.separator + nebflow.shared.Branding.productName + File.separator + rgBinName,
+          local + File.separator + "Nebflow" + File.separator + rgBinName
+        )
+      }.distinct
+    else Nil
 
   /**
    * Well-known rg install prefixes probed after the PATH leg. Service
@@ -78,7 +94,7 @@ object RgHelper:
       pathEnv = sys.env.getOrElse("PATH", ""),
       probeDirs = curatedProbeDirs,
       localPaths = rgLocalPaths,
-      winInstall = rgWinInstallPath
+      winInstall = rgWinInstallPaths
     )
 
   /**
@@ -90,7 +106,7 @@ object RgHelper:
     pathEnv: String,
     probeDirs: List[String],
     localPaths: List[String],
-    winInstall: Option[String]
+    winInstall: List[String]
   ): Option[String] =
     val fromBundled = nebflow.core.InstallLayout.bundledRg
     // 1. PATH lookup
@@ -110,8 +126,11 @@ object RgHelper:
       .map(p => new File(p))
       .find(_.isFile)
       .map(_.getAbsolutePath)
-    // 4. Windows install dir (%LOCALAPPDATA%\Nebflow\rg.exe)
-    val fromWinInstall = winInstall.flatMap(p => Some(new File(p)).filter(_.isFile).map(_.getAbsolutePath))
+    // 4. Windows install dir (%LOCALAPPDATA%\<productName>\rg.exe，旧名 Nebflow 次选)
+    val fromWinInstall = winInstall.iterator
+      .map(p => new File(p))
+      .find(_.isFile)
+      .map(_.getAbsolutePath)
     fromBundled.orElse(fromPath).orElse(fromProbe).orElse(fromCache).orElse(fromWinInstall)
 
   end resolveRgPathFrom
@@ -182,9 +201,16 @@ object RgHelper:
       case None => Left(ToolError(notFoundMessage))
       case Some(rgPath) =>
         try
-          val proc = new ProcessBuilder((rgPath :: args)*)
-            .directory(new File(processCwd.getOrElse(workDir)))
-            .start()
+          // 🔴 缺陷⑥（2026-11-02）：子进程 cwd 此前是「用户给什么就传什么」。
+          // Windows 上 CreateProcess 的 lpCurrentDirectory 不是目录 ⇒
+          // error=267 (ERROR_DIRECTORY)「The directory name is invalid」，而
+          // 报错文案会把程序路径顶到前面（`...\Nebflow\rg.exe (in directory ...)`），
+          // 极易被读成「rg.exe 缺失/打包漏了」。真正的不变量是：**只有确认是目录
+          // 才设 cwd**，否则交给父进程 cwd（rg 的搜索根是绝对参数，不依赖 cwd）。
+          val pb = new ProcessBuilder((rgPath :: args)*)
+          val cwd = new File(processCwd.getOrElse(workDir))
+          if cwd.isDirectory then pb.directory(cwd)
+          val proc = pb.start()
           try
             val (stdoutStr, stdoutTruncated) = readWithLimit(proc.getInputStream)
             if stdoutTruncated && !truncateOnOverflow then throw new OutputTooLargeException

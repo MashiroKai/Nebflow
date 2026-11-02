@@ -1,6 +1,6 @@
-# ptc-typescript —— PTC 模式（用 JavaScript/TypeScript 代码编排工具调用）
+# ptc-javascript —— PTC 模式（用 JavaScript 代码编排工具调用）
 
-你获得了两个工具：`ptc_run`（只读档）与 `ptc_run_rw`（读写档）。**你写一段 JS/TS 代码，代码在受控子进程里跑，跑的过程中可以调宿主工具；一次调用把整段程序的 stdout、返回值、工具调用台账和结构化错误一起还给你。**
+你获得了两个工具：`ptc_run`（只读档）与 `ptc_run_rw`（读写档）。**你写一段 JavaScript（ES2022）代码，代码在受控子进程里跑，跑的过程中可以调宿主工具；一次调用把整段程序的 stdout、返回值、工具调用台账和结构化错误一起还给你。**
 
 ## 什么时候用 / 不用
 
@@ -32,7 +32,7 @@ console.log('hits:', rows.count);                          // stdout 进响应�
 | `allowed_tools` | 只能**收窄**档位：如 `["read","grep"]` |
 | `timeout_ms` | 缺省 30000，上限 300000 |
 | `limits` | `max_tool_calls`(64) / `max_output_bytes`(65536) / `max_memory_mb`(1024) / `max_cpu_ms`(60000)，只能收紧 |
-| `cwd` / `fs_roots` | 都必须落在插件声明的 workspace 根内 |
+| `cwd` / `fs_roots` | 默认必须落在插件 workspace 根内；部署若设了 `PTC_FS_ROOTS`/`PTC_FS_ROOTS_OPEN=1`，可点名额外/任意已存在目录（见 SKILL §5） |
 | `args` | 透传给代码的参数字典 |
 
 ## 响应
@@ -53,6 +53,48 @@ console.log('hits:', rows.count);                          // stdout 进响应�
 | `TIMEOUT` | 超时被杀 | 拆分任务或调小范围 |
 | `LIMIT_EXCEEDED` | 撞工具调用次数/输出/内存（V8 堆上限）上限 | 缩小任务 |
 | `POLICY_DENIED` | 触安全政策（模块加载/联网/起进程/越根/未授权工具） | **不要试图绕过**，换做法 |
+
+## fs_roots 与工作区（缺陷③，2026-11-02）
+
+**缺省**：唯一可访问根 = `${PLUGIN_DATA}/workspace`（插件自己的沙盒目录），缺省 cwd 也在里面。
+delegate 会话的工作区是它的 worktree，**不在**这个根下，所以缺省配置下读自己工作区的
+`notes/` 会全量 `PTC_POLICY_FS`（"path escapes the authorised fs_roots"）。
+
+三种显式覆盖（任一即可，全部走 mcp.json 的 `env` 或引擎进程环境）：
+
+| 变量 | 作用 |
+|---|---|
+| `PTC_FS_ROOTS` | pathsep 分隔的**额外根**，并入缺省根成为新的上界（如 `D:/work/tree1;D:/work/tree2`） |
+| `PTC_FS_ROOTS_OPEN=1` | 允许**请求级** `fs_roots` 点名任意**已存在目录**（每次 `ptc_run` 仍过宿主 `McpToolGate` 审批）；请求给了 `fs_roots` 而没给 `cwd` 时，cwd 缺省取第一个根 |
+| `PTC_CWD` | 缺省 cwd 覆盖（须落在最终 `fs_roots` 内） |
+
+mcp.json 例子（`${PLUGIN_DATA}` / `${PLUGIN_ROOT}` 会被装载器展开）：
+
+```json
+{"mcpServers": {"ptc": {"type": "stdio", "command": "python3",
+  "args": ["${PLUGIN_ROOT}/skills/ptc-python/scripts/ptc_executor.py"],
+  "env": {"PTC_FS_ROOTS": "${PLUGIN_DATA}/workspace;D:/workspace/mytree"},
+  "timeoutMs": 600000}}}
+```
+
+**已知边界**：插件 MCP server 按插件引用计数、**多会话共享一个进程**，所以 env 是
+「谁先起谁生效」的静态值——不能做成 per-session 的工作区。要 per-session 边界就用
+`PTC_FS_ROOTS_OPEN=1` + 每次请求自带 `fs_roots`（收窄在请求面，随会话变化）。
+
+## 语言边界（**只吃 JavaScript，不做类型转译**）
+
+本插件跑的是**纯 JavaScript**（ES2022，node 语法校验直接执行，无转译步骤）：
+
+```js
+const x: string = 'a';        // ❌ SYNTAX_ERROR —— TypeScript 类型注解不会被剥掉
+const x = 'a';                // ✅
+interface Foo { a: string }   // ❌ 同上
+```
+
+要类型请用 JSDoc 注释（`/** @type {string} */`），它对运行期零影响。
+理由：转译需要 tsc/esbuild/swc 常驻，而插件挂载面禁止构建步骤、node ≥20 也没有
+`--experimental-strip-types`（node ≥22.6 才有）——与其叫 TypeScript 却在不转译时抛
+`PTC_SYNTAX`，不如把名字说成它真正支持的东西（缺陷④，2026-11-02 改名 ptc-typescript → ptc-javascript）。
 
 ## 硬边界（撞上即 POLICY_DENIED）
 

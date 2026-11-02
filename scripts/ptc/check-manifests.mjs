@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CONTRACT_DIR = path.join(ROOT, 'contracts/ptc/v1');
 const CONTRACT_FILES = ['README.md', 'ptc-request.schema.json', 'ptc-response.schema.json', 'ptc-manifest.schema.json'];
-const PLUGINS = ['ptc-python', 'ptc-typescript'];
+const PLUGINS = ['ptc-python', 'ptc-javascript'];
 
 const problems = [];
 const notes = [];
@@ -102,7 +102,7 @@ for (const name of PLUGINS) {
 }
 
 // ⑤ 跨语言对齐
-const [a, b] = [profiles['ptc-python'], profiles['ptc-typescript']];
+const [a, b] = [profiles['ptc-python'], profiles['ptc-javascript']];
 if (a && b) {
   for (const key of ['tools', 'readonly', 'readwrite']) {
     if (JSON.stringify(a[key]) !== JSON.stringify(b[key])) {

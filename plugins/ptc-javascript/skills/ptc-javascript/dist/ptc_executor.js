@@ -1,5 +1,5 @@
 /**
- * ptc_executor —— PTC 插件（ptc-typescript）的 MCP server = 执行器。
+ * ptc_executor —— PTC 插件（ptc-javascript）的 MCP server = 执行器。
  * 与 plugins/ptc-python 的 ptc_executor.py **逐条对齐**（同一份契约 contracts/ptc/v1）：
  *   工具：ptc_run（只读档）/ ptc_run_rw（读写档）
  *   反向通道：执行器自己是工具 MCP server 的 client —— 代码里的 tools.read(...) 由宿主侧
@@ -15,9 +15,9 @@ const PLUGIN_ROOT = path.resolve(process.env.PLUGIN_ROOT ?? path.join(HERE, '..'
 // PLUGIN_DATA 由宿主注入（<dataRoot>/plugin-data/<plugin>）；独立跑测试时落系统临时目录，
 // 绝不默认写进插件包根（包根未知条目会被装载器告警、且污染包 digest）。
 const PLUGIN_DATA = path.resolve(process.env.PLUGIN_DATA
-    ?? path.join(process.env.TEMP ?? process.env.TMP ?? '/tmp', 'ptc-plugin-data', 'ptc-typescript'));
+    ?? path.join(process.env.TEMP ?? process.env.TMP ?? '/tmp', 'ptc-plugin-data', 'ptc-javascript'));
 const PROTOCOL_VERSION = '2025-06-18';
-const SERVER_NAME = 'ptc-typescript';
+const SERVER_NAME = 'ptc-javascript';
 const SERVER_VERSION = '1.0.0';
 const CONTRACT = 'ptc/v1';
 const RUNNER = path.join(HERE, 'ptc_runner.js');
@@ -40,8 +40,34 @@ function expand(value) {
     }
     return value;
 }
-const DEFAULT_CWD = expand(PTC.workspace.default_cwd);
-const DEFAULT_ROOTS = (expand(PTC.workspace.fs_roots)).map((r) => fs.realpathSync(path.resolve(r)));
+const DEFAULT_CWD_MANIFEST = expand(PTC.workspace.default_cwd);
+/** 规范化到真实路径；不存在时退回 resolve（PTC_FS_ROOTS 里写错不炸启动）。 */
+const toReal = (p) => {
+    try {
+        return fs.realpathSync(path.resolve(p));
+    }
+    catch {
+        return path.resolve(p);
+    }
+};
+// ── fs_roots 覆盖（缺陷③，2026-11-02；与 ptc-python 的 ptc_executor.py 逐条同义）─
+// 缺省：唯一根 = `${PLUGIN_DATA}/workspace`（插件自己的沙盒目录）。delegate 会话里
+// 这不够用（工作区是它的 worktree，读自己 notes/ 全量 PolicyDenied）。覆盖面：
+//   PTC_FS_ROOTS        pathsep 分隔的额外根（并入缺省根，成为新的上界）
+//   PTC_FS_ROOTS_OPEN=1 允许请求级 fs_roots 点名任意**已存在目录**（per-call 收窄；
+//                       每一次 ptc_run 仍过宿主 McpToolGate 审批）
+//   PTC_CWD             缺省 cwd 覆盖（须落在最终 fs_roots 内）
+// mcp.json 的 env 同样可承载三者（装载器展开 ${PLUGIN_ROOT}/${PLUGIN_DATA}）。
+const EXTRA_ROOTS = (process.env.PTC_FS_ROOTS ?? '')
+    .split(path.delimiter).map((s) => s.trim()).filter(Boolean).map((r) => toReal(r));
+const ROOTS_OPEN = ['1', 'true', 'TRUE', 'yes'].includes((process.env.PTC_FS_ROOTS_OPEN ?? '0').trim());
+const DEFAULT_ROOTS = Array.from(new Set([
+    ...(expand(PTC.workspace.fs_roots)).map((r) => toReal(path.resolve(r))),
+    ...EXTRA_ROOTS,
+]));
+const DEFAULT_CWD = process.env.PTC_CWD?.trim()
+    ? toReal(process.env.PTC_CWD.trim())
+    : DEFAULT_CWD_MANIFEST;
 const KNOWN_TOOLS = Array.from(new Set(Object.values(PTC.profiles)
     .flatMap((p) => p.tools))).sort();
 const TOOL_PROFILES = Object.fromEntries(PTC.tools.map((t) => [t.name, t.profile]));
@@ -200,13 +226,29 @@ function validate(args, toolProfile) {
     }
     let roots = DEFAULT_ROOTS;
     if (args.fs_roots !== undefined) {
-        if (!Array.isArray(args.fs_roots) || args.fs_roots.length === 0)
+        if (!Array.isArray(args.fs_roots) || args.fs_roots.length === 0 || args.fs_roots.some((r) => typeof r !== 'string'))
             throw new Invalid('fs_roots must be a non-empty string array');
         roots = args.fs_roots.map((r) => real(r));
-        if (!roots.every((r) => inside(r, DEFAULT_ROOTS)))
-            throw new Invalid(`fs_roots must stay inside the manifest roots ${JSON.stringify(DEFAULT_ROOTS)}`);
+        // 缺陷③：默认仍要求「请求级 fs_roots ⊆ 已知根」；只有显式 PTC_FS_ROOTS_OPEN=1
+        // 才允许点名任意**已存在目录**（delegate 自助声明工作区）。
+        if (!ROOTS_OPEN) {
+            if (!roots.every((r) => inside(r, DEFAULT_ROOTS)))
+                throw new Invalid(`fs_roots must stay inside the manifest roots ${JSON.stringify(DEFAULT_ROOTS)} `
+                    + '(set PTC_FS_ROOTS=<path> to add a root, or PTC_FS_ROOTS_OPEN=1 to let the request declare its own)');
+        }
+        else {
+            const missing = roots.filter((r) => { try {
+                return !fs.statSync(r).isDirectory();
+            }
+            catch {
+                return true;
+            } });
+            if (missing.length)
+                throw new Invalid(`fs_roots entries must be existing directories: ${JSON.stringify(missing)}`);
+        }
     }
-    const cwd = real(args.cwd ?? DEFAULT_CWD);
+    // cwd：显式 > 请求自带 fs_roots 的首个根 > 缺省 cwd（插件 workspace / PTC_CWD）。
+    const cwd = real(args.cwd ?? (args.fs_roots !== undefined ? roots[0] : DEFAULT_CWD));
     if (!inside(cwd, roots))
         throw new Invalid(`cwd '${cwd}' is outside fs_roots`);
     if (!fs.statSync(cwd).isDirectory())

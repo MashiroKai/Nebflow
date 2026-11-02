@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "ptc-typescript",
+  "name": "ptc-javascript",
   "version": "1.0.0",
-  "description": "PTC 模式 TypeScript 承载件——节点获得 ptc_run / ptc_run_rw：模型写 JS/TS 代码编排工具调用（node 权限模型限定 fs + 网络面 patch），tools.* 经执行器以 MCP client 转调宿主工具 server（标准 MCP）。返回 stdout、完成值、逐次调用台账、四类错误分类；写能力仅 ptc_run_rw 给。用于 ≥2 次工具调用的循环/分支编排，不适用于单次工具调用与无工具任务的问答。前置 node≥20。内含 skills：ptc-typescript（请求面、绑定形状、错误判读、排障）。",
+  "description": "PTC 模式 JavaScript 承载件——节点获得 ptc_run / ptc_run_rw：模型写 JavaScript 代码（ES2022，**无类型转译**——TS 注解会 PTC_SYNTAX）编排工具调用（node 权限模型限定 fs + 网络面 patch），tools.* 经执行器以 MCP client 转调宿主工具 server（标准 MCP）。返回 stdout、完成值、逐次调用台账、四类错误分类；写能力仅 ptc_run_rw 给。用于 ≥2 次工具调用的循环/分支编排，不适用于单次工具调用与无工具任务的问答。前置 node≥20。内含 skills：ptc-javascript（请求面、绑定形状、错误判读、排障）。",
   "author": {
     "name": "Nebflow"
   },
@@ -10,7 +10,7 @@
     "ptc",
     "programmatic-tool-calling",
     "code-orchestration",
-    "typescript",
+    "javascript",
     "node",
     "mcp",
     "sandbox"
@@ -19,21 +19,21 @@
     "ptc": {
       "contract": "ptc/v1",
       "runtime": {
-        "kind": "typescript",
+        "kind": "javascript",
         "min_version": "20.0.0",
-        "entry": "skills/ptc-typescript/dist/ptc_executor.js",
+        "entry": "skills/ptc-javascript/dist/ptc_executor.js",
         "self_exec": true
       },
       "tools": [
         {
           "name": "ptc_run",
           "profile": "readonly",
-          "description": "Execute JS/TS code that orchestrates read-only host tool calls (read/glob/grep/stat)."
+          "description": "Execute JavaScript code that orchestrates read-only host tool calls (read/glob/grep/stat)."
         },
         {
           "name": "ptc_run_rw",
           "profile": "readwrite",
-          "description": "Execute JS/TS code that orchestrates host tool calls including write/edit/remove."
+          "description": "Execute JavaScript code that orchestrates host tool calls including write/edit/remove."
         }
       ],
       "profiles": {
@@ -63,7 +63,7 @@
           "transport": "stdio",
           "command": "${RUNTIME_SELF}",
           "args": [
-            "${PLUGIN_ROOT}/skills/ptc-typescript/dist/ptc_tools_fs.js"
+            "${PLUGIN_ROOT}/skills/ptc-javascript/dist/ptc_tools_fs.js"
           ],
           "timeout_ms": 10000
         }

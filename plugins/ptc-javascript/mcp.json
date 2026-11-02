@@ -4,7 +4,7 @@
     "ptc": {
       "type": "stdio",
       "command": "node",
-      "args": ["${PLUGIN_ROOT}/skills/ptc-typescript/dist/ptc_executor.js"],
+      "args": ["${PLUGIN_ROOT}/skills/ptc-javascript/dist/ptc_executor.js"],
       "timeoutMs": 600000
     }
   }
