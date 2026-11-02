@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "visual-report",
-  "version": "1.5.0",
-  "description": "可视化报告包——节点可分场景出图与人读报告。用于出图、图表、架构图、流程图、数据可视化、汇报、验收/调研/复盘报告。内含 skills：visual-report（体例）、core（规范）、academic-research（论文）、tech-architecture（架构）、engineering（工程）、office（办公）、education（讲义）、eda（电路）、timing（时序）、biology（分子）、chemistry（化学）、architecture（建筑）、mathematics（数学）、art（艺术）、music（音乐）、geo-map（地图）、astronomy（天文）、finance（行情）、network（网络）、motion-toolkit（动效）。另含 wiki-docs（项目文档库体例：docs/ vault、attachments/ 附件、Obsidian wikilink 互引、三条强制条款＝Obsidian 格式/论文式引用/概念首现必释或必引用、frontmatter 场景元数据与科研/学习/工程/写作/团队五套编排包、文献必下载原件；随包自带条款校验器 scripts/check_wiki_docs.py，--graph 可导出图谱数据 JSON）。不适用于 Office 文档成稿与幻灯片制作。组件面：无mcp.json、无工具扩展。",
+  "version": "1.6.0",
+  "description": "可视化报告包——节点可分场景出图与人读报告。用于出图、图表、架构图、流程图、数据可视化、汇报、验收/调研/复盘报告。内含 skills：visual-report（体例）、core（规范）、academic-research（论文）、tech-architecture（架构）、engineering（工程）、office（办公）、education（讲义）、eda（电路）、timing（时序）、biology（分子）、chemistry（化学）、architecture（建筑）、mathematics（数学）、art（艺术）、music（音乐）、geo-map（地图）、astronomy（天文）、finance（行情）、network（网络）、motion-toolkit（动效）。另含 wiki-docs（项目文档库体例：docs/ vault、attachments/ 附件、Obsidian wikilink 互引、三条强制条款＝Obsidian 格式/论文式引用/概念首现必释或必引用、frontmatter 场景元数据与科研/学习/工程/写作/团队五套编排包、文献必下载原件；随包自带条款校验器 scripts/check_wiki_docs.py，--graph 可导出图谱数据 JSON）。不适用于 Office 文档成稿与幻灯片制作。组件面：自带 mcp.json（一个 stdio MCP server，serverId `plugin_visual-report_glossary`，Python 3.12 标准库 + SQLite FTS5 索引）——词条构建与检索面，六个工具：glossary_search（全文/模糊检索词条）、glossary_lookup（精确定义 + 反向链接）、glossary_put（写进 markdown 词条，非写库）、glossary_links（词条↔文档双向引用）、glossary_validate（一致性与条款校验，输出 file:line）、glossary_reindex（索引重建）。词条两层分治不合并：概念层 docs/glossary.md 块锚 ^slug、实体层 docs/entities.md 块锚 ^ent-<slug>；markdown 是唯一真相源，索引可随时删重建。",
   "author": {
     "name": "Nebflow"
   }
