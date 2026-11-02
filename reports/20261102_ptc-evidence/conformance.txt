@@ -1,0 +1,26 @@
+
+ptc-python  tools=[ptc_run, ptc_run_rw]  11/11 cases passed
+  PASS  case-01-two-tools-readonly  70ms  只读档跑通 ≥2 个不同工具，返回值与台账都要对
+  PASS  case-02-syntax-error  62ms  语法错误必须先于执行被识别，phase=compile
+  PASS  case-03-runtime-error  62ms  运行期未捕获异常 = RUNTIME_ERROR，且此前已发生的工具台账照发
+  PASS  case-04-tool-call-error  63ms  工具自己失败 = TOOL_CALL_ERROR（与运行时异常区分开）
+  PASS  case-05-tool-denied  62ms  只读档调用写工具 = POLICY_DENIED（能力而不是参数决定权限）
+  PASS  case-06-network-denied  67ms  联网一律拒绝（两种运行时的拒绝码可以不同，category 必须一致）
+  PASS  case-07-timeout  697ms  wall-clock 超时 = TIMEOUT（与限额、运行时异常分开）
+  PASS  case-08-tool-call-limit  63ms  请求只能收紧限额：max_tool_calls=2 时第 3 次调用被拒
+  PASS  case-09-readonly-escalation  0ms  ptc_run 不接受 profile=readwrite：工具面本身就是授权边界
+  PASS  case-10-readwrite-profile  63ms  读写档真的写盘，并且台账记下 files_written
+  PASS  case-11-fs-escape  61ms  路径逃出 fs_roots 一律拒绝（写入档也一样）
+
+ptc-typescript  tools=[ptc_run, ptc_run_rw]  11/11 cases passed
+  PASS  case-01-two-tools-readonly  112ms  只读档跑通 ≥2 个不同工具，返回值与台账都要对
+  PASS  case-02-syntax-error  104ms  语法错误必须先于执行被识别，phase=compile
+  PASS  case-03-runtime-error  105ms  运行期未捕获异常 = RUNTIME_ERROR，且此前已发生的工具台账照发
+  PASS  case-04-tool-call-error  98ms  工具自己失败 = TOOL_CALL_ERROR（与运行时异常区分开）
+  PASS  case-05-tool-denied  106ms  只读档调用写工具 = POLICY_DENIED（能力而不是参数决定权限）
+  PASS  case-06-network-denied  102ms  联网一律拒绝（两种运行时的拒绝码可以不同，category 必须一致）
+  PASS  case-07-timeout  749ms  wall-clock 超时 = TIMEOUT（与限额、运行时异常分开）
+  PASS  case-08-tool-call-limit  106ms  请求只能收紧限额：max_tool_calls=2 时第 3 次调用被拒
+  PASS  case-09-readonly-escalation  1ms  ptc_run 不接受 profile=readwrite：工具面本身就是授权边界
+  PASS  case-10-readwrite-profile  104ms  读写档真的写盘，并且台账记下 files_written
+  PASS  case-11-fs-escape  102ms  路径逃出 fs_roots 一律拒绝（写入档也一样）

@@ -1,0 +1,354 @@
+{
+  "contract": "ptc/v1",
+  "description": "语言中立一致性用例。任一实现（python / typescript / 未来的 rust）跑同一份用例，断言的是契约字段（contracts/ptc/v1/ptc-response.schema.json），不是内部细节。request 是 MCP tools/call 的 arguments；code 按语言给；assert 是 [路径, 操作, 期望值] 的扁平断言。",
+  "fixtures": {
+    "notes/a.md": "# A\nalpha TODO one\nbeta\n",
+    "notes/b.md": "# B\ngamma TODO two\ndelta TODO three\n",
+    "notes/c.log": "no markdown here\n"
+  },
+  "cases": [
+    {
+      "id": "case-01-two-tools-readonly",
+      "title": "只读档跑通 ≥2 个不同工具，返回值与台账都要对",
+      "tool": "ptc_run",
+      "request": {
+        "exec_id": "conf-01",
+        "timeout_ms": 20000
+      },
+      "code": {
+        "python": "paths = tools.glob({\"pattern\": \"*.md\", \"path\": \"notes\"})\nrows = tools.grep({\"pattern\": \"TODO\", \"path\": \"notes\"})\ndoc = tools.read({\"path\": \"notes/a.md\"})\nprint(\"ok\")\n{\"files\": len(paths[\"paths\"]), \"hits\": rows[\"count\"], \"chars\": len(doc[\"text\"])}",
+        "typescript": "const paths = tools.glob({ pattern: '*.md', path: 'notes' });\nconst rows = tools.grep({ pattern: 'TODO', path: 'notes' });\nconst doc = tools.read({ path: 'notes/a.md' });\nconsole.log('ok');\n({ files: paths.paths.length, hits: rows.count, chars: doc.text.length })"
+      },
+      "expect": {
+        "ok": true,
+        "assert": [
+          [
+            "tool_call_count",
+            "eq",
+            3
+          ],
+          [
+            "value.files",
+            "eq",
+            2
+          ],
+          [
+            "value.hits",
+            "eq",
+            3
+          ],
+          [
+            "stdout",
+            "contains",
+            "ok"
+          ],
+          [
+            "tool_calls.0.ok",
+            "eq",
+            true
+          ],
+          [
+            "error",
+            "eq",
+            null
+          ]
+        ]
+      }
+    },
+    {
+      "id": "case-02-syntax-error",
+      "title": "语法错误必须先于执行被识别，phase=compile",
+      "tool": "ptc_run",
+      "request": {
+        "exec_id": "conf-02"
+      },
+      "code": {
+        "python": "def broken(:\n    return 1",
+        "typescript": "function ( {"
+      },
+      "expect": {
+        "ok": false,
+        "error": {
+          "category": "SYNTAX_ERROR",
+          "phase": "compile"
+        },
+        "assert": [
+          [
+            "error.code",
+            "eq",
+            "PTC_SYNTAX"
+          ],
+          [
+            "tool_call_count",
+            "eq",
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "id": "case-03-runtime-error",
+      "title": "运行期未捕获异常 = RUNTIME_ERROR，且此前已发生的工具台账照发",
+      "tool": "ptc_run",
+      "request": {
+        "exec_id": "conf-03"
+      },
+      "code": {
+        "python": "tools.stat({\"path\": \"notes\"})\nraise ValueError(\"boom\")",
+        "typescript": "tools.stat({ path: 'notes' });\nthrow new Error('boom');"
+      },
+      "expect": {
+        "ok": false,
+        "error": {
+          "category": "RUNTIME_ERROR",
+          "phase": "run"
+        },
+        "assert": [
+          [
+            "error.code",
+            "eq",
+            "PTC_RUNTIME"
+          ],
+          [
+            "tool_call_count",
+            "eq",
+            1
+          ],
+          [
+            "tool_calls.0.ok",
+            "eq",
+            true
+          ]
+        ]
+      }
+    },
+    {
+      "id": "case-04-tool-call-error",
+      "title": "工具自己失败 = TOOL_CALL_ERROR（与运行时异常区分开）",
+      "tool": "ptc_run",
+      "request": {
+        "exec_id": "conf-04"
+      },
+      "code": {
+        "python": "tools.read({\"path\": \"notes/does-not-exist.md\"})",
+        "typescript": "tools.read({ path: 'notes/does-not-exist.md' });"
+      },
+      "expect": {
+        "ok": false,
+        "error": {
+          "category": "TOOL_CALL_ERROR",
+          "phase": "tool_call"
+        },
+        "assert": [
+          [
+            "tool_calls.0.ok",
+            "eq",
+            false
+          ],
+          [
+            "tool_call_count",
+            "eq",
+            1
+          ]
+        ]
+      }
+    },
+    {
+      "id": "case-05-tool-denied",
+      "title": "只读档调用写工具 = POLICY_DENIED（能力而不是参数决定权限）",
+      "tool": "ptc_run",
+      "request": {
+        "exec_id": "conf-05"
+      },
+      "code": {
+        "python": "tools.write({\"path\": \"notes/x.md\", \"content\": \"nope\"})",
+        "typescript": "tools.write({ path: 'notes/x.md', content: 'nope' });"
+      },
+      "expect": {
+        "ok": false,
+        "error": {
+          "category": "POLICY_DENIED"
+        },
+        "assert": [
+          [
+            "error.code",
+            "eq",
+            "PTC_TOOL_DENIED"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "case-06-network-denied",
+      "title": "联网一律拒绝（两种运行时的拒绝码可以不同，category 必须一致）",
+      "tool": "ptc_run",
+      "request": {
+        "exec_id": "conf-06",
+        "timeout_ms": 10000
+      },
+      "code": {
+        "python": "import socket\nsocket.create_connection((\"1.1.1.1\", 80), timeout=2)",
+        "typescript": "await import('node:net');"
+      },
+      "expect": {
+        "ok": false,
+        "error": {
+          "category": "POLICY_DENIED"
+        },
+        "assert": [
+          [
+            "error.code",
+            "in",
+            [
+              "PTC_POLICY_NETWORK",
+              "PTC_POLICY_IMPORT"
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "id": "case-07-timeout",
+      "title": "wall-clock 超时 = TIMEOUT（与限额、运行时异常分开）",
+      "tool": "ptc_run",
+      "request": {
+        "exec_id": "conf-07",
+        "timeout_ms": 700
+      },
+      "code": {
+        "python": "import time\ntime.sleep(5)",
+        "typescript": "while (true) {}"
+      },
+      "expect": {
+        "ok": false,
+        "error": {
+          "category": "TIMEOUT"
+        },
+        "assert": [
+          [
+            "error.code",
+            "eq",
+            "PTC_TIMEOUT"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "case-08-tool-call-limit",
+      "title": "请求只能收紧限额：max_tool_calls=2 时第 3 次调用被拒",
+      "tool": "ptc_run",
+      "request": {
+        "exec_id": "conf-08",
+        "limits": {
+          "max_tool_calls": 2
+        }
+      },
+      "code": {
+        "python": "for _ in range(5):\n    tools.stat({\"path\": \"notes\"})\n\"done\"",
+        "typescript": "for (let i = 0; i < 5; i += 1) tools.stat({ path: 'notes' });\n'done'"
+      },
+      "expect": {
+        "ok": false,
+        "error": {
+          "category": "LIMIT_EXCEEDED"
+        },
+        "assert": [
+          [
+            "error.code",
+            "eq",
+            "PTC_LIMIT_TOOL_CALLS"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "case-09-readonly-escalation",
+      "title": "ptc_run 不接受 profile=readwrite：工具面本身就是授权边界",
+      "tool": "ptc_run",
+      "request": {
+        "exec_id": "conf-09",
+        "profile": "readwrite"
+      },
+      "code": {
+        "python": "\"noop\"",
+        "typescript": "'noop'"
+      },
+      "expect": {
+        "ok": false,
+        "error": {
+          "category": "INVALID_REQUEST",
+          "phase": "validate"
+        },
+        "assert": [
+          [
+            "error.code",
+            "eq",
+            "PTC_INVALID_REQUEST"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "case-10-readwrite-profile",
+      "title": "读写档真的写盘，并且台账记下 files_written",
+      "tool": "ptc_run_rw",
+      "request": {
+        "exec_id": "conf-10"
+      },
+      "code": {
+        "python": "w = tools.write({\"path\": \"out/sum.txt\", \"content\": \"hello\"})\ns = tools.stat({\"path\": \"out/sum.txt\"})\n{\"created\": w[\"created\"], \"size\": s[\"size\"]}",
+        "typescript": "const w = tools.write({ path: 'out/sum.txt', content: 'hello' });\nconst s = tools.stat({ path: 'out/sum.txt' });\n({ created: w.created, size: s.size })"
+      },
+      "expect": {
+        "ok": true,
+        "assert": [
+          [
+            "value.created",
+            "eq",
+            true
+          ],
+          [
+            "value.size",
+            "eq",
+            5
+          ],
+          [
+            "tool_call_count",
+            "eq",
+            2
+          ],
+          [
+            "files_written.0",
+            "eq",
+            "out/sum.txt"
+          ]
+        ]
+      }
+    },
+    {
+      "id": "case-11-fs-escape",
+      "title": "路径逃出 fs_roots 一律拒绝（写入档也一样）",
+      "tool": "ptc_run_rw",
+      "request": {
+        "exec_id": "conf-11"
+      },
+      "code": {
+        "python": "tools.write({\"path\": \"../escape.txt\", \"content\": \"x\"})",
+        "typescript": "tools.write({ path: \"../escape.txt\", content: \"x\" });"
+      },
+      "expect": {
+        "ok": false,
+        "error": {
+          "category": "POLICY_DENIED"
+        },
+        "assert": [
+          [
+            "error.code",
+            "eq",
+            "PTC_POLICY_FS"
+          ]
+        ]
+      }
+    }
+  ]
+}
