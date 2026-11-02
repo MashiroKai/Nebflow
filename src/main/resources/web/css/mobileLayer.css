@@ -1457,17 +1457,26 @@ body.mobile-layer .mf-canvas-page {
   flex-direction: column;
   overflow: hidden;
 }
-/* ── 标签栏 = 常驻展开的横向圆环（作者令 2026-11-02 07:22 §二）──────────
+/* ── 标签栏 = 常驻展开的横向圆环（作者令 2026-11-02 07:22 §二；对齐修正批
+   2026-11-02 09:00 重排几何）────────────────────────────────────────────
    桌面语言 = hover 后上下展开的竖向胶囊环（split.css #canvas-capsule-ring：
-   缘位逐级缩径 + 减淡 + 弧深，|d|≥2 越出 = 读作绕到圈外）。手机端无 hover，
-   映射为**常驻展开的横向圆环**：当前签居中（dx=0、scale 1、全不透明），左右
-   相邻签沿圆弧外移 + 下沉 + 缩径 + 减淡 + 模糊，读作「绕到圈后」。
-   几何单源 = navController.js（RING_* 常量 + layoutRing 写五变量），CSS 只消费
-   --rdx/--rdy/--rsc/--rop/--rbl，不另算 —— 换签即换环形距离 k，五值同步过渡
+   缘位逐级缩径 + 减淡，|d|≥2 越出 = 读作绕到圈外）。手机端无 hover，映射为
+   **常驻展开的横向圆环**：当前签居中（dx=0、scale 1.14、全不透明），左右相邻
+   签外移 + 缩径 + 连续减淡 + 连续模糊，读作「绕到圈后」。
+   对齐修正批两条铁律（作者令「同一水平」+「样式统一」）：
+     ① **纵向零偏移**：不再有弧深/下沉（旧 `--rdy` 已删）。签 = `top:40px` +
+        `translateY(-50%)`，缩放走 transform-origin:center ⇒ 缩放后中心不动 ⇒
+        全组纸签严格同一水平线（机械断言：渲染盒垂直中心极差 ≤1px）。
+     ② **同一套视觉语言**：中签与两侧签的圆角/玻璃底/描边/字重/字号全同源，
+        只有**尺寸**（scale + 最大宽）与**透明度/模糊**不同 —— 中签不是另一个
+        组件，只是同一枚签放大后的样子。
+   几何单源 = navController.js（RING_* 常量 + layoutRing 写变量），CSS 只消费
+   --rdx/--rsc/--rop/--rbl/--mhit，不另算 —— 换签即换环形距离 k，四值同步过渡
    = 环在转。
    条几何：高 72px，签心 y=40 = ✕/堆叠两悬浮钮垂直中心（top 16 + 48/2）；左右
-   让位 68px（悬浮钮 48 + 边距 16 + 4 气隙），mask 在 60→76px 与镜像段渐隐 ——
-   签滑到浮钮前先淡出，命中盒永不压钮（截图实证过的旧 bug 面）。 */
+   让位 68px（悬浮钮 48 + 边距 16 + 4 气隙），mask 在 52→64px 与镜像段渐隐 ——
+   从浮钮右缘 64 起恒为全实色，可见签（≥65.3）不被误伤，浮钮面上零墨
+   （截图实证过的旧 bug 面防线保留）。 */
 body.mobile-layer .mf-strip {
   position: relative;
   flex: none;
@@ -1478,18 +1487,23 @@ body.mobile-layer .mf-strip {
   overflow: visible;
   touch-action: pan-y;
 }
-/* 环带双侧渐隐（2 签起挂 .fade —— 单签居中无需遮）：60→76px 渐入，与左右
-   悬浮钮 16+48+4 栅格同源，签滑到钮前先淡出（命中盒永不压钮）。 */
+/* 环带双侧渐隐（2 签起挂 .fade —— 单签居中无需遮）：52→64px 渐入到全实色，
+   与左侧悬浮钮右缘 64 严丝合缝 —— ① 浮钮面上零墨（旧 bug 面的防线仍在）；
+   ② 全实色区 [64, 311] 恰好容纳「中签 123.7…251.3 + 左右邻签 65.3…119.7 /
+   255.3…309.7」，可见签**不被条带遮罩误伤**（对齐修正批：旧 60→76 的渐隐带
+   会啃掉邻签左缘 10px，与新的连续淡化曲线叠加后糊成一片）。 */
 body.mobile-layer .mf-strip.fade {
-  -webkit-mask-image: linear-gradient(90deg, transparent 60px, #000 76px, #000 calc(100% - 76px), transparent calc(100% - 60px));
-  mask-image: linear-gradient(90deg, transparent 60px, #000 76px, #000 calc(100% - 76px), transparent calc(100% - 60px));
+  -webkit-mask-image: linear-gradient(90deg, transparent 52px, #000 64px, #000 calc(100% - 64px), transparent calc(100% - 52px));
+  mask-image: linear-gradient(90deg, transparent 52px, #000 64px, #000 calc(100% - 64px), transparent calc(100% - 52px));
 }
 body.mobile-layer .mf-strip[hidden] { display: none; }
 /* chip = 电脑端胶囊（.canvas-header）同族小档：材质 = --glass-bg 底 +
    --glass-blur saturate(1.15) + --glass-border（底缘透明化同胶囊）+
    --sapphire-refraction 顶缘折射线 + --cv-shadow（frosted 标准一份，逐项同源
-   零新造）；圆角 999；字 = 中性 muted 档。选中态 = 看板家族既有 sapphire 语言
-   （sapphire 14% 底 + 45% 描边 + 亮字）。位姿五值 = 环变量（见条注释）。 */
+   零新造）；圆角 999；字 = 中性 muted 档。位姿四值 = 环变量（见条注释）。
+   尺寸：基准宽 68px（两侧签），中签另档 max-width 112px —— **只有宽度不同**，
+   其余视觉属性全部同源（作者令「样式应该要是和两边的统一」；对齐修正批已把
+   选中态的 sapphire 描边/底色/加粗整条删除，见下方 `.on` 档注释）。 */
 body.mobile-layer .mf-strip-chip {
   position: absolute;
   top: 40px;
@@ -1497,9 +1511,9 @@ body.mobile-layer .mf-strip-chip {
   display: flex;
   align-items: center;
   justify-content: center;
-  max-width: 92px;
+  max-width: 68px;
   height: 32px;
-  padding: 0 14px;
+  padding: 0 var(--mpad-x);
   border-radius: 999px;
   border: 1px solid var(--glass-border);
   border-bottom-color: transparent;
@@ -1513,14 +1527,17 @@ body.mobile-layer .mf-strip-chip {
   font-size: var(--mfs-min);
   font-weight: 500;
   cursor: pointer;
-  /* 视觉本体 = 32px（环位姿以它为基准）；热区不靠放大本体，走 ::before 外扩
-     —— 见下方命中盒规则（手机交互标准 44×44 的图形件解法，同 .nb-toggle）。
-     故此处不得 overflow:hidden（会裁掉外扩层）：省略号交给 .mf-strip-label。 */
+  /* 视觉本体 = 32px × scale（环位姿以它为基准）；热区不靠放大本体，走 ::before
+     外扩 —— 见下方命中盒规则（手机交互标准 44×44 的图形件解法，同 .nb-toggle）。
+     故此处不得 overflow:hidden（会裁掉外扩层）；超宽文字由 .mf-strip-label
+     的 mask 渐隐处理（**不用省略号**，作者令「不用…号，直接模糊隐藏」）。 */
   overflow: visible;
   white-space: nowrap;
   touch-action: manipulation;
+  /* 纵向零偏移铁律：签心 = top 40 + translateY(-50%)，缩放围绕盒中心对称 ⇒
+     缩放后中心不动，全组纸签严格同一水平线（对齐修正批，取代旧 --rdy 弧深）。 */
   transform-origin: center center;
-  transform: translate(calc(-50% + var(--rdx, 0px)), calc(-50% + var(--rdy, 0px))) scale(var(--rsc, 1));
+  transform: translate(calc(-50% + var(--rdx, 0px)), -50%) scale(var(--rsc, 1));
   opacity: var(--rop, 1);
   filter: blur(var(--rbl, 0px));
   transition:
@@ -1532,10 +1549,13 @@ body.mobile-layer .mf-strip-chip {
 }
 /* 环外（|k| > 露出半径）：位姿仍算（换签轨迹连续），命中与可见双关。 */
 body.mobile-layer .mf-strip-chip.is-far { pointer-events: none; }
-/* 命中盒外扩到手机交互标准 44×44（作者令 2026-11-02「手机端标准全量套用」）：
-   视觉本体 32px 不动（环位姿以本体为基准，放大破坏环几何），热区由 ::before
-   补足 —— 与 .nb-toggle 同解法（伪元素指针事件归宿主）。横向不超本体（邻签
-   间距 86px，互不抢占），纵向补到 44 覆盖弧深带。 */
+/* 命中盒外扩到手机交互标准 44×44（作者令 2026-11-02「手机端标准全量套用」；
+   对齐修正批补：**热区不随环位姿缩放**）：
+   伪元素是 chip 的后代 ⇒ 环位姿的 scale 会连带缩掉热区（邻签 scale 0.78 ⇒ 44
+   只剩 34.3px，名义达标、实际不达标）。故伪元素自带**反向缩放** 1/--rsc：
+   净变换恒为单位阵 ⇒ 热区实际恒 44×44（中/邻/环外一律），且量测面（计算样式
+   width/height）与真实渲染一致，无「读数达标、手感不达标」的偏差。
+   横向 44 远小于邻签中心间距 86px ⇒ 互不抢占；纵向 44 覆盖整条环带。 */
 body.mobile-layer .mf-strip-chip::before {
   content: '';
   position: absolute;
@@ -1543,40 +1563,57 @@ body.mobile-layer .mf-strip-chip::before {
   top: 50%;
   width: max(100%, var(--mhit, 44px));
   height: max(100%, var(--mhit, 44px));
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) scale(calc(1 / var(--rsc, 1)));
   border-radius: 999px;
 }
+/* 中签（当前签）= **同一枚签放大**，不是另一个组件（作者令 2026-11-02 09:00
+   「样式应该要是和两边的统一……不许换底色、加描边」）：本档只给两件事 ——
+   ① 多一档宽度（68 → 112px），让标题显示更完整；② z-index 抬一层（过渡中缩小
+   的邻签从放大中的中签身下穿过，不互相穿插）。
+   **零**描边改色 / 零底色改色 / 零字重改档 / 零字号改档 —— 圆角、玻璃底、顶缘
+   折射线、阴影、字体字重字色全部继承基础档（机械断言 T13③ 逐项钉死）。
+   选中态的可读性由环几何本身承担：中签恒在环心、恒为最大的一枚、恒全不透明。 */
 body.mobile-layer .mf-strip-chip.on {
   z-index: 2;
-  border-color: rgb(var(--sapphire, 96 165 250) / 0.45);
-  border-bottom-color: transparent; /* 底缘透明化随胶囊家族（.canvas-header 同律） */
-  background:
-    linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
-    rgb(var(--sapphire, 96 165 250) / 0.14);
-  color: var(--color-frame-text-bright, var(--color-frame-text));
-  font-weight: 600;
+  max-width: 112px;
 }
-/* 长名省略 + 点击展开全名（作者令 §二.3「按既有省略规则 + 点击展开全名」）：
-   常态 = 单行 ellipsis（max-width 92px）；.is-expanded（点活签）= 解限宽度、
-   回到完全可见层、盖过邻签（2600ms 自动收，换签即收 —— JS 侧定时）。
-   内容起点让位批（2026-11-02 作者令「右上层叠图标压字」）：展开宽签原钳
-   `min(100vw - 96px, 280px)` = 375 宽下 279px，居中后跨 48→327 —— 左右两端各
-   压进 ✕（16→64）与层叠钮（311→359）的钮带 16px（实拍：签底毛玻璃与图标圆底
-   叠成一片，长标题文字顺延到钮下）。改钳到两侧各让出 --mchrome-inset（72 =
-   簇顶 16 + 钮 48 + 呼吸 8）⇒ 375 宽下 231px、跨 72→303，两端各余 8px 气隙，
-   展开签与其文字永不进钮带（滚动时也不进：签是 chrome 带自身，不在滚动流里）。
-   窄屏下限随 --mchrome-inset 同比收缩，零新魔法数。 */
+/* 文本层：**零省略号**（作者令「不用…号，直接模糊隐藏了」）。超宽部分不是被
+   截断加「…」，而是用 mask 做水平 alpha 渐隐 —— 文字在签的内衬里匀速化开，读作
+   「纸签还在往两边排，只是看不清了」。
+   实现要点：mask 的透明段（左右各 9px）**落在签自己的 16px 内衬之内** ⇒ 渐隐
+   起点仍在签身内部（不会出现「签边硬切、渐隐在体外」的假象）；文字完整装得下
+   时首尾字形也只会轻触 0.2 的 alpha 边缘，肉眼几乎无感（且签宽 auto 收缩到
+   文字宽，长标题才吃到 max-width 上限 ⇒ 只有真溢出时才发生淡化）。
+   text-overflow 显式钉 clip：任何继承或浏览器默认都不会再画「…」。
+   DOM 不动 ⇒ title / aria-selected / 读屏全名全保留（模糊只是视觉）。 */
 body.mobile-layer .mf-strip-label {
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
   white-space: nowrap;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 9px, #000 calc(100% - 9px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 9px, #000 calc(100% - 9px), transparent 100%);
 }
+/* 点活签展开全名（作者令 §二.3「点击展开全名」）：常态已放大到 112px 宽，展开
+   档再加一档。钳法沿用内容起点让位批的 --mchrome-inset 口径（两侧各让 72 =
+   簇顶 16 + 钮 48 + 呼吸 8），但**先除掉环位姿 scale 再钳**：`max-width` 是
+   缩放前的盒宽，渲染宽 = max-width × --rsc（中签 1.14）—— 直接按 100vw − 2·72
+   钳会渲染成 263px、两头各压进浮钮 8px（旧批里 scale=1 时才成立）。除掉 scale
+   ⇒ 375 下 max-width 202.6、渲染恰 231px、跨 72…303，两端各余 8px 气隙；
+   `260px` 上限（渲染 296px）只在窄屏且 scale 更小时兜底。仍居中、仍同一水平线、
+   仍零省略号（超宽继续走 label 的 mask 渐隐，而不是「…」）。
+   2600ms 自动收，换签即收 —— JS 侧定时。 */
 body.mobile-layer .mf-strip-chip.is-expanded {
   z-index: 3;
-  max-width: min(calc(100vw - 2 * var(--mchrome-inset)), 280px);
+  max-width: min(calc((100vw - 2 * var(--mchrome-inset)) / var(--rsc, 1)), 260px);
   opacity: 1;
   filter: none;
+}
+/* 展开期两侧签退到幕后：邻签常态 opacity 0.66、底是半透明玻璃，展开签压上去会
+   透出两段文字（截图实证）。展开态本来就只读一枚签的全名 ⇒ 环临时收起，收起即
+   复原。只动 opacity，不碰 --rop 位姿变量（退出展开后由 layoutRing 的值继续管）。 */
+body.mobile-layer .mf-strip:has(.mf-strip-chip.is-expanded) .mf-strip-chip:not(.is-expanded) {
+  opacity: 0;
 }
 /* 工具条（Canvas 改造批②⑤ → 悬浮钮统一批 2026-10-31 作者令 16:03）：✕/堆叠视角钮
    自通栏工具条退役为**悬浮 chrome 带**控件（与页面壳返回钮同带同几何：48px
@@ -3585,13 +3622,10 @@ body.mobile-layer #usage-dashboard .ud-colormode {
   min-height: var(--mtap);
 }
 
-/* 看板 chip 条：视觉本体保持环几何（92×32 胶囊），热区已在 .mf-strip-chip
-   ::before 外扩到 --mhit（44×44）；此处只把左右内衬收编到标准档 --mpad-x。
-   条带 padding 保持 0 —— 环位姿（签心 y=40 = 两悬浮钮中心）以条带零 padding
-   为前提，加纵向 padding 会把签心整体下移、与浮钮错位。 */
-body.mobile-layer .mf-strip-chip {
-  padding: 0 var(--mpad-x);
-}
+/* 看板 chip 条：条带 padding 保持 0 —— 环位姿（签心 y=40 = 两悬浮钮中心）以条带
+   零 padding 为前提，加纵向 padding 会把签心整体下移、与浮钮错位。
+   签的内衬 = 标准档 --mpad-x（16px，已写在上方 .mf-strip-chip 基础 rule 里；
+   此处不再重复声明，视觉单源一处）。 */
 
 /* 搜索范围 chips / 类型选择：30px → 44（胶囊形态保持）。 */
 body.mobile-layer .mh-scope-chip,
