@@ -6,7 +6,9 @@ import nebflow.shared.PeerInfo
 
 /**
  * FleetRoster 单测（台账 #913 ①，2026-10-26）——`# Devices` 花名册渲染纯函数面：
- *   - 本机行：名称/id短码/platform/版本/能力面（键名级）+ 描述；
+ *   - 本机行：名称/id短码/platform/版本/能力面（键名级）+ 描述，且**与对端行同形态**
+ *     （同一 `[online … · platform]` 语法，不带任何身份徽标——2026-11-02「local 展示面
+ *     退场」批：本机事实由**行序**承载，本机行恒首位）；
  *   - 在线对端行：online 标 + 画像摘要（DeviceProfile 既有渲染面）+ caps 键名；
  *   - 离线已知行：登记表/画像在册但 presence 不在 ⇒ offline 标（诚实显示未知）；
  *   - 去重：presence 在场设备绝不重复出现在离线段；
@@ -47,10 +49,27 @@ class FleetRosterSpec extends FunSuite:
 
   test("render: local row carries name/id-short/platform/version/caps keys/description"):
     val out = FleetRoster.render(Some(local), Nil, Nil, Map.empty, now, enforce = false)
-    assert(out.contains("KAI (40742cd4) [local · v2026.10.26-beta.1 · windows]"), out)
+    assert(out.contains("KAI (40742cd4) [online · v2026.10.26-beta.1 · windows]"), out)
     assert(out.contains("- 主力机"), out)
     assert(out.contains("caps: git,node"), "caps listed as sorted KEYS (never values)")
     assert(!out.contains("node.exe") && !out.contains("git.exe"), "capability VALUES (absolute paths) must not leak into the roster")
+
+  // 意图变更（2026-11-02「local 展示面退场」批）：原意图 = 「本机行必须带 local 徽标」；
+  // 新意图 = 「本机行与对端行同形态——同一 [状态 · …平台] 括号语法、无任何 local 字样，
+  // 本机事实只由行序（恒首行）承载」。
+  test("render: local row shares the peer-row shape — no local badge, identity carried by row order"):
+    val out = FleetRoster.render(Some(local), List(mac), Nil, Map.empty, now, enforce = false)
+    val rows = out.linesIterator.toList
+    val localLine = rows.head
+    assert(localLine.startsWith("KAI (40742cd4) "), s"local row must be the FIRST row (order carries 'this machine'): $out")
+    assert(!localLine.contains("local"), s"local row must carry no 'local' wording: $localLine")
+    assert(localLine.contains("[online · v2026.10.26-beta.1 · windows]"), localLine)
+    // 同形态判据：两行的括号段都由「状态 · 平台」构成，只是本机多一段版本（对端 wire 不带版本）
+    def bracket(line: String): String =
+      val fromOpen = line.dropWhile(_ != '[')
+      fromOpen.take(fromOpen.indexOf(']') + 1)
+    assert(bracket(localLine).contains("online") && bracket(rows(1)).contains("online"), out)
+    assert(bracket(rows(1)) == "[online · macos]", out)
 
   test("render: online peer row carries online tag, platform and caps keys"):
     val out = FleetRoster.render(Some(local), List(mac), Nil, Map.empty, now, enforce = false)
@@ -88,7 +107,7 @@ class FleetRosterSpec extends FunSuite:
       PeerInfo(deviceId = f"dev-$n%04d", deviceName = f"DEV$n%02d", platform = "linux", address = "x")
     }.toList
     val out = FleetRoster.render(Some(local), peers, Nil, Map.empty, now, enforce = false)
-    val deviceRows = out.linesIterator.count(l => l.contains(" [online · ") || l.contains(" [local"))
+    val deviceRows = out.linesIterator.count(l => l.contains(" [online · "))
     assert(deviceRows <= FleetRoster.MaxRows, s"rows capped at ${FleetRoster.MaxRows}, got $deviceRows")
     assert(out.contains("more device(s) not shown"), out)
     assert(out.contains("GET /api/neblink/status"), out)

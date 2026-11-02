@@ -87,6 +87,13 @@ object FleetConfig:
    * 六件工具缺显式 `device` 的拒绝文案。`localName` = 本机设备名（名册不可得 =
    * 空串，文案降级为「仅 local」）；`peerNames` = 在线对端名；`sessionDefault`
    * = 会话默认设备（设备项目会话在场时点名——语义仍强制显式，但告诉模型该写什么）。
+   *
+   * 展示面纪律（2026-11-02「local 展示面退场」）：本机名在 Available devices 列表里
+   * **只出现一次、不带任何括注**——与对端名同形（同为「一个可写的名字」）。改前的
+   * `$localName (= local)` 让同一台机器在列表里出现两次（`(# Devices)` 名册首行 +
+   * 本列表的 `(= local)` 变体），正是作者裁定要退场的「反复强调本机」观感。本机
+   * 的身份事实由名册首行承载，不在此处标注；「该写什么值」的操作说明保留在尾句
+   * 的 `device="local"`（那不是身份标注，是参数写法）。
    */
   def explicitDeviceRefusal(
     tool: String,
@@ -97,7 +104,7 @@ object FleetConfig:
     val roster =
       if peerNames.isEmpty && localName.isEmpty then "local only (device roster unavailable — NebLink not configured)"
       else
-        val self = if localName.nonEmpty then List(s"$localName (= local)") else List("local")
+        val self = if localName.nonEmpty then List(localName) else List("local")
         (self ++ peerNames).mkString(", ")
     val defaultHint = sessionDefault.filter(_.nonEmpty).map(d =>
       s" This session's default device is \"$d\" — pass device=\"$d\" explicitly."
