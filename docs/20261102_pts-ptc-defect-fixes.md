@@ -469,7 +469,8 @@ SKILL.md / Plugin.md 三处写明（模型能在首屏读到）。
 
 ### 7.7 门禁自检
 
-- `sbt -batch test`（本批三份 spec）：`Passed: Total 56, Failed 0, Errors 0`
+- 本批触及的三份 spec（`PluginMcpProtocolSpec` / `PluginInjectionSpec` / `LlmAllocatorSpec`）合计：
+  `Passed: Total 56, Failed 0, Errors 0`
 - `sbt -batch "testOnly nebflow.core.tools.RgHelperSpec"`：`Passed: Total 12, Failed 0, Skipped 1`
 - `sbt -batch assembly`：exit 0（产物即上面那个新 jar）
 - wiki 校验：`check_wiki_docs.py --root <workspace>/docs` → 本批两篇文档**零告警**；
