@@ -5615,7 +5615,15 @@ export function settingsDevicesHTML() {
     const list = devs.length === 0
       ? `<div class="fm-empty">${escapeHtml(t('contacts.devicesEmpty'))}</div>`
       : devs.map(settingsDeviceRowHTML).join('');
-    rows = `<div class="fm-device-list" data-settings-device-section="1" data-device-count="${devs.length}">${list}</div>`;
+    // 全设备统一更新（fleet 批 2026-11-01，作者令：控制台设置·设备页要有「全部更新」）：
+    // 动作入口 = 本行；实际渲染/进度全在 `fleetUpdate.js` 的阻塞式状态卡里（本段只管
+    // 一个键，不复制卡片、不复制任何进度状态）。
+    const fleetBar =
+      `<div class="fm-device-fleet-bar" data-fleet-entry="1">` +
+      `<button class="fleet-btn" data-fleet-open="1" type="button">${escapeHtml(t('fleet.startAction'))}</button>` +
+      `</div>`;
+    rows = fleetBar +
+      `<div class="fm-device-list" data-settings-device-section="1" data-device-count="${devs.length}">${list}</div>`;
   }
   return entry + rows;
 }
@@ -5624,11 +5632,17 @@ function settingsDeviceRowHTML(d) {
   const icon = platformDisplay(d.platform).icon;
   const statusText = escapeHtml(platformDisplay(d.platform).text || '');
   const cls = 'neblink-peer fm-device-row' + (d.online === true ? '' : ' neblink-peer-offline');
+  // 每行「更新此设备」（作者令：每台设备单行也有更新动作）。本机行不挂——本机更新
+  // 由「全部更新」腿统一交编排器，单挂一个键只会出重复入口。
+  const updateBtn = d.isLocal
+    ? ''
+    : `<button class="neblink-peer-update-btn" data-settings-device-update="${escapeHtml(String(d.deviceName || ''))}" type="button">${escapeHtml(t('neblink.update'))}</button>`;
   return `<div class="${cls}" role="button" tabindex="0" data-settings-device-row="1" data-device-id="${escapeHtml(String(d.deviceId || ''))}">` +
     `<span class="neblink-peer-icon">${icon}</span>` +
     `<span class="neblink-peer-name">${escapeHtml(deviceLabel(d))}</span>` +
     presenceBadgeHTML({ ...d, isLocal: false }) +
     `<span class="neblink-peer-status">${statusText}</span>` +
+    updateBtn +
     `</div>`;
 }
 
@@ -5650,6 +5664,24 @@ function bindSettingsDevicesOnce() {
   document.addEventListener('click', (e) => {
     const target = e.target instanceof Element ? e.target : null;
     if (!target) return;
+    // 全设备统一更新（fleet 批 2026-11-01）：本区的两个键都只是**打开入口**——
+    // 「全部更新」开阻塞卡（确认 + 进度 + 收口全在那张卡里），「更新此设备」走既有
+    // `remoteUpdate` 单台腿再开同一张卡。动态 import 规避 messages↔fleetUpdate 的
+    // 静态环（fleetUpdate 依赖 neblink.js，而本文件已在环上）。
+    if (target.closest('[data-fleet-open]')) {
+      e.stopPropagation();
+      import('./fleetUpdate.js').then((m) => m.openFleetUpdatePanel()).catch(() => {});
+      return;
+    }
+    const updateBtn = target.closest('[data-settings-device-update]');
+    if (updateBtn instanceof HTMLElement) {
+      e.stopPropagation(); // 行激活（→ 开设备会话窗）让位：更新键只做更新
+      const dn = updateBtn.dataset.settingsDeviceUpdate || '';
+      if (dn) {
+        import('./fleetUpdate.js').then((m) => m.updateSingleDevice(dn)).catch(() => {});
+      }
+      return;
+    }
     const row = target.closest('[data-settings-device-row]');
     if (row instanceof HTMLElement) {
       // checkJs gate fix (mention-routing batch, 2026-09-27): Element has no

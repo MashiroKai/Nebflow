@@ -130,6 +130,9 @@ import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgent
 import { openBgTaskOutput } from './bgTaskOutputPopup.js';
 import { fmtUptime, isFailedSnapshotStatus } from './managePanel.js';
 import { initNeblink } from './neblink.js';
+// 全设备统一更新（fleet 批 2026-11-01）：阻塞式状态卡 + 「全部更新 / 更新此设备」
+// 两个动作面的唯一属主（纯订阅 `fleetUpdate` 帧，服务端为唯一真源）。
+import { initFleetUpdate } from './fleetUpdate.js';
 import { initDropbox } from './dropbox.js';
 import { initContacts } from './contacts.js';
 import { initMessages } from './messages.js';
@@ -4526,6 +4529,7 @@ initPerception();
 initChatSearch();
 initUsageDashboard();
 initNeblink();
+initFleetUpdate();
 initSocialPanel();
 initSecretsPanel();
 initDropbox();

@@ -193,6 +193,16 @@ case class SharedResources(
    */
   updateConvergence: Option[nebflow.neblink.NeblinkUpdateConvergence] = None,
   /**
+   * **全设备统一更新协调器**（fleet 批 2026-11-01，作者令「一键把所有设备更新到同一
+   * 版本」）：GatewayMain 装配后注入；None = 未装配（测试 / 极早期 boot / neblink 关闭）。
+   *
+   * 面：`GET/POST /api/update/fleet`（计划 + 发起）、`/cancel`、`/retry`（REST），
+   * `fleetUpdate` WS 帧（阻塞式状态卡），`/api/health` 的 `fleet` 自报键。
+   * 装包/重启/自检/回滚一律复用 [[updateOrchestrator]] 与既有远端更新动作——本件只
+   * 做**调度与可见性**。
+   */
+  fleetUpdate: Option[nebflow.core.hotupdate.FleetUpdateCoordinator] = None,
+  /**
    * **会话级压缩阈值比例覆盖**（ctxthresh 批，2026-09-15 方案 A）：键 = **root
    * sessionId**，值 = 比例 `r`（`15% < r ≤ 90%`，见
    * [[nebflow.agent.CompactThresholdOverride]]）。与 `sessionModelOverrides`

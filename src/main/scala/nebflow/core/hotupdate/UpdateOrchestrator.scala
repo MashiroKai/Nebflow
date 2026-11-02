@@ -57,7 +57,15 @@ class UpdateOrchestrator(
    */
   install: UpdateChannel => IO[Either[String, String]] = UpdateOrchestrator.defaultInstall,
   /** 幂等键保留窗口（本批冻结值 300s，契约对齐点 ④）——见 [[UpdateDefaults]]。 */
-  idempotencyWindowMs: Long = UpdateDefaults.idempotencyKeyWindowMs
+  idempotencyWindowMs: Long = UpdateDefaults.idempotencyKeyWindowMs,
+  /**
+   * 相位观察钩子（fleet 批 2026-11-01：「全设备统一更新」的**本机进度行**需要既有
+   * 七相位的推进读数）。默认 no-op ⇒ 既有构造点（生产 + 全部既有 spec）零改动。
+   *
+   * 🔴 语义边界：本钩子是**只读旁路**——相位推进的唯一权威仍是 [[step]]；
+   * 钩子异常一律吞进日志，绝不改变更新链的走向（可见性不得影响执行）。
+   */
+  onPhase: (UpdatePhase, Option[Double], String) => IO[Unit] = (_, _, _) => IO.unit
 ):
 
   private val logger = NebflowLogger.forName("nebflow.hotupdate")
@@ -265,6 +273,9 @@ class UpdateOrchestrator(
       (if phase == UpdatePhase.Completed then run.markFinished(System.currentTimeMillis())
        else IO.unit) *>
       logger.info(s"[hotupdate] phase=${phase.wire} key=${run.key} source=${run.source.wire}: $detail") *>
+      // 旁路观察（fleet 批）：**只读**——失败只记日志，绝不改变相位推进结果。
+      onPhase(phase, progress, detail)
+        .handleErrorWith(e => logger.warn(s"[hotupdate] phase observer failed (ignored): ${msg(e)}")) *>
       broadcast(progressFrame(run, phase, detail, latest, progress, reason))
 
   /**

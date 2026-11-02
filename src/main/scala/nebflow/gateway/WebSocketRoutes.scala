@@ -1284,6 +1284,12 @@ class WebSocketRoutes(
                     updateSnapshot <- sharedResources.updateConvergence
                       .traverse(_.stateJson)
                       .map(_.flatten)
+                    // 全设备统一更新（fleet 批 2026-11-01）：连接初始态并「fleetUpdate」
+                    // 快照——状态卡纯订阅 + 快照，刷新/重连/换设备后自动接续，零轮询。
+                    // 未装配 ⇒ 空对象，帧形零变化（与上面 updateSnapshot 同纪律）。
+                    fleetSnapshot <- sharedResources.fleetUpdate
+                      .traverse(_.snapshot)
+                      .map(_.getOrElse(io.circe.Json.obj()))
                     mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
                       io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
                     })
@@ -1321,8 +1327,15 @@ class WebSocketRoutes(
                             "mcpServers" -> mcpServers.asJson
                           )
                           // M3 ④：update 快照 additive 挂载（未装配 = 空对象 = 不出现键）
+                          // fleet 批：fleetUpdate 快照同款 additive 挂载（`fleetUpdate`
+                          // 键——状态卡刷新/重连后一帧接续）。
                           .deepMerge(
                             updateSnapshot.map(u => io.circe.Json.obj("update" -> u)).getOrElse(io.circe.Json.obj())
+                          )
+                          .deepMerge(
+                            if fleetSnapshot.isObject && fleetSnapshot.asObject.exists(!_.isEmpty) then
+                              io.circe.Json.obj("fleetUpdate" -> fleetSnapshot)
+                            else io.circe.Json.obj()
                           )
                           .noSpaces
                       )
