@@ -4,19 +4,23 @@
 // 顶部居中的 Muse 头像调小一点」）验收 harness：375×812 双主题 × 静止态/滚动中
 // 两态实拍 + 机械探针；桌面 1280 回归自查（28px 零触碰）。
 //
-// 判据（与令逐条对齐）：
-//   ① 头像 56px（原 78 一档；区间 52-60 内取 56 —— 取值理由见批文档）
-//   ② 头像与名字的间距保持：6px（.g2-chat-head gap:6px，实测 nameTop−avBottom）
-//   ③ 成组贴顶 64px 锚保持：静止态 headTop − chatTop == 64 ±2（悬浮双键行下缘）
-//   ④ 居中保持：头像中心 == #chat 中心 ±2；名字中心 == 头像中心 ±2
-//   ⑤ sticky 语义保持：滚动中锚贴 #chat 可视顶 ±1.5（top 走 --muse-head-top）
-//   ⑥ 名字字号：14px（原「随大头像升半档」档；头像收小后字身比 4.0，仍克制）
+// ⚠ 契约改写（会话顶栏单行三段式批 2026-11-02 07:23）：sticky 锚贴 + 56px 大头像
+// + 名字下置的旧形态已被整条取代，本 harness 判据随之改写为下表的单行档
+// （同批新增的单行三段式验收见 tests/mobile-chat-topbar-single-row-shots.mjs）。
+//
+// 判据（新契约）：
+//   ① 头像 40px（单行内 36-40 档取上沿；56 撑不开 56px 单行，取值理由见批文档）
+//   ② 名字横排挂头像右侧：名字盒垂直落在头像区间内，水平间距 8px ±1.5
+//   ③ 顶栏 fixed 贴窗口顶：headTop == 0 ±1（不再有 64px 内容流锚）
+//   ④ 居中：头像中心 == 屏幕中线 ±1（名字绝对定位不参与居中）
+//   ⑤ 滚动中顶栏不动（headTop/headBottom 逐值不变）+ 名字仍横排
+//   ⑥ 名字字号：14px（与 40px 头像字身比 2.9，克制档）
 //   ⑦ 桌面零触碰：1280 下 #chat 无 .g2-chat-head、#header 头像钮 28px
 //   R0 每腿零 console error / pageerror
 //
 // 产出 → evidence/20261102_muse-avatar-shrink/：
 //   rest-<scheme>.png       修后静止态（375 全屏，含消息区比例观感）
-//   scrolled-<scheme>.png   修后滚动态（sticky 锚贴窗口顶）
+//   scrolled-<scheme>.png   修后滚动态（fixed 顶栏不动）
 //   desktop-1280.png        桌面回归
 // 走 chat-head-position-shots 同款静态 harness（无后端：routeWebSocket 供
 // configData/sessionList/historyPage，fm_api_mock 供登录态，catch-all API 200）。
@@ -66,16 +70,19 @@ async function probeState(page) {
     return {
       mobileLayer: document.body.classList.contains('mobile-layer'),
       headTop: headBox ? headBox.top : null,
+      headBottom: headBox ? headBox.bottom : null,
       chatTop: chatBox.top,
       avW: av.width, avH: av.height,
       avTop: av.top, avBottom: av.bottom,
       avCx: (av.left + av.right) / 2,
       chatCx: (chatBox.left + chatBox.right) / 2,
       nameTop: nr ? nr.top : -1,
+      nameBottom: nr ? nr.bottom : -1,
+      nameLeft: nr ? nr.left : -1,
       nameCx: nr ? (nr.left + nr.right) / 2 : -1,
       nameFont: nameEl ? getComputedStyle(nameEl).fontSize : '',
       nameText: nameEl ? nameEl.textContent : null,
-      stickyPos: head ? getComputedStyle(head).position : 'absent',
+      headPos: head ? getComputedStyle(head).position : 'absent',
       scrollTop: chat.scrollTop,
     };
   });
@@ -150,26 +157,31 @@ async function runMobile(scheme) {
     await page.waitForFunction(() => document.getElementById('chat').scrollTop === 0, { timeout: 10000 });
     await page.waitForTimeout(250);
     const rest = await probeState(page);
-    ok(`${scheme} ① 头像 56px（78 一档收小）`,
-      Math.abs(rest.avW - 56) <= 0.8 && Math.abs(rest.avH - 56) <= 0.8, `${rest.avW.toFixed(1)}×${rest.avH.toFixed(1)}`);
-    ok(`${scheme} ② 头像-名字间距 6px 保持`, Math.abs((rest.nameTop - rest.avBottom) - 6) <= 1,
-      `gap=${(rest.nameTop - rest.avBottom).toFixed(1)} nameTop=${rest.nameTop.toFixed(1)} avBottom=${rest.avBottom.toFixed(1)}`);
-    ok(`${scheme} ③ 成组贴顶 64px 锚保持`, Math.abs(rest.headTop - rest.chatTop - 64) <= 2,
-      `headTop-chatTop=${(rest.headTop - rest.chatTop).toFixed(1)}`);
-    ok(`${scheme} ④ 居中保持（头像/名字/#chat 同心 ±2px）`,
-      Math.abs(rest.avCx - rest.chatCx) <= 2 && Math.abs(rest.nameCx - rest.avCx) <= 2,
-      `avCx=${rest.avCx.toFixed(1)} chatCx=${rest.chatCx.toFixed(1)} nameCx=${rest.nameCx.toFixed(1)}`);
-    ok(`${scheme} ⑤ sticky 语义在场 + 名字字号 14px`,
-      rest.stickyPos === 'sticky' && rest.nameFont === '14px', `pos=${rest.stickyPos} font=${rest.nameFont}`);
+    ok(`${scheme} ① 头像 40px（单行档取上沿）`,
+      Math.abs(rest.avW - 40) <= 0.8 && Math.abs(rest.avH - 40) <= 0.8, `${rest.avW.toFixed(1)}×${rest.avH.toFixed(1)}`);
+    ok(`${scheme} ② 名字横排挂头像右侧（间距 8px ±1.5）`,
+      rest.nameTop >= rest.avTop - 0.5 && rest.nameBottom <= rest.avBottom + 0.5
+        && Math.abs((rest.nameLeft - (rest.avCx + rest.avW / 2)) - 8) <= 1.5,
+      `nameTop=${rest.nameTop.toFixed(1)} nameBottom=${rest.nameBottom.toFixed(1)} avTop=${rest.avTop.toFixed(1)} avBottom=${rest.avBottom.toFixed(1)}`);
+    ok(`${scheme} ③ 顶栏 fixed 贴窗口顶（headTop == 0 ±1；64px 内容流锚退役）`,
+      rest.headPos === 'fixed' && Math.abs(rest.headTop - 0) <= 1,
+      `pos=${rest.headPos} headTop=${rest.headTop.toFixed(1)} headBottom=${rest.headBottom.toFixed(1)}`);
+    ok(`${scheme} ④ 头像中心 == 屏幕中线 ±1px`,
+      Math.abs(rest.avCx - 187.5) <= 1, `avCx=${rest.avCx.toFixed(1)} mid=187.5`);
+    ok(`${scheme} ⑤ 名字字号 14px + 顶栏 flex 单行`,
+      rest.nameFont === '14px', `font=${rest.nameFont}`);
     await page.screenshot({ path: join(OUT, `rest-${scheme}.png`) });
 
-    // ── 滚动态：中段位置（锚已贴顶、上下仍有内容）────────────────────
+    // ── 滚动态：中段位置（顶栏 fixed，必须纹丝不动）─────────────────
     await page.evaluate(() => { const c = document.getElementById('chat'); c.scrollTop = Math.round((c.scrollHeight - c.clientHeight) * 0.55); });
     await page.waitForTimeout(350);
     const mid = await probeState(page);
-    ok(`${scheme} ⑤ 滚动中锚贴窗口顶（±1.5px，sticky 语义保持）`,
-      Math.abs(mid.headTop - mid.chatTop) <= 1.5, `headTop-chatTop=${(mid.headTop - mid.chatTop).toFixed(1)} scrollTop=${mid.scrollTop}`);
-    ok(`${scheme} ⑤ 滚动中头像仍 56px`, Math.abs(mid.avW - 56) <= 0.8, `${mid.avW.toFixed(1)}`);
+    ok(`${scheme} ⑤ 滚动中顶栏不动（headTop/headBottom 逐值不变）`,
+      mid.scrollTop > 0 && mid.headTop === rest.headTop && mid.headBottom === rest.headBottom,
+      `headTop=${mid.headTop}/${rest.headTop} headBottom=${mid.headBottom}/${rest.headBottom} scrollTop=${mid.scrollTop}`);
+    ok(`${scheme} ⑤ 滚动中头像仍 40px + 名字仍横排`,
+      Math.abs(mid.avW - 40) <= 0.8 && mid.nameTop >= mid.avTop - 0.5 && mid.nameBottom <= mid.avBottom + 0.5,
+      `av=${mid.avW.toFixed(1)} nameTop=${mid.nameTop.toFixed(1)} avTop=${mid.avTop.toFixed(1)}`);
     await page.screenshot({ path: join(OUT, `scrolled-${scheme}.png`) });
 
     ok(`${scheme} R0 零 console error`, errors.length === 0, errors.slice(0, 3).join(' | '));

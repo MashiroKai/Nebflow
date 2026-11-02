@@ -12,23 +12,27 @@
 //   ② 名字缺位：未命名 root 下 `#session-name` 被写空串但 `display:''` 保留 ⇒
 //      空 span 仍吃胶囊 padding，画出 28×6px 幽灵玻璃条（既非名字也非间距）。
 //
+// ⚠ 契约改写（会话顶栏单行三段式批 2026-11-02 07:23 作者令）：本 harness 原验
+// 的「64px 内容流锚 + 名字下置 + sticky 变形」三件已被新契约整条取代 ——
+// .g2-chat-head 现在是 position:fixed 的真顶栏（高 56+safe，头像 40px 与名字
+// 横排同行，与左右双钮同轴），--muse-head-top 变量链退役。断言随之改写：
+//
 // 产出 → evidence/20261101_chat-head-position/：
-//   rest-<scheme>.png        静止态（头像+名字成组贴顶，落在悬浮双键行下缘 64px）
-//   scrollmid-<scheme>.png   滚动中（sticky 锚定贴窗口顶，消息从锚上缘穿过）
-//   scrolled-<scheme>.png    滚动后（停住仍是锚定格，渐隐带 88px 在场）
-//   before-<scheme>.png      修前对照（注入 margin-top:0 还原 96px 让位病灶；
-//                            仅作目检对照帧，不参与断言）
+//   rest-<scheme>.png        静止态（fixed 顶栏单行：头像+名字居中，双钮同轴）
+//   scrollmid-<scheme>.png   滚动中（顶栏不动，消息从其下缘穿过）
+//   scrolled-<scheme>.png    滚动后（顶栏 rect 逐值不变，渐隐带 88px 在场）
 //   unnamed-<scheme>.png     未命名 root 档（②-c 幽灵胶囊收口实证：无名字条）
 //   desktop-1280.png         桌面回归（#header 头像行原样、零身份头）
-// 探针：
-//   P① 静止态落位：headTop − chatTop == 64 ±2（= 悬浮双键行下缘 16+48）
-//   P② 成组：头像顶 = 组顶 + 8（呼吸缝，[6,10]）；名字在头像正下且居中 ±2
-//   P③ 静止态零叠压：消息行矩形与身份组矩形相交计数 == 0（组之上无内容、
-//      组本身不压消息）
+// 探针（新契约）：
+//   P① 静止态落位：顶栏贴窗口顶 headTop == 0 ±1、高 56+safe ±0.6（64px 锚退役）
+//   P② 单行成组：头像垂直居中于顶栏（avTop − headTop == 8 ±1.5）；名字横排挂
+//      头像右侧且垂直落在头像区间内；头像水平中心 = 屏幕中线 ±1
+//   P③ 静止态零叠压：消息行矩形与顶栏矩形相交计数 == 0（内容从顶栏下方起）
 //   P④ 名字读数：已命名 root ⇒ #session-name 文本 = agent.json displayName
-//   P⑤ 滚动态 sticky 语义：锚贴 #chat 可视顶 ±1.5px；消息行从锚上缘穿过
-//      （rowsBehind > 0 —— 既定 Muse 形态，非本批回归）；渐隐带 88px 在场
-//   P⑥ 幽灵胶囊收口：未命名 root ⇒ #session-name 计算 display none 且盒高 0
+//   P⑤ 滚动态 steadfast：顶栏 headTop/headBottom 逐值不变；消息行穿过其下缘
+//      （rowsBehind > 0）；渐隐带 88px 在场；--muse-head-top 变量已退役（空串）
+//   P⑥ 幽灵胶囊收口：未命名 root ⇒ #session-name 计算 display none 且盒高 0，
+//      且头像仍居中（名字不参与居中）
 //   P⑦ 桌面零触及：1280 下 #chat 内零 .g2-chat-head、#header 头像行可绘
 //   R0 每腿零 console error / pageerror
 // 走 mobile-muse-avatar-shots 同款静态 harness（无后端：routeWebSocket 供
@@ -88,20 +92,23 @@ async function probeState(page) {
       mobileLayer: document.body.classList.contains('mobile-layer'),
       headerHidden: getComputedStyle(document.getElementById('header')).display === 'none',
       headTop: headBox ? headBox.top : null,
+      headBottom: headBox ? headBox.bottom : null,
       chatTop: chatBox.top,
       headHeight: headBox ? headBox.height : null,
+      headPos: headCs?.position || 'absent',
       avTop: av.top, avBottom: av.bottom, avH: av.height,
-      avCx: (av.left + av.right) / 2,
+      avCx: (av.left + av.right) / 2, avRight: av.right,
       chatCx: (chatBox.left + chatBox.right) / 2,
+      vw: window.innerWidth,
       nameText: nameEl ? nameEl.textContent : null,
       nameDisplay: nameEl ? getComputedStyle(nameEl).display : 'absent',
       nameH: nr ? nr.height : -1,
       nameTop: nr ? nr.top : -1,
+      nameBottom: nr ? nr.bottom : -1,
+      nameLeft: nr ? nr.left : -1,
       nameCx: nr ? (nr.left + nr.right) / 2 : -1,
       clipTop: getComputedStyle(chat).getPropertyValue('--chat-top-clip').trim(),
       museHeadTop: getComputedStyle(chat).getPropertyValue('--muse-head-top').trim(),
-      stickyPos: headCs?.position || 'absent',
-      stickyTop: headCs?.top || '',
       scrollTop: chat.scrollTop,
       fadeH: r(fade).height,
       rowsBehind,
@@ -187,37 +194,31 @@ async function runMobile(scheme, { named = true, tagSuffix = '' } = {}) {
     await page.waitForFunction(() => document.getElementById('chat').scrollTop === 0, { timeout: 10000 });
     await page.waitForTimeout(250);
     const rest = await probeState(page);
-    ok(`${tag} P① 静止态落位 = 悬浮双键行下缘 64px（不再浮在页面中部）`,
-      Math.abs(rest.headTop - rest.chatTop - 64) <= 2,
-      `headTop-chatTop=${(rest.headTop - rest.chatTop).toFixed(1)} (muse-head-top=${rest.museHeadTop} clip=${rest.clipTop})`);
-    ok(`${tag} P② 成组：头像顶 = 组顶 + 8px 呼吸缝，名字在头像正下且居中`,
-      rest.avTop - rest.headTop >= 6 && rest.avTop - rest.headTop <= 10 && rest.nameTop >= rest.avBottom - 2 && Math.abs(rest.nameCx - rest.avCx) <= 2 && Math.abs(rest.avCx - rest.chatCx) <= 2,
-      `avTop-headTop=${(rest.avTop - rest.headTop).toFixed(1)} nameBelow=${rest.nameTop >= rest.avBottom - 2} avCx=${rest.avCx.toFixed(1)} chatCx=${rest.chatCx.toFixed(1)}`);
-    ok(`${tag} P③ 静止态零叠压（无消息行与身份组矩形相交）`, rest.rowsBehind === 0, `rowsBehind=${rest.rowsBehind}`);
+    ok(`${tag} P① 静止态落位 = 贴窗口顶的真顶栏（headTop 0 ±1、高 56 ±0.6；64px 内容流锚退役）`,
+      rest.headPos === 'fixed' && Math.abs(rest.headTop - 0) <= 1 && Math.abs(rest.headHeight - 56) <= 0.6,
+      `pos=${rest.headPos} headTop=${rest.headTop.toFixed(1)} h=${rest.headHeight} muse-head-top="${rest.museHeadTop}" clip=${rest.clipTop}`);
+    ok(`${tag} P② 单行成组：头像垂直居中于顶栏、名字横排挂其右侧、头像水平居中`,
+      Math.abs((rest.avTop - rest.headTop) - 8) <= 1.5
+        && rest.nameTop >= rest.avTop - 0.5 && rest.nameBottom <= rest.avBottom + 0.5
+        && rest.nameLeft >= rest.avRight - 0.5
+        && Math.abs(rest.avCx - rest.vw / 2) <= 1,
+      `avTop-headTop=${(rest.avTop - rest.headTop).toFixed(1)} onLine=${rest.nameTop >= rest.avTop - 0.5 && rest.nameBottom <= rest.avBottom + 0.5} avCx=${rest.avCx.toFixed(1)} mid=${(rest.vw / 2).toFixed(1)}`);
+    ok(`${tag} P③ 静止态零叠压（无消息行与顶栏矩形相交）`, rest.rowsBehind === 0, `rowsBehind=${rest.rowsBehind}`);
     ok(`${tag} P④ 名字读数 = agent.json displayName`, rest.nameText === 'Spider' && rest.nameH > 0,
       `text="${rest.nameText}" h=${rest.nameH} display=${rest.nameDisplay}`);
     await page.screenshot({ path: join(OUT, `rest-${tag}.png`) });
 
-    // ── 修前对照帧（仅目检：注入 margin-top:0 还原 96px 让位病灶）───
-    await page.addStyleTag({ content: 'body.mobile-layer #chat .g2-chat-head { margin-top: 0 !important; }' });
-    await page.waitForTimeout(200);
-    const before = await probeState(page);
-    await page.screenshot({ path: join(OUT, `before-${tag}.png`) });
-    console.log(`      · 修前对照帧：headTop-chatTop=${(before.headTop - before.chatTop).toFixed(1)}（病灶 96px 让位）`);
-    // 摘掉该 style 节点（回到修复态）
-    await page.evaluate(() => { document.querySelectorAll('style').forEach((s) => { if (s.textContent.includes('margin-top: 0 !important')) s.remove(); }); });
-    await page.waitForTimeout(200);
-
-    // ── 滚动中（中段位置：锚已贴顶、上下仍有内容）──────────────────
+    // ── 滚动中（中段位置：顶栏 fixed，内容从其下缘流过）──────────────
     await page.evaluate(() => { const c = document.getElementById('chat'); c.scrollTop = Math.round((c.scrollHeight - c.clientHeight) * 0.55); });
     await page.waitForTimeout(350);
     const mid = await probeState(page);
-    ok(`${tag} P⑤ 滚动中：锚贴窗口顶（±1.5px）`,
-      Math.abs(mid.headTop - mid.chatTop) <= 1.5, `headTop-chatTop=${(mid.headTop - mid.chatTop).toFixed(1)} scrollTop=${mid.scrollTop}`);
-    ok(`${tag} P⑤ 滚动中：消息行从锚上缘穿过（既定 Muse 形态）`, mid.rowsBehind > 0, `rowsBehind=${mid.rowsBehind}`);
+    ok(`${tag} P⑤ 滚动中：顶栏纹丝不动（headTop/headBottom 逐值不变）`,
+      mid.scrollTop > 0 && mid.headTop === rest.headTop && mid.headBottom === rest.headBottom,
+      `headTop=${mid.headTop}/${rest.headTop} headBottom=${mid.headBottom}/${rest.headBottom} scrollTop=${mid.scrollTop}`);
+    ok(`${tag} P⑤ 滚动中：消息行从顶栏下缘穿过`, mid.rowsBehind > 0, `rowsBehind=${mid.rowsBehind}`);
     await page.screenshot({ path: join(OUT, `scrollmid-${tag}.png`) });
 
-    // ── 滚动后（落底停住）：仍锚定格 + 渐隐带在场 ────────────────────
+    // ── 滚动后（落底停住）：顶栏仍不动 + 渐隐带在场 ──────────────────
     await page.evaluate(() => { const c = document.getElementById('chat'); c.scrollTop = c.scrollHeight; });
     await page.waitForFunction(() => {
       const chat = document.getElementById('chat');
@@ -225,9 +226,10 @@ async function runMobile(scheme, { named = true, tagSuffix = '' } = {}) {
     }, { timeout: 10000 });
     await page.waitForTimeout(300);
     const after = await probeState(page);
-    ok(`${tag} P⑤ 滚动后：停住仍锚定格（±1.5px）+ 渐隐带 88px 在场`,
-      Math.abs(after.headTop - after.chatTop) <= 1.5 && Math.abs(after.fadeH - 88) <= 1.5,
-      `headTop-chatTop=${(after.headTop - after.chatTop).toFixed(1)} fadeH=${after.fadeH}`);
+    ok(`${tag} P⑤ 滚动后：停住顶栏仍不动（rect 不变）+ 渐隐带 88px 在场 + --muse-head-top 已退役`,
+      after.headTop === rest.headTop && after.headBottom === rest.headBottom
+        && Math.abs(after.fadeH - 88) <= 1.5 && after.museHeadTop === '',
+      `headTop=${after.headTop} headBottom=${after.headBottom} fadeH=${after.fadeH} muse-head-top="${after.museHeadTop}"`);
     await page.screenshot({ path: join(OUT, `scrolled-${tag}.png`) });
 
     ok(`${tag} R0 零 console error`, errors.length === 0, errors.slice(0, 3).join(' | '));
@@ -303,8 +305,10 @@ async function runUnnamed(scheme) {
     ok(`${tag} P⑥ 幽灵胶囊收口：空名 #session-name 退出渲染（display none，盒高 0）`,
       p.nameText === '' && p.nameDisplay === 'none' && p.nameH === 0,
       `text="${p.nameText}" display=${p.nameDisplay} h=${p.nameH}`);
-    ok(`${tag} P①′ 未命名档落位不变（组顶 = 64px）`, Math.abs(p.headTop - p.chatTop - 64) <= 2,
-      `headTop-chatTop=${(p.headTop - p.chatTop).toFixed(1)}`);
+    ok(`${tag} P①′ 未命名档顶栏形态不变（fixed 贴顶、高 56、头像仍居中）`,
+      p.headPos === 'fixed' && Math.abs(p.headTop - 0) <= 1 && Math.abs(p.headHeight - 56) <= 0.6
+        && Math.abs(p.avCx - p.vw / 2) <= 1,
+      `pos=${p.headPos} headTop=${p.headTop} h=${p.headHeight} avCx=${p.avCx} mid=${(p.vw / 2)}`);
     await page.screenshot({ path: join(OUT, `unnamed-${scheme}.png`) });
     ok(`${tag} R0 零 console error`, errors.length === 0, errors.slice(0, 3).join(' | '));
     await page.close();

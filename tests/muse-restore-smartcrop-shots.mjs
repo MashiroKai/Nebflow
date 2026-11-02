@@ -275,23 +275,20 @@ async function runMobile(engineKind, scheme) {
     await page.waitForTimeout(250);
     const rest = await probeHead(page, scheme);
     assertMuse(tag, rest, scheme);
-    ok(`${tag} A① 静止态：组顶进顶带（= 悬浮双键行下缘 64px，未锚定）`,
-      !rest.pinnedNow && Math.abs(rest.head.top - rest.chat.top - 64) <= 2,
-      `headTop-chatTop=${(rest.head.top - rest.chat.top).toFixed(1)}`);
+    ok(`${tag} A① 静止态：顶栏贴窗口顶（headTop 0 ±1、高 56 ±0.6；64px 内容流锚退役）`,
+      Math.abs(rest.head.top - 0) <= 1 && Math.abs(rest.head.height - 56) <= 0.6,
+      `headTop=${rest.head.top.toFixed(1)} h=${rest.head.height}`);
     await page.screenshot({ path: join(OUT, `muse-${tag}-rest.png`) });
 
-    // ── A：滚动态（sticky 锚 + 压流）─────────────────────────────────
+    // ── A：滚动态（fixed 顶栏不动 + 压流）───────────────────────────
     await page.evaluate(() => { const c = document.getElementById('chat'); c.scrollTop = c.scrollHeight; });
-    await page.waitForFunction(() => {
-      const head = document.querySelector('#chat > .g2-chat-head');
-      const chat = document.getElementById('chat');
-      return head && chat && Math.abs(head.getBoundingClientRect().top - chat.getBoundingClientRect().top) <= 1.5;
-    }, { timeout: 10000 });
+    await page.waitForFunction(() => document.getElementById('chat').scrollTop > 0, { timeout: 10000 });
     await page.waitForTimeout(250);
     const pinned = await probeHead(page, scheme);
     assertMuse(tag, pinned, scheme);
-    ok(`${tag} A① 滚动态：锚贴窗口顶（±1.5px）`, pinned.pinnedNow,
-      `headTop-chatTop=${(pinned.head.top - pinned.chat.top).toFixed(1)}`);
+    ok(`${tag} A① 滚动态：顶栏不动（rect 与静止态逐值相同）`,
+      pinned.head.top === rest.head.top && pinned.head.height === rest.head.height,
+      `headTop=${pinned.head.top}/${rest.head.top}`);
     ok(`${tag} A① 滚动态：压在消息流上缘（rowsBehind>0）`, pinned.rowsBehind > 0, `rowsBehind=${pinned.rowsBehind}`);
     await page.screenshot({ path: join(OUT, `muse-${tag}-pinned.png`) });
 
@@ -369,7 +366,10 @@ async function probeHead(page, scheme) {
     const chatBox = r(chat);
     const headBox = r(head);
     const intersect = (a, b) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
-    const rowsBehind = [...chat.querySelectorAll('.row.ai')]
+    /* 压流探针口径（同位置批修正）：判据本意是「消息行从顶栏下缘穿过」，行类型
+       与语义无关 ⇒ 数全部 .row（原口径只数 .row.ai ⇒ 落底时穿顶栏的那一行恰好
+       是 user 行就恒判 0）。 */
+    const rowsBehind = [...chat.querySelectorAll('.row')]
       .filter((row) => intersect(r(row), headBox) > 4).length;
     const glassBgLight = 'rgba(255, 255, 255, 0.55)';
     const glassBgDark = 'rgba(24, 28, 38, 0.68)';
@@ -381,13 +381,19 @@ async function probeHead(page, scheme) {
       aiRows: chat.querySelectorAll('.row.ai').length,
       avW: av.width, avH: av.height,
       avCx: (av.left + av.right) / 2,
+      avRight: av.right,
+      avTop: av.top,
+      avBottom: av.bottom,
+      vw: window.innerWidth,
       chatCx: (chatBox.left + chatBox.right) / 2,
-      nameBelow: nr.top >= av.bottom - 2,
+      /* 单行判据：名字盒完全落在头像垂直区间内（横排），左缘 ≥ 头像右缘。 */
+      nameOnLine: nr.top >= av.top - 0.5 && nr.bottom <= av.bottom + 0.5,
+      nameGap: nr.left - av.right,
       nameCx: (nr.left + nr.right) / 2,
       nameText: nameEl.textContent,
-      // A② 扁平毛玻璃材质面。
+      // A② 名字材质：单行档 = 零自绘底（直接写在玻璃顶栏上，玻璃叠玻璃退役）。
       nameBg: nameCs?.backgroundColor,
-      nameBgOk: nameCs?.backgroundColor === (scheme === 'dark' ? glassBgDark : glassBgLight),
+      nameBgOk: nameCs?.backgroundColor === 'rgba(0, 0, 0, 0)',
       nameBorderZero: nameCs ? parseFloat(nameCs.borderWidth) === 0 || nameCs.borderStyle === 'none' : false,
       nameShadowNone: !nameCs?.boxShadow || nameCs.boxShadow === 'none',
       nameBackdropBlur: (nameCs?.backdropFilter || nameCs?.webkitBackdropFilter || '').includes('blur'),
@@ -401,23 +407,30 @@ async function probeHead(page, scheme) {
 
 /** Muse 形态两态共用断言（A①A②A③）。 */
 function assertMuse(tag, p, scheme) {
-  ok(`${tag} A① 头部列式居中基座在场（flex/column/center）`,
-    p.display === 'flex' && p.flexDir === 'column' && p.alignItems === 'center',
+  // ⚠ 契约改写（会话顶栏单行三段式批 2026-11-02 07:23）：flex column 竖排基座 +
+  // 56px 大头像 + 名字下置胶囊 + sticky 全部退役 —— 现为 flex row 单行顶栏、
+  // 头像 40px、名字横排挂右侧（零自绘底，直接写在玻璃顶栏上）、position:fixed。
+  ok(`${tag} A① 顶栏单行基座在场（flex/row/center）`,
+    p.display === 'flex' && p.flexDir === 'row' && p.alignItems === 'center',
     `${p.display}/${p.flexDir}/${p.alignItems}`);
-  ok(`${tag} A① 大号圆头像 56px`, Math.abs(p.avW - 56) <= 0.8 && Math.abs(p.avH - 56) <= 0.8,
+  ok(`${tag} A① 头像 40px（单行档）`, Math.abs(p.avW - 40) <= 0.8 && Math.abs(p.avH - 40) <= 0.8,
     `${p.avW.toFixed(1)}×${p.avH.toFixed(1)}`);
-  ok(`${tag} A① 头像水平居中（与 #chat 同心 ±2px）`, Math.abs(p.avCx - p.chatCx) <= 2,
-    `avCx=${p.avCx.toFixed(1)} chatCx=${p.chatCx.toFixed(1)}`);
-  ok(`${tag} A① 名字在头像正下方且居中`, p.nameBelow && Math.abs(p.nameCx - p.avCx) <= 2,
-    `below=${p.nameBelow} nameCx=${p.nameCx.toFixed(1)}`);
-  ok(`${tag} A① sticky 顶锚在场`, p.position === 'sticky', p.position);
+  ok(`${tag} A① 头像水平居中（屏幕中线 ±1px）`, Math.abs(p.avCx - p.vw / 2) <= 1,
+    `avCx=${p.avCx.toFixed(1)} mid=${(p.vw / 2).toFixed(1)}`);
+  ok(`${tag} A① 名字横排挂头像右侧（垂直同行、间距 8px ±1.5）`,
+    p.nameOnLine && p.nameGap >= 6.5 && p.nameGap <= 9.5,
+    `onLine=${p.nameOnLine} gap=${p.nameGap.toFixed(1)}`);
+  ok(`${tag} A① fixed 真顶栏在场（sticky 退役）`, p.position === 'fixed', p.position);
   ok(`${tag} A① 消息流零行内身份行（meta/slot/name 全零）`, p.aiRows > 0 && p.metas === 0,
     `aiRows=${p.aiRows} metas=${p.metas}`);
-  ok(`${tag} A② 名字扁平毛玻璃：底 = --glass-bg ${scheme} 真值`, p.nameBgOk, p.nameBg);
+  // A② 改写：名字不再自带玻璃胶囊 —— 零自绘底/零 border/零 shadow/零 backdrop，
+  // 直接落在顶栏玻璃面上（单层材质，避免玻璃叠玻璃）。
+  ok(`${tag} A② 名字零自绘底（直接写在顶栏玻璃上）`,
+    p.nameBg === 'rgba(0, 0, 0, 0)' || p.nameBg === 'transparent', p.nameBg);
   ok(`${tag} A② 名字零立体边框（border-width 0）`, p.nameBorderZero, '');
   ok(`${tag} A② 名字零 box-shadow（立体感退役）`, p.nameShadowNone, p.nameShadowNone ? 'none' : 'shadow!');
-  ok(`${tag} A② 名字毛玻璃采样在场（backdrop-filter blur）`, p.nameBackdropBlur, '');
-  ok(`${tag} A② 名字胶囊圆角 999px`, p.nameRadius === '999px', p.nameRadius);
+  ok(`${tag} A② 名字零 backdrop-filter（玻璃叠玻璃退役）`, !p.nameBackdropBlur, p.nameBackdropBlur ? 'blur!' : 'none');
+  ok(`${tag} A② 名字零胶囊圆角（0px）`, p.nameRadius === '0px', p.nameRadius);
 }
 
 // ── 手机腿：双引擎 × 双主题（4 跑）─────────────────────────────────────

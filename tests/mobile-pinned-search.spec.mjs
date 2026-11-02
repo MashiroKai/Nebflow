@@ -20,7 +20,8 @@
 //   P5 Esc = 清空回列表。
 //   P6 联系人页常驻条 = 该页唯一搜索入口（桌面输入行收起）：输入出结果卡、
 //      输入串跨面板重渲保留、清空后卡片消失且首行回位。
-//   P7 其它面零触碰：聊天根 chrome 搜索键 48×48 @ top16/right359 且仍能开搜索页；
+//   P7 其它面零触碰：聊天根 chrome 搜索键 48×48 @ right359（垂直落点由会话顶栏
+//      单行三段式批 2026-11-02 改写为 top 4+safe）且仍能开搜索页；
 //      详情页（设置）「<」48 + 大标题在；搜索页/详情页无常驻条。
 //   P8 搜索回跳胶囊手机层 z 抬层 = 170，层序 156 < 170 < 200。
 //   P9 封存态（features.friends=false）：两页既无常驻条也无浮钮。
@@ -409,7 +410,10 @@ test('P7 other faces untouched: chat chrome search key + detail pages keep the f
   await bootApp(page, { friends: true });
   await dockTo(page, 'messages');
 
-  // 聊天根顶缘搜索键（本批零触碰）：48×48 @ top16 / right359。
+  // 聊天根顶缘搜索键（本批零触碰）：48×48 @ right359 / 圆钮材质不变。
+  // 垂直落点 top 16 → 4+safe 由**会话顶栏单行三段式批**（2026-11-02 07:23，同 worktree
+  // 合并时就地解冲突）改写：钮中心 = safe+28 = 40px 头像中心，三者同轴；尺寸/材质/
+  // 水平足印仍按本批（pinned-search）契约零改动。
   const chrome = await page.evaluate(() => {
     const el = document.querySelector('.mh-chrome-btn[data-chrome="search"]');
     if (!el) return null;
@@ -423,7 +427,7 @@ test('P7 other faces untouched: chat chrome search key + detail pages keep the f
   });
   expect(chrome, 'chrome 搜索键在位').not.toBeNull();
   expect({ w: chrome.w, h: chrome.h }).toEqual({ w: 48, h: 48 });
-  expect(chrome.top).toBe(16);
+  expect(chrome.top).toBe(4);
   expect(chrome.right).toBe(359);
   expect(chrome.radius).toBe('50%');
 

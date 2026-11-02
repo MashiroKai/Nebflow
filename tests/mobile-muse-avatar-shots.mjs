@@ -7,21 +7,22 @@
 //   <engine>-<scheme>-pinned.png     滚动态（Muse 形态：锚贴窗口顶、压消息流上缘）
 //   <engine>-<scheme>-fallback.png   无自定义头像回落 stand logo 样张
 //   desktop-1280.png                 桌面回归（#header 头像行原样，零锚零身份头）
-// 探针（与令逐条对齐）：
+// ⚠ 契约改写（会话顶栏单行三段式批 2026-11-02 07:23 作者令）：②③③-b④ 的
+// sticky 顶锚 / 56px 大头像 / 名字下置 / 64px 内容流锚已被新契约整条取代 ——
+// .g2-chat-head 现在是 position:fixed 真顶栏（高 56+safe，头像 40px 与名字横排
+// 同一行，与左右双钮同轴，--muse-head-top 链退役）。判据随之改写：
+//
+// 探针（新契约）：
 //   ① 消息流零身份头：#chat 内 .g2-msg-meta / .g2-msg-avatar-slot / .g2-msg-name
 //      计数 == 0（消息分组/时间戳/footer 不在本批面 —— 以 ai 行数>0 佐证在演戏台）
-//   ② 悬浮锚形态：.g2-chat-head position:sticky / top:0 / z-index:26（> 渐隐带
+//   ② 顶栏形态：.g2-chat-head position:fixed / top:0 / z-index:26（> 渐隐带
 //      25，头像本体不被 veil 蒙住）；#chat mask 已在手机层释放（堆叠上下文解锁）
-//   ③ Muse 几何：大号圆头像 56px（原 78，2026-11-02 06:58 作者令收一档）、水平
-//      居中（与 #chat 可视盒同心）、名字玻璃
-//      胶囊在头像正下方居中、名字 = 当前会话对方 agent 身份（Spider 腿实文）
-//   ③-b 静止态落位（位置批 2026-11-01 23:0x 作者报障重钉）：组顶进顶带、落点 =
-//      悬浮双键行下缘 64px（16+48，组自带 8px 上内距作呼吸缝）±2px —— 原判据
-//      `组顶 >= chatTop + 88`（渐隐带之下）钉的正是病灶（组被 96px 让位推到视觉
-//      中段，「头像上方一大块空白、像浮在页面中央」）；sticky 未锚定判定保留
-//   ④ 压流锚定（滚动态）：锚顶 ≈ #chat 可视顶（±1.5px）且消息行矩形与锚矩形
-//      相交（行从锚上缘穿过；判据数全部 .row —— 原口径只数 .row.ai 是存量红，
-//      落底时穿锚的是 user 行，见 probeState 注记）；渐隐带仍在场（88px，未被本批破坏）
+//   ③ 单行几何：头像 40px、水平居中（屏幕中线 ±1）、名字横排挂头像右侧同行
+//      （垂直落在头像区间内）、名字 = 当前会话对方 agent 身份（Spider 腿实文）
+//   ③-b 静止态落位：顶栏贴窗口顶（headTop == 0 ±1，高 56 ±0.6）—— 64px 内容流
+//      锚随批退役；内容起点 = 顶栏下缘 + 8 基线
+//   ④ 压流（滚动态）：顶栏 rect 逐值不变、消息行矩形与顶栏矩形相交（内容从
+//      顶栏下缘流过）；渐隐带仍在场（88px，未被本批破坏）
 //   ⑤ 头像货源：自定义头像腿 = .agent-avatar-img 可绘（现役身份链）；无头像腿
 //      = .agent-avatar-stand-logo 可绘（2963aeac0 同货源回落，零默认人形）
 //   R0 双引擎双主题零 console error + 桌面腿零 console error
@@ -146,33 +147,27 @@ async function runMobile(engineKind, scheme, withAvatar) {
     await page.waitForTimeout(250);
     const rest = await probeState(page);
     assertCommon(tag, rest, withAvatar);
-    /* 静止态几何契约（位置批 2026-11-01 23:0x 作者报障重钉）：原判据
-       `headTop >= chatTop + 88`（= 组顶在渐隐带之下）钉的是**病灶本身** ——
-       组顶 = #chat padding-top 让位（96）把会话身份头推到视觉中段，作者所见
-       「头像上方一大块空白、像浮在页面中央」。重钉为「组顶进顶带、落点 = 悬浮
-       双键行下缘」：组顶 = 64px（16+48，组自带 8px 上内距作呼吸缝），容差 ±2。
-       未锚定判定保留（组在流内原位，非 sticky 锚定格）。 */
-    ok(`${tag} 静止态：组顶进顶带（= 悬浮双键行下缘 64px，不再浮在页面中部）`,
-      !rest.pinnedNow && Math.abs(rest.head.top - rest.chat.top - 64) <= 2,
-      `headTop-chatTop=${(rest.head.top - rest.chat.top).toFixed(1)}`);
-    ok(`${tag} 静止态：头像+名字成组居顶（头像顶 = 组顶 + 8px 呼吸缝，名字在其正下）`,
-      Math.abs(rest.head.top - rest.chat.top - 64) <= 2 && rest.av.top - rest.head.top >= 6 && rest.av.top - rest.head.top <= 10,
+    /* 静止态几何契约（会话顶栏单行三段式批 2026-11-02 07:23 改名）：顶栏贴
+       窗口顶（headTop == 0 ±1、高 56 ±0.6），原「64px 内容流锚 + sticky 未锚定」
+       判据随批退役。头像在行内垂直居中（avTop − headTop = 8）。 */
+    ok(`${tag} 静止态：顶栏贴窗口顶（headTop 0 ±1、高 56 ±0.6；64px 锚退役）`,
+      rest.position === 'fixed' && Math.abs(rest.head.top - 0) <= 1 && Math.abs(rest.head.height - 56) <= 0.6,
+      `pos=${rest.position} headTop=${rest.head.top.toFixed(1)} h=${rest.head.height}`);
+    ok(`${tag} 静止态：头像在行内垂直居中（avTop − headTop = 8 ±1.5）`,
+      Math.abs((rest.av.top - rest.head.top) - 8) <= 1.5,
       `avTop-headTop=${(rest.av.top - rest.head.top).toFixed(1)}`);
     await page.screenshot({ path: join(OUT, `${tag}-rest.png`) });
 
-    // ── 滚动态（Muse 形态）探针 + 实拍 ────────────────────────────
+    // ── 滚动态探针 + 实拍 ────────────────────────────────────────
     await page.evaluate(() => { const c = document.getElementById('chat'); c.scrollTop = c.scrollHeight; });
-    await page.waitForFunction(() => {
-      const head = document.querySelector('#chat > .g2-chat-head');
-      const chat = document.getElementById('chat');
-      return head && chat && head.getBoundingClientRect().top - chat.getBoundingClientRect().top <= 1.5;
-    }, { timeout: 10000 });
+    await page.waitForFunction(() => document.getElementById('chat').scrollTop > 0, { timeout: 10000 });
     await page.waitForTimeout(250);
     const pinned = await probeState(page);
     assertCommon(tag, pinned, withAvatar);
-    ok(`${tag} 滚动态：锚贴窗口顶（headTop ≈ chatTop ±1.5px）`, pinned.pinnedNow,
-      `headTop-chatTop=${(pinned.head.top - pinned.chat.top).toFixed(1)}`);
-    ok(`${tag} 滚动态：压在消息流上缘（消息行矩形与锚矩形相交）`, pinned.rowsBehind > 0,
+    ok(`${tag} 滚动态：顶栏不动（rect 与静止态逐值相同）`,
+      pinned.head.top === rest.head.top && pinned.head.height === rest.head.height && pinned.scrollTop > 0,
+      `headTop=${pinned.head.top}/${rest.head.top} scrollTop=${pinned.scrollTop}`);
+    ok(`${tag} 滚动态：内容从顶栏下缘流过（消息行矩形与顶栏矩形相交）`, pinned.rowsBehind > 0,
       `rowsBehind=${pinned.rowsBehind}`);
     ok(`${tag} 滚动态：渐隐带仍在场（88px，未被本批破坏）`,
       Math.abs(pinned.fadeH - 88) <= 1.5, `fadeH=${pinned.fadeH}`);
@@ -215,14 +210,22 @@ async function probeState(page) {
       metas: chat.querySelectorAll('.g2-msg-meta, .g2-msg-avatar-slot, .g2-msg-name').length,
       aiRows: chat.querySelectorAll('.row.ai').length,
       position: headCs?.position,
-      stickyTop: headCs?.top,
+      headH: headBox.height,
+      headPos: headCs?.position,
       padTop: pad,
       zIndex: headCs?.zIndex,
       maskImage: chatCs.maskImage === 'none' ? 'none' : (chatCs.webkitMaskImage || chatCs.maskImage),
       avW: av.width, avH: av.height,
       avCx: (av.left + av.right) / 2,
+      avRight: av.right,
+      avTop: av.top,
+      avBottom: av.bottom,
+      vw: window.innerWidth,
       chatCx: (chatBox.left + chatBox.right) / 2,
-      nameBelow: nr.top >= av.bottom - 2,
+      /* 单行判据：名字盒完全落在头像垂直区间内（横排同行；下置形态必然跌破
+        头像 bottom）+ 名字左缘 ≥ 头像右缘（挂右侧）。 */
+      nameOnLine: nr.top >= av.top - 0.5 && nr.bottom <= av.bottom + 0.5,
+      nameGap: nr.left - av.right,
       nameCx: (nr.left + nr.right) / 2,
       nameText: nameEl.textContent,
       nameVisible: nr.height > 0 && getComputedStyle(nameEl).visibility !== 'hidden',
@@ -231,7 +234,7 @@ async function probeState(page) {
       glyphFallback: !!avatarBtn?.querySelector('svg.lucide-user, i[data-lucide="user"], .agent-avatar-initial'),
       head: headBox, chat: chatBox,
       av: av,
-      pinnedNow: Math.abs(headBox.top - chatBox.top) <= 1.5,
+      scrollTop: chat.scrollTop,
       rowsBehind,
       aiRowsBehind,
       fadeH: r(fade).height,
@@ -243,17 +246,18 @@ async function probeState(page) {
 function assertCommon(tag, p, withAvatar) {
   ok(`${tag} ① 消息流零身份头（meta/slot/name 全零）`, p.aiRows > 0 && p.metas === 0,
     `aiRows=${p.aiRows} metas=${p.metas}`);
-  ok(`${tag} ② sticky 顶锚（position/top 补偿/z=26）`,
-    p.position === 'sticky' && Math.abs(parseFloat(p.stickyTop || '1') + p.padTop) <= 1 && p.zIndex === '26',
-    `position=${p.position} top=${p.stickyTop} pad=${p.padTop} z=${p.zIndex}`);
+  ok(`${tag} ② 顶栏形态 = fixed 真顶栏（z=26；sticky/--muse-head-top 链退役）`,
+    p.position === 'fixed' && p.zIndex === '26',
+    `position=${p.position} z=${p.zIndex}`);
   ok(`${tag} ② #chat mask 已释放（手机层堆叠上下文解锁）`, p.maskImage === 'none', p.maskImage);
   ok(`${tag} ② 手机层在场 + #header 退场`, p.mobileLayer && p.headerHidden, '');
-  ok(`${tag} ③ 大号圆头像 56px`,
-    Math.abs(p.avW - 56) <= 0.8 && Math.abs(p.avH - 56) <= 0.8, `${p.avW.toFixed(1)}×${p.avH.toFixed(1)}`);
-  ok(`${tag} ③ 头像水平居中（与 #chat 同心 ±2px）`, Math.abs(p.avCx - p.chatCx) <= 2,
-    `avCx=${p.avCx.toFixed(1)} chatCx=${p.chatCx.toFixed(1)}`);
-  ok(`${tag} ③ 名字在头像正下方且居中`, p.nameBelow && Math.abs(p.nameCx - p.avCx) <= 2,
-    `below=${p.nameBelow} nameCx=${p.nameCx.toFixed(1)}`);
+  ok(`${tag} ③ 头像 40px（单行档）`,
+    Math.abs(p.avW - 40) <= 0.8 && Math.abs(p.avH - 40) <= 0.8, `${p.avW.toFixed(1)}×${p.avH.toFixed(1)}`);
+  ok(`${tag} ③ 头像水平居中（屏幕中线 ±1px）`, Math.abs(p.avCx - p.vw / 2) <= 1,
+    `avCx=${p.avCx.toFixed(1)} mid=${(p.vw / 2).toFixed(1)}`);
+  ok(`${tag} ③ 名字横排挂头像右侧（垂直同行、间距 8px ±1.5）`,
+    p.nameOnLine && p.nameGap >= 6.5 && p.nameGap <= 9.5,
+    `onLine=${p.nameOnLine} gap=${p.nameGap.toFixed(1)}`);
   if (withAvatar) {
     ok(`${tag} ③ 名字 = 当前会话对方 agent（Spider）`, p.nameVisible && p.nameText === 'Spider',
       `text="${p.nameText}"`);
