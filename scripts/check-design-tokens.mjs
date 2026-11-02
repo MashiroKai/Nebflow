@@ -65,6 +65,45 @@ const COLOR_RE = /#[0-9a-fA-F]{3,8}\b|\brgba?\([^)]*\)|\bhsla?\([^)]*\)/g;
 const COMMENT_RE = /\/\*[\s\S]*?\*\//g;
 
 /**
+ * CSS 语义关键字白名单 —— 这类值的语义是「随父 / 继承 / 回退 / 借当前色」，
+ * **不携带任何可量化数值**，因此在 8 档圆角、5 档字号、4px 栅格这些**数值阶梯**
+ * 面前不成立「档外值」。
+ *
+ * 批次 2026-11-03：`border-radius: inherit` 被判定为档外字面量 = **假阳性类别** ——
+ * 它与 `#ff00aa` / `border-radius: 7px` 那种真违规不同类：后者是可量化值（能落档 /
+ * 不能落档），前者只是一条继承指令。
+ *
+ * 纪律：**具名白名单 + 单点判定**（见 isSemanticKeywordValue），**不用正则撒网** ——
+ * /inherit/ 之类会顺手放过 `inherit-foo`、`uninherited` 这种真值。
+ */
+const CSS_SEMANTIC_KEYWORDS = new Set([
+  'inherit', 'initial', 'unset', 'revert', 'revert-layer', 'currentcolor',
+]);
+
+/**
+ * 整条声明值是否只由语义关键字构成（**唯一判定点**：所有「档外值」类哨兵 ——
+ * 圆角 / 字号 / 将来的 shadow / spacing —— 都必须先过这里再谈档位）。
+ * 多 token 值（`inherit inherit`）同样算语义值；`7px inherit` 这种混入数值的
+ * 值**不算**（仍走档位判定，宁可漏放不可放过真值）。
+ * @param {string} raw 属性值原文（可含多 token）
+ * @returns {boolean}
+ */
+function isSemanticKeywordValue(raw) {
+  const tokens = String(raw).trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+  return tokens.every((t) => CSS_SEMANTIC_KEYWORDS.has(t.toLowerCase()));
+}
+
+/** 语义关键字命中记录（informational：只打印，不参与基线比较、不计入 radiusOff）。 */
+const semanticHits = {};   // rel → { radius: {n, keywords:Set}, fs: {n, keywords:Set} }
+function noteSemantic(rel, kind, token) {
+  const box = (semanticHits[rel] ||= {});
+  const slot = (box[kind] ||= { n: 0, keywords: new Set() });
+  slot.n += 1;
+  slot.keywords.add(token.toLowerCase());
+}
+
+/**
  * 一行里真正的「颜色字面量」——**排除**由 var() 拼装的色值
  * （`rgb(var(--brand-green) / 0.25)` 是令牌组合，不是字面量；后者才是要禁的）。
  * @param {string} line
@@ -163,13 +202,19 @@ for (const abs of files) {
     if (!isCss) return;
     const fs = line.match(/font-size\s*:\s*([^;}]+)/);
     if (fs) {
-      const v = fs[1].trim();
-      if (!v.startsWith('var(') && /^[\d.]+px$/.test(v) && parseFloat(v) < FS_MIN) c.fsSmall += 1;
+      const raw = fs[1].trim();
+      const v = raw.split(/\s+/)[0];
+      // 语义关键字（inherit/unset/…）不携带数值，不成立「低于 11px」（历史上这条
+      // 判据因 px 形态判据已天然免疫，此处显式走同一单点判定，防将来改判据时回退）。
+      if (isSemanticKeywordValue(raw)) noteSemantic(rel, 'fs', v);
+      else if (!v.startsWith('var(') && /^[\d.]+px$/.test(v) && parseFloat(v) < FS_MIN) c.fsSmall += 1;
     }
     const br = line.match(/border-radius\s*:\s*([^;}]+)/);
     if (br) {
-      const first = br[1].trim().split(/\s+/)[0];
-      if (!first.startsWith('var(') && !RADIUS_LADDER.has(first)) c.radiusOff += 1;
+      const raw = br[1].trim();
+      const first = raw.split(/\s+/)[0];
+      if (isSemanticKeywordValue(raw)) noteSemantic(rel, 'radius', first);
+      else if (!first.startsWith('var(') && !RADIUS_LADDER.has(first)) c.radiusOff += 1;
     }
   });
   if (c.color || c.transitionAll || c.fsSmall || c.radiusOff) counts[rel] = c;
@@ -238,13 +283,17 @@ for (const abs of walk(CSS_DIR)) {
       if (isTokenDeclLine(text)) continue;
       const fs = text.match(/font-size\s*:\s*([^;}]+)/);
       if (fs) {
-        const v = fs[1].trim().split(/\s+/)[0];
-        if (!v.startsWith('var(') && !FS_LADDER.has(v)) add(rel, line, `严格面字号 ${v} 不在阶梯（11/12/13/15/20）`, 'strict-fs');
+        const raw = fs[1].trim();
+        const v = raw.split(/\s+/)[0];
+        if (isSemanticKeywordValue(raw)) noteSemantic(rel, 'fs', v);
+        else if (!v.startsWith('var(') && !FS_LADDER.has(v)) add(rel, line, `严格面字号 ${v} 不在阶梯（11/12/13/15/20）`, 'strict-fs');
       }
       const br = text.match(/border-radius\s*:\s*([^;}]+)/);
       if (br) {
-        const v = br[1].trim().split(/\s+/)[0];
-        if (!v.startsWith('var(') && !RADIUS_LADDER.has(v)) add(rel, line, `严格面圆角 ${v} 不在 8 档（4/6/8/10/14/16/20/999）`, 'strict-radius');
+        const raw = br[1].trim();
+        const v = raw.split(/\s+/)[0];
+        if (isSemanticKeywordValue(raw)) noteSemantic(rel, 'radius', v);
+        else if (!v.startsWith('var(') && !RADIUS_LADDER.has(v)) add(rel, line, `严格面圆角 ${v} 不在 8 档（4/6/8/10/14/16/20/999）`, 'strict-radius');
       }
       if (/\btransition\s*:\s*all\b/.test(text)) add(rel, line, '严格面 transition: all（禁 all，逐属性列出）', 'strict-transition');
     }
@@ -273,9 +322,17 @@ if (dsDefs.size === 0) {
 // ── 报告 ─────────────────────────────────────────────────────────────
 const totalColor = Object.values(counts).reduce((s, c) => s + c.color, 0);
 if (ARGS.has('--json')) {
-  console.log(JSON.stringify({ ok: fails.length === 0, totalColor, baselineColor: Object.values(baseline).reduce((s, c) => s + (c.color || 0), 0), fails, notes }, null, 2));
+  const semantic = Object.fromEntries(Object.entries(semanticHits).map(([rel, box]) => [rel, Object.fromEntries(Object.entries(box).map(([k, v]) => [k, { n: v.n, keywords: [...v.keywords] }]))]));
+  console.log(JSON.stringify({ ok: fails.length === 0, totalColor, baselineColor: Object.values(baseline).reduce((s, c) => s + (c.color || 0), 0), fails, notes, semanticKeywords: semantic }, null, 2));
 } else {
   console.log(`design-tokens：${Object.keys(counts).length} 文件 / ${totalColor} 处颜色字面量 / ${Object.keys(baseline).length} 个基线条目`);
+  const semTotal = Object.values(semanticHits).reduce((s, box) => s + Object.values(box).reduce((t, v) => t + v.n, 0), 0);
+  if (semTotal > 0) {
+    for (const [rel, box] of Object.entries(semanticHits)) {
+      const parts = Object.entries(box).map(([k, v]) => `${k}×${v.n}(${[...v.keywords].join('/')})`);
+      console.log(`  ℹ ${rel}: 语义关键字（不计档外） ${parts.join(' ')}`);
+    }
+  }
   for (const n of notes) console.log(`  ↑ ${n}`);
   if (fails.length === 0) {
     console.log('PASS: 无新增设计字面量；严格面（设置页结构面 + 设计体系层）零跑偏，令牌引用全部有定义。');
