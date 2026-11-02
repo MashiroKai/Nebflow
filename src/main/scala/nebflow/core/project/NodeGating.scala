@@ -565,10 +565,94 @@ private[project] trait NodeGating:
                 case true =>
                   val summary = s"barrier blocked by terminal upstream (cause=$cause): $reason"
                   FlowMapEventLog.append(workspace, projectName, n.id, "barrier-blocked", summary) *>
-                    logger.warn(s"[$projectName] node ${n.id} barrier-blocked (cause=$cause): $reason")
+                    logger.warn(s"[$projectName] node ${n.id} barrier-blocked (cause=$cause): $reason") *>
+                    chainWedgedReceipt(snap.nodes, n, terminalId, cause, reason)
               }
         }
     }
+
+  /**
+   * **链级终态回执**（P0 dispatch-notify 批 2026-11-02，RCA §7-P1）：由
+   * [[checkBarriersNow]] 在**已有** `barrier-blocked` 留痕之后调用（追加腿，不改动
+   * 后者的文本与发射条件）。零归属（`n.chainId` 空）⇒ `IO.unit`，行为与改前逐字
+   * 一致。
+   *
+   * 两条产物（同一分支、同一 chainId 单发）：
+   *   ① **事件面** [[NodeEngine.ChainWedgedEventType]]：三要素
+   *      `chain=<chainId> node=<被闸死的下游 id> wedgedBy=<terminalId>`（机械可
+   *      grep），附 `cause` 与 reason 摘要；顶层 `chainId` 键一并带上（与链族事件
+   *      同源口径，消费者免反解析）。
+   *   ② **上层回执**：走**既有** root 通知通道 [[enqueueRootNotify]]——本仓既有分流
+   *      语义直接复用，**不为 delegate 另写投递**：`rootSessionId` 在项目面 = 项目根
+   *      会话（→ 项目 dispatcher/root 可见），在 delegate 作用域面 = delegate 自己
+   *      （`notifyTargetKind = CreatorDelegate`，[[DelegateFlowHosts]] 挂载面固定）
+   *      ⇒ 落到**创建者 delegate**。文本逐字含 `chain-wedged` / chainId / 被闸死
+   *      节点名+id / 处置方向三段（承接 hand over · 改接 rewire · abandon）。
+   *
+   * `status` = `"blocked"`：这是**要求上层处置的终态回执**，前端据此打 BLOCKED 标签
+   * （与既有 `feedbackRouter.escalate` 同档）；`blocked` 不在 [[isRootNotifyInterrupt]]
+   * 档内 ⇒ 进 root 打包窗，密集扇出不轰炸。`nodeId` 刻意传 `None`（理由见调用点注释：
+   * 不让 pending 节点被盖上「结果已投根」的持久账本）；重复抑制由
+   * [[NodeEngine.chainWedgedAlerted]] 的 chainId 单发承担，**不依赖** root 通道的
+   * 60s 同键窗。
+   *
+   * 🔴 **不套 uplink 归因闸**（`uplinkAllowed`）：该闸的语义是「有任务归属的任务面
+   * 上报」，而本回执是**引擎监督面**的链级终态告知（收件人 = 链属主 / root，不是
+   * 任务台账）；对本形态（下游无 `taskId`）套闸只会让「链断了」这一条最该被看见的
+   * 信号静默消失。**没有新建第三套闸**：直接复用 `enqueueRootNotify` 的既有形态
+   * （与 `NodeDelivery.rootDelivery` 的 Nebula 腿同款调用）。
+   *
+   * 去重：[[NodeEngine.chainWedgedAlerted]]（key = chainId，与 `barrierAlerted` 的
+   * 节点 id 集正交）；由 `settleRunnableSweep` 按「该链此刻是否仍被闸住」剪枝。
+   */
+  private[project] def chainWedgedReceipt(
+    nodes: Map[String, NodeDef],
+    n: NodeDef,
+    terminalId: String,
+    cause: String,
+    reason: String
+  ): IO[Unit] =
+    n.chainId.map(_.trim).filter(_.nonEmpty) match
+      case None => IO.unit // 无链归属 ⇒ 零行为变化（只留既有 barrier-blocked）
+      case Some(cid) =>
+        chainWedgedAlerted.modify(s => if s.contains(cid) then (s, false) else (s + cid, true)).flatMap {
+          case false => IO.unit // 本链已回过执（单发）
+          case true =>
+            val wedgedBy = nodes.get(terminalId).map(_.name).getOrElse(terminalId)
+            val action =
+              "Action for the chain owner: hand over (承接) the wedged node, rewire (改接) it to a live upstream, " +
+                "or abandon the chain — without one of these the chain stays permanently wedged (no settlement " +
+                "for failed/cancelled upstreams; this receipt is sent once per chain)"
+            FlowMapEventLog
+              .append(
+                workspace,
+                projectName,
+                n.id,
+                NodeEngine.ChainWedgedEventType,
+                s"chain-wedged chain=$cid node=${n.id} (${n.name}) wedgedBy=$terminalId ($wedgedBy) " +
+                  s"cause=$cause — $reason",
+                chainId = Some(cid)
+              ) *>
+              logger.warn(
+                s"[$projectName] CHAIN WEDGED chain=$cid — node '${n.name}'(${n.id}) permanently blocked by " +
+                  s"terminal upstream '$wedgedBy'($terminalId) (cause=$cause)"
+              ) *>
+              enqueueRootNotify(
+                s"chain-wedged chain=$cid — node '${n.name}' (${n.id}, status=${n.status}) is permanently wedged " +
+                  s"by terminal upstream '$wedgedBy' (${terminalId}, cause=$cause): the in-barrier can never be " +
+                  s"settled and nothing downstream of this node will ever start on its own.\nReason: $reason\n$action",
+                n.name,
+                NodeLifecycle.Blocked,
+                // 🔴 `nodeId = None`（刻意）：本回执是**监督面**告知，被闸死的下游自己
+                // **尚未产出任何结果**。`deliverToRoot` 拿到 nodeId 会顺手
+                // `markRootDelivered` 写 `nebulaDeliveredAt`（`NodeDelivery.scala:780,791`）
+                // ——那是「本节点结果已投根」的持久账本，写在一个 pending 节点上是伪事实，
+                // 并且会让 `deliverOutTo` 的 Nebula 腿（`NodeDelivery.scala:534` 持久去重锚）
+                // 在承接/改接后**拒投**该节点真正的结果。与既有 `feedbackRouter.escalate`
+                // 的调用形态（`enqueueRootNotify(text, nodeName, blocked)`，不传 nodeId）同款。
+                None
+              )
+        }
 
   /**
    * barrier 被终态上游**永久闸死**的判定单点（R3 即时告警与周期回扫共享口径，
