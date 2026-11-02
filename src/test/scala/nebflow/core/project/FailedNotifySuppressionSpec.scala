@@ -74,18 +74,45 @@ class FailedNotifySuppressionSpec extends FunSuite:
   private val CancelledAbsolutePhrase = "不可重激活"
 
   /**
-   * **F2 字节锁**：四形态非抑制态 failed 文本在**改前树**（`86064874f`）上的 sha256。
+   * **F2 字节锁**：四形态非抑制态 failed 文本的 sha256。
    *
-   * 读数原文（同一份探针夹具 `FailTextProbeSpec`、同一 fixture 命名）：
-   * `.nebflow/evidence/20260916_failtext/e1-probe-prechange.log`。改后逐形态相同
-   * ⇒ 非抑制态文本零漂移（`e2-probe-postchange.log`）。
+   * == 两代读数 ==
+   * v1（`86064874f` 改前树，本 spec 立项批）：`.nebflow/evidence/20260916_failtext/e1-probe-prechange.log`
+   * ⇒ 证明「抑制态联动」批**没动**非抑制态文本。
+   *
+   * **v2（当前，P0/P1/P2 批 2026-11-02 重锚）**：P2 有意把 failed 文本的第 4 条从
+   * 「在你的最终输出中写明上报内容（**自动投递 Nebula**）」改成真话
+   * （「分发器没有消息工具 … `AskUserQuestion` / `TaskBoard` … 链级回执由引擎送达」）。
+   * 那句假承诺**正是** `DispatchNotify.scala` 里 5 处副本中的一处（`git diff
+   * 0bb71eff4 ff51ebb65` = 5 行同一替换 + 1 处注释，无别的字符变动），所以四形态
+   * 字面必然全部改变 —— **这是判据要的改动，不是回归**。
+   *
+   * == 改法（只重锚哈希，判据一条没松）==
+   * 四形态仍逐形态锁死字节；另加 [[P2TextRevision]] 结构断言：新文本**必须**含
+   * 真话锚（没有消息工具 / AskUserQuestion / TaskBoard）且**不得**再含旧假承诺
+   * ⇒ 从「锁死任意旧字节」升级为「锁死**已审阅的**新字节」。注释里的
+   * `v1 …` 串即旧代读数，留作两代对照，想回到旧文本可复算。
+   *
+   * 读数来源：`TempFailTextShaProbe`（一次性探针，复刻本文件 `fiveForms()` 逐字同形，
+   * 取数后即删）；旧代读数已由 v1 记录在案。
    */
   private val PreChangeSha: Map[String, String] = Map(
-    "no-retry" -> "615003108f5240f800a3b01fb0e732257fac2da2788c652e4a5c7faa6026ed35",
-    "capped" -> "bc14abf999ea7201a4d315339e1ea082a8be19a9d4a90e0cbdc39d7f90e8b9a6",
-    "engine-cancel" -> "139e583dd3458bc003215f236e449a93f400da2d1cbb9a07d3865bd3bf6ab27b",
-    "unknown-source" -> "e822a00a57cd394ee85a6ca3c08e0a91aab409ab3288d93b31eed0210713b059"
+    // v1 615003108f5240f800a3b01fb0e732257fac2da2788c652e4a5c7faa6026ed35
+    "no-retry" -> "959512d564b8f0775c902d810ebc2b5fe600590789f51ba7fdb62046a047d9c8",
+    // v1 bc14abf999ea7201a4d315339e1ea082a8be19a9d4a90e0cbdc39d7f90e8b9a6
+    "capped" -> "35f2b4c394c9ef5d5c0137aedd0ed1485c5d87f617f92a6f7409ae907b1cac49",
+    // v1 139e583dd3458bc003215f236e449a93f400da2d1cbb9a07d3865bd3bf6ab27b
+    "engine-cancel" -> "d02337e25e32fc3593d75ec0e3d7a63ca2837b9cd04428db770f4856cea0f934",
+    // v1 e822a00a57cd394ee85a6ca3c08e0a91aab409ab3288d93b31eed0210713b059
+    "unknown-source" -> "696b11bc7cdbac89106e4e59284ba54344172cb408972ccdf7087010d8a2c6b9"
   )
+
+  /** P2 真话锚（新文本**必须**含）：与 `PromptCatalog` / `AgentCore.DispatcherFixedTools` 同向口径。 */
+  private val P2TextRevision: List[String] =
+    List("没有消息工具", "`AskUserQuestion`", "`TaskBoard`", "不会自动收到")
+
+  /** P2 已删掉的旧假承诺（新文本**不得**再含）。 */
+  private val P2RetiredPromise = "自动投递 Nebula"
 
   /** 改前树抑制态读数（同一夹具）：与常态同形（664 B），改后必须变（新变体 922 B）。 */
   private val PreChangeSuppressedSha = "bde725c93b800b3fd4a0612d244ffbadfdc34a00f758cae8b8787b7393e0e264"
@@ -270,6 +297,19 @@ class FailedNotifySuppressionSpec extends FunSuite:
         s"F2: form '$form' must NOT carry the suppressed-state marker (that is a suppression-only field)"
       )
       assert(t.contains(ReactivateLead), s"F2: form '$form' must keep the normal first-choice recipe verbatim")
+      // P2 重锚的结构锚（不只是哈希）：新文本必须是「已审阅的新字节」——
+      // 真话锚齐备且旧假承诺不再出现。哈希锁死字面，本节锁死**语义方向**。
+      P2TextRevision.foreach(anchor =>
+        assert(
+          t.contains(anchor),
+          s"F2: form '$form' must carry the P2 truth anchor '$anchor' (dispatcher has no messaging tool; " +
+            "AskUserQuestion / TaskBoard are the real channels) — got: ${t.take(600)}"
+        )
+      )
+      assert(
+        !t.contains(P2RetiredPromise),
+        s"F2: form '$form' must NOT re-promise auto-delivery to Nebula (retired by P2 as a false promise)"
+      )
     }
     // 对照读数（同一夹具）：抑制态改前 sha = PreChangeSuppressedSha（**常态形态**文本，
     // 即被修的缺陷）；改后必须换形态（F1 臂另给正向/负向锚）
