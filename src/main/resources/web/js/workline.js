@@ -144,11 +144,35 @@ export function priorTurnBadgeSettled(chat, row) {
       }
     }
     if (cls.contains('user') && !el.hasAttribute('data-nf-ask-answer') &&
+        !isMidTurnRow(el) &&
         !(el.querySelector && el.querySelector('.bubble.injected'))) {
       return !!rid; // plain user row: stamped ⇒ new group; injected ⇒ open tail
     }
   }
   return false;
+}
+
+/** MID-TURN 插话行的唯一判据（tool-card-leak-on-reload 批 2026-11-02）。
+ *
+ *  作者现象：「我在回复中，然后我网络中断或者刷新了页面，再次进来就会看到
+ *  完整的工具执行过程」——即同一个引擎回合被**回合内插话**的 user 行劈成两段，
+ *  前段没有任何终态载体（terminal 只落在整轮 done 的那一段）⇒ 回放折叠
+ *  `summarizeSegment` 平铺 ⇒ 整段裸工具卡。
+ *
+ *  DOM 契约 = `data-nf-mid-turn`：
+ *    · 回放腿：persistence.js 的 user 行渲染据落盘字段 `midTurn===true` 盖戳
+ *      （写者 = 后端 dispatchUserText / typeless 帧腿 / skill 腿，落盘那一瞬读
+ *      `AgentStatus.Processing`）；旧 `.ui.json` 行无该字段 ⇒ 同处按时间戳蕴含
+ *      推断盖同一戳（`data-nf-mid-turn-src="inferred"`，零迁移）。
+ *    · live 腿：chat.js `renderUserBubble` 在会话 busy 时盖同一戳 ⇒ 流式进行中
+ *      的同一回合在 DOM 里也只有一个边界。
+ *
+ *  本判据是**唯一**的，turnGroup 的五个边界读者（isNonInjectedUserRow →
+ *  turnScope / dissolveTurnChrome / scopeFromHeader / expandGroupContaining /
+ *  buildTurnSummariesForHistory）与 workline 的 turnAnchor /
+ *  priorTurnBadgeSettled 全部只读它，不许第二套判断。 */
+export function isMidTurnRow(row) {
+  return !!(row && row.hasAttribute && row.hasAttribute('data-nf-mid-turn'));
 }
 
 /** The turn-top anchor: the last user-class row of #chat — CONDITIONAL since
@@ -203,6 +227,9 @@ function turnAnchor(chat) {
       if (priorTurnBadgeSettled(chat, el) || !el.nextElementSibling) anchor = el;
       continue;
     }
+    // tool-card-leak-on-reload 批（2026-11-02）：回合内插话行**不是**开轮事件
+    // （同一引擎回合仍在跑）⇒ 线锚留在该回合真正的开轮用户行上，不随插话下移。
+    if (isMidTurnRow(el)) continue;
     anchor = el; // real user input: unconditional opener
   }
   for (let n = anchor ? anchor.nextElementSibling : null; n; n = n.nextElementSibling) {

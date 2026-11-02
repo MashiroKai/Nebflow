@@ -84,7 +84,7 @@ import { isNearBottom } from './utils.js';
 // buildHeader insert below is only the fallback for turns with no live line
 // (history rebuild, popup restores). One-way dependency: workline.js imports
 // i18n + utils only, so this adds no cycle (chat.js → workline.js ← here).
-import { settleWorklineAsHeader, removeWorkline, priorTurnBadgeSettled, buildBadgeLabel } from './workline.js';
+import { settleWorklineAsHeader, removeWorkline, priorTurnBadgeSettled, buildBadgeLabel, isMidTurnRow } from './workline.js';
 // output 块语法批（作者令 2026-10-31）：turn-header 角标 = 「看思考过程与工具
 // 结果」的现成入口——output 气泡的展开/收起随同一 toggle 换面（展开 = 原文
 // 全量 + <output> 语法原样现形）。
@@ -113,6 +113,14 @@ function isInjectedRow(row) {
 function isNonInjectedUserRow(row) {
   if (!row.classList || !row.classList.contains('row') ||
       !row.classList.contains('user') || isInjectedRow(row)) return false;
+  // tool-card-leak-on-reload 批（2026-11-02）：回合内插话行**不是**轮起点。
+  // 作者现象「我在回复中…刷新页面 ⇒ 完整工具执行过程摊平」的根因即此：后端两个
+  // 普通用户帧落盘点与引擎回合状态无关地无条件落一条 User 行，任何非注入 user
+  // 行都被当轮边界 ⇒ 一轮被劈成两段，前段零 terminal 载体 ⇒ summarizeSegment
+  // 平铺 ⇒ 整段裸工具卡。判据 = workline.isMidTurnRow（data-nf-mid-turn 单点，
+  // 写入面：后端 midTurn=true 落盘 → persistence 两条回放腿盖戳，旧行按时间戳
+  // 蕴含推断盖同一戳；live 腿 chat.js renderUserBubble 在 busy 时盖同一戳）。
+  if (isMidTurnRow(row)) return false;
   // Real user input: unconditional opener (unchanged — the reference shape).
   if (!row.hasAttribute('data-nf-ask-answer')) return true;
   // Ask ANSWER row (AskUser 强制展开修令, author 2026-10-06 19:29 → 条件化升级:
@@ -562,8 +570,75 @@ function exchangeComplete(tail) {
   return badgeIdx > stampIdx;
 }
 
+/* ---------- 旧存量转录的插话推断（tool-card-leak-on-reload 批 2026-11-02） ---------- */
+
+/** 行的时间戳（epoch ms，0 = 不可判）。行级时间只长在 footer 徽章的
+ *  `.duration-badge-time[data-ts]` 上（createMsgFooterBadge /
+ *  createDurationBadgeElement 同款契约），除此之外无第二处时间载子。 */
+function rowTimestamp(row) {
+  const el = row.querySelector('.duration-badge-time[data-ts]');
+  const ts = el ? Number(el.getAttribute('data-ts')) : 0;
+  return Number.isFinite(ts) && ts > 0 ? ts : 0;
+}
+
+/** 该行是不是「本回合的过程行」（ai / thinking / tool）。user 行（含注入与作答）
+ *  与系统行都不算 —— 插话判定要求紧邻上方确有本回合正在进行的产出。 */
+function isProcessRow(row) {
+  if (!row.classList) return false;
+  return row.classList.contains('tool') || row.classList.contains('ai')
+    || row.classList.contains('thinking-row');
+}
+
+/**
+ * 旧存量 `.ui.json` 没有 `midTurn` 键（本批的写者字段是新增的）——为让老会话
+ * 刷新后同样不再摊平，这里用**时间戳蕴含关系**把回合内插话行补标成与写者字段
+ * 同一枚 DOM 戳（`data-nf-mid-turn`，src=inferred）。
+ *
+ * 判定（全部满足才算，任一不满足 ⇒ 不动该行，维持现状=平铺，绝不劣化）：
+ *   ① 行 = 普通 user 行（非注入、非作答行、尚未带戳）；
+ *   ② 行有时间戳 T；
+ *   ③ 向下最近的 terminal 行（`data-nf-turn-terminal`）存在，且它带
+ *      `data-nf-turn-duration`（= 该引擎回合的 durationMs）与时间戳 E，
+ *      T 落在开区间 (E - durationMs, E] 内 —— 即插话发生在该引擎回合的
+ *      **运行窗口内部**（回合结束时刻正是 terminal 行的落盘时刻）；
+ *   ④ 紧邻上方是本回合的过程行（ai/thinking/tool）且它**不是** terminal 行
+ *      —— 证明插话是「回复中插进来的」，不是新回合的第一条输入。
+ *
+ * 判据推不出（老行无 timestamp / 无 durationMs / 回合失败无 terminal）⇒ 保持
+ * 老口径（平铺），与改前逐字节同形；既有 DOM 已被写者字段标过的行不改写。
+ */
+function markInferredMidTurnRows(chat) {
+  const kids = Array.from(chat.children);
+  for (let i = 0; i < kids.length; i++) {
+    const row = kids[i];
+    if (!row.classList || !row.classList.contains('row') || !row.classList.contains('user')) continue;
+    if (isInjectedRow(row)) continue;
+    if (row.hasAttribute('data-nf-mid-turn') || row.hasAttribute('data-nf-ask-answer')) continue;
+    const t = rowTimestamp(row);
+    if (!t) continue;
+    let term = null;
+    for (let j = i + 1; j < kids.length; j++) {
+      const k = kids[j];
+      if (k.classList && k.classList.contains('user') && !isInjectedRow(k)) break; // 下一开轮行 = 窗口外
+      if (k.dataset && k.dataset.nfTurnTerminal) { term = k; break; }
+    }
+    if (!term) continue;
+    const end = rowTimestamp(term);
+    const dur = Number(term.dataset.nfTurnDuration || 0);
+    if (!end || !(dur > 0)) continue;
+    if (!(t > end - dur && t <= end)) continue;
+    const prev = i > 0 ? kids[i - 1] : null;
+    if (!prev || !isProcessRow(prev) || (prev.dataset && prev.dataset.nfTurnTerminal)) continue;
+    row.dataset.nfMidTurn = '1';
+    row.dataset.nfMidTurnSrc = 'inferred';
+  }
+}
+
 export function buildTurnSummariesForHistory(chat, opts = {}) {
   const { busyTail = false } = opts;
+  // tool-card-leak-on-reload 批（2026-11-02）：段边界判据之前先把**旧存量转录**的
+  // 回合内插话行补标（新转录由后端 midTurn 字段在行构建期直接落标）。
+  markInferredMidTurnRows(chat);
   const rows = Array.from(chat.children).filter(el => el.classList && el.classList.contains('row'));
   let segStart = 0;
   const flush = (end) => {

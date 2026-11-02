@@ -358,7 +358,25 @@ object UiMessage:
      * 行字节形态与旧读法逐字不变（intake/header/answerOf/quote/fileChanges/
      * answerAttachments 先例同款条件编码）；旧历史行（无标记）按现状渲染不追溯。
      */
-    schedule: Option[Json] = None
+    schedule: Option[Json] = None,
+    /**
+     * **回合内插话行的显式标记**（tool-card-leak-on-reload 批 2026-11-02）：
+     * 本行是用户在**引擎回合仍在进行中**送来的输入（作者现象：「我在回复中…
+     * 刷新页面 ⇒ 完整工具执行过程摊平」）。
+     *
+     * WHY（数据面）：`WebSocketRoutes` 的两个普通用户帧落盘点（`dispatchUserText`
+     * 与 typeless 用户帧腿）与引擎回合状态无关地无条件落一条 `User` 行；而前端
+     * 回放折叠的**段边界判据**（`turnGroup.js isNonInjectedUserRow`）把「任何非注入
+     * user 行」当轮起点。二者联合 ⇒ 回合中插话把同一个引擎回合劈成两段，前段
+     * **零 terminal 载体** ⇒ `summarizeSegment` 平铺 ⇒ 整段工具卡裸奔。写入方在
+     * 落盘时判定「此刻该会话是否 Processing」即把这条歧义一次消掉。
+     *
+     * 缺席即不落键（intake/header/answerOf/quote/fileChanges/answerAttachments/
+     * schedule 先例同款条件编码 ⇒ 旧 `.ui.json` 行字节形态与旧读法逐字不变；
+     * 解码宽松回落 None）。旧行降级策略 = 纯前端时间戳蕴含推断，见
+     * `turnGroup.js midTurnInferred`（零迁移、不崩、不劣化）。
+     */
+    midTurn: Option[Boolean] = None
   ) extends UiMessage:
     val typeName = "user"
 
@@ -545,7 +563,10 @@ object UiMessage:
         m.answerAttachments.fold(withFileChanges)(a => withFileChanges.deepMerge(Json.obj("answerAttachments" -> a)))
       // schedcard 批（2026-10-29）：定时任务卡片载荷——缺席即不落键
       // ⇒ 非 schedule 行与旧字节形态逐字相同。
-      m.schedule.fold(withAnswerAtts)(s => withAnswerAtts.deepMerge(Json.obj("schedule" -> s)))
+      val withSchedule = m.schedule.fold(withAnswerAtts)(s => withAnswerAtts.deepMerge(Json.obj("schedule" -> s)))
+      // tool-card-leak-on-reload 批（2026-11-02）：回合内插话标记——只在 Some(true)
+      // 落键（缺席即不落键 ⇒ 普通用户行与旧字节形态逐字相同）。
+      if m.midTurn.contains(true) then withSchedule.deepMerge(Json.obj("midTurn" -> true.asJson)) else withSchedule
     case m: Ai =>
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
@@ -626,6 +647,10 @@ object UiMessage:
           // schedcard 批（2026-10-29）：定时任务卡片载荷（旧行无本键 ⇒ None，
           // 同上兼容纪律——宽松透传，新增可选键绝不改变任何既有行的可解析性）
           schedule <- cursor.downField("schedule").as[Option[Json]]
+          // tool-card-leak-on-reload 批（2026-11-02）：回合内插话标记（旧行无本键
+          // ⇒ None；形态不合同样回落 None —— 宽松透传，新增可选键绝不改变任何
+          // 既有行的可解析性）
+          midTurn <- cursor.downField("midTurn").as[Option[Boolean]]
         yield User(
           text,
           atts.getOrElse(Nil),
@@ -642,7 +667,8 @@ object UiMessage:
           quote,
           fileChanges,
           answerAttachments,
-          schedule
+          schedule,
+          midTurn
         )
       case "ai" =>
         for
