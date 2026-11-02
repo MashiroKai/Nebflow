@@ -202,17 +202,17 @@
         "w": 27.2,
         "h": 14.4
       },
-      "bytes": 1837,
+      "bytes": 1813,
       "width": 62,
       "height": 36,
-      "peak": 64.14039999999999,
+      "peak": 64.85559999999998,
       "inkFrom": 7,
       "inkTo": 56,
-      "interiorMedian": 53.643,
+      "interiorMedian": 54.92779999999999,
       "rampLeft": 10,
       "rampRight": 14,
-      "firstRatio": 0.162,
-      "lastRatio": 0.15
+      "firstRatio": 0.178,
+      "lastRatio": 0.165
     }
   }
 }
