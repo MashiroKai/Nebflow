@@ -514,7 +514,11 @@ body.mobile-layer #g2-edge-fade {
   #canvas-head-close,
   .g2-fab,
   .g2-pill:not(.g2-pill-primary),
-  body.mobile-layer #chat > .g2-chat-head,
+  /* Muse 悬浮身份头恢复批（2026-11-02 09:14）：上一批列的是 .g2-chat-head
+     （fixed 顶栏整条实底面）；顶栏已拆，现役需要降级实底的是**名字胶囊**
+     （#session-name 自带 --glass-bg + blur）。.g2-chat-head 本体在手机层是
+     sticky 透明浮层（无背景），不再列名。 */
+  body.mobile-layer #chat > .g2-chat-head #session-name,
   body.mobile-layer #mobile-dock {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
@@ -550,7 +554,9 @@ html.no-backdrop #deck-fab,
 html.no-backdrop #canvas-head-close,
 html.no-backdrop .g2-fab,
 html.no-backdrop .g2-pill:not(.g2-pill-primary),
-html.no-backdrop body.mobile-layer #chat > .g2-chat-head,
+/* Muse 悬浮身份头恢复批（2026-11-02 09:14）：顶栏已拆 ⇒ 降级实底落到名字胶囊
+   （#session-name 自带 --glass-bg + blur；胶囊底走 glass token 单源）。 */
+html.no-backdrop body.mobile-layer #chat > .g2-chat-head #session-name,
 html.no-backdrop body.mobile-layer #mobile-dock {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;

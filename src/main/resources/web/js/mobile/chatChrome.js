@@ -14,10 +14,12 @@
 //     零镜像漂移；chatView.setSession 清空保留本层（chatView.js 同批注记）。
 //     功能谱系不动：头像 = profile 面板入口（PANEL 链全绿），记忆钮 hidden 常态。
 //     形态沿革：Muse 式悬浮头像批（2026-11-01 13:33）→ sticky 顶锚大圆头像 +
-//     名字下置；**会话顶栏单行三段式批（2026-11-02 07:23 作者令）** 把该层改为
-//     position:fixed 的真顶栏 —— 头像（40px）与名字并入顶栏同一行、与左右双钮
-//     同轴，sticky 与 --muse-head-top 变量链整条退役（样式全在 mobileLayer.css
-//     文件尾批次块，本文件节点迁移/清空守望链不变）。
+//     名字下置；「会话顶栏单行三段式批」（2026-11-02 07:23）曾把该层改成
+//     position:fixed 真顶栏（头像 40 + 名字横排），**该批已由「Muse 悬浮身份头
+//     恢复批」（作者令 2026-11-02 09:14「头像在上、名字在下，拆掉顶栏」）整条
+//     回退** —— 现役形态 = sticky 悬浮锚（--muse-head-top 同步，见下方 syncHeadTop）
+//     + 头像 56px 居中 + 名字玻璃胶囊下置（样式全在 mobileLayer.css 中块）。
+//     本文件节点迁移/清空守望链历批不变。
 //   · dock 收形批（作者令 10-31 22:50 ①③）的「每条 agent 消息泡上方补挂
 //     .g2-msg-meta 身份头」随 Muse 式悬浮头像批**整批退役**（作者令 ①：
 //     「去掉每条消息头部的 agent 头像+名字行」）—— 守望/装饰/摘除链全数
@@ -111,11 +113,9 @@ export function activateChatChrome() {
       }
     });
     headMo.observe(chat, { childList: true });
-    /* 顶栏建层广播（会话顶栏单行三段式批 2026-11-02）：main.js 的顶让位观察器
-       在本 IIFE 之后早已执行、取不到本节点（后建）——广播一拍让它重取并挂进
-       ResizeObserver（让位算式改由顶栏下缘承担）。重插/会话切换不需要再广播：
-       节点同一个、尺寸不变（fixed 56+safe）。 */
-    window.dispatchEvent(new CustomEvent('nebflow-chat-head-mounted'));
+    /* 顶栏建层广播（07:23 单行三段式批）随 Muse 悬浮身份头恢复批（09:14）退役：
+       手机层没有顶栏、main.js 让位回到 bandBottom() 公式，不再有消费方。
+       （历史：本行曾 dispatch 'nebflow-chat-head-mounted' 让 main.js 重取顶栏 rect。） */
   }
 
   // ── 消息流身份头（收形批①③）随 Muse 式悬浮头像批退役 ──
@@ -134,13 +134,24 @@ export function activateChatChrome() {
     avatarSlotMo.observe(avatarSlot, { childList: true });
   }
 
-  // ── 会话顶栏单行三段式批（2026-11-02 07:23 作者令）：--muse-head-top 退役 ──
-  // Muse 式悬浮头像批（2026-11-01 13:33）曾在此同步 --muse-head-top = -(#chat
-  // padding-top)，供 mobileLayer.css 的 sticky 锚（top: var(--muse-head-top)）
-  // 与 ②-b 负 margin 上提消费 —— 二者随本批**整条退役**：.g2-chat-head 现为
-  // position:fixed 的真顶栏（mobileLayer.css 文件尾「会话顶栏单行三段式批」），
-  // 滚动锚定由 fixed 本体承担，零变量、零 RO、零 hot path。同步链与 teardown 的
-  // removeProperty 一并摘除（残留变量已无消费方，摘除保证 DOM 无幽灵内联样式）。
+  // ── 悬浮锚 top 变量同步（Muse 悬浮身份头恢复批 · 作者令 2026-11-02 09:14）──
+  // sticky 的锚定矩形 = scrollport 内缩 padding（实测：top:0 只能锚到 padding
+  // 缘）—— main.js 顶让位观察器把 padding-top 写在 #chat 上（手机层常态 96px =
+  // 渐隐带 88 + 基线 8），CSS 的 top:0 够不到窗口顶。本层同步
+  // --muse-head-top = -(padding-top)，mobileLayer.css 中块 ②/②-b 以 var()
+  // 消费（sticky 顶锚 + 组顶锚 64px）—— 锚定阈值恒等窗口顶。#chat 的 content
+  // box 随 padding 写入收缩 ⇒ ResizeObserver 必有一拍重测（横幅/键盘/层翻转
+  // 引起的 reserve 变化同链覆盖）；同步轻量幂等，零滚动热路径成本。
+  // ⚠ 上一批（07:23 单行三段式顶栏）曾**整条摘除**本链（fixed 顶栏不需要锚定
+  // 变量）；本批随顶栏回退一并恢复，逐字沿用 2026-11-01 13:33 原实现。
+  const syncHeadTop = () => {
+    const pad = parseFloat(getComputedStyle(chat).paddingTop) || 0;
+    chat.style.setProperty('--muse-head-top', `${-pad}px`);
+  };
+  syncHeadTop();
+  const headTopRo = new ResizeObserver(syncHeadTop);
+  headTopRo.observe(chat);
+  unsubs.push(() => headTopRo.disconnect());
 
   // ── 左右悬浮圆钮层（任务/搜索；48px v2 液体玻璃正圆）──
   fabLayer = document.createElement('div');
@@ -206,8 +217,7 @@ export function activateChatChrome() {
     // 归位重绘（桌面腿 2026-11-01）：摘除走的是同名类（注入档 + paintSlot 自绘档
     // 一并中招）——归还桌面形态前必须补一次 paintSlot，否则空槽挂到下一个事件。
     try { paintSlot(); } catch { /* 绘制失败不阻断其余归还 */ }
-    // 会话顶栏单行三段式批：--muse-head-top 已退役（上块注记），内联样式环保留
-    // 一次兜底摘除 —— 旧变量若在升级热路径里残留于 #chat，拆除时一并清掉。
+    // 悬浮锚 top 变量随层拆除（headTopRo 经 unsubs 断开）。
     chat.style.removeProperty('--muse-head-top');
     taskBtn?.remove();
     searchBtn?.remove();
@@ -224,8 +234,7 @@ export function activateChatChrome() {
       }
       chatHead.remove();
       chatHead = null;
-      // 顶栏拆除广播：main.js 让位观察器回落旧公式（桌面公式逐字不变）。
-      window.dispatchEvent(new CustomEvent('nebflow-chat-head-unmounted'));
+      // 顶栏拆除广播随 Muse 悬浮身份头恢复批（09:14）退役（让位不再依赖顶栏）。
     }
   };
 }
