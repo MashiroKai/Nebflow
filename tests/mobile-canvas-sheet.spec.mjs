@@ -437,7 +437,7 @@ test('T6 双页叠开收口（批①）：归还腿失效（锚邻位被摘）�
   expect(errors).toEqual([]);
 });
 
-test('T7 chip 胶囊同族 + 横向圆环几何（居中 / 弧深 / 缩径 / 减淡 / 让位浮钮）', async ({ page }) => {
+test('T7 chip 胶囊同族 + 横向圆环几何（居中 / 缩径 / 连续减淡 / 让位浮钮）', async ({ page }) => {
   const errors = watchErrors(page);
   await openDocCards(page, [['doc-a', '卡甲', 'pg-a'], ['doc-b', '卡乙', 'pg-b'], ['doc-c', '卡丙', 'pg-c']]);
   const m = await page.evaluate(() => {
@@ -483,22 +483,23 @@ test('T7 chip 胶囊同族 + 横向圆环几何（居中 / 弧深 / 缩径 / 减
   // 环带几何：高 72、双侧渐隐 mask（让位浮钮 68px 内清零）。
   expect(m.stripH).toBe(72);
   expect(m.mask).toContain('linear-gradient');
-  // 当前签 = 环心：居中（cx = 375/2 附近）、scale 1、零偏移、全不透明、无模糊。
+  // 当前签 = 环心：居中（cx = 375/2 附近）、零偏移、全不透明、无模糊。
   const on = m.chips.find((c) => c.on);
   expect(on.cx).toBeGreaterThan(178);
   expect(on.cx).toBeLessThan(197);
   expect(on.rdx).toBe('0.0px');
-  expect(on.rdy).toBe('0.0px');
-  expect(on.rsc).toBe('1.000');
+  // 对齐修正批（2026-11-02 09:00）：纵向弧深整条退役 —— `--rdy` 变量不再写，
+  // transform 里也没有 dy 项，签心恒 y=40（几何断言在 T13 里机械钉死）。
+  expect(on.rdy).toBe('');
+  expect(on.rsc).toBe('1.140');
   expect(on.op).toBe(1);
-  expect(on.rbl).toBe('0px');
-  // 邻位（|k|=1）：外移一步、下沉弧深、缩径、减淡、轻模糊；两侧对称。
+  expect(on.rbl).toBe('0.00px');
+  // 邻位（|k|=1）：外移一步、缩径、连续减淡、连续轻模糊；两侧对称；**不下沉**。
   const nb = m.chips.filter((c) => !c.on).sort((a, b) => a.cx - b.cx);
-  expect(nb.map((c) => c.rdx)).toEqual(['-86.0px', '86.0px']);
-  expect(nb.map((c) => c.rdy)).toEqual(['11.1px', '11.1px']);
-  expect(nb.map((c) => c.rsc)).toEqual(['0.820', '0.820']);
-  expect(nb.map((c) => c.op)).toEqual([0.78, 0.78]);
-  expect(nb.map((c) => c.rbl)).toEqual(['0.8px', '0.8px']);
+  expect(nb.map((c) => c.rdx)).toEqual(['-95.0px', '95.0px']);
+  expect(nb.map((c) => c.rsc)).toEqual(['0.800', '0.800']);
+  expect(nb.map((c) => c.op)).toEqual([0.66, 0.66]);
+  expect(nb.map((c) => c.rbl)).toEqual(['0.70px', '0.70px']);
   // 垂直中心 = 两颗悬浮钮中心（同一悬浮带栅格）；命中盒永不压钮。
   expect(Math.abs(on.cy - m.closeCy)).toBeLessThanOrEqual(2);
   expect(Math.abs(on.cy - m.stackCy)).toBeLessThanOrEqual(2);
@@ -516,15 +517,165 @@ test('T9 环外签（|k|≥2）：零透明零命中（位姿仍算 —— 换�
     id: c.dataset.tabId, on: c.classList.contains('on'), far: c.classList.contains('is-far'),
     op: +getComputedStyle(c).opacity, pe: getComputedStyle(c).pointerEvents,
     tabIndex: c.tabIndex, rdx: c.style.getPropertyValue('--rdx').trim(),
+    rsc: c.style.getPropertyValue('--rsc').trim(), rbl: c.style.getPropertyValue('--rbl').trim(),
   })));
   // 环序 [1,2,3,4,5]，活动 = 5 ⇒ k = [1,2,-2,-1,0]（最近环绕）。
   expect(st.map((c) => c.id)).toEqual(['r1', 'r2', 'r3', 'r4', 'r5']);
-  expect(st.map((c) => c.rdx)).toEqual(['86.0px', '172.0px', '-172.0px', '-86.0px', '0.0px']);
+  expect(st.map((c) => c.rdx)).toEqual(['95.0px', '190.0px', '-190.0px', '-95.0px', '0.0px']);
   expect(st.map((c) => c.far)).toEqual([false, true, true, false, false]);
   expect(st[1].op).toBe(0);
   expect(st[1].pe).toBe('none');
   expect(st[1].tabIndex).toBe(-1);
+  // 曲线在环外触底（scale 触底、blur 封顶）而不归零 —— 换签轨迹连续。
+  expect(st[1].rsc).toBe('0.600');
+  expect(st[1].rbl).toBe('2.60px');
   expect(st[4].on).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('T13 对齐修正批五条机械断言（同水平线 / 中签更大 / 视觉语言同源 / 零省略号 / 热区+签心）', async ({ page }) => {
+  const errors = watchErrors(page);
+
+  /** 清空页签 + 灌入 n 张卡（末张给超长标题）—— 覆盖 2/3/5/8 签四档。 */
+  const seedTabs = async (n) => {
+    await page.evaluate(async () => {
+      const c = await import('/js/canvas.js');
+      const nav = await import('/js/mobile/navController.js');
+      for (const d of nav.docTabs()) c.closeTab(d.id);
+    });
+    await page.waitForTimeout(200);
+    await page.evaluate((list) => import('/js/canvas.js').then((canvas) => {
+      for (const [id, title, type] of list) canvas.openTab(id, title, { type });
+    }), Array.from({ length: n }, (_, i) => [
+      `t13-${i}`,
+      i === n - 1 ? '7451 lugi 命名规约汇编（超长标题档·验零省略号）' : `签${i + 1}`,
+      `t13-type-${i}`,
+    ]));
+    await dockTo(page, 'canvas');
+    await page.waitForTimeout(520);   // 位姿过渡落定（320ms 曲线）
+  };
+
+  const probe = () => page.evaluate(() => {
+    const chips = [...document.querySelectorAll('.mf-strip-chip')];
+    const close = document.querySelector('.mf-cv-close').getBoundingClientRect();
+    const stack = document.querySelector('.mf-cv-stack').getBoundingClientRect();
+    const box = (el) => {
+      const r = el.getBoundingClientRect();
+      return { x: r.left, y: r.top, w: r.width, h: r.height, cy: r.top + r.height / 2, cx: r.left + r.width / 2 };
+    };
+    return {
+      strip: {
+        h: document.querySelector('.mf-strip').getBoundingClientRect().height,
+        mask: getComputedStyle(document.querySelector('.mf-strip')).maskImage,
+        fade: document.querySelector('.mf-strip').classList.contains('fade'),
+      },
+      fabCy: { close: close.top + close.height / 2, stack: stack.top + stack.height / 2 },
+      fabBox: { closeRight: close.right, stackLeft: stack.left },
+      chips: chips.map((c) => {
+        const cs = getComputedStyle(c);
+        const label = c.querySelector('.mf-strip-label');
+        const lcs = getComputedStyle(label);
+        const before = getComputedStyle(c, '::before');
+        return {
+          id: c.dataset.tabId,
+          on: c.classList.contains('on'),
+          far: c.classList.contains('is-far'),
+          op: +cs.opacity,
+          blur: cs.filter,
+          rsc: +c.style.getPropertyValue('--rsc'),
+          ...box(c),
+          // ③ 视觉语言同源面：中签与两侧签必须逐项相等（只有尺寸/透明度/模糊不同）
+          radius: cs.borderRadius,
+          bgImage: cs.backgroundImage,
+          bgColor: cs.backgroundColor,
+          borderTop: cs.borderTopColor,
+          borderBottom: cs.borderBottomColor,
+          borderWidth: cs.borderTopWidth,
+          shadow: cs.boxShadow,
+          weight: cs.fontWeight,
+          size: cs.fontSize,
+          family: cs.fontFamily,
+          color: cs.color,
+          glass: cs.backdropFilter || cs.webkitBackdropFilter,
+          // ④ 省略号面
+          textOverflow: lcs.textOverflow,
+          labelMask: lcs.maskImage || lcs.webkitMaskImage,
+          overflow: lcs.overflow,
+          labelW: label.getBoundingClientRect().width,
+          labelSW: label.scrollWidth,
+          text: label.textContent,
+          title: c.title,
+          // ⑤ 热区面（::before 的计算尺寸 = 渲染尺寸：伪元素自带 1/--rsc 反向
+          // 缩放，与 chip 的 scale 相抵，净变换恒为单位阵 —— 见 CSS 命中盒注释）
+          hitW: parseFloat(before.width),
+          hitH: parseFloat(before.height),
+        };
+      }),
+    };
+  });
+
+  const ratios = [];
+  for (const n of [2, 3, 5, 8]) {
+    await seedTabs(n);
+    const p = await probe();
+
+    // ── ① 全组露出纸签渲染盒垂直中心极差 ≤1px（作者令「不应该都是同一水平吗」）
+    const shown = p.chips.filter((c) => c.op > 0.01);
+    expect(shown.length).toBeGreaterThanOrEqual(Math.min(n, 3));
+    const cys = shown.map((c) => c.cy);
+    const spread = Math.max(...cys) - Math.min(...cys);
+    expect(spread).toBeLessThanOrEqual(1);
+
+    // ── ② 中签渲染宽/高严格大于次签（次签 = 可见非中签里最大的那枚）
+    const on = p.chips.find((c) => c.on);
+    const side = p.chips.filter((c) => !c.on && c.op > 0.01).sort((a, b) => b.w - a.w)[0];
+    expect(on).toBeTruthy();
+    expect(side).toBeTruthy();
+    expect(on.w).toBeGreaterThan(side.w);
+    expect(on.h).toBeGreaterThan(side.h);
+    ratios.push({ n, onW: +on.w.toFixed(1), sideW: +side.w.toFixed(1), wRatio: +(on.w / side.w).toFixed(3), hRatio: +(on.h / side.h).toFixed(3) });
+
+    // ── ③ 中签与两侧签的视觉语言逐项一致（只允许尺寸 / 透明度 / 模糊不同）
+    for (const k of ['radius', 'bgImage', 'bgColor', 'borderTop', 'borderBottom', 'borderWidth',
+      'shadow', 'weight', 'size', 'family', 'color', 'glass']) {
+      expect({ n, key: k, on: on[k] }).toEqual({ n, key: k, on: side[k] });
+    }
+
+    // ── ④ 任一纸签无省略号：text-overflow = clip + 标签文本无 U+2026 + 溢出仍靠 mask 淡出
+    for (const c of p.chips) {
+      expect(c.textOverflow).toBe('clip');
+      expect(c.text.includes('\u2026')).toBe(false);
+      expect(c.title.includes('\u2026')).toBe(false);
+      expect(c.labelMask).toContain('linear-gradient');    // 溢出 = 模糊淡出，不是截断
+      expect(c.title).toBe(c.text);                        // 全名留在 title（读屏/悬停）
+    }
+    // 中签长标题确实溢出（否则本档断言没验到东西）
+    expect(on.labelSW).toBeGreaterThan(on.labelW);
+
+    // ── ⑤ 热区 ≥44（含环位姿缩放后的实际尺寸）+ 签心 = 两悬浮钮中心线 + 不压钮
+    for (const c of p.chips) {
+      expect(c.hitW).toBeGreaterThanOrEqual(43.5);
+      expect(c.hitH).toBeGreaterThanOrEqual(43.5);
+    }
+    expect(Math.abs(on.cy - p.fabCy.close)).toBeLessThanOrEqual(2);
+    expect(Math.abs(on.cy - p.fabCy.stack)).toBeLessThanOrEqual(2);
+    // 不压浮钮：可见签的渲染盒左右缘都在两颗 48px 浮钮之外（16…64 / 311…359）。
+    const closeR = p.fabBox.closeRight;      // ✕ 钮右缘 = 64
+    const stackL = 375 - 64;                 // 堆叠钮左缘 = 311
+    for (const c of shown) {
+      expect(c.x).toBeGreaterThanOrEqual(closeR);
+      expect(c.x + c.w).toBeLessThanOrEqual(stackL);
+    }
+
+    // 环带几何本身：高 72 + 双侧 mask 保留（与新淡化曲线叠加，作者令「别打架」）
+    expect(p.strip.h).toBe(72);
+    expect(p.strip.fade).toBe(true);
+    expect(p.strip.mask).toContain('linear-gradient');
+  }
+
+  // 中签/次签尺寸比（报告要具体值）：2 签 127.7/43.4≈2.94×、3 签同、5/8 签同。
+  console.log('T13 中签 vs 次签渲染尺寸比:', JSON.stringify(ratios));
+  for (const r of ratios) expect(r.wRatio).toBeGreaterThan(1.8);
   expect(errors).toEqual([]);
 });
 

@@ -111,22 +111,40 @@
  *   sticky 锚窗口顶（--muse-head-top）全部保持；名字字号留 14px（字身比 4.0，
  *   仍「头像为主、名字为辅」）；dock 中键 44px 与桌面 28px 零触碰。取值理由与
  *   验收读数见 docs/20261102_muse-avatar-shrink__delegate-nebflow-d616c46a.md。
- *   ⚠ 该批的 sticky/64px 锚形态已由下一条**整条取代**（头像 40px 单行档）。
+ *   ⚠ 该批的 sticky/64px 锚形态曾由「会话顶栏单行三段式批」整条取代。
  *
- * 会话顶栏单行三段式批（作者令 2026-11-02 07:23，实拍 rest-light.png）落位 ——
- * 文件尾批次块 + 中块 ②/②-b 整条退役：
- *   ① 顶栏单行三段式：左＝任务键 / 中＝头像（右挂名字）/ 右＝搜索键，三者垂直
- *      中线同轴；.g2-chat-head 从内容流首项改为 position:fixed 真顶栏
- *      （高 56 + safe、玻璃单源 --glass-bg + blur24/sat1.15 + 下缘 1px --glass-
- *      border、z 26），sticky 变形与负 margin 上提全数退役；
- *   ② 头像 40px（36-40 档取上沿；56 撑不开 56px 单行，理由见批文档）；
- *   ③ 名字横排挂头像右侧（绝对定位锚中线+28px，使头像单独居中满足「头像水平
- *      中心 − 屏幕中线 = 0±1px」）；名字玻璃胶囊底退役（直接写在玻璃顶栏上）；
- *   ④ 内容起点 = 顶栏下缘 + 8（main.js 手机层分支按顶栏 rect 实测），原 96/64px
- *      留白带收掉；#g2-edge-fade 元素与材质不动，mask 收到顶栏下缘以下透明
- *      （滚入内容由顶栏本体 backdrop 先糊、顶栏玻璃后没）；
- *   ⑤ 双钮 top 16 → 4+safe（纽中心 = safe + 28 = 头像中心；尺寸/材质/角标零改）；
- *   ⑥ #top-overlays 手机层 top 68 → 64+safe（真顶栏之下，避免刘海档叠压）。
+ * Muse 悬浮身份头恢复批（作者令 2026-11-02 09:14「会话顶部身份头回到『头像在上、
+ * 名字在下』的悬浮形态，拆掉顶栏」）落位 —— **上一批（07:23 单行三段式）理解偏了**：
+ * 把悬浮身份头做成了 position:fixed 单行三段式顶栏（56+safe 毛玻璃通栏带 + 下缘
+ * 1px 描边 + 头像 40px + 名字横排右侧），本批整条回退、恢复 Muse 悬浮形态：
+ *   回退（随文件尾批次块删除）：
+ *     ① fixed 56+safe 通栏顶栏 + 下缘 1px --glass-border（→ 无任何横贯带）；
+ *     ② 头像 40px（→ 56px，考古档）；
+ *     ③ 名字横排 absolute（→ 名字回头像正下方玻璃胶囊）；
+ *     ④ #g2-edge-fade mask 收到 56+safe（→ 恢复 88px 两段式原 mask）；
+ *     ⑤ 双钮 top 4+safe（→ 16+safe）；
+ *     ⑥ #top-overlays top 64+safe（→ 68px 基准）。
+ *   恢复（考古 49e2e7477 / 6438f440b / d82cf3543 / ac68cac51）：
+ *     ① .g2-chat-head = sticky 悬浮锚（top: var(--muse-head-top) + z 26），
+ *        头像 56px 居中悬浮压在消息流上，消息从头像后穿过进渐隐带；
+ *     ② ②-b 组顶锚 64px + safe（负 margin 纯 CSS 派生）；
+ *     ③ 名字玻璃胶囊下置（--glass-bg 半透明底、零 border、r999）；
+ *     ④ --muse-head-top = -(#chat padding-top)（chatChrome.js RO 同步恢复）；
+ *     ⑤ main.js 顶让位回 bandBottom() 实测（96 = 渐隐带 88 + 基线 8），
+ *        顶栏广播链随批退役；
+ *     ⑥ glass.css 降级块 .g2-chat-head 列名随批退役（悬浮头不是实底面）。
+ *   实拍量化（作者 09:14 截屏 1134×246 深色，÷3.024 折算 CSS px）：头像直径
+ *   50.6 / cx 185.8（中线偏 −1.7）/ top 5.9；胶囊 47.3×15.2、与头像同心
+ *   （cx 185.8 → 偏 0.0）、顶距头像底 4.3；右搜索圆 cy 24.8、左列表钮同带。
+ *   ⇒ 本批取值：头像 56（实拍 50.6 的上一档既有 token，取「≥实拍且不退回图标
+ *   档」）、胶囊间距 6（实拍 4.3 的既有 gap token 档，落在作者令 6–10 区间下沿）。
+ *   已知相对差（有意，不是漏改）：本仓胶囊渲染高 24（mfs-sub 15px 的
+ *   line-height normal + 上下 padding 3）而实拍 15.2 —— 实拍那颗字面 ≈13px、
+ *   内距更紧；本批沿用基座档 padding/字号不改，理由见批文档「几何数值表」注。
+ *
+ * 「会话顶栏单行三段式批」（作者令 2026-11-02 07:23）—— **本批整条回退**，
+ * 上面 Muse 恢复批块为准；此条仅留档：fixed 单行三段式顶栏 + 头像 40 + 名字
+ * 横排 + 渐隐带 mask 收 56 + 双钮 top 4 + #top-overlays 64，全部随批退役。
  *
  * 铁律：本文件全部规则挂在 body.mobile-layer 之下 —— 该类只由 mobile/bootstrap.js
  * 在手机视口（≤768px，与既有 css/mobile.css 折叠点同源）激活。桌面窗口永远不
@@ -207,6 +225,8 @@ html.mobile-html-layer {
                         底缘；标题→首块间距由收编面自带 12 档承担，不在此叠）
      --mtitle-inset  72px 标题左右内缩 = 返回钮位 16 + 钮 48 + 缝隙 8
                         ⇒ 居中大标题与左上返回钮横向零重叠，胶囊同源取同一档
+                        （= --mchrome-inset，见下方「顶部悬浮 chrome 簇几何」
+                        块：本批起单源，勿各写一份）
      --mtitle-start   8px 收起进度起点（scrollTop px，进度 0 起算）
      --mtitle-snap   56px 吸附阈值（进度 = 1 且 .rolled 成立的 scrollTop）
      --mcap-h        48px 吸附胶囊高 = 返回钮高（胶囊高度批 2026-11-02 作者令：
@@ -258,7 +278,10 @@ body.mobile-layer {
   --mtitle-pad-t: 10px;
   --mtitle-pad-b: 6px;
   --mtitle-lead: 12px;
-  --mtitle-inset: 72px;
+  /* 内容起点让位批（2026-11-02）：标题/胶囊左右内缩与簇几何**单源** —— 一律
+     由下方 --mchrome-inset 派生（= 簇顶 16 + 钮 48 + 呼吸 8 = 72），不再各写
+     一份 72px 字面量（同一读数两处来源 = 后续调簇几何必漏一处）。 */
+  --mtitle-inset: var(--mchrome-inset);
   --mtitle-start: 8px;
   --mtitle-snap: 56px;
   --mcap-h: 48px;
@@ -273,6 +296,31 @@ body.mobile-layer {
   --mtap: 44px;
   --mtap-lg: 48px;
   --mhit: 44px;
+  /* ── 顶部悬浮 chrome 簇几何（内容起点让位批 2026-11-02 作者令： 「内容都需要
+     从按钮下开始，只有向上滑动的时候才允许从按钮下过」）──
+     簇 = 页头零高带里那几颗 48px 悬浮圆钮（返回钮 / canvas 页 ✕ 与层叠钮 /
+     聊天根 chrome 键同基准）。让位与右侧钳位一律由本块推导，禁写死像素：
+       --mchrome-top     16px 簇顶距（= 悬浮钮统一批 top: calc(16px + safe)）
+       --mchrome-btn     48px 钮面边长（= --mtap-lg 档，g2-fab 基准）
+       --mchrome-breathe  8px 钮下沿 → 正文首行的呼吸缝（作者「不得贴边到视觉
+                             拥挤」的最小留白）
+       --mchrome-clear   72px 页体顶让位 = 簇顶 16 + 钮 48 + 呼吸 8
+                             （= 顶栏控件高度 + 8px 呼吸；静止态正文首行起于此）
+       --mchrome-inset   72px 簇左右占位 = 同上三件之和（右侧钳位用：正文/胶囊
+                             横向不得侵入 [0,inset) 与 (100%-inset, 100%] 两条
+                             钮带）
+     与「面板头两段式标题批」（2026-11-02，已合入 main）同源：该批的
+     --mtitle-inset 现取 var(--mchrome-inset)（单源，勿再写字面量 72）。让位
+     责任方 = 标题盒（页体流内首件、盒底与钮底同线）⇒ 页体 padding-top 仍取
+     --mtitle-lead 12 + safe，**不再叠一条 72px 的 chrome 让位**（两段式批
+     已把旧的双层让位退役，重复加回会把首屏内容推掉 60px）。簇几何 token 在
+     本批的消费点 = ①标题/胶囊左右内缩（--mtitle-inset）；②canvas 环标签展开
+     签的横向钳位（--mchrome-inset，见 .mf-strip-chip.is-expanded）。 */
+  --mchrome-top: 16px;
+  --mchrome-btn: var(--mtap-lg);
+  --mchrome-breathe: 8px;
+  --mchrome-clear: calc(var(--mchrome-top) + var(--mchrome-btn) + var(--mchrome-breathe));
+  --mchrome-inset: var(--mchrome-clear);
   /* 行高与间距 */
   --mrow: 44px;
   --mpad-x: 16px;
@@ -874,7 +922,14 @@ body.mobile-layer .mh-tpanel .tp-x svg {
    两段式标题批 2026-11-02：顶让位整条退役 —— 旧 calc(72px + safe) 是「悬浮
    chrome 带 + 流内大标题」叠加时代的双层让位（72 + 52 = 124px 空带，作者实拍
    所指屏占比浪费）。新顶距 = --mtitle-lead 12（标题盒顶呼吸缝）+ safe，标题盒
-   底 = 12 + 52 = 64 = 返回钮底缘 ⇒ 首屏内容较修前多出 60px。 */
+   底 = 12 + 52 = 64 = 返回钮底缘 ⇒ 首屏内容较修前多出 60px。
+   内容起点让位批（2026-11-02 作者令「内容都需要从按钮下开始，只有向上滑动的
+   时候才允许从按钮下过」）合并裁定：让位**责任方**仍归标题盒（它本身就是页体
+   流内首件、盒底与钮底同线），本批只做两件事 —— ①把左右内缩/簇几何收成单源
+   token（--mtitle-inset = var(--mchrome-inset) = 钮位 16 + 钮 48 + 呼吸 8，见
+   token 块）；②机械断言全页静止帧无正文落进钮命中区（tests/mobile-chrome-
+   clearance.spec.mjs C1，25 页 × 双引擎 × 双主题）。滚动态内容自钮下穿过 =
+   标题盒收高 + 胶囊浮层，非本规则。 */
 body.mobile-layer .mobile-page-body {
   flex: 1;
   min-height: 0;
@@ -1426,17 +1481,26 @@ body.mobile-layer .mf-canvas-page {
   flex-direction: column;
   overflow: hidden;
 }
-/* ── 标签栏 = 常驻展开的横向圆环（作者令 2026-11-02 07:22 §二）──────────
+/* ── 标签栏 = 常驻展开的横向圆环（作者令 2026-11-02 07:22 §二；对齐修正批
+   2026-11-02 09:00 重排几何）────────────────────────────────────────────
    桌面语言 = hover 后上下展开的竖向胶囊环（split.css #canvas-capsule-ring：
-   缘位逐级缩径 + 减淡 + 弧深，|d|≥2 越出 = 读作绕到圈外）。手机端无 hover，
-   映射为**常驻展开的横向圆环**：当前签居中（dx=0、scale 1、全不透明），左右
-   相邻签沿圆弧外移 + 下沉 + 缩径 + 减淡 + 模糊，读作「绕到圈后」。
-   几何单源 = navController.js（RING_* 常量 + layoutRing 写五变量），CSS 只消费
-   --rdx/--rdy/--rsc/--rop/--rbl，不另算 —— 换签即换环形距离 k，五值同步过渡
+   缘位逐级缩径 + 减淡，|d|≥2 越出 = 读作绕到圈外）。手机端无 hover，映射为
+   **常驻展开的横向圆环**：当前签居中（dx=0、scale 1.14、全不透明），左右相邻
+   签外移 + 缩径 + 连续减淡 + 连续模糊，读作「绕到圈后」。
+   对齐修正批两条铁律（作者令「同一水平」+「样式统一」）：
+     ① **纵向零偏移**：不再有弧深/下沉（旧 `--rdy` 已删）。签 = `top:40px` +
+        `translateY(-50%)`，缩放走 transform-origin:center ⇒ 缩放后中心不动 ⇒
+        全组纸签严格同一水平线（机械断言：渲染盒垂直中心极差 ≤1px）。
+     ② **同一套视觉语言**：中签与两侧签的圆角/玻璃底/描边/字重/字号全同源，
+        只有**尺寸**（scale + 最大宽）与**透明度/模糊**不同 —— 中签不是另一个
+        组件，只是同一枚签放大后的样子。
+   几何单源 = navController.js（RING_* 常量 + layoutRing 写变量），CSS 只消费
+   --rdx/--rsc/--rop/--rbl/--mhit，不另算 —— 换签即换环形距离 k，四值同步过渡
    = 环在转。
    条几何：高 72px，签心 y=40 = ✕/堆叠两悬浮钮垂直中心（top 16 + 48/2）；左右
-   让位 68px（悬浮钮 48 + 边距 16 + 4 气隙），mask 在 60→76px 与镜像段渐隐 ——
-   签滑到浮钮前先淡出，命中盒永不压钮（截图实证过的旧 bug 面）。 */
+   让位 68px（悬浮钮 48 + 边距 16 + 4 气隙），mask 在 52→64px 与镜像段渐隐 ——
+   从浮钮右缘 64 起恒为全实色，可见签（≥65.3）不被误伤，浮钮面上零墨
+   （截图实证过的旧 bug 面防线保留）。 */
 body.mobile-layer .mf-strip {
   position: relative;
   flex: none;
@@ -1447,18 +1511,23 @@ body.mobile-layer .mf-strip {
   overflow: visible;
   touch-action: pan-y;
 }
-/* 环带双侧渐隐（2 签起挂 .fade —— 单签居中无需遮）：60→76px 渐入，与左右
-   悬浮钮 16+48+4 栅格同源，签滑到钮前先淡出（命中盒永不压钮）。 */
+/* 环带双侧渐隐（2 签起挂 .fade —— 单签居中无需遮）：52→64px 渐入到全实色，
+   与左侧悬浮钮右缘 64 严丝合缝 —— ① 浮钮面上零墨（旧 bug 面的防线仍在）；
+   ② 全实色区 [64, 311] 恰好容纳「中签 123.7…251.3 + 左右邻签 65.3…119.7 /
+   255.3…309.7」，可见签**不被条带遮罩误伤**（对齐修正批：旧 60→76 的渐隐带
+   会啃掉邻签左缘 10px，与新的连续淡化曲线叠加后糊成一片）。 */
 body.mobile-layer .mf-strip.fade {
-  -webkit-mask-image: linear-gradient(90deg, transparent 60px, #000 76px, #000 calc(100% - 76px), transparent calc(100% - 60px));
-  mask-image: linear-gradient(90deg, transparent 60px, #000 76px, #000 calc(100% - 76px), transparent calc(100% - 60px));
+  -webkit-mask-image: linear-gradient(90deg, transparent 52px, #000 64px, #000 calc(100% - 64px), transparent calc(100% - 52px));
+  mask-image: linear-gradient(90deg, transparent 52px, #000 64px, #000 calc(100% - 64px), transparent calc(100% - 52px));
 }
 body.mobile-layer .mf-strip[hidden] { display: none; }
 /* chip = 电脑端胶囊（.canvas-header）同族小档：材质 = --glass-bg 底 +
    --glass-blur saturate(1.15) + --glass-border（底缘透明化同胶囊）+
    --sapphire-refraction 顶缘折射线 + --cv-shadow（frosted 标准一份，逐项同源
-   零新造）；圆角 999；字 = 中性 muted 档。选中态 = 看板家族既有 sapphire 语言
-   （sapphire 14% 底 + 45% 描边 + 亮字）。位姿五值 = 环变量（见条注释）。 */
+   零新造）；圆角 999；字 = 中性 muted 档。位姿四值 = 环变量（见条注释）。
+   尺寸：基准宽 68px（两侧签），中签另档 max-width 112px —— **只有宽度不同**，
+   其余视觉属性全部同源（作者令「样式应该要是和两边的统一」；对齐修正批已把
+   选中态的 sapphire 描边/底色/加粗整条删除，见下方 `.on` 档注释）。 */
 body.mobile-layer .mf-strip-chip {
   position: absolute;
   top: 40px;
@@ -1466,9 +1535,9 @@ body.mobile-layer .mf-strip-chip {
   display: flex;
   align-items: center;
   justify-content: center;
-  max-width: 92px;
+  max-width: 68px;
   height: 32px;
-  padding: 0 14px;
+  padding: 0 var(--mpad-x);
   border-radius: 999px;
   border: 1px solid var(--glass-border);
   border-bottom-color: transparent;
@@ -1482,14 +1551,17 @@ body.mobile-layer .mf-strip-chip {
   font-size: var(--mfs-min);
   font-weight: 500;
   cursor: pointer;
-  /* 视觉本体 = 32px（环位姿以它为基准）；热区不靠放大本体，走 ::before 外扩
-     —— 见下方命中盒规则（手机交互标准 44×44 的图形件解法，同 .nb-toggle）。
-     故此处不得 overflow:hidden（会裁掉外扩层）：省略号交给 .mf-strip-label。 */
+  /* 视觉本体 = 32px × scale（环位姿以它为基准）；热区不靠放大本体，走 ::before
+     外扩 —— 见下方命中盒规则（手机交互标准 44×44 的图形件解法，同 .nb-toggle）。
+     故此处不得 overflow:hidden（会裁掉外扩层）；超宽文字由 .mf-strip-label
+     的 mask 渐隐处理（**不用省略号**，作者令「不用…号，直接模糊隐藏」）。 */
   overflow: visible;
   white-space: nowrap;
   touch-action: manipulation;
+  /* 纵向零偏移铁律：签心 = top 40 + translateY(-50%)，缩放围绕盒中心对称 ⇒
+     缩放后中心不动，全组纸签严格同一水平线（对齐修正批，取代旧 --rdy 弧深）。 */
   transform-origin: center center;
-  transform: translate(calc(-50% + var(--rdx, 0px)), calc(-50% + var(--rdy, 0px))) scale(var(--rsc, 1));
+  transform: translate(calc(-50% + var(--rdx, 0px)), -50%) scale(var(--rsc, 1));
   opacity: var(--rop, 1);
   filter: blur(var(--rbl, 0px));
   transition:
@@ -1501,10 +1573,13 @@ body.mobile-layer .mf-strip-chip {
 }
 /* 环外（|k| > 露出半径）：位姿仍算（换签轨迹连续），命中与可见双关。 */
 body.mobile-layer .mf-strip-chip.is-far { pointer-events: none; }
-/* 命中盒外扩到手机交互标准 44×44（作者令 2026-11-02「手机端标准全量套用」）：
-   视觉本体 32px 不动（环位姿以本体为基准，放大破坏环几何），热区由 ::before
-   补足 —— 与 .nb-toggle 同解法（伪元素指针事件归宿主）。横向不超本体（邻签
-   间距 86px，互不抢占），纵向补到 44 覆盖弧深带。 */
+/* 命中盒外扩到手机交互标准 44×44（作者令 2026-11-02「手机端标准全量套用」；
+   对齐修正批补：**热区不随环位姿缩放**）：
+   伪元素是 chip 的后代 ⇒ 环位姿的 scale 会连带缩掉热区（邻签 scale 0.78 ⇒ 44
+   只剩 34.3px，名义达标、实际不达标）。故伪元素自带**反向缩放** 1/--rsc：
+   净变换恒为单位阵 ⇒ 热区实际恒 44×44（中/邻/环外一律），且量测面（计算样式
+   width/height）与真实渲染一致，无「读数达标、手感不达标」的偏差。
+   横向 44 远小于邻签中心间距 86px ⇒ 互不抢占；纵向 44 覆盖整条环带。 */
 body.mobile-layer .mf-strip-chip::before {
   content: '';
   position: absolute;
@@ -1512,33 +1587,57 @@ body.mobile-layer .mf-strip-chip::before {
   top: 50%;
   width: max(100%, var(--mhit, 44px));
   height: max(100%, var(--mhit, 44px));
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) scale(calc(1 / var(--rsc, 1)));
   border-radius: 999px;
 }
+/* 中签（当前签）= **同一枚签放大**，不是另一个组件（作者令 2026-11-02 09:00
+   「样式应该要是和两边的统一……不许换底色、加描边」）：本档只给两件事 ——
+   ① 多一档宽度（68 → 112px），让标题显示更完整；② z-index 抬一层（过渡中缩小
+   的邻签从放大中的中签身下穿过，不互相穿插）。
+   **零**描边改色 / 零底色改色 / 零字重改档 / 零字号改档 —— 圆角、玻璃底、顶缘
+   折射线、阴影、字体字重字色全部继承基础档（机械断言 T13③ 逐项钉死）。
+   选中态的可读性由环几何本身承担：中签恒在环心、恒为最大的一枚、恒全不透明。 */
 body.mobile-layer .mf-strip-chip.on {
   z-index: 2;
-  border-color: rgb(var(--sapphire, 96 165 250) / 0.45);
-  border-bottom-color: transparent; /* 底缘透明化随胶囊家族（.canvas-header 同律） */
-  background:
-    linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
-    rgb(var(--sapphire, 96 165 250) / 0.14);
-  color: var(--color-frame-text-bright, var(--color-frame-text));
-  font-weight: 600;
+  max-width: 112px;
 }
-/* 长名省略 + 点击展开全名（作者令 §二.3「按既有省略规则 + 点击展开全名」）：
-   常态 = 单行 ellipsis（max-width 92px）；.is-expanded（点活签）= 解限宽度、
-   回到完全可见层、盖过邻签（2600ms 自动收，换签即收 —— JS 侧定时）。 */
+/* 文本层：**零省略号**（作者令「不用…号，直接模糊隐藏了」）。超宽部分不是被
+   截断加「…」，而是用 mask 做水平 alpha 渐隐 —— 文字在签的内衬里匀速化开，读作
+   「纸签还在往两边排，只是看不清了」。
+   实现要点：mask 的透明段（左右各 9px）**落在签自己的 16px 内衬之内** ⇒ 渐隐
+   起点仍在签身内部（不会出现「签边硬切、渐隐在体外」的假象）；文字完整装得下
+   时首尾字形也只会轻触 0.2 的 alpha 边缘，肉眼几乎无感（且签宽 auto 收缩到
+   文字宽，长标题才吃到 max-width 上限 ⇒ 只有真溢出时才发生淡化）。
+   text-overflow 显式钉 clip：任何继承或浏览器默认都不会再画「…」。
+   DOM 不动 ⇒ title / aria-selected / 读屏全名全保留（模糊只是视觉）。 */
 body.mobile-layer .mf-strip-label {
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
   white-space: nowrap;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 9px, #000 calc(100% - 9px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 9px, #000 calc(100% - 9px), transparent 100%);
 }
+/* 点活签展开全名（作者令 §二.3「点击展开全名」）：常态已放大到 112px 宽，展开
+   档再加一档。钳法沿用内容起点让位批的 --mchrome-inset 口径（两侧各让 72 =
+   簇顶 16 + 钮 48 + 呼吸 8），但**先除掉环位姿 scale 再钳**：`max-width` 是
+   缩放前的盒宽，渲染宽 = max-width × --rsc（中签 1.14）—— 直接按 100vw − 2·72
+   钳会渲染成 263px、两头各压进浮钮 8px（旧批里 scale=1 时才成立）。除掉 scale
+   ⇒ 375 下 max-width 202.6、渲染恰 231px、跨 72…303，两端各余 8px 气隙；
+   `260px` 上限（渲染 296px）只在窄屏且 scale 更小时兜底。仍居中、仍同一水平线、
+   仍零省略号（超宽继续走 label 的 mask 渐隐，而不是「…」）。
+   2600ms 自动收，换签即收 —— JS 侧定时。 */
 body.mobile-layer .mf-strip-chip.is-expanded {
   z-index: 3;
-  max-width: min(calc(100vw - 96px), 280px);
+  max-width: min(calc((100vw - 2 * var(--mchrome-inset)) / var(--rsc, 1)), 260px);
   opacity: 1;
   filter: none;
+}
+/* 展开期两侧签退到幕后：邻签常态 opacity 0.66、底是半透明玻璃，展开签压上去会
+   透出两段文字（截图实证）。展开态本来就只读一枚签的全名 ⇒ 环临时收起，收起即
+   复原。只动 opacity，不碰 --rop 位姿变量（退出展开后由 layoutRing 的值继续管）。 */
+body.mobile-layer .mf-strip:has(.mf-strip-chip.is-expanded) .mf-strip-chip:not(.is-expanded) {
+  opacity: 0;
 }
 /* 工具条（Canvas 改造批②⑤ → 悬浮钮统一批 2026-10-31 作者令 16:03）：✕/堆叠视角钮
    自通栏工具条退役为**悬浮 chrome 带**控件（与页面壳返回钮同带同几何：48px
@@ -3127,18 +3226,32 @@ body.mobile-layer #chat {
   -webkit-mask-image: none;
   mask-image: none;
 }
-/* ② 悬浮锚本体 + ②-b 身份组上提 —— **整条退役**（单行三段式顶栏批
-   2026-11-02 07:23 作者令「头像为什么不在顶栏与左右两颗按钮同一行…现在给出明确
-   要求并实施」）。
-   退役对象 = ① `position: sticky` + `top: var(--muse-head-top)`（chatChrome.js
-   同步负 padding 补偿的 sticky 顶锚）与 ②-b 负 margin 上提（把组顶钉到双键行下缘
-   64px 的补丁）。二者共同造就作者实拍所见病灶：身份组永远是「顶带之下另起一行」
-   的浮层，且滚动时做 sticky 变形（顶栏不是真顶栏）。
-   新契约（本文件尾「会话顶栏单行三段式批」块）把 .g2-chat-head 直接做成
-   `position: fixed` 的顶栏本体：头像与左右双钮落在同一条水平轴线上、顶栏下缘
-   56px+safe 是内容流起点（零额外空白带），滚动时顶栏不动、内容从下方流过。
-   规则删除（非注释化保留）⇒ 与 --muse-head-top 变量一并失去消费方，
-   chatChrome.js 的同名同步链本批同批摘除。 */
+/* ② 悬浮锚本体：sticky 顶锚 + 让头像/名字（而非整条带）当浮层。
+   top 走 var(--muse-head-top)（chatChrome.js 同步 = -(#chat padding-top)）：
+   sticky 锚定矩形 = scrollport 内缩 padding，top:0 只能锚到 padding 缘
+   （main.js 顶让位常态 96px）——负值补偿后锚定阈值恒等窗口顶。
+   ⚠ 本条曾在「会话顶栏单行三段式批」（2026-11-02 07:23）被整条退役、改成
+   position:fixed 通栏顶栏；作者 09:14 令判该形态错误（「拆掉顶栏」）⇒ 本批
+   （Muse 悬浮身份头恢复批）按考古逐值恢复，并补齐 ②-b 组顶锚。 */
+body.mobile-layer #chat .g2-chat-head {
+  position: sticky;
+  top: var(--muse-head-top, 0px);
+  z-index: 26;
+  gap: 6px;
+  padding: 8px 2px 12px;
+}
+/* ②-b 会话身份组上提进顶带（位置批 2026-11-01 23:0x；本批恢复）。
+   静止态组顶 = #chat padding-top（让位常态 96 = 渐隐带 88 + 基线 8）会把身份组
+   推到视觉中段 ⇒ 负 margin-top 把组上提回顶带，落点 = 悬浮双键行下缘（16 + 48
+   = 64）。取值纯 CSS 派生、零新 JS 状态：--muse-head-top 已知 = -(#chat
+   padding-top)，故「组顶 = 64 + safe」⇔ margin-top = var(...) + 64px + safe；
+   让位带随横幅/键盘变化时 JS 重写该变量，上提量同帧跟随。
+   回退值 -8px 与 chat.css `#chat { padding: 8px 0 36px }` 基线让位同值 ⇒ CSS 先于
+   JS 落地的首帧即已正确落位（-8 + 64 = 56，加基线 padding 8 = 组顶 64）。
+   sticky 语义不变：上提只改静止态落点，滚动时 top 仍由 --muse-head-top 锚窗口顶。 */
+body.mobile-layer #chat .g2-chat-head {
+  margin-top: calc(var(--muse-head-top, -8px) + 64px + env(safe-area-inset-top, 0px));
+}
 /* ②-c 无名档幽灵胶囊收口（同批）：#session-name 在「root 未命名」态由
    sidebar.updateHeaderSessionName 写空串（2026-10-06 N1 裁定：无名 root 标题区为空
    串，机制名永不作显示回落）。空串 span 仍吃本块胶囊的 padding（3px 14px）⇒ 画出一枚
@@ -3148,21 +3261,23 @@ body.mobile-layer #chat {
 body.mobile-layer #chat .g2-chat-head #session-name:empty {
   display: none;
 }
-/* ③ 大号圆头像 —— 现役取值见文件尾单行三段式批 ④ 块（**40px**）。下方 56px
-   为收小批（06:58）历史档，本批被後置块覆盖，保留注记作沿革。
-   （基座 52px → 78px → **56px**；底/描边/浮影/glass-control 缘沿用
-   基座档）——收小批（作者令 2026-11-02 06:58，实拍 IMG_1674「手机端会话顶部居中
-   的 Muse 头像调小一点」）：78 一档收到 56（视宽 375 的 14.9%；原 78 = 20.8%），
+/* ③ 大圆头像 **56px**（基座 52px → 78px → 56px；底/描边/浮影/glass-control 缘
+   沿用基座档）——收小批（作者令 2026-11-02 06:58，实拍 IMG_1674「手机端会话顶部
+   居中的 Muse 头像调小一点」）：78 一档收到 56（视宽 375 的 14.9%；原 78 = 20.8%），
    成组贴顶 64px 锚 / 头像-名字 6px 间距 / sticky 与居中语义零触碰。
-   56 的取法：78 与名字 14px 的字身比 5.57，56 档下同一视觉重量落在 14px（4.0）——
-   仍在「头像为主、名字为辅」的量级内，而 52-54 会把头像压到接近两倍字高的
+   56 的取法：78 与名字 15px 的字身比 5.2，56 档下同一视觉重量落在 15px（3.7）——
+   仍在「头像为主、名字为辅」的量级内，而 52-54 会把头像压到接近两倍半字高的
    「小号图标」观感；故取 56 而非区间下沿（详见批文档「取值理由」）。
-   桌面 28px 与 dock 中键 44px 零触碰（规则挂 body.mobile-layer + #chat 子树）。 */
+   ⚠ 单行三段式批（07:23）曾改 40px，本批回退：作者 09:14 实拍头像直径 ≈50.8
+   CSS px（1134px 截图 ÷ 3.024），56 落在「≥实拍且仍显小」的一档；40 只有实拍
+   的 79%，观感退化成图标。桌面 28px 与 dock 中键 44px 零触碰
+   （规则挂 body.mobile-layer + #chat 子树）。 */
 body.mobile-layer #chat .g2-chat-head #agent-avatar-btn {
   width: 56px;
   height: 56px;
 }
-/* ④ 名字玻璃胶囊：随大头像同比例升半档（13px → 14px），余沿用基座档 */
+/* ④ 名字玻璃胶囊：名字字号随头像同档（mfs-sub 15px），余沿用基座档
+   （②-c 的 :empty 收口继续兜无名档）。 */
 body.mobile-layer #chat .g2-chat-head #session-name {
   font-size: var(--mfs-sub);
   max-width: 220px;
@@ -3529,6 +3644,27 @@ body.mobile-layer #bg-dropdown .bg-task-row button {
 
 /* 插件卡动作钮。 */
 body.mobile-layer #plugins-content .plugins-item-actions .cfg-btn { min-height: var(--mtap); }
+/* 插件卡操作行（2026-11-02 操作区一行化批）手机层热区：Plugin.md 入口 / 卸载钮
+   视觉本体分别为 20/22px 高（桌面密度档），一行化后仍须满足手机交互标准
+   ≥44×44 —— 解法同 .nb-toggle/.mf-strip-chip：本体不动，::before 外扩命中盒
+   到 --mhit（横向量体本已 94/59 ≥ 44，只补纵向）。三件水平占位不因外扩变宽
+   （横纵向同时 max(100%, 44) —— 宽已达标即取本体宽），故 375 宽一行仍富余
+   97px（实测 224 / 可用 321，见 tests/mobile-chrome-clearance.spec.mjs C4）。 */
+body.mobile-layer #plugins-content .plugins-item-actions .plugins-item-doc,
+body.mobile-layer #plugins-content .plugins-item-actions .plugins-item-uninstall {
+  position: relative;
+}
+body.mobile-layer #plugins-content .plugins-item-actions .plugins-item-doc::before,
+body.mobile-layer #plugins-content .plugins-item-actions .plugins-item-uninstall::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, var(--mhit));
+  height: max(100%, var(--mhit));
+  transform: translate(-50%, -50%);
+  border-radius: inherit;
+}
 
 /* 心跳行动作键。 */
 body.mobile-layer #daemon-panel .daemon-row {
@@ -3550,13 +3686,10 @@ body.mobile-layer #usage-dashboard .ud-colormode {
   min-height: var(--mtap);
 }
 
-/* 看板 chip 条：视觉本体保持环几何（92×32 胶囊），热区已在 .mf-strip-chip
-   ::before 外扩到 --mhit（44×44）；此处只把左右内衬收编到标准档 --mpad-x。
-   条带 padding 保持 0 —— 环位姿（签心 y=40 = 两悬浮钮中心）以条带零 padding
-   为前提，加纵向 padding 会把签心整体下移、与浮钮错位。 */
-body.mobile-layer .mf-strip-chip {
-  padding: 0 var(--mpad-x);
-}
+/* 看板 chip 条：条带 padding 保持 0 —— 环位姿（签心 y=40 = 两悬浮钮中心）以条带
+   零 padding 为前提，加纵向 padding 会把签心整体下移、与浮钮错位。
+   签的内衬 = 标准档 --mpad-x（16px，已写在上方 .mf-strip-chip 基础 rule 里；
+   此处不再重复声明，视觉单源一处）。 */
 
 /* 搜索范围 chips / 类型选择：30px → 44（胶囊形态保持）。 */
 body.mobile-layer .mh-scope-chip,
@@ -3769,123 +3902,54 @@ body.mobile-layer #usage-grid .ud-cell[data-date]::after {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   会话顶栏单行三段式批（2026-11-02 07:23 作者令，实拍
-   evidence/20261102_muse-avatar-shrink/rest-light.png）
+   Muse 悬浮身份头恢复批（作者令 2026-11-02 09:14，实拍
+   「会话顶部身份头回到『头像在上、名字在下』的悬浮形态，拆掉顶栏」）
    ═══════════════════════════════════════════════════════════════════════
-   作者原话：「手机端会话顶部，头像为什么不在顶栏与左右两颗按钮**同一行**
-   居中，而是掉到下面一行… 新要求：头像与名字并入顶栏同一行」。
+   🔴 承认：上一批（2026-11-02 07:23「会话顶栏单行三段式」）理解偏了 —— 作者
+   说的是「头像与名字在会话顶部居中悬浮」，本批做成了 position:fixed 的
+   单行三段式**真顶栏**（56+safe 横贯毛玻璃带 + 下缘 1px 描边 + 头像 40px
+   左右夹两颗钮 + 名字横排挂头像右侧）。作者 09:14 实拍（深色 1134×246）里
+   根本没有横贯带：头像居中悬浮压在消息流上、名字小胶囊在头像正下方、左右
+   两钮各自独立悬浮。本批把那一批**整条回退**，回到 49e2e7477 / b4b6d8745 /
+   d82cf3543 / ac68cac51 考古得到的悬浮形态，按新实拍重新取值。
 
-   病灶（本批修掉的形态）：.g2-chat-head 曾是 #chat 内容流首项 + 负 margin 上提
-   到双键行下缘（上块 ②/②-b 已整条退役）+ 列式布局 ⇒ 头像必然另起一行，
-   且 sticky 变形（不是真顶栏）。
+   本块内容 = 三件：
+     ① 无顶栏：本批删除了上一批的 fixed 顶栏块（.g2-chat-head 的
+        position:fixed / left:0 / right:0 / height 56+safe / background /
+        backdrop-filter / border-bottom 全数不写），身份组回到
+        `sticky` + `top: var(--muse-head-top)`（见本文件中块 ②/②-b）——
+        只有头像与胶囊是浮层，**不生成任何横贯屏幕的背景带或描边**。
+        z 26（> 渐隐带 25，头像本体不被 veil 蒙住；< 双钮层 30 < 页面栈
+        156 < dock 200）由中块 ② 承担。
+     ② 名字在头像正下方（列式 flex 由基座块承担：display:flex /
+        flex-direction:column / align-items:center / flex:none）⇒ 胶囊
+        宽度随内容收缩、水平中心与头像同轴；间距 = 基座 gap 6px（实拍
+        头像底→胶囊顶 ≈4.7px 是「无 gap 档」的视觉近似，6 是既有 token 档）。
+     ③ 胶囊视觉 = 深色半透明底 + 白字，走 glass token 单源（--glass-bg
+        浅档 rgba(255,255,255,.55) / 深档 rgba(24,28,38,.68)），**零 border**
+        （作者令③历史裁定「不再用胶囊立体感边框」）、零立体 box-shadow、
+        r999。胶囊在浅色主题下是「白底深字」、深色主题下是「深底白字」——
+        两种主题各自由 token 决定，也正是作者 09:14 深色实拍里那枚深底
+        白字胶囊（实测底 #171c26 左右、字纯白）。字色 = --color-frame-text-bright
+        （浅档 #1b1e26 / 暗档 #e8eaed）⇒ 深底上读白字、浅底上读深字，
+        对比度两档均成立。
+     ④ 渐隐带回到 88px 两段式原 mask（glass.css #g2-edge-fade 的
+        0%→55%@50%→transparent 逐字现役）：内容从头像后穿过时「先糊后没」，
+        上一批「mask 收到顶栏下缘」的覆盖随顶栏一并退役。
+     ⑤ 左右双钮回到 top: 16px + safe（上一批 4px 是「与顶栏中线同轴」的
+        派生值，顶栏没了就失去依据）；48px 钮中心 = 40 + safe，与头像贴顶
+        态中心 36 + safe 差 4px —— 同一视觉行，两枚钮仍各自独立悬浮。
+     ⑥ #top-overlays 回到 chat.css 的 68px 基准（上一批 64+safe 覆盖退役）。
+   桌面零触碰：本块无可执行规则，中块 ②/②-b/③/④ 全部挂在 body.mobile-layer。 */
 
-   新契约 = 单行三段式真顶栏：
-     左＝任务键　中＝头像（+ 右侧名字）　右＝搜索键，三者垂直中线同轴。
-   · 高度 56px + env(safe-area-inset-top)（手机标准档：iOS 导航栏 44pt 的
-     上沿档；56 内放 48px 圆钮 = 上下各 4px 余量，放 40px 头像 = 各 8px）；
-   · 材质 = 玻璃单源包：--glass-bg + blur(--glass-blur) saturate(--cv-saturate)
-     + border-bottom 1px --glass-border（与 #mobile-dock / #input-bar 同配方，
-     浅深双主题走 token 自动成立，零新色值）；降级档在 glass.css 两块列名；
-   · 固定在顶部（position: fixed，不随内容滚动、无 sticky 变形）：内容从顶栏
-     下缘起（main.js 顶让位 = 顶栏下缘 + 8 呼吸），原 96/64px 留白带一并收掉；
-   · z 26：> 渐隐带 25（顶栏压在渐隐带上），< 双钮层 30（双钮仍是更高一层，
-     按压/角标零遮挡），< 页面栈 156 < dock 200 —— 层级契约与本文件头注一致。
-   ═══════════════════════════════════════════════════════════════════════ */
-/* ① 顶栏本体：fixed 单行，头像吃满高度居中 */
-body.mobile-layer #chat .g2-chat-head {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: calc(56px + env(safe-area-inset-top, 0px));
-  z-index: 26;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 0 72px; /* 左 16+48、右 16+48 双钮足印 + 8 呼吸：中段永不被钮压 */
-  flex: none;
-  box-sizing: border-box;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
-  border-bottom: 1px solid var(--glass-border);
-}
-/* ② 头像 40px：单行内取 36-40 档的**上沿**（理由见批文档「取值理由」：
-   56 档在 56px 单行里上下各只剩 0px，撑不开；40 = 视宽 10.7%，与 14px 名字
-   的字身比 2.9 —— 仍读成「头像为主、名字为辅」，而 36 已贴近两倍字高的小号
-   图标观感）。垂直中心 = safe + 28 = 双钮中心（48px 钮 top 4 + 24）。
-   头像本体（圆/描边/高光/浮影/芯片底）沿用 chat.css 全局 #agent-avatar-btn 档
-   与既有 stand logo 58% 槽内缩放，本块只改外径。order 前置保证在名字左侧
-   （agentProfile.initAgentProfile 已把节点插在 .header-center 首位 ⇒ 迁入时仍是
-   首子节点，order 仅作结构性兜底）。 */
-body.mobile-layer #chat .g2-chat-head #agent-avatar-btn {
-  width: 40px;
-  height: 40px;
-  flex: none;
-  order: 0;
-}
-/* ③ 名字横排挂头像右侧（作者令「优先横排」；竖排=下置已在 ②/②-b 退役）。
-   🔴 定位取舍（与机械断言对齐）：作者验收 2 要求「头像水平中心与屏幕中线
-   偏差 0±1px」——若名字参与 flex 居中，整组（头像+8+名字）居中会把头像推离
-   中线（375 下 "Spider" 即偏 26px）。故：头像单独居中（唯一流内子节点 +
-   justify-center ⇒ 恒在屏幕中线），名字 position:absolute 从「中线 + 头像半宽
-   + 8」起排，不参与居中计算。视觉结果 = 头像为轴、名字挂右侧；名字缺失时
-   只余头像且仍居中（:empty 隐藏见 ②-c 块）。
-   max-width = 50vw − 28 − 72（右双钮足印）⇒ 375 下 87.5px：容纳 "Spider"
-   （42px）/ 中文 2-4 字，超长省略号收口（不侵入搜索钮）；放不下的情况已在
-   批文档「横排容量」节申报。 */
-body.mobile-layer #chat .g2-chat-head #session-name {
-  position: absolute;
-  left: calc(50% + 28px); /* 中线 + 头像半宽 20 + 间距 8 */
-  top: 50%;
-  transform: translateY(-50%);
-  max-width: calc(50vw - 100px);
-  margin: 0;
-  padding: 0;             /* 名字胶囊底退役：名字直接写在玻璃顶栏上，不再叠一层 */
-  border-radius: 0;
-  background: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.2;
-  color: var(--color-frame-text-bright, var(--color-frame-text));
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-align: left;
-  user-select: none;
-  order: 1;
-}
-/* ④ 顶栏下缘即内容起点：原「渐隐带 88 全高都压在前 88px 内容上」的形态与真
-   顶栏冲突（顶栏已自带 blur，渐隐带在顶栏之下只会把首条消息上沿糊掉）。故把
-   渐隐带的可视区收到顶栏下缘：0..顶栏下缘 全强度（被顶栏玻璃盖住，等价加深
-   玻璃底），顶栏下缘以下 0 —— 元素尺寸/材质/mask 结构不变（88px / blur18 /
-   sat1.5 / linear-gradient 均照旧），滚入内容由顶栏本体的 backdrop-filter
-   「先糊」，再被顶栏 55% 玻璃与下缘线「后没」。 */
-body.mobile-layer #g2-edge-fade {
-  -webkit-mask-image: linear-gradient(to bottom,
-    #000 0,
-    #000 calc(56px + env(safe-area-inset-top, 0px)),
-    transparent calc(56px + env(safe-area-inset-top, 0px)),
-    transparent 100%);
-  mask-image: linear-gradient(to bottom,
-    #000 0,
-    #000 calc(56px + env(safe-area-inset-top, 0px)),
-    transparent calc(56px + env(safe-area-inset-top, 0px)),
-    transparent 100%);
-}
-/* ⑤ 双钮上移到与头像同轴：钮中心 = safe + 28（顶栏高 56 ⇒ 中线 safe + 28）。
-   48px 钮 in 56px 行 = 上下各 4px 余量（iOS 导航栏零余量的最小可辨呼吸档）。
-   左右 16px 足印与顶栏 padding 的 72px 对齐（16+48+8）。
-   注：水平位置/尺寸/材质/角标链零改动 —— 只动垂直落点。 */
-body.mobile-layer .mh-chrome-btn {
-  top: calc(4px + env(safe-area-inset-top, 0px));
-}
-/* ⑥ 顶带卡（待办提醒条/站内通知）让位到真顶栏之下：原 top:68px 是「无顶栏、
-   只有 16+48 双钮」时代的取值，刘海档（safe>12）会与 56+safe 顶栏交叠。 */
-body.mobile-layer #top-overlays {
-  top: calc(64px + env(safe-area-inset-top, 0px));
-}
+/* ── 本批执行规则说明（占位注记，零声明）────────────────────────────────
+   ① 无顶栏 —— 由「删除」实现：文件内已无 `#chat .g2-chat-head { position:
+      fixed ...}` 与 `border-bottom` / `background` / `backdrop-filter` 声明；
+      机械断言 D（顶部 ≥40px 高、横贯 ≥90% 宽、带背景或描边的带）必然为 0 条。
+   ② 名字下置 + 胶囊底 —— 由中块「基座回归块」（display:flex/column/center +
+      #session-name 的 --glass-bg 底 / r999 / 零 border）承担，本批不复写。
+   ③ 渐隐带 —— 由「删除」实现：文件内已无 `body.mobile-layer #g2-edge-fade`
+      的 mask 覆盖，glass.css 的 88px 两段式原 mask 直通。
+   ④ 双钮 —— 由 #mobile-fab-layer 块 `top: calc(16px + env(safe-area-inset-top))`
+      承担（上一批的文件尾覆盖已删）。
+   ⑤ #top-overlays —— 同上，chat.css 基准 68px 直通（覆盖已删）。 */

@@ -194,9 +194,23 @@ export function makeReference(input) {
       path: String(a.path || '').slice(0, 600),
       preview: (typeof a.preview === 'string' && a.preview.startsWith('data:')) ? a.preview : undefined,
     }));
+    // 叠卡单张引用批（2026-11-02 作者令「让叠卡的图片可以分开引用」）：
+    // content.itemIndex/itemTotal = 「这张在第几位、组里共几张」。引用**目标**
+    // 仍是 messageId（深链寻址不变）；index 只进引用牌身份与标注 ⇒ 同一叠卡里
+    // 三张图的引用牌互不相同（id 带 `:i<n>`，摘要尾部带「第 N/total 张」）。
+    const itemIndex = Number.isInteger(content.itemIndex) && content.itemIndex >= 0 ? content.itemIndex : null;
+    const itemTotal = itemIndex !== null && Number.isInteger(content.itemTotal) && content.itemTotal > itemIndex
+      ? content.itemTotal : null;
+    const refContent = { excerpt: preview, fullText, attachments };
+    if (itemIndex !== null) {
+      refContent.itemIndex = itemIndex;
+      if (itemTotal !== null) refContent.itemTotal = itemTotal;
+    }
     return {
       type: 'ref', refType: 'chat-message',
-      id: src.messageId ? `ref:chatmsg:${src.messageId}` : nextRefId('chatmsg'),
+      id: src.messageId
+        ? `ref:chatmsg:${src.messageId}${itemIndex !== null ? `:i${itemIndex}` : ''}`
+        : nextRefId('chatmsg'),
       source: {
         kind: src.kind || 'chat-message',
         sessionId: src.sessionId || '',
@@ -205,7 +219,7 @@ export function makeReference(input) {
         senderName: src.senderName || '',
       },
       anchor,
-      content: { excerpt: preview, fullText, attachments },
+      content: refContent,
       meta: { icon: 'message-circle', typeLabel: t('messages.quote'), ts: (input.meta && input.meta.ts) || 0 },
       display: { label: src.senderName ? `${src.senderName}：${preview}` : preview, preview },
     };

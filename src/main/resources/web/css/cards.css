@@ -200,24 +200,45 @@ html[data-theme="dark"] {
    用家族标题距档 16px）。 */
 .nfc-error + .nfc-actions { margin-top: var(--nfc-gap-title); }
 
-/* ── 加载步骤清单形态 .nfc-steps（左对齐行 + 四态点；行样式消费方 =
-   门入场卡 .nf-entry-item）───────────────────────────────────────────── */
+/* ── 加载步骤清单形态 .nfc-steps（居中行 + 四态点；行样式消费方 =
+   门入场卡 .nf-entry-item）─────────────────────────────────────────────
+   🔴 同步卡状态居中批（2026-11-02 09:19 作者令「把这个同步卡片的下面的状态
+   居中」）：本块原为 `text-align: left` + 行左对齐 —— 卡片顶部标题（动态状态
+   文案）本来就是居中的（实测 2026-11-02：标题文字盒中心 719.99 vs 卡中线 720，
+   Δ0.008px），作者实拍里看着「没居中」的正是**标题下面这四行状态**（含当前
+   正在跑的那一行「正在同步数据…」/「同步数据」）。改法 = 行内 flex 居中
+   （justify-content:center）+ 一枚与状态点**等宽的右端留白**（.nfc-step:has
+   (.nf-entry-dot)::after）—— 左右两侧对称（各 14px + 10px 间距），于是**状态
+   文字自身的水平中心 = 行中心 = 卡内容中线**（实测 ≤1px，三态各验，见
+   tests/synccard-center.spec.mjs）；点仍然紧贴各自文案左侧。
+   垂直不动：清单块距标题 --nfc-gap-title(16px)、行距 8px 原样 —— 三态点的几何
+   勾/叉是点内的绝对定位伪元素，不参与行内排版，行高与字号零变化，
+   既不会被勾叉顶偏，也不改字体/配色/字标。 */
 .nfc-steps {
   display: flex;
   flex-direction: column;
   gap: 8px;
   width: 100%;
   margin: var(--nfc-gap-title) 0 0;
-  text-align: left;
+  text-align: center;
 }
 .nfc-step {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
   font-size: var(--nfc-body-size);
   line-height: 1.5;
   color: var(--nfc-subtle);
   transition: color 0.2s ease;
+}
+/* 对称留白（只有带状态点的行挂）：点 14px 在左，右端补同宽空位 ⇒ 中间那格
+   （= 状态文字）正好居中于卡中线。:has 判据只认真实状态行，静态样例里无点的
+   裸 .nfc-step 不受影响（文字照常居中，不被空位推偏）。 */
+.nfc-step:has(> .nf-entry-dot)::after {
+  content: '';
+  width: 14px;  /* = .nf-entry-dot 的宽 */
+  flex: 0 0 auto;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════

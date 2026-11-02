@@ -420,6 +420,10 @@ export default {
   'chat.quoteDeletedSnapshot': '原消息已删除 · 已保留快照文',
   'chat.quoteSenderMe': '我',
   'chat.quoteTypeImage': '[图片]',
+  // 叠卡单张引用批（2026-11-02 作者令「让叠卡的图片可以分开引用」）：引用牌上的
+  // 位置标注 —— 同一叠卡内不同张的引用牌靠它彼此可区分。
+  'chat.quoteImagePos': '第 {n}/{total} 张',
+  'chat.quoteItemAria': '引用第 {n} 张',
   'chat.quoteTypeFile': '[文件]',
   'chat.quoteTypeTool': '[工具]',
   'chat.quoteTypeAsk': '[提问]',

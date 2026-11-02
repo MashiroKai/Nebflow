@@ -2380,7 +2380,12 @@
 .plugins-item-detail .plugins-card-desc { -webkit-line-clamp: unset; }
 /* 启停操作钮行（既有派发开关收进展开态，2026-10-07 条目式批只动层级）：
    右对齐呼应原「卡片右上」的肌肉记忆。卸载批（2026-10-29）：行内加「卸载」钮——
-   开关居左、卸载居右（危险动作离手边最远位）。 */
+   开关居左、卸载居右（危险动作离手边最远位）。
+   操作区一行化批（2026-11-02 作者令「toggle 和卸载按钮和 plugin.md 放一行，
+   节约空间」）：Plugin.md 入口自独立行并入本行 —— 左缘贴齐（margin-right:auto
+   把其余件推右），右侧仍是「开关 → 卸载」右对齐两件。74→55 纵向省 19px
+   （detail gap 6 + doc 行高 20 合成一行高 31）。桌面形态同步一行（同一 DOM，
+   手机层只在其上补热区/间距，不改桌面对齐）。 */
 .plugins-item-actions {
   display: flex;
   justify-content: flex-end;
@@ -2424,7 +2429,12 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  align-self: flex-start;
+  /* 操作区一行化批（2026-11-02）：入口自独立行并入 .plugins-item-actions ——
+     原 `align-self: flex-start`（单行贴左）随之退役，竖向交给行内
+     align-items:center 三条同轴（机械断言②）；横向由 margin-right:auto 顶到
+     左缘、把「开关 → 卸载」右对齐两件推远（三条互不挤：375 宽实测占 224px /
+     可用 321px，见 docs/20261102_plugin-panel-layout__*.md）。 */
+  margin-right: auto;
   font: 500 10px ui-monospace, SFMono-Regular, monospace;
   padding: 3px 10px;
   border-radius: 8px;
