@@ -6,8 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.actor.ActorSystem
 import nebflow.core.AgentRuntimePort
-import nebflow.core.delegate.DelegateFlowMapLifecycle
-import nebflow.core.delegate.DelegateRegistry
+import nebflow.core.delegate.{DelegateFlowMapLifecycle, DelegateNotify, DelegateRegistry}
 import nebflow.shared.{NebflowLogger, PathUtil}
 
 import scala.concurrent.duration.*
@@ -180,6 +179,19 @@ object DelegateFlowHosts:
                 // （NodeTools.parseOutSegment R1-a 分支零触碰）。
                 notifyTargetKind = NodeEngine.NotifyTargetKind.CreatorDelegate,
                 notifyAuditWorkspace = Some(baseWorkspace),
+                // P0（投递地址批 2026-11-02）：**dispatch-notify 的投递地址 = 链属主**。
+                // 此前作用域引擎的节点终态通知走 DispatchNotify.defaultTrigger →
+                // ProjectRuntimeRegistry（**项目**分发器，与「谁写了这条链」无关），
+                // 实测链主人一条都没收到。本参把投递目标显式钉成创建者 delegate 本人：
+                // 通道复用 DelegateNotify.inject（core 层合法，见 layers 门禁）；
+                // creator 不 live ⇒ 探针 false ⇒ 件**滞留**（不 markSent，留补投候选集），
+                // **绝不旁路回项目分发器**（「不进项目分发器、不串批」）。
+                notifyDeliveryTarget = Some(
+                  DispatchNotify.DeliveryTarget(
+                    DispatchNotify.delegateCreatorLabel(delegateId),
+                    text => DelegateNotify.inject(resources.agentRegistry, delegateId, text)
+                  )
+                ),
                 // jev-plugins 批 #1226（S9 扩面）：作用域引擎 = 分配触发点（链每步
                 // spawn）——节点空声明走分配面（PluginInjection.forNode）；per-project
                 // 引擎不传（缺省 false = 逐字节旧行为）。
