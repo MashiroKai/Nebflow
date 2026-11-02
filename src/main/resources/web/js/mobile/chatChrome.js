@@ -127,7 +127,8 @@ export function activateChatChrome() {
        的「取最大 scrollTop」口径同源）。渐隐只改 opacity（rAF 合帧，值不变不写）。 */
     unbindHeadFade = bindIdHeadFade(chatHead, chat);
     /* 顶栏建层广播已随机制退役（会话页头同构批）：悬浮身份头不在流内、main.js
-       的顶让位不再按它实测（回 bandBottom 单一真值），故无需通知观察器重取。 */  }
+       的顶让位不再按它实测（回 bandBottom 单一真值），故无需通知观察器重取。 */
+  }
 
   // ── 消息流身份头（收形批①③）随 Muse 式悬浮头像批退役 ──
   // 作者令 2026-11-01 13:33 ①「去掉每条消息头部的 agent 头像+名字行」：
@@ -250,6 +251,7 @@ export function activateChatChrome() {
       chatHead = null;
       // 会话页头同构批：建/拆层广播（nebflow-chat-head-mounted/-unmounted）随
       // fixed 顶栏退役 —— 悬浮身份头不在内容流内，main.js 的顶让位已回到
-      // bandBottom 单一真值，无观察器可通知（监听腿同批摘除）。    }
+      // bandBottom 单一真值，无观察器可通知（监听腿同批摘除）。
+    }
   };
 }
