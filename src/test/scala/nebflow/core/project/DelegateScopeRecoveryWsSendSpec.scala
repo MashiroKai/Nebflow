@@ -291,7 +291,9 @@ class DelegateScopeRecoveryWsSendSpec extends CatsEffectSuite:
   // ── S5 取证件存在性（普查可复跑）────────────────────────────────────────────
 
   test("S5 取证件在册：node-* 会话 ui.json 普查脚本可复跑（本批判据来源）") {
-    val script = Paths.get("evidence/20261101_crash-recovery-ws-send/census.py")
+    // 2026-11-02：evidence/ 已整体排除在推送之外（作者裁定），取证脚本随批迁入
+    // tests/fixtures/（正常跟踪），断言语义不变——脚本仍在册、内容仍覆盖普查口径。
+    val script = Paths.get("tests/fixtures/crash-recovery-ws-send/census.py")
     assert(Files.exists(script), s"普查脚本必须在册：$script")
     val body = Files.readString(script)
     assert(body.contains("node-"), "普查脚本必须覆盖 node-* 会话族")
