@@ -101,4 +101,27 @@ class CompactServiceSpec extends FunSuite:
     assert(!CompactService.isCompactReminder(blocksMsg), "non-matching block text must not match")
   }
 
+  /**
+   * ReminderSignature 是**派生值**（`PromptCatalog.Compact.ReminderSignature` = preamble 头两行），
+   * 不是手抄副本 —— 这就是「改 preamble 头条会红」的那道闸。
+   *
+   * 为什么必须有它：判据一旦与被判文本分居两文件，「改 preamble 头条 ⇒ 压缩提示认不出来 ⇒
+   * 尾部 reminder 混进保留轮」这条链上**没有任何其它机械闸**（它的症状是压缩后行为变差，
+   * 不是报错）。派生让判据自动跟随；本断言把「不许改头条」钉成红灯。
+   */
+  test("ReminderSignature is derived from the catalog preamble (head-line lock)") {
+    import nebflow.prompts.PromptCatalog
+    val sig = PromptCatalog.Compact.ReminderSignature
+    assertEquals(
+      sig,
+      "<system-reminder>\nContext compaction required — the conversation has grown too large and must be compressed.",
+      "compact reminder head changed: every profile reminder's recognizer moved with it — if that was intended, update this lock in the same commit"
+    )
+    assertEquals(
+      sig,
+      PromptCatalog.Compact.CompactPreamble.linesIterator.take(2).mkString("\n"),
+      "ReminderSignature must be DERIVED from the preamble, never a hand-copied literal"
+    )
+  }
+
 end CompactServiceSpec

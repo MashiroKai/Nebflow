@@ -1,0 +1,1258 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+  <meta charset="utf-8">
+  <script>
+  /* Anti-recursion guard (canvas-html embedded boot, 2026-08-18). Sandboxed
+     HTML previews (Canvas/Card srcdoc iframes) can navigate their frame to the
+     app URL — e.g. a slidev deck's hash router resolving against the inherited
+     base URL. A nested boot would share localStorage, restore the same canvas
+     file tab and re-render the same file → infinite nesting. Classic script so
+     it always runs before the module graph; main.js checks the flag and
+     refuses to boot. */
+  if (window.self !== window.top) document.documentElement.dataset.nfEmbedded = '1';
+  /* Card-window pre-paint gate (独立窗口内容物收口批, 2026-10-22). ?card-window=1
+     means this window must render a single content card ONLY (document / file /
+     image viewer) — never the full app shell. The mode class used to be added
+     by canvas.js initCardWindowMode(), i.e. only AFTER the whole main.js module
+     graph finished loading: on a cold cache / slow tunnel the popup showed the
+     FULL stand UI for seconds (author-reported「独立窗口打开，打开的是整个
+     stand」), and any boot crash before that line left the full shell up for
+     good. Classic script = runs before first paint and before the module graph:
+     (a) tag <html> so the shell-hide rules in split.css apply from frame zero;
+     (b) normalize a legacy /index.html deep link onto the canonical app URL "/"
+         (same query preserved) so the alias route can never BE the URL of an
+         independent window — the popout chain targets "/" exclusively. */
+  try {
+    var __nfQ = new URLSearchParams(location.search);
+    if (__nfQ.get('card-window') === '1') {
+      document.documentElement.classList.add('card-window-boot');
+      if (location.pathname === '/index.html') {
+        history.replaceState(null, '', '/' + location.search);
+      }
+    }
+  } catch (_) { /* no-history environment: canvas.js boot leg still applies */ }
+  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <!-- Neutral initial title: js/brand.js sets the real one from window.__BRAND__. -->
+  <title></title>
+  <!-- Favicons are derived by scripts/switch-logo.py. Their content digest
+       invalidates browser caches when another logo is selected. -->
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=71a456e2d388b27e">
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png?v=71a456e2d388b27e">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg?v=71a456e2d388b27e">
+  <link rel="shortcut icon" href="favicon.ico?v=71a456e2d388b27e">
+  <link rel="icon" type="image/png" sizes="192x192" href="favicon-192.png?v=71a456e2d388b27e">
+  <link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png?v=71a456e2d388b27e">
+  <link rel="apple-touch-icon" sizes="180x180" href="favicon-180.png?v=71a456e2d388b27e">
+  <link rel="stylesheet" href="vendor/katex.min.css">
+  <link rel="stylesheet" href="vendor/highlight-github.min.css" media="(prefers-color-scheme: light)">
+  <link rel="stylesheet" href="vendor/highlight-github-dark.min.css" media="(prefers-color-scheme: dark)">
+  <link rel="stylesheet" href="assets/app-ea3ed8d7.css">
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  <!-- #27 Project 面板 + Flow Map 视图（§3.5，试点期与旧面板并列） -->
+  
+  
+  
+  
+  
+  <!-- Canvas ask mode（2026-10-28 实施批）：右下角入口 + 无窗体气泡列覆盖层。
+       token = 样张 v2 + token 规格页 E 表（品牌蓝/紫/几何材质档）；玻璃基底
+       引用 sapphire.css 单源（sapphire 仍最后加载，同特异性胜出）。 -->
+  
+  
+  
+  <!-- ```human filter fence（人面子批 2026-10-30）：框内卡片 + 框外细节抽屉，
+       面中立组件，token 引用 sapphire/既有变量单源。 -->
+  
+  
+  
+  
+  <!-- Social interface cards (socpanel batch, 2026-09-19): all widths, tokens
+       and materials are reused from the design system — new values land here,
+       never in sapphire.css (off-limits for this batch). -->
+  
+  <!-- Secrets management dialog (secrets-frontend batch, 2026-09-27): tokens
+       and materials reused from the design system — new values land here,
+       never in sapphire.css (off-limits for this batch). -->
+  
+  <!-- 感知域（mail-perception-impl 批）：官网 token 单源（stand-tokens.css）+
+       感知三脸（面板 / OTP 单码片 / 快照卡 + Canvas 邮件编辑器）。 -->
+  
+  
+  <!-- Executors panel (/Agents canvas tab + settings rows; executor-registry
+       batch, 2026-10-03) -->
+  
+  <!-- Per-node changed-file diff section (file-diff feature; mounted by
+       diffView.js into the Flow Map node detail panel) -->
+  
+  <!-- sapphire.css loads LAST: it is the design-system standard layer.
+       Its grouped glass-control rules must win equal-specificity ties
+       against feature CSS hover/base states. -->
+  
+  <!-- 液体玻璃 v2 批（2026-10-31，作者 08:43 裁定 + 09:03 拍板）：按钮族换代
+       （圆钮/药丸/墨玻璃药丸 + 镜面高光 + spring 按压 + 边缘光折射）+ 手机端
+       顶缘 88px 渐隐带。紧随 sapphire 加载：换代规则同特异性时以本文件为准；
+       桌面 #header（chat.css）零触碰。折射滤镜 defs（feTurbulence +
+       feDisplacementMap）在本文件 body 首 #g2-refract-defs。 -->
+  
+  
+  <!-- mobile-ui-refactor 批：手机交互层（独立层，非响应式补丁）。全部规则挂在
+       body.mobile-layer 之下 —— 该类只由 js/mobile/bootstrap.js 在 ≤768px 视口
+       激活，桌面窗口不命中任何一条（桌面渲染零变化）。注册钩子 = 本行 + 文件尾
+       script。层样式落 css/（/css/<file> 单段路由服务），控制器落 js/mobile/
+       （jsRoutes 任意深度服务）—— 均为既有静态路由面，零引擎改动。 -->
+  
+  <!-- 对话层活性批（2026-10-22）：回合活动流条 + 断连横幅 -->
+  
+  <!-- 偶发裸渲染修复批（2026-10-30，作者 20:03 截图实证：冷启动实例「有时候」
+       右侧面板整面无样式、工作台列表以原文竖排裸露）。根因面：stylesheet 是
+       渲染阻塞资源，但若任一 CSS 请求**失败**（实例重启在途请求被掐断 / 隧道
+       上 SW 未命中回 Response.error / 深层 404 / gzip 流中断），浏览器放弃该
+       表并立即无样式绘制——JS 模块图请求是独立并发fetch，可全部成功 ⇒ 列表
+       照样渲染，样式面整体未挂 = 作者所见截图。旧行为无任何韧性：不 gate、
+       无骨架、无失败面 ⇒ 失败态恒等裸 DOM。
+       本件 = 未就绪不裸露三件套（全部内联、零请求依赖、经典脚本先于模块图）：
+       ① 门样式（下方 <style>，内联故自身永不缺席）：html.nf-boot-gate 下
+          body 整面 visibility:hidden（visibility 可被子代覆写——失败面/加载面
+          自显），任何 body 级新增容器零维护全覆盖；
+       ② 门脚本（下方经典脚本）：逐条 head stylesheet 三态判定——sheet 缺席
+          = pending，cssRules>0 = ok，已处理而 0 规则 = fail（404/空体形态），
+          error 事件/看门狗（15s，与卡窗静态看门狗同档预算）兜底挂死；全 ok
+          ⇒ 摘门（缓存即中时常在首帧前完成，零闪现），任一 fail ⇒ 永不摘门，
+          换失败卡（重试 / 绕过缓存重试 nfsw=0 逃生门）——裸 DOM 暴露不可能。
+          关键机制：本脚本自身被先行 render-blocking 表 script-block（HTML
+          标准机制）——执行时先行表必已终态，初始评 sheet 缺席即网络失败类
+          （error 事件先于本脚本挂监听 fire 完毕，此判据是唯一收口）；纯慢
+          （无失败）路径由浏览器首帧阻塞天然兜底（白窗非裸），骨架面覆盖
+          非阻塞引擎的「失败 unblock 后其余未决」窗。
+       ③ 加载/失败面（body 首元素 #nf-boot-gate）：纯 CSS 环 + 文本卡，不属
+          「弹窗禁遮罩」族（应用本体未就绪时的整页引导面，同卡窗失败卡先例）。
+       隧道首开打包脸全部 CSS 内联成 <style> ⇒ 门脚本见零 link 即开，零开销；
+       dist 脸 16 链并 1 bundle 链，同一判定成立。内嵌脸（nfEmbedded）由
+       main.js 自渲染停止面，不进门。 -->
+  <style>
+    html.nf-boot-gate body { visibility: hidden; }
+    html.nf-boot-gate #nf-boot-gate { visibility: visible; }
+    #nf-boot-gate {
+      position: fixed; inset: 0; z-index: 9999;
+      display: none; align-items: center; justify-content: center;
+      background: #f2f3f5;
+      font: 13px/1.6 -apple-system, 'Segoe UI', sans-serif;
+    }
+    html.nf-boot-gate #nf-boot-gate { display: flex; }
+    .nf-boot-ring {
+      width: 22px; height: 22px; border-radius: 50%;
+      border: 2px solid rgba(0, 0, 0, 0.25); border-top-color: transparent;
+      animation: nf-boot-spin 0.8s linear infinite;
+    }
+    @media (prefers-color-scheme: reduce) { .nf-boot-ring { animation: none; } }
+    @keyframes nf-boot-spin { to { transform: rotate(360deg); } }
+    #nf-boot-gate[data-state="failed"] .nf-boot-ring { display: none; }
+    .nf-boot-card {
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      max-width: 78vw; padding: 26px 34px; text-align: center;
+      background: #fff; color: #1b1e26;
+      border: 1px solid #e0e1e4; border-radius: 14px;
+      box-shadow: 0 2px 14px rgba(0, 0, 0, 0.08);
+    }
+    .nf-boot-card-title { font-size: 14px; font-weight: 600; }
+    .nf-boot-card-hint { font-size: 12px; color: #6a737d; max-width: 340px; }
+    .nf-boot-card-actions { display: flex; gap: 10px; margin-top: 6px; }
+    .nf-boot-card-actions button {
+      padding: 6px 18px; border-radius: 8px; font-size: 12px; cursor: pointer;
+      border: 1px solid #d8d9dd; background: transparent; color: inherit;
+    }
+    .nf-boot-card-actions button:hover { border-color: #b9bcc2; }
+    /* 本盒的 display:flex 会压过 UA 的 [hidden]{display:none}（作者声明胜 UA 默认）
+       ——入场卡批实拍抓到空失败卡在慢载窗裸浮。此条恢复 hidden 语义（展示仍由
+       showFailedFace 的 card.hidden=false 驱动）。 */
+    .nf-boot-card[hidden] { display: none; }
+    /* ── 入场卡（接管/入场同族批 2026-11-01 作者令③）：进控制台的加载期整面
+       同族卡片覆盖 + 真实加载项清单——样式表/界面模块/连接主机/同步数据四项，
+       进度只由各阶段真实信号驱动（window.__nfEntry.mark），无假进度；全部就绪
+       才揭幕（crossfade 让位给已渲染完整的壳）。材质 = 接管模态卡同族配方
+       （毛玻璃 + 1px 边 + 柔影，radius 18 同档）；此面必须零请求依赖（样式面
+       缺席时它就是唯一的遮羞面），故玻璃配方内联自持、双主题自持。 ── */
+    .nf-entry-card {
+      display: none; /* 门脚本在 CSS 窗落定后置 data-entry="on" 才显——纯 CSS 窗保持现状（环 + 空门） */
+      flex-direction: column; align-items: center; gap: 14px;
+      width: 320px; max-width: 86vw; padding: 26px 28px 22px; text-align: left;
+      background: rgba(255, 255, 255, 0.72);
+      -webkit-backdrop-filter: blur(24px) saturate(1.15);
+      backdrop-filter: blur(24px) saturate(1.15);
+      border: 1px solid #e0e1e4; border-radius: 18px;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.25),
+        0 2px 8px rgba(0, 0, 0, 0.04),
+        0 8px 24px rgba(0, 0, 0, 0.08);
+      color: #1b1e26;
+    }
+    #nf-boot-gate[data-entry="on"] .nf-entry-card { display: flex; }
+    #nf-boot-gate[data-entry="on"] .nf-boot-ring { display: none; } /* 清单自带活动环，门环退役 */
+    #nf-boot-gate[data-state="failed"] .nf-entry-card { display: none; } /* 失败面换失败卡 */
+    .nf-entry-title { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; text-align: center; }
+    .nf-entry-items { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+    .nf-entry-item {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 13px; line-height: 1.5; color: #6a737d;
+      transition: color 0.2s ease;
+    }
+    .nf-entry-item[data-state="active"] { color: #1b1e26; }
+    .nf-entry-dot {
+      width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; box-sizing: border-box;
+      border: 2px solid rgba(0, 0, 0, 0.18);
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 10px; line-height: 1; font-weight: 600;
+    }
+    .nf-entry-item[data-state="active"] .nf-entry-dot {
+      border-color: rgba(91, 127, 191, 0.35); border-top-color: transparent;
+      animation: nf-boot-spin 0.8s linear infinite;
+    }
+    .nf-entry-item[data-state="done"] .nf-entry-dot { border-color: rgba(91, 127, 191, 0.9); }
+    .nf-entry-item[data-state="done"] .nf-entry-dot::after { content: '✓'; color: rgb(91, 127, 191); }
+    .nf-entry-item[data-state="fail"] { color: #1b1e26; }
+    .nf-entry-item[data-state="fail"] .nf-entry-dot { border-color: rgba(209, 36, 47, 0.65); }
+    .nf-entry-item[data-state="fail"] .nf-entry-dot::after { content: '×'; color: #d1242f; font-size: 11px; }
+    /* 揭幕（就绪门槛过后的 crossfade）：body 先行可见（揭的是已就绪的壳），
+       门面整体淡出让位；纯 CSS 窗（卡窗脸）不走本机制，行为不变。 */
+    #nf-boot-gate { transition: opacity 0.22s ease; }
+    html.nf-boot-reveal body { visibility: visible; }
+    html.nf-boot-reveal #nf-boot-gate { opacity: 0; }
+    @media (prefers-reduced-motion: reduce) { #nf-boot-gate { transition: none; } }
+    /* 暗色覆写必须在基态之后（同特异性序胜）——放本块尾。 */
+    @media (prefers-color-scheme: dark) {
+      #nf-boot-gate { background: #141519; }
+      .nf-boot-card { background: #1e2025; color: #e6e8ec; border-color: #33363d; }
+      .nf-boot-card-hint { color: #9aa0a8; }
+      .nf-boot-card-actions button { border-color: #3a3e46; }
+      .nf-boot-card-actions button:hover { border-color: #4c525c; }
+      .nf-boot-ring { border-color: rgba(255, 255, 255, 0.3); border-top-color: transparent; }
+      .nf-entry-card {
+        background: rgba(30, 32, 37, 0.82); border-color: #33363d; color: #e6e8ec;
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.04),
+          0 2px 8px rgba(0, 0, 0, 0.2),
+          0 8px 24px rgba(0, 0, 0, 0.35);
+      }
+      .nf-entry-item { color: #9aa0a8; }
+      .nf-entry-item[data-state="active"], .nf-entry-item[data-state="fail"] { color: #e6e8ec; }
+      .nf-entry-dot { border-color: rgba(255, 255, 255, 0.25); }
+      .nf-entry-item[data-state="active"] .nf-entry-dot {
+        border-color: rgba(120, 155, 220, 0.55); border-top-color: transparent;
+      }
+      .nf-entry-item[data-state="done"] .nf-entry-dot { border-color: rgba(120, 155, 220, 0.9); }
+      .nf-entry-item[data-state="done"] .nf-entry-dot::after { color: rgb(120, 155, 220); }
+    }
+  </style>
+  <script>
+  (function () {
+    var root = document.documentElement;
+    try {
+      // 内嵌脸（沙箱 HTML 预览防递归体系）不进门：main.js 在 DOMContentLoaded
+      // 自渲染停止面，门会把body藏起来连停止面一起吞。卡窗脸进门——其壳隐藏
+      // 规则也在 CSS 里，CSS 失败时卡窗同样会裸整壳，门是它在模块图跑起来之前
+      // 唯一的遮羞面（卡窗静态看门狗只管模块图挂起，不管 CSS 失败）。
+      if (root.dataset.nfEmbedded === '1') return;
+      root.classList.add('nf-boot-gate');
+
+      var links = Array.prototype.slice.call(
+        document.querySelectorAll('head link[rel~="stylesheet"]')
+      );
+      var done = false;
+      // 与卡窗静态看门狗同档预算：判定「永远到不了」，不是性能超时。
+      var WATCHDOG_MS = 15000;
+      var watchdog = null;
+
+      // ── 入场卡（接管/入场同族批 2026-11-01 作者令③）────────────────────────
+      // 进控制台的加载期整面同族卡片 + 真实加载项清单（作者令：进度走真实加载项
+      // 不是假进度条，就绪才揭幕）。四项：css（本门脚本自己的三态判定）/ ui（
+      // main.js 模块图+壳装配完成）/ host（ws.js 首次握手成功；握手被拒 = fail 腿
+      // 立即揭幕让位给登录/重连面）/ data（首帧 configData 落地）。信号源在
+      // ws.js / main.js，经 window.__nfEntry.mark 回报——本脚本零请求依赖不变，
+      // API 先于一切模块存在，回报点只做 typeof 防御。
+      // 卡窗脸不进延长门（其就绪语义不同、自带静态看门狗）：CSS 窗落定即摘门，
+      // 行为与接管批之前逐字一致。
+      var isCardWindow = root.classList.contains('card-window-boot');
+      var failedHard = false; // CSS 失败面已落（fail()）：一票否决入场揭幕——裸渲染批
+                              // 「任一样式失败 ⇒ 永不摘门」的铁律不被 fail 腿击穿
+                              //（CSS 全断时模块图仍会跑、ws 仍会握手被拒）。
+      var entry = {
+        order: ['css', 'ui', 'host', 'data'],
+        states: {},     // id -> 'pending'|'active'|'done'|'fail'
+        armed: false,   // 入场面已建（DOMContentLoaded 后）
+        revealed: false,
+        watchdog: null
+      };
+      var dataGrace = null; // 数据宽限定时器（见 maybeReveal）
+      // 面文案随既存 locale 偏好（品牌命名空间键优先，nebflow_ 旧拼法回退——
+      // modal.js 顶部经典脚本同款读法）。
+      var loc = 'zh-CN';
+      try {
+        var lb = (window.__BRAND__ && window.__BRAND__.lowerName) || 'nebflow';
+        loc = localStorage.getItem(lb + '_locale') || localStorage.getItem('nebflow_locale') || 'zh-CN';
+      } catch (e) { /* 存储不可用：中文缺省 */ }
+      var zh = String(loc).indexOf('zh') === 0;
+      var T = zh ? {
+        cardTitle: '正在进入控制台',
+        ready: '就绪',
+        items: {
+          css:  ['样式表', '正在准备样式…'],
+          ui:   ['界面模块', '正在装载界面…'],
+          host: ['连接主机', '正在检查主机…'],
+          data: ['同步数据', '正在同步数据…']
+        }
+      } : {
+        cardTitle: 'Entering console',
+        ready: 'Ready',
+        items: {
+          css:  ['Styles', 'Preparing styles…'],
+          ui:   ['Interface', 'Loading interface…'],
+          host: ['Checking host', 'Checking host…'],
+          data: ['Syncing data', 'Syncing data…']
+        }
+      };
+
+      function entryRows() {
+        var face = document.getElementById('nf-boot-gate');
+        if (!face) return null;
+        var items = face.querySelector('.nf-entry-items');
+        var title = face.querySelector('.nf-entry-title');
+        if (!items || !title) return null;
+        return { face: face, items: items, title: title };
+      }
+
+      function paintEntry() {
+        var el = entryRows();
+        if (!el) return;
+        // 活动项 = 顺序面上第一个未完成项；标题跟随它的动作文案（「正在检查主机…」
+        // 即入场族同名位的出处），全部完成 = 就绪。活动行 data-state=active
+        // （与样式表的 active 强调位同源——先行项之后仍未到的行保持 pending）。
+        var active = null;
+        for (var i = 0; i < entry.order.length; i++) {
+          var id = entry.order[i];
+          var st = entry.states[id] || 'pending';
+          var row = el.items.querySelector('[data-item="' + id + '"]');
+          if (!active && st !== 'done' && st !== 'fail') { active = id; st = 'active'; }
+          if (row) row.setAttribute('data-state', st);
+        }
+        el.title.textContent = active ? T.items[active][1] : T.ready;
+      }
+
+      function buildEntryFace() {
+        if (entry.revealed) return; // 揭幕先到（如握手在 DCL 前被拒）：面已收走，零补画零看门狗
+        var el = entryRows();
+        if (!el) return;
+        el.face.setAttribute('data-entry', 'on');
+        el.title.textContent = T.cardTitle;
+        var frag = document.createDocumentFragment();
+        for (var i = 0; i < entry.order.length; i++) {
+          var id = entry.order[i];
+          var row = document.createElement('div');
+          row.className = 'nf-entry-item';
+          row.setAttribute('data-item', id);
+          row.setAttribute('data-state', 'pending');
+          var dot = document.createElement('span');
+          dot.className = 'nf-entry-dot';
+          dot.setAttribute('aria-hidden', 'true');
+          var label = document.createElement('span');
+          label.className = 'nf-entry-label';
+          label.textContent = T.items[id][0];
+          row.appendChild(dot);
+          row.appendChild(label);
+          frag.appendChild(row);
+        }
+        el.items.appendChild(frag);
+        entry.armed = true;
+        paintEntry();
+        // 安全阀：入场项 20s 仍未齐（TCP 黑洞/挂死握手形状）——揭幕让位给应用
+        // 自身的活性面（conn-banner/登录门），绝不无限期扣住入口。
+        entry.watchdog = setTimeout(function () { reveal(true); }, 20000);
+      }
+
+      function reveal(fade) {
+        if (entry.revealed || failedHard) return;
+        entry.revealed = true;
+        if (entry.watchdog !== null) { clearTimeout(entry.watchdog); entry.watchdog = null; }
+        if (dataGrace !== null) { clearTimeout(dataGrace); dataGrace = null; }
+        var face = document.getElementById('nf-boot-gate');
+        var finish = function () {
+          root.classList.remove('nf-boot-gate');
+          root.classList.remove('nf-boot-reveal');
+          if (face) face.style.display = 'none';
+        };
+        if (fade && face) {
+          // crossfade：body 先行可见（揭的是已就绪/已让位的壳），门面淡出后收走。
+          face.setAttribute('data-state', 'ready');
+          root.classList.add('nf-boot-reveal');
+          setTimeout(finish, 260);
+        } else finish();
+      }
+
+      function maybeReveal() {
+        if (entry.revealed || !entry.armed) return;
+        var missing = [];
+        for (var i = 0; i < entry.order.length; i++) {
+          if (entry.states[entry.order[i]] !== 'done') missing.push(entry.order[i]);
+        }
+        if (!missing.length) { reveal(true); return; }
+        // 数据宽限（css/ui/host 齐、唯 data 未到）：3s 有界等待后让位——真实引擎
+        // 在 connect 即推 configData（生产形态零感知）；替身/病态服务端不扣入口。
+        if (missing.length === 1 && missing[0] === 'data' && dataGrace === null) {
+          dataGrace = setTimeout(function () { dataGrace = null; reveal(true); }, 3000);
+        }
+      }
+
+      function markEntry(id, state) {
+        if (entry.revealed || failedHard) return; // 已揭幕 / CSS 失败面：迟到回报零副作用
+        if (entry.order.indexOf(id) < 0) return;
+        entry.states[id] = state;
+        try { (window.__nfEntryState = window.__nfEntryState || {})[id] = state; } catch (e) { /* 永不抛 */ }
+        paintEntry();
+        // fail 腿（host 握手被拒 = 入场无法继续）：立即揭幕让位给登录/重连面。
+        if (state === 'fail' && id !== 'css') reveal(true);
+        else maybeReveal();
+      }
+
+      // 信号回报单缝（ws.js / main.js 消费点只做 typeof 防御调用）。
+      window.__nfEntry = { mark: markEntry };
+
+      // 三态判定（逐链终态性自知）：本脚本被**script-blocking 表**（媒体条件
+      // 命中或无媒体条件的 render-blocking 表）阻塞——执行到此处时这类表必已
+      // 终态（成功/失败），其 sheet 缺席 = 网络失败类（abort/断流：error 事件
+      // 在本脚本挂监听**之前**就 fire 完毕，此判据是唯一收口），0 规则 = 404/
+      // 空体（本树 CSS 均非空，0 规则即失败语义）。非适用媒体表（highlight
+      // 双主题对）不阻塞脚本、可能仍在途——缺席按 pending，其 load/error 事件
+      // 驱动复评；已处理即足（适用性由媒体查询决定，与规则数无关）。看门狗
+      // 兜底一切挂死。
+      function isScriptBlocking(link) {
+        var m = link.getAttribute('media');
+        if (!m || !window.matchMedia) return true;
+        try { return window.matchMedia(m).matches; } catch (e) { return true; }
+      }
+      function classify(link) {
+        var sheet = link.sheet;
+        if (!sheet) return isScriptBlocking(link) ? 'fail' : 'pending';
+        if (!isScriptBlocking(link)) return 'ok';
+        // CSSOM：加载失败的表 cssRules 访问抛 SecurityError（同源前提下 throw
+        // 即失败语义）；0 规则 = 404/空体（本树 CSS 均非空）。
+        try { return sheet.cssRules.length > 0 ? 'ok' : 'fail'; }
+        catch (e) { return 'fail'; }
+      }
+
+      function cleanup() {
+        document.removeEventListener('load', onRes, true);
+        document.removeEventListener('error', onRes, true);
+        if (watchdog !== null) { clearTimeout(watchdog); watchdog = null; }
+      }
+
+      // CSS 窗落定（全 ok）——接管/入场同族批改语义：主脸不再就地摘门，转入场
+      // 延长门（清单四项全 done 才揭幕）；卡窗脸保持现行为（就地摘门）。原「摘门」
+      // 职责收进 reveal()/本函数，失败路径（fail → 失败面、永不揭幕）逐字不变。
+      function lift() {
+        if (done) return;
+        done = true;
+        cleanup();
+        if (isCardWindow) {
+          // 卡窗脸：就绪语义不同（canvas.js 自带引导态面 + 静态看门狗），CSS 窗
+          // 即门——接管批之前的行为逐字保留（同任务 add+lift，零闪现不受入场卡影响）。
+          root.classList.remove('nf-boot-gate');
+          return;
+        }
+        markEntry('css', 'done');
+        // 面元素在 body 首元素——CSS 窗落定可能先于 body 解析完成，两拍收口：
+        // 已解析即建面，否则挂 DOMContentLoaded（此窗内信号先到的，建面后补画）。
+        if (document.getElementById('nf-boot-gate')) buildEntryFace();
+        else document.addEventListener('DOMContentLoaded', buildEntryFace, { once: true });
+      }
+
+      function fail() {
+        if (done) return;
+        done = true;
+        failedHard = true; // 一票否决入场揭幕（见上）——失败面永在，绝不回落裸壳
+        window.__nfBootGateFailed = true; // 卡窗静态看门狗去重锚（下方）
+        cleanup();
+        // error 可在 body 解析完成前到达（首帧前失败）——面元素在 body 首元素，
+        // 未解析则挂 DOMContentLoaded 补画；门类保持（body 维持隐藏）。
+        if (document.getElementById('nf-boot-gate')) showFailedFace();
+        else document.addEventListener('DOMContentLoaded', showFailedFace, { once: true });
+      }
+
+      function showFailedFace() {
+        var face = document.getElementById('nf-boot-gate');
+        if (!face) return;
+        face.setAttribute('data-state', 'failed');
+        var card = face.querySelector('.nf-boot-card');
+        if (!card) return;
+        var title = card.querySelector('.nf-boot-card-title');
+        var hint = card.querySelector('.nf-boot-card-hint');
+        var retry = card.querySelector('.nf-boot-retry');
+        var bypass = card.querySelector('.nf-boot-retry-bypass');
+        if (title) title.textContent = '页面样式加载失败 / Styles failed to load';
+        if (hint) hint.textContent = '部分样式资源未能到达（网络中断或缓存过期），重试即可恢复。Some stylesheets never arrived — retry to reload.';
+        if (retry) {
+          retry.textContent = '重试 / Retry';
+          retry.addEventListener('click', function () {
+            try { location.reload(); } catch (e) { /* 永不抛 */ }
+          });
+        }
+        if (bypass) {
+          bypass.textContent = '绕过缓存重试 / Retry without cache';
+          bypass.addEventListener('click', function () {
+            try {
+              var u = new URL(location.href);
+              u.searchParams.set('nfsw', '0'); // sw.js 逃生门：query 其余原样保留
+              location.replace(u.toString());
+            } catch (e) { location.reload(); }
+          });
+        }
+        card.hidden = false;
+      }
+
+      function evaluate() {
+        if (done) return;
+        var ok = 0;
+        for (var i = 0; i < links.length; i++) {
+          var c = classify(links[i]);
+          if (c === 'fail') { fail(); return; }
+          if (c === 'ok') ok++;
+        }
+        if (ok === links.length) lift();
+      }
+
+      // load/error 在 link 上不冒泡——捕获阶段挂在 document 上收。error 即判死
+      // （样式加载失败的定义本身），不等 sheet 态；load 走常规三态复评。
+      function onRes(evt) {
+        var t = evt.target;
+        if (!t || t.tagName !== 'LINK') return;
+        var rel = ' ' + (t.getAttribute('rel') || '') + ' ';
+        if (rel.indexOf(' stylesheet ') < 0) return;
+        if (evt.type === 'error') { fail(); return; }
+        evaluate();
+      }
+
+      document.addEventListener('load', onRes, true);
+      document.addEventListener('error', onRes, true);
+      watchdog = setTimeout(function () {
+        if (done) return;
+        fail(); // 到点仍有未决样式 ⇒ 失败面收口，绝不回落裸壳
+      }, WATCHDOG_MS);
+
+      evaluate(); // 初始评：缓存即中 ⇒ 首帧前摘门，加载面零闪现
+    } catch (e) {
+      // 门自身故障 ⇒ 放行回现状行为（面只在 html.nf-boot-gate 下可见，自隐）。
+      try { root.classList.remove('nf-boot-gate'); } catch (_) { /* 永不抛 */ }
+    }
+  })();
+  </script>
+<script>window.__BRAND__={"productName":"stand","lowerName":"stand","domain":"mystand.space","homeDirName":".stand","profileUrl":"https://mystand.space/profile","name":"stand","logoUrl":"/brand/releases/71a456e2d388b27e/symbol-light.svg","logoDarkUrl":"/brand/releases/71a456e2d388b27e/symbol-dark.svg"};</script><script>window.__WEB_FINGERPRINT__="be57ee40772f04e0";</script></head>
+<body>
+  <!-- 偶发裸渲染修复批（2026-10-30）：加载/失败引导面，body 首元素。常态
+       display:none（html.nf-boot-gate 下才显）；纯 CSS 环 + 文本卡，零资产
+       依赖——它报告的正是样式面缺席，自身绝不能再依赖任何请求。
+       接管/入场同族批（2026-11-01 作者令③）追加 .nf-entry-card：主脸的入场
+       延长门面（真实加载项清单 + 就绪揭幕，门脚本置 data-entry="on" 才显；
+       卡窗脸与 CSS 窗不显，行为不变）。 -->
+  <div id="nf-boot-gate" role="status" aria-live="polite">
+    <div class="nf-boot-ring" aria-hidden="true"></div>
+    <div class="nf-entry-card" role="status" aria-live="polite">
+      <div class="nf-entry-title"></div>
+      <div class="nf-entry-items"></div>
+    </div>
+    <div class="nf-boot-card" hidden>
+      <div class="nf-boot-card-title"></div>
+      <div class="nf-boot-card-hint"></div>
+      <div class="nf-boot-card-actions">
+        <button type="button" class="nf-boot-retry"></button>
+        <button type="button" class="nf-boot-retry-bypass"></button>
+      </div>
+    </div>
+  </div>
+  <!-- 液体玻璃 v2 批：边缘光折射滤镜 defs（追加批指定方案 —— SVG feDisplacementMap
+       驱动 backdrop 光畸变，iOS 26 液体玻璃 CSS 复刻通行做法）。低频次 fractal
+       噪声 + 克制 scale（5）：折射集中在边缘、按钮文字零畸变。消费 =
+       liquid-glass.css ::before 折射层（html.g2-refract-on 类开关，js/liquidGlass.js
+       能力探测）；旧 WebView 无滤镜 = 高光+浮影直 blur，不裸断。filter 区域外扩
+       20%：边缘位移不裁切。 -->
+  <svg id="g2-refract-defs" width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <filter id="g2-refract" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.012 0.018" numOctaves="2" seed="8" result="g2noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="g2noise" scale="5" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </svg>
+  <!-- conn-liveness（对话层活性批 2026-10-22）：ws 断连/重连顶栏横幅。传输层
+       问题不再伪装成卡死：断开 ⇒ 顶栏「连接断开 · 正在重连」（离线排队消息
+       在场时追加「N 条待送达」）；重连成功 ⇒ 横幅收起，队列由 flushOfflineQueue
+       自动冲刷。固定定位不推挤布局；生产者 = ws.js updateConnBanner。 -->
+  <div id="conn-banner" class="hidden" role="status" aria-live="polite"></div>
+  <script>document.documentElement.classList.add('ui-init');</script>
+  <script>/* Classic script: cannot import branding.js. Read the brand-namespaced key first, fall back to the legacy nebflow_ spelling. */var __b=(window.__BRAND__&&window.__BRAND__.lowerName)||'nebflow';if(localStorage.getItem(__b+'_sidebar_collapsed')==='true'||localStorage.getItem('nebflow_sidebar_collapsed')==='true'||window.matchMedia('(max-width: 768px)').matches)document.body.classList.add('sidebar-collapsed');window.__sidebarRestore={collapsed:document.body.classList.contains('sidebar-collapsed'),panel:localStorage.getItem(__b+'_sidebar_active_panel')||localStorage.getItem('nebflow_sidebar_active_panel')||'files'};</script>
+  <!-- Activity Bar — vertical icon strip (independent glass card).
+       Top: avatar (tap to log in to NebLink) + the two communication
+       entries (Messages → Contacts). Gating is a single decision point in
+       js/featureFlags.js (friendsEnabled(): release marker vs. dev config
+       chain): activityBar.js detaches them at boot and main.js re-attaches
+       them once the flag latches on. Default is ON / unsealed (author
+       ruling 2026-09-14).
+       Bottom: fixed semantic order (2026-09-05 sidebar-restructure spec) —
+       Files → Projects → Plugins (agents-btn mounts the plugins page) →
+       Usage → Settings. Device management lives in the Settings panel
+       (NebLink section). -->
+  <div id="activity-bar">
+    <button id="activity-avatar" class="activity-avatar" title="Login">
+      <picture>
+        <!-- Brand-standard console batch 2026-10-19: the legacy black-cat
+             avatar is retired; the avatar slots show the stand-symbol mark
+             (black on light / white on dark). Injected gateways override both
+             legs with __BRAND__.logoUrl/logoDarkUrl (release symbol renders).
+             Avatar-sharp batch 2026-10-19: both legs are the vector symbol
+             sources — sharp at any slot size × devicePixelRatio. -->
+        <source media="(prefers-color-scheme: dark)" srcset="/brand/stand/illustrator/svg/stand-symbol-white.svg">
+        <img class="activity-avatar-logo" src="/brand/stand/illustrator/svg/stand-symbol-black.svg" alt="">
+      </picture>
+      <img class="activity-avatar-photo" alt="" hidden>
+      <span class="activity-avatar-letter" hidden>N</span>
+    </button>
+    <script>/* Brand slot apply (classic script, pre-paint — brand-switch-console batch 2026-10-15): the avatar logo src/srcset and the (always-hidden) avatar letter are brand slots driven by window.__BRAND__ (injected in <head>). Applied ONLY when the injected fields are present; the static markup above keeps the current values as the no-injection fallback, so the default brand renders pixel-identical and JS-off still works. Paths are display/reference slots (see brand.js) — never URL builders. */(function(){var b=window.__BRAND__||{};var pic=document.querySelector('#activity-avatar picture');if(pic){if(typeof b.logoDarkUrl==='string'&&b.logoDarkUrl){var src=pic.querySelector('source');if(src)src.setAttribute('srcset',b.logoDarkUrl);}if(typeof b.logoUrl==='string'&&b.logoUrl){var img=pic.querySelector('img.activity-avatar-logo');if(img)img.setAttribute('src',b.logoUrl);}}if(typeof b.name==='string'&&b.name){var el=document.querySelector('#activity-avatar .activity-avatar-letter');if(el)el.textContent=b.name.charAt(0)||'N';}})();</script>
+    <button id="messages-btn" class="activity-btn" data-panel-btn="messages" title="Messages" aria-pressed="false"><i data-lucide="message-circle"></i><span class="activity-badge" id="messages-badge" hidden></span></button>
+    <button id="contacts-btn" class="activity-btn" data-panel-btn="contacts" title="Contacts" aria-pressed="false"><i data-lucide="contact-round"></i><span class="activity-badge" id="contacts-badge" hidden></span></button>
+    <!-- Social interface cards entry (socpanel batch, 2026-09-19; author ruling
+         2026-09-19 令③): smartphone icon, directly below the contacts entry,
+         before the spacer. No side panel — it opens the config dialog
+         (#social-overlay). NOT part of the friends seal (friendseal batch,
+         author ruling 2026-09-25 ④: this is a social-channel config panel,
+         unrelated to the friends feature) — the button stays mounted and
+         functional in every friends-flag state. -->
+    <button id="social-btn" class="activity-btn" data-panel-btn="social" title="Phone access" aria-pressed="false"><i data-lucide="smartphone"></i></button>
+    <div class="activity-spacer"></div>
+    <!-- 2026-09-05 旧 UI 退役：v5 §3.5 二级入口（#legacy-btn/#legacy-pop 与
+         teams-btn/flows-btn）已整体删除（作者裁定「直接删除，不是封存」）；
+         Projects 按钮沿用 Team/Flow 让出的槽位。 -->
+    <button id="files-btn" class="activity-btn active" data-panel-btn="files" title="Files" aria-pressed="true"><i data-lucide="files"></i></button>
+    <!-- 待办体系改版批（2026-10-31 作者令）：待办不占单独侧边栏槽位——退役
+         activity bar #todo-btn 与侧边栏 #panel-todo；入口 = 消息列表顶部
+         「待办事项」行（随 #fm-conversations 双端同现），内页 = #todo-page
+         提醒事项风格独立页（桌面玻璃 overlay ⇄ 手机 pushPage 收编，见
+         scheduled-task.js / navController.js / css/todo-page.css）。 -->
+    <button id="projects-btn" class="activity-btn" title="Projects"><i data-lucide="folder-kanban"></i></button>
+    <!-- Wiki document graph (wiki-graph batch, 2026-10-14; icon wiring batch,
+         2026-10-15: lucide sparkles replaced by the C2 hub-spoke inline SVG —
+         geometry from .nebflow/evidence/20261014_wiki-dx/icons/c2-hub-spoke.svg,
+         stroke/size follow the .activity-btn svg active spec 19×19 · 1.8; the
+         asset's inline color is dropped so the 4-state currentColor applies).
+         Same 4-state panel-button contract as Projects (canvas.js
+         registerCanvasPanelButton, wired from main.js). -->
+    <button id="wiki-btn" class="activity-btn" title="Wiki Graph"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><circle cx="4.8" cy="4.8" r="2.2"/><circle cx="19.2" cy="4.8" r="2.2"/><circle cx="4.8" cy="19.2" r="2.2"/><circle cx="19.2" cy="19.2" r="2.2"/><line x1="9" y1="9" x2="7.1" y2="7.1"/><line x1="15" y1="9" x2="16.9" y2="7.1"/><line x1="9" y1="15" x2="7.1" y2="16.9"/><line x1="15" y1="15" x2="16.9" y2="16.9"/></svg></button>
+    <!-- 2026-09-04 件 B：原「智能体」独立面板入口移除，按钮改挂「插件」页
+         （plugins.js 接管注册，id/按下态机制不变；i18n 标题走 activity.plugins）。
+         2026-09-05 重排规格：语义顺序 文件→项目→插件→token→设置。 -->
+    <button id="agents-btn" class="activity-btn" title="Plugins"><i data-lucide="puzzle"></i></button>
+    <button id="usage-btn" class="activity-btn" title="Usage Dashboard" aria-haspopup="dialog"><i data-lucide="bar-chart-3"></i></button>
+    <button id="settings-btn" class="activity-btn" title="Settings"><i data-lucide="settings"></i></button>
+  </div>
+
+  <!-- Sidebar — switchable panels (explorer today; registry-driven) -->
+  <div id="sidebar">
+    <div id="sidebar-panel">
+      <div id="panel-sessions" class="panel active" data-panel-id="files">
+        <!-- Sidebar top bar -->
+        <div class="sidebar-topbar"></div>
+
+        <!-- Explorer Section -->
+        <div id="explorer-section">
+          <div class="explorer-header">
+            <span class="explorer-title" id="panel-title-explorer">Explorer</span>
+            <div class="explorer-actions">
+              <button class="explorer-action-btn" id="explorer-new-file-btn" title="New File">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 12v6"/><path d="M9 15h6"/></svg>
+              </button>
+              <button class="explorer-action-btn" id="explorer-new-folder-btn" title="New Folder">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/><path d="M12 10v6"/><path d="M9 13h6"/></svg>
+              </button>
+              <button id="explorer-folder-btn" class="explorer-folder-btn" title="Open Folder">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>
+              </button>
+            </div>
+          </div>
+          <div id="explorer-tree">
+            <!-- File tree rendered here by explorer.js -->
+          </div>
+        </div>
+      </div>
+      <div id="panel-messages" class="panel" data-panel-id="messages">
+        <div class="panel-header"><span class="panel-title" data-i18n="panel.messages">Messages</span></div>
+        <div id="fm-conversations" role="listbox" aria-label="Messages"></div>
+      </div>
+      <!-- 待办面板（待办分家批 2026-10-30）已随改版批（2026-10-31）退役：侧边栏
+           不再占槽，待办面迁至 #todo-page 提醒事项页（入口 = 消息列表顶部行）。 -->
+      <div id="panel-contacts" class="panel" data-panel-id="contacts">
+        <div class="panel-header"><span class="panel-title" data-i18n="panel.contacts">Contacts</span></div>
+        <div id="fm-contacts-body"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+  /* Pre-paint Side Bar panel restore (classic script — runs before the module
+     graph). The body class was set at parse start; here we resolve the
+     persisted active panel so the FIRST FRAME already shows the correct
+     panel/button state (no flicker). Unknown persisted ids fall back to
+     'files'. Collapsed → nothing is active (activityBar.js re-activates the
+     stored panel on expand). */
+  (function () {
+    var r = window.__sidebarRestore || { collapsed: false, panel: 'files' };
+    var panels = document.querySelectorAll('#sidebar-panel .panel');
+    var target = null;
+    for (var i = 0; i < panels.length; i++) {
+      if (panels[i].getAttribute('data-panel-id') === r.panel) target = panels[i];
+    }
+    if (!target) target = document.querySelector('#sidebar-panel .panel[data-panel-id="files"]');
+    for (var j = 0; j < panels.length; j++) {
+      panels[j].classList.toggle('active', !r.collapsed && panels[j] === target);
+    }
+    var pid = target ? target.getAttribute('data-panel-id') : 'files';
+    var btn = document.querySelector('#activity-bar [data-panel-btn="' + pid + '"]');
+    if (btn) {
+      btn.classList.toggle('active', !r.collapsed);
+      btn.setAttribute('aria-pressed', r.collapsed ? 'false' : 'true');
+    }
+  })();
+  </script>
+
+  <!-- Column resizer — drag to adjust sidebar / main widths -->
+  <div class="col-resizer" data-left="sidebar" data-right="main"></div>
+
+  <!-- Main Chat Area -->
+  <div id="main">
+    <div id="header">
+      <div class="header-left">
+        <button id="sidebar-toggle" class="panel-toggle-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
+        </button>
+        <!-- 上下文用量环（ctxring 批）已整链退役 —— 2026-10-23 作者令
+             逐字「把桌面端的上下文用量显示也去掉」。本处不留挂载点；
+             防复活钉：tests/remove-context-usage.spec.mjs。 -->
+      </div>
+      <div class="header-center">
+        <span id="session-name"></span>
+        <button id="memory-btn" class="memory-btn" title="Memory" hidden><i data-lucide="brain"></i></button>
+      </div>
+      <div class="header-right">
+        <button id="search-btn" title="搜索聊天记录"><i data-lucide="search"></i></button>
+        <div id="bypass-dropdown" class="header-dropdown">
+          <button id="bypass-toggle" class="bypass-toggle" data-mode="confirm-edits" title="安全模式">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </button>
+        </div>
+        <button class="voice-toggle" id="voice-toggle-btn" title="Voice output">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+        </button>
+        <button id="reminder-btn" title="Scheduled Tasks"><i data-lucide="clock"></i></button>
+        <button id="daemon-btn" title="心跳进程"><i data-lucide="server"></i></button>
+        <div id="bg-indicator" class="hidden" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-controls="bg-dropdown">
+          <span class="bg-dot"></span>
+          <span class="bg-count">0</span>
+        </div>
+        <!-- D6 批 F2: pending AskUser count — same capsule pattern as bg-indicator,
+             warning hue (pending question = blocked task chain). Click jumps to
+             the oldest pending card. -->
+        <div id="pending-asks-indicator" class="hidden" role="button" tabindex="0" aria-live="polite">
+          <span class="pa-dot"></span>
+          <span class="pa-count">0</span>
+        </div>
+        <!-- held-receipt 投递可靠性批（2026-10-21 fix 3）：本会话「N 条回执待投递」
+             徽标——held（被屏障扣留）+ unread（催注穷尽终态）。同 pending-asks 胶囊族，
+             由 WS heldReceipts 帧驱动（main.js），归零即隐。 -->
+        <div id="held-receipts-indicator" class="hidden" role="button" tabindex="0" title="Held delivery receipts">
+          <span class="pa-dot"></span>
+          <span class="pa-count">0</span>
+        </div>
+        <div id="bgagent-indicator" class="hidden" title="Sub-agents running" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-controls="bgagent-dropdown">
+          <span class="bgagent-dot"></span>
+          <span class="bgagent-count">0</span>
+        </div>
+        <button id="canvas-toggle-btn" class="panel-toggle-btn" title="Canvas">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
+        </button>
+      </div>
+    </div>
+    <!-- 顶缘滚入渐隐带（液体玻璃 v2 批 2026-10-31）：手机端替代顶栏的 88px
+         「先糊后没」层（blur 18 / sat 1.5 + veil + 两段式 mask；liquid-glass.css）。
+         桌面恒隐；不是栏——pointer-events:none、无背景容器/边框/固定标题
+         （作者裁定 ② 逐字）。层级：内容 < 渐隐带 25 < 悬浮圆钮层 30。 -->
+    <div id="g2-edge-fade" aria-hidden="true"></div>
+    <!-- Dropdowns moved outside #header so backdrop-filter can blur chat content.
+         #header has its own backdrop-filter which creates a backdrop root, preventing
+         child elements from blurring content behind the header. -->
+    <div class="header-dropdown-menu" id="bypass-menu">
+      <button data-mode="confirm-edits" data-i18n="bypass.confirmEdits">确认编辑</button>
+      <button data-mode="auto-edits" data-i18n="bypass.autoEdits">编辑放行</button>
+      <button data-mode="auto-all" data-i18n="bypass.autoAll">全部放行</button>
+    </div>
+    <div id="bgagent-dropdown" class="hidden">
+      <div class="bg-dropdown-header" aria-live="polite">Sub-agents</div>
+      <div class="bg-dropdown-list" role="list"></div>
+    </div>
+    <div id="bg-dropdown" class="hidden">
+      <div class="bg-dropdown-header" aria-live="polite">Background tasks</div>
+      <div class="bg-dropdown-list" role="list"></div>
+    </div>
+    <!-- Reminder Panel — floating dropdown from header button -->
+    <div id="reminder-panel" class="scroll-under-glass">
+      <div class="reminder-panel-header">
+        <div class="reminder-panel-title">Scheduled Tasks</div>
+        <div class="reminder-panel-header-right">
+          <span class="reminder-panel-count"></span>
+          <button class="reminder-create-btn" id="reminder-create-btn" title="New Task">
+            <i data-lucide="plus"></i>
+          </button>
+        </div>
+      </div>
+      <div class="reminder-panel-body"></div>
+      <div class="reminder-panel-footer"></div>
+    </div>
+    <!-- Todo Page — 提醒事项风格独立页（改版批 2026-10-31）：入口 = 消息列表
+         顶部「待办事项」行；桌面 = 玻璃 overlay 页开合（.open），手机层由
+         navController 收编进 pushPage 详情页。分组：已到期（浮顶）/待决策/
+         待批准/计划；圆钮打勾销账；跨会话收件箱（scope:all）。渲染核 =
+         scheduled-task.js。 -->
+    <div id="todo-page" class="scroll-under-glass">
+      <div class="todo-page-header">
+        <div class="todo-page-title" data-i18n="todo.entryTitle">待办事项</div>
+        <div class="todo-page-header-right">
+          <span class="todo-page-count" id="todo-page-count"></span>
+          <button class="todo-create-btn" id="todo-create-btn" title="New">
+            <i data-lucide="plus"></i>
+          </button>
+          <button class="todo-close-btn" id="todo-close-btn" title="Close">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+      </div>
+      <div class="todo-page-body" id="todo-page-body"></div>
+      <div class="todo-page-footer"></div>
+    </div>
+    <!-- Daemon Panel — floating dropdown from header button -->
+    <div id="daemon-panel" class="scroll-under-glass">
+      <div class="daemon-panel-header">
+        <div class="daemon-panel-title" data-i18n="daemons.title">Heartbeat</div>
+        <div class="daemon-panel-header-right">
+          <button class="daemon-close-btn" id="daemon-close-btn" title="Close">
+            <i data-lucide="x"></i>
+          </button>
+        </div>
+      </div>
+      <div class="daemon-panel-body"></div>
+      <div class="daemon-panel-footer"></div>
+    </div>
+    <!-- 顶带裙边退役批（2026-10-22 作者回访裁定「不允许任何渐变蒙层盖在气泡内容上」）：
+         scroll-under-glass 不再挂本带 —— 带空时 28px tint+blur 裙边照画在穿顶首行上
+         （归因探针 tests/tmp-topclip-band-probe.mjs：隐藏本元素带区均色即回亮）。
+         穿顶内容 = Header 玻璃自身磨砂（盒内）+ 带下零蒙层；带下过渡 = 纯硬边界
+         （任务卡玻璃 blur 仍在卡上，裙边渐隐本体退役）。五面浮层面板裙边照旧。 -->
+    <div id="top-overlays">
+      <div id="task-list"></div>
+      <!-- D6 批 F2: pending-AskUser persistent bar (one row per unanswered
+           question: source · summary, click = scroll to card + highlight) -->
+      <div id="ask-pending-bar" class="hidden" role="list" aria-live="polite"></div>
+      <div id="notification-banner"></div>
+    </div>
+    <!-- daemonpanel Phase A: daemon config-panel overlay. BODY-LEVEL on purpose
+         — #daemon-panel is an `overflow:hidden` + backdrop-filter container, and
+         such an ancestor both clips its descendants and becomes the containing
+         block for their fixed positioning (the #392 precedent: DOM assertions
+         all green while the overlay is invisible on screen). -->
+    <div id="daemon-config-overlay" role="dialog" aria-modal="false"></div>
+    <div id="chat"></div>
+    <div id="input-area">
+      <div class="voice-overlay" id="voice-overlay">
+        <div class="voice-wave"><i data-lucide="mic"></i></div>
+        <div class="voice-text" id="voice-text">Listening...</div>
+        <div class="voice-hint" id="voice-hint">Release to send</div>
+      </div>
+      <!-- Moved outside #input-bar so backdrop-filter can blur chat content -->
+      <div id="slash-dropdown"></div>
+      <!-- 回合活动流条（对话层活性批 2026-10-22）已整链退役 —— 2026-10-23 作者令
+           逐字「这个活动面板我不是让删掉吗，就是对话框上面这个」。本处不留挂载点；
+           防复活钉：tests/turn-activity-stream.spec.mjs。 -->
+      <div id="queue-bar"></div>
+      <div id="input-bar">
+        <!-- 语音输入 = micOrb 液态光球（voicefix 批，作者 2026-09-21 14:0x ③：
+             「参考我们最新的实现……把最近的有光球的回退回来」⇒ 回退源 =
+             2cba0a224 删除前的最近版（git show 2cba0a224^），非 v8.2.2 原初版；
+             设置页光球调色板维持现状不恢复）。DOM 四件照原样恢复。
+             🟢 voiceseal 纠正批（批 #513，作者澄清：「怎么语音气泡直接没了，
+             我要去掉的是hover拖动这些功能。」）：#508 的静态 `hidden` 摘除，
+             气泡回归**默认产品形态 = 可见可点**（点击听写等非全双工路径照常），
+             但为**纯静态**——`voice-static` 姿态类静态携带、JS 从不摘除：
+             hover 悬停反馈（.voice-drag-hint）被 css/voiceMode.css 静态姿态
+             覆盖规则压死，拖动/回弹手势由 input.js pointerdown 的
+             voiceEnabled() 闸（#508 原样）兜死 ⇒ 气泡固定默认位。
+             挂载门 = featureFlags.voiceOrbEnabled()（默认显示；显式
+             `features.voiceOrb:false` 才藏，与全双工正交——js/voiceSeal.js
+             双参 latch）。隐藏 ≠ 删除：子树/监听/i18n/CSS 全保留
+             （companion 规则 = css/input.css `.mic-orb-wrap[hidden]`）。 -->
+        <div class="mic-orb-wrap voice-static" id="mic-orb-wrap">
+          <button class="micbubble" id="voice-btn" type="button" title="Voice input" aria-label="Voice input">
+            <canvas class="orb-canvas" id="mic-canvas" aria-hidden="true"></canvas>
+            <div class="css-orb orb" id="mic-css-orb" role="img" aria-label="Mic state"></div>
+          </button>
+          <div class="voice-drag-hint" aria-hidden="true"><span></span><span></span><span></span></div>
+        </div>
+      <div id="input-wrap" style="position:relative;">
+        <div id="attachment-preview"></div>
+        <div id="ask-indicator"><span id="ask-indicator-label">ASK</span><span id="ask-indicator-cancel">&times;</span></div>
+        <div id="skill-indicator"><span id="skill-indicator-label">SKILL</span><span id="skill-indicator-cancel">&times;</span></div>
+        <div id="compact-indicator"><span id="compact-indicator-label">COMPACT</span><span id="compact-indicator-cancel">&times;</span></div>
+        <textarea id="input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
+      </div>
+      <button class="skip-freeze-btn" id="skip-freeze-btn" type="button"><i data-lucide="skip-forward"></i><span id="skip-freeze-label">跳过本次</span></button>
+      <button class="icon-btn" id="attach-btn"><i data-lucide="paperclip"></i></button>
+      <button id="send-btn"><i data-lucide="send"></i></button>
+      <button id="stop-btn"><i data-lucide="square"></i></button>
+    </div>
+  </div>
+  </div>
+
+  <!-- Column resizer — drag to adjust main / canvas widths (only when canvas open) -->
+  <div class="col-resizer" data-left="main" data-right="canvas"></div>
+
+  <!-- Canvas Panel — generic display container (画板).
+       叠卡批（canvas-stack v5 落地）：桌面态标签行退役 → 常态头只留居中标题
+       （.canvas-title，兼作叠卡前卡的卡顶名称条）；标签条/关闭钮 DOM 保留
+       （数据模型与移动层仍引用），桌面由 split.css 隐藏。
+       UI 批⑨：标题头浮层毛玻璃胶囊化（.canvas-header absolute + 玻璃胶囊），
+       .scroll-under-glass 挂裙边 —— 内容全高滚动、从胶囊底下穿过渐隐。 -->
+  <div id="canvas-panel">
+    <div id="canvas-slide">
+      <div class="canvas-header scroll-under-glass">
+        <div class="canvas-title" id="canvas-title">
+          <span class="t-inner">
+            <span class="t-icon" id="canvas-title-icon"></span>
+            <span class="t-dot"></span>
+            <span class="t-name" id="canvas-title-name"></span>
+          </span>
+        </div>
+        <div class="canvas-tab-bar" id="canvas-tab-bar"></div>
+        <button id="canvas-close-btn" class="canvas-close-btn" title="Close">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <div id="canvas-content"></div>
+    </div>
+  </div>
+
+  <!-- Right edge bar — thin fixed strip anchoring the canvas panel's right boundary -->
+  <div class="edge-bar edge-bar-right"></div>
+
+  <!-- Full-duplex voice mode overlay. BODY-LEVEL on purpose (same reasoning
+       as #daemon-config-overlay): must cover the viewport and escape any
+       overflow / backdrop-filter ancestor clipping.
+       🔴 voiceseal 批（批 #508）封存面 A：静态 `hidden` = boot 默认封存姿态；
+       js/voiceSeal.js 按 featureFlags.voiceEnabled() latch。🔴 纠正批（#513）：
+       面语义收窄 —— overlay 只挂全双工 flag（voiceEnabled，默认封存），
+       **维持 #508 封存不变**；语音气泡（原同 flag 的面 B）已分家
+       （voiceOrbEnabled，默认显示，见 #mic-orb-wrap 注）。
+       隐藏 ≠ 删除：overlay 子树 / voiceMode.js / voiceEngine conversation 模式
+       全保留（companion 规则 = css/voiceMode.css `#voice-mode-overlay[hidden]`）。 -->
+  <div id="voice-mode-overlay" role="dialog" aria-modal="false" aria-label="Voice conversation" hidden>
+    <div class="vmo-scrim"></div>
+    <div class="vmo-center">
+      <div class="mic-orb-wrap vmo-orb-wrap" id="vmo-orb-wrap">
+        <div class="micbubble vmo-bubble">
+          <canvas class="orb-canvas" id="vmo-canvas" aria-hidden="true"></canvas>
+          <div class="css-orb orb" id="vmo-css-orb" role="img" aria-label="Voice state"></div>
+        </div>
+      </div>
+      <div class="vmo-caption" id="vmo-caption" hidden></div>
+      <div class="vmo-transcript" id="vmo-transcript" hidden></div>
+      <div class="vmo-hint" id="vmo-hint"></div>
+    </div>
+    <button class="vmo-exit" id="vmo-exit" type="button" title="Exit voice conversation" aria-label="Exit voice conversation">
+      <i data-lucide="x"></i>
+    </button>
+  </div>
+
+  <!-- Modals -->
+  <div id="modal-overlay">
+    <div id="modal-box">
+      <div id="modal-title">New Session</div>
+      <input id="modal-input" type="text" placeholder="Session name" autocomplete="off">
+      <div id="modal-actions">
+        <button id="modal-cancel">Cancel</button>
+        <button id="modal-confirm">Create</button>
+      </div>
+    </div>
+    <div id="delete-box">
+      <div id="delete-title">Delete Session</div>
+      <div id="delete-msg"></div>
+      <div id="delete-actions">
+        <button id="delete-alt" hidden></button>
+        <button id="delete-cancel">Cancel</button>
+        <button id="delete-confirm">Delete</button>
+      </div>
+    </div>
+    <!-- Drop conflict dialog (external file drag-in, VS Code parity) — 3-choice
+         Replace / Keep Both / Cancel. Cleaned/re-rendered by modal.js; buttons
+         localized via the i18n `conflict-*` entries. -->
+    <div id="conflict-box">
+      <div id="conflict-title">Replace</div>
+      <div id="conflict-msg"></div>
+      <div id="conflict-actions">
+        <button id="conflict-cancel">Cancel</button>
+        <button id="conflict-keep-both">Keep Both</button>
+        <button id="conflict-replace">Replace</button>
+      </div>
+    </div>
+    <!-- 控制台单实例接管模态（2026-10-27 批；四修批 2026-10-29：极简卡 + 毛玻璃背景
+         + 退出直达官网个人主页；接管/入场同族批 2026-11-01 作者令②：按钮语换代
+         g2 药丸族（次级白玻璃药丸 / 主动作墨玻璃药丸），卡面与入场加载卡同族——
+         同材质/版式/按钮语）。语义与既有模态族不同——Escape/遮罩点击不关闭
+         （互斥权的裁决点不可误关）。渲染单点 = takeoverModal.js。 -->
+    <div id="takeover-box">
+      <div id="takeover-title">Console opened elsewhere</div>
+      <div id="takeover-msg"></div>
+      <div id="takeover-error" role="alert" hidden></div>
+      <div id="takeover-actions">
+        <button id="takeover-exit" class="g2-pill">Exit</button>
+        <button id="takeover-retake" class="g2-pill g2-pill-primary">Retake Control</button>
+      </div>
+    </div>
+  </div>
+  <!-- Agent Editor Modal — retired 2026-09-06 (tool-face retirement batch):
+       per-agent editing lives in the Canvas detail tab (agentManager.js). -->
+  <!-- Memory Editor Modal (three tabs: Folder / Agent / User) -->
+  <div id="memory-overlay">
+    <div id="memory-modal" class="scroll-under-glass">
+      <div id="memory-modal-title">Memory</div>
+      <div class="memory-tabs">
+        <button class="memory-tab active" data-scope="agent">Agent</button>
+        <button class="memory-tab" data-scope="user">User</button>
+      </div>
+      <div id="memory-modal-body">
+        <textarea id="memory-content-input" placeholder="# Memory&#10;&#10;Key facts, decisions, context..." rows="12" spellcheck="false"></textarea>
+      </div>
+      <div id="memory-modal-actions">
+        <button id="memory-modal-cancel">Cancel</button>
+        <button id="memory-modal-save">Save</button>
+      </div>
+    </div>
+  </div>
+  <!-- Rules Editor Modal -->
+  <div id="rules-overlay">
+    <div id="rules-modal" class="scroll-under-glass">
+      <div id="rules-modal-title">Project Rules</div>
+      <div id="rules-modal-body">
+        <textarea id="rules-input" placeholder="" rows="14" spellcheck="false"></textarea>
+      </div>
+      <div id="rules-modal-actions">
+        <button id="rules-modal-delete" style="display:none;margin-right:auto"></button>
+        <button id="rules-modal-cancel">Cancel</button>
+        <button id="rules-modal-save">Save</button>
+      </div>
+    </div>
+  </div>
+  <!-- Settings Modal (centered popup — no dimming backdrop, no blur) -->
+  <div id="settings-overlay">
+    <div id="settings-modal" class="scroll-under-glass">
+      <div class="settings-modal-header">
+        <span id="settings-modal-title">Settings</span>
+        <button id="settings-modal-close" class="panel-btn" title="Close"><i data-lucide="x"></i></button>
+      </div>
+      <div id="settings-content"></div>
+    </div>
+  </div>
+  <!-- Chat History Search Modal (centered popup — no dimming backdrop, no blur) -->
+  <div id="search-overlay">
+    <div id="search-modal">
+      <div class="search-modal-header">
+        <span id="search-modal-title">Search Messages</span>
+        <button id="search-modal-close" class="panel-btn" title="Close"><i data-lucide="x"></i></button>
+      </div>
+      <div class="search-controls">
+        <input id="search-keyword" type="text" placeholder="Keyword…" autocomplete="off"
+               role="combobox" aria-expanded="true" aria-controls="search-results">
+        <div class="search-tabs" role="tablist" aria-label="Search categories">
+          <button type="button" class="search-tab" id="search-tab-all" role="tab" aria-selected="true" data-tab="all"></button>
+          <button type="button" class="search-tab" id="search-tab-images" role="tab" aria-selected="false" data-tab="images"></button>
+          <button type="button" class="search-tab" id="search-tab-files" role="tab" aria-selected="false" data-tab="files"></button>
+          <button type="button" class="search-tab" id="search-tab-pop" role="tab" aria-selected="false" data-tab="pop"></button>
+          <button type="button" class="search-tab" id="search-tab-date" role="tab" aria-selected="false"
+                  aria-haspopup="dialog" aria-expanded="false" data-tab="date"></button>
+        </div>
+        <div class="search-filters">
+          <select id="search-scope" class="cfg-select"></select>
+          <select id="search-agent" class="cfg-select"></select>
+          <select id="search-tool" class="cfg-select"></select>
+          <button id="search-go" class="glass-control cfg-btn cfg-btn-sm">Search</button>
+        </div>
+        <div id="search-date-popover" role="dialog" hidden></div>
+      </div>
+      <div id="search-status" aria-live="polite"></div>
+      <div id="search-results" role="listbox"></div>
+    </div>
+  </div>
+
+  <!-- Social interface cards dialog (socpanel batch, 2026-09-19).
+       Shell only — every caption is applied by js/socialPanel.js through the
+       locale table (js/i18n.js is not part of this batch's write face), and the
+       cards are rendered from the definition array in js/socialChannels.js.
+       No dimming backdrop (design §B/W3): the overlay is transparent and the
+       shell itself carries the blur.
+       #social-section-remote is the remote-access face (author ruling 令②): an
+       independent section, never a channel card. It stays deliberately
+       INERT in this batch — the switch semantics, the address export, the QR
+       code and the clipboard fallback are author-face items O1–O5 of the
+       redesign and are NOT decided yet. No link, no QR, no guessed address is
+       rendered here (see js/socialPanel.js header).
+
+       🔴 HIDDEN FROM THE VISIBLE FACE (author ruling 2026-09-23, Part A): the
+       whole section is withdrawn from the visible face by the `hidden`
+       attribute below — HIDDEN, NOT DELETED. The DOM subtree, its JS consumers
+       (js/socialPanel.js's applyStaticText mapping), the `social.remote.*`
+       locale keys and the section's own CSS body all stay intact, so restoring
+       the section is exactly one attribute less (drop `hidden`) at zero cost.
+       The channel-configuration face (the three cards + pill / switch / save /
+       re-probe) is untouched by this ruling. O1–O5 remain UNDECIDED — hiding
+       the section does NOT settle them.
+       A bare `hidden` is not sufficient on its own: `css/social.css`'s
+       `.social-section { display: flex; }` outranks the user agent's
+       `[hidden] { display: none }`, so the section also needs the companion
+       `#social-section-remote[hidden] { display: none; }` rule added there
+       (same precedent as flowMap.css / usage.css). -->
+  <div id="social-overlay">
+    <div id="social-modal" role="dialog" aria-modal="true" aria-labelledby="social-modal-title">
+      <div class="social-modal-header">
+        <span id="social-modal-title"></span>
+        <button id="social-modal-close" class="panel-btn"><i data-lucide="x"></i></button>
+      </div>
+      <div class="social-modal-body">
+        <div id="social-section-remote" class="social-section" hidden>
+          <div id="social-remote-title" class="social-section-title"></div>
+          <div class="social-card social-remote-card">
+            <div id="social-remote-suspended" class="social-remote-note"></div>
+            <div class="social-remote-safety">
+              <div id="social-remote-safety-key" class="social-remote-safety-line"></div>
+              <div id="social-remote-safety-plain" class="social-remote-safety-line"></div>
+            </div>
+          </div>
+        </div>
+        <div id="social-section-channels" class="social-section">
+          <div class="social-card-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Secrets management dialog (secrets-frontend batch, 2026-09-27).
+       Standalone dedicated dialog per the author's ruling 2026-09-27 19:20:
+       NOT an embedded settings section — the list lives HERE, in its own
+       modal (capacity not bounded by #settings-modal); the settings page
+       carries only the one-row entry button (sidebar.js renderSettings →
+       #btn-open-secrets, opened by js/secretsPanel.js). Same dialog family
+       as #social-overlay: centered, no dimming backdrop, no background blur
+       (visual iron rule 1); the panel itself is the glass, the list area
+       scrolls. Shell is text-free — every caption is applied by
+       js/secretsPanel.js through t().
+       行内化 (author ruling 2026-10-09 07:42): the editor sub-dialog
+       (#secrets-form) and the floating「+」(#secrets-fab) are RETIRED — every
+       operation happens inline in the list rows: value field + eye per row,
+       dashed「＋ 新建密钥」tail row for create. The shell is header + list. -->
+  <div id="secrets-overlay">
+    <div id="secrets-modal" role="dialog" aria-modal="true" aria-labelledby="secrets-modal-title">
+      <div class="secrets-modal-header">
+        <span id="secrets-modal-title"></span>
+        <button type="button" id="secrets-modal-close" class="panel-btn"><i data-lucide="x"></i></button>
+      </div>
+      <div class="secrets-modal-body">
+        <div id="secrets-section" class="social-section">
+          <div id="secrets-list" class="secrets-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2026-09-05 旧 UI 退役：body 级 legacy-pop 容器（含 teams-btn/flows-btn）
+       已删除——旧面板入口非封存而是摘除（作者裁定）。 -->
+  <!-- vendor 经典脚本 defer 化（console-load-perf 批 2026-10-21）：defer 经典脚本与
+       module 脚本同入「按文档序延迟执行」队列——下列脚本仍在 js/main.js 之前执行，
+       window 全局契约与执行顺序不变；变化只在不再阻塞 HTML 解析/首帧（10-19 瀑布
+       审计根因#4 止损）。qrcode.js 摘出首开路径：非首屏（社交渠道二维码），按需
+       注入见 socialPanel.js ensureVendorQr——typeof 兜底路径原样保留。katex/lottie
+       保留 defer 在册：katex 服务聊天历史数学块渲染、lottie 服务 boot 门控
+       （main.js waitForGlobals），二者按需化会引入首屏回归面，留 dist 打包时代再收。 -->
+  <script defer src="vendor/lucide.min.js"></script>
+  <script defer src="vendor/lottie.min.js"></script>
+  <script defer src="vendor/marked.min.js"></script>
+  <script defer src="vendor/katex.min.js"></script>
+  <script defer src="vendor/highlight.min.js"></script>
+  <script type="module" src="assets/app-UVYBGY6J.js"></script>
+  <!-- 卡窗静态引导看门狗（独立窗口本机加速批 2026-10-29）。诊断失地：模块图
+       （main.js 及其 import 图）挂起/失败时 —— 拥塞隧道上模块 fetch 停摆、SW
+       陈旧索引引用已不存在的历史版本资产（404）—— canvas.js 的引导态面自身
+       也在模块图里 ⇒ 谁都不会报错，独立窗只剩 index 静态壳的空标题胶囊
+       （作者 11:06 截证形态）。本看门狗是**零模块依赖**的最后观察者：经典脚本
+       只认 DOM 事实 —— html.card-window-boot 在场而 body.card-window 迟迟不
+       现（initCardWindowMode 未跑）且无引导态面 ⇒ 判「引导未启动」，注入可见
+       失败卡 + [重试]；重试带 ?nfsw=0 绕过 SW（陈旧索引形态的自愈出口）。
+       引导成功（body.card-window 现身）即永久哑火，零运行时面。 -->
+  <script>
+  (function () {
+    try {
+      if (!document.documentElement.classList.contains('card-window-boot')) return;
+      var CARDWIN_BOOT_WATCHDOG_MS = 15000;
+      setTimeout(function () {
+        try {
+          if (document.body.classList.contains('card-window')) return;   // 引导已启动
+          if (window.__nfBootGateFailed) return; // 裸渲染批：引导门已出样式失败面，不重复报告
+          if (document.getElementById('nf-cardwin-boot')) return;        // canvas.js 引导态面在场
+          var pane = document.querySelector('#canvas-content .canvas-tab-pane');
+          if (pane && pane.childElementCount > 0) return;                // 真容已挂
+          var card = document.createElement('div');
+          card.id = 'nf-cardwin-static-watchdog';
+          card.setAttribute('data-state', 'failed');
+          card.style.cssText =
+            'position:fixed;left:50%;top:42%;transform:translate(-50%,-50%);z-index:60;' +
+            'display:flex;flex-direction:column;align-items:center;gap:12px;padding:26px 34px;' +
+            'border:1px solid #e0e1e4;border-radius:14px;background:#fff;color:#1b1e26;' +
+            "font:13px/1.7 -apple-system,'Segoe UI',sans-serif;text-align:center;max-width:78vw;" +
+            'box-shadow:0 2px 14px rgba(0,0,0,.08)';
+          var head = document.createElement('div');
+          head.style.cssText = 'font-weight:600;font-size:14px';
+          head.textContent = '独立窗口加载失败';
+          var hint = document.createElement('div');
+          hint.style.cssText = 'color:#6a737d;font-size:12px;max-width:340px;word-break:break-word';
+          hint.textContent = '页面资源未能完成加载（网络拥塞或缓存版本过期）。点击重试将绕过缓存重新载入。';
+          var retry = document.createElement('button');
+          retry.style.cssText =
+            'margin-top:2px;padding:6px 18px;border-radius:8px;cursor:pointer;' +
+            'border:1px solid #d8d9dd;background:transparent;color:inherit;font-size:12px';
+          retry.textContent = '重试';
+          retry.addEventListener('click', function () {
+            try {
+              var q = new URLSearchParams(location.search);
+              q.set('nfsw', '0');   // sw.js 逃生门：绕过 SW（陈旧索引形态自愈）
+              location.replace(location.pathname + '?' + q.toString());
+            } catch (_) { location.reload(); }
+          });
+          card.append(head, hint, retry);
+          document.body.appendChild(card);
+        } catch (_) { /* 看门狗自身永不抛 */ }
+      }, CARDWIN_BOOT_WATCHDOG_MS);
+    } catch (_) { /* 无 DOM 形态（测试壳）静默 */ }
+  })();
+  </script>
+  <!-- 手机交互层注册钩子：桌面视口只做一次 media-query 判定即返回（不 import
+       控制器、不建 DOM）；手机视口动态加载 js/mobile/ 四控制器（nav/layout/
+       gestures/floats，r2 规格①②③⑤）。 -->
+  <script type="module" src="assets/mobile/bootstrap-TP763NRY.js"></script>
+</body>
+</html>

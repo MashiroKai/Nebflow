@@ -20,6 +20,10 @@ import { makeReference } from './reference.js';
 import { initCanvasDrop } from './canvasDrop.js';
 import { authHeaders } from './flowHelpers.js'; // Bearer token for REST withAuth (/api/canvas-tabs)
 import { setSideBarCollapsed, isMobileViewport } from './activityBar.js';
+// keyboard-first 三期：叠卡/胶囊环/卡窗的键位搬进规则表（keyRules.js），本模块
+// 提供三件事——① 状态 → 上下文键（派生，无推送）② 动作函数（deckKeyAction 等）
+// ③ 不再持有任何 document 级 keydown 监听。
+import { provideContextKey, KEYS } from './keyContext.js';
 // 独立窗口本机加速批：直连开窗计划 + 导航腿 + PM origin 记账（零环：本模块
 // 只消费，cardwinDirect 不回import canvas/ws）。
 import {
@@ -643,6 +647,21 @@ function syncCanvasPanelButtons() {
  *  (markdown source toggle) have no mounted handle; their cached model is
  *  released by path instead. Safe for panes that never had an editor. */
 function disposeTabEditor(entry) {
+  // Viewer-protocol teardown (阅读/编辑体验优化批 2026-11-01): a viewer that
+  // declares dispose(pane) records it on the pane (fileViewers.js renderFile);
+  // 关闭页签的全部路径都汇到这里 —— closeTab / 预览顶替 / 叠卡关闭 / 迟到墓碑
+  // 清扫 —— 所以一个调用点覆盖全部分支。属性读取不引 import 边（canvas.js 对
+  // 文件查看器的既有纪律是动态 import）。
+  const paneSlot = /** @type {any} */ (entry.paneEl);
+  const viewerDispose = paneSlot ? paneSlot._nfViewerDispose : null;
+  if (typeof viewerDispose === 'function') {
+    paneSlot._nfViewerDispose = null;
+    try {
+      viewerDispose();
+    } catch (err) {
+      console.warn('Viewer dispose error:', err);
+    }
+  }
   // Text-stream tabs hold a live client (windows / index / server-side scan):
   // closing the tab releases the server side too (卡 §三.5 textCancel).
   const streamView = entry.paneEl?._streamClient;
@@ -811,10 +830,28 @@ function teardownTab(id, opts = {}) {
 /** Close a single tab and switch to an adjacent one.
  *  If the closed tab was the last one, closes the entire panel.
  *  Dispatches 'canvas-tab-closed' so external code (e.g. flowCanvas) can clean up.
- *  @param {string} id — Tab identifier. */
-export function closeTab(id) {
+ *  @param {string} id — Tab identifier.
+ *  @param {{discardDirty?: boolean}} [opts] 关闭确认之后的内部腿专用
+ *    （用户已经点过「关闭并丢弃」），外部调用一律不传。 */
+export function closeTab(id, opts = {}) {
   const entry = tabs.get(id);
   if (!entry) return;
+
+  // B7-1（文档后续批，2026-11-01）：脏页签关闭要一次确认。
+  // 改造前这条路径**直接丢编辑**：`beforeunload` 只管整页卸载，页签关闭不走它
+  // （实测命中 0），而叠卡 Delete / 卡头 ✕ / cmd-W 三条入口全部汇聚到这里。
+  // 确认框复用既有 `__showConfirm`：modal.js 早就 `pushLayer(overlay,{name:'modal'})`
+  // —— 走 B4 层栈，不新造第二个栈外模态（计划 §B7 风险条）。
+  // 取消 / Esc ⇒ 什么都不做：页签与编辑原样留着。
+  if (!opts.discardDirty && isTabDirty(entry) && typeof window.__showConfirm === 'function') {
+    window.__showConfirm(
+      t('canvas.closeDirtyTitle'),
+      t('canvas.closeDirtyMsg', { name: entry.title || entry.id }),
+      () => closeTab(id, { discardDirty: true }),
+      { tone: 'danger', confirmLabel: t('canvas.closeDirtyConfirm') },
+    );
+    return;
+  }
 
   // UI 批⑧：独立中的卡先静默收窗（merge 等价腿，无动画）再走关闭 —— 主窗卡
   // 关闭时独立窗绝不残留（cmd-W 卡窗自己会 bye，这里管主窗主动关的顺序）。
@@ -937,12 +974,12 @@ function scheduleFileRefresh(entry) {
  *  as every other refresh path) and drops the nf-file blob-ledger entry first —
  *  a ledger hit renders cached bytes with zero fetch, which would make the
  *  button silently lie for image/pdf tabs. */
-function refreshFileTab(entry) {
+function refreshFileTab(entry, opts = {}) {
   if (!entry || !entry.absPath) return;
   const pane = entry.paneEl;
   if (!pane || !pane.isConnected) return;
   if (pane.dataset.sourceMode === '1') return;  // button hidden there (CSS); programmatic guard
-  if (isTabDirty(entry)) {
+  if (isTabDirty(entry) && !opts.force) {
     window.__showToast?.(t('canvas.refreshDirty'), 'info');
     return;
   }
@@ -976,6 +1013,76 @@ function settleFileRefresh(entry) {
   // 壳层单例：busy 类挂在共享按钮上，代表「任一在飞刷新」——清它即可
   if (fileRefreshBtn && fileRefreshBtn.isConnected) fileRefreshBtn.classList.remove('busy');
 }
+
+// ── B7-2 外部改动冲突条（文档后续批，2026-11-01）─────────────────────────
+// 病灶（计划 §B7-2）：`nf-cache-invalidate` 只喂 nf-file 账本，从不触达编辑器；
+// 而 `scheduleFileRefresh` 在脏页签上**静默 return** —— 合计效果是「文件被改过」
+// 这件事对正在编辑的人完全不可见，用户接着保存就把别人的改动覆盖掉。
+//
+// 现在的语义（冲突条二选一，两条各自改状态）：
+//   干净页签 → 照旧走 scheduleFileRefresh（读回新内容，不打扰人）；
+//   脏页签   → 出一条冲突条：**保留**（继续编辑，什么都不做）/ **重载**（丢弃本地
+//              编辑，强制重读）。条子内联样式、零 CSS 依赖 —— 与 staleTabHint.js
+//              （2026-10-28 作者令④）同一先例，本批不改 css/ 一字，`app-*.css`
+//              哈希因此不动。
+// 不进层栈：它不是模态，不加遮罩、不抢焦点、不拦 Tab（壳契约逐字保留）。
+const CONFLICT_BAR_CLASS = 'nf-file-conflict';
+
+/** 渲染（或刷新）某页签上的外部改动冲突条。幂等。 */
+function showExternalConflict(entry) {
+  const pane = entry && entry.paneEl;
+  if (!pane || !pane.isConnected) return;
+  const old = pane.querySelector('.' + CONFLICT_BAR_CLASS);
+  if (old) old.remove();
+  const bar = document.createElement('div');
+  bar.className = CONFLICT_BAR_CLASS;
+  bar.setAttribute('role', 'status');
+  bar.dataset.path = entry.absPath || '';
+  bar.setAttribute('style', [
+    'display:flex', 'align-items:center', 'gap:10px',
+    'margin:8px 10px', 'padding:8px 10px 8px 12px',
+    'border-radius:10px',
+    'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
+    'font:12.5px/1.4 -apple-system,"Segoe UI",sans-serif',
+    'border:1px solid rgba(255,255,255,0.12)',
+    'box-shadow:0 4px 14px rgba(0,0,0,0.22)',
+  ].join(';'));
+  const text = document.createElement('span');
+  text.className = 'nf-file-conflict-text';
+  text.textContent = t('canvas.conflictDirty');
+  text.setAttribute('style', 'flex:1 1 auto;');
+  const keep = document.createElement('button');
+  keep.className = 'nf-file-conflict-keep';
+  keep.textContent = t('canvas.conflictKeep');
+  keep.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:transparent;color:inherit;font:inherit;');
+  keep.onclick = () => { entry._externalConflict = null; bar.remove(); };
+  const reload = document.createElement('button');
+  reload.className = 'nf-file-conflict-reload';
+  reload.textContent = t('canvas.conflictReload');
+  reload.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
+  reload.onclick = () => { entry._externalConflict = null; bar.remove(); refreshFileTab(entry, { force: true }); };
+  bar.append(text, keep, reload);
+  pane.prepend(bar);
+}
+
+/** Which live file tab owns this absolute path (null when none is open). */
+function tabForPath(absPath) {
+  if (!absPath) return null;
+  for (const entry of tabs.values()) if (entry.absPath === absPath) return entry;
+  return null;
+}
+
+// 外部改动广播（main.js 的 nf-cache-invalidate 处理器转派，见 main.js 同批注释）。
+// 挂在 **window** 上：转派方就是 `window.dispatchEvent`，而事件不向下传播到
+// document —— 挂 document 收不到（首版就是这么静默丢的，实测 bar 恒 false）。
+window.addEventListener('nf-file-external-change', (e) => {
+  const path = /** @type {any} */ (e).detail?.path;
+  const entry = tabForPath(path);
+  if (!entry) return;                      // 没开这个文件 ⇒ 无事可做（账本已由 main.js 淘汰）
+  entry._externalConflict = Date.now();
+  if (isTabDirty(entry)) showExternalConflict(entry);
+  else scheduleFileRefresh(entry);
+});
 
 // ── 文件刷新钮 · 壳层挂载（定位修复，作者报障 2026-10-27「刷新钮悬浮在正文
 // 中间」）────────────────────────────────────────────────────────────────
@@ -1070,7 +1177,14 @@ export function setActiveTab(id) {
     // position (_mdScrollPos, viewers/markdown.js) and restores it here,
     // because Chromium does NOT preserve the scroll box across a display
     // flip (measured 178 → 0 in the harness).
-    if (t.id === id && (t.paneEl._editorHandle || t.paneEl._mdScrollPos !== undefined)) {
+    // 阅读/编辑体验优化批 2026-11-01: 同一条判据再收两个记账者 ——
+    // `.txt` 阅读面（viewers/textReader.js `_nfTxtScrollPos`）与 epub/mobi 阅读
+    // 器（viewers/readerChrome.js `_nfReaderScrollPos`）。判据是「该 pane 有人
+    // 声明了滚动记账」，不是某种格式的白名单。
+    if (t.id === id && (t.paneEl._editorHandle
+        || t.paneEl._mdScrollPos !== undefined
+        || (/** @type {any} */ (t.paneEl))._nfTxtScrollPos !== undefined
+        || (/** @type {any} */ (t.paneEl))._nfReaderScrollPos !== undefined)) {
       t.paneEl.dispatchEvent(new CustomEvent('canvas-tab-activated'));
     }
   });
@@ -1834,6 +1948,15 @@ export function deckFaceOf(entry) {
   return { family, icon: deckIconOf(family), thumb: deckThumbMock(family) };
 }
 
+// ── 上下文键（keyboard-first 三期）──────────────────────────────────────────
+// 三条**派生**键：值现场从本模块的状态读，不推送、不重复赋值。
+// 为什么不用「改了状态就 setContextKey」：`deck.open = false` 在本文件出现三处
+// （收场/换入/兜底），漏一处就会让键盘层拿旧状态做判决 —— 派生键把这类 bug 从
+// 「靠自觉」变成「结构上不可能」。
+provideContextKey(KEYS.deckOpen, () => deck.open === true);
+provideContextKey(KEYS.canvasRingOpen, () => !!ringState);
+provideContextKey(KEYS.cardWindow, () => cardWindowMode === true);
+
 // ── 引擎状态 ──
 const deck = {
   open: false,
@@ -1979,6 +2102,12 @@ function initDeck() {
     if (e.target === deckLayer && !deck.finalizing) closeDeck();   // 点空白（区外露缘）收回
   });
   deckLayer.addEventListener('contextmenu', (e) => { if (e.target === deckLayer) e.preventDefault(); });
+
+  /* B2-1 → 三期：环卡键盘语义（Enter/Space = 复用 `.deck-card` 的既有 click
+     语义；Delete = deckRequestClose）**搬进规则表**（keyRules.js 的 deck.card.*），
+     条件 = `deckOpen && deckCardFocus`。改造前这里挂的是层内 keydown 委托，并且
+     必须 `e.stopPropagation()` 才能压住本文档级那条 Enter —— 现在两条动作由同一张
+     表按 when 互斥（卡内 vs 环级），不再靠冒泡顺序博弈。 */
 
   bindDeckInput();
   // 左移批收口：面板 flex-basis 开合过渡（0.32s，左缘从右缘向左展开）期间
@@ -2242,6 +2371,18 @@ function deckMakeCardEl(entry, r, cls) {
   card.className = 'deck-card' + (isTabDirty(entry) ? ' is-dirty' : '') + (cls ? ' ' + cls : '');
   card.dataset.r = String(r);
   card.dataset.tab = entry.id;
+  /* B2-1（keyboard-first 二期）：卡壳成为**键盘可及件**。改造前这里是裸 div ——
+     role / tabIndex 命中 0，只有卡内的 `.deck-card-x` 能被 Tab 到，于是
+     「键盘切不了文档页签」。三个属性分工：
+       · role="tab" + aria-selected —— 卡在语义上就是页签，与 #canvas-tabs 同族；
+       · data-focus-key="deck:<tabId>" —— 保焦协议的第二个生产者（B3-2 的输入）；
+       · tabindex 由 deckSyncCardA11y() 统一分配（恰好一张 = 0）。 */
+  if (cls !== 'ghost') {
+    card.setAttribute('role', 'tab');
+    card.setAttribute('aria-selected', 'false');
+    card.dataset.focusKey = `deck:${entry.id}`;
+    card.tabIndex = -1;
+  }
   card.innerHTML =
     '<div class="card-top">' +
       '<span class="n-icon">' + deckIconOf(family) + '</span>' +
@@ -2629,11 +2770,32 @@ function deckMountRing() {
   deck.M = deck.ring.length;
   deck.ring.forEach((entry, r) => deckLayer.appendChild(deckMakeCardEl(entry, r)));
   deck.ringActiveId = activeTabId;
+  deckSyncCardA11y();
   deck.selfCardEl = deck.M
     ? deckLayer.querySelector('.deck-card[data-tab="' + cssEscapeV(activeTabId || '') + '"]')
     : null;
   deckCardsDirty();                      // 性能批⑤：全量重建 = 卡列表置脏
 }
+/**
+ * B2-1：卡壳 roving tabindex + aria-selected 的**唯一分配点**。
+ * 不变量与文件树一致：同一时刻恰好一张卡 `tabindex=0`（= 当前活动页签的卡；
+ * 活动页签不在环里时取环首）。卡 DOM 在每次重挂环时整批换血，所以必须是
+ * "挂完再算"，而不是建卡时各算一次（各算各的 = 多张 0 或零张 0）。
+ * @returns {void}
+ */
+function deckSyncCardA11y() {
+  if (!deckLayer) return;
+  const cards = [...deckLayer.querySelectorAll('.deck-card:not(.ghost)')].filter((el) => el instanceof HTMLElement);
+  if (!cards.length) return;
+  const wanted = deck.ringActiveId || activeTabId || '';
+  const target = cards.find((el) => el.dataset.tab === wanted) || cards[0];
+  for (const el of cards) {
+    const on = el === target;
+    el.tabIndex = on ? 0 : -1;
+    el.setAttribute('aria-selected', on ? 'true' : 'false');
+  }
+}
+
 /** 外部换签收敛：环重置到新 active 的前景位（pos=0）。 */
 function deckRemountForActive() {
   deck.cardDrag = null;                  // UI 批 ②：重挂环 = 全卡换血，在途拖划随旧卡失效
@@ -3174,6 +3336,64 @@ function deckRequestClose(id) {
   }
   deckStartLoop();
 }
+/**
+ * 收环动作的模块级句柄：真正的 `closeRing` 是画布头部装配函数里的局部 const
+ * （canvas.js 环形滚轮段），模块作用域够不着 —— 用一个登记位把它接到规则表。
+ * @type {(() => void)|null}
+ */
+let ringCloseFn = null;
+
+/**
+ * 叠卡/环的键位动作（三期：**唯一的键盘入口**，由 keyRules.js 的 deck.* /
+ * canvas.* 规则按 when 条件转发进来）。
+ *
+ * 为什么动作留在本模块而不是搬进规则表：动作要读 `deck.pos`/`ringState` 这些
+ * 就地状态，搬走只会制造第二份真相。规则表拥有的是「键位 + 条件」这层横切关注点，
+ * 本函数拥有的是「点下去发生什么」。
+ * @param {'next'|'prev'|'close'|'select'|'activateCard'|'closeCard'|'closeRing'|'mergeSelf'} action
+ * @param {KeyboardEvent} [e]
+ * @returns {void}
+ */
+export function deckKeyAction(action, e) {
+  switch (action) {
+    case 'next':
+      if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx) return;
+      if (deck.M > 1) { wheelGlideV = 0; deck.target += 1; deckStartLoop(); }
+      return;
+    case 'prev':
+      if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx) return;
+      if (deck.M > 1) { wheelGlideV = 0; deck.target -= 1; deckStartLoop(); }
+      return;
+    case 'close':
+      closeDeck();
+      return;
+    case 'select':
+      if (!deck.open || !deck.M) return;
+      deckSelectCard(deckMod(Math.round(deck.pos), deck.M));
+      return;
+    case 'activateCard': {
+      // 复用 `.deck-card` 的既有 click 语义（前景卡放大换入 / 深处卡翻到该卡），
+      // 不另写一份换签逻辑。
+      const card = e && e.target instanceof Element ? e.target.closest('.deck-card') : null;
+      if (card instanceof HTMLElement) card.click();
+      return;
+    }
+    case 'closeCard': {
+      const card = e && e.target instanceof Element ? e.target.closest('.deck-card') : null;
+      const id = card instanceof HTMLElement ? card.dataset.tab : '';
+      if (id) deckRequestClose(id);
+      return;
+    }
+    case 'closeRing':
+      if (ringState && ringCloseFn) ringCloseFn();
+      return;
+    case 'mergeSelf':
+      requestMergeSelf();
+      return;
+    default:
+  }
+}
+
 function deckCloseOthers(keepId) {
   if (!deck.open || deck.finalizing) return;
   for (const [id, entry] of [...tabs]) {
@@ -3269,16 +3489,10 @@ function bindDeckInput() {
     deckStartLoop();
   }, { passive: false });
 
-  // 键盘：↑↓ 连续擦洗 ±1；Enter 选中前景卡（= 换入；canvas 前景时 = 收回）；Esc 收回。
-  document.addEventListener('keydown', (e) => {
-    if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx) return;
-    const tgt = e.target;
-    if (tgt instanceof Element && (tgt.closest('input, textarea, select, [contenteditable="true"], .monaco-editor, .cm-editor'))) return;
-    if (e.key === 'Escape') { e.preventDefault(); closeDeck(); }
-    else if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); if (deck.M > 1) { wheelGlideV = 0; deck.target += 1; deckStartLoop(); } }
-    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); if (deck.M > 1) { wheelGlideV = 0; deck.target -= 1; deckStartLoop(); } }
-    else if (e.key === 'Enter') { e.preventDefault(); if (deck.M) deckSelectCard(deckMod(Math.round(deck.pos), deck.M)); }
-  });
+  // 键盘（三期：搬进规则表 —— 见 deckKeyAction / keyRules.js 的 deck.* 组）。
+  // 改造前是文档级 keydown + 手写 `closest('input, textarea, …')` 早退：
+  // 那条早退只覆盖「焦点在输入类元素里」，读不出「叠卡开没开 / 是否在卡上」，
+  // 而这正是 when 上下文要表达的东西（`deckOpen && !textInputFocus && !deckCardFocus`）。
 
   // 缩放态面板拖划（v4⑥ + 竖拖补充令）：主导轴分工 —— 横向主导 = 跟手划走，越阈
   // 甩出关闭 / 不足弹回；纵向主导 = dy 增量喂 scrub 引擎换卡（跟手连续，松手惯性+
@@ -3983,6 +4197,8 @@ function initCapsuleRing() {
     document.removeEventListener('pointerleave', onDocPointerLeft);
     if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = 0; }
   };
+  // 三期：登记给规则表（canvas.ring.close → deckKeyAction('closeRing')）。
+  ringCloseFn = closeRing;
 
   hdr.addEventListener('pointerenter', (e) => {
     if (isMobileLayer() || e.pointerType === 'touch') return;
@@ -3996,7 +4212,7 @@ function initCapsuleRing() {
   // 作者令③：从胶囊发起的原生拖拽一律拦下（文字/链接拖拽；OS 文件拖入 =
   // drop 落区不受影响）。文字多选已被全头 user-select:none 封死（CSS）。
   hdr.addEventListener('dragstart', (e) => e.preventDefault());
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && ringState) closeRing(); });
+  // 三期：Esc 收环搬进规则表（`canvas.ring.close`，when = canvasRingOpen）。
   // 生命周期：换签不再无条件收环（作者报障 2026-10-25「hover 滚动连续性丧失」：
   // 「如果滚动，切换了其他卡片，那么就无法再次滚动，需要重新hover触发」）——
   // 旧腿 canvas-tab-switched → closeRing() 无条件收环，滚轮监听随环拆走，而
@@ -4648,7 +4864,7 @@ function initCardWindowMode() {
     if (Date.now() - cardLastMainBeat > 20000) requestMergeSelf({ silent: true });
   }, 2000);
   window.addEventListener('pagehide', () => cardBcPost({ kind: 'bye', tabId: currentCardTabId() }));
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') requestMergeSelf(); });
+  // 三期：卡窗 Esc 合并搬进规则表（`canvas.mergeSelf`，when = cardWindow）。
   // 卡头「合并」钮（.canvas-header 内，panel 关闭钮在卡窗态 CSS 隐藏）
   const hdr = document.querySelector('#canvas-panel .canvas-header');
   if (hdr && !hdr.querySelector('.canvas-merge-btn')) {

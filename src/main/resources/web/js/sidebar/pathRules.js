@@ -4,6 +4,7 @@
 import state from '../state.js';
 import { sendWs } from '../ws.js';
 import { t } from '../i18n.js';
+import { pushLayer, popLayer } from '../focusTrap.js';
 import { escapeHtml } from './providersUi.js';
 // 弹窗退场批（作者令 2026-10-31②）：手机层 rules 编辑窗铺满屏 + 左上返回（桌面零变化）。
 import { mobileSheetBack } from '../mobile/popSheet.js';
@@ -28,7 +29,10 @@ function openRulesEditor(folderId, folderName) {
   input.placeholder = t('rules.placeholder');
   deleteBtn.style.display = activeRulesExists ? 'inline-block' : 'none';
   deleteBtn.textContent = t('rules.delete');
-  document.getElementById('rules-overlay').classList.add('on');
+  const ov = /** @type {HTMLElement} */ (document.getElementById('rules-overlay'));
+  ov.classList.add('on');
+  // B4：目录规则编辑器入层栈（Esc 由 main.js 全局 Esc → 点 overlay → 本模块关闭腿收口）。
+  pushLayer(ov, { name: 'rules' });
   document.getElementById('rules-modal').classList.add('show');
   // 弹窗退场批：跨档重排后补注左上返回（幂等；非手机层不注入）。
   mobileSheetBack(document.getElementById('rules-overlay'), closeRulesEditor);
@@ -39,7 +43,9 @@ function openRulesEditor(folderId, folderName) {
 
 function closeRulesEditor() {
   activeRulesFolderId = null;
-  document.getElementById('rules-overlay').classList.remove('on');
+  const ov = document.getElementById('rules-overlay');
+  if (ov) popLayer(ov); // B4：出栈 + 回焦
+  document.getElementById('rules-overlay')?.classList.remove('on');
   document.getElementById('rules-modal').classList.remove('show');
 }
 

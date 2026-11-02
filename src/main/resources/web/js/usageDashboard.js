@@ -23,6 +23,7 @@ import { t, getLocale } from './i18n.js';
 import state from './state.js';
 import { authHeaders } from './flowHelpers.js';
 import { createIconsIn } from './utils.js';
+import { withFocusKey } from './focusTrap.js';
 
 /** Providers known not to report cache fields (spec §6.9c).
  *  Empty since 2026-08-21: reconciliation (report f5e80ca §4 F2) confirmed kimi
@@ -595,6 +596,15 @@ function fillSelect(sel, keys, current) {
 
 // ── summary cards ───────────────────────────────────────────────────
 function renderSummary() {
+  const wrap = document.getElementById('usage-summary');
+  if (!wrap || !lastTotals) return;
+  // B3-2：汇总卡阵 = `innerHTML = ''` 全重建（卡片内含可点钻取面）。重渲前后按
+  // key 回焦；卡内没有 id/标记 ⇒ 第三级 DOM 路径（同形重建位序不变）。
+  withFocusKey(wrap, renderSummaryCards);
+}
+
+/** 汇总卡阵重建本体（重渲保焦包装见 renderSummary）。 */
+function renderSummaryCards() {
   const wrap = document.getElementById('usage-summary');
   if (!wrap || !lastTotals) return;
   wrap.innerHTML = '';

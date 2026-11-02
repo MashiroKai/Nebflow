@@ -969,12 +969,22 @@ export function mountReader(pane, adapter) {
 
   pane.tabIndex = 0;
   pane.addEventListener('keydown', (e) => {
+    // 输入焦点守卫（阅读体验批 2026-11-01）：目录项、跳百分比 number 输入、
+    // 标注笔记 textarea 都在 pane 内（readerChrome:122-128 / annotations.js:396-433），
+    // 无守卫时在笔记框里按方向键会翻页并吃掉 caret 移动（e.preventDefault()）。
+    // 可编辑目标一律放行 —— 阅读器只接管「正文」上的方向键。
+    const target = /** @type {any} */ (e.target);
+    if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName || ''))) return;
     if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); prevPage(); }
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); nextPage(); }
   });
 
   let scrollTimer = null;
   scroller.addEventListener('scroll', () => {
+    // 阅读位置记账：Chromium 在 .canvas-tab-pane{display:none} 期间会重置滚动盒
+    // （measured 178 → 0，同 markdown.js:858-861 的记录），切回本页签时由
+    // canvas-tab-activated 还原（见下方 _nfReaderScrollPos）。
+    /** @type {any} */ (pane)._nfReaderScrollPos = scroller.scrollTop;
     clearTimeout(scrollTimer);
     scrollTimer = setTimeout(() => updateUI(), 100);
   }, { passive: true });
@@ -992,7 +1002,10 @@ export function mountReader(pane, adapter) {
   }
   document.addEventListener('keydown', onEscClose);
 
-  new ResizeObserver(() => updateUI()).observe(scroller);
+  // ResizeObserver 必须在 teardown 里 disconnect：观察 scroller 的 observer 会
+  // 让整本书的 DOM 与闭包跟着 chrome 一起永生（勘察：关页签后仍每帧可触发）。
+  const layoutObserver = new ResizeObserver(() => updateUI());
+  layoutObserver.observe(scroller);
 
   // ── 启动 ────────────────────────────────────────────────────────────────
   renderTicks();
@@ -1003,15 +1016,25 @@ export function mountReader(pane, adapter) {
     updateUI();
   });
 
-  // 组件卸载（pane 复用/切书）时撤 fab 让位。
-  const teardown = () => setFabGate(false);
-  pane.addEventListener('canvas-tab-closed', teardown, { once: true });
+  // 切回本页签时还原阅读位置（见 scroll 监听里的记账）。canvas.js 的
+  // setActiveTab 只对「声明了滚动记账的 pane」派发 canvas-tab-activated
+  // （判据 `_mdScrollPos !== undefined` 同族），故记账键一经写入即生效。
+  pane.addEventListener('canvas-tab-activated', () => {
+    const keep = /** @type {any} */ (pane)._nfReaderScrollPos;
+    if (typeof keep === 'number' && keep > 0) {
+      scroller.scrollTop = keep;
+      updateUI();
+    }
+  });
 
-  // 清理函数挂 pane 供复用入口（epub 切书 revoke blob 等独立于 chrome）。
+  // 清理函数挂 pane 供复用入口（epub 切书 revoke blob 等独立于 chrome）与
+  // viewer 的 dispose(pane)（fileViewers.disposeViewer → canvas.js 关页签）。
   /** @type {any} */ (pane)._nfReaderTeardown = () => {
     setFabGate(false);
     if (annoFace) annoFace.destroy();
     themeAttrObserver.disconnect();
+    layoutObserver.disconnect();
+    clearTimeout(scrollTimer);
     if (darkMq && darkMq.removeEventListener) darkMq.removeEventListener('change', onPanelThemeChange);
     document.removeEventListener('keydown', onEscClose);
   };

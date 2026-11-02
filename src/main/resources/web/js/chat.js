@@ -79,6 +79,7 @@ import { bindCollapsibleToggle } from './chat/collapsible.js';
 // 输入行为包批（2026-11-02 作者令）：busy↔idle 按钮 chrome = input/composer.js
 // 统一状态机（主会话 setBusy/clearBusy 与 canvas ask 共用同一实现）。
 import { applyTurnChrome } from './input/composer.js';
+import { withFocusKey } from './focusTrap.js';
 export { formatDuration, formatLiveDuration, pickThinkingPhrase, createMsgFooterBadge, createDurationBadgeElement, renderDurationBadge } from './chat/durationBadges.js';
 // Pop 族合流（A 侧 pop-upgrade 批单源化）：`popArtifactFromInput` / `openPopArtifact`
 // 的再导出改由下方 A 侧 `./popArtifacts.js` 单源承担（chatSearch.js 既有 import 面
@@ -3722,6 +3723,15 @@ export function clearAttachmentStripAnimated(target) {
 }
 
 export function renderAttachmentPreview(target) {
+  // B3-2：附件条 = `innerHTML` 全量重建 + 每 chip 一个 ✕ 按钮的面 —— 键盘用户正在
+  // 某个 chip 的 ✕ 上按 Enter 时，任何一次重渲都会把节点换掉。重渲前后按 key 回焦
+  // （chips 无 id ⇒ 走协议第三级 DOM 路径：同形重建时结构位序不变）。
+  const box = (target && target.attPreviewEl) || activeView.dom.attPreview;
+  return withFocusKey(box instanceof HTMLElement ? box : null, () => renderAttachmentPreviewInner(target));
+}
+
+/** 附件条重建本体（重渲保焦包装见 renderAttachmentPreview）。 */
+function renderAttachmentPreviewInner(target) {
   // target: optional { attPreviewEl, attachments } for non-primary windows.
   // Defaults to the primary window's attPreview + pendingAttachments so existing
   // call sites are unaffected.

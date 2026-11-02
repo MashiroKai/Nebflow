@@ -422,6 +422,16 @@ export async function createEditor(container, opts) {
     model,
     getDirty: () => dirty,
     onDirty: (fn) => { dirtyListeners.add(fn); },
+    /** Mark the buffer dirty against disk WITHOUT a content change.
+     *  源码↔渲染往返（viewers/shared.js addSourceToggle）用：渲染面把
+     *  model 里的最新内容当「文本内容」带走了，再回源码态时 createEditor 以
+     *  该内容为 originalContent ⇒ 未落盘的编辑会被判成干净（脏点消失、⌘S
+     *  被 getDirty() 闸拒、外部刷新又可以覆盖它）。往返方据此把脏态补回来。 */
+    markDirty: () => {
+      if (dirty) return;
+      dirty = true;
+      dirtyListeners.forEach(fn => fn(true));
+    },
     save,
     dispose,
     focus: () => editor.focus(),

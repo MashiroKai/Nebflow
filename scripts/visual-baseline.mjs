@@ -16,7 +16,10 @@
 //   node scripts/visual-baseline.mjs --check --filter canvas   # 只跑名字含 canvas 的场景
 //   node scripts/visual-baseline.mjs --check --determinism     # 同轮双拍自比对（验确定性）
 //   node scripts/visual-baseline.mjs --list              # 列场景
+//   NEBFLOW_WEB_ROOT=build/web-dist node scripts/visual-baseline.mjs --check
+//                                                        # 验证**产物形态**（B0-3）
 //   选项：--theme dark|light  --tolerance <0-255>  --max-ratio <0-1>  --platform <key>
+//         --web-root <dir>   # 静态根覆盖（等价 NEBFLOW_WEB_ROOT，CLI 优先）
 //
 // 产物：
 //   基准（入库）  tests/visual/baseline/<platform>/<scenario>-<theme>.png + manifest.json
@@ -26,7 +29,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { ROOT, WEB, loadPlaywright, launchBrowser, createSession, settle, applyMasks, shoot } from './lib/visual-harness.mjs';
+import { ROOT, webRoot, setWebRoot, loadPlaywright, launchBrowser, createSession, settle, applyMasks, shoot } from './lib/visual-harness.mjs';
 import { comparePng } from './lib/png-diff.mjs';
 
 // ── 参数 ───────────────────────────────────────────────────────────────
@@ -43,6 +46,10 @@ const TOLERANCE = Number(valOf('--tolerance', '0'));
 const MAX_RATIO = Number(valOf('--max-ratio', '0'));
 const DETERMINISM = hasFlag('--determinism');
 const PLATFORM_OVERRIDE = valOf('--platform');
+// B0-3（G3）：验证对象可切换。显式 `--web-root` 优先于 NEBFLOW_WEB_ROOT（后者
+// 在 visual-harness.mjs 加载时已消费）。缺省 = 源树，与改造前逐字节相同。
+const WEB_ROOT_OVERRIDE = valOf('--web-root');
+if (WEB_ROOT_OVERRIDE) setWebRoot(WEB_ROOT_OVERRIDE);
 
 // ── 场景表 ─────────────────────────────────────────────────────────────
 // 选取口径：(a) 改动后最该「看起来一模一样」的三类面 —— 主壳/对话流/设置；
@@ -91,6 +98,88 @@ const CANVAS_CODE = [
   '  return ext === "json" ? "json" : "code";',
   '}',
 ].join('\n');
+
+// 代码块着色面（文档渲染批 2026-11-01）：markdown 围栏的 hljs 着色是新增面，
+// 上面那份 CANVAS_MD 夹具只有行内代码、没有围栏——所以另立一条场景，把
+// 「多语言围栏 + 无语言围栏（不高亮）+ 行内代码（另一种底色）」钉进基准图，
+// 主题切换下的 token 配色错位能被像素比对直接抓住。
+const CANVAS_MD_CODE = [
+  '# 代码块着色基线',
+  '',
+  '围栏带语言标签才着色，行内代码用另一套底色。',
+  '',
+  '```js',
+  'const cache = new Map();',
+  'export function put(k, v) {',
+  '  if (!cache.has(k)) cache.set(k, v);',
+  '  return cache.size;   // 注释也该有独立配色',
+  '}',
+  '```',
+  '',
+  '```python',
+  'def total(rows):',
+  '    return sum(r["n"] for r in rows)',
+  '```',
+  '',
+  '```',
+  '不加语言标签的围栏：保持原样，不做词法分析。',
+  '```',
+  '',
+  '行内代码 `const x = 1` 用于对照。',
+].join('\n');
+
+// ── 渲染器覆盖面补强（阅读/编辑体验优化批 2026-11-01）────────────────────
+// 修前 12 张基准只覆盖 14 个渲染器里的 2 个（markdown / monaco）。
+// 下面三条各自打在**不同的 viewer 模块 + 不同的 CSS 面**上：
+//   txt   → viewers/textReader.js（.canvas-txt-scroll，纯文本段落面）
+//   html  → viewers/html.js（srcdoc 沙箱 iframe + 主题变量注入）
+//   image → viewers/image.js + viewers/zoom.js（缩放引擎工具条 + fit 几何）
+// 三者都由 openWorkspaceItem 的既有入口驱动（与 canvas-markdown-tab 同路），
+// 无一需要新的打桩端点：txt/html 走纯文本内容，image 走 data: URI 的
+// `objectUrl` 腿（nfFileCache.nfViewerSource 命中 objectUrl 即短路取数）。
+const CANVAS_TXT = [
+  '视觉基线夹具 — 纯文本阅读面',
+  '',
+  '这一段用来验证 .txt 阅读视图的排版：段落分隔、空行、段距。',
+  '',
+  '- 阅读面：viewers/textReader.js（.canvas-txt-scroll）',
+  '- 段落：行 → <p>，textContent 防 XSS，空白 pre-wrap 保留',
+  '',
+  '\f',
+  '第二段（\\f 章界之后）：只做段距，不进任何操控件。',
+  '这是第三行，用来给视觉基线一个稳定的行高读数。',
+].join('\n');
+
+const CANVAS_HTML = `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  body{margin:0;padding:18px;font:14px/1.7 system-ui,-apple-system,"Segoe UI",sans-serif;color:#c9d3e0;background:#0f1420}
+  h1{font-size:17px;margin:0 0 10px;font-weight:600}
+  p{margin:0 0 10px}
+  .card{border:1px solid #2a3648;border-radius:10px;padding:10px 12px;margin:10px 0}
+  ul{margin:0;padding-left:18px}
+  li{margin:3px 0}
+  code{background:#1b2434;border-radius:4px;padding:1px 5px}
+</style></head><body>
+  <h1>HTML viewer fixture</h1>
+  <p>srcdoc 沙箱渲染：样式、列表、卡片 —— 主题变量由父页注入。</p>
+  <div class="card"><ul>
+    <li>缩放引擎用 transform 作用在整帧上，不改帧内 DOM</li>
+    <li>引用选择 / 查找条挂在本面之外的壳层</li>
+    <li>行内代码：<code>viewers/html.js</code></li>
+  </ul></div>
+</body></html>`;
+
+// 图片夹具用 data: URI 的 SVG（无外部取数、无字体依赖、无随机像素）。
+// 形状/纯色块在截图里的抗锯齿是稳定的（与主题无关 —— 画面颜色由夹具自定）。
+const CANVAS_IMAGE_URI = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="300" viewBox="0 0 480 300">'
+  + '<rect width="480" height="300" fill="#1b2434"/>'
+  + '<rect x="24" y="24" width="200" height="120" rx="12" fill="#3b6ea5"/>'
+  + '<circle cx="356" cy="196" r="72" fill="#7f5ad4"/>'
+  + '<rect x="24" y="196" width="120" height="80" rx="10" fill="#2f9e6f"/>'
+  + '<rect x="176" y="196" width="120" height="80" rx="10" fill="#c9a227"/>'
+  + '</svg>',
+);
 
 // 全场景共用桩：只桩「会在画面上留下随机/报错残影」的两条端点。
 //   · /api/plugins   —— 画布面板默认页签就是插件清单（boot 即开），404 会让面板
@@ -151,6 +240,10 @@ const SCENARIOS = [
     why: '后台任务下拉（来源标签 + 状态阶梯）—— 面板/角标改动的闸',
     themes: ['dark', 'light'],
     selector: '#bg-dropdown',
+    // G1 真修（B0-1）：uptime 文本 = now - startedAt，**字符数**随墙上时钟增长
+    // （9m → 10m、9h → 10h、9d → 10d），该行 min-content 变宽 ⇒ 整块下拉变宽；
+    // `mask: ['.bg-task-uptime']` 只涂像素、不遮布局。所以钉的是时钟，不是基准图。
+    clock: 1757000553000, // = startedAt + 9m13s（t1 显示 9分13秒 / t2 9分12秒）
     setup: async (s) => {
       const sid = await s.boot();
       const agents = [
@@ -173,7 +266,7 @@ const SCENARIOS = [
       await s.page.waitForSelector('#bg-dropdown:not(.hidden) .bg-task-row', { timeout: 8000 });
       await settle(s.page, 250);
     },
-    mask: ['.bg-task-uptime'], // uptime = now - startedAt，实时钟
+    mask: ['.bg-task-uptime'], // 真修是 clock（见上）；遮罩保留 = 第二道保险（uptime 区不进像素比）
   },
   {
     name: 'canvas-markdown-tab',
@@ -192,6 +285,26 @@ const SCENARIOS = [
       }, CANVAS_MD);
       await paneReady(s.page, 'file:/tmp/visual-baseline-note.md');
       await s.page.waitForTimeout(900); // markdown 渲染 + 高亮批
+      await settle(s.page, 300);
+    },
+  },
+  {
+    name: 'canvas-markdown-code-tab',
+    why: 'canvas 页签 + markdown 代码块着色面（hljs token 配色 / 无语言围栏对照）—— 代码块渲染批的新增闸',
+    themes: ['dark', 'light'],
+    selector: '#canvas-panel',
+    setup: async (s) => {
+      await s.boot();
+      await s.page.evaluate((content) => {
+        window.dispatchEvent(new CustomEvent('workspace-open-item', {
+          detail: {
+            id: 'file:/tmp/visual-baseline-code-note.md', itemType: 'markdown', title: 'visual-baseline-code-note.md',
+            content, absPath: '/tmp/visual-baseline-code-note.md', size: content.length, mtimeMs: 1757000000000,
+          },
+        }));
+      }, CANVAS_MD_CODE);
+      await paneReady(s.page, 'file:/tmp/visual-baseline-code-note.md');
+      await s.page.waitForTimeout(900); // markdown 渲染 + hljs 着色
       await settle(s.page, 300);
     },
   },
@@ -215,6 +328,146 @@ const SCENARIOS = [
       await settle(s.page, 400);
     },
     mask: [], // 光标已由 shoot() 的 caret:'hide' 藏掉；当前行高亮是静态装饰，无需遮罩
+  },
+  {
+    name: 'canvas-txt-tab',
+    why: 'canvas 页签 + 纯文本阅读面（viewers/textReader.js）—— .txt 排版面的闸',
+    themes: ['dark', 'light'],
+    selector: '#canvas-panel',
+    setup: async (s) => {
+      await s.boot();
+      await s.page.evaluate((content) => {
+        window.dispatchEvent(new CustomEvent('workspace-open-item', {
+          detail: {
+            id: 'file:/tmp/visual-baseline-note.txt', itemType: 'code', title: 'visual-baseline-note.txt',
+            content, absPath: '/tmp/visual-baseline-note.txt', size: content.length, mtimeMs: 1757000000000,
+          },
+        }));
+      }, CANVAS_TXT);
+      await paneReady(s.page, 'file:/tmp/visual-baseline-note.txt');
+      await s.page.waitForTimeout(400);
+      await settle(s.page, 250);
+    },
+  },
+  {
+    name: 'canvas-html-tab',
+    why: 'canvas 页签 + HTML viewer（srcdoc 沙箱 iframe + 主题变量注入）—— html.js 的闸',
+    themes: ['dark', 'light'],
+    selector: '#canvas-panel',
+    setup: async (s) => {
+      await s.boot();
+      await s.page.evaluate((content) => {
+        window.dispatchEvent(new CustomEvent('workspace-open-item', {
+          detail: {
+            id: 'file:/tmp/visual-baseline-page.html', itemType: 'html', title: 'visual-baseline-page.html',
+            content, absPath: '/tmp/visual-baseline-page.html', size: content.length, mtimeMs: 1757000000000,
+          },
+        }));
+      }, CANVAS_HTML);
+      await paneReady(s.page, 'file:/tmp/visual-baseline-page.html');
+      // iframe srcdoc 的 load 是异步的：等帧内 document 真的画出来再拍。
+      await s.page.waitForFunction(() => {
+        const f = document.querySelector('#canvas-panel .canvas-tab-pane[data-tab-id="file:/tmp/visual-baseline-page.html"] iframe');
+        try { return !!(f && f.contentDocument && f.contentDocument.body && f.contentDocument.body.children.length); } catch { return false; }
+      }, null, { timeout: 15000 });
+      await s.page.waitForTimeout(400);
+      await settle(s.page, 250);
+    },
+  },
+  {
+    name: 'canvas-image-tab',
+    why: 'canvas 页签 + 图片查看器与缩放引擎（image.js + zoom.js 工具条/fit 几何）—— 缩放面的闸',
+    themes: ['dark', 'light'],
+    selector: '#canvas-panel',
+    setup: async (s) => {
+      await s.boot();
+      await s.page.evaluate((objectUrl) => {
+        window.dispatchEvent(new CustomEvent('workspace-open-item', {
+          detail: {
+            id: 'file:/tmp/visual-baseline-image.svg', itemType: 'image', title: 'visual-baseline-image.svg',
+            content: '', absPath: '/tmp/visual-baseline-image.svg', size: 0, mtimeMs: 1757000000000,
+            objectUrl, // 字节已在手：nfViewerSource 短路，零取数（打桩下也不碰票据链）
+          },
+        }));
+      }, CANVAS_IMAGE_URI);
+      await paneReady(s.page, 'file:/tmp/visual-baseline-image.svg');
+      // 图片 decode → onload → 几何 fit 后才出现 .canvas-image-viewport 与缩放条。
+      await s.page.waitForSelector('#canvas-panel .canvas-tab-pane[data-tab-id="file:/tmp/visual-baseline-image.svg"] .canvas-zoom-bar', { timeout: 15000 });
+      await s.page.waitForTimeout(500);
+      await settle(s.page, 250);
+    },
+  },
+
+  // ── B0-2（G2）：改前零覆盖的三个面 + 设置面常态 ───────────────────────
+  // 这四条存在的理由不是"多拍几张"，而是**B1/B2/B4 要改的正是这三个面**：
+  // `explorer.js` 的行构造（div → role=treeitem + roving tabindex）、
+  // `canvas.js:2253` 的环卡壳、`index.html` 的 9 个 overlay 壳。没有改前基线，
+  // 「只改了该改的」这句话就无法成立（必改像素会被当成回归，或反过来把回归
+  // 当成必改像素）。每条都用夹具数据，不依赖真实文件系统内容。
+  {
+    name: 'explorer-tree',
+    why: '文件树：项目根 + 两级展开 + 文件行（B1 行构造/缩进的改前对照物）',
+    themes: ['dark', 'light'],
+    setup: async (s) => {
+      await s.boot();
+      // 根列表（MockWS 的 listDir 固定应答 docs/src/README.md/CONTRIBUTING.md）
+      await s.page.waitForSelector('#explorer-tree .explorer-item', { timeout: 10000 });
+      // 一级展开：docs（目录行 → 子列表，子项路径前缀 docs/）
+      await s.page.click('#explorer-tree .explorer-folder[data-path="docs"]');
+      await s.page.waitForSelector('.explorer-dir-wrapper[data-path="docs"] .explorer-children .explorer-item', { timeout: 10000 });
+      // 二级展开：docs/docs（缩进第三档 —— B1 要动的正是这条 padding 阶梯）
+      await s.page.click('.explorer-dir-wrapper[data-path="docs"] .explorer-children .explorer-folder[data-path="docs/docs"]');
+      await s.page.waitForSelector('.explorer-dir-wrapper[data-path="docs/docs"] .explorer-children .explorer-item', { timeout: 10000 });
+      await settle(s.page, 300);
+    },
+  },
+  {
+    name: 'deck-cards',
+    why: '叠卡环（≥2 张卡 + fab）—— B2 卡壳 a11y 与中心环的改前对照物',
+    themes: ['dark', 'light'],
+    setup: async (s) => {
+      await s.boot();
+      for (const [id, title, content] of [
+        ['file:/tmp/deck-a.md', 'deck-a.md', CANVAS_MD],
+        ['file:/tmp/deck-b.txt', 'deck-b.txt', CANVAS_TXT],
+        ['file:/tmp/deck-c.txt', 'deck-c.txt', CANVAS_TXT],
+      ]) {
+        await s.page.evaluate((d) => {
+          window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: d }));
+        }, { id, itemType: 'markdown', title, content, absPath: id.replace('file:', ''), size: content.length, mtimeMs: 1757000000000 });
+        await paneReady(s.page, id);
+      }
+      await s.page.click('#deck-fab');
+      // 环卡弹簧动画收敛后才算稳定（settled ⇒ deckLoop 停帧）
+      await s.page.waitForSelector('#deck-layer .deck-card', { timeout: 15000 });
+      await s.page.waitForTimeout(1600);
+      await settle(s.page, 400);
+    },
+  },
+  {
+    name: 'modal-confirm',
+    why: '确认模态（#modal-overlay.on：遮罩 + 玻璃卡 + 两枚按钮）—— B4 层栈的改前对照物',
+    themes: ['dark', 'light'],
+    setup: async (s) => {
+      await s.boot();
+      await s.page.evaluate(() => {
+        window.__showConfirm('删除后不可恢复，确定要删除这 3 个文件吗？', '删除确认', () => {}, {});
+      });
+      await s.page.waitForSelector('#modal-overlay.on', { timeout: 8000 });
+      await settle(s.page, 300);
+    },
+  },
+  {
+    name: 'settings-panel',
+    why: '设置面板壳常态（#settings-overlay.on 顶部）—— B4 壳入层栈的改前对照物',
+    themes: ['dark', 'light'],
+    setup: async (s) => {
+      await s.boot({ config: { llm: { providers: {} }, features: { friends: false } } });
+      await s.page.click('#settings-btn');
+      await s.page.waitForSelector('#settings-overlay:not(.hidden)', { timeout: 10000 }).catch(() => {});
+      await s.page.waitForTimeout(700);
+      await settle(s.page, 300);
+    },
   },
 ];
 
@@ -259,7 +512,7 @@ async function captureAll() {
   if (MODE === 'update') mkdirSync(baseDir, { recursive: true });
 
   console.log(`visual-baseline [${MODE}] playwright=${pwRes.from} browser=${label} (${version}) platform=${platform}`);
-  console.log(`  web    : ${relative(ROOT, WEB)}`);
+  console.log(`  web    : ${relative(ROOT, webRoot())}  (root = ${webRoot()})`);
   console.log(`  baseline: ${relative(ROOT, baseDir)}`);
   console.log(`  out    : ${relative(ROOT, outDir)}\n`);
 
@@ -270,7 +523,7 @@ async function captureAll() {
     for (const theme of sc.themes) {
       const tag = `${sc.name}-${theme}`;
       const t0 = Date.now();
-      const session = await createSession(browser, { colorScheme: theme, apiStubs: { ...BASE_STUBS, ...(sc.apiStubs || {}) } });
+      const session = await createSession(browser, { colorScheme: theme, clock: sc.clock, apiStubs: { ...BASE_STUBS, ...(sc.apiStubs || {}) } });
       let buf;
       let second = null;
       const masks = [...BASE_MASK, ...(sc.mask || [])];

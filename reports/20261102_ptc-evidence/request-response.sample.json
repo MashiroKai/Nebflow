@@ -1,0 +1,179 @@
+{
+  "contract": "ptc/v1",
+  "samples": [
+    {
+      "language": "python",
+      "plugin": "ptc-python",
+      "tool": "mcp__plugin_ptc-python_ptc__ptc_run_rw",
+      "request": {
+        "code": "import json, os\n\n# 1) 列文件：所有 .md（一次 glob，而非逐个手写路径）\nfound = tools.glob({\"pattern\": \"**/*.md\"})\npaths = sorted(p for p in (found.get(\"paths\") or found.get(\"matches\") or []) if p.lower().endswith(\".md\"))\nprint(\"md files:\", paths)\n\n# 2) 检索 + 3) 读取 + 统计，循环在手内完成\ntodo_total = 0\nper_file = {}\nchars_total = 0\nfor p in paths:\n    doc = tools.read({\"path\": p})\n    text = doc.get(\"text\", \"\")\n    chars_total += len(text)\n    n = sum(1 for line in text.splitlines() if \"TODO\" in line)\n    if n:\n        per_file[p] = n\n    todo_total += n\n\n# 顺便用 grep 交叉校验 TODO 行数\ng = tools.grep({\"pattern\": \"TODO\", \"path\": \".\", \"glob\": \"**/*.md\"})\ngrep_hits = g.get(\"count\") if isinstance(g, dict) else None\nprint(\"grep count:\", grep_hits)\n\nsummary = {\n    \"todo_lines\": todo_total,\n    \"files\": sorted(per_file.keys()),\n    \"chars\": chars_total,\n}\nw = tools.write({\"path\": \"summary.json\", \"content\": json.dumps(summary, ensure_ascii=False, indent=2)})\n\n{\"summary\": summary, \"per_file\": per_file, \"grep_count\": grep_hits, \"written\": w}",
+        "profile": "readwrite"
+      },
+      "response": {
+        "contract": "ptc/v1",
+        "exec_id": "ptc-9dddf30e",
+        "language": "python",
+        "profile": "readwrite",
+        "stdout": "md files: ['notes/alpha.md', 'notes/beta.md', 'notes/gamma.md']\ngrep count: 4\n",
+        "stderr": "",
+        "stdout_truncated": false,
+        "stderr_truncated": false,
+        "tool_calls": [
+          {
+            "seq": 1,
+            "tool": "glob",
+            "args": {
+              "pattern": "**/*.md"
+            },
+            "ok": true,
+            "duration_ms": 0,
+            "truncated": false,
+            "result_bytes": 231
+          },
+          {
+            "seq": 2,
+            "tool": "read",
+            "args": {
+              "path": "notes/alpha.md"
+            },
+            "ok": true,
+            "duration_ms": 0,
+            "truncated": false,
+            "result_bytes": 278
+          },
+          {
+            "seq": 3,
+            "tool": "read",
+            "args": {
+              "path": "notes/beta.md"
+            },
+            "ok": true,
+            "duration_ms": 0,
+            "truncated": false,
+            "result_bytes": 287
+          },
+          {
+            "seq": 4,
+            "tool": "read",
+            "args": {
+              "path": "notes/gamma.md"
+            },
+            "ok": true,
+            "duration_ms": 0,
+            "truncated": false,
+            "result_bytes": 271
+          },
+          {
+            "seq": 5,
+            "tool": "grep",
+            "args": {
+              "pattern": "TODO",
+              "path": ".",
+              "glob": "**/*.md"
+            },
+            "ok": true,
+            "duration_ms": 0,
+            "truncated": false,
+            "result_bytes": 411
+          },
+          {
+            "seq": 6,
+            "tool": "write",
+            "args": {
+              "path": "summary.json",
+              "content": "{\n  \"todo_lines\": 3,\n  \"files\": [\n    \"notes/alpha.md\",\n    \"notes/beta.md\",\n    \"notes/gamma.md\"\n  ],\n  \"chars\": 163\n}"
+            },
+            "ok": true,
+            "duration_ms": 0,
+            "truncated": false,
+            "result_bytes": 212
+          }
+        ],
+        "tool_call_count": 6,
+        "files_written": [
+          "summary.json"
+        ],
+        "value": {
+          "summary": {
+            "todo_lines": 3,
+            "files": [
+              "notes/alpha.md",
+              "notes/beta.md",
+              "notes/gamma.md"
+            ],
+            "chars": 163
+          },
+          "per_file": {
+            "notes/alpha.md": 1,
+            "notes/beta.md": 1,
+            "notes/gamma.md": 1
+          },
+          "grep_count": 4,
+          "written": {
+            "path": "D:\\workspace@zcode\\nebflow\\nebflow-stand\\.nebflow\\worktrees\\delegate-nebflow-226f28aa\\reports\\20261102_ptc-evidence\\python\\plugin-data\\workspace\\summary.json",
+            "bytes": 119,
+            "created": true
+          }
+        },
+        "clamped": [],
+        "duration_ms": 77,
+        "usage": {
+          "wall_ms": 77,
+          "cpu_ms": null,
+          "max_rss_kb": 2552,
+          "tool_calls": 6,
+          "output_bytes": 78
+        },
+        "ok": true,
+        "error": null
+      }
+    },
+    {
+      "language": "typescript",
+      "plugin": "ptc-typescript",
+      "tool": "mcp__plugin_ptc-typescript_ptc__ptc_run_rw",
+      "request": {
+        "code": "const md = tools.glob({ pattern: '**/*.md' });\n// glob may return {paths:[]} or array-like; normalize\nconst paths: string[] = (md as any).paths || (md as any).files || (Array.isArray(md) ? md as any : []);\nconsole.log('glob keys:', Object.keys(md as any).join(','));\nconsole.log('md files:', JSON.stringify(paths));\n\nconst perFile: {file: string, todoLines: number, chars: number}[] = [];\nlet totalTodo = 0, totalChars = 0;\nfor (const p of paths) {\n  const doc = tools.read({ path: p });\n  const text: string = (doc as any).text ?? (doc as any).content ?? '';\n  const lines = text.split('\\n');\n  const n = lines.filter(l => l.includes('TODO')).length;\n  perFile.push({ file: p, todoLines: n, chars: text.length });\n  totalTodo += n;\n  totalChars += text.length;\n}\n\n// cross-check with grep\nconst g = tools.grep({ pattern: 'TODO', path: '.' });\nconsole.log('grep count:', (g as any).count, 'matches:', JSON.stringify(((g as any).matches || []).map((m: any) => m.file ?? m.path)));\n\nconsole.log(JSON.stringify(perFile, null, 2));\n\nconst filesWithTodo = perFile.filter(f => f.todoLines > 0).map(f => f.file).sort();\nconst summary = { todo_lines: totalTodo, files: filesWithTodo, chars: totalChars };\nconst w = tools.write({ path: 'summary.json', content: JSON.stringify(summary, null, 2) + '\\n' });\nconsole.log('written:', JSON.stringify(w));\n({ summary, perFile, grepCount: (g as any).count });",
+        "profile": "readwrite",
+        "limits": {
+          "max_tool_calls": 32
+        }
+      },
+      "response": {
+        "contract": "ptc/v1",
+        "exec_id": "ptc-8289a5dd",
+        "language": "typescript",
+        "profile": "readwrite",
+        "stdout": "",
+        "stderr": "",
+        "stdout_truncated": false,
+        "stderr_truncated": false,
+        "tool_calls": [],
+        "tool_call_count": 0,
+        "files_written": [],
+        "value": null,
+        "clamped": [],
+        "duration_ms": 115,
+        "usage": {
+          "wall_ms": 115,
+          "cpu_ms": null,
+          "max_rss_kb": null,
+          "tool_calls": 0,
+          "output_bytes": 0
+        },
+        "ok": false,
+        "error": {
+          "category": "SYNTAX_ERROR",
+          "code": "PTC_SYNTAX",
+          "phase": "compile",
+          "message": "Missing initializer in const declaration",
+          "tool": null,
+          "detail": {
+            "type": "SyntaxError",
+            "stack": "<ptc>:3\nconst paths: string[] = (md as any).paths || (md as any).files || (Array.isArray(md) ? md as any : []);\n      ^^^^^\n\nSyntaxError: Missing initializer in const declaration\n    at new Script (node:vm:117:7)\n    at main (file:///D:/workspace@zcode/nebflow/nebflow-stand/.nebflow/worktrees/delegate-nebflow-226f28aa/plugins/ptc-typescript/skills/ptc-typescript/dist/ptc_runner.js:233:9)\n    at file:///D:/workspace@zcode/nebflow/nebflow-stand/.nebflow/worktrees/delegate-nebflow-226f28aa/plugins/ptc-typescript/skills/ptc-typescript/dist/ptc_runner.js:312:11\n    at ModuleJob.run (node:internal/modules/esm/module_job:325:25)\n    at async ModuleLoader.import (node:internal/modules/esm/loader:606:24)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:117:5)"
+          }
+        }
+      }
+    }
+  ]
+}

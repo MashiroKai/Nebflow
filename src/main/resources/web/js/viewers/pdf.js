@@ -396,13 +396,26 @@ async function viewPdf(pane, { absPath, fileName, anchor, objectUrl }) {
     scheduleVisible();
   };
 
-  enableViewerZoom(pane, {
+  const zoomApi = enableViewerZoom(pane, {
     min: 0.25, max: 5,
     getScale: () => scale,
     applyScale,
     reset: resetScale,
     attachTo: pages,
   });
+
+  // 卸载（阅读/编辑体验优化批 2026-11-01）：修前这四件在关页签后全部存活 ——
+  // pdf.js 的 PDFDocumentProxy + worker 线程（每关一档留一个 worker 与整档字节）、
+  // IntersectionObserver（观察全部页 canvas）、缩放 120ms debounce 定时器、
+  // 以及带 document 级 keydown 的缩放引擎。pane._nfPdfTeardown 由 viewer 的
+  // dispose(pane) 调用（fileViewers.disposeViewer ← canvas.js disposeTabEditor）。
+  /** @type {any} */ (pane)._nfPdfTeardown = () => {
+    try { io.disconnect(); } catch { /* 已断开 */ }
+    clearTimeout(debounce);
+    try { zoomApi.destroy(); } catch { /* 引擎已卸 */ }
+    try { if (doc && typeof doc.destroy === 'function') doc.destroy(); } catch { /* worker 已走 */ }
+    /** @type {any} */ (pane)._scrollToPage = null;
+  };
 }
 
 export default {
@@ -412,4 +425,11 @@ export default {
   binary: true,
   priority: 0,
   render: viewPdf,
+  /** Protocol teardown — see _nfPdfTeardown above. */
+  dispose: (pane) => {
+    const slot = /** @type {any} */ (pane);
+    const fn = slot._nfPdfTeardown;
+    slot._nfPdfTeardown = null;
+    if (typeof fn === 'function') fn();
+  },
 };

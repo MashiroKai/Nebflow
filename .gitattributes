@@ -1,0 +1,6 @@
+# Windows batch entry points must land in the working tree with CRLF line
+# endings: cmd.exe misparses an LF-only batch file (it executes comment text
+# as commands). core.autocrlf=input would otherwise check these out with LF.
+# Blobs stay LF in the object store; checkout writes CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf

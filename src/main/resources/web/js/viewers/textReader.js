@@ -24,6 +24,17 @@ function viewText(pane, ctx) {
     /** @type {any} */ (pane)._nfReaderTeardown = null;
   }
 
+  // 阅读/编辑体验优化批 2026-11-01（重渲叠加 + 回顶部，两处确定性缺陷）：
+  //  ① 修前 viewText 只 appendChild、从不清 pane —— 而 canvas.js 的页签激活
+  //     刷新（setActiveTab → scheduleFileRefresh，canvas.js:1089）会重跑
+  //     renderFile，第二份 .canvas-txt-scroll（position:absolute;inset:0，
+  //     split.css:2518-2521）正好盖在第一份上面 ⇒ 每激活一次 DOM 无界增长。
+  //  ② 同一个 display 翻转会把滚动盒重置为 0（Chromium，实测同 markdown.js
+  //     :858-861）⇒ 长文本每次切签都回顶部。
+  // 两处一起收：先摘旧面，渲染后按记账还位，切签时由 canvas-tab-activated 还位。
+  const keepScroll = /** @type {any} */ (pane)._nfTxtScrollPos;
+  pane.innerHTML = '';
+
   const content = String(ctx.content || '');
   const fileName = ctx.fileName || (ctx.absPath ? ctx.absPath.split(/[\\/]/).pop() : 'TXT') || 'TXT';
 
@@ -49,6 +60,34 @@ function viewText(pane, ctx) {
     wrap.appendChild(body);
   });
   pane.appendChild(wrap);
+
+  // 记账键（canvas.js setActiveTab 依此判据派发 canvas-tab-activated；一经写入
+  // 即为「本 pane 有滚动记账」的声明）。
+  /** @type {any} */ (pane)._nfTxtScrollPos = typeof keepScroll === 'number' ? keepScroll : 0;
+  wrap.addEventListener('scroll', () => {
+    /** @type {any} */ (pane)._nfTxtScrollPos = wrap.scrollTop;
+  }, { passive: true });
+  if (keepScroll > 0) {
+    // 追加后布局尚未完成，直接写 scrollTop 会被夹到 0 —— 与 readerChrome:1000
+    // 同款，等一帧再还位。
+    requestAnimationFrame(() => {
+      if (wrap.isConnected) wrap.scrollTop = keepScroll;
+    });
+  }
+
+  // 切回本页签时还位：滚动盒在 display 翻转中被重置，而 wrap 元素本身没换，
+  // 所以要主动写回（一次绑定，按当前 wrap 查询，重渲不叠监听）。
+  const paneAny = /** @type {any} */ (pane);
+  if (!paneAny._nfTxtActivateBound) {
+    paneAny._nfTxtActivateBound = true;
+    pane.addEventListener('canvas-tab-activated', () => {
+      const sc = pane.querySelector('.canvas-txt-scroll');
+      const keep = paneAny._nfTxtScrollPos;
+      if (sc && typeof keep === 'number' && keep > 0 && Math.abs(sc.scrollTop - keep) > 1) {
+        sc.scrollTop = keep;
+      }
+    });
+  }
 
   addSourceToggle(pane, viewText, {
     content,

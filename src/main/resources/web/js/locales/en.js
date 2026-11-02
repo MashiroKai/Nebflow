@@ -1974,6 +1974,20 @@ export default {
   // canvas file-refresh batch (2026-10-25 author order): pane corner re-read button
   'canvas.refresh': 'Re-read from disk',
   'canvas.refreshDirty': 'Unsaved changes — save or revert before refreshing.',
+  // B7 doc follow-up batch (2026-11-01): dirty-tab close confirm + external-change conflict bar
+  'canvas.closeDirtyTitle': 'Close unsaved tab?',
+  'canvas.closeDirtyMsg': '"{name}" has unsaved changes. Closing discards them.',
+  'canvas.closeDirtyConfirm': 'Close and discard',
+  'canvas.conflictDirty': 'This file changed on disk while you have unsaved edits here.',
+  'canvas.conflictKeep': 'Keep mine',
+  'canvas.conflictReload': 'Reload from disk',
+  // B7-4 explorer tree search + sort (client-side; server order untouched)
+  'explorer.searchPlaceholder': 'Search files…',
+  'explorer.sortDefault': 'Default order',
+  'explorer.sortNameAsc': 'Name ↑',
+  'explorer.sortNameDesc': 'Name ↓',
+  'explorer.sortMtime': 'Recently modified',
+  'explorer.sortSize': 'Largest',
   'canvas.refreshFailed': 'Refresh failed: {error}',
   // Reader P0 stop-the-bleed batch (design 20261030_181655 §1.2/§2.1, acceptance A1-A12 i18n keys)
   'epub.prev': 'Previous page',
@@ -2367,6 +2381,8 @@ export default {
   'daemons.configSecretHint': 'Leave "***" to keep the stored value; an empty field does not modify it.',
   // === Explorer (file tree multi-select) ===
   'explorer.selectedCount': '{count} selected',
+  // B1-1: accessible name for the role="tree" container
+  'explorer.treeLabel': 'File tree',
   'explorer.delete': 'Delete',
   'explorer.deleteN': 'Delete {count} Selected Items',
   'explorer.deleteTitle': 'Delete Files',
