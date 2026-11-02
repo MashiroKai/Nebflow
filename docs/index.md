@@ -17,6 +17,7 @@ status: current
 - 审计报告 — [[20261028_171800_审计报告二五机制__delegate-nebflow-a13975e4]]（delegate／插件分配／AgentFlow／合并队列／门户数据面五机制审计·权威版，取代 reports/ 同名过程件）。
 - delegate 子系统现状审计 — [[20261101_174600_delegate-status-audit__kernel]]（2026-11-01 17:46 快照：十面架构盘点 + 今日实案卷宗 + 已落/未落对账 + 运行时读数 + 优先级表；引 [[20261101_165531_dispatcher-chain-lifecycle-rca__kernel]] 的 RCA，不重查其归因）。
 - 运维报告 — [[20261029_175151_plugin-repo-registry]]（2026-10-29 插件建仓批：23 插件一仓一包、v tag 打在导入 commit、7 public／16 private、种子 vs 实例内容源裁定与三包实例直改差异申报、GitHub 二次限流全程读数）。
+- 启动加载卡品牌图标批 — [[20261102_084500_bootcard-brandicon-and-emoji-audit__delegate-nebflow-f555a161]]（2026-11-02 08:16 作者实拍报障的根因与修复：蓝底问号 = `/brand/stand/lockup-*.png` 在生产脸 404（classpath 与 disk dist 两个 serving 面错位），非 emoji 回落；字标改单档内联 SVG、状态点改纯 CSS 几何；附 emoji/字形当图标全仓清单 119 处与旧 spec 漏检归因）。
 
 ## 存目（v1.0.0 清仓移出，git 史可考）
 

@@ -126,8 +126,7 @@ const PROBE = `
     <button class="nfc-link" type="button">账号设置</button>
   </div>
   <div class="nfc nfc-offline">
-    <img class="nfc-lockup nfc-lockup-light" src="/brand/stand/lockup-light.png" alt="STAND">
-    <img class="nfc-lockup nfc-lockup-dark" src="/brand/stand/lockup-dark.png" alt="" aria-hidden="true">
+    <svg class="nfc-lockup" viewBox="0 0 1375.18 343.15" role="img" aria-label="STAND"><g transform="translate(15.00,15.00) scale(0.200000)" fill="currentColor" fill-rule="evenodd"><path d="M 22.96,167.53 L 27.19,174.53 L 32.46,179.99 L 37.46,183.80 L 46.46,188.91 L 58.46,193.82 L 68.46,196.76 L 90.46,200.79 L 102.46,201.93 L 121.46,202.18 L 150.46,199.84 L 174.46,194.71 L 186.46,190.82 L 198.46,185.85 L 206.46,181.86 L 206.46,180.81 L 185.46,183.98 L 174.46,184.80 L 160.46,184.79 L 142.46,182.69 L 127.46,177.99 L 115.30,168.53 L 113.11,164.53 Z"/></g></svg>
     <div class="nfc-title">连接已断开</div>
     <div class="nfc-body">与主机的连接中断，正在自动重连。</div>
     <div class="nfc-error" role="alert">重连失败：主机拒绝了连接</div>
@@ -182,9 +181,20 @@ for (const engine of ['chromium', 'webkit']) {
       ok(`C2 ${engine} 家族影亮档（两档官方外影、无 inset）`,
         card.shadow.includes('rgba(17, 24, 39, 0.06)') && !card.shadow.includes('inset'), card.shadow.slice(0, 140));
       ok(`C2 ${engine} 家族内距（32/32/40 栅格档）`, card.pad === '32px 32px 40px', card.pad);
-      ok(`C2 ${engine} 字标在场（亮档 lockup 可见）`, await box.locator('.nfc-lockup-light').isVisible());
-      const lockupH = await box.locator('.nfc-lockup-light').evaluate(el => getComputedStyle(el).height);
-      ok(`C2 ${engine} 字标 24px 档`, lockupH === '24px', lockupH);
+      // 品牌图标缺字形批（2026-11-02）新契约：内联 SVG 单档（老的两张 PNG
+      // 在实跑实例上 404 ⇒ 蓝底问号破图）。判据改：svg 可见 + 96×24 + 零 <img>。
+      const lockSel = box.locator('svg.nfc-lockup');
+      ok(`C2 ${engine} 字标在场（内联 SVG）`, await lockSel.isVisible());
+      const lockGeom = await lockSel.evaluate(el => {
+        const r = el.getBoundingClientRect();
+        const s2 = getComputedStyle(el);
+        return { w: Math.round(r.width), h: Math.round(r.height), color: s2.color };
+      });
+      ok(`C2 ${engine} 字标几何 96×24 档`, lockGeom.w === 96 && lockGeom.h === 24, JSON.stringify(lockGeom));
+      ok(`C2 ${engine} 字标墨色 = 家族 heading（currentColor 继承）`,
+        lockGeom.color === 'rgb(17, 24, 39)', lockGeom.color);
+      ok(`C2 ${engine} 字标零图片依赖（无 lockup <img>）`,
+        (await box.locator('img.nfc-lockup').count()) === 0);
       const title = await page.locator('#takeover-title').evaluate(el => {
         const s = getComputedStyle(el);
         return `${s.fontSize}/${s.fontWeight}/${s.color}`;
@@ -215,8 +225,10 @@ for (const engine of ['chromium', 'webkit']) {
         card.bg === 'rgb(22, 27, 34)' && card.border === '1px rgb(45, 51, 59)', JSON.stringify(card));
       ok(`C1 ${engine} 强制暗腿阴影（官方 panel-shadow 逐值）`,
         card.shadow.includes('rgba(0, 0, 0, 0.5)') && card.shadow.includes('rgba(0, 0, 0, 0.35)'), card.shadow.slice(0, 140));
-      ok(`C1 ${engine} 暗字标切换`, await page.locator('#takeover-box .nfc-lockup-dark').isVisible()
-        && !(await page.locator('#takeover-box .nfc-lockup-light').isVisible()));
+      const dkLockColor = await page.locator('#takeover-box svg.nfc-lockup')
+        .evaluate(el => getComputedStyle(el).color).catch(() => null);
+      ok(`C1 ${engine} 暗字标随主题换墨（currentColor ⇒ #e6edf3）`,
+        dkLockColor === 'rgb(230, 237, 243)', dkLockColor);
       const title = await page.locator('#takeover-title').evaluate(el => getComputedStyle(el).color);
       ok(`C1 ${engine} 强制暗腿标题（#e6edf3）`, title === 'rgb(230, 237, 243)', title);
       await page.screenshot({ path: join(SHOTS, `family-dialog-dark-forced-${engine}.png`) });
@@ -234,7 +246,10 @@ for (const engine of ['chromium', 'webkit']) {
       ok(`C3 ${engine} 加载卡家族 DNA 暗档（回退腿：bg #161b22 + 边 #2d333b + 384/18）`,
         card.bg === 'rgb(22, 27, 34)' && card.border === '1px rgb(45, 51, 59)'
         && card.width === '384px' && card.radius === '18px', JSON.stringify(card));
-      ok(`C3 ${engine} 加载卡字标在场`, await page.locator('.nf-entry-card .nfc-lockup-dark').isVisible());
+      const entryLock = page.locator('.nf-entry-card svg.nfc-lockup');
+      ok(`C3 ${engine} 加载卡字标在场（内联 SVG）`, await entryLock.isVisible());
+      const entryLockColor = await entryLock.evaluate(el => getComputedStyle(el).color).catch(() => null);
+      ok(`C3 ${engine} 加载卡字标暗档墨色（#e6edf3）`, entryLockColor === 'rgb(230, 237, 243)', entryLockColor);
       await sleep(400); // 行色 transition 0.2s 过完再采样（activity 翻面瞬间为过渡中值）
       const rows = await page.locator('.nf-entry-card .nf-entry-item').count();
       const stepCls = await page.locator('.nf-entry-card .nf-entry-item').first().evaluate(el => el.className);

@@ -152,11 +152,91 @@ try {
     ok('V1 家族卡材质（bg #fff 实色 + radius 18 + width 384 + 边 #e5e7eb）',
       fam.bg === 'rgb(255, 255, 255)' && fam.radius === '18px' && fam.width === '384px'
       && fam.border === '1px rgb(229, 231, 235)', JSON.stringify(fam));
-    ok('V1 家族字标在场（官方 lockup，alt=STAND）',
-      await page.locator('.nf-entry-card .nfc-lockup-light').isVisible()
-      && (await page.locator('.nf-entry-card .nfc-lockup-light').getAttribute('alt')) === 'STAND');
+    // 品牌图标缺字形批（2026-11-02）：字标由「两张 PNG 双档」改为**内联 SVG
+    // 单档**（老契约在实跑实例上 404 ⇒ 蓝底问号破图，见
+    // evidence/20261102_bootcard-brandicon__* §1）。新判据 = SVG 在场 +
+    // naturalWidth 类「已加载」判据不再适用，改判：svg 可见 / 无 <img> 残留 /
+    // 几何 96×24 / 无硬编码色值（currentColor 随 --nfc-heading）。
+    const lockSvg = page.locator('.nf-entry-card svg.nfc-lockup');
+    const lockInfo = await lockSvg.evaluate(el => {
+      const r = el.getBoundingClientRect();
+      return { w: Math.round(r.width), h: Math.round(r.height), html: el.outerHTML, label: el.getAttribute('aria-label') };
+    }).catch(() => null);
+    ok('V1 家族字标在场（内联 SVG，aria-label=STAND）',
+      !!lockInfo && lockInfo.label === 'STAND' && (await lockSvg.isVisible()), JSON.stringify(lockInfo && { w: lockInfo.w, h: lockInfo.h, label: lockInfo.label }));
+    ok('V1 字标零网络依赖（卡内不再有 lockup <img>）',
+      (await page.locator('.nf-entry-card img.nfc-lockup').count()) === 0);
+    ok('V1 字标几何 96×24（家族 token 档）',
+      !!lockInfo && lockInfo.w === 96 && lockInfo.h === 24, lockInfo ? `${lockInfo.w}x${lockInfo.h}` : 'missing');
+    ok('V1 字标零硬编码色值（fill=currentColor）',
+      !!lockInfo && !/#[0-9a-fA-F]{3,8}/.test(lockInfo.html) && lockInfo.html.includes('currentColor'));
     const titleSt = await page.locator('.nf-entry-title').evaluate(el => getComputedStyle(el).fontSize + '/' + getComputedStyle(el).fontWeight);
     ok('V1 家族标题档（21px/600）', titleSt === '21px/600', titleSt);
+    // ── V6 三态视觉 + 加载动效（作者 2026-11-02 验收项③④）──────────────
+    // 真实进度窗里天然存在的态 = done（css/ui/host）+ active（data）；
+    // pending 态在同一刻不存在（活动项就是由 pending 翻上来的），故三态在
+    // **探针**上一次性测全（挂同一套类与 data-state，零副作用、可重复）。
+    const triProbe = await page.evaluate(() => {
+      const host = document.querySelector('.nf-entry-card .nf-entry-steps-probe')
+        || document.querySelector('.nf-entry-items');
+      const wrap = document.createElement('div');
+      wrap.className = 'nf-entry-steps-probe';
+      wrap.innerHTML = ['done', 'active', 'pending']
+        .map(st => `<div class="nf-entry-item nfc-step" data-state="${st}"><span class="nf-entry-dot"></span><span class="nf-entry-label">${st}</span></div>`)
+        .join('');
+      host.appendChild(wrap);
+      const out = {};
+      for (const st of ['done', 'active', 'pending']) {
+        const row = wrap.querySelector(`[data-state="${st}"]`);
+        const dot = row.querySelector('.nf-entry-dot');
+        const ds = getComputedStyle(dot);
+        const after = getComputedStyle(dot, '::after');
+        out[st] = {
+          rowColor: getComputedStyle(row).color,
+          borderTop: ds.borderTopColor,
+          borderRight: ds.borderRightColor,
+          anim: ds.animationName,
+          afterContent: after.content,
+          afterBg: after.backgroundColor,
+          afterBorderRightW: after.borderRightWidth,
+          afterTransform: after.transform,
+        };
+      }
+      wrap.remove();
+      return out;
+    });
+    // 三态互不相同（几何 + 墨色 + 动效三通道各自分层）
+    ok('V6 三态环几何互异（done 实环 / active 断口弧 / pending 空环）',
+      triProbe.done.borderTop !== triProbe.active.borderTop
+      && triProbe.active.borderTop !== triProbe.pending.borderTop,
+      JSON.stringify({ d: triProbe.done.borderTop, a: triProbe.active.borderTop, p: triProbe.pending.borderTop }));
+    ok('V6 进行中真实动效（animation = nf-boot-spin，非静帧）',
+      triProbe.active.anim === 'nf-boot-spin' && triProbe.done.anim === 'none' && triProbe.pending.anim === 'none',
+      JSON.stringify({ a: triProbe.active.anim, d: triProbe.done.anim, p: triProbe.pending.anim }));
+    ok('V6 完成项 = 纯 CSS 几何勾（无字形 content，2px 描边）',
+      triProbe.done.afterContent === '""' && triProbe.done.afterBorderRightW === '2px',
+      `content=${triProbe.done.afterContent} bw=${triProbe.done.afterBorderRightW} tf=${triProbe.done.afterTransform}`);
+    ok('V6 失败项 = 纯 CSS 几何叉（::before/::after 双杆）',
+      triProbe.pending.afterContent === 'none',
+      `pending content=${triProbe.pending.afterContent}`);
+    // 三态字色分层：以**卡面 bg 的对比度距离**为尺（淡 → 中 → 亮），
+    // 不假定主题明暗（浅档 row 越亮越淡、暗档越暗越淡，同一把尺两种都成立）。
+    const lum = c => { const m = String(c).match(/[\d.]+/g); return m ? (+m[0]) * 0.299 + (+m[1]) * 0.587 + (+m[2]) * 0.114 : -1; };
+    const cardBg = await page.locator('.nf-entry-card').evaluate(el => getComputedStyle(el).backgroundColor);
+    const dist = c => Math.abs(lum(c) - lum(cardBg));
+    ok('V6 三态字色分层（pending 淡 < done 中 < active 亮，对比度单调）',
+      dist(triProbe.pending.rowColor) < dist(triProbe.done.rowColor)
+      && dist(triProbe.done.rowColor) < dist(triProbe.active.rowColor),
+      `bg=${cardBg} Δ ${dist(triProbe.pending.rowColor).toFixed(1)} < ${dist(triProbe.done.rowColor).toFixed(1)} < ${dist(triProbe.active.rowColor).toFixed(1)}`);
+    // 动效「在跑」而非「声明在」：真实活动行两帧 transform 必须变化
+    const spinA = await page.locator('.nf-entry-card .nf-entry-item[data-state="active"] .nf-entry-dot')
+      .evaluate(el => getComputedStyle(el).transform).catch(() => '');
+    await sleep(160);
+    const spinB = await page.locator('.nf-entry-card .nf-entry-item[data-state="active"] .nf-entry-dot')
+      .evaluate(el => getComputedStyle(el).transform).catch(() => '');
+    ok('V6 动效实测在跑（两帧 transform 变化）', spinA !== spinB, `${spinA} → ${spinB}`);
+    ok('V6 卡内零图片依赖（字标与状态点均无 <img>/emoji）',
+      (await page.locator('.nf-entry-card img').count()) === 0);
     await page.screenshot({ path: join(SHOTS, 'entry-progress-light.png') });
     stub.releaseConfig = true; // 观察窗收：帧落地 ⇒ 四项全 done ⇒ 揭幕（门摘 + 壳可见）
     await page.waitForSelector('#input', { state: 'visible', timeout: 15000 });
@@ -227,9 +307,14 @@ try {
     });
     ok('V5 家族暗档（bg #161b22 + 边 #2d333b）',
       darkFam.bg === 'rgb(22, 27, 34)' && darkFam.border === '1px rgb(45, 51, 59)', JSON.stringify(darkFam));
-    ok('V5 暗字标切换（dark lockup 可见/亮档隐）',
-      await dark.locator('.nf-entry-card .nfc-lockup-dark').isVisible()
-      && !(await dark.locator('.nf-entry-card .nfc-lockup-light').isVisible()));
+    // 新契约：单档内联 SVG，主题切换靠 currentColor 继承 --nfc-heading
+    // （不再是双档显隐 —— 那条腿正是 production 404 的来源）。
+    const darkLock = await dark.locator('.nf-entry-card svg.nfc-lockup').evaluate(el => ({
+      vis: !!el.getBoundingClientRect().width,
+      color: getComputedStyle(el).color,
+    })).catch(() => null);
+    ok('V5 暗字标随主题换墨（单档 currentColor ⇒ #e6edf3）',
+      !!darkLock && darkLock.vis && darkLock.color === 'rgb(230, 237, 243)', JSON.stringify(darkLock));
     await dark.screenshot({ path: join(SHOTS, 'entry-progress-dark.png') });
     await darkCtx.close();
   }
