@@ -78,23 +78,38 @@
   --ds-fs-btn: 12px;       /* 按钮 500（对话发送族 13px 沿用裁定） */
   --ds-fs-hint: 12px;      /* hint/caption 400 */
   --ds-fs-meta: 11px;      /* meta/徽标/小节标签 400–600 */
+  /* 字阶吸收（值重定批 §3.3 T 组）：既有 11/12/13/15/20 五档与草案逐档同值
+     （meta↔micro、hint↔label、body↔body、title↔sub、display↔title），故只补
+     草案里原先空缺的两档；档数增不改五档语义，消费点零改动。 */
+  --ds-fs-lead: 17px;      /* Apple body 17（M5：手机档已落地 --mfs-body 17，桌面正文仍 13px 密度档） */
+  --ds-fs-title-lg: 28px;  /* 大标题档（与手机层 --mfs-title 28 同值对齐） */
 
-  /* ── ③ 行高与字距（SKILL.md §3）── */
+  /* ── ③ 行高与字距（SKILL.md §3 + 值重定批 §3.3 H/L 组）── */
   --ds-lh-body: 1.5;       /* 聊天/选项文案 1.55 */
   --ds-lh-title: 1.3;
-  --ds-lh-tight: 1;        /* 单行控件；图标行 0 */
+  --ds-lh-tight: 1;        /* 单行控件；图标行 0（Apple display 1.07–1.19 与 SpaceX 0.95–1.25 的
+                             中间档 1.2 不另立：标题已由 --ds-lh-title 1.3 承接，1.2 属同语义带内微差） */
+  --ds-lh-std: 1.45;       /* Apple body 1.47 微调中文行距；长文段落档 */
   --ds-ls-label: 0.5px;    /* 11px uppercase 小节标签 */
   --ds-ls-display: -0.01em;
-  --ds-ls-body: 0;         /* 正文恒 0，禁顺手字距 */
+  --ds-ls-body: 0;         /* 正文恒 0，禁顺手字距；字距三档仲裁：display 负、正文 normal（Carbon 正字距 M16 不采）、caps 仅拉丁/数字位（SpaceX M27） */
+  --ds-ls-caps: 0.08em;    /* SpaceX caps 正字距（≈0.96px@12）；仅拉丁/数字大写微标位，中文一律走 --ds-ls-body */
 
-  /* ── ④ 间距（4px 栅格；SKILL.md §5 合法值 4/8/12/16/20/24/32）── */
-  --ds-space-1: 4px;
-  --ds-space-2: 8px;
-  --ds-space-3: 12px;
-  --ds-space-4: 16px;
-  --ds-space-5: 20px;      /* 面板左右留白 */
-  --ds-space-6: 24px;      /* 页面级留白 */
-  --ds-space-8: 32px;
+  /* ── ④ 间距（4px 栅格；SKILL.md §5 合法值 4/8/12/16/20/24/32；值重定批
+     §3.3 S 组吸收 Carbon 2x：值对位见各行注释，编号不重排 —— 既有消费点
+     （.ds-*/设置页）的索引语义不漂移，缺口档以 -half/-12/-16 延续 N=px/4 编号法）── */
+  --ds-space-1: 4px;       /* Carbon $spacing-02 */
+  --ds-space-2: 8px;       /* Carbon $spacing-03 */
+  --ds-space-3: 12px;      /* Carbon $spacing-04 */
+  --ds-space-4: 16px;      /* Carbon $spacing-05 */
+  --ds-space-5: 20px;      /* 面板左右留白（站内档，Carbon 阶无此值） */
+  --ds-space-6: 24px;      /* 页面级留白；Carbon $spacing-06（编号与站内同值同号） */
+  --ds-space-8: 32px;      /* Carbon $spacing-07 */
+  --ds-space-half: 2px;    /* Carbon $spacing-01：4px 栅格外半步微缝档 */
+  --ds-space-12: 48px;     /* Carbon $spacing-09：区块级留白 */
+  --ds-space-16: 64px;     /* Carbon $spacing-10：大区块留白 */
+  --ds-space-glass-x: 10px; /* 玻璃条横缝既有值档（--cv-pad-bar 语境）；迁移向 --ds-space-2/3 由门禁渐进收 */
+  --ds-density-row-compact: 36px; /* 紧凑行档（= --cv-head-h 胶囊行带值 36px） */
   --ds-row-pad: 8px 12px;              /* 列表行静息档 */
   --ds-row-pad-tight: 8px 10px;
   --ds-section-gap: var(--ds-space-4);
@@ -103,12 +118,20 @@
   --ds-modal-body-pad: 12px 20px 20px;
   --ds-input-pad: 6px 10px;            /* 面板档输入 */
   --ds-input-pad-lg: 8px 12px;         /* 卡内档输入 */
+  /* 密度组其余两值对位既有槽：gap regular/compact = --ds-space-3/2；
+     radius regular/compact = --ds-radius-button/--ds-radius-input
+     （NVIDIA 密度联动机制，无新槽——值已各有家）。 */
 
-  /* ── ⑤ 圆角阶梯（8 档 + 卡片三档；SKILL.md §4，禁档外值）── */
-  --ds-radius-badge: 4px;    /* 徽标 pill、行内 code */
+  /* ── ⑤ 圆角阶梯（8 档 + 卡片三档；SKILL.md §4，禁档外值）──
+     值重定批 §3.3 R 组吸收：既有 badge/chip/input/button/shell/pill 六槽与草案
+     xs/sm/md/lg/window/pill 逐档同值（4/6/8/10/20/999，Apple rounded.sm 8px 与
+     NVIDIA --radius-lg 8px 三源互证），故只补草案里原先无归属的两档。 */
+  --ds-radius-badge: 4px;    /* 徽标 pill、行内 code；NVIDIA --radius-md 4px 同值互证 */
   --ds-radius-chip: 6px;     /* 28px 图标钮、chip */
   --ds-radius-input: 8px;    /* 输入/下拉/面板档按钮 */
   --ds-radius-button: 10px;  /* 对话档按钮、列表行 hover 面 */
+  --ds-radius-xl: 12px;      /* 条状容器档（= 悬浮控件 --cv-radius-bar 12，直方图 12×39 次高档） */
+  --ds-radius-2xl: 18px;     /* Apple rounded.lg 18px：工具卡/大卡档（本阶梯唯一非 4 倍数值，来源单一，禁再派生） */
   --ds-radius-card-sm: 10px;
   --ds-radius-card-md: 14px; /* 面板内卡（cfg-card 族） */
   --ds-radius-card-lg: 16px; /* 聊天浮层卡 */
@@ -125,11 +148,18 @@
      本文件里仅有的字面色出生点，门禁对 --ds 声明行放行）。 */
   --ds-shadow-card: 0 2px 8px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.06);
   --ds-shadow-card-dark: 0 2px 8px rgb(0 0 0 / 0.20), 0 8px 24px rgb(0 0 0 / 0.35);
+  /* 阴影吸收（值重定批 §3.3 D 组）：两档都是**既有单源的别名**，不复制值——
+     Apple「唯一投影」纪律（M7）不采，理由：玻璃浮件靠浮影分层，投影是功能
+     不是装饰。文字位禁 box-shadow 判据另记（非 token）。 */
+  --ds-shadow-float: var(--cv-shadow);            /* 浮件三档栈（悬浮控件单源，亮暗已在 sapphire.css） */
+  --ds-shadow-press: var(--ig-shadow-press);      /* 墨玻璃按压影单源（glass.css） */
 
   /* ── ⑦ 动效（别名既有 token；SKILL.md §6）── */
-  --ds-dur-micro: var(--dur-1);    /* 120ms 微变换 */
-  --ds-dur-hover: var(--dur-2);    /* 160ms 色彩/边框/底纹 */
-  --ds-dur-surface: var(--dur-3);  /* 240ms 表面切换 */
+  --ds-dur-micro: var(--dur-1);    /* 120ms 微变换（Carbon fast-02 110ms 同语义档） */
+  --ds-dur-hover: var(--dur-2);    /* 160ms 色彩/边框/底纹（Carbon moderate-01 150ms 同语义档） */
+  --ds-dur-surface: var(--dur-3);  /* 240ms 表面切换（Carbon moderate-02 240ms 同值互证） */
+  --ds-dur-slow: 400ms;            /* Carbon duration-slow-01：大展开/重要通知档（现无既有档，本批补）
+                                     缓动不换档：Carbon standard 曲线（M13）不采，--ds-ease-std 保持 Material 同源 */
   --ds-ease-enter: var(--ease-enter);
   --ds-ease-std: var(--ease-std);
   --ds-ease-panel: var(--panel-ease);
@@ -140,6 +170,15 @@
   --ds-hit-row: 44px;
   --ds-hit-control: 32px;
   --ds-row-min-h: var(--ds-hit-row);
+
+  /* ── ⑨ 描边与 focus 宽度（值重定批 §3.3 B 组）──
+     命名裁定：`--ds-border-hairline` 在本文件上半段已是「发丝线**颜色**别名」
+     （② 配色层），语义已占用；宽度另立 --ds-border-width，不改既有槽位语义。
+     1px 为四家共识（Apple/IBM/NVIDIA/SpaceX hairline 全 1px），玻璃描边亦 1px。 */
+  --ds-border-width: 1px;
+  --ds-border-glass: var(--glass-border);   /* 玻璃描边单源别名（不复制值） */
+  --ds-focus-width: 2px;                    /* IBM / NVIDIA focus 双源 2px */
+  /* focus 色锚 = 既有 --ds-focus-ring（var(--btn-focus-ring)），草案条目精确归属，不另立槽 */
 }
 
 /* ══ 组件类层（`.ds-*`）══════════════════════════════════════════════
