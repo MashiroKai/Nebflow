@@ -701,6 +701,21 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 )
               )
             else IO.pure("")
+          // 既有 worktree 候选段（worktree-reuse-selection 批 2026-11-02）：根代理
+          // only（同 executorsText 判据）。数据源 = WorktreeCandidates.inventory
+          // （候选发现 + 活会话对账 + 状态标注），fail-soft 空串 = 段不注入。
+          // 注入时机 = systemStable 生命周期重建（同快照口径）；mid-session 变化
+          // 靠 Delegate 拒绝面的显式文案自纠错（active 拒绝时列出谁在持有）。
+          worktreesText <-
+            if isRootAgent then
+              // 枚举根 = 根会话座位工作区（挂载项目各自的 worktree 不在此列——派发
+              // 到别的项目时，`Delegate` 的续用腿按**目标项目**的 workspace 现读重
+              // 枚举，见 DelegateTool.internalSpawn；本段只是主座位的提示面）。
+              val rootWs = turnCtx.projectRoot.getOrElse((PathUtil.dataRoot / "general").toString)
+              nebflow.core.delegate.WorktreeCandidates
+                .inventory(rootWs)
+                .map(inv => nebflow.core.delegate.WorktreeCandidates.render(inv, rootWs))
+            else IO.pure("")
           // identity-sync 批（2026-10-23）：展示身份现读（displayName + 头像 sha）——
           // `## Self` 段体（order 396）与 identity 变更提醒的唯一数据源。空 = 该
           // agent 无非默认身份（未起名且无自定义头像）= 段不注入、提醒不产生 =
@@ -797,6 +812,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             isRootAgent = isRootAgent,
             mountedProjectsText = mountedProjectsText,
             executorsText = executorsText,
+            worktreesText = worktreesText,
             identitySelfText = identitySelfText
           )
           // systemStable: rebuilt only at lifecycle nodes; otherwise reuse the

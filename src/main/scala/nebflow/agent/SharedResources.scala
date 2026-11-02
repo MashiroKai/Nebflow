@@ -499,6 +499,20 @@ case class SharedResources(
     nebflow.llm.decision.DelegateJudgeMachine.face(providerRegistry)
   )
 
+  // worktree-reuse-selection 批（2026-11-02）：续用候选的「活会话持有」判据注册
+  // （M2 注册器形态，DelegateJudgePort 邻位同缝）。读面 = 本实例的 agentRegistry：
+  // 会话在表内即演员仍在场（注销/终态删行 ⇒ 缺席）；判据不需要 status 细化——
+  // 「演员还在」与「它会不会碰这棵树」是两件事，前者可机械判，后者交作者/模型
+  // 用 force 显式承担。端口缺席（离线 spec）= 恒空集 = 全部按不 live 判（保守
+  // 方向见 WorktreeCandidates.LiveSessions 头注）。
+  nebflow.core.delegate.WorktreeCandidates.LiveSessions.install(
+    new nebflow.core.delegate.WorktreeCandidates.LiveSessions.Face:
+      def liveAmong(ids: List[String]): IO[Set[String]] =
+        val wanted = ids.toSet
+        if wanted.isEmpty then IO.pure(Set.empty[String])
+        else agentRegistry.get.map(_.keySet.intersect(wanted))
+  )
+
   // 引擎加固批 2026-10-09（P1-2）：外部执行器判定缝**缺省接线**——同一判定机
   // （上方安装的 DelegateJudgePort face）服务外部腿终态三态判词；ready-to-merge
   // 由 ExternalSessionRunner.settle 并入 MergeQueue（外部通道条目）。幂等赋值

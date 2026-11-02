@@ -117,6 +117,14 @@ object PromptSections:
      */
     executorsText: String = "",
     /**
+     * Pre-rendered existing-worktree candidate list body (worktree-reuse-selection
+     * 批 2026-11-02)：本工作区既有 delegate worktree 清单（状态词 orphan /
+     * active / done + 脏度 + 最后活动），模型面「续用哪棵树」的选择输入。
+     * 来源 = `WorktreeCandidates.render`（AgentSessionExecution 装配期现读）。
+     * 仅根代理渲染；空串 = 段不注入（无既有树的会话零字节变化）。
+     */
+    worktreesText: String = "",
+    /**
      * Pre-rendered `## Self` section body (identity-sync 批 2026-10-23): the
      * agent's display name / avatar self-knowledge — rendered by
      * AgentIdentityStore.selfSectionText from the CURRENT display face. Empty
@@ -542,6 +550,19 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
 ${ctx.executorsText}
 
 External executors receive the task text only — no platform tools or plugins are injected."""
+    ),
+    // --- 既有 worktree 候选段（worktree-reuse-selection 批 2026-11-02）──────
+    // 作者令：「不仅是要能分配 worktree 还要能选择接着已有的 worktree继续干的
+    // 能力 灵活一点」。候选发现 + 状态标注在 core（`WorktreeCandidates`），本段
+    // 只是它的渲染面：根代理逐棵看到 orphan（前任退场但树上有活）/ active（活
+    // 会话持有——续用需 force）/ done 三态与脏度。
+    // 注入判据与 Mounted Projects / Available executors 同族：仅根代理（分发器
+    // 与节点会话不派发 Delegate，零面）；空清单 = 段不注入（无既有树的工作区
+    // 提示词字节零变化）。
+    PromptSection.dynamic(
+      645,
+      condition = ctx => ctx.isRootAgent && ctx.worktreesText.nonEmpty,
+      renderer = _.worktreesText
     ),
     // --- 阶段 2d（§D.1-14/§D.2）：原 order 630 Task List Protocol 段已删除
     // ——内容下迁进 TeamTask 三件 description（双轨期语义，阶段 3 随 team
