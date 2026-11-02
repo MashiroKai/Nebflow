@@ -201,6 +201,27 @@ body.mobile-layer {
   --mtap: 44px;
   --mtap-lg: 48px;
   --mhit: 44px;
+  /* ── 顶部悬浮 chrome 簇几何（内容起点让位批 2026-11-02 作者令： 「内容都需要
+     从按钮下开始，只有向上滑动的时候才允许从按钮下过」）──
+     簇 = 页头零高带里那几颗 48px 悬浮圆钮（返回钮 / canvas 页 ✕ 与层叠钮 /
+     聊天根 chrome 键同基准）。让位与右侧钳位一律由本块推导，禁写死像素：
+       --mchrome-top     16px 簇顶距（= 悬浮钮统一批 top: calc(16px + safe)）
+       --mchrome-btn     48px 钮面边长（= --mtap-lg 档，g2-fab 基准）
+       --mchrome-breathe  8px 钮下沿 → 正文首行的呼吸缝（作者「不得贴边到视觉
+                             拥挤」的最小留白）
+       --mchrome-clear   72px 页体顶让位 = 簇顶 16 + 钮 48 + 呼吸 8
+                             （= 顶栏控件高度 + 8px 呼吸；静止态正文首行起于此）
+       --mchrome-inset   72px 簇左右占位 = 同上三件之和（右侧钳位用：正文/胶囊
+                             横向不得侵入 [0,inset) 与 (100%-inset, 100%] 两条
+                             钮带）
+     与在飞「面板头两段式标题批」的 --mtitle-inset 同源同值（16+48+8）：该批
+     标题盒自承担让位（页体顶留 12），合并时把 --mtitle-inset 改指 --mchrome-inset
+     即可单源；本批不动标题规则。 */
+  --mchrome-top: 16px;
+  --mchrome-btn: var(--mtap-lg);
+  --mchrome-breathe: 8px;
+  --mchrome-clear: calc(var(--mchrome-top) + var(--mchrome-btn) + var(--mchrome-breathe));
+  --mchrome-inset: var(--mchrome-clear);
   /* 行高与间距 */
   --mrow: 44px;
   --mpad-x: 16px;
@@ -751,7 +772,17 @@ body.mobile-layer .mh-tpanel .tp-x svg {
   display: block;
 }
 /* 页面体：纵向滚域（收编面自管内滚的以其自身为准；body 滚动兜底封面/空态）。
-   悬浮钮统一批：页体顶让位悬浮 chrome 带（72 = 16+48+8，safe 同源）。 */
+   内容起点让位批（2026-11-02 作者令「内容都需要从按钮下开始，只有向上滑动的时候
+   才允许从按钮下过」）：页体顶让位 = --mchrome-clear（= 簇顶 16 + 钮 48 + 呼吸 8
+   = 顶栏控件高度 + 8px 呼吸，见文件头 token 块），**不写死像素**。
+   静止帧：正文首行起于簇下沿之下 ⇒ 文字/卡片永不落在悬浮钮命中区内；滚动态：
+   页体自身滚动、簇浮于滚动内容之上（半透明毛玻璃浮层）⇒ 内容自钮下穿过——
+   这正是「只有滑动时才允许穿过」的实现落点（滚动发生与否由页体 scrollTop 判，
+   非本规则）。机械断言见 tests/mobile-chrome-clearance.spec.mjs C1。
+   ⚠ 在飞「面板头两段式标题批」（分支 delegate/delegate-nebflow-1bae7308）把本行
+   改成 calc(var(--mtitle-lead) + safe) 并把让位交给标题盒；两批合并时本行须保留
+   （或由该批 --mtitle-inset 改指 --mchrome-inset 后由标题盒自承），否则静止帧
+   正文会顶进簇带 —— 合并顺序建议：两段式标题批先合，本批让位行作为其加冕。 */
 body.mobile-layer .mobile-page-body {
   flex: 1;
   min-height: 0;
@@ -760,7 +791,7 @@ body.mobile-layer .mobile-page-body {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
-  padding-top: calc(72px + env(safe-area-inset-top, 0px));
+  padding-top: calc(var(--mchrome-clear) + env(safe-area-inset-top, 0px));
 }
 /* 合流批注（顶栏批 15:19 ∪ 悬浮钮批 16:03）：dock 根页顶栏整体退役
    （.mobile-page-nohead，无 chrome 带可让位）——页体顶归零（安全区顶距由
@@ -1404,7 +1435,14 @@ body.mobile-layer .mf-strip-chip.on {
 }
 /* 长名省略 + 点击展开全名（作者令 §二.3「按既有省略规则 + 点击展开全名」）：
    常态 = 单行 ellipsis（max-width 92px）；.is-expanded（点活签）= 解限宽度、
-   回到完全可见层、盖过邻签（2600ms 自动收，换签即收 —— JS 侧定时）。 */
+   回到完全可见层、盖过邻签（2600ms 自动收，换签即收 —— JS 侧定时）。
+   内容起点让位批（2026-11-02 作者令「右上层叠图标压字」）：展开宽签原钳
+   `min(100vw - 96px, 280px)` = 375 宽下 279px，居中后跨 48→327 —— 左右两端各
+   压进 ✕（16→64）与层叠钮（311→359）的钮带 16px（实拍：签底毛玻璃与图标圆底
+   叠成一片，长标题文字顺延到钮下）。改钳到两侧各让出 --mchrome-inset（72 =
+   簇顶 16 + 钮 48 + 呼吸 8）⇒ 375 宽下 231px、跨 72→303，两端各余 8px 气隙，
+   展开签与其文字永不进钮带（滚动时也不进：签是 chrome 带自身，不在滚动流里）。
+   窄屏下限随 --mchrome-inset 同比收缩，零新魔法数。 */
 body.mobile-layer .mf-strip-label {
   min-width: 0;
   overflow: hidden;
@@ -1413,7 +1451,7 @@ body.mobile-layer .mf-strip-label {
 }
 body.mobile-layer .mf-strip-chip.is-expanded {
   z-index: 3;
-  max-width: min(calc(100vw - 96px), 280px);
+  max-width: min(calc(100vw - 2 * var(--mchrome-inset)), 280px);
   opacity: 1;
   filter: none;
 }
@@ -3345,6 +3383,27 @@ body.mobile-layer #bg-dropdown .bg-task-row button {
 
 /* 插件卡动作钮。 */
 body.mobile-layer #plugins-content .plugins-item-actions .cfg-btn { min-height: var(--mtap); }
+/* 插件卡操作行（2026-11-02 操作区一行化批）手机层热区：Plugin.md 入口 / 卸载钮
+   视觉本体分别为 20/22px 高（桌面密度档），一行化后仍须满足手机交互标准
+   ≥44×44 —— 解法同 .nb-toggle/.mf-strip-chip：本体不动，::before 外扩命中盒
+   到 --mhit（横向量体本已 94/59 ≥ 44，只补纵向）。三件水平占位不因外扩变宽
+   （横纵向同时 max(100%, 44) —— 宽已达标即取本体宽），故 375 宽一行仍富余
+   97px（实测 224 / 可用 321，见 tests/mobile-chrome-clearance.spec.mjs C4）。 */
+body.mobile-layer #plugins-content .plugins-item-actions .plugins-item-doc,
+body.mobile-layer #plugins-content .plugins-item-actions .plugins-item-uninstall {
+  position: relative;
+}
+body.mobile-layer #plugins-content .plugins-item-actions .plugins-item-doc::before,
+body.mobile-layer #plugins-content .plugins-item-actions .plugins-item-uninstall::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, var(--mhit));
+  height: max(100%, var(--mhit));
+  transform: translate(-50%, -50%);
+  border-radius: inherit;
+}
 
 /* 心跳行动作键。 */
 body.mobile-layer #daemon-panel .daemon-row {
