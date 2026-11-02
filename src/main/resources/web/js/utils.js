@@ -115,6 +115,121 @@ export function initMarkdown() {
   marked.setOptions({ breaks: true, gfm: true, headerIds: false });
 }
 
+// === External-input safe mode (fm-md-social batch, 2026-11-02) ==============
+//
+// The agent sessions (chat.js / persistence.js / askDock / canvas md viewer …)
+// all render through renderMarkdownWithMath. The friend/group/device faces
+// (messages.js fillBubble) rendered bodies as raw textContent — agent-generated
+// structured text arrived as visible `**`/`- ` syntax. Fix: wire the SAME
+// pipeline into those faces (one renderer, no second implementation), with a
+// `safe` mode for EXTERNAL input: a friend/group/device peer's message is
+// untrusted — a full trust tier above agent output — so raw HTML, non-http(s)
+// link schemes and KaTeX trust extensions are refused there.
+//
+// Safe-mode contract (per-call via opts.safe on renderMarkdownWithMath):
+//   · marked `html` tokens (block + inline raw HTML) are ESCAPED to literal
+//     text — `<img onerror>` / `<script>` can never enter the DOM;
+//   · `link` hrefs are scheme-allow-listed (http/https/mailto; protocol-
+//     relative forced to https); everything else degrades to label text;
+//     allowed links carry target=_blank rel="noopener noreferrer nofollow"
+//     and class md-ext (the face confirms before navigating — messages.js
+//     delegate, modal.js __showConfirm);
+//   · `image` tokens never auto-fetch remote bytes: rendered as an md-ext
+//     link chip to the sanitized src (tracking-pixel refusal), alt text kept;
+//   · KaTeX runs with trust:false (no \href/\includegraphics escapes).
+// Everything else — code fences + hljs, tables, lists, math, mermaid
+// placeholders, output blocks, mention/msg-token chips, copy buttons — is the
+// unmodified shared pipeline (single source; agent faces keep trust mode).
+//
+// 🔴 Fail-closed: safe mode with no usable marked.Renderer degrades the WHOLE
+// text to escapeHtml output — never falls through to the trusting path.
+
+/** Scheme allow-list for external links (lowercase; exact scheme match). */
+const SAFE_LINK_SCHEMES = ['http', 'https', 'mailto'];
+/** Defensive cap: no href longer than this is emitted at all. */
+const SAFE_HREF_MAX_LEN = 2048;
+
+/** Sanitize one external href. Returns the URL to emit or null (= refuse →
+ *  the anchor degrades to its label text). Bare relative/anchor hrefs are
+ *  refused: inside a chat bubble they would resolve against the app origin. */
+function safeExternalHref(raw) {
+  const s = String(raw || '').trim();
+  if (!s || s.length > SAFE_HREF_MAX_LEN) return null;
+  const m = s.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+  if (m) return SAFE_LINK_SCHEMES.includes(m[1].toLowerCase()) ? s : null;
+  if (s.startsWith('//')) return 'https:' + s; // protocol-relative → pin https
+  return null;
+}
+
+/** @type {any} */
+let _safeRenderer = null;
+
+/** Build (once) the hardened marked renderer. Null = library shape unknown →
+ *  callers fail closed. */
+function safeMarkedRenderer() {
+  if (_safeRenderer !== null || typeof marked === 'undefined') return _safeRenderer;
+  const Base = /** @type {any} */ (marked).Renderer;
+  if (typeof Base !== 'function') return null;
+  const r = new Base();
+  // Raw HTML (block + inline): escaped to visible literal text. marked v12
+  // hands over either a string (string form) or a token object (loose form).
+  r.html = (html) => escapeHtml(typeof html === 'string' ? html : String((html && html.text) || ''));
+  // Links: allow-list + hardened anchor. Label renders inline-token content
+  // when the token form carries tokens, else the plain label.
+  r.link = (href, title, text) => {
+    const t = /** @type {any} */ (href && typeof href === 'object' ? href : { href, title, text });
+    const url = safeExternalHref(t.href);
+    const label = t.tokens && t.tokens.length
+      ? /** @type {any} */ (r.parser ? r.parser.parseInline(t.tokens) : escapeHtml(String(t.text || t.href || '')))
+      : escapeHtml(String(t.text != null ? t.text : t.href || ''));
+    if (!url) return label; // refused → plain label text, no anchor at all
+    const titleAttr = t.title ? ` title="${escapeHtml(String(t.title))}"` : '';
+    return `<a href="${escapeHtml(url)}"${titleAttr} target="_blank" rel="noopener noreferrer nofollow" class="md-ext">${label}</a>`;
+  };
+  // Images: never auto-fetch. Allowed-src images render as an external link
+  // chip (same confirm gate as links); refused srcs degrade to alt text.
+  r.image = (href, title, text) => {
+    const t = /** @type {any} */ (href && typeof href === 'object' ? href : { href, title, text });
+    const url = safeExternalHref(t.href);
+    const alt = String(t.text || t.alt || '');
+    if (!url) return escapeHtml(alt);
+    const titleAttr = t.title ? ` title="${escapeHtml(String(t.title))}"` : '';
+    return `<a href="${escapeHtml(url)}"${titleAttr} target="_blank" rel="noopener noreferrer nofollow" class="md-ext md-ext-img">${escapeHtml(alt || url)}</a>`;
+  };
+  _safeRenderer = r;
+  return r;
+}
+
+/**
+ * Markdown-ness detector for the fm faces: bodies WITHOUT any markdown
+ * syntax keep the byte-identical plain-text face (A3 regression gate);
+ * bodies WITH syntax route through the shared markdown pipeline. Single
+ * source, imported by messages.js — no second implementation.
+ *
+ * The guard list mirrors what the pipeline actually transforms (headings,
+ * lists, bold/italic/strike, fences, inline code, links, images, tables,
+ * blockquotes, math). Single `*` emphasis and single-`_` italics are
+ * deliberately NOT detected (multiplication / snake_case false positives);
+ * `$x$` inline math uses the same guarded shape the renderer pairs on.
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function looksLikeMarkdown(text) {
+  if (!text || typeof text !== 'string') return false;
+  return /(^|\n)[ \t]{0,3}(#{1,6}[ \t]|\*|-|\+|[>]|\d{1,9}[.)][ \t])/.test(text) // heading / list / quote
+    || /(^|\n)[ \t]{0,3}(```|~~~)/.test(text)                                     // fence
+    || /\*\*[^*\n]+\*\*/.test(text)                                               // bold
+    || /(^|[^\w\\])\*[^*\n]+\*(?!\*)/.test(text)                                  // *italic* (word-bounded)
+    || /(^|\n)[ \t]{0,3}(---+|\*\*\*+|___+)[ \t]*($|\n)/.test(text)               // hr
+    || /~~[^~\n]+~~/.test(text)                                                   // strike
+    || /`[^`\n]+`/.test(text)                                                     // inline code
+    || /\[[^\]\n]+\]\([^)\n]+\)/.test(text)                                       // link / image
+    || /^\s{0,3}\|.+\|/m.test(text)                                               // table row
+    || /\$\$[^$\n]+\$\$/.test(text)                                               // display math
+    || /(^|[^\s$])\$(?![\s$])((?:\\\$|[^$\n])*?[^\s$])\$(?!\d)/.test(text)        // inline math (same guards)
+    || /(^|[^\w\\])(_{2})[^_\n]+\2/.test(text);                                   // __bold__
+}
+
 // === @-mention rendering (mention-render batch, 2026-09-27) ===
 //
 // Message text naming a MOUNTED project (`@<name>` at word start, the name
@@ -318,13 +433,16 @@ const RE_HUMAN_BLOCK = /<pre><code class="language-human"[^>]*>([\s\S]*?)<\/code
 
 export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   if (!text) return '';
+  const safe = !!(opts && opts.safe);
   // Streaming bypass (mem-diagnosis 20260907 D3): per-frame stream renders
   // re-parse the SAME growing text — every intermediate snapshot used to
   // enter this LRU and evict real entries until the hit rate hit 0. Stream
   // renderers pass { cache:false } and go straight to the parser; only
   // finish*/history renders (stable text) populate the cache.
-  if (opts && opts.cache === false) return _renderMarkdownWithMath(text, parseVoice);
-  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${outputBlockEnabled() ? 1 : 0}${mentionListState().gen}|${text}`;
+  if (opts && opts.cache === false) return _renderMarkdownWithMath(text, parseVoice, safe);
+  // 🔴 safe 是 key 的一部分：同一段文本在两条信任档下产物不同，混键会把
+  // 「agent 面可信渲染」与「外部消息安全渲染」互相串味（缓存投毒面）。
+  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${outputBlockEnabled() ? 1 : 0}${mentionListState().gen}|${safe ? 'S' : 'T'}|${text}`;
   const hit = _mdCache.get(key);
   if (hit !== undefined) {
     _mdCache.delete(key);
@@ -338,7 +456,7 @@ export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   // escapeHtml 纯文本（安全、可读、绝不整行消失，也区别于编辑态显源码）。
   let html;
   try {
-    html = _renderMarkdownWithMath(text, parseVoice);
+    html = _renderMarkdownWithMath(text, parseVoice, safe);
   } catch (e) {
     html = escapeHtml(text);
   }
@@ -349,8 +467,15 @@ export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   return html;
 }
 
-function _renderMarkdownWithMath(text, parseVoice) {
+function _renderMarkdownWithMath(text, parseVoice, safe) {
   if (typeof marked === 'undefined') return escapeHtml(text);
+  // safe 档（外部消息面）：渲染器形态不可用 ⇒ **整段回落转义纯文本**（fail
+  // closed），绝不落到可信腿上——外部输入不接受「降级但仍可信」。
+  let safeRenderer = null;
+  if (safe) {
+    safeRenderer = safeMarkedRenderer();
+    if (!safeRenderer) return escapeHtml(text);
+  }
   // voice 块补封批 2026-10-31（作者令「封存所有会话的 voice 块」，漏网面）：
   // 全双工 TTS 已随 #508 封存（voiceEnabled 缺席即封存），TTS 输出族
   // （<voice> 块 = .voice-block 可点绿字 + VoicePlayer 播报）是同源漏网——
@@ -418,9 +543,9 @@ function _renderMarkdownWithMath(text, parseVoice) {
       voiceBlocks.push(content.trim());
       return `VOICEBLOCK${voiceBlocks.length - 1}END`;
     });
-    return _renderMarkdownInternal(vp, voiceBlocks, false, outputBlocks, msgTokens);
+    return _renderMarkdownInternal(vp, voiceBlocks, false, outputBlocks, msgTokens, safe, safeRenderer);
   }
-  return _renderMarkdownInternal(text, voiceBlocks, false, outputBlocks, msgTokens);
+  return _renderMarkdownInternal(text, voiceBlocks, false, outputBlocks, msgTokens, safe, safeRenderer);
 }
 
 // ── <output> user-visible block (output 块语法批 2026-10-31) ────────────────
@@ -644,14 +769,17 @@ function protectMsgTokens(seg, store) {
   });
 }
 
-function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks, msgTokens) {
+function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks, msgTokens, safe, safeRenderer) {
   if (!msgTokens) msgTokens = [];
   // human-face batch (2026-10-30): the ```human filter fence renders ONLY when
   // every fence in the source is closed (streaming gate, 设计稿 §7.5 落地口径
   // 「整段等闭合」). An unclosed fence (mid-stream snapshot) falls through to
   // the normal code-block path — everything stays visible, nothing crashes, and
   // the card+drawer layout appears in one step the moment the fence closes.
-  const humanOn = !noHuman && _humanFencesBalanced(protected_);
+  //
+  // safe 档（外部消息面）关掉 ```human：那是 agent 产出的「人面卡」版式族，
+  // 外部来信不该驱动版式分栏（正文照常全显，围栏退回普通代码块，零丢失）。
+  const humanOn = !noHuman && !safe && _humanFencesBalanced(protected_);
   const mathBlocks = [];
   const mentionBlocks = [];
   // Math is protected BEFORE marked.parse and restored AFTER it on the whole
@@ -683,7 +811,12 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
     .split(RE_CODE_SPLIT)
     .map((seg, i) => (i % 2 === 1 ? seg : protectMentions(protectMath(protectMsgTokens(seg, msgTokens)), mentionBlocks)))
     .join('');
-  let html = marked.parse(protected_, { headerIds: false });
+  // safe 档：**逐次调用**注入硬化渲染器（marked.parse 的 per-call option，
+  // 实测不污染后续调用 ⇒ agent 面永远走默认渲染器；禁 marked.use 全局换装，
+  // 那会在流式交叠时串档）。降级器缺席 ⇒ 上游已 fail closed（走不到这里）。
+  let html = marked.parse(protected_, safeRenderer
+    ? { headerIds: false, renderer: safeRenderer }
+    : { headerIds: false });
   // Mermaid blocks (mermaid-md batch, 2026-10-23): a ```mermaid fence is a
   // DIAGRAM, not code — swap marked's `<pre><code class="language-mermaid">`
   // for a placeholder div BEFORE the copy-button pass below sees it (so no
@@ -724,7 +857,9 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
   if (outputBlocks && outputBlocks.length) {
     html = html.replace(RE_OUTPUT_RESTORE, (m, idx) => {
       const inner = outputBlocks[parseInt(idx, 10)] || '';
-      return '<div class="nf-output">' + _renderMarkdownInternal(inner, [], true, undefined, []) + '</div>';
+      // 信任档随嵌套下传（safe + 硬化渲染器）：output 块的内容同样来自外部
+      // 消息面，不能靠「嵌套一层」逃出白名单。
+      return '<div class="nf-output">' + _renderMarkdownInternal(inner, [], true, undefined, [], safe, safeRenderer) + '</div>';
     });
   }
   // Restore math blocks as KaTeX
@@ -736,7 +871,10 @@ function _renderMarkdownInternal(protected_, voiceBlocks, noHuman, outputBlocks,
           displayMode: block.display,
           throwOnError: false,
           strict: 'ignore',
-          trust: true
+          // safe 档（外部消息面）：关掉 KaTeX 的 trust 扩展——`\href` /
+          // `\htmlClass` / `\includegraphics` 一族在 trust:true 下会产出可点
+          // 链接与原始 HTML 片段，等于把 marked 那层的白名单在数学腿里绕开。
+          trust: !safe
         });
         html = html.replace(token, rendered);
       } catch (e) {

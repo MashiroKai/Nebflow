@@ -1184,6 +1184,196 @@ button.fm-req-decline:focus-visible {
 .fm-msg-text { white-space: pre-wrap; }
 .fm-msg-text:not(:last-child) { margin-bottom: 2px; }
 
+/* ── 正文 markdown 面（fm-md-social 批 · 2026-11-02 19:30 作者令）───────────────
+   「好友/群聊/设备里的聊天也要支持渲染 markdown」。渲染器 = 主会话同一条
+   `utils.renderMarkdownWithMath`（`{safe:true}` 外部输入档），本段只补**元素样式
+   作用域**——与 `chat.css` 的 `.bubble.ai*` 段、`flowMap.css` 的 `.fm-md` 段同一族
+   规则语言（同一批产品里第三处消费点，不是第三套渲染器）。
+   🔴 作用域只到 `.fm-msg-md`（= 正文里**确实有** md 语法的那些气泡）：无语法的
+   普通一句话走 `.fm-msg-text` 纯文本腿，本段一条都不命中 ⇒ 间距/行高/字色逐字节
+   不变（A3 回归门的实现前提）。
+   🔴 取色一律走主题 token（--color-frame-hover / --color-border / --sapphire）：
+   亮暗两档同源自适应，禁裸 hex（与 flowMap.css `.fm-md` 段同一条纪律）。
+   🔴 字号：正文继承气泡的既有档（13px）——**本批不动既有排版**（改后纯文本与
+   markdown 正文同档，同屏不出现两种正文字号）；新增元素只加下限 13px 与
+   ≥44×44 热区，见下。 */
+
+/* 正文容器：markdown 腿关掉 pre-wrap（块级元素已由 marked 结构化，pre-wrap 会把
+   源码里的换行叠成双倍行距；`breaks:true` 已把单个换行转成 <br>）。 */
+.fm-msg-text.fm-msg-md { white-space: normal; min-width: 0; max-width: 100%; }
+
+/* 🔴 宽度约束（本批实测发现的产品缺陷，非夹具问题）：`.fm-msg` 是 flex column +
+   `align-items: flex-start` ⇒ `.fm-msg-bubble` 的 cross-size = fit-content，而
+   flex 项的 `min-width: auto` 会把它顶到 **min-content**（= nowrap 表格/长代码行的
+   最宽内容）。实测 390 视口下气泡撑到 484px（行上限 279px）⇒ 表格/代码块被
+   `.fm-flow` 的 overflow-x:hidden 直接裁掉，横滚永远出不来（改前纯文本腿没有
+   这个问题 —— 文本会折行，min-content 只有最长单词）。
+   修法 = 只给**带 markdown 正文的气泡**解掉 min-content 下限（`:has()` 精确
+   作用域；纯文本气泡一个像素都不动，A3 回归门逐字节守）：气泡宽 = min(fit-content,
+   行宽) ⇒ 内部 `table`/`pre` 的 `max-width:100%` 才有确定参照系，`overflow-x:auto`
+   才真的产生滚动。 */
+.fm-msg-bubble:has(> .fm-msg-text.fm-msg-md) { min-width: 0; max-width: 100%; }
+
+.fm-msg-md p { margin: 4px 0; }
+.fm-msg-md p:first-child { margin-top: 0; }
+.fm-msg-md p:last-child { margin-bottom: 0; }
+/* 全局 reset（base.css `* { margin:0; padding:0 }`）把 ul/ol 缩进清零 ⇒ 圆点会掉到
+   气泡左内边距之外（chat.css 同款注释）。此处补回 18px 档。 */
+.fm-msg-md ul, .fm-msg-md ol { margin: 4px 0 4px 18px; padding: 0; }
+.fm-msg-md li { margin: 2px 0; }
+.fm-msg-md li > p { margin: 2px 0; }
+.fm-msg-md strong, .fm-msg-md b { font-weight: 600; }
+.fm-msg-md em { font-style: italic; }
+.fm-msg-md del { text-decoration: line-through; opacity: 0.75; }
+.fm-msg-md a {
+  color: rgb(var(--sapphire));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  /* 外链钮热区：行内锚的纵向不足 44px ⇒ ::before 外扩命中盒（视觉形态不变，
+     触控面达 Apple 档；mobileLayer.css 的 --mhit 同一手法）。 */
+  position: relative;
+}
+/* 命中盒外扩（44×44 下限；行内锚本体高度 ≈ 行高，纵向补足）。 */
+.fm-msg-md a.md-ext::before {
+  content: '';
+  position: absolute;
+  inset: -14px -10px;
+  border-radius: 8px;
+}
+/* 外链标识（明显可辨，不靠配色单打）：右上小箭头，与 `target=_blank` 语义同源，
+   点击仍走二次确认（messages.js onMdExtClick）。 */
+.fm-msg-md a.md-ext::after {
+  content: '↗';
+  position: absolute;
+  top: -0.45em;
+  right: -0.62em;
+  font-size: 0.72em;
+  line-height: 1;
+  opacity: 0.72;
+  pointer-events: none;
+}
+/* 图片降级牌（safe 档不自动取远端字节）：小牌 + 图钉语义（glyph 走 ::after，
+   ::before 仍是命中盒）。 */
+.fm-msg-md a.md-ext-img {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 8px;
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 8px;
+  background: var(--glass-etched-bg);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 图片牌前缀字形走**文字**而非 emoji/图标（emoji-当图标是已登记的清剿面）：
+   方括号 = 「这张图没加载，是个链接」的既有表达。 */
+.fm-msg-md a.md-ext-img::after {
+  content: '↗';
+  position: static;
+  margin-left: 2px;
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+.fm-msg-md h1, .fm-msg-md h2, .fm-msg-md h3,
+.fm-msg-md h4, .fm-msg-md h5, .fm-msg-md h6 {
+  margin: 8px 0 4px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.fm-msg-md h1 { font-size: 1.35em; }
+.fm-msg-md h2 { font-size: 1.22em; }
+.fm-msg-md h3 { font-size: 1.1em; }
+.fm-msg-md h4, .fm-msg-md h5, .fm-msg-md h6 { font-size: 1em; }
+
+.fm-msg-md blockquote {
+  border-left: 3px solid var(--color-border);
+  margin: 6px 0;
+  padding-left: 10px;
+  color: var(--color-text-muted);
+}
+.fm-msg-md hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 8px 0;
+}
+
+/* 行内代码：等宽 + 底纹（与 chat.css `.bubble.ai code` 同形，取色换 token）。 */
+.fm-msg-md code {
+  background: var(--color-frame-hover);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* 可读辅助字下限 13px（Apple footnote 档）：气泡正文 13px ⇒ 代码不得更小。 */
+  font-size: 13px;
+  word-break: break-all;
+}
+
+/* 代码块：块级容器 + 横向滚动 + 右缘**模糊淡出**（不用省略号 —— 长内容/超宽内容
+   的既有表达法；mask 只在溢出侧生效，短代码块不产生视觉差）。 */
+.fm-msg-md pre {
+  background: var(--color-frame-hover);
+  padding: 8px 12px 10px;
+  border-radius: 8px;
+  margin: 6px 0;
+  overflow-x: auto;
+  line-height: 1.45;
+  scrollbar-color: var(--color-border) transparent;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent 100%);
+}
+.fm-msg-md pre code {
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  word-break: normal;
+  white-space: pre;
+}
+/* 复制按钮的定位上下文（渲染管线注入 `.code-block-wrap` + `.code-copy-btn`，
+   按钮是 absolute；缺这条会落到最近定位祖先 = 气泡右上角压住内容 ——
+   flowMap.css `.fm-md` 段同款注释、同一处修补）。 */
+.fm-msg-md .code-block-wrap { position: relative; margin: 6px 0; }
+.fm-msg-md .code-block-wrap pre { margin: 0; padding-top: 12px; }
+/* 复制钮热区 ≥44×44（Apple HIG）：本体保持既有小钮视觉，::before 外扩命中盒。
+   触摸端（hover:none）常显（无 hover 可依赖）。 */
+.fm-msg-md .code-copy-btn { position: absolute; }
+.fm-msg-md .code-copy-btn::before {
+  content: '';
+  position: absolute;
+  inset: -12px -6px;
+}
+@media (hover: none) {
+  .fm-msg-md .code-copy-btn { opacity: 1; }
+}
+
+/* 表格：小屏横向滚动（作者令「不许挤成一团」）+ 右缘模糊淡出；单元格换行关闭
+   ⇒ 列不被压成竖排字。 */
+.fm-msg-md table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 6px 0;
+  font-size: 13px;
+  scrollbar-color: var(--color-border) transparent;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent 100%);
+}
+.fm-msg-md th, .fm-msg-md td {
+  border: 1px solid var(--color-border);
+  padding: 4px 8px;
+  white-space: nowrap;
+  text-align: left;
+}
+.fm-msg-md th { background: var(--color-frame-hover); font-weight: 600; }
+
+/* 数学（KaTeX 产物）与 mermaid 占位：超宽同样横向滚动而不是撑破气泡。 */
+.fm-msg-md .katex-display { overflow-x: auto; overflow-y: hidden; }
+.fm-msg-md .nf-mermaid { max-width: 100%; overflow-x: auto; }
+
 /* Chips: agent-sent + forwarded (§3.3 R6/R7) — pill, etched bg, no new color */
 /* 转发徽章（消息元信息行槽位；材质本就与 agent 徽章同族）。
    🔴 `.fm-msg-agent-badge` 已随 F1 单源化移出本规则（现状 = `sapphire.css` 的

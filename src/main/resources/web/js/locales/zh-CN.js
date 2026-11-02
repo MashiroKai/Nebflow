@@ -655,6 +655,11 @@ export default {
   'messages.ariaUnread': '{n} 条未读消息',
   'messages.ariaActionable': '{n} 项待你处理',
   'messages.copy': '复制',
+  // fm-md-social 批（2026-11-02）：好友/群聊/设备消息里的 markdown 外链点击**二次确认**
+  // （正文来自外部，外跳动作要确认；确认框 = 全站既有 __showConfirm）。
+  'messages.mdLinkTitle': '打开外部链接',
+  'messages.mdLinkConfirm': '这条消息来自外部，链接指向 {host}。确认在新窗口打开？',
+  'messages.mdLinkOpen': '打开',
   'header.memory': '记忆',
   'header.bgTasks': '后台任务',
   'input.placeholder': '输入消息...',
