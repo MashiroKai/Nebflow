@@ -1,0 +1,12 @@
+visual-baseline [check] playwright=playwright browser=chromium-151 (151.0.7922.34) platform=darwin-chromium-151
+  web    : src/main/resources/web
+  baseline: tests/visual/baseline/darwin-chromium-151
+  out    : .nebflow/visual-baseline/darwin-chromium-151
+
+  SAME   canvas-markdown-tab-dark               552x874 (2841ms) 
+  SAME   canvas-markdown-tab-light              552x874 (2479ms) 
+  SAME   canvas-code-tab-dark                   552x874 (3480ms) 
+  SAME   canvas-code-tab-light                  552x874 (3476ms) 
+
+VISUAL BASELINE PASS
+EXIT=0

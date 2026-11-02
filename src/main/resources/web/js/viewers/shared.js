@@ -777,11 +777,16 @@ const FIND_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="non
  * 单行排布批（2026-11-01 作者令 16:18）：簇左锚化（作者令「功能钮靠左、ask
  * 单独靠右，两端对齐」）——`left` 语义与旧 `right` 值一比一（槽值原样，
  * 角缘序镜像）；css 同批 split.css .canvas-source-toggle 注。
+ * canvas 控件尺寸对齐批（2026-11-02 作者追加令 09:41「包括 canvas 的这些控件
+ * 宽度也要保持一致」）：钮 40 → 48 ⇒ 槽距 48 → 56（48 + 8 缝，缝不变），
+ * 调用方槽值随之派生：md 64 → **72**（源码 16 + 48 + 8）/ html 112 → **128**
+ * （引用 72 + 48 + 8）/ monaco 16 不变（源码态无簇，单钮独坐）。缩放条同理
+ * 160 → 184（split.css）。
  *  @param {HTMLElement} pane — canvas tab pane
- *  @param {number} [left] - offset from the pane's left edge (default 112;
- *    md 64 / html 112 / monaco 16 —— 调用方槽值零改）
+ *  @param {number} [left] - offset from the pane's left edge (default 128;
+ *    md 72 / html 128 / monaco 16 —— 48px 钮 + 8px 缝的 56px 槽距派生)
  */
-export function addFindToggle(pane, left = 112) {
+export function addFindToggle(pane, left = 128) {
   pane.querySelector('.canvas-find-toggle')?.remove();
   if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
 
@@ -802,14 +807,18 @@ export function addFindToggle(pane, left = 112) {
 // ── File refresh button (canvas 文件刷新批, 作者令 2026-10-25) ──────────
 
 const REFRESH_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>';
-// Same corner family as source/ref/find: 40px glass circles on a 48px
-// pitch, bottom:16 (split.css). The zoom bar is the one non-circle member —
+// Same corner family as source/ref/find: **48px glass circles on a 56px
+// pitch**, bottom:16 (split.css). The zoom bar is the one non-circle member —
 // its occupied span is measured, not assumed.（图谱圆钮批④退役后簇内只剩
-// 源码/引用/查找三圆钮 + 缩放条 + 壳刷新钮，簇内 48px 间距不变。
-// 单行排布批 2026-11-01：簇左锚化——座位计算同式镜像到 left 轴。）
+// 源码/引用/查找三圆钮 + 缩放条 + 壳刷新钮。
+// 单行排布批 2026-11-01：簇左锚化——座位计算同式镜像到 left 轴。
+// canvas 控件尺寸对齐批 2026-11-02：钮 40→48 ⇒ 槽距 48→56（缝 8px 不变），
+// 第二行底锚 64→72（= 圆钮行顶 16+48 + 8 缝），行判定容差随槽距同源。）
 const REFRESH_CIRCLE_SEL = '.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle';
-const REFRESH_ROW_PITCH = 48;
-const REFRESH_ROW_BOTTOMS = [16, 64];
+const REFRESH_CIRCLE_SIZE = 48;      // = --cv-size-circle-lg
+const REFRESH_ROW_PITCH = 56;        // = --cv-row-pitch-lg（48 钮 + 8 缝）
+const REFRESH_ROW_BOTTOMS = [16, 72];
+const REFRESH_ROW_TOLERANCE = REFRESH_ROW_PITCH / 2;  // 行归并容差（同槽距半档）
 
 function _refreshCornerItems(pane) {
   const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : NaN; };
@@ -823,15 +832,15 @@ function _refreshCornerItems(pane) {
     const left = Number.isFinite(num(el.style.left)) ? num(el.style.left) : (num(cs.left) || 16);
     const bottom = num(cs.bottom) || 16;
     const isBar = el.classList.contains('canvas-zoom-bar');
-    items.push({ left, bottom, span: isBar ? (el.getBoundingClientRect().width || 140) + 8 : REFRESH_ROW_PITCH });
+    items.push({ left, bottom, span: isBar ? (el.getBoundingClientRect().width || 222) + 8 : REFRESH_ROW_PITCH });
   }
   return items;
 }
 
-/** First free seat on the bottom-left corner row for one more 40px circle.
+/** First free seat on the bottom-left corner row for one more 48px circle.
  *  Row 0 = bottom:16 (the circle row); when the measured seat would overflow
- *  the panel the button drops to row 1 = bottom:64 (same convention the narrow
- *  html zoom bar already uses). */
+ *  the panel the button drops to row 1 = bottom:72 (same convention the narrow
+ *  html zoom bar uses — 圆钮行顶 16+48 + 8 缝). */
 function _refreshSeat(pane) {
   const items = _refreshCornerItems(pane);
   // The mount can run mid open-transition (flex-basis 0 → target, 0.32s): the
@@ -845,10 +854,10 @@ function _refreshSeat(pane) {
   for (const bottom of REFRESH_ROW_BOTTOMS) {
     let left = 16;
     for (const it of items) {
-      if (Math.abs(it.bottom - bottom) > 24) continue;  // different row
+      if (Math.abs(it.bottom - bottom) > REFRESH_ROW_TOLERANCE) continue;  // different row
       left = Math.max(left, it.left + it.span);
     }
-    if (bottom === REFRESH_ROW_BOTTOMS[0] && widthKnown && left + 40 > target - 8) continue;  // row 0 full
+    if (bottom === REFRESH_ROW_BOTTOMS[0] && widthKnown && left + REFRESH_CIRCLE_SIZE > target - 8) continue;  // row 0 full
     return { left, bottom };
   }
   return { left: 16, bottom: REFRESH_ROW_BOTTOMS[1] };

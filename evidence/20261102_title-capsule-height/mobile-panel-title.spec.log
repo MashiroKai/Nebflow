@@ -1,0 +1,637 @@
+evidence → /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-f003855e/evidence/20261102_title-capsule-height/spec-tmp
+PASS  chromium-light-projects 页面壳在场
+PASS  chromium-light-projects 静止态 .rolled 不在场
+PASS  chromium-light-projects 静止态进度 p = 0  — p=0
+PASS  chromium-light-projects 大标题文案 = 面板现名  — text="项目"
+PASS  chromium-light-projects 大标题在流内（position:static）、页体首件  — static/true
+PASS  chromium-light-projects 大标题水平居中（text-align center）  — center
+PASS  chromium-light-projects 大标题左右内缩各 72px（--mtitle-inset）  — 72px/72px
+PASS  chromium-light-projects 大标题 28px/600（作者令破档档位保留）  — 28px/600
+PASS  chromium-light-projects 大标题字距负档（-0.01em）  — got -0.28px
+PASS  chromium-light-projects 大标题墨色 = --color-frame-text-bright  — got rgb(27, 30, 38) / token rgb(27, 30, 38)
+PASS  chromium-light-projects 大标题可见（opacity 1）  — got 1
+PASS  chromium-light-projects 大标题盒高 52（防裁字）  — h=52
+PASS  chromium-light-projects 大标题盒顶 12（页体顶呼吸缝）  — top=12
+PASS  chromium-light-projects 大标题盒底 64 = 返回钮底缘  — title=64 back=64
+PASS  chromium-light-projects 大标题文字中心 = 返回钮中心（40，同轴）  — text=40 back=40
+PASS  chromium-light-projects 静止态胶囊 opacity 0  — got 0
+PASS  chromium-light-projects 胶囊高度恒 48（--mcap-h，胶囊高度批 2026-11-02）  — h=48
+PASS  chromium-light-projects 胶囊垂直中心 40（= 返回钮中心）  — cy=40
+PASS  chromium-light-projects 胶囊横向居中（页面中轴）  — cx=188 vw=375
+PASS  chromium-light-projects 胶囊右缘不越返回钮禁区（左缘 ≥ 72）  — left=148
+PASS  chromium-light-projects 胶囊 15px / 全圆角 / 毛玻璃材质（backdrop-filter）  — 15px 999px blur(24px) saturate(1.15)
+PASS  chromium-light-projects 胶囊不拦事件（pointer-events none）  — none
+PASS  chromium-light-projects 渐隐带节点退役（.mobile-page-title-band 计数 0）  — count=0
+PASS  chromium-light-projects 「<」返回钮在场且可点  — pe=auto
+PASS  chromium-light-projects 主滚轴余量 > 吸附阈值（夹具充足，实测 max=2370）  — max=2370
+PASS  chromium-light-projects 区间内（scrollTop 40）进度 = 0.667  — got p=0.667 @team-scroll
+PASS  chromium-light-projects 区间内不切 .rolled（40 < 56）
+PASS  chromium-light-projects 区间内大标题 opacity = 1−p（连续跟手）  — got 0.333
+PASS  chromium-light-projects 区间内胶囊 opacity = p（连续跟手）  — got 0.667
+PASS  chromium-light-projects 区间内胶囊几何不漂（h 48 / 中心 40）  — 48/40
+PASS  chromium-light-projects 阈值上（scrollTop 300）进度 = 1  — got p=1 @team-scroll
+PASS  chromium-light-projects 阈值上切 .rolled
+PASS  chromium-light-projects 吸附态胶囊 opacity 1  — got 1
+PASS  chromium-light-projects 吸附态大标题 opacity 0  — got 0
+PASS  chromium-light-projects 吸附态大标题不拦交互（pointer-events none）  — none
+PASS  chromium-light-projects 吸附态顶区零占位（大标题收高 → 0）  — h=0
+PASS  chromium-light-projects 吸附态胶囊几何 = 48 高 / 中心 40 / 左缘 ≥72  — 48/40/148
+PASS  chromium-light-projects 吸附态胶囊仍横向居中  — cx=188
+PASS  chromium-light-projects 吸附态返回钮仍在胶囊左侧且可点（z 6 > 5）  — backZ=6 miniZ=5
+PASS  chromium-light-projects ① 胶囊高 ↔ 返回钮高 |差| ≤2px（实测 胶囊 48 / 钮 48）  — cap=48 back=48
+PASS  chromium-light-projects ② 胶囊中心 ↔ 返回钮中心 |偏| ≤1px（实测 胶囊 40 / 钮 40）  — cap=40 back=40
+PASS  chromium-light-projects ③a 胶囊不压返回钮（缝 ≥ 8px：实测 83.5，左 147.5 / 钮右 64）  — gap=83.5
+PASS  chromium-light-projects ③b 上限饱和时缝 = 8px±1（实测 8；胶囊宽 231 = max-width calc(100% - 144px)，vw 375）  — gap=8 w=231
+PASS  chromium-light-projects ④ 胶囊宽度随内容收缩（< vw×0.9 = 338）+ 圆角 999（实测 w=80 r=999px）  — w=80 vw=375 r=999px
+PASS  chromium-light-projects ⑤ 文字不溢出/不被圆角裁（文字 30 + 内距 24px+24px = 78 ≤ 胶囊宽 80）  — 78 vs 80
+PASS  chromium-light-projects ⑤b 胶囊内距 = 24（= 半径 h/2，文字落直段内）  — 24px/24px
+PASS  chromium-light-projects ⑥ 内容仍从胶囊下方流过（相交件 10 个，示例 div.canvas-tab-pane）  — n=10
+PASS  chromium-light-projects 滚轮回顶（真滚轮）大标题展开复现  — p=0 top=0@team-scroll
+PASS  chromium-light-projects 回顶后胶囊退回 0（无残留）  — got 0
+PASS  chromium-light-settings 设置内容滚动域成立（夹具充足）  — surplus=1112
+PASS  chromium-light-settings 页面壳在场
+PASS  chromium-light-settings 静止态 .rolled 不在场
+PASS  chromium-light-settings 静止态进度 p = 0  — p=0
+PASS  chromium-light-settings 大标题文案 = 面板现名  — text="设置"
+PASS  chromium-light-settings 大标题在流内（position:static）、页体首件  — static/true
+PASS  chromium-light-settings 大标题水平居中（text-align center）  — center
+PASS  chromium-light-settings 大标题左右内缩各 72px（--mtitle-inset）  — 72px/72px
+PASS  chromium-light-settings 大标题 28px/600（作者令破档档位保留）  — 28px/600
+PASS  chromium-light-settings 大标题字距负档（-0.01em）  — got -0.28px
+PASS  chromium-light-settings 大标题墨色 = --color-frame-text-bright  — got rgb(27, 30, 38) / token rgb(27, 30, 38)
+PASS  chromium-light-settings 大标题可见（opacity 1）  — got 1
+PASS  chromium-light-settings 大标题盒高 52（防裁字）  — h=52
+PASS  chromium-light-settings 大标题盒顶 12（页体顶呼吸缝）  — top=12
+PASS  chromium-light-settings 大标题盒底 64 = 返回钮底缘  — title=64 back=64
+PASS  chromium-light-settings 大标题文字中心 = 返回钮中心（40，同轴）  — text=40 back=40
+PASS  chromium-light-settings 静止态胶囊 opacity 0  — got 0
+PASS  chromium-light-settings 胶囊高度恒 48（--mcap-h，胶囊高度批 2026-11-02）  — h=48
+PASS  chromium-light-settings 胶囊垂直中心 40（= 返回钮中心）  — cy=40
+PASS  chromium-light-settings 胶囊横向居中（页面中轴）  — cx=188 vw=375
+PASS  chromium-light-settings 胶囊右缘不越返回钮禁区（左缘 ≥ 72）  — left=148
+PASS  chromium-light-settings 胶囊 15px / 全圆角 / 毛玻璃材质（backdrop-filter）  — 15px 999px blur(24px) saturate(1.15)
+PASS  chromium-light-settings 胶囊不拦事件（pointer-events none）  — none
+PASS  chromium-light-settings 渐隐带节点退役（.mobile-page-title-band 计数 0）  — count=0
+PASS  chromium-light-settings 「<」返回钮在场且可点  — pe=auto
+PASS  chromium-light-settings 面内同名标题退役（#settings-modal-title）  — none
+PASS  chromium-light-settings 主滚轴余量 > 吸附阈值（夹具充足，实测 max=1077）  — max=1077
+PASS  chromium-light-settings 区间内（scrollTop 40）进度 = 0.667  — got p=0.667 @settings-content
+PASS  chromium-light-settings 区间内不切 .rolled（40 < 56）
+PASS  chromium-light-settings 区间内大标题 opacity = 1−p（连续跟手）  — got 0.333
+PASS  chromium-light-settings 区间内胶囊 opacity = p（连续跟手）  — got 0.667
+PASS  chromium-light-settings 区间内胶囊几何不漂（h 48 / 中心 40）  — 48/40
+PASS  chromium-light-settings 阈值上（scrollTop 300）进度 = 1  — got p=1 @settings-content
+PASS  chromium-light-settings 阈值上切 .rolled
+PASS  chromium-light-settings 吸附态胶囊 opacity 1  — got 1
+PASS  chromium-light-settings 吸附态大标题 opacity 0  — got 0
+PASS  chromium-light-settings 吸附态大标题不拦交互（pointer-events none）  — none
+PASS  chromium-light-settings 吸附态顶区零占位（大标题收高 → 0）  — h=0
+PASS  chromium-light-settings 吸附态胶囊几何 = 48 高 / 中心 40 / 左缘 ≥72  — 48/40/148
+PASS  chromium-light-settings 吸附态胶囊仍横向居中  — cx=188
+PASS  chromium-light-settings 吸附态返回钮仍在胶囊左侧且可点（z 6 > 5）  — backZ=6 miniZ=5
+PASS  chromium-light-settings ① 胶囊高 ↔ 返回钮高 |差| ≤2px（实测 胶囊 48 / 钮 48）  — cap=48 back=48
+PASS  chromium-light-settings ② 胶囊中心 ↔ 返回钮中心 |偏| ≤1px（实测 胶囊 40 / 钮 40）  — cap=40 back=40
+PASS  chromium-light-settings ③a 胶囊不压返回钮（缝 ≥ 8px：实测 83.5，左 147.5 / 钮右 64）  — gap=83.5
+PASS  chromium-light-settings ③b 上限饱和时缝 = 8px±1（实测 8；胶囊宽 231 = max-width calc(100% - 144px)，vw 375）  — gap=8 w=231
+PASS  chromium-light-settings ④ 胶囊宽度随内容收缩（< vw×0.9 = 338）+ 圆角 999（实测 w=80 r=999px）  — w=80 vw=375 r=999px
+PASS  chromium-light-settings ⑤ 文字不溢出/不被圆角裁（文字 30 + 内距 24px+24px = 78 ≤ 胶囊宽 80）  — 78 vs 80
+PASS  chromium-light-settings ⑤b 胶囊内距 = 24（= 半径 h/2，文字落直段内）  — 24px/24px
+PASS  chromium-light-settings ⑥ 内容仍从胶囊下方流过（相交件 5 个，示例 div.scroll-under-glass）  — n=5
+PASS  chromium-light-settings 滚轮回顶（真滚轮）大标题展开复现  — p=0 top=0@settings-content
+PASS  chromium-light-settings 回顶后胶囊退回 0（无残留）  — got 0
+PASS  chromium-light-todo 页面壳在场
+PASS  chromium-light-todo 静止态 .rolled 不在场
+PASS  chromium-light-todo 静止态进度 p = 0  — p=0
+PASS  chromium-light-todo 大标题文案 = 面板现名  — text="待办事项"
+PASS  chromium-light-todo 大标题在流内（position:static）、页体首件  — static/true
+PASS  chromium-light-todo 大标题水平居中（text-align center）  — center
+PASS  chromium-light-todo 大标题左右内缩各 72px（--mtitle-inset）  — 72px/72px
+PASS  chromium-light-todo 大标题 28px/600（作者令破档档位保留）  — 28px/600
+PASS  chromium-light-todo 大标题字距负档（-0.01em）  — got -0.28px
+PASS  chromium-light-todo 大标题墨色 = --color-frame-text-bright  — got rgb(27, 30, 38) / token rgb(27, 30, 38)
+PASS  chromium-light-todo 大标题可见（opacity 1）  — got 1
+PASS  chromium-light-todo 大标题盒高 52（防裁字）  — h=52
+PASS  chromium-light-todo 大标题盒顶 12（页体顶呼吸缝）  — top=12
+PASS  chromium-light-todo 大标题盒底 64 = 返回钮底缘  — title=64 back=64
+PASS  chromium-light-todo 大标题文字中心 = 返回钮中心（40，同轴）  — text=40 back=40
+PASS  chromium-light-todo 静止态胶囊 opacity 0  — got 0
+PASS  chromium-light-todo 胶囊高度恒 48（--mcap-h，胶囊高度批 2026-11-02）  — h=48
+PASS  chromium-light-todo 胶囊垂直中心 40（= 返回钮中心）  — cy=40
+PASS  chromium-light-todo 胶囊横向居中（页面中轴）  — cx=188 vw=375
+PASS  chromium-light-todo 胶囊右缘不越返回钮禁区（左缘 ≥ 72）  — left=133
+PASS  chromium-light-todo 胶囊 15px / 全圆角 / 毛玻璃材质（backdrop-filter）  — 15px 999px blur(24px) saturate(1.15)
+PASS  chromium-light-todo 胶囊不拦事件（pointer-events none）  — none
+PASS  chromium-light-todo 渐隐带节点退役（.mobile-page-title-band 计数 0）  — count=0
+PASS  chromium-light-todo 「<」返回钮在场且可点  — pe=auto
+PASS  chromium-light-todo 面内同名标题退役（.todo-page-title）  — none
+PASS  chromium-light-todo 主滚轴余量 > 吸附阈值（夹具充足，实测 max=720）  — max=720
+PASS  chromium-light-todo 区间内（scrollTop 40）进度 = 0.667  — got p=0.667 @todo-page-body
+PASS  chromium-light-todo 区间内不切 .rolled（40 < 56）
+PASS  chromium-light-todo 区间内大标题 opacity = 1−p（连续跟手）  — got 0.333
+PASS  chromium-light-todo 区间内胶囊 opacity = p（连续跟手）  — got 0.667
+PASS  chromium-light-todo 区间内胶囊几何不漂（h 48 / 中心 40）  — 48/40
+PASS  chromium-light-todo 阈值上（scrollTop 300）进度 = 1  — got p=1 @todo-page-body
+PASS  chromium-light-todo 阈值上切 .rolled
+PASS  chromium-light-todo 吸附态胶囊 opacity 1  — got 1
+PASS  chromium-light-todo 吸附态大标题 opacity 0  — got 0
+PASS  chromium-light-todo 吸附态大标题不拦交互（pointer-events none）  — none
+PASS  chromium-light-todo 吸附态顶区零占位（大标题收高 → 0）  — h=0
+PASS  chromium-light-todo 吸附态胶囊几何 = 48 高 / 中心 40 / 左缘 ≥72  — 48/40/133
+PASS  chromium-light-todo 吸附态胶囊仍横向居中  — cx=188
+PASS  chromium-light-todo 吸附态返回钮仍在胶囊左侧且可点（z 6 > 5）  — backZ=6 miniZ=5
+PASS  chromium-light-todo ① 胶囊高 ↔ 返回钮高 |差| ≤2px（实测 胶囊 48 / 钮 48）  — cap=48 back=48
+PASS  chromium-light-todo ② 胶囊中心 ↔ 返回钮中心 |偏| ≤1px（实测 胶囊 40 / 钮 40）  — cap=40 back=40
+PASS  chromium-light-todo ③a 胶囊不压返回钮（缝 ≥ 8px：实测 68.5，左 132.5 / 钮右 64）  — gap=68.5
+PASS  chromium-light-todo ③b 上限饱和时缝 = 8px±1（实测 8；胶囊宽 231 = max-width calc(100% - 144px)，vw 375）  — gap=8 w=231
+PASS  chromium-light-todo ④ 胶囊宽度随内容收缩（< vw×0.9 = 338）+ 圆角 999（实测 w=110 r=999px）  — w=110 vw=375 r=999px
+PASS  chromium-light-todo ⑤ 文字不溢出/不被圆角裁（文字 60 + 内距 24px+24px = 108 ≤ 胶囊宽 110）  — 108 vs 110
+PASS  chromium-light-todo ⑤b 胶囊内距 = 24（= 半径 h/2，文字落直段内）  — 24px/24px
+PASS  chromium-light-todo ⑥ 内容仍从胶囊下方流过（相交件 8 个，示例 div.scroll-under-glass）  — n=8
+PASS  chromium-light-todo 滚轮回顶（真滚轮）大标题展开复现  — p=0 top=0@todo-page-body
+PASS  chromium-light-todo 回顶后胶囊退回 0（无残留）  — got 0
+PASS  chromium-light 切换前 projects 处于吸附态
+PASS  chromium-light 返回后 projects 退场（.live 摘除）
+PASS  chromium-light 退场后进度保留但不影响他页（离场态即 p=1）  — p=1
+PASS  chromium-light 新进面板静止态（进场对账 p=0，不继承他页吸附）  — p=0 h=52
+PASS  chromium-dark-projects 页面壳在场
+PASS  chromium-dark-projects 静止态 .rolled 不在场
+PASS  chromium-dark-projects 静止态进度 p = 0  — p=0
+PASS  chromium-dark-projects 大标题文案 = 面板现名  — text="项目"
+PASS  chromium-dark-projects 大标题在流内（position:static）、页体首件  — static/true
+PASS  chromium-dark-projects 大标题水平居中（text-align center）  — center
+PASS  chromium-dark-projects 大标题左右内缩各 72px（--mtitle-inset）  — 72px/72px
+PASS  chromium-dark-projects 大标题 28px/600（作者令破档档位保留）  — 28px/600
+PASS  chromium-dark-projects 大标题字距负档（-0.01em）  — got -0.28px
+PASS  chromium-dark-projects 大标题墨色 = --color-frame-text-bright  — got rgb(232, 234, 237) / token rgb(232, 234, 237)
+PASS  chromium-dark-projects 大标题可见（opacity 1）  — got 1
+PASS  chromium-dark-projects 大标题盒高 52（防裁字）  — h=52
+PASS  chromium-dark-projects 大标题盒顶 12（页体顶呼吸缝）  — top=12
+PASS  chromium-dark-projects 大标题盒底 64 = 返回钮底缘  — title=64 back=64
+PASS  chromium-dark-projects 大标题文字中心 = 返回钮中心（40，同轴）  — text=40 back=40
+PASS  chromium-dark-projects 静止态胶囊 opacity 0  — got 0
+PASS  chromium-dark-projects 胶囊高度恒 48（--mcap-h，胶囊高度批 2026-11-02）  — h=48
+PASS  chromium-dark-projects 胶囊垂直中心 40（= 返回钮中心）  — cy=40
+PASS  chromium-dark-projects 胶囊横向居中（页面中轴）  — cx=188 vw=375
+PASS  chromium-dark-projects 胶囊右缘不越返回钮禁区（左缘 ≥ 72）  — left=148
+PASS  chromium-dark-projects 胶囊 15px / 全圆角 / 毛玻璃材质（backdrop-filter）  — 15px 999px blur(24px) saturate(1.15)
+PASS  chromium-dark-projects 胶囊不拦事件（pointer-events none）  — none
+PASS  chromium-dark-projects 渐隐带节点退役（.mobile-page-title-band 计数 0）  — count=0
+PASS  chromium-dark-projects 「<」返回钮在场且可点  — pe=auto
+PASS  chromium-dark-projects 主滚轴余量 > 吸附阈值（夹具充足，实测 max=2370）  — max=2370
+PASS  chromium-dark-projects 区间内（scrollTop 40）进度 = 0.667  — got p=0.667 @team-scroll
+PASS  chromium-dark-projects 区间内不切 .rolled（40 < 56）
+PASS  chromium-dark-projects 区间内大标题 opacity = 1−p（连续跟手）  — got 0.333
+PASS  chromium-dark-projects 区间内胶囊 opacity = p（连续跟手）  — got 0.667
+PASS  chromium-dark-projects 区间内胶囊几何不漂（h 48 / 中心 40）  — 48/40
+PASS  chromium-dark-projects 阈值上（scrollTop 300）进度 = 1  — got p=1 @team-scroll
+PASS  chromium-dark-projects 阈值上切 .rolled
+PASS  chromium-dark-projects 吸附态胶囊 opacity 1  — got 1
+PASS  chromium-dark-projects 吸附态大标题 opacity 0  — got 0
+PASS  chromium-dark-projects 吸附态大标题不拦交互（pointer-events none）  — none
+PASS  chromium-dark-projects 吸附态顶区零占位（大标题收高 → 0）  — h=0
+PASS  chromium-dark-projects 吸附态胶囊几何 = 48 高 / 中心 40 / 左缘 ≥72  — 48/40/148
+PASS  chromium-dark-projects 吸附态胶囊仍横向居中  — cx=188
+PASS  chromium-dark-projects 吸附态返回钮仍在胶囊左侧且可点（z 6 > 5）  — backZ=6 miniZ=5
+PASS  chromium-dark-projects ① 胶囊高 ↔ 返回钮高 |差| ≤2px（实测 胶囊 48 / 钮 48）  — cap=48 back=48
+PASS  chromium-dark-projects ② 胶囊中心 ↔ 返回钮中心 |偏| ≤1px（实测 胶囊 40 / 钮 40）  — cap=40 back=40
+PASS  chromium-dark-projects ③a 胶囊不压返回钮（缝 ≥ 8px：实测 83.5，左 147.5 / 钮右 64）  — gap=83.5
+PASS  chromium-dark-projects ③b 上限饱和时缝 = 8px±1（实测 8；胶囊宽 231 = max-width calc(100% - 144px)，vw 375）  — gap=8 w=231
+PASS  chromium-dark-projects ④ 胶囊宽度随内容收缩（< vw×0.9 = 338）+ 圆角 999（实测 w=80 r=999px）  — w=80 vw=375 r=999px
+PASS  chromium-dark-projects ⑤ 文字不溢出/不被圆角裁（文字 30 + 内距 24px+24px = 78 ≤ 胶囊宽 80）  — 78 vs 80
+PASS  chromium-dark-projects ⑤b 胶囊内距 = 24（= 半径 h/2，文字落直段内）  — 24px/24px
+PASS  chromium-dark-projects ⑥ 内容仍从胶囊下方流过（相交件 10 个，示例 div.canvas-tab-pane）  — n=10
+PASS  chromium-dark-projects 滚轮回顶（真滚轮）大标题展开复现  — p=0 top=0@team-scroll
+PASS  chromium-dark-projects 回顶后胶囊退回 0（无残留）  — got 0
+PASS  chromium-dark-settings 设置内容滚动域成立（夹具充足）  — surplus=1112
+PASS  chromium-dark-settings 页面壳在场
+PASS  chromium-dark-settings 静止态 .rolled 不在场
+PASS  chromium-dark-settings 静止态进度 p = 0  — p=0
+PASS  chromium-dark-settings 大标题文案 = 面板现名  — text="设置"
+PASS  chromium-dark-settings 大标题在流内（position:static）、页体首件  — static/true
+PASS  chromium-dark-settings 大标题水平居中（text-align center）  — center
+PASS  chromium-dark-settings 大标题左右内缩各 72px（--mtitle-inset）  — 72px/72px
+PASS  chromium-dark-settings 大标题 28px/600（作者令破档档位保留）  — 28px/600
+PASS  chromium-dark-settings 大标题字距负档（-0.01em）  — got -0.28px
+PASS  chromium-dark-settings 大标题墨色 = --color-frame-text-bright  — got rgb(232, 234, 237) / token rgb(232, 234, 237)
+PASS  chromium-dark-settings 大标题可见（opacity 1）  — got 1
+PASS  chromium-dark-settings 大标题盒高 52（防裁字）  — h=52
+PASS  chromium-dark-settings 大标题盒顶 12（页体顶呼吸缝）  — top=12
+PASS  chromium-dark-settings 大标题盒底 64 = 返回钮底缘  — title=64 back=64
+PASS  chromium-dark-settings 大标题文字中心 = 返回钮中心（40，同轴）  — text=40 back=40
+PASS  chromium-dark-settings 静止态胶囊 opacity 0  — got 0
+PASS  chromium-dark-settings 胶囊高度恒 48（--mcap-h，胶囊高度批 2026-11-02）  — h=48
+PASS  chromium-dark-settings 胶囊垂直中心 40（= 返回钮中心）  — cy=40
+PASS  chromium-dark-settings 胶囊横向居中（页面中轴）  — cx=188 vw=375
+PASS  chromium-dark-settings 胶囊右缘不越返回钮禁区（左缘 ≥ 72）  — left=148
+PASS  chromium-dark-settings 胶囊 15px / 全圆角 / 毛玻璃材质（backdrop-filter）  — 15px 999px blur(24px) saturate(1.15)
+PASS  chromium-dark-settings 胶囊不拦事件（pointer-events none）  — none
+PASS  chromium-dark-settings 渐隐带节点退役（.mobile-page-title-band 计数 0）  — count=0
+PASS  chromium-dark-settings 「<」返回钮在场且可点  — pe=auto
+PASS  chromium-dark-settings 面内同名标题退役（#settings-modal-title）  — none
+PASS  chromium-dark-settings 主滚轴余量 > 吸附阈值（夹具充足，实测 max=1077）  — max=1077
+PASS  chromium-dark-settings 区间内（scrollTop 40）进度 = 0.667  — got p=0.667 @settings-content
+PASS  chromium-dark-settings 区间内不切 .rolled（40 < 56）
+PASS  chromium-dark-settings 区间内大标题 opacity = 1−p（连续跟手）  — got 0.333
+PASS  chromium-dark-settings 区间内胶囊 opacity = p（连续跟手）  — got 0.667
+PASS  chromium-dark-settings 区间内胶囊几何不漂（h 48 / 中心 40）  — 48/40
+PASS  chromium-dark-settings 阈值上（scrollTop 300）进度 = 1  — got p=1 @settings-content
+PASS  chromium-dark-settings 阈值上切 .rolled
+PASS  chromium-dark-settings 吸附态胶囊 opacity 1  — got 1
+PASS  chromium-dark-settings 吸附态大标题 opacity 0  — got 0
+PASS  chromium-dark-settings 吸附态大标题不拦交互（pointer-events none）  — none
+PASS  chromium-dark-settings 吸附态顶区零占位（大标题收高 → 0）  — h=0
+PASS  chromium-dark-settings 吸附态胶囊几何 = 48 高 / 中心 40 / 左缘 ≥72  — 48/40/148
+PASS  chromium-dark-settings 吸附态胶囊仍横向居中  — cx=188
+PASS  chromium-dark-settings 吸附态返回钮仍在胶囊左侧且可点（z 6 > 5）  — backZ=6 miniZ=5
+PASS  chromium-dark-settings ① 胶囊高 ↔ 返回钮高 |差| ≤2px（实测 胶囊 48 / 钮 48）  — cap=48 back=48
+PASS  chromium-dark-settings ② 胶囊中心 ↔ 返回钮中心 |偏| ≤1px（实测 胶囊 40 / 钮 40）  — cap=40 back=40
+PASS  chromium-dark-settings ③a 胶囊不压返回钮（缝 ≥ 8px：实测 83.5，左 147.5 / 钮右 64）  — gap=83.5
+PASS  chromium-dark-settings ③b 上限饱和时缝 = 8px±1（实测 8；胶囊宽 231 = max-width calc(100% - 144px)，vw 375）  — gap=8 w=231
+PASS  chromium-dark-settings ④ 胶囊宽度随内容收缩（< vw×0.9 = 338）+ 圆角 999（实测 w=80 r=999px）  — w=80 vw=375 r=999px
+PASS  chromium-dark-settings ⑤ 文字不溢出/不被圆角裁（文字 30 + 内距 24px+24px = 78 ≤ 胶囊宽 80）  — 78 vs 80
+PASS  chromium-dark-settings ⑤b 胶囊内距 = 24（= 半径 h/2，文字落直段内）  — 24px/24px
+PASS  chromium-dark-settings ⑥ 内容仍从胶囊下方流过（相交件 5 个，示例 div.scroll-under-glass）  — n=5
+PASS  chromium-dark-settings 滚轮回顶（真滚轮）大标题展开复现  — p=0 top=0@settings-content
+PASS  chromium-dark-settings 回顶后胶囊退回 0（无残留）  — got 0
+PASS  chromium-dark-todo 页面壳在场
+PASS  chromium-dark-todo 静止态 .rolled 不在场
+PASS  chromium-dark-todo 静止态进度 p = 0  — p=0
+PASS  chromium-dark-todo 大标题文案 = 面板现名  — text="待办事项"
+PASS  chromium-dark-todo 大标题在流内（position:static）、页体首件  — static/true
+PASS  chromium-dark-todo 大标题水平居中（text-align center）  — center
+PASS  chromium-dark-todo 大标题左右内缩各 72px（--mtitle-inset）  — 72px/72px
+PASS  chromium-dark-todo 大标题 28px/600（作者令破档档位保留）  — 28px/600
+PASS  chromium-dark-todo 大标题字距负档（-0.01em）  — got -0.28px
+PASS  chromium-dark-todo 大标题墨色 = --color-frame-text-bright  — got rgb(232, 234, 237) / token rgb(232, 234, 237)
+PASS  chromium-dark-todo 大标题可见（opacity 1）  — got 1
+PASS  chromium-dark-todo 大标题盒高 52（防裁字）  — h=52
+PASS  chromium-dark-todo 大标题盒顶 12（页体顶呼吸缝）  — top=12
+PASS  chromium-dark-todo 大标题盒底 64 = 返回钮底缘  — title=64 back=64
+PASS  chromium-dark-todo 大标题文字中心 = 返回钮中心（40，同轴）  — text=40 back=40
+PASS  chromium-dark-todo 静止态胶囊 opacity 0  — got 0
+PASS  chromium-dark-todo 胶囊高度恒 48（--mcap-h，胶囊高度批 2026-11-02）  — h=48
+PASS  chromium-dark-todo 胶囊垂直中心 40（= 返回钮中心）  — cy=40
+PASS  chromium-dark-todo 胶囊横向居中（页面中轴）  — cx=188 vw=375
+PASS  chromium-dark-todo 胶囊右缘不越返回钮禁区（左缘 ≥ 72）  — left=133
+PASS  chromium-dark-todo 胶囊 15px / 全圆角 / 毛玻璃材质（backdrop-filter）  — 15px 999px blur(24px) saturate(1.15)
+PASS  chromium-dark-todo 胶囊不拦事件（pointer-events none）  — none
+PASS  chromium-dark-todo 渐隐带节点退役（.mobile-page-title-band 计数 0）  — count=0
+PASS  chromium-dark-todo 「<」返回钮在场且可点  — pe=auto
+PASS  chromium-dark-todo 面内同名标题退役（.todo-page-title）  — none
+PASS  chromium-dark-todo 主滚轴余量 > 吸附阈值（夹具充足，实测 max=720）  — max=720
+PASS  chromium-dark-todo 区间内（scrollTop 40）进度 = 0.667  — got p=0.667 @todo-page-body
+PASS  chromium-dark-todo 区间内不切 .rolled（40 < 56）
+PASS  chromium-dark-todo 区间内大标题 opacity = 1−p（连续跟手）  — got 0.333
+PASS  chromium-dark-todo 区间内胶囊 opacity = p（连续跟手）  — got 0.667
+PASS  chromium-dark-todo 区间内胶囊几何不漂（h 48 / 中心 40）  — 48/40
+PASS  chromium-dark-todo 阈值上（scrollTop 300）进度 = 1  — got p=1 @todo-page-body
+PASS  chromium-dark-todo 阈值上切 .rolled
+PASS  chromium-dark-todo 吸附态胶囊 opacity 1  — got 1
+PASS  chromium-dark-todo 吸附态大标题 opacity 0  — got 0
+PASS  chromium-dark-todo 吸附态大标题不拦交互（pointer-events none）  — none
+PASS  chromium-dark-todo 吸附态顶区零占位（大标题收高 → 0）  — h=0
+PASS  chromium-dark-todo 吸附态胶囊几何 = 48 高 / 中心 40 / 左缘 ≥72  — 48/40/133
+PASS  chromium-dark-todo 吸附态胶囊仍横向居中  — cx=188
+PASS  chromium-dark-todo 吸附态返回钮仍在胶囊左侧且可点（z 6 > 5）  — backZ=6 miniZ=5
+PASS  chromium-dark-todo ① 胶囊高 ↔ 返回钮高 |差| ≤2px（实测 胶囊 48 / 钮 48）  — cap=48 back=48
+PASS  chromium-dark-todo ② 胶囊中心 ↔ 返回钮中心 |偏| ≤1px（实测 胶囊 40 / 钮 40）  — cap=40 back=40
+PASS  chromium-dark-todo ③a 胶囊不压返回钮（缝 ≥ 8px：实测 68.5，左 132.5 / 钮右 64）  — gap=68.5
+PASS  chromium-dark-todo ③b 上限饱和时缝 = 8px±1（实测 8；胶囊宽 231 = max-width calc(100% - 144px)，vw 375）  — gap=8 w=231
+PASS  chromium-dark-todo ④ 胶囊宽度随内容收缩（< vw×0.9 = 338）+ 圆角 999（实测 w=110 r=999px）  — w=110 vw=375 r=999px
+PASS  chromium-dark-todo ⑤ 文字不溢出/不被圆角裁（文字 60 + 内距 24px+24px = 108 ≤ 胶囊宽 110）  — 108 vs 110
+PASS  chromium-dark-todo ⑤b 胶囊内距 = 24（= 半径 h/2，文字落直段内）  — 24px/24px
+PASS  chromium-dark-todo ⑥ 内容仍从胶囊下方流过（相交件 8 个，示例 div.scroll-under-glass）  — n=8
+PASS  chromium-dark-todo 滚轮回顶（真滚轮）大标题展开复现  — p=0 top=0@todo-page-body
+PASS  chromium-dark-todo 回顶后胶囊退回 0（无残留）  — got 0
+PASS  chromium-dark 切换前 projects 处于吸附态
+PASS  chromium-dark 返回后 projects 退场（.live 摘除）
+PASS  chromium-dark 退场后进度保留但不影响他页（离场态即 p=1）  — p=1
+PASS  chromium-dark 新进面板静止态（进场对账 p=0，不继承他页吸附）  — p=0 h=52
+PASS  webkit-light-projects 页面壳在场
+PASS  webkit-light-projects 静止态 .rolled 不在场
+PASS  webkit-light-projects 静止态进度 p = 0  — p=0
+PASS  webkit-light-projects 大标题文案 = 面板现名  — text="项目"
+PASS  webkit-light-projects 大标题在流内（position:static）、页体首件  — static/true
+PASS  webkit-light-projects 大标题水平居中（text-align center）  — center
+PASS  webkit-light-projects 大标题左右内缩各 72px（--mtitle-inset）  — 72px/72px
+PASS  webkit-light-projects 大标题 28px/600（作者令破档档位保留）  — 28px/600
+PASS  webkit-light-projects 大标题字距负档（-0.01em）  — got -0.28px
+PASS  webkit-light-projects 大标题墨色 = --color-frame-text-bright  — got rgb(27, 30, 38) / token rgb(27, 30, 38)
+PASS  webkit-light-projects 大标题可见（opacity 1）  — got 1
+PASS  webkit-light-projects 大标题盒高 52（防裁字）  — h=52
+PASS  webkit-light-projects 大标题盒顶 12（页体顶呼吸缝）  — top=12
+PASS  webkit-light-projects 大标题盒底 64 = 返回钮底缘  — title=64 back=64
+PASS  webkit-light-projects 大标题文字中心 = 返回钮中心（40，同轴）  — text=40 back=40
+PASS  webkit-light-projects 静止态胶囊 opacity 0  — got 0
+PASS  webkit-light-projects 胶囊高度恒 48（--mcap-h，胶囊高度批 2026-11-02）  — h=48
+PASS  webkit-light-projects 胶囊垂直中心 40（= 返回钮中心）  — cy=40
+PASS  webkit-light-projects 胶囊横向居中（页面中轴）  — cx=187 vw=375
+PASS  webkit-light-projects 胶囊右缘不越返回钮禁区（左缘 ≥ 72）  — left=148
+PASS  webkit-light-projects 胶囊 15px / 全圆角 / 毛玻璃材质（backdrop-filter）  — 15px 999px blur(24px) saturate(1.15)
+PASS  webkit-light-projects 胶囊不拦事件（pointer-events none）  — none
+PASS  webkit-light-projects 渐隐带节点退役（.mobile-page-title-band 计数 0）  — count=0
+PASS  webkit-light-projects 「<」返回钮在场且可点  — pe=auto
+PASS  webkit-light-projects 主滚轴余量 > 吸附阈值（夹具充足，实测 max=2370）  — max=2370
+PASS  webkit-light-projects 区间内（scrollTop 40）进度 = 0.667  — got p=0.667 @team-scroll
+PASS  webkit-light-projects 区间内不切 .rolled（40 < 56）
+PASS  webkit-light-projects 区间内大标题 opacity = 1−p（连续跟手）  — got 0.333
+PASS  webkit-light-projects 区间内胶囊 opacity = p（连续跟手）  — got 0.667
+PASS  webkit-light-projects 区间内胶囊几何不漂（h 48 / 中心 40）  — 48/40
+PASS  webkit-light-projects 阈值上（scrollTop 300）进度 = 1  — got p=1 @team-scroll
+PASS  webkit-light-projects 阈值上切 .rolled
+PASS  webkit-light-projects 吸附态胶囊 opacity 1  — got 1
+PASS  webkit-light-projects 吸附态大标题 opacity 0  — got 0
+PASS  webkit-light-projects 吸附态大标题不拦交互（pointer-events none）  — none
+PASS  webkit-light-projects 吸附态顶区零占位（大标题收高 → 0）  — h=0
+PASS  webkit-light-projects 吸附态胶囊几何 = 48 高 / 中心 40 / 左缘 ≥72  — 48/40/148
+PASS  webkit-light-projects 吸附态胶囊仍横向居中  — cx=187
+PASS  webkit-light-projects 吸附态返回钮仍在胶囊左侧且可点（z 6 > 5）  — backZ=6 miniZ=5
+PASS  webkit-light-projects ① 胶囊高 ↔ 返回钮高 |差| ≤2px（实测 胶囊 48 / 钮 48）  — cap=48 back=48
+PASS  webkit-light-projects ② 胶囊中心 ↔ 返回钮中心 |偏| ≤1px（实测 胶囊 40 / 钮 40）  — cap=40 back=40
+PASS  webkit-light-projects ③a 胶囊不压返回钮（缝 ≥ 8px：实测 83.5，左 147.5 / 钮右 64）  — gap=83.5
+PASS  webkit-light-projects ③b 上限饱和时缝 = 8px±1（实测 8；胶囊宽 231 = max-width calc(100% - 144px)，vw 375）  — gap=8 w=231
+PASS  webkit-light-projects ④ 胶囊宽度随内容收缩（< vw×0.9 = 338）+ 圆角 999（实测 w=79.78 r=999px）  — w=79.78 vw=375 r=999px
+PASS  webkit-light-projects ⑤ 文字不溢出/不被圆角裁（文字 29.77 + 内距 24px+24px = 77.77 ≤ 胶囊宽 79.78）  — 77.77 vs 79.78
+PASS  webkit-light-projects ⑤b 胶囊内距 = 24（= 半径 h/2，文字落直段内）  — 24px/24px
+PASS  webkit-light-projects ⑥ 内容仍从胶囊下方流过（相交件 10 个，示例 div.canvas-tab-pane）  — n=10
+PASS  webkit-light-projects 滚轮回顶（真滚轮）大标题展开复现  — p=0 top=0@team-scroll
+PASS  webkit-light-projects 回顶后胶囊退回 0（无残留）  — got 0
+PASS  webkit-light-settings 设置内容滚动域成立（夹具充足）  — surplus=1033
+PASS  webkit-light-settings 页面壳在场
+PASS  webkit-light-settings 静止态 .rolled 不在场
+PASS  webkit-light-settings 静止态进度 p = 0  — p=0
+PASS  webkit-light-settings 大标题文案 = 面板现名  — text="设置"
+PASS  webkit-light-settings 大标题在流内（position:static）、页体首件  — static/true
+PASS  webkit-light-settings 大标题水平居中（text-align center）  — center
+PASS  webkit-light-settings 大标题左右内缩各 72px（--mtitle-inset）  — 72px/72px
+PASS  webkit-light-settings 大标题 28px/600（作者令破档档位保留）  — 28px/600
+PASS  webkit-light-settings 大标题字距负档（-0.01em）  — got -0.28px
+PASS  webkit-light-settings 大标题墨色 = --color-frame-text-bright  — got rgb(27, 30, 38) / token rgb(27, 30, 38)
+PASS  webkit-light-settings 大标题可见（opacity 1）  — got 1
+PASS  webkit-light-settings 大标题盒高 52（防裁字）  — h=52
+PASS  webkit-light-settings 大标题盒顶 12（页体顶呼吸缝）  — top=12
+PASS  webkit-light-settings 大标题盒底 64 = 返回钮底缘  — title=64 back=64
+PASS  webkit-light-settings 大标题文字中心 = 返回钮中心（40，同轴）  — text=40 back=40
+PASS  webkit-light-settings 静止态胶囊 opacity 0  — got 0
+PASS  webkit-light-settings 胶囊高度恒 48（--mcap-h，胶囊高度批 2026-11-02）  — h=48
+PASS  webkit-light-settings 胶囊垂直中心 40（= 返回钮中心）  — cy=40
+PASS  webkit-light-settings 胶囊横向居中（页面中轴）  — cx=187 vw=375
+PASS  webkit-light-settings 胶囊右缘不越返回钮禁区（左缘 ≥ 72）  — left=148
+PASS  webkit-light-settings 胶囊 15px / 全圆角 / 毛玻璃材质（backdrop-filter）  — 15px 999px blur(24px) saturate(1.15)
+PASS  webkit-light-settings 胶囊不拦事件（pointer-events none）  — none
+PASS  webkit-light-settings 渐隐带节点退役（.mobile-page-title-band 计数 0）  — count=0
+PASS  webkit-light-settings 「<」返回钮在场且可点  — pe=auto
+PASS  webkit-light-settings 面内同名标题退役（#settings-modal-title）  — none
+PASS  webkit-light-settings 主滚轴余量 > 吸附阈值（夹具充足，实测 max=998）  — max=998
+PASS  webkit-light-settings 区间内（scrollTop 40）进度 = 0.667  — got p=0.667 @settings-content
+PASS  webkit-light-settings 区间内不切 .rolled（40 < 56）
+PASS  webkit-light-settings 区间内大标题 opacity = 1−p（连续跟手）  — got 0.333
+PASS  webkit-light-settings 区间内胶囊 opacity = p（连续跟手）  — got 0.667
+PASS  webkit-light-settings 区间内胶囊几何不漂（h 48 / 中心 40）  — 48/40
+PASS  webkit-light-settings 阈值上（scrollTop 300）进度 = 1  — got p=1 @settings-content
+PASS  webkit-light-settings 阈值上切 .rolled
+PASS  webkit-light-settings 吸附态胶囊 opacity 1  — got 1
+PASS  webkit-light-settings 吸附态大标题 opacity 0  — got 0
+PASS  webkit-light-settings 吸附态大标题不拦交互（pointer-events none）  — none
+PASS  webkit-light-settings 吸附态顶区零占位（大标题收高 → 0）  — h=0
+PASS  webkit-light-settings 吸附态胶囊几何 = 48 高 / 中心 40 / 左缘 ≥72  — 48/40/148
+PASS  webkit-light-settings 吸附态胶囊仍横向居中  — cx=187
+PASS  webkit-light-settings 吸附态返回钮仍在胶囊左侧且可点（z 6 > 5）  — backZ=6 miniZ=5
+PASS  webkit-light-settings ① 胶囊高 ↔ 返回钮高 |差| ≤2px（实测 胶囊 48 / 钮 48）  — cap=48 back=48
+PASS  webkit-light-settings ② 胶囊中心 ↔ 返回钮中心 |偏| ≤1px（实测 胶囊 40 / 钮 40）  — cap=40 back=40
+PASS  webkit-light-settings ③a 胶囊不压返回钮（缝 ≥ 8px：实测 83.5，左 147.5 / 钮右 64）  — gap=83.5
+PASS  webkit-light-settings ③b 上限饱和时缝 = 8px±1（实测 8；胶囊宽 231 = max-width calc(100% - 144px)，vw 375）  — gap=8 w=231
+PASS  webkit-light-settings ④ 胶囊宽度随内容收缩（< vw×0.9 = 338）+ 圆角 999（实测 w=79.78 r=999px）  — w=79.78 vw=375 r=999px
+PASS  webkit-light-settings ⑤ 文字不溢出/不被圆角裁（文字 29.77 + 内距 24px+24px = 77.77 ≤ 胶囊宽 79.78）  — 77.77 vs 79.78
+PASS  webkit-light-settings ⑤b 胶囊内距 = 24（= 半径 h/2，文字落直段内）  — 24px/24px
+PASS  webkit-light-settings ⑥ 内容仍从胶囊下方流过（相交件 5 个，示例 div.scroll-under-glass）  — n=5
+PASS  webkit-light-settings 滚轮回顶（真滚轮）大标题展开复现  — p=0 top=0@settings-content
+PASS  webkit-light-settings 回顶后胶囊退回 0（无残留）  — got 0
+PASS  webkit-light-todo 页面壳在场
+PASS  webkit-light-todo 静止态 .rolled 不在场
+PASS  webkit-light-todo 静止态进度 p = 0  — p=0
+PASS  webkit-light-todo 大标题文案 = 面板现名  — text="待办事项"
+PASS  webkit-light-todo 大标题在流内（position:static）、页体首件  — static/true
+PASS  webkit-light-todo 大标题水平居中（text-align center）  — center
+PASS  webkit-light-todo 大标题左右内缩各 72px（--mtitle-inset）  — 72px/72px
+PASS  webkit-light-todo 大标题 28px/600（作者令破档档位保留）  — 28px/600
+PASS  webkit-light-todo 大标题字距负档（-0.01em）  — got -0.28px
+PASS  webkit-light-todo 大标题墨色 = --color-frame-text-bright  — got rgb(27, 30, 38) / token rgb(27, 30, 38)
+PASS  webkit-light-todo 大标题可见（opacity 1）  — got 1
+PASS  webkit-light-todo 大标题盒高 52（防裁字）  — h=52
+PASS  webkit-light-todo 大标题盒顶 12（页体顶呼吸缝）  — top=12
+PASS  webkit-light-todo 大标题盒底 64 = 返回钮底缘  — title=64 back=64
+PASS  webkit-light-todo 大标题文字中心 = 返回钮中心（40，同轴）  — text=40 back=40
+PASS  webkit-light-todo 静止态胶囊 opacity 0  — got 0
+PASS  webkit-light-todo 胶囊高度恒 48（--mcap-h，胶囊高度批 2026-11-02）  — h=48
+PASS  webkit-light-todo 胶囊垂直中心 40（= 返回钮中心）  — cy=40
+PASS  webkit-light-todo 胶囊横向居中（页面中轴）  — cx=188 vw=375
+PASS  webkit-light-todo 胶囊右缘不越返回钮禁区（左缘 ≥ 72）  — left=133
+PASS  webkit-light-todo 胶囊 15px / 全圆角 / 毛玻璃材质（backdrop-filter）  — 15px 999px blur(24px) saturate(1.15)
+PASS  webkit-light-todo 胶囊不拦事件（pointer-events none）  — none
+PASS  webkit-light-todo 渐隐带节点退役（.mobile-page-title-band 计数 0）  — count=0
+PASS  webkit-light-todo 「<」返回钮在场且可点  — pe=auto
+PASS  webkit-light-todo 面内同名标题退役（.todo-page-title）  — none
+PASS  webkit-light-todo 主滚轴余量 > 吸附阈值（夹具充足，实测 max=645）  — max=645
+PASS  webkit-light-todo 区间内（scrollTop 40）进度 = 0.667  — got p=0.667 @todo-page-body
+PASS  webkit-light-todo 区间内不切 .rolled（40 < 56）
+PASS  webkit-light-todo 区间内大标题 opacity = 1−p（连续跟手）  — got 0.333
+PASS  webkit-light-todo 区间内胶囊 opacity = p（连续跟手）  — got 0.667
+PASS  webkit-light-todo 区间内胶囊几何不漂（h 48 / 中心 40）  — 48/40
+PASS  webkit-light-todo 阈值上（scrollTop 300）进度 = 1  — got p=1 @todo-page-body
+PASS  webkit-light-todo 阈值上切 .rolled
+PASS  webkit-light-todo 吸附态胶囊 opacity 1  — got 1
+PASS  webkit-light-todo 吸附态大标题 opacity 0  — got 0
+PASS  webkit-light-todo 吸附态大标题不拦交互（pointer-events none）  — none
+PASS  webkit-light-todo 吸附态顶区零占位（大标题收高 → 0）  — h=0
+PASS  webkit-light-todo 吸附态胶囊几何 = 48 高 / 中心 40 / 左缘 ≥72  — 48/40/133
+PASS  webkit-light-todo 吸附态胶囊仍横向居中  — cx=188
+PASS  webkit-light-todo 吸附态返回钮仍在胶囊左侧且可点（z 6 > 5）  — backZ=6 miniZ=5
+PASS  webkit-light-todo ① 胶囊高 ↔ 返回钮高 |差| ≤2px（实测 胶囊 48 / 钮 48）  — cap=48 back=48
+PASS  webkit-light-todo ② 胶囊中心 ↔ 返回钮中心 |偏| ≤1px（实测 胶囊 40 / 钮 40）  — cap=40 back=40
+PASS  webkit-light-todo ③a 胶囊不压返回钮（缝 ≥ 8px：实测 68.75，左 132.75 / 钮右 64）  — gap=68.75
+PASS  webkit-light-todo ③b 上限饱和时缝 = 8px±1（实测 8；胶囊宽 231 = max-width calc(100% - 144px)，vw 375）  — gap=8 w=231
+PASS  webkit-light-todo ④ 胶囊宽度随内容收缩（< vw×0.9 = 338）+ 圆角 999（实测 w=109.55 r=999px）  — w=109.55 vw=375 r=999px
+PASS  webkit-light-todo ⑤ 文字不溢出/不被圆角裁（文字 59.53 + 内距 24px+24px = 107.53 ≤ 胶囊宽 109.55）  — 107.53 vs 109.55
+PASS  webkit-light-todo ⑤b 胶囊内距 = 24（= 半径 h/2，文字落直段内）  — 24px/24px
+PASS  webkit-light-todo ⑥ 内容仍从胶囊下方流过（相交件 12 个，示例 div.scroll-under-glass）  — n=12
+PASS  webkit-light-todo 滚轮回顶（真滚轮）大标题展开复现  — p=0 top=0@todo-page-body
+PASS  webkit-light-todo 回顶后胶囊退回 0（无残留）  — got 0
+PASS  webkit-light 切换前 projects 处于吸附态
+PASS  webkit-light 返回后 projects 退场（.live 摘除）
+PASS  webkit-light 退场后进度保留但不影响他页（离场态即 p=1）  — p=1
+PASS  webkit-light 新进面板静止态（进场对账 p=0，不继承他页吸附）  — p=0 h=52
+PASS  webkit-dark-projects 页面壳在场
+PASS  webkit-dark-projects 静止态 .rolled 不在场
+PASS  webkit-dark-projects 静止态进度 p = 0  — p=0
+PASS  webkit-dark-projects 大标题文案 = 面板现名  — text="项目"
+PASS  webkit-dark-projects 大标题在流内（position:static）、页体首件  — static/true
+PASS  webkit-dark-projects 大标题水平居中（text-align center）  — center
+PASS  webkit-dark-projects 大标题左右内缩各 72px（--mtitle-inset）  — 72px/72px
+PASS  webkit-dark-projects 大标题 28px/600（作者令破档档位保留）  — 28px/600
+PASS  webkit-dark-projects 大标题字距负档（-0.01em）  — got -0.28px
+PASS  webkit-dark-projects 大标题墨色 = --color-frame-text-bright  — got rgb(232, 234, 237) / token rgb(232, 234, 237)
+PASS  webkit-dark-projects 大标题可见（opacity 1）  — got 1
+PASS  webkit-dark-projects 大标题盒高 52（防裁字）  — h=52
+PASS  webkit-dark-projects 大标题盒顶 12（页体顶呼吸缝）  — top=12
+PASS  webkit-dark-projects 大标题盒底 64 = 返回钮底缘  — title=64 back=64
+PASS  webkit-dark-projects 大标题文字中心 = 返回钮中心（40，同轴）  — text=40 back=40
+PASS  webkit-dark-projects 静止态胶囊 opacity 0  — got 0
+PASS  webkit-dark-projects 胶囊高度恒 48（--mcap-h，胶囊高度批 2026-11-02）  — h=48
+PASS  webkit-dark-projects 胶囊垂直中心 40（= 返回钮中心）  — cy=40
+PASS  webkit-dark-projects 胶囊横向居中（页面中轴）  — cx=187 vw=375
+PASS  webkit-dark-projects 胶囊右缘不越返回钮禁区（左缘 ≥ 72）  — left=148
+PASS  webkit-dark-projects 胶囊 15px / 全圆角 / 毛玻璃材质（backdrop-filter）  — 15px 999px blur(24px) saturate(1.15)
+PASS  webkit-dark-projects 胶囊不拦事件（pointer-events none）  — none
+PASS  webkit-dark-projects 渐隐带节点退役（.mobile-page-title-band 计数 0）  — count=0
+PASS  webkit-dark-projects 「<」返回钮在场且可点  — pe=auto
+PASS  webkit-dark-projects 主滚轴余量 > 吸附阈值（夹具充足，实测 max=2370）  — max=2370
+PASS  webkit-dark-projects 区间内（scrollTop 40）进度 = 0.667  — got p=0.667 @team-scroll
+PASS  webkit-dark-projects 区间内不切 .rolled（40 < 56）
+PASS  webkit-dark-projects 区间内大标题 opacity = 1−p（连续跟手）  — got 0.333
+PASS  webkit-dark-projects 区间内胶囊 opacity = p（连续跟手）  — got 0.667
+PASS  webkit-dark-projects 区间内胶囊几何不漂（h 48 / 中心 40）  — 48/40
+PASS  webkit-dark-projects 阈值上（scrollTop 300）进度 = 1  — got p=1 @team-scroll
+PASS  webkit-dark-projects 阈值上切 .rolled
+PASS  webkit-dark-projects 吸附态胶囊 opacity 1  — got 1
+PASS  webkit-dark-projects 吸附态大标题 opacity 0  — got 0
+PASS  webkit-dark-projects 吸附态大标题不拦交互（pointer-events none）  — none
+PASS  webkit-dark-projects 吸附态顶区零占位（大标题收高 → 0）  — h=0
+PASS  webkit-dark-projects 吸附态胶囊几何 = 48 高 / 中心 40 / 左缘 ≥72  — 48/40/148
+PASS  webkit-dark-projects 吸附态胶囊仍横向居中  — cx=187
+PASS  webkit-dark-projects 吸附态返回钮仍在胶囊左侧且可点（z 6 > 5）  — backZ=6 miniZ=5
+PASS  webkit-dark-projects ① 胶囊高 ↔ 返回钮高 |差| ≤2px（实测 胶囊 48 / 钮 48）  — cap=48 back=48
+PASS  webkit-dark-projects ② 胶囊中心 ↔ 返回钮中心 |偏| ≤1px（实测 胶囊 40 / 钮 40）  — cap=40 back=40
+PASS  webkit-dark-projects ③a 胶囊不压返回钮（缝 ≥ 8px：实测 83.5，左 147.5 / 钮右 64）  — gap=83.5
+PASS  webkit-dark-projects ③b 上限饱和时缝 = 8px±1（实测 8；胶囊宽 231 = max-width calc(100% - 144px)，vw 375）  — gap=8 w=231
+PASS  webkit-dark-projects ④ 胶囊宽度随内容收缩（< vw×0.9 = 338）+ 圆角 999（实测 w=79.78 r=999px）  — w=79.78 vw=375 r=999px
+PASS  webkit-dark-projects ⑤ 文字不溢出/不被圆角裁（文字 29.77 + 内距 24px+24px = 77.77 ≤ 胶囊宽 79.78）  — 77.77 vs 79.78
+PASS  webkit-dark-projects ⑤b 胶囊内距 = 24（= 半径 h/2，文字落直段内）  — 24px/24px
+PASS  webkit-dark-projects ⑥ 内容仍从胶囊下方流过（相交件 10 个，示例 div.canvas-tab-pane）  — n=10
+PASS  webkit-dark-projects 滚轮回顶（真滚轮）大标题展开复现  — p=0 top=0@team-scroll
+PASS  webkit-dark-projects 回顶后胶囊退回 0（无残留）  — got 0
+PASS  webkit-dark-settings 设置内容滚动域成立（夹具充足）  — surplus=1033
+PASS  webkit-dark-settings 页面壳在场
+PASS  webkit-dark-settings 静止态 .rolled 不在场
+PASS  webkit-dark-settings 静止态进度 p = 0  — p=0
+PASS  webkit-dark-settings 大标题文案 = 面板现名  — text="设置"
+PASS  webkit-dark-settings 大标题在流内（position:static）、页体首件  — static/true
+PASS  webkit-dark-settings 大标题水平居中（text-align center）  — center
+PASS  webkit-dark-settings 大标题左右内缩各 72px（--mtitle-inset）  — 72px/72px
+PASS  webkit-dark-settings 大标题 28px/600（作者令破档档位保留）  — 28px/600
+PASS  webkit-dark-settings 大标题字距负档（-0.01em）  — got -0.28px
+PASS  webkit-dark-settings 大标题墨色 = --color-frame-text-bright  — got rgb(232, 234, 237) / token rgb(232, 234, 237)
+PASS  webkit-dark-settings 大标题可见（opacity 1）  — got 1
+PASS  webkit-dark-settings 大标题盒高 52（防裁字）  — h=52
+PASS  webkit-dark-settings 大标题盒顶 12（页体顶呼吸缝）  — top=12
+PASS  webkit-dark-settings 大标题盒底 64 = 返回钮底缘  — title=64 back=64
+PASS  webkit-dark-settings 大标题文字中心 = 返回钮中心（40，同轴）  — text=40 back=40
+PASS  webkit-dark-settings 静止态胶囊 opacity 0  — got 0
+PASS  webkit-dark-settings 胶囊高度恒 48（--mcap-h，胶囊高度批 2026-11-02）  — h=48
+PASS  webkit-dark-settings 胶囊垂直中心 40（= 返回钮中心）  — cy=40
+PASS  webkit-dark-settings 胶囊横向居中（页面中轴）  — cx=187 vw=375
+PASS  webkit-dark-settings 胶囊右缘不越返回钮禁区（左缘 ≥ 72）  — left=148
+PASS  webkit-dark-settings 胶囊 15px / 全圆角 / 毛玻璃材质（backdrop-filter）  — 15px 999px blur(24px) saturate(1.15)
+PASS  webkit-dark-settings 胶囊不拦事件（pointer-events none）  — none
+PASS  webkit-dark-settings 渐隐带节点退役（.mobile-page-title-band 计数 0）  — count=0
+PASS  webkit-dark-settings 「<」返回钮在场且可点  — pe=auto
+PASS  webkit-dark-settings 面内同名标题退役（#settings-modal-title）  — none
+PASS  webkit-dark-settings 主滚轴余量 > 吸附阈值（夹具充足，实测 max=998）  — max=998
+PASS  webkit-dark-settings 区间内（scrollTop 40）进度 = 0.667  — got p=0.667 @settings-content
+PASS  webkit-dark-settings 区间内不切 .rolled（40 < 56）
+PASS  webkit-dark-settings 区间内大标题 opacity = 1−p（连续跟手）  — got 0.333
+PASS  webkit-dark-settings 区间内胶囊 opacity = p（连续跟手）  — got 0.667
+PASS  webkit-dark-settings 区间内胶囊几何不漂（h 48 / 中心 40）  — 48/40
+PASS  webkit-dark-settings 阈值上（scrollTop 300）进度 = 1  — got p=1 @settings-content
+PASS  webkit-dark-settings 阈值上切 .rolled
+PASS  webkit-dark-settings 吸附态胶囊 opacity 1  — got 1
+PASS  webkit-dark-settings 吸附态大标题 opacity 0  — got 0
+PASS  webkit-dark-settings 吸附态大标题不拦交互（pointer-events none）  — none
+PASS  webkit-dark-settings 吸附态顶区零占位（大标题收高 → 0）  — h=0
+PASS  webkit-dark-settings 吸附态胶囊几何 = 48 高 / 中心 40 / 左缘 ≥72  — 48/40/148
+PASS  webkit-dark-settings 吸附态胶囊仍横向居中  — cx=187
+PASS  webkit-dark-settings 吸附态返回钮仍在胶囊左侧且可点（z 6 > 5）  — backZ=6 miniZ=5
+PASS  webkit-dark-settings ① 胶囊高 ↔ 返回钮高 |差| ≤2px（实测 胶囊 48 / 钮 48）  — cap=48 back=48
+PASS  webkit-dark-settings ② 胶囊中心 ↔ 返回钮中心 |偏| ≤1px（实测 胶囊 40 / 钮 40）  — cap=40 back=40
+PASS  webkit-dark-settings ③a 胶囊不压返回钮（缝 ≥ 8px：实测 83.5，左 147.5 / 钮右 64）  — gap=83.5
+PASS  webkit-dark-settings ③b 上限饱和时缝 = 8px±1（实测 8；胶囊宽 231 = max-width calc(100% - 144px)，vw 375）  — gap=8 w=231
+PASS  webkit-dark-settings ④ 胶囊宽度随内容收缩（< vw×0.9 = 338）+ 圆角 999（实测 w=79.78 r=999px）  — w=79.78 vw=375 r=999px
+PASS  webkit-dark-settings ⑤ 文字不溢出/不被圆角裁（文字 29.77 + 内距 24px+24px = 77.77 ≤ 胶囊宽 79.78）  — 77.77 vs 79.78
+PASS  webkit-dark-settings ⑤b 胶囊内距 = 24（= 半径 h/2，文字落直段内）  — 24px/24px
+PASS  webkit-dark-settings ⑥ 内容仍从胶囊下方流过（相交件 5 个，示例 div.scroll-under-glass）  — n=5
+PASS  webkit-dark-settings 滚轮回顶（真滚轮）大标题展开复现  — p=0 top=0@settings-content
+PASS  webkit-dark-settings 回顶后胶囊退回 0（无残留）  — got 0
+PASS  webkit-dark-todo 页面壳在场
+PASS  webkit-dark-todo 静止态 .rolled 不在场
+PASS  webkit-dark-todo 静止态进度 p = 0  — p=0
+PASS  webkit-dark-todo 大标题文案 = 面板现名  — text="待办事项"
+PASS  webkit-dark-todo 大标题在流内（position:static）、页体首件  — static/true
+PASS  webkit-dark-todo 大标题水平居中（text-align center）  — center
+PASS  webkit-dark-todo 大标题左右内缩各 72px（--mtitle-inset）  — 72px/72px
+PASS  webkit-dark-todo 大标题 28px/600（作者令破档档位保留）  — 28px/600
+PASS  webkit-dark-todo 大标题字距负档（-0.01em）  — got -0.28px
+PASS  webkit-dark-todo 大标题墨色 = --color-frame-text-bright  — got rgb(232, 234, 237) / token rgb(232, 234, 237)
+PASS  webkit-dark-todo 大标题可见（opacity 1）  — got 1
+PASS  webkit-dark-todo 大标题盒高 52（防裁字）  — h=52
+PASS  webkit-dark-todo 大标题盒顶 12（页体顶呼吸缝）  — top=12
+PASS  webkit-dark-todo 大标题盒底 64 = 返回钮底缘  — title=64 back=64
+PASS  webkit-dark-todo 大标题文字中心 = 返回钮中心（40，同轴）  — text=40 back=40
+PASS  webkit-dark-todo 静止态胶囊 opacity 0  — got 0
+PASS  webkit-dark-todo 胶囊高度恒 48（--mcap-h，胶囊高度批 2026-11-02）  — h=48
+PASS  webkit-dark-todo 胶囊垂直中心 40（= 返回钮中心）  — cy=40
+PASS  webkit-dark-todo 胶囊横向居中（页面中轴）  — cx=188 vw=375
+PASS  webkit-dark-todo 胶囊右缘不越返回钮禁区（左缘 ≥ 72）  — left=133
+PASS  webkit-dark-todo 胶囊 15px / 全圆角 / 毛玻璃材质（backdrop-filter）  — 15px 999px blur(24px) saturate(1.15)
+PASS  webkit-dark-todo 胶囊不拦事件（pointer-events none）  — none
+PASS  webkit-dark-todo 渐隐带节点退役（.mobile-page-title-band 计数 0）  — count=0
+PASS  webkit-dark-todo 「<」返回钮在场且可点  — pe=auto
+PASS  webkit-dark-todo 面内同名标题退役（.todo-page-title）  — none
+PASS  webkit-dark-todo 主滚轴余量 > 吸附阈值（夹具充足，实测 max=645）  — max=645
+PASS  webkit-dark-todo 区间内（scrollTop 40）进度 = 0.667  — got p=0.667 @todo-page-body
+PASS  webkit-dark-todo 区间内不切 .rolled（40 < 56）
+PASS  webkit-dark-todo 区间内大标题 opacity = 1−p（连续跟手）  — got 0.333
+PASS  webkit-dark-todo 区间内胶囊 opacity = p（连续跟手）  — got 0.667
+PASS  webkit-dark-todo 区间内胶囊几何不漂（h 48 / 中心 40）  — 48/40
+PASS  webkit-dark-todo 阈值上（scrollTop 300）进度 = 1  — got p=1 @todo-page-body
+PASS  webkit-dark-todo 阈值上切 .rolled
+PASS  webkit-dark-todo 吸附态胶囊 opacity 1  — got 1
+PASS  webkit-dark-todo 吸附态大标题 opacity 0  — got 0
+PASS  webkit-dark-todo 吸附态大标题不拦交互（pointer-events none）  — none
+PASS  webkit-dark-todo 吸附态顶区零占位（大标题收高 → 0）  — h=0
+PASS  webkit-dark-todo 吸附态胶囊几何 = 48 高 / 中心 40 / 左缘 ≥72  — 48/40/133
+PASS  webkit-dark-todo 吸附态胶囊仍横向居中  — cx=188
+PASS  webkit-dark-todo 吸附态返回钮仍在胶囊左侧且可点（z 6 > 5）  — backZ=6 miniZ=5
+PASS  webkit-dark-todo ① 胶囊高 ↔ 返回钮高 |差| ≤2px（实测 胶囊 48 / 钮 48）  — cap=48 back=48
+PASS  webkit-dark-todo ② 胶囊中心 ↔ 返回钮中心 |偏| ≤1px（实测 胶囊 40 / 钮 40）  — cap=40 back=40
+PASS  webkit-dark-todo ③a 胶囊不压返回钮（缝 ≥ 8px：实测 68.75，左 132.75 / 钮右 64）  — gap=68.75
+PASS  webkit-dark-todo ③b 上限饱和时缝 = 8px±1（实测 8；胶囊宽 231 = max-width calc(100% - 144px)，vw 375）  — gap=8 w=231
+PASS  webkit-dark-todo ④ 胶囊宽度随内容收缩（< vw×0.9 = 338）+ 圆角 999（实测 w=109.55 r=999px）  — w=109.55 vw=375 r=999px
+PASS  webkit-dark-todo ⑤ 文字不溢出/不被圆角裁（文字 59.53 + 内距 24px+24px = 107.53 ≤ 胶囊宽 109.55）  — 107.53 vs 109.55
+PASS  webkit-dark-todo ⑤b 胶囊内距 = 24（= 半径 h/2，文字落直段内）  — 24px/24px
+PASS  webkit-dark-todo ⑥ 内容仍从胶囊下方流过（相交件 12 个，示例 div.scroll-under-glass）  — n=12
+PASS  webkit-dark-todo 滚轮回顶（真滚轮）大标题展开复现  — p=0 top=0@todo-page-body
+PASS  webkit-dark-todo 回顶后胶囊退回 0（无残留）  — got 0
+PASS  webkit-dark 切换前 projects 处于吸附态
+PASS  webkit-dark 返回后 projects 退场（.live 摘除）
+PASS  webkit-dark 退场后进度保留但不影响他页（离场态即 p=1）  — p=1
+PASS  webkit-dark 新进面板静止态（进场对账 p=0，不继承他页吸附）  — p=0 h=52
+PASS  reduced-motion 进度二值化（取样只会是 0 或 1）  — [0,0,1,1]
+PASS  reduced-motion 区间前段即 0（scrollTop 20 = p 0.25 侧）  — [0,0,1,1]
+PASS  reduced-motion 阈值上瞬时成立（p=1）  — p=1
+PASS  reduced-motion 大标题无位移量（transform none）  — none
+PASS  ⑦ 页壳表在场（PAGES 非根页 ≥ 19）  — n=21
+PASS  ⑦ 每个页壳都建了吸附胶囊（零缺失）  — []
+PASS  ⑦ 全部页壳胶囊高 = 48（21 壳）  — []
+PASS  ⑦ 全部页壳胶囊中心 = 40  — []
+PASS  ⑦ 全部页壳内距 = 24（= 半径 h/2）  — []
+PASS  ⑦ 全部页壳圆角 999  — []
+PASS  ⑦ 全部页壳胶囊左缘 ≥ 72（不压返回钮）  — []
+PASS  ⑦ 全部页壳文字不被裁（短/中/长页名各档）  — []
+PASS  ⑦ 全部页壳返回钮高 = 48（胶囊高差基准同表）  — []
+PASS  ⑦ 宽度随页名收缩（最短/最长极差 > 40px，非定宽）  — min=80 max=165.1 sample=设置@80 / 项目@80 / 图谱@80 / 插件@80
+PASS  桌面腿 body.mobile-layer 不激活（390 折叠点外）
+PASS  桌面腿零页面壳/零标题节点（页面世界不建）  — shells=0 titles=0
+PASS  桌面腿 #header 在场（桌面壳零变化）
+PASS  零 console error（双引擎×双主题全腿 + reduced-motion + 桌面腿，噪声过滤后硬零）
+
+ALL PASS

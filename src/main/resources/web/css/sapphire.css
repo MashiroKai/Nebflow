@@ -230,12 +230,22 @@
   --cv-hover-underedge: var(--glass-control-underedge);
   --cv-hover-scale: 1.05;
   --cv-active-scale: 0.96;
-  /* 尺寸档（圆钮 40 / 条内小钮 26 / 图标 18·14 / 簇槽距 48 —— 四档全站通用） */
+  /* 尺寸档（圆钮 40 / 条内小钮 26 / 图标 18·14 / 簇槽距 48 —— 四档全站通用）
+     canvas 控件尺寸对齐批（2026-11-02 作者追加令 09:41「包括 canvas 的这些控件
+     宽度也要保持一致」）：canvas 文档 chrome（缩放条内钮 + 源码/引用/查找/刷新
+     四圆钮）单独一档 **48**，= 手机层 --mtap-lg = 手机层返回钮 = 面板吸附胶囊
+     --mcap-h —— 全站「canvas 悬浮控件」回到一个真值。`--cv-size-circle` 40 仍是
+     **面板级**圆钮档（#deck-fab 堆叠视角钮 / #canvas-head-close 关签钮 / .g2-fab
+     基准类）——它们在画布顶带、受叠卡环带批与 canvas-stack A1-5/A13-3 的 40px
+     钉位约束，不属作者指的「这条工具带上的控件」，本批零触碰（见批文档「桌面腿」）。 */
   --cv-size-circle: 40px;
-  --cv-size-btn: 26px;
+  --cv-size-circle-lg: 48px;   /* canvas 文档 chrome 档（缩放条钮 + 圆钮簇） */
+  --cv-size-btn: 26px;         /* 查找条内钮（.nf-findbar-btn，条内小钮语言） */
   --cv-icon: 18px;
   --cv-icon-btn: 14px;
-  --cv-row-pitch: 48px;
+  --cv-icon-btn-lg: 20px;      /* 48 档钮内图标（= 手机层 --micon-sm 20px） */
+  --cv-row-pitch: 48px;        /* 面板级圆钮簇槽距（40 钮 + 8 缝） */
+  --cv-row-pitch-lg: 56px;     /* canvas chrome 簇槽距（48 钮 + 8 缝） */
   /* 圆角档（胶囊 999 / 查找条 12 / 缩放条 10 / 胶囊内小钮 8 / 条内小钮 7） */
   --cv-radius-pill: 999px;
   --cv-radius-bar: 12px;
