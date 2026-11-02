@@ -82,12 +82,14 @@ function seed() {
     friends: [{ ...F_MAIN }],
     incoming: [],
     outgoing: [],
+    // 🔴 落地节点（2026-11-02）夹具修正：此处原内联过一条 `g-1` 群行，与下方
+    // `groups: [{ ...G_MAIN }]`（GET /api/groups 真值行，带 description/remark）**重复**。
+    // `messages.js:527` 的归并是 `directNonDevice.concat(grp.groups)` ⇒ 同一群出两行，
+    // 内联那条**不带两个描述字段**（`find()` 取首个 ⇒ 读到空描述），于是 ④-b 群描述
+    // 检索恒 0 命中（profile-dual-desc 的夹具没有这条内联项，故那边恒绿）。
+    // 群行的唯一数据源 = `groups[]`（与产品同口径），此处只留好友会话行。
     conversations: [
       { conversationId: 'c-f1', friend: { ...F_MAIN }, lastMessage: msgs[msgs.length - 1], unreadCount: 0 },
-      {
-        conversationId: 'g-1', kind: 'group', title: G_MAIN.title, memberCount: 2, myRole: 'owner',
-        lastMessage: G_MAIN.lastMessage, unreadCount: 0,
-      },
     ],
     messages: { 'c-f1': msgs, 'g-1': [] },
     groups: [{ ...G_MAIN }],
@@ -441,17 +443,35 @@ test.describe('七条机械断言 · 手机腿（375×812）', () => {
     // ④-b 常驻搜索条：群介绍命中「资料命中」组
     const input = page.locator('.mobile-page[data-page="messages"] .mh-search-input');
     await expect(input, '④-b 常驻搜索条在消息页').toBeVisible({ timeout: 8000 });
-    await input.fill(GROUP_NEEDLE);
-    await expect(page.locator('.mh-sr-row-desc').first(), '④-b 群介绍命中 ⇒ 资料命中行').toBeVisible({ timeout: 8000 });
+    // 🔴 落地节点（2026-11-02）测试侧去时序耦合（与 profile-dual-desc D4 同一根因）：
+    // 常驻条检索是 **300ms 防抖**任务，且 `fm-groups-changed ⇒ refreshConversations()`
+    // 是**异步** REST 重取（搜索面读的 conversationSnapshot 可能仍是旧描述）。
+    // 两条并发腿在并发批次里偶发「防抖落在重取之前」⇒ 0 命中；单跑恒绿 = 典型未等
+    // 异步。处理：先等快照读到新值，再轮询式**重填**（每次 fill 重跑一次防抖检索），
+    // 直到命中行出现 —— 断言面不变（仍是「描述进检索」），不赌单次防抖窗口。
+    await expect.poll(async () => page.evaluate(async () => {
+      const m = await import('/js/messages.js');
+      const c = m.conversationSnapshot().find((x) => x.conversationId === 'g-1');
+      return c ? String(c.description || '') : '';
+    }), { timeout: 10000, message: '群会话快照已随 fm-groups-changed 重取到新群介绍' }).toBe(GROUP_NEEDLE);
+    const searchUntil = async (q, sel) => {
+      for (let i = 0; i < 12; i += 1) {
+        await input.fill(q);
+        if (await page.locator(sel).count()) return true;
+        await page.waitForTimeout(400);
+      }
+      return (await page.locator(sel).count()) > 0;
+    };
+    expect(await searchUntil(GROUP_NEEDLE, '.mh-sr-row-desc'), '④-b 群介绍命中 ⇒ 资料命中行').toBe(true);
     await expect(page.locator('.mh-sr-row-desc').first()).toContainText('项目群');
     console.log('[④/b] 群介绍命中行数', await page.locator('.mh-sr-row-desc').count());
 
-    await input.fill('群备注-独特串');
-    await expect(page.locator('.mh-sr-row-desc').first(), '④-b 我的群备注同样命中').toBeVisible({ timeout: 8000 });
+    expect(await searchUntil('群备注-独特串', '.mh-sr-row-desc'), '④-b 我的群备注同样命中').toBe(true);
 
-    // 否定面：无关串零命中（防恒命中假绿）
+    // 否定面：无关串零命中（防恒命中假绿）—— 防抖窗口后仍须为 0。
     await input.fill('绝无此串zzz');
-    await expect(page.locator('.mh-sr-row-desc')).toHaveCount(0, { timeout: 8000 });
+    await page.waitForTimeout(700);
+    await expect(page.locator('.mh-sr-row-desc')).toHaveCount(0);
   });
 
   test('⑦ 联系人设备更新入口不存在 + 无死链 + 行激活不回退', async ({ page }) => {
