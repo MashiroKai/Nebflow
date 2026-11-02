@@ -26,7 +26,7 @@ related:
 
 | # | 缺陷 | 结论 | 根因落点 | 复验证据 |
 |---|---|---|---|---|
-| ① | 插件自动分配 60s 上限 + fail-open 静默降级 | **修了**（抬预算 + 超时重试 + 失败显式化） | `OpenAiAdapter.scala:368` / `AnthropicAdapter.scala:473`（缺 `readTimeout` ⇒ sttp 默认 60s）；`PluginInjection.scala:103-109`（失败转空集） | `reports/20261102_ptc-defect-fixes/`（mock 70s 慢响应复验 + 单测） |
+| ① | 插件自动分配 60s 上限 + fail-open 静默降级 | **修了**（抬预算 + 超时重试 + 失败显式化） | `OpenAiAdapter.scala:379` / `AnthropicAdapter.scala:487`（修复前无 `readTimeout` ⇒ sttp 默认 60s）；`PluginInjection.scala:59-62,120`（失败转空集） | `reports/20261102_ptc-defect-fixes/`（mock 70s 慢响应 RED/GREEN 对照 + 单测） |
 | ② | `mcp.json` 的 `timeoutMs` 被装载器丢弃 | **修了** | `PluginRegistry.scala:1060-1064`（白名单缺项）+ `1129-1138`/`1161-1170`（`timeoutMs = None` 硬编码） | `McpManager.scala` budget INFO 行 + `PluginMcpProtocolSpec` 三例 |
 | ③ | `fs_roots` 与会话工作区不一致（delegate 读不到自己工作区） | **修了**（显式配置项 + 请求级收窄） | `plugins/ptc-*/plugin.json` 的 `workspace.fs_roots` 恒为 `${PLUGIN_DATA}/workspace` | 实例内 ptc_run_rw 直接读写工作区 |
 | ④ | ptc-typescript 不吃类型注解 | **改名为 `ptc-javascript`**（另一条路要转译器，本机不具备；二选一，取明确的那个） | 无转译步骤：node 20 无 `--experimental-strip-types`（≥22.6 才有），无 tsc/esbuild/swc | 插件名/枚举/SKILL/Plugin.md 全量改名 + 类型注解显式报错 |
@@ -102,7 +102,7 @@ related:
 
 | 刀 | 落点 | 内容 |
 |---|---|---|
-| 抬预算 | `OpenAiAdapter.scala:368-378`、`AnthropicAdapter.scala:473-481` | 非流式请求补 `.readTimeout(Defaults.LlmReadTimeoutSec.seconds)`（600s，与流式面同口径） |
+| 抬预算 | `OpenAiAdapter.scala:379`、`AnthropicAdapter.scala:487`（补入 `.readTimeout(...)`） | 非流式请求补 `.readTimeout(Defaults.LlmReadTimeoutSec.seconds)`（600s，与流式面同口径）；修复前这两处没有该调用 ⇒ 落回 sttp 的 60s 缺省 |
 | 超时重试 | `LlmAllocator.scala`（`chainCall` 内新增 `oneShot` + `isTimeoutOrTransport`） | 超时/传输类失败**先原样重试同一候选一次**，仍败才落下一候选（单候选部署下"换下一候选"等于没重试） |
 | 去掉静默降级 | `PluginInjection.scala`（`FailureModes` + `failureReason`）、`PluginsConfig.failOpenOnAllocationError` | `llm-error`/`parse-fail`/`fail-open` 三个模式词 ⇒ **`Left`**（派发显式失败，错误里点名模式词 + 真因 + 回退开关）；缺省 fail-closed，`plugins.failOpenOnAllocationError=true` 一键回退旧语义（仍留 WARN，不再无声） |
 
@@ -199,6 +199,13 @@ related:
 `ptc_executor.ts` 对应段。文档：两个 `Plugin.md` 的「fs_roots 与工作区」节 + 两个 `SKILL.md` §5。
 
 **默认行为不变**（仍只有 `${PLUGIN_DATA}/workspace`）——这是刻意的：放开面必须显式。
+
+**Windows 部署注意**：仓内 `mcp.json` 的 `command` 写的是 `python3`（跨平台口径）。
+本机 `python3`/`python` 都是 Microsoft Store 的转发桩（真跑会 `exit 9009`），
+所以实例侧那份写的是绝对路径
+`C:/Users/Administrator/AppData/Local/Programs/Python/Python312/python.exe`。
+这是**部署期**的差别（实例的 plugins 副本与仓内源不同源），不影响插件代码本身；
+换机器时按本机真实解释器路径改一处即可。
 
 ### 3.4 复验
 
@@ -356,7 +363,9 @@ Windows 的 `lpCurrentDirectory` 非法时 `CreateProcess` 返回 `ERROR_DIRECTO
 
 ### 7.1 缺陷①：70s 慢分配不再被掐、也不再静默降级
 
-**验红（改动前 jar，home3 / 18125）** —— 恰好 60,025ms 失败，然后静默以空插件集派发：
+**A/B 的唯一变量是 jar**（同一数据根 `home3`、同端口 18125、同一 70s 慢分配假模型）：
+
+**验红（改动前 jar）** —— 恰好 60,025ms 失败，然后静默以空插件集派发：
 
 ```
 18:05:25.192 INFO  nebflow.llm.plugin-alloc - plugin allocation 'delegate-nebflow-6c8e2844': llm fallback leg …
@@ -368,12 +377,17 @@ Windows 的 `lpCurrentDirectory` 非法时 `CreateProcess` 返回 `ERROR_DIRECTO
 同一时刻假模型侧看到的 delegate spawn 工具面是 `tools:15`（一个 ptc_* 都没有），它如实回
 `No PTC tool available; task finished with builtin tools.`——上层却拿到 `OK`。
 
-**修复后（本批 jar，home2 / 18123）** —— 70,044ms 才回，插件集非空，派发继续：
+**修复后（本批 jar）** —— 70,039ms 等到底，插件集非空，三次 `ptc_run_rw` 全部 OK：
 
 ```
-17:58:40.868 INFO  nebflow.llm.plugin-alloc - plugin allocation 'delegate-nebflow-f860c0fd': llm fallback leg (jev gate off (jev block absent))
-17:59:50.912 INFO  nebflow.core.plugin.injection - plugin allocation 'delegate-nebflow-f860c0fd': via=llm-fallback plugins=[ptc-python,ptc-javascript] duty=Allocated(false)
+18:09:16.940 INFO  nebflow.llm.plugin-alloc - plugin allocation 'delegate-nebflow-fb7a4b6c': llm fallback leg (jev gate off (jev block absent))
+18:10:26.979 INFO  nebflow.core.plugin.injection - plugin allocation 'delegate-nebflow-fb7a4b6c': via=llm-fallback plugins=[ptc-python,ptc-javascript] duty=Allocated(false)
+18:10:27.234 INFO  nebflow.handlers - … Tool Delegate(用 ptc-python 与 ptc-javascript 两个插件… ) OK (70332ms)
+18:10:27.365 INFO  nebflow.handlers - … Tool [MCP] ptc_run_rw OK (88ms)
 ```
+
+复跑（另一实例 18123 / home2 / 另一份 mock）：`17:58:40.868 → 17:59:50.912`（70,044ms）
+同样得 `plugins=[ptc-python,ptc-javascript]`——不是单次侥幸。
 
 ### 7.2 缺陷②：`timeoutMs` 真的进到调用预算
 
@@ -431,6 +445,16 @@ SKILL.md / Plugin.md 三处写明（模型能在首屏读到）。
 {"pythonOk":true,"jsOk":true,"valuesEqual":true,
  "pythonFilesWritten":["notes/probe-python.json"],"jsFilesWritten":["notes/probe-js.json"]}
 ```
+
+- 实例内**经由 delegate 的模型驱动**同一个用例（§7.1 的 GREEN 那次），两个插件各落一份文件：
+
+```json
+{"files":{"python":"D:\\ptc-e2e\\home3\\general\\notes\\ptc-python.json",
+          "javascript":"D:\\ptc-e2e\\home3\\general\\notes\\ptc-js.json","identical":true}}
+```
+
+  两份文件逐字段相等（3 行，键序 `path/chars/todo`）：
+  `[{"path":"notes/a.md","chars":43,"todo":1},{"path":"notes/sub/b.md","chars":23,"todo":0},{"path":"notes/sub/c.md","chars":45,"todo":2}]`
 
 ### 7.6 缺陷⑥：内置 Grep 正常返回
 
