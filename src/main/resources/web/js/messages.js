@@ -444,26 +444,36 @@ function groupEventText(ev) {
 }
 
 /**
- * 可行动未读（P6 判据）：未读会话里点名作者行动的条数。会话无行动标记
- * （pendingAsk/mention）⇒ 该会话计数 0——「有更新」不构成行动请求，纯未读
- * 不上徽标。未读同步等既有腿不消费本函数，零触碰。
+ * 未读总数（**唯一真值 = 各会话 `unreadCount`**，与会话列表行徽标
+ * `convRow` 的 `if (conv.unreadCount > 0)` 支同一读数源，禁第二套计数）。
+ *
+ * 🔴 侧边栏图标角标（activity bar 消息钮）由本函数**派生**——unreadside 批
+ * （作者 2026-11-02 01:1x 反馈逐字「现在新消息的显示好像有问题，侧边栏 没通知
+ * 我。」）之前，图标角标走的是另一套聚合（`actionableUnread`：只数「未读 ∩
+ * `pendingAskCount`/`mentionCount`」，而这两个会话字段**全仓零生产者**——服务端
+ * 会话行契约只有 `unreadCount`，见 NeblinkModel.scala:1319-1330）⇒ 图标角标恒 0，
+ * 而列表行徽标报真未读：两套计数不同源，必然漂移（现场 = 行上 `(1)`、侧栏无提示）。
+ * 判据（作者硬约束）：图标角标只许由这条真值集合派生（sum），禁止另立计数器。
+ *
+ * 语义面不变：本函数只在**徽标读数**上用；未读清零仍由 `markConvRead` /
+ * `markDeviceConvRead` / 帧处理里开会话的那三处负责（读后同拍 `updateBadge()`）。
  */
-function actionableUnread() {
-  return conversations.reduce((s, c) => {
-    const unread = c.unreadCount || 0;
-    if (unread <= 0) return s;
-    const flagged = (c.pendingAskCount || 0) + (c.mentionCount || 0);
-    return s + Math.min(unread, flagged);
-  }, 0);
+function totalUnread() {
+  return conversations.reduce((s, c) => s + Math.max(0, Math.floor(Number(c && c.unreadCount) || 0)), 0);
 }
 
 function updateBadge() {
-  // 徽标 = 可行动量：会话内点名行动（待批准/@）+ 跨面板可行动（待销账待办/
-  // 待处置任务/未读回执——各面板注册的提供者）。纯「有更新」不上徽标。
-  const n = loggedIn()
-    ? actionableUnread() + pendingAskCount() + actionableTotal()
-    : 0;
-  setActivityBadge('messages-btn', n, t('messages.ariaActionable', { n }));
+  // 徽标 = 未读真值（与会话行徽标同源）+ 可行动量（另一轴，非未读量：待答卡
+  // `pendingAskCount` + 跨面板待销账待办/未读回执 `actionableTotal`）。
+  // 🔴 未读腿**必须是 totalUnread()**：这是行徽标与图标角标唯一的同源点。
+  const on = loggedIn();
+  const unread = on ? totalUnread() : 0;
+  const actionable = on ? pendingAskCount() + actionableTotal() : 0;
+  const n = unread + actionable;
+  // aria 文案：未读腿在场按未读报（与行徽标同词），否则按可行动量报。
+  setActivityBadge('messages-btn', n, unread > 0
+    ? t('messages.ariaUnread', { n: unread })
+    : t('messages.ariaActionable', { n: actionable }));
 }
 
 // 任一可行动提供者计数变化 ⇒ 重算徽标（actionable.js 广播面）。
