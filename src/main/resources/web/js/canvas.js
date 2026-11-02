@@ -1823,6 +1823,17 @@ function deckThumbMock(family) {
   }
 }
 
+/** 卡面语言单源（手机端堆叠卡翻页批 2026-11-02 作者令 §四「让手机端 canvas
+ *  标签页也像电脑端一样变成一张张卡片上下翻动」）：手机 deck 卡面的类型族
+ *  / 图标 / 缩略 mock 全部取自桌面环卡同一份数据（DECK_ICONS / deckTypeFamily
+ *  / deckThumbMock），手机层零复制 —— 桌面换图标/mock 即手机同步。
+ *  @param {{id: string, title?: string}} entry
+ *  @returns {{family: string, icon: string, thumb: string}} */
+export function deckFaceOf(entry) {
+  const family = deckTypeFamily(entry);
+  return { family, icon: deckIconOf(family), thumb: deckThumbMock(family) };
+}
+
 // ── 引擎状态 ──
 const deck = {
   open: false,

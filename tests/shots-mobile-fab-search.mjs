@@ -1,9 +1,12 @@
-// shots-mobile-fab-search.mjs — 悬浮钮统一+搜索批 双主题截图 + 展开动效帧取证。
+// shots-mobile-fab-search.mjs — 悬浮钮统一批 双主题截图取证。
 // Self-contained（route 拦截 + fm_api_mock 夹具，零后端）。
 // Run: node tests/shots-mobile-fab-search.mjs [outDir]
-// 产物：f1 聊天根基准钮 / f2 详情页悬浮返回钮 / f3 canvas 浮带工具钮 /
-//       f4 消息页搜索钮 / f5 展开动效 4 帧 / f6 检索分组结果 / f7 联系人展开搜索 /
-//       f8 跳转定位闪烁；亮暗双主题（f4-f7 亮档补齐）。
+// 产物：f1 聊天根基准钮 / f2 详情页悬浮返回钮 / f3 canvas 浮带工具钮；亮暗双主题。
+//
+// 常驻搜索条批（作者令 2026-11-02 07:13）交接：本脚本原 f4-f8 腿（消息/联系人
+// 页搜索浮钮 + 展开动效 + 检索结果 + 联系人展开搜索 + 跳转闪烁）随「搜索浮钮在
+// 这两个 tab 退役」作废 —— 新形态取证与实拍见 tests/shots-mobile-pinned-search.mjs
+// （常驻条三态 + 搜索回跳胶囊一帧）。本文件此后只取「其它面」的悬浮钮基准帧。
 
 import { chromium } from 'playwright-core';
 import { readFileSync, mkdirSync } from 'node:fs';
@@ -147,47 +150,13 @@ for (const theme of ['dark', 'light']) {
   await dockTo(page, 'canvas');
   await shot(page, `f3-canvas-toolbar-${theme}.png`);
 
-  // f4 消息页搜索钮（dock 根页右上）。
+  // f4 消息页静止态（常驻搜索条在位；右上搜索浮钮已退役 —— 本帧即「无浮钮」证据）。
   await dockTo(page, 'messages');
-  await shot(page, `f4-messages-fab-${theme}.png`);
+  await shot(page, `f4-messages-pinned-${theme}.png`);
 
-  // f5 展开动效 4 帧（点击后 60/120/220/420ms）。
-  await page.locator('.mobile-page[data-page="messages"] .mh-fab-search').click();
-  const t0 = Date.now();
-  for (const [name, at] of [['f5-expand-frame0', 60], ['f5-expand-frame1', 120], ['f5-expand-frame2', 220], ['f5-expand-frame3', 420]]) {
-    const wait = at - (Date.now() - t0);
-    if (wait > 0) await page.waitForTimeout(wait);
-    await shot(page, `${name}-${theme}.png`);
-  }
-
-  // f6 检索分组结果（mark 高亮）。
-  await page.locator('.mh-search-input').fill('部署');
-  await page.waitForSelector('.mh-sr-group', { timeout: 6000 });
-  await page.waitForTimeout(350);
-  await shot(page, `f6-messages-results-${theme}.png`);
-
-  // f7 联系人页展开式搜索（既有搜好友逻辑承载）。
+  // f5 联系人页常驻搜索条（同形态；输入结果腿见 shots-mobile-pinned-search.mjs）。
   await dockTo(page, 'contacts');
-  await page.locator('.mobile-page[data-page="contacts"] .mh-fab-search').click();
-  await page.waitForTimeout(450);
-  await page.locator('.mobile-page[data-page="contacts"] .fm-search-block .fm-search-input').fill('xintongxue');
-  await page.locator('.mobile-page[data-page="contacts"] .fm-search-btn').click();
-  await page.waitForSelector('.mobile-page[data-page="contacts"] .fm-result-card:not(.fm-searching)', { timeout: 6000 });
-  await page.waitForTimeout(250);
-  await shot(page, `f7-contacts-search-${theme}.png`);
-
-  // f8 跳转定位闪烁（点结果行进群会话，命中消息居中 + 闪烁中段）。
-  await dockTo(page, 'messages');
-  await page.evaluate(() => {
-    const sec = document.querySelector('.mobile-page[data-page="messages"]');
-    if (!sec.classList.contains('mh-search-open')) sec.querySelector('.mh-fab-search').click();
-  });
-  await page.locator('.mh-search-input').fill('部署');
-  await page.waitForSelector('.mh-sr-row', { timeout: 6000 });
-  await page.locator('.mh-sr-row').first().click();
-  await page.waitForSelector('.mobile-page[data-page="conversation"] .fm-msg.fm-reveal-flash', { timeout: 8000 });
-  await page.waitForTimeout(500); // 闪烁动画中段
-  await shot(page, `f8-jump-flash-${theme}.png`);
+  await shot(page, `f5-contacts-pinned-${theme}.png`);
 
   await page.close();
   console.log(`${T}档截图完成`);

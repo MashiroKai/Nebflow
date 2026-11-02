@@ -370,8 +370,8 @@ test('D4 canvas page: empty state on entry, doc cards via openTab (chips/stepper
   expect(empty0.emptyVisible).toBe(true);
   expect(empty0.panelDisplay).toBe('none');
 
-  // 双卡：chip 条两枚 + 工具条 ‹计数› 步进 + X 关卡（详情交互见
-  // mobile-canvas-sheet.spec.mjs —— 此处钉「页内呈现/切换」面）。
+  // 双卡：环带两枚签（当前签居中 + 邻签）+ 工具条 ✕/堆叠钮 + 底部小点
+  // （详情交互见 mobile-canvas-sheet.spec.mjs —— 此处钉「页内呈现/切换」面）。
   await page.evaluate(() => {
     import('/js/canvas.js').then((c) => {
       c.openTab('dock-a', '文档甲', { type: 'dock-a' });
@@ -389,10 +389,17 @@ test('D4 canvas page: empty state on entry, doc cards via openTab (chips/stepper
       popGone: !pg.querySelector('.mf-cv-pop') && !pg.querySelector('.mf-cv-prev'),
       adopted: pg.querySelectorAll('.mf-cv-host .canvas-tab-pane[data-tab-id="dock-b"]').length,
       emptyHidden: pg.querySelector('.mf-cv-empty').hidden,
+      dots: (() => {
+        const d = pg.querySelector('.mf-dots');
+        const items = [...d.querySelectorAll('.mf-dot')];
+        return { hidden: d.hidden, n: items.length, onIdx: items.findIndex((x) => x.classList.contains('on')) };
+      })(),
     };
   });
   expect(st.chips).toEqual([{ id: 'dock-a', on: false }, { id: 'dock-b', on: true }]);
+  // 标签栏重做批（2026-11-02 §二/§三）：档位读数转底部小点，计数降 sr-only 仍播报。
   expect(st.count).toBe('2/2');
+  expect(st.dots).toEqual({ hidden: false, n: 2, onIdx: 1 });
   expect(st.stackBtn).toBe(true);
   expect(st.popGone).toBe(true);   // 批⑤：独立窗/步进钮退役
   expect(st.adopted).toBe(1);

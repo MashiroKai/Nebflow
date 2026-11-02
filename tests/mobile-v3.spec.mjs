@@ -392,8 +392,11 @@ test('T5 header retired on mobile (liquid-glass v2 2026-10-31); top edge = fade 
   await expect(page.locator('.mh-chrome-btn[data-chrome="tasks"]')).toBeVisible();
   await expect(page.locator('.mh-chrome-btn[data-chrome="search"]')).toBeVisible();
   // 页标题入流：头像 + 会话名迁入 .g2-chat-head（首位、可见）。
+  // 会话顶栏单行三段式批（2026-11-02 07:23）：该层入流后改为 position:fixed
+  // 真顶栏（单行三段式，高 56+safe），节点归属与可见性契约不变。
   const head = page.locator('#chat > .g2-chat-head');
   await expect(head).toHaveCount(1);
+  await expect(head).toHaveCSS('position', 'fixed');
   await expect(head.locator('#agent-avatar-btn')).toBeVisible();
   await expect(head.locator('#session-name')).toHaveCount(1);
 });

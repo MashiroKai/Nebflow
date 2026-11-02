@@ -113,17 +113,28 @@ for (const scheme of ['dark', 'light']) {
     return {
       hasHeader: !!head, hasTitle: !!title,
       stripTop: +sr.top.toFixed(1), stripLeft: +sr.left.toFixed(1), stripH: +sr.height.toFixed(1),
+      // 标签栏重做批（2026-11-02 §二）：横向圆环 —— 条不再横滚（scrollWidth 无义），
+      // 渐隐门控改由签数驱动（2 签起 .fade，单签居中不遮）。
       stripFade: strip.classList.contains('fade'),
-      stripOverflow: strip.scrollWidth > strip.clientWidth + 1,
+      stripRing: getComputedStyle(strip).overflowX === 'visible' && sr.height === 72,
       stripBarless: getComputedStyle(strip).backgroundImage === 'none' && getComputedStyle(strip).borderBottomWidth === '0px',
       maskImage: getComputedStyle(strip).maskImage || getComputedStyle(strip).webkitMaskImage,
       chipCount: strip.querySelectorAll('.mf-strip-chip').length,
+      chipOnCenter: (() => {
+        const on = strip.querySelector('.mf-strip-chip.on');
+        if (!on) return -1;
+        const r = on.getBoundingClientRect();
+        return +(r.x + r.width / 2).toFixed(1);
+      })(),
     };
   });
   ok(`[${scheme}] ① canvas 页头/标题胶囊退役`, !probes.hasHeader && !probes.hasTitle);
   ok(`[${scheme}] ② 标签条置顶就位（top ≤ 12px）`, probes.stripTop <= 12, `top=${probes.stripTop}`);
   ok(`[${scheme}] ② 条面退役（无通栏底色/底缘线）`, probes.stripBarless);
-  ok(`[${scheme}] ② 溢出门控：内容溢出 + .fade 在位 + 双侧 mask`, probes.stripOverflow && probes.stripFade && /linear-gradient/.test(probes.maskImage), `overflow=${probes.stripOverflow} fade=${probes.stripFade}`);
+  ok(`[${scheme}] ② 横向圆环：条高 72 / 非横滚 / 当前签居中 / 双侧 mask（2 签起）`,
+    probes.stripRing && probes.stripFade && /linear-gradient/.test(probes.maskImage)
+      && Math.abs(probes.chipOnCenter - 195) <= 12,
+    `ring=${probes.stripRing} fade=${probes.stripFade} cx=${probes.chipOnCenter}`);
 
   // 全顶带截图 + 左右渐隐特写
   await page.screenshot({ path: join(OUT, `shots/m1-strip-top-${scheme}.png`), clip: { x: 0, y: 0, width: 390, height: Math.round(probes.stripTop + probes.stripH + 46) } });
@@ -135,7 +146,7 @@ for (const scheme of ['dark', 'light']) {
   await sleep(130);                                    // 中段：首张已起、末张未动
   const mid = await page.evaluate(() => {
     const view = document.querySelector('.mf-stack-view');
-    const cards = [...view.querySelectorAll('.mf-stack-card')];
+    const cards = [...view.querySelectorAll('.mf-deck-card')];
     const cs = cards.map((c) => getComputedStyle(c));
     return {
       open: view.classList.contains('open'), hidden: view.hidden,
@@ -144,14 +155,19 @@ for (const scheme of ['dark', 'light']) {
       n: cards.length,
     };
   });
-  ok(`[${scheme}] ④ 堆叠面展开动画（中段 stagger：首卡已现、末卡未现）`,
-    mid.open && !mid.hidden && mid.firstOp > 0.05 && mid.lastOp < 0.05 && mid.lastTf !== 'none',
+  ok(`[${scheme}] ④ 卡叠展开动画（中段 stagger：首卡已现、末卡未现）`,
+    mid.open && !mid.hidden && mid.firstOp > 0.05 && mid.lastOp < 0.05 && mid.firstTf !== 'none',
     `firstOp=${mid.firstOp} lastOp=${mid.lastOp} n=${mid.n}`);
   await page.screenshot({ path: join(OUT, `shots/m4-stack-expand-mid-${scheme}.png`) });
   await sleep(500);
   await page.screenshot({ path: join(OUT, `shots/m5-stack-open-${scheme}.png`) });
-  const settled = await page.evaluate(() => +getComputedStyle(document.querySelector('.mf-stack-card:last-child')).opacity);
-  ok(`[${scheme}] ④ 展开终态全列就位`, settled === 1, `lastOp=${settled}`);
+  const settled = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll('.mf-deck-card')];
+    const last = cards[cards.length - 1];
+    return { op: +getComputedStyle(last).opacity, on: last.classList.contains('on') };
+  });
+  ok(`[${scheme}] ④ 卡叠展开终态就位（末卡 = 前景活动卡，全不透明）`, settled.op === 1 && settled.on,
+    JSON.stringify(settled));
   // 收面回归：✕ 点击后 200ms+ 隐去
   await page.click('.mf-stack-x');
   await sleep(420);
