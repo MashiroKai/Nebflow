@@ -255,42 +255,49 @@ for (const scheme of ['light', 'dark']) {
   await ctx.close();
 }
 
-/* ── F7 三个文字 logo 候选对比（3× 放大 + 16px 实尺） ─────────────── */
+/* ── F7 文字引用牌图标（图标统一批 2026-11-02 12:58：= footer 引用入口图标） ──
+ *
+ *  历史说明：上一批（引用牌图标化 11:00）在本帧渲染 A/B/C 三个候选 logo。作者同日
+ *  裁定弃用自制 logo、直接复用 footer 引用入口键的图标，候选字形随之删除（死代码），
+ *  本帧改为对照「footer 入口键字形 / 引用牌内实样」——同一枚、两种色上下文。
+ *  候选对比帧 `evidence/20261102_quote-iconify/after/f7-text-logo-candidates.png` 保留
+ *  作历史，不再由本脚本生成。 */
 {
   const { ctx, page } = await openPage({ width: 900, height: 420 }, { colorScheme: 'light' });
   const info = await page.evaluate(async () => {
-    // 候选字形单源：改前树没有 quoteLogo.js ⇒ 退化为「无候选可渲染」的说明帧。
-    let cands = null;
+    // 字形单源：改前树没有 quoteLogo.js ⇒ 退化为「无字形可渲染」的说明帧。
+    let svg = null;
     try {
       const mod = await import('/src/main/resources/web/js/quoteLogo.js');
-      cands = mod.QUOTE_LOGO_CANDIDATES || null;
-    } catch { cands = null; }
+      svg = mod.QUOTE_ENTRY_ICON || null;
+    } catch { svg = null; }
     const host = document.createElement('div');
     host.id = 'logo-candidates';
     host.style.cssText = 'position:absolute;inset:0;margin:0;padding:20px;background:#fff;font:12px/1.4 -apple-system,sans-serif;color:#333;display:flex;flex-direction:column;gap:14px;';
-    if (!cands) {
-      host.innerHTML = '<div style="font-weight:600">改前树：文字引用牌没有专用 logo（只有 message-circle 通用图标）——本帧为红面对照。</div>';
+    if (!svg) {
+      host.innerHTML = '<div style="font-weight:600">改前树：文字引用牌没有类型图标 —— 本帧为红面对照。</div>';
       document.body.appendChild(host);
       return [];
     }
-    const names = { a: 'A 双引号 + 双横线（默认）', b: 'B 票据卡 + 引号', c: 'C 三横线 + 火焰引号' };
-    for (const [k, svg] of Object.entries(cands)) {
+    const rows = [
+      ['footer 引用入口键（#quote-item-btn）', '#7b7e88'],
+      ['文字引用牌 16px 实尺（引用牌色上下文）', '#8b8e96'],
+      ['引用块里的样子（Nebula：摘要）', '#8b8e96'],
+    ];
+    for (const [label, color] of rows) {
       const row = document.createElement('div');
       row.style.cssText = 'display:flex;align-items:center;gap:18px;';
-      row.innerHTML = `<div style="width:190px;font-weight:600">${names[k]}</div>`
-        + `<div style="width:48px;height:48px;color:#555">${svg.replace('<svg ', '<svg style="width:48px;height:48px;display:block" ')}</div>`
-        + `<div style="width:100px;display:flex;align-items:center;gap:8px;color:#666">`
+      row.innerHTML = `<div style="width:260px;font-weight:600">${label}</div>`
+        + `<div style="width:48px;height:48px;color:${color}">${svg.replace('<svg ', '<svg style="width:48px;height:48px;display:block" ')}</div>`
+        + `<div style="width:110px;display:flex;align-items:center;gap:8px;color:${color}">`
         + `<div style="width:16px;height:16px">${svg.replace('<svg ', '<svg style="width:16px;height:16px;display:block" ')}</div>`
-        + `<span style="font-size:11px">16px 实尺</span></div>`
-        + `<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:10px;background:rgba(0,0,0,0.035);color:#888;font-size:12px">`
-        + `<div style="width:16px;height:16px">${svg.replace('<svg ', '<svg style="width:16px;height:16px;display:block" ')}</div>`
-        + `<span>Nebula：引用块里的样子</span></div>`;
+        + `<span style="font-size:11px">16px 实尺</span></div>`;
       host.appendChild(row);
     }
     document.body.appendChild(host);
-    return Object.keys(cands);
+    return rows.map(r => r[0]);
   });
-  ok(BEFORE ? 'F7 改前无文字 logo 候选（红面对照帧）' : 'F7 三个文字 logo 候选',
+  ok(BEFORE ? 'F7 改前无文字引用牌图标（红面对照帧）' : 'F7 文字引用牌图标 = footer 入口图标（同一枚）',
     BEFORE ? info.length === 0 : info.length === 3, info);
   await page.locator('#logo-candidates').screenshot({ path: join(OUT, 'f7-text-logo-candidates.png') });
   await ctx.close();
