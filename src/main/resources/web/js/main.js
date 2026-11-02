@@ -59,6 +59,9 @@ import {
 // ON the turn line (dots + live timer), not in a bubble row.
 import { startWorklineDots, beginRound } from './workline.js';
 import { replayHistoryPageInitialLoad } from './chat/historyReplay.js';
+// 进场落底「武装窗」撤窗口（手机端进场落顶修复批 · 2026-11-02）：回看补页腿
+// （分帧挂载 + 相对补偿）必须与每帧钉底互斥 —— 见下方补页分支的注释。
+import { cancelSettleBottom } from './chat/settleBottom.js';
 import { installMsgTokenChip } from './chat/msgTokenChip.js'; // msgchip 批：带短名引用小牌交互/取数腿
 import { notePendingAsk, removePendingAsk, applyPendingAskSnapshot, pendingSnapshotFailed, initPendingAsks, requestPendingAskSync, startPendingAskSync } from './askPending.js';
 import { initScrollUnderGlass } from './scrollUnderGlass.js'; // uifix ⑤
@@ -2128,6 +2131,12 @@ onMessage('historyPage', (msg, view) => {
     // 到 onDone（升级批 drain 完）才放行 —— 期间不会发出第二页请求。
     const chat = activeView.dom.chat;
     const prevScrollHeight = chat.scrollHeight;
+    // 进场落底武装窗（2026-11-02 手机端进场落顶修复批）：**回看补页腿撤窗**——
+    // 本腿以 `chat.prepend + scrollTop += 增量` 相对补偿把读者钉在原来读的那一行，
+    // 而武装窗的每帧钉底会把这笔补偿直接抹掉（把回看的人拽回底部）。撤窗放在
+    // 补页腿入口（不是 onBuilt 里）：构建切片期间窗口的任何一帧都不该再钉底。
+    // 撤窗是幂等的，窗口本就没武装时是空操作。
+    cancelSettleBottom(chat);
     // 陈页守卫：会话切换/重连初载会 `resetPagination()` **整替** pagination
     // 对象（chatView.js:175 / sidebar.js:2194）——守卫用对象**身份**比对
     // （数值比对在「新会话初载恰回同 offset」的窄竞态下会漏判）。
