@@ -914,11 +914,14 @@ test('D18 floating chrome band: zero-height transparent band, back 48px g2-fab a
       headBg: hs.backgroundColor,
       headHeight: hs.height,
       headPointerEvents: hs.pointerEvents,
-      // 标题（B批）：流内块、页体首件、文本左缩进 = 16px（块通栏，缩进在
-      // padding 上 —— 盒左与页左重合，探针读 padding 不读盒）。
+      // 标题（B批 → 两段式标题批 2026-11-02）：流内块、页体首件、文本**水平
+      // 居中**，左右内缩各 72px（--mtitle-inset = 返回钮左 16 + 钮 48 + 缝 8，
+      // 块通栏、缩进在 padding 上 —— 居中大标题与左上返回钮横向零重叠）。
       titlePosition: ts.position,
       titleIsBodyFirst: page.querySelector('.mobile-page-body')?.firstElementChild === title,
       titlePadLeft: ts.paddingLeft,
+      titlePadRight: ts.paddingRight,
+      titleTextAlign: ts.textAlign,
       // 返回钮 = 48px g2-fab（材质与 chrome 键同源 token 族），悬浮位同 chrome 几何。
       backBg: bs.backgroundColor,
       backFabBg: fabBg,
@@ -935,7 +938,9 @@ test('D18 floating chrome band: zero-height transparent band, back 48px g2-fab a
   expect(st.headPointerEvents).toBe('none');
   expect(st.titlePosition).toBe('static');
   expect(st.titleIsBodyFirst).toBe(true);
-  expect(st.titlePadLeft).toBe('16px');
+  expect(st.titlePadLeft).toBe('72px'); // 两段式标题批：居中内缩（原 16px 左对齐退役）
+  expect(st.titlePadRight).toBe('72px');
+  expect(st.titleTextAlign).toBe('center');
   expect(st.backBg).toBe(st.backFabBg); // 返回钮 = g2-fab 族（统一批新基准）
   expect(st.backRadius).toBe('50%');
   expect(st.backBox).toEqual({ w: 48, h: 48 });
