@@ -121,6 +121,10 @@
   <link rel="stylesheet" href="css/mobileLayer.css">
   <!-- 对话层活性批（2026-10-22）：回合活动流条 + 断连横幅 -->
   <link rel="stylesheet" href="css/liveness.css">
+  <!-- 键盘层（keyboard-first 一期，2026-11-01）：焦点环基线 + meta/edit 模式
+       指示器 + 命令面板。放最后 = 兜底环压得住前面 26 个文件里的 `outline:none`
+       （特异性与颜色单源见该文件头注）。 -->
+  <link rel="stylesheet" href="css/keyboard.css">
   <!-- 偶发裸渲染修复批（2026-10-30，作者 20:03 截图实证：冷启动实例「有时候」
        右侧面板整面无样式、工作台列表以原文竖排裸露）。根因面：stylesheet 是
        渲染阻塞资源，但若任一 CSS 请求**失败**（实例重启在途请求被掐断 / 隧道
@@ -836,7 +840,13 @@
          穿顶内容 = Header 玻璃自身磨砂（盒内）+ 带下零蒙层；带下过渡 = 纯硬边界
          （任务卡玻璃 blur 仍在卡上，裙边渐隐本体退役）。五面浮层面板裙边照旧。 -->
     <div id="top-overlays">
-      <div id="task-list"></div>
+      <!-- 待办胶囊重做批（作者令 2026-11-02 11:52「收缩到只显示 8 待办 这么几个
+           文字的大小程度的一个在对话框下方的一个胶囊……点击的时候就是从这么个小
+           胶囊拓展到一个大的界面」）：#task-list 槽位从顶带 #top-overlays 迁到
+           #input-area 内、#input-bar 之后 —— 静默态 = 输入框下方居中小胶囊，
+           展开态 = 锚在输入区上方 8px 的浮层面板（见 css/todo-face.css 槽位块）。
+           顶带让位公式（js/main.js bandBottom）只读 #header/#top-overlays 的盒子，
+           本节点离场后自带收缩，无需改动。 -->
       <!-- D6 批 F2: pending-AskUser persistent bar (one row per unanswered
            question: source · summary, click = scroll to card + highlight) -->
       <div id="ask-pending-bar" class="hidden" role="list" aria-live="polite"></div>
@@ -893,8 +903,22 @@
       </div>
       <button class="skip-freeze-btn" id="skip-freeze-btn" type="button"><i data-lucide="skip-forward"></i><span id="skip-freeze-label">跳过本次</span></button>
       <button class="icon-btn" id="attach-btn"><i data-lucide="paperclip"></i></button>
+      <!-- 引用入口移入 footer（2026-11-02 11:00 作者令「图片引用在footer显示就行了。
+           不需要hover图片的时候也显示一个图标」）：单图/单张引用入口 = composer
+           footer 动作行的一枚键（与附件键同族 .icon-btn），动作对象 = 当前会话里
+           最近一条叠卡的**当前张**（拖动/横滑翻到的那张，见 popArtifacts
+           `.pop-stack-area`.popQuoteState）。默认 hidden：没有叠卡就没有可引单张
+           （零死入口，见 js/msgQuote.js initQuoteItemButton）。字形 = lucide
+           `quote`（内联 SVG，vendor 里没有该图标，见 js/msgQuote.js QUOTE_SVG）。 -->
+      <button class="icon-btn" id="quote-item-btn" type="button" hidden><span class="quote-item-btn-glyph"></span></button>
       <button id="send-btn"><i data-lucide="send"></i></button>
       <button id="stop-btn"><i data-lucide="square"></i></button>
+      </div>
+      <!-- 待办胶囊槽位（重做批 2026-11-02 11:52；从 #top-overlays 迁入，见上方
+           顶带块注记）：静默态 = 输入框正下方居中小胶囊；展开态 = 自胶囊位置向上
+           生长的浮层面板（position:absolute; bottom:calc(100% + 8px)，不占输入区
+           高度、不与输入框打架）。`has-tasks` 门照旧由 js/todoFace.js 挂。 -->
+      <div id="task-list"></div>
     </div>
   </div>
   </div>

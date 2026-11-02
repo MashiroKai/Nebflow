@@ -79,6 +79,7 @@ import { bindCollapsibleToggle } from './chat/collapsible.js';
 // 输入行为包批（2026-11-02 作者令）：busy↔idle 按钮 chrome = input/composer.js
 // 统一状态机（主会话 setBusy/clearBusy 与 canvas ask 共用同一实现）。
 import { applyTurnChrome } from './input/composer.js';
+import { withFocusKey } from './focusTrap.js';
 export { formatDuration, formatLiveDuration, pickThinkingPhrase, createMsgFooterBadge, createDurationBadgeElement, renderDurationBadge } from './chat/durationBadges.js';
 // Pop 族合流（A 侧 pop-upgrade 批单源化）：`popArtifactFromInput` / `openPopArtifact`
 // 的再导出改由下方 A 侧 `./popArtifacts.js` 单源承担（chatSearch.js 既有 import 面
@@ -469,6 +470,31 @@ function createPendingSendMark() {
  *   消息只在排队条行，drain 后由 input.js 补渲本气泡；排队条行按钮 = 队列动作
  *   唯一入口。）
  */
+/**
+ * live 腿辅助（tool-card-leak-on-reload 批 2026-11-02）：DOM 里此刻是否有一个
+ * **尚未终态**的引擎回合 —— 判据 = 最后一条开轮 user 行之后没有
+ * `data-nf-turn-terminal` 行、也没有 `.turn-header`（collapseTurn 收拢过的轮）。
+ * `busySessionIds` 是真值源，但在飞终态帧的处理窗口里它可能比 DOM 慢一拍；本
+ * 判据把「回合其实已经收口」的那一拍挡掉，避免新回合的开轮行被误标成插话。
+ */
+function liveTurnStillOpen(chat) {
+  const kids = Array.from(chat.children);
+  let lastOpener = -1;
+  kids.forEach((el, i) => {
+    if (!el.classList || !el.classList.contains('row') || !el.classList.contains('user')) return;
+    if (el.hasAttribute('data-nf-mid-turn') || el.hasAttribute('data-nf-ask-answer')) return;
+    if (el.querySelector('.bubble.injected')) return;
+    lastOpener = i;
+  });
+  if (lastOpener < 0) return false;
+  for (let i = lastOpener + 1; i < kids.length; i++) {
+    const el = kids[i];
+    if (el.classList && el.classList.contains('turn-header')) return false;
+    if (el.dataset && el.dataset.nfTurnTerminal) return false;
+  }
+  return true;
+}
+
 export function renderUserBubble(text, attachments, timestamp, opts) {
   const chat = activeView.dom.chat;
   // 媒体统一适配批（2026-10-20）：社交通道入站媒体的**存量「已存至」文本行**
@@ -488,6 +514,16 @@ export function renderUserBubble(text, attachments, timestamp, opts) {
   const row = document.createElement('div');
   row.className = 'row user';
   row.dataset.msgId = (opts && opts.msgId) || nextChatMsgId();
+  // tool-card-leak-on-reload 批（2026-11-02）：live 腿的回合内插话标 —— 发送时该
+  // 会话仍 busy（引擎回合在跑）⇒ 本行不是轮起点（与回放腿的同一 DOM 契约
+  // data-nf-mid-turn；turnGroup 的段边界判据 / workline.turnAnchor 只读它）。
+  // 缺席（空闲态发送 / 旧调用点）⇒ 不落标，行为逐字不变。
+  // pending:true（离线入队乐观气泡）不算：那一行根本不代表引擎回合内的输入。
+  if (!(opts && opts.pending) && activeView && activeView.sessionId &&
+      state.busySessionIds && state.busySessionIds.has(activeView.sessionId) &&
+      liveTurnStillOpen(chat)) {
+    row.dataset.nfMidTurn = '1';
+  }
   // quote-message 一期：带引用发送 ⇒ 气泡上方引用块（微信形态）。数据单点 =
   // 附件里的 chat-message ref（live/排队/草稿恢复共用同一形状 ⇒ 三个入路零
   // 额外处理）；该 ref 不进气泡内的 ref 卡循环（引用块是它唯一的消费面）。
@@ -3722,6 +3758,15 @@ export function clearAttachmentStripAnimated(target) {
 }
 
 export function renderAttachmentPreview(target) {
+  // B3-2：附件条 = `innerHTML` 全量重建 + 每 chip 一个 ✕ 按钮的面 —— 键盘用户正在
+  // 某个 chip 的 ✕ 上按 Enter 时，任何一次重渲都会把节点换掉。重渲前后按 key 回焦
+  // （chips 无 id ⇒ 走协议第三级 DOM 路径：同形重建时结构位序不变）。
+  const box = (target && target.attPreviewEl) || activeView.dom.attPreview;
+  return withFocusKey(box instanceof HTMLElement ? box : null, () => renderAttachmentPreviewInner(target));
+}
+
+/** 附件条重建本体（重渲保焦包装见 renderAttachmentPreview）。 */
+function renderAttachmentPreviewInner(target) {
   // target: optional { attPreviewEl, attachments } for non-primary windows.
   // Defaults to the primary window's attPreview + pendingAttachments so existing
   // call sites are unaffected.

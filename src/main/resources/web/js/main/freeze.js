@@ -58,7 +58,7 @@ export function setFrozenBarState(v, frozen) {
     if (frozen) { input.setAttribute('disabled', ''); input.setAttribute('aria-disabled', 'true'); }
     else { input.removeAttribute('disabled'); input.setAttribute('aria-disabled', 'false'); }
   }
-  for (const sel of ['#voice-btn', '#attach-btn', '#send-btn', '#stop-btn']) {
+  for (const sel of ['#voice-btn', '#attach-btn', '#quote-item-btn', '#send-btn', '#stop-btn']) {
     const el = bar.querySelector(sel);
     if (!el) continue;
     if (frozen) el.setAttribute('disabled', '');

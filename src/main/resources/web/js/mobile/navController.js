@@ -711,31 +711,57 @@ const SWIPE_SWITCH_PX = 48;
 // ── 横向圆环标签栏（作者令 2026-11-02 07:22「手机端 canvas 顶部标签栏重做」）──
 // 桌面语言 = hover 后上下展开的竖向圆环（canvas.js §胶囊环：缘位逐级缩径 +
 // 减淡 + 弧深，|d|≥2 越出 = 读作绕到圈外）；手机端无 hover，映射为**常驻展开
-// 的横向圆环**（竖向 → 横向的等价变换：弧从此前「上下展」改为「左右展」，
-// 缩径/减淡/模糊三档深度语言逐档沿用）。
+// 的横向圆环**（竖向 → 横向的等价变换：「上下展」改为「左右展」，缩径 / 减淡 /
+// 模糊三条深度语言沿用并改为连续曲线 —— 见下「对齐修正批」）。
 //
-// 几何（375 基线；环带左右各让 76px = 悬浮钮 48 + 边距 16 + 气隙 12 —— 与
-// 悬浮钮统一批同一栅格，钮的命中盒永不与标签相交）：
-//   · 环带（.mf-strip）= 屏宽 − 152px（375 → 223px），高 56px，overflow:hidden
-//     + 双侧 12px mask 渐隐（溢出段淡出而不是硬切）；
-//   · 中签 dx=0：宽自适应，max-width 132px，scale 1，完全不透明；
-//   · 步距 RING_DX1 = 86px（|k|=1；= 中签半宽 46 + 邻签半宽 92×0.82/2 ≈ 38
-//     + 2px 缝 —— 中心签与邻签不叠字）→ dx = 86·k（|k|=2 = 172px，被环带
-//     mask 咬掉大半 = 读作已绕到圈外）；
-//   · 弧深 dy = R − √(R² − dx²)，R = 340px 且上限 RING_DY_MAX = 12px
-//     ⇒ |k|=1 dy ≈ 11.1px，|k|=2 dy = 12px（横向环的「绕到后面去」＝下沉 +
-//     缩径 + 减淡 + 模糊，四条同向叠加）；
-//   · 逐级：scale = 1 − 0.18|k|（0.82 / 0.64），opacity 0.78 / 0.42，
-//     blur 0.8px / 1.8px（对应桌面 is-edge 单档语言向两级外推）；
-//   · 露出半径 RING_VISIBLE = 1（|k| ≥ 2 挂 .is-far：零透明、零命中，位姿仍算
-//     —— 换签时是连续位迁移而不是瞬切）。环带净宽 223px（375 − 2×76）只容得下
-//     「中签 + 左右各一枚邻签」：|k|=2 的位置在 187.5 ± 172 ⇒ 已出 mask 渐隐带，
-//     物理上就看不见，故露出半径取 1（读作「只看得到相邻两页，其余绕到圈后」）。
-const RING_DX1 = 86;
-const RING_RADIUS = 340;
-const RING_DY_MAX = 12;
-const RING_SCALE_STEP = 0.18;
+// 对齐修正批（作者令 2026-11-02 09:00「不应该都是同一水平吗」）——根因实证：
+// 签的垂直定位 = `top:40px` + `translateY(-50% + var(--rdy))`。`-50%` 量的是**未
+// 缩放盒**的一半，而 `--rdy` 是环的垂直弧深 ⇒ 渲染盒中心 = 40 + rdy（|k|=1 时
+// 40 + 11.1 = 51.1，与中签 40 差 11.1px，正是实测偏差）。缩放本身无责：
+// transform-origin:center 下 scale 围绕盒中心对称，中心不动。
+// 修法（几何源头，不做反向偏移补偿）：**删除纵向弧深**。环的「绕到圈后」只由
+// 横向位移 + 缩径 + 连续减淡/模糊表达，签心恒 y=40（= 两悬浮钮中心线）。
+//
+// 几何（375 基线；环带左右各让 68px = 悬浮钮 48 + 边距 16 + 4 气隙）：
+//   · 环带（.mf-strip）高 72px，overflow:visible + 双侧 mask 52 → 64px 渐隐
+//     （浮钮右缘 64 起恒全实色 ⇒ 可见签不被误伤）；
+//   · 签心恒 y = 40（= 两悬浮钮垂直中心）；scale 走 transform-origin:center ⇒
+//     缩放后中心不动 ⇒ 全组纸签严格同一水平线（机械断言极差 ≤1px）；
+//   · 中签 dx=0、基准宽 112px（CSS `.on` 档）、scale 1.14 ⇒ 渲染 127.7×36.5，
+//     文字框 78px（= 112 − 2×16 内衬 − 2 边框；旧 58px）⇒ 有效字号 14.82px、
+//     单行可见约 5.3 个汉字宽（旧 4.5）——「能显示稍微完整一些」；中签左缘
+//     123.7，远在悬浮钮右缘 64 之外（不压钮）；
+//   · 步距 RING_DX1 = 95px：邻签基准宽 68px、scale 0.80 ⇒ 渲染 54.4×25.6，
+//     中心 187.5 ± 95 ⇒ 左邻左缘 65.3 ≥ 悬浮钮右缘 64（不压钮，余量 1.3px）；
+//     邻签右缘 119.7 vs 中签左缘 123.7 ⇒ 缝隙 4.0px（**不重叠**）；
+//   · |k|=2 = ±190px：被环带 mask 咬掉 + 曲线归零 = 读作已绕到圈外
+//     （.is-far 零透明零命中）；
+//   · 露出半径 RING_VISIBLE = 1 —— 环带净宽只容得下「中签 + 左右各一枚邻签」。
+const RING_DX1 = 95;
 const RING_VISIBLE = 1;
+// 宽度档住 CSS（唯一视觉源）：两侧签 `.mf-strip-chip` max-width 68px、中签
+// `.mf-strip-chip.on` max-width 112px —— JS 只给 scale，不改宽，两者相乘才是
+// 渲染宽度（中签 112×1.14 = 127.7 / 邻签 68×0.80 = 54.4）。
+// 连续曲线（作者令「越到边缘越模糊」+「不用…号」）：三条量全按 t = min(|k|,2)/2
+// ∈ [0,1] 连续单调取值，不再分三档跳；k 取整数，故实际采样点 = |k| 0/1/2，
+// 其余行只为证明曲线连续（拖动换签的过渡帧即落在这些 t 上）。
+//   t   |k|   scale           opacity        blur
+//   0    0    1.140           1.000          0.00px   ← 中签
+//   0.25 0.5  0.958           0.841          0.19px
+//   0.5  1    0.800           0.660          0.70px   ← 邻签（唯一可见的非中签）
+//   0.75 1.5  0.674           0.435          1.51px
+//   1    2    0.600           0.000          2.60px   ← 与 .is-far 的无缝点
+// 三条曲线（指数取值的由来）：scale 用 (1−t)^1.43 使邻签落 0.80（旧 0.82，
+// 略小一档让中签的「稍微大一点」可读）；op 用 (1−t)^0.6 —— 指数 < 1 ⇒ 前段
+// 掉得陡、后段收敛，邻签 0.66（旧 0.78）仍清晰可辨，|k|≥2 归零衔接 .is-far；
+// blur 用 t^1.9 —— 指数 > 1 ⇒ 起手温柔（邻签仅 0.70px，不糊字）、边缘陡增
+// （2.60px 糊成一团 = 「直接模糊隐藏」的读感）。三条全单调 ⇒ 越靠边越淡越糊。
+const RING_SCALE_ON = 1.14;      // 中签缩径（旧 1.0 —— 作者令「中间的稍微大一点」）
+const RING_SCALE_MIN = 0.60;     // 环外下限（|k| ≥ 2）
+const RING_SCALE_POW = 1.4327;   // s = MIN + (ON − MIN)·(1−t)^P ⇒ |k|=1 恰 0.800
+const RING_OP_POW = 0.60;        // op = (1−t)^P ⇒ |k|=1 0.660、|k|=2 恰 0
+const RING_BLUR_MAX = 2.60;      // blur = MAX·t^P ⇒ |k|=1 0.70px、|k|=2 2.60px
+const RING_BLUR_POW = 1.9;
 
 // ── 底部小点指示器（作者令：1 个标签不显示 / 2 个起显示 / 最多 3 点）──────
 // 省略策略（申报，批文档 §3「小点数量规则」）：n > 3 时点数**恒为 3**，点位 =
@@ -851,17 +877,13 @@ function adoptActiveDoc() {
   }
 }
 
-// ══ 横向圆环标签栏（作者令 2026-11-02 07:22）══════════════════════════
-// 环位姿 = 唯一几何源（ringPose）：chip 的 dx/dy/scale/opacity/blur 五值全由
-// 环形距离 k 派生，CSS 只消费变量不另算 —— 换签即换 k，五值同步过渡 = 环在转。
-// 层级表（tier）对应桌面 §胶囊环的 |d| 档：0 = 中心位（活签）、1 = 邻位、
-// 2 = 次邻位（被环带 mask 咬掉一半 = 「绕到圈外」的读感），>2 = 环外（隐藏但
-// 仍参与位姿计算，换签时轨迹连续而不是瞬切）。
-const RING_TIERS = [
-  { s: 1, op: 1, blur: 0 },
-  { s: 1 - RING_SCALE_STEP, op: 0.78, blur: 0.8 },
-  { s: 1 - 2 * RING_SCALE_STEP, op: 0.42, blur: 1.8 },
-];
+// ══ 横向圆环标签栏（作者令 2026-11-02 07:22；对齐修正批 2026-11-02 09:00）══
+// 环位姿 = 唯一几何源（ringPose）：chip 的 dx/scale/opacity/blur 四值全由环形
+// 距离 k 派生，CSS 只消费变量不另算 —— 换签即换 k，四值同步过渡 = 环在转。
+// **无纵向量（无 dy / 无 --rdy）**：对齐修正批删掉了弧深，签心恒 y=40，全组纸签
+// 同一水平线；环的「绕到圈后」只由横向位移 + 缩径 + 连续减淡/模糊表达。
+// 三条量都是 |k| 的连续单调函数（不再分档跳），|k| ≥ 2 时 s 触底、op 归零 ⇒
+// 与 .is-far（零命中）无缝衔接；>2 仍参与计算，换签时轨迹连续而不是瞬切。
 
 /** 环内最短偏移（i 相对活动位；n=1 恒 0）。@returns {number} */
 function ringOffset(d, n) {
@@ -871,17 +893,24 @@ function ringOffset(d, n) {
   return k;
 }
 
-/** chip 位姿五值（k → dx/dy/scale/opacity/blur）。弧深走圆方程，上限封顶。 */
+/** chip 位姿四值（k → dx/scale/opacity/blur）。三条曲线均按
+ *  t = min(|k|,2)/2 ∈ [0,1] 连续单调；数值表见文件头 RING_* 常量注释。
+ *  @returns {{dx: number, s: number, op: number, blur: number}} */
 function ringPose(k) {
-  const ak = Math.abs(k);
-  const dx = RING_DX1 * k;
-  const dy = Math.min(RING_DY_MAX, RING_RADIUS - Math.sqrt(Math.max(0, RING_RADIUS * RING_RADIUS - dx * dx)));
-  const tier = RING_TIERS[Math.min(ak, RING_TIERS.length - 1)];
-  return { dx, dy, s: tier.s, op: ak > RING_VISIBLE ? 0 : tier.op, blur: tier.blur };
+  const t = Math.min(Math.abs(k), 2) / 2;
+  return {
+    dx: RING_DX1 * k,
+    s: RING_SCALE_MIN + (RING_SCALE_ON - RING_SCALE_MIN) * (1 - t) ** RING_SCALE_POW,
+    op: (1 - t) ** RING_OP_POW,
+    blur: RING_BLUR_MAX * t ** RING_BLUR_POW,
+  };
 }
 
 /** 环重排（不发 DOM 重建）：按当前活动位给每个 chip 写变量 + on/far 类。
- *  重建仅由签名闸驱动（syncCanvasPage）——本函数只做位姿对账，切签零建删。 */
+ *  重建仅由签名闸驱动（syncCanvasPage）——本函数只做位姿对账，切签零建删。
+ *  中签基准宽 112px（CSS `.on` 档 `max-width` 消费），两侧签 68px 窄一档 ——
+ *  两者差只体现在**宽度**上：圆角/玻璃底/描边/字重/字号全同源（作者令
+ *  「样式应该要是和两边的统一」，机械断言 T13③ 钉死）。 */
 function layoutRing() {
   const strip = canvasUI?.strip;
   if (!strip) return;
@@ -894,10 +923,9 @@ function layoutRing() {
     const k = ringOffset(i - (ai < 0 ? 0 : ai), docs.length);
     const p = ringPose(k);
     el.style.setProperty('--rdx', `${p.dx.toFixed(1)}px`);
-    el.style.setProperty('--rdy', `${p.dy.toFixed(1)}px`);
     el.style.setProperty('--rsc', p.s.toFixed(3));
     el.style.setProperty('--rop', p.op.toFixed(2));
-    el.style.setProperty('--rbl', `${p.blur}px`);
+    el.style.setProperty('--rbl', `${p.blur.toFixed(2)}px`);
     el.classList.toggle('on', k === 0);
     el.classList.toggle('is-far', Math.abs(k) > RING_VISIBLE);
     el.setAttribute('aria-selected', k === 0 ? 'true' : 'false');
@@ -905,6 +933,119 @@ function layoutRing() {
   }
   // 环带渐隐门控：2 签起双侧渐隐（单签居中无需遮，中心签恒完整）。
   strip.classList.toggle('fade', docs.length > 1);
+  fitRingLabels();
+}
+
+// ══ 中签整字收束（作者令 2026-11-02 11:23「前置显示的那个标签，两端不要有虚化
+// 渐隐」）════════════════════════════════════════════════════════════
+// 上一批给所有签的 label 加了水平 alpha 渐隐（`.mf-strip-label` 的 mask-image）
+// 来替代「…」。本令只撤**中签**那一段（CSS `.mf-strip-chip.on .mf-strip-label`
+// 的 `mask-image: none`），两侧邻签的渐隐原样保留。
+//
+// 撤掉 mask 之后，超宽文字若只靠 `overflow: hidden` 硬裁，右端会**切半个字**——
+// 比渐隐更难看。故本函数把中签 label 的 `max-width` 收到**「能完整放下的最大整字
+// 前缀」**上：截断点永远落在字界（grapheme cluster，中文一字、emoji 一簇、拉丁
+// 一个字母），一个完整字都不缺省、也绝不出现半个字，**不出省略号、不溢出签盒**。
+// 多出来的部分照既有展开腿承载（点活签 → `.is-expanded` 加宽一档 → 2600ms 自动
+// 收）；全名另有两处保底（label.textContent 全名 + chip.title），收束只压绘制宽。
+//
+//   实测（375 基线，中签 scale 1.14）：常态 label 可用宽 78px ⇒ 整 6 个汉字；
+//   展开档可用宽 168.6px ⇒ 整 12 个汉字（= 展开腿在 48px 浮钮钳制下的几何上限）。
+//
+// 只在**中签**上生效：非中签的 label 每次重排都清掉内联 max-width，回到「由
+// max-width 收紧 + mask 渐隐」的原始行为 ⇒ 邻签视觉零变化。
+//
+// 度量腿 = 隐藏探针 span（字体从 label 抄）+ 签的**内衬内容宽**（= 计算 max-width
+// − 左右内衬 − 左右描边，CSS px）：探针不受 chip 的 `scale(--rsc)` 与 flex 收紧
+// 影响 ⇒ 与 `max-width` 同一度量面。签宽是 auto（贴合内容收缩），故「可用宽」取
+// 签的上限内容宽，而不是 label 的当前宽（后者会被文字长短反向污染）。
+const FIT_EPS_PX = 0.05;        // 亚像素容差（advance 边界处的侧承，非墨迹）
+
+/** 按 grapheme cluster 切分（中文一字 / emoji 一簇 / 拉丁一字母）。 */
+function graphemes(text) {
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    return [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)]
+      .map((s) => s.segment);
+  }
+  return Array.from(text);
+}
+
+/** 度量用的隐藏探针（body 直属：不受签名 flex 收紧、不受 chip 的 scale 影响 ——
+ *  量到的是**未缩放 CSS px**，正好是 max-width 的度量面）。字体样式从 label 抄。 */
+let fitProbe = null;
+function fitProbeEl(label) {
+  if (!fitProbe) {
+    fitProbe = document.createElement('span');
+    fitProbe.setAttribute('aria-hidden', 'true');
+    fitProbe.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;white-space:nowrap;pointer-events:none;contain:layout style;';
+    document.body.appendChild(fitProbe);
+  }
+  const cs = getComputedStyle(label);
+  fitProbe.style.font = cs.font;
+  fitProbe.style.letterSpacing = cs.letterSpacing;
+  fitProbe.style.wordSpacing = cs.wordSpacing;
+  fitProbe.style.textTransform = cs.textTransform;
+  return fitProbe;
+}
+
+/** 签的**目标档**内衬内容宽（CSS px，= max-width − 左右内衬 − 左右描边）。
+ *  **不能直接读计算 max-width**：它带 220ms 过渡，切签瞬间读到的是过渡中的中间值
+ *  （实测 34px ⇒ 中签只留 2 个字）。故先把该签的 `transition` 临时掐掉读一次目标值
+ *  再复原（同一任务内改回 ⇒ 不触发重绘，无视觉抖动、无额外 DOM 节点）。
+ *  **不造探针元素**：任何带 `.mf-strip-chip` 的离屏节点都会污染
+ *  `querySelectorAll('.mf-strip-chip')` 的既有判据面（T13 / 手势腿 / 小点对账）。
+ *  @returns {number} */
+function chipInnerWidth(chip) {
+  const prev = chip.style.transition;
+  chip.style.transition = 'none';
+  const cs = getComputedStyle(chip);
+  const cap = parseFloat(cs.maxWidth);
+  const inner = Number.isFinite(cap)
+    ? cap - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
+      - (parseFloat(cs.borderLeftWidth) || 0) - (parseFloat(cs.borderRightWidth) || 0)
+    : 0;
+  chip.style.transition = prev;
+  return inner;
+}
+
+/** 把中签 label 收到整字边界（幂等：先回原始态再量，收束只压绘制宽）。 */
+function fitCenterLabel(chip) {
+  const label = /** @type {HTMLElement|null} */ (chip.querySelector('.mf-strip-label'));
+  if (!label) return;
+  label.style.maxWidth = '';                    // 回原始态：量到的是「未收束」的真实排版
+  const avail = chipInnerWidth(chip);           // 签能容纳的文本上限（CSS px）
+  if (avail <= 0) return;
+  const chars = graphemes(label.textContent || '');
+  if (!chars.length) return;
+  const probe = fitProbeEl(label);
+  probe.textContent = chars.join('');
+  if (probe.getBoundingClientRect().width <= avail - FIT_EPS_PX) return;   // 全文放得下：不收
+  let keep = 0;
+  let keepW = 0;
+  for (let i = 1; i < chars.length; i++) {
+    probe.textContent = chars.slice(0, i).join('');
+    const w = probe.getBoundingClientRect().width;
+    if (w > avail - FIT_EPS_PX) break;          // 再放一个字就压进内衬 ⇒ 停在字界
+    keep = i;
+    keepW = w;
+  }
+  if (!keep) return;                            // 一个字都放不下（病态窄）：让 clip 兜底
+  // 向上取整到 0.01：收到字界的那一刻不能比最后一个字的 advance 窄（窄 0.4px 就会
+  // 削掉末字右缘的笔画 —— 那正是本批要消灭的「硬裁半个字」）。
+  label.style.maxWidth = `${Math.ceil(keepW * 100) / 100}px`;
+}
+
+/** 全体签的收束对账：中签收束，非中签复原（邻签的 mask 渐隐因此零影响）。 */
+function fitRingLabels() {
+  const strip = canvasUI?.strip;
+  if (!strip) return;
+  for (const chip of strip.querySelectorAll('.mf-strip-chip')) {
+    const el = /** @type {HTMLElement} */ (chip);
+    const label = /** @type {HTMLElement|null} */ (el.querySelector('.mf-strip-label'));
+    if (!label) continue;
+    if (el.classList.contains('on')) fitCenterLabel(el);
+    else if (label.style.maxWidth) label.style.maxWidth = '';
+  }
 }
 
 /** 切到第 idx 签（环绕安全；同签零动作）。@param {number} idx */
@@ -937,13 +1078,17 @@ function syncCanvasPage() {
       label.className = 'mf-strip-label';
       label.textContent = d.label;
       chip.appendChild(label);
-      // 长名省略档（CSS ellipsis）：title 供桌面悬停，触屏走「点活签展开全名」。
+      // 全名三处保留（对齐修正批：视觉上不再有「…」，但读屏/悬停仍拿得到全名）：
+      //   ① label.textContent = 全名（读屏直接读 DOM 文本，mask 只影响绘制）；
+      //   ② chip.title = 全名（桌面悬停 / 长按提示）；
+      //   ③ 触屏展开腿 = 点活签 `.is-expanded`（宽度解一档，超宽继续 mask 淡出）。
       chip.title = d.label;
       chip.addEventListener('click', () => {
         if (chip.classList.contains('on')) {
           // 活签再点 = 展开/收起全名（长标签专利；其余签点击一律换签）。
           const open = !chip.classList.contains('is-expanded');
           chip.classList.toggle('is-expanded', open);
+          fitRingLabels();          // 展开档另一档宽度 ⇒ 重新按整字收束（全名放得下就全显）
           logEvent('tab-label-expand', { tab: d.id, open });
           if (open) armLabelCollapse(chip);
           return;
@@ -982,6 +1127,7 @@ function armLabelCollapse(chip) {
   clearTimeout(labelCollapseTimer);
   labelCollapseTimer = window.setTimeout(() => {
     chip.classList.remove('is-expanded');
+    fitRingLabels();     // 收回常态宽度 ⇒ 重按整字收束
   }, 2600);
 }
 
@@ -1403,8 +1549,12 @@ function buildCanvasPage(body) {
     createIconsIn(wrap);
     createIconsIn(toolbar);
   }
-  // 视口变化：环带渐隐/小点位姿均为纯 CSS + 变量，无需重算；只补小点计数对账。
-  window.addEventListener('resize', () => { syncDots(); });
+  // 视口变化：环带渐隐/小点位姿均为纯 CSS + 变量，无需重算；补小点计数对账，
+  // 并按新可用宽重跑中签整字收束（字体/内衬不变时内联 maxWidth 数值不变，幂等）。
+  window.addEventListener('resize', () => { syncDots(); fitRingLabels(); });
+  // 字体后到（网络字体 / 首帧 fallback 度量不同）⇒ 重跑一次收束，避免按 fallback
+  // 字体算出的截断点。document.fonts 缺失（老 WebView）则跳过，无副作用。
+  document.fonts?.ready?.then(() => { fitRingLabels(); }).catch(() => {});
   void stackView;
 }
 

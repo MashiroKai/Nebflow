@@ -501,7 +501,14 @@ async function renderFrontendPptx(pane, { absPath, fileName, size, objectUrl }, 
   const cleanupStage = () => {
     if (onMessage) { window.removeEventListener('message', onMessage); onMessage = null; }
     if (stageFrame) { stageFrame.remove(); stageFrame = null; }
+    if (/** @type {any} */ (pane)._pptxTeardown === cleanupStage) /** @type {any} */ (pane)._pptxTeardown = null;
   };
+  // B3-2：把渲染腿的**在飞资源**（staging iframe + window message 监听）登记到 pane 上。
+  // 消费者在 viewPptx 开头（`pane._pptxTeardown?.()`）—— 改造前全仓**没有一处赋值**，
+  // 那句可选调用永远打空：pane 被重渲/重开时，上一轮 staging 帧要挂到自己的 60s 超时
+  // 才退场。cleanupStage 是本函数里唯一持有这两件资源的闭包 ⇒ 它就是该 teardown 的
+  // 正确来源（不删消费者：那 60s 空窗是真实泄漏，不是死约定）。
+  /** @type {any} */ (pane)._pptxTeardown = cleanupStage;
   try {
     const product = await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('render pipeline timeout 60s')), 60000);

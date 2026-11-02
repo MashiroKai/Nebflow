@@ -16,9 +16,16 @@ import nebflow.shared.PeerInfo
  *
  * 行格式（一行一台，**无列表符号**——devicesDelta 差量解析按 `[;\n]` 切行，
  * 条目行保持 `+<entry>` / `-<entry>` 净形；紧凑，不撑上下文）：
- *   - `KAI (40742cd4) [local · windows · v2026.10.26-beta.1] - 描述 · caps: node,git,java`
+ *   - `KAI (40742cd4) [online · v2026.10.26-beta.1 · windows] - 描述 · caps: node,git,java`
  *   - `Mac (dd8cfd22) [online · macos] - 描述 · caps: … [cwd=… | os=Darwin …]`
  *   - `OldBox (abcd1234) [offline · linux]`（登记表/画像在册但 presence 不在）
+ *
+ * 本机行与对端行**同形态**（同一 `[状态 · …平台]` 括号语法，无任何身份徽标）：2026-11-02
+ * 批「local 展示面退场」（作者裁定「仅改 local 展示面」）把 `[local …]` 徽标与
+ * `FleetConfig.explicitDeviceRefusal` 的 `(= local)` 括注整对退役 —— 「这台就是当前
+ * 机器」这一事实**改由行序承载**（[[render]] 恒把本机行放首行），不再靠文字标注。
+ * 「本机」这个参数的**写法**仍只在两处操作说明里出现（[[hintLine]] 与
+ * refusal 尾句的 `device="local"`），那是「该写什么值」不是身份标注。
  *
  * 预算纪律（任务口径「表行数多时截断+指针」）：设备行数超过 [[MaxRows]] 时截断，
  * 尾行 `(+N more not shown — full roster: GET /api/neblink/status)` 指权威全量面。
@@ -105,9 +112,16 @@ object FleetRoster:
   private def descSegment(desc: String): String =
     if desc.trim.isEmpty then "" else s" - ${desc.trim}"
 
+  /**
+   * 本机行 —— 与 [[peerRow]] **同形态**（同一 `[状态 · …平台]` 语法）：本机引擎此刻
+   * 正在跑，`online` 是诚实取值，不是占位。与对端行的唯一内容差 = 多一段引擎版本
+   * （对端 presence wire 不带版本，见文件头注「版本诚实性」——这是**数据可得性**差，
+   * 不是身份徽标）。「这台是本机」由行序承载（[[render]] 恒首行），本行不再带任何
+   * `local` 字样（2026-11-02 批）。
+   */
   private def localRow(l: LocalDevice): String =
     val version = if l.version.trim.isEmpty then "" else s" · v${l.version.trim}"
-    s"${l.deviceName} (${shortId(l.deviceId)}) [local$version · ${l.platform}]${descSegment(l.userDescription)}${capsSegment(l.capabilities)}"
+    s"${l.deviceName} (${shortId(l.deviceId)}) [online$version · ${l.platform}]${descSegment(l.userDescription)}${capsSegment(l.capabilities)}"
 
   private def peerRow(p: PeerInfo, profiles: Map[String, DeviceProfileEntry], now: Long): String =
     val base =

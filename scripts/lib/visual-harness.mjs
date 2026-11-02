@@ -16,13 +16,40 @@
 
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-import { extname, join, normalize } from 'node:path';
+import { extname, isAbsolute, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 
 export const ROOT = fileURLToPath(new URL('../..', import.meta.url));
-export const WEB = join(ROOT, 'src', 'main', 'resources', 'web');
+
+// ── 验证对象可切换（B0-3 / G3）──────────────────────────────────────────────
+// 改造前这里是 `export const WEB = join(ROOT,'src','main','resources','web')`：
+// 装置**只喂源树**，而运行实例吃的是 jar 内 `web-dist`（`StaticRoutes.scala:24-113`
+// 的 BundledDist）。两棵树不是同一份字节，"验过的"因此不等于"跑过的"。
+//
+// 现在根可覆盖，三条口径并存：
+//   ① 显式 setWebRoot(p)            —— CLI `--web-root <dir>`（脚本内、可随时改）
+//   ② 环境变量 NEBFLOW_WEB_ROOT     —— 模块加载时生效（跨进程一句话切换）
+//   ③ 缺省 src/main/resources/web   —— 与改造前逐字节相同（既有调用零改动）
+// 相对路径一律按仓库根解析（`build/web-dist` 这种写法在 CI 与本机都成立）。
+// 403 白名单（越界拒绝）跟随同一个根 —— 换根不会把静态取数的边界留在旧根上。
+/** @param {string|null|undefined} spec @returns {string} */
+function resolveWebRoot(spec) {
+  if (!spec) return join(ROOT, 'src', 'main', 'resources', 'web');
+  return normalize(isAbsolute(spec) ? spec : join(ROOT, spec));
+}
+/** @type {string} */
+let webRootDir = resolveWebRoot(process.env.NEBFLOW_WEB_ROOT);
+
+/** 当前被服务的静态根（绝对路径）。 @returns {string} */
+export function webRoot() { return webRootDir; }
+
+/**
+ * 切换被服务的静态根（CLI 用）。@param {string} spec 绝对路径或仓内相对路径
+ * @returns {string} 生效后的绝对路径
+ */
+export function setWebRoot(spec) { webRootDir = resolveWebRoot(spec); return webRootDir; }
 
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
@@ -98,7 +125,11 @@ export async function launchBrowser(pw, opts = {}) {
 
 /**
  * 建页 + 装打桩。返回 { page, frame, pushConfig, boot, close }。
- * @param {object} opts { width, height, colorScheme, locale, apiStubs, time }
+ * @param {object} opts { width, height, colorScheme, locale, apiStubs, time, clock }
+ *   `clock`（B0-1 / G1）：传入固定 epoch ms ⇒ 页面内 `Date.now()` 与被冻结的
+ *   `new Date()` 恒返回该值。用途是把「随墙上时钟生长的文本」（后台任务 uptime）
+ *   钉死 —— 那条文本的**字符数**会改变整块下拉的布局宽度，遮罩只遮像素、遮不住
+ *   布局，所以只有钉时钟才是真修法。不传 ⇒ 不安装，全部行为逐字节不变。
  */
 export async function createSession(browser, opts = {}) {
   const width = opts.width ?? 1440;
@@ -149,6 +180,20 @@ export async function createSession(browser, opts = {}) {
       localStorage.setItem('nebflow_token', 'visual-baseline-token');
       localStorage.setItem('nebflow_locale', cfg.locale);
     } catch { /* ignore */ }
+    // 假时钟（B0-1）：必须在产品脚本之前装，否则第一帧已经拿到真时间。
+    // performance.now() 保持真值 —— 动效/节流靠它，钉死会把减动效也一起冻住。
+    if (cfg.clock) {
+      const fixed = cfg.clock;
+      const RealDate = Date;
+      class FakeDate extends RealDate {
+        constructor(...args) {
+          // @ts-expect-error — 透传 Date 的多形态签名
+          if (args.length === 0) super(fixed); else super(...args);
+        }
+        static now() { return fixed; }
+      }
+      /** @type {any} */ (window).Date = FakeDate;
+    }
     // 文件树固定夹具：真实实例总能答 listDir，打桩不答就会永远停在
     // 「加载中…」（explorer.js:881-940 的有界等待只管超时，不管内容）。
     // 答上它，侧栏才是产品的常态而不是打桩的破绽。
@@ -180,7 +225,7 @@ export async function createSession(browser, opts = {}) {
       onopen = null; onmessage = null; onclose = null; onerror = null;
     }
     Object.defineProperty(window, 'WebSocket', { value: MockWS });
-  }, { locale: opts.locale ?? 'zh-CN', autoRespond: opts.autoRespond !== false });
+  }, { locale: opts.locale ?? 'zh-CN', autoRespond: opts.autoRespond !== false, clock: opts.clock ?? 0 });
 
   const stubs = opts.apiStubs || {};
   await page.route('**/*', (route) => {
@@ -202,8 +247,11 @@ export async function createSession(browser, opts = {}) {
     if (p.startsWith('/api/')) {
       return route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"not found"}' });
     }
-    const file = normalize(join(WEB, p));
-    if (!file.startsWith(normalize(WEB))) return route.fulfill({ status: 403, body: 'forbidden' });
+    // 静态根跟随 webRoot()（B0-3）：403 白名单与取数用**同一个**根，换根时
+    // 边界随之移动 —— 否则 build/web-dist 模式下所有资源都会被判越界。
+    const rootDir = normalize(webRootDir);
+    const file = normalize(join(rootDir, p));
+    if (!file.startsWith(rootDir)) return route.fulfill({ status: 403, body: 'forbidden' });
     try {
       return route.fulfill({ status: 200, contentType: MIME[extname(file)] || 'application/octet-stream', body: readFileSync(file) });
     } catch {

@@ -222,6 +222,7 @@
 }
 #input-bar.frozen #voice-btn[disabled],
 #input-bar.frozen #attach-btn[disabled],
+#input-bar.frozen #quote-item-btn[disabled],
 #input-bar.frozen #stop-btn[disabled] {
   opacity: 0.4;
   cursor: default;
@@ -589,6 +590,28 @@
   min-width: 0;
 }
 #attachment-preview .att-ref[data-ref-type="chat-message"] .att-ref-label { max-width: 220px; }
+/* 引用牌图标化（2026-11-02 11:00 作者令「引用的消息也需要图标化，文档和图片就是
+   原图标和图片缩略，文字的话就单独设计一个logo」）：chip 的类型图标三形态同盒 ——
+   图片真缩略 / 文档 `.fc-icon` 色档 / 文字 logo，一律 18px（chip 高 28px 档内留
+   5px 上下气，与既有一行式 chip 语言同族）。字形与判定单点 = js/quoteLogo.js
+   （与气泡引用块 `.msg-quote-icon` 同源）；此处只管尺寸/裁切，零新色值。 */
+.att-ref .att-ref-icon .nf-qicon {
+  --nf-qicon-size: 18px;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+}
+.att-ref .att-ref-icon .nf-qicon.is-thumb { background: rgba(0, 0, 0, 0.06); }
+.att-ref .att-ref-icon .nf-qicon.fc-icon { font-size: 8px; }
+@media (prefers-color-scheme: dark) {
+  .att-ref .att-ref-icon .nf-qicon.is-thumb { background: rgba(255, 255, 255, 0.09); }
+}
+/* 引用入口移入 footer（2026-11-02 11:00）：footer 动作行的单枚引用键。`.icon-btn`
+   是既有 36×36（桌面）/48×48（手机层）按钮族 —— 本键只做「按需隐身」一处：
+   当前会话没有叠卡（= 没有单张可引）或引用入口不适用时 `hidden` 生效。
+   `.icon-btn` 是 display:flex ⇒ 属性 `hidden` 的 UA `display:none` 会被压过，
+   必须显式补一条同权规则（值档零新色）。 */
+.icon-btn[hidden] { display: none; }
 /* ✕ 圆盘随 chip 同比例缩小（同字形/同色/同居中纪律，仅尺寸档位）—— 与 .att-file
    的紧凑高度对齐；hover 态沿用共用块「红底白 ✕」钉回（input.css 上方同段）。 */
 #attachment-preview .att-ref[data-ref-type="chat-message"] .fm-quote-remove { width: 13px; height: 13px; }

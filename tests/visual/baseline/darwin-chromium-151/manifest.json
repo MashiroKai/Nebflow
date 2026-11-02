@@ -1,6 +1,6 @@
 {
   "generatedBy": "scripts/visual-baseline.mjs --update",
-  "generatedAt": "2026-11-01T09:56:53.843Z",
+  "generatedAt": "2026-11-02T05:09:15.989Z",
   "platform": "darwin-chromium-151",
   "browser": {
     "label": "chromium-151",
@@ -16,9 +16,9 @@
       "tag": "canvas-markdown-tab-dark",
       "scenario": "canvas-markdown-tab",
       "theme": "dark",
-      "bytes": 62166,
-      "at": "2026-11-01T09:56:40.640Z",
-      "ms": 3356,
+      "bytes": 61211,
+      "at": "2026-11-02T05:09:06.661Z",
+      "ms": 2599,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -27,9 +27,9 @@
       "tag": "canvas-markdown-tab-light",
       "scenario": "canvas-markdown-tab",
       "theme": "light",
-      "bytes": 57131,
-      "at": "2026-11-01T09:56:44.486Z",
-      "ms": 3844,
+      "bytes": 56680,
+      "at": "2026-11-02T05:09:09.049Z",
+      "ms": 2386,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -38,9 +38,9 @@
       "tag": "canvas-code-tab-dark",
       "scenario": "canvas-code-tab",
       "theme": "dark",
-      "bytes": 43314,
-      "at": "2026-11-01T09:56:49.061Z",
-      "ms": 4573,
+      "bytes": 43941,
+      "at": "2026-11-02T05:09:12.492Z",
+      "ms": 3442,
       "mask": [
         ".mic-orb-wrap"
       ]
@@ -49,9 +49,9 @@
       "tag": "canvas-code-tab-light",
       "scenario": "canvas-code-tab",
       "theme": "light",
-      "bytes": 39713,
-      "at": "2026-11-01T09:56:53.744Z",
-      "ms": 4681,
+      "bytes": 40038,
+      "at": "2026-11-02T05:09:15.961Z",
+      "ms": 3467,
       "mask": [
         ".mic-orb-wrap"
       ]

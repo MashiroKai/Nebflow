@@ -917,32 +917,80 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
       IO(logger.warnSync(s"wiki.term: rejected ${MdHtmlGate.rejectReason(bad)} doc=$bad")) *>
         IO.pure(Left(MdHtmlGate.rejectReason(bad)))
     else
-      graph(project, vault = None).map { view =>
-        val viewError = view.hcursor.downField("error").as[String].toOption.filter(_.nonEmpty)
-        viewError match
-          case Some(err) => Left(err)
-          case None =>
-            val terms = view.hcursor.downField("nodes").as[List[Json]].getOrElse(Nil)
-              .flatMap(n => n.hcursor.downField("terms").as[List[Json]].toOption.getOrElse(Nil))
-              .flatMap(WikiIndex.decodeTerm)
-            WikiIndex.selectTerm(name, terms) match
-              case WikiIndex.TermSelection.Resolved(t) =>
-                Right(Json.obj(
-                  "found" -> true.asJson,
-                  "resolved" -> true.asJson,
-                  "term" -> WikiIndex.termJson(t)
-                ))
-              case WikiIndex.TermSelection.Ambiguous(candidates) =>
-                Right(Json.obj(
-                  "found" -> true.asJson,
-                  "resolved" -> false.asJson,
-                  "ambiguous" -> true.asJson,
-                  "name" -> name.asJson,
-                  "candidates" -> candidates.map(WikiIndex.termJson).asJson
-                ))
-              case WikiIndex.TermSelection.NotFound =>
-                Left(s"term '$name' is not registered")
+      // B5-2（文档增强腿）：本地工程的词条单查先走**增量索引**（TermIndex），
+      // 索引不可用（无 vault / 远端工程 / 工程未注册）才回落到图谱腿。两条腿
+      // 共用同一套消解裁定与响应形状（termSelectionJson），行为面零差异，
+      // 差别只在代价：改造前任何一次单查都可能触发整库重扫（30s TTL 到期后）。
+      termIndexLeg(name, project).flatMap {
+        case Some(res) => IO.pure(res)
+        case None => termGraphLeg(name, project)
       }
+
+  /** 图谱腿（改造前的唯一腿，保留为回落路径）。 */
+  private def termGraphLeg(name: String, project: Option[String]): IO[Either[String, Json]] =
+    graph(project, vault = None).map { view =>
+      val viewError = view.hcursor.downField("error").as[String].toOption.filter(_.nonEmpty)
+      viewError match
+        case Some(err) => Left(err)
+        case None =>
+          val terms = view.hcursor.downField("nodes").as[List[Json]].getOrElse(Nil)
+            .flatMap(n => n.hcursor.downField("terms").as[List[Json]].toOption.getOrElse(Nil))
+            .flatMap(WikiIndex.decodeTerm)
+          termSelectionJson(name, WikiIndex.selectTerm(name, terms))
+    }
+
+  /**
+   * 索引腿（B5-2）：只对**本地工程根 vault** 生效。
+   *
+   * 为什么限定这么窄：合并视图（project=None）与远端工程的词条表分散在多台
+   * 机器/多个 vault 上，索引它们要跨机取数（把「快」换成「慢且新」）；而单查
+   * 最热的正是「某个工程里某个词条是什么」。其余情形原样走图谱腿，语义不动。
+   *
+   * 缓存键 = 工程名 + vault rel（同一工程换 vault 不复用条目）。返回 None 表示
+   * 该请求不适合索引腿，调用方回落图谱腿。
+   */
+  private def termIndexLeg(name: String, project: Option[String]): IO[Option[Either[String, Json]]] =
+    val wanted = project.map(_.trim).filter(_.nonEmpty)
+    wanted match
+      case None => IO.pure(None)
+      case Some(p) =>
+        ProjectStore.load(p).flatMap {
+          case Some(pd) if ProjectOrigin.isSelfLiteral(deviceOf(pd)) =>
+            val vault = workspacePath(pd) / WikiIndex.VaultDirName
+            if !os.isDir(vault) then IO.pure(None)   // 无 vault ⇒ 图谱腿给既有 error 面
+            else
+              val key = s"$p|${WikiIndex.VaultDirName}"
+              TermIndex.current.lookup(key, vault, Set.empty, name).map { case (selection, reparsed) =>
+                if reparsed > 0 then
+                  val (files, terms, total) = TermIndex.current.stats(key)
+                  logger.debugSync(s"wiki.term: index refreshed $reparsed file(s) for '$p' (files=$files terms=$terms reparsedTotal=$total)")
+                Some(termSelectionJson(name, selection))
+              }
+          case _ => IO.pure(None)                    // 远端工程 / 未注册 ⇒ 图谱腿
+        }.handleErrorWith(e =>
+          // 索引腿任何异常都退回图谱腿：词条查询是背景面，绝不因索引问题变红。
+          IO(logger.warnSync(s"wiki.term: index leg skipped ($p): ${msgOf(e)}")) *> IO.pure(None)
+        )
+
+  /** 消解结果 → 响应 JSON（两条腿共用，形状与改造前逐字节相同）。 */
+  private def termSelectionJson(name: String, selection: WikiIndex.TermSelection): Either[String, Json] =
+    selection match
+      case WikiIndex.TermSelection.Resolved(t) =>
+        Right(Json.obj(
+          "found" -> true.asJson,
+          "resolved" -> true.asJson,
+          "term" -> WikiIndex.termJson(t)
+        ))
+      case WikiIndex.TermSelection.Ambiguous(candidates) =>
+        Right(Json.obj(
+          "found" -> true.asJson,
+          "resolved" -> false.asJson,
+          "ambiguous" -> true.asJson,
+          "name" -> name.asJson,
+          "candidates" -> candidates.map(WikiIndex.termJson).asJson
+        ))
+      case WikiIndex.TermSelection.NotFound =>
+        Left(s"term '$name' is not registered")
 
   private def emptyStubScan(project: String, device: String): WikiIndex.VaultScan =
     WikiIndex.VaultScan(

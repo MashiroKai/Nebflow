@@ -25,8 +25,9 @@
 // 探针：
 //   A① Muse 形态回归：.g2-chat-head display:flex/column/center；头像 56px 水平
 //      居中（与 #chat 同心 ±2px）；名字在头像正下方且居中；sticky 顶锚 + 压流；
-//      静止态落位 = 组顶 64px（悬浮双键行下缘；位置批 2026-11-01 23:0x 作者报障
-//      重钉——原判据 `组顶 >= chatTop + 88` 钉的正是病灶「头像上方一大块空白」）
+//      静止态落位 = 组顶 4px（= --muse-head-anchor，锚双钮中心行；同行批
+//      2026-11-02 11:08 再改 —— 旧值 64px「悬浮双键行下缘」= 让 60px 错位合法化
+//      的口径，已退役）
 //   A② 名字扁平毛玻璃：background = --glass-bg 真值（亮 rgba(255,255,255,.55) /
 //      暗 rgba(24,28,38,.68)）；border-width 0（无立体边框）；box-shadow none；
 //      backdrop-filter 含 blur；999px 胶囊圆角
@@ -281,20 +282,20 @@ async function runMobile(engineKind, scheme) {
     await page.waitForTimeout(250);
     const rest = await probeHead(page, scheme);
     assertMuse(tag, rest, scheme);
-    ok(`${tag} A① 静止态：顶栏贴窗口顶（headTop 0 ±1、高 56 ±0.6；64px 内容流锚退役）`,
-      Math.abs(rest.head.top - 0) <= 1 && Math.abs(rest.head.height - 56) <= 0.6,
-      `headTop=${rest.head.top.toFixed(1)} h=${rest.head.height}`);
+    ok(`${tag} A① 静止态：悬浮组锚双钮中心行（组顶 4 ±1、头像顶 12 ±1）`,
+      Math.abs(rest.head.top - 4) <= 1 && Math.abs(rest.avTop - 12) <= 1,
+      `headTop=${rest.head.top.toFixed(1)} avTop=${rest.avTop.toFixed(1)} h=${rest.head.height}`);
     await page.screenshot({ path: join(OUT, `muse-${tag}-rest.png`) });
 
-    // ── A：滚动态（fixed 顶栏不动 + 压流）───────────────────────────
+    // ── A：滚动态（sticky 贴顶 + 压流）─────────────────────────────
     await page.evaluate(() => { const c = document.getElementById('chat'); c.scrollTop = c.scrollHeight; });
     await page.waitForFunction(() => document.getElementById('chat').scrollTop > 0, { timeout: 10000 });
     await page.waitForTimeout(250);
     const pinned = await probeHead(page, scheme);
     assertMuse(tag, pinned, scheme);
-    ok(`${tag} A① 滚动态：顶栏不动（rect 与静止态逐值相同）`,
-      pinned.head.top === rest.head.top && pinned.head.height === rest.head.height,
-      `headTop=${pinned.head.top}/${rest.head.top}`);
+    ok(`${tag} A① 滚动态：落点 == 静止落点（组顶 4 ±1、头像顶 12 ±1，零 sticky 位移）`,
+      Math.abs(pinned.head.top - 4) <= 1 && Math.abs(pinned.avTop - 12) <= 1,
+      `headTop=${pinned.head.top}/${rest.head.top} avTop=${pinned.avTop}`);
     ok(`${tag} A① 滚动态：压在消息流上缘（rowsBehind>0）`, pinned.rowsBehind > 0, `rowsBehind=${pinned.rowsBehind}`);
     await page.screenshot({ path: join(OUT, `muse-${tag}-pinned.png`) });
 
@@ -392,8 +393,10 @@ async function probeHead(page, scheme) {
       avBottom: av.bottom,
       vw: window.innerWidth,
       chatCx: (chatBox.left + chatBox.right) / 2,
-      /* 单行判据：名字盒完全落在头像垂直区间内（横排），左缘 ≥ 头像右缘。 */
+      /* 下置判据：胶囊顶 ≥ 头像底（竖排）；水平中心与头像同轴。 */
       nameOnLine: nr.top >= av.top - 0.5 && nr.bottom <= av.bottom + 0.5,
+      nameTop: nr.top,
+      nameBottom: nr.bottom,
       nameGap: nr.left - av.right,
       nameCx: (nr.left + nr.right) / 2,
       nameText: nameEl.textContent,
@@ -413,30 +416,33 @@ async function probeHead(page, scheme) {
 
 /** Muse 形态两态共用断言（A①A②A③）。 */
 function assertMuse(tag, p, scheme) {
-  // ⚠ 契约改写（会话顶栏单行三段式批 2026-11-02 07:23）：flex column 竖排基座 +
-  // 56px 大头像 + 名字下置胶囊 + sticky 全部退役 —— 现为 flex row 单行顶栏、
-  // 头像 40px、名字横排挂右侧（零自绘底，直接写在玻璃顶栏上）、position:fixed。
-  ok(`${tag} A① 顶栏单行基座在场（flex/row/center）`,
-    p.display === 'flex' && p.flexDir === 'row' && p.alignItems === 'center',
+  // ⚠ 契约改写（Muse 悬浮身份头恢复批 2026-11-02 09:14 作者令「头像在上、名字在下，
+  // 拆掉顶栏」）：上一批（07:23 单行三段式：flex row 顶栏 / 头像 40 / 名字横排右侧 /
+  // 零自绘底 / position:fixed）整条回退 —— 回到本文件 2026-11-01 21:40 批钉的
+  // Muse 形态：flex column 竖排基座 + 头像 56px + 名字玻璃胶囊下置 + sticky 悬浮锚。
+  ok(`${tag} A① Muse 基座在场（flex/column/center）`,
+    p.display === 'flex' && p.flexDir === 'column' && p.alignItems === 'center',
     `${p.display}/${p.flexDir}/${p.alignItems}`);
-  ok(`${tag} A① 头像 40px（单行档）`, Math.abs(p.avW - 40) <= 0.8 && Math.abs(p.avH - 40) <= 0.8,
+  ok(`${tag} A① 头像 56px（收小批档；09:14 实拍 ≈50.8 佐证）`,
+    Math.abs(p.avW - 56) <= 0.8 && Math.abs(p.avH - 56) <= 0.8,
     `${p.avW.toFixed(1)}×${p.avH.toFixed(1)}`);
   ok(`${tag} A① 头像水平居中（屏幕中线 ±1px）`, Math.abs(p.avCx - p.vw / 2) <= 1,
     `avCx=${p.avCx.toFixed(1)} mid=${(p.vw / 2).toFixed(1)}`);
-  ok(`${tag} A① 名字横排挂头像右侧（垂直同行、间距 8px ±1.5）`,
-    p.nameOnLine && p.nameGap >= 6.5 && p.nameGap <= 9.5,
-    `onLine=${p.nameOnLine} gap=${p.nameGap.toFixed(1)}`);
-  ok(`${tag} A① fixed 真顶栏在场（sticky 退役）`, p.position === 'fixed', p.position);
+  ok(`${tag} A① 名字在头像正下方且居中（胶囊顶 ≥ 头像底 −1、中心 ≤1px）`,
+    p.nameTop >= p.avBottom - 1 && Math.abs(p.nameCx - p.avCx) <= 1,
+    `gap=${(p.nameTop - p.avBottom).toFixed(1)} |nameCx−avCx|=${Math.abs(p.nameCx - p.avCx).toFixed(2)}`);
+  ok(`${tag} A① sticky 悬浮锚在场（非 fixed 顶栏）`, p.position === 'sticky', p.position);
   ok(`${tag} A① 消息流零行内身份行（meta/slot/name 全零）`, p.aiRows > 0 && p.metas === 0,
     `aiRows=${p.aiRows} metas=${p.metas}`);
-  // A② 改写：名字不再自带玻璃胶囊 —— 零自绘底/零 border/零 shadow/零 backdrop，
-  // 直接落在顶栏玻璃面上（单层材质，避免玻璃叠玻璃）。
-  ok(`${tag} A② 名字零自绘底（直接写在顶栏玻璃上）`,
-    p.nameBg === 'rgba(0, 0, 0, 0)' || p.nameBg === 'transparent', p.nameBg);
+  // A② 名字 = 扁平毛玻璃胶囊（glass token 单源；零 border —— 作者令③历史裁定
+  // 「不再用胶囊立体感边框」；999 圆角；有 backdrop blur）。上一批「零自绘底/
+  // radius 0/零 backdrop」的单行顶栏判据随顶栏一并退役。
+  const wantBg = scheme === 'dark' ? 'rgba(24, 28, 38, 0.68)' : 'rgba(255, 255, 255, 0.55)';
+  ok(`${tag} A② 名字胶囊底 = glass token 真值（${wantBg}）`, p.nameBg === wantBg, p.nameBg);
   ok(`${tag} A② 名字零立体边框（border-width 0）`, p.nameBorderZero, '');
   ok(`${tag} A② 名字零 box-shadow（立体感退役）`, p.nameShadowNone, p.nameShadowNone ? 'none' : 'shadow!');
-  ok(`${tag} A② 名字零 backdrop-filter（玻璃叠玻璃退役）`, !p.nameBackdropBlur, p.nameBackdropBlur ? 'blur!' : 'none');
-  ok(`${tag} A② 名字零胶囊圆角（0px）`, p.nameRadius === '0px', p.nameRadius);
+  ok(`${tag} A② 名字自带 backdrop-filter blur（胶囊玻璃）`, p.nameBackdropBlur, p.nameBackdropBlur ? 'blur' : 'none');
+  ok(`${tag} A② 名字 999px 胶囊圆角`, p.nameRadius === '999px', p.nameRadius);
 }
 
 // ── 手机腿：双引擎 × 双主题（4 跑）─────────────────────────────────────

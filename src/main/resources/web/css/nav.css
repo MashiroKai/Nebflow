@@ -58,7 +58,6 @@
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge);
 }
-.nav-agent:focus { outline: none; }
 .nav-agent { -webkit-tap-highlight-color: transparent; }
 .nav-agent.active {
   background: var(--color-frame-active);
@@ -288,7 +287,6 @@ body.sidebar-collapsed #activity-bar {
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge);
 }
-.activity-btn:focus { outline: none; }
 /* Visible keyboard focus ring (outline is suppressed above). */
 .activity-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); }
 .activity-btn:active { transform: scale(0.97); }

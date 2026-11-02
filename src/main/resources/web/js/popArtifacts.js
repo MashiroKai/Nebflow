@@ -159,27 +159,14 @@ function humanSize(bytes) {
  *  the att-ref-card 语言统一批 (2026-10-26): the user-side ref card reuses the
  *  SAME icon spec — one family, zero second source.
  *
- *  输入框附件图标化批（作者令 2026-11-02：「输入框里的附件条不显示文件名，
- *  用与图片附件缩略图一样大小的图标代替」）：本表即附件 icon chip 的**唯一**
- *  色族/角标来源（composer 文件附件 chip 复用本函数，零第二张扩展名表）；
- *  `cls` 直接落 CSS `.fc-icon.<cls>` 既有色档（chat.css 单点）。
- *  归档族（zip/rar/7z/tar/gz/tgz/bz2/xz）本批**补入** —— 此前落 'code' 灰档，
- *  作者令要求「压缩」独立色族；补入是纯增项（既有 pop 卡/引用卡的同扩展名
- *  文件随之从灰档变归档紫档，语义更准，形态无回归）。 */
-export function fileIconStyle(ext) {
-  const e = (ext || '').toLowerCase();
-  if (e === 'pdf') return { label: 'PDF', cls: 'pdf' };
-  if (e === 'html' || e === 'htm') return { label: 'HTML', cls: 'html' };
-  if (e === 'md' || e === 'markdown') return { label: 'MD', cls: 'md' };
-  if (['doc', 'docx'].includes(e)) return { label: 'DOC', cls: 'doc' };
-  if (['xls', 'xlsx', 'xlsm', 'csv', 'tsv'].includes(e)) return { label: 'XLS', cls: 'xls' };
-  if (['ppt', 'pptx'].includes(e)) return { label: 'PPT', cls: 'ppt' };
-  if (e === 'epub') return { label: 'EPUB', cls: 'epub' };
-  if (['zip', 'rar', '7z', 'tar', 'gz', 'tgz', 'bz2', 'xz'].includes(e)) return { label: e.toUpperCase().slice(0, 4), cls: 'zip' };
-  if (['json', 'yaml', 'yml'].includes(e)) return { label: e.toUpperCase(), cls: 'data' };
-  if (e) return { label: e.toUpperCase().slice(0, 4), cls: 'code' };
-  return { label: 'FILE', cls: 'code' };
-}
+ *  引用牌图标化批（2026-11-02）：表体抽到叶子模块 `fileIcon.js`（quoteLogo.js 也要
+ *  用同一张表，住这里会把既有三环扩成四环）；本文件 **re-export** 保持既有 import
+ *  点（attachUpload.js / reference.js / chat.js 等）逐字不动、单一来源不变。 */
+export { fileIconStyle, extOf } from './fileIcon.js';
+// 本文件内部消费者（buildFileCard / popItemFromAttachment / buildImageRefMediaFace）
+// 也要这两个符号：`export ... from` 只做转发、不建本地绑定 ⇒ 另起一条具名 import
+// （同一模块、同一份实现，零第二套表）。
+import { fileIconStyle, extOf } from './fileIcon.js';
 
 const FWD_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.2 5.1c0-.86 1.02-1.3 1.65-.73l7.06 6.4c.44.4.44 1.08 0 1.48l-7.06 6.4c-.63.57-1.65.13-1.65-.73v-2.9c-4.3.14-7.02 1.42-9.06 4.06-.5.65-1.55.2-1.4-.6.9-4.7 3.9-8.5 10.46-8.9V5.1z"/></svg>';
 
@@ -642,6 +629,12 @@ const POP_SWIPE_QUIET_MS = 160;  // 动量窗：翻页后事件流静默 ≥160m
  *   · `area.popFaces`：字节填充句柄（dry 腿宿主用）——`[{item, index, els}]`，
  *     `els` = 该件的全部媒体元素（折叠层 + 展开层各一枚，文档序），调用方按序
  *     直填 `el.src`（`item.dry` 约定不变，见 hydrateMedia 头注）。
+ *   · `opts.quoteDescFor(item, index)`：该张的引用描述符工厂（单张引用批 2026-11-02）。
+ *     产物不挂在面上，只经 `area.popQuoteState()` 暴露（见下）；缺席 ⇒ null。
+ *   · `area.popQuoteState()`：`{index, total, desc}` —— **当前张 = front**（拖动/横滑
+ *     翻到的那张 = 折叠面显示卡 = 整面点击打开的卡）+ 该张描述符。footer 引用入口
+ *     （msgQuote.initQuoteItemButton）消费本接驳点；面上零引用钮（作者令 2026-11-02
+ *     11:00「图片引用在footer显示就行了。不需要hover图片的时候也显示一个图标」）。
  *
  *  🔴 **「展开 N」钮的位置不是 API 参数位**（fm-stack-pill-align 批 2026-11-02 ·
  *  作者令「把 buildMediaStack 的展开钮默认位改回与主会话逐字同款（同角、同边距、
@@ -659,7 +652,19 @@ const POP_SWIPE_QUIET_MS = 160;  // 动量窗：翻页后事件流静默 ≥160m
 function buildMediaStack(items, opts) {
   const openItem = (opts && typeof opts.onOpen === 'function') ? opts.onOpen : openMediaItemClick;
   const cornerFor = (opts && typeof opts.cornerFor === 'function') ? opts.cornerFor : null;
-  const area = document.createElement('div');
+  // 引用入口移入 footer 批（2026-11-02 11:00 作者令「图片引用在footer显示就行了。
+  // 不需要hover图片的时候也显示一个图标」）：叠卡面上**不再长**任何引用钮，改为把
+  // 「当前张 + 该张引用描述符」暴露成接驳点 `area.popQuoteState()`（见下方），
+  // footer 入口（msgQuote.initQuoteItemButton）消费 —— 面上零按钮，引用入口与
+  // 文本/文件行同族（composer footer 动作行）。**只用动作位，不长相位置键**
+  // （与 onOpen/cornerFor 同一纪律，见头注「展开 N 钮位置不是 API 参数位」）。
+  const quoteDescFor = (opts && typeof opts.quoteDescFor === 'function') ? opts.quoteDescFor : null;
+  // 自定义载荷（expando）面：lib.dom 无这些属性 —— 同一处声明类型，两个消费者
+  // （popFaces 字节填充 / popQuoteState 引用接驳点）读同一份形状。
+  const area = /** @type {HTMLDivElement & {
+   *   popFaces?: Array<{item: any, index: number, els: Element[]}>,
+   *   popQuoteState?: () => {index: number, total: number, desc: any},
+   * }} */ (document.createElement('div'));
   area.className = 'pop-stack-area';
   const pill = document.createElement('button');
   pill.type = 'button';
@@ -712,6 +717,10 @@ function buildMediaStack(items, opts) {
     layer.addEventListener('click', () => openItem(item, i));
     const canvasBtn = cornerFor ? cornerFor(item, i) : canvasCornerButton(item);
     if (canvasBtn) layer.appendChild(canvasBtn);
+    // 叠卡面上零引用钮（引用入口移入 footer 批 2026-11-02 11:00 作者令）：单张
+    // 引用改由 footer 入口按 `area.popQuoteState()` 取「当前张」——手势仲裁面
+    // 因此更窄：拖动翻页/双指横滑仍是折叠盒唯一的两条手势，展开列只剩整面点击
+    // （= 打开该张）与 Canvas 角标。
     expandView.appendChild(layer);
     return layer;
   });
@@ -727,6 +736,12 @@ function buildMediaStack(items, opts) {
   // z-index as the third, so 4+ items overlapped indistinguishably (and clicks
   // could hit a buried card). The parked items are `display:none`.
   const VISIBLE_LAYERS = 3;
+  // 翻页播报（冒泡）：拖动 / 双指横滑换「当前张」时通知宿主，footer 引用入口据此
+  // 即时更新文案（不吃缓存）。零第二套状态 —— 每次 applyLayers（= front 变更的
+  // 唯一落点）都发，宿主侧幂等去重。
+  const announceFront = () => {
+    area.dispatchEvent(new CustomEvent('nf-quote-front', { bubbles: true, detail: { index: front } }));
+  };
   const applyLayers = () => {
     layers.forEach((layer, i) => {
       const p = (i - front + layers.length) % layers.length;
@@ -735,8 +750,20 @@ function buildMediaStack(items, opts) {
       layer.style.zIndex = String(3 - Math.min(p, 2));
       layer.classList.toggle('is-buried', p > VISIBLE_LAYERS - 1);
     });
+    announceFront();
   };
   applyLayers();
+
+  // 引用接驳点（引用入口移入 footer 批 2026-11-02 11:00 作者令）：footer 入口问
+  // 「这一组此刻是第几张、它的引用描述符是什么」——**当前张 = `front`**，即拖动
+  // 翻页 / 双指横滑翻到的那一张（与折叠面显示卡、整面点击打开的卡同一序 ⇒ 零
+  // 第二套「当前」定义）。`desc` 由宿主传入的 `quoteDescFor(index)` 产出，缺席
+  // （旧宿主 / fm 三窗）⇒ null，footer 入口据此隐藏（零死入口）。
+  area.popQuoteState = () => ({
+    index: front,
+    total: items.length,
+    desc: quoteDescFor ? quoteDescFor(items[front], front) : null,
+  });
 
   // 三修 ③ (2026-10-06 10:59 作者截图令), 复验修正 (16:47 作者核查令), 复报令
   // A-1 修 (2026-10-06 19:43 作者截图令): a click on the COLLAPSED stack opens
@@ -906,7 +933,8 @@ function buildMediaFlat(item, opts) {
   if (corner === undefined) corner = canvasCornerButton(item);
   if (corner) box.appendChild(corner);
   const mediaEl = box.querySelector('img, video, audio');
-  if (mediaEl) box.popFaces = [{ item, index: 0, els: [mediaEl] }];
+  // 自定义载荷面（expando，lib.dom 无此属性）：与 buildMediaStack 的 area 同形状。
+  if (mediaEl) /** @type {any} */ (box).popFaces = [{ item, index: 0, els: [mediaEl] }];
   return box;
 }
 export { buildMediaFlat };
@@ -1021,12 +1049,8 @@ export function unifyUserMediaFace(text, attachments) {
  * exact face builders above, so the two sides cannot drift apart. */
 
 /** File-name → extension (no dot → ''). (导出：fm-att-card-unify 批 —— 三窗文件卡
- *  同一扩展名单点，禁第二份 ext 解析。) */
-export function extOf(name) {
-  const n = String(name || '');
-  const i = n.lastIndexOf('.');
-  return i > 0 ? n.slice(i + 1).toLowerCase() : '';
-}
+ *  同一扩展名单点，禁第二份 ext 解析。) 实现 = 叶子模块 `fileIcon.js`（同一份
+ *  re-export，见上方 fileIconStyle 段）。 */
 
 /** UiMessage.User.attachment → the pop-item shape the faces consume.
  *  `resolver` (optional) replaces the ticket leg for user bytes: the uploads
@@ -1054,6 +1078,28 @@ export function popItemFromAttachment(att, resolver) {
   }
   if (!name && !path) return null;
   return { kind: 'file', name: name || path.split('/').pop() || 'file', path, ext: extOf(name), size };
+}
+
+/** 叠卡单张的引用描述符（2026-11-02 单图引用批）：只带**这一张**的附件
+ *  （引用牌的缩略/文件名 = 被引那张），并带 itemIndex/itemTotal 作位置标注
+ *  ⇒ 同组三张的引用牌彼此可区分（摘要「第 N/total 张」+ 单张缩略）。宿主身份
+ *  （messageId/sessionId/sender）不走这里 —— msgQuote.startItemQuote 从行级
+ *  描述符统一解析（挂点零身份算术）。 */
+function stackItemQuoteDesc(item, index, total) {
+  const isMedia = item.kind === 'image' || item.kind === 'video';
+  return {
+    kind: isMedia ? 'image' : 'file',
+    fileName: item.name || (item.path || '').split('/').pop() || '',
+    path: item.path || '',
+    attachments: [{
+      type: isMedia ? item.kind : 'file',
+      name: item.name || (item.path || '').split('/').pop() || '',
+      path: item.path || '',
+      preview: (typeof item.src === 'string' && item.src.startsWith('data:')) ? item.src : undefined,
+    }],
+    itemIndex: index,
+    itemTotal: total,
+  };
 }
 
 /** The INDEPENDENT media row for one user message's non-ref attachments — the
@@ -1105,7 +1151,13 @@ export function buildUserMediaRow(attachments, opts) {
   group.className = 'pop-group';
   row.appendChild(group);
   if (media.length === 1) group.appendChild(buildMediaFlat(media[0]));
-  else if (media.length > 1) group.appendChild(buildMediaStack(media));
+  else if (media.length > 1) {
+    // 单张引用入口（2026-11-02 11:00 作者令移入 footer）：叠卡每张各自的描述符
+    // —— 张数 = media 组（拖动/横滑翻页的同一序）；footer 入口按当前 front 取。
+    group.appendChild(buildMediaStack(media, {
+      quoteDescFor: (it, i) => stackItemQuoteDesc(it, i, media.length),
+    }));
+  }
   files.forEach(f => group.appendChild(buildFileCard(f)));
   // footer 信息条（手机端长按退役批 2026-10-31 作者令）：与文本消息底部信息条
   // 同族 .duration-badge——时间 + 下载（常用操作），触屏触达不再依赖长按；
@@ -1326,7 +1378,13 @@ export function buildPopArtifactRow(payload, opts) {
   row.appendChild(group);
 
   if (media.length === 1) group.appendChild(buildMediaFlat(media[0]));
-  else if (media.length > 1) group.appendChild(buildMediaStack(media));
+  else if (media.length > 1) {
+    // 单张引用入口（2026-11-02 11:00 作者令移入 footer）：LLM Pop 交付行与用户
+    // 媒体行同一条路 —— 叠卡每张各有描述符，footer 入口按当前 front 取该张。
+    group.appendChild(buildMediaStack(media, {
+      quoteDescFor: (it, i) => stackItemQuoteDesc(it, i, media.length),
+    }));
+  }
   files.forEach(f => group.appendChild(buildFileCard(f)));
 
   const failed = payload.fileRefs && Number(payload.fileRefs.failed) > 0;

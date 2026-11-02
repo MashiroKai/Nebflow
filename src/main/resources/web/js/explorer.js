@@ -16,6 +16,10 @@ import { appendRefToActiveView } from './input.js';
 import { showSidePanel } from './activityBar.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+import { withFocusKey } from './focusTrap.js';
+// keyboard-first 三期：树键位搬进规则表（keyRules.js 的 explorer.tree.*），
+// 本模块只提供动作函数 + 一个派生上下文键（选中态）。
+import { provideContextKey, KEYS } from './keyContext.js';
 
 // explorer.js 拆分(FE组件化批次五 2026-09-28):选择状态族与文件规则小簇迁至 js/explorer/
 // 子模块 —— selection.js(多选模型族,簇私态 selectedPaths/anchorPath 整态随迁)、
@@ -776,15 +780,398 @@ function $(sel) { return document.querySelector(sel); }
 
 // FILE_ICONS/HIDDEN_DIRS/getFileInfo/shouldHide 已迁 ./explorer/fileRules.js(FE组件化批次五,行为保持)。
 
+// ── 行构造收口 + 键盘漫游（B1-1/B1-2，keyboard-first 二期）──────────────
+// 改造前的事实（本批实测）：`.explorer-item` 是 `<div>`，`role`/`tabindex` 命中 0；
+// `mode.js:170-177` 只是给它们**临时**补了 `tabindex="-1"`，所以焦点进得去、
+// 按不动 —— "键盘打不开文件"的准确表述就是这四个字。
+//
+// 本段建立三个不变量：
+//   ① 每行都有稳定身份：`role="treeitem"` + `aria-level` + `data-focus-key="explorer:<path>"`
+//      （后者同时是全树 `data-focus-key` 标记通道的**首批生产者**，B3-2 的保焦协议
+//      从此不再只有 `#id` 与 DOM 路径两级）。
+//   ② 同一时刻**恰好一行** `tabindex=0`（roving）；行的 tabindex 由本模块独占，
+//      其他模块（mode.js）不得再改写它。
+//   ③ 键位语义由 `treeKeyAction` 一处定义：↑↓ 相邻行 / ←→ 收展 / Home End 两端 /
+//      Enter 激活（目录=收展，文件=走既有打开路径）；**哪个键触发哪个动作**在
+//      keyRules.js 的规则表里（三期起，本文件不留键名字面量）。
+
+/**
+ * 树行工厂：三处行（目录 / 文件 / 新建输入行）共用同一份 a11y + 缩进契约。
+ * 收口前三个构造各写一遍 `className` 与 `paddingLeft`，A11y 属性一处都没有 ——
+ * 这正是"三处行构造"必须收成一个函数的原因：漏一处就等于漏一类行。
+ * @param {'folder'|'file'|'creating'} kind
+ * @param {string} path 树内相对路径（creating 行没有路径）
+ * @param {number} depth 缩进档位（0 = 根列表项）
+ * @returns {HTMLElement}
+ */
+function makeExplorerRow(kind, path, depth) {
+  const row = document.createElement('div');
+  row.className = kind === 'folder'
+    ? 'explorer-item explorer-folder'
+    : kind === 'file' ? 'explorer-item explorer-file' : 'explorer-item explorer-creating';
+  if (path) row.dataset.path = path;
+  // 文件行多留一格箭头位（既有视觉口径，逐像素不变）
+  row.style.paddingLeft = `${depth * 14 + (kind === 'file' ? 22 : 8)}px`;
+  if (kind === 'creating') {
+    // 新建行 = 输入框宿主：行本身不可聚焦、不进 Tab 序（Tab 落在内部 input 上）
+    row.setAttribute('role', 'none');
+    return row;
+  }
+  row.setAttribute('role', 'treeitem');
+  row.setAttribute('aria-level', String(depth + 1));
+  row.tabIndex = -1; // roving：由 syncRoving() 把"当前行"改回 0
+  row.dataset.focusKey = `explorer:${path}`; // data-focus-key 生产者（B3-2 的输入）
+  if (kind === 'folder') row.setAttribute('aria-expanded', 'false');
+  return row;
+}
+
+/** 当前树里可漫游的行（可见 = 非 0 尺寸；DOM 序 = 视觉序）。 @returns {HTMLElement[]} */
+function treeRows() {
+  const tree = document.getElementById('explorer-tree');
+  if (!tree) return [];
+  /** @type {HTMLElement[]} */
+  const out = [];
+  for (const el of tree.querySelectorAll('.explorer-item[role="treeitem"]')) {
+    if (!(el instanceof HTMLElement)) continue;
+    if (!el.offsetWidth && !el.offsetHeight) continue; // 折叠子树里的行
+    out.push(el);
+  }
+  return out;
+}
+
+/** 记住的漫游锚点（重渲/重载后仍指向同一路径）。 */
+let treeFocusPath = '';
+
+/**
+ * 让「恰好一行 tabindex=0」成立，并返回该行。
+ * @param {string} [preferPath] 想落在哪一行（缺省沿用记录的锚点，锚点消失则首行）
+ * @returns {HTMLElement|null}
+ */
+function syncRoving(preferPath) {
+  const rows = treeRows();
+  if (!rows.length) return null;
+  const want = preferPath === undefined ? treeFocusPath : preferPath;
+  let target = /** @type {HTMLElement|null} */ (null);
+  for (const el of rows) if (el.dataset.path === want) { target = el; break; }
+  if (!target) target = rows[0];
+  for (const el of rows) el.tabIndex = el === target ? 0 : -1;
+  treeFocusPath = target.dataset.path || '';
+  return target;
+}
+
+/**
+ * 把焦点搬到某行（并同步 roving）。
+ * @param {HTMLElement|null} el
+ * @returns {void}
+ */
+function focusTreeRow(el) {
+  if (!(el instanceof HTMLElement)) return;
+  treeFocusPath = el.dataset.path || '';
+  syncRoving(treeFocusPath);
+  el.focus({ preventScroll: true });
+  el.scrollIntoView({ block: 'nearest' });
+}
+
+/** 行所属的父目录行（← 在收起态/文件行上退一层用）。 @param {HTMLElement} row @returns {HTMLElement|null} */
+function parentTreeRow(row) {
+  const wrapper = row.closest('.explorer-dir-wrapper');
+  const parentWrapper = wrapper?.parentElement?.closest('.explorer-dir-wrapper');
+  const parentRow = parentWrapper?.querySelector(':scope > .explorer-folder');
+  return parentRow instanceof HTMLElement ? parentRow : null;
+}
+
+/**
+ * 树上的按键语义（一处定义，事件委托到容器 —— 行是重渲即换的，绑在行上会漏）。
+ * @param {KeyboardEvent} e
+ * @returns {void}
+ */
+/**
+ * 文件树键盘动作（keyboard-first 三期：唯一的键盘入口）。
+ *
+ * 改造前 = `onTreeKeydown(e)`：一个挂在树容器上的 keydown 监听，串 `switch (e.key)`
+ * 直接把键名与动作写死，并自带 `closest('input, textarea, …')` 早退。三期把
+ * 「是哪个键」搬到规则表（keyRules.js 的 explorer.tree.*，条件
+ * `explorerTreeFocus`），本函数只保留「哪个动作、作用在谁身上」——键名在这里
+ * 一个字面量都不留。
+ *
+ * @param {'down'|'up'|'home'|'end'|'expand'|'collapse'|'activate'} action
+ * @returns {void}
+ */
+export function treeKeyAction(action) {
+  const t = document.activeElement;
+  const row = t instanceof HTMLElement ? t.closest('.explorer-item[role="treeitem"]') : null;
+  if (!(row instanceof HTMLElement)) return;
+  const rows = treeRows();
+  const i = rows.indexOf(row);
+  if (i < 0) return;
+  const isFolder = row.classList.contains('explorer-folder');
+
+  switch (action) {
+    case 'down':
+      focusTreeRow(i + 1 < rows.length ? rows[i + 1] : row);
+      return;
+    case 'up':
+      focusTreeRow(i > 0 ? rows[i - 1] : row);
+      return;
+    case 'home':
+      focusTreeRow(rows[0] || row);
+      return;
+    case 'end':
+      focusTreeRow(rows[rows.length - 1] || row);
+      return;
+    case 'expand':
+      if (!isFolder) return;
+      if (row.getAttribute('aria-expanded') !== 'true') {
+        // 展开 = 复用既有 click 语义（handleSelectClick 在无修饰键时返回 false，
+        // 随后 toggleDir 走原来的深度与加载管线），不另写一份展开逻辑。
+        row.click();
+      } else {
+        focusTreeRow(rows[i + 1] || row); // 已展开 → 进第一个子行
+      }
+      return;
+    case 'collapse':
+      if (isFolder && row.getAttribute('aria-expanded') === 'true') {
+        row.click(); // 收起（同一份 click 语义）
+        return;
+      }
+      focusTreeRow(parentTreeRow(row));
+      return;
+    case 'activate': {
+      if (isFolder) { row.click(); return; }
+      // 文件行：与单击监听**同一条激活路径**（openFile → readFile →
+      // fileContent → workspace-open-item），不直接派发事件绕过取数腿。
+      const path = row.dataset.path || '';
+      openFile(path, path.split('/').pop() || path);
+      return;
+    }
+    default:
+  }
+}
+
+/**
+ * 清除文件树选中（三期：规则 `explorer.selection.clear` 的唯一动作入口）。
+ *
+ * 改造前这是文档级 keydown 里的一句 `clearSelection()`，条件是「有选中 + 焦点不在
+ * 新建输入行」。**那条腿在 EDIT 模式下也会穿透**（在对话输入框里按 Esc 同样清空
+ * 选中项）—— 三期把条件写进规则的 `when`：`explorerSelection && !textInputFocus`。
+ * @returns {void}
+ */
+export function clearTreeSelection() {
+  clearSelection();
+}
+
 // ── Render ─────────────────────────────────────────────────────────────
+
+// ── B7-4 树搜索 + 排序（文档后续批，2026-11-01）───────────────────────────
+// 病灶（计划 §B7-4）：树没有搜索框、没有排序控件，而服务端的顺序是**硬编码**
+// 的（目录优先 + 名字升序，见 dirListing 的成功腿）—— 用户除了滚动没有别的办法，
+// 大目录直接不可用。
+//
+// 两条都在**客户端**做，理由有三：
+//   ① 零协议改动：dirListing 帧的形状不动，后端不用跟着改（也不动排序口径）。
+//   ② 零 CSS 依赖：控件用既有 `.explorer-*` 家族 class + 少量内联样式，本批
+//      **不碰 css/ 一字**（`app-*.css` 哈希因此不动，见 staleTabHint.js 先例）。
+//   ③ 目录恒在前：目录不是文件的一种排序值，换排序只重排**同级文件**——
+//      VS Code 同语义，也避免"排序把目录挪走"这种找不到路的意外。
+//
+// 搜索是「已渲染行」的浅过滤：只有展开过的目录里的行在 DOM 里，未展开的深处
+// 命中不了（要深层全量命中得先全量 listDir，那是另一个量级的改动，本批不做）。
+// 目录名自身命中时整枝保留，避免"明明搜到了目录名却看不见"。
+const EXPLORER_SORT_KEY = 'nf.explorerSort';
+/** @type {'default'|'name-asc'|'name-desc'|'mtime-desc'|'size-desc'} */
+let explorerSortMode = (() => {
+  try {
+    const v = localStorage.getItem(EXPLORER_SORT_KEY);
+    return v === 'name-asc' || v === 'name-desc' || v === 'mtime-desc' || v === 'size-desc' ? v : 'default';
+  } catch { return 'default'; }
+})();
+
+const SORT_CYCLE = /** @type {const} */ (['default', 'name-asc', 'name-desc', 'mtime-desc', 'size-desc']);
+
+function sortModeLabel(/** @type {string} */ m) {
+  return m === 'name-asc' ? t('explorer.sortNameAsc')
+    : m === 'name-desc' ? t('explorer.sortNameDesc')
+      : m === 'mtime-desc' ? t('explorer.sortMtime')
+        : m === 'size-desc' ? t('explorer.sortSize')
+          : t('explorer.sortDefault');
+}
+
+/**
+ * 渲染前重排一轮目录条目：目录恒在前，文件按当前模式排序。
+ *
+ * **默认模式是 `default`（原样返回服务端顺序），不是 `name-asc`**：实测
+ * `localeCompare` 的排序与 `FileBrowser` 的服务端顺序并不逐条等价（`.gitignore`
+ * 与 `CONTRIBUTING.md`/`contributing` 的先后就不同）⇒ 拿 name-asc 当默认会把
+ * 11 张基线推出 DIFF（bbox {117..219, 114..144} = 一行树文字换位）。
+ * 排序是**用户显式选的视图偏好**，默认态必须与服务端顺序逐字节一致。
+ * @param {any[]} entries
+ * @returns {any[]}
+ */
+function sortExplorerEntries(entries) {
+  if (explorerSortMode === 'default') return entries.slice();
+  const nm = (/** @type {any} */ a, /** @type {any} */ b) => String(a?.name ?? '').localeCompare(String(b?.name ?? ''), undefined, { numeric: true, sensitivity: 'base' });
+  const num = (/** @type {any} */ v) => Number(v) || 0;
+  const cmp = explorerSortMode === 'name-desc' ? (/** @type {any} */ a, /** @type {any} */ b) => nm(b, a)
+    : explorerSortMode === 'mtime-desc' ? (/** @type {any} */ a, /** @type {any} */ b) => (num(b.mtime) - num(a.mtime)) || nm(a, b)
+      : explorerSortMode === 'size-desc' ? (/** @type {any} */ a, /** @type {any} */ b) => (num(b.size) - num(a.size)) || nm(a, b)
+        : nm;
+  const dirs = entries.filter((e) => e && e.type === 'dir');
+  const files = entries.filter((e) => e && e.type !== 'dir');
+  dirs.sort(cmp);
+  files.sort(cmp);
+  return [...dirs, ...files];
+}
+
+/** 搜索框 + 排序钮（JS 注入：index.html 归 B4 独占，本批不碰）。幂等。
+ *
+ *  **默认收起（`hidden`）不是保守，是闸的要求**：视觉基线 28 张逐像素比对，
+ *  侧栏 header 每一张都拍——常驻一行会把 14 张基线全部推出 DIFF（实测
+ *  bbox {61..294, 37..333} = 侧栏头部），那等于用「允许差异」把视觉闸的
+ *  整条侧栏护栏买断。所以控制条按需展开，且**不新造任何快捷键面**：
+ *    · 树上有焦点时敲任意可打印字符 ⇒ 展开并把它当第一个过滤字符（列表型 typeahead，
+ *      VS Code 同名手感；原本空按这些键没有语义，不抢任何既有键）；
+ *    · `Ctrl/Cmd+F` 且焦点在侧栏内 ⇒ 展开（局部范围，不进全局 keymap 注册表，
+ *      因此不会和命令面板/搜索面的既有 combo 打架）。
+ */
+function ensureExplorerSearch() {
+  if (document.getElementById('explorer-search')) return;
+  const header = document.querySelector('#explorer-section .explorer-header');
+  if (!header) return;
+  const row = document.createElement('div');
+  row.id = 'explorer-search-row';
+  row.className = 'explorer-search-row';
+  row.hidden = true;   // 默认不占位：基线零像素变化
+  // 注意：光设 `hidden` 属性**打不过**内联 display（UA 的 [hidden]{display:none} 优先级最低）
+  // —— 这里连 display 一起关，展开时一起开。踩过一次：属性 true 但行照样占位，
+  // 整棵树下移，14 张基线全 DIFF。
+  row.setAttribute('style', 'display:none;align-items:center;gap:6px;padding:2px 8px 6px;');
+  const input = document.createElement('input');
+  input.type = 'search';
+  input.id = 'explorer-search';
+  input.className = 'explorer-search-input';
+  input.placeholder = t('explorer.searchPlaceholder');
+  input.setAttribute('aria-label', t('explorer.searchPlaceholder'));
+  input.setAttribute('style', 'flex:1 1 auto;min-width:0;padding:4px 8px;border-radius:8px;'
+    + 'border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);'
+    + 'color:inherit;font:12.5px/1.4 inherit;');
+  input.addEventListener('input', () => applyTreeFilter(input.value));
+  input.addEventListener('keydown', (e) => {
+    // Esc 只收自己的过滤词并收起（不吞事件给全局：层栈/壳的 Esc 契约逐字保留）
+    if (e.key === 'Escape') {
+      if (input.value) { input.value = ''; applyTreeFilter(''); return; }
+      closeExplorerSearch();
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const hit = /** @type {HTMLElement|null} */ (document.querySelector('#explorer-tree .explorer-file:not([hidden])'));
+      if (hit) hit.click(); // 既有激活路径（click 委派），不另造第二条
+    }
+  });
+  const sortBtn = document.createElement('button');
+  sortBtn.id = 'explorer-sort';
+  sortBtn.className = 'explorer-action-btn';
+  sortBtn.type = 'button';
+  sortBtn.title = sortModeLabel(explorerSortMode);
+  sortBtn.setAttribute('aria-label', sortModeLabel(explorerSortMode));
+  sortBtn.textContent = sortModeLabel(explorerSortMode);
+  sortBtn.setAttribute('style', 'flex:0 0 auto;font:11.5px/1.2 inherit;padding:3px 7px;border-radius:7px;'
+    + 'border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);color:inherit;cursor:pointer;');
+  sortBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const i = SORT_CYCLE.indexOf(/** @type {any} */ (explorerSortMode));
+    explorerSortMode = SORT_CYCLE[(i + 1) % SORT_CYCLE.length];
+    try { localStorage.setItem(EXPLORER_SORT_KEY, explorerSortMode); } catch { /* ignore */ }
+    sortBtn.textContent = sortModeLabel(explorerSortMode);
+    sortBtn.title = sortModeLabel(explorerSortMode);
+    sortBtn.setAttribute('aria-label', sortModeLabel(explorerSortMode));
+    renderTree(); // 重渲即重排（已展开目录会按需重取，与换根同一条腿）
+  });
+  row.append(input, sortBtn);
+  header.appendChild(row);
+
+  // 唯一的展开腿：树上有焦点时敲可打印字符 ⇒ typeahead 过滤。
+  // 为什么不挂 Ctrl+F：**这个 combo 已经被产品占了**（实测按下后焦点落到
+  // `#search-keyword`，也就是既有的搜索面）。一个 combo 两个主人正是键盘首批
+  // 要消灭的病灶，所以本批不再造第二个；typeahead 用的键原本在树上是空操作，
+  // 不会与任何既有绑定重叠。全局 keymap 注册表因此**零增量**。
+  document.getElementById('explorer-tree')?.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (typeof e.key !== 'string' || e.key.length !== 1 || !/\S/.test(e.key)) return;
+    const searchRow = document.getElementById('explorer-search-row');
+    if (searchRow && !searchRow.hidden) return;   // 已在过滤态 ⇒ 由输入框接管
+    e.preventDefault();
+    openExplorerSearch(e.key);
+  }, true);
+}
+
+/** 展开搜索条并落焦（`seed` = typeahead 的第一个字符）。 */
+function openExplorerSearch(seed) {
+  const row = document.getElementById('explorer-search-row');
+  const input = /** @type {HTMLInputElement|null} */ (document.getElementById('explorer-search'));
+  if (!row || !input) return;
+  row.hidden = false;
+  row.style.display = 'flex';
+  input.value = seed || '';
+  input.focus();
+  applyTreeFilter(input.value);
+}
+
+/** 收起搜索条并清掉过滤（行恢复原样）。 */
+function closeExplorerSearch() {
+  const row = document.getElementById('explorer-search-row');
+  const input = /** @type {HTMLInputElement|null} */ (document.getElementById('explorer-search'));
+  if (input) input.value = '';
+  if (row) { row.hidden = true; row.style.display = 'none'; }
+  applyTreeFilter('');
+}
+
+/**
+ * 浅过滤（只作用于已渲染的行）。文件行按名字匹配；目录行在其子树还有命中时
+ * 保留，否则整枝隐藏。空查询 = 全部恢复。
+ * @param {string} q
+ */
+function applyTreeFilter(q) {
+  const tree = document.getElementById('explorer-tree');
+  if (!tree) return;
+  const needle = String(q || '').trim().toLowerCase();
+  const files = /** @type {HTMLElement[]} */ ([...tree.querySelectorAll('.explorer-item.explorer-file')]);
+  if (!needle) {
+    for (const f of files) f.hidden = false;
+    for (const d of /** @type {HTMLElement[]} */ ([...tree.querySelectorAll('.explorer-item.explorer-folder')])) d.hidden = false;
+    return;
+  }
+  for (const f of files) {
+    const name = (f.dataset.path || '').split('/').pop() || '';
+    f.hidden = !name.toLowerCase().includes(needle);
+  }
+  // 目录：自底向上，子树有可见文件或目录名自身命中 ⇒ 保留
+  const dirs = /** @type {HTMLElement[]} */ ([...tree.querySelectorAll('.explorer-item.explorer-folder')]).reverse();
+  for (const d of dirs) {
+    const selfHit = ((d.dataset.path || '').split('/').pop() || '').toLowerCase().includes(needle);
+    const wrapper = d.closest('.explorer-dir-wrapper');
+    const childVisible = !!(wrapper && wrapper.querySelector('.explorer-children .explorer-item:not([hidden])'));
+    d.hidden = !(selfHit || childVisible);
+  }
+}
 
 function renderTree() {
   const body = $('#explorer-tree');
   if (!body) return;
-  clearSelection();
-  body.innerHTML = '';
-  // Root-level listing — path "" means project root
-  body.appendChild(buildDirNode('', true, 0));
+  // B1-1：容器补 `role="tree"`（行补 treeitem）。写在 JS 而不是 index.html：
+  // index.html 是 B4 的独占文件（计划 §四），树语义归本模块。
+  body.setAttribute('role', 'tree');
+  body.setAttribute('aria-label', t('explorer.title') || 'Files');
+  // B3-2：整树重建是「重渲丢焦点」最典型的一面 —— 旧行节点全被换掉。行自带
+  // `data-focus-key="explorer:<path>"`（B1-1 的生产者），所以按 key 就能把焦点
+  // 送回**同一路径的新行**；没有这条接线时，刷新一次树焦点就掉回 body。
+  withFocusKey(body, () => {
+    clearSelection();
+    body.innerHTML = '';
+    // Root-level listing — path "" means project root
+    body.appendChild(buildDirNode('', true, 0));
+  });
+  ensureExplorerSearch();
   syncWatch();
 }
 
@@ -809,10 +1196,7 @@ function buildDirNode(path, isRoot, depth) {
   }
 
   const name = path.split('/').pop();
-  const row = document.createElement('div');
-  row.className = 'explorer-item explorer-folder';
-  row.dataset.path = path;
-  row.style.paddingLeft = `${depth * 14 + 8}px`;
+  const row = makeExplorerRow('folder', path, depth);
 
   const chevron = document.createElement('span');
   chevron.className = 'explorer-chevron';
@@ -851,7 +1235,7 @@ function buildDirNode(path, isRoot, depth) {
     e.stopPropagation();
     // Cmd/Ctrl or Shift click = selection only — never expand/collapse
     if (handleSelectClick(e, path)) return;
-    toggleDir(path, chevron, children, depth);
+    toggleDir(path, chevron, children, depth, row);
   });
 
   wrapper.appendChild(row);
@@ -861,10 +1245,7 @@ function buildDirNode(path, isRoot, depth) {
 
 function buildFileNode(path, depth) {
   const name = path.split('/').pop();
-  const node = document.createElement('div');
-  node.className = 'explorer-item explorer-file';
-  node.dataset.path = path;
-  node.style.paddingLeft = `${depth * 14 + 22}px`; // extra indent for chevron space
+  const node = makeExplorerRow('file', path, depth);
 
   const info = getFileInfo(name);
   const icon = document.createElement('span');
@@ -922,12 +1303,22 @@ function buildFileNode(path, depth) {
 
 // ── Actions ────────────────────────────────────────────────────────────
 
-function toggleDir(path, chevronEl, childrenEl, depth) {
+/**
+ * 展开/收起一个目录行。`rowEl` 给了就同步 `aria-expanded`（键盘/读屏同源事实）。
+ * @param {string} path
+ * @param {Element} chevronEl
+ * @param {HTMLElement} childrenEl
+ * @param {number} depth
+ * @param {HTMLElement|null} [rowEl]
+ * @returns {void}
+ */
+function toggleDir(path, chevronEl, childrenEl, depth, rowEl = null) {
   if (expandedDirs.has(path)) {
     // Collapse
     expandedDirs.delete(path);
     chevronEl.classList.remove('expanded');
     childrenEl.style.display = 'none';
+    if (rowEl) rowEl.setAttribute('aria-expanded', 'false');
   } else {
     // Expand — always reload to pick up file system changes
     expandedDirs.add(path);
@@ -935,6 +1326,7 @@ function toggleDir(path, chevronEl, childrenEl, depth) {
     chevronEl.classList.add('expanded');
     childrenEl.style.display = '';
     childrenEl.innerHTML = '';
+    if (rowEl) rowEl.setAttribute('aria-expanded', 'true');
     loadDir(path, childrenEl, depth);
   }
   // The visible-dir set changed — the watch subscription follows it (throttled).
@@ -1424,7 +1816,7 @@ onMessage('dirListing', (msg) => {
   }
 
   let hasVisible = false;
-  for (const entry of entries) {
+  for (const entry of sortExplorerEntries(entries)) {
     if (shouldHide(entry.name, entry.type === 'dir')) continue;
     hasVisible = true;
 
@@ -1455,6 +1847,10 @@ onMessage('dirListing', (msg) => {
     const kids = child.querySelector('.explorer-children');
     if (chevron && kids) {
       chevron.classList.add('expanded');
+      // 重渲后的行是新节点：aria-expanded 必须跟着恢复，否则读屏/断言看到的
+      // 是"已展开的子树 + 收起的语义"这种自相矛盾的状态。
+      const fRow = child.querySelector(':scope > .explorer-folder');
+      if (fRow instanceof HTMLElement) fRow.setAttribute('aria-expanded', 'true');
       kids.style.display = '';
       kids.innerHTML = '';
       loadDir(p, kids, p.split('/').length);
@@ -1463,6 +1859,10 @@ onMessage('dirListing', (msg) => {
 
   // Directory re-rendered — restore .selected classes from the selection model
   applySelectionClasses();
+
+  // roving 锚点跟随重渲（新行是全新节点：不重算就"没有一行 tabindex=0"，
+  // Tab 再也进不来 —— 这正是"重渲后键盘失灵"的形态）。
+  syncRoving();
 
   if (typeof lucide !== 'undefined') createIconsIn(pending.container);
 });
@@ -1589,6 +1989,8 @@ export function initExplorer() {
   // Restore persisted root on startup
   explorerRoot = loadPersistedRoot();
   updateExplorerTitle();
+  // B7-4：树搜索框 + 排序钮（JS 注入，幂等；index.html 归 B4 不碰）
+  ensureExplorerSearch();
 
   // Wire folder picker button — opens the unified directory picker
   // (workspacePicker.js) in callback mode: the picked path becomes the tree
@@ -1674,15 +2076,22 @@ export function initExplorer() {
     });
   }
 
-  // Esc clears the selection (unless an inline create input has focus)
-  if (!window.__explorerEscBound) {
-    window.__explorerEscBound = true;
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && selectedPaths.size && !(/** @type {Element|null} */ (e.target))?.closest('.explorer-creating')) {
-        clearSelection();
-      }
+  // ── 键盘腿（B1-2 → 三期）─────────────────────────────────────────────
+  // 改造前这里挂 `kbdTree.addEventListener('keydown', onTreeKeydown)`；三期键位搬进
+  // 规则表（条件 = `explorerTreeFocus`，由 keyContext 从 focus 现算），容器只留
+  // **roving 锚点**这一件与键盘无关的事（谁搬的焦点都算数）。
+  const kbdTree = /** @type {(HTMLElement & {_kbdBound?: boolean})|null} */ (document.getElementById('explorer-tree'));
+  if (kbdTree && !kbdTree._kbdBound) {
+    kbdTree._kbdBound = true;
+    kbdTree.addEventListener('focusin', (e) => {
+      const row = (/** @type {Element} */ (e.target)).closest?.('.explorer-item[role="treeitem"]');
+      if (row instanceof HTMLElement && row.dataset.path) syncRoving(row.dataset.path);
     });
   }
+
+  // 选中态 → 上下文键（派生：值现场读 selectedPaths，不推送）。
+  // 规则的 `when` 直接引用它（`explorerSelection && !textInputFocus`）。
+  provideContextKey(KEYS.explorerSelection, () => selectedPaths.size > 0);
 
   // Close context menu on any interaction outside the menu.
   // Use mousedown + capture so it fires BEFORE child stopPropagation calls.
@@ -1780,9 +2189,7 @@ function startCreateNode(isDir, dirPath) {
 
   // Create inline input row
   const depth = dirPath ? dirPath.split('/').length + 1 : 1;
-  const inputRow = document.createElement('div');
-  inputRow.className = 'explorer-item explorer-creating';
-  inputRow.style.paddingLeft = `${depth * 14 + 8}px`;
+  const inputRow = makeExplorerRow('creating', '', depth);
 
   const icon = document.createElement('span');
   icon.className = 'explorer-icon';

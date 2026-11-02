@@ -2136,20 +2136,27 @@ class WebSocketRoutes(
                              // 不落 quote 键 ⇒ 无引用行字节形态与旧 .ui.json 逐字相同。
                              val quoteJson = quoteFromRefs(json)
                              val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
-                             sharedResources.sessionStore
-                               .appendUiMessages(
-                                 msgSessionId,
-                                 List(
-                                   UiMessage.User(
-                                     content,
-                                     attJson,
-                                     injected,
-                                     timestamp = System.currentTimeMillis(),
-                                     quote = quoteJson
+                             // tool-card-leak-on-reload 批（2026-11-02）：与
+                             // dispatchUserText 同一落盘判据——回合进行中送来的输入
+                             // 落 midTurn=true（回放折叠段边界的数据面依据；注入行
+                             // 由 injected 自辨，本键只对真人输入有意义）。
+                             midTurnAtPersist(msgSessionId).flatMap { midTurn =>
+                               sharedResources.sessionStore
+                                 .appendUiMessages(
+                                   msgSessionId,
+                                   List(
+                                     UiMessage.User(
+                                       content,
+                                       attJson,
+                                       injected,
+                                       timestamp = System.currentTimeMillis(),
+                                       quote = quoteJson,
+                                       midTurn = if injected then None else midTurn
+                                     )
                                    )
                                  )
-                               )
-                               .handleErrorWith(e => logger.warn(s"Failed to record user UiMessage: ${e.getMessage}"))
+                                 .handleErrorWith(e => logger.warn(s"Failed to record user UiMessage: ${e.getMessage}"))
+                             }
                              // attachmentsSaved（用户附件点击统一批 2026-10-08）：live 渲染腿
                              // 前端只有 data/preview、没有落盘 path —— Pop 面的点击开 Canvas
                              // 依赖 item.path（popArtifacts.openMediaItemClick / buildFileCard
@@ -2444,10 +2451,15 @@ class WebSocketRoutes(
     device: Option[nebflow.bridge.ResolvedDevice] = None
   ): IO[Unit] =
     logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
-      sessionStore.appendUiMessages(
-        sessionId,
-        List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
-      ) *>
+      // tool-card-leak-on-reload 批（2026-11-02）：回合内插话判定在**落盘这一瞬**
+      // 取（注册表 Processing = 引擎回合在跑），随行落 `midTurn=true`。这是回放
+      // 折叠段边界判据的数据面依据 —— 回合中插话不再把同一回合劈成两段。
+      midTurnAtPersist(sessionId).flatMap { midTurn =>
+        sessionStore.appendUiMessages(
+          sessionId,
+          List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis(), midTurn = midTurn))
+        )
+      } *>
       // Hard-recovery P4: if the target turn is wedged (Processing + idle >
       // SessionKickIdleSec), break it BEFORE queueing — the queued message
       // injects at the turn boundary the kick creates (user intent first).
@@ -2586,6 +2598,11 @@ class WebSocketRoutes(
    * attachments（附件批 2026-10-31 作者令「引用要支持你发的文件 图片等」）：
    * content.attachments 的**白名单**拷贝 —— 每项只留 type（image|video|file）/
    * name/path（sanitize + 截长，cap 8），前端 preview（data: 内联字节）不落盘。
+   *
+   * 叠卡单张引用（2026-11-02 作者令「让叠卡的图片可以分开引用」）：content 可带
+   * itemIndex（0 基，≤99）/itemTotal（该组张数，≤99）——两张量都是**位置标注**，
+   * 引用目标仍是 refMessageId（寻址/降级矩阵不变）。缺失/非法 ⇒ 不落键（旧载荷
+   * 落盘字节形态逐字不变，旧行渲染零变化）。
    */
   private def quoteFromRefs(frame: io.circe.Json): Option[io.circe.Json] =
     val refs = frame.hcursor.downField("refs").as[List[io.circe.Json]].getOrElse(Nil)
@@ -2642,6 +2659,19 @@ class WebSocketRoutes(
               )
           }
         if atts.nonEmpty then base("attachments") = io.circe.Json.fromValues(atts)
+        // 叠卡单张引用（2026-11-02）：「第 N 张」位置标注。itemIndex 0 基、≤99；
+        // itemTotal 只在 > itemIndex 且 ≤99 时落（组张数，展示「第 N/M 张」）。
+        // 两者都缺席/非法 ⇒ 不落键 ⇒ 旧载荷的快照字节形态逐字不变。
+        val itemIndex = c.downField("content").downField("itemIndex").as[Int].toOption.filter(i => i >= 0 && i <= 99)
+        itemIndex.foreach { i =>
+          base("itemIndex") = i.asJson
+          c.downField("content")
+            .downField("itemTotal")
+            .as[Int]
+            .toOption
+            .filter(n => n > i && n <= 99)
+            .foreach(n => base("itemTotal") = n.asJson)
+        }
         Some(io.circe.Json.fromJsonObject(io.circe.JsonObject.fromIterable(base)))
       end if
     }
@@ -3146,6 +3176,26 @@ class WebSocketRoutes(
         case e: RuntimeException => NotFound(Json.obj("error" -> e.getMessage.asJson))
         case e => InternalServerError(Json.obj("error" -> e.getMessage.asJson))
       }
+
+  /**
+   * 落盘判据（tool-card-leak-on-reload 批 2026-11-02）：**此刻**该会话是否有一个
+   * 引擎回合在跑。与 `sessionBusyStates`（getSessionBusy 的权威忙判据）同源
+   * （`AgentStatus.Processing`），差别只在取数时刻是**落盘这一瞬**：
+   *
+   *   true  ⇒ 这条 user 行是回合内插话 → `UiMessage.User.midTurn=Some(true)`，
+   *           回放折叠的段边界判据（turnGroup.isNonInjectedUserRow）据此**不**把
+   *           它当轮起点，同一个引擎回合仍是一段（一枚 turn-header 收全部工具卡）；
+   *   false ⇒ 普通开轮用户行（缺席即不落键，字节形态与本批前逐字相同）。
+   *
+   * 判据失效的忠实降级：注册表里没有该会话（未激活的冷会话）⇒ None ⇒ 按老口径
+   * 落成开轮行；旧存量 `.ui.json` 行同样没有本键，由前端时间戳蕴含推断回落。
+   */
+  private def midTurnAtPersist(sessionId: String): IO[Option[Boolean]] =
+    if sessionId.isEmpty then IO.pure(None)
+    else
+      sharedResources.agentRegistry.get
+        .map(reg => Option.when(reg.get(sessionId).exists(_.status == AgentStatus.Processing))(true))
+        .handleErrorWith(_ => IO.pure(None))
 
   /** Resolve a session: use provided ID, or create a new one for the agent. */
   private def resolveSession(agentName: String, sessionIdOpt: Option[String]): IO[String] =

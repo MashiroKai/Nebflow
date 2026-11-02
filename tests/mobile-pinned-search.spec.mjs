@@ -413,8 +413,7 @@ test('P7 other faces untouched: chat chrome search key + detail pages keep the f
   // 聊天根顶缘搜索键（本批零触碰）：48×48 @ right359 / 圆钮材质不变。
   // 垂直落点沿革：top 16（本批）→ 4+safe（会话顶栏单行三段式批 2026-11-02 07:23）
   // → **16+safe（会话页头同构批 件二+件三 2026-11-02，fixed 真顶栏整条退役）**：
-  // 钮回到悬浮顶缘 16，与左上任务键同档；尺寸/材质/水平足印仍按本批契约零改动。
-  const chrome = await page.evaluate(() => {
+  // 钮回到悬浮顶缘 16，与左上任务键同档；尺寸/材质/水平足印仍按本批契约零改动。  const chrome = await page.evaluate(() => {
     const el = document.querySelector('.mh-chrome-btn[data-chrome="search"]');
     if (!el) return null;
     const r = el.getBoundingClientRect();

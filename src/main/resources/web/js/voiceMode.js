@@ -20,6 +20,7 @@
 // the chat behind the overlay.
 
 import { t } from './i18n.js';
+import { pushLayer, popLayer } from './focusTrap.js';
 import { startDictation, stopDictation, setMicVolumeListener } from './voiceEngine.js';
 import { registerVoiceModeOrb, notifyVoiceState } from './micOrb.js';
 import { showToast } from './modal.js';
@@ -224,6 +225,8 @@ export function enterVoiceMode(depsIn) {
   if (inputArea && el.overlay.parentElement !== inputArea) inputArea.appendChild(el.overlay);
   ensureVoiceAudible();
   el.overlay.classList.add('on');
+  // B4：全双工语音面入层栈（flag 默认封存 ⇒ 常态不激活）。Esc 仍由本模块 onKeydown 收口。
+  pushLayer(el.overlay, { name: 'voice' });
   if (el.hint) el.hint.textContent = t('voiceMode.hint');
   showTranscript('');
   showCaption('');
@@ -265,7 +268,7 @@ export function exitVoiceMode() {
   }
 
   document.body.classList.remove('voice-mode-active');
-  if (el.overlay) el.overlay.classList.remove('on');
+  if (el.overlay) { popLayer(el.overlay); el.overlay.classList.remove('on'); } // B4：出栈
   window.removeEventListener('voiceplayer:start', onPlaybackStart);
   window.removeEventListener('voiceplayer:end', onPlaybackEnd);
   window.removeEventListener('aireply', onAiReply);

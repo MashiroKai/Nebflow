@@ -233,6 +233,7 @@
 // Zero engine change throughout (GET /api/social/channels stays read-only).
 
 import { t } from './i18n.js';
+import { pushLayer, popLayer } from './focusTrap.js';
 import { escapeHtml, createIconsIn, statusIcon } from './utils.js';
 import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
 import { getAuthToken } from './neblink.js';
@@ -1812,6 +1813,9 @@ export function openSocialPanel() {
   if (!ov) return;
   lastFocusedBeforeOpen = /** @type {HTMLElement|null} */ (document.activeElement);
   ov.classList.add('on');
+  // B4：社交面板入层栈。本壳自带 Esc/Tab 处理器（onKeydown）——层接管栈内身份与
+  // 关闭回焦，两条腿同一关闭函数，重复调用幂等。
+  pushLayer(ov, { name: 'social' });
   // 秒显批 (author order 2026-10-25): seed the maps from the last converged
   // snapshot BEFORE this first render, so a bound card paints its 已接入 pill
   // with the DOM — the fetch chain below converges in the background and
@@ -1835,6 +1839,7 @@ export function closeSocialPanel() {
   // weixin-binditem: expansion is session-scoped view state — reopening the
   // panel starts from the default (the row only).
   itemExpanded.clear();
+  popLayer(ov); // B4：出栈 + 回焦
   ov.classList.remove('on');
   // Esc/close always returns focus to the entry button (W13).
   const btn = document.getElementById('social-btn');

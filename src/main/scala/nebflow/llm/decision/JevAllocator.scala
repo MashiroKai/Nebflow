@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.core.jev.{CatalogEntry, JevAllocation, JevAllocatorPort, JevFallback, JevFallbackKind}
 import nebflow.shared.NebflowLogger
+import nebflow.prompts.PromptCatalog
 
 /**
  * JeV allocator: task text + capability catalog -> capability set
@@ -214,14 +215,7 @@ object JevAllocator:
    * purpose: the preamble is ONE line, and a line break introduced for
    * readability would change the model-visible bytes.
    */
-  private[decision] val StatePreamble: String =
-    "You are auditing task dispatch in an agent-orchestration platform. Below are (1) one dispatched node " +
-      "task brief, verbatim, and (2) the installed plugin capability catalog. The brief may contain platform " +
-      "boilerplate (default-clause templates D-1..D-6, merge-window fragments, citation paths) - ignore " +
-      "boilerplate; judge the task's substantive purpose. Judge from the task text alone. Multiple capability " +
-      "packages may be needed for one task: judge each package independently, and count a package as " +
-      "\"needed\" only when the task's primary purpose cannot be properly executed without the capability " +
-      "that package provides."
+  private[decision] val StatePreamble: String = PromptCatalog.Classifiers.JevStatePreamble
 
   /**
    * Brief section header.

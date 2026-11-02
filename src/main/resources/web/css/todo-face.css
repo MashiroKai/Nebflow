@@ -31,22 +31,195 @@
   }
 }
 
-/* ── 槽位（#task-list 老规则收口：高度预算移交本面弹簧）────────────────── */
+/* ── 槽位（待办胶囊重做批 2026-11-02 11:52）────────────────────────────────
+   作者原文：「收缩到只显示 8 待办 这么几个文字的大小程度的一个在对话框下方的
+   一个胶囊……出现逾期的时候就是翻转一下 然后只显示 1 逾期 胶囊的大小不改变
+   ……点击的时候就是从这么个小胶囊拓展到一个大的界面。样式要设计好，现在上下
+   都没居中」。
+
+   槽位语义（本块是几何单源）：
+   · `#task-list` 现挂 #input-area 内、#input-bar 之后（index.html 本批注记）：
+     静默态 = 输入框正下方的一个居中行（.tfl-mount），高度 0 的绝对定位浮层
+     不占输入区，胶囊自身若干 px 由 `#task-list` 的 margin 顶部给出呼吸位。
+   · 展开态 = `.tfl-card` 变 `position:absolute; bottom:calc(100% + 8px)`：
+     锚在槽位（= 胶囊行）上方，自胶囊向上生长、浮在聊天体之上，不占输入区
+     高度、不与输入框打架。
+   · 手机层 `#task-list` 仍由 mobileLayer.css 整条 display:none 压死（手机共用
+     的是 .tfl-mobile 展开面），本块对手机零影响。 */
+#task-list {
+  /* 老规则（css/taskList.css）给的是顶带通栏 #task-list { padding:0 8px;
+     max-height:0; overflow:hidden; display:flex; flex-direction:column } ——
+     此处按重做批逐条覆盖为居中行槽位（同特异度、本文件后载，天然胜出）。
+
+     `position: static` 是**关键**：展开面板（.tfl-card，absolute）要锚在
+     **#input-area 顶缘**（= 输入框上方），而不是锚在这条胶囊行上 —— 否则
+     面板会压住输入框本身（「不与输入区打架」的反面）。静态定位让最近的
+     定位祖先退回 #input-area（position:absolute），`bottom:100%` 即
+     「整个输入区之上」；同时本节点的 overflow 不再裁剪面板（裁剪只沿包含块
+     链生效，面板的包含块已是 #input-area）。 */
+  position: static;
+  display: block;
+  /* 胶囊与输入框之间的呼吸位（4px 栅格）：6px 上 + 6px 下。上下内距计入
+     #input-area.offsetHeight ⇒ 消息列让位自动把胶囊也让出来（js/main.js 同源）。 */
+  padding: 6px 8px;
+  margin: 0;
+  max-height: none;
+  overflow: visible;
+  flex-direction: initial;
+  /* 命中：槽位本身 auto——旧 delegate 链块渲染路径（js/taskList.js
+     renderTaskList）仍把 .task-card 直接挂进 #task-list，其行点击不得透传
+     给 #chat（本批首版写 none 时 chain-panel 三套件 T7 卡住：locator 报
+     「#chat intercepts pointer events」）。槽位在输入区内部，不遮挡聊天体。 */
+  pointer-events: auto;
+}
 #task-list.has-tasks {
   max-height: none;
-  padding: 0 8px;
+  padding: 6px 8px;
   display: block;
+  overflow: visible;
+  flex-direction: initial;
   transition: none;
 }
+#task-list:not(.has-tasks) { display: none; }
 
-/* ── 卡容器（刘海形变载体：胶囊 ⇄ 面板 高度/圆角弹簧）──────────────────── */
-.tfl-card {
-  position: relative;
+/* 居中行（胶囊的几何母体）：内容 inline-flex + 水平居中 —— 胶囊宽度由内容
+   决定（不横跨容器），胶囊中心恒等于本行中心恒等于输入区中线（同一盒模型）。 */
+.tfl-mount {
+  /* 同 #task-list：保持 static —— 展开面板（absolute）的包含块必须是
+     #input-area，才能锚在输入框正上方；若在此建定位祖先，面板会贴胶囊行
+     下缘、压住输入框。 */
+  position: static;
   display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  pointer-events: none;
+  /* 呼吸位由 #task-list 的 padding 承担；框内零额外高度。 */
+  padding: 0;
+}
+.tfl-mount > * { pointer-events: auto; }
+
+/* ── 胶囊（静默态：小件 = 圆点 + 一行读数，宽度由内容决定）─────────────────
+   材质 = 扁平控件族（--ctl-neutral-*，css/stand-tokens.css 单源；与「扁平按钮
+   组件库」批同一语言：实底 / 无模糊 / 无高光 / 无浮影 / 圆角 999 全圆胶囊），
+   hover/active 中性档递进 —— 与 .cfg-btn 族 Pattern B（css/sapphire.css）逐值
+   同源，本文件不新增裸色值。
+
+   居中三重（作者「上下左右都居中」）：
+   ① 文字行盒：外框 inline-flex + align-items:center + line-height:1 ⇒ 行盒中心
+      与外框中心重合（不再出现「30px 卡里贴顶的 11px 文字」）；
+   ② 圆点：与文字同一 flex 行、align-items:center ⇒ cy 与文字 cy 同轴；
+   ③ 左右：padding 左右同值（--tfl-cap-pad-x），宽度 = 内容 + 2×pad ⇒ 内距差 0。
+   宽度不变量：内层 `.tfl-cap-faces` = inline-grid 单格双面叠层 ⇒ 胶囊宽 =
+   max(「N 待办」「N 逾期」) 的自然宽；窄面在格内居中。翻面前后外框宽严格相等。 */
+:root {
+  --tfl-cap-h: 26px;      /* 小胶囊高（4px 栅格；字 11px + 上下 7.5px 对称内距） */
+  --tfl-cap-pad-x: 12px;  /* 左右内距（对称；= 圆角半径 13 内收一档） */
+  --tfl-cap-radius: 999px;
+  --tfl-cap-gap: 6px;     /* 圆点 ↔ 文字间距 */
+}
+.tfl-capsule {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--tfl-cap-gap);
+  height: var(--tfl-cap-h);
+  padding: 0 var(--tfl-cap-pad-x);
+  border: 0;
+  border-radius: var(--tfl-cap-radius);
+  background: var(--ctl-neutral-bg);
+  color: var(--ctl-neutral-ink);
+  font: 500 11px/1 ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  text-align: center;
+  white-space: nowrap;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  transition: background-color 0.15s ease, color 0.15s ease, opacity 0.2s ease;
+}
+.tfl-capsule:hover { background: var(--ctl-neutral-bg-hover); }
+.tfl-capsule:active { background: var(--ctl-neutral-bg-active); }
+.tfl-capsule:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+/* 开态：胶囊仍留在浮层下方（继续作「收起」入口）；仅在展开时压暗一档做层级
+   区分（不再 display:none —— 否则面板一开胶囊消失，作者要求的「点击展开/
+   收起」双向手势就断了）。 */
+.tfl-mount.is-open .tfl-capsule { opacity: 0.55; }
+
+.tfl-capsule-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ctl-neutral-ink) 38%, transparent);
+}
+/* ReminderIsland closed 点语言：有逾期 → 红点（= 逾期读数同色，翻面即状态色） */
+.tfl-capsule.has-overdue .tfl-capsule-dot { background: var(--tfl-red); }
+.tfl-capsule-overdue { color: var(--tfl-red-o); }
+
+/* ── 翻面（两态叠层）────────────────────────────────────────────────────
+   `.tfl-cap-faces` = inline-grid 单格：两面各占同一格（grid-area 1/1）⇒ 容器宽
+   = 两态最大自然宽、高 = 单行行高（两面同字号同 pad，高度逐值相等）。
+   非当期面 `visibility:hidden`（不进读屏、不出渲染，但**仍参与 grid 尺寸**）。
+   翻面时给当期面加 tfl-cap-in（淡入 + 轻微 Y 位移），前一瞬旧面已不可见 ⇒
+   过渡中永不出现并排帧，外框宽高零变化。 */
+.tfl-cap-faces {
+  display: inline-grid;
+  grid-template-columns: auto;
+  align-items: center;
+  justify-items: center;
+}
+.tfl-cap-face {
+  grid-area: 1 / 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+/* 当期面：逾期优先（is-overdue 在胶囊上） */
+.tfl-capsule:not(.is-overdue) .tfl-cap-face-overdue,
+.tfl-capsule.is-overdue .tfl-cap-face-todo { visibility: hidden; }
+/* 翻面淡入：JS 在读数翻面那一拍挂 `.tfl-cap-flip`（260ms 后摘），只让当期面
+   播 —— 旧面在同一帧已 visibility:hidden ⇒ 过渡中永不出现并排帧，外框宽高
+   零变化（宽由 max-content 叠层决定，高由单行行高决定，动画只动 opacity/
+   transform 两个不参与布局的属性）。 */
+.tfl-capsule.tfl-cap-flip.is-overdue .tfl-cap-face-overdue,
+.tfl-capsule.tfl-cap-flip:not(.is-overdue) .tfl-cap-face-todo {
+  animation: tfl-cap-flip 0.24s ease-out;
+}
+@keyframes tfl-cap-flip {
+  from { opacity: 0; transform: translateY(28%); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ── 卡容器 = 展开态面板（`.tfl-card`）────────────────────────────────────
+   静默态 `display:none`（零占位：面板 DOM 常驻但完全不参与布局，避免旧的
+   「30px 卡里塞 11px 胶囊」几何纠缠）；开态 = **绝对定位浮层**，锚在
+   #input-area 顶缘之上 8px（包含块 = #input-area，见上方槽位块「position:
+   static 是关键」）：
+
+   · 不占输入区高度 ⇒ 展开/收起时输入框位置一动不动（不与输入区打架），
+     也不触发聊天体让位重排；
+   · 向上生长（bottom 锚定）⇒ 视觉上「自胶囊长出」，不是从屏幕顶掉下来；
+   · #task-list / .tfl-mount 均为 static、#input-area/#main 无裁剪 ⇒ 浮层
+     可以完整溢出到输入区上方；
+   · 层级：#input-area 自身 z-index 20 已高于 #chat，浮层在同层之上；全局模态
+     （z-index ≥100）仍在其上。
+   · 宽度 `min(420px, calc(100vw - 32px))` 与胶囊同一水平中线（left:50% +
+     自身 translateX(-50%)），中心 = 输入区中线。 */
+.tfl-card {
+  display: none;
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  width: min(420px, calc(100vw - 32px));
   flex-direction: column;
-  /* 静默态 resting 高度 = 胶囊（面板 opacity 0 仍占位 → 收口在此） */
-  height: 30px;
-  border-radius: var(--tfl-rt) var(--tfl-rt) var(--tfl-rb) var(--tfl-rb);
+  border-radius: 19px 19px 24px 24px;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -54,13 +227,19 @@
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
     0 4px 16px rgba(0, 0, 0, 0.05);
+  /* 过渡起源点 = 胶囊中心（浮层底缘中点，含 8px 呼吸缝）—— JS 的 scale 弹簧
+     与 CSS 共用这个原点 ⇒ 形变「从胶囊长出来」。 */
+  transform-origin: 50% calc(100% + 8px);
   overflow: hidden;
 }
 .tfl-card[data-state="open"] {
-  height: auto;
+  display: flex;
   --tfl-rt: 19px;
   --tfl-rb: 24px;
 }
+/* 收起退场：卡容器仍 display:flex 直到弹簧落地（JS 落地后才翻 data-state），
+   内容随 tfl-panel-out 淡出 —— 视觉上「从面板收回胶囊」。 */
+.tfl-panel.tfl-panel-out { opacity: 0; pointer-events: none; }
 @media (prefers-color-scheme: dark) {
   .tfl-card {
     box-shadow:
@@ -68,42 +247,6 @@
       0 4px 16px rgba(0, 0, 0, 0.2);
   }
 }
-
-/* ── 胶囊（静默态：紧凑摘要 = 提醒点 + 待办数 + 逾期数）────────────────── */
-.tfl-capsule {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
-  height: 30px;
-  padding: 0 12px;
-  border: none;
-  border-radius: 15px;
-  background: transparent;
-  color: color-mix(in srgb, var(--color-text, #000) 45%, transparent);
-  font: 500 11px/1 ui-monospace, SFMono-Regular, monospace;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-  text-align: left;
-  transition: opacity 0.2s ease;
-}
-.tfl-card[data-state="open"] .tfl-capsule {
-  display: none; /* 开态胶囊零占位（收起瞬换回——closed 内容即换的刘海语义） */
-}
-.tfl-capsule:hover { color: color-mix(in srgb, var(--color-text, #000) 70%, transparent); }
-.tfl-capsule-dot {
-  flex-shrink: 0;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--color-text, #000) 20%, transparent);
-}
-/* ReminderIsland closed 点语言：有活跃事项 → 亮点 + 柔光 */
-.tfl-capsule.has-overdue .tfl-capsule-dot {
-  background: color-mix(in srgb, var(--color-text, #000) 75%, transparent);
-  box-shadow: 0 0 3px color-mix(in srgb, var(--color-text, #000) 55%, transparent);
-}
-.tfl-capsule-overdue { color: var(--tfl-red-o); }
 
 /* ── 面板（展开态）─────────────────────────────────────────────────────── */
 .tfl-panel {
@@ -717,17 +860,29 @@
 .tfl-add-ic-done { color: var(--tfl-green); }
 .tfl-add-ic-done svg { stroke: var(--tfl-glyph); }
 
-/* ── 手机变体（页面即展开态：无胶囊、高度随页面体）────────────────────── */
-.tfl-mobile { border-radius: 16px; }
-.tfl-mobile .tfl-capsule { display: none; }
+/* ── 手机变体（页面即展开态：无胶囊、高度随页面体）──────────────────────
+   重做批：桌面胶囊/浮层两条规则（.tfl-capsule 小件、.tfl-card absolute 浮层）
+   一律不得带崩手机 —— 手机腿在此整条回退成流内块。 */
+.tfl-mount-mobile { pointer-events: auto; display: block; }
+.tfl-mobile,
+.tfl-mount-mobile .tfl-card {
+  display: flex;
+  position: static;
+  transform: none;
+  width: auto;
+  height: auto;
+  border-radius: 16px;
+  animation: none;
+  transform-origin: center;
+}
+.tfl-mount-mobile .tfl-capsule { display: none; } /* 手机 = 页面即展开态，无胶囊 */
 .tfl-mobile .tfl-list { max-height: none; }
-.tfl-mobile .tfl-card, .tfl-mobile { height: auto; }
 
 /* ── 动效降级（prefers-reduced-motion 全静止——仓内既有纪律）──────────── */
 @media (prefers-reduced-motion: reduce) {
   .tfl-card, .tfl-panel, .tfl-capsule, .tfl-chip, .tfl-chip-dot,
   .tfl-row, .tfl-edit-wrap, .tfl-complete-fill, .tfl-complete-fill svg,
   .tfl-filterbar, .tfl-tag-popover, .tfl-hint, .tfl-switch-knob,
-  .tfl-switch-knob-wrap { transition: none !important; animation: none !important; }
+  .tfl-switch-knob-wrap, .tfl-cap-face { transition: none !important; animation: none !important; }
   .tfl-row.tfl-row-enter, .tfl-create-row { animation: none !important; }
 }

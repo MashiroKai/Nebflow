@@ -715,7 +715,9 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   // wiki-graph batch: in-file find toggle, seated left of the element-select
   // toggle (find searches INSIDE the frame via the injected script above).
   // 移位批（2026-10-22）：112 → 160（簇 +48 给底右 deck fab 让位）。
-  addFindToggle(pane, 112);
+  // canvas 控件尺寸对齐批（2026-11-02）：钮 40→48 ⇒ 槽距 56，槽值再派生
+  // 128（= 引用 72 + 48 + 8；缝 8px 不变，缩放条随 split.css 到 184）。
+  addFindToggle(pane, 128);
   // Cache the rendered content for the unchanged-guard at the top. Set after
   // the pane is fully assembled; the guard also requires a live iframe, so a
   // stale marker after a navigation-away replacement is harmless (no iframe →
@@ -731,4 +733,16 @@ export default {
   binary: false,
   priority: 0,
   render: viewHtml,
+  /** Protocol teardown (阅读/编辑体验优化批 2026-11-01): the zoom engine owns a
+   *  document-level ⌘±/0 keydown plus a module-level hovered entry — dropping the
+   *  pane's listeners alone would leave the hover record behind. htmlRefSel /
+   *  the search bar self-sweep on their next use (bounded, unchanged). */
+  dispose: (pane) => {
+    const slot = /** @type {any} */ (pane);
+    if (typeof slot._nfZoomDestroy === 'function') {
+      try { slot._nfZoomDestroy(); } catch { /* 引擎已卸 */ }
+    }
+    slot._nfZoomDestroy = null;
+    slot._nfHtmlZoom = null;
+  },
 };

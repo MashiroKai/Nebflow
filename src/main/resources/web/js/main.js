@@ -18,6 +18,10 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
   });
   throw new Error('[nf] embedded context — boot refused (anti-recursion guard)');
 }
+// 探针面（2026-11-01 装置批）：嵌入式守卫之后装 —— 预览页不登记，与守卫同口径。
+// 为什么在产品侧：打包后 `/js/xxx.js` 路由不存在、导出名被压成单字母别名，
+// 验证脚本只能从产品自己的模块图取到**同一实例**，否则键盘闸永远只能验源树。
+installProbeSurface();
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
 import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, enhanceMentionSpansInDom, bgHealthNorm } from './utils.js';
 // mermaid-md batch (2026-10-23): ONE global hydration point — every markdown
@@ -82,6 +86,15 @@ import './delegateChainProvider.js';
 // 控制台单实例批（2026-10-27）：接管独占客户端腿——模块副作用 = 注册 takeover/
 // takeoverResult 帧消费 + 接管模态按钮接线（叶子模块，只依赖 ws.js/state/i18n）。
 import './takeoverModal.js';
+// keyboard-first 一期（2026-11-01）：键盘层引导 —— 模块副作用 = 建模式指示器 +
+// 注册 meta/edit 双模态直键 + 命令面板命令表（keymap.js / mode.js /
+// commandPalette.js / focusTrap.js 四件，入口仅此一行）。为什么走 import 而不是
+// index.html 第三个 module entry：scripts/build-web.mjs 只认 main.js 与
+// mobile/bootstrap.js 两个 entryPoint（第三个 entry 不进 bundle ⇒ 生产 404）。
+import './keyboardBoot.js';
+// 键盘/焦点 QA 探针面（2026-11-01 装置批）：把 keyboard-check 需要的模块句柄登记
+// 到 window.__nfProbeSurface。只读句柄、无行为副作用，见 probeSurface.js 头注。
+import { installProbeSurface } from './probeSurface.js';
 // delegate-ui 批（2026-10-08 · 定稿蓝本 §1.2）：面板两级化（C2/R6）经 stub 读取口
 // 取 G1 编排模式（rows）与 G3 星型子代理投影（children）——读 port 单缝，禁渲染面
 // 直连 WS/REST（数据权威恒在 provider 镜像）。
@@ -121,6 +134,8 @@ import { initFileSearch } from './fileSearch.js';
 import { initUsageDashboard } from './usageDashboard.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
+// 引用入口移入 footer 批（2026-11-02 11:00）：叠卡单张引用的 composer 入口装配。
+import { initQuoteItemButton } from './msgQuote.js';
 // 回合活动流条（turnActivity.js，对话层活性批 2026-10-22）已整链退役 ——
 // 2026-10-23 作者令逐字「这个活动面板我不是让删掉吗，就是对话框上面这个」。
 // 防复活钉：tests/turn-activity-stream.spec.mjs。
@@ -279,6 +294,12 @@ initChatView(
     sessionNameEl: document.getElementById('session-name'),
   }
 );
+
+// 引用入口移入 footer（2026-11-02 11:00 作者令「图片引用在footer显示就行了。不
+// 需要hover图片的时候也显示一个图标」）：叠卡单张引用的唯一入口 = composer footer
+// 动作行里的一枚键（#quote-item-btn）。装配挂在 primary 视图上（它拥有 #input-bar；
+// 其余窗口/面板无该条 ⇒ 无从装配，叠卡面上也不再长按钮）。
+initQuoteItemButton(chatViews.primary);
 
 // D6 批 F2: pending-ask bar + header badge wiring (click = jump to oldest ask).
 initPendingAsks();
@@ -2002,6 +2023,12 @@ onMessage('nf-cache-invalidate', (msg) => {
   const p = msg && msg.path;
   if (typeof p === 'string' && p) {
     void nfCacheInvalidatePath(p).catch(() => {});
+    // B7-2（文档后续批，2026-11-01）：账本淘汰之外，**编辑器也要知道**。
+    // 改造前这条广播只喂 nf-file 账本，打开中的页签一概不知情 —— 干净页签
+    // 靠 scheduleFileRefresh 的冷却窗口碰运气，脏页签则被静默跳过（用户接着
+    // 保存就覆盖掉别人的改动）。canvas.js 收到后按「干净 ⇒ 重读 / 脏 ⇒ 冲突条」
+    // 分流（该文件同批注释）。
+    window.dispatchEvent(new CustomEvent('nf-file-external-change', { detail: { path: p } }));
   }
 });
 
@@ -4326,8 +4353,7 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
   // 链（mobileHead / getMobileHead / headRo / 建拆层广播监听）**整条退役**：
   // 悬浮头不再是 #chat 的流内首件，也没有可测的「顶栏下缘」——让位回到本文件的
   // 单一真值 bandBottom()（手机层 = 顶缘渐隐带 88 底缘 ⇒ reserve 96，与四种会话
-  // 身份头的可视足迹 96 同值；会话页面壳侧由 CSS 直接给同一 96）。
-  // chat.css's #chat padding-top (the no-overlay breathing room baseline).
+  // 身份头的可视足迹 96 同值；会话页面壳侧由 CSS 直接给同一 96）。  // chat.css's #chat padding-top (the no-overlay breathing room baseline).
   const BASE_TOP_PAD = 8;
   const bandBottom = () => Math.max(
     header.getBoundingClientRect().bottom,
@@ -4371,8 +4397,7 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
        单行三段式批的「顶栏下缘 − chat 顶 + 8」分支随该批的 fixed 顶栏一并退役
        （悬浮身份头 .mh-idhead 不在流内、也不占版面，故没有可让位的「顶栏下缘」；
        会话页的同类让位由 CSS `.mobile-page[data-page=conversation] .mobile-page-body`
-       给同一 96，四种会话内容起点同值）。 */
-    const reserve = Math.max(BASE_TOP_PAD, Math.ceil(bandBottom() - chatTop) + BASE_TOP_PAD);
+       给同一 96，四种会话内容起点同值）。 */    const reserve = Math.max(BASE_TOP_PAD, Math.ceil(bandBottom() - chatTop) + BASE_TOP_PAD);
     const prev = parseFloat(getComputedStyle(chat).paddingTop) || BASE_TOP_PAD;
     if (Math.abs(prev - reserve) < 0.5) return;
     const delta = reserve - prev;

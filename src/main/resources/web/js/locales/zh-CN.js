@@ -438,6 +438,10 @@ export default {
   'chat.quoteDeletedSnapshot': '原消息已删除 · 已保留快照文',
   'chat.quoteSenderMe': '我',
   'chat.quoteTypeImage': '[图片]',
+  // 叠卡单张引用批（2026-11-02 作者令「让叠卡的图片可以分开引用」）：引用牌上的
+  // 位置标注 —— 同一叠卡内不同张的引用牌靠它彼此可区分。
+  'chat.quoteImagePos': '第 {n}/{total} 张',
+  'chat.quoteItemAria': '引用第 {n} 张',
   'chat.quoteTypeFile': '[文件]',
   'chat.quoteTypeTool': '[工具]',
   'chat.quoteTypeAsk': '[提问]',
@@ -1942,6 +1946,20 @@ export default {
   // canvas 文件刷新批（2026-10-25 作者令）：页签右下「重新读盘」钮
   'canvas.refresh': '从磁盘重新读取',
   'canvas.refreshDirty': '有未保存的修改，先保存或撤销后再刷新。',
+  // B7 文档后续批（2026-11-01）：脏页签关闭确认 + 外部改动冲突条
+  'canvas.closeDirtyTitle': '关闭未保存的页签？',
+  'canvas.closeDirtyMsg': '「{name}」有未保存的修改，关闭后这些修改会丢失。',
+  'canvas.closeDirtyConfirm': '关闭并丢弃',
+  'canvas.conflictDirty': '这个文件在磁盘上已被改动，你本地有未保存的编辑。',
+  'canvas.conflictKeep': '保留我的',
+  'canvas.conflictReload': '重载磁盘版本',
+  // B7-4 文件树搜索 + 排序（客户端，服务端顺序不动）
+  'explorer.searchPlaceholder': '搜索文件…',
+  'explorer.sortDefault': '默认顺序',
+  'explorer.sortNameAsc': '名称 ↑',
+  'explorer.sortNameDesc': '名称 ↓',
+  'explorer.sortMtime': '最近修改',
+  'explorer.sortSize': '体积最大',
   'canvas.refreshFailed': '刷新失败：{error}',
   // 阅读器 P0 止血批（设计稿 20261030_181655 §1.2/§2.1，验收表 A1-A12 i18n key 回填）
   'epub.prev': '上一页',
@@ -2334,6 +2352,8 @@ export default {
   'daemons.configSecretHint': '保留「***」表示沿用已存值；留空则不修改。',
   // === Explorer（文件浏览器多选） ===
   'explorer.selectedCount': '已选 {count} 项',
+  // B1-1：树容器 role="tree" 的可及名（读屏与键盘断言共用的稳定标签）
+  'explorer.treeLabel': '文件树',
   'explorer.delete': '删除',
   'explorer.deleteN': '删除 {count} 个所选项',
   'explorer.deleteTitle': '删除文件',

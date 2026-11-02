@@ -9,6 +9,7 @@
 // Close: ESC / backdrop click / close button.
 
 import { t } from './i18n.js';
+import { pushLayer, popLayer } from './focusTrap.js';
 import { reMint, decodePathParam } from './nfTicket.js';
 // 二次加载清剿批（2026-10-24 · #816 同法）：本地路径的字节改经 **nfFileCache 账本
 // 单点**先行——`nf:<path>` 命中零抓取直显（气泡/文档渲染已入账的同件）；未命中 =
@@ -237,12 +238,15 @@ export function openLightbox(src, alt, path) {
   }
 
   overlayEl.classList.add('on');
+  // B4：看图大图 = 第 9 个壳（body 级 overlay）。入层栈 ⇒ Tab 不跑到背后的画布。
+  pushLayer(overlayEl, { name: 'lightbox' });
   document.body.classList.add('nf-lightbox-open');
   overlayEl.querySelector('.nf-lightbox-close').focus();
 }
 
 export function closeLightbox() {
   if (!overlayEl || !overlayEl.classList.contains('on')) return;
+  popLayer(overlayEl); // B4：出栈 + 回焦
   overlayEl.classList.remove('on');
   document.body.classList.remove('nf-lightbox-open');
   openSeq += 1;                   // invalidate any in-flight ticket fetch

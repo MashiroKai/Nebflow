@@ -16,11 +16,21 @@
 
 // 弹窗退场批（作者令 2026-10-31②）：手机层右键/长按菜单 = 全屏动作表 + 左上返回。
 import { mobileSheetBack } from './mobile/popSheet.js';
+// keyboard-first 一期（2026-11-01）：菜单是「层」——打开时落焦进菜单、Tab 在
+// 菜单内循环、关闭后把焦点还给触发元素。20+ 个调用方零改动（本文件对它们
+// 的契约仍是 showPopupMenu(x, y, items)）。
+import { pushLayer } from './focusTrap.js';
 
 let menuEl = null;
+/** @type {import('./focusTrap.js').Layer|null} */
+let menuLayer = null;
 
 /** Hide the open menu (if any). Safe to call unconditionally. */
 export function hidePopupMenu() {
+  // 先出栈（回焦到触发元素）再摘 DOM：反序会让回焦目标是一次性的游离节点。
+  const l = menuLayer;
+  menuLayer = null;
+  if (l) l.release();
   if (menuEl) { menuEl.remove(); menuEl = null; }
 }
 
@@ -70,6 +80,17 @@ export function showPopupMenu(x, y, items) {
   const rect = menuEl.getBoundingClientRect();
   if (rect.right > window.innerWidth) menuEl.style.left = Math.max(0, x - rect.width) + 'px';
   if (rect.bottom > window.innerHeight) menuEl.style.top = Math.max(0, y - rect.height) + 'px';
+
+  // keyboard-first 一期：整张菜单入层栈。落焦 → 首项；Tab/Shift+Tab 在菜单内
+  // 首尾相接；任意关闭路径（点外 / Esc / 选项点击 / resize / blur）都会经
+  // hidePopupMenu → release 把焦点送回触发元素。
+  // 不声明 onEscape：Esc 仍由下方既有 capture 监听独占（它要 stopPropagation
+  // 以免同一击连带关掉宿主弹窗，这段语义逐字保留）。
+  menuLayer = pushLayer(menuEl, {
+    initial: /** @type {HTMLElement|null} */ (menuEl.querySelector('button')),
+    contain: true,
+    name: 'context-menu',
+  });
 }
 
 // Global dismiss: any click / scroll / Escape / resize closes the menu.

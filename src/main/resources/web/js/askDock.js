@@ -394,9 +394,11 @@ function onTabClosed() {
 // ── 座位（单行排布批 2026-11-01 作者令 16:18「功能钮靠左、ask 单独靠右，
 //    一行两端对齐；对话框落在按钮行上一行」：文档工具簇已左锚化（split.css
 //    .canvas-source-toggle 注）——与右缘 fab 不再同角，簇实测让位整腿退役；
-//    fab 基准 22px 与簇行（pane 底 16+壳底 8 → 面板系 [24..64]，中线 44px）
-//    共中线。仍需让位的只剩通栏底栏 = 电子书阅读器 nav（fab 抬其上，输入条
-//    联动同距）。移动端让位切换条同口径。）
+//    fab 与簇行共中线。canvas 控件尺寸对齐批 2026-11-02（作者追加令 09:41）：
+//    簇钮 40→48 ⇒ pane 底 16+壳底 8 → 面板系行带 [24..72]、中线 48px；fab 48
+//    时 bottom = 48−24 = **24**（原 22 是 44 钮的旧中线值，中线本身不动）。
+//    仍需让位的只剩通栏底栏 = 电子书阅读器 nav（fab 抬其上，输入条联动同距）。
+//    移动端让位切换条同口径。）
 
 function syncSeat() {
   if (!el) return;
@@ -427,8 +429,11 @@ function syncSeat() {
   const panel = document.getElementById('canvas-panel');
   if (!panel) return;
   const panelRect = panel.getBoundingClientRect();
-  // 基准 22px = 与左锚文档工具簇行共中线（簇面板系中线 44px − fab 半高 22）。
-  let bottomPx = 22;
+  // 基准 24px = 与左锚文档工具簇行共中线（canvas 控件尺寸对齐批 2026-11-02：
+  // 簇纽 48 ⇒ 面板系中线 48px − fab 半高 24；与 ask.css --ask-fab-bottom 同值，
+  // 本腿写内联变量会覆盖 CSS 缺省，两处必须同步）。
+  const FAB_BOTTOM_BASE = 24;
+  let bottomPx = FAB_BOTTOM_BASE;
   // 通栏底栏（可见者取最上沿）：电子书阅读器底栏——批⑩ 2026-10-31：epub/mobi/
   // azw3 可问面 fab 上阅读器页（底栏 ⋯ 钮在右端，fab 不抬必拦截其命中，
   // reader-p1 A5 实证）。左锚工具簇与右缘 fab 异侧，不再入让位实测集。
@@ -441,7 +446,7 @@ function syncSeat() {
     if (r.width === 0 && r.height === 0) return;
     occupied = Math.max(occupied, panelRect.bottom - r.top);
   });
-  bottomPx = occupied > 0 ? occupied + 12 : 22;
+  bottomPx = occupied > 0 ? occupied + 12 : FAB_BOTTOM_BASE;
   panel.style.setProperty('--ask-fab-bottom', bottomPx + 'px');
 }
 

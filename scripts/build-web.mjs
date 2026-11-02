@@ -153,13 +153,19 @@ const jsEntryUrl = entryOutputUrl('/js/main.js');
 // the second <script type="module"> tag below.
 const mobileEntryUrl = entryOutputUrl('/js/mobile/bootstrap.js');
 
-// ── 4. Orphan guard: every web/js/**/*.js must be in metafile inputs ──
+// ── 4. Orphan guard: every source module under web/js must be in metafile inputs ──
+// B0-4（G4）：改造前这里只认 `.js`（`e.name.endsWith('.js')`），任何 `.mjs` /
+// `.ts` / `.vue` 会**静默掉出**「每个源文件必须在打包图里」的保护 —— 一个未来
+// 引入的 `.ts` 被谁 import 都无所谓，因为它压根不在被审计的集合里。现在按
+// 源扩展名清单收，声明文件（`*.d.ts`）除外：它没有运行时实体，天然不进图。
+const SOURCE_EXTS = ['.js', '.mjs', '.cjs', '.ts', '.tsx', '.vue'];
+const isSourceModule = (name) => SOURCE_EXTS.some((x) => name.endsWith(x)) && !name.endsWith('.d.ts');
 const jsFiles = [];
 (function walk(d) {
   for (const e of readdirSync(d, { withFileTypes: true })) {
     const p = join(d, e.name);
     if (e.isDirectory()) walk(p);
-    else if (e.name.endsWith('.js')) jsFiles.push(relative(SRC, p).split('\\').join('/'));
+    else if (isSourceModule(e.name)) jsFiles.push(relative(SRC, p).split('\\').join('/'));
   }
 })(join(SRC, 'js'));
 const inputs = new Set(
@@ -172,9 +178,34 @@ const inputs = new Set(
 );
 const orphans = jsFiles.filter(f => !inputs.has(f) && !ORPHAN_EXEMPTIONS.has(f));
 if (orphans.length > 0) {
-  console.error('ORPHAN JS FILES (reachable from dev server but NOT in the bundle):');
+  console.error('ORPHAN SOURCE FILES (reachable from dev server but NOT in the bundle):');
   for (const f of orphans) console.error('  ' + f);
   console.error('Fix: import it from the graph, delete it, or add an explicit ORPHAN_EXEMPTIONS entry with a reason.');
+  process.exit(1);
+}
+
+// 反向审计（B0-4 第二半）：产物里**每一个** JS 都必须能在 metafile 里找到自己的
+// 登记。正向审计只保证「源文件都进了图」，管不住「产物里多出一个没人登记的
+// 文件」（历史遗留、手工拷贝、构建半途而废留下的残渣）。范围限定 assets/：
+// copy-through 的 vendor/ 与 sw.js 不经过打包图，属于另一条纪律。
+const emitted = new Set(
+  Object.keys(result.metafile.outputs).map(k => relative(OUT, join(ROOT, k)).split('\\').join('/'))
+);
+const strays = [];
+(function walkOut(d) {
+  for (const e of readdirSync(d, { withFileTypes: true })) {
+    const p = join(d, e.name);
+    if (e.isDirectory()) walkOut(p);
+    else if (e.name.endsWith('.js')) {
+      const rel = relative(OUT, p).split('\\').join('/');
+      if (!emitted.has(rel)) strays.push(rel);
+    }
+  }
+})(join(OUT, 'assets'));
+if (strays.length > 0) {
+  console.error('UNREGISTERED JS IN DIST (present in build output but absent from the esbuild metafile):');
+  for (const f of strays) console.error('  ' + f);
+  console.error('Fix: remove the stale file or make the build emit it — dist must be explainable by the metafile.');
   process.exit(1);
 }
 
@@ -182,7 +213,38 @@ if (orphans.length > 0) {
 // (Vendor css stays as separate links - katex/highlight reference fonts via
 // relative url() that would rebase wrongly from assets/.)
 const concat = appCss.map(h => `/* ==== ${h} ==== */\n` + readFileSync(join(SRC, h), 'utf8')).join('\n');
-const minCss = await esbuild.transform(concat, { loader: 'css', minify: true, target: 'es2022' });
+// 只压空白，**不压语法**（2026-11-01 视觉闸 dist 形态红点归因，见下）。
+// `minify: true` 会顺带把 `rgba(0,0,0,.12)` 重写成 8 位十六进制 `#0000001f`：
+// 0x1f=31/255=0.1216 ≠ 0.12，即 minifier 把色彩的 **alpha 改写到 8bit 网格**上，
+// 实测打包 CSS 里出现 595 处这种改写（源 CSS 自带 8 位 hex 仅 36 处）。单处误差
+// ≤0.002 肉眼不可见，但渲染结果是 ±1~2/255 的像素差 —— 恰好落在 `deck-cards`
+// 的平滑渐变卡面上：同一份源码，源树形态 28/28 逐字节 SAME，产物形态固定
+// 73px(dark)/1477px(light) DIFF，且关掉 backdrop-filter、强制作废合成层栅格、
+// 再等 3 秒都纹丝不动（= 不是未收敛，是**字节级色彩改写**）。
+// 结论：产物必须与"被验证的那一形态"**同像素**，否则「验证对象 = 运行对象」这条
+// 断言在色彩一级就不成立。代价 = CSS 606,358 → 618,065 字节（+1.9%），换来闸
+// 一套基线同时守住源树与产物两种形态（tolerance 仍为 0，不放宽）。
+const minCss = await esbuild.transform(concat, { loader: 'css', minifyWhitespace: true, target: 'es2022' });
+// 色彩字面量保真断言：`minify: true` 一旦被重新启用（或 esbuild 改了默认），
+// rgba() 会被重写成 8 位 hex，色彩 alpha 落到 8bit 网格上 —— 见上面那条注释的
+// 实测数据。这里用「字数守恒」把它钉住：产物里的 8 位 hex 处数必须等于源 CSS
+// 的处数，且 rgb()/hsl() 函数色处数也必须守恒（语法压缩会把函数色转成 hex）。
+// 违反即构建失败，不允许产物悄悄改变被验证那一形态的像素。
+{
+  const countHex8 = (s) => (s.match(/#[0-9a-fA-F]{8}(?![\da-fA-F])/g) || []).length;
+  const countFnColor = (s) => (s.match(/\b(?:rgba?|hsla?)\(/gi) || []).length;
+  // 注释里也会出现 `rgba(...)` 字样，而空白压缩会整条删注释 —— 先把源侧注释剥掉
+  // 再数，否则这条断言测的是"注释条数"而不是"色彩字面量"。
+  const sourceCode = concat.replace(/\/\*[\s\S]*?\*\//g, '');
+  const before = { hex8: countHex8(sourceCode), fn: countFnColor(sourceCode) };
+  const after = { hex8: countHex8(minCss.code), fn: countFnColor(minCss.code) };
+  if (before.hex8 !== after.hex8 || before.fn !== after.fn) {
+    throw new Error(
+      `css color literal drift: source {hex8:${before.hex8}, fn:${before.fn}} -> bundle {hex8:${after.hex8}, fn:${after.fn}}` +
+      ' — CSS 压缩不得改写色彩字面量（会让产物像素与源树形态差 ±1~2/255，视觉闸 dist 形态随即出现无法归因的红点）'
+    );
+  }
+}
 const cssHash = createHash('sha256').update(minCss.code).digest('hex').slice(0, 8);
 const cssName = `app-${cssHash}.css`;
 writeFileSync(join(OUT, 'assets', cssName), minCss.code);
@@ -230,6 +292,7 @@ console.log(`  js entry : ${jsEntryUrl}`);
 console.log(`  mobile   : ${mobileEntryUrl} (bootstrap hook, #510)`);
 console.log(`  chunks   : ${chunks.length} lazy chunks (dynamic import boundaries preserved)`);
 console.log(`  css      : assets/${cssName} (${appCss.length} files concatenated in source link order)`);
-console.log(`  js files : ${jsFiles.length} sources, all in bundle graph (orphans: 0, exemptions: ${ORPHAN_EXEMPTIONS.size})`);
+console.log(`  js files : ${jsFiles.length} sources (${SOURCE_EXTS.join('/')}), all in bundle graph (orphans: 0, exemptions: ${ORPHAN_EXEMPTIONS.size})`);
+console.log(`  reverse  : ${emitted.size} registered outputs, 0 unregistered js under assets/`);
 console.log(`  vendor   : copied through (${vendorCss.length} vendor css links kept separate)`);
 console.log(`  form     : ${STRIP_FRIENDS ? 'SEALED (--strip-friends: release marker injected, dev branch DCE-stripped)' : 'UNSEALED (default: no release marker, friends visible)'}`);

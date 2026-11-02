@@ -1599,8 +1599,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   opacity: 0.5;
 }
 
-
-
 .tool-card {
   background: #f0f0f0;
   border-radius: 10px;
@@ -2211,7 +2209,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: var(--glass-control-bg-hover);
   border-color: var(--glass-control-border);
 }
-.option-secret-eye:focus { outline: none; }
 .option-secret-eye:focus-visible { border-color: var(--glass-control-border); }
 .option-secret-hint {
   margin-top: 8px;
@@ -3437,7 +3434,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   box-shadow: 0 1px 4px rgba(0,0,0,0.1);
 }
 
-
 /* ===== NebLink tool row ===== */
 .row.tool.neblink-row {
   position: relative;
@@ -3836,7 +3832,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
     transition: none;
   }
 }
-
 
 /* ---------- Workspace dir picker（ProjectCreate「选择工作区」卡 + Route C 应用内浏览器，workspace-picker 批次） ---------- */
 /* 卡片大目标：整行点击区，SVG 描边文件夹图标 + 标题 + 提示。毛玻璃、克制专业感。 */
@@ -4877,6 +4872,22 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   .pop-media-canvas { opacity: 0.75; }
 }
 
+/* 叠卡引用钮已退役（引用入口移入 footer 批 2026-11-02 11:00 作者令：「图片引用在
+   footer显示就行了。不需要hover图片的时候也显示一个图标」）—— 面上零引用钮，
+   `.pop-media-quote` 整块删除；引用入口 = #input-bar 动作行的单枚 footer 键
+   （input.css `.icon-btn` 族，见 #quote-item-btn 段）。单张引用的「当前张」由
+   `.pop-stack-area`.popQuoteState() 提供（front = 拖动/横滑翻到的那张）。 */
+/* 单图深链高亮（引用块点回「第 N 张」）：展开列里那一行一次性 1.8s 高亮，与
+   行级 .quote-target-flash 同节奏同色阶（--sapphire-tint-15），叠在圆角上不破形。 */
+.pop-expand-view .media-layer.quote-item-flash {
+  outline: 2px solid rgb(var(--sapphire) / 0.55);
+  outline-offset: 2px;
+  animation: msgQuoteTargetFlash 1.8s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pop-expand-view .media-layer.quote-item-flash { animation-duration: 0.01s; }
+}
+
 /* ── the in-stream lightbox (AC-S1) — WeChat-style zoom overlay ── */
 .nf-lightbox {
   position: fixed; inset: 0; z-index: 3200; /* above search-overlay (310), below the modal family (11000) */
@@ -5213,6 +5224,13 @@ object.search-media-thumb { object-fit: initial; }
   line-height: 1.45;
   color: var(--color-text-muted, #888);
   max-width: 100%;
+  /* 引用牌图标化（2026-11-02 11:00 作者令）：图标独占左列（16px 一格），
+     摘要文本在右列（`minmax(0,1fr)` ⇒ 两行 clamp 与既有宽度语义逐值不变），
+     缩略带/降级注记跨两列整行（`.msg-quote-atts` / `.msg-quote-note` 下方声明）。 */
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 6px;
+  align-items: start;
 }
 .msg-quote-block .msg-quote-text {
   display: -webkit-box;
@@ -5222,6 +5240,50 @@ object.search-media-thumb { object-fit: initial; }
   word-break: break-word;
 }
 .msg-quote-block .msg-quote-sender { font-weight: 600; }
+/* 引用牌图标化（2026-11-02 11:00 作者令「引用的消息也需要图标化，文档和图片就是
+   原图标和图片缩略，文字的话就单独设计一个logo」）：
+   · 图标 = 摘要行的前置件，独占 `.msg-quote-head` 一行（16×16，`--nf-qicon-size`）；
+     `.msg-quote-text` 逐字不动 ⇒ 两行 clamp / 宽度语义零变化。
+   · 三种形态同盒：图片真缩略（`img`，object-fit cover + 圆角 4px）/ 文档 `.fc-icon`
+     （扩展名色族单源，把 38px 文件卡档、28px 用户行档压到 16px 档）/ 文字 logo
+     （内联 SVG，currentColor 继承引用块文字色）。
+   · 零新色值：全部继承引用块材质与字色。 */
+.msg-quote-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  line-height: 1;
+}
+.nf-qicon {
+  flex: 0 0 auto;
+  width: var(--nf-qicon-size, 16px);
+  height: var(--nf-qicon-size, 16px);
+  border-radius: 4px;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.nf-qicon svg { width: 100%; height: 100%; display: block; }
+.nf-qicon.is-thumb { background: rgba(0, 0, 0, 0.06); }
+.nf-qicon .nf-qicon-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* 文档档：压过 .fc-icon 的 38px（文件卡）/ 28px（.row.user-media）两档，只在本盒内生效。 */
+.nf-qicon.fc-icon {
+  width: var(--nf-qicon-size, 16px);
+  height: var(--nf-qicon-size, 16px);
+  border-radius: 4px;
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+@media (prefers-color-scheme: dark) {
+  .nf-qicon.is-thumb { background: rgba(255, 255, 255, 0.09); }
+}
 @media (prefers-color-scheme: dark) {
   .msg-quote-block { background: rgba(255, 255, 255, 0.055); }
 }
@@ -5241,7 +5303,7 @@ object.search-media-thumb { object-fit: initial; }
 .msg-quote-composite .bubble.user { max-width: 100%; }
 .msg-quote-composite .msg-quote-block { width: 0; min-width: 100%; }
 /* 降级注记（「原消息已删除」；.fm-quote-note 同族：再降一档不透明度）。 */
-.msg-quote-note { opacity: 0.75; font-size: 11px; margin-top: 2px; }
+.msg-quote-note { opacity: 0.75; font-size: 11px; margin-top: 2px; grid-column: 1 / -1; }
 .msg-quote-note:empty { display: none; }
 /* 引用块附件缩略带（附件批 2026-10-31 作者令「引用要支持你发的文件 图片等」）：
    被引消息带文件/图片附件 ⇒ 摘要行下挂缩略。图片/视频 = 48px 方缩略
@@ -5254,6 +5316,7 @@ object.search-media-thumb { object-fit: initial; }
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 4px;
+  grid-column: 1 / -1;
 }
 .msg-quote-att-media {
   width: 48px;

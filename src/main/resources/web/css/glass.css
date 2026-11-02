@@ -518,8 +518,7 @@ body.mobile-layer #g2-edge-fade {
      （悬浮形态，见 mobileLayer.css 文件尾批次块），降级面只剩**名字玻璃胶囊**
      （.mh-idhead-name 家族 = 四种会话同一枚）。右上三点键带 .g2-fab 已在本名单。
      旧项 `body.mobile-layer #chat > .g2-chat-head` 随 221391120 fixed 顶栏整条退役。 */
-  body.mobile-layer .mh-idhead-name,
-  body.mobile-layer #mobile-dock {
+  body.mobile-layer .mh-idhead-name,  body.mobile-layer #mobile-dock {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
     background: var(--glass-bg);
@@ -556,8 +555,7 @@ html.no-backdrop .g2-fab,
 html.no-backdrop .g2-pill:not(.g2-pill-primary),
 /* 会话页头同构批（件二+件三，2026-11-02）：见上一条 @supports 块同注 —— 身份头
    本体零背景，降级面只剩名字玻璃胶囊；三点键带 .g2-fab 已在名单。 */
-html.no-backdrop body.mobile-layer .mh-idhead-name,
-html.no-backdrop body.mobile-layer #mobile-dock {
+html.no-backdrop body.mobile-layer .mh-idhead-name,html.no-backdrop body.mobile-layer #mobile-dock {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
   background: var(--glass-bg);

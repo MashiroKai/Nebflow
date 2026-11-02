@@ -26,6 +26,7 @@
 // 5s poll re-renders the list, and sharing one flag would reset the form.
 
 import { t } from './i18n.js';
+import { pushLayer, popLayer } from './focusTrap.js';
 import { brand } from './brand.js';
 import { key } from './branding.js';
 import { createIconsIn, statusIcon } from './utils.js';
@@ -273,6 +274,9 @@ export async function openDaemonConfig(id, trigger) {
   renderOverlay();
   positionOverlay(trigger);
   overlay.classList.add('open');
+  // B4：daemon 配置面板入层栈（与 modal.js:65 同款）。Esc 仍由本模块的 capture
+  // 处理器（bindKeyHandler）独占 —— 层这里不加 onEscape，避免两条腿各关一次。
+  pushLayer(overlay, { name: 'daemon-config' });
   // 弹窗退场批：跨档重排后补注左上返回（幂等；非手机层不注入）。
   mobileSheetBack(overlay, () => closeDaemonConfig());
   const first = overlay.querySelector('input, select, textarea, button');
@@ -429,6 +433,7 @@ function bindKeyHandler() {
 /** Close and return focus to the config button that opened the panel (C5). */
 export function closeDaemonConfig() {
   if (!overlay) return;
+  popLayer(overlay); // B4：出栈 + 回焦（打开时那个配置钮）
   overlay.classList.remove('open');
   overlay.innerHTML = '';
   const trigger = current?.trigger;

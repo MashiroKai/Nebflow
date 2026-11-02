@@ -115,9 +115,10 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
     // ResizeObserver fires on every transition frame, so re-fit as the
     // geometry settles — until the user takes over zoom/pan manually.
     let userTouched = false;
-    new ResizeObserver(() => {
+    const geometryObserver = new ResizeObserver(() => {
       if (!userTouched && pane.isConnected) fit();
-    }).observe(viewport);
+    });
+    geometryObserver.observe(viewport);
 
     const applyScale = (next, pivot) => {
       userTouched = true; // manual zoom — stop auto re-fit
@@ -132,7 +133,7 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
       apply();
     };
 
-    enableViewerZoom(pane, {
+    const zoomApi = enableViewerZoom(pane, {
       min: 0.05, max: 8,
       getScale: () => s,
       applyScale,
@@ -227,6 +228,19 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
       if (Math.abs(s - 1) < 0.01) { userTouched = false; fit(); } // toggle to fit = re-arm follow
       else applyScale(1, pivot);
     });
+
+    // 卸载（阅读/编辑体验优化批 2026-11-01）：修前三件在关页签后都不回收 ——
+    // 观察 viewport 的 ResizeObserver（持 img + viewport，永不 disconnect）、
+    // 缩放引擎（document 级 cmd± keydown + 模块级 hovered 集合里那条永不出栈的
+    // ctl）、以及 Space 平移的 document keydown/keyup。修前唯一的自愈是
+    // 「下一次任意 keydown 且 pane 已断连」才摘 Space 键，observer 与 hovered
+    // 无任何回收路径。dispose 由 fileViewers.disposeViewer 调用。
+    /** @type {any} */ (pane)._nfImageTeardown = () => {
+      try { geometryObserver.disconnect(); } catch { /* 已断开 */ }
+      try { zoomApi.destroy(); } catch { /* 引擎已卸 */ }
+      document.removeEventListener('keydown', onSpaceDown);
+      document.removeEventListener('keyup', onSpaceUp);
+    };
   };
   // M2 账本接缝（imgdoor #542 推广批 · 设计 v1 §7 M1-2）：票据腿经 `nfViewerUrl`
   // ——`nf:<absPath>` 账本命中 = blob URL 直渲染（第二次打开零取数）；未命中走既有
@@ -241,4 +255,11 @@ export default {
   binary: true,
   priority: 0,
   render: viewImage,
+  /** Protocol teardown — see _nfImageTeardown above. */
+  dispose: (pane) => {
+    const slot = /** @type {any} */ (pane);
+    const fn = slot._nfImageTeardown;
+    slot._nfImageTeardown = null;
+    if (typeof fn === 'function') fn();
+  },
 };

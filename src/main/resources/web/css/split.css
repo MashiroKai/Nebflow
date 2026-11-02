@@ -1901,13 +1901,20 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
    单行排布批（2026-11-01 作者令 16:18「浮钮组改单行：功能钮靠左、ask 靠右，
    两端对齐」）：文档工具簇整体从底右角镜像到底左角（右锚 16 → 左锚 16，槽位
    值原样=角缘序镜像保序），与右缘 ask-fab 同行（两端对齐）——ask 座位联动
-   见 askDock.js syncSeat / ask.css。纯排布改动，材质/尺寸零变。 */
+   见 askDock.js syncSeat / ask.css。纯排布改动，材质/尺寸零变。
+   canvas 控件尺寸对齐批（2026-11-02 作者追加令 09:41「包括 canvas 的这些控件
+   宽度也要保持一致」）：本簇四圆钮（源码/引用/查找/壳刷新）40 → **48**
+   （--cv-size-circle-lg），槽距 48 → **56**（48 钮 + 8 缝，缝的绝对值不变 = 只
+   放大不挤压）。落位由槽距派生：源码 16 · 引用 72 · 查找 128（html）/ 72（md）·
+   缩放条 184（html）；壳刷新钮座位由 shared.js seatRefreshButton 实测续排。
+   圆钮档 48 与缩放条内钮同档 ⇒ 同排图标中心同一水平线（共中线由「同档 + 同
+   bottom」自然成立，无需额外中线计算）。 */
 .canvas-source-toggle {
   position: absolute;
   bottom: 16px;
   left: 16px;
-  width: var(--cv-size-circle, 40px);
-  height: var(--cv-size-circle, 40px);
+  width: var(--cv-size-circle-lg, 48px);
+  height: var(--cv-size-circle-lg, 48px);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -1927,13 +1934,15 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
    六项批（2026-10-23 六项③④）：右锚回原槽 64（= source 16 + 40 + 8 同排 sequel），
    材质同 source toggle 换 frosted 标准单源；件三统一批（2026-10-28）尺寸/阴影/
    hover-active 收 --cv-* token 档。单行排布批（2026-11-01）：左锚镜像同批
-   （右锚 64 → 左锚 64，槽值原样）。 */
+   （右锚 64 → 左锚 64，槽值原样）。
+   canvas 控件尺寸对齐批（2026-11-02）：尺寸 40 → 48（--cv-size-circle-lg），
+   槽位 64 → 72 = 源码钮 16 + 48 + 8 缝（槽距 56 派生，缝 8px 不变）。 */
 .canvas-ref-select {
   position: absolute;
   bottom: 16px;
-  left: 64px;
-  width: var(--cv-size-circle, 40px);
-  height: var(--cv-size-circle, 40px);
+  left: 72px;
+  width: var(--cv-size-circle-lg, 48px);
+  height: var(--cv-size-circle-lg, 48px);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -1960,11 +1969,14 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
    syncFileRefreshButton 随活动页签/源码态同步。
    z 层级：z:10 压 pane 内容（pane z:auto 不建层叠上下文，同层比较胜出）；
    #912 错误态顶部让位带（纯 padding，非浮层）与卡头胶囊/胶囊环（头部区 z-30，
-   空间不与右下角交叠）互不相扰；deck 层/独立浮标各自独立空间位。 */
+   空间不与右下角交叠）互不相扰；deck 层/独立浮标各自独立空间位。
+   canvas 控件尺寸对齐批（2026-11-02）：40 → **48**（--cv-size-circle-lg）——
+   本钮就是作者实拍里「缩放条旁边那颗又大一号的圆钮」，与条内钮一并对齐到
+   同一真值；槽距 48 → 56 由 shared.js 的 REFRESH_ROW_PITCH 同步。 */
 .canvas-refresh-toggle {
   position: absolute;
-  width: var(--cv-size-circle, 40px);
-  height: var(--cv-size-circle, 40px);
+  width: var(--cv-size-circle-lg, 48px);
+  height: var(--cv-size-circle-lg, 48px);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -2656,8 +2668,11 @@ mark.nf-anno[data-anno-stale] {
 
 /* ── 阅读器底栏让位（P1 §2.2）─────────────────────────────────────────────
    角浮件簇（壳层刷新钮）抬到底栏上方同簇；移动层阅读器的刷新退入 ⋯ 菜单，
-   壳层浮件直隐（双显防增额）。:has() 随活动页签自动落位/复位，零 JS。 */
-#canvas-content:has(.canvas-tab-pane.active .epub-reader) > .canvas-refresh-toggle { bottom: 64px !important; /* 座席是内联样式，须压 */ }
+   壳层浮件直隐（双显防增额）。:has() 随活动页签自动落位/复位，零 JS。
+   canvas 控件尺寸对齐批（2026-11-02）：钮档 40 → 48 后「底栏上方一行」的底锚
+   随行高走 64 → **72**（= 圆钮行顶 16+48 + 8 缝；与 shared.js REFRESH_ROW_BOTTOMS
+   第二行、html 窄面板回落行同值）—— 否则 48 钮会压到底栏上沿。 */
+#canvas-content:has(.canvas-tab-pane.active .epub-reader) > .canvas-refresh-toggle { bottom: 72px !important; /* 座席是内联样式，须压 */ }
 body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .canvas-refresh-toggle { display: none !important; }
 
 /* ── YAML viewer ── */
@@ -2774,16 +2789,27 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
    26px 档（修前 glass-control 实心 chip 面退役 —— zoom.js 去 .glass-control
    类，与查找条内钮同语言：静默 ghost + hover 抬亮，聊天控件同款）。
    单行排布批（2026-11-01）：左锚镜像同批（右锚 16 → 左锚 16，见
-   .canvas-source-toggle 注）——缩放条与文档工具簇同落左端，右端独行 ask。 */
+   .canvas-source-toggle 注）——缩放条与文档工具簇同落左端，右端独行 ask。
+   canvas 控件尺寸对齐批（2026-11-02 作者追加令 09:41「包括 canvas 的这些控件
+   宽度也要保持一致」）：内钮 26 → **48**（--cv-size-circle-lg，与同排源码/引用/
+   查找/刷新四圆钮同档，全站 canvas 悬浮控件回到一个真值），图标 14 → 20，钮间距
+   4 → 8（相对比例 4/26 ≈ 15.4% ⇒ 8/48 ≈ 16.7%，与手机层同读法「不许因变大而
+   挤在一起」）。条高随之 36 → **58**（48 + 2×4 内距 + 2×1 描边），条宽
+   138/170 → **222/278**（html 三钮 / 图片四钮含手形钮；= 4 内距×2 + 1 描边×2 +
+   48×钮数 + 8×缝 + 44 读数，实测桌面 1280 逐值对齐）。
+   底锚 18 → **11**：底锚的语义是「条中线对齐同排圆钮中线」（六项批 2026-10-23
+   「底边 18px 与圆钮簇（bottom:16，40px 高）视觉对中线不变」）——圆钮档升到 48
+   后簇中线 = 16 + 24 = 40，条高 58 ⇒ 中线对齐的底锚 = 40 − 58/2 = 11。紧贴
+   16 会让条内 48 钮的中心比圆钮中心高 5px（同排图标不成一条线）。 */
 .canvas-zoom-bar {
   position: absolute;
   top: auto;
-  bottom: 18px;
+  bottom: 11px;
   left: 16px;
   z-index: 5;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   padding: var(--cv-pad-bar-sm, 4px);
   border-radius: var(--cv-radius-bar-sm, 10px);
   background: var(--cv-bg, var(--glass-bg));
@@ -2811,8 +2837,17 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   pointer-events: none;
 }
 .canvas-zoom-btn {
-  width: var(--cv-size-btn, 26px);
-  height: var(--cv-size-btn, 26px);
+  /* canvas 控件尺寸对齐批（2026-11-02 作者追加令 09:41「包括 canvas 的这些控件
+     宽度也要保持一致」）：条内钮 26（--cv-size-btn 条内小钮档）→ **48**
+     （--cv-size-circle-lg = canvas chrome 档 = 手机层 --mtap-lg = 手机层返回钮
+     = 面板吸附胶囊 --mcap-h）。全站「canvas 悬浮控件」回到**一个**尺寸真值：
+     作者实拍里同一条带上有的钮 26（缩放条）、旁边独立刷新圆钮 40，正是
+     「大小不一」的现场 —— 两者本批一并 48，同排四圆钮（源码/引用/查找/刷新）
+     也随 --cv-size-circle-lg 同步 48。
+     圆角维持 --cv-radius-btn-sm 7px（条内小钮的既有圆角语义不变 —— 作者令只
+     要求尺寸档，不要求改成全圆；48 档下 7px 仍是「条内方钮」而不是圆钮）。 */
+  width: var(--cv-size-circle-lg, 48px);
+  height: var(--cv-size-circle-lg, 48px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2843,11 +2878,16 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   border-color: var(--cv-hover-border);
   color: var(--color-text);
 }
-.canvas-zoom-btn svg { width: var(--cv-icon-btn, 14px); height: var(--cv-icon-btn, 14px); }
+.canvas-zoom-btn svg { width: var(--cv-icon-btn-lg, 20px); height: var(--cv-icon-btn-lg, 20px); }
 .canvas-zoom-pct {
-  min-width: 40px;
+  min-width: 44px;
   text-align: center;
-  font-size: 11px;
+  /* 读数档 11 → 13（canvas 控件尺寸对齐批 2026-11-02）：11px 是 36px 高条
+     （26 钮）时代的读数档；条高升到 58、钮升到 48 后 11px 在同排失衡。13 =
+     全站最小可读档，手机层（mobileLayer.css ①b）已取同值 ⇒ 两腿一致。
+     只改字号不改进位逻辑：读数仍是行内文本、宽度随内容（百分比数字用
+     tabular-nums 定宽防跳）。 */
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
 }
@@ -2862,18 +2902,26 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
    wiki-graph batch — so the circle printed on top of the bar's Fit button
    (screenshot 2026-10-19). 160 keeps the 8px gap after the find circle
    (ends at 152).
-   单行排布批（2026-11-01）：左锚镜像（右 160 → 左 160），槽值原样。 */
+   单行排布批（2026-11-01）：左锚镜像（右 160 → 左 160），槽值原样。
+   canvas 控件尺寸对齐批（2026-11-02）：槽值 160 → **184** = 查找钮 128 + 48 +
+   8 缝（同排四钮 40→48 后整行右移 24px，缝 8px 与「48px 槽距节奏」语义不变，
+   节奏值本身 48→56）；条内钮 26→48 后条宽 138→222（三钮）——沿用容器查询
+   回落：窄面板（< 415px）装不下 184 + 222 + 8 ⇒ 条升到圆钮行上方第二行，
+   回落阈值 355 → 414、行距锚 64 → 72（= 圆钮行顶 16+48 + 8 缝），套用同一条
+   「圆钮行 / 条行」竖向节距。 */
 .canvas-tab-pane[data-type="html"] .canvas-zoom-bar {
   top: auto;
-  left: 160px;
-  bottom: 18px;
+  left: 184px;
+  bottom: 11px;
 }
-/* 窄面板（<356px 装不下 160 槽 + 140 条宽，拖拽下限 320）：条升到圆钮行上方
-   第二行（左 16 槽、行距 8px），与圆钮簇零交叠、完整落在 pane 内。 */
-@container nfpane (max-width: 355px) {
+/* 窄面板（< 415px 装不下 184 槽 + 222 条宽，拖拽下限 320）：条升到圆钮行上方
+   第二行（左 16 槽、行距 8px），与圆钮簇零交叠、完整落在 pane 内。
+   阈值推导：184 + 222（条宽）+ 8（右让位）= 414 ⇒ max-width 414 起回落；
+   第二行底锚 72 = 圆钮行顶（16 + 48）+ 8 缝。 */
+@container nfpane (max-width: 414px) {
   .canvas-tab-pane[data-type="html"] .canvas-zoom-bar {
     left: 16px;
-    bottom: 64px;
+    bottom: 72px;
   }
 }
 
@@ -3156,10 +3204,13 @@ body.col-resizing #canvas-panel { transition: none; }
    --glass-control-* 自绘（暗档 5% 白 + blur10 + 减淡 opacity .6）与 source/ref
    圆钮两种玻璃并存 —— 现整族归一到聊天模板 token（--cv-bg/--cv-blur/
    --cv-saturate/--cv-border/--cv-shadow），减淡 opacity 退役（材质到位不靠
-   减淡，S4-2 同规）；尺寸/hover-active 同 --cv-* 档。 */
+   减淡，S4-2 同规）；尺寸/hover-active 同 --cv-* 档。
+   canvas 控件尺寸对齐批（2026-11-02）：尺寸 40 → 48（--cv-size-circle-lg），
+   槽位由调用方派生（html.js 112 → 128 = 引用钮 72 + 48 + 8；markdown.js 64 →
+   72 = 源码钮 16 + 48 + 8；monaco.js 16 不变 —— 源码态无簇，单钮独坐）。 */
 .canvas-find-toggle {
   position: absolute; bottom: 16px;
-  width: var(--cv-size-circle, 40px); height: var(--cv-size-circle, 40px); border-radius: 50%;
+  width: var(--cv-size-circle-lg, 48px); height: var(--cv-size-circle-lg, 48px); border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; z-index: 10; color: var(--color-text);
   transition: all .2s ease;
@@ -3407,6 +3458,16 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 a.nf-wikilink.nf-wikilink-term {
   text-decoration: underline dotted currentColor 1px;
   text-underline-offset: 3px;
+}
+
+/* 正文裸词识别（B5-1）：自动链接的词条取同一套点线底纹，但不改字色 ——
+   作者手写的引用是「信号」，自动生成的是「提示」：密度高一个量级，视觉必须
+   更轻；字色继承正文，只有底纹在标识可点。 */
+a.nf-term {
+  color: inherit;
+  text-decoration: underline dotted currentColor 1px;
+  text-underline-offset: 3px;
+  cursor: pointer;
 }
 
 /* ── 返回原文档按钮（词条引用批 batch 2, F5；作者令 2026-10-29 11:49

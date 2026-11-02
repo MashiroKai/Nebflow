@@ -3,24 +3,33 @@
 // IMG_1677「设置」/ IMG_1678「项目」）：B 批「iOS 大标题式」两态（左对齐大标题 +
 // 小字渐隐带）升级为**两段式**：
 //   静止态 = 页体流内**水平居中**大标题（28px/600）；吸附态 = 同页名的装饰副本
-//   收成一颗**毛玻璃胶囊**（高 32、左缘 ≥72、垂直中心 40），绝对悬浮、不占高度；
+//   收成一颗**毛玻璃胶囊**（高 48、左缘 72、垂直中心 40），绝对悬浮、不占高度；
 //   两段之间 = 滚动跟随的连续插值 --mtitle-p 0→1（区间 8→56），回滚反向展开。
 //   顶缘渐隐带 .mobile-page-title-band 整族退役（DOM 不再建）。
+//
+// ⚠ 面板头吸附胶囊高度批（2026-11-02 作者令 09:33「面板的进入胶囊状态的胶囊大小
+//   要和返回按钮上下宽度差不多大」）：胶囊高 32 → 48 = 返回钮高，垂直中心仍 40，
+//   左右内距 16 → 24（= 新半径 h/2）。本 spec 的 32 档读数随之改 48（改动逐条见
+//   P1/P2/P3 注释与 docs/20261102_title-capsule-height__<chain>.md）；宽度策略、
+//   大标题、插值区间、内容让位、返回钮全部不变。
 //
 // 覆盖（双引擎 Chromium/WebKit × 双主题 light/dark × 3 面板 × 三态）：
 //   P1 静止态：大标题 = 页体流内首件（static）、水平居中（text-align center +
 //      左右内缩 72）、28px/600、字距负档、墨色 = --color-frame-text-bright、
 //      opacity 1；盒高 52、盒顶 12、盒底 64 = 返回钮底缘、文字中心 = 钮中心 40；
-//      胶囊 opacity 0、几何恒 32 高；渐隐带节点零；「<」返回钮在场。
+//      胶囊 opacity 0、几何恒 48 高；渐隐带节点零；「<」返回钮在场。
 //   P2 阈值 + 插值：主滚轴 scrollTop 40（区间内）⇒ p≈0.667、不切 .rolled、
 //      大标题 opacity = 1−p、胶囊 opacity = p；scrollTop 300 ⇒ p=1、.rolled 成立、
-//      大标题收高（pane 收高 leg：h=0）、胶囊满透明且几何仍 32/中心 40/左缘 ≥72、
+//      大标题收高（pane 收高 leg：h=0）、胶囊满透明且几何仍 48/中心 40/左缘 ≥72、
 //      返回钮仍可点（z 序 6 > 胶囊 5 / 胶囊 pointer-events none）。
 //   P3 真滚轮回顶：mouse.wheel 上滚到顶 ⇒ p=0、.rolled 消失、大标题复现。
 //   P4 面板切换对账：A 面板吸附态离场 → 进 B 面板 ⇒ B 静止态（p=0，不继承吸附）。
 //   P5 reduced-motion：进度二值（只有 0/1），且大标题无位移量。
-//   P6 截图存证：375×812 每面板 静止/吸附中/回顶 三拍（引擎×主题×面板 = 36 张）。
-//   P7 零 console error，P8 桌面零触碰腿。
+//   P6 胶囊几何七条机械断言（胶囊高度批）：①高差 ≤2 ②中心偏差 ≤1 ③水平缝 8±1
+//      ④宽度随内容收缩（< vw×0.9）+ 圆角 999 ⑤文字不被裁 ⑥内容从胶囊下方流过
+//      ⑦19 页壳一致（短/中/长页名各档）。
+//   P7 截图存证：375×812 每面板 静止/吸附中/回顶 三拍（引擎×主题×面板 = 36 张）。
+//   P8 零 console error，P9 桌面零触碰腿。
 //
 // 数据面 = 自包含 harness（route 静态 + WS 夹具 + /api 夹具），零后端、零 sbt。
 // Run: node tests/mobile-panel-title.spec.mjs
@@ -52,8 +61,16 @@ const VH = 812;
 const ROLL_START = 8;
 const ROLL_SNAP = 56;
 const INSET = 72;
-const CAP_H = 32;
+// 胶囊高度批 2026-11-02：32 → 48（= 返回钮高；作者令「胶囊大小要和返回按钮上下
+// 宽度差不多大」）。中心 40 不动（高度只向上下对称生长）。
+const CAP_H = 48;
 const CAP_CENTER_Y = 40;
+// 返回钮几何（--mcap-h 的取值基准）：left 16 / 48×48 ⇒ 右缘 64、中心 40。
+const BACK_LEFT = 16;
+const BACK_SIZE = 48;
+const BACK_RIGHT = BACK_LEFT + BACK_SIZE; // 64
+const CAP_GAP = 8; // 胶囊左缘 72 − 返回钮右缘 64
+const CAP_PAD = 24; // --mcap-pad（= 新半径 h/2 = 24）
 
 let failures = 0;
 const ok = (name, cond, extra = '') => {
@@ -235,8 +252,19 @@ async function probe(page, pageId) {
       titlePE: t.pointerEvents,
       miniOpacity: Math.round(parseFloat(m.opacity) * 1000) / 1000,
       miniH: Math.round(mb.height),
+      // 胶囊高度批 2026-11-02 七条机械断言的读数面（高度/中心/缝/宽度/内距/裁字）。
+      miniHExact: Math.round(mb.height * 100) / 100,
+      miniW: Math.round(mb.width * 100) / 100,
+      miniPadL: m.paddingLeft,
+      miniPadR: m.paddingRight,
+      miniLineHeight: m.lineHeight,
+      miniText: mini.textContent || '',
+      miniScrollW: mini.scrollWidth,
+      miniClientW: mini.clientWidth,
       miniCenterY: Math.round(mb.top + mb.height / 2),
+      miniCenterYExact: Math.round((mb.top + mb.height / 2) * 100) / 100,
       miniLeft: Math.round(mb.left),
+      miniLeftExact: Math.round(mb.left * 100) / 100,
       miniRight: Math.round(mb.right),
       miniCenterX: Math.round(mb.left + mb.width / 2),
       miniPE: m.pointerEvents,
@@ -245,12 +273,41 @@ async function probe(page, pageId) {
       miniBg: m.backgroundColor,
       miniBlur: m.backdropFilter || m.webkitBackdropFilter || '',
       miniRadius: m.borderRadius,
-      backCenterY: bb ? Math.round(bb.top + bb.height / 2) : -1,
+      // 文字实际渲染宽度（Range 量文本节点，不受 padding 影响）。
+      miniTextW: (() => {
+        const r = document.createRange();
+        r.selectNodeContents(mini);
+        const rects = [...r.getClientRects()];
+        if (!rects.length) return 0;
+        return Math.round((Math.max(...rects.map((x) => x.right)) - Math.min(...rects.map((x) => x.left))) * 100) / 100;
+      })(),
+      backW: bb ? Math.round(bb.width * 100) / 100 : -1,
+      backH: bb ? Math.round(bb.height * 100) / 100 : -1,
+      backLeft: bb ? Math.round(bb.left * 100) / 100 : -1,
+      backRight: bb ? Math.round(bb.right * 100) / 100 : -1,
+      backTop: bb ? Math.round(bb.top * 100) / 100 : -1,
       backBottom: bb ? Math.round(bb.bottom) : -1,
+      backCenterY: bb ? Math.round(bb.top + bb.height / 2) : -1,
+      backCenterYExact: bb ? Math.round((bb.top + bb.height / 2) * 100) / 100 : -1,
       backZ: bs ? bs.zIndex : '',
       backPE: bs ? bs.pointerEvents : '',
       backVisible: !!back && bs.display !== 'none',
       bandCount: sec.querySelectorAll('.mobile-page-title-band').length,
+      // ⑥ 内容仍从胶囊下方流过：吸附态下把页体内容件的渲染盒与胶囊盒求交。
+      contentOverlapsCapsule: (() => {
+        const bodyEl = sec.querySelector('.mobile-page-body');
+        if (!bodyEl) return { any: false, n: 0, sample: '' };
+        let n = 0; let sample = '';
+        for (const el of bodyEl.querySelectorAll('*')) {
+          if (el.classList.contains('mobile-page-title')) continue;
+          if (el.closest('.mobile-page-title')) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0) continue;
+          const inter = !(r.right <= mb.left || r.left >= mb.right || r.bottom <= mb.top || r.top >= mb.bottom);
+          if (inter) { n += 1; if (!sample) sample = `${el.tagName.toLowerCase()}.${(el.className || '').toString().split(' ')[0]}`; }
+        }
+        return { any: n > 0, n, sample };
+      })(),
       vw: window.innerWidth,
     };
   }, pageId);
@@ -324,7 +381,7 @@ async function panelLeg(page, tag, pageId, hoverSel) {
   ok(`${tag} 大标题盒底 64 = 返回钮底缘`, p0.titleBottom === 64 && p0.backBottom === 64, `title=${p0.titleBottom} back=${p0.backBottom}`);
   ok(`${tag} 大标题文字中心 = 返回钮中心（40，同轴）`, p0.titleTextCenterY === CAP_CENTER_Y && p0.backCenterY === CAP_CENTER_Y, `text=${p0.titleTextCenterY} back=${p0.backCenterY}`);
   ok(`${tag} 静止态胶囊 opacity 0`, p0.miniOpacity === 0, `got ${p0.miniOpacity}`);
-  ok(`${tag} 胶囊高度恒 32（--mcap-h）`, p0.miniH === CAP_H, `h=${p0.miniH}`);
+  ok(`${tag} 胶囊高度恒 48（--mcap-h，胶囊高度批 2026-11-02）`, p0.miniH === CAP_H, `h=${p0.miniH}`);
   ok(`${tag} 胶囊垂直中心 40（= 返回钮中心）`, p0.miniCenterY === CAP_CENTER_Y, `cy=${p0.miniCenterY}`);
   ok(`${tag} 胶囊横向居中（页面中轴）`, near(p0.miniCenterX, p0.vw / 2, 1), `cx=${p0.miniCenterX} vw=${p0.vw}`);
   ok(`${tag} 胶囊右缘不越返回钮禁区（左缘 ≥ 72）`, p0.miniLeft >= INSET - 1, `left=${p0.miniLeft}`);
@@ -363,7 +420,7 @@ async function panelLeg(page, tag, pageId, hoverSel) {
   ok(`${tag} 区间内不切 .rolled（${a40.top} < 56）`, !mid.rolled);
   ok(`${tag} 区间内大标题 opacity = 1−p（连续跟手）`, near(mid.titleOpacity, 1 - p40, 0.02), `got ${mid.titleOpacity}`);
   ok(`${tag} 区间内胶囊 opacity = p（连续跟手）`, near(mid.miniOpacity, p40, 0.02), `got ${mid.miniOpacity}`);
-  ok(`${tag} 区间内胶囊几何不漂（h 32 / 中心 40）`, mid.miniH === CAP_H && mid.miniCenterY === CAP_CENTER_Y, `${mid.miniH}/${mid.miniCenterY}`);
+  ok(`${tag} 区间内胶囊几何不漂（h 48 / 中心 40）`, mid.miniH === CAP_H && mid.miniCenterY === CAP_CENTER_Y, `${mid.miniH}/${mid.miniCenterY}`);
   await page.screenshot({ path: join(SHOTS, `${tag}-mid.png`) });
 
   const s300 = await setScroll(page, pageId, 300);
@@ -374,10 +431,58 @@ async function panelLeg(page, tag, pageId, hoverSel) {
   ok(`${tag} 吸附态大标题 opacity 0`, near(top.titleOpacity, 0, 0.01), `got ${top.titleOpacity}`);
   ok(`${tag} 吸附态大标题不拦交互（pointer-events none）`, top.titlePE === 'none', top.titlePE);
   ok(`${tag} 吸附态顶区零占位（大标题收高 → 0）`, top.titleH === 0, `h=${top.titleH}`);
-  ok(`${tag} 吸附态胶囊几何 = 32 高 / 中心 40 / 左缘 ≥72`, top.miniH === CAP_H && top.miniCenterY === CAP_CENTER_Y && top.miniLeft >= INSET - 1, `${top.miniH}/${top.miniCenterY}/${top.miniLeft}`);
+  ok(`${tag} 吸附态胶囊几何 = 48 高 / 中心 40 / 左缘 ≥72`, top.miniH === CAP_H && top.miniCenterY === CAP_CENTER_Y && top.miniLeft >= INSET - 1, `${top.miniH}/${top.miniCenterY}/${top.miniLeft}`);
   ok(`${tag} 吸附态胶囊仍横向居中`, near(top.miniCenterX, top.vw / 2, 1), `cx=${top.miniCenterX}`);
   ok(`${tag} 吸附态返回钮仍在胶囊左侧且可点（z 6 > 5）`, top.backVisible && Number(top.backZ) > Number(top.miniZ), `backZ=${top.backZ} miniZ=${top.miniZ}`);
   await page.screenshot({ path: join(SHOTS, `${tag}-snapped.png`) });
+
+  // ── 胶囊几何七条机械断言（胶囊高度批 2026-11-02，吸附态实测面）──
+  // ① 高差：胶囊渲染高 vs 返回钮渲染高 ≤2px。
+  ok(`${tag} ① 胶囊高 ↔ 返回钮高 |差| ≤2px（实测 胶囊 ${top.miniHExact} / 钮 ${top.backH}）`,
+    Math.abs(top.miniHExact - top.backH) <= 2, `cap=${top.miniHExact} back=${top.backH}`);
+  // ② 垂直中心同轴：偏差 ≤1px（40 轴线不破）。
+  ok(`${tag} ② 胶囊中心 ↔ 返回钮中心 |偏| ≤1px（实测 胶囊 ${top.miniCenterYExact} / 钮 ${top.backCenterYExact}）`,
+    Math.abs(top.miniCenterYExact - top.backCenterYExact) <= 1, `cap=${top.miniCenterYExact} back=${top.backCenterYExact}`);
+  // ③ 水平缝：胶囊左缘 − 返回钮右缘 = 8px（±1）。
+  //    几何事实：胶囊**横向居中**（left:50% + translate −50%）、宽度 max-content
+  //    随页名收缩，故 8px 是「胶囊撑到上限（max-width = 100% − 2×72）」时的缝；
+  //    短页名胶囊更窄、缝更大。故本断言分两臂：
+  //    ③a 真实页名：缝 ≥ 8（永不重叠，8 是最小保证）；
+  //    ③b 上限饱和探针：把文本临时换成长串逼到 max-width ⇒ 缝必须落在 8±1。
+  const realGap = Math.round((top.miniLeftExact - top.backRight) * 100) / 100;
+  ok(`${tag} ③a 胶囊不压返回钮（缝 ≥ 8px：实测 ${realGap}，左 ${top.miniLeftExact} / 钮右 ${top.backRight}）`,
+    realGap >= CAP_GAP - 1, `gap=${realGap}`);
+  const sat = await page.evaluate((pid) => {
+    const sec = document.querySelector(`#mobile-pages .mobile-page[data-page="${pid}"]`);
+    const mini = sec.querySelector('.mobile-page-title-mini');
+    const back = sec.querySelector('.mobile-back-btn');
+    const old = mini.textContent;
+    mini.textContent = '胶囊上限饱和探针页名 W'.repeat(4); // 必然越过 max-width
+    const mb = mini.getBoundingClientRect();
+    const bb = back.getBoundingClientRect();
+    mini.textContent = old; // 复原（本探针只量几何，不留痕）
+    return {
+      gap: Math.round((mb.left - bb.right) * 100) / 100,
+      w: Math.round(mb.width * 100) / 100,
+      maxW: getComputedStyle(mini).maxWidth,
+      vw: window.innerWidth,
+    };
+  }, pageId);
+  ok(`${tag} ③b 上限饱和时缝 = 8px±1（实测 ${sat.gap}；胶囊宽 ${sat.w} = max-width ${sat.maxW}，vw ${sat.vw}）`,
+    Math.abs(sat.gap - CAP_GAP) <= 1 && Math.abs(sat.w - (sat.vw - 2 * INSET)) <= 1, `gap=${sat.gap} w=${sat.w}`);
+  // ④ 宽度随内容收缩（< vw×0.9）+ 圆角 999 档。
+  ok(`${tag} ④ 胶囊宽度随内容收缩（< vw×0.9 = ${Math.round(top.vw * 0.9)}）+ 圆角 999（实测 w=${top.miniW} r=${top.miniRadius}）`,
+    top.miniW < top.vw * 0.9 && top.miniRadius === '999px', `w=${top.miniW} vw=${top.vw} r=${top.miniRadius}`);
+  // ⑤ 文字不被圆角裁切：文字宽 + 左内距 + 右内距 ≤ 胶囊宽（内距 24 = 新半径，
+  //    保证文字整段落在直段内）。
+  const textFit = Math.round((top.miniTextW + parseFloat(top.miniPadL) + parseFloat(top.miniPadR)) * 100) / 100;
+  ok(`${tag} ⑤ 文字不溢出/不被圆角裁（文字 ${top.miniTextW} + 内距 ${top.miniPadL}+${top.miniPadR} = ${textFit} ≤ 胶囊宽 ${top.miniW}）`,
+    textFit <= top.miniW + 0.5, `${textFit} vs ${top.miniW}`);
+  ok(`${tag} ⑤b 胶囊内距 = 24（= 半径 h/2，文字落直段内）`, top.miniPadL === `${CAP_PAD}px` && top.miniPadR === `${CAP_PAD}px`, `${top.miniPadL}/${top.miniPadR}`);
+  // ⑥ 内容仍从胶囊下方流过（页体内容件与胶囊渲染盒相交）。
+  ok(`${tag} ⑥ 内容仍从胶囊下方流过（相交件 ${top.contentOverlapsCapsule.n} 个，示例 ${top.contentOverlapsCapsule.sample}）`,
+    top.contentOverlapsCapsule.any, `n=${top.contentOverlapsCapsule.n}`);
+
 
   // ── P3 真滚轮回顶（形态反向插值展开）──
   const box = await page.locator(hoverSel).first().boundingBox();
@@ -455,6 +560,77 @@ async function reducedMotionLeg() {
   }
 }
 
+/* ── ⑦ 全页壳一致腿（胶囊高度批 2026-11-02）────────────────────────────
+   19+ 个手机页壳共用同一份 .mobile-page-title-mini 规则（吸附胶囊），但页名
+   长短跨度很大（「设置」2 字 ↔ 「旧工具结果清理」6 字 ↔「Jev（插件分配）」）。
+   高度档换到 48 后必须逐壳复验：胶囊高 = 48、中心 = 40、内距 = 24、圆角 999、
+   左缘 ≥ 72（不压返回钮）、文字不被 ellipsis 裁（scrollWidth ≤ clientWidth+1）。
+   面 = navController.PAGES 全表（dock 根页无返回钮/无胶囊，按设计排除），
+   走 pushPage 导航 = 每壳的真实 shell 构建路径（非 DOM 手搭）。 */
+async function shellLeg() {
+  const page = await boot('light', 'chromium');
+  try {
+    const ids = await page.evaluate(async () => {
+      const nav = await import('/js/mobile/navController.js');
+      return nav.PAGES.filter((p) => !p.dock).map((p) => p.id);
+    });
+    ok('⑦ 页壳表在场（PAGES 非根页 ≥ 19）', ids.length >= 19, `n=${ids.length}`);
+    const rows = [];
+    for (const id of ids) {
+      const r = await page.evaluate(async (pid) => {
+        const nav = await import('/js/mobile/navController.js');
+        try { nav.pushPage(pid); } catch (e) { return { id: pid, err: String(e).slice(0, 80) }; }
+        await new Promise((res) => setTimeout(res, 420));
+        const sec = document.querySelector(`#mobile-pages .mobile-page.live[data-page="${pid}"]`);
+        const mini = sec && sec.querySelector('.mobile-page-title-mini');
+        const back = sec && sec.querySelector('.mobile-back-btn');
+        if (!mini) return { id: pid, noMini: true };
+        const mb = mini.getBoundingClientRect();
+        const bb = back ? back.getBoundingClientRect() : null;
+        const cs = getComputedStyle(mini);
+        return {
+          id: pid,
+          text: (mini.textContent || '').trim(),
+          w: +mb.width.toFixed(1),
+          h: +mb.height.toFixed(1),
+          cy: +(mb.top + mb.height / 2).toFixed(1),
+          left: +mb.left.toFixed(1),
+          padL: cs.paddingLeft,
+          padR: cs.paddingRight,
+          radius: cs.borderRadius,
+          backH: bb ? +bb.height.toFixed(1) : null,
+          clipped: mini.scrollWidth > mini.clientWidth + 1,
+        };
+      }, id);
+      rows.push(r);
+      await page.evaluate(async () => { const nav = await import('/js/mobile/navController.js'); try { nav.popToRoot(); } catch { /* at root */ } });
+      await page.waitForTimeout(140);
+    }
+    const miss = rows.filter((r) => r.noMini || r.err);
+    ok('⑦ 每个页壳都建了吸附胶囊（零缺失）', miss.length === 0, JSON.stringify(miss.slice(0, 4)));
+    const live = rows.filter((r) => !r.noMini && !r.err);
+    const badH = live.filter((r) => Math.abs(r.h - CAP_H) > 1);
+    const badCy = live.filter((r) => Math.abs(r.cy - CAP_CENTER_Y) > 1);
+    const badPad = live.filter((r) => r.padL !== `${CAP_PAD}px` || r.padR !== `${CAP_PAD}px`);
+    const badR = live.filter((r) => r.radius !== '999px');
+    const badLeft = live.filter((r) => r.left < INSET - 1);
+    const badClip = live.filter((r) => r.clipped);
+    const badBack = live.filter((r) => r.backH != null && Math.abs(r.backH - CAP_H) > 1);
+    ok(`⑦ 全部页壳胶囊高 = 48（${live.length} 壳）`, badH.length === 0, JSON.stringify(badH.map((r) => `${r.id}:${r.h}`)));
+    ok('⑦ 全部页壳胶囊中心 = 40', badCy.length === 0, JSON.stringify(badCy.map((r) => `${r.id}:${r.cy}`)));
+    ok('⑦ 全部页壳内距 = 24（= 半径 h/2）', badPad.length === 0, JSON.stringify(badPad.map((r) => `${r.id}:${r.padL}/${r.padR}`)));
+    ok('⑦ 全部页壳圆角 999', badR.length === 0, JSON.stringify(badR.map((r) => `${r.id}:${r.radius}`)));
+    ok('⑦ 全部页壳胶囊左缘 ≥ 72（不压返回钮）', badLeft.length === 0, JSON.stringify(badLeft.map((r) => `${r.id}:${r.left}`)));
+    ok(`⑦ 全部页壳文字不被裁（短/中/长页名各档）`, badClip.length === 0, JSON.stringify(badClip.map((r) => `${r.id}:${r.text}`)));
+    ok('⑦ 全部页壳返回钮高 = 48（胶囊高差基准同表）', badBack.length === 0, JSON.stringify(badBack.map((r) => `${r.id}:${r.backH}`)));
+    const ws = live.map((r) => r.w).sort((a, b) => a - b);
+    ok('⑦ 宽度随页名收缩（最短/最长极差 > 40px，非定宽）', ws.length > 2 && ws[ws.length - 1] - ws[0] > 40,
+      `min=${ws[0]} max=${ws[ws.length - 1]} sample=${live.slice(0, 4).map((r) => `${r.text}@${r.w}`).join(' / ')}`);
+  } finally {
+    await page.close();
+  }
+}
+
 /* ── 桌面零触碰腿 ─────────────────────────────────────────────────────── */
 async function desktopLeg() {
   const engine = chromium;
@@ -517,6 +693,7 @@ for (const engineName of ['chromium', 'webkit']) {
   }
 }
 await reducedMotionLeg();
+await shellLeg();
 await desktopLeg();
 
 ok('零 console error（双引擎×双主题全腿 + reduced-motion + 桌面腿，噪声过滤后硬零）', consoleErrors.length === 0,

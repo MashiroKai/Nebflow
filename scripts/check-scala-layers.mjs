@@ -40,6 +40,10 @@ const EXEMPT_PATH = join(ROOT, 'scripts', 'layer-exemptions.json');
 // 声明层次:下标越小越底层。新增顶层包必须显式入表——不在表内即 exit 2,
 // 逼一次有意识的分层裁定,而不是无声漏边。
 const LAYER_ORDER = [
+  'prompts',  // 最底:提示词常量单源(提示词单文件批 2026-11-01),零业务依赖 ——
+              // 它被 shared/core/agent/llm 各层引用,自己一个包都不准引;
+              // 放在 shared 之下 = 任何反向边都判违规。专项从严闸见
+              // scripts/check-prompt-catalog-imports.mjs。
   'shared',   // 底层:纯支撑面(日志等),零上层依赖
   'actor',    // 底层:actor 原语
   'core',     // 引擎核心:只准依赖底下两层(C/D 步倒置 core→agent/core→gateway 后成形)
