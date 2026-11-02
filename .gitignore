@@ -27,6 +27,7 @@ SKEL
 archives/
 temp/
 tmp/
+# 过程产物：报告与知识文档 —— 本地保留，永不入库（作者裁定 2026-11-02）
 docs/
 test-envs.sh
 # CHANGELOG.md / CODEBASE.md are kept OUT of git tracking by author ruling
@@ -116,3 +117,7 @@ replay_pid*
 
 # ZCode 工作流运行器生成的排除清单(harness-owned,不入库)
 .zcodeignore
+
+# 过程产物：调试截图 / 批报告 / 视觉基准帧 —— 本地保留，永不入库（作者裁定 2026-11-02）
+/evidence/
+/reports/
