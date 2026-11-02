@@ -395,13 +395,23 @@ private[agent] object AgentProcessing:
                   ) + jitter
               enterErrorFrozen(agentDef, resources, depth, parentRef, state, replyTo, errReason, resumeInMs, error)
             else
+              // 2026-11-02「循环检测误杀整批任务」批 ③：L1 终止路径的**交付面
+              // 文本** = 终止原因 + 被终止那一轮已产出的助手输出（salvagedText）。
+              // 该轮文本从未进 transcript（本路径不投 ToolsComplete），若不在这
+              // 里带出，就会随一条卡死的命令一起蒸发：节点 results/<nodeId>.md
+              // 只写错误串，父会话/用户只看到 "loop-detected"。fullMessage 把
+              // 「已完成的部分」并列进 AgentError.message（⇒ AgentEvent.Failed ⇒
+              // NodeStarter FailOutcome ⇒ failNode 的 result 文件）与 WS error 帧。
+              val errorText = error match
+                case e: LoopDetectedError => e.fullMessage
+                case _ => error.getMessage
               val agentError =
                 AgentError(
                   ctx.self.path.name,
                   agentDef.name,
                   depth,
                   AgentErrorType.LlmFailed,
-                  error.getMessage,
+                  errorText,
                   retryable = Some(AgentActor.llmFailureRetryable(error))
                 )
               val errMsg = error match
@@ -424,7 +434,8 @@ private[agent] object AgentProcessing:
                 case e: ToolPipelineError =>
                   e.message
                 case e: LoopDetectedError =>
-                  e.getMessage
+                  // 用户可见面同 AgentError.message：终止原因 + 抢救的最后一轮输出
+                  e.fullMessage
                 case _ =>
                   NebflowError.toUserMessage(
                     NebflowError.Internal(Option(error.getMessage).getOrElse("internalError"))

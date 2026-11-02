@@ -853,7 +853,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             // F-2 M1/M3：计数键 = 设备**成员集合**（与 `devInfo` 同帧的读数）。
             deviceMemberKey = deviceMemberKey
           )
-          // 消息身份牌宣告（msgtokens 批 2026-10-31）：真用户轮把本条消息的牌经
+          // 消息身份牌宣告（msgtokens 批 2026-11-02）：真用户轮把本条消息的牌经
           // 请求级 reminder 下发（context 族——非持久化，compact/ask 轮被下方注入闸
           // 抑制；映射本体在会话级 JSONL，压缩/重启后仍可按文本反查）。未铸牌 = None =
           // 零注入零噪声（机制关 / 旧会话无牌史）。铸牌点 = AgentIdle 直投腿 +
@@ -1022,7 +1022,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           workerThinking =
             if depth > 0 then nebflow.shared.ThinkingConfig.cappedForSubagent(turnCtx.thinkingConfig)
             else turnCtx.thinkingConfig
-          // ask 思考低档（2026-10-31 换装批，作者令「思考强度低」）：ask 会话
+          // ask 思考低档（2026-11-02 换装批，作者令「思考强度低」）：ask 会话
           // （ask- 前缀身份，AskSessions 单点）逐请求 effort 强制 low——经
           // req.thinking 语义载体的 effort 键携带（toLlmJson 主面不变；非 ask
           // 会话该键恒缺席 ⇒ 行为逐字节不变），interface.resolveThinkingFor 单点
@@ -1563,7 +1563,19 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           // 链（supervisor notify / team 成员父 ExternalEvent(failed) / Done / 持久化）。
           // 计数器（含 terminatedFps）随 LlmFailed 写回——后续 turn 同 fp 复发
           // → recurrence → L2 冻结。
-          ctx.self ! AgentCommand.LlmFailed(LoopDetectedError(t.msg), replyTo, state.currentTurnId, Some(loopCounters))
+          //
+          // 2026-11-02「误杀整批」批 ③：终止前把**本轮已产出的文本**随错误带出
+          // （salvagedText）——它进不了 transcript（本路径不投 ToolsComplete），
+          // fatal 链会把它拼进 AgentError.message ⇒ 节点 results/<nodeId>.md /
+          // WS error 帧 / 父会话失败载荷三面可见，整批工作不再随一条卡死的命令
+          // 一起蒸发。工具批的产物（文件、命令输出）本就在盘上，文本是唯一
+          // 会凭空消失的那部分。
+          ctx.self ! AgentCommand.LlmFailed(
+            LoopDetectedError(t.msg, salvagedText = result.text),
+            replyTo,
+            state.currentTurnId,
+            Some(loopCounters)
+          )
         case w: nebflow.core.processor.LoopGuard.Verdict.Warn =>
           // L0：正常续轮 + loopReminder（下一轮 user system-reminder 注入，D3）
           ctx.self ! ToolsComplete(
@@ -2313,7 +2325,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     /** 双模式批：delegate 会话生效执行形态（None = 总闸关/未判定——本参数全部分叉即失效）。 */
     delegateMode: Option[String] = None
   ): Set[String] =
-    // Canvas ask mode（2026-10-28 实施批，机制稿 §5；2026-10-31 换装批）：白名单
+    // Canvas ask mode（2026-10-28 实施批，机制稿 §5；2026-11-02 换装批）：白名单
     // **封闭枚举**早退——ask 会话工具面 = AskSessions.AllowedTools（ask 专属两件
     // + 只读五件 Read/Glob/Grep/WebSearch/WebFetch，后者与 Subagent 侦察面同源），
     // 白名单外一律不下发（含 bash/edit/write 等一切编辑与编排工具，作者令点名

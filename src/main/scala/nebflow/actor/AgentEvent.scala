@@ -102,7 +102,29 @@ case class ToolPipelineError(message: String) extends RuntimeException(message)
  * turn 级终止。分类=Permanent（不重试不冻结）→ LlmFailed fatal 链（supervisor
  * notify / team 成员父 ExternalEvent(failed, retryable=true) / 持久化）。
  */
-final case class LoopDetectedError(message: String) extends RuntimeException(message)
+final case class LoopDetectedError(message: String, salvagedText: String = "") extends RuntimeException(message):
+  /**
+   * 交付面文本 = 终止原因 + 被终止那一轮**已产出**的助手输出。
+   *
+   * 2026-11-02「循环检测误杀整批任务」批 ③：L1 终止路径此前不投 ToolsComplete
+   * ⇒ 触发终止的那一轮的 assistant 文本（分析结论 / 算出来的数据 / 已写文件
+   * 的说明）既不进 transcript 也不进任何交付面——整批工作跟着一条卡死的命令
+   * 一起蒸发（节点 result 文件只写错误串）。修法 = 把该轮文本随错误对象带出，
+   * 由 fatal 链写进 AgentError.message ⇒ 节点 `results/<nodeId>.md`、WS error
+   * 帧、父会话失败载荷三面同时可见。
+   */
+  def fullMessage: String =
+    val s = Option(salvagedText).getOrElse("").trim
+    if s.isEmpty then Option(message).getOrElse("loop detected")
+    else
+      s"""${Option(message).getOrElse("loop detected")}
+         |
+         |[salvaged: last-turn output of the terminated session — this work is NOT lost; it was never persisted to the transcript, so it is carried here]
+         |${s.take(LoopDetectedError.SalvageMaxChars)}""".stripMargin
+
+object LoopDetectedError:
+  /** 抢救段最大字符数（节点 result 文件 / 父通知载荷的体量闸）。 */
+  val SalvageMaxChars: Int = 8000
 
 sealed trait AgentEvent
 
