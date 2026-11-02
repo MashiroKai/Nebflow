@@ -2005,6 +2005,7 @@ export default {
   'canvas.zoomIn': 'Zoom in',
   'canvas.zoomFit': 'Fit to view',
   'canvas.pan': 'Pan (or hold Space)',
+  'canvas.a11yZoomLevel': 'Zoom %d%', // mobile gesture batch: mobile-layer image viewer aria-live zoom level (spec §2.8)
   'canvas.imgFailed': 'Failed',
   'canvas.closeTab': 'Close tab',
   'canvas.stackToggle': 'Stacked cards (wheel / vertical drag to switch · click front card to bring in · swipe away to close)',
