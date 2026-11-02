@@ -1,0 +1,7 @@
+
+Running 3 tests using 1 worker
+
+[1/3] tests/mobile-topbar.spec.mjs:100:1 › T1 根页顶栏退役：消息/联系人/工作台/canvas 无页头无标题胶囊，详情页顶栏不变
+[2/3] tests/mobile-topbar.spec.mjs:118:1 › T2 头像搬家：工作台顶部头像入口在场同态，设置页头像位/设备区撤掉（手机层）
+[3/3] tests/mobile-topbar.spec.mjs:142:1 › T3 个人主页层级：点头像进 me 页，用户名/头像/绑定子页铺满屏可返回
+  3 passed (4.4s)

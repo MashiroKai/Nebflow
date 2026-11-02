@@ -3,8 +3,11 @@
 //  Reminder；接我们自己的待办工具是下一步」）。
 //
 // 面形态（作者令三条）：
-//   · 静默态  桌面 = agent 名字下的胶囊（#task-list 槽位改造——收起态紧凑摘要：
-//     提醒点 + 待办数 + 逾期数；点开 = ReminderIsland 刘海展开节奏）；
+//   · 静默态  桌面 = **输入框下方居中小胶囊**（待办胶囊重做批，作者令 2026-11-02
+//     11:52「收缩到只显示 8 待办 这么几个文字的大小程度的一个在对话框下方的
+//     一个胶囊」）：宽度由内容决定（内联 flex + 左右对称内距），有逾期时**翻面**
+//     成「N 逾期」（红字），两态外框宽高严格相等（宽度由 inline-grid 叠层取两态
+//     最大自然宽，构造上恒等）；点开 = 自胶囊向上生长的浮层面板。
 //     手机 = 左侧悬浮圆钮照旧（chatChrome FAB），点开进任务页 = 本面展开态。
 //   · 展开态 = ReminderIsland ReminderListView 整体复刻：极简头（计数/筛选/收起）、
 //     可折叠筛选栏（All + 标签 chips + 新建 + 重要度四签）、列表行（重要度点/
@@ -170,22 +173,45 @@ class TodoFace {
   // ── DOM 骨架 ──────────────────────────────────────────────────────────
 
   buildDom() {
-    // 卡容器 = 刘海形变载体（胶囊 ⇄ 面板高度/圆角弹簧）
-    this.card = el('div', 'tfl-card');
-    this.card.dataset.state = this.expanded ? 'open' : 'capsule';
-    if (this.mobile) this.card.classList.add('tfl-mobile');
+    // 挂载槽（重做批）：胶囊行的居中容器 —— 宽度 100%、内容 inline-flex 居中
+    // （#task-list 本身仍是流内块，胶囊不再 let 宽度跟随容器 width:100%）。
+    this.mount = el('div', 'tfl-mount');
 
-    // 胶囊（静默态）
+    // 胶囊（静默态）。宽度策略 = **两态取最大自然宽**，由布局引擎算（inline-grid
+    // 两格叠同一格 = max-content 合成），不写死数值、不需要 canvas 量字：
+    //   外框 = inline-flex（宽度 = 内容），内层 `.tfl-cap-faces` = inline-grid
+    //   单一格，两个文案副本各占同一格 ⇒ 胶囊宽 = max(「N 待办」「N 逾期」)，
+    //   窄的那面在格内居中 ⇒ 翻面前后外框宽严格相等（0px）、内容始终居中，
+    //   左右内距由同一 padding 对称给出；三位数（如 888 待办）自然撑宽不溢出。
     this.capsule = el('button', 'tfl-capsule');
     this.capsule.type = 'button';
     this.capsule.setAttribute('aria-expanded', String(this.expanded));
     this.capsule.setAttribute('aria-label', t('todoface.aria'));
     this.capsuleDot = el('span', 'tfl-capsule-dot');
+    this.capsuleFaces = el('span', 'tfl-cap-faces');
+    // 两面：待办面（默认）/ 逾期面（翻面）。同一时刻只有一面在流内
+    // （另一面 visibility:hidden + aria-hidden）—— 无并排、无「待办」数字
+    // 残留在读屏/取文本口径里（断言 ⑤：逾期时「待办」不可见且不可读）。
+    this.faceTodo = el('span', 'tfl-cap-face tfl-cap-face-todo');
     this.capsuleCount = el('span', 'tfl-capsule-count');
+    this.faceTodo.appendChild(this.capsuleCount);
+    this.faceOverdue = el('span', 'tfl-cap-face tfl-cap-face-overdue');
     this.capsuleOverdue = el('span', 'tfl-capsule-overdue');
-    this.capsule.append(this.capsuleDot, this.capsuleCount, this.capsuleOverdue);
-    this.capsule.addEventListener('click', () => this.expand());
-    this.card.appendChild(this.capsule);
+    this.faceOverdue.appendChild(this.capsuleOverdue);
+    this.capsuleFaces.append(this.faceTodo, this.faceOverdue);
+    this.capsule.append(this.capsuleDot, this.capsuleFaces);
+    // 点击 = 展开；已展开时再点 = 收起（胶囊在浮层下方始终可点，作 toggle）
+    this.capsule.addEventListener('click', () => {
+      if (this.expanded) this.collapse(); else this.expand();
+    });
+
+    // 面板容器 = 展开态面板（`.tfl-card`）。静默态 display:none（零占位）；
+    // 开态 = 挂载槽内的流内块，排在胶囊**之前** ⇒ 面板出现在胶囊上方、自胶囊
+    // 位置向上生长（#input-area 是 bottom 锚定的绝对层 ⇒ 高度只向上长，
+    // 输入框自身位置不动；聊天让位读 #input-area.offsetHeight，零 JS 改动）。
+    this.card = el('div', 'tfl-card');
+    this.card.dataset.state = this.expanded ? 'open' : 'capsule';
+    if (this.mobile) this.card.classList.add('tfl-mobile');
 
     // 面板（展开态 = ReminderListView 整体）
     this.panel = el('div', 'tfl-panel');
@@ -201,7 +227,14 @@ class TodoFace {
     this.footer = el('div', 'tfl-footer');
     this.panel.append(this.header, this.filterWrap, this.listScroll, this.footer);
     this.card.appendChild(this.panel);
-    this.root = this.card;
+    // DOM 顺序 = 面板在前、胶囊在后（面板排在胶囊上方；声明顺序即视觉顺序）
+    this.mount.appendChild(this.card);
+    this.mount.appendChild(this.capsule);
+    this.root = this.mount;
+    if (this.mobile) {
+      // 手机 = 页面即展开态：挂载槽即页面体，卡容器回退为流内块（CSS .tfl-mobile）
+      this.mount.classList.add('tfl-mount-mobile');
+    }
   }
 
   buildHeader() {
@@ -303,12 +336,43 @@ class TodoFace {
     if (this.expanded && !this.mobile && !this.outsideBound) this.bindOutsideClose();
   }
 
+  /** 胶囊渲染 = 翻面语义（待办胶囊重做批 2026-11-02 11:52）。
+   *
+   *  语义：`overdueCount() > 0` → 显示「N 逾期」（红字，dot 转红）；
+   *        `overdueCount() === 0` → 显示「N 待办」。
+   *  即「逾期优先、不同时显示」—— 与作者原文「出现逾期的时候就是翻转一下
+   *  然后只显示 1 逾期 胶囊的大小不改变」逐条对齐（不是并排两段）。
+   *
+   *  翻转落地：两个面常驻 DOM、叠在同一 grid 格内（宽度恒 = 两态最大自然宽，
+   *  CSS 承担），本函数只切 `.is-overdue` 类 —— 类切换驱动 CSS `@keyframes`
+   *  tfl-cap-flip（前半程旧面不可见、后半程新面不可见 ⇒ 过渡期间外框零形变、
+   *  不留并排中间态）。`prefers-reduced-motion: reduce` 下动画整条退役（CSS）
+   *  ⇒ 直接换面，状态读数一致。*/
   renderCapsule() {
     const n = todoStore.openCount();
     const od = todoStore.overdueCount();
     this.capsuleCount.textContent = t('todoface.capsuleCount', { n: String(n) });
-    this.capsuleOverdue.textContent = od > 0 ? t('todoface.overdue', { n: String(od) }) : '';
-    this.capsule.classList.toggle('has-overdue', od > 0);
+    this.capsuleOverdue.textContent = t('todoface.overdue', { n: String(od) });
+    const overdue = od > 0;
+    const prevFace = this.capFace; // 'overdue' | 'todo' | undefined（首次渲染不播）
+    this.capFace = overdue ? 'overdue' : 'todo';
+    this.capsule.classList.toggle('has-overdue', overdue);
+    this.capsule.classList.toggle('is-overdue', overdue);
+    // 翻面动画只在「面真的换了」那一拍播一次（同一面内的数字增减不重播）
+    if (prevFace !== undefined && prevFace !== this.capFace) {
+      this.capsule.classList.remove('tfl-cap-flip');
+      void this.capsule.offsetWidth; // 强制回流，重启动画
+      this.capsule.classList.add('tfl-cap-flip');
+      clearTimeout(this.capFlipTimer);
+      this.capFlipTimer = setTimeout(() => {
+        if (this.capsule) this.capsule.classList.remove('tfl-cap-flip');
+      }, 260);
+    }
+    // 翻面态的可读性收口：非当期面 aria-hidden + 胶囊 aria-label 带出唯一读数
+    this.faceTodo.setAttribute('aria-hidden', String(overdue));
+    this.faceOverdue.setAttribute('aria-hidden', String(!overdue));
+    this.capsule.setAttribute('aria-label',
+      overdue ? t('todoface.overdue', { n: String(od) }) : t('todoface.capsuleCount', { n: String(n) }));
   }
 
   renderHeader() {
@@ -803,35 +867,45 @@ class TodoFace {
   }
 
   /** Esc 分层退出（handleEscapeFallback 复刻）：行编辑→保存收起；创建行→丢草稿；
-   *  标签 popover→关；浏览态 Esc 无语义。 */
+   *  标签 popover→关；**浏览态→收起面板**（重做批：作者要求面板有明确退出方式，
+   *  点外部 / Esc / 收起钮三条并存 —— 原实现浏览态 Esc 无动作）。 */
   handleEscape() {
     if (this.editingId != null) this.saveEditing();
     else if (this.creating) { this.creating = false; this.renderRows(); this.renderFooter(); }
     else if (this.editingTagId != null || this.creatingTag) this.closeTagPopover(false);
+    else this.collapse();
   }
 
-  // ── 展开 / 收起（刘海节奏：胶囊 ⇄ 面板 弹簧形变）────────────────────────
+  // ── 展开 / 收起（重做批：面板 = 胶囊上方的流内块，自胶囊位置向上生长）──────
+  //
+  // 形变语言保留（scale + 原点），几何从「卡容器高度弹簧」换成「面板块 + 原点
+  // 在底缘中点」：
+  //   · 面板开态 display:flex 排在胶囊之前（CSS），#input-area bottom 锚定 ⇒
+  //     高度只向上长、输入框位置不动、聊天让位自动跟随（main.js 读 offsetHeight）。
+  //   · 过渡起源点 = `transform-origin: 50% 100%`（面板底缘中点 = 胶囊正上方）
+  //     + scale 0.94→1 / 高度弹簧取消（面板高度由内容决定，弹簧只做 scale）。
 
   expand() {
     if (this.expanded || this.destroyed) return;
     this.expanded = true;
     this.card.dataset.state = 'open';
+    this.mount.classList.add('is-open');
     this.capsule.setAttribute('aria-expanded', 'true');
-    this.measurePanel();
-    const fromH = this.card.offsetHeight || this.capsuleH || 32;
-    const toH = this.panelH;
-    const pillR = Math.max(14, fromH / 2);
     if (this.cancelMorph) this.cancelMorph();
-    this.capsule.classList.add('tfl-hidden-content');
     this.panel.classList.add('tfl-panel-in');
+    if (this.mobile) {
+      this.panel.classList.add('tfl-panel-open');
+      this.renderAll();
+      return;
+    }
+    const from = REDUCED_MOTION ? 1 : 0.94;
     this.cancelMorph = springAnimate([
-      { from: fromH, to: toH, set: (v) => { this.card.style.height = `${v}px`; } },
-      { from: pillR, to: 19, set: (v) => { this.card.style.setProperty('--tfl-rt', `${v}px`); } },
-      { from: pillR, to: 24, set: (v) => { this.card.style.setProperty('--tfl-rb', `${v}px`); } },
+      { from, to: 1, set: (v) => { this.card.style.scale = String(v); } },
     ], SPRING.open, () => {
-      this.card.style.height = '';
+      this.card.style.scale = '';
       this.panel.classList.remove('tfl-panel-in');
       this.panel.classList.add('tfl-panel-open');
+      this.measurePanel();
       this.refocusList(); // 列表持有焦点，↑↓/Return 立即可用（复刻 onAppear）
       this.bindOutsideClose();
     });
@@ -846,55 +920,56 @@ class TodoFace {
     this.closeTagPopover(false);
     this.dismissHint();
     this.expanded = false;
-    this.card.dataset.state = 'capsule';
+    this.mount.classList.remove('is-open');
     this.capsule.setAttribute('aria-expanded', 'false');
     this.unbindOutsideClose();
-    const fromH = this.panelH || this.card.offsetHeight || 200;
-    const toH = this.capsuleH || 32;
     if (this.cancelMorph) this.cancelMorph();
     this.panel.classList.remove('tfl-panel-open');
-    this.cancelMorph = springAnimate([
-      { from: fromH, to: toH, set: (v) => { this.card.style.height = `${v}px`; } },
-      { from: 19, to: toH / 2, set: (v) => { this.card.style.setProperty('--tfl-rt', `${v}px`); } },
-      { from: 24, to: toH / 2, set: (v) => { this.card.style.setProperty('--tfl-rb', `${v}px`); } },
-    ], SPRING.close, () => {
-      this.card.style.height = '';
-      this.capsule.classList.remove('tfl-hidden-content');
+    this.panel.classList.add('tfl-panel-out');
+    // 收起动画期间卡容器保持 display:flex（data-state 在动画落地后才翻），
+    // 否则一翻类就 display:none、无退场可看，胶囊侧也观察不到「从面板收成胶囊」。
+    const done = () => {
+      this.card.style.scale = '';
+      this.card.dataset.state = 'capsule';
+      this.panel.classList.remove('tfl-panel-in', 'tfl-panel-out');
       this.refocusList();
-    });
+    };
+    if (REDUCED_MOTION) { done(); return; }
+    this.cancelMorph = springAnimate([
+      { from: 1, to: 0.94, set: (v) => { this.card.style.scale = String(v); } },
+    ], SPRING.close, done);
   }
 
+  /** 面板/胶囊实测（取证与回归断言用；几何已由 CSS 决定，此处只读不写）。 */
   measurePanel() {
-    // 展开目标高度：面板自然高度（≤50vh 由 CSS max-height 约束）
-    const prev = this.card.style.height;
-    this.card.style.height = 'auto';
-    this.card.style.overflow = 'visible';
-    this.panelH = this.panel.offsetHeight || 320;
-    this.capsuleH = this.capsule.offsetHeight || 32;
-    this.card.style.height = prev;
-    this.card.style.overflow = '';
+    this.panelH = this.card.offsetHeight || 0;
+    this.capsuleH = this.capsule.offsetHeight || 0;
+    this.capsuleW = this.capsule.offsetWidth || 0;
   }
 
   /** 胶囊 pop（notchPop 等价：+10px 高度弹跳、圆角 10/16 中间态；本批无自然
-   *  触发源——数据接口留下一步，测试缝 __pop 取证）。 */
+   *  触发源——数据接口留下一步，测试缝 __pop 取证）。重做批后胶囊外框
+   *  固定（翻面不变量），pop 只做 scale 弹跳、绝不动高宽。 */
   pop() {
     if (this.expanded || this.mobile || this.destroyed) return;
-    const h0 = this.capsuleH || this.capsule.offsetHeight || 32;
-    springAnimate([
-      { from: h0, to: h0 + 10, set: (v) => { this.card.style.height = `${v}px`; } },
-      { from: h0 / 2, to: 16, set: (v) => { this.card.style.setProperty('--tfl-rt', `${v}px`); } },
-      { from: h0 / 2, to: 16, set: (v) => { this.card.style.setProperty('--tfl-rb', `${v}px`); } },
+    if (this.cancelMorph) this.cancelMorph();
+    this.cancelMorph = springAnimate([
+      { from: 1, to: 1.08, set: (v) => { this.capsule.style.scale = String(v); } },
     ], SPRING.pop, () => {
-      springAnimate([
-        { from: h0 + 10, to: h0, set: (v) => { this.card.style.height = `${v}px`; } },
-        { from: 16, to: h0 / 2, set: (v) => { this.card.style.setProperty('--tfl-rt', `${v}px`); } },
-        { from: 16, to: h0 / 2, set: (v) => { this.card.style.setProperty('--tfl-rb', `${v}px`); } },
-      ], SPRING.pop, () => { this.card.style.height = ''; });
+      this.cancelMorph = springAnimate([
+        { from: 1.08, to: 1, set: (v) => { this.capsule.style.scale = String(v); } },
+      ], SPRING.pop, () => { this.capsule.style.scale = ''; });
     });
   }
 
   // ── 点击外部关闭（handleMouseDown click-outside 等价；编辑态先落盘）─────
 
+  /** 点击外部关闭 + 全局 Esc 收起（handleMouseDown click-outside 等价；编辑态先落盘）。
+   *
+   *  重做批（作者令「退出方式」）：面板是浮层后必须随时收得掉 —— 原实现 Esc 只在
+   *  .tfl-list 持有焦点时经 onListKey 生效，焦点在输入框时按 Esc 无反应。本批在
+   *  document 上补一个 capture 监听（IME 组合期不接管，走 isImeComposing）；
+   *  与 collapse/destroy 一一对应解绑。 */
   bindOutsideClose() {
     if (this.mobile || this.outsideBound) return;
     this.outsideHandler = (e) => {
@@ -903,18 +978,30 @@ class TodoFace {
       const insideCard = path.includes(this.card);
       const insideLayer = (this.tagPopover && path.includes(this.tagPopover)) ||
         (this.hintLayer && path.includes(this.hintLayer));
-      if (insideCard || insideLayer) return;
+      if (insideCard || insideLayer || path.includes(this.mount)) return;
       if (this.editingId) this.saveEditing();
       if (this.creating) { this.creating = false; this.renderRows(); this.renderFooter(); }
       this.closeTagPopover(false);
       this.collapse();
     };
     document.addEventListener('pointerdown', this.outsideHandler, true);
+    this.escHandler = (e) => {
+      if (e.key !== 'Escape' || !this.expanded || this.destroyed) return;
+      if (isImeComposing(e)) return;
+      // 列表内的 Esc 由 onListKey 分层处理（行编辑/创建行/popover 优先），
+      // 此处只在焦点不在面板子树内时才接管 —— 避免同一次按键双重动作。
+      if (this.card.contains(document.activeElement)) return;
+      e.preventDefault();
+      this.handleEscape();
+    };
+    document.addEventListener('keydown', this.escHandler, true);
     this.outsideBound = true;
   }
 
   unbindOutsideClose() {
     if (this.outsideHandler) document.removeEventListener('pointerdown', this.outsideHandler, true);
+    if (this.escHandler) document.removeEventListener('keydown', this.escHandler, true);
+    this.escHandler = null;
     this.outsideBound = false;
   }
 
