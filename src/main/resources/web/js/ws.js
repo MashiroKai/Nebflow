@@ -241,6 +241,13 @@ const GLOBAL_MSG_TYPES = new Set([
   // 两者都只是「既有帧 + 补消费」，零新消息类型。
   'restartStatus', 'restartResult',
   'remoteUpdateResult', 'peerListChanged',
+  // 全设备统一更新（fleet 批 2026-11-01）：状态卡的进度快照帧
+  // {type:'fleetUpdate', minRemoteVersion, protocol, currentVersion, job, inflight}
+  // ——wsHub.broadcast 到**所有**连接、无 sessionId。🔴 必须入 GLOBAL：否则每
+  // 一次阶段推进都被 :485-494 当会话内事件 ⇒ setActiveView(primary)，把用户正在
+  // 看的视图抢走。`fleetUpdateResult` = 四个命令（start/cancel/retry/snapshot）的
+  // 直回帧（无 sessionId，同律）。
+  'fleetUpdate', 'fleetUpdateResult',
   'activeBgTasks', 'activeAgents',
   // P0 面板投影批（设计稿 20261030 §3.2/§3.4）：bgHealth 徽标帧
   // {type:'bgHealth', unread, suspect, escalated}——全表健康计数对账广播
