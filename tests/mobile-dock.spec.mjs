@@ -62,7 +62,8 @@ test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, colorScheme: '
  *  `sealed:true`   = 显式再封（features.friends:false ⇒ 封存空态卡面）。
  *  `unread` = mock 会话未读数（真实未读链夹具，D14 用；默认 0）。
  *  `pendingAsk` = 该会话未读里点名作者行动的条数（认知二期可行动判据夹具，
- *    D14 用；默认 0 —— 纯未读不上徽标，见 messages.js actionableUnread）。 */
+ *    D14 用；默认 0 —— 徽标读数口径见 messages.js totalUnread（未读真值腿）+
+ *    pendingAskCount/actionableTotal（可行动轴），两轴相加。 */
 async function bootApp(page, { friends = false, unread = 0, pendingAsk = 0, sealed = false } = {}) {
   await page.addInitScript(({ friends: f, unread: u, pendingAsk: pa }) => {
     localStorage.setItem('nebflow_token', 'e2e-token');
@@ -739,19 +740,20 @@ test.describe('friends-ON social pages', () => {
 });
 
 test.describe('friends-ON unread chain', () => {
-  // 认知二期产品批②角标可行动判据（9f016dfb3；设计稿 §5 P6）：
-  // messages 徽标只报「需要作者行动」的量 —— 未读 ∩ 点名行动（pendingAsk/mention）
-  // + 跨面板可行动提供者；纯「有更新」不上徽标（新鲜度 ≠ 可行动量）。
-  test('D14 actionable unread lights the numeric badge: mock unread=1 + pendingAsk=1 paints "1"; opening the conversation clears it', async ({ page }) => {
+  // 未读徽标口径（unreadside 批 2026-11-02，作者反馈「侧边栏 没通知我」）：
+  // 图标角标 = 各会话 `unreadCount` 之和——**与会话列表行徽标同一读数源**（此前
+  // 走的是另一套「未读 ∩ pendingAsk/mention」聚合，而那两个字段零生产者 ⇒ 角标
+  // 恒 0、行上有 `(1)`）。可行动量（待答卡 + 待销账待办 + 未读回执）是**另一轴**，
+  // 与本读数相加，不替代它。
+  test('D14 unread lights the numeric badge: mock unread=1 paints "1"; opening the conversation clears it', async ({ page }) => {
     await bootApp(page, { friends: true, unread: 1, pendingAsk: 1 });
     const errors = watchErrors(page);
     const badgeSel = '#mobile-dock .dock-key[data-dock="messages"] .dock-badge';
-    // 可行动未读链（mock 会话 unreadCount=1 + pendingAskCount=1 ⇒
-    // messages.js actionableUnread()=1 → setActivityBadge('messages-btn') →
-    // 手机层镜像），零夹具直写徽标。
+    // 未读真值链（mock 会话 unreadCount=1 ⇒ messages.js totalUnread()=1 →
+    // setActivityBadge('messages-btn') → 手机层镜像），零夹具直写徽标。
     await expect(page.locator(badgeSel)).toBeVisible({ timeout: 8000 });
     await expect(page.locator(badgeSel)).toHaveText('1');
-    // 进消息页 → 点会话 → 开窗即已读（markConvRead ⇒ 未读清零 ⇒ 可行动量归零
+    // 进消息页 → 点会话 → 开窗即已读（markConvRead ⇒ 未读清零 ⇒ 未读腿归零
     // ⇒ 角标熄灭）。
     await dockTo(page, 'messages');
     const row = page.locator('.mobile-page[data-page="messages"] .mobile-page-body #fm-conversations .fm-conv-row').first();
@@ -772,13 +774,14 @@ test.describe('friends-ON unread chain', () => {
     expect(errors).toEqual([]);
   });
 
-  test('D14b pure unread (no actionable flag) does NOT light the dock badge; the row face still reports it', async ({ page }) => {
+  test('D14b pure unread (no actionable flag) lights the dock badge too: badge and row badge read the same number', async ({ page }) => {
     await bootApp(page, { friends: true, unread: 1 });
     const errors = watchErrors(page);
-    // 可行动判据负向锚：unread=1 但无 pendingAsk/mention ⇒ actionableUnread()=0
-    // ⇒ 徽标恒隐（「有更新」不上徽标）。
-    await expect(page.locator('#mobile-dock .dock-key[data-dock="messages"] .dock-badge')).toBeHidden({ timeout: 8000 });
-    // 行面语义不变：会话列表行徽标照报纯未读（行面 ≠ 徽标面，两判据分钉）。
+    // 同源锚（unreadside 批）：unread=1 且无 pendingAsk/mention ⇒ 未读腿 =1
+    // ⇒ 徽标 `1`，与行徽标**同一读数**（两套计数必漂移，是原作者反馈的断链形态）。
+    await expect(page.locator('#mobile-dock .dock-key[data-dock="messages"] .dock-badge')).toBeVisible({ timeout: 8000 });
+    await expect(page.locator('#mobile-dock .dock-key[data-dock="messages"] .dock-badge')).toHaveText('1');
+    // 行面同一读数（agent 断言面：两侧数字相等，不是各读一套）。
     await dockTo(page, 'messages');
     const row = page.locator('.mobile-page[data-page="messages"] .mobile-page-body #fm-conversations .fm-conv-row').first();
     await expect(row).toBeVisible({ timeout: 8000 });
