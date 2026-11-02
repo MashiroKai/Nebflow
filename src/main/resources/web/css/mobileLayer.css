@@ -1363,14 +1363,17 @@ body.mobile-layer .mh-daemon-foot {
 }
 
 /* P6 后台合并面板：行密度收紧（几何由统一页面化块承担；.hidden 开合真源
-   chat.css 桌面规则不动）。 */
+   chat.css 桌面规则不动）。
+   后台面板单滚批（2026-11-02 · 作者令「把内容都放进这个面板，可以下滑；现在是
+   分块了，然后分块下滑」）：两条分组列表**不再自带内滚**（原 overflow-y:auto +
+   flex 0 1 auto 是「哪张卡装不下就滚哪张」的病灶）——按内容自然长高
+   （flex 0 0 auto），纵向滚动全额交给载体那一个上下文（见下方「单滚」块）。 */
 body.mobile-layer #bg-dropdown .bg-dropdown-header {
   flex: none;
 }
 body.mobile-layer #bg-dropdown .bg-dropdown-list {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
-  overflow-y: auto;
 }
 body.mobile-layer #bg-dropdown .bg-task-row {
   padding: 6px 12px;
@@ -1385,7 +1388,9 @@ body.mobile-layer #bg-dropdown .bg-dropdown-empty {
 }
 /* 面板分区批（2026-10-29 ③ · 作者报障「后台任务和子智能体混在一起」）：手机端
    两节升格为**两张内嵌卡**——玻璃载体（morph 形变面）内各节独立卡面（边界 +
-   圆角 + 间距），分区一目了然；「智能体」签的桌面顶界线在卡面内退役。 */
+   圆角 + 间距），分区一目了然；「智能体」签的桌面顶界线在卡面内退役。
+   后台面板单滚批（2026-11-02）：卡面只承担视觉分块，**不再是滚动单元**——
+   overflow 两轴 hidden 只是裁剪兜底（卡高由内容决定，见下「单滚」块）。 */
 body.mobile-layer #bg-dropdown .bg-section {
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
@@ -1398,6 +1403,33 @@ body.mobile-layer #bg-dropdown .mh-bg-grp {
   border-top: none;
 }
 body.mobile-layer #bg-dropdown [hidden] { display: none; }
+
+/* ── 后台面板单滚（2026-11-02）─────────────────────────────────────────
+   作者令：「把内容都放进这个面板，可以下滑；现在是分块了，然后分块下滑」。
+   形态 = **整页一个连续可滚动的文档流**（微信/iOS 消息页式单一滚动上下文）：
+     · 唯一纵向滚动器 = 载体 #bg-dropdown 自身（overflow-y:auto，惯性滚动）；
+     · 两节卡片（.bg-section）与两条列表（.bg-dropdown-list）按内容自然展开
+       （flex 0 0 auto，无 max-height、无内滚）—— 卡片保留圆角/描边/间距的
+       视觉分块，但跟着整页一起滚；
+     · 行数再多也不折叠成小滚动框（默认自然展开；本面板历史上从未出现上百条
+       量级，故不设「展开全部 N 条」折叠臂——见交付报告 §7）。
+   特异性必须打平「收编面统一页面化几何」块（同一条 2 id + 2 class 链，
+   overflow:hidden 来自那里）：本规则源序在后 ⇒ 同特异性胜出（与 usage 面板
+   2026-11-01 滚动手势修复批同一手法）。
+   底部安全：页面壳底缘已 = dock 高 + 底距 + 安全区（.mobile-page bottom），
+   内容在结构上就止于 dock 上缘，本块再加 12px 呼吸缝 + safe-area 兜底，
+   滚到底时末条绝不压在导航栏下。 */
+body.mobile-layer #mobile-pages .mobile-page-body > #bg-dropdown {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+}
+body.mobile-layer #mobile-pages .mobile-page-body > #bg-dropdown::-webkit-scrollbar {
+  display: none;
+}
 
 /* P5 记忆/智能体合并面板：手机读态件（卡读态/编辑钮/分区显隐）。 */
 /* 编辑态：卡读态隐、textarea + Save/Cancel 显（默认读态反之；态类挂在 body）。 */

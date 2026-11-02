@@ -312,25 +312,40 @@
    paired with a text label (Carbon status-indicator / spec §7). */
 /* 后台合并批（2026-10-23 ⑥）：#bg-dropdown = 后台任务 + 子智能体 单面板。
    面板分区批（2026-10-29 ③ · 作者报障「两面板混在一起」）：面板纵排改为两个
-   **独立分区**（.bg-section = 任务节 / 智能体节）——各节自带标题签与独立滚动
-   （两列表各自 overflow-y、flex 收缩按内容让位），节间由「智能体」签顶界线
-   分隔；内容少时按内容收缩（与手机端紧凑化同语义）。 */
+   分区（.bg-section = 任务节 / 智能体节），节间由「智能体」签顶界线分隔。
+   后台面板单滚批（2026-11-02 · 作者令「把内容都放进这个面板，可以下滑；现在是
+   分块了，然后分块下滑」）：滚动语义由「两节各自内滚」改为**载体单一滚动**——
+   本载体自身 overflow-y:auto 是整个面板唯一的纵向滚动上下文，两节与两条列表
+   按内容自然展开（flex 0 0 auto，永不收缩）、跟着整页一起滚；卡片只保留视觉
+   分块（圆角/描边/间距），不再是滚动单元。桌面/手机同源（手机端的页面化几何
+   与卡片形态由 mobileLayer.css 承接）。 */
 #bg-dropdown {
   display: flex;
   flex-direction: column;
   max-height: 60vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  /* 滚动链隔离：面板滚到底不把页面/聊天流带着滚（移动端手势同律）。 */
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
-/* 分区容器（面板分区批 ③）：纵排弹性盒，列表收缩在各自分区内（独立滚动）。
-   手机端两节升格为两张内嵌卡（mobileLayer.css 覆写）。 */
+/* 分区容器（单滚批）：纵排弹性盒，**不收缩**（flex 0 0 auto）——高由内容决定，
+   溢出统一交给载体那一个滚动上下文。
+   手机端两节升格为两张内嵌卡（mobileLayer.css 覆写形态，滚动语义同本条）。 */
 #bg-dropdown .bg-section {
   display: flex;
   flex-direction: column;
+  flex: 0 0 auto;
   min-height: 0;
 }
+/* 列表（单滚批）：不再自带 overflow-y:auto —— 行内容多就长高，由载体滚。
+   overflow-x 的 hidden 机制（面板版式批 ③ 禁横拖）原样保留：两轴都 hidden 时
+   计算值不再被「另一轴 visible → auto」的规范规则翻成滚动容器。 */
 .bg-dropdown-list {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-height: 0;
-  overflow-y: auto;
+  overflow-x: hidden;
+  overflow-y: hidden;
 }
 .bg-dropdown-header { flex: none; }
 /* 分组签（子智能体节题；= bg-dropdown-header 同族小写字号语言）。
@@ -802,7 +817,11 @@
     0px 2px 8px rgba(0, 0, 0, 0.04),
     0px 8px 24px rgba(0, 0, 0, 0.06);
   z-index: 100;
-  overflow: hidden;
+  /* 后台面板单滚批（2026-11-02）：原 overflow:hidden 只裁圆角——面板改为载体
+     单一滚动后，纵向回归 auto（唯一滚动上下文，见上方合并块注），横向仍 hidden
+     （禁横拖，面板版式批 ③）。 */
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 #bg-dropdown::before {
   content: '';
@@ -841,8 +860,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   min-width: min(280px, calc(100vw - 48px));
   max-width: min(380px, calc(100vw - 48px));
 }
-#bg-dropdown .bg-section { overflow-x: hidden; }
-#bg-dropdown .bg-dropdown-list { overflow-x: hidden; }
+/* 后台面板单滚批（2026-11-02）：两轴都显式 hidden —— 单写 overflow-x:hidden 会
+   让另一轴 visible 按规范计算成 auto，分区/列表又变回滚动容器（本次病灶的同一
+   机制面）；两轴 hidden 后它们只是文档流里的普通块，滚动只归载体。 */
+#bg-dropdown .bg-section { overflow-x: hidden; overflow-y: hidden; }
+#bg-dropdown .bg-dropdown-list { overflow-x: hidden; overflow-y: hidden; }
 #bg-dropdown .bg-task-info > * { min-width: 0; max-width: 100%; }
 #bg-dropdown .bgagent-tool { max-width: 100%; }
 /* 面板层级批（2026-10-31 ①）：组头折叠 caret——行首固定位小 chevron（中性
