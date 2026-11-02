@@ -24,7 +24,11 @@ import { jevTestButtonHTML, jevTestResultsHTML, bindJevTestButton } from './side
 import { chatViews, setActiveView, activeView } from './chatView.js';
 import { cleanupCardIframes, resetCardAccumulator } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
-import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents, avatarViewState, noteAvatarFailure, paintAvatarSlot } from './neblink.js';
+import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents } from './neblink.js';
+// 件四 · 设置页身份卡本地化（作者令 2026-11-02）：头像在上 + 用户名/邮箱单行胶囊，
+// 点胶囊 = App 内个人资料面（不再跳官网）。卡片结构/绘制/资料面全在该叶子模块，
+// 本文件只调两个入口（settingsIdentityCardHTML 出结构，paintSettingsIdentity 出读数）。
+import { settingsIdentityCardHTML, paintSettingsIdentity } from './settingsIdentity.js';
 // updateCheck.js（更新检查/更新执行链）已随 auth-trim 批（2026-10-20 作者令）整体删除：
 // 设置页「更新」功能退役，未来由官网统一检测更新取代。重启面（restartStatus/
 // restartResult 帧消费）留在本文件（见 bindSettingsEvents 后的模块级订阅）。
@@ -879,24 +883,18 @@ export function renderSettings() {
   // 2026-09-06 作者裁定：账号区与设备互联统一为一个区块——设备属于账号，
   // 登录态头像下方直接放设备列表，未登录态只有 logo + 一句「不可用」说明，
   // 不再有独立的 neblink settings-section。
-  // 手机顶栏批（2026-10-31 作者令②③，仅手机层）：设置页撤掉头像入口与设备区 ——
-  // 头像上收工作台顶部（点击进个人主页），设备在联系人页展示、不重复。桌面
-  // 逐字不变（渲染期按 body.mobile-layer 判别；两处消费腿均为元素在场判空，
-  // 缺席零成本）。设置页账号块保留 neblink 登录态读数行。
+  // 件四 · 设置页身份卡本地化（作者令 2026-11-02「头像在上，下面是用户名和邮箱…
+  // 点击胶囊直接进自己的 profile 设置页」）：头像在上 + 用户名/邮箱单行胶囊，两档
+  // 形态同一 DOM（手机层由 mobileLayer.css 同族规则适配）。**手机层也渲染** ——
+  // 「设置页头像入口手机层不渲染」是手机顶栏批（2026-10-31）的旧口径，本批按作者
+  // 新令就地推翻：身份卡回到设置页两档并在场（设备区仍在联系人页，不搬回）。
+  // 点胶囊 = App 内个人资料面；点头像 = 换头像流程 / 未登录登录卡（activityBar
+  // 既有委托统一承担，本文件不绑任何点击）。
   const mobileLayer = typeof document !== 'undefined' && document.body.classList.contains('mobile-layer');
   content.innerHTML = `
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.account')}</div>
-      ${mobileLayer ? '' : `
-      <button class="settings-avatar-entry" id="settings-avatar-entry" type="button">
-        <span class="settings-avatar-frame">
-          <picture>
-            <source media="(prefers-color-scheme: dark)" srcset="${brand.logoDarkUrl}">
-            <img class="settings-avatar-logo" src="${brand.logoUrl}" alt="">
-          </picture>
-          <img class="settings-avatar-photo" alt="" hidden>
-        </span>
-      </button>`}
+      ${settingsIdentityCardHTML()}
       ${neblinkSettingsHTML()}
       ${mobileLayer ? '' : '<div id="settings-devices-slot"></div>'}
     </div>
@@ -1094,7 +1092,7 @@ export function renderSettings() {
       </div>
     </div>`;
 
-  renderSettingsAvatar();
+  paintSettingsIdentity();
   bindSettingsEvents(content, cfg);
   bindNeblinkEvents(() => renderSettings());
   // Secrets entry count pill (secrets-ui-redesign, 2026-10-08): read/cached
@@ -1164,7 +1162,7 @@ export function renderSettings() {
         bindNeblinkEvents(() => renderSettings());
       }
       // Keep the avatar section in lockstep with login/avatar changes.
-      renderSettingsAvatar();
+      paintSettingsIdentity();
       // friendseal (2026-09-25 ①-A): keep the device expansion area in
       // lockstep with peer/presence/login changes on the same tick.
       const devicesSlot = document.getElementById('settings-devices-slot');
@@ -1221,36 +1219,14 @@ function renderProviderCard(name, p) {
     </div>`;
 }
 
-// ── Settings avatar section (09-05 五项裁定④; 2026-09-06 修整: 头像-only) ──
-// Dual state driven by the SAME decision as the Activity Bar avatar
-// (neblink.js avatarViewState): logged in with a usable account avatar →
-// photo; otherwise the product logo. The entry renders the centered avatar
-// only — all in-area text removed (author 2026-09-06). Click behavior is not
-// reimplemented here either: activityBar.js's activateAccountEntry owns it for
-// both entries (login when logged out, profile page when logged in → hence the
-// landing URL, including the `from=client` hint, comes from the single source
-// brand.js getProfileUrl()).
-function renderSettingsAvatar() {
-  const entry = document.getElementById('settings-avatar-entry');
-  if (!entry) return;
-  const { url: validAvatarUrl, showPhoto } = avatarViewState();
-  const logoEl = /** @type {HTMLElement|null} */ (entry.querySelector('.settings-avatar-logo'));
-  const photoEl = /** @type {HTMLElement|null} */ (entry.querySelector('.settings-avatar-photo'));
-  if (photoEl) {
-    // Same shared, readiness-gated slot paint as the Activity Bar avatar
-    // (neblink.js paintAvatarSlot, 2026-09-15 flicker fix): the logo holds the
-    // slot until the photo is paintable, so a fresh mount can never paint an
-    // empty ring while the avatar bytes are still loading.
-    paintAvatarSlot(photoEl, logoEl, validAvatarUrl, showPhoto, () => {
-      noteAvatarFailure(validAvatarUrl); // shared failed-URL latch
-      const view = avatarViewState();
-      if (photoEl) photoEl.hidden = true;
-      if (logoEl) logoEl.hidden = view.showPhoto;
-    });
-  } else if (logoEl) {
-    logoEl.hidden = showPhoto;
-  }
-}
+// ── Settings avatar section — 已迁入 settingsIdentity.js（件四，作者令 2026-11-02）──
+// 修前本处是 `renderSettingsAvatar()`（只画头像、点击委托 activityBar 的
+// activateAccountEntry）：2026-09-06 起「头像 only、区内零文案」；2026-11-01 起
+// 已登录态点头像 = 两选一菜单（其中「个人主页」= window.open 官网）。
+// 件四按作者令整体改写：头像在上 + 用户名/邮箱单行胶囊 + 点胶囊进 **App 内**
+// 个人资料面（零外链），绘制/交互/资料面全在 `settingsIdentity.js`
+// （`settingsIdentityCardHTML()` 出结构，`paintSettingsIdentity()` 出读数）。
+// 本文件不再持有任何头像绘制代码 —— 禁在此重建第二份（双真源必然分叉）。
 
 // ---------- Autostart (开机自启动) ----------
 // Target `enabled` while an autostartSet request is in flight; null when idle.

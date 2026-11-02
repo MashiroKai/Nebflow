@@ -309,8 +309,114 @@ private[gateway] object SocialRoutes:
               }
         }
 
-      /** 会话列表（按 last_message_id 倒序，含 unreadCount）。 */
-      case req @ GET -> Root / "conversations" =>
+      /**
+       * 好友自我介绍 `bio` 的**本地缓存**写入（件一，2026-11-02「双描述」）。
+       * body `{bio}` → 200 `{ok:true}`。
+       *
+       * 🔴 语义边界（与上面 `remark` 端点**两个不同字段、两个不同写面**）：
+       *  - `bio` = **对方**的自我介绍，语义真源在**上游**（neblink-server 目前**无**
+       *    该字段）⇒ 本仓这份是**本地缓存**，UI 必须标「本地缓存·未同步」，禁把
+       *    本地写读当成「已同步到对方」。上游一旦加性出键，上游值在出站口优先
+       *    （见 `FriendService.applyFriendBio`）。
+       *  - `remark` = **我给对方写的备注**，纯本地真源（既有端点）。
+       * 形态逐字镜像 `PUT /friends/{id}/remark`：`withAuth` + 缺参 400 + 恒
+       * `{ok:true}`（**无 502 面**：纯本地态、零上游往返）；`trim` 后空串 = 清除；
+       * 清值用 `""`，不用 null（键缺席 / null / 非字符串 = 缺参 400）。
+       */
+      case req @ PUT -> Root / "friends" / friendUserId / "bio" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              req.as[Json].flatMap { body =>
+                body.hcursor.downField("bio").as[String].toOption match
+                  case Some(bio) => fs.setFriendBio(friendUserId, bio) *> Ok(ApiJson.ok)
+                  case None => BadRequest(Json.obj("error" -> "Missing bio".asJson))
+              }
+        }
+
+      /**
+       * 我的群备注（件一，2026-11-02）。body `{remark}` → 200 `{ok:true}`。
+       *
+       * **纯本地真源**（`profile-descriptions.json` 的 `groupRemark`，键 = `groupId`），
+       * 与好友 `remark` 同族同形：零上游往返 ⇒ 无 502 面；`trim` 后空串 = 清除。
+       * 🔴 与 `PUT /groups/{id}/description`（群介绍）**互不影响**：两个独立键。
+       */
+      case req @ PUT -> Root / "groups" / groupId / "remark" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              req.as[Json].flatMap { body =>
+                body.hcursor.downField("remark").as[String].toOption match
+                  case Some(remark) => fs.setGroupRemark(groupId, remark) *> Ok(ApiJson.ok)
+                  case None => BadRequest(Json.obj("error" -> "Missing remark".asJson))
+              }
+        }
+
+      /**
+       * 群介绍的**本地缓存**写入（件一，2026-11-02）。body `{description}` → 200
+       * `{ok:true}`。
+       *
+       * 🔴 语义边界：群介绍的真源在**上游群管理**（neblink-server 的 `GroupSummary`
+       * 目前**无**该键）⇒ 本仓这份是**本地缓存**，UI 必须标「本地缓存·未同步」。
+       * 而且群域其余 12 条路由是**逐字代理**（`groups.rs` 契约，禁 reshape）⇒ 本键
+       * **刻意不走上游**、只落本地（上游出字段后，出站口上游值优先，见
+       * `FriendService.applyGroupDescriptions`）。
+       */
+      case req @ PUT -> Root / "groups" / groupId / "description" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              req.as[Json].flatMap { body =>
+                body.hcursor.downField("description").as[String].toOption match
+                  case Some(desc) => fs.setGroupDescription(groupId, desc) *> Ok(ApiJson.ok)
+                  case None => BadRequest(Json.obj("error" -> "Missing description".asJson))
+              }
+        }
+
+      /**
+       * 双描述快照（件一，2026-11-02）：`GET /api/profile/descriptions` →
+       * `{friendBio:{userId→str}, groupRemark:{groupId→str}, groupDescription:{…}, selfBio:str}`。
+       *
+       * 为什么需要它（不是冗余面）：四条字段的**写面**各自独立（上面三条 + 下面的
+       * `selfBio`），而**读面**分散在 `/friends`、`/groups` 与 `/neblink/status`
+       * （`selfBio`）。前端 Profile 面需要在**一次往返**里拿全「哪些是我写的本地态」，
+       * 否则会出现「同一批描述来自三个不同拍次的快照」的撕裂态。本端点只回**原始
+       * 本地真值**（空串 / 缺键 = 未设置），不参与任何合并（合并只在出站口做）。
+       */
+      case req @ GET -> Root / "profile" / "descriptions" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              fs.descriptions.flatMap(d => Ok(d.asJson))
+        }
+
+      /**
+       * 自己给自己写的介绍 `selfBio`（件一，2026-11-02）。body `{selfBio}` →
+       * 200 `{ok:true}`。
+       *
+       * 🔴 与 `/neblink/device-info` 的 `userDescription` **刻意分家**：后者语义 =
+       * 「设备描述，Agent 选设备用」（有 `DeviceProfile` 等消费面），把自我介绍塞进
+       * 去是语义污染（勘察报告 §6.2 定案 (b)）。故本字段独立落
+       * `profile-descriptions.json`，读面 = `/api/profile/descriptions` 与
+       * `/api/neblink/status` 的 `selfBio` 加性键。
+       */
+      case req @ PUT -> Root / "profile" / "self-bio" =>
+        withAuth(req) {
+          sharedResources.friendService match
+            case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
+            case Some(fs) =>
+              req.as[Json].flatMap { body =>
+                body.hcursor.downField("selfBio").as[String].toOption match
+                  case Some(bio) => fs.setSelfBio(bio) *> Ok(ApiJson.ok)
+                  case None => BadRequest(Json.obj("error" -> "Missing selfBio".asJson))
+              }
+        }
+
+
         withAuth(req) {
           sharedResources.friendService match
             case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))

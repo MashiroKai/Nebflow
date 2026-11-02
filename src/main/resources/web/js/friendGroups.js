@@ -561,6 +561,29 @@ export function buildGroupSettings(conv, hooks) {
   titleSec.appendChild(titleRow);
   root.appendChild(titleSec);
 
+  // ── 群资料（件一 2026-11-02）：群介绍 + 我的群备注（微信式 Profile 面）────────
+  // 入口 = 本抽屉里一行「查看资料」（群窗 `.fm-gs-open` 与窗头群名两处既有入口都收敛到
+  // 本抽屉 ⇒ 抽屉内一行即可达）。面本体 = `profileFace.openGroupProfile`（**唯一属主**；
+  // 禁在本模块另建第二套 Profile 面 —— 另一节点的「右上三点」入口 import 的是同一个函数）。
+  //
+  // 🔴 本处用**动态 import**：`friendGroups` 已被 `messages.js` 静态引入，而
+  // `profileFace` → `messages.js`（personLabel）⇒ 静态引入会成
+  // `friendGroups → profileFace → messages → friendGroups` 环（本仓静态环闸）。
+  // 点击时才拉模块 = 零静态边、零环，且面本体仍是同一份实现（`socialSearch.js`
+  // 动态引 `contacts.js` 同族先例）。
+  const infoSec = el('div', 'fm-gs-section');
+  infoSec.appendChild(el('div', 'fm-gs-title', t('profile.groupTitle')));
+  const infoRow = el('div', 'fm-gs-rename');
+  const infoBtn = el('button', 'glass-control fm-gs-action fm-gs-profile', t('profile.open'));
+  infoBtn.addEventListener('click', () => {
+    void import('./profileFace.js')
+      .then((m) => m.openGroupProfile(conv))
+      .catch((err) => console.debug('[friendGroups] open group profile failed', err && err.message));
+  });
+  infoRow.appendChild(infoBtn);
+  infoSec.appendChild(infoRow);
+  root.appendChild(infoSec);
+
   async function saveTitle() {
     const next = titleInput.value.trim();
     if (!next || next === (conv.title || '').trim()) return;

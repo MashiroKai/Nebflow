@@ -411,10 +411,9 @@ test('P7 other faces untouched: chat chrome search key + detail pages keep the f
   await dockTo(page, 'messages');
 
   // 聊天根顶缘搜索键（本批零触碰）：48×48 @ right359 / 圆钮材质不变。
-  // 垂直落点 top 4 → 16+safe 由 **Muse 悬浮身份头恢复批**（作者令 2026-11-02 09:14
-  // 「拆掉顶栏」）改写：上一批的 fixed 56px 单行顶栏整条回退，4px 是「与顶栏中线
-  // 同轴」的派生值、顶栏拆掉后失去依据 ⇒ 回到 #mobile-fab-layer 块的 16+safe；
-  // 尺寸/材质/水平足印仍按本批（pinned-search）契约零改动。
+  // 垂直落点沿革：top 16（本批）→ 4+safe（会话顶栏单行三段式批 2026-11-02 07:23）
+  // → **16+safe（会话页头同构批 件二+件三 2026-11-02，fixed 真顶栏整条退役）**：
+  // 钮回到悬浮顶缘 16，与左上任务键同档；尺寸/材质/水平足印仍按本批契约零改动。
   const chrome = await page.evaluate(() => {
     const el = document.querySelector('.mh-chrome-btn[data-chrome="search"]');
     if (!el) return null;

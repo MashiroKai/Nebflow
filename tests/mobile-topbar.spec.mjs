@@ -1,13 +1,16 @@
 // mobile-topbar.spec.mjs — 手机端工作台顶栏批 spec（作者令 2026-10-31 15:31，四件）：
 //   ① 三个 tab 根页（消息/联系人/工作台，canvas 同族）顶部标题文字全去掉——
 //      无页头/标题胶囊，内容上移（mobile-page-nohead 壳级安全区顶距）。
-//   ② 设置页头像入口挪到工作台顶部（圆形头像，与设置页现头像同源同态），
-//      设置页原头像位同步撤掉（仅手机层；桌面由 unifyfix/settings-cleanup 钉）。
+//   ② 设置页头像入口挪到工作台顶部（圆形头像，与设置页现头像同源同态）。
+//      ⚠️ 2026-11-02 件四翻新：「设置页原头像位同步撤掉（仅手机层）」已被作者新令
+//      推翻 —— 设置页身份卡两档共用同一 DOM、手机层也在场（头像在上 + 用户名/
+//      邮箱胶囊）；设备区仍在联系人页（不搬回）。
 //   ③ 工作台列表「设备」行去掉（设置账号段设备区手机层不渲染），联系人页
 //      设备段完好（data-devices-entry 在位）。
 //   ④ 点头像进个人主页：me 页 + 用户名/头像/绑定层级子页（苹果层级式铺满屏、
-//      左上「<」返回 = 既有详情页壳）；字段 = neblink status 既有读数；配置动作
-//      统一官网个人主页出口（不新造配置面）。
+//      左上「<」返回 = 既有详情页壳）；字段 = 账号服务真实读数。
+//      ⚠️ 2026-11-02 件四翻新：四页零官网出口（旧 `.mf-me-portal` 键已退役），
+//      编辑入口 = App 内个人资料面（与设置页胶囊同一面）。
 //
 // Run: node <stand>/node_modules/@playwright/test/cli.js test tests/mobile-topbar.spec.mjs
 
@@ -127,10 +130,13 @@ test('T2 头像搬家：工作台顶部头像入口在场同态，设置页头�
   // 读数 = neblink status 账号字段（displayName/email）。
   await expect(entry.locator('.mf-me-name')).toHaveText('测试用户');
   await expect(entry.locator('.mf-me-sub')).toHaveText('me@example.com');
-  // 设置页：头像入口与设备槽手机层不渲染；hub 行集不变（设置行末位在场）。
+  // 设置页（件四新口径）：身份卡在场（头像 + 用户名/邮箱胶囊）；设备槽
+  // 仍在手机层不渲染（设备只在联系人页）；hub 行集不变。
   await page.locator('.mobile-page[data-page="workbench"] .mf-hub-row[data-hub-page="settings"]').click();
   await expect(page.locator('.mobile-page[data-page="settings"]')).toHaveClass(/live/);
-  await expect(page.locator('#settings-avatar-entry')).toHaveCount(0);
+  await expect(page.locator('#settings-identity-card')).toHaveCount(1);
+  await expect(page.locator('#settings-avatar-entry')).toHaveCount(1);
+  await expect(page.locator('#settings-identity-capsule')).toHaveCount(1);
   await expect(page.locator('#settings-devices-slot')).toHaveCount(0);
   await expect(page.locator('#settings-modal .neblink-peer')).toHaveCount(0);
   await page.locator('.mobile-page[data-page="settings"] .mobile-back-btn').click();
@@ -159,14 +165,21 @@ test('T3 个人主页层级：点头像进 me 页，用户名/头像/绑定子�
     await subPage.locator('.mobile-back-btn').click();
     await expect(page.locator('.mobile-page[data-page="me"]')).toHaveClass(/live/);
   }
-  // 字段 = 官网个人页已有字段的本地读数（neblink status）；配置出口 = 官网
-  // 个人主页（既有接口），客户端零账号编辑控件。
-  await expect(page.locator('.mobile-page[data-page="me"] .mf-me-portal')).toHaveCount(1);
+  // 件四（作者令 2026-11-02）：字段 = 账号服务真实读数；**零官网出口**（旧
+  // 的 `.mf-me-portal` 「前往官网个人主页」键已退役），编辑入口 = App 内资料面键。
+  await expect(page.locator('.mobile-page[data-page="me"] .mf-me-portal')).toHaveCount(0);
+  await expect(page.locator('.mobile-page[data-page="me"] #me-edit-profile')).toHaveCount(1);
   await page.locator('.mobile-page[data-page="me"] .mf-hub-row[data-me-page="me-user"]').click();
-  await expect(page.locator('.mobile-page[data-page="me-user"] .mf-me-field-value').first()).toHaveText('测试用户');
-  await expect(page.locator('.mobile-page[data-page="me-user"] .mf-me-field-value').nth(1)).toHaveText('me@example.com');
-  // 绑定子页：设备绑定读数 = 本机 + 1 台（peers 夹具一行）。
+  // 用户名 = 自证探针（GET /api/users/search 且 relation_status==='self'）；本夹具未 stub 该
+  // 端点 ⇒ **未知**（禁拿昵称/邮箱冒充）；昵称/邮箱 = status 的 id_token claims。
+  await expect(page.locator('.mobile-page[data-page="me-user"] .mf-me-field-value').first()).toHaveText('未知');
+  await expect(page.locator('.mobile-page[data-page="me-user"] .mf-me-field-value').nth(1)).toHaveText('测试用户');
+  await expect(page.locator('.mobile-page[data-page="me-user"] .mf-me-field-value').nth(2)).toHaveText('me@example.com');
+  // 绑定子页（件四起字段序：邮箱/GitHub/Google/设备/登录）：GitHub 与 Google 绑定无接口
+  // ⇒ 恒「未知」（禁拿 legacy githubLogin 冒充）；设备绑定读数 = 本机 + 1 台（peers 夹具一行）。
   await page.locator('.mobile-page[data-page="me-user"] .mobile-back-btn').click();
   await page.locator('.mobile-page[data-page="me"] .mf-hub-row[data-me-page="me-bind"]').click();
-  await expect(page.locator('.mobile-page[data-page="me-bind"] .mf-me-field-value').nth(1)).toHaveText('本机 + 1 台');
+  await expect(page.locator('.mobile-page[data-page="me-bind"] .mf-me-field-value').nth(1)).toHaveText('未知');
+  await expect(page.locator('.mobile-page[data-page="me-bind"] .mf-me-field-value').nth(2)).toHaveText('未知');
+  await expect(page.locator('.mobile-page[data-page="me-bind"] .mf-me-field-value').nth(3)).toHaveText('本机 + 1 台');
 });

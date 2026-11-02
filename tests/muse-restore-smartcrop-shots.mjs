@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+// ⛔ 已退役（会话页头同构批 件二+件三，作者令 2026-11-02）：本脚本拍的形态
+//    （Muse 基座回归（sticky 顶锚 + 名字下置））已被**整条取代** —— 现役形态 = 悬浮身份头
+//    `.mh-idhead`（mobileLayer.css 文件尾「会话页头同构批」+ js/mobile/sessionHead.js），
+//    机械验收改由 `tests/conversation-heads-unify.spec.mjs` 承担。
+//    保留本文件仅作历史取证回放；其断言（fixed 顶栏/sticky 锚/负 margin）**不再成立**，
+//    重跑必红 = 预期，勿据此判回归。
 // muse-restore-smartcrop-shots.mjs — Muse 头像基座回归 + 叠卡封面智能取景批
 // （作者令 2026-11-01 21:40 三件：①叠卡内容感知取景 ②头像+名字回归顶层居中
 // ③名字扁平毛玻璃考古适配）验收 harness。

@@ -4347,16 +4347,13 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
   // ⇒ getBoundingClientRect 全零，本行桌面恒无副作用）。静止态内容首（页标题/
   // 首条消息）让位到渐隐带之下，滚动态内容穿入渐隐带「先糊后没」。
   const edgeFade = document.getElementById('g2-edge-fade');
-  /* Muse 悬浮身份头恢复批（作者令 2026-11-02 09:14「拆掉顶栏」）：上一批
-     （07:23 单行三段式）在手机层建了 position:fixed 的 56+safe 真顶栏，让位改由
-     「顶栏下缘 + 8」实测承担；本批把那一批整条回退 —— 手机层没有顶栏，身份组是
-     #chat 内容流首项的 sticky 悬浮锚（.g2-chat-head，见 mobileLayer.css 中块
-     ②/②-b），顶让位回到下面的统一公式 bandBottom()（手机层 = 渐隐带 88 的底 +
-     基线 8 ⇒ 96）。首条消息因此从渐隐带之下起、滚动后穿进渐隐带「先糊后没」，
-     头像/sticky 锚压在其上 —— 「内容从头像后穿过」由 z 26 > 渐隐带 25 保证。
-     顶栏惰性取节点 / RO 挂载 / mounted-unmounted 广播链随批**整条退役**
-     （零消费方，留着只会让让位公式在浮层与渐隐带之间反复横跳）。 */
-  // chat.css's #chat padding-top (the no-overlay breathing room baseline).
+  // 会话页头同构批（件二+件三，作者令 2026-11-02 15:xx）：手机层会话身份头回到
+  // **悬浮**形态（.mh-idhead，绝对定位、零全宽带，见 mobileLayer.css 文件尾批次块）
+  // —— 单行三段式批（2026-11-02 07:23）的 fixed 真顶栏及其「按顶栏下缘实测让位」
+  // 链（mobileHead / getMobileHead / headRo / 建拆层广播监听）**整条退役**：
+  // 悬浮头不再是 #chat 的流内首件，也没有可测的「顶栏下缘」——让位回到本文件的
+  // 单一真值 bandBottom()（手机层 = 顶缘渐隐带 88 底缘 ⇒ reserve 96，与四种会话
+  // 身份头的可视足迹 96 同值；会话页面壳侧由 CSS 直接给同一 96）。  // chat.css's #chat padding-top (the no-overlay breathing room baseline).
   const BASE_TOP_PAD = 8;
   const bandBottom = () => Math.max(
     header.getBoundingClientRect().bottom,
@@ -4395,18 +4392,12 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
     if ((parseFloat(chat.style.getPropertyValue('--chat-top-clip')) || 0) !== clipTop) {
       chat.style.setProperty('--chat-top-clip', clipTop + 'px');
     }
-    /* 身份头同行批（作者令 2026-11-02 11:08「头像与左右双钮必须始终同一行」）：
-       身份组的位置本批起**与让位解耦** —— mobileLayer.css 的 ② sticky top 与
-       ②-b 负 margin 取同一表达式（-padding-top + --muse-head-anchor + safe），
-       两者恒等 ⇒ 头像垂直中心恒等双钮中心，且不再依赖 reserve 的取值：
-         head.top = padding-top + margin-top = --muse-head-anchor + safe（= 4）
-         firstRow = --muse-head-anchor + 组高 + 行距 = 4 + 106 + 6 = 116（恒定）
-       即 reserve 由「把头像顶到 64 的那条 96 空带」降级为**只承担渐隐带让位**。
-       仍取 bandBottom()（手机层 = 渐隐带 88 底 + 基线 8 = 96）而非收紧到 88：
-       首条消息落 116、名字胶囊底 98 ⇒ 名字→首行 18px 呼吸；改 reserve 会连同
-       ②-b 的 1:1 补偿一起把首行拖动（padding 与负 margin 同步变），实测无收益
-       且破坏与桌面同源的单公式，故保留。读数见批文档「几何数值表」。 */
-    const reserve = Math.max(BASE_TOP_PAD, Math.ceil(bandBottom() - chatTop) + BASE_TOP_PAD);
+    /* 会话页头同构批（件二+件三，2026-11-02）：让位 = **单一真值 bandBottom()**
+       （手机层 = 顶缘渐隐带 88 底缘 ⇒ 96；桌面 = header/overlays 实测）——
+       单行三段式批的「顶栏下缘 − chat 顶 + 8」分支随该批的 fixed 顶栏一并退役
+       （悬浮身份头 .mh-idhead 不在流内、也不占版面，故没有可让位的「顶栏下缘」；
+       会话页的同类让位由 CSS `.mobile-page[data-page=conversation] .mobile-page-body`
+       给同一 96，四种会话内容起点同值）。 */    const reserve = Math.max(BASE_TOP_PAD, Math.ceil(bandBottom() - chatTop) + BASE_TOP_PAD);
     const prev = parseFloat(getComputedStyle(chat).paddingTop) || BASE_TOP_PAD;
     if (Math.abs(prev - reserve) < 0.5) return;
     const delta = reserve - prev;
@@ -4435,8 +4426,6 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
   // 显隐（display 切换 = 尺寸 88↔0 变化）——把它也挂进观察器，层翻转/带显隐
   // 后 reserve/clip 必有一拍重测，不依赖「resize 恰好也来」的时序。
   if (edgeFade) ro.observe(edgeFade);
-  /* 会话顶栏（07:23 单行三段式）的惰性挂载 / mounted-unmounted 广播链随
-     Muse 悬浮身份头恢复批（09:14）退役：让位不再依赖顶栏 rect。 */
   // 顶部消失点批（2026-10-22，原 UI 批⑦ resize 兜底）：桌面⇄手机层翻转
   // （matchMedia 768px，mobile/bootstrap.js）走窗口 resize 兜底重算——層翻转时
   // header 尺寸恰好不变也不漏（幂等轻写）。

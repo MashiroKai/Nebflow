@@ -1055,7 +1055,8 @@ object FriendCodecs:
           displayNameOf(c),
           strOr(c, "avatar", "avatarUrl"),
           c.get[Option[Long]]("since").getOrElse(None),
-          c.get[Option[Boolean]]("blocked").getOrElse(None)
+          c.get[Option[Boolean]]("blocked").getOrElse(None),
+          bio = strOr(c, "bio", "description")
         )
       )
 
@@ -1064,6 +1065,11 @@ object FriendCodecs:
    * 本地态（`FriendRemarkStore`），上游 wire 永不带该键；即便某天带上也必须
    * 忽略，否则上游可覆盖用户自己的备注。`remark` 由 `FriendService.applyRemarks`
    * 在出站口按本地 map 注入。
+   *
+   * `bio`（2026-11-02 件一）：**对方自我介绍**，真源在上游 ⇒ 上游一旦加性出
+   * `bio`（或历史别名 `description`）本解码器直接吃下；缺席 ⇒ `None`。本仓不用
+   * 上游值覆盖用户在本地缓存里写入的值（出站口的合并顺序见
+   * `FriendService.applyDescriptions`：**上游在场优先**，因为 bio 的语义真源是对方）。
    */
   given Decoder[FriendSummary] = Decoder.instance { c =>
     for
@@ -1076,7 +1082,8 @@ object FriendCodecs:
       displayNameOf(c),
       strOr(c, "avatar", "avatarUrl"),
       since,
-      blocked
+      blocked,
+      bio = strOr(c, "bio", "description")
     )
   }
 
@@ -1209,7 +1216,11 @@ object FriendCodecs:
       unreadCount = longField(c, "unreadCount").map(_.toInt).getOrElse(0),
       lastMessageId = longField(c, "lastMessageId").getOrElse(0L),
       createdAt = longField(c, "createdAt").getOrElse(0L),
-      selfUserId = strField(c, "selfUserId").getOrElse("")
+      selfUserId = strField(c, "selfUserId").getOrElse(""),
+      // 件一（2026-11-02）：上游一旦加性下发群介绍即直接吃下（`description` 为其
+      // 契约名；`bio` 作同义别名容忍）；`remark` 是**本仓本地态**，上游值一律丢弃
+      // （与好友 remark 同一条纪律：上游不得覆盖用户自己的备注）。
+      description = strField(c, "description").orElse(strField(c, "bio"))
     )
   }
 
@@ -1235,7 +1246,10 @@ object FriendCodecs:
       "avatar" -> f.avatar.asJson,
       "since" -> f.since.asJson,
       "blocked" -> f.blocked.asJson,
-      "remark" -> f.remark.asJson
+      "remark" -> f.remark.asJson,
+      // 件一（2026-11-02）：对方自我介绍，**键恒在**（未设置 ⇒ null，同 remark 口径
+      // ——前端不必容错「键缺席」与「键为 null」两态）。
+      "bio" -> f.bio.asJson
     )
   }
   given Encoder[FriendRequestSummary] = deriveEncoder

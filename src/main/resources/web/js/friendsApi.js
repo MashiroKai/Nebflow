@@ -329,7 +329,17 @@ function matchUser(m, s) {
 function personFromWire(p) {
   if (!p || typeof p !== 'object') return p;
   if (p.username === undefined && p.display_name === undefined && p.avatar === undefined) return p;
-  return { userId: p.userId, neblinkId: p.username ?? '', name: p.display_name ?? '', avatarUrl: p.avatar ?? '', remark: p.remark ?? null };
+  // 件一（2026-11-02）：`bio` 与 `remark` **两个独立键**必须都在本边界加键，否则
+  // wire 键在此被丢弃 ⇒ 下游 Profile 面永远看不到对方自我介绍（同 remark 的
+  // 「在此边界被丢弃」先例）。
+  return {
+    userId: p.userId,
+    neblinkId: p.username ?? '',
+    name: p.display_name ?? '',
+    avatarUrl: p.avatar ?? '',
+    remark: p.remark ?? null,
+    bio: p.bio ?? null,
+  };
 }
 
 /** 搜索响应归一：契约 {found:true, user:{username,display_name,avatar},
@@ -598,6 +608,95 @@ export function applyLocalFriendRemark(userId, remark) {
   for (const f of lastFriendState.friends) {
     if (f && String(f.userId) === String(userId)) f.remark = v ? v : null;
   }
+}
+
+// ── 件一（2026-11-02）双描述：好友 bio / 群 description + 群 remark / selfBio ──
+//
+// 语义矩阵（与后端 `ProfileDescriptions` 头注一一对应，禁混用）：
+//   好友 `bio`          = 对方自我介绍     | 真源 = 上游（上游无该键）⇒ 本仓**本地缓存**
+//   好友 `remark`       = 我给对方的备注   | 真源 = 本仓本地（`PUT /friends/{id}/remark`）
+//   群   `description`  = 群自己的介绍     | 真源 = 上游群管理（上游无该键）⇒ **本地缓存**
+//   群   `remark`       = 我给群起的备注   | 真源 = 本仓本地（`PUT /groups/{id}/remark`）
+//   自己 `selfBio`      = 我给自己写的介绍 | 真源 = 本仓本地（`PUT /profile/self-bio`）
+//
+// 🔴 「本地缓存」的四条字段**零跨设备同步**（同族先例 S1 定案）——UI 必须显式标注，
+// 禁把本地写读当成「已同步到对方/已同步到群」。四条写面同形：body 单键 + trim 后
+// 空串 = 清除，回恒 `{ok:true}`（无 502 面：零上游往返）。
+
+/** PUT /api/friends/{id}/bio {bio} → 200 {ok:true}（**本地缓存**，见上矩阵）。 */
+export async function setFriendBio(friendUserId, bio) {
+  const body = { bio: String(bio ?? '') };
+  if (!MOCK) return req('PUT', `/api/friends/${encodeURIComponent(friendUserId)}/bio`, body);
+  await delay();
+  const m = mockStore();
+  const f = m.friends.find(x => x.userId === friendUserId);
+  if (!f) throw mockError('not a friend', 403);
+  const v = body.bio.trim();
+  f.bio = v ? v : null;
+  for (const c of m.conversations) if (c.friend && c.friend.userId === friendUserId) c.friend.bio = f.bio;
+  return { ok: true };
+}
+
+/** PUT /api/groups/{id}/remark {remark} → 200 {ok:true}（纯本地真源）。 */
+export async function setGroupRemark(groupId, remark) {
+  const body = { remark: String(remark ?? '') };
+  if (!MOCK) return req('PUT', `/api/groups/${encodeURIComponent(groupId)}/remark`, body);
+  await delay();
+  const m = mockStore();
+  const g = m.groups.find(x => x.groupId === groupId);
+  if (!g) throw mockError('group not found', 404);
+  const v = body.remark.trim();
+  g.remark = v ? v : null;
+  return { ok: true };
+}
+
+/** PUT /api/groups/{id}/description {description} → 200 {ok:true}（**本地缓存**）。 */
+export async function setGroupDescription(groupId, description) {
+  const body = { description: String(description ?? '') };
+  if (!MOCK) return req('PUT', `/api/groups/${encodeURIComponent(groupId)}/description`, body);
+  await delay();
+  const m = mockStore();
+  const g = m.groups.find(x => x.groupId === groupId);
+  if (!g) throw mockError('group not found', 404);
+  const v = body.description.trim();
+  g.description = v ? v : null;
+  return { ok: true };
+}
+
+/** PUT /api/profile/self-bio {selfBio} → 200 {ok:true}（纯本地真源）。 */
+export async function setSelfBio(bio) {
+  const body = { selfBio: String(bio ?? '') };
+  if (!MOCK) return req('PUT', '/api/profile/self-bio', body);
+  await delay();
+  const m = mockStore();
+  const v = body.selfBio.trim();
+  m.self.bio = v ? v : '';
+  m.selfBio = v;
+  return { ok: true };
+}
+
+/** GET /api/profile/descriptions → 四条本地态一次读（读面**单一往返**：禁让 Profile
+ *  面从三个不同拍次各取一半而拼出撕裂态）。返回恒为四键全在的形状
+ *  `{friendBio:{}, groupRemark:{}, groupDescription:{}, selfBio:''}`。 */
+export async function getProfileDescriptions() {
+  if (!MOCK) {
+    const raw = await req('GET', '/api/profile/descriptions');
+    return {
+      friendBio: (raw && raw.friendBio) || {},
+      groupRemark: (raw && raw.groupRemark) || {},
+      groupDescription: (raw && raw.groupDescription) || {},
+      selfBio: (raw && typeof raw.selfBio === 'string') ? raw.selfBio : '',
+    };
+  }
+  await delay();
+  const m = mockStore();
+  const friendBio = {}, groupRemark = {}, groupDescription = {};
+  for (const f of m.friends) if (f.bio) friendBio[f.userId] = f.bio;
+  for (const g of m.groups) {
+    if (g.remark) groupRemark[g.groupId] = g.remark;
+    if (g.description) groupDescription[g.groupId] = g.description;
+  }
+  return { friendBio, groupRemark, groupDescription, selfBio: m.selfBio || '' };
 }
 
 /** mock 链路的 `GET /api/friends` 注入点（既有测试夹具用）：注入后**同一套**收敛
@@ -1044,6 +1143,11 @@ function normalizeGroupRow(row) {
     // 渲染面无需判 undefined（禁「看情况」式消费）。空数组 = 无预览 ⇒ 调用方渲染
     // 标题首字母（现状形态 = 降级态）。
     memberAvatars: normalizeAvatarPreview(row),
+    // 件一（2026-11-02）双描述：两个键**恒在场**（未设置 ⇒ null，同 remark 口径），
+    // 语义正交——`description` = 群自己的介绍（上游真源 / 本仓本地缓存），
+    // `remark` = 我给群起的备注（纯本地真源）。
+    description: typeof row.description === 'string' && row.description ? row.description : null,
+    remark: typeof row.remark === 'string' && row.remark ? row.remark : null,
   };
   const ev = normalizeLatestEvent(row);
   if (ev) out.latestEvent = ev;

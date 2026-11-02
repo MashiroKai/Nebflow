@@ -1357,6 +1357,110 @@ button.fm-req-decline:focus-visible {
    加载序（split.css 后加载也压不掉）。零新色值。 */
 body > .fm-context-menu { z-index: 10001; }
 
+/* ── Profile 面（联系人 / 群；件一 2026-11-02）───────────────────────────────
+   壳 = 既有 `.cfg-modal-overlay` + `.cfg-modal`（modal.css），此处只补本面自己的
+   字段/英雄区样式。零裸 hex：全部走 var(--color-*) / var(--glass-*)（sapphire 单源）。 */
+#profile-face-overlay[hidden] { display: none; }
+.pf-modal { width: 420px; }
+.pf-close {
+  float: right;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font: inherit;
+}
+.pf-close:hover { color: var(--color-text); }
+.pf-close svg { width: 16px; height: 16px; }
+.pf-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 16px 8px;
+}
+.pf-hero-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+  text-align: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-hero-sub {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  text-align: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 16px 8px;
+}
+.pf-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-frame-border-light);
+}
+.pf-field:first-child { border-top: none; padding-top: 0; }
+.pf-field-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.pf-label {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  flex: none;
+}
+/* 「本地缓存·未同步」标记：字段真源在上游、上游当前无接口 ⇒ 必须可见（禁假装已同步）。 */
+.pf-cache-hint {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-frame-border-light);
+  border-radius: 6px;
+  padding: 0 5px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.pf-field-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.pf-save {
+  flex: none;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.pf-save:disabled { opacity: 0.55; cursor: default; }
+.pf-note {
+  margin: 0;
+  padding: 2px 16px 14px;
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--color-text-muted);
+}
+
 /* ── ① 引用块（气泡内，被引消息摘要 + 可辨识样式）──────────────────────────
    🔴 **D1（作者 2026-09-19 04:22 照案）= 下沉面**：材质由「浮起卡面（`--color-surface`
    + `--msg-meta-card-shadow`）」改为**比气泡底再退一档的填充 + 零阴影**（light

@@ -185,8 +185,10 @@ for (const scheme of ['dark', 'light']) {
         && probe.centerTop >= probe.dockTop - 0.5 && probe.centerBottom <= probe.dockBottom + 0.5,
       `${probe.centerW}×${probe.centerH} top=${probe.centerTop.toFixed(1)} dockTop=${probe.dockTop.toFixed(1)}`);
     ok(`${tag} ⑤ 呼吸缝 == --dock-gap 10px（胶囊形态零触碰）`, Math.abs(probe.gap - 10) <= 1.5, `gap=${probe.gap.toFixed(2)}`);
-    ok(`${tag} ⑤ 顶部会话头头像 56px 形态零触碰 + 同帧可见`,
-      Math.abs(probe.topW - 56) <= 0.6 && Math.abs(probe.topH - 56) <= 0.6
+    // 会话页头同构批（件二+件三，2026-11-02）：顶部会话身份头落回**悬浮**形态
+    // （.mh-idhead，非 fixed 顶栏），头像外径 40 → **56**（--idhead-avatar，四种
+    // 会话同档）。本条只钉「同帧可见 + 外径读音」，边缘一致性判据（①）不受影响。
+    ok(`${tag} ⑤ 顶部会话身份头头像 56px（--idhead-avatar）+ 同帧可见`,      Math.abs(probe.topW - 56) <= 0.6 && Math.abs(probe.topH - 56) <= 0.6
         && probe.topInViewport && probe.centerInViewport,
       `top=${probe.topW}×${probe.topH} inFrame=${probe.topInViewport && probe.centerInViewport}`);
 

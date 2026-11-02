@@ -347,6 +347,24 @@ export default {
   'contacts.menuSetRemark': '设置备注',
   'contacts.remarkPlaceholder': '备注（留空清除）',
   'contacts.remarkHint': 'Enter 保存 · Esc 取消 · 留空清除备注',
+  // ── 件一（2026-11-02）：好友/群 Profile 双描述面 ─────────────────────────
+  'profile.open': '查看资料',
+  'profile.friendTitle': '好友资料',
+  'profile.groupTitle': '群资料',
+  'profile.close': '关闭',
+  'profile.save': '保存',
+  'profile.saved': '已保存',
+  'profile.friendRemarkLabel': '我的备注',
+  'profile.friendRemarkPlaceholder': '我给对方起的备注（留空清除）',
+  'profile.friendBioLabel': '自我介绍',
+  'profile.friendBioPlaceholder': '对方的自我介绍（留空清除）',
+  'profile.groupRemarkLabel': '我的群备注',
+  'profile.groupRemarkPlaceholder': '我给这个群起的备注（留空清除）',
+  'profile.groupDescriptionLabel': '群介绍',
+  'profile.groupDescriptionPlaceholder': '群介绍（留空清除）',
+  'profile.localCacheHint': '本地缓存·未同步',
+  'profile.friendNote': '备注只存在本机；自我介绍与群介绍的上游同步接口尚未提供，当前为本机缓存。两者都已纳入搜索。',
+  'profile.groupNote': '我的群备注只存在本机；群介绍的上游同步接口尚未提供，当前为本机缓存。两者都已纳入搜索。',
   'contacts.deleteTitle': '删除好友',
   'contacts.deleteConfirm': '删除后，将解除与 {name} 的好友关系，聊天记录保留。',
   'contacts.blockTitle': '加入黑名单',
@@ -1282,6 +1300,22 @@ export default {
   'settings.editRawJson': '编辑原始 JSON',
   'settings.reload': '重新加载',
   'settings.account': '账号',
+  // 件四 · 设置页身份卡本地化（作者令 2026-11-02「头像在上，下面是用户名和邮箱…
+  // 点击胶囊直接进自己的 profile 设置页」）。zh/en **同键对称**新增（14 键 × 2 文件）。
+  'settings.identityCardLabel': '账号资料',
+  'settings.identityChangeAvatar': '更换头像',
+  'settings.identityNotSignedIn': '未登录',
+  'settings.identityUnknown': '未知',
+  'settings.avatarChangeUnavailable': '账号服务暂未提供头像上传接口，图片未上传。',
+  'settings.profileSelf': '个人资料',
+  'settings.profileClose': '关闭',
+  'settings.profileUsername': '用户名',
+  'settings.profileNickname': '昵称',
+  'settings.profileEmail': '邮箱',
+  'settings.profileGithub': 'GitHub 绑定',
+  'settings.profileGoogle': 'Google 绑定',
+  'settings.profileReadonlyNote': '以下均为账号服务当前返回的真实读数，客户端不缓存、不代填。',
+  'settings.accountServiceUnavailable': '账号服务暂未提供该接口，当前无法在应用内修改。',
   'settings.about': '关于',
   'settings.connection': '连接状态',
   'settings.connected': '已连接',
@@ -1403,6 +1437,10 @@ export default {
   'session.delete': '删除此会话',
   'session.dropDelete': '拖放以删除',
   'session.dropDeleteCount': '拖放以删除 {count} 个会话',
+  // 会话页头同构批（件二+件三，2026-11-02）：右上三点键的无障碍名（仅图标钮）
+  // + 设备会话三点菜单的「设备描述」项（设备无 Profile 面 ⇒ 入口 = 既有描述编辑面板）。
+  'session.more': '更多',
+  'session.deviceDesc': '设备描述',
   'folder.newPlaceholder': '新文件夹名称…',
 
   // === Delete modals ===
@@ -2114,11 +2152,11 @@ export default {
   'neblink.stable': '稳定版',
   'neblink.beta': '测试版',
   'neblink.cancel': '取消',
-  'neblink.updating': '更新中…',
-  'neblink.restarting': '重启中…',
-  // 远端更新超时态（hotupdate 批 3 · 裁定 7「外层 300 秒落在触发/受理面」+ 设计 §7:149
-  // 「超时上限与超时态」）：触发面在 300 秒内没等到任何结果帧时的收口文案。
-  'neblink.updateTimeout': '等待超时（300 秒）——请检查设备状态',
+  // 远端更新的三态文案（`neblink.updating` / `neblink.restarting` / `neblink.updateTimeout`）
+  // 随件五（2026-11-02「联系人里的设备更新去掉，现在统一由官网进行统一更新」）删除：
+  // 三键的唯一消费者是联系人设备行的行内回显，该面退役后全仓零引用（grep 实证）。
+  // `neblink.update` **保留**——设置页设备区每行仍用（`messages.js` 的
+  // `[data-settings-device-update]`，fleet 批 2026-11-01）。
 
   // ── 全设备统一更新（fleet 批 2026-11-01，作者令「一键把所有设备更新到同一版本，
   //    并全程有状态卡片引导」）──────────────────────────────────────────────
@@ -2240,6 +2278,7 @@ export default {
   'mhsearch.scopeGroup': '群聊',
   'mhsearch.searching': '搜索中…',
   'mhsearch.resultCount': '{n} 条结果',
+  'mhsearch.descHits': '资料命中 · {n} 个会话',
   'mhsearch.noResults': '无匹配结果',
   'mhsearch.noResultsHint': '试试更换关键词或切换范围',
   'mhsearch.error': '搜索失败，请稍后重试',

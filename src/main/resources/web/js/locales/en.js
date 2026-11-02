@@ -372,6 +372,24 @@ export default {
   'contacts.menuSetRemark': 'Set remark',
   'contacts.remarkPlaceholder': 'Remark (empty clears)',
   'contacts.remarkHint': 'Enter saves · Esc cancels · empty clears the remark',
+  // ── Batch 1 (2026-11-02): friend/group profile with two descriptions ─────
+  'profile.open': 'View profile',
+  'profile.friendTitle': 'Friend profile',
+  'profile.groupTitle': 'Group profile',
+  'profile.close': 'Close',
+  'profile.save': 'Save',
+  'profile.saved': 'Saved',
+  'profile.friendRemarkLabel': 'My remark',
+  'profile.friendRemarkPlaceholder': 'Remark you gave this friend (empty clears)',
+  'profile.friendBioLabel': 'Self-introduction',
+  'profile.friendBioPlaceholder': "The friend's self-introduction (empty clears)",
+  'profile.groupRemarkLabel': 'My group remark',
+  'profile.groupRemarkPlaceholder': 'Remark you gave this group (empty clears)',
+  'profile.groupDescriptionLabel': 'Group description',
+  'profile.groupDescriptionPlaceholder': 'Group description (empty clears)',
+  'profile.localCacheHint': 'Local cache · not synced',
+  'profile.friendNote': 'Your remark stays on this device; upstream sync for self-introductions and group descriptions is not available yet, so those are cached locally. Both fields are included in search.',
+  'profile.groupNote': 'Your group remark stays on this device; upstream sync for group descriptions is not available yet, so it is cached locally. Both fields are included in search.',
   'contacts.deleteTitle': 'Delete friend',
   'contacts.deleteConfirm': 'This removes {name} from your friends. Chat history is kept.',
   'contacts.blockTitle': 'Block',
@@ -1324,6 +1342,23 @@ export default {
   'settings.editRawJson': 'Edit Raw JSON',
   'settings.reload': 'Reload',
   'settings.account': 'Account',
+  // 件四 · settings identity card localization (author ruling 2026-11-02: avatar on
+  // top, one capsule below with username + email; the capsule opens the profile page).
+  // zh/en added **symmetrically** (14 keys x 2 files).
+  'settings.identityCardLabel': 'Account details',
+  'settings.identityChangeAvatar': 'Change avatar',
+  'settings.identityNotSignedIn': 'Not signed in',
+  'settings.identityUnknown': 'Unknown',
+  'settings.avatarChangeUnavailable': 'The account service does not offer an avatar upload endpoint yet — the image was not uploaded.',
+  'settings.profileSelf': 'Profile',
+  'settings.profileClose': 'Close',
+  'settings.profileUsername': 'Username',
+  'settings.profileNickname': 'Nickname',
+  'settings.profileEmail': 'Email',
+  'settings.profileGithub': 'GitHub binding',
+  'settings.profileGoogle': 'Google binding',
+  'settings.profileReadonlyNote': 'Everything below is a live reading from the account service; the client caches nothing and fills nothing in.',
+  'settings.accountServiceUnavailable': 'The account service does not offer this endpoint yet, so it cannot be edited in the app.',
   'settings.about': 'About',
   'settings.connection': 'Connection',
   'settings.connected': 'Connected',
@@ -1448,6 +1483,10 @@ export default {
   'session.delete': 'Delete this session',
   'session.dropDelete': 'Drop to delete',
   'session.dropDeleteCount': 'Drop to delete {count} sessions',
+  // Conversation head unification batch (件二+件三, 2026-11-02): accessible name of
+  // the top-right "more" button (icon-only).
+  'session.more': 'More',
+  'session.deviceDesc': 'Device description',
   'folder.newPlaceholder': 'New folder name…',
 
   // === Delete modals ===
@@ -2185,12 +2224,13 @@ export default {
   'neblink.stable': 'Stable',
   'neblink.beta': 'Beta',
   'neblink.cancel': 'Cancel',
-  'neblink.updating': 'Updating...',
-  'neblink.restarting': 'Restarting...',
-  // Remote-update timeout state (hotupdate batch 3 · ruling 7 "the outer 300s lands on
-  // the trigger/admission face" + design §7:149 "timeout cap and timeout state"): the
-  // trigger face's closing text when no result frame arrived within 300 seconds.
-  'neblink.updateTimeout': 'Timed out (300s) — check the device state',
+  // The three remote-update state strings (neblink.updating / neblink.restarting /
+  // neblink.updateTimeout) were removed with item 5 (2026-11-02: "drop the device
+  // update inside contacts — updates are unified on the website now"): their only
+  // consumer was the contacts device row's inline echo, and after that face retired
+  // they had zero references repo-wide (grep-verified).
+  // `neblink.update` STAYS — the settings device area still uses it per row
+  // (`messages.js` `[data-settings-device-update]`, fleet batch 2026-11-01).
 
   // ── Fleet-wide unified update (fleet batch 2026-11-01: "one click brings every
   //    device to the same version, with a status card guiding the whole way") ──
@@ -2307,6 +2347,7 @@ export default {
   'mhsearch.scopeGroup': 'Groups',
   'mhsearch.searching': 'Searching…',
   'mhsearch.resultCount': '{n} results',
+  'mhsearch.descHits': 'Profile matches · {n} chats',
   'mhsearch.noResults': 'No matches',
   'mhsearch.noResultsHint': 'Try a different keyword or scope',
   'mhsearch.error': 'Search failed, try again later',

@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+// ⛔ 已退役（会话页头同构批 件二+件三，作者令 2026-11-02）：本脚本拍的形态
+//    （会话身份组负 margin 上提定位（②-b 块））已被**整条取代** —— 现役形态 = 悬浮身份头
+//    `.mh-idhead`（mobileLayer.css 文件尾「会话页头同构批」+ js/mobile/sessionHead.js），
+//    机械验收改由 `tests/conversation-heads-unify.spec.mjs` 承担。
+//    保留本文件仅作历史取证回放；其断言（fixed 顶栏/sticky 锚/负 margin）**不再成立**，
+//    重跑必红 = 预期，勿据此判回归。
 // chat-head-position-shots.mjs — 会话身份组位置批（作者报障 2026-11-01 23:0x
 // 「中间 agent 头像和 agent name 的位置这么奇怪」，实拍
 // evidence/20261101_dock-avatar-edge-unify/edge-sameframe-dark-avatar.png）验收

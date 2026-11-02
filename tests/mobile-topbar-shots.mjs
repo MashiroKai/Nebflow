@@ -75,7 +75,8 @@ for (const scheme of ['dark', 'light']) {
   await m.locator('.mobile-page[data-page="me"] .mf-hub-row[data-me-page="me-user"]').click();
   await sleep(500);
   await m.screenshot({ path: join(OUT, `me-username-${scheme}.png`) });
-  // 设置页（头像位/设备区已撤，账号读数行保留）。
+  // 设置页（件四·2026-11-02：身份卡已回到设置页 = 头像在上 +
+  // 用户名/邮箱胶囊；设备区仍在联系人页。文件名保留不改，避免证据引用键变。含旧名的照片含义已变）。
   await m.locator('.mobile-page[data-page="me-user"] .mobile-back-btn').click();
   await sleep(300);
   await m.locator('.mobile-page[data-page="me"] .mobile-back-btn').click();
