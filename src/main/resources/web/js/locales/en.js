@@ -2168,12 +2168,13 @@ export default {
   'neblink.stable': 'Stable',
   'neblink.beta': 'Beta',
   'neblink.cancel': 'Cancel',
-  'neblink.updating': 'Updating...',
-  'neblink.restarting': 'Restarting...',
-  // Remote-update timeout state (hotupdate batch 3 · ruling 7 "the outer 300s lands on
-  // the trigger/admission face" + design §7:149 "timeout cap and timeout state"): the
-  // trigger face's closing text when no result frame arrived within 300 seconds.
-  'neblink.updateTimeout': 'Timed out (300s) — check the device state',
+  // The three remote-update state strings (neblink.updating / neblink.restarting /
+  // neblink.updateTimeout) were removed with item 5 (2026-11-02: "drop the device
+  // update inside contacts — updates are unified on the website now"): their only
+  // consumer was the contacts device row's inline echo, and after that face retired
+  // they had zero references repo-wide (grep-verified).
+  // `neblink.update` STAYS — the settings device area still uses it per row
+  // (`messages.js` `[data-settings-device-update]`, fleet batch 2026-11-01).
 
   // ── Fleet-wide unified update (fleet batch 2026-11-01: "one click brings every
   //    device to the same version, with a status card guiding the whole way") ──

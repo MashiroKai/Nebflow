@@ -131,13 +131,13 @@ test('M1-M3 手机层：本机入设备列 + 单窗一进一出 + 禁横向滚�
   await expect(rows.nth(0).locator('.neblink-peer-name')).toHaveText('Mashiro-Mac');
   await expect(rows.nth(0).locator('.neblink-presence')).toHaveText('在线');
   await expect(rows.nth(0)).toContainText('macOS');
-  // 对端行不变（名 + 在线 + Windows + 远程更新键）
+  // 对端行不变（名 + 在线 + Windows）——设备更新入口已随件五退役（作者令 2026-11-02
+  // 「联系人里的设备更新去掉，现在统一由官网进行统一更新」）⇒ 全列零更新键。
   await expect(rows.nth(1).locator('.neblink-peer-name')).toHaveText('KAI');
   await expect(rows.nth(2).locator('.neblink-peer-name')).toHaveText('DESKTOP-IJBBEOT');
-  await expect(rows.nth(1).locator('[data-device-update-btn]')).toHaveCount(1);
-  await expect(rows.nth(2).locator('[data-device-update-btn]')).toHaveCount(1);
-  // 本机行不挂远程更新键（remoteUpdate 是远控对端语义）
   await expect(rows.nth(0).locator('[data-device-update-btn]')).toHaveCount(0);
+  await expect(rows.nth(1).locator('[data-device-update-btn]')).toHaveCount(0);
+  await expect(rows.nth(2).locator('[data-device-update-btn]')).toHaveCount(0);
   // 更新卡整块退役 + 版本/commit 串不进联系人页
   await expect(page.locator('#fm-local-update-card')).toHaveCount(0);
   const contactsText = await page.locator('.mobile-page[data-page="contacts"]').innerText();
@@ -222,7 +222,8 @@ test('D1 桌面端：设备段行规格 + 会话窗单窗一进一出', async ({
   await expect(rows.nth(0).locator('.neblink-presence')).toHaveText('在线');
   await expect(rows.nth(0)).toContainText('macOS');
   await expect(rows.nth(0).locator('[data-device-update-btn]')).toHaveCount(0);
-  await expect(rows.nth(1).locator('[data-device-update-btn]')).toHaveCount(1);
+  // 件五（2026-11-02）：联系人设备列零更新键（本机与对端同规格）。
+  await expect(rows.nth(1).locator('[data-device-update-btn]')).toHaveCount(0);
   await expect(page.locator('#fm-local-update-card')).toHaveCount(0);
   const panelText = await page.locator('#panel-contacts').innerText();
   expect(panelText).not.toMatch(/20\d\d\.\d{2}\.\d{2}/);

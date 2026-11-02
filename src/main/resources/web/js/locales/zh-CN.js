@@ -2096,11 +2096,11 @@ export default {
   'neblink.stable': '稳定版',
   'neblink.beta': '测试版',
   'neblink.cancel': '取消',
-  'neblink.updating': '更新中…',
-  'neblink.restarting': '重启中…',
-  // 远端更新超时态（hotupdate 批 3 · 裁定 7「外层 300 秒落在触发/受理面」+ 设计 §7:149
-  // 「超时上限与超时态」）：触发面在 300 秒内没等到任何结果帧时的收口文案。
-  'neblink.updateTimeout': '等待超时（300 秒）——请检查设备状态',
+  // 远端更新的三态文案（`neblink.updating` / `neblink.restarting` / `neblink.updateTimeout`）
+  // 随件五（2026-11-02「联系人里的设备更新去掉，现在统一由官网进行统一更新」）删除：
+  // 三键的唯一消费者是联系人设备行的行内回显，该面退役后全仓零引用（grep 实证）。
+  // `neblink.update` **保留**——设置页设备区每行仍用（`messages.js` 的
+  // `[data-settings-device-update]`，fleet 批 2026-11-01）。
 
   // ── 全设备统一更新（fleet 批 2026-11-01，作者令「一键把所有设备更新到同一版本，
   //    并全程有状态卡片引导」）──────────────────────────────────────────────

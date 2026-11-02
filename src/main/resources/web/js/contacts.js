@@ -5,12 +5,12 @@
 // count on #contacts-btn (pure-badge model, [U3]).
 import { t } from './i18n.js';
 import { createIconsIn, escapeHtml } from './utils.js';
-import { getNeblinkState, presenceBadgeHTML, onNeblinkStatus, platformDisplay, getDeviceUpdateState, markDeviceUpdating, markDeviceUpdateTimeout, onDeviceUpdateChange, pendingDeviceUpdateKey } from './neblink.js';
+import { getNeblinkState, presenceBadgeHTML, onNeblinkStatus, platformDisplay } from './neblink.js';
 import { setActivityBadge, openLoginModal } from './activityBar.js';
 // R2（③ 更正轮）：本模块的验证键也要接**链路态**——判据唯一真源 = `state.js` 的
 // `connected`（主对话框 `ws.js:119` / 会话窗 `messages.js:1160` / dropbox
 // `dropbox.js:299` 三处同源），断连/重连两拍由 ws.js 的回调派发（禁第二份判据）。
-import { onMessage, onDisconnect, onReconnect, sendWs } from './ws.js';
+import { onMessage, onDisconnect, onReconnect } from './ws.js';
 import state from './state.js';
 import * as api from './friendsApi.js';
 // 设备会话统一批 MVP-1（2026-09-15）：设备段入本面板。数据源/开窗入口都从
@@ -353,8 +353,6 @@ function render() {
   // 同条目规格：在线态 + 系统 + 点进对话）。
   body.appendChild(buildDevicesEntry());
   if (devicesExpanded) body.appendChild(buildDeviceRows());
-  // 设备行的更新回显按**状态机现读值**同步（面板每次 render 重建行 ⇒ 重开后不丢进度）。
-  syncDeviceUpdateUI();
 
   // ── 群组一期（friendgroups 客户端腿）──
   // 入站群邀请（pending 态；「邀请需对方确认」= 主卡 A-4/O② 的被邀请侧确认面）。
@@ -462,7 +460,7 @@ function buildDeviceRows() {
  *   · 显示名 = `deviceLabel`（`messages.js:2607-2626` 单点：描述 > 设备名 > 占位文案；
  *     2026-09-15 22:27 作者卡答 ⇒ 面板行兜底与窗头同键，**不回落 id**）。
  *  交互 = 点击开设备会话窗（`openDeviceChat` → `renderChatModal`，与好友窗同一渲染器）。
- *  ⚠ 与设置页旧行的**唯一**差异 = 无「远程更新」键组（随 ④ 摘除，见报告被移除项）。 */
+ *  ⚠ 行结构恒为四件，**无任何更新面**（件五 2026-11-02 退役；更新入口只在设置页设备区）。 */
 function deviceRow(d) {
   const displayName = escapeHtml(deviceLabel(d));
   const icon = platformDisplay(d.platform).icon;
@@ -483,110 +481,40 @@ function deviceRow(d) {
   row.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); open(); }
   });
-  // 更新入口（G7 新形态 = **单按钮 + 统一进度面**），追加在模板尾（icon → name →
-  // presence → status → 更新面），不动既有四件的位置与类名。
-  // 设备平级批 2026-10-31：本机行**不挂**远程更新键组——`remoteUpdate` 是「远控
-  // 对端」语义，对本机无意义（本机更新归设置面/编排器自决），挂上去只会出一个
-  // 点了必错的键；行激活（点进对话）对本机照常成立。
-  if (!d.isLocal) for (const node of deviceUpdateEntry(d)) row.appendChild(node);
+  // 🔴 联系人设备段**无更新入口**（件五，作者令 2026-11-02「联系人里的设备更新去掉，
+  // 现在统一由官网进行统一更新」）：hotupdate 批 3 · G7 的「单按钮 + 行内状态文本」
+  // 整组退役。行尾**不留空按钮位/空容器/空白 flex 占位**——行结构回到四件
+  // （icon → name → presence → status），与本函数复用清单逐件一致。
+  // 更新入口现**唯一存续面 = 设置页设备区**（`messages.js` 的
+  // `[data-settings-device-update]` 每行键 + `[data-fleet-open]` 全部更新，fleet 批
+  // 2026-11-01 起），二者无共享 DOM、无共享进度面（见本批交付报告的重叠申报）。
   return row;
 }
 
-// ── 设备行更新入口（hotupdate 批 3 · G7；裁定 1 = 新形态「单按钮 + 统一进度面」）──
+// ── 设备行更新入口已退役（件五，作者令 2026-11-02）────────────────────────
 //
-// 🔴 复用面（逐条，禁第二套；「同名不算复用」故逐件给实际调用）：
-//   · 进度状态机与结果帧处理 = `neblink.js` 的 `deviceUpdateState` + `initNeblink()` 里那个
-//     `remoteUpdateResult` 处理体（2026-09-15 摘除令的**未删保留面**）。本文件只经其导出的
-//     访问器（`getDeviceUpdateState` / `markDeviceUpdating` / `markDeviceUpdateTimeout` /
-//     `pendingDeviceUpdateKey` / `onDeviceUpdateChange`）读写 ⇒ **零第二套进度状态变量、
-//     零第二套结果处理**。
-//   · 按钮 = **保留的既有类名** `.neblink-peer-update-btn`（`neblink.css:153-167`——摘除令
-//     后样式表一字未动，该类仍在）× **保留的既有文案键** `neblink.update`（'更新'）。
-//     ⇒ 恢复发生在**新家**（联系人面板设备行），旧 `neblink.js` 设备行模板与三组键绑定的
-//     摘除令**不回滚**（本函数不碰 neblink.js 的模板段）。
-//   · 行内状态文本 = 既有 `.neblink-peer-status`（11px / `--color-text-muted` 中性灰）。
-//     🔴 刻意**不用** `.neblink-update-status` 的 updating/error 档（ui-status-redesign
-//     后两档 = 图标+中性词，与裁定 10「失败/回滚仅状态行、中性灰+明确原因」同向）：
-//     设计 §7:143-144「中性灰 + 明确原因，不用红块」，且「每视口
-//     至多一个彩色事件」（本行已有一个 presence 彩色事件）。⇒ **样式表零改动**。
-//   · 发送 = **既有** `remoteUpdate` WS 命令（`WebSocketRoutes.scala` 的 `case "remoteUpdate"`）
-//     ⇒ 零新消息类型；载荷在既有 `device` / `beta` 上**加**可选幂等键 `clientRequestId`（G8），
-//     既有字段语义与存在性不变。`beta:false` = 界面不暴露测试通道（裁定 9）。
-//   · 离线设备：**沿用既有错误分支**（裁定 12）——不新增「上线后拉取」机制；按钮照常可点，
-//     后端既有错误文案（device not found / no address / relay 错误）原样回显。
+// 作者原话「联系人里的设备更新去掉，现在统一由官网进行统一更新」⇒ hotupdate 批 3 ·
+// G7 在联系人设备行上的整组更新面**一并退役**，本段原内容（逐条留档，便于回溯）：
+//   · `REMOTE_UPDATE_ACCEPT_TIMEOUT_MS`（300000，外层受理等待上限）；
+//   · `newClientRequestId()`（`clientRequestId` 幂等键生成，契约 §D.2）；
+//   · `triggerDeviceUpdate(d)`（`markDeviceUpdating` + 300s 超时 + `sendWs remoteUpdate`）；
+//   · `deviceUpdateEntry(d)`（`[data-device-update-state]` 状态文本 +
+//     `[data-device-update-btn]` / `.neblink-peer-update-btn` 单按钮，文案键 `neblink.update`）；
+//   · `syncDeviceUpdateUI()`（按 `deviceUpdateState` 现读值扫 DOM 回显四态）及其两个调用点
+//     （面板 `render()` 尾、`onDeviceUpdateChange` 订阅）。
 //
-// 🔴 超时面（裁定 7「外层 300 秒落在触发/受理面」）：本值 = 触发面的受理等待上限，
-// 与内层中继 120s 超时（NebLink 服务侧，本仓零命中）和既有界面 600s 重启默认
-// （`WebSocketRoutes.scala:1585-1619`）**互不影响、本批零改动**。
-const REMOTE_UPDATE_ACCEPT_TIMEOUT_MS = 300_000;
-
-/** 一次逻辑更新请求的幂等键（契约 §D.2 形状 = 字符串；生成方 = 调用方）。 */
-function newClientRequestId() {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return 'cru-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
-}
-
-/** 触发点（受层面）：幂等键 + 状态机推进 + 外层 300s 受理等待。 */
-function triggerDeviceUpdate(d) {
-  const dn = d.deviceName || '';
-  if (!dn) return;
-  // 重试复用同键（契约 §D.2「用户重试须复用同一个键」）：pending 态（updating/timeout）
-  // 沿用上一枚；终态或无记录 ⇒ 新生成一枚。
-  const key = pendingDeviceUpdateKey(dn) || newClientRequestId();
-  markDeviceUpdating(dn, key);
-  setTimeout(() => markDeviceUpdateTimeout(dn), REMOTE_UPDATE_ACCEPT_TIMEOUT_MS);
-  sendWs({ type: 'remoteUpdate', device: dn, beta: false, clientRequestId: key });
-}
-
-/** 设备行的更新面两件（状态文本 + 单按钮）。 */
-function deviceUpdateEntry(d) {
-  const dn = d.deviceName || '';
-  const stateEl = el('span', 'neblink-peer-status');
-  stateEl.dataset.deviceUpdateState = dn;
-  const btn = el('button', 'neblink-peer-update-btn', t('neblink.update'));
-  btn.dataset.deviceUpdateBtn = dn;
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation(); // 行激活（→ 开设备会话窗）让位：更新键只做更新
-    triggerDeviceUpdate(d);
-  });
-  return [stateEl, btn];
-}
-
-/** 统一进度面 → 行内回显（按状态机现读值同步；结果帧由 neblink.js 单点消费后播报）。
- *  按 DOM 现读扫描（不整面板重渲染）：零重排、零列表闪烁。 */
-function syncDeviceUpdateUI() {
-  // querySelectorAll yields Element, which carries neither `dataset` nor
-  // `disabled`; narrow once at the top and keep the body unchanged.
-  document.querySelectorAll('[data-device-update-state]').forEach((node) => {
-    if (!(node instanceof HTMLElement)) return;
-    const stateEl = node;
-    const dn = stateEl.dataset.deviceUpdateState || '';
-    const row = stateEl.closest('.neblink-peer');
-    const btnFound = row ? row.querySelector('[data-device-update-btn]') : null;
-    const btn = btnFound instanceof HTMLButtonElement ? btnFound : null;
-    const st = getDeviceUpdateState(dn);
-    if (!st) {
-      stateEl.textContent = '';
-      if (btn) btn.disabled = false;
-      return;
-    }
-    if (st.status === 'updating') {
-      stateEl.textContent = t('neblink.updating');
-      if (btn) btn.disabled = true;
-    } else if (st.status === 'done') {
-      stateEl.textContent = t('neblink.restarting');
-      if (btn) btn.disabled = true;
-    } else if (st.status === 'timeout') {
-      stateEl.textContent = t('neblink.updateTimeout');
-      if (btn) btn.disabled = false;
-    } else { // error —— 文案 = 后端既有错误分支原文（不新增客户端离线机制）
-      stateEl.textContent = st.message || '';
-      if (btn) btn.disabled = false;
-    }
-  });
-}
+// 🔴 连带判据（本批交付报告逐条给了 grep 读数）：
+//   · `neblink.update` **保留**——设置页设备区每行仍在用（`messages.js:5639`，
+//     `[data-settings-device-update]`，fleet 批 2026-11-01）。全仓零引用才可删，此处
+//     恰有引用 ⇒ 不删。
+//   · `neblink.updating` / `neblink.restarting` / `neblink.updateTimeout` 三键在退役后
+//     全仓零引用 ⇒ 连同 zh-CN/en 双语对称删除（本段是本批三键的最后消费点）。
+//   · `neblink.js` 的 `deviceUpdateState` 状态机 + `remoteUpdateResult` 结果帧处理
+//     **保留**：它是共享 store（远程更新仍是服务端既有能力），本模块不再是其消费者，
+//     保留它不产生死调用（导出面零引用只是「当前无消费者」，不是坏引用）。
+//   · 更新入口**唯一存续面 = 设置页设备区**：`[data-fleet-open]` 全部更新 +
+//     `[data-settings-device-update]` 每行（`messages.js` / `fleetUpdate.js`）。与联系人
+//     入口无共享 DOM、无共享进度面 ⇒ 本批零触碰设置页。
 
 function friendRow(f) {
   const blocked = !!f.blocked;
@@ -1249,10 +1177,9 @@ export function initContacts() {
       refresh();
     }
   });
-  // 设备更新进度回显（hotupdate 批 3 · G7）：订阅面 = `neblink.js` 里结果帧处理的
-  // **唯一播报点**（`notifyDeviceUpdateChange`）——本模块不注册第二个 `remoteUpdateResult`
-  // 处理器（禁第二套结果处理），只按状态机现读值同步行内回显。
-  onDeviceUpdateChange(syncDeviceUpdateUI);
+  // 设备更新进度回显订阅（hotupdate 批 3 · G7）已随件五（2026-11-02）退役：联系人设备行
+  // 不再有更新面 ⇒ 无 `onDeviceUpdateChange` 订阅者（该订阅面在 `neblink.js` 仍属共享
+  // store 的导出，其它面将来要用可直接接，零死调用）。
   // P3 error surface — friendsApi dispatches on auth failure / network error.
   // `{auto:true}`: this is not a user gesture — it fires once per failed
   // friendship request, so it must not open an OAuth window per event
