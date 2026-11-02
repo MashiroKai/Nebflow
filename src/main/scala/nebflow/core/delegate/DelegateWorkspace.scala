@@ -79,7 +79,13 @@ object DelegateWorkspace:
      * 判定腿（jev / small-judge / fail-open——值域见
      * [[DelegateJudge.JudgeLeg]]；fail-open = 两层全败按判是反转）。
      */
-    judgeLeg: Option[String] = None
+    judgeLeg: Option[String] = None,
+    /**
+     * 续用腿的来源标记（worktree-reuse-selection 批 2026-11-02）：本座位**接续
+     * 自哪个既有 worktree**（被续用者的 delegate id / 目录名）。`None` = 正常
+     * 新建腿（默认形态，存量语义逐字不变）。
+     */
+    reusedFrom: Option[String] = None
   )
 
   /**
@@ -147,6 +153,100 @@ object DelegateWorkspace:
         end for
     }
   end prepare
+
+  /**
+   * **续用已有 worktree** 的绑定腿（worktree-reuse-selection 批 2026-11-02）。
+   *
+   * 语义：不新建任何树/分支——座位直接落在一个**既有** worktree 上（候选由
+   * [[WorktreeCandidates]] 发现与裁决），delegate 开局即在上一任的成果与未提交
+   * 改动之上继续干。
+   *
+   * 与 [[prepare]] 的三点差异（其余全同）：
+   *   - **不建分支**：分支 = 该树当前检出的分支（上一任的 `delegate/<旧 id>`）；
+   *     合并轮的基分支/基 SHA = 基工作区读数（不是树内 HEAD —— 树内 HEAD 是
+   *     交付点，不是合并目标）；
+   *   - **worktreeJudged 仍走判定机**：判否 = 只读座位变体 brief（同 [[prepare]]），
+   *     但复用腿的 brief 行额外**申报「你接着上一任的活干」**（模型必须知道树上
+   *     的未提交改动是继承来的，不是自己弄脏的）；
+   *   - **建败无从谈起**：目标树已存在且已解析为合法 git 工作树，本腿零 git 写
+   *     （唯一的写是 spawn 侧记账），故不可能触发 in-place 回落。
+   *
+   * ⚠ 反错配的机械兜底留在调用方（[[WorktreeCandidates.resolve]] 已拒「被活会话
+   * 持有」的树）；本腿只负责「绑定形态正确」。
+   */
+  def prepareReuse(
+    workspace: String,
+    task: String,
+    delegateId: String,
+    candidate: WorktreeCandidates.Candidate
+  ): IO[Binding] =
+    IO.blocking {
+      val baseWs = os.Path(workspace)
+      val seat = os.Path(candidate.path)
+      val baseBranch = GitWorktrees.currentBranch(baseWs).orElse(candidate.baseBranch)
+      val baseSha = GitWorktrees.headSha(baseWs)
+      val branch = candidate.branch.getOrElse(s"delegate/$delegateId")
+      (baseBranch, baseSha, branch)
+    }.flatMap { case (baseBranch, baseSha, branch) =>
+      DelegateJudge.DelegateJudgePort.decideWorktreeDetailed(task).map { judged =>
+        // 判定机照判（brief 的只读/工作座位变体沿它的裁决）；腿词标 `reuse`——
+        // 本座位不是判定机新建的，是接续的（spawn 行可审计）。
+        val leg = judged.map(l => DelegateJudge.JudgeLeg.Reuse).getOrElse(DelegateJudge.JudgeLeg.Reuse)
+        val changesFiles = judged.map(_.changesFiles).getOrElse(true)
+        logger.info(
+          s"delegate $delegateId: REUSING worktree ${candidate.path} (branch=$branch, " +
+            s"dirty=${candidate.dirty}, ahead=${candidate.aheadOfBase}, status=${candidate.status})"
+        )
+        Binding(
+          branch,
+          worktree = Some(candidate.path),
+          cwd = candidate.path,
+          baseWs = workspace,
+          baseBranch = baseBranch,
+          baseSha = baseSha,
+          briefLine = Some(reuseBriefLine(branch, candidate, readOnly = !changesFiles)),
+          worktreeJudged = Some(changesFiles),
+          judgeLeg = Some(leg),
+          reusedFrom = Some(candidate.delegateId.getOrElse(candidate.dirName))
+        )
+      }
+    }
+  end prepareReuse
+
+  /**
+   * 续用腿的 brief 申报行（🔴 模型可见文案——§16 待过目）。
+   *
+   * 与 [[workingBranchLine]] 的差异 = **继承事实申报**：树上已有的未提交改动 /
+   * 领先提交是上一任留下的，模型必须「接着干」而不是「重做」。这是复用腿唯一的
+   * 提示词语义增量（机械纪律措辞逐字沿用工作座位变体）。
+   */
+  def reuseBriefLine(
+    branch: String,
+    candidate: WorktreeCandidates.Candidate,
+    readOnly: Boolean
+  ): String =
+    val inherited = List(
+      Option.when(candidate.aheadOfBase > 0)(s"${candidate.aheadOfBase} commit(s) ahead of the base branch"),
+      Option.when(candidate.dirty > 0)(s"${candidate.dirty} uncommitted path(s)")
+    ).flatten
+    val inheritedText =
+      if inherited.isEmpty then "The tree is clean (no inherited uncommitted work, nothing ahead)."
+      else
+        s"This tree was INHERITED from an earlier session (${candidate.delegateId.getOrElse(candidate.dirName)}): " +
+          s"it already carries ${inherited.mkString(" and ")}. Continue that work — read the existing changes before you edit, " +
+          "build on them rather than redoing them, and do not discard them." +
+          (if candidate.dirtySample.nonEmpty then s" Uncommitted sample: ${candidate.dirtySample.mkString(", ")}." else "")
+    val core =
+      if readOnly then
+        s"[working branch] $branch — read-only seat (REUSED worktree): $inheritedText This task is judged read-only — do NOT create commits; " +
+          "with zero commits ahead of the base the merge queue never engages and the task simply completes when done."
+      else
+        s"[working branch] $branch — your worktree is a REUSED seat on this branch. $inheritedText " +
+          "Commit your deliverable commits here." +
+          " When the work on this branch is complete and ready to land, call delegate_report(category=\"merge\", detail=…) — " +
+          "you will receive a merge reminder when it is your turn; do NOT merge on your own initiative."
+    core + " NEVER commit directly to the base branch."
+  end reuseBriefLine
 
   /**
    * 设备项目腿的 worktree 解析（跨设备 worktree 归属修复批 2026-10-30——作者报障：
@@ -333,6 +433,9 @@ object DelegateWorkspace:
           ++ allocation.toList.map(a => "allocation" -> a.asJson)
           ++ b.flatMap(_.worktreeJudged).map(j => "worktreeJudged" -> j.asJson)
           ++ b.flatMap(_.judgeLeg).map(l => "judgeLeg" -> l.asJson)
+          // 续用腿审计（worktree-reuse-selection 批，additive：新建腿不落键——旧行字节不变）：
+          // `reusedFrom` = 接续自哪个既有 worktree（被续用者的 delegate id / 目录名）。
+          ++ b.flatMap(_.reusedFrom).map(r => "reusedFrom" -> r.asJson)
           ++ workspaceSeat.toList.map(w => "workspaceSeat" -> w.asJson)
       )
     )

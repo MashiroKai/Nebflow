@@ -80,6 +80,53 @@ object GitWorktrees:
     Try(git(ws, "rev-parse", "--short", "HEAD")).toOption.flatMap(_.toOption).map(_.trim).filter(_.nonEmpty)
 
   /**
+   * HEAD commit's committer time (epoch **seconds**), None when unknown —
+   * worktree-reuse-selection 批（2026-11-02）候选「最后活动时间」的辅助读数。
+   * fail-soft 同 [[headSha]]。
+   */
+  def headCommitEpoch(ws: os.Path): Option[Long] =
+    Try(git(ws, "log", "-1", "--format=%ct")).toOption
+      .flatMap(_.toOption)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .flatMap(s => Try(s.toLong).toOption)
+
+  /**
+   * All worktrees of the repo in ONE git call（`git worktree list --porcelain`）——
+   * worktree-reuse-selection 批（2026-11-02）：候选枚举的**批量读数**（每条 = 路径 +
+   * 检出分支 + HEAD sha）。逐树各跑 `rev-parse` 在生产工作区（数百棵树）是数百次
+   * 进程叉，本方法把这一层压到一次。
+   *
+   * 返回顺序 = git 的输出顺序；解析失败/非 repo = Nil（fail-soft）。
+   */
+  def worktreeList(ws: os.Path): List[(String, Option[String], Option[String])] =
+    Try(git(ws, "worktree", "list", "--porcelain")).toOption.flatMap(_.toOption) match
+      case None => Nil
+      case Some(out) =>
+        // 记录块以空行分隔；键 = worktree / HEAD / branch / detached / bare / locked …
+        val blocks = out.split("\n\n").toList.map(_.trim).filter(_.nonEmpty)
+        blocks.flatMap { b =>
+          val fields = b.linesIterator.toList
+          def field(k: String): Option[String] =
+            fields.collectFirst { case l if l.startsWith(k + " ") => l.stripPrefix(k + " ").trim }.filter(_.nonEmpty)
+          field("worktree").map { path =>
+            val branch = field("branch").map(_.stripPrefix("refs/heads/"))
+            (path, branch, field("HEAD").map(_.take(9)))
+          }
+        }
+
+  /**
+   * Uncommitted / untracked paths（`git status --porcelain` 原始行，含冲突行）——
+   * worktree-reuse-selection 批（2026-11-02）：候选 worktree 的「脏度」读数（接续
+   * 前必须让模型知道树上有前任的进行中工作）。fail-soft：非 repo / git 失败 = None
+   * （与 [[statusDigest]] 的「读不到不算脏」同族，但保真——None ≠ Some(Nil)）。
+   */
+  def dirtyPaths(ws: os.Path): Option[List[String]] =
+    Try(git(ws, "status", "--porcelain")).toOption
+      .flatMap(_.toOption)
+      .map(_.linesIterator.toList.filter(_.trim.nonEmpty))
+
+  /**
    * 合并道读数（投递可靠性批 2026-10-29 修复 A/B/②）：`.git/MERGE_HEAD` 在场 =
    * 该工作区有一笔**进行中的 merge**（未 commit 未 abort）。返回其 commit 全 sha。
    * 文件缺席 = None（道净）；读失败 = None（fail-open——读数缺失不判占道）。

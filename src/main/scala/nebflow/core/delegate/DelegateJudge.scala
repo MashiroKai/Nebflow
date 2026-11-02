@@ -119,6 +119,10 @@ object DelegateJudge:
 
     /** 调用方拿到裸 boolean（未升级的 Face 缺省实现——腿不可分）。 */
     val Unknown: String = "unknown"
+
+    /** 续用腿（worktree-reuse-selection 批 2026-11-02）：判定机照判（只读/工作
+      * 座位变体同 fresh 腿），但腿词标 `reuse`——spawn 行可审计「本座位是接续的」。 */
+    val Reuse: String = "reuse"
   end JudgeLeg
 
   /**

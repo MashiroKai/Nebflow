@@ -6,7 +6,7 @@ import io.circe.{Json, JsonObject}
 import nebflow.actor.*
 import nebflow.agent.*
 import nebflow.core.AgentRuntimePort
-import nebflow.core.delegate.{ChainStore, DelegateRegistry, DelegateWorkspace, DualModeConfig, ModeDecision}
+import nebflow.core.delegate.{ChainStore, DelegateRegistry, DelegateWorkspace, DualModeConfig, ModeDecision, WorktreeCandidates}
 import nebflow.core.executor.ExecutorRegistry
 import nebflow.core.node.NodeRunner
 import nebflow.core.project.*
@@ -81,6 +81,7 @@ object DelegateTool extends Tool:
 - `name` (optional): a short name for this batch — at most 12 characters, summarizing it in a glance (e.g. "液体玻璃批", "ask-mode修复"). It shows at the front of the batch's row in the background-agents panel, so the user can tell batches apart at a glance. Omit it and the panel falls back to the truncated task title. Longer values are clamped to 12 characters.
 - `project` (optional): name of a mounted project — the task then runs in that project's workspace. Omit it to run in the default general workspace.
 - `executor` (optional): which executor runs the task. You pick it dynamically per task; omit it for the built-in default (`nebflow`). The available set (with detected external CLIs) is listed in your "Available executors" prompt section. An unavailable pick fails explicitly — there is no silent fallback.
+- `worktree` (optional): REUSE an existing delegate worktree instead of creating a fresh one — value = the owning delegate id, the worktree directory name, or its absolute path. Omit it (default) and the dispatch creates a fresh worktree exactly as before. Use it ONLY when the new task continues work that sits in that tree; candidate rows with status words are in your "Existing delegate worktrees" section (orphan = previous session gone with unlanded work — prefer these; active = held by a live session, refused unless `force`; done = clean). Reusing a tree held by a live session is REFUSED unless `force=true`.
 
 **Result and continuation address:** the tool result is an ACK carrying the task number (`task #N`) and the continuation address `delegate:<id>`. To send the instance more input (supplements, corrections), use `Mail(address="delegate:<id>", message=...)` — a running instance gets it queued for its next continuation turn; a finished one is continued as a new turn. Do not start a second Delegate for the same work.
 
@@ -111,6 +112,14 @@ object DelegateTool extends Tool:
         "executor" -> io.circe.Json.obj(
           "type" -> "string".asJson,
           "description" -> "Optional executor id — you pick dynamically per task (see the \"Available executors\" section). Omit for the built-in default \"nebflow\". An unavailable id fails explicitly; there is no silent fallback.".asJson
+        ),
+        "worktree" -> io.circe.Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Optional: REUSE an existing delegate worktree instead of creating a fresh one. Value = the delegate id that owns it (e.g. \"delegate-nebflow-4b756df9\"), its directory name under .nebflow/worktrees/, or the worktree's absolute path. Omit (default) = fresh worktree, unchanged. Use it ONLY when this task continues the work sitting in that tree — a candidate list with status words (orphan = previous session gone with unlanded work — prefer these / active = held by a live session / done = clean) is in your \"Existing delegate worktrees\" prompt section. Reusing a tree held by a live session is REFUSED unless force=true.".asJson
+        ),
+        "force" -> io.circe.Json.obj(
+          "type" -> "boolean".asJson,
+          "description" -> "Optional (default false): override the refusal to reuse a worktree that is currently held by a live session. Two agents editing one tree is unsafe — pass true ONLY when you are certain the live session is not touching those files (e.g. it is parked/idle on a different file set).".asJson
         ),
         "mode" -> io.circe.Json.obj(
           "type" -> "string".asJson,
@@ -449,6 +458,11 @@ Advance: the chain's nodes all run in THIS session's workspace (inside this sess
     val description = labelOf(task)
     // 面板命名批（2026-10-31 · 作者令②）：批次短名随三条 spawn 腿落台账记录。
     val shortName = shortNameOf(input)
+    // 续用腿（worktree-reuse-selection 批 2026-11-02）：`worktree` = 目标三形态
+    // （delegate id / 目录名 / 绝对路径）；`force` = 越过「活会话持有」闸。缺省 =
+    // 新建（默认形态，存量语义逐字节）。
+    val reuseTarget = input("worktree").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    val forceReuse = input("force").flatMap(_.asBoolean).getOrElse(false)
 
     if task.trim.isEmpty then
       IO.pure(
@@ -473,7 +487,17 @@ Advance: the chain's nodes all run in THIS session's workspace (inside this sess
           val modeParam = input("mode").flatMap(_.asString).map(_.trim.toLowerCase).filter(_.nonEmpty)
           modeParam match
             case m if m.forall(w => w == "auto" || nebflow.core.delegate.DualModeConfig.isModeWord(w)) =>
-              internalSpawn(project, task, description, ctx, input("executor").flatMap(_.asString), modeParam, shortName)
+              internalSpawn(
+                project,
+                task,
+                description,
+                ctx,
+                input("executor").flatMap(_.asString),
+                modeParam,
+                shortName,
+                reuseTarget,
+                forceReuse
+              )
             case bad =>
               IO.pure(
                 Left(
@@ -484,12 +508,20 @@ Advance: the chain's nodes all run in THIS session's workspace (inside this sess
               )
         case Right(ExecutorRegistry.ResolvedSelection.External(defn, binPath)) =>
           // 外部执行器腿不参与双模式（Q5 裁定：恒单会话执行形态 = kernel 语义）；
-          // mode 参数在场 = 显式拒（语义不存在的参数不静默吞）。
+          // mode/worktree 参数在场 = 显式拒（语义不存在的参数不静默吞）。
           if input("mode").exists(_.asString.exists(_.trim.nonEmpty)) then
             IO.pure(
               Left(
                 ToolError(
                   "Delegate: the mode parameter applies to the built-in executor only — external executors are always single-session (kernel semantics). Drop the parameter or omit executor."
+                )
+              )
+            )
+          else if reuseTarget.isDefined then
+            IO.pure(
+              Left(
+                ToolError(
+                  "Delegate: the worktree (reuse) parameter applies to the built-in executor only — external executors resolve their own workspace and never sit in this engine's delegate worktrees. Drop the parameter or omit executor. (DELEGATE_WORKTREE_EXTERNAL_UNSUPPORTED)"
                 )
               )
             )
@@ -535,45 +567,80 @@ Advance: the chain's nodes all run in THIS session's workspace (inside this sess
     executorParam: Option[String] = None,
     modeParam: Option[String] = None,
     /** 面板命名批（2026-10-31）：批次短名（≤12 字）随 Record 落盘 + agentStart 注入。 */
-    shortName: Option[String] = None
+    shortName: Option[String] = None,
+    /** 续用腿（worktree-reuse-selection 批）：`worktree` 参数（三形态目标；None = 新建缺省）。 */
+    reuseTarget: Option[String] = None,
+    /** 续用腿：越过「活会话持有」闸（红线闸，仅显式 true 越过）。 */
+    forceReuse: Boolean = false
   ): IO[Either[ToolError, String]] =
     resolveWorkspace(project, ctx).flatMap {
       case Left(err) => IO.pure(Left(err))
       case Right(WorkspaceResolution.Local(workspace, resolvedProject, sessionDevice, sessionDeviceWorkspace)) =>
         (ctx.actorSystem, ctx.sharedResources) match
           case (Some(system), Some(resources)) =>
-            for
-              rootSid <- callerRootOf(ctx, resources)
-              taskId <- createLedgerEntry(resolvedProject, description)
-              safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
-              result <- spawnKernel(
-                task = task,
-                description = description,
-                workspace = workspace,
-                project = resolvedProject,
-                taskId = taskId,
-                system = system,
-                resources = resources,
-                parentDepth = ctx.depth,
-                parentRef = ctx.agentActorRef,
-                wsSend = ctx.wsSend,
-                parentSessionId = ctx.sessionId,
-                safetyMode = safetyMode,
-                rootSessionId = rootSid,
-                // 新鲜派发腿跑判定机（R6 worktree + S13 分支纪律）；Mail
-                // continue 复活腿（不经此处）保持旧形态。
-                judgeWorkspace = true,
-                // 双模式批：mode 参数透传（auto/None = 选择器判；kernel/dispatcher
-                // = 人工覆盖）。
-                requestedMode = modeParam,
-                // 跨设备批（2026-10-25）：设备项目的会话默认设备上下文透传——
-                // 六件工具默认路由设备 + brief 设备 workspace 行。
-                sessionDevice = sessionDevice,
-                sessionDeviceWorkspace = sessionDeviceWorkspace,
-                // 面板命名批（2026-10-31）：批次短名透传（Record 落盘 + agentStart 注入）。
-                shortName = shortName
-              )
-            yield result
+            // 续用腿的解析（worktree-reuse-selection 批）：目标 → 候选对账 → 裁决。
+            // ① 设备项目腿（挂载的设备项目，座位 = 设备盘）——续用不在本批范围，
+            //    显式拒（设备 worktree 归属设备盘，编排机侧清单对不上账）。
+            // ② 命中 active 且未 force ⇒ 显式拒（防错配红线——文案说清出路）。
+            // ③ 未命中且非合法 git worktree 路径 ⇒ 显式拒（零静默回落新建）。
+            // 全部三态都不阻断新建路径（缺省 None = 现状逐字）。
+            val reuseLeg: IO[Either[ToolError, Option[WorktreeCandidates.Candidate]]] = reuseTarget match
+              case None => IO.pure(Right(None))
+              case Some(target) if sessionDevice.isDefined =>
+                IO.pure(
+                  Left(
+                    ToolError(
+                      s"Delegate: worktree reuse applies to host-local projects only — this project executes against device '${sessionDevice.getOrElse("?")}' and its worktrees live on the device disk, not under this engine's .nebflow/worktrees. (DELEGATE_WORKTREE_REMOTE)"
+                    )
+                  )
+                )
+              case Some(target) =>
+                for
+                  inv <- WorktreeCandidates.inventory(workspace)
+                  decision = WorktreeCandidates.resolve(inv, target, forceReuse)
+                  result <- decision match
+                    case WorktreeCandidates.Decision.Reuse(cand, _) => IO.pure(Right(cand))
+                    case WorktreeCandidates.Decision.Refuse(code, msg) =>
+                      IO.pure(Left(ToolError(s"Delegate: worktree reuse refused — $msg ($code)")))
+                yield result
+            reuseLeg.flatMap {
+              case Left(err) => IO.pure(Left(err))
+              case Right(reuseCandidate) =>
+                for
+                  rootSid <- callerRootOf(ctx, resources)
+                  taskId <- createLedgerEntry(resolvedProject, description)
+                  safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
+                  result <- spawnKernel(
+                    task = task,
+                    description = description,
+                    workspace = workspace,
+                    project = resolvedProject,
+                    taskId = taskId,
+                    system = system,
+                    resources = resources,
+                    parentDepth = ctx.depth,
+                    parentRef = ctx.agentActorRef,
+                    wsSend = ctx.wsSend,
+                    parentSessionId = ctx.sessionId,
+                    safetyMode = safetyMode,
+                    rootSessionId = rootSid,
+                    // 新鲜派发腿跑判定机（R6 worktree + S13 分支纪律）；Mail
+                    // continue 复活腿（不经此处）保持旧形态。
+                    judgeWorkspace = true,
+                    // 双模式批：mode 参数透传（auto/None = 选择器判；kernel/dispatcher
+                    // = 人工覆盖）。
+                    requestedMode = modeParam,
+                    // 跨设备批（2026-10-25）：设备项目的会话默认设备上下文透传——
+                    // 六件工具默认路由设备 + brief 设备 workspace 行。
+                    sessionDevice = sessionDevice,
+                    sessionDeviceWorkspace = sessionDeviceWorkspace,
+                    // 面板命名批（2026-10-31）：批次短名透传（Record 落盘 + agentStart 注入）。
+                    shortName = shortName,
+                    // 续用腿（worktree-reuse-selection 批）：命中候选透传（None = 新建）。
+                    reuseCandidate = reuseCandidate
+                  )
+                yield result
+            }
           case _ =>
             IO.pure(Left(ToolError("Delegate requires ActorSystem and SharedResources")))
       case Right(remote @ WorkspaceResolution.RemoteRoute(peer, deviceName, projectName, workspace)) =>
@@ -591,7 +658,17 @@ Advance: the chain's nodes all run in THIS session's workspace (inside this sess
                 )
               )
             )
-          case None => dispatchRemote(remote, task, description, ctx, shortName)
+          case None =>
+            // 续用腿 × 整会话派设备 = 显式拒（对端设备的 worktree 清单不经本机账）。
+            if reuseTarget.isDefined then
+              IO.pure(
+                Left(
+                  ToolError(
+                    s"Delegate: worktree reuse applies to host-local execution only — project '$projectName' executes on device '$deviceName' and its worktrees live on the device disk. (DELEGATE_WORKTREE_REMOTE)"
+                  )
+                )
+              )
+            else dispatchRemote(remote, task, description, ctx, shortName)
     }
   end internalSpawn
 
@@ -755,7 +832,13 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     sessionDevice: Option[String] = None,
     sessionDeviceWorkspace: Option[String] = None,
     /** 面板命名批（2026-10-31）：批次短名透传（Record 落盘 + agentStart 注入）。 */
-    shortName: Option[String] = None
+    shortName: Option[String] = None,
+    /**
+     * 续用腿（worktree-reuse-selection 批 2026-11-02）：命中的既有 worktree 候选
+     * ——`Some` = **不新建**树（[[DelegateWorkspace.prepareReuse]] 腿），`None` =
+     * 既有新建路径逐字（默认形态，存量语义零变化）。
+     */
+    reuseCandidate: Option[nebflow.core.delegate.WorktreeCandidates.Candidate] = None
   ): IO[Either[ToolError, String]] =
     // 提示词来源拆分批（2026-10-08）：delegate spawn 走 **delegate 面解析路径**
     // `delegateEntry`（= delegate_report 纪律的系统提示词；节点面恒走
@@ -782,7 +865,8 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
           requestedMode = requestedMode,
           sessionDevice = sessionDevice,
           sessionDeviceWorkspace = sessionDeviceWorkspace,
-          shortName = shortName
+          shortName = shortName,
+          reuseCandidate = reuseCandidate
         ).map(_.map { case (subagentId, ack) => ack + DelegateRegistry.continuationLine(subagentId) })
     }
 
@@ -828,7 +912,9 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     /** 双模式批：mode 参数（kernel|dispatcher|auto；None = auto）。 */
     requestedMode: Option[String] = None,
     /** 面板命名批（2026-10-31）：批次短名（Record 落盘 + agentStart 帧注入）。 */
-    shortName: Option[String] = None
+    shortName: Option[String] = None,
+    /** 续用腿（worktree-reuse-selection 批）：命中候选（None = 新建缺省）。 */
+    reuseCandidate: Option[nebflow.core.delegate.WorktreeCandidates.Candidate] = None
   ): IO[Either[ToolError, (String, String)]] =
     val childDepth = parentDepth + 1
     val agentName = agentDef.name
@@ -983,7 +1069,10 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     modeDecision: Option[nebflow.core.delegate.ModeDecision] = None,
     /** 面板命名批（2026-10-31）：批次短名——Record 落盘；None = 旧形态（且复活腿
      *  不丢名：落盘时回读存量记录补保）。 */
-    shortName: Option[String] = None
+    shortName: Option[String] = None,
+    /** 续用腿（worktree-reuse-selection 批 2026-11-02）：命中候选（None = 新建缺省
+     *  ——行为逐字节不变）。 */
+    reuseCandidate: Option[nebflow.core.delegate.WorktreeCandidates.Candidate] = None
   ): IO[Either[ToolError, (String, String)]] =
     val agentName = agentDef.name
     val isDispatcher = modeDecision.exists(_.mode == DualModeConfig.ModeDispatcher)
@@ -995,25 +1084,44 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
       // 不可达 / 建败 ⇒ 不建 worktree 直用设备 workspace（WARN，派发不阻断），面板
       // 经 workspaceSeat 键标注「直接使用工作区」。本机项目 = 原 prepare 腿逐字。
       binding <-
-        if judgeWorkspace then
-          (sessionDevice, sessionDeviceWorkspace) match
-            case (Some(dev), Some(devWs)) =>
-              DelegateWorkspace
-                .prepareDevice(dev, devWs, task, subagentId)
-                .handleErrorWith(e =>
-                  logger
-                    .warn(
-                      s"DelegateWorkspace.prepareDevice failed (degraded to direct workspace seat): ${e.getMessage}"
+        reuseCandidate match
+          // 续用腿（worktree-reuse-selection 批 2026-11-02）：座位 = 既有 worktree，
+          // 不新建树/分支（建权前置已完成——候选发现 + [[WorktreeCandidates.resolve]]
+          // 裁决；此处只绑定）。判定机照跑（只读/工作座位 brief 变体）。
+          case Some(cand) =>
+            DelegateWorkspace
+              .prepareReuse(workspace, task, subagentId, cand)
+              .map(b => Some(b): Option[nebflow.core.delegate.DelegateWorkspace.Binding])
+              .handleErrorWith { e =>
+                // fail-open 合同与新建腿一致：绑定失败绝不拒绝派发——回落既有新建路径。
+                logger
+                  .warn(s"DelegateWorkspace.prepareReuse failed (falling back to a fresh worktree): ${e.getMessage}") *>
+                  DelegateWorkspace
+                    .prepare(workspace, task, subagentId)
+                    .handleErrorWith(e2 =>
+                      logger.warn(s"DelegateWorkspace.prepare failed (degraded to legacy spawn): ${e2.getMessage}").as(None)
                     )
-                    .as(None)
-                )
-            case _ =>
-              DelegateWorkspace
-                .prepare(workspace, task, subagentId)
-                .handleErrorWith(e =>
-                  logger.warn(s"DelegateWorkspace.prepare failed (degraded to legacy spawn): ${e.getMessage}").as(None)
-                )
-        else IO.pure(None)
+              }
+          case None =>
+            if judgeWorkspace then
+              (sessionDevice, sessionDeviceWorkspace) match
+                case (Some(dev), Some(devWs)) =>
+                  DelegateWorkspace
+                    .prepareDevice(dev, devWs, task, subagentId)
+                    .handleErrorWith(e =>
+                      logger
+                        .warn(
+                          s"DelegateWorkspace.prepareDevice failed (degraded to direct workspace seat): ${e.getMessage}"
+                        )
+                        .as(None)
+                    )
+                case _ =>
+                  DelegateWorkspace
+                    .prepare(workspace, task, subagentId)
+                    .handleErrorWith(e =>
+                      logger.warn(s"DelegateWorkspace.prepare failed (degraded to legacy spawn): ${e.getMessage}").as(None)
+                    )
+            else IO.pure(None)
       // 判是腿的 delegate 工作座 = worktree；判否/无腿 = 原 workspace。设备项目（归属
       // 修复批）：本机引擎座位恒 = 基 workspace（brain 根）——设备 worktree 是设备
       // 本地路径（如对端盘符），绝不能当本机 projectRoot。
