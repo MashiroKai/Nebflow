@@ -31,6 +31,11 @@ import { t } from './i18n.js';
 import { showPopupMenu } from './contextMenu.js';
 import { makeReference } from './reference.js';
 import state from './state.js';
+// 引用牌图标化批（2026-11-02 11:00 作者令）：气泡引用块与 composer chip 的「类型
+// 图标」同一实现（图片=真缩略 / 文档=.fc-icon 原图标 / 文字=新 logo），单点 =
+// quoteLogo.js（对两个宿主都是叶子方向 ⇒ 既有的 msgQuote↔reference↔popArtifacts
+// 环不加深，见 check-circular 读数）。
+import { quoteTypeIcon } from './quoteLogo.js';
 
 // ── id ──────────────────────────────────────────────────────────────────
 
@@ -241,6 +246,104 @@ export function mountQuoteFooterButton(rowEl) {
     if (badge.querySelector('.msg-quote-btn')) return;
     badge.appendChild(createMsgQuoteButton());
   });
+}
+
+// ── 叠卡单张引用入口 = composer footer 键（引用入口移入 footer 批 2026-11-02 11:00
+//    作者令「图片引用在footer显示就行了。不需要hover图片的时候也显示一个图标」）──
+//
+// 形态：`#input-bar` 动作行里的一枚 `.icon-btn`（`#quote-item-btn`，与附件键同族、
+// 同尺寸档）。**面上零引用钮** —— 叠卡无论展开/收起都不再长按钮（`.pop-media-quote`
+// 整块退役），因此「hover 图片才出现一个图标」的形态彻底消失。
+//
+// 动作对象 = 当前会话里**最近一条叠卡的当前张**：候选行 = `#chat .pop-stack-area`，
+// 优先取落在聊天滚动视口内的最后一条（滚动到老消息时跟着那一条），视口内没有则退回
+// 全列最后一条；「当前张」= 该叠卡 `popQuoteState().index`（= 拖动翻页/双指横滑翻到
+// 的那一张 = 折叠面显示卡 = 整面点击打开的卡，零第二套「当前」定义）。
+//
+// 显隐：没有叠卡 / 叠卡宿主未提供描述符（fm 三窗等旧宿主）⇒ `hidden`（零死入口）。
+// 刷新时机：聊天列 MutationObserver（新行/展开/收起）+ 聊天列 scroll（可见叠卡换人）
+// + 点击时现算（永远按点击那一刻的 front 取值，不吃缓存）。
+
+let _qibRefreshRaf = 0;
+let _qibBound = null;
+
+/** 当前应被 footer 引用键引用的叠卡（见上方「动作对象」）。返回 {area, row, state} 或 null。 */
+function currentQuoteStackTarget(view) {
+  const chat = (view && view.dom && view.dom.chat) || document.getElementById('chat');
+  if (!chat) return null;
+  const areas = Array.from(chat.querySelectorAll('.pop-stack-area'))
+    .filter(a => a.isConnected && typeof a.popQuoteState === 'function');
+  if (!areas.length) return null;
+  // 视口判定：以聊天滚动容器的可视矩形为准（部分可见即算「在该视口里」）。
+  const vr = chat.getBoundingClientRect();
+  const inView = (a) => {
+    const r = a.getBoundingClientRect();
+    return r.bottom > vr.top && r.top < vr.bottom;
+  };
+  const pick = areas.filter(inView).pop() || areas[areas.length - 1];
+  const state = pick.popQuoteState();
+  if (!state || !state.desc) return null;
+  const row = pick.closest('.row');
+  if (!row) return null;
+  return { area: pick, row, state };
+}
+
+function refreshQuoteItemButton(view, btn) {
+  const tgt = currentQuoteStackTarget(view);
+  if (!tgt) {
+    btn.hidden = true;
+    btn.removeAttribute('aria-label');
+    btn.title = '';
+    return null;
+  }
+  btn.hidden = false;
+  const pos = t('chat.quoteImagePos', { n: tgt.state.index + 1, total: tgt.state.total });
+  btn.title = `${t('messages.quote')} · ${pos}`;
+  btn.setAttribute('aria-label', t('chat.quoteItemAria', { n: tgt.state.index + 1 }));
+  return tgt;
+}
+
+/** composer footer 引用入口装配（单点；幂等）。`view` = 拥有该 #input-bar 的视图
+ *  （主窗口 = chatViews.primary）。字形与 footer 徽章引用钮同一枚（QUOTE_SVG）。 */
+export function initQuoteItemButton(view) {
+  const bar = (view && view.dom && view.dom.inputBar) || document.getElementById('input-bar');
+  const btn = bar && bar.querySelector('#quote-item-btn');
+  if (!btn) return null;
+  if (btn.__nfQuoteItemBound) return btn;
+  btn.__nfQuoteItemBound = true;
+  btn.innerHTML = QUOTE_SVG;
+  btn.type = 'button';
+  btn.hidden = true;
+
+  const schedule = () => {
+    if (_qibRefreshRaf) return;
+    _qibRefreshRaf = requestAnimationFrame(() => {
+      _qibRefreshRaf = 0;
+      refreshQuoteItemButton(view, btn);
+    });
+  };
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // 点击时现算：翻页/横滑/新行都不需要预先同步，读到的一定是当下那张。
+    const tgt = refreshQuoteItemButton(view, btn);
+    if (!tgt) return;
+    startItemQuote(tgt.row, tgt.state.desc);
+  });
+
+  // 聊天列结构变化（新叠卡行 / 展开收起 / 行被删）与滚动（可见叠卡换人）都刷新。
+  const chat = (view && view.dom && view.dom.chat) || document.getElementById('chat');
+  if (chat && typeof MutationObserver === 'function') {
+    _qibBound = new MutationObserver(schedule);
+    _qibBound.observe(chat, { childList: true, subtree: true });
+  }
+  if (chat) chat.addEventListener('scroll', schedule, { passive: true });
+  // 翻页播报（叠卡 `nf-quote-front` 冒泡事件，见 popArtifacts buildMediaStack）：
+  // 拖动/双指横滑换当前张 ⇒ 文案即时跟着换（幂等：refresh 只读现状）。
+  if (chat) chat.addEventListener('nf-quote-front', schedule);
+  window.addEventListener('resize', schedule, { passive: true });
+  schedule();
+  return btn;
 }
 
 let _btnMountRaf = 0;
@@ -537,6 +640,14 @@ export function renderQuoteBlock(quote) {
   // 叠卡单张（2026-11-02）：位置钉在引用块上 ⇒ 跳转读得到「展开到第几张」，
   // 探针也读得到（验收项③/④的读数面）。
   if (q.itemIndex !== null && q.itemIndex !== undefined) box.dataset.quoteItemIndex = String(q.itemIndex);
+  // 引用牌图标化（2026-11-02 11:00 作者令「引用的消息也需要图标化，文档和图片就是
+  // 原图标和图片缩略，文字的话就单独设计一个logo」）：图标是摘要行的**前置件** ——
+  // `.msg-quote-head` 只装图标，`.msg-quote-text` 保持逐字不变（发送方名 + `：` +
+  // 摘要，两行 clamp 与既有断言面「text = 摘要全文」零回归）。
+  const head = document.createElement('div');
+  head.className = 'msg-quote-head';
+  head.appendChild(quoteTypeIcon(q, 'msg-quote-icon'));
+  box.appendChild(head);
   const line = document.createElement('div');
   line.className = 'msg-quote-text';
   const sender = document.createElement('span');

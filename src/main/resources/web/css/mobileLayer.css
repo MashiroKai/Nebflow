@@ -3696,13 +3696,15 @@ body.mobile-layer #attachment-preview .att-file .att-remove::after { inset: -11p
 /* ── 输入卡附件圆键：36×36 → 48 ───────────────────────────────────────
    与发送键（本文件上方 #send-btn 块，已一并升到 --mtap-lg）同档——两者是
    输入条上**全局最高频**的触控目标，36 明显偏小。图标本体同步 --micon。 */
-body.mobile-layer #attach-btn {
+body.mobile-layer #attach-btn,
+body.mobile-layer #quote-item-btn {
   width: var(--mtap-lg);
   height: var(--mtap-lg);
   min-width: var(--mtap-lg);
   min-height: var(--mtap-lg);
 }
 body.mobile-layer #attach-btn svg,
+body.mobile-layer #quote-item-btn svg,
 body.mobile-layer #send-btn svg {
   width: var(--micon);
   height: var(--micon);
