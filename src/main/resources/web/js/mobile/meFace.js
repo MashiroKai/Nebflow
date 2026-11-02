@@ -1,24 +1,28 @@
-// mobile/meFace.js — 个人主页层级面（手机顶栏批 2026-10-31 作者令④）。
+// mobile/meFace.js — 个人主页层级面（手机顶栏批 2026-10-31；件四改写 2026-11-02）。
 //
 // 定位：工作台顶头像点击后的「个人主页」+ 苹果层级式配置子页（用户名/头像/
-// 绑定）——点进行铺满屏子页、左上「<」返回 = 既有手机详情页壳（navController
+// 绑定）——点进铺满屏子页、左上「<」返回 = 既有手机详情页壳（navController
 // pushPage/popPage），本模块只产页面体内容，导航语义零新建。
 //
-// 数据纪律（作者令「复用官网个人页已有字段与接口，不新造配置面」）：
-//   · 全部字段 = /api/neblink/status 的既有账号读数（displayName/email/avatarUrl/
-//     peers/loggedIn），经 neblink.js 单点访问器取 —— 禁第二份取数、禁新端点；
-//   · 修改入口一律 defer 到官网个人主页（brand.js getProfileUrl，既有接口 +
-//     from=client 契约）——客户端不出现任何账号编辑控件（2026-09-05 裁定口径：
-//     Username 统一经官网账号中心设置，客户端不提供修改入口）；
-//   · 设备绑定读数只作展示，管理入口 = 联系人页既有设备段（不重复造设备面）。
+// ══ 件四改写（作者令 2026-11-02「设置里…直接修改；这里和官网对齐」）══════════
+// 本模块**四处官网出口全部退役**（修前 `openPortal()` / `portalButton()` 在 me /
+// me-user / me-avatar / me-bind 各出现一次，且 me-user 的文案里还有一句「前往官网
+// 账号中心」）：现在四个页面**零外链、零 window.open、零可编辑控件**，只展示
+// `getIdentityReadout()` 的真实读数（与设置页身份卡 / App 内个人资料面同一单点），
+// 并给一条明确的「账号服务暂未提供该接口」提示。修不修、改不改由上游接口决定，
+// 不由本模块自造 —— 见 settingsIdentity.js 头注的实测清单。
 //
-// 头像绘制与设置页/Activity Bar 同池：avatarViewState 双态 + paintAvatarSlot
-// 就绪门（永不空环），失败 URL 进共享 latch（noteAvatarFailure）。
+// 数据纪律：全部字段 = `settingsIdentity.js` 的 `getIdentityReadout()`（其上游 =
+// `/api/neblink/status` 的 id_token claims + `GET /api/users/search` 自证探针），
+// 禁第二份取数、禁新端点。头像绘制与设置页/Activity Bar 同池（avatarViewState
+// 双态 + paintAvatarSlot 就绪门，永不空环；失败 URL 进共享 latch）。
 
 import { getNeblinkState, avatarViewState, paintAvatarSlot, noteAvatarFailure, onNeblinkStatus } from '../neblink.js';
-import { getProfileUrl, brand } from '../brand.js';
+import { brand } from '../brand.js';
 import { createIconsIn } from '../utils.js';
 import { showLoginModal } from '../activityBar.js';
+import { getIdentityReadout, openProfileFace, openSettingsAvatarPicker } from '../settingsIdentity.js';
+import { t } from '../i18n.js';
 
 function tt(zh, en) {
   let lang = '';
@@ -39,20 +43,9 @@ function el(body, cls, tag = 'div') {
   return d;
 }
 
-/** 官网跳转（既有接口：品牌契约 profileUrl + from=client；noopener 防 opener）。 */
-function openPortal() {
-  window.open(getProfileUrl(), '_blank', 'noopener');
-}
-
-/** 玻璃行动键（官网个人主页入口；登录键同款形态不同语义色）。 */
-function portalButton(body, label) {
-  const btn = document.createElement('button');
-  btn.className = 'mf-me-portal glass-control';
-  btn.type = 'button';
-  body.appendChild(btn);
-  btn.textContent = label;
-  btn.addEventListener('click', (e) => { e.stopPropagation(); openPortal(); });
-  return btn;
+/** 读数缺失的统一降级文案（禁空白、禁占位假值）。 */
+function unknownText() {
+  return t('settings.identityUnknown');
 }
 
 /** 字段行（label + 只读 value；层级子页的信息排布单元）。 */
@@ -68,8 +61,8 @@ function fieldRow(body, label, valueText) {
   return v;
 }
 
-/** 卡内入口行（图标 + 标签 + 右值 + chevron；点 = push 子页）。 */
-function navRow(card, icon, label, push, pageId, valueText = '') {
+/** 卡内入口行（图标 + 标签 + 右值 + chevron；点 = 执行动作，不再跳官网）。 */
+function navRow(card, icon, label, onClick, pageId, valueText = '') {
   const row = document.createElement('button');
   row.type = 'button';
   row.className = 'mf-hub-row';
@@ -79,7 +72,7 @@ function navRow(card, icon, label, push, pageId, valueText = '') {
     '<i data-lucide="chevron-right" class="mf-hub-chev"></i>';
   /** @type {HTMLElement|null} */ (row.querySelector('.mf-hub-row-label')).textContent = label;
   if (valueText) /** @type {HTMLElement|null} */ (row.querySelector('.mf-hub-row-val')).textContent = valueText;
-  row.addEventListener('click', (e) => { e.stopPropagation(); push(pageId); });
+  row.addEventListener('click', (e) => { e.stopPropagation(); onClick(); });
   card.appendChild(row);
   return row;
 }
@@ -101,9 +94,9 @@ function paintAvatarFrame(frame) {
   }
 }
 
-/** 个人主页（me）：资料卡 + 账号分组行 + 官网入口。 */
+/** 个人主页（me）：资料卡 + 账号分组行 + 「编辑资料」入口（App 内，零外链）。 */
 function buildMeHome(body, push) {
-  const st = getNeblinkState();
+  const id = getIdentityReadout();
   // 资料卡：大头像 + 名 + 邮箱（未登录态给登录键，与顶栏批登录面同源）。
   const card = el(body, 'mf-me-card');
   const frame = el(card, 'mf-me-avatar-frame big');
@@ -117,7 +110,7 @@ function buildMeHome(body, push) {
   const names = el(card, 'mf-me-names');
   const nameEl = el(names, 'mf-me-name');
   const subEl = el(names, 'mf-me-sub');
-  if (!st.loggedIn) {
+  if (!id.loggedIn) {
     const login = document.createElement('button');
     login.className = 'mf-me-login glass-control';
     login.type = 'button';
@@ -125,48 +118,56 @@ function buildMeHome(body, push) {
     login.addEventListener('click', (e) => { e.stopPropagation(); showLoginModal(); });
     card.appendChild(login);
   }
-  // 账号分组（苹果层级入口）。
+  // 账号分组（苹果层级入口；全部为 App 内页面）。
   el(body, 'mf-hub-label mf-me-grouplabel').textContent = tt('账号', 'Account');
   const rows = el(body, 'mf-hub-rows');
-  navRow(rows, 'user-round', tt('用户名', 'Username'), push, 'me-user',
-    st.device?.displayName || st.device?.email || '—');
-  navRow(rows, 'image', tt('头像', 'Avatar'), push, 'me-avatar');
-  navRow(rows, 'link', tt('绑定', 'Bindings'), push, 'me-bind',
-    st.device?.email || '—');
-  // 配置修改统一在官网（既有接口，不新造配置面）。
-  const hint = el(body, 'mf-me-hint');
-  hint.textContent = tt('用户名、头像、绑定等配置在官网个人主页统一管理。',
-    'Username, avatar and bindings are managed on the website profile.');
-  portalButton(body, tt('前往官网个人主页', 'Open website profile'));
+  // 右值禁拿昵称/邮箱冒充用户名（与身份卡同一口径：读不到 = 未知）。
+  navRow(rows, 'user-round', tt('用户名', 'Username'), () => push('me-user'), 'me-user',
+    id.username || unknownText());
+  navRow(rows, 'image', tt('头像', 'Avatar'), () => push('me-avatar'), 'me-avatar');
+  navRow(rows, 'link', tt('绑定', 'Bindings'), () => push('me-bind'), 'me-bind',
+    id.email || unknownText());
+  // 编辑资料 = App 内个人资料面（与设置页胶囊同一面；修前的官网出口在此退役）。
+  const edit = document.createElement('button');
+  edit.className = 'mf-me-edit glass-control';
+  edit.type = 'button';
+  edit.id = 'me-edit-profile';
+  edit.textContent = tt('编辑资料', 'Edit profile');
+  edit.addEventListener('click', (e) => { e.stopPropagation(); openProfileFace(); });
+  body.appendChild(edit);
+  el(body, 'mf-me-hint').textContent =
+    tt('资料与绑定只展示账号服务当前提供的读数；账号服务暂未提供该接口（编辑）。',
+      'Profile and bindings show only what the account service currently provides; it does not offer edit endpoints yet.');
   paintCbs.add(() => {
-    const s = getNeblinkState();
+    const s = getIdentityReadout();
     nameEl.textContent = s.loggedIn
-      ? (s.device?.displayName || s.device?.email || tt('已登录', 'Signed in'))
+      ? (s.nickname || s.username || s.email || tt('已登录', 'Signed in'))
       : tt('未登录', 'Not signed in');
-    subEl.textContent = s.loggedIn ? (s.device?.email || '') : '';
+    subEl.textContent = s.loggedIn ? (s.email || '') : '';
     paintAvatarFrame(frame);
   });
 }
 
-/** 用户名子页（只读读数 + 官网账号中心出口）。 */
+/** 用户名子页（真实读数：username / nickname / email；零官网出口）。 */
 function buildMeUser(body) {
-  const st = getNeblinkState();
+  const id = getIdentityReadout();
   const card = el(body, 'mf-hub-rows mf-me-fields');
-  const vName = fieldRow(card, tt('用户名', 'Username'),
-    st.device?.displayName || st.device?.email || '—');
-  const vEmail = fieldRow(card, tt('邮箱', 'Email'), st.device?.email || '—');
+  // 用户名 = 自证探针读数；读不到就是「未知」—— **禁**拿昵称/邮箱冒充（那是假读数）。
+  const vName = fieldRow(card, tt('用户名', 'Username'), id.username || unknownText());
+  const vNick = fieldRow(card, tt('昵称', 'Nickname'), id.nickname || unknownText());
+  const vEmail = fieldRow(card, tt('邮箱', 'Email'), id.email || unknownText());
   el(body, 'mf-me-hint').textContent =
-    tt('用户名在官网账号中心统一管理，客户端不提供修改入口。',
-      'The username is managed on the website account center; the client has no edit entry.');
-  portalButton(body, tt('前往官网账号中心', 'Open website account center'));
+    tt('用户名与昵称由账号服务提供，客户端当前没有修改接口。',
+      'The username and nickname come from the account service; the client has no edit endpoint yet.');
   paintCbs.add(() => {
-    const s = getNeblinkState();
-    vName.textContent = s.device?.displayName || s.device?.email || '—';
-    vEmail.textContent = s.device?.email || '—';
+    const s = getIdentityReadout();
+    vName.textContent = s.username || unknownText();
+    vNick.textContent = s.nickname || unknownText();
+    vEmail.textContent = s.email || unknownText();
   });
 }
 
-/** 头像子页（大头像读数 + 官网个人主页出口）。 */
+/** 头像子页（大头像读数 + 就地换头像入口；零官网出口）。 */
 function buildMeAvatar(body) {
   const frame = el(body, 'mf-me-hero');
   frame.innerHTML = `
@@ -178,29 +179,45 @@ function buildMeAvatar(body) {
       <img class="mf-me-avatar-photo" alt="" hidden>
     </span>`;
   paintAvatarFrame(frame.querySelector('.mf-me-avatar-frame'));
+  // 点「更换头像」= 换头像流程（与设置页身份卡同一个隐藏文件选择器；修前的官网出口在此退役）。
+  const pick = document.createElement('button');
+  pick.className = 'mf-me-edit glass-control';
+  pick.type = 'button';
+  pick.id = 'me-avatar-pick';
+  pick.textContent = tt('更换头像', 'Change avatar');
+  pick.addEventListener('click', (e) => { e.stopPropagation(); openSettingsAvatarPicker(); });
+  body.appendChild(pick);
   el(body, 'mf-me-hint').textContent =
-    tt('头像在官网个人主页统一更换。', 'The avatar is changed on the website profile.');
-  portalButton(body, tt('前往官网个人主页', 'Open website profile'));
+    tt('账号头像上传接口暂未提供，选定图片后不会上传。',
+      'The account avatar upload endpoint is not available yet — a picked image will not be uploaded.');
   paintCbs.add(() => paintAvatarFrame(frame.querySelector('.mf-me-avatar-frame')));
 }
 
-/** 绑定子页（邮箱/设备/登录态只读读数）。 */
+/** 绑定子页（邮箱/设备/登录态 + GitHub / Google 绑定读数；零官网出口）。 */
 function buildMeBind(body) {
+  const id = getIdentityReadout();
   const st = getNeblinkState();
   const card = el(body, 'mf-hub-rows mf-me-fields');
-  const vEmail = fieldRow(card, tt('邮箱账号', 'Email account'), st.device?.email || '—');
+  const vEmail = fieldRow(card, tt('邮箱账号', 'Email account'), id.email || unknownText());
+  // GitHub / Google 绑定态：上游无接口 ⇒ 恒「未知」（禁拿 legacy githubLogin 冒充，
+  // neblink.js 明确该字段不映射——它只承载 legacy enroll handle）。
+  const vGh = fieldRow(card, tt('GitHub 绑定', 'GitHub binding'), unknownText());
+  const vGg = fieldRow(card, tt('Google 绑定', 'Google binding'), unknownText());
   const peers = Array.isArray(st.peers) ? st.peers : [];
   const vDev = fieldRow(card, tt('设备绑定', 'Devices'),
     tt(`本机 + ${peers.length} 台`, `This device + ${peers.length}`));
-  const vState = fieldRow(card, tt('登录状态', 'Sign-in'), st.loggedIn ? tt('已登录', 'Signed in') : tt('未登录', 'Not signed in'));
+  const vState = fieldRow(card, tt('登录状态', 'Sign-in'),
+    st.loggedIn ? tt('已登录', 'Signed in') : tt('未登录', 'Not signed in'));
   el(body, 'mf-me-hint').textContent =
-    tt('设备管理在联系人页。', 'Manage devices on the Contacts page.');
+    tt('绑定关系由账号服务提供，当前没有查询或修改接口；设备管理在联系人页。',
+      'Bindings come from the account service, which offers no read or edit endpoint yet; manage devices on the Contacts page.');
   paintCbs.add(() => {
-    const s = getNeblinkState();
-    vEmail.textContent = s.device?.email || '—';
-    const n = Array.isArray(s.peers) ? s.peers.length : 0;
+    const s = getIdentityReadout();
+    const s2 = getNeblinkState();
+    vEmail.textContent = s.email || unknownText();
+    const n = Array.isArray(s2.peers) ? s2.peers.length : 0;
     vDev.textContent = tt(`本机 + ${n} 台`, `This device + ${n}`);
-    vState.textContent = s.loggedIn ? tt('已登录', 'Signed in') : tt('未登录', 'Not signed in');
+    vState.textContent = s2.loggedIn ? tt('已登录', 'Signed in') : tt('未登录', 'Not signed in');
   });
 }
 

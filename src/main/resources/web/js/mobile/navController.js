@@ -122,9 +122,10 @@ export const PAGES = [
   { id: 'conversation', tabId: null,   icon: 'message-circle',  zh: '会话',   en: 'Conversation' },
   // 手机顶栏批（2026-10-31 作者令④）：个人主页 + 层级配置子页（苹果层级式
   // 点进下一层铺满屏、左上返回 —— 复用既有详情页壳，返回钮/pop 语义零新建）。
-  // 内容面 = 官网个人页字段的本地读数（/api/neblink/status：displayName/email/
-  // avatarUrl/peers），配置动作统一跳官网个人主页（brand getProfileUrl，
-  // 既有接口）——不新造配置面。
+  // 内容面 = 账号读数（/api/neblink/status 的 id_token claims + /api/users/search 自证探针，
+  // 单点 = settingsIdentity.js getIdentityReadout）。**件四（2026-11-02 作者令）起配置/
+  // 编辑动作不再跳官网**，而是就地开 App 内个人资料面
+  // （settingsIdentity.js openProfileFace）—— 四个 me 子页零外链。
   { id: 'me',        tabId: null, icon: 'user-round', zh: '个人主页', en: 'Profile' },
   { id: 'me-user',   tabId: null, icon: 'user-round', zh: '用户名',   en: 'Username' },
   { id: 'me-avatar', tabId: null, icon: 'image',      zh: '头像',     en: 'Avatar' },

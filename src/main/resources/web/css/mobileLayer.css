@@ -2157,20 +2157,23 @@ body.mobile-layer .mf-me-hero {
   justify-content: center;
   padding: 36px 0 28px;
 }
-/* 官网出口键（玻璃质感控件族，玻璃空间相对钮；视觉裁定：面板/控件玻璃质感）。 */
-body.mobile-layer .mf-me-portal {
+/* App 内资料面入口键（件四，2026-11-02）。修前这里是 `.mf-me-portal`
+   （「前往官网个人主页」，`window.open` 外链）—— 出口已随件四退役；同一几何档改挂
+   到「编辑资料 / 更换头像」两枚就地键（`.mf-me-edit`，玻璃质感控件族不变）。 */
+body.mobile-layer .mf-me-edit {
   display: flex;
   align-items: center;
   justify-content: center;
   margin: 12px 14px 0;
   padding: 12px 16px;
+  min-height: 44px; /* 触控最小高档（同 .mf-me-entry 家族） */
   border-radius: 12px;
   font-size: var(--mfs-body);
   font-weight: 500;
   cursor: pointer;
   touch-action: manipulation;
 }
-/* 提示文案（官网统一管理口径）。 */
+/* 提示文案（账号服务能力口径；件四起 = 「只展示真实读数」）。 */
 body.mobile-layer .mf-me-hint {
   margin: 12px 24px 0;
   font-size: var(--mfs-min);
@@ -3824,4 +3827,39 @@ body.mobile-layer .mh-chrome-btn {
    只有 16+48 双钮」时代的取值，刘海档（safe>12）会与 56+safe 顶栏交叠。 */
 body.mobile-layer #top-overlays {
   top: calc(64px + env(safe-area-inset-top, 0px));
+}
+
+/* ── 件四：设置页身份卡（手机层适配）+ App 内个人资料面铺平 ──────────────────
+   桌面形态在 sidebar.css（同一 DOM）；本块只补手机层差异：
+     · 身份卡两档都在场（旧口径「手机层不渲染设置页头像」已被作者令推翻）；
+     · 胶囊/头像触控最小高 44px（与 .mf-me-entry 同档）；
+     · `#settings-profile-overlay` 铺平：overlay/box 两个类名已在上面 A 族的
+       选择器里，本块只补「本面自己的内边距 + 字段行触控高」。 */
+body.mobile-layer .settings-identity-card {
+  margin: 4px 0 10px;
+}
+body.mobile-layer .settings-avatar-entry {
+  min-width: 68px;
+  min-height: 68px;
+}
+body.mobile-layer .settings-identity-capsule {
+  min-height: 44px;
+  max-width: calc(100% - 24px);
+  font-size: var(--mfs-body);
+}
+body.mobile-layer .settings-identity-username,
+body.mobile-layer .settings-identity-email {
+  max-width: 38vw;
+}
+body.mobile-layer #settings-profile-overlay .settings-profile-modal {
+  padding-top: calc(64px + env(safe-area-inset-top, 0px));
+}
+/* 手机层：返回腿 = 注入的左上「<」(`mobileSheetBack`)，右上「×」重复 ⇒ 收掉。 */
+body.mobile-layer .settings-profile-close { display: none; }
+body.mobile-layer .sp-field {
+  min-height: 44px;
+  align-items: center;
+}
+body.mobile-layer .mf-me-edit {
+  min-height: 44px;
 }

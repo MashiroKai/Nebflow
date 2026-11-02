@@ -4,8 +4,9 @@
 //   • Avatar — the NebLink login entry. Tap when logged out → opens the
 //     NebLink login modal (Logto OIDC, Authorization Code + PKCE; legacy
 //     device flow as fallback). Tap when logged in → opens the account menu
-//     (「个人主页」/「退出登录」, 2026-11 sign-out-entry fix batch — the profile
-//     page path is unchanged, sign-out needs a second, explicit click).
+//     (「个人资料」/「退出登录」, 2026-11 sign-out-entry fix batch; the profile
+//     item now opens the in-app face, 2026-11-02 batch 四 — sign-out still
+//     needs a second, explicit click).
 //   • Side Bar panel switch buttons (Files; future panels register the same way).
 //   • (spacer)
 //   • Projects / Plugins (Canvas tabs) and Settings.
@@ -24,7 +25,10 @@ import { fetchNeblinkStatus, getNeblinkState, startPkceLogin, pollPkceState, can
 // setUpdateDot（settings-btn 更新绿点，updateCheck.js）已随 auth-trim 批删除 ——
 // 绿点与静默自动检查整链退役（2026-10-20 作者令，未来由官网统一检测更新取代）。
 import { createIconsIn, escapeHtml, statusIcon } from './utils.js';
-import { getProfileUrl, standLockupSvg } from './brand.js';
+import { standLockupSvg } from './brand.js';
+// 件四（作者令 2026-11-02）：设置页身份卡的头像引擎（换头像流程触发）+ App 内个人资料面。
+// 无环：该模块是叶子（只依 neblink/friendsApi/utils/i18n/brand/mobile-popSheet）。
+import { openSettingsAvatarPicker, openProfileFace } from './settingsIdentity.js';
 import { t } from './i18n.js';
 import { key } from './branding.js';
 // 已登录态账号菜单壳（2026-11「退出登录没有入口」修复批）：复用既有右键/长按
@@ -471,14 +475,16 @@ function observeSettingsModal() {
  * longer forwards a synthetic click — see bindSettingsAccountEntry).
  *
  * Logged out → the single click starts the PKCE flow (no second confirmation
- * step); logged in → open the account menu (profile page + sign out).
+ * step); logged in → open the account menu (in-app profile + sign out).
  *
  * 2026-11「退出登录没有入口」修复批（作者裁「只修退不出」）：已登录态原先一点
- * 就**直接打开**官网个人页 —— 作者踩坑点（想登出却进了个人页）。现改为一个
- * 两选一菜单：**打开个人页这条路逐字保留**（同一个 `getProfileUrl()` +
- * `window.open(..., 'noopener')`），退出登录是**菜单里的第二枚键**（需明确
- * 点击两次：点头像 → 点「退出登录」）⇒ 不会误触。菜单壳 = 既有
- * `contextMenu.js` (`showPopupMenu`)，零新视觉体系、零新弹层形态。
+ * 就**直接打开**官网个人页。当批改为一个两选一菜单，退出登录是菜单里的
+ * **第二枚键**（需明确点击两次：点头像 → 点「退出登录」）⇒ 不会误触。
+ *
+ * 2026-11-02 件四·身份卡本地化（作者令：「现在的设计是跳转到官网，但是我是要在这里
+ * 直接修改」）—— 菜单里那条「打开个人页」从 `window.open(getProfileUrl())`
+ * 改为打开 **App 内个人资料面**（settingsIdentity.js `openProfileFace`）；
+ * `brand.getProfileUrl()` 本身保留不删（它仍服务 takeoverModal 的退出落地等链路）。
  * @param {Element|null} [anchorEl] 菜单锚点（调用者传入自己那个入口元素；
  *   缺省回退到活动条头像）。
  */
@@ -486,6 +492,13 @@ export function activateAccountEntry(anchorEl) {
   const st = getNeblinkState();
   if (st.pairing) return; // pairing in progress — ignore
   if (st.loggedIn) {
+    // 设置页身份卡的头像点击 = 「直接换头像」（作者令 2026-11-02：「点击头像就是
+    // 直接换头像进去就是自己的 profile 设置页」—— 头像本体走换头像流程，胶囊才是 profile 面）。
+    // 只对**设置页那枚入口**生效：活动条头像仍是账号菜单（那里没有身份卡语境，且菜单里
+    // 的「个人资料」已是 App 内面）。换头像函数返回 false = 该入口不在场⇒ 回退菜单。
+    if (anchorEl instanceof Element && anchorEl.id === 'settings-avatar-entry' && openSettingsAvatarPicker()) {
+      return;
+    }
     openAccountMenu(anchorEl || null);
     return;
   }
@@ -498,8 +511,9 @@ export function activateAccountEntry(anchorEl) {
  * Logged-in account menu (2026-11 sign-out-entry fix batch).
  *
  * 两枚键，都走既有实现，零新增链路：
- *   · 打开个人页 → `brand.getProfileUrl()` + `window.open(..., 'noopener')`
- *     （逐字沿用修复前 activateAccountEntry 的实现 —— 该路径不得删除）；
+ *   · 打开个人资料 → `openProfileFace()`（settingsIdentity.js 的 **App 内** 资料面；
+ *     2026-11-02 件四前这里是 `window.open(getProfileUrl(), 'noopener')`，作者令「不再跳官网」
+ *     后改为就地面；`brand.getProfileUrl()` 函数保留，只是本条链路不再调它）；
  *   · 退出登录 → `openEndSessionHandoff(false)`（neblink.js；本地八步拆除 +
  *     provider end-session + /auth/logged-out 落地页，与「清理并重登」同一链路，
  *     仅入参 false = 不做强制登录）。
@@ -513,9 +527,9 @@ function openAccountMenu(anchorEl) {
   const y = r ? Math.round(r.top) : Math.round(window.innerHeight / 2);
   showPopupMenu(x, y, [
     {
-      // 打开个人页这条路径**保留**（修复前点头像的唯一行为）。
+      // App 内个人资料面（件四：零外链）。点中即关菜单并就地开面。
       label: t('activity.profile'),
-      onClick: () => window.open(getProfileUrl(), '_blank', 'noopener'),
+      onClick: () => openProfileFace(),
     },
     {
       // 退出登录 = 明确第二次点击；危险档位不套 red（退出不是破坏性操作）。
@@ -546,8 +560,8 @@ function bindAvatar() {
 function bindSettingsAccountEntry() {
   document.addEventListener('click', (e) => {
     const target = e.target instanceof Element ? e.target : null;
-    // 锚点 = 设置里那个头像入口本身（已登录态的账号菜单从它展开，见
-    // openAccountMenu）—— 行为与活动条头像一致，仅锚点不同。
+    // 锚点 = 设置里那个头像入口本身。未登录 ⇒ 登录卡（与活动条头像同一肿）；
+    // 已登录 ⇒ 「直接换头像」（件四，只对本入口生效；见 activateAccountEntry）。
     const entry = target ? target.closest('#settings-avatar-entry') : null;
     if (entry) activateAccountEntry(entry);
   });

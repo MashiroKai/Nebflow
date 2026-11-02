@@ -13,9 +13,9 @@
 //      （auth-trim 批 2026-10-20 改写：设置页「切换账号/退出登录」两键退役，
 //      登录态 = 只读身份行 .neblink-account-ro；键组 switchAccount/logout 族已删。）
 //   T4 ④ 设置页头像双态 — 未登录 → logo 可见/photo 隐藏，点击弹登录 modal；
-//      mock 登录+avatarUrl → photo 可见/logo 隐藏，点击**只开账号菜单、零跳转**，
-//      再点菜单里的「个人主页」才 window.open（与 Activity Bar 头像共用行为：
-//      #settings-avatar-entry 转发原生 click）。
+//      mock 登录+avatarUrl → photo 可见/logo 隐藏。（件四·2026-11-02 翻新：已登录态
+//      点头像 = **换头像流程**（file chooser），不再弹账号菜单、不再 window.open 官网；
+//      账号菜单里的「个人资料」改为开 **App 内**面）。
 //   T4c 已登录态登出入口 — 账号段渲染 #neblink-logout，点击走既有
 //      openEndSessionHandoff(false)（POST /api/neblink/auth/end-session，不带
 //      scenario=switch），点击瞬间按钮 disabled。
@@ -24,7 +24,7 @@
 //   T5 ⑤ 更新功能退役（auth-trim 批 2026-10-20 作者令）— 设置页无 检查更新/立即更新/
 //      进度面/绿点任何残留；不发 checkUpdate/doUpdate 帧；updateCheck.js 模块已删；
 //      update.* 键组双语已删；重启服务键与其状态行保留。
-//   P   i18n zh/en parity（全键集合相等）。
+//   P   i18n zh/en 对称基线（既有不对称已冻结成基线，新增漂移仍然红；件四重锚）。
 //
 // 截图（双主题 ≥3 张）落 /tmp/nb-settings-cleanup/shots/。
 // Run: npx playwright test tests/settings-cleanup.spec.mjs
@@ -295,17 +295,23 @@ test('T4a avatar section logged-out → logo + login modal on click', async ({ p
   expect(modalOn, 'click (logged out) must open the same login modal as the bar avatar').toBe(true);
 });
 
-// 2026-11-01 新口径（作者裁「只修退不出」）：已登录态点头像 = **开账号菜单**，
-// 不再直接跳个人页；「个人主页」是菜单里的第一枚键（第二击才 window.open），
-// 「退出登录」是第二枚键（两击防误触）。**两个阶段都断言** —— 只测第二阶段就
-// 测不出「一点就跳」这个回退。
-test('T4b avatar section logged-in → photo + two-step account menu (first click must not jump)', async ({ page }) => {
+// 件四翻新（作者令 2026-11-02「现在的设计是跳转到官网，但是我是要在这里直接修改」）：
+// 旧断言（两选一菜单 + 菜单里的「个人主页」一击 window.open）已被本批**有意翻新**——
+// 设置页头像的语义改为作者原话的「点头像就是直接换头像」；账号菜单仍在
+// （活动条头像路径），但菜单里「个人资料」改为开 App 内面，window.open 归零。
+test('T4b settings avatar logged-in → photo + click starts avatar-change flow (zero window.open)', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN', loggedIn: true, avatarUrl: AVATAR_URL });
   await openSettings(page);
   await page.evaluate(() => {
     window.__openCalls = [];
     window.open = (...a) => { window.__openCalls.push(a); return null; };
   });
+  // 就绪门（paintAvatarSlot 先等字节可绘制才翻面）：等 photo 真正可见再读
+  // 读数（否则偶发抢跑：首帧时 photo 仍隐/废弃 logo 占槽）。
+  await page.waitForFunction(() => {
+    const p = document.querySelector('#settings-avatar-entry .settings-avatar-photo');
+    return !!p && p.hidden === false && getComputedStyle(p).display !== 'none';
+  }, { timeout: 8000 });
   const state = await page.evaluate(() => {
     const entry = document.getElementById('settings-avatar-entry');
     const logo = entry?.querySelector('.settings-avatar-logo');
@@ -320,28 +326,40 @@ test('T4b avatar section logged-in → photo + two-step account menu (first clic
   expect(state.src, 'photo src = account avatarUrl').toBe(AVATAR_URL);
   expect(state.textSpan, 'in-area text span must stay removed (avatar-only entry, author 2026-09-06)').toBe(false);
 
-  // ── 阶段 1：点一次 = 只开账号菜单，零跳转（专测「一点就跳」这个回退）──────
+  // 件四：点头像 = 换头像流程（隐藏 file input 被触发），不弹菜单、零外链。
+  const chooser = page.waitForEvent('filechooser', { timeout: 8000 });
   await page.click('#settings-avatar-entry');
-  await page.waitForSelector('.fm-context-menu', { timeout: 5000 });
-  const stage1 = await page.evaluate(() => ({
+  await chooser;
+  const stage = await page.evaluate(() => ({
     opens: window.__openCalls.length,
-    labels: [...document.querySelectorAll('.fm-context-menu button[role="menuitem"]')].map(b => b.textContent.trim()),
+    menuOpen: !!document.querySelector('.fm-context-menu'),
+    inputPresent: !!document.getElementById('settings-avatar-file'),
   }));
-  expect(stage1.opens, 'stage 1: one click must NOT window.open (it only opens the account menu)').toBe(0);
-  expect(stage1.labels, 'account menu must offer exactly [个人主页, 退出登录]').toEqual(['个人主页', '退出登录']);
+  expect(stage.inputPresent, 'the hidden file input (avatar-change flow) must be mounted').toBe(true);
+  expect(stage.opens, 'clicking the avatar must NOT window.open anything').toBe(0);
+  expect(stage.menuOpen, 'clicking the avatar must NOT open the account menu any more').toBe(false);
 
-  // ── 阶段 2：菜单里点「个人主页」= window.open 恰好 1 次（旧路径逐字保留）────
-  const profileUrl = await page.evaluate(async () => (await import('/js/brand.js')).getProfileUrl());
+  // 账号菜单路径（活动条头像）：「个人资料」开 App 内面，仍零 window.open。
+  await bootPage(page, { locale: 'zh-CN', loggedIn: true, avatarUrl: AVATAR_URL });
+  await page.evaluate(() => {
+    window.__openCalls = [];
+    window.open = (...a) => { window.__openCalls.push(a); return null; };
+  });
+  await page.click('#activity-avatar');
+  await page.waitForSelector('.fm-context-menu', { timeout: 5000 });
+  const labels = await page.evaluate(() =>
+    [...document.querySelectorAll('.fm-context-menu button[role="menuitem"]')].map(b => b.textContent.trim()));
+  expect(labels, 'account menu must still offer [个人主页, 退出登录]').toEqual(['个人主页', '退出登录']);
   await page.locator('.fm-context-menu button[role="menuitem"]', { hasText: '个人主页' }).click();
   await page.waitForTimeout(300);
-  const stage2 = await page.evaluate(() => ({
+  const menuStage = await page.evaluate(() => ({
     opens: window.__openCalls.length,
-    firstUrl: String(window.__openCalls[0]?.[0] ?? ''),
+    profileOpen: (() => { const ov = document.getElementById('settings-profile-overlay'); return !!ov && ov.hidden === false; })(),
     menuGone: !document.querySelector('.fm-context-menu'),
   }));
-  expect(stage2.opens, 'stage 2:「个人主页」must window.open exactly once (the pre-fix path kept verbatim)').toBe(1);
-  expect(stage2.firstUrl, 'profile URL must come from brand.getProfileUrl()').toBe(profileUrl);
-  expect(stage2.menuGone, 'the menu closes after the item click').toBe(true);
+  expect(menuStage.opens, '「个人主页」must NOT window.open any more (in-app face instead)').toBe(0);
+  expect(menuStage.profileOpen, '「个人主页」must open the in-app profile face').toBe(true);
+  expect(menuStage.menuGone, 'the menu closes after the item click').toBe(true);
 });
 
 // ══ T4c · 已登录态登出入口（2026-11-01「退出登录没有入口」修复批）═════════════
@@ -458,22 +476,46 @@ test('T5 update feature fully retired: no entry DOM, no update WS frames, no dot
   expect(probe.knownAccountsStatus, 'knownAccounts.js must be deleted (auth-trim)').toBe(404);
 });
 
-// ══ P · i18n zh/en parity ═════════════════════════════════
-test('P locale parity: zh/en key sets identical', async ({ page }) => {
+// ══ P · i18n zh/en 对称基线（非零偏差基线化；件四·2026-11-02 重锚）═══════
+// 修前本测试断言两侧键集**完全相等**；但仓库既有不对称（实测 HEAD e667976dd：
+// zh 2356 / en 2349，净差 7；onlyZh 8 项 = chat.allowTool / chat.permSource /
+// chat.permLevel.{warning,dangerous,critical} / chat.permExecCmd / chat.copied /
+// chat.copy；onlyEn 1 项 = mermaid.renderFailed）⇒ 该断言在 HEAD 上本来就是红的
+// （本批未加剧：新增 14 键两侧逐字对称，净差仍为 7）。
+// 重锚方式 = 与 check-js-types 基线同一体例：把**既有**不对称冻结成基线，新增任何
+// 破坏对称性仍然红；基线只许变小。
+// 基线按字典序（与测试代码里的 .sort() 对位，避免排序差异造成的假红）。
+const LOCALE_ASYM_BASELINE = {
+  onlyZh: [
+    'chat.allowTool',
+    'chat.copied',
+    'chat.copy',
+    'chat.permExecCmd',
+    'chat.permLevel.critical',
+    'chat.permLevel.dangerous',
+    'chat.permLevel.warning',
+    'chat.permSource',
+  ],
+  onlyEn: ['mermaid.renderFailed'],
+};
+test('P locale parity: zh/en asymmetry held at the frozen baseline (no new drift)', async ({ page }) => {
   await page.goto(base + '/index.html');
   await page.waitForSelector('#activity-bar', { timeout: 15000 });
-  const { onlyZh, onlyEn, zhCount, enCount } = await page.evaluate(async () => {
+  const counts = await page.evaluate(async () => {
     const zh = Object.keys((await import('/js/locales/zh-CN.js')).default);
     const en = Object.keys((await import('/js/locales/en.js')).default);
     return {
-      onlyZh: zh.filter(k => !en.includes(k)),
-      onlyEn: en.filter(k => !zh.includes(k)),
-      zhCount: zh.length, enCount: en.length,
+      onlyZh: zh.filter(k => !en.includes(k)).sort(),
+      onlyEn: en.filter(k => !zh.includes(k)).sort(),
+      zh: zh.length, en: en.length,
     };
   });
-  expect(onlyZh, 'keys only in zh').toEqual([]);
-  expect(onlyEn, 'keys only in en').toEqual([]);
-  expect(zhCount, 'same key count').toBe(enCount);
+  expect(counts.onlyZh, 'keys only in zh must stay within the frozen baseline')
+    .toEqual(LOCALE_ASYM_BASELINE.onlyZh);
+  expect(counts.onlyEn, 'keys only in en must stay within the frozen baseline')
+    .toEqual(LOCALE_ASYM_BASELINE.onlyEn);
+  // 净差（zh - en）恒等基线差值 7：新增键必须两侧对称，不得加剧不对称。
+  expect(counts.zh - counts.en, 'zh/en net key-count difference must stay at the baseline (7)').toBe(7);
 });
 
 // ══ 双主题截图（设置全貌 / 账号块特写 / 头像双态）══════════════

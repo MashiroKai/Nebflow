@@ -1321,6 +1321,23 @@ export default {
   'settings.editRawJson': 'Edit Raw JSON',
   'settings.reload': 'Reload',
   'settings.account': 'Account',
+  // 件四 · settings identity card localization (author ruling 2026-11-02: avatar on
+  // top, one capsule below with username + email; the capsule opens the profile page).
+  // zh/en added **symmetrically** (14 keys x 2 files).
+  'settings.identityCardLabel': 'Account details',
+  'settings.identityChangeAvatar': 'Change avatar',
+  'settings.identityNotSignedIn': 'Not signed in',
+  'settings.identityUnknown': 'Unknown',
+  'settings.avatarChangeUnavailable': 'The account service does not offer an avatar upload endpoint yet — the image was not uploaded.',
+  'settings.profileSelf': 'Profile',
+  'settings.profileClose': 'Close',
+  'settings.profileUsername': 'Username',
+  'settings.profileNickname': 'Nickname',
+  'settings.profileEmail': 'Email',
+  'settings.profileGithub': 'GitHub binding',
+  'settings.profileGoogle': 'Google binding',
+  'settings.profileReadonlyNote': 'Everything below is a live reading from the account service; the client caches nothing and fills nothing in.',
+  'settings.accountServiceUnavailable': 'The account service does not offer this endpoint yet, so it cannot be edited in the app.',
   'settings.about': 'About',
   'settings.connection': 'Connection',
   'settings.connected': 'Connected',

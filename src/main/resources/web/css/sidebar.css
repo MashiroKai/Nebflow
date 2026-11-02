@@ -1085,6 +1085,193 @@
 .settings-avatar-logo[hidden],
 .settings-avatar-photo[hidden] { display: none; }
 
+/* ── 设置页身份卡（件四，作者令 2026-11-02）────────────────────────────────
+   形态 = 头像在上（`.settings-avatar-entry` 原样复用，几何/双态/就绪门零改动）
+   + 下面一行胶囊（用户名 · 邮箱同胶囊，点 = App 内个人资料面）。桌面与手机层
+   同一 DOM，手机层差异只在 mobileLayer.css 的触控最小高与断点（禁两份结构）。
+   颜色全部取既有 token —— 禁裸 hex（与本文件其余区块同纪律）。 */
+.settings-identity-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 8px;
+}
+/* 胶囊：一行文字 + 右侧 chevron；宽度随内容（不铺满，作者「胶囊」语义）。 */
+.settings-identity-capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 12px;
+  background: var(--color-frame-input-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-frame-input-border);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 18px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+}
+.settings-identity-capsule:hover {
+  border-color: rgba(91, 127, 191, 0.55);
+  box-shadow: 0 0 0 4px rgba(91, 127, 191, 0.10);
+}
+.settings-identity-capsule:active { transform: scale(0.98); }
+.settings-identity-capsule:focus-visible {
+  outline: 2px solid rgba(91, 127, 191, 0.65);
+  outline-offset: 2px;
+}
+.settings-identity-username {
+  font-weight: 600;
+  color: var(--color-text);
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-identity-sep { color: var(--color-text-muted); }
+.settings-identity-sep[hidden] { display: none; }
+.settings-identity-email {
+  color: var(--color-text-secondary);
+  max-width: 40vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-identity-chev {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--color-text-muted);
+}
+/* 卡内提示（换头像不可用等）：同区块次级文案档，hidden 归零。 */
+.settings-identity-notice {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--color-text-muted);
+  text-align: center;
+  max-width: 320px;
+}
+.settings-identity-notice[hidden] { display: none; }
+
+/* ── App 内个人资料面（`#settings-profile-overlay`；件四）─────────────────
+   壳 = 既有 `.cfg-modal-overlay` + `.cfg-modal`（dropbox / friendGroups 同族，
+   零新弹层形态）；手机层铺平由 mobileLayer.css 的 A 族既有规则覆盖（两个类名
+   都在该族选择器里），此处只补本面自己的字段/英雄区样式。 */
+#settings-profile-overlay[hidden] { display: none; }
+.settings-profile-modal { width: 420px; }
+.settings-profile-close {
+  float: right;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font: inherit;
+}
+.settings-profile-close:hover { color: var(--color-text); }
+.settings-profile-close svg { width: 16px; height: 16px; }
+.sp-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 16px 10px;
+}
+.sp-avatar-frame {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  overflow: hidden;
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--color-frame-input-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sp-avatar-logo {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  pointer-events: none;
+}
+.sp-avatar-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+  pointer-events: none;
+}
+.sp-avatar-logo[hidden], .sp-avatar-photo[hidden] { display: none; }
+.sp-hero-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+  text-align: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sp-hero-sub {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  text-align: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sp-fields {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 16px 8px;
+}
+.sp-field {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-top: 1px solid var(--color-frame-border-light);
+}
+.sp-field:first-child { border-top: none; }
+.sp-label {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  flex: none;
+}
+.sp-value {
+  font-size: 13px;
+  color: var(--color-text);
+  text-align: right;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* 无接口字段：值显「未知」并降一档墨色（禁把它画成可编辑/可用态）。 */
+.sp-field[data-sp-state='unavailable'] .sp-value { color: var(--color-text-muted); }
+.sp-note {
+  margin: 0;
+  padding: 0 16px 8px;
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--color-text-muted);
+}
+.sp-note-warn { padding-bottom: 14px; color: var(--color-text-secondary); }
+
+
 /* ── Config Cards (Providers) ──────────────────────────────────────────── */
 .cfg-card {
   background: var(--color-frame-input-bg);
