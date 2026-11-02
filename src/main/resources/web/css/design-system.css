@@ -178,7 +178,7 @@
   --ds-border-width: 1px;
   --ds-border-glass: var(--glass-border);   /* 玻璃描边单源别名（不复制值） */
   --ds-focus-width: 2px;                    /* IBM / NVIDIA focus 双源 2px */
-  --ds-focus-ring-color: var(--ds-focus-ring); /* 与既有 --ds-focus-ring 同源一跳别名（门禁锚形态，不复制色值） */
+  /* focus 色锚 = 既有 --ds-focus-ring（var(--btn-focus-ring)），草案条目精确归属，不另立槽 */
 }
 
 /* ══ 组件类层（`.ds-*`）══════════════════════════════════════════════
