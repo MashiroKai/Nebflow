@@ -982,7 +982,9 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
   // Canvas 改造批⑦⑧（2026-10-31）：md 已无阅读器底栏，角浮件回落单行同簇
   //（右下 48px 间距档：源码 16 · 查找 64 · 壳刷新钮实测续排）；图谱圆钮随
   // 批④退役，词条面走 vault 入口。
-  addFindToggle(pane, 64);
+  // canvas 控件尺寸对齐批（2026-11-02）：钮 40→48 ⇒ 槽距 56，查找钮 64 → 72
+  //（= 源码 16 + 48 + 8；缝 8px 不变，只放大不挤压）。
+  addFindToggle(pane, 72);
 }
 
 export default {

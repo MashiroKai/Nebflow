@@ -113,9 +113,9 @@ for (const scheme of ['dark', 'light']) {
     await page.waitForFunction(() => document.querySelectorAll('#chat .row.ai').length >= 2, { timeout: 10000 });
     await page.waitForTimeout(600);
 
-    // 同帧前置：#chat 滚到顶 → .g2-chat-head（Muse 悬浮身份头恢复批 2026-11-02
-    // 09:14 起回到 sticky 悬浮锚，静止态落在 64px 顶带、头像恒在窗口顶部可见）
-    // 可见，dock 固定底缘（中键可见）—— 375×812 单帧同时容纳两件头像。
+    // 同帧前置：#chat 滚到顶 → .g2-chat-head（sticky 悬浮锚；同行批 2026-11-02
+    // 11:08 起落点 = --muse-head-anchor 4px，锚双钮中心行、头像恒在窗口顶部
+    // 可见）可见，dock 固定底缘（中键可见）—— 375×812 单帧同时容纳两件头像。
     await page.evaluate(() => { document.getElementById('chat').scrollTop = 0; });
     await page.waitForTimeout(300);
 

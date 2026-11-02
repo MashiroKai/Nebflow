@@ -165,8 +165,8 @@ async function runMobile(scheme) {
       rest.nameTop >= rest.avBottom - 1 && !(rest.nameBottom <= rest.avBottom + 0.5)
         && Math.abs(rest.nameCx - rest.avCx) <= 1,
       `nameTop=${rest.nameTop.toFixed(1)} avBottom=${rest.avBottom.toFixed(1)} gap=${(rest.nameTop - rest.avBottom).toFixed(1)} |nameCx−avCx|=${Math.abs(rest.nameCx - rest.avCx).toFixed(2)}`);
-    ok(`${scheme} ③ 身份组 = sticky 悬浮锚（非 fixed；--muse-head-top 在场）`,
-      rest.headPos === 'sticky' && rest.museHeadTop !== '',
+    ok(`${scheme} ③ 身份组 = sticky 悬浮锚（非 fixed；--muse-head-top 在场）+ 组顶落双钮中心行 4 ±1`,
+      rest.headPos === 'sticky' && rest.museHeadTop !== '' && Math.abs(rest.headTop - 4) <= 1,
       `pos=${rest.headPos} muse-head-top="${rest.museHeadTop}" headTop=${rest.headTop.toFixed(1)} headBottom=${rest.headBottom.toFixed(1)}`);
     ok(`${scheme} ④ 头像中心 == 屏幕中线 ±1px`,
       Math.abs(rest.avCx - 187.5) <= 1, `avCx=${rest.avCx.toFixed(1)} mid=187.5`);
@@ -174,12 +174,13 @@ async function runMobile(scheme) {
       rest.nameFont === '15px', `font=${rest.nameFont}`);
     await page.screenshot({ path: join(OUT, `rest-${scheme}.png`) });
 
-    // ── 滚动态：sticky 贴顶（头像顶收敛到组 padding-top 8）────────────
+    // ── 滚动态：落点与静止同位（头像顶恒 12 = 组顶 4 + 组内上距 8）────────
     await page.evaluate(() => { const c = document.getElementById('chat'); c.scrollTop = Math.round((c.scrollHeight - c.clientHeight) * 0.55); });
     await page.waitForTimeout(350);
     const mid = await probeState(page);
-    ok(`${scheme} ⑤ 滚动中身份组锚窗口顶（头像顶 = 8 ±1）`,
-      mid.scrollTop > 0 && Math.abs(mid.avTop - 8) <= 1 && Math.abs(mid.headTop) <= 1,
+    ok(`${scheme} ⑤ 滚动中身份组落点 == 静止落点（组顶 4 ±1 / 头像顶 12 ±1）`,
+      mid.scrollTop > 0 && Math.abs(mid.avTop - 12) <= 1 && Math.abs(mid.headTop - 4) <= 1
+        && Math.abs(mid.avTop - rest.avTop) <= 0.5,
       `滚动前 avTop=${rest.avTop.toFixed(1)} 滚动后 avTop=${mid.avTop.toFixed(1)} headTop=${mid.headTop.toFixed(1)} scrollTop=${mid.scrollTop}`);
     ok(`${scheme} ⑤ 滚动中头像仍 56px + 名字仍在其正下方`,
       Math.abs(mid.avW - 56) <= 0.8 && mid.nameTop >= mid.avBottom - 1 && Math.abs(mid.nameCx - mid.avCx) <= 1,

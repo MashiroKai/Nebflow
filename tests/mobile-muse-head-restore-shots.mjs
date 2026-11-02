@@ -11,7 +11,8 @@
 //   A 不存在顶栏：顶部区域没有「高度 ≥40 且横贯 ≥90% 宽 且 有背景/描边/固定定位」
 //     的横贯带（全文档扫描 + .g2-chat-head 本体静态属性双口径）。
 //   B 胶囊水平中心 ↔ 头像水平中心 ≤1px，且胶囊 top ≥ 头像 bottom −1（在下方）。
-//   C 头像中心 ↔ 左钮中心 / 右钮中心 的垂直中心极差 ≤ 12px（实测打印真实值）。
+//   C 头像中心 ↔ 左钮中心 / 右钮中心 的垂直中心极差 ≤ 1px（**全状态**；本批
+//     2026-11-02 11:08「始终同一行」契约取代旧的「贴顶态 ≤12px / 静止态豁免」）。
 //   D 头像水平中心 ↔ 屏幕中线 ≤1px。
 //   E 内容确实从头像后穿过：滚动态存在消息行渲染盒与头像盒相交（面积 >0）。
 //   F 无名态：胶囊不渲染（display:none）+ 头像仍居中（中线 ≤1px）。
@@ -270,13 +271,21 @@ async function runMobile(scheme) {
       dB <= 1 && gapBA >= -1,
       `|nameCx−avCx|=${dB.toFixed(2)} (nameCx=${rest.nameCx} avCx=${rest.avCx}) gap=${gapBA.toFixed(2)} (nameTop=${rest.nameTop} avBottom=${rest.avBottom})`);
 
-    // ── C 头像中心 ↔ 双钮中心垂直极差（贴顶态；见下方 pinned 段）──
-    // 🔴 口径说明：作者 09:14 实拍（dark 1134×246）取的是**滚动态贴顶**画面 ——
-    // 头像 y≈6..57 CSS、双钮 y≈16..64 ⇒ 中心差 ≈9px；实拍里消息文字正从头像
-    // 后方穿过，静止态不可能出现。故本判据在贴顶态量（sticky 锚窗口顶）。静止
-    // 态头像落在内容流原位（= #chat padding-top 96 之下，中心 100 vs 双钮 40），
-    // 属 Muse 静止形态（历史素材 chromium-light-rest.png 逐值同构：73..148），
-    // 仅打印不判红。
+    // ── C 头像中心 ↔ 双钮中心垂直极差（**静止态也判**；见下 + pinned 段）──
+    // 🔴 口径修订（身份头同行批 2026-11-02 11:08，作者令「为什么会出现有的情况，
+    // 这个头像会和两侧按钮不在同一行」）：本判据原先把静止态**豁免**掉（字面
+    // 「静止态头像落在内容流原位…属 Muse 静止形态，仅打印不判红」），于是静止态
+    // 实测 spread=60px 被当成形态本来的样子放过 —— 那正是作者报障的画面。
+    // 现契约：**任何状态（静止 / 滚动中 / 贴顶 / 无名字）都必须同一行，≤1px**。
+    // 静止态 spread 之所以曾是 60：sticky 的两个落点由两个不同表达式给定、恒差
+    // 64；同行批把 top 与 margin-top 统一成同一表达式后，静止落点 ≡ 贴顶落点。
+    const spreadRest = Math.max(Math.abs(rest.avCy - rest.taskCy), Math.abs(rest.avCy - rest.searchCy));
+    ok(`${scheme} C 静止态头像中心 ↔ 左右双钮中心垂直极差 ≤1px（旧豁免取消）`,
+      spreadRest <= 1,
+      `spread=${spreadRest.toFixed(2)} avCy=${rest.avCy} taskCy=${rest.taskCy} searchCy=${rest.searchCy}（修前实测 60.00，被旧口径放过）`);
+    ok(`${scheme} C 静止态身份组锚落位（组顶 4 ±1 / 头像顶 12 ±1 —— 与贴顶态逐值相同）`,
+      Math.abs(rest.headTop - 4) <= 1 && Math.abs(rest.avTop - 12) <= 1,
+      `headTop=${rest.headTop} avTop=${rest.avTop}（修前 64 / 72）`);
 
     // ── D 头像水平居中 ─────────────────────────────────────────────
     const dD = Math.abs(rest.avCx - rest.vw / 2);
@@ -305,18 +314,18 @@ async function runMobile(scheme) {
     ok(`${scheme} E 内容确实从头像后穿过（滚动态消息行渲染盒与头像盒相交）`,
       mid.scrollTop > 0 && mid.behindHits > 0 && mid.behindMaxArea > 0,
       `scrollTop=${mid.scrollTop} 相交行数=${mid.behindHits} 最大交叠面积=${mid.behindMaxArea}px²`);
-    // ── C（贴顶态）头像中心 ↔ 双钮中心极差 ─────────────────────────
+    // ── C（贴顶态）头像中心 ↔ 双钮中心极差（同批收紧 12 → 1）─────────
     const spreadPinned = Math.max(Math.abs(mid.avCy - mid.taskCy), Math.abs(mid.avCy - mid.searchCy));
-    ok(`${scheme} C 贴顶态头像中心 ↔ 左右双钮中心垂直极差 ≤12px（作者实拍口径）`,
-      spreadPinned <= 12,
-      `spread=${spreadPinned.toFixed(2)} avCy=${mid.avCy} taskCy=${mid.taskCy} searchCy=${mid.searchCy}（静止态 spread=${Math.max(Math.abs(rest.avCy - rest.taskCy), Math.abs(rest.avCy - rest.searchCy)).toFixed(2)}，Muse 静止形态不判）`);
-    // ── E 滚动态 sticky 锚窗口顶 ───────────────────────────────────
-    // 贴顶判据 = 头像顶 = 组 padding-top 8（sticky 锚定在 scrollport padding 缘）；
-    // 静止态该值 72（= 让位 96 − 负 margin 24）。滚动后收敛到 8 即「贴窗口顶」，
-    // 所以判「贴顶后的落点」而非「top 不变」。
-    ok(`${scheme} E 滚动态身份组锚窗口顶（sticky 贴顶：头像顶 = 8 = 组 padding-top）`,
-      Math.abs(mid.avTop - 8) <= 1 && Math.abs(mid.headTop) <= 1,
-      `滚动前 avTop=${rest.avTop} 滚动后 avTop=${mid.avTop}（head top ${mid.headTop}）`);
+    ok(`${scheme} C 贴顶态头像中心 ↔ 左右双钮中心垂直极差 ≤1px`,
+      spreadPinned <= 1,
+      `spread=${spreadPinned.toFixed(2)} avCy=${mid.avCy} taskCy=${mid.taskCy} searchCy=${mid.searchCy}（静止态 spread=${Math.max(Math.abs(rest.avCy - rest.taskCy), Math.abs(rest.avCy - rest.searchCy)).toFixed(2)}，本批起同样判红）`);
+    // ── E 滚动态 sticky 锚落点 ─────────────────────────────────────
+    // 贴顶判据（同行批改）：静态落点与贴顶落点取同一表达式 ⇒ 组顶恒 4、头像顶恒 12，
+    // 滚动不产生任何位移（修前是「静止 64/72 → 贴顶 0/8」的 64px converge）。
+    ok(`${scheme} E 滚动态身份组锚落点 = 静止落点（组顶 4 / 头像顶 12，零 sticky 位移）`,
+      Math.abs(mid.avTop - 12) <= 1 && Math.abs(mid.headTop - 4) <= 1
+        && Math.abs(mid.avTop - rest.avTop) <= 0.5 && Math.abs(mid.headTop - rest.headTop) <= 0.5,
+      `滚动前 avTop=${rest.avTop} headTop=${rest.headTop} → 滚动后 avTop=${mid.avTop} headTop=${mid.headTop}`);
     ok(`${scheme} E 滚动态头像仍居中 + 胶囊仍在正下方`,
       Math.abs(mid.avCx - mid.vw / 2) <= 1 && Math.abs(mid.nameCx - mid.avCx) <= 1 && mid.nameTop >= mid.avBottom - 1,
       `|avCx−vw/2|=${Math.abs(mid.avCx - mid.vw / 2).toFixed(2)} |nameCx−avCx|=${Math.abs(mid.nameCx - mid.avCx).toFixed(2)} gap=${(mid.nameTop - mid.avBottom).toFixed(2)}`);

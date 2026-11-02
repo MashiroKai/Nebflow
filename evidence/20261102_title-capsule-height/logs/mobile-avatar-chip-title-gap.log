@@ -1,0 +1,156 @@
+evidence → /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-f003855e/evidence/20261102_030446_avatar-chip-title-gap
+PASS  chromium-light A1 会话头芯片底色随主题（light）  — bg=rgb(255, 255, 255) img=none
+PASS  chromium-light A1 会话头 logo 换源随主题  — src=symbol-light.svg
+PASS  chromium-light A1 会话头芯片圆形  — 50%
+PASS  chromium-light A1 会话头 img 盒四向边距等分（±1px）  — {"top":9,"bottom":9,"left":9,"right":9}
+PASS  chromium-light A1 会话头 picture flex 居中档  — flex
+PASS  chromium-light A2 dock 芯片底色随主题（logo 态）  — rgb(255, 255, 255)
+PASS  chromium-light A2 dock logo 换源随主题  — symbol-light.svg
+PASS  chromium-light A2 dock img 盒四向边距等分（±1px）  — {"top":9,"bottom":9,"left":9,"right":9}
+PASS  chromium-light A2 dock 墨迹扫描有解
+PASS  chromium-light A2 dock 墨心偏移 ≤1.5px（水平/垂直）  — {"dx":0,"dy":0}
+PASS  chromium-light A2 dock 左右墨距差 ≤2px  — {"left":25,"right":25,"top":15.5,"bottom":15.5}
+PASS  chromium-light B1 usage 面板在场
+PASS  chromium-light B2 usage 标题盒 52±2（防裁字）  — h=52
+PASS  chromium-light B1 usage 标题→首块 = 12±2px  — div.ud-filters gap=12
+PASS  chromium-light B1 projects 面板在场
+PASS  chromium-light B2 projects 标题盒 52±2（防裁字）  — h=52
+PASS  chromium-light B1 projects 标题→首块 = 12±2px  — div.team-card.project-card gap=12
+PASS  chromium-light B1 settings 面板在场
+PASS  chromium-light B2 settings 标题盒 52±2（防裁字）  — h=52
+PASS  chromium-light B1 settings 标题→首可见件 ≤16px  — div.settings-section gap=16
+PASS  chromium-light B1 todo 面板在场
+PASS  chromium-light B2 todo 标题盒 52±2（防裁字）  — h=52
+PASS  chromium-light B1 todo 标题→首可见件 ≤16px  — div.todo-page-header gap=0
+PASS  chromium-light B1 plugins 面板在场
+PASS  chromium-light B2 plugins 标题盒 52±2（防裁字）  — h=52
+PASS  chromium-light B1 plugins 标题→首可见件 ≤16px  — div#plugins-content. gap=0
+PASS  chromium-light B1 daemon 面板在场
+PASS  chromium-light B2 daemon 标题盒 52±2（防裁字）  — h=52
+PASS  chromium-light B1 daemon 标题→首可见件 ≤16px  — div.daemon-panel-header gap=0
+PASS  chromium-light B1 reminder 面板在场
+PASS  chromium-light B2 reminder 标题盒 52±2（防裁字）  — h=52
+PASS  chromium-light B1 reminder 标题→首可见件 ≤16px  — div.reminder-panel-header gap=0
+PASS  chromium-light B1 background 面板在场
+PASS  chromium-light B2 background 标题盒 52±2（防裁字）  — h=52
+PASS  chromium-light B1 background 标题→首可见件 ≤16px  — div.bg-section.bg-section-tasks gap=6
+PASS  chromium-dark A1 会话头芯片底色随主题（dark）  — bg=rgb(0, 0, 0) img=none
+PASS  chromium-dark A1 会话头 logo 换源随主题  — src=symbol-dark.svg
+PASS  chromium-dark A1 会话头芯片圆形  — 50%
+PASS  chromium-dark A1 会话头 img 盒四向边距等分（±1px）  — {"top":9,"bottom":9,"left":9,"right":9}
+PASS  chromium-dark A1 会话头 picture flex 居中档  — flex
+PASS  chromium-dark A2 dock 芯片底色随主题（logo 态）  — rgb(0, 0, 0)
+PASS  chromium-dark A2 dock logo 换源随主题  — symbol-dark.svg
+PASS  chromium-dark A2 dock img 盒四向边距等分（±1px）  — {"top":9,"bottom":9,"left":9,"right":9}
+PASS  chromium-dark A2 dock 墨迹扫描有解
+PASS  chromium-dark A2 dock 墨心偏移 ≤1.5px（水平/垂直）  — {"dx":0,"dy":-0.5}
+PASS  chromium-dark A2 dock 左右墨距差 ≤2px  — {"left":25,"right":25,"top":14.5,"bottom":15.5}
+PASS  chromium-dark B1 usage 面板在场
+PASS  chromium-dark B2 usage 标题盒 52±2（防裁字）  — h=52
+PASS  chromium-dark B1 usage 标题→首块 = 12±2px  — div.ud-filters gap=12
+PASS  chromium-dark B1 projects 面板在场
+PASS  chromium-dark B2 projects 标题盒 52±2（防裁字）  — h=52
+PASS  chromium-dark B1 projects 标题→首块 = 12±2px  — div.team-card.project-card gap=12
+PASS  chromium-dark B1 settings 面板在场
+PASS  chromium-dark B2 settings 标题盒 52±2（防裁字）  — h=52
+PASS  chromium-dark B1 settings 标题→首可见件 ≤16px  — div.settings-section gap=16
+PASS  chromium-dark B1 todo 面板在场
+PASS  chromium-dark B2 todo 标题盒 52±2（防裁字）  — h=52
+PASS  chromium-dark B1 todo 标题→首可见件 ≤16px  — div.todo-page-header gap=0
+PASS  chromium-dark B1 plugins 面板在场
+PASS  chromium-dark B2 plugins 标题盒 52±2（防裁字）  — h=52
+PASS  chromium-dark B1 plugins 标题→首可见件 ≤16px  — div#plugins-content. gap=0
+PASS  chromium-dark B1 daemon 面板在场
+PASS  chromium-dark B2 daemon 标题盒 52±2（防裁字）  — h=52
+PASS  chromium-dark B1 daemon 标题→首可见件 ≤16px  — div.daemon-panel-header gap=0
+PASS  chromium-dark B1 reminder 面板在场
+PASS  chromium-dark B2 reminder 标题盒 52±2（防裁字）  — h=52
+PASS  chromium-dark B1 reminder 标题→首可见件 ≤16px  — div.reminder-panel-header gap=0
+PASS  chromium-dark B1 background 面板在场
+PASS  chromium-dark B2 background 标题盒 52±2（防裁字）  — h=52
+PASS  chromium-dark B1 background 标题→首可见件 ≤16px  — div.bg-section.bg-section-tasks gap=6
+PASS  webkit-light A1 会话头芯片底色随主题（light）  — bg=rgb(255, 255, 255) img=none
+PASS  webkit-light A1 会话头 logo 换源随主题  — src=symbol-light.svg
+PASS  webkit-light A1 会话头芯片圆形  — 50%
+PASS  webkit-light A1 会话头 img 盒四向边距等分（±1px）  — {"top":9,"bottom":9,"left":9,"right":9}
+PASS  webkit-light A1 会话头 picture flex 居中档  — flex
+PASS  webkit-light A2 dock 芯片底色随主题（logo 态）  — rgb(255, 255, 255)
+PASS  webkit-light A2 dock logo 换源随主题  — symbol-light.svg
+PASS  webkit-light A2 dock img 盒四向边距等分（±1px）  — {"top":9,"bottom":9,"left":9,"right":9}
+PASS  webkit-light A2 dock 墨迹扫描有解
+PASS  webkit-light A2 dock 墨心偏移 ≤1.5px（水平/垂直）  — {"dx":0,"dy":0}
+PASS  webkit-light A2 dock 左右墨距差 ≤2px  — {"left":25,"right":25,"top":16,"bottom":16}
+PASS  webkit-light B1 usage 面板在场
+PASS  webkit-light B2 usage 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-light B1 usage 标题→首块 = 12±2px  — div.ud-filters gap=12
+PASS  webkit-light B1 projects 面板在场
+PASS  webkit-light B2 projects 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-light B1 projects 标题→首块 = 12±2px  — div.team-card.project-card gap=12
+PASS  webkit-light B1 settings 面板在场
+PASS  webkit-light B2 settings 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-light B1 settings 标题→首可见件 ≤16px  — div.settings-section gap=16
+PASS  webkit-light B1 todo 面板在场
+PASS  webkit-light B2 todo 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-light B1 todo 标题→首可见件 ≤16px  — div.todo-page-header gap=0
+PASS  webkit-light B1 plugins 面板在场
+PASS  webkit-light B2 plugins 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-light B1 plugins 标题→首可见件 ≤16px  — div#plugins-content. gap=0
+PASS  webkit-light B1 daemon 面板在场
+PASS  webkit-light B2 daemon 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-light B1 daemon 标题→首可见件 ≤16px  — div.daemon-panel-header gap=0
+PASS  webkit-light B1 reminder 面板在场
+PASS  webkit-light B2 reminder 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-light B1 reminder 标题→首可见件 ≤16px  — div.reminder-panel-header gap=0
+PASS  webkit-light B1 background 面板在场
+PASS  webkit-light B2 background 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-light B1 background 标题→首可见件 ≤16px  — div.bg-section.bg-section-tasks gap=6
+PASS  webkit-dark A1 会话头芯片底色随主题（dark）  — bg=rgb(0, 0, 0) img=none
+PASS  webkit-dark A1 会话头 logo 换源随主题  — src=symbol-dark.svg
+PASS  webkit-dark A1 会话头芯片圆形  — 50%
+PASS  webkit-dark A1 会话头 img 盒四向边距等分（±1px）  — {"top":9,"bottom":9,"left":9,"right":9}
+PASS  webkit-dark A1 会话头 picture flex 居中档  — flex
+PASS  webkit-dark A2 dock 芯片底色随主题（logo 态）  — rgb(0, 0, 0)
+PASS  webkit-dark A2 dock logo 换源随主题  — symbol-dark.svg
+PASS  webkit-dark A2 dock img 盒四向边距等分（±1px）  — {"top":9,"bottom":9,"left":9,"right":9}
+PASS  webkit-dark A2 dock 墨迹扫描有解
+PASS  webkit-dark A2 dock 墨心偏移 ≤1.5px（水平/垂直）  — {"dx":0,"dy":-0.5}
+PASS  webkit-dark A2 dock 左右墨距差 ≤2px  — {"left":25,"right":25,"top":15,"bottom":16}
+PASS  webkit-dark B1 usage 面板在场
+PASS  webkit-dark B2 usage 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-dark B1 usage 标题→首块 = 12±2px  — div.ud-filters gap=12
+PASS  webkit-dark B1 projects 面板在场
+PASS  webkit-dark B2 projects 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-dark B1 projects 标题→首块 = 12±2px  — div.team-card.project-card gap=12
+PASS  webkit-dark B1 settings 面板在场
+PASS  webkit-dark B2 settings 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-dark B1 settings 标题→首可见件 ≤16px  — div.settings-section gap=16
+PASS  webkit-dark B1 todo 面板在场
+PASS  webkit-dark B2 todo 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-dark B1 todo 标题→首可见件 ≤16px  — div.todo-page-header gap=0
+PASS  webkit-dark B1 plugins 面板在场
+PASS  webkit-dark B2 plugins 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-dark B1 plugins 标题→首可见件 ≤16px  — div#plugins-content. gap=0
+PASS  webkit-dark B1 daemon 面板在场
+PASS  webkit-dark B2 daemon 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-dark B1 daemon 标题→首可见件 ≤16px  — div.daemon-panel-header gap=0
+PASS  webkit-dark B1 reminder 面板在场
+PASS  webkit-dark B2 reminder 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-dark B1 reminder 标题→首可见件 ≤16px  — div.reminder-panel-header gap=0
+PASS  webkit-dark B1 background 面板在场
+PASS  webkit-dark B2 background 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-dark B1 background 标题→首可见件 ≤16px  — div.bg-section.bg-section-tasks gap=6
+PASS  C1 会话头自定义头像态 has-img（logo 节点让位）  — logoSrc=null
+PASS  C1 dock 自定义头像照片在场
+PASS  C1 dock 自定义头像态底色保持 sapphire 族（零回归）  — rgb(70, 99, 156)
+PASS  桌面腿(light) body.mobile-layer 不激活
+PASS  桌面腿(light) 桌面头芯片随主题翻转  — rgb(255, 255, 255)
+PASS  桌面腿(light) 桌面头 logo 居中（盒四向 ±1.6px）  — {"top":6.5,"bottom":6.5,"left":6.5,"right":6.5}
+PASS  桌面腿(light) 桌面 projects 让位带 56px 原值（手机档限定不越界）  — pad=56px top=56px
+PASS  桌面腿(dark) body.mobile-layer 不激活
+PASS  桌面腿(dark) 桌面头芯片随主题翻转  — rgb(0, 0, 0)
+PASS  桌面腿(dark) 桌面头 logo 居中（盒四向 ±1.6px）  — {"top":6.5,"bottom":6.5,"left":6.5,"right":6.5}
+PASS  桌面腿(dark) 桌面 projects 让位带 56px 原值（手机档限定不越界）  — pad=56px top=56px
+PASS  零 console error（双引擎×双主题全腿 + 自定义头像腿 + 桌面腿，噪声过滤后硬零）
+
+ALL PASS
+EXIT=0

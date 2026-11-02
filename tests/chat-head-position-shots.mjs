@@ -18,20 +18,20 @@
 // 56px 居中悬浮、名字玻璃胶囊在其正下方，内容从头像后穿过进渐隐带。断言随之改写：
 //
 // 产出 → evidence/20261101_chat-head-position/：
-//   rest-<scheme>.png        静止态（悬浮身份组落在 64px 顶带锚，头像+胶囊居中）
-//   scrollmid-<scheme>.png   滚动中（sticky 贴顶，消息行从头像后穿过）
-//   scrolled-<scheme>.png    滚动后（贴顶 rect 稳定，渐隐带 88px 在场）
+//   rest-<scheme>.png        静止态（悬浮身份组锚落 4px 顶带，头像 cy == 双钮 cy）
+//   scrollmid-<scheme>.png   滚动中（sticky 落点与静止同位，消息行从头像后穿过）
+//   scrolled-<scheme>.png    滚动后（rect 稳定，渐隐带 88px 在场）
 //   unnamed-<scheme>.png     未命名 root 档（②-c 幽灵胶囊收口实证：无名字条）
 //   desktop-1280.png         桌面回归（#header 头像行原样、零身份头）
-// 探针（新契约）：
-//   P① 静止态落位：身份组 sticky + 组顶 = 64 ±1（②-b 负 margin 锚双钮行下缘）；
-//      --muse-head-top = -(#chat padding-top) 在场（非空串）
+// 探针（新契约 · 身份头同行批 2026-11-02 11:08 再改）：
+//   P① 静止态落位：身份组 sticky + 组顶 = 4 ±1（= --muse-head-anchor，锚双钮中心行；
+//      修前 64 ±1 —— 那是让 60px 错位合法化的旧口径）；--muse-head-top 在场（非空串）
 //   P② 下置成组：胶囊顶 ≥ 头像底 −1、水平中心与头像中心 ≤1px；头像水平中心
 //      = 屏幕中线 ±1
 //   P③ 静止态不相撞：首条消息行顶 ≥ 胶囊底（内容起点由实测派生，无魔法数字）
 //   P④ 名字读数：已命名 root ⇒ #session-name 文本 = agent.json displayName
-//   P⑤ 滚动态 sticky 贴顶（组顶 0 ±1、头像顶 8 ±1）+ 消息行穿过头像盒
-//      （rowsBehind > 0）+ 渐隐带 88px 在场
+//   P⑤ 滚动态落点 == 静止落点（组顶 4 / 头像顶 12；修前 0 / 8 —— 那是 64px
+//      converge 的贴顶端）+ 消息行穿过头像盒（rowsBehind > 0）+ 渐隐带 88px 在场
 //   P⑥ 幽灵胶囊收口：未命名 root ⇒ #session-name 计算 display none 且盒高 0，
 //      且头像仍居中（名字不参与居中）；组高 = 56 + 8 + 12 = 76（无空洞）
 //   P⑦ 桌面零触及：1280 下 #chat 内零 .g2-chat-head、#header 头像行可绘
@@ -201,8 +201,8 @@ async function runMobile(scheme, { named = true, tagSuffix = '' } = {}) {
     await page.waitForFunction(() => document.getElementById('chat').scrollTop === 0, { timeout: 10000 });
     await page.waitForTimeout(250);
     const rest = await probeState(page);
-    ok(`${tag} P① 静止态落位 = sticky 悬浮锚（组顶 64 ±1；--muse-head-top 在场）`,
-      rest.headPos === 'sticky' && Math.abs(rest.headTop - 64) <= 1 && rest.museHeadTop !== '',
+    ok(`${tag} P① 静止态落位 = sticky 悬浮锚（组顶 4 ±1 = --muse-head-anchor；--muse-head-top 在场）`,
+      rest.headPos === 'sticky' && Math.abs(rest.headTop - 4) <= 1 && rest.museHeadTop !== '',
       `pos=${rest.headPos} headTop=${rest.headTop.toFixed(1)} h=${rest.headHeight} muse-head-top="${rest.museHeadTop}" clip=${rest.clipTop}`);
     ok(`${tag} P② 下置成组：胶囊在头像正下方（顶 ≥ 头像底 −1、水平中心 ≤1px）、头像水平居中`,
       rest.nameTop >= rest.avBottom - 1
@@ -220,8 +220,9 @@ async function runMobile(scheme, { named = true, tagSuffix = '' } = {}) {
     await page.evaluate(() => { const c = document.getElementById('chat'); c.scrollTop = Math.round((c.scrollHeight - c.clientHeight) * 0.55); });
     await page.waitForTimeout(350);
     const mid = await probeState(page);
-    ok(`${tag} P⑤ 滚动中 sticky 贴顶（组顶 0 ±1、头像顶 8 ±1）`,
-      mid.scrollTop > 0 && Math.abs(mid.headTop) <= 1 && Math.abs(mid.avTop - 8) <= 1,
+    ok(`${tag} P⑤ 滚动中落点 == 静止落点（组顶 4 ±1、头像顶 12 ±1，零 sticky 位移）`,
+      mid.scrollTop > 0 && Math.abs(mid.headTop - 4) <= 1 && Math.abs(mid.avTop - 12) <= 1
+        && Math.abs(mid.headTop - rest.headTop) <= 0.5,
       `headTop=${mid.headTop.toFixed(1)} avTop=${mid.avTop.toFixed(1)}（静止态 headTop=${rest.headTop.toFixed(1)}）scrollTop=${mid.scrollTop}`);
     ok(`${tag} P⑤ 滚动中消息行从头像盒穿过（内容确实压在头像后）`, mid.rowsBehindAvatar > 0,
       `rowsBehindAvatar=${mid.rowsBehindAvatar}（组盒 rowsBehind=${mid.rowsBehind}）`);
@@ -314,8 +315,8 @@ async function runUnnamed(scheme) {
     ok(`${tag} P⑥ 幽灵胶囊收口：空名 #session-name 退出渲染（display none，盒高 0）`,
       p.nameText === '' && p.nameDisplay === 'none' && p.nameH === 0,
       `text="${p.nameText}" display=${p.nameDisplay} h=${p.nameH}`);
-    ok(`${tag} P①′ 未命名档形态不变（sticky 悬浮锚 + 头像仍居中 + 组高 76）`,
-      p.headPos === 'sticky' && Math.abs(p.headTop - 64) <= 1
+    ok(`${tag} P①′ 未命名档形态不变（sticky 悬浮锚 + 组顶 4 ±1 + 头像仍居中 + 组高 76）`,
+      p.headPos === 'sticky' && Math.abs(p.headTop - 4) <= 1
         && Math.abs(p.avCx - p.vw / 2) <= 1 && Math.abs(p.headHeight - 76) <= 1,
       `pos=${p.headPos} headTop=${p.headTop} h=${p.headHeight} avCx=${p.avCx} mid=${(p.vw / 2)}`);
     await page.screenshot({ path: join(OUT, `unnamed-${scheme}.png`) });

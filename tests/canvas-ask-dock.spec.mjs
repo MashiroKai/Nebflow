@@ -5,10 +5,14 @@
 // 机制稿 §8 验收条目 → 本 spec 断言映射（前端组件行为面；后端路由/绑定/流式
 // 的协议面用 routeWebSocket mock 驱动，形态 = canvas-stack.spec.mjs 孪生）：
 //   T0  页面零 pageerror（载入健康面）
-//   T1  入口（§8-1/§8-2/§8-3）：.ask-fab 44×44 右下角最靠右、z 序 25 = ask-dock
+//   T1  入口（§8-1/§8-2/§8-3）：.ask-fab 48×48（canvas 控件尺寸对齐批 2026-11-02
+//       作者令 09:41「包括 canvas 的这些控件宽度也要保持一致」：入口钮 44 → 48 =
+//       canvas chrome 档 --cv-size-circle-lg，全站悬浮圆钮回到一个真值）、右下角
+//       最靠右、z 序 25 = ask-dock
 //       24+1 < 顶行胶囊 30（排他 z 序）、dock 宽 372（E-2 桌面档）；
 //       单行排布批（2026-11-01 作者令 16:18）：功能钮簇左锚 / fab 独右一行两端
-//       对齐（T1f 共中线）、对话框钉按钮行上一行（T1g）、座位基准 22（T1c）
+//       对齐（T1f 共中线）、对话框钉按钮行上一行（T1g）、座位基准 24（T1c；
+//       fab 48 ⇒ 中线 48 − 半高 24）
 //   T2  开合三通路（§8-1）：入口钮再点 / Esc / 画布空白点击；开 = .closed 摘除
 //       + fab.open + 输入聚焦；输入条在按钮上方（transform-origin 100% 100% 锚定）
 //   T3  提问 → 气泡流式回答（§8-1）：askOpen 帧先于 askQuestion 帧、sessionId =
@@ -25,7 +29,7 @@
 //   T7  主会话零交集（§8-2 视图排他）：ask 流式全程 #chat .bubble 计数不变
 //   T8  UI 纪律（§8-2）：dock max-h 316（E-2）、零遮罩（新增阻塞层计数零）、
 //       气泡列 touch-action pan-y（#988 列内纵滚原生）
-//   T9  移动档（§8-3）：44×48 命中盒、座位 = dock-h+16 与左锚簇行同带（单行
+//   T9  移动档（§8-3）：48×48 命中盒、座位 = dock-h+16 与左锚簇行同带（单行
 //       排布批）、列 max-h 250、
 //       气泡列表面横滑零切卡（.mobile-card-peek 不亮起，surface 归属制）
 //   T10 v2.1 减法纪律（作者令 2026-10-28 22:42「简约一点…」）：ghost 提示行/
@@ -286,15 +290,17 @@ try {
 
   // T1 入口几何 + z 序
   const g1 = await geo(page);
-  ok('T1a 入口钮 44×44（命中盒=视觉径）', !!g1.fab && Math.abs(g1.fab.w - 44) < 1.5 && Math.abs(g1.fab.h - 44) < 1.5, JSON.stringify(g1.fab));
+  ok('T1a 入口钮 48×48（命中盒=视觉径；canvas 控件尺寸对齐批 2026-11-02 作者令 09:41：44 → 48 = canvas chrome 档）', !!g1.fab && Math.abs(g1.fab.w - 48) < 1.5 && Math.abs(g1.fab.h - 48) < 1.5, JSON.stringify(g1.fab));
   ok('T1b 右下角最靠右（右缘距面板右缘 ~14px）', !!g1.fab && Math.abs(g1.panel.right - g1.fab.right - 14) < 3, `gap=${g1.panel.right - (g1.fab ? g1.fab.right : 0)}`);
   // T1c 座位契约（单行排布批 2026-11-01 作者令 16:18「功能钮靠左、ask 单独
-  // 靠右，一行两端对齐」）：基准 22px = 与左锚文档工具簇行共中线（簇面板系
-  // 行带 [24..64] 中线 44 − fab 半高 22）；左锚簇与右缘 fab 异侧不再让位，
-  // 实测让位只剩通栏底栏（epub reader nav，上沿+12）。本环境无 epub → 基准。
+  // 靠右，一行两端对齐」）：基准 = 与左锚文档工具簇行共中线。簇在 pane 内
+  // bottom:16、48px 高 ⇒ 面板系行带 [24..72]、中线 48 − fab 半高 24 = **24**
+  // （canvas 控件尺寸对齐批 2026-11-02：簇/钮 40 → 48、fab 44 → 48 后同式中线
+  // 数学，原 22 是 44 钮时代的配平）；左锚簇与右缘 fab 异侧不再让位，实测让位
+  // 只剩通栏底栏（epub reader nav，上沿+12）。本环境无 epub → 基准。
   const seatExpect = await page.evaluate(() => {
     const panel = document.getElementById('canvas-panel');
-    if (!panel) return 22;
+    if (!panel) return 24;
     const pr = panel.getBoundingClientRect();
     let occupied = 0;
     panel.querySelectorAll('.epub-reader-nav').forEach((f) => {
@@ -304,9 +310,9 @@ try {
       if (r.width === 0 && r.height === 0) return;
       occupied = Math.max(occupied, pr.bottom - r.top);
     });
-    return occupied > 0 ? occupied + 12 : 22;
+    return occupied > 0 ? occupied + 12 : 24;
   });
-  ok('T1c 座位：基准 22px（与左锚工具簇行共中线），通栏底栏在场时实测让位（上沿+12）', !!g1.fab && Math.abs(g1.panel.bottom - g1.fab.bottom - seatExpect) < 3, `gap=${g1.panel.bottom - (g1.fab ? g1.fab.bottom : 0)} expected=${seatExpect}`);
+  ok('T1c 座位：基准 24px（= 中线 48 − fab 半高 24，与左锚工具簇共中线），通栏底栏在场时实测让位（上沿+12）', !!g1.fab && Math.abs(g1.panel.bottom - g1.fab.bottom - seatExpect) < 3, `gap=${g1.panel.bottom - (g1.fab ? g1.fab.bottom : 0)} expected=${seatExpect}`);
   // 单行排布批：一行两端对齐——文档工具簇贴 pane 左缘、fab 独守右缘、同带共中线。
   const rowAlign = await page.evaluate(() => {
     const pane = document.querySelector('.canvas-tab-pane.active');
@@ -888,13 +894,16 @@ try {
     const m1 = await mob.page.evaluate(() => {
       // 批⑨ 2026-10-31：手机层 FAB = body 级 fixed（canvas 整页制）——座位判据
       // 视口径。单行排布批（2026-11-01 作者令 16:18）：文档工具簇左锚化，与右缘
-      // fab 异侧零交叠——角簇让位腿退役；座位 = dock-h + env(safe-area) + 16
-      // （与左锚簇行同带共中线：簇 pane 内 bottom:16，pane 底 = 页底 = dock-h+env）。
+      // fab 异侧零交叠——角簇让位腿退役；座位 = dock-h + --dock-inset-b（dock 悬浮
+      // 胶囊批 2026-11-01 21:07 加的下缘内距 8） + env(safe-area) + 16（与左锚簇行
+      // 同带共中线：簇 pane 内 bottom:16，pane 底 = 页底 = dock 带顶）。期望值按
+      // 活 token 读数拼装（不在 spec 里另抄一份几何真值）。
       const fab = document.querySelector('.ask-fab');
       if (!fab) return null;
       const fr = fab.getBoundingClientRect();
       const dock = document.getElementById('mobile-dock');
       const dr = dock ? dock.getBoundingClientRect() : null;
+      const cssVar = (el, name) => parseFloat(getComputedStyle(el).getPropertyValue(name)) || 0;
       // 同带共中线镜像核对（左锚簇可见者取中线）。
       const pane = document.querySelector('.canvas-tab-pane.active');
       const circles = pane ? [...pane.querySelectorAll('.canvas-source-toggle, .canvas-find-toggle, .canvas-ref-select')].filter((b) => !b.hidden && b.offsetParent !== null) : [];
@@ -907,14 +916,17 @@ try {
         dockH: dr ? dr.height : null,
         fabRightToViewport: innerWidth - fr.right,
         fabBottomOffset: innerHeight - fr.bottom,
-        seatExpect: 54 + 16,
+        // dock 悬浮胶囊批（2026-11-01 21:07）：--dock-inset-b 8 抬出「胶囊底缘 →
+        // 簇行」；原 spec 写死 54+16 是胶囊化之前的账（HEAD 基线即红）。
+        // dock 域 token 声明在 body.mobile-layer 作用域（不在 :root）⇒ 从 body 读。
+        seatExpect: cssVar(document.body, '--dock-h') + cssVar(document.body, '--dock-inset-b') + 16,
         cCenter,
         fabCenter: fr.top + fr.height / 2,
         colMaxH: getComputedStyle(document.querySelector('.ask-col')).maxHeight,
       };
     });
     ok('T9a 移动入口钮 48×48（悬浮钮统一批 g2-fab 基准）', !!m1 && Math.abs(m1.w - 48) < 1.5 && Math.abs(m1.h - 48) < 1.5, JSON.stringify(m1));
-    ok('T9b 座位 = dock-h+16（单行排布批：与左锚工具簇行同带共中线，异侧零让位）',
+    ok('T9b 座位 = dock-h + --dock-inset-b + 16（单行排布批：与左锚工具簇行同带共中线，异侧零让位；期望按活 token 拼装）',
       !!m1 && m1.fabBottomToDock !== null && Math.abs(m1.fabBottomOffset - m1.seatExpect) < 3 && m1.fabRightToViewport <= 17,
       JSON.stringify({ offset: m1 && m1.fabBottomOffset, expect: m1 && m1.seatExpect, right: m1 && m1.fabRightToViewport }));
     ok('T9b2 单行同带：fab 中线 = 左锚簇中线（≤3px）', !!m1 && m1.cCenter !== null && Math.abs(m1.fabCenter - m1.cCenter) <= 3,
