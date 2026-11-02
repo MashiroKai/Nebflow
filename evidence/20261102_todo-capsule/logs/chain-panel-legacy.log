@@ -24,7 +24,7 @@ Running 25 tests using 1 worker
     Error: expect(received).toBeLessThan(expected)
 
     Expected: < 2
-    Received:   2.4827880859375
+    Received:   2.41363525390625
 
       193 |   const iconBox = await headB.locator('.task-delegate-icon').boundingBox();
       194 |   const glyphBox = await headB.locator('.task-node-spin').boundingBox();
