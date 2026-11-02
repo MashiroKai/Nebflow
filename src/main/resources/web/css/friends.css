@@ -1444,7 +1444,14 @@ body > .fm-context-menu { z-index: 10001; }
   justify-content: flex-end;
   gap: 8px;
 }
-.pf-save { flex: none; }
+.pf-save {
+  flex: none;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+}
 .pf-save:disabled { opacity: 0.55; cursor: default; }
 .pf-note {
   margin: 0;

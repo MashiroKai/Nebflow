@@ -403,21 +403,40 @@ test.describe('手机层：群描述进检索（④-b）', () => {
     await page.locator(`${convPage} .fm-modal-close`).first().dispatchEvent('click');
     await expect(page.locator(`${convPage} .fm-modal`)).toHaveCount(0, { timeout: 8000 });
     await settlePage(page, 'messages');
+    // 🔴 落地节点（2026-11-02）修测试侧竞态：`fm-groups-changed` 的消费腿是
+    // `refreshConversations()`（**异步** REST 重取）⇒ 搜索面读的
+    // `conversationSnapshot()` 可能在重取落地前拿到**旧描述**（实测：并发批次里
+    // 偶发 0 命中，单跑恒绿 = 典型未等异步）。这里显式等快照读到新值再搜，
+    // 断言面不变（仍是「描述进检索」），禁以 sleep 冒充同步。
+    await expect.poll(async () => page.evaluate(async () => {
+      const m = await import('/js/messages.js');
+      const c = m.conversationSnapshot().find((x) => x.conversationId === 'g-1');
+      return c ? String(c.description || '') : '';
+    }), { timeout: 10000, message: '群会话快照已随 fm-groups-changed 重取到新群介绍' }).toBe(GROUP_NEEDLE);
 
     // ④-b 群介绍 → 资料命中
+    // 🔴 落地节点（2026-11-02）测试侧去时序耦合：常驻条检索是 **300ms 防抖**任务，
+    // 且与 `fm-groups-changed ⇒ refreshConversations()` 的异步重取同为并发的两条
+    // 腿（并发批次里偶发「防抖恰好落在重取之前」⇒ 拿到旧描述 ⇒ 0 命中；单跑恒绿）。
+    // 处理：轮询式**重填**（每次重发 input 事件即重跑一次检索），直到命中行出现；
+    // 断言面不变（仍需真实命中行 + 真实分组），只是不再赌单次防抖窗口。
     const input = page.locator('.mobile-page[data-page="messages"] .mh-search-input');
-    await input.fill(GROUP_NEEDLE);
+    const searchUntil = async (q, sel) => {
+      for (let i = 0; i < 12; i += 1) {
+        await input.fill(q);
+        if (await page.locator(sel).count()) return true;
+        await page.waitForTimeout(400);
+      }
+      return (await page.locator(sel).count()) > 0;
+    };
+    expect(await searchUntil(GROUP_NEEDLE, '.mh-sr-row-desc'), '群介绍命中 ⇒ 常驻条出现「资料命中」行（会话级命中，不混进正文结果）').toBe(true);
     const descRow = page.locator('.mh-sr-row-desc').first();
-    await expect(descRow, '群介绍命中 ⇒ 常驻条出现「资料命中」行（会话级命中，不混进正文结果）')
-      .toBeVisible({ timeout: 8000 });
     await expect(page.locator('.mh-sr-group-desc'), '「资料命中」独立成组（与消息正文结果不互相污染）')
       .toHaveCount(1);
     await expect(descRow).toContainText('项目群');
 
     // ④-b 我的群备注 → 同一条匹配面
-    await input.fill('群备注-独特串');
-    await expect(page.locator('.mh-sr-row-desc').first(), '我的群备注同样命中')
-      .toBeVisible({ timeout: 8000 });
+    expect(await searchUntil('群备注-独特串', '.mh-sr-row-desc'), '我的群备注同样命中').toBe(true);
     await expect(page.locator('.mh-sr-row-desc').first()).toContainText('项目群');
 
     // 反向：无关串 ⇒ 零资料命中（否定面，防「恒命中」假绿）

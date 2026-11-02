@@ -1548,7 +1548,9 @@ function renderChatModal(conv) {
   modalEls = { overlay, modal, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge, stopVoice: composer.stopVoice, idHead };
   // 🔴 渐隐解绑器恒读本作用域的**当前**一份（首绑 + rAF 重绑会换解绑函数）：
   // 用一层代理挂到 `modalEls`（`closeChat()` 只认 `modalEls.unbindFade`）。
-  modalEls.unbindFade = () => { if (unbindFade) unbindFade(); };
+  // 🔴 断言面：`modalEls` 是本模块的对象字面量类型（checkJs 会精确收窄），
+  // `unbindFade` 不在首建字面量里 ⇒ 显式 any 断言（与 closeChat 的读法成对）。
+  /** @type {any} */ (modalEls).unbindFade = () => { if (unbindFade) unbindFade(); };
   // Fresh modal → reset history-window state (a stale older conversation's
   // tail must never leak into this one).
   chatMsgs = [];

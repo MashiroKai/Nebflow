@@ -4120,6 +4120,6 @@ body.mobile-layer .sp-field {
   min-height: 44px;
   align-items: center;
 }
-body.mobile-layer .mf-me-edit {
-  min-height: 44px;
-}
+/* 🔴 修残（落地节点 2026-11-02）：此处原有一条 `body.mobile-layer .mf-me-edit
+   { min-height: 44px }`，与 me 面块（本文件 :2334 起，同选择器同声明）**逐字
+   重复**，是件四落地时留下的第二份 ⇒ 删除，44px 触控档仍由 me 面块单点承担。 */
