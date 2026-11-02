@@ -3,7 +3,7 @@ package nebflow.core.tools
 import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.delegate.{DelegateRegistry, DelegateSessions}
+import nebflow.core.delegate.{DelegateInflightGate, DelegateRegistry, DelegateSessions}
 
 /**
  * delegate_report —— delegate 终态语义申报工具（S7/S8；worktree-judge-fifo 批
@@ -56,7 +56,7 @@ object DelegateReportTool extends Tool:
 
   /** 🔴 模型可见文案——§16 待过目标注：本批最小成稿，终稿归 N3 提示词批。 */
   override def description: String =
-    """Report your state-machine position as a structured signal — delegate sessions only. `category` = "merge" (your work on the branch is complete and needs to land: you enter the waiting-merge state — the engine queues you in the MergeQueue FIFO and sends you a merge reminder when it is your turn; do NOT merge on your own initiative) or "finish" (terminal report: pure read / no file changes with nothing to merge, your merge round has landed, OR the task could not be completed — state the blocker plainly in your final text; there is no separate blocked state) or "standby" (you are waiting for orders/events — waiting for the author, for upstream results, for a merge window — and are NOT done: the turn ends with NO terminal verdict and NO delivery to the dispatcher; the task row stays running, your session parks in the explicit standby state (UI shows 待命), and the next Mail wakes you into a normal working turn; while deliverable commits sit unmerged on your branch standby is NOT honored — merge obligations come first, so report "merge" instead; the ONLY combination the engine judges as complete is finish — an undeclared turn end is reminded, never completed), plus a `detail` saying what exactly is the case (actionable). The report updates your session's status record only — your final assistant text remains the deliverable that is handed back; write your own completion report there (what you did, artifacts, open items), self-contained. Unreported does not hang: an undeclared turn end gets a system reminder asking you to declare (standby or finish) — it is never silently judged complete — the report just makes your own semantics explicit."""
+    """Report your state-machine position as a structured signal — delegate sessions only. `category` = "merge" (your work on the branch is complete and needs to land: you enter the waiting-merge state — the engine queues you in the MergeQueue FIFO and sends you a merge reminder when it is your turn; do NOT merge on your own initiative) or "finish" (the TASK is definitely complete — NOT merely "this reporting turn is over": pure read / no file changes with nothing to merge, your merge round has landed, OR the task genuinely cannot be completed — state the blocker plainly in your final text; there is no separate blocked state. finish is REFUSED (error code DELEGATE_REPORT_INFLIGHT, and no status slot is written) while your own scope map still holds any non-terminal node — running / pending / wiring; the refusal comes back as a system reminder listing those nodes and the two ways out: CANCEL them with the tools you already hold — `NodeCancel(chain="<chainId>")` for a whole chain, `NodeCancel(node-id="<id or name>")` for one node, `NodeEdit(nodename="<name>", abandon=true)` to drop a wiring/pending/terminal node — or STANDBY until they finish, then report finish. Nodes in completed / failed / cancelled / blocked count as terminal and never block finish) or "standby" (you are waiting for orders/events — waiting for the author, for upstream results, for a merge window — and are NOT done: the turn ends with NO terminal verdict and NO delivery to the dispatcher; the task row stays running, your session parks in the explicit standby state (UI shows 待命), and the next Mail wakes you into a normal working turn; while deliverable commits sit unmerged on your branch standby is NOT honored — merge obligations come first, so report "merge" instead; the ONLY combination the engine judges as complete is finish — an undeclared turn end is reminded, never completed), plus a `detail` saying what exactly is the case (actionable). The report updates your session's status record only — your final assistant text remains the deliverable that is handed back; write your own completion report there (what you did, artifacts, open items), self-contained. Unreported does not hang: an undeclared turn end gets a system reminder asking you to declare (standby or finish) — it is never silently judged complete — the report just makes your own semantics explicit."""
 
   override def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
@@ -64,7 +64,7 @@ object DelegateReportTool extends Tool:
       "category" -> Json.obj(
         "type" -> "string".asJson,
         "enum" -> Json.arr(FinishValue.asJson, MergeValue.asJson, StandbyValue.asJson),
-        "description" -> "State-machine position: merge = branch work complete, needs to land (enters the waiting-merge FIFO; a merge reminder follows); finish = terminal report (pure read / no file changes, the merge has landed, or the task could not be completed — say so in detail and your final text); standby = waiting for orders/events, NOT done (no terminal verdict, no delivery to the dispatcher — parks until the next Mail wakes you; refused while unmerged deliverable commits sit on the branch).".asJson
+        "description" -> "State-machine position: merge = branch work complete, needs to land (enters the waiting-merge FIFO; a merge reminder follows); finish = the TASK is definitely complete (taken literally: refused with DELEGATE_REPORT_INFLIGHT while your own scope map still holds any non-terminal node — cancel them or go standby first); standby = waiting for orders/events, NOT done (no terminal verdict, no delivery to the dispatcher — parks until the next Mail wakes you; refused while unmerged deliverable commits sit on the branch).".asJson
       ),
       "detail" -> Json.obj(
         "type" -> "string".asJson,
@@ -124,52 +124,78 @@ object DelegateReportTool extends Tool:
       )
     else
       val id = ctx.sessionId.getOrElse("")
-      // 仅状态单写（§3.4）：DelegateRegistry 状态槽；不携汇报、不动终态消息面。
-      // 案A 批：standby 申报的软预检——分支上已有未并交付提交时确认文案直说
-      // 「回合收尾将不被采纳」（防退化闸在 DelegateTerminal 回合收尾权威执行，
-      // git 面在申报后仍可能变化——此处只是即时反馈，不拒写）。
-      val softWarn: String =
-        if category == StandbyValue then
-          try
-            DelegateRegistry.find(id) match
-              case Some(rec) =>
-                (for
-                  b <- rec.branch
-                  bb <- rec.baseBranch
-                  ws <- scala.util.Try(os.Path(rec.cwd)).toOption
-                    if nebflow.core.GitWorktrees.isGitRepo(ws)
-                yield nebflow.core.GitWorktrees.commitsAhead(ws, bb, b)) match
-                  case Some(ahead) if ahead > 0 =>
-                    s" WARNING: $ahead deliverable commit(s) already sit unmerged on the branch — standby will NOT be honored at turn end (merge obligations come first). Report 'merge' instead, or commit/merge/drop them before the turn ends."
-                  case _ => ""
-              case None => ""
-          catch case _: Throwable => ""
-        else ""
-      val write = IO
-        .blocking(DelegateRegistry.updateReport(id, category, detail, suggestion))
-        .handleErrorWith(e => IO.pure(Left(s"delegate_report: status write failed: ${e.getMessage}")))
-      write
-        .flatTap {
-          // task-rag 批（#1227 / §Batch 7）：delegate 终态增量索引——申报写成功后
-          // fire-and-forget upkeep（reportStatus/reportDetail 变化 ⇒ 索引文本 hash
-          // 变化 ⇒ 下轮 upkeep 重嵌；检索前另有惰性 upkeep 自愈）。在飞合流 + 异常
-          // 内吞，绝不影响本工具结果。🔴 接缝纪律：DelegateRegistry 本体零触碰。
-          case Right(_) => nebflow.core.index.TaskSearchIndex.upkeepFireAndForget()
-          case Left(_) => IO.unit
-        }
-        .map {
-          case Left(err) => Left(ToolError(err))
-          case Right(_) =>
-            val confirm =
-              if category == MergeValue then
-                "[OK] merge recorded — you are now waiting-merge (MergeQueue FIFO). Do NOT merge on your own initiative: keep working elsewhere or go idle; the engine sends you a merge reminder when it is your turn. Your final report comes AFTER the merge round (report finish then)."
-              else if category == StandbyValue then
-                "[OK] standby recorded — when this turn ends the engine will NOT run the terminal verdict and will NOT deliver your text to the dispatcher: the task row stays running and your session parks in the explicit standby state (UI shows 待命). A standby-care reminder may nudge you (10s/30s/60s, then 10min ×3) — re-declare standby to keep waiting, or report finish/merge if the end state is actually reached. The NEXT Mail to your address wakes you into a normal working turn (the standby declaration is consumed — report again after working)." + softWarn
-              else
-                "[OK] finish recorded — now write your final report as normal text output; it is the deliverable handed back to the dispatcher. It must contain your WORK RESULT (what the task produced, artifacts, REPORT.md paths) with merge info kept to one line; the engine also auto-attaches your preserved work-phase report. finish is the ONLY declaration the engine may judge as complete — never end a turn without a declaration."
-            Right(confirm)
-        }
+      // 在飞闸（P3 批 2026-11-02 · 作者裁定逐字「finish 要是任务完成了 而不是汇报轮次
+      // 完成 有在飞节点是不能接受完成的 需要用 system reminder 提醒 要么取消 要么
+      // stand by 等节点完成」）：finish 只在**任务确定完成**时才受理。作用域图里还有
+      // 非终态节点 ⇒ **硬拒绝**（工具返回 Left = 调用失败，零写状态槽）。Left 文案
+      // 全文进模型上下文（ToolExecResult.isError 渲染），这就是 system reminder 的
+      // 送达通道；文案里带结构化错误码 DELEGATE_REPORT_INFLIGHT + 逐个节点读数 +
+      // 两条真可执行的出路（NodeCancel / NodeEdit(abandon) 或 standby）。
+      // merge / standby 不经本闸：前者是入队等合并、后者是显式未完成。
+      val inflightGate: IO[Option[String]] =
+        if category == FinishValue then DelegateInflightGate.check(id)
+        else IO.pure(None)
+      inflightGate.flatMap {
+        case Some(refusal) => IO.pure(Left(ToolError(refusal)))
+        case None         => writeReport(id, category, detail, suggestion)
+      }
     end if
   end call
+
+  /**
+   * 申报落槽（原 `call()` 主体，2026-11-02 在飞闸批提为私有方法只为让 `call()` 的
+   * `if/else` 链保持表达式式、不嵌套块）：仅状态单写（§3.4）——DelegateRegistry
+   * 状态槽；不携汇报、不动终态消息面。
+   */
+  private def writeReport(
+    id: String,
+    category: String,
+    detail: String,
+    suggestion: String
+  ): IO[Either[ToolError, String]] =
+    // 案A 批：standby 申报的软预检——分支上已有未并交付提交时确认文案直说
+    // 「回合收尾将不被采纳」（防退化闸在 DelegateTerminal 回合收尾权威执行，
+    // git 面在申报后仍可能变化——此处只是即时反馈，不拒写）。
+    val softWarn: String =
+      if category == StandbyValue then
+        try
+          DelegateRegistry.find(id) match
+            case Some(rec) =>
+              (for
+                b <- rec.branch
+                bb <- rec.baseBranch
+                ws <- scala.util.Try(os.Path(rec.cwd)).toOption
+                  if nebflow.core.GitWorktrees.isGitRepo(ws)
+              yield nebflow.core.GitWorktrees.commitsAhead(ws, bb, b)) match
+                case Some(ahead) if ahead > 0 =>
+                  s" WARNING: $ahead deliverable commit(s) already sit unmerged on the branch — standby will NOT be honored at turn end (merge obligations come first). Report 'merge' instead, or commit/merge/drop them before the turn ends."
+                case _ => ""
+            case None => ""
+        catch case _: Throwable => ""
+      else ""
+    val write = IO
+      .blocking(DelegateRegistry.updateReport(id, category, detail, suggestion))
+      .handleErrorWith(e => IO.pure(Left(s"delegate_report: status write failed: ${e.getMessage}")))
+    write
+      .flatTap {
+        // task-rag 批（#1227 / §Batch 7）：delegate 终态增量索引——申报写成功后
+        // fire-and-forget upkeep（reportStatus/reportDetail 变化 ⇒ 索引文本 hash
+        // 变化 ⇒ 下轮 upkeep 重嵌；检索前另有惰性 upkeep 自愈）。在飞合流 + 异常
+        // 内吞，绝不影响本工具结果。🔴 接缝纪律：DelegateRegistry 本体零触碰。
+        case Right(_) => nebflow.core.index.TaskSearchIndex.upkeepFireAndForget()
+        case Left(_)  => IO.unit
+      }
+      .map {
+        case Left(err) => Left(ToolError(err))
+        case Right(_) =>
+          val confirm =
+            if category == MergeValue then
+              "[OK] merge recorded — you are now waiting-merge (MergeQueue FIFO). Do NOT merge on your own initiative: keep working elsewhere or go idle; the engine sends you a merge reminder when it is your turn. Your final report comes AFTER the merge round (report finish then)."
+            else if category == StandbyValue then
+              "[OK] standby recorded — when this turn ends the engine will NOT run the terminal verdict and will NOT deliver your text to the dispatcher: the task row stays running and your session parks in the explicit standby state (UI shows 待命). A standby-care reminder may nudge you (10s/30s/60s, then 10min ×3) — re-declare standby to keep waiting, or report finish/merge if the end state is actually reached. The NEXT Mail to your address wakes you into a normal working turn (the standby declaration is consumed — report again after working)." + softWarn
+            else
+              "[OK] finish recorded — now write your final report as normal text output; it is the deliverable handed back to the dispatcher. It must contain your WORK RESULT (what the task produced, artifacts, REPORT.md paths) with merge info kept to one line; the engine also auto-attaches your preserved work-phase report. finish is the ONLY declaration the engine may judge as complete — never end a turn without a declaration."
+          Right(confirm)
+      }
 
 end DelegateReportTool
