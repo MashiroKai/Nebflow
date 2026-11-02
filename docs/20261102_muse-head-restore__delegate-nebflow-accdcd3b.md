@@ -34,14 +34,14 @@ status: implemented
 ## 2. 落地（文件与行号）
 
 - `src/main/resources/web/css/mobileLayer.css`
-  - 文件头慕斯批注记（L74-107）：新批六条回退 + 六条恢复 + 实拍量化；上一批单行三段式降为留档（L105-107）。
-  - 中块 ② 悬浮锚本体（L2978-3005）：`position: sticky` + `top: var(--muse-head-top, 0px)` + `z-index: 26` + `gap: 6px` + `padding: 8px 2px 12px`；②-b（L3004）`margin-top: calc(var(--muse-head-top, -8px) + 64px + env(safe-area-inset-top, 0px))`。
-  - ③ 头像（L3016-3031）`width/height: 56px`；④ 名字（L3032-3036）`font-size: var(--mfs-sub)`（=15px，L209）+ `max-width: 220px`。
-  - 文件尾（L3616-3667）：上一批的整块可执行规则（fixed 顶栏 / 头像 40 / 名字横排 / 渐隐带 mask / 双钮 4+safe / `#top-overlays` 64+safe）**删除**，替换为 Muse 恢复批说明块（零声明，只留交叉索引）。
-  - 基座回归块（L2896-2933）与 ②-c `:empty { display: none }`（L3006-3012）、`#chat` mask 释放块保留不动。
-- `src/main/resources/web/js/main.js`（L4317-4330 / L4365-4372 / L4397-4401）：删 `mobileHead` / `getMobileHead` / `headRo` / 两条 mounted-unmounted 监听；`reserve` 回到单公式。
-- `src/main/resources/web/js/mobile/chatChrome.js`（L1-25 头注、L113-118、L137-155、L217-219、L234-237）：删建层/拆层广播；恢复 `syncHeadTop()` + `headTopRo` 并在 `unsubs` 里 `disconnect`；teardown 保留一次 `removeProperty('--muse-head-top')`。
-- `src/main/resources/web/css/glass.css`（L515-521、L552-556）：两处降级列名换成 `#session-name`。
+  - 文件头批次注记（L81-110）：新批六条回退 + 六条恢复 + 实拍量化；上一批单行三段式降为留档（L110-112）。
+  - 中块 ② 悬浮锚本体（L2985-2998）：`position: sticky` + `top: var(--muse-head-top, 0px)` + `z-index: 26` + `gap: 6px` + `padding: 8px 2px 12px`；②-b（L2999-3010）`margin-top: calc(var(--muse-head-top, -8px) + 64px + env(safe-area-inset-top, 0px))`。
+  - ③ 头像（L3020-3034）`width/height: 56px`；④ 名字（L3035-3040）`font-size: var(--mfs-sub)`（= 15px，L214）+ `max-width: 220px`。
+  - 文件尾（L3621-3672）：上一批的整块可执行规则（fixed 顶栏 / 头像 40 / 名字横排 / 渐隐带 mask / 双钮 4+safe / `#top-overlays` 64+safe）**删除**，替换为 Muse 恢复批说明块（零声明，只留交叉索引）。
+  - 基座回归块（L2896-2934）与 ②-c `:empty { display: none }`（L3011-3019）、`#chat` mask 释放块保留不动。
+- `src/main/resources/web/js/main.js`（L4320-4329 / L4371 / L4400-4401）：删 `mobileHead` / `getMobileHead` / `headRo` / 两条 mounted-unmounted 监听；`reserve` 回到单公式。
+- `src/main/resources/web/js/mobile/chatChrome.js`（L16-22 头注、L116-118、L137-155、L219-220、L235-236）：删建层/拆层广播；恢复 `syncHeadTop()` + `headTopRo` 并在 `unsubs` 里 `disconnect`；teardown 保留一次 `removeProperty('--muse-head-top')`。
+- `src/main/resources/web/css/glass.css`（L517-521、L557-559）：两处降级列名换成 `#session-name`。
 
 **考古依据**：悬浮形态不是本批新造的 —— `49e2e7477`（Muse 基座块合入）、`6438f440b`、`b4b6d8745`（`liquid-glass.css:330-402` 原基座）、`d82cf3543` / `ac68cac51`（sticky + 88px 渐隐带 + `z26 > 25` 层序）逐条实证「sticky 悬浮 + 渐隐带 + 名字下置」在本仓历史上成立且自洽，**本批考古判定无技术冲突**（没有第二种形态与作者实拍互相矛盾）。
 
