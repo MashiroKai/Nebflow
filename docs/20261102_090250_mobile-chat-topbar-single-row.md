@@ -145,3 +145,24 @@ dock（五栏位/中键 44px/胶囊几何/边缘 token）、输入条、面板�
 
 相关概念见 [[glossary]]；并批沿革见 [[20261101_221500_muse-avatar-restore-stack-smartcrop]]、
 [[20261031_160300_mobile-fab-unify-search]]。
+
+---
+
+## 6. 合并记录
+
+- 批主题提交（分支 `delegate/delegate-nebflow-15c0bcbf`）：`221391120`。
+- 真合并 main：`9c59050b0`（`Merge branch 'delegate/delegate-nebflow-15c0bcbf'`）。
+- 就地解冲突两处：
+  1. `tests/mobile-fab-search.spec.mjs` —— main 侧已由「常驻搜索条批」（`870929a69`）
+     退役并改名为 `tests/mobile-pinned-search.spec.mjs` ⇒ 取删除态，本批对 F1 的
+     chrome 键 `top 16 → 4` 改写随之落到新文件的 P7；
+  2. `tests/mobile-pinned-search.spec.mjs` P7 —— 同步为 `top: 4`（钮中心 = safe+28
+     = 40px 头像中心），尺寸 48×48 / right 359 / 圆钮材质按该批契约不变。
+  `mobileLayer.css` 为语义无交叠的自动合并（常驻搜索条块 + 顶栏批次块并存）。
+- 合并树复跑（main）：`mobile-chat-topbar-single-row-shots`（ALL PASS）、
+  `muse-avatar-shrink-shots`（ALL PASS）、`chat-head-position-shots`（ALL PASS）、
+  `mobile-pinned-search.spec` P1-P10b（16 全绿）、`mobile-topline-clear.spec` T1-T3、
+  `mobile-chat-topclip.spec` C1-C2、`mobile-dock.spec` D1-D19 —— 全绿。
+- 存量红（非本批引入，main 合并前同树同样红）：`mobile-v3.spec.mjs` T2
+  （`.mh-chrome-badge` 8≠10）、`liquid-glass.spec.mjs` M3/M4/M5/D3/T1/R1（`.g2-fab`
+  折射层与 token 探针）。
