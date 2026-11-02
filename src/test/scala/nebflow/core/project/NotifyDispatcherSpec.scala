@@ -978,7 +978,26 @@ class NotifyDispatcherSpec extends CatsEffectSuite:
       assert(prompt.contains("reactivate"), "prompt must teach reactivate rerun (ruling ③: failed IS reactivatable)")
       assert(prompt.contains("承接节点"), "prompt must teach rename-new fallback action")
       assert(prompt.contains("abandon=true"), "prompt must teach abandon action")
-      assert(prompt.contains("Nebula"), "prompt must teach escalate-to-Nebula action")
+      // 断言语义不变 =「failed 通知必须教给分发器一条升级路径」。变的只是**路径名**：
+      // 改前它指向 `Mail(address="Nebula")`（R2 批形态），而 `Mail` 已于 agentflow 批
+      // 2026-10-02 从 `AgentCore.DispatcherFixedTools` 摘除 ⇒ 那条路径**不存在**。
+      // 故本断言钉「改后文本里确实存在的那条路径」（AskUserQuestion 交互 / TaskBoard 留痕），
+      // 并**额外**钉「不得再承诺自动投递」——比原断言更强，不是弱化。
+      assert(
+        prompt.contains("上报"),
+        s"prompt must teach an escalate action (语义不变), got: ${prompt.take(400)}"
+      )
+      assert(
+        prompt.contains("`AskUserQuestion`") && prompt.contains("`TaskBoard`"),
+        s"prompt must teach the two REAL escalation paths — AskUserQuestion (blocking ask) and " +
+          s"TaskBoard (durable note); the dispatcher holds no Mail tool (AgentCore.DispatcherFixedTools), " +
+          s"got: ${prompt.take(600)}"
+      )
+      assert(
+        prompt.contains("没有消息工具") && !prompt.contains("自动投递 Nebula"),
+        "prompt must state the true fact (no messaging tool) and must NOT re-promise auto-delivery to Nebula — " +
+          "the root does not receive dispatcher final text automatically since R7-b"
+      )
       assert(prompt.contains("无下游等待者"), "prompt must carry waiter line (E-③: none for out=Nebula leaf)")
       assertEquals(node.notifySentAt.isDefined, true, "notifySentAt marker must be set after failed trigger")
       assert(

@@ -108,7 +108,7 @@ object PromptCatalog:
 **Root return is engine-delivered, not sent by you:** you hold no messaging tool and there is no address you can write to. Batch-level results reach the root through the topology — a chain-end / landing / acceptance node carries the explicit root gate, and the engine delivers along the out edge itself; for batch-level state the root reads the event stream and the flow map directly.
 
 ## Reply economy (hard rule — an unconditional acknowledgement is a defect)
-Your final text is the dispatch summary the root reads, so state only what is substantive. Substantive means at least one of:
+Your final text is the dispatch summary recorded on the flow map / event stream (nothing is delivered to the root for you), so state only what is substantive. Substantive means at least one of:
 1. a decision, ruling, or waiver is needed from the root (name it in one line);
 2. a node reached `failed` / `blocked` / a FAIL verdict, or an author-facing blocker appeared;
 3. a landing / merge / push outcome or a git fact that changes the standing order;
@@ -117,7 +117,7 @@ Your final text is the dispatch summary the root reads, so state only what is su
 Otherwise the turn ends in its final text alone: a pure acknowledgement ("received", "adopted", "zero action", "still waiting") carries nothing, and a turn that only confirms a prior order is not substantive. When in doubt whether a report is substantive, it is not.
 
 ## Tool and address face
-Your fixed tools: `NodeList` / `NodeEdit` / `NodeCancel` / `AskUserQuestion` plus `Read` / `Glob` / `Grep` / `Bash` (worktree and git only). You hold no messaging tool: you cannot send a message to the root or to a node, and no address in this file names one. Batch-level results reach the root through the engine — a chain-end / landing / acceptance node carries the explicit root gate, and the engine delivers along the out edge itself.
+Your fixed tools: `NodeList` / `NodeEdit` / `NodeCancel` / `AskUserQuestion` / `TaskBoard` plus `Read` / `Glob` / `Grep` / `Bash` (worktree and git only). You hold no messaging tool: you cannot send a message to the root or to a node, and no address in this file names one; your final text lands in the Flow Map and the event stream only, and the root does **not** receive it automatically. Chain-level terminal receipts (a chain completing, or a chain permanently wedged) are engine-delivered, not written by you: the engine carries them to the chain's owner (the delegate that created it) on the scope face, and to the project root on the project face. When you need a decision, ask with `AskUserQuestion`; when you need a durable note, use `TaskBoard`.
 `AskUserQuestion` is your only interactive channel, and it BLOCKS: the question parks this session until the author answers, and the answer comes back as the tool's result. Use it when a decision needs the author's word and no standing order covers it; do not use it to acknowledge, to report progress, or to restate a brief. One batched call carries several questions when they belong together.
 Node ids follow a lifecycle: a COMPLETED node cannot be reactivated unless you pass `reactivateCompleted=true` explicitly (that re-RUNS the existing node, it does not create one); a non-existent node id cannot be edited or referenced — every id you cite must exist and violations are explicit errors, never implicit creation; `NodeEdit` with a NEW nodename is what creates a node — create first, then edit.
 

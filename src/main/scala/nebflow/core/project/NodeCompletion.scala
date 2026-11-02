@@ -544,6 +544,15 @@ private[project] trait NodeCompletion:
       // 即时告警记账剪枝：仅保留「此刻仍被终态上游闸住」的下游（恢复即出集）。
       heldNow = actives.collect { case n if barrierHeldReason(s1.nodes, n).isDefined => n.id }.toSet
       _ <- barrierAlerted.set(prevAlerted.intersect(heldNow))
+      // 链级回执记账剪枝（P0 dispatch-notify 批 2026-11-02，RCA §7-P1）：与上一行
+      // 同源同刻、同款口径（key 面不同：本集按 chainId，`barrierAlerted` 按节点 id）
+      // ——只保留「此刻该链仍有成员被终态上游闸住」的 chainId；承接/改接/取消后
+      // 该 chainId 出集 ⇒ 该链未来再次 wedged 时可再回执一次（有界：≤ 活在链数，
+      // 不随 tick 增长；只读委托，不改 `barrierHeldReason` 单点判据）。
+      wedgedChainsNow = actives
+        .flatMap(n => n.chainId.map(_.trim).filter(_.nonEmpty).filter(_ => barrierHeldReason(s1.nodes, n).isDefined))
+        .toSet
+      _ <- chainWedgedAlerted.update(_.intersect(wedgedChainsNow))
       _ <- stallEmits.traverse_ { case (id, reason, n, _) =>
         FlowMapEventLog.append(workspace, projectName, id, "mount-stalled", reason) *>
           logger.warn(s"[$projectName] node $id mount-stalled (alert #$n): $reason")

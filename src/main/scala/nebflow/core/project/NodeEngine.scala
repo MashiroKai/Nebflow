@@ -851,6 +851,21 @@ class NodeEngine(
     Ref.unsafe[IO, Set[String]](Set.empty)
 
   /**
+   * **链级终态回执单发记账**（P0 dispatch-notify 批 2026-11-02，RCA §7-P1）：
+   * 已发过 `chain-wedged` 回执的 **chainId** 集（key = chainId，**与 [[barrierAlerted]]
+   * 的 key 面正交**——后者按下游节点 id 单发告警事件，本集按链单发**上层回执**）。
+   *
+   * 语义对齐 [[barrierAlerted]]：同一 chainId 只发一次；由 `settleRunnableSweep`
+   * 每轮按「此刻该链是否仍有节点被终态上游闸住」剪枝（恢复 ⇒ 出集 ⇒ 该链未来再次
+   * wedged 时可再回执一次），⇒ 集合有界（≤ 活在链数），不会随 tick 无界增长。
+   *
+   * 为什么必须去重：`checkBarriersNow` 由**每个终态写点**同步调用（failed/cancelled/
+   * dead-session 各腿），一条多成员链的多次终态会反复命中同一 chainId。
+   */
+  private[project] val chainWedgedAlerted: Ref[IO, Set[String]] =
+    Ref.unsafe[IO, Set[String]](Set.empty)
+
+  /**
    * 失败投递（P1 语义门控，spec §2.2 #3；D5 零结算为底座）：
    * ① 运行期 merge 兜底（纵深，护栏只读复用不重构 §2.6-2）：全部 out 边的节点目标
    *    中 MergeNodePolicy.haltsOnFailure 命中 → mergeBlocked（**与门控无关**——覆盖
@@ -1519,6 +1534,19 @@ object NodeEngine:
    * [[notifyAuditWorkspace]]（delegate 宿主 = 基工作区）。per-project 引擎零写。
    */
   val NotifyRedirectedEventType: String = "notify-redirected"
+
+  /**
+   * **链级终态回执事件类型**（P0 dispatch-notify 批 2026-11-02，RCA §7-P1「链断了要有
+   * 人知道」）：`checkBarriersNow` 发现「某 pending/wiring 下游被终态上游永久闸死 ∧
+   * 该下游带 `chainId`」时，除既有 `barrier-blocked` 留痕外**追加**一行本类型事件，
+   * summary 携三要素 `chain=<chainId> node=<被闸死的下游 id> wedgedBy=<terminalId id>`
+   * （机械可 grep），并由同一分支发一条上层回执（`enqueueRootNotify`）。
+   *
+   * 与 `barrier-blocked` 的关系：**追加而非替换**——后者文本/发射条件逐字未动（既有
+   * 消费方零影响）；本类型是「链级」聚合面（一条链一条），前者是「节点级」留痕面。
+   * 作用域面落作用域事件流，项目面落项目流（与既有事件同锚点，未改）。
+   */
+  val ChainWedgedEventType: String = "chain-wedged"
 
   /** S19① 通知目标形态（判别单点；见构造参 [[NodeEngine.notifyTargetKind]]）。 */
   private[project] enum NotifyTargetKind:

@@ -279,7 +279,8 @@ final class DispatchNotify(
       case List(one) => one
       case many =>
         // 本批 N 件触发 + 各件清单。（桥侧 `batchSummaryLine` 已随 R7-b 删净，
-        // 分发器的批级回传改由显式 `Mail(address="Nebula", type=RESULT, chainId=…)` 承载。）
+        // 批级回传改由**引擎级回执**承担——分发器没有 Mail 工具，见
+        // [[AgentCore.DispatcherFixedTools]]。）
         s"[dispatch-notify] 本批 ${many.size} 件触发（同打包窗口合并为一次注入）：\n\n" + many.mkString("\n\n---\n\n")
 
   /**
@@ -972,7 +973,7 @@ final class DispatchNotify(
        |2. 改接（该轨确实不再需要）：**普通取消路径引擎已自动处理**——取消终态写点即把本节点 out 摘除并改接 Nebula（下游 in 镜像随之 prune，下游登记「待承接」标）。若下游 in 里仍见本节点，NodeEdit 把本节点 out 改为 Nebula 即可（幂等）。
        |   **L3 硬恢复路径语义不同**：该路径取消时**不摘除**（resume 成功后拓扑必须完整，提前 prune 会让下游永远拿不到结果）；resume 失败则节点被**改判 failed**（不是留在 cancelled）——failed 侧按 D5 零结算停等，**同样不摘除**，下游 in 保持完整、等上游 NodeEdit 重激活重跑后自动续跑；此时若该轨确实不再需要，请用于该节点 out→Nebula 的 NodeEdit 触发 prune（幂等）。兜底腿：仅当引擎已无法定位该会话归属节点（节点已离活动区/归档）时，引擎才代做 cancelled 侧的**迟到摘除**（反向 prune 活动区引用 + 登记「待承接」+ 事件流留痕）；两者都查无则记 ERROR + 事件流（人工介入）。
        |3. 放弃该轨：NodeEdit abandon=true 标记放弃；下游的「待承接」标记仍需按 1/2 处置，否则其 barrier 永久停等。
-       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（自动投递 Nebula）。
+       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（分发器**没有消息工具**：终文只落 Flow Map / 事件流，root **不会自动收到**，别指望自动投递）。要人裁定 ⇒ `AskUserQuestion`（阻塞到作者答复）；要留痕/转交 ⇒ `TaskBoard` 注记。链级终态（含「链永久 wedged」）的回执由**引擎**送达（作用域面 = 创建该链的 delegate，项目面 = 项目根），不靠分发器手写消息。
        |$waiterLine
        |前置检查：本节点可能在 L3 硬恢复中已被引擎复活（status 已非 cancelled）**或被改判 failed**——先 NodeList(detail="${node.id}") 读现状；若已 running/pending 则本轮无需动作（若已是 failed，按 failed 版通知的处置指引处理：首选 NodeEdit 重激活重跑）。
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
@@ -998,7 +999,7 @@ final class DispatchNotify(
        |1. **不要承接**（严禁新建 `<原名>-retry` / 语义新名承接节点，也严禁编辑本节点试图复活）：若确需恢复这条轨，只能等用户在本会话中明确要求之后（Nebula 或本项目收到新指令）再动手，不要自行重派。
        |2. 改接（该轨确实不再需要）：**普通取消路径引擎已自动处理**——取消终态写点即把本节点 out 摘除并改接 Nebula（下游 in 镜像随之 prune，下游登记「待承接」标）。若下游 in 里仍见本节点，NodeEdit 把本节点 out 改为 Nebula 即可（幂等）。
        |3. 放弃该轨：NodeEdit abandon=true 标记放弃；下游的「待承接」标记仍需按 1/2 处置，否则其 barrier 永久停等。
-       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（自动投递 Nebula）。
+       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（分发器**没有消息工具**：终文只落 Flow Map / 事件流，root **不会自动收到**，别指望自动投递）。要人裁定 ⇒ `AskUserQuestion`（阻塞到作者答复）；要留痕/转交 ⇒ `TaskBoard` 注记。链级终态（含「链永久 wedged」）的回执由**引擎**送达（作用域面 = 创建该链的 delegate，项目面 = 项目根），不靠分发器手写消息。
        |$waiterLine
        |前置检查：本节点可能在 L3 硬恢复中已被引擎复活（status 已非 cancelled）**或被改判 failed**——先 NodeList(detail="${node.id}") 读现状；若已 running/pending 则本轮无需动作（若已是 failed，按 failed 版通知的处置指引处理：首选 NodeEdit 重激活重跑）。
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
@@ -1150,7 +1151,7 @@ final class DispatchNotify(
        |1. 承接（首选）：NodeEdit 新建替代节点（建议命名 <原名>-retry 或语义新名），接原拓扑位置（in 同源、out 同目标）。
        |2. 该轨确实不再需要：无需额外动作（链级腿已把取消成员的 out 摘除并改接 Nebula，下游 in 镜像随之 prune）。
        |3. 放弃该轨：NodeEdit abandon=true 标记放弃。
-       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（自动投递 Nebula）。
+       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（分发器**没有消息工具**：终文只落 Flow Map / 事件流，root **不会自动收到**，别指望自动投递）。要人裁定 ⇒ `AskUserQuestion`（阻塞到作者答复）；要留痕/转交 ⇒ `TaskBoard` 注记。链级终态（含「链永久 wedged」）的回执由**引擎**送达（作用域面 = 创建该链的 delegate，项目面 = 项目根），不靠分发器手写消息。
        |读取入口：NodeList(detail="<节点id>", project=$projectName) / flow-map 链定位（chainId=$chainId）。
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
@@ -1175,7 +1176,7 @@ final class DispatchNotify(
        |1. 瞬时/基础设施类失败（LLM 超时、agent 基础设施故障等，同参数值得重试）→ NodeEdit 编辑该节点任意实际变更（task/description/in/out/deps 任一实际改动）触发 reactivate 重跑——原节点复活（status 回 wiring/pending），in/out 拓扑保持，轮次计数清零；
        |2. 需换基线/重派（任务定义或执行形态需实质调整）→ NodeEdit 新建承接节点（建议命名 <原名>-retry 或语义新名），接原拓扑位置（in 同源、out 同目标）；原 failed 节点留作审计，勿删改；
        |3. 任务无意义/无法修复 → NodeEdit abandon=true 标记放弃；
-       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（自动投递 Nebula）。
+       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（分发器**没有消息工具**：终文只落 Flow Map / 事件流，root **不会自动收到**，别指望自动投递）。要人裁定 ⇒ `AskUserQuestion`（阻塞到作者答复）；要留痕/转交 ⇒ `TaskBoard` 注记。链级终态（含「链永久 wedged」）的回执由**引擎**送达（作用域面 = 创建该链的 delegate，项目面 = 项目根），不靠分发器手写消息。
        |$waiterLine
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
@@ -1224,7 +1225,7 @@ final class DispatchNotify(
        |1. **首选：等承接 / 勿重激活**（勿把 '${up.name}' (${up.id}) 重新卷进来）——用户取消的意图必须被尊重：要恢复本节点，先由用户在本会话明确要求恢复该上游（或先按第 2 条改接替代上游）再动手，不要自行重激活重跑；
        |2. 需换基线/重派（任务定义或执行形态需实质调整）→ NodeEdit 新建承接节点（建议命名 <原名>-retry 或语义新名），接原拓扑位置（in 同源、out 同目标）；原 failed 节点留作审计，勿删改——**注意**：若其 in 仍同源引用 '${up.name}' (${up.id})，该节点照样停等（上游已是用户取消的终态、不会再产出结果），须先按 cancelled 通知处置该上游（改接替代上游 / abandon）或改换上游；
        |3. 任务无意义/无法修复 → NodeEdit abandon=true 标记放弃；
-       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（自动投递 Nebula）。
+       |4. 需人工/外部条件 → 在你的最终输出中写明上报内容（分发器**没有消息工具**：终文只落 Flow Map / 事件流，root **不会自动收到**，别指望自动投递）。要人裁定 ⇒ `AskUserQuestion`（阻塞到作者答复）；要留痕/转交 ⇒ `TaskBoard` 注记。链级终态（含「链永久 wedged」）的回执由**引擎**送达（作用域面 = 创建该链的 delegate，项目面 = 项目根），不靠分发器手写消息。
        |$waiterLine
        |无需回报——拓扑与状态已落 Flow Map。""".stripMargin
 
