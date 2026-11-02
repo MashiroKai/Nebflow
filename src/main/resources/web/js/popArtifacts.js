@@ -64,7 +64,7 @@ import { nfViewerUrl, nfCacheDrop, nfViewerSource } from './nfFileCache.js';
 // 摘要 = [图片]/[文件] 文件名（spec §2.5 表）。挂点在本 builder ⇒ live 发送、
 // 历史恢复（persistence.buildUserAttachmentRows）、attachmentsSaved 原位重渲
 // （patchUserMediaRow 走 replaceWith ⇒ 重建后仍带 id/菜单）三路同构。
-import { attachQuoteMenu, nextChatMsgId } from './msgQuote.js';
+import { attachQuoteMenu, nextChatMsgId, startItemQuote, QUOTE_SVG } from './msgQuote.js';
 // footer 信息条族（手机端长按退役批 2026-10-31 作者令）：媒体行 footer 与文本
 // 消息底部信息条同族徽章（时间 + 常用操作），durationBadges 是唯一 builder。
 import { createMsgFooterBadge } from './chat/durationBadges.js';
@@ -659,6 +659,12 @@ const POP_SWIPE_QUIET_MS = 160;  // 动量窗：翻页后事件流静默 ≥160m
 function buildMediaStack(items, opts) {
   const openItem = (opts && typeof opts.onOpen === 'function') ? opts.onOpen : openMediaItemClick;
   const cornerFor = (opts && typeof opts.cornerFor === 'function') ? opts.cornerFor : null;
+  // 叠卡单张引用批（2026-11-02 作者令「让叠卡的图片可以分开引用」）：
+  // `opts.quoteFor(item, index)` = 该张自己的引用描述符（名字/路径/该张附件/
+  // itemIndex/itemTotal）；返回 null/undefined ⇒ 该行不挂引用钮。**只用动作位，
+  // 不长相位置键**（与 onOpen/cornerFor 同一纪律，见头注「展开 N 钮位置不是
+  // API 参数位」）。
+  const quoteFor = (opts && typeof opts.quoteFor === 'function') ? opts.quoteFor : null;
   const area = document.createElement('div');
   area.className = 'pop-stack-area';
   const pill = document.createElement('button');
@@ -712,6 +718,30 @@ function buildMediaStack(items, opts) {
     layer.addEventListener('click', () => openItem(item, i));
     const canvasBtn = cornerFor ? cornerFor(item, i) : canvasCornerButton(item);
     if (canvasBtn) layer.appendChild(canvasBtn);
+    // 单张引用钮（2026-11-02 作者令「让叠卡的图片可以分开引用」）：挂在**展开态
+    // 每一行**——上左角（Canvas 角标在右，两钮零重叠），与 `.pop-media-canvas`
+    // 同族材质/同 hover 显隐档（chat.css `.pop-media-quote`）。
+    // 手势仲裁：引用钮只活在展开列，而拖动翻页（pointerdown/move/up）与双指横滑
+    // （wheel）都只绑在折叠盒 `.pop-stack-view` 上 ⇒ 展开态里点引用钮完全不进
+    // 那两条手势判定窗（内容操作优先，横滑不会误切卡）；折叠态保持「整面点击 =
+    // 打开当前张」原语义不动（不新增折叠面按钮，零误触面）。
+    const quoteDesc = quoteFor ? quoteFor(item, i) : null;
+    if (quoteDesc) {
+      const qbtn = document.createElement('button');
+      qbtn.type = 'button';
+      qbtn.className = 'pop-media-quote';
+      qbtn.dataset.quoteItemIndex = String(i);
+      const label = t('messages.quote');
+      qbtn.title = label;
+      qbtn.setAttribute('aria-label', t('chat.quoteItemAria', { n: i + 1 }));
+      qbtn.innerHTML = QUOTE_SVG;
+      qbtn.addEventListener('click', (e) => {
+        e.stopPropagation(); // 不触发整面点击（那一面 = 打开该张）
+        const row = area.closest('.row');
+        if (row) startItemQuote(row, quoteDesc);
+      });
+      layer.appendChild(qbtn);
+    }
     expandView.appendChild(layer);
     return layer;
   });
@@ -1056,6 +1086,28 @@ export function popItemFromAttachment(att, resolver) {
   return { kind: 'file', name: name || path.split('/').pop() || 'file', path, ext: extOf(name), size };
 }
 
+/** 叠卡单张的引用描述符（2026-11-02 单图引用批）：只带**这一张**的附件
+ *  （引用牌的缩略/文件名 = 被引那张），并带 itemIndex/itemTotal 作位置标注
+ *  ⇒ 同组三张的引用牌彼此可区分（摘要「第 N/total 张」+ 单张缩略）。宿主身份
+ *  （messageId/sessionId/sender）不走这里 —— msgQuote.startItemQuote 从行级
+ *  描述符统一解析（挂点零身份算术）。 */
+function stackItemQuoteDesc(item, index, total) {
+  const isMedia = item.kind === 'image' || item.kind === 'video';
+  return {
+    kind: isMedia ? 'image' : 'file',
+    fileName: item.name || (item.path || '').split('/').pop() || '',
+    path: item.path || '',
+    attachments: [{
+      type: isMedia ? item.kind : 'file',
+      name: item.name || (item.path || '').split('/').pop() || '',
+      path: item.path || '',
+      preview: (typeof item.src === 'string' && item.src.startsWith('data:')) ? item.src : undefined,
+    }],
+    itemIndex: index,
+    itemTotal: total,
+  };
+}
+
 /** The INDEPENDENT media row for one user message's non-ref attachments — the
  *  exact same row shape a Pop payload builds (`.row.pop-artifact` + faces), so
  *  「与 LLM Pop 卡片同层同形」 holds by construction. The `user-media` marker
@@ -1105,7 +1157,14 @@ export function buildUserMediaRow(attachments, opts) {
   group.className = 'pop-group';
   row.appendChild(group);
   if (media.length === 1) group.appendChild(buildMediaFlat(media[0]));
-  else if (media.length > 1) group.appendChild(buildMediaStack(media));
+  else if (media.length > 1) {
+    // 单张引用入口（2026-11-02 作者令「让叠卡的图片可以分开引用」）：叠卡每张
+    // 各自的描述符 —— 张数 = media 组（拖动/横滑翻页的同一序）。
+    const total = media.length;
+    group.appendChild(buildMediaStack(media, {
+      quoteFor: (it, i) => stackItemQuoteDesc(it, i, total),
+    }));
+  }
   files.forEach(f => group.appendChild(buildFileCard(f)));
   // footer 信息条（手机端长按退役批 2026-10-31 作者令）：与文本消息底部信息条
   // 同族 .duration-badge——时间 + 下载（常用操作），触屏触达不再依赖长按；
@@ -1326,7 +1385,14 @@ export function buildPopArtifactRow(payload, opts) {
   row.appendChild(group);
 
   if (media.length === 1) group.appendChild(buildMediaFlat(media[0]));
-  else if (media.length > 1) group.appendChild(buildMediaStack(media));
+  else if (media.length > 1) {
+    // 单张引用入口（2026-11-02）：LLM Pop 交付行与用户媒体行同一条路 ——
+    // 叠卡每张各自可引用，描述符只带该张。
+    const total = media.length;
+    group.appendChild(buildMediaStack(media, {
+      quoteFor: (it, i) => stackItemQuoteDesc(it, i, total),
+    }));
+  }
   files.forEach(f => group.appendChild(buildFileCard(f)));
 
   const failed = payload.fileRefs && Number(payload.fileRefs.failed) > 0;
