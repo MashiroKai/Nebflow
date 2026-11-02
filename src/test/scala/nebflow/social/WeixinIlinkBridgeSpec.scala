@@ -883,7 +883,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       _ <- IO(SocialChannels.setDefaultSessionId(root, WeixinIlinkBridgePlugin.Name, Some("s_default")))
       _ <- p.start(c)
       _ <- p.intake(c, inbound(Some("wx_new"))) // auto-binds + injects
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "hi".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>hi</output>".asJson))
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       got <- calls.get
     yield assertEquals(
@@ -902,6 +902,9 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
   // stashed as a dead letter that the sender's FIRST registration redelivers;
   // a never-served session's drop stays quiet (it is not weixin traffic —
   // dispatchAgentEvent fans every session to every plugin).
+  //
+  // output 块纪律渠道接线批（2026-11-01）：轮文本夹具裹 `<output>` 块——只有
+  // 块内内容出站/入死信（作者令「不要回退成发全文」）；断言值 = 块内内容。
 
   /**
    * A context whose session list is mutable — the refreshRoutes redelivery leg
@@ -947,7 +950,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val root = tmpRoot()
     for
       p <- servedDropFixture(root, calls)
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "the answer".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>the answer</output>".asJson))
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       got <- calls.get
       _ = assertEquals(got, Nil, "no route, no send — the drop stands")
@@ -996,7 +999,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val root = tmpRoot()
     for
       p <- servedDropFixture(root, calls)
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "the answer".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>the answer</output>".asJson))
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       before <- calls.get
       _ = assertEquals(before, Nil)
@@ -1021,12 +1024,12 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val root = tmpRoot()
     for
       p <- servedDropFixture(root, calls)
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "lost".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>lost</output>".asJson))
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       _ = assertEquals(strikesOf(root).size, 1, "precondition: the strike is on")
       // the return address appears (a manual binding face) and the next flush lands
       _ <- p.routesRef.update(_.updated("wx_carol", "s_default"))
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "found".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>found</output>".asJson))
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       got <- calls.get
       _ = assertEquals(got, List(("wx_carol", "found")), "the reply goes out")
@@ -1087,10 +1090,10 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val root = tmpRoot()
     for
       p <- servedDropFixture(root, calls)
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "first".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>first</output>".asJson))
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       first :: Nil = strikesOf(root): @unchecked
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "second".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>second</output>".asJson))
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       second :: Nil = strikesOf(root): @unchecked
       _ = assertEquals(second.hcursor.downField("count").as[Long].toOption, Some(2L), "the count accumulates")

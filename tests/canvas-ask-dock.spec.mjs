@@ -6,7 +6,9 @@
 // 的协议面用 routeWebSocket mock 驱动，形态 = canvas-stack.spec.mjs 孪生）：
 //   T0  页面零 pageerror（载入健康面）
 //   T1  入口（§8-1/§8-2/§8-3）：.ask-fab 44×44 右下角最靠右、z 序 25 = ask-dock
-//       24+1 < 顶行胶囊 30（排他 z 序）、dock 宽 372（E-2 桌面档）
+//       24+1 < 顶行胶囊 30（排他 z 序）、dock 宽 372（E-2 桌面档）；
+//       单行排布批（2026-11-01 作者令 16:18）：功能钮簇左锚 / fab 独右一行两端
+//       对齐（T1f 共中线）、对话框钉按钮行上一行（T1g）、座位基准 22（T1c）
 //   T2  开合三通路（§8-1）：入口钮再点 / Esc / 画布空白点击；开 = .closed 摘除
 //       + fab.open + 输入聚焦；输入条在按钮上方（transform-origin 100% 100% 锚定）
 //   T3  提问 → 气泡流式回答（§8-1）：askOpen 帧先于 askQuestion 帧、sessionId =
@@ -23,7 +25,8 @@
 //   T7  主会话零交集（§8-2 视图排他）：ask 流式全程 #chat .bubble 计数不变
 //   T8  UI 纪律（§8-2）：dock max-h 316（E-2）、零遮罩（新增阻塞层计数零）、
 //       气泡列 touch-action pan-y（#988 列内纵滚原生）
-//   T9  移动档（§8-3）：44×44 命中盒、座位在切换条上方、列 max-h 250、
+//   T9  移动档（§8-3）：44×48 命中盒、座位 = dock-h+16 与左锚簇行同带（单行
+//       排布批）、列 max-h 250、
 //       气泡列表面横滑零切卡（.mobile-card-peek 不亮起，surface 归属制）
 //   T10 v2.1 减法纪律（作者令 2026-10-28 22:42「简约一点…」）：ghost 提示行/
 //       session 徽标/转交钮零残留；旧 T10b 短快照 sys 过滤面由 T14e 长快照腿
@@ -285,23 +288,53 @@ try {
   const g1 = await geo(page);
   ok('T1a 入口钮 44×44（命中盒=视觉径）', !!g1.fab && Math.abs(g1.fab.w - 44) < 1.5 && Math.abs(g1.fab.h - 44) < 1.5, JSON.stringify(g1.fab));
   ok('T1b 右下角最靠右（右缘距面板右缘 ~14px）', !!g1.fab && Math.abs(g1.panel.right - g1.fab.right - 14) < 3, `gap=${g1.panel.right - (g1.fab ? g1.fab.right : 0)}`);
-  // T1c 座位契约：基准 14px；角落圆钮簇（缩放条等）可见时实测让位（浮件上沿+12，
-  // seatRefreshButton 同思路）。本环境 zoom-bar 在场 → 期望值按同式实测推导。
+  // T1c 座位契约（单行排布批 2026-11-01 作者令 16:18「功能钮靠左、ask 单独
+  // 靠右，一行两端对齐」）：基准 22px = 与左锚文档工具簇行共中线（簇面板系
+  // 行带 [24..64] 中线 44 − fab 半高 22）；左锚簇与右缘 fab 异侧不再让位，
+  // 实测让位只剩通栏底栏（epub reader nav，上沿+12）。本环境无 epub → 基准。
   const seatExpect = await page.evaluate(() => {
     const panel = document.getElementById('canvas-panel');
-    if (!panel) return 14;
+    if (!panel) return 22;
     const pr = panel.getBoundingClientRect();
     let occupied = 0;
-    panel.querySelectorAll('.canvas-zoom-bar, .canvas-refresh-toggle, .canvas-source-toggle, .canvas-ref-toggle').forEach((f) => {
+    panel.querySelectorAll('.epub-reader-nav').forEach((f) => {
       const h = /** @type {HTMLElement} */ (f);
       if (h.hidden || h.offsetParent === null) return;
       const r = h.getBoundingClientRect();
       if (r.width === 0 && r.height === 0) return;
       occupied = Math.max(occupied, pr.bottom - r.top);
     });
-    return occupied > 0 ? occupied + 12 : 14;
+    return occupied > 0 ? occupied + 12 : 22;
   });
-  ok('T1c 座位：基准 14px，角落浮件在场时实测让位（上沿+12）', !!g1.fab && Math.abs(g1.panel.bottom - g1.fab.bottom - seatExpect) < 3, `gap=${g1.panel.bottom - (g1.fab ? g1.fab.bottom : 0)} expected=${seatExpect}`);
+  ok('T1c 座位：基准 22px（与左锚工具簇行共中线），通栏底栏在场时实测让位（上沿+12）', !!g1.fab && Math.abs(g1.panel.bottom - g1.fab.bottom - seatExpect) < 3, `gap=${g1.panel.bottom - (g1.fab ? g1.fab.bottom : 0)} expected=${seatExpect}`);
+  // 单行排布批：一行两端对齐——文档工具簇贴 pane 左缘、fab 独守右缘、同带共中线。
+  const rowAlign = await page.evaluate(() => {
+    const pane = document.querySelector('.canvas-tab-pane.active');
+    const pr = pane ? pane.getBoundingClientRect() : null;
+    const circles = pane ? [...pane.querySelectorAll('.canvas-source-toggle, .canvas-find-toggle, .canvas-ref-select')].filter((b) => !b.hidden && b.offsetParent !== null) : [];
+    const fab = document.querySelector('.ask-fab');
+    if (!pr || !circles.length || !fab) return null;
+    const fb = fab.getBoundingClientRect();
+    const cLeft = Math.min(...circles.map((b) => b.getBoundingClientRect().left)) - pr.left;
+    const cCenter = circles.reduce((s, b) => { const r = b.getBoundingClientRect(); return Math.max(s, r.top + r.height / 2); }, 0);
+    return { cLeft, fabCenter: fb.top + fb.height / 2, cCenter, dy: Math.abs(fb.top + fb.height / 2 - cCenter) };
+  });
+  ok('T1f 单行两端对齐：工具簇贴左（16px 栅格）∧ fab 独右 ∧ 同行共中线（≤2.5px）',
+    !!rowAlign && rowAlign.cLeft <= 17 && rowAlign.dy <= 2.5,
+    JSON.stringify(rowAlign));
+  // 对话框锚点（作者令「ask 展开的对话框正好落在按钮行的上一行，按钮行在其
+  // 下方贴着，展开方向向上」）：开态 dock 底缘钉 fab 顶上方 10px 缝。
+  await page.click('.ask-fab');
+  await sleep(400);
+  const dockAnchor = await page.evaluate(() => {
+    const fab = document.querySelector('.ask-fab').getBoundingClientRect();
+    const dock = document.querySelector('.ask-dock').getBoundingClientRect();
+    return { gap: fab.top - dock.bottom, above: dock.bottom <= fab.top + 1 };
+  });
+  ok('T1g 对话框锚点：dock 展开底缘在按钮行上一行（fab 顶上方 10px 缝，向上展开）',
+    dockAnchor.above && dockAnchor.gap >= 6 && dockAnchor.gap <= 13, JSON.stringify(dockAnchor));
+  await page.keyboard.press('Escape');
+  await sleep(350);
   ok('T1d z 序排他：fab 25 / dock 24 < 顶行胶囊 30', g1.fabZ === '25' && g1.dockZ === '24' && Number(g1.headZ) >= 30, `fab=${g1.fabZ} dock=${g1.dockZ} head=${g1.headZ}`);
   ok('T1e dock 桌面档宽 372px', g1.dockW === '372px', g1.dockW);
 
@@ -842,42 +875,39 @@ try {
     await mob.page.waitForSelector(`.canvas-tab-pane[data-tab-id="file:/tmp/canvas-ask-fixture/记忆检索调优笔记.md"]`, { state: 'visible', timeout: 8000 }).catch(() => {});
     await sleep(400);
     const m1 = await mob.page.evaluate(() => {
-      // 批⑨ 2026-10-31：手机层 FAB = body 级 fixed（canvas 整页制，切换条/
-      // #canvas-panel 手机层退役）——座位判据改视口径。悬浮钮统一批（同日 16:03
-      // 作者令）：48px g2-fab 基准 + right 16 栅格；座位 = max(dock-h+10, 角簇
-      // 占用+12)（askDock.syncSeat 手机腿，座步行写入幂等）。
+      // 批⑨ 2026-10-31：手机层 FAB = body 级 fixed（canvas 整页制）——座位判据
+      // 视口径。单行排布批（2026-11-01 作者令 16:18）：文档工具簇左锚化，与右缘
+      // fab 异侧零交叠——角簇让位腿退役；座位 = dock-h + env(safe-area) + 16
+      // （与左锚簇行同带共中线：簇 pane 内 bottom:16，pane 底 = 页底 = dock-h+env）。
       const fab = document.querySelector('.ask-fab');
       if (!fab) return null;
       const fr = fab.getBoundingClientRect();
       const dock = document.getElementById('mobile-dock');
       const dr = dock ? dock.getBoundingClientRect() : null;
-      // 镜像 syncSeat 的占用扫描（角簇可见者取最上沿）——期望座位同式推导。
+      // 同带共中线镜像核对（左锚簇可见者取中线）。
       const pane = document.querySelector('.canvas-tab-pane.active');
-      const floats = pane
-        ? pane.querySelectorAll('.canvas-source-toggle, .canvas-find-toggle, .canvas-ref-select')
-        : [];
-      let occupied = 0;
-      floats.forEach((f) => {
-        const h = /** @type {HTMLElement} */ (f);
-        if (h.hidden || h.offsetParent === null) return;
-        const r = h.getBoundingClientRect();
-        if (r.width === 0 && r.height === 0) return;
-        occupied = Math.max(occupied, innerHeight - r.top);
-      });
+      const circles = pane ? [...pane.querySelectorAll('.canvas-source-toggle, .canvas-find-toggle, .canvas-ref-select')].filter((b) => !b.hidden && b.offsetParent !== null) : [];
+      const cCenter = circles.length
+        ? circles.reduce((s, b) => { const r = b.getBoundingClientRect(); return Math.max(s, r.top + r.height / 2); }, 0)
+        : null;
       return {
         w: fr.width, h: fr.height,
         fabBottomToDock: dr ? dr.top - fr.bottom : null,
         dockH: dr ? dr.height : null,
         fabRightToViewport: innerWidth - fr.right,
         fabBottomOffset: innerHeight - fr.bottom,
-        seatExpect: Math.max(54 + 10, occupied > 0 ? occupied + 12 : 0),
+        seatExpect: 54 + 16,
+        cCenter,
+        fabCenter: fr.top + fr.height / 2,
         colMaxH: getComputedStyle(document.querySelector('.ask-col')).maxHeight,
       };
     });
     ok('T9a 移动入口钮 48×48（悬浮钮统一批 g2-fab 基准）', !!m1 && Math.abs(m1.w - 48) < 1.5 && Math.abs(m1.h - 48) < 1.5, JSON.stringify(m1));
-    ok('T9b 座位 = max(dock-h+10, 角簇占用+12)（body fixed 视口径 · 批⑨+统一批）',
+    ok('T9b 座位 = dock-h+16（单行排布批：与左锚工具簇行同带共中线，异侧零让位）',
       !!m1 && m1.fabBottomToDock !== null && Math.abs(m1.fabBottomOffset - m1.seatExpect) < 3 && m1.fabRightToViewport <= 17,
       JSON.stringify({ offset: m1 && m1.fabBottomOffset, expect: m1 && m1.seatExpect, right: m1 && m1.fabRightToViewport }));
+    ok('T9b2 单行同带：fab 中线 = 左锚簇中线（≤3px）', !!m1 && m1.cCenter !== null && Math.abs(m1.fabCenter - m1.cCenter) <= 3,
+      JSON.stringify({ fab: m1 && m1.fabCenter, cluster: m1 && m1.cCenter }));
     // F3-b 批后口径：列可视高 = 总档 − 带档（⑤带净空在 colwrap，E-2 移动 250−56=194）。
     ok('T9c 列可视 max-h = 总档 250 − 带档 56 = 194（E-2 移动档，⑤带净空口径）', m1 && m1.colMaxH === '194px', m1 && m1.colMaxH);
     // 气泡列表面横滑零切卡（surface 归属制：peek 不亮）

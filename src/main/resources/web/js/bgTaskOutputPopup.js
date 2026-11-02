@@ -746,8 +746,10 @@ export function openBgTaskOutput(task) {
     initialStatus: task.status || 'running',
     // #753 运行态 meta 的「已运行」时长来源（行数据自带 startedAt；缺省 0 = 不显示）。
     startedAtMs: Number(task.startedAt) || 0,
-    originText: [task.originLabel, task.kind === 'remote' ? t('bg.kind.remote') : (task.kind ? t('bg.kind.local') : '')]
-      .filter(Boolean).join(' · '),
+    // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：详情卡来源行
+    // 同步停止拼「· 本地 / · 远程」尾缀——设备名（originLabel，设备任务恒为对端
+    // 设备名）已在，跑在哪由面板行设备 chip 承载（禁残留第二口径）。
+    originText: String(task.originLabel || '').trim(),
     // 远端模式面（输出查看补全批）：remoteMode = 轮询 /remote-output 的整窗渲染
     // 分叉；outputPath = 对端日志路径（引擎逐拍回带）；deviceName = 设备名
     // （origin chip 的 label，拉取中占位文案用）。

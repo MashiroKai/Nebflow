@@ -1,0 +1,8 @@
+checkJs: 362 errors (baseline 345, zero-gate files: 3)
+
+checkJs GATE FAILURES:
+  src/main/resources/web/js/ws.js: 6 errors — this file is a P2-3 core contract and must be checkJs-clean
+  src/main/resources/web/js/modelPanel.js: new file with 10 errors — new/touched files must be checkJs-clean
+  src/main/resources/web/js/main.js: TS2339 count 19 > baseline 13
+  src/main/resources/web/js/scheduled-task.js: TS2339 count 9 > baseline 8
+  total errors 356 > baseline 345

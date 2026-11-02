@@ -1,4 +1,6 @@
 > **迁址说明（2026-10-31 stand-dev 合并批）**：本文 = 原 `qa` 插件 `skills/nebflow-qa-frontend/SKILL.md` 全文迁入，能力零删改；文内出现的自包根相对路径（`skills/...`、`scripts/...`、`assets/...`）为原包内路径，对应物现位于 `skills/stand-dev/` 下（脚本 `scripts/`、资产 `assets/`）；跨包引用（原各 nebflow-* 插件名）已改写指向 stand-dev 对应章。深读顺序：先读章导览（`skills/stand-dev/SKILL.md`）。
+>
+> **章内衔接（2026-11-01 二批并入）**：与同包**设计章** `design-spec` 的分工——视觉评审（截图 + vision 对照规格书）归设计方，本件只做功能验收（冒烟/契约/资源/DOM 断言），不重复视觉评审；验收断言的口径来源是设计规格书 §8 可断言点（本件负责转 Playwright 断言），规格书口径含糊时回问设计方而不是自行解释。
 
 ---
 name: stand-dev qa 章-frontend

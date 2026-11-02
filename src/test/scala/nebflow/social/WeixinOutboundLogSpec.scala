@@ -264,7 +264,7 @@ class WeixinOutboundLogSpec extends CatsEffectSuite:
         val before = lines(appender).length
         (for
           _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
-          _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "这条回复会丢".asJson))
+          _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>这条回复会丢</output>".asJson))
           _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
         yield ()).unsafeRunSync()
         val fired = newWarns(appender, before)

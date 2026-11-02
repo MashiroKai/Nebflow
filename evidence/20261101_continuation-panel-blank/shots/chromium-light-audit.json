@@ -1,0 +1,47 @@
+{
+ "engine": "chromium",
+ "theme": "light",
+ "scenes": {
+  "A": {
+   "ai": 0,
+   "tool": 0,
+   "thinking": 0,
+   "turnHeader": 0,
+   "injected": 22,
+   "injectedLabels": [
+    "DELEGATE · NEBULA[workspace] /Users/kaiy",
+    "BACKGROUND · NEBULA · COMPLETED[Backgrou",
+    "BACKGROUND · NEBULA · COMPLETED[Backgrou"
+   ],
+   "badgePills": 1,
+   "textLen": 24523,
+   "aiTextSample": "",
+   "strip": "任务[workspace] /Users/kaiyu/Claude code/Stand/.nebflow/worktr",
+   "scrollH": 1575,
+   "shot": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-d86b41ad/evidence/20261101_continuation-panel-blank/shots/chromium-light-A-blank-before.png"
+  },
+  "B": {
+   "ai": 234,
+   "tool": 184,
+   "thinking": 113,
+   "turnHeader": 1,
+   "injected": 22,
+   "injectedLabels": [
+    "DELEGATE · NEBULA[workspace] /Users/kaiy",
+    "BACKGROUND · NEBULA · COMPLETED[Backgrou",
+    "BACKGROUND · NEBULA · COMPLETED[Backgrou"
+   ],
+   "badgePills": 1,
+   "textLen": 353617,
+   "aiTextSample": "思考过程Let me understand the situation. I'm a delegate session ",
+   "strip": "任务[workspace] /Users/kaiyu/Claude code/Stand/.nebflow/worktr",
+   "scrollH": 10163,
+   "toolVis": 184,
+   "thinkVis": 113,
+   "tucked": 0,
+   "shot": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-d86b41ad/evidence/20261101_continuation-panel-blank/shots/chromium-light-B-body-restored.png",
+   "shot2": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-d86b41ad/evidence/20261101_continuation-panel-blank/shots/chromium-light-B2-body-top.png",
+   "shot3": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-d86b41ad/evidence/20261101_continuation-panel-blank/shots/chromium-light-B3-process-expanded.png"
+  }
+ }
+}

@@ -4,19 +4,21 @@
 
 ## 1. 速览
 
-stand-dev 是 **stand 本体开发统一知识包**（2026-10-31 作者令「开发插件统一批」：原 qa / frontend-dev / backend-dev / docs-prompt / pipelines / nebflow-plugin-creator 六包合并，能力零丢失）：节点获得 stand 全栈开发域的综合能力——验证怎么把关、前端怎么写、后端怎么写、引擎工程纪律（合并/发版/审查/文档/提示词/插件封装）。单 skill 目录结构，内部按面分**四章**：
+stand-dev 是 **stand 本体开发统一知识包**（2026-10-31 作者令「开发插件统一批」：原 qa / frontend-dev / backend-dev / docs-prompt / pipelines / nebflow-plugin-creator 六包合并；2026-11-01 作者令二批并入 design-spec / engineering-methods 两包，能力零丢失）：节点获得 stand 全栈开发域的综合能力——需求怎么拆/调研怎么查证、UI/UX 设计规格书怎么写、验证怎么把关、前端怎么写、后端怎么写、引擎工程纪律（合并/发版/审查/文档/提示词/插件封装）。单 skill 目录结构，内部按面分**六章**：
 
+- **方法章**——`skills/stand-dev/references/methods/`（2 份）：需求拆解与技术选型双文档交付（grill）、并行调研纪律（parallel-research）。
+- **设计章**——`skills/stand-dev/references/design/`（1 份）：设计规格书四道防线（只设计不实现）与视觉评审（design-spec）。
 - **qa 章**——`skills/stand-dev/references/qa/`（5 份）：前后端五维审核、隔离真实例冒烟、自验 harness、验红实证。
 - **前端章**——`skills/stand-dev/references/frontend/`（3 份）：web/ 实现规范、用户视觉裁定铁律、UI/UX 范式案例库。
 - **后端章**——`skills/stand-dev/references/backend/`（3 份）：Scala 技术栈与分层铁律、sbt 实践、prompt cache、工具系统设计。
 - **引擎章**——`skills/stand-dev/references/engine/`（7 份）：合并/发版/三维审查、技术文档、提示词工程、插件封装与描述规范。
 
-**包纪律一句话**：四章不混装——按任务域进对应章，章内 references 深件按需 Read；「写」（后端/前端章）与「验」（qa 章）与「闸」（引擎章 pipelines）是三道不同关卡，交付自测完成后交 QA 验收、审查前置再合并，不自行跳关。
+**包纪律一句话**：六章不混装——按任务域进对应章，章内 references 深件按需 Read；「选题/调研/方案」（方法章）→「设计先行」（设计章）→「写」（前端/后端章）→「验」（qa 章）→「闸」（引擎章 pipelines）是五道关卡，不自行跳关；方法章/设计章不写生产代码（示例代码、规格书、评审报告除外），交付自测完成后交 QA 验收、审查前置再合并。
 
 ## 2. 安装与启用
 
 - **安装**：本包属 Nebflow seed 官方分发，随实例 seed mirror 自动下发（默认预装集成员），无需手工安装。
-- **启用/选配**：装载为「在位即生效」；分发器按 description 触发词选配（改 stand 前端/后端、交付前验证、合并发版、写文档/提示词、封装插件等），分配时注入本文件（Plugin.md），SKILL.md 与 references 为按需查阅件。
+- **启用/选配**：装载为「在位即生效」；分发器按 description 触发词选配（需求拆解/技术调研/方案对比、写设计规格书/视觉评审、改 stand 前端/后端、交付前验证、合并发版、写文档/提示词、封装插件等），分配时注入本文件（Plugin.md），SKILL.md 与 references 为按需查阅件。
 - **停用**：面板「更多 → 封禁该插件」/ `POST /api/plugins/stand-dev/revoke` / `nebflow plugin revoke stand-dev`。
 - **内容变更**：包内任何字节改动都会漂移 digest，面板把该包标为「内容已变更」（可见性提示，不拦截装载；新内容对新派发即刻生效）。
 
@@ -27,9 +29,11 @@ stand-dev/                              （包根）
   plugin.json
   Plugin.md                             ← 本文件（包根使用指导件）
   skills/
-    stand-dev/                          ← 唯一 skill（四章总纲 SKILL.md = 按需查阅件）
+    stand-dev/                          ← 唯一 skill（六章总纲 SKILL.md = 按需查阅件）
       SKILL.md                          ← 章导览 / 核心指令摘要 / 决策树
       references/
+        methods/    （2 份 .md）
+        design/     （1 份 .md）
         qa/         （5 份 .md）
         frontend/   （3 份 .md）
         backend/    （3 份 .md）
@@ -42,24 +46,29 @@ stand-dev/                              （包根）
         skill-template/                 ← skill 目录骨架
 ```
 
-## 4. 章导览（怎么用四章）
+## 4. 章导览（怎么用六章）
 
 > 全量口径以 SKILL.md 与 references 为准；本节是跨章速查。
 
 | 章 | 任务信号 | 关键判据（速查） | 深件 |
 |---|---|---|---|
+| 方法 | 需求拆解 / 技术选型 / 方案对比 / 深度调研 | 需求模糊先问不猜；关键选型 2-3 方案＋trade-off 必给对比；完整架构＝双文档交付（人类摘要＋实施规格书）；调研每论断带来源链接、核验者亲自重访来源 | `references/methods/*.md` |
+| 设计 | 写设计规格书 / 视觉评审 / 设计走查 | 只设计不写产品代码；四道防线（设计先行→规格化实现→双重验收→教训沉淀）；视觉评审绝不裸看图下结论（截图＋DOM 断言交叉验证） | `references/design/*.md` |
 | qa | 交付前验证 / 合并前把关 / verify 节点 | 后端五维全覆盖（compile/test/验收逐项/质量/回归）；前端隔离真实例三步缺一不可、禁静态替身；修 bug 必做验红实证 | `references/qa/*.md` |
-| 前端 | 改 `src/main/resources/web/` | 无构建 vanilla JS；CSS 禁裸 hex 一律 `var(--color-*)`；视觉冲突以 visual-style 铁律终裁 | `references/frontend/*.md` |
+| 前端 | 改 `src/main/resources/web/` | 无构建 vanilla JS；CSS 禁裸 hex 一律 `var(--color-*)`；视觉冲突以 visual-style 铁律终裁；实现以设计规格书为唯一依据 | `references/frontend/*.md` |
 | 后端 | 改 `src/main/scala/` / 调 flow engine / 建工具 | Actor 与 IO 分层铁律；最小改动/向后兼容；system prompt 前缀改动前必读 nebflow-cache | `references/backend/*.md` |
 | 引擎 | 合并 / 发版 / 审查 / 文档 / 提示词 / 封装插件 | 合并 `--no-ff` + go/no-go 三判据；tag 打在 release 分支 merge commit；review 三维评分 check-fix ≤3 轮；插件封装落盘即生效、自检后冻结 | `references/engine/*.md` |
 
-- **关卡顺序**：写（前端/后端章）→ 自验（qa 章 frontend-verification）→ 交付 QA（qa 章 nebflow-qa-*）→ 审查（引擎章 review）→ 合并（引擎章 merge-pipeline）→ 需要发版时（引擎章 release-pipeline）。
-- **红线**：宿主 gateway 端口保护 / PID 验身（qa 章）；不 push 除非明确指示（引擎章 merge-pipeline）；上传 gated 永不自动 publish（release-pipeline）；落盘后不得再写包内文件（plugin-packaging）。
+- **关卡顺序**：选题与方案（方法章）→ 设计先行（设计章）→ 写（前端/后端章）→ 自验（qa 章 frontend-verification）→ 交付 QA（qa 章 nebflow-qa-*）→ 审查（引擎章 review）→ 合并（引擎章 merge-pipeline）→ 需要发版时（引擎章 release-pipeline）。
+- **红线**：宿主 gateway 端口保护 / PID 验身（qa 章）；不 push 除非明确指示（引擎章 merge-pipeline）；上传 gated 永不自动 publish（release-pipeline）；落盘后不得再写包内文件（plugin-packaging）；只设计不实现（设计章）；无链接不作论断（方法章）。
 
 ## 5. references 总目录
 
 | references 路径 | 来源（原包/skill） | 一句话括注 |
 |---|---|---|
+| `methods/grill.md` | engineering-methods/grill | 系统架构设计：需求澄清四场景、调研四维、trade-off 对比、双文档交付（人类摘要＋实施规格书）、输出风格与禁忌 |
+| `methods/parallel-research.md` | engineering-methods/parallel-research | 并行调研纪律：正交拆题、来源强制（每论断带链接/≥3 独立来源/一手优先）、逐轨核验三查、双轨综合成文规范 |
+| `design/design-spec.md` | design-spec/design-spec | 设计规格书与视觉评审方法论：角色边界、四道防线、规格书模板 §0-9、检索源清单、PASS/FAIL 二值化硬约束 |
 | `qa/nebflow-qa-backend.md` | qa/nebflow-qa-backend | Scala 后端五维审核：sbt compile/test/验收逐项/三维质量/回归 + 运行安全红线 |
 | `qa/nebflow-qa-frontend.md` | qa/nebflow-qa-frontend | 前端合并回归：隔离真实例三步验证、资源可达性、禁替身、契约静态审核 |
 | `qa/frontend-verification.md` | qa/frontend-verification | 实现侧自验 harness：wire 探针、契约夹具、Playwright 坑、分层验证 |
@@ -81,13 +90,16 @@ stand-dev/                              （包根）
 
 ## 6. 选章决策树
 
+- 任务是**定方向**（需求拆解、技术选型、架构设计、方案对比）→ 方法章（grill）。
+- 任务是**查证据**（多视角、来源可验证的深度调研）→ 方法章（parallel-research）。
+- 任务是**出设计**（新 UI/交互要设计规格书；实现完成要视觉评审/设计走查）→ 设计章（design-spec）。
 - 任务是**改 web/ 前端页面/组件/样式** → 前端章（nebflow-frontend + visual-style；设计新 UI 前先查 design-system 案例库）。
 - 任务是**写/改 Scala 后端、调 flow engine、建工具** → 后端章（nebflow-backend / nebflow-tool-dev；cache 指标相关加读 nebflow-cache）。
 - 任务是**交付 QA、验证、verify 节点** → qa 章（后端交付→nebflow-qa-backend；前端交付→nebflow-qa-frontend；修 bug 必附 verification-rigor 验红；跨 agent 行为→isolated-smoke-verification）。
 - 任务是**合并分支** → 引擎章 merge-pipeline；**发版** → release-pipeline；**代码审查/review** → review。
 - 任务是**写文档/改系统提示词/体检 agent 定义** → 引擎章 nebflow-docs / nebflow-prompt-engineering。
 - 任务是**封装新插件/体检 plugin.json** → 引擎章 plugin-packaging（+ description-quality）。
-- **官网 mystand.space** → 不进本包：另配 `website`；**通用 Word/PDF/PPT/Excel** → 另配 `document-production`。
+- **官网 mystand.space** → 不进本包：另配 `website`；**通用 Word/PDF/PPT/Excel** → 另配 `document-production`；**代码库现状探索与实施方案** → 另配 `explorer-toolkit`。
 
 ## 7. 脚本与资产
 
@@ -109,7 +121,7 @@ stand-dev/                              （包根）
 
 ## 9. 维护约定
 
-- **references 即原 skill 全文**：18 份 references = 原六包 SKILL.md 逐字迁入（仅跨包引用改写 + 迁址头注）；改章内容 = 改对应 references 文件，并在 SKILL.md 章导览同步口径。
+- **references 即原 skill 全文**：21 份 references = 原八包 SKILL.md 逐字迁入（一批 2026-10-31 六包 + 二批 2026-11-01 两包；仅跨包引用改写 + 迁址头注 + 章内衔接注）；改章内容 = 改对应 references 文件，并在 SKILL.md 章导览同步口径。
 - **digest 纪律**：包内任何字节改动即 digest 漂移（可见性提示）；seed 副本（仓内 `src/main/resources/seed/plugins/stand-dev/`）与运行时副本（`<data_root>/plugins/stand-dev/`）**双副本逐字节同步**，改动两侧同落。
 - **本文件定位**：Plugin.md 是分配注入体；SKILL.md 与 references 是内容权威——不一致时以 SKILL.md / references 为准并回改本文；跨章共用的包级内容才进本文，单章细节留在对应 references。
-- **合并溯源**：2026-10-31「开发插件统一批」卸除的六包（qa/frontend-dev/backend-dev/docs-prompt/pipelines/nebflow-plugin-creator）留痕见仓内批文档 `docs/20261031_*_stand-dev-plugin-merge*.md` 与 `<data_root>/plugins-backups/*_pre-stand-dev-merge-*/` 备份。
+- **合并溯源**：一批 2026-10-31「开发插件统一批」卸除的六包（qa/frontend-dev/backend-dev/docs-prompt/pipelines/nebflow-plugin-creator）留痕见仓内批文档 `docs/20261031_223533_stand-dev-plugin-merge.md` 与 `<data_root>/plugins-backups/*_pre-stand-dev-merge-*/` 备份；二批 2026-11-01「design-spec/engineering-methods 并入批」留痕见仓内对应批文档——两原独立包**未卸除未退役**（实例侧仍装载 dispatchable，能力已双载于本包；退役与否等作者令）。

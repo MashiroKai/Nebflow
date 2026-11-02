@@ -1,0 +1,12 @@
+(node:99296) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///private/tmp/merge-eed3ad45/pristine/src/main/resources/web/js/locales/en.js is not specified and it doesn't parse as CommonJS.
+Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+To eliminate this warning, add "type": "module" to /private/tmp/merge-eed3ad45/pristine/package.json.
+(Use `node --trace-warnings ...` to show where the warning was created)
+file:///private/tmp/merge-eed3ad45/pristine/tests/content-i18n.spec.mjs:97
+RED_ANCHORS.add(`E-detail-desc-${DS.agents[0].id}`);
+                                              ^
+
+TypeError: Cannot read properties of undefined (reading 'id')
+    at file:///private/tmp/merge-eed3ad45/pristine/tests/content-i18n.spec.mjs:97:47
+
+Node.js v23.9.0

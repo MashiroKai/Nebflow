@@ -8,7 +8,7 @@ import state from '../state.js';
 import { sendWs } from '../ws.js';
 import { t } from '../i18n.js';
 import { escapeHtml, isBgAgentId, createIconsIn, statusIcon, bgHealthNorm } from '../utils.js';
-import { findViewBySessionId, activeView } from '../chatView.js';
+import { findViewBySessionId, activeView, setActiveView, chatViews } from '../chatView.js';
 import { fmtUptime, isFailedSnapshotStatus } from '../managePanel.js';
 import { openStepPopup as openFlowStepPopup } from '../flowAgentPopup.js';
 import { openStepPopup as openBgAgentPopup } from '../bgAgentPopup.js';
@@ -25,6 +25,30 @@ import { ensureMergeQueueStatus, mergeQueueEntryFor } from '../mergeQueueStatus.
 // card (spinner → result) is the only chat-level feedback.
 // Click the indicator to see a dropdown with per-agent status.
 
+/**
+ * 作用域桶宿主反查（Flow 会话可见性批 2026-11-01）：delegate 作用域桶键 → 持有该
+ * delegate 组头行的主桶 id。判据 = 主桶内存在 sessionId === 桶键 的行（引擎自根
+ * 事实——DelegateFlowHosts.mount rootSessionId = delegateId——的显示面单点判读）。
+ * 查无宿主 = live 行已离场，徽标回收走终态管线（main.js done 收尾 →
+ * refreshAllBgAgentIndicators 全视图重算——见该处）。
+ *
+ * 导出面（终态管线共用）：main.js 会话级 done 收尾按桶键反查宿主视图。
+ *
+ * @param {string} delegateSid delegate 作用域桶键
+ * @returns {string} 宿主主桶 id（'' = 未定位）
+ */
+export function bgScopeRootForBucket(delegateSid) {
+  const d = String(delegateSid || '').replace(/^team-/, '');
+  if (!d) return '';
+  for (const [root, agents] of Object.entries(state.sessionBgAgents || {})) {
+    if (String(root) === d) continue;
+    for (const info of Object.values(agents || {})) {
+      if (String((info && info.sessionId) || '').replace(/^team-/, '') === d) return String(root);
+    }
+  }
+  return '';
+}
+
 export function updateBgAgentIndicator(targetSid, opts) {
   // Update the indicator of the view that DISPLAYS the session owning these
   // sub-agents — not blindly activeView. Sub-agent events are routed through
@@ -33,17 +57,32 @@ export function updateBgAgentIndicator(targetSid, opts) {
   // while the dropdown re-rendered from live data on click — showing e.g.
   // count=2 on the badge but 3 rows inside (a stuck sub-agent that emits no
   // further events never triggered another badge refresh).
-  const view = targetSid ? findViewBySessionId(targetSid) : activeView;
-  if (!view) return;
+  // Flow 会话可见性批（2026-11-01）：delegate 作用域桶（rootSessionId = delegate-*）
+  // 不是任何视图的桶——链行挂在主桶 delegate 组头下，宿主视图经 bgScopeRootForBucket
+  // 反查刷新（agentStart/agentToolStart/agentDone/会话级 done 各路径共用本缝；
+  // 查无宿主 = live 行已离场，徽标回收走终态管线）。
+  // 修订（同批，T1 实证）：反查门不是「查无视图」而是「查无可刷新视图」——链帧
+  // 进场前拦截器（interceptBgAgentStep.ensureStepView）已为 delegate 会话本身建了
+  // 隐藏 step 视图（chatViews['bgagent-<sid>']），findViewBySessionId(delegateSid)
+  // 会抢先命中它，而 step 视图无指示器元素（旧代码在 el 检查处静默 return）——
+  // 反查回退从未执行，宿主徽标恒滞留旧值。判据统一为「视图无 bgagentIndicatorEl
+  // = 不可刷新」：命中 step/弹窗视图同样落入反查；终判同款（反查落点亦无指示器
+  // = 无宿主，返回）。
+  let view = targetSid ? findViewBySessionId(targetSid) : activeView;
+  if (targetSid && (!view || !view.dom || !view.dom.bgagentIndicatorEl)) {
+    view = findViewBySessionId(bgScopeRootForBucket(targetSid));
+  }
+  if (!view || !view.dom || !view.dom.bgagentIndicatorEl) return;
   const el = view.dom.bgagentIndicatorEl;
-  if (!el) return;
   const sid = view.sessionId;
-  const bgAgents = (sid && state.sessionBgAgents[sid]) || {};
+  // Flow 会话可见性批（2026-11-01）：计数走 bgPanelModel 单点（主桶可见行 ∪ 作用
+  // 域桶链行 ∪ 延续态组头）——delegate 已终态而链仍在跑的批，主桶已空，徽标计数
+  // 只能来自链行/延续组头（「批死了」的前端症状一半就在这枚徽标恒隐）。
   // Author ruling 2026-09-14 16:30: the badge counts RUNNING rows only (an idle
   // dispatcher inside its keep-alive window counts zero). Same predicate as the
   // list (visibleBgAgentEntries) — the two must never disagree (see the view
   // resolution note above: count>0 with an empty dropdown was a real defect).
-  const count = visibleBgAgentEntries(bgAgents).length;
+  const count = bgPanelModel(sid).total;
   if (count > 0) {
     el.classList.remove('hidden');
     el.querySelector('.bgagent-count').textContent = count;
@@ -65,6 +104,24 @@ export function updateBgAgentIndicator(targetSid, opts) {
     if (dropdown && !(opts && opts.keepDropdownOpen)) dropdown.classList.add('hidden');
   }
   if (view === activeView) renderBgAgentDropdown();
+}
+
+/**
+ * 全视图徽标重算（Flow 会话可见性批 2026-11-01）：delegate 作用域桶整桶清空（链
+ * 全终态）后，桶键再无任何行可供 bgScopeRootForBucket 反查宿主——延续态组头随
+ * 行集消失的同一拍，持有它的主视图徽标必须归零回收，否则「链运行中」徽标滞留
+ * 死链（T4 契约）。逐视图换场重算（与 main.js 终态管线的 setActiveView 舞步同
+ * 款——renderBgAgentDropdown 只刷 activeView 载体），弹窗/step 视图无指示器元素
+ * 跳过。语义 = updateBgAgentIndicator 原样（count=0 收面板走既有令①/②分岔）。
+ */
+export function refreshAllBgAgentIndicators() {
+  for (const v of Object.values(chatViews)) {
+    if (!v || !v.dom || !v.dom.bgagentIndicatorEl) continue;
+    const saved = activeView;
+    setActiveView(v);
+    updateBgAgentIndicator();
+    setActiveView(saved);
+  }
 }
 
 // ── Sub-agents panel (2026-08-25 spec, frozen @142535e9) ─────────────
@@ -175,32 +232,31 @@ function bgIdleDetail(info) {
 }
 
 /** Session-id prefix predicate (single point): `dispatcher-` = Project task
- *  dispatcher session. `node-` = Project Flow Map node session (its panel
- *  visibility口径 is deliberately UNCHANGED by this batch), `delegate-` /
+ *  dispatcher session. `node-` = Project Flow Map node session, `delegate-` /
  *  `subtask-` = Delegate / SubTask sub-agents. */
 function isDispatcherSession(id) {
   return typeof id === 'string' && id.startsWith('dispatcher-');
 }
 
-/** C1 过渡呈现纪律（delegate-ui 批 2026-10-08 · 定稿蓝本 §1.2）：`dispatcher-*` /
- *  `node-*` 是 delegate 编排的引擎内部件——过渡期（P0-P3）**在册但不入一等陈列面**：
- *  数据侧 activeAgents 快照保持全量（管理/调试面照读），仅渲染入口过滤此处单点
- *  （计数与列表同走 visibleBgAgentEntries，badge 与面板永不打架）。终态（P4）内部
- *  会话形态删除，过滤自然成空。取代旧「dispatcher 仅 active 才准入」口径
- *  （2026-09-14 16:30 author ruling）——显示侧收得更紧，活性/注册语义零触碰。 */
+/** Flow 会话可见性批（2026-11-01 · 作者令「控制台后台代理面板修复」）：C1 过渡
+ *  过滤**退役**。考古：`dispatcher-*` / `node-*` 是 Project 域引擎会话（kind=Flow，
+ *  注册点 ProjectActor / NodeStarter），delegate-ui 批（2026-10-08）以 C1 过渡纪律
+ *  「在册但不入一等陈列面」整体滤除——终态（P4）内部会话形态删除并未发生，分发器
+ *  模式的链会话（delegate 已终态、dispatcher/node 仍在册）在面板零渲染 =「批死了」
+ *  （作者 15:18 实证）。本批口径：Flow 会话与 Delegate/SubTask 同一陈列标准——
+ *  溯源到所属 delegate 的挂组头子行（分发器/节点徽标 + 状态/运行时长），溯源不到
+ *  的顶层行直显并标 kind；活性/注册语义零触碰（快照面本就全量出帧）。 */
 function isC1InternalOrchestration(id, info) {
-  const sid = String((info && info.sessionId) || id || '');
-  return isDispatcherSession(sid) || isDispatcherSession(info && info.sessionId) ||
-    sid.startsWith('node-');
+  return false;
 }
 
 /** Panel admission口径 (author ruling 2026-09-14 16:30, asknb-6d626dd4307a4d31):
  *  「只显示运行中的，计数也只计算运行中的，空闲不显示。」
  *
- *  delegate-ui 批（2026-10-08）更新：`dispatcher-` 与 `node-` 前缀全滤（C1 过渡纪律，
- *  见 isC1InternalOrchestration）；其余前缀沿用既有口径——hidden = not rendered AND
- *  not counted（same bucket, same 口径 as the list, so the badge can never
- *  disagree with the dropdown）。 */
+ *  delegate-ui 批（2026-10-08）曾滤 `dispatcher-`/`node-`（C1）；Flow 会话可见性批
+ *  （2026-11-01）退役该滤（isC1InternalOrchestration 恒 false——见上注）。其余前缀
+ *  沿用既有口径——hidden = not rendered AND not counted（same bucket, same 口径 as
+ *  the list, so the badge can never disagree with the dropdown）。 */
 function isBgRowVisible(id, info) {
   if (isC1InternalOrchestration(id, info)) return false;
   return true;
@@ -406,6 +462,57 @@ function bgKindDisplayWord(kind) {
   return k;
 }
 
+/** Flow 会话 kind 显示词（Flow 会话可见性批 2026-11-01）：`dispatcher-*` →
+ *  「分发器」、`node-*` → 「节点」（引擎协议 kind 一律 "Flow"，无区分度——显示词
+ *  按会话 id 前缀单点判读，与 isDispatcherSession/NodeEngine.SessionPrefix 同源
+ *  契约）。其余前缀 → ''（走既有 kind 链：快照 kind → bgAgentKindFromSession）。
+ *  徽标归位批铁律不冲突：顶层摘除的是 Delegate/Subagent 历史残留词；分发器/节点
+ *  是本批要求的正向 kind 徽标（顶层与子行都渲染）。 */
+function bgFlowKindWord(info, id) {
+  const sid = String((info && info.sessionId) || id || '').replace(/^team-/, '');
+  if (isDispatcherSession(sid)) return t('subagents.kindDispatcher');
+  if (sid.startsWith('node-')) return t('subagents.kindNode');
+  return '';
+}
+
+/**
+ * delegate 作用域桶的链会话行（Flow 会话可见性批 2026-11-01 · 溯源规则②）。
+ *
+ * 引擎侧事实（溯源依据，零前端派生）：delegate-scope NodeEngine（DelegateFlowHosts.
+ * mount）与 delegate 名下挂载的项目（ProjectCreateService sessionId 回落腿）都以
+ * **delegate 会话 id 自根**（rootSessionId = delegateId）——其 dispatcher- 与
+ * node- 前缀会话（含 subtask- 等）的 WS 帧（routeSubagentWsSend）与快照行全部归桶
+ * `sessionBgAgents[delegateSid]`。该桶不是任何视图的桶（视图只读自己的主会话桶），
+ * 此前整桶不可见 =「批死了」的直接根因。本函数 = 该桶的受控读口：渲染面按组头
+ * delegate sid 逐桶拉取（self 守卫 + 分发器置顶 + startedAt 升序）。
+ *
+ * @param {string} delegateSid delegate 会话 id（组头 sid）
+ * @returns {Array<{id: string, info: any, sid: string}>}
+ */
+function bgDelegateScopeChainRows(delegateSid) {
+  const own = String(delegateSid || '').replace(/^team-/, '');
+  const bucket = (own && state.sessionBgAgents[own]) || {};
+  const out = [];
+  for (const [id, info] of Object.entries(bucket)) {
+    const sid = String((info && info.sessionId) || id || '').replace(/^team-/, '');
+    if (!sid || sid === own) continue; // self 守卫（组头行永不在自己的作用域桶重复）
+    out.push({ id, info, sid });
+  }
+  out.sort((a, b) => {
+    const da = isDispatcherSession(a.sid) ? 0 : 1;
+    const db = isDispatcherSession(b.sid) ? 0 : 1;
+    if (da !== db) return da - db; // 分发器置顶（作者口径「分发器 + 节点」）
+    return (Number(a.info && a.info.startedAt) || 0) - (Number(b.info && b.info.startedAt) || 0);
+  });
+  return out;
+}
+
+/** 行是否终态（done/error）——链活性判据（bgRowState 单点派生）。 */
+function bgRowTerminal(info) {
+  const st = bgRowState(info);
+  return st === 'done' || st === 'error';
+}
+
 /** flow 节点状态 → 面板状态词键（ROW_STATUS 值域；既有键复用，零新键）。 */
 const BG_FLOW_WORD_KEY = {
   pending: 'task.nodePending',
@@ -443,6 +550,13 @@ function bgFirstLine(text) {
  * 但父组头不可见（父已终态 / 父为 C1 内部件 / 父即桶根会话）的行**提升顶层**并随
  * `orphanBy` 携带来源（渲染面出「来自 …」角标）；parent = 桶根会话的行**不算认领**
  * （根会话自身不是行——root 直派的 delegate 恒为一等组头，既有语义零回归）。
+ *
+ * Flow 会话可见性批（2026-11-01）：新增第⑤认领源 = **delegate 作用域桶链会话**
+ * （`sessionBgAgents[delegateSid]`，引擎自根事实——见 bgDelegateScopeChainRows）；
+ * 第⑥组源 = **延续态组头**（delegate live 行已离场而链仍在跑——注册行镜像合成
+ * 组头，徽标「链运行中」，链全终态即随行集消失）。flow-step 结构投影（第③源）
+ * 与 live 链行**互斥**：作用域桶在场（live 面更富：状态/运行时长实时）时结构投影
+ * 让位，桶空时结构投影照旧兜底（既有形态零回归）。
  *
  * @param {Array<[string, any]>} entries visibleBgAgentEntries 产出
  * @param {string} bucketSid 桶根会话 id（root-parent 豁免判据）
@@ -500,20 +614,95 @@ function bgDelegateGroups(entries, bucketSid) {
       orphanBy.set(sid, { parentSid: parent, parentTitle: String((prow && prow.title) || '') });
     }
   }
-  // Pass 3：store 子条目（去重——已在场的 live 子行不重复）+ flow 结构行。
+  // Pass 3：store 子条目（去重——已在场的 live 子行不重复）+ 作用域桶链会话
+  // （第⑤源）+ flow 结构行。Flow 会话可见性批（2026-11-01）：flow-step 结构投影
+  // 与 live 链行互斥——作用域桶在场（live 面更富：状态/运行时长实时）时结构投影
+  // 整组让位（全量结构走链视图下钻），桶空时结构投影照旧（既有形态零回归）。
   for (const g of groups) {
     const present = new Set(g.children.map((c) => c.sid));
     for (const c of listDelegateChildren(g.sid)) {
       const cid = String((c && c.taskId) || '');
-      if (cid && !present.has(cid)) g.children.push({ type: 'store', child: c, sid: cid });
+      if (cid && !present.has(cid)) {
+        g.children.push({ type: 'store', child: c, sid: cid });
+        present.add(cid);
+      }
     }
-    const chain = g.key ? getChainByTask(g.key) : null;
-    const flowSteps = chain && Array.isArray(chain.nodes)
-      ? chain.nodes.filter((n) => n && n.kind === 'flow-step')
-      : [];
-    for (const n of flowSteps) g.children.push({ type: 'flow', node: n });
+    for (const c of bgDelegateScopeChainRows(g.sid)) {
+      if (c.sid && !present.has(c.sid)) {
+        g.children.push({ type: 'chain', id: c.id, info: c.info, sid: c.sid });
+        present.add(c.sid);
+      }
+    }
+    g.chainLive = g.children.some((c) => c.type === 'chain' && !bgRowTerminal(c.info));
+    if (!g.children.some((c) => c.type === 'chain')) {
+      const chain = g.key ? getChainByTask(g.key) : null;
+      const flowSteps = chain && Array.isArray(chain.nodes)
+        ? chain.nodes.filter((n) => n && n.kind === 'flow-step')
+        : [];
+      for (const n of flowSteps) g.children.push({ type: 'flow', node: n });
+    }
+  }
+  // Pass 4（Flow 会话可见性批 · 第⑥组源）：delegate live 行已离场而链仍在跑——
+  // 注册行镜像（DelegateRegistry.Record 投影，spawn 落盘跨重启存活）合成延续态
+  // 组头。判据三连：镜像行在场 ∧ 本桶无该 delegate 组头（live 行离场）∧ 作用域桶
+  // 非空。链全终态后作用域桶行被终态清理删除 → 判据失效 → 合成组头自然消失
+  // （延续徽标绝不滞留死链——「链全终态后恢复普通终态样式」由 live 行在场窗口
+  // 与桶残留终态行的短暂窗口承接）。合成组头只挂链子行（第⑤源；store/flow 投影
+  // 不重复展开——链详情走既有链视图下钻）。
+  const headSids = new Set(groups.map((g) => g.sid));
+  for (const r of listDelegateRows()) {
+    const d = String(r.delegateId || '').replace(/^team-/, '');
+    if (!d || headSids.has(d)) continue;
+    const chain = bgDelegateScopeChainRows(d);
+    if (!chain.length) continue;
+    const chainLive = chain.some((c) => !bgRowTerminal(c.info));
+    const g = {
+      id: 'chain:' + d,
+      info: {
+        name: String(r.name || ''),
+        sessionId: d,
+        kind: 'Delegate',
+        // 终态呈现基座：failed → error 词档，其余（completed/cancelled/…）→ done。
+        status: String(r.status || '') === 'failed' ? 'Error' : 'Completed',
+        done: String(r.status || '') !== 'failed',
+        startedAt: Number(r.createdAt) || 0,
+        task: String(r.title || ''),
+        delegateName: String(r.name || ''),
+      },
+      sid: d,
+      row: r,
+      key: String(r.taskNo || d),
+      children: chain.map((c) => ({ type: 'chain', id: c.id, info: c.info, sid: c.sid })),
+      synthesized: true,
+      chainLive,
+    };
+    groups.push(g);
+    headSids.add(d);
   }
   return { groups, leftovers, orphanBy };
+}
+
+/**
+ * 面板模型单点（Flow 会话可见性批 2026-11-01）：badge 计数 / 头部计数 / 空态 /
+ * 行集四个消费面共读此一处——「签与列表永不打架」的口径随模型延续。
+ * total = 主桶可见行（visibleBgAgentEntries 既有口径）∪ 作用域桶链子行（第⑤源）
+ * ∪ 延续态组头（第⑥组源，终态基座不计活链子行外的重复——组头本身计 1：它是
+ * 「用户看得见的一行」，且 count=0 关面板语义必须让活链在场时成立）。
+ *
+ * @param {string} bucketSid 主会话桶 id（视图 sessionId）
+ * @returns {{bgAgents: Object, entries: Array<[string, any]>, groups: Array<Object>, leftovers: Array<Array<any>>, orphanBy: Map<string, any>, total: number}}
+ */
+function bgPanelModel(bucketSid) {
+  const bgAgents = (bucketSid && state.sessionBgAgents[bucketSid]) || {};
+  const entries = visibleBgAgentEntries(bgAgents);
+  const { groups, leftovers, orphanBy } = bgDelegateGroups(entries, bucketSid);
+  // 计数口径：主桶行逐行计（既有）；链子行逐行计（各自是活会话）；合成组头计 1
+  // （组头 = 用户看得见的一行；其链子行已逐行计——组头行本身是陈列锚不是第二个会话）。
+  const chainChildren = groups.reduce((n, g) => {
+    const kids = g.children.filter((c) => c.type === 'chain').length;
+    return n + kids + (g.synthesized ? 1 : 0);
+  }, 0);
+  return { bgAgents, entries, groups, leftovers, orphanBy, total: entries.length + chainChildren };
 }
 
 /**
@@ -567,21 +756,38 @@ function bgOrphanChipHtml(orphan) {
  * 逐字（标题截断显示，老数据零迁移）。
  * 面板层级批（2026-10-31 ①）：opts.childCount/opts.collapsed——组头行首 caret
  * 折叠锚（有子行的组头才渲染；caret 点击 = 收起/展开子行树，行体点击照旧开详情）。
- * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string, rowTitle?: string, shortName?: string, childCount?: number, collapsed?: boolean, orphanFrom?: string, orphanTitle?: string}} [opts]
+ * Flow 会话可见性批（2026-11-01）：opts.chainContinued/opts.chainCount——delegate
+ * 已终态而链仍在跑的**延续态**呈现覆写：状态词位改琥珀「链运行中」（workflow
+ * 图标 + status-warn token，tooltip 带链会话数），状态点改 active 绿脉冲（活链
+ * ≠ 死行），行不加 .done 灰化（链活着）；链全终态后覆写入参自然缺席 → 行回
+ * 普通终态样式（既有 done 灰化/点形）。
+ * @param {string} id @param {any} info @param {{childLevel?: boolean, headLevel?: boolean, badgeWord?: string, rowTitle?: string, shortName?: string, childCount?: number, collapsed?: boolean, orphanFrom?: string, orphanTitle?: string, chainContinued?: boolean, chainCount?: number}} [opts]
  * @returns {string}
  */
 function bgTaskRowHtml(id, info, opts = {}) {
-  const rowState = bgRowState(info);
-  const terminal = rowState === 'done' || rowState === 'error';
-  const statusLabel = t('subagents.status.' + (rowState === 'active' ? 'running' : rowState));
-  const dotClass = {
-    active: 'bg-status-active', idle: 'bg-status-idle', stuck: 'bg-status-stuck',
-    error: 'bg-status-error', frozen: 'bg-status-frozen', done: 'bg-status-done',
-    waiting: 'bg-status-waiting',
-  }[rowState];
+  const rawState = bgRowState(info);
+  // 延续态覆写只对终态基座行生效（进行中 delegate 行的链子行走普通两级呈现）。
+  const chainContinued = !!(opts.chainContinued && (rawState === 'done' || rawState === 'error'));
+  const rowState = chainContinued ? 'active' : rawState; // 展示态：点形/词档按活链走
+  const terminal = !chainContinued && (rawState === 'done' || rawState === 'error');
+  const statusLabel = chainContinued
+    ? t('subagents.chainRunning')
+    : t('subagents.status.' + (rowState === 'active' ? 'running' : rowState));
+  const chainTip = chainContinued
+    ? t('subagents.chainRunningTip', { n: Number(opts.chainCount) || 0 })
+    : '';
+  const dotClass = chainContinued
+    ? 'bg-status-active'
+    : {
+      active: 'bg-status-active', idle: 'bg-status-idle', stuck: 'bg-status-stuck',
+      error: 'bg-status-error', frozen: 'bg-status-frozen', done: 'bg-status-done',
+      waiting: 'bg-status-waiting',
+    }[rowState];
   // 修订批九点②补漏：快照 kind（AgentKind.SubTask）同走显示词归一（数据面不动）。
-  let kind = (opts && opts.badgeWord) || bgKindDisplayWord(info.kind) ||
-    bgAgentKindFromSession(info.sessionId || id);
+  // Flow 会话可见性批（2026-11-01）：dispatcher-*/node-* 行 kind 词走 bgFlowKindWord
+  // （分发器/节点——引擎协议 kind 一律 "Flow" 无区分度）；其余前缀走既有链。
+  let kind = (opts && opts.badgeWord) || bgFlowKindWord(info, info.sessionId || id) ||
+    bgKindDisplayWord(info.kind) || bgAgentKindFromSession(info.sessionId || id);
   // 徽标归位批（2026-10-31 23:02 作者裁定）：**顶层行**（组头 + 未被认领的 leftover/
   //  孤儿行，即一切非 childLevel 行）不渲染 Delegate/Subagent 字样——层级锚不是历史
   //  类型残留。组头徽标只认 row.mode（bgDelegateBadgeWord，mode 缺席即无徽标）；此处
@@ -763,7 +969,7 @@ function bgTaskRowHtml(id, info, opts = {}) {
       escapeHtml(caretWord) + '">' +
       statusIcon(collapsedNow ? 'chevron-right' : 'chevron-down', 11) + '</span>'
     : '';
-  return '<div class="bg-task-row' + (rowState === 'done' ? ' done' : '') + levelCls + '" role="listitem" tabindex="0" ' + clickAttr + '>' +
+  return '<div class="bg-task-row' + (rawState === 'done' && !chainContinued ? ' done' : '') + levelCls + '" role="listitem" tabindex="0" ' + clickAttr + '>' +
     caretPart +
     '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
     '<div class="bg-task-info">' +
@@ -778,8 +984,10 @@ function bgTaskRowHtml(id, info, opts = {}) {
       // panel only (#bgagent-dropdown); the background-tasks panel
       // (#bg-dropdown) keeps .bg-task-meta / .bg-task-name-line untouched.
       '<div class="bg-task-line bg-task-main">' +
-        '<span class="bg-task-state bg-state-' + rowState + '">' +
-          (rowState === 'stuck' ? statusIcon('timer-off', 11, 'st-err')
+        '<span class="bg-task-state' + (chainContinued ? ' bg-task-chain' : ' bg-state-' + rowState) + '"' +
+          (chainTip ? ' title="' + escapeHtml(chainTip) + '" role="note"' : '') + '>' +
+          (chainContinued ? statusIcon('workflow', 11, 'st-warn')
+            : rowState === 'stuck' ? statusIcon('timer-off', 11, 'st-err')
             : rowState === 'error' ? statusIcon('circle-x', 11, 'st-err')
             : '') +
           escapeHtml(statusLabel) + '</span>' +
@@ -871,12 +1079,16 @@ export function renderBgAgentDropdown() {
   const listEl = activeView.dom.bgagentDropdownListEl;
   if (!listEl) return;
   const sid = activeView?.sessionId;
-  const bgAgents = (sid && state.sessionBgAgents[sid]) || {};
+  // Flow 会话可见性批（2026-11-01）：badge/头部计数/空态/行集全部走同一模型
+  // （bgPanelModel 单点 = 主桶可见行 ∪ 作用域桶链行 ∪ 延续态组头）——计数签与
+  // 列表永不打架的口径随模型单点延续。
+  const model = bgPanelModel(sid);
+  const bgAgents = model.bgAgents;
   // Author ruling 2026-09-14 16:30: an idle dispatcher row is neither listed nor
   // counted (it survives in the keep-alive window and the snapshot reports it —
   // see isBgRowVisible). Header count, empty state and rows all read this one
   // filtered set — 0 visible ⇒ count 0 + empty text, never a self-contradiction.
-  const entries = visibleBgAgentEntries(bgAgents);
+  const entries = model.entries;
   // 台账 #929：远端投影行（展示专用组，缀在本地行后；不入计数——见处理器红线注）。
   const remoteHtml = bgRemoteRowsHtml();
   // panel-merge-status 批（2026-10-25）：面板含候合并行 ⇒ 事件驱动取一次合并队列
@@ -890,11 +1102,12 @@ export function renderBgAgentDropdown() {
   }
   // Panel header carries the live count (aria-live polite, spec §5).
   const headerEl = dropdownEl ? dropdownEl.querySelector('.bg-dropdown-header') : null;
-  if (headerEl) headerEl.textContent = t('subagents.header', { count: entries.length });
-  if (entries.length === 0 && remoteHtml === '') {
+  if (headerEl) headerEl.textContent = t('subagents.header', { count: model.total });
+  if (model.total === 0 && remoteHtml === '') {
     // 空态自动收起（修订批九点⑤ · 2026-10-09）：无内容不渲染空态区块——列表留白，
     // 头部计数（·0）即空态真值（原 spec §6 空态文案行停用，键保留）。
     // #929：远端行在场时本地空 ≠ 面板空——远端行使本早退失效（列表仍渲远端组）。
+    // Flow 会话可见性批：total 含作用域桶链行与延续态组头——活链在场时本早退失效。
     listEl.innerHTML = '';
     return;
   }
@@ -902,12 +1115,22 @@ export function renderBgAgentDropdown() {
   // ＋缩进一格子行；孤儿行提升顶层并带「来自 …」来源角标。 ──
   // 面板层级批（2026-10-31 ①）：组头可折叠——用户偏好 > 默认规（终态收起/进行中
   // 展开）；收起组头的子行不进本轮 HTML（计数签不受影响）。
-  const { groups, leftovers, orphanBy } = bgDelegateGroups(entries, sid);
+  // Flow 会话可见性批（2026-11-01）：延续态组头（终态基座 + 活链）默认**展开**——
+  // 活链可见即本批目的；链全终态（覆写缺席）回既有默认规。
+  const { groups, leftovers, orphanBy } = model;
   const htmlParts = [];
+  // 链子行信息表（作用域桶行不在主桶 bgAgents——点击详情经此表解析，同 store 子行
+  // 的 storeChildBySid 形制）。
+  const chainBySid = new Map();
   for (const g of groups) {
     const childCount = g.children.length;
     const pref = bgHeadCollapsePref.get(g.sid);
-    const collapsed = childCount > 0 && (pref !== undefined ? pref : bgHeadDefaultCollapsed(g.info));
+    const continued = !!(g.chainLive && (bgRowState(g.info) === 'done' || bgRowState(g.info) === 'error'));
+    const collapsed = childCount > 0 &&
+      (pref !== undefined ? pref : (g.chainLive ? false : bgHeadDefaultCollapsed(g.info)));
+    // 合成延续组头的行体点击 = delegate 详情弹窗（历史恢复）——info 不在主桶，
+    // 经 chainBySid 兜底解析（与链子行同一缝）。
+    if (g.synthesized) chainBySid.set(g.sid, g.info);
     htmlParts.push(bgTaskRowHtml(g.id, g.info, {
       headLevel: true,
       badgeWord: bgDelegateBadgeWord(g.info, g.row),
@@ -919,11 +1142,17 @@ export function renderBgAgentDropdown() {
       shortName: (g.row && g.row.name) || g.info.delegateName || '',
       childCount,
       collapsed,
+      chainContinued: continued,
+      chainCount: g.children.filter((c) => c.type === 'chain').length,
     }));
     if (collapsed) continue;
     for (const c of g.children) {
       if (c.type === 'live') htmlParts.push(bgTaskRowHtml(c.id, c.info, { childLevel: true }));
       else if (c.type === 'store') htmlParts.push(bgStoreChildHtml(c.child));
+      else if (c.type === 'chain') {
+        chainBySid.set(c.sid, c.info);
+        htmlParts.push(bgTaskRowHtml(c.id, c.info, { childLevel: true }));
+      }
       else htmlParts.push(bgFlowChildHtml(c.node, g.key));
     }
   }
@@ -943,7 +1172,9 @@ export function renderBgAgentDropdown() {
     row.addEventListener('click', (e) => {
       e.stopPropagation();
       const rawSessionId = row.getAttribute('data-node-session-id');
-      const info = bgAgents[row.getAttribute('data-bg-key')];
+      // Flow 会话可见性批：作用域桶链行不在主桶——chainBySid 兜底解析（主桶命中
+      // 优先，零行为差）。
+      const info = bgAgents[row.getAttribute('data-bg-key')] || chainBySid.get(rawSessionId.replace(/^team-/, ''));
       if (info && rawSessionId) {
         // Capture the dropdown BEFORE opening the popup — openStepPopup
         // switches activeView to the popup view whose fakeDom has no dropdown.

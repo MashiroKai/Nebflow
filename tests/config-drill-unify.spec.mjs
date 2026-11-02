@@ -5,9 +5,11 @@
 //    手机层级子页——手机 legs 在 mobile-popup-retire.spec T4 末尾）：
 //    U1  生图入口行 → 浮层收编 #imagegen-advance-body（内容/绑定随节点走），
 //        ×/点空白/Esc 归还隐藏；JeV 同链路由 jev-panel-threefix R1b 守。
-// ② 设置页「模型回退链」节（/model 回退链调整页原样再放一份）：
+// ② 设置页「模型选择顺序」节（/model 顺序调整页原样再放一份）：
 //    U2  显式链：行渲染 = 链内容（拖拽排序行族 .mp-row 同源）、加模型 ⇒
 //        PUT /api/agents/Nebula/model {model:{preferred,fallbacks}}。
+//        （精简批 2026-11-01：刷新列表/手动输入/清空链三交互退役，加模型
+//        只余下拉一路——U2 同时钉死这三种控件零复活。）
 //    U3  双向往返同步：面板改 ⇒ 设置节即时重渲；设置节改 ⇒ 面板即时重渲
 //        （同一 roleState/保存通道，emitChainChange 单点）。
 //    U4  seed 态：mode=follow ⇒ seed 注记 + 生效链预览 + 「独立配置」fork ⇒
@@ -129,6 +131,9 @@ async function bootPage(page, opts = {}) {
           providers: {
             kimi: { baseUrl: 'https://api.kimi.example/v1/', apiKey: '***', protocol: 'anthropic', models: [{ id: 'kimi-k2', contextWindow: 8192 }] },
             anon: { baseUrl: 'https://anon.example/v1/', apiKey: '***', protocol: 'openai', models: [{ id: 'anon-1', contextWindow: 4096 }] },
+            // 模型顺序节精简批（2026-11-01）：加模型只剩下拉一路 ⇒ 夹具留一个
+            // 链外模型（glm-4）供 selectOption 使用（原手动输入腿已退役）。
+            glm: { baseUrl: 'https://api.glm.example/v1/', apiKey: '***', protocol: 'openai', models: [{ id: 'glm-4', contextWindow: 8192 }] },
           },
         },
         jev: { enabled: true, provider: 'typesafe-jev', endpoint: PINNED, keyRef: 'typesafe-api-key' },
@@ -223,11 +228,19 @@ test('U2 chain section renders the explicit chain (same .mp-row face as /model) 
   expect(rows[0], 'first row carries the 首选 badge').toContain('首选');
   expect(rows[1], 'second row = the fallback model').toContain('anon-1');
 
-  // 加模型：手动输入腿（下拉按 provider 分组、与 /model 编辑器同款选择面；
-  // 手动输入回车 = 第三个模型入链尾部）。
-  await page.click('#model-chain-section-body .mp-manual-toggle');
-  await page.fill('#model-chain-section-body .mp-manual', 'glm/glm-4');
-  await page.press('#model-chain-section-body .mp-manual', 'Enter');
+  // 加模型：只剩「添加模型」下拉一路（精简批 2026-11-01——刷新列表/手动输入/
+  // 清空链三交互整块退役，此处同时钉死「不复活」）。
+  const retired = await page.evaluate(() => ({
+    refresh: document.querySelectorAll('#model-chain-section-body .mp-refresh').length,
+    manualToggle: document.querySelectorAll('#model-chain-section-body .mp-manual-toggle').length,
+    manualInput: document.querySelectorAll('#model-chain-section-body .mp-manual').length,
+    clear: document.querySelectorAll('#model-chain-section-body .mp-clear').length,
+    buttons: [...document.querySelectorAll('#model-chain-section-body .mp-addrow button')].map(b => b.textContent.trim()),
+  }));
+  expect(retired, 'refresh / manual-input / clear-chain are gone (no dead controls)').toEqual({
+    refresh: 0, manualToggle: 0, manualInput: 0, clear: 0, buttons: [],
+  });
+  await page.selectOption('#model-chain-section-body .mp-add-select', 'glm/glm-4');
 
   await page.waitForFunction(() => document.querySelectorAll('#model-chain-section-body .mp-row').length === 3, null, { timeout: 5000 });
   expect(h.putBodies.length, 'exactly one PUT (per-action save)').toBe(1);
@@ -311,13 +324,12 @@ test('U3 edits sync both ways: panel change re-renders the settings section and 
 
   // 设置节侧加回 fallback ⇒ 面板即时重渲回 2 行。
   // 面板浮层（z10000）盖着设置页——设置节在浮层底下，物理点击被承接层截胡；
-  // 同步腿断言用合成事件直驱（模块监听挂在元素本体的 keydown，冒泡即达）。
+  // 同步腿断言用合成事件直驱（change 冒泡即达编辑器监听）。
   await page.evaluate(() => {
-    document.querySelector('#model-chain-section-body .mp-manual-toggle')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    const input = document.querySelector('#model-chain-section-body .mp-manual');
-    if (input) {
-      input.value = 'anon/anon-1';
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    const sel = document.querySelector('#model-chain-section-body .mp-add-select');
+    if (sel) {
+      sel.value = 'anon/anon-1';
+      sel.dispatchEvent(new Event('change', { bubbles: true }));
     }
   });
   await page.waitForFunction(() => document.querySelectorAll('#model-panel-overlay .mp-roleblock-nebula .mp-row').length === 2, null, { timeout: 5000 });

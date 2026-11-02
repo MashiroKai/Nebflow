@@ -30,7 +30,9 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = join(ROOT, 'src', 'main', 'resources', 'web');
-const SHOTS = join(ROOT, 'evidence', '20261101_103300_takeover-entry__delegate-nebflow-ce004aa9', 'after');
+// 卡片家族批（2026-11-01 作者 16:05 令）起截图随本 spec 落本批证据目录
+// （原接管批目录 evidence/20261101_103300_takeover-entry__* 定格为历史，不复写）。
+const SHOTS = join(ROOT, 'evidence', '20261101_cards-family__delegate-nebflow-67f23d42', 'after');
 
 let failures = 0;
 function ok(name, cond, extra = '') {
@@ -151,6 +153,26 @@ try {
     ok('F1 毛玻璃：overlay takeover-blur 类在场', await overlay.evaluate(el => el.classList.contains('takeover-blur')));
     const blur = await overlay.evaluate(el => getComputedStyle(el).backdropFilter || getComputedStyle(el).webkitBackdropFilter);
     ok('F1 毛玻璃：backdrop-filter blur(24px) 同源 --cv-blur', /blur\(24px\)/.test(blur || ''), blur || '');
+    // 卡片家族批（作者 16:05 令）：面板 = .nfc 实色家族卡（官网 auth 域 DNA 逐值：
+    // 白底 #fff / 边 #e5e7eb / radius 18 / 宽 384 / 阴影两档）+ 官方字标双档。
+    const card = await box.evaluate(el => {
+      const s = getComputedStyle(el);
+      return { bg: s.backgroundColor, radius: s.borderRadius, width: s.width, shadow: s.boxShadow, border: `${s.borderWidth} ${s.borderColor}` };
+    });
+    ok('F1 家族卡材质（bg #fff 实色，玻璃退役）', card.bg === 'rgb(255, 255, 255)', card.bg);
+    ok('F1 家族卡几何（radius 18 + width 384）', card.radius === '18px' && card.width === '384px', JSON.stringify(card));
+    ok('F1 家族卡边（1px #e5e7eb）', card.border === '1px rgb(229, 231, 235)', card.border);
+    ok('F1 家族卡影（官方两档外影，无 inset 玻璃高光）',
+      card.shadow.includes('rgba(17, 24, 39, 0.06)') && !card.shadow.includes('inset'), card.shadow.slice(0, 120));
+    const lockup = page.locator('#takeover-box .nfc-lockup-light');
+    ok('F1 家族字标在场（官方 lockup 图，alt=STAND）',
+      await lockup.isVisible() && (await lockup.getAttribute('alt')) === 'STAND');
+    const titleSt = await page.locator('#takeover-title').evaluate(el => {
+      const s = getComputedStyle(el);
+      return { size: s.fontSize, weight: s.fontWeight, color: s.color };
+    });
+    ok('F1 家族标题档（21px/600 #111827）',
+      titleSt.size === '21px' && titleSt.weight === '600' && titleSt.color === 'rgb(17, 24, 39)', JSON.stringify(titleSt));
     // 按钮语 = g2 药丸族（接管/入场同族批作者令②）：药丸形态（radius 999）+
     // 非透明填充（次级白玻璃 / 主动作墨玻璃各自 token 底），旧「无底无框 chip」退役。
     for (const [id, expectClass] of [['takeover-exit', 'g2-pill'], ['takeover-retake', 'g2-pill-primary']]) {
@@ -259,6 +281,19 @@ try {
     await sleep(400);
     ok('F1-dark 模态在场', await dark.locator('#takeover-box').isVisible());
     ok('F1-dark 毛玻璃类在场', await dark.locator('#modal-overlay').evaluate(el => el.classList.contains('takeover-blur')));
+    // 卡片家族批：暗档面板 = 官网 auth 域 dark 值（#161b22 面 / #2d333b 边 /
+    // 官方 --auth-panel-shadow 逐值）+ 暗字标（白墨 lockup）切换。
+    const darkCard = await dark.locator('#takeover-box').evaluate(el => {
+      const s = getComputedStyle(el);
+      return { bg: s.backgroundColor, border: `${s.borderWidth} ${s.borderColor}`, shadow: s.boxShadow };
+    });
+    ok('F1-dark 家族卡暗档（bg #161b22 + 边 #2d333b）',
+      darkCard.bg === 'rgb(22, 27, 34)' && darkCard.border === '1px rgb(45, 51, 59)', JSON.stringify(darkCard));
+    ok('F1-dark 家族影暗档（官方 panel-shadow 两档）',
+      darkCard.shadow.includes('rgba(0, 0, 0, 0.5)') && darkCard.shadow.includes('rgba(0, 0, 0, 0.35)'), darkCard.shadow.slice(0, 120));
+    ok('F1-dark 暗字标切换（dark lockup 可见/亮档隐）',
+      await dark.locator('#takeover-box .nfc-lockup-dark').isVisible()
+      && !(await dark.locator('#takeover-box .nfc-lockup-light').isVisible()));
     await dark.screenshot({ path: join(SHOTS, 'takeover-dark.png') });
     await darkCtx.close();
   }

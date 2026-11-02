@@ -363,8 +363,12 @@ function onTabClosed() {
   syncToActiveTab();
 }
 
-// ── 座位（右下角让位：缩放条/刷新钮等角落圆钮簇实测让位，seatRefreshButton
-//    同思路；移动端让位切换条）──────────────────────────────────────────────
+// ── 座位（单行排布批 2026-11-01 作者令 16:18「功能钮靠左、ask 单独靠右，
+//    一行两端对齐；对话框落在按钮行上一行」：文档工具簇已左锚化（split.css
+//    .canvas-source-toggle 注）——与右缘 fab 不再同角，簇实测让位整腿退役；
+//    fab 基准 22px 与簇行（pane 底 16+壳底 8 → 面板系 [24..64]，中线 44px）
+//    共中线。仍需让位的只剩通栏底栏 = 电子书阅读器 nav（fab 抬其上，输入条
+//    联动同距）。移动端让位切换条同口径。）
 
 function syncSeat() {
   if (!el) return;
@@ -373,37 +377,21 @@ function syncSeat() {
     // 批⑨：手机层 = body 级 fixed（ask.css 移动档钉位：底 dock 上方），
     // 面板锚让位计算整腿退役。
     // 批⑩：活动卡挂电子书阅读器时，底栏 ⋯ 右端与 fab 同角——fab 抬到底栏
-    // 上方（nf-reader-mounted 触发本重算；reader-p1 移动触滑腿实证拦截）。
+    // 上方（nf-reader-mounted 触发本重算；reader-p1 移动触滑腿实证拦截）；
+    // 输入条跟随同距（单行排布批 2026-11-01：dock 一并抬，钉 fab 上方）。
     const pane = document.querySelector('.canvas-tab-pane.active');
     const nav = pane && (/** @type {HTMLElement|null} */ (pane.querySelector('.epub-reader-nav')));
     if (nav && nav.offsetParent !== null) {
       const nr = nav.getBoundingClientRect();
       if (nr.width > 0 && nr.height > 0) {
-        el.fab.style.bottom = Math.max(10, window.innerHeight - nr.top + 8) + 'px';
+        const fabBottom = Math.max(10, window.innerHeight - nr.top + 8);
+        el.fab.style.bottom = fabBottom + 'px';
+        el.dock.style.bottom = (fabBottom + 48 + 10) + 'px';
         return;
       }
     }
-    // 悬浮控件排布批③（2026-10-31 作者令 23:35「两个浮动控件互相重叠」截图
-    // 实证）：文档 pane 角落圆钮簇（查找/源码/引用，pane 内 absolute bottom:16
-    // 右缘）与 body 级 fab（底 dock 上方 right:16）在手机层同角同带——fab 钉
-    // 位恰压住源码钮。桌面 occupied 同律换算视口系：簇可见时 fab 抬到簇上缘
-    // 之上 12px（输入条跟随同距，保持钮-条联动）；无簇回落 css 钉位。
-    const floats = pane
-      ? pane.querySelectorAll('.canvas-source-toggle, .canvas-find-toggle, .canvas-ref-select')
-      : [];
-    let occupied = 0;
-    floats.forEach((f) => {
-      const h = /** @type {HTMLElement} */ (f);
-      if (!(h instanceof HTMLElement) || h.hidden || h.offsetParent === null) return;
-      const r = h.getBoundingClientRect();
-      if (r.width === 0 && r.height === 0) return;
-      occupied = Math.max(occupied, window.innerHeight - r.top);
-    });
-    if (occupied > 0) {
-      el.fab.style.bottom = (occupied + 12) + 'px';
-      el.dock.style.bottom = (occupied + 12 + 48 + 10) + 'px';
-      return;
-    }
+    // 单行排布批（2026-11-01）：文档工具簇（查找/源码/引用）左锚化后与 body 级
+    // fab（右缘钉位）异侧分行零交叠——簇实测让位腿退役；fab 回 css 钉位。
     el.fab.style.bottom = '';
     el.dock.style.bottom = '';
     return;
@@ -411,11 +399,12 @@ function syncSeat() {
   const panel = document.getElementById('canvas-panel');
   if (!panel) return;
   const panelRect = panel.getBoundingClientRect();
-  let bottomPx = 14;
-  // 角落浮件（可见者取最上沿）：缩放条 / 壳刷新钮 / pane 内源码-引用钮族 /
-  // 电子书阅读器底栏（批⑩ 2026-10-31：epub/mobi/azw3 并入可问面后 fab 同样上
-  // 阅读器页——底栏 ⋯ 钮在右端，fab 不抬必拦截其命中，reader-p1 A5 实证）。
-  const floats = panel.querySelectorAll('.canvas-zoom-bar, .canvas-refresh-toggle, .canvas-source-toggle, .canvas-ref-toggle, .epub-reader-nav');
+  // 基准 22px = 与左锚文档工具簇行共中线（簇面板系中线 44px − fab 半高 22）。
+  let bottomPx = 22;
+  // 通栏底栏（可见者取最上沿）：电子书阅读器底栏——批⑩ 2026-10-31：epub/mobi/
+  // azw3 可问面 fab 上阅读器页（底栏 ⋯ 钮在右端，fab 不抬必拦截其命中，
+  // reader-p1 A5 实证）。左锚工具簇与右缘 fab 异侧，不再入让位实测集。
+  const floats = panel.querySelectorAll('.epub-reader-nav');
   let occupied = 0;
   floats.forEach((f) => {
     const h = /** @type {HTMLElement} */ (f);
@@ -424,7 +413,7 @@ function syncSeat() {
     if (r.width === 0 && r.height === 0) return;
     occupied = Math.max(occupied, panelRect.bottom - r.top);
   });
-  bottomPx = occupied > 0 ? occupied + 12 : 14;
+  bottomPx = occupied > 0 ? occupied + 12 : 22;
   panel.style.setProperty('--ask-fab-bottom', bottomPx + 'px');
 }
 

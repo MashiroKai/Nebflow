@@ -259,7 +259,7 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
 
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", textDelta("s1", "here is the card"))
+      _ <- p.onAgentEvent("s1", textDelta("s1", "<output>here is the card</output>"))
       _ <- p.onAgentEvent("s1", toolEnd("s1", cardPayload()))
       _ <- p.onAgentEvent("s1", done("s1"))
       imgs <- rec.images.get
@@ -428,7 +428,7 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
 
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", textDelta("s1", "failed"))
+      _ <- p.onAgentEvent("s1", textDelta("s1", "<output>failed</output>"))
       _ <- p.onAgentEvent("s1", toolEnd("s1", cardPayload(), isError = true))
       _ <- p.onAgentEvent("s1", done("s1"))
       imgs <- rec.images.get
@@ -451,7 +451,7 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
 
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", textDelta("s1", raw))
+      _ <- p.onAgentEvent("s1", textDelta("s1", s"<output>$raw</output>"))
       _ <- p.onAgentEvent("s1", done("s1"))
       calls <- renderer.calls.get
       imgs <- rec.images.get
@@ -478,7 +478,7 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
 
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", textDelta("s1", "done"))
+      _ <- p.onAgentEvent("s1", textDelta("s1", "<output>done</output>"))
       _ <- p.onAgentEvent("s1", toolEnd("s1", s"file at $odd", Some(Json.obj("path" -> odd.toString.asJson))))
       _ <- p.onAgentEvent("s1", done("s1"))
       imgs <- rec.images.get
@@ -673,7 +673,7 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
 
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", textDelta("s1", "两张图如下"))
+      _ <- p.onAgentEvent("s1", textDelta("s1", "<output>两张图如下</output>"))
       _ <- p.onAgentEvent("s1", toolEnd("s1", popPayload(item("image", "a.png", a), item("image", "b.png", b))))
       _ <- p.onAgentEvent("s1", done("s1"))
       order <- wire.get
@@ -701,7 +701,7 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
 
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", textDelta("s1", "正文照发"))
+      _ <- p.onAgentEvent("s1", textDelta("s1", "<output>正文照发</output>"))
       _ <- p.onAgentEvent(
         "s1",
         toolEnd("s1", popPayload(item("image", "a.png", a), item("image", "bad.png", bad), item("image", "c.png", c)))

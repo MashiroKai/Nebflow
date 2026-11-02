@@ -12,7 +12,9 @@
 //        全幅（w=375 / x=0 / radius 0）。
 //   在飞任务行 …… 桌面 .bg-task-row 全字段沿用：状态点 + 状态词（六档：
 //        running/idle/stuck/cancelling/failed/done，卡死阈值 idle>10min 桌面
-//        既有）+ origin chip + 本地·远程 kind chip + 行数 + 时长。
+//        既有）+ 设备名 chip + origin chip + 行数 + 时长。
+//        （设备同级批 2026-11-01：原「本地·远程」kind chip 整对退役——本机任务
+//        同样只标设备名，手机层与桌面同源同形。）
 //   开放点① 两下拉归并 …… #bgagent-dropdown 幽灵面退场（chat.css 全局
 //        display:none），列表节点由 bgMergedPanel.js 收编进载体
 //        （载体桌面头「后台任务」= 第一分组题 + 「智能体」分组签）；收口 =
@@ -22,7 +24,8 @@
 //        混在一起」）—— 任务/智能体两列表各居 .bg-section-tasks /
 //        .bg-section-agents section 内，不再做 #bg-dropdown 直子；分区签带
 //        实时行数（n=0 时签 hidden；n>0 文案 = 「智能体 · N」）。
-//   开放点④ 远程 chip …… .bg-task-kind（bg.kind.remote = 远程）。
+//   开放点④ 远程 chip …… 退役（设备同级批 2026-11-01「本地/远程这组徽标整对
+//        退役」）：远端任务改由设备名 chip 表达（.bg-origin-device）。
 //   开放点③ 资源占用条 …… 后端无 CPU/内存/网络字段，不实施不伪造（见实施 spec）。
 //
 // 数据面 = WS activeBgTasks 快照 + state.sessionBgAgents 直种，零后端、零 sbt。
@@ -50,7 +53,7 @@ test.use({ viewport: { width: 375, height: 812 }, hasTouch: true, colorScheme: '
 function bgTasksFixture() {
   return { [SID]: [
     { taskId: 'job-1', description: '长跑构建任务', status: 'running', startedAt: T0 - 90_000, sessionId: SID, kind: 'local', origin: 'nebula', originLabel: 'Nebula', heartbeat: { idleMs: 5_000, outputLines: 42 } },
-    { taskId: 'job-2', description: '远端巡检任务', status: 'running', startedAt: T0 - 30_000, sessionId: SID, kind: 'remote', origin: 'dispatcher', originLabel: 'dispatcher' },
+    { taskId: 'job-2', description: '[DESKTOP-IJBBEOT] 远端巡检任务', status: 'running', startedAt: T0 - 30_000, sessionId: SID, kind: 'remote', origin: 'device', originLabel: 'DESKTOP-IJBBEOT' },
     { taskId: 'job-3', description: '卡死的长任务', status: 'running', startedAt: T0 - 900_000, sessionId: SID, kind: 'local', origin: 'nebula', originLabel: 'Nebula', heartbeat: { idleMs: 700_000, outputLines: 7 } },
   ] };
 }
@@ -83,6 +86,8 @@ async function bootApp(page) {
   await page.routeWebSocket(/\/ws/, (ws) => {
     const sendConfig = () => ws.send(JSON.stringify({
       type: 'configData', config: '{}', configured: true, onboarding: 'done',
+      // 设备同级批（2026-11-01）：本机任务行设备 chip 读本机设备名（第二源）。
+      selfDevice: { id: 'self-dev-1', name: 'Mashiros-MacBook-Pro-iso-a659864a' },
     }));
     const sendSessions = () => ws.send(JSON.stringify({
       type: 'sessionList',
@@ -174,23 +179,26 @@ test('T1 page geometry: adopted full-bleed in background page, ghost retired (do
   expect(errors).toEqual([]);
 });
 
-test('T2 task rows: status word / origin chip / local·remote kind chip / lines / uptime (open point ②④)', async ({ page }) => {
+test('T2 task rows: status word / device-name chip / no local·remote kind chip / lines / uptime (open point ②)', async ({ page }) => {
   const errors = watchErrors(page);
   await openViaHub(page);
   // 面板分区批换代：任务列表居 .bg-section-tasks 内（非 #bg-dropdown 直子）。
   const rows = page.locator('#bg-dropdown .bg-section-tasks .bg-dropdown-list').first().locator('.bg-task-row');
   await expect(rows).toHaveCount(3);
 
-  // 行 1：运行中 + Nebula origin + 本地 chip + 行数 + 时长。
+  // 行 1：运行中 + 本机设备名 chip + Nebula origin + 行数 + 时长。
   const r1 = rows.nth(0);
   await expect(r1.locator('.bg-task-state')).toHaveText('运行中');
-  await expect(r1.locator('.bg-task-origin')).toHaveText('Nebula');
-  await expect(r1.locator('.bg-task-kind')).toHaveText('本地');
+  // 设备同级批：本机任务同样标设备名（剥 -iso 后缀），不再有「本地」字样。
+  await expect(r1.locator('.bg-origin-device')).toHaveText('Mashiros-MacBook-Pro');
+  await expect(r1.locator('.bg-origin-nebula')).toHaveText('Nebula');
+  await expect(r1.locator('.bg-task-kind')).toHaveCount(0);
   await expect(r1.locator('.bg-task-lines')).toHaveText('42行');
   await expect(r1.locator('.bg-task-uptime')).toContainText('m');
 
-  // 行 2：远程 chip（开放点④）。
-  await expect(rows.nth(1).locator('.bg-task-kind')).toHaveText('远程');
+  // 行 2：远端任务 = 对端设备名（同档同类，无「远程」字样）。
+  await expect(rows.nth(1).locator('.bg-origin-device')).toHaveText('DESKTOP-IJBBEOT');
+  await expect(rows.nth(1).locator('.bg-task-kind')).toHaveCount(0);
 
   // 行 3：卡死阈值沿用（idle>10min → 超过 10 分钟无输出）。
   await expect(rows.nth(2).locator('.bg-task-state')).toHaveText('超过 10 分钟无输出');

@@ -17,7 +17,7 @@ author-order: 作者 2026-11-01 10:00 令
 
 ## 1. 考古：9.19 版 dispatcher 提炼了什么
 
-**版本锚**：tag `2026.9.19`（`git show 949ce9159:VERSION` → `2026.9.19`；[[20261028_213056_delegate-dual-mode-redesign__delegate-nebflow-192d10a5]] §2.1 记 tag 对应 merge commit `249a83958`）。考古对象 = 该树 `src/main/resources/seed/agents/project-dispatcher/system.md`（11 行全文，git 可复读）+ 该设计的现役后裔（今 `BuiltinAgents.DispatcherPromptTemplate`，project-dispatcher 定形 2026-09-20）。
+**版本锚**：tag `2026.9.19`（`git show 949ce9159:VERSION` → `2026.9.19`；[[design/20261028_213056_delegate-dual-mode-redesign__delegate-nebflow-192d10a5.zh-CN]] §2.1 记 tag 对应 merge commit `249a83958`）。考古对象 = 该树 `src/main/resources/seed/agents/project-dispatcher/system.md`（11 行全文，git 可复读）+ 该设计的现役后裔（今 `BuiltinAgents.DispatcherPromptTemplate`，project-dispatcher 定形 2026-09-20）。
 
 9.19 分发器的编排纪律要点（逐条可锚）：
 
@@ -71,11 +71,11 @@ author-order: 作者 2026-11-01 10:00 令
 
 ## 6. 执行记录
 
-- 考古读面：`git show 949ce9159:src/main/resources/seed/agents/project-dispatcher/system.md`（9.19 全文 11 行）；`BuiltinAgents.scala`（现役 project-dispatcher 定形稿）；[[20261028_213056_delegate-dual-mode-redesign__delegate-nebflow-192d10a5]] §2/§5.7（考古表与纪律层设计）。
+- 考古读面：`git show 949ce9159:src/main/resources/seed/agents/project-dispatcher/system.md`（9.19 全文 11 行）；`BuiltinAgents.scala`（现役 project-dispatcher 定形稿）；[[design/20261028_213056_delegate-dual-mode-redesign__delegate-nebflow-192d10a5.zh-CN]] §2/§5.7（考古表与纪律层设计）。
 - 改码：`DelegateTool.scala`（座位段重写 + Scaladoc 五段批注）；`DualModeToolFaceSpec.scala`（F11a/b/c）；`DualModeBriefInjectionSpec.scala`（新件 I1-I3）。
 - 回归：见 §4（本批提交内附执行输出）。
 
 ## 相关文档
 
-- [[20261028_213056_delegate-dual-mode-redesign__delegate-nebflow-192d10a5]] — 双模式设计（§2 = 9.19 考古权威表；§5.7 = 三层防线纪律层）
+- [[design/20261028_213056_delegate-dual-mode-redesign__delegate-nebflow-192d10a5.zh-CN]] — 双模式设计（§2 = 9.19 考古权威表；§5.7 = 三层防线纪律层）
 - [[glossary]] — 词表；[[index]] — 文档库入口

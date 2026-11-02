@@ -1,0 +1,242 @@
+[
+  {
+    "name": "A1 chromium/light ON 轨道=绿 35%",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.35)"
+  },
+  {
+    "name": "A2 chromium/light ON 描边=绿 50%",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.5)"
+  },
+  {
+    "name": "A3 chromium/light ON 圆钮=实心绿",
+    "ok": true,
+    "extra": "rgb(7, 193, 96)"
+  },
+  {
+    "name": "A4 chromium/light OFF 轨道零绿",
+    "ok": true,
+    "extra": "rgba(255, 255, 255, 0.6)"
+  },
+  {
+    "name": "A5 chromium/light OFF 圆钮零绿",
+    "ok": true,
+    "extra": "rgb(113, 115, 121)"
+  },
+  {
+    "name": "A6 chromium/light disabled opacity=0.5",
+    "ok": true,
+    "extra": "0.5"
+  },
+  {
+    "name": "B1 chromium/light OFF hover 描边递进（≠rest）",
+    "ok": true,
+    "extra": "rgba(255, 255, 255, 0.9) → rgb(113, 115, 121)"
+  },
+  {
+    "name": "B2 chromium/light ON hover 保持绿描边",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.5)"
+  },
+  {
+    "name": "C1 chromium/light 真实开关翻转",
+    "ok": true,
+    "extra": "aria-checked false→true"
+  },
+  {
+    "name": "C2 chromium/light 真实开关翻转后配色随态",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.35)"
+  },
+  {
+    "name": "D1 chromium/light 插件面开关配色随态(true)",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.35)"
+  },
+  {
+    "name": "G1 chromium/light 零 console error / pageerror（除 virgin-home 固有 404 ×5）",
+    "ok": true,
+    "extra": "{\"hard\":[],\"bad404\":[],\"unexplained\":[]}"
+  },
+  {
+    "name": "A1 chromium/dark ON 轨道=绿 35%",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.35)"
+  },
+  {
+    "name": "A2 chromium/dark ON 描边=绿 50%",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.5)"
+  },
+  {
+    "name": "A3 chromium/dark ON 圆钮=实心绿",
+    "ok": true,
+    "extra": "rgb(7, 193, 96)"
+  },
+  {
+    "name": "A4 chromium/dark OFF 轨道零绿",
+    "ok": true,
+    "extra": "rgba(255, 255, 255, 0.14)"
+  },
+  {
+    "name": "A5 chromium/dark OFF 圆钮零绿",
+    "ok": true,
+    "extra": "rgb(129, 131, 138)"
+  },
+  {
+    "name": "A6 chromium/dark disabled opacity=0.5",
+    "ok": true,
+    "extra": "0.5"
+  },
+  {
+    "name": "B1 chromium/dark OFF hover 描边递进（≠rest）",
+    "ok": true,
+    "extra": "rgba(255, 255, 255, 0.32) → rgb(129, 131, 138)"
+  },
+  {
+    "name": "B2 chromium/dark ON hover 保持绿描边",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.5)"
+  },
+  {
+    "name": "C1 chromium/dark 真实开关翻转",
+    "ok": true,
+    "extra": "aria-checked false→true"
+  },
+  {
+    "name": "C2 chromium/dark 真实开关翻转后配色随态",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.35)"
+  },
+  {
+    "name": "D1 chromium/dark 插件面开关配色随态(true)",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.35)"
+  },
+  {
+    "name": "G1 chromium/dark 零 console error / pageerror（除 virgin-home 固有 404 ×5）",
+    "ok": true,
+    "extra": "{\"hard\":[],\"bad404\":[],\"unexplained\":[]}"
+  },
+  {
+    "name": "A1 webkit/light ON 轨道=绿 35%",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.35)"
+  },
+  {
+    "name": "A2 webkit/light ON 描边=绿 50%",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.5)"
+  },
+  {
+    "name": "A3 webkit/light ON 圆钮=实心绿",
+    "ok": true,
+    "extra": "rgb(7, 193, 96)"
+  },
+  {
+    "name": "A4 webkit/light OFF 轨道零绿",
+    "ok": true,
+    "extra": "rgba(255, 255, 255, 0.6)"
+  },
+  {
+    "name": "A5 webkit/light OFF 圆钮零绿",
+    "ok": true,
+    "extra": "rgb(113, 115, 121)"
+  },
+  {
+    "name": "A6 webkit/light disabled opacity=0.5",
+    "ok": true,
+    "extra": "0.5"
+  },
+  {
+    "name": "B1 webkit/light OFF hover 描边递进（≠rest）",
+    "ok": true,
+    "extra": "rgba(255, 255, 255, 0.9) → rgb(113, 115, 121)"
+  },
+  {
+    "name": "B2 webkit/light ON hover 保持绿描边",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.5)"
+  },
+  {
+    "name": "C1 webkit/light 真实开关翻转",
+    "ok": true,
+    "extra": "aria-checked false→true"
+  },
+  {
+    "name": "C2 webkit/light 真实开关翻转后配色随态",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.35)"
+  },
+  {
+    "name": "D1 webkit/light 插件面开关配色随态(true)",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.35)"
+  },
+  {
+    "name": "G1 webkit/light 零 console error / pageerror（除 virgin-home 固有 404 ×5）",
+    "ok": true,
+    "extra": "{\"hard\":[],\"bad404\":[],\"unexplained\":[]}"
+  },
+  {
+    "name": "A1 webkit/dark ON 轨道=绿 35%",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.35)"
+  },
+  {
+    "name": "A2 webkit/dark ON 描边=绿 50%",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.5)"
+  },
+  {
+    "name": "A3 webkit/dark ON 圆钮=实心绿",
+    "ok": true,
+    "extra": "rgb(7, 193, 96)"
+  },
+  {
+    "name": "A4 webkit/dark OFF 轨道零绿",
+    "ok": true,
+    "extra": "rgba(255, 255, 255, 0.14)"
+  },
+  {
+    "name": "A5 webkit/dark OFF 圆钮零绿",
+    "ok": true,
+    "extra": "rgb(129, 131, 138)"
+  },
+  {
+    "name": "A6 webkit/dark disabled opacity=0.5",
+    "ok": true,
+    "extra": "0.5"
+  },
+  {
+    "name": "B1 webkit/dark OFF hover 描边递进（≠rest）",
+    "ok": true,
+    "extra": "rgba(255, 255, 255, 0.32) → rgb(129, 131, 138)"
+  },
+  {
+    "name": "B2 webkit/dark ON hover 保持绿描边",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.5)"
+  },
+  {
+    "name": "C1 webkit/dark 真实开关翻转",
+    "ok": true,
+    "extra": "aria-checked false→true"
+  },
+  {
+    "name": "C2 webkit/dark 真实开关翻转后配色随态",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.35)"
+  },
+  {
+    "name": "D1 webkit/dark 插件面开关配色随态(true)",
+    "ok": true,
+    "extra": "rgba(7, 193, 96, 0.35)"
+  },
+  {
+    "name": "G1 webkit/dark 零 console error / pageerror（除 virgin-home 固有 404 ×5）",
+    "ok": true,
+    "extra": "{\"hard\":[],\"bad404\":[],\"unexplained\":[]}"
+  }
+]

@@ -1,0 +1,58 @@
+[
+  {
+    "engine": "chromium",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "bubbles": 120,
+    "errors": [],
+    "frames": 113,
+    "durationMs": 2505,
+    "avgFps": 45.1,
+    "droppedFrames": 39,
+    "p95Ms": 44.7,
+    "maxMs": 49.5,
+    "scrolledHeight": 11373
+  },
+  {
+    "engine": "chromium",
+    "theme": "light",
+    "viewport": "1280x844",
+    "bubbles": 120,
+    "errors": [],
+    "frames": 114,
+    "durationMs": 2542,
+    "avgFps": 44.8,
+    "droppedFrames": 44,
+    "p95Ms": 44.4,
+    "maxMs": 45.6,
+    "scrolledHeight": 11373
+  },
+  {
+    "engine": "webkit",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "bubbles": 120,
+    "errors": [],
+    "frames": 140,
+    "durationMs": 2511,
+    "avgFps": 55.8,
+    "droppedFrames": 3,
+    "p95Ms": 19,
+    "maxMs": 190,
+    "scrolledHeight": 11373
+  },
+  {
+    "engine": "webkit",
+    "theme": "light",
+    "viewport": "1280x844",
+    "bubbles": 120,
+    "errors": [],
+    "frames": 139,
+    "durationMs": 2508,
+    "avgFps": 55.4,
+    "droppedFrames": 3,
+    "p95Ms": 22,
+    "maxMs": 197,
+    "scrolledHeight": 11373
+  }
+]

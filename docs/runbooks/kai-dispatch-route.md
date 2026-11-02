@@ -1,3 +1,8 @@
+---
+type: runbook
+status: done
+---
+
 # Runbook：KAI 派发路由（Mac → KAI 引擎 device-delegate 腿）
 
 - 批次：20261028 派发路由重接批（作者拍板 2026-10-28 14:0x「按推荐重接」；依据报告一 `~/.stand/docs/20261028_103000_多设备现状与KAI迁移根因/REPORT.md` 结论①）。

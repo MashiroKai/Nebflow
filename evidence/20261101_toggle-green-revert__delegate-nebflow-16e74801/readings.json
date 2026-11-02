@@ -1,0 +1,20 @@
+{
+  "light": {
+    "trackRaw": "rgba(7, 193, 96, 0.35)",
+    "knobRaw": "rgb(7, 193, 96)",
+    "borderRaw": "rgba(7, 193, 96, 0.5)",
+    "opacity": "1",
+    "knobVsTrack": 1.72,
+    "trackVsBase": 1.38,
+    "onVsOffTrack": 1.38
+  },
+  "dark": {
+    "trackRaw": "rgba(7, 193, 96, 0.35)",
+    "knobRaw": "rgb(7, 193, 96)",
+    "borderRaw": "rgba(7, 193, 96, 0.5)",
+    "opacity": "1",
+    "knobVsTrack": 3.55,
+    "trackVsBase": 1.95,
+    "onVsOffTrack": 1.26
+  }
+}

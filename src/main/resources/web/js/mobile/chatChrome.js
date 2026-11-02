@@ -10,16 +10,16 @@
 //     任务键徽标 = taskBadgeCount 镜像（dock 批机制零变化）；
 //   · 页标题入流：原 #header .header-center 三节点（#agent-avatar-btn /
 //     #session-name / #memory-btn）整体迁入 #chat 内容流首的 .g2-chat-head，
-//     形态 = 顶缘渐隐改造前原样恢复（作者 10-31 11:38 令②：52px 头像 + 名称
-//     玻璃胶囊居中列，见 liquid-glass.css .g2-chat-head 块注记）——
 //     节点迁移非复制：桌面 JS（agentProfile/sidebar 改名链）照写原节点，
 //     零镜像漂移；chatView.setSession 清空保留本层（chatView.js 同批注记）。
 //     功能谱系不动：头像 = profile 面板入口（PANEL 链全绿），记忆钮 hidden 常态。
-//   · dock 收形批（作者令 10-31 22:50 ①③）：主对话每条 agent 消息补挂身份头
-//     （圆头像 + agent 名；.g2-msg-meta，CSS 在 mobileLayer.css 消息流块）——
-//     #chat childList 守望随行随挂，teardown 全量摘除 ⇒ 桌面 DOM 逐字节还原；
-//     无头像回落 = stand logo（.g2-msg-avatar-slot / 会话头空态
-//     .agent-avatar-stand-logo 同货源，零默认人形）。
+//     形态随 Muse 式悬浮头像批（作者令 2026-11-01 13:33）升级为 sticky 顶锚
+//     大圆头像 + 名字下置 —— 样式全在 mobileLayer.css 文件尾批次块，本文件
+//     节点迁移/清空守望链不变。
+//   · dock 收形批（作者令 10-31 22:50 ①③）的「每条 agent 消息泡上方补挂
+//     .g2-msg-meta 身份头」随 Muse 式悬浮头像批**整批退役**（作者令 ①：
+//     「去掉每条消息头部的 agent 头像+名字行」）—— 守望/装饰/摘除链全数
+//     摘除，本文件不再触碰消息行；会话级身份 = .g2-chat-head 悬浮锚一处。
 //   · 顶缘 88px 渐隐带 #g2-edge-fade（index.html 静态节点 + liquid-glass.css；
 //     主 JS 顶带实测把它计入 #chat 顶让位，main.js 同批）——本文件不管其显隐：
 //     push 页（#mobile-pages z156）全屏不透明直盖其上，零 JS 对账。
@@ -30,12 +30,9 @@
 
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
-import state from '../state.js';
 import { taskBadgeCount } from './taskPanel.js';
 import { pushPage, logEvent, touchLayer } from './navController.js';
-import { agentAvatarDataUrl, onAgentAvatarChange, paintSlot } from '../agentProfile.js';
-import { avatarImgNode } from '../avatarRender.js';
-import { rootDisplayName } from '../rootName.js';
+import { paintSlot } from '../agentProfile.js';
 import { brand } from '../brand.js';
 
 /** @type {HTMLButtonElement|null} */
@@ -48,65 +45,8 @@ let fabLayer = null;
 let chatHead = null;
 /** @type {MutationObserver|null} 聊天清空路径守望（见 activateChatChrome 注记）。 */
 let headMo = null;
-/** @type {MutationObserver|null} 消息流行守望：.row.ai 追加 → 补挂头像+名（批①）。 */
-let msgMo = null;
 /** @type {Array<() => void>} */
 let unsubs = [];
-
-/* ── 消息流头像 + agent 名（收形批①③，作者令 10-31 22:50）────────────────
- *  主对话里每条 agent 消息（.row.ai 且带直接 .bubble.ai 子泡）在泡上方补一行
- *  身份头：圆头像 + agent 名（微信式，见 mobileLayer.css .g2-msg-meta 块）。
- *  🔴 手机层专属装饰：只由本模块（mobile-layer 激活路径）挂出；teardown 时
- *  全量摘除 ⇒ 桌面 #chat DOM 逐字节还原（桌面端零感知）。实现走 #chat
- *  childList 守望（行一律 appendChatRow 直挂 #chat，单点入口），行内泡的
- *  流式 innerHTML 更新不在 childList 面上 ⇒ 守望零热路径成本。
- *  · 代发行（.agent-badge 直子 = 「Agent 代发」徽章）不装饰 —— 它已有自己的
- *    身份徽章，名字标 root 反而错标；
- *  · 头像 = agentAvatarDataUrl()（与 dock 中键/会话头同一本地条目），无头像
- *    回落 stand logo（brand 双主题 picture —— 不显示空白/默认人形）；
- *  · 名字 = rootDisplayName() 单读点；头像/名变化经 onAgentAvatarChange /
- *    nebflow-root-name-change 全量重刷（幂等，innerHTML 重建只在事件时）。 */
-
-/** 给单个身份头节点填头像 + 名（幂等可重入，事件重刷入口同一函数）。 */
-function paintMsgMeta(meta) {
-  const nameEl = meta.querySelector('.g2-msg-name');
-  if (nameEl) nameEl.textContent = rootDisplayName();
-  const slot = meta.querySelector('.g2-msg-avatar-slot');
-  if (!slot) return;
-  const dataUrl = agentAvatarDataUrl();
-  if (dataUrl) {
-    const img = avatarImgNode(dataUrl);
-    img.className = 'g2-msg-avatar';
-    img.alt = '';
-    slot.replaceChildren(img);
-    return;
-  }
-  slot.innerHTML =
-    `<picture><source media="(prefers-color-scheme: dark)" srcset="${brand.logoDarkUrl}">` +
-    `<img class="g2-msg-avatar g2-msg-logo" src="${brand.logoUrl}" alt=""></picture>`;
-}
-
-/** 装饰一行 agent 消息（已装饰/代发行/无泡行一律零操作幂等返回）。 */
-function decorateAiRow(row) {
-  if (row.querySelector(':scope > .g2-msg-meta')) return;
-  if (row.querySelector(':scope > .agent-badge')) return;
-  if (!row.querySelector(':scope > .bubble.ai')) return;
-  const meta = document.createElement('div');
-  meta.className = 'g2-msg-meta';
-  const slot = document.createElement('span');
-  slot.className = 'g2-msg-avatar-slot';
-  const name = document.createElement('span');
-  name.className = 'g2-msg-name';
-  meta.append(slot, name);
-  row.insertBefore(meta, row.firstChild);
-  paintMsgMeta(meta);
-}
-
-/** 全量重刷（头像/名变化事件 + 激活时的存量行补挂）。 */
-function repaintAllMsgMeta(chat) {
-  for (const row of chat.querySelectorAll('.row.ai')) decorateAiRow(row);
-  for (const meta of chat.querySelectorAll('.g2-msg-meta')) paintMsgMeta(meta);
-}
 
 /* ── 会话头头像空态回落 stand logo（批③；2026-11-01 起为**兜底腿**）────────────
  *  #agent-avatar-btn 两端共享节点。桌面腿补齐批（2026-11-01，作者令 10-31 22:50
@@ -171,22 +111,13 @@ export function activateChatChrome() {
     headMo.observe(chat, { childList: true });
   }
 
-  // ── 消息流头像 + agent 名（收形批①③）：存量行补挂 + 追加行守望 ──
-  repaintAllMsgMeta(chat);
-  msgMo = new MutationObserver((records) => {
-    for (const rec of records) {
-      for (const node of rec.addedNodes) {
-        if (!(node instanceof HTMLElement)) continue;
-        if (node.matches('.row.ai')) decorateAiRow(node);
-        for (const row of node.querySelectorAll('.row.ai')) decorateAiRow(row);
-      }
-    }
-  });
-  msgMo.observe(chat, { childList: true });
-  const onIdentity = () => repaintAllMsgMeta(chat);
-  unsubs.push(onAgentAvatarChange(onIdentity));
-  window.addEventListener('nebflow-root-name-change', onIdentity);
-  unsubs.push(() => window.removeEventListener('nebflow-root-name-change', onIdentity));
+  // ── 消息流身份头（收形批①③）随 Muse 式悬浮头像批退役 ──
+  // 作者令 2026-11-01 13:33 ①「去掉每条消息头部的 agent 头像+名字行」：
+  // 守望/装饰/全量重刷链整批摘除（原 repaintAllMsgMeta + #chat childList
+  // 守望 + avatar/root-name 重刷订阅），消息行回归桌面同构零装饰；会话级
+  // 身份 = .g2-chat-head 悬浮锚（sticky 顶锚大圆头像 + 名字下置，
+  // mobileLayer.css 文件尾批次块）一处承载。teardown 的 .g2-msg-meta 摘除
+  // 行随之退役 —— 本文件此后对消息行零写入。
 
   // ── 会话头头像空态回落 stand logo（批③）──
   const avatarSlot = document.getElementById('agent-avatar-btn');
@@ -195,6 +126,23 @@ export function activateChatChrome() {
     avatarSlotMo = new MutationObserver(() => paintAgentSlotLogo(avatarSlot));
     avatarSlotMo.observe(avatarSlot, { childList: true });
   }
+
+  // ── 悬浮锚 top 变量同步（Muse 式悬浮头像批 · 作者令 2026-11-01 13:33）──
+  // sticky 的锚定矩形 = scrollport 内缩 padding（实测：top:0 只能锚到 padding
+  // 缘）—— main.js 顶让位观察器把 padding-top 写在 #chat 上（手机层常态
+  // 96px = 渐隐带 88 + 基线 8），CSS 的 top:0 够不到窗口顶。本层同步
+  // --muse-head-top = -(padding-top)，mobileLayer.css 的 .g2-chat-head 以
+  // var() 消费 —— 锚定阈值恒等窗口顶。#chat 的 content box 随 padding 写入
+  // 收缩 ⇒ ResizeObserver 必有一拍重测（横幅/键盘/层翻转引起的 reserve
+  // 变化同链覆盖）；同步轻量幂等，零滚动热路径成本。
+  const syncHeadTop = () => {
+    const pad = parseFloat(getComputedStyle(chat).paddingTop) || 0;
+    chat.style.setProperty('--muse-head-top', `${-pad}px`);
+  };
+  syncHeadTop();
+  const headTopRo = new ResizeObserver(syncHeadTop);
+  headTopRo.observe(chat);
+  unsubs.push(() => headTopRo.disconnect());
 
   // ── 左右悬浮圆钮层（任务/搜索；48px v2 液体玻璃正圆）──
   fabLayer = document.createElement('div');
@@ -253,16 +201,15 @@ export function activateChatChrome() {
     for (const fn of unsubs.splice(0)) { try { fn(); } catch { /* ignore */ } }
     headMo?.disconnect();
     headMo = null;
-    msgMo?.disconnect();
-    msgMo = null;
     avatarSlotMo?.disconnect();
     avatarSlotMo = null;
-    // 消息流身份头全量摘除 ⇒ 桌面 #chat DOM 逐字节还原（批①手机层专属装饰）。
-    document.querySelectorAll('#chat .g2-msg-meta').forEach((m) => m.remove());
+    // 消息流身份头随 Muse 式悬浮头像批退役（挂出链已摘，DOM 无此节点）。
     document.querySelectorAll('#agent-avatar-btn .agent-avatar-stand-logo').forEach((n) => n.remove());
     // 归位重绘（桌面腿 2026-11-01）：摘除走的是同名类（注入档 + paintSlot 自绘档
     // 一并中招）——归还桌面形态前必须补一次 paintSlot，否则空槽挂到下一个事件。
     try { paintSlot(); } catch { /* 绘制失败不阻断其余归还 */ }
+    // 悬浮锚 top 变量随层拆除（headTopRo 经 unsubs 断开）。
+    chat.style.removeProperty('--muse-head-top');
     taskBtn?.remove();
     searchBtn?.remove();
     taskBtn = null;

@@ -1,0 +1,147 @@
+
+Running 9 tests using 1 worker
+
+[1/9] tests/canvas-file-refresh.spec.mjs:114:3 › refresh button › A1 exists on file tabs, seats bottom-right without overlapping the corner cluster
+[2/9] tests/canvas-file-refresh.spec.mjs:164:3 › refresh button › A2 md tab: click re-reads from disk and re-renders changed content
+  1) tests/canvas-file-refresh.spec.mjs:164:3 › refresh button › A2 md tab: click re-reads from disk and re-renders changed content 
+
+    Error: changed content shows after refresh
+
+    expect(locator).toContainText(expected) failed
+
+    Locator: locator('.canvas-tab-pane[data-tab-id="file:/tmp/nfr/live.md"]').locator('.canvas-md-viewer')
+    Expected substring: "NEW-CONTENT-MARKER v2"
+    Error: strict mode violation: locator('.canvas-tab-pane[data-tab-id="file:/tmp/nfr/live.md"]').locator('.canvas-md-viewer') resolved to 2 elements:
+        1) <div class="canvas-md-viewer">…</div> aka getByText('note Paragraph 1: mock body').first()
+        2) <div class="canvas-md-viewer">…</div> aka getByText('note Paragraph 1: mock body').nth(1)
+
+    Call log:
+      - changed content shows after refresh with timeout 10000ms
+      - waiting for locator('.canvas-tab-pane[data-tab-id="file:/tmp/nfr/live.md"]').locator('.canvas-md-viewer')
+        - locator resolved to <div class="canvas-md-viewer">…</div>
+        - unexpected value "note
+    Paragraph 1: mock body line for scroll.
+    Paragraph 2: mock body line for scroll.
+    Paragraph 3: mock body line for scroll.
+    Paragraph 4: mock body line for scroll.
+    Paragraph 5: mock body line for scroll.
+    Paragraph 6: mock body line for scroll.
+    Paragraph 7: mock body line for scroll.
+    Paragraph 8: mock body line for scroll.
+    Paragraph 9: mock body line for scroll.
+    Paragraph 10: mock body line for scroll.
+    Paragraph 11: mock body line for scroll.
+    Paragraph 12: mock body line for scroll.
+    Paragraph 13: mock body line for scroll.
+    Paragraph 14: mock body line for scroll.
+    Paragraph 15: mock body line for scroll.
+    Paragraph 16: mock body line for scroll.
+    Paragraph 17: mock body line for scroll.
+    Paragraph 18: mock body line for scroll.
+    Paragraph 19: mock body line for scroll.
+    Paragraph 20: mock body line for scroll.
+    Paragraph 21: mock body line for scroll.
+    Paragraph 22: mock body line for scroll.
+    Paragraph 23: mock body line for scroll.
+    Paragraph 24: mock body line for scroll.
+    Paragraph 25: mock body line for scroll.
+    Paragraph 26: mock body line for scroll.
+    Paragraph 27: mock body line for scroll.
+    Paragraph 28: mock body line for scroll.
+    Paragraph 29: mock body line for scroll.
+    Paragraph 30: mock body line for scroll.
+    Paragraph 31: mock body line for scroll.
+    Paragraph 32: mock body line for scroll.
+    Paragraph 33: mock body line for scroll.
+    Paragraph 34: mock body line for scroll.
+    Paragraph 35: mock body line for scroll.
+    Paragraph 36: mock body line for scroll.
+    Paragraph 37: mock body line for scroll.
+    Paragraph 38: mock body line for scroll.
+    Paragraph 39: mock body line for scroll.
+    Paragraph 40: mock body line for scroll.
+    Paragraph 41: mock body line for scroll.
+    Paragraph 42: mock body line for scroll.
+    Paragraph 43: mock body line for scroll.
+    Paragraph 44: mock body line for scroll.
+    Paragraph 45: mock body line for scroll.
+    Paragraph 46: mock body line for scroll.
+    Paragraph 47: mock body line for scroll.
+    Paragraph 48: mock body line for scroll.
+    Paragraph 49: mock body line for scroll.
+    Paragraph 50: mock body line for scroll.
+    Paragraph 51: mock body line for scroll.
+    Paragraph 52: mock body line for scroll.
+    Paragraph 53: mock body line for scroll.
+    Paragraph 54: mock body line for scroll.
+    Paragraph 55: mock body line for scroll.
+    Paragraph 56: mock body line for scroll.
+    Paragraph 57: mock body line for scroll.
+    Paragraph 58: mock body line for scroll.
+    Paragraph 59: mock body line for scroll.
+    Paragraph 60: mock body line for scroll.
+    Paragraph 61: mock body line for scroll.
+    Paragraph 62: mock body line for scroll.
+    Paragraph 63: mock body line for scroll.
+    Paragraph 64: mock body line for scroll.
+    Paragraph 65: mock body line for scroll.
+    Paragraph 66: mock body line for scroll.
+    Paragraph 67: mock body line for scroll.
+    Paragraph 68: mock body line for scroll.
+    Paragraph 69: mock body line for scroll.
+    Paragraph 70: mock body line for scroll.
+    Paragraph 71: mock body line for scroll.
+    Paragraph 72: mock body line for scroll.
+    Paragraph 73: mock body line for scroll.
+    Paragraph 74: mock body line for scroll.
+    Paragraph 75: mock body line for scroll.
+    Paragraph 76: mock body line for scroll.
+    Paragraph 77: mock body line for scroll.
+    Paragraph 78: mock body line for scroll.
+    Paragraph 79: mock body line for scroll.
+    Paragraph 80: mock body line for scroll.
+    "
+
+
+      171 |     files['/tmp/nfr/live.md'] = { content: MD_V2, itemType: 'markdown' };
+      172 |     await page.locator('.canvas-refresh-toggle').click();
+    > 173 |     await expect(pane.locator('.canvas-md-viewer'), 'changed content shows after refresh').toContainText('NEW-CONTENT-MARKER v2', { timeout: 10000 });
+          |                                                                                            ^
+      174 |     await expect(page.locator('.canvas-refresh-toggle'), 'busy state cleared after settle').not.toHaveClass(/busy/);
+      175 |     expect(errors, 'zero pageerrors').toEqual([]);
+      176 |     await ctx.close();
+        at /private/tmp/merge-eed3ad45/pristine/tests/canvas-file-refresh.spec.mjs:173:92
+
+    Error Context: test-results/canvas-file-refresh-refres-ce0b3--re-renders-changed-content/error-context.md
+
+    Error Context: test-results/canvas-file-refresh-refres-ce0b3--re-renders-changed-content/error-context.md
+
+
+[3/9] tests/canvas-file-refresh.spec.mjs:179:3 › refresh button › A3 unchanged content: click is harmless — no remount, scroll kept, busy cleared
+[4/9] tests/canvas-file-refresh.spec.mjs:213:3 › refresh button › A4 image tab: refresh invalidates the blob ledger and re-fetches bytes
+tests/canvas-file-refresh.spec.mjs:213:3 › refresh button › A4 image tab: refresh invalidates the blob ledger and re-fetches bytes
+[A4] booted
+
+[A4] nf-file fetch # 1
+
+[A4] first render fetches = 1
+
+[A4] refresh clicked
+
+[A4] nf-file fetch # 2
+
+[A4] re-fetch observed, count = 2
+
+[A4] done
+
+[5/9] tests/canvas-file-refresh.spec.mjs:245:3 › refresh button › A5 dirty tab: refresh refuses to clobber and says so; no readFile is sent
+[6/9] tests/canvas-file-refresh.spec.mjs:284:3 › refresh button › A6 refresh button hides in source mode and returns in rendered mode
+[7/9] tests/canvas-file-refresh.spec.mjs:308:3 › refresh button › A8 scroll pin: pane self-scroll (yaml/.scrollable class) never moves the button
+[8/9] tests/canvas-file-refresh.spec.mjs:359:3 › refresh button › A9 theme pin: light and dark give identical button geometry
+[9/9] tests/canvas-file-refresh.spec.mjs:408:3 › view-source latency › A7 preloaded source open mounts within the performance budget (1500ms)
+tests/canvas-file-refresh.spec.mjs:408:3 › view-source latency › A7 preloaded source open mounts within the performance budget (1500ms)
+[canvas-file-refresh] preloaded source-open latency: 119ms (budget 1500ms)
+
+  1 failed
+    tests/canvas-file-refresh.spec.mjs:164:3 › refresh button › A2 md tab: click re-reads from disk and re-renders changed content 
+  8 passed (14.1s)

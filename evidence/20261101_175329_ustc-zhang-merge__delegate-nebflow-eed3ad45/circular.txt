@@ -1,0 +1,11 @@
+circular-deps GATE FAILURES (static import cycles):
+  SCC [3]: popArtifacts.js, reference.js, msgQuote.js
+    popArtifacts.js -> msgQuote.js
+    reference.js -> popArtifacts.js
+    msgQuote.js -> reference.js
+  SCC [2]: mobile/navController.js, mobile/taskPanel.js
+    mobile/navController.js -> mobile/taskPanel.js
+    mobile/taskPanel.js -> mobile/navController.js
+
+Break the cycle: convert the thinnest edge to a dynamic import()
+at the call site, or inject an accessor via state.js (see chatView.js).

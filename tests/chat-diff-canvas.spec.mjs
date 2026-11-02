@@ -186,7 +186,9 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     await injectCompletion(page, PAYLOAD_A);
 
     // T1 — 折叠态小注在场：灰字一行（+X −Y）、可点击标识（button + aria-pressed
-    //      初始 false）；「不是 chip 不是胶囊」构造性断言 = 零背景零边框零 padding。
+    //      初始 false）；diff 统计恢复批（2026-11-01 作者令版式②「diff 统计旁边
+    //      单独一颗块」）：小注为**胶囊块** = hairline 边框 + 999px 圆角 + 横向
+    //      padding（22:29 批「零构造」口径随版式批②退役）。
     const bubble = page.locator('.bubble.injected').first();
     const c = note(page);
     await expect(c).toBeVisible();
@@ -206,26 +208,29 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     const noteLook = await c.evaluate((el) => {
       const cs = getComputedStyle(el);
       return {
-        borderTopWidth: cs.borderTopWidth,
+        borderTopWidth: cs.borderTopWidth, borderTopStyle: cs.borderTopStyle,
+        borderRadius: cs.borderRadius,
         backgroundColor: cs.backgroundColor,
         paddingLeft: cs.paddingLeft,
         color: cs.color,
         fontFamily: cs.fontFamily,
       };
     });
-    expect(noteLook.borderTopWidth).toBe('0px');
+    expect(noteLook.borderTopWidth).toBe('1px');
+    expect(noteLook.borderTopStyle).toBe('solid');
+    expect(noteLook.borderRadius).toBe('999px');
     expect(noteLook.backgroundColor === 'rgba(0, 0, 0, 0)' || noteLook.backgroundColor === 'transparent').toBe(true);
-    expect(noteLook.paddingLeft).toBe('0px');
+    expect(parseFloat(noteLook.paddingLeft)).toBeGreaterThan(0);
     // 墨族灰字（--color-text-muted 面，双主题 token——暗亮两档由 T12 覆盖）。
     expect(noteLook.color).not.toBe('');
     expect(noteLook.fontFamily).toContain('monospace');
-    // 判词徽标墨族单色（hairline 边框 + muted 文字，无色相填充）。
+    // 判词徽标墨族单色（muted 文字，无色相填充）；版式批②「合成一个块」——徽标
+    // 自身边框退役（块界由 .nf-rcpt-pill 承担，borderTopWidth = 0px）。
     const badgeLook = await bubble.locator('.nf-rcpt-badge').evaluate((el) => {
       const cs = getComputedStyle(el);
-      return { borderTopWidth: cs.borderTopWidth, borderTopStyle: cs.borderTopStyle, color: cs.color, backgroundColor: cs.backgroundColor };
+      return { borderTopWidth: cs.borderTopWidth, color: cs.color, backgroundColor: cs.backgroundColor };
     });
-    expect(badgeLook.borderTopWidth).toBe('1px');
-    expect(badgeLook.borderTopStyle).toBe('solid');
+    expect(badgeLook.borderTopWidth).toBe('0px');
     expect(badgeLook.backgroundColor === 'rgba(0, 0, 0, 0)' || badgeLook.backgroundColor === 'transparent').toBe(true);
 
     // T2 — 展开体内零 diff 面（旧 Changes 段退役）。展开点击面 = 卡头/摘要行
@@ -545,26 +550,26 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     });
     expect(reads.bg).toBe('rgba(255, 255, 255, 0.55)');
     expect(reads.backdrop).toContain('saturate(1.15)');
-    // 小注墨族灰字在亮档同样成立：透明底 + 零边框 + 非透明文字色（「灰字小注」
-    // 形态双主题不漂移；旧 glass chip 的描边/999 圆角断言随胶囊退役移除）。
-    // 单行化+hover 批（2026-10-31 22:29）：小注为分块 hover 单元（hover 上底色），
-    // 上文 click 后指针仍悬停小注 ⇒ 先移开指针再读 rest 构造（零背景是 rest 断言）。
+    // 小注胶囊块在亮档同样成立：rest 透明底 + hairline 边框 + 非透明文字色
+    // （版式批 2026-11-01「单独一颗块」口径双主题不漂移；22:29 批零边框断言随
+    // 版式批②退役）。单行化+hover 批（2026-10-31 22:29）：小注为分块 hover 单元
+    // （hover 上底色），上文 click 后指针仍悬停小注 ⇒ 先移开指针再读 rest 构造
+    // （零背景是 rest 断言）。
     await page.mouse.move(2, 2);
     await page.waitForTimeout(300); // hover 底色 0.15s 过渡走完再读 rest 构造。
     const noteStyles = await note(page).evaluate((el) => {
       const cs = getComputedStyle(el);
       return { border: cs.borderTopWidth, bg: cs.backgroundColor, color: cs.color };
     });
-    expect(noteStyles.border).toBe('0px');
+    expect(noteStyles.border).toBe('1px');
     expect(noteStyles.bg === 'rgba(0, 0, 0, 0)' || noteStyles.bg === 'transparent').toBe(true);
     expect(noteStyles.color).not.toBe('rgba(0, 0, 0, 0)');
-    // 判词徽标 hairline 边框亮档成立（墨族单色，两档同形态）。
+    // 判词徽标亮档成立（墨族 muted 单色；版式批②徽标自身边框退役，两档同形态）。
     const badgeStyles = await page.locator('.bubble.injected .nf-rcpt-badge').evaluate((el) => {
       const cs = getComputedStyle(el);
-      return { border: cs.borderTopWidth, style: cs.borderTopStyle, color: cs.color };
+      return { border: cs.borderTopWidth, color: cs.color };
     });
-    expect(badgeStyles.border).toBe('1px');
-    expect(badgeStyles.style).toBe('solid');
+    expect(badgeStyles.border).toBe('0px');
     expect(badgeStyles.color).not.toBe('rgba(0, 0, 0, 0)');
   });
 });

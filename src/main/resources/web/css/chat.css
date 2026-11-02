@@ -466,6 +466,16 @@
 .bg-task-state .st-ic { width: 11px; height: 11px; margin-right: 3px; }
 .bg-task-state.bg-state-frozen { color: rgb(var(--accent-agent-light)); }
 .bg-task-state.bg-state-done { color: var(--color-frame-text-dim); }
+/* 延续态徽标（Flow 会话可见性批 2026-11-01）：delegate 已终态而链仍在跑的组头行
+   ——琥珀「链运行中」（--status-warn-icon 既有 token，同长空闲/离线徽标族；词前
+   workflow 图标同档），行不加 .done 灰化（活链 ≠ 死行——行体无 0.6 透明），状态点
+   走 active 绿脉冲。链全终态后覆写缺席 → 行回普通终态样式（既有 done 档）。 */
+.bg-task-state.bg-task-chain { color: var(--status-warn-icon); font-weight: 500; }
+.bg-task-state.bg-task-chain .st-ic { width: 11px; height: 11px; margin-right: 3px; color: var(--status-warn-icon); }
+/* 中性 chip 族（共用样式，零独立语义）：设备同级批（作者令 2026-11-01「本地/远程
+   这组徽标整对退役」）后，后台任务**行**不再用本类（原「本地/远程」kind chip 整对
+   删除，跑在哪由 .bg-task-origin.bg-origin-device 承载）；现值存消费方 = 同族任务
+   聚合组头（×N 计数）与子智能体行（main/bgAgents.js 的 agent kind 词）。 */
 .bg-task-kind {
   font-size: 10px;
   font-weight: 500;
@@ -509,7 +519,10 @@
    a different axis from nebula/dispatcher/node (谁开启). Same neutral chip
    family as dispatcher (one text notch brighter); the LABEL (device name,
    e.g. KAI) is the differentiator. No new color tokens — existing glass /
-   text tokens only (visual-style: reuse before inventing). */
+   text tokens only (visual-style: reuse before inventing).
+   设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：本类升格为**每行
+   恒在的设备名 chip**——远端 = 对端设备名，本机 = 本机设备名（同名同类，本机不再
+   有专属样式/不再是第二口径）；title 恒用 bg.runsOn（「跑在 X」）。零样式改动。 */
 .bg-task-origin.bg-origin-device {
   color: var(--color-frame-text);
 }
@@ -976,13 +989,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   max-width: 80%;
   border-radius: 16px;
   border-bottom-left-radius: 4px;
-  background-color: var(--color-bubble-ai);
+  background-color: var(--glass-bub-ai-bg);
   background-image: linear-gradient(90deg,
     rgb(var(--sapphire) / 0.05) 25%, rgb(var(--sapphire) / 0.13) 50%, rgb(var(--sapphire) / 0.05) 75%);
   background-size: 200% 100%;
   animation: chat-sk-shimmer 1.4s ease-in-out infinite;
 }
-.chat-sk-row-me .chat-sk-bubble { border-bottom-left-radius: 16px; border-bottom-right-radius: 4px; background-color: var(--color-bubble-user); }
+.chat-sk-row-me .chat-sk-bubble { border-bottom-left-radius: 16px; border-bottom-right-radius: 4px; background-color: var(--glass-bub-user-bg); }
 .chat-sk-w62 { width: 62%; }
 .chat-sk-w38 { width: 38%; }
 .chat-sk-w76 { width: 76%; }
@@ -1108,7 +1121,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   word-break: break-word;
 }
 .bubble.user {
-  background: var(--color-bubble-user);
+  /* 统一按钮玻璃批 2026-11-01：气泡禁独立 backdrop-filter ⇒ 消费 glass.css
+     半透明实底档（--glass-bub-user-bg = color-mix(--color-bubble-user 90%)，
+     色相单源不变、主题自适应、滚动零 backdrop 成本） */
+  background: var(--glass-bub-user-bg);
   color: var(--color-text);
   border-bottom-right-radius: 4px;
 }
@@ -1327,12 +1343,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 
 .bubble.ai {
-  background: var(--color-bubble-ai);
+  /* 统一按钮玻璃批 2026-11-01：面/边/柔影走 glass.css 气泡档 token（亮暗
+     双档随包解析；底色仍以 --color-bubble-ai 为色相单源 color-mix 出 α） */
+  background: var(--glass-bub-ai-bg);
   color: var(--color-text);
   /* Whisper edge — separates bubble from background without feeling deliberate */
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--glass-bub-ai-border);
   border-bottom-left-radius: 4px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--glass-bub-ai-shadow);
 }
 .bubble.ai img, .bubble.injected img, .ask-bub.ai img { max-width: 220px; max-height: 220px; border-radius: 8px; display: block; margin-top: 4px; }
 /* 件① 失败占位（2026-09-15 作者现场报）：思考流里的图片节点跨帧存活后，加载失败的
@@ -2756,11 +2774,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    旧「15px 内容轴」对齐（HYBRID §4.2）随题文入泡让位（作者令优先）。 */
 .bubble.ai.ob-ghost-seat .ob-body {
   padding: 10px 14px;
-  background: var(--color-bubble-ai);
-  border: 1px solid rgba(0, 0, 0, 0.04);
+  background: var(--glass-bub-ai-bg);
+  border: 1px solid var(--glass-bub-ai-border);
   border-radius: 16px;
   border-bottom-left-radius: 4px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--glass-bub-ai-shadow);
 }
 /* 题干（卡引言）在浮层语言里抬一档：15px/600（BRIEF §4.4 下限之上） */
 .bubble.ai.ob-ghost-seat .ob-para.ob-question {
@@ -4538,6 +4556,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    ═════════════════════════════════════════════════════════════════════════ */
 
 .row.pop-artifact { display: flex; justify-content: flex-start; margin: 8px 0 10px; }
+/* footer 信息条落位（Pop 交付卡 footer 批，作者令 2026-11-01 16:19）：LLM Pop 行
+   转**列向**——徽章（.duration-badge，buildPopArtifactRow 行尾追加）落卡片组下方、
+   左缘对齐（AI 行族同侧；用户侧 .row.user-media 经 .row.user 的 column+flex-end
+   本就列向+右对齐，:not(.user) 闸保证不触）。改前该行只有 .pop-group 一个子元素，
+   行/列向视觉逐字等价——本规则只服务于徽章落位，零既有面迁移。 */
+.row.pop-artifact:not(.user) { flex-direction: column; align-items: flex-start; }
 .pop-group {
   display: flex; flex-direction: column; align-items: flex-start;
   gap: 10px; min-width: 0;
@@ -4937,15 +4961,16 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    attach-bubble-unify (2026-10-20 author ruling 「用户发送附件与气泡设计语言统一
    ——微信式：附件是气泡的一部分而非独立异形卡」): the USER side's media/file
    faces join the USER BUBBLE family — same radius (16px + the 4px bottom-right
-   tail of .bubble/.bubble.user), same backing color (var(--color-bubble-user)),
+   tail of .bubble/.bubble.user), same backing color (var(--glass-bub-user-bg),
+   统一玻璃批起 = 气泡档 token，与 .bubble.user 逐值同源),
    same column cap (80%, .bubble), no standing card chrome (border/drop shadow
    go). Strictly scoped to the user row (.row.user-media); LLM Pop rows keep
    their faces verbatim (「agent 发的媒体卡维持现设计不动」). Geometry the authored
    rulings pin — 220px stack/flat boxes, peek transforms, pill clearances
    (uifix3 ① above) — is deliberately untouched: only the PAINT changes.
-   Theme note: --color-bubble-user has no dark override (base.css), so the
-   unified face is the same green in light and dark — identical to the user
-   text bubble on both themes by construction.
+   Theme note: the hue single-source --color-bubble-user has no dark override
+   (base.css), so the unified face is the same green in light and dark —
+   identical to the user text bubble on both themes by construction.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* Width cap = the bubble's own cap (.bubble max-width 80%), not the artifact
@@ -4961,7 +4986,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-radius: 16px;
   border-bottom-right-radius: 4px;
   box-shadow: none;
-  background: var(--color-bubble-user);
+  background: var(--glass-bub-user-bg);
 }
 .row.user-media .pop-img,
 .row.user-media .pop-video { background: transparent; }
@@ -4973,7 +4998,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-radius: 16px;
   border-bottom-right-radius: 4px;
   box-shadow: none;
-  background: var(--color-bubble-user);
+  background: var(--glass-bub-user-bg);
 }
 
 /* File card — 统一 chip 族（2026-10-22 作者令「附件卡=统一 chip 族」：与 AskUser

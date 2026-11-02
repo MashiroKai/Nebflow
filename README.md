@@ -7,7 +7,7 @@
 A self-hosted AI agent orchestration platform — bring all your work to one entry, and Nebflow dispatches it across agents, projects, and devices.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](https://github.com/MashiroKai/Nebflow/releases)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)
 [![Scala](https://img.shields.io/badge/Scala-3.5.2-red.svg)](https://www.scala-lang.org/)
 [![Java](https://img.shields.io/badge/Java-21%2B-orange.svg)](https://adoptium.net/)
 
@@ -15,7 +15,7 @@ A self-hosted AI agent orchestration platform — bring all your work to one ent
   <img src="docs/assets/readme/hero-flow-map.png" alt="Nebflow Flow Map — a task chain executing live" width="960">
 </p>
 
-**[Website](https://mystand.space)** · **[Releases](https://github.com/MashiroKai/Nebflow/releases)**
+**[Website](https://mystand.space)** · **[Releases](https://git.ustc.edu.cn/kaiyu/nebflow/-/releases)**
 
 </div>
 
@@ -100,7 +100,7 @@ Then start the workspace:
 stand start    # serves the web UI at http://localhost:6138
 ```
 
-Releases on [GitHub Releases](https://github.com/MashiroKai/Nebflow/releases) ship a single self-contained JAR; the install scripts above add Java 21 and ripgrep for you when either is missing.
+Releases on [the USTC releases page](https://git.ustc.edu.cn/kaiyu/nebflow/-/releases) ship a single self-contained JAR; the install scripts above add Java 21 and ripgrep for you when either is missing.
 
 To build from source (Java 21+, sbt):
 
@@ -152,6 +152,10 @@ Full documentation lives at [mystand.space](https://mystand.space).
 ## Architecture
 
 Nebflow is written in **Scala 3** on **self-developed actors** (message passing and state management) and **http4s / cats-effect** (HTTP, WebSocket, and side-effect orchestration), with a deliberate boundary keeping the two layers apart. Work is organized as **Projects → Nodes**: a dispatcher turns a task into a Flow Map DAG, executes each node in an isolated worktree, and collects results along the out-edges for merge. Everything ships as a single self-contained JAR you host yourself — the web UI is served from embedded resources, with no separate frontend build step.
+
+## Development & Contributions
+
+Development happens on an internal USTC Git instance ([git.ustc.edu.cn/kaiyu/nebflow](https://git.ustc.edu.cn/kaiyu/nebflow)); external pull requests are not accepted. The GitHub repository stays frozen as a read-only archive of the project's history. Internal workflow and conventions are described in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

@@ -1,4 +1,6 @@
 > **迁址说明（2026-10-31 stand-dev 合并批）**：本文 = 原 `frontend-dev` 插件 `skills/nebflow-frontend/SKILL.md` 全文迁入，能力零删改；文内出现的自包根相对路径（`skills/...`、`scripts/...`、`assets/...`）为原包内路径，对应物现位于 `skills/stand-dev/` 下（脚本 `scripts/`、资产 `assets/`）；跨包引用（原各 nebflow-* 插件名）已改写指向 stand-dev 对应章。深读顺序：先读章导览（`skills/stand-dev/SKILL.md`）。
+>
+> **章内衔接（2026-11-01 二批并入）**：新 UI/交互的实现以上游**设计章** `design-spec` 的设计规格书为唯一依据（防线 2 规格化实现——规格书未定义之处回问，不自由发挥）；设计规格书方法见 `references/design/design-spec.md`。
 
 ---
 name: nebflow-frontend
@@ -73,4 +75,4 @@ src/main/resources/web/
 - **无法截图时（服务没起/工具故障）必须明说**，不许声称已验证。
 - 响应式三档：desktop 1440×900 / tablet 768×1024 / mobile 375×812。
 - dev server `http://localhost:3000`；起服务 `npm run dev`（后台）后等 3-5 秒再截。
-- 深度自验方法（Playwright harness/wire 探针/契约断言）见 `qa` 插件的 `frontend-verification`。
+- 深度自验方法（Playwright harness/wire 探针/契约断言）见同包 qa 章 `frontend-verification`。

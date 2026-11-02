@@ -1,3 +1,8 @@
+---
+type: report
+status: done
+---
+
 # cmdcode provider 摘除与换 key 重新启用说明
 
 - 状态：current（2026-10-30 执行并验证）

@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>统一悬浮按钮设计样张 · stand 玻璃语言（cc28a33e）</title>
+<style>
+/* ════════════════════════════════════════════════════════════════
+   统一悬浮按钮样张 —— 配方逐值来自设计稿
+   docs/design/20261101_141229_unified-button-design__cc28a33e.md
+   基准件: canvas 源码/渲染切换器 × 主会话 #header / #input-bar
+   自包含: 零外部依赖; 亮/暗 = data-theme 属性 + 右上角切换钮
+   ════════════════════════════════════════════════════════════════ */
+:root {
+  /* ── 玻璃配方单源（= sapphire.css 基准件 B/C 亮档）── */
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-blur: 24px;
+  --glass-border: rgba(255, 255, 255, 0.35);
+  --sapphire: 91 127 191;
+  --sapphire-refraction: rgba(255, 255, 255, 0.45);
+  --cv-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.25), 0px 2px 8px rgba(0, 0, 0, 0.04), 0px 8px 24px rgba(0, 0, 0, 0.06);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.74);
+  --color-text: #1f2430;
+  --color-text-muted: #6b7280;
+  --color-primary: #07c160;
+  --page-bg: #eef1f6;
+  --label-ink: #475061;
+  --code-chip-bg: rgba(91,127,191,0.10);
+}
+html[data-theme="dark"] {
+  --glass-bg: rgba(24, 28, 38, 0.68);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --sapphire-refraction: rgba(91, 127, 191, 0.06);
+  --cv-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.04), 0px 2px 8px rgba(0, 0, 0, 0.20), 0px 8px 24px rgba(0, 0, 0, 0.35);
+  --glass-control-bg-hover: rgba(255, 255, 255, 0.20);
+  --color-text: #e6e9ef;
+  --color-text-muted: #98a2b3;
+  --page-bg: #12151c;
+  --label-ink: #aab3c2;
+  --code-chip-bg: rgba(91,127,191,0.16);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", sans-serif;
+  background: var(--page-bg);
+  color: var(--color-text);
+  transition: background .25s ease, color .25s ease;
+  padding-bottom: 60px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; padding: 28px 24px 0; }
+h1 { font-size: 21px; font-weight: 700; letter-spacing: .01em; }
+.sub { font-size: 13px; color: var(--color-text-muted); margin-top: 6px; line-height: 1.7; }
+.sub code { background: var(--code-chip-bg); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+h2 { font-size: 16px; font-weight: 650; margin: 42px 0 4px; }
+h2 .tagline { font-size: 12px; font-weight: 400; color: var(--color-text-muted); margin-left: 10px; }
+.note { font-size: 12.5px; color: var(--color-text-muted); line-height: 1.8; margin-top: 6px; }
+
+/* ── 顶栏（页面 chrome，非样张本体）── */
+.topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.theme-toggle {
+  border: 1px solid var(--glass-border); background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(1.15); backdrop-filter: blur(24px) saturate(1.15);
+  color: var(--color-text); border-radius: 999px; height: 36px; padding: 0 16px;
+  font-size: 13px; font-weight: 500; cursor: pointer;
+  box-shadow: var(--cv-shadow);
+}
+.theme-toggle:hover { background: var(--glass-control-bg-hover); }
+
+/* ── 舞台：彩色衬底（让玻璃有东西可磨）── */
+.stage {
+  position: relative; overflow: hidden; border-radius: 16px;
+  border: 1px solid var(--glass-border);
+  background:
+    radial-gradient(360px 240px at 12% 20%, rgba(91,127,191,0.35), transparent 70%),
+    radial-gradient(300px 220px at 85% 15%, rgba(7,193,96,0.22), transparent 70%),
+    radial-gradient(420px 300px at 70% 85%, rgba(255,168,60,0.20), transparent 70%),
+    radial-gradient(300px 260px at 30% 90%, rgba(155,107,241,0.18), transparent 70%),
+    linear-gradient(160deg, #f7f9fc, #e3e9f4);
+}
+html[data-theme="dark"] .stage {
+  background:
+    radial-gradient(360px 240px at 12% 20%, rgba(91,127,191,0.30), transparent 70%),
+    radial-gradient(300px 220px at 85% 15%, rgba(7,193,96,0.14), transparent 70%),
+    radial-gradient(420px 300px at 70% 85%, rgba(255,168,60,0.12), transparent 70%),
+    radial-gradient(300px 260px at 30% 90%, rgba(155,107,241,0.15), transparent 70%),
+    linear-gradient(160deg, #1a1e28, #12151c);
+}
+.stage-pad { position: relative; padding: 26px; min-height: 150px; }
+.ghosttext { font-size: 13px; line-height: 2.1; color: var(--color-text); opacity: .8; max-width: 640px; }
+.ghosttext b { opacity: 1; }
+
+/* ══ 统一玻璃材质（= 基准件 B/C 逐字）══ */
+.glass {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(1.15);
+  backdrop-filter: blur(24px) saturate(1.15);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--cv-shadow);
+  color: var(--color-text);
+}
+/* 面级浮件顶缘折射线（#header/#input-bar 同配方） */
+.glass-line { position: relative; }
+.glass-line::before {
+  content: ''; position: absolute; top: 0; left: 10%; right: 10%; height: 1px;
+  background: linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%);
+  pointer-events: none;
+}
+
+/* ══ 基准圆钮（= .canvas-source-toggle 逐值）══ */
+.fab {
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(24px) saturate(1.15);
+  backdrop-filter: blur(24px) saturate(1.15);
+  box-shadow: var(--cv-shadow);
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--color-text); cursor: pointer; padding: 0;
+  transition: background .2s ease, transform .2s ease;
+  position: relative; flex: none;
+}
+.fab svg { width: 18px; height: 18px; pointer-events: none; }
+.fab:hover, .fab.demo-hover { background: var(--glass-control-bg-hover); transform: scale(1.05); }
+.fab.demo-pressed, .fab:active { transform: scale(0.96); }
+.fab.is-selected { color: var(--color-primary); border-color: rgb(var(--sapphire) / 0.35); background: rgb(var(--sapphire) / 0.12); }
+.fab.is-selected.demo-hover { background: rgb(var(--sapphire) / 0.18); }
+.fab:disabled { opacity: 0.35; cursor: not-allowed; }
+.fab:disabled:hover { transform: none; background: var(--glass-bg); }
+.fab.demo-focus { outline: 2px solid rgb(var(--sapphire) / 0.5); outline-offset: 2px; }
+/* 手机档 48px + 图标 20 */
+.m48 { width: 48px; height: 48px; }
+.m48 svg { width: 20px; height: 20px; }
+.m48.demo-pressed-spring { transform: scale(0.88); }
+
+/* 状态矩阵排版 */
+.matrix { display: flex; flex-wrap: wrap; gap: 26px; margin-top: 16px; }
+.cell { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.cell .lab { font-size: 11.5px; color: var(--label-ink); font-weight: 500; }
+.divider-v { width: 1px; align-self: stretch; background: var(--glass-border); margin: 0 4px; }
+
+/* ══ 应用面模拟 ══ */
+/* 主会话 Header / 输入条（配方基准展示） */
+.demo-header {
+  border-radius: 20px; padding: 10px 16px; display: flex; align-items: center; gap: 10px;
+  font-size: 14px; font-weight: 500;
+}
+.demo-header .mem {
+  width: 28px; height: 28px; border-radius: 6px; border: 1px solid transparent;
+  display: inline-flex; align-items: center; justify-content: center; color: var(--color-text-muted);
+}
+.demo-header .mem.demo-hover { background: var(--glass-control-bg-hover); border-color: var(--glass-border); color: var(--color-text); }
+.demo-input {
+  border-radius: 20px; padding: 6px 12px; display: flex; align-items: center; gap: 8px;
+  margin-top: 12px; min-height: 44px; font-size: 13px;
+}
+.demo-input .ph { color: var(--color-text-muted); flex: 1; }
+.demo-input .send {
+  height: 32px; padding: 0 14px; border-radius: 999px; border: none;
+  background: #07c160; color: #fff; font-size: 13px; font-weight: 600;
+  display: inline-flex; align-items: center; /* 控件族扁平绿（范围外，维持 v3 拍板） */
+}
+
+/* canvas 面板：右下圆钮簇 + 标题胶囊 + 查找条 */
+.canvas-pane {
+  position: relative; height: 240px; margin-top: 16px; border-radius: 14px; overflow: hidden;
+  border: 1px solid var(--glass-border);
+  background:
+    radial-gradient(240px 160px at 80% 30%, rgba(91,127,191,0.25), transparent 70%),
+    linear-gradient(150deg, #fbfcfe, #e9eef7);
+}
+html[data-theme="dark"] .canvas-pane {
+  background:
+    radial-gradient(240px 160px at 80% 30%, rgba(91,127,191,0.22), transparent 70%),
+    linear-gradient(150deg, #191d26, #131720);
+}
+.md-body { padding: 22px 26px; font-size: 13.5px; line-height: 1.95; color: var(--color-text); opacity: .92; }
+.md-body h3 { font-size: 15px; margin-bottom: 8px; }
+.md-body code { background: var(--code-chip-bg); border-radius: 5px; padding: 1px 6px; font-size: 12px; }
+.canvas-cap {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  height: 36px; width: 180px; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  font-size: 13px; font-weight: 500;
+  border-bottom-color: transparent; /* 底缘零边界（#header 同规） */
+}
+.canvas-cap .cnt { font-size: 11px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.fab.toprow { position: absolute; top: 10px; }
+.fab.toprow.close { left: 12px; }
+.fab.toprow.deck { right: 12px; }
+.fab.toprow.deck.is-selected { /* deck pressed 统一后 = ref-select 选中档 */ }
+/* 右下簇：source 16 · ref 64 · find 112 · zoom bar 160（48px pitch） */
+.fab.cluster { position: absolute; bottom: 16px; }
+.fab.cluster.c1 { right: 16px; }
+.fab.cluster.c2 { right: 64px; }
+.fab.cluster.c3 { right: 112px; }
+.zoombar {
+  position: absolute; bottom: 18px; right: 160px;
+  display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 10px;
+}
+.zbtn {
+  width: 26px; height: 26px; border-radius: 7px; border: 1px solid transparent;
+  background: transparent; color: var(--color-text-muted);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.zbtn svg { width: 14px; height: 14px; }
+.zbtn:hover, .zbtn.demo-hover {
+  background: var(--glass-control-bg-hover); border-color: var(--glass-border); color: var(--color-text);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), inset 0 -1px 0 rgba(0,0,0,0.08);
+}
+.zpct { min-width: 40px; text-align: center; font-size: 11px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.findbar {
+  position: absolute; bottom: 16px; left: 16px; width: 200px; height: 34px; border-radius: 12px;
+  display: flex; align-items: center; gap: 6px; padding: 0 10px; font-size: 12px; color: var(--color-text-muted);
+}
+
+/* dock 顶部浮钮（手机档 48px） */
+.dock-strip { position: relative; height: 110px; margin-top: 16px; border-radius: 14px; overflow: hidden;
+  background:
+    radial-gradient(220px 140px at 20% 80%, rgba(7,193,96,0.25), transparent 70%),
+    radial-gradient(260px 160px at 75% 70%, rgba(91,127,191,0.30), transparent 70%),
+    linear-gradient(140deg, #f2f5fa, #e2e8f3);
+}
+html[data-theme="dark"] .dock-strip {
+  background:
+    radial-gradient(220px 140px at 20% 80%, rgba(7,193,96,0.14), transparent 70%),
+    radial-gradient(260px 160px at 75% 70%, rgba(91,127,191,0.25), transparent 70%),
+    linear-gradient(140deg, #191d27, #141821);
+}
+.dock-strip .hint { position: absolute; left: 84px; top: 24px; font-size: 12.5px; color: var(--color-text); opacity: .75; max-width: 420px; line-height: 1.8; }
+.fab.dock { position: absolute; top: 16px; }
+
+/* ask-fab 右下 + 会话通知点 */
+.ask-strip { position: relative; height: 120px; margin-top: 16px; border-radius: 14px; overflow: hidden;
+  background: linear-gradient(120deg, #eef2f8, #e6ecf6);
+}
+html[data-theme="dark"] .ask-strip { background: linear-gradient(120deg, #181c25, #131720); }
+.ask-strip .hint { position: absolute; left: 26px; top: 30px; font-size: 12.5px; color: var(--color-text); opacity: .75; max-width: 480px; line-height: 1.9; }
+.fab.ask { position: absolute; right: 16px; bottom: 16px; }
+.ask .dot {
+  position: absolute; top: -1px; right: -1px; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--color-primary); border: 2px solid var(--page-bg);
+}
+
+/* F1 对照条（退役参考） */
+.compare { display: flex; gap: 34px; margin-top: 16px; flex-wrap: wrap; }
+.cmp { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--label-ink); }
+.fab.f1 {
+  background: rgba(255, 255, 255, 0.30);
+  -webkit-backdrop-filter: blur(20px) saturate(2.2); backdrop-filter: blur(20px) saturate(2.2);
+  border-color: rgba(255, 255, 255, 0.70);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.55), 0 10px 26px rgba(30, 40, 60, 0.12);
+}
+
+/* token 速览表 */
+table { border-collapse: collapse; margin-top: 14px; width: 100%; font-size: 12.5px; }
+th, td { border: 1px solid var(--glass-border); padding: 7px 10px; text-align: left; }
+th { background: var(--glass-bg); font-weight: 600; }
+td { color: var(--color-text); }
+td code { font-size: 11.5px; background: var(--code-chip-bg); padding: 1px 5px; border-radius: 4px; }
+
+footer { margin-top: 46px; font-size: 12px; color: var(--color-text-muted); line-height: 1.9; }
+@media (prefers-reduced-motion: reduce) { .fab, .zbtn { transition-duration: .01s; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div>
+      <h1>统一悬浮按钮样张 · 回归 stand 玻璃语言</h1>
+      <div class="sub">尺寸样式 = canvas 源码/渲染切换器（40/48px 圆钮）· 毛玻璃 = 主会话 Header + 输入框配方（blur 24 / saturate 1.15 / 三档阴影）·
+        <code>20261101_141229_unified-button-design__cc28a33e.md</code> 配套样张</div>
+    </div>
+    <button class="theme-toggle" id="themeBtn" type="button">◐ 亮 / 暗</button>
+  </div>
+
+  <!-- ══ ① 玻璃配方演示（基准件 B/C）══ -->
+  <h2>① 玻璃配方 · 主会话 Header / 输入框款 <span class="tagline">所有悬浮件唯一材质单源</span></h2>
+  <div class="note">填充 <code>--glass-bg</code>（亮 .55 白 / 暗 .68 深蓝灰）· <code>blur(24px) saturate(1.15)</code> 双写 · 边 <code>--glass-border</code> · 面阴影 <code>--cv-shadow</code> 三档栈 · 面级浮件加顶缘 sapphire 折射线 · 底缘零边界。</div>
+  <div class="stage" style="margin-top:14px;">
+    <div class="stage-pad">
+      <div class="demo-header glass glass-line">
+        <span>stand ▸ 会话标题（消息气泡可从底下穿过，底缘无横线）</span>
+        <span style="flex:1"></span>
+        <span class="mem demo-hover" title="记忆键 hover 显玻璃（ghost 档沿用）">◈</span>
+      </div>
+      <div class="demo-input glass glass-line">
+        <span class="ph">输入消息…（输入框原配方；发送键 = 控件族扁平绿，范围外维持拍板）</span>
+        <button class="send" type="button">发送</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ ② 圆钮状态矩阵 ══ -->
+  <h2>② 圆钮状态矩阵 <span class="tagline">桌面 40px（图标 18）· 手机 48px（图标 20，弹簧按压）</span></h2>
+  <div class="note">hover = 抬亮 + 1.05（触屏无 hover）· 按下 = 0.96 / 手机弹簧 0.88 · 选中 = sapphire 12% 底 + 35% 边 + primary 字 · 禁用 = opacity .35 无 hover · 焦点 = 2px sapphire 外描（新增建议）。</div>
+  <div class="stage" style="margin-top:14px;">
+    <div class="stage-pad" style="min-height:190px;">
+      <div class="matrix">
+        <div class="cell"><button class="fab" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button><span class="lab">默认 rest</span></div>
+        <div class="cell"><button class="fab demo-hover" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button><span class="lab">hover ×1.05</span></div>
+        <div class="cell"><button class="fab demo-pressed" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button><span class="lab">按下 ×0.96</span></div>
+        <div class="cell"><button class="fab is-selected" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button><span class="lab">选中（接通态）</span></div>
+        <div class="cell"><button class="fab" disabled type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button><span class="lab">禁用 .35</span></div>
+        <div class="cell"><button class="fab demo-focus" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button><span class="lab">键盘焦点（新增）</span></div>
+        <div class="divider-v"></div>
+        <div class="cell"><button class="fab m48" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button><span class="lab">手机 48px</span></div>
+        <div class="cell"><button class="fab m48 demo-pressed-spring" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button><span class="lab">手机弹簧 0.88</span></div>
+        <div class="cell"><button class="fab m48 is-selected" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button><span class="lab">手机选中</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ ③ canvas 应用面（桌面档）══ -->
+  <h2>③ 应用面模拟 · canvas 桌面档 <span class="tagline">右下簇 48px 槽距 · 标题胶囊 36×180 · 查找条/缩放条沿用</span></h2>
+  <div class="canvas-pane">
+    <div class="md-body">
+      <h3>设计说明.md</h3>
+      正文从玻璃控件底下穿过：毛玻璃对背后内容做 <code>blur(24)</code> + <code>saturate(1.15)</code>，
+      文字在圆钮与胶囊后仍保持可辨 —— 这就是统一后的悬浮件观感。
+    </div>
+    <button class="fab toprow close" type="button" title="关签钮（左缘对称）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    <div class="canvas-cap glass glass-line"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>设计说明.md<span class="cnt">t3</span></div>
+    <button class="fab toprow deck" type="button" title="堆叠钮（pressed = 选中档）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="13" height="13" rx="2"/><path d="M3 17V5a2 2 0 0 1 2-2h12"/></svg></button>
+    <button class="fab cluster c3" type="button" title="文件内查找"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></button>
+    <button class="fab cluster c2 is-selected" type="button" title="引用选取（接通态）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
+    <button class="fab cluster c1" type="button" title="源码 / 渲染切换（基准件）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>
+    <div class="zoombar glass glass-line">
+      <button class="zbtn demo-hover" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M8 11h6"/></svg></button>
+      <span class="zpct">100%</span>
+      <button class="zbtn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M8 11h6"/></svg></button>
+    </div>
+    <div class="findbar glass"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>查找…<span style="margin-left:auto">2/9</span></div>
+  </div>
+
+  <!-- ══ ④ 手机档应用面 ══ -->
+  <h2>④ 应用面模拟 · 手机档 48px <span class="tagline">dock 顶部待办/搜索 · ask-dock 开合钮 · 触达 ≥44pt</span></h2>
+  <div class="dock-strip">
+    <button class="fab m48 dock" style="left:16px;" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></button>
+    <button class="fab m48 dock" style="right:16px;" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></button>
+    <div class="hint">dock 顶部待办浮钮（左）与搜索浮钮（右）——top 16+safe-area、左右 16 栅格；手机档统一 48px 基准玻璃。</div>
+  </div>
+  <div class="ask-strip">
+    <div class="hint">会话页 ask-dock 开合钮（右下 fixed 16）——通知点 = 品牌绿；桌面同款材质收 40px 档。</div>
+    <button class="fab m48 ask" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg><span class="dot"></span></button>
+  </div>
+
+  <!-- ══ ⑤ F1 对照（退役参考）══ -->
+  <h2>⑤ 统一后 vs 液态玻璃 F1（退役参考） <span class="tagline">同一按钮两种配方对照</span></h2>
+  <div class="stage">
+    <div class="stage-pad" style="min-height:120px;">
+      <div class="compare">
+        <div class="cmp"><button class="fab" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>统一后：Header 款（blur 24 / sat 1.15 / 三档阴影）</div>
+        <div class="cmp"><button class="fab f1" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></button>液态玻璃 F1（blur 20 / sat 2.2 / 填充 .30）→ 退役，理由见设计稿 §4</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ ⑥ token 速览 ══ -->
+  <h2>⑥ 统一 token 速览 <span class="tagline">全部沿用既有 --cv-* / --glass-* 单源，零新造字面量</span></h2>
+  <table>
+    <tr><th>维度</th><th>桌面</th><th>手机</th><th>token / 出处</th></tr>
+    <tr><td>圆钮尺寸</td><td>40px 正圆</td><td>48px</td><td><code>--cv-size-circle</code> sapphire.css:233</td></tr>
+    <tr><td>条内小钮</td><td>26px / 图标 14</td><td>26px</td><td><code>--cv-size-btn / --cv-icon-btn</code>:234-236</td></tr>
+    <tr><td>玻璃配方</td><td colspan="2">blur(24) saturate(1.15) 双写 + <code>--glass-bg</code> + <code>--glass-border</code></td><td>= #header chat.css:48-50 = #input-bar input.css:20-23</td></tr>
+    <tr><td>面阴影</td><td colspan="2">inset 高光 + 0 2px 8px + 0 8px 24px（亮 .04/.06 · 暗 .20/.35）</td><td><code>--cv-shadow</code> sapphire.css:221/263</td></tr>
+    <tr><td>hover</td><td>抬亮 + ×1.05</td><td>无</td><td><code>--cv-hover-bg / --cv-hover-scale</code></td></tr>
+    <tr><td>按下</td><td>×0.96</td><td>弹簧 ×0.88</td><td><code>--cv-active-scale</code> · mobileLayer.css:1933</td></tr>
+    <tr><td>选中</td><td colspan="2">sapphire 12% 底 / 35% 边 / primary 字</td><td>split.css:1938-1942（ref-select 档）</td></tr>
+    <tr><td>禁用</td><td colspan="2">opacity .35 + 无 hover</td><td>split.css:1943-1950</td></tr>
+    <tr><td>圆角</td><td colspan="2">胶囊 999 · 条 12 · 条 sm 10 · 钮 8 · 钮 sm 7 · 圆钮 50%</td><td><code>--cv-radius-*</code> sapphire.css:239-243</td></tr>
+    <tr><td>簇槽距</td><td colspan="2">48px pitch；右下槽位 16/64/112/160</td><td><code>--cv-row-pitch</code> split.css:2868-2874</td></tr>
+    <tr><td>降级</td><td colspan="2">html.no-backdrop + @supports 双保险 → <code>--glass-bg</code> 实色档</td><td>liquid-glass.css:247-294 先例</td></tr>
+  </table>
+
+  <footer>
+    样张只渲染统一规格，零产品代码改动 · 配方逐值来源与收编清单见设计稿
+    <code>docs/design/20261101_141229_unified-button-design__cc28a33e.md</code> ·
+    截图证据 <code>docs/evidence/20261101_unified-button-design/</code> ·
+    亮/暗切换钮在右上角；URL 加 <code>?theme=dark</code> 可直开暗档。
+  </footer>
+</div>
+<script>
+  // 主题：?theme= 优先 → prefers-color-scheme 兜底；切换钮写 data-theme
+  (function () {
+    var html = document.documentElement;
+    var q = new URLSearchParams(location.search).get('theme');
+    var start = q === 'dark' || q === 'light' ? q
+      : (window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    html.setAttribute('data-theme', start);
+    document.getElementById('themeBtn').addEventListener('click', function () {
+      html.setAttribute('data-theme', html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+    });
+  })();
+</script>
+</body>
+</html>

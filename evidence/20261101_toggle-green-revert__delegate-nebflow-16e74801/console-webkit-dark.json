@@ -1,0 +1,22 @@
+[
+  {
+    "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "url": "http://localhost:8765/api/agents/Nebula/avatar/meta"
+  },
+  {
+    "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "url": "http://localhost:8765/agents/Nebula/agent.json"
+  },
+  {
+    "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "url": "http://localhost:8765/api/portal/status"
+  },
+  {
+    "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "url": "http://localhost:8765/api/agents/Nebula/avatar/meta"
+  },
+  {
+    "text": "Failed to load resource: the server responded with a status of 404 (Not Found)",
+    "url": "http://localhost:8765/agents/Nebula/agent.json"
+  }
+]

@@ -243,6 +243,27 @@ class SecretsCatalogSpec extends FunSuite:
     assert(rendered.contains("has \\| a pipe and an embedded newline"), rendered)
   }
 
+  test("C16 · 清杂质: rollback backups carry no catalogue row and no consumption pointer") {
+    withStore { (store, root) =>
+      assert(store.create("mock-a", MockValue).unsafeRunSync().isRight)
+      os.write(root / "secrets" / "logto-logout-rollback.json", MockValue)
+      os.write(root / "secrets" / "email-connector-rollback-2026-10-20-0342.json", MockValue)
+      // The catalogue face (rows → rendered md → pointers) filters the same
+      // single point as the list face (SecretsStore.isArchiveBackup).
+      assertEquals(
+        SecretsCatalog.rows(root / "secrets", root).map(_.name),
+        List("mock-a"),
+        "rollback backups must not surface as catalogue rows"
+      )
+      assertEquals(
+        store.pointers().unsafeRunSync().toOption.get.map(_.name),
+        List("mock-a"),
+        "nor as consumption pointers"
+      )
+      assert(os.exists(root / "secrets" / "logto-logout-rollback.json"), "files stay on disk untouched")
+    }
+  }
+
   private def CredentialFileAclIsWindows: Boolean =
     nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName)
 

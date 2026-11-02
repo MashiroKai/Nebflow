@@ -781,8 +781,14 @@ export function restoreFromStorage(opts = {}) {
         chat.appendChild(row);
         const popPayload = parsePopPayload(m.content);
         if (popPayload) {
-          const artifactRow = buildPopArtifactRow(popPayload);
-          if (artifactRow) chat.appendChild(artifactRow);
+          // Pop 交付卡 footer 批（作者令 2026-11-01 16:19）：重放腿 ts = m.timestamp
+          // （footer 信息条时间档与 live 腿同口径三腿）；行 id 覆写为
+          // historyMsgId(i)+'-pop'——引用寻址落卡行本体，不与同轮工具行撞号。
+          const artifactRow = buildPopArtifactRow(popPayload, { ts: m.timestamp });
+          if (artifactRow) {
+            artifactRow.dataset.msgId = historyMsgId(i) + '-pop';
+            chat.appendChild(artifactRow);
+          }
         }
       } else if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
         const isError = m.isError;
@@ -1217,8 +1223,13 @@ function buildHistoryRow(m, i, ctx) {
         fragment.appendChild(row);
         const popPayload = parsePopPayload(m.content);
         if (popPayload) {
-          const artifactRow = buildPopArtifactRow(popPayload);
-          if (artifactRow) fragment.appendChild(artifactRow);
+          // Pop 交付卡 footer 批（作者令 2026-11-01 16:19）：重放腿 ts = m.timestamp
+          // + 行 id 覆写 historyMsgId(i)+'-pop'（storage 腿同口径，见上方同款注）。
+          const artifactRow = buildPopArtifactRow(popPayload, { ts: m.timestamp });
+          if (artifactRow) {
+            artifactRow.dataset.msgId = historyMsgId(i) + '-pop';
+            fragment.appendChild(artifactRow);
+          }
         }
       } else if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
         const isError = m.isError;

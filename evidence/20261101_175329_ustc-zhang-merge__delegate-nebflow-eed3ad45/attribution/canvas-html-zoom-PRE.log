@@ -1,0 +1,14 @@
+node:internal/modules/run_main:104
+    triggerUncaughtException(
+    ^
+
+locator.click: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for locator('.canvas-zoom-btn[title="Zoom in"]')[22m
+
+    at /private/tmp/merge-eed3ad45/pristine/tests/canvas-html-zoom.spec.mjs:183:59 {
+  log: [ `  - waiting for locator('.canvas-zoom-btn[title="Zoom in"]')` ],
+  name: 'TimeoutError'
+}
+
+Node.js v23.9.0

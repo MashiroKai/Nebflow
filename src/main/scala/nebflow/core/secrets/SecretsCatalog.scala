@@ -196,6 +196,10 @@ object SecretsCatalog:
    * The rows for the current store state: names and mtimes straight off the
    * directory listing plus the sidecar. 🔴 No file's CONTENT is opened here —
    * this is the whole reason the catalogue can be agent-readable.
+   * Archive/rollback backups (`SecretsStore.isArchiveBackup`) are not
+   * credentials — they carry no row here, so the rendered catalogue and the
+   * consumption pointers stay free of them (清杂质件, author ruling
+   * 2026-11-01; files stay on disk untouched).
    */
   def rows(secretsDir: os.Path, dataRoot: os.Path): List[Row] =
     if !Files.isDirectory(secretsDir.toNIO) then Nil
@@ -204,6 +208,7 @@ object SecretsCatalog:
       os.list(secretsDir)
         .filter(p => Files.isRegularFile(p.toNIO))
         .map(_.last)
+        .filterNot(SecretsStore.isArchiveBackup)
         .sorted
         .toList
         .map { n =>

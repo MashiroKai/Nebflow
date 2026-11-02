@@ -33,7 +33,7 @@ scope: 前端引导面（src/main/resources/web/index.html）+ 验收钉（tests
 | 假设 | 结论 |
 |---|---|
 | 样式加载竞态（CSS 未就绪即渲染） | **部分成立但非病灶**：head 全链 render-blocking，模块图执行前样式必已终态；JS 渲染内容时样式结果已定。「未就绪」窗口不存在于 JS 渲染路径 |
-| 缓存命中半新半旧 | 不成立：dev 树 index 引用带内容指纹 `?v=`（[[AssetVersions]]），URL 变即内容变；SW 键=全 URL。版本错位不可能产裸 DOM |
+| 缓存命中半新半旧 | 不成立：dev 树 index 引用带内容指纹 `?v=`（`AssetVersions` 设施，未入库），URL 变即内容变；SW 键=全 URL。版本错位不可能产裸 DOM |
 | coldstart 资产路径 | 不成立：StaticRoutes 分发同树同源；dist/dev 混服有 mtime freshness 闸 |
 | **stylesheet 请求失败** | **实锤**：裸 DOM 要求至少一条 `<link rel=stylesheet>` 到达终态-失败（浏览器随即放弃该表并解除首帧阻塞）。JS 模块请求是独立并发 fetch，成功失败互不相关——列表照常渲染（含原始文件名文本），lucide 图标 hydrate 一半 = 「碎图标」。失败源：实例重启掐断在途请求（本仓工作流每日多次重启）、隧道 SW `swrResponse` 未命中+网络失败回 `Response.error`、深层 404、gzip 流中断。冷启动提高单请求失败率 ⇒「有时候」 |
 

@@ -444,6 +444,44 @@ class PromptSectionsSpec extends munit.FunSuite:
     }
 
   // ============================================================
+  // 密钥教义（密钥能力三件套批 B 件，作者令 2026-11-01「agent/分发器提示词加
+  // 一节『密钥的使用与创建』」）：order-377 **always** 段，逐字承载
+  // Defaults.SecretsRule。与 375/376 的 root-only 刻意不同：凭证经任务文本
+  // 流进每张面（分发器写 brief、节点 Bash 消费），纪律必须在每张面上。
+  // ============================================================
+
+  test("Secrets discipline section injected for EVERY agent session (order 377, always, verbatim SecretsRule)"):
+    withIsolatedDataRoot {
+      val root = buildConditionalBlocks(PromptContext(isRootAgent = true))
+      val dispatcher = buildConditionalBlocks(PromptContext(isRootAgent = false))
+      val node = buildConditionalBlocks(
+        PromptContext(isRootAgent = false, availableTools = Set(nebflow.core.tools.NodeReportToolDef.Name))
+      )
+      for (who, blocks) <- Seq("root" -> root, "dispatcher" -> dispatcher, "node" -> node) do
+        assert(
+          blocks.contains(nebflow.shared.Defaults.SecretsRule),
+          s"$who session systemStable must carry the secrets discipline section"
+        )
+        assert(blocks.contains("── Secrets (credentials) ──"), s"$who: section body is the secrets rule text")
+      // 段序钉：紧跟 order-376 SendMessage 边界段之后
+      assert(
+        root.indexOf("── SendMessage scope ──") < root.indexOf("── Secrets (credentials) ──"),
+        "secrets section must follow the SendMessage scope section (order 377 > 376)"
+      )
+      // 条款面齐：创建 / 消费 / 铁律三 clauses 都在段体里（教义条款化）
+      val body = nebflow.shared.Defaults.SecretsRule
+      assert(body.contains("CREATE") && body.contains("CONSUME") && body.contains("IRON RULES"), body)
+    }
+
+  test("Secrets discipline section is a static always-on section (stable-prefix reading)"):
+    val s377 = PromptSections.all.filter(_.order == 377)
+    assertEquals(s377.size, 1, "registry carries exactly one order-377 section")
+    val sec = s377.head
+    assert(sec.shouldInclude(PromptContext()), "always: included on the minimal context")
+    assert(sec.shouldInclude(PromptContext(isRootAgent = true, voiceEnabled = false)), "always: included on any context")
+    assertEquals(sec.render(PromptContext()), nebflow.shared.Defaults.SecretsRule, "static body = the constant")
+
+  // ============================================================
   // 文档溯源规范（order 350，always 段；作者 2026-09-11 裁定 / 方案 #165）
   //
   // 系统提示词 = 唯一权威面。运行时（~/.nebflow/**）9 处本地重述删除由

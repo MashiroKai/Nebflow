@@ -1,0 +1,45 @@
+
+Running 6 tests using 1 worker
+
+[1/6] tests/sidebar-restructure.spec.mjs:153:1 › T1 § sidebar order: top = avatar+messages+contacts+social; bottom fixed order; no legacy revival
+  1) tests/sidebar-restructure.spec.mjs:153:1 › T1 § sidebar order: top = avatar+messages+contacts+social; bottom fixed order; no legacy revival 
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 1
+    + Received  + 0
+
+    @@ -4,10 +4,9 @@
+        "contacts-btn",
+        "social-btn",
+        "activity-spacer",
+        "files-btn",
+        "projects-btn",
+    -   "wiki-btn",
+        "agents-btn",
+        "usage-btn",
+        "settings-btn",
+      ]
+
+      157 |   // Structural equality: exactly the spec elements, in the spec order — any
+      158 |   // revived legacy entry would break equality.
+    > 159 |   expect(ids).toEqual(ACTIVITY_ORDER_IDS);
+          |               ^
+      160 |   // Top group: exactly three .activity-btn (messages + contacts + social) above spacer.
+      161 |   const topBtns = await page.$$eval('#activity-bar > *', els => {
+      162 |     const out = [];
+        at /private/tmp/merge-eed3ad45/base/tests/sidebar-restructure.spec.mjs:159:15
+
+    Error Context: test-results/sidebar-restructure-T1-§-s-fab7a-xed-order-no-legacy-revival/error-context.md
+
+    Error Context: test-results/sidebar-restructure-T1-§-s-fab7a-xed-order-no-legacy-revival/error-context.md
+
+
+[2/6] tests/sidebar-restructure.spec.mjs:184:1 › T2 § toggle consolidation: same .nb-toggle class + identical computed style, both themes
+[3/6] tests/sidebar-restructure.spec.mjs:226:1 › T2b § cross-panel toggle equality (plugin card dispatch switch vs settings toggle)
+[4/6] tests/sidebar-restructure.spec.mjs:251:1 › T3 § avatar local-first cache: rebuild-free second load, refetch only on source change
+[5/6] tests/sidebar-restructure.spec.mjs:301:1 › T4 § i18n parity: zh-CN and en key sets are identical
+[6/6] tests/sidebar-restructure.spec.mjs:309:1 › T5 § static: toggleHTML adopted, hand-rolled .toggle extinct, legacy entries absent from HTML
+  1 failed
+    tests/sidebar-restructure.spec.mjs:153:1 › T1 § sidebar order: top = avatar+messages+contacts+social; bottom fixed order; no legacy revival 
+  5 passed (41.1s)

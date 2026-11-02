@@ -316,8 +316,16 @@ test.describe('refresh button', () => {
     }, { path: '/tmp/nfr/conf.yaml', content: YAML_LONG });
     const sel = paneSel('/tmp/nfr/conf.yaml');
     await page.waitForSelector(`${sel} .canvas-yaml-viewer`, { timeout: 15000 });
-    // 等面板开合过渡落定（同 A1：早量几何读数瞬态）
-    await expect.poll(async () => page.evaluate((s) => document.querySelector(s).getBoundingClientRect().width, sel), { timeout: 10000 }).toBeGreaterThan(320);
+    // 等面板开合过渡落定（同 A1：早量几何读数瞬态）。单行排布批（2026-11-01）
+    // 簇左锚化后右锚不再免疫左缘漂移——「宽 >320」在过渡中段即真，此处改为
+    // 等宽速度收敛（相邻采样差 <0.5px）再量几何。
+    await expect.poll(async () => page.evaluate(async (s) => {
+      const pane = document.querySelector(s);
+      const w1 = pane.getBoundingClientRect().width;
+      await new Promise((r) => setTimeout(r, 160));
+      const w2 = pane.getBoundingClientRect().width;
+      return Math.abs(w2 - w1);
+    }, sel), { timeout: 10000 }).toBeLessThan(0.5);
     // yaml pane 自身即滚动容器（.canvas-tab-pane.scrollable）——修前按钮 bottom:16
     // 按整份内容盒落点 = 文档末尾，滚动即漂移（报障截图形态）。量的是「按钮本体」
     // 全局唯一命中（挂载点归属已由 A1 钉死，本钉只管行为：滚动不动位）
@@ -334,15 +342,16 @@ test.describe('refresh button', () => {
     const after = await page.evaluate(({ b, p }) => {
       const r = document.querySelector(b).getBoundingClientRect();
       const paneR = document.querySelector(p).getBoundingClientRect();
-      return { x: r.x, y: r.y, w: r.width, h: r.height, fromBottom: paneR.bottom - r.bottom, fromRight: paneR.right - r.right };
+      return { x: r.x, y: r.y, w: r.width, h: r.height, fromBottom: paneR.bottom - r.bottom, fromLeft: r.left - paneR.left };
     }, { b: btnSel, p: sel });
     expect(after.x, 'button viewport X unchanged after content scroll').toBeCloseTo(before.x, 1);
     expect(after.y, 'button viewport Y unchanged after content scroll').toBeCloseTo(before.y, 1);
     expect(after.w, 'button size unchanged after content scroll').toBeCloseTo(before.w, 1);
     expect(after.h, 'button height unchanged after content scroll').toBeCloseTo(before.h, 1);
-    // 仍钉在可视区右下（视觉 16px 边距 + 壳层 8px padding 补偿后 ≤ 24）
+    // 仍钉在可视区左下（视觉 16px 边距 + 壳层 8px padding 补偿后 ≤ 24）。
+    // 单行排布批（2026-11-01）：簇左锚化——右缘钉改左缘钉（工具簇行在左端）。
     expect(after.fromBottom, 'pinned to the visible bottom edge after scroll').toBeLessThanOrEqual(24);
-    expect(after.fromRight, 'pinned to the visible right edge after scroll').toBeLessThanOrEqual(24);
+    expect(after.fromLeft, 'pinned to the visible left edge after scroll').toBeLessThanOrEqual(24);
     expect(errors, 'zero pageerrors').toEqual([]);
     await ctx.close();
   });
@@ -358,7 +367,16 @@ test.describe('refresh button', () => {
         }));
       }, { path: '/tmp/nfr/theme.yaml', content: YAML_LONG });
       await page.waitForSelector(`${paneSel('/tmp/nfr/theme.yaml')} .canvas-yaml-viewer`, { timeout: 15000 });
-      await expect.poll(async () => page.evaluate((s) => document.querySelector(s).getBoundingClientRect().width, paneSel('/tmp/nfr/theme.yaml')), { timeout: 10000 }).toBeGreaterThan(320);
+      // 单行排布批（2026-11-01）：左锚化后过渡中段左缘在漂移——等宽速度收敛
+      // （相邻采样差 <0.5px）再量几何（同 A8 口径），否则两主题各自相位不同
+      // 会出假 X 差。
+      await expect.poll(async () => page.evaluate(async (s) => {
+        const pane = document.querySelector(s);
+        const w1 = pane.getBoundingClientRect().width;
+        await new Promise((r) => setTimeout(r, 160));
+        const w2 = pane.getBoundingClientRect().width;
+        return Math.abs(w2 - w1);
+      }, paneSel('/tmp/nfr/theme.yaml')), { timeout: 10000 }).toBeLessThan(0.5);
       return page.evaluate((b) => {
         const el = document.querySelector(b);
         if (!el) return null;

@@ -197,7 +197,10 @@ async function dragCapsuleTrack(page, ddx, ddy, steps = 12) {
   });
   ok('S1-4 去重只作用于阅读渲染面（DOM/源码未删，style 内联单点）', sourceHas === true, `sourceMode intact`);
 
-  /* ── S3 底右钮组贴齐（md pane：source-toggle 右锚 16）── */
+  /* ── S3 底左钮组贴齐（md pane：source-toggle 左锚 16）
+     单行排布批（2026-11-01 作者令 16:18「功能钮靠左、ask 单独靠右，两端对齐」）：
+     文档工具簇整体左锚镜像（右锚 16 → 左锚 16，槽值原样），与右缘 ask-fab
+     同行两端对齐——右缘贴齐钉随批翻转为左缘贴齐。 ── */
   const align = await page.evaluate(() => {
     const pr = document.getElementById('canvas-panel').getBoundingClientRect();
     const pick = (sel) => {
@@ -205,12 +208,12 @@ async function dragCapsuleTrack(page, ddx, ddy, steps = 12) {
       if (!el) return null;
       const r = el.getBoundingClientRect();
       const cs = getComputedStyle(el);
-      return { gap: +(pr.right - r.right).toFixed(1), right: cs.right, bottom: cs.bottom };
+      return { gap: +(r.left - pr.left).toFixed(1), left: cs.left, bottom: cs.bottom };
     };
     return { src: pick('.canvas-source-toggle'), find: pick('.nf-findbar') };
   });
-  ok('S3-1 source-toggle 贴齐面板右缘（gap ≤1px，右锚 16 原槽）',
-    !!align.src && approx(align.src.gap, 16, 1), `gap=${align.src && align.src.gap} right=${align.src && align.src.right}`);
+  ok('S3-1 source-toggle 贴齐面板左缘（gap ≤1px，左锚 16 原槽·单行排布批镜像）',
+    !!align.src && approx(align.src.gap, 16, 1), `gap=${align.src && align.src.gap} left=${align.src && align.src.left}`);
 
   /* ── S4 frosted 材质 = chat 对话面板同源（逐项相等，带既有豁免）──
      #header 豁免（前批裁定，不算差异）：border-bottom 透明（Header 底缘零边界
@@ -371,13 +374,13 @@ async function dragCapsuleTrack(page, ddx, ddy, steps = 12) {
     document.body.appendChild(d);
     const frost = getComputedStyle(d).boxShadow;
     d.remove();
-    return { gap: +(pr.right - r.right).toFixed(1), bg: c.backgroundColor, blur: c.backdropFilter, btop: c.borderTopColor, shadow: c.boxShadow,
+    return { gap: +(r.left - pr.left).toFixed(1), bg: c.backgroundColor, blur: c.backdropFilter, btop: c.borderTopColor, shadow: c.boxShadow,
       hdr: { bg: h.backgroundColor, blur: h.backdropFilter, btop: h.borderTopColor, shadow: h.boxShadow }, frost };
   });
   // #header 豁免（同 S4-1 口径）：底缘透明 + 仅顶缘 inset 是既有裁定，不算差异
   const frostL = alignL.shadow === alignL.hdr.shadow
     || alignL.shadow.replace(/\s+/g, ' ') === alignL.frost.replace(/\s+/g, ' ');
-  ok('L1 亮色：source-toggle 贴齐右缘 + 材质 = #header 单源（bg/blur/border-top 相等 + shadow = --frost-shadow；豁免同 S4-1）',
+  ok('L1 亮色：source-toggle 贴齐左缘（单行排布批镜像）+ 材质 = #header 单源（bg/blur/border-top 相等 + shadow = --frost-shadow；豁免同 S4-1）',
     approx(alignL.gap, 16, 1) && alignL.bg === alignL.hdr.bg && alignL.blur === alignL.hdr.blur
       && alignL.btop === alignL.hdr.btop && frostL,
     `gap=${alignL.gap} bg=${alignL.bg}`);

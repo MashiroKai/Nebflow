@@ -770,6 +770,9 @@ object AgentActor extends AgentCore with AgentSession:
      * file-diff → 委托结果行（bug #58 修，2026-10-09）：delegate 终态事件
      * metadata 携带的**改动文件 diff 载荷**（`FileChangeReport.delegateBatchMetadata`
      * 产物，形状 = REST `file-changes` 面 {nodeId,generatedAt,root,files:[…]}）。
+     * 完工卡 diff 统计恢复批（2026-11-01）起，delegate 终态载荷可另带一枚**可选**
+     * `merge` 锚键 {commit,added,removed}（合并提交第一亲 diff 行数统计——卡面
+     * 「+新增 −删除」数据源，BackoffSupervisor.terminalDiffMetadata 合成）。
      * 随注入帧（WS `fileChanges` 键）与 `.ui.json` 行**同源落盘** ⇒ live 渲染与
      * 历史恢复同构获得 diff 视图。缺席（None = 非 delegate 源 / 零改动 / 生成
      * 失败）即不落键 ⇒ 旧行字节形态与旧读法逐字不变（intake/header/quote 先例

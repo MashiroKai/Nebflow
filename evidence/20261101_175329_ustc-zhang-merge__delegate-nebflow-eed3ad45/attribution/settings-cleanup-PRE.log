@@ -1,0 +1,51 @@
+
+Running 10 tests using 1 worker
+
+[1/10] tests/settings-cleanup.spec.mjs:125:3 › T1 [zh-CN] settings DOM has no MCP section, neighbors intact
+[2/10] tests/settings-cleanup.spec.mjs:125:3 › T1 [en] settings DOM has no MCP section, neighbors intact
+[3/10] tests/settings-cleanup.spec.mjs:170:1 › T2 rerun-onboarding entry rendered (unsealed by 2026-10-30 skip batch), code + i18n key retained
+[4/10] tests/settings-cleanup.spec.mjs:198:1 › T3 NL-ID entry gone (logged-in view), auth buttons removed with read-only identity, keys + API wrappers deleted
+[5/10] tests/settings-cleanup.spec.mjs:263:1 › T4a avatar section logged-out → logo + login modal on click
+[6/10] tests/settings-cleanup.spec.mjs:288:1 › T4b avatar section logged-in → photo + profile window.open on click
+[7/10] tests/settings-cleanup.spec.mjs:319:1 › T5 update feature fully retired: no entry DOM, no update WS frames, no dot, module + keys gone; restart kept
+[8/10] tests/settings-cleanup.spec.mjs:384:1 › P locale parity: zh/en key sets identical
+  1) tests/settings-cleanup.spec.mjs:384:1 › P locale parity: zh/en key sets identical ─────────────
+
+    Error: keys only in zh
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 10
+
+    - Array []
+    + Array [
+    +   "chat.allowTool",
+    +   "chat.permSource",
+    +   "chat.permLevel.warning",
+    +   "chat.permLevel.dangerous",
+    +   "chat.permLevel.critical",
+    +   "chat.permExecCmd",
+    +   "chat.copied",
+    +   "chat.copy",
+    + ]
+
+      394 |     };
+      395 |   });
+    > 396 |   expect(onlyZh, 'keys only in zh').toEqual([]);
+          |                                     ^
+      397 |   expect(onlyEn, 'keys only in en').toEqual([]);
+      398 |   expect(zhCount, 'same key count').toBe(enCount);
+      399 | });
+        at /private/tmp/merge-eed3ad45/pristine/tests/settings-cleanup.spec.mjs:396:37
+
+    Error Context: test-results/settings-cleanup-P-locale-parity-zh-en-key-sets-identical/error-context.md
+
+    Error Context: test-results/settings-cleanup-P-locale-parity-zh-en-key-sets-identical/error-context.md
+
+
+[9/10] tests/settings-cleanup.spec.mjs:403:3 › shots[light] settings full + account block closeup + avatar dual state
+[10/10] tests/settings-cleanup.spec.mjs:403:3 › shots[dark] settings full + account block closeup + avatar dual state
+  1 failed
+    tests/settings-cleanup.spec.mjs:384:1 › P locale parity: zh/en key sets identical ──────────────
+  9 passed (12.8s)

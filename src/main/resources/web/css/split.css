@@ -1535,12 +1535,10 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
 }
 body.canvas-open:not(.mobile-layer) #deck-fab { display: inline-flex; }
 #deck-fab svg { width: 18px; height: 18px; }
-/* 堆叠态活性语义的活性蓝档（canvas aria-pressed 既有词汇；id+attr 特异性高于
-   .g2-fab:hover 的 hover 档，活性态不被 hover 填充盖掉） */
-#deck-fab[aria-pressed="true"] {
-  background-color: rgb(var(--sapphire) / 0.14);
-  color: rgb(var(--sapphire));
-}
+/* 堆叠态活性档（canvas aria-pressed 既有词汇）随统一按钮玻璃批迁 glass.css
+   选中档单源（D5：pressed sapphire 14% → 12%/35% + primary 字，与
+   .canvas-ref-select.active 同一条规则 = 全站选中标准）。本文件留显隐与
+   禁用命中面。 */
 #deck-fab[disabled] { pointer-events: none; }
 
 /* ── 左移批（作者令 2026-10-31 21:37「电脑端关签钮左移，与堆叠钮左右对称」）：
@@ -1877,19 +1875,18 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
    件三统一批（2026-10-28）：尺寸/阴影/hover-active 全部收进 --cv-* token 档
    （sapphire.css 单源）——尺寸 = --cv-size-circle 40、阴影 = --cv-shadow
    （= chat #header 现值，外投影退役）、hover = --cv-hover-bg + 
-   --cv-hover-scale、active = --cv-active-scale（聊天控件同款语言）。 */
+   --cv-hover-scale、active = --cv-active-scale（聊天控件同款语言）。
+   单行排布批（2026-11-01 作者令 16:18「浮钮组改单行：功能钮靠左、ask 靠右，
+   两端对齐」）：文档工具簇整体从底右角镜像到底左角（右锚 16 → 左锚 16，槽位
+   值原样=角缘序镜像保序），与右缘 ask-fab 同行（两端对齐）——ask 座位联动
+   见 askDock.js syncSeat / ask.css。纯排布改动，材质/尺寸零变。 */
 .canvas-source-toggle {
   position: absolute;
   bottom: 16px;
-  right: 16px;
+  left: 16px;
   width: var(--cv-size-circle, 40px);
   height: var(--cv-size-circle, 40px);
   border-radius: 50%;
-  border: 1px solid var(--cv-border, var(--glass-border));
-  background: var(--cv-bg, var(--glass-bg));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  box-shadow: var(--cv-shadow);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1897,30 +1894,25 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   z-index: 10;
   color: var(--color-text);
   transition: all 0.2s ease;
+  /* 统一按钮玻璃批 2026-11-01（设计稿 D1 基准件）：材质（cv 玻璃配方）与
+     状态档（hover 抬亮+scale / active / 选中 / disabled / focus-visible）
+     迁 css/glass.css 圆钮级浮件档单源——F1 覆盖层随 liquid-glass.css 退役，
+     cv 档直读。几何/落位留本文件。 */
 }
-.canvas-source-toggle:hover {
-  background: var(--cv-hover-bg);
-  transform: scale(var(--cv-hover-scale, 1.05));
-}
-.canvas-source-toggle:active { transform: scale(var(--cv-active-scale, 0.96)); }
 
 /* #303 B6: element-select toggle — same floating-glass style as the source
    toggle, seated 8px to its left.
    六项批（2026-10-23 六项③④）：右锚回原槽 64（= source 16 + 40 + 8 同排 sequel），
    材质同 source toggle 换 frosted 标准单源；件三统一批（2026-10-28）尺寸/阴影/
-   hover-active 收 --cv-* token 档。 */
+   hover-active 收 --cv-* token 档。单行排布批（2026-11-01）：左锚镜像同批
+   （右锚 64 → 左锚 64，槽值原样）。 */
 .canvas-ref-select {
   position: absolute;
   bottom: 16px;
-  right: 64px;
+  left: 64px;
   width: var(--cv-size-circle, 40px);
   height: var(--cv-size-circle, 40px);
   border-radius: 50%;
-  border: 1px solid var(--cv-border, var(--glass-border));
-  background: var(--cv-bg, var(--glass-bg));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  box-shadow: var(--cv-shadow);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1928,25 +1920,8 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   z-index: 10;
   color: var(--color-text);
   transition: all 0.2s ease;
-}
-.canvas-ref-select:hover {
-  background: var(--cv-hover-bg);
-  transform: scale(var(--cv-hover-scale, 1.05));
-}
-.canvas-ref-select:active { transform: scale(var(--cv-active-scale, 0.96)); }
-/* Active (select mode engaged): sapphire-leaning accent tint */
-.canvas-ref-select.active {
-  color: var(--color-primary);
-  border-color: rgb(var(--sapphire) / 0.35);
-  background: rgb(var(--sapphire) / 0.12);
-}
-.canvas-ref-select:disabled {
-  cursor: not-allowed;
-  opacity: 0.35;
-}
-.canvas-ref-select:disabled:hover {
-  transform: none;
-  background: var(--cv-bg, var(--glass-bg));
+  /* 材质/状态档迁 glass.css 圆钮级浮件档（D2）；selected sapphire 档升格为
+     全站选中标准（glass.css .canvas-ref-select.active 共档块）。 */
 }
 
 /* canvas 文件刷新批（作者令 2026-10-25）：文件页签右下「重新读盘」钮。
@@ -1969,11 +1944,6 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   width: var(--cv-size-circle, 40px);
   height: var(--cv-size-circle, 40px);
   border-radius: 50%;
-  border: 1px solid var(--cv-border, var(--glass-border));
-  background: var(--cv-bg, var(--glass-bg));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  box-shadow: var(--cv-shadow);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1981,12 +1951,8 @@ body.canvas-overlay #deck-layer { border-radius: 20px; }
   z-index: 10;
   color: var(--color-text);
   transition: all 0.2s ease;
+  /* 材质/状态档迁 glass.css 圆钮级浮件档（D3，busy 旋转动画保留下方）。 */
 }
-.canvas-refresh-toggle:hover {
-  background: var(--cv-hover-bg);
-  transform: scale(var(--cv-hover-scale, 1.05));
-}
-.canvas-refresh-toggle:active { transform: scale(var(--cv-active-scale, 0.96)); }
 .canvas-refresh-toggle.busy svg {
   animation: canvasRefreshSpin 1s linear infinite;
 }
@@ -2784,12 +2750,14 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
    件三统一批（2026-10-28）：材质/尺寸收 --cv-* token 档 —— 面阴影 = 
    --cv-shadow（= chat #header 现值，修前 --frost-shadow 外投影退役）；内钮
    26px 档（修前 glass-control 实心 chip 面退役 —— zoom.js 去 .glass-control
-   类，与查找条内钮同语言：静默 ghost + hover 抬亮，聊天控件同款）。 */
+   类，与查找条内钮同语言：静默 ghost + hover 抬亮，聊天控件同款）。
+   单行排布批（2026-11-01）：左锚镜像同批（右锚 16 → 左锚 16，见
+   .canvas-source-toggle 注）——缩放条与文档工具簇同落左端，右端独行 ask。 */
 .canvas-zoom-bar {
   position: absolute;
   top: auto;
   bottom: 18px;
-  right: 16px;
+  left: 16px;
   z-index: 5;
   display: flex;
   align-items: center;
@@ -2861,27 +2829,28 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
 }
-/* HTML viewer: zoom bar joins the bottom-right chrome cluster. The default
+/* HTML viewer: zoom bar joins the bottom chrome cluster. The default
    spot floats over arbitrary HTML content — posters put interactive
    headers exactly there, blocking clicks on both sides. Scoped to html panes;
-   image/PDF keep the default bottom-right spot.
+   image/PDF keep the default bottom-left spot.
    Cluster slots (48px pitch, 40px circles；六项批 2026-10-23 簇回原槽 −48 ——
    移位批 +48 随 fab 回退一并失效，见 .canvas-source-toggle 注)：source 16 ·
    ref-select 64 · find 112 (html.js addFindToggle(pane, 112)) · zoom bar 160.
    The zoom bar used to sit at right:112 — the find toggle's slot since the
    wiki-graph batch — so the circle printed on top of the bar's Fit button
    (screenshot 2026-10-19). 160 keeps the 8px gap after the find circle
-   (ends at 152). */
+   (ends at 152).
+   单行排布批（2026-11-01）：左锚镜像（右 160 → 左 160），槽值原样。 */
 .canvas-tab-pane[data-type="html"] .canvas-zoom-bar {
   top: auto;
-  right: 160px;
+  left: 160px;
   bottom: 18px;
 }
 /* 窄面板（<356px 装不下 160 槽 + 140 条宽，拖拽下限 320）：条升到圆钮行上方
-   第二行（右 16 槽、行距 8px），与圆钮簇零交叠、完整落在 pane 内。 */
+   第二行（左 16 槽、行距 8px），与圆钮簇零交叠、完整落在 pane 内。 */
 @container nfpane (max-width: 355px) {
   .canvas-tab-pane[data-type="html"] .canvas-zoom-bar {
-    right: 16px;
+    left: 16px;
     bottom: 64px;
   }
 }
@@ -3169,19 +3138,11 @@ body.col-resizing #canvas-panel { transition: none; }
 .canvas-find-toggle {
   position: absolute; bottom: 16px;
   width: var(--cv-size-circle, 40px); height: var(--cv-size-circle, 40px); border-radius: 50%;
-  border: 1px solid var(--cv-border, var(--glass-border));
-  background: var(--cv-bg, var(--glass-bg));
-  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
-  box-shadow: var(--cv-shadow);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; z-index: 10; color: var(--color-text);
   transition: all .2s ease;
+  /* 材质/状态档迁 glass.css 圆钮级浮件档（D4；图谱钮已退役不在成员面）。 */
 }
-.canvas-find-toggle:hover {
-  background: var(--cv-hover-bg); transform: scale(var(--cv-hover-scale, 1.05));
-}
-.canvas-find-toggle:active { transform: scale(var(--cv-active-scale, 0.96)); }
 
 /* ── Glass find bar (fileSearch.js) ───────────────────────────────
    件三统一批（2026-10-28）：材质整族归一聊天模板 token（修前 --glass-control-*
@@ -3337,6 +3298,12 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   display: block;
   cursor: default;
   background: transparent;
+  /* 触摸即拖批（2026-11-01 作者令「图谱默认可直接拖动/平移，不需要模式切换」）：
+     画布无滚动语义，touch-action 收归指针管线 —— 修前默认 auto 让浏览器手势
+     接管触屏拖动（≈2 个 move 后 pointercancel），手机端图谱永远拖不动；
+     桌面鼠标路径零影响（touch-action 只约束触屏/滚轮默认行为，wheel 已
+     preventDefault）。双指捏合缩放走 wikiGraph.js pinch 管线。 */
+  touch-action: none;
 }
 .wiki-canvas.grabbing { cursor: grabbing; }
 .wiki-canvas.hovering { cursor: pointer; }

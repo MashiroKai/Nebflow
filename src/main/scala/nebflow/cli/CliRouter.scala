@@ -323,7 +323,12 @@ object CliRouter:
     // same atomic write), so leak containment must not depend on a live
     // gateway. `token print` / `sessions revoke` stay online (a live store
     // is the minting/revoking object).
-    ("token", "rotate")
+    ("token", "rotate"),
+    // 密钥 CLI 批（密钥能力三件套 A 件，2026-11-01）：`secrets list`/`usage`
+    // 是本机元数据读面（SecretsStore.list 零值读，与网关 REST 同一单点）——
+    // 网关不在时恰恰更该可用（health/logs 同款判据），离线归类。
+    ("secrets", "list"),
+    ("secrets", "usage")
   )
 
   private[cli] def isOffline(cmdName: String, subName: String): Boolean =

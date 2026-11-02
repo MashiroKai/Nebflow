@@ -817,6 +817,13 @@ export default {
   // 面板层级批（2026-10-31 ①）：组头折叠 caret 的无障碍/悬停文案（随折叠态翻转）。
   'subagents.collapseGroup': '收起子任务',
   'subagents.expandGroup': '展开子任务',
+  // Flow 会话可见性批（2026-11-01）：dispatcher-*/node-* 行 kind 徽标（引擎协议
+  // kind 一律 "Flow" 无区分度——显示词按前缀单点判读）＋ delegate 已终态而链仍在
+  // 跑的延续态徽标（琥珀词 + workflow 图标；tooltip 带链会话数）。
+  'subagents.kindDispatcher': '分发器',
+  'subagents.kindNode': '节点',
+  'subagents.chainRunning': '链运行中',
+  'subagents.chainRunningTip': '委托已交付，链仍在运行 · {n} 个会话',
   // 面板行说明批（2026-10-29 ②）：任务摘要次行无文案键（原文上屏）。
   // 任务归属徽标（2026-09-27 taskbadge 批）：行内 `#号 · 标题` 徽标的悬停提示
   'subagents.taskBadge': '所属任务：{text}',
@@ -1167,10 +1174,12 @@ export default {
   'settings.secretsNone': '尚无密钥',
   'settings.addProvider': '+ 添加服务商',
   'settings.modelChainHint': '在输入框输入 /model 命令，以统一/分开两种模式配置各角色的模型链。',
-  // 配置面风格统一批②（2026-10-31 作者令）：设置页回退链节（/model 回退链
-  // 编辑器同款内容面，两份共享同一状态/保存通道）。
-  'settings.modelChainTitle': '模型回退链',
-  'settings.modelChainSectionHint': '主链路模型与回退顺序；每次调整即时保存，与 /model 面板同一份状态、改哪边都即时同步。',
+  // 配置面风格统一批②（2026-10-31 作者令）：设置页顺序节（/model 顺序编辑器
+  // 同款内容面，两份共享同一状态/保存通道）。
+  // 精简批（作者令 2026-11-01）：标题「模型回退链」→「模型选择顺序」；说明
+  // 压到一行以内（超长删繁就简，不再折行）。
+  'settings.modelChainTitle': '模型选择顺序',
+  'settings.modelChainSectionHint': '首选在前，拖动排序即存，与 /model 同步。',
   // /model 面板文案（modelcfg Phase 1）
   'model.title': '模型配置',
   'model.modeUnified': '统一配置',
@@ -1180,10 +1189,6 @@ export default {
   'model.chainHead': '首选',
   'model.chainFallback': '备用',
   'model.addModel': '添加模型',
-  'model.refreshList': '刷新列表',
-  'model.refreshFailed': '刷新失败，可手动输入 provider/model',
-  'model.manualInput': '手动输入',
-  'model.manualPlaceholder': 'provider/model',
   'model.orderNote': '顺序 = 出错时自动切换的先后次序',
   'model.followers': '跟随方',
   'model.followsNebula': '跟随 {agent}',
@@ -1204,8 +1209,6 @@ export default {
   'model.divergedBar': '{roles} 已独立配置，不受主链影响',
   'model.divergedView': '查看',
   'model.seedNote': '未配置，将使用首个可用模型',
-  'model.clearChain': '清空链',
-  'model.clearChainConfirm': '清空后回落种子链（首个可用模型），该角色的自有链将被删除。继续？',
   'model.singleModelNote': '仅 1 个模型，无备用——出错将直接使用储备层',
   'model.loadFailed': '加载失败',
   // 台账 #937：面板级降级面（全角色读数失败 —— 静默僵面修复）。提示给全
@@ -1372,6 +1375,10 @@ export default {
   'chat.retry': '重试',
   // A 支 · 滚动跟随收敛：新增消息胶囊（计数 = 自离开底部以来新增的消息行数）
   'chat.newMessages': '↓ {n} 条新消息',
+  // 搜索跳转回位胶囊（作者令 2026-11-01，searchReturnPill.js）：锚在 ⇒ 回跳转前
+  // 位置；锚失 ⇒ 诚实降级回最新。
+  'chat.backToPrevPosition': '回到跳转前位置',
+  'chat.backToLatest': '回到最新',
   'chat.confirm': '确认',
   'chat.answeredViaChatInput': '已通过输入框回答',
   'chat.cancel': '取消',
@@ -1631,8 +1638,8 @@ export default {
   'bgws.moreTasks': '还有 {count} 个后台任务（主窗口面板查看）',
   'bg.sectionAgents': '智能体',
   'bg.empty': '当前无运行中的后台任务',
-  'bg.kind.local': '本地',
-  'bg.kind.remote': '远程',
+  // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：bg.kind.local /
+  // bg.kind.remote 两键随徽标整对删除——跑在哪由设备名 chip 承载（bg.runsOn）。
   'bg.openedBy': '由 {origin} 开启',
   'bg.runsOn': '跑在 {origin}',
   // P0 面板投影批（设计稿 20261030_background-task-lifecycle §3.4）：后台任务
@@ -2730,8 +2737,8 @@ export default {
   'secrets.delete': '删除',
   'secrets.save': '保存',
   'secrets.saved': '已保存 ✓',
-  'secrets.state.ok': '仅所有者可读写',
-  'secrets.state.permissive': '权限过宽',
+  // 「权限过宽/仅所有者可读写」两态徽标键已随徽标概念退役（层级收进批，
+  // 作者令 2026-11-01：红标整概念退役，en/zh 同批同删，键集两边一致）。
   'secrets.referencedBy': '被引用：{refs}',
   'secrets.deleteTitle': '删除密钥',
   'secrets.deleteConfirm': '删除后不可恢复，确定删除「{name}」？',

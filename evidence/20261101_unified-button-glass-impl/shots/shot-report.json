@@ -1,0 +1,92 @@
+[
+  {
+    "target": "chat",
+    "engine": "chromium",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "png": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-94fe78c9/evidence/20261101_unified-button-glass-impl/shots/chat-chromium-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "chat",
+    "engine": "chromium",
+    "theme": "light",
+    "viewport": "1280x844",
+    "png": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-94fe78c9/evidence/20261101_unified-button-glass-impl/shots/chat-chromium-light.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "chat",
+    "engine": "webkit",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "png": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-94fe78c9/evidence/20261101_unified-button-glass-impl/shots/chat-webkit-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "chat",
+    "engine": "webkit",
+    "theme": "light",
+    "viewport": "1280x844",
+    "png": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-94fe78c9/evidence/20261101_unified-button-glass-impl/shots/chat-webkit-light.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "canvas",
+    "engine": "chromium",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "png": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-94fe78c9/evidence/20261101_unified-button-glass-impl/shots/canvas-chromium-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "canvas",
+    "engine": "webkit",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "png": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-94fe78c9/evidence/20261101_unified-button-glass-impl/shots/canvas-webkit-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "mobile",
+    "engine": "chromium",
+    "theme": "dark",
+    "viewport": "390x844",
+    "png": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-94fe78c9/evidence/20261101_unified-button-glass-impl/shots/mobile-chromium-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "mobile",
+    "engine": "webkit",
+    "theme": "dark",
+    "viewport": "390x844",
+    "png": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-94fe78c9/evidence/20261101_unified-button-glass-impl/shots/mobile-webkit-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "dialog",
+    "engine": "chromium",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "png": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-94fe78c9/evidence/20261101_unified-button-glass-impl/shots/dialog-chromium-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  },
+  {
+    "target": "dialog",
+    "engine": "webkit",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "png": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-94fe78c9/evidence/20261101_unified-button-glass-impl/shots/dialog-webkit-dark.png",
+    "consoleErrors": [],
+    "ok": true
+  }
+]

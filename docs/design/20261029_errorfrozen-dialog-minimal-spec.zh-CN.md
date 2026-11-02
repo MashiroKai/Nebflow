@@ -5,7 +5,7 @@ status: shipped
 
 # 错误态/冻结态对话框极简化 · 规格（errorfrozen-dialog-minimal 批）
 
-> 批依据：作者令 2026-10-29 13:51「出现错误状态以及冻结状态的时候 对话框的设计比较丑 可以优化一下 往简约的方向走 结合stand的风格 要极简」。本稿为该批的设计规格与可断言验收点（防线①→③闭环），实施与证据同批落盘（见文末附注）。视觉上位法 = [[visual-style]] 铁律（弹窗禁 overlay 遮罩、面板毛玻璃、低调克制专业感）+ ui-status-redesign 既有极简范式（中性字 + 左缘 2px 描边 + 图标载体）；范式参考 Apple HIG Alerts（https://developer.apple.com/design/human-interface-guidelines/alerts）与 macOS 通知横幅（单一图标点缀 + 中性底，语义色不上正文、不上大面积底色）。
+> 批依据：作者令 2026-10-29 13:51「出现错误状态以及冻结状态的时候 对话框的设计比较丑 可以优化一下 往简约的方向走 结合stand的风格 要极简」。本稿为该批的设计规格与可断言验收点（防线①→③闭环），实施与证据同批落盘（见文末附注）。视觉上位法 = 视觉风格铁律（弹窗禁 overlay 遮罩、面板毛玻璃、低调克制专业感，词表见 [[glossary]]）+ ui-status-redesign 既有极简范式（中性字 + 左缘 2px 描边 + 图标载体）；范式参考 Apple HIG Alerts（https://developer.apple.com/design/human-interface-guidelines/alerts）与 macOS 通知横幅（单一图标点缀 + 中性底，语义色不上正文、不上大面积底色）。
 
 ## 0. 一句话目标
 

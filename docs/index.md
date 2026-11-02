@@ -16,6 +16,7 @@ status: current
 - 根散件 — 运维检查单、并行会话资源规范等专项报告：[[production-ops-checklist.zh-CN]]（生产操作检查单）、[[parallel-session-resources.zh-CN]]（并行会话资源预分配规范）。
 - 机制设计批（2026-11-02）— [[20261102_143609_ptc-mode-two-plugins__delegate-nebflow-226f28aa]]（PTC 模式激活：两个独立 MCP 插件 ptc-python / ptc-typescript + 语言中立契约 contracts/ptc/v1 + 契约门 11×2 用例 + 真模型最小闭环实证；宿主侧零改动）。
 - 审计报告 — [[20261028_171800_审计报告二五机制__delegate-nebflow-a13975e4]]（delegate／插件分配／AgentFlow／合并队列／门户数据面五机制审计·权威版，取代 reports/ 同名过程件）。
+- delegate 子系统现状审计 — [[20261101_174600_delegate-status-audit__kernel]]（2026-11-01 17:46 快照：十面架构盘点 + 今日实案卷宗 + 已落/未落对账 + 运行时读数 + 优先级表；引 [[20261101_165531_dispatcher-chain-lifecycle-rca__kernel]] 的 RCA，不重查其归因）。
 - 审计报告（NebLink 身份面）— [[20261102_171500_neblink-device-identity-and-ownership]]（云端怎么认「不同机器」——deviceId 双线派生实测复算、register 一腿建立归属、networkId=账号网络、顶号实测 5/8 抢输；服务端源码不在本机，分档标注一手实测／二手行号／设计断言）。
 - 运维报告 — [[20261029_175151_plugin-repo-registry]]（2026-10-29 插件建仓批：23 插件一仓一包、v tag 打在导入 commit、7 public／16 private、种子 vs 实例内容源裁定与三包实例直改差异申报、GitHub 二次限流全程读数）。
 

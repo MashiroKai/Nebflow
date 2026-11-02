@@ -1,0 +1,60 @@
+{
+  "generatedBy": "scripts/visual-baseline.mjs --update",
+  "generatedAt": "2026-11-01T09:56:53.843Z",
+  "platform": "darwin-chromium-151",
+  "browser": {
+    "label": "chromium-151",
+    "version": "151.0.7922.34"
+  },
+  "viewport": {
+    "deviceScaleFactor": 1
+  },
+  "tolerance": 0,
+  "maxRatio": 0,
+  "entries": [
+    {
+      "tag": "canvas-markdown-tab-dark",
+      "scenario": "canvas-markdown-tab",
+      "theme": "dark",
+      "bytes": 62166,
+      "at": "2026-11-01T09:56:40.640Z",
+      "ms": 3356,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-markdown-tab-light",
+      "scenario": "canvas-markdown-tab",
+      "theme": "light",
+      "bytes": 57131,
+      "at": "2026-11-01T09:56:44.486Z",
+      "ms": 3844,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-code-tab-dark",
+      "scenario": "canvas-code-tab",
+      "theme": "dark",
+      "bytes": 43314,
+      "at": "2026-11-01T09:56:49.061Z",
+      "ms": 4573,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    },
+    {
+      "tag": "canvas-code-tab-light",
+      "scenario": "canvas-code-tab",
+      "theme": "light",
+      "bytes": 39713,
+      "at": "2026-11-01T09:56:53.744Z",
+      "ms": 4681,
+      "mask": [
+        ".mic-orb-wrap"
+      ]
+    }
+  ]
+}

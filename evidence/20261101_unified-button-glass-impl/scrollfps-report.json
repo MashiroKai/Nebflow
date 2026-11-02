@@ -1,0 +1,30 @@
+[
+  {
+    "engine": "chromium",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "bubbles": 120,
+    "errors": [],
+    "frames": 117,
+    "durationMs": 2505,
+    "avgFps": 46.7,
+    "droppedFrames": 49,
+    "p95Ms": 43.4,
+    "maxMs": 45.9,
+    "scrolledHeight": 11373
+  },
+  {
+    "engine": "webkit",
+    "theme": "dark",
+    "viewport": "1280x844",
+    "bubbles": 120,
+    "errors": [],
+    "frames": 141,
+    "durationMs": 2514,
+    "avgFps": 56.1,
+    "droppedFrames": 2,
+    "p95Ms": 18,
+    "maxMs": 186,
+    "scrolledHeight": 11373
+  }
+]

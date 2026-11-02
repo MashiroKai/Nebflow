@@ -17,10 +17,6 @@
 #input-bar {
   position: relative;
   pointer-events: auto;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
   border-radius: 20px;
   /* 瘦身批：垂直内 padding 8px → 6px（横向 12px 不动；mic-orb 64px/图标钮 36px
      为静息态高度驱动件，本项在输入态（textarea 驱动行高）再省 4px）。 */
@@ -29,10 +25,11 @@
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
+  /* 统一按钮玻璃批 2026-11-01：材质（--glass-bg + blur24 sat1.15 双写 +
+     --cv-shadow 三档栈 + 顶缘折射线 ::before）迁 css/glass.css 面级浮件档
+     （v2 改皮随 liquid-glass.css 退役 = 设计稿 D10 撤销，回归基准件 C 原配方）；
+     本文件只留几何与状态过渡。frozen/disconnected/voice 高特异态在本文件
+     原样保留，特异度高于包档零影响。 */
   /* 2026-08-24 frozen-input spec §4: freeze/unfreeze material transition —
      300ms Material standard easing on the three painted properties.
      voice-mode batch: opacity/transform join the set — the full-duplex voice
@@ -43,22 +40,6 @@
     box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1),
     opacity 0.24s ease,
     transform 0.26s cubic-bezier(0.4, 0, 0.2, 1);
-}
-#input-bar::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 10%;
-  right: 10%;
-  height: 1px;
-  background: linear-gradient(90deg,
-    transparent 10%,
-    var(--sapphire-refraction) 50%,
-    transparent 90%
-  );
-  pointer-events: none;
-  z-index: 1;
-  border-radius: inherit;
 }
 #input-wrap {
   flex: 1;
@@ -992,14 +973,11 @@
 #stop-btn {
   background: var(--color-error);
   color: #fff;
-  /* Same glass material as #send-btn: blur + inset edges + whisper border */
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  -webkit-backdrop-filter: blur(8px) saturate(1.3);
-  backdrop-filter: blur(8px) saturate(1.3);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.3),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.12),
-    0 1px 4px rgba(0, 0, 0, 0.12);
+  /* 统一按钮玻璃批 2026-11-01：非悬浮面孤儿玻璃底（blur8 + inset 双高光）
+   随批扁平化——归非悬浮墨玻璃包强调/危险档口径（v3 C1 扁平族纪律：纯色/
+   无 blur/无高光/无浮影）。悬浮玻璃只允许消费 glass.css 包档，非悬浮面
+   不再残留包外材质（原为 v3 扁平口径外的唯一残留，侦察批 inventory §四）。 */
+  border: 1px solid transparent;
   border-radius: 50%;
   width: 36px; height: 36px;
   cursor: pointer;
@@ -1007,9 +985,9 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: background 0.15s, box-shadow 0.15s;
+  transition: background 0.15s ease;
 }
-#stop-btn:hover { background: #d32f2f; }
+#stop-btn:hover { background: color-mix(in srgb, var(--color-error) 88%, black); }
 #stop-btn svg { width: 18px; height: 18px; stroke-width: 2.5; }
 
 /* ---------- Voice Overlay ---------- */
@@ -1080,31 +1058,19 @@
    #input-bar's backdrop root. */
 /* #mention-dropdown (@-mention project popup, mention-routing batch) shares
    the #slash-dropdown glass recipe verbatim — one dropdown pattern, two hosts. */
-/* 换装批（作者令 2026-10-31「@ 与 / 候选浮层对齐现行设计语言」）：材质整体换代
-   为液态玻璃悬浮件 token 单源（stand-tokens.css --g2-fab-* 族 = liquid-glass.css
-   共享底材同配方），圆角 16px 对齐聊天气泡族；行内缩圆角行（r10）+ hover 白玻璃
-   hover 档 + 选中行墨族 --g2-ink-* 墨玻璃高亮（ink-swap 双档随面板主题自动解析，
-   字色随高亮翻转）。旧硬编码 #f0f0f0/#e8f5e9/#333 + @media 暗档字面量覆写
-   整体退役（g2 token 自带 data-theme + media 双档解析，无主题裂缝）。
-   v3 实现批：--g2-fab-* 升 F1 档（填充 .30/.10、blur 20 sat 2.2、边 .70/.26、
-   高光 .55/.26、投影 0 10px 26px）——本块浮影栈结构不动，底缘层 token 已置
-   透明（F1 无底缘内影），材质随单源自解析。 */
+/* 换装批（作者令 2026-10-31「@ 与 / 候选浮层对齐现行设计语言」）：材质换代
+   为悬浮件玻璃单源。统一按钮玻璃批 2026-11-01：面板材质迁 css/glass.css 面
+   级浮件档（--glass-bg + blur24 sat1.15 双写 + --cv-shadow；原 --g2-fab-*
+   F1 档随族退役，设计稿 §4 遗产处置表），本块只留几何。行内缩圆角行（r10）
+   + hover 玻璃抬亮档 + 选中行墨族 --btn-ink-* 墨面高亮（ink-swap 双档随面板
+   主题自动解析，字色随高亮翻转；原 --g2-ink-* 中转层退役）。 */
 #slash-dropdown,
 #mention-dropdown {
   position: absolute;
   bottom: 100%;
   left: 12px;
   right: 12px;
-  background: var(--g2-fab-bg);
-  -webkit-backdrop-filter: blur(var(--g2-fab-blur)) saturate(var(--g2-fab-sat));
-  backdrop-filter: blur(var(--g2-fab-blur)) saturate(var(--g2-fab-sat));
-  border: 1px solid var(--g2-fab-border);
   border-radius: 16px;
-  box-shadow:
-    inset 0 1px 0 var(--g2-fab-highlight),
-    inset 0 -2px 5px var(--g2-fab-underedge),
-    0 1px 3px var(--g2-fab-shadow),
-    0 8px 24px var(--g2-fab-shadow);
   margin-bottom: 8px;
   max-height: 240px;
   overflow-y: auto;
@@ -1137,17 +1103,17 @@
   transition: background-color 0.15s ease;
 }
 .slash-item + .slash-item { margin-top: 2px; }
-.slash-item:hover { background: var(--g2-fab-bg-hover); }
+.slash-item:hover { background: var(--cv-hover-bg, var(--glass-control-bg-hover)); }
 .slash-item.active {
-  background: var(--g2-ink-bg);
+  background: var(--btn-ink-bg);
 }
-.slash-item.active .slash-cmd { color: var(--g2-ink-ink); }
+.slash-item.active .slash-cmd { color: var(--btn-ink-ink); }
 .slash-item.active .slash-desc,
 .slash-item.active .slash-when {
-  color: var(--g2-ink-ink);
+  color: var(--btn-ink-ink);
   opacity: 0.72;
 }
-.slash-item.active .slash-delete { color: var(--g2-ink-ink); }
+.slash-item.active .slash-delete { color: var(--btn-ink-ink); }
 .slash-cmd {
   font-size: 14.5px;
   font-weight: 500;
@@ -1218,13 +1184,13 @@
   transition: background-color 0.15s ease;
 }
 .mention-item + .mention-item { margin-top: 2px; }
-.mention-item:hover { background: var(--g2-fab-bg-hover); }
+.mention-item:hover { background: var(--cv-hover-bg, var(--glass-control-bg-hover)); }
 .mention-item.active {
-  background: var(--g2-ink-bg);
+  background: var(--btn-ink-bg);
 }
-.mention-item.active .mention-name { color: var(--g2-ink-ink); }
+.mention-item.active .mention-name { color: var(--btn-ink-ink); }
 .mention-item.active .mention-path {
-  color: var(--g2-ink-ink);
+  color: var(--btn-ink-ink);
   opacity: 0.72;
 }
 .mention-name {
@@ -1248,15 +1214,16 @@
   color: var(--color-text-muted);
   cursor: default;
 }
-/* 降级（liquid-glass.css §7 同口径：@supports + html.no-backdrop 双保险）：
-   无 backdrop-filter 引擎时玻璃底退化为 --g2-fab-solid 实色档，浮影/高光保留。 */
+/* 降级（glass.css 同口径：@supports + html.no-backdrop 双保险）：无
+   backdrop-filter 引擎时玻璃底回落实色档 = --glass-bg 原值（主降级块在
+   glass.css，此处为下拉自身旧块的口径收口——值同源零漂移）。 */
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   #slash-dropdown,
-  #mention-dropdown { background: var(--g2-fab-solid); }
+  #mention-dropdown { background: var(--glass-bg); }
 }
 html.no-backdrop #slash-dropdown,
 html.no-backdrop #mention-dropdown {
-  background: var(--g2-fab-solid);
+  background: var(--glass-bg);
 }
 
 /* ── Queue Bar (messages typed while LLM is busy) ──────────────────────
@@ -1281,33 +1248,11 @@ html.no-backdrop #mention-dropdown {
   opacity: 1;
   margin-bottom: 4px;
   overflow-y: auto;
-  /* Sapphire glass — identical material to #input-bar */
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
   border-radius: 20px;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
+  /* Sapphire glass — identical material to #input-bar（材质迁 glass.css
+     面级浮件档：--glass-bg + blur24 sat1.15 双写 + --cv-shadow + 折射线） */
 }
-/* Top-edge refraction line — same technique as .glass::before */
-#queue-bar.visible::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 10%;
-  right: 10%;
-  height: 1px;
-  background: linear-gradient(90deg,
-    transparent 10%,
-    var(--sapphire-refraction) 50%,
-    transparent 90%
-  );
-  pointer-events: none;
-  z-index: 1;
-}
+/* Top-edge refraction line — 同 #input-bar（glass.css #queue-bar.visible::before） */
 
 /* ── Queue header ── */
 .queue-bar-header {
