@@ -4368,9 +4368,17 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
     if ((parseFloat(chat.style.getPropertyValue('--chat-top-clip')) || 0) !== clipTop) {
       chat.style.setProperty('--chat-top-clip', clipTop + 'px');
     }
-    /* Muse 悬浮身份头恢复批（2026-11-02 09:14）：顶栏没了 ⇒ 让位回到统一公式
-       bandBottom()（手机层 = 渐隐带 88 底 + 基线 8 = 96）。身份组是内容流首项的
-       sticky 悬浮锚，静止态落在流内原位、滚动时锚窗口顶，不占额外让位。 */
+    /* 身份头同行批（作者令 2026-11-02 11:08「头像与左右双钮必须始终同一行」）：
+       身份组的位置本批起**与让位解耦** —— mobileLayer.css 的 ② sticky top 与
+       ②-b 负 margin 取同一表达式（-padding-top + --muse-head-anchor + safe），
+       两者恒等 ⇒ 头像垂直中心恒等双钮中心，且不再依赖 reserve 的取值：
+         head.top = padding-top + margin-top = --muse-head-anchor + safe（= 4）
+         firstRow = --muse-head-anchor + 组高 + 行距 = 4 + 106 + 6 = 116（恒定）
+       即 reserve 由「把头像顶到 64 的那条 96 空带」降级为**只承担渐隐带让位**。
+       仍取 bandBottom()（手机层 = 渐隐带 88 底 + 基线 8 = 96）而非收紧到 88：
+       首条消息落 116、名字胶囊底 98 ⇒ 名字→首行 18px 呼吸；改 reserve 会连同
+       ②-b 的 1:1 补偿一起把首行拖动（padding 与负 margin 同步变），实测无收益
+       且破坏与桌面同源的单公式，故保留。读数见批文档「几何数值表」。 */
     const reserve = Math.max(BASE_TOP_PAD, Math.ceil(bandBottom() - chatTop) + BASE_TOP_PAD);
     const prev = parseFloat(getComputedStyle(chat).paddingTop) || BASE_TOP_PAD;
     if (Math.abs(prev - reserve) < 0.5) return;
