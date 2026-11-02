@@ -128,6 +128,9 @@
  *     ① .g2-chat-head = sticky 悬浮锚（top: var(--muse-head-top) + z 26），
  *        头像 56px 居中悬浮压在消息流上，消息从头像后穿过进渐隐带；
  *     ② ②-b 组顶锚 64px + safe（负 margin 纯 CSS 派生）；
+ *        ⚠ 该锚值由「会话身份头同行批」（2026-11-02 11:08，见下）改为
+ *        **--muse-head-anchor = 4px + safe**（锚双钮中心行）—— 64px 锚只在
+ *        滚动贴顶后才对齐，静止态偏差 60px。
  *     ③ 名字玻璃胶囊下置（--glass-bg 半透明底、零 border、r999）；
  *     ④ --muse-head-top = -(#chat padding-top)（chatChrome.js RO 同步恢复）；
  *     ⑤ main.js 顶让位回 bandBottom() 实测（96 = 渐隐带 88 + 基线 8），
@@ -141,6 +144,21 @@
  *   已知相对差（有意，不是漏改）：本仓胶囊渲染高 24（mfs-sub 15px 的
  *   line-height normal + 上下 padding 3）而实拍 15.2 —— 实拍那颗字面 ≈13px、
  *   内距更紧；本批沿用基座档 padding/字号不改，理由见批文档「几何数值表」注。
+ *
+ * 会话身份头同行批（作者令 2026-11-02 11:08「为什么会出现有的情况，这个头像会和
+ * 两侧按钮不在同一行」）落位 —— token 块 + 文件尾 ②/②-b/③：
+ *   ① 病灶：sticky 的两个落点由**两个不同表达式**给定（静止 = padding-top +
+ *      margin-top = 64；贴顶 = padding-top + top = 0），恒差 64 ⇒ 身份组只在滚动
+ *      之后才与双钮（cy 40）同一行，静止态偏差 60px。上一批把这 60px 写成「Muse
+ *      静止形态不判」豁免掉，正是作者实拍所见。
+ *   ② 修法：top 与 margin-top 取**同一表达式**（--muse-head-top +
+ *      --muse-head-anchor + safe）⇒ 静止落点 ≡ 贴顶落点 ≡ 4（375 无刘海），
+ *      sticky 位移恒 0、滚动全程零跳动；--muse-head-anchor 由「头像 cy == 双钮
+ *      cy」纯派生（--mchrome-top / --mchrome-btn / --muse-avatar /
+ *      --muse-head-pad-t 单源，零字面量）。
+ *   ③ 尺寸不动（头像 56 / 双钮 48 各有既有口径），二者居中的上下各 4px 突出为
+ *      有意保留；让位公式 reserve 仍 = bandBottom() 96（身份组位置与让位解耦）。
+ *   验收读数见 docs/20261102_muse-head-same-row__*.md「四态读数表」。
  *
  * 「会话顶栏单行三段式批」（作者令 2026-11-02 07:23）—— **本批整条回退**，
  * 上面 Muse 恢复批块为准；此条仅留档：fixed 单行三段式顶栏 + 头像 40 + 名字
@@ -321,6 +339,22 @@ body.mobile-layer {
   --mchrome-breathe: 8px;
   --mchrome-clear: calc(var(--mchrome-top) + var(--mchrome-btn) + var(--mchrome-breathe));
   --mchrome-inset: var(--mchrome-clear);
+  /* ── 会话身份头几何（同一行批 2026-11-02 作者令「头像与左右双钮必须始终同一行」）──
+     单源：头像外径 + 组内上内距 + 由此推出的**组顶锚**。锚 = 让「头像垂直中心
+     恒等双钮垂直中心」的那个组顶值，纯派生、零字面量：
+       双钮中心 = --mchrome-top + --mchrome-btn / 2      （16 + 24 = 40）
+       头像中心 = 组顶 + --muse-head-pad-t + --muse-avatar / 2（组顶 + 8 + 28）
+       令二者相等 ⇒ 组顶 = 40 − 28 − 8 = 4
+     两侧尺寸差（56 − 48 = 8）居中成上下各 4px 突出，属有意保留的既有档
+     （56 = 收小批档、48 = g2-fab 基准档，两者都有既有口径，本批不动尺寸）。
+     消费点：② 悬浮锚 sticky top 与 ②-b 负 margin 用**同一个**表达式 ⇒ 静止落点
+     恒等贴顶落点（sticky 位移为 0）。批次契约见文件尾「身份头同行批」块。 */
+  --muse-avatar: 56px;
+  --muse-head-pad-t: 8px;
+  --muse-head-anchor: calc(
+    var(--mchrome-top) + var(--mchrome-btn) / 2
+    - var(--muse-avatar) / 2 - var(--muse-head-pad-t)
+  );
   /* 行高与间距 */
   --mrow: 44px;
   --mpad-x: 16px;
@@ -3227,30 +3261,52 @@ body.mobile-layer #chat {
   mask-image: none;
 }
 /* ② 悬浮锚本体：sticky 顶锚 + 让头像/名字（而非整条带）当浮层。
-   top 走 var(--muse-head-top)（chatChrome.js 同步 = -(#chat padding-top)）：
-   sticky 锚定矩形 = scrollport 内缩 padding，top:0 只能锚到 padding 缘
-   （main.js 顶让位常态 96px）——负值补偿后锚定阈值恒等窗口顶。
+   🔴 身份头同行批（作者令 2026-11-02 11:08「为什么会出现有的情况，这个头像会和
+   两侧按钮不在同一行」）—— 病因与修法（实测见批文档读数表）：
+     · sticky 的两个落点由两个不同表达式给定，实测证明（临时探针，逐 scrollTop）：
+         静止落点 = #chat padding-top + margin-top   （96 + (-32) = 64）
+         贴顶落点 = #chat padding-top + top          （96 + (-96) =  0）
+       二者恒差 64 ⇒ 「组顶 64 锚」只在**滚动后**才与双钮（cy 40）对齐；静止态
+       头像 cy = 100、双钮 cy = 40，spread 60（上一批把这一态豁免在断言之外，
+       于是错位被当成形态本来的样子放过）。
+     · 修法 = **让两式相等**：top 与 margin-top 取同一个表达式
+         var(--muse-head-top) + var(--muse-head-anchor) + env(safe-area-inset-top)
+       于是静止落点 ≡ 贴顶落点 ≡ anchor + safe（375 无刘海下 = 4px），sticky 的
+       位移量恒为 0 —— 身份头从进入视口起就在那一行，滚动全程不动（跳动 = 0）。
+     · anchor（= 4）由 token 块 --muse-head-anchor 纯派生自「头像 cy == 双钮 cy」，
+       零字面量、改任一尺寸自动跟随。
+   sticky 仍**必要**（不是可选）：它才是「滚动时把它按在窗口顶」的那个机制 ——
+   若降级成 relative，头像会随内容滚走；位移为 0 只是说明它的钳位点在设计上
+   恰好等于静止点，不是可以取消的理由。
    ⚠ 本条曾在「会话顶栏单行三段式批」（2026-11-02 07:23）被整条退役、改成
-   position:fixed 通栏顶栏；作者 09:14 令判该形态错误（「拆掉顶栏」）⇒ 本批
-   （Muse 悬浮身份头恢复批）按考古逐值恢复，并补齐 ②-b 组顶锚。 */
+   position:fixed 通栏顶栏；作者 09:14 令判该形态错误（「拆掉顶栏」）⇒ 09:14 批
+   按考古逐值恢复，本批只改落点表达式（形态零触碰）。 */
 body.mobile-layer #chat .g2-chat-head {
   position: sticky;
-  top: var(--muse-head-top, 0px);
+  top: calc(
+    var(--muse-head-top, 0px) + var(--muse-head-anchor)
+    + env(safe-area-inset-top, 0px)
+  );
   z-index: 26;
   gap: 6px;
-  padding: 8px 2px 12px;
+  /* 组内上内距 = --muse-head-pad-t 单源（头像顶 = 组顶 + 8） */
+  padding: var(--muse-head-pad-t) 2px 12px;
 }
-/* ②-b 会话身份组上提进顶带（位置批 2026-11-01 23:0x；本批恢复）。
-   静止态组顶 = #chat padding-top（让位常态 96 = 渐隐带 88 + 基线 8）会把身份组
-   推到视觉中段 ⇒ 负 margin-top 把组上提回顶带，落点 = 悬浮双键行下缘（16 + 48
-   = 64）。取值纯 CSS 派生、零新 JS 状态：--muse-head-top 已知 = -(#chat
-   padding-top)，故「组顶 = 64 + safe」⇔ margin-top = var(...) + 64px + safe；
-   让位带随横幅/键盘变化时 JS 重写该变量，上提量同帧跟随。
-   回退值 -8px 与 chat.css `#chat { padding: 8px 0 36px }` 基线让位同值 ⇒ CSS 先于
-   JS 落地的首帧即已正确落位（-8 + 64 = 56，加基线 padding 8 = 组顶 64）。
-   sticky 语义不变：上提只改静止态落点，滚动时 top 仍由 --muse-head-top 锚窗口顶。 */
+/* ②-b 会话身份组上提进顶带 —— 本批改为与 ② 的 sticky top **同一表达式**。
+   推导（375×812、safe=0、让位 96）：
+     组顶（静止）= padding-top + margin-top = 96 + (-92) = 4
+     组顶（贴顶）= padding-top + top        = 96 + (-92) = 4   ⇒ 无位移
+     头像 cy     = 组顶 4 + pad-t 8 + 56/2 = 40
+     双钮 cy     = 16 + 48/2               = 40                 ⇒ 偏差 0
+   回退值（CSS 先于 JS 落地的首帧，--muse-head-top 缺省 -8 = chat.css 基线让位）：
+     -8 + 4 = -4，加基线 padding 8 ⇒ 组顶 4、头像 cy 40 —— 首帧即对齐，无闪跳。
+   让位带随横幅/键盘变化时 JS 重写 --muse-head-top，两条表达式同帧跟随、
+   恒等关系不变（安全区项两式同源）。 */
 body.mobile-layer #chat .g2-chat-head {
-  margin-top: calc(var(--muse-head-top, -8px) + 64px + env(safe-area-inset-top, 0px));
+  margin-top: calc(
+    var(--muse-head-top, -8px) + var(--muse-head-anchor)
+    + env(safe-area-inset-top, 0px)
+  );
 }
 /* ②-c 无名档幽灵胶囊收口（同批）：#session-name 在「root 未命名」态由
    sidebar.updateHeaderSessionName 写空串（2026-10-06 N1 裁定：无名 root 标题区为空
@@ -3271,10 +3327,11 @@ body.mobile-layer #chat .g2-chat-head #session-name:empty {
    ⚠ 单行三段式批（07:23）曾改 40px，本批回退：作者 09:14 实拍头像直径 ≈50.8
    CSS px（1134px 截图 ÷ 3.024），56 落在「≥实拍且仍显小」的一档；40 只有实拍
    的 79%，观感退化成图标。桌面 28px 与 dock 中键 44px 零触碰
-   （规则挂 body.mobile-layer + #chat 子树）。 */
+   （规则挂 body.mobile-layer + #chat 子树）。尺寸取 --muse-avatar 单源
+   （同行批 2026-11-02 11:08：与 --muse-head-anchor 联动，改一处即自动重算锚）。 */
 body.mobile-layer #chat .g2-chat-head #agent-avatar-btn {
-  width: 56px;
-  height: 56px;
+  width: var(--muse-avatar);
+  height: var(--muse-avatar);
 }
 /* ④ 名字玻璃胶囊：名字字号随头像同档（mfs-sub 15px），余沿用基座档
    （②-c 的 :empty 收口继续兜无名档）。 */
@@ -3937,8 +3994,10 @@ body.mobile-layer #usage-grid .ud-cell[data-date]::after {
         0%→55%@50%→transparent 逐字现役）：内容从头像后穿过时「先糊后没」，
         上一批「mask 收到顶栏下缘」的覆盖随顶栏一并退役。
      ⑤ 左右双钮回到 top: 16px + safe（上一批 4px 是「与顶栏中线同轴」的
-        派生值，顶栏没了就失去依据）；48px 钮中心 = 40 + safe，与头像贴顶
-        态中心 36 + safe 差 4px —— 同一视觉行，两枚钮仍各自独立悬浮。
+        派生值，顶栏没了就失去依据）；48px 钮中心 = 40 + safe。
+        ⚠ 原文「与头像贴顶态中心 36 + safe 差 4px —— 同一视觉行」由「会话身份头
+        同行批」（2026-11-02 11:08）收口：头像 cy 现恒 = 40 + safe，与双钮
+        **逐值相等**（偏差 0）；「同一视觉行」不再是近似，而是机械等式。
      ⑥ #top-overlays 回到 chat.css 的 68px 基准（上一批 64+safe 覆盖退役）。
    桌面零触碰：本块无可执行规则，中块 ②/②-b/③/④ 全部挂在 body.mobile-layer。 */
 

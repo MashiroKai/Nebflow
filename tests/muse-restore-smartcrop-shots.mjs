@@ -19,8 +19,9 @@
 // 探针：
 //   A① Muse 形态回归：.g2-chat-head display:flex/column/center；头像 56px 水平
 //      居中（与 #chat 同心 ±2px）；名字在头像正下方且居中；sticky 顶锚 + 压流；
-//      静止态落位 = 组顶 64px（悬浮双键行下缘；位置批 2026-11-01 23:0x 作者报障
-//      重钉——原判据 `组顶 >= chatTop + 88` 钉的正是病灶「头像上方一大块空白」）
+//      静止态落位 = 组顶 4px（= --muse-head-anchor，锚双钮中心行；同行批
+//      2026-11-02 11:08 再改 —— 旧值 64px「悬浮双键行下缘」= 让 60px 错位合法化
+//      的口径，已退役）
 //   A② 名字扁平毛玻璃：background = --glass-bg 真值（亮 rgba(255,255,255,.55) /
 //      暗 rgba(24,28,38,.68)）；border-width 0（无立体边框）；box-shadow none；
 //      backdrop-filter 含 blur；999px 胶囊圆角
@@ -275,8 +276,8 @@ async function runMobile(engineKind, scheme) {
     await page.waitForTimeout(250);
     const rest = await probeHead(page, scheme);
     assertMuse(tag, rest, scheme);
-    ok(`${tag} A① 静止态：悬浮组落在 64px 顶带（组顶 64 ±1、头像顶 72 ±1）`,
-      Math.abs(rest.head.top - 64) <= 1 && Math.abs(rest.avTop - 72) <= 1,
+    ok(`${tag} A① 静止态：悬浮组锚双钮中心行（组顶 4 ±1、头像顶 12 ±1）`,
+      Math.abs(rest.head.top - 4) <= 1 && Math.abs(rest.avTop - 12) <= 1,
       `headTop=${rest.head.top.toFixed(1)} avTop=${rest.avTop.toFixed(1)} h=${rest.head.height}`);
     await page.screenshot({ path: join(OUT, `muse-${tag}-rest.png`) });
 
@@ -286,8 +287,8 @@ async function runMobile(engineKind, scheme) {
     await page.waitForTimeout(250);
     const pinned = await probeHead(page, scheme);
     assertMuse(tag, pinned, scheme);
-    ok(`${tag} A① 滚动态：sticky 贴窗口顶（组顶 0 ±1、头像顶 8 ±1）`,
-      Math.abs(pinned.head.top) <= 1 && Math.abs(pinned.avTop - 8) <= 1,
+    ok(`${tag} A① 滚动态：落点 == 静止落点（组顶 4 ±1、头像顶 12 ±1，零 sticky 位移）`,
+      Math.abs(pinned.head.top - 4) <= 1 && Math.abs(pinned.avTop - 12) <= 1,
       `headTop=${pinned.head.top}/${rest.head.top} avTop=${pinned.avTop}`);
     ok(`${tag} A① 滚动态：压在消息流上缘（rowsBehind>0）`, pinned.rowsBehind > 0, `rowsBehind=${pinned.rowsBehind}`);
     await page.screenshot({ path: join(OUT, `muse-${tag}-pinned.png`) });

@@ -19,9 +19,12 @@
 //      veil 蒙住）；非 fixed（顶栏已拆）；#chat mask 已在手机层释放
 //   ③ 几何：头像 56px、水平居中（屏幕中线 ±1）、名字在头像正下方（胶囊顶 ≥
 //      头像底 −1、水平中心 ≤1px）、名字 = 当前会话对方 agent 身份（Spider 腿实文）
-//   ③-b 静止态落位：组顶 = 64 ±1（②-b 负 margin 锚双钮行下缘）、头像顶 = 72 ±1
-//   ④ 压流（滚动态）：sticky 贴窗口顶（组顶 0 ±1、头像顶 8 ±1），消息行矩形与
-//      头像盒相交（内容从头像后穿过）；渐隐带仍在场（88px，未被本批破坏）
+//   ③-b 静止态落位（同行批 11:08 再改）：组顶 = 4 ±1（= --muse-head-anchor，锚
+//      双钮中心行）、头像顶 = 12 ±1 ⇒ 头像 cy 40 == 双钮 cy 40（旧值 64/72 = 60px
+//      错位，已退役）
+//   ④ 压流（滚动态）：落点 == 静止落点（组顶 4 / 头像顶 12，零 sticky 位移；
+//      旧值 0/8 = 64px converge 的贴顶端），消息行矩形与头像盒相交（内容从头像
+//      后穿过）；渐隐带仍在场（88px，未被本批破坏）
 //   ⑤ 头像货源：自定义头像腿 = .agent-avatar-img 可绘（现役身份链）；无头像腿
 //      = .agent-avatar-stand-logo 可绘（2963aeac0 同货源回落，零默认人形）
 //   R0 双引擎双主题零 console error + 桌面腿零 console error
@@ -146,12 +149,12 @@ async function runMobile(engineKind, scheme, withAvatar) {
     await page.waitForTimeout(250);
     const rest = await probeState(page);
     assertCommon(tag, rest, withAvatar);
-    /* 静止态几何契约（Muse 悬浮身份头恢复批 2026-11-02 09:14 改名）：身份组是
-       sticky 悬浮锚，落在 ②-b 的 64px 顶带锚（组顶 64 ±1）⇒ 头像顶 = 64 + 组
-       padding-top 8 = 72 ±1。上一批「fixed 顶栏 / headTop 0 / 高 56」判据随顶栏
-       拆除一并退役。 */
-    ok(`${tag} 静止态：sticky 悬浮锚落在 64px 顶带（组顶 64 ±1、头像顶 72 ±1）`,
-      rest.position === 'sticky' && Math.abs(rest.head.top - 64) <= 1 && Math.abs(rest.av.top - 72) <= 1,
+    /* 静止态几何契约（身份头同行批 2026-11-02 11:08 再改）：身份组是 sticky 悬浮
+       锚，落在 ②-b 的**双钮中心行锚**（组顶 = --muse-head-anchor = 4 ±1）⇒ 头像顶
+       = 4 + 组 padding-top 8 = 12 ±1、头像 cy 40 == 双钮 cy 40。修前口径「组顶
+       64 / 头像顶 72」= 让 60px 错位合法化的旧值，随本批退役。 */
+    ok(`${tag} 静止态：sticky 悬浮锚落双钮中心行（组顶 4 ±1、头像顶 12 ±1）`,
+      rest.position === 'sticky' && Math.abs(rest.head.top - 4) <= 1 && Math.abs(rest.av.top - 12) <= 1,
       `pos=${rest.position} headTop=${rest.head.top.toFixed(1)} avTop=${rest.av.top.toFixed(1)} h=${rest.head.height}`);
     ok(`${tag} 静止态：头像在组内吃掉 padding-top 8（avTop − headTop = 8 ±1）`,
       Math.abs((rest.av.top - rest.head.top) - 8) <= 1,
@@ -164,8 +167,9 @@ async function runMobile(engineKind, scheme, withAvatar) {
     await page.waitForTimeout(250);
     const pinned = await probeState(page);
     assertCommon(tag, pinned, withAvatar);
-    ok(`${tag} 滚动态：sticky 贴窗口顶（组顶 0 ±1、头像顶 8 ±1）`,
-      Math.abs(pinned.head.top) <= 1 && Math.abs(pinned.av.top - 8) <= 1 && pinned.scrollTop > 0,
+    ok(`${tag} 滚动态：落点 == 静止落点（组顶 4 ±1、头像顶 12 ±1，零 sticky 位移）`,
+      Math.abs(pinned.head.top - 4) <= 1 && Math.abs(pinned.av.top - 12) <= 1 && pinned.scrollTop > 0
+        && Math.abs(pinned.head.top - rest.head.top) <= 0.5,
       `headTop=${pinned.head.top}/${rest.head.top} avTop=${pinned.av.top} scrollTop=${pinned.scrollTop}`);
     ok(`${tag} 滚动态：内容从头像后穿过（消息行矩形与头像盒相交）`, pinned.rowsBehindAvatar > 0,
       `rowsBehindAvatar=${pinned.rowsBehindAvatar}（组盒 rowsBehind=${pinned.rowsBehind}）`);
