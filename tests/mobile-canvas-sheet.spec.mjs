@@ -158,6 +158,14 @@ test('T1 canvas page presentation: full-bleed page, chip strip, toolbar, host, s
       chipOn: pg.querySelectorAll('.mf-strip-chip.on').length,
       chipLabel: pg.querySelector('.mf-strip-chip.on')?.textContent || '',
       count: pg.querySelector('.mf-cv-count').textContent,
+      // 标签栏重做批（2026-11-02 §一）：两颗悬浮钮图标必须真的渲染成 svg ——
+      // 修前 toolbar 挂 section 根而图标替换只跑 wrap 子树 ⇒ 两钮永远是空圆
+      // （<i data-lucide> 从未被替换）。判据 = svg 数 1 + 剩余未替换 i 数 0。
+      closeIcon: { svg: document.querySelectorAll('.mf-cv-close svg').length, i: document.querySelectorAll('.mf-cv-close i[data-lucide]').length },
+      stackIcon: { svg: document.querySelectorAll('.mf-cv-stack svg').length, i: document.querySelectorAll('.mf-cv-stack i[data-lucide]').length },
+      emptyIcon: { svg: pg.querySelectorAll('.mf-cv-empty svg').length, i: pg.querySelectorAll('.mf-cv-empty i[data-lucide]').length },
+      // 计数读数转 sr-only（视觉档位下沉到底部小点）—— 仍占 DOM/读屏，不占视觉。
+      countBox: (() => { const r = pg.querySelector('.mf-cv-count').getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; })(),
       // 批②⑤（2026-10-31）：工具条换代 = ✕/计数/堆叠视角钮；步进/独立窗退役。
       stackBox: chip('.mf-cv-stack'),
       popGone: !pg.querySelector('.mf-cv-pop') && !pg.querySelector('.mf-cv-prev') && !pg.querySelector('.mf-cv-next'),
@@ -186,6 +194,11 @@ test('T1 canvas page presentation: full-bleed page, chip strip, toolbar, host, s
   // 批②：堆叠视角钮在挂（单卡亦可开面——计数 0 张）。
   expect(geo.stackBtn === undefined || geo.stackBtn === true).toBe(true);
   expect(geo.count).toBe('');           // 单卡无计数
+  // 标签栏重做批 §一：图标根因修复（两钮 svg 就位、无残留 <i data-lucide>）。
+  expect(geo.closeIcon).toEqual({ svg: 1, i: 0 });
+  expect(geo.stackIcon).toEqual({ svg: 1, i: 0 });
+  expect(geo.emptyIcon).toEqual({ svg: 1, i: 0 });
+  expect(geo.countBox).toEqual({ w: 1, h: 1 });   // 计数 = sr-only（clip 1×1）
   // 批⑤：.mf-cv-pop 已退役，popHidden 断言随钮移除（popGone 已钉在上）。
   expect(geo.closeBox.w).toBe(48);      // X 热区 48×48（统一批基准规格）
   expect(geo.closeBox.h).toBe(48);
@@ -253,18 +266,51 @@ test('T3 host horizontal swipe switches cards (left=next, right=prev, ring); swi
   expect(errors).toEqual([]);
 });
 
-test('T3b 堆叠视角 + count + chip tap switch cards（批②⑤：步进钮退役，堆叠视角接棒）', async ({ page }) => {
+test('T3b 堆叠卡视图（作者令 2026-11-02 §四）+ count + chip tap switch cards', async ({ page }) => {
   const errors = watchErrors(page);
   await openDocCards(page, [['doc-a', '卡甲', 'pg-a'], ['doc-b', '卡乙', 'pg-b'], ['doc-c', '卡丙', 'pg-c']]);
   expect(await activeChip(page)).toBe('doc-c'); // 环序 [甲, 乙, 丙]
   const pg = '.mobile-page[data-page="canvas"]';
-  // 堆叠视角开面：顶行「3 张文档」（批⑤ 顶部计数）+ 全卡列表。
+  // 堆叠钮 → 卡叠视图：顶行「3 张文档」+ 三张卡（卡标题 + 缩略预览 + 卡内 ✕）。
   await page.locator(`${pg} .mf-cv-stack`).click();
   await expect(page.locator(`${pg} .mf-stack-view`)).toBeVisible();
   await expect(page.locator(`${pg} .mf-stack-count`)).toHaveText('3 张文档');
-  await expect(page.locator(`${pg} .mf-stack-card`)).toHaveCount(3);
-  // 点卡甲换入并收面（1/3）。
-  await page.locator(`${pg} .mf-stack-card[data-tab-id="doc-a"]`).click();
+  await expect(page.locator(`${pg} .mf-deck-card`)).toHaveCount(3);
+  const deck = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll('.mf-deck-card')];
+    const on = cards.find((c) => c.classList.contains('on'));
+    return {
+      titles: cards.map((c) => c.querySelector('.mf-deck-title').textContent),
+      icons: cards.map((c) => c.querySelectorAll('.mf-deck-icon svg').length),
+      thumbs: cards.map((c) => c.querySelectorAll('.mf-deck-thumb > *').length),
+      closes: cards.map((c) => c.querySelectorAll('.mf-deck-x').length),
+      onId: on ? on.dataset.tabId : null,
+      // 位姿 = 环形距离逐级下沉/缩径（CSS 变量单源，非硬编码 transform）。
+      dtys: cards.map((c) => c.style.getPropertyValue('--dty').trim()),
+      dscs: cards.map((c) => c.style.getPropertyValue('--dsc').trim()),
+      cardBg: getComputedStyle(on).backgroundColor,
+      cardRadius: getComputedStyle(on).borderTopLeftRadius,
+    };
+  });
+  expect(deck.titles).toEqual(['卡甲', '卡乙', '卡丙']);
+  expect(deck.icons).toEqual([1, 1, 1]);
+  expect(deck.thumbs).toEqual([1, 1, 1]);
+  expect(deck.closes).toEqual([1, 1, 1]);
+  expect(deck.onId).toBe('doc-c');                    // 前景卡 = 活动签
+  // 卡叠下沉：活动卡 0，环两侧 |k|=1 各下沉一档（16px；同距破平 +0.5 档 = 24px）。
+  expect(deck.dtys).toEqual(['24.0px', '16.0px', '0.0px']);
+  expect(deck.dscs[0]).toBe('0.925');                  // 深处卡缩径（0.05/档）
+  expect(deck.dscs[2]).toBe('1.000');
+  expect(deck.cardRadius).toBe('18px');                // 卡族圆角
+  // 点「后卡露出的那一段」（堆叠读感）= 翻到该卡，卡叠不退出（桌面环卡同构）。
+  await page.waitForTimeout(600);   // 开面动画落位（stagger 300ms + 320ms 过渡）
+  const back = await page.locator(`${pg} .mf-deck-card[data-tab-id="doc-a"]`).boundingBox();
+  await page.mouse.click(back.x + back.width / 2, back.y + back.height - 5);
+  await expect.poll(() => activeChip(page)).toBe('doc-a');
+  await expect(page.locator(`${pg} .mf-stack-view`)).toBeVisible();     // 翻卡不退出
+  await expect(page.locator(`${pg} .mf-deck-card.on`)).toHaveAttribute('data-tab-id', 'doc-a');
+  // 点前景卡（= 活动签）= 收面回标签视图（桌面「点前景卡换入面板」等价）。
+  await page.locator(`${pg} .mf-deck-card.on`).click();
   await expect(page.locator(`${pg} .mf-stack-view`)).toBeHidden();
   expect(await activeChip(page)).toBe('doc-a');
   await expect(page.locator(`${pg} .mf-cv-count`)).toHaveText('1/3');
@@ -391,34 +437,256 @@ test('T6 双页叠开收口（批①）：归还腿失效（锚邻位被摘）�
   expect(errors).toEqual([]);
 });
 
-test('T7 chip 胶囊同族（批②：材质/圆角/选中态）+ 条带让位悬浮工具带（批③）', async ({ page }) => {
+test('T7 chip 胶囊同族 + 横向圆环几何（居中 / 弧深 / 缩径 / 减淡 / 让位浮钮）', async ({ page }) => {
   const errors = watchErrors(page);
-  await openDocCards(page, [['doc-a', '卡甲', 'pg-a'], ['doc-b', '卡乙', 'pg-b']]);
+  await openDocCards(page, [['doc-a', '卡甲', 'pg-a'], ['doc-b', '卡乙', 'pg-b'], ['doc-c', '卡丙', 'pg-c']]);
   const m = await page.evaluate(() => {
     const chip = document.querySelector('.mf-strip-chip.on');
     const cs = getComputedStyle(chip);
-    const strip = getComputedStyle(document.querySelector('.mf-strip'));
+    const strip = document.querySelector('.mf-strip');
+    const stripR = strip.getBoundingClientRect();
     const closeB = document.querySelector('.mf-cv-close').getBoundingClientRect();
     const stackB = document.querySelector('.mf-cv-stack').getBoundingClientRect();
-    const chipR = chip.getBoundingClientRect();
     const inter = (a, b) => !(a.right < b.left || b.right < a.left || a.bottom < b.top || b.bottom < a.top);
+    const chips = [...document.querySelectorAll('.mf-strip-chip')].map((c) => {
+      const r = c.getBoundingClientRect();
+      return {
+        id: c.dataset.tabId,
+        on: c.classList.contains('on'),
+        far: c.classList.contains('is-far'),
+        cx: Math.round(r.x + r.width / 2),
+        cy: Math.round(r.y + r.height / 2),
+        op: +getComputedStyle(c).opacity,
+        rdx: c.style.getPropertyValue('--rdx').trim(),
+        rdy: c.style.getPropertyValue('--rdy').trim(),
+        rsc: c.style.getPropertyValue('--rsc').trim(),
+        rbl: c.style.getPropertyValue('--rbl').trim(),
+        hitsBtn: inter(r, closeB) || inter(r, stackB),
+      };
+    });
     return {
       radius: cs.borderRadius,
       blur: `${cs.backdropFilter}${cs.webkitBackdropFilter || ''}`,
       borderBottom: cs.borderBottomColor,
       bgImage: cs.backgroundImage,
-      padL: strip.paddingLeft,
-      padR: strip.paddingRight,
-      chipHitsBtn: inter(chipR, closeB) || inter(chipR, stackB),
+      stripH: Math.round(stripR.height),
+      mask: `${getComputedStyle(strip).maskImage}${getComputedStyle(strip).webkitMaskImage || ''}`,
+      closeCy: Math.round(closeB.y + closeB.height / 2),
+      stackCy: Math.round(stackB.y + stackB.height / 2),
+      chips,
     };
   });
   expect(m.radius).toBe('999px');                       // 圆角 = 胶囊同族
   expect(m.blur).toContain('blur');                     // 材质 = 毛玻璃同族
   expect(m.borderBottom).toBe('rgba(0, 0, 0, 0)');      // 底缘透明化（.canvas-header 同律）
   expect(m.bgImage).toContain('linear-gradient');       // 顶缘折射线层（胶囊同源）
-  expect(m.padL).toBe('76px');                          // 让位 ✕/堆叠浮钮（48+16+12）
-  expect(m.padR).toBe('76px');
-  expect(m.chipHitsBtn).toBe(false);                    // chip 命中盒不进浮钮底下
+  // 环带几何：高 72、双侧渐隐 mask（让位浮钮 68px 内清零）。
+  expect(m.stripH).toBe(72);
+  expect(m.mask).toContain('linear-gradient');
+  // 当前签 = 环心：居中（cx = 375/2 附近）、scale 1、零偏移、全不透明、无模糊。
+  const on = m.chips.find((c) => c.on);
+  expect(on.cx).toBeGreaterThan(178);
+  expect(on.cx).toBeLessThan(197);
+  expect(on.rdx).toBe('0.0px');
+  expect(on.rdy).toBe('0.0px');
+  expect(on.rsc).toBe('1.000');
+  expect(on.op).toBe(1);
+  expect(on.rbl).toBe('0px');
+  // 邻位（|k|=1）：外移一步、下沉弧深、缩径、减淡、轻模糊；两侧对称。
+  const nb = m.chips.filter((c) => !c.on).sort((a, b) => a.cx - b.cx);
+  expect(nb.map((c) => c.rdx)).toEqual(['-86.0px', '86.0px']);
+  expect(nb.map((c) => c.rdy)).toEqual(['11.1px', '11.1px']);
+  expect(nb.map((c) => c.rsc)).toEqual(['0.820', '0.820']);
+  expect(nb.map((c) => c.op)).toEqual([0.78, 0.78]);
+  expect(nb.map((c) => c.rbl)).toEqual(['0.8px', '0.8px']);
+  // 垂直中心 = 两颗悬浮钮中心（同一悬浮带栅格）；命中盒永不压钮。
+  expect(Math.abs(on.cy - m.closeCy)).toBeLessThanOrEqual(2);
+  expect(Math.abs(on.cy - m.stackCy)).toBeLessThanOrEqual(2);
+  expect(m.chips.some((c) => c.hitsBtn)).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+test('T9 环外签（|k|≥2）：零透明零命中（位姿仍算 —— 换签轨迹连续）', async ({ page }) => {
+  const errors = watchErrors(page);
+  await openDocCards(page, [
+    ['r1', '环一', 'r1'], ['r2', '环二', 'r2'], ['r3', '环三', 'r3'],
+    ['r4', '环四', 'r4'], ['r5', '环五', 'r5'],
+  ]);
+  const st = await page.evaluate(() => [...document.querySelectorAll('.mf-strip-chip')].map((c) => ({
+    id: c.dataset.tabId, on: c.classList.contains('on'), far: c.classList.contains('is-far'),
+    op: +getComputedStyle(c).opacity, pe: getComputedStyle(c).pointerEvents,
+    tabIndex: c.tabIndex, rdx: c.style.getPropertyValue('--rdx').trim(),
+  })));
+  // 环序 [1,2,3,4,5]，活动 = 5 ⇒ k = [1,2,-2,-1,0]（最近环绕）。
+  expect(st.map((c) => c.id)).toEqual(['r1', 'r2', 'r3', 'r4', 'r5']);
+  expect(st.map((c) => c.rdx)).toEqual(['86.0px', '172.0px', '-172.0px', '-86.0px', '0.0px']);
+  expect(st.map((c) => c.far)).toEqual([false, true, true, false, false]);
+  expect(st[1].op).toBe(0);
+  expect(st[1].pe).toBe('none');
+  expect(st[1].tabIndex).toBe(-1);
+  expect(st[4].on).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('T10 底部小点指示器：1 签不显示 / 2 签 2 点 / ≥3 签 3 点（当前点高亮）+ 位置在内容区底部居中不压 dock', async ({ page }) => {
+  const errors = watchErrors(page);
+  // 1 签：不显示。
+  await openDocCards(page, [['s1', '单卡', 's1']]);
+  const one = await page.evaluate(() => {
+    const d = document.querySelector('.mf-dots');
+    return { hidden: d.hidden, dots: d.querySelectorAll('.mf-dot').length, attr: d.getAttribute('aria-hidden') };
+  });
+  expect(one.hidden).toBe(true);
+  expect(one.attr).toBe('true');
+  expect(one.dots).toBe(0);
+  // 2 签：2 点，活动签高亮。
+  await page.evaluate(async () => { (await import('/js/canvas.js')).openTab('s2', '次卡', { type: 's2' }); });
+  await expect.poll(() => page.evaluate(() => document.querySelector('.mf-dots').dataset.count)).toBe('2');
+  const two = await page.evaluate(() => {
+    const d = document.querySelector('.mf-dots');
+    const dots = [...d.querySelectorAll('.mf-dot')];
+    return {
+      n: dots.length,
+      onIdx: dots.findIndex((x) => x.classList.contains('on')),
+      onW: Math.round(dots[1].getBoundingClientRect().width),
+      offW: Math.round(dots[0].getBoundingClientRect().width),
+    };
+  });
+  expect(two.n).toBe(2);
+  expect(two.onIdx).toBe(1);
+  expect(two.onW).toBeGreaterThan(two.offW);       // 当前点更大
+  // 5 签：点数恒 3（省略策略：序号归一映射，点不随换签滑动）+ 当前档高亮。
+  await page.evaluate(async () => {
+    const c = await import('/js/canvas.js');
+    c.openTab('s3', '三卡', { type: 's3' });
+    c.openTab('s4', '四卡', { type: 's4' });
+    c.openTab('s5', '五卡', { type: 's5' });
+  });
+  await expect.poll(() => page.evaluate(() => document.querySelector('.mf-dots').dataset.count)).toBe('3');
+  const five = await page.evaluate(() => {
+    const d = document.querySelector('.mf-dots');
+    const dots = [...d.querySelectorAll('.mf-dot')];
+    return { n: dots.length, onIdx: dots.findIndex((x) => x.classList.contains('on')), dataN: d.dataset.n, dataIdx: d.dataset.idx };
+  });
+  expect(five).toEqual({ n: 3, onIdx: 2, dataN: '5', dataIdx: '4' });   // 末签落第三点
+  // 点回第一签：归一映射到首点（换签点不滑动，只换高亮）。
+  await page.evaluate(async () => (await import('/js/canvas.js')).setActiveTab('s1'));
+  await expect.poll(() => page.evaluate(() => [...document.querySelectorAll('.mf-dot')].findIndex((x) => x.classList.contains('on')))).toBe(0);
+  const xs = await page.evaluate(() => [...document.querySelectorAll('.mf-dot')].map((x) => Math.round(x.getBoundingClientRect().x)));
+  expect(xs.length).toBe(3);
+  // 位置：内容区底部居中、dock 之上（不压 dock）。
+  const pos = await page.evaluate(() => {
+    const d = document.querySelector('.mf-dots').getBoundingClientRect();
+    const host = document.querySelector('.mf-cv-host').getBoundingClientRect();
+    const dock = document.getElementById('mobile-dock').getBoundingClientRect();
+    return {
+      cx: Math.round(d.x + d.width / 2),
+      aboveHostBottom: d.y >= host.bottom - 1,
+      aboveDock: d.bottom <= dock.y + 0.5,
+      inViewport: d.y > 0 && d.bottom < window.innerHeight,
+    };
+  });
+  expect(Math.abs(pos.cx - 187.5)).toBeLessThanOrEqual(2);   // 居中
+  expect(pos.aboveHostBottom).toBe(true);                    // 在内容区之下的独立条带
+  expect(pos.aboveDock).toBe(true);                          // 不压 dock
+  expect(pos.inViewport).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('T11 小点长按放大 + 横拖逐签换卡 + 松手吸附（reduced-motion 下同语义）', async ({ page }) => {
+  const errors = watchErrors(page);
+  await openDocCards(page, [['l1', '拖一', 'l1'], ['l2', '拖二', 'l2'], ['l3', '拖三', 'l3'], ['l4', '拖四', 'l4'], ['l5', '拖五', 'l5']]);
+  expect(await activeChip(page)).toBe('l5');
+  const box = await page.locator('.mf-dots').boundingBox();
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  // 长按（> 260ms 阈值）→ .is-grip 放大态。
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  await page.waitForTimeout(340);
+  const gripped = await page.evaluate(() => ({
+    grip: document.querySelector('.mf-dots').classList.contains('is-grip'),
+    scale: getComputedStyle(document.querySelector('.mf-dots')).transform,
+  }));
+  expect(gripped.grip).toBe(true);
+  expect(gripped.scale).not.toBe('none');                  // 放大档（scale 1.24）
+  // 按住左拖 2 步（34px/步）→ 逐签换到 l3（5 → 4 → 3）。
+  for (let i = 1; i <= 8; i++) {
+    await page.mouse.move(cx - (68 * i) / 8, cy);
+    await page.waitForTimeout(16);
+  }
+  expect(await activeChip(page)).toBe('l3');
+  // 松手吸附：停在该签（大点高亮映射随动），grip 态解除。
+  await page.mouse.up();
+  await page.waitForTimeout(120);
+  const after = await page.evaluate(() => {
+    const d = document.querySelector('.mf-dots');
+    const dots = [...d.querySelectorAll('.mf-dot')];
+    return { grip: d.classList.contains('is-grip'), onIdx: dots.findIndex((x) => x.classList.contains('on')) };
+  });
+  expect(after.grip).toBe(false);
+  expect(after.onIdx).toBeGreaterThan(0);
+  expect(after.onIdx).toBeLessThan(2);
+  // 轻触（< 阈值、零位移）：点按不触发 grip，落点小点 = 跳到该点对应签。
+  const firstDot = await page.locator('.mf-dot').first().boundingBox();
+  await page.mouse.click(firstDot.x + firstDot.width / 2, firstDot.y + firstDot.height / 2);
+  await page.waitForTimeout(160);
+  expect(await activeChip(page)).toBe('l1');
+  // reduced-motion 降级：动效压零但语义全保留（长按放大仍是状态指示、换签仍生效）。
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const rm = await page.evaluate(() => {
+    const dots = document.querySelector('.mf-dots');
+    const d0 = dots.querySelector('.mf-dot');
+    return {
+      dotsTransition: getComputedStyle(dots).transitionDuration,
+      dotTransition: getComputedStyle(d0).transitionDuration,
+      dotBox: Math.round(d0.getBoundingClientRect().width),
+    };
+  });
+  expect(rm.dotsTransition).toBe('0s');
+  expect(rm.dotTransition).toBe('0s');       // 点尺寸随档直切（无补间）
+  expect(rm.dotBox).toBeGreaterThan(0);
+  const box2 = await page.locator('.mf-dots').boundingBox();
+  await page.mouse.move(box2.x + box2.width / 2, box2.y + box2.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(340);
+  expect(await page.evaluate(() => document.querySelector('.mf-dots').classList.contains('is-grip'))).toBe(true);
+  await page.mouse.up();
+  expect(await page.evaluate(() => document.querySelector('.mf-dots').classList.contains('is-grip'))).toBe(false);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  expect(errors).toEqual([]);
+});
+
+test('T12 堆叠卡上下滑动翻页 + 卡内 ✕ 关卡 + ✕/Esc 退出回标签视图', async ({ page }) => {
+  const errors = watchErrors(page);
+  await openDocCards(page, [['p1', '页一', 'p1'], ['p2', '页二', 'p2'], ['p3', '页三', 'p3']]);
+  expect(await activeChip(page)).toBe('p3');
+  const pg = '.mobile-page[data-page="canvas"]';
+  await page.locator(`${pg} .mf-cv-stack`).click();
+  await expect(page.locator(`${pg} .mf-stack-view`)).toBeVisible();
+  // 上滑（> 56px 阈）→ 翻到下一张：环序 3 → 环绕回 1。
+  const stage = await page.locator('.mf-deck').boundingBox();
+  await drag(page, stage.x + stage.width / 2, stage.y + stage.height / 2, stage.x + stage.width / 2, stage.y + stage.height / 2 - 110);
+  await page.waitForTimeout(320);
+  expect(await activeChip(page)).toBe('p1');
+  // 下滑 → 翻回上一张（1 → 环绕 3）。
+  await drag(page, stage.x + stage.width / 2, stage.y + stage.height / 2, stage.x + stage.width / 2, stage.y + stage.height / 2 + 110);
+  await page.waitForTimeout(320);
+  expect(await activeChip(page)).toBe('p3');
+  // 卡内 ✕ 关卡（前景卡 = 活动签）：关后卡叠重建、卡数递减。
+  await page.locator(`${pg} .mf-deck-card.on .mf-deck-x`).click();
+  await expect(page.locator(`${pg} .mf-deck-card`)).toHaveCount(2);
+  await expect.poll(async () => page.evaluate(async () => !(await import('/js/canvas.js')).hasTab('p3'))).toBe(true);
+  await expect(page.locator(`${pg} .mf-stack-count`)).toHaveText('2 张文档');
+  // ✕ 退出回标签视图（环带复现，卡叠隐藏）。
+  await page.locator(`${pg} .mf-stack-x`).click();
+  await expect(page.locator(`${pg} .mf-stack-view`)).toBeHidden();
+  await expect(page.locator(`${pg} .mf-strip`)).toBeVisible();
+  // Esc 同样收面。
+  await page.locator(`${pg} .mf-cv-stack`).click();
+  await expect(page.locator(`${pg} .mf-stack-view`)).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator(`${pg} .mf-stack-view`)).toBeHidden();
   expect(errors).toEqual([]);
 });
 

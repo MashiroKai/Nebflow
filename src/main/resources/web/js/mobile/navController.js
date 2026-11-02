@@ -46,7 +46,7 @@
 // API / 桌面已渲染节点收编；桌面侧零改动。
 
 import {
-  getTabPane, setActiveTab, closeTab,
+  getTabPane, setActiveTab, closeTab, deckFaceOf,
 } from '../canvas.js';
 import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
@@ -648,6 +648,51 @@ const PANEL_TAB_IDS = new Set(PAGES.filter((p) => p.tabId).map((p) => p.tabId));
 const SWIPE_AXIS_PX = 8;
 const SWIPE_SWITCH_PX = 48;
 
+// ── 横向圆环标签栏（作者令 2026-11-02 07:22「手机端 canvas 顶部标签栏重做」）──
+// 桌面语言 = hover 后上下展开的竖向圆环（canvas.js §胶囊环：缘位逐级缩径 +
+// 减淡 + 弧深，|d|≥2 越出 = 读作绕到圈外）；手机端无 hover，映射为**常驻展开
+// 的横向圆环**（竖向 → 横向的等价变换：弧从此前「上下展」改为「左右展」，
+// 缩径/减淡/模糊三档深度语言逐档沿用）。
+//
+// 几何（375 基线；环带左右各让 76px = 悬浮钮 48 + 边距 16 + 气隙 12 —— 与
+// 悬浮钮统一批同一栅格，钮的命中盒永不与标签相交）：
+//   · 环带（.mf-strip）= 屏宽 − 152px（375 → 223px），高 56px，overflow:hidden
+//     + 双侧 12px mask 渐隐（溢出段淡出而不是硬切）；
+//   · 中签 dx=0：宽自适应，max-width 132px，scale 1，完全不透明；
+//   · 步距 RING_DX1 = 86px（|k|=1；= 中签半宽 46 + 邻签半宽 92×0.82/2 ≈ 38
+//     + 2px 缝 —— 中心签与邻签不叠字）→ dx = 86·k（|k|=2 = 172px，被环带
+//     mask 咬掉大半 = 读作已绕到圈外）；
+//   · 弧深 dy = R − √(R² − dx²)，R = 340px 且上限 RING_DY_MAX = 12px
+//     ⇒ |k|=1 dy ≈ 11.1px，|k|=2 dy = 12px（横向环的「绕到后面去」＝下沉 +
+//     缩径 + 减淡 + 模糊，四条同向叠加）；
+//   · 逐级：scale = 1 − 0.18|k|（0.82 / 0.64），opacity 0.78 / 0.42，
+//     blur 0.8px / 1.8px（对应桌面 is-edge 单档语言向两级外推）；
+//   · 露出半径 RING_VISIBLE = 1（|k| ≥ 2 挂 .is-far：零透明、零命中，位姿仍算
+//     —— 换签时是连续位迁移而不是瞬切）。环带净宽 223px（375 − 2×76）只容得下
+//     「中签 + 左右各一枚邻签」：|k|=2 的位置在 187.5 ± 172 ⇒ 已出 mask 渐隐带，
+//     物理上就看不见，故露出半径取 1（读作「只看得到相邻两页，其余绕到圈后」）。
+const RING_DX1 = 86;
+const RING_RADIUS = 340;
+const RING_DY_MAX = 12;
+const RING_SCALE_STEP = 0.18;
+const RING_VISIBLE = 1;
+
+// ── 底部小点指示器（作者令：1 个标签不显示 / 2 个起显示 / 最多 3 点）──────
+// 省略策略（申报，批文档 §3「小点数量规则」）：n > 3 时点数**恒为 3**，点位 =
+// 标签序号归一映射 bucket = round(idx × 2 / (n−1)) ∈ {0,1,2} —— 点本身不滑动
+// （位置稳定、不随换签跳动），当前位置由「哪一点高亮放大」表达 = 首/中/末三段
+// 各占一档（5 签 ⇒ 序号 0/1,2,3/4 分别落三点）。n ≤ 3 时一一对应。
+const DOTS_MAX = 3;
+const DOT_LONGPRESS_MS = 260;   // 长按放大阈值（ms，触屏手感档）
+const DOT_DRAG_STEP_PX = 34;    // 拖动换签步距（横拖过 34px 换一签）
+const DOT_TAP_SLOP_PX = 8;      // 点按容差（未过阈 = 点按跳签，不走拖动腿）
+
+// ── 堆叠卡翻页（右上角堆叠钮 → 卡片上下翻动）────────────────────────────
+const DECK_SWITCH_PX = 56;      // 纵拖过阈即翻一页（松手吸附到最近卡）
+const DECK_AXIS_PX = 8;         // 轴锁死区（内 = 点按，外 = 拖动）
+const DECK_PEEK_PX = 16;        // 后卡逐级下沉步距（|d|=1 在面前卡底缘下露出 16px）
+const DECK_SCALE_STEP = 0.05;   // 后卡逐级缩径（同尺寸铁律的手机档收敛）
+
 // ── 手势仲裁（内容操作优先，作者令 2026-11-01「拖动图谱、调整图片大小这类
 //    内容操作，会和左右滑动切换卡片的手势冲突……内容区起手的横滑归内容操作，
 //    不触发切卡；切卡手势限定在非交互内容区」）────────────────────────
@@ -663,7 +708,8 @@ const CONTENT_GESTURE_SELECTOR =
  *  查它 —— 认领期内切卡手势整体让路（同模块直读，零 DOM 事件戏法）。 */
 let swipeSuppressed = false;
 
-/** @type {{strip: HTMLElement, toolbar: HTMLElement, host: HTMLElement, empty: HTMLElement}|null} */
+/** @type {{strip: HTMLElement, toolbar: HTMLElement, host: HTMLElement,
+ *          empty: HTMLElement, dots: HTMLElement}|null} */
 let canvasUI = null;
 /** @type {{pane: Element, parent: Node, next: Node|null}|null} 活动文档 pane 收编槽（单槽）。 */
 let canvasDocAnchor = null;
@@ -745,37 +791,121 @@ function adoptActiveDoc() {
   }
 }
 
-/** canvas 页同步：chip 条重建（签名闸）+ 工具条态 + pane 收编 + 空态。 */
+// ══ 横向圆环标签栏（作者令 2026-11-02 07:22）══════════════════════════
+// 环位姿 = 唯一几何源（ringPose）：chip 的 dx/dy/scale/opacity/blur 五值全由
+// 环形距离 k 派生，CSS 只消费变量不另算 —— 换签即换 k，五值同步过渡 = 环在转。
+// 层级表（tier）对应桌面 §胶囊环的 |d| 档：0 = 中心位（活签）、1 = 邻位、
+// 2 = 次邻位（被环带 mask 咬掉一半 = 「绕到圈外」的读感），>2 = 环外（隐藏但
+// 仍参与位姿计算，换签时轨迹连续而不是瞬切）。
+const RING_TIERS = [
+  { s: 1, op: 1, blur: 0 },
+  { s: 1 - RING_SCALE_STEP, op: 0.78, blur: 0.8 },
+  { s: 1 - 2 * RING_SCALE_STEP, op: 0.42, blur: 1.8 },
+];
+
+/** 环内最短偏移（i 相对活动位；n=1 恒 0）。@returns {number} */
+function ringOffset(d, n) {
+  if (n < 2) return 0;
+  let k = ((d % n) + n) % n;      // 0..n-1
+  if (k > n / 2) k -= n;          // (−n/2, n/2]
+  return k;
+}
+
+/** chip 位姿五值（k → dx/dy/scale/opacity/blur）。弧深走圆方程，上限封顶。 */
+function ringPose(k) {
+  const ak = Math.abs(k);
+  const dx = RING_DX1 * k;
+  const dy = Math.min(RING_DY_MAX, RING_RADIUS - Math.sqrt(Math.max(0, RING_RADIUS * RING_RADIUS - dx * dx)));
+  const tier = RING_TIERS[Math.min(ak, RING_TIERS.length - 1)];
+  return { dx, dy, s: tier.s, op: ak > RING_VISIBLE ? 0 : tier.op, blur: tier.blur };
+}
+
+/** 环重排（不发 DOM 重建）：按当前活动位给每个 chip 写变量 + on/far 类。
+ *  重建仅由签名闸驱动（syncCanvasPage）——本函数只做位姿对账，切签零建删。 */
+function layoutRing() {
+  const strip = canvasUI?.strip;
+  if (!strip) return;
+  const docs = docTabs();
+  const ai = docs.findIndex((d) => d.id === activeDocId());
+  for (const chip of strip.querySelectorAll('.mf-strip-chip')) {
+    const el = /** @type {HTMLElement} */ (chip);
+    const i = docs.findIndex((d) => d.id === el.dataset.tabId);
+    if (i < 0) continue;
+    const k = ringOffset(i - (ai < 0 ? 0 : ai), docs.length);
+    const p = ringPose(k);
+    el.style.setProperty('--rdx', `${p.dx.toFixed(1)}px`);
+    el.style.setProperty('--rdy', `${p.dy.toFixed(1)}px`);
+    el.style.setProperty('--rsc', p.s.toFixed(3));
+    el.style.setProperty('--rop', p.op.toFixed(2));
+    el.style.setProperty('--rbl', `${p.blur}px`);
+    el.classList.toggle('on', k === 0);
+    el.classList.toggle('is-far', Math.abs(k) > RING_VISIBLE);
+    el.setAttribute('aria-selected', k === 0 ? 'true' : 'false');
+    el.tabIndex = Math.abs(k) <= 1 ? 0 : -1;
+  }
+  // 环带渐隐门控：2 签起双侧渐隐（单签居中无需遮，中心签恒完整）。
+  strip.classList.toggle('fade', docs.length > 1);
+}
+
+/** 切到第 idx 签（环绕安全；同签零动作）。@param {number} idx */
+function switchToIndex(idx) {
+  const docs = docTabs();
+  if (!docs.length) return;
+  const i = Math.min(docs.length - 1, Math.max(0, Math.round(idx)));
+  const d = docs[i];
+  if (!d || d.id === activeDocId()) return;
+  logEvent('card-switch', { via: 'ring', tab: d.id });
+  setActiveTab(d.id);
+}
+
+/** canvas 页同步：环标签重建（签名闸）+ 工具条态 + 小点指示器 + pane 收编 + 空态。 */
 function syncCanvasPage() {
   if (!canvasUI) return;
   const docs = docTabs();
   const activeId = activeDocId();
-  const sig = docs.map((d) => d.id).join('|') + '#' + (activeId || '');
+  const sig = docs.map((d) => d.id).join('|');
   if (canvasUI.strip.dataset.sig !== sig) {
     canvasUI.strip.dataset.sig = sig;
     canvasUI.strip.innerHTML = '';
     for (const d of docs) {
       const chip = document.createElement('button');
       chip.type = 'button';
-      chip.className = 'mf-strip-chip' + (d.id === activeId ? ' on' : '');
+      chip.className = 'mf-strip-chip';
       chip.dataset.tabId = d.id;
-      chip.textContent = d.label;
+      chip.setAttribute('role', 'tab');
+      const label = document.createElement('span');
+      label.className = 'mf-strip-label';
+      label.textContent = d.label;
+      chip.appendChild(label);
+      // 长名省略档（CSS ellipsis）：title 供桌面悬停，触屏走「点活签展开全名」。
       chip.title = d.label;
       chip.addEventListener('click', () => {
+        if (chip.classList.contains('on')) {
+          // 活签再点 = 展开/收起全名（长标签专利；其余签点击一律换签）。
+          const open = !chip.classList.contains('is-expanded');
+          chip.classList.toggle('is-expanded', open);
+          logEvent('tab-label-expand', { tab: d.id, open });
+          if (open) armLabelCollapse(chip);
+          return;
+        }
         logEvent('card-switch', { via: 'strip', tab: d.id });
         setActiveTab(d.id);
       });
       canvasUI.strip.appendChild(chip);
     }
-    // 活动 chip 滚入视野（切卡后一键可见）。
-    canvasUI.strip.querySelector('.mf-strip-chip.on')?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
   }
-  syncStripFade();
+  // 活签的全名展开态不跨切签存活（换签即收，防宽签压邻签）。
+  for (const chip of canvasUI.strip.querySelectorAll('.mf-strip-chip.is-expanded')) {
+    if ((/** @type {HTMLElement} */ (chip)).dataset.tabId !== activeId) chip.classList.remove('is-expanded');
+  }
+  layoutRing();
+  syncDots();
+  // 位置读数仍留 sr-only live 区（小点是纯视觉，读屏靠这行播报「第几/共几」）。
   const idx = docs.findIndex((d) => d.id === activeId);
   const cnt = /** @type {HTMLElement|null} */ (canvasUI.toolbar.querySelector('.mf-cv-count'));
   if (cnt) cnt.textContent = docs.length > 1 && idx >= 0 ? `${idx + 1}/${docs.length}` : '';
-  // Canvas 改造批②⑤（2026-10-31 作者令）：工具条 = 左叉号 + 计数 + 右堆叠视角
-  // 钮；独立窗/步进钮退役（独立窗出口桌面保留；切卡走 chip/横滑/堆叠视角）。
+  // Canvas 改造批②⑤（2026-10-31 作者令）：工具条 = 左叉号 + 右堆叠视角钮
+  // （计数改 sr-only；档位读数下沉到底部小点指示器）。
   const stackBtn = /** @type {HTMLButtonElement|null} */ (canvasUI.toolbar.querySelector('.mf-cv-stack'));
   if (stackBtn) stackBtn.disabled = docs.length === 0;
   adoptActiveDoc();
@@ -783,26 +913,172 @@ function syncCanvasPage() {
   canvasUI.strip.hidden = docs.length === 0;
   canvasUI.toolbar.hidden = docs.length === 0;
   canvasUI.host.hidden = docs.length === 0;
-  if (stackOpen) syncStackView();
+  if (stackOpen) syncDeck();
 }
 
-/** 标签条横向边缘渐隐门控（顶栏批② 2026-10-31）：内容横向溢出才挂 .fade
- *  （左右两端 28px mask 渐隐，chat.css .nf-wl-clip 同配方双侧版）；不溢出
- *  摘 mask 全清晰。chip 重建/横滚/视口变化三路都对账（签名闸零成本直过）。 */
-function syncStripFade() {
-  const strip = canvasUI?.strip;
-  if (!strip) return;
-  strip.classList.toggle('fade', strip.scrollWidth > strip.clientWidth + 1);
+/** 全名展开的自动收起定时（同一时刻至多一枚活签展开）。@type {number} */
+let labelCollapseTimer = 0;
+function armLabelCollapse(chip) {
+  clearTimeout(labelCollapseTimer);
+  labelCollapseTimer = window.setTimeout(() => {
+    chip.classList.remove('is-expanded');
+  }, 2600);
 }
 
-/** 堆叠视角开关态（批②⑤：手机端「堆叠态」= 全卡堆叠列表面，顶部显示标签数）。 */
+// ══ 底部小点指示器（作者令 2026-11-02 07:22 §三）════════════════════
+// 数量规则：n = 1 不显示；n ≥ 2 显示且最多 3 点（DOTS_MAX）。n > 3 时点**不滑动**
+// ——点数恒 3，序号归一映射到 0/1/2 三档，当前位置由「高亮点」表达（申报口径）。
+// 交互：长按 DOT_LONGPRESS_MS 放大 → 按住横拖按 DOT_DRAG_STEP_PX 步距连续换签 →
+// 松手吸附到最近签（拖动中已逐签落地，吸附 = 停在该签）；短按点 = 跳该点对应签。
+
+/** 标签序号 → 点位（n ≤ 3 一一对应；n > 3 三段归一）。@returns {number} */
+function dotBucket(idx, n) {
+  if (n <= DOTS_MAX) return Math.max(0, idx);
+  return Math.round((idx * (DOTS_MAX - 1)) / (n - 1));
+}
+
+/** 点位 → 该点的代表签序号（n > 3 时取该段首签；n ≤ 3 即本签）。@returns {number} */
+function dotIndex(bucket, n) {
+  if (n <= DOTS_MAX) return Math.min(bucket, n - 1);
+  return Math.round((bucket * (n - 1)) / (DOTS_MAX - 1));
+}
+
+/** 小点重绘（点数 + 高亮；点数变化才重建 DOM，其余只改类）。 */
+function syncDots() {
+  const dotsEl = canvasUI?.dots;
+  if (!dotsEl) return;
+  const docs = docTabs();
+  const n = docs.length;
+  const ai = Math.max(0, docs.findIndex((d) => d.id === activeDocId()));
+  const count = n < 2 ? 0 : Math.min(DOTS_MAX, n);
+  dotsEl.hidden = count === 0;
+  dotsEl.setAttribute('aria-hidden', count === 0 ? 'true' : 'false');
+  if (Number(dotsEl.dataset.count) !== count) {
+    dotsEl.dataset.count = String(count);
+    dotsEl.innerHTML = '';
+    for (let i = 0; i < count; i++) {
+      const dot = document.createElement('span');
+      dot.className = 'mf-dot';
+      dotsEl.appendChild(dot);
+    }
+  }
+  const on = dotBucket(ai, n);
+  [...dotsEl.querySelectorAll('.mf-dot')].forEach((el, i) => el.classList.toggle('on', i === on));
+  dotsEl.dataset.n = String(n);
+  dotsEl.dataset.idx = String(ai);
+}
+
+/** 触感反馈（有 vibrate API 才响；reduced-motion 不影响触感，仅关动效）。 */
+function hapticTap(ms = 8) {
+  try { navigator.vibrate?.(ms); } catch { /* 无 API / 被策略拒 */ }
+}
+
+/** 小点手势：长按放大 → 横拖连续换签 → 松手吸附；短按点 = 跳到该点签。 */
+function bindDots(dotsEl) {
+  /** @type {{id: number, x0: number, idx0: number, steps: number, armed: boolean,
+   *          dragging: boolean, timer: number, bucket: number}|null} */
+  let g = null;
+  const endGrip = () => {
+    if (!g) return;
+    clearTimeout(g.timer);
+    dotsEl.classList.remove('is-grip');
+  };
+  dotsEl.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const docs = docTabs();
+    if (docs.length < 2) return;
+    e.stopPropagation();          // 不惊动页面壳的边缘返回/切卡手势
+    clearTimeout(g?.timer);
+    // 点按落点必须**下手时**取：setPointerCapture 会把后续 pointer 事件整体
+    // 重定向到采集元素（pointerup.target 恒为 dotsEl，closest('.mf-dot') 恒
+    // null ⇒ 轻触跳签整条腿失效 —— 探针实证）。
+    const hitEl = /** @type {Element|null} */ (e.target instanceof Element ? e.target.closest('.mf-dot') : null);
+    const bucket0 = hitEl ? [...dotsEl.querySelectorAll('.mf-dot')].indexOf(hitEl) : -1;
+    g = {
+      id: e.pointerId, x0: e.clientX, idx0: Math.max(0, docs.findIndex((d) => d.id === activeDocId())),
+      steps: 0, armed: false, dragging: false, timer: 0, bucket: bucket0,
+    };
+    g.timer = window.setTimeout(() => {
+      if (!g) return;
+      g.armed = true;
+      dotsEl.classList.add('is-grip');   // 长按到位 = 放大态（CSS 承接）
+      hapticTap(10);
+      logEvent('dots-longpress', {});
+    }, DOT_LONGPRESS_MS);
+    try { dotsEl.setPointerCapture(e.pointerId); } catch { /* 合成事件无 capture */ }
+  });
+  dotsEl.addEventListener('pointermove', (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    const dx = e.clientX - g.x0;
+    if (!g.armed) {
+      // 未到长按阈值就大位移 = 普通横划，交回页面（收手势，不劫持）。
+      if (Math.abs(dx) > DOT_TAP_SLOP_PX) { endGrip(); g = null; }
+      return;
+    }
+    g.dragging = true;
+    const docs = docTabs();
+    const steps = Math.round(dx / DOT_DRAG_STEP_PX);
+    if (steps !== g.steps) {
+      g.steps = steps;
+      const next = Math.min(docs.length - 1, Math.max(0, g.idx0 + steps));
+      if (next !== Math.max(0, docs.findIndex((d) => d.id === activeDocId()))) {
+        switchToIndex(next);
+        hapticTap(6);
+      }
+    }
+  });
+  const finish = (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    const armed = g.armed;
+    const dragging = g.dragging;
+    const bucket0 = g.bucket;
+    endGrip();
+    const wasGrip = armed;
+    g = null;
+    if (wasGrip) {
+      // 松手吸附 = 停在最近签（拖动中已逐签落地；此处只补一次触感与事件）。
+      logEvent('dots-snap', { dragging });
+      return;
+    }
+    // 短按：落点小点 = 跳到该点对应签（未拖动的轻触；落点取自 pointerdown）。
+    const b = bucket0;
+    if (b >= 0) {
+      const docs = docTabs();
+      switchToIndex(dotIndex(b, docs.length));
+      hapticTap(6);
+    }
+  };
+  dotsEl.addEventListener('pointerup', finish);
+  dotsEl.addEventListener('pointercancel', (e) => { if (g && e.pointerId === g.id) { endGrip(); g = null; } });
+  // 触屏长按的系统 contextmenu 一律吞掉（放大态自己的语义，不弹原生菜单）。
+  dotsEl.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+// ══ 堆叠卡翻页视图（作者令 2026-11-02 07:22 §四）════════════════════════
+// 「右上角那个堆叠按钮，让手机端 canvas 标签页也像电脑端一样变成一张张卡片
+// 上下翻动（堆叠卡视图，上下滑动翻页切换标签，含卡标题/预览/关闭），退出回
+// 标签视图」——手机端等价物：
+//   · 卡面语言单源 = canvas.js deckFaceOf()（桌面 #deck-layer 环卡同一份
+//     类型族图标 + 缩略 mock，手机零复制）；
+//   · 位姿 = 环形距离 |d| 逐级下沉（DECK_PEEK_PX）+ 收缩（DECK_SCALE_STEP）
+//     + 减淡，前景卡 |d|=0 满幅，|d| > DECK_VISIBLE 隐藏（读作绕到圈外）；
+//   · 手势 = 纵拖翻页：轴锁 DECK_AXIS_PX，过 DECK_SWITCH_PX 松手翻一签并吸附
+//     到最近卡（拖动中卡叠整体跟手，松手必落到某一签 —— 无悬停态）；
+//   · 出口 = 头行 ✕ / Esc 收面回标签视图（下滑不兼收面：与「下滑翻上一张」
+//     语义互斥，收面只留显式出口）。
+const DECK_VISIBLE = 2;
+
+/** 堆叠卡视图开关态。 */
 let stackOpen = false;
-/** @type {{view: HTMLElement, list: HTMLElement, count: HTMLElement}|null} */
-let stackUI = null;
+/** @type {{view: HTMLElement, stage: HTMLElement, count: HTMLElement,
+ *          cards: Map<string, HTMLElement>}|null} */
+let deckUI = null;
+/** 拖动中的临时位移（px）：正 = 手指向下 ⇒ 卡叠整体下移（翻上一张）。 */
+let deckDragDy = 0;
 
-/** 堆叠视角面构建（一次）：顶部「N 张文档」计数行 + 全卡堆叠列表（活动卡高亮；
- *  点卡换入并收面；✕/下滑/Esc 收面）。毛玻璃浮层面，锚 canvas 页内。 */
-function buildStackView(wrap) {
+/** 卡片翻页视图构建（一次）：头行「N 张文档」+ ✕，卡叠舞台（.mf-deck）。
+ *  浮层宿主仍用 .mf-stack-view 类名（开合动画/工具条让位选择器零改）。 */
+function buildDeckView(wrap) {
   const view = document.createElement('div');
   view.className = 'mf-stack-view';
   view.hidden = true;
@@ -813,98 +1089,199 @@ function buildStackView(wrap) {
   const x = document.createElement('button');
   x.type = 'button';
   x.className = 'mf-stack-x g2-fab';
-  x.title = tt('关闭堆叠视角', 'Close stacked view');
+  x.title = tt('返回标签视图', 'Back to tabs');
   x.setAttribute('aria-label', x.title);
   x.innerHTML = '<i data-lucide="x"></i>';
-  x.addEventListener('click', () => toggleStackView(false));
+  x.addEventListener('click', () => toggleDeck(false));
   head.append(count, x);
-  const list = document.createElement('div');
-  list.className = 'mf-stack-list';
-  view.append(head, list);
+  const stage = document.createElement('div');
+  stage.className = 'mf-deck';
+  view.append(head, stage);
   wrap.appendChild(view);
-  // 下滑收面（浮面自身纵滑手势；横滑无义不接管）。
-  let dy0 = null;
-  view.addEventListener('pointerdown', (e) => { dy0 = e.clientY; });
-  view.addEventListener('pointerup', (e) => {
-    if (dy0 === null) return;
-    const dy = e.clientY - dy0;
-    dy0 = null;
-    if (dy > 56) toggleStackView(false);
-  });
+  bindDeckSwipe(stage);
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && stackOpen) toggleStackView(false);
+    if (e.key === 'Escape' && stackOpen) toggleDeck(false);
   });
-  stackUI = { view, list, count };
+  deckUI = { view, stage, count, cards: new Map() };
+  if (typeof lucide !== 'undefined') createIconsIn(head);
   return view;
 }
 
-/** 堆叠视角开合 + 列表同步（open 省略 = 翻转）。
- *  顶栏批④（2026-10-31 作者令「展开动画与电脑端类似」）：开合不再瞬时
- *  display 切换——开 = 摘 hidden → 回流 → .open（浮面淡入 + 卡列自堆叠位
- *  逐张弹簧升起，CSS .open/.mf-stack-card stagger 承载）；收 = 摘 .open 卡列
- *  即时回落（.closing 清 stagger 递延，不拖尾）→ 淡出后 hidden。 */
-function toggleStackView(open) {
-  if (!stackUI) return;
+/** 卡叠纵拖翻页（轴锁 + 越阈翻签 + 松手吸附）。横拖不接管（内容区切卡手势
+ *  在卡面之下，浮层在场时整体被盖住，无冲突面）。 */
+function bindDeckSwipe(stage) {
+  /** @type {{id: number, y0: number, dy: number, axis: string|null}|null} */
+  let g = null;
+  stage.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const t = /** @type {Element} */ (e.target);
+    if (t.closest('button')) return;         // 卡内 ✕ 不参与翻页
+    g = { id: e.pointerId, y0: e.clientY, dy: 0, axis: null };
+    // capture 延到轴锁后才抢：一上手就 setPointerCapture 会把 pointerup 整体
+    // 重定向到舞台 ⇒ 卡面（含卡内 ✕ / 点卡换入）的 click 永不触发（探针实证）。
+  });
+  stage.addEventListener('pointermove', (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    g.dy = e.clientY - g.y0;
+    if (!g.axis && Math.abs(g.dy) > DECK_AXIS_PX) {
+      g.axis = 'y';
+      try { stage.setPointerCapture(e.pointerId); } catch { /* 合成事件无 capture */ }
+    }
+    if (g.axis !== 'y') return;
+    deckDragDy = g.dy;                        // 跟手：卡叠整体随指位移
+    stage.dataset.dragging = '1';             // CSS 关过渡（直写变量即跟手）
+    layoutDeck();
+  });
+  const finish = (e, cancelled) => {
+    if (!g || e.pointerId !== g.id) return;
+    const { dy, axis } = g;
+    g = null;
+    deckDragDy = 0;
+    delete stage.dataset.dragging;            // 回过渡档：回弹/落位走弹簧
+    if (!cancelled && axis === 'y' && Math.abs(dy) > DECK_SWITCH_PX && docTabs().length > 1) {
+      // 上滑（dy<0）= 翻到下一张；下滑 = 上一张。吸附 = 落到该签（无悬停位）。
+      logEvent('deck-page', { dir: dy < 0 ? 1 : -1 });
+      switchDocCard(dy < 0 ? 1 : -1);
+      hapticTap(6);
+    }
+    layoutDeck();                             // 回弹/落位（过阈时活动签已变）
+  };
+  stage.addEventListener('pointerup', (e) => finish(e, false));
+  stage.addEventListener('pointercancel', (e) => finish(e, true));
+}
+
+/** 单张卡面（图标 + 标题 + ✕ + 缩略预览）。 */
+function buildDeckCard(doc) {
+  const card = document.createElement('div');
+  card.className = 'mf-deck-card';
+  card.dataset.tabId = doc.id;
+  card.setAttribute('role', 'tab');
+  const face = deckFaceOf({ id: doc.id, title: doc.label });
+  const top = document.createElement('div');
+  top.className = 'mf-deck-top';
+  const icon = document.createElement('span');
+  icon.className = 'mf-deck-icon';
+  icon.innerHTML = face.icon;
+  const title = document.createElement('span');
+  title.className = 'mf-deck-title';
+  title.textContent = doc.label;
+  title.title = doc.label;
+  const x = document.createElement('button');
+  x.type = 'button';
+  x.className = 'mf-deck-x';
+  x.title = tt('关闭卡片', 'Close card');
+  x.setAttribute('aria-label', `${tt('关闭', 'Close')} ${doc.label}`);
+  x.innerHTML = '<i data-lucide="x"></i>';
+  x.addEventListener('pointerdown', (e) => e.stopPropagation());
+  x.addEventListener('click', (e) => {
+    e.stopPropagation();
+    logEvent('card-close', { tab: doc.id, via: 'deck' });
+    closeTab(doc.id);
+    syncCanvasPage();
+  });
+  top.append(icon, title, x);
+  const thumb = document.createElement('div');
+  thumb.className = 'mf-deck-thumb';
+  thumb.innerHTML = face.thumb;
+  card.append(top, thumb);
+  /* 点击语义与桌面 #deck-layer 环卡同构（作者令 §四「像电脑端一样」）：
+     · 深处卡（露出的那一段）= 翻到该卡（不换视图，卡叠继续开着看它升到前景）；
+     · 前景卡（= 活动签）= 收面回标签视图（等价桌面「点前景卡换入面板」）。 */
+  card.addEventListener('click', () => {
+    if (doc.id !== activeDocId()) {
+      logEvent('card-switch', { via: 'deck', tab: doc.id });
+      setActiveTab(doc.id);
+      return;
+    }
+    logEvent('deck-exit', { via: 'front-card' });
+    toggleDeck(false);
+  });
+  return card;
+}
+
+/** 卡叠位姿对账（唯一几何源；CSS 只消费 --dty/--dsc/--dop 三变量）。 */
+function layoutDeck() {
+  if (!deckUI) return;
+  const docs = docTabs();
+  if (!docs.length) return;
+  const ai = Math.max(0, docs.findIndex((d) => d.id === activeDocId()));
+  for (const [id, card] of deckUI.cards) {
+    const i = docs.findIndex((d) => d.id === id);
+    if (i < 0) continue;
+    const k = ringOffset(i - ai, docs.length);
+    const ak = Math.abs(k);
+    // 深度 = 环形距离（|k|）+ 同距破平（环两侧同距时右侧让 0.5 档）——
+    // 卡叠是单向向下的一张张，同距不得同位（否则两卡完全重叠、层次读不出）。
+    const depth = ak + (k > 0 ? 0.5 : 0);
+    card.style.setProperty('--dty', `${(depth * DECK_PEEK_PX + deckDragDy).toFixed(1)}px`);
+    card.style.setProperty('--dsc', (1 - Math.min(depth, 4) * DECK_SCALE_STEP).toFixed(3));
+    card.style.setProperty('--dop', ak > DECK_VISIBLE ? '0' : ak === 0 ? '1' : ak === 1 ? '0.82' : '0.5');
+    card.style.zIndex = String(60 - Math.round(depth * 2));
+    card.classList.toggle('on', ak === 0);
+    card.classList.toggle('is-far', ak > DECK_VISIBLE);
+    card.tabIndex = ak === 0 ? 0 : -1;
+    card.setAttribute('aria-selected', ak === 0 ? 'true' : 'false');
+  }
+}
+
+/** 卡叠重建（签名闸 = 签集）；点卡换入、✕ 关卡、纵拖翻页三腿都在此对账。 */
+function syncDeck() {
+  if (!deckUI || !stackOpen) return;
+  const docs = docTabs();
+  deckUI.count.textContent = docs.length ? tt(`${docs.length} 张文档`, `${docs.length} cards`) : '';
+  deckUI.count.dataset.n = String(docs.length);
+  const sig = docs.map((d) => d.id).join('|');
+  if (deckUI.stage.dataset.sig !== sig) {
+    deckUI.stage.dataset.sig = sig;
+    deckUI.stage.innerHTML = '';
+    deckUI.cards.clear();
+    for (const d of docs) {
+      const card = buildDeckCard(d);
+      deckUI.stage.appendChild(card);
+      deckUI.cards.set(d.id, card);
+    }
+  }
+  layoutDeck();
+}
+
+/** 堆叠卡视图开合（open 省略 = 翻转）。开 = 摘 hidden → 建卡 → 回流 → .open
+ *  （浮面淡入 + 卡叠逐张自落位升起，CSS 承接）；收 = 摘 .open 即时回落 →
+ *  淡出后 hidden（.closing 清零递延不拖尾）。 */
+function toggleDeck(open) {
+  if (!deckUI) return;
   const next = open === undefined ? !stackOpen : !!open;
   if (next === stackOpen) return;
   stackOpen = next;
+  deckDragDy = 0;
   logEvent('canvas-stack-' + (next ? 'open' : 'close'));
-  const view = stackUI.view;
+  const view = deckUI.view;
   if (next) {
     view.hidden = false;
     view.classList.remove('closing');
-    syncStackView();                   // 先建列（卡生于收合落位态，:not(.open) 初始样式）
-    void view.offsetWidth;             // 回流：.open 自初始态（opacity 0/卡落位）起播
-    view.classList.add('open');        // 后开闸：stagger 从落位态逐张归位（建列在闸前 = 中段帧可取证）
+    syncDeck();                        // 先建卡（卡生于收合落位态，:not(.open) 初始样式）
+    void view.offsetWidth;             // 回流：.open 自初始态起播
+    view.classList.add('open');
   } else {
     view.classList.remove('open');
-    view.classList.add('closing');     // 收面零递延：卡列即时回落不逐张拖尾
+    view.classList.add('closing');
     setTimeout(() => {
       if (!stackOpen) { view.hidden = true; view.classList.remove('closing'); }
     }, 200);
   }
+  syncCanvasPage();                    // 工具条让位/计数对账（:has 选择器读 hidden 态）
 }
 
-/** 堆叠列表重建（签名闸同 chip 条纪律）：活动卡高亮，点卡 = 换入 + 收面。 */
-function syncStackView() {
-  if (!stackUI || !stackOpen) return;
-  const docs = docTabs();
-  const activeId = activeDocId();
-  stackUI.count.textContent = docs.length ? `${docs.length} 张文档` : '';
-  const sig = docs.map((d) => d.id).join('|') + '#' + (activeId || '');
-  if (stackUI.list.dataset.sig === sig) {
-    stackUI.list.querySelectorAll('.mf-stack-card').forEach((el) => {
-      el.classList.toggle('on', (/** @type {HTMLElement} */ (el)).dataset.tabId === activeId);
-    });
-    return;
-  }
-  stackUI.list.dataset.sig = sig;
-  stackUI.list.innerHTML = '';
-  docs.forEach((d, i) => {
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.className = 'mf-stack-card' + (d.id === activeId ? ' on' : '');
-    card.dataset.tabId = d.id;
-    const num = document.createElement('span');
-    num.className = 'mf-stack-num';
-    num.textContent = String(i + 1);
-    const label = document.createElement('span');
-    label.className = 'mf-stack-label';
-    label.textContent = d.label;
-    card.append(num, label);
-    card.addEventListener('click', () => {
-      logEvent('card-switch', { via: 'stack-view', tab: d.id });
-      if (d.id !== activeDocId()) setActiveTab(d.id);
-      toggleStackView(false);
-    });
-    stackUI.list.appendChild(card);
-  });
-}
-
-/** canvas 页内容臂构建（一次；chip 条 + 工具条 + 文档区 + 空态 + 堆叠视角）。
- *  Canvas 改造批②⑤（2026-10-31 作者令）：工具条换代 = 左叉号（液态玻璃悬浮
- *  钮）+ 中部计数 + 右堆叠视角钮（.g2-fab 复用液体玻璃 v2 材质，零新造）。
- *  退役：‹ › 步进（chip/横滑/堆叠视角三条换卡腿已足）、独立窗钮（批⑤）。 */
+/** canvas 页内容臂构建（一次；环标签带 + 工具条 + 文档区 + 空态 + 小点 +
+ *  卡叠视图）。Canvas 改造批②⑤（2026-10-31 作者令）：工具条换代 = 左叉号
+ *  （液态玻璃悬浮钮）+ 右堆叠视角钮（.g2-fab 复用液体玻璃 v2 材质，零新造）。
+ *  标签栏重做批（2026-11-02 07:22 作者令）：
+ *   ① 两颗钮图标修复 —— toolbar 挂 section 根（body.parentElement），图标替换
+ *      必须对它单独跑一次 createIconsIn（修前只跑 wrap 子树 ⇒ 两钮永远空圆）；
+ *   ② 标签条 = 常驻展开的横向圆环（位姿变量由 layoutRing 写），计数降为
+ *      sr-only（档位读数下沉到底部小点指示器）；
+ *   ③ 底部小点指示器 = 内容区底部居中（不压 dock）——host 之后的独立行；
+ *   ④ 右上堆叠钮 → 卡叠翻页视图（.mf-stack-view 宿主 + .mf-deck 卡叠）。
+ *  退役：‹ › 步进、独立窗钮（批⑤）、堆叠列表（本批改卡叠）。 */
 function buildCanvasPage(body) {
   const wrap = document.createElement('div');
   wrap.className = 'mf-canvas-page';
@@ -927,15 +1304,21 @@ function buildCanvasPage(body) {
   const stack = document.createElement('button');
   stack.type = 'button';
   stack.className = 'mf-cv-stack g2-fab';
-  stack.title = tt('堆叠视角', 'Stacked view');
-  stack.setAttribute('aria-label', tt('堆叠视角', 'Stacked view'));
+  stack.title = tt('堆叠卡视图', 'Stacked cards');
+  stack.setAttribute('aria-label', tt('堆叠卡视图', 'Stacked cards'));
   stack.innerHTML = '<i data-lucide="layers"></i>';
-  stack.addEventListener('click', () => { logEvent('canvas-stack-toggle'); toggleStackView(); });
+  stack.addEventListener('click', () => { logEvent('canvas-stack-toggle'); toggleDeck(); });
   toolbar.append(close, count, stack);
 
   const host = document.createElement('div');
   host.className = 'mf-cv-host';
   bindDocSwipe(host);
+  const dots = document.createElement('div');
+  dots.className = 'mf-dots';
+  dots.hidden = true;
+  dots.setAttribute('role', 'group');
+  dots.setAttribute('aria-label', tt('卡片位置', 'Card position'));
+  bindDots(dots);
   const empty = document.createElement('div');
   empty.className = 'mf-cv-empty';
   const eIcon = document.createElement('i');
@@ -947,17 +1330,21 @@ function buildCanvasPage(body) {
   eSub.className = 'mf-cv-empty-sub';
   eSub.textContent = tt('在聊天里打开文件或文档后会出现在这里', 'Documents opened from chat appear here');
   empty.append(eIcon, eTitle, eSub);
-  const stackView = buildStackView(wrap);
-  wrap.append(strip, host, empty);
+  const stackView = buildDeckView(wrap);
+  wrap.append(strip, host, dots, empty);
   body.appendChild(wrap);
   // 悬浮钮统一批：工具条 = 页面悬浮 chrome 带控件 —— 挂 section 根（与页头带同
-  // 定位上下文，top:16+safe 落位），mf-canvas-page 只吃 chip 条/文档区/空态。
+  // 定位上下文，top:16+safe 落位），mf-canvas-page 只吃环带/文档区/小点/空态。
   body.parentElement?.appendChild(toolbar);
-  canvasUI = { strip, toolbar, host, empty };
-  // 顶栏批②：标签条渐隐门控的横滚/视口两路对账（chip 重建路在 syncCanvasPage）。
-  strip.addEventListener('scroll', syncStripFade, { passive: true });
-  window.addEventListener('resize', syncStripFade);
-  if (typeof lucide !== 'undefined') createIconsIn(wrap);
+  canvasUI = { strip, toolbar, host, empty, dots };
+  // 标签栏重做批①：图标替换覆盖到 toolbobar 子树（根因修复 —— 修前只 createIconsIn(wrap)，
+  // 而 ✕/堆叠两钮在 toolbar 内、wrap 之外 ⇒ 永远停在 <i data-lucide>）。
+  if (typeof lucide !== 'undefined') {
+    createIconsIn(wrap);
+    createIconsIn(toolbar);
+  }
+  // 视口变化：环带渐隐/小点位姿均为纯 CSS + 变量，无需重算；只补小点计数对账。
+  window.addEventListener('resize', () => { syncDots(); });
   void stackView;
 }
 
@@ -1849,6 +2236,11 @@ export function activateNav() {
     if (dockEl) { dockEl.remove(); dockEl = null; }
     dockKeys.clear();
     canvasUI = null;
+    // 标签栏重做批：卡叠视图/小点手势句柄随页面树一并归零（重挂时重建，
+    // 防旧节点引用悬挂 + stackOpen 卡在 true 导致新页首帧就开浮面）。
+    deckUI = null;
+    stackOpen = false;
+    deckDragDy = 0;
     hubBodies.clear();
     for (const b of injectedBacks.splice(0)) b.remove();
     document.body.classList.remove('mf-page-open');

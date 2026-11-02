@@ -291,7 +291,7 @@ const openFile = (page, p) => page.evaluate((pp) => {
   await sleep(600);
   probes.stackView = await page.evaluate(() => ({
     count: (document.querySelector('.mf-stack-count') || {}).textContent || '',
-    cards: document.querySelectorAll('.mf-stack-card').length,
+    cards: document.querySelectorAll('.mf-deck-card').length,       // 标签栏重做批：卡叠翻页视图
   }));
   await page.screenshot({ path: join(SHOTS_DIR, 'm03-stackview.png') });
   await page.click('.mf-stack-view, .mf-stack-count, .mf-cv-stack').catch(() => {});

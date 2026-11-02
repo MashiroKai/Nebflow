@@ -359,24 +359,35 @@ const ALPHA = '/tmp/cw-fixture/alpha.md';
   await page.waitForSelector('.mf-stack-view:not([hidden])', { timeout: 5000 });
   const stackView = await page.evaluate(() => ({
     count: (document.querySelector('.mf-stack-count') || {}).textContent || '',
-    cards: document.querySelectorAll('.mf-stack-card').length,
-    on: document.querySelectorAll('.mf-stack-card.on').length,
+    cards: document.querySelectorAll('.mf-deck-card').length,
+    on: document.querySelectorAll('.mf-deck-card.on').length,
+    thumbs: document.querySelectorAll('.mf-deck-thumb > *').length,
   }));
-  ok('CW6-2 堆叠视角：顶部「N 张文档」计数 + 全卡列表 + 活动卡高亮（批⑤）',
-    stackView.count === '2 张文档' && stackView.cards === 2 && stackView.on === 1,
+  ok('CW6-2 堆叠卡视图（作者令 2026-11-02 §四）：顶部「N 张文档」计数 + 每签一张卡（标题/预览）+ 前景卡高亮',
+    stackView.count === '2 张文档' && stackView.cards === 2 && stackView.on === 1 && stackView.thumbs === 2,
     JSON.stringify(stackView));
-  // 点卡换入 + 收面。
+  // 点后卡 = 翻到该卡（卡叠不退出，桌面环卡同构）。
   await page.evaluate(() => {
-    const cards = [...document.querySelectorAll('.mf-stack-card')];
+    const cards = [...document.querySelectorAll('.mf-deck-card')];
     (cards.find((c) => !c.classList.contains('on')) || cards[0]).click();
   });
   await sleep(400);
   const afterPick = await page.evaluate(() => ({
-    stackHidden: document.querySelector('.mf-stack-view').hidden,
+    stackOpen: !document.querySelector('.mf-stack-view').hidden,
+    onId: document.querySelector('.mf-deck-card.on')?.dataset.tabId || '',
     count: (document.querySelector('.mf-cv-count') || {}).textContent || '',
   }));
-  ok('CW6-3 堆叠视角点卡换入并收面，工具条计数跟随（换入 alpha = 首卡 ⇒ 1/2）', afterPick.stackHidden && afterPick.count === '1/2',
-    JSON.stringify(afterPick));
+  ok('CW6-3 点后卡 = 翻到该卡（卡叠保持展开），工具条计数跟随（换入 alpha = 首卡 ⇒ 1/2）',
+    afterPick.stackOpen && afterPick.count === '1/2', JSON.stringify(afterPick));
+  // 点前景卡（= 活动签）= 收面回标签视图。
+  await page.evaluate(() => document.querySelector('.mf-deck-card.on').click());
+  await sleep(420);
+  const afterFront = await page.evaluate(() => ({
+    stackHidden: document.querySelector('.mf-stack-view').hidden,
+    stripVisible: !document.querySelector('.mf-strip').hidden,
+  }));
+  ok('CW6-4 点前景卡 = 收面回标签视图（环带复现）', afterFront.stackHidden && afterFront.stripVisible,
+    JSON.stringify(afterFront));
   ok('R0 主文档零 JS 错误（CW6）', errors.length === 0, errors.slice(0, 2).join(' | '));
   await ctx.close();
 }
