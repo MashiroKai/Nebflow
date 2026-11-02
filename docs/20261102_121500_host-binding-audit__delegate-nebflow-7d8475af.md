@@ -172,8 +172,10 @@ device.json` 的 `idToken.exp` 停在 2026-10-31 01:25:42、`refreshToken` 为�
 （再补入本文）后跑 `check_wiki_docs.py --root /tmp/vaultchk/docs`：
 
 ```
-wiki-docs 校验：通过（/tmp/vaultchk/docs，154 篇文档，零违规）
+wiki-docs 校验：通过（/tmp/vaultchk/docs，<N> 篇文档，零违规）
 EXIT=0
 ```
+
+（`<N>` 随该次 archive 快照的文档数浮动——最后一跑为 156 篇；关键是**零违规**与 exit 0。）
 
 工作区直跑会报既有 orphan（工作区 `docs/` 含未入仓文件），故以 archive 快照为准。
