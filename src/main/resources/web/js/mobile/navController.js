@@ -1788,8 +1788,20 @@ function closePageFace(pageId) {
       // 隐藏页体直到下次换卡才归还，滞留窗内的树变即触发双页叠开）。
       releaseAdoptedDoc();
       break;
+    case 'conversation':
+      // 会话页头同构批（件二+件三，2026-11-02）：会话页的左上返回钮必须**真关窗**
+      // —— 旧 `default` 是 no-op，靠随后「桌面关窗 ⇒ watchChatModal 对账」
+      // 巧合兜底；现在窗体头（×）与窗头行在手机层已退场（身份头接管），返回钮
+      // 成为唯一出页入口 ⇒ 在这里显式走 `messages.closeChat()`（唯一关窗实现：
+      // 摘 overlay ⇒ watchChatModal 的 childList 腿照旧弃收编节点 + 弹页）。
+      // 动态 import：`messages.js` 静态引 `navController.js`（pushPage/logEvent），
+      // 静态反向边会成环 —— 本腿只在运行期、页面已建出时执行，模块必已求值。
+      import('../messages.js')
+        .then((m) => m.closeChat?.())
+        .catch(() => { /* 模块态异常不阻断出页 */ });
+      break;
     default:
-      break; // messages/contacts/canvas/panels/conversation：面态无需翻转
+      break; // messages/contacts/canvas/panels：面态无需翻转
   }
 }
 

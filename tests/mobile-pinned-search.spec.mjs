@@ -411,9 +411,9 @@ test('P7 other faces untouched: chat chrome search key + detail pages keep the f
   await dockTo(page, 'messages');
 
   // 聊天根顶缘搜索键（本批零触碰）：48×48 @ right359 / 圆钮材质不变。
-  // 垂直落点 top 16 → 4+safe 由**会话顶栏单行三段式批**（2026-11-02 07:23，同 worktree
-  // 合并时就地解冲突）改写：钮中心 = safe+28 = 40px 头像中心，三者同轴；尺寸/材质/
-  // 水平足印仍按本批（pinned-search）契约零改动。
+  // 垂直落点沿革：top 16（本批）→ 4+safe（会话顶栏单行三段式批 2026-11-02 07:23）
+  // → **16+safe（会话页头同构批 件二+件三 2026-11-02，fixed 真顶栏整条退役）**：
+  // 钮回到悬浮顶缘 16，与左上任务键同档；尺寸/材质/水平足印仍按本批契约零改动。
   const chrome = await page.evaluate(() => {
     const el = document.querySelector('.mh-chrome-btn[data-chrome="search"]');
     if (!el) return null;
@@ -427,7 +427,7 @@ test('P7 other faces untouched: chat chrome search key + detail pages keep the f
   });
   expect(chrome, 'chrome 搜索键在位').not.toBeNull();
   expect({ w: chrome.w, h: chrome.h }).toEqual({ w: 48, h: 48 });
-  expect(chrome.top).toBe(4);
+  expect(chrome.top).toBe(16);
   expect(chrome.right).toBe(359);
   expect(chrome.radius).toBe('50%');
 

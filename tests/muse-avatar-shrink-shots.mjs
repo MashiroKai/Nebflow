@@ -1,4 +1,10 @@
 #!/usr/bin/env node
+// ⛔ 已退役（会话页头同构批 件二+件三，作者令 2026-11-02）：本脚本拍的形态
+//    （Muse 头像 78→56 收小档（sticky 锚 + 流内首件））已被**整条取代** —— 现役形态 = 悬浮身份头
+//    `.mh-idhead`（mobileLayer.css 文件尾「会话页头同构批」+ js/mobile/sessionHead.js），
+//    机械验收改由 `tests/conversation-heads-unify.spec.mjs` 承担。
+//    保留本文件仅作历史取证回放；其断言（fixed 顶栏/sticky 锚/负 margin）**不再成立**，
+//    重跑必红 = 预期，勿据此判回归。
 // muse-avatar-shrink-shots.mjs — Muse 会话头头像收小批（作者令 2026-11-02 06:58，
 // 实拍 /Users/kaiyu/.stand/uploads/.../722923094985583_IMG_1674.jpg「手机端会话
 // 顶部居中的 Muse 头像调小一点」）验收 harness：375×812 双主题 × 静止态/滚动中

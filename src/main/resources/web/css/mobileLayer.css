@@ -2993,25 +2993,16 @@ body.mobile-layer #modal-overlay.takeover-live .mfs-back { display: none !import
      悬浮控件同一材质族），**零 border、零立体 box-shadow**（原胶囊的
      glass-control 双 inset 高光/阴影档不移植）；兜底字色/省略号沿用原基座。
    · 头像本体零触碰：28px 圆 + 芯片底 = chat.css 全局 #agent-avatar-btn 现役
-     档（含 2026-11-01 主题化芯片），56px 放大由下方 Muse 覆盖块承担。
+     档（含 2026-11-01 主题化芯片），56px 外径由**文件尾「会话页头同构批」**
+     的 .mh-idhead 块承担（本批起 .g2-chat-head 本体就是 .mh-idhead：
+     悬浮 + 列式居中 + 零背景，名字胶囊规则也统一到那边的 :is() 合并选择器，
+     禁两处各写一份）。
    桌面零感知（规则全挂 body.mobile-layer）。 */
 body.mobile-layer .g2-chat-head {
   display: flex;
   flex-direction: column;
   align-items: center;
   flex: none;
-}
-body.mobile-layer .g2-chat-head #session-name {
-  font-weight: 600;
-  color: var(--color-frame-text-bright, var(--color-frame-text));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 3px 14px;
-  border-radius: 999px;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
-  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
 }
 body.mobile-layer .g2-chat-head #memory-btn {
   width: 32px;
@@ -3066,46 +3057,16 @@ body.mobile-layer #chat {
   -webkit-mask-image: none;
   mask-image: none;
 }
-/* ② 悬浮锚本体 + ②-b 身份组上提 —— **整条退役**（单行三段式顶栏批
-   2026-11-02 07:23 作者令「头像为什么不在顶栏与左右两颗按钮同一行…现在给出明确
-   要求并实施」）。
-   退役对象 = ① `position: sticky` + `top: var(--muse-head-top)`（chatChrome.js
-   同步负 padding 补偿的 sticky 顶锚）与 ②-b 负 margin 上提（把组顶钉到双键行下缘
-   64px 的补丁）。二者共同造就作者实拍所见病灶：身份组永远是「顶带之下另起一行」
-   的浮层，且滚动时做 sticky 变形（顶栏不是真顶栏）。
-   新契约（本文件尾「会话顶栏单行三段式批」块）把 .g2-chat-head 直接做成
-   `position: fixed` 的顶栏本体：头像与左右双钮落在同一条水平轴线上、顶栏下缘
-   56px+safe 是内容流起点（零额外空白带），滚动时顶栏不动、内容从下方流过。
-   规则删除（非注释化保留）⇒ 与 --muse-head-top 变量一并失去消费方，
-   chatChrome.js 的同名同步链本批同批摘除。 */
-/* ②-c 无名档幽灵胶囊收口（同批）：#session-name 在「root 未命名」态由
-   sidebar.updateHeaderSessionName 写空串（2026-10-06 N1 裁定：无名 root 标题区为空
-   串，机制名永不作显示回落）。空串 span 仍吃本块胶囊的 padding（3px 14px）⇒ 画出一枚
-   28×6px 的幽灵玻璃条挂在头像下方（作者实拍所见头像下的小暗条），既不是名字也不是
-   间距。空名时整枚胶囊退出渲染 ⇒ 组收敛为「头像 + 克制下白」，名字一到即恢复（:empty
-   仅命中无子节点无文本节点，故不吃「加载中」态）。 */
-body.mobile-layer #chat .g2-chat-head #session-name:empty {
-  display: none;
-}
-/* ③ 大号圆头像 —— 现役取值见文件尾单行三段式批 ④ 块（**40px**）。下方 56px
-   为收小批（06:58）历史档，本批被後置块覆盖，保留注记作沿革。
-   （基座 52px → 78px → **56px**；底/描边/浮影/glass-control 缘沿用
-   基座档）——收小批（作者令 2026-11-02 06:58，实拍 IMG_1674「手机端会话顶部居中
-   的 Muse 头像调小一点」）：78 一档收到 56（视宽 375 的 14.9%；原 78 = 20.8%），
-   成组贴顶 64px 锚 / 头像-名字 6px 间距 / sticky 与居中语义零触碰。
-   56 的取法：78 与名字 14px 的字身比 5.57，56 档下同一视觉重量落在 14px（4.0）——
-   仍在「头像为主、名字为辅」的量级内，而 52-54 会把头像压到接近两倍字高的
-   「小号图标」观感；故取 56 而非区间下沿（详见批文档「取值理由」）。
-   桌面 28px 与 dock 中键 44px 零触碰（规则挂 body.mobile-layer + #chat 子树）。 */
-body.mobile-layer #chat .g2-chat-head #agent-avatar-btn {
-  width: 56px;
-  height: 56px;
-}
-/* ④ 名字玻璃胶囊：随大头像同比例升半档（13px → 14px），余沿用基座档 */
-body.mobile-layer #chat .g2-chat-head #session-name {
-  font-size: var(--mfs-sub);
-  max-width: 220px;
-}
+/* ② 悬浮锚本体 + ②-b 身份组上提 —— 已退役（单行三段式顶栏批 2026-11-02 07:23
+   先把 sticky 顶锚换成 fixed 真顶栏；本批〔会话页头同构批〕再把 fixed 顶栏整条
+   退役，落回**悬浮身份头** —— 但形态由文件尾 .mh-idhead 块**单源**给出，
+   本处不再声明任何 .g2-chat-head / #session-name / #agent-avatar-btn 几何，
+   否则会与文件尾块争特异度（旧选择器带 #chat + #session-name 两层 id）。
+   现存变量 --muse-head-top 已无消费方（chatChrome.js 同步链随批摘除）。 */
+/* ②-c 无名档幽灵胶囊收口 —— 规则已在文件尾 .mh-idhead 块
+   （`:is(.mh-idhead-name, .mh-idhead > #session-name):empty`），本处不留第二份。 */
+/* ③④ 头像 56px / 名字胶囊字号 —— 取样见文件尾 .mh-idhead 块
+   （--idhead-avatar 56 与 15px 名字胶囊，四种会话同一条声明，禁两处各写一份）。 */
 
 /* ═══════════════════════════════════════════════════════════════════════
    面板头标识 B 批（2026-11-01 作者 17:01 选型 B「iOS 大标题式」）——
@@ -3708,125 +3669,194 @@ body.mobile-layer #usage-grid .ud-cell[data-date]::after {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   会话顶栏单行三段式批（2026-11-02 07:23 作者令，实拍
-   evidence/20261102_muse-avatar-shrink/rest-light.png）
+   会话页头同构批（凝：件二 + 件三，作者令 2026-11-02 15:xx）
    ═══════════════════════════════════════════════════════════════════════
-   作者原话：「手机端会话顶部，头像为什么不在顶栏与左右两颗按钮**同一行**
-   居中，而是掉到下面一行… 新要求：头像与名字并入顶栏同一行」。
+   作者原话：「三种会话页头同构（左返回 / 右三点 / 中悬浮身份头），与主对话窗
+   视觉完全一致，且不得有横贯顶栏带」。
 
-   病灶（本批修掉的形态）：.g2-chat-head 曾是 #chat 内容流首项 + 负 margin 上提
-   到双键行下缘（上块 ②/②-b 已整条退役）+ 列式布局 ⇒ 头像必然另起一行，
-   且 sticky 变形（不是真顶栏）。
+   本块**整条取代**上方沿革里的「会话顶栏单行三段式批（2026-11-02 07:23，
+   221391120）」：那批把 .g2-chat-head 做成 position:fixed 的 56+safe 真顶栏
+   （玻璃底 + 下缘描边，横贯屏幕），正是作者本批点名要退掉的形态。fixed 顶栏
+   与「回退也让位」的 main.js 链在同批一并退役（main.js 顶让位回到 bandBottom
+   公式；chatChrome.js 的两条建/拆层广播随之摘除）。
 
-   新契约 = 单行三段式真顶栏：
-     左＝任务键　中＝头像（+ 右侧名字）　右＝搜索键，三者垂直中线同轴。
-   · 高度 56px + env(safe-area-inset-top)（手机标准档：iOS 导航栏 44pt 的
-     上沿档；56 内放 48px 圆钮 = 上下各 4px 余量，放 40px 头像 = 各 8px）；
-   · 材质 = 玻璃单源包：--glass-bg + blur(--glass-blur) saturate(--cv-saturate)
-     + border-bottom 1px --glass-border（与 #mobile-dock / #input-bar 同配方，
-     浅深双主题走 token 自动成立，零新色值）；降级档在 glass.css 两块列名；
-   · 固定在顶部（position: fixed，不随内容滚动、无 sticky 变形）：内容从顶栏
-     下缘起（main.js 顶让位 = 顶栏下缘 + 8 呼吸），原 96/64px 留白带一并收掉；
-   · z 26：> 渐隐带 25（顶栏压在渐隐带上），< 双钮层 30（双钮仍是更高一层，
-     按压/角标零遮挡），< 页面栈 156 < dock 200 —— 层级契约与本文件头注一致。
+   形态（四种会话同一类名族 .mh-idhead，差异只许来自数据）：
+     · 页头 = **只有左右两颗钮**：左上＝返回（好友/群/设备会话 = 页面壳既有
+       .mobile-back-btn；主对话 = 既有任务键 .mh-chrome-btn[data-chrome=tasks]）、
+       右上＝三点（会话页 = .mh-sess-more；主对话 = 既有搜索键）。两钮都是
+       48px g2-fab 圆钮 @ top 16+safe、左右 16 —— **零横贯带**：无通栏背景、
+       无通栏描边、无占满宽度的盒（页面壳 .mobile-page-header 仍是零高透明带）。
+     · 中间 = **悬浮身份头**：圆头像（56px，唯一流内子节点 ⇒ 恒居屏幕中线）+
+       名字玻璃胶囊（绝对定位挂在头像正下方居中；空名 :empty 不渲染，头像仍
+       居中）。头本体 position:absolute 悬浮在内容之上：零背景、零描边、
+       pointer-events:none（只有头像/名字各自接事件），内容从其后穿过。
+     · 滚动渐隐：滚动量由 mobile/sessionHead.js 的 bindIdHeadFade **唯一实现**
+       写成 --idhead-p（0→1，行程 64px，rAF 合帧），本块消费为
+       opacity: calc(1 - var(--idhead-p))。四种会话同一驱动器，禁第二套进度。
+     · 四种会话同形：头像尺寸（--idhead-avatar 56）、名字胶囊的字号/padding/
+       圆角/背景 token 全部由**同一组声明**给出（选择器用 :is() 合并写），
+       好友/群/设备 与主对话之间零样式分叉。
+
+   🔴 与 #1365（分支 delegate/delegate-nebflow-accdcd3b）的对接点：
+   #1365 在做同一件事（主对话顶栏回退成悬浮形态），且**相对 main 零提交**
+   （无组件可消费）。本块即「同一组件名 .mh-idhead / 同一 CSS 块（本块）/
+   同一渐隐驱动器 bindIdHeadFade」的落点 —— 合流时只保留一份：类名与取值以
+   本块为准；若 #1365 另带近似实现，以其组件名对齐本块类名后删另一套，
+   禁两套近似样式并存（同名对接注记见 js/mobile/sessionHead.js 文件头）。
+
+   层级：身份头 26 < 右上三点/双键层 30（页面壳带 20 之下、dock 200 之上口径
+   不变）；页面栈 156、dock 200 不动。
    ═══════════════════════════════════════════════════════════════════════ */
-/* ① 顶栏本体：fixed 单行，头像吃满高度居中 */
-body.mobile-layer #chat .g2-chat-head {
-  position: fixed;
-  top: 0;
+/* ① 悬浮身份头本体（四种会话共用；**零背景零描边零全宽盒** —— 顶栏带判据的
+   正面反例）。position:absolute 的包含块 = 最近的定位祖先（#main / .mobile-page），
+   二者都在滚动容器（#chat / .mobile-page-body）之外 ⇒ 头既不随内容滚动、
+   也不被滚动容器的 overflow 裁掉（CSS 2.1 §11.1.1：包含块在裁剪盒之外的
+   绝对定位后代不受该盒 overflow 裁剪）。 */
+body.mobile-layer .mh-idhead {
+  --idhead-avatar: 56px;
+  --idhead-seat: 12px;  /* 头顶净空：12 + 56/2 = 40 = 左右 48px 钮的中心（top 16 + 24）
+                           ⇒ 头像中心与两颗钮同轴，且头像视觉中心落在同一水平线 */
+  --idhead-p: 0;        /* 滚动渐隐进度（JS 写；无 JS 时恒 0 = 常显） */
+  position: absolute;
+  top: calc(var(--idhead-seat) + env(safe-area-inset-top, 0px));
   left: 0;
   right: 0;
-  height: calc(56px + env(safe-area-inset-top, 0px));
   z-index: 26;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
+  align-items: center;
+  background: none;
+  border: none;
+  box-shadow: none;
+  pointer-events: none;
+  opacity: calc(1 - var(--idhead-p));
+}
+/* ② 头像：唯一流内子节点 ⇒ 水平恒居屏幕中线（名字/副行都不参与 flex 居中，
+   故「头像中心 − 屏幕中线」是结构性 0，不靠测量对齐）。四种会话同一尺寸档
+   （--idhead-avatar，56 = 视宽 375 的 14.9%；56 与 15px 名字的字身比 3.7，
+   仍读成「头像为主、名字为辅」）。头像本体（圆/描边/高光/浮影/芯片底）各自
+   沿用既有件：主对话 = #agent-avatar-btn（chat.css 全局档 + stand logo 兜底），
+   好友/群/设备 = .fm-avatar（friends.css）—— 尺寸与圆角同档，本块只钉外径。 */
+body.mobile-layer .mh-idhead > #agent-avatar-btn,
+body.mobile-layer .mh-idhead .mh-idhead-avatar > .fm-modal-avatar,
+body.mobile-layer .mh-idhead .mh-idhead-avatar .fm-avatar,
+body.mobile-layer .mh-idhead .mh-idhead-avatar .fm-avgrid {
+  width: var(--idhead-avatar);
+  height: var(--idhead-avatar);
+  flex: none;
+}
+body.mobile-layer .mh-idhead > #agent-avatar-btn {
+  pointer-events: auto; /* 头本体不吃事件；头像仍是 profile 面入口 */
+}
+body.mobile-layer .mh-idhead .mh-idhead-avatar {
+  display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 0 72px; /* 左 16+48、右 16+48 双钮足印 + 8 呼吸：中段永不被钮压 */
   flex: none;
-  box-sizing: border-box;
+  pointer-events: auto;
+}
+/* 🟢 角色别（视觉完全一致的正面证据）：主对话页头左键 = 既有任务键
+   （[data-chrome=tasks]），会话页左键 = 页面壳返回钮（.mobile-back-btn）；
+   右上三点 = 主对话的搜索键 / 会话页的 .mh-sess-more。两族几何/材质/落位
+   同档（48px g2-fab @ top 16+safe、左右 16），差异只来自语义 —— 本块不造
+   任何按会话类型分叉的样式。 */
+/* 槽内三档头像的**内容缩放**（外径 56 由上一组规则钉死；这里只按 56 的比例
+   放大字母/设备字形 —— 与 .fm-avatar-40 的 15/17px、20px 字形同一等比口径
+   〔56/40 = 1.4〕，逐档读数见批文档断言表）。群组合头像（.fm-avgrid）的球径
+   走容器 cqw，随容器自动等比，无需本条。 */
+body.mobile-layer .mh-idhead .mh-idhead-avatar .fm-avatar { font-size: 20px; }
+body.mobile-layer .mh-idhead .mh-idhead-avatar .fm-avatar-device svg { width: 28px; height: 28px; }
+/* ③ 名字玻璃胶囊（**四种会话同一条规则**）：绝对定位挂在头像正下方居中，
+   不参与居中计算；padding 3/14、圆角 999、--glass-bg + blur/saturate 玻璃单源
+   （与 dock / 输入卡同配方，零新色值，双主题自随）。空名 ⇒ 整枚退出渲染
+   （无名态只剩居中头像，禁幽灵胶囊）。 */
+body.mobile-layer :is(.mh-idhead-name, .mh-idhead > #session-name) {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(220px, calc(100vw - 144px)); /* 左右各留 72 的双钮足印 */
+  margin: 0;
+  padding: 3px 14px;
+  border-radius: 999px;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
   backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
-  border-bottom: 1px solid var(--glass-border);
-}
-/* ② 头像 40px：单行内取 36-40 档的**上沿**（理由见批文档「取值理由」：
-   56 档在 56px 单行里上下各只剩 0px，撑不开；40 = 视宽 10.7%，与 14px 名字
-   的字身比 2.9 —— 仍读成「头像为主、名字为辅」，而 36 已贴近两倍字高的小号
-   图标观感）。垂直中心 = safe + 28 = 双钮中心（48px 钮 top 4 + 24）。
-   头像本体（圆/描边/高光/浮影/芯片底）沿用 chat.css 全局 #agent-avatar-btn 档
-   与既有 stand logo 58% 槽内缩放，本块只改外径。order 前置保证在名字左侧
-   （agentProfile.initAgentProfile 已把节点插在 .header-center 首位 ⇒ 迁入时仍是
-   首子节点，order 仅作结构性兜底）。 */
-body.mobile-layer #chat .g2-chat-head #agent-avatar-btn {
-  width: 40px;
-  height: 40px;
-  flex: none;
-  order: 0;
-}
-/* ③ 名字横排挂头像右侧（作者令「优先横排」；竖排=下置已在 ②/②-b 退役）。
-   🔴 定位取舍（与机械断言对齐）：作者验收 2 要求「头像水平中心与屏幕中线
-   偏差 0±1px」——若名字参与 flex 居中，整组（头像+8+名字）居中会把头像推离
-   中线（375 下 "Spider" 即偏 26px）。故：头像单独居中（唯一流内子节点 +
-   justify-center ⇒ 恒在屏幕中线），名字 position:absolute 从「中线 + 头像半宽
-   + 8」起排，不参与居中计算。视觉结果 = 头像为轴、名字挂右侧；名字缺失时
-   只余头像且仍居中（:empty 隐藏见 ②-c 块）。
-   max-width = 50vw − 28 − 72（右双钮足印）⇒ 375 下 87.5px：容纳 "Spider"
-   （42px）/ 中文 2-4 字，超长省略号收口（不侵入搜索钮）；放不下的情况已在
-   批文档「横排容量」节申报。 */
-body.mobile-layer #chat .g2-chat-head #session-name {
-  position: absolute;
-  left: calc(50% + 28px); /* 中线 + 头像半宽 20 + 间距 8 */
-  top: 50%;
-  transform: translateY(-50%);
-  max-width: calc(50vw - 100px);
-  margin: 0;
-  padding: 0;             /* 名字胶囊底退役：名字直接写在玻璃顶栏上，不再叠一层 */
-  border-radius: 0;
-  background: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   line-height: 1.2;
+  letter-spacing: -0.01em;
   color: var(--color-frame-text-bright, var(--color-frame-text));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-align: left;
+  text-align: center;
   user-select: none;
-  order: 1;
+  pointer-events: auto; /* 群窗：胶囊仍是群设置的第二入口（热区随名迁入头） */
 }
-/* ④ 顶栏下缘即内容起点：原「渐隐带 88 全高都压在前 88px 内容上」的形态与真
-   顶栏冲突（顶栏已自带 blur，渐隐带在顶栏之下只会把首条消息上沿糊掉）。故把
-   渐隐带的可视区收到顶栏下缘：0..顶栏下缘 全强度（被顶栏玻璃盖住，等价加深
-   玻璃底），顶栏下缘以下 0 —— 元素尺寸/材质/mask 结构不变（88px / blur18 /
-   sat1.5 / linear-gradient 均照旧），滚入内容由顶栏本体的 backdrop-filter
-   「先糊」，再被顶栏 55% 玻璃与下缘线「后没」。 */
-body.mobile-layer #g2-edge-fade {
-  -webkit-mask-image: linear-gradient(to bottom,
-    #000 0,
-    #000 calc(56px + env(safe-area-inset-top, 0px)),
-    transparent calc(56px + env(safe-area-inset-top, 0px)),
-    transparent 100%);
-  mask-image: linear-gradient(to bottom,
-    #000 0,
-    #000 calc(56px + env(safe-area-inset-top, 0px)),
-    transparent calc(56px + env(safe-area-inset-top, 0px)),
-    transparent 100%);
+body.mobile-layer :is(.mh-idhead-name, .mh-idhead > #session-name):empty {
+  display: none;
 }
-/* ⑤ 双钮上移到与头像同轴：钮中心 = safe + 28（顶栏高 56 ⇒ 中线 safe + 28）。
-   48px 钮 in 56px 行 = 上下各 4px 余量（iOS 导航栏零余量的最小可辨呼吸档）。
-   左右 16px 足印与顶栏 padding 的 72px 对齐（16+48+8）。
-   注：水平位置/尺寸/材质/角标链零改动 —— 只动垂直落点。 */
-body.mobile-layer .mh-chrome-btn {
-  top: calc(4px + env(safe-area-inset-top, 0px));
+/* ④ 会话页（好友/群/设备）：页面壳大标题与吸附胶囊退场 —— 页头只余左上返回 +
+   右上三点 + 悬浮身份头（主对话无页面壳标题，天然同形）。 */
+body.mobile-layer .mobile-page[data-page='conversation'] .mobile-page-title,
+body.mobile-layer .mobile-page[data-page='conversation'] .mobile-page-title-mini {
+  display: none;
 }
-/* ⑥ 顶带卡（待办提醒条/站内通知）让位到真顶栏之下：原 top:68px 是「无顶栏、
-   只有 16+48 双钮」时代的取值，刘海档（safe>12）会与 56+safe 顶栏交叠。 */
+/* 页体顶让位 = 身份头的可视足迹（8 头顶 + 56 头像 + 6 缝 + 24 名字胶囊 ≈ 94）
+   + 与主对话同值的底呼吸缝。主对话侧的同一读数由 main.js 顶让位块给出
+   （reserve = bandBottom(= 顶缘渐隐带 88 / #top-overlays 96 底缘) + 基线 8 =
+   **104**）⇒ 本节取 104，四种会话「身份头底缘 → 首条内容」的间距逐像素一致
+   （读数见批文档断言表）。 */
+body.mobile-layer .mobile-page[data-page='conversation'] .mobile-page-body {
+  padding-top: calc(104px + env(safe-area-inset-top, 0px));
+}
+/* ⑤ 右上三点键（48px g2-fab 圆钮；材质/按压 = .g2-fab 共享档）。落位与主对话
+   搜索键同一几何（top 16+safe / right 16）。包含块 = .mobile-page（.fm-modal
+   手机层为 position:static），故它挂在窗体子树里也不会随之滚动、不被页体
+   overflow 裁掉 —— 与 identity 头同一条定位纪律。 */
+body.mobile-layer .mh-sess-more {
+  position: absolute;
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  right: 16px;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  z-index: 27;
+}
+body.mobile-layer .mh-sess-more svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+/* ⑥ 会话窗体里的**旧窗头退场**（作者令「不许任一会话类型保留旧的『行内小头像 +
+   名字』形态」）：头像/名字节点已迁入 .mh-idhead（同一节点、非复制 ⇒
+   .fm-modal-name 文本断言面不变），窗头行只作零高占位（DOM 保留：0 高、透明、
+   不拦事件 —— 桌面形态与既有断言面逐字不动）。多选计数/信任槽在窗头行内随之
+   退场；设备描述键/群设置图标钮同批退役（入口已进右上三点菜单，禁三处入口）。 */
+body.mobile-layer .mobile-page[data-page='conversation'] .fm-modal-header {
+  height: 1px;
+  min-height: 0;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+  border: none;
+  pointer-events: none;
+}
+body.mobile-layer .mobile-page[data-page='conversation'] .fm-modal-header > * {
+  display: none;
+}
+/* ⑦ 双钮底档：主对话任务/搜索键的垂直落点回到「悬浮顶缘 16」（真顶栏已退役，
+   ⑤ 的 4+safe 覆盖随之作废 —— 本块不再声明，基础规则 :389 的 16+safe 生效）。 */
+/* ⑧ 顶带卡（待办提醒条/站内通知）落在身份头之下（96+safe = 身份头足迹底缘，
+   与 #chat 顶让位同值）—— 刘海档也不与头像/胶囊交叠。 */
 body.mobile-layer #top-overlays {
-  top: calc(64px + env(safe-area-inset-top, 0px));
+  top: calc(96px + env(safe-area-inset-top, 0px));
 }
 
 /* ── 件四：设置页身份卡（手机层适配）+ App 内个人资料面铺平 ──────────────────

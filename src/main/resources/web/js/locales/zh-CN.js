@@ -1433,6 +1433,10 @@ export default {
   'session.delete': '删除此会话',
   'session.dropDelete': '拖放以删除',
   'session.dropDeleteCount': '拖放以删除 {count} 个会话',
+  // 会话页头同构批（件二+件三，2026-11-02）：右上三点键的无障碍名（仅图标钮）
+  // + 设备会话三点菜单的「设备描述」项（设备无 Profile 面 ⇒ 入口 = 既有描述编辑面板）。
+  'session.more': '更多',
+  'session.deviceDesc': '设备描述',
   'folder.newPlaceholder': '新文件夹名称…',
 
   // === Delete modals ===

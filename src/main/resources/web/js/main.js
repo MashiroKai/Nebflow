@@ -4320,26 +4320,13 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
   // ⇒ getBoundingClientRect 全零，本行桌面恒无副作用）。静止态内容首（页标题/
   // 首条消息）让位到渐隐带之下，滚动态内容穿入渐隐带「先糊后没」。
   const edgeFade = document.getElementById('g2-edge-fade');
-  // 会话顶栏单行三段式批（2026-11-02 07:23 作者令）：手机层新增真顶栏
-  // .g2-chat-head（position:fixed，高 56 + safe，见 mobileLayer.css 文件尾
-  // 批次块）—— 手机层让位改由**顶栏下缘**实测承担（见下方 mobileLayer 分支）：
-  // 原公式把渐隐带 88 计入顶带 ⇒ 静止态首条消息之上留 96px 空白带（作者本批
-  // 要「直接收掉」的那块）。桌面无此节点（null），公式逐字不变。
-  // 注意：本 IIFE 在脚本加载时执行，而顶栏节点由 mobile/chatChrome.js 在手机层
-  // 激活时才创建 ⇒ 必须在 syncTopReserve 内**惰性**取节点（首次取到即挂进 RO；
-  // 层翻转/拆除后再取不到则自动回落旧公式）。
-  let mobileHead = null;
-  /** @type {ResizeObserver|null} 惰性挂载的观察器（下方 syncTopReserve 前赋值） */
-  let headRo = null;
-  const getMobileHead = () => {
-    if (!mobileHead || !mobileHead.isConnected) {
-      mobileHead = document.querySelector('#chat > .g2-chat-head');
-      // 节点后建（chatChrome.js 在手机层激活时创建）—— 取到即挂进观察器，
-      // 层拆除后 isConnected=false ⇒ 下次再取、不重复 observe 同一个已摘节点。
-      if (mobileHead && headRo) headRo.observe(mobileHead);
-    }
-    return mobileHead;
-  };
+  // 会话页头同构批（件二+件三，作者令 2026-11-02 15:xx）：手机层会话身份头回到
+  // **悬浮**形态（.mh-idhead，绝对定位、零全宽带，见 mobileLayer.css 文件尾批次块）
+  // —— 单行三段式批（2026-11-02 07:23）的 fixed 真顶栏及其「按顶栏下缘实测让位」
+  // 链（mobileHead / getMobileHead / headRo / 建拆层广播监听）**整条退役**：
+  // 悬浮头不再是 #chat 的流内首件，也没有可测的「顶栏下缘」——让位回到本文件的
+  // 单一真值 bandBottom()（手机层 = 顶缘渐隐带 88 底缘 ⇒ reserve 96，与四种会话
+  // 身份头的可视足迹 96 同值；会话页面壳侧由 CSS 直接给同一 96）。
   // chat.css's #chat padding-top (the no-overlay breathing room baseline).
   const BASE_TOP_PAD = 8;
   const bandBottom = () => Math.max(
@@ -4379,17 +4366,13 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
     if ((parseFloat(chat.style.getPropertyValue('--chat-top-clip')) || 0) !== clipTop) {
       chat.style.setProperty('--chat-top-clip', clipTop + 'px');
     }
-    /* 会话顶栏单行三段式批（2026-11-02 07:23 作者令⑤「顶栏不占额外空白带」）：
-       手机层让位 = **顶栏下缘 − chat 顶 + 基线 8**，不再吃 bandBottom()（渐隐带
-       88 的旧让位带）。顶栏 fixed 但 getBoundingClientRect 可读；顶栏尚未建层
-       （首帧/桌面）时回落旧公式，零行为差。
-       为什么仍然让位：顶栏是真·不透明玻璃条（56+safe），首条消息必须从它下面
-       起 —— 8px 是「顶栏下缘 → 首条消息」的唯一留白（作者验收要求的数值）。 */
-    const head = mobileLayer ? getMobileHead() : null;
-    const headBottom = head ? head.getBoundingClientRect().bottom : 0;
-    const reserve = mobileLayer && headBottom > 0
-      ? Math.max(BASE_TOP_PAD, Math.ceil(headBottom - chatTop) + BASE_TOP_PAD)
-      : Math.max(BASE_TOP_PAD, Math.ceil(bandBottom() - chatTop) + BASE_TOP_PAD);
+    /* 会话页头同构批（件二+件三，2026-11-02）：让位 = **单一真值 bandBottom()**
+       （手机层 = 顶缘渐隐带 88 底缘 ⇒ 96；桌面 = header/overlays 实测）——
+       单行三段式批的「顶栏下缘 − chat 顶 + 8」分支随该批的 fixed 顶栏一并退役
+       （悬浮身份头 .mh-idhead 不在流内、也不占版面，故没有可让位的「顶栏下缘」；
+       会话页的同类让位由 CSS `.mobile-page[data-page=conversation] .mobile-page-body`
+       给同一 96，四种会话内容起点同值）。 */
+    const reserve = Math.max(BASE_TOP_PAD, Math.ceil(bandBottom() - chatTop) + BASE_TOP_PAD);
     const prev = parseFloat(getComputedStyle(chat).paddingTop) || BASE_TOP_PAD;
     if (Math.abs(prev - reserve) < 0.5) return;
     const delta = reserve - prev;
@@ -4418,15 +4401,6 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
   // 显隐（display 切换 = 尺寸 88↔0 变化）——把它也挂进观察器，层翻转/带显隐
   // 后 reserve/clip 必有一拍重测，不依赖「resize 恰好也来」的时序。
   if (edgeFade) ro.observe(edgeFade);
-  // 会话顶栏单行三段式批：让位算式用的 headRo 指向下面建的同一个 ro（惰性
-  // 挂载见 getMobileHead 注记）——赋值必须早于下方首个 syncTopReserve() 调用。
-  headRo = ro;
-  // 顶栏节点由 chatChrome.js 在手机层激活时后建（本 IIFE 早已执行）——建层完成
-  // 即由该模块广播 'nebflow-chat-head-mounted'，这里补一拍重算（拆除同链广播
-  // unmounted，让位回落旧公式）；与 resize/RO 兜底互补，不依赖时序巧合。
-  const onHeadMounted = () => { mobileHead = null; syncTopReserve(); };
-  window.addEventListener('nebflow-chat-head-mounted', onHeadMounted);
-  window.addEventListener('nebflow-chat-head-unmounted', onHeadMounted);
   // 顶部消失点批（2026-10-22，原 UI 批⑦ resize 兜底）：桌面⇄手机层翻转
   // （matchMedia 768px，mobile/bootstrap.js）走窗口 resize 兜底重算——層翻转时
   // header 尺寸恰好不变也不漏（幂等轻写）。

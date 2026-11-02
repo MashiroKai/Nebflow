@@ -1480,6 +1480,10 @@ export default {
   'session.delete': 'Delete this session',
   'session.dropDelete': 'Drop to delete',
   'session.dropDeleteCount': 'Drop to delete {count} sessions',
+  // Conversation head unification batch (件二+件三, 2026-11-02): accessible name of
+  // the top-right "more" button (icon-only).
+  'session.more': 'More',
+  'session.deviceDesc': 'Device description',
   'folder.newPlaceholder': 'New folder name…',
 
   // === Delete modals ===

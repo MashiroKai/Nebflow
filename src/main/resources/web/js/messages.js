@@ -28,6 +28,11 @@ import {
 import { makeReference, renderRefBlock } from './reference.js';
 import { appendRefToActiveView } from './input.js';
 import { showPopupMenu, isPopupMenuOpen } from './contextMenu.js';
+// 会话页头同构批（件二+件三，作者令 2026-11-02）：好友/群/设备会话页的**悬浮身份头**
+// 组件与**滚动渐隐驱动器**的唯一属主 = `mobile/sessionHead.js`（与主对话
+// `chatChrome.js` 消费同一实现、同一 CSS 块 —— 差异只来自数据）。桌面零感知：
+// 本模块只在手机层分支调用它，桌面窗头行逐字不变。
+import { createSessionIdentityHead, bindIdHeadFade } from './mobile/sessionHead.js';
 // ⑥ 信任好友封存（作者裁定 2026-09-12）：静态常量，非配置读取、不过 latch。
 import { TRUST_SEALED } from './featureFlags.js';
 // 认知二期产品批②角标可行动判据（设计稿 §5 P6）：messages 徽标只报「需要
@@ -732,7 +737,12 @@ function rerenderConvRow(conversationId) {
 }
 
 // ── Chat modal (§2.3/§3.3) ───────────────────────────────
-function closeChat() {
+/** 关窗（**唯一实现**；ESC / 覆层 / × / 发完 / 手机层左上返回全经此）。
+ *  会话页头同构批（件二+件三，2026-11-02）把本函数升为 `export`：手机层页面壳
+ *  的左上「<」= 唯一出页入口（窗头 × 与窗头行在手机层已退场），
+ *  `navController.closePageFace('conversation')` 以动态 import 调本函数（禁第二套
+ *  关窗实现；桌面零变化 —— 桌面 caller 仍走内部引用）。 */
+export function closeChat() {
   // Every close path (ESC, backdrop, ×, post-send) funnels through here —
   // detach the document listener centrally so open/close cycles stay
   // symmetric (D4, mem-diag 20260907). removeEventListener is idempotent.
@@ -745,6 +755,9 @@ function closeChat() {
   // 必须同拍收敛（引擎是全局单例，不关会往已销毁的输入框里继续写字）。
   // fmStopVoice 幂等（未录音 = no-op），且须在 modalEls 清零**之前**调用。
   if (modalEls && modalEls.stopVoice) modalEls.stopVoice();
+  // 会话页头同构批：身份头滚动渐隐监听随窗同拍注销（跨窗残留 = 上个会话的
+  // 滚动回调写进已摘节点的样式；解绑幂等）。
+  if (modalEls && modalEls.unbindFade) { try { modalEls.unbindFade(); } catch { /* 解绑失败不阻断关窗 */ } }
   if (modalEls) {
     modalEls.overlay.remove();
     modalEls = null;
@@ -770,6 +783,17 @@ function closeChat() {
 function currentConv() {
   if (modalEls && modalEls.conv) return modalEls.conv;
   return conversations.find(c => c.conversationId === openConvId) || null;
+}
+
+/** 会话窗件的**查询根**（唯一入口）：桌面 = `overlay`（窗体在 overlay 子树内）；
+ *  手机层 = 窗体本体 —— navController.watchChatModal 把 `.fm-modal` re-parent 进
+ *  「会话」详情页体，overlay 只剩空壳，`overlay.querySelector(...)` 会**全部落空**
+ *  （旧代码即如此：开着的群窗改名/成员变化、设备在线态都不再就地重绘）。
+ *  会话页头同构批（件二+件三）把「名字」搬进悬浮身份头后这一落空**肉眼可见**，
+ *  故统一收口到本函数：只换查询根，零行为语义变化。 */
+function modalRoot() {
+  if (!modalEls) return null;
+  return modalEls.modal || modalEls.overlay;
 }
 
 /** 群组合头像落槽（**唯一**落槽实现；落点 = **窗头** `.fm-modal-avatar` 一处
@@ -812,7 +836,7 @@ function paintGroupAvatarInto(host, conv, cells) {
  *  （展开面板不再重复「头像 + 群名 + 成员数」）⇒ 本函数只重打窗头那**一处**。 */
 function refreshOpenGroupHeaderAvatar() {
   if (!modalEls) return;
-  const slot = modalEls.overlay.querySelector('.fm-modal-avatar');
+  const slot = modalRoot()?.querySelector('.fm-modal-avatar');
   if (!slot) return;
   const conv = currentConv();
   if (!conv || conv.kind !== 'group') return;
@@ -1224,16 +1248,21 @@ function renderChatModal(conv) {
   // H（决策卡 C/D/G/H）：入口**在会话窗头群名处** —— 窗头群名/标题区整块可点
   // （微信原样），原 `.fm-gs-open` 图标钮**保留**为同族第二入口（既有断言面
   // `.fm-gs-open` 不破；两入口共用同一个 mountDrawer，禁第二套抽屉实现）。
+  // 会话页头同构批（件二+件三）：`mountDrawer` / `groupSettingsMounted` 升到
+  // 群分支**外**——手机层右上三点菜单的「群设置」项与窗头 `.fm-gs-open`、
+  // 群名热区**共用同一个 mountDrawer**（禁第二套抽屉实现、禁第二份开合态）。
   let groupSettingsMounted = false;
+  /** @type {null | (() => void)} 群设置抽屉的唯一开合腿（群窗才赋值）。 */
+  let mountDrawer = null;
   if (conv.kind === 'group') {
     const settingsBtn = el('button', 'fm-gs-open');
     settingsBtn.type = 'button';
     settingsBtn.innerHTML = '<i data-lucide="users"></i>';
     settingsBtn.title = t('messages.groupSettings');
     settingsBtn.setAttribute('aria-label', t('messages.groupSettings'));
-    const mountDrawer = () => {
+    mountDrawer = () => {
       if (!modalEls) return;
-      modalEls.overlay.querySelector('.fm-group-settings')?.remove();
+      modalRoot()?.querySelector('.fm-group-settings')?.remove();
       const drawer = buildGroupSettings(conv, {
         toast: (s) => modalToast(s),
         close: () => closeChat(),
@@ -1252,7 +1281,7 @@ function renderChatModal(conv) {
     const refreshGroupHeaderAvatar = () => refreshOpenGroupHeaderAvatar();
     settingsBtn.addEventListener('click', () => {
       if (groupSettingsMounted) {
-        modalEls?.overlay.querySelector('.fm-group-settings')?.remove();
+        modalRoot()?.querySelector('.fm-group-settings')?.remove();
         groupSettingsMounted = false;
         return;
       }
@@ -1267,7 +1296,7 @@ function renderChatModal(conv) {
     // 🔴 可达性零回归：`role=button` / `tabindex=0` / Enter|Space 键盘契约**随迁**
     // （逐条断言见报告 §P3）；Tab 序不变（`.fm-modal-name` 仍在 `.fm-gs-open` 之前）。
     // 🔴 与 `.fm-gs-open`（同族第二入口）仍共用同一个 `mountDrawer`，禁第二套抽屉实现。
-    const toggleFromTitle = () => { if (groupSettingsMounted) { modalEls?.overlay.querySelector('.fm-group-settings')?.remove(); groupSettingsMounted = false; } else { mountDrawer(); } };
+    const toggleFromTitle = () => { if (groupSettingsMounted) { modalRoot()?.querySelector('.fm-group-settings')?.remove(); groupSettingsMounted = false; } else { mountDrawer(); } };
     nameEl.classList.add('fm-modal-title-btn');
     nameEl.setAttribute('role', 'button');
     nameEl.setAttribute('tabindex', '0');
@@ -1297,6 +1326,71 @@ function renderChatModal(conv) {
   header.appendChild(closeBtn);
   modal.appendChild(header);
 
+  // ── 会话页头同构批（件二+件三，作者令 2026-11-02）─────────────────────────────
+  // 手机层三会话（好友 / 群 / 设备）页头 = **只有左右两颗钮** + **中悬浮身份头**：
+  //   · 左上返回 = 页面壳既有 `.mobile-back-btn`（navController 建，本模块不造第二颗）；
+  //   · 右上三点 = `sessionHead.createSessionIdentityHead` 返回的 `.mh-sess-more`；
+  //   · 中间身份头 = `.mh-idhead.mh-sess-head`（圆头像 + 名字玻璃胶囊在下居中），
+  //     与主对话 `chatChrome.js` 的 `.g2-chat-head.mh-idhead.mh-agent-head` **共用
+  //     同一 CSS 块与同一渐隐驱动器**（mobileLayer.css 文件尾 / sessionHead.js）。
+  // 🔴 节点迁移非复制：头像槽 `.fm-modal-avatar` 与名字 `.fm-modal-name` **整节点**
+  // 迁入身份头（既有断言面 `.fm-modal-name` 文本、群名热区、`refreshOpenGroupHeaderAvatar`
+  // 的 `.fm-modal-avatar` 查询全部照旧命中），禁第二份文本/第二枚头像。
+  // 桌面零改动：本块只在 `body.mobile-layer` 下执行；桌面窗头行逐字不变。
+  const isMobileLayer = document.body.classList.contains('mobile-layer');
+  /** @type {HTMLElement|null} 悬浮身份头（手机层才有）。 */
+  let idHead = null;
+  /** @type {(() => void)|null} 滚动渐隐解绑（关窗同拍注销）。 */
+  let unbindFade = null;
+  if (isMobileLayer) {
+    // 头像槽缺失（理论不可达：三面都建槽）⇒ 用空槽兜底，保持结构同形。
+    const avatarHost = headAvatarSlot || el('span', 'fm-modal-avatar');
+    const idParts = createSessionIdentityHead({
+      avatar: avatarHost,
+      nameEl, // 复用同一节点（群名热区/断言面都挂在它身上）
+      moreTitle: t('session.more'),
+      onMore: (e) => {
+        const r = /** @type {HTMLElement} */ (e.currentTarget).getBoundingClientRect();
+        const items = [];
+        // ① 查看资料（好友/群）：面本体 = 件一 `profileFace.js` 的**导出函数**
+        //   （不另写 Profile 面；动态 import 与群设置抽屉同一纪律 ——
+        //    `profileFace` 静态引 `messages.js`（personLabel）⇒ 静态边成环）。
+        if (conv.kind === 'group') {
+          items.push({
+            label: t('profile.open'),
+            onClick: () => { void import('./profileFace.js').then((m) => m.openGroupProfile(conv)).catch(() => {}); },
+          });
+          // ② 群设置（与窗头 `.fm-gs-open` / 群名热区**共用同一个 mountDrawer**）。
+          items.push({
+            label: t('messages.groupSettings'),
+            onClick: () => { if (groupSettingsMounted) { modalRoot()?.querySelector('.fm-group-settings')?.remove(); groupSettingsMounted = false; } else mountDrawer?.(); },
+          });
+        } else if (conv.friend) {
+          items.push({
+            label: t('profile.open'),
+            onClick: () => { void import('./profileFace.js').then((m) => m.openFriendProfile(conv.friend)).catch(() => {}); },
+          });
+        } else if (conv.kind === 'device') {
+          // 设备无 Profile 面（有据偏离申报）：入口 = 既有设备描述编辑面板
+          // （`openDeviceDescPanel` 单点，开合态仍归窗头那枚 `.fm-device-desc-btn`）。
+          items.push({
+            label: t('session.deviceDesc'),
+            onClick: () => {
+              const btn = title.querySelector('.fm-device-desc-btn');
+              if (deviceDescRow && btn) openDeviceDescPanel(conv, deviceDescRow, btn);
+            },
+          });
+        }
+        showPopupMenu(r.left, r.bottom, items);
+      },
+    });
+    idHead = idParts.head;
+    // 头插在窗头行之后（绝对定位 ⇒ 不进 flex 流、不推动内容；DOM 序仍 header→head）。
+    modal.insertBefore(idHead, header.nextSibling);
+    modal.appendChild(idParts.moreBtn);
+    createIconsIn(idParts.moreBtn);
+  }
+
   const toast = el('div', 'fm-modal-toast');
   toast.hidden = true;
   modal.appendChild(toast);
@@ -1317,6 +1411,22 @@ function renderChatModal(conv) {
 
   const flow = el('div', 'fm-flow');
   modal.appendChild(flow);
+
+  // 会话页头同构批：滚动渐隐接线（**唯一驱动器** = sessionHead.bindIdHeadFade）。
+  // 滚动源两处都可能持轴：`.fm-flow`（消息流内滚，常态）与页面体（`.mobile-page-body`，
+  // 收编面/输入卡挤压时外滚）—— 驱动器取最大 scrollTop 作进度，单一口径。
+  // 🔴 绑定时机：本函数执行时窗体还在 `#fm-chat-overlay` 里（浮层载体），
+  // navController.watchChatModal 的 MutationObserver 在**随后的微任务**里把
+  // `.fm-modal` re-parent 进 `.mobile-page-body` ⇒ 页面体滚轴此刻还不存在。
+  // 故首绑只挂 `.fm-flow`，收编落定后的下一帧（rAF）再解旧重绑（挂上页面体）。
+  if (idHead) {
+    const bindHeadFade = () => {
+      if (unbindFade) { try { unbindFade(); } catch { /* 解绑失败不阻断重绑 */ } }
+      unbindFade = bindIdHeadFade(idHead, flow, modal.closest('.mobile-page-body'));
+    };
+    bindHeadFade();
+    requestAnimationFrame(bindHeadFade);
+  }
 
   // ── 贴底跟随 + 「↓ N 条新消息」回底胶囊（follow 批 2026-10-08，主人反馈）────────
   // 目标（与主窗 agent 面同语义，A-branch 2026-09-11 / B4 2026-10-04 的本面对应）：
@@ -1413,7 +1523,10 @@ function renderChatModal(conv) {
 
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
-  modalEls = { overlay, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge, stopVoice: composer.stopVoice };
+  modalEls = { overlay, modal, flow, input, sendBtn, toast, offline, conv, quoteStrip, selectBar, selectCount, selectForward, selectForwardEach, selectForwardMerge, stopVoice: composer.stopVoice, idHead };
+  // 🔴 渐隐解绑器恒读本作用域的**当前**一份（首绑 + rAF 重绑会换解绑函数）：
+  // 用一层代理挂到 `modalEls`（`closeChat()` 只认 `modalEls.unbindFade`）。
+  modalEls.unbindFade = () => { if (unbindFade) unbindFade(); };
   // Fresh modal → reset history-window state (a stale older conversation's
   // tail must never leak into this one).
   chatMsgs = [];
@@ -1604,16 +1717,16 @@ function openDeviceDescPanel(conv, row, btn) {
 
 function updateModalTitle(conv) {
   if (!modalEls) return;
-  const nameEl = modalEls.overlay.querySelector('.fm-modal-name');
+  const nameEl = modalRoot()?.querySelector('.fm-modal-name');
   if (nameEl) nameEl.textContent = convTitleLabel(conv);
-  const dlg = modalEls.overlay.querySelector('.fm-modal');
+  const dlg = modalRoot()?.querySelector('.fm-modal');
   if (dlg) dlg.setAttribute('aria-label', convTitleLabel(conv));
 }
 
 // 信任状态指示：trusted → sapphire chip（shield-check + 「已信任」），未信任
 // → 空槽。fm-trust-changed（contacts 右键菜单开关）到达时对开着的窗重打。
 function updateTrustBadge(conv) {
-  const slot = modalEls && modalEls.overlay.querySelector('.fm-trust-slot');
+  const slot = modalEls && modalRoot()?.querySelector('.fm-trust-slot');
   if (!slot) return;
   slot.innerHTML = '';
   if (!conv || !conv.friend || !isFriendTrusted(conv.friend.userId)) return;
@@ -1641,7 +1754,7 @@ function escClose(e) {
 // §3.3/R8: not-friend gate — system bar + disabled input (history read-only)
 function applyBlockState(conv) {
   if (!modalEls) return;
-  modalEls.overlay.querySelector('.fm-blocked-bar')?.remove();
+  modalRoot()?.querySelector('.fm-blocked-bar')?.remove();
   // 群分支（O⑨ 裁定「拉黑只断单聊、同群照常」）：群窗不走好友闸 —— 拉黑/删
   // 好友不产生群内只读栏，也不禁用群发送输入框（群发送权在服务端成员闸）。
   const blocked = conv.kind !== 'group' && conv.kind !== 'device' && !isStillFriend(conv);
@@ -6648,9 +6761,9 @@ function refreshOpenDevicePresence() {
   const conv = modalEls.conv;
   const fresh = devicePeers().find(d => d.deviceId === conv.device.deviceId);
   if (fresh) conv.device = fresh;
-  const sub = modalEls.overlay.querySelector('.fm-modal-id');
+  const sub = modalRoot()?.querySelector('.fm-modal-id');
   if (sub) sub.textContent = deviceSubLabel(conv.device);
-  const slot = modalEls.overlay.querySelector('.fm-modal-presence');
+  const slot = modalRoot()?.querySelector('.fm-modal-presence');
   if (slot) {
     const badge = presenceBadgeHTML({ ...(conv.device || {}), isLocal: false });
     slot.innerHTML = badge;

@@ -386,9 +386,13 @@ test.describe('手机层：群描述进检索（④-b）', () => {
     });
     // 🔴 手机层：会话窗体被 navController **re-parent 进「会话」详情页**
     // （`.fm-modal` 已不在 `#fm-chat-overlay` 内）⇒ 窗体件一律按页面体定位。
+    // 会话页头同构批（件二+件三，2026-11-02）：手机层会话页头 = 左返回 + 右三点 +
+    // 悬浮身份头；窗头行（含旧 `.fm-gs-open` 图标钮）在手机层整体退场 ⇒ 群设置
+    // 入口改走**右上三点菜单**（与窗头同名入口共用同一个 mountDrawer，禁第二套）。
     const convPage = '#mobile-pages .mobile-page[data-page="conversation"]';
     await page.waitForSelector(`${convPage} .fm-modal-header`, { timeout: 10000 });
-    await page.locator(`${convPage} .fm-gs-open`).click();
+    await page.locator(`${convPage} .mh-sess-more`).click();
+    await page.locator('.fm-context-menu button').filter({ hasText: '群设置' }).first().click();
     await page.waitForSelector(`${convPage} .fm-group-settings`, { timeout: 5000 });
     await page.locator(`${convPage} .fm-group-settings .fm-gs-profile`).click();
     await page.waitForSelector('#profile-face-overlay:not([hidden]) .pf-modal', { timeout: 5000 });
