@@ -1732,8 +1732,12 @@ body.mobile-layer .mf-cv-count {
   pointer-events: none;
 }
 /* ── 底部小点指示器（作者令 2026-11-02 07:22 §三）───────────────────────
-   位置 = 内容区底部居中（.mf-canvas-page 流内末行，dock 之上；不压 dock、
-   不压内容——高于 host 底缘 8px 的独立条带，高 26px）。
+   位置 = 内容区底部居中（dock 之上；不压 dock、不压内容）。
+   ⚠ 2026-11-02 19:18 作者实拍报障后，**「流内末行」语义已退役**：本行现为
+   **浮层**（与底部圆钮行共中线的下半档，见文件尾「canvas 底部控件浮层带批」
+   块）—— 它原是 42px 的流内占位，把整个文档区抬高，与 body 级 fixed 的 ask
+   气泡钮错行 42px（作者实拍读数）。以下几何（高 26 / 材质 / 点档 / 长按放大）
+   原样保留，只换定位腿。
    数量 = 1 签不显示 / 2 起显示 / 最多 3 点（JS DOTS_MAX）；n > 3 时点不滑动，
    序号归一映射到三档，当前档由「高亮点」表达。
    样式 = 参考图 2：灰底半透明胶囊 + 白点，当前点更亮更大（8px vs 5.5px）。
@@ -1746,8 +1750,13 @@ body.mobile-layer .mf-dots {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 26px;
-  margin: 6px 0 10px;
+  /* 高度单源 = .mf-canvas-page 上的 --mf-dots-h（文件尾「canvas 底部控件浮层带
+     批」块）：底部可滚余量要按它算，两处不得各写一把尺。 */
+  height: var(--mf-dots-h, 26px);
+  /* 浮层化（2026-11-02 19:18 批）：脱离 .mf-canvas-page 的纵向 flex 流 ——
+     原位（flex 末件 + margin 6/10 = 42px）把文档宿主整体抬高，正是「底部钮
+     错行 42px」的根因。定位腿见文件尾块（position/bottom/居中）。 */
+  margin: 0;
   padding: 0 12px;
   border-radius: 999px;
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.28));
@@ -4028,3 +4037,102 @@ body.mobile-layer #usage-grid .ud-cell[data-date]::after {
    ④ 双钮 —— 由 #mobile-fab-layer 块 `top: calc(16px + env(safe-area-inset-top))`
       承担（上一批的文件尾覆盖已删）。
    ⑤ #top-overlays —— 同上，chat.css 基准 68px 直通（覆盖已删）。 */
+
+/* ═══════════════════════════════════════════════════════════════════════
+   canvas 底部控件浮层带批（作者实拍报障 2026-11-02 19:18）════════════════
+   作者原话（手机端 canvas 阅读面，390×844 实拍）：①「底部这个源码按钮和放大
+   镜按钮，明显比右边的对话气泡按钮高」；②「这些按钮压在文字上面，但文字又
+   好像给它们让了位置」；③「第一屏第一行正文被上面的按钮挡住了」。
+   ── 根因（断言 A1/A3/A6 改前红基线实测，非推测）──────────────────────
+   `.mf-canvas-page` 是纵向 flex 列，成员顺序 = 环标签带（72）→ 文档宿主
+   （flex:1）→ **小点指示器 .mf-dots**（26 高 + margin 6/10 = **42px 流内**）
+   → 空态。小点是**流内末件** ⇒ 文档宿主底缘被顶到 740（页面底缘 782 之上
+   42px）⇒ pane 内 `bottom:16` 的两颗圆钮跟着上移到 cy=700；而 ask 气泡钮是
+   **body 级 fixed**（ask.css 手机档：dock 上缘 + 16），落在 cy=742 不动 ⇒
+   42px 错行 = 作者实拍①。同一根因还带来另两条实拍读数：正文容器宽 390 与
+   视口同宽（这说明窗格没缩 —— 缩的是**高度**，作者读作「让了位置」= ②）与
+   滚到底末块 bottom 719.86 > 控件 top 718（末行永远滚不出浮层 = 「压在文字
+   上面」= ③ 的底部腿）。
+   ── 修法（一处根因 + 一条余量，全部 body.mobile-layer 限定）──────────
+   ① **小点离流**：`.mf-dots` 由「流内末件」改**浮层**（position:absolute，
+      同带中线：底部控件行 top = 页面底 16 + 48，点条垂直中心与 48 圆钮中心
+      **逐值同线**）。文档宿主随即吃满到页面底缘 ⇒ pane 底 = 页面底 = dock
+      上缘 ⇒ `bottom:16` 的圆钮 cy = 782−16−24 = **742** = ask 气泡钮 cy
+      （ask.css 同一表达式）⇒ 三钮中心极差 **0px**（改前 42px）。**零新尺寸、
+      零新槽位**：圆钮槽值（left 16/72/128、bottom 16、48 直径）与 ask 座位
+      表达式一律原样继承，本批只删掉那段流内占位。
+      小点高度收 `--mf-dots-h` 单源（下方余量公式要按它算，禁两把尺）。
+      居中不用 transform（`.is-grip` 的长按缩放要独占 transform 属性）：
+      left/right 0 + width:max-content + margin-inline:auto。
+   ② **底部可滚余量**：`padding-bottom` = 控件行高（16 底缝 + 48 钮）+ 12
+      呼吸 = **76px**，加在三种自持滚动容器上（md / 纯文本 / epub —— 三者
+      同为 `inset:0` 的自滚动面，同一把尺，禁各写一值）。语义 = 末行能滚到
+      控件行**之上**，而不是在浮层底下停住（作者诉求「要能完整看到」）。
+   ③ **顶部腿零代码**：既有 `.canvas-viewer-safe-top` 手机档静态顶垫
+      （--capsule-h 36 + 16 = 52px，split.css 文件尾单源）已满足「首屏首行
+      不被遮挡」，滚动后正文自然从顶组下穿过（A4/A5 改前即绿，读数见
+      evidence 目录）—— 本批不重复造第二套让位机制。
+   ── 桌面零触碰 ─────────────────────────────────────────────────────────
+   本块每条规则都挂 `body.mobile-layer`：桌面小点指示器不存在（DOM 只在手机
+   页里建）、桌面 `.canvas-md-scroll` 余量仍走 split.css 原值。 */
+body.mobile-layer .mf-canvas-page {
+  /* 小点条高单源（点条本体 height / 余量公式 / 中线配平三处共用）。 */
+  --mf-dots-h: 26px;
+  /* 底部控件行几何单源 = 页面底缘起算：16 底缝 + 一枚 48 圆钮。 */
+  --mf-ctrl-row: calc(16px + var(--mtap-lg, 48px));
+}
+body.mobile-layer .mf-dots {
+  position: absolute;
+  left: 0;
+  right: 0;
+  width: max-content;
+  margin-inline: auto;
+  /* 垂直中心 = 48 圆钮中心（bottom 16 + 48 的行内居中）：26 高与 48 差 22，
+     各让 11 ⇒ 点条底距 = 16 + 11 = 27。 */
+  bottom: calc(16px + (var(--mtap-lg, 48px) - var(--mf-dots-h, 26px)) / 2);
+  z-index: 20;   /* 浮在文档区之上（同 DOM 序也在后，双保险） */
+}
+/* 居中腿刻意不走 transform（已知陷阱）：`.mf-dots.is-grip` 的长按放大要独占
+   transform 属性（上方既有档 scale(1.24) 原样保留），故本批用
+   left/right:0 + width:max-content + margin-inline:auto 实现居中，
+   transform 面上两个意图（居中 / 放大）永不相撞。 */
+/* 底部可滚余量（md / 纯文本 / epub 三面同尺）：末行滚到控件行之上。
+   值 = 16（控件行底缝）+ 48（钮径）+ 12（呼吸）= 76。 */
+body.mobile-layer .canvas-md-scroll,
+body.mobile-layer .canvas-txt-scroll,
+body.mobile-layer .epub-reader-viewport {
+  padding-bottom: calc(var(--mf-ctrl-row, 64px) + 12px);
+  scroll-padding-bottom: calc(var(--mf-ctrl-row, 64px) + 12px);
+}
+
+/* ── ④ 手机端阅读面字档（本批硬约束：正文 ≥17px / 辅助字 ≥13px）──────────
+   读数事实（隔离实例实测，改前）：手机 canvas md 面 `.canvas-md-viewer`
+   **正文 14px / 行高 1.55**，h1 16 / h2 15 / h3 14 —— 正文与 h3 同档、比
+   手机层既有的 --mfs-body（17）小一整档。这是 split.css 桌面档直通的结果
+   （桌面 14 是信息密度选择，手机层从未接管过这一面）。
+   本块按 token 单源接管：正文 = --mfs-body（17，Apple 正文档档），标题按
+   「必须严格大于正文」重排（h1 22 / h2 19 / h3 17 = 正文档，标题靠字重
+   600 区分层级），代码/表格 = --mfs-min（13，全站最小可读档）—— 否则
+   14px 正文配 16px h1 的旧梯度在 17 正文下会倒挂（h3 14 < 正文 17）。
+   行高 1.55 → **1.7**：17px 档的舒适行距（中文正文 1.6–1.8）。
+   桌面零触碰：全部挂 body.mobile-layer；桌面阅读面仍 14px（信息密度选择）。 */
+body.mobile-layer .canvas-md-viewer {
+  font-size: var(--mfs-body, 17px);
+  line-height: 1.7;
+}
+body.mobile-layer .canvas-md-viewer h1 { font-size: 22px; line-height: 1.35; }
+body.mobile-layer .canvas-md-viewer h2 { font-size: 19px; line-height: 1.4; }
+body.mobile-layer .canvas-md-viewer h3,
+body.mobile-layer .canvas-md-viewer h4,
+body.mobile-layer .canvas-md-viewer h5,
+body.mobile-layer .canvas-md-viewer h6 { font-size: var(--mfs-body, 17px); line-height: 1.4; }
+/* 代码 / 表格 = 辅助字档 13（全站最小可读档；旧值 12 低于硬标准）。 */
+body.mobile-layer .canvas-md-viewer pre,
+body.mobile-layer .canvas-md-viewer pre code,
+body.mobile-layer .canvas-md-viewer code,
+body.mobile-layer .canvas-md-viewer table { font-size: var(--mfs-min, 13px); }
+/* 纯文本阅读面（textReader）同档：它自带 16px（≤560px 档降到 15）—— 一并
+   收到「正文 = --mfs-body」单源，避免同一阅读行为两把尺。 */
+body.mobile-layer .canvas-txt-scroll { font-size: var(--mfs-body, 17px); line-height: 1.75; }
+/* epub 正文（阅读器排版档）同理：现有 16px → 17。 */
+body.mobile-layer .epub-reader-content { font-size: var(--mfs-body, 17px); }
