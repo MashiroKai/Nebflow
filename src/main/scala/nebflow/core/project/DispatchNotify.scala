@@ -158,7 +158,20 @@ final class DispatchNotify(
    * **定档推导**用（[[DispatchNotify.completionTier]]），不改变回合边界本身；
    * spec 注入小值使「档位公式」可确定性断言。
    */
-  roundSpanMs: Long = DispatchNotify.DefaultRoundSpanMs
+  roundSpanMs: Long = DispatchNotify.DefaultRoundSpanMs,
+  /**
+   * **投递目标（P0 · 2026-11-02 dispatch-notify 投递地址批）**：链属主（delegate 作用域
+   * 引擎 = 创建者 delegate 本人）取代「项目分发器常量」的唯一接缝。
+   * `None`（缺省 / per-project 引擎）= **逐字节旧行为**：投递闭包由
+   * [[DispatchNotify.defaultTrigger]] 给出、投递探针恒 `true` ⇒ [[flushBatch]] 恒
+   * `markSent` + 既有 `triggered: <key> → dispatcher (…)` 审计行一字不改。
+   * `Some(t)` = 投递后**按探针结果分支**：`true`（已投到活会话）⇒ 照旧逐件 markSent
+   * ＋既有审计行 ＋ 一条 `dispatch-notify-delivery`；`false`（目标不 live）⇒ **不
+   * markSent**（件留在 [[redeliver]] 候选集，at-least-once 补投）＋ 一条
+   * `dispatch-notify-parked` 审计 ＋ WARN——**绝不旁路回项目分发器**（链主人不 live 的
+   * 语义是「滞留」，不是「换个收件人」）。
+   */
+  deliveryTarget: Option[DispatchNotify.DeliveryTarget] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.project.dispatch-notify")
 
@@ -302,6 +315,10 @@ final class DispatchNotify(
    * 预算耗尽：逐件走 [[escalateBudgetExhaustedFor]]（节点保持终态 + markSent 退出
    * 候选集 + single-flight 监督通知）——账务口径与窗口引入前一致。
    * 投递成功后逐件 `markSent`（tell-then-mark，per-node 持久去重语义不变）。
+   *
+   * P0（投递地址批）：投递目标可由 [[deliveryTarget]] 覆盖——探针 `true` = 上面的旧
+   * 行为（markSent + 既有审计行）；`false` = 目标不 live ⇒ **滞留**（不 markSent，
+   * 留 [[redeliver]] 候选集 + `dispatch-notify-parked` 审计 + WARN，不旁路项目分发器）。
    */
   private def flushBatch(reason: NotifyReason): IO[Unit] =
     val key = batchKey(reason)
@@ -311,25 +328,81 @@ final class DispatchNotify(
         budgetUsedFor(reason).modify(n => if n >= budgetMaxFor(reason) then (n, false) else (n + 1, true)).flatMap {
           case true =>
             val nodes = entries.map(_._1)
-            trigger(mergedText(entries.map(_._2)))
-              .handleErrorWith(e =>
-                logger
-                  .warn(s"dispatch-notify trigger failed (reason=${key}, batch=${entries.size}): ${e.getMessage}")
-                  .void
-              ) *>
-              nodes.traverse_(node =>
-                markSent(node.id) *>
-                  FlowMapEventLog.append(
-                    workspace,
-                    projectName,
-                    node.id,
-                    "dispatch-notify",
-                    s"triggered: $key → dispatcher (node '${node.name}', batch=${entries.size}, budget ${budgetMaxFor(reason)})"
+            // P0：投递结果（探针 true/false）决定「照旧 markSent」还是「滞留」。
+            //  - `deliveryTarget=None`（缺省 / per-project）= **唯一**投递腿仍是 `trigger`
+            //    （project dispatcher 链），其结果语义恒 true ⇒ 旧行为逐字节不变。
+            //  - `Some(t)` = **只**走 `t.deliver`，项目 dispatcher 链在这条 flushBatch
+            //    腿上完全不被调用（不旁路：作用域件绝不进项目分发器）。
+            // 抛错一律按「已尝试投递（true）」处理 = 旧行为（WARN 后照旧 markSent）。
+            val send: IO[Boolean] = deliveryTarget match
+              case Some(t) =>
+                t.deliver(mergedText(entries.map(_._2))).handleErrorWith { e =>
+                  logger
+                    .warn(
+                      s"dispatch-notify delivery failed (target=${t.label}, reason=${key}, batch=${entries.size}): ${e.getMessage}"
+                    )
+                    .as(true)
+                }
+              case None =>
+                trigger(mergedText(entries.map(_._2)))
+                  .handleErrorWith(e =>
+                    logger
+                      .warn(s"dispatch-notify trigger failed (reason=${key}, batch=${entries.size}): ${e.getMessage}")
+                      .void
                   )
-              ) *>
-              logger.info(
-                s"Project '$projectName' dispatch-notify batch flushed: reason=$key batch=${entries.size} nodes=${nodes.map(_.name).mkString(",")}"
-              )
+                  .as(true)
+            send.flatMap {
+              case true =>
+                nodes.traverse_(node =>
+                  markSent(node.id) *>
+                    FlowMapEventLog.append(
+                      workspace,
+                      projectName,
+                      node.id,
+                      "dispatch-notify",
+                      s"triggered: $key → dispatcher (node '${node.name}', batch=${entries.size}, budget ${budgetMaxFor(reason)})"
+                    ) *>
+                    deliveryTarget.traverse_(t =>
+                      FlowMapEventLog
+                        .append(
+                          workspace,
+                          projectName,
+                          node.id,
+                          DispatchNotify.DeliveryEventType,
+                          DispatchNotify.deliverySummary(t.label, node.id, "delivered")
+                        )
+                        .handleErrorWith(e =>
+                          logger.warn(s"dispatch-notify-delivery audit append failed: ${e.getMessage}")
+                        )
+                    )
+                ) *>
+                  logger.info(
+                    s"Project '$projectName' dispatch-notify batch flushed: reason=$key batch=${entries.size} nodes=${nodes.map(_.name).mkString(",")}"
+                  )
+              case false =>
+                // 目标不 live ⇒ **滞留**：不 markSent（留 redeliver 候选集，at-least-once），
+                // 不写既有「triggered → dispatcher」行，不旁路项目分发器。
+                nodes.traverse_(node =>
+                  deliveryTarget.traverse_(t =>
+                    FlowMapEventLog
+                      .append(
+                        workspace,
+                        projectName,
+                        node.id,
+                        DispatchNotify.ParkedEventType,
+                        DispatchNotify.deliverySummary(t.label, node.id, "parked")
+                      )
+                      .handleErrorWith(e =>
+                        logger.warn(s"dispatch-notify-parked audit append failed: ${e.getMessage}")
+                      )
+                  ) *>
+                    logger.warn(
+                      s"Project '$projectName' dispatch-notify PARKED: target=${deliveryTarget.map(_.label).getOrElse("-")} " +
+                        s"reason=$key node=${node.id} ('${node.name}') batch=${entries.size} — target not live, " +
+                        "notifySentAt NOT set (stays a redelivery candidate; no bypass to the project dispatcher)"
+                    )
+                )
+            }
           case false =>
             entries.traverse_((node, _) => escalateBudgetExhaustedFor(node, reason))
         }
@@ -1235,6 +1308,47 @@ object DispatchNotify:
    */
   val NoticeEventType: String = "notice"
 
+  // ── P0 投递目标（2026-11-02 dispatch-notify 投递地址批）─────────────────────
+  //
+  // 语义：把「通知投给谁」从项目常量升为**显式三态**（label 审计用 + 投递探针）。
+  // 缺省（None）= 项目分发器腿，逐字节旧行为；作用域引擎（DelegateFlowHosts.mount）
+  // 传 `delegate-creator:<delegateId>` + `DelegateNotify.inject(...)`。
+
+  /** 投递目标缺省标签：项目分发器（= [[defaultTrigger]] 那条链的审计归因）。 */
+  val ProjectDispatcherLabel: String = "project-dispatcher"
+
+  /** 作用域引擎的投递目标标签（`delegate-creator:<delegateId>`，与 NotifyRule.Target 同族命名）。 */
+  def delegateCreatorLabel(delegateId: String): String = s"delegate-creator:$delegateId"
+
+  /** 「已投达」审计事件（探针 true；**新增**行，不改既有 `triggered: …` 执行文本）。 */
+  val DeliveryEventType: String = "dispatch-notify-delivery"
+
+  /** 「滞留」审计事件（探针 false：目标不 live ⇒ 不 markSent、不旁路项目分发器）。 */
+  val ParkedEventType: String = "dispatch-notify-parked"
+
+  /** 投递审计 summary（delivery / parked 共用形状：`target=<label> node=<id> outcome=<…>`）。 */
+  def deliverySummary(label: String, nodeId: String, outcome: String): String =
+    s"target=$label node=$nodeId outcome=$outcome"
+
+  /**
+   * **投递目标**：`label`（审计/日志归因）+ `deliver`（投递探针，`true` = 已投达活
+   * 会话，`false` = 目标不 live ⇒ [[DispatchNotify.flushBatch]] 走滞留分支）。
+   *
+   * 生产装配：delegate 作用域引擎 = `delegate-creator:<delegateId>` +
+   * `DelegateNotify.inject(resources.agentRegistry, delegateId, _)`（`nebflow.core.delegate`
+   * 在 core 内，层级门禁合法）；per-project 引擎不传（缺省 = [[defaultTrigger]] 链，
+   * 项目 dispatcher 行为零变化）。
+   */
+  final case class DeliveryTarget(label: String, deliver: String => IO[Boolean])
+
+  /**
+   * 默认投递目标（label = [[ProjectDispatcherLabel]]，探针 = `trigger` 后恒 true）——
+   * 便于显式装配方复用「项目分发器」语义；`forEngine` 的缺省路径**不用**本值（它保持
+   * 零行为差的 `trigger`+恒 true 形态，见 [[forEngine]]）。
+   */
+  def projectDispatcherTarget(trigger: String => IO[Unit]): DeliveryTarget =
+    DeliveryTarget(ProjectDispatcherLabel, text => trigger(text).as(true))
+
   /**
    * 默认触发通道：ProjectRuntimeRegistry → ProjectActor.TriggerDispatcher
    * （与 `Mail(address="project:<名>")` 同链路；rootSessionId 用挂载根——系统发起，
@@ -1279,7 +1393,14 @@ object DispatchNotify:
     emitUpdated: NodeDef => IO[Unit],
     budgetMax: Int = DefaultBudget,
     triggerOverride: Option[String => IO[Unit]] = None,
-    windowMs: Long = DefaultWindowMs
+    windowMs: Long = DefaultWindowMs,
+    /**
+     * P0：投递目标（None = 项目分发器腿，逐字节旧行为；作用域引擎传
+     * `delegate-creator:<id>` + `DelegateNotify.inject`）。`Some` 时**只**走该探针，
+     * [[defaultTrigger]] 链不被调用（作用域件不进项目分发器）。
+     * `triggerOverride` 与 `deliveryTarget` 同时给出 ⇒ 仍按测试接缝纪律关窗（同步逐条）。
+     */
+    deliveryTarget: Option[DeliveryTarget] = None
   ): DispatchNotify =
     new DispatchNotify(
       store,
@@ -1289,7 +1410,8 @@ object DispatchNotify:
       emitUpdated,
       triggerOverride.getOrElse(defaultTrigger(projectName, rootSessionId)),
       budgetMax,
-      windowMs = if triggerOverride.isDefined then 0L else windowMs
+      windowMs = if triggerOverride.isDefined then 0L else windowMs,
+      deliveryTarget = deliveryTarget
     )
 
 end DispatchNotify

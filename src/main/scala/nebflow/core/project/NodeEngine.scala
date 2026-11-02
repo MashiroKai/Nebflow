@@ -91,6 +91,16 @@ class NodeEngine(
    */
   notifyTriggerOverride: Option[String => IO[Unit]] = None,
   /**
+   * dispatch-notify **投递目标**覆盖（P0 投递地址批 2026-11-02，与
+   * `notifyTriggerOverride` 同族接缝但语义不同）：`None`（缺省 / per-project 引擎）=
+   * 逐字节旧行为——投给项目分发器（[[DispatchNotify.defaultTrigger]] 链）；
+   * `Some(t)` = 投给 `t`（[[DelegateFlowHosts.mount]] 恒传
+   * `delegate-creator:<delegateId>` + `DelegateNotify.inject` ——通知投给**创建者
+   * delegate 本人**）。探针 false（creator 不 live）⇒ 件**滞留**（不 markSent，留补投
+   * 候选集），**绝不旁路回项目分发器**；探针 true ⇒ 照旧 markSent + 既有审计行。
+   */
+  notifyDeliveryTarget: Option[DispatchNotify.DeliveryTarget] = None,
+  /**
    * 完成门腿 1 开关（noderpt 批 A 段 2026-09-11）：后台任务存活是否拦节点终态化。
    * None = 现读 `Defaults.BgGateCompletionHold`（生产默认 **false = 封存**：不查
    * `BgTaskRegistry.waitingFor`，hold 代码与 armCap 逐字保留、打开即恢复旧行为）；
@@ -333,6 +343,9 @@ class NodeEngine(
     escalate = (text, nodeName) => enqueueRootNotify(text, nodeName, DispatchNotify.NoticeEventType),
     emitUpdated = emitUpdated,
     triggerOverride = notifyTriggerOverride,
+    // P0（投递地址批 2026-11-02）：投递目标覆盖——None = 项目分发器（逐字节旧行为），
+    // Some = 链属主 delegate（作用域引擎由 DelegateFlowHosts.mount 注入）。
+    deliveryTarget = notifyDeliveryTarget,
     // M4（b64 批）：`notify.quietMs` → 打包/静默窗口（缺省 5s，上界 60s 由挂载面校验）。
     windowMs = notifyQuietMs.getOrElse(NotifyPolicy.NotifyQuietMsDefaultMs)
   )
