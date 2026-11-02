@@ -390,7 +390,7 @@ console.log('\n== A5 桌面：底栏重排（[‹ ›] 滑杆 页码 Aa ☰ ⋯�
   ok('A5 滑杆在栏（input[type=range]）', bar.slider);
   ok('A5 页码文本 = Pg a/b · Ch i/n', /^Pg \d+\/\d+ · Ch \d+\/\d+$/.test(bar.info), bar.info);
   ok('A5 刷新钮不在底栏直显位', bar.refreshInBar === false);
-  ok('A5 刷新角浮件抬到底栏上方（bottom 64px）', bar.floatBtnBottom === '64px', String(bar.floatBtnBottom));
+  ok('A5 刷新角浮件抬到底栏上方（bottom 72px = 圆钮行顶 16+48 + 8 缝；canvas 控件尺寸对齐批 2026-11-02 钮 40→48 后行锚 64→72）', bar.floatBtnBottom === '72px', String(bar.floatBtnBottom));
   ok('A5 章节刻度来自 TOC（NCX 三章 = 3 刻度）', bar.tickCount === 3, `ticks=${bar.tickCount}`);
   ok('A5 常态位置 tooltip「章 · %」', /· \d+%$/.test(bar.tipText), bar.tipText);
   await shot(h.page, 'a5-desktop-bar.png');

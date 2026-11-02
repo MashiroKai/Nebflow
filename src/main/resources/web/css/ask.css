@@ -31,13 +31,19 @@
  *    三修批后本表只留几何/域内档——材质色全部改引全局单源 token）═══ */
 :root {
   /* E-2 几何/材质档 */
-  --ask-fab-size: 44px;          /* 入口钮（命中盒=视觉径） */
+  /* canvas 控件尺寸对齐批（2026-11-02 作者追加令 09:41「包括 canvas 的这些控件
+   * 宽度也要保持一致」）② 全站悬浮圆钮单一真值 48：入口钮桌面 44 → **48**
+   * （= canvas 文档 chrome 档 --cv-size-circle-lg = 手机层 --mtap-lg）。同排共中线
+   * 随之重算：圆钮行（pane 内 bottom:16、48 高、pane 底 = 面板底 −8）中线在面板
+   * 系 48px ⇒ fab bottom = 48 − 24 = **24**（原 44 钮 → 22）。手机层原本 48，
+   * 本批只补桌面档（mobileLayer.css .ask-fab 48 覆盖不变）。 */
+  --ask-fab-size: 48px;          /* 入口钮（命中盒=视觉径） */
   --ask-fab-gap: 14px;           /* 钮距画布右缘 */
-  /* 单行排布批（2026-11-01 作者令 16:18）：22 = 与左锚文档工具簇行共中线——
+  /* 单行排布批（2026-11-01 作者令 16:18）：与左锚文档工具簇行共中线——
    * 簇在 pane 内 bottom:16、pane 底=面板底上 8px（壳 padding-bottom）→ 面板系
-   * 行带 [24..64]、中线 44px；fab 44px 时 bottom = 44−22 = 22（原 14 为旧
-   * 「让位悬层」基准，随簇左锚化退役）。JS 让位腿只剩通栏 epub 底栏。 */
-  --ask-fab-bottom: 22px;        /* 钮距画布下缘（JS 随通栏底栏实测让位） */
+   * 行带 [24..72]、中线 48px；fab 48px 时 bottom = 48−24 = 24（原 44 钮的 22
+   * 随本批 +2，中线不变）。JS 让位腿只剩通栏 epub 底栏。 */
+  --ask-fab-bottom: 24px;        /* 钮距画布下缘（JS 随通栏底栏实测让位） */
   --ask-dock-w: 372px;           /* 覆盖层宽（= 输入框档宽） */
   --ask-col-maxh: 316px;         /* 气泡列 max-height（小巧不占 canvas） */
   --ask-fade-h: 64px;            /* 顶部液体玻璃 v2 渐隐带高（列顶留白同值，首条不入带） */
@@ -265,7 +271,10 @@ html.no-backdrop .ask-colwrap .ask-veil {
    「同带共中线」的 16px 对齐关系原样保留（pane 底 = 页底 = 新顶缘，同批扩面）。 */
 body.mobile-layer .ask-fab {
   --ask-fab-gap: 12px;
-  width: 44px; height: 44px;
+  /* canvas 控件尺寸对齐批（2026-11-02）② 全站悬浮圆钮单一真值 48：本档原写死
+     44（mobileLayer.css 01 块同值 48 覆盖生效），两处并一 —— 手机层 48 与
+     --mtap-lg 同档，桌面档本批也升到 48（--ask-fab-size），全站一个真值。 */
+  width: 48px; height: 48px;
   position: fixed;
   right: var(--ask-fab-gap);
   bottom: calc(var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px) + 16px);

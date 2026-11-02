@@ -1,0 +1,19 @@
+
+Running 14 tests using 1 worker
+
+[1/14] tests/mobile-pinned-search.spec.mjs:272:1 › P1 messages page: pinned bar geometry/material + list starts below it + fab retired
+[2/14] tests/mobile-pinned-search.spec.mjs:303:1 › P2 contacts page: same pinned bar, desktop input row retired, friend rows below it
+[3/14] tests/mobile-pinned-search.spec.mjs:323:1 › P3 messages page: type-to-search yields, conversation list yields, first result under the bar
+[4/14] tests/mobile-pinned-search.spec.mjs:346:1 › P4 messages page: clear button returns to the list
+[5/14] tests/mobile-pinned-search.spec.mjs:363:1 › P5 messages page: Esc clears the query (single clear semantics preserved)
+[6/14] tests/mobile-pinned-search.spec.mjs:380:1 › P6 contacts page: pinned bar is the single search entry; query survives panel re-render; clear restores list
+[7/14] tests/mobile-pinned-search.spec.mjs:408:1 › P7 other faces untouched: chat chrome search key + detail pages keep the floating language
+[8/14] tests/mobile-pinned-search.spec.mjs:461:1 › P8 search-return pill: mobile layer lifts it above the page container, below the dock
+[9/14] tests/mobile-pinned-search.spec.mjs:487:1 › P9 sealed mode: neither pinned bar nor fab search on the two tabs
+[10/14] tests/mobile-pinned-search.spec.mjs:501:3 › light scheme material › P10 light: pinned bar fill = --glass-control-bg 亮档（0.60）单源
+[11/14] tests/mobile-pinned-search.spec.mjs:515:1 › P10b dark: pinned bar fill = --glass-control-bg 暗档（0.14）单源
+[12/14] tests/mobile-topbar.spec.mjs:100:1 › T1 根页顶栏退役：消息/联系人/工作台/canvas 无页头无标题胶囊，详情页顶栏不变
+[13/14] tests/mobile-topbar.spec.mjs:118:1 › T2 头像搬家：工作台顶部头像入口在场同态，设置页头像位/设备区撤掉（手机层）
+[14/14] tests/mobile-topbar.spec.mjs:142:1 › T3 个人主页层级：点头像进 me 页，用户名/头像/绑定子页铺满屏可返回
+  14 passed (20.5s)
+EXIT=0
