@@ -365,11 +365,18 @@ class OpenAiAdapter(baseUrl: String, apiKey: String, backend: StreamBackend[IO, 
         bodyWithSearchExtras.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
       case _ => bodyWithSearchExtras
 
+    // 🔴 缺陷①（2026-11-02）：非流式请求此前**不带** readTimeout ⇒ 落回 sttp
+    // client4 的 60s 缺省值（同 DecisionHttpTransport.scala 的书面记录）。插件
+    // 自动分配腿走的正是这条非流式路（`sendMessage`），于是慢模型一过 60s 就被
+    // 掐断，上层 fail-open 成 plugins=[]。此处与流式面 （:480）同口径显式给
+    // LlmReadTimeoutSec（600s），预算对全部非流式调用面（分配器/小判官/健康探测）
+    // 一并生效。
     val request = basicRequest
       .post(uri"$endpoint")
       .header("Authorization", s"Bearer $apiKey")
       .header("content-type", "application/json")
       .body(bodyWithMetadata.noSpaces)
+      .readTimeout(Defaults.LlmReadTimeoutSec.seconds)
     IO.delay(logSearchInjection(params)) *>
       backend.send(request).flatMap { response =>
         response.body match

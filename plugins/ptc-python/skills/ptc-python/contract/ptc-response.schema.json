@@ -9,7 +9,7 @@
     "contract": { "const": "ptc/v1" },
     "exec_id": { "type": ["string", "null"] },
     "ok": { "type": "boolean" },
-    "language": { "enum": ["python", "typescript"] },
+    "language": { "enum": ["python", "typescript", "javascript"] },
     "profile": { "enum": ["readonly", "readwrite"] },
     "duration_ms": { "type": "integer", "minimum": 0 },
     "value": { "description": "Completion value of the last expression statement of the user code, or null." },

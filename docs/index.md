@@ -15,6 +15,7 @@ status: current
 - `templates/` — 文档批范本：按 wiki-docs 纪律改写的 Obsidian 格式报告模板，见 [[console-403-diagnosis]]（诊断报告范本）与 [[console-load-perf]]（性能验证报告范本）。
 - 根散件 — 运维检查单、并行会话资源规范等专项报告：[[production-ops-checklist.zh-CN]]（生产操作检查单）、[[parallel-session-resources.zh-CN]]（并行会话资源预分配规范）。
 - 机制设计批（2026-11-02）— [[20261102_143609_ptc-mode-two-plugins__delegate-nebflow-226f28aa]]（PTC 模式激活：两个独立 MCP 插件 ptc-python / ptc-typescript + 语言中立契约 contracts/ptc/v1 + 契约门 11×2 用例 + 真模型最小闭环实证；宿主侧零改动）。
+- PTC 缺陷修复批（2026-11-02）— [[20261102_pts-ptc-defect-fixes]]（六条实测缺陷逐条现象/根因 file:line/修法/复验：分配腿 60s 静默降级、mcp.json timeoutMs 被丢、fs_roots 错位、ts 注解、两侧 read/glob 语义、Grep error=267；含验红脚本与隔离实例 18123 现场日志）与 [[20261102_173500_ptc-agent-dispatch-feasibility]]（PTC 脚本调度 node/kernel/subagent 的可行性勘察：内部入口与权限门盘点、`tools.spawn_*` 落点、风险清单、三个候选设计与推荐 C——只出计划 JSON，注册交宿主 ChainWrite）。
 - 审计报告 — [[20261028_171800_审计报告二五机制__delegate-nebflow-a13975e4]]（delegate／插件分配／AgentFlow／合并队列／门户数据面五机制审计·权威版，取代 reports/ 同名过程件）。
 - delegate 子系统现状审计 — [[20261101_174600_delegate-status-audit__kernel]]（2026-11-01 17:46 快照：十面架构盘点 + 今日实案卷宗 + 已落/未落对账 + 运行时读数 + 优先级表；引 [[20261101_165531_dispatcher-chain-lifecycle-rca__kernel]] 的 RCA，不重查其归因）。
 - 审计报告（NebLink 身份面）— [[20261102_171500_neblink-device-identity-and-ownership]]（云端怎么认「不同机器」——deviceId 双线派生实测复算、register 一腿建立归属、networkId=账号网络、顶号实测 5/8 抢输；服务端源码不在本机，分档标注一手实测／二手行号／设计断言）。

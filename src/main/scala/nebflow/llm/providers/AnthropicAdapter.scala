@@ -470,12 +470,16 @@ class AnthropicAdapter(
         bodyWithThinking.deepMerge(Json.obj("metadata" -> Json.obj("agent_id" -> aid.asJson)))
       case _ => bodyWithThinking
 
+    // 🔴 缺陷①（2026-11-02）：与 OpenAiAdapter 非流式面同一处根因——缺显式
+    // readTimeout ⇒ sttp client4 的 60s 缺省把插件自动分配腿在 60.0xx s 掐断。
+    // 与流式面（:578）同口径给 LlmReadTimeoutSec（600s）。
     val request = basicRequest
       .post(uri"$endpoint")
       .header("x-api-key", apiKey)
       .header("anthropic-version", "2023-06-01")
       .header("content-type", "application/json")
       .body(bodyWithMetadata.noSpaces)
+      .readTimeout(Defaults.LlmReadTimeoutSec.seconds)
 
     backend.send(request).flatMap { response =>
       response.body match

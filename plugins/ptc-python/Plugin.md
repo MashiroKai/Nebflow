@@ -31,7 +31,7 @@ print("hits:", rows["count"])                            # stdout 进响应的 s
 | `allowed_tools` | 只能**收窄**档位：如 `["read","grep"]` |
 | `timeout_ms` | 缺省 30000，上限 300000 |
 | `limits` | `max_tool_calls`(64) / `max_output_bytes`(65536) / `max_memory_mb`(1024) / `max_cpu_ms`(60000)，只能收紧 |
-| `cwd` / `fs_roots` | 都必须落在插件声明的 workspace 根内 |
+| `cwd` / `fs_roots` | 默认必须落在插件 workspace 根内；部署若设了 `PTC_FS_ROOTS`/`PTC_FS_ROOTS_OPEN=1`，可点名额外/任意已存在目录（见 SKILL §5 与 Plugin.md「fs_roots 与工作区」） |
 | `args` | 透传给代码的参数字典 |
 
 ## 响应

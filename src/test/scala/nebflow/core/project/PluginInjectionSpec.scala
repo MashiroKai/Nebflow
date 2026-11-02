@@ -83,6 +83,14 @@ class PluginInjectionSpec extends CatsEffectSuite:
       createFolders = true
     )
 
+  /** 缺陷①（2026-11-02）：失败语义回退位（plugins.failOpenOnAllocationError）。 */
+  private def setFailOpenOnAllocationError(on: Boolean): Unit =
+    os.write.over(
+      tempRoot / "nebflow.json",
+      s"""{"plugins":{"enabled":true,"failOpenOnAllocationError":$on}}""",
+      createFolders = true
+    )
+
   /** 分配桩面：固定返回 names（via=Jev），并记录调用。 */
   private def installStub(
     names: List[String],
@@ -332,9 +340,30 @@ class PluginInjectionSpec extends CatsEffectSuite:
       assertEquals(os.exists(tempRoot / "chains"), false, "inert mode writes no step-plugins line")
   }
 
-  test("allocatePreparation: both allocation arms fail → mode=fail-open, empty injection, dispatch continues (Jev 不可用回退路径)") {
+  test("allocatePreparation: allocation failure → Left (fail-closed), never a silent plugins=[] (缺陷① 2026-11-02)") {
     setPluginsEnabled(true)
-    writeSkillPlugin("p1", "FAIL-OPEN") // 非空目录——越过 empty-catalog 短路，分配面真实到场
+    writeSkillPlugin("p1", "FAIL-CLOSED") // 非空目录——越过 empty-catalog 短路，分配面真实到场
+    PluginAllocator.install(
+      new PluginAllocator.Face:
+        def allocatePlugins(subject: String, taskText: String, catalog: List[CatalogEntry]) =
+          IO.raiseError(new java.util.concurrent.TimeoutException("jev+llm both down"))
+    )
+    for r <- PluginInjection.allocatePreparation("delegate-fail-closed", "task")
+    yield
+      assert(r.isLeft, s"allocation failure must NOT degrade into an empty plugin set, got: $r")
+      val err = r.left.toOption.get
+      assert(err.contains("fail-open"), err) // 模式词点名（结构态）
+      assert(err.contains("no silent degradation"), err)
+      assert(err.contains("failOpenOnAllocationError"), err) // 回退开关在错误里可发现
+      // 分配台账仍留 Failure 事件行（归因链不因 fail-closed 而丢）。
+      val events = os.read.lines(tempRoot / "logs" / "jev-allocation.jsonl")
+      assert(events.exists(l => l.contains("delegate-fail-closed") && l.contains("failure")), events.mkString("\n"))
+  }
+
+  test("allocatePreparation: failOpenOnAllocationError=true restores the old empty-set dispatch (opt-in degradation)") {
+    setPluginsEnabled(true)
+    setFailOpenOnAllocationError(true)
+    writeSkillPlugin("p1", "FAIL-OPEN-OPTIN")
     PluginAllocator.install(
       new PluginAllocator.Face:
         def allocatePlugins(subject: String, taskText: String, catalog: List[CatalogEntry]) =
@@ -343,11 +372,8 @@ class PluginInjectionSpec extends CatsEffectSuite:
     for r <- PluginInjection.allocatePreparation("delegate-fail-open", "task")
     yield
       val (prep, set) = r.toOption.get
-      assertEquals(prep.injectedBlock, "", "fail-open = empty set, dispatch is never wedged")
+      assertEquals(prep.injectedBlock, "", "opted-in fail-open = empty set, dispatch is never wedged")
       assertEquals(set, PluginInjection.AllocatedSet(Nil, "fail-open"))
-      // fail-open 落 Failure 事件行（JevFallback WARN + jsonl 审计——④判定结果落审计）。
-      val events = os.read.lines(tempRoot / "logs" / "jev-allocation.jsonl")
-      assert(events.exists(l => l.contains("delegate-fail-open") && l.contains("failure")), events.mkString("\n"))
   }
 
   test("allocatePreparation: LLM fallback arm produces mode=llm-fallback (Jev unavailable → small-model takeover)") {

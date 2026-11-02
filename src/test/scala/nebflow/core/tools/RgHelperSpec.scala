@@ -42,7 +42,7 @@ class RgHelperSpec extends FunSuite:
         pathEnv = launchdMinimalPath, // dirs exist but carry no rg
         probeDirs = List(probeDir.toString),
         localPaths = List((tmp / "no-home" / ".nebflow" / "bin" / rgName).toString), // nonexistent
-        winInstall = None
+        winInstall = Nil
       )
       assertEquals(r, Some(seeded), "curated probe dir must supply the hit when PATH is minimal")
     finally os.remove.all(tmp)
@@ -59,7 +59,7 @@ class RgHelperSpec extends FunSuite:
         pathEnv = pathDir.toString,
         probeDirs = List(probeDir.toString),
         localPaths = List((tmp / "no-home" / ".nebflow" / "bin" / rgName).toString),
-        winInstall = None
+        winInstall = Nil
       )
       assertEquals(r, Some(onPath), "PATH hit must keep priority over the curated probe leg")
     finally os.remove.all(tmp)
@@ -76,7 +76,7 @@ class RgHelperSpec extends FunSuite:
         pathEnv = launchdMinimalPath,
         probeDirs = List(probeDir.toString),
         localPaths = List(local),
-        winInstall = None
+        winInstall = Nil
       )
       assertEquals(r, Some(probed), "probe leg sits with the PATH leg, before the local bin leg")
     finally os.remove.all(tmp)
@@ -94,21 +94,21 @@ class RgHelperSpec extends FunSuite:
         pathEnv = launchdMinimalPath,
         probeDirs = Nil,
         localPaths = List(newRg, legacyRg),
-        winInstall = None
+        winInstall = Nil
       )
       assertEquals(both, Some(newRg), "new default bin position must be probed before the legacy one")
       val legacyOnly = RgHelper.resolveRgPathFrom(
         pathEnv = launchdMinimalPath,
         probeDirs = Nil,
         localPaths = List(legacyRg),
-        winInstall = None
+        winInstall = Nil
       )
       assertEquals(legacyOnly, Some(legacyRg), "old installs (legacy bin only) must keep resolving rg")
       val none = RgHelper.resolveRgPathFrom(
         pathEnv = launchdMinimalPath,
         probeDirs = Nil,
         localPaths = List(newRg, legacyRg).map(p => p + ".missing"),
-        winInstall = None
+        winInstall = Nil
       )
       assertEquals(none, None, "missing files in both local legs must stay None")
     finally os.remove.all(tmp)
@@ -122,7 +122,7 @@ class RgHelperSpec extends FunSuite:
         pathEnv = launchdMinimalPath,
         probeDirs = Nil, // pre-fix shape: the leg did not exist
         localPaths = List((tmp / "no-home" / ".nebflow" / "bin" / rgName).toString),
-        winInstall = None
+        winInstall = Nil
       )
       assertEquals(r, None, "nothing anywhere must stay None (drives the not-found error path)")
     finally os.remove.all(tmp)
@@ -142,7 +142,7 @@ class RgHelperSpec extends FunSuite:
         probeDirs = probeDirs,
         localPaths =
           List((tmp / "no-home" / ".nebflow" / "bin" / rgName).toString), // nonexistent: isolate the probe leg
-        winInstall = None
+        winInstall = Nil
       )
       assertEquals(r, Some(expected.get.toAbsolutePath.toString))
     finally os.remove.all(tmp)
@@ -171,6 +171,19 @@ class RgHelperSpec extends FunSuite:
       os.write(dir / s"${pad}$i.txt", "x", createFolders = true)
     }
     tmp
+
+  test("runRg: workDir 不是目录时不再把非法 cwd 交给 CreateProcess（缺陷⑥ error=267 回归）") {
+    // Windows 的 CreateProcess 在 lpCurrentDirectory 非法时返回 ERROR_DIRECTORY(267)，
+    // 而报错文案会把 rg 程序路径顶到前面（`...\Nebflow\rg.exe (in directory …)`）——
+    // 曾被读成「发行包漏了 rg.exe」。修复后不变量：只有确认是目录才设 cwd。
+    if !sys.props.getOrElse("os.name", "").toLowerCase.contains("win") then
+      assume(false, "create-process semantics differ on this platform")
+    val missing = new java.io.File("Z:" + java.io.File.separator + "nebflow-missing-cwd-267")
+    assert(!missing.isDirectory)
+    RgHelper.runRg(List("--version"), missing.getPath) match
+      case Right(_) => () // 修复后：cwd 落父进程，rg 照跑
+      case Left(err) => fail(s"a non-directory workDir must not break rg: ${err.message}")
+  }
 
   test("runRg honors processCwd for relative '.' search") {
     val tmp = os.Path(java.nio.file.Files.createTempDirectory("nb-rghelper"))

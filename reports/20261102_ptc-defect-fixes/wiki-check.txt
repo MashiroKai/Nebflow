@@ -1,0 +1,36 @@
+# wiki 校验（check_wiki_docs.py --root <workspace>/docs）
+# 本批两篇文档：零告警（不在下面任何一条里）
+# 退出码 1 = 仓库既有历史问题（下列 22 条，均属别的批次/别的文档）
+
+wiki-docs 校验：22 条违规（D:\workspace@zcode\nebflow\nebflow-stand\.nebflow\worktrees\delegate-nebflow-e616097f\docs）
+
+── R1 obsidian-format（3）──
+  20261030_cmdcode-provider-removal.md:1  缺 front-matter（type/status）——所有文档一律 Obsidian 格式产出
+  design/20261028_triple-line-integration-contract.zh-CN.md:1  缺 front-matter（type/status）——所有文档一律 Obsidian 格式产出
+  runbooks/kai-dispatch-route.md:1  缺 front-matter（type/status）——所有文档一律 Obsidian 格式产出
+
+── R3 concept-first-use（3）──
+  20261029_140000_mobile-projects-single-column__delegate-nebflow-ea10c90a.md:29  概念「样张」首现未解释且未引用——就地一句话解释，或 [[glossary#^mockup-sample]]
+  design/20261028_canvas-ask-mode-design.zh-CN.md:8  概念「样张」首现未解释且未引用——就地一句话解释，或 [[glossary#^mockup-sample]]
+  design/imagegen-dual-layer-spec.zh-CN.md:61  概念「插件包」首现未解释且未引用——就地一句话解释，或 [[glossary#^plugin-package]]
+
+── broken-link（15）──
+  20261028_171800_审计报告二五机制__delegate-nebflow-a13975e4.md:216  引用目标不存在：[[20261028_103000_多设备现状与KAI迁移根因]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  20261030_204500_boot-render-gate__delegate-nebflow-ca1a7b93.md:36  引用目标不存在：[[AssetVersions]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  20261031_074500_login-expiry-singleflight__delegate-nebflow-25c36738.md:39  引用目标不存在：[[20261025_030145_legacy-domain-sweep]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  20261031_mobile-askuser-whitescreen.md:23  引用目标不存在：[[20261031_liquid-glass-v2]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  20261101_101138_dispatcher-seat-prompt-919-doctrine__delegate-nebflow-dd0d529e.zh-CN.md:20  引用目标不存在：[[20261028_213056_delegate-dual-mode-redesign__delegate-nebflow-192d10a5]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  20261101_101138_dispatcher-seat-prompt-919-doctrine__delegate-nebflow-dd0d529e.zh-CN.md:74  引用目标不存在：[[20261028_213056_delegate-dual-mode-redesign__delegate-nebflow-192d10a5]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  20261101_101138_dispatcher-seat-prompt-919-doctrine__delegate-nebflow-dd0d529e.zh-CN.md:80  引用目标不存在：[[20261028_213056_delegate-dual-mode-redesign__delegate-nebflow-192d10a5]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  20261102_161500_keyboard-layer-monaco-quickinput__delegate-nebflow-17658d72.md:8  引用目标不存在：[[20261102_132051_replace-nebflow-ui-with-vscode__delegate-nebflow-5313652f]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  design/20261028_canvas-ask-mode-design.zh-CN.md:44  引用目标不存在：[[20261029_111029_term-citation-research__delegate-nebflow-253ec234.zh-CN]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  design/20261028_canvas-ask-mode-design.zh-CN.md:96  引用目标不存在：[[20261031_113700_ask-readonly-tool-design__delegate-nebflow-09ef7b2e]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  design/20261028_canvas-ask-mode-design.zh-CN.md:169  引用目标不存在：[[20261029_111029_term-citation-research__delegate-nebflow-253ec234.zh-CN]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  design/20261029_errorfrozen-dialog-minimal-spec.zh-CN.md:8  引用目标不存在：[[visual-style]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  design/20261030_human-readable-presentation.zh-CN.md:358  引用目标不存在：[[20261030_201300_presentation-entry-fence-semantics__delegate-nebflow-208b0e62.zh-CN]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  design/cardwin-origin-resolution-spec.zh-CN.md:12  引用目标不存在：[[turn-liveness-spec]]（既非文档也非已注册词条——补词条声明块或改引文档）
+  index.md:20  引用目标不存在：[[20261102_171500_neblink-device-identity-and-ownership]]（既非文档也非已注册词条——补词条声明块或改引文档）
+
+── orphan-doc（1）──
+  20261101_125600_mobile-chat-blank-hotfix__delegate-nebflow-0df6b25c.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+

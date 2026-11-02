@@ -6,7 +6,7 @@
 |---|---|
 | `run-conformance.mjs` | **契约一致性门**：把 `contracts/ptc/v1/conformance/cases.v1.json` 打到两个插件的 MCP server 上，断言响应字段与 §6 错误枚举 |
 | `closed-loop.mjs` | **最小闭环**：真模型 → 生成代码 → 代码调 ≥2 个宿主工具 → 结果回模型 → 继续；产出 `conversation.json` 证据 |
-| `build-ts.mjs` | 把 `plugins/ptc-typescript/skills/ptc-typescript/src/*.ts` 编译到 `dist/` |
+| `build-ts.mjs` | 把 `plugins/ptc-javascript/skills/ptc-javascript/src/*.ts` 编译到 `dist/` |
 | `lib/mcp-client.mjs` | 最小 MCP stdio 客户端（与引擎 `core/mcp/McpClient.scala` 同路径：initialize → tools/list → tools/call） |
 
 ## 一条能照抄的验证命令

@@ -1,0 +1,28 @@
+# 固定证据：本批新 jar / 独立实例 18123 / 数据根 home2 / 假模型 alloc-delay=70s
+# 取自 <dataRoot>/logs/stand.log（行号保留，对应正文 §7 的引用）
+#
+# —— 对照：同一日志里更早的一次失败（此时跑的还是改动前的 jar + 尚不支持的 SSE 假模型），
+#    分配腿失败后**没有任何失败痕迹地**以 plugins=[] 继续派发，这正是缺陷①的第二半：
+91: 2026-11-02 17:57:20.676 INFO  nebflow.core.plugin.injection - plugin allocation 'delegate-nebflow-3d32c427': via=- plugins=[] duty=AllocatedViaFallback(llm allocator: call failed (candidate chain exhausted — see per-candidate WARN lines))
+#
+# —— 修复后（本批 jar）：分配用满 70s 仍然成功，插件集非空，派发继续
+143: 2026-11-02 17:58:40.868 INFO  nebflow.llm.plugin-alloc - plugin allocation 'delegate-nebflow-f860c0fd': llm fallback leg (jev gate off (jev block absent))
+149: 2026-11-02 17:59:50.912 INFO  nebflow.core.plugin.injection - plugin allocation 'delegate-nebflow-f860c0fd': via=llm-fallback plugins=[ptc-python,ptc-javascript] duty=Allocated(false)
+   （143 → 149 = 70,044ms；改动前这条腿在 60s 被 sttp 缺省 readTimeout 掐断）
+#
+# —— 缺陷②：mcp.json timeoutMs 透传到调用预算（两个插件各一行）
+150: 2026-11-02 17:59:50.942 INFO  nebflow.mcp - MCP server 'plugin_ptc-python_ptc' tools/call budget: 600000ms (from config timeoutMs)
+152: 2026-11-02 17:59:50.990 INFO  nebflow.mcp - MCP server 'plugin_ptc-python_ptc' connected, 2 tools registered
+153: 2026-11-02 17:59:50.995 INFO  nebflow.mcp - MCP server 'plugin_ptc-javascript_ptc' tools/call budget: 600000ms (from config timeoutMs)
+155: 2026-11-02 17:59:51.038 INFO  nebflow.mcp - MCP server 'plugin_ptc-javascript_ptc' connected, 2 tools registered
+#
+# —— 缺陷③/⑤：delegate 在**自己的工作区**里真的调到了两个插件的 ptc_run_rw（三次调用均 OK）
+161: 2026-11-02 17:59:51.188 INFO  nebflow.handlers - Nebula ptc-e2e-2 Tool Delegate(用 ptc-python 与 ptc-javascript 两个插件的 ptc_run_rw 在 notes/ 下...) OK (70368ms)
+163/164/165: 2026-11-02 17:59:51.251 INFO  nebflow.audit - event=mcpGate decision=allow tool=mcp__plugin_ptc-{javascript,python}_ptc__ptc_run_rw surface=mcp tier=L0 form=host-executor session=delegate-nebflow-f860c0fd
+169: 2026-11-02 17:59:51.353 INFO  nebflow.handlers - ... Tool [MCP] ptc_run_rw OK (101ms)
+170: 2026-11-02 17:59:51.373 INFO  nebflow.handlers - ... Tool [MCP] ptc_run_rw OK (120ms)
+171: 2026-11-02 17:59:51.384 INFO  nebflow.handlers - ... Tool [MCP] ptc_run_rw OK (131ms)
+#
+# —— 缺陷⑥：内置 Grep 在同一实例上正常返回（不再 CreateProcess error=267）
+166: 2026-11-02 17:59:51.270 INFO  nebflow.handlers - ... Tool Grep("TODO")
+167: 2026-11-02 17:59:51.270 INFO  nebflow.handlers -   (path="D:/ptc-e2e/home2/general") OK (33ms)
