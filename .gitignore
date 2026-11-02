@@ -28,7 +28,11 @@ archives/
 temp/
 tmp/
 # 过程产物：报告与知识文档 —— 本地保留，永不入库（作者裁定 2026-11-02）
-docs/
+# 根锚定（前导斜杠）：只忽略**仓库根**的 docs/。无斜杠形态会命中任意层级同名
+# 目录（src/web/docs/ 之类），那是误伤面而不是防线。三目录形态须与门禁
+# scripts/check-process-artifacts.sh 的 GUARDED_DIRS 逐目录对齐
+# （evidence/ reports/ 的同名规则块见本文件尾部）。
+/docs/
 test-envs.sh
 # CHANGELOG.md / CODEBASE.md are kept OUT of git tracking by author ruling
 # 2026-09-17 (they were tracked between 2026-09-14 and that ruling): their
