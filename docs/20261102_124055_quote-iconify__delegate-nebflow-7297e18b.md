@@ -58,15 +58,20 @@ scope: 叠卡引用入口移入 composer footer（web/index.html #quote-item-btn
 
 ## 文字 logo 三候选（默认 A）
 
+> **© 候选已废弃（2026-11-02 12:58 作者令「图标就用跟我们footer那个引用图标一样的吧」）**：
+> 文字引用牌现用 **composer footer 引用入口键 `#quote-item-btn` 那颗图标**
+> （`js/quoteLogo.js` 的 `QUOTE_ENTRY_ICON`，双引号双路径）。下表 A/B/C 三候选字形与
+> `QUOTE_LOGO_CANDIDATES` 导出**已删除**；本节的对比帧保留作历史记录，不再由脚本生成。
+> 详见 `[[20261102_133000_quote-icon-unify__delegate-nebflow-1818bb74]]`。
+
 | 候选 | 构成 | 读作 | 16px 实尺判据 |
 |---|---|---|---|
-| **A（默认）** | 双引号（上）+ 双横线（下） | 「引用了一段文字」 | 主体引号最大，最清晰 |
-| B | 票据卡外框 + 裁切线 + 左上引号 | 「引用卡」 | 外框占满盒体，与图片缩略的矩形轮廓撞形 |
-| C | 三横线 + 右下火焰引号 | 「引文」，动势强 | 两件争主次，易糊 |
+| **A（已废弃）** | 双引号（上）+ 双横线（下） | 「引用了一段文字」 | 主体引号最大，最清晰 |
+| B（已废弃） | 票据卡外框 + 裁切线 + 左上引号 | 「引用卡」 | 外框占满盒体，与图片缩略的矩形轮廓撞形 |
+| C（已废弃） | 三横线 + 右下火焰引号 | 「引文」，动势强 | 两件争主次，易糊 |
 
-对比帧：`evidence/20261102_quote-iconify/after/f7-text-logo-candidates.png`（48px / 16px 实尺 /
-引用块内实样三档并排）。三份字形留在 `QUOTE_LOGO_CANDIDATES` 导出，取证帧直接渲染同一份，
-测试内无第二份抄写。
+对比帧（历史）：`evidence/20261102_quote-iconify/after/f7-text-logo-candidates.png`
+（48px / 16px 实尺 / 引用块内实样三档并排；A/B/C 三候选时代存档）。
 
 ## 验收钉与回归
 

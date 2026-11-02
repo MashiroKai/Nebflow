@@ -19,7 +19,8 @@ import { t } from './i18n.js';
 // （扩展名色块档 = 引擎侧 .file-card 同源，零第二套图标语言）。
 import { buildImageRefMediaFace, fileIconStyle } from './popArtifacts.js';
 // 引用牌图标化批（2026-11-02 11:00 作者令）：composer 引用 chip 的类型图标与气泡
-// 引用块同源（quoteLogo.js 单点 —— 图片=真缩略 / 文档=.fc-icon 原图标 / 文字=新 logo）。
+// 引用块同源（quoteLogo.js 单点 —— 图片=真缩略 / 文档=.fc-icon 原图标 / 文字=
+// 引用入口图标 QUOTE_ENTRY_ICON，即 footer 引用键那颗，作者令 2026-11-02 12:58）。
 import { quoteTypeIcon } from './quoteLogo.js';
 
 /** Stable-ish ref id (内部用，非用户可见) — refType + monotonic counter. */

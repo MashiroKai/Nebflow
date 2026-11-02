@@ -32,10 +32,11 @@ import { showPopupMenu } from './contextMenu.js';
 import { makeReference } from './reference.js';
 import state from './state.js';
 // 引用牌图标化批（2026-11-02 11:00 作者令）：气泡引用块与 composer chip 的「类型
-// 图标」同一实现（图片=真缩略 / 文档=.fc-icon 原图标 / 文字=新 logo），单点 =
+// 图标」同一实现（图片=真缩略 / 文档=.fc-icon 原图标 / 文字=引用入口图标），单点 =
 // quoteLogo.js（对两个宿主都是叶子方向 ⇒ 既有的 msgQuote↔reference↔popArtifacts
-// 环不加深，见 check-circular 读数）。
-import { quoteTypeIcon } from './quoteLogo.js';
+// 环不加深，见 check-circular 读数）。footer 引用键的字形也从这里取（QUOTE_ENTRY_ICON，
+// 图标统一批 2026-11-02 12:58：键与引用牌同一枚，零第二份 path）。
+import { quoteTypeIcon, QUOTE_ENTRY_ICON } from './quoteLogo.js';
 
 // ── id ──────────────────────────────────────────────────────────────────
 
@@ -194,9 +195,12 @@ export const MAX_QUOTE_ATTS = 8;
 // （已带 .msg-quote-btn 的徽章跳过），round 边界二次 finishAi 追加的新徽章由
 // chat.js tagQuotableRow 重入时再排一次收敛补齐。
 
-/** 双引号图标（lucide `quote` 双路径原样；包裹属性与 utils.js COPY_SVG 同一约定
- *  —— 12×12 / 24 viewBox / stroke currentColor / round，视觉与复制钮同族）。 */
-const QUOTE_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/><path d="M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/></svg>';
+/** 双引号图标 = **引用入口图标**（单点在 quoteLogo.js）。字形统一批（作者令
+ *  2026-11-02 12:58「图标就用跟我们footer那个引用图标一样的吧」）把此前内联在本文件
+ *  的 `QUOTE_SVG` 上提到 quoteLogo.js 的 `QUOTE_ENTRY_ICON`：footer 键、footer 徽章
+ *  引用钮、气泡引用牌、composer 引用 chip 四处同源同一份 path（零第二份抄写）。
+ *  保留 `QUOTE_SVG` 这个名字给既有调用点/测试（同名 re-export，语义不变）。 */
+const QUOTE_SVG = QUOTE_ENTRY_ICON;
 // 字形导出（叠卡单张引用批 2026-11-02）：叠卡展开行的单张引用钮与 footer 引用钮
 // 同一枚字形（禁第二份拷贝 —— 字形漂移即第二套样式）。
 export { QUOTE_SVG };

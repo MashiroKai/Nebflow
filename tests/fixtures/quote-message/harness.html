@@ -486,6 +486,71 @@
     /** 内联图片字节（引用牌「真缩略」的取证源，与叠卡 tinyImg 同族）。 */
     window.__tinyImg = (tag) => tinyImg(tag);
 
+    /** 引用入口图标的读数（引用入口图标统一批 2026-11-02 12:58）：
+     *  footer 引用键 / footer 徽章引用钮 / 气泡引用牌 / composer chip 四处的
+     *  **SVG path `d` 串**与 `data-icon` 标识 —— 断言①「逐字相同」的直接读数面。
+     *  同时读 `color`（getComputedStyle）证明**只复用形状、不复用颜色**。 */
+    window.__quoteEntryIconShape = (textRowId) => {
+      const readSvg = (host) => {
+        const svg = host && host.querySelector('svg');
+        if (!svg) return null;
+        const cs = getComputedStyle(svg);
+        return {
+          d: Array.from(svg.querySelectorAll('path')).map(p => p.getAttribute('d')),
+          iconId: svg.getAttribute('data-icon') || '',
+          color: cs.color,
+          stroke: svg.getAttribute('stroke') || '',
+          viewBox: svg.getAttribute('viewBox') || '',
+          w: Math.round(svg.getBoundingClientRect().width),
+          h: Math.round(svg.getBoundingClientRect().height),
+        };
+      };
+      const footerBtn = document.getElementById('quote-item-btn');
+      const badgeBtn = document.querySelector('#chat .duration-badge .msg-quote-btn');
+      // 文字引用牌 = 走入口图标的那一块：优先按行 id 精确定位（同屏还有图片/文档/
+      // 历史腿引用牌，其 .nf-qicon 分别是 <img> 与 .fc-icon，不带 SVG）。
+      const textRow = textRowId ? window.__rowById(textRowId) : null;
+      const pill = (textRow && textRow.querySelector('.msg-quote-block .nf-qicon'))
+        || Array.from(document.querySelectorAll('#chat .msg-quote-block .nf-qicon'))
+          .find(el => el.classList.contains('is-glyph') && !el.classList.contains('fc-icon')
+            && el.querySelector('svg[data-icon]'))
+        || null;
+      const chip = document.querySelector('#attachment-preview .att-ref[data-ref-type="chat-message"] .nf-qicon');
+      // 色上下文单点：引用牌宿主链用 `--color-text-muted`，footer 键用
+      // `--color-frame-text-muted`（两个不同变量）。把两个变量在**当前主题**下的解析值
+      // 归一成计算色一并读出 —— 断言「引用牌图标吃的是引用牌那个变量」，而不是
+      // "恰好值不同"（深色主题下两个变量可以算出同值，值比较会误报）。
+      const resolveVar = (name) => {
+        const probe = document.createElement('span');
+        probe.style.color = `var(${name})`;
+        probe.style.position = 'absolute';
+        probe.style.visibility = 'hidden';
+        document.body.appendChild(probe);
+        const v = getComputedStyle(probe).color;
+        probe.remove();
+        return v;
+      };
+      return {
+        footer: readSvg(footerBtn),
+        badge: readSvg(badgeBtn),
+        pill: readSvg(pill),
+        chip: readSvg(chip),
+        pillHostColor: pill ? getComputedStyle(pill).color : '',
+        footerHostColor: footerBtn ? getComputedStyle(footerBtn).color : '',
+        chipHostColor: chip ? getComputedStyle(chip).color : '',
+        varTextMuted: resolveVar('--color-text-muted'),
+        varFrameTextMuted: resolveVar('--color-frame-text-muted'),
+        pillHeadHeight: (() => {
+          const h = pill && pill.closest('.msg-quote-head');
+          return h ? Math.round(h.getBoundingClientRect().height) : -1;
+        })(),
+        pillBlockColor: (() => {
+          const b = pill && pill.closest('.msg-quote-block');
+          return b ? getComputedStyle(b).color : '';
+        })(),
+      };
+    };
+
     /** 引用块读数（张数 UI 的机械判据：data-quote-item-index + 「第 N/total 张」）。
      *  引用牌图标化批（2026-11-02 11:00）追加 icon* 读数：图标类型（thumb/file/glyph）、
      *  缩略 src、`.fc-icon` 色族、图标盒几何（16px 档）、图标与摘要行的几何关系。 */
@@ -498,6 +563,7 @@
       const tr = box.querySelector('.msg-quote-text');
       const trr = tr ? tr.getBoundingClientRect() : null;
       const img = icon && icon.querySelector('img.nf-qicon-img');
+      const svg = icon && icon.querySelector('svg');
       return {
         itemIndex: box.dataset.quoteItemIndex ?? null,
         text: (box.querySelector('.msg-quote-text') || {}).textContent || '',
@@ -517,7 +583,12 @@
           leftOfText: !!(ir && trr && ir.right <= trr.left + 1),
           besideText: !!(ir && trr && ir.top < trr.bottom && ir.bottom > trr.top),
           inBox: !!(ir && ir.left >= box.getBoundingClientRect().left - 1),
+          // 图标统一批（2026-11-02 12:58）：字形身份 + 色上下文（形状复用、颜色各宿主）。
+          svgD: svg ? Array.from(svg.querySelectorAll('path')).map(p => p.getAttribute('d')) : [],
+          svgId: svg ? (svg.getAttribute('data-icon') || '') : '',
+          svgColor: svg ? getComputedStyle(svg).color : '',
         } : null,
+        boxColor: getComputedStyle(box).color,
         boxHeight: Math.round(box.getBoundingClientRect().height),
         textHeight: trr ? Math.round(trr.height) : 0,
         textLines: tr ? Math.round(trr.height / parseFloat(getComputedStyle(tr).lineHeight || '17.4')) : 0,
@@ -532,6 +603,7 @@
       const ir = icon ? icon.getBoundingClientRect() : null;
       const cr = chip.getBoundingClientRect();
       const img = icon && icon.querySelector('img.nf-qicon-img');
+      const svg = icon && icon.querySelector('svg');
       return {
         kind: icon ? (icon.classList.contains('is-thumb') ? 'thumb'
           : icon.classList.contains('is-file') ? 'file' : 'glyph') : 'none',
@@ -541,6 +613,10 @@
         text: icon ? (icon.textContent || '') : '',
         w: ir ? Math.round(ir.width) : 0,
         h: ir ? Math.round(ir.height) : 0,
+        svgD: svg ? Array.from(svg.querySelectorAll('path')).map(p => p.getAttribute('d')) : [],
+        svgId: svg ? (svg.getAttribute('data-icon') || '') : '',
+        svgColor: svg ? getComputedStyle(svg).color : '',
+        chipColor: getComputedStyle(chip).color,
         chipHeight: Math.round(cr.height),
         chipText: chip.textContent || '',
       };
