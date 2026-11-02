@@ -274,9 +274,22 @@ async function desktopScenario(browser, engine, colorScheme) {
     await page.waitForTimeout(900);
 
     // I. 点击外部收起（click-outside close）
+    //    「外部」= 真实的面板外（重做批 2026-11-02：面板从 30px 条变成 420×374 浮层，
+    //    旧写死的 (720,600) 现在落在面板内部 —— 那不是「点外部」）。取点规则：以面板
+    //    盒子为准，取其左侧 24px 之外、纵向落在面板中线的一个点，先断言该点确实不在
+    //    面板里，再点。
     await page.click('.tfl-capsule');
     await page.waitForTimeout(800);
-    await page.mouse.click(720, 600); // 聊天体空白
+    const outside = await page.evaluate(() => {
+      const card = document.querySelector('.tfl-card');
+      const r = card.getBoundingClientRect();
+      const x = Math.max(8, Math.round(r.left - 24));
+      const y = Math.round(r.top + r.height / 2);
+      const el = document.elementFromPoint(x, y);
+      return { x, y, outsideCard: !card.contains(el), hit: el ? (el.id || el.className || el.tagName) : null };
+    });
+    ok(`click-outside target is truly outside the panel (${tag})`, outside.outsideCard, JSON.stringify(outside));
+    await page.mouse.click(outside.x, outside.y);
     await page.waitForTimeout(900);
     ok(`click-outside closes (${tag})`,
       await page.locator('.tfl-card[data-state="capsule"]').count() === 1);

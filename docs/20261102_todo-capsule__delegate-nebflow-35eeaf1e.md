@@ -90,20 +90,32 @@ related: "[[20261102_title-capsule-height__delegate-nebflow-f003855e]]"
 | 套件 | 结果 | 日志 |
 |---|---|---|
 | `node tests/todo-capsule-redesign-shots.mjs`（九条断言 + 证据） | **187 pass / 0 fail** | `logs/todo-capsule-redesign.log` |
-| `node tests/todo-face-shots.mjs`（既有 todo suite） | **112 pass / 0 fail** | 改动前后同值（基线 `73c305f81` 亦 112/0） |
+| `node tests/todo-face-shots.mjs`（既有 todo suite） | **116 pass / 0 fail** | `logs/todo-face-shots.log` |
+| 同上，`73c305f81` 干净基线（同一施加了 §5.1 夹具修正的脚本） | **112 pass / 0 fail** | `logs/before-HEAD-todo-face-shots.log` |
 | `npx playwright test tests/mobile-dock.spec.mjs tests/mobile-pinned-search.spec.mjs` | **32 passed** | `logs/mobile-dock+pinned-search.log` |
 | `node tests/mobile-panel-title.spec.mjs`（独立脚本） | ALL PASS | `logs/mobile-panel-title.log` |
-| `npx playwright test tests/mobile-topbar.spec.mjs` | **3 passed** | `logs/mobile-panel-title+topbar+ime-guard.log` |
+| `npx playwright test tests/mobile-topbar.spec.mjs` | **3 passed** | `logs/mobile-topbar.log` |
 | `node tests/ime-guard.spec.mjs`（独立脚本） | ALL PASS | `logs/ime-guard.log` |
 | `npx playwright test delegate-chain-stub / taskbar-flow-overlap / tasklist-chain-blocks` | **24 passed / 1 failed**（该 1 项 = 既有红，见下） | `logs/chain-panel-legacy.log` |
 | `node scripts/visual-baseline.mjs --check` | canvas 四帧 SAME；余 8 项既有红（非本批） | `logs/visual-baseline-check.log` |
 
 **既有红的归因（不甩锅、逐条给证据）**：
 - `tasklist-chain-blocks` T1（`iconBox.y - glyphBox.y = 2.48 > 2`）：**在 `73c305f81` 干净基线工作树上同样红**（`logs/before-HEAD-chain-legacy.log`，同一断言、同一量级 `3.43`）。本批 `#task-list` 槽位与 `.task-card` 几何零触碰（只改 `.tfl-*` 面与槽位的 `position/padding/pointer-events`），该断言的元素 `.task-delegate-icon` / `.task-node-spin` 都在 delegate 链块内 ⇒ 既有红。
-- visual baseline 8 项（app-empty / chat-messages / settings-llm / bgtask-panel 等）：在 HEAD `f6cea0cf1` 上同样红 ⇒ 既有红。
+- visual baseline 8 项（app-empty / chat-messages / settings-llm-empty / bgtask-panel，各亮暗）= **既有红，且是同一批既有红**：在 `73c305f81`（本批起点）上这 8 项同样红（`logs/before-HEAD-visual-baseline-check.log`）。根因与本批无关 —— 存库基准的 `app-empty` 场景里**根本没有待办胶囊**，而 `73c305f81` 的实现已经在该场景渲染出顶带胶囊（改前读数 `diff=16963px (1.309%) bbox={x0:310,y0:27,x1:857,y1:97}`，正是顶带那一行；存库帧同位置为空）。本批只是把同一个胶囊从顶带挪到输入框下方，于是差异区跟着搬家、像素数变大（`diff=58850px (4.541%) bbox={x0:289,y0:27,x1:878,y1:899}`），但**红的那 8 项一字不差**。这类「场景基准早于待办面落地」的期望漂移应由待办面自己的重采批次统一处理，本批不擅自扩权去改 6 张场景基准。
 - canvas 两帧暗色差异**是本批的**：逐像素 `#242730 → #24272F`（B 通道 48→47），位于 `x=0, y=791..855` —— `#input-area` 新增的 6px 上下 padding 把玻璃底缘抬进视口，A/B 合成降 1 级。已按期望重采集（light 两帧 md5 未变），复跑全量 canvas 四帧 SAME。
 
 **申报**：任务书的 `make check-visual`（`Makefile:27`）在本机不可用，已按指令改跑 `scripts/visual-baseline.mjs --check`（在 `73c305f81` 快照树上需要 `NEBFLOW_PW_PATH` 指向主仓 `node_modules/playwright`）。
+
+### 5.1 既有 todo suite 的一处夹具修正（必须申报）
+
+`tests/todo-face-shots.mjs` 的 I 段「点击外部收起」原本写死点击点 `(720, 600)`，注释是「聊天体空白」。**该点在改前成立、在本批之后不成立**：面板从 30px 高的条变成 420×374 的浮层，`(720, 600)` 现在落在**面板内部** —— 于是这条断言退化成了「点面板内部应能收起」，语义已不是它自称的「点外部」。
+
+改法是让夹具自己证明「点的是外部」，而不是换一个魔法数字：
+1. 取面板盒子，取它左侧 24px 之外、纵向落在面板中线的点（`x = max(8, round(card.left - 24))`）；
+2. **先断言** `elementFromPoint(x, y)` 命中的元素不在 `.tfl-card` 内（新增断言 `click-outside target is truly outside the panel`）；
+3. 再点。
+
+改后该套件 **116 pass / 0 fail**（比基线多出的 4 条就是上述自证断言，chromium/webkit × 亮/暗）；同一脚本（含修正）在 `73c305f81` 干净基线上跑 **112 pass / 0 fail** —— 修正只补了自证，没有放宽任何判定。
 
 ## 6. 证据
 

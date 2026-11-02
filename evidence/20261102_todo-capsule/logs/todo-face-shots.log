@@ -20,6 +20,7 @@
   PASS idea chip visible (chromium-light)
   PASS swipe-down deletes tag (chromium-light)
   PASS collapse back to capsule (chromium-light)
+  PASS click-outside target is truly outside the panel (chromium-light)
   PASS click-outside closes (chromium-light)
   PASS zero console errors desktop (chromium-light)
 
@@ -52,6 +53,7 @@
   PASS idea chip visible (chromium-dark)
   PASS swipe-down deletes tag (chromium-dark)
   PASS collapse back to capsule (chromium-dark)
+  PASS click-outside target is truly outside the panel (chromium-dark)
   PASS click-outside closes (chromium-dark)
   PASS zero console errors desktop (chromium-dark)
 
@@ -84,6 +86,7 @@
   PASS idea chip visible (webkit-light)
   PASS swipe-down deletes tag (webkit-light)
   PASS collapse back to capsule (webkit-light)
+  PASS click-outside target is truly outside the panel (webkit-light)
   PASS click-outside closes (webkit-light)
   PASS zero console errors desktop (webkit-light)
 
@@ -116,6 +119,7 @@
   PASS idea chip visible (webkit-dark)
   PASS swipe-down deletes tag (webkit-dark)
   PASS collapse back to capsule (webkit-dark)
+  PASS click-outside target is truly outside the panel (webkit-dark)
   PASS click-outside closes (webkit-dark)
   PASS zero console errors desktop (webkit-dark)
 
@@ -127,4 +131,4 @@
   PASS mobile complete check (webkit-dark)
   PASS zero console errors mobile (webkit-dark)
 
-──── todo-face-shots: 112 pass / 0 fail ────
+──── todo-face-shots: 116 pass / 0 fail ────

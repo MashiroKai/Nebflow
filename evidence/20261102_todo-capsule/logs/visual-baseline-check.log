@@ -9,12 +9,12 @@ visual-baseline [check] playwright=playwright browser=chromium-151 (151.0.7922.3
   DIFF   chat-messages-light                    diff=57922px (4.469%) bbox={"x0":292,"y0":27,"x1":875,"y1":899}  → .nebflow/visual-baseline/darwin-chromium-151/chat-messages-light-diff.png 
   DIFF   settings-llm-empty-dark                diff=109279px (8.432%) bbox={"x0":289,"y0":27,"x1":998,"y1":899}  → .nebflow/visual-baseline/darwin-chromium-151/settings-llm-empty-dark-diff.png 
   DIFF   settings-llm-empty-light               diff=109639px (8.460%) bbox={"x0":292,"y0":27,"x1":998,"y1":899}  → .nebflow/visual-baseline/darwin-chromium-151/settings-llm-empty-light-diff.png 
-  DIFF   bgtask-panel-dark                      diff=-1px (100.000%) bbox=null 尺寸不一致 base=378x146 cur=338x144  
-  DIFF   bgtask-panel-light                     diff=-1px (100.000%) bbox=null 尺寸不一致 base=378x146 cur=338x144  
-  SAME   canvas-markdown-tab-dark               552x874 (2348ms) 
-  SAME   canvas-markdown-tab-light              552x874 (2369ms) 
-  SAME   canvas-code-tab-dark                   552x874 (3434ms) 
-  SAME   canvas-code-tab-light                  552x874 (3432ms) 
+  DIFF   bgtask-panel-dark                      diff=-1px (100.000%) bbox=null 尺寸不一致 base=378x146 cur=332x144  
+  DIFF   bgtask-panel-light                     diff=-1px (100.000%) bbox=null 尺寸不一致 base=378x146 cur=332x144  
+  SAME   canvas-markdown-tab-dark               552x874 (2414ms) 
+  SAME   canvas-markdown-tab-light              552x874 (2428ms) 
+  SAME   canvas-code-tab-dark                   552x874 (3517ms) 
+  SAME   canvas-code-tab-light                  552x874 (3471ms) 
 
 VISUAL BASELINE FAIL: 8 项超阈值/缺失
   阈值：单通道容差 0，差异像素占比上限 0.00%
