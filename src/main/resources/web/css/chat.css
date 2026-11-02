@@ -378,8 +378,17 @@
    细顶界线分组）；二级行 = 缩进一格的子行（bg-task-row-child）。纯布局，零新色令牌
    （沿用既有 muted/hover 变量）。
    面板树批（2026-10-29 ①）：子行加**左侧引导竖线**（2px frame-border；缩进相应
-   -2px 防布局移位）——派生关系一眼可辨（作者报障「让人一眼能看出是派生的子智能体」）。 */
-.bg-task-row-head { border-top: 1px solid var(--glass-control-border); }
+   -2px 防布局移位）——派生关系一眼可辨（作者报障「让人一眼能看出是派生的子智能体」）。
+   行集收敛批（2026-11-02 · RCA 必须修③「组头/子行视觉可辨」）：组头加**左侧 3px
+   强调条**（agent 档 token，inset 阴影零布局位移）+ 主名中度字重——此前组头与顶层行
+   共用同一张脸（截图里两行重复节点都是无标识的顶层脸），层级一眼读不出。子行保持
+   「缩进 + 引导竖线 + 小一号主名」既有档；DOM 机器可读锚 = data-bg-row-level
+   （head/child/top，bgAgents.js 写点）。 */
+.bg-task-row-head {
+  border-top: 1px solid var(--glass-control-border);
+  box-shadow: inset 3px 0 0 rgb(var(--accent-agent-light) / 0.35);
+}
+.bg-task-row-head .bg-task-name { font-weight: 600; }
 .bg-dropdown-list .bg-task-row-head:first-child { border-top: none; }
 /* 双类锚（0,2,0）压过 .bg-task-row 的 padding 简写（源序在后——单类锚必输）。 */
 .bg-task-row.bg-task-row-child {
