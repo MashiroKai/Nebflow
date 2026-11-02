@@ -206,25 +206,79 @@ let unsubs = [];
 
 const backLabel = () => tt('返回', 'Back');
 
-// ── 面板头两态滚动探针（B 批 2026-11-01 作者 17:01 选型）───────────────
-// 收缩阈值：样张迷你比例 36px（258×470 壳）→ 真机 390 宽换算 ≈ 56px
-// （大标题文本行滑入顶缘渐隐带实底区、行将没入时小字接棒）。
+// ── 面板头两段式标题滚动探针（两段式标题批 2026-11-02 作者令）──────────
+// 承接 B 批（2026-11-01 17:01 选型）的 56px 吸附阈值，并把它由「布尔切换」
+// 升级为**连续进度**：大标题 → 悬浮胶囊之间的全部形态量（大标题透明度/位移/
+// 收高、胶囊透明度）都由 CSS 侧的 --mtitle-p 0→1 插值，逐帧跟手。胶囊几何
+// 不参与插值（高 32 / 中心 40 恒定 —— 几何契约要有单一真值，见 mobileLayer.css）。
+//   进度区间：[ROLL_START, ROLL_THRESHOLD] = [8, 56]（区间外钳死在 0/1）——
+//   8 起算 = 手指一动即开始收，56 到位 = 大标题整行没入胶囊位（样张换算档）。
+//   .rolled 保留为「进度到顶」的布尔判据（spec 与兼容读者用；阈值仍 56）。
+const ROLL_START = 8;
 const ROLL_THRESHOLD = 56;
+/** reduced-motion：形态二值切换（进度只在 0/1 两值；配 CSS 侧摘除唯一位移量
+ *  = 切换瞬时成立、零动画）。 */
+const reducedMotion = () => typeof window.matchMedia === 'function'
+  && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+/** 事件目标到 section 之间**最外层**纵向可滚容器（getComputedStyle overflowY
+ *  auto/scroll + 真实可滚余量）—— 内层横滑 chip 条/嵌套小滚区不误判。 */
+function primaryScroller(section, target) {
+  let primary = null;
+  for (let n = /** @type {Element} */ (target); n && n !== section; n = n.parentElement) {
+    const oy = getComputedStyle(n).overflowY;
+    if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight - n.clientHeight > 4) primary = n;
+  }
+  return primary;
+}
+/** 写进度 + 两个判据类：
+ *   --mtitle-p        0→1 连续进度（CSS 两段形态量单源）；
+ *   .rolled           scrollTop > 阈值（吸附成立，spec/兼容读者）；
+ *   .mpt-pane-scroll  主滚轴**不是**页面体（pane/内滚面：大标题不会随滚走，
+ *                     故 CSS 侧按进度收高把整条顶带还给收编面）。 */
+function applyRoll(section, scroller) {
+  const st = scroller ? scroller.scrollTop : 0;
+  let p = (st - ROLL_START) / (ROLL_THRESHOLD - ROLL_START);
+  p = p < 0 ? 0 : p > 1 ? 1 : p;
+  if (reducedMotion()) p = p >= 0.5 ? 1 : 0;
+  section.style.setProperty('--mtitle-p', String(Math.round(p * 1000) / 1000));
+  section.classList.toggle('rolled', st > ROLL_THRESHOLD);
+  const body = section.querySelector('.mobile-page-body');
+  section.classList.toggle('mpt-pane-scroll', !!scroller && scroller !== body);
+}
 /** 滚动收缩探针：section 上挂捕获相位监听（scroll 不冒泡但走捕获，页内一切
  *  滚动容器——页体自身/pane 内部 .team-scroll、#settings-content、.todo-page-body
- *  等——统一汇入，零逐面接线）。主滚轴判定 = 事件目标到 section 之间**最外层**
- *  纵向可滚容器（getComputedStyle overflowY auto/scroll + 真实可滚余量）：
- *  内层横滑 chip 条/嵌套小滚区的 scrollTop 不误触发、不误复位。 */
+ *  等——统一汇入，零逐面接线）。 */
 function bindRollProbe(section) {
   section.addEventListener('scroll', (e) => {
-    let primary = null;
-    for (let n = /** @type {Element} */ (e.target); n && n !== section; n = n.parentElement) {
-      const oy = getComputedStyle(n).overflowY;
-      if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight - n.clientHeight > 4) primary = n;
-    }
-    const sc = /** @type {HTMLElement} */ (primary || e.target);
-    section.classList.toggle('rolled', sc.scrollTop > ROLL_THRESHOLD);
+    const sc = primaryScroller(section, e.target) || /** @type {HTMLElement} */ (e.target);
+    applyRoll(section, sc);
   }, { capture: true, passive: true });
+}
+/** 进场对账（push/切根时调用）：页面壳 DOM 常驻、滚动位保留，故按当前实测
+ *  主滚轴重算一次进度（否则离场时的吸附态会带进下一次进场）。
+ *  判据同事件腿：**最外层**有余量的纵向滚动器（按距 section 的层级取最小者，
+ *  避免把 earlier 兄弟里的嵌套滚区误当主滚轴）。 */
+function refreshRoll(section) {
+  if (section.classList.contains('mobile-page-nohead')) return;
+  const body = section.querySelector('.mobile-page-body');
+  let primary = null;
+  let primaryDepth = Infinity;
+  const depthOf = (n) => {
+    let d = 0;
+    for (let p = n; p && p !== section; p = p.parentElement) d += 1;
+    return d;
+  };
+  if (body) {
+    for (const n of [body, ...body.querySelectorAll('*')]) {
+      const oy = getComputedStyle(n).overflowY;
+      if (oy !== 'auto' && oy !== 'scroll') continue;
+      if (n.scrollHeight - n.clientHeight <= 4) continue;
+      const d = depthOf(n);
+      if (d < primaryDepth) { primary = n; primaryDepth = d; }
+      if (d === 1) break; // 页体自身可滚 ⇒ 它必是最外层，无需再扫
+    }
+  }
+  applyRoll(section, primary || body);
 }
 
 // ── 页面壳构建 ───────────────────────────────────────────────────────
@@ -249,13 +303,17 @@ function buildSection(def) {
   //  （随滚走；.mobile-page-title 类名不变，locale 重绘/ push 聚焦两个既有
   //  查询点零改）；收缩态 = 小字居中 + 顶缘渐隐带承底（几何/材质在
   //  mobileLayer.css）。dock 根页无页头不变。
+  //  两段式标题批（2026-11-02 作者令，实拍 IMG_1677/1678）：两态升级为
+  //  「静止大标题（水平居中）→ 吸附毛玻璃胶囊」连续两段，渐隐带退役；
+  //  滚动进度 --mtitle-p 由 bindRollProbe 写（几何全在 mobileLayer.css）。
   if (!def.dock) {
     const head = document.createElement('div');
     head.className = 'mobile-page-header';
-    // 收缩态两件（装饰副本，aria-hidden —— 页名播报与聚焦由流内大标题承接）。
-    const band = document.createElement('div');
-    band.className = 'mobile-page-title-band';
-    band.setAttribute('aria-hidden', 'true');
+    // 吸附态装饰副本（aria-hidden —— 页名播报与聚焦由流内大标题承接）。
+    // 两段式标题批 2026-11-02：本节点 = 悬浮毛玻璃胶囊（材质/几何在
+    // mobileLayer.css），顶缘渐隐带 .mobile-page-title-band 随批退役
+    // （固定高度渐隐罩正是作者所指「顶区占一条不走内容」，胶囊自带毛玻璃
+    // 底已承担压住滚入内容的读作）——DOM 侧不再建该节点。
     const mini = document.createElement('span');
     mini.className = 'mobile-page-title-mini';
     mini.setAttribute('aria-hidden', 'true');
@@ -263,13 +321,14 @@ function buildSection(def) {
     const back = document.createElement('button');
     back.type = 'button';
     // 悬浮钮统一批（作者令 10-31 16:03）：「<」归 48px g2-fab 基准材质，
-    // 悬浮位/几何由 mobileLayer.css 页面悬浮带块承担。
+    // 悬浮位/几何由 mobileLayer.css 页面悬浮带块承担；两段式标题批后仍在
+    // 胶囊左侧（左 16 / 钮 48 / 缝 8 = 胶囊左缘 72），吸附态保持可点。
     back.className = 'mobile-back-btn g2-fab';
     back.title = backLabel();
     back.setAttribute('aria-label', backLabel());
     back.innerHTML = '<i data-lucide="chevron-left"></i>';
     back.addEventListener('click', () => backOut());
-    head.append(back, band, mini);
+    head.append(back, mini);
     if (typeof lucide !== 'undefined') createIconsIn(head);
     // 展开态大标题 = 页体流内首件（在一切收编面之前入列 —— 后续 pane/面
     // adopt 全部 append，首件地位恒定）。
@@ -1696,7 +1755,12 @@ function renderPages() {
   for (const [id, section] of sections) {
     const live = top === id;
     section.classList.toggle('live', live);
-    if (live) (/** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title')))?.focus?.();
+    if (live) {
+      (/** @type {HTMLElement|null} */ (section.querySelector('.mobile-page-title')))?.focus?.();
+      // 两段式标题批：进场按当前实测主滚轴重算进度（DOM 常驻、滚动位保留，
+      // 离场时的吸附态不得带进下一次进场）。
+      refreshRoll(section);
+    }
   }
   document.body.classList.toggle('mf-page-open', top !== 'chat');
   syncDockActive();

@@ -164,9 +164,13 @@ try {
     ok('F1 家族卡边（1px #e5e7eb）', card.border === '1px rgb(229, 231, 235)', card.border);
     ok('F1 家族卡影（官方两档外影，无 inset 玻璃高光）',
       card.shadow.includes('rgba(17, 24, 39, 0.06)') && !card.shadow.includes('inset'), card.shadow.slice(0, 120));
-    const lockup = page.locator('#takeover-box .nfc-lockup-light');
-    ok('F1 家族字标在场（官方 lockup 图，alt=STAND）',
-      await lockup.isVisible() && (await lockup.getAttribute('alt')) === 'STAND');
+    // 品牌图标缺字形批（2026-11-02）：字标 = 内联 SVG 单档（原双档 PNG 在实跑
+    // 实例上 404 ⇒ 蓝底问号破图）。判据改：svg 可见 + aria-label=STAND + 零 <img>。
+    const lockup = page.locator('#takeover-box svg.nfc-lockup');
+    ok('F1 家族字标在场（内联 SVG，aria-label=STAND）',
+      await lockup.isVisible() && (await lockup.getAttribute('aria-label')) === 'STAND');
+    ok('F1 字标零图片依赖（无 lockup <img>）',
+      (await page.locator('#takeover-box img.nfc-lockup').count()) === 0);
     const titleSt = await page.locator('#takeover-title').evaluate(el => {
       const s = getComputedStyle(el);
       return { size: s.fontSize, weight: s.fontWeight, color: s.color };
@@ -291,9 +295,10 @@ try {
       darkCard.bg === 'rgb(22, 27, 34)' && darkCard.border === '1px rgb(45, 51, 59)', JSON.stringify(darkCard));
     ok('F1-dark 家族影暗档（官方 panel-shadow 两档）',
       darkCard.shadow.includes('rgba(0, 0, 0, 0.5)') && darkCard.shadow.includes('rgba(0, 0, 0, 0.35)'), darkCard.shadow.slice(0, 120));
-    ok('F1-dark 暗字标切换（dark lockup 可见/亮档隐）',
-      await dark.locator('#takeover-box .nfc-lockup-dark').isVisible()
-      && !(await dark.locator('#takeover-box .nfc-lockup-light').isVisible()));
+    const darkLockColor = await dark.locator('#takeover-box svg.nfc-lockup')
+      .evaluate(el => getComputedStyle(el).color).catch(() => null);
+    ok('F1-dark 暗字标随主题换墨（currentColor ⇒ #e6edf3）',
+      darkLockColor === 'rgb(230, 237, 243)', darkLockColor);
     await dark.screenshot({ path: join(SHOTS, 'takeover-dark.png') });
     await darkCtx.close();
   }

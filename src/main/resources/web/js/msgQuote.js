@@ -74,6 +74,17 @@ function truncate(s, n) {
   return v.length > n ? v.slice(0, n) + '…' : v;
 }
 
+/** 叠卡单张位置标注（叠卡内单图引用批 2026-11-02 作者令「让叠卡的图片可以分开
+ *  引用」）：d.itemIndex（0 基）+ d.itemTotal（该组总张数，≥2）⇒「第 N/total 张」
+ *  后缀。任一项缺席/非法 ⇒ ''（= 消息级引用，**零张数 UI**：单图行与普通文本/
+ *  工具行退化路径逐字不变，验收项④）。 */
+function quoteItemPosOf(d) {
+  const i = Number(d && d.itemIndex);
+  const n = Number(d && d.itemTotal);
+  if (!Number.isInteger(i) || i < 0 || !Number.isInteger(n) || n < 2) return '';
+  return t('chat.quoteImagePos', { n: i + 1, total: n });
+}
+
 /**
  * 行描述符 → 引用摘要/注入正文（§2.5 表 + §3.1 fullText 组装规则）。
  * d.kind: 'text'（用户/助手/注入文本行）| 'tool' | 'ask' | 'image' | 'file'
@@ -87,7 +98,11 @@ function excerptOf(d) {
   switch (d.kind) {
     case 'tool': return `${t('chat.quoteTypeTool')} ${truncate(d.label || '', 40)}${d.summary ? ' · ' + truncate(d.summary, 40) : ''}`;
     case 'ask': return `${t('chat.quoteTypeAsk')} ${firstLineExcerpt(d.question)}`;
-    case 'image': return `${t('chat.quoteTypeImage')} ${d.fileName || ''}`.trim();
+    // 叠卡单张（itemIndex 在场）⇒ 摘要带「第 N/total 张」：三张图的引用牌
+    // 因此**互不相同**（验收项②），引用对象仍是该图自己的身份（图片名 + 位置）。
+    // 位置放**文件名之前**：引用块是两行 clamp（窄气泡时更短），尾部的标注会被
+    // 截掉 —— 标注必须在看得见的位置（作者令「引用牌要能区分」的可读落地）。
+    case 'image': return `${t('chat.quoteTypeImage')} ${quoteItemPosOf(d) ? quoteItemPosOf(d) + ' · ' : ''}${d.fileName || ''}`.trim();
     case 'file': return `${t('chat.quoteTypeFile')} ${d.fileName || ''}`.trim();
     default: return firstLineExcerpt(d.text);
   }
@@ -98,7 +113,12 @@ function fullTextOf(d) {
   switch (d.kind) {
     case 'tool': return excerptOf(d);
     case 'ask': return excerptOf(d);
-    case 'image': return `${t('chat.quoteTypeImage')} ${d.fileName || ''}${pathTail}`.trim();
+    // 注入正文（fullText，模型读的语义面）同样带位置：引用「第 2 张」与「整组」
+    // 在上下文里必须可区分。
+    case 'image': {
+      const pos = quoteItemPosOf(d);
+      return `${t('chat.quoteTypeImage')} ${pos ? pos + ' · ' : ''}${d.fileName || ''}${pathTail}`.trim();
+    }
     case 'file': return `${t('chat.quoteTypeFile')} ${d.fileName || ''}${pathTail}`.trim();
     default: return String(d.text || '').slice(0, 1200);
   }
@@ -108,9 +128,34 @@ function fullTextOf(d) {
  *  附件批（2026-10-31 作者令「引用要支持你发的文件 图片等」）：描述符 d.attachments
  *  （媒体行全量附件 / 文本行引用时兄弟媒体行合入）随 content.attachments 上 wire，
  *  live 腿引用块据此渲染附件缩略；后端落盘 quote 快照白名单化 type/name/path
- *  （WebSocketRoutes.quoteFromRefs），preview（data: 内联字节）只活在前端内存。 */
+ *  （WebSocketRoutes.quoteFromRefs），preview（data: 内联字节）只活在前端内存。
+ *
+ *  **叠卡单张引用批（2026-11-02 作者令「让叠卡的图片可以分开引用」）——数据面
+ *  只做**扩展**，不换引用目标模型（申报见文档 §数据模型两方案）：
+ *   · 引用目标仍 = 该行的 messageId（不变；深链寻址/就绪判据/降级矩阵零改动）；
+ *   · 新增 content.itemIndex（0 基）+ content.itemTotal（该组张数）＝「这张在第
+ *     几位、组里共几张」——引用牌据此标注「第 N/total 张」（互不相同的判据）；
+ *   · 单张引用时 content.attachments 只带**被引那张**（一张起引用牌的缩略/文件名
+ *     就是那张的，不再是整组）；缺席 itemIndex ⇒ 既有全量语义逐字节不变。
+ *  代价 = 后端 quote 快照白名单需放行两个整数字段（旧载荷零变化，旧行照旧渲染）。 */
 export function chatMessageRefInput(d) {
   const atts = Array.isArray(d.attachments) ? d.attachments : [];
+  const content = {
+    excerpt: excerptOf(d),
+    fullText: fullTextOf(d),
+    attachments: atts.slice(0, MAX_QUOTE_ATTS).map(a => ({
+      type: a.type === 'image' || a.type === 'video' ? a.type : 'file',
+      name: String(a.name || '').slice(0, 200),
+      path: String(a.path || '').slice(0, 600),
+      preview: (typeof a.preview === 'string' && a.preview.startsWith('data:')) ? a.preview : undefined,
+    })),
+  };
+  const idx = Number(d.itemIndex);
+  const total = Number(d.itemTotal);
+  if (Number.isInteger(idx) && idx >= 0) {
+    content.itemIndex = idx;
+    if (Number.isInteger(total) && total > idx) content.itemTotal = total;
+  }
   return {
     refType: 'chat-message',
     source: {
@@ -120,16 +165,7 @@ export function chatMessageRefInput(d) {
       senderRole: d.senderRole || 'user',
       senderName: d.senderName || '',
     },
-    content: {
-      excerpt: excerptOf(d),
-      fullText: fullTextOf(d),
-      attachments: atts.slice(0, MAX_QUOTE_ATTS).map(a => ({
-        type: a.type === 'image' || a.type === 'video' ? a.type : 'file',
-        name: String(a.name || '').slice(0, 200),
-        path: String(a.path || '').slice(0, 600),
-        preview: (typeof a.preview === 'string' && a.preview.startsWith('data:')) ? a.preview : undefined,
-      })),
-    },
+    content,
     meta: { ts: d.ts || 0 },
   };
 }
@@ -156,6 +192,9 @@ export const MAX_QUOTE_ATTS = 8;
 /** 双引号图标（lucide `quote` 双路径原样；包裹属性与 utils.js COPY_SVG 同一约定
  *  —— 12×12 / 24 viewBox / stroke currentColor / round，视觉与复制钮同族）。 */
 const QUOTE_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/><path d="M5 3a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2 1 1 0 0 1 1 1v1a2 2 0 0 1-2 2 1 1 0 0 0-1 1v2a1 1 0 0 0 1 1 6 6 0 0 0 6-6V5a2 2 0 0 0-2-2z"/></svg>';
+// 字形导出（叠卡单张引用批 2026-11-02）：叠卡展开行的单张引用钮与 footer 引用钮
+// 同一枚字形（禁第二份拷贝 —— 字形漂移即第二套样式）。
+export { QUOTE_SVG };
 
 /**
  * footer 引用按钮（与右键「引用」完全同动作）。tooltip 复用既有键
@@ -181,6 +220,17 @@ export function createMsgQuoteButton() {
     startQuote(resolveQuoteDesc(row, d));
   });
   return btn;
+}
+
+/** 行内**单件**引用（叠卡单张引用批 2026-11-02 作者令「让叠卡的图片可以分开
+ *  引用」）：宿主面板只描述「这一件是什么」（itemDesc），行身份（messageId /
+ *  sessionId / 发送方）与行级描述符仍在**这里**统一解析 —— 挂点漏传身份也不会
+ *  产生无锚引用（attachQuoteMenu 的同一纪律）。itemDesc 覆盖行级描述符的同名键
+ *  （kind/fileName/path/attachments），并带 itemIndex/itemTotal 作位置标注。 */
+export function startItemQuote(rowEl, itemDesc) {
+  if (!itemDesc) return false;
+  const base = (rowEl && /** @type {any} */ (rowEl).__nfQuoteDesc) || {};
+  return startQuote(resolveQuoteDesc(rowEl, { ...base, ...itemDesc }));
 }
 
 /** 徽章收敛：行内每个直属 footer 徽章补一枚引用按钮（复制钮右侧；徽章级幂等）。
@@ -340,6 +390,14 @@ export function attachQuoteMenu(rowEl, d) {
 function quoteViewOf(q) {
   if (!q || typeof q !== 'object') return null;
   const raw = Array.isArray(q.attachments) ? q.attachments : [];
+  // 叠卡单张（2026-11-02）：itemIndex/itemTotal 从快照（历史腿，顶层）或
+  // content（live 腿 ref 本体）读；非法/缺席 ⇒ null（消息级引用，零张数 UI）。
+  const iRaw = q.itemIndex != null ? q.itemIndex : (q.content && q.content.itemIndex);
+  const nRaw = q.itemTotal != null ? q.itemTotal : (q.content && q.content.itemTotal);
+  const itemIndex = Number.isInteger(Number(iRaw)) && Number(iRaw) >= 0 && iRaw !== null && iRaw !== undefined
+    ? Number(iRaw) : null;
+  const itemTotal = itemIndex !== null && Number.isInteger(Number(nRaw)) && Number(nRaw) > itemIndex
+    ? Number(nRaw) : null;
   return {
     refMessageId: String(q.refMessageId || (q.source && q.source.messageId) || ''),
     excerpt: String(q.excerpt || (q.content && q.content.excerpt) || ''),
@@ -351,6 +409,8 @@ function quoteViewOf(q) {
       path: String(a.path || ''),
       preview: (typeof a.preview === 'string' && a.preview.startsWith('data:')) ? a.preview : '',
     })),
+    itemIndex,
+    itemTotal,
     deleted: q.deleted === true,
   };
 }
@@ -474,6 +534,9 @@ export function renderQuoteBlock(quote) {
     return box;
   }
   box.dataset.refMessageId = q.refMessageId;
+  // 叠卡单张（2026-11-02）：位置钉在引用块上 ⇒ 跳转读得到「展开到第几张」，
+  // 探针也读得到（验收项③/④的读数面）。
+  if (q.itemIndex !== null && q.itemIndex !== undefined) box.dataset.quoteItemIndex = String(q.itemIndex);
   const line = document.createElement('div');
   line.className = 'msg-quote-text';
   const sender = document.createElement('span');
@@ -482,6 +545,10 @@ export function renderQuoteBlock(quote) {
   line.appendChild(sender);
   line.appendChild(document.createTextNode(sender.textContent ? `：${q.excerpt}` : q.excerpt));
   box.appendChild(line);
+  // 位置标注只有一处 UI = 摘要行尾的「第 N/total 张」（excerptOf 拼好，见该处）：
+  // 不再挂第二枚标记元素（同一信息不重复上屏）。消息级引用（无 index）连这个
+  // 后缀都没有 ⇒ 验收项④「单图退化无张数 UI」的机械判据 = 摘要不含该串 +
+  // 引用块无 data-quote-item-index。
   if (q.attachments.length) box.appendChild(renderQuoteAttStrip(q.attachments));
   // 点击不消费菜单/不触发行上其它交互。
   box.addEventListener('click', (e) => { e.stopPropagation(); jumpToQuote(box); });
@@ -496,15 +563,65 @@ export function renderQuoteBlock(quote) {
 // ── 跳转 + 高亮（同屏；fmQuoteTargetFlash 同款 1.8s 整块 fade）───────────
 
 let _flashTimer = 0;
+let _itemFlashTimer = 0;
+
+/** 叠卡单图深链（2026-11-02 作者令「让叠卡的图片可以分开引用」验收项④/⑤）：
+ *  引用块带 data-quote-item-index ⇒ 跳转**定位到那一张**：
+ *   ① 目标行的叠卡若处于收起态 ⇒ 先展开（`pill.click()` = 用户手势同一条路，
+ *      零第二套开关；展开后每行是自己的真实比，能看清是哪一张）；
+ *   ② 展开列里第 N 行打 `.quote-item-flash`（1.8s，与行级 flash 同节奏同色阶）；
+ *   ③ 再按「该行是否已在视口内」把滚动目标从整行切到那一行（比整行更准）。
+ *  卡片暴露的钩子是 `area.popFaces`（index → 折叠层/展开层元素，见
+ *  popArtifacts.buildMediaStack 头注），不新增 DOM 契约；拿不到钩子（旧宿主/
+ *  纯内联腿）⇒ 静默退回整行定位（零死点击、零异常）。 */
+function revealQuoteItem(row, index) {
+  if (!row || !Number.isInteger(index) || index < 0) return null;
+  const area = row.querySelector('.pop-stack-area');
+  if (!area) return null;
+  const faces = Array.isArray(area.popFaces) ? area.popFaces : [];
+  const face = faces[index];
+  const expandLayer = face && Array.isArray(face.els)
+    ? face.els.find(el => el && el.closest && el.closest('.pop-expand-view'))
+    : null;
+  const layer = expandLayer ? expandLayer.closest('.media-layer') : null;
+  if (!layer) return null;
+  const pill = area.querySelector('.pill');
+  if (pill && !area.querySelector('.pop-expand-view.show')) pill.click(); // 收起态 ⇒ 展开
+  layer.classList.remove('quote-item-flash');
+  void layer.offsetWidth; // 重放动画
+  layer.classList.add('quote-item-flash');
+  if (_itemFlashTimer) clearTimeout(_itemFlashTimer);
+  _itemFlashTimer = setTimeout(() => {
+    document.querySelectorAll('.media-layer.quote-item-flash').forEach(el => el.classList.remove('quote-item-flash'));
+  }, 1800);
+  return layer;
+}
+
+/** 同一 msg-id 的全部行（用户「气泡行 + 媒体卡行」共用同一 id，见 chat.js
+ *  renderUserBubble：mediaRow.dataset.msgId = row.dataset.msgId）——单图跳转要挑
+ *  出**带叠卡的那一行**，不能停在文档序第一行（气泡行没有叠卡）。 */
+function targetRows(box) {
+  const id = box.dataset.refMessageId || '';
+  if (!id) return [];
+  const root = box.closest('#chat') || document;
+  return Array.from(root.querySelectorAll(`.row[data-msg-id="${CSS.escape(id)}"]`));
+}
 
 /** 滚动到目标行（在其滚动容器内滚，不写任意外层祖先 —— revealQuoteTarget 同纪律）
  *  + 一次性 1.8s 高亮（宿主 = 整行；prefers-reduced-motion 由 CSS 降为 0.01s）。 */
 export function jumpToQuote(box) {
   if (!box || box.dataset.quoteJump !== 'ready') return false;
-  const row = quoteTargetRow(box);
-  if (!row) return false;
+  const rows = targetRows(box);
+  if (!rows.length) return false;
+  const idx = Number(box.dataset.quoteItemIndex ?? NaN);
+  // 叠卡单图（2026-11-02）：带叠卡的那一行优先（展开 + 高亮第 N 张），
+  // 滚动目标优先用那张本身（比整行更准）；拿不到叠卡/旧宿主 ⇒ 退回整行。
+  const stackRow = Number.isInteger(idx) ? (rows.find(r => r.querySelector('.pop-stack-area')) || rows[0]) : rows[0];
+  const itemLayer = revealQuoteItem(stackRow, idx);
+  const row = stackRow;
+  const target = itemLayer || row;
   // 就近滚动容器（overflow-y auto/scroll 的最近祖先）。
-  let scroller = row.parentElement;
+  let scroller = target.parentElement;
   while (scroller && scroller !== document.body) {
     const oy = getComputedStyle(scroller).overflowY;
     if (oy === 'auto' || oy === 'scroll') break;
@@ -512,21 +629,29 @@ export function jumpToQuote(box) {
   }
   if (scroller && scroller !== document.body) {
     const fr = scroller.getBoundingClientRect();
-    const nr = row.getBoundingClientRect();
+    const nr = target.getBoundingClientRect();
     const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
     const delta = (nr.top - fr.top) - Math.max(0, (scroller.clientHeight - nr.height) / 2);
     scroller.scrollTop = Math.max(0, Math.min(max, scroller.scrollTop + delta));
   }
   row.classList.remove('quote-target-flash');
-  void row.offsetWidth; // 重放动画（同一行连点两次）
-  row.classList.add('quote-target-flash');
+  // 同一 msg-id 的兄弟行（用户「气泡行 + 媒体卡行」）一并高亮：引用对象是整条
+  // 消息，高亮只落在其中一行会让「点回去」看起来只到一半（单图引用批 2026-11-02）。
+  rows.forEach(r => {
+    r.classList.remove('quote-target-flash');
+    void r.offsetWidth; // 重放动画（同一行连点两次）
+    r.classList.add('quote-target-flash');
+  });
   if (_flashTimer) clearTimeout(_flashTimer);
-  _flashTimer = setTimeout(() => row.classList.remove('quote-target-flash'), 1800);
+  _flashTimer = setTimeout(() => {
+    document.querySelectorAll('.row.quote-target-flash').forEach(el => el.classList.remove('quote-target-flash'));
+  }, 1800);
   return true;
 }
 
 /** 引用 ref（wire/pendingAttachments 形状）→ renderQuoteBlock 入参视图。
- *  附件批：ref.content.attachments 随带（live 腿，含内联 preview）。 */
+ *  附件批：ref.content.attachments 随带（live 腿，含内联 preview）。
+ *  叠卡单张：content.itemIndex/itemTotal 一并透传（quoteViewOf 消费）。 */
 export function quoteFromRef(ref) {
   if (!ref || ref.refType !== 'chat-message') return null;
   return {
@@ -535,5 +660,7 @@ export function quoteFromRef(ref) {
     senderRole: (ref.source && ref.source.senderRole) || 'user',
     senderName: (ref.source && ref.source.senderName) || '',
     attachments: Array.isArray(ref.content && ref.content.attachments) ? ref.content.attachments : [],
+    itemIndex: ref.content ? ref.content.itemIndex : undefined,
+    itemTotal: ref.content ? ref.content.itemTotal : undefined,
   };
 }

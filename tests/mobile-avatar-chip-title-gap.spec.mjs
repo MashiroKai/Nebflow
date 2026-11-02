@@ -6,7 +6,8 @@
 //   ① agent 默认头像（无自定义头像时的 stand logo 兜底）随主题换色：
 //      浅色主题 = 白底黑 logo / 深色主题 = 黑底白 logo（stand-tokens.css
 //      --agent-avatar-chip-bg，配对 = brand app-icon 亮/暗档）。消费者 =
-//      会话头 #agent-avatar-btn（桌面 28px / 手机 56px 同规则）+ 档案预览盒
+//      会话头 #agent-avatar-btn（桌面 28px / 手机 40px 同规则；40 由会话顶栏单行
+//      三段式批 2026-11-02 从 56 收档）+ 档案预览盒
 //      .ap-avatar-box + dock 中键 logo 态（:has 限定，自定义头像态 sapphire 环
 //      零回归）。logo 黑白翻面 = brand 双主题 picture（prefers-color-scheme）。
 //   ② dock 中键 logo 居中修正：裸 inline <picture> 百分比双基准问题（修前像素

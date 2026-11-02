@@ -1238,52 +1238,12 @@ private[gateway] object NeblinkRoutes:
   )(using ctx: RestApiCtx): IO[Either[String, String]] =
     import ctx.*
 
-    ns.peers.flatMap { peers =>
-      peers.find(p =>
-        p.deviceName.equalsIgnoreCase(targetDevice) ||
-          p.deviceName.toLowerCase.contains(targetDevice.toLowerCase)
-      ) match
-        case None => IO.pure(Left(s"Device '$targetDevice' not found"))
-        case Some(peer) =>
-          if peer.address.isEmpty then IO.pure(Left(s"Device '$targetDevice' has no address"))
-          else
-            logger.info(s"Remote update via P2P: ${peer.deviceName} at ${peer.address} (beta=$beta)") *>
-              IO.blocking {
-                import sttp.client4.*
-                val fields = List("beta" -> beta.asJson)
-                  ++ clientRequestId.map(id => "clientRequestId" -> id.asJson)
-                val body = Json.obj(fields*).noSpaces
-                val resp = basicRequest
-                  .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/update"))
-                  .contentType("application/json")
-                  .body(body)
-                  .readTimeout(180.seconds)
-                  .response(asStringAlways)
-                  .send(ns.httpBackend)
-                resp
-              }.flatMap { resp =>
-                if resp.code.isSuccess then IO.pure(Right("Update installed, device is restarting..."))
-                else relayUpdateFallback(ns, peer, beta, s"P2P HTTP ${resp.code}")
-              }.handleErrorWith { e =>
-                relayUpdateFallback(ns, peer, beta, s"P2P unreachable: ${e.getMessage}")
-              }
-    }
+    // fleet 批（2026-11-01）收口：P2P → 中继的派发**唯一实现**在
+    // [[nebflow.neblink.RemoteUpdateDispatch]]（批量推送与单台点击共用同一腿）。
+    // 本方法保留为薄壳：调用方（REST 路由此处）零改动，派发语义逐字不变。
+    nebflow.neblink.RemoteUpdateDispatch.dispatchByName(ns, targetDevice, beta, clientRequestId)
 
   end doRemoteUpdate
-
-  private def relayUpdateFallback(
-    ns: nebflow.neblink.NeblinkService,
-    peer: nebflow.shared.PeerInfo,
-    beta: Boolean,
-    p2pError: String
-  )(using ctx: RestApiCtx): IO[Either[String, String]] =
-    import ctx.*
-
-    ns.relayClientOpt match
-      case Some(client) =>
-        logger.info(s"P2P update failed ($p2pError), trying relay to ${peer.deviceName}") *>
-          client.relayUpdate(peer.deviceId, beta)
-      case None => IO.pure(Left(p2pError))
 
   /** Run block only if NeblinkService is available and request is authenticated. */
   private def withNeblink(req: Request[IO])(f: NeblinkService => IO[Response[IO]])(using

@@ -4877,6 +4877,39 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   .pop-media-canvas { opacity: 0.75; }
 }
 
+/* 叠卡单张引用钮（2026-11-02 作者令「让叠卡的图片可以分开引用」）：
+   **展开态每一行**左上角一枚，材质/尺寸/显隐档与 .pop-media-canvas 逐值同族
+   （同一枚钮语言，只是角位镜像：Canvas 在右上、引用在左上，两钮零重叠）。
+   只活在展开列 ⇒ 折叠盒上的拖动翻页与双指横滑仲裁零交集（内容操作优先）。
+   零新色值：底/字/悬停全部沿用上条 rgba 档。 */
+.pop-media-quote {
+  position: absolute; top: 8px; left: 8px; z-index: 6;
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 8px;
+  background: rgba(0, 0, 0, 0.45); color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+}
+.pop-media-quote svg { width: 14px; height: 14px; }
+.pop-expand-view .media-layer:hover .pop-media-quote,
+.pop-media-quote:focus-visible { opacity: 1; }
+.pop-media-quote:hover { background: rgba(0, 0, 0, 0.65); }
+@media (hover: none) {
+  .pop-media-quote { opacity: 0.75; }
+}
+/* 单图深链高亮（引用块点回「第 N 张」）：展开列里那一行一次性 1.8s 高亮，与
+   行级 .quote-target-flash 同节奏同色阶（--sapphire-tint-15），叠在圆角上不破形。 */
+.pop-expand-view .media-layer.quote-item-flash {
+  outline: 2px solid rgb(var(--sapphire) / 0.55);
+  outline-offset: 2px;
+  animation: msgQuoteTargetFlash 1.8s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pop-expand-view .media-layer.quote-item-flash { animation-duration: 0.01s; }
+}
+
 /* ── the in-stream lightbox (AC-S1) — WeChat-style zoom overlay ── */
 .nf-lightbox {
   position: fixed; inset: 0; z-index: 3200; /* above search-overlay (310), below the modal family (11000) */

@@ -1109,13 +1109,27 @@ object GatewayMain extends IOApp:
                                     // 目录 ⇒ 指针动作旁路，绝不动真实安装）
                                     installDir = Some(nebflow.core.hotrestart.InstallPointer.defaultInstallDir())
                                   )
+                                  // 全设备统一更新（fleet 批 2026-11-01，作者令「一键把所有设备更新到
+                                  // 同一版本」）：协调器必须**后**造（它要用编排器），而编排器的相位
+                                  // 观察钩子**先**要碰协调器 ⇒ 一个 late-bind 引用打破这个先后死结。
+                                  // 钩子只读旁路：协调器未就绪 / 未装配 ⇒ 空操作，更新链零影响。
+                                  val fleetUpdateRef =
+                                    new java.util.concurrent.atomic.AtomicReference[Option[
+                                      nebflow.core.hotupdate.FleetUpdateCoordinator
+                                    ]](None)
                                   // 统一更新编排器（hotupdate 批 1，设计 §4 设计 A）：全部入口
                                   // 只发「更新请求」，由它独占执行；重启相位**一律委托**上面的
                                   // 热重启编排器（排空/翻态/派生/握手零复制）；统一进度帧经**同一
                                   // 广播通道** wsHub.broadcast（复用点 #11，构造点即本处）。
                                   val updateOrchestrator = new nebflow.core.hotupdate.UpdateOrchestrator(
                                     Some(hotRestart),
-                                    wsHub.broadcast
+                                    wsHub.broadcast,
+                                    // fleet 批：本机进度行读既有七相位（唯一权威仍是编排器 step；
+                                    // 钩子只翻译相位，不改变更新走向）。
+                                    onPhase = (phase, progress, detail) =>
+                                      fleetUpdateRef.get() match
+                                        case Some(f) => f.onLocalPhase(phase, progress, detail)
+                                        case None => IO.unit
                                   )
                                   // 统一更新收敛闭环（M3 ③，DESIGN §7.2）：心跳响应领账
                                   // → 采纳闸（跨通道拒采/前向-only）→ 全复用上面的编排器
@@ -1529,7 +1543,45 @@ object GatewayMain extends IOApp:
                                               )
                                           ) *> neblinkService.setDiagnostic(tsDiscovery.diagnosticScan) *>
                                           neblinkService.addPeerChangeCallback(
-                                            wsHub.broadcast(io.circe.Json.obj("type" -> "peerListChanged".asJson))
+                                            // 既有事件帧 + fleet 哨兵（fleet 批 2026-11-01）：
+                                            // 「离线设备上线时自动补推」的唯一触发腿 = 既有 peer 变更
+                                            // 回调（零新增定时器）。协调器晚绑定（ref 现读）；哨兵内部
+                                            // 自会判「有没有待推送行」，无在飞任务时近乎零开销，异常
+                                            // 一律吞在协调器里，绝不打断名册腿。
+                                            // 🔴 两条腿**互不牵连**（fleet e2e ⑦ 的可诊断性修法）：修前是
+                                            // `broadcast *> 哨兵`，任一腿抛错都会把另一腿整条吞掉
+                                            // （`notifyPeersChanged` 的 handleErrorWith 是**整个回调**级的）
+                                            // ⇒ 广播失败就会让「上线补推」永久静默。现在各自 handleErrorWith，
+                                            // 哨兵腿的失败降级为 WARN，绝不影响既有 peerListChanged 帧。
+                                            wsHub
+                                              .broadcast(io.circe.Json.obj("type" -> "peerListChanged".asJson))
+                                              .handleErrorWith(e =>
+                                                logger.warn(s"[fleet] peerListChanged broadcast failed: ${e.getMessage}")
+                                              ) *>
+                                              // 🔴 晚绑定必须**每次事件现读**：`.get()` 是纯 Option 读，
+                                              // 写在回调构造处会被**求值一次**（此处协调器还没建：fleetUpdateRef
+                                              // 在下方 Dropbox 段之后才 set ⇒ fold 恒走 IO.unit ⇒ 哨兵腿注册即死）。
+                                              // e2e ⑦ 三轮实测坐实：回调触发、名册在线，却零 `sentinel consulted`。
+                                              // 现在把「读 ref」放进 IO 里（`IO(...).flatMap`），语义与注释一致。
+                                              IO(fleetUpdateRef.get()).flatMap {
+                                                case None =>
+                                                  logger.info("[fleet] peer-change event seen but no fleet coordinator yet — sentinel skipped")
+                                                case Some(f) =>
+                                                  neblinkService.peers
+                                                    .flatMap { ps =>
+                                                      // 留痕（fleet e2e ⑦ 抓到的可诊断性缺口：修前哨兵不动作时
+                                                      // 日志里**一行痕迹都没有**，只能靠读源码猜是「回调没触发」
+                                                      // 还是「触发了但名册/在线态判掉」。这是 peer 变更事件
+                                                      // （非周期）上的一行，不是定时器噪声。
+                                                      logger.info(
+                                                        s"[fleet] peer-change sentinel sweep: peers=" +
+                                                          ps.map(p => s"${p.deviceId}(online=${p.lastSeen > 0})")
+                                                            .mkString(",")
+                                                      ) *> ps.traverse_(p => f.onPeerOnline(p.deviceId))
+                                                    }
+                                              }.handleErrorWith(e =>
+                                                logger.warn(s"[fleet] sentinel callback failed: ${e.getMessage}")
+                                              )
                                           ) *>
                                           // Wire the WS data channel send function so other services
                                           // (e.g. DropboxService) can send P2P messages via presenceService.
@@ -1548,10 +1600,65 @@ object GatewayMain extends IOApp:
                                           // Create Dropbox service (cross-device messaging & file transfer)
                                           nebflow.dropbox.DropboxService.create(neblinkService, wsHub).flatMap {
                                             dropboxService =>
+                                              // 全设备统一更新（fleet 批 2026-11-01）：协调器装配。
+                                              // 三腿注入面（禁双实现）：
+                                              //   · listDevices —— 本机固定一行 + presence 名册（滤掉
+                                              //     本机自条目），在线态用**既有**新鲜度判据
+                                              //     `NeblinkService.isPeerOnline`（本件不重算窗口）；
+                                              //   · probe —— 既有 `/api/health`（版本 + `fleet` 自报）；
+                                              //   · pushRemote —— [[RemoteUpdateDispatch]]（P2P→中继的
+                                              //     唯一派发实现，与单台入口共用同一腿）。
+                                              val fleetUpdate: nebflow.core.hotupdate.FleetUpdateCoordinator =
+                                                new nebflow.core.hotupdate.FleetUpdateCoordinator(
+                                                  orchestrator = Some(updateOrchestrator),
+                                                  broadcast = wsHub.broadcast,
+                                                  listDevices = () =>
+                                                    for
+                                                      id <- neblinkService.identity
+                                                      peers <- neblinkService.peers
+                                                      cfgNb <- neblinkService.neblinkConfig
+                                                      now = System.currentTimeMillis()
+                                                    yield nebflow.core.hotupdate.FleetUpdateCoordinator
+                                                      .roster(
+                                                        localId = id.deviceId,
+                                                        localName = id.deviceName,
+                                                        localPlatform = id.platform,
+                                                        localVersion = Some(nebflow.Version.string),
+                                                        peers = peers,
+                                                        online = p =>
+                                                          nebflow.neblink.NeblinkService.isPeerOnline(
+                                                            p,
+                                                            now,
+                                                            cfgNb.syncIntervalSec
+                                                          )
+                                                      ),
+                                                  pushRemote = (peer, beta, clientRequestId) =>
+                                                    nebflow.neblink.RemoteUpdateDispatch
+                                                      .dispatchToPeer(
+                                                        neblinkService,
+                                                        nebflow.shared.PeerInfo(
+                                                          deviceId = peer.deviceId,
+                                                          deviceName = peer.deviceName,
+                                                          platform = peer.platform,
+                                                          address = peer.address
+                                                        ),
+                                                        beta,
+                                                        Some(clientRequestId)
+                                                      )
+                                                )
+                                              fleetUpdateRef.set(Some(fleetUpdate))
+                                              // 引擎重启后从上一次落盘任务恢复（在飞行标「失联」，
+                                              // 绝不假装还在跑）；幂等，HTTP/WS 首次读也会再碰一次。
+                                              dispatcher.unsafeRunAndForget(
+                                                fleetUpdate.restore().handleErrorWith(e =>
+                                                  logger.warn(s"[fleet] restore failed at boot: ${e.getMessage}")
+                                                )
+                                              )
                                               val sharedResourcesWithBridge =
                                                 sharedResourcesLive.copy(
                                                   bridgeManager = Some(bridgeManager),
                                                   neblinkService = Some(neblinkService),
+                                                  fleetUpdate = Some(fleetUpdate),
                                                   // 2026-09-11 boot 快照修复：slot 恒 Some（装配缝里
                                                   // 明确记录「boot 快照不再参与存在性判据」）。
                                                   friendService = nebflow.neblink.NeblinkWiring

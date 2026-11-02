@@ -514,8 +514,8 @@ function renderPluginCard(manifest, updates) {
       ${status.blocked ? `<div class="plugins-card-hint blocked">${esc(t('plugins.blockedHint'))}</div>` : ''}
       ${composition ? `<div class="plugins-card-composition">${composition}</div>` : ''}
       ${sourceRowHtml(name, updates)}
-      <button type="button" class="plugins-item-doc" data-plugin-doc="${esc(name)}" hidden>${statusIcon('file-text', 12, '')}Plugin.md</button>
       <div class="plugins-item-actions">
+        <button type="button" class="plugins-item-doc" data-plugin-doc="${esc(name)}" hidden>${statusIcon('file-text', 12, '')}Plugin.md</button>
         <span class="plugins-card-dispatch">
           ${toggleHTML({
             on: disp.on,

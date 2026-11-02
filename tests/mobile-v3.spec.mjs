@@ -392,8 +392,14 @@ test('T5 header retired on mobile (liquid-glass v2 2026-10-31); top edge = fade 
   await expect(page.locator('.mh-chrome-btn[data-chrome="tasks"]')).toBeVisible();
   await expect(page.locator('.mh-chrome-btn[data-chrome="search"]')).toBeVisible();
   // 页标题入流：头像 + 会话名迁入 .g2-chat-head（首位、可见）。
+  // Muse 悬浮身份头恢复批（2026-11-02 09:14 作者令「拆掉顶栏」）：该层回到
+  // position:sticky 悬浮锚 + 透明底（上一批 07:23 的 fixed 真顶栏整条回退），
+  // 节点归属与可见性契约不变。
   const head = page.locator('#chat > .g2-chat-head');
   await expect(head).toHaveCount(1);
+  await expect(head).toHaveCSS('position', 'sticky');
+  await expect(head).toHaveCSS('z-index', '26');
+  await expect(head).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
   await expect(head.locator('#agent-avatar-btn')).toBeVisible();
   await expect(head.locator('#session-name')).toHaveCount(1);
 });

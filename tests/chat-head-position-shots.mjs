@@ -12,23 +12,28 @@
 //   ② 名字缺位：未命名 root 下 `#session-name` 被写空串但 `display:''` 保留 ⇒
 //      空 span 仍吃胶囊 padding，画出 28×6px 幽灵玻璃条（既非名字也非间距）。
 //
+// ⚠ 契约改写（Muse 悬浮身份头恢复批 2026-11-02 09:14，作者令「头像在上、名字在下，
+// 拆掉顶栏」）：上一批（07:23 单行三段式）把身份头做成 position:fixed 真顶栏，本批
+// 整条回退 —— .g2-chat-head 回到 sticky 悬浮锚（top: var(--muse-head-top)），头像
+// 56px 居中悬浮、名字玻璃胶囊在其正下方，内容从头像后穿过进渐隐带。断言随之改写：
+//
 // 产出 → evidence/20261101_chat-head-position/：
-//   rest-<scheme>.png        静止态（头像+名字成组贴顶，落在悬浮双键行下缘 64px）
-//   scrollmid-<scheme>.png   滚动中（sticky 锚定贴窗口顶，消息从锚上缘穿过）
-//   scrolled-<scheme>.png    滚动后（停住仍是锚定格，渐隐带 88px 在场）
-//   before-<scheme>.png      修前对照（注入 margin-top:0 还原 96px 让位病灶；
-//                            仅作目检对照帧，不参与断言）
+//   rest-<scheme>.png        静止态（悬浮身份组落在 64px 顶带锚，头像+胶囊居中）
+//   scrollmid-<scheme>.png   滚动中（sticky 贴顶，消息行从头像后穿过）
+//   scrolled-<scheme>.png    滚动后（贴顶 rect 稳定，渐隐带 88px 在场）
 //   unnamed-<scheme>.png     未命名 root 档（②-c 幽灵胶囊收口实证：无名字条）
 //   desktop-1280.png         桌面回归（#header 头像行原样、零身份头）
-// 探针：
-//   P① 静止态落位：headTop − chatTop == 64 ±2（= 悬浮双键行下缘 16+48）
-//   P② 成组：头像顶 = 组顶 + 8（呼吸缝，[6,10]）；名字在头像正下且居中 ±2
-//   P③ 静止态零叠压：消息行矩形与身份组矩形相交计数 == 0（组之上无内容、
-//      组本身不压消息）
+// 探针（新契约）：
+//   P① 静止态落位：身份组 sticky + 组顶 = 64 ±1（②-b 负 margin 锚双钮行下缘）；
+//      --muse-head-top = -(#chat padding-top) 在场（非空串）
+//   P② 下置成组：胶囊顶 ≥ 头像底 −1、水平中心与头像中心 ≤1px；头像水平中心
+//      = 屏幕中线 ±1
+//   P③ 静止态不相撞：首条消息行顶 ≥ 胶囊底（内容起点由实测派生，无魔法数字）
 //   P④ 名字读数：已命名 root ⇒ #session-name 文本 = agent.json displayName
-//   P⑤ 滚动态 sticky 语义：锚贴 #chat 可视顶 ±1.5px；消息行从锚上缘穿过
-//      （rowsBehind > 0 —— 既定 Muse 形态，非本批回归）；渐隐带 88px 在场
-//   P⑥ 幽灵胶囊收口：未命名 root ⇒ #session-name 计算 display none 且盒高 0
+//   P⑤ 滚动态 sticky 贴顶（组顶 0 ±1、头像顶 8 ±1）+ 消息行穿过头像盒
+//      （rowsBehind > 0）+ 渐隐带 88px 在场
+//   P⑥ 幽灵胶囊收口：未命名 root ⇒ #session-name 计算 display none 且盒高 0，
+//      且头像仍居中（名字不参与居中）；组高 = 56 + 8 + 12 = 76（无空洞）
 //   P⑦ 桌面零触及：1280 下 #chat 内零 .g2-chat-head、#header 头像行可绘
 //   R0 每腿零 console error / pageerror
 // 走 mobile-muse-avatar-shots 同款静态 harness（无后端：routeWebSocket 供
@@ -83,28 +88,37 @@ async function probeState(page) {
       ? [...chat.querySelectorAll('.row')].filter((row) => intersect(r(row), headBox) > 4).length
       : -1;
     const av = r(avatarBtn);
+    // 头像盒相交行数（Muse 悬浮形态的「内容从头像后穿过」主判据：头像才是浮层）。
+    const rowsBehindAvatar = [...chat.querySelectorAll('.row')]
+      .filter((row) => intersect(r(row), av) > 4).length;
     const nr = nameEl ? r(nameEl) : null;
+    const firstRow = chat.querySelector('.row');
     return {
       mobileLayer: document.body.classList.contains('mobile-layer'),
       headerHidden: getComputedStyle(document.getElementById('header')).display === 'none',
       headTop: headBox ? headBox.top : null,
+      headBottom: headBox ? headBox.bottom : null,
       chatTop: chatBox.top,
       headHeight: headBox ? headBox.height : null,
-      avTop: av.top, avBottom: av.bottom, avH: av.height,
-      avCx: (av.left + av.right) / 2,
+      headPos: headCs?.position || 'absent',
+      avTop: av.top, avBottom: av.bottom, avH: av.height, avW: av.width,
+      avCx: (av.left + av.right) / 2, avRight: av.right,
       chatCx: (chatBox.left + chatBox.right) / 2,
+      vw: window.innerWidth,
       nameText: nameEl ? nameEl.textContent : null,
       nameDisplay: nameEl ? getComputedStyle(nameEl).display : 'absent',
       nameH: nr ? nr.height : -1,
       nameTop: nr ? nr.top : -1,
+      nameBottom: nr ? nr.bottom : -1,
+      nameLeft: nr ? nr.left : -1,
       nameCx: nr ? (nr.left + nr.right) / 2 : -1,
       clipTop: getComputedStyle(chat).getPropertyValue('--chat-top-clip').trim(),
       museHeadTop: getComputedStyle(chat).getPropertyValue('--muse-head-top').trim(),
-      stickyPos: headCs?.position || 'absent',
-      stickyTop: headCs?.top || '',
       scrollTop: chat.scrollTop,
       fadeH: r(fade).height,
       rowsBehind,
+      rowsBehindAvatar,
+      firstRowTop: firstRow ? r(firstRow).top : -1,
       aiRows: chat.querySelectorAll('.row.ai').length,
     };
   });
@@ -187,37 +201,33 @@ async function runMobile(scheme, { named = true, tagSuffix = '' } = {}) {
     await page.waitForFunction(() => document.getElementById('chat').scrollTop === 0, { timeout: 10000 });
     await page.waitForTimeout(250);
     const rest = await probeState(page);
-    ok(`${tag} P① 静止态落位 = 悬浮双键行下缘 64px（不再浮在页面中部）`,
-      Math.abs(rest.headTop - rest.chatTop - 64) <= 2,
-      `headTop-chatTop=${(rest.headTop - rest.chatTop).toFixed(1)} (muse-head-top=${rest.museHeadTop} clip=${rest.clipTop})`);
-    ok(`${tag} P② 成组：头像顶 = 组顶 + 8px 呼吸缝，名字在头像正下且居中`,
-      rest.avTop - rest.headTop >= 6 && rest.avTop - rest.headTop <= 10 && rest.nameTop >= rest.avBottom - 2 && Math.abs(rest.nameCx - rest.avCx) <= 2 && Math.abs(rest.avCx - rest.chatCx) <= 2,
-      `avTop-headTop=${(rest.avTop - rest.headTop).toFixed(1)} nameBelow=${rest.nameTop >= rest.avBottom - 2} avCx=${rest.avCx.toFixed(1)} chatCx=${rest.chatCx.toFixed(1)}`);
-    ok(`${tag} P③ 静止态零叠压（无消息行与身份组矩形相交）`, rest.rowsBehind === 0, `rowsBehind=${rest.rowsBehind}`);
+    ok(`${tag} P① 静止态落位 = sticky 悬浮锚（组顶 64 ±1；--muse-head-top 在场）`,
+      rest.headPos === 'sticky' && Math.abs(rest.headTop - 64) <= 1 && rest.museHeadTop !== '',
+      `pos=${rest.headPos} headTop=${rest.headTop.toFixed(1)} h=${rest.headHeight} muse-head-top="${rest.museHeadTop}" clip=${rest.clipTop}`);
+    ok(`${tag} P② 下置成组：胶囊在头像正下方（顶 ≥ 头像底 −1、水平中心 ≤1px）、头像水平居中`,
+      rest.nameTop >= rest.avBottom - 1
+        && Math.abs(rest.nameCx - rest.avCx) <= 1
+        && Math.abs(rest.avCx - rest.vw / 2) <= 1,
+      `gap=${(rest.nameTop - rest.avBottom).toFixed(1)} |nameCx−avCx|=${Math.abs(rest.nameCx - rest.avCx).toFixed(2)} avCx=${rest.avCx.toFixed(1)} mid=${(rest.vw / 2).toFixed(1)}`);
+    ok(`${tag} P③ 静止态不相撞（首条消息行顶 ≥ 胶囊底）`,
+      rest.firstRowTop >= rest.nameBottom,
+      `firstRowTop=${rest.firstRowTop.toFixed(1)} nameBottom=${rest.nameBottom.toFixed(1)} gap=${(rest.firstRowTop - rest.nameBottom).toFixed(1)}`);
     ok(`${tag} P④ 名字读数 = agent.json displayName`, rest.nameText === 'Spider' && rest.nameH > 0,
       `text="${rest.nameText}" h=${rest.nameH} display=${rest.nameDisplay}`);
     await page.screenshot({ path: join(OUT, `rest-${tag}.png`) });
 
-    // ── 修前对照帧（仅目检：注入 margin-top:0 还原 96px 让位病灶）───
-    await page.addStyleTag({ content: 'body.mobile-layer #chat .g2-chat-head { margin-top: 0 !important; }' });
-    await page.waitForTimeout(200);
-    const before = await probeState(page);
-    await page.screenshot({ path: join(OUT, `before-${tag}.png`) });
-    console.log(`      · 修前对照帧：headTop-chatTop=${(before.headTop - before.chatTop).toFixed(1)}（病灶 96px 让位）`);
-    // 摘掉该 style 节点（回到修复态）
-    await page.evaluate(() => { document.querySelectorAll('style').forEach((s) => { if (s.textContent.includes('margin-top: 0 !important')) s.remove(); }); });
-    await page.waitForTimeout(200);
-
-    // ── 滚动中（中段位置：锚已贴顶、上下仍有内容）──────────────────
+    // ── 滚动中（sticky 贴顶：内容从头像后穿过）──────────────────────
     await page.evaluate(() => { const c = document.getElementById('chat'); c.scrollTop = Math.round((c.scrollHeight - c.clientHeight) * 0.55); });
     await page.waitForTimeout(350);
     const mid = await probeState(page);
-    ok(`${tag} P⑤ 滚动中：锚贴窗口顶（±1.5px）`,
-      Math.abs(mid.headTop - mid.chatTop) <= 1.5, `headTop-chatTop=${(mid.headTop - mid.chatTop).toFixed(1)} scrollTop=${mid.scrollTop}`);
-    ok(`${tag} P⑤ 滚动中：消息行从锚上缘穿过（既定 Muse 形态）`, mid.rowsBehind > 0, `rowsBehind=${mid.rowsBehind}`);
+    ok(`${tag} P⑤ 滚动中 sticky 贴顶（组顶 0 ±1、头像顶 8 ±1）`,
+      mid.scrollTop > 0 && Math.abs(mid.headTop) <= 1 && Math.abs(mid.avTop - 8) <= 1,
+      `headTop=${mid.headTop.toFixed(1)} avTop=${mid.avTop.toFixed(1)}（静止态 headTop=${rest.headTop.toFixed(1)}）scrollTop=${mid.scrollTop}`);
+    ok(`${tag} P⑤ 滚动中消息行从头像盒穿过（内容确实压在头像后）`, mid.rowsBehindAvatar > 0,
+      `rowsBehindAvatar=${mid.rowsBehindAvatar}（组盒 rowsBehind=${mid.rowsBehind}）`);
     await page.screenshot({ path: join(OUT, `scrollmid-${tag}.png`) });
 
-    // ── 滚动后（落底停住）：仍锚定格 + 渐隐带在场 ────────────────────
+    // ── 滚动后（落底停住）：贴顶 rect 稳定 + 渐隐带在场 ────────────────
     await page.evaluate(() => { const c = document.getElementById('chat'); c.scrollTop = c.scrollHeight; });
     await page.waitForFunction(() => {
       const chat = document.getElementById('chat');
@@ -225,9 +235,10 @@ async function runMobile(scheme, { named = true, tagSuffix = '' } = {}) {
     }, { timeout: 10000 });
     await page.waitForTimeout(300);
     const after = await probeState(page);
-    ok(`${tag} P⑤ 滚动后：停住仍锚定格（±1.5px）+ 渐隐带 88px 在场`,
-      Math.abs(after.headTop - after.chatTop) <= 1.5 && Math.abs(after.fadeH - 88) <= 1.5,
-      `headTop-chatTop=${(after.headTop - after.chatTop).toFixed(1)} fadeH=${after.fadeH}`);
+    ok(`${tag} P⑤ 滚动后：贴顶 rect 稳定 + 渐隐带 88px 在场 + --muse-head-top 现役（-96）`,
+      Math.abs(after.headTop - mid.headTop) <= 1 && Math.abs(after.headBottom - mid.headBottom) <= 1
+        && Math.abs(after.fadeH - 88) <= 1.5 && after.museHeadTop !== '',
+      `headTop=${after.headTop} headBottom=${after.headBottom} fadeH=${after.fadeH} muse-head-top="${after.museHeadTop}"`);
     await page.screenshot({ path: join(OUT, `scrolled-${tag}.png`) });
 
     ok(`${tag} R0 零 console error`, errors.length === 0, errors.slice(0, 3).join(' | '));
@@ -303,8 +314,10 @@ async function runUnnamed(scheme) {
     ok(`${tag} P⑥ 幽灵胶囊收口：空名 #session-name 退出渲染（display none，盒高 0）`,
       p.nameText === '' && p.nameDisplay === 'none' && p.nameH === 0,
       `text="${p.nameText}" display=${p.nameDisplay} h=${p.nameH}`);
-    ok(`${tag} P①′ 未命名档落位不变（组顶 = 64px）`, Math.abs(p.headTop - p.chatTop - 64) <= 2,
-      `headTop-chatTop=${(p.headTop - p.chatTop).toFixed(1)}`);
+    ok(`${tag} P①′ 未命名档形态不变（sticky 悬浮锚 + 头像仍居中 + 组高 76）`,
+      p.headPos === 'sticky' && Math.abs(p.headTop - 64) <= 1
+        && Math.abs(p.avCx - p.vw / 2) <= 1 && Math.abs(p.headHeight - 76) <= 1,
+      `pos=${p.headPos} headTop=${p.headTop} h=${p.headHeight} avCx=${p.avCx} mid=${(p.vw / 2)}`);
     await page.screenshot({ path: join(OUT, `unnamed-${scheme}.png`) });
     ok(`${tag} R0 零 console error`, errors.length === 0, errors.slice(0, 3).join(' | '));
     await page.close();

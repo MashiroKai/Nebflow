@@ -2000,6 +2000,21 @@ body > .fm-context-menu { z-index: 10001; }
 /* 设备展开体容器（②：设备入口 = 「新的朋友」同族折叠结构，本容器 = 其展开体；
    原静态段标题 `.fm-section-title` 随该形态作废 —— 标签已上移到入口行 `.fm-nf-label`）。 */
 .fm-device-list { margin-top: 2px; }
+
+/* 全设备统一更新（fleet 批 2026-11-01）：设置·设备页的「全部更新」条。
+   动作本体与进度全部在 `js/fleetUpdate.js` 的阻塞卡里（零新视觉家族）——本处只做
+   **入口行几何**：右贴边、与设备列表同缩进；材质沿用 glass-control token（零裸 hex）。 */
+.fm-device-fleet-bar {
+  display: flex; justify-content: flex-end; align-items: center;
+  padding: 2px 4px 6px; gap: 6px;
+}
+.fm-device-fleet-bar .fleet-btn {
+  font-size: 11px; padding: 4px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  color: var(--color-frame-text);
+}
+.fm-device-fleet-bar .fleet-btn:hover { background: var(--glass-control-bg-hover); }
 .fm-device-row { cursor: pointer; }
 /* 设备行在线态：徽章本体（.neblink-presence）样式在 neblink.css（全局已加载）——
    本处只做**槽位**（右贴边、不参与行内文本压缩）。 */

@@ -2,7 +2,8 @@
 // mobile-dock-shape-shots.mjs — dock 收形批（作者令 10-31 22:50 六件）双主题截图取证
 // + 机械探针。产出 → evidence/20261101_dock-shape-post-muse/：
 //   dock-<scheme>.png         聊天根 dock 全景（中键 = agent 头像图、无文字、收进 dock 内）
-//   msgflow-<scheme>.png      消息流样张（Muse 悬浮头像批后：零身份头 + 顶部 sticky 悬浮锚）
+//   msgflow-<scheme>.png      消息流样张（零身份头 + 顶部 fixed 单行会话顶栏，
+//                             会话顶栏单行三段式批 2026-11-02 07:23 起）
 //   logo-fallback-<scheme>.png 无头像回落样张（dock 中键 + 会话头 = stand logo）
 // 🔴 Muse 式悬浮头像批（作者令 2026-11-01 13:33）重跑档：批①「消息流头像+名」
 //    已整批退役（.g2-msg-meta 摘除）—— 探针①翻转为「零身份头」断言；探针③
@@ -193,7 +194,7 @@ for (const scheme of ['dark', 'light']) {
     // ── 截图 ──────────────────────────────────────────────────────
     await page.screenshot({ path: join(OUT, `dock-${tag}.png`) });
     if (withAvatar) {
-      // 消息流样张：滚到底（Muse 批后 = sticky 悬浮锚锚定窗口顶 + 消息行零身份头）。
+      // 消息流样张：滚到底（固定顶栏不动 + 消息行零身份头）。
       await page.evaluate(() => { const c = document.getElementById('chat'); c.scrollTop = c.scrollHeight; });
       await page.waitForTimeout(300);
       await page.screenshot({ path: join(OUT, `msgflow-${tag}.png`) });

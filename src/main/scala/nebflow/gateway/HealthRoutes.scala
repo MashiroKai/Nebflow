@@ -57,9 +57,22 @@ private[gateway] object HealthRoutes:
             // provider 账户的当前限流档位（limit/rung/inFlight/queued）。「有状态
             // 才出现」纪律同 `update`/`deviceId`：总闸关或从无闸 ⇒ None ⇒ 载荷
             // 逐字节不变（探针契约零回归）。
+            //
+            // fleet 批（2026-11-01）：`fleet` 键 = **能力自报**（protocol / hotUpdate /
+            // minRemoteVersion）——全设备统一更新的「接口能力自报」腿就是读它，另一腿
+            // 是版本号门槛（`UpdateCapability.verdict`）。未装配 fleet 协调器 ⇒ 不出现键
+            // （同纪律：默认载荷逐字节不变，探针契约零回归）。
+            val fleetKey = sharedResources.fleetUpdate
+              .map(_ =>
+                Json.obj(
+                  "fleet" -> nebflow.core.hotupdate.FleetUpdateCoordinator.selfReportJson(writable = true)
+                )
+              )
+              .getOrElse(Json.obj())
             sharedResources.providerRegistry.throttleHealthJson.flatMap { throttleKey =>
-              val extraAll = throttleKey.fold(updateKey)(t => updateKey.deepMerge(Json.obj("throttle" -> t)))
-              HealthPayload.build(sharedResources.healthMonitor, extraAll)
+              val extraAll =
+                throttleKey.fold(updateKey)(t => updateKey.deepMerge(Json.obj("throttle" -> t)))
+              HealthPayload.build(sharedResources.healthMonitor, extraAll.deepMerge(fleetKey))
             }
           }
           .flatMap(nearPathProbePayload(req, _))

@@ -292,8 +292,161 @@
       };
     };
 
-    window.__clearChat = () => { chatEl.innerHTML = ''; };
-    window.__makeRowsTall = () => {
+    /* ── 叠卡单张引用批（2026-11-02 作者令「让叠卡的图片可以分开引用」）─────
+     * 探针面：用户媒体行（renderUserBubble 的附件腿 → buildUserMediaRow）里的
+     * 叠卡，展开态每行一枚单张引用钮；点它 → 引用态（pendingAttachments）。
+     * 读数只读渲染后的 DOM + pendingAttachments 形状（房规）。 */
+    const tinyImg = (tag) => 'data:image/svg+xml;base64,' + btoa(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="100%" height="100%" fill="#2a4d8f"/><text x="4" y="20" fill="#fff">' + tag + '</text></svg>');
+
+    /** 一条用户消息附 N 张图（N≥2 ⇒ 叠卡；N=1 ⇒ 平铺单图）。 */
+    window.__renderUserStack = (n) => {
+      const atts = [];
+      for (let i = 0; i < n; i++) {
+        atts.push({ type: 'image', name: 'shot-' + i + '.png', path: '/tmp/up/shot-' + i + '.png', preview: tinyImg(i) });
+      }
+      chatMod.renderUserBubble('图 ' + n + ' 张', atts, Date.now());
+      const rows = Array.from(document.querySelectorAll('#chat > .row'));
+      const mediaRow = rows.filter(r => r.classList.contains('user-media')).pop();
+      return { msgId: mediaRow ? mediaRow.dataset.msgId : '', rows: rows.length };
+    };
+
+    /** 叠卡行寻址（同一 msgId 上可能有两行：气泡行 + 用户媒体卡行 ——
+     *  buildUserMediaRow 与文本行共 id，见 chat.js renderUserBubble）⇒ 取带叠卡
+     *  的那一行；没有叠卡则退回任意同 id 行。 */
+    window.__mediaRowById = (id) => {
+      const all = Array.from(document.querySelectorAll(`#chat .row[data-msg-id="${CSS.escape(String(id))}"]`));
+      return all.find(r => r.querySelector('.pop-stack-area')) || all.find(r => r.classList.contains('user-media')) || all[0] || null;
+    };
+
+    /** 展开叠卡（真实用户手势 = 点「展开 N」钮）。 */
+    window.__expandStack = async (msgId) => {
+      const row = window.__mediaRowById(msgId);
+      const pill = row && row.querySelector('.pop-stack-area .pill');
+      if (!pill) return false;
+      if (!row.querySelector('.pop-expand-view.show')) pill.click();
+      await raf2();
+      return true;
+    };
+
+    /** 叠卡展开态的单张引用钮读数（每行一枚；data-quote-item-index 即张序）。
+     *  未展开就先展开（真实手势 = 点「展开 N」），保证读数是展开面的形态。 */
+    window.__stackQuoteButtons = async (msgId) => {
+      const row = window.__mediaRowById(msgId);
+      const area = row && row.querySelector('.pop-stack-area');
+      if (!area) return null;
+      const expand = area.querySelector('.pop-expand-view');
+      if (!expand.classList.contains('show')) {
+        area.querySelector('.pill').click();
+        await raf2();
+      }
+      const layers = Array.from(expand.querySelectorAll('.media-layer'));
+      return {
+        expanded: expand.classList.contains('show'),
+        count: layers.length,
+        buttons: layers.map((l, i) => {
+          const b = l.querySelector('.pop-media-quote');
+          return {
+            index: b ? b.dataset.quoteItemIndex : null,
+            inRow: i,
+            label: b ? b.getAttribute('aria-label') : '',
+            // 折叠面（.pop-stack-view）里不许有单张引用钮：那一面只有「整面点击 =
+            // 打开当前张」一条动作（验收⑤）
+            collapsedHasButton: !!area.querySelector('.pop-stack-view .pop-media-quote'),
+          };
+        }),
+      };
+    };
+
+    /** 点第 i 张的引用钮 ⇒ 引用态（pendingAttachments）的真实载荷。 */
+    window.__quoteItemOn = async (msgId, i) => {
+      const row = window.__mediaRowById(msgId);
+      if (!row) return { ok: false, why: 'no row' };
+      await window.__expandStack(msgId);
+      const btn = row.querySelector(`.pop-expand-view .media-layer:nth-child(${i + 1}) .pop-media-quote`);
+      if (!btn) return { ok: false, why: 'no button' };
+      btn.click();
+      await new Promise(r => setTimeout(r, 20));
+      const q = quoteMod.quoteAttOf(view.pendingAttachments);
+      if (!q) return { ok: false, why: 'no quote state' };
+      return {
+        ok: true,
+        id: q.id,
+        refType: q.refType,
+        messageId: q.source.messageId,
+        itemIndex: q.content.itemIndex,
+        itemTotal: q.content.itemTotal,
+        attNames: (q.content.attachments || []).map(a => a.name),
+        attPaths: (q.content.attachments || []).map(a => a.path),
+        excerpt: q.content.excerpt,
+        label: q.display.label,
+        fullText: q.content.fullText,
+      };
+    };
+
+    /** 行级（整组）引用：媒体行 footer 引用钮（既有语义，用作对照 + 回归面）。 */
+    window.__quoteRowOn = async (rowId) => {
+      const row = window.__mediaRowById(rowId);
+      if (!row) return { ok: false };
+      const btn = row.querySelector('.duration-badge .msg-quote-btn');
+      if (!btn) return { ok: false, why: 'no footer button' };
+      btn.click();
+      await new Promise(r => setTimeout(r, 20));
+      const q = quoteMod.quoteAttOf(view.pendingAttachments);
+      return q ? {
+        ok: true, id: q.id, messageId: q.source.messageId,
+        itemIndex: q.content.itemIndex, attNames: (q.content.attachments || []).map(a => a.name),
+        excerpt: q.content.excerpt,
+      } : { ok: false, why: 'no quote state' };
+    };
+
+    /** 带着当前引用态发一条用户消息 ⇒ 气泡上方引用块（renderQuoteBlock 真腿）。 */
+    window.__sendQuoted = (text, msgId) => {
+      const row = window.__renderUserRowWithQuote(text, msgId);
+      return row && row.dataset.msgId;
+    };
+
+    /** 引用块读数（张数 UI 的机械判据：data-quote-item-index + 「第 N/total 张」）。 */
+    window.__quoteBlockShape = (rowId) => {
+      const row = window.__rowById(rowId);
+      const box = row && row.querySelector('.msg-quote-block');
+      if (!box) return null;
+      return {
+        itemIndex: box.dataset.quoteItemIndex ?? null,
+        text: (box.querySelector('.msg-quote-text') || {}).textContent || '',
+        hasPosText: /第 \d+\/\d+ 张/.test(box.textContent || ''),
+        attCells: box.querySelectorAll('.msg-quote-att-media').length,
+        attFiles: box.querySelectorAll('.msg-quote-att-file').length,
+        jump: box.dataset.quoteJump || '',
+      };
+    };
+
+    /** 深链：点带张序的引用块 ⇒ 目标叠卡展开 + 第 N 行高亮（验收项③）。 */
+    window.__jumpItem = async (rowId) => {
+      const row = window.__rowById(rowId);
+      const box = row && row.querySelector('.msg-quote-block');
+      if (!box) return { ok: false };
+      const targetId = box.dataset.refMessageId;
+      box.click();
+      await new Promise(r => setTimeout(r, 260)); // 展开过渡 + 高亮落定
+      const trow = window.__mediaRowById(targetId);
+      const expand = trow && trow.querySelector('.pop-expand-view');
+      const layers = expand ? Array.from(expand.querySelectorAll('.media-layer')) : [];
+      return {
+        ok: true,
+        expanded: !!(expand && expand.classList.contains('show')),
+        flashed: layers.map((l, i) => (l.classList.contains('quote-item-flash') ? i : -1)).filter(i => i >= 0),
+        rowFlash: !!(trow && trow.classList.contains('quote-target-flash')),
+        scrolled: chatEl.scrollTop,
+        layerInView: layers.map(l => {
+          const r = l.getBoundingClientRect();
+          const c = chatEl.getBoundingClientRect();
+          return r.top >= c.top - 2 && r.bottom <= c.bottom + 2;
+        }),
+      };
+    };
+
+    window.__clearChat = () => { chatEl.innerHTML = ''; };    window.__makeRowsTall = () => {
       // 让 #chat 产生可滚动高度（跳转位移断言的前提）。#chat 在 chat.css 是
       // flex column 容器 ⇒ 占位块必须 flex:none，否则默认 flex-shrink:1 会把它
       // 压回容器高（可滚动前提失效）。

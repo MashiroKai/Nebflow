@@ -420,6 +420,10 @@ export default {
   'chat.quoteDeletedSnapshot': '原消息已删除 · 已保留快照文',
   'chat.quoteSenderMe': '我',
   'chat.quoteTypeImage': '[图片]',
+  // 叠卡单张引用批（2026-11-02 作者令「让叠卡的图片可以分开引用」）：引用牌上的
+  // 位置标注 —— 同一叠卡内不同张的引用牌靠它彼此可区分。
+  'chat.quoteImagePos': '第 {n}/{total} 张',
+  'chat.quoteItemAria': '引用第 {n} 张',
   'chat.quoteTypeFile': '[文件]',
   'chat.quoteTypeTool': '[工具]',
   'chat.quoteTypeAsk': '[提问]',
@@ -2101,6 +2105,81 @@ export default {
   // 远端更新超时态（hotupdate 批 3 · 裁定 7「外层 300 秒落在触发/受理面」+ 设计 §7:149
   // 「超时上限与超时态」）：触发面在 300 秒内没等到任何结果帧时的收口文案。
   'neblink.updateTimeout': '等待超时（300 秒）——请检查设备状态',
+
+  // ── 全设备统一更新（fleet 批 2026-11-01，作者令「一键把所有设备更新到同一版本，
+  //    并全程有状态卡片引导」）──────────────────────────────────────────────
+  // 帧内只带键（`stageKey` / `failureKey` / `statusKey` / `capabilityKey`），展示文案
+  // 全在这里——禁在 JS 里硬编码中文。`{...}` 为插值占位（i18n.js 的 t()）。
+  'fleet.title': '全设备统一更新',
+  'fleet.subtitle': '本机 v{current} → 目标 v{target} · 阶段：{stages}',
+  'fleet.stages': '准备 → 下载 → 校验 → 切换 → 重启 → 自检 → 完成',
+  'fleet.blocking': '正在更新，请稍候——当前阶段「{stage}」，{eta}。更新期间本控制台不可用，完成后自动接续。',
+  'fleet.reconnecting': '设备已发起重启，正在等待它回来（回到本页会自动接续，不需要手动刷新）。',
+  'fleet.eta': '预计 3–5 分钟',
+  'fleet.empty': '暂无可更新的设备。',
+  'fleet.close': '关闭',
+  'fleet.cancel': '中断',
+  'fleet.retry': '重试失败项',
+  'fleet.startConfirm': '开始全部更新',
+  'fleet.startAction': '全部更新',
+  'fleet.updateThisDevice': '更新此设备',
+  'fleet.thisDevice': '本机',
+  'fleet.online': '在线',
+  'fleet.offline': '离线',
+  'fleet.versionUnknown': '版本未知',
+  'fleet.attempt': '第 {n} 次尝试',
+  'fleet.manualTitle': '需手动更新（版本过旧或无法远控）',
+  'fleet.manualHow': '到该设备上打开控制台 → 设置 → 检查更新，或运行安装脚本',
+  'fleet.pendingTitle': '待上线（上线后自动补推）',
+  'fleet.summary.counts': '{updated} 台已更新、{failed} 台失败、{manual} 台需手动、{pending} 台待上线',
+  // 收口状态（引擎 `FleetSummary.status` 的 messageKey 面）
+  'fleet.summary.all-consistent': '全部一致',
+  'fleet.summary.manual-required': '有待手动更新的设备',
+  'fleet.summary.pending-online': '有待上线设备',
+  'fleet.summary.out-of-sync': '版本尚未统一（可推送更新的设备已列出）',
+  // 任务状态（`fleet.job.<status>`）
+  'fleet.job.running': '进行中',
+  'fleet.job.completed': '全部完成',
+  'fleet.job.partial': '部分成功',
+  'fleet.job.cancelled': '已中断',
+  // 七阶段 + 非进度态（`fleet.stage.<wire>`，与 FleetStage 的 wire 值一一对应）
+  'fleet.stage.queued': '排队中',
+  'fleet.stage.prepare': '准备',
+  'fleet.stage.download': '下载中',
+  'fleet.stage.verify': '校验中',
+  'fleet.stage.switch': '切换中',
+  'fleet.stage.restart': '正在重启',
+  'fleet.stage.healthcheck': '健康自检',
+  'fleet.stage.done': '完成',
+  'fleet.stage.failed': '失败',
+  'fleet.stage.manual': '需手动更新',
+  'fleet.stage.waiting-online': '待上线',
+  'fleet.stage.cancelled': '已中断',
+  // 失败五类 + 可操作建议（`fleet.failure.<wire>` / `.advice`）
+  'fleet.failure.download-failed': '下载失败',
+  'fleet.failure.download-failed.advice': '建议：网络恢复后点「重试失败项」；多次失败请在该设备上手动更新。',
+  'fleet.failure.verify-failed': '校验不过（安装包与本机记录不符）',
+  'fleet.failure.verify-failed.advice': '建议：重试一次；仍不过说明包源有问题，请在该设备上手动更新并保留日志。',
+  'fleet.failure.switch-rolled-back': '切换回滚（新版本未站住，已退回上一版）',
+  'fleet.failure.switch-rolled-back.advice': '建议：已自动回滚到可用版本，本机仍在正常服务；请查看该设备日志后手动更新。',
+  'fleet.failure.healthcheck-failed': '自检没过（重启后健康检查失败）',
+  'fleet.failure.healthcheck-failed.advice': '建议：查看该设备日志；确认问题后点「重试失败项」。',
+  'fleet.failure.device-lost': '设备失联',
+  'fleet.failure.device-lost.advice': '建议：确认该设备已开机并联网，然后点「重试失败项」。',
+  'fleet.failure.device-refused': '设备拒绝更新',
+  'fleet.failure.device-refused.advice': '建议：按上面的原因处理；版本过旧的设备请手动更新。',
+  'fleet.failure.unknown': '未知失败',
+  'fleet.failure.unknown.advice': '建议：重试一次；仍失败请查看该设备日志。',
+  // 能力门槛（`fleet.capability.<wire>`）：每台设备的「可远控更新 / 需手动」
+  'fleet.capability.self-reported': '可远控更新（自报支持）',
+  'fleet.capability.version-threshold': '可远控更新（版本达标）',
+  'fleet.capability.version-too-old': '需手动更新（版本过旧）',
+  'fleet.capability.unknown': '需手动更新（版本未知）',
+  // 分发分支（`fleet.branch.<wire>`）
+  'fleet.branch.push': '直接推送',
+  'fleet.branch.manual': '需手动',
+  'fleet.branch.queued': '待上线补推',
+
   // 登录态只读展示（auth-trim 批 2026-10-20 作者令）：谁登录着，无动作入口。
   // 原「切换账号 / 退出登录」键组（switchAccount/logout/loggingOut/useOtherAccount/
   // currentTag）已随两键退役删除 —— 登出/切号只在官网门户操作。

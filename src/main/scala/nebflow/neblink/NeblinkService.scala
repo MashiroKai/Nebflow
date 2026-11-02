@@ -312,14 +312,31 @@ class NeblinkService private (
         case None => peer
     }
 
-  /** Add or update a single peer. Fires callback only when peer is newly discovered. */
+  /**
+   * Add or update a single peer. Fires the change callback when the peer is
+   * newly discovered **or when it comes back online** after having been
+   * flagged offline.
+   *
+   * 回归批（fleet 统一更新 2026-11-02，离线补推哨兵的触发腿）：修前只在 `isNew`
+   * 时通知 ⇒ 一台**已在名册里但被标下线**的设备重新上线时，名册腿只做原地覆盖，
+   * 订阅方（fleet 哨兵「设备上线即补推」）永远收不到「它回来了」这一刻 ⇒ 离线队列
+   * 只能等引擎重启后靠 `restore()` 兜底。判据取**既有新鲜度谓词**
+   * （[[NeblinkService.isPeerOnline]]，本实例 `configRef` 的 syncIntervalSec），
+   * 前后两次读数都由它算 ⇒ 不新增第二套「在线」定义，也不新增定时器。
+   */
   def upsertPeer(peer: PeerInfo): IO[Unit] =
     for
       _ <- pendingRemovals.update(_ - peer.deviceId)
-      isNew <- peersRef.get.map(!_.contains(peer.deviceId))
+      syncSec <- configRef.get.map(_.syncIntervalSec)
+      prevIsNew <- peersRef.get.map(!_.contains(peer.deviceId))
       finalPeer <- applyDescOverride(peer)
-      _ <- peersRef.update(_ + (peer.deviceId -> finalPeer))
-      _ <- if isNew then notifyPeersChanged else IO.unit
+      newlyOnline <- peersRef.modify { peers =>
+        val now = System.currentTimeMillis()
+        val wasOnline = peers.get(peer.deviceId).exists(p => NeblinkService.isPeerOnline(p, now, syncSec))
+        val isOnline = NeblinkService.isPeerOnline(finalPeer, now, syncSec)
+        (peers + (peer.deviceId -> finalPeer), prevIsNew || (isOnline && !wasOnline))
+      }
+      _ <- if newlyOnline then notifyPeersChanged else IO.unit
     yield ()
 
   /** Schedule peer removal after grace period. If peer reconnects before timeout, removal is cancelled. */
