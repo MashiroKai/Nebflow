@@ -35,7 +35,7 @@ vault 根 = `<project workspace>/docs/`（`src/main/scala/nebflow/core/wiki/Wiki
 
 ### 1.2 frontmatter、index 与 glossary 怎么维护
 
-- frontmatter 只有两键 `type:` / `status:`（`docs/index.md:1-4`、`docs/glossary.md:1-4`）。校验器只要求两者**至少一个在场**（`check_wiki_docs.py:501-508`），**没有闭集校验**。实测取值发散：`type` 出现 20 种（`design-note` 27、`design` 16、`fix-report` 10、`design-spec` 10、`audit-report` 5、`audit` 4 …… 各 1 的若干），`status` 出现 15 种（`done` 15、`published` 14、`current` 13、`draft` 11 ……）。合法的 type 枚举只活在一份设计稿的**引文**里（`docs/design/visual-report-gate-plan.zh-CN.md:47` 抄了一段 `research-log|problem|…)` 的旧正则），那份正则今天在任何脚本里都已不存在。
+- frontmatter 只有两键 `type:` / `status:`（`docs/index.md:1-4`、`docs/glossary.md:1-4`）。校验器只要求两者**至少一个在场**（`check_wiki_docs.py:501-508`），**没有闭集校验**。实测取值发散：`type` 在用 19 个不同取值（`design-note` 27、`design` 16、`fix-report` 10、`design-spec` 10、`audit-report` 5、`audit` 4 …… 各 1 的若干），`status` 在用 14 个（`done` 15、`published` 14、`current` 13、`draft` 11 …… 另有若干中文自由文本如「作者已批（2026-10-30）」）。合法的 type 枚举只活在一份设计稿的**引文**里（`docs/design/visual-report-gate-plan.zh-CN.md:47` 抄了一段 `research-log|problem|…)` 的旧正则），那份正则今天在任何脚本里都已不存在。
 - `docs/index.md` 是**手工维护**的分类入口：自带 `存目（v1.0.0 清仓移出）` 一节，把库外旧稿降级为反引号纯文本、明确「不作图谱链接」（`docs/index.md:22-31`），写作纪律段指向词表与校验器（`:33-36`）。全仓 grep 未发现任何生成 `index.md` 的脚本；校验器的 `--graph` 只导出 `{nodes,edges}` JSON（`check_wiki_docs.py:634-689`、`:822-825`）。
 - 反面先例值得借用：`triple-star/docs/INDEX.md`（另一条线）首页就写明「本件只列目录职责与主题指针，**不逐件列名**——逐件列名在这次重构中被证明是腐化之源」，并把状态收束到 `status.md` 单点。本仓 `index.md:14-21` 恰恰是逐件列名的形态，已经出现描述与实际文档不齐的迹象（多篇新文档未挂入）。
 
@@ -327,7 +327,7 @@ docs/
 | 2 | 两个注册项目各一份 vault，内容已漂 13 份、各 8/71 份独有 | `~/.stand/projects/{nebflow,nebflow-stand}/project.json`；合并图 `WikiRoutes.scala:13-24` | 合并图同题双节点；「唯一真相」无机制保证 |
 | 3 | `CONVENTIONS.md` 被 4 处引用但盘上不存在 | `NodeEngineContract.scala:697`、`PromptSections.scala:282`、`NodeChainAttributionSpec.scala:94/101` | 命名纪律只有提示词字面量，无可核对规范件 |
 | 4 | 人读件落点条文指向不存在的 `~/.nebflow/docs/` | `seed/plugins/visual-report/skills/visual-report/SKILL.md:272` | 照条文写 = 写到图谱扫不到的地方 |
-| 5 | frontmatter `type` 无闭集，实际 20 种取值 | `check_wiki_docs.py:501-508`；枚举只活在设计稿引文 `design/visual-report-gate-plan.zh-CN.md:47` | 图谱按 type 过滤形同虚设 |
+| 5 | frontmatter `type` 无闭集，在用 19 个取值 | `check_wiki_docs.py:501-508`；枚举只活在设计稿引文 `design/visual-report-gate-plan.zh-CN.md:47` | 图谱按 type 过滤形同虚设 |
 | 6 | 无文档全文检索；检索面只有对话 | `ChatSearchRoutes.scala:15/38`、`SearchIndexService` 单 face；`tools/stand-recall` 头注 | 「查查以前调查过什么」只能靠图，无法按正文 |
 | 7 | `GLOSSARY.md` 无任何机器校验，且与词表零互链 | `grep GLOSSARY scripts/` = 0；两表互不引用 | 名字域与概念域各自漂移 |
 | 8 | 存量违规：14 断链 + 1 孤儿 | 校验器基线读数（`--root nebflow-stand/docs`） | 新规则上线前先清存量，否则噪声掩盖新违规 |
