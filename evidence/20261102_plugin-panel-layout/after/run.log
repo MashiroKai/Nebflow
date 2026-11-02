@@ -1,0 +1,371 @@
+PASS  C1 chromium-light page registry swept (25 pages)  — messages,contacts,canvas,workbench,settings,projects,graph,plugins,usage,tasks,search,reminder,todo,daemon,background,profile,conversation,me,me-user,me-avatar,me-bind,settings-stt,settings-ttl,settings-jev,settings-imagegen
+PASS  C1 chromium-light messages resting: no body text inside chrome hit-rects  — text=4 ctrlBottom=0.0 firstTextTop=72.8
+PASS  C1 chromium-light messages first body text starts below chrome band  — firstTextTop=72.8 ctrlBottom=0.0
+SKIP  C2 chromium-light messages (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light contacts resting: no body text inside chrome hit-rects  — text=2 ctrlBottom=0.0 firstTextTop=90.0
+PASS  C1 chromium-light contacts first body text starts below chrome band  — firstTextTop=90.0 ctrlBottom=0.0
+SKIP  C2 chromium-light contacts (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light canvas resting: no body text inside chrome hit-rects  — text=2 ctrlBottom=0.0 firstTextTop=373.0
+PASS  C1 chromium-light canvas first body text starts below chrome band  — firstTextTop=373.0 ctrlBottom=0.0
+SKIP  C2 chromium-light canvas (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light workbench resting: no body text inside chrome hit-rects  — text=10 ctrlBottom=0.0 firstTextTop=25.0
+PASS  C1 chromium-light workbench first body text starts below chrome band  — firstTextTop=25.0 ctrlBottom=0.0
+SKIP  C2 chromium-light workbench (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light settings resting: no body text inside chrome hit-rects  — text=13 ctrlBottom=64.0 firstTextTop=101.0
+PASS  C1 chromium-light settings first body text starts below chrome band  — firstTextTop=101.0 ctrlBottom=64.0
+PASS  C2 chromium-light settings scrolled: content passes under chrome band (allowed)  — scrollTop=200 firstTextTop=22.0 ctrlBottom=64.0 hits=1 masks=0
+PASS  C2 chromium-light settings scroll leg: no opaque mask over chrome band  — ctrlBottom=64.0
+PASS  C1 chromium-light projects resting: no body text inside chrome hit-rects  — text=5 ctrlBottom=64.0 firstTextTop=339.0
+PASS  C1 chromium-light projects first body text starts below chrome band  — firstTextTop=339.0 ctrlBottom=64.0
+SKIP  C2 chromium-light projects (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light graph resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=164.5
+PASS  C1 chromium-light graph first body text starts below chrome band  — firstTextTop=164.5 ctrlBottom=64.0
+SKIP  C2 chromium-light graph (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light plugins resting: no body text inside chrome hit-rects  — text=28 ctrlBottom=64.0 firstTextTop=76.0
+PASS  C1 chromium-light plugins first body text starts below chrome band  — firstTextTop=76.0 ctrlBottom=64.0
+PASS  C2 chromium-light plugins scrolled: content passes under chrome band (allowed)  — scrollTop=200 firstTextTop=40.9 ctrlBottom=64.0 hits=2 masks=0
+PASS  C2 chromium-light plugins scroll leg: no opaque mask over chrome band  — ctrlBottom=64.0
+PASS  C1 chromium-light usage resting: no body text inside chrome hit-rects  — text=38 ctrlBottom=64.0 firstTextTop=149.0
+PASS  C1 chromium-light usage first body text starts below chrome band  — firstTextTop=149.0 ctrlBottom=64.0
+PASS  C2 chromium-light usage scrolled: content passes under chrome band (allowed)  — scrollTop=28 firstTextTop=121.0 ctrlBottom=64.0 hits=0 masks=0
+PASS  C2 chromium-light usage scroll leg: no opaque mask over chrome band  — ctrlBottom=64.0
+PASS  C1 chromium-light tasks resting: no body text inside chrome hit-rects  — text=28 ctrlBottom=64.0 firstTextTop=76.0
+PASS  C1 chromium-light tasks first body text starts below chrome band  — firstTextTop=76.0 ctrlBottom=64.0
+SKIP  C2 chromium-light tasks (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light search resting: no body text inside chrome hit-rects  — text=10 ctrlBottom=64.0 firstTextTop=78.5
+PASS  C1 chromium-light search first body text starts below chrome band  — firstTextTop=78.5 ctrlBottom=64.0
+PASS  C2 chromium-light search scrolled: content passes under chrome band (allowed)  — scrollTop=13 firstTextTop=73.1 ctrlBottom=64.0 hits=0 masks=0
+PASS  C2 chromium-light search scroll leg: no opaque mask over chrome band  — ctrlBottom=64.0
+PASS  C1 chromium-light reminder resting: no body text inside chrome hit-rects  — text=4 ctrlBottom=64.0 firstTextTop=79.0
+PASS  C1 chromium-light reminder first body text starts below chrome band  — firstTextTop=79.0 ctrlBottom=64.0
+SKIP  C2 chromium-light reminder (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light todo resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=179.0
+PASS  C1 chromium-light todo first body text starts below chrome band  — firstTextTop=179.0 ctrlBottom=64.0
+SKIP  C2 chromium-light todo (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light daemon resting: no body text inside chrome hit-rects  — text=7 ctrlBottom=64.0 firstTextTop=77.0
+PASS  C1 chromium-light daemon first body text starts below chrome band  — firstTextTop=77.0 ctrlBottom=64.0
+SKIP  C2 chromium-light daemon (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light background resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=80.0
+PASS  C1 chromium-light background first body text starts below chrome band  — firstTextTop=80.0 ctrlBottom=64.0
+SKIP  C2 chromium-light background (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light profile resting: no body text inside chrome hit-rects  — text=6 ctrlBottom=64.0 firstTextTop=91.0
+PASS  C1 chromium-light profile first body text starts below chrome band  — firstTextTop=91.0 ctrlBottom=64.0
+SKIP  C2 chromium-light profile (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light conversation resting: no body text inside chrome hit-rects  — text=1 ctrlBottom=64.0 firstTextTop=n/a
+SKIP  C2 chromium-light conversation (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light me resting: no body text inside chrome hit-rects  — text=11 ctrlBottom=64.0 firstTextTop=109.0
+PASS  C1 chromium-light me first body text starts below chrome band  — firstTextTop=109.0 ctrlBottom=64.0
+SKIP  C2 chromium-light me (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light me-user resting: no body text inside chrome hit-rects  — text=7 ctrlBottom=64.0 firstTextTop=91.0
+PASS  C1 chromium-light me-user first body text starts below chrome band  — firstTextTop=91.0 ctrlBottom=64.0
+SKIP  C2 chromium-light me-user (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light me-avatar resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=229.0
+PASS  C1 chromium-light me-avatar first body text starts below chrome band  — firstTextTop=229.0 ctrlBottom=64.0
+SKIP  C2 chromium-light me-avatar (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light me-bind resting: no body text inside chrome hit-rects  — text=8 ctrlBottom=64.0 firstTextTop=91.0
+PASS  C1 chromium-light me-bind first body text starts below chrome band  — firstTextTop=91.0 ctrlBottom=64.0
+SKIP  C2 chromium-light me-bind (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light settings-stt resting: no body text inside chrome hit-rects  — text=9 ctrlBottom=64.0 firstTextTop=85.5
+PASS  C1 chromium-light settings-stt first body text starts below chrome band  — firstTextTop=85.5 ctrlBottom=64.0
+SKIP  C2 chromium-light settings-stt (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light settings-ttl resting: no body text inside chrome hit-rects  — text=8 ctrlBottom=64.0 firstTextTop=85.5
+PASS  C1 chromium-light settings-ttl first body text starts below chrome band  — firstTextTop=85.5 ctrlBottom=64.0
+SKIP  C2 chromium-light settings-ttl (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light settings-jev resting: no body text inside chrome hit-rects  — text=9 ctrlBottom=64.0 firstTextTop=85.5
+PASS  C1 chromium-light settings-jev first body text starts below chrome band  — firstTextTop=85.5 ctrlBottom=64.0
+SKIP  C2 chromium-light settings-jev (content shorter than viewport — no scroll room)
+PASS  C1 chromium-light settings-imagegen resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=71.0
+PASS  C1 chromium-light settings-imagegen first body text starts below chrome band  — firstTextTop=71.0 ctrlBottom=64.0
+SKIP  C2 chromium-light settings-imagegen (content shorter than viewport — no scroll room)
+PASS  C3 chromium-light three controls present in one actions row  — {"toggle":{"w":51,"h":44},"uninstall":{"w":59,"h":44},"doc":{"w":94,"h":44}}
+PASS  C3 chromium-light Plugin.md entry revealed (in-package probe 200)
+PASS  C3 chromium-light toggle + uninstall + Plugin.md on one row (y bands overlap)  — toggle=[365.0,396.0] uninstall=[369.5,391.5] doc=[370.5,390.5]
+PASS  C3 chromium-light vertical centers aligned (±1px)  — spread=0.00px centers=380.5/380.5/380.5
+PASS  C3 chromium-light all controls hit area ≥44  — toggle/uninstall/doc ok
+PASS  C4 chromium-light row fits 375 without horizontal scroll  — need≈224px avail=321px scrollW=321
+PASS  C4 chromium-light three widths sum fits available width  — sum=224 avail=321 margin=97px (viewport=375)
+PASS  C4 chromium-light no text truncation (buttons not clipped)  — uninstall.right=348.0 actions.right=348.0 doc.x=27.0
+PASS  C7 chromium-light long-name chip expanded  — ink=[89,303] box=[72,303] vw=375
+PASS  C7 chromium-light expanded chip ink stays inside viewport  — ink.right=303 vw=375
+PASS  C7 chromium-light chip ink never enters floating-button hit rects  — chips=1 fabs=2
+PASS  C1 chromium-dark page registry swept (25 pages)  — messages,contacts,canvas,workbench,settings,projects,graph,plugins,usage,tasks,search,reminder,todo,daemon,background,profile,conversation,me,me-user,me-avatar,me-bind,settings-stt,settings-ttl,settings-jev,settings-imagegen
+PASS  C1 chromium-dark messages resting: no body text inside chrome hit-rects  — text=4 ctrlBottom=0.0 firstTextTop=72.8
+PASS  C1 chromium-dark messages first body text starts below chrome band  — firstTextTop=72.8 ctrlBottom=0.0
+SKIP  C2 chromium-dark messages (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark contacts resting: no body text inside chrome hit-rects  — text=2 ctrlBottom=0.0 firstTextTop=90.0
+PASS  C1 chromium-dark contacts first body text starts below chrome band  — firstTextTop=90.0 ctrlBottom=0.0
+SKIP  C2 chromium-dark contacts (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark canvas resting: no body text inside chrome hit-rects  — text=2 ctrlBottom=0.0 firstTextTop=373.0
+PASS  C1 chromium-dark canvas first body text starts below chrome band  — firstTextTop=373.0 ctrlBottom=0.0
+SKIP  C2 chromium-dark canvas (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark workbench resting: no body text inside chrome hit-rects  — text=10 ctrlBottom=0.0 firstTextTop=25.0
+PASS  C1 chromium-dark workbench first body text starts below chrome band  — firstTextTop=25.0 ctrlBottom=0.0
+SKIP  C2 chromium-dark workbench (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark settings resting: no body text inside chrome hit-rects  — text=13 ctrlBottom=64.0 firstTextTop=101.0
+PASS  C1 chromium-dark settings first body text starts below chrome band  — firstTextTop=101.0 ctrlBottom=64.0
+PASS  C2 chromium-dark settings scrolled: content passes under chrome band (allowed)  — scrollTop=200 firstTextTop=22.0 ctrlBottom=64.0 hits=1 masks=0
+PASS  C2 chromium-dark settings scroll leg: no opaque mask over chrome band  — ctrlBottom=64.0
+PASS  C1 chromium-dark projects resting: no body text inside chrome hit-rects  — text=5 ctrlBottom=64.0 firstTextTop=339.0
+PASS  C1 chromium-dark projects first body text starts below chrome band  — firstTextTop=339.0 ctrlBottom=64.0
+SKIP  C2 chromium-dark projects (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark graph resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=164.5
+PASS  C1 chromium-dark graph first body text starts below chrome band  — firstTextTop=164.5 ctrlBottom=64.0
+SKIP  C2 chromium-dark graph (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark plugins resting: no body text inside chrome hit-rects  — text=28 ctrlBottom=64.0 firstTextTop=76.0
+PASS  C1 chromium-dark plugins first body text starts below chrome band  — firstTextTop=76.0 ctrlBottom=64.0
+PASS  C2 chromium-dark plugins scrolled: content passes under chrome band (allowed)  — scrollTop=200 firstTextTop=40.9 ctrlBottom=64.0 hits=2 masks=0
+PASS  C2 chromium-dark plugins scroll leg: no opaque mask over chrome band  — ctrlBottom=64.0
+PASS  C1 chromium-dark usage resting: no body text inside chrome hit-rects  — text=38 ctrlBottom=64.0 firstTextTop=149.0
+PASS  C1 chromium-dark usage first body text starts below chrome band  — firstTextTop=149.0 ctrlBottom=64.0
+PASS  C2 chromium-dark usage scrolled: content passes under chrome band (allowed)  — scrollTop=28 firstTextTop=121.0 ctrlBottom=64.0 hits=0 masks=0
+PASS  C2 chromium-dark usage scroll leg: no opaque mask over chrome band  — ctrlBottom=64.0
+PASS  C1 chromium-dark tasks resting: no body text inside chrome hit-rects  — text=28 ctrlBottom=64.0 firstTextTop=76.0
+PASS  C1 chromium-dark tasks first body text starts below chrome band  — firstTextTop=76.0 ctrlBottom=64.0
+SKIP  C2 chromium-dark tasks (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark search resting: no body text inside chrome hit-rects  — text=10 ctrlBottom=64.0 firstTextTop=78.5
+PASS  C1 chromium-dark search first body text starts below chrome band  — firstTextTop=78.5 ctrlBottom=64.0
+PASS  C2 chromium-dark search scrolled: content passes under chrome band (allowed)  — scrollTop=13 firstTextTop=73.1 ctrlBottom=64.0 hits=0 masks=0
+PASS  C2 chromium-dark search scroll leg: no opaque mask over chrome band  — ctrlBottom=64.0
+PASS  C1 chromium-dark reminder resting: no body text inside chrome hit-rects  — text=4 ctrlBottom=64.0 firstTextTop=79.0
+PASS  C1 chromium-dark reminder first body text starts below chrome band  — firstTextTop=79.0 ctrlBottom=64.0
+SKIP  C2 chromium-dark reminder (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark todo resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=179.0
+PASS  C1 chromium-dark todo first body text starts below chrome band  — firstTextTop=179.0 ctrlBottom=64.0
+SKIP  C2 chromium-dark todo (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark daemon resting: no body text inside chrome hit-rects  — text=7 ctrlBottom=64.0 firstTextTop=77.0
+PASS  C1 chromium-dark daemon first body text starts below chrome band  — firstTextTop=77.0 ctrlBottom=64.0
+SKIP  C2 chromium-dark daemon (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark background resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=80.0
+PASS  C1 chromium-dark background first body text starts below chrome band  — firstTextTop=80.0 ctrlBottom=64.0
+SKIP  C2 chromium-dark background (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark profile resting: no body text inside chrome hit-rects  — text=6 ctrlBottom=64.0 firstTextTop=91.0
+PASS  C1 chromium-dark profile first body text starts below chrome band  — firstTextTop=91.0 ctrlBottom=64.0
+SKIP  C2 chromium-dark profile (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark conversation resting: no body text inside chrome hit-rects  — text=1 ctrlBottom=64.0 firstTextTop=n/a
+SKIP  C2 chromium-dark conversation (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark me resting: no body text inside chrome hit-rects  — text=11 ctrlBottom=64.0 firstTextTop=109.0
+PASS  C1 chromium-dark me first body text starts below chrome band  — firstTextTop=109.0 ctrlBottom=64.0
+SKIP  C2 chromium-dark me (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark me-user resting: no body text inside chrome hit-rects  — text=7 ctrlBottom=64.0 firstTextTop=91.0
+PASS  C1 chromium-dark me-user first body text starts below chrome band  — firstTextTop=91.0 ctrlBottom=64.0
+SKIP  C2 chromium-dark me-user (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark me-avatar resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=229.0
+PASS  C1 chromium-dark me-avatar first body text starts below chrome band  — firstTextTop=229.0 ctrlBottom=64.0
+SKIP  C2 chromium-dark me-avatar (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark me-bind resting: no body text inside chrome hit-rects  — text=8 ctrlBottom=64.0 firstTextTop=91.0
+PASS  C1 chromium-dark me-bind first body text starts below chrome band  — firstTextTop=91.0 ctrlBottom=64.0
+SKIP  C2 chromium-dark me-bind (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark settings-stt resting: no body text inside chrome hit-rects  — text=9 ctrlBottom=64.0 firstTextTop=85.5
+PASS  C1 chromium-dark settings-stt first body text starts below chrome band  — firstTextTop=85.5 ctrlBottom=64.0
+SKIP  C2 chromium-dark settings-stt (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark settings-ttl resting: no body text inside chrome hit-rects  — text=8 ctrlBottom=64.0 firstTextTop=85.5
+PASS  C1 chromium-dark settings-ttl first body text starts below chrome band  — firstTextTop=85.5 ctrlBottom=64.0
+SKIP  C2 chromium-dark settings-ttl (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark settings-jev resting: no body text inside chrome hit-rects  — text=9 ctrlBottom=64.0 firstTextTop=85.5
+PASS  C1 chromium-dark settings-jev first body text starts below chrome band  — firstTextTop=85.5 ctrlBottom=64.0
+SKIP  C2 chromium-dark settings-jev (content shorter than viewport — no scroll room)
+PASS  C1 chromium-dark settings-imagegen resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=71.0
+PASS  C1 chromium-dark settings-imagegen first body text starts below chrome band  — firstTextTop=71.0 ctrlBottom=64.0
+SKIP  C2 chromium-dark settings-imagegen (content shorter than viewport — no scroll room)
+PASS  C3 chromium-dark three controls present in one actions row  — {"toggle":{"w":51,"h":44},"uninstall":{"w":59,"h":44},"doc":{"w":94,"h":44}}
+PASS  C3 chromium-dark Plugin.md entry revealed (in-package probe 200)
+PASS  C3 chromium-dark toggle + uninstall + Plugin.md on one row (y bands overlap)  — toggle=[365.0,396.0] uninstall=[369.5,391.5] doc=[370.5,390.5]
+PASS  C3 chromium-dark vertical centers aligned (±1px)  — spread=0.00px centers=380.5/380.5/380.5
+PASS  C3 chromium-dark all controls hit area ≥44  — toggle/uninstall/doc ok
+PASS  C4 chromium-dark row fits 375 without horizontal scroll  — need≈224px avail=321px scrollW=321
+PASS  C4 chromium-dark three widths sum fits available width  — sum=224 avail=321 margin=97px (viewport=375)
+PASS  C4 chromium-dark no text truncation (buttons not clipped)  — uninstall.right=348.0 actions.right=348.0 doc.x=27.0
+PASS  C7 chromium-dark long-name chip expanded  — ink=[89,303] box=[72,303] vw=375
+PASS  C7 chromium-dark expanded chip ink stays inside viewport  — ink.right=303 vw=375
+PASS  C7 chromium-dark chip ink never enters floating-button hit rects  — chips=1 fabs=2
+PASS  C1 webkit-light page registry swept (25 pages)  — messages,contacts,canvas,workbench,settings,projects,graph,plugins,usage,tasks,search,reminder,todo,daemon,background,profile,conversation,me,me-user,me-avatar,me-bind,settings-stt,settings-ttl,settings-jev,settings-imagegen
+PASS  C1 webkit-light messages resting: no body text inside chrome hit-rects  — text=4 ctrlBottom=0.0 firstTextTop=74.1
+PASS  C1 webkit-light messages first body text starts below chrome band  — firstTextTop=74.1 ctrlBottom=0.0
+SKIP  C2 webkit-light messages (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light contacts resting: no body text inside chrome hit-rects  — text=2 ctrlBottom=0.0 firstTextTop=90.5
+PASS  C1 webkit-light contacts first body text starts below chrome band  — firstTextTop=90.5 ctrlBottom=0.0
+SKIP  C2 webkit-light contacts (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light canvas resting: no body text inside chrome hit-rects  — text=2 ctrlBottom=0.0 firstTextTop=374.0
+PASS  C1 webkit-light canvas first body text starts below chrome band  — firstTextTop=374.0 ctrlBottom=0.0
+SKIP  C2 webkit-light canvas (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light workbench resting: no body text inside chrome hit-rects  — text=10 ctrlBottom=0.0 firstTextTop=25.0
+PASS  C1 webkit-light workbench first body text starts below chrome band  — firstTextTop=25.0 ctrlBottom=0.0
+SKIP  C2 webkit-light workbench (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light settings resting: no body text inside chrome hit-rects  — text=14 ctrlBottom=64.0 firstTextTop=100.0
+PASS  C1 webkit-light settings first body text starts below chrome band  — firstTextTop=100.0 ctrlBottom=64.0
+PASS  C2 webkit-light settings scrolled: content passes under chrome band (allowed)  — scrollTop=200 firstTextTop=12.0 ctrlBottom=64.0 hits=2 masks=0
+PASS  C2 webkit-light settings scroll leg: no opaque mask over chrome band  — ctrlBottom=64.0
+PASS  C1 webkit-light projects resting: no body text inside chrome hit-rects  — text=5 ctrlBottom=64.0 firstTextTop=343.8
+PASS  C1 webkit-light projects first body text starts below chrome band  — firstTextTop=343.8 ctrlBottom=64.0
+SKIP  C2 webkit-light projects (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light graph resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=164.9
+PASS  C1 webkit-light graph first body text starts below chrome band  — firstTextTop=164.9 ctrlBottom=64.0
+SKIP  C2 webkit-light graph (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light plugins resting: no body text inside chrome hit-rects  — text=28 ctrlBottom=64.0 firstTextTop=76.3
+PASS  C1 webkit-light plugins first body text starts below chrome band  — firstTextTop=76.3 ctrlBottom=64.0
+PASS  C2 webkit-light plugins scrolled: content passes under chrome band (allowed)  — scrollTop=200 firstTextTop=36.3 ctrlBottom=64.0 hits=2 masks=0
+PASS  C2 webkit-light plugins scroll leg: no opaque mask over chrome band  — ctrlBottom=64.0
+PASS  C1 webkit-light usage resting: no body text inside chrome hit-rects  — text=38 ctrlBottom=64.0 firstTextTop=148.9
+PASS  C1 webkit-light usage first body text starts below chrome band  — firstTextTop=148.9 ctrlBottom=64.0
+PASS  C2 webkit-light usage scrolled: content passes under chrome band (allowed)  — scrollTop=14 firstTextTop=141.9 ctrlBottom=64.0 hits=0 masks=0
+PASS  C2 webkit-light usage scroll leg: no opaque mask over chrome band  — ctrlBottom=64.0
+PASS  C1 webkit-light tasks resting: no body text inside chrome hit-rects  — text=28 ctrlBottom=64.0 firstTextTop=75.3
+PASS  C1 webkit-light tasks first body text starts below chrome band  — firstTextTop=75.3 ctrlBottom=64.0
+SKIP  C2 webkit-light tasks (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light search resting: no body text inside chrome hit-rects  — text=10 ctrlBottom=64.0 firstTextTop=79.2
+PASS  C1 webkit-light search first body text starts below chrome band  — firstTextTop=79.2 ctrlBottom=64.0
+PASS  C2 webkit-light search scrolled: content passes under chrome band (allowed)  — scrollTop=13 firstTextTop=73.7 ctrlBottom=64.0 hits=0 masks=0
+PASS  C2 webkit-light search scroll leg: no opaque mask over chrome band  — ctrlBottom=64.0
+PASS  C1 webkit-light reminder resting: no body text inside chrome hit-rects  — text=4 ctrlBottom=64.0 firstTextTop=79.3
+PASS  C1 webkit-light reminder first body text starts below chrome band  — firstTextTop=79.3 ctrlBottom=64.0
+SKIP  C2 webkit-light reminder (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light todo resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=178.4
+PASS  C1 webkit-light todo first body text starts below chrome band  — firstTextTop=178.4 ctrlBottom=64.0
+SKIP  C2 webkit-light todo (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light daemon resting: no body text inside chrome hit-rects  — text=7 ctrlBottom=64.0 firstTextTop=76.3
+PASS  C1 webkit-light daemon first body text starts below chrome band  — firstTextTop=76.3 ctrlBottom=64.0
+SKIP  C2 webkit-light daemon (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light background resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=79.0
+PASS  C1 webkit-light background first body text starts below chrome band  — firstTextTop=79.0 ctrlBottom=64.0
+SKIP  C2 webkit-light background (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light profile resting: no body text inside chrome hit-rects  — text=6 ctrlBottom=64.0 firstTextTop=90.3
+PASS  C1 webkit-light profile first body text starts below chrome band  — firstTextTop=90.3 ctrlBottom=64.0
+SKIP  C2 webkit-light profile (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light conversation resting: no body text inside chrome hit-rects  — text=1 ctrlBottom=64.0 firstTextTop=n/a
+SKIP  C2 webkit-light conversation (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light me resting: no body text inside chrome hit-rects  — text=11 ctrlBottom=64.0 firstTextTop=109.0
+PASS  C1 webkit-light me first body text starts below chrome band  — firstTextTop=109.0 ctrlBottom=64.0
+SKIP  C2 webkit-light me (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light me-user resting: no body text inside chrome hit-rects  — text=7 ctrlBottom=64.0 firstTextTop=91.0
+PASS  C1 webkit-light me-user first body text starts below chrome band  — firstTextTop=91.0 ctrlBottom=64.0
+SKIP  C2 webkit-light me-user (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light me-avatar resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=230.1
+PASS  C1 webkit-light me-avatar first body text starts below chrome band  — firstTextTop=230.1 ctrlBottom=64.0
+SKIP  C2 webkit-light me-avatar (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light me-bind resting: no body text inside chrome hit-rects  — text=8 ctrlBottom=64.0 firstTextTop=91.0
+PASS  C1 webkit-light me-bind first body text starts below chrome band  — firstTextTop=91.0 ctrlBottom=64.0
+SKIP  C2 webkit-light me-bind (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light settings-stt resting: no body text inside chrome hit-rects  — text=9 ctrlBottom=64.0 firstTextTop=85.8
+PASS  C1 webkit-light settings-stt first body text starts below chrome band  — firstTextTop=85.8 ctrlBottom=64.0
+SKIP  C2 webkit-light settings-stt (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light settings-ttl resting: no body text inside chrome hit-rects  — text=8 ctrlBottom=64.0 firstTextTop=85.8
+PASS  C1 webkit-light settings-ttl first body text starts below chrome band  — firstTextTop=85.8 ctrlBottom=64.0
+SKIP  C2 webkit-light settings-ttl (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light settings-jev resting: no body text inside chrome hit-rects  — text=9 ctrlBottom=64.0 firstTextTop=85.8
+PASS  C1 webkit-light settings-jev first body text starts below chrome band  — firstTextTop=85.8 ctrlBottom=64.0
+SKIP  C2 webkit-light settings-jev (content shorter than viewport — no scroll room)
+PASS  C1 webkit-light settings-imagegen resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=70.1
+PASS  C1 webkit-light settings-imagegen first body text starts below chrome band  — firstTextTop=70.1 ctrlBottom=64.0
+SKIP  C2 webkit-light settings-imagegen (content shorter than viewport — no scroll room)
+PASS  C3 webkit-light three controls present in one actions row  — {"toggle":{"w":51,"h":44},"uninstall":{"w":58.9,"h":44},"doc":{"w":95.6,"h":44}}
+PASS  C3 webkit-light Plugin.md entry revealed (in-package probe 200)
+PASS  C3 webkit-light toggle + uninstall + Plugin.md on one row (y bands overlap)  — toggle=[365.0,396.0] uninstall=[370.5,390.5] doc=[370.5,390.5]
+PASS  C3 webkit-light vertical centers aligned (±1px)  — spread=0.00px centers=380.5/380.5/380.5
+PASS  C3 webkit-light all controls hit area ≥44  — toggle/uninstall/doc ok
+PASS  C4 webkit-light row fits 375 without horizontal scroll  — need≈226px avail=321px scrollW=321
+PASS  C4 webkit-light three widths sum fits available width  — sum=226 avail=321 margin=96px (viewport=375)
+PASS  C4 webkit-light no text truncation (buttons not clipped)  — uninstall.right=348.0 actions.right=348.0 doc.x=27.0
+PASS  C7 webkit-light long-name chip expanded  — ink=[89,303] box=[72,303] vw=375
+PASS  C7 webkit-light expanded chip ink stays inside viewport  — ink.right=303 vw=375
+PASS  C7 webkit-light chip ink never enters floating-button hit rects  — chips=1 fabs=2
+PASS  C1 webkit-dark page registry swept (25 pages)  — messages,contacts,canvas,workbench,settings,projects,graph,plugins,usage,tasks,search,reminder,todo,daemon,background,profile,conversation,me,me-user,me-avatar,me-bind,settings-stt,settings-ttl,settings-jev,settings-imagegen
+PASS  C1 webkit-dark messages resting: no body text inside chrome hit-rects  — text=4 ctrlBottom=0.0 firstTextTop=74.1
+PASS  C1 webkit-dark messages first body text starts below chrome band  — firstTextTop=74.1 ctrlBottom=0.0
+SKIP  C2 webkit-dark messages (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark contacts resting: no body text inside chrome hit-rects  — text=2 ctrlBottom=0.0 firstTextTop=90.5
+PASS  C1 webkit-dark contacts first body text starts below chrome band  — firstTextTop=90.5 ctrlBottom=0.0
+SKIP  C2 webkit-dark contacts (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark canvas resting: no body text inside chrome hit-rects  — text=2 ctrlBottom=0.0 firstTextTop=374.0
+PASS  C1 webkit-dark canvas first body text starts below chrome band  — firstTextTop=374.0 ctrlBottom=0.0
+SKIP  C2 webkit-dark canvas (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark workbench resting: no body text inside chrome hit-rects  — text=10 ctrlBottom=0.0 firstTextTop=25.0
+PASS  C1 webkit-dark workbench first body text starts below chrome band  — firstTextTop=25.0 ctrlBottom=0.0
+SKIP  C2 webkit-dark workbench (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark settings resting: no body text inside chrome hit-rects  — text=14 ctrlBottom=64.0 firstTextTop=100.0
+PASS  C1 webkit-dark settings first body text starts below chrome band  — firstTextTop=100.0 ctrlBottom=64.0
+PASS  C2 webkit-dark settings scrolled: content passes under chrome band (allowed)  — scrollTop=200 firstTextTop=12.0 ctrlBottom=64.0 hits=2 masks=0
+PASS  C2 webkit-dark settings scroll leg: no opaque mask over chrome band  — ctrlBottom=64.0
+PASS  C1 webkit-dark projects resting: no body text inside chrome hit-rects  — text=5 ctrlBottom=64.0 firstTextTop=343.8
+PASS  C1 webkit-dark projects first body text starts below chrome band  — firstTextTop=343.8 ctrlBottom=64.0
+SKIP  C2 webkit-dark projects (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark graph resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=164.9
+PASS  C1 webkit-dark graph first body text starts below chrome band  — firstTextTop=164.9 ctrlBottom=64.0
+SKIP  C2 webkit-dark graph (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark plugins resting: no body text inside chrome hit-rects  — text=28 ctrlBottom=64.0 firstTextTop=76.3
+PASS  C1 webkit-dark plugins first body text starts below chrome band  — firstTextTop=76.3 ctrlBottom=64.0
+PASS  C2 webkit-dark plugins scrolled: content passes under chrome band (allowed)  — scrollTop=200 firstTextTop=36.3 ctrlBottom=64.0 hits=2 masks=0
+PASS  C2 webkit-dark plugins scroll leg: no opaque mask over chrome band  — ctrlBottom=64.0
+PASS  C1 webkit-dark usage resting: no body text inside chrome hit-rects  — text=38 ctrlBottom=64.0 firstTextTop=148.9
+PASS  C1 webkit-dark usage first body text starts below chrome band  — firstTextTop=148.9 ctrlBottom=64.0
+PASS  C2 webkit-dark usage scrolled: content passes under chrome band (allowed)  — scrollTop=14 firstTextTop=141.9 ctrlBottom=64.0 hits=0 masks=0
+PASS  C2 webkit-dark usage scroll leg: no opaque mask over chrome band  — ctrlBottom=64.0
+PASS  C1 webkit-dark tasks resting: no body text inside chrome hit-rects  — text=28 ctrlBottom=64.0 firstTextTop=75.3
+PASS  C1 webkit-dark tasks first body text starts below chrome band  — firstTextTop=75.3 ctrlBottom=64.0
+SKIP  C2 webkit-dark tasks (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark search resting: no body text inside chrome hit-rects  — text=10 ctrlBottom=64.0 firstTextTop=79.2
+PASS  C1 webkit-dark search first body text starts below chrome band  — firstTextTop=79.2 ctrlBottom=64.0
+PASS  C2 webkit-dark search scrolled: content passes under chrome band (allowed)  — scrollTop=13 firstTextTop=73.7 ctrlBottom=64.0 hits=0 masks=0
+PASS  C2 webkit-dark search scroll leg: no opaque mask over chrome band  — ctrlBottom=64.0
+PASS  C1 webkit-dark reminder resting: no body text inside chrome hit-rects  — text=4 ctrlBottom=64.0 firstTextTop=79.3
+PASS  C1 webkit-dark reminder first body text starts below chrome band  — firstTextTop=79.3 ctrlBottom=64.0
+SKIP  C2 webkit-dark reminder (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark todo resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=178.4
+PASS  C1 webkit-dark todo first body text starts below chrome band  — firstTextTop=178.4 ctrlBottom=64.0
+SKIP  C2 webkit-dark todo (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark daemon resting: no body text inside chrome hit-rects  — text=7 ctrlBottom=64.0 firstTextTop=76.3
+PASS  C1 webkit-dark daemon first body text starts below chrome band  — firstTextTop=76.3 ctrlBottom=64.0
+SKIP  C2 webkit-dark daemon (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark background resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=79.0
+PASS  C1 webkit-dark background first body text starts below chrome band  — firstTextTop=79.0 ctrlBottom=64.0
+SKIP  C2 webkit-dark background (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark profile resting: no body text inside chrome hit-rects  — text=6 ctrlBottom=64.0 firstTextTop=90.3
+PASS  C1 webkit-dark profile first body text starts below chrome band  — firstTextTop=90.3 ctrlBottom=64.0
+SKIP  C2 webkit-dark profile (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark conversation resting: no body text inside chrome hit-rects  — text=1 ctrlBottom=64.0 firstTextTop=n/a
+SKIP  C2 webkit-dark conversation (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark me resting: no body text inside chrome hit-rects  — text=11 ctrlBottom=64.0 firstTextTop=109.0
+PASS  C1 webkit-dark me first body text starts below chrome band  — firstTextTop=109.0 ctrlBottom=64.0
+SKIP  C2 webkit-dark me (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark me-user resting: no body text inside chrome hit-rects  — text=7 ctrlBottom=64.0 firstTextTop=91.0
+PASS  C1 webkit-dark me-user first body text starts below chrome band  — firstTextTop=91.0 ctrlBottom=64.0
+SKIP  C2 webkit-dark me-user (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark me-avatar resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=230.1
+PASS  C1 webkit-dark me-avatar first body text starts below chrome band  — firstTextTop=230.1 ctrlBottom=64.0
+SKIP  C2 webkit-dark me-avatar (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark me-bind resting: no body text inside chrome hit-rects  — text=8 ctrlBottom=64.0 firstTextTop=91.0
+PASS  C1 webkit-dark me-bind first body text starts below chrome band  — firstTextTop=91.0 ctrlBottom=64.0
+SKIP  C2 webkit-dark me-bind (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark settings-stt resting: no body text inside chrome hit-rects  — text=9 ctrlBottom=64.0 firstTextTop=85.8
+PASS  C1 webkit-dark settings-stt first body text starts below chrome band  — firstTextTop=85.8 ctrlBottom=64.0
+SKIP  C2 webkit-dark settings-stt (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark settings-ttl resting: no body text inside chrome hit-rects  — text=8 ctrlBottom=64.0 firstTextTop=85.8
+PASS  C1 webkit-dark settings-ttl first body text starts below chrome band  — firstTextTop=85.8 ctrlBottom=64.0
+SKIP  C2 webkit-dark settings-ttl (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark settings-jev resting: no body text inside chrome hit-rects  — text=9 ctrlBottom=64.0 firstTextTop=85.8
+PASS  C1 webkit-dark settings-jev first body text starts below chrome band  — firstTextTop=85.8 ctrlBottom=64.0
+SKIP  C2 webkit-dark settings-jev (content shorter than viewport — no scroll room)
+PASS  C1 webkit-dark settings-imagegen resting: no body text inside chrome hit-rects  — text=3 ctrlBottom=64.0 firstTextTop=70.1
+PASS  C1 webkit-dark settings-imagegen first body text starts below chrome band  — firstTextTop=70.1 ctrlBottom=64.0
+SKIP  C2 webkit-dark settings-imagegen (content shorter than viewport — no scroll room)
+PASS  C3 webkit-dark three controls present in one actions row  — {"toggle":{"w":51,"h":44},"uninstall":{"w":58.9,"h":44},"doc":{"w":95.6,"h":44}}
+PASS  C3 webkit-dark Plugin.md entry revealed (in-package probe 200)
+PASS  C3 webkit-dark toggle + uninstall + Plugin.md on one row (y bands overlap)  — toggle=[365.0,396.0] uninstall=[370.5,390.5] doc=[370.5,390.5]
+PASS  C3 webkit-dark vertical centers aligned (±1px)  — spread=0.00px centers=380.5/380.5/380.5
+PASS  C3 webkit-dark all controls hit area ≥44  — toggle/uninstall/doc ok
+PASS  C4 webkit-dark row fits 375 without horizontal scroll  — need≈226px avail=321px scrollW=321
+PASS  C4 webkit-dark three widths sum fits available width  — sum=226 avail=321 margin=96px (viewport=375)
+PASS  C4 webkit-dark no text truncation (buttons not clipped)  — uninstall.right=348.0 actions.right=348.0 doc.x=27.0
+PASS  C7 webkit-dark long-name chip expanded  — ink=[89,303] box=[72,303] vw=375
+PASS  C7 webkit-dark expanded chip ink stays inside viewport  — ink.right=303 vw=375
+PASS  C7 webkit-dark chip ink never enters floating-button hit rects  — chips=1 fabs=2
+PASS  C6 desktop: mobile layer NOT active
+PASS  C6 desktop: toggle + uninstall + Plugin.md share one row  — {"toggle":{"x":1131,"y":679.4,"w":36,"h":20,"cy":689.4,"r":1167,"b":699.4},"uninstall":{"x":1177,"y":678.4,"w":59,"h":22,"cy":689.4,"r":1236,"b":700.4},"doc":{"x":832,"y":679.4,"w":94,"h":20,"cy":689.4,"r":926,"b":699.4}}
+PASS  C6 desktop: row layout = doc left, toggle + uninstall right  — doc.x=832 toggle.x=1131 uninstall.right=1236 actions.right=1236
+PASS  C6 desktop: card keeps desktop width (not mobile full-bleed)  — cardW=430
+PASS  C6 desktop: mobile layer NOT active
+PASS  C6 desktop: toggle + uninstall + Plugin.md share one row  — {"toggle":{"x":1131,"y":679.4,"w":36,"h":20,"cy":689.4,"r":1167,"b":699.4},"uninstall":{"x":1177,"y":678.4,"w":59,"h":22,"cy":689.4,"r":1236,"b":700.4},"doc":{"x":832,"y":679.4,"w":94,"h":20,"cy":689.4,"r":926,"b":699.4}}
+PASS  C6 desktop: row layout = doc left, toggle + uninstall right  — doc.x=832 toggle.x=1131 uninstall.right=1236 actions.right=1236
+PASS  C6 desktop: card keeps desktop width (not mobile full-bleed)  — cardW=430
+PASS  C5 zero console error / pageerror (all legs)
+
+ALL PASS  — shots: evidence/20261102_plugin-panel-layout/after/shots

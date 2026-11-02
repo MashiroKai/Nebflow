@@ -28,7 +28,9 @@ import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const WEB = join(HERE, '..', 'src', 'main', 'resources', 'web');
+// MCC_WEB：改前/改后同视口对照用 —— 指向另一份 web 根（如 `git archive main` 解包
+// 出来的干净基线），同一份断言在两边各跑一遍，读数才可逐项对比。
+const WEB = process.env.MCC_WEB || join(HERE, '..', 'src', 'main', 'resources', 'web');
 const OUT = process.env.MCC_OUT_DIR || join(HERE, '..', 'evidence', '20261102_plugin-panel-layout', 'after');
 const SHOTS = join(OUT, 'shots');
 mkdirSync(SHOTS, { recursive: true });
@@ -56,27 +58,45 @@ const watchErrors = (page, tag) => {
   page.on('console', (m) => { if (m.type() === 'error' && !NOISE.test(m.text())) consoleErrors.push(`${tag} console.error: ${m.text()}`); });
 };
 
-/* ── 夹具：插件册（首包 50 技能 = 作者实拍「50 个技能 · 2 个…」统计行口径）── */
+/* ── 夹具：插件册（首包 50 技能 = 作者实拍「50 个技能 · 2 个…」统计行口径）──
+ *  字段形态照引擎契约（tests/plugins-panel-itemize.spec.mjs manifest 同构）：
+ *  skills = [{id, description, preview}]，mcpServers = [{server, transport, ...}]
+ *  —— 传裸字符串会让「MCP: undefined (none)」这类错投影进证据图。 */
+const skillFixtures = (prefix, n) => Array.from({ length: n }, (_, i) => ({
+  id: `${prefix}/skill-${i + 1}`, description: `技能 ${i + 1} 的描述`, preview: '',
+}));
 const PLUGINS = {
   plugins: [
     {
       name: 'stand-dev', version: '1.1.0', author: 'nebflow',
       description: '统一插件系统：技能与 MCP 以插件为单位打包分发，装载即生效。本开关只影响任务分发器对未来节点的派发（已在跑的节点保持其许可）',
-      skills: Array.from({ length: 50 }, (_, i) => `stand-dev-skill-${i + 1}`),
-      mcpServers: ['viz-mcp', 'search-mcp'], toolsExtension: null,
-      blocked: false, contentChanged: false,
+      skills: skillFixtures('stand-dev', 50),
+      mcpServers: [
+        { server: 'viz-mcp', transport: 'stdio', command: 'uvx', args: ['mcp-viz'], url: null, envKeys: [] },
+        { server: 'search-mcp', transport: 'http', command: null, args: [], url: 'http://127.0.0.1:7331/mcp', envKeys: [] },
+      ],
+      toolsExtension: null, blocked: false, contentChanged: false,
     },
     {
       name: 'visual-report', version: '1.0.0', author: 'nebflow',
       description: '可视化报告包：17 个场景 skill',
-      skills: ['visual-report', 'core', 'motion-toolkit'], mcpServers: [],
+      skills: skillFixtures('visual-report', 3), mcpServers: [],
       toolsExtension: null, blocked: false, contentChanged: false,
     },
     {
       name: 'legacy-scraper', version: '0.9.2', author: '3rd-party',
-      description: '旧版抓取（已封禁示例）', skills: ['scrape'],
-      mcpServers: ['scraper-mcp'], toolsExtension: null, blocked: true, contentChanged: false,
+      description: '旧版抓取（已封禁示例）', skills: skillFixtures('legacy-scraper', 1),
+      mcpServers: [{ server: 'scraper-mcp', transport: 'stdio', command: 'uvx', args: ['mcp-scrape'], url: null, envKeys: [] }],
+      toolsExtension: null, blocked: true, contentChanged: false,
     },
+    // 尾部填充包（≥6 个 ⇒ 插件页内容超出 812 视口，C2 滚动腿与「滚动中途」证据
+    // 才有真实滚域；名称/描述皆为中性占位，不引入新文案契约）。
+    ...[1, 2, 3, 4, 5, 6].map((i) => ({
+      name: `filler-pack-${i}`, version: `1.${i}.0`, author: 'nebflow',
+      description: `占位插件 ${i}：用于撑出插件面板的滚动余量，验证静止让位与滚动穿越两态。`,
+      skills: skillFixtures(`filler-pack-${i}`, 2), mcpServers: [], toolsExtension: null,
+      blocked: false, contentChanged: false,
+    })),
   ],
   rejected: [],
 };
@@ -249,6 +269,7 @@ const PROBE = () => {
     texts.push({
       txt: node.nodeValue.trim().slice(0, 24),
       cls: String(host.className).slice(0, 40),
+      isPageTitle: !!host.closest('.mobile-page-title'),
       rect: { x: vx, y: vy, w: vr - vx, h: vb - vy, r: vr, b: vb },
     });
   }
@@ -265,12 +286,18 @@ const PROBE = () => {
     }
   }
 
-  // ④ 让位读数：正文首个文字顶 vs 控件簇下沿（最大 b）
+  // ④ 让位读数：正文首个文字顶 vs 控件簇下沿（最大 b）。
+  //    「正文」= 除页名大标题之外的文字 —— 两段式标题批把大标题摆成与返回钮
+  //    同轴同带（横向靠 --mtitle-inset 让开钮位，交面积 0 已由 ③ 判过），它
+  //    在钮带内是**设计意图**，不是被遮挡；作者令的「内容」指的是标题之下的
+  //    正卡片/说明段。
   const ctrlBottom = controls.reduce((m, c) => Math.max(m, c.rect.b), 0);
-  const firstTextTop = texts.length ? Math.min(...texts.map((t) => t.rect.y)) : null;
+  const bodyTexts = texts.filter((t) => !t.isPageTitle);
+  const firstTextTop = bodyTexts.length ? Math.min(...bodyTexts.map((t) => t.rect.y)) : null;
+  const titleTop = texts.some((t) => t.isPageTitle) ? Math.min(...texts.filter((t) => t.isPageTitle).map((t) => t.rect.y)) : null;
   return {
     found: true, page: pageId,
-    controls, hits, ctrlBottom, firstTextTop, textCount: texts.length,
+    controls, hits, ctrlBottom, firstTextTop, titleTop, textCount: texts.length,
     scrollTop: (() => {
       const cands = [body, ...(body ? body.querySelectorAll('*') : [])];
       for (const n of cands) {
