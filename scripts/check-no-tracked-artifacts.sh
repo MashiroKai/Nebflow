@@ -6,15 +6,19 @@
 # `git add -f` 强塞（如提交 51beafa16，提交信息自己写着"靠 add -f"）。
 # 后果是与协作方每次合并反复拉锯：那边清一次，这边下一次合并又带回去。
 #
-# 本门禁把「操作产物目录一律不得出现在索引里」钉死在 CI：
-#   A 面  git ls-files -- <产物目录> 必须为空。非空即红，逐条列出违规路径。
+# 本门禁把「操作产物一律不得出现在索引里」钉死在 CI：
+#   A 面  git ls-files -- <产物 pathspec> 必须为空。非空即红，逐条列出违规路径。
 #   B 面  probe-before-trust：先证明 git ls-files 在本 checkout 里真的能列出
 #         东西（探 src 必须非空）。否则「零命中」可能只是 git 不可用/不是仓库/
 #         浅克隆异常造成的假绿 —— 检测器瞎了必须红，不能静默放行。
 #
-# 判定面（ARTIFACT_ROOTS）只收已由作者裁定为过程产物的目录：
-#   docs/  reports/  evidence/  reports-evidence/
-# 新增产物目录时同步本文件与 .gitignore（两处都得写，单一真源是 .gitignore，
+# 判定面（ARTIFACT_SPECS）只收已由作者裁定为过程产物的路径，全部根锚定
+# （:(top) magic），与 .gitignore 里同名根锚定规则一一对应：
+#   docs/  reports/  evidence/  reports-evidence/   —— 第一批
+#   design/                                          —— 第二批
+#   scripts/data-root-migration/evidence/            —— 第二批（嵌套路径，写全路径）
+#   仓库根 *__flow-*.md                              —— 第二批（:(top,glob) 只匹配根层）
+# 新增产物时同步本文件与 .gitignore（两处都得写，单一真源是 .gitignore，
 # 本文件是它的 CI 执法面）。
 #
 # 本地等价：bash scripts/check-no-tracked-artifacts.sh
@@ -24,7 +28,16 @@ set -u
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
-ARTIFACT_ROOTS="docs reports evidence reports-evidence"
+# "<展示名>|<git pathspec>"，一行一条。pathspec 一律 :(top) 根锚定：
+# 不加 top magic 时语义随 cwd 漂移，且 design 这类词会连带匹配子目录同名路径。
+# 规则里含 / 的（嵌套 evidence、根目录 md glob）必须写全，才不会被误读成任一层的同名目录。
+ARTIFACT_SPECS='docs|:(top)docs
+reports|:(top)reports
+evidence|:(top)evidence
+reports-evidence|:(top)reports-evidence
+design|:(top)design
+scripts/data-root-migration/evidence|:(top)scripts/data-root-migration/evidence
+<仓库根>*__flow-*.md|:(top,glob)*__flow-*.md'
 
 cd "$REPO_ROOT" || fail "无法进入仓库根 $REPO_ROOT"
 git rev-parse --is-inside-work-tree > /dev/null 2>&1 || fail "不是 git 工作树：$REPO_ROOT（本门禁依赖索引，纯导出目录无法判定）"
@@ -35,20 +48,24 @@ git rev-parse --is-inside-work-tree > /dev/null 2>&1 || fail "不是 git 工作�
 PROBE_COUNT="$(git ls-files -- src 2>/dev/null | wc -l | tr -d ' ')"
 [ "$PROBE_COUNT" -gt 0 ] || fail "探针失败：git ls-files -- src 零命中（git 面不可信，拒绝给出「零产物」的假绿结论；检查 checkout 是否完整）"
 
-# -- A 面：产物目录必须零跟踪 ------------------------------------------------
+# -- A 面：产物必须零跟踪 ----------------------------------------------------
 VIOLATIONS=0
-for root in $ARTIFACT_ROOTS; do
-    # -- 后接目录名：只匹配该顶层目录本身，不做 pathspec 模糊扩散。
-    # 目录不存在时 git ls-files 输出为空且退出 0（CI 全新检出即此情形）。
-    hits="$(git ls-files -- "$root")"
+CHECKED=""
+while IFS='|' read -r label spec; do
+    [ -n "${label:-}" ] || continue
+    # 目录/路径不存在时 git ls-files 输出为空且退出 0（CI 全新检出即此情形）。
+    hits="$(git ls-files -- "$spec")"
+    CHECKED="${CHECKED}${label} "
     if [ -n "$hits" ]; then
         count="$(printf '%s\n' "$hits" | wc -l | tr -d ' ')"
-        echo "FAIL: $root/ 有 ${count} 个文件被 git 跟踪（过程产物不得入库，见 .gitignore）" >&2
+        echo "FAIL: ${label} 有 ${count} 个文件被 git 跟踪（过程产物不得入库，见 .gitignore）" >&2
         printf '%s\n' "$hits" | head -20 | sed 's/^/    /' >&2
         [ "$count" -gt 20 ] && echo "    …（其余 $((count - 20)) 条略）" >&2
         VIOLATIONS=$((VIOLATIONS + 1))
     fi
-done
+done <<HEADS
+$ARTIFACT_SPECS
+HEADS
 
 if [ "$VIOLATIONS" -gt 0 ]; then
     echo "" >&2
@@ -58,4 +75,4 @@ if [ "$VIOLATIONS" -gt 0 ]; then
     exit 1
 fi
 
-echo "OK: 索引里零过程产物（docs/ reports/ evidence/ reports-evidence/ 全部零跟踪；探针 src=${PROBE_COUNT} 条）"
+echo "OK: 索引里零过程产物（${CHECKED% } 全部零跟踪；探针 src=${PROBE_COUNT} 条）"
