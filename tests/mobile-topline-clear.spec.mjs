@@ -146,9 +146,12 @@ test('T1 mobile layer active; top band carries no gradient skirt; hard-clip var 
      「无通栏渐变底面」语义由不渲染保证（computed background 仍回指定值，但盒
      零绘制零命中）。渐隐带契约见 T3。 */
   expect(shape.headerDisplay).toBe('none');
-  // 硬裁切机制在场（--chat-top-clip 锚点变量 + #chat mask）。
+  // 硬裁切机制：--chat-top-clip 锚点变量仍在场；#chat 的顶部消失点 mask 在手机层
+  // 由 mobileLayer.css「#chat mask 释放」块**有意置 none**（非 none 会让 #chat 自成
+  // 堆叠上下文，把顶栏/悬浮钮的 z 序困在内部）。本断言的旧口径（要求手机层 mask
+  // 恒含 linear-gradient）在 main 同树即为存量红，随本批按现役契约改写。
   expect(shape.chatClipVar === '' || shape.chatClipVar.endsWith('px')).toBe(true);
-  expect(shape.chatMask).toContain('linear-gradient');
+  expect(shape.chatMask).toBe('none');
   expect(errors).toEqual([]);
 });
 

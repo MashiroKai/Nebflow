@@ -514,6 +514,7 @@ body.mobile-layer #g2-edge-fade {
   #canvas-head-close,
   .g2-fab,
   .g2-pill:not(.g2-pill-primary),
+  body.mobile-layer #chat > .g2-chat-head,
   body.mobile-layer #mobile-dock {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
@@ -549,6 +550,7 @@ html.no-backdrop #deck-fab,
 html.no-backdrop #canvas-head-close,
 html.no-backdrop .g2-fab,
 html.no-backdrop .g2-pill:not(.g2-pill-primary),
+html.no-backdrop body.mobile-layer #chat > .g2-chat-head,
 html.no-backdrop body.mobile-layer #mobile-dock {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;

@@ -218,7 +218,9 @@ test('F1 button unification: 48px g2-fab geometry + material + spring press (A1/
   expect(geo.cvStack.right).toBe(359);
   // 与聊天根 chrome 任务键同高同材质族（基准规格不动它们本身）。
   expect(geo.chrome.box).toEqual({ w: 48, h: 48 });
-  expect(geo.chrome.top).toBe(16);
+  // 会话顶栏单行三段式批（2026-11-02 07:23）：聊天根 chrome 双键 top 16 → 4+safe
+  // （钮中心 = safe+28 = 40px 头像中心，三者同轴）；页面壳按钮仍 16，本轮不改。
+  expect(geo.chrome.top).toBe(4);
   // A2 材质：全部 = --glass-bg 探针同源（统一按钮玻璃批单源）。
   for (const [k, v] of Object.entries({ msgFab: geo.msgFab, ctFab: geo.ctFab, back: geo.back, cvClose: geo.cvClose, cvStack: geo.cvStack })) {
     expect(v.bg, k).toBe(geo.fabBg);

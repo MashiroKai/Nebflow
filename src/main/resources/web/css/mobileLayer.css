@@ -76,6 +76,22 @@
  *   sticky 锚窗口顶（--muse-head-top）全部保持；名字字号留 14px（字身比 4.0，
  *   仍「头像为主、名字为辅」）；dock 中键 44px 与桌面 28px 零触碰。取值理由与
  *   验收读数见 docs/20261102_muse-avatar-shrink__delegate-nebflow-d616c46a.md。
+ *   ⚠ 该批的 sticky/64px 锚形态已由下一条**整条取代**（头像 40px 单行档）。
+ *
+ * 会话顶栏单行三段式批（作者令 2026-11-02 07:23，实拍 rest-light.png）落位 ——
+ * 文件尾批次块 + 中块 ②/②-b 整条退役：
+ *   ① 顶栏单行三段式：左＝任务键 / 中＝头像（右挂名字）/ 右＝搜索键，三者垂直
+ *      中线同轴；.g2-chat-head 从内容流首项改为 position:fixed 真顶栏
+ *      （高 56 + safe、玻璃单源 --glass-bg + blur24/sat1.15 + 下缘 1px --glass-
+ *      border、z 26），sticky 变形与负 margin 上提全数退役；
+ *   ② 头像 40px（36-40 档取上沿；56 撑不开 56px 单行，理由见批文档）；
+ *   ③ 名字横排挂头像右侧（绝对定位锚中线+28px，使头像单独居中满足「头像水平
+ *      中心 − 屏幕中线 = 0±1px」）；名字玻璃胶囊底退役（直接写在玻璃顶栏上）；
+ *   ④ 内容起点 = 顶栏下缘 + 8（main.js 手机层分支按顶栏 rect 实测），原 96/64px
+ *      留白带收掉；#g2-edge-fade 元素与材质不动，mask 收到顶栏下缘以下透明
+ *      （滚入内容由顶栏本体 backdrop 先糊、顶栏玻璃后没）；
+ *   ⑤ 双钮 top 16 → 4+safe（纽中心 = safe + 28 = 头像中心；尺寸/材质/角标零改）；
+ *   ⑥ #top-overlays 手机层 top 68 → 64+safe（真顶栏之下，避免刘海档叠压）。
  *
  * 铁律：本文件全部规则挂在 body.mobile-layer 之下 —— 该类只由 mobile/bootstrap.js
  * 在手机视口（≤768px，与既有 css/mobile.css 折叠点同源）激活。桌面窗口永远不
@@ -2605,6 +2621,11 @@ body.mobile-layer .g2-chat-head #memory-btn {
    令①「去掉每条消息头部的 agent 头像+名字行」：.g2-msg-meta 六条样式随
    挂出链（chatChrome.js）整批退役（上方退役块），消息分组/时间戳/footer
    信息条不动。
+   🔴 本块的 Muse 形态（②sticky 顶锚 + 名字下置 + 56px 头像 + 名字玻璃胶囊）
+   已由**文件尾「会话顶栏单行三段式批」（2026-11-02 07:23 作者令）整条取代**：
+   头像与名字并入真顶栏同一行（与左右双钮同轴），sticky/负 margin/胶囊底全数
+   退役。下方保留原始注记仅作沿革考古，现役取值一律以文件尾批次块为准。
+
    令② Muse 式：会话窗口顶部居中悬浮**大号**圆形头像（对方 agent 头像），
    头像正下方居中显示 agent 名字；悬浮态 = 随内容滚动的固定锚 —— 贴窗口
    顶部、压在消息流上缘。实现 = .g2-chat-head（chatChrome.js 自 #header
@@ -2642,40 +2663,18 @@ body.mobile-layer #chat {
   -webkit-mask-image: none;
   mask-image: none;
 }
-/* ② 悬浮锚本体：sticky 顶锚 + 让头像/名字（而非整条带）当浮层。
-   top 走 var(--muse-head-top)（chatChrome.js 同步 = -(#chat padding-top)）：
-   sticky 锚定矩形 = scrollport 内缩 padding，top:0 只能锚到 padding 缘
-   （main.js 顶让位常态 96px）——负值补偿后锚定阈值恒等窗口顶。 */
-body.mobile-layer #chat .g2-chat-head {
-  position: sticky;
-  top: var(--muse-head-top, 0px);
-  z-index: 26;
-  gap: 6px;
-  padding: 8px 2px 12px;
-}
-/* ②-b 会话身份组上提进顶带（位置批 2026-11-01 23:0x 作者报障「头像和 agent name
-   的位置这么奇怪…头像上方留了一大块空白、像浮在页面中央」）。
-   病灶：.g2-chat-head 是 #chat 内容流首项 ⇒ 静止态组顶 = #chat padding-top（顶让位
-   常态 96px = 渐隐带 88 + 基线 8），组顶之下才是头像 —— 96px 的纯空带把「会话身份
-   头」推到了视觉中段，读成浮在页面中部而不是「顶部居中的会话头」。
-   修法：负 margin-top 把组上提回顶带，落点 = 悬浮双键行下缘（16 + 48 = 64，见下方
-   #mobile-fab-layer 块）—— 组自带 padding-top 8 即成为与双键的呼吸缝，组顶贴着,
-   头像右落 8px；正下方 name 顺次上提，消息列整体随流上移同等距离（负 margin 参与
-   流内布局 ⇒ 后续内容跟动，不留叠压也不产生空洞）。
-   取值纯 CSS 派生、零新 JS 状态：--muse-head-top 已知 = -(#chat padding-top)，故
-   「组顶 = 64 + safe」⇔ margin-top = var(--muse-head-top) + 64px + safe。让位带随
-   横幅/键盘变化时 JS 重写该变量，上提量同一帧跟随（不增量叠加、不写死 96）。
-   回退值 -8px 与 chat.css `#chat { padding: 8px 0 36px }` 的基线让位同值 ⇒ CSS 先于
-   JS 落地的首帧即已正确落位（-8 + 64 = 56，加基线 padding 8 = 组顶 64），不产生
-   「先下推再上收」的跳变；--muse-head-top 由 chatChrome.activateChatChrome 建层后
-   同帧写入，随后 RO 与让位带变化同步（横幅/键盘档同一帧跟随）。
-   安全区：悬浮双键同为 top: calc(16px + safe)（见 #mobile-fab-layer 块），故上提量
-   同加 env(safe-area-inset-top) —— 刘海档组顶与双键下缘的 8px 关系逐像素保持。
-   sticky 语义不变：上提只改静止态落点，滚动时 top 仍由 --muse-head-top 锚窗口顶
-   （负 margin 不改 sticky 锚定阈值，实测滚动态组顶仍 = #chat 顶）。 */
-body.mobile-layer #chat .g2-chat-head {
-  margin-top: calc(var(--muse-head-top, -8px) + 64px + env(safe-area-inset-top, 0px));
-}
+/* ② 悬浮锚本体 + ②-b 身份组上提 —— **整条退役**（单行三段式顶栏批
+   2026-11-02 07:23 作者令「头像为什么不在顶栏与左右两颗按钮同一行…现在给出明确
+   要求并实施」）。
+   退役对象 = ① `position: sticky` + `top: var(--muse-head-top)`（chatChrome.js
+   同步负 padding 补偿的 sticky 顶锚）与 ②-b 负 margin 上提（把组顶钉到双键行下缘
+   64px 的补丁）。二者共同造就作者实拍所见病灶：身份组永远是「顶带之下另起一行」
+   的浮层，且滚动时做 sticky 变形（顶栏不是真顶栏）。
+   新契约（本文件尾「会话顶栏单行三段式批」块）把 .g2-chat-head 直接做成
+   `position: fixed` 的顶栏本体：头像与左右双钮落在同一条水平轴线上、顶栏下缘
+   56px+safe 是内容流起点（零额外空白带），滚动时顶栏不动、内容从下方流过。
+   规则删除（非注释化保留）⇒ 与 --muse-head-top 变量一并失去消费方，
+   chatChrome.js 的同名同步链本批同批摘除。 */
 /* ②-c 无名档幽灵胶囊收口（同批）：#session-name 在「root 未命名」态由
    sidebar.updateHeaderSessionName 写空串（2026-10-06 N1 裁定：无名 root 标题区为空
    串，机制名永不作显示回落）。空串 span 仍吃本块胶囊的 padding（3px 14px）⇒ 画出一枚
@@ -2685,7 +2684,9 @@ body.mobile-layer #chat .g2-chat-head {
 body.mobile-layer #chat .g2-chat-head #session-name:empty {
   display: none;
 }
-/* ③ 大号圆头像（基座 52px → 78px → **56px**；底/描边/浮影/glass-control 缘沿用
+/* ③ 大号圆头像 —— 现役取值见文件尾单行三段式批 ④ 块（**40px**）。下方 56px
+   为收小批（06:58）历史档，本批被後置块覆盖，保留注记作沿革。
+   （基座 52px → 78px → **56px**；底/描边/浮影/glass-control 缘沿用
    基座档）——收小批（作者令 2026-11-02 06:58，实拍 IMG_1674「手机端会话顶部居中
    的 Muse 头像调小一点」）：78 一档收到 56（视宽 375 的 14.9%；原 78 = 20.8%），
    成组贴顶 64px 锚 / 头像-名字 6px 间距 / sticky 与居中语义零触碰。
@@ -2837,4 +2838,126 @@ body.mobile-layer #attachment-preview .att-file .att-remove::after { inset: -6px
 body.mobile-layer #attachment-preview .att-file .att-remove svg {
   width: 6.5px;
   height: 6.5px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   会话顶栏单行三段式批（2026-11-02 07:23 作者令，实拍
+   evidence/20261102_muse-avatar-shrink/rest-light.png）
+   ═══════════════════════════════════════════════════════════════════════
+   作者原话：「手机端会话顶部，头像为什么不在顶栏与左右两颗按钮**同一行**
+   居中，而是掉到下面一行… 新要求：头像与名字并入顶栏同一行」。
+
+   病灶（本批修掉的形态）：.g2-chat-head 曾是 #chat 内容流首项 + 负 margin 上提
+   到双键行下缘（上块 ②/②-b 已整条退役）+ 列式布局 ⇒ 头像必然另起一行，
+   且 sticky 变形（不是真顶栏）。
+
+   新契约 = 单行三段式真顶栏：
+     左＝任务键　中＝头像（+ 右侧名字）　右＝搜索键，三者垂直中线同轴。
+   · 高度 56px + env(safe-area-inset-top)（手机标准档：iOS 导航栏 44pt 的
+     上沿档；56 内放 48px 圆钮 = 上下各 4px 余量，放 40px 头像 = 各 8px）；
+   · 材质 = 玻璃单源包：--glass-bg + blur(--glass-blur) saturate(--cv-saturate)
+     + border-bottom 1px --glass-border（与 #mobile-dock / #input-bar 同配方，
+     浅深双主题走 token 自动成立，零新色值）；降级档在 glass.css 两块列名；
+   · 固定在顶部（position: fixed，不随内容滚动、无 sticky 变形）：内容从顶栏
+     下缘起（main.js 顶让位 = 顶栏下缘 + 8 呼吸），原 96/64px 留白带一并收掉；
+   · z 26：> 渐隐带 25（顶栏压在渐隐带上），< 双钮层 30（双钮仍是更高一层，
+     按压/角标零遮挡），< 页面栈 156 < dock 200 —— 层级契约与本文件头注一致。
+   ═══════════════════════════════════════════════════════════════════════ */
+/* ① 顶栏本体：fixed 单行，头像吃满高度居中 */
+body.mobile-layer #chat .g2-chat-head {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: calc(56px + env(safe-area-inset-top, 0px));
+  z-index: 26;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 72px; /* 左 16+48、右 16+48 双钮足印 + 8 呼吸：中段永不被钮压 */
+  flex: none;
+  box-sizing: border-box;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
+  border-bottom: 1px solid var(--glass-border);
+}
+/* ② 头像 40px：单行内取 36-40 档的**上沿**（理由见批文档「取值理由」：
+   56 档在 56px 单行里上下各只剩 0px，撑不开；40 = 视宽 10.7%，与 14px 名字
+   的字身比 2.9 —— 仍读成「头像为主、名字为辅」，而 36 已贴近两倍字高的小号
+   图标观感）。垂直中心 = safe + 28 = 双钮中心（48px 钮 top 4 + 24）。
+   头像本体（圆/描边/高光/浮影/芯片底）沿用 chat.css 全局 #agent-avatar-btn 档
+   与既有 stand logo 58% 槽内缩放，本块只改外径。order 前置保证在名字左侧
+   （agentProfile.initAgentProfile 已把节点插在 .header-center 首位 ⇒ 迁入时仍是
+   首子节点，order 仅作结构性兜底）。 */
+body.mobile-layer #chat .g2-chat-head #agent-avatar-btn {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  order: 0;
+}
+/* ③ 名字横排挂头像右侧（作者令「优先横排」；竖排=下置已在 ②/②-b 退役）。
+   🔴 定位取舍（与机械断言对齐）：作者验收 2 要求「头像水平中心与屏幕中线
+   偏差 0±1px」——若名字参与 flex 居中，整组（头像+8+名字）居中会把头像推离
+   中线（375 下 "Spider" 即偏 26px）。故：头像单独居中（唯一流内子节点 +
+   justify-center ⇒ 恒在屏幕中线），名字 position:absolute 从「中线 + 头像半宽
+   + 8」起排，不参与居中计算。视觉结果 = 头像为轴、名字挂右侧；名字缺失时
+   只余头像且仍居中（:empty 隐藏见 ②-c 块）。
+   max-width = 50vw − 28 − 72（右双钮足印）⇒ 375 下 87.5px：容纳 "Spider"
+   （42px）/ 中文 2-4 字，超长省略号收口（不侵入搜索钮）；放不下的情况已在
+   批文档「横排容量」节申报。 */
+body.mobile-layer #chat .g2-chat-head #session-name {
+  position: absolute;
+  left: calc(50% + 28px); /* 中线 + 头像半宽 20 + 间距 8 */
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: calc(50vw - 100px);
+  margin: 0;
+  padding: 0;             /* 名字胶囊底退役：名字直接写在玻璃顶栏上，不再叠一层 */
+  border-radius: 0;
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--color-frame-text-bright, var(--color-frame-text));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: left;
+  user-select: none;
+  order: 1;
+}
+/* ④ 顶栏下缘即内容起点：原「渐隐带 88 全高都压在前 88px 内容上」的形态与真
+   顶栏冲突（顶栏已自带 blur，渐隐带在顶栏之下只会把首条消息上沿糊掉）。故把
+   渐隐带的可视区收到顶栏下缘：0..顶栏下缘 全强度（被顶栏玻璃盖住，等价加深
+   玻璃底），顶栏下缘以下 0 —— 元素尺寸/材质/mask 结构不变（88px / blur18 /
+   sat1.5 / linear-gradient 均照旧），滚入内容由顶栏本体的 backdrop-filter
+   「先糊」，再被顶栏 55% 玻璃与下缘线「后没」。 */
+body.mobile-layer #g2-edge-fade {
+  -webkit-mask-image: linear-gradient(to bottom,
+    #000 0,
+    #000 calc(56px + env(safe-area-inset-top, 0px)),
+    transparent calc(56px + env(safe-area-inset-top, 0px)),
+    transparent 100%);
+  mask-image: linear-gradient(to bottom,
+    #000 0,
+    #000 calc(56px + env(safe-area-inset-top, 0px)),
+    transparent calc(56px + env(safe-area-inset-top, 0px)),
+    transparent 100%);
+}
+/* ⑤ 双钮上移到与头像同轴：钮中心 = safe + 28（顶栏高 56 ⇒ 中线 safe + 28）。
+   48px 钮 in 56px 行 = 上下各 4px 余量（iOS 导航栏零余量的最小可辨呼吸档）。
+   左右 16px 足印与顶栏 padding 的 72px 对齐（16+48+8）。
+   注：水平位置/尺寸/材质/角标链零改动 —— 只动垂直落点。 */
+body.mobile-layer .mh-chrome-btn {
+  top: calc(4px + env(safe-area-inset-top, 0px));
+}
+/* ⑥ 顶带卡（待办提醒条/站内通知）让位到真顶栏之下：原 top:68px 是「无顶栏、
+   只有 16+48 双钮」时代的取值，刘海档（safe>12）会与 56+safe 顶栏交叠。 */
+body.mobile-layer #top-overlays {
+  top: calc(64px + env(safe-area-inset-top, 0px));
 }
