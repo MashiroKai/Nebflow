@@ -26,8 +26,27 @@
 //     `@Space`、`@KeyJ` —— 全角/半角、输入法、键盘布局都不影响；
 //     【】在中文输入法下是 BracketLeft/BracketRight 的**显示形**，物理键不变。
 //   · Mod = Windows/Linux 的 Ctrl、macOS 的 Cmd（沿用全仓 `e.metaKey || e.ctrlKey` 口径）。
+//
+// ── 三期改造（keyboard-first 三期，2026-11-02）：`mode` → `when` 上下文 ──────
+// 一期只有「模式」一个维度（meta/edit）。三期把它降格成**普通上下文键**
+// `keyboardMode`（keyContext.js），于是「这条键在什么状态下算数」可以写成
+// `when: 'deckOpen && !textInputFocus'` 这样的表达式，而不是每个模块自己 if。
+//
+// 兼容策略（不破坏既有 8 条注册与既有断言）：
+//   · `mode: 'meta'` 仍然有效 —— 它等价于 `when: 'keyboardMode == meta'`；
+//     `mode: '*'` 等价于不加 when。两项同时给出时取**与**。
+//   · `allowInInput` 仍然有效 —— 它等价于 `when: '!textInputFocus'` 的便捷写法。
+//
+// 语义权威：`when` 的语法与求值以 Monaco 的 `ContextKeyExpr` 为准，本地实现见
+// keyContext.js，等价性由 scripts/keyboard-check.mjs 的 L 组逐格断言。
 
 import { isImeComposing } from './imeGuard.js';
+import {
+  compileWhen, setContextKey, getContextKey, isEditableTarget, isActivatableTarget, KEYS,
+  installFocusContextKeys,
+} from './keyContext.js';
+
+export { isEditableTarget, isActivatableTarget };
 
 /**
  * vim 式双模态：meta = 导航态，edit = 输入态，'*' = 两态通用。
@@ -44,7 +63,10 @@ import { isImeComposing } from './imeGuard.js';
  * @property {KeyMode} [mode]      生效模式，缺省 '*'（两态通用）
  * @property {string} [group]      命令面板分组名
  * @property {string[]} [aliases]  额外 combo（同一 handler 的第二键位）
- * @property {boolean} [allowInInput] true = 焦点在输入框时也生效（默认 false）
+ * @property {string} [when]       生效条件（keyContext 的 when 表达式，Monaco 语法）。
+ *   缺省 = 无条件。与 `mode` 同时给出时取与。
+ * @property {boolean} [allowInInput] true = 焦点在输入框时也生效（默认 false）；
+ *   等价于 `when: '!textInputFocus'` 的便捷写法，三期起不再推荐新代码使用。
  * @property {boolean} [observe] true = 「观察者」注册：即使按键已被别处
  *   preventDefault 仍要跑（用于监听一个**不归自己所有**的键，典型 = Enter 由
  *   input.js 拥有发送权，本层只在它之后补一次模式切换）。不阻塞、不改默认行为。
@@ -52,7 +74,7 @@ import { isImeComposing } from './imeGuard.js';
  * @property {boolean} [stopPropagation] 默认 true
  */
 
-/** @typedef {ShortcutSpec & {scope: string, mode: KeyMode, canonical: string[]}} Entry */
+/** @typedef {ShortcutSpec & {scope: string, mode: KeyMode, canonical: string[], when: string, test: (e?: KeyboardEvent) => boolean}} Entry */
 
 /** @type {Map<string, Entry[]>} canonical combo → entries */
 const byCombo = new Map();
@@ -62,6 +84,10 @@ const byId = new Map();
 const activeScopes = new Set();
 /** @type {KeyMode} */
 let currentMode = 'meta';
+
+// 模式 = 上下文键（三期）：初值写进上下文表，规则表里的
+// `when: 'keyboardMode == meta'` 从第一拍起就有值可读。
+setContextKey(KEYS.mode, currentMode);
 
 /** 修饰键别名归一（Ctrl / Cmd / Meta 统一收敛成 Mod）。 */
 const MOD_ALIASES = new Set(['mod', 'cmd', 'meta', 'ctrl', 'control', 'command']);
@@ -127,36 +153,6 @@ function canonicalFromCode(e) {
 }
 
 /**
- * 事件目标是否在「文本输入态」内 —— 键盘优先最容易被误伤的一面：
- * 在输入框里把 `Alt+1` 当面板切换，用户就打不出那个字符了。
- * @param {EventTarget | null} t
- * @returns {boolean}
- */
-export function isEditableTarget(t) {
-  if (!(t instanceof HTMLElement)) return false;
-  const tag = t.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-  return t.isContentEditable === true;
-}
-
-/**
- * 聚焦元素是否是「自己用 Space/Enter 激活」的自绘控件（button / role 族 / 带 tabindex）。
- * meta 模式下 Space 不许抢它的原生激活语义。
- * @param {Element | null} el
- * @returns {boolean}
- */
-export function isActivatableTarget(el) {
-  if (!(el instanceof HTMLElement)) return false;
-  if (el.tagName === 'BUTTON' || el.tagName === 'A') return true;
-  const role = el.getAttribute('role');
-  if (role === 'button' || role === 'checkbox' || role === 'menuitem' || role === 'option' || role === 'tab') return true;
-  // tabindex **>= 0** 才算：带 tabindex="-1" 的是程序化焦点落点（对话流容器、
-  // 侧边栏条目的导航标记），它们没有 Space 激活语义 —— 若算作激活控件，
-  // "Shift+] 走到侧栏条目 → Space 进输入" 就会被自己的标记挡死。
-  return el.tabIndex >= 0;
-}
-
-/**
  * 场景是否生效。'global' 恒生效。
  * @param {string} scope
  * @returns {boolean}
@@ -186,6 +182,10 @@ export function getMode() {
 /**
  * 切换模式（meta ↔ edit）。注册器只负责「哪个键在哪个模式下算数」，
  * 焦点迁移由 mode.js 负责（关注点分离：注册器不碰 DOM）。
+ *
+ * 三期：模式**同时**写进上下文表（`keyboardMode`）—— 从此规则表里的
+ * `when: 'keyboardMode == meta'` 与业务键的 `when` 条件走同一条求值路径，
+ * 模式不再是注册器内部的特例分支（isModeActive 已退役）。
  * @param {KeyMode} mode
  * @returns {void}
  */
@@ -194,16 +194,9 @@ export function setMode(mode) {
   if (mode === currentMode) return;
   const from = currentMode;
   currentMode = mode;
+  setContextKey(KEYS.mode, mode);
   notifyChange();
   document.dispatchEvent(new CustomEvent('nf-mode-change', { detail: { from, to: mode } }));
-}
-
-/**
- * @param {KeyMode} m
- * @returns {boolean} 该注册项在当前模式下是否生效
- */
-function isModeActive(m) {
-  return m === '*' || m === currentMode;
 }
 
 /**
@@ -219,9 +212,11 @@ function modesOverlap(a, b) {
 /**
  * 注册一条快捷键。
  *
- * 冲突策略 = **注册期硬错**（同 scope、同 combo、**mode 相交**的二次注册直接抛），
- * 因为运行期静默二选一是最难查的一类 bug。同一 combo 在不同 mode 下可以共存
- * —— 那正是双模态的用法，不是冲突。
+ * 冲突策略 = **注册期硬错**（同 scope、同 combo、**条件相交**的二次注册直接抛），
+ * 因为运行期静默二选一是最难查的一类 bug。条件相交的判据（三期）：
+ * 模式相交 **且** when 串相同或其中一方为空 —— 两条 `when` 不同的规则共享一个
+ * combo 是合法用法（`Escape` 在 `deckOpen` 与在 `explorerSelection` 下是两件事），
+ * 这与 Monaco 的 `KeybindingsRegistry` 口径一致。
  *
  * @param {ShortcutSpec} spec
  * @returns {() => void} 注销函数
@@ -232,23 +227,35 @@ export function registerShortcut(spec) {
   }
   const scope = spec.scope || 'global';
   const mode = /** @type {KeyMode} */ (spec.mode || '*');
+  const whenSrc = String(spec.when || '').trim();
   const canonicals = [spec.combo, ...(spec.aliases || [])].map(canonicalCombo).filter(Boolean);
   if (!canonicals.length) throw new Error(`keymap: combo 无法解析 (${spec.id}: ${spec.combo})`);
+
+  // when 与 mode / allowInInput 合成**一条**谓词：dispatch 只有一个判断点。
+  const whenFn = compileWhen(whenSrc);
+  const test = (/** @type {KeyboardEvent|undefined} */ e) => {
+    if (mode !== '*' && mode !== currentMode) return false;
+    if (!whenSrc && spec.allowInInput !== true && e && isEditableTarget(e.target)) return false;
+    if (!whenSrc) return true;
+    return whenFn(getContextKey);
+  };
 
   if (byId.has(spec.id)) unregister(spec.id); // 同 id 覆盖 = 幂等重入
 
   for (const c of canonicals) {
     const bucket = byCombo.get(c) || [];
-    const clash = bucket.find((s) => s.scope === scope && modesOverlap(s.mode, mode));
+    const clash = bucket.find((s) => s.scope === scope && modesOverlap(s.mode, mode)
+      && (s.when === whenSrc || !s.when || !whenSrc));
     if (clash) {
       throw new Error(
-        `keymap: combo 冲突 "${c}" —— "${spec.id}"(mode=${mode}) 与 "${clash.id}"(mode=${clash.mode}) 同在 scope=${scope}`,
+        `keymap: combo 冲突 "${c}" —— "${spec.id}"(mode=${mode}${whenSrc ? `, when=${whenSrc}` : ''})`
+        + ` 与 "${clash.id}"(mode=${clash.mode}${clash.when ? `, when=${clash.when}` : ''}) 同在 scope=${scope}`,
       );
     }
   }
 
   /** @type {Entry} */
-  const entry = Object.assign({}, spec, { scope, mode, canonical: canonicals });
+  const entry = Object.assign({}, spec, { scope, mode, when: whenSrc, canonical: canonicals, test });
   byId.set(spec.id, entry);
   for (const c of canonicals) {
     const bucket = byCombo.get(c) || [];
@@ -289,7 +296,7 @@ export function clearAll() {
 
 /**
  * 列出全部注册项（命令面板 / 速查视图 / 验收脚本消费）。
- * @returns {Array<{id: string, combo: string, scope: string, mode: KeyMode, description: string, group: string, active: boolean}>}
+ * @returns {Array<{id: string, combo: string, scope: string, mode: KeyMode, when: string, description: string, group: string, active: boolean}>}
  */
 export function listShortcuts() {
   const out = [];
@@ -299,6 +306,7 @@ export function listShortcuts() {
       combo: entry.combo,
       scope: entry.scope,
       mode: entry.mode,
+      when: entry.when || '',
       description: entry.description || '',
       group: entry.group || '',
       active: isScopeActive(entry.scope),
@@ -329,16 +337,15 @@ function notifyChange() {
 }
 
 /**
- * 唯一 keydown 入口。裁决顺序见设计文档 §3.2：
+ * 唯一 keydown 入口。裁决顺序（keyboard-first 三期起）：
  *   defaultPrevented → IME 守卫 → combo 命中（物理键口径优先于字符口径）→
- *   模式过滤 → 场景过滤 → 输入态过滤 → 执行。
+ *   场景过滤 → **条件求值**（`test()`：mode ⊕ when ⊕ 输入态，合成一条谓词）→ 执行。
  * 未命中一律不碰事件。
  * @param {KeyboardEvent} e
  * @returns {void}
  */
 function onKeydown(e) {
   const target = e.target;
-  const editable = isEditableTarget(target);
   // ⑤ IME 收归（复用全仓唯一谓词 imeGuard.isImeComposing）：
   // 组字期间的 Enter 是「上屏候选词」，**绝不能**被当成发送或模式切换。
   if (isImeComposing(e, /** @type {HTMLInputElement} */ (target))) return;
@@ -357,9 +364,8 @@ function onKeydown(e) {
   for (const spec of hits) {
     // 已被别人 preventDefault ⇒ 让位；observe 注册项为例外（见 ShortcutSpec.observe）
     if (e.defaultPrevented && spec.observe !== true) continue;
-    if (!isModeActive(spec.mode)) continue;
     if (!isScopeActive(spec.scope)) continue;
-    if (editable && spec.allowInInput !== true) continue;
+    if (!spec.test(e)) continue;
     spec.handler(e);
     if (spec.preventDefault !== false) e.preventDefault();
     if (spec.stopPropagation !== false) e.stopPropagation();
@@ -368,3 +374,8 @@ function onKeydown(e) {
 }
 
 document.addEventListener('keydown', onKeydown);
+
+// 焦点类上下文键（textInputFocus / activatableFocus / explorerTreeFocus /
+// deckCardFocus）的唯一换算点。装在这里的理由：keymap 是键盘层的引导模块，
+// 任何规则求值之前它一定已经跑过（规则表由 keyboardBoot 安装）。
+installFocusContextKeys();
