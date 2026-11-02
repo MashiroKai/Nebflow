@@ -1178,47 +1178,49 @@ body.mobile-layer .mf-canvas-page {
   flex-direction: column;
   overflow: hidden;
 }
-/* 卡片列表（chip 条）：文档卡一览 + 当前卡高亮；横滚 + 消 bar。
-   顶栏批②（2026-10-31 作者令①②）：canvas 页头胶囊退役 → 标签条上移就位
-   顶带（安全区顶距由页面壳 .mobile-page-nohead 自管，本条只留 6px 气隙，
-   合流批注：原「垫高随条」方案与壳级 safe-area 合并后防双计 inset）；通栏
-   毛玻璃条面退役（「不再是现在形态」）——chips 悬浮本位零条面。左右两端
-   溢出时渐隐模糊 = 横向边缘环形模糊（.fade 双侧 mask 渐隐，chat.css
-   .nf-wl-clip 同配方横置版；溢出门控 = JS syncStripFade，不溢出全清晰）。
-   悬浮控件排布批③（2026-10-31 作者令 23:35）：左右内距 76px 让位悬浮工具带
-   （✕/堆叠钮 48px + 边距 16 + 12 气隙）——chip 命中盒不再钻进两颗浮钮底下
-   （截图实证：左端 chip 被叉号压住）；渐隐带同扩 56px，chip 滑到浮钮前先
-   淡出（钮缘 64px 之外清零）。 */
+/* ── 标签栏 = 常驻展开的横向圆环（作者令 2026-11-02 07:22 §二）──────────
+   桌面语言 = hover 后上下展开的竖向胶囊环（split.css #canvas-capsule-ring：
+   缘位逐级缩径 + 减淡 + 弧深，|d|≥2 越出 = 读作绕到圈外）。手机端无 hover，
+   映射为**常驻展开的横向圆环**：当前签居中（dx=0、scale 1、全不透明），左右
+   相邻签沿圆弧外移 + 下沉 + 缩径 + 减淡 + 模糊，读作「绕到圈后」。
+   几何单源 = navController.js（RING_* 常量 + layoutRing 写五变量），CSS 只消费
+   --rdx/--rdy/--rsc/--rop/--rbl，不另算 —— 换签即换环形距离 k，五值同步过渡
+   = 环在转。
+   条几何：高 72px，签心 y=40 = ✕/堆叠两悬浮钮垂直中心（top 16 + 48/2）；左右
+   让位 68px（悬浮钮 48 + 边距 16 + 4 气隙），mask 在 60→76px 与镜像段渐隐 ——
+   签滑到浮钮前先淡出，命中盒永不压钮（截图实证过的旧 bug 面）。 */
 body.mobile-layer .mf-strip {
+  position: relative;
   flex: none;
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  padding: 6px 76px 8px;
+  height: 72px;
+  padding: 0;
   background: none;
   border-bottom: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
+  overflow: visible;
+  touch-action: pan-y;
 }
+/* 环带双侧渐隐（2 签起挂 .fade —— 单签居中无需遮）：60→76px 渐入，与左右
+   悬浮钮 16+48+4 栅格同源，签滑到钮前先淡出（命中盒永不压钮）。 */
 body.mobile-layer .mf-strip.fade {
-  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 56px, #000 calc(100% - 56px), transparent 100%);
-  mask-image: linear-gradient(90deg, transparent 0, #000 56px, #000 calc(100% - 56px), transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 60px, #000 76px, #000 calc(100% - 76px), transparent calc(100% - 60px));
+  mask-image: linear-gradient(90deg, transparent 60px, #000 76px, #000 calc(100% - 76px), transparent calc(100% - 60px));
 }
-body.mobile-layer .mf-strip::-webkit-scrollbar { display: none; }
 body.mobile-layer .mf-strip[hidden] { display: none; }
-/* chip = 电脑端现胶囊（.canvas-header）同族小档（② 标签条形态对齐批
-   2026-10-31 作者令「材质/圆角/选中态同族」）：材质 = --glass-bg 底 +
+/* chip = 电脑端胶囊（.canvas-header）同族小档：材质 = --glass-bg 底 +
    --glass-blur saturate(1.15) + --glass-border（底缘透明化同胶囊）+
-   --sapphire-refraction 顶缘折射线 + --cv-shadow（frosted 标准一份，token
-   逐项同源零新造）；圆角 999 同胶囊；字 = 中性 muted 档。选中态 = 看板家族
-   既有 sapphire 语言（.mf-stack-card.on 同款 tint/描边构造）：sapphire 14% 底
-   + 45% 描边 + 亮字 + 中度加重。 */
+   --sapphire-refraction 顶缘折射线 + --cv-shadow（frosted 标准一份，逐项同源
+   零新造）；圆角 999；字 = 中性 muted 档。选中态 = 看板家族既有 sapphire 语言
+   （sapphire 14% 底 + 45% 描边 + 亮字）。位姿五值 = 环变量（见条注释）。 */
 body.mobile-layer .mf-strip-chip {
-  flex: none;
-  max-width: 46vw;
-  height: 30px;
-  padding: 0 13px;
+  position: absolute;
+  top: 40px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 92px;
+  height: 32px;
+  padding: 0 14px;
   border-radius: 999px;
   border: 1px solid var(--glass-border);
   border-bottom-color: transparent;
@@ -1233,11 +1235,23 @@ body.mobile-layer .mf-strip-chip {
   font-weight: 500;
   cursor: pointer;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   touch-action: manipulation;
+  transform-origin: center center;
+  transform: translate(calc(-50% + var(--rdx, 0px)), calc(-50% + var(--rdy, 0px))) scale(var(--rsc, 1));
+  opacity: var(--rop, 1);
+  filter: blur(var(--rbl, 0px));
+  transition:
+    transform var(--dur-2, 320ms) cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 220ms ease,
+    filter 220ms ease,
+    max-width 220ms ease;
+  will-change: transform, opacity;
 }
+/* 环外（|k| > 露出半径）：位姿仍算（换签轨迹连续），命中与可见双关。 */
+body.mobile-layer .mf-strip-chip.is-far { pointer-events: none; }
 body.mobile-layer .mf-strip-chip.on {
+  z-index: 2;
   border-color: rgb(var(--sapphire, 96 165 250) / 0.45);
   border-bottom-color: transparent; /* 底缘透明化随胶囊家族（.canvas-header 同律） */
   background:
@@ -1246,7 +1260,21 @@ body.mobile-layer .mf-strip-chip.on {
   color: var(--color-frame-text-bright, var(--color-frame-text));
   font-weight: 600;
 }
-body.mobile-layer .mf-strip-chip:active { transform: scale(0.95); }
+/* 长名省略 + 点击展开全名（作者令 §二.3「按既有省略规则 + 点击展开全名」）：
+   常态 = 单行 ellipsis（max-width 92px）；.is-expanded（点活签）= 解限宽度、
+   回到完全可见层、盖过邻签（2600ms 自动收，换签即收 —— JS 侧定时）。 */
+body.mobile-layer .mf-strip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+body.mobile-layer .mf-strip-chip.is-expanded {
+  z-index: 3;
+  max-width: min(calc(100vw - 96px), 280px);
+  opacity: 1;
+  filter: none;
+}
 /* 工具条（Canvas 改造批②⑤ → 悬浮钮统一批 2026-10-31 作者令 16:03）：✕/堆叠视角钮
    自通栏工具条退役为**悬浮 chrome 带**控件（与页面壳返回钮同带同几何：48px
    g2-fab，top:16+safe，左 16 / 右 16；带本体零高透明不拦截）；计数文本带内居中。
@@ -1276,18 +1304,83 @@ body.mobile-layer .mf-cv-toolbar .g2-fab svg { width: 20px; height: 20px; }
 body.mobile-layer .mobile-page[data-page="canvas"]:has(.mf-stack-view:not([hidden])) .mf-cv-toolbar {
   display: none;
 }
+/* 位置读数（批②⑤「N/总数」）：标签栏重做批（2026-11-02 §三）起视觉档位下沉
+   到底部小点指示器，本行转 **sr-only** —— 纯读屏播报（视障用户靠它拿「第几/
+   共几」），零视觉占位、零命中。 */
 body.mobile-layer .mf-cv-count {
   position: absolute;
-  top: calc(34px + env(safe-area-inset-top, 0px));
-  left: 50%;
-  transform: translateX(-50%);
-  min-width: 40px;
-  text-align: center;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--color-frame-text-muted, #98a2b3);
-  font-variant-numeric: tabular-nums;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
   pointer-events: none;
+}
+/* ── 底部小点指示器（作者令 2026-11-02 07:22 §三）───────────────────────
+   位置 = 内容区底部居中（.mf-canvas-page 流内末行，dock 之上；不压 dock、
+   不压内容——高于 host 底缘 8px 的独立条带，高 26px）。
+   数量 = 1 签不显示 / 2 起显示 / 最多 3 点（JS DOTS_MAX）；n > 3 时点不滑动，
+   序号归一映射到三档，当前档由「高亮点」表达。
+   样式 = 参考图 2：灰底半透明胶囊 + 白点，当前点更亮更大（8px vs 5.5px）。
+   交互 = 长按放大（.is-grip：胶囊与点各放大一档 + 触感）、按住横拖逐档换签、
+   松手吸附、轻触点跳签（JS bindDots）。 */
+body.mobile-layer .mf-dots {
+  flex: none;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 26px;
+  margin: 6px 0 10px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.28));
+  background: rgba(128, 128, 128, 0.16);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2);
+  backdrop-filter: blur(10px) saturate(1.2);
+  box-shadow: 0 2px 10px rgba(16, 20, 30, 0.10);
+  touch-action: none;
+  cursor: grab;
+  transition: transform 180ms cubic-bezier(0.22, 0.61, 0.36, 1), background 180ms ease;
+}
+body.mobile-layer .mf-dots[hidden] { display: none; }
+/* 长按放大（.is-grip）：整胶囊放大 1.24×（读作「抓住了」），点同步放大。 */
+body.mobile-layer .mf-dots.is-grip {
+  transform: scale(1.24);
+  background: rgba(128, 128, 128, 0.26);
+  cursor: grabbing;
+}
+body.mobile-layer .mf-dot {
+  flex: none;
+  width: 5.5px;
+  height: 5.5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  transition: width 200ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              height 200ms cubic-bezier(0.22, 0.61, 0.36, 1),
+              background 200ms ease;
+}
+@media (prefers-color-scheme: light) {
+  body.mobile-layer .mf-dot { background: rgba(70, 78, 96, 0.42); }
+}
+/* 当前点：更亮 + 更大（作者令「当前点更亮更大」）。 */
+body.mobile-layer .mf-dot.on {
+  width: 8px;
+  height: 8px;
+  background: #fff;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.55);
+}
+@media (prefers-color-scheme: light) {
+  body.mobile-layer .mf-dot.on { background: var(--color-frame-text-bright, #1b1e26); box-shadow: none; }
+}
+/* reduced-motion：点尺寸随档直切（长按放大仍保留 —— 它是状态指示不是动效）。 */
+@media (prefers-reduced-motion: reduce) {
+  body.mobile-layer .mf-dot,
+  body.mobile-layer .mf-dots { transition: none; }
 }
 /* 文档区横滑邻卡圆环（批③：横拖时拖向侧露玻璃描边圆环 = 桌面上下滚动的
    横屏变体；进深 = 拖距/换卡阈 0→1，松手即退）。半露圆（54px，缘外 20px），
@@ -1311,9 +1404,14 @@ body.mobile-layer .mf-swipe-ring {
 }
 body.mobile-layer .mf-swipe-ring.left { left: -20px; }
 body.mobile-layer .mf-swipe-ring.right { right: -20px; }
-/* 堆叠视角面（批②⑤）：全卡堆叠列表浮层——顶行「N 张文档」计数（批⑤：堆叠
-   态顶部显示标签数）+ ✕ 收面；卡列毛玻璃卡面，活动卡活性蓝高亮。
-   悬浮钮统一批：堆叠面 ✕ 同 48px g2-fab 基准，顶行几何对齐悬浮带。 */
+/* ── 堆叠卡翻页视图（作者令 2026-11-02 07:22 §四）────────────────────────
+   右上堆叠钮 → 手机端 canvas 标签页「变成一张张卡片上下翻动」（桌面
+   #deck-layer 环卡的手机等价面）：浮层宿主沿用 .mf-stack-view 类名（开合
+   动画 + 工具条让位选择器零改），内部 .mf-deck = 卡叠舞台，每张 .mf-deck-card
+   = 卡头（类型图标 + 标题 + ✕）+ 缩略预览（canvas.js deckFaceOf 单源 mock）。
+   位姿 = 环形距离 |d| 逐级下沉（--dty，步距 12px）+ 收缩（--dsc，步距 0.05）
+   + 减淡（--dop），前景卡满幅、|d|>2 隐藏；上下滑动翻页（JS layoutDeck 写变量，
+   CSS 只消费）。 */
 body.mobile-layer .mf-stack-view {
   position: absolute;
   inset: 0;
@@ -1323,10 +1421,8 @@ body.mobile-layer .mf-stack-view {
   background: var(--glass-bg, rgba(20, 24, 33, 0.55));
   -webkit-backdrop-filter: blur(18px) saturate(1.5);
   backdrop-filter: blur(18px) saturate(1.5);
-  /* 顶栏批④（2026-10-31 作者令「展开动画与电脑端类似」）：开合从瞬时显隐改
-     为两段——浮面整体淡入（.open），卡列自堆叠位逐张弹簧升起（卡条目初始
-     落位态挂 .mf-stack-view 本体（:not(.open)），.open 逐个归位 + opacity；
-     stagger 递延仅 .open 态生效，收面 .closing 清零递延不拖尾）。 */
+  /* 开合两段：浮面整体淡入（.open）+ 卡叠自落位逐张升起（:not(.open) 初始态；
+     收面 .closing 清零递延不拖尾 —— 顶栏批④同语言，换代只换卡面）。 */
   opacity: 0;
   transition: opacity 0.2s ease;
 }
@@ -1347,93 +1443,172 @@ body.mobile-layer .mf-stack-count {
 }
 body.mobile-layer .mf-stack-x { width: 48px; height: 48px; }
 body.mobile-layer .mf-stack-x svg { width: 18px; height: 18px; }
-body.mobile-layer .mf-stack-list {
+/* 卡叠舞台：全幅吃满余高；overflow hidden 让后卡自然沉到视野外（读作环）。 */
+body.mobile-layer .mf-deck {
+  position: relative;
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  margin: 4px 16px calc(16px + env(safe-area-inset-bottom, 0px));
+  touch-action: pan-y;
+}
+/* 单卡：卡片语言 = 桌面 .deck-card 同族（--card-bg/--card-border/--card-shadow
+   令牌单源，深浅双主题自动成立），卡面实描一档（读作「物」）。 */
+body.mobile-layer .mf-deck-card {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 6px 16px 20px;
-  -webkit-overflow-scrolling: touch;
+  height: min(62vh, 460px);
+  overflow: hidden;
+  border: 1px solid var(--card-border, rgba(28, 32, 44, 0.13));
+  border-radius: 18px;
+  background: var(--card-bg, rgba(255, 255, 255, 0.82));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+  color: var(--color-frame-text);
+  box-shadow: var(--card-shadow, 0 6px 18px rgba(16, 20, 30, 0.07));
+  transform: translateY(calc(-50% + var(--dty, 0px))) scale(var(--dsc, 1));
+  opacity: var(--dop, 1);
+  /* origin = 底缘：后卡缩径时底边不动 ⇒ 只在面前卡底缘下方露出 12/24px 卡身
+     （堆叠「一叠卡」读感；origin top 会把后卡整片藏进前卡后面）。 */
+  transform-origin: center bottom;
+  transition:
+    transform var(--dur-2, 320ms) cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 220ms ease;
+  will-change: transform, opacity;
+  cursor: pointer;
 }
-body.mobile-layer .mf-stack-card {
+body.mobile-layer .mf-deck-card.is-far { pointer-events: none; }
+/* 拖 Gesture 中跟手（JS 每次 layoutDeck 改 --dty）：过渡关掉，直写即跟手。 */
+body.mobile-layer .mf-deck[data-dragging="1"] .mf-deck-card { transition: none; }
+body.mobile-layer .mf-deck-card.on {
+  border-color: rgb(var(--sapphire, 96 165 250) / 0.40);
+  box-shadow:
+    var(--card-shadow, 0 6px 18px rgba(16, 20, 30, 0.07)),
+    0 0 0 1px rgb(var(--sapphire, 96 165 250) / 0.18);
+}
+body.mobile-layer .mf-deck-top {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 56px;
-  padding: 10px 14px;
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.28));
-  border-radius: 14px;
-  background: var(--glass-bg, rgba(255, 255, 255, 0.12));
-  color: var(--color-frame-text, #e6e9ef);
-  font-size: 14px;
-  font-weight: 500;
-  text-align: start;
-  cursor: pointer;
-  touch-action: manipulation;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  gap: 8px;
+  height: 46px;
+  padding: 0 10px 0 14px;
+  border-bottom: 1px solid var(--th-border, rgba(28, 32, 44, 0.07));
 }
-/* 堆叠语义：卡自上而下渐次缩径内收（远卡小一档），近卡完整。 */
-body.mobile-layer .mf-stack-card:nth-child(n+2) { transform: scale(0.985); }
-body.mobile-layer .mf-stack-card:nth-child(n+4) { transform: scale(0.97); }
-body.mobile-layer .mf-stack-card:active { transform: scale(0.97); }
-/* 顶栏批④：收合态（:not(.open)）卡列自落位 + 零透明起步，.open 逐张归位；
-   位姿/透明双过渡（与桌面 deck 展开同走 transform/opacity 合成通道）。
-   stagger：前 10 张 28ms 逐张递延（约 300ms 全列就位），其后零递延齐动。 */
-body.mobile-layer .mf-stack-card {
-  transition: transform 0.34s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.24s ease;
-}
-body.mobile-layer .mf-stack-view:not(.open) .mf-stack-card {
-  opacity: 0;
-  transform: translateY(22px) scale(0.96);
-}
-body.mobile-layer .mf-stack-view.open .mf-stack-card { opacity: 1; }
-body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(1) { transition-delay: 0ms; }
-body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(2) { transition-delay: 28ms; }
-body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(3) { transition-delay: 56ms; }
-body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(4) { transition-delay: 84ms; }
-body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(5) { transition-delay: 112ms; }
-body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(6) { transition-delay: 140ms; }
-body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(7) { transition-delay: 168ms; }
-body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(8) { transition-delay: 196ms; }
-body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(9) { transition-delay: 224ms; }
-body.mobile-layer .mf-stack-view.open .mf-stack-card:nth-child(10) { transition-delay: 252ms; }
-body.mobile-layer .mf-stack-view.closing .mf-stack-card { transition-delay: 0ms; }
-@media (prefers-reduced-motion: reduce) {
-  body.mobile-layer .mf-stack-card,
-  body.mobile-layer .mf-stack-view { transition: none; }
-}
-body.mobile-layer .mf-stack-card.on {
-  border-color: rgb(var(--sapphire, 96 165 250) / 0.45);
-  background: rgb(var(--sapphire, 96 165 250) / 0.14);
-}
-body.mobile-layer .mf-stack-num {
+body.mobile-layer .mf-deck-icon {
   flex: none;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  color: var(--color-frame-text-muted, #98a2b3);
-  background: rgba(128, 128, 128, 0.16);
-}
-body.mobile-layer .mf-stack-card.on .mf-stack-num {
+  width: 22px;
+  height: 22px;
   color: rgb(var(--sapphire, 96 165 250));
-  background: rgb(var(--sapphire, 96 165 250) / 0.16);
 }
-body.mobile-layer .mf-stack-label {
+body.mobile-layer .mf-deck-icon svg { width: 18px; height: 18px; }
+body.mobile-layer .mf-deck-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+}
+/* 卡内 ✕：低调档（与桌面 .deck-card-x 同语言），44px 命中盒。 */
+body.mobile-layer .mf-deck-x {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-right: -8px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-frame-text-muted, #98a2b3);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+body.mobile-layer .mf-deck-x svg { width: 16px; height: 16px; }
+body.mobile-layer .mf-deck-x:active { background: rgba(128, 128, 128, 0.16); }
+/* 缩略预览：桌面 thumb mock 族（.thumb-pad/.thumb-grid/... 由 split.css 收在
+   .deck-card 作用域，这里补一份同几何手机档 —— 令牌同样 --bar-1/2/3/--th-border
+   单源，深浅双主题自动）。 */
+body.mobile-layer .mf-deck-thumb {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-surface, rgba(255, 255, 255, 0.5));
+}
+body.mobile-layer .mf-deck-thumb .ln { height: 7px; border-radius: 3.5px; background: var(--bar-2, rgba(27, 30, 38, 0.09)); margin: 0 0 9px; }
+body.mobile-layer .mf-deck-thumb .ln.strong { height: 8px; background: var(--bar-1, rgba(27, 30, 38, 0.16)); }
+body.mobile-layer .mf-deck-thumb .ln.w30 { width: 30%; } body.mobile-layer .mf-deck-thumb .ln.w40 { width: 40%; }
+body.mobile-layer .mf-deck-thumb .ln.w55 { width: 55%; } body.mobile-layer .mf-deck-thumb .ln.w70 { width: 70%; }
+body.mobile-layer .mf-deck-thumb .ln.w85 { width: 85%; } body.mobile-layer .mf-deck-thumb .ln.w100 { width: 100%; }
+body.mobile-layer .mf-deck-thumb .thumb-pad { position: absolute; inset: 14px 16px; }
+body.mobile-layer .mf-deck-thumb .thumb-grid {
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(0deg, var(--bar-3, rgba(27, 30, 38, 0.05)) 0 1px, transparent 1px 26px),
+    repeating-linear-gradient(90deg, var(--bar-3, rgba(27, 30, 38, 0.05)) 0 1px, transparent 1px 38px);
+}
+body.mobile-layer .mf-deck-thumb .thumb-grid .ghead {
+  position: absolute; top: 0; left: 0; right: 0; height: 24px;
+  background: rgb(var(--sapphire, 96 165 250) / 0.10);
+  border-bottom: 1px solid rgb(var(--sapphire, 96 165 250) / 0.18);
+}
+body.mobile-layer .mf-deck-thumb .thumb-img {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgb(var(--sapphire, 96 165 250) / 0.38), rgb(var(--sapphire, 96 165 250) / 0.10) 60%, rgb(var(--sapphire, 96 165 250) / 0.22));
+}
+body.mobile-layer .mf-deck-thumb .thumb-img svg {
+  position: absolute; left: 50%; bottom: 8%; transform: translateX(-50%);
+  width: 58%; height: 52%; color: rgb(255 255 255 / 0.75);
+}
+body.mobile-layer .mf-deck-thumb .thumb-page {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 58%; height: 82%;
+  background: var(--card-bg, rgba(255, 255, 255, 0.82));
+  border: 1px solid var(--th-border, rgba(28, 32, 44, 0.07));
+  border-radius: 6px; padding: 12px 14px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+body.mobile-layer .mf-deck-thumb .thumb-page .ln { height: 6px; margin-bottom: 8px; }
+body.mobile-layer .mf-deck-thumb .thumb-flow { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+body.mobile-layer .mf-deck-thumb .thumb-flow svg { width: 78%; height: 68%; color: var(--color-frame-text-muted, #98a2b3); }
+body.mobile-layer .mf-deck-thumb .thumb-browser { position: absolute; inset: 0; padding: 10px 12px; }
+body.mobile-layer .mf-deck-thumb .thumb-browser .bar {
+  height: 16px; border-radius: 6px; background: var(--bar-3, rgba(27, 30, 38, 0.05));
+  border: 1px solid var(--th-border, rgba(28, 32, 44, 0.07)); margin-bottom: 9px;
+  display: flex; align-items: center; gap: 3px; padding: 0 6px;
+}
+body.mobile-layer .mf-deck-thumb .thumb-browser .bar i { width: 5px; height: 5px; border-radius: 50%; background: var(--bar-1, rgba(27, 30, 38, 0.16)); display: block; }
+body.mobile-layer .mf-deck-thumb .thumb-browser .blk { height: 18px; border-radius: 4px; background: var(--bar-2, rgba(27, 30, 38, 0.09)); margin-bottom: 7px; }
+body.mobile-layer .mf-deck-thumb .thumb-browser .blk.b2 { width: 64%; }
+/* 开合动画：收合态卡叠自落位（下移 22px + 缩 0.96 + 零透明），.open 逐张就位；
+   stagger 前 6 张 30ms 递延（手机栈深有限 —— 更深处本来就是隐藏档）。 */
+body.mobile-layer .mf-stack-view:not(.open) .mf-deck-card {
+  opacity: 0;
+  transform: translateY(calc(-50% - 22px)) scale(0.96);
+}
+body.mobile-layer .mf-stack-view.open .mf-deck-card:nth-child(1) { transition-delay: 0ms; }
+body.mobile-layer .mf-stack-view.open .mf-deck-card:nth-child(2) { transition-delay: 30ms; }
+body.mobile-layer .mf-stack-view.open .mf-deck-card:nth-child(3) { transition-delay: 60ms; }
+body.mobile-layer .mf-stack-view.open .mf-deck-card:nth-child(4) { transition-delay: 90ms; }
+body.mobile-layer .mf-stack-view.open .mf-deck-card:nth-child(5) { transition-delay: 120ms; }
+body.mobile-layer .mf-stack-view.open .mf-deck-card:nth-child(6) { transition-delay: 150ms; }
+body.mobile-layer .mf-stack-view.closing .mf-deck-card { transition-delay: 0ms; }
+@media (prefers-reduced-motion: reduce) {
+  body.mobile-layer .mf-deck-card,
+  body.mobile-layer .mf-stack-view { transition: none; }
 }
 /* 文档区：活动文档 pane 宿主（pane 自管滚动）。 */
 body.mobile-layer .mf-cv-host {

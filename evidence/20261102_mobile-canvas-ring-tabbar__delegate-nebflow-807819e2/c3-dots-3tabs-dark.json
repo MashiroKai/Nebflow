@@ -1,0 +1,77 @@
+{
+  "strip": {
+    "x": 0,
+    "y": 0,
+    "w": 375,
+    "h": 72,
+    "h72": "72px",
+    "fade": true
+  },
+  "chips": [
+    {
+      "id": "rk-1",
+      "on": false,
+      "far": false,
+      "x": 236,
+      "y": 38,
+      "w": 75,
+      "h": 26,
+      "rdx": "86.0px",
+      "rdy": "11.1px",
+      "rsc": "0.820",
+      "op": 0.78,
+      "blur": "0.8px"
+    },
+    {
+      "id": "rk-2",
+      "on": false,
+      "far": false,
+      "x": 64,
+      "y": 38,
+      "w": 75,
+      "h": 26,
+      "rdx": "-86.0px",
+      "rdy": "11.1px",
+      "rsc": "0.820",
+      "op": 0.78,
+      "blur": "0.8px"
+    },
+    {
+      "id": "rk-3",
+      "on": true,
+      "far": false,
+      "x": 142,
+      "y": 24,
+      "w": 92,
+      "h": 32,
+      "rdx": "0.0px",
+      "rdy": "0.0px",
+      "rsc": "1.000",
+      "op": 1,
+      "blur": "0px"
+    }
+  ],
+  "count": "3/3",
+  "countSrOnly": true,
+  "dots": {
+    "hidden": false,
+    "grip": false,
+    "x": 159,
+    "y": 714,
+    "w": 57,
+    "h": 26,
+    "n": 3,
+    "onIdx": 2,
+    "sizes": [
+      5.5,
+      5.5,
+      8
+    ]
+  },
+  "icons": {
+    "close": 1,
+    "stack": 1,
+    "leftoverI": 0
+  },
+  "dockTop": 750
+}

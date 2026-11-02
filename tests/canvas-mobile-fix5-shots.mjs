@@ -127,6 +127,22 @@ async function probe(page) {
   });
 }
 
+/** 切卡（标签栏重做批 2026-11-02 §二）：横向圆环只露出当前签 + 左右邻签，
+ *  环外签（.is-far）零命中不可点 —— 截图脚本按「可点则真点，环外走 API」切，
+ *  保证每帧都能落到目标签。 */
+async function activate(page, id) {
+  const clickable = await page.evaluate((tabId) => {
+    const el = document.querySelector(`.mf-strip-chip[data-tab-id="${tabId}"]`);
+    return !!el && !el.classList.contains('is-far') && el.tabIndex >= 0;
+  }, id);
+  if (clickable) {
+    await page.locator(`.mf-strip-chip[data-tab-id="${id}"]`).click();
+  } else {
+    await page.evaluate(async (tabId) => (await import('/js/canvas.js')).setActiveTab(tabId), id);
+  }
+  await page.waitForTimeout(360);
+}
+
 async function shot(page, name, scheme, subdir = '') {
   const p = await probe(page);
   writeFileSync(join(OUT, subdir, `${name}-probe.json`), JSON.stringify(p, null, 2));
@@ -150,8 +166,7 @@ for (const scheme of ['dark', 'light']) {
   await shot(page, '1-canvas-page', scheme);
 
   // 2. 横滑切卡动画帧：左滑拖程中逐段截图（跟手位移 + 圆环进深）。
-  await page.locator('.mf-strip-chip[data-tab-id="doc-profile"]').click();
-  await sleep(400);
+  await activate(page, 'doc-profile');
   const host = await page.locator('.mf-cv-host').boundingBox();
   const midY = host.y + host.height / 2;
   const x0 = host.x + host.width - 50;
@@ -178,8 +193,7 @@ for (const scheme of ['dark', 'light']) {
   await shot(page, '2-swipe-settled', scheme);
 
   // 3. ask 悬浮钮让位角落圆钮簇（说明.md 卡 + 簇钮同 viewer 几何）。
-  await page.locator('.mf-strip-chip[data-tab-id="doc-md"]').click();
-  await sleep(300);
+  await activate(page, 'doc-md');
   await page.evaluate(() => {
     const pane = document.querySelector('.mf-cv-host > .canvas-tab-pane');
     const src = document.createElement('button');
@@ -199,8 +213,7 @@ for (const scheme of ['dark', 'light']) {
   await page.evaluate(() => {
     for (const p of [...document.getElementById('canvas-content').querySelectorAll(':scope > .canvas-tab-pane')]) p.remove();
   });
-  await page.locator('.mf-strip-chip[data-tab-id="doc-bg"]').click();
-  await sleep(500);
+  await activate(page, 'doc-bg');
   await shot(page, '4-single-pane-after-sweep', scheme);
 
   // 5. 输入框错误态：聊天根输入区注入队列失败项 + 内联错误行（真实 input.css）。
