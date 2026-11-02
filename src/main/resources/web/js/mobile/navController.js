@@ -932,6 +932,119 @@ function layoutRing() {
   }
   // 环带渐隐门控：2 签起双侧渐隐（单签居中无需遮，中心签恒完整）。
   strip.classList.toggle('fade', docs.length > 1);
+  fitRingLabels();
+}
+
+// ══ 中签整字收束（作者令 2026-11-02 11:23「前置显示的那个标签，两端不要有虚化
+// 渐隐」）════════════════════════════════════════════════════════════
+// 上一批给所有签的 label 加了水平 alpha 渐隐（`.mf-strip-label` 的 mask-image）
+// 来替代「…」。本令只撤**中签**那一段（CSS `.mf-strip-chip.on .mf-strip-label`
+// 的 `mask-image: none`），两侧邻签的渐隐原样保留。
+//
+// 撤掉 mask 之后，超宽文字若只靠 `overflow: hidden` 硬裁，右端会**切半个字**——
+// 比渐隐更难看。故本函数把中签 label 的 `max-width` 收到**「能完整放下的最大整字
+// 前缀」**上：截断点永远落在字界（grapheme cluster，中文一字、emoji 一簇、拉丁
+// 一个字母），一个完整字都不缺省、也绝不出现半个字，**不出省略号、不溢出签盒**。
+// 多出来的部分照既有展开腿承载（点活签 → `.is-expanded` 加宽一档 → 2600ms 自动
+// 收）；全名另有两处保底（label.textContent 全名 + chip.title），收束只压绘制宽。
+//
+//   实测（375 基线，中签 scale 1.14）：常态 label 可用宽 78px ⇒ 整 6 个汉字；
+//   展开档可用宽 168.6px ⇒ 整 12 个汉字（= 展开腿在 48px 浮钮钳制下的几何上限）。
+//
+// 只在**中签**上生效：非中签的 label 每次重排都清掉内联 max-width，回到「由
+// max-width 收紧 + mask 渐隐」的原始行为 ⇒ 邻签视觉零变化。
+//
+// 度量腿 = 隐藏探针 span（字体从 label 抄）+ 签的**内衬内容宽**（= 计算 max-width
+// − 左右内衬 − 左右描边，CSS px）：探针不受 chip 的 `scale(--rsc)` 与 flex 收紧
+// 影响 ⇒ 与 `max-width` 同一度量面。签宽是 auto（贴合内容收缩），故「可用宽」取
+// 签的上限内容宽，而不是 label 的当前宽（后者会被文字长短反向污染）。
+const FIT_EPS_PX = 0.05;        // 亚像素容差（advance 边界处的侧承，非墨迹）
+
+/** 按 grapheme cluster 切分（中文一字 / emoji 一簇 / 拉丁一字母）。 */
+function graphemes(text) {
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    return [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)]
+      .map((s) => s.segment);
+  }
+  return Array.from(text);
+}
+
+/** 度量用的隐藏探针（body 直属：不受签名 flex 收紧、不受 chip 的 scale 影响 ——
+ *  量到的是**未缩放 CSS px**，正好是 max-width 的度量面）。字体样式从 label 抄。 */
+let fitProbe = null;
+function fitProbeEl(label) {
+  if (!fitProbe) {
+    fitProbe = document.createElement('span');
+    fitProbe.setAttribute('aria-hidden', 'true');
+    fitProbe.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;white-space:nowrap;pointer-events:none;contain:layout style;';
+    document.body.appendChild(fitProbe);
+  }
+  const cs = getComputedStyle(label);
+  fitProbe.style.font = cs.font;
+  fitProbe.style.letterSpacing = cs.letterSpacing;
+  fitProbe.style.wordSpacing = cs.wordSpacing;
+  fitProbe.style.textTransform = cs.textTransform;
+  return fitProbe;
+}
+
+/** 签的**目标档**内衬内容宽（CSS px，= max-width − 左右内衬 − 左右描边）。
+ *  **不能直接读计算 max-width**：它带 220ms 过渡，切签瞬间读到的是过渡中的中间值
+ *  （实测 34px ⇒ 中签只留 2 个字）。故先把该签的 `transition` 临时掐掉读一次目标值
+ *  再复原（同一任务内改回 ⇒ 不触发重绘，无视觉抖动、无额外 DOM 节点）。
+ *  **不造探针元素**：任何带 `.mf-strip-chip` 的离屏节点都会污染
+ *  `querySelectorAll('.mf-strip-chip')` 的既有判据面（T13 / 手势腿 / 小点对账）。
+ *  @returns {number} */
+function chipInnerWidth(chip) {
+  const prev = chip.style.transition;
+  chip.style.transition = 'none';
+  const cs = getComputedStyle(chip);
+  const cap = parseFloat(cs.maxWidth);
+  const inner = Number.isFinite(cap)
+    ? cap - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
+      - (parseFloat(cs.borderLeftWidth) || 0) - (parseFloat(cs.borderRightWidth) || 0)
+    : 0;
+  chip.style.transition = prev;
+  return inner;
+}
+
+/** 把中签 label 收到整字边界（幂等：先回原始态再量，收束只压绘制宽）。 */
+function fitCenterLabel(chip) {
+  const label = /** @type {HTMLElement|null} */ (chip.querySelector('.mf-strip-label'));
+  if (!label) return;
+  label.style.maxWidth = '';                    // 回原始态：量到的是「未收束」的真实排版
+  const avail = chipInnerWidth(chip);           // 签能容纳的文本上限（CSS px）
+  if (avail <= 0) return;
+  const chars = graphemes(label.textContent || '');
+  if (!chars.length) return;
+  const probe = fitProbeEl(label);
+  probe.textContent = chars.join('');
+  if (probe.getBoundingClientRect().width <= avail - FIT_EPS_PX) return;   // 全文放得下：不收
+  let keep = 0;
+  let keepW = 0;
+  for (let i = 1; i < chars.length; i++) {
+    probe.textContent = chars.slice(0, i).join('');
+    const w = probe.getBoundingClientRect().width;
+    if (w > avail - FIT_EPS_PX) break;          // 再放一个字就压进内衬 ⇒ 停在字界
+    keep = i;
+    keepW = w;
+  }
+  if (!keep) return;                            // 一个字都放不下（病态窄）：让 clip 兜底
+  // 向上取整到 0.01：收到字界的那一刻不能比最后一个字的 advance 窄（窄 0.4px 就会
+  // 削掉末字右缘的笔画 —— 那正是本批要消灭的「硬裁半个字」）。
+  label.style.maxWidth = `${Math.ceil(keepW * 100) / 100}px`;
+}
+
+/** 全体签的收束对账：中签收束，非中签复原（邻签的 mask 渐隐因此零影响）。 */
+function fitRingLabels() {
+  const strip = canvasUI?.strip;
+  if (!strip) return;
+  for (const chip of strip.querySelectorAll('.mf-strip-chip')) {
+    const el = /** @type {HTMLElement} */ (chip);
+    const label = /** @type {HTMLElement|null} */ (el.querySelector('.mf-strip-label'));
+    if (!label) continue;
+    if (el.classList.contains('on')) fitCenterLabel(el);
+    else if (label.style.maxWidth) label.style.maxWidth = '';
+  }
 }
 
 /** 切到第 idx 签（环绕安全；同签零动作）。@param {number} idx */
@@ -974,6 +1087,7 @@ function syncCanvasPage() {
           // 活签再点 = 展开/收起全名（长标签专利；其余签点击一律换签）。
           const open = !chip.classList.contains('is-expanded');
           chip.classList.toggle('is-expanded', open);
+          fitRingLabels();          // 展开档另一档宽度 ⇒ 重新按整字收束（全名放得下就全显）
           logEvent('tab-label-expand', { tab: d.id, open });
           if (open) armLabelCollapse(chip);
           return;
@@ -1012,6 +1126,7 @@ function armLabelCollapse(chip) {
   clearTimeout(labelCollapseTimer);
   labelCollapseTimer = window.setTimeout(() => {
     chip.classList.remove('is-expanded');
+    fitRingLabels();     // 收回常态宽度 ⇒ 重按整字收束
   }, 2600);
 }
 
@@ -1433,8 +1548,12 @@ function buildCanvasPage(body) {
     createIconsIn(wrap);
     createIconsIn(toolbar);
   }
-  // 视口变化：环带渐隐/小点位姿均为纯 CSS + 变量，无需重算；只补小点计数对账。
-  window.addEventListener('resize', () => { syncDots(); });
+  // 视口变化：环带渐隐/小点位姿均为纯 CSS + 变量，无需重算；补小点计数对账，
+  // 并按新可用宽重跑中签整字收束（字体/内衬不变时内联 maxWidth 数值不变，幂等）。
+  window.addEventListener('resize', () => { syncDots(); fitRingLabels(); });
+  // 字体后到（网络字体 / 首帧 fallback 度量不同）⇒ 重跑一次收束，避免按 fallback
+  // 字体算出的截断点。document.fonts 缺失（老 WebView）则跳过，无副作用。
+  document.fonts?.ready?.then(() => { fitRingLabels(); }).catch(() => {});
   void stackView;
 }
 

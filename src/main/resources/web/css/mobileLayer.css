@@ -1594,6 +1594,20 @@ body.mobile-layer .mf-strip-label {
   -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 9px, #000 calc(100% - 9px), transparent 100%);
   mask-image: linear-gradient(90deg, transparent 0, #000 9px, #000 calc(100% - 9px), transparent 100%);
 }
+/* 中签（前置显示的那一枚）两端**零虚化渐隐**（作者令 2026-11-02 11:23「前置显示的
+   那个标签，两端不要有虚化渐隐」）：撤掉 label 的水平 alpha mask —— 文字左右端点
+   是实色硬边，不化开、不淡化。两侧邻签的 mask **原样保留**（上一批「越到边缘越
+   模糊」那条不撤，见上方基础档）。
+   撤了 mask 之后超宽文字怎么办 —— **不出省略号 / 不溢出签盒 / 不切半个字**：
+   改由 navController.js `fitRingLabels()` 做「整字收束」，label 的 max-width 收到
+   「能完整容纳的最大整字前缀」上（字界处收住，不出现半个字），多出来的部分照既有
+   展开腿承载（点活签 → 全名，2600ms 自动收）；全名三处保留不变（DOM 文本 / title /
+   展开腿），收束只压**绘制宽**。圆角 / 底色 / 玻璃 / 内距 / 字重 / 字号本档零改动
+   （机械断言 T13⑥ 逐项钉死）。 */
+body.mobile-layer .mf-strip-chip.on .mf-strip-label {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
 /* 点活签展开全名（作者令 §二.3「点击展开全名」）：常态已放大到 112px 宽，展开
    档再加一档。钳法沿用内容起点让位批的 --mchrome-inset 口径（两侧各让 72 =
    簇顶 16 + 钮 48 + 呼吸 8），但**先除掉环位姿 scale 再钳**：`max-width` 是

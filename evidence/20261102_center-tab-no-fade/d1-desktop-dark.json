@@ -1,0 +1,19 @@
+{
+  "strip": null,
+  "fabCy": {
+    "close": null,
+    "stack": null
+  },
+  "fabEdge": {
+    "closeRight": null,
+    "stackLeft": null
+  },
+  "chips": [],
+  "cySpread": null,
+  "sizeRatio": null,
+  "centerMask": null,
+  "neighborMasks": [],
+  "allClip": true,
+  "anyEllipsis": false,
+  "minHit": null
+}
