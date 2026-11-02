@@ -397,7 +397,8 @@ test('T5 header retired on mobile (liquid-glass v2 2026-10-31); top edge = fade 
   // 内容从后穿过、滚动渐隐）——节点归属与可见性契约不变。
   const head = page.locator('#chat > .g2-chat-head');
   await expect(head).toHaveCount(1);
-  await expect(head).toHaveCSS('position', 'absolute');  await expect(head.locator('#agent-avatar-btn')).toBeVisible();
+  await expect(head).toHaveCSS('position', 'absolute');
+  await expect(head.locator('#agent-avatar-btn')).toBeVisible();
   await expect(head.locator('#session-name')).toHaveCount(1);
 });
 
