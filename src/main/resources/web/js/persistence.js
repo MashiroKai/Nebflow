@@ -664,6 +664,10 @@ export function restoreFromStorage(opts = {}) {
       // Ask ANSWER marker — same contract as the backend-history leg below
       // (AskUser 强制展开修令 2026-10-06): mid-turn, never a turn opener.
       if (m.answerOf) row.dataset.nfAskAnswer = m.answerOf;
+      // tool-card-leak-on-reload 批（2026-11-02）：回合内插话行标——与后端历史腿
+      // 同一 DOM 契约（data-nf-mid-turn = 该 user 行不是轮起点；turnGroup 的段边界
+      // 单点判据据此把同一引擎回合保持为一段）。缺席（旧缓存行/普通开轮行）⇒ 不落标。
+      if (m.midTurn === true) row.dataset.nfMidTurn = '1';
       // 媒体统一适配批（2026-10-20）：存量「已存至」行级换算（单点
       // unifyUserMediaFace）——识别命中 ⇒ 媒体行接管、文本气泡隐去；否则逐字现状。
       const userUnified = unifyUserMediaFace(m.text, m.attachments);
@@ -755,6 +759,10 @@ export function restoreFromStorage(opts = {}) {
         if (isTurnTerminal) {
           row.dataset.nfTurnTerminal = '1';
           if (m.model) row.dataset.nfModel = m.model;
+          // tool-card-leak-on-reload 批（2026-11-02）：轮时长随 terminal 行落 DOM，
+          // 供 turnGroup 对**旧存量**转录（无 `midTurn` 键）做「该 user 行是否落在
+          // 这轮引擎窗口内」的时间戳蕴含推断（零迁移降级路径）。
+          if (hasDuration) row.dataset.nfTurnDuration = String(m.durationMs);
         }
         if (hasDuration) {
           const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.text);
@@ -1091,6 +1099,12 @@ function buildHistoryRow(m, i, ctx) {
       // workline turnAnchor same exemption). Absent on pre-案B rows ⇒ those
       // keep the legacy split behaviour (unchanged).
       if (m.answerOf) row.dataset.nfAskAnswer = m.answerOf;
+      // tool-card-leak-on-reload 批（2026-11-02）：回合内插话行标——后端在落盘那
+      // 一瞬判定「该会话仍在 Processing」并随行写 `midTurn=true`（dispatchUserText
+      // / typeless 帧腿 / skill 腿），此处转成 data-nf-mid-turn（turnGroup 的段边界
+      // 单点判据读它；live 腿 chat.js renderUserBubble 盖同一标）。缺席（旧
+      // `.ui.json` 行 / 普通开轮行）⇒ 不落标，判据回落时间戳蕴含推断。
+      if (m.midTurn === true) row.dataset.nfMidTurn = '1';
       // quote-message 一期（spec §3.4）：`m.quote` 在场 ⇒ 气泡上方引用块（与
       // live 腿同一渲染器 renderQuoteBlock；快照文随行落盘自包含 —— ui.json 裁剪/
       // 换设备/分页都稳）。目标行可点性在 fragment 挂载后由 syncQuoteJumpStates
@@ -1203,6 +1217,10 @@ function buildHistoryRow(m, i, ctx) {
         if (isTurnTerminal) {
           row.dataset.nfTurnTerminal = '1';
           if (m.model) row.dataset.nfModel = m.model;
+          // tool-card-leak-on-reload 批（2026-11-02）：轮时长随 terminal 行落 DOM，
+          // 供 turnGroup 对**旧存量**转录（无 `midTurn` 键）做「该 user 行是否落在
+          // 这轮引擎窗口内」的时间戳蕴含推断（零迁移降级路径）。
+          if (hasDuration) row.dataset.nfTurnDuration = String(m.durationMs);
         }
         if (hasDuration) {
           const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.text);
