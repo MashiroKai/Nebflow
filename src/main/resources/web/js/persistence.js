@@ -35,6 +35,10 @@ import { renderRefBlock, normalizeTaskRef } from './reference.js';
 // index + mount token）+ 可引用行右键菜单 + UiMessage.User.quote 引用块重渲。
 import { beginHistoryMount, historyMsgId, attachQuoteMenu, renderQuoteBlock, syncQuoteJumpStates } from './msgQuote.js';
 import { renderGateBegin, renderGateEnd } from './chat/renderGate.js'; // perf 台账 #922：分帧挂载腿持渲染遮蔽门
+// 进场落底「武装窗」（手机端进场落顶修复批 · 2026-11-02）：同步钉底的延续，
+// 覆盖 deferred markdown 升级批 / 晚到媒体的撑高（下方 followBottom 分支用）；
+// 分帧挂载腿（挂载进行中）以 `cancelSettleBottom` 同拍撤回。理由见模块头注。
+import { settleBottom, cancelSettleBottom } from './chat/settleBottom.js';
 // quote-message 一期：被引用者名（助手/工具/提问行）= agent 显示名 —— ownAgentName
 // （会话行）缺席时回落 rootDisplayName（叶模块，只读 state，无环）。
 import { rootDisplayName } from './rootName.js';
@@ -1590,6 +1594,14 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   if (followBottom) {
     chat.scrollTop = chat.scrollHeight;
     if (activeView) activeView.stream.scrollSnapped = true;
+    // 进场落底修复批（2026-11-02 · 作者实拍报障「手机端点进聊天从最顶部开始读」）：
+    // 上面这次同步钉底只赢一次 —— 紧随其后的 deferred markdown 升级批（下方
+    // `upgradeBatch`，每帧 6 条）与晚到的图片字节都会在下一次布局把内容撑高，
+    // 而**下方增长不产生 scroll 事件**（同族既有注记见 main.js `pinIfFollowing`），
+    // 视图就停在原处。武装窗在原语里把「这一小段时间内任何原因导致的离开底部」
+    // 逐帧收敛回来（用户一动手即解除、有截止时刻 —— 见 chat/settleBottom.js 头注）。
+    // 非跟随腿（回看中段）**不**武装：那里要的是锚位，不是底部。
+    settleBottom(chat);
   } else if (scrollToBottom) {
     // 非跟随（用户回看中段）：绝对锚位恢复——重放上方行与改前同形（同一历史
     // 重放），scrollTop 回到 prev 即回到原阅读位；不写 scrollSnapped（不劫持

@@ -63,6 +63,11 @@ import { formatHm, formatFooterTime, bindTimeToggle, TIME_FORMAT_CHANGED } from 
 // follow 批（2026-10-08）：贴底判定 `isAtBottom`（AT_BOTTOM_PX 单源）也从这一份
 // 实现出 —— 到达跟随、锚点补偿、回底胶囊三处共用同一判据，本面内禁第二个数。
 import { preserveScrollAnchor, isAtBottom } from './msgScrollAnchor.js';
+// 进场落底「武装窗」（手机端进场落顶修复批 · 2026-11-02）：一次性同步钉底对
+// **容器搬家/异步撑高**两类时序都只能赢一次 —— 本模块的会话窗在手机层会被
+// `navController.watchChatModal` re-parent 进页面体（迁移即把 scrollTop 归零），
+// 钉底写在迁移之前就等于没写。原语与选型理由见 chat/settleBottom.js 头注。
+import { settleBottom, cancelSettleBottom } from './chat/settleBottom.js';
 // 设备会话统一批 MVP-1（2026-09-15）：设备腿的**数据面**访问器（唯一属主 = dropbox.js，
 // 含 WS 帧 `dropbox-history`/`dropbox-message` + L2 缓存 + 附件队列/闸位）。本模块只
 // **消费**它们，不复制任何取数/合并/落盘逻辑（卡 §6.2：否则造第三实现）。
@@ -782,6 +787,8 @@ export function closeChat() {
   // 滚动回调写进已摘节点的样式；解绑幂等）。
   if (modalEls && modalEls.unbindFade) { try { modalEls.unbindFade(); } catch { /* 解绑失败不阻断关窗 */ } }
   if (modalEls) {
+    // 进场落底武装窗同拍拆：容器即将脱离文档，窗口期内不许再有写入（幂等拆除）。
+    cancelSettleBottom(modalEls.flow);
     modalEls.overlay.remove();
     modalEls = null;
   }
@@ -3402,8 +3409,15 @@ function renderMessages(msgs, { stickBottom = true } = {}) {
   };
   if (stickBottom) {
     // 开窗首帧 / 本机发送：钉到底部。
+    // 🔴 进场落顶修复批（2026-11-02）：同步钉底**必配**一个落底武装窗 ——
+    //   本窗（好友/群/设备三面共用）在手机层会被 `navController.watchChatModal`
+    //   re-parent 进 `.mobile-page-body`，节点迁移把所有者的 `scrollTop` 归零，
+    //   而这次归零发生在同步钉底**之后**（热缓存重开实测：钉底 → 18ms 后归 0 →
+    //   1.5s 内再无回底写入 = 作者报障「从最顶部开始读」）。`settleBottom` 就是
+    //   那次同步写的延续（首帧无可见滚动由本次同步写保证，窗口只负责后续时序；
+    //   用户一动手即解除，窗口有截止时刻——见 chat/settleBottom.js 头注）。
     apply();
-    flow.scrollTop = flow.scrollHeight;
+    settleBottom(flow);
     return;
   }
   // ⑩ 合并/增量路径（`appendMessages` 等）：以**可视锚点**为准补偿。
