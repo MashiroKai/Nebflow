@@ -521,30 +521,47 @@
 /* ---------- Settings: Config ---------- */
 .cfg-input {
   width: 100%;
-  background: var(--glass-etched-bg);
+  background: var(--ds-etched-bg);
   color: var(--color-frame-input-text);
-  border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: 12px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  border: 1px solid var(--ds-etched-border);
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-input-pad);
+  /* 设计语言批整改判例③：面板输入 = 正文同档 13px（本批落令牌）。 */
+  font-size: var(--ds-fs-body);
+  font-family: var(--ds-font-mono);
   outline: none;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color var(--ds-dur-hover) var(--ds-ease-std),
+              box-shadow var(--ds-dur-hover) var(--ds-ease-std);
   box-sizing: border-box;
 }
 .cfg-input:focus {
-  border-color: rgba(91, 127, 191, 0.5);
+  border-color: rgb(var(--sapphire) / 0.5);
   box-shadow:
-    0 0 0 2px rgba(91, 127, 191, 0.08),
-    0 0 0 4px rgba(91, 127, 191, 0.04);
+    0 0 0 2px rgb(var(--sapphire) / 0.08),
+    0 0 0 4px rgb(var(--sapphire) / 0.04);
 }
 @media (prefers-color-scheme: dark) {
   .cfg-input:focus {
-    border-color: rgba(91, 127, 191, 0.4);
+    border-color: rgb(var(--sapphire) / 0.4);
     box-shadow:
-      0 0 0 2px rgba(91, 127, 191, 0.12),
-      0 0 0 4px rgba(91, 127, 191, 0.06);
+      0 0 0 2px rgb(var(--sapphire) / 0.12),
+      0 0 0 4px rgb(var(--sapphire) / 0.06);
   }
+}
+.cfg-eye-btn {
+  background: none;
+  border: none;
+  color: var(--ds-text-dim);
+  cursor: pointer;
+  padding: 4px 2px;
+  border-radius: var(--ds-radius-badge);
+  transition: color var(--ds-dur-hover);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+.cfg-eye-btn:hover {
+  color: var(--ds-text-bright);
 }
 .cfg-eye-btn {
   background: none;

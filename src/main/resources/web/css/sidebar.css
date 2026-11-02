@@ -657,24 +657,23 @@
   min-height: 0;
   overflow-y: auto;
   padding: 16px;
-  background: var(--color-bg, #f5f6f8);
-  scrollbar-color: var(--color-frame-border) transparent;
+  background: var(--ds-surface-sunken);
+  scrollbar-color: var(--ds-border) transparent;
 }
 .settings-section {
-  background: var(--color-surface, #ffffff);
-  border-radius: 16px;
-  box-shadow:
-    0 2px 8px rgba(0, 0, 0, 0.04),
-    0 8px 24px rgba(0, 0, 0, 0.06);
+  /* design-system-token-batch：字面量 → --ds-* 令牌（基准值逐字不变，
+     阴影 = 面板族两档，圆角 = card-lg 16 —— 门禁 scripts/check-design-tokens.mjs
+     严格面从此零字面量）。 */
+  background: var(--ds-surface);
+  border-radius: var(--ds-radius-card-lg);
+  box-shadow: var(--ds-shadow-card);
   margin: 40px 0 0;
   padding: 6px 16px;
   display: flow-root;
 }
 @media (prefers-color-scheme: dark) {
   .settings-section {
-    box-shadow:
-      0 2px 8px rgba(0, 0, 0, 0.20),
-      0 8px 24px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--ds-shadow-card-dark);
   }
 }
 #settings-content > .settings-section:first-child { margin-top: 24px; }
@@ -691,7 +690,7 @@
   font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--color-text-muted, #8b8e96);
+  color: var(--ds-text-muted);
   /* 上拉出卡：卡顶内距 6px + 组间留白 ⇒ 标题整段落在卡外灰底（呼吸感）。 */
   margin: -33px 0 12px;
   padding: 0 10px;
@@ -705,14 +704,17 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
+  /* 热区档（本批新增判据）：行高 ≥44px（--ds-hit-row），矮内容行由 min-height
+     撑到触控下限；行内距保持 10px 0（卡内行变体，规范 §5 未覆盖 → 不改值）。 */
+  min-height: var(--ds-row-min-h);
   padding: 10px 0;
-  border-bottom: 1px solid var(--color-frame-border-light);
+  border-bottom: 1px solid var(--ds-border-hairline);
 }
 .settings-row:last-child { border-bottom: none; }
 .settings-label {
-  font-size: 13px;
-  color: var(--color-text, #1b1e26);
+  font-size: var(--ds-fs-body);
+  color: var(--ds-text);
 }
 
 /* ── Jev glass card · status badges · secrets entry row (secrets-ui-redesign,
@@ -934,6 +936,20 @@
 .settings-collapse-toggle[aria-expanded="true"] .settings-collapse-chevron {
   transform: rotate(180deg);
 }
+/* 设置页热区整改（design-system-token-batch 批·O5，2026-11-02）：
+   入口行此前热区 = 行内 button 自身（实测 114×18px，行宽 494px ⇒ 行上 77% 的
+   空白区域点了没反应）。改为「按钮撑满行内剩余宽度 + 纵向撑到行高」：
+   命中面 = 整行（右侧状态位仍不可点，它只是读数），纵向 ≥44px 触控档。
+   判据（O5 读数）：按钮宽 114 → ≥ 行宽 − 状态位宽；按钮高 18 → 行高 44/46。
+   DRILL 委托（configDrill.js / mobile/settingsSub.js）以 closest('#xxx-toggle')
+   判定，撑大按钮即可整体生效，两模块零改动。 */
+.stt-advance-toggle-row .settings-collapse-toggle {
+  flex: 1 1 auto;
+  min-height: var(--ds-hit-row, 44px);
+  align-self: stretch;
+  padding: 0;
+}
+.stt-advance-toggle-row .stt-status { flex: 0 0 auto; pointer-events: none; }
 /* 配置面风格统一批（2026-10-31 作者令）：层级下钻入口行（JeV/生图）的
    chevron 常驻右转 affordance——与手机层同款几何（手机层规则见
    mobileLayer.css 弹窗退场批③块），STT/TTL 原地下旋语义不变。 */

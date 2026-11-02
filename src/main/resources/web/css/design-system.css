@@ -1,0 +1,274 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   design-system.css — Stand 设计体系**令牌层 + 组件类层**（单源）
+   ═══════════════════════════════════════════════════════════════════════
+
+   规范权威 = seed/plugins/design-language/skills/design-language/SKILL.md
+   （八节：配色/字体/字距行高/圆角阴影/间距栅格/动画/组件固定尺寸档/文案 tone），
+   基准 = mystand.space 官网 design tokens × 客户端 Sapphire Glass。
+
+   ── 为什么要这一层（本文件的存在理由）─────────────────────────────
+   规范值散在 base.css / sapphire.css / stand-tokens.css 三处出生，**没有一档
+   结构量（圆角/字号/间距/热区）的具名令牌**：实测 border-radius 28 种取值、
+   font-size 26 种取值、两处 `style="width:auto"` 内联。规范说「圆角只有 8 档」
+   靠人记 = 一定会跑偏。本文件把规范表**逐值落成 `--ds-*` 令牌**，让「表里有值
+   取表里的，表里没档先补表」第一次可被机器判据（scripts/check-design-tokens.mjs）。
+
+   ── 三条纪律 ──────────────────────────────────────────────────
+   ① **追加不改写**：本文件**只新增 `--ds-*` 命名空间**，不覆盖、不重定义任何
+      既有 token（`--color-*` / `--glass-*` / `--sapphire*` / `--st-*` / `--btn-*`
+      / `--dur-*`）。既有消费点零影响 ⇒ 引入本层是零视觉回归改动。
+      结构档（圆角/字号/间距/字重/行高/热区）此前**无令牌**，故在此出生；
+      已有令牌的量（颜色/材质/动效）一律走 `var()` 别名，不复制字面量。
+   ② **消费即引用**：新面 / 整改面写 `var(--ds-…)`，禁再写字面量；门禁
+      `scripts/check-design-tokens.mjs` 对新增字面量报红（存量清单外不追溯）。
+   ③ **值域即规范**：档位表见 SKILL.md §4（圆角 8 档）、§2（字号 5 档）、
+      §5（4px 栅格）；本文件是那些表的机器面，改值先改表再改这里。
+
+   ── 加载位置 ─────────────────────────────────────────────────
+   index.html 中紧随 sapphire.css 之前（sapphire 仍是最后加载的设计系统标准层，
+   本文件只提供令牌与独立 `.ds-*` 类，不与之争夺既有选择器的特异性）。
+
+   ── 谁在消费 ─────────────────────────────────────────────────
+   · 设置页（sidebar.css §Settings Modal content / modal.css cfg-input 族）——
+     本批已改走 `--ds-*`（示范面）；
+   · 设计体系文档页 docs/design-language/design-system-token-batch/kit.html
+     的五组件样张；
+   · 后续新面（面板/卡片/列表）按 SKILL.md §10 使用流三步取值取形。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── ① 配色（别名层：一切颜色仍由 base.css / sapphire.css / stand-tokens.css
+     出生，本层只给「语义角色 → 既有 token」的一跳别名，保证双主题自动解析）──
+     反例：在本文件写任何裸色值。 */
+  --ds-text: var(--color-text);
+  --ds-text-bright: var(--color-frame-text-bright);
+  --ds-text-muted: var(--color-frame-text-muted);
+  --ds-text-dim: var(--color-frame-text-dim);
+  --ds-surface: var(--color-surface);
+  --ds-surface-sunken: var(--color-bg);
+  --ds-border-hairline: var(--color-frame-border-light);
+  --ds-border: var(--color-frame-border);
+  --ds-accent: var(--color-primary);            /* 身份/状态绿（2026-10-30 降级语义） */
+  --ds-accent-ink: rgb(var(--brand-green));     /* 开关 ON / 圆钮实心 */
+  --ds-focus-ring: var(--btn-focus-ring);
+  --ds-danger-icon: var(--status-error-icon);
+  --ds-warn-icon: var(--status-warn-icon);
+  --ds-success-icon: var(--status-success-icon);
+  --ds-status-word: var(--status-word);         /* 状态词永远中性字 */
+  --ds-control-bg: var(--glass-control-bg);
+  --ds-control-bg-hover: var(--glass-control-bg-hover);
+  --ds-control-border: var(--glass-control-border);
+  --ds-control-blur: var(--glass-control-blur);
+  --ds-etched-bg: var(--glass-etched-bg);
+  --ds-etched-border: var(--glass-etched-border);
+  --ds-overlay: var(--overlay-bg);              /* 恒透明：弹窗禁遮罩 */
+
+  /* ── ② 字体族与字重（SKILL.md §2）── */
+  --ds-font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+  --ds-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --ds-fw-body: 400;
+  --ds-fw-btn: 500;
+  --ds-fw-title: 600;                           /* 禁 700 / 禁 300 */
+
+  /* ── ② 字号阶梯（5 档 + 页面大标题；SKILL.md §2 场景表）──
+     可读下限 11px：11px 以下不存在合法场景（门禁 R3）。 */
+  --ds-fs-display: 20px;   /* 页面级大标题 600 / -0.01em */
+  --ds-fs-title: 15px;     /* 面板标题、卡片问题行 600 */
+  --ds-fs-body: 13px;      /* 正文/表单标签/输入/下拉/选项 400 */
+  --ds-fs-btn: 12px;       /* 按钮 500（对话发送族 13px 沿用裁定） */
+  --ds-fs-hint: 12px;      /* hint/caption 400 */
+  --ds-fs-meta: 11px;      /* meta/徽标/小节标签 400–600 */
+
+  /* ── ③ 行高与字距（SKILL.md §3）── */
+  --ds-lh-body: 1.5;       /* 聊天/选项文案 1.55 */
+  --ds-lh-title: 1.3;
+  --ds-lh-tight: 1;        /* 单行控件；图标行 0 */
+  --ds-ls-label: 0.5px;    /* 11px uppercase 小节标签 */
+  --ds-ls-display: -0.01em;
+  --ds-ls-body: 0;         /* 正文恒 0，禁顺手字距 */
+
+  /* ── ④ 间距（4px 栅格；SKILL.md §5 合法值 4/8/12/16/20/24/32）── */
+  --ds-space-1: 4px;
+  --ds-space-2: 8px;
+  --ds-space-3: 12px;
+  --ds-space-4: 16px;
+  --ds-space-5: 20px;      /* 面板左右留白 */
+  --ds-space-6: 24px;      /* 页面级留白 */
+  --ds-space-8: 32px;
+  --ds-row-pad: 8px 12px;              /* 列表行静息档 */
+  --ds-row-pad-tight: 8px 10px;
+  --ds-section-gap: var(--ds-space-4);
+  --ds-card-gap: var(--ds-space-3);
+  --ds-modal-head-pad: 12px 16px 12px 20px;  /* 左 20 光学对齐内容 */
+  --ds-modal-body-pad: 12px 20px 20px;
+  --ds-input-pad: 6px 10px;            /* 面板档输入 */
+  --ds-input-pad-lg: 8px 12px;         /* 卡内档输入 */
+
+  /* ── ⑤ 圆角阶梯（8 档 + 卡片三档；SKILL.md §4，禁档外值）── */
+  --ds-radius-badge: 4px;    /* 徽标 pill、行内 code */
+  --ds-radius-chip: 6px;     /* 28px 图标钮、chip */
+  --ds-radius-input: 8px;    /* 输入/下拉/面板档按钮 */
+  --ds-radius-button: 10px;  /* 对话档按钮、列表行 hover 面 */
+  --ds-radius-card-sm: 10px;
+  --ds-radius-card-md: 14px; /* 面板内卡（cfg-card 族） */
+  --ds-radius-card-lg: 16px; /* 聊天浮层卡 */
+  --ds-radius-shell: 20px;   /* 弹窗外壳（全站统一值） */
+  --ds-radius-pill: 999px;
+
+  /* ── ⑥ 阴影（3 族；SKILL.md §4，禁族外自造）── */
+  --ds-shadow-panel: var(--frost-shadow);
+  --ds-shadow-control: inset 0 1px 0 var(--glass-control-highlight),
+                       inset 0 -1px 0 var(--glass-control-underedge);
+  --ds-shadow-flat: none;    /* 平面族：1px hairline 承担边界 */
+  /* 卡面族（设置页白卡 = SKILL.md §4 面板族两档，不带 inset 高光——与
+     --frost-shadow 同值但少一层，故单独出生；黑α是主题不变「墨常量」，
+     本文件里仅有的字面色出生点，门禁对 --ds 声明行放行）。 */
+  --ds-shadow-card: 0 2px 8px rgb(0 0 0 / 0.04), 0 8px 24px rgb(0 0 0 / 0.06);
+  --ds-shadow-card-dark: 0 2px 8px rgb(0 0 0 / 0.20), 0 8px 24px rgb(0 0 0 / 0.35);
+
+  /* ── ⑦ 动效（别名既有 token；SKILL.md §6）── */
+  --ds-dur-micro: var(--dur-1);    /* 120ms 微变换 */
+  --ds-dur-hover: var(--dur-2);    /* 160ms 色彩/边框/底纹 */
+  --ds-dur-surface: var(--dur-3);  /* 240ms 表面切换 */
+  --ds-ease-enter: var(--ease-enter);
+  --ds-ease-std: var(--ease-std);
+  --ds-ease-panel: var(--panel-ease);
+
+  /* ── ⑧ 热区档（本批新增判据：SKILL.md 只钉了行内距，没钉最小热区）──
+     行高热区 = 44px（触控下限，WCAG 2.5.5 / Apple HIG 同档）；行内可点元素的
+     最小热区 = 32px（桌面指针档，低于此互相挤压误触）。设置页整改即按此档。 */
+  --ds-hit-row: 44px;
+  --ds-hit-control: 32px;
+  --ds-row-min-h: var(--ds-hit-row);
+}
+
+/* ══ 组件类层（`.ds-*`）══════════════════════════════════════════════
+   五组件 = 按钮 / 行 / 徽标 / 输入 / 卡（SKILL.md §7 固定尺寸档）。
+   所有值走 `--ds-*`；本层不覆盖任何既有类，只在 `.ds-*` 命名空间内生效
+   ⇒ 引入即用，零回归面。文档页样张 = docs/design-language/
+   design-system-token-batch/kit.html（本批 kit 段）。 */
+
+/* ① 按钮：主 = 墨族实心（2026-10-30 作者令「按钮不要绿色」），次级 = 玻璃，
+   危险 = ghost + hover 红。三档，禁第二实色族。 */
+.ds-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ds-space-2);
+  min-height: var(--ds-hit-control);
+  padding: 0 var(--ds-space-3);
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-btn);
+  font-weight: var(--ds-fw-btn);
+  line-height: var(--ds-lh-tight);
+  color: var(--ds-text);
+  background: var(--ds-control-bg);
+  border: 1px solid var(--ds-control-border);
+  border-radius: var(--ds-radius-input);
+  box-shadow: var(--ds-shadow-control);
+  cursor: pointer;
+  transition: background var(--ds-dur-hover) var(--ds-ease-std),
+              border-color var(--ds-dur-hover) var(--ds-ease-std),
+              color var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-btn:hover { background: var(--ds-control-bg-hover); }
+.ds-btn--primary {
+  color: var(--btn-primary-ink);
+  background: var(--btn-primary-bg);
+  border-color: var(--btn-primary-bg-hover);
+  box-shadow: none;
+}
+.ds-btn--primary:hover { background: var(--btn-primary-bg-hover); }
+.ds-btn--danger { color: var(--ds-danger-icon); background: transparent; border-color: transparent; box-shadow: none; }
+.ds-btn--danger:hover { background: var(--ds-etched-bg); }
+.ds-btn:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 2px; }
+
+/* ② 行：静息无边框盒，hairline 分隔，hover 只做底色 wash（平面族）——
+   热区 44px 起，可点行整行命中（点击目标 = 行本身，不是行内某个 span）。 */
+.ds-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-2);
+  min-height: var(--ds-row-min-h);
+  padding: var(--ds-row-pad);
+  border-bottom: 1px solid var(--ds-border-hairline);
+  font-size: var(--ds-fs-body);
+  line-height: var(--ds-lh-body);
+  color: var(--ds-text);
+}
+.ds-row:last-child { border-bottom: none; }
+.ds-row--link { cursor: pointer; width: 100%; text-align: left; background: none; border-left: 0; border-right: 0; border-top: 0; font-family: inherit; }
+.ds-row--link:hover { background: var(--color-frame-hover); }
+.ds-row__label { font-size: var(--ds-fs-body); color: var(--ds-text); }
+.ds-row__value { font-size: var(--ds-fs-hint); color: var(--ds-text-muted); font-variant-numeric: tabular-nums; }
+
+/* ③ 徽标 pill：tint 底 + 25% 边，字**中性**（色在图标/底上，SKILL.md §1.3）。 */
+.ds-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  padding: 1px 7px;
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-btn);
+  line-height: var(--ds-lh-tight);
+  color: var(--ds-status-word);
+  border: 1px solid var(--ds-border);
+  border-radius: var(--ds-radius-badge);
+  background: var(--ds-etched-bg);
+  white-space: nowrap;
+}
+.ds-badge[data-tone="ok"] { border-color: rgb(var(--brand-green) / 0.25); background: rgb(var(--brand-green) / 0.10); }
+.ds-badge[data-tone="warn"] { border-color: rgb(var(--amber) / 0.25); background: rgb(var(--amber) / 0.12); }
+.ds-badge[data-tone="err"] { border-color: rgb(var(--sapphire) / 0.20); background: var(--ds-etched-bg); }
+
+/* ④ 输入：etched 材质，focus = 1px 强边 + 2px 环（面板档灰环）。 */
+.ds-input {
+  width: 100%;
+  padding: var(--ds-input-pad);
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-body);
+  line-height: var(--ds-lh-body);
+  color: var(--ds-text);
+  background: var(--ds-etched-bg);
+  border: 1px solid var(--ds-etched-border);
+  border-radius: var(--ds-radius-input);
+  transition: border-color var(--ds-dur-hover) var(--ds-ease-std),
+              box-shadow var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-input::placeholder { color: var(--ds-text-muted); }
+.ds-input:focus {
+  outline: none;
+  border-color: var(--ds-border);
+  box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.10);
+}
+
+/* ⑤ 卡：平面族面板内卡（radius 14，无影，hairline 边）。 */
+.ds-card {
+  background: var(--ds-surface);
+  border: 1px solid var(--ds-border-hairline);
+  border-radius: var(--ds-radius-card-md);
+  padding: var(--ds-space-3) var(--ds-space-4);
+  box-shadow: var(--ds-shadow-flat);
+}
+.ds-card__title {
+  font-size: var(--ds-fs-title);
+  font-weight: var(--ds-fw-title);
+  line-height: var(--ds-lh-title);
+  color: var(--ds-text-bright);
+  margin-bottom: var(--ds-card-gap);
+}
+
+/* ⑥ 小节标签（meta 档 uppercase）——面板分组的标题语言。 */
+.ds-section-label {
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-body);
+  letter-spacing: var(--ds-ls-label);
+  text-transform: uppercase;
+  color: var(--ds-text-muted);
+}
+
+/* prefers-reduced-motion：全局压掉过渡（SKILL.md §6 官网同款兜底）。 */
+@media (prefers-reduced-motion: reduce) {
+  .ds-btn, .ds-input { transition-duration: 0.01ms; }
+}
