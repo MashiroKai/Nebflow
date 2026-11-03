@@ -698,6 +698,76 @@ object MergeQueue:
   /** IO 包装（BackoffSupervisor / settle 路径是 IO 上下文）。 */
   def enqueueIO(entry: Member): IO[Unit] = IO.blocking(enqueue(entry))
 
+  /**
+   * 预记账入队（merge-fifo 批 2026-11-03 · 作者报障「两个会话都已经报了 merge，
+   * 为什么还没收到通知」）：只记成员、**不 pump**。
+   *
+   * 调用点 = `delegate_report(category="merge")` 的申报腿（[[MergeEnqueue.ensurePending]]）
+   * ——此刻属主回合**尚未收尾**，放行腿不归申报点：回合收尾的重入队
+   * （[[enqueue]]，状态仍 waiting ⇒ 落 pump）与扫描拍（[[careTick]] 每项目补一拍
+   * pump）负责把它推到放行。这样「终态腿没跑成」（重启打断 / 判定降级 / 提前收尾）
+   * 最坏也只退化成「成员停在 waiting 等下一拍」，**绝不零台账行**。
+   *
+   * 幂等：已在账的开放成员只刷新通道（readyAt 不覆写——FIFO 位次不因重复申报
+   * 而跳动），审计行 `enqueued-pending-duplicate`。
+   */
+  def enqueuePendingIO(entry: Member): IO[Unit] = IO.blocking {
+    lock.synchronized {
+      ensureLoadedLocked()
+      members.get(entry.delegateId) match
+        case Some(existing) if existing.open =>
+          val refreshed =
+            existing.copy(internal = entry.internal.orElse(existing.internal), external = entry.external.orElse(existing.external))
+          members = members.updated(entry.delegateId, refreshed)
+          record(refreshed, "enqueued-pending-duplicate", Json.obj("state" -> refreshed.state.asJson))
+        case _ =>
+          // write-ahead（R5）：成员镜像先落持久通道——进程死在内存/账本写盘前，
+          // boot 重放仍能从通道收养。
+          MergeQueueChannel.sync(entry.delegateId, entry.state, memberJson(entry))
+          members = members.updated(entry.delegateId, entry)
+          persistLocked()
+          record(
+            entry,
+            "enqueued-pending",
+            Json.obj("readyAt" -> entry.readyAt.asJson, "queueDepth" -> openSortedLocked(entry.projectKey).size.asJson)
+          )
+    }
+  }
+
+  /**
+   * 核实入队（merge-fifo 批 2026-11-03 · 入队强保证的终态腿）：enqueue（含 pump）
+   * → 核账本 `find(id).exists(_.open)`；**false ⇒ `enqueue-failed` 必通知**
+   * （[[BlockNotifyPort]]，父/根会话收到可行动文案：入队没落地 ⇒ 这条分支不会被排到，
+   * 手工合并或重派）。**绝不抛**——入队腿的任何故障都不得拖垮终态序列（属主的 Release
+   * 照常投递），故障只转成「核实失败 + 通知」。
+   *
+   * 两形 false 都在文案里点名（诚实面）：① 账本压根没落行（异常/进队路失败）；
+   * ② 行落了但**开放态**不在（入队腿内被立即关账——merged / failed / owner-gone，
+   * 该情形各自的关账通知由既有三端口承担，本条只是「没有开放条目」的补票）。
+   */
+  def enqueueVerifiedIO(entry: Member): IO[Boolean] =
+    val reason =
+      s"merge-queue membership verification failed: no OPEN ledger entry for '${entry.delegateId}' after enqueue " +
+        s"(branch '${entry.branch}' → '${entry.baseBranch}') — either the row never landed or it was closed immediately " +
+        "(a separate merged/failed/owner-gone notice accompanies the closed shape). The merge turn for this delegate is NOT scheduled: " +
+        "merge the branch by hand or re-dispatch the task (branch and worktree preserved)."
+    enqueueIO(entry)
+      .attempt
+      .map {
+        case Right(_) =>
+          try find(entry.delegateId).exists(_.open)
+          catch case _: Throwable => false
+        case Left(e) =>
+          logger.warn(
+            s"[merge-queue] enqueue FAILED for '${entry.delegateId}': ${Option(e.getMessage).getOrElse(e.toString).take(200)}"
+          )
+          false
+      }
+      .flatTap {
+        case true => IO.unit
+        case false => IO.blocking(BlockNotifyPort.deliver(entry, "enqueue-failed", reason))
+      }
+
   // ── 放行（waiting → turn-granted；通知即放行） ────────────────────────
 
   /**
@@ -959,7 +1029,8 @@ object MergeQueue:
     via: String,
     closeReason: Option[String] = None,
     cleanup: Boolean = false,
-    ownerTerminal: Boolean = false
+    ownerTerminal: Boolean = false,
+    notifyParent: Boolean = true
   ): Unit =
     lock
       .synchronized {
@@ -988,7 +1059,17 @@ object MergeQueue:
             Some(closed)
           case _ => None
       }
-      .foreach { closed => pump(closed.projectKey) }
+      .foreach { closed =>
+        // merge-fifo 批 2026-11-03（作者报障②：队列侧合并是静默的——`care-tick
+        // fact-check` 落了地从不宣布）：关账 merged 也是**状态变化**，父/根会话
+        // 收到一条可行动通知（[[BlockNotifyPort]] kind=`merged`，同因去重）。
+        // `notifyParent = false` 的两处用法：① 属主自己的终态腿（合并轮的 Release
+        // 就是父通知本体——18:14 矩阵裁定「不许双通知」）；② 自身已投父的恢复腿
+        // （BootSweep 的 restart-recovery 文案）。
+        if notifyParent then
+          noteBlockedOrFailed(closed, "merged", closed.closeReason.getOrElse(s"merge landed (via $via)"))
+        pump(closed.projectKey)
+      }
 
   /** IO 包装（boot reconcile 路径）。 */
   def closeMergedIO(
@@ -996,9 +1077,10 @@ object MergeQueue:
     via: String,
     closeReason: Option[String] = None,
     cleanup: Boolean = false,
-    ownerTerminal: Boolean = false
+    ownerTerminal: Boolean = false,
+    notifyParent: Boolean = true
   ): IO[Unit] =
-    IO.blocking(closeMerged(delegateId, via, closeReason, cleanup, ownerTerminal))
+    IO.blocking(closeMerged(delegateId, via, closeReason, cleanup, ownerTerminal, notifyParent))
 
   /**
    * 关账 owner-gone（幂等）：属主失联——通知不可达 / 会话终态 / 重启后通道丢失。
@@ -1117,12 +1199,24 @@ object MergeQueue:
     mOpt.foreach { m =>
       outcome match
         case Some(RoundOutcome.Merged) =>
-          closeMerged(delegateId, via = "merge-round", cleanup = true)
+          // merge-fifo 批 2026-11-03（18:14 矩阵裁定「不许双通知」）：本腿的父通知
+          // 是**属主自己的终态 Release**（合并轮的工作结果 + 判词就在那条投递里）——
+          // 队列侧不再叠一条 `merged` 通知（notifyParent = false）；队列侧**异步**
+          // 关账腿（care-tick / 放行前账实核对）没有 Release 兜底，照常必通知。
+          closeMerged(delegateId, via = "merge-round", cleanup = true, notifyParent = false)
         case Some(RoundOutcome.Refused(reason)) =>
           closeFailed(delegateId, reason)
         case None =>
+          // 回合外终态（取消/超时/会话死亡）：本序列的终态投递照常报父，merged 细节
+          // 不另发通知（同上：不许双通知）。
           if alreadyMerged(m) then
-            closeMerged(delegateId, via = "fact-check-on-terminal", closeReason = Some("session ended; the branch was already merged"), cleanup = true)
+            closeMerged(
+              delegateId,
+              via = "fact-check-on-terminal",
+              closeReason = Some("session ended; the branch was already merged"),
+              cleanup = true,
+              notifyParent = false
+            )
           else
             markOwnerGone(delegateId, s"owner session ended without completing the merge round (state was '${m.state}')")
     }

@@ -1,0 +1,54 @@
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-8bbd5088-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-8bbd5088/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-8bbd5088/)
+[warn] javaOptions will be ignored, fork is set to false
+20:48:13.320 [33mWARN [0m nebflow.core.delegate.merge-enqueue - [merge-enqueue] 'delegate-nebflow-rw' has no branch/baseBranch anchor (branch=-, baseBranch=-) — merge target unknown, membership NOT pre-booked (the engine never guesses 'main')
+[32mnebflow.core.tools.DelegateReportToolSpec:[0m
+[32m  + [0m[32midentity gate: a non-delegate session is refused (mount face + in-tool check twin safeguard)[0m [90m0.238s[0m
+[32m  + [0m[32mvalue domain: invalid category and empty detail are refused with actionable codes[0m [90m0.004s[0m
+[32m  + [0m[32mstatus single-write: a legal report lands ONLY in the DelegateRegistry status slot, other fields untouched[0m [90m0.075s[0m
+[32m  + [0m[32m#566: the retired 'blocked' category is refused with guidance (no blocked state for delegates)[0m [90m0.003s[0m
+[32m  + [0m[32mno record, no write: reporting from an unspawned session id is refused, not fabricated[0m [90m0.004s[0m
+[32m  + [0m[32m状态矩阵批 (2026-11-01): the standby category is accepted — status slot single-write with the waiting-for detail, confirm names the parked semantics[0m [90m0.005s[0m
+[32m  + [0m[32m状态矩阵批: a standby declaration on a branch with unmerged commits carries the soft warning (the authoritative gate runs at turn end)[0m [90m0.004s[0m
+[32m  + [0m[32mbackward-compatible decode: a legacy record JSON without the new fields still decodes (deriveDecoder would drop it)[0m [90m0.003s[0m
+20:48:13.638 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-nebflow-1367aaaa' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dr-inflight-16946604933951462174/.nebflow/flow-maps/delegate-nebflow-1367aaaa, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dr-inflight-16946604933951462174, root=self) — one delegate one map
+20:48:13.750 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-nebflow-1367bbbb' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dr-inflight-lone-7770445272485044847/.nebflow/flow-maps/delegate-nebflow-1367bbbb, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dr-inflight-lone-7770445272485044847, root=self) — one delegate one map
+20:48:13.834 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-nebflow-1367cccc' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dr-nohost-13060269251709621513/.nebflow/flow-maps/delegate-nebflow-1367cccc, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dr-nohost-13060269251709621513, root=self) — one delegate one map
+20:48:13.843 [33mWARN [0m nebflow.core.delegate.merge-enqueue - [merge-enqueue] 'delegate-nebflow-1367cccc' has no branch/baseBranch anchor (branch=-, baseBranch=-) — merge target unknown, membership NOT pre-booked (the engine never guesses 'main')
+20:48:13.914 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-nebflow-1367dddd' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dr-cancel-17414872314645835164/.nebflow/flow-maps/delegate-nebflow-1367dddd, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dr-cancel-17414872314645835164, root=self) — one delegate one map
+20:48:13.982 [36mINFO [0m nebflow.node.engine - Node 'docs-pass' cancelled [source=user]: chain-cancel chain=chain-n-cancelme cascade=true: cancelled via NodeCancel chain-level form (scope=nb-dr-cancel-17414872314645835164)
+20:48:13.992 [36mINFO [0m nebflow.node.engine - Node 'batch-gate' cancelled [source=user]: chain-cancel chain=chain-n-cancelme cascade=true: cancelled via NodeCancel chain-level form (scope=nb-dr-cancel-17414872314645835164)
+20:48:14.018 [33mWARN [0m nebflow.project.dispatch-notify - Project 'nb-dr-cancel-17414872314645835164' not mounted — dispatch-notify skipped
+20:48:14.018 [36mINFO [0m nebflow.project.dispatch-notify - Project 'nb-dr-cancel-17414872314645835164' chain 'chain-n-cancelme' cancelled: 2 node(s) → cancelled, 0 preserved, 0 skipped — one aggregated dispatcher injection (chain-cancel leg)
+20:48:14.133 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-nebflow-1367eeee' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dr-abandon-11899732238558671082/.nebflow/flow-maps/delegate-nebflow-1367eeee, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dr-abandon-11899732238558671082, root=self) — one delegate one map
+[32mnebflow.core.tools.DelegateReportInflightFinishSpec:[0m
+[32m  + [0m[32mR1/R2: finish is REFUSED while scope nodes are in flight — structured error + reminder naming nodes, both exits, and the completion condition[0m [90m0.284s[0m
+[32m  + [0m[32mR1b: a lone non-terminal node outside any chain is in flight too — the criterion is node status, not chain membership[0m [90m0.096s[0m
+[32m  + [0m[32mR3: no false positives — no host mounted (no chain dispatched) still finishes; all-terminal graph finishes; merge/standby untouched[0m [90m0.09s[0m
+[32m  + [0m[32mR4: the offered cancel exit really works — NodeCancel(chain=…) terminalizes the in-flight nodes and finish is then accepted[0m [90m0.177s[0m
+[32m  + [0m[32mR4b: the abandon exit also works — NodeEdit(abandon=true) on a pending node clears it, and the tool face really carries both tools[0m [90m0.173s[0m
+[32mnebflow.agent.MergeQueueRestartReminderSpec:[0m
+[32m  + [0m[32m① terminal members are invisible to the boot sweep (closed is closed — a restart never re-opens a membership)[0m [90m0.363s[0m
+[32m  + [0m[32m② the retry vocabulary is retired: a full grant→refused lifecycle leaves no park/retry words on the ledger[0m [90m0.522s[0m
+[32m  + [0m[32m③ the ledger persists across a restart: granted facts (grantedAt / base tip / close-outs) reload from disk[0m [90m0.128s[0m
+[32mnebflow.core.delegate.MergeLaneGateSpec:[0m
+[32m  + [0m[32m① classifyLane: the five verdicts by MERGE_HEAD presence × owner liveness (pure decision face)[0m [90m0.003s[0m
+[32m  + [0m[32m② grant-side lane gate: a foreign in-progress merge blocks the grant with a notice; clearing the lane re-grants[0m [90m0.775s[0m
+[32m  + [0m[32m③ requeueForLane keeps the membership: turn-granted → waiting, grantedAt cleared, reason recorded, audit line rides[0m [90m0.143s[0m
+[32m  + [0m[32m④ owner-gone with the member's own leftover MERGE_HEAD aborts the orphan merge (recovery, not an engine merge)[0m [90m0.307s[0m
+[32m  + [0m[32m⑤ a MERGE_HEAD belonging to another branch is NEVER aborted on owner-gone (human manual merge protection)[0m [90m0.303s[0m
+[32m  + [0m[32m⑥ care-tick fact-check releases the window as soon as the merge commit lands (the owner never reports back)[0m [90m0.207s[0m
+[32m  + [0m[32m⑦ the merge brief teaches the OWN-leftover recovery (abort your own MERGE_HEAD and retry once in-round)[0m [90m0.148s[0m
+[32mnebflow.core.delegate.MergeArtifactCareSpec:[0m
+[32m  + [0m[32m① triage removes an untracked copy whose blob is identical to the delegate branch (content preserved there)[0m [90m0.252s[0m
+[32m  + [0m[32m② out-of-path unrelated untracked is quarantined outside the repo with a PROVENANCE record — nothing deleted[0m [90m0.24s[0m
+[32m  + [0m[32m③ whitelisted untracked NOT on the branch is still absorbed (deliverable semantics unchanged)[0m [90m0.305s[0m
+[32m  + [0m[32m④ whitelisted tracked overwrite is restored (10-23 semantics); out-of-path tracked dirt is NEVER touched (honest remainingDirty)[0m [90m0.247s[0m
+[32m  + [0m[32m⑤ a collapsed untracked DIRECTORY outside the whitelist is quarantined whole (porcelain `?? dir/` form)[0m [90m0.242s[0m
+[32m  + [0m[32m⑥ fail-soft: a non-repo path reports an error and never throws[0m [90m0.014s[0m
+[info] Passed: Total 29, Failed 0, Errors 0, Passed 29
+[success] Total time: 7 s, completed 2026年11月3日 20:48:18
+EXIT=0

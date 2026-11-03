@@ -863,6 +863,16 @@ object TaskStuckWatcher:
             nebflow.core.delegate.BaseDriftWatch
               .scan(nebflow.core.delegate.BaseDriftWatch.fromResources(resources))
               .handleErrorWith(e => logger.warn(s"[base-drift] sweep failed: ${e.getMessage}").void)
+              .void *>
+            // ── merge-fifo 批 2026-11-03（作者报障「两个会话都已经报了 merge，为什么
+            // 还没收到通知」）：合并队列**活性守卫**。入队只在回合终态腿发生，任何让
+            // 那条腿没跑成的路径（重启打断 / 判定降级 / 提前收尾）都会让有交付提交
+            // 的分支永远不进队——本拍把「Idle + 有未并交付 + 任务行 running/restarting
+            // + 账本无开放条目 + 静默够久」的漏网成员补进队并通知（幂等：账本有开放
+            // 条目即零动作）。搭本既有扫描拍，零新增定时器。
+            nebflow.core.delegate.MergeEnqueueWatch
+              .scan(resources)
+              .handleErrorWith(e => logger.warn(s"[merge-enqueue-watch] sweep failed: ${e.getMessage}").void)
               .void
       }
 

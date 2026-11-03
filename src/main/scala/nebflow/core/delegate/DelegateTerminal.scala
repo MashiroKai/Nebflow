@@ -1061,7 +1061,7 @@ object DelegateTerminal:
           _ <- resources.subAgentTaskStore
             .updateStatus(parentSessionId, delegateId, ReadyToMergeStatus, completedAt = Some(now))
             .handleErrorWith(e => IO(logger.warn(s"ready-to-merge status write failed: ${e.getMessage}")))
-          _ <- MergeQueue.enqueueIO(entry)
+          _ <- MergeQueue.enqueueVerifiedIO(entry)
           _ = logger.info(
             s"delegate $delegateId held for merge (project=$projectKey, branch=${entry.branch}, readyAt=$now) — parent notified after the merge round"
           )
