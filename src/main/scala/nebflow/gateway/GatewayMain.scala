@@ -1693,6 +1693,16 @@ object GatewayMain extends IOApp:
                                                   .map(_.sortBy(_.name).headOption)
                                                   .map(_.map(pd => os.Path(pd.workspace)))
                                                   .map(_.filter(p => os.exists(p)))
+                                              // 附件落位（作者令 2026-11-03 20:02：文档库 = 项目注册
+                                              // 目录 `.stand/docs`）：热力图 SVG 落 ledger vault 的
+                                              // attachments/ 而非 workspace docs/。None（无本机项目）⇒
+                                              // 生成器回落 workspace docs/attachments，行为零变化。
+                                              val weeklyReportAttachments: IO[Option[os.Path]] =
+                                                nebflow.core.project.ProjectStore
+                                                  .list()
+                                                  .map(_.filter(pd => nebflow.core.project.ProjectStore.deviceOrigin(pd).isEmpty))
+                                                  .map(_.sortBy(_.name).headOption)
+                                                  .map(_.map(pd => nebflow.core.project.ProjectStore.ledgerDocsAttachments(pd.name)))
                                               val weeklyReport = new nebflow.core.scheduler.WeeklyReportGenerator(
                                                 sharedResourcesWithBridge.scheduledTaskStore,
                                                 sharedResourcesWithBridge.doneRecordStore,
@@ -1702,7 +1712,8 @@ object GatewayMain extends IOApp:
                                                 // §6.4 回填：周报 Ready 收件箱入账到当前活跃会话
                                                 // （待办面会话归属与既有待办同语义；无活跃会话 ⇒
                                                 // 生成器记日志跳过入账，报告与广播不受影响）。
-                                                sessionStore.getActiveId
+                                                sessionStore.getActiveId,
+                                                weeklyReportAttachments
                                               )
                                               val scheduledTaskService = new ScheduledTaskService(
                                                 sharedResourcesWithBridge.dispatcher,

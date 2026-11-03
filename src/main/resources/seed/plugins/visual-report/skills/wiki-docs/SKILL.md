@@ -21,7 +21,9 @@ convention-enforced (skill + dispatch briefs) until the validator grows its
 existence rule (design §7.4, still open):
 
 1. **Obsidian format, every document** — written inside the vault
-   `<workspace>/docs/`, with a frontmatter block (`type:` / `status:`),
+   `<data_root>/projects/<project>/.stand/docs/` (the project's REGISTRATION
+   dir, next to its `project.json` — NOT the project workspace repo; author
+   ruling 2026-11-03), with a frontmatter block (`type:` / `status:`),
    references as wikilinks, attachments under `attachments/`.
    → check rule `obsidian-format`.
 2. **Paper-style citation graph** — when document B builds on document A, B
@@ -66,8 +68,13 @@ existence rule (design §7.4, still open):
 Run before delivering any document batch:
 
 ```
-python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --root <workspace>/docs --glossary glossary.md
+python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --project <project> --glossary glossary.md
 ```
+
+- The vault root defaults to `<data_root>/projects/<project>/.stand/docs/`
+  (`STAND_HOME` / `NEBFLOW_HOME` override the data root); `--project` defaults
+  to `stand`. `--root <path>` still overrides explicitly — use it to validate a
+  not-yet-migrated workspace `docs/` vault.
 
 - Deliverables must pass with zero NEW violations (exit 0). Pre-existing
   legacy violations in the vault are not a pass for this batch — fix what you
@@ -92,9 +99,11 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --root <workspace>/docs --glossa
 
 ## Vault layout
 
-- Vault root: `<workspace>/docs/`. Create it on first write (idempotent).
+- Vault root: `<data_root>/projects/<project>/.stand/docs/` — created at project
+  creation (idempotent); fall back to the workspace `docs/` only for a
+  not-yet-migrated project (read-side compatibility, never for new writes).
 - Attachments (images, exports, data files referenced by documents):
-  `<workspace>/docs/attachments/`. Never scatter attachments next to documents
+  `<vault>/attachments/`. Never scatter attachments next to documents
   or in ad-hoc folders — every asset referenced by a document lives under
   `attachments/` and is referenced by its vault-relative path.
 - One document = one topic. The file name is the document identity; prefer
@@ -111,7 +120,7 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --root <workspace>/docs --glossa
     (`[[<sub>/docs/topic.md]]`) — cross-vault references are counted as
     cross-vault links, never silently broken.
   Validate every level independently:
-  `python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --root <workspace>/docs --include-subvaults`
+  `python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --project <project> --include-subvaults`
 
 ## Document form (paper style)
 
@@ -124,8 +133,8 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --root <workspace>/docs --glossa
   Never leave a term that only a companion document explains without the link.
   (This is mandatory clause ③ — the validator above enforces it.)
 - Concepts that recur across documents belong in a glossary document
-  (`docs/glossary.md`): one block per concept, each block ending with a block
-  id, e.g.
+  (`glossary.md` at the vault root): one block per concept, each block ending
+  with a block id, e.g.
 
   ```
   Retry storm — a feedback loop where failures trigger retries that multiply
@@ -224,7 +233,8 @@ Citation discipline:
 
 - A document with zero outgoing links and zero incoming links is a defect
   unless it is the first document in a new domain — wire new documents to at
-  least the glossary or the project's index document (`docs/index.md`).
+  least the glossary or the project's index document (`index.md` at the vault
+  root).
 - When document B builds on document A, B cites A at the point of use, and A
   gains a "See also" link back to B when A is revised next. The pair of edges
   is what makes the graph navigable in both directions.

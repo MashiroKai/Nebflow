@@ -12,21 +12,27 @@ import nebflow.shared.{NebflowLogger, PathUtil}
 import scala.collection.mutable.ListBuffer
 
 /**
- * Wiki graph service — turns every registered project's `docs/` vault
+ * Wiki graph service — turns every registered project's document vault
  * (Obsidian-compatible) into per-project document graphs (#744-B multi-vault).
  *
  * Vault registration is DISCOVERY-BASED, zero-config (#744-B 设计 §1): a
- * project's vault is always `<workspace>/docs` (the wiki-docs SKILL convention)
- * — mounting the project registers its vault; unmount/archive hides it
+ * project's vault root is resolved by [[ProjectStore.localVault]] — the
+ * project's REGISTRATION dir vault `projects/<name>/.stand/docs` (author ruling
+ * 2026-11-03: docs live next to project.json, not in the project workspace
+ * repo), falling back to the workspace `docs/` dir for not-yet-migrated
+ * projects. Mounting the project registers its vault; unmount/archive hides it
  * (`ProjectStore.list` is the single source). Sub-project hierarchy is
  * convention-based too: any direct child `SUB/docs` directory inside a vault is
  * a sub
  * vault (recursive, depth-capped), discovered at scan time — no new fields on
  * project.json.
  *
- * Home-awareness: projects live under the data root, but a project's
- * `workspace` is an absolute path anywhere on disk — the vault is always
- * `<workspace>/docs`, never assumed to sit under `.nebflow`.
+ * Home-awareness: the vault lives under the DATA ROOT (registration dir), while
+ * a project's `workspace` is an absolute path anywhere on disk — the two are
+ * distinct precisely because knowledge documents are ledger-side (brain side),
+ * not repo-side. Remote (device-origin) projects keep the workspace-relative
+ * `docs/` probe on the peer: their registration dir vault is still the host's
+ * ledger one, but the peer vault is what the user sees on that device.
  *
  * Cross-device: a project whose `origin.device` points at a peer is scanned
  * ON the peer over the existing `FileTransfer scope=browse` channel
@@ -109,14 +115,19 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
             .guarantee(IO(building.set(false)))
     }
 
-  /** Create `<workspace>/docs/attachments` for a project (idempotent). */
+  /**
+   * Create the project's vault (`<ledger>/attachments`, idempotent). Canonical
+   * write face = the project's registration dir vault
+   * ([[ProjectStore.ledgerDocsDir]]: `projects/<name>/.stand/docs`, author
+   * ruling 2026-11-03) — never the workspace `docs/` dir.
+   */
   def ensureVault(project: String): IO[Either[String, Json]] =
     ProjectStore.load(project).flatMap {
       case None => IO.pure(Left(s"project '$project' not found"))
       case Some(pd) if !ProjectOrigin.isSelfLiteral(deviceOf(pd)) =>
         IO.pure(Left(s"project '$project' lives on device '${deviceOf(pd)}' — create the vault on that device"))
       case Some(pd) =>
-        val vault = workspacePath(pd) / WikiIndex.VaultDirName
+        val vault = ProjectStore.ledgerDocsDir(pd.name)
         IO.blocking {
           val existed = os.exists(vault)
           os.makeDir.all(vault / WikiIndex.AttachmentsDirName)
@@ -142,12 +153,15 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
         if ProjectOrigin.isSelfLiteral(device) then
           IO.blocking {
             val ws = workspacePath(pd)
+            // 读面兼容解析（迁移分级期）：注册目录 vault 优先、workspace docs/ 兜底
+            // （[[ProjectStore.localVault]]）。
+            val vault = ProjectStore.localVault(pd)
             Json.obj(
               "project" -> pd.name.asJson,
               "device" -> device.asJson,
               "workspace" -> ws.toString.asJson,
-              "vault" -> (ws / WikiIndex.VaultDirName).toString.asJson,
-              "present" -> os.isDir(ws / WikiIndex.VaultDirName).asJson
+              "vault" -> vault.toString.asJson,
+              "present" -> os.isDir(vault).asJson
             )
           }
         else
@@ -255,20 +269,23 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
 
   private def buildLocalVaultView(pd: ProjectDef, vaultRel: String): IO[Json] =
     val device = deviceOf(pd)
-    val ws = workspacePath(pd)
     IO.blocking {
       // vaultRel namespace = ROOT-VAULT-relative ("docs" = the root vault,
-      // "sub/docs" = <workspace>/docs/sub/docs — a sub vault lives INSIDE the
-      // root vault, #744-B 设计 §1). Segments below the root vault (the root
+      // "sub/docs" = <rootVault>/sub/docs — a sub vault lives INSIDE the root
+      // vault, #744-B 设计 §1). Segments below the root vault (the root
       // segment itself is already folded in), each validated no-'/' by /.
-      val rootVault = ws / WikiIndex.VaultDirName
+      //
+      // 落位（作者令 2026-11-03）：root vault = 项目注册目录下的 `.stand/docs`
+      // （[[ProjectStore.localVault]] 读面兼容解析；namespace 仍以 "docs" 为根段，
+      // 前端口径与 rel 通道零变化）。
+      val rootVault = ProjectStore.localVault(pd)
       val vault = vaultRelSegments(vaultRel).foldLeft(rootVault)(_ / _)
       // Sub-vault aggregates: rels are ROOT-vault-relative; the direct children
       // of THIS vault are the ones exactly one `<sub>/docs` pair deeper
       // (root "docs" is itself the pair's tail segment, so its children sit at
       // below-depth 2; deeper levels add 2 per hop).
       val allChildren =
-        if os.isDir(ws / WikiIndex.VaultDirName) then discoverLocalSubVaults(ws / WikiIndex.VaultDirName)
+        if os.isDir(rootVault) then discoverLocalSubVaults(rootVault)
         else Nil
       val below = vaultRelSegments(vaultRel)
       val children = allChildren.filter { c =>
@@ -277,7 +294,7 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
       }
       // Sibling/ancestor rel sets for external classification (listing only —
       // only THIS vault's documents are parsed). srel is root-vault-relative.
-      val siblingRels = allLocalVaultRels(ws)
+      val siblingRels = allLocalVaultRels(rootVault)
         .filterNot(_ == vaultRel)
         .flatMap { srel =>
           val sv = vaultRelSegments(srel).foldLeft(rootVault)(_ / _)
@@ -506,7 +523,9 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
   private def scanLocalRootProject(pd: ProjectDef): IO[ProjectScan] =
     val device = deviceOf(pd)
     val ws = workspacePath(pd)
-    val vault = ws / WikiIndex.VaultDirName
+    // 落位（作者令 2026-11-03）：vault 根 = 注册目录 `.stand/docs`；未迁移项目
+    // 经 [[ProjectStore.localVault]] 回落到 workspace `docs/`（读面兼容）。
+    val vault = ProjectStore.localVault(pd)
     IO.blocking {
       if !os.isDir(vault) then
         ProjectScan(pd.name, device, ws.toString(), vault.toString(), emptyStubScan(pd.name, device), None, stubProject = true)
@@ -569,11 +588,10 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
     walk(rootVault, Nil, 0)
     out.toList
 
-  /** Every vault rel of a local workspace (root + sub vaults) — listing only. */
-  private def allLocalVaultRels(ws: os.Path): List[String] =
-    val root = ws / WikiIndex.VaultDirName
-    if !os.isDir(root) then Nil
-    else WikiIndex.VaultDirName +: discoverLocalSubVaults(root).map(_.rel)
+  /** Every vault rel of a local root vault (root + sub vaults) — listing only. */
+  private def allLocalVaultRels(rootVault: os.Path): List[String] =
+    if !os.isDir(rootVault) then Nil
+    else WikiIndex.VaultDirName +: discoverLocalSubVaults(rootVault).map(_.rel)
 
   // ── Remote vault scanning ────────────────────────────────────────
 
@@ -836,7 +854,7 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
         val segs = rel.split('/').toVector.filter(s => s.nonEmpty && s != "." && s != "..")
         if segs.isEmpty then None
         else
-          val f = segs.foldLeft(workspacePath(pd) / WikiIndex.VaultDirName)(_ / os.RelPath(_))
+          val f = segs.foldLeft(ProjectStore.localVault(pd))(_ / os.RelPath(_))
           if os.isFile(f) && os.size(f) <= WikiIndex.MaxDocBytes then Some(os.read(f)) else None
       }.handleErrorWith(_ => IO.pure(None))
     else
@@ -956,7 +974,7 @@ class WikiService(neblinkService: Option[NeblinkServicePort] = None):
       case Some(p) =>
         ProjectStore.load(p).flatMap {
           case Some(pd) if ProjectOrigin.isSelfLiteral(deviceOf(pd)) =>
-            val vault = workspacePath(pd) / WikiIndex.VaultDirName
+            val vault = ProjectStore.localVault(pd)
             if !os.isDir(vault) then IO.pure(None)   // 无 vault ⇒ 图谱腿给既有 error 面
             else
               val key = s"$p|${WikiIndex.VaultDirName}"

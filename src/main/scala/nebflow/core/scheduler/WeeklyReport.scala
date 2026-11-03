@@ -24,9 +24,10 @@ import java.time.{DayOfWeek, Instant, ZoneId, ZonedDateTime}
  * 产物：
  * - 周报 markdown → `<workspace>/reports/<yyyyMMdd>_weekly-checkin/REPORT.md`
  *   （reports/ = 纯过程文件，零 frontmatter，仓内约定）
- * - 打卡热力图 SVG → `<workspace>/docs/attachments/checkin-heatmap-<weekKey>.svg`
- *   （附件纪律：docs/attachments/ 供 vault 索引；SVG = 零依赖矢量图，趋势一图
- *   一结论，图注 = 结论句）
+ * - 打卡热力图 SVG → `<vault>/attachments/checkin-heatmap-<weekKey>.svg`
+ *   （vault = 项目注册目录 `.stand/docs`（作者令 2026-11-03）；装配面注入，缺省
+ *   回落 `<workspace>/docs/attachments` 保全量调用点零改动；SVG = 零依赖矢量图，
+ *   趋势一图一结论，图注 = 结论句）
  *
  * 工作区解析：注入 `resolveWorkspace: IO[Option[os.Path]]`（GatewayMain 装配 =
  * 第一个本机非归档项目；None = 本机无可写工作区，记日志跳过，绝不静默写别处）。
@@ -196,6 +197,10 @@ end WeeklyReport
  * @param stateFile marker 持久化位置（默认 dataRoot 内；spec 注临时路径）
  * @param activeSession 收件箱入账会话解析（§6.4 回填）：空串 = 无活跃会话，
  *   跳过入账（报告与广播不受影响）；默认 IO.pure("") 保存量 spec 构造零改动。
+ * @param resolveAttachments 热力图附件落位解析（作者令 2026-11-03 20:02：文档库
+ *   = 项目注册目录 `.stand/docs`）：Some(vault) ⇒ `<vault>/attachments/`；None =
+ *   未注入（存量 spec / 无项目上下文）⇒ 回落 `<ws>/docs/attachments`（迁移前
+ *   口径，行为零变化）。装配面 GatewayMain 注入＝当前项目的 ledger vault。
  */
 final class WeeklyReportGenerator(
   taskStore: ScheduledTaskStore,
@@ -203,7 +208,8 @@ final class WeeklyReportGenerator(
   resolveWorkspace: IO[Option[os.Path]],
   broadcast: Json => IO[Unit],
   stateFile: JPath,
-  activeSession: IO[String] = IO.pure("")
+  activeSession: IO[String] = IO.pure(""),
+  resolveAttachments: IO[Option[os.Path]] = IO.pure(None)
 ):
 
   private val logger = NebflowLogger.forName("nebflow.weekly-report")
@@ -262,10 +268,11 @@ final class WeeklyReportGenerator(
                   heatmapName = s"checkin-heatmap-$weekKey.svg"
                   stamp = DateTimeFormatter.ofPattern("yyyyMMdd").withZone(zone).format(instant)
                   reportDir = ws / "reports" / s"${stamp}_weekly-checkin"
-                  _ <- IO.blocking { os.makeDir.all(reportDir); os.makeDir.all(ws / "docs" / "attachments") }
+                  attachDir <- resolveAttachments.map(_.getOrElse(ws / "docs" / "attachments"))
+                  _ <- IO.blocking { os.makeDir.all(reportDir); os.makeDir.all(attachDir) }
                   md = WeeklyReport.renderMarkdown(stats, heatmapName, openTodos.map(_.content), zone)
                   _ <- IO.blocking { os.write.over(reportDir / "REPORT.md", md) }
-                  _ <- IO.blocking { os.write.over(ws / "docs" / "attachments" / heatmapName, WeeklyReport.renderHeatmapSvg(stats)) }
+                  _ <- IO.blocking { os.write.over(attachDir / heatmapName, WeeklyReport.renderHeatmapSvg(stats)) }
                   _ <- writeMarker(Marker(weekKey))
                   reportPath = (reportDir / "REPORT.md").toString
                   // §6.4 接合面回填（§9-12/§9-13 授权）：周报 Ready 从通知横幅改为

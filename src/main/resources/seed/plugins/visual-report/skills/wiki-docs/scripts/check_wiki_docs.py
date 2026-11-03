@@ -24,11 +24,21 @@ edge.anchor 直查目标段落，点击经 markdown 查看器锚点通道跳转�
 同一脚本兼任图谱样张/离线分析的数据导出：--graph 按 WikiIndex.scala 的解析语义
 （wikilink/markdown 链接、front-matter、块锚、fence 屏蔽）产出 {nodes, edges} JSON。
 
+落位单源（作者令 2026-11-03 20:02）：「项目名 → 文档根」= 项目注册目录（
+project.json 所在）下的 `.stand/docs/`，即
+`<data_root>/projects/<project>/.stand/docs`——**不落**项目 workspace 仓库的
+`docs/`。数据根解析序与引擎 PathUtil.dataRoot 同序：`STAND_HOME` → `NEBFLOW_HOME`
+（legacy）→ `~/.stand`。`--root` 显式传参仍然胜出（向后兼容：未迁移项目 /
+workspace 内 docs/ 的存量 vault 照旧可校验）。
+
 用法：
-  python3 check_wiki_docs.py --root docs                 # 校验，人读清单到 stdout
-  python3 check_wiki_docs.py --root docs --json          # 校验，机器读 JSON
-  python3 check_wiki_docs.py --root docs --graph out.json --project stand
-  python3 check_wiki_docs.py --root docs --include-subvaults
+  python3 check_wiki_docs.py                             # 校验，根按 --project 解析
+                                                         # （默认 stand，见上「落位单源」）
+  python3 check_wiki_docs.py --project stand             # 同上，显式项目名
+  python3 check_wiki_docs.py --root docs                 # 显式根覆盖（向后兼容）
+  python3 check_wiki_docs.py --json                      # 校验，机器读 JSON
+  python3 check_wiki_docs.py --graph out.json --project stand
+  python3 check_wiki_docs.py --include-subvaults
                                                          # 子项目图谱批（#744-B）：
                                                          # 发现 <sub>/docs 子 vault 后
                                                          # 逐 vault 独立跑 R1-R3；
@@ -47,6 +57,7 @@ edge.anchor 直查目标段落，点击经 markdown 查看器锚点通道跳转�
 import argparse
 import fnmatch
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -67,11 +78,51 @@ DEFINITION_TAIL_RE = re.compile(r"^\s*(?:[—–-]{1,2}|[:：])\s*\S")
 DEFINITION_PAREN_RE = re.compile(r"^\s*[（(]\s*\S")
 
 RULES = (
-    ("R1", "obsidian-format", "所有文档一律 Obsidian 格式产出：front-matter（type/status）+ [[wiki-link]] 引用 + vault 目录约定（docs/ 根、attachments/ 附件）"),
+    ("R1", "obsidian-format", "所有文档一律 Obsidian 格式产出：front-matter（type/status）+ [[wiki-link]] 引用 + vault 目录约定（vault 根 = 项目注册目录 .stand/docs、attachments/ 附件）"),
     ("R2", "citation-graph", "文档之间建立论文式引用关系：断链（目标/标题锚/块锚不存在，含引用词条未注册）即缺陷；零出链且零入链的孤儿文档即缺陷（index/glossary 豁免）"),
     ("R3", "concept-first-use", "名词概念第一次出现必须就地解释，或 [[引用]] 已解释它的文档；多篇文档不得各自发明同一概念的定义（词表 = 唯一定义源）"),
     ("R4", "term-registry", "词条注册表面：词表锚段落与 ^term-* 声明块必须按「名 — 定义」分隔约定抽出词条名（词条块结构合法）；同一文档内词条名不得重复；`[[名]]` 短形引用经词条注册表消解（词表命中优先，未注册 = R2 断链）"),
 )
+
+
+# ── 落位解析：项目名 → 文档根（作者令 2026-11-03 20:02，单源）────────────
+#
+# 知识文档（设计/审计/裁定/调研/Obsidian 文档）落**项目注册目录**（project.json
+# 所在目录，即 <data_root>/projects/<项目名>/）下的 `.stand/docs/`，不落项目
+# workspace 仓库的 `docs/`。本函数是该规则的 Python 面单源；Scala 面单源 =
+# `ProjectStore.ledgerDocsDir` / `ProjectStore.localVault`（两处同公式，改则同改）。
+#
+# 数据根解析序（与引擎 PathUtil.dataRoot 同序）：STAND_HOME → NEBFLOW_HOME
+# （legacy 兼容）→ ~/.stand。显式 `--root` 恒胜出（向后兼容：未迁移项目、或
+# workspace 内 docs/ 的存量 vault 照旧可校验）。
+
+DATA_ROOT_ENV_VARS = ("STAND_HOME", "NEBFLOW_HOME")
+DEFAULT_HOME_DIRNAME = ".stand"
+LEDGER_DOCS_REL = (".stand", "docs")
+
+
+def resolve_data_root(env=None):
+    """数据根：STAND_HOME → NEBFLOW_HOME → ~/.stand（与 PathUtil.dataRoot 同序）。"""
+    env = os.environ if env is None else env
+    for key in DATA_ROOT_ENV_VARS:
+        raw = (env.get(key) or "").strip()
+        if raw:
+            return Path(raw).expanduser()
+    return Path.home() / DEFAULT_HOME_DIRNAME
+
+
+def resolve_project_docs_root(project, env=None):
+    """项目名 → 文档根：<data_root>/projects/<project>/.stand/docs。
+
+    project 为空/缺省时按 `<data_root>/projects/stand/.stand/docs` 解析——绝不
+    回落到相对 cwd 的 `docs`（那正是本批要废掉的旧落位）。"""
+    name = (project or "").strip() or "stand"
+    root = resolve_data_root(env)
+    for part in ("projects", name):
+        root = root / part
+    for part in LEDGER_DOCS_REL:
+        root = root / part
+    return root
 
 
 # ── 文档模型 ─────────────────────────────────────────────────────────
@@ -773,9 +824,13 @@ def resolve_cross_vault(resolver_by_vault, target):
 
 def main():
     ap = argparse.ArgumentParser(description="wiki-docs 文档纪律校验器 + 图谱数据导出")
-    ap.add_argument("--root", default="docs", help="vault 根目录（默认 docs）")
+    ap.add_argument("--root", default=None,
+                    help="vault 根目录（显式覆盖，向后兼容）。缺省 = 按 --project 解析："
+                         "<data_root>/projects/<project>/.stand/docs（项目注册目录，"
+                         "project.json 所在；数据根 = STAND_HOME → NEBFLOW_HOME → ~/.stand）")
     ap.add_argument("--glossary", default=None, help="词表路径（vault 相对；默认自动探测 *glossary*.md）")
-    ap.add_argument("--project", default="stand", help="--graph 输出的 project 名")
+    ap.add_argument("--project", default="stand",
+                    help="项目名（--graph 输出的 project 名；缺省 --root 时同时是文档根的解析键）")
     ap.add_argument("--json", action="store_true", help="违规清单以 JSON 输出")
     ap.add_argument("--graph", metavar="OUT", default=None, help="导出图谱数据 JSON 到 OUT")
     ap.add_argument("--exclude", action="append", default=[],
@@ -792,6 +847,9 @@ def main():
             print(f"{rid} {name}: {text}")
         return 0
 
+    # 落位解析（2026-11-03 作者令单源）：显式 --root 恒胜出（向后兼容）；缺省
+    # 按 --project 解析到注册目录 .stand/docs。解析结果回写 args.root，下游零变化。
+    args.root = args.root if args.root else str(resolve_project_docs_root(args.project))
     root = Path(args.root)
     if not root.is_dir():
         print(f"ERROR: vault 根不存在：{root}", file=sys.stderr)
@@ -891,7 +949,7 @@ def main():
         else:
             print(f"wiki-docs 校验：通过（{root}，{len(docs)} 篇文档，零违规）")
         if not glossary_rel:
-            print("提示：未发现词表（glossary）——R3 概念首现检查未启用。建 vault 词表：docs/glossary.md")
+            print("提示：未发现词表（glossary）——R3 概念首现检查未启用。建 vault 词表：<vault>/glossary.md")
     else:
         print(f"wiki-docs 校验（逐 vault，#744-B）：{len(per_vault)} 个 vault，{total_violations} 条违规（{root}）\n")
         for r in per_vault:

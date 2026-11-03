@@ -155,6 +155,31 @@ class WeeklyReportSpec extends CatsEffectSuite:
       .map(_ => assertEquals(os.list(ws / "reports").length, 1))
   }
 
+  test("生成器：注入附件落位（作者令 2026-11-03）⇒ SVG 落注册目录 .stand/docs/attachments，不落 workspace docs/") {
+    val ws = tempRoot / "ws-attach"
+    val ledgerAtt = tempRoot / "projects" / "ledger-proj" / ".stand" / "docs" / "attachments"
+    os.makeDir.all(ws)
+    val taskStore = new ScheduledTaskStore(tempRoot / "scheduled-tasks-attach")
+    val store = DoneRecordStore(tempRoot)
+    val gen = new WeeklyReportGenerator(
+      taskStore,
+      store,
+      IO.pure(Some(ws)),
+      _ => IO.unit,
+      (tempRoot / "weekly-report-attach" / "state.json").toNIO,
+      IO.pure(""),
+      IO.pure(Some(ledgerAtt))
+    )
+    for
+      _ <- store.record(rec(mondayAfter.minus(java.time.Duration.ofDays(6))))
+      _ <- gen.tick(mondayAfter, zone)
+    yield
+      assert(os.exists(ledgerAtt), "注册目录 attachments 应被自动建出来")
+      assertEquals(os.list(ledgerAtt).count(_.last.endsWith(".svg")), 1, "热力图落 ledger vault")
+      assert(!os.exists(ws / "docs" / "attachments"), "注入落位后不再写 workspace docs/（单一落位，无第二份）")
+      assertEquals(os.list(ws / "reports").length, 1, "REPORT.md 仍落 workspace reports/（过程件）")
+  }
+
   test("生成器：无可写工作区 ⇒ 跳过且不写 marker（下次有工作区补生成）") {
     val taskStore = new ScheduledTaskStore(tempRoot / "scheduled-tasks-3")
     val gen = new WeeklyReportGenerator(
