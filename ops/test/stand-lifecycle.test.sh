@@ -19,7 +19,8 @@ SRC_LIB="$REPO_ROOT/ops/bin/stand-cli-lib.sh"
 SRC_SHIM="$REPO_ROOT/ops/bin/nebflow-stand-shim"
 SRC_JDK="$REPO_ROOT/ops/bin/stand-jdk"
 SRC_AUTOSTART="$REPO_ROOT/ops/nebflow-autostart.sh"
-SRC_RESTART="$REPO_ROOT/ops/nebflow-restart.sh"
+SRC_RESTART="$REPO_ROOT/ops/stand-restart.sh"          # 2026-11-03 改名批: nebflow-restart.sh → stand-restart.sh
+SRC_RESTART_SHIM="$REPO_ROOT/ops/bin/nebflow-restart-shim"
 
 PASS=0; FAIL=0
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/stand-lifecycle.XXXXXX")"
@@ -65,6 +66,16 @@ FAKEJAVA
     cp "$SRC_NEBFLOW" "$SANDBOX/bin/nebflow"
     cp "$SRC_LIB" "$SANDBOX/bin/stand-cli-lib.sh"
     chmod +x "$SANDBOX/bin/stand" "$SANDBOX/bin/nebflow"
+    # 2026-11-03 改名批: 开发重启工具 (stand-restart.sh) + 旧名弃用垫片, 连同它要求的
+    # 两个 helper（setsid-exec / daemonize——沙箱里只需存在且可执行, --check 面不 spawn）。
+    cp "$SRC_RESTART" "$SANDBOX/bin/stand-restart.sh"
+    cp "$SRC_RESTART_SHIM" "$SANDBOX/bin/nebflow-restart.sh"
+    printf '#!/bin/bash\nexit 0\n' > "$SANDBOX/bin/nebflow-setsid-exec.py"
+    printf '#!/bin/bash\nexit 0\n' > "$SANDBOX/bin/nebflow-daemonize.py"
+    chmod +x "$SANDBOX/bin/stand-restart.sh" "$SANDBOX/bin/nebflow-restart.sh" \
+             "$SANDBOX/bin/nebflow-setsid-exec.py" "$SANDBOX/bin/nebflow-daemonize.py"
+    mkdir -p "$SANDBOX/home/logs"
+    : > "$SANDBOX/home/logs/nebflow.log"
     : > "$FAKE_LOG"
 }
 
@@ -208,7 +219,7 @@ echo "   sandbox: $SANDBOX"
 
 # ── 0. 静态: 语法 ──
 t "case 0: bash -n on ops scripts"
-for _f in "$SRC_STAND" "$SRC_NEBFLOW" "$SRC_LIB" "$SRC_SHIM" "$SRC_JDK" "$SRC_AUTOSTART" "$SRC_RESTART"; do
+for _f in "$SRC_STAND" "$SRC_NEBFLOW" "$SRC_LIB" "$SRC_SHIM" "$SRC_JDK" "$SRC_AUTOSTART" "$SRC_RESTART" "$SRC_RESTART_SHIM"; do
     if bash -n "$_f" 2>"$SANDBOX/syn.err"; then ok "syntax: $(basename "$_f")"; else bad "syntax: $(basename "$_f"): $(cat "$SANDBOX/syn.err")"; fi
 done
 if command -v shellcheck >/dev/null 2>&1; then
@@ -664,6 +675,93 @@ if case "$FIX27" in ''|*[!0-9]*) false ;; *) true ;; esac; then
 else
     bad "case 27 skipped: fixture failed ($FIX27)"
 fi
+
+# ── 28. 2026-11-03 改名批: 弃用垫片 nebflow-restart.sh → stand-restart.sh 转发 + --check 只读 ──
+t "case 28: deprecation shim forwards to stand-restart.sh (verbatim args) and --check is read-only"
+fresh_sandbox
+STAND_HOME="$SANDBOX/home" NEBFLOW_RESTART_PORT=25891 \
+    RUN_OUT="$("$SANDBOX/bin/nebflow-restart.sh" --check 2>&1)"; RC=$?
+assert_rc "shim --check rc" 0 "$RC"
+assert_contains "shim prints deprecation line" "nebflow-restart.sh is deprecated — use stand-restart.sh" "$RUN_OUT"
+assert_contains "forwarded check output reached (status line)" "watchdog=" "$RUN_OUT"
+assert_contains "forwarded --check verdict present" "状态:" "$RUN_OUT"
+# 参数逐字透传: 未知旗标原样到达正文脚本（正文解析器忽略它, 仍走 --check 默认面）
+STAND_HOME="$SANDBOX/home" NEBFLOW_RESTART_PORT=25891 \
+    RUN_OUT="$("$SANDBOX/bin/nebflow-restart.sh" --check --totally-unknown-flag 2>&1)"; RC=$?
+assert_rc "shim forwards unknown flags verbatim (body ignores, rc unchanged)" 0 "$RC"
+# 垫片缺失正文时的报错指引（临时挪走正文再恢复）
+mv "$SANDBOX/bin/stand-restart.sh" "$SANDBOX/bin/stand-restart.sh.hidden"
+STAND_HOME="$SANDBOX/home" NEBFLOW_RESTART_PORT=25891 \
+    RUN_OUT="$("$SANDBOX/bin/nebflow-restart.sh" --check 2>&1)"; RC=$?
+assert_rc "shim without body rc" 66 "$RC"
+assert_contains "shim missing-body guidance" "shim cannot forward" "$RUN_OUT"
+mv "$SANDBOX/bin/stand-restart.sh.hidden" "$SANDBOX/bin/stand-restart.sh"
+
+# ── 29. 2026-11-03 改名批: `stand restart --dry-run` 与 `stand-restart.sh --check` 零真实终止 ──
+t "case 29: zero real termination - dry-run fake ignition + restart-script --check both leave the live engine untouched"
+fresh_sandbox
+P29=$(pick_free_port)
+FIX29=$(start_fixture "$P29" marker)
+if case "$FIX29" in ''|*[!0-9]*) false ;; *) true ;; esac; then
+    echo "$FIX29" > "$SANDBOX/home/.pid"
+    # 腿1: stand-restart.sh --check (沙箱 home + 沙箱端口 ⇒ 四信号全绿, 无任何信号发送)
+    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" NEBFLOW_RESTART_PORT="$P29" \
+        "$SANDBOX/bin/stand-restart.sh" --check 2>&1)"; RC=$?
+    assert_rc "restart-script --check rc" 0 "$RC"
+    assert_contains "check face reads four signals" "状态:" "$RUN_OUT"
+    if kill -0 "$FIX29" 2>/dev/null; then ok "--check did not terminate the live engine"; else bad "--check killed the live engine"; fi
+    if [ ! -e "$SANDBOX/home/logs/watchdog-paused" ]; then ok "--check leaves no watchdog pause flag"; else bad "--check created watchdog pause flag"; fi
+    # 腿2: stand restart --dry-run (假点火, 与 case 23 同语义 — 此处只断「进程零终止」)
+    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+        STAND_GATEWAY_PORT="$P29" FAKE_LOG="$FAKE_LOG" \
+        "$SANDBOX/bin/stand" restart --dry-run 2>&1)"; RC=$?
+    assert_rc "dry-run arm rc" 0 "$RC"
+    assert_contains "dry-run armed message" "DRY-RUN armed" "$RUN_OUT"
+    _L29=""
+    for _i in $(seq 1 80); do
+        _L29="$(cat "$SANDBOX/home"/logs/restart-detached-*.log 2>/dev/null || true)"
+        case "$_L29" in *"verdict:"*) break ;; esac
+        sleep 0.1
+    done
+    assert_contains "dry-run verdict OK" "verdict: DRY-RUN OK" "$_L29"
+    if kill -0 "$FIX29" 2>/dev/null; then ok "--dry-run did not terminate the live engine"; else bad "--dry-run killed the live engine"; fi
+    assert_eq "zero java exec'd across both legs" "0" "$(FAKE_LOG_LINES)"
+    kill "$FIX29" 2>/dev/null; wait_gone "$P29" >/dev/null
+else
+    bad "case 29 skipped: fixture failed ($FIX29)"
+fi
+
+# ── 30. 2026-11-03 作者裁定批: restart 帮助三面口径（用户面/自救面/开发面; 用户面无 sbt/canary 字样）──
+t "case 30: restart --help renders three-face help; user face free of dev-tool words"
+fresh_sandbox
+run_stand restart --help; RC=$?
+assert_rc "stand restart --help rc" 0 "$RC"
+assert_contains "help names user face" "用户面" "$RUN_OUT"
+assert_contains "help names rescue face" "自救面" "$RUN_OUT"
+assert_contains "help names dev face" "开发面" "$RUN_OUT"
+assert_contains "help points at stand-restart.sh" "stand-restart.sh" "$RUN_OUT"
+assert_contains "help mentions rollback on update" "回滚" "$RUN_OUT"
+_U30="$(printf '%s\n' "$RUN_OUT" | awk '/── 用户面/,/── 自救面/')"
+assert_lacks "user face has no sbt" "sbt" "$_U30"
+assert_lacks "user face has no canary" "canary" "$_U30"
+assert_eq "help execs no java" "0" "$(FAKE_LOG_LINES)"
+run_nebflow restart --help; RC=$?
+assert_rc "nebflow restart --help rc" 0 "$RC"
+assert_contains "nebflow help flags jar lacks restart" "没有 restart 命令" "$RUN_OUT"
+assert_contains "nebflow help still shows three faces" "自救面" "$RUN_OUT"
+# --help 拦截不破坏既有透传面: 其余旗标照旧进 jar
+: > "$FAKE_LOG"
+run_stand restart run --inline --force; RC=$?
+assert_rc "restart run --inline --force still passthrough rc" 0 "$RC"
+assert_contains "passthrough intact after help arm" "restart run --inline --force" "$(cat "$FAKE_LOG")"
+# --jar-apply 显式具名面: 与 bare 同落 jar; 与 --detached/--dry-run 互斥
+: > "$FAKE_LOG"
+run_stand restart --jar-apply; RC=$?
+assert_rc "jar-apply passthrough rc" 0 "$RC"
+assert_contains "jar-apply reached jar" "restart" "$(cat "$FAKE_LOG")"
+run_stand restart --jar-apply --dry-run; RC=$?
+assert_rc "jar-apply + dry-run mutual exclusion rc" 2 "$RC"
+assert_contains "mutual exclusion message" "互斥" "$RUN_OUT"
 
 echo
 echo "== summary: PASS=$PASS FAIL=$FAIL =="

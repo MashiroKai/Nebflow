@@ -14,11 +14,12 @@
 | `ops/bin/nebflow-stand-shim` | `~/.stand/bin/nebflow` | PATH 垫片：`nebflow` → `~/.nebflow/bin/nebflow` 真入口（`~/.zshrc` 只把 `~/.stand/bin` 加进 PATH；2026-10-22 旧垫片是「转发 stand」，即跨品牌拉起的总根，本垫片取而代之） |
 | `ops/bin/stand-jdk` | `~/.stand/bin/stand-jdk` | pinned JDK（`$STAND_HOME/jdk-21`）自愈 installer（装 / 修 / 体检） |
 | `ops/nebflow-autostart.sh` | `~/.stand/bin/nebflow-autostart.sh` | 开机自启入口（v2：从 main 树 `sbt run` 起，带 6138 端口守卫） |
-| `ops/nebflow-restart.sh` | `~/.stand/bin/nebflow-restart.sh` | 开发实例自重启工具 v4.2（verbatim 入库，改动仍走它自己的版本纪律） |
+| `ops/stand-restart.sh` | `~/.stand/bin/stand-restart.sh` | 开发实例自重启工具 v4.2（**开发者/编排侧**：编译预检 + 隔离 canary + 四信号空闲 + 观察窗；2026-11-03 改名批由 `nebflow-restart.sh` git mv 而来，verbatim 入库，改动仍走它自己的版本纪律） |
+| `ops/bin/nebflow-restart-shim` | `~/.stand/bin/nebflow-restart.sh` | **旧名弃用垫片**（2026-11-03 改名批）：打印 `nebflow-restart.sh is deprecated — use stand-restart.sh` 后 `exec` 转发同目录 `stand-restart.sh "$@"`，参数逐字透传（与 CLI 改名「老 nebflow 命令留垫片转发」同一手法） |
 | `ops/release.sh` | —（不入 live：与仓绑定，从仓内跑） | **发版流水线（工程化 M2）**：`stage` → `approve` → `rollback` / `tag`，显式批准门（见下节） |
 | `ops/bin/stand-jar-pull` | —（不入 live：与仓绑定，从仓内跑） | **KAI → Mac jar 流转（KAI 主线迁移批 2026-10-26）**：拉 KAI 出包位最新 jar → SHA 对账 → 原子落位 → 切指针 → start 指针解析验证（`--verify`/`--dry-run` 零触碰预演；用法一页：`ops/stand-jar-pull.md`） |
 | `release/install.sh` `release/install.ps1` | release 出包路径 | release 安装器：`stand` 主命令 + `nebflow` legacy 转发垫片（与本目录 CLI 的隔离契约分工见 REBRAND「双命令并存」） |
-| `ops/test/stand-lifecycle.test.sh` | —（不入 live） | 守卫的纯 bash 断言测试（沙箱化，零真实 daemon；覆盖 stand+nebflow 两品牌隔离与 `restart --dry-run` 假点火） |
+| `ops/test/stand-lifecycle.test.sh` | —（不入 live） | 守卫的纯 bash 断言测试（沙箱化，零真实 daemon；覆盖 stand+nebflow 两品牌隔离、`restart --dry-run` 假点火、`restart --help` 三面口径、`stand-restart.sh`/弃用垫片的零副作用面） |
 | `ops/test/release-pipeline.test.sh` | —（不入 live） | release.sh 的纯 bash 断言测试（沙箱化：假构建/假冒烟/假 java + fixture git 仓） |
 
 ## 部署（Mac 侧）
@@ -31,6 +32,9 @@ cp "$REPO/ops/bin/stand-cli-lib.sh" ~/.stand/bin/stand-cli-lib.sh
 cp "$REPO/ops/bin/nebflow-stand-shim" ~/.stand/bin/nebflow && chmod +x ~/.stand/bin/nebflow
 cp "$REPO/ops/bin/stand-jdk"   ~/.stand/bin/stand-jdk   && chmod +x ~/.stand/bin/stand-jdk
 cp "$REPO/ops/nebflow-autostart.sh" ~/.stand/bin/nebflow-autostart.sh && chmod +x ~/.stand/bin/nebflow-autostart.sh
+# 开发实例自重启工具（2026-11-03 改名批）+ 旧名弃用垫片
+cp "$REPO/ops/stand-restart.sh"  ~/.stand/bin/stand-restart.sh  && chmod +x ~/.stand/bin/stand-restart.sh
+cp "$REPO/ops/bin/nebflow-restart-shim" ~/.stand/bin/nebflow-restart.sh && chmod +x ~/.stand/bin/nebflow-restart.sh
 # nebflow 根 (9.19 自有根): 真入口 + 库
 cp "$REPO/ops/bin/nebflow"     ~/.nebflow/bin/nebflow   && chmod +x ~/.nebflow/bin/nebflow
 cp "$REPO/ops/bin/stand-cli-lib.sh" ~/.nebflow/bin/stand-cli-lib.sh
@@ -168,6 +172,18 @@ bash ops/release.sh status    # 只读: 指针 / previous / staged 状态
 
 引擎内建（`nebflow.cli.DetachedApply`），设计件：`docs/design/20261026_detached-apply-restart-update-spec.zh-CN.md`。
 
+**`stand restart` 三条腿（作者裁定 2026-11-03 07:45：restart 的 CLI 从用户角度设计，用户不用编译版 stand）**
+
+| 腿 | 命令 | 适用场景 | 依赖 |
+|---|---|---|---|
+| 用户面（默认） | `stand restart`（= `--jar-apply`） | 装了官网发布版的终端用户：热重启当前已装版本 | 引擎活着才能注册 OS 作业（需可用 java） |
+| 自救面 | `stand restart --detached` / `--dry-run` | 引擎挂死、jar 面注册不了时 | **零 JVM 依赖**，只要 shell 能跑 |
+| 开发面 | `~/.stand/bin/stand-restart.sh`（**不进 bare 路径、CLI 不暴露开发旗标**） | 本机有源码树、在跑开发实例 | sbt + canary 端口，属开发者/编排侧工具 |
+
+`stand restart --help` 即按此三段渲染（用户面刻意不出现 sbt/编译/canary 字样；用户面文字：
+`ops/bin/stand-cli-lib.sh` 的 `stand_restart_help`）。开发面工具 2026-11-03 由
+`nebflow-restart.sh` 改名 `stand-restart.sh`，旧名保留为弃用垫片转发（见部署表）。
+
 - **`stand restart`（默认 detached）**：CLI 只向 OS 注册一次性 apply 作业
   （macOS = launchd agent bootstrap+kickstart；Windows = schtasks 固定名任务
   `/Create /F` + `/Run`）后立即返回——stop→start→健康闸由 **OS 托管的作业**执行，
@@ -184,6 +200,14 @@ bash ops/release.sh status    # 只读: 指针 / previous / staged 状态
   可用即新版可用。
 - **引擎 boot 对账**：发现上一 apply 死在中途 → WARN + state 记 `interrupted`，
   只留证据不自作主张。
+
+**用户面语义（作者裁定 2026-11-03 07:45）**：`stand restart` 只重跑当前已安装的版本，
+不涉及编译与 staging——用户装的官网发布版没有源码树，sbt 编译预检对他们不适用。
+失败语义按引擎实况（`DetachedApply` 渲染脚本 `do_apply`，`src/main/scala/nebflow/cli/DetachedApply.scala:512-540`）：
+restart 失败 = `phase=failed` + 写因留证（stop 腿失败 rc=3 / start 健康闸失败 rc=4），
+**服务保持停止**；**只有 `stand update` 才有回滚腿**（切回旧指针并起回旧版）。
+`--jar-apply` = 同一用户面的显式具名（与 bare 同路径，落 `RestartCommand.runDetached`），
+供脚本化调用自证意图；与 `--detached`/`--dry-run` 互斥（rc=2）。
 
 ### CLI 零 JVM detached 面（`restart --detached` / `--dry-run`，2026-10-27 批）
 
@@ -202,6 +226,11 @@ bash ops/release.sh status    # 只读: 指针 / previous / staged 状态
 - bare `stand restart`（含 `run --inline --force/--tree`）**逐字透传 jar 面**，
   #916 语义零改动。`nebflow restart --detached/--dry-run` 同代码路径
   （9.19 jar 无 restart 命令，bare 报错 rc=2 并指路 detached 面）。
+- **三腿关系（2026-11-03 裁定批）**：jar 面（用户面）要求引擎活着才能注册 OS 作业；
+  `--detached`/`--dry-run` 是引擎挂死时**用户唯一的自救腿**（零 JVM），因此帮助文本里
+  排在用户面之后、开发面之前。`stand-restart.sh`（原 `nebflow-restart.sh`）是**第四个面**：
+  开发护栏工具（编译预检 + canary + 四信号 + 观察窗），CLI **刻意不接进 bare 路径**，
+  只在帮助的「开发面」段与本节指路。
 
 ## 测试
 
@@ -216,6 +245,13 @@ argv[0] 对 .app 二进制无效——测试基建里踩过的坑）。覆盖：
 未命中放行（子命令与端口 env 钉一致）、stop 双探针命中/失配态（pid 腿）/双空幂等/
 身份门拒杀/`--force`/`--tree` 透传、Java 版本门 rc=11、passthrough。
 
+**改名批 2026-11-03**（作者令 2026-10-29「这个脚本是不是也改改名为stand了」+ 裁定 2026-11-03 07:45
+「restart 的 CLI 从用户角度设计」）新增断言：弃用垫片 `nebflow-restart.sh` 打印弃用提示并逐字
+转发（含未知旗标透传、正文缺失时 rc=66 指路）；`stand restart --dry-run` 与
+`stand-restart.sh --check` **双零终止**实证（活监听器前后仍在、零 java exec、不留 watchdog
+暂停标志）；`stand restart --help` 三面齐全且**用户面段落不含 sbt/canary 字样**；
+`--jar-apply` 透传与 `--detached/--dry-run` 互斥。
+
 **双实例并存批 2026-10-30**（作者令「和 nebflow 隔离，同时可用」）在此基础上新增：
 默认值解析断言（`stand`→`~/.stand`+6138、`nebflow`→`~/.nebflow`+6140，经隐藏探针
 `__brand-defaults`，零 JVM）；start 撞**对家品牌实例**占口时 rc=1、报错点名「另一实例」
@@ -225,5 +261,8 @@ argv[0] 对 .app 二进制无效——测试基建里踩过的坑）。覆盖：
 
 1. 改动只发生在本目录（commit 进 stand 仓）。
 2. 部署 = `cp`（先 `.bak-时间戳` 备份 live）。
-3. `ops/nebflow-restart.sh` 为 verbatim 入库：它的真正开发流仍在 live 侧按其自身
-   头注释的版本纪律走；入库目的是换机/灾备有源可寻。
+3. `ops/stand-restart.sh` 为 verbatim 入库（2026-11-03 由 `ops/nebflow-restart.sh` git mv 改名，
+   `git log --follow` 保完整历史）：它的真正开发流仍在 live 侧按其自身头注释的版本纪律走；
+   入库目的是换机/灾备有源可寻。旧名 `nebflow-restart.sh` 的自造副本在 live 侧已被
+   `ops/bin/nebflow-restart-shim` 的弃用垫片取代（打印一行提示后 exec 转发），
+   老调用点/老脚本/老文档里的旧名一律继续可用。

@@ -2,7 +2,7 @@
 # nebflow-autostart.sh — authoritative copy (stand repo ops/nebflow-autostart.sh)
 # 部署位置: ~/.stand/bin/nebflow-autostart.sh (cp + chmod +x; launchd/开机自启入口, 见 ops/README.md)
 #
-# v2 (2026-10-25): 从 main 树以 sbt run 启动（与 nebflow-restart.sh 同源）——旧版经 bin/stand 起
+# v2 (2026-10-25): 从 main 树以 sbt run 启动（与 stand-restart.sh〔原 nebflow-restart.sh，2026-11-03 改名〕同源）——旧版经 bin/stand 起
 # 封装 jar，OS 重启后会回退旧构建，修好的代码到不了用户眼前（2026-10-25 审计实证）。
 # v2.1 (2026-10-25 入库批): REPO 路径参数化（STAND_REPO env 可覆写；live 副本同构）。
 # 端口守卫（lsof 6138 listener 探测）与 ops/bin/stand 的 start 守卫同源——双启动断根。
