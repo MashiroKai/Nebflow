@@ -200,6 +200,39 @@
                                     好友面 13px 保持——档外既有值以具名槽收编，禁再派生） */
   --ds-card-pad-compact: 6px 10px; /* 工具卡紧档内距既有值档 */
   --ds-toolcard-max-w: 85%;      /* 工具卡列宽既有值档 */
+
+  /* ── ⑪ 侧栏行态槽（ui-unification-20261103-sidebar）──
+     缺槽先扩再消费：侧栏行五态（静息/hover/active/pinned/多选）此前只有
+     --color-frame-active 一个槽位在岗，多选洗选灰与 hover 洗选无槽。以下两槽
+     均为既有 rgb 通道的 α 组合（灰通道 = 多选条的既有字面值原样收编，令牌出生
+     行放行——与 --ds-shadow-card 同法），亮暗同式：灰色洗选本就主题中性。
+     字阶/内距两档（13.5px / 6px）不在五档阶梯与 4px 栅格内，按 --ds-fs-bubble
+     先例以具名槽收编（禁再派生第二处）。 */
+  --ds-text-frame: var(--color-frame-text);        /* 面板框内正文（侧栏/面板体——与
+                                                      --ds-text（--color-text）分档，
+                                                      原 .session-name/.ctx-item 投票值） */
+  --ds-fs-row: 13.5px;                             /* 会话行主文案既有档 */
+  --ds-row-inset: 6px;                             /* 列表行左右内缩既有档 */
+  --ds-row-pad-dense: 6px 12px;                    /* 树/文件行既有内距档 */
+  --ds-row-hover: var(--color-frame-hover);        /* 行 hover 洗选（既有槽一跳别名） */
+  --ds-row-active: var(--color-frame-active);      /* 行激活洗选（既有槽一跳别名） */
+  --ds-row-pinned: var(--color-frame-input-bg);    /* 行钉住 / 内联输入洗选（既有槽一跳别名） */
+  --ds-row-selected: rgb(128 128 128 / 0.08);      /* 多选行洗选（灰通道；:hover 加深到
+                                                     0.12 由 --ds-row-selected-strong 承接） */
+  --ds-row-selected-strong: rgb(128 128 128 / 0.12);
+  --ds-attention: rgb(var(--amber));               /* 注意态脉冲点（既有 --amber 通道，
+                                                     亮暗自适应；原 #e8a735 两处写死） */
+  /* 浮层三档栈（右键菜单 / 子菜单 / 多选条）：既有 --cv-* 族无此值，按
+     --ds-shadow-card 先例在此出生（墨α = 主题不变「墨常量」；sapphire 蓝通道
+     高光两档由下面的 prefers-color-scheme 令牌覆盖解析）。 */
+  --ds-shadow-pop: inset 0 1px 0 0 rgb(91 127 191 / 0.04), 0 4px 16px rgb(0 0 0 / 0.08), 0 8px 32px rgb(0 0 0 / 0.06);
+}
+
+/* 浮层阴影暗档（令牌层单点解析：消费面不再各写一份 prefers-color-scheme）。 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ds-shadow-pop: inset 0 1px 0 0 rgb(91 127 191 / 0.05), 0 4px 16px rgb(0 0 0 / 0.30), 0 8px 32px rgb(0 0 0 / 0.45);
+  }
 }
 
 /* ══ 组件类层（`.ds-*`）══════════════════════════════════════════════
@@ -535,7 +568,157 @@
 /* 链接蓝化同登记项（chat 链接全面蓝化，与 .bubble.ai a 同 token 同源）。 */
 .ds-tool-card .tool-mail-msg a { color: rgb(var(--sapphire)); }
 
+/* ══ ⑧ 侧栏族（.ds-side-*）——ui-unification-20261103-sidebar ═══════════
+   侧栏导航项的**形态唯一家**：行基座 / 紧凑树行 / 行主文案 / 行 meta /
+   小节标签 / 图标钮 / 行内危险钮。字阶、间距、热区、激活态四轴全部取 --ds-*。
+
+   钩子契约（照 .tool-card 先例）：渲染腿 emit `class="session-item ds-side-row"`
+   —— 旧 class（.session-item/.folder-item/.session-name/...）保留为 **DOM 寻址
+   钩子**（js/sidebar.js 的 querySelector 与既有 E2E 全兼容），形状零复制；
+   `.ds-side-*` 是样式唯一来源。状态钩子 .active/.pinned/.selected/.drag-over
+   同理保留（JS 只 toggle 状态，不画形态）。
+
+   热区两档（SKILL.md §8）：会话行 = --ds-hit-row 44px（触控下限）；树/文件行 =
+   --ds-hit-control 32px（桌面指针档）。侧栏会话列表 DOM 已随单会话架构退役
+   （sidebar.js「Session list DOM removed in single-session architecture」），
+   故树行 28px→32px 的档位补齐在运行时零可见位移。
+
+   主题：四态全是语义令牌（令牌层自适应）⇒ sidebar.css 里两处
+   prefers-color-scheme 暗档双写（.session-ctx-menu / .ctx-submenu）退役。 */
+
+/* 行基座：会话行 / 规则行 / 新建行内联 */
+.ds-side-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-height: var(--ds-row-min-h);
+  padding: var(--ds-row-pad);
+  border-radius: var(--ds-radius-button);
+  /* 行墨 = 面板框内正文档（--ds-text-frame = 既有 --color-frame-text；侧栏体
+     原投票值），不是主对话正文的 --ds-text 档。 */
+  color: var(--ds-text-frame);
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-body);
+  line-height: var(--ds-lh-body);
+  cursor: pointer;
+  transition: background var(--ds-dur-hover) var(--ds-ease-std),
+              color var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-side-row:hover { background: var(--ds-row-hover); }
+/* 激活态（当前会话 / 当前文件夹） */
+.ds-side-row--active { background: var(--ds-row-active); color: var(--ds-text-bright); }
+.ds-side-row--active:hover { background: var(--ds-row-hover); }
+/* 钉住态 */
+.ds-side-row--pinned { background: var(--ds-row-pinned); color: var(--ds-text-bright); }
+.ds-side-row--pinned:hover { background: var(--ds-row-hover); }
+/* 多选态（灰通道洗选，两档） */
+.ds-side-row--selected { background: var(--ds-row-selected); }
+.ds-side-row--selected:hover { background: var(--ds-row-selected-strong); }
+/* 拖拽中的行整体退淡 */
+.ds-side-row--dragging { opacity: 0.4; }
+
+/* 紧凑树行（文件夹 / 规则条目）：控制钮档热区 + 密内距 */
+.ds-side-row--tree {
+  min-height: var(--ds-hit-control);
+  gap: var(--ds-space-1);
+  padding: var(--ds-row-pad-dense);
+  border-radius: var(--ds-radius-badge);
+  color: var(--ds-text-dim);
+  font-size: var(--ds-fs-body);
+  transition: background var(--ds-dur-hover) var(--ds-ease-std),
+              color var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-side-row--tree:hover { color: var(--ds-text-bright); }
+
+/* 行主文案（会话名 / 文件夹名）：占满余宽 + 单行省略 */
+.ds-side-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--ds-fs-row);
+  font-weight: var(--ds-fw-body);
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ds-side-row--tree .ds-side-title { font-size: var(--ds-fs-body); }
+.ds-side-row--active .ds-side-title { color: var(--ds-text-bright); font-weight: var(--ds-fw-btn); }
+.ds-side-row--selected .ds-side-title { color: var(--ds-text-bright); }
+
+/* 行 meta（时间 / 草稿摘要 / 路径提示）：11px 档 */
+.ds-side-meta {
+  font-size: var(--ds-fs-meta);
+  line-height: var(--ds-lh-title);
+  color: var(--ds-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 草稿档：降一档墨色 + 斜体（「未发送」语义） */
+.ds-side-meta--dim { color: var(--ds-text-dim); font-style: italic; }
+
+/* 小节/面板标题（分组头 11px 档、面板题 13px 档） */
+.ds-side-label {
+  font-size: var(--ds-fs-body);
+  font-weight: var(--ds-fw-btn);
+  letter-spacing: var(--ds-ls-label);
+  text-transform: uppercase;
+  color: var(--ds-text-muted);
+}
+.ds-side-label--meta { font-size: var(--ds-fs-meta); font-weight: var(--ds-fw-title); user-select: none; }
+
+/* 图标钮（面板动作档 24px）：描边玻璃、hover 抬亮 */
+.ds-side-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ds-space-6);
+  height: var(--ds-space-6);
+  padding: 0;
+  font-family: inherit;
+  font-size: var(--ds-fs-body);
+  line-height: var(--ds-lh-tight);
+  color: var(--ds-text-muted);
+  background: none;
+  border: var(--ds-border-width) solid var(--ds-border-glass);
+  border-radius: var(--ds-radius-input);
+  cursor: pointer;
+  opacity: 0.7;
+  transition: background var(--ds-dur-hover) var(--ds-ease-std),
+              border-color var(--ds-dur-hover) var(--ds-ease-std),
+              color var(--ds-dur-hover) var(--ds-ease-std),
+              opacity var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-side-icon-btn:hover {
+  background: var(--ds-row-hover);
+  border-color: var(--ds-text-muted);
+  color: var(--ds-text-bright);
+  opacity: 1;
+}
+
+/* 行内危险钮（删除会话 / 删除文件夹）：静息不可见，行 hover 现身，hover 转危险色 */
+.ds-side-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--ds-space-5);
+  height: var(--ds-space-5);
+  padding: 0;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--ds-text-muted);
+  border-radius: var(--ds-radius-badge);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--ds-dur-hover) var(--ds-ease-std),
+              color var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-side-row:hover .ds-side-danger { opacity: 1; }
+.ds-side-danger:hover { color: var(--ds-danger-icon); }
+.ds-side-danger svg { width: 14px; height: 14px; }
 /* prefers-reduced-motion：全局压掉过渡（SKILL.md §6 官网同款兜底）。 */
 @media (prefers-reduced-motion: reduce) {
-  .ds-btn, .ds-input { transition-duration: 0.01ms; }
+  .ds-btn, .ds-input, .ds-side-row, .ds-side-icon-btn, .ds-side-danger { transition-duration: 0.01ms; }
 }

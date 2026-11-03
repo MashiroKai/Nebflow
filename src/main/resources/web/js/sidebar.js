@@ -1859,11 +1859,13 @@ function renderOneSessionItem(s, container, opts = {}) {
   const inFolder = opts.inFolder || false;
   const item = document.createElement('div');
   const isSelected = state.selectedSessionIds.has(s.id);
-  item.className = 'session-item'
+  // 侧栏族（ui-unification-20261103-sidebar）：.ds-side-row = 形态唯一家
+  // （design-system.css），.session-item 保留为 DOM 寻址钩子（JS 查询 + spec）。
+  item.className = 'session-item ds-side-row'
     + (inFolder ? ' in-folder' : '')
-    + (s.id === state.activeSessionId ? ' active' : '')
-    + (state.pinnedSessions.has(s.id) ? ' pinned' : '')
-    + (isSelected ? ' selected' : '');
+    + (s.id === state.activeSessionId ? ' ds-side-row--active active' : '')
+    + (state.pinnedSessions.has(s.id) ? ' ds-side-row--pinned pinned' : '')
+    + (isSelected ? ' ds-side-row--selected selected' : '');
   item.dataset.id = s.id;
   // B3-2 生产者：会话行的跨重渲稳定 key（重渲后按 key 回焦，见 renderSessionSidebar）。
   item.dataset.focusKey = `session:${s.id}`;
@@ -1878,24 +1880,26 @@ function renderOneSessionItem(s, container, opts = {}) {
       e.dataTransfer.setData('text/plain', s.id);
     }
     e.dataTransfer.effectAllowed = 'move';
-    item.classList.add('dragging');
+    item.classList.add('dragging', 'ds-side-row--dragging');
     showDeleteZone();
   });
   item.addEventListener('dragend', () => {
-    item.classList.remove('dragging');
+    item.classList.remove('dragging', 'ds-side-row--dragging');
     document.querySelectorAll('.folder-item.drag-over').forEach(el => el.classList.remove('drag-over'));
     hideDeleteZone();
   });
   const statusCls = getSessionStatusClass(s.id);
   const draft = state.sessionInputDrafts[s.id];
+  // 行内文字形态走族内槽（.ds-side-title 主文案 / .ds-side-meta 时间与草稿），
+  // 旧 class 全保留为钩子（重命名 contenteditable 与查询都按旧名）。
   const draftHtml = draft && draft.text
-    ? '<div class="session-draft">' + escapeHtml(draft.text.replace(/\n/g, ' ').slice(0, 60)) + '</div>'
+    ? '<div class="session-draft ds-side-meta ds-side-meta--dim">' + escapeHtml(draft.text.replace(/\n/g, ' ').slice(0, 60)) + '</div>'
     : '';
-  const deleteBtnHtml = '<button class="session-delete" title="' + t('session.delete') + '"><i data-lucide="x"></i></button>';
+  const deleteBtnHtml = '<button class="session-delete ds-side-danger" title="' + t('session.delete') + '"><i data-lucide="x"></i></button>';
   item.innerHTML =
     '<div class="session-info">' +
-    '<div class="session-name">' + escapeHtml(s.name) + '</div>' +
-    (draftHtml || '<div class="session-time">' + formatSessionTime(s.updatedAt || s.createdAt) + '</div>') +
+    '<div class="session-name ds-side-title">' + escapeHtml(s.name) + '</div>' +
+    (draftHtml || '<div class="session-time ds-side-meta">' + formatSessionTime(s.updatedAt || s.createdAt) + '</div>') +
     '</div>' +
     '<div class="session-status ' + statusCls + '">' +
     '<div class="status-spinner"><i data-lucide="loader-2"></i></div>' +
@@ -2159,7 +2163,7 @@ function renderSessionSidebarInner(sessionData, activeId) {
     // Agent group header (only when multiple agents exist)
     if (agentOrder.length > 1) {
       const header = document.createElement('div');
-      header.className = 'agent-group-header';
+      header.className = 'agent-group-header ds-side-label ds-side-label--meta';
       header.textContent = agentDisplayLabel(agentName);
       sessionList.appendChild(header);
     }
@@ -3137,10 +3141,12 @@ function renderFolderItem(folder, sessions, container) {
   const isExpanded = state.expandedFolders.has(folder.id);
   const isPinned = state.pinnedFolders.has(folder.id);
 
+  // 侧栏族：树行 = .ds-side-row .ds-side-row--tree（32px 热区 + 紧内距）；
+  // .folder-item 保留为 DOM 寻址钩子（拖放态 .drag-over 仍写在旧 class 上）。
   const folderEl = document.createElement('div');
-  folderEl.className = 'folder-item'
-    + (isPinned ? ' pinned' : '')
-    + (state.activeFolderId === folder.id ? ' active' : '');
+  folderEl.className = 'folder-item ds-side-row ds-side-row--tree'
+    + (isPinned ? ' ds-side-row--pinned pinned' : '')
+    + (state.activeFolderId === folder.id ? ' ds-side-row--active active' : '');
   folderEl.dataset.folderId = folder.id;
   folderEl.draggable = true;
 
@@ -3155,23 +3161,23 @@ function renderFolderItem(folder, sessions, container) {
         : '<i data-lucide="chevron-right"></i>') +
     '</div>' +
     '<div class="folder-icon"><i data-lucide="folder"></i></div>' +
-    '<div class="folder-name">' + escapeHtml(folder.name) + '</div>' +
-    (folder.projectRoot ? '<span class="folder-badge" title="' + escapeHtml(folder.projectRoot) + '"><i data-lucide="hard-drive" style="width:12px;height:12px"></i></span>' : '') +
+    '<div class="folder-name ds-side-title">' + escapeHtml(folder.name) + '</div>' +
+    (folder.projectRoot ? '<span class="folder-badge ds-side-meta" title="' + escapeHtml(folder.projectRoot) + '"><i data-lucide="hard-drive" style="width:12px;height:12px"></i></span>' : '') +
     '<div class="folder-status ' + statusCls + '">' +
       '<div class="status-spinner"><i data-lucide="loader-2"></i></div>' +
       '<div class="folder-status-dot"></div>' +
     '</div>' +
-    '<button class="folder-delete" title="' + t('sidebar.folderDelete') + '"><i data-lucide="x"></i></button>';
+    '<button class="folder-delete ds-side-danger" title="' + t('sidebar.folderDelete') + '"><i data-lucide="x"></i></button>';
 
   // Drag: folder itself can be dragged (into another folder) or to delete zone
   folderEl.addEventListener('dragstart', (e) => {
     e.dataTransfer.setData('text/plain', 'folder:' + folder.id);
     e.dataTransfer.effectAllowed = 'move';
-    folderEl.classList.add('dragging');
+    folderEl.classList.add('dragging', 'ds-side-row--dragging');
     showDeleteZone();
   });
   folderEl.addEventListener('dragend', () => {
-    folderEl.classList.remove('dragging');
+    folderEl.classList.remove('dragging', 'ds-side-row--dragging');
     document.querySelectorAll('.folder-item.drag-over').forEach(el => el.classList.remove('drag-over'));
     hideDeleteZone();
   });
@@ -3250,10 +3256,10 @@ function renderFolderItem(folder, sessions, container) {
     // Rules.md entry — only shown when rules exist for this folder
     if (state.foldersWithRules && state.foldersWithRules.has(folder.id)) {
       const rulesItem = document.createElement('div');
-      rulesItem.className = 'session-item in-folder rules-item';
+      rulesItem.className = 'session-item in-folder rules-item ds-side-row ds-side-row--tree';
       rulesItem.innerHTML =
         '<div class="session-icon"><i data-lucide="file-text" style="width:14px;height:14px;color:var(--color-text-muted)"></i></div>' +
-        '<div class="session-name">rules.md</div>';
+        '<div class="session-name ds-side-title">rules.md</div>';
       rulesItem.addEventListener('click', (e) => {
         e.stopPropagation();
         openRulesEditor(folder.id, folder.name);

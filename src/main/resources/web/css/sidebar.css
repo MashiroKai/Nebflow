@@ -1,30 +1,23 @@
-/* ---------- Sidebar — unified floating glass card ---------- */
+/* ---------- Sidebar — unified floating glass card ----------
+   ui-unification-20261103-sidebar：卡片材质/圆角/浮影全部走设计令牌。
+   浮影 = var(--ds-shadow-float)（= sapphire --cv-shadow，亮暗已在令牌层解析：
+   亮档白高光 0.25 / 暗档 0.04，与本面原字面值逐字同值）⇒ 本文件原先的
+   prefers-color-scheme 暗档双写块整段退役（主题由令牌层承担，不做第二套形态）。 */
 #sidebar {
   display: flex;
   flex-direction: row;
   flex-shrink: 0;
   /* Bottom margin matches #input-area's padding-bottom (12px) so the sidebar
      card's bottom edge aligns with the chat's input bar. */
-  margin: 16px 4px 10px;
+  margin: var(--ds-space-4) var(--ds-space-1) var(--ds-space-glass-x);
   max-height: calc(100vh - 26px);
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   overflow: hidden;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0px 2px 8px rgba(0,0,0, 0.04),
-    0px 8px 24px rgba(0,0,0, 0.06);
-}
-@media (prefers-color-scheme: dark) {
-  #sidebar {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0px 2px 8px rgba(0, 0, 0, 0.20),
-      0px 8px 24px rgba(0, 0, 0, 0.35);
-  }
+  border: var(--ds-border-width) solid var(--glass-border);
+  box-shadow: var(--ds-shadow-float);
 }
 
 /* ---------- Sidebar Panel — inner column inside #sidebar ---------- */
@@ -49,58 +42,62 @@
 .sidebar-topbar {
   display: flex;
   align-items: center;
-  padding: 4px 14px;
+  padding: var(--ds-space-1) var(--ds-space-4);
   flex-shrink: 0;
 }
 .panel-header {
-  padding: 14px 14px;
+  padding: var(--ds-space-3) var(--ds-space-4);
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
-  border-bottom: 1px solid var(--glass-border);
+  border-bottom: var(--ds-border-width) solid var(--glass-border);
 }
+/* 面板题形态 = 侧栏小节标签同槽族（.ds-side-label 13px / --ds-fw-btn / 0.5px
+   uppercase / muted）：此处单点声明（index.html 与 diffPanel.js 的 DOM 均无 ds 类，
+   两个发射点不在本面文件内，故形态留在本面、取值仍全部来自 --ds-* 槽）。 */
 .panel-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-frame-text-muted);
+  font-size: var(--ds-fs-body);
+  font-weight: var(--ds-fw-btn);
+  color: var(--ds-text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: var(--ds-ls-label);
 }
 
-/* ---------- Agent Group Headers ---------- */
+/* ---------- Agent Group Headers ----------
+   字阶/字重/字距/字色由 .ds-side-label(+--meta) 承担（design-system.css 侧栏族）；
+   本处只留版面（分组头内距），不做第二套字面。 */
 .agent-group-header {
-  padding: 8px 16px 4px;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--color-frame-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  user-select: none;
+  padding: var(--ds-space-2) var(--ds-space-4) var(--ds-space-1);
 }
 
 /* Session list styles (within panel-sessions) */
 
 .panel-actions {
   display: flex;
-  gap: 4px;
+  gap: var(--ds-space-1);
   align-items: center;
 }
+/* 24px 面板动作钮：字阶/圆角/描边/动效全走 --ds-* 槽（尺寸 = --ds-space-6 24px，
+   全站共用档；本类是唯一形态，设置/搜索/社交弹窗的关闭钮同读此家）。 */
 .panel-btn {
   background: none;
-  border: 1px solid var(--glass-border);
-  color: var(--color-frame-text-muted);
-  font-size: 13px;
-  width: 24px;
-  height: 24px;
-  border-radius: 8px;
+  border: var(--ds-border-width) solid var(--ds-border-glass);
+  color: var(--ds-text-muted);
+  font-size: var(--ds-fs-body);
+  width: var(--ds-space-6);
+  height: var(--ds-space-6);
+  border-radius: var(--ds-radius-input);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.15s;
+  transition: background var(--ds-dur-hover) var(--ds-ease-std),
+              border-color var(--ds-dur-hover) var(--ds-ease-std),
+              color var(--ds-dur-hover) var(--ds-ease-std),
+              opacity var(--ds-dur-hover) var(--ds-ease-std);
   font-family: inherit;
-  line-height: 1;
+  line-height: var(--ds-lh-tight);
   padding: 0;
   opacity: 0.7;
 }
@@ -109,66 +106,51 @@
   height: 13px;
   stroke-width: 1.8;
 }
-.panel-btn:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); border-color: var(--color-frame-text-muted); opacity: 1; }
+.panel-btn:hover { background: var(--ds-row-hover); color: var(--ds-text-bright); border-color: var(--ds-text-muted); opacity: 1; }
 
 #session-list {
   flex: 1;
   overflow-y: auto;
   scrollbar-color: var(--color-frame-border) transparent;
 }
-.session-item {
-  padding: 10px 16px;
-  margin: 0 6px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  position: relative;
-  transition: background 0.15s;
-  border-radius: 10px;
-}
-.session-item:hover { background: var(--color-frame-hover); }
-.session-item.active { background: var(--color-frame-active); }
-.session-item.pinned { background: var(--color-frame-input-bg); }
-.session-item.pinned:hover { background: var(--color-frame-hover); }
-.session-item.in-folder {
-  position: relative;
-}
 
-/* Multi-selection styles */
-.session-item.selected {
-  background: rgba(128, 128, 128, 0.08);
+/* ---------- 会话行 / 树行 / 多选条 / 拖放区 ----------
+   形态（字阶/间距/热区/激活态/悬停态/钉住态/多选态）全在 design-system.css 的
+   .ds-side-* 族；本段只留版面（左右内缩）与 JS 状态钩子（.drag-over 为拖放态
+   适配器：只借一个令牌上色，不复制形状）。 */
+.session-item {
+  margin: 0 var(--ds-row-inset);
 }
-.session-item.selected .session-name {
-  color: var(--color-frame-text-bright);
-}
-.session-item.selected:hover {
-  background: rgba(128, 128, 128, 0.12);
+/* 拖放目标态（JS 只 toggle .drag-over；色仍取族内 hover 槽） */
+.folder-item.drag-over {
+  background: var(--ds-row-hover);
 }
 
 /* Multi-select floating toolbar */
 .multi-select-bar {
   position: absolute;
-  bottom: 12px;
+  bottom: var(--ds-space-3);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 6px 5px 12px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1) var(--ds-row-inset) var(--ds-space-1) var(--ds-space-3);
   background: var(--color-frame-bg);
-  border: 1px solid var(--color-frame-border);
-  border-radius: 10px;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.20), 0 0 0 1px rgba(255,255,255,0.04) inset;
+  border: var(--ds-border-width) solid var(--ds-border);
+  border-radius: var(--ds-radius-button);
+  box-shadow: var(--ds-shadow-pop);
   z-index: 100;
-  animation: msBarIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: msBarIn var(--ds-dur-hover) var(--ds-ease-enter);
 }
 @keyframes msBarIn {
   from { opacity: 0; transform: translateX(-50%) translateY(6px) scale(0.96); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
 }
 
-/* Delete drop zone */
+/* Delete drop zone —— 危险语义色全部由 --ds-danger-icon 经 color-mix 派生
+   （原为 4 处 rgba(239,68,68,α) + #ef4444 亮暗写死：亮暗同值、不随主题；
+   改走语义档后暗档自动抬亮，α 逐档同值 0.35/0.06/0.7 → 0.6/0.14/1）。 */
 .delete-drop-zone {
   position: sticky;
   bottom: 0;
@@ -177,20 +159,23 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 14px 16px;
-  margin: 8px 10px 10px;
-  border-radius: 10px;
-  border: 2px dashed rgba(239, 68, 68, 0.35);
-  background: rgba(239, 68, 68, 0.06);
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-3) var(--ds-space-4);
+  margin: var(--ds-space-2) var(--ds-space-glass-x) var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-button);
+  border: 2px dashed color-mix(in srgb, var(--ds-danger-icon) 35%, transparent);
+  background: color-mix(in srgb, var(--ds-danger-icon) 6%, transparent);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  color: rgba(239, 68, 68, 0.7);
-  font-size: 12px;
-  font-weight: 500;
+  color: color-mix(in srgb, var(--ds-danger-icon) 70%, transparent);
+  font-size: var(--ds-fs-btn);
+  font-weight: var(--ds-fw-btn);
   pointer-events: auto;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  animation: dzIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background var(--ds-dur-surface) var(--ds-ease-enter),
+              border-color var(--ds-dur-surface) var(--ds-ease-enter),
+              color var(--ds-dur-surface) var(--ds-ease-enter),
+              transform var(--ds-dur-surface) var(--ds-ease-enter);
+  animation: dzIn 0.25s var(--ds-ease-enter);
   z-index: 50;
 }
 @keyframes dzIn {
@@ -202,9 +187,9 @@
   opacity: 0.7;
 }
 .delete-drop-zone.active {
-  background: rgba(239, 68, 68, 0.14);
-  border-color: rgba(239, 68, 68, 0.6);
-  color: #ef4444;
+  background: color-mix(in srgb, var(--ds-danger-icon) 14%, transparent);
+  border-color: color-mix(in srgb, var(--ds-danger-icon) 60%, transparent);
+  color: var(--ds-danger-icon);
   transform: scale(1.02);
 }
 .delete-drop-zone.active svg {
@@ -212,46 +197,27 @@
 }
 
 .session-divider {
-  height: 1px;
+  height: var(--ds-border-width);
   background: var(--color-frame-border);
-  margin: 0 14px;
+  margin: 0 var(--ds-space-4);
 }
 .session-divider.thin {
   opacity: 0.4;
-  margin: 2px 20px;
+  margin: var(--ds-space-half) var(--ds-space-5);
 }
+/* 行内文字：形状由族内 .ds-side-title/.ds-side-meta 承担；本段只留
+   .session-info 的排版容器（列向，半格微缝）。 */
 .session-info {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-space-half);
 }
-.session-name {
-  font-size: 13.5px;
-  color: var(--color-frame-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.session-item.active .session-name {
-  color: var(--color-frame-text-bright);
-  font-weight: 500;
-}
-.session-time {
-  font-size: 11px;
-  color: var(--color-frame-text-muted);
-}
-.session-draft {
-  font-size: 11px;
-  color: var(--color-frame-text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-style: italic;
-}
-/* Session status indicator — state-machine driven, one visible at a time */
-/* Priority: attention > busy > unread > idle（压缩中可见指示已拆，作者令 2026-10-09 ①） */
+/* 会话状态指示（state-machine driven, one visible at a time）
+   Priority: attention > busy > unread > idle（压缩中可见指示已拆，作者令 2026-10-09 ①）
+   色档：busy = --ds-accent（= --color-primary）、attention = --ds-attention
+   （= 既有 --amber 通道，暗档自动抬亮）、unread = --ds-accent。 */
 .session-status {
   flex-shrink: 0;
   align-self: center;
@@ -271,7 +237,7 @@
 /* State: busy — lucide spinner icon */
 .session-status.busy .status-spinner {
   display: flex;
-  color: var(--color-primary, #07c160);
+  color: var(--ds-accent);
   animation: spin 1.5s linear infinite;
 }
 .session-status .status-spinner svg {
@@ -286,20 +252,20 @@
 /* State: attention — pulsing amber dot */
 .session-status.attention .status-dot {
   display: block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #e8a735;
+  width: var(--ds-space-2);
+  height: var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-attention);
   animation: statusPulse 2s ease-in-out infinite;
 }
 
 /* State: unread — solid dot */
 .session-status.unread .status-dot {
   display: block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-primary);
+  width: var(--ds-space-2);
+  height: var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-accent);
 }
 
 @keyframes statusPulse {
@@ -310,206 +276,129 @@
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
-.session-delete {
-  background: none;
-  border: none;
-  color: var(--color-frame-text-muted);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, color 0.15s;
-  width: 22px;
-  height: 22px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-}
-.session-item:hover .session-delete { opacity: 1; }
-.session-delete:hover { color: var(--color-error); }
-.session-delete svg { width: 14px; height: 14px; }
 
-/* Session context menu — sapphire glass */
+/* Session context menu — sapphire glass（浮影走 --ds-shadow-pop 令牌：
+   亮暗两档在令牌层解析，本文件不再双写暗档） */
 .session-ctx-menu {
   position: fixed;
   z-index: 1000;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  border-radius: 14px;
-  padding: 4px 0;
-  box-shadow:
-    inset 0 1px 0 0 rgba(91, 127, 191, 0.04),
-    0px 4px 16px rgba(0, 0, 0, 0.08),
-    0px 8px 32px rgba(0, 0, 0, 0.06);
-}
-@media (prefers-color-scheme: dark) {
-  .session-ctx-menu {
-    box-shadow:
-      inset 0 1px 0 0 rgba(91, 127, 191, 0.05),
-      0px 4px 16px rgba(0, 0, 0, 0.30),
-      0px 8px 32px rgba(0, 0, 0, 0.45);
-  }
+  border: var(--ds-border-width) solid var(--glass-border);
+  border-radius: var(--ds-radius-card-md);
+  padding: var(--ds-space-1) 0;
+  box-shadow: var(--ds-shadow-pop);
 }
 .session-ctx-menu .ctx-item {
-  padding: 6px 14px;
-  font-size: 12.5px;
-  color: var(--color-frame-text);
+  padding: var(--ds-space-1) var(--ds-space-4);
+  font-size: var(--ds-fs-body);
+  color: var(--ds-text-frame);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.1s;
+  transition: background var(--ds-dur-micro) var(--ds-ease-std);
 }
 .session-ctx-menu .ctx-item:hover {
-  background: var(--color-frame-hover);
-  color: var(--color-frame-text-bright);
+  background: var(--ds-row-hover);
+  color: var(--ds-text-bright);
 }
 /* ui-status-redesign（S10 / 盘点 #47）：常显危险项（删除文件夹）——字转常规色、
    行首 trash-2 红图标（sidebar.js 注入）；hover 时刻字随交互转红（铁律三）。 */
 .session-ctx-menu .ctx-item .st-ic { width: 12px; height: 12px; margin-right: 7px; vertical-align: -2px; }
-.session-ctx-menu .ctx-item[data-action="delete"] .st-ic { color: var(--status-error-icon); }
-.session-ctx-menu .ctx-item[data-action="delete"]:hover { color: var(--status-error-icon); }
+.session-ctx-menu .ctx-item[data-action="delete"] .st-ic { color: var(--ds-danger-icon); }
+.session-ctx-menu .ctx-item[data-action="delete"]:hover { color: var(--ds-danger-icon); }
 
 /* Context menu submenu */
 .ctx-separator {
-  height: 1px;
+  height: var(--ds-border-width);
   background: var(--color-frame-border);
-  margin: 4px 8px;
+  margin: var(--ds-space-1) var(--ds-space-2);
 }
 .ctx-has-sub {
   position: relative;
 }
+/* 子菜单元：表面走 --ds-surface（亮白 / 暗 #1c1f27 —— 原写死 #ffffff / #1c202a，
+   两处暗档双写退役），浮影与主菜单同源 --ds-shadow-pop。 */
 .ctx-submenu {
   position: absolute;
   left: 100%;
   top: 0;
-  background: #ffffff;
-  border: 1px solid var(--glass-border);
-  border-radius: 14px;
-  padding: 4px 0;
-  box-shadow:
-    inset 0 1px 0 0 rgba(91, 127, 191, 0.04),
-    0px 4px 16px rgba(0, 0, 0, 0.08),
-    0px 8px 32px rgba(0, 0, 0, 0.06);
+  background: var(--ds-surface);
+  border: var(--ds-border-width) solid var(--ds-border);
+  border-radius: var(--ds-radius-card-md);
+  padding: var(--ds-space-1) 0;
+  box-shadow: var(--ds-shadow-pop);
   min-width: 140px;
   z-index: 1001;
 }
-@media (prefers-color-scheme: dark) {
-  .ctx-submenu {
-    background: #1c202a;
-    box-shadow:
-      inset 0 1px 0 0 rgba(91, 127, 191, 0.05),
-      0px 4px 16px rgba(0, 0, 0, 0.30),
-      0px 8px 32px rgba(0, 0, 0, 0.45);
-  }
-}
 .ctx-sub {
-  padding: 6px 14px;
-  font-size: 12px;
-  color: var(--color-frame-text);
+  padding: var(--ds-space-1) var(--ds-space-4);
+  font-size: var(--ds-fs-hint);
+  color: var(--ds-text-frame);
   cursor: pointer;
   white-space: nowrap;
 }
 .ctx-sub:hover {
-  background: var(--color-frame-hover);
-  color: var(--color-frame-text-bright);
+  background: var(--ds-row-hover);
+  color: var(--ds-text-bright);
 }
 .ctx-disabled {
-  padding: 6px 14px;
-  font-size: 12px;
-  color: var(--color-frame-text-muted);
+  padding: var(--ds-space-1) var(--ds-space-4);
+  font-size: var(--ds-fs-hint);
+  color: var(--ds-text-muted);
   font-style: italic;
 }
 
 /* ===== Folder tree styles ===== */
+/* 树行/行文字/删除钮：形状（热区 32px / 紧内距 / 4px 圆角）在 .ds-side-row--tree、
+   行内文字在 .ds-side-title、危险钮在 .ds-side-danger（design-system.css 侧栏族）；
+   本段只留版面（wrapper 定位、children 缩进轨）与旧 class 的 DOM 钩子空位。 */
 .folder-wrapper {
   position: relative;
 }
-.folder-item {
-  padding: 6px 12px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  position: relative;
-  transition: background 0.15s, color 0.15s;
-  font-size: 13px;
-  color: var(--color-frame-text-dim);
-  border-radius: 4px;
-  margin: 0 6px;
-}
-.folder-item:hover {
-  background: var(--color-frame-hover);
-  color: var(--color-frame-text-bright);
-}
-.folder-item.active {
-  background: var(--color-frame-active);
-  color: var(--color-frame-text-bright);
-}
-.folder-item.active:hover {
-  background: var(--color-frame-hover);
-}
-.folder-item.drag-over {
-  background: var(--color-frame-hover);
-}
-.folder-item.pinned {
-  background: var(--color-frame-input-bg);
-  color: var(--color-frame-text-bright);
-}
-
-.folder-item.dragging,
-.session-item.dragging {
-  opacity: 0.4;
-}
+/* 行内字形（展开箭头 / 文件夹图标）：16px 槽，hover 时文件夹图标转身份绿
+   （选择钩子仍是 .folder-item，形状值全部取 --ds-* 槽）。 */
 .folder-arrow {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: var(--ds-space-4);
+  height: var(--ds-space-4);
   flex-shrink: 0;
-  color: var(--color-frame-text-muted);
-  transition: transform 0.15s;
+  color: var(--ds-text-muted);
+  transition: transform var(--ds-dur-hover) var(--ds-ease-std);
 }
 .folder-arrow svg { width: 13px; height: 13px; }
 .folder-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: var(--ds-space-4);
+  height: var(--ds-space-4);
   flex-shrink: 0;
-  color: var(--color-frame-text-muted);
+  color: var(--ds-text-muted);
 }
 .folder-icon svg { width: 13px; height: 13px; stroke-width: 1.8; }
-.folder-item:hover .folder-icon { color: var(--color-primary); }
-.folder-name {
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: 400;
-}
-.folder-item:hover .folder-name { color: var(--color-frame-text-bright); }
+.folder-item:hover .folder-icon { color: var(--ds-accent); }
 .folder-name[contenteditable="true"] {
   overflow: visible;
   text-overflow: unset;
   outline: none;
   cursor: text;
   background: var(--color-frame-bg);
-  border-radius: 4px;
-  padding: 0 4px;
-  margin: 0 -4px;
+  border-radius: var(--ds-radius-badge);
+  padding: 0 var(--ds-space-1);
+  margin: 0 calc(var(--ds-space-1) * -1);
 }
 
-/* Folder status badge — aggregated from child sessions */
+/* Folder status badge — aggregated from child sessions
+   （色档与会话状态同源：attention = --ds-attention、unread/busy = --ds-accent） */
 .folder-status {
   display: none;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  margin-right: 4px;
+  margin-right: var(--ds-space-1);
 }
 .folder-status.busy,
 .folder-status.attention,
@@ -524,49 +413,29 @@
 }
 .folder-status.busy .status-spinner { display: flex; }
 .folder-status.busy .status-spinner svg {
-  color: var(--color-primary, #07c160);
+  color: var(--ds-accent);
   animation: spin 1.5s linear infinite;
 }
 .folder-status-dot {
   display: none;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--ds-radius-pill);
 }
 .folder-status.attention .folder-status-dot {
   display: block;
-  background: #e8a735;
+  background: var(--ds-attention);
   animation: statusPulse 2s ease-in-out infinite;
 }
 .folder-status.unread .folder-status-dot {
   display: block;
-  background: var(--color-primary);
+  background: var(--ds-accent);
 }
-
-.folder-delete {
-  background: none;
-  border: none;
-  color: var(--color-frame-text-muted);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, color 0.15s;
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  padding: 0;
-}
-.folder-item:hover .folder-delete { opacity: 1; }
-.folder-delete:hover { color: var(--color-error); }
-.folder-delete svg { width: 13px; height: 13px; stroke-width: 1.8; }
 .folder-badge {
   display: inline-flex;
   align-items: center;
-  color: var(--color-text-muted);
-  margin-left: 4px;
+  color: var(--ds-text-muted);
+  margin-left: var(--ds-space-1);
   opacity: 0.5;
 }
 .folder-item:hover .folder-badge { opacity: 0.8; }
@@ -582,66 +451,66 @@
 /* ===== Rules Editor Modal (in modal.css) ===== */
 .folder-children {
   position: relative;
-  margin-left: 6px;
+  margin-left: var(--ds-row-inset);
   border-left: 1.5px solid var(--color-frame-border-light);
 }
 
 /* Inline folder input (new folder, subfolder) */
 .folder-new-row {
-  padding: 6px 12px;
-  margin: 0 6px;
+  padding: var(--ds-row-pad-dense);
+  margin: 0 var(--ds-row-inset);
 }
 .folder-new-row-inner {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
 }
 .folder-new-arrow {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: var(--ds-space-4);
+  height: var(--ds-space-4);
   flex-shrink: 0;
-  color: var(--color-frame-text-muted);
+  color: var(--ds-text-muted);
 }
 .folder-new-arrow svg { width: 13px; height: 13px; }
 .folder-new-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: var(--ds-space-4);
+  height: var(--ds-space-4);
   flex-shrink: 0;
-  color: var(--color-frame-text-muted);
+  color: var(--ds-text-muted);
 }
 .folder-new-icon svg { width: 13px; height: 13px; stroke-width: 1.8; }
 .folder-new-input {
   flex: 1;
-  background: var(--color-frame-input-bg);
-  border: 1px solid var(--color-frame-input-border);
-  border-radius: 6px;
-  padding: 5px 10px;
-  color: var(--color-frame-input-text);
-  font-size: 13px;
+  background: var(--ds-row-pinned);
+  border: var(--ds-border-width) solid var(--ds-border);
+  border-radius: var(--ds-radius-chip);
+  padding: var(--ds-space-1) var(--ds-space-glass-x);
+  color: var(--ds-text-frame);
+  font-size: var(--ds-fs-body);
   font-family: inherit;
   outline: none;
   min-width: 0;
 }
-.folder-new-input:focus { border-color: var(--color-frame-text-muted); }
+.folder-new-input:focus { border-color: var(--ds-text-muted); }
 
 /* Creation path indicator — shown above inline inputs when creating inside a folder */
 .creation-path {
-  font-size: 11px;
-  color: var(--color-frame-text-muted);
-  padding: 2px 10px 4px;
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
+  padding: var(--ds-space-half) var(--ds-space-glass-x) var(--ds-space-1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   opacity: 0.7;
 }
 .session-item > .creation-path {
-  padding: 0 0 4px;
+  padding: 0 0 var(--ds-space-1);
 }
 
 /* ---------- Settings Modal content (scrollable region inside #settings-modal) ----------
