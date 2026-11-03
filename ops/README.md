@@ -179,7 +179,7 @@ bash ops/release.sh status    # 只读: 指针 / previous / staged 状态
 
 ## 内建分离式重启/两阶段更新（台账 #916 · 2026-10-26）
 
-引擎内建（`nebflow.cli.DetachedApply`），设计件：`docs/design/20261026_detached-apply-restart-update-spec.zh-CN.md`。
+引擎内建（`nebflow.cli.DetachedApply`），设计件：`~/.stand/projects/stand/.stand/docs/design/20261026_detached-apply-restart-update-spec.zh-CN.md`（文档库落位 = 项目注册目录 `.stand/docs/`，不在仓库 `docs/`，见「文档落位」条）。
 
 **`stand restart` 三条腿（作者裁定 2026-11-03 07:45：restart 的 CLI 从用户角度设计，用户不用编译版 stand）**
 
@@ -220,7 +220,7 @@ restart 失败 = `phase=failed` + 写因留证（stop 腿失败 rc=3 / start 健
 
 ### CLI 零 JVM detached 面（`restart --detached` / `--dry-run`，2026-10-27 批）
 
-与上节 jar 面**互补不冲突**（设计件：`docs/design/20261027_cli-isolation-and-detached-restart-spec.zh-CN.md`）：
+与上节 jar 面**互补不冲突**（设计件：`~/.stand/projects/stand/.stand/docs/design/20261027_cli-isolation-and-detached-restart-spec.zh-CN.md`）：
 
 - `stand restart --detached`：CLI 层双 fork 孤儿化点火器（过继 launchd，ppid=1）
   + 点火前自检 ppid=1（不达标 ABORT rc=3，引擎分毫未动）+ stop 腿（launcher
