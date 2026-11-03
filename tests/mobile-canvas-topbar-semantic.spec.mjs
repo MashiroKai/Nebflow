@@ -227,6 +227,14 @@ test.describe('mobile canvas topbar zero-base + scroll-under', () => {
           chipClasses: strip ? [...strip.querySelectorAll('.mf-strip-chip')].slice(0, 3).map((c) => c.className) : null,
           pageErrors: (window.__tbPageErrors || []),
         },
+        chromeParts: (() => {
+          const cs = getComputedStyle(document.body);
+          return {
+            top: cs.getPropertyValue('--mchrome-top').trim(),
+            btn: cs.getPropertyValue('--mchrome-btn').trim(),
+            breathe: cs.getPropertyValue('--mchrome-breathe').trim(),
+          };
+        })(),
         safeTop: getComputedStyle(sec.parentElement || sec).paddingTop,
         chromeClear: getComputedStyle(document.body).getPropertyValue('--mchrome-clear').trim(),
         scroll: { rect: r(scroller), cs: cs(scroller), top: scroller ? scroller.scrollTop : null },
@@ -267,11 +275,19 @@ test.describe('mobile canvas topbar zero-base + scroll-under', () => {
     readings.scrollerTopGap = scrollerTopGap;
     check('A3 reading surface reaches page top (boundary = scroller top edge, gap ≤1px)', scrollerTopGap <= 1, `gap=${scrollerTopGap}px`);
 
-    /* ── B 初态不重叠 ────────────────────────────────────────────────── */
-    const clearExpect = parseFloat(geo.chromeClear) || 72;
+    /* ── B 初态不重叠 ──────────────────────────────────────────────────
+       期望值从手机层簇几何三件派生（--mchrome-top + --mchrome-btn +
+       --mchrome-breathe = 16 + 48 + 8 = 72），不写常量：token 一变断言即红，
+       防「常量兜底吞漂移」（--mchrome-clear 的 calc() 在 computed 值里保留，
+       不能直接 parseFloat 整串）。 */
+    const expectClear = (
+      (parseFloat(geo.chromeParts.top) || 0)
+      + (parseFloat(geo.chromeParts.btn) || 0)
+      + (parseFloat(geo.chromeParts.breathe) || 0)
+    ) || 72;
     const padTop = parseFloat(geo.scrollerPadTop);
-    readings.padTop = padTop; readings.chromeClear = clearExpect;
-    check('B1 initial clearance = topbar chrome geometry (--mchrome-clear, not desktop capsule 52)', Math.abs(padTop - clearExpect) <= 0.5, `padding-top=${padTop} expect=${clearExpect}`);
+    readings.padTop = padTop; readings.chromeClear = expectClear;
+    check('B1 initial clearance = topbar chrome geometry (--mchrome-top+btn+breathe, not desktop capsule 52)', Math.abs(padTop - expectClear) <= 0.5, `padding-top=${padTop} expect=${expectClear}`);
     const ctrlBottom = Math.max(geo.close.rect.bottom, geo.stack.rect.bottom, geo.chipOn.rect ? geo.chipOn.rect.bottom : 0);
     check('B2 first content below controls at rest (top ≥ controls bottom + 8)', geo.firstContent && geo.firstContent.top >= ctrlBottom + 8 - 0.5,
       `content.top=${geo.firstContent && geo.firstContent.top} ctrlBottom=${ctrlBottom}`);
