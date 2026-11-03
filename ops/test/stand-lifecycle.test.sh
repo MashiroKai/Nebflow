@@ -1,7 +1,9 @@
 #!/bin/bash
 # stand/nebflow CLI 生命周期守卫 — 纯 bash 断言测试 (无 bats 依赖)
-# 被测对象: <repo>/ops/bin/{stand,nebflow,stand-cli-lib.sh,nebflow-stand-shim}
+# 被测对象: <repo>/ops/bin/{stand,nebflow,stand-cli-lib.sh}
 #           (stand + nebflow 两入口的共享实现库) + ops/bin/stand-jdk (体检面)
+#           + 改名批弃用垫片 {nebflow-restart-shim, nebflow-autostart-shim}
+#           + ops/stand-autostart.sh (2026-11-03 双根分家批: nebflow-autostart.sh git mv 改名)
 #
 # 方法: 沙箱化 —— 每个用例把被测脚本(含同目录依赖库)拷进临时 bin/(伪造 jar +
 #   current-version), STAND_HOME/NEBFLOW_HOME 指沙箱 home, STAND_JAVA_BIN 指假
@@ -16,9 +18,9 @@ REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SRC_STAND="$REPO_ROOT/ops/bin/stand"
 SRC_NEBFLOW="$REPO_ROOT/ops/bin/nebflow"
 SRC_LIB="$REPO_ROOT/ops/bin/stand-cli-lib.sh"
-SRC_SHIM="$REPO_ROOT/ops/bin/nebflow-stand-shim"
 SRC_JDK="$REPO_ROOT/ops/bin/stand-jdk"
-SRC_AUTOSTART="$REPO_ROOT/ops/nebflow-autostart.sh"
+SRC_AUTOSTART="$REPO_ROOT/ops/stand-autostart.sh"       # 2026-11-03 双根分家批: nebflow-autostart.sh → stand-autostart.sh
+SRC_AUTOSTART_SHIM="$REPO_ROOT/ops/bin/nebflow-autostart-shim"
 SRC_RESTART="$REPO_ROOT/ops/stand-restart.sh"          # 2026-11-03 改名批: nebflow-restart.sh → stand-restart.sh
 SRC_RESTART_SHIM="$REPO_ROOT/ops/bin/nebflow-restart-shim"
 
@@ -67,13 +69,18 @@ FAKEJAVA
     cp "$SRC_LIB" "$SANDBOX/bin/stand-cli-lib.sh"
     chmod +x "$SANDBOX/bin/stand" "$SANDBOX/bin/nebflow"
     # 2026-11-03 改名批: 开发重启工具 (stand-restart.sh) + 旧名弃用垫片, 连同它要求的
-    # 两个 helper（setsid-exec / daemonize——沙箱里只需存在且可执行, --check 面不 spawn）。
+    # 两个 helper（setsid-exec / daemonize——沙箱里只需存在且可执行, --check 面不 spawn;
+    # 2026-11-03 双根分家批 helper 随归属 stand 改名 stand-*）。
     cp "$SRC_RESTART" "$SANDBOX/bin/stand-restart.sh"
     cp "$SRC_RESTART_SHIM" "$SANDBOX/bin/nebflow-restart.sh"
-    printf '#!/bin/bash\nexit 0\n' > "$SANDBOX/bin/nebflow-setsid-exec.py"
-    printf '#!/bin/bash\nexit 0\n' > "$SANDBOX/bin/nebflow-daemonize.py"
+    printf '#!/bin/bash\nexit 0\n' > "$SANDBOX/bin/stand-setsid-exec.py"
+    printf '#!/bin/bash\nexit 0\n' > "$SANDBOX/bin/stand-daemonize.py"
     chmod +x "$SANDBOX/bin/stand-restart.sh" "$SANDBOX/bin/nebflow-restart.sh" \
-             "$SANDBOX/bin/nebflow-setsid-exec.py" "$SANDBOX/bin/nebflow-daemonize.py"
+             "$SANDBOX/bin/stand-setsid-exec.py" "$SANDBOX/bin/stand-daemonize.py"
+    # 2026-11-03 双根分家批: 开机自启工具 (stand-autostart.sh) + 旧名弃用垫片
+    cp "$SRC_AUTOSTART" "$SANDBOX/bin/stand-autostart.sh"
+    cp "$SRC_AUTOSTART_SHIM" "$SANDBOX/bin/nebflow-autostart.sh"
+    chmod +x "$SANDBOX/bin/stand-autostart.sh" "$SANDBOX/bin/nebflow-autostart.sh"
     mkdir -p "$SANDBOX/home/logs"
     : > "$SANDBOX/home/logs/nebflow.log"
     : > "$FAKE_LOG"
@@ -219,11 +226,11 @@ echo "   sandbox: $SANDBOX"
 
 # ── 0. 静态: 语法 ──
 t "case 0: bash -n on ops scripts"
-for _f in "$SRC_STAND" "$SRC_NEBFLOW" "$SRC_LIB" "$SRC_SHIM" "$SRC_JDK" "$SRC_AUTOSTART" "$SRC_RESTART" "$SRC_RESTART_SHIM"; do
+for _f in "$SRC_STAND" "$SRC_NEBFLOW" "$SRC_LIB" "$SRC_JDK" "$SRC_AUTOSTART" "$SRC_AUTOSTART_SHIM" "$SRC_RESTART" "$SRC_RESTART_SHIM"; do
     if bash -n "$_f" 2>"$SANDBOX/syn.err"; then ok "syntax: $(basename "$_f")"; else bad "syntax: $(basename "$_f"): $(cat "$SANDBOX/syn.err")"; fi
 done
 if command -v shellcheck >/dev/null 2>&1; then
-    if shellcheck -S warning "$SRC_STAND" "$SRC_NEBFLOW" "$SRC_LIB" "$SRC_SHIM" 2>/dev/null; then ok "shellcheck: entries+lib+shim"; else bad "shellcheck: entries+lib+shim"; fi
+    if shellcheck -S warning "$SRC_STAND" "$SRC_NEBFLOW" "$SRC_LIB" "$SRC_AUTOSTART_SHIM" "$SRC_RESTART_SHIM" 2>/dev/null; then ok "shellcheck: entries+lib+shims"; else bad "shellcheck: entries+lib+shims"; fi
 else
     echo "  (shellcheck not installed — skipped)"
 fi
@@ -769,6 +776,31 @@ assert_contains "bare argv really reached the jar" "restart" "$(cat "$_BARE30")"
 run_stand restart --jar-apply --dry-run; RC=$?
 assert_rc "jar-apply + dry-run mutual exclusion rc" 2 "$RC"
 assert_contains "mutual exclusion message" "互斥" "$RUN_OUT"
+
+# ── 31. 2026-11-03 双根分家批: 自启弃用垫片 nebflow-autostart.sh → stand-autostart.sh 转发 ──
+t "case 31: autostart deprecation shim forwards to stand-autostart.sh (verbatim args)"
+fresh_sandbox
+# 转发面验证用替身正文（真正文会 exec sbt——测试绝不真起实例）; 语义同 case 28 手法。
+printf '#!/bin/bash\nprintf "%%s\\n" "$*" > "%s/body-got.txt"\n' "$SANDBOX" > "$SANDBOX/bin/stand-autostart.sh"
+chmod +x "$SANDBOX/bin/stand-autostart.sh"
+RUN_OUT="$(HOME="$SANDBOX/home" "$SANDBOX/bin/nebflow-autostart.sh" --some-flag val 2>&1)"; RC=$?
+assert_rc "autostart shim forward rc" 0 "$RC"
+assert_contains "autostart shim prints deprecation line" "nebflow-autostart.sh is deprecated — use stand-autostart.sh" "$RUN_OUT"
+assert_eq "autostart shim forwards args verbatim" "--some-flag val" "$(cat "$SANDBOX/body-got.txt")"
+# 正文缺失时的报错指引（挪走正文再恢复）
+mv "$SANDBOX/bin/stand-autostart.sh" "$SANDBOX/bin/stand-autostart.sh.hidden"
+RUN_OUT="$(HOME="$SANDBOX/home" "$SANDBOX/bin/nebflow-autostart.sh" 2>&1)"; RC=$?
+assert_rc "autostart shim without body rc" 66 "$RC"
+assert_contains "autostart shim missing-body guidance" "shim cannot forward" "$RUN_OUT"
+mv "$SANDBOX/bin/stand-autostart.sh.hidden" "$SANDBOX/bin/stand-autostart.sh"
+# 真正文引用面静态对账: exec 代码行只准用新名 helper（stand-setsid-exec.py），
+# 不准残留旧名的路径形态引用（`bin/nebflow-*`；注释里的改名纪年不算代码引用）
+if grep -q 'exec python3 .*stand-setsid-exec\.py' "$SRC_AUTOSTART" \
+   && ! grep -q 'bin/nebflow-setsid-exec\|bin/nebflow-daemonize' "$SRC_AUTOSTART"; then
+    ok "autostart body execs stand-* helper (no old-name path refs)"
+else
+    bad "autostart body helper wiring wrong (old-name path refs or missing new exec line)"
+fi
 
 echo
 echo "== summary: PASS=$PASS FAIL=$FAIL =="

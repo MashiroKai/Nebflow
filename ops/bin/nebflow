@@ -2,8 +2,9 @@
 # nebflow CLI launcher — thin entry (authoritative copy: stand repo ops/bin/nebflow)
 #
 # 部署位置: ~/.nebflow/bin/nebflow (cp + chmod +x), 与 stand-cli-lib.sh 同目录部署;
-# 另有 PATH 垫片 ~/.stand/bin/nebflow → 本文件 (~/.zshrc:18 只把 ~/.stand/bin 加进
-# PATH, 垫片是唯一无侵入通道 — 不动用户 rc)。
+# 命令行解析由 PATH 直达: ~/.nebflow/bin 在 ~/.zshrc PATH 里（2026-11-03 作者令·双根
+# 分家批）。旧 PATH 垫片 ~/.stand/bin/nebflow（转投本文件）同批退役删除——nebflow 的
+# 东西不再住 stand 家。
 #
 # 2026.9.19 自有根契约 (承 ~/.nebflow/bin/nebflow 旧 launcher, 2026-10-23 作者令):
 #   home : ~/.nebflow (NEBFLOW_HOME 钉住防漂移; 不读 STAND_HOME — 隔离契约)

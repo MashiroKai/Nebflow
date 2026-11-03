@@ -5,6 +5,9 @@
 #   ~/.stand/bin/nebflow-restart.sh 保留为弃用垫片（打印弃用提示后 exec 转发本脚本，
 #   与 CLI 改名「老 nebflow 命令留垫片转发」同一手法）。历史事故纪年里的旧名/旧日志
 #   路径按当时原样保留，加「改名前旧名」注记。
+#   同批（2026-11-03 双根分家批）: 两个 helper 随本工具归属 stand 改名——
+#   nebflow-setsid-exec.py → stand-setsid-exec.py、nebflow-daemonize.py → stand-daemonize.py
+#   （live 侧 mv 改名，内容零改动；正文内 9 处引用同步）。
 # 定位: 开发者/编排侧工具（sbt 编译预检 + 隔离 canary + 四信号空闲 + 观察窗），
 #   服务对象是「本机有源码树、在跑开发实例」的场景——终端用户（官网安装版）的重启面
 #   是 `stand restart`（jar 面 #916 detached apply），与本脚本无关。
@@ -55,7 +58,7 @@
 # v4.2（2026-09-09，canary 300s 未就绪事故 /tmp/nebflow-canary.log）:
 #   A helper 解析去 $0 单点依赖: source/eval 执行时 $0=shell 名（实测 bash source/eval → $0=bash，
 #     zsh eval → $0=zsh；zsh source 因 FUNCTION_ARGZERO 默认 on 反而安全）→ dirname "." →
-#     BIN_DIR=cwd → canary spawn 的 python3 找不到 nebflow-setsid-exec.py（报错路径=主仓根）
+#     BIN_DIR=cwd → canary spawn 的 python3 找不到 stand-setsid-exec.py（报错路径=主仓根）
 #     → canary 永不监听，300s 空等后放弃。修复: BIN_DIR 下 helper 不齐时回退规范位
 #     $NF_HOME/bin，两处都没有 → fail-fast 输出可行动指引；daemonize re-exec 的脚本路径
 #     同步走 SELF_PATH（$0 失效时同样回退规范位）。
@@ -96,7 +99,7 @@ set -u
 set -o pipefail
 
 SELF_PID=$$
-BIN_DIR="$(cd "$(dirname "$0")" && pwd)"   # 辅助脚本（nebflow-daemonize.py / nebflow-setsid-exec.py）同目录
+BIN_DIR="$(cd "$(dirname "$0")" && pwd)"   # 辅助脚本（stand-daemonize.py / stand-setsid-exec.py）同目录
 
 # 端口对调（作者令 2026-10-23 微信，9.19 重装自有根批收尾）: 默认改 6138——下次重启生效，
 #   让出 8080 给 9.19（其自有根启动器 ~/.nebflow/bin/nebflow 缺省 8080）。旧行为可
@@ -121,13 +124,13 @@ PAUSE_FLAG="$NF_HOME/logs/watchdog-paused"   # R5: watchdog 维护暂停标志�
 # $NF_HOME/bin；两处都没有 → fail-fast（在任何 spawn 之前断言，绝不带病跑 canary）。
 NEBFLOW_BIN_DIR="$BIN_DIR"
 SELF_PATH="$0"
-if [[ ! -x "$NEBFLOW_BIN_DIR/nebflow-setsid-exec.py" || ! -x "$NEBFLOW_BIN_DIR/nebflow-daemonize.py" || ! -f "$SELF_PATH" ]]; then
-  if [[ -x "$NF_HOME/bin/nebflow-setsid-exec.py" && -x "$NF_HOME/bin/nebflow-daemonize.py" && -f "$NF_HOME/bin/stand-restart.sh" ]]; then
+if [[ ! -x "$NEBFLOW_BIN_DIR/stand-setsid-exec.py" || ! -x "$NEBFLOW_BIN_DIR/stand-daemonize.py" || ! -f "$SELF_PATH" ]]; then
+  if [[ -x "$NF_HOME/bin/stand-setsid-exec.py" && -x "$NF_HOME/bin/stand-daemonize.py" && -f "$NF_HOME/bin/stand-restart.sh" ]]; then
     NEBFLOW_BIN_DIR="$NF_HOME/bin"
     SELF_PATH="$NF_HOME/bin/stand-restart.sh"
     echo "[helper] \$0 未解析出 helper 目录（source/eval 调用？BIN_DIR=${BIN_DIR}）——回退规范位 ${NEBFLOW_BIN_DIR}"
   else
-    echo "✗ 找不到辅助脚本 nebflow-setsid-exec.py / nebflow-daemonize.py" >&2
+    echo "✗ 找不到辅助脚本 stand-setsid-exec.py / stand-daemonize.py" >&2
     echo "  已尝试: $BIN_DIR 与 $NF_HOME/bin" >&2
     echo "  请以路径直接调用本脚本（例: $NF_HOME/bin/stand-restart.sh --canary），不要 source" >&2
     exit 1
@@ -196,7 +199,7 @@ if [[ "$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')" != "1" ]] \
   # ppid==1（已被 launchd 收养）即已脱离实例树，不得再 daemonize——否则 FORCE_DETACH 下
   # 每次 re-exec 都满足条件 → exec 死循环（2026-09-01 隔离验证实测）
   echo "[detach] 脚本处于实例进程树内（或 FORCE_DETACH）——daemonize 脱离（fork→reparent ppid=1→setsid→exec）"
-  exec python3 "$NEBFLOW_BIN_DIR/nebflow-daemonize.py" "$SELF_PATH" "$@"
+  exec python3 "$NEBFLOW_BIN_DIR/stand-daemonize.py" "$SELF_PATH" "$@"
 fi
 trap '' PIPE   # daemonize 后 Bash 工具管道可能已关闭：忽略 SIGPIPE，防「首个 echo 即死」
 
@@ -343,7 +346,7 @@ preflight_canary() {
   fi
   mkdir -p "$CANARY_HOME"
   echo "[canary] 隔离实例启动: NEBFLOW_HOME=$CANARY_HOME port=${CANARY_PORT}（日志 ${CANARY_OUT}）"
-  ( cd "$NEBFLOW_DIR" && NEBFLOW_HOME="$CANARY_HOME" NEBFLOW_GATEWAY_PORT="$CANARY_PORT" nohup python3 "$NEBFLOW_BIN_DIR/nebflow-setsid-exec.py" sbt -batch "run --port $CANARY_PORT" > "$CANARY_OUT" 2>&1 & )
+  ( cd "$NEBFLOW_DIR" && NEBFLOW_HOME="$CANARY_HOME" NEBFLOW_GATEWAY_PORT="$CANARY_PORT" nohup python3 "$NEBFLOW_BIN_DIR/stand-setsid-exec.py" sbt -batch "run --port $CANARY_PORT" > "$CANARY_OUT" 2>&1 & )
   started=$(now_ts)
   for i in $(seq 1 60); do
     sleep 5
@@ -649,9 +652,9 @@ do_restart() {
 
   echo "[restart] 启动 sbt run --port $PORT （日志 ${SBT_OUT}）"
   cd "$NEBFLOW_DIR" || { echo "✗ 找不到 $NEBFLOW_DIR"; exit 1; }
-  # v4.1 A: 新实例用 setsid 独立会话承载（macOS 无 setsid 命令，nebflow-setsid-exec.py 等价实现，
+  # v4.1 A: 新实例用 setsid 独立会话承载（macOS 无 setsid 命令，stand-setsid-exec.py 等价实现，
   # exec 后同 pid，$! 跟踪语义不变）——脚本退出/被杀后新实例继续运行，与脚本不同会话/进程组。
-  NEBFLOW_GATEWAY_PORT="$PORT" nohup python3 "$NEBFLOW_BIN_DIR/nebflow-setsid-exec.py" sbt "run --port $PORT" > "$SBT_OUT" 2>&1 &
+  NEBFLOW_GATEWAY_PORT="$PORT" nohup python3 "$NEBFLOW_BIN_DIR/stand-setsid-exec.py" sbt "run --port $PORT" > "$SBT_OUT" 2>&1 &
   SBT_PID=$!
   disown
   echo "[restart] sbt pid=${SBT_PID}（setsid 独立会话），进入自适应就绪等待（硬上限 ${READY_HARD_CAP}s，编译活跃可续期至 ${READY_IDLE_BONUS_CAP}s）"

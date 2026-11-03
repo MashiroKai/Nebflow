@@ -11,30 +11,33 @@
 | `ops/bin/stand` | `~/.stand/bin/stand` | stand CLI 入口（薄品牌壳）：只管辖 `~/.stand`（6138 缺省）实例 |
 | `ops/bin/nebflow` | `~/.nebflow/bin/nebflow` | nebflow CLI 入口（薄品牌壳）：只管辖 `~/.nebflow`（6140 缺省，双生分家批 2026-10-31）实例（2026-10-27 隔离批） |
 | `ops/bin/stand-cli-lib.sh` | `~/.stand/bin/` 与 `~/.nebflow/bin/` **各一份** | 两入口的**共享实现库**（隔离契约/守卫/横幅/`restart --detached` 全在此；单一代码路径） |
-| `ops/bin/nebflow-stand-shim` | `~/.stand/bin/nebflow` | PATH 垫片：`nebflow` → `~/.nebflow/bin/nebflow` 真入口（`~/.zshrc` 只把 `~/.stand/bin` 加进 PATH；2026-10-22 旧垫片是「转发 stand」，即跨品牌拉起的总根，本垫片取而代之） |
 | `ops/bin/stand-jdk` | `~/.stand/bin/stand-jdk` | pinned JDK（`$STAND_HOME/jdk-21`）自愈 installer（装 / 修 / 体检） |
-| `ops/nebflow-autostart.sh` | `~/.stand/bin/nebflow-autostart.sh` | 开机自启入口（v2：从 main 树 `sbt run` 起，带 6138 端口守卫） |
+| `ops/stand-autostart.sh` | `~/.stand/bin/stand-autostart.sh` | 开机自启入口（v2：从 main 树 `sbt run` 起，带 6138 端口守卫；2026-11-03 双根分家批由 `nebflow-autostart.sh` git mv 改名——stand 的自启住 stand 家，旧名留弃用垫片转发） |
+| `ops/bin/nebflow-autostart-shim` | `~/.stand/bin/nebflow-autostart.sh` | **旧名弃用垫片**（2026-11-03 双根分家批）：打印弃用提示后 `exec` 转发同目录 `stand-autostart.sh`，参数逐字透传。launchd 现挂 `com.nebflow.gateway` 作业的 ProgramArguments 仍指旧名路径，经垫片继续工作（改 plist 属 launchd 操作，须作者裁定） |
 | `ops/stand-restart.sh` | `~/.stand/bin/stand-restart.sh` | 开发实例自重启工具 v4.2（**开发者/编排侧**：编译预检 + 隔离 canary + 四信号空闲 + 观察窗；2026-11-03 改名批由 `nebflow-restart.sh` git mv 而来，verbatim 入库，改动仍走它自己的版本纪律） |
 | `ops/bin/nebflow-restart-shim` | `~/.stand/bin/nebflow-restart.sh` | **旧名弃用垫片**（2026-11-03 改名批）：打印 `nebflow-restart.sh is deprecated — use stand-restart.sh` 后 `exec` 转发同目录 `stand-restart.sh "$@"`，参数逐字透传（与 CLI 改名「老 nebflow 命令留垫片转发」同一手法） |
 | `ops/release.sh` | —（不入 live：与仓绑定，从仓内跑） | **发版流水线（工程化 M2）**：`stage` → `approve` → `rollback` / `tag`，显式批准门（见下节） |
 | `ops/bin/stand-jar-pull` | —（不入 live：与仓绑定，从仓内跑） | **KAI → Mac jar 流转（KAI 主线迁移批 2026-10-26）**：拉 KAI 出包位最新 jar → SHA 对账 → 原子落位 → 切指针 → start 指针解析验证（`--verify`/`--dry-run` 零触碰预演；用法一页：`ops/stand-jar-pull.md`） |
 | `release/install.sh` `release/install.ps1` | release 出包路径 | release 安装器：`stand` 主命令 + `nebflow` legacy 转发垫片（与本目录 CLI 的隔离契约分工见 REBRAND「双命令并存」） |
-| `ops/test/stand-lifecycle.test.sh` | —（不入 live） | 守卫的纯 bash 断言测试（沙箱化，零真实 daemon；覆盖 stand+nebflow 两品牌隔离、`restart --dry-run` 假点火、`restart --help` 三面口径、`stand-restart.sh`/弃用垫片的零副作用面） |
+| `ops/test/stand-lifecycle.test.sh` | —（不入 live） | 守卫的纯 bash 断言测试（沙箱化，零真实 daemon；覆盖 stand+nebflow 两品牌隔离、`restart --dry-run` 假点火、`restart --help` 三面口径、`stand-restart.sh`/`stand-autostart.sh` 弃用垫片的零副作用面） |
 | `ops/test/release-pipeline.test.sh` | —（不入 live） | release.sh 的纯 bash 断言测试（沙箱化：假构建/假冒烟/假 java + fixture git 仓） |
 
 ## 部署（Mac 侧）
 
 ```bash
 REPO="/Users/kaiyu/Claude code/Stand"        # 或任意 stand 仓 checkout
-# stand 根: 入口 + 库 + 垫片 + JDK 体检
+# stand 根: 入口 + 库 + JDK 体检（PATH 垫片已退役——2026-11-03 作者令，见下节）
 cp "$REPO/ops/bin/stand"       ~/.stand/bin/stand       && chmod +x ~/.stand/bin/stand
 cp "$REPO/ops/bin/stand-cli-lib.sh" ~/.stand/bin/stand-cli-lib.sh
-cp "$REPO/ops/bin/nebflow-stand-shim" ~/.stand/bin/nebflow && chmod +x ~/.stand/bin/nebflow
 cp "$REPO/ops/bin/stand-jdk"   ~/.stand/bin/stand-jdk   && chmod +x ~/.stand/bin/stand-jdk
-cp "$REPO/ops/nebflow-autostart.sh" ~/.stand/bin/nebflow-autostart.sh && chmod +x ~/.stand/bin/nebflow-autostart.sh
+cp "$REPO/ops/stand-autostart.sh" ~/.stand/bin/stand-autostart.sh && chmod +x ~/.stand/bin/stand-autostart.sh
+cp "$REPO/ops/bin/nebflow-autostart-shim" ~/.stand/bin/nebflow-autostart.sh && chmod +x ~/.stand/bin/nebflow-autostart.sh
 # 开发实例自重启工具（2026-11-03 改名批）+ 旧名弃用垫片
 cp "$REPO/ops/stand-restart.sh"  ~/.stand/bin/stand-restart.sh  && chmod +x ~/.stand/bin/stand-restart.sh
 cp "$REPO/ops/bin/nebflow-restart-shim" ~/.stand/bin/nebflow-restart.sh && chmod +x ~/.stand/bin/nebflow-restart.sh
+# 开发重启工具的两个 helper（2026-11-03 双根分家批由 nebflow-* 改名；live 专属件，
+# 仓内无权威副本——与 stand-restart.sh 同目录部署）
+#   ~/.stand/bin/stand-setsid-exec.py / ~/.stand/bin/stand-daemonize.py（chmod +x）
 # nebflow 根 (9.19 自有根): 真入口 + 库
 cp "$REPO/ops/bin/nebflow"     ~/.nebflow/bin/nebflow   && chmod +x ~/.nebflow/bin/nebflow
 cp "$REPO/ops/bin/stand-cli-lib.sh" ~/.nebflow/bin/stand-cli-lib.sh
@@ -45,7 +48,13 @@ bash "$REPO/ops/test/stand-lifecycle.test.sh"   # 回归：全绿再部署
 **品牌隔离契约（2026-10-27 作者令）**：`stand` 只动 `~/.stand`（端口 `--port > STAND_GATEWAY_PORT > 6138`），
 `nebflow` 只动 `~/.nebflow`（`--port > NEBFLOW_GATEWAY_PORT > 6140`；分家批后引擎侧解析链同为 --port > env > config "port" > 品牌缺省）——互不拉起、互不探活、互不误杀；
 home/端口/JDK 覆写 env 各只认自家变量，stop 双探针（自家端口 ∪ 自家 `.pid`）+ 身份门按品牌收窄。
-**不编辑用户 shell rc**：`~/.zshrc:18` 的 PATH 原样保留，隔离由垫片换向达成。
+**PATH 与双根（2026-11-03 作者令，替代旧「不编辑用户 shell rc」口径）**：`~/.zshrc` 同时收两个根——
+`~/.stand/bin`（stand 命令）与 `~/.nebflow/bin`（nebflow 命令）；两目录互不放对方文件。
+原 PATH 垫片 `~/.stand/bin/nebflow`（转投 `~/.nebflow/bin/nebflow`）同批退役删除，
+删除时 sha256 = `6df461b3c714b94d710822dbd6beddd90804e35d24fcbe234a4a8815bbc79e2d`（留档，文件已不存在）。
+
+> **2026-11-03 作者令（双根分家）**：nebflow 命令住自己的家（`~/.nebflow/bin` 进 PATH），
+> stand 家里不再放 nebflow 任何文件。
 
 改 live 前先备份（沿用该目录既有 `.bak-YYYYMMDD` 惯例）：
 
