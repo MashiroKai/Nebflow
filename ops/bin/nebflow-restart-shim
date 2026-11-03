@@ -1,5 +1,6 @@
 #!/bin/bash
 # nebflow-restart-shim — 弃用垫片（2026-11-03 改名批；作者令 2026-10-29「这个脚本是不是也改改名为stand了」）
+# nebflow 字样仅为旧名兼容，本工具属 stand（2026-11-03 作者令·双根分家批加注）。
 #
 # 权威副本: stand 仓 ops/bin/nebflow-restart-shim → live 部署位 ~/.stand/bin/nebflow-restart.sh
 # 语义: 打印一行弃用提示后 exec 转发同目录 stand-restart.sh，参数逐字透传

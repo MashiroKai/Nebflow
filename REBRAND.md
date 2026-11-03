@@ -34,8 +34,9 @@ Stand 原名 Nebflow。网站入口是 https://mystand.space，跨设备控制�
   年代跟着撞车，从无前例的独立默认；6140 是第一个）。8080 自此只属 9.19 自有根实例，
   经 `NEBFLOW_GATEWAY_PORT=8080` / `--port 8080` 管辖，任何品牌都不绑定它。
 - 两入口共用一份实现库 `stand-cli-lib.sh`（单一实现路径），按品牌壳只认自家 env；
-  PATH 上没有 `nebflow` 时由垫片 `~/.stand/bin/nebflow` 转投真入口（该垫片已弃用，应删除；
-  KAI 的 `C:\Users\Kai\AppData\Local\stand\nebflow.cmd` 转发 shim 同理）。
+  命令行由 PATH 直达（2026-11-03 作者令·双根分家：`~/.zshrc` 同时收 `~/.stand/bin` 与
+  `~/.nebflow/bin`，旧 PATH 垫片 `~/.stand/bin/nebflow` 同日退役删除——nebflow 的东西
+  不再住 stand 家；KAI 的 `C:\Users\Kai\AppData\Local\stand\nebflow.cmd` 转发 shim 同理待清）。
 - 单实例守卫按**「品牌+自己的端口+自己的 home」三元组**判定：健康面 `product` 是已知
   异品牌 ⇒ 拒启并点名（**绝不跨品牌 focus**）；同品牌词仍聚焦；同品牌词但对家根路径
   证据 ⇒ 拒启。两个品牌的引擎兜底口已错开，撞口只剩显式同配一类，撞了也只会互相
