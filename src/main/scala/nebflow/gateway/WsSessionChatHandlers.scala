@@ -1213,13 +1213,15 @@ private[gateway] object WsSessionChatHandlers:
                             if rec.kind == AgentKind.Delegate then
                               nebflow.core.delegate.DelegateRegistry
                                 .find(rec.sessionId)
-                                .map(_.title)
+                                .map(rec0 => nebflow.core.delegate.SessionResumption.displayTitle(rec0))
                                 .filter(_.trim.nonEmpty)
                             else None
                           WebSocketRoutes.delegateDisplayTitle(
                             rec.kind,
                             registryTitle,
-                            taskOpt.map(_.description).filter(_.trim.nonEmpty)
+                            taskOpt
+                              .map(t => nebflow.core.delegate.SessionResumption.stripContinuationPrefix(t.description))
+                              .filter(_.trim.nonEmpty)
                           )
                         }
                         .handleErrorWith(_ => IO.pure(None))

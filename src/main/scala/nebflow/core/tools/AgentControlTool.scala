@@ -562,6 +562,24 @@ When to use:
           val readOnly =
             if !cancelable(rec) && !teamManageable then " （read-only）" else ""
           val taskLabel = (task.map(_.description).getOrElse("") + readOnly).trim
+          // 会话续命名与位修正批（2026-11-03 · A 部分）：任务列显示名走**去叠加读影**
+          // （[[nebflow.core.delegate.SessionResumption.stripContinuationPrefix]] 单点）
+          // ——续命派生代的存量 description 行带 `continuation:` 叠加前缀，此处读面
+          // 归一（纯读投影，零写盘），面板/AgentControl 行名逐代稳定 = 第一代名。
+          val taskLabelClean = nebflow.core.delegate.SessionResumption.stripContinuationPrefix(taskLabel)
+          // 续命血缘（B 部分）：派生代在 task 列尾标注来源（审计可读）——血缘在
+          // DelegateRegistry.Record.resumedFrom（本批新增槽），任务行不动。
+          val lineage =
+            if rec.kind == AgentKind.Delegate then
+              try
+                nebflow.core.delegate.DelegateRegistry
+                  .find(rec.sessionId)
+                  .flatMap(_.resumedFrom)
+                  .filter(_.nonEmpty)
+                  .map(f => s" ←resumed:$f")
+                  .getOrElse("")
+              catch case _: Throwable => ""
+            else ""
           // issue #31 Fix D: barrier snapshot — phantom visibility. outstanding>0
           // on an idle session with no in-flight work = a batch member hung / died
           // without a terminal event; held>0 = results parked waiting for the batch.
@@ -602,7 +620,7 @@ When to use:
             fmtMillis(if rec.startedAt > 0 then now - rec.startedAt else 0),
             fmtMillis(if rec.lastActivityMs > 0 then now - rec.lastActivityMs else 0),
             task.map(_.retryCount.toString).getOrElse("-"),
-            if taskLabel.nonEmpty then taskLabel.take(48) else "-"
+            if taskLabelClean.nonEmpty then (taskLabelClean + lineage).take(64) else lineage.take(64)
           )
         }
     yield
@@ -643,7 +661,8 @@ When to use:
             fmtMillis(math.max(0L, now - t.spawnedAt)),
             fmtMillis(math.max(0L, now - t.spawnedAt)),
             t.retryCount.toString,
-            (t.description + " [orphan: no live actor — lost to a process crash; swept at next startup]").take(60)
+            (nebflow.core.delegate.SessionResumption.stripContinuationPrefix(t.description) +
+              " [orphan: no live actor — lost to a process crash; swept at next startup]").take(60)
           )
         }
       // 外部行（#1225）：address 列内外统一（源 DelegateRegistry）；stuck?/phase/
@@ -667,7 +686,9 @@ When to use:
           fmtMillis(math.max(0L, now - o.startedAtMs)),
           "-",
           "-",
-          rec.title.take(48)
+          // 会话续命名与位修正批（A 部分）：外部行同走去叠加读影（存量续命代
+          // 记录的 title 带 `continuation:` 叠加前缀——读面归一，零写盘）。
+          nebflow.core.delegate.SessionResumption.displayTitle(rec).take(48)
         )
       }
       val table =
