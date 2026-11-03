@@ -50,7 +50,9 @@ export function initBgMergedPanel() {
   const aSec = document.createElement('div');
   aSec.className = 'bg-section bg-section-agents';
   grpLabel = document.createElement('div');
-  grpLabel.className = 'mh-bg-grp';
+  // panel-ia 批（2026-11-03）：分组签收编 .ds-section-label（与 .bg-dropdown-header
+  // 同语言——字号/字距/大写化/色走 design-system 组件类单源）。
+  grpLabel.className = 'mh-bg-grp ds-section-label';
   carrier.appendChild(aSec);
   aSec.appendChild(grpLabel);
   aSec.appendChild(gList);

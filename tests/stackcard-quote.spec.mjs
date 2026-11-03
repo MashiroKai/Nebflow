@@ -5,7 +5,8 @@
 // 本批形态（改后）：
 //   · 叠卡面上**零引用钮** —— 展开态每行、折叠盒上都不许出现 `.pop-media-quote`
 //     （也不再有任何 hover 才浮现的图标）；
-//   · 唯一入口 = composer footer 动作行的一枚键 `#input-bar #quote-item-btn`
+//   · 入口 —— 🔴 composer footer 引用键已随作者令 2026-11-03 10:11 ② 整链退役；本 spec
+//      保留**能力面**验收（引用载荷/张序/摘要由 startItemQuote 直调验证），入口腿改退役钉
 //     （与附件键同族 `.icon-btn`），动作对象 = 最近一条叠卡的**当前张**
 //     （`popQuoteState().index` = 拖动/横滑翻到的那张）；
 //   · 引用载荷语义不变：content.itemIndex/itemTotal 标注位置，深链展开并高亮第 N 行。
@@ -15,7 +16,7 @@
 //   ② 三个引用牌互不相同（发送后三块引用块的全文两两不同，各含自己的张序 + 文件名）；
 //   ③ 点第 2 张的引用牌 ⇒ 定位到**第 2 张**（目标叠卡展开 + 第 2 行高亮 + 该行在视口内）；
 //   ④ 单图退化 = 消息级引用、无张数 UI（无 itemIndex、摘要不含「第 N/M 张」、
-//      平铺单图面上没有叠卡 ⇒ footer 单张引用键隐身）；
+//      平铺单图面上没有叠卡 ⇒ 单张引用入口不存在（键已整体退役，恒不在场））；
 //   ⑤ 不破坏既有语义：叠卡面（折叠 + 展开）零 `.pop-media-quote`、拖动仍翻页、
 //      footer 键随 front 换目标、行级（整组）引用钮照旧可用。
 //
@@ -96,11 +97,10 @@ test.describe('① 单张可引用（引用目标 = 该图自己）', () => {
     expect(shape.surfaceButtons, '叠卡面上零 .pop-media-quote').toBe(0);
     expect(shape.buttons.every(b => b.index === null), '展开列每行都无引用钮').toBe(true);
     expect(shape.buttons.every(b => b.collapsedHasButton === false), '折叠面无引用钮').toBe(true);
-    // 入口 = composer footer 动作行的一枚键，可见（有叠卡 ⇒ 有单张可引）
-    expect(shape.footer, 'footer 引用键存在').toBeTruthy();
-    expect(shape.footer.inInputBar, '入口在 #input-bar 动作行').toBe(true);
-    expect(shape.footer.hidden, '有叠卡 ⇒ footer 键可见').toBe(false);
-    expect(shape.footer.title, 'title 带「引用 · 第 N/M 张」').toContain('引用');
+    // 🔴 2026-11-03 10:11 ②：composer 引用键整链退役（「不留替代按钮」）——
+    //    原「入口键在场/在动作行/可见/文案」四条断言随键退役，改为退役钉。
+    expect(shape.footer, 'footer 引用键已退役（0 元素）').toBeNull();
+    expect(shape.footerRetired, '探针确认 #quote-item-btn 不在场').toBe(true);
 
     const picked = [];
     for (const i of [0, 1, 2]) {
@@ -175,12 +175,10 @@ test.describe('④ 单图退化', () => {
     expect(msgId).toBeTruthy();
     // 平铺单图没有叠卡 ⇒ 无 popQuoteState、footer 单张引用键隐身（零死入口）
     expect(await page.evaluate(id => window.__stackQuoteButtons(id), msgId)).toBeNull();
-    const btn = await page.evaluate(() => {
-      const b = document.getElementById('quote-item-btn');
-      return b ? { hidden: !!b.hidden } : null;
-    });
-    expect(btn, 'footer 键存在').toBeTruthy();
-    expect(btn.hidden, '无叠卡 ⇒ footer 键隐身').toBe(true);
+    // 🔴 2026-11-03 10:11 ②：输入框引用键退役 ⇒ 「无叠卡时隐身」的前提不再存在
+    //    （零死入口 = 键根本不在场）。
+    expect(await page.evaluate(() => !!document.getElementById('quote-item-btn')),
+      'footer 键已退役（无叠卡/有叠卡都不在场）').toBe(false);
     // 行级引用照旧（整条消息语义）
     const r = await page.evaluate(id => window.__quoteRowOn(id), msgId);
     expect(r.ok, '单图行的 footer 引用钮仍可用').toBe(true);
@@ -246,13 +244,12 @@ test.describe('⑤ 既有语义不破', () => {
       const frontIdx = Array.from(row.querySelectorAll('.pop-stack-view .media-layer')).findIndex(l => l.classList.contains('layer-front'));
       const st = window.__stackFront(id);
       const btn = document.getElementById('quote-item-btn');
-      return { changed: before !== after, frontIdx, state: st, btnTitle: btn ? btn.title : '', btnHidden: btn ? !!btn.hidden : null };
+      return { changed: before !== after, frontIdx, state: st, btnTitle: btn ? btn.title : '', btnHidden: btn ? !!btn.hidden : null, btnRetired: !btn };
     }, msgId);
     expect(drag.frontIdx, '拖动后 front 换到第 2 张').toBe(1);
     expect(drag.state.index, 'popQuoteState 的当前张跟着拖动走').toBe(1);
     expect(drag.state.descName, '当前张描述符 = 第 2 张').toBe('shot-1.png');
-    expect(drag.btnHidden, '仍然可见（仍有叠卡）').toBe(false);
-    expect(drag.btnTitle, 'footer 键文案跟着当前张更新').toContain('第 2/3 张');
+    expect(drag.btnRetired, '引用键保持退役态（0 元素）').toBe(true);
 
     const whole = await page.evaluate(id => window.__quoteRowOn(id), msgId);
     expect(whole.ok).toBe(true);
@@ -272,14 +269,10 @@ test.describe('⑤ 既有语义不破', () => {
     const geo = await page.evaluate((id) => {
       const row = window.__mediaRowById(id);
       const surface = row.querySelectorAll('.pop-media-quote').length;
-      const b = document.getElementById('quote-item-btn');
-      const r = b ? b.getBoundingClientRect() : null;
-      return { surface, hidden: b ? !!b.hidden : null, w: r ? Math.round(r.width) : 0, h: r ? Math.round(r.height) : 0, opacity: b ? getComputedStyle(b).opacity : '' };
+      return { surface, btnRetired: !document.getElementById('quote-item-btn') };
     }, msgId);
     expect(geo.surface, '手机层叠卡面同样零引用钮').toBe(0);
-    expect(geo.hidden, 'footer 键可见').toBe(false);
-    expect(Number(geo.opacity), 'footer 键不透明（不靠 hover 才是可见的）').toBeGreaterThanOrEqual(0.99);
-    expect(Math.min(geo.w, geo.h), '手机层触控档 ≥44').toBeGreaterThanOrEqual(44);
+    expect(geo.btnRetired, '手机层引用键同样退役（0 元素）').toBe(true);
     const r = await page.evaluate(([id]) => window.__quoteItemOn(id, 1), [msgId]);
     expect(r.ok).toBe(true);
     expect(r.itemIndex).toBe(1);

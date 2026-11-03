@@ -57,27 +57,33 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   overflow: hidden;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255,255,255,0.25),
-    0px 2px 8px rgba(0,0,0,0.04),
-    0px 8px 32px rgba(0,0,0,0.10);
-}
-@media (prefers-color-scheme: dark) {
-  .flow-agent-modal {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255,255,255,0.04),
-      0px 2px 8px rgba(0,0,0,0.20),
-      0px 8px 32px rgba(0,0,0,0.35);
-  }
+  /* 全站一套毛玻璃（sapphire.css --frost-shadow 单源；design-system 的
+     --ds-shadow-panel 即其别名）：亮/暗双档由 token 自身解析——本面不再各画
+     一套三元投影（panel-ia 批 · 面板族弹窗统一收编，暗档逐字同值，亮档底影
+     收进「唯一投影」口径）。 */
+  box-shadow: var(--ds-shadow-panel);
 }
 
-/* Header — matches #header glassmorphism + sapphire refraction line. */
+/* Header — matches #header glassmorphism + sapphire refraction line.
+   ── panel-ia 批（2026-11-03 · 竖排字实拍 784832362646666_IMG_1707.jpg）────────
+   症状：卡片标题「文字卡模板升级」逐字竖排（一字一行）。根因 = **flex 压缩**，
+   不是 writing-mode / 逐字 span：旧头是一行 display:flex 且三个文本槽都可自由
+   收缩，长任务全文（.flow-agent-subtitle）与长模型串（.flow-agent-model）同场时，
+   主名槽被压到 min-content —— CJK 允许任意两字间断行 ⇒ 压缩终点就是「一列一个字」。
+   修法写成机制契约（不是一次性补丁）：
+     · .flow-agent-name 不参与收缩（flex:0 0 auto）+ 单行（nowrap）+ 自身截断
+       （max-width 46% / ellipsis）—— 无论邻居多长都不会再退回竖排；
+     · 长文本槽（subtitle / model）单行截断（nowrap + min-width:0 + ellipsis），
+       不再靠多行换行撑高头部（原形态在窄屏把头部撑到 5 行，视觉噪音主源之一）；
+     · 间距/字阶/圆角一律取 --ds-* 槽（design-system.css 单源）。
+   回归断言：evidence/panel-ia/verify-panel-ia.mjs U1/U2/U4（U4 = 真实几何探针：
+   390px 窄容器 + 长任务全文，量 .flow-agent-name 的宽高比与行数）。 */
 .flow-agent-header {
-  display: flex; align-items: center; gap: 6px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.08));
+  display: flex; align-items: center; gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-4);
+  border-bottom: var(--ds-border-width) solid var(--glass-border);
   flex-shrink: 0;
   position: relative;
   user-select: none;
@@ -89,29 +95,62 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   height: 1px;
   background: linear-gradient(90deg,
     transparent 10%,
-    var(--sapphire-refraction, rgba(99,179,237,0.25)) 50%,
+    var(--sapphire-refraction) 50%,
     transparent 90%);
   pointer-events: none;
   z-index: 1;
 }
 .flow-agent-name {
-  font: 600 13px -apple-system, BlinkMacSystemFont, sans-serif;
-  color: var(--color-text);
+  flex: 0 0 auto;
+  max-width: 46%;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-body);
+  font-weight: var(--ds-fw-title);
+  line-height: var(--ds-lh-title);
+  color: var(--ds-text);
 }
 .flow-agent-subtitle {
-  font: 400 11px -apple-system, sans-serif;
-  color: var(--color-text-muted);
-  margin-right: auto; margin-left: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-meta);
+  line-height: var(--ds-lh-title);
+  color: var(--ds-text-muted);
+  margin-right: auto; margin-left: 0;
 }
+/* 模型徽标槽：单行、可收缩、自身截断（长 provider/model 串不再撑行/挤邻居）。 */
+.flow-agent-model {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 42%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-meta);
+  line-height: var(--ds-lh-title);
+  color: var(--ds-text-muted);
+  text-align: right;
+}
+.flow-agent-model .flow-agent-subtitle,
+.flow-agent-model .flow-agent-model-badge { margin: 0; min-width: 0; }
 /* 弹窗头部用量环样式已随 2026-10-23 上下文用量显示退役批删除。 */
 .flow-agent-close {
-  cursor: pointer; font-size: 16px; line-height: 1;
-  opacity: 0.7; transition: opacity 0.15s;
-  padding: 2px 4px; color: var(--color-text);
+  cursor: pointer; font-size: var(--ds-fs-title); line-height: var(--ds-lh-tight);
+  opacity: 0.7; transition: opacity var(--ds-dur-hover) var(--ds-ease-std);
+  padding: var(--ds-space-half) var(--ds-space-1); color: var(--ds-text);
   z-index: 10;
-  border-radius: 4px;
+  flex: 0 0 auto;
+  border-radius: var(--ds-radius-badge);
 }
-.flow-agent-close:hover { opacity: 1; background: rgba(255,255,255,0.06); }
+.flow-agent-close:hover { opacity: 1; background: var(--ds-control-bg-hover); }
 /* Code copy buttons inside popup: shift left to avoid overlapping close button */
 .flow-agent-modal .code-copy-btn { right: 40px; }
 
@@ -145,7 +184,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   height: 1px;
   background: linear-gradient(90deg,
     transparent 10%,
-    var(--sapphire-refraction, rgba(99,179,237,0.25)) 50%,
+    var(--sapphire-refraction) 50%,
     transparent 90%);
   pointer-events: none;
   z-index: 1;
@@ -156,14 +195,14 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 }
 .flow-agent-footer.running .fa-status-dot,
 .flow-agent-footer.responding .fa-status-dot {
-  background: var(--color-primary, #07c160); opacity: 1;
+  background: var(--color-primary); opacity: 1;
   animation: fa-pulse 1.4s ease-in-out infinite;
 }
 .flow-agent-footer.done .fa-status-dot {
-  background: var(--color-success, #4caf50); opacity: 1;
+  background: var(--color-success); opacity: 1;
 }
 .flow-agent-footer.failed .fa-status-dot {
-  background: var(--color-error, #f44336); opacity: 1;
+  background: var(--color-error); opacity: 1;
 }
 /* Frozen (work-schedule park, freeze-spec §3.2): sapphire dot + tint,
    sapphire task text — distinct from running (pulse green) / done (green) */
@@ -229,7 +268,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   animation: fa-pulse 1.4s ease-in-out infinite;
 }
 .flow-agent-footer.tool .fa-status-dot {
-  background: #d4a030; opacity: 1;
+  background: var(--status-warn-icon); opacity: 1;
   animation: fa-pulse 0.9s ease-in-out infinite;
 }
 /* 2026-09-03 toolline truncate fix: the phase line carries "Using tool: …"
@@ -271,7 +310,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   transition: background 0.15s, box-shadow 0.15s, border-color 0.15s, opacity 0.15s;
 }
 .flow-agent-footer .fa-mgmt-btn svg { width: 13px; height: 13px; stroke-width: 2.5; }
-.flow-agent-footer .fa-mgmt-stop { color: var(--color-error, #f44336); }
+.flow-agent-footer .fa-mgmt-stop { color: var(--color-error); }
 .flow-agent-footer .fa-mgmt-retry { color: rgb(var(--sapphire)); }
 .flow-agent-footer .fa-mgmt-btn.readonly {
   opacity: 0.35;
@@ -280,7 +319,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 .flow-agent-footer .fa-retries {
   font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
   font-variant-numeric: tabular-nums;
-  color: #d4a030;
+  color: var(--status-warn-icon);
 }
 .flow-agent-footer .fa-uptime {
   font: 400 11px -apple-system, BlinkMacSystemFont, sans-serif;

@@ -1,4 +1,4 @@
-/* keyboard.css — 键盘层：焦点环基线 / 模式指示器 / 命令面板（keyboard-first 一期，2026-11-01）
+/* keyboard.css — 键盘层：焦点环基线 / 命令面板（keyboard-first 一期，2026-11-01）
    ══════════════════════════════════════════════════════════════════════════
    为什么是一个独立文件而不是散进既有 26 个 CSS：
    改造前全树 26 个文件写了 60+ 条 focus 规则，却**没有一条兜底基线** ——
@@ -8,6 +8,10 @@
    颜色纪律：零裸 hex。焦点环 = --btn-focus-ring（蓝族单源，亮 #3b82f6 /
    暗 #60a5fa 双档，已由 sapphire.css:927 与 stand-tokens.css:133/141 定义），
    因此暗/亮两套主题下都可见，且不引入新色。
+
+   🔴 §2 模式指示器（.nf-mode-chip）与对话输入框本体环（#input:focus-visible）
+   已随作者令 2026-11-03 10:11 ④（输入框键盘提示与高亮移除）整块退役；本文件
+   现存 = 焦点环基线 + 命令面板外观，§ 编号顺延保留原文。
    ══════════════════════════════════════════════════════════════════════════ */
 
 :root {
@@ -49,10 +53,11 @@
   outline-offset: var(--nf-focus-ring-offset);
 }
 
-/* 输入框：既有 `#input { outline: none }`（input.css）把环压掉了，这里按键盘
-   语义显式补回 —— 键盘优先的输入框必须让人看见「字会进这里」。命令面板的输入框
-   三期换成 Monaco 的 `.quick-input-box`，选择器跟着换（旧 `.nf-palette-input` 已退役）。 */
-#input:focus-visible,
+/* 输入框环：🔴 对话输入框本体的键盘态高亮已随作者令 2026-11-03 10:11 ④
+   （「输入框键盘提示与高亮移除……键盘态不再给输入区加高亮」）退役 —— 既有
+   `#input { outline: none }`（input.css）恢复为唯一口径；焦点是否在输入框由
+   `body[data-nf-mode]`（mode.js，零视觉痕迹）承载，不再上屏。
+   命令面板的输入框（Monaco `.quick-input-box`）是另一张脸，环照旧。 */
 #nf-quickinput-host .quick-input-box input:focus-visible {
   outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
   outline-offset: var(--nf-focus-ring-offset);
@@ -71,59 +76,15 @@
   outline: none;
 }
 
-/* ── 2 模式指示器（meta / edit 双模态的状态面） ──────────────────────────
-   宿主 = #input-wrap 内绝对定位（与既有 #ask-indicator / #skill-indicator /
-   #compact-indicator 同一宿主），靠右放置 —— 那三个都在 left:8px，互不遮挡。
-   绝对定位 = **零布局位移**：不挤动输入框、不改行高、不动任何既有元素盒。
-   形态 = 符号 + 单词两段纯文本，任何主题/字体下都能被视觉基线截图捕捉。 */
-.nf-mode-chip {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  z-index: 6;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 1px 7px;
-  border-radius: 6px;
-  border: 1px solid var(--nf-chip-border);
-  background: var(--nf-chip-bg);
-  font-size: 9.5px;
-  font-weight: 600;
-  line-height: 1.5;
-  letter-spacing: 0.7px;
-  text-transform: uppercase;
-  white-space: nowrap;
-  pointer-events: none;
-  user-select: none;
-  color: var(--color-text-muted);
-  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
-}
-
-.nf-mode-chip .nf-mode-chip-glyph {
-  font-weight: 500;
-  letter-spacing: 0;
-  opacity: 0.85;
-}
-
-/* edit = 输入态：蓝族填充，一眼可辨（对应焦点真的在输入框里）。 */
-.nf-mode-chip[data-mode="edit"] {
-  border-color: var(--nf-chip-border-on);
-  background: var(--nf-chip-bg-on);
-  color: var(--nf-focus-ring);
-}
-
-/* meta = 导航态：描边淡显，不抢注意力。 */
-.nf-mode-chip[data-mode="meta"] {
-  border-color: var(--nf-chip-border);
-  background: var(--nf-chip-bg);
-  color: var(--color-text-muted);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .nf-mode-chip { transition: none; }
-}
+/* ── 2 模式指示器（meta / edit 双模态的状态面）—— 🔴 已整块退役 ────────────
+   作者令 2026-11-03 10:11 ④：「输入框键盘提示与高亮移除——输入区的「[ ] NAV」
+   模式胶囊与键盘态高亮整块去掉；键盘模式指示若要有去处另行设计（不进输入框），
+   本批先移除。」原块（.nf-mode-chip 基础档 + glyph + [data-mode=edit/meta]
+   双态 + reduced-motion 兜底，共 5 条规则）摘除，js/mode.js 的挂载面
+   （ensureChip/paint）同批退役。防复活钉 =
+   /Users/kaiyu/.stand/evidence/ui-unification-20261103/input-fixes/
+   verify-five-fixes.mjs ④ 腿（CSS/JS/HTML 三面 0 命中）。
+   --nf-chip-* 四槽保留：命令面板（§3）仍在消费。 */
 
 /* ── 3 命令面板（三期：Monaco QuickInput 组件）─────────────────────────────
    内核换成了 Monaco 自带的 QuickInput（vs/platform/quickinput 的

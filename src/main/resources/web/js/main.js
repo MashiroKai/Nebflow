@@ -137,8 +137,8 @@ import { initFileSearch } from './fileSearch.js';
 import { initUsageDashboard } from './usageDashboard.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
-// 引用入口移入 footer 批（2026-11-02 11:00）：叠卡单张引用的 composer 入口装配。
-import { initQuoteItemButton } from './msgQuote.js';
+// 🔴 引用入口移入 footer 批（2026-11-02 11:00）的 initQuoteItemButton 接线随
+// 2026-11-03 10:11 ②（输入框引用图标移除）整链退役：本文件不再 import 该装配面。
 // 回合活动流条（turnActivity.js，对话层活性批 2026-10-22）已整链退役 ——
 // 2026-10-23 作者令逐字「这个活动面板我不是让删掉吗，就是对话框上面这个」。
 // 防复活钉：tests/turn-activity-stream.spec.mjs。
@@ -298,11 +298,10 @@ initChatView(
   }
 );
 
-// 引用入口移入 footer（2026-11-02 11:00 作者令「图片引用在footer显示就行了。不
-// 需要hover图片的时候也显示一个图标」）：叠卡单张引用的唯一入口 = composer footer
-// 动作行里的一枚键（#quote-item-btn）。装配挂在 primary 视图上（它拥有 #input-bar；
-// 其余窗口/面板无该条 ⇒ 无从装配，叠卡面上也不再长按钮）。
-initQuoteItemButton(chatViews.primary);
+// 🔴 引用入口（#quote-item-btn）装配已退役（作者令 2026-11-03 10:11 ②「输入框引用
+// 图标移除，不留替代按钮」）：输入框动作行不再引用 `initQuoteItemButton`——
+// 装配面本体在 msgQuote.js 同批摘除，本处不留调用点、不留死入口。
+// （叠卡单张引用能力面 startItemQuote 仍在，入口另行设计。）
 
 // D6 批 F2: pending-ask bar + header badge wiring (click = jump to oldest ask).
 initPendingAsks();
@@ -3499,8 +3498,12 @@ function renderBgDropdown() {
     // 绿=healthy / 黄=suspect / 红=escalated；bgHealthNorm 双端容错（脏值回落
     // healthy、空值（旧后端）零渲染不膨胀行高）。与智能体行 bgWaiting[].health
     // 同一词表同一账本（禁第二状态源）。
+    // panel-ia 批（2026-11-03 · 作者「信息太多、太杂」）：健康点只在**非健康**
+    // 时上位——healthy 行原本已是「状态点 + 状态词 + 绿健康点」三枚状态元素叠在
+    // 一行上（同一件事说三遍）；健康色因此改为**异常信号**（suspect/escalated
+    // 出点、healthy 静默）。判读链不变：词表/账本/后端字段零改动。
     const healthWord = bgHealthNorm(task.health);
-    const healthPart = healthWord
+    const healthPart = (healthWord && healthWord !== 'healthy')
       ? '<span class="bg-health-dot bg-health-' + healthWord + '" title="' + escapeHtml(t('bg.health.' + healthWord)) + '" aria-hidden="true"></span>'
       : '';
     const hb = task.heartbeat;
@@ -3538,12 +3541,16 @@ function renderBgDropdown() {
     return '<div class="bg-task-row' + (rowState === 'cancelling' ? ' bg-task-cancelling' : '') + endedClass + extraCls + '" role="listitem" tabindex="0" data-task-id="' + escapeHtml(task.taskId) + '">' +
       '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
       '<div class="bg-task-info">' +
+        // panel-ia 批（2026-11-03 · IA 重排）：行序翻转为「主名在前、meta 退后」——
+        // 身份（这是哪个任务）是第一读数，状态/设备/来源/行数/耗时是第二读数；
+        // 与智能体行（bgAgents.js 同批）和弹窗头（flow-agent 家族）同一层级序。
+        // 每条目仍恰一条 meta 状态行（H1/H2 断言锚）。
+        '<div class="bg-task-line bg-task-name-line">' +
+          '<span class="bg-task-name" title="' + escapeHtml(nameTitle) + '">' + escapeHtml(desc) + '</span>' +
+        '</div>' +
         '<div class="bg-task-line bg-task-meta">' +
           '<span class="bg-task-state' + stateClass + '">' + escapeHtml(statusLabel) + '</span>' +
           devicePart + originPart + modePart + healthPart + linesPart + exitPart + uptimePart +
-        '</div>' +
-        '<div class="bg-task-line bg-task-name-line">' +
-          '<span class="bg-task-name" title="' + escapeHtml(nameTitle) + '">' + escapeHtml(desc) + '</span>' +
         '</div>' +
       '</div>' +
       cancelPart +
@@ -3573,18 +3580,20 @@ function renderBgDropdown() {
     const uptimePart = earliest
       ? '<span class="bg-task-uptime">' + escapeHtml(formatDuration(now - earliest)) + '</span>' : '';
     const base = bgFamilyBaseLabel(members);
+    // panel-ia 批（2026-11-03）：组头行序同批翻转——族名（身份）在前，
+    // 聚合状态/计数/行数/族龄退到第二行。
     return '<div class="bg-task-row bg-task-row-family" role="listitem" tabindex="0" aria-expanded="' + (expanded ? 'true' : 'false') + '" data-family-key="' + escapeHtml(key) + '">' +
       '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
       '<div class="bg-task-info">' +
+        '<div class="bg-task-line bg-task-name-line">' +
+          '<span class="bg-task-name" title="' + escapeHtml(base || key) + '">' + escapeHtml(base || key) + '</span>' +
+          '<span class="bg-family-caret" aria-hidden="true">' + (expanded ? '▾' : '▸') + '</span>' +
+        '</div>' +
         '<div class="bg-task-line bg-task-meta">' +
           '<span class="bg-task-state' + (runningCount > 0 ? '' : ' bg-state-done') + '">' + escapeHtml(stateWord) + '</span>' +
           '<span class="bg-task-kind" title="' + escapeHtml(t('bg.familyTitle', { count: members.length })) + '">' +
             escapeHtml(t('bg.familyCount', { count: members.length })) + '</span>' +
           linesPart + uptimePart +
-        '</div>' +
-        '<div class="bg-task-line bg-task-name-line">' +
-          '<span class="bg-task-name" title="' + escapeHtml(base || key) + '">' + escapeHtml(base || key) + '</span>' +
-          '<span class="bg-family-caret" aria-hidden="true">' + (expanded ? '▾' : '▸') + '</span>' +
         '</div>' +
       '</div>' +
     '</div>';

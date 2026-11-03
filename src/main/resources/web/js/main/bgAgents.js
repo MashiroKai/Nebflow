@@ -1190,7 +1190,11 @@ function bgTaskRowHtml(id, info, opts = {}) {
       // are untouched. Supersedes the old meta+name two-line split for THIS
       // panel only (#bgagent-dropdown); the background-tasks panel
       // (#bg-dropdown) keeps .bg-task-meta / .bg-task-name-line untouched.
+      // panel-ia 批（2026-11-03 · IA 重排）：主名提前——行首第一读数 = 这是谁
+      // （名字），状态词与归组元数据（kind / project / orphan / badge）退后成
+      // 第二读数；与后台任务行（main.js 同批翻转）和弹窗头同一层级序（H3 断言锚）。
       '<div class="bg-task-line bg-task-main">' +
+        namePart +
         '<span class="bg-task-state' + (chainContinued ? ' bg-task-chain' : ' bg-state-' + rowState) + '"' +
           (chainTip ? ' title="' + escapeHtml(chainTip) + '" role="note"' : '') + '>' +
           (chainContinued ? statusIcon('workflow', 11, 'st-warn')
@@ -1198,7 +1202,7 @@ function bgTaskRowHtml(id, info, opts = {}) {
             : rowState === 'error' ? statusIcon('circle-x', 11, 'st-err')
             : '') +
           escapeHtml(statusLabel) + '</span>' +
-        kindPart + projectPart + orphanPart + namePart + taskPart + retriesPart + uptimePart +
+        kindPart + projectPart + orphanPart + taskPart + retriesPart + uptimePart +
       '</div>' +
       // 任务摘要次行（面板行说明批 2026-10-29 ②）：实名行的任务摘要上屏位——
       // 单行截断 + tooltip 全文；无摘要/已并入主名时零渲染（行高不膨胀）。
@@ -1241,9 +1245,11 @@ function bgStoreChildHtml(child) {
   return '<div class="bg-task-row bg-task-row-child" data-bg-row-level="child" role="listitem" tabindex="0" data-child-session="' + escapeHtml(sid) + '">' +
     '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
     '<div class="bg-task-info">' +
+      // panel-ia 批：主名在前（与 bgTaskRowHtml 同一批层级序）。
       '<div class="bg-task-line bg-task-main">' +
+        namePart +
         '<span class="bg-task-state bg-state-' + (state === 'active' ? 'running' : state) + '">' + escapeHtml(statusLabel) + '</span>' +
-        kindPart + namePart + retriesPart +
+        kindPart + retriesPart +
       '</div>' +
       (taskSummary
         ? '<div class="bg-task-line bg-task-subline"><span class="bg-task-sub" title="' + escapeHtml(desc) + '">' + escapeHtml(taskSummary) + '</span></div>'
@@ -1271,9 +1277,9 @@ function bgFlowChildHtml(node, delegateKey) {
     '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
     '<div class="bg-task-info">' +
       '<div class="bg-task-line bg-task-main">' +
+        '<span class="bg-task-name">' + escapeHtml(label) + '</span>' +
         '<span class="bg-task-state">' + escapeHtml(wordKey ? t(wordKey) : st) + '</span>' +
         '<span class="bg-task-kind">AgentFlow</span>' +
-        '<span class="bg-task-name">' + escapeHtml(label) + '</span>' +
         depPart +
       '</div>' +
     '</div>' +

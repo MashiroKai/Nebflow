@@ -222,7 +222,6 @@
 }
 #input-bar.frozen #voice-btn[disabled],
 #input-bar.frozen #attach-btn[disabled],
-#input-bar.frozen #quote-item-btn[disabled],
 #input-bar.frozen #stop-btn[disabled] {
   opacity: 0.4;
   cursor: default;
@@ -606,12 +605,10 @@
 @media (prefers-color-scheme: dark) {
   .att-ref .att-ref-icon .nf-qicon.is-thumb { background: rgba(255, 255, 255, 0.09); }
 }
-/* 引用入口移入 footer（2026-11-02 11:00）：footer 动作行的单枚引用键。`.icon-btn`
-   是既有 36×36（桌面）/48×48（手机层）按钮族 —— 本键只做「按需隐身」一处：
-   当前会话没有叠卡（= 没有单张可引）或引用入口不适用时 `hidden` 生效。
-   `.icon-btn` 是 display:flex ⇒ 属性 `hidden` 的 UA `display:none` 会被压过，
-   必须显式补一条同权规则（值档零新色）。 */
-.icon-btn[hidden] { display: none; }
+/* 引用入口键（#quote-item-btn）CSS 随键退役（作者令 2026-11-03 10:11 ②）：
+   `.icon-btn[hidden] { display:none }` 这条同权补丁原只为「没有可引叠卡时按需
+   隐身」而写；键本身移除后无消费方，规则一并摘除（.icon-btn 是 display:flex，
+   UA hidden 会被压过，将来若重引入按需隐身形态须同时补回该补丁）。 */
 /* ✕ 圆盘随 chip 同比例缩小（同字形/同色/同居中纪律，仅尺寸档位）—— 与 .att-file
    的紧凑高度对齐；hover 态沿用共用块「红底白 ✕」钉回（input.css 上方同段）。 */
 #attachment-preview .att-ref[data-ref-type="chat-message"] .fm-quote-remove { width: 13px; height: 13px; }
@@ -934,23 +931,29 @@
      改回之前的绿色」）：配色恢复 10-30 墨族换代前的微信绿考古值（git
      c91de8456^ 本块：rest #07C160 / hover #06AD56 / active #059A4C，白字，
      1px 深绿缘 #06AD56）——全走 --ctl-send-* 单源（stand-tokens.css，双主题
-     同值）。形态 = v2 药丸几何（h32 r999）保留；材质换代 = C1 扁平实底
-     （v3 §D 族纪律：无 blur / 无镜面高光 / 无浮影 / 按压 = 色深一档无弹缩），
-     liquid-glass.css 的墨玻璃药丸承接块随本批退役；spring 按压与 ::before
-     高光层移除。禁用灰玻璃（--btn-disabled-*）与掉线灰档语义不变。
-     （10-30 批注释见 git 历史；本块自 v3 起只描述现态。） */
+     同值）。
+     🔴 形态回归修正（作者令 2026-11-03 10:11 ③「发送/停止钮钉死圆形旧版…
+     把 send 与 stop 两态统一钉回圆形按钮形态（图标在圆内切换）…禁止再出现
+     圆角方块」）：v2 批（d4cc8d1890, 2026-10-31 10:45「液体玻璃 v2 三件 —
+     按钮族全端换代」）把本键从考古圆形（r50% 36×36，见 d4cc8d1890^）改成
+     999px 药丸（h32 + 横向 padding 0 14px）。本批**收回药丸几何**、钉回
+     d4cc8d1890^ 基准：圆形 36×36 正圆 + 零横向 padding + 18px 图标 —— 与
+     #stop-btn 逐值同几何（两态只换图标与配色，形状语言零差异）。
+     材质维持 v3 C1 扁平实底（无 blur / 无镜面高光 / 无浮影 / 按压 = 色深一档
+     无弹缩）；禁用灰玻璃（--btn-disabled-*）与掉线灰档语义不变。
+     （10-30/v2 批注释见 git 历史；本块自 v3 起只描述现态。） */
   background: var(--ctl-send-bg);
   color: var(--ctl-send-ink);
-  /* Edge: 药丸同底色描边（按压/悬停递进 --ctl-send-bg-hover/active）。 */
+  /* Edge: 圆钮同底色描边（按压/悬停递进 --ctl-send-bg-hover/active）。 */
   border: 1px solid var(--ctl-send-border);
-  border-radius: 999px;
-  height: 32px;
-  padding: 0 14px;
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  padding: 0;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
   flex-shrink: 0;
   transition:
     background-color 0.15s ease,
@@ -976,7 +979,9 @@
   transform: none;
 }
 #send-btn:disabled svg { opacity: 0.45; }
-#send-btn svg { width: 16px; height: 16px; stroke-width: 2.5; }
+/* 图标 18px（2026-11-03 10:11 ③ 回归修正）：与 #stop-btn 的 18px 图标同档 ——
+   圆形钮内两态只换图标（send 纸飞机 ⇄ stop 方块），图标档位一致才「在圆内切换」。 */
+#send-btn svg { width: 18px; height: 18px; stroke-width: 2.5; }
 /* Disconnected state — doubles as the connection indicator: the send button
    fades into the family's **gray** (掉线灰) so users see they can't send until
    the link is back.
@@ -1007,6 +1012,8 @@
    无 blur/无高光/无浮影）。悬浮玻璃只允许消费 glass.css 包档，非悬浮面
    不再残留包外材质（原为 v3 扁平口径外的唯一残留，侦察批 inventory §四）。 */
   border: 1px solid transparent;
+  /* 圆形形态 = 本批基准（作者令 2026-11-03 10:11 ③）：#stop-btn 的 36×36 正圆
+     是**锚**，#send-btn 逐值对齐它（两态同几何，禁止任一侧再出现圆角方块/药丸）。 */
   border-radius: 50%;
   width: 36px; height: 36px;
   cursor: pointer;

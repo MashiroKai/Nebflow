@@ -113,12 +113,15 @@ async function seedFourPills(page) {
   return { imgId, docId, txtId, histId };
 }
 
-/* ═══════ ① 字形同一：footer 入口键 = 文字引用牌（两处宿主） ═══════ */
+/* ═══════ ① 字形同一：徽章引用钮 = 文字引用牌 = composer chip ═══════
+   🔴 2026-11-03 10:11 ②：composer 引用键（#quote-item-btn）整链退役 ⇒ 本组不再是
+   「footer 键 = 各处」，改为「徽章引用钮 / 气泡引用牌 / composer chip 三处同源」，
+   并补一条退役钉（键 0 元素）。 */
 
-test.describe('① 同一 SVG（footer 入口键 = 气泡引用牌 = composer chip）', () => {
+test.describe('① 同一 SVG（徽章引用钮 = 气泡引用牌 = composer chip；footer 键已退役）', () => {
   test('SVG path d 串逐字相同 + data-icon 标识相同', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
-    // footer 键字形：先铺一条叠卡让 footer 键显形（装配 = initQuoteItemButton）
+    // 先铺一条叠卡（徽章引用钮在场的行）
     await page.evaluate(() => window.__renderUserStack(3));
     const txtId = await page.evaluate(() => window.__quotePill({
       kind: 'text', text: '这是一段被引用的文字', senderRole: 'ai', senderName: 'Nebula', ts: Date.now(),
@@ -127,32 +130,34 @@ test.describe('① 同一 SVG（footer 入口键 = 气泡引用牌 = composer ch
     await page.evaluate(() => window.__startQuoteDirect({
       kind: 'text', text: '被引用的文字消息', senderRole: 'ai', senderName: 'Nebula', ts: Date.now(),
     }));
-    // footer 键刷新走 rAF 收敛、徽章引用钮走 rAF 挂载 —— 等帧落定再读
+    // 徽章引用钮走 rAF 挂载 —— 等帧落定再读
     await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
     await page.waitForTimeout(150);
 
     const shape = await page.evaluate(id => window.__quoteEntryIconShape(id), txtId);
-    expect(shape.footer, 'footer 入口键 #quote-item-btn 有 SVG').toBeTruthy();
+    // 🔴 2026-11-03 10:11 ② 退役钉：composer 引用键 0 元素（无替代按钮）
+    expect(await page.evaluate(() => !!document.getElementById('quote-item-btn')),
+      'composer 引用键 #quote-item-btn 已退役').toBe(false);
+    expect(shape.footer, 'footer 键无 SVG（键已不在场）').toBeFalsy();
     expect(shape.pill, '文字引用牌有 SVG').toBeTruthy();
     expect(shape.chip, 'composer 文字引用 chip 有 SVG').toBeTruthy();
+    expect(shape.badge, '行内徽章引用钮有 SVG').toBeTruthy();
 
-    // ① path d 逐字相同（本批核心断言）
-    expect(shape.footer.d.length, 'footer 键 = 双路径字形').toBe(2);
-    expect(shape.pill.d, '气泡引用牌的 path d 与 footer 键逐字相同').toEqual(shape.footer.d);
-    expect(shape.chip.d, 'composer chip 的 path d 与 footer 键逐字相同').toEqual(shape.footer.d);
+    // ① path d 逐字相同（本批核心断言；同源锚 = 徽章引用钮）
+    expect(shape.badge.d.length, '徽章引用钮 = 双路径字形').toBe(2);
+    expect(shape.pill.d, '气泡引用牌的 path d 与徽章引用钮逐字相同').toEqual(shape.badge.d);
+    expect(shape.chip.d, 'composer chip 的 path d 与徽章引用钮逐字相同').toEqual(shape.badge.d);
     // ① data-icon 标识同源
-    expect(shape.footer.iconId, 'footer 键带 data-icon').toBe('quote-entry');
+    expect(shape.badge.iconId, '徽章引用钮带 data-icon').toBe('quote-entry');
     expect(shape.pill.iconId, '气泡引用牌 data-icon 同标识').toBe('quote-entry');
     expect(shape.chip.iconId, 'chip data-icon 同标识').toBe('quote-entry');
-    // 徽章引用钮（行内引用钮）也同源 —— 「改一处四处同步」的证据
-    if (shape.badge) expect(shape.badge.d, 'footer 徽章引用钮 .msg-quote-btn 同字形').toEqual(shape.footer.d);
 
     // 块级读数复核
     const pill = await page.evaluate(id => window.__quoteBlockShape(id), txtId);
     expect(pill.icon.kind, '文字引用牌 = 字形分支').toBe('glyph');
-    expect(pill.icon.svgD, '引用牌 SVG d 与 footer 键逐字相同（块级复核）').toEqual(shape.footer.d);
+    expect(pill.icon.svgD, '引用牌 SVG d 与徽章引用钮逐字相同（块级复核）').toEqual(shape.badge.d);
     expect(pageErrors).toEqual([]);
-    await page.locator('#input-bar').screenshot({ path: path.join(SHOTS, 'unify-footer-entry.png') }).catch(() => {});
+    await page.locator('#chat').first().screenshot({ path: path.join(SHOTS, 'unify-quote-entry-retired.png') }).catch(() => {});
     await context.close();
   });
 });
@@ -285,15 +290,15 @@ test.describe('④ 深浅主题下随引用牌色上下文', () => {
       expect(block.icon.svgColor, '块级读数复核：图标色 = 块色').toBe(block.boxColor);
       // ④ stroke 走 currentColor
       expect(shape.pill.stroke, '引用牌 SVG stroke = currentColor').toBe('currentColor');
-      expect(shape.footer.stroke, 'footer 键 SVG stroke = currentColor').toBe('currentColor');
+      expect(shape.badge.stroke, '徽章引用钮 SVG stroke = currentColor').toBe('currentColor');
       // ④ 只复用形状、不复用颜色 —— 变量级判据：引用牌图标吃的是**引用牌那条链**
       //    （`--color-text-muted`），而不是 footer 键的按钮色链。
       //    注：dark 主题下两个变量恰好同值、且 `.icon-btn` 在 dark 里另有硬编码
       //    `color:#7b7e88`（既有规则，本批未动）—— 所以「值不相等」不是可判据，
       //    只有「吃哪个变量」是可判据的。
       expect(shape.pill.color, '引用牌图标吃 --color-text-muted（引用牌色上下文）').toBe(shape.varTextMuted);
-      expect(shape.footer.color, 'footer 键仍吃自己的按钮色链（本批未改按钮外观）')
-        .toBe(shape.footerHostColor);
+      expect(shape.badge.color, '徽章引用钮仍吃徽章自己的色链')
+        .toBe(shape.badgeHostColor);
       // chip 侧同理：图标色 = chip 宿主色（不是引用牌、也不是按钮的色）
       expect(shape.chip.color, 'chip 图标色 = chip 宿主色').toBe(shape.chipHostColor);
       // ④ 是 rgb() 计算值（证明不是 hex 字面量）

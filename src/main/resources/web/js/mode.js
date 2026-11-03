@@ -5,13 +5,18 @@
 // 互不 import —— 一个纯数据层，一个纯 DOM 层。
 //
 // 三个视觉/交互不变式（作者 2026-11-01 裁定）：
-//   ① 用户必须一眼知道当前在 meta 还是 edit。→ #nf-mode-chip 常驻可见
-//      （meta = 描边淡显 NAV；edit = 蓝族填充 EDIT），且**可被视觉基线截图捕捉**。
+//   ① 用户必须一眼知道当前在 meta 还是 edit。→ 🔴 **已退役**（作者令 2026-11-03
+//      10:11 ④「输入框键盘提示与高亮移除：输入区的「[ ] NAV」模式胶囊与键盘态高亮
+//      整块去掉；键盘模式指示若要有去处另行设计（不进输入框），本批先移除」）：
+//      `#nf-mode-chip` / `.nf-mode-chip` 整链（本模块的 ensureChip/paint + keyboard.css
+//      的 §2 指示器块）同批摘除，模式状态只落 `body[data-nf-mode]`（机器可读，零视觉
+//      痕迹，供 keymap 仲裁与 scripts/keyboard-check.mjs 探针）。
 //   ② meta 下 `[`/`]` 调整「中心区聚焦位置」、`Shift+[`/`Shift+*`]` 在侧边栏条目间移动。
 //   ③ `Space` meta→edit、`Enter`（发送后）edit→meta。
 //
 // 焦点即模式：edit ⇔ 焦点在对话输入框；meta ⇔ 焦点在别处。这条等价关系是防
 // 「以为在导航、其实把字打进了输入框」的机械保证 —— 不靠自觉，靠 focus 位置。
+// （等价关系本身不变；变的是它**不再有上屏指示器**。）
 
 import { getMode, setMode } from './keymap.js';
 
@@ -24,46 +29,16 @@ const SIDEBAR_ITEM_SEL = [
   '[data-focus-key]',
 ].join(',');
 
-/** @type {HTMLElement|null} */
-let chipEl = null;
-
-/** 语言无关的短标签（不引 i18n 表，避免一次性加 4 条键；形态是符号 + 单词）。 */
-const LABEL = { meta: 'NAV', edit: 'EDIT' };
-
 /**
- * 建模式指示器并挂进 #input-wrap（与既有 ASK/SKILL/COMPACT 三个 chip 同一宿主，
- * 但靠右 —— 那三个都在 left:8px，互不遮挡）。
+ * 模式状态发布（2026-11-03 10:11 ④）：替代已退役的 `.nf-mode-chip` 指示器。
+ * 只写 `body[data-nf-mode]` —— **无元素、无类、无高亮**，键盘态不再给任何容器
+ * 上视觉痕迹（作者令「键盘态高亮整块去掉」）。消费者 = 本模块的 keymap 仲裁链与
+ * scripts/keyboard-check.mjs 的探针（读同一个属性，读数语义与旧 chip.dataset.mode
+ * 逐字等价：'meta' | 'edit'）。
  * @returns {void}
  */
-function ensureChip() {
-  if (chipEl && chipEl.isConnected) return;
-  const wrap = document.getElementById('input-wrap');
-  if (!wrap) return; // 输入区未装配（测试壳）⇒ 静默降级
-  chipEl = document.createElement('div');
-  chipEl.id = 'nf-mode-chip';
-  chipEl.className = 'nf-mode-chip';
-  chipEl.setAttribute('role', 'status');
-  chipEl.setAttribute('aria-live', 'polite');
-  chipEl.setAttribute('aria-label', 'keyboard mode');
-  chipEl.title = 'Space 进入输入 · Enter 发送后回到导航 · [ ] 中心区 · Shift+[ ] 侧边栏';
-  wrap.appendChild(chipEl);
-  paint();
-}
-
-/** 把当前模式画到 chip 上。 @returns {void} */
-function paint() {
-  if (!chipEl) return;
-  const mode = getMode();
-  chipEl.dataset.mode = mode === 'edit' ? 'edit' : 'meta';
-  chipEl.innerHTML = '';
-  const glyph = document.createElement('span');
-  glyph.className = 'nf-mode-chip-glyph';
-  glyph.setAttribute('aria-hidden', 'true');
-  glyph.textContent = mode === 'edit' ? '\u2038' : '[ ]';
-  const word = document.createElement('span');
-  word.className = 'nf-mode-chip-label';
-  word.textContent = mode === 'edit' ? LABEL.edit : LABEL.meta;
-  chipEl.append(glyph, word);
+function publishMode() {
+  document.body.dataset.nfMode = getMode() === 'edit' ? 'edit' : 'meta';
 }
 
 /**
@@ -222,16 +197,16 @@ export function stepSidebar(dir) {
 }
 
 /**
- * 启动模式面：建 chip、跟随模式变化、把输入框焦点与模式绑死。
+ * 启动模式面：跟随模式变化（发布到 body[data-nf-mode]）、把输入框焦点与模式绑死。
+ * （2026-11-03 10:11 ④：不再建任何指示器元素 —— 原来的 ensureChip/paint 已退役。）
  * @returns {void}
  */
 export function initMode() {
-  ensureChip();
-  document.addEventListener('nf-mode-change', paint);
+  document.addEventListener('nf-mode-change', publishMode);
   const input = document.getElementById('input');
   if (input) {
     input.addEventListener('focus', () => { setMode('edit'); });
     input.addEventListener('blur', () => { setMode('meta'); });
   }
-  paint();
+  publishMode();
 }

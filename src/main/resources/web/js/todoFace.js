@@ -882,7 +882,9 @@ class TodoFace {
   // 在底缘中点」：
   //   · 面板开态 display:flex 排在胶囊之前（CSS），#input-area bottom 锚定 ⇒
   //     高度只向上长、输入框位置不动、聊天让位自动跟随（main.js 读 offsetHeight）。
-  //   · 过渡起源点 = `transform-origin: 50% 100%`（面板底缘中点 = 胶囊正上方）
+  //   · 过渡起源点 = `transform-origin: 50% calc(0% - 8px)`（面板**顶**缘中点 −
+  //     8px 呼吸缝 = 胶囊正下方；2026-11-03 10:11 ① 挪位后方向翻转，原 50% 100%
+  //     是「面板在输入框上方、向上下长」时代的底缘原点）
   //     + scale 0.94→1 / 高度弹簧取消（面板高度由内容决定，弹簧只做 scale）。
 
   expand() {
