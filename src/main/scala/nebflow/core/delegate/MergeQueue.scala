@@ -947,11 +947,20 @@ object MergeQueue:
 
   /**
    * 关账 merged（幂等）。`via` = 审计来源（fact-check / round / boot-reconcile）。
-   * `cleanup` = 合并后现场回收（PostMergeCleanup——零领先守卫，绝不丢工作）。
+   * `cleanup` = 合并后现场回收（PostMergeCleanup——零领先守卫 ＋ 在飞守卫，绝不丢工作）。
+   * `ownerTerminal` = 本次关账是否由**属主自己的终态序列**驱动（merge-round /
+   * fact-check-on-terminal）——该腿的现场回收跳过在飞守卫（「分支已合并」与「会话正在
+   * 收尾」是同一件事；队列侧异步腿缺省走守卫，见 [[PostMergeCleanup.run]]）。
    * 关账前再跑一次账实核对：事实未落地但调用方声称 merged（机械验收已挡住常规
    * 路径；boot/手工路径兜底）⇒ 照关（调用方是裁决者），但 closeReason 如实标注。
    */
-  def closeMerged(delegateId: String, via: String, closeReason: Option[String] = None, cleanup: Boolean = false): Unit =
+  def closeMerged(
+    delegateId: String,
+    via: String,
+    closeReason: Option[String] = None,
+    cleanup: Boolean = false,
+    ownerTerminal: Boolean = false
+  ): Unit =
     lock
       .synchronized {
         ensureLoadedLocked()
@@ -968,7 +977,11 @@ object MergeQueue:
             record(closed, "merge-merged", Json.obj("via" -> via.asJson, "reason" -> closed.closeReason.fold("".asJson)(_.asJson)))
             if cleanup then
               try
-                DelegateRegistry.find(delegateId).foreach(rec => PostMergeCleanup.run(Some(rec)).unsafeRunSync())
+                DelegateRegistry
+                  .find(delegateId)
+                  .foreach(rec =>
+                    PostMergeCleanup.run(Some(rec), ownerTerminal).unsafeRunSync()
+                  )
               catch
                 case e: Throwable =>
                   logger.warn(s"[merge-queue] post-merge cleanup failed for $delegateId: ${Option(e.getMessage).getOrElse(e.toString).take(200)}")
@@ -978,8 +991,14 @@ object MergeQueue:
       .foreach { closed => pump(closed.projectKey) }
 
   /** IO 包装（boot reconcile 路径）。 */
-  def closeMergedIO(delegateId: String, via: String, closeReason: Option[String] = None, cleanup: Boolean = false): IO[Unit] =
-    IO.blocking(closeMerged(delegateId, via, closeReason, cleanup))
+  def closeMergedIO(
+    delegateId: String,
+    via: String,
+    closeReason: Option[String] = None,
+    cleanup: Boolean = false,
+    ownerTerminal: Boolean = false
+  ): IO[Unit] =
+    IO.blocking(closeMerged(delegateId, via, closeReason, cleanup, ownerTerminal))
 
   /**
    * 关账 owner-gone（幂等）：属主失联——通知不可达 / 会话终态 / 重启后通道丢失。

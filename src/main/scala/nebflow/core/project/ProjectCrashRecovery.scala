@@ -318,16 +318,17 @@ object ProjectCrashRecovery:
   ): IO[Int] =
     DelegateRegistry.find(scope) match
       case None =>
-        recoverDelegateScopeOn(
-          baseWorkspace,
-          scope,
-          project = None,
-          engineCwd = baseWorkspace,
-          concurrency,
-          reportGateHold,
-          rootNotifyQuietMs,
-          wsSend
-        )
+        // 孤儿链判定（引擎会话治理专项 · 缺陷六，作者令 14:52）：作用域的属主
+        // dispatcher **不在 delegate 注册表**（重启前已死、且无在册记录）⇒ 这是
+        // 一条孤儿链。改前此处无条件重挂 + 续跑 Running/Interrupted 节点——父已
+        // 死的链在面板上继续「运行中」，节点无限推进、结果无处投递。
+        // 现行为：**暂停推进**（处置语义选 a：链台账落 paused——`blocksDispatch`
+        // 把所有派发闸住，根会话可经 resume 原语接管；不选 b「跑完归档」——无主
+        // 产出没有收口对象，白烧 LLM 且与后续接管实例抢工作树）+ `chain-orphaned`
+        // 审计事件（含 chainId/parentSessionId/剩余节点数）+ 根会话通知（活投 /
+        // 持久收件箱补投）。挂载动作照做（只读面/面板语义要宿主在，但**零认领
+        // 零续跑**）。
+        recoverOrphanScope(baseWorkspace, scope, concurrency, reportGateHold, rootNotifyQuietMs, wsSend)
       case Some(rec) =>
         recoverDelegateScopeOn(
           baseWorkspace,
@@ -339,6 +340,110 @@ object ProjectCrashRecovery:
           rootNotifyQuietMs,
           wsSend
         )
+
+  /**
+   * 孤儿作用域处置（缺陷六）：属主 dispatcher 不在注册表的作用域。
+   *
+   * 步骤：① 重挂宿主（面板/只读面要有挂载语义）② 链台账落 `paused`（暂停推进
+   * ——`chainGateOf` 闸死所有派发；节点不再被 claim/rehydrate ⇒ 不无限推进；根会
+   * 话 `NodeCancel.resumeChain` 可解）③ `chain-orphaned` 事件行（链号、父会话、剩
+   * 余非终态节点数）④ 根会话通知（活投 / 持久收件箱）。
+   */
+  private def recoverOrphanScope(
+    baseWorkspace: String,
+    scope: String,
+    concurrency: Int,
+    reportGateHold: Option[Boolean],
+    rootNotifyQuietMs: Option[Long],
+    wsSend: Option[Json => IO[Unit]]
+  ): IO[Int] =
+    runtimeCarrier.flatMap {
+      case None =>
+        logger.warn(s"[boot-recovery] orphan scope '$scope' skipped: no runtime carrier").as(0)
+      case Some((system, resources)) =>
+        DelegateFlowHosts
+          .mount(
+            delegateId = scope,
+            project = None,
+            baseWorkspace = baseWorkspace,
+            engineCwd = baseWorkspace,
+            system = system,
+            resources = resources,
+            wsSend = wsSend,
+            reportGateHold = reportGateHold,
+            rootNotifyQuietMs = rootNotifyQuietMs
+          )
+          .flatMap {
+            case None => IO.pure(0)
+            case Some(h) =>
+              if OrphanChainPolicy.pauseEnabled then
+                // 判定 + 动作单点 = OrphanChainPolicy（pause：暂停推进 + 留痕 + 通知根）：
+                // 本腿**零** bootRecoveryClaim / bootRecoveryStart —— 节点绝不无限推进。
+                OrphanChainPolicy
+                  .handle(
+                    new OrphanChainPolicy.Port:
+                      def scopeState = h.store.snapshot.map { snap =>
+                        val chains = snap.nodes.values.flatMap(_.chainId).toList.distinct
+                        val remaining = snap.nodes.values.count(n => !NodeLifecycle.Terminal.contains(n.status))
+                        (chains, remaining)
+                      }
+                      def pauseChain(chainId: String) =
+                        h.store.chainLedgerStore
+                          .setChainControl(chainId, ChainLedger.StatusPaused, System.currentTimeMillis())
+                          .void
+                      def event(chainId: String, remaining: Int) =
+                        FlowMapEventLog.append(
+                          workspace = baseWorkspace,
+                          project = h.engine.projectName,
+                          nodeId = chainId,
+                          typ = OrphanChainPolicy.EventType,
+                          summary =
+                            s"orphan chain: parent dispatcher session '$scope' is not in the delegate registry after restart " +
+                              s"($remaining non-terminal node(s) left) — chain PAUSED (dispatch gated; the root session can resume it via NodeCancel resume)",
+                          chainId = Some(chainId)
+                        )
+                      override def notifyRoot(scope: String, chains: List[String], remaining: Int) =
+                        notifyRootOfOrphan(resources, scope, chains, remaining)
+                    ,
+                    scope
+                  )
+                  .map(n => if n > 0 then 1 else 0)
+              else
+                // 回滚腿（`nebflow.boot.orphanChain.action=resume`）：改前的无脑续跑。
+                notifyRootOfOrphan(resources, scope, Nil, 0) *> IO.pure(0)
+          }
+    }
+
+  /** 孤儿链根通知：活投（rootSessionId 在注册表）否则持久收件箱补投。 */
+  private def notifyRootOfOrphan(
+    resources: nebflow.core.AgentRuntimePort,
+    scope: String,
+    chains: List[String],
+    remaining: Int
+  ): IO[Unit] =
+    // 父会话 id = 作用域 id（delegate 会话 id 即父 dispatcher 会话）；rootSessionId
+    // 从 delegate 注册表记录取（已无记录 ⇒ 回落空 = 只留审计面）。
+    val root = DelegateRegistry.find(scope).map(_.parentSessionId).getOrElse("")
+    if root.trim.isEmpty then IO.unit
+    else
+      val text =
+        s"[chain-orphaned] parent dispatcher session '$scope' died across restart (not in the delegate registry). " +
+          s"Chain(s) ${if chains.isEmpty then "(no chain ids)" else chains.mkString(", ")} are PAUSED with $remaining " +
+          "non-terminal node(s) — dispatch is gated, nothing advances. Resume via NodeCancel resume, or re-dispatch."
+      nebflow.core.tools.BgNotifyDelivery
+        .deliverToRootOrInbox(
+          Some(resources.actorSystem),
+          Some(resources.agentRegistry),
+          root,
+          nebflow.actor.AgentCommand.ExternalEvent(
+            source = "chain-orphan",
+            eventType = "chain-orphaned",
+            payload = text,
+            correlationId = chains.headOption
+          )
+        )
+        .void
+        .handleErrorWith(e => logger.warn(s"[orphan-chain] root notify failed: ${e.getMessage}"))
 
   private def recoverDelegateScopeOn(
     baseWorkspace: String,

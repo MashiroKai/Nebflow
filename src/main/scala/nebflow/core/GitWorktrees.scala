@@ -199,7 +199,18 @@ object GitWorktrees:
         val usedBranch = if branchFollowsDir then name else branch
         os.makeDir.all(ws / ".nebflow" / "worktrees")
         git(ws, "worktree", "add", "-b", usedBranch, path.toString, baseRef)
-          .map(_ => Created(name, path))
+          .flatMap { _ =>
+            // 分配后验收（引擎会话治理专项 · 缺陷二，2026-11-03 作者令）：`git
+            // worktree add` 返回 0 不等于座位真的可用（半写残场/目录被外部清空
+            // 后透传过）。四查全过才把座位交出去；不过 = 显式报错（可重试），
+            // 绝不把坏座位交给任务。验收失败的现场不自动清（留给人/调用方判）。
+            val problems = validateAllocation(ws, path.toString)
+            if problems.isEmpty then Right(Created(name, path))
+            else
+              val msg = s"worktree allocation post-validation failed for '$path': ${problems.mkString("; ")}"
+              logger.warn(msg)
+              Left(msg)
+          }
           .leftMap { err =>
             logger.warn(s"git worktree add failed for branch '$usedBranch' at '$path': $err")
             err
@@ -208,6 +219,32 @@ object GitWorktrees:
     end match
 
   end createWorktree
+
+  /**
+   * Worktree 座位可用性四查（引擎会话治理专项 · 缺陷二；分配腿与续用腿共用）。
+   * 返回问题清单（空 = 可用座位）。判据全部是**机械读数**：
+   *   ① `git worktree list`（以 ws 为仓）里能看到该目录 —— 未登记的目录不是座位；
+   * ② `rev-parse --show-toplevel` 恰好等于该目录 —— 防空目录沿父级仓解析被骗
+   *    （`.nebflow/worktrees/<name>` 在主工作区内时 isGitRepo 会误报 true）；
+   *   ③ HEAD 可解（checkout 完成）；
+   *   ④ `status --porcelain` 可执行（git 语义面在座位内工作）。
+   */
+  def validateAllocation(ws: os.Path, path: String): List[String] =
+    val p = os.Path(path)
+    val problems = scala.collection.mutable.ListBuffer[String]()
+    if !os.isDir(p) then problems += s"directory does not exist: $path"
+    else
+      val registered = worktreeList(ws).exists(_._1.stripSuffix("/") == path.stripSuffix("/"))
+      if !registered then problems += "not registered in `git worktree list` (not a worktree of this repo)"
+      Try(git(p, "rev-parse", "--show-toplevel")).toOption.flatMap(_.toOption).map(_.trim) match
+        case None =>
+          problems += "rev-parse --show-toplevel unreadable (no git checkout at this path)"
+        case Some(top) if java.nio.file.Paths.get(top).toRealPath() != java.nio.file.Paths.get(p.toString).toRealPath() =>
+          problems += s"toplevel '$top' is not this directory (not a checkout — parent repo resolution)"
+        case _ => ()
+      if headSha(p).isEmpty then problems += "HEAD does not resolve (checkout incomplete)"
+      if dirtyPaths(p).isEmpty then problems += "git status not runnable in this directory"
+    problems.toList
 
   /**
    * Create a plain branch (no checkout, no worktree) — the S13 no-worktree
@@ -223,6 +260,23 @@ object GitWorktrees:
   /** True when the branch ref exists locally. */
   def branchExists(ws: os.Path, branch: String): Boolean =
     Try(git(ws, "rev-parse", "--verify", "--quiet", branch)).toOption.exists(_.isRight)
+
+  /**
+   * A branch's current tip sha (short form) — base-drift 批（缺陷四）：在飞 delegate
+   * 的基分支 tip 漂移读数。fail-soft 同 [[headSha]]（ref 不存在/非 repo = None）。
+   */
+  def headShaOfBranch(ws: os.Path, branch: String): Option[String] =
+    Try(git(ws, "rev-parse", "--short", branch)).toOption.flatMap(_.toOption).map(_.trim).filter(_.nonEmpty)
+
+  /**
+   * Files touched between two revisions（`git diff --name-only from to`）——base-drift
+   * 通知的「涉及文件列表」读数。任一 rev 不可解/非 repo = Nil（fail-soft）。
+   */
+  def changedFilesBetween(ws: os.Path, from: String, to: String): List[String] =
+    Try(git(ws, "diff", "--name-only", from, to)).toOption
+      .flatMap(_.toOption)
+      .map(_.linesIterator.map(_.trim).filter(_.nonEmpty).toList)
+      .getOrElse(Nil)
 
   /**
    * Count of branch commits not reachable from `baseBranch`（`git log --oneline

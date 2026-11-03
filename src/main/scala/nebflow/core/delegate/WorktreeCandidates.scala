@@ -347,6 +347,8 @@ ${lines.mkString("\n")}$more"""
   object RefuseCode:
     val NotFound: String = "DELEGATE_WORKTREE_NOT_FOUND"
     val Active: String = "DELEGATE_WORKTREE_ACTIVE"
+    /** 座位存在但不可用（未登记/无 checkout/status 不可执行——缺陷二四查拒）。 */
+    val NotReady: String = "DELEGATE_WORKTREE_NOT_READY"
   end RefuseCode
 
   /**
@@ -373,9 +375,26 @@ ${lines.mkString("\n")}$more"""
         case Some(c) => Decision.Reuse(Some(c), c.path)
         case None =>
           // 清单未命中：按路径兜底（合法 git worktree 接纳——可能是不在 registry 的
-          // 遗留树）；不存在 / 非 git 树 ⇒ 显式拒（零静默回落）。
+          // 遗留树）。**座位四查**（引擎会话治理专项 · 缺陷二，2026-11-03）：旧判据
+          // `os.isDir ∧ isGitRepo` 会被空目录骗过——`.nebflow/worktrees/<name>` 在主
+          // 工作区内时 `rev-parse` 沿父级解析为 true，空目录被当成座位收下（3c9f1ce2
+          // 实证）。改走 [[GitWorktrees.validateAllocation]]：注册可见 / 顶层即该目录
+          // （checkout 完成）/ HEAD 可解 / status 可执行——任一不过 ⇒ 显式拒
+          // （`DELEGATE_WORKTREE_NOT_READY`），绝不把坏座位交给任务。
           val p = os.Path(t, os.pwd)
-          if os.isDir(p) && GitWorktrees.isGitRepo(p) then Decision.Reuse(None, p.toString)
+          if os.isDir(p) && GitWorktrees.isGitRepo(p) then
+            // 四查所用「仓」锚：该目录在 `git worktree list` 的首条（任一注册树都
+            // 能枚举全仓）；未注册空目录 = 列表空 ⇒ 用目录自身探测（四查会点名
+            // "not registered"）。
+            val wsForCheck: os.Path =
+              GitWorktrees.worktreeList(p).headOption.map(w => os.Path(w._1)).getOrElse(p)
+            val problems = GitWorktrees.validateAllocation(wsForCheck, p.toString)
+            if problems.isEmpty then Decision.Reuse(None, p.toString)
+            else
+              Decision.Refuse(
+                RefuseCode.NotReady,
+                s"path '$t' is not a usable worktree seat: ${problems.mkString("; ")}"
+              )
           else
             Decision.Refuse(
               RefuseCode.NotFound,

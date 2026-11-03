@@ -257,4 +257,48 @@ class DelegateStandbyCareAnswerSpec extends CatsEffectSuite:
       assertEquals(after, firstCount, "🔴 穷尽后重申 standby 不再产生任何提醒（静默封顶）")
   }
 
+  // ── ④ 换腿不漏（引擎会话治理专项 · 缺陷三同族漏网，2026-11-03）──────────
+  //
+  // 912335af7 的应答消费修好了「同一待命期内的重申」，但记账 [[DelegateStandbyCare.CareState]]
+  // 只按 delegateId 存、**不分提醒型**（Declared / IdleNudge）。矩阵两条腿是串行换乘的：
+  // 「回合结束未申报」先吃 IdleNudge 腿的整条退避序（穷尽 ⇒ exhausted=true），之后模型
+  // 补报 standby 换成 Declared 腿——arm() 读到**上一条腿的** exhausted ⇒ StaySilent ⇒
+  // 申报后的待命期零提醒（看护被静默关闭，且与「应答即消费」的封顶语义混淆）。
+  // 修法：记账带 kind；换腿 = 新待命期 ⇒ StartFresh（作废旧腿的 attempt/exhausted）。
+  test("④ 换提醒型 = 新待命期：IdleNudge 序列穷尽后申报 standby，Declared 腿必须重新武装（改前红：沿用旧腿 exhausted ⇒ 零提醒）") {
+    sys.props("nebflow.delegate.standby.nudgeDelaysMs") = "60"
+    sys.props("nebflow.delegate.standby.nudgeLongMs") = "80"
+    sys.props("nebflow.delegate.standby.nudgeLongMax") = "0"
+    val sid = "delegate-nebflow-standby-kindflip"
+    val system = ActorSystem(s"standby-kindflip-${scala.util.Random.nextInt(100000)}")
+    for
+      resources <- mkResources(system, os.temp.dir())
+      received <- Ref.of[IO, List[(Long, String)]](Nil)
+      child <- nudgeRecorder(system, "standby-child-kindflip", received)
+      supervisor <- supervisorRef(system)
+      _ <- IO(seedRecord(sid))
+      _ <- resources.agentRegistry.update(
+        _ + (sid -> AgentRecord(sid, child, AgentKind.Delegate, "spec-root", None, status = AgentStatus.Waiting))
+      )
+      // 第一腿：回合结束未申报 ⇒ IdleNudge 看护（1 档穷尽）
+      _ <- DelegateStandbyCare.arm(sid, child, supervisor, resources, DelegateStandbyCare.IdleNudge)
+      _ <- waitUntil(5.seconds)(received.get.map(_.nonEmpty))
+      idleState <- IO(DelegateStandbyCare.careStateOf(sid))
+      _ = assert(idleState.exists(_.exhausted), s"fixture sanity: the idle leg must be exhausted, state=$idleState")
+      before <- received.get.map(_.size)
+      // 换腿：模型补报 standby ⇒ Declared 看护（新待命期）
+      _ <- IO(DelegateRegistry.parkStandby(sid))
+      _ <- DelegateStandbyCare.arm(sid, child, supervisor, resources, DelegateStandbyCare.Declared)
+      _ <- waitUntil(3.seconds)(received.get.map(_.size > before))
+      after <- received.get.map(_.size)
+      state = DelegateStandbyCare.careStateOf(sid)
+      _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
+    yield
+      assert(
+        after > before,
+        s"🔴 换腿必须重新武装（改前红：旧腿 exhausted 沿用 ⇒ 申报 standby 后零提醒），before=$before after=$after state=$state"
+      )
+      assertEquals(state.map(_.kind), Some(DelegateStandbyCare.KindDeclared), "记账面：当前腿 = declared")
+  }
+
 end DelegateStandbyCareAnswerSpec
