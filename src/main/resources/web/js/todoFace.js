@@ -1155,7 +1155,7 @@ class TodoFace {
         if (swipe && swipe.chip.isConnected) swipe.chip.classList.remove('swiping-up', 'swiping-down');
         if (swipe && Math.abs(swipe.dy) >= threshold) {
           if (dir === 'up') this.openTagPopover(tag.id);
-          else todoStore.deleteTag(tag.id); // 复刻：下划直接删（无确认弹层）
+          else this.confirmDeleteTag(tag); // HIG 铁律：破坏性操作必须二次确认（下划不再直删）
         }
         return;
       }
@@ -1163,6 +1163,24 @@ class TodoFace {
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
+  }
+
+  /** 标签删除 = **破坏性操作** ⇒ 二次确认（手机端 HIG 铁律；作者裁定只有
+   *  「关标签页」豁免）。形态 = 全站既有 __showConfirm（danger 档），与联系人
+   *  删除 / 插件卸载同一套；无确认面可用时退回直删（同 contacts 先例，绝不
+   *  因缺面而静默吞掉用户的删除意图）。 */
+  confirmDeleteTag(tag) {
+    const run = () => todoStore.deleteTag(tag.id);
+    if (typeof window.__showConfirm === 'function') {
+      window.__showConfirm(
+        t('todoface.tagDeleteTitle'),
+        t('todoface.tagDeleteConfirm', { name: tag.name || t('todoface.tagName') }),
+        run,
+        { tone: 'danger', confirmLabel: t('todoface.tagDelete') },
+      );
+      return;
+    }
+    run();
   }
 
   beginChipSwipe(tag, chip, dir) {

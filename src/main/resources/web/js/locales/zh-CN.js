@@ -2982,6 +2982,8 @@ export default {
   'todoface.tagNew': '新建标签',
   'todoface.tagRename': '重命名',
   'todoface.tagDelete': '删除',
+  'todoface.tagDeleteTitle': '删除标签',
+  'todoface.tagDeleteConfirm': '删除「{name}」后，该标签下的待办不再带此标签。此操作不可撤销。',
   'todoface.colorN': '颜色 {n}',
   // ── 感知域（mail-perception-impl 批）──
   'perception.title': '感知',

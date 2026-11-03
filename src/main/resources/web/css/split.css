@@ -3991,8 +3991,16 @@ body.card-window #canvas-panel.card-win-merging { animation: nf-card-win-out 0.1
 .canvas-viewer-safe-top {
   transition: padding-top 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
+/* 手机档初态让位（透传悬浮批 ui-unification-20261103-mobile-canvas-topbar）：
+   旧值 calc(--capsule-h 36 + 16) = **桌面卡头胶囊档**，在手机层是借来的第二把尺
+   （断言 B1 改前红基线实测 52 ≠ 72）。手机层顶栏 = 悬浮 chrome 簇（✕ / 层叠钮
+   / 环签，.ds-chrome-band 家族），初态让位单源 = --mchrome-clear（簇顶 16 +
+   钮 48 + 呼吸 8 = 72，mobileLayer.css 簇几何块）—— 与页头标题盒 / 页体
+   padding 同一把尺，语义 = 「首条内容落在按钮/胶囊正下方」。
+   safe-area 注：手机页壳 .mobile-page-nohead 已统一垫 env(safe-area-inset-top)
+   （dock 页），滚动面在壳内再垫一份会双计 —— 故此处不叠 safe。 */
 body.mobile-layer .canvas-viewer-safe-top {
-  padding-top: calc(var(--capsule-h, 36px) + 16px);
+  padding-top: var(--mchrome-clear, 72px);
 }
 #canvas-content.capsule-ring-open .canvas-viewer-safe-top {
   padding-top: calc(var(--capsule-h, 36px) + 16px);
