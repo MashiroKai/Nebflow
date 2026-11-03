@@ -68,8 +68,9 @@ class ProjectOriginSpec extends CatsEffectSuite:
     val (pd, report) = result.map(_.toOption.get).unsafeRunSync()
     assertEquals(pd.origin, Some(ProjectOrigin("dev-remote-9", ws)))
     assertEquals(pd.agentFile, s"$ws/AGENTS.md")
-    // 本地零脚手架（脚手架由远端腿在对端完成——本地落笔只有定义）。
-    assertEquals(report.items, Nil)
+    // 本地零 workspace 脚手架（脚手架由远端腿在对端完成——本机落笔只有定义 + 引擎侧
+    // 文档库：vault 恒在注册目录（大脑侧），设备项目也不例外）。
+    assertEquals(report.items.map(_.item), List(".stand/docs/"))
     assertEquals(os.exists(os.Path(ws)), false)
     // 定义就绪（createWithScaffold 的唯一本机落笔 = project.json）。
     assertEquals(os.exists(ProjectStore.projectJsonPath("cross-dev")), true)
