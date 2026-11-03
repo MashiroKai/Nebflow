@@ -370,6 +370,20 @@
   }
 }
 
+/* ── ㉑ 渐隐带槽（`.ds-edge-fade` 材质桥；ui-unification-20261103-doc-ask-fade）──
+   渐隐带（顶缘「先糊后没」层）的材质真值出生在液体玻璃 v2 渐隐带子族
+   `--g2-veil` / `--g2-fade-*`（stand-tokens.css 该子族块，三态解析：
+   :root 亮档 → html[data-theme] 强制档 → prefers-color-scheme 回退）。
+   **本层不复制字面量**：四个 `--ds-fade-*` 槽一律 `var()` 桥到既有单源，
+   与手机层 `--ds-*` → `--mfs-*` 桥同式（缺槽先扩再消费，来源即上行 token 族）。
+   改渐隐带的颜色/模糊/饱和/高 = 改 stand-tokens.css 那四个 `--g2-*`，本层零改动。 */
+:root {
+  --ds-fade-veil: var(--g2-veil);          /* 渐层罩（色 = 页面底色族，只吃内容不吃底） */
+  --ds-fade-blur: var(--g2-fade-blur);     /* backdrop 模糊径 */
+  --ds-fade-sat: var(--g2-fade-sat);       /* backdrop 饱和倍率 */
+  --ds-fade-height: var(--g2-fade-height); /* 聊天根带高（88）；面板档另由消费面声明 */
+}
+
 /* ══ 组件类层（`.ds-*`）══════════════════════════════════════════════
    五组件 = 按钮 / 行 / 徽标 / 输入 / 卡（SKILL.md §7 固定尺寸档）。
    所有值走 `--ds-*`；本层不覆盖任何既有类，只在 `.ds-*` 命名空间内生效
@@ -999,6 +1013,56 @@
   background: none;
   box-shadow: none;
   pointer-events: none;
+}
+
+/* ── 顶缘渐隐带（.ds-edge-fade）——「先糊后没」的唯一实现 ──
+   ui-unification-20261103-doc-ask-fade（作者令 2026-11-03 实拍 IMG_1720/IMG_1721）：
+   「上边缘过渡：现在上方边缘有很明显的截断。我想要的效果是像主对话窗口那样，做一个
+   慢慢渐渐隐去的消失效果来做过渡」。
+   本类是**主对话窗顶缘滚入渐隐带**（glass.css 原 `#g2-edge-fade` 材质段）的收编体：
+   聊天根（`#g2-edge-fade`）与文档阅读面 Ask 面板（`.ask-veil`）同为成员，两处只留
+   **差异档**（高度 / 落位 / z 序 / 左右缩进，由消费面声明）。
+   材质三件（顺序不可拆，缺一件就退化成一条色带）：
+     ① veil 渐层 `--ds-fade-veil`（色 = 页面底色族 ⇒ 本身几乎不可见，作用是把内容
+        「洗掉」而不是盖一块色）；
+     ② backdrop blur+saturate `--ds-fade-blur`/`--ds-fade-sat`（内容越靠顶越糊）；
+     ③ 两段式 ease-out mask（0% 全实 → 50% 0.55 → 100% 透明）= 「先糊后没」的
+        衰减曲线本身。
+   ── 已知坑（前几轮实证，消费面必须绕开）────────────────────────────
+   ① mask × backdrop-filter **同元素**在自适应/降级路径上会被合成器架空（blur 按
+      未裁剪全幅输出）⇒ 本类的 mask 只承担「带自身的上下缘衰减」，消费面**不得**
+      再给本类叠加第二层 mask / opacity 裁剪；
+   ② mask 参与 hit-test 裁剪（alpha≈0 处整块 pointer-events 透传）⇒ 本类恒
+      `pointer-events:none`（纯视觉层），且**内容宿主绝不许挂 mask**——内容必须
+      保持可滚可点（Ask 面板原「colwrap 挂 mask」的形态即栽在这里，本批已摘）；
+   ③ mask 里的颜色只为取 alpha 通道，故用 `currentColor` + `color-mix()` 表达
+      0.55 中间档（严格面：设计体系层整文件零裸色值，见 scripts/check-design-tokens.mjs）。
+   本类**不定高**（聊天根 `--ds-fade-height` 88px / Ask 面板 `--ask-fade-h`）、
+   **不定 z 序**、**不定左右缩进** —— 由消费面声明。 */
+.ds-edge-fade {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  color: var(--ds-text);   /* 只为 mask 取 alpha（见坑③），不参与可见配色 */
+  pointer-events: none;
+  background: var(--ds-fade-veil);
+  -webkit-backdrop-filter: blur(var(--ds-fade-blur)) saturate(var(--ds-fade-sat));
+  backdrop-filter: blur(var(--ds-fade-blur)) saturate(var(--ds-fade-sat));
+  -webkit-mask-image: linear-gradient(to bottom, currentColor 0%, color-mix(in srgb, currentColor 55%, transparent) 50%, transparent 100%);
+  mask-image: linear-gradient(to bottom, currentColor 0%, color-mix(in srgb, currentColor 55%, transparent) 50%, transparent 100%);
+}
+/* 降级（微信内置浏览器 / 旧 WebView / X5 无 backdrop-filter）：带退化为纯渐层罩，
+   渐隐语义不破（原 glass.css #g2-edge-fade 降级档逐条收编到本类单源）。 */
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .ds-edge-fade {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+html.no-backdrop .ds-edge-fade {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
 }
 
 @keyframes modalIn {

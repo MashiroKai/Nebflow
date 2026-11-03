@@ -775,11 +775,13 @@
       </div>
     </div>
     <!-- 顶缘滚入渐隐带（液体玻璃 v2 批 2026-10-31）：手机端替代顶栏的 88px
-         「先糊后没」层（blur 18 / sat 1.5 + veil + 两段式 mask；样式随
-         统一按钮玻璃批逐字迁 glass.css，待裁项 M9 维持现状）。
+         「先糊后没」层（blur 18 / sat 1.5 + veil + 两段式 mask；材质随
+         doc-ask-fade 批 2026-11-03 收编到 design-system.css `.ds-edge-fade` 单源，
+         本节点只挂类 + 高度/z 序差异档）。
          桌面恒隐；不是栏——pointer-events:none、无背景容器/边框/固定标题
-         （作者裁定 ② 逐字）。层级：内容 < 渐隐带 25 < 悬浮圆钮层 30。 -->
-    <div id="g2-edge-fade" aria-hidden="true"></div>
+         （作者裁定 ② 逐字）。层级：内容 < 渐隐带 25 < 悬浮圆钮层 30。
+         同一类的第二个成员 = 文档阅读面 Ask 面板的 .ask-veil。 -->
+    <div id="g2-edge-fade" class="ds-edge-fade" aria-hidden="true"></div>
     <!-- Dropdowns moved outside #header so backdrop-filter can blur chat content.
          #header has its own backdrop-filter which creates a backdrop root, preventing
          child elements from blurring content behind the header. -->
