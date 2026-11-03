@@ -44,6 +44,18 @@ jobs:
         # writer of el.dataset.imeComposing. Violations are listed as file:line.
         # Same logic locally: node scripts/check-ime-guard.mjs
         run: node scripts/check-ime-guard.mjs
+      - name: Console takeover identity guard (single-instance identity chain)
+        # 身份必达批 gate (author report 2026-11-03: "手机端和电脑端同时在线，没有
+        # 被挤掉"): console single-instance only kicks when BOTH sides carry a
+        # provable browser identity. The identity rides THREE legs - the WS
+        # handshake query (`?clientId=`), the in-band frame
+        # (`takeoverIdentify`, the leg that survives tunnels/proxies which
+        # rewrite the request target) and the HTTP retake body - all from ONE
+        # source (`deviceClientId()`), with the frame type owned by
+        # ConsoleTakeover.IdentifyFrameType. A rename on either side is
+        # wire-level and silently reproduces the reported bug, so it is gated.
+        # Same logic locally: node scripts/check-takeover-identify.mjs
+        run: node scripts/check-takeover-identify.mjs
       - name: Message style single source (shared message surface)
         # ③-G gate (author ruling 2026-09-12, batch ②④③): the message surface
         # values shared by the friend chat modal and the dropbox modal (out
