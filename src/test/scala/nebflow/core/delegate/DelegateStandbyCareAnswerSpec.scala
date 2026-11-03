@@ -112,7 +112,8 @@ class DelegateStandbyCareAnswerSpec extends CatsEffectSuite:
     system.spawn(loop, name)
 
   private def supervisorRef(system: ActorSystem): IO[nebflow.actor.ActorRef[nebflow.actor.AgentEvent]] =
-    def loop: Behavior[nebflow.actor.AgentEvent] = Behaviors.receiveMessage[nebflow.actor.AgentEvent](_ => IO.pure(loop))
+    def loop: Behavior[nebflow.actor.AgentEvent] =
+      Behaviors.receiveMessage[nebflow.actor.AgentEvent](_ => IO.pure(loop))
     system.spawn(loop, "standby-supervisor")
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 10.millis)(cond: IO[Boolean]): IO[Unit] =
@@ -167,12 +168,22 @@ class DelegateStandbyCareAnswerSpec extends CatsEffectSuite:
     )
     // 18:14 裁定的退避判据：换型（IdleNudge ↔ Declared）不再重置回首档。
     assertEquals(
-      armDecision(Some(CareState(attempt = 2, kind = DelegateStandbyCare.KindIdleNudge)), fiberLive = false, total = 6, kind = DelegateStandbyCare.KindDeclared),
+      armDecision(
+        Some(CareState(attempt = 2, kind = DelegateStandbyCare.KindIdleNudge)),
+        fiberLive = false,
+        total = 6,
+        kind = DelegateStandbyCare.KindDeclared
+      ),
       ArmDecision.ResumeAt(3),
       "🔴 换型 ≠ 新待命期起点：单调续档（改前红：换型 ⇒ StartFresh ⇒ 退避序回第 1 档 ⇒ 分钟级连戳）"
     )
     assertEquals(
-      armDecision(Some(CareState(attempt = 3, kind = DelegateStandbyCare.KindDeclared)), fiberLive = false, total = 6, kind = DelegateStandbyCare.KindIdleNudge),
+      armDecision(
+        Some(CareState(attempt = 3, kind = DelegateStandbyCare.KindDeclared)),
+        fiberLive = false,
+        total = 6,
+        kind = DelegateStandbyCare.KindIdleNudge
+      ),
       ArmDecision.ResumeAt(4),
       "反向换型同样单调续档"
     )
@@ -200,7 +211,7 @@ class DelegateStandbyCareAnswerSpec extends CatsEffectSuite:
       _ <- DelegateStandbyCare.arm(sid, child, supervisor, resources, DelegateStandbyCare.IdleNudge)
       // 「会话收到提醒 → 回合收尾仍未申报 → 再次 arm」的循环：跑 2.4s
       // （缺省 4 档累计 1000ms，留足余量观察穷尽后的静默）。
-      _ <- {
+      _ <-
         def answersLoop(deadline: Long, seen: Int): IO[Unit] =
           IO.realTime.map(_.toMillis).flatMap { now =>
             if now >= deadline then IO.unit
@@ -213,7 +224,6 @@ class DelegateStandbyCareAnswerSpec extends CatsEffectSuite:
               }
           }
         IO.realTime.map(_.toMillis).flatMap(start => answersLoop(start + 2400L, 0))
-      }
       rows <- received.get
       state = DelegateStandbyCare.careStateOf(sid)
       live = DelegateStandbyCare.caretakerLive(sid)
@@ -263,6 +273,7 @@ class DelegateStandbyCareAnswerSpec extends CatsEffectSuite:
     yield
       assertEquals(firstCount, 1, "短档 1 档 + longMax 0 ⇒ 首轮恰一条提醒")
       assertEquals(after, firstCount, "🔴 穷尽后重申不再产生任何提醒（静默封顶）")
+    end for
   }
 
   // ── ④ 申报待命腿：零提醒（18:14 裁定 stand by×complete 不通知）────────
@@ -292,7 +303,11 @@ class DelegateStandbyCareAnswerSpec extends CatsEffectSuite:
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))
     yield (liveAfter, stateAfter, rows)
     program.map { case (live, state, rows) =>
-      assertEquals(rows, Nil, s"🔴 申报待命腿必须零注入（改前红：Declared 腿照常催 —— 作者 18:14「都已经报了 stand by 了，还通知什么」），实际=${rows.map(_._2.take(80))}")
+      assertEquals(
+        rows,
+        Nil,
+        s"🔴 申报待命腿必须零注入（改前红：Declared 腿照常催 —— 作者 18:14「都已经报了 stand by 了，还通知什么」），实际=${rows.map(_._2.take(80))}"
+      )
       assertEquals(live, false, "申报待命腿不得武装 caretaker")
       assertEquals(state, None, "申报待命腿不得写看护记账（careStateOf=None）")
     }
@@ -317,7 +332,7 @@ class DelegateStandbyCareAnswerSpec extends CatsEffectSuite:
         _ + (sid -> AgentRecord(sid, child, AgentKind.Delegate, "spec-root", None, status = AgentStatus.Waiting))
       )
       _ <- DelegateStandbyCare.arm(sid, child, supervisor, resources, DelegateStandbyCare.IdleNudge)
-      _ <- {
+      _ <-
         def answersLoop(deadline: Long, seen: Int): IO[Unit] =
           IO.realTime.map(_.toMillis).flatMap { now =>
             if now >= deadline then IO.unit
@@ -330,7 +345,6 @@ class DelegateStandbyCareAnswerSpec extends CatsEffectSuite:
               }
           }
         IO.realTime.map(_.toMillis).flatMap(start => answersLoop(start + 2500L, 0))
-      }
       rows <- received.get
       state = DelegateStandbyCare.careStateOf(sid)
       _ <- IO(system.stopAll.handleErrorWith(_ => IO.unit))

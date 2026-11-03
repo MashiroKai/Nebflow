@@ -977,7 +977,8 @@ object Defaults:
     sys.props
       .get("nebflow.delegate.standby.nudgeDelaysMs")
       .map { raw =>
-        val parsed = raw.split(",").toList.map(_.trim).filter(_.nonEmpty).flatMap(s => scala.util.Try(s.toLong).toOption)
+        val parsed =
+          raw.split(",").toList.map(_.trim).filter(_.nonEmpty).flatMap(s => scala.util.Try(s.toLong).toOption)
         if parsed.nonEmpty then parsed else List(10_000L, 30_000L, 60_000L)
       }
       .getOrElse(List(10_000L, 30_000L, 60_000L))
@@ -994,6 +995,18 @@ object Defaults:
    */
   def DelegateStandbyNudgeLongMax: Int =
     sys.props.getOrElse("nebflow.delegate.standby.nudgeLongMax", "3").toInt
+
+  /**
+   * **应答后提醒下限**（ms，缺省 600000 = 10min · prop
+   * `nebflow.delegate.standby.answerFloorMs`）——作者 2026-11-03 18:14 裁定的退避
+   * 判据：「会话已经答过（重申待命/无变化）之后，绝不再 1 分钟连戳」。口径 =
+   * 同一待命期内 `answers > 0` **或** `attempt >= 2` 的相邻提醒间隔一律取
+   * `max(退避档, floor)`（见 [[nebflow.core.delegate.DelegateStandbyCare.effectiveDelay]]）；
+   * 首档（会话尚未被提醒过）照旧走短档，保留「刚空等就提醒」的及时性。
+   * prop 覆写 = 单值毫秒（spec 用 600 跑真 caretaker 验实测间隔）。
+   */
+  def DelegateStandbyNudgeAnswerFloorMs: Long =
+    sys.props.getOrElse("nebflow.delegate.standby.answerFloorMs", (10 * 60 * 1000L).toString).toLong
 
   // ── Delegate 错误冻结（错误冻结批 2026-11-01 · 作者令「所有因错误状态的
   //    delegate 应该上报之后 要能保留状态 冻结态 方便被唤醒 接着做」）────────
@@ -1908,15 +1921,17 @@ object Defaults:
    */
   def brandDefaultPort: Int = brandDefaultPortFor(Branding.lowerName)
 
-  /** 命令品牌 → 其缺省端口（双实例并存批 2026-10-30 的读数面单点；分家批换源）。
+  /**
+   * 命令品牌 → 其缺省端口（双实例并存批 2026-10-30 的读数面单点；分家批换源）。
    *  `stand` = [[GatewayPort]]（6138），`nebflow` = [[NebflowBrandGatewayPort]]（6140）。
    *  认不出的品牌返回 `"?"`（调用方据此只说「对家实例」，不编数字）。
-   *  CLI 侧同名真值在 `ops/bin/stand-cli-lib.sh` 的 `stand_brand_default_port`。 */
+   *  CLI 侧同名真值在 `ops/bin/stand-cli-lib.sh` 的 `stand_brand_default_port`。
+   */
   def legacyPortOf(brand: String): String =
     brand match
       case "nebflow" => NebflowBrandGatewayPort.toString
-      case "stand"   => GatewayPort.toString
-      case _         => "?"
+      case "stand" => GatewayPort.toString
+      case _ => "?"
 end Defaults
 
 /**

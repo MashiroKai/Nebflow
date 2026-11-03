@@ -1296,9 +1296,9 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                     // 案A 待命唤醒（2026-10-31 批 · 状态矩阵批收编）：live delegate
                     // 收到 Mail ⇒ 待命宣告消费——清 standbySince + 申报槽
                     // （clearStandby）。唤醒轮若无新申报，回合收尾按矩阵未申报腿
-                    // 分流（提醒补报，绝不静默判完成）；standby-care caretaker 以
-                    // standbySince 清零为自取消信号，绝不在 Mail 唤醒轮中途再注入
-                    // 提醒。fail-soft：清槽失败只 WARN，绝不阻断 Mail 投递。
+                    // 分流（提醒补报，绝不静默判完成）；未申报腿的 standby-care
+                    // caretaker 以 standbySince 置位为静默信号（申报待命 = 零提醒：
+                    // 作者 2026-11-03 18:14「都已经报了 stand by 了，还通知什么」）。
                     //
                     // ═══ 错误冻结唤醒腿（错误冻结批 2026-11-01 · 作者令「冻结态
                     // 方便被唤醒 接着做」「别丢上下文」）═══
