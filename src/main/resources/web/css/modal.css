@@ -2,27 +2,19 @@
    Modal Styles — Sapphire Glass Design
    ═══════════════════════════════════════════════════════════════════════ */
 
-/* ── Overlay (shared) ──────────────────────────────────────────────────── */
+/* ── Overlay (shared) ────────────────────────────────────────────────────
+   形（position/inset/遮罩底/居中/层级带）自 ui-unification-20261103-overlays
+   起 = design-system.css `.ds-overlay` 层类族单点（遮罩底 = var(--ds-overlay)
+   恒透明 + z = var(--ds-z-overlay)，#modal-overlay 走 `ds-overlay--top`
+   确认族顶带 11000）。本文件只留**显隐机制**：display:none → .on 显。
+   id 特异性（100）高于族类（10）⇒ 开关语义逐字不变。 */
 #modal-overlay,
 #memory-overlay,
 #rules-overlay,
 #settings-overlay,
 #search-overlay {
-  position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: var(--overlay-bg);
   display: none;
-  align-items: center;
-  justify-content: center;
-  z-index: 310;
 }
-/* Confirm/generic modal layer — TOP of the overlay stack (dialog-unify
-   2026-09-05): confirms can be triggered from inside ANY panel (settings
-   310, daemon popover 300, cfg-modal 10000, onboarding 320). #modal-overlay
-   and #settings-overlay are body-level siblings, so a plain z-index compare
-   decides paint order — no stacking-context traps. Below only the toast
-   (10000, bottom-right corner, no overlap with the centered dialog). */
-#modal-overlay { z-index: 11000; }
 #modal-overlay.on,
 #memory-overlay.on,
 #rules-overlay.on,
@@ -33,7 +25,12 @@
    统一按钮玻璃批 2026-11-01：卡面材质（--glass-bg + blur24 sat1.15 双写 +
    三档栈阴影，亮暗双档）整块迁 css/glass.css 面级浮件档单源（迁移前
    modal.css 与 #header/#input-bar 三处同值三档栈字面量并存——收归后改一处
-   全站生效）；本文件只留卡片几何（position/padding/overflow）。
+   全站生效）；本文件只留卡片几何（padding/overflow）。
+   弹层层族批 2026-11-01→03（ui-unification-20261103-overlays）：壳形
+   （position:relative 定位基座 + 圆角 --ds-radius-shell + 入场动效
+   modalIn×--ds-dur-layer×--ds-ease-enter）收编 design-system.css
+   `.ds-layer` 层类族单点 —— DOM 挂 `ds-layer` 钩子类，本文件不再声明
+   position/border-radius/animation。
    （卡片家族批 2026-11-01：#takeover-box 摘出本列表——其面板已基准化为
    cards.css 实色家族卡 .nfc，非玻璃材质；玻璃族规则对它不再适用。） */
 #modal-box,
@@ -46,8 +43,6 @@
 #onboarding-panel,
 .model-panel,
 .wsp-panel {
-  position: relative;
-
   padding: 20px;
   overflow-y: auto;
 }
@@ -78,17 +73,11 @@
   z-index: 1;
 }
 
-/* ── Modal Animation ───────────────────────────────────────────────────── */
-@keyframes modalIn {
-  from {
-    opacity: 0;
-    transform: scale(0.96) translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
-}
+/* ── Modal Animation ─────────────────────────────────────────────────────
+   @keyframes modalIn 已迁 design-system.css（弹层层族批：入场键帧与
+   「时长 --ds-dur-layer / 缓动 --ds-ease-enter」同家单点）。按名字引用的
+   外部消费方（secrets.css / social.css / chat.css / mobileLayer.css）零改动
+   ——键帧全局解析，与加载序无关。 */
 
 /* ── Shared Input Style (etched into glass surface) ────────────────────── */
 .modal-input,
@@ -274,10 +263,8 @@
 
 /* ---------- Main Modal ---------- */
 #modal-box {
-  border-radius: 20px;
   padding: 24px;
   width: 340px;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 #modal-title {
   font-size: 16px;
@@ -305,11 +292,9 @@
 
 /* ---------- Delete Session Modal ---------- */
 #delete-box {
-  border-radius: 20px;
   padding: 24px;
   width: 340px;
   display: none;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 #delete-title {
   font-size: 16px;
@@ -341,11 +326,9 @@
 
 /* ---------- Drop Conflict Dialog ---------- */
 #conflict-box {
-  border-radius: 20px;
   padding: 24px;
   width: 340px;
   display: none;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 #conflict-title {
   font-size: 16px;
@@ -405,10 +388,8 @@
 /* ---------- Memory Modal ---------- */
 #memory-modal {
   display: none;
-  border-radius: 20px;
   width: 520px;
   max-height: 80vh;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 #memory-modal.show { display: block; }
 #memory-modal-title {
@@ -493,10 +474,8 @@
 /* ---------- Rules Editor Modal ---------- */
 #rules-modal {
   display: none;
-  border-radius: 20px;
   width: 520px;
   max-height: 80vh;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 #rules-modal.show { display: block; }
 #rules-modal-title {
@@ -574,13 +553,11 @@
    全站一档），标题 15px/600 = 面板标题档。 */
 #settings-modal {
   display: none;
-  border-radius: var(--ds-radius-shell);
   width: 560px;
   max-width: calc(100vw - 48px);
   max-height: 85vh;
   padding: 0;
   overflow: hidden;
-  animation: modalIn 0.2s var(--ease-enter);
 }
 #settings-overlay.on #settings-modal {
   display: flex;
@@ -603,7 +580,6 @@
 /* ---------- Chat History Search Modal ---------------------------------- */
 #search-modal {
   display: none;
-  border-radius: 20px;
   width: 640px;
   max-width: calc(100vw - 48px);
   max-height: 85vh;
@@ -613,7 +589,6 @@
      instead of being clipped. Backgrounds are corner-clipped by border-radius
      regardless; no flow child paints outside the box. */
   overflow: visible;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 #search-overlay.on #search-modal {
   display: flex;
@@ -1109,10 +1084,10 @@
   position: fixed;
   bottom: 20px;
   right: 20px;
-  z-index: 10000;
+  z-index: var(--ds-z-toast);   /* 弹层堆叠带（design-system.css ⑭：通知 10000） */
   max-width: 400px;
   padding: 12px 16px;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);   /* 12px 既有档 = --ds-radius-xl 同值 */
   font-size: 13px;
   line-height: 1.4;
   opacity: 0;
@@ -1175,13 +1150,11 @@
   z-index: 320;
 }
 #onboarding-panel {
-  border-radius: 20px;
   width: 480px;
   max-width: calc(100vw - 48px);
   padding: 32px 28px 24px;
   text-align: center;
   overflow: visible;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .onboarding-title {
   font-size: 20px;
@@ -1228,7 +1201,6 @@
 .model-panel {
   display: flex;
   flex-direction: column;
-  border-radius: 20px;
   width: 540px;
   max-width: calc(100vw - 48px);
   max-height: 85vh;

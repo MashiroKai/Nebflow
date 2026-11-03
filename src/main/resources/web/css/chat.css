@@ -3690,17 +3690,15 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    Panel material rides the modal.css shared glass-card group (.wsp-panel, with
    refraction line / stacked shadows / dark variants); this section carries the
    layout and control styles only, on the app's directory-browser baseline
-   values. */
+   values.
+   弹层层族批（ui-unification-20261103-overlays）：遮罩形（fixed/inset/居中/
+   恒透明底 --overlay-bg/层级带 310）收编 design-system.css `.ds-overlay` 层类族
+   ——渲染腿 emit `wsp-overlay ds-overlay`（.wsp-overlay 保留为 DOM 寻址钩子：
+   workspacePicker.js:769 / projectTab.js 的 querySelector('.wsp-overlay')），
+   本文件只留**显隐机制** display:flex（族不声明 display，开关语义留消费面）。
+   .wsp-panel 的壳圆角 + 入场动效同批归 `.ds-layer`（DOM 双挂）。 */
 .wsp-overlay {
-  position: fixed;
-  inset: 0;
-  /* dialog-unify 2026-09-05: visual ruling — no dimming/blur behind dialogs.
-     Overlay only blocks clicks; the panel carries the glass effect. */
-  background: var(--overlay-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 310; /* overlay 家族同层（modal.css shared overlay 组） */
+  display: flex;   /* 在场即显（overlay 按需建、拆即收）；形见 .ds-overlay 族 */
 }
 .wsp-panel {
   width: 520px;
@@ -3709,8 +3707,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex;
   flex-direction: column;
   overflow: hidden; /* 覆写共享玻璃卡的 overflow-y:auto——列表内部滚动 */
-  border-radius: 20px;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .wsp-title {
   font-size: 15px;

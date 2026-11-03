@@ -817,7 +817,7 @@ function buildPanel() {
   overlay.className = 'cfg-modal-overlay';
   overlay.id = 'model-panel-overlay';
   overlay.innerHTML = `
-    <div class="model-panel" tabindex="-1" role="dialog" aria-label="${esc(t('model.title'))}">
+    <div class="model-panel ds-layer" tabindex="-1" role="dialog" aria-label="${esc(t('model.title'))}">
       <div class="mp-header">
         <span class="mp-title">${esc(t('model.title'))}</span>
         <div class="mp-modes" role="group" aria-label="${esc(t('model.title'))}">

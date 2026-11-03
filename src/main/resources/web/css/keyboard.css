@@ -92,22 +92,27 @@
    本段是它**唯一的外观真相**：桥把所有 style 入参置空 ⇒ 组件不写内联颜色 ⇒
    这里用既有玻璃族 token 接管皮肤，视觉与改造前的面板逐项对应（居中偏上 12vh /
    14px 圆角 / 玻璃底 + 描边 + 投影 / 分组小标题 / 选中行蓝族淡填充 / 右列键位提示）。
-   不引入新颜色：全部走 --glass-* 与 --nf-chip-* 两条既有单源。 */
+   不引入新颜色：全部走 --glass-* 与 --nf-chip-* 两条既有单源。
+   弹层层族批（ui-unification-20261103-overlays）：壳的**层三件套**改由
+   design-system.css 弹层层族槽供给 —— 层级 = var(--ds-z-quickinput) 档 /
+   圆角 = var(--ds-radius-card-md)（14px 同值零漂）/ 面板壳影 =
+   var(--ds-shadow-palette)。Monaco 内核生成件挂不上类钩子，故按**令牌消费
+   同族值**（不用 .ds-overlay/.ds-layer 类），玻璃材质仍走 --glass-* 面级档。 */
 #nf-quickinput-host {
   position: fixed;
   inset: 0;
-  z-index: 9000;
+  z-index: var(--ds-z-quickinput);
   pointer-events: none;   /* 宿主自身不吃事件：只有面板本体可点 */
 }
 
 #nf-quickinput-host .quick-input-widget {
   pointer-events: auto;
   border: 1px solid var(--glass-border);
-  border-radius: 14px;
+  border-radius: var(--ds-radius-card-md);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.4);
   backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.4);
-  box-shadow: 0 18px 48px var(--nf-chip-bg-on);
+  box-shadow: var(--ds-shadow-palette);
   color: var(--color-text);
   font-family: inherit;
   font-size: 13px;

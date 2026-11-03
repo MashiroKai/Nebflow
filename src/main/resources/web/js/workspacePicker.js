@@ -223,9 +223,12 @@ export function openPicker(opts = {}) {
     '<svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
 
   const overlay = document.createElement('div');
-  overlay.className = 'wsp-overlay';
+  // 弹层层族批（ui-unification-20261103-overlays）：`ds-overlay` = 遮罩形单点
+  // （design-system.css 层类族），`wsp-overlay` 保留为 DOM 寻址钩子
+  // （workspacePicker.js / projectTab.js 的 querySelector('.wsp-overlay')）。
+  overlay.className = 'wsp-overlay ds-overlay';
   overlay.innerHTML =
-    '<div class="wsp-panel" role="dialog" aria-modal="true">' +
+    '<div class="wsp-panel ds-layer" role="dialog" aria-modal="true">' +
       '<div class="wsp-title-slot"></div>' +
       // 设备选择行（picker-device-switch 批）：标题下、面包屑上。行类复用
       // projectPanel.css 全局 .dev-row/.dev-btn/.dev-menu 族（零新样式面，仅

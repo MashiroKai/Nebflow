@@ -271,6 +271,35 @@
   --ds-media-letterbox: #17191f;             /* 媒体卡留黑底（墨常量：亮暗各一档） */
   --ds-shadow-media-card: 0 5px 16px rgb(0 0 0 / 0.16);      /* 叠卡卡层投影（墨α） */
   --ds-dur-stack: 0.42s;                     /* 叠卡收放/翻页既有时长档 */
+
+  /* ── ⑭ 弹层层族槽（ui-unification-20261103-overlays）──
+     缺槽先扩再消费：⑦门入场加载卡/接管卡与⑧命令面板+弹层族的**层级带 /
+     入场动效 / 面板壳影 / 过渡卡字阶**此前散在 modal.css / keyboard.css /
+     cards.css 的裸值里。以下槽 = 三面**现盘读数逐字搬迁**（值的家从消费面
+     迁到令牌层，计算值零漂移），不是新规范值：
+     · z 四档 = 全站弹层堆叠带（遮罩基础 310 / 命令面板 9000 / 通知 10000 /
+       确认族顶带 11000）。数值一栏不变，只把「谁在谁上面」写成一处可读档表；
+       模态**内部**堆叠坐标（#search-date-popover z20 / .cal-pill-listbox z30）
+       不入档——它们是模态子树内的坐标，不是全站层带。
+     · --ds-dur-layer 0.2s = 弹层入场时长档（base.css 动效 token 批已明文
+       「入场 200ms modalIn 家族（--ease-enter）」——本槽是那句注释的机器面，
+       缓动继续走 --ds-ease-enter 一跳别名，不复制字面量）。
+     · --ds-dur-spin 0.8s = 加载点旋转周期（门环 / 入场清单活动点同周期；连续
+       旋转是循环周期而非过渡档，不并入 dur 阶梯）。
+     · --ds-shadow-palette = 命令面板壳下投蓝晕影（rgb(--sapphire) 通道 α 组合，
+       与 --ds-shadow-card 同法：墨/蓝通道 + α，令牌出生行放行）。
+     · 字档两槽 = 官网 auth 域过渡卡（接管 / 入场同族）标题 21 / 正文 14 既有
+       读数（off-ladder，按 --ds-fs-bubble 14.5px 先例以具名槽收编）；cards.css
+       的 --nfc-* 家族令牌改指本槽 —— 值不再在消费面出生。 */
+  --ds-z-overlay: 310;      /* 遮罩基础带（settings / memory / rules / search / wsp） */
+  --ds-z-quickinput: 9000;  /* 命令面板宿主（QuickInput 层） */
+  --ds-z-toast: 10000;      /* 通知栈（右下角，不与居中弹窗重叠） */
+  --ds-z-modal: 11000;      /* 确认族顶带（任何面板内触发 confirm 都压最上） */
+  --ds-dur-layer: 0.2s;     /* 弹层入场时长档（modalIn 家族；缓动 = --ds-ease-enter） */
+  --ds-dur-spin: 0.8s;      /* 加载点旋转周期（门环 / 清单活动点） */
+  --ds-shadow-palette: 0 18px 48px rgb(var(--sapphire) / 0.2);
+  --ds-fs-card-hero: 21px;  /* 过渡卡主标题（官网 auth 域 21/600/-0.2px 档） */
+  --ds-fs-card-body: 14px;  /* 过渡卡正文 / 说明（实测 14×1.5） */
 }
 
 /* 浮层阴影暗档（令牌层单点解析：消费面不再各写一份 prefers-color-scheme）。 */
@@ -852,7 +881,62 @@
               filter var(--ds-dur-stack) var(--ds-ease-panel);
 }
 
+/* ══ ⑩ 弹层层族（.ds-overlay / .ds-layer）——ui-unification-20261103-overlays ══
+   ⑦⑧ 两面的**层形唯一家**：遮罩承接层（层级带 + 遮罩底色）与浮层玻璃壳
+   （圆角 + 入场动效）。材质不在本族：玻璃配方（--glass-* 底 + blur +
+   --cv-saturate / --glass-border / --cv-shadow 三档栈影 + 面级折射线）**仍由
+   css/glass.css 面级浮件档单源供给**——--cv-* 玻璃系本就是弹层层级的既有
+   材质单源，继续有效；本族只持形：层级 / 遮罩 / 圆角 / 入场动效。
+
+   钩子契约（照 .tool-card / .ds-side-row / .ds-media-stack 先例）：
+   · 遮罩层 emit `class="ds-overlay"`（#modal-overlay 叠 `ds-overlay--top`
+     进确认族顶带；workspacePicker / projectTab 两腿 emit
+     `wsp-overlay ds-overlay`）。
+   · 浮层壳 emit `class="ds-layer"`（index.html 六盒 + model-panel /
+     wsp-panel / proj-create-panel 三条 JS 腿）。
+   · 旧 id/class 保留为 **DOM 寻址钩子**（modal.js 的 .on / .takeover-blur
+     切换、focusTrap、mobileLayer 铺平块、既有 spec 全兼容），形零复制。
+   · display 显隐机制留在消费面 modal.css（display:none → .on 显）：本族
+     **不声明 display**——遮罩开关仍由 id 选择器（特异性 100 > 本族 10）单点
+     决定，族在线只是把形交给它，零叠加副作用。
+   · 命令面板（Monaco QuickInput）是内核生成件（不可挂类），按令牌消费同族值
+     （keyboard.css：--ds-radius-card-md / --ds-shadow-palette / --ds-z-quickinput）。
+
+   @keyframes modalIn 自 modal.css 迁来（secrets / social / chat / mobileLayer
+   六处外部消费方按名字引用它；键帧全局解析、与加载序无关 ⇒ 迁址零破面，
+   单点在此）。 */
+.ds-overlay {
+  position: fixed;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  background: var(--ds-overlay);   /* 恒透明（弹窗禁遮罩），只承接点击 */
+  z-index: var(--ds-z-overlay);
+}
+/* 确认族顶带（#modal-overlay：任何面板内触发的 confirm 都压在最上） */
+.ds-overlay--top { z-index: var(--ds-z-modal); }
+
+/* 浮层玻璃壳：形 = 圆角（弹窗外壳全站统一值 20px）+ 入场动效（modalIn 家族）。 */
+.ds-layer {
+  position: relative;   /* 壳顶缘折射线（glass.css 面级浮件档 ::before）定位基座 */
+  border-radius: var(--ds-radius-shell);
+  animation: modalIn var(--ds-dur-layer) var(--ds-ease-enter);
+}
+
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
 /* prefers-reduced-motion：全局压掉过渡（SKILL.md §6 官网同款兜底）。 */
 @media (prefers-reduced-motion: reduce) {
   .ds-btn, .ds-input, .ds-side-row, .ds-side-icon-btn, .ds-side-danger { transition-duration: 0.01ms; }
+  /* 弹层入场同守卫（家族自带，消费面不再各写一份 reduce 块） */
+  .ds-layer { animation-duration: 0.01ms; }
 }
