@@ -344,8 +344,11 @@ object DelegateRevival:
     }
 
   /** 插件 best-effort 重挂：registry 记录的 plugins 集逐名 resolve → MCP 授予 +
-    * builtin 工具并集 → effectiveDef。零分配/全失败 = 原 def（fail-open）。 */
-  private def regrantPlugins(
+    * builtin 工具并集 → effectiveDef。零分配/全失败 = 原 def（fail-open）。
+    * 会话续命批（2026-11-03）：原位续腿（`nebflow.core.delegate.SessionResumption`）
+    * 同点复用——`private[nebflow]` 跨包单点消费（`spawnBackground`/`resolveRoots`
+    * 同款豁免先例：一个表达式一份拷贝，两份必漂移）。 */
+  private[nebflow] def regrantPlugins(
     resources: nebflow.core.AgentRuntimePort,
     sessionId: String,
     record: DelegateRegistry.Record,
