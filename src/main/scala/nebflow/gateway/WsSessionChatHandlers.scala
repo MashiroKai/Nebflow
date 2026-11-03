@@ -102,11 +102,25 @@ private[gateway] object WsSessionChatHandlers:
                 // 案 B（双开缺陷批 2026-09-21，chain-askuserdup）作答行单一构造点逐字
                 // 保留：秘密题缺席的卡与改前同形（answers-only 载荷、原样行文本）；
                 // 附件在场 ⇒ 行带附件清单（本批），载荷带 attachments 键。
+                //
+                // 作答落库归属批（2026-11-03）：落点不再恒为帧内 sessionId —— 子代理 /
+                // 项目节点 / 内核提问（`AskOrigin.isSelfAsk=false`）的作答**全文只落
+                // 提问会话**，根会话只留一条不含内容的代答痕迹行（用户报障：回答后台
+                // 智能体的问题，全文变成根会话流里的一条「被记录的消息」）。裁决单点 =
+                // [[AskAnswerPlacement]]；归属读数 = hub 只读查询（槽位已消费 ⇒ None ⇒
+                // 回落改前路径，逐字不变）。
                 val answerText = answers.mkString("\n")
-                sessionStore.appendUiMessages(
-                  askSessionId,
-                  List(UiMessage.askUserAnswer(answerText, requestId, System.currentTimeMillis(), attachmentsJson))
-                ) *>
+                AskAnswerPlacement.originOf(sharedResources, requestId).flatMap { origin =>
+                  val plan = AskAnswerPlacement.plan(
+                    origin,
+                    askSessionId,
+                    answerText,
+                    requestId,
+                    System.currentTimeMillis(),
+                    attachmentsJson
+                  )
+                  AskAnswerPlacement.persist(sessionStore, requestId, plan)
+                } *>
                   markAnswered(askSessionId, requestId, attachmentsJson) *>
                   forwardInteractionAnswer(
                     requestId,
@@ -352,11 +366,21 @@ private[gateway] object WsSessionChatHandlers:
           s"stored=${receipts.flatten.count(r => r.hcursor.downField("stored").as[Boolean].toOption.getOrElse(false))} " +
           s"plainLeakRefused=${secretIdxs.count(i => answers.lift(i).exists(!_.isBlank))}"
       )
-      _ <- sessionStore.appendUiMessages(
-        askSessionId,
-        // 案 B 单一构造点不变（见 legacy 腿注）；秘密槽的行文本 = 脱敏行（本批）。
-        List(UiMessage.askUserAnswer(finalRow, requestId, System.currentTimeMillis()))
-      )
+      // 作答落库归属批（2026-11-03）：与 legacy 腿同一裁决单点（脱敏行已算出 ⇒
+      // 这里只搬运文本，秘密性的判定仍在上方 rowLines/finalRow）。子代理/节点提问
+      // ⇒ 脱敏全文只落提问会话，根会话只留代答痕迹行（零值、零明文）。
+      _ <- AskAnswerPlacement
+        .originOf(sharedResources, requestId)
+        .flatMap { origin =>
+          val plan = AskAnswerPlacement.plan(
+            origin,
+            askSessionId,
+            finalRow,
+            requestId,
+            System.currentTimeMillis()
+          )
+          AskAnswerPlacement.persist(sessionStore, requestId, plan)
+        }
       payload = Json.obj(
         "answers" -> answers.asJson, // 原样上行：秘密槽明文值由 hub 守卫拒收（fail-closed）
         "stored" -> receipts.flatten.asJson

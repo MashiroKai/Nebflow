@@ -626,9 +626,17 @@ class WebSocketRoutes(
               )
               .map(_.getOrElse(Nil).map(_.idx).toSet)
               .handleErrorWith(_ => IO.pure(Set.empty[Int]))
+            // 作答落库归属批（2026-11-03）：桥腿与 web 腿同一裁决单点（作者报障
+            // 「回答后台智能体的提问泄漏进主会话」）——子代理 / 节点提问 ⇒ 脱敏全文
+            // 只落提问会话，根会话（rootSid）只留不含内容的代答痕迹行；根自问 /
+            // 归属读数缺席 ⇒ 改前路径逐字不变。连接件在 [[AskAnswerPlacement]]。
             _ <- BridgeAnswerReflection.rowFor(requestId, payload, secretIdxs).traverse_ { row =>
-              sharedResources.sessionStore
-                .appendUiMessages(rootSid, List(row))
+              AskAnswerPlacement
+                .originOf(sharedResources, requestId)
+                .flatMap { origin =>
+                  val plan = AskAnswerPlacement.plan(origin, rootSid, row.text, requestId, row.timestamp)
+                  AskAnswerPlacement.persist(sharedResources.sessionStore, requestId, plan)
+                }
                 .handleErrorWith(e =>
                   logger.warn(
                     s"bridge answer ui-row append failed requestId=$requestId root=$rootSid: ${e.getMessage}"
