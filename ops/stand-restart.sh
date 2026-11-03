@@ -1,6 +1,14 @@
 #!/bin/bash
-# nebflow-restart.sh — Nebflow 开发实例自重启工具 v4.2（外部工具，不属于 Nebflow 源码）
-# ⚠️ 调用方式: 必须以路径直接调用（例: ~/.nebflow/bin/nebflow-restart.sh --canary）。
+# stand-restart.sh — stand 开发实例自重启工具 v4.2（外部工具，不属于 stand 源码）
+# 改名沿革（2026-11-03 落地，作者令 2026-10-29「这个脚本是不是也改改名为stand了」）:
+#   本脚本原名 nebflow-restart.sh，git mv 保历史改名 stand-restart.sh；旧名
+#   ~/.stand/bin/nebflow-restart.sh 保留为弃用垫片（打印弃用提示后 exec 转发本脚本，
+#   与 CLI 改名「老 nebflow 命令留垫片转发」同一手法）。历史事故纪年里的旧名/旧日志
+#   路径按当时原样保留，加「改名前旧名」注记。
+# 定位: 开发者/编排侧工具（sbt 编译预检 + 隔离 canary + 四信号空闲 + 观察窗），
+#   服务对象是「本机有源码树、在跑开发实例」的场景——终端用户（官网安装版）的重启面
+#   是 `stand restart`（jar 面 #916 detached apply），与本脚本无关。
+# ⚠️ 调用方式: 必须以路径直接调用（例: ~/.stand/bin/stand-restart.sh --canary）。
 #    禁止 source/eval 执行——source/eval 下 $0=shell 名，脚本内路径解析失效（v4.2 已加
 #    规范位回退兜底，但直接调用始终是最可靠方式）。
 # ⚠️ 运行安全铁律（2026-08-19 00:20 事故：验证 Ctrl+C 修复的 agent 对 ps 定位进程发信号，
@@ -13,10 +21,10 @@
 #   预检:   sbt compile 失败立即放弃，旧实例不动（绝不"杀了起不来"）
 #   Canary: 隔离 NEBFLOW_HOME + 独立端口真实启动验证，通过才动主实例
 #   空闲:   四信号合取（v3）——任一信号活跃即 BUSY:
-#     S1 日志静默   ~/.nebflow/logs/nebflow.log ≥180s 无写入（LLM 思考期可能无日志，故仅作首道防线）
-#     S2 Mail 队列  ~/.nebflow/sessions/*/mail-queue.json 全部为空/不存在（防 Mail 传递间隙误杀）
-#     S3 子任务     ~/.nebflow/subagent-tasks/*/*.json 无 status=running（≥30min 未更新的 running 视为陈旧忽略并记日志）
-#     S4 任务流转   ~/.nebflow/tasks/*/*.json 近 10min 无 mtime 变化（任务状态变化即写入）
+#     S1 日志静默   $NF_HOME/logs/nebflow.log ≥180s 无写入（LLM 思考期可能无日志，故仅作首道防线）
+#     S2 Mail 队列  $NF_HOME/sessions/*/mail-queue.json 全部为空/不存在（防 Mail 传递间隙误杀）
+#     S3 子任务     $NF_HOME/subagent-tasks/*/*.json 无 status=running（≥30min 未更新的 running 视为陈旧忽略并记日志）
+#     S4 任务流转   $NF_HOME/tasks/*/*.json 近 10min 无 mtime 变化（任务状态变化即写入）
 #   观察期: 四信号首次全绿后进入 5 分钟观察窗，每 30s 复查，任一转红即重置重新等待
 #   终检:   canary 预检耗时数分钟，重启前再查一次四信号，转红则放弃本次回到守望
 # v4.0（2026-08-30，根因报告 docs/Nebflow/20260830_restart-script-stability.md）:
@@ -31,7 +39,7 @@
 #      所有出口（成功/失败/中断）经 trap 自动删除。
 #   R6 sbt 附带击杀收窄: 只杀 cwd 在本项目目录的 sbt/scala/java 进程，不再全机器扫杀。
 #   R7 notify_nebula 的 sid 初始化（修 set -u 未绑定告警）。
-# v4.1（2026-09-01，用户报告 + 日志实证 /tmp/nebflow-restart-force.log）:
+# v4.1（2026-09-01，用户报告 + 日志实证 /tmp/nebflow-restart-force.log〔改名前旧名纪年〕）:
 #   A 脱离实例进程树: 脚本经 Nebula Bash 工具启动时是 JVM 的 ppid 后代（JVM→Bash 工具→bash→脚本），
 #     TERM 实例 → JVM 关闭钩子/会话清理走 ProcessTree.killProcessTree（ProcessTree.scala:
 #     ps ppid-walk + ProcessHandle descendants 按 PID 连坐，维度是进程树而非组/会话）→ 脚本被
@@ -65,19 +73,24 @@
 # 测试开关: NEBFLOW_RESTART_PORT=<port> 改目标端口；NEBFLOW_RESTART_FORCE_DETACH=1 强制 daemonize；
 #   NEBFLOW_RESTART_NO_NARROW_SBT=1 跳过「本项目残留 sbt/scala 窄域击杀」（隔离验证专用——
 #   宿主实例 cwd 也在项目目录，隔离验证不允许触碰宿主；真实重启默认行为不变）。
+#   环境变量名保留 NEBFLOW_RESTART_* 旧前缀不改（兼容既有注入面；引擎侧 DetachedApply.scala
+#   注记也引用 NEBFLOW_RESTART_PORT——改名不改契约）。数据根可用 STAND_HOME 注入（与 CLI
+#   stand 品牌解析链同源），缺省 ~/.stand。
 # 用法:
-#   nebflow-restart.sh [无参数]           等价 --check：仅检测四信号状态，不动作（安全默认）
-#   nebflow-restart.sh --check            仅检测四信号状态，不动作
-#   nebflow-restart.sh --canary           最稳路径（推荐）: 编译预检 → canary 验证 → 四信号+观察期 → 重启
-#   nebflow-restart.sh --watch [-m M]     守望模式: 持续等待全 agent 完成后自动重启（默认最多 24h，可 -m 指定分钟）
-#   nebflow-restart.sh --wait-idle [-m M] 等待四信号空闲+观察期后重启（默认最多 60 分钟）
-#   nebflow-restart.sh --restart-if-idle 立即探测四信号：空闲则重启，忙则拒绝（exit 3，零动作）
+#   stand-restart.sh [无参数]           等价 --check：仅检测四信号状态，不动作（安全默认）
+#   stand-restart.sh --check            仅检测四信号状态，不动作
+#   stand-restart.sh --canary           最稳路径（推荐）: 编译预检 → canary 验证 → 四信号+观察期 → 重启
+#   stand-restart.sh --watch [-m M]     守望模式: 持续等待全 agent 完成后自动重启（默认最多 24h，可 -m 指定分钟）
+#   stand-restart.sh --wait-idle [-m M] 等待四信号空闲+观察期后重启（默认最多 60 分钟）
+#   stand-restart.sh --restart-if-idle 立即探测四信号：空闲则重启，忙则拒绝（exit 3，零动作）
 #                                        （R2 回炉 2026-09-22 F1 接线：此前该旗标无解析臂 ⇒ 静默落入 --check）
-#   nebflow-restart.sh [--idle-secs N]    空闲则重启（轻量场景，仍走四信号）
-#   nebflow-restart.sh --force            强制重启: 跳过空闲检测，但保留编译预检（R4，编译失败不杀旧实例）
-#   nebflow-restart.sh --force --no-compile  逃生舱: 连编译预检也跳过（双重警告，风险自负）
+#   stand-restart.sh [--idle-secs N]    空闲则重启（轻量场景，仍走四信号）
+#   stand-restart.sh --force            强制重启: 跳过空闲检测，但保留编译预检（R4，编译失败不杀旧实例）
+#   stand-restart.sh --force --no-compile  逃生舱: 连编译预检也跳过（双重警告，风险自负）
 #   通用: --dry-run 全部预检验证后退出不重启
-# 报告: 每次重启动作写 /tmp/nebflow-restart-last-run.txt（新实例可读回溯）
+# 旧名入口: nebflow-restart.sh（弃用垫片，打印提示后转发本脚本，参数逐字透传）
+# 报告: 每次重启动作写 /tmp/stand-restart-last-run.txt（新实例可读回溯；改名前为
+#   /tmp/nebflow-restart-last-run.txt，旧文件仅作历史纪年）
 
 set -u
 set -o pipefail
@@ -92,13 +105,15 @@ BIN_DIR="$(cd "$(dirname "$0")" && pwd)"   # 辅助脚本（nebflow-daemonize.py
 PORT="${NEBFLOW_RESTART_PORT:-6138}"       # v4.3: 默认 6138（端口对调落地）；v4.1: 端口可注入（隔离验证用）
 CANARY_PORT=8081
 CANARY_HOME="$HOME/.nebflow-canary"
-NF_HOME="$HOME/.stand"   # 2026-10-23 对齐现役数据根（原值 ~/.nebflow 系 rebrand 前旧账，S2/S3/S4/notify 全指错家）
+NF_HOME="${STAND_HOME:-$HOME/.stand}"   # 2026-10-23 对齐现役数据根（原值 ~/.nebflow 系 rebrand 前旧账，S2/S3/S4/notify 全指错家）；
+                                        # 2026-11-03 改名批: 补 STAND_HOME 注入口（与 ops/bin/stand-cli-lib.sh stand 品牌解析链同源，
+                                        # 缺省不变——沙箱化测试由此把四信号读数指进隔离 home）
 LOG="$NF_HOME/logs/nebflow.log"
 NEBFLOW_DIR="$HOME/Claude code/Stand"   # 2026-10-23 仓目录更名对齐（旧 Nebflow 目录仍在，不修会从旧树编译起实例）
 SBT_OUT="/tmp/nebflow-sbt-restart.log"
 CANARY_OUT="/tmp/nebflow-canary.log"
-WATCH_LOG="/tmp/nebflow-restart-watch.log"
-REPORT="/tmp/nebflow-restart-last-run.txt"
+WATCH_LOG="/tmp/stand-restart-watch.log"
+REPORT="/tmp/stand-restart-last-run.txt"
 PAUSE_FLAG="$NF_HOME/logs/watchdog-paused"   # R5: watchdog 维护暂停标志（机制已存在于 nebflow-watchdog.sh）
 
 # v4.2 A: helper 解析去 $0 单点依赖。BIN_DIR 由 $0 派生——source/eval 下 $0=shell 名，
@@ -107,14 +122,14 @@ PAUSE_FLAG="$NF_HOME/logs/watchdog-paused"   # R5: watchdog 维护暂停标志�
 NEBFLOW_BIN_DIR="$BIN_DIR"
 SELF_PATH="$0"
 if [[ ! -x "$NEBFLOW_BIN_DIR/nebflow-setsid-exec.py" || ! -x "$NEBFLOW_BIN_DIR/nebflow-daemonize.py" || ! -f "$SELF_PATH" ]]; then
-  if [[ -x "$NF_HOME/bin/nebflow-setsid-exec.py" && -x "$NF_HOME/bin/nebflow-daemonize.py" && -f "$NF_HOME/bin/nebflow-restart.sh" ]]; then
+  if [[ -x "$NF_HOME/bin/nebflow-setsid-exec.py" && -x "$NF_HOME/bin/nebflow-daemonize.py" && -f "$NF_HOME/bin/stand-restart.sh" ]]; then
     NEBFLOW_BIN_DIR="$NF_HOME/bin"
-    SELF_PATH="$NF_HOME/bin/nebflow-restart.sh"
+    SELF_PATH="$NF_HOME/bin/stand-restart.sh"
     echo "[helper] \$0 未解析出 helper 目录（source/eval 调用？BIN_DIR=${BIN_DIR}）——回退规范位 ${NEBFLOW_BIN_DIR}"
   else
     echo "✗ 找不到辅助脚本 nebflow-setsid-exec.py / nebflow-daemonize.py" >&2
     echo "  已尝试: $BIN_DIR 与 $NF_HOME/bin" >&2
-    echo "  请以路径直接调用本脚本（例: $NF_HOME/bin/nebflow-restart.sh --canary），不要 source" >&2
+    echo "  请以路径直接调用本脚本（例: $NF_HOME/bin/stand-restart.sh --canary），不要 source" >&2
     exit 1
   fi
 fi
@@ -557,7 +572,7 @@ abandon_restart() {
   for p in $PID_SET; do ps_alive "$p" && kill -KILL "$p" 2>/dev/null; done
   local occ; occ=$(pid_on_port $PORT)
   [[ -n "$occ" ]] && echo "[restart] ⚠ 端口 $PORT 当前被 pid=$occ 占用（非本脚本所启，不处置）"
-  { echo "== nebflow-restart $(ts_str) =="; echo "结果: 失败（${reason}）"; } > "$REPORT"
+  { echo "== stand-restart $(ts_str) =="; echo "结果: 失败（${reason}）"; } > "$REPORT"
   exit 1
 }
 
@@ -593,7 +608,7 @@ do_restart() {
         for p in $tree_live; do kill -KILL "$p" 2>/dev/null; done
         if ! wait_pids_dead "$tree_live" 10 > /dev/null; then
           echo "[restart] ✗ 残留进程无法终止，放弃"
-          { echo "== nebflow-restart $(ts_str) =="; echo "结果: 失败（残留进程无法终止:${tree_live}）"; } > "$REPORT"
+          { echo "== stand-restart $(ts_str) =="; echo "结果: 失败（残留进程无法终止:${tree_live}）"; } > "$REPORT"
           exit 1
         fi
       fi
@@ -614,7 +629,7 @@ do_restart() {
       sleep 2
       if ! tree_live=$(wait_tree_dead "$pid" 10); then
         echo "[restart] ✗ KILL 后仍有进程存活:${tree_live}，放弃（绝不在旧实例存活时启动新实例）"
-        { echo "== nebflow-restart $(ts_str) =="; echo "结果: 失败（旧进程树 KILL 后仍存活:${tree_live}）"; } > "$REPORT"
+        { echo "== stand-restart $(ts_str) =="; echo "结果: 失败（旧进程树 KILL 后仍存活:${tree_live}）"; } > "$REPORT"
         exit 1
       fi
     fi
@@ -661,9 +676,11 @@ do_restart() {
       code=$(curl -s -o /dev/null -w "%{http_code}" -m 3 "http://localhost:$PORT/api/sessions" 2>/dev/null)
       if [[ "$code" =~ ^(200|401|403)$ ]]; then
         echo "[restart] ✓ 新实例就绪 pid=$listener 耗时 $(( now2 - started ))s（API=${code}）"
-        printf '{"startedBy":"restart-script"}\n' > "${NEBFLOW_HOME:-$HOME/.nebflow}/.pid.meta" 2>/dev/null || true
+        # 2026-11-03 改名批顺手修正（10-23 家对齐漏网之鱼）: 原写 ${NEBFLOW_HOME:-$HOME/.nebflow}
+        # 指错家（NEBFLOW_HOME 通常 unset ⇒ 落 ~/.nebflow，引擎读不到）——对齐 NF_HOME。
+        printf '{"startedBy":"restart-script"}\n' > "$NF_HOME/.pid.meta" 2>/dev/null || true
         echo "[restart] 前端请刷新重连；会话持久化将自动恢复"
-        { echo "== nebflow-restart $(ts_str) =="; echo "结果: 成功 pid=$listener API=${code}"; echo "四信号快照: ${LAST_SNAPSHOT:-n/a}"; } > "$REPORT"
+        { echo "== stand-restart $(ts_str) =="; echo "结果: 成功 pid=$listener API=${code}"; echo "四信号快照: ${LAST_SNAPSHOT:-n/a}"; } > "$REPORT"
         notify_nebula
         exit 0
       fi
@@ -678,7 +695,7 @@ do_restart() {
         code=$(curl -s -o /dev/null -w "%{http_code}" -m 3 "http://localhost:$PORT/api/sessions" 2>/dev/null)
         if [[ "$code" =~ ^(200|401|403)$ ]]; then
           echo "[restart] ✓ sbt 外壳已退出但服务健在（detached）pid=$listener 耗时 $(( $(now_ts) - started ))s（API=${code}）"
-          { echo "== nebflow-restart $(ts_str) =="; echo "结果: 成功 pid=$listener API=${code}（sbt 外壳已退出）"; echo "四信号快照: ${LAST_SNAPSHOT:-n/a}"; } > "$REPORT"
+          { echo "== stand-restart $(ts_str) =="; echo "结果: 成功 pid=$listener API=${code}（sbt 外壳已退出）"; echo "四信号快照: ${LAST_SNAPSHOT:-n/a}"; } > "$REPORT"
           notify_nebula
           exit 0
         fi

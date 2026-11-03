@@ -28,6 +28,15 @@
 #   与应用侧 #916 (`stand restart` 注册 launchd 一次性任务, DetachedApply) 互补:
 #   jar 面要求引擎活着能注册; 本 CLI 面零 JVM 依赖(点火腿), 引擎死/挂也能点火。
 #   bare `stand restart` 保持透传给 jar(#916 detached apply 语义不变)。
+#
+# ── restart 三面口径 (作者裁定 2026-11-03 07:45「stand restart 的 cli 的话应该从用户
+#    的角度去设计, 用户应该不是用编译版本的 stand, 应该和我们官网的自动更新、热重启相关」) ──
+#   bare `stand restart` 不接开发护栏腿——终端用户装的是官网发布版(jar+指针布局), 没有源码
+#   树, sbt 编译预检对他们不适用。bare = jar 面 #916 热重启(注册 OS 一次性作业后立即返回,
+#   stop→start→健康闸由系统托管), 与 `stand update` 成对(同一 apply 执行器/日志/状态相)。
+#   CLI 帮助面: `stand restart --help` 分三段(用户面/自救面/开发面), 用户面不出现 sbt/
+#   编译/canary 字样; 开发面单独成段指路 ~/.stand/bin/stand-restart.sh(原 nebflow-restart.sh,
+#   2026-11-03 改名批, 编译预检+canary+四信号, 不进 bare 路径、CLI 不暴露开发旗标)。
 # =============================================================================
 
 BRAND="${_STAND_CLI_BRAND:-stand}"
@@ -540,6 +549,65 @@ cli_pin_child_env() { # <port> — 探到的端口/解析的家钉进子进程 e
     esac
 }
 
+# >>> RESTART-HELP (作者裁定 2026-11-03 07:45: restart 的 CLI 从用户角度设计) >>>
+# 三段口径: 用户面(jar 面 #916 热重启, 默认) / 自救面(--detached · --dry-run, 零 JVM) /
+# 开发面(stand-restart.sh 外部工具, 不进 bare 路径)。用户面刻意不出现 sbt / 编译 / canary
+# 字样——读者是「只装了官网发布的 stand、机器上没有源码树」的人。
+# 失败语义按引擎实况写(DetachedApply 渲染脚本 do_apply): restart 失败 = phase=failed
+# + 报因留证(日志/状态相), 服务保持停止; **只有 update 才有回滚腿**(切回旧指针并起旧版)。
+stand_restart_help() {
+    local _root="${STAND_HOME:-$(stand_brand_default_home "$BRAND")}"
+    if [ "$BRAND" != "stand" ]; then
+        # nebflow 品牌挂的是 9.19 自有根 jar，没有 restart 子命令 ⇒ 用户面不可用（既有事实，rc=2）。
+        echo "note: '$BRAND' 品牌的 jar（9.19 自有根）没有 restart 命令 —— 用户面（bare / --jar-apply）"
+        echo "      在 '$BRAND' 上不可用，请直接用下面「自救面」的两条腿。以下按 stand 品牌口径说明。"
+        echo
+    fi
+    cat <<EOF
+$BRAND restart — 重启 stand 服务
+
+── 用户面（默认，敲这个就够）：$BRAND restart ──
+  命令只做一件事：把这次「停旧服务 → 起新服务 → 健康检查」交给操作系统的后台作业，
+  随即打印「已排定」回执并返回（几秒内）。所以命令返回后你可以立刻关终端、断 ssh、
+  退出任何会话——后台作业照常跑完，不会被连带中断。
+
+  · 装的是什么版本，重启的就是什么版本：只重跑当前已安装的那一份，不下载、不换包。
+  · 多久生效：通常几十秒。停旧服务最多等 90 秒；新服务的健康检查最多等 180 秒，
+    超时按失败处理。
+  · 失败了会怎样：后台作业停下并写明原因——服务保持停止（不会带着起不来的实例继续跑），
+    原因落在 $_root/logs/apply-restart.log，进度相在 $_root/apply/state.json。
+    照日志里的结论处理即可；修好后重跑一次 $BRAND restart。
+  · 顺带换新版本：用 $BRAND update --from <jar>。它先校验新包再排定同一次重启；
+    健康检查不过会自动回滚到上一个版本并起回旧服务。
+  · 平台：macOS（launchd 一次性作业）/ Windows（计划任务）。Linux 上此能力未内置，
+    命令会直接报错说明，不会假装已排定。
+  · 想同步等待结果、不要后台作业：$BRAND restart --inline（旧同步面，命令自己不返回
+  一直到起停做完）；终端断开即前功尽弃）。
+
+── 自救面（引擎已经挂死、命令起不来时）：--detached / --dry-run ──
+  上面的用户面要求引擎活着（才能把作业排进系统）。引擎死透时用这两条腿——它们
+  完全不碰 JVM，只要 shell 能跑就行：
+  · $BRAND restart --detached
+      在命令行这一层把点火器过继给系统（ppid=1，脱离调用方进程树/会话），自检通过才
+      动手：停旧 → 等端口空 → 直接起服务。全程日志 $_root/logs/restart-detached-*.log。
+      防双点火守卫：$_root/.restart-detached.pid（点火器在飞时再敲会被拒绝）。
+  · $BRAND restart --dry-run
+      假点火：只把「自身 ppid、要动的进程、祖先链里有没有引擎」写成证据日志，不停也不起。
+      验证判据：日志出现 "ppid=1 OK" 且 "engine pid in igniter ancestor chain: NO"，
+      即点火器已经脱离引擎树，之后真跑不会被引擎的树杀连带带走。
+
+── 开发面（本机有源码树、在跑开发实例时才相关）：stand-restart.sh ──
+  这是**另一个工具**，不是本命令的分支：$_root/bin/stand-restart.sh（2026-11 改名前为
+  nebflow-restart.sh，旧名保留为弃用垫片，转发同一实现）。
+  它服务开发者场景——先在本机源码树上做编译预检，再用隔离实例真实起一遍验证，然后等
+  「四信号全空闲 + 观察窗」确认没人在干活了才动手，宁可等也不打断在途任务。
+  用法与全部护栏见 ops/README.md 与脚本自身头注释；裸调用 = 只检测不动手
+  （$_root/bin/stand-restart.sh --check，安全默认）。
+  本命令刻意不把它接进 bare 路径：官网安装版没有源码树，编译预检对终端用户不适用。
+EOF
+}
+# <<< RESTART-HELP <<<
+
 stand_cli_main() {
     local cli_cmd="${1:-}"
     case "$cli_cmd" in
@@ -584,17 +652,29 @@ stand_cli_main() {
             ;;
         restart)
             shift
-            local _detached=0 _dry=0 _fwd=() _a
+            local _detached=0 _dry=0 _jar_apply=0 _fwd=() _a _help=0
             for _a in "$@"; do
                 case "$_a" in
-                    --detached) _detached=1 ;;
-                    --dry-run)  _dry=1 ;;
-                    *)          _fwd+=("$_a") ;;   # 其余一律透传 (--port/--force/--tree/run --inline…)
+                    --detached)  _detached=1 ;;
+                    --dry-run)   _dry=1 ;;
+                    --jar-apply) _jar_apply=1 ;;   # 显式具名 = 用户面 jar 面 (#916 detached apply)；与 bare 同路径
+                    --help|-h)   _help=1 ;;        # 帮助面在 brand 探针之前: 不落 JVM
+                    *)           _fwd+=("$_a") ;;   # 其余一律透传 (--port/--force/--tree/run --inline…)
                 esac
             done
+            if [ "$_help" = 1 ]; then stand_restart_help; exit 0; fi
+            if [ "$_jar_apply" = 1 ] && { [ "$_detached" = 1 ] || [ "$_dry" = 1 ]; }; then
+                echo "ERROR: --jar-apply 与 --detached/--dry-run 互斥（前者走引擎 jar 面, 后者是零 JVM 自救腿）" >&2
+                exit 2
+            fi
+            # 用户面（bare / --jar-apply）: jar 面 #916 热重启——RestartCommand.runDetached 注册
+            # OS 一次性 apply 作业（stop→start→健康闸由系统托管）后立即返回, 与 `stand update`
+            # 成对。作者裁定 2026-11-03 07:45: 终端用户装的是官网发布版, 无源码树,
+            # **bare 不接开发护栏腿**（stand-restart.sh 的编译预检/canary 对用户不适用）。
             if [ "$_detached" = 0 ] && [ "$_dry" = 0 ]; then
                 if [ "$BRAND" = "stand" ]; then
-                    cli_boot "restart" "$@"   # bare 透传(逐字, 含 --force/--tree/run --inline): jar 侧 #916 detached apply 语义不变
+                    # --jar-apply 是本面显式具名；剥掉后逐字透传（jar 侧不认识该旗标）。
+                    cli_boot "restart" "${_fwd[@]}"   # bare 透传(逐字, 含 --force/--tree/run --inline): jar 侧 #916 语义不变
                 else
                     echo "nebflow (2026.9.19) jar has no restart command — use: nebflow restart --detached (or --dry-run 假点火验证)" >&2
                     exit 2
