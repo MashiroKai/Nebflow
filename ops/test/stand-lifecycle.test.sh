@@ -759,6 +759,13 @@ assert_contains "passthrough intact after help arm" "restart run --inline --forc
 run_stand restart --jar-apply; RC=$?
 assert_rc "jar-apply passthrough rc" 0 "$RC"
 assert_contains "jar-apply reached jar" "restart" "$(cat "$FAKE_LOG")"
+# bare 与 --jar-apply 的 jar argv 必须逐字等价（empty-array 展开在 bash 3.2 + set -u 下不炸；
+# `"${_fwd[@]}"` 而非 `"${_fwd[@]:-}"` —— 这条断言把该等价性钉住）
+_BARE30="$SANDBOX/jar-argv-bare.txt"; _JAR30="$SANDBOX/jar-argv-jarapply.txt"
+: > "$FAKE_LOG"; run_stand restart >/dev/null 2>&1; grep '^ARGS:' "$FAKE_LOG" > "$_BARE30"
+: > "$FAKE_LOG"; run_stand restart --jar-apply >/dev/null 2>&1; grep '^ARGS:' "$FAKE_LOG" > "$_JAR30"
+assert_eq "bare and --jar-apply send identical jar argv" "$(cat "$_BARE30")" "$(cat "$_JAR30")"
+assert_contains "bare argv really reached the jar" "restart" "$(cat "$_BARE30")"
 run_stand restart --jar-apply --dry-run; RC=$?
 assert_rc "jar-apply + dry-run mutual exclusion rc" 2 "$RC"
 assert_contains "mutual exclusion message" "互斥" "$RUN_OUT"
