@@ -110,18 +110,109 @@ object DelegateStandbyCare:
     if longMax > 0 then s"$short, then every ${longMs / 60000}min ×$longMax"
     else short
 
-  // ── 执行面 ─────────────────────────────────────────────────────────────
+  // ── 退避状态机（2026-11-03 应答消费批 · 作者报障「报了 standby 还一直通知让
+  //    standby」）──────────────────────────────────────────────────────────
+  //
+  // 病灶（实证 delegate-nebflow-1e759bae 单会话 49 条 [delegate-standby]，**全部
+  // 写着 Reminder #1**，间隔 20-50s）：旧 arm() 无条件「先取消旧 fiber 再从
+  // attempt=1 起新序列」。守护提醒唤醒会话 → 会话重申 standby → 回合收尾又一次
+  // 命中 Standby 腿 → arm() 再次把序列**从头开始** ⇒ 退避序永远停在第一档
+  // （10s），短档/长档/封顶全部作废——「应答不被消费、退避不推进」。
+  //
+  // 修法 = 把「重申 standby」当**应答**消费：同期待命期内 arm() 不再重启序列，
+  // 在跑的 caretaker 按自己的档序继续（fiber 活着 ⇒ 零动作，让下一档自然到点）；
+  // fiber 已自死（回合在飞/重启等）⇒ 从**下一档**续跑（ResumeAt，不重发已发档）；
+  // 序列穷尽 ⇒ 本期待命期**静默**（只保留终态判定）。待命期边界 = 停靠槽由
+  // Some → None（Mail 唤醒 / 新申报 / 会话终态），由 [[resetPeriod]] 记账清零
+  // （写点 = DelegateRegistry.clearStandby 与 updateReport 的 standbyCleared 分支）。
+
+  /** 同一待命期内的看护记账（进程内存态，重启即清）。 */
+  final case class CareState(
+    /** 已发提醒数（下一档 = attempt + 1）。 */
+    attempt: Int = 0,
+    /** 序列是否已穷尽（本期待命期此后静默）。 */
+    exhausted: Boolean = false,
+    /** 被当应答消费的重申次数（应答消费批的观测面/审计面）。 */
+    answers: Int = 0
+  )
+
+  /** arm() 的决策面（纯函数，spec 判红锚——「应答后不再重复提醒」的机械锚）。 */
+  sealed trait ArmDecision extends Product with Serializable
+
+  object ArmDecision:
+    /** 新待命期（无先验记账）：从第 1 档起。 */
+    case object StartFresh extends ArmDecision
+    /** 同一待命期、fiber 已不在：从第 attempt 档续跑（不重发已发档）。 */
+    final case class ResumeAt(attempt: Int) extends ArmDecision
+    /** 同一待命期、fiber 在跑：重申 = 应答 —— 零动作（推进由在跑 caretaker 承担）。 */
+    case object AnswerConsumed extends ArmDecision
+    /** 序列穷尽：本期待命期静默（零提醒，只保留终态判定）。 */
+    case object StaySilent extends ArmDecision
 
   /**
-   * per-delegate 单槽 caretaker 注册表（ConcurrentHashMap——arm 幂等：先取消旧
-   * fiber 再置新；自死 fiber 的残留条目无害：cancel 已终 fiber = no-op，且下次
-   * arm 直接覆写。进程内存态，重启即清——与「重启后会话不 live」同生命周期）。
+   * 决策表：
+   *   无记账 ⇒ StartFresh；
+   *   已穷尽（或已发满 total 档）⇒ StaySilent（封顶硬约束）；
+   *   fiber 在跑 ⇒ AnswerConsumed（**不重发、不重启**——退避自然推进）；
+   *   否则 ⇒ ResumeAt(attempt + 1)（fiber 中途自死也不回第一档）。
    */
-  private val arms = new java.util.concurrent.ConcurrentHashMap[String, Fiber[IO, Throwable, Unit]]()
+  def armDecision(prev: Option[CareState], fiberLive: Boolean, total: Int): ArmDecision =
+    prev match
+      case None                                 => ArmDecision.StartFresh
+      case Some(st) if st.exhausted             => ArmDecision.StaySilent
+      case Some(st) if st.attempt >= total      => ArmDecision.StaySilent
+      case Some(_) if fiberLive                 => ArmDecision.AnswerConsumed
+      case Some(st)                             => ArmDecision.ResumeAt(math.max(1, st.attempt + 1))
+
+  /** 提醒总数封顶（delay 档长 + 长档次数）——同一待命期提醒次数上界。 */
+  def sequenceTotal: Int =
+    totalAttempts(Defaults.DelegateStandbyNudgeDelaysMs, math.max(0, Defaults.DelegateStandbyNudgeLongMax))
+
+  // ── 执行面 ─────────────────────────────────────────────────────────────
+
+  /** per-delegate caretaker 槽（token = 自死 fiber 的归属判据：只移除自己的槽）。 */
+  private final case class Slot(token: Long)
+
+  /**
+   * per-delegate 单槽 caretaker 注册表。含 fiber ⇒ 该待命期的序列在跑（= 应答面
+   * 「fiberLive」判据）；fiber 自终即移除自己的槽（token 比对，防误删新槽）。
+   * 进程内存态，重启即清——与「重启后会话不 live」同生命周期。
+   */
+  private val arms = new java.util.concurrent.ConcurrentHashMap[String, Slot]()
+
+  /** per-delegate 退避记账（跨 arm 存活 = 应答消费的载体）。 */
+  private val states = new java.util.concurrent.ConcurrentHashMap[String, CareState]()
+
+  /** 待命期边界：停靠槽由 Some → None（Mail 唤醒 / 新申报覆盖 / 终态）时清零。
+   *  纯簿记（无 IO）——从 DelegateRegistry 的写锁临界区内调用，绝不阻塞投递。 */
+  def resetPeriod(delegateId: String): Unit =
+    if delegateId != null && delegateId.nonEmpty then
+      states.remove(delegateId)
+      ()
+
+  /** 读面（spec 断言 / 审计）：当前待命期的看护记账。 */
+  private[delegate] def careStateOf(delegateId: String): Option[CareState] =
+    Option(states.get(delegateId))
+
+  /** 读面：是否有 caretaker 在跑（spec 断言面）。 */
+  private[delegate] def caretakerLive(delegateId: String): Boolean = arms.containsKey(delegateId)
+
+  /** spec 现场复原（生产无调用方）。 */
+  private[delegate] def clearAllForSpec(): Unit =
+    arms.clear()
+    states.clear()
 
   /**
    * 武装一轮待命看护（回合收尾矩阵分流 ⇒ 监督者调用）。fire-and-forget：启动失败
    * 只 WARN（看护缺失不改写待命语义——只是少了提醒）。总闸关 = 零动作。
+   *
+   * **应答消费批（2026-11-03）**：本方法现在是幂等「确保本期待命期有一条
+   * caretaker」，不再无条件重启序列——决策表见 [[armDecision]]：
+   *   - 新待命期 ⇒ 从第 1 档起；
+   *   - 同期待命期内 fiber 在跑（会话刚被我们的提醒唤醒、重申 standby）⇒ **应答
+   *     消费**：零动作，在跑 fiber 按档序自然推进（不重发、不回第一档）；
+   *   - 同期待命期内 fiber 已自死 ⇒ 从下一档续跑（不回第一档）；
+   *   - 序列穷尽 ⇒ 静默（同一 standby 期间提醒次数封顶）。
    */
   def arm(
     delegateId: String,
@@ -134,19 +225,74 @@ object DelegateStandbyCare:
   ): IO[Unit] =
     if !Defaults.DelegateStandbyNudgeEnabled then IO.unit
     else
-      (IO.blocking(Option(arms.get(delegateId)))
-        .flatMap(_.fold(IO.unit)(_.cancel))
-        .flatMap { _ =>
-          IO
-            .defer(loop(delegateId, childRef, supervisorRef, resources, kind, attempt = 1, chainsInFlight, emptyTurn))
-            .start
-            .flatMap(f => IO.blocking { arms.put(delegateId, f); () })
-        })
-        .handleErrorWith(e => logger.warn(s"[standby-care] arm failed for $delegateId: ${e.getMessage}").void)
+      val total = sequenceTotal
+      IO.blocking {
+        val prev = Option(states.get(delegateId))
+        val live = arms.containsKey(delegateId)
+        (prev, armDecision(prev, live, total))
+      }.flatMap {
+        case (_, ArmDecision.AnswerConsumed) =>
+          IO.blocking {
+            states.compute(
+              delegateId,
+              (_, cur) => Option(cur).getOrElse(CareState()).copy(answers = Option(cur).map(_.answers).getOrElse(0) + 1)
+            )
+            val st = Option(states.get(delegateId)).getOrElse(CareState())
+            logger.info(
+              s"[standby-care] re-declared standby consumed as an ANSWER for $delegateId " +
+                s"(answers=${st.answers}, reminders sent=${st.attempt}/$total) — backoff ADVANCES, no reminder re-sent"
+            )
+            ()
+          }
 
-  /** caretaker 本体：睡档 → 复验仍等 → 注入提醒 → 递进（穷尽即静默）。 */
+        case (_, ArmDecision.StaySilent) =>
+          IO.blocking {
+            val st = Option(states.get(delegateId)).getOrElse(CareState())
+            logger.info(
+              s"[standby-care] reminder sequence EXHAUSTED for $delegateId (${st.attempt}/$total) — " +
+                "this standby period stays silent (pure event-driven wait; Mail wakes anytime; zero timeout)"
+            )
+            ()
+          }
+
+        case (_, decision) =>
+          val startAttempt = decision match
+            case ArmDecision.StartFresh     => 1
+            case ArmDecision.ResumeAt(n)    => n
+            case _                          => 1
+          val token = System.nanoTime()
+          val slot = Slot(token)
+          IO.blocking {
+            arms.put(delegateId, slot)
+            states.put(delegateId, CareState(attempt = startAttempt - 1))
+            ()
+          } *>
+            IO.defer(
+              loop(
+                delegateId,
+                slot,
+                childRef,
+                supervisorRef,
+                resources,
+                kind,
+                attempt = startAttempt,
+                chainsInFlight,
+                emptyTurn
+              )
+            ).start.void
+      }.handleErrorWith(e => logger.warn(s"[standby-care] arm failed for $delegateId: ${e.getMessage}").void)
+
+  /**
+   * caretaker 本体：睡档 → 复验仍等 → 注入提醒 → 递进（穷尽即静默）。
+   *
+   * 记账面（应答消费批）：每次注入即落 `attempt`（下一档据此续跑），穷尽即落
+   * `exhausted` 并**移除自己的槽**（本期待命期此后静默——重申不再武装新序列）。
+   * 自我了断（已唤醒/已离开待命/会话终态）同样移除自己的槽（token 比对，防误删
+   * 新待命期的新槽）。
+   */
   private def loop(
     delegateId: String,
+    slot: Slot,
     childRef: ActorRef[AgentCommand],
     supervisorRef: ActorRef[AgentEvent],
     resources: AgentRuntimePort,
@@ -159,9 +305,16 @@ object DelegateStandbyCare:
     val longMs = Defaults.DelegateStandbyNudgeLongMs
     val longMax = math.max(0, Defaults.DelegateStandbyNudgeLongMax)
     val total = totalAttempts(delays, longMax)
+    val releaseSlot: IO[Unit] = IO.blocking {
+      arms.remove(delegateId, slot)
+      ()
+    }.handleErrorWith(_ => IO.unit)
     IO.sleep(delayFor(attempt, delays, longMs).millis) *>
       stillWaiting(delegateId, resources, kind).flatMap {
-        case false => IO.unit // 已唤醒/已补报/终态 ⇒ 自我了断（绝不在在飞回合中途打扰）
+        case false =>
+          // 已唤醒/已补报/终态 ⇒ 自我了断（绝不在在飞回合中途打扰）；槽归还，
+          // 记账保留（同期待命期内后续重申按 ResumeAt 续档，不回第一档）。
+          releaseSlot
         case true =>
           val last = attempt >= total
           val detail = IO
@@ -177,12 +330,26 @@ object DelegateStandbyCare:
             )).void
               .handleErrorWith(e => logger.warn(s"[standby-care] nudge #$attempt inject failed for $delegateId: ${e.getMessage}").void)
           } *>
-            IO.whenA(!last)(loop(delegateId, childRef, supervisorRef, resources, kind, attempt + 1, chainsInFlight, emptyTurn)) *>
-            IO.whenA(last)(
-              logger.info(
-                s"[standby-care] reminder sequence exhausted for $delegateId " +
-                  s"(matrix ${kind.toString.toLowerCase}, $total nudge(s)) — back to pure event-driven waiting (Mail wakes; zero timeout)"
+            // 记账：已发档数推进（穷尽位随最后一档置位）。answers 面**保留**——
+            // 计数由 arm() 的 AnswerConsumed 分支独占推进，注入腿只读不改
+            // （否则每次注入把应答计数清零，审计面失真）。
+            IO.blocking {
+              states.compute(
+                delegateId,
+                (_, cur) => CareState(attempt = attempt, exhausted = last, answers = Option(cur).map(_.answers).getOrElse(0))
               )
+              ()
+            } *>
+            IO.whenA(!last)(
+              loop(delegateId, slot, childRef, supervisorRef, resources, kind, attempt + 1, chainsInFlight, emptyTurn)
+            ) *>
+            IO.whenA(last)(
+              releaseSlot *>
+                logger.info(
+                  s"[standby-care] reminder sequence exhausted for $delegateId " +
+                    s"(matrix ${kind.toString.toLowerCase}, $total nudge(s)) — this standby period goes SILENT " +
+                    "(pure event-driven waiting: Mail wakes; zero timeout; re-declarations no longer re-arm)"
+                )
             )
       }
 

@@ -83,6 +83,28 @@ object ScheduledTaskService:
         if t.length > 160 then t.take(160) + "…" else t
     }
 
+  // ── 注入身份键（事件投递绑定批 2026-11-03 · 作者报障「定时任务怎么都没触发
+  //    你的轮次了」）────────────────────────────────────────────────────────
+  //
+  // 病灶：触发事件旧 identity = 任务 id（`correlationId = Some(task.id)`）。重复任务
+  // **每期一炮**，而注入即标记的「已投递回执台账」（DeliveredReceiptLedger，
+  // session 级持久文件）以 correlationId 为身份键 ⇒ 首炮入账后，第 2…N 炮在会话
+  // 收件口被 intake 闸判为「重复件」**静默丢弃**（只留一行 duplicate-suppressed
+  // 日志）：面板卡片照常落盘（卡片写在路由之前）但**轮次永不启动**，直到作者下次
+  // 发言才把内容一起带进那一轮。实证 11-03 10:55（corr=b65f1355，session
+  // d7c3cb54 的台账里 b65f1355 / 9d0e41d6 各只入账一次，此后每期皆 suppressed）。
+  //
+  // 修法：身份键升为**单次触发**（任务 id + 触发时刻毫秒），逐炮唯一；同一炮的
+  // 重复投递仍按同键去重（exactly-once 语义保留）。
+
+  /** 单次触发身份键：`<taskId>@<firedAtMs>`（纯函数，spec 判红锚）。 */
+  def firingKey(taskId: String, firedAtMs: Long): String = s"$taskId@$firedAtMs"
+
+  /** 同窗合并组身份键：触发时刻 + 任务集摘要（同窗重复合并注入仍去重）。 */
+  def mergedFiringKey(taskIds: List[String], firedAtMs: Long): String =
+    val ids = taskIds.map(_.trim).filter(_.nonEmpty).distinct.sorted.mkString("+")
+    s"merged[$ids]@$firedAtMs"
+
 end ScheduledTaskService
 
 class ScheduledTaskService(
@@ -467,7 +489,8 @@ class ScheduledTaskService(
         else ""
       prevChain <- prevResultNote(task)
       chainNote = prevChain.map(s => s"\n（上一轮结果摘要：$s）").getOrElse("")
-      actualTime = formatTime(System.currentTimeMillis())
+      firedAtMs = System.currentTimeMillis()
+      actualTime = formatTime(firedAtMs)
       payload = s"${task.content}$refNote$extraNote$downfreqNote$chainNote\n（实际触发 $actualTime，预定 $formattedTime）"
 
       event = AgentCommand.ExternalEvent(
@@ -477,9 +500,16 @@ class ScheduledTaskService(
         metadata = io.circe.JsonObject(
           "taskId" -> task.id.asJson,
           "triggerAt" -> task.triggerAt.asJson,
+          "firedAt" -> firedAtMs.asJson,
           "referencePath" -> task.referencePath.asJson
         ),
-        correlationId = Some(task.id)
+        // 🔴 身份键 = **本次触发**（事件投递绑定批 2026-11-03）：重复任务每期一炮，
+        // 身份必须逐炮不同——旧形态用它 = 任务 id，与「已投递回执台账」
+        // （DeliveredReceiptLedger，注入即标记）撞键 ⇒ 首炮之后的每一期都被 intake
+        // 闸判为重复件**静默丢弃**（实证 11-03 10:55：corr=b65f1355 报
+        // external-event-duplicate-suppressed，会话整轮不启动，作者 10:58 手动发
+        // 消息才把卡片内容带进同一轮）。同一次触发的重复投递仍按本键去重。
+        correlationId = Some(ScheduledTaskService.firingKey(task.id, firedAtMs))
       )
 
       _ <- logger.info(
@@ -519,7 +549,6 @@ class ScheduledTaskService(
    * 逐任务的后事（例行落账/一次性删除/面板广播）不合并，逐字保留各自语义。
    */
   private def fireMergedGroup(resolvedSessionId: String, tasks: List[ScheduledTask]): IO[Unit] =
-    val now = System.currentTimeMillis()
     for
       perTask <- tasks.traverse { t =>
         t.repeat.filter(nextPeriodMs(_).isDefined) match
@@ -536,22 +565,26 @@ class ScheduledTaskService(
         case Some(first) => prevResultNote(first)
         case None => IO.pure(None)
       chainNote = prevChain.map(s => s"\n（上一轮结果摘要：$s）").getOrElse("")
+      firedAtMs = System.currentTimeMillis()
       lines = perTask.map { case (t, _, _) =>
         val notes = fireNote(t)
         s"- ${t.content.take(160)}$notes（预定 ${formatTime(t.triggerAt)}）"
       }
       header =
         s"[定时任务批量触发 ×${tasks.size}]（同窗合并注入：本窗口 ${tasks.size} 个到点触发合并为一次，请逐条处置）"
-      payload = ((header +: chainNote.toList) ++ lines :+ s"（实际触发 ${formatTime(now)}）").mkString("\n")
+      payload = ((header +: chainNote.toList) ++ lines :+ s"（实际触发 ${formatTime(firedAtMs)}）").mkString("\n")
       event = AgentCommand.ExternalEvent(
         source = "scheduled-task",
         eventType = "trigger-batch",
         payload = payload,
         metadata = io.circe.JsonObject(
           "taskIds" -> tasks.map(_.id).asJson,
-          "merged" -> true.asJson
+          "merged" -> true.asJson,
+          "firedAt" -> firedAtMs.asJson
         ),
-        correlationId = None
+        // 🔴 身份键 = **本次合并窗**（同 [[fireTask]] 的逐炮身份批——同窗触发集合
+        // 几乎必不同，取齐到毫秒的触发时刻 + 任务集做键；空集退化 raw id）。
+        correlationId = Some(ScheduledTaskService.mergedFiringKey(tasks.map(_.id), firedAtMs))
       )
       _ <- logger.info(
         s"Merged ${tasks.size} due tasks into one batched trigger for session $resolvedSessionId: ${tasks.map(_.id).mkString(", ")}"
@@ -667,9 +700,13 @@ class ScheduledTaskService(
         payload = payload,
         metadata = io.circe.JsonObject(
           "todoIds" -> dueTodos.map(_.id).asJson,
-          "digestTodoIds" -> allTodos.map(_.id).asJson
+          "digestTodoIds" -> allTodos.map(_.id).asJson,
+          "surfacedAt" -> now.asJson
         ),
-        correlationId = dueTodos.headOption.map(_.id)
+        // 同 [[ScheduledTaskService.firingKey]] 的身份口径：待办每天浮出一次，身份
+        // 必须逐次唯一——旧形态用 `dueTodos.head.id`（同一待办次日的浮出撞键 ⇒
+        // 天天只浮出第一天那次）。同一次浮出的重复投递仍按本键去重。
+        correlationId = Some(ScheduledTaskService.firingKey("todo-digest", now))
       )
       _ <- injectTodoDigest(resolvedSessionId, payload, event)
       // 只顺延**到期**的待办（未到期的首次浮出时间不动——它明晨自会浮出）。
