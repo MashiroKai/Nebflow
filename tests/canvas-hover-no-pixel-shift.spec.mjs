@@ -221,8 +221,13 @@ async function unhover(page) {
   await sleep(500);
 }
 
-const hasLayoutTransition = (s) =>
-  !!(s.safeTransitionProp && /padding|width|height|margin|top|left|right|bottom/.test(s.safeTransitionProp) && !/^0s(,|$)/.test(String(s.safeTransitionDur || '').trim() === '' ? '0s' : String(s.safeTransitionDur).split(',')[0].trim()));
+/** 该查看面是否挂着「布局属性」过渡（作者要点②③：只许合成属性）。
+ *  transition-property 含 padding/尺寸/定位 且首个 duration > 0 ⇒ 红。 */
+const hasLayoutTransition = (s) => {
+  const prop = String(s.safeTransitionProp || '');
+  const dur = String(s.safeTransitionDur || '0s').split(',')[0].trim();
+  return /padding|width|height|margin|top|left|right|bottom/.test(prop) && !/^0(\.0+)?m?s$/.test(dur);
+};
 
 /* ════════ 桌面腿：图片面（作者报障本体）════════ */
 {
