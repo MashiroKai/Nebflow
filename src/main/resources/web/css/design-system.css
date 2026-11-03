@@ -235,12 +235,62 @@
      亮暗自适应——灰通道本就主题中性）。 */
   --ds-focus-seam: rgb(128 128 128 / 0.08);
   --ds-focus-seam-strong: rgb(128 128 128 / 0.12);
+
+  /* ── ⑬ Canvas 卡面 / 叠卡卡族槽（ui-unification-20261103-canvas-overlay）──
+     缺槽先扩再消费：④Canvas 看板卡面（面板卡/标题胶囊/页签轨与四态）与 ⑤叠卡
+     卡族（栈区/展开钮/折叠卡脸/媒体卡层）的尺度、态、圆角、间距此前散在
+     split.css 与 chat.css 的裸值里。以下槽 = 两面的**现盘读数逐字搬迁**（值的
+     家从消费面迁到令牌层，计算值零漂移），不是新规范值；亮/暗两档分列见下方
+     prefers-color-scheme 覆盖块（页签态与叠卡钮底在暗档本就各有一套既有值）。
+     · 灰通道洗选族（页签轨/悬停/分隔、展开钮底、关闭钮悬停）与白通道高光族
+       （选中页签玻璃两缘/描边/投影）= 既有 rgba 通道的 α 组合 —— 与
+       --ds-row-selected / --ds-shadow-card 同法（令牌出生行放行，亮暗各站档）。
+     · 胶囊几何三槽（字档/内距/件缝）与页签几何两槽（横内距/轨内距）为档外
+       既有值，按 --ds-fs-bubble / --ds-row-inset 先例以具名槽收编（禁再派生）。 */
+  --ds-fs-capsule: 14px;                     /* canvas 标题胶囊字档（既有值） */
+  --ds-capsule-pad: 6px 8px 6px 14px;        /* 胶囊内距（手机/基线档） */
+  --ds-capsule-pad-desk: 4px 7px 4px 12px;   /* 桌面腿 36px 固定高胶囊内距 */
+  --ds-capsule-gap: 6px;                     /* 胶囊内件缝（图标/标题/pop 钮） */
+  --ds-tab-track: rgb(128 128 128 / 0.08);   /* 看板页签轨底（灰通道洗选） */
+  --ds-tab-hover: rgb(128 128 128 / 0.15);   /* 页签悬停洗选 */
+  --ds-tab-divider: rgb(128 128 128 / 0.25); /* 未选中页签分隔线（暗档同值） */
+  --ds-tab-pad-x: 10px;                      /* 页签横内距（既有值档） */
+  --ds-tab-track-pad: 3px;                   /* 页签轨内距（既有微缝档） */
+  --ds-tab-close-hover-bg: rgb(128 128 128 / 0.18);           /* 页签关闭钮悬停底 */
+  --ds-tab-active-hi: rgb(255 255 255 / 0.65);                /* 选中页签玻璃上缘 */
+  --ds-tab-active-hi-soft: rgb(255 255 255 / 0.4);            /* 选中页签玻璃下缘 */
+  --ds-tab-active-border: rgb(255 255 255 / 0.4);             /* 选中页签描边 */
+  --ds-tab-active-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5), 0 1px 3px rgb(0 0 0 / 0.06);
+  --ds-tab-active-hover-hi: rgb(255 255 255 / 0.6);           /* 选中页签悬停：玻璃两缘加深 */
+  --ds-tab-active-hover-hi-soft: rgb(255 255 255 / 0.35);
+  --ds-tab-active-hover-wash: rgb(128 128 128 / 0.06);        /* 选中页签悬停：灰洗第二层 */
+  --ds-media-face-w: 220px;                  /* 叠卡固定卡脸宽（11:14，微信叠卡档） */
+  --ds-media-pill-pad: 10px 18px;            /* 「展开 N」钮内距（既有值档） */
+  --ds-media-pill-bg: rgb(128 128 128 / 0.12);       /* 展开钮底（灰通道洗选） */
+  --ds-media-pill-bg-hover: rgb(128 128 128 / 0.2);
+  --ds-media-letterbox: #17191f;             /* 媒体卡留黑底（墨常量：亮暗各一档） */
+  --ds-shadow-media-card: 0 5px 16px rgb(0 0 0 / 0.16);      /* 叠卡卡层投影（墨α） */
+  --ds-dur-stack: 0.42s;                     /* 叠卡收放/翻页既有时长档 */
 }
 
 /* 浮层阴影暗档（令牌层单点解析：消费面不再各写一份 prefers-color-scheme）。 */
 @media (prefers-color-scheme: dark) {
   :root {
     --ds-shadow-pop: inset 0 1px 0 0 rgb(91 127 191 / 0.05), 0 4px 16px rgb(0 0 0 / 0.30), 0 8px 32px rgb(0 0 0 / 0.45);
+    /* ⑬ Canvas/叠卡槽暗档（与消费面既有暗档读数逐字对齐） */
+    --ds-media-letterbox: #101318;
+    --ds-shadow-media-card: 0 5px 16px rgb(0 0 0 / 0.5);
+    --ds-media-pill-bg: rgb(128 128 128 / 0.18);
+    --ds-media-pill-bg-hover: rgb(128 128 128 / 0.28);
+    --ds-tab-track: rgb(255 255 255 / 0.04);
+    --ds-tab-hover: rgb(255 255 255 / 0.1);
+    --ds-tab-active-hi: rgb(255 255 255 / 0.32);
+    --ds-tab-active-hi-soft: rgb(255 255 255 / 0.14);
+    --ds-tab-active-border: rgb(255 255 255 / 0.16);
+    --ds-tab-active-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1), 0 1px 3px rgb(0 0 0 / 0.2);
+    --ds-tab-active-hover-hi: rgb(255 255 255 / 0.28);
+    --ds-tab-active-hover-hi-soft: rgb(255 255 255 / 0.1);
+    --ds-tab-active-hover-wash: rgb(255 255 255 / 0.04);
   }
 }
 
@@ -727,6 +777,81 @@
 .ds-side-row:hover .ds-side-danger { opacity: 1; }
 .ds-side-danger:hover { color: var(--ds-danger-icon); }
 .ds-side-danger svg { width: 14px; height: 14px; }
+/* ══ ⑨ 叠卡卡族（.ds-media-stack / .ds-media-card）——ui-unification-20261103-canvas-overlay ══
+   叠卡（Pop 媒体卡：微信式「前卡 + 右侧露边两层」）的**形态唯一家**：栈区 /
+   展开钮 / 折叠卡脸 / 展开面 / 媒体卡层。此前形与态混在 chat.css「media stack」
+   段一处；本批形迁本层，态留在 chat.css。
+
+   钩子契约（照 .tool-card / .ds-side-row 先例）：渲染腿 popArtifacts.js emit
+   `class="pop-stack-area ds-media-stack"` / `"pill ds-media-stack__pill"` /
+   `"pop-stack-view ds-media-stack__view"` / `"pop-expand-view ds-media-stack__expand"` /
+   `"media-layer ds-media-card"` —— 旧 class 保留为 **DOM 寻址钩子**（msgQuote.js 的
+   `.pop-stack-area` 查询、messages.js/smartCrop.js 的 `.media-layer` 查询、friends.css
+   宿主镜像 `.fm-msg .pop-stack-area`、以及 canvas-stack 等既有 spec 全兼容），
+   形状零复制。
+
+   留在 chat.css 的是**态与机制**（不是形）：layer-front/mid/back 扇形变换、
+   is-buried 隐没、dragging 光标与过渡关闭、展开列逐张 own-ratio 排版、栈内
+   object-fit 裁切域、引用高亮一次闪光。判据 = 「形是否随主题/尺度换值」——
+   换值的进本层，只做状态切换的留消费面。
+
+   主题：卡面材质/四态全槽语义令牌（暗档自动解析 —— chat.css 暗档里
+   `.media-layer` 与 `.pop-stack-area .pill` 的亮暗双写同批退役）。 */
+.ds-media-stack {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-4);
+  transition: height var(--ds-dur-stack) var(--ds-ease-panel);
+}
+/* 展开钮（「展开 N」）：灰通道洗选底 + 胶囊圆角，一档 hover 抬亮。 */
+.ds-media-stack__pill {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  background: var(--ds-media-pill-bg);
+  color: var(--ds-text);
+  border: none;
+  border-radius: var(--ds-radius-pill);
+  padding: var(--ds-media-pill-pad);
+  font-size: var(--ds-fs-body);
+  font-weight: var(--ds-fw-btn);
+  font-family: inherit;
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--ds-dur-hover), transform var(--ds-dur-micro);
+}
+.ds-media-stack__pill:hover { background: var(--ds-media-pill-bg-hover); }
+.ds-media-stack__pill:active { transform: scale(0.95); }
+/* 折叠卡脸：ONE fixed WeChat-style face — 220×280 (11:14)，一切入口无论自身
+   比例都裁到同一张脸上（卡面尺度单源 = --ds-media-face-w）。 */
+.ds-media-stack__view {
+  position: relative;
+  width: var(--ds-media-face-w);
+  aspect-ratio: 11 / 14;
+  flex-shrink: 0;
+  touch-action: pan-y;
+}
+/* 展开列容器（逐张 own-ratio：宽度同卡脸档，纵向自然高）。 */
+.ds-media-stack__expand {
+  display: none;
+  flex-direction: column;
+  gap: var(--ds-space-5);
+  width: var(--ds-media-face-w);
+  flex-shrink: 0;
+}
+/* 媒体卡层（折叠前卡与展开行共用基形）：卡脸圆角 + 卡影 + 留黑底。 */
+.ds-media-card {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--ds-radius-card-md);
+  overflow: hidden;
+  box-shadow: var(--ds-shadow-media-card);
+  cursor: pointer;
+  background: var(--ds-media-letterbox);
+  transition: transform var(--ds-dur-stack) var(--ds-ease-panel),
+              filter var(--ds-dur-stack) var(--ds-ease-panel);
+}
+
 /* prefers-reduced-motion：全局压掉过渡（SKILL.md §6 官网同款兜底）。 */
 @media (prefers-reduced-motion: reduce) {
   .ds-btn, .ds-input, .ds-side-row, .ds-side-icon-btn, .ds-side-danger { transition-duration: 0.01ms; }

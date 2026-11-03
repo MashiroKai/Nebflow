@@ -600,15 +600,15 @@ button.dev-chip {
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  border-radius: 20px;
+  border: var(--ds-border-width) solid var(--ds-border-glass);
+  border-radius: var(--ds-radius-shell);
   opacity: 0;
   overflow: hidden;
-  margin: 16px 10px 10px;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
+  margin: var(--ds-space-4) var(--ds-space-glass-x) var(--ds-space-glass-x);
+  /* 卡面浮影 = 悬浮控件单源（--ds-shadow-float → --cv-shadow 亮/暗两档），
+     与 #input-bar 同款三档栈；下方「Dark Theme — Canvas Panel」自绘暗档块
+     同批退役（亮暗由令牌单点解析）。 */
+  box-shadow: var(--ds-shadow-float);
   transition: flex-basis var(--panel-duration) var(--panel-ease),
               opacity var(--panel-duration) var(--panel-ease),
               transform var(--deck-morph-duration, 0.28s) var(--deck-morph-ease, cubic-bezier(0.32, 0, 0.18, 1)),
@@ -728,12 +728,12 @@ body.canvas-open.canvas-overlay #canvas-panel {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--ds-capsule-gap);
   width: fit-content;
   max-width: min(76%, calc(100% - 184px));
-  padding: 6px 8px 6px 14px;
+  padding: var(--ds-capsule-pad);
   margin: 0;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   /* ── Frosted 标准（2026-10-22 作者令：全站一套毛玻璃，禁各画各的）──
      材质 token 对齐 chat header 现实现：--glass-bg 底 + --glass-blur
      saturate(1.15) + --glass-border + 顶缘折射线（--sapphire-refraction）。
@@ -742,7 +742,7 @@ body.canvas-open.canvas-overlay #canvas-panel {
      外投影零（chat.css 底缘零边界批同规；修前 --frost-shadow 外投影两档退役，
      令胶囊与聊天控件计算样式逐项相等 = canvas-glass-unify.spec 钉）；底缘
      border 同步透明化（同 #header，内容从胶囊底下穿过不再衬横线）。 */
-  border: 1px solid var(--glass-border);
+  border: var(--ds-border-width) solid var(--ds-border-glass);
   border-bottom-color: transparent;
   background:
     linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
@@ -750,9 +750,9 @@ body.canvas-open.canvas-overlay #canvas-panel {
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   color: var(--color-frame-text-bright);
-  font-size: 14px;
-  font-weight: 500;
-  box-shadow: var(--cv-shadow);
+  font-size: var(--ds-fs-capsule);
+  font-weight: var(--ds-fw-btn);
+  box-shadow: var(--ds-shadow-float);
   /* 手势跟手位移/按压形（JS 写变量；静止恒等）。--head-rot：滑删动画批
      （2026-10-23 六项⑥a）横划跟手微倾变量（deck 同斜率，静止 0deg）。 */
   --head-dx: 0px;
@@ -818,7 +818,7 @@ body:not(.mobile-layer):not(.card-window) #canvas-panel.stacked .canvas-header {
 body:not(.mobile-layer) .canvas-header {
   height: var(--capsule-h, 36px);
   width: var(--capsule-w, 180px);
-  padding: 4px 7px 4px 12px;
+  padding: var(--ds-capsule-pad-desk);
   /* #926 件1 兜底（作者令 2026-10-26「任何状态不溢出」）：胶囊本体裁切盒 ——
      .t-name ellipsis 为主收口，本体裁切防过渡中途/字体度量抖动等任何态的
      子元素出界（pop 钮无出界装饰，裁切零副作用；手机层通栏头不受本条）。 */
@@ -852,7 +852,7 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
   background: none;
   color: var(--color-text-muted);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -893,9 +893,10 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
   scroll-behavior: smooth;
   scrollbar-width: thin;
   scrollbar-color: var(--color-border, rgba(128,128,128,0.35)) transparent;
-  background: rgba(128, 128, 128, 0.08);
-  border-radius: 10px;
-  padding: 3px;
+  /* 看板页签轨 = 卡面灰洗（--ds-tab-track 亮/暗单源解析） */
+  background: var(--ds-tab-track);
+  border-radius: var(--ds-radius-card-sm);
+  padding: var(--ds-tab-track-pad);
 }
 .canvas-tab-bar::-webkit-scrollbar { height: 5px; }
 .canvas-tab-bar::-webkit-scrollbar-track { background: transparent; }
@@ -918,10 +919,10 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
   align-items: center;
   justify-content: center;
   height: 28px;
-  padding: 0 10px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
+  padding: 0 var(--ds-tab-pad-x);
+  border-radius: var(--ds-radius-chip);
+  font-size: var(--ds-fs-hint);
+  font-weight: var(--ds-fw-btn);
   color: var(--color-text-muted);
   cursor: pointer;
   white-space: nowrap;
@@ -936,8 +937,8 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
 }
 /* Hover — same rounded shape as active, gray distinguishable from track (0.08) */
 .canvas-tab:not(.active):hover {
-  background: rgba(128, 128, 128, 0.15);
-  border-radius: 6px;
+  background: var(--ds-tab-hover);
+  border-radius: var(--ds-radius-chip);
 }
 .canvas-tab:not(.active):hover::after {
   opacity: 0;
@@ -950,7 +951,7 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
   top: 25%;
   bottom: 25%;
   width: 1px;
-  background: rgba(128, 128, 128, 0.25);
+  background: var(--ds-tab-divider);
   transition: opacity 0.15s;
 }
 .canvas-tab:last-child::after { display: none; }
@@ -960,48 +961,29 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
   min-width: 120px;
   max-width: 180px;
   background:
-    linear-gradient(180deg, rgba(255,255,255,0.65), rgba(255,255,255,0.4));
+    linear-gradient(180deg, var(--ds-tab-active-hi), var(--ds-tab-active-hi-soft));
   -webkit-backdrop-filter: blur(12px) saturate(1.4);
   backdrop-filter: blur(12px) saturate(1.4);
   color: var(--color-text);
-  border-radius: 6px;
-  border: 1px solid rgba(255,255,255,0.4);
-  box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.5),
-    0 1px 3px rgba(0,0,0,0.06);
+  border-radius: var(--ds-radius-chip);
+  border: var(--ds-border-width) solid var(--ds-tab-active-border);
+  box-shadow: var(--ds-tab-active-shadow);
 }
 /* Active hover — slightly deeper gray on top of the glass base */
 .canvas-tab.active:hover {
   background:
-    linear-gradient(180deg, rgba(255,255,255,0.6), rgba(255,255,255,0.35)),
-    rgba(128, 128, 128, 0.06);
+    linear-gradient(180deg, var(--ds-tab-active-hover-hi), var(--ds-tab-active-hover-hi-soft)),
+    var(--ds-tab-active-hover-wash);
 }
 .canvas-tab.active::after { display: none; }
 @media (prefers-color-scheme: dark) {
-  .canvas-tab-bar {
-    background: rgba(255, 255, 255, 0.04);
-  }
+  /* 页签轨/悬停/选中（含悬停）四态暗档值已上收 --ds-tab-* 亮暗对 —— 原自绘
+     块整段退役（ui-unification-20261103-canvas-overlay）；滚动条族非卡面态，留。 */
   .canvas-tab-bar::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.25);
   }
   .canvas-tab-bar::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.4);
-  }
-  .canvas-tab:not(.active):hover {
-    background: rgba(255, 255, 255, 0.1);
-  }
-  .canvas-tab.active {
-    background:
-      linear-gradient(180deg, rgba(255,255,255,0.32), rgba(255,255,255,0.14));
-    border: 1px solid rgba(255,255,255,0.16);
-    box-shadow:
-      inset 0 1px 0 rgba(255,255,255,0.1),
-      0 1px 3px rgba(0,0,0,0.2);
-  }
-  .canvas-tab.active:hover {
-    background:
-      linear-gradient(180deg, rgba(255,255,255,0.28), rgba(255,255,255,0.1)),
-      rgba(255, 255, 255, 0.04);
   }
 }
 .canvas-tab-label {
@@ -1042,7 +1024,7 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
   background: none;
   color: var(--color-text-muted);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   padding: 0;
   opacity: 0.45;
   transition: opacity 0.15s, background 0.15s;
@@ -1054,7 +1036,7 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
 }
 .canvas-tab-close:hover {
   opacity: 1 !important;
-  background: rgba(128, 128, 128, 0.18);
+  background: var(--ds-tab-close-hover-bg);
   color: var(--color-text);
 }
 
@@ -1640,13 +1622,13 @@ body.mobile-layer #canvas-head-close { display: none !important; }
   transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
-  border-radius: 14px;
+  border-radius: var(--ds-radius-card-md);
   background: var(--card-bg);
   -webkit-backdrop-filter: blur(14px) saturate(1.1);
   backdrop-filter: blur(14px) saturate(1.1);
   /* UI 批 ⑤：1px 硬描边退役（透明占位保布局盒不变），边缘读感交给投影羽化；
      顶部一条内嵌高光保留玻璃体量（内高光不是描边，不产生硬边感） */
-  border: 1px solid transparent;
+  border: var(--ds-border-width) solid transparent;
   box-shadow: inset 0 1px 0 var(--card-inset-hi);
   /* uifix ③a：基础投影 = 深处档（兜底），数据 dim 档位逐卡切换；
      数据 dim 由 deckFrame 每帧写（0=前景…3=深处）——同档零节流 */
@@ -1841,7 +1823,7 @@ body.mobile-layer #canvas-head-close { display: none !important; }
    收进 ？ 帮由后续批定。此处的规则连同元素一并摘除（无死 CSS）。 */
 
 /* 窄窗 overlay 形态下，叠卡 floating 族随面板浮层；裁切面/盒由 JS 同步 */
-body.canvas-overlay #deck-layer { border-radius: 20px; }
+body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 
 /* 动效降级（样张 A14）：面板/卡组过渡 0.01s */
 @media (prefers-reduced-motion: reduce) {
@@ -3185,14 +3167,9 @@ body.col-resizing #canvas-panel { transition: none; }
 /* ═══════════════════════════════════════════════════════════════════════
    Dark Theme — Canvas Panel
    ═══════════════════════════════════════════════════════════════════════ */
-@media (prefers-color-scheme: dark) {
-  #canvas-panel {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0px 2px 8px rgba(0, 0, 0, 0.20),
-      0px 8px 24px rgba(0, 0, 0, 0.35);
-  }
-}
+/* 暗档面板投影已由 --ds-shadow-float（→ --cv-shadow 暗档两外投影 + 0.04 顶缘
+   内高光）单点解析 —— 原自绘暗档块（inset 0.04 / 0.20 / 0.35 三档）与此逐值
+   等价，本批整块退役（ui-unification-20261103-canvas-overlay）。 */
 
 /* ── ui-device-faces 批（2026-10-10）：减动效降级（本文件首个 reduce 块）──
    spinner 停转（加载行/取件行）+ 浮条入场动画关闭；语义不受影响（文本行仍在）。 */

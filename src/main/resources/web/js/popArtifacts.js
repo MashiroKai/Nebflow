@@ -665,15 +665,18 @@ function buildMediaStack(items, opts) {
    *   popFaces?: Array<{item: any, index: number, els: Element[]}>,
    *   popQuoteState?: () => {index: number, total: number, desc: any},
    * }} */ (document.createElement('div'));
-  area.className = 'pop-stack-area';
+  // UI 统一批（ui-unification-20261103-canvas-overlay）：形唯一家 = design-system.css
+  // ⑨ .ds-media-stack 族；旧类保留为 DOM 寻址钩子（msgQuote/messages/smartCrop/
+  // friends.css 镜像与既有 spec 全兼容）。
+  area.className = 'pop-stack-area ds-media-stack';
   const pill = document.createElement('button');
   pill.type = 'button';
-  pill.className = 'pill';
+  pill.className = 'pill ds-media-stack__pill';
   pill.textContent = t('chat.popExpand', { n: items.length });
   const view = document.createElement('div');
-  view.className = 'pop-stack-view';
+  view.className = 'pop-stack-view ds-media-stack__view';
   const expandView = document.createElement('div');
-  expandView.className = 'pop-expand-view';
+  expandView.className = 'pop-expand-view ds-media-stack__expand';
   area.append(pill, view, expandView);
 
   let front = 0;
@@ -685,7 +688,7 @@ function buildMediaStack(items, opts) {
   // consumed by its EXPANDED row (own-ratio fit, contain — 展开态不受扇形影响).
   const layers = items.map((item, i) => {
     const layer = document.createElement('div');
-    layer.className = 'media-layer';
+    layer.className = 'media-layer ds-media-card';
     layer.appendChild(mediaFace(item, 'stack', (w, h) => {
       fitLayer(expandLayers[i], w, h, EXPAND_MAX.w, EXPAND_MAX.h);
       if (expanded) settleExpandHeight();
@@ -704,7 +707,7 @@ function buildMediaStack(items, opts) {
   });
   const expandLayers = items.map((item, i) => {
     const layer = document.createElement('div');
-    layer.className = 'media-layer';
+    layer.className = 'media-layer ds-media-card';
     layer.appendChild(mediaFace(item, 'expanded', (w, h) => {
       fitLayer(layer, w, h, EXPAND_MAX.w, EXPAND_MAX.h);
       if (expanded) settleExpandHeight();

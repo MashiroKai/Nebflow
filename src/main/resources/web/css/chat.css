@@ -4409,43 +4409,21 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   max-width: var(--msg-bubble-max-w);
 }
 
-/* ── media stack (WeChat-style: front card + peeking layers right) ── */
-.pop-stack-area {
-  display: flex; align-items: center; gap: 16px;
-  transition: height 0.42s var(--panel-ease, cubic-bezier(0.32, 0.72, 0, 1));
-}
-.pop-stack-area .pill {
-  flex-shrink: 0;
-  display: flex; align-items: center;
-  background: rgba(128, 128, 128, 0.12); color: var(--color-text);
-  border: none; border-radius: 999px;
-  padding: 10px 18px; font-size: 13px; font-weight: 500;
-  cursor: pointer; user-select: none;
-  transition: background 0.15s, transform 0.12s;
-  font-family: inherit;
-}
-.pop-stack-area .pill:hover { background: rgba(128, 128, 128, 0.2); }
-.pop-stack-area .pill:active { transform: scale(0.95); }
+/* ── media stack (WeChat-style: front card + peeking layers right) ──
+   UI 统一批（ui-unification-20261103-canvas-overlay）：栈区与「展开 N」钮的
+   **形**已上收 design-system.css ⑨ .ds-media-stack / .ds-media-stack__pill
+   （令牌单源 + 亮暗单点解析）；渲染腿 emit `pop-stack-area ds-media-stack` /
+   `pill ds-media-stack__pill`，旧类保留为 DOM 寻址钩子。本节只留态与机制。 */
 
 /* The stack box is ONE fixed WeChat-style card face — 220×280 (11:14, the
    「Expand N」 reference card's proportions). The 2026-10-30 author order
    (「参考微信的叠卡…强制放缩所有尺寸的卡片到一个大小」) retires the
    front-media-ratio box (zcode-484 D1's per-media fit): every entry, whatever
    its own ratio, is cropped onto this same face by the stack-scoped
-   `object-fit: cover` below. The renderer no longer pins a ratio here. */
-.pop-stack-view {
-  position: relative;
-  width: 220px; aspect-ratio: 11 / 14;
-  flex-shrink: 0; touch-action: pan-y;
-}
+   `object-fit: cover` below. The renderer no longer pins a ratio here.
+   UI 统一批：卡脸盒的形（含 --ds-media-face-w 卡面尺度单源）已上收
+   design-system.css .ds-media-stack__view；本节只留拖动态。 */
 .pop-stack-view.dragging { cursor: grabbing; }
-.media-layer {
-  position: absolute; inset: 0;
-  border-radius: 14px; overflow: hidden;
-  box-shadow: 0 5px 16px rgba(0, 0, 0, 0.16);
-  cursor: pointer; background: #17191f;
-  transition: transform 0.42s var(--panel-ease, cubic-bezier(0.32, 0.72, 0, 1)), filter 0.42s var(--panel-ease, cubic-bezier(0.32, 0.72, 0, 1));
-}
 .pop-stack-view.dragging .media-layer { transition: none; }
 /* The 2026-10-30 fan design (「像扑克一样轻微旋转展开 而不是重叠」): each back
    layer keeps the front card's FULL size and fans out with a small translate
@@ -4466,7 +4444,6 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    renderer assigns `is-buried` to every item beyond the front three. */
 .pop-stack-view .media-layer.is-buried { display: none; }
 
-.pop-expand-view { display: none; flex-direction: column; gap: 20px; width: 220px; flex-shrink: 0; }
 .pop-expand-view.show { display: flex; }
 /* zcode-484 D3: the expanded face keeps each media's OWN aspect ratio. The
    layers used to be a fixed 256px tall with `object-fit: cover` inherited from
@@ -4639,10 +4616,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 
 @media (prefers-color-scheme: dark) {
-  .media-layer, .pop-img, .pop-video, .pop-media-flat { background: #101318; box-shadow: 0 5px 16px rgba(0, 0, 0, 0.5); }
+  /* .media-layer 暗档留黑/卡影与 .pop-stack-area .pill 暗档洗选已上收
+     --ds-media-letterbox / --ds-shadow-media-card / --ds-media-pill-bg(-hover)
+     令牌亮暗对 —— 原双写退役（ui-unification-20261103-canvas-overlay）；
+     此处只剩平铺/展开行自身的暗档底材。 */
+  .pop-img, .pop-video, .pop-media-flat { background: #101318; box-shadow: 0 5px 16px rgba(0, 0, 0, 0.5); }
   .file-card { border-color: var(--color-border); }
-  .pop-stack-area .pill { background: rgba(128, 128, 128, 0.18); }
-  .pop-stack-area .pill:hover { background: rgba(128, 128, 128, 0.28); }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
