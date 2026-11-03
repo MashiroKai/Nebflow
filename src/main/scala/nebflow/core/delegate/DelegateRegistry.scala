@@ -278,6 +278,9 @@ object DelegateRegistry:
               val standbyCleared =
                 if status != nebflow.core.tools.DelegateReportTool.StandbyValue then None
                 else rec.standbySince
+              // 待命期边界（应答消费批 2026-11-03）：非 standby 申报把停靠槽清掉
+              // ⇒ 旧待命期结束，看护记账清零（下一轮待命 = 新期，退避序从头发）。
+              if rec.standbySince.isDefined && standbyCleared.isEmpty then DelegateStandbyCare.resetPeriod(id)
               put(
                 rec.copy(
                   reportStatus = Some(status),
@@ -354,6 +357,9 @@ object DelegateRegistry:
             if rec.standbySince.isEmpty && rec.reportStatus.isEmpty then Right(()) // 幂等：非待命零写
             else
               try
+                // 待命期边界（应答消费批 2026-11-03）：停靠槽被清 = 该会话已被唤醒
+                // /已离开待命 ⇒ 看护记账清零（下轮停靠是新期待命，退避序从头发）。
+                DelegateStandbyCare.resetPeriod(id)
                 put(
                   rec.copy(
                     standbySince = None,
