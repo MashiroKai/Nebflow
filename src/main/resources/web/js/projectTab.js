@@ -237,9 +237,10 @@ function openProjectsCreateDialog(trigger) {
   closeProjectsCreateDialog(false); // 单例：重开先关旧的（不归还焦点，焦点归新层）
 
   const overlay = document.createElement('div');
-  overlay.className = `wsp-overlay ${PROJECT_CREATE_OVERLAY}`;
+  // 弹层层族批：`ds-overlay` 遮罩形单点 / `.wsp-overlay` 保留为寻址钩子。
+  overlay.className = `wsp-overlay ds-overlay ${PROJECT_CREATE_OVERLAY}`;
   overlay.innerHTML =
-    '<div class="wsp-panel proj-create-panel" role="dialog" aria-modal="true"' +
+    '<div class="wsp-panel proj-create-panel ds-layer" role="dialog" aria-modal="true"' +
       ` aria-label="${esc(t('project.createTitle'))}">` +
       `<div class="wsp-title">${esc(t('project.createTitle'))}</div>` +
       `<label class="proj-create-label" for="${PROJECT_CREATE_DESC_ID}">${esc(t('project.createDescLabel'))}</label>` +

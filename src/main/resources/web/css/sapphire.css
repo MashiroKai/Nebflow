@@ -762,13 +762,17 @@ button.glass-control.fm-login-btn:disabled {
 .fm-msg.in,
 .dropbox-msg.in { align-self: flex-start; align-items: flex-start; }
 
-/* bubble — 几何 / 字号 / 行高 / 出向无描边 + 方向尾角 4px */
+/* bubble — 几何 / 字号 / 行高 / 出向无描边 + 方向尾角 4px
+   ui-unification-20261103-chat-stream：几何/字号/行高走 --ds-* 槽（值逐字同前：
+   8px/12px = space-2/3、14px = radius-card-md、13px = fs-body、1.5 = lh-body）。
+   列宽 token --msg-bubble-max-w 的值家**原地不动**（本文件，msgstyle 门禁 A3
+   逐字钉死）；方向尾角 4px 亦保持字面（A1/A2 同门禁按字面计数）。 */
 .fm-msg-bubble,
 .dropbox-msg-bubble {
-  padding: 8px 12px;
-  border-radius: 14px;
-  font-size: 13px;
-  line-height: 1.5;
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border-radius: var(--ds-radius-card-md);
+  font-size: var(--ds-fs-body);
+  line-height: var(--ds-lh-body);
   word-break: break-word;
   color: var(--color-text, #000);
 }

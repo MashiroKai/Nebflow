@@ -39,6 +39,11 @@
   <title>toolline-detail harness</title>
   <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
   <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <!-- ui-unification-20261103-chat-stream：真应用加载面含 design-system.css
+       （.ds-tool-card 族 = 工具卡样式唯一家，chat.css 旧 .tool-card 块已退役）
+       ——本 harness 与 index.html 同序补挂，缺失时 .body 无 display:none 档
+       （历史腿默认收起断言会假红）。 -->
+  <link rel="stylesheet" href="/src/main/resources/web/css/design-system.css">
   <style>
     html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
     #chat {

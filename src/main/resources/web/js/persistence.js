@@ -16,7 +16,7 @@ import { dropDeviceMessageCache } from './fmDropboxCache.js';
 import { evict as evictLocalStore } from './localStore.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
-import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom, deviceTagHtml } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom, deviceTagHtml } from './utils.js';
 // output 块语法批（作者令 2026-10-31）：历史重放腿同 live 腿一个 output 面——
 // 平衡 <output> 对 ⇒ 正常态只渲染块内，角标展开回原文（turnGroup toggle）。
 import { applyOutputFace, hasOutputBlock } from './outputTag.js';
@@ -789,7 +789,7 @@ export function restoreFromStorage(opts = {}) {
       // 读写 <K> 文件 count (same contract as chat.js renderTool).
       if (m.input) { try { row.dataset.nfInput = typeof m.input === 'string' ? m.input : JSON.stringify(m.input); } catch {} }
       const card = document.createElement('div');
-      card.className = 'tool-card';
+      card.className = 'tool-card ds-tool-card';
       // beta.56 ruling: tool-class bubbles carry NO footer (message-class
       // only). Card/iframe payloads render without any copy badge.
       // Pop artifact payload (pop-upgrade batch): process row + artifact row,
@@ -813,7 +813,7 @@ export function restoreFromStorage(opts = {}) {
       } else if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
@@ -847,7 +847,7 @@ export function restoreFromStorage(opts = {}) {
         // branch below byte-for-byte.
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
@@ -866,12 +866,12 @@ export function restoreFromStorage(opts = {}) {
       } else {
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const detailHtml = buildToolDetail(m.input, m.label);
-        const _delegatePrompt = buildDelegatePromptHtml(m.input);
-        const highlightHtml = renderHighlightedContent(m.content, m.label);
-        const bodyHtml = (detailHtml + _delegatePrompt + (highlightHtml || (m.content ? '<pre class="tool-body-pre">' + esc(m.content) + '</pre>' : ''))) || '';
-        const hasBody = !!bodyHtml;
+        // 折叠单源（ui-unification-20261103-chat-stream）：与 chat.js renderTool
+        // 同构——预览/全文两态 mountToolCardBody 单点定义，全文只在展开瞬间进 DOM。
+        const promptText = delegatePromptRaw(m.input);
+        const hasBody = !!(detailHtml || promptText || m.content);
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
@@ -880,8 +880,8 @@ export function restoreFromStorage(opts = {}) {
         const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary) + _deviceTag
           + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-          '<div class="content"><div class="label">' + lHtml + '</div>' +
-          (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
+          '<div class="content"><div class="label">' + lHtml + '</div></div>';
+        mountToolCardBody(card, { detailHtml, promptText, content: m.content, label: m.label });
         row.appendChild(card);
         chat.appendChild(row);
         if (hasBody) attachToolClick(card);
@@ -1251,7 +1251,7 @@ function buildHistoryRow(m, i, ctx) {
       // 读写 <K> 文件 count (same contract as chat.js renderTool).
       if (m.input) { try { row.dataset.nfInput = typeof m.input === 'string' ? m.input : JSON.stringify(m.input); } catch {} }
       const card = document.createElement('div');
-      card.className = 'tool-card';
+      card.className = 'tool-card ds-tool-card';
       // beta.56 ruling: tool-class bubbles carry NO footer (message-class
       // only). Card/iframe payloads render without any copy badge.
       // Pop artifact payload (pop-upgrade batch): process row + artifact row,
@@ -1274,7 +1274,7 @@ function buildHistoryRow(m, i, ctx) {
       } else if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
         const isError = m.isError;
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
@@ -1312,7 +1312,7 @@ function buildHistoryRow(m, i, ctx) {
           // ordinary tool results never match the regex, so their rendering is untouched.
           const isError = m.isError;
           const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                               : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                               : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
           const localLabel = localizeToolLabel(m.label);
           const localSummary = localizeToolSummary(m.summary, m.label);
           const lParts = localLabel.split('\n', 2);
@@ -1330,7 +1330,7 @@ function buildHistoryRow(m, i, ctx) {
           fragment.appendChild(row);
         } else {
         const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         // perf 台账 #922（2026-10-26）：大工具正文是补页/初载长任务的大头——
         // 实测 renderHighlightedContent 在 60KB 正文上 ~0.6s/条（正则重灾），
         // esc+innerHTML 仅 ~3ms。三刀合一：>TOOL_HEAVY_BODY 的正文（甲）跳过
@@ -1338,14 +1338,13 @@ function buildHistoryRow(m, i, ctx) {
         // 纯成本）；（乙）分帧挂载腿把正文构建推进空闲升级批（卡片壳即时、
         // .body 稍后逐字同形）；（丙）同步腿（初载/弹窗）同享甲刀（cap 在
         // 共享 helper 内）。TOOL_HEAVY_BODY 以下逐字现状。
-        const deferBigBody = !!(deferToolBody && typeof m.content === 'string' && m.content.length > TOOL_HEAVY_BODY);
-        let bodyHtml = '';
-        if (deferBigBody) {
-          deferToolBody(card, () => toolBodyHtml(m.content, m.input, m.label));
-        } else {
-          bodyHtml = toolBodyHtml(m.content, m.input, m.label);
-        }
-        const hasBody = deferBigBody || !!bodyHtml;
+        // 折叠单源（ui-unification-20261103-chat-stream）：与 live 腿同构。
+        // perf 台账 #922 的闲置分帧腿被折叠面**取代**：预览只对 ≤TOOL_PREVIEW_LINES
+        // 行做渲染（capLines 后高亮，成本与行数无关的墙已拆），全文改为展开瞬间
+        // 才构建——比「空闲升级批」严格更懒，故此处不再走 deferToolBody。
+        const detailHtml = buildToolDetail(m.input, m.label);
+        const promptText = delegatePromptRaw(m.input);
+        const hasBody = !!(detailHtml || promptText || m.content);
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
@@ -1354,8 +1353,8 @@ function buildHistoryRow(m, i, ctx) {
         const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary) + _deviceTag2
           + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-          '<div class="content"><div class="label">' + lHtml + '</div>' +
-          (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
+          '<div class="content"><div class="label">' + lHtml + '</div></div>';
+        mountToolCardBody(card, { detailHtml, promptText, content: m.content, label: m.label });
         row.appendChild(card);
         fragment.appendChild(row);
         if (hasBody) attachToolClick(card);

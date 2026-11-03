@@ -1484,6 +1484,10 @@ export default {
   // cardguard（作者裁定 2026-09-17 · #687①）：含卡片哨兵的工具结果不再以 <pre>
   // 兜底渲染原文 ⇒ 走卡片路径，提取失败时显示本占位（🔴 原文不进 DOM）。
   'chat.toolCardUnavailable': '卡片内容不可用（未渲染原始数据）',
+  // 工具卡折叠控件（ui-unification-20261103-chat-stream）：长输出默认 ≤8 行预览，
+  // 控件明示全文行数；收起文案与 aria-expanded 联动（收起态回显行数）。
+  'chat.toolExpandMore': '展开全部 {n} 行',
+  'chat.toolCollapse': '收起',
   // pop-upgrade 批(2026-10-03):Pop 工件面(叠卡/文件卡片)文案
   'chat.popExpand': '展开 {n}',
   'chat.popCollapse': '收起',

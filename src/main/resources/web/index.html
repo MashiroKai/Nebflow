@@ -1003,8 +1003,12 @@
   </div>
 
   <!-- Modals -->
-  <div id="modal-overlay">
-    <div id="modal-box">
+  <!-- 弹层层族批（ui-unification-20261103-overlays）：遮罩/壳的形由
+       design-system.css `.ds-overlay` / `.ds-layer` 层类族单点承担（层级带 /
+       遮罩底 / 壳圆角 / 入场动效）；id 保留为 DOM 寻址钩子（modal.js 的 .on /
+       .takeover-blur 切换、focusTrap、mobileLayer 铺平、既有 spec）。 -->
+  <div id="modal-overlay" class="ds-overlay ds-overlay--top">
+    <div id="modal-box" class="ds-layer">
       <div id="modal-title">New Session</div>
       <input id="modal-input" type="text" placeholder="Session name" autocomplete="off">
       <div id="modal-actions">
@@ -1012,7 +1016,7 @@
         <button id="modal-confirm">Create</button>
       </div>
     </div>
-    <div id="delete-box">
+    <div id="delete-box" class="ds-layer">
       <div id="delete-title">Delete Session</div>
       <div id="delete-msg"></div>
       <div id="delete-actions">
@@ -1024,7 +1028,7 @@
     <!-- Drop conflict dialog (external file drag-in, VS Code parity) — 3-choice
          Replace / Keep Both / Cancel. Cleaned/re-rendered by modal.js; buttons
          localized via the i18n `conflict-*` entries. -->
-    <div id="conflict-box">
+    <div id="conflict-box" class="ds-layer">
       <div id="conflict-title">Replace</div>
       <div id="conflict-msg"></div>
       <div id="conflict-actions">
@@ -1058,8 +1062,8 @@
   <!-- Agent Editor Modal — retired 2026-09-06 (tool-face retirement batch):
        per-agent editing lives in the Canvas detail tab (agentManager.js). -->
   <!-- Memory Editor Modal (three tabs: Folder / Agent / User) -->
-  <div id="memory-overlay">
-    <div id="memory-modal" class="scroll-under-glass">
+  <div id="memory-overlay" class="ds-overlay">
+    <div id="memory-modal" class="scroll-under-glass ds-layer">
       <div id="memory-modal-title">Memory</div>
       <div class="memory-tabs">
         <button class="memory-tab active" data-scope="agent">Agent</button>
@@ -1075,8 +1079,8 @@
     </div>
   </div>
   <!-- Rules Editor Modal -->
-  <div id="rules-overlay">
-    <div id="rules-modal" class="scroll-under-glass">
+  <div id="rules-overlay" class="ds-overlay">
+    <div id="rules-modal" class="scroll-under-glass ds-layer">
       <div id="rules-modal-title">Project Rules</div>
       <div id="rules-modal-body">
         <textarea id="rules-input" placeholder="" rows="14" spellcheck="false"></textarea>
@@ -1089,8 +1093,8 @@
     </div>
   </div>
   <!-- Settings Modal (centered popup — no dimming backdrop, no blur) -->
-  <div id="settings-overlay">
-    <div id="settings-modal" class="scroll-under-glass">
+  <div id="settings-overlay" class="ds-overlay">
+    <div id="settings-modal" class="scroll-under-glass ds-layer">
       <div class="settings-modal-header">
         <span id="settings-modal-title">Settings</span>
         <button id="settings-modal-close" class="panel-btn" title="Close"><i data-lucide="x"></i></button>
@@ -1099,8 +1103,8 @@
     </div>
   </div>
   <!-- Chat History Search Modal (centered popup — no dimming backdrop, no blur) -->
-  <div id="search-overlay">
-    <div id="search-modal">
+  <div id="search-overlay" class="ds-overlay">
+    <div id="search-modal" class="ds-layer">
       <div class="search-modal-header">
         <span id="search-modal-title">Search Messages</span>
         <button id="search-modal-close" class="panel-btn" title="Close"><i data-lucide="x"></i></button>

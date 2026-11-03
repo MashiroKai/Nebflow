@@ -58,7 +58,39 @@ const CSS = {
   modal: read('css/modal.css'),
   sidebar: read('css/sidebar.css'),
   sapphire: read('css/sapphire.css'),
+  // 令牌单源（--ds-* 声明地）：只进 TOK 表，不作声明面对照目标。
+  designSystem: read('css/design-system.css'),
 };
+
+// ── 令牌解析（ui-unification-20261103-settings 补强）────────────────────
+// 背景：主窗锚面（modal/sidebar）按设计令牌批逐面令牌化后，声明文本一侧是
+// `var(--ds-*)`、另一侧（friends）仍是同值字面量——字符串对照会把「计算值
+// 实同」误判为不一致。本脚本自述语义 = 「判据是**同一个 token**」「主窗值即
+// 真值」（见 norm() 注）⇒ 对照前把两侧 var() 按令牌单源解析到字面值再比对：
+// 同值仍然 PASS（别名 = 同一真值）；字面量对字面量的真漂移照样 FAIL。
+// 令牌表 = 上面 CSS 全集的自定义属性声明（去注释后正则抽取，后者胜 = 级联近似）。
+const TOK = new Map();
+for (const text of Object.values(CSS)) {
+  const clean = text.replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const m of clean.matchAll(/^\s*(--[a-z0-9-]+)\s*:\s*([^;]+);/gm)) TOK.set(m[1], m[2].trim());
+}
+/** 把声明值里的 var(--x[, fallback]) 解析到字面值（最多 4 跳，别名链足够）。 */
+function resolveVars(v, depth = 4) {
+  if (v == null) return v;
+  let out = String(v);
+  for (let i = 0; i < depth; i++) {
+    const next = out.replace(/var\(\s*(--[a-z0-9-]+)\s*(?:,\s*([^()]*?)\s*)?\)/gi,
+      (m, name, fb) => TOK.get(name) ?? (fb ?? '').trim());
+    if (next === out) break;
+    out = next;
+  }
+  return out.replace(/\s+/g, ' ').trim();
+}
+/** 等值判定（解析后对照）：任一侧缺失沿用原字符串判；否则解析到字面值比对。 */
+function sameDecl(a, b) {
+  if (a == null || b == null) return norm(a) === norm(b);
+  return resolveVars(norm(a)) === resolveVars(norm(b));
+}
 
 /** 路 A 对照表：每一行 = 一份「本批新件 ↔ 主窗口既有件」的声明级配对。
  *  kind: 'eq'（必须逐字相等）/ 'dev'（有意偏离，附 reason）。 */
@@ -212,8 +244,8 @@ lines.push('## 路 A · CSS **声明面**逐字比对', '');
 lines.push('| # | 对照项 | 本批新件 | 主窗口既有件 | 声明值逐条 | 判 |');
 lines.push('|---|--------|----------|--------------|------------|----|');
 ROWS.forEach((r, i) => {
-  const vals = r.checks.map(([prop, a, b]) => `\`${prop}\`: 本件 \`${a}\` ${norm(a) === norm(b) ? '=' : '≠'} 主窗 \`${b}\`${a !== b && norm(a) === norm(b) ? ' *(同 token；本件附字面量回落)*' : ''}`).join('<br>');
-  const same = r.checks.every(([, a, b]) => norm(a) === norm(b));
+  const vals = r.checks.map(([prop, a, b]) => `\`${prop}\`: 本件 \`${a}\` ${sameDecl(a, b) ? '=' : '≠'} 主窗 \`${b}\`${a !== b && sameDecl(a, b) ? ' *(var 解析后同值)*' : ''}`).join('<br>');
+  const same = r.checks.every(([, a, b]) => sameDecl(a, b));
   const verdict = same ? 'PASS' : (r.kind === 'dev' ? 'DEVIATION（已申报）' : 'FAIL');
   if (verdict === 'FAIL') fails++;
   lines.push(`| ${i + 1} | ${r.item} | ${r.mine} | ${r.ref} | ${vals} | **${verdict}** |`);

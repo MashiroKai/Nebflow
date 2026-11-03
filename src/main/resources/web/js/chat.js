@@ -13,7 +13,7 @@ import { voiceEnabled } from './featureFlags.js';
 // 今天仍为纯时钟（formatHm），更早按本地日历日加日期层（昨天/星期X/M月D日/跨年）。
 import { formatHm, formatFooterTime, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
 import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 // msgchip-provenance 批（2026-11-01）：渠道/平台来源注记剥离单点（牌窗与气泡共用）。
@@ -1041,7 +1041,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   if (pending && pending.isConnected) {
     row = pending;
     card = row.querySelector('.tool-card');
-    card.classList.remove('tool-card--pending');
+    card.classList.remove('tool-card--pending', 'ds-tool-card--pending');
     card.innerHTML = '';
   } else {
     row = document.createElement('div');
@@ -1052,7 +1052,9 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     // （9.19 同一收拢路径）。
     row.className = bareProcessRows(activeView) ? 'row tool' : 'row tool nf-tucked';
     card = document.createElement('div');
-    card.className = 'tool-card';
+    // .tool-card = DOM 寻址钩子（main.js 换面/chatSearch/turnGroup/spec），
+    // .ds-tool-card = 样式族（design-system.css 唯一家）。
+    card.className = 'tool-card ds-tool-card';
     row.appendChild(card);
     appendChatRow(chat, row);
   }
@@ -1081,7 +1083,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   // consistent tool card header — while the rendered HTML card appears separately.
   if (content && typeof content === 'string' && /^___\w+_HTML___/.test(content)) {
     const cIcon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                         : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                         : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
     const cLocalLabel = localizeToolLabel(label);
     const cLocalSummary = localizeToolSummary(summary, label);
     const cLabelParts = cLocalLabel.split('\n', 2);
@@ -1153,7 +1155,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
 
   if (_toolName === 'Mail' && inputJson) {
     const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                         : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                         : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
     const localLabel = localizeToolLabel(label);
     const localSummary = localizeToolSummary(summary, label);
     const labelParts = localLabel.split('\n', 2);
@@ -1175,7 +1177,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
 
   // Default rendering for all other tools
   const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                       : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+                       : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
   //
   // ── cardguard negative filter (author ruling 2026-09-17 · #687①) ──────────
   // A tool RESULT whose content carries the card sentinel ANYWHERE — not only
@@ -1222,12 +1224,10 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   }
 
   const detailHtml = buildToolDetail(inputJson, label);
-  const delegatePromptHtml = buildDelegatePromptHtml(inputJson);
-  // Render full content in body with syntax highlighting (Read/Grep only).
-  // Body is hidden by default, click to expand shows full content with scroll for long output.
-  const highlightHtml = content ? renderHighlightedContent(content, label) : null;
-  const bodyHtml = (detailHtml + delegatePromptHtml + (highlightHtml || (content ? '<pre class="tool-body-pre">' + escapeHtml(content) + '</pre>' : ''))) || '';
-  const hasBody = !!bodyHtml;
+  // 折叠单源（ui-unification-20261103-chat-stream）：长输出默认 ≤TOOL_PREVIEW_LINES
+  // 行预览 + 展开控件，全文只在展开瞬间进 DOM（mountToolCardBody 单点定义，
+  // persistence.js 两条历史腿同构引用）。短内容保持遗留「点击开合」形态。
+  const promptText = delegatePromptRaw(inputJson);
   const localLabel = localizeToolLabel(label);
   const localSummary = localizeToolSummary(summary, label);
   const labelParts = localLabel.split('\n', 2);
@@ -1245,8 +1245,8 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   const labelHtml = escapeHtml(labelParts[0]) + ' &mdash; ' + escapeHtml(localSummary) + truncBadge + deviceTag
     + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
   card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-    '<div class="content"><div class="label">' + labelHtml + '</div>' +
-    (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
+    '<div class="content"><div class="label">' + labelHtml + '</div></div>';
+  const { hasBody } = mountToolCardBody(card, { detailHtml, promptText, content, label });
   smartScroll();
 
   if (hasBody) attachToolClick(card);
@@ -1347,7 +1347,7 @@ export function renderToolPending(label, sessionId) {
   stampRound(activeView, row);
   if (label && label.startsWith('[NebLink]')) row.classList.add('neblink-row');
   const card = document.createElement('div');
-  card.className = 'tool-card tool-card--pending';
+  card.className = 'tool-card ds-tool-card tool-card--pending ds-tool-card--pending';
   const localLabel = localizeToolLabel(label);
   const labelParts = localLabel.split('\n', 2);
   const labelHtml = escapeHtml(labelParts[0])

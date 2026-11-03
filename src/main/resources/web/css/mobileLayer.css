@@ -4511,6 +4511,27 @@ body.mobile-layer .mf-dots {
    transform 属性（上方既有档 scale(1.24) 原样保留），故本批用
    left/right:0 + width:max-content + margin-inline:auto 实现居中，
    transform 面上两个意图（居中 / 放大）永不相撞。 */
+/* ── 存量红修（-legacy 提交 ui-unification-20261103-canvas-overlay-legacy）──
+   canvas-chrome-size-align ⑥ 手机两腿 2 红（main 存量）：2026-11-02 19:18
+   「底部控件浮层带批」把小点指示器从流内末件改成**浮层**、与底部 48 圆钮行共
+   中线后 —— html 页文档工具簇（source 16 / ref 72 / find 128，三颗 48 圆钮占
+   16..176）与小点（375 宽下居中 ≈142..233）落在同一条带上相交，第三颗钮
+   （find，128..176）被压（本轮 HEAD 复现：手机-dark / 手机-light 两腿各 1 红）。
+   修法：**簇在场的页面**把小点浮层收进「簇右缘 ↔ ask 钮左缘」之间的净带
+   （左 = 首钮座 16 + 3×48 + 2×槽缝 8 + 让位缝 8 = 184；右 = ask 座 16 + 钮宽
+   48 + 让位缝 8 = 72），中线 / 形态 / 手势面全不变；无簇页（md / monaco：
+   source+find 两钮 16..120，居中小点本就零相交；图 / pdf 无簇）维持既有居中。
+   判据用 `.canvas-ref-select`（= 引用选取钮，**只 html 查看器有** —— shared.js
+   addElementRefToggle 的唯一调用方是 viewers/html.js:714）⇒ 只有真会被压的
+   html 页让位，不牵连 md 面。:has() 不支持时整条规则回落 = 改前行为（与既有
+   mobileLayer :has 让位块同法）。 */
+body.mobile-layer .mf-canvas-page:has(.canvas-ref-select) .mf-dots {
+  /* 左 = 16 首钮座 + 3×48 钮宽 + 3×8 缝（2 槽缝 + 1 让位缝） */
+  left: calc(16px + var(--mtap-lg, 48px) * 3 + 8px * 3);
+  /* 右 = 16 ask 座 + 48 钮宽 + 8 让位缝 */
+  right: calc(16px + var(--mtap-lg, 48px) + 8px);
+  margin-inline: auto;   /* 净带内仍居中（原居中意图保留） */
+}
 /* 底部可滚余量（md / 纯文本 / epub 三面同尺）：末行滚到控件行之上。
    值 = 16（控件行底缝）+ 48（钮径）+ 12（呼吸）= 76。 */
 body.mobile-layer .canvas-md-scroll,

@@ -1,30 +1,23 @@
-/* ---------- Sidebar — unified floating glass card ---------- */
+/* ---------- Sidebar — unified floating glass card ----------
+   ui-unification-20261103-sidebar：卡片材质/圆角/浮影全部走设计令牌。
+   浮影 = var(--ds-shadow-float)（= sapphire --cv-shadow，亮暗已在令牌层解析：
+   亮档白高光 0.25 / 暗档 0.04，与本面原字面值逐字同值）⇒ 本文件原先的
+   prefers-color-scheme 暗档双写块整段退役（主题由令牌层承担，不做第二套形态）。 */
 #sidebar {
   display: flex;
   flex-direction: row;
   flex-shrink: 0;
   /* Bottom margin matches #input-area's padding-bottom (12px) so the sidebar
      card's bottom edge aligns with the chat's input bar. */
-  margin: 16px 4px 10px;
+  margin: var(--ds-space-4) var(--ds-space-1) var(--ds-space-glass-x);
   max-height: calc(100vh - 26px);
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   overflow: hidden;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0px 2px 8px rgba(0,0,0, 0.04),
-    0px 8px 24px rgba(0,0,0, 0.06);
-}
-@media (prefers-color-scheme: dark) {
-  #sidebar {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0px 2px 8px rgba(0, 0, 0, 0.20),
-      0px 8px 24px rgba(0, 0, 0, 0.35);
-  }
+  border: var(--ds-border-width) solid var(--glass-border);
+  box-shadow: var(--ds-shadow-float);
 }
 
 /* ---------- Sidebar Panel — inner column inside #sidebar ---------- */
@@ -49,58 +42,62 @@
 .sidebar-topbar {
   display: flex;
   align-items: center;
-  padding: 4px 14px;
+  padding: var(--ds-space-1) var(--ds-space-4);
   flex-shrink: 0;
 }
 .panel-header {
-  padding: 14px 14px;
+  padding: var(--ds-space-3) var(--ds-space-4);
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
-  border-bottom: 1px solid var(--glass-border);
+  border-bottom: var(--ds-border-width) solid var(--glass-border);
 }
+/* 面板题形态 = 侧栏小节标签同槽族（.ds-side-label 13px / --ds-fw-btn / 0.5px
+   uppercase / muted）：此处单点声明（index.html 与 diffPanel.js 的 DOM 均无 ds 类，
+   两个发射点不在本面文件内，故形态留在本面、取值仍全部来自 --ds-* 槽）。 */
 .panel-title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-frame-text-muted);
+  font-size: var(--ds-fs-body);
+  font-weight: var(--ds-fw-btn);
+  color: var(--ds-text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: var(--ds-ls-label);
 }
 
-/* ---------- Agent Group Headers ---------- */
+/* ---------- Agent Group Headers ----------
+   字阶/字重/字距/字色由 .ds-side-label(+--meta) 承担（design-system.css 侧栏族）；
+   本处只留版面（分组头内距），不做第二套字面。 */
 .agent-group-header {
-  padding: 8px 16px 4px;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--color-frame-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  user-select: none;
+  padding: var(--ds-space-2) var(--ds-space-4) var(--ds-space-1);
 }
 
 /* Session list styles (within panel-sessions) */
 
 .panel-actions {
   display: flex;
-  gap: 4px;
+  gap: var(--ds-space-1);
   align-items: center;
 }
+/* 24px 面板动作钮：字阶/圆角/描边/动效全走 --ds-* 槽（尺寸 = --ds-space-6 24px，
+   全站共用档；本类是唯一形态，设置/搜索/社交弹窗的关闭钮同读此家）。 */
 .panel-btn {
   background: none;
-  border: 1px solid var(--glass-border);
-  color: var(--color-frame-text-muted);
-  font-size: 13px;
-  width: 24px;
-  height: 24px;
-  border-radius: 8px;
+  border: var(--ds-border-width) solid var(--ds-border-glass);
+  color: var(--ds-text-muted);
+  font-size: var(--ds-fs-body);
+  width: var(--ds-space-6);
+  height: var(--ds-space-6);
+  border-radius: var(--ds-radius-input);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.15s;
+  transition: background var(--ds-dur-hover) var(--ds-ease-std),
+              border-color var(--ds-dur-hover) var(--ds-ease-std),
+              color var(--ds-dur-hover) var(--ds-ease-std),
+              opacity var(--ds-dur-hover) var(--ds-ease-std);
   font-family: inherit;
-  line-height: 1;
+  line-height: var(--ds-lh-tight);
   padding: 0;
   opacity: 0.7;
 }
@@ -109,66 +106,51 @@
   height: 13px;
   stroke-width: 1.8;
 }
-.panel-btn:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); border-color: var(--color-frame-text-muted); opacity: 1; }
+.panel-btn:hover { background: var(--ds-row-hover); color: var(--ds-text-bright); border-color: var(--ds-text-muted); opacity: 1; }
 
 #session-list {
   flex: 1;
   overflow-y: auto;
   scrollbar-color: var(--color-frame-border) transparent;
 }
-.session-item {
-  padding: 10px 16px;
-  margin: 0 6px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  position: relative;
-  transition: background 0.15s;
-  border-radius: 10px;
-}
-.session-item:hover { background: var(--color-frame-hover); }
-.session-item.active { background: var(--color-frame-active); }
-.session-item.pinned { background: var(--color-frame-input-bg); }
-.session-item.pinned:hover { background: var(--color-frame-hover); }
-.session-item.in-folder {
-  position: relative;
-}
 
-/* Multi-selection styles */
-.session-item.selected {
-  background: rgba(128, 128, 128, 0.08);
+/* ---------- 会话行 / 树行 / 多选条 / 拖放区 ----------
+   形态（字阶/间距/热区/激活态/悬停态/钉住态/多选态）全在 design-system.css 的
+   .ds-side-* 族；本段只留版面（左右内缩）与 JS 状态钩子（.drag-over 为拖放态
+   适配器：只借一个令牌上色，不复制形状）。 */
+.session-item {
+  margin: 0 var(--ds-row-inset);
 }
-.session-item.selected .session-name {
-  color: var(--color-frame-text-bright);
-}
-.session-item.selected:hover {
-  background: rgba(128, 128, 128, 0.12);
+/* 拖放目标态（JS 只 toggle .drag-over；色仍取族内 hover 槽） */
+.folder-item.drag-over {
+  background: var(--ds-row-hover);
 }
 
 /* Multi-select floating toolbar */
 .multi-select-bar {
   position: absolute;
-  bottom: 12px;
+  bottom: var(--ds-space-3);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 6px 5px 12px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1) var(--ds-row-inset) var(--ds-space-1) var(--ds-space-3);
   background: var(--color-frame-bg);
-  border: 1px solid var(--color-frame-border);
-  border-radius: 10px;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.20), 0 0 0 1px rgba(255,255,255,0.04) inset;
+  border: var(--ds-border-width) solid var(--ds-border);
+  border-radius: var(--ds-radius-button);
+  box-shadow: var(--ds-shadow-pop);
   z-index: 100;
-  animation: msBarIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: msBarIn var(--ds-dur-hover) var(--ds-ease-enter);
 }
 @keyframes msBarIn {
   from { opacity: 0; transform: translateX(-50%) translateY(6px) scale(0.96); }
   to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
 }
 
-/* Delete drop zone */
+/* Delete drop zone —— 危险语义色全部由 --ds-danger-icon 经 color-mix 派生
+   （原为 4 处 rgba(239,68,68,α) + #ef4444 亮暗写死：亮暗同值、不随主题；
+   改走语义档后暗档自动抬亮，α 逐档同值 0.35/0.06/0.7 → 0.6/0.14/1）。 */
 .delete-drop-zone {
   position: sticky;
   bottom: 0;
@@ -177,20 +159,23 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 14px 16px;
-  margin: 8px 10px 10px;
-  border-radius: 10px;
-  border: 2px dashed rgba(239, 68, 68, 0.35);
-  background: rgba(239, 68, 68, 0.06);
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-3) var(--ds-space-4);
+  margin: var(--ds-space-2) var(--ds-space-glass-x) var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-button);
+  border: 2px dashed color-mix(in srgb, var(--ds-danger-icon) 35%, transparent);
+  background: color-mix(in srgb, var(--ds-danger-icon) 6%, transparent);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  color: rgba(239, 68, 68, 0.7);
-  font-size: 12px;
-  font-weight: 500;
+  color: color-mix(in srgb, var(--ds-danger-icon) 70%, transparent);
+  font-size: var(--ds-fs-btn);
+  font-weight: var(--ds-fw-btn);
   pointer-events: auto;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  animation: dzIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background var(--ds-dur-surface) var(--ds-ease-enter),
+              border-color var(--ds-dur-surface) var(--ds-ease-enter),
+              color var(--ds-dur-surface) var(--ds-ease-enter),
+              transform var(--ds-dur-surface) var(--ds-ease-enter);
+  animation: dzIn 0.25s var(--ds-ease-enter);
   z-index: 50;
 }
 @keyframes dzIn {
@@ -202,9 +187,9 @@
   opacity: 0.7;
 }
 .delete-drop-zone.active {
-  background: rgba(239, 68, 68, 0.14);
-  border-color: rgba(239, 68, 68, 0.6);
-  color: #ef4444;
+  background: color-mix(in srgb, var(--ds-danger-icon) 14%, transparent);
+  border-color: color-mix(in srgb, var(--ds-danger-icon) 60%, transparent);
+  color: var(--ds-danger-icon);
   transform: scale(1.02);
 }
 .delete-drop-zone.active svg {
@@ -212,46 +197,27 @@
 }
 
 .session-divider {
-  height: 1px;
+  height: var(--ds-border-width);
   background: var(--color-frame-border);
-  margin: 0 14px;
+  margin: 0 var(--ds-space-4);
 }
 .session-divider.thin {
   opacity: 0.4;
-  margin: 2px 20px;
+  margin: var(--ds-space-half) var(--ds-space-5);
 }
+/* 行内文字：形状由族内 .ds-side-title/.ds-side-meta 承担；本段只留
+   .session-info 的排版容器（列向，半格微缝）。 */
 .session-info {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-space-half);
 }
-.session-name {
-  font-size: 13.5px;
-  color: var(--color-frame-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.session-item.active .session-name {
-  color: var(--color-frame-text-bright);
-  font-weight: 500;
-}
-.session-time {
-  font-size: 11px;
-  color: var(--color-frame-text-muted);
-}
-.session-draft {
-  font-size: 11px;
-  color: var(--color-frame-text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-style: italic;
-}
-/* Session status indicator — state-machine driven, one visible at a time */
-/* Priority: attention > busy > unread > idle（压缩中可见指示已拆，作者令 2026-10-09 ①） */
+/* 会话状态指示（state-machine driven, one visible at a time）
+   Priority: attention > busy > unread > idle（压缩中可见指示已拆，作者令 2026-10-09 ①）
+   色档：busy = --ds-accent（= --color-primary）、attention = --ds-attention
+   （= 既有 --amber 通道，暗档自动抬亮）、unread = --ds-accent。 */
 .session-status {
   flex-shrink: 0;
   align-self: center;
@@ -271,7 +237,7 @@
 /* State: busy — lucide spinner icon */
 .session-status.busy .status-spinner {
   display: flex;
-  color: var(--color-primary, #07c160);
+  color: var(--ds-accent);
   animation: spin 1.5s linear infinite;
 }
 .session-status .status-spinner svg {
@@ -286,20 +252,20 @@
 /* State: attention — pulsing amber dot */
 .session-status.attention .status-dot {
   display: block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #e8a735;
+  width: var(--ds-space-2);
+  height: var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-attention);
   animation: statusPulse 2s ease-in-out infinite;
 }
 
 /* State: unread — solid dot */
 .session-status.unread .status-dot {
   display: block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-primary);
+  width: var(--ds-space-2);
+  height: var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
+  background: var(--ds-accent);
 }
 
 @keyframes statusPulse {
@@ -310,206 +276,129 @@
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
-.session-delete {
-  background: none;
-  border: none;
-  color: var(--color-frame-text-muted);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, color 0.15s;
-  width: 22px;
-  height: 22px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-}
-.session-item:hover .session-delete { opacity: 1; }
-.session-delete:hover { color: var(--color-error); }
-.session-delete svg { width: 14px; height: 14px; }
 
-/* Session context menu — sapphire glass */
+/* Session context menu — sapphire glass（浮影走 --ds-shadow-pop 令牌：
+   亮暗两档在令牌层解析，本文件不再双写暗档） */
 .session-ctx-menu {
   position: fixed;
   z-index: 1000;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  border-radius: 14px;
-  padding: 4px 0;
-  box-shadow:
-    inset 0 1px 0 0 rgba(91, 127, 191, 0.04),
-    0px 4px 16px rgba(0, 0, 0, 0.08),
-    0px 8px 32px rgba(0, 0, 0, 0.06);
-}
-@media (prefers-color-scheme: dark) {
-  .session-ctx-menu {
-    box-shadow:
-      inset 0 1px 0 0 rgba(91, 127, 191, 0.05),
-      0px 4px 16px rgba(0, 0, 0, 0.30),
-      0px 8px 32px rgba(0, 0, 0, 0.45);
-  }
+  border: var(--ds-border-width) solid var(--glass-border);
+  border-radius: var(--ds-radius-card-md);
+  padding: var(--ds-space-1) 0;
+  box-shadow: var(--ds-shadow-pop);
 }
 .session-ctx-menu .ctx-item {
-  padding: 6px 14px;
-  font-size: 12.5px;
-  color: var(--color-frame-text);
+  padding: var(--ds-space-1) var(--ds-space-4);
+  font-size: var(--ds-fs-body);
+  color: var(--ds-text-frame);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.1s;
+  transition: background var(--ds-dur-micro) var(--ds-ease-std);
 }
 .session-ctx-menu .ctx-item:hover {
-  background: var(--color-frame-hover);
-  color: var(--color-frame-text-bright);
+  background: var(--ds-row-hover);
+  color: var(--ds-text-bright);
 }
 /* ui-status-redesign（S10 / 盘点 #47）：常显危险项（删除文件夹）——字转常规色、
    行首 trash-2 红图标（sidebar.js 注入）；hover 时刻字随交互转红（铁律三）。 */
 .session-ctx-menu .ctx-item .st-ic { width: 12px; height: 12px; margin-right: 7px; vertical-align: -2px; }
-.session-ctx-menu .ctx-item[data-action="delete"] .st-ic { color: var(--status-error-icon); }
-.session-ctx-menu .ctx-item[data-action="delete"]:hover { color: var(--status-error-icon); }
+.session-ctx-menu .ctx-item[data-action="delete"] .st-ic { color: var(--ds-danger-icon); }
+.session-ctx-menu .ctx-item[data-action="delete"]:hover { color: var(--ds-danger-icon); }
 
 /* Context menu submenu */
 .ctx-separator {
-  height: 1px;
+  height: var(--ds-border-width);
   background: var(--color-frame-border);
-  margin: 4px 8px;
+  margin: var(--ds-space-1) var(--ds-space-2);
 }
 .ctx-has-sub {
   position: relative;
 }
+/* 子菜单元：表面走 --ds-surface（亮白 / 暗 #1c1f27 —— 原写死 #ffffff / #1c202a，
+   两处暗档双写退役），浮影与主菜单同源 --ds-shadow-pop。 */
 .ctx-submenu {
   position: absolute;
   left: 100%;
   top: 0;
-  background: #ffffff;
-  border: 1px solid var(--glass-border);
-  border-radius: 14px;
-  padding: 4px 0;
-  box-shadow:
-    inset 0 1px 0 0 rgba(91, 127, 191, 0.04),
-    0px 4px 16px rgba(0, 0, 0, 0.08),
-    0px 8px 32px rgba(0, 0, 0, 0.06);
+  background: var(--ds-surface);
+  border: var(--ds-border-width) solid var(--ds-border);
+  border-radius: var(--ds-radius-card-md);
+  padding: var(--ds-space-1) 0;
+  box-shadow: var(--ds-shadow-pop);
   min-width: 140px;
   z-index: 1001;
 }
-@media (prefers-color-scheme: dark) {
-  .ctx-submenu {
-    background: #1c202a;
-    box-shadow:
-      inset 0 1px 0 0 rgba(91, 127, 191, 0.05),
-      0px 4px 16px rgba(0, 0, 0, 0.30),
-      0px 8px 32px rgba(0, 0, 0, 0.45);
-  }
-}
 .ctx-sub {
-  padding: 6px 14px;
-  font-size: 12px;
-  color: var(--color-frame-text);
+  padding: var(--ds-space-1) var(--ds-space-4);
+  font-size: var(--ds-fs-hint);
+  color: var(--ds-text-frame);
   cursor: pointer;
   white-space: nowrap;
 }
 .ctx-sub:hover {
-  background: var(--color-frame-hover);
-  color: var(--color-frame-text-bright);
+  background: var(--ds-row-hover);
+  color: var(--ds-text-bright);
 }
 .ctx-disabled {
-  padding: 6px 14px;
-  font-size: 12px;
-  color: var(--color-frame-text-muted);
+  padding: var(--ds-space-1) var(--ds-space-4);
+  font-size: var(--ds-fs-hint);
+  color: var(--ds-text-muted);
   font-style: italic;
 }
 
 /* ===== Folder tree styles ===== */
+/* 树行/行文字/删除钮：形状（热区 32px / 紧内距 / 4px 圆角）在 .ds-side-row--tree、
+   行内文字在 .ds-side-title、危险钮在 .ds-side-danger（design-system.css 侧栏族）；
+   本段只留版面（wrapper 定位、children 缩进轨）与旧 class 的 DOM 钩子空位。 */
 .folder-wrapper {
   position: relative;
 }
-.folder-item {
-  padding: 6px 12px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  position: relative;
-  transition: background 0.15s, color 0.15s;
-  font-size: 13px;
-  color: var(--color-frame-text-dim);
-  border-radius: 4px;
-  margin: 0 6px;
-}
-.folder-item:hover {
-  background: var(--color-frame-hover);
-  color: var(--color-frame-text-bright);
-}
-.folder-item.active {
-  background: var(--color-frame-active);
-  color: var(--color-frame-text-bright);
-}
-.folder-item.active:hover {
-  background: var(--color-frame-hover);
-}
-.folder-item.drag-over {
-  background: var(--color-frame-hover);
-}
-.folder-item.pinned {
-  background: var(--color-frame-input-bg);
-  color: var(--color-frame-text-bright);
-}
-
-.folder-item.dragging,
-.session-item.dragging {
-  opacity: 0.4;
-}
+/* 行内字形（展开箭头 / 文件夹图标）：16px 槽，hover 时文件夹图标转身份绿
+   （选择钩子仍是 .folder-item，形状值全部取 --ds-* 槽）。 */
 .folder-arrow {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: var(--ds-space-4);
+  height: var(--ds-space-4);
   flex-shrink: 0;
-  color: var(--color-frame-text-muted);
-  transition: transform 0.15s;
+  color: var(--ds-text-muted);
+  transition: transform var(--ds-dur-hover) var(--ds-ease-std);
 }
 .folder-arrow svg { width: 13px; height: 13px; }
 .folder-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: var(--ds-space-4);
+  height: var(--ds-space-4);
   flex-shrink: 0;
-  color: var(--color-frame-text-muted);
+  color: var(--ds-text-muted);
 }
 .folder-icon svg { width: 13px; height: 13px; stroke-width: 1.8; }
-.folder-item:hover .folder-icon { color: var(--color-primary); }
-.folder-name {
-  flex: 1;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: 400;
-}
-.folder-item:hover .folder-name { color: var(--color-frame-text-bright); }
+.folder-item:hover .folder-icon { color: var(--ds-accent); }
 .folder-name[contenteditable="true"] {
   overflow: visible;
   text-overflow: unset;
   outline: none;
   cursor: text;
   background: var(--color-frame-bg);
-  border-radius: 4px;
-  padding: 0 4px;
-  margin: 0 -4px;
+  border-radius: var(--ds-radius-badge);
+  padding: 0 var(--ds-space-1);
+  margin: 0 calc(var(--ds-space-1) * -1);
 }
 
-/* Folder status badge — aggregated from child sessions */
+/* Folder status badge — aggregated from child sessions
+   （色档与会话状态同源：attention = --ds-attention、unread/busy = --ds-accent） */
 .folder-status {
   display: none;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  margin-right: 4px;
+  margin-right: var(--ds-space-1);
 }
 .folder-status.busy,
 .folder-status.attention,
@@ -524,49 +413,29 @@
 }
 .folder-status.busy .status-spinner { display: flex; }
 .folder-status.busy .status-spinner svg {
-  color: var(--color-primary, #07c160);
+  color: var(--ds-accent);
   animation: spin 1.5s linear infinite;
 }
 .folder-status-dot {
   display: none;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--ds-radius-pill);
 }
 .folder-status.attention .folder-status-dot {
   display: block;
-  background: #e8a735;
+  background: var(--ds-attention);
   animation: statusPulse 2s ease-in-out infinite;
 }
 .folder-status.unread .folder-status-dot {
   display: block;
-  background: var(--color-primary);
+  background: var(--ds-accent);
 }
-
-.folder-delete {
-  background: none;
-  border: none;
-  color: var(--color-frame-text-muted);
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, color 0.15s;
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 4px;
-  padding: 0;
-}
-.folder-item:hover .folder-delete { opacity: 1; }
-.folder-delete:hover { color: var(--color-error); }
-.folder-delete svg { width: 13px; height: 13px; stroke-width: 1.8; }
 .folder-badge {
   display: inline-flex;
   align-items: center;
-  color: var(--color-text-muted);
-  margin-left: 4px;
+  color: var(--ds-text-muted);
+  margin-left: var(--ds-space-1);
   opacity: 0.5;
 }
 .folder-item:hover .folder-badge { opacity: 0.8; }
@@ -582,66 +451,66 @@
 /* ===== Rules Editor Modal (in modal.css) ===== */
 .folder-children {
   position: relative;
-  margin-left: 6px;
+  margin-left: var(--ds-row-inset);
   border-left: 1.5px solid var(--color-frame-border-light);
 }
 
 /* Inline folder input (new folder, subfolder) */
 .folder-new-row {
-  padding: 6px 12px;
-  margin: 0 6px;
+  padding: var(--ds-row-pad-dense);
+  margin: 0 var(--ds-row-inset);
 }
 .folder-new-row-inner {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
 }
 .folder-new-arrow {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: var(--ds-space-4);
+  height: var(--ds-space-4);
   flex-shrink: 0;
-  color: var(--color-frame-text-muted);
+  color: var(--ds-text-muted);
 }
 .folder-new-arrow svg { width: 13px; height: 13px; }
 .folder-new-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: var(--ds-space-4);
+  height: var(--ds-space-4);
   flex-shrink: 0;
-  color: var(--color-frame-text-muted);
+  color: var(--ds-text-muted);
 }
 .folder-new-icon svg { width: 13px; height: 13px; stroke-width: 1.8; }
 .folder-new-input {
   flex: 1;
-  background: var(--color-frame-input-bg);
-  border: 1px solid var(--color-frame-input-border);
-  border-radius: 6px;
-  padding: 5px 10px;
-  color: var(--color-frame-input-text);
-  font-size: 13px;
+  background: var(--ds-row-pinned);
+  border: var(--ds-border-width) solid var(--ds-border);
+  border-radius: var(--ds-radius-chip);
+  padding: var(--ds-space-1) var(--ds-space-glass-x);
+  color: var(--ds-text-frame);
+  font-size: var(--ds-fs-body);
   font-family: inherit;
   outline: none;
   min-width: 0;
 }
-.folder-new-input:focus { border-color: var(--color-frame-text-muted); }
+.folder-new-input:focus { border-color: var(--ds-text-muted); }
 
 /* Creation path indicator — shown above inline inputs when creating inside a folder */
 .creation-path {
-  font-size: 11px;
-  color: var(--color-frame-text-muted);
-  padding: 2px 10px 4px;
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
+  padding: var(--ds-space-half) var(--ds-space-glass-x) var(--ds-space-1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   opacity: 0.7;
 }
 .session-item > .creation-path {
-  padding: 0 0 4px;
+  padding: 0 0 var(--ds-space-1);
 }
 
 /* ---------- Settings Modal content (scrollable region inside #settings-modal) ----------
@@ -656,7 +525,7 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 16px;
+  padding: var(--ds-space-4);
   background: var(--ds-surface-sunken);
   scrollbar-color: var(--ds-border) transparent;
 }
@@ -668,7 +537,7 @@
   border-radius: var(--ds-radius-card-lg);
   box-shadow: var(--ds-shadow-card);
   margin: 40px 0 0;
-  padding: 6px 16px;
+  padding: 6px var(--ds-space-4);
   display: flow-root;
 }
 @media (prefers-color-scheme: dark) {
@@ -676,7 +545,7 @@
     box-shadow: var(--ds-shadow-card-dark);
   }
 }
-#settings-content > .settings-section:first-child { margin-top: 24px; }
+#settings-content > .settings-section:first-child { margin-top: var(--ds-space-6); }
 /* 嵌套 section（呈现档案区 = runtime 卡的卡内子组）压平：不再成卡、无阴影。 */
 .settings-section .settings-section {
   background: transparent;
@@ -687,12 +556,12 @@
   display: block;
 }
 .settings-section-title {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ds-text-muted);
   /* 上拉出卡：卡顶内距 6px + 组间留白 ⇒ 标题整段落在卡外灰底（呼吸感）。 */
-  margin: -33px 0 12px;
+  margin: -33px 0 var(--ds-space-3);
   padding: 0 10px;
 }
 /* 卡内子组标题（嵌套 section 首题 / Overrides 副题）回落为卡内分隔子标题。 */
@@ -723,80 +592,23 @@
    base.css / sapphire.css / secrets.css): --color-frame-*, --glass-etched-bg,
    --status-*, and color-mix of existing tokens only — zero new colour, zero
    new radius family. */
-.cfg-card {
-  border: 1px solid var(--color-frame-border-light);
-  background: var(--glass-etched-bg);
-  border-radius: 14px;
-  overflow: hidden;
-}
-.cfg-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 12px 14px;
-}
-.cfg-card-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--color-frame-text-bright);
-}
-/* 三改①（2026-10-09 用户反馈①）：卡头行体=点击展开热区——真实 button（标题
-   + chevron，aria-expanded 随态），toggle 是行内兄弟钮（不进热区）。行 hover
-   语言 = secrets-row-head（--color-frame-hover，零新色值）；chevron 旋转 =
-   task-tree/turn-header 先例（rotate 90deg, 0.15s 控件过渡惯例）。 */
-.cfg-card-head-btn {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: none;
-  border: none;
-  padding: 0;
-  margin: 0;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.cfg-card-head-btn:focus-visible { box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12); }
-.cfg-head-chev {
-  margin-left: auto;
-  display: inline-flex;
-  color: var(--color-frame-text-muted);
-  flex: 0 0 auto;
-  transition: color 0.15s;
-}
-.cfg-head-chev svg { transition: transform 0.15s; }
-.cfg-card-head:hover .cfg-head-chev { color: var(--color-frame-text); }
-.cfg-card-head-btn[aria-expanded="true"] .cfg-head-chev svg { transform: rotate(90deg); }
-.cfg-card-divider { height: 1px; background: var(--color-frame-border-light); }
-.cfg-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-  min-height: 44px;
-}
-.cfg-row + .cfg-row { border-top: 1px solid var(--color-frame-border-light); }
-.cfg-row-label { font-size: 13px; color: var(--color-frame-text); flex: none; }
-.cfg-row-main {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-}
-/* Card row lane caps inputs at the prototype's 280px (proto .cfg-select /
-   .cfg-input `max-width: 280px`). */
-.cfg-row-main .cfg-select,
-.cfg-row-main .cfg-input { width: 100%; max-width: 280px; }
-/* keyRef 遮蔽行：.cfg-password-wrap 先例（sidebar.css:1259）原样复用；卡内
-   行道里占满行宽、同封顶 280px（原型 .pwd-wrap flex:1 1 auto; max-width:280px）。 */
-.cfg-row-main .cfg-password-wrap { flex: 1 1 auto; max-width: 280px; }
-.cfg-card .cfg-hint { padding: 0 14px 10px; margin-top: -4px; line-height: 1.45; }
+/* （ui-unification-20261103-settings · 旧类清零）本节原有 .cfg-card 原型块
+   （etched 底 + r14 + overflow）与 .cfg-card-head / -head-btn / .cfg-head-chev /
+   .cfg-card-divider 一组，随 2026-10-28 settings-panel 批 C 件重排**已零 DOM 发射**
+   （js 侧无任何 class 发射点，jev-panel-threefix 头注同证），本批清走样式残留；
+   现行 .cfg-card / .cfg-card-title 单源 = 下方「Config Cards (Providers)」块
+   （同名双写合并，生效值逐字不动）。keyboard.css:41 的 .cfg-card-head-btn 选择器
+   列表保留原样（零消费，非本面文件）。 */
+/* （ui-unification-20261103-settings · 旧类清零）卡头行体一组（.cfg-card-head-btn /
+   .cfg-head-chev / .cfg-card-divider）与横排卡行一组（.cfg-row / .cfg-row-label /
+   .cfg-row-main + 其 280px 控件封顶 / 密码壳封顶）同属 2026-10-09 三改① 与
+   2026-10-28 settings-panel 批 C 件之间的过渡形态，DOM 侧早已零发射（现结构 =
+   .cfg-card-header + 纵排 .cfg-form-group，见 js/sidebar.js:1208 与 providersUi.js），
+   本批连同其样式残留一并清零；面板卡行的唯一热区档 = .settings-row（44px，
+   取 --ds-row-min-h）。 */
+/* keyRef 遮蔽行：.cfg-password-wrap 先例（sidebar.css:1259 现 §Config Modal 段）原样复用；
+   卡内行道里占满行宽、同封顶 280px（原型 .pwd-wrap flex:1 1 auto; max-width:280px）。 */
+.cfg-card .cfg-hint { padding: 0 14px 10px; margin-top: -4px; line-height: var(--ds-lh-std); }
 /* 卡底动作行：内联反馈 + spacer + 保存钮右对齐（取代独立的块级保存行）。 */
 .card-actions {
   display: flex;
@@ -810,8 +622,8 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
-  color: var(--status-word);
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-status-word);
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -824,46 +636,46 @@
   gap: 4px;
   font-size: 10px;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   border: 1px solid transparent;
-  color: var(--status-word);
+  color: var(--ds-status-word);
   flex-shrink: 0;
   max-width: 100%;
   min-width: 0;
 }
 .st-badge .st-ic { width: 10px; height: 10px; }
 .st-badge[data-tone="ok"] {
-  background: color-mix(in srgb, var(--status-success-icon) 10%, transparent);
-  border-color: color-mix(in srgb, var(--status-success-icon) 22%, transparent);
+  background: color-mix(in srgb, var(--ds-success-icon) 10%, transparent);
+  border-color: color-mix(in srgb, var(--ds-success-icon) 22%, transparent);
 }
 .st-badge[data-tone="err"] {
-  background: color-mix(in srgb, var(--status-error-icon) 10%, transparent);
-  border-color: color-mix(in srgb, var(--status-error-icon) 25%, transparent);
+  background: color-mix(in srgb, var(--ds-danger-icon) 10%, transparent);
+  border-color: color-mix(in srgb, var(--ds-danger-icon) 25%, transparent);
 }
 /* 三改③（2026-10-09）：回退态（jev 腿挂→llm 接管，通道仍有产出）= warn 档。
    色值 = 既有 --status-warn-icon token（base.css 品牌四色案成员，暗亮两态随
    token 自适应）——零新色值；同款 color-mix 配方照 ok/err 档。 */
 .st-badge[data-tone="warn"] {
-  background: color-mix(in srgb, var(--status-warn-icon) 10%, transparent);
-  border-color: color-mix(in srgb, var(--status-warn-icon) 25%, transparent);
+  background: color-mix(in srgb, var(--ds-warn-icon) 10%, transparent);
+  border-color: color-mix(in srgb, var(--ds-warn-icon) 25%, transparent);
 }
-.st-badge[data-tone="warn"] .st-ic { color: var(--status-warn-icon); }
+.st-badge[data-tone="warn"] .st-ic { color: var(--ds-warn-icon); }
 .st-badge[data-tone="mut"] {
-  background: color-mix(in srgb, var(--color-frame-text-muted) 12%, transparent);
+  background: color-mix(in srgb, var(--ds-text-muted) 12%, transparent);
 }
-.st-badge[data-tone="mut"] .st-ic { color: var(--color-frame-text-muted); }
+.st-badge[data-tone="mut"] .st-ic { color: var(--ds-text-muted); }
 /* down 态的 reason 尾巴：截断 + title 全文（徽标永不撑破行）。 */
 .st-badge .badge-reason {
-  color: var(--color-frame-text-muted);
+  color: var(--ds-text-muted);
   font-weight: 400;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
 }
-/* 健康行（三改① 2026-10-09：随细节入折叠体——展开才见，用户原话「点击展开
-   才显示细节」）：比表单行矮一档（原型 inline 40px）。 */
-.jev-health-row { min-height: 40px; }
+/* （ui-unification-20261103-settings · 旧类清零）原 .jev-health-row（min-height 40px，
+   三改① 2026-10-09 扁平健康行）随 2026-10-28 批 C 件把通道徽标迁入头行后零 DOM 发射
+   （js 侧零命中），样式残留由本批删除；健康读数现由 .st-badge[data-tone] 承载。 */
 /* 密钥入口行：玻璃行卡（key 图标 + 行名 + 副词 + count pill + chevron），
    取代虚线满宽 .cfg-btn-add。 */
 .secrets-entry {
@@ -873,12 +685,12 @@
   gap: 10px;
   text-align: left;
   padding: 11px 14px;
-  border-radius: 14px;
+  border-radius: var(--ds-radius-card-md);
   cursor: pointer;
   font-family: inherit;
   border: 1px solid var(--color-frame-border-light);
   background: var(--glass-etched-bg);
-  transition: all 0.15s;
+  transition: background 0.15s, border-color 0.15s;
 }
 .secrets-entry:hover {
   background: var(--color-frame-hover);
@@ -886,7 +698,7 @@
 }
 .secrets-entry .st-ic { color: var(--color-frame-text-muted); flex: 0 0 auto; }
 .secrets-entry .entry-name {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   color: var(--color-frame-text-bright);
   flex: 1;
@@ -895,11 +707,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.secrets-entry .entry-sub { font-size: 11px; color: var(--color-frame-text-muted); flex: none; }
+.secrets-entry .entry-sub { font-size: var(--ds-fs-meta); color: var(--color-frame-text-muted); flex: none; }
 .count-pill {
   font-size: 10px;
   padding: 1px 7px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: color-mix(in srgb, var(--color-frame-text-muted) 12%, transparent);
   color: var(--color-frame-text-muted);
   font-variant-numeric: tabular-nums;
@@ -957,17 +769,17 @@
   transform: rotate(-90deg);
 }
 .settings-collapse-body {
-  padding: 4px 0 6px;
+  padding: var(--ds-space-1) 0 6px;
 }
 .stt-key-configured {
   display: inline-block;
   margin-left: 8px;
   padding: 1px 8px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: rgb(var(--sapphire));
   border: 1px solid rgb(var(--sapphire) / 0.3);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   vertical-align: 1px;
 }
 
@@ -986,11 +798,11 @@
   background: var(--color-frame-input-bg);
   color: var(--color-frame-input-text);
   border: 1px solid var(--color-frame-input-border);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   padding: 8px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-family: ui-monospace, SFMono-Regular, monospace;
-  line-height: 1.5;
+  line-height: var(--ds-lh-body);
   resize: vertical;
   scrollbar-color: var(--color-frame-border) transparent;
 }
@@ -1001,15 +813,15 @@
   margin-top: 8px;
 }
 .config-actions button {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   padding: 4px 12px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   border: 1px solid var(--color-frame-border);
   background: none;
   color: var(--color-frame-text-dim);
   cursor: pointer;
   font-family: inherit;
-  transition: all 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 .config-actions button:hover { background: var(--color-frame-hover); color: var(--color-frame-text-bright); }
 /* 设置内主保存 = 主操作语义（2026-10-30 按钮体系批 B7：蓝描边 → 墨族实心底） */
@@ -1021,7 +833,7 @@
 .config-actions .btn-save:hover { background: var(--btn-primary-bg-hover); border-color: var(--btn-primary-bg-hover); }
 /* About section */
 .about-info {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted);
   line-height: 1.6;
 }
@@ -1033,8 +845,8 @@
    Activity Bar avatar (neblink.js avatarViewState).
    Design: avatar sits directly on the panel — no card/baseboard; a 1px
    ring defines the boundary; hover reuses the Activity Bar motion language
-   (scale 1.04 / active 0.97) plus a soft accent halo in the same
-   rgba(91,127,191,*) family the rest of the frame uses.
+   (scale 1.04 / active 0.97) plus a soft accent halo in the sapphire
+   channel (--sapphire 单源，ui-unification-20261103-settings 起通道组合化).
    Click target = the avatar itself: the <button> shrinks to wrap the frame
    (auto width, centered); the JS handler is unchanged (forwards to
    #activity-avatar). Tokens only. */
@@ -1050,7 +862,7 @@
   color: inherit;
 }
 .settings-avatar-entry:focus-visible {
-  outline: 2px solid rgba(91, 127, 191, 0.65);
+  outline: 2px solid rgb(var(--sapphire) / 0.65);
   outline-offset: 2px;
 }
 .settings-avatar-frame {
@@ -1068,8 +880,8 @@
   transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
 }
 .settings-avatar-entry:hover .settings-avatar-frame {
-  border-color: rgba(91, 127, 191, 0.55);
-  box-shadow: 0 0 0 4px rgba(91, 127, 191, 0.12);
+  border-color: rgb(var(--sapphire) / 0.55);
+  box-shadow: 0 0 0 4px rgb(var(--sapphire) / 0.12);
   transform: scale(1.04);
 }
 .settings-avatar-entry:active .settings-avatar-frame { transform: scale(0.97); }
@@ -1117,20 +929,20 @@
   background: var(--color-frame-input-bg);
   color: var(--color-text);
   border: 1px solid var(--color-frame-input-border);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   line-height: 18px;
   cursor: pointer;
   transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
 }
 .settings-identity-capsule:hover {
-  border-color: rgba(91, 127, 191, 0.55);
-  box-shadow: 0 0 0 4px rgba(91, 127, 191, 0.10);
+  border-color: rgb(var(--sapphire) / 0.55);
+  box-shadow: 0 0 0 4px rgb(var(--sapphire) / 0.10);
 }
 .settings-identity-capsule:active { transform: scale(0.98); }
 .settings-identity-capsule:focus-visible {
-  outline: 2px solid rgba(91, 127, 191, 0.65);
+  outline: 2px solid rgb(var(--sapphire) / 0.65);
   outline-offset: 2px;
 }
 .settings-identity-username {
@@ -1158,7 +970,7 @@
 }
 /* 卡内提示（换头像不可用等）：同区块次级文案档，hidden 归零。 */
 .settings-identity-notice {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 16px;
   color: var(--color-text-muted);
   text-align: center;
@@ -1182,7 +994,7 @@
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   color: var(--color-text-muted);
   cursor: pointer;
   font: inherit;
@@ -1226,7 +1038,7 @@
 }
 .sp-avatar-logo[hidden], .sp-avatar-photo[hidden] { display: none; }
 .sp-hero-name {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   color: var(--color-text);
   text-align: center;
@@ -1236,7 +1048,7 @@
   white-space: nowrap;
 }
 .sp-hero-sub {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-secondary);
   text-align: center;
   max-width: 100%;
@@ -1259,12 +1071,12 @@
 }
 .sp-field:first-child { border-top: none; }
 .sp-label {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-text-secondary);
   flex: none;
 }
 .sp-value {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-text);
   text-align: right;
   min-width: 0;
@@ -1275,7 +1087,7 @@
 .sp-note {
   margin: 0;
   padding: 0 16px 8px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 17px;
   color: var(--color-text-muted);
 }
@@ -1283,15 +1095,19 @@
 
 
 /* ── Config Cards (Providers) ──────────────────────────────────────────── */
+/* ui-unification-20261103-settings：同名双写合并——原顶部原型块（etched 底 + r14
+   + overflow:hidden，零覆盖生效）随旧类清零退役，overflow: hidden 并入本块
+   （现行生效值逐字不动）；圆角/描边走 --ds-*。 */
 .cfg-card {
   background: var(--color-frame-input-bg);
   border: 1px solid var(--color-frame-input-border);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   margin-bottom: 8px;
   cursor: pointer;
+  overflow: hidden;
   transition: border-color 0.15s;
 }
-.cfg-card:hover { border-color: rgba(91, 127, 191, 0.35); }
+.cfg-card:hover { border-color: rgb(var(--sapphire) / 0.35); }
 /* Model rows inside provider cards */
 .cfg-model-list { padding: 4px 0; }
 .cfg-model-row {
@@ -1316,10 +1132,10 @@
 .vision-badge {
   font: 500 9.5px -apple-system, sans-serif;
   padding: 1px 8px;
-  border-radius: 8px;
-  border: 1px solid rgba(91, 127, 191, 0.35);
-  background: rgba(91, 127, 191, 0.08);
-  color: #5b7fbf;
+  border-radius: var(--ds-radius-input);
+  border: 1px solid rgb(var(--sapphire) / 0.35);
+  background: rgb(var(--sapphire) / 0.08);
+  color: rgb(var(--sapphire));
   white-space: nowrap;
   line-height: 1.5;
 }
@@ -1332,7 +1148,7 @@
   border-bottom: 1px solid var(--color-frame-border-light);
 }
 .cfg-card-title {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 600;
   color: var(--color-frame-text);
   flex: 1;
@@ -1356,44 +1172,21 @@
   line-height: 1;
   transition: color 0.15s;
 }
+/* #e53935 = 材料红 600，仓内无同值 token（≠--color-error #f44336 / ≠
+   --status-error-icon #d64545）——改值需作者裁定，登记在案不改。 */
 .cfg-card-remove:hover { color: #e53935; }
-.cfg-toggle {
-  width: 36px;
-  height: 20px;
-  border-radius: 10px;
-  border: none;
-  background: var(--color-frame-border);
-  cursor: pointer;
-  position: relative;
-  transition: background 0.2s;
-  flex-shrink: 0;
-}
-.cfg-toggle::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #fff;
-  transition: transform 0.2s;
-}
-/* 开关 ON 档回绿（2026-11-01 作者令「toggle 重新回到绿色」，随 nb-toggle 一并
-   撤销 2026-10-30 按钮体系批 B9 的墨 tint 改写）：恢复原绿实心填充（原
-   var(--color-primary)=#07c160，现值冻结留作身份/状态色，故直取 --brand-green
-   三元组同值）。注意：.cfg-toggle 已无 JS 用点（toggle.js 头注），本规则仅退役
-   留档——若复活请改走共享 nb-toggle，不再续写本块。 */
-.cfg-toggle.on { background: rgb(var(--brand-green)); }
-.cfg-toggle.on::after { transform: translateX(16px); }
+/* （ui-unification-20261103-settings · 开关唯一形态）原 .cfg-toggle 手造开关一组
+   （36×20 轨道 + #fff 圆钮 + ON 档）已无 DOM 发射（toggle.js 头注：MCP 卡退役后
+   零用点；settings-cleanup T1 断言 `.cfg-toggle[data-mcp]` = 0），设置页开关
+   唯一形态 = 共享 nb-toggle（js/toggle.js + 本文件底部组件节），残留删除。 */
 .cfg-card-sub {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
   margin-right: 4px;
 }
 .cfg-empty {
   color: var(--color-frame-text-muted);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   padding: 8px 0;
 }
 
@@ -1410,9 +1203,9 @@
   gap: 4px;
   font: 400 11px ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text);
-  background: var(--glass-etched-bg);
-  border: 1px solid var(--glass-etched-border);
-  border-radius: 6px;
+  background: var(--ds-etched-bg);
+  border: 1px solid var(--ds-etched-border);
+  border-radius: var(--ds-radius-chip);
   padding: 2px 8px;
   max-width: 100%;
 }
@@ -1450,9 +1243,9 @@
    注：本文件先于 sapphire.css 加载，Pattern B 同值声明为实算胜出方（零冲突
    双保险）；cfg-btn-add 虚线幽灵档由本条自管。 */
 .cfg-btn {
-  font-size: 12px;
+  font-size: var(--ds-fs-btn);
   padding: 6px 16px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   border: 1px solid var(--ctl-neutral-bg);
   background: var(--ctl-neutral-bg);
   color: var(--ctl-neutral-ink);
@@ -1464,9 +1257,9 @@
 .cfg-btn:hover { background: var(--ctl-neutral-bg-hover); color: var(--ctl-neutral-ink); }
 .cfg-btn:active { background: var(--ctl-neutral-bg-active); }
 .cfg-btn:focus-visible { outline: 2px solid var(--btn-focus-ring); outline-offset: 2px; }
-.cfg-btn-sm { font-size: 12px; padding: 4px 12px; border-radius: 999px; }
+.cfg-btn-sm { font-size: var(--ds-fs-btn); padding: 4px 12px; border-radius: var(--ds-radius-pill); }
 .cfg-btn-primary {
-  font-size: 12px; padding: 6px 18px; border-radius: 999px;
+  font-size: var(--ds-fs-btn); padding: 6px 18px; border-radius: var(--ds-radius-pill);
   border: 1px solid var(--btn-primary-bg);
   background: var(--btn-primary-bg);
   color: var(--btn-primary-ink);
@@ -1495,25 +1288,25 @@
 .cfg-form-group { margin-bottom: 12px; }
 .cfg-label {
   display: block;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted);
   margin-bottom: 4px;
 }
 .cfg-hint {
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: var(--ds-fs-hint);
+  line-height: var(--ds-lh-body);
   color: var(--color-frame-text-muted);
   margin-top: 4px;
 }
 .cfg-select {
   width: 100%;
   /* Etched glass — same material as .cfg-input */
-  background: var(--glass-etched-bg);
+  background: var(--ds-etched-bg);
   color: var(--color-frame-input-text);
-  border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: 13px;
+  border: 1px solid var(--ds-etched-border);
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-input-pad);
+  font-size: var(--ds-fs-body);
   font-family: inherit;
   outline: none;
   cursor: pointer;
@@ -1523,8 +1316,8 @@
 .cfg-select:focus {
   border-color: var(--color-frame-text-muted);
   box-shadow:
-    0 0 0 2px rgba(128, 128, 128, 0.08),
-    0 0 0 4px rgba(91, 127, 191, 0.04);
+    0 0 0 2px var(--ds-focus-seam),
+    0 0 0 4px rgb(var(--sapphire) / 0.04);
 }
 
 /* ── Config Modal ────────────────────────────────────────────────────────── */
@@ -1545,15 +1338,16 @@
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   width: 400px;
   max-width: 92vw;
   max-height: 85vh;
   overflow-y: auto;
+  /* 外双层 = --ds-shadow-card 逐字同值（面板族面板档）；inset 白高光 0.25 无同值 token
+     （--glass-control-highlight 亮 0.95 / 暗 0.35），登记在案不改值。 */
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
+    var(--ds-shadow-card);
 }
 /* Top refraction line */
 .cfg-modal::before {
@@ -1594,12 +1388,12 @@
 .cfg-modal-body .cfg-label { margin-bottom: 5px; }
 .cfg-input {
   width: 100%;
-  background: var(--glass-etched-bg);
+  background: var(--ds-etched-bg);
   color: var(--color-frame-input-text);
-  border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: 13px;
+  border: 1px solid var(--ds-etched-border);
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-input-pad);
+  font-size: var(--ds-fs-body);
   font-family: inherit;
   outline: none;
   box-sizing: border-box;
@@ -1608,15 +1402,15 @@
 .cfg-input:focus {
   border-color: var(--color-frame-text-muted);
   box-shadow:
-    0 0 0 2px rgba(128, 128, 128, 0.08),
-    0 0 0 4px rgba(91, 127, 191, 0.04);
+    0 0 0 2px var(--ds-focus-seam),
+    0 0 0 4px rgb(var(--sapphire) / 0.04);
 }
 @media (prefers-color-scheme: dark) {
   .cfg-input:focus {
     border-color: var(--color-frame-text-muted);
     box-shadow:
-      0 0 0 2px rgba(128, 128, 128, 0.12),
-      0 0 0 4px rgba(91, 127, 191, 0.06);
+      0 0 0 2px var(--ds-focus-seam-strong),
+      0 0 0 4px rgb(var(--sapphire) / 0.06);
   }
 }
 .cfg-input:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -1645,17 +1439,19 @@
 .cfg-model-remove {
   background: none;
   border: 1px solid transparent;
-  color: var(--color-error, #e44);
+  color: var(--color-error);
   cursor: pointer;
   font-size: 18px;
   line-height: 1;
   padding: 4px 6px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   flex-shrink: 0;
 }
 .cfg-model-remove:hover {
-  background: var(--color-error, #e44)20;
-  border-color: var(--color-error, #e44);
+  /* 原 `var(--color-error, #e44)20` 意外拼成 8 位 hex（#f44336 + α 0x20/255 ≈ 12.5%），
+     修成 color-mix 同值表达（Δα 0.0005 不可辨）；死 fallback #e44 一并清除。 */
+  background: color-mix(in srgb, var(--color-error) 12.5%, transparent);
+  border-color: var(--color-error);
 }
 .cfg-model-add {
   background: none;
@@ -1663,8 +1459,8 @@
   color: var(--color-frame-text-muted);
   cursor: pointer;
   padding: 4px 12px;
-  border-radius: 4px;
-  font-size: 13px;
+  border-radius: var(--ds-radius-badge);
+  font-size: var(--ds-fs-body);
   align-self: flex-start;
 }
 /* Provider model-list auto-fetch (B1): small ghost button + status line
@@ -1681,21 +1477,21 @@
   color: var(--color-frame-text-muted);
   cursor: pointer;
   padding: 3px 10px;
-  border-radius: 6px;
-  font-size: 11px;
+  border-radius: var(--ds-radius-chip);
+  font-size: var(--ds-fs-meta);
   font-family: inherit;
   flex-shrink: 0;
 }
 .cfg-fetch-models-btn:hover:not(:disabled) {
-  border-color: rgba(91, 127, 191, 0.45);
-  color: rgb(91, 127, 191);
+  border-color: rgb(var(--sapphire) / 0.45);
+  color: rgb(var(--sapphire));
 }
 .cfg-fetch-models-btn:disabled {
   opacity: 0.5;
   cursor: default;
 }
 .cfg-fetch-status {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
   min-width: 0;
 }
@@ -1720,7 +1516,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   line-height: 0;
 }
 .cfg-eye-btn:hover {
@@ -1728,8 +1524,8 @@
   background: var(--color-frame-hover);
 }
 .cfg-model-add:hover {
-  border-color: rgba(91, 127, 191, 0.45);
-  color: rgb(91, 127, 191);
+  border-color: rgb(var(--sapphire) / 0.45);
+  color: rgb(var(--sapphire));
 }
 .cfg-modal-actions {
   display: flex;
@@ -1740,12 +1536,12 @@
 }
 .cfg-modal-actions .cfg-btn { padding: 6px 16px; }
 .cfg-btn-save {
-  border-color: rgba(91, 127, 191, 0.35) !important;
-  color: rgb(91, 127, 191) !important;
+  border-color: rgb(var(--sapphire) / 0.35) !important;
+  color: rgb(var(--sapphire)) !important;
 }
 .cfg-btn-save:hover {
-  background: rgba(91, 127, 191, 0.12) !important;
-  border-color: rgba(91, 127, 191, 0.55) !important;
+  background: rgb(var(--sapphire) / 0.12) !important;
+  border-color: rgb(var(--sapphire) / 0.55) !important;
   box-shadow:
     0 0 12px rgba(120, 160, 220, 0.15),
     0 0 24px rgba(120, 160, 220, 0.08) !important;
@@ -1758,8 +1554,8 @@
    布局钩子（fixed/bottom/z-index/动画）保留，正文可读性回到主题 token。 */
 .cfg-toast {
   position: fixed; bottom: 20px; right: 20px; z-index: 10000;
-  max-width: 400px; padding: 10px 16px; border-radius: 12px;
-  font-size: 13px; line-height: 1.4;
+  max-width: 400px; padding: 10px 16px; border-radius: var(--ds-radius-xl);
+  font-size: var(--ds-fs-body); line-height: 1.4;
   display: flex; align-items: flex-start; gap: 8px;
   background: var(--glass-control-bg);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
@@ -1775,7 +1571,7 @@
   animation: cfg-toast-in 0.2s ease-out;
 }
 .cfg-toast-error .st-ic { width: 15px; height: 15px; margin-top: 1px; flex-shrink: 0; }
-.cfg-toast-error .cfg-toast-msg { color: var(--status-word); min-width: 0; overflow-wrap: anywhere; }
+.cfg-toast-error .cfg-toast-msg { color: var(--ds-status-word); min-width: 0; overflow-wrap: anywhere; }
 @keyframes cfg-toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
 /* ── Agent Manager ────────────────────────────────────────────────────── */
