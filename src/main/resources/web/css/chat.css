@@ -369,10 +369,14 @@
 }
 .bg-task-row { cursor: pointer; }
 .bg-task-row.done { opacity: 0.6; }
+/* 面板高亮极低调档（作者令 2026-11-03 10:11 ⑤「面板键盘焦点/选中高亮改为非常
+   非常低调——几乎不可见但仍有线索」）：键盘焦点 = --ds-veil-focus 4% 蓝雾，
+   **2px 蓝强调条（inset box-shadow rgb(var(--sapphire)/0.8)）退役**——那是本仓
+   最响的一条焦点信号，与「几乎不可见」直接冲突。描边走既有 hairline 口径
+   （outline:none 保留：行是整行命中面，环会画出盒感）。 */
 .bg-task-row:focus-visible {
   outline: none;
-  background: var(--color-frame-hover);
-  box-shadow: inset 2px 0 0 rgb(var(--sapphire) / 0.8);
+  background: var(--ds-veil-focus);
 }
 /* delegate-ui 批（2026-10-08 · C2 两级层级）：一级行 = delegate 组头（bg-task-row-head，
    细顶界线分组）；二级行 = 缩进一格的子行（bg-task-row-child）。纯布局，零新色令牌
@@ -602,9 +606,11 @@
    applies in #bg-dropdown too; Enter/Space keyboard parity wired in main.js.
    Focus = hover background (no accent bar — visual-style iron rule). */
 #bg-dropdown .bg-task-row { cursor: pointer; }
+/* 同 ⑤（2026-11-03 10:11）：焦点底色退到 --ds-veil-focus 最低档（原 --color-frame-hover
+   是「面板行 hover 级」的可见wash，作者要「非常非常低调」）。 */
 #bg-dropdown .bg-task-row:focus-visible {
   outline: none;
-  background: var(--color-frame-hover);
+  background: var(--ds-veil-focus);
 }
 /* Project attribution (2026-09-06 author ruling): Flow rows label the owning
    project next to the kind chip. Deliberately plainer than the chip — dim

@@ -47,9 +47,10 @@
         <div id="attachment-preview"></div>
         <textarea id="input" rows="1" placeholder="Type a message..."></textarea>
       </div>
-      <!-- 引用入口移入 footer 批（2026-11-02 11:00）：与 index.html 同形的 composer
-           引用键（叠卡单张引用的唯一入口；默认 hidden，装配 = initQuoteItemButton）。 -->
-      <button class="icon-btn" id="quote-item-btn" type="button" hidden></button>
+      <!-- 🔴 composer 引用键（#quote-item-btn）已整链退役（作者令 2026-11-03 10:11 ②
+           「输入框引用图标移除，不留替代按钮」）：本壳与 index.html 同步移除该键，
+           装配面（msgQuote.initQuoteItemButton）同批摘除。叠卡单张引用的**能力面**
+           仍可用（startItemQuote，探针 __quoteItemOn 直接调用），只是没有 UI 入口。 -->
     </div>
   </div>
   <script type="module">
@@ -75,9 +76,9 @@
     const persistMod = await import(`${WEB}/persistence.js`);
     const view = chatViews.primary;
 
-    // 引用入口移入 footer 批（2026-11-02 11:00）：装配 composer 引用键（真实模块
-    // 的 initQuoteItemButton —— 与 main.js 同一条路，零 stub）。
-    quoteMod.initQuoteItemButton(view);
+    // 🔴 composer 引用键装配随 2026-11-03 10:11 ② 退役（本壳不再调 initQuoteItemButton；
+    // 该导出已从 msgQuote.js 摘除）。叠卡单张引用的能力面经 __quoteItemOn 直调
+    // startItemQuote 验证。
 
     const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
@@ -392,12 +393,14 @@
           label: '',
           collapsedHasButton: !!area.querySelector('.pop-stack-view .pop-media-quote'),
         })),
+        // 2026-11-03 10:11 ②：输入框引用键已退役 ⇒ 恒 null（specs 断言键不存在）。
         footer: btn ? {
           hidden: !!btn.hidden,
           title: btn.title || '',
           ariaLabel: btn.getAttribute('aria-label') || '',
           inInputBar: btn.parentElement.id === 'input-bar',
         } : null,
+        footerRetired: !btn,
         quoteState: typeof area.popQuoteState === 'function' ? area.popQuoteState() : null,
       };
     };
@@ -432,10 +435,10 @@
           await raf2();
         }
       }
-      const btn = document.getElementById('quote-item-btn');
-      if (!btn) return { ok: false, why: 'no footer button' };
-      if (btn.hidden) return { ok: false, why: 'footer button hidden' };
-      btn.click();
+      // 2026-11-03 10:11 ②：入口键退役 ⇒ 直接走能力面（原按钮点击 = 同一调用）：
+      const st = area.popQuoteState();
+      if (!st || !st.desc) return { ok: false, why: 'no item desc' };
+      quoteMod.startItemQuote(row, st.desc);
       await new Promise(r => setTimeout(r, 20));
       const q = quoteMod.quoteAttOf(view.pendingAttachments);
       if (!q) return { ok: false, why: 'no quote state' };
@@ -537,6 +540,8 @@
         chip: readSvg(chip),
         pillHostColor: pill ? getComputedStyle(pill).color : '',
         footerHostColor: footerBtn ? getComputedStyle(footerBtn).color : '',
+        // 2026-11-03 10:11 ②：footer 键退役后，徽章引用钮成为同源锚 ⇒ 同步读它的宿主色。
+        badgeHostColor: badgeBtn ? getComputedStyle(badgeBtn).color : '',
         chipHostColor: chip ? getComputedStyle(chip).color : '',
         varTextMuted: resolveVar('--color-text-muted'),
         varFrameTextMuted: resolveVar('--color-frame-text-muted'),

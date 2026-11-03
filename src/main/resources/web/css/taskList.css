@@ -169,7 +169,11 @@
   border-radius: 6px;
   transition: background 0.15s;
 }
-.task-node:hover { background: var(--color-frame-hover, rgba(128, 128, 128, 0.08)); }
+/* 面板行悬停/焦点档（作者令 2026-11-03 10:11 ⑤「面板键盘焦点/选中高亮改为非常
+   非常低调——几乎不可见但仍有线索」）：底色退到 --ds-veil-focus（design-system.css
+   的低调焦面槽，4% 蓝雾）。原 --color-frame-hover 是「可见 wash」级，且带裸
+   rgba fallback 字面量——本批一并去掉（字面量只减不增）。 */
+.task-node:hover { background: var(--ds-veil-focus); }
 
 /* 状态 glyph：统一 12px（= 任务行 pending 小方框尺寸节奏，宁小勿大）；
    margin-top 3px = 13px/1.4 首行 (18.2-12)/2 垂直居中。 */
@@ -495,7 +499,7 @@
   border-radius: 6px;
   transition: background 0.15s;
 }
-.task-chain-member:hover { background: var(--color-frame-hover, rgba(128, 128, 128, 0.08)); }
+.task-chain-member:hover { background: var(--ds-veil-focus); }
 .task-chain-depth {
   flex: 0 0 auto;
   min-width: 24px;

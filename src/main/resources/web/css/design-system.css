@@ -63,6 +63,14 @@
   --ds-etched-border: var(--glass-etched-border);
   --ds-overlay: var(--overlay-bg);              /* 恒透明：弹窗禁遮罩 */
 
+  /* 低调焦面槽（ui-unification-20261103-input-fixes，作者令 2026-11-03 10:11 ⑤
+     「面板键盘焦点/选中高亮改为非常非常低调——几乎不可见但仍有线索」）：
+     值 = 既有 sapphire 蓝通道 4% tint（同文件 --ds-badge err 底 0.10 的降半档、
+     keyboard.css --nf-chip-bg 0.10 的同族低档），零新字面量 —— 只由 var(--sapphire)
+     组合。首批消费者 = 后台任务/子智能体面板行（chat.css .bg-task-row:focus-visible
+     族）与任务节点行（taskList.css .task-node:hover / .task-chain-member:hover）。 */
+  --ds-veil-focus: rgb(var(--sapphire) / 0.04);
+
   /* ── ② 字体族与字重（SKILL.md §2）── */
   --ds-font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
   --ds-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

@@ -31,36 +31,40 @@
   }
 }
 
-/* ── 槽位（待办胶囊重做批 2026-11-02 11:52）────────────────────────────────
-   作者原文：「收缩到只显示 8 待办 这么几个文字的大小程度的一个在对话框下方的
+/* ── 槽位（待办胶囊重做批 2026-11-02 11:52；挪位批 2026-11-03 10:11 ①）────────
+   作者原文（11-02）：「收缩到只显示 8 待办 这么几个文字的大小程度的一个在对话框下方的
    一个胶囊……出现逾期的时候就是翻转一下 然后只显示 1 逾期 胶囊的大小不改变
    ……点击的时候就是从这么个小胶囊拓展到一个大的界面。样式要设计好，现在上下
    都没居中」。
+   作者原文（11-03 10:11 ①）：「待办胶囊挪位：桌面端待办胶囊从输入框下方移到顶栏
+   正下方。11-02 胶囊重做批的形态口径（71.2×26、逾期翻面、两态等宽）原样保留，
+   只改挂载位置与布局层级。」
 
    槽位语义（本块是几何单源）：
-   · `#task-list` 现挂 #input-area 内、#input-bar 之后（index.html 本批注记）：
-     静默态 = 输入框正下方的一个居中行（.tfl-mount），高度 0 的绝对定位浮层
-     不占输入区，胶囊自身若干 px 由 `#task-list` 的 margin 顶部给出呼吸位。
-   · 展开态 = `.tfl-card` 变 `position:absolute; bottom:calc(100% + 8px)`：
-     锚在槽位（= 胶囊行）上方，自胶囊向上生长、浮在聊天体之上，不占输入区
-     高度、不与输入框打架。
+   · `#task-list` 现挂 **#top-overlays**（顶栏布局层，紧贴 #header 下缘，见
+     index.html 顶带块注记）：静默态 = 顶栏正下方的一个居中行（.tfl-mount），
+     高度 0 的绝对定位浮层不占带外空间，胶囊自身若干 px 由 `#task-list` 的
+     padding 给出呼吸位。
+   · 展开态 = `.tfl-card` 变 `position:absolute; top:calc(100% + 8px)`：
+     锚在槽位下缘、**自胶囊向下生长**（11-03 挪位后方向翻转；原 11-02 的
+     `bottom:calc(100% + 8px)` 向上生长是「面板在输入框上方」时代的几何，
+     在顶栏位置会整块长出屏幕外）。面板浮在聊天体之上，不占输入区高度。
+     **`position: relative` 是本次挪位的关键**：展开面板要锚在**胶囊行下缘**
+     （而不是整条顶带的下缘，否则 ask-pending-bar / notification-banner 一出现
+     面板就被顶下去）。relative 让槽位成为最近的定位祖先，`top:100%` 即「胶囊
+     行底」；同时本节点 overflow 为 visible，面板不被裁剪（裁剪只沿包含块链生效）。
+   · 胶囊宽/高/翻面口径**一字未改**（--tfl-cap-h 26 / 两态叠层严格等宽）。
    · 手机层 `#task-list` 仍由 mobileLayer.css 整条 display:none 压死（手机共用
      的是 .tfl-mobile 展开面），本块对手机零影响。 */
 #task-list {
   /* 老规则（css/taskList.css）给的是顶带通栏 #task-list { padding:0 8px;
      max-height:0; overflow:hidden; display:flex; flex-direction:column } ——
-     此处按重做批逐条覆盖为居中行槽位（同特异度、本文件后载，天然胜出）。
-
-     `position: static` 是**关键**：展开面板（.tfl-card，absolute）要锚在
-     **#input-area 顶缘**（= 输入框上方），而不是锚在这条胶囊行上 —— 否则
-     面板会压住输入框本身（「不与输入区打架」的反面）。静态定位让最近的
-     定位祖先退回 #input-area（position:absolute），`bottom:100%` 即
-     「整个输入区之上」；同时本节点的 overflow 不再裁剪面板（裁剪只沿包含块
-     链生效，面板的包含块已是 #input-area）。 */
-  position: static;
+     此处按重做批逐条覆盖为居中行槽位（同特异度、本文件后载，天然胜出）。 */
+  position: relative;
   display: block;
-  /* 胶囊与输入框之间的呼吸位（4px 栅格）：6px 上 + 6px 下。上下内距计入
-     #input-area.offsetHeight ⇒ 消息列让位自动把胶囊也让出来（js/main.js 同源）。 */
+  /* 胶囊与顶栏/聊天之间的呼吸位（4px 栅格）：6px 上 + 6px 下。槽位在顶带内，
+     其下缘即 #chat 让位的观测点之一（js/main.js bandBottom 读 #top-overlays
+     实测盒 ⇒ 胶囊出现即把消息列让出）。 */
   padding: 6px 8px;
   margin: 0;
   max-height: none;
@@ -69,7 +73,7 @@
   /* 命中：槽位本身 auto——旧 delegate 链块渲染路径（js/taskList.js
      renderTaskList）仍把 .task-card 直接挂进 #task-list，其行点击不得透传
      给 #chat（本批首版写 none 时 chain-panel 三套件 T7 卡住：locator 报
-     「#chat intercepts pointer events」）。槽位在输入区内部，不遮挡聊天体。 */
+     「#chat intercepts pointer events」）。槽位在顶带内，不遮挡聊天体。 */
   pointer-events: auto;
 }
 #task-list.has-tasks {
@@ -83,11 +87,11 @@
 #task-list:not(.has-tasks) { display: none; }
 
 /* 居中行（胶囊的几何母体）：内容 inline-flex + 水平居中 —— 胶囊宽度由内容
-   决定（不横跨容器），胶囊中心恒等于本行中心恒等于输入区中线（同一盒模型）。 */
+   决定（不横跨容器），胶囊中心恒等于本行中心恒等于顶带中线（同一盒模型）。 */
 .tfl-mount {
-  /* 同 #task-list：保持 static —— 展开面板（absolute）的包含块必须是
-     #input-area，才能锚在输入框正上方；若在此建定位祖先，面板会贴胶囊行
-     下缘、压住输入框。 */
+  /* 同 #task-list：保持 static —— 展开面板（absolute）的包含块必须是 #task-list
+     槽位本身（2026-11-03 挪位后：面板锚在胶囊行下缘向下生长；若在此建定位祖先，
+     锚点会漂到别的盒子）。 */
   position: static;
   display: flex;
   justify-content: center;
@@ -199,27 +203,32 @@
 /* ── 卡容器 = 展开态面板（`.tfl-card`）────────────────────────────────────
    静默态 `display:none`（零占位：面板 DOM 常驻但完全不参与布局，避免旧的
    「30px 卡里塞 11px 胶囊」几何纠缠）；开态 = **绝对定位浮层**，锚在
-   #input-area 顶缘之上 8px（包含块 = #input-area，见上方槽位块「position:
-   static 是关键」）：
+   #task-list 槽位下缘之下 8px（包含块 = #task-list（position:relative），
+   见上方槽位块）：
 
+   · 向下生长（top 锚，2026-11-03 10:11 ① 挪位后翻转；原向上生长的 bottom 锚
+     属于「面板在输入框上方」时代）⇒ 视觉上「自胶囊向下长出」，顶栏位置不会
+     整块长出屏幕外；
    · 不占输入区高度 ⇒ 展开/收起时输入框位置一动不动（不与输入区打架），
      也不触发聊天体让位重排；
-   · 向上生长（bottom 锚定）⇒ 视觉上「自胶囊长出」，不是从屏幕顶掉下来；
-   · #task-list / .tfl-mount 均为 static、#input-area/#main 无裁剪 ⇒ 浮层
-     可以完整溢出到输入区上方；
-   · 层级：#input-area 自身 z-index 20 已高于 #chat，浮层在同层之上；全局模态
-     （z-index ≥100）仍在其上。
+   · #task-list relative、#top-overlays / #main 无裁剪 ⇒ 浮层可以完整溢出到
+     聊天体之上；
+   · 层级：#top-overlays 自身 z-index 25（自成堆叠上下文）已高于 #chat，
+     浮层在同层之上；全局模态（z-index ≥100）仍在其上。
    · 宽度 `min(420px, calc(100vw - 32px))` 与胶囊同一水平中线（left:50% +
-     自身 translateX(-50%)），中心 = 输入区中线。 */
+     自身 translateX(-50%)），中心 = 顶带中线。 */
 .tfl-card {
   display: none;
   position: absolute;
   left: 50%;
-  bottom: calc(100% + 8px);
+  /* 2026-11-03 10:11 ①：自胶囊向下生长（原 bottom:calc(100% + 8px) 向上）。 */
+  top: calc(100% + 8px);
   transform: translateX(-50%);
   width: min(420px, calc(100vw - 32px));
   flex-direction: column;
-  border-radius: 19px 19px 24px 24px;
+  /* 圆角语言镜像：靠近胶囊的一条边（现在是顶边）承 24 的大圆角，
+     远端（底边）19 —— 与原「贴胶囊的底边 24 / 远端顶边 19」同一读法。 */
+  border-radius: 24px 24px 19px 19px;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -227,15 +236,15 @@
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
     0 4px 16px rgba(0, 0, 0, 0.05);
-  /* 过渡起源点 = 胶囊中心（浮层底缘中点，含 8px 呼吸缝）—— JS 的 scale 弹簧
+  /* 过渡起源点 = 胶囊中心（浮层**顶**缘中点 − 8px 呼吸缝）—— JS 的 scale 弹簧
      与 CSS 共用这个原点 ⇒ 形变「从胶囊长出来」。 */
-  transform-origin: 50% calc(100% + 8px);
+  transform-origin: 50% calc(0% - 8px);
   overflow: hidden;
 }
 .tfl-card[data-state="open"] {
   display: flex;
-  --tfl-rt: 19px;
-  --tfl-rb: 24px;
+  --tfl-rt: 24px;
+  --tfl-rb: 19px;
 }
 /* 收起退场：卡容器仍 display:flex 直到弹簧落地（JS 落地后才翻 data-state），
    内容随 tfl-panel-out 淡出 —— 视觉上「从面板收回胶囊」。 */

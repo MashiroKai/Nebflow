@@ -330,10 +330,13 @@ async function desktopLeg(browser, width, colorScheme, opts = {}) {
     await page.waitForTimeout(reduced ? 150 : 800);
     ok(`⑥[${tag}] 收起钮收起`, (await geo(page)).cardState === 'capsule');
 
-    // 退出方式 3：点外部（聊天体空白）
+    // 退出方式 3：点外部（聊天体空白）。2026-11-03 10:11 ① 挪位批：面板改为
+    // 锚顶带自胶囊**向下**生长（水平居中、宽 min(420, vw-32)），原坐标
+    // (width/2, 300) 现落在面板**内部**（旧几何里面板长在输入框上方，300 必空）；
+    // 「外部」语义不变，坐标改取聊天体左缘空白（x=24 恒在居中面板的水平范围外）。
     await page.click('#task-list .tfl-capsule');
     await page.waitForTimeout(reduced ? 150 : 700);
-    await page.mouse.click(Math.round(width / 2), 300);
+    await page.mouse.click(24, 300);
     await page.waitForTimeout(reduced ? 150 : 800);
     ok(`⑥[${tag}] 点外部收起`, (await geo(page)).cardState === 'capsule');
 

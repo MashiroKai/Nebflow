@@ -6,8 +6,9 @@
 // 七条机械断言：
 //   ① 叠卡面上零引用钮 —— 折叠态、展开态、hover 态三处 `.pop-media-quote` 命中数全为 0
 //      （「不需要hover图片的时候也显示一个图标」= 那枚 hover 图标整条退役）；
-//   ② 单张引用入口 = composer footer 动作行的一枚键（`#input-bar #quote-item-btn`），
-//      可见/可用/在动作行内，动作对象 = 当前张（拖动翻页后文案与载荷同步换人）；
+//   ② 单张引用入口 = composer footer 动作行的一枚键 —— 🔴 **已随作者令 2026-11-03
+//      10:11 ② 整链退役**（「输入框引用图标移除，不留替代按钮」）：本条改为退役钉
+//      （#quote-item-btn 0 元素 + 动作行零引用控件）；当前张状态仍跟手（能力面保留）；
 //   ③ 引用牌三分支图标化：图片 = 真缩略（内联 data: `<img>`）/ 文档 = `.fc-icon` 既有
 //      扩展名色族 / 文字 = 独立 logo（内联 SVG）；历史腿无 preview ⇒ 图片字形（不伪造缩略）；
 //   ④ 三张不同图 ⇒ 三块引用牌的缩略 src 两两不同（图标是「这张」的，不是组的）；
@@ -110,30 +111,20 @@ test.describe('①② 引用入口只活在 footer', () => {
     expect(hovered.hoverHits, 'hover 命中数为 0').toBe(0);
     expect(hovered.visibleButtons, '展开列可见按钮只有 Canvas 角标').toEqual(['pop-media-canvas']);
 
-    // ② footer 入口：在动作行内、可见、有「第 N/M 张」文案
-    const footer = await page.evaluate(() => {
-      const b = document.getElementById('quote-item-btn');
-      const bar = document.getElementById('input-bar');
-      const r = b.getBoundingClientRect();
-      const br = bar.getBoundingClientRect();
-      return {
-        exists: !!b, hidden: !!b.hidden, inBar: b.parentElement === bar,
-        inBarBox: r.top >= br.top - 1 && r.bottom <= br.bottom + 1,
-        title: b.title, aria: b.getAttribute('aria-label'),
-        iconBtn: b.classList.contains('icon-btn'),
-        glyph: !!b.querySelector('svg'),
-      };
-    });
-    expect(footer.exists, 'footer 引用键存在').toBe(true);
-    expect(footer.hidden, '有叠卡 ⇒ 可见').toBe(false);
-    expect(footer.inBar, '在 #input-bar 内').toBe(true);
-    expect(footer.inBarBox, '几何上落在动作行盒内').toBe(true);
-    expect(footer.iconBtn, '与附件键同族 .icon-btn').toBe(true);
-    expect(footer.glyph, '有字形').toBe(true);
-    expect(footer.title, '文案带当前张位置').toContain('第 1/3 张');
-    expect(footer.aria).toContain('引用');
+    // ② 🔴 输入框引用键已整链退役（作者令 2026-11-03 10:11 ②「输入框引用图标移除，
+    //    不留替代按钮」）：动作行零引用控件、零替代按钮，本 spec 的原「footer 键在场/
+    //    几何/文案」三条断言**随键退役**，改为退役钉（键 0 元素 + 动作行零引用控件）。
+    const entry = await page.evaluate(() => ({
+      key: !!document.getElementById('quote-item-btn'),
+      barButtons: Array.from(document.querySelectorAll('#input-bar button'))
+        .map(b => b.id || b.className || b.tagName.toLowerCase()),
+      quoteish: Array.from(document.querySelectorAll('#input-bar button'))
+        .filter(b => /quote/i.test(b.id + ' ' + b.className)).length,
+    }));
+    expect(entry.key, 'footer 引用键已退役（0 元素）').toBe(false);
+    expect(entry.quoteish, '动作行零引用控件（无替代按钮）').toBe(0);
 
-    // ② 翻页后：文案与载荷同步换到当前张
+    // ② 翻页：当前张状态仍然跟手（能力面保留，只是没有 UI 入口）
     const afterDrag = await page.evaluate(async (id) => {
       const row = window.__mediaRowById(id);
       const view = row.querySelector('.pop-stack-view');
@@ -143,12 +134,10 @@ test.describe('①② 引用入口只活在 footer', () => {
       view.dispatchEvent(new PointerEvent('pointermove', { ...opts, clientX: r.x + r.width - 120, clientY: r.y + r.height / 2 }));
       view.dispatchEvent(new PointerEvent('pointerup', { ...opts, clientX: r.x + r.width - 120, clientY: r.y + r.height / 2 }));
       await new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
-      const b = document.getElementById('quote-item-btn');
-      return { title: b.title, state: window.__stackFront(id) };
+      return { state: window.__stackFront(id) };
     }, msgId);
     expect(afterDrag.state.index, '拖动把当前张翻到 index 1').toBe(1);
     expect(afterDrag.state.descName).toBe('shot-1.png');
-    expect(afterDrag.title, 'footer 文案跟着当前张').toContain('第 2/3 张');
 
     expect(pageErrors).toEqual([]);
     await context.close();

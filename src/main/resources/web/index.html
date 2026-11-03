@@ -850,13 +850,21 @@
          穿顶内容 = Header 玻璃自身磨砂（盒内）+ 带下零蒙层；带下过渡 = 纯硬边界
          （任务卡玻璃 blur 仍在卡上，裙边渐隐本体退役）。五面浮层面板裙边照旧。 -->
     <div id="top-overlays">
-      <!-- 待办胶囊重做批（作者令 2026-11-02 11:52「收缩到只显示 8 待办 这么几个
-           文字的大小程度的一个在对话框下方的一个胶囊……点击的时候就是从这么个小
-           胶囊拓展到一个大的界面」）：#task-list 槽位从顶带 #top-overlays 迁到
-           #input-area 内、#input-bar 之后 —— 静默态 = 输入框下方居中小胶囊，
-           展开态 = 锚在输入区上方 8px 的浮层面板（见 css/todo-face.css 槽位块）。
-           顶带让位公式（js/main.js bandBottom）只读 #header/#top-overlays 的盒子，
-           本节点离场后自带收缩，无需改动。 -->
+      <!-- 待办胶囊槽位（作者令 2026-11-03 10:11 ①「桌面端待办胶囊从输入框下方
+           移到顶栏正下方」）：#task-list 回到顶带 #top-overlays —— 本带是
+           `position:absolute; top:68px` 的顶栏布局层（chat.css:3004 块，紧贴
+           #header 下缘、全宽、pointer-events:none + 子件 auto），胶囊行即
+           「顶栏正下方」的居中一行（.tfl-mount flex 居中）。
+           形态口径**原样保留**（重做批 2026-11-02 11:52：高 26px 小胶囊 /
+           逾期翻面 / 两态严格等宽，见 css/todo-face.css 几何单源块）；本批只改
+           挂载位置与布局层级 —— 展开面板随之改为**自胶囊向下生长**
+           （top:calc(100% + 8px)，原向上生长的 bottom 锚随迁位退役）。
+           让位链自动跟随：js/main.js bandBottom() 读 #top-overlays 实测盒 ⇒
+           胶囊出现即把 #chat 的 padding-top 让出（top-reserve 观察器挂在
+           #top-overlays 的 ResizeObserver 上，零 JS 改动）。
+           手机层不受影响：body.mobile-layer #task-list 照旧整条 display:none
+           （css/mobileLayer.css:2656）。 -->
+      <div id="task-list"></div>
       <!-- D6 批 F2: pending-AskUser persistent bar (one row per unanswered
            question: source · summary, click = scroll to card + highlight) -->
       <div id="ask-pending-bar" class="hidden" role="list" aria-live="polite"></div>
@@ -913,22 +921,22 @@
       </div>
       <button class="skip-freeze-btn" id="skip-freeze-btn" type="button"><i data-lucide="skip-forward"></i><span id="skip-freeze-label">跳过本次</span></button>
       <button class="icon-btn" id="attach-btn"><i data-lucide="paperclip"></i></button>
-      <!-- 引用入口移入 footer（2026-11-02 11:00 作者令「图片引用在footer显示就行了。
-           不需要hover图片的时候也显示一个图标」）：单图/单张引用入口 = composer
-           footer 动作行的一枚键（与附件键同族 .icon-btn），动作对象 = 当前会话里
-           最近一条叠卡的**当前张**（拖动/横滑翻到的那张，见 popArtifacts
-           `.pop-stack-area`.popQuoteState）。默认 hidden：没有叠卡就没有可引单张
-           （零死入口，见 js/msgQuote.js initQuoteItemButton）。字形 = lucide
-           `quote`（内联 SVG，vendor 里没有该图标，见 js/msgQuote.js QUOTE_SVG）。 -->
-      <button class="icon-btn" id="quote-item-btn" type="button" hidden><span class="quote-item-btn-glyph"></span></button>
+      <!-- 🔴 输入框引用图标移除（作者令 2026-11-03 10:11 ②）：#quote-item-btn
+           （2026-11-02 11:00「引用入口移入 footer」批引入的动作行引用键）整键退役，
+           不留替代按钮——作者原意是「引用消息时用图标替代长文本展示」，不是输入框
+           加引用按钮；引用消息图标化语义另行核对后再设计入口，本批只做移除。
+           装配链（msgQuote.js initQuoteItemButton / freeze.js 冻结名单 /
+           input.css frozen disabled 档）同批摘除；防复活钉 =
+           /Users/kaiyu/.stand/evidence/ui-unification-20261103/input-fixes/
+           verify-five-fixes.mjs ② 腿（元素 0 命中）。 -->
       <button id="send-btn"><i data-lucide="send"></i></button>
       <button id="stop-btn"><i data-lucide="square"></i></button>
       </div>
-      <!-- 待办胶囊槽位（重做批 2026-11-02 11:52；从 #top-overlays 迁入，见上方
-           顶带块注记）：静默态 = 输入框正下方居中小胶囊；展开态 = 自胶囊位置向上
-           生长的浮层面板（position:absolute; bottom:calc(100% + 8px)，不占输入区
-           高度、不与输入框打架）。`has-tasks` 门照旧由 js/todoFace.js 挂。 -->
-      <div id="task-list"></div>
+      <!-- 待办胶囊槽位已迁出输入区（作者令 2026-11-03 10:11 ①「待办胶囊挪位：
+           桌面端待办胶囊从输入框下方移到顶栏正下方」）——槽位现挂 #top-overlays，
+           见上方顶带块注记。本处不留挂载点（防复活钉：
+           /Users/kaiyu/.stand/evidence/ui-unification-20261103/input-fixes/
+           verify-five-fixes.mjs ① 腿 = 祖先链必须落在 #top-overlays）。 -->
     </div>
   </div>
   </div>
