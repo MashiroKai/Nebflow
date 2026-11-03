@@ -131,6 +131,23 @@ object InteractionHubCommand:
    */
   final case class AttachGateOf(requestId: String, reply: ActorRef[Option[AttachGate]])
       extends InteractionHubCommand
+
+  /**
+   * 作答落库归属批（2026-11-03，作者报障「回答后台智能体的提问泄漏进主会话」）：
+   * **只读**归属查询 —— `requestId` 的槽位由**哪个会话**发起（`sourceSession`）、
+   * 卡片渲染/落盘在哪个会话（`rootSessionId`）、提问方标注是什么。
+   *
+   * 唯一消费方 = 网关作答落库腿（web 腿 `handleAskUserAnswer` /
+   * `handleSecretAwareAnswer`、桥腿 `forwardBridgeInteractionAnswer`）：作答行的
+   * 落点必须按「回答谁，记录在谁的会话」判定 —— 子代理/项目节点的提问（
+   * `sourceSession != rootSessionId`）只把**作答全文**落进提问会话，根会话只留一条
+   * 不带内容的代答痕迹（`AskAnswerPlacement` 单点裁决）。
+   *
+   * 与 [[SecretSlotsOf]] / [[AttachGateOf]] 同一纪律：只读（不碰 pending/渲染/
+   * 广播），`None` = 无此槽位（已答/已收/从未存在 —— 网关回落改前落库路径）。
+   */
+  final case class AskOriginOf(requestId: String, reply: ActorRef[Option[AskOrigin]])
+      extends InteractionHubCommand
 end InteractionHubCommand
 
 /**
@@ -139,6 +156,28 @@ end InteractionHubCommand
  * `hasSecret` = 卡上任一题 secret 型（fail-closed 拒传）。
  */
 final case class AttachGate(rootSessionId: String, hasSecret: Boolean)
+
+/**
+ * 作答落库归属批的查询回执（见 [[InteractionHubCommand.AskOriginOf]]）。
+ *
+ * @param rootSessionId 卡片渲染/落盘所属会话（hub `renderAskUser` 的 sessionId）
+ * @param sourceSession 发起提问的会话（子代理 / 项目节点 / 根会话自身）
+ * @param sourceAgent   提问方代理名（fallback 标注）
+ * @param askerLabel    提问方**人读标注**：payload 显式携带的 `agentName` 优先
+ *                      （内核会话的 `subagent · <任务摘要>` 由 `AgentActor` 写在
+ *                      payload 上），缺省回 `sourceAgent`。只用于痕迹行文案，不参与
+ *                      任何判据。
+ */
+final case class AskOrigin(
+  rootSessionId: String,
+  sourceSession: String,
+  sourceAgent: String,
+  askerLabel: String
+):
+
+  /** 自己问自己（根会话自问 / 无 sourceSession 的旧槽位）⇒ 作答行落在卡片会话，
+    * 与改前逐字同路径。子代理/节点提问 ⇒ false（全文只落提问会话）。 */
+  def isSelfAsk: Boolean = sourceSession.isEmpty || sourceSession == rootSessionId
 
 /**
  * askuser-secret 批：一条 secret 型题的落库参数（hub 从 pending 载荷的 items 里

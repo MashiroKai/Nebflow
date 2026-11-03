@@ -159,6 +159,10 @@ object InteractionHub:
               // askuser-dragdrop 实施批（2026-10-19，批 #551）：只读附件闸查询
               // （上传端点前置闸的判据来源）——见 InteractionHubCommand.AttachGateOf 注。
               ctx.forkTurn(handleAttachGateOf(pending, requestId, reply)) *> IO.pure(behavior)
+            case InteractionHubCommand.AskOriginOf(requestId, reply) =>
+              // 作答落库归属批（2026-11-03）：只读归属查询（作答行落点判据来源）
+              // ——见 InteractionHubCommand.AskOriginOf 注。
+              ctx.forkTurn(handleAskOriginOf(pending, requestId, reply)) *> IO.pure(behavior)
         }
       IO.pure(behavior)
     }
@@ -527,6 +531,43 @@ object InteractionHub:
         }
       )
       .flatMap(gate => (reply ! gate).void)
+
+  /**
+   * 只读查询（AskOriginOf，作答落库归属批 2026-11-03）：槽位在册且 kind=AskUser
+   * ⇒ 回提问归属（root 会话 / 发起会话 / 提问方标注）；否则 None（网关回落改前
+   * 落库路径 —— 已答 / 已收 / 从未存在，与 SecretSlotsOf / AttachGateOf 同款）。
+   *
+   * 归属三类读者（网关 `AskAnswerPlacement`）：`isSelfAsk=true`（根自问）⇒ 全文
+   * 作答行照旧落卡片会话；false（子代理 / 项目节点 / 内核提问）⇒ 全文只落
+   * `sourceSession`，`rootSessionId` 只留不带内容的代答痕迹行。
+   */
+  private def handleAskOriginOf(
+    pending: Ref[IO, Map[String, PendingRequest]],
+    requestId: String,
+    reply: ActorRef[Option[AskOrigin]]
+  ): IO[Unit] =
+    pending.get
+      .map(m =>
+        m.get(requestId).filter(_.kind == InteractionKind.AskUser).map { p =>
+          // 提问方标注：payload 显式携带者优先（内核会话 `subagent · <任务摘要>`
+          // 由 AgentActor 写在 payload.agentName —— 与 renderAskUser 同一条回落链），
+          // 缺省回 sourceAgent；两者皆空 ⇒ 空串（网关侧给中性文案）。
+          val labelled = p.payload.hcursor
+            .downField("agentName")
+            .as[String]
+            .toOption
+            .map(_.trim)
+            .filter(_.nonEmpty)
+            .getOrElse(p.sourceAgent.trim)
+          AskOrigin(
+            rootSessionId = p.rootSessionId,
+            sourceSession = p.sourceSession,
+            sourceAgent = p.sourceAgent,
+            askerLabel = labelled
+          )
+        }
+      )
+      .flatMap(origin => (reply ! origin).void)
 
   // ============================================================
   // 工具面按角色分化批 B6 (2026-09-13): read-only reachability probe.
