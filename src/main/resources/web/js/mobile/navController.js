@@ -47,6 +47,10 @@
 
 import {
   getTabPane, setActiveTab, closeTab, deckFaceOf,
+  // 堆叠视角真快照（作者令 2026-11-02 21:47 §三「让堆叠视觉能看到卡片内容」）：
+  // 源解析/克隆腿**单源复用**桌面 canvas.js 的同一内核（不另造第二套截图方案），
+  // 手机层只负责缓存与挂载。
+  canvasSnapshotFor, canvasSnapshotStamp,
 } from '../canvas.js';
 import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
@@ -769,15 +773,41 @@ const RING_BLUR_POW = 1.9;
 // （位置稳定、不随换签跳动），当前位置由「哪一点高亮放大」表达 = 首/中/末三段
 // 各占一档（5 签 ⇒ 序号 0/1,2,3/4 分别落三点）。n ≤ 3 时一一对应。
 const DOTS_MAX = 3;
-const DOT_LONGPRESS_MS = 260;   // 长按放大阈值（ms，触屏手感档）
-const DOT_DRAG_STEP_PX = 34;    // 拖动换签步距（横拖过 34px 换一签）
-const DOT_TAP_SLOP_PX = 8;      // 点按容差（未过阈 = 点按跳签，不走拖动腿）
+// ── 底部三点手势区（作者令 2026-11-02 21:47 §二「三点区手势化」）──────────
+// 判据换代：**去掉长按门槛**（旧 DOT_LONGPRESS_MS 260ms 放大档已退役）——三点
+// 那一条就是一枚手势交互区，一上手即响应：
+//   · 左右滑 = 上一张 / 下一张（切文档卡）；
+//   · 上滑   = 进入堆叠视角；
+//   · 下滑   = **关闭当前标签页**（作者 2026-11-02 21:54 裁定「下滑删除不需要
+//              确认 只是关闭标签页而已 后果没那么严重」——语义 = 关标签、不是
+//              删文档；零确认步；失败不乐观：只有手势过阈才调 closeTab，
+//              关不掉（页签已不在/closeTab 拒）就等于没发生，UI 由 syncCanvasPage
+//              按真实页签集重建，绝不先删 DOM 再祈祷）；
+//   · 轻触     = 跳该点对应签（旧腿保留，同时是「非手势可点等价入口」之一）。
+// 阈值（实测调优读数见批文档 §I4/I5/I6/I7）：轴锁 6px（touch-action:none 下
+// 不需要大的死区，但要压住点按抖动）；横向提交 = 位移 ≥26px **或** 位移 ≥14px
+// 且末段速度 ≥0.35px/ms（快弹腿，短促轻扫也换页）；纵向提交 = 22px。纵向阈值
+// 比横向小：纵向只有「开堆叠 / 关标签」两个明确意图，且要与横向互斥判定。
+const DOT_AXIS_PX = 6;          // 轴锁死区（内 = 点按）
+const DOT_SWIPE_X_PX = 26;      // 横向位移阈（换页）
+const DOT_FLICK_X_PX = 14;      // 快弹位移下限（配合速度阈）
+const DOT_FLICK_V_PX_MS = 0.35; // 快弹速度阈（px/ms）
+const DOT_SWIPE_Y_PX = 22;      // 纵向位移阈（上滑开堆叠 / 下滑关标签）
+// 点按容差 = 上面的轴锁死区本身（未过 DOT_AXIS_PX 即「没有位移」，等同点按）；
+// 独立常量退役 —— 两个 6px 并存的读数口径只会互相打架。
 
-// ── 堆叠卡翻页（右上角堆叠钮 → 卡片上下翻动）────────────────────────────
-const DECK_SWITCH_PX = 56;      // 纵拖过阈即翻一页（松手吸附到最近卡）
-const DECK_AXIS_PX = 8;         // 轴锁死区（内 = 点按，外 = 拖动）
-const DECK_PEEK_PX = 16;        // 后卡逐级下沉步距（|d|=1 在面前卡底缘下露出 16px）
-const DECK_SCALE_STEP = 0.05;   // 后卡逐级缩径（同尺寸铁律的手机档收敛）
+// ── 堆叠视角（iOS app switcher 形态；作者令 2026-11-02 21:47 §三）───────
+// 形态 = **横向卡列**（旧「纵向卡叠」退役）：中央卡最大最清晰，左右相邻卡
+// 被裁切只露出一部分、越靠边越暗越模糊，背景重度模糊。位姿变量单源在本文件
+// （layoutDeck 写 --dtx/--dsc/--dop/--dblur），CSS 只消费。
+const DECK_CARD_W_RATIO = 0.78;  // 中央卡宽 = 舞台宽 × 0.78（iOS 观感档；高
+                                 // 由 CSS 侧 min(74%, 520px) 承担 —— 高不参与 JS 几何）
+const DECK_SIDE_STEP_RATIO = 0.66;  // 邻卡中心距 = 卡宽 × 0.66（露约 1/3 卡身）
+const DECK_SCALE_SIDE = 0.84;    // 邻卡缩径
+const DECK_SCALE_FAR = 0.72;     // 第二邻卡缩径
+const DECK_SWITCH_PX = 56;       // 横拖过阈即换中央卡（松手吸附）
+const DECK_AXIS_PX = 8;          // 轴锁死区（内 = 点按）
+const DECK_SWIPE_Y_PX = 48;      // 纵拖过阈：上滑收面回阅读 / 下滑关当前标签
 
 // ── 手势仲裁（内容操作优先，作者令 2026-11-01「拖动图谱、调整图片大小这类
 //    内容操作，会和左右滑动切换卡片的手势冲突……内容区起手的横滑归内容操作，
@@ -928,6 +958,14 @@ function layoutRing() {
     el.style.setProperty('--rbl', `${p.blur.toFixed(2)}px`);
     el.classList.toggle('on', k === 0);
     el.classList.toggle('is-far', Math.abs(k) > RING_VISIBLE);
+    /* 胶囊边缘渐隐批（作者令 2026-11-02 21:47 §一）：**朝中心一侧清晰、朝外
+       一侧化开**——方向由环形偏移 k 的符号决定（k<0 = 在中心左侧 ⇒ 左为外）。
+       中签两向都清晰（不挂任何 side 类 ⇒ 无 mask）。淡化宽度随 |k| 连续增大
+       （见 CSS --rfade 档），与 --rbl 的连续模糊同族，读作「越靠边越模糊」。
+       只用视觉层（mask），不动 DOM 文本 ⇒ 读屏/title 拿到的仍是全名。 */
+    el.classList.toggle('side-l', k < 0);
+    el.classList.toggle('side-r', k > 0);
+    el.style.setProperty('--rfade', `${Math.min(1, Math.abs(k)) * 55}%`);
     el.setAttribute('aria-selected', k === 0 ? 'true' : 'false');
     el.tabIndex = Math.abs(k) <= 1 ? 0 : -1;
   }
@@ -1134,8 +1172,7 @@ function armLabelCollapse(chip) {
 // ══ 底部小点指示器（作者令 2026-11-02 07:22 §三）════════════════════
 // 数量规则：n = 1 不显示；n ≥ 2 显示且最多 3 点（DOTS_MAX）。n > 3 时点**不滑动**
 // ——点数恒 3，序号归一映射到 0/1/2 三档，当前位置由「高亮点」表达（申报口径）。
-// 交互：长按 DOT_LONGPRESS_MS 放大 → 按住横拖按 DOT_DRAG_STEP_PX 步距连续换签 →
-// 松手吸附到最近签（拖动中已逐签落地，吸附 = 停在该签）；短按点 = 跳该点对应签。
+// 交互：见下方 bindDots 头注（长按门槛已退役，一上手即响应）。
 
 /** 标签序号 → 点位（n ≤ 3 一一对应；n > 3 三段归一）。@returns {number} */
 function dotBucket(idx, n) {
@@ -1179,99 +1216,121 @@ function hapticTap(ms = 8) {
   try { navigator.vibrate?.(ms); } catch { /* 无 API / 被策略拒 */ }
 }
 
-/** 小点手势：长按放大 → 横拖连续换签 → 松手吸附；短按点 = 跳到该点签。 */
+/** 小点手势区（作者令 2026-11-02 21:47 §二「三点区手势化……不用长按才响应」）：
+ *  一上手即响应 —— 左右滑换签（快弹/位移双判据）、上滑进堆叠、下滑关标签
+ *  （作者 21:54 裁定：关标签零确认）、轻触点跳签。阈值常量见上方 DOT_* 注释。 */
 function bindDots(dotsEl) {
-  /** @type {{id: number, x0: number, idx0: number, steps: number, armed: boolean,
-   *          dragging: boolean, timer: number, bucket: number}|null} */
+  /** @type {{id: number, x0: number, y0: number, t0: number, lx: number, lt: number,
+   *          vx: number, axis: string|null, bucket: number}|null} */
   let g = null;
-  const endGrip = () => {
-    if (!g) return;
-    clearTimeout(g.timer);
-    dotsEl.classList.remove('is-grip');
-  };
+  const endGrip = () => dotsEl.classList.remove('is-grip');
   dotsEl.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const docs = docTabs();
-    if (docs.length < 2) return;
+    if (!docs.length) return;      // 无文档卡 = 手势区无对象（空态另有空态面）
     e.stopPropagation();          // 不惊动页面壳的边缘返回/切卡手势
-    clearTimeout(g?.timer);
     // 点按落点必须**下手时**取：setPointerCapture 会把后续 pointer 事件整体
     // 重定向到采集元素（pointerup.target 恒为 dotsEl，closest('.mf-dot') 恒
     // null ⇒ 轻触跳签整条腿失效 —— 探针实证）。
+    // 其次，胶囊的 44px 热区是 ::before 伪元素（纵向把 26px 本体外扩），伪元素
+    // 参与父元素的命中 ⇒ 落在点上方的指针 target 是 .mf-dots 本身（closest 拿
+    // 不到点）。故 target 拿不到点时按**横坐标几何**兜底：取水平覆盖 x 的点。
     const hitEl = /** @type {Element|null} */ (e.target instanceof Element ? e.target.closest('.mf-dot') : null);
-    const bucket0 = hitEl ? [...dotsEl.querySelectorAll('.mf-dot')].indexOf(hitEl) : -1;
+    const dots = [...dotsEl.querySelectorAll('.mf-dot')];
+    const bucket0 = hitEl ? dots.indexOf(hitEl) : dots.findIndex((d) => {
+      const r = d.getBoundingClientRect();
+      return e.clientX >= r.left - 3 && e.clientX <= r.right + 3;
+    });
     g = {
-      id: e.pointerId, x0: e.clientX, idx0: Math.max(0, docs.findIndex((d) => d.id === activeDocId())),
-      steps: 0, armed: false, dragging: false, timer: 0, bucket: bucket0,
+      id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: performance.now(),
+      lx: e.clientX, lt: performance.now(), vx: 0,
+      axis: null, bucket: bucket0,
     };
-    g.timer = window.setTimeout(() => {
-      if (!g) return;
-      g.armed = true;
-      dotsEl.classList.add('is-grip');   // 长按到位 = 放大态（CSS 承接）
-      hapticTap(10);
-      logEvent('dots-longpress', {});
-    }, DOT_LONGPRESS_MS);
     try { dotsEl.setPointerCapture(e.pointerId); } catch { /* 合成事件无 capture */ }
   });
   dotsEl.addEventListener('pointermove', (e) => {
     if (!g || e.pointerId !== g.id) return;
     const dx = e.clientX - g.x0;
-    if (!g.armed) {
-      // 未到长按阈值就大位移 = 普通横划，交回页面（收手势，不劫持）。
-      if (Math.abs(dx) > DOT_TAP_SLOP_PX) { endGrip(); g = null; }
-      return;
+    const dy = e.clientY - g.y0;
+    // 末段速度 EMA（快弹判据用；普通位移腿不依赖它）。
+    const dt = Math.max(1, performance.now() - g.lt);
+    g.vx = 0.6 * g.vx + 0.4 * ((e.clientX - g.lx) / dt);
+    g.lx = e.clientX;
+    g.lt = performance.now();
+    if (!g.axis && (Math.abs(dx) > DOT_AXIS_PX || Math.abs(dy) > DOT_AXIS_PX)) {
+      g.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+      // 横划即放大态（不等长按 —— 「抓住了」的读感保留，零等待）。
+      if (g.axis === 'x') dotsEl.classList.add('is-grip');
     }
-    g.dragging = true;
-    const docs = docTabs();
-    const steps = Math.round(dx / DOT_DRAG_STEP_PX);
-    if (steps !== g.steps) {
-      g.steps = steps;
-      const next = Math.min(docs.length - 1, Math.max(0, g.idx0 + steps));
-      if (next !== Math.max(0, docs.findIndex((d) => d.id === activeDocId()))) {
-        switchToIndex(next);
+    if (g.axis !== 'x') return;
+    // 横划**不在拖动中逐签换**（一次滑 = 一张，松手提交）：早期实现按
+    // dx/26px 步距在「下手时基准」上连跳，52px 的快扫会一次翻两张 —— 与
+    // 「左右滑 = 上一张 / 下一张」的语义不符（探针实证：52px 滑出落在两张
+    // 之后）。拖动中只维持放大态（is-grip）作「抓住了」的临界反馈。
+  });
+  const finish = (e, cancelled) => {
+    if (!g || e.pointerId !== g.id) return;
+    const { axis, bucket, vx } = g;
+    const dx = e.clientX - g.x0;
+    const dy = e.clientY - g.y0;
+    g = null;
+    endGrip();
+    if (cancelled) return;
+    // 轻触（未过轴锁）：落点小点 = 跳到该点对应签。
+    if (!axis) {
+      if (bucket >= 0) {
+        switchToIndex(dotIndex(bucket, docTabs().length));
         hapticTap(6);
       }
-    }
-  });
-  const finish = (e) => {
-    if (!g || e.pointerId !== g.id) return;
-    const armed = g.armed;
-    const dragging = g.dragging;
-    const bucket0 = g.bucket;
-    endGrip();
-    const wasGrip = armed;
-    g = null;
-    if (wasGrip) {
-      // 松手吸附 = 停在最近签（拖动中已逐签落地；此处只补一次触感与事件）。
-      logEvent('dots-snap', { dragging });
       return;
     }
-    // 短按：落点小点 = 跳到该点对应签（未拖动的轻触；落点取自 pointerdown）。
-    const b = bucket0;
-    if (b >= 0) {
-      const docs = docTabs();
-      switchToIndex(dotIndex(b, docs.length));
-      hapticTap(6);
+    if (axis === 'x') {
+      // 横向提交 = 位移阈 或 快弹（短位移 + 末段速度）。
+      const hit = Math.abs(dx) >= DOT_SWIPE_X_PX ||
+        (Math.abs(dx) >= DOT_FLICK_X_PX && Math.abs(vx) >= DOT_FLICK_V_PX_MS);
+      if (hit && docTabs().length > 1) {
+        logEvent('dots-swipe-x', { dx: Math.round(dx), dir: dx < 0 ? 1 : -1 });
+        switchDocCard(dx < 0 ? 1 : -1);
+        hapticTap(6);
+      }
+      return;
+    }
+    // 纵向：上滑进堆叠 / 下滑关当前标签（关标签 = closeTab 一发，零确认 ——
+    // 作者 21:54 裁定「只是关闭标签页而已」；语义 = 关页签不是删文档）。
+    if (dy <= -DOT_SWIPE_Y_PX) {
+      if (!stackOpen) {
+        logEvent('dots-swipe-up', { dy: Math.round(dy) });
+        toggleDeck(true);
+        hapticTap(8);
+      }
+    } else if (dy >= DOT_SWIPE_Y_PX) {
+      logEvent('dots-swipe-down', { dy: Math.round(dy) });
+      closeCard();
+      hapticTap(12);
     }
   };
-  dotsEl.addEventListener('pointerup', finish);
-  dotsEl.addEventListener('pointercancel', (e) => { if (g && e.pointerId === g.id) { endGrip(); g = null; } });
-  // 触屏长按的系统 contextmenu 一律吞掉（放大态自己的语义，不弹原生菜单）。
+  dotsEl.addEventListener('pointerup', (e) => finish(e, false));
+  dotsEl.addEventListener('pointercancel', (e) => finish(e, true));
+  // 触屏长按的系统 contextmenu 一律吞掉（手势区自己的语义，不弹原生菜单）。
   dotsEl.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
-// ══ 堆叠卡翻页视图（作者令 2026-11-02 07:22 §四）════════════════════════
-// 「右上角那个堆叠按钮，让手机端 canvas 标签页也像电脑端一样变成一张张卡片
-// 上下翻动（堆叠卡视图，上下滑动翻页切换标签，含卡标题/预览/关闭），退出回
-// 标签视图」——手机端等价物：
-//   · 卡面语言单源 = canvas.js deckFaceOf()（桌面 #deck-layer 环卡同一份
-//     类型族图标 + 缩略 mock，手机零复制）；
-//   · 位姿 = 环形距离 |d| 逐级下沉（DECK_PEEK_PX）+ 收缩（DECK_SCALE_STEP）
-//     + 减淡，前景卡 |d|=0 满幅，|d| > DECK_VISIBLE 隐藏（读作绕到圈外）；
-//   · 手势 = 纵拖翻页：轴锁 DECK_AXIS_PX，过 DECK_SWITCH_PX 松手翻一签并吸附
-//     到最近卡（拖动中卡叠整体跟手，松手必落到某一签 —— 无悬停态）；
-//   · 出口 = 头行 ✕ / Esc 收面回标签视图（下滑不兼收面：与「下滑翻上一张」
-//     语义互斥，收面只留显式出口）。
+// ══ 堆叠视角（iOS app switcher 形态；作者令 2026-11-02 21:47 §三）════════
+// 以作者附图（iPhone app switcher 实拍）为设计基准：
+//   · **中央卡最大最清晰**，左右相邻卡**被裁切只露一部分**（横列，露约 1/3 卡身）；
+//   · **越往边越暗**（邻卡 brightness 压暗 + 减淡 + 模糊，连续曲线）；
+//   · **背景重度模糊**（浮层 backdrop blur 重档，阅读面在背后化开）；
+//   · **每张卡有真实内容快照**（不是空白框也不是标题占位）——快照管线**单源复用
+//     桌面 canvas.js 的 deckSnapshotNode 内核**（md/代码/html/图片/pdf 各自的
+//     真渲染面克隆），本文件只做缓存与挂载；内容指纹（canvasSnapshotStamp）
+//     命中即不重截，「内容变了再重截」由指纹失配兜底 —— 作者令「同一张卡不
+//     重复截图，内容变了再重截」。
+//   · 卡上方有可辨识标识（类型图标 + 标题 + ✕，参考图的「图标 + 名字」档）。
+// 交互（与阅读面语义连续）：
+//   · 左右拖 = 换中央卡（跟手 + 松手吸附/回弹）；
+//   · 点中央卡 = 收面回阅读；点邻卡 = 换入中央；点 ✕ = 关该标签；
+//   · 纵拖下滑 = 关当前标签（零确认，作者 21:54 裁定）；上滑 = 收面回阅读；
+//   · 显式出口 = 头行 ✕ / Esc（可点等价入口，Apple HIG 硬要求）。
 const DECK_VISIBLE = 2;
 
 /** 堆叠卡视图开关态。 */
@@ -1279,8 +1338,89 @@ let stackOpen = false;
 /** @type {{view: HTMLElement, stage: HTMLElement, count: HTMLElement,
  *          cards: Map<string, HTMLElement>}|null} */
 let deckUI = null;
-/** 拖动中的临时位移（px）：正 = 手指向下 ⇒ 卡叠整体下移（翻上一张）。 */
+/** 拖动中的临时位移（px）：正值方向由轴决定 —— 横拖 = 卡列平移（换中央卡），
+ *  纵拖 = 中央卡下坠（关闭预览）/ 整列上移（收面预览）。 */
+let deckDragDx = 0;
 let deckDragDy = 0;
+/** 卡内 ✕ / 点卡换入的 pointerup 抑制窗（跟手拖过后松手不触发 click）。 */
+let deckDragEndedAt = 0;
+
+// ── 快照缓存（作者令「同一张卡不重复截图，内容变了再重截」）────────────
+// tabId → { node, srcW, kind, stamp }。stamp = canvas.js canvasSnapshotStamp()
+// 的内容指纹：命中即挂缓存节点（零重截）；失配（内容/类型变了）才走重截。
+// 缓存不随堆叠面关闭清空（卡在、快照在），由指纹失配驱动刷新 —— 面每次开合
+// 都重截的话，连开连关就是纯浪费（作者令的另一半「同一张卡不重复截图」）。
+/** @type {Map<string, {node: Element, srcW: number, kind: string, stamp: string}>} */
+const deckSnapCache = new Map();
+/** 挂载中标记（防同卡并发重截；rAF 批处理用）。 */
+const deckSnapPending = new Set();
+/** 快照构建读数探针（性能验收 I9 用；window 只读）。 */
+let deckSnapLastMs = 0;
+/** 累计真建次数（缓存命中不计数）—— 「内容变了才重截」的机械判据。 */
+let deckSnapBuilds = 0;
+/** 单次构建的最长耗时（掉帧面读数）。 */
+let deckSnapMaxMs = 0;
+
+/** 建一张卡的快照并挂进 thumb 槽（mock 先在，真快照好了就位替换 —— 不闪白）。
+ *  失败（不可克隆腿）= 留 mock，不清空：mock 也是桌面 deckThumbMock 单源。 */
+function deckMountSnapshot(id, card) {
+  if (deckSnapPending.has(id)) return;
+  const thumb = card.querySelector('.mf-deck-thumb');
+  if (!thumb) return;
+  const stamp = canvasSnapshotStamp(id);
+  const cached = deckSnapCache.get(id);
+  if (cached && cached.stamp === stamp && cached.node.isConnected) return;
+  if (!stamp) { deckSnapCache.delete(id); return; }   // 不可克隆面 → mock 兜底
+  deckSnapPending.add(id);
+  // rAF 卸载到下一帧：开面当帧只做布局，快照构建（cloneNode 重活）不挤首帧。
+  requestAnimationFrame(() => {
+    deckSnapPending.delete(id);
+    if (!stackOpen || !deckUI || !docTabs().some((d) => d.id === id)) return;
+    const t0 = performance.now();
+    let snap = null;
+    try {
+      snap = canvasSnapshotFor(id, deckCardW());
+    } catch { snap = null; }
+    deckSnapLastMs = performance.now() - t0;
+    deckSnapBuilds++;
+    if (deckSnapLastMs > deckSnapMaxMs) deckSnapMaxMs = deckSnapLastMs;
+    if (!snap || !snap.node) return;                 // 不可克隆 → mock 留守
+    deckSnapCache.set(id, { node: snap.node, srcW: snap.srcW, kind: snap.kind, stamp });
+    const slot = deckUI.cards.get(id)?.querySelector('.mf-deck-thumb');
+    if (!slot) return;
+    mountDeckSnapNode(slot, snap.node, snap.srcW, snap.kind);
+  });
+}
+
+/** 快照节点挂载（桌面 .card-snap 同语言：原宽渲染 + scale 缩进槽，origin 左上，
+ *  只读）。img 腿 = object-fit contain 直排（同桌面 card-snap-img 档）。 */
+function mountDeckSnapNode(slot, node, srcW, kind) {
+  const wrap = document.createElement('div');
+  wrap.className = 'mf-deck-snap';
+  wrap.dataset.kind = kind;
+  const inner = document.createElement('div');
+  inner.className = 'mf-deck-snap-inner';
+  const slotW = Math.max(1, slot.clientWidth || (deckUI ? deckCardW() : 320));
+  if (kind === 'img') {
+    /** @type {HTMLElement} */ (node).classList.add('mf-deck-snap-img');
+    inner.appendChild(node);
+  } else {
+    const k = srcW > 0 ? slotW / srcW : 1;
+    inner.style.width = `${srcW}px`;
+    inner.style.transform = `scale(${k.toFixed(4)})`;
+    inner.appendChild(node);
+  }
+  wrap.appendChild(inner);
+  slot.replaceChildren(wrap);
+  slot.classList.add('has-snap');
+}
+
+/** 中央卡宽（快照 srcW 与拖拽几何共用一个口径）。@returns {number} */
+function deckCardW() {
+  const stage = deckUI?.stage;
+  const w = stage?.clientWidth || (canvasUI?.host?.clientWidth ?? window.innerWidth);
+  return Math.max(240, Math.round(w * DECK_CARD_W_RATIO));
+}
 
 /** 卡片翻页视图构建（一次）：头行「N 张文档」+ ✕，卡叠舞台（.mf-deck）。
  *  浮层宿主仍用 .mf-stack-view 类名（开合动画/工具条让位选择器零改）。 */
@@ -1313,42 +1453,76 @@ function buildDeckView(wrap) {
   return view;
 }
 
-/** 卡叠纵拖翻页（轴锁 + 越阈翻签 + 松手吸附）。横拖不接管（内容区切卡手势
- *  在卡面之下，浮层在场时整体被盖住，无冲突面）。 */
+/** 堆叠面拖拽（iOS app switcher 手势；轴锁 + 分轴语义）：
+ *  · 横轴 = 卡列跟手平移，松手过 DECK_SWITCH_PX 换中央卡，不过阈回弹；
+ *  · 纵轴下 = 中央卡跟手坠落 + 渐淡，松手过 DECK_SWIPE_Y_PX 关该标签（零确认）；
+ *  · 纵轴上 = 整列上移预览，松手过阈收面回阅读（与阅读面「上滑进堆叠」互逆）。 */
 function bindDeckSwipe(stage) {
-  /** @type {{id: number, y0: number, dy: number, axis: string|null}|null} */
+  /** @type {{id: number, x0: number, y0: number, axis: string|null}|null} */
   let g = null;
   stage.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (performance.now() < deckDragEndedAt) return;  // 拖后松手的 click 抑制窗内不再武装
     const t = /** @type {Element} */ (e.target);
     if (t.closest('button')) return;         // 卡内 ✕ 不参与翻页
-    g = { id: e.pointerId, y0: e.clientY, dy: 0, axis: null };
+    g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, axis: null };
     // capture 延到轴锁后才抢：一上手就 setPointerCapture 会把 pointerup 整体
     // 重定向到舞台 ⇒ 卡面（含卡内 ✕ / 点卡换入）的 click 永不触发（探针实证）。
   });
   stage.addEventListener('pointermove', (e) => {
     if (!g || e.pointerId !== g.id) return;
-    g.dy = e.clientY - g.y0;
-    if (!g.axis && Math.abs(g.dy) > DECK_AXIS_PX) {
-      g.axis = 'y';
-      try { stage.setPointerCapture(e.pointerId); } catch { /* 合成事件无 capture */ }
+    const dx = e.clientX - g.x0;
+    const dy = e.clientY - g.y0;
+    if (!g.axis && (Math.abs(dx) > DECK_AXIS_PX || Math.abs(dy) > DECK_AXIS_PX)) {
+      g.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+      if (g.axis) {
+        try { stage.setPointerCapture(e.pointerId); } catch { /* 合成事件无 capture */ }
+        stage.dataset.dragging = '1';             // CSS 关过渡（直写变量即跟手）
+      }
     }
-    if (g.axis !== 'y') return;
-    deckDragDy = g.dy;                        // 跟手：卡叠整体随指位移
-    stage.dataset.dragging = '1';             // CSS 关过渡（直写变量即跟手）
+    if (!g.axis) return;
+    if (g.axis === 'x') {
+      deckDragDx = dx;
+      deckDragDy = 0;
+    } else {
+      deckDragDy = dy;
+      deckDragDx = 0;
+    }
     layoutDeck();
   });
   const finish = (e, cancelled) => {
     if (!g || e.pointerId !== g.id) return;
-    const { dy, axis } = g;
+    const { axis } = g;
+    const dx = e.clientX - g.x0;
+    const dy = e.clientY - g.y0;
     g = null;
+    deckDragDx = 0;
     deckDragDy = 0;
     delete stage.dataset.dragging;            // 回过渡档：回弹/落位走弹簧
-    if (!cancelled && axis === 'y' && Math.abs(dy) > DECK_SWITCH_PX && docTabs().length > 1) {
-      // 上滑（dy<0）= 翻到下一张；下滑 = 上一张。吸附 = 落到该签（无悬停位）。
-      logEvent('deck-page', { dir: dy < 0 ? 1 : -1 });
-      switchDocCard(dy < 0 ? 1 : -1);
-      hapticTap(6);
+    // 只有**真的拖过**（轴锁建立过）才吞后续 click：一次纯点按没有轴 ⇒ click 必须
+    // 照常送达卡面（否则「点邻卡换入 / 点中央卡收面」两条可点等价入口全废 ——
+    // 点按的 pointerup 也会把 click 抑制窗打开，click 紧跟着就被吞掉）。
+    if (axis) deckDragEndedAt = performance.now() + 350;
+    if (cancelled) { layoutDeck(); return; }
+    if (axis === 'x') {
+      // 横向提交：左滑（dx<0）= 下一张；右滑 = 上一张。吸附 = 落到该签。
+      if (Math.abs(dx) > DECK_SWITCH_PX && docTabs().length > 1) {
+        logEvent('deck-page', { dir: dx < 0 ? 1 : -1 });
+        switchDocCard(dx < 0 ? 1 : -1);
+        hapticTap(6);
+      }
+    } else if (axis === 'y') {
+      if (dy >= DECK_SWIPE_Y_PX) {
+        // 下滑 = 关当前标签（零确认 —— 作者 21:54 裁定「只是关闭标签页而已」）。
+        logEvent('deck-close', { via: 'swipe-down' });
+        closeCard();
+        hapticTap(12);
+      } else if (dy <= -DECK_SWIPE_Y_PX) {
+        // 上滑 = 收面回阅读（与阅读面「上滑进堆叠」互逆成环）。
+        logEvent('deck-exit', { via: 'swipe-up' });
+        toggleDeck(false);
+        return;                                // 面已收，无需回弹排版
+      }
     }
     layoutDeck();                             // 回弹/落位（过阈时活动签已变）
   };
@@ -1356,7 +1530,8 @@ function bindDeckSwipe(stage) {
   stage.addEventListener('pointercancel', (e) => finish(e, true));
 }
 
-/** 单张卡面（图标 + 标题 + ✕ + 缩略预览）。 */
+/** 单张卡面（图标 + 标题 + ✕ + **真实内容快照**）。
+ *  快照先在 mock（桌面 deckThumbMock 单源，立即有面），rAF 里换真快照。 */
 function buildDeckCard(doc) {
   const card = document.createElement('div');
   card.className = 'mf-deck-card';
@@ -1390,10 +1565,11 @@ function buildDeckCard(doc) {
   thumb.className = 'mf-deck-thumb';
   thumb.innerHTML = face.thumb;
   card.append(top, thumb);
-  /* 点击语义与桌面 #deck-layer 环卡同构（作者令 §四「像电脑端一样」）：
-     · 深处卡（露出的那一段）= 翻到该卡（不换视图，卡叠继续开着看它升到前景）；
-     · 前景卡（= 活动签）= 收面回标签视图（等价桌面「点前景卡换入面板」）。 */
+  /* 点击语义（iOS app switcher 同构）：
+     · 邻卡（露出的那一段）= 换入中央（不换视图）；
+     · 中央卡（= 活动签）= 收面回阅读。 */
   card.addEventListener('click', () => {
+    if (performance.now() < deckDragEndedAt) return;   // 跟手拖过 = 不是点击
     if (doc.id !== activeDocId()) {
       logEvent('card-switch', { via: 'deck', tab: doc.id });
       setActiveTab(doc.id);
@@ -1405,24 +1581,49 @@ function buildDeckCard(doc) {
   return card;
 }
 
-/** 卡叠位姿对账（唯一几何源；CSS 只消费 --dty/--dsc/--dop 三变量）。 */
+/** 卡列位姿对账（唯一几何源；CSS 只消费 --dtx/--dty/--dsc/--dop/--ddark/--dblur）。
+ *  iOS app switcher 形态：中央卡（|k|=0）满幅清晰；邻卡（|k|=1）横移露出约
+ *  1/3、缩径、压暗、轻模糊；第二邻（|k|=2）更远更暗；再远（|k|>2）隐藏
+ *  （class .is-far，op 已压到近 0 —— 留在列里只为换卡连续性）。
+ *  |k| 是环距（整数），故位姿是**三档表**而非插值式；越靠边越暗越糊由档位
+ *  单调性保证，拖动中的跟手连续量只来自 deckDragDx/deckDragDy（不是几何插值）：
+ *    |k|   scale   opacity  brightness  blur
+ *    0     1.000   1.000    1.000       0px     ← 中央
+ *    1     0.840   0.920    0.620       1.4px   ← 邻卡
+ *    2     0.720   0.520    0.340       3.2px   ← 第二邻
+ */
 function layoutDeck() {
   if (!deckUI) return;
   const docs = docTabs();
   if (!docs.length) return;
   const ai = Math.max(0, docs.findIndex((d) => d.id === activeDocId()));
+  const cardW = deckCardW();
+  const step = cardW * DECK_SIDE_STEP_RATIO;
   for (const [id, card] of deckUI.cards) {
     const i = docs.findIndex((d) => d.id === id);
     if (i < 0) continue;
     const k = ringOffset(i - ai, docs.length);
     const ak = Math.abs(k);
-    // 深度 = 环形距离（|k|）+ 同距破平（环两侧同距时右侧让 0.5 档）——
-    // 卡叠是单向向下的一张张，同距不得同位（否则两卡完全重叠、层次读不出）。
-    const depth = ak + (k > 0 ? 0.5 : 0);
-    card.style.setProperty('--dty', `${(depth * DECK_PEEK_PX + deckDragDy).toFixed(1)}px`);
-    card.style.setProperty('--dsc', (1 - Math.min(depth, 4) * DECK_SCALE_STEP).toFixed(3));
-    card.style.setProperty('--dop', ak > DECK_VISIBLE ? '0' : ak === 0 ? '1' : ak === 1 ? '0.82' : '0.5');
-    card.style.zIndex = String(60 - Math.round(depth * 2));
+    const scale = ak === 0 ? 1 : (ak === 1 ? DECK_SCALE_SIDE : DECK_SCALE_FAR);
+    const op = ak === 0 ? 1 : ak === 1 ? 0.92 : 0.52;
+    const dark = ak === 0 ? 1 : ak === 1 ? 0.62 : 0.34;
+    const blur = ak === 0 ? 0 : ak === 1 ? 1.4 : 3.2;
+    // 中央卡：纵拖跟手（下坠 = 关闭预览 / 上移 = 收面预览）；
+    // 两侧卡：横拖时整列跟手（换卡跟手感），纵拖只吃 35%（视差，不跟着飞出去）。
+    const dtx = k * step + deckDragDx;
+    const dty = ak === 0 ? deckDragDy * 0.9 : deckDragDy * 0.35;
+    card.style.setProperty('--dtx', `${dtx.toFixed(1)}px`);
+    card.style.setProperty('--dty', `${dty.toFixed(1)}px`);
+    card.style.setProperty('--dsc', scale.toFixed(3));
+    card.style.setProperty('--dop', String(op));
+    card.style.setProperty('--ddark', dark.toFixed(2));
+    card.style.setProperty('--dblur', `${blur.toFixed(2)}px`);
+    // 中央卡拖动中随下坠/上移淡出（关闭/收面的跟手反馈）。
+    if (ak === 0 && deckDragDy !== 0) {
+      const fade = Math.max(0.35, 1 - Math.abs(deckDragDy) / 420);
+      card.style.setProperty('--dop', fade.toFixed(3));
+    }
+    card.style.zIndex = String(60 - ak);
     card.classList.toggle('on', ak === 0);
     card.classList.toggle('is-far', ak > DECK_VISIBLE);
     card.tabIndex = ak === 0 ? 0 : -1;
@@ -1430,7 +1631,7 @@ function layoutDeck() {
   }
 }
 
-/** 卡叠重建（签名闸 = 签集）；点卡换入、✕ 关卡、纵拖翻页三腿都在此对账。 */
+/** 卡列重建（签名闸 = 签集）；点卡换入、✕ 关卡、拖拽换卡/关卡三腿都在此对账。 */
 function syncDeck() {
   if (!deckUI || !stackOpen) return;
   const docs = docTabs();
@@ -1447,7 +1648,20 @@ function syncDeck() {
       deckUI.cards.set(d.id, card);
     }
   }
+  // 卡集变了 ⇒ 缓存里已无主稿的条目清掉（防 Map 无界增长）
+  for (const id of [...deckSnapCache.keys()]) {
+    if (!docs.some((d) => d.id === id)) deckSnapCache.delete(id);
+  }
   layoutDeck();
+  // 快照：先给中央卡与两侧卡（可视窗）挂，深处的分帧挂（作者令「不阻塞主线程」）。
+  const ordered = docs
+    .map((d) => ({ id: d.id, ak: Math.abs(ringOffset(docs.findIndex((x) => x.id === d.id) - Math.max(0, docs.findIndex((x) => x.id === activeDocId())), docs.length)) }))
+    .filter((o) => o.ak <= DECK_VISIBLE)
+    .sort((a, b) => a.ak - b.ak);
+  for (const o of ordered) {
+    const card = deckUI.cards.get(o.id);
+    if (card) deckMountSnapshot(o.id, card);
+  }
 }
 
 /** 堆叠卡视图开合（open 省略 = 翻转）。开 = 摘 hidden → 建卡 → 回流 → .open
@@ -1458,6 +1672,7 @@ function toggleDeck(open) {
   const next = open === undefined ? !stackOpen : !!open;
   if (next === stackOpen) return;
   stackOpen = next;
+  deckDragDx = 0;
   deckDragDy = 0;
   logEvent('canvas-stack-' + (next ? 'open' : 'close'));
   const view = deckUI.view;
@@ -2427,6 +2642,18 @@ function watchCanvasEvents() {
 
 export function activateNav() {
   (/** @type {any} */ (window)).__nfMobileLayerEvents = __nfEvents;
+  // 堆叠视角只读探针（性能验收 I9：首建耗时 / 缓存命中数 / 缓存条目）。
+  (/** @type {any} */ (window)).__nfDeckProbe = () => ({
+    lastMs: +deckSnapLastMs.toFixed(2),
+    maxMs: +deckSnapMaxMs.toFixed(2),
+    builds: deckSnapBuilds,
+    cacheSize: deckSnapCache.size,
+    pending: deckSnapPending.size,
+    open: stackOpen,
+    cards: deckUI ? deckUI.cards.size : 0,
+    snapped: deckUI ? [...deckUI.cards.values()].filter((c) => c.querySelector('.mf-deck-thumb.has-snap')).length : 0,
+  });
+  (/** @type {any} */ (window)).__nfDeckProbeReset = () => { deckSnapBuilds = 0; deckSnapMaxMs = 0; deckSnapLastMs = 0; };
   ensureContainer();
   buildDock();
   watchCanvasContent();
@@ -2477,5 +2704,6 @@ export function activateNav() {
     layerTouched = false;
     overlayReconcileBound.clear();
     delete (/** @type {any} */ (window)).__nfMobileNav;
+    delete (/** @type {any} */ (window)).__nfDeckProbe;
   };
 }

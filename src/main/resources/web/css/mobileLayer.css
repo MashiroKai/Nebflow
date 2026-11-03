@@ -1590,14 +1590,18 @@ body.mobile-layer .mf-strip {
   overflow: visible;
   touch-action: pan-y;
 }
-/* 环带双侧渐隐（2 签起挂 .fade —— 单签居中无需遮）：52→64px 渐入到全实色，
-   与左侧悬浮钮右缘 64 严丝合缝 —— ① 浮钮面上零墨（旧 bug 面的防线仍在）；
-   ② 全实色区 [64, 311] 恰好容纳「中签 123.7…251.3 + 左右邻签 65.3…119.7 /
-   255.3…309.7」，可见签**不被条带遮罩误伤**（对齐修正批：旧 60→76 的渐隐带
-   会啃掉邻签左缘 10px，与新的连续淡化曲线叠加后糊成一片）。 */
+/* 环带双侧渐隐（2 签起挂 .fade —— 单签居中无需遮）。
+   胶囊边缘渐隐批（作者令 2026-11-02 21:47 §一「靠近中间胶囊的部分要能清晰
+   显示包括文字，然后越靠边越模糊，可以是胶囊只显示一半的那种圆环感」）：
+   **主渐隐下沉到每一枚签自己身上**（下方 .mf-strip-chip 的 mask，朝中心一侧
+   清晰、朝外一侧化开），环带这一层只留**视口边缘的极窄羽化**（0→14px）——
+   它不再是「把两侧签整块啃掉」的硬闸（旧 52→64 那条会连朝中心的半枚签一起
+   抹掉，正是作者报障的「边界生硬」根因）。
+   浮钮面上零墨仍机械保证：可见签的最小左缘 = 390/2 − 95 − 54.4/2 = 72.8px，
+   远在 14px 羽化带之外（375 基线为 65.3px，同样在外）—— 不靠遮罩挡，靠几何。 */
 body.mobile-layer .mf-strip.fade {
-  -webkit-mask-image: linear-gradient(90deg, transparent 52px, #000 64px, #000 calc(100% - 64px), transparent calc(100% - 52px));
-  mask-image: linear-gradient(90deg, transparent 52px, #000 64px, #000 calc(100% - 64px), transparent calc(100% - 52px));
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
 }
 body.mobile-layer .mf-strip[hidden] { display: none; }
 /* chip = 电脑端胶囊（.canvas-header）同族小档：材质 = --glass-bg 底 +
@@ -1606,7 +1610,20 @@ body.mobile-layer .mf-strip[hidden] { display: none; }
    零新造）；圆角 999；字 = 中性 muted 档。位姿四值 = 环变量（见条注释）。
    尺寸：基准宽 68px（两侧签），中签另档 max-width 112px —— **只有宽度不同**，
    其余视觉属性全部同源（作者令「样式应该要是和两边的统一」；对齐修正批已把
-   选中态的 sapphire 描边/底色/加粗整条删除，见下方 `.on` 档注释）。 */
+   选中态的 sapphire 描边/底色/加粗整条删除，见下方 `.on` 档注释）。
+
+   ══ 渐隐热区修复批（::after 迁移；2026-11-03 续 delegate-nebflow-89580610）══
+   病根（两轮实证，elementFromPoint 复现）：`-webkit-mask-image` **不只裁绘制，
+   还裁 hit-test 裁剪盒**（WebKit/Blink 把 mask 区域当 clip：alpha≈0 处整块
+   pointer-events 透传）。方向 mask 挂在签本体上 ⇒ 邻签朝外半边「看不见也点不到」
+   （实证：`elementFromPoint(290,25)` 返回 `.mf-strip` 父容器；摘掉 mask 后同一
+   点命中签本体）。修法 = **视觉底整体下沉 `::after`、方向 mask 只挂 `::after`**：
+   · 宿主本体零视觉零 mask，恒保 44×44 热区（::before 外扩命中盒，见下）；
+   · 玻璃底（background 渐变 + --glass-bg）/描边/顶缘折射线/box-shadow/
+     backdrop-filter 全部迁 `::after`（`position:absolute; inset:0;
+     border-radius:inherit; pointer-events:none;` —— mask 只影响 ::after 的
+     绘制，命中裁剪随之只作用在视觉层，热区层零波及）；
+   · 展开腿（.is-expanded）只摘 ::after 的 mask（全名腿两向都清晰），宿主照旧。 */
 body.mobile-layer .mf-strip-chip {
   position: absolute;
   top: 40px;
@@ -1618,14 +1635,10 @@ body.mobile-layer .mf-strip-chip {
   height: 32px;
   padding: 0 var(--mpad-x);
   border-radius: 999px;
-  border: 1px solid var(--glass-border);
-  border-bottom-color: transparent;
-  background:
-    linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
-    var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  box-shadow: var(--cv-shadow);
+  /* 宿主零描边零底（渐隐热区修复批）：视觉材质全在 ::after。chip 是 <button>，
+     UA 默认 2px outset 黑描边必须显式归零 —— 迁移删掉旧 glass-border 行时若
+     不补这条，UA 按钮描边就浮出来（T7 宿主零描边钉抓到过）。 */
+  border: 0;
   color: var(--color-frame-text-muted, #98a2b3);
   font-size: var(--mfs-min);
   font-weight: 500;
@@ -1649,6 +1662,38 @@ body.mobile-layer .mf-strip-chip {
     filter 220ms ease,
     max-width 220ms ease;
   will-change: transform, opacity;
+}
+/* 玻璃视觉层（::after 迁移承载面）：宿主的材质四件套全部落在这里 —— 玻璃底
+   （顶缘折射线渐变 + --glass-bg）、描边（--glass-border，底缘透明化）、
+   box-shadow。`inset:0` 贴齐宿主盒（尺寸随 max-width 档 68/112 与展开钳制
+   自动跟随）；`border-radius:inherit` 同族圆角；`pointer-events:none` 让命中
+   穿透到宿主（热区 = ::before，见下）。
+   mask 的 alpha≈0 段从此只裁这一层的绘制 —— 邻签朝外半边「视觉化开」的同时，
+   宿主热区（::before）照常吃 pointer（I3 的 elementFromPoint 判据）。
+   **backdrop-filter 不落本层**（渐隐热区修复批，headless 软渲染 A/B 实证）：
+   同一元素上 mask-image × backdrop-filter 并存时，合成器把描边/毛玻璃面按
+   未裁剪输出（最小复现：wrapper opacity .55 + backdrop + mask，左端描边仍
+   全亮环——mask 被架空；去掉 backdrop 后同一 mask 干净化开）。故 blur 只留
+   给中签（.on::after，无 mask，渲染安全）；邻签材质 = 底色+描边+阴影+折射线，
+   视觉语族不变（55% 透明度档下 blur 本就不可辨）。 */
+body.mobile-layer .mf-strip-chip::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  border: 1px solid var(--glass-border);
+  border-bottom-color: transparent;
+  background:
+    linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
+    var(--glass-bg);
+  box-shadow: var(--cv-shadow);
+  pointer-events: none;
+}
+/* 中签玻璃层 = 完整毛玻璃档（毛玻璃 blur 只在无 mask 的层上安全 —— 见上）。 */
+body.mobile-layer .mf-strip-chip.on::after {
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
 }
 /* 环外（|k| > 露出半径）：位姿仍算（换签轨迹连续），命中与可见双关。 */
 body.mobile-layer .mf-strip-chip.is-far { pointer-events: none; }
@@ -1708,6 +1753,74 @@ body.mobile-layer .mf-strip-label {
    展开腿），收束只压**绘制宽**。圆角 / 底色 / 玻璃 / 内距 / 字重 / 字号本档零改动
    （机械断言 T13⑥ 逐项钉死）。 */
 body.mobile-layer .mf-strip-chip.on .mf-strip-label {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+/* ── 胶囊边缘渐隐（作者令 2026-11-02 21:47 §一）───────────────────────────
+   「两边的两个小的，靠近中间胶囊的部分要能清晰显示包括文字，然后越靠边越
+   模糊，可以是胶囊只显示一半的那种圆环感」。
+   实现 = **签本体的 mask-image**（不是视口遮罩）：
+   · 朝中心一侧（内端）零淡化 —— 文字最靠近中心胶囊的那部分完全清晰可读
+     （作者令 I2 的载体）；
+   · 朝外一侧连续化开，宽度 = --rfade（layoutRing 按 |k| 写：|k|=1 恰 55%，
+     即约半枚签化开 = 「只显示一半的那种圆环感」；|k|≥2 已被 .is-far 收走，
+     变量只是过渡中的轨迹值）；
+   · 方向 = 环形偏移的符号（k<0 = 签在中心左侧 ⇒ 左端为外）。
+   与 label 文本层无关（DOM 零动 ⇒ 读屏全名 / title / 展开腿三处保真不变）；
+   热区照旧（::before 命中盒在 mask 之外 —— mask 只影响绘制，命中盒几何不变，
+   「看不见 ≠ 点不到」由 I3 的 elementFromPoint 机械证明）。
+   取舍说明（对照作者给的两条候选路线）：视口整体渐隐遮罩方案一行 CSS 就能做，
+   但它是**无差别横切** —— 中心签、邻签、展开腿谁靠边谁被抹，且把「清晰区」
+   钉死在固定像素带上（窄屏上会啃到邻签的朝中心半边，正是上一版 52→64 mask
+   被作者判「边界生硬」的同型问题）。签本体 mask 的实现面稍宽（方向变量 +
+   JS 写宽度），换来的是**每枚签自己的朝中心半边恒定清晰**，与浮钮、屏宽、
+   签宽解耦 —— 按效果与复杂度综合取后者。
+   渐隐热区修复批：方向 mask **只挂 ::after**（视觉层）—— mask 的 hit-test
+   裁剪随之只作用在玻璃层，宿主（::before 热区）零波及；本体的 mask 档整条
+   退役（宿主零 mask 是热区修复的前提，防复活钉）。 */
+body.mobile-layer .mf-strip-chip.side-l::after {
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--rfade, 55%), #000 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 var(--rfade, 55%), #000 100%);
+}
+body.mobile-layer .mf-strip-chip.side-r::after {
+  -webkit-mask-image: linear-gradient(270deg, transparent 0, #000 var(--rfade, 55%), #000 100%);
+  mask-image: linear-gradient(270deg, transparent 0, #000 var(--rfade, 55%), #000 100%);
+}
+/* 展开腿（点活签看全名）不吃方向 mask：全名时签被加宽到近全幅，方向化开会
+   把展开的两端也吃掉（与 11:23 批「中签两端零虚化渐隐」同语义冲突）。展开腿
+   挂在 .on 签上（k=0 ⇒ 本就不带 side-l/side-r），此条是防复活钉。 */
+body.mobile-layer .mf-strip-chip.is-expanded::after {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+/* 宿主本体恒零 mask（渐隐热区修复批防复活钉：mask 若回到本体，hit-test
+   裁剪立即随行 —— 两端渐隐区点不到的缺陷原样复发）。 */
+body.mobile-layer .mf-strip-chip {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+/* 邻签文本层也**方向化**（作者令 §一「靠近中间胶囊的部分要能清晰显示**包括
+   文字**」）：基础档的 label mask 是两端各淡 9px（对称），会顺手把**朝中心
+   一侧**的文字端点也化掉。本档把邻签的 label mask 改成**只淡朝外一侧**，朝
+   中心一侧零淡化 —— 与签级 mask 同向、互补。
+   渐隐热区修复批（::after 迁移）补：**淡化宽度同步取 --rfade（55%）**，与
+   ::after 玻璃层同一条曲线 —— 迁移前 chip 的 mask 会连子元素（label）一起裁，
+   文字与玻璃同步化开；迁到 ::after 后 mask 只作用于玻璃层，若 label 仍按 9px
+   淡化，文字就会「玻璃已化开、字还实色」两层脱节（像素剖面实证：外/内半边
+   墨迹比 0.91，判据要求 ≤0.85）。取同一 --rfade 即恢复「半枚圆环」读感，
+   且文字淡化**不进 hit-test**（label 只是绘制层，热区在宿主/::before）。
+   中签（.on）不受影响：它在上面那条 `.on .mf-strip-label { mask: none }` 档里，
+   两端恒实色硬边（11:23 批语义原样保留）。 */
+body.mobile-layer .mf-strip-chip.side-l .mf-strip-label {
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--rfade, 55%), #000 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 var(--rfade, 55%), #000 100%);
+}
+body.mobile-layer .mf-strip-chip.side-r .mf-strip-label {
+  -webkit-mask-image: linear-gradient(270deg, transparent 0, #000 var(--rfade, 55%), #000 100%);
+  mask-image: linear-gradient(270deg, transparent 0, #000 var(--rfade, 55%), #000 100%);
+}
+/* 展开腿上的 label 恒无 mask（全名腿优先于上面的方向化档 —— 展开时两向都清晰）。 */
+body.mobile-layer .mf-strip-chip.is-expanded .mf-strip-label {
   -webkit-mask-image: none;
   mask-image: none;
 }
@@ -1814,11 +1927,44 @@ body.mobile-layer .mf-dots {
   transition: transform 180ms cubic-bezier(0.22, 0.61, 0.36, 1), background 180ms ease;
 }
 body.mobile-layer .mf-dots[hidden] { display: none; }
-/* 长按放大（.is-grip）：整胶囊放大 1.24×（读作「抓住了」），点同步放大。 */
+/* ── 底部三点**手势区**（作者令 2026-11-02 21:47 §二「三点区手势化」）─────
+   判据换代：长按门槛整条退役（旧 DOT_LONGPRESS_MS 260ms 放大档不再需要），
+   这一条就是一枚**手势交互区**：左右滑换页 / 上滑进堆叠 / 下滑关标签 / 轻触
+   跳点。视觉本体仍是一枚小胶囊（点数与高亮照旧表达「第几/共几」），但语义
+   从「指示器 + 长按放大」升格为「指示器 + 四向手势区」。
+   热区：胶囊 26px 高不达 Apple HIG 44×44 ⇒ ::before 纵向外扩到 44（横向本就
+   宽于 44），外扩层零视觉（只吃指针）—— 与 .mf-strip-chip 同一解法。
+   下方 bottom 定位沿用「canvas 底部控件浮层带批」的单源公式（点条中线 = 48
+   圆钮中线），本批零改几何。 */
+body.mobile-layer .mf-dots::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: max(100%, var(--mtap-lg, 48px));
+  transform: translateY(-50%);
+  border-radius: 999px;
+}
 body.mobile-layer .mf-dots.is-grip {
-  transform: scale(1.24);
+  transform: scale(1.14);
   background: rgba(128, 128, 128, 0.26);
   cursor: grabbing;
+}
+/* 手势区提示（一次性、极轻）：右侧一枚小箭头对，读作「这里能滑」。纯装饰
+   （aria-hidden），不占交互 —— 手势的可点等价入口是工具条的 X / 堆叠钮与
+   环标签上的签（见 navController 头注）。 */
+body.mobile-layer .mf-dots::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: -14px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.28;
+  transform: translateY(-50%);
 }
 body.mobile-layer .mf-dot {
   flex: none;
@@ -1870,31 +2016,46 @@ body.mobile-layer .mf-swipe-ring {
 }
 body.mobile-layer .mf-swipe-ring.left { left: -20px; }
 body.mobile-layer .mf-swipe-ring.right { right: -20px; }
-/* ── 堆叠卡翻页视图（作者令 2026-11-02 07:22 §四）────────────────────────
-   右上堆叠钮 → 手机端 canvas 标签页「变成一张张卡片上下翻动」（桌面
-   #deck-layer 环卡的手机等价面）：浮层宿主沿用 .mf-stack-view 类名（开合
-   动画 + 工具条让位选择器零改），内部 .mf-deck = 卡叠舞台，每张 .mf-deck-card
-   = 卡头（类型图标 + 标题 + ✕）+ 缩略预览（canvas.js deckFaceOf 单源 mock）。
-   位姿 = 环形距离 |d| 逐级下沉（--dty，步距 12px）+ 收缩（--dsc，步距 0.05）
-   + 减淡（--dop），前景卡满幅、|d|>2 隐藏；上下滑动翻页（JS layoutDeck 写变量，
-   CSS 只消费）。 */
+/* ── 堆叠视角（iOS app switcher 形态；作者令 2026-11-02 21:47 §三）─────────
+   以作者 iPhone 实拍（iOS app switcher）为基准：中央卡最大最清晰、左右邻卡
+   被裁切只露一部分、越靠边越暗越模糊、背景重度模糊、卡上方有可辨识标识。
+   位姿 = 环形距离 |k|（layoutDeck 单源写 --dtx/--dty/--dsc/--dop/--ddark/
+   --dblur 六变量），CSS 只消费。
+   旧「纵向卡叠」（一叠向下、错位 12px）整条退役：形态差在**方向**（纵 →
+   横）与**露法**（叠边 → 左右裁切邻卡）—— 这正是作者附图与旧形态的实质差。 */
 body.mobile-layer .mf-stack-view {
   position: absolute;
   inset: 0;
   z-index: 40;
   display: flex;
   flex-direction: column;
+  /* 背景重度模糊（参考图的桌面 blur 档）：玻璃底 + 18px→26px 上移一档，
+     saturate 加强避免糊成灰板；阅读面在背后化开但不消失（空间感）。 */
   background: var(--glass-bg, rgba(20, 24, 33, 0.55));
-  -webkit-backdrop-filter: blur(18px) saturate(1.5);
-  backdrop-filter: blur(18px) saturate(1.5);
-  /* 开合两段：浮面整体淡入（.open）+ 卡叠自落位逐张升起（:not(.open) 初始态；
-     收面 .closing 清零递延不拖尾 —— 顶栏批④同语言，换代只换卡面）。 */
+  -webkit-backdrop-filter: blur(26px) saturate(1.6);
+  backdrop-filter: blur(26px) saturate(1.6);
+  /* 开合两段：浮面整体淡入（.open）+ 卡列自落位升起（:not(.open) 初始态；
+     收面 .closing 清零递延不拖尾）。 */
   opacity: 0;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.22s ease;
+  overflow: hidden;
 }
 body.mobile-layer .mf-stack-view.open { opacity: 1; }
 body.mobile-layer .mf-stack-view[hidden] { display: none; }
+/* 背景重度模糊层：浮面之下的模糊底（参考图里整个桌面被糊开的那一层）。
+   用一层独立元素承载「重度模糊 + 压暗」，不吃浮面自身的 backdrop-filter
+   配平问题 —— 两者相加只会更糊，不会互相抵消。 */
+body.mobile-layer .mf-stack-view::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: rgba(12, 15, 22, 0.34);
+  pointer-events: none;
+}
 body.mobile-layer .mf-stack-head {
+  position: relative;
+  z-index: 2;
   flex: none;
   display: flex;
   align-items: center;
@@ -1909,51 +2070,55 @@ body.mobile-layer .mf-stack-count {
 }
 body.mobile-layer .mf-stack-x { width: 48px; height: 48px; }
 body.mobile-layer .mf-stack-x svg { width: 18px; height: 18px; }
-/* 卡叠舞台：全幅吃满余高；overflow hidden 让后卡自然沉到视野外（读作环）。 */
+/* 卡列舞台：全幅吃满余高；左右溢出裁切（邻卡被视口裁掉一部分 = 参考图里
+   「两边的卡只露一截」的读感），纵向不裁（中央卡下坠跟手时不被切）。 */
 body.mobile-layer .mf-deck {
   position: relative;
+  z-index: 1;
   flex: 1;
   min-height: 0;
-  margin: 4px 16px calc(16px + env(safe-area-inset-bottom, 0px));
-  touch-action: pan-y;
+  margin: 4px 0 calc(16px + env(safe-area-inset-bottom, 0px));
+  touch-action: none;   /* 手势区：横拖换卡 / 纵拖收面或关卡，全部自己接管 */
+  overflow: hidden;
+  perspective: 1200px;
 }
-/* 单卡：卡片语言 = 桌面 .deck-card 同族（--card-bg/--card-border/--card-shadow
-   令牌单源，深浅双主题自动成立），卡面实描一档（读作「物」）。 */
+/* 单卡：iOS app switcher 的卡面语言 —— 圆角 20、细描边、投影、玻璃底；
+   卡头（图标 + 标题 + ✕）+ 真内容快照占满余下。 */
 body.mobile-layer .mf-deck-card {
   position: absolute;
-  left: 0;
-  right: 0;
+  left: 50%;
   top: 50%;
   display: flex;
   flex-direction: column;
-  height: min(62vh, 460px);
+  width: min(78%, 420px);
+  height: min(74%, 520px);
   overflow: hidden;
   border: 1px solid var(--card-border, rgba(28, 32, 44, 0.13));
-  border-radius: 18px;
+  border-radius: 20px;
   background: var(--card-bg, rgba(255, 255, 255, 0.82));
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
   color: var(--color-frame-text);
-  box-shadow: var(--card-shadow, 0 6px 18px rgba(16, 20, 30, 0.07));
-  transform: translateY(calc(-50% + var(--dty, 0px))) scale(var(--dsc, 1));
+  box-shadow: 0 14px 38px rgba(8, 10, 16, 0.34);
+  /* 位姿：横移（--dtx，卡列）+ 纵坠（--dty，跟手预览）+ 缩径（--dsc）。
+     origin = center：中央卡缩 1 时不位移，邻卡缩径后仍以自身中心为轴。 */
+  transform: translate(-50%, -50%) translate(var(--dtx, 0px), var(--dty, 0px)) scale(var(--dsc, 1));
   opacity: var(--dop, 1);
-  /* origin = 底缘：后卡缩径时底边不动 ⇒ 只在面前卡底缘下方露出 12/24px 卡身
-     （堆叠「一叠卡」读感；origin top 会把后卡整片藏进前卡后面）。 */
-  transform-origin: center bottom;
+  /* 越靠边越暗越模糊（参考图两侧卡的明显变暗）：brightness 压暗 + blur 化开，
+     与 --dsc/--dop 同一曲线族（JS 六变量同源）。 */
+  filter: brightness(var(--ddark, 1)) blur(var(--dblur, 0px));
   transition:
     transform var(--dur-2, 320ms) cubic-bezier(0.22, 0.61, 0.36, 1),
-    opacity 220ms ease;
-  will-change: transform, opacity;
+    opacity 220ms ease,
+    filter 220ms ease;
+  will-change: transform, opacity, filter;
   cursor: pointer;
 }
 body.mobile-layer .mf-deck-card.is-far { pointer-events: none; }
-/* 拖 Gesture 中跟手（JS 每次 layoutDeck 改 --dty）：过渡关掉，直写即跟手。 */
+/* 拖 Gesture 中跟手（JS 每次 layoutDeck 改变量）：过渡关掉，直写即跟手。 */
 body.mobile-layer .mf-deck[data-dragging="1"] .mf-deck-card { transition: none; }
 body.mobile-layer .mf-deck-card.on {
   border-color: rgb(var(--sapphire, 96 165 250) / 0.40);
-  box-shadow:
-    var(--card-shadow, 0 6px 18px rgba(16, 20, 30, 0.07)),
-    0 0 0 1px rgb(var(--sapphire, 96 165 250) / 0.18);
 }
 body.mobile-layer .mf-deck-top {
   flex: none;
@@ -1974,12 +2139,16 @@ body.mobile-layer .mf-deck-icon {
   color: rgb(var(--sapphire, 96 165 250));
 }
 body.mobile-layer .mf-deck-icon svg { width: 18px; height: 18px; }
+/* 卡头标题：**零省略号**（作者铁律「长名/超宽内容走模糊淡出，不用省略号」）——
+   与顶部胶囊的 label 同一套语言：mask 水平 alpha 渐隐，不是「…」硬截。 */
 body.mobile-layer .mf-deck-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
   white-space: nowrap;
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 18px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 18px), transparent 100%);
   font-size: var(--mfs-sub);
   font-weight: 600;
 }
@@ -2059,11 +2228,45 @@ body.mobile-layer .mf-deck-thumb .thumb-browser .bar {
 body.mobile-layer .mf-deck-thumb .thumb-browser .bar i { width: 5px; height: 5px; border-radius: 50%; background: var(--bar-1, rgba(27, 30, 38, 0.16)); display: block; }
 body.mobile-layer .mf-deck-thumb .thumb-browser .blk { height: 18px; border-radius: 4px; background: var(--bar-2, rgba(27, 30, 38, 0.09)); margin-bottom: 7px; }
 body.mobile-layer .mf-deck-thumb .thumb-browser .blk.b2 { width: 64%; }
-/* 开合动画：收合态卡叠自落位（下移 22px + 缩 0.96 + 零透明），.open 逐张就位；
+/* ── 真实内容快照（作者令 2026-11-02 21:47 §三「做好各卡片的快照，让堆叠视觉
+   能看到卡片内容」，并明确「不是标题占位、是真实内容的缩放」）──────────
+   挂载语言 = 桌面 .card-snap 同族（原宽渲染面 + scale 缩进槽，origin 左上，
+   只读）。.mf-deck-snap = 裁切框；.mf-deck-snap-inner = 原尺寸面 + scale。
+   快照子树 pointer-events 全关（纯展示，手势归舞台/卡面）。 */
+body.mobile-layer .mf-deck-snap {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  background: var(--card-bg, rgba(255, 255, 255, 0.82));
+}
+body.mobile-layer .mf-deck-snap * { pointer-events: none !important; }
+body.mobile-layer .mf-deck-snap-inner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+}
+/* md 阅读面在快照里的几何：桌面同款（去 max-width、统一内衬），保证克隆面
+   排出来的正文宽度与归档视觉一致。 */
+body.mobile-layer .mf-deck-snap-inner .canvas-md-viewer {
+  max-width: none !important;
+  padding: 16px 20px !important;
+  background: transparent !important;
+}
+body.mobile-layer .mf-deck-snap-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+body.mobile-layer .mf-deck-thumb.has-snap { padding: 0; }
+/* 开合动画：收合态卡列自落位（下移 18px + 缩 0.96 + 零透明），.open 逐张就位；
    stagger 前 6 张 30ms 递延（手机栈深有限 —— 更深处本来就是隐藏档）。 */
 body.mobile-layer .mf-stack-view:not(.open) .mf-deck-card {
   opacity: 0;
-  transform: translateY(calc(-50% - 22px)) scale(0.96);
+  transform: translate(-50%, -50%) translate(0, 18px) scale(0.96);
 }
 body.mobile-layer .mf-stack-view.open .mf-deck-card:nth-child(1) { transition-delay: 0ms; }
 body.mobile-layer .mf-stack-view.open .mf-deck-card:nth-child(2) { transition-delay: 30ms; }

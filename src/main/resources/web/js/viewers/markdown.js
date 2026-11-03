@@ -950,6 +950,21 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
     try { /** @type {any} */ (pane)._nfReaderTeardown(); } catch { /* 卸载容错 */ }
     /** @type {any} */ (pane)._nfReaderTeardown = null;
   }
+  // 双层重叠修复批（作者报障 2026-11-02 23:07「底下有一层内容固定，上面有一层
+  // 内容可以滑动」）：重渲挂新 scroller 前必须**清掉本 pane 的一切旧阅读面**
+  //（.canvas-md-scroll/.canvas-md-viewer 及旧角浮件）。根因：本函数的
+  // unchanged-guard 只挡「内容没变」的重入；内容**变了**（外部改动/刷新腿/重开
+  // 腿）就走全量重建，而此前的挂载腿是 `pane.appendChild(mdScroller)` —— 旧
+  // scroller 从不摘除。`.canvas-md-scroll` 是 `position:absolute; inset:0` 的
+  // 全幅独立滚动盒（split.css:2007），两个实例完全重叠：旧层滚动位冻结（无新
+  // 内容写入、非 active 记账监听也不更新）=「底层内容固定」；新层照常滚动 =
+  // 「上层可滑」，两层文字交错同屏 —— 正是作者实拍的双影。
+  // 复现（tests/mobile-dup-layer.spec.mjs）：同 pane 先渲 v1 → scrollTop=500
+  // → 再渲 v2 ⇒ 修前 pane 内 .canvas-md-scroll = 2（必红）；修后 = 1（必绿）。
+  // 根因早于本批（git log -L：`pane.appendChild` 随 Canvas 改造批⑦ 2026-10-31
+  // dc7c965bb 落地；本批堆叠快照腿只读克隆，与此无关 —— 申报存证）。
+  pane.querySelectorAll(':scope > .canvas-md-scroll, :scope > .canvas-md-viewer').forEach((n) => n.remove());
+  pane.querySelectorAll(':scope > .canvas-source-toggle, :scope > .canvas-find-toggle').forEach((n) => n.remove());
   const mdHost = document.createElement('div');
   mdHost.className = 'canvas-md-viewer';
   mdHost.innerHTML = html;
