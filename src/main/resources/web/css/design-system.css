@@ -300,6 +300,50 @@
   --ds-shadow-palette: 0 18px 48px rgb(var(--sapphire) / 0.2);
   --ds-fs-card-hero: 21px;  /* 过渡卡主标题（官网 auth 域 21/600/-0.2px 档） */
   --ds-fs-card-body: 14px;  /* 过渡卡正文 / 说明（实测 14×1.5） */
+
+  /* ── ⑮ 手机端字阶 / 热区桥槽（ui-unification-20261103-mobile）──
+     作者令：手机端**与桌面共用同一套 --ds-* 槽位**，只是经 --mfs-* 手机字号层
+     消费（mobileLayer.css 的 body.mobile-layer token 块）。桥的方向固定为
+     `--mfs-*: var(--ds-*)`，**值只在桌面阶梯出生一次**，手机层零第二份读数：
+       --mfs-body 17        ← --ds-fs-lead 17   （Apple body 档；本文件 §②
+                              注释早前已预告「手机档已落地 --mfs-body 17」）
+       --mfs-min 13         ← --ds-fs-body 13   （桌面正文档；13 = 手机可读下限）
+       --mfs-title 28       ← --ds-fs-title-lg 28（§② 注释同样已对齐）
+       --mfs-sub 15         ← --ds-fs-mobile-sub（见下：缺槽先扩）
+       --mfs-callout 16     ← --ds-fs-mobile-callout（见下：缺槽先扩）
+       --mfs-title-mini     ← --mfs-sub（同值派生，不另立槽 —— 与 --mtitle-inset
+                              取 var(--mchrome-inset) 同法）
+     热区同源：--mtap / --mhit / --mrow ← --ds-hit-row 44（WCAG 2.5.5 触控下限）；
+     --mtap-lg 48（悬浮圆钮档，g2-fab 基准）此前桌面无槽 ⇒ 按「缺槽先扩」补。
+
+     为什么 15/16 两档必须新出生、不能借 --ds-fs-title：15px 在桌面阶梯上的唯一
+     现槽 --ds-fs-title 语义是「面板标题 600」，正文次说明借名会让下一面误用；
+     16px 桌面阶梯上根本没有（iOS 输入焦点不自动缩放的硬下限），属手机层专属档。
+     两槽值 = 手机层既有读数逐字搬迁（不是新规范值）。 */
+  --ds-fs-mobile-callout: 16px;  /* 手机档次正文 / 输入件（iOS 不缩放硬下限 16） */
+  --ds-fs-mobile-sub: 15px;      /* 手机档次要说明（Apple subheadline 15pt） */
+  --ds-hit-tap-lg: 48px;         /* 手机档悬浮圆钮（g2-fab 基准 48；桌面无此档） */
+
+  /* ── ⑯ 手机层洗选 / 状态点 / 浮影槽（ui-unification-20261103-mobile 收编）──
+     mobileLayer.css 的颜色字面量收编：收编前 156，其中 **118 处是 var() 的死
+     fallback 字面量**（`var(--color-frame-text-muted, #98a2b3)` 一类 —— 这些 token
+     在 base.css/sapphire.css 全站有定义，fallback 永不命中，随批逐条摘除 = 零视觉
+     漂移的纯删减）；余下 38 处现盘裸值按「值的家从消费面迁到令牌层」收编至此
+     （沿用 --ds-shadow-card / --ds-row-selected 的「灰/墨通道 + α 出生行放行」先例）。
+     **可复用既有槽的一律不重复出生**：卡片影两档与 --ds-shadow-card /
+     --ds-shadow-card-dark 逐字同值 ⇒ 消费面直接改用那两个槽（本批不改本文件值）。 */
+  --ds-ink-inverse: #fff;                        /* 实底反极字（徽标/角标/图标） */
+  --ds-wash-16: rgb(128 128 128 / 0.16);         /* 玻璃胶囊底 / 按压洗选 */
+  --ds-wash-18: rgb(128 128 128 / 0.18);         /* 行内小圆钮悬停底 */
+  --ds-wash-26: rgb(128 128 128 / 0.26);         /* 抓取态加深档（点条 .is-grip） */
+  --ds-dot-idle: #98a2b3;                        /* 状态点未激活灰（队列/中断点） */
+  --ds-dot-idle-light: rgb(70 78 96 / 0.42);     /* 亮档点条未激活点 */
+  --ds-dot-on-glass: rgb(255 255 255 / 0.55);    /* 暗档点条未激活点 */
+  --ds-dot-glow: 0 0 6px rgb(255 255 255 / 0.55);       /* 当前点亮环 */
+  --ds-shadow-dots: 0 2px 10px rgb(16 20 30 / 0.10);    /* 点条胶囊投影 */
+  --ds-shadow-thumb: 0 2px 8px rgb(0 0 0 / 0.08);       /* 缩略页纸面投影 */
+  --ds-shadow-deck-card: 0 14px 38px rgb(8 10 16 / 0.34); /* 堆叠卡浮影 */
+  --ds-scrim-stack: rgb(12 15 22 / 0.34);        /* 堆叠视角背景压暗层 */
 }
 
 /* 浮层阴影暗档（令牌层单点解析：消费面不再各写一份 prefers-color-scheme）。 */
@@ -320,6 +364,9 @@
     --ds-tab-active-hover-hi: rgb(255 255 255 / 0.28);
     --ds-tab-active-hover-hi-soft: rgb(255 255 255 / 0.1);
     --ds-tab-active-hover-wash: rgb(255 255 255 / 0.04);
+    /* ⑯ 手机层暗档：dock 数字角标的托出描边（= 胶囊毛玻璃下承底带色；
+       mobileLayer.css 原字面 #16181d，取值随本槽） */
+    --ds-badge-ring-dark: #16181d;
   }
 }
 

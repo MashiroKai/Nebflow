@@ -3065,6 +3065,8 @@ export default {
   'todoface.tagNew': 'New tag',
   'todoface.tagRename': 'Rename',
   'todoface.tagDelete': 'Delete',
+  'todoface.tagDeleteTitle': 'Delete tag',
+  'todoface.tagDeleteConfirm': 'Deleting “{name}” removes it from every todo. This cannot be undone.',
   'todoface.colorN': 'Color {n}',
   // ── Perception domain (mail-perception-impl batch) ──
   'perception.title': 'Perception',

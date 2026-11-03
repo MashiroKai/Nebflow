@@ -1061,7 +1061,7 @@ export function renderSettings() {
       <div class="settings-row" id="nf-cache-row">
         <span class="settings-label">${t('settings.fileCache')}</span>
         <span style="display:flex;align-items:center;gap:8px">
-          <span id="nf-cache-usage" role="status" style="font-size:12px;color:var(--color-text-secondary)">…</span>
+          <span id="nf-cache-usage" role="status" style="font-size:var(--mfs-min, 12px);color:var(--color-text-secondary)">…</span>
           <button class="cfg-btn cfg-btn-sm" id="btn-clear-nf-cache" type="button">${t('settings.fileCacheClear')}</button>
         </span>
       </div>
@@ -1079,12 +1079,12 @@ export function renderSettings() {
       <div class="settings-section-title">${t('settings.about')}</div>
       <div class="about-info">
         <div>${brand.productName} ${state.serverVersion || '...'}</div>
-        <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: ${state.connected
+        <div style="margin-top:4px;font-size:var(--mfs-min, 12px);color:var(--color-text-secondary)">${t('settings.connection')}: ${state.connected
           ? statusIcon('circle-check', 14, 'st-ok') + ' <span style="color:var(--status-word)">' + t('settings.connected') + '</span>'
           : statusIcon('wifi-off', 14, 'st-err') + ' <span style="color:var(--status-word)">' + t('settings.disconnected') + '</span>'}</div>
         <div style="margin-top:10px;display:flex;align-items:center;gap:8px">
           <button class="cfg-btn cfg-btn-sm" id="btn-restart-gateway">${t('settings.restart')}</button>
-          <span id="restart-status" role="status" style="font-size:12px;line-height:18px;min-height:18px;flex:1;min-width:0;color:var(--color-text-muted)"></span>
+          <span id="restart-status" role="status" style="font-size:var(--mfs-min, 12px);line-height:18px;min-height:18px;flex:1;min-width:0;color:var(--color-text-muted)"></span>
         </div>
         <!-- 更新功能已随 auth-trim 批（2026-10-20 作者令）退役：检查更新/立即更新/
              进度面/绿点整链移除，未来由官网统一检测更新取代。重启（restartStatus/
