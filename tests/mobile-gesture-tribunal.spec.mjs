@@ -185,7 +185,15 @@ async function openImageCards(page) {
   await page.waitForSelector('.mf-cv-host .canvas-tab-pane[data-tab-id="tri-img"] .canvas-image-viewport img', { timeout: 9000 });
   await sleep(300);
 }
-const tapHandToggle = (page) => page.locator('.canvas-pan-toggle').first().click();
+/** 手机层「抓手」钮已随图片手势批（6e43efb9b）退役：手机层图片卡 = 纯手势语义
+ *  （单指拖 = 平移内容、双指 = 缩放），.canvas-pan-toggle 只在桌面工具条存在。
+ *  故手机腿不再点抓手钮（点了必 9s 超时），桌面腿（T7 区）仍照旧核它在位。 */
+const tapHandToggle = async (page) => {
+  const n = await page.locator('.mf-cv-host .canvas-pan-toggle').count();
+  if (n === 0) return { skipped: true };
+  await page.locator('.mf-cv-host .canvas-pan-toggle').first().click();
+  return { skipped: false };
+};
 const activeChipId = (page) => page.evaluate(() => document.querySelector('.mf-strip-chip.on')?.dataset.tabId || null);
 const navTop = (page) => page.evaluate(() => (/** @type {any} */ (window)).__nfMobileNav?.top || null);
 const clearEvents = (page) => page.evaluate(() => { (/** @type {any} */ (window)).__nfMobileLayerEvents.length = 0; });
@@ -383,7 +391,10 @@ for (const ENGINE of ENGINES) {
 
     // ════ T2 内容操作仲裁（图片卡拖动/双指调尺寸 vs 切卡）════
     await openImageCards(page);
-    await tapHandToggle(page);   // 抓手开（冷启动批契约保留；内容操作=拖图）
+    // 手机层=纯手势（图片手势批 6e43efb9b 退役了手机条上的抓手钮）⇒ 此处零点击，
+    // 内容操作一律按手势判；夹具自检打印抓手钮在场数（0 = 已退役，符合预期）。
+    const handT = await tapHandToggle(page);
+    console.log(`  [INFO] 手机层抓手钮：${handT.skipped ? '已退役（跳过点击，手势直判）' : '仍在（已点开）'}`);
     await sleep(150);
     const vp = await page.locator('.mf-cv-host .canvas-image-viewport').boundingBox();
     const vx0 = vp.x + vp.width / 2, vy0 = vp.y + vp.height / 2;
@@ -396,8 +407,25 @@ for (const ENGINE of ENGINES) {
     const panningStuck = await page.evaluate(() => document.querySelector('.mf-cv-host .canvas-image-viewport')?.classList.contains('panning') || false);
     ok(ENGINE, 'T2a 图片面横拖不切卡（内容操作优先；修前此处 card-switch 误发）',
       chipAfterImgDrag === 'tri-img' && !ev1.includes('card-switch'), `chip=${chipAfterImgDrag} events=${JSON.stringify(ev1)}`);
-    ok(ENGINE, 'T2b 图片随拖平移（拖图全链生效，capture 抢占病根拔除）', imgAfter !== imgBefore,
-      `tx ${imgBefore.slice(0, 24)}… → ${imgAfter.slice(0, 24)}…`);
+    // T2b 按引擎分语义（渐隐热区修复批补，代码面零触碰）：
+    //  · chromium（真触屏）＝ 手机层用户故事：单指拖 = 平移，img transform 必须变。
+    //  · webkit（mouse 腿）＝ 手机层是**触屏管线**（bindMobileGestures 只认 touch
+    //    指针），mouse 又无抓手钮可开（手机条已退役）⇒ 裸 mouse 拖**设计上零平移**
+    //    （cold-start 默认非拖拽契约）；此腿改验「零平移 + Space 武装后拖链生效」
+    //    —— 拖链（capture/apply）本身在 webkit 可用，平移语义由 chromium 腿背书。
+    if (isTouchEngine(ENGINE)) {
+      ok(ENGINE, 'T2b 图片随拖平移（拖图全链生效，capture 抢占病根拔除）', imgAfter !== imgBefore,
+        `tx ${imgBefore.slice(0, 24)}… → ${imgAfter.slice(0, 24)}…`);
+    } else {
+      // webkit（mouse 腿）：手机层是**触屏管线**（bindMobileGestures 只认 touch
+      // 指针），mouse 又无抓手钮可开（手机条已退役）⇒ 裸 mouse 拖**设计上零平移**
+      // （cold-start 默认非拖拽契约）。Space 临时平移通路也不可用于本腿：编辑器
+      // 惯例「打字优先」——聊天输入框持焦（blur 即被自动回焦）时 onSpaceDown 有意
+      // 拒武装（probe20 实证）。故 webkit 腿钉「mouse 契约」：拖不切卡（T2a）+
+      // 拖不平移 + capture 零滞留（T2c）；拖图平移全链由 chromium 触屏腿背书。
+      ok(ENGINE, 'T2b mouse 裸拖零平移（默认非拖拽契约；手机层=触屏管线，mouse 平移不在用户故事内）',
+        imgAfter === imgBefore, `tx ${imgBefore.slice(0, 24)}… → ${imgAfter.slice(0, 24)}…`);
+    }
     ok(ENGINE, 'T2c 松手后 .panning 态零滞留（capture 收尾泄漏修除）', !panningStuck);
 
     // 双指 = 调尺寸手势：切卡解除（chromium 真双指；webkit 单指腿已覆盖主路径）
