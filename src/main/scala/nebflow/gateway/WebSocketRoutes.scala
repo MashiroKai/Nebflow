@@ -1177,6 +1177,13 @@ class WebSocketRoutes(
                               ) *>
                               outboundOverflowClosed.complete(()).void
                         }
+                    // 在带身份声明（握手 query 不可靠批 2026-11-03）：本连接的实例
+                    // 键读数——初值 = 握手腿（query 可用时已是身份键；隧道脸无 query
+                    // = 会话退路键）。identify 帧到达后经 onIdentify 迁移并写回，
+                    // 内容闸随读数换轨（None = Bearer 轨/总闸关，直通）。
+                    takeoverHolderRef = new java.util.concurrent.atomic.AtomicReference[Option[String]](
+                                          takeoverSession.map(sid => ConsoleTakeover.holderOf(sid, takeoverClient))
+                                        )
                     // 单实例四修批（2026-10-29 作者令 · 隐私面）：被顶出连接的
                     // 内容帧闸——ConsoleTakeover.gateFrame 按**实例**裁决（owner 非本
                     // 实例 ⇒ 只放行 takeover/takeoverResult 接管协议帧，对话内容帧
@@ -1184,11 +1191,11 @@ class WebSocketRoutes(
                     // （clientId 优先），否则同浏览器换会话后自己的新连接会被自己掐死。
                     // Bearer 轨（takeoverSession=None）与总闸关闭 ⇒ 恒放行（零漂移）。
                     // 心跳面不受影响：pong 走 perConnJsonSend 旁路，不经本闸。
+                    // 在带声明批：闸键改读本连接实例键（握手腿初值 / identify 换轨）。
                     gatedWsSend = (text: String, isStream: Boolean) =>
-                      takeoverSession match
+                      takeoverHolderRef.get match
                         case None => perConnWsSend(text, isStream)
-                        case Some(sid) =>
-                          val holder = ConsoleTakeover.holderOf(sid, takeoverClient)
+                        case Some(holder) =>
                           takeover.gateFrame(holder, text).flatMap {
                             case true  => perConnWsSend(text, isStream)
                             case false => IO.unit
@@ -1231,9 +1238,22 @@ class WebSocketRoutes(
                           // 只在本管上有（WsDispatchCtx 不携带），故不走 WsDispatch 注册表。
                           // 总闸关闭时 isRetakeFrame 恒 false 侧不成立，故显式以
                           // takeover.enabled 判：关闭 ⇒ 帧走既有未知类型回退（零漂移）。
+                          // 在带身份声明（握手 query 不可靠批 2026-11-03）：握手腿与
+                          // 声明腿同键（holderOf）⇒ 闭包三态经下方识别后归还本管、
+                          // 后续帧照常进常规分派（takeoverIdentify 不是常规帧型）。
                           val handled =
                             if takeover.enabled && ConsoleTakeover.isRetakeFrame(text) then
                               takeover.handleRetake(hubConnId, perConnJsonSend)
+                            else if takeover.enabled && ConsoleTakeover.isIdentifyFrame(text) then
+                              (ConsoleTakeover.declaredClientId(text), takeoverSession) match
+                                case (Some(cid), Some(sid)) =>
+                                  // 迁移 + 重裁决（kick 与否在 ConsoleTakeover.settle 内定），
+                                  // 再把本连接实例键写回闸读数（闸随之换轨）。
+                                  takeover.onIdentify(sid, hubConnId, Some(cid)).flatMap { h =>
+                                    IO(takeoverHolderRef.set(h))
+                                  }
+                                // 坏体/无身份/Bearer 轨 ⇒ 静默空转（声明是加速面，不是语义面）。
+                                case _ => IO.unit
                             // 门户身份透传批（方案 A1）：本连接的会话身份随帧进消息
                             // 分发（两处消费点：typeless 腿 + immediateInput 腿——
                             // 后者经 wsDispatchContext 闭包）。Bearer 轨恒 None。

@@ -1119,6 +1119,19 @@ export function connect() {
     shelteredMisses = 0;      // 传输遮蔽窗计数同清零（本地回路短路批）
     state.pendingPong = false;
     syncSendButtonConnState();
+    // 单实例在带身份声明批（2026-11-03 作者报障「手机+电脑同时在线，没有被挤掉」）：
+    // 实例身份**必须**在连接建立后于数据面重申一次。根因实证：握手 `?clientId=` 在
+    // 控制台的真实交付路径上会丢（门户/隧道腿与中转代理会重写请求目标）——
+    // stand.log 2026-11-03 10:07–10:30 连续 7 条控制台连接全部以会话 id 入账
+    //（`joined — no takeover (joining page carries no client id)`），其中一个还来自
+    // 刚在 HTTP retake 体里带上 clientId 的同一浏览器 ⇒ 服务端身份不可证 ⇒ 永不
+    // 提示永不踢。在带声明走数据面：只要能收到本连接的应用帧，引擎就必然收到它。
+    // 与握手腿同一份 deviceClientId()（同一 localStorage 键，无第二身份源）；
+    // 老引擎把未知帧型走既有回退，零破坏。
+    try {
+      const cid = deviceClientId();
+      if (cid) sendWs({ type: 'takeoverIdentify', clientId: cid });
+    } catch (_) { /* 取不到身份 ⇒ 省略该帧（服务端落会话退路，行为同本批之前） */ }
     // 离线期间入队的 WS 命令按序补发（观察项① 收口；先于以下引导命令）。
     flushPendingSends();
     if (state.thinkingMode?.enabled) {
