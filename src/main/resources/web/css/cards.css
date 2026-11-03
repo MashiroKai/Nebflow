@@ -240,6 +240,25 @@ html[data-theme="dark"] {
   width: 14px;  /* = .nf-entry-dot 的宽 */
   flex: 0 0 auto;
 }
+/* 🔴 首项勾图标对齐批（2026-11-03 作者实拍 IMG_1699：「样式表」的勾相对其余
+   三项横向偏移，要求靠左对齐）：上述居中排版下点的左缘 = 卡中线 −(48+标签宽)/2，
+   **随各行标签宽度漂移**（实测「样式表」3 字 42px vs 四字 56px ⇒ 首行点恒偏右
+   7px，四态×双主题一致——点盒本身 14×14 固定、勾/叉伪元素逐行同几何，不是
+   字形问题是槽位锚点问题；en 标签 38.9–93.2px 不等 ⇒ 四点铺开 27px）。
+   修法 = 标签升级为**固定宽度槽**（min-width + 槽内 text-align:center）——
+   四行排版盒全等 ⇒ 四点同锚（zh = 卡中线 −52px），文字居中零回退
+   （synccard-center S1 仍钉）；点本身 14×14 固定槽 + 勾/叉伪元素绝对定位居中，
+   done/pending 内容变化不推槽位。机械验收 tests/entrycard-dot-slot.spec.mjs：
+   四点左缘两两差 ≤1px（混合态双排 × 双主题 × zh/en 双档）。槽宽必须 ≥ 最长
+   标签：改四项文案时同步核槽宽（zh 四字 = 4em；en 槽由门脚本 data-locale 档加宽）。 */
+.nf-entry-label {
+  min-width: 4em;     /* zh 最长项 = 四个 CJK 字（界面模块/连接主机/同步数据）*/
+  text-align: center; /* 短于槽的标签（样式表）在槽内居中 */
+}
+/* 挂点 = 门面 #nf-boot-gate（buildEntryFace 的 el.face），不是卡体 .nf-entry-card。 */
+[data-locale="en"] .nf-entry-label {
+  min-width: 7.5em;   /* en 最长项 Checking host 实测 93.2px ≈6.7em + 余量 */
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
    面迁移（本批落点，设计稿 §4 M1/M2）

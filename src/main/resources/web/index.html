@@ -337,6 +337,9 @@
         var el = entryRows();
         if (!el) return;
         el.face.setAttribute('data-entry', 'on');
+        // 标签槽档位（css/cards.css .nf-entry-label min-width：zh 四字槽 / en 加宽槽
+        // ——首项勾图标对齐批 2026-11-03：点位锚统一要求标签槽宽随 locale 定档）
+        el.face.setAttribute('data-locale', zh ? 'zh' : 'en');
         el.title.textContent = T.cardTitle;
         var frag = document.createDocumentFragment();
         for (var i = 0; i < entry.order.length; i++) {
