@@ -221,8 +221,11 @@ function mount() {
   // 输入行为包批（2026-11-02）：① <textarea rows=1> 承载 Shift+Enter 换行（键位
   // 契约与主会话逐一对齐；单行视觉不变，超行自动长高封顶）；② + 中断钮
   // .ask-stop（busy 态与发送钮互换，主会话 #stop-btn 同律；包状态机驱动）。
+  // 顶缘渐隐视觉层 = design-system.css `.ds-edge-fade`（与主对话窗 #g2-edge-fade
+  // 同一个类：author 令 2026-11-03「像主对话窗口那样，做一个慢慢渐渐隐去的消失
+  // 效果」；本文件只挂类，材质零自带 —— 禁在此另造第二套渐隐）。
   dock.innerHTML =
-    '<div class="ask-colwrap"><div class="ask-col"></div><div class="ask-veil" aria-hidden="true"></div></div>' +
+    '<div class="ask-colwrap"><div class="ask-col"></div><div class="ask-veil ds-edge-fade" aria-hidden="true"></div></div>' +
     '<div class="ask-input">' +
     '<textarea rows="1" placeholder="' + tt('针对这份文件提问…', 'Ask about this file…') + '" aria-label="' + tt('提问', 'Question') + '"></textarea>' +
     '<button type="button" class="ask-send" aria-label="' + tt('发送', 'Send') + '">' + ICONS.send + '</button>' +

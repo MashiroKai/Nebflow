@@ -48,8 +48,9 @@
 //       F1 ④双泡修复——发问等待期零空 ai 泡（typing 单件）；
 //       F2 ①ai 气泡复用主会话渲染腿 renderMarkdownWithMath（h2/ul/pre+code/
 //          table 全在场、裸 md 字面量退场）；
-//       F3 ⑤顶带渐隐按液体玻璃 v2（--g2-veil + blur(18) saturate(1.5) + 两段式
-//          mask）且列顶留白 64px 首条不入带。
+//       F3 ⑤顶带渐隐（doc-ask-fade 批 2026-11-03 收编）：材质 = 主对话窗同一类
+//          .ds-edge-fade（--g2-veil + blur(18) saturate(1.5) + 两段式 mask）；
+//          内容在带顶起排、宿主零 mask（旧「列顶留白 64px + colwrap mask」形态退役）。
 //   T12 风格统一（三修③ 作者令 2026-10-29「ask 输入条/气泡对齐 canvas 统一风格，
 //       不新造风格」）：输入条/气泡三面计算材质与聊天 #header 玻璃模板（--cv-* 单源）
 //       逐项相等；入口钮材质随液体玻璃 v3 F1 扩面批（2026-10-31 作者 12:32 点选
@@ -473,26 +474,29 @@ try {
     const veil = document.querySelector('.ask-colwrap .ask-veil');
     const wrap = document.querySelector('.ask-colwrap');
     const col = document.querySelector('.ask-col');
+    const mainFade = document.getElementById('g2-edge-fade');
     const vcs = getComputedStyle(veil);
-    const wcs = getComputedStyle(wrap);
     const vr = veil.getBoundingClientRect();
     const cr = col.getBoundingClientRect();
     return {
+      veilCls: veil.className,
+      mainCls: mainFade ? mainFade.className : null,
       veilBg: vcs.backgroundImage,
       veilFilter: vcs.backdropFilter || vcs.webkitBackdropFilter,
       veilMask: vcs.maskImage || vcs.webkitMaskImage,
-      colPadTop: wcs.paddingTop, // 带净空在 colwrap（滚动容器之外）
-      // 结构保证：列可视口顶 = 带底沿——可视气泡永在带下（滚出的旧泡被 overflow 裁剪）。
+      colwrapMask: String(getComputedStyle(wrap).maskImage),
+      // 主窗同形态：内容在带顶起排（列顶 = 带顶）——doc-ask-fade 批口径。
       colTop: cr.top,
-      veilBottom: vr.bottom,
+      veilTop: vr.top,
     };
   });
-  ok('F3 液体玻璃 v2 顶带：--g2-veil 渐层 + blur(18px) saturate(1.5) + 两段式 mask',
-    f3.veilBg.includes('gradient') && /blur\(18px\)/.test(f3.veilFilter) && /saturate\(1\.5\)/.test(f3.veilFilter) && f3.veilMask.includes('gradient'),
-    JSON.stringify({ bg: f3.veilBg.slice(0, 40), f: f3.veilFilter, m: f3.veilMask.slice(0, 40) }));
-  ok('F3-b 与消息留距：colwrap 列顶留白 = fade-h 64px（滚动容器外保留区），列可视口顶 ≥ 带底沿（首条永不入带）',
-    f3.colPadTop === '64px' && f3.colTop >= f3.veilBottom - 1,
-    JSON.stringify({ pad: f3.colPadTop, colTop: f3.colTop, veilBottom: f3.veilBottom }));
+  ok('F3 顶带材质走 .ds-edge-fade 单源（doc-ask-fade 批收编）：veil 渐层 + blur(18px) saturate(1.5) + 两段式 mask，且与主对话窗 #g2-edge-fade 同一个类',
+    f3.veilBg.includes('gradient') && /blur\(18px\)/.test(f3.veilFilter) && /saturate\(1\.5\)/.test(f3.veilFilter) && f3.veilMask.includes('gradient')
+      && /\bds-edge-fade\b/.test(f3.veilCls) && /\bds-edge-fade\b/.test(String(f3.mainCls)),
+    JSON.stringify({ bg: f3.veilBg.slice(0, 40), f: f3.veilFilter, m: f3.veilMask.slice(0, 40), cls: f3.veilCls, main: f3.mainCls }));
+  ok('F3-b 主窗同形态：内容在带顶起排（列顶 = 带顶），列宿主零 mask（hit-test 不被裁）',
+    f3.veilCls !== null && Math.abs(f3.colTop - f3.veilTop) <= 1 && f3.colwrapMask === 'none',
+    JSON.stringify({ colTop: f3.colTop, veilTop: f3.veilTop, mask: f3.colwrapMask }));
   await shot(page, 'f-batch-md-render-and-fade');
 
   // mock 服务端持久化面：A 的转录入库（T5 再开 askOpen 重放需复现——服务端为权威）。
@@ -923,6 +927,7 @@ try {
         cCenter,
         fabCenter: fr.top + fr.height / 2,
         colMaxH: getComputedStyle(document.querySelector('.ask-col')).maxHeight,
+        colwrapMaxH: getComputedStyle(document.querySelector('.ask-colwrap')).maxHeight,
       };
     });
     ok('T9a 移动入口钮 48×48（悬浮钮统一批 g2-fab 基准）', !!m1 && Math.abs(m1.w - 48) < 1.5 && Math.abs(m1.h - 48) < 1.5, JSON.stringify(m1));
@@ -931,8 +936,12 @@ try {
       JSON.stringify({ offset: m1 && m1.fabBottomOffset, expect: m1 && m1.seatExpect, right: m1 && m1.fabRightToViewport }));
     ok('T9b2 单行同带：fab 中线 = 左锚簇中线（≤3px）', !!m1 && m1.cCenter !== null && Math.abs(m1.fabCenter - m1.cCenter) <= 3,
       JSON.stringify({ fab: m1 && m1.fabCenter, cluster: m1 && m1.cCenter }));
-    // F3-b 批后口径：列可视高 = 总档 − 带档（⑤带净空在 colwrap，E-2 移动 250−56=194）。
-    ok('T9c 列可视 max-h = 总档 250 − 带档 56 = 194（E-2 移动档，⑤带净空口径）', m1 && m1.colMaxH === '194px', m1 && m1.colMaxH);
+    // doc-ask-fade 批后口径：带盖内容不再吃列高 ⇒ 列可视高 = 总档（旧 250−56=194 退役）。
+    // 新档 = clamp(320px, 46vh, 420px)（活 token 解析成 px）；期望值不写常量：
+    // 断言「落在档内 ∧ 列高 = 容器档」= 无带档扣减 + 加高生效两件事一起钉住。
+    ok('T9c 列可视 max-h 落在加高档 [320,420] 且 = colwrap 档（无带档扣减；旧 194 必红）',
+      !!m1 && parseFloat(m1.colMaxH) >= 320 && parseFloat(m1.colMaxH) <= 420 && m1.colMaxH === m1.colwrapMaxH,
+      JSON.stringify({ col: m1 && m1.colMaxH, wrap: m1 && m1.colwrapMaxH }));
     // 气泡列表面横滑零切卡（surface 归属制：peek 不亮）
     await mob.page.click('.ask-fab');
     await sleep(500);

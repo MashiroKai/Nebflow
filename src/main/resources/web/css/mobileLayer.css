@@ -2700,15 +2700,30 @@ body.mobile-layer #input-area {
 /* ── 发送钮退回纯圆（收形批⑥，作者令 10-31 22:50）──────────────────────
    药丸几何（r999 h32 + 横向 padding）是桌面档；手机层退回考古圆形
    （d4cc8d189^ 前基准：r50% 36×36 方圆钮，与输入条 36px 图标钮同高）——
-   绿色保留（--ctl-send-* 三态 token 单源不动），只收几何。 */
-body.mobile-layer #send-btn {
-  /* 纯圆形态（收形批⑥「发送钮退回纯圆」的形状裁定）保留；**尺寸**随手机端
-     交互标准批（2026-11-02）升到 --mtap-lg（48）：36 是明显偏小的触控目标，
-     而发送是全局最高频动作。形状语言不动，只放大本体。 */
+   绿色保留（--ctl-send-* 三态 token 单源不动），只收几何。
+   send/stop 同档批（作者报障 2026-11-03 22:15 逐字「手机端输入框的发送按钮
+   和终止按钮，大小怎么没有统一？发送按钮怎么那么大呀？」/ 待办 #1475 第八条）：
+   两钮 = 同位同角色互斥两态（busy 互换，js/input/composer.js applyTurnChrome），
+   尺寸必须逐值相等、热区档一致；主次只用颜色表达（send 绿 / stop 红）。
+   修前 send 被手机端交互标准批（2026-11-02）单抬到 --mtap-lg(48) 而 stop 留在
+   桌面基类 36 —— 尺寸失衡即作者所见「发送钮怎么那么大」。现两钮**同块同
+   token** 升到 --mtap-lg(48)：send 回归「高频动作抬大档」不撤（附件钮/光球/
+   dock 同尺），stop 跟上同档；图标同升 --micon(22)（圆内同视觉重量，
+   input.css 基类 18px 档在手机层被覆盖）。热区 48 天然 ≥44（HIG）。 */
+body.mobile-layer #send-btn,
+body.mobile-layer #stop-btn {
+  position: relative;
   border-radius: 50%;
   width: var(--mtap-lg);
   height: var(--mtap-lg);
+  min-width: var(--mtap-lg);
+  min-height: var(--mtap-lg);
   padding: 0;
+}
+body.mobile-layer #send-btn svg,
+body.mobile-layer #stop-btn svg {
+  width: var(--micon);
+  height: var(--micon);
 }
 
 /* ── 输入卡垂直收窄批（2026-11-01 22:1x 作者令「收窄输入框的上下高度，
@@ -4108,11 +4123,12 @@ body.mobile-layer #quote-item-btn {
   min-height: var(--mtap-lg);
 }
 body.mobile-layer #attach-btn svg,
-body.mobile-layer #quote-item-btn svg,
-body.mobile-layer #send-btn svg {
+body.mobile-layer #quote-item-btn svg {
   width: var(--micon);
   height: var(--micon);
 }
+/* （#send-btn / #stop-btn 的图标档已随上方 send/stop 同档批移入同块 —— 单源，
+   此处不重复声明。） */
 
 /* ── 待办面（todo-face.css 收编面）小图标键 ─────────────────────────────
    .tfl-icon-btn 28×24（筛选）、.tfl-complete 28×28（标记完成）：图形语义件，

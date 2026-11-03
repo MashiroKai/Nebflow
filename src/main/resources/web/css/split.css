@@ -1904,7 +1904,17 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   cursor: pointer;
   z-index: 10;
   color: var(--color-text);
-  transition: all 0.2s ease;
+  /* hover 零布局批（2026-11-03）：`transition: all` 退役 → 显式白名单。
+     实际会变的只有本钮自身的合成属性（glass.css 圆钮档：background +
+     transform scale）与 active/disabled 的 color/border-color —— all 会把
+    任何未来新增的布局属性也拖进过渡（作者判定要点②）。时长/缓动 = 该族
+     基准档（glass.css .g2-fab 同值：transform 0.18s 弹性档）。 */
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
   /* 统一按钮玻璃批 2026-11-01（设计稿 D1 基准件）：材质（cv 玻璃配方）与
      状态档（hover 抬亮+scale / active / 选中 / disabled / focus-visible）
      迁 css/glass.css 圆钮级浮件档单源——F1 覆盖层随 liquid-glass.css 退役，
@@ -1932,7 +1942,13 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   cursor: pointer;
   z-index: 10;
   color: var(--color-text);
-  transition: all 0.2s ease;
+  /* hover 零布局批（2026-11-03）：`transition: all` → 显式白名单（同源码钮档）。 */
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
   /* 材质/状态档迁 glass.css 圆钮级浮件档（D2）；selected sapphire 档升格为
      全站选中标准（glass.css .canvas-ref-select.active 共档块）。 */
 }
@@ -1966,7 +1982,14 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   cursor: pointer;
   z-index: 10;
   color: var(--color-text);
-  transition: all 0.2s ease;
+  /* hover 零布局批（2026-11-03）：`transition: all` → 显式白名单（同族档；
+     busy 态 svg 自转在子元素，不受本条）。 */
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
   /* 材质/状态档迁 glass.css 圆钮级浮件档（D3，busy 旋转动画保留下方）。 */
 }
 .canvas-refresh-toggle.busy svg {
@@ -2948,7 +2971,9 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   color: var(--color-text-muted);
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.15s;
+  /* hover 零布局批（2026-11-03）：`transition: all` → 显式白名单（本钮只会
+     换 background/border-color/color）。 */
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   font-family: inherit;
 }
 .xlsx-sheet-tab:hover { background: var(--color-hover, rgba(128,128,128,0.08)); color: var(--color-text); }
@@ -3205,7 +3230,13 @@ body.col-resizing #canvas-panel { transition: none; }
   width: var(--cv-size-circle-lg, 48px); height: var(--cv-size-circle-lg, 48px); border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; z-index: 10; color: var(--color-text);
-  transition: all .2s ease;
+  /* hover 零布局批（2026-11-03）：`transition: all` → 显式白名单（同族档）。 */
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
   /* 材质/状态档迁 glass.css 圆钮级浮件档（D4；图谱钮已退役不在成员面）。 */
 }
 
@@ -3983,14 +4014,22 @@ body.card-window #canvas-panel.card-win-merging { animation: nf-card-win-out 0.1
 /* ── 查看面顶部留白共享类（P0 §6，设计稿 20261030）──
    单源纪律：四个面（monaco/md/image/epub）统一引用本类，禁四处各写数值。
    值 = 胶囊高 token + 16px 安全距。桌面常态不额外垫（避免白洞——基类不设
-   padding-top，各面保留自身默认；md 面由下方例外规则钉常驻垫）；环展开态
-   由 canvas.js 给 #canvas-content 挂 .capsule-ring-open（240ms 与环过渡同长，
-   收起即撤）；手机层 chip 条 + 工具条形态下常态生效（A9）。
+   padding-top，各面保留自身默认；md 面由下方例外规则钉常驻垫）；手机层
+   chip 条 + 工具条形态下常态生效（A9）。顶垫只由**静态档位**决定，绝无
+   状态类驱动（见下）。
    位置注：本块置文件尾——垫值规则需压过上方查看器 padding 简写
-   （.canvas-image-viewer 等）。 */
-.canvas-viewer-safe-top {
-  transition: padding-top 240ms cubic-bezier(0.22, 0.61, 0.36, 1);
-}
+   （.canvas-image-viewer 等）。
+   hover 零布局批（作者报障 2026-11-03 21:35 逐字「我在电脑端hover canvas
+   胶囊的时候，会带着图片一起动，这个应该不要影响」/ 待办 #1475 第七条）：
+   修前此处有 `transition: padding-top 240ms` + 下方
+   `#canvas-content.capsule-ring-open .canvas-viewer-safe-top { padding-top:
+   52px }` —— 桌面 hover 胶囊 → canvas.js openRing() 挂 .capsule-ring-open
+   → 图片面顶垫 16 → 52px（240ms 过渡）⇒ 定高 flex 列里 viewport 高度 −36px
+   ⇒ 图片 ResizeObserver 重 fit，视觉上「图片跟着一起动」。**padding 是布局
+   属性，hover 反馈只许用合成属性**（作者判定要点①②③）。
+   现语义：胶囊环是真浮层（#canvas-capsule-ring 挂 body / z-246 / 真实越出
+   面板顶缘）——浮 chrome 不占位、不透传布局（与本批 mobile-canvas-topbar
+   「零底带透传悬浮」同语义）。故两条规则整条退役，顶垫恒为静态值。 */
 /* 手机档初态让位（透传悬浮批 ui-unification-20261103-mobile-canvas-topbar）：
    旧值 calc(--capsule-h 36 + 16) = **桌面卡头胶囊档**，在手机层是借来的第二把尺
    （断言 B1 改前红基线实测 52 ≠ 72）。手机层顶栏 = 悬浮 chrome 簇（✕ / 层叠钮
@@ -4001,9 +4040,6 @@ body.card-window #canvas-panel.card-win-merging { animation: nf-card-win-out 0.1
    （dock 页），滚动面在壳内再垫一份会双计 —— 故此处不叠 safe。 */
 body.mobile-layer .canvas-viewer-safe-top {
   padding-top: var(--mchrome-clear, 72px);
-}
-#canvas-content.capsule-ring-open .canvas-viewer-safe-top {
-  padding-top: calc(var(--capsule-h, 36px) + 16px);
 }
 /* md 面例外：卡头胶囊浮带是真实遮挡（移位批 2026-10-22 作者报障实测），
    桌面常态保留顶垫——值同源上式（同一表达式，非第二把尺）。 */

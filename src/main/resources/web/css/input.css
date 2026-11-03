@@ -1026,6 +1026,28 @@
 #stop-btn:hover { background: color-mix(in srgb, var(--color-error) 88%, black); }
 #stop-btn svg { width: 18px; height: 18px; stroke-width: 2.5; }
 
+/* ── 输入条双钮热区补齐（作者报障 2026-11-03 22:15「手机端发送按钮和终止按钮
+   大小怎么没有统一」/ 待办 #1475 第八条）────────────────────────────────
+   两钮是**同位同角色的互斥两态**（busy 时 #send-btn 隐 / #stop-btn 显，见
+   js/input/composer.js applyTurnChrome）⇒ 必须同尺寸档、同热区档；主次只由
+   颜色表达（send = --ctl-send-* 绿实底，stop = --color-error 红实底），
+   绝不用尺寸表达。
+   视觉档：桌面 36×36（输入条圆钮族既有基准，本批不改）；手机层 48×48
+   （--mtap-lg，mobileLayer.css 同块两钮同挂）。
+   热区档：Apple HIG / WCAG 2.5.5 ≥44×44 —— 桌面本体的 36 用 ::after 外扩
+   4px 补到 44（外扩只在命中面，视觉零变化；手机层本体 48 天然达标，故外扩
+   只在非手机层声明，手机层命中盒 = 本体 48，不外溢到邻居钮）。
+   两钮同法 ⇒ busy↔idle 显隐互换时热区与几何都对称。 */
+#send-btn,
+#stop-btn { position: relative; }
+body:not(.mobile-layer) #send-btn::after,
+body:not(.mobile-layer) #stop-btn::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+}
+
 /* ---------- Voice Overlay ---------- */
 .voice-overlay {
   position: absolute;
