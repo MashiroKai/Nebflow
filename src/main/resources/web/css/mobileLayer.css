@@ -344,9 +344,9 @@ body.mobile-layer {
      已把旧的双层让位退役，重复加回会把首屏内容推掉 60px）。簇几何 token 在
      本批的消费点 = ①标题/胶囊左右内缩（--mtitle-inset）；②canvas 环标签展开
      签的横向钳位（--mchrome-inset，见 .mf-strip-chip.is-expanded）。 */
-  --mchrome-top: 16px;
+  --mchrome-top: var(--ds-space-4);      /* 16 —— 桥桌面间距阶梯（透传悬浮批，同值换源） */
   --mchrome-btn: var(--mtap-lg);
-  --mchrome-breathe: 8px;
+  --mchrome-breathe: var(--ds-space-2);  /* 8 —— 同上（簇顶/呼吸两字面量随批归 --ds-* 桥） */
   --mchrome-clear: calc(var(--mchrome-top) + var(--mchrome-btn) + var(--mchrome-breathe));
   --mchrome-inset: var(--mchrome-clear);
   /* ── 会话身份头几何（同一行批 2026-11-02 作者令「头像与左右双钮必须始终同一行」）──
@@ -483,21 +483,19 @@ body.mobile-layer #header {
    高光、spring 按压 scale(.88)、边缘光折射）；top:16px 左右 16px 悬浮顶缘
    （设计稿 §3.1），z 高于渐隐带（30 > 25）。 */
 body.mobile-layer #mobile-fab-layer {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
   height: 0;
   z-index: 30;
-  pointer-events: none; /* 层自身不拦截 —— 只有两枚圆钮接事件（渐隐带同源口径） */
+  /* 零底带几何（absolute/top/l/r/零底/不拦截）随透传悬浮批收编 .ds-chrome-band
+     （chatChrome.js 挂类；与 .mobile-page-header / .mf-cv-toolbar 同一族，
+     design-system.css 单源）—— 本块只留差档。 */
 }
 body.mobile-layer .mh-chrome-btn {
   position: absolute;
-  top: calc(16px + env(safe-area-inset-top, 0px));
+  top: calc(var(--mchrome-top, 16px) + env(safe-area-inset-top, 0px));
   pointer-events: auto;
 }
-body.mobile-layer .mh-chrome-btn[data-chrome='tasks'] { left: 16px; }
-body.mobile-layer .mh-chrome-btn[data-chrome='search'] { right: 16px; }
+body.mobile-layer .mh-chrome-btn[data-chrome='tasks'] { left: var(--mchrome-top, 16px); }
+body.mobile-layer .mh-chrome-btn[data-chrome='search'] { right: var(--mchrome-top, 16px); }
 body.mobile-layer .mh-chrome-btn svg { width: 20px; height: 20px; }
 /* 按压弹簧随统一按钮玻璃批迁 glass.css 手机弹簧档（.g2-fab 基准类共档）。 */
 body.mobile-layer .mh-chrome-badge {
@@ -791,15 +789,15 @@ body.mobile-layer .mobile-page-nohead {
    布局：返回钮（详情页）左 16 悬浮；大标题流内水平居中、垂直中心 = 钮中心
    （两段式标题批 2026-11-02：页体只留 --mtitle-lead 12 的顶呼吸缝，标题盒
    52 自承担让位 —— 旧 calc(72px + safe) 整条 chrome 让位随批退役）。
-   dock 根页「<」缺席（dock 语义，批②沿用）。 */
+   dock 根页「<」缺席（dock 语义，批②沿用）。
+   透传悬浮批（ui-unification-20261103-mobile-canvas-topbar）：零底带几何收编
+   .ds-chrome-band（navController.js 挂类；与 #mobile-fab-layer / .mf-cv-toolbar
+   同一族，design-system.css 单源）—— 本块只留差档（零高 / z 20）。 */
 body.mobile-layer .mobile-page-header {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
   height: 0;
-  pointer-events: none; /* 带本体不拦截 —— 子件各自接事件（fab 层同源口径） */
   z-index: 20;
+  /* 零底带几何随透传悬浮批收编 .ds-chrome-band（navController.js 挂类；
+     与 #mobile-fab-layer / .mf-cv-toolbar 同一族）—— 本块只留差档。 */
 }
 /* ═══ 面板头标题「大标题 → 胶囊」**单元素连续变形**（标题单元素化批
    2026-11-02 22:32 作者令，实拍双影：「我们现在面板的这个胶囊态 是两个割裂的
@@ -921,8 +919,8 @@ body.mobile-layer .mobile-page.rolled .mobile-page-title { pointer-events: none;
    z 序（B 批补）：带 4 < 小字 5 < 本钮 6 —— 渐隐带承底不蒙返回钮。 */
 body.mobile-layer .mobile-back-btn {
   position: absolute;
-  top: calc(16px + env(safe-area-inset-top, 0px));
-  left: 16px;
+  top: calc(var(--mchrome-top, 16px) + env(safe-area-inset-top, 0px));
+  left: var(--mchrome-top, 16px);
   width: 48px;
   height: 48px;
   padding: 0;
@@ -1585,17 +1583,43 @@ body.mobile-layer .mf-canvas-page {
    条几何：高 72px，签心 y=40 = ✕/堆叠两悬浮钮垂直中心（top 16 + 48/2）；左右
    让位 68px（悬浮钮 48 + 边距 16 + 4 气隙），mask 在 52→64px 与镜像段渐隐 ——
    从浮钮右缘 64 起恒为全实色，可见签（≥65.3）不被误伤，浮钮面上零墨
-   （截图实证过的旧 bug 面防线保留）。 */
+   （截图实证过的旧 bug 面防线保留）。
+
+   ══ 透传悬浮批（ui-unification-20261103-mobile-canvas-topbar；作者令 2026-11-03
+   实拍 IMG_1718/1719）═══════════════════════════════════════════════
+   作者原话：「顶栏不要有一个明显的边缘，而是能让文字从下方穿过，呈现出一种胶囊
+   和按钮悬浮在上面、正好可以显示它们毛玻璃效果的感觉……跟我们的主对话窗口是一样
+   的：一开始第一条消息放在顶栏下面；等消息变多了，就可以从下面滚过去」。
+   病根（断言 A3 改前红基线实测）：环带是**流内首件（72px）**⇒ 文档滚动容器
+   （.canvas-md-scroll，pane 内 inset:0）起于 y=72，滚动内容在 72 这条边上**硬裁**
+   —— 作者读作「明显的顶栏边界」；且初态让位吃的是桌面胶囊档 52（≠ 手机簇几何
+   72）。修法三件：
+     ① **环带离流**：`position:absolute; top:0`（几何零变化 —— 签照旧 top:40、
+        mask 照旧 375×72），文档宿主吃满整页 ⇒ 滚动面顶缘 = 页面顶缘（A3 ≤1px）；
+     ② **带零视觉底 + 手势落穿**：挂 `.ds-chrome-band`（design-system.css 单源：
+        无底/无边/无影/pointer-events:none），本块只留环带专属差档（高 72 / z 20 /
+        overflow / touch-action）。带区从顶栏起手也能滚 —— 滚动手势落穿到下方
+        滚动面（与主对话窗 #mobile-fab-layer 同一语义）；签本体显式
+        `pointer-events:auto` 接回点击（带 none 不下传，子件自接是同一族口径）；
+     ③ **初态让位换源**：滚动容器初态 padding-top = --mchrome-clear（簇顶 16 +
+        钮 48 + 呼吸 8 = 72；旧 52 = 桌面胶囊档，见 split.css .canvas-viewer-
+        safe-top 手机档）。安全区顶距由页面壳（.mobile-page-nohead）统一垫，
+        滚动面不再叠一份 env(safe-area-inset-top)（会双计）。
+   z 序：签组 z 20 压过 pane 内容（旧形态靠流内位置天然在上，离流后必须显式）；
+   工具条（节根 z 20，DOM 在后）压过签组；堆叠视角 .mf-stack-view z 40 全盖。
+   桌面零触碰：全部 body.mobile-layer 限定。 */
 body.mobile-layer .mf-strip {
-  position: relative;
-  flex: none;
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
   height: 72px;
-  padding: 0;
-  background: none;
-  border-bottom: none;
+  z-index: 20;
   overflow: visible;
   touch-action: pan-y;
 }
+/* 签本体接回点击/手势（带 pointer-events:none 不下传 —— 上方透传悬浮批②）。 */
+body.mobile-layer .mf-strip-chip { pointer-events: auto; }
 /* 环带双侧渐隐（2 签起挂 .fade —— 单签居中无需遮）。
    胶囊边缘渐隐批（作者令 2026-11-02 21:47 §一「靠近中间胶囊的部分要能清晰
    显示包括文字，然后越靠边越模糊，可以是胶囊只显示一半的那种圆环感」）：
@@ -1854,26 +1878,24 @@ body.mobile-layer .mf-strip:has(.mf-strip-chip.is-expanded) .mf-strip-chip:not(.
 /* 工具条（Canvas 改造批②⑤ → 悬浮钮统一批 2026-10-31 作者令 16:03）：✕/堆叠视角钮
    自通栏工具条退役为**悬浮 chrome 带**控件（与页面壳返回钮同带同几何：48px
    g2-fab，top:16+safe，左 16 / 右 16；带本体零高透明不拦截）；计数文本带内居中。
-   材质 = g2-fab 液体玻璃 v2 单源（blur/sat 双档 + 镜面高光 + spring 按压 scale.88）。 */
+   材质 = g2-fab 液体玻璃 v2 单源（blur/sat 双档 + 镜面高光 + spring 按压 scale.88）。
+   透传悬浮批（ui-unification-20261103-mobile-canvas-topbar）：零底带几何收编
+   `.ds-chrome-band`（design-system.css 单源，JS 挂类；与主对话窗 #mobile-fab-layer
+   同一族）—— 本块只留差档（零高 / z 20），位置/零底/不拦截声明随类。 */
 body.mobile-layer .mf-cv-toolbar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
   height: 0;
   z-index: 20;
-  pointer-events: none;
-  border-bottom: none;
-  padding: 0;
 }
 body.mobile-layer .mf-cv-toolbar[hidden] { display: none; }
+/* 钮落位走簇几何单源（--mchrome-top 16 = 簇顶距；与页头返回钮 / 聊天根双键
+   同一表达式，禁各写字面量 —— 透传悬浮批）。 */
 body.mobile-layer .mf-cv-toolbar .g2-fab {
   position: absolute;
-  top: calc(16px + env(safe-area-inset-top, 0px));
+  top: calc(var(--mchrome-top, 16px) + env(safe-area-inset-top, 0px));
   pointer-events: auto;
 }
-body.mobile-layer .mf-cv-toolbar .mf-cv-close { left: 16px; }
-body.mobile-layer .mf-cv-toolbar .mf-cv-stack { right: 16px; }
+body.mobile-layer .mf-cv-toolbar .mf-cv-close { left: var(--mchrome-top, 16px); }
+body.mobile-layer .mf-cv-toolbar .mf-cv-stack { right: var(--mchrome-top, 16px); }
 body.mobile-layer .mf-cv-toolbar .g2-fab svg { width: 20px; height: 20px; }
 /* 禁用 opacity .35 档随统一按钮玻璃批迁 glass.css 圆钮禁用档（.g2-fab 共档）。 */
 /* 堆叠视角打开时浮带工具钮让位（堆叠面自带同位 ✕，零双键重叠）。 */

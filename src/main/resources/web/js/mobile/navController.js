@@ -318,7 +318,9 @@ function buildSection(def) {
   //  滚动进度 --mtitle-p 由 bindRollProbe 写（几何全在 mobileLayer.css）。
   if (!def.dock) {
     const head = document.createElement('div');
-    head.className = 'mobile-page-header';
+    // 零底带类 = design-system.css 单源（透传悬浮批 2026-11-03：与聊天根
+    // #mobile-fab-layer / canvas 工具条同一族，一处定义处处引用）。
+    head.className = 'mobile-page-header ds-chrome-band';
     // 标题单元素化批（2026-11-02 22:32 作者令「两个割裂的形态…一直是同一个的
     // 形式」）：吸附态装饰副本 .mobile-page-title-mini **退役**（DOM 不再建节点）。
     // 双影根因 = 两套元素同屏交接（大标题盒收高的同时胶囊元素登场，交接区间内
@@ -1707,12 +1709,16 @@ function buildCanvasPage(body) {
   const wrap = document.createElement('div');
   wrap.className = 'mf-canvas-page';
   const strip = document.createElement('div');
-  strip.className = 'mf-strip';
+  // 零底带类 = design-system.css 单源（透传悬浮批 2026-11-03）：环带离流成
+  // 覆盖层（几何零变化：签 top:40 / 高 72 不变），带本体零视觉 + 手势落穿
+  // （pointer-events:none，签本体自接事件）—— 滚动正文从签底下穿过。
+  strip.className = 'mf-strip ds-chrome-band';
   strip.setAttribute('role', 'tablist');
   strip.setAttribute('aria-label', tt('文档卡片', 'Document cards'));
 
   const toolbar = document.createElement('div');
-  toolbar.className = 'mf-cv-toolbar';
+  // 零底带类同上（与页头带 / 聊天根双钮带同一族）。
+  toolbar.className = 'mf-cv-toolbar ds-chrome-band';
   const close = document.createElement('button');
   close.type = 'button';
   close.className = 'mf-cv-close g2-fab';

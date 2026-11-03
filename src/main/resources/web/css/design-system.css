@@ -970,6 +970,37 @@
   animation: modalIn var(--ds-dur-layer) var(--ds-ease-enter);
 }
 
+/* ── 悬浮 chrome 带（手机端「零视觉底」带）──
+   ui-unification-20261103-mobile-canvas-topbar（作者令 2026-11-03，实拍 IMG_1718/1719）：
+   「顶栏不要有一个明显的边缘，而是能让文字从下方穿过，呈现出一种胶囊和按钮悬浮在
+   上面、正好可以显示它们毛玻璃效果的感觉……这个设计思路其实跟我们的主对话窗口是一样的」。
+   语义 = 顶栏带本体**不存在**：带只是控件的定位上下文，自己不画任何东西 ——
+   无底色块 / 无分割线 / 无阴影 / 无渐变遮条；滚动态正文直接从带底下穿过，视觉层次
+   只由控件自己的毛玻璃承载（.g2-fab 圆钮 / .mf-strip-chip::after 胶囊）。
+   成员（全部手机层，JS 挂类、既有类名零改动 —— 一处定义，处处引用）；
+   各族规则只留**差异档**（高度 / z 序 / 子件几何）：
+     · #mobile-fab-layer   聊天根双钮带（chatChrome.js）
+     · .mobile-page-header 详情页返回钮带（navController.js）
+     · .mf-cv-toolbar      canvas 页 ✕ / 层叠钮带（navController.js）
+     · .mf-strip           canvas 环标签带（同文件；高 72 自持 —— 签位/mask 几何用）
+   交互：pointer-events:none ⇒ 带区手势一律落穿到下方滚动面（从顶栏起手也能滚）；
+   子件自接事件（圆钮 / 签各自 pointer-events:auto，见各面规则）。
+   几何注：top/left/right 贴齐定位上下文；本类**不定高**（零高带 vs 72px 环带由
+   消费面声明），也**不定 z 序**（聊天根 30 / 页头与 canvas 带 20 = 既有层带读数）。
+   初态让位同族单源 = 手机层 --mchrome-clear（簇顶 16 + 钮 48 + 呼吸 8），消费点见
+   split.css .canvas-viewer-safe-top 手机档与 mobileLayer.css 标题盒。 */
+.ds-chrome-band {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  pointer-events: none;
+}
+
 @keyframes modalIn {
   from {
     opacity: 0;

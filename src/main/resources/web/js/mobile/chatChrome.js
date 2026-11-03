@@ -168,6 +168,10 @@ export function activateChatChrome() {
   // ── 左右悬浮圆钮层（任务/搜索；48px v2 液体玻璃正圆）──
   fabLayer = document.createElement('div');
   fabLayer.id = 'mobile-fab-layer';
+  // 零底带类 = design-system.css 单源（透传悬浮批 2026-11-03）：聊天根本来就是
+  // 这套语义的基准件，随批与 .mobile-page-header / .mf-cv-toolbar / .mf-strip
+  // 收编进同一族（一处定义处处引用）。
+  fabLayer.className = 'ds-chrome-band';
 
   taskBtn = document.createElement('button');
   taskBtn.type = 'button';
