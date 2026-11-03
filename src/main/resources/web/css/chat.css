@@ -1099,11 +1099,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble {
   /* 气泡宽度上限 = 消息列宽的 80%。百分比相对 .row 内容盒解析——.row 作为 #chat
      （无水平 padding 的纵向 flex）的拉伸子项恒为全行宽，故长内容只换行、永不
-     铺满聊天区，非贴边一侧恒留 ≥20% 空白；user 右贴 / ai 左贴对齐方向不变。 */
-  max-width: 80%;
-  padding: 10px 14px;
-  border-radius: 16px;
-  font-size: 14.5px;
+     铺满聊天区，非贴边一侧恒留 ≥20% 空白；user 右贴 / ai 左贴对齐方向不变。
+     ui-unification-20261103-chat-stream：圆角/间距/字阶/最大宽四维走 --ds-* 槽
+     （值的家迁 design-system.css，计算值零漂移；好友/设备面 78% 另属
+     sapphire.css --msg-bubble-max-w，msgstyle 门禁钉死，两档两制）。 */
+  max-width: var(--ds-bubble-max-w);
+  padding: var(--ds-bubble-pad);
+  border-radius: var(--ds-radius-card-lg);
+  font-size: var(--ds-fs-bubble);
   line-height: 1.55;
   word-break: break-word;
 }
@@ -1561,162 +1564,21 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   opacity: 0.5;
 }
 
-.tool-card {
-  background: #f0f0f0;
-  border-radius: 10px;
-  padding: 6px 10px;
-  font-size: 12px;
-  max-width: 85%;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  cursor: pointer;
-  transition: background 0.15s;
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-}
-.tool-card:hover { background: #e8e8e8; }
-.tool-card--pending { background: #e8e8e8; }
-.tool-card .icon { flex-shrink: 0; margin-top: 1px; }
-.tool-card .icon.ok { color: var(--color-success); }
-/* ui-status-redesign（盘点 #45）：11 处 JS 内联 ✕ SVG stroke 硬编码 #f44336 →
-   currentColor，色由本类 token 给出（--status-error-icon，暗档随 token 提亮）。 */
-.tool-card .icon.err { color: var(--status-error-icon); }
-.tool-card .spinner {
-  width: 14px; height: 14px;
-  /* spinner-smooth 批（2026-10-06）：案外字面 #ccc/#555 归既有运行态 token 档——
-     与本页另外两处运行 spinner（.nf-wl-spin::before、.session-status.busy
-     .status-spinner）及 .task-node-spin 同一 --color-primary 惯例，暗档随 token
-     提亮；几何（14px/2px border）与动画（spin 1s，transform-only）不动。 */
-  border: 2px solid color-mix(in srgb, var(--color-primary, #07c160) 25%, transparent);
-  border-top-color: var(--color-primary, #07c160);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  display: inline-block;
-}
+/* 工具卡样式整段退役（ui-unification-20261103-chat-stream）：**唯一家** =
+   design-system.css `.ds-tool-card` 族（卡体/正文/弹片/设备角标/折叠件全走
+   --ds-* 槽；渲染腿 emit `class="tool-card ds-tool-card"`，.tool-card 降为
+   DOM 寻址钩子零样式）。本文件仅保留两个跨族资产：
+   · @keyframes spin —— 全仓 spinner 共享的文档级 keyframes（chat.css:956 等
+     多处 animation 消费，见 taskList.css 同注「例外保留」）；
+   · .pop-rainbow-name / @keyframes pop-rainbow-flow —— pop 文件名彩虹字，
+     chat.css 基线内既有字面量，非工具卡族形态、不入设计系统层。
+   内存条墨色/差分色/角标渐变已改由语义令牌 + color-mix 出演（亮暗自适，
+   暗档块随之整段退役）。 */
+
 @keyframes spin { to { transform: rotate(360deg); } }
-.tool-card .content { flex: 1; min-width: 0; }
-.tool-card .label { color: #555; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; }
-.tool-card .label .tool-detail { color: #999; font-size: 11px; }
-.tool-card .label .tool-device-tag {
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 500;
-  font-style: italic;
-  font-family: "SF Mono", "Menlo", "Consolas", monospace;
-  letter-spacing: 0.3px;
-  background: linear-gradient(135deg, #c0c0c8, #8a8a92, #b0b0b8);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  margin-left: 8px;
-  padding: 0 2px;
-  vertical-align: 1px;
-  white-space: nowrap;
-  user-select: none;
-  opacity: 0.85;
-}
-.tool-card .body {
-  color: #333;
-  font-size: 11px;
-  margin-top: 4px;
-  display: none;
-  background: #f5f5f5;
-  border-radius: 6px;
-  padding: 6px 8px;
-}
-.tool-card .body.open {
-  display: block;
-  max-height: 55vh;
-  overflow-y: auto;
-  overflow-x: auto;
-}
-.tool-card .body.open::-webkit-scrollbar-track { background: transparent; }
-.tool-card .body.open::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 2px; }
-.tool-card .body pre {
-  margin: 0;
-  font-size: 11px;
-  line-height: 1.4;
-  scrollbar-color: rgba(0,0,0,0.15) transparent;
-}
-.tool-card .body pre.tool-body-pre {
-  white-space: pre;
-}
-/* highlight.js overrides for tool card body */
-.tool-card .body pre.hljs {
-  white-space: pre-wrap;
-  word-break: break-all;
-  background: transparent;
-  padding: 0;
-  margin: 0;
-  overflow: visible;
-}
-.tool-card .body pre.hljs code.hljs {
-  background: transparent;
-  padding: 0;
-}
-.tool-card .body pre::-webkit-scrollbar-track {
-  background: transparent;
-}
-.tool-card .body pre::-webkit-scrollbar-thumb {
-  background: rgba(0,0,0,0.15);
-  border-radius: 2px;
-}
-.tool-card .body pre::-webkit-scrollbar-thumb:hover {
-  background: rgba(0,0,0,0.25);
-}
-.tool-card .body .diff-line { display: flex; gap: 6px; }
-.tool-card .body .diff-line:hover { background: rgba(0,0,0,0.03); }
-.tool-card .body .diff-lineno { color: #999; min-width: 28px; text-align: right; user-select: none; }
-.tool-card .body .diff-add { color: #2e7d32; background: #e8f5e9; }
-.tool-card .body .diff-del { color: #c62828; background: #ffebee; }
-.tool-card .body .diff-content { flex: 1; }
-.tool-card .body .detail-cmd {
-  color: #666;
-  font-size: 10.5px;
-  border-bottom: 1px solid var(--color-border);
-  padding-bottom: 4px;
-  margin-bottom: 4px;
-}
-.tool-card .body .delegate-prompt {
-  border-bottom: 1px solid var(--color-border);
-  padding-bottom: 6px;
-  margin-bottom: 6px;
-}
-.tool-card .body .delegate-prompt-label {
-  display: inline-block;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--color-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  margin-bottom: 3px;
-}
-.tool-card .body .delegate-prompt > pre {
-  margin: 0;
-  font-size: 11px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--color-text);
-}
 
-/* Mail tool — message content rendered as markdown inside the tool card body */
-.tool-mail-msg { font-size: 13px; line-height: 1.5; color: var(--color-text); }
-.tool-mail-msg p { margin: 4px 0; }
-.tool-mail-msg p:first-child { margin-top: 0; }
-.tool-mail-msg p:last-child { margin-bottom: 0; }
-.tool-mail-msg ul, .tool-mail-msg ol { margin: 4px 0 4px 18px; padding: 0; }
-.tool-mail-msg li { margin: 2px 0; }
-.tool-mail-msg code { background: rgba(0,0,0,0.05); padding: 1px 4px; border-radius: 3px; font-size: 0.9em; font-family: ui-monospace, SFMono-Regular, monospace; }
-.tool-mail-msg pre { background: rgba(0,0,0,0.05); padding: 8px 12px; border-radius: 8px; overflow-x: auto; font-size: 12px; margin: 6px 0; }
-.tool-mail-msg pre code { background: none; padding: 0; }
-.tool-mail-msg blockquote { border-left: 3px solid var(--color-border); margin: 6px 0; padding-left: 10px; color: var(--color-text-muted); }
-.tool-mail-msg strong { font-weight: 600; }
-/* 链接蓝化同登记项（chat 链接全面蓝化，与 .bubble.ai a 同 token 同源）。 */
-.tool-mail-msg a { color: rgb(var(--sapphire)); }
-
-/* Pop tool — rainbow filename inline + clickable card */
-.tool-card.pop-tool-card { cursor: pointer; }
+/* Pop tool — rainbow filename inline + clickable card（.tool-card.pop-tool-card
+   的 cursor 钩子随族化退役：.ds-tool-card 本体即 cursor:pointer） */
 .pop-rainbow-name {
   font: 600 12px ui-monospace, SFMono-Regular, monospace;
   background: linear-gradient(90deg, #e84855, #f68bd0, #9b5de5, #4cc9f0, #06d6a0, #ffd166, #e84855);
@@ -1872,19 +1734,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   .bubble.ai th, .bubble.injected th, .ask-bub.ai th { background: #22252e; }
   .bubble.ai hr, .bubble.injected hr, .ask-bub.ai hr { border-top-color: #2a2d35; }
 
-  .tool-card {
-    background: #22252e;
-  }
-  .tool-card:hover { background: #282b33; }
-  .tool-card--pending { background: #282b33; }
-  .tool-card .label { color: #b0b3ba; }
-  .tool-card .body {
-    background: #171a21;
-    color: #c0c3ca;
-  }
-  .tool-card .body.open::-webkit-scrollbar-track { background: transparent; }
-  .tool-card .body.open::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
-  .tool-card .body .detail-cmd { border-bottom-color: #2a2d35; color: #7b7e88; }
+  /* 工具卡暗档整段退役（ui-unification-20261103-chat-stream）：.ds-tool-card
+     族全槽语义令牌，暗档由 --ds-* 别名自动解析，无双写。 */
 
   .tool-stream-body { background: rgba(255,255,255,0.04); }
   .tool-stream-body pre.tool-body-pre { color: #b0b3ba; }

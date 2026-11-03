@@ -1351,11 +1351,123 @@ export function buildToolDetail(inputJson, label) {
   }
 }
 
-// === Tool card click handler (click to toggle body) ===
+// ═══ 工具卡折叠单源（ui-unification-20261103-chat-stream）══════════════════
+// 「执行命令 — N 行输出」信息密度收敛：长输出默认折叠为 ≤TOOL_PREVIEW_LINES 行
+// 预览 + 明确展开/收起控件（aria-expanded 联动），全文只在展开瞬间进 DOM、
+// 收起即卸（无泄漏）。三条默认渲染腿（chat.js renderTool + persistence.js 历史
+// 与存储两腿）统一经 mountToolCardBody 建体；attachToolClick 兼任折叠状态机
+// （整卡可点习惯保留，控件是显式主路径）。
+export const TOOL_PREVIEW_LINES = 8;
+
+/** card → 全文构建闭包（WeakMap 随卡生灭；折叠卡展开时的全文注入源）。 */
+const FOLD_BODIES = new WeakMap();
+
+/** delegate 入参的 prompt 原文（buildDelegatePromptHtml 的文本源，供预览截断）。 */
+export function delegatePromptRaw(inputJson) {
+  if (!inputJson) return null;
+  try {
+    const inp = typeof inputJson === 'string' ? JSON.parse(inputJson) : inputJson;
+    return (inp && typeof inp.prompt === 'string' && inp.prompt) ? inp.prompt : null;
+  } catch (e) { return null; }
+}
+
+/** 行数封顶：≤ n+1 行原文返回；超出取首 n 行 + 余量计数（「全文 N 行」读数）。 */
+function capLines(text, n) {
+  const lines = String(text).split('\n');
+  if (lines.length <= n + 1) return { text: String(text), more: 0 };
+  return { text: lines.slice(0, n).join('\n'), more: lines.length - n };
+}
+
+/** 折叠/展开两面的正文 HTML（同一渲染路径，仅截断口径不同；full=true 全文）。 */
+function toolFoldHtml({ detailHtml, promptText, content, label }, full) {
+  const parts = [];
+  if (detailHtml) parts.push(detailHtml);
+  if (promptText) {
+    const p = full ? { text: promptText } : capLines(promptText, TOOL_PREVIEW_LINES);
+    parts.push('<div class="delegate-prompt"><span class="delegate-prompt-label">Prompt</span><pre class="tool-body-pre">' + escapeHtml(p.text) + '</pre></div>');
+  }
+  if (content) {
+    const src = full ? content : capLines(content, TOOL_PREVIEW_LINES).text;
+    const highlighted = renderHighlightedContent(src, label);
+    parts.push(highlighted || '<pre class="tool-body-pre">' + escapeHtml(src) + '</pre>');
+  }
+  return parts.join('');
+}
+
+/**
+ * 建工具卡体（三条默认腿单源）：折叠预览 + 控件 + .body 空壳 hook。
+ * 前置：card.innerHTML 已含 icon + .content + .label（本函数只往 .content 追加）。
+ * 短内容（≤ 阈值）不折叠：.body 直接收全文（遗留形态，点击开合）。
+ * 返回 { hasBody } —— 真值时腿据此挂 attachToolClick。
+ */
+export function mountToolCardBody(card, { detailHtml = '', promptText = null, content = null, label = '' }) {
+  const contentEl = card.querySelector('.content');
+  if (!contentEl) return { hasBody: false };
+  const contentLines = content ? String(content).split('\n').length : 0;
+  const promptLines = promptText ? String(promptText).split('\n').length : 0;
+  const overThreshold = contentLines > TOOL_PREVIEW_LINES + 1 || promptLines > TOOL_PREVIEW_LINES + 1;
+  if (!overThreshold) {
+    // 阈值内（或无可折叠正文）：遗留形态——.body 直接收全文，点击开合。
+    const html = toolFoldHtml({ detailHtml, promptText, content, label }, true);
+    if (html) {
+      const body = document.createElement('div');
+      body.className = 'body';
+      body.innerHTML = html;
+      contentEl.appendChild(body);
+      return { hasBody: true };
+    }
+    return { hasBody: false };
+  }
+  // 折叠面：预览（≤N 行）+ 明确控件
+  const preview = document.createElement('div');
+  preview.className = 'ds-tool-card__preview';
+  preview.innerHTML = toolFoldHtml({ detailHtml, promptText, content, label }, false);
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'ds-tool-card__toggle';
+  toggle.setAttribute('aria-expanded', 'false');
+  const total = (content ? String(content).split('\n').length : 0)
+    + (promptText ? String(promptText).split('\n').length : 0);
+  toggle.textContent = t('chat.toolExpandMore', { n: total });
+  preview.appendChild(toggle);
+  contentEl.appendChild(preview);
+  // 全文槽：.body 空壳（折叠态零内容零可见；遗留 .body hook 断言面兼容）
+  const body = document.createElement('div');
+  body.className = 'body';
+  contentEl.appendChild(body);
+  card.dataset.nfToolFoldTotal = String(total);
+  FOLD_BODIES.set(card, () => toolFoldHtml({ detailHtml, promptText, content, label }, true));
+  return { hasBody: true };
+}
+
+// === Tool card click handler（整卡点击；折叠卡走状态机，遗留卡原样开合） ===
 export function attachToolClick(card) {
   card.addEventListener('click', () => {
     const body = card.querySelector('.body');
-    if (body) body.classList.toggle('open');
+    if (!body) return;
+    const buildFull = FOLD_BODIES.get(card);
+    if (buildFull) {
+      // 折叠状态机：全文只在展开瞬间进 DOM，收起即卸（往返无泄漏）。
+      const opening = !body.classList.contains('open');
+      if (opening) {
+        body.innerHTML = buildFull();
+        body.classList.add('open');
+      } else {
+        body.innerHTML = '';
+        body.classList.remove('open');
+      }
+      const preview = card.querySelector('.ds-tool-card__preview');
+      if (preview) preview.style.display = opening ? 'none' : '';
+      const toggle = card.querySelector('.ds-tool-card__toggle');
+      if (toggle) {
+        toggle.setAttribute('aria-expanded', opening ? 'true' : 'false');
+        toggle.textContent = opening
+          ? t('chat.toolCollapse')
+          : t('chat.toolExpandMore', { n: Number(card.dataset.nfToolFoldTotal || 0) });
+      }
+    } else {
+      body.classList.toggle('open');
+    }
   });
 }
 

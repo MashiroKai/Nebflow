@@ -187,6 +187,19 @@
   --ds-border-glass: var(--glass-border);   /* 玻璃描边单源别名（不复制值） */
   --ds-focus-width: 2px;                    /* IBM / NVIDIA focus 双源 2px */
   /* focus 色锚 = 既有 --ds-focus-ring（var(--btn-focus-ring)），草案条目精确归属，不另立槽 */
+
+  /* ── ⑩ 聊天流面既有值档（ui-unification-20261103-chat-stream）──
+     缺槽先扩再消费：以下四槽 = chat.css .bubble / .tool-card 的**现盘读数逐字搬迁**
+     （值的家从消费面迁到本令牌层，计算值零漂移），不是新规范值。
+     · 好友/设备面 78% 列宽**不**并入：其值家 = sapphire.css --msg-bubble-max-w，
+       被 scripts/check-msgstyle-single-source.mjs A3 规则逐字钉死在 sapphire.css，
+       两档两制并存是门禁钉死的单源现状，禁在本层起同值第二槽。 */
+  --ds-bubble-max-w: 80%;        /* 主对话气泡列宽（chat.css .bubble 既有值档） */
+  --ds-bubble-pad: 10px 14px;    /* 主对话气泡内距既有值档 */
+  --ds-fs-bubble: 14.5px;        /* 主对话气泡字档（2026-09-12 ③-4 裁定：主对话 14.5px、
+                                    好友面 13px 保持——档外既有值以具名槽收编，禁再派生） */
+  --ds-card-pad-compact: 6px 10px; /* 工具卡紧档内距既有值档 */
+  --ds-toolcard-max-w: 85%;      /* 工具卡列宽既有值档 */
 }
 
 /* ══ 组件类层（`.ds-*`）══════════════════════════════════════════════
@@ -314,6 +327,213 @@
   text-transform: uppercase;
   color: var(--ds-text-muted);
 }
+
+/* ══ ⑦ 工具卡族（.ds-tool-card）——聊天流「执行命令 — N 行输出」卡片 ══════
+   ui-unification-20261103-chat-stream：**样式唯一家**。chat.css 旧 .tool-card
+   亮/暗档整段退役（含 #ask-indicator 之外的 pop-stack 无关段不动）。
+   钩子契约：渲染腿 emit `class="tool-card ds-tool-card"`——.tool-card 保留为
+   DOM 寻址钩子（main.js 换面 / chatSearch / turnGroup / spec），零样式。
+   折叠语义（密度收敛核心）：.ds-tool-card__preview = 默认可见 ≤8 行预览 +
+   __toggle 明确展开/收起控件（aria-expanded 联动）；.body = 全文槽（遗留 hook，
+   折叠态空壳隐藏——toolline-detail-stream 断言它存在且不可见；全文只在展开
+   瞬间由 utils.js attachToolClick 注入，收起即卸）。
+   主题：全槽语义令牌（暗档自动解析，chat.css 暗档块同批退役）；滚动条墨色 =
+   color-mix(--ds-text 15%)（亮暗自适，替代旧 rgba 黑/白双写）。 */
+.ds-tool-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ds-space-1);
+  max-width: var(--ds-toolcard-max-w);
+  padding: var(--ds-card-pad-compact);
+  font-family: var(--ds-font-mono);
+  font-size: var(--ds-fs-hint);
+  border-radius: var(--ds-radius-card-sm);
+  background: var(--ds-etched-bg);
+  color: var(--ds-text);
+  cursor: pointer;
+  transition: background var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-tool-card:hover,
+.ds-tool-card--pending { background: var(--ds-control-bg-hover); }
+.ds-tool-card .icon { flex-shrink: 0; margin-top: 1px; }
+.ds-tool-card .icon.ok { color: var(--ds-success-icon); }
+.ds-tool-card .icon.err { color: var(--ds-danger-icon); }
+.ds-tool-card .spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid color-mix(in srgb, var(--ds-accent) 25%, transparent);
+  border-top-color: var(--ds-accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  display: inline-block;
+}
+.ds-tool-card .content { flex: 1; min-width: 0; }
+.ds-tool-card .label {
+  color: var(--ds-text-muted);
+  font-size: var(--ds-fs-hint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ds-tool-card .label .tool-detail { color: var(--ds-text-dim); font-size: var(--ds-fs-meta); }
+/* 设备角标：旧「金属渐变字」收编语义档（muted→dim→muted），三色随主题。 */
+.ds-tool-card .label .tool-device-tag {
+  display: inline-block;
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-btn);
+  font-style: italic;
+  font-family: var(--ds-font-mono);
+  letter-spacing: 0.3px;
+  background: linear-gradient(135deg, var(--ds-text-muted), var(--ds-text-dim), var(--ds-text-muted));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-left: var(--ds-space-2);
+  padding: 0 var(--ds-space-half);
+  vertical-align: 1px;
+  white-space: nowrap;
+  user-select: none;
+  opacity: 0.85;
+}
+
+/* ── 卡体：预览面（默认可见）与全文槽（.body）共用同一套正文排版 ── */
+.ds-tool-card .ds-tool-card__preview {
+  margin-top: var(--ds-space-1);
+  color: var(--ds-text);
+  font-size: var(--ds-fs-meta);
+  line-height: 1.4;
+}
+.ds-tool-card .body {
+  color: var(--ds-text);
+  font-size: var(--ds-fs-meta);
+  margin-top: var(--ds-space-1);
+  display: none;
+  background: var(--ds-surface);
+  border-radius: var(--ds-radius-badge);
+  padding: var(--ds-space-1) var(--ds-space-2);
+}
+.ds-tool-card .body.open {
+  display: block;
+  max-height: 55vh;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+.ds-tool-card .body.open::-webkit-scrollbar-track { background: transparent; }
+.ds-tool-card .body.open::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ds-text) 15%, transparent);
+  border-radius: var(--ds-radius-badge);
+}
+.ds-tool-card pre {
+  margin: 0;
+  font-size: var(--ds-fs-meta);
+  line-height: 1.4;
+  scrollbar-color: color-mix(in srgb, var(--ds-text) 15%, transparent) transparent;
+}
+.ds-tool-card pre.tool-body-pre { white-space: pre; }
+.ds-tool-card pre.hljs {
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  overflow: visible;
+}
+.ds-tool-card pre.hljs code.hljs { background: transparent; padding: 0; }
+.ds-tool-card pre::-webkit-scrollbar-track { background: transparent; }
+.ds-tool-card pre::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ds-text) 15%, transparent);
+  border-radius: var(--ds-radius-badge);
+}
+.ds-tool-card pre::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--ds-text) 25%, transparent);
+}
+.ds-tool-card .diff-line { display: flex; gap: var(--ds-space-1); }
+.ds-tool-card .diff-line:hover { background: var(--ds-veil-focus); }
+.ds-tool-card .diff-lineno { color: var(--ds-text-dim); min-width: 28px; text-align: right; user-select: none; }
+.ds-tool-card .diff-add { color: var(--ds-success-icon); background: color-mix(in srgb, var(--ds-success-icon) 12%, transparent); }
+.ds-tool-card .diff-del { color: var(--ds-danger-icon); background: color-mix(in srgb, var(--ds-danger-icon) 12%, transparent); }
+.ds-tool-card .diff-content { flex: 1; }
+.ds-tool-card .detail-cmd {
+  color: var(--ds-text-muted);
+  font-size: var(--ds-fs-meta);
+  border-bottom: 1px solid var(--ds-border-hairline);
+  padding-bottom: var(--ds-space-1);
+  margin-bottom: var(--ds-space-1);
+}
+.ds-tool-card .delegate-prompt {
+  border-bottom: 1px solid var(--ds-border-hairline);
+  padding-bottom: var(--ds-space-1);
+  margin-bottom: var(--ds-space-1);
+}
+.ds-tool-card .delegate-prompt-label {
+  display: inline-block;
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-btn);
+  color: var(--ds-text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--ds-ls-label);
+  margin-bottom: var(--ds-space-half);
+}
+.ds-tool-card .delegate-prompt > pre {
+  margin: 0;
+  font-size: var(--ds-fs-meta);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ds-text);
+}
+
+/* ── 折叠控件（显式主路径；整卡可点习惯由 attachToolClick 保留）── */
+.ds-tool-card__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-half);
+  margin-top: var(--ds-space-half);
+  padding: 1px var(--ds-space-1);
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-btn);
+  line-height: var(--ds-lh-tight);
+  color: var(--ds-text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--ds-radius-badge);
+  cursor: pointer;
+}
+.ds-tool-card__toggle:hover { color: var(--ds-text); background: var(--ds-veil-focus); }
+.ds-tool-card__toggle:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 1px; }
+
+/* ── Mail 工具：卡内 markdown 正文（自 chat.css 迁入本族，色面走语义档）── */
+.ds-tool-card .tool-mail-msg { font-size: var(--ds-fs-body); line-height: var(--ds-lh-body); color: var(--ds-text); }
+.ds-tool-card .tool-mail-msg p { margin: var(--ds-space-1) 0; }
+.ds-tool-card .tool-mail-msg p:first-child { margin-top: 0; }
+.ds-tool-card .tool-mail-msg p:last-child { margin-bottom: 0; }
+.ds-tool-card .tool-mail-msg ul, .ds-tool-card .tool-mail-msg ol { margin: var(--ds-space-1) 0 var(--ds-space-1) 18px; padding: 0; }
+.ds-tool-card .tool-mail-msg li { margin: var(--ds-space-half) 0; }
+.ds-tool-card .tool-mail-msg code {
+  background: color-mix(in srgb, var(--ds-text) 5%, transparent);
+  padding: 1px 4px;
+  border-radius: var(--ds-radius-badge);
+  font-size: var(--ds-fs-meta);
+  font-family: var(--ds-font-mono);
+}
+.ds-tool-card .tool-mail-msg pre {
+  background: color-mix(in srgb, var(--ds-text) 5%, transparent);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border-radius: var(--ds-radius-input);
+  overflow-x: auto;
+  font-size: var(--ds-fs-hint);
+  margin: var(--ds-space-1) 0;
+}
+.ds-tool-card .tool-mail-msg pre code { background: none; padding: 0; }
+.ds-tool-card .tool-mail-msg blockquote {
+  border-left: 3px solid var(--ds-border-hairline);
+  margin: var(--ds-space-1) 0;
+  padding-left: var(--ds-space-2);
+  color: var(--ds-text-muted);
+}
+.ds-tool-card .tool-mail-msg strong { font-weight: var(--ds-fw-title); }
+/* 链接蓝化同登记项（chat 链接全面蓝化，与 .bubble.ai a 同 token 同源）。 */
+.ds-tool-card .tool-mail-msg a { color: rgb(var(--sapphire)); }
 
 /* prefers-reduced-motion：全局压掉过渡（SKILL.md §6 官网同款兜底）。 */
 @media (prefers-reduced-motion: reduce) {

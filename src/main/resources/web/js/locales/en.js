@@ -1536,6 +1536,11 @@ export default {
   // card sentinel is no longer dumped through the <pre> fallback ⇒ it takes the
   // card path, and this placeholder when extraction fails (raw text never in DOM).
   'chat.toolCardUnavailable': 'Card content unavailable (raw data not rendered)',
+  // Tool-card fold toggle (ui-unification-20261103-chat-stream): long output
+  // collapses to an <=8-line preview; the toggle names the full line count and
+  // mirrors aria-expanded (collapsed state echoes the count).
+  'chat.toolExpandMore': 'Expand all {n} lines',
+  'chat.toolCollapse': 'Collapse',
   // pop-upgrade batch (2026-10-03): Pop artifact faces (media stack / file cards)
   'chat.popExpand': 'Expand {n}',
   'chat.popCollapse': 'Collapse',
