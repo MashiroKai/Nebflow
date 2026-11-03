@@ -613,6 +613,20 @@ case class SharedResources(
         s"""[merge-queue] delegate "${m.description}" (${m.delegateId}) is WAITING in the merge queue for branch '${m.branch}' → '${m.baseBranch}' because: $reason. It stays queued and is re-attempted every care tick — ACTION: fix the base workspace condition above (e.g. check out '${m.baseBranch}' in '${m.baseWs}') or the member keeps waiting; an escalation notice follows if the same blocker persists."""
       case "failed" =>
         s"""[merge-queue] delegate "${m.description}" (${m.delegateId}) — its merge round for branch '${m.branch}' → '${m.baseBranch}' was REFUSED and the membership is CLOSED as failed: $reason. No merge rounds are revived (traffic-controller model). MANUAL ACTION: merge '${m.branch}' by hand or re-dispatch the task (branch and worktree preserved)."""
+      // merge-fifo 批 2026-11-03（作者报障「两个会话都已经报了 merge，为什么还没收到
+      // 通知」·「队列侧合并是静默的」）：**落地也是要宣布的**——队列侧异步关账
+      // （care-tick 账实核对 / 放行前核对 / boot 对账）读到「分支已并入基分支」即
+      // 关账 merged，本条通知把这件事说给父/根会话（作者面「落了地，从不宣布」的消除闸）。
+      case "merged" =>
+        s"""[merge-queue] delegate "${m.description}" (${m.delegateId}) — its branch '${m.branch}' is MERGED into '${m.baseBranch}'; the merge-queue membership is CLOSED as merged: $reason. No action needed on the queue side (this is the close-out notice for a membership that landed without the owner reporting back)."""
+      // 入队强保证的失败腿（enqueueVerifiedIO）：入队没核到开放条目 ⇒ 这条分支
+      // **不会被排到**，必须显式宣布（否则又回到「零台账行 + 零通知」）。
+      case "enqueue-failed" =>
+        s"""[merge-queue] delegate "${m.description}" (${m.delegateId}) — the merge-queue ENQUEUE for branch '${m.branch}' → '${m.baseBranch}' could NOT be verified: $reason. This branch will NOT be granted a merge turn. MANUAL ACTION: merge '${m.branch}' by hand or re-dispatch the task (branch and worktree preserved)."""
+      // 活性守卫补入队（MergeEnqueueWatch）：申报/终态腿双失的漏网成员被守护腿捡回
+      // 队列——作者面可见「差点漏掉的那条是这一条」。
+      case "watch-queued" =>
+        s"""[merge-queue] delegate "${m.description}" (${m.delegateId}) — branch '${m.branch}' → '${m.baseBranch}' was MISSING from the merge queue (its report/terminal leg never enqueued it); the idle-safety watch has just queued it: $reason. No action needed unless the membership looks wrong to you."""
       case _ =>
         s"""[merge-queue] ESCALATION: delegate "${m.description}" (${m.delegateId}) has been blocked for ${nebflow.core.delegate.MergeQueue.EscalateAfterBlockedRounds} consecutive pump rounds with the same reason: $reason. AUTHOR ATTENTION: the merge queue cannot proceed past this blocker by itself — resolve it or close the membership."""
     nebflow.core.tools.BgNotifyDelivery

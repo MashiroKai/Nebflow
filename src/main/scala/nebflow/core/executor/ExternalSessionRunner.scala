@@ -687,7 +687,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                       )
                         .map(_.map(_ => ()))
                   }
-                  MergeQueue.enqueueIO(
+                  MergeQueue.enqueueVerifiedIO(
                     MergeQueue.Member(
                       delegateId = sessionId,
                       branch = r.branch.get,

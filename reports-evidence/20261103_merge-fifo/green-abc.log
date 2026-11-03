@@ -1,0 +1,30 @@
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-8bbd5088-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-8bbd5088/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-8bbd5088/)
+[info] compiling 2 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-8bbd5088/target/scala-3.5.2/test-classes ...
+[info] done compiling
+[warn] javaOptions will be ignored, fork is set to false
+20:47:00.258 [33mWARN [0m nebflow.core.delegate.merge-enqueue - [merge-enqueue] no registry record for 'delegate-a2-ghost' — merge membership not pre-booked
+20:47:00.261 [33mWARN [0m nebflow.core.delegate.merge-enqueue - [merge-enqueue] 'delegate-a2-nobase' has no branch/baseBranch anchor (branch=delegate/delegate-a2-nobase, baseBranch=-) — merge target unknown, membership NOT pre-booked (the engine never guesses 'main')
+20:47:00.261 [33mWARN [0m nebflow.core.delegate.merge-enqueue - [merge-enqueue] 'delegate-a2-nobranch' has no branch/baseBranch anchor (branch=-, baseBranch=main) — merge target unknown, membership NOT pre-booked (the engine never guesses 'main')
+[32mnebflow.core.delegate.MergeQueueFifoNotifySpec:[0m
+[32m  + [0m[32mA1 申报点预记账：delegate_report(merge) 落槽即入队（终态腿没跑成也不会有零台账行）+ 回执显式 CONFIRMED[0m [90m0.66s[0m
+[32m  + [0m[32mA2 零猜：ensurePending 只认 branch ∧ baseBranch 两锚（缺锚 = false，绝不猜 main；无记录 = false）[0m [90m0.232s[0m
+[32m  + [0m[32mA3 核实入队的失败腿：账本核不到开放条目 ⇒ 返回 false + enqueue-failed 必通知，绝不抛[0m [90m0.188s[0m
+[32m  + [0m[32mA4 核实入队的好腿：开放条目核到 ⇒ 返回 true 且零通知[0m [90m0.681s[0m
+[32m  + [0m[32mB1 排空序：readyAt 300/100/200 反序注入 ⇒ 放行序必须 100 → 200 → 300（FIFO = 完成时间序，不是入队序）[0m [90m1.52s[0m
+[32m  + [0m[32mC1 merged 必通知：队列侧异步关账（放行前账实核对命中已并）⇒ BlockNotifyPort kind=merged（落地也是状态变化）[0m [90m0.511s[0m
+[32m  + [0m[32mC2 不许双通知：属主合并轮终态（onTerminal Merged）⇒ 队列侧零通知（父通知由属主自己的 Release 承担）[0m [90m0.771s[0m
+[32m  + [0m[32mC3 failed 必通知：合并轮被拒 ⇒ kind=failed 且原因原文逐字随行（无重试无 park）[0m [90m0.807s[0m
+[32mnebflow.core.delegate.MergeEnqueueWatchSpec:[0m
+[32m  + [0m[32mD1 七维真值表：全真才代办；任一维翻假都必须零动作[0m [90m0.01s[0m
+[32m  + [0m[32mD2 阈值边界：idle=999 不代办、idle=1000 代办（>= 而非 >）；缺省阈值 = Defaults.MergeEnqueueWatchIdleSec=600s[0m [90m0.002s[0m
+[32m  + [0m[32mD3 代办锚：readyAt = lastActivityMs（不是扫描时刻）+ watch-queued 通知点名漏排事实[0m [90m0.174s[0m
+[32m  + [0m[32mD3b 零猜：无 branch/baseBranch 锚的漏网候选 ⇒ 不入队、零通知（引擎绝不猜 main）[0m [90m0.13s[0m
+[32m  + [0m[32mD4 幂等：账本已有开放条目 ⇒ 同一读数扫两拍零代办、零通知（hasOpenEntry 是唯一闸）[0m [90m0.144s[0m
+[32m  + [0m[32mD4b 幂等（真入队腿）：已代办的成员在下一拍不再被代办（hasOpenEntry 闸），零重复通知[0m [90m0.547s[0m
+[info] Passed: Total 14, Failed 0, Errors 0, Passed 14
+[success] Total time: 17 s, completed 2026年11月3日 20:47:06
+EXIT=0

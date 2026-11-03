@@ -176,6 +176,26 @@ object DelegateReportTool extends Tool:
     val write = IO
       .blocking(DelegateRegistry.updateReport(id, category, detail, suggestion))
       .handleErrorWith(e => IO.pure(Left(s"delegate_report: status write failed: ${e.getMessage}")))
+    // merge-fifo 批 2026-11-03（作者报障「两个会话都已经报了 merge，为什么还没收到通知」）：
+    // merge 申报落槽成功 ⇒ **立刻预记账**（MergeEnqueue.ensurePending——申报点入队强
+    // 保证：终态腿没跑成也绝不零台账行）。fail-soft：任何故障只转成确认行里的一句
+    // PENDING 注记，绝不改写本工具的 Right/Left（申报本身成功就是成功）。
+    val pendingNote: IO[String] =
+      if category == MergeValue then
+        nebflow.core.delegate.MergeEnqueue
+          .ensurePending(id, System.currentTimeMillis())
+          .attempt
+          .map {
+            case Right(true)  => " Merge queue entry CONFIRMED (pre-booked now; the merge reminder follows when it is your turn)."
+            case Right(false) =>
+              " Merge queue entry PENDING (not pre-booked: no registry record or no branch/baseBranch anchor — the merge target is unknown; the engine never guesses 'main'). State this in your final report."
+            case Left(e) =>
+              s" Merge queue entry PENDING (pre-booking failed: ${Option(e.getMessage).getOrElse(e.toString).take(160)}) — the turn-end enqueuer is still the safety net."
+          }
+          .handleErrorWith(e =>
+            IO(s" Merge queue entry PENDING (pre-booking errored: ${Option(e.getMessage).getOrElse(e.toString).take(160)}).")
+          )
+      else IO.pure("")
     write
       .flatTap {
         // task-rag 批（#1227 / §Batch 7）：delegate 终态增量索引——申报写成功后
@@ -185,17 +205,19 @@ object DelegateReportTool extends Tool:
         case Right(_) => nebflow.core.index.TaskSearchIndex.upkeepFireAndForget()
         case Left(_)  => IO.unit
       }
-      .map {
-        case Left(err) => Left(ToolError(err))
+      .flatMap {
+        case Left(err) => IO.pure(Left(ToolError(err)))
         case Right(_) =>
-          val confirm =
-            if category == MergeValue then
-              "[OK] merge recorded — you are now waiting-merge (MergeQueue FIFO). Do NOT merge on your own initiative: keep working elsewhere or go idle; the engine sends you a merge reminder when it is your turn. Your final report comes AFTER the merge round (report finish then)."
-            else if category == StandbyValue then
-              "[OK] standby recorded — when this turn ends the engine will NOT run the terminal verdict and will NOT deliver your text to the dispatcher: the task row stays running and your session parks in the explicit standby state (UI shows 待命). Declared standby gets NO reminder and NO wake-up (author 2026-11-03 18:14 matrix: only an undeclared idle turn is nudged) — re-declare standby to keep waiting, or report finish/merge if the end state is actually reached. The NEXT Mail to your address wakes you into a normal working turn (the standby declaration is consumed — report again after working)." + softWarn
-            else
-              "[OK] finish recorded — now write your final report as normal text output; it is the deliverable handed back to the dispatcher. It must contain your WORK RESULT (what the task produced, artifacts, REPORT.md paths) with merge info kept to one line; the engine also auto-attaches your preserved work-phase report. finish is the ONLY declaration the engine may judge as complete — never end a turn without a declaration."
-          Right(confirm)
+          pendingNote.map { note =>
+            val confirm =
+              if category == MergeValue then
+                "[OK] merge recorded — you are now waiting-merge (MergeQueue FIFO). Do NOT merge on your own initiative: keep working elsewhere or go idle; the engine sends you a merge reminder when it is your turn. Your final report comes AFTER the merge round (report finish then)." + note
+              else if category == StandbyValue then
+                "[OK] standby recorded — when this turn ends the engine will NOT run the terminal verdict and will NOT deliver your text to the dispatcher: the task row stays running and your session parks in the explicit standby state (UI shows 待命). Declared standby gets NO reminder and NO wake-up (author 2026-11-03 18:14 matrix: only an undeclared idle turn is nudged) — re-declare standby to keep waiting, or report finish/merge if the end state is actually reached. The NEXT Mail to your address wakes you into a normal working turn (the standby declaration is consumed — report again after working)." + softWarn
+              else
+                "[OK] finish recorded — now write your final report as normal text output; it is the deliverable handed back to the dispatcher. It must contain your WORK RESULT (what the task produced, artifacts, REPORT.md paths) with merge info kept to one line; the engine also auto-attaches your preserved work-phase report. finish is the ONLY declaration the engine may judge as complete — never end a turn without a declaration."
+            Right(confirm)
+          }
       }
 
 end DelegateReportTool

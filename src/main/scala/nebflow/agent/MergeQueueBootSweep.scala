@@ -142,7 +142,8 @@ object MergeQueueBootSweep:
                         m.delegateId,
                         via = "boot-reconcile",
                         closeReason = Some("branch already merged (fact-check at boot)"),
-                        cleanup = false
+                        cleanup = false,
+                        notifyParent = false // 本腿自带 notifyParent 文案（不许双通知）
                       )
                     )
                     _ <- notifyParent(
@@ -162,7 +163,8 @@ object MergeQueueBootSweep:
                         closeReason = Some(
                           s"nothing to merge (branch exists=${GitWorktrees.branchExists(ws, branch)}, commitsAhead=$ahead)"
                         ),
-                        cleanup = false
+                        cleanup = false,
+                        notifyParent = false // 本腿自带 notifyParent 文案（不许双通知）
                       )
                     )
                     _ <- notifyParent(
@@ -219,7 +221,8 @@ object MergeQueueBootSweep:
             m.delegateId,
             via = "boot-reconcile",
             closeReason = Some("branch already merged (fact-check at boot; registry record gone, channel record open)"),
-            cleanup = false
+            cleanup = false,
+            notifyParent = true // 本腿无属主 Release 兜底（记录已失联）——队列侧必通知
           )
         ).as(Report(alreadyMerged = List(m.delegateId)))
       case _ =>
