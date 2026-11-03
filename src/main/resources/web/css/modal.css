@@ -555,28 +555,13 @@
   cursor: pointer;
   padding: 4px 2px;
   border-radius: var(--ds-radius-badge);
-  transition: color var(--ds-dur-hover);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-}
-.cfg-eye-btn:hover {
-  color: var(--ds-text-bright);
-}
-.cfg-eye-btn {
-  background: none;
-  border: none;
-  color: var(--color-frame-text-dim, #999);
-  cursor: pointer;
-  padding: 4px 2px;
-  border-radius: 4px;
   transition: color 0.15s;
   flex-shrink: 0;
   display: flex;
   align-items: center;
 }
 .cfg-eye-btn:hover {
-  color: var(--color-frame-text-bright, #333);
+  color: var(--ds-text-bright);
 }
 .cfg-eye-btn svg {
   width: 16px;
@@ -589,7 +574,7 @@
    全站一档），标题 15px/600 = 面板标题档。 */
 #settings-modal {
   display: none;
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   width: 560px;
   max-width: calc(100vw - 48px);
   max-height: 85vh;
@@ -605,12 +590,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px 12px 20px;
+  padding: var(--ds-modal-head-pad);
   border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
 }
 #settings-modal-title {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   color: var(--color-frame-text-bright);
 }

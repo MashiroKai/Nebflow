@@ -105,7 +105,7 @@
 
   /* ── ④ 间距（4px 栅格；SKILL.md §5 合法值 4/8/12/16/20/24/32；值重定批
      §3.3 S 组吸收 Carbon 2x：值对位见各行注释，编号不重排 —— 既有消费点
-     （.ds-*/设置页）的索引语义不漂移，缺口档以 -half/-12/-16 延续 N=px/4 编号法）── */
+     （.ds-* 与设置页）的索引语义不漂移，缺口档以 -half/-12/-16 延续 N=px/4 编号法）── */
   --ds-space-1: 4px;       /* Carbon $spacing-02 */
   --ds-space-2: 8px;       /* Carbon $spacing-03 */
   --ds-space-3: 12px;      /* Carbon $spacing-04 */
@@ -226,6 +226,15 @@
      --ds-shadow-card 先例在此出生（墨α = 主题不变「墨常量」；sapphire 蓝通道
      高光两档由下面的 prefers-color-scheme 令牌覆盖解析）。 */
   --ds-shadow-pop: inset 0 1px 0 0 rgb(91 127 191 / 0.04), 0 4px 16px rgb(0 0 0 / 0.08), 0 8px 32px rgb(0 0 0 / 0.06);
+
+  /* ── ⑫ 设置面焦点缝（ui-unification-20261103-settings）──
+     缺槽先扩再消费：设置面控件焦点环的灰缝（.cfg-select / .cfg-input:focus 的
+     2px 灰环）此前是裸 rgba(128,128,128,α) 字面值；灰通道两档 α 与 §⑪ 多选行
+     洗选（--ds-row-selected 0.08 / -strong 0.12）同值但**不同义**（行洗选 vs
+     焦点缝），按「不复制字面量、同义才复用」纪律另立具名槽（令牌出生行放行，
+     亮暗自适应——灰通道本就主题中性）。 */
+  --ds-focus-seam: rgb(128 128 128 / 0.08);
+  --ds-focus-seam-strong: rgb(128 128 128 / 0.12);
 }
 
 /* 浮层阴影暗档（令牌层单点解析：消费面不再各写一份 prefers-color-scheme）。 */
