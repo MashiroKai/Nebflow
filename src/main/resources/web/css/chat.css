@@ -259,52 +259,14 @@
 /* Background sub-agent dropdown — GHOST SURFACE (后台合并批 2026-10-23 ⑥).
    两面板归并为一个后台面板后，#bgagent-dropdown 不再作为可见面存在：
    其列表节点被 bgMergedPanel.js re-parent 进 #bg-dropdown（「智能体」分组签下），
-   节点本体原地保留 —— 只是渲染/显隐状态载体（.hidden 语义与旧脚本相容）。 */
+   节点本体原地保留 —— 只是渲染/显隐状态载体（.hidden 语义与旧脚本相容）。
+   panel-ia 批（2026-11-03）：永不可见面的整套材质/几何（定位/玻璃/圆角/投影
+   三元组/refraction 顶线）随之退役——死样式是「界面丑」的会计成本之一；
+   display:none 状态载 体语义与 i18n/main.js 读写点原样保留。 */
 #bgagent-dropdown { display: none; }
-#bgagent-dropdown {
-  position: absolute;
-  top: 50px;
-  right: 24px;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  border-radius: 14px;
-  min-width: 280px;
-  max-width: 380px;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
-  z-index: 100;
-  overflow: hidden;
-}
-#bgagent-dropdown::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 10%;
-  right: 10%;
-  height: 1px;
-  background: linear-gradient(90deg,
-    transparent 10%,
-    var(--sapphire-refraction) 50%,
-    transparent 90%
-  );
-  pointer-events: none;
-  z-index: 1;
-}
-@media (prefers-color-scheme: dark) {
-  #bgagent-dropdown {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0px 2px 8px rgba(0, 0, 0, 0.20),
-      0px 8px 24px rgba(0, 0, 0, 0.35);
-  }
-}
 #bgagent-dropdown.hidden { display: none; }
 
-.bgagent-tool { font-size: 10px; color: var(--color-text-muted); display: block; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bgagent-tool { font-size: var(--ds-fs-meta); color: var(--ds-text-muted); display: block; margin-top: var(--ds-space-half); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ── Sub-agents panel rows (2026-08-25 spec, frozen @142535e9) ──────────
    State ladder: active=green+pulse, idle=amber, stuck=red+blink,
@@ -352,19 +314,14 @@
    空节整签隐藏（bgMergedPanel.js MutationObserver 置 hidden）。 */
 #bg-dropdown .mh-bg-grp {
   flex: none;
-  padding: 8px 12px 4px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--color-frame-text-muted);
-  border-top: 1px solid var(--color-frame-border-light);
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-1);
+  border-top: var(--ds-border-width) solid var(--ds-border-hairline);
 }
 #bg-dropdown .mh-bg-grp[hidden] { display: none; }
 .bg-dropdown-empty {
-  padding: 14px 12px;
-  font-size: 12px;
-  color: var(--color-frame-text-muted);
+  padding: var(--ds-space-3);
+  font-size: var(--ds-fs-hint);
+  color: var(--ds-text-muted);
   text-align: center;
 }
 .bg-task-row { cursor: pointer; }
@@ -399,13 +356,24 @@
   padding-left: 16px;
   border-left: 2px solid var(--color-frame-border);
 }
-.bg-task-row-child .bg-task-name { font-size: 12px; }
-/* 任务摘要次行（面板行说明批 2026-10-29 ②）：实名行的任务摘要上屏位——单行
-   截断 + tooltip 全文；muted 小字，状态词/摘要同族语言。 */
-.bg-task-subline { margin-top: 1px; }
+.bg-task-row-child .bg-task-name { font-size: var(--ds-fs-hint); }
+/* panel-ia 批：主名行升为行内第一读数后，meta 槽（状态词）与摘要同族 muted。 */
+.bg-task-state {
+  font-size: var(--ds-fs-meta);
+  /* Unified panel spec §3.1: state word is L4 (400) — yields hierarchy to
+     the primary name (0825 spec had it 500; superseded by the type ramp). */
+  font-weight: var(--ds-fw-body);
+  color: var(--ds-text-muted);
+  flex-shrink: 0;
+}
+/* 面板行说明批（2026-10-29 ②）：实名行的任务摘要上屏位——单行
+   截断 + tooltip 全文；muted 小字，状态词/摘要同族语言。
+   panel-ia 批（2026-11-03）：面板面字阶/间距/色全部走 --ds-* 槽
+   （--ds-fs-meta 11 / --ds-fs-hint 12 / --ds-fs-body 13 …），值同源不换档。 */
+.bg-task-subline { margin-top: var(--ds-space-half); }
 .bg-task-sub {
-  font-size: 11px;
-  color: var(--color-frame-text-muted);
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -419,23 +387,22 @@
   /* Unified panel spec §2.2: text slots (state/name/uptime) share the L3
      first-line baseline; the status dot falls back to visual centering. */
   align-items: baseline;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-wrap: wrap; /* narrow viewport: meta wraps to a second line, never overflows */
   min-width: 0;
 }
-/* Row primary text (name · task). Explicit theme-aware color — never rely on
-   inheritance from body (pre-fix it fell to the UA default black, invisible
-   on the dark glass panel). Unified panel spec §2.1 L3: 13px/400. */
-.bg-task-name { color: var(--color-text); font-size: 13px; font-weight: 400; }
+/* Row primary text (name · task). Unified panel spec §2.1 L3: 13px/400.
+   panel-ia 批：色/字阶走 --ds-text / --ds-fs-body 别名槽。 */
+.bg-task-name { color: var(--ds-text); font-size: var(--ds-fs-body); font-weight: var(--ds-fw-body); }
 /* Agent-name row — ALWAYS the second line, separated from the meta labels
    (state/kind/uptime). Dedicated line means length-independent consistency
    (user ruling 21: the name never collides onto the meta first line). */
 .bg-task-name-line {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--ds-space-2);
   min-width: 0;
-  margin-top: 1px;
+  margin-top: var(--ds-space-half);
 }
 .bg-task-name-line .bg-task-name {
   min-width: 0;
@@ -457,7 +424,7 @@
 .bg-task-main {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--ds-space-2);
   flex-wrap: nowrap; /* the whole point: one line — truncate, never wrap */
   min-width: 0;
 }
@@ -493,42 +460,41 @@
 .bg-task-state.bg-state-failed { color: var(--status-word); }
 .bg-task-state .st-ic { width: 11px; height: 11px; margin-right: 3px; }
 .bg-task-state.bg-state-frozen { color: rgb(var(--accent-agent-light)); }
-.bg-task-state.bg-state-done { color: var(--color-frame-text-dim); }
+.bg-task-state.bg-state-done { color: var(--ds-text-dim); }
 /* 延续态徽标（Flow 会话可见性批 2026-11-01）：delegate 已终态而链仍在跑的组头行
    ——琥珀「链运行中」（--status-warn-icon 既有 token，同长空闲/离线徽标族；词前
    workflow 图标同档），行不加 .done 灰化（活链 ≠ 死行——行体无 0.6 透明），状态点
    走 active 绿脉冲。链全终态后覆写缺席 → 行回普通终态样式（既有 done 档）。 */
-.bg-task-state.bg-task-chain { color: var(--status-warn-icon); font-weight: 500; }
+.bg-task-state.bg-task-chain { color: var(--status-warn-icon); font-weight: var(--ds-fw-btn); }
 .bg-task-state.bg-task-chain .st-ic { width: 11px; height: 11px; margin-right: 3px; color: var(--status-warn-icon); }
-/* 中性 chip 族（共用样式，零独立语义）：设备同级批（作者令 2026-11-01「本地/远程
-   这组徽标整对退役」）后，后台任务**行**不再用本类（原「本地/远程」kind chip 整对
-   删除，跑在哪由 .bg-task-origin.bg-origin-device 承载）；现值存消费方 = 同族任务
-   聚合组头（×N 计数）与子智能体行（main/bgAgents.js 的 agent kind 词）。 */
-.bg-task-kind {
-  font-size: 10px;
-  font-weight: 500;
+/* ── 面板 chip 族：单一形态，一处声明（panel-ia 批 2026-11-03）─────────────
+   六个 chip 类（kind / origin / mode / retries / device / badge）原先各写一套
+   「10px / 6px / control-bg / muted」——六套同值声明就是视觉噪音的样式面成本
+   （作者报障「信息太多、太杂」），且 10px 是字阶梯外的档外值。收编为一条
+   单一形态规则（值全走 --ds-* 槽：字阶 --ds-fs-meta 11 / 圆角 --ds-radius-chip
+   6 / 材质 --ds-control-bg/-border/--ds-text-muted），变体规则只保留各自真正的
+   差异（强调色 / 截断 / 收缩率）——「不做第二套形态」由同一条声明成立。 */
+.bg-task-kind,
+.bg-task-origin,
+.bg-task-mode,
+.bg-task-retries,
+.bg-task-device,
+.bg-task-badge {
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-btn);
   padding: 1px 6px;
-  border-radius: 6px;
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  color: var(--color-frame-text-muted);
+  border-radius: var(--ds-radius-chip);
+  background: var(--ds-control-bg);
+  border: var(--ds-border-width) solid var(--ds-control-border);
+  color: var(--ds-text-muted);
   flex-shrink: 0;
 }
 /* Origin chip (2026-09-07 后台任务面板重设计，作者指令②): marks which node
-   category started the task — nebula / dispatcher / node. Same chip family as
-   .bg-task-kind; category differentiation reuses EXISTING tokens only
-   (node = agent-sapphire accent, mirroring the frozen-state pattern;
-   dispatcher = one text notch brighter; nebula = base muted). No new color
-   tokens introduced. */
+   category started the task — nebula / dispatcher / node. Category
+   differentiation reuses EXISTING tokens only (node = agent-sapphire accent,
+   mirroring the frozen-state pattern; dispatcher = one text notch brighter;
+   nebula = base muted). No new color tokens introduced. */
 .bg-task-origin {
-  font-size: 10px;
-  font-weight: 500;
-  padding: 1px 6px;
-  border-radius: 6px;
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  color: var(--color-frame-text-muted);
-  flex-shrink: 0;
   max-width: 180px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -539,7 +505,7 @@
   border-color: rgb(var(--accent-agent-light) / 0.35);
 }
 .bg-task-origin.bg-origin-dispatcher {
-  color: var(--color-frame-text);
+  color: var(--ds-text);
 }
 /* Device origin (多设备后台任务可见批 · 作者令 2026-10-25「多设备的后台任务
    我们也要可见」): device-channel background tasks (Bash device=KAI +
@@ -552,7 +518,7 @@
    恒在的设备名 chip**——远端 = 对端设备名，本机 = 本机设备名（同名同类，本机不再
    有专属样式/不再是第二口径）；title 恒用 bg.runsOn（「跑在 X」）。零样式改动。 */
 .bg-task-origin.bg-origin-device {
-  color: var(--color-frame-text);
+  color: var(--ds-text);
 }
 /* 后台任务归属批（作者令 2026-10-31「后台任务行标归属」）：delegate 批次短名
    占归属槽位时的专属 chip——agent 强调族（同 origin-node 先例），「一眼看出
@@ -570,24 +536,14 @@
 }
 /* 任务模式标注批（2026-10-30 作者令「派发任务显示执行模式」）：开启任务的
    delegate 会话执行形态 chip——kernel 极简内核（sapphire 强调族，同 origin-node
-   先例）/ dispatcher 分发器（亮一档正文色）。同 chip 家族，零新色板 token；
+   先例）/ dispatcher 分发器（亮一档正文色）。形态走上方单一 chip 声明，
    ownerMode 缺席（旧后端/非 delegate/闸关）= 不渲染，行高零变化。 */
-.bg-task-mode {
-  font-size: 10px;
-  font-weight: 500;
-  padding: 1px 6px;
-  border-radius: 6px;
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  color: var(--color-frame-text-muted);
-  flex-shrink: 0;
-}
 .bg-task-mode.bg-mode-kernel {
   color: rgb(var(--accent-agent-light));
   border-color: rgb(var(--accent-agent-light) / 0.35);
 }
 .bg-task-mode.bg-mode-dispatcher {
-  color: var(--color-frame-text);
+  color: var(--ds-text);
 }
 @media (prefers-color-scheme: dark) {
   .bg-task-mode.bg-mode-kernel {
@@ -618,9 +574,9 @@
    badge and never competes with the node name below. Long names truncate
    (nowrap + max-width + ellipsis; full name on hover via title). */
 .bg-task-project {
-  font-size: 10px;
-  font-weight: 400;
-  color: var(--color-frame-text-dim);
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-body);
+  color: var(--ds-text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -630,19 +586,11 @@
 }
 /* Task attribution badge (2026-09-27 taskbadge batch): `#id · title` chip on
    each row — the per-row task marker under the multi-task dispatcher
-   architecture. Same chip family as .bg-task-kind; the one accent tint per row
-   (sapphire light, mirroring .bg-task-origin.bg-origin-node) so rows from
-   different tasks are scannable at a glance. No new color tokens: existing
-   accent/glass tokens only. Long titles truncate (nowrap + max-width +
-   ellipsis; full text on hover via title). No attribution → the chip is not
+   architecture. 单一 chip 形态声明（上方）+ 本行唯一的行内强调 tint（rows from
+   different tasks are scannable at a glance）。No attribution → the chip is not
    rendered at all (empty state = no badge, same contract as .bg-task-project). */
 .bg-task-badge {
-  font-size: 10px;
-  font-weight: 500;
-  padding: 1px 6px;
-  border-radius: 6px;
-  background: var(--glass-control-bg);
-  border: 1px solid rgb(var(--accent-agent-light) / 0.35);
+  border-color: rgb(var(--accent-agent-light) / 0.35);
   color: rgb(var(--accent-agent-light));
   overflow: hidden;
   text-overflow: ellipsis;
@@ -659,62 +607,46 @@
   }
 }
 /* 台账 #929（后台子智能体跨设备透明）：远端投影行的设备角标（「跑在哪」轴，
-   bg-device-origin-chip 批同轴）——中性 chip 族（无新色令牌），truncate 契约
+   bg-device-origin-chip 批同轴）——中性 chip 单一形态 + truncate 契约
    同 .bg-task-project。 */
 .bg-task-device {
-  font-size: 10px;
-  font-weight: 500;
-  padding: 1px 6px;
-  border-radius: 6px;
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  color: var(--color-frame-text-muted);
+  max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 120px;
-  min-width: 0;
-  flex-shrink: 0;
 }
 /* 离线角标（断联语义）：琥珀警示（--status-warn-icon 同 idle-detail 长空闲徽标
    族——既有 warn token，零新色）——行保留最后态，角标回答「为什么不动了」，行
    本身绝不假装死亡。 */
 .bg-task-offline {
-  font-size: 10px;
-  font-weight: 500;
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-btn);
   color: var(--status-warn-icon);
   white-space: nowrap;
   flex-shrink: 0;
 }
 .bg-task-offline .st-ic { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; }
 .bg-task-uptime {
-  font-size: 10px;
-  color: var(--color-frame-text-muted);
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
+  font-family: var(--ds-font-mono);
   /* Unified panel spec §2.1 L5: time column 500 + tabular figures. */
-  font-weight: 500;
+  font-weight: var(--ds-fw-btn);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
   margin-left: auto;
 }
+/* Unified panel spec §3.1: chip-ify (same family as the kind chip)——形态走
+   单一 chip 声明，本条只留数字档。 */
 .bg-task-retries {
-  font-size: 11px;
-  font-weight: 500;
-  /* Unified panel spec §3.1: chip-ify (same family as the kind chip). */
-  padding: 1px 6px;
-  border-radius: 6px;
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  color: var(--color-frame-text-muted);
   font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
 }
 /* 卡死标签（盘点 #10 / S2）：词转中性 + timer-off 红图标（发射点注入）。 */
 .bg-task-stuck {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--status-word);
-  margin-top: 2px;
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-btn);
+  color: var(--ds-status-word);
+  margin-top: var(--ds-space-half);
 }
 .bg-task-stuck .st-ic { width: 11px; height: 11px; margin-right: 3px; }
 /* 心跳光点 error/stuck（盘点 #11 / S2）：终态/卡死光点由「红晕＋1s 闪烁」改
@@ -728,29 +660,29 @@
    中性静点（无脉冲），区别于运行的绿脉冲与卡死的红描边；标签行同款中性词。 */
 .bg-task-status.bg-status-waiting { background: var(--color-frame-text-muted); box-shadow: none; animation: none; }
 .bg-task-waiting {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--color-frame-text-muted);
-  margin-top: 2px;
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-btn);
+  color: var(--ds-text-muted);
+  margin-top: var(--ds-space-half);
 }
 /* 错误冻结批（2026-11-01）：delegate **错误冻结**徽标 + 唤醒按钮（与「候合并/
    待命」的自愿停靠词显式分家——冻结是异常停态，用琥珀系，不占中性 muted）。 */
 .bg-task-frozen {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--status-warn-icon, #b8860b);
-  margin-top: 2px;
+  gap: var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-title);
+  color: var(--status-warn-icon);
+  margin-top: var(--ds-space-half);
   white-space: nowrap;
 }
 .bg-task-wake {
-  margin: 2px 0 0 6px;
-  font-size: 11px;
-  line-height: 1.4;
-  padding: 0 6px;
-  border-radius: 4px;
+  margin: var(--ds-space-half) 0 0 var(--ds-space-2);
+  font-size: var(--ds-fs-meta);
+  line-height: var(--ds-lh-title);
+  padding: 0 var(--ds-space-2);
+  border-radius: var(--ds-radius-badge);
   border: 1px solid rgb(var(--accent-agent-light) / 0.55);
   background: rgb(var(--accent-agent-light) / 0.12);
   color: rgb(var(--accent-agent-light));
@@ -764,11 +696,11 @@
 .bg-task-idle-detail {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--color-frame-text-muted);
-  margin-top: 2px;
+  gap: var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
+  font-weight: var(--ds-fw-body);
+  color: var(--ds-text-muted);
+  margin-top: var(--ds-space-half);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -776,7 +708,7 @@
 }
 .bg-task-idle-detail .st-ic { width: 11px; height: 11px; flex-shrink: 0; }
 /* 长空闲徽标字色 = 既有 warn 图标档 token（base.css --status-warn-icon，亮暗双档）。 */
-.bg-task-idle-detail.bg-idle-stale { color: var(--status-warn-icon); font-weight: 500; }
+.bg-task-idle-detail.bg-idle-stale { color: var(--status-warn-icon); font-weight: var(--ds-fw-btn); }
 .bg-task-idle-detail.bg-idle-stale .st-ic { color: var(--status-warn-icon); }
 /* P0 面板投影批（设计稿 20261030_background-task-lifecycle §3.4）：后台任务健康
    轨三色圆点——色值全部取 ui-status-redesign 状态 token（亮暗双档随主题），
@@ -795,15 +727,15 @@
 /* #753 同族聚合行（waiter 族）：组头行 — 收起态默认（计数一目了然）；成员行
    缩进一格（与 subagent 面板 bg-task-row-child 同款缩进语义）；carets 中性。 */
 .bg-task-row-family { border-top: 1px solid var(--color-frame-border); }
-.bg-task-row-family .bg-task-name { font-weight: 500; }
+.bg-task-row-family .bg-task-name { font-weight: var(--ds-fw-btn); }
 .bg-task-row-family .bg-family-caret {
-  margin-left: 6px;
-  font-size: 10px;
-  color: var(--color-frame-text-muted);
+  margin-left: var(--ds-space-2);
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
   flex-shrink: 0;
 }
 .bg-task-row-member { padding-left: 18px; border-top: 1px dotted var(--color-frame-border); }
-.bg-task-row-member .bg-task-name { font-size: 12px; }
+.bg-task-row-member .bg-task-name { font-size: var(--ds-fs-hint); }
 /* Frozen is the agent-blue accent: deep sapphire in light theme (agent-light
    token), back to the sapphire triplet in dark. Mirrors #bgagent-indicator. */
 @media (prefers-color-scheme: dark) {
@@ -823,14 +755,13 @@
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  border-radius: 14px;
+  border: var(--ds-border-width) solid var(--ds-border-glass);
+  border-radius: var(--ds-radius-card-md);
   min-width: 280px;
   max-width: 380px;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
+  /* 全站一套毛玻璃（panel-ia 批）：--ds-shadow-panel = sapphire.css --frost-shadow
+     单源，亮/暗双档由 token 解析——本面不再各画一套三元投影（暗档逐字同值）。 */
+  box-shadow: var(--ds-shadow-panel);
   z-index: 100;
   /* 后台面板单滚批（2026-11-02）：原 overflow:hidden 只裁圆角——面板改为载体
      单一滚动后，纵向回归 auto（唯一滚动上下文，见上方合并块注），横向仍 hidden
@@ -852,14 +783,6 @@
   );
   pointer-events: none;
   z-index: 1;
-}
-@media (prefers-color-scheme: dark) {
-  #bg-dropdown {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0px 2px 8px rgba(0, 0, 0, 0.20),
-      0px 8px 24px rgba(0, 0, 0, 0.35);
-  }
 }
 #bg-dropdown.hidden { display: none; }
 /* 面板拆分批（2026-10-31 ④ · 作者追加令）：桌面端两顶键各开单族面板——任务键
@@ -890,35 +813,35 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  /* 14px = 击键友好微热区（不进 4px 栅格：它是行内小图标格，不是留白档）。 */
   width: 14px;
   height: 14px;
-  margin-left: -2px;
-  color: var(--color-frame-text-muted);
+  margin-left: calc(-1 * var(--ds-space-half));
+  color: var(--ds-text-muted);
   cursor: pointer;
 }
 .bg-task-caret:hover { color: var(--color-text); }
+/* 分组签（任务节标题）：排版语言 = .ds-section-label（design-system 组件类，
+   panel-ia 批已由 index.html 挂上）——本文件只留布局面（内距 / 底 hairline）。
+   智能体节的 .mh-bg-grp 同批收编同一类（bgMergedPanel.js）。 */
 .bg-dropdown-header {
-  padding: 8px 12px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--color-frame-text-muted);
-  border-bottom: 1px solid var(--color-frame-border-light);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border-bottom: var(--ds-border-width) solid var(--ds-border-hairline);
 }
 .bg-task-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  gap: 10px;
-  border-bottom: 1px solid var(--color-frame-border-light);
-  transition: background 0.15s;
+  padding: var(--ds-row-pad);
+  gap: var(--ds-space-2);
+  border-bottom: var(--ds-border-width) solid var(--ds-border-hairline);
+  transition: background var(--ds-dur-hover) var(--ds-ease-std);
 }
 .bg-task-row:hover { background: var(--color-frame-hover); }
 .bg-task-row:last-child { border-bottom: none; }
-.bg-task-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
-.bg-task-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bg-task-info { display: flex; flex-direction: column; gap: var(--ds-space-half); min-width: 0; flex: 1; }
+/* meta 行（第二读数）：state 词 + chip 群 + 行数/耗时，单一横向槽。 */
+.bg-task-meta { display: flex; align-items: center; gap: var(--ds-space-1); flex-wrap: wrap; }
 .bg-task-desc {
   font-size: 12px;
   color: var(--color-frame-text);
@@ -945,23 +868,25 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-radius: 50%;
   flex-shrink: 0;
 }
-.bg-task-status.bg-status-active { background: var(--color-success); box-shadow: 0 0 4px rgba(76,175,80,0.5); animation: bg-pulse 1.5s ease-in-out infinite; }
-.bg-task-status.bg-status-idle { background: #d4a030; box-shadow: 0 0 4px rgba(212,160,48,0.4); }
+/* panel-ia 批：状态点去外发光（色 + 脉冲即状态信号；三层光晕是「界面太杂」的
+   主要视觉源之一），并收编档外裸色（#d4a030 → 既有 warn 图标 token）。 */
+.bg-task-status.bg-status-active { background: var(--color-success); animation: bg-pulse 1.5s ease-in-out infinite; }
+.bg-task-status.bg-status-idle { background: var(--status-warn-icon); }
 /* stuck 移到上面与 error 同规（ui-status-redesign：静态描边环点）。 */
 
 .bg-task-lines {
-  font-size: 10px;
-  color: var(--color-frame-text-muted);
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
+  font-family: var(--ds-font-mono);
 }
 
 .bg-task-cancel {
-  font-size: 11px;
-  padding: 3px 10px;
-  border: 1px solid var(--color-frame-border);
-  border-radius: 12px;
+  font-size: var(--ds-fs-meta);
+  padding: var(--ds-space-half) var(--ds-space-2);
+  border: var(--ds-border-width) solid var(--ds-border);
+  border-radius: var(--ds-radius-xl);
   background: transparent;
-  color: var(--color-frame-text-dim);
+  color: var(--ds-text-dim);
   cursor: pointer;
   white-space: nowrap;
   flex-shrink: 0;

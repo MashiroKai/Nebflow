@@ -3498,8 +3498,12 @@ function renderBgDropdown() {
     // 绿=healthy / 黄=suspect / 红=escalated；bgHealthNorm 双端容错（脏值回落
     // healthy、空值（旧后端）零渲染不膨胀行高）。与智能体行 bgWaiting[].health
     // 同一词表同一账本（禁第二状态源）。
+    // panel-ia 批（2026-11-03 · 作者「信息太多、太杂」）：健康点只在**非健康**
+    // 时上位——healthy 行原本已是「状态点 + 状态词 + 绿健康点」三枚状态元素叠在
+    // 一行上（同一件事说三遍）；健康色因此改为**异常信号**（suspect/escalated
+    // 出点、healthy 静默）。判读链不变：词表/账本/后端字段零改动。
     const healthWord = bgHealthNorm(task.health);
-    const healthPart = healthWord
+    const healthPart = (healthWord && healthWord !== 'healthy')
       ? '<span class="bg-health-dot bg-health-' + healthWord + '" title="' + escapeHtml(t('bg.health.' + healthWord)) + '" aria-hidden="true"></span>'
       : '';
     const hb = task.heartbeat;
@@ -3537,12 +3541,16 @@ function renderBgDropdown() {
     return '<div class="bg-task-row' + (rowState === 'cancelling' ? ' bg-task-cancelling' : '') + endedClass + extraCls + '" role="listitem" tabindex="0" data-task-id="' + escapeHtml(task.taskId) + '">' +
       '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
       '<div class="bg-task-info">' +
+        // panel-ia 批（2026-11-03 · IA 重排）：行序翻转为「主名在前、meta 退后」——
+        // 身份（这是哪个任务）是第一读数，状态/设备/来源/行数/耗时是第二读数；
+        // 与智能体行（bgAgents.js 同批）和弹窗头（flow-agent 家族）同一层级序。
+        // 每条目仍恰一条 meta 状态行（H1/H2 断言锚）。
+        '<div class="bg-task-line bg-task-name-line">' +
+          '<span class="bg-task-name" title="' + escapeHtml(nameTitle) + '">' + escapeHtml(desc) + '</span>' +
+        '</div>' +
         '<div class="bg-task-line bg-task-meta">' +
           '<span class="bg-task-state' + stateClass + '">' + escapeHtml(statusLabel) + '</span>' +
           devicePart + originPart + modePart + healthPart + linesPart + exitPart + uptimePart +
-        '</div>' +
-        '<div class="bg-task-line bg-task-name-line">' +
-          '<span class="bg-task-name" title="' + escapeHtml(nameTitle) + '">' + escapeHtml(desc) + '</span>' +
         '</div>' +
       '</div>' +
       cancelPart +
@@ -3572,18 +3580,20 @@ function renderBgDropdown() {
     const uptimePart = earliest
       ? '<span class="bg-task-uptime">' + escapeHtml(formatDuration(now - earliest)) + '</span>' : '';
     const base = bgFamilyBaseLabel(members);
+    // panel-ia 批（2026-11-03）：组头行序同批翻转——族名（身份）在前，
+    // 聚合状态/计数/行数/族龄退到第二行。
     return '<div class="bg-task-row bg-task-row-family" role="listitem" tabindex="0" aria-expanded="' + (expanded ? 'true' : 'false') + '" data-family-key="' + escapeHtml(key) + '">' +
       '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
       '<div class="bg-task-info">' +
+        '<div class="bg-task-line bg-task-name-line">' +
+          '<span class="bg-task-name" title="' + escapeHtml(base || key) + '">' + escapeHtml(base || key) + '</span>' +
+          '<span class="bg-family-caret" aria-hidden="true">' + (expanded ? '▾' : '▸') + '</span>' +
+        '</div>' +
         '<div class="bg-task-line bg-task-meta">' +
           '<span class="bg-task-state' + (runningCount > 0 ? '' : ' bg-state-done') + '">' + escapeHtml(stateWord) + '</span>' +
           '<span class="bg-task-kind" title="' + escapeHtml(t('bg.familyTitle', { count: members.length })) + '">' +
             escapeHtml(t('bg.familyCount', { count: members.length })) + '</span>' +
           linesPart + uptimePart +
-        '</div>' +
-        '<div class="bg-task-line bg-task-name-line">' +
-          '<span class="bg-task-name" title="' + escapeHtml(base || key) + '">' + escapeHtml(base || key) + '</span>' +
-          '<span class="bg-family-caret" aria-hidden="true">' + (expanded ? '▾' : '▸') + '</span>' +
         '</div>' +
       '</div>' +
     '</div>';

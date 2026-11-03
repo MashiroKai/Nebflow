@@ -44,10 +44,12 @@ const showToast = (msg, type) =>
 // 平移的可见性保底：一行摘要 + 点开 brief/结果全文）。
 if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegate-strip-css')) {
   document.head.insertAdjacentHTML('beforeend', `<style id="bgagent-delegate-strip-css">
+/* panel-ia 批（2026-11-03）：摘要条材质/字阶全面走 --ds-* 槽（原来裸灰值 +
+   非阶梯字号），条内两层（收起行 / 展开体）语言同源。 */
 .bgagent-delegate-strip {
-  border-bottom: 1px solid rgba(128,128,128,0.18);
-  padding: 6px 14px;
-  font-size: 12px;
+  border-bottom: var(--ds-border-width) solid var(--ds-border-hairline);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  font-size: var(--ds-fs-hint);
 }
 /* 收起式摘要条（WF-01）：默认收起 = 一行（任务 chip + brief 摘要 + 结果词 +
    展开 chevron）；点开 = 任务 brief 全文 + 判词 + 报告全文（九点⑦正文不丢）。 */
@@ -59,13 +61,14 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
 .bgagent-strip-toggle:hover .bgagent-strip-briefline { color: var(--color-text, inherit); }
 .bgagent-strip-chip {
   flex-shrink: 0; padding: 1px 8px; border-radius: 8px;
-  font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
-  color: var(--color-frame-text-muted, rgba(128,128,128,0.9));
-  background: var(--color-frame-hover, rgba(128,128,128,0.12));
+  font-size: var(--ds-fs-meta); font-weight: var(--ds-fw-title);
+  letter-spacing: var(--ds-ls-body);
+  color: var(--ds-text-muted);
+  background: var(--color-frame-hover);
 }
 .bgagent-strip-briefline {
   flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--color-frame-text-muted, rgba(128,128,128,0.9));
+  color: var(--ds-text-muted);
 }
 .bgagent-strip-result {
   flex-shrink: 0; font-weight: 500; color: var(--color-text, inherit);
@@ -73,19 +76,19 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
 .bgagent-strip-result[hidden] { display: none; }
 .bgagent-strip-chev {
   flex-shrink: 0; width: 12px; height: 12px; display: inline-flex;
-  color: var(--color-frame-text-dim, rgba(128,128,128,0.6));
-  transition: transform 0.15s ease;
+  color: var(--ds-text-dim);
+  transition: transform var(--ds-dur-hover) var(--ds-ease-std);
 }
 .bgagent-strip-chev svg { width: 12px; height: 12px; display: block; }
 .bgagent-strip-toggle[aria-expanded="true"] .bgagent-strip-chev { transform: rotate(180deg); }
 .bgagent-strip-body {
-  margin-top: 6px; padding-top: 6px; border-top: 1px dashed rgba(128,128,128,0.18);
+  margin-top: var(--ds-space-2); padding-top: var(--ds-space-2); border-top: var(--ds-border-width) dashed var(--ds-border-hairline);
   max-height: 38vh; overflow-y: auto;
   display: flex; flex-direction: column; gap: 3px;
 }
 .bgagent-strip-body[hidden] { display: none; }
 .bgagent-strip-plugins {
-  color: var(--color-frame-text-dim, rgba(128,128,128,0.6));
+  color: var(--ds-text-dim);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .bgagent-strip-sec {
@@ -97,25 +100,26 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
 .bgagent-strip-sec[hidden],
 .bgagent-strip-verdict[hidden] { display: none; }
 .bgagent-strip-sec-label {
-  font-weight: 600; font-size: 10px; letter-spacing: 0.02em;
-  color: var(--color-frame-text-dim, rgba(128,128,128,0.6)); flex-shrink: 0;
+  font-weight: var(--ds-fw-title); font-size: var(--ds-fs-meta);
+  letter-spacing: var(--ds-ls-body);
+  color: var(--ds-text-dim); flex-shrink: 0;
 }
 .bgagent-strip-tasktext {
-  font-size: 12px; line-height: 1.5; color: var(--color-text, inherit);
+  font-size: var(--ds-fs-hint); line-height: var(--ds-lh-body); color: var(--ds-text);
   white-space: pre-wrap; word-break: break-word;
   max-height: 88px; overflow-y: auto;
 }
 .bgagent-strip-verdict {
   display: flex; align-items: baseline; gap: 8px; min-width: 0;
-  font-size: 12px; color: var(--color-text, inherit);
+  font-size: var(--ds-fs-hint); color: var(--ds-text);
 }
 .bgagent-strip-verdict-word { flex-shrink: 0; font-weight: 500; }
 .bgagent-strip-verdict-reason {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--color-frame-text-muted, rgba(128,128,128,0.9));
+  color: var(--ds-text-muted);
 }
 .bgagent-strip-report {
-  font-size: 12px; line-height: 1.5; color: var(--color-text, inherit);
+  font-size: var(--ds-fs-hint); line-height: var(--ds-lh-body); color: var(--ds-text);
   white-space: pre-wrap; word-break: break-word;
   max-height: 132px; overflow-y: auto;
 }
@@ -483,11 +487,16 @@ export function openStepPopup(nodeSessionId, agentName, taskDescription) {
   lastModelBadgeHtml = null; // fresh badge element — force first render on open
 
   // Mount on document.body for bg-agent popups (not inside a flow card)
+  // panel-ia 批（2026-11-03 · 作者报障「信息太多、太杂」+ 竖排字实拍）：弹窗头收敛为
+  // 单一身份行（名字 + 模型徽标 + 关闭）——原第二行 .flow-agent-subtitle 承载的任务
+  // 全文与页脚 .fa-task / delegate 摘要条 briefline 三处重复，属同一信息的二次上屏；
+  // 退役头部副本后（任务全文单源 = 页脚），头部在窄屏不再把名字挤成逐字竖排
+  // （.flow-agent-name 抗压缩契约见 POPUP_CSS 同批注释）。功能零删：页脚与摘要条
+  // 两承载面原样保留。
   popupOverlay.innerHTML = `
     <div class="flow-agent-modal">
       <div class="flow-agent-header">
         <span class="flow-agent-name">${esc(agentName || entry.meta.agentName || 'Sub-agent')}</span>
-        <span class="flow-agent-subtitle">${esc(taskDescription || entry.meta.task || '')}</span>
         <span class="flow-agent-model" id="bgagent-model"></span>
         <div class="flow-agent-close" id="bgagent-close">✕</div>
       </div>

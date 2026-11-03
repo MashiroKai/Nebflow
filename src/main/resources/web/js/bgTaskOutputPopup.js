@@ -91,20 +91,11 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   overflow: hidden;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255,255,255,0.25),
-    0px 2px 8px rgba(0,0,0,0.04),
-    0px 8px 32px rgba(0,0,0,0.10);
-}
-@media (prefers-color-scheme: dark) {
-  .bgt-modal {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255,255,255,0.04),
-      0px 2px 8px rgba(0,0,0,0.20),
-      0px 8px 32px rgba(0,0,0,0.35);
-  }
+  /* panel-ia 批：面板族弹窗统一走 --ds-shadow-panel（= sapphire.css --frost-shadow
+     单源，亮/暗双档由 token 解析）；本面不再各画一套三元投影。 */
+  box-shadow: var(--ds-shadow-panel);
 }
 
 /* Header：同 .flow-agent-header（顶缘折射线 + 底部 hairline）。 */
@@ -123,7 +114,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   height: 1px;
   background: linear-gradient(90deg,
     transparent 10%,
-    var(--sapphire-refraction, rgba(99,179,237,0.25)) 50%,
+    var(--sapphire-refraction) 50%,
     transparent 90%);
   pointer-events: none;
   z-index: 1;
@@ -253,7 +244,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   height: 1px;
   background: linear-gradient(90deg,
     transparent 10%,
-    var(--sapphire-refraction, rgba(99,179,237,0.25)) 50%,
+    var(--sapphire-refraction) 50%,
     transparent 90%);
   pointer-events: none;
   z-index: 1;
@@ -287,7 +278,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 .bgt-prompt { opacity: 0.7; flex-shrink: 0; }
 .bgt-truncated {
   font: 500 11px -apple-system, sans-serif;
-  color: #d4a030;
+  color: var(--status-warn-icon);
   flex-shrink: 0;
 }
 @media (prefers-reduced-motion: reduce) {
