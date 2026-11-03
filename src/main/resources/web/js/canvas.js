@@ -2561,10 +2561,63 @@ function deckSnapshotSource(entry) {
 /** 建一张快照节点（已缓存直接返回；不可克隆回落 null）。 */
 function deckBuildSnapshot(entry) {
   if (deckSnapshots.has(entry.id)) return deckSnapshots.get(entry.id);
-  const src = deckSnapshotSource(entry);
-  if (!src) return null;
   const area = deckPanelRect();
   const srcW = (area && area.width) || 900;   // 渲染面宽 = canvas 区宽（display:none 面读不到 offsetWidth）
+  const node = deckSnapshotNode(entry, srcW);
+  if (!node) return null;
+  const snap = { node, srcW, kind: node.__nfSnapKind || 'clone', scroller: node.__nfSnapScroller || null };
+  delete node.__nfSnapKind;
+  delete node.__nfSnapScroller;
+  deckSnapshots.set(entry.id, snap);
+  return snap;
+}
+
+/**
+ * 快照节点构建（桌面环卡 + 手机堆叠视角共核，**同一套源解析/克隆腿**——
+ * 手机端不另造第二套截图方案，作者铁律「复用现有组件」）。
+ * 手机端堆叠视角批（作者令 2026-11-02 21:47 §三）把它从私有函数提为导出：
+ * 手机层需要自己的缓存生命周期（卡在、快照在；内容变才重截），桌面侧仍走
+ * 上面的 deckSnapshots 单会话缓存，行为零变化。
+ * @param {string} tabId canvas 页签 id
+ * @param {number} srcW 渲染面宽（快照缩放基准，CSS px）
+ * @returns {{node: Element, srcW: number, kind: string, scroller: Element|null}|null}
+ */
+export function canvasSnapshotFor(tabId, srcW) {
+  const entry = tabs.get(tabId);
+  if (!entry) return null;
+  const w = Number(srcW) > 0 ? Number(srcW) : 900;
+  const node = deckSnapshotNode(entry, w);
+  if (!node) return null;
+  const kind = node.__nfSnapKind || 'clone';
+  const scroller = node.__nfSnapScroller || null;
+  delete node.__nfSnapKind;
+  delete node.__nfSnapScroller;
+  return { node, srcW: w, kind, scroller };
+}
+
+/**
+ * 快照内容指纹（手机堆叠视角缓存命中判据，作者令「同一张卡不重复截图，
+ * 内容变了再重截」）：类型族 + 标题 + 源渲染面文本长度/滚动高度。
+ * 极轻（不克隆、不布局），只在开面/切卡时算一次。
+ * @param {string} tabId
+ * @returns {string} 指纹（无源面 = 空串 ⇒ 调用方落 mock）
+ */
+export function canvasSnapshotStamp(tabId) {
+  const entry = tabs.get(tabId);
+  if (!entry) return '';
+  const src = deckSnapshotSource(entry);
+  if (!src) return '';
+  const el = /** @type {HTMLElement} */ (src.el);
+  const text = (el.textContent || '').length;
+  const h = el.scrollHeight || el.offsetHeight || 0;
+  const img = src.kind === 'img' ? (/** @type {HTMLImageElement} */ (el).currentSrc || el.getAttribute('src') || '') : '';
+  return [deckTypeFamily(entry), src.kind, text, h, img.length].join('|');
+}
+
+/** 快照节点构建内核（无缓存；kind/scroller 以临时属性回传，调用方消费后删除）。 */
+function deckSnapshotNode(entry, srcW) {
+  const src = deckSnapshotSource(entry);
+  if (!src) return null;
   let node = null;
   try {
     if (src.kind === 'canvas') {
@@ -2607,9 +2660,12 @@ function deckBuildSnapshot(entry) {
       node.querySelectorAll('button, input, textarea, select').forEach((n) => n.setAttribute('tabindex', '-1'));
     }
   } catch { return null; }
-  const snap = { node, srcW, kind: src.kind, scroller: src.scroller || null };
-  deckSnapshots.set(entry.id, snap);
-  return snap;
+  // kind / scroller 经 node 上的临时属性回传（本内核只造节点，缓存策略归调用方：
+  // 桌面 = deckSnapshots 单会话缓存，手机堆叠视角 = 内容指纹缓存）。
+  const host = /** @type {any} */ (node);
+  host.__nfSnapKind = src.kind;
+  host.__nfSnapScroller = src.scroller || null;
+  return node;
 }
 /** 把快照挂进卡的 thumb 槽（替换 mock；等比缩放 + 只读）。缩放比取布局常量
  *  （卡宽 = 面板盒 85%，thumb 内宽 = 卡宽 − 12×2 margin − 2 border）——建环瞬间
