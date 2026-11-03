@@ -508,7 +508,8 @@ object DelegateTerminal:
           // [[PostMergeCleanup.run]]——零领先 + 祖先真 + 绝不 force；失败仅 WARN
           // 保留现场）。非合并完成绝不清理（防丢工作）。
           val cleanup =
-            if mergeRound && acceptance.exists(_.ok) then PostMergeCleanup.run(record)
+            // 属主终态腿：allowLiveOwner=true（本序列内会话仍在 agentRegistry 是常态）
+            if mergeRound && acceptance.exists(_.ok) then PostMergeCleanup.run(record, allowLiveOwner = true)
             else IO.pure(false)
           // 台账 #896：合并轮终态结论随行（队列关账输入）。非合并轮 = None。
           val roundOutcome =

@@ -146,6 +146,97 @@ class PostMergeCleanupSpec extends FunSuite:
     assert(!PostMergeCleanup.run(None).unsafeRunSync(), "None record ⇒ false")
   }
 
+  // ── 引擎会话治理专项（2026-11-03，作者令 14:38）· 缺陷一 ────────────────
+  //
+  // 实证（chain 1460 账本行）：`14:04:52 delegate-nebflow-bb1a8bbb removed`——合并机
+  // 在该 dispatcher 会话**仍活着（standby，12 节点在飞）**时把它的 worktree ＋ 分支
+  // 引用 ＋ worktree 注册一并删除（14:20 作者发现，被迫 `git worktree repair` 手救）。
+  // 根因：队列侧异步关账路径（grant 账实核对 / care-tick stale-holder / boot reconcile）
+  // 把「该 delegate 的分支已合并」外推成「会话生命周期结束」，直接调本清理——清理面
+  // 从不查会话注册表活状态，也不认「停靠/冻结」标记。
+  //
+  // 修法：队列侧腿（默认 run）先查活状态：活会话（LiveSessions 端口）∨ 记录带
+  // standby/frozen 标记 ⇒ 一律保留现场（kept 行留名）；**属主自己的终态序列**
+  // （DelegateTerminal / 外部执行器 settle / merge-round 关账）走
+  // `allowLiveOwner = true`——那里「分支已合并」与「会话正在收尾」是同一件事，
+  // 保留会造出永不回收的现场。
+
+  test("⑦ in-flight guard (queue-side): a PARKED dispatcher (standby marker) keeps worktree dir + branch ref + worktree registration after its branch was merged — red before the guard") {
+    if !gitAvailable then ()
+    else
+      val repo = mkRepo(tempRoot / "clean-inflight", branch = "delegate/pm-inflight", merged = true)
+      val wt   = addWorktree(repo, "delegate/pm-inflight", tempRoot / "wt-inflight")
+      val r = rec("delegate-pm-inflight", repo, "delegate/pm-inflight", Some(wt))
+        .copy(mode = Some(DualModeConfig.ModeDispatcher), reportStatus = Some("standby"), standbySince = Some(1L))
+      val removed = PostMergeCleanup.run(Some(r)).unsafeRunSync()
+      assert(!removed, "🔴 an in-flight (standby) session's scene must NEVER be cleaned by the merge flow")
+      assert(os.exists(wt), "🔴 worktree directory must survive the merge")
+      assert(
+        GitWorktrees.branchExists(repo, "delegate/pm-inflight"),
+        "🔴 branch ref must survive the merge (deleting it destroyed the batch's delivery pointer)"
+      )
+      assert(
+        GitWorktrees.worktreeList(repo).exists(_._1.stripSuffix("/") == wt.toString.stripSuffix("/")),
+        "🔴 the worktree registration in `git worktree list` must survive the merge"
+      )
+      val rows = cleanupRows("delegate-pm-inflight")
+      val (_, detail) = rows.lastOption.getOrElse(fail("a kept row must be audited"))
+      assert(rows.lastOption.exists(_._1 == "kept"), s"action=kept: $rows")
+      assert(detail.contains("in-flight guard"), s"the guard must be named in the row: $detail")
+  }
+
+  test("⑧ in-flight guard (queue-side): a LIVE session in the session registry keeps the scene; the same scene with the session gone is cleaned (guard is not over-blocking)") {
+    if !gitAvailable then ()
+    else
+      val repo = mkRepo(tempRoot / "clean-live", branch = "delegate/pm-live", merged = true)
+      val wt   = addWorktree(repo, "delegate/pm-live", tempRoot / "wt-live")
+      val r    = rec("delegate-pm-live", repo, "delegate/pm-live", Some(wt))
+      // 活会话端口（生产 = SharedResources 安装的 agentRegistry 读面；本 spec 装 fake）
+      WorktreeCandidates.LiveSessions.install(new WorktreeCandidates.LiveSessions.Face:
+        def liveAmong(ids: List[String]): IO[Set[String]] = IO.pure(ids.toSet.intersect(Set("delegate-pm-live")))
+      )
+      try
+        val removedLive = PostMergeCleanup.run(Some(r)).unsafeRunSync()
+        assert(!removedLive, "🔴 a LIVE delegate's scene must never be cleaned (session registry says alive)")
+        assert(os.exists(wt) && GitWorktrees.branchExists(repo, "delegate/pm-live"), "scene intact (dir + branch)")
+        assert(
+          GitWorktrees.worktreeList(repo).exists(_._1.stripSuffix("/") == wt.toString.stripSuffix("/")),
+          "worktree registration intact"
+        )
+        assertEquals(cleanupRows("delegate-pm-live").lastOption.map(_._1), Some("kept"), "kept row audited")
+      finally WorktreeCandidates.LiveSessions.clear()
+      // 对照：同一现场、端口判「不 live」⇒ 照旧回收（守卫只挡在飞，不挡合法清理）
+      WorktreeCandidates.LiveSessions.install(new WorktreeCandidates.LiveSessions.Face:
+        def liveAmong(ids: List[String]): IO[Set[String]] = IO.pure(Set.empty)
+      )
+      try
+        val removedGone = PostMergeCleanup.run(Some(r)).unsafeRunSync()
+        assert(removedGone, "🔴 a gone session's fully-merged scene must still be cleaned (no over-blocking)")
+        assert(!os.exists(wt), "the worktree directory is gone")
+        assert(!GitWorktrees.branchExists(repo, "delegate/pm-live"), "the merged branch is deleted")
+      finally WorktreeCandidates.LiveSessions.clear()
+  }
+
+  test("⑨ owner-terminal leg (allowLiveOwner=true) keeps cleaning: the owner's own end-of-session sequence is not blocked by the in-flight guard") {
+    if !gitAvailable then ()
+    else
+      val repo = mkRepo(tempRoot / "clean-owner", branch = "delegate/pm-owner", merged = true)
+      val wt   = addWorktree(repo, "delegate/pm-owner", tempRoot / "wt-owner")
+      // 属主收尾序列里会话仍在 agentRegistry 是常态（清理跑在终态序列内）⇒
+      // 该腿必须放行，否则每个正常收尾的 delegate 都留下永不回收的现场。
+      WorktreeCandidates.LiveSessions.install(new WorktreeCandidates.LiveSessions.Face:
+        def liveAmong(ids: List[String]): IO[Set[String]] = IO.pure(ids.toSet)
+      )
+      try
+        val rec2 = rec("delegate-pm-owner", repo, "delegate/pm-owner", Some(wt))
+          .copy(standbySince = Some(1L)) // 终态序列里 standbyClear 尚未跑到 ⇒ 标记仍在
+        val removed = PostMergeCleanup.run(Some(rec2), allowLiveOwner = true).unsafeRunSync()
+        assert(removed, "🔴 allowLiveOwner=true must behave byte-identically to the pre-batch cleanup")
+        assert(!os.exists(wt) && !GitWorktrees.branchExists(repo, "delegate/pm-owner"), "scene cleaned")
+        assertEquals(cleanupRows("delegate-pm-owner").lastOption.map(_._1), Some("removed"), "removed row audited")
+      finally WorktreeCandidates.LiveSessions.clear()
+  }
+
   test("⑥ rescue guard: merged scene with a report missing from the main workspace ⇒ rescued before removal, row carries the rescue summary") {
     if !gitAvailable then ()
     else

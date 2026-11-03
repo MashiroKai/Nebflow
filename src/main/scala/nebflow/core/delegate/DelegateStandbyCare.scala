@@ -49,6 +49,18 @@ object DelegateStandbyCare:
   case object IdleNudge extends PromptKind
 
   /**
+   * [[CareState.kind]] 取值（记账面的提醒型标签；缺陷三同族漏网修的判据常量）：
+   * 换型（Declared ↔ IdleNudge）= 新待命期 ⇒ StartFresh。
+   */
+  val KindDeclared: String = "Declared"
+  val KindIdleNudge: String = "IdleNudge"
+
+  /** PromptKind → 记账标签（单点映射；判据与写面同源）。 */
+  def kindTag(kind: PromptKind): String = kind match
+    case Declared  => KindDeclared
+    case IdleNudge => KindIdleNudge
+
+  /**
    * 第 attempt 次提醒的退避延迟（attempt 1-based；纯函数，spec 判红锚）：短档序列
    * 内逐档取 `delays`，其后走平长档 `longMs`。
    */
@@ -133,7 +145,18 @@ object DelegateStandbyCare:
     /** 序列是否已穷尽（本期待命期此后静默）。 */
     exhausted: Boolean = false,
     /** 被当应答消费的重申次数（应答消费批的观测面/审计面）。 */
-    answers: Int = 0
+    answers: Int = 0,
+    /**
+     * 本记账所属的提醒型（`Declared` / `IdleNudge` 的 toString；"" = 旧记账/未标注）。
+     *
+     * 同族漏网修（引擎会话治理专项 · 缺陷三，2026-11-03 实证）：旧 `CareState` 不
+     * 区分提醒型 ⇒ IdleNudge 序列穷尽（`exhausted=true`）后，会话补报 standby 换
+     * 到 **Declared** 腿时，`armDecision` 命中「已穷尽 ⇒ StaySilent」⇒ **申报后的
+     * 正式待命期零提醒**（「报了 standby 还一直通知」的镜像：报了反而不催）。口
+     * 径：**换型 = 新待命期**（两种腿的催法不同、判据不同，旧腿的穷尽预算不该吞
+     * 掉新腿的提醒），同型重申才走应答消费/续档。
+     */
+    kind: String = ""
   )
 
   /** arm() 的决策面（纯函数，spec 判红锚——「应答后不再重复提醒」的机械锚）。 */
@@ -152,13 +175,19 @@ object DelegateStandbyCare:
   /**
    * 决策表：
    *   无记账 ⇒ StartFresh；
+   *   **提醒型变了**（Declared ↔ IdleNudge）⇒ StartFresh（新腿 = 新待命期；
+   *        旧腿的穷尽预算绝不吃掉新腿的提醒——缺陷三同族漏网修）；
    *   已穷尽（或已发满 total 档）⇒ StaySilent（封顶硬约束）；
    *   fiber 在跑 ⇒ AnswerConsumed（**不重发、不重启**——退避自然推进）；
    *   否则 ⇒ ResumeAt(attempt + 1)（fiber 中途自死也不回第一档）。
+   *
+   * `kind` 缺省 "" = 调用方不关心型（旧调用面/单测逐字兼容：双方 kind 非空时才
+   * 比较，空 = 未标注 ⇒ 不比）。
    */
-  def armDecision(prev: Option[CareState], fiberLive: Boolean, total: Int): ArmDecision =
+  def armDecision(prev: Option[CareState], fiberLive: Boolean, total: Int, kind: String = ""): ArmDecision =
     prev match
       case None                                 => ArmDecision.StartFresh
+      case Some(st) if kind.nonEmpty && st.kind.nonEmpty && st.kind != kind => ArmDecision.StartFresh
       case Some(st) if st.exhausted             => ArmDecision.StaySilent
       case Some(st) if st.attempt >= total      => ArmDecision.StaySilent
       case Some(_) if fiberLive                 => ArmDecision.AnswerConsumed
@@ -226,16 +255,20 @@ object DelegateStandbyCare:
     if !Defaults.DelegateStandbyNudgeEnabled then IO.unit
     else
       val total = sequenceTotal
+      val kindTag = DelegateStandbyCare.kindTag(kind)
       IO.blocking {
         val prev = Option(states.get(delegateId))
         val live = arms.containsKey(delegateId)
-        (prev, armDecision(prev, live, total))
+        (prev, armDecision(prev, live, total, kindTag))
       }.flatMap {
         case (_, ArmDecision.AnswerConsumed) =>
           IO.blocking {
             states.compute(
               delegateId,
-              (_, cur) => Option(cur).getOrElse(CareState()).copy(answers = Option(cur).map(_.answers).getOrElse(0) + 1)
+              (_, cur) =>
+                Option(cur)
+                  .getOrElse(CareState())
+                  .copy(answers = Option(cur).map(_.answers).getOrElse(0) + 1, kind = kindTag)
             )
             val st = Option(states.get(delegateId)).getOrElse(CareState())
             logger.info(
@@ -264,7 +297,7 @@ object DelegateStandbyCare:
           val slot = Slot(token)
           IO.blocking {
             arms.put(delegateId, slot)
-            states.put(delegateId, CareState(attempt = startAttempt - 1))
+            states.put(delegateId, CareState(attempt = startAttempt - 1, kind = kindTag))
             ()
           } *>
             IO.defer(
@@ -305,6 +338,7 @@ object DelegateStandbyCare:
     val longMs = Defaults.DelegateStandbyNudgeLongMs
     val longMax = math.max(0, Defaults.DelegateStandbyNudgeLongMax)
     val total = totalAttempts(delays, longMax)
+    val kindTag = DelegateStandbyCare.kindTag(kind)
     val releaseSlot: IO[Unit] = IO.blocking {
       arms.remove(delegateId, slot)
       ()
@@ -336,7 +370,7 @@ object DelegateStandbyCare:
             IO.blocking {
               states.compute(
                 delegateId,
-                (_, cur) => CareState(attempt = attempt, exhausted = last, answers = Option(cur).map(_.answers).getOrElse(0))
+                (_, cur) => CareState(attempt = attempt, exhausted = last, answers = Option(cur).map(_.answers).getOrElse(0), kind = kindTag)
               )
               ()
             } *>

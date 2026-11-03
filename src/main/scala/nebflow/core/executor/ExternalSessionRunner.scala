@@ -585,7 +585,7 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               case (Outcome.Completed, true) =>
                 IO.blocking(MergeAcceptance.verifyRecord(rec))
                   .flatMap { r =>
-                    if r.ok then PostMergeCleanup.run(rec).as(Outcome.Completed)
+                    if r.ok then PostMergeCleanup.run(rec, allowLiveOwner = true).as(Outcome.Completed)
                     else
                       IO.pure(
                         Outcome.Failed(
