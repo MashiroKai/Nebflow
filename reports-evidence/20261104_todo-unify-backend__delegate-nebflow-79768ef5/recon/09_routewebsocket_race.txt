@@ -1,0 +1,51 @@
+# 09 · `page.routeWebSocket` 首连竞态实测（转写记录）
+
+**性质申报**：本文件是**早期取证轮次的 stderr 转写**。那批轮次的
+`10_runtime-proof.stderr.txt` 已被**最终成功轮次**覆盖为空文件，原文不再在盘上；
+下面每一行都是从当时那次运行的终端输出里逐字抄下来的（未改写、未美化）。
+取证脚本已因此改为真服务器方案（见 `todo-shell-runtime-proof.mjs` 头注），
+最终轮次不再产生此类噪声。
+
+## 观测到的事实
+
+### 轮次 v2（`page.route` + `page.routeWebSocket` 垫片，桌面 context 含 `serviceWorkers:'block'` + `deviceScaleFactor:2`）
+
+浏览器控制台（页面侧）：
+
+```
+WebSocket connection to 'ws://localhost:8118/ws?clientId=c7085df3-da98-4cf0-a64e-4962628a7bbf' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED
+```
+
+同轮 harness 侧：
+
+```
+  首帧到位耗时轮询结束，已录帧数: 0
+  活跃探针帧: (未录到)
+  FAIL 活跃探针 getConfig 被记录器捕获（记录器在线，可作零写帧的活证据）
+  #messages-btn 就绪: false
+```
+
+——即：**首个 WS 握手没有被垫片拦下，真的打到了不存在的监听端口**（8118 无服务）。
+页面随后自动重连，重连那一次才被 `routeWebSocket` 接管（该轮稍后累计到 74 帧，
+阳性对照的 `completeTodo` 也能录到）。
+
+### 轮次 v1（同垫片，`#messages-btn` 找不到）
+
+```
+HARNESS ERROR page.click: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator('#messages-btn')
+```
+
+根因同一：应用外壳渲染被 WS 握手卡住，activity bar 迟迟不进 DOM。
+
+## 结论（为什么改成真服务器）
+
+阴性结论（"点击窗口内零写帧"）必须建立在**记录器一定在线**的前提下。
+垫片存在"首连漏拦 + 重连才拦"的时序竞态，会让"零帧"退化成"没接上"。
+改法：起真 `http` + `ws` 服务器（`127.0.0.1:8399`，避开作者生产实例 6138），
+帧日志 = 服务器 `onmessage` 原文，并额外加一条**活跃探针**
+（页面主动发 `getConfig` ⇒ 必须被日志捕获）来自证记录器在线。
+
+最终轮次：`PASS 33 / FAIL 0`，active probe 命中 `[29] {"type":"getConfig"}`。
+见 `10_runtime-proof.stdout.txt`。

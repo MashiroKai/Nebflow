@@ -155,31 +155,52 @@ class ScheduledTaskStore(baseDir: os.Path):
    * Get all pending (untriggered) tasks across all sessions — used to compute next fire time.
    * 含待办（待办也是 pending 条目；调用方按 kind 分面呈现——工具 list 分节、
    * next-fire 计算把待办的下次浮出时间视同一次未来注入，无害）。
+   * 🔴 已完成（completedAt 置位）不算 pending（待办体系统一批 2026-11-04）：软删
+   * 行留在库里，但「下一次浮出」与 list 面都不许再看到它。
    */
   def getAllPendingTasks: IO[List[ScheduledTask]] =
-    storeLock.lock.surround(scanUnlocked(!_.triggered, sort = false))
+    storeLock.lock.surround(scanUnlocked(t => !t.triggered && !t.isCompleted, sort = false))
 
-  /**
-   * Get ALL unfinished todos across all sessions — digest 的内容源（含尚未到
-   * 浮出时间的，汇总语义：一次把未完成待办说全）。
-   */
-  def getAllTodos: IO[List[ScheduledTask]] =
+  private def todosUnlocked(includeCompleted: Boolean): IO[List[ScheduledTask]] =
     storeLock.lock.surround {
-      scanUnlocked(t => t.isTodo && !t.triggered && t.enabled, sort = false)
+      scanUnlocked(t => t.isTodo && !t.triggered && t.enabled && (includeCompleted || !t.isCompleted), sort = false)
         .map(_.sortBy(t => (t.triggerAt, t.createdAt)))
     }
 
-  /** Get due todos (untriggered, enabled, past surface time) across all sessions. */
+  /**
+   * Get ALL **unfinished** todos across all sessions — digest 的内容源（含尚未到
+   * 浮出时间的，汇总语义：一次把未完成待办说全）。
+   * 已完成（completedAt 置位）行被排除（待办体系统一批 2026-11-04：软删行留库
+   * 不等于留面——digest / 周报未销账清单 / 收件箱默认面都不许看到它）。
+   */
+  def getAllTodos: IO[List[ScheduledTask]] = todosUnlocked(includeCompleted = false)
+
+  /**
+   * 收件箱「含已完成」读口（opt-in，`listScheduledTasks{scope:"all",
+   * includeCompleted:true}` 专用）：**默认读口 [[getAllTodos]] 一字不改**，只有
+   * 显式要归档/撤销视图时才走这里。刻意做成独立方法而不是默认参数——默认参数在
+   * 省略括号的调用点会 eta-展开成函数值（本批实测编译报错于
+   * ScheduledTaskActor/WeeklyReport 两处旧调用点）。
+   */
+  def getAllTodosIncludingCompleted: IO[List[ScheduledTask]] = todosUnlocked(includeCompleted = true)
+
+  /**
+   * Get due todos (untriggered, enabled, past surface time) across all sessions.
+   * 🔴 触发面硬闸（待办体系统一批 2026-11-04）：已完成行在此被**读口**挡住——
+   * 挡在这里而不是在 Actor 里加判断，是因为 getAllDueTodos 是浮出腿的唯一入口；
+   * 漏了它，已完成待办会每日 09:00 继续浮出、missCount 继续涨、下次浮出继续
+   * 顺延（spec 钉）。
+   */
   def getAllDueTodos: IO[List[ScheduledTask]] =
     storeLock.lock.surround {
       val now = System.currentTimeMillis()
-      scanUnlocked(t => t.isTodo && !t.triggered && t.enabled && t.triggerAt <= now, sort = false)
+      scanUnlocked(t => t.isTodo && !t.triggered && t.enabled && !t.isCompleted && t.triggerAt <= now, sort = false)
         .map(_.sortBy(t => (t.triggerAt, t.createdAt)))
     }
 
-  /** Get pending (untriggered) task count for a session. */
+  /** Get pending (untriggered, not-completed) task count for a session. */
   def getPendingCount(sessionId: String): IO[Int] =
-    loadTasks(sessionId).map(_.count(!_.triggered))
+    loadTasks(sessionId).map(_.count(t => !t.triggered && !t.isCompleted))
 
   /** Toggle the enabled state of a task. Returns the updated enabled value. */
   def toggleTask(sessionId: String, taskId: String): IO[Boolean] =
