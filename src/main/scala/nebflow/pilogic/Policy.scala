@@ -31,7 +31,12 @@ object LoopPolicy:
 
 /** 失败重试预算——与轮数预算是两个类型分离的独立位（病灶 #5 的结构性拆分：
   * 轮数预算数每一轮；重试预算只数失败重投。pilogic 只承载策略位，不内建数字）。 */
-final case class RetryPolicy(maxAttempts: Option[Int] = None)
+final case class RetryPolicy(maxAttempts: Option[Int] = None):
+
+  /** 已失败的 attempt 数是否仍在预算内（接线点 3：主链 per-turn LLM 重试闸的
+    * 策略位谓词——`attemptsDone < maxAttempts`。None = 无帽恒允许）。 */
+  def allows(attemptsDone: Int): Boolean =
+    maxAttempts.forall(attemptsDone < _)
 
 /** 成本帽（单位由装配层的 CostMeter 实现定义；此处只承载总量限）。 */
 final case class TokenBudget(limit: Long) extends AnyVal

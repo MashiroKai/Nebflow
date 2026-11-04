@@ -69,6 +69,7 @@ private[pilogic] object SitePayloads:
 end SitePayloads
 
 import SitePayloads.given
+import SiteEvents.given
 
 /** 双层 while 循环体（增量轮：AgentLoop trait 契约落成可运行实现，设计 §Ⅱ.1 骨架逐行对位）。
   *
@@ -99,11 +100,13 @@ object SessionStages:
 
   /** 会话拆除前（pi session_shutdown 返 true 供调用方跳重复拆除——Decided 效果由调用方解释）。 */
   def ending[F[_]: Concurrent](snapshot: HookSnapshot[F], sink: EventSink[F]): F[DispatchResult] =
-    HookDispatch.dispatch(HookPoint.SessionEnding, Json.obj("stage" -> "session.ending".asJson), snapshot, sink)
+    HookDispatch.dispatch(HookPoint.SessionEnding,
+      SiteEvents.SessionEndingInput().asJson, snapshot, sink)
 
   /** 压缩落库后（#8 观察级）。 */
   def compactEnded[F[_]: Concurrent](snapshot: HookSnapshot[F], sink: EventSink[F]): F[DispatchResult] =
-    HookDispatch.dispatch(HookPoint.CompactEnded, Json.obj("stage" -> "compact.ended".asJson), snapshot, sink)
+    HookDispatch.dispatch(HookPoint.CompactEnded,
+      SiteEvents.CompactEndedInput().asJson, snapshot, sink)
 
 /** run 内私有状态（run-local 值传递——病灶 #1 结构性免疫；LoopState 为 §Ⅱ 公开签名件）。 */
 private[pilogic] final case class RState(
@@ -151,12 +154,11 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
         _       <- seed.sink.emit(LoopEvent.RunStarted) // 对位 :116
         _       <- if ctx0.messages.isEmpty
                    then observe(seed, HookPoint.SessionStarted, seed.hooks.snapshot, gates,
-                     Json.obj("fresh" -> true.asJson))
+                     SiteEvents.SessionStartedInput(fresh = true).asJson)
                    else F.unit
-        gated <- HookDispatch.dispatch(HookPoint.RunGate, Json.obj(
-          "messageCount" -> ctx0.messages.size.asJson,
-          "model" -> seed.model.getOrElse("").asJson,
-        ), seed.hooks.snapshot, seed.sink, gates)
+        gated <- HookDispatch.dispatch(HookPoint.RunGate,
+          SiteEvents.RunGateInput(ctx0.messages.size, seed.model.getOrElse("")).asJson,
+          seed.hooks.snapshot, seed.sink, gates)
         out <- gated match
           case DispatchResult.Decided(HookEffect.Veto(reason)) =>
             finishRun(seed, RunOutcome.Failed(LoopError.RunGated(reason)))
@@ -173,14 +175,15 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
     val snap = seed.hooks.snapshot
     val sysNow = effectiveSystem(ctx0.messages, None)
     for
-      startEff <- HookDispatch.dispatch(HookPoint.PreRunStart, sysNow.getOrElse(Json.Null),
+      startEff <- HookDispatch.dispatch(HookPoint.PreRunStart,
+        SiteEvents.PreRunStartInput(sysNow.getOrElse(Json.Null)).asJson,
         snap, seed.sink, gates)
       sysOverride = startEff match
         case DispatchResult.Decided(HookEffect.Modify(v)) => Some(v)
         case _                                           => None
-      injEff <- HookDispatch.dispatch(HookPoint.PreRunInject, Json.obj(
-        "messageCount" -> ctx0.messages.size.asJson,
-      ), snap, seed.sink, gates)
+      injEff <- HookDispatch.dispatch(HookPoint.PreRunInject,
+        SiteEvents.PreRunInjectInput(ctx0.messages.size).asJson,
+        snap, seed.sink, gates)
       ctx1 = injEff match
         case DispatchResult.Decided(HookEffect.Inject(ms)) => ms.foldLeft(ctx0)(_.appended(_))
         case _                                             => ctx0
@@ -191,7 +194,7 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
   private def finishRun(seed: RunSeed[F], outcome: RunOutcome): F[RunOutcome] =
     seed.sink.emit(LoopEvent.RunEnded(outcome)) *>
       observe(seed, HookPoint.PostRunSettled, seed.hooks.snapshot, DropGates.none,
-        Json.obj("outcome" -> outcome.getClass.getSimpleName.asJson)).as(outcome)
+        SiteEvents.PostRunSettledInput(outcome).asJson).as(outcome)
 
   private def naturalOutcome(st: RState): RunOutcome =
     if st.settles > 0 then RunOutcome.SettledExtra(st.settles, st.loop.newMessages)
@@ -209,13 +212,12 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
           // 自然断：postRun.Settle（#22 关键位）+ postRun.FollowUp（#43/#67）续命判定
           val snap = seed.hooks.snapshot
           for
-            settle <- HookDispatch.dispatch(HookPoint.PostRunSettle, Json.obj(
-              "newMessageCount" -> stEnd.loop.newMessages.size.asJson,
-              "turn" -> stEnd.loop.turn.value.asJson,
-            ), snap, seed.sink, gates)
-            follow <- HookDispatch.dispatch(HookPoint.PostRunFollowUp, Json.obj(
-              "messageCount" -> stEnd.ctx.messages.size.asJson,
-            ), snap, seed.sink, gates)
+            settle <- HookDispatch.dispatch(HookPoint.PostRunSettle,
+              SiteEvents.PostRunSettleInput(stEnd.loop.newMessages.size, stEnd.loop.turn).asJson,
+              snap, seed.sink, gates)
+            follow <- HookDispatch.dispatch(HookPoint.PostRunFollowUp,
+              SiteEvents.PostRunFollowUpInput(stEnd.ctx.messages.size).asJson,
+              snap, seed.sink, gates)
             cbMsgs <- seed.getFollowUpMessages.getOrElse(F.pure(Vector.empty[LoopMessage]))
             hookMsgs = follow match
               case DispatchResult.Decided(HookEffect.Inject(ms)) => ms
@@ -262,12 +264,13 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
     for
       _ <- seed.sink.emit(LoopEvent.TurnStarted(turn))
       // turn.Started（#1 位点：与事件同步落地，入参 = 轮次号；早于 preRequest 族）
-      _ <- observe(seed, HookPoint.TurnStarted, snap, gates, Json.obj("turn" -> turn.value.asJson))
+      _ <- observe(seed, HookPoint.TurnStarted, snap, gates,
+        SiteEvents.TurnStartedInput(turn).asJson)
 
       // preRequest.Context（#13/#44/#53：消息史改写链式；解码失败=弃改写+守卫事件）
-      ctxEff <- HookDispatch.dispatch(HookPoint.PreRequestContext, Json.obj(
-        "messages" -> st.ctx.messages.asJson,
-      ), snap, seed.sink, gates)
+      ctxEff <- HookDispatch.dispatch(HookPoint.PreRequestContext,
+        SiteEvents.PreRequestContextInput(st.ctx.messages).asJson,
+        snap, seed.sink, gates)
       (ctx1, ctxGuard) = ctxEff match
         case DispatchResult.Decided(HookEffect.Modify(v)) =>
           v.as[Vector[LoopMessage]] match
@@ -278,7 +281,8 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
 
       // preRequest.System（#14/#52）
       sysNow = effectiveSystem(ctx1.messages, st.systemOverride)
-      sysEff <- HookDispatch.dispatch(HookPoint.PreRequestSystem, sysNow.getOrElse(Json.Null), snap, seed.sink, gates)
+      sysEff <- HookDispatch.dispatch(HookPoint.PreRequestSystem,
+        SiteEvents.PreRequestSystemInput(sysNow.getOrElse(Json.Null)).asJson, snap, seed.sink, gates)
       sysOverride1 = sysEff match
         case DispatchResult.Decided(HookEffect.Modify(v)) if v.isNull => None
         case DispatchResult.Decided(HookEffect.Modify(v))            => Some(v)
@@ -289,7 +293,8 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
         case _                                            => sysNow
 
       // preRequest.Options（#45：Patch=增量 deepMerge / Modify=整块替换，显式分档）
-      optEff <- HookDispatch.dispatch(HookPoint.PreRequestOptions, seed.options, snap, seed.sink, gates)
+      optEff <- HookDispatch.dispatch(HookPoint.PreRequestOptions,
+        SiteEvents.PreRequestOptionsInput(seed.options).asJson, snap, seed.sink, gates)
       options1 = optEff match
         case DispatchResult.Decided(HookEffect.Modify(v)) => v
         case DispatchResult.Decided(HookEffect.Patch(d))  => seed.options.deepMerge(d)
@@ -299,7 +304,8 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
 
       // 请求装配 + providerPort.Payload（#15/#46 整块替换；#64 消息条数冻结守卫）
       req0 = ProviderRequest(model, sysEffective, ctx1.messages, options1, Json.obj())
-      payloadEff <- HookDispatch.dispatch(HookPoint.ProviderPayload, req0.asJson, snap, seed.sink, gates)
+      payloadEff <- HookDispatch.dispatch(HookPoint.ProviderPayload,
+        SiteEvents.ProviderPayloadInput(req0).asJson, snap, seed.sink, gates)
       (req1, payloadGuard) = payloadEff match
         case DispatchResult.Decided(HookEffect.Modify(v)) =>
           v.as[ProviderRequest] match
@@ -311,7 +317,8 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
       _ <- payloadGuard.traverse_(seed.sink.emit)
 
       // providerPort.Headers（#16 改造位：返值必读——Modify 直接生效）
-      hdrEff <- HookDispatch.dispatch(HookPoint.ProviderHeaders, req1.headers, snap, seed.sink, gates)
+      hdrEff <- HookDispatch.dispatch(HookPoint.ProviderHeaders,
+        SiteEvents.ProviderHeadersInput(req1.headers).asJson, snap, seed.sink, gates)
       req = hdrEff match
         case DispatchResult.Decided(HookEffect.Modify(v)) => req1.copy(headers = v)
         case _                                            => req1
@@ -321,11 +328,13 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
       effThinking = req.options.hcursor.get[Json]("thinkingLevel").toOption
       _ <- st.prevModel match
         case Some(prev) if prev != req.model =>
-          observe(seed, HookPoint.ModelSelected, snap, gates, Json.obj("from" -> prev.asJson, "to" -> req.model.asJson))
+          observe(seed, HookPoint.ModelSelected, snap, gates,
+            SiteEvents.ModelSelectedInput(prev, req.model).asJson)
         case _ => F.unit
       _ <- (st.prevThinking, effThinking) match
         case (Some(prev), Some(cur)) if prev != cur =>
-          observe(seed, HookPoint.ThinkingLevelSelected, snap, gates, Json.obj("from" -> prev.asJson, "to" -> cur.asJson))
+          observe(seed, HookPoint.ThinkingLevelSelected, snap, gates,
+            SiteEvents.ThinkingLevelSelectedInput(prev, cur).asJson)
         case _ => F.unit
 
       // provider 调用（中止前置检查 + 可重试腿）
@@ -362,21 +371,25 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
     val resp = pstream.response
     for
       // providerPort.Responded（#17/#54：收到响应消费前，只读）
-      _ <- observe(seed, HookPoint.ProviderResponded, snap, gates, SitePayloads.responseJson(resp))
+      _ <- observe(seed, HookPoint.ProviderResponded, snap, gates,
+        SiteEvents.ProviderRespondedInput(resp).asJson)
 
       // 消息事件族（seq 单写者；块逐个转发：message.Delta 事件+位点 + providerPort.Chunked）
       seq = MessageSeq(st.loop.nextSeqValue)
       _ <- seed.sink.emit(LoopEvent.MessageStarted(seq))
-      _ <- observe(seed, HookPoint.MessageStarted, snap, gates, Json.obj("seq" -> seq.value.asJson))
+      _ <- observe(seed, HookPoint.MessageStarted, snap, gates,
+        SiteEvents.MessageStartedInput(seq).asJson)
       _ <- pstream.chunks.traverse_ { chunk =>
         seed.sink.emit(LoopEvent.MessageDelta(seq, chunk.delta)) *>
           observe(seed, HookPoint.MessageDelta, snap, gates,
-            Json.obj("seq" -> seq.value.asJson, "chunk" -> chunk.delta)) *>
-          observe(seed, HookPoint.ProviderChunked, snap, gates, chunk.delta)
+            SiteEvents.MessageDeltaInput(seq, chunk.delta).asJson) *>
+          observe(seed, HookPoint.ProviderChunked, snap, gates,
+            SiteEvents.ProviderChunkedInput(chunk.delta).asJson)
       }
 
       // message.Ended（#30/#47：改写 + role 约束强制——pi 两实现不一致处不照抄）
-      msgEff <- HookDispatch.dispatch(HookPoint.MessageEnded, resp.message.asJson, snap, seed.sink, gates)
+      msgEff <- HookDispatch.dispatch(HookPoint.MessageEnded,
+        SiteEvents.MessageEndedInput(resp.message).asJson, snap, seed.sink, gates)
       (finalMsg, msgGuard) = msgEff match
         case DispatchResult.Decided(HookEffect.Modify(v)) =>
           v.as[LoopMessage] match
@@ -467,14 +480,9 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
           case Some(f) => f(TurnSnapshot(turn, Some(msg), batch.results.map(_._2), stopReason))
           case None    => F.pure(TurnDecision.Continue("natural"))
       upstreamExplicitEnd = !batch.terminated && seed.finishTurn.isDefined && upstream == TurnDecision.End
-      turnEff <- HookDispatch.dispatch(HookPoint.TurnEnded, Json.obj(
-        "turn" -> turn.value.asJson,
-        "message" -> msg.asJson,
-        "toolResults" -> batch.results.map(_._2.output).asJson,
-        "decision" -> (upstream match
-          case TurnDecision.End           => "end"
-          case TurnDecision.Continue(why) => s"continue:$why").asJson,
-      ), snap, seed.sink, gates)
+      turnEff <- HookDispatch.dispatch(HookPoint.TurnEnded,
+        SiteEvents.TurnEndedInput(turn, Some(msg), batch.results.map(_._2.output), upstream).asJson,
+        snap, seed.sink, gates)
       effective =
         if batch.terminated then TurnDecision.End
         else if upstreamExplicitEnd then TurnDecision.End
@@ -521,8 +529,8 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
         case None =>
           // 空批不发 batch.Settled（文本轮 calls 为空；根因修复③：位点语义=「有批收尾」）
           (if acc.isEmpty then F.unit
-           else observe(seed, HookPoint.ToolBatchSettled, snap, gates, Json.obj(
-             "results" -> Json.arr(acc.map { case (c, r) => ToolExecutionResult.toJson(c, r) }*))))
+           else observe(seed, HookPoint.ToolBatchSettled, snap, gates,
+             SiteEvents.ToolBatchSettledInput(acc.map(SiteEvents.ToolOutcome.apply)).asJson))
             .as(BatchOutcome(acc, terminated, aborted))
         case Some(c) =>
           def skipped(r: ToolExecutionResult): F[BatchOutcome] =
@@ -551,17 +559,18 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
 
     def finishWith(r: ToolExecutionResult, terminate: Boolean): F[(ToolExecutionResult, Boolean)] =
       seed.sink.emit(LoopEvent.ToolExecutionEnded(call.callId, r.output, r.isError)) *>
-        observe(seed, HookPoint.ToolExecutionEnded, snap, gates, Json.obj(
-          "callId" -> call.callId.asJson, "output" -> r.output, "isError" -> r.isError.asJson))
+        observe(seed, HookPoint.ToolExecutionEnded, snap, gates,
+          SiteEvents.ToolExecutionEndedInput(call.callId, r.output, r.isError).asJson)
           .as((r, terminate))
 
     /** tool.Post（#37/#49/#57/#69：结果改写链式 + Terminate 批停通道）——仅真执行过的调用。 */
     def postThenFinish(r: ToolExecutionResult): F[(ToolExecutionResult, Boolean)] =
-      HookDispatch.dispatch(HookPoint.ToolPost, ToolExecutionResult.toJson(call, r), snap, seed.sink, gates).flatMap {
+      HookDispatch.dispatch(HookPoint.ToolPost,
+        SiteEvents.ToolOutcome(call, r).asJson, snap, seed.sink, gates).flatMap {
         case DispatchResult.Decided(HookEffect.Modify(v)) =>
           finishWith(decodeResult(v).getOrElse(r), terminate = false)
         case DispatchResult.Decided(HookEffect.Patch(d)) =>
-          finishWith(decodeResult(ToolExecutionResult.toJson(call, r).deepMerge(d)).getOrElse(r), terminate = false)
+          finishWith(decodeResult(SiteEvents.ToolOutcome(call, r).asJson.deepMerge(d)).getOrElse(r), terminate = false)
         case DispatchResult.Decided(HookEffect.Terminate(_)) =>
           finishWith(r, terminate = true)
         case _ => finishWith(r, terminate = false)
@@ -570,8 +579,8 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
     def executeThenFinish(c: ToolCall): F[(ToolExecutionResult, Boolean)] =
       val onDelta: Json => F[Unit] = partial =>
         seed.sink.emit(LoopEvent.ToolExecutionDelta(c.callId, partial)) *>
-          observe(seed, HookPoint.ToolExecutionDelta, snap, gates, Json.obj(
-            "callId" -> c.callId.asJson, "partial" -> partial))
+          observe(seed, HookPoint.ToolExecutionDelta, snap, gates,
+            SiteEvents.ToolExecutionDeltaInput(c.callId, partial).asJson)
       seed.executor.execute(c, seed.signal, onDelta).attempt.flatMap {
         case Right(r) => postThenFinish(r)
         case Left(e: LoopError) => F.raiseError(e) // 引擎级错误透传（drive 统一回收为 Failed 收尾）
@@ -582,8 +591,8 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
       }
 
     seed.sink.emit(LoopEvent.ToolExecutionStarted(call.callId, call.name)) *>
-      observe(seed, HookPoint.ToolExecutionStarted, snap, gates, Json.obj(
-        "callId" -> call.callId.asJson, "name" -> call.name.asJson)) >>
+      observe(seed, HookPoint.ToolExecutionStarted, snap, gates,
+        SiteEvents.ToolExecutionStartedInput(call.callId, call.name).asJson) >>
       // 引擎侧原始参校验（pi「校验后 execute 前」——校验先行、hook 后置；无 spec=不可校验放行）
       (seed.tools.specOf(call.name) match
         case Some(spec) => spec.validateArgs(call.args).pure[F]
@@ -591,7 +600,8 @@ final class LoopRuntime[F[_]: Concurrent: Clock] extends AgentLoop[F]:
         case Left(err) =>
           finishWith(ToolExecutionResult.error(s"invalid arguments: $err"), terminate = false)
         case Right(()) =>
-          HookDispatch.dispatch(HookPoint.ToolPre, ToolCall.toJson(call), snap, seed.sink, gates).flatMap {
+          HookDispatch.dispatch(HookPoint.ToolPre,
+            SiteEvents.ToolPreInput(call).asJson, snap, seed.sink, gates).flatMap {
             case DispatchResult.Decided(HookEffect.Block(reason, terminate)) =>
               finishWith(ToolExecutionResult.error(s"blocked: $reason"), terminate)
             case DispatchResult.Decided(HookEffect.Veto(reason)) =>
