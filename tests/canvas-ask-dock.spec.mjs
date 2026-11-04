@@ -48,9 +48,9 @@
 //       F1 ④双泡修复——发问等待期零空 ai 泡（typing 单件）；
 //       F2 ①ai 气泡复用主会话渲染腿 renderMarkdownWithMath（h2/ul/pre+code/
 //          table 全在场、裸 md 字面量退场）；
-//       F3 ⑤顶带渐隐（doc-ask-fade 批 2026-11-03 收编）：材质 = 主对话窗同一类
-//          .ds-edge-fade（--g2-veil + blur(18) saturate(1.5) + 两段式 mask）；
-//          内容在带顶起排、宿主零 mask（旧「列顶留白 64px + colwrap mask」形态退役）。
+//       F3 ⑤顶缘渐隐（ask-fade-content-opacity 批 2026-11-04 改判据）：面板内零遮罩
+//          条元素，渐隐本体 = .ask-col 自身的 mask-image（内容 alpha 渐到 0）；
+//          面板/滚动容器整体透明无边框（①-批 .ask-veil + .ds-edge-fade 成员形态退役）。
 //   T12 风格统一（三修③ 作者令 2026-10-29「ask 输入条/气泡对齐 canvas 统一风格，
 //       不新造风格」）：输入条/气泡三面计算材质与聊天 #header 玻璃模板（--cv-* 单源）
 //       逐项相等；入口钮材质随液体玻璃 v3 F1 扩面批（2026-10-31 作者 12:32 点选
@@ -470,33 +470,41 @@ try {
     return b ? { n: nodes.length, table: !!b.querySelector('table td'), pre: !!b.querySelector('pre') } : null;
   });
   ok('F2-b done 定稿：markdown 渲染保持 + ai 泡总数稳定（无空泡残留）', !!f2final && f2final.n === aiCountBefore + 1 && f2final.table && f2final.pre, JSON.stringify(f2final));
+  // F3 顶缘渐隐 = 内容级 mask（ask-fade-content-opacity 批 2026-11-04，作者令「渐隐
+  //    应该是对消息降低透明度到 0 的过程，而不是放一个过渡的条在哪，整体透明无边框」）：
+  //    ① 面板内零渐隐带遮罩元素（①-批 .ask-veil / .ds-edge-fade 成员退役）；
+  //    ② 渐隐本体 = .ask-col 自身的 mask-image（起点 transparent → fade-h）；
+  //    ③ 面板/滚动容器零背景/零边框/零浮影/零 backdrop-filter。
   const f3 = await page.evaluate(() => {
-    const veil = document.querySelector('.ask-colwrap .ask-veil');
     const wrap = document.querySelector('.ask-colwrap');
     const col = document.querySelector('.ask-col');
+    const dock = document.querySelector('.ask-dock');
     const mainFade = document.getElementById('g2-edge-fade');
-    const vcs = getComputedStyle(veil);
-    const vr = veil.getBoundingClientRect();
-    const cr = col.getBoundingClientRect();
+    const ccs = getComputedStyle(col);
+    const wcs = getComputedStyle(wrap);
+    const dcs = getComputedStyle(dock);
     return {
-      veilCls: veil.className,
+      fadeLayers: dock.querySelectorAll('.ds-edge-fade, .ask-veil').length,
       mainCls: mainFade ? mainFade.className : null,
-      veilBg: vcs.backgroundImage,
-      veilFilter: vcs.backdropFilter || vcs.webkitBackdropFilter,
-      veilMask: vcs.maskImage || vcs.webkitMaskImage,
-      colwrapMask: String(getComputedStyle(wrap).maskImage),
-      // 主窗同形态：内容在带顶起排（列顶 = 带顶）——doc-ask-fade 批口径。
-      colTop: cr.top,
-      veilTop: vr.top,
+      colMask: String(ccs.maskImage || ccs.webkitMaskImage),
+      colMaskWebkit: String(ccs.webkitMaskImage || ''),
+      fadeH: parseFloat(ccs.getPropertyValue('--ask-fade-h')) || 0,
+      colPadTop: parseFloat(ccs.paddingTop) || 0,
+      colwrapMask: String(wcs.maskImage),
+      dockBg: dcs.backgroundColor, dockBorder: dcs.borderTopWidth, dockShadow: dcs.boxShadow,
+      dockFilter: dcs.backdropFilter || dcs.webkitBackdropFilter,
     };
   });
-  ok('F3 顶带材质走 .ds-edge-fade 单源（doc-ask-fade 批收编）：veil 渐层 + blur(18px) saturate(1.5) + 两段式 mask，且与主对话窗 #g2-edge-fade 同一个类',
-    f3.veilBg.includes('gradient') && /blur\(18px\)/.test(f3.veilFilter) && /saturate\(1\.5\)/.test(f3.veilFilter) && f3.veilMask.includes('gradient')
-      && /\bds-edge-fade\b/.test(f3.veilCls) && /\bds-edge-fade\b/.test(String(f3.mainCls)),
-    JSON.stringify({ bg: f3.veilBg.slice(0, 40), f: f3.veilFilter, m: f3.veilMask.slice(0, 40), cls: f3.veilCls, main: f3.mainCls }));
-  ok('F3-b 主窗同形态：内容在带顶起排（列顶 = 带顶），列宿主零 mask（hit-test 不被裁）',
-    f3.veilCls !== null && Math.abs(f3.colTop - f3.veilTop) <= 1 && f3.colwrapMask === 'none',
-    JSON.stringify({ colTop: f3.colTop, veilTop: f3.veilTop, mask: f3.colwrapMask }));
+  ok('F3 顶缘渐隐 = 内容级 mask（面板内零遮罩条元素；.ask-col mask 起点 transparent → fade-h）',
+    f3.fadeLayers === 0 && /linear-gradient/.test(f3.colMask) && /transparent|rgba\(0, 0, 0, 0\)/.test(f3.colMask)
+      && f3.fadeH > 0 && f3.colMask.includes(`${Math.round(f3.fadeH)}px)`),
+    JSON.stringify({ layers: f3.fadeLayers, mask: f3.colMask, fadeH: f3.fadeH }));
+  ok('F3-b 整体透明无边框（dock 零背景/零边框/零浮影/零 backdrop-filter；外框零 mask）',
+    f3.dockBg === 'rgba(0, 0, 0, 0)' && parseFloat(f3.dockBorder) === 0 && f3.dockShadow === 'none'
+      && /^none$/.test(String(f3.dockFilter)) && f3.colwrapMask === 'none' && /^none$/.test(String(f3.colwrapMask)),
+    JSON.stringify({ bg: f3.dockBg, bw: f3.dockBorder, sh: f3.dockShadow, bf: f3.dockFilter, wrapMask: f3.colwrapMask }));
+  ok('F3-c 主对话窗 #g2-edge-fade 未受影响（本批只改 Ask）', f3.mainCls !== null && /\bds-edge-fade\b/.test(String(f3.mainCls)),
+    JSON.stringify({ main: f3.mainCls }));
   await shot(page, 'f-batch-md-render-and-fade');
 
   // mock 服务端持久化面：A 的转录入库（T5 再开 askOpen 重放需复现——服务端为权威）。
