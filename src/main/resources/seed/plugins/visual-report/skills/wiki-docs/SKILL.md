@@ -109,6 +109,22 @@ python3 ${SKILL_DIR}/scripts/check_wiki_docs.py --project <project> --glossary g
 - One document = one topic. The file name is the document identity; prefer
   short kebab-case names (`auth-flow-review.md`), because other documents cite
   the file name.
+- **Document naming — key information first, time last (author ruling
+  2026-11-04 18:12; this bullet is the only naming rule for produced docs).**
+  What the document IS leads the file name; time is a tail attribute. Stage
+  documents (one-off diagnostics / audits / review snapshots) are named
+  `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md`: `topic`, then `__`, then the
+  second-precision local time block (`YYYYMMDD_HHMMSS`, `_` inside the block; a
+  same-second clash appends `-<n>` to the time block), then `__<chainId>` only
+  when the producing chain is real — never invented. Living documents stay
+  date-less (`<topic>.md`, `__<chainId>` tail only when attributed). `topic` =
+  lowercase kebab (English / pinyin) or verbatim CJK, one phrase that says what
+  the document is; a bland word alone (`report`, `doc`, `notes`) is not a topic,
+  and documents of one series share one topic prefix. Scope = produced documents
+  and evidence (vault knowledge docs, `reports-evidence/`, `evidence/`); code,
+  tests, specs and configs are out of scope. Existing documents keep their
+  names — no rename, no move, no retro-edit (the date-first form survives only
+  on that existing stock).
 - **Sub-project vaults (multi-project graph, #744-B)**: any `<sub>/docs/`
   directory inside the vault is its own sub-graph — a sub-project keeps the
   same vault convention one level down (`docs/<sub>/docs/`). Sub-vault
