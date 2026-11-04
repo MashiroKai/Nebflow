@@ -2,6 +2,14 @@ import { key } from './branding.js'; // MUST be first: storage-key migration run
 import state from './state.js';
 import { initBranding, brand } from './brand.js';
 
+// ask-paradigm-a（2026-11-03）：vanilla 组件范式基座三件（dom / events / component）
+// 目前只有下游组件 import 才进构建图，入口侧在这里显式登记一次 ——
+// `scripts/build-web.mjs` 的孤儿守卫要求 web/js/**/*.js 每个文件都出现在 esbuild
+// metafile inputs 里。三个模块在 import 期零副作用（纯导出），不改变启动顺序。
+import './dom.js';
+import './events.js';
+import './component.js';
+
 // Branding first: correct the tab title before any other module body runs.
 initBranding();
 
@@ -14,7 +22,7 @@ if (document.documentElement.dataset.nfEmbedded === '1') {
   // Tab title follows the same uppercase brand-token rule as initBranding().
   document.title = `${brand.lowerName.toUpperCase()} (embedded)`;
   document.addEventListener('DOMContentLoaded', () => {
-    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#888;padding:24px;text-align:center">Stand 预览已停止——该页面试图在应用内嵌套启动（已防止无限递归）。</div>';
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#888;padding:var(--ds-space-6);text-align:center">Stand 预览已停止——该页面试图在应用内嵌套启动（已防止无限递归）。</div>';
   });
   throw new Error('[nf] embedded context — boot refused (anti-recursion guard)');
 }

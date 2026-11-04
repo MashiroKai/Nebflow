@@ -1627,26 +1627,27 @@ class RemoteExecutor(
     all.filter(_.nonEmpty).distinct
 
   /**
-   * P2P 下发入口（砍探测税批 2026-11-04 重写）。
+   * P2P 下发入口（三档选路批 2026-11-04 起**先选路再拨**）。
    *
-   * 改前：`p2pExecuteCandidates` **串行**挨个拨候选，每个付满一个 connect 超时
-   * （实测两个候选各 SYN 黑洞 ⇒ 3 000 ms + 1 500 ms），且负证据只活 60 s。
-   * 改后三步（见 [[resolveP2pEndpoint]]）：
-   *
-   *   ① 路径记忆新鲜且`method=p2p` ⇒ 直接用记忆里的端点（**零探测**）；
-   *   ② 负缓存命中（[[P2pReachability]]）⇒ 直接报「不可达」，调用方零成本走 relay；
-   *   ③ 否则**并发探测全部候选、首胜即放行**，全不通则写负证据（指数退避窗口）。
+   * 三步（见 [[resolveP2pEndpoint]]）：
+   *   ① 选路计划（[[DirectRoute.plan]]）= ① Tailscale 档（探测可用才选）/ ② 自研 P2P
+   *      （未实现 ⇒ 恒跳过）/ ③ relay 兜底；计划里 `attempt` 为空 ⇒ **一个字节都不拨**，
+   *      直接把 relay 决策交回调用方（不落到「排第一 → 失败 → 回落」）；
+   *   ② 路径记忆新鲜且`method=p2p` ⇒ 直接用记忆里的端点（**零探测**）；
+   *   ③ 负缓存命中（[[P2pReachability]]）⇒ 零成本走 relay；
+   *   ④ 否则**并发探测计划里的候选、首胜即放行**，全不通则写负证据。
    */
   private def p2pExecute(
     peer: PeerInfo,
     toolName: String,
     params: JsonObject,
     timeout: FiniteDuration,
-    budget: P2pPathDecision.ProbeBudget
+    budget: P2pPathDecision.ProbeBudget,
+    plan: RoutePlan
   ): IO[Either[ToolError, String]] =
     for
       selfDeviceId <- neblinkService.identity.map(_.deviceId)
-      decision <- resolveP2pEndpoint(peer, budget)
+      decision <- resolveP2pEndpoint(peer, budget, plan)
       result <- decision.endpoint match
         case Some(endpoint) =>
           p2pExecuteAt(peer, endpoint, selfDeviceId, toolName, params, timeout, budget).flatMap {
@@ -1657,9 +1658,12 @@ class RemoteExecutor(
           IO.pure(
             Left(
               ToolError(
-                if decision.negativeHit then
+                if plan.isEmpty then
+                  s"Cannot reach ${peer.deviceName}: 直连档全部跳过（via=relay reasons=" +
+                    s"${plan.reasons.mkString(",")}；0ms，未付探测税）"
+                else if decision.negativeHit then
                   s"Cannot reach ${peer.deviceName}: P2P endpoint(s) known unreachable " +
-                    s"(negative cache, no probe paid; tried ${p2pCandidates(peer).size} candidate endpoint(s))"
+                    s"(negative cache, no probe paid; tried ${plan.attempt.size} candidate endpoint(s))"
                 else
                   s"Cannot reach ${peer.deviceName}: no candidate endpoint answered " +
                     s"(probed ${decision.probed} endpoint(s) concurrently in ${decision.probeMs}ms)"
@@ -1669,34 +1673,47 @@ class RemoteExecutor(
     yield result
 
   /**
-   * 端点解析（**唯一判据点**）：记忆 → 负缓存 → 并发探测。返回
+   * 端点解析（**唯一判据点**）：选路计划 → 记忆 → 负缓存 → 并发探测。返回
    * [[P2pReachability.Decision]]（端点 + 探测读数），读数随日志外发供本批取数。
+   *
+   * 三档选路批（2026-11-04）：候选集改为 `plan.attempt`（① 档的门已经过滤掉不可用的
+   * tailnet 候选），并在**每个分支**落一行结构化选路日志（`[route] …`）——这是「为什么
+   * 没直连」的唯一可读面。
    */
   private def resolveP2pEndpoint(
     peer: PeerInfo,
-    budget: P2pPathDecision.ProbeBudget
+    budget: P2pPathDecision.ProbeBudget,
+    plan: RoutePlan
   ): IO[P2pReachability.Decision] =
     val now = System.currentTimeMillis()
     val addressKey = P2pPathDecision.addressKey(peer)
+    val candidates = plan.attempt
+    val routeLog: IO[Unit] = IO(DirectRoute.logPlan(peer.deviceName, plan))
     rememberedEndpoint(peer) match
       case Some(ep) =>
-        IO.pure(P2pReachability.Decision(Some(ep), probed = 0, probeMs = 0L, negativeHit = false, probeFailed = false))
+        routeLog.as(
+          P2pReachability.Decision(Some(ep), probed = 0, probeMs = 0L, negativeHit = false, probeFailed = false)
+        )
       case None =>
-        if reachLedger.shouldSkip(peer.deviceId, addressKey, now) then
+        if candidates.isEmpty then
+          // ① 档不可用且（② 恒不可用）⇒ 零成本 relay 决策：**不探测、不拨号**。
+          routeLog.as(
+            P2pReachability.Decision(None, probed = 0, probeMs = 0L, negativeHit = false, probeFailed = false)
+          )
+        else if reachLedger.shouldSkip(peer.deviceId, addressKey, now) then
           val left = reachLedger.negativeRemainingMs(peer.deviceId, addressKey, now).getOrElse(0L)
-          IO(reachLedger.noteSkip()) *> logger.info(
+          routeLog *> IO(reachLedger.noteSkip()) *> logger.info(
             s"[p2p-probe] device=${peer.deviceName} decision=relay (negative cache, ${left}ms left, 0ms paid)"
           )
           IO.pure(
             P2pReachability.Decision(None, probed = 0, probeMs = 0L, negativeHit = true, probeFailed = false)
           )
         else
-          val candidates = p2pCandidates(peer)
           // 探测预算：短连接预算（fast-fail）与硬上限取小——探测本身不该比下发更贵。
           val probeBudgetMs =
             math.min(budget.connectTimeout.toMillis, P2pProbePolicy.ProbeConnectTimeoutMs.toLong).toInt
           val t0 = System.nanoTime()
-          IO(reachLedger.noteProbeAttempt()) *>
+          routeLog *> IO(reachLedger.noteProbeAttempt()) *>
             P2pReachability.probeConcurrently(candidates, probeBudgetMs).map { winner =>
               val ms = (System.nanoTime() - t0) / 1000000L
               winner match
@@ -1704,7 +1721,7 @@ class RemoteExecutor(
                   // 探通即清账（负证据的可失效条件之一）：端点回来了就不该继续旁路。
                   reachLedger.noteSuccess(peer.deviceId)
                   logger.info(
-                    s"[p2p-probe] device=${peer.deviceName} decision=p2p endpoint=$ep " +
+                    s"[p2p-probe] device=${peer.deviceName} decision=${DirectRoute.viaOf(ep)} endpoint=$ep " +
                       s"probed=${candidates.size} probeMs=$ms (concurrent, first-wins)"
                   )
                   P2pReachability.Decision(
@@ -1820,6 +1837,11 @@ class RemoteExecutor(
    * A: the budget is the caller's (see [[P2pPathDecision.probeBudget]]) — a
    * `directOnline=false` dispatch probes once with a 1.5s connect timeout
    * instead of paying 4 attempts + backoff before the relay fallback.
+   *
+   * 三档选路批（2026-11-04）：**选路计划在重试循环之外算一次**。计划为空（① 档探测
+   * 不可用 + ② 档未实现）⇒ 直接返回 relay 决策：**零拨号、零探测、零重试**
+   * ——否则「Cannot reach」会被 [[isTransientError]] 判成可重试，白付 1+2+3s 退避
+   * （改前正是这种形态，只是白付的是三个 connect 超时）。
    */
   private def p2pExecuteWithRetry(
     peer: PeerInfo,
@@ -1830,18 +1852,32 @@ class RemoteExecutor(
     budget: P2pPathDecision.ProbeBudget,
     kind: String = ""
   ): IO[Either[ToolError, String]] =
-    def attempt(n: Int): IO[Either[ToolError, String]] =
-      p2pExecute(peer, toolName, params, timeout, budget).flatMap {
+    def attempt(n: Int, plan: RoutePlan): IO[Either[ToolError, String]] =
+      p2pExecute(peer, toolName, params, timeout, budget, plan).flatMap {
         case Right(result) => IO.pure(Right(result))
         case Left(err) if n < budget.maxRetries && isTransientError(err) =>
           val delay = (n + 1).seconds
           logger.info(s"Retrying ${peer.deviceName} in ${delay.toSeconds}s (attempt ${n + 1}/${budget.maxRetries})") *>
-            IO.sleep(delay) *> attempt(n + 1)
+            IO.sleep(delay) *> attempt(n + 1, plan)
         case Left(err) => IO.pure(Left(err))
       }
     // T4：一次逻辑下发的审计行（在第一次网络尝试前落——重试是同一行下发，
     // 不重复记行；下发本身失败也记，审计关心「试图驱动了哪台设备」）。
-    auditDispatch(peer, toolName, params, projectRoot, "p2p", kind) *> attempt(0)
+    DirectRoute.plan(peer.deviceName, p2pCandidates(peer)).flatMap { plan =>
+      // 审计的 `via` 仍是 "p2p"（分档信息在 `[route]` 行里；不改既有审计字段值域）。
+      auditDispatch(peer, toolName, params, projectRoot, "p2p", kind) *>
+        (if plan.isEmpty then
+           IO(DirectRoute.logPlan(peer.deviceName, plan)) *>
+             IO.pure(
+               Left(
+                 ToolError(
+                   s"Cannot reach ${peer.deviceName}: 直连档全部跳过（via=relay reasons=" +
+                     s"${plan.reasons.mkString(",")}；0ms，未付探测税）"
+                 )
+               )
+             )
+         else attempt(0, plan))
+    }
 
   end p2pExecuteWithRetry
 

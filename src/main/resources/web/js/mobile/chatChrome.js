@@ -38,7 +38,10 @@
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
 import { taskBadgeCount } from './taskPanel.js';
-import { pushPage, logEvent, touchLayer } from './navController.js';
+import { todoStore } from '../todoStore.js';
+import { pushPage, touchLayer } from './navController.js';
+// 层事件流水（循环门禁修复批 2026-11-04）：事件走叶子 navEvents.js 单点。
+import { logEvent } from './navEvents.js';
 import { paintSlot } from '../agentProfile.js';
 import { brand } from '../brand.js';
 import { bindIdHeadFade } from './sessionHead.js';
@@ -211,6 +214,12 @@ export function activateChatChrome() {
   const onMirror = () => syncTaskBadge();
   window.addEventListener('delegate-chain-mirror-updated', onMirror);
   window.addEventListener('nebflow-session-change', onMirror);
+  // 待办体系统一批（2026-11-04）：徽标读数 = 后端真源（todoStore）的派生值。
+  // 换血前它只在创建这一刻读一次、靠 todoStore 模块加载期的 mock seed 对齐；
+  // mock seed 退役后，真源回执 / 写口乐观更新到达时徽标必须跟新——否则徽标
+  // 停在 0 直到下一次会话切换（本批实测 todo-face-shots「FAB badge = 8」四处红）。
+  // 只接一条订阅，零 DOM/CSS/结构改动。
+  unsubs.push(todoStore.subscribe(syncTaskBadge));
   const onLocale = () => {
     syncTaskBadge();
     if (searchBtn) searchBtn.title = t('search.placeholder') || '搜索聊天记录';

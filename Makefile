@@ -1,5 +1,5 @@
 .PHONY: compile run assembly clean install \
-  lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates
+  lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
 # Respects user-set COURSIER_REPOSITORIES; only runs detection if unset
@@ -56,29 +56,40 @@ fmt-check:
 	sbt scalafmtCheckAll
 
 check: compile fmt-check lint frontend-gates
+	node scripts/check-component-contract.mjs
 	@echo "All automated checks passed."
+
+# 前端组件契约门禁（单独一条腿，不依赖 sbt）
+component-contract:
+	node scripts/check-component-contract.mjs
+	@echo "Frontend component contract gate passed."
 
 quality-gate:
 	sbt compile scalafmtCheckAll "scalafix --check"
 	@echo "Quality gate passed."
 
 # ── 前端静态门禁（self-explaining-cleanup 批 2026-11-04 归口）────────────────
-# 三道 node 静态哨兵，零依赖零端口（不需要浏览器、不碰宿主实例 6138）：
+# 四道 node 静态哨兵，零依赖零端口（不需要浏览器、不碰宿主实例 6138）：
 #   · design-tokens   设计字面量 → 令牌（存量基线只降不升 + 严格面零跑偏）
 #   · msgstyle        消息面同值字面量单源（共享层 = css/sapphire.css）
 #   · self-explaining 页面文案自解释（铁律 8：禁能力说明/路径指引/行为教学/重复说明；
 #                     存量基线只降不升、新语言包零容忍）
+#   · circular        静态 import 图无环（Tarjan SCC；dynamic import() 是处方逃逸口）
 # 归口动机（本批实测）：design-tokens 与 msgstyle 早就存在，但既不在 `make check`
 # 也不在 CI —— 等于「写了门禁没人跑」，规则回退零成本。本 target 是**唯一入口**，
 # CI 的 `Frontend static gates` 步调的就是它（单一真源，别在 CI 里另抄一遍命令）。
+# circular 入列（循环门禁修复批 2026-11-04）：它一直在 CI（ci.yml js-types job）里跑，
+# 但**本地**这条腿没有它 —— 断环的人跑 `make check` 看不到读数，存量环就是这么红着
+# 过夜的（CI 侧实证见批报告）。CI 那条腿照旧，这里补的是本地防回退。
 # 只跑前端门禁：`make frontend-gates`；全量静态检查：`make check`。
-FRONTEND_GATES := design-tokens msgstyle self-explaining
+FRONTEND_GATES := design-tokens msgstyle self-explaining circular
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
 	node scripts/check-design-tokens.mjs
 	node scripts/check-msgstyle-single-source.mjs
 	node scripts/check-self-explaining.mjs
+	node scripts/check-circular.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 视觉回归基线门禁（tests/visual/，2026-11-01 采纳批）──────────────────────

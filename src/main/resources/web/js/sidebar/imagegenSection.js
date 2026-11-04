@@ -132,7 +132,7 @@ function providerFieldsHTML() {
         </div>
         ${keyState}
       </div>
-      <div style="display:flex;gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+      <div style="display:flex;gap:var(--ds-space-2);margin-top:var(--ds-space-2);align-items:center;flex-wrap:wrap">
         <button class="cfg-btn cfg-btn-primary" id="btn-save-imagegen">${escapeHtml(t('settings.save'))}</button>
         <button class="cfg-btn" id="btn-test-imagegen" type="button" title="${escapeHtml(t('settings.imagegenTestTitle'))}" aria-label="${escapeHtml(t('settings.imagegenTestTitle'))}">${statusIcon('plug-zap', 12)}<span>${escapeHtml(t('settings.imagegenTestBtn'))}</span></button>
         <button class="cfg-btn" id="btn-imagegen-generate" type="button" title="${escapeHtml(t('settings.imagegenGenTitle'))}" aria-label="${escapeHtml(t('settings.imagegenGenTitle'))}">${statusIcon('image', 12)}<span>${escapeHtml(t('settings.imagegenGenBtn'))}</span></button>

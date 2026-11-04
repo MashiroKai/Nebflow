@@ -1,0 +1,727 @@
+{
+  "targetTitle": "修复登录态在手机层的过期提示",
+  "before": {
+    "openCount": 8,
+    "visible": [
+      {
+        "id": "i5_mw1r8ckc",
+        "title": "修复登录态在手机层的过期提示",
+        "priority": 3,
+        "completed": false
+      },
+      {
+        "id": "i8_mw1r8ckc",
+        "title": "缴房租",
+        "priority": 3,
+        "completed": false
+      },
+      {
+        "id": "i6_mw1r8ckc",
+        "title": "整理验收对照表的动画取帧",
+        "priority": 2,
+        "completed": false
+      },
+      {
+        "id": "i9_mw1r8ckc",
+        "title": "下班顺路买菜",
+        "priority": 2,
+        "completed": false
+      },
+      {
+        "id": "i7_mw1r8ckc",
+        "title": "回复设计稿第二批意见",
+        "priority": 1,
+        "completed": false
+      },
+      {
+        "id": "i11_mw1r8ckc",
+        "title": "读《设计中的设计》第三章",
+        "priority": 1,
+        "completed": false
+      },
+      {
+        "id": "i12_mw1r8ckc",
+        "title": "记录灵感：刘海收展节奏迁移到胶囊",
+        "priority": 1,
+        "completed": false
+      },
+      {
+        "id": "i10_mw1r8ckc",
+        "title": "预约体检",
+        "priority": 0,
+        "completed": false
+      }
+    ],
+    "capsuleText": "8 待办",
+    "rows": [
+      "修复登录态在手机层的过期提示",
+      "缴房租",
+      "整理验收对照表的动画取帧",
+      "下班顺路买菜",
+      "回复设计稿第二批意见",
+      "读《设计中的设计》第三章",
+      "记录灵感：刘海收展节奏迁移到胶囊",
+      "预约体检"
+    ],
+    "taskListDisplay": "block"
+  },
+  "after": {
+    "openCount": 7,
+    "visible": [
+      {
+        "id": "i8_mw1r8ckc",
+        "title": "缴房租",
+        "priority": 3,
+        "completed": false
+      },
+      {
+        "id": "i6_mw1r8ckc",
+        "title": "整理验收对照表的动画取帧",
+        "priority": 2,
+        "completed": false
+      },
+      {
+        "id": "i9_mw1r8ckc",
+        "title": "下班顺路买菜",
+        "priority": 2,
+        "completed": false
+      },
+      {
+        "id": "i7_mw1r8ckc",
+        "title": "回复设计稿第二批意见",
+        "priority": 1,
+        "completed": false
+      },
+      {
+        "id": "i11_mw1r8ckc",
+        "title": "读《设计中的设计》第三章",
+        "priority": 1,
+        "completed": false
+      },
+      {
+        "id": "i12_mw1r8ckc",
+        "title": "记录灵感：刘海收展节奏迁移到胶囊",
+        "priority": 1,
+        "completed": false
+      },
+      {
+        "id": "i10_mw1r8ckc",
+        "title": "预约体检",
+        "priority": 0,
+        "completed": false
+      }
+    ],
+    "capsuleText": "7 待办",
+    "rows": [
+      "缴房租",
+      "整理验收对照表的动画取帧",
+      "下班顺路买菜",
+      "回复设计稿第二批意见",
+      "读《设计中的设计》第三章",
+      "记录灵感：刘海收展节奏迁移到胶囊",
+      "预约体检"
+    ],
+    "taskListDisplay": "block"
+  },
+  "reloaded": {
+    "openCount": 8,
+    "visible": [
+      {
+        "id": "i5_mw1r8i00",
+        "title": "修复登录态在手机层的过期提示",
+        "priority": 3,
+        "completed": false
+      },
+      {
+        "id": "i8_mw1r8i00",
+        "title": "缴房租",
+        "priority": 3,
+        "completed": false
+      },
+      {
+        "id": "i6_mw1r8i00",
+        "title": "整理验收对照表的动画取帧",
+        "priority": 2,
+        "completed": false
+      },
+      {
+        "id": "i9_mw1r8i00",
+        "title": "下班顺路买菜",
+        "priority": 2,
+        "completed": false
+      },
+      {
+        "id": "i7_mw1r8i00",
+        "title": "回复设计稿第二批意见",
+        "priority": 1,
+        "completed": false
+      },
+      {
+        "id": "i11_mw1r8i00",
+        "title": "读《设计中的设计》第三章",
+        "priority": 1,
+        "completed": false
+      },
+      {
+        "id": "i12_mw1r8i00",
+        "title": "记录灵感：刘海收展节奏迁移到胶囊",
+        "priority": 1,
+        "completed": false
+      },
+      {
+        "id": "i10_mw1r8i00",
+        "title": "预约体检",
+        "priority": 0,
+        "completed": false
+      }
+    ],
+    "capsuleText": "8 待办",
+    "rows": [
+      "修复登录态在手机层的过期提示",
+      "缴房租",
+      "整理验收对照表的动画取帧",
+      "下班顺路买菜",
+      "回复设计稿第二批意见",
+      "读《设计中的设计》第三章",
+      "记录灵感：刘海收展节奏迁移到胶囊",
+      "预约体检"
+    ],
+    "taskListDisplay": "block"
+  },
+  "frames": [
+    {
+      "seq": 0,
+      "at": 1793774850245,
+      "tag": "desktop-pre-reload",
+      "type": "takeoverIdentify",
+      "raw": "{\"type\":\"takeoverIdentify\",\"clientId\":\"788a7dd2-8437-41be-84b7-b3f4ed81dd41\"}"
+    },
+    {
+      "seq": 1,
+      "at": 1793774850245,
+      "tag": "desktop-pre-reload",
+      "type": "setVoiceMuted",
+      "raw": "{\"type\":\"setVoiceMuted\",\"muted\":false}"
+    },
+    {
+      "seq": 2,
+      "at": 1793774850246,
+      "tag": "desktop-pre-reload",
+      "type": "getSkills",
+      "raw": "{\"type\":\"getSkills\"}"
+    },
+    {
+      "seq": 3,
+      "at": 1793774850246,
+      "tag": "desktop-pre-reload",
+      "type": "getTeams",
+      "raw": "{\"type\":\"getTeams\"}"
+    },
+    {
+      "seq": 4,
+      "at": 1793774850246,
+      "tag": "desktop-pre-reload",
+      "type": "memoryStatus",
+      "raw": "{\"type\":\"memoryStatus\"}"
+    },
+    {
+      "seq": 5,
+      "at": 1793774850246,
+      "tag": "desktop-pre-reload",
+      "type": "getLlmLog",
+      "raw": "{\"type\":\"getLlmLog\"}"
+    },
+    {
+      "seq": 6,
+      "at": 1793774850246,
+      "tag": "desktop-pre-reload",
+      "type": "getConfig",
+      "raw": "{\"type\":\"getConfig\"}"
+    },
+    {
+      "seq": 7,
+      "at": 1793774850246,
+      "tag": "desktop-pre-reload",
+      "type": "getToolsList",
+      "raw": "{\"type\":\"getToolsList\"}"
+    },
+    {
+      "seq": 8,
+      "at": 1793774850246,
+      "tag": "desktop-pre-reload",
+      "type": "getModelOptions",
+      "raw": "{\"type\":\"getModelOptions\",\"sessionId\":null}"
+    },
+    {
+      "seq": 9,
+      "at": 1793774850246,
+      "tag": "desktop-pre-reload",
+      "type": "fleetUpdateSnapshot",
+      "raw": "{\"type\":\"fleetUpdateSnapshot\"}"
+    },
+    {
+      "seq": 10,
+      "at": 1793774850246,
+      "tag": "desktop-pre-reload",
+      "type": "listAgents",
+      "raw": "{\"type\":\"listAgents\"}"
+    },
+    {
+      "seq": 11,
+      "at": 1793774850246,
+      "tag": "desktop-pre-reload",
+      "type": "getPendingAsks",
+      "raw": "{\"type\":\"getPendingAsks\"}"
+    },
+    {
+      "seq": 12,
+      "at": 1793774850246,
+      "tag": "desktop-pre-reload",
+      "type": "getActiveBgTasks",
+      "raw": "{\"type\":\"getActiveBgTasks\"}"
+    },
+    {
+      "seq": 13,
+      "at": 1793774850246,
+      "tag": "desktop-pre-reload",
+      "type": "getActiveAgents",
+      "raw": "{\"type\":\"getActiveAgents\"}"
+    },
+    {
+      "seq": 14,
+      "at": 1793774850246,
+      "tag": "desktop-pre-reload",
+      "type": "listSessions",
+      "raw": "{\"type\":\"listSessions\"}"
+    },
+    {
+      "seq": 15,
+      "at": 1793774850443,
+      "tag": "desktop-pre-reload",
+      "type": "getHeldReceipts",
+      "raw": "{\"type\":\"getHeldReceipts\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 16,
+      "at": 1793774850443,
+      "tag": "desktop-pre-reload",
+      "type": "listDir",
+      "raw": "{\"type\":\"listDir\",\"sessionId\":\"todo-shell-root\",\"path\":\"\",\"rootPath\":null}"
+    },
+    {
+      "seq": 17,
+      "at": 1793774850443,
+      "tag": "desktop-pre-reload",
+      "type": "listScheduledTasks",
+      "raw": "{\"type\":\"listScheduledTasks\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 18,
+      "at": 1793774850443,
+      "tag": "desktop-pre-reload",
+      "type": "listScheduledTasks",
+      "raw": "{\"type\":\"listScheduledTasks\",\"sessionId\":\"todo-shell-root\",\"scope\":\"all\"}"
+    },
+    {
+      "seq": 19,
+      "at": 1793774850443,
+      "tag": "desktop-pre-reload",
+      "type": "getTaskList",
+      "raw": "{\"type\":\"getTaskList\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 20,
+      "at": 1793774850445,
+      "tag": "desktop-pre-reload",
+      "type": "getHistory",
+      "raw": "{\"type\":\"getHistory\",\"sessionId\":\"todo-shell-root\",\"limit\":50}"
+    },
+    {
+      "seq": 21,
+      "at": 1793774850454,
+      "tag": "desktop-pre-reload",
+      "type": "listAgents",
+      "raw": "{\"type\":\"listAgents\"}"
+    },
+    {
+      "seq": 22,
+      "at": 1793774850458,
+      "tag": "desktop-pre-reload",
+      "type": "getHeldReceipts",
+      "raw": "{\"type\":\"getHeldReceipts\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 23,
+      "at": 1793774850458,
+      "tag": "desktop-pre-reload",
+      "type": "listDir",
+      "raw": "{\"type\":\"listDir\",\"sessionId\":\"todo-shell-root\",\"path\":\"\",\"rootPath\":null}"
+    },
+    {
+      "seq": 24,
+      "at": 1793774850458,
+      "tag": "desktop-pre-reload",
+      "type": "listScheduledTasks",
+      "raw": "{\"type\":\"listScheduledTasks\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 25,
+      "at": 1793774850458,
+      "tag": "desktop-pre-reload",
+      "type": "listScheduledTasks",
+      "raw": "{\"type\":\"listScheduledTasks\",\"sessionId\":\"todo-shell-root\",\"scope\":\"all\"}"
+    },
+    {
+      "seq": 26,
+      "at": 1793774850458,
+      "tag": "desktop-pre-reload",
+      "type": "getTaskList",
+      "raw": "{\"type\":\"getTaskList\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 27,
+      "at": 1793774850459,
+      "tag": "desktop-pre-reload",
+      "type": "listAgents",
+      "raw": "{\"type\":\"listAgents\"}"
+    },
+    {
+      "seq": 28,
+      "at": 1793774850728,
+      "tag": "desktop-pre-reload",
+      "type": "watchSubscribe",
+      "raw": "{\"type\":\"watchSubscribe\",\"sessionId\":\"todo-shell-root\",\"rootPath\":null,\"dirs\":[\"\"]}"
+    },
+    {
+      "seq": 29,
+      "at": 1793774852202,
+      "tag": "desktop-pre-reload",
+      "type": "getConfig",
+      "raw": "{\"type\":\"getConfig\"}"
+    },
+    {
+      "seq": 30,
+      "at": 1793774856962,
+      "tag": "desktop-post-reload",
+      "type": "takeoverIdentify",
+      "raw": "{\"type\":\"takeoverIdentify\",\"clientId\":\"788a7dd2-8437-41be-84b7-b3f4ed81dd41\"}"
+    },
+    {
+      "seq": 31,
+      "at": 1793774856962,
+      "tag": "desktop-post-reload",
+      "type": "setVoiceMuted",
+      "raw": "{\"type\":\"setVoiceMuted\",\"muted\":false}"
+    },
+    {
+      "seq": 32,
+      "at": 1793774856962,
+      "tag": "desktop-post-reload",
+      "type": "getSkills",
+      "raw": "{\"type\":\"getSkills\"}"
+    },
+    {
+      "seq": 33,
+      "at": 1793774856962,
+      "tag": "desktop-post-reload",
+      "type": "getTeams",
+      "raw": "{\"type\":\"getTeams\"}"
+    },
+    {
+      "seq": 34,
+      "at": 1793774856962,
+      "tag": "desktop-post-reload",
+      "type": "memoryStatus",
+      "raw": "{\"type\":\"memoryStatus\"}"
+    },
+    {
+      "seq": 35,
+      "at": 1793774856962,
+      "tag": "desktop-post-reload",
+      "type": "getLlmLog",
+      "raw": "{\"type\":\"getLlmLog\"}"
+    },
+    {
+      "seq": 36,
+      "at": 1793774856962,
+      "tag": "desktop-post-reload",
+      "type": "getConfig",
+      "raw": "{\"type\":\"getConfig\"}"
+    },
+    {
+      "seq": 37,
+      "at": 1793774856962,
+      "tag": "desktop-post-reload",
+      "type": "getToolsList",
+      "raw": "{\"type\":\"getToolsList\"}"
+    },
+    {
+      "seq": 38,
+      "at": 1793774856962,
+      "tag": "desktop-post-reload",
+      "type": "getModelOptions",
+      "raw": "{\"type\":\"getModelOptions\",\"sessionId\":null}"
+    },
+    {
+      "seq": 39,
+      "at": 1793774856962,
+      "tag": "desktop-post-reload",
+      "type": "fleetUpdateSnapshot",
+      "raw": "{\"type\":\"fleetUpdateSnapshot\"}"
+    },
+    {
+      "seq": 40,
+      "at": 1793774856962,
+      "tag": "desktop-post-reload",
+      "type": "listAgents",
+      "raw": "{\"type\":\"listAgents\"}"
+    },
+    {
+      "seq": 41,
+      "at": 1793774856962,
+      "tag": "desktop-post-reload",
+      "type": "getPendingAsks",
+      "raw": "{\"type\":\"getPendingAsks\"}"
+    },
+    {
+      "seq": 42,
+      "at": 1793774856962,
+      "tag": "desktop-post-reload",
+      "type": "getActiveBgTasks",
+      "raw": "{\"type\":\"getActiveBgTasks\"}"
+    },
+    {
+      "seq": 43,
+      "at": 1793774856962,
+      "tag": "desktop-post-reload",
+      "type": "getActiveAgents",
+      "raw": "{\"type\":\"getActiveAgents\"}"
+    },
+    {
+      "seq": 44,
+      "at": 1793774856962,
+      "tag": "desktop-post-reload",
+      "type": "listSessions",
+      "raw": "{\"type\":\"listSessions\"}"
+    },
+    {
+      "seq": 45,
+      "at": 1793774857285,
+      "tag": "desktop-post-reload",
+      "type": "takeoverIdentify",
+      "raw": "{\"type\":\"takeoverIdentify\",\"clientId\":\"788a7dd2-8437-41be-84b7-b3f4ed81dd41\"}"
+    },
+    {
+      "seq": 46,
+      "at": 1793774857285,
+      "tag": "desktop-post-reload",
+      "type": "setVoiceMuted",
+      "raw": "{\"type\":\"setVoiceMuted\",\"muted\":false}"
+    },
+    {
+      "seq": 47,
+      "at": 1793774857285,
+      "tag": "desktop-post-reload",
+      "type": "getSkills",
+      "raw": "{\"type\":\"getSkills\"}"
+    },
+    {
+      "seq": 48,
+      "at": 1793774857285,
+      "tag": "desktop-post-reload",
+      "type": "getTeams",
+      "raw": "{\"type\":\"getTeams\"}"
+    },
+    {
+      "seq": 49,
+      "at": 1793774857285,
+      "tag": "desktop-post-reload",
+      "type": "memoryStatus",
+      "raw": "{\"type\":\"memoryStatus\"}"
+    },
+    {
+      "seq": 50,
+      "at": 1793774857285,
+      "tag": "desktop-post-reload",
+      "type": "getLlmLog",
+      "raw": "{\"type\":\"getLlmLog\"}"
+    },
+    {
+      "seq": 51,
+      "at": 1793774857285,
+      "tag": "desktop-post-reload",
+      "type": "getConfig",
+      "raw": "{\"type\":\"getConfig\"}"
+    },
+    {
+      "seq": 52,
+      "at": 1793774857286,
+      "tag": "desktop-post-reload",
+      "type": "getToolsList",
+      "raw": "{\"type\":\"getToolsList\"}"
+    },
+    {
+      "seq": 53,
+      "at": 1793774857286,
+      "tag": "desktop-post-reload",
+      "type": "getModelOptions",
+      "raw": "{\"type\":\"getModelOptions\",\"sessionId\":null}"
+    },
+    {
+      "seq": 54,
+      "at": 1793774857286,
+      "tag": "desktop-post-reload",
+      "type": "fleetUpdateSnapshot",
+      "raw": "{\"type\":\"fleetUpdateSnapshot\"}"
+    },
+    {
+      "seq": 55,
+      "at": 1793774857286,
+      "tag": "desktop-post-reload",
+      "type": "listAgents",
+      "raw": "{\"type\":\"listAgents\"}"
+    },
+    {
+      "seq": 56,
+      "at": 1793774857286,
+      "tag": "desktop-post-reload",
+      "type": "getPendingAsks",
+      "raw": "{\"type\":\"getPendingAsks\"}"
+    },
+    {
+      "seq": 57,
+      "at": 1793774857286,
+      "tag": "desktop-post-reload",
+      "type": "getActiveBgTasks",
+      "raw": "{\"type\":\"getActiveBgTasks\"}"
+    },
+    {
+      "seq": 58,
+      "at": 1793774857286,
+      "tag": "desktop-post-reload",
+      "type": "getActiveAgents",
+      "raw": "{\"type\":\"getActiveAgents\"}"
+    },
+    {
+      "seq": 59,
+      "at": 1793774857286,
+      "tag": "desktop-post-reload",
+      "type": "listSessions",
+      "raw": "{\"type\":\"listSessions\"}"
+    },
+    {
+      "seq": 60,
+      "at": 1793774857443,
+      "tag": "desktop-post-reload",
+      "type": "getHeldReceipts",
+      "raw": "{\"type\":\"getHeldReceipts\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 61,
+      "at": 1793774857443,
+      "tag": "desktop-post-reload",
+      "type": "listDir",
+      "raw": "{\"type\":\"listDir\",\"sessionId\":\"todo-shell-root\",\"path\":\"\",\"rootPath\":null}"
+    },
+    {
+      "seq": 62,
+      "at": 1793774857443,
+      "tag": "desktop-post-reload",
+      "type": "listScheduledTasks",
+      "raw": "{\"type\":\"listScheduledTasks\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 63,
+      "at": 1793774857444,
+      "tag": "desktop-post-reload",
+      "type": "listScheduledTasks",
+      "raw": "{\"type\":\"listScheduledTasks\",\"sessionId\":\"todo-shell-root\",\"scope\":\"all\"}"
+    },
+    {
+      "seq": 64,
+      "at": 1793774857444,
+      "tag": "desktop-post-reload",
+      "type": "getTaskList",
+      "raw": "{\"type\":\"getTaskList\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 65,
+      "at": 1793774857444,
+      "tag": "desktop-post-reload",
+      "type": "getHistory",
+      "raw": "{\"type\":\"getHistory\",\"sessionId\":\"todo-shell-root\",\"limit\":50}"
+    },
+    {
+      "seq": 66,
+      "at": 1793774857445,
+      "tag": "desktop-post-reload",
+      "type": "listAgents",
+      "raw": "{\"type\":\"listAgents\"}"
+    },
+    {
+      "seq": 67,
+      "at": 1793774857446,
+      "tag": "desktop-post-reload",
+      "type": "getHeldReceipts",
+      "raw": "{\"type\":\"getHeldReceipts\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 68,
+      "at": 1793774857446,
+      "tag": "desktop-post-reload",
+      "type": "listDir",
+      "raw": "{\"type\":\"listDir\",\"sessionId\":\"todo-shell-root\",\"path\":\"\",\"rootPath\":null}"
+    },
+    {
+      "seq": 69,
+      "at": 1793774857446,
+      "tag": "desktop-post-reload",
+      "type": "listScheduledTasks",
+      "raw": "{\"type\":\"listScheduledTasks\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 70,
+      "at": 1793774857446,
+      "tag": "desktop-post-reload",
+      "type": "listScheduledTasks",
+      "raw": "{\"type\":\"listScheduledTasks\",\"sessionId\":\"todo-shell-root\",\"scope\":\"all\"}"
+    },
+    {
+      "seq": 71,
+      "at": 1793774857446,
+      "tag": "desktop-post-reload",
+      "type": "getTaskList",
+      "raw": "{\"type\":\"getTaskList\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 72,
+      "at": 1793774857447,
+      "tag": "desktop-post-reload",
+      "type": "listAgents",
+      "raw": "{\"type\":\"listAgents\"}"
+    },
+    {
+      "seq": 73,
+      "at": 1793774857697,
+      "tag": "desktop-post-reload",
+      "type": "watchSubscribe",
+      "raw": "{\"type\":\"watchSubscribe\",\"sessionId\":\"todo-shell-root\",\"rootPath\":null,\"dirs\":[\"\"]}"
+    },
+    {
+      "seq": 74,
+      "at": 1793774859559,
+      "tag": "positive-control",
+      "type": "listScheduledTasks",
+      "raw": "{\"type\":\"listScheduledTasks\",\"sessionId\":\"todo-shell-root\",\"scope\":\"all\"}"
+    },
+    {
+      "seq": 75,
+      "at": 1793774860347,
+      "tag": "positive-control",
+      "type": "completeTodo",
+      "raw": "{\"type\":\"completeTodo\",\"sessionId\":\"todo-shell-root\",\"id\":\"st-1\"}"
+    }
+  ],
+  "consoleErrors": [],
+  "pageErrors": []
+}

@@ -221,3 +221,63 @@ class PresenceCandidateProbeSpec extends munit.FunSuite:
     assertEquals(merged.endpoints.head, "http://z:9")
     assert(merged.endpoints.contains("http://a:1"), "名册首条候选必须还在")
   }
+
+  // ===== IPv6 优先批（2026-11-04）：v6 进候选面，但只在能处理它的地方 =====
+
+  test("v6: isUnreportableAddress 的 v6 语义与 v4 同族（链路本地/回环/未指定/组播 丢，全局与 ULA 留）") {
+    assert(PresenceCandidateProbe.isUnreportableAddress("fe80::1"), "v6 链路本地 = v6 版 APIPA，必须丢")
+    assert(PresenceCandidateProbe.isUnreportableAddress("fe80::1%en0"), "带 scope 的链路本地照样丢")
+    assert(PresenceCandidateProbe.isUnreportableAddress("::1"), "v6 回环必须丢")
+    assert(PresenceCandidateProbe.isUnreportableAddress("::"), "v6 未指定必须丢")
+    assert(PresenceCandidateProbe.isUnreportableAddress("ff02::1"), "v6 组播必须丢")
+    assert(!PresenceCandidateProbe.isUnreportableAddress("2001:db8::1"), "全局单播必须留")
+    assert(
+      !PresenceCandidateProbe.isUnreportableAddress("fd7a:115c:a1e0::1"),
+      "Tailscale ULA 与 100.64/10 同权：它是首选直连面，绝不能丢"
+    )
+    assert(!PresenceCandidateProbe.isUnreportableAddress("2408:8207:1234::1"), "运营商全局 v6 必须留")
+  }
+
+  test("v6: preferV6 = v6 前置 + v4 必留槽位 + 无 v6 原样返回") {
+    val v4a = ep("192.168.1.145")
+    val v4b = ep("100.65.49.141")
+    val v6a = ep("2408:8207:1234::1")
+    val v6b = ep("2408:8207:1234::2")
+    val v6c = ep("2408:8207:1234::3")
+    // 无 v6 ⇒ 逐字节原样（无 v6 环境行为不变）。
+    assertEquals(PresenceCandidateProbe.preferV6(List(v4a, v4b)), List(v4a, v4b))
+    // 有 v6 ⇒ v6 前置，v4 紧随其后（不会被挤出 4 条上限）。
+    assertEquals(PresenceCandidateProbe.preferV6(List(v4a, v6a, v4b, v6b)), List(v6a, v6b, v4a, v4b))
+    // v6 超过槽位 ⇒ 溢出的 v6 排到 v4 之后（v4 必留槽位）。
+    assertEquals(
+      PresenceCandidateProbe.preferV6(List(v4a, v6a, v6b, v6c)),
+      List(v6a, v6b, v4a, v6c),
+      "3 条 v6 时只允许 2 条占前位，v4 必须留在前面"
+    )
+    // 与 sanitizeReported 串联后：4 条上限内一定含 v4（改前的「唯一可用 v4 被挤出」不发生）。
+    val chosen = PresenceCandidateProbe.sanitizeReported(
+      PresenceCandidateProbe.preferV6(List(v4a, v6a, v6b, v6c))
+    )
+    assert(chosen.exists(e => e.address == "192.168.1.145"), s"v4 候选必须在 4 条上限内：$chosen")
+    assert(chosen.head.address.startsWith("2408:"), s"v6 优先：$chosen")
+  }
+
+  // ===== tailnet v6 豁免对称（本批修复的验真点）=====
+
+  test("v6: 隧道网卡上的 tailnet v6 ULA 与 100.64/10 同权保留（豁免不得只认 v4）") {
+    val tailnetV6 = ep("fd7a:115c:a1e0::1", kind = "tailscale", label = "utun3")
+    val lanV4 = ep("192.168.1.145", label = "en0")
+    val got = PresenceCandidateProbe.sanitizeReported(List(tailnetV6, lanV4))
+    assert(
+      got.exists(_.address == "fd7a:115c:a1e0::1"),
+      s"macOS 上 tailnet 跑在 utun*，其 v6 ULA 是首选直连面——存在普通候选时也不得被结构性丢弃：$got"
+    )
+    assertEquals(got.map(_.address), List("fd7a:115c:a1e0::1", "192.168.1.145"), "保序：只删不重排")
+  }
+
+  test("v6: 隧道网卡上的非 tailnet 公网 v6 仍被丢（豁免只给 tailnet，不给所有 utun 地址）") {
+    val publicV6 = ep("2001:db8::1", label = "utun3")
+    val lanV4 = ep("192.168.1.145", label = "en0")
+    val got = PresenceCandidateProbe.sanitizeReported(List(publicV6, lanV4))
+    assertEquals(got.map(_.address), List("192.168.1.145"), "utun 上的普通公网 v6 属于隧道污染面，必须丢")
+  }

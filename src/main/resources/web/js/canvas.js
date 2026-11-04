@@ -1039,9 +1039,9 @@ function showExternalConflict(entry) {
   bar.setAttribute('role', 'status');
   bar.dataset.path = entry.absPath || '';
   bar.setAttribute('style', [
-    'display:flex', 'align-items:center', 'gap:10px',
-    'margin:8px 10px', 'padding:8px 10px 8px 12px',
-    'border-radius:10px',
+    'display:flex', 'align-items:center', 'gap:var(--ds-space-glass-x)',
+    'margin:var(--ds-space-2) var(--ds-space-glass-x)', 'padding:var(--ds-space-2) var(--ds-space-glass-x) var(--ds-space-2) var(--ds-space-3)',
+    'border-radius:var(--ds-radius-button)',
     'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
     'font:12.5px/1.4 -apple-system,"Segoe UI",sans-serif',
     'border:1px solid rgba(255,255,255,0.12)',
@@ -1054,12 +1054,12 @@ function showExternalConflict(entry) {
   const keep = document.createElement('button');
   keep.className = 'nf-file-conflict-keep';
   keep.textContent = t('canvas.conflictKeep');
-  keep.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:transparent;color:inherit;font:inherit;');
+  keep.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px var(--ds-space-glass-x);border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:transparent;color:inherit;font:inherit;');
   keep.onclick = () => { entry._externalConflict = null; bar.remove(); };
   const reload = document.createElement('button');
   reload.className = 'nf-file-conflict-reload';
   reload.textContent = t('canvas.conflictReload');
-  reload.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px 10px;border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
+  reload.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:3px var(--ds-space-glass-x);border-radius:7px;border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
   reload.onclick = () => { entry._externalConflict = null; bar.remove(); refreshFileTab(entry, { force: true }); };
   bar.append(text, keep, reload);
   pane.prepend(bar);
@@ -1315,7 +1315,7 @@ function renderUrlPane(pane, url) {
   // (javascript:, data:, file:) so the sandbox stays meaningful.
   if (!/^https?:\/\//i.test(url)) {
     const err = document.createElement('div');
-    err.style.cssText = 'padding:24px;font-size:13px;color:var(--color-text-muted)';
+    err.style.cssText = 'padding:var(--ds-space-6);font-size:var(--ds-fs-body);color:var(--color-text-muted)';
     err.textContent = '无法显示该链接：仅支持 http/https 网页。';
     pane.appendChild(err);
     return;
@@ -1323,10 +1323,10 @@ function renderUrlPane(pane, url) {
 
   // ── Top toolbar: hostname + "open in new window" fallback ──
   const bar = document.createElement('div');
-  bar.style.cssText = 'flex:none;display:flex;align-items:center;gap:12px;' +
-    'height:32px;padding:0 12px;min-width:0;' +
+  bar.style.cssText = 'flex:none;display:flex;align-items:center;gap:var(--ds-space-3);' +
+    'height:32px;padding:0 var(--ds-space-3);min-width:0;' +
     'border-bottom:1px solid var(--color-border);' +
-    'font-size:12px;color:var(--color-text-muted);user-select:none';
+    'font-size:var(--ds-fs-hint);color:var(--color-text-muted);user-select:none';
 
   const host = document.createElement('span');
   let hostText = url;
@@ -1355,8 +1355,8 @@ function renderUrlPane(pane, url) {
 
   // ── Bottom hint strip — always visible (embedding refusal is undetectable) ──
   const hint = document.createElement('div');
-  hint.style.cssText = 'flex:none;display:flex;align-items:center;justify-content:center;gap:6px;' +
-    'padding:4px 12px;font-size:11px;color:var(--color-text-muted);opacity:.7;user-select:none';
+  hint.style.cssText = 'flex:none;display:flex;align-items:center;justify-content:center;gap:var(--ds-space-1h);' +
+    'padding:var(--ds-space-1) var(--ds-space-3);font-size:var(--ds-fs-meta);color:var(--color-text-muted);opacity:.7;user-select:none';
   const hintText = document.createElement('span');
   hintText.textContent = '如果页面没有显示，可能是该网站不允许嵌入';
   const hintLink = document.createElement('a');
@@ -1408,20 +1408,20 @@ function renderFilePlaceholder(paneEl, errorMsg, absPath) {
   wrap.style.cssText = [
     'display:flex',
     'flex-direction:column',
-    'gap:8px',
+    'gap:var(--ds-space-2)',
     'align-items:flex-start',
     'justify-content:center',
     'height:100%',
-    'padding:24px',
+    'padding:var(--ds-space-6)',
     'color:var(--color-text-muted)',
     'font-size:14px',
   ].join(';');
   const iconRow = document.createElement('div');
   iconRow.textContent = t('canvas.unreadableTitle');
-  iconRow.style.cssText = 'font-weight:600;color:var(--color-text);font-size:15px;';
+  iconRow.style.cssText = 'font-weight:600;color:var(--color-text);font-size:var(--ds-fs-title);';
   const path = document.createElement('div');
   path.textContent = absPath || '';
-  path.style.cssText = 'font-family:var(--font-mono,monospace);font-size:12px;word-break:break-all;';
+  path.style.cssText = 'font-family:var(--font-mono,monospace);font-size:var(--ds-fs-hint);word-break:break-all;';
   const hint = document.createElement('div');
   hint.textContent = `${readErrorHint(errorMsg)}${errorMsg ? ' ' + errorMsg : ''}`;
   wrap.append(iconRow, path, hint);
@@ -2565,9 +2565,12 @@ function deckBuildSnapshot(entry) {
   const srcW = (area && area.width) || 900;   // 渲染面宽 = canvas 区宽（display:none 面读不到 offsetWidth）
   const node = deckSnapshotNode(entry, srcW);
   if (!node) return null;
-  const snap = { node, srcW, kind: node.__nfSnapKind || 'clone', scroller: node.__nfSnapScroller || null };
-  delete node.__nfSnapKind;
-  delete node.__nfSnapScroller;
+  // checkJs：`__nfSnapKind` / `__nfSnapScroller` 是快照宿主的传输期 expando（见
+  // deckSnapshotNode 的写法），断言面只做类型放行，运行期仍是同一个节点对象。
+  const snapNode = /** @type {any} */ (node);
+  const snap = { node, srcW, kind: snapNode.__nfSnapKind || 'clone', scroller: snapNode.__nfSnapScroller || null };
+  delete snapNode.__nfSnapKind;
+  delete snapNode.__nfSnapScroller;
   deckSnapshots.set(entry.id, snap);
   return snap;
 }
@@ -2588,10 +2591,11 @@ export function canvasSnapshotFor(tabId, srcW) {
   const w = Number(srcW) > 0 ? Number(srcW) : 900;
   const node = deckSnapshotNode(entry, w);
   if (!node) return null;
-  const kind = node.__nfSnapKind || 'clone';
-  const scroller = node.__nfSnapScroller || null;
-  delete node.__nfSnapKind;
-  delete node.__nfSnapScroller;
+  const snapNode = /** @type {any} */ (node);   // 同上：expando 类型放行，运行期同一对象
+  const kind = snapNode.__nfSnapKind || 'clone';
+  const scroller = snapNode.__nfSnapScroller || null;
+  delete snapNode.__nfSnapKind;
+  delete snapNode.__nfSnapScroller;
   return { node, srcW: w, kind, scroller };
 }
 
@@ -4804,8 +4808,8 @@ function cardWindowBootFace(fileName) {
   el.setAttribute('data-state', 'loading');
   el.style.cssText =
     'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;' +
-    'display:flex;flex-direction:column;align-items:center;gap:10px;padding:22px 30px;' +
-    'border:1px solid var(--glass-border,#e0e1e4);border-radius:14px;' +
+    'display:flex;flex-direction:column;align-items:center;gap:var(--ds-space-glass-x);padding:22px 30px;' +
+    'border:1px solid var(--glass-border,#e0e1e4);border-radius:var(--ds-radius-card-md);' +
     'background:var(--glass-bg,#fff);color:var(--color-text,#1b1e26);' +
     "font:13px/1.6 -apple-system,'Segoe UI',sans-serif;text-align:center;max-width:78vw;";
   const dot = document.createElement('div');
@@ -4816,18 +4820,18 @@ function cardWindowBootFace(fileName) {
     'animation:nf-cardwin-spin 0.9s linear infinite;';
   const title = document.createElement('div');
   title.className = 'nf-cw-title';
-  title.style.cssText = 'font-weight:600;font-size:13px;max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  title.style.cssText = 'font-weight:600;font-size:var(--ds-fs-body);max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
   title.textContent = fileName || t('canvas.loadingFile');
   const hint = document.createElement('div');
   hint.className = 'nf-cw-hint';
-  hint.style.cssText = 'font-size:12px;color:var(--color-text-muted,#8b8e96);display:none;';
+  hint.style.cssText = 'font-size:var(--ds-fs-hint);color:var(--color-text-muted,#8b8e96);display:none;';
   const retry = document.createElement('button');
   retry.className = 'nf-cw-retry';
   retry.textContent = t('canvas.retry');
   retry.style.cssText =
-    'display:none;margin-top:2px;padding:5px 16px;border-radius:8px;cursor:pointer;' +
+    'display:none;margin-top:var(--ds-space-half);padding:5px var(--ds-space-4);border-radius:var(--ds-radius-input);cursor:pointer;' +
     'border:1px solid var(--glass-control-border,#d8d9dd);background:var(--glass-control-bg,transparent);' +
-    'color:inherit;font-size:12px;';
+    'color:inherit;font-size:var(--ds-fs-hint);';
   retry.addEventListener('click', () => { try { location.reload(); } catch { /* 无历环境 */ } });
   el.append(dot, title, hint, retry);
   const style = document.createElement('style');

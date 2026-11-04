@@ -1320,6 +1320,12 @@ object GatewayMain extends IOApp:
                                         // 共用可达性真源（`P2pReachability.current`，与文件腿同一份负缓存/TTL）。
                                         // 缺省是 `None`（排程类 spec 的隔离用），生产漏传 ⇒ 探测税与拨号税又会各付一遍。
                                         // 源码护栏：`NeblinkPresenceDialConcurrencySpec` 扫描本文件断言这行仍在。
+                                        // 三档选路批（2026-11-04 作者裁定 16:51）：装真机 Tailscale 探测器
+                                        // （缓存 + 负证据退避 + single-flight，见 DirectRoute）。
+                                        // 🔴 必须在 presence client / RemoteExecutor 之前装好：两边都是在
+                                        // **每次选路时现读** 这个进程级指针（`DirectRoute.probe`），
+                                        // 晚装只会让启动初段的几次选路走 fail-open（无害但少一次门控）。
+                                        nebflow.core.tools.DirectRoute.installSystemProbe()
                                         val presenceService =
                                           new nebflow.neblink.NeblinkPresenceService(
                                             neblinkService,

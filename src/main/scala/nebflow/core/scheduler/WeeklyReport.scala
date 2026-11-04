@@ -88,9 +88,19 @@ object WeeklyReport:
     zone: ZoneId
   ): WeekStats =
     val (fromMs, toMs, key) = lastWeekBounds(instant, zone)
-    val week = allRecords.filter(r => r.doneAt >= fromMs && r.doneAt < toMs)
+    // 取消完成（待办体系统一批 2026-11-04）：撤销**不改写**历史行（只增不改契约），
+    // 只追加 via="undo" 反向事件；聚合按净额解释——同 taskId 的 undo 数 ≥ done 数
+    // ⇒ 该条本周计为未完成（完成→撤销 = 没做过）；否则照旧计入（撤销后重新完成
+    // = 新的一次打卡）。无 undo 行时逐字等于改前读数（既有 WeeklyReportSpec 钉）。
+    val rawWeek = allRecords.filter(r => r.doneAt >= fromMs && r.doneAt < toMs)
+    val weekDoneRecords = rawWeek.filter(_.via != DoneRecord.ViaUndo)
+    val undoCountByTask = rawWeek.filter(_.via == DoneRecord.ViaUndo).groupBy(_.taskId).view.mapValues(_.size).toMap
+    val cancelledTaskIds = undoCountByTask.collect {
+      case (id, n) if n >= weekDoneRecords.count(_.taskId == id) => id
+    }.toSet
+    val week = weekDoneRecords.filterNot(r => cancelledTaskIds.contains(r.taskId))
     val prevFrom = fromMs - 7 * 86_400_000L
-    val prev = allRecords.count(r => r.doneAt >= prevFrom && r.doneAt < fromMs)
+    val prev = allRecords.count(r => r.via != DoneRecord.ViaUndo && r.doneAt >= prevFrom && r.doneAt < fromMs)
     val perDay = (0 until 7).toList.map { i =>
       val dayStart = fromMs + i * 86_400_000L
       week.count(r => r.doneAt >= dayStart && r.doneAt < dayStart + 86_400_000L)

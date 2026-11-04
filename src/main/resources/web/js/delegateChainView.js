@@ -513,10 +513,10 @@ const STRUCT_ARCHIVE_CSS = `
   background:
     radial-gradient(120% 90% at 50% -10%, rgb(var(--sapphire, 88 166 255) / 0.09), transparent 60%),
     var(--color-surface, transparent);
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   padding: 14px;
 }
-.delegate-chain-view-body.delegate-mode-structure { padding: 2px 2px 8px; }
+.delegate-chain-view-body.delegate-mode-structure { padding: var(--ds-space-half) var(--ds-space-half) var(--ds-space-2); }
 /* Nav identity slot (L1): the chain's #N · title — engine-owned summary counts
    live in .flowmap-summary next to it (single-writer split, see openPane). */
 .delegate-chain-title {
@@ -546,8 +546,8 @@ const STRUCT_ARCHIVE_CSS = `
 .delegate-archive-fab:hover { background: var(--glass-control-bg-hover, rgba(128,128,128,0.12)); opacity: 1; transform: scale(1.05); }
 .delegate-archive-fab.active { opacity: 1; color: rgb(var(--sapphire)); border-color: rgb(var(--sapphire) / 0.35); background: rgb(var(--sapphire) / 0.12); transform: none; }
 .delegate-archive-badge {
-  position: absolute; top: -5px; right: -5px; min-width: 15px; height: 15px; padding: 0 4px;
-  border-radius: 8px; background: rgb(var(--sapphire)); color: #fff;
+  position: absolute; top: -5px; right: -5px; min-width: 15px; height: 15px; padding: 0 var(--ds-space-1);
+  border-radius: var(--ds-radius-input); background: rgb(var(--sapphire)); color: #fff;
   font: 500 9px/15px -apple-system, BlinkMacSystemFont, sans-serif; text-align: center;
   font-variant-numeric: tabular-nums; pointer-events: none;
 }
@@ -561,23 +561,23 @@ const STRUCT_ARCHIVE_CSS = `
 /* 归档抽屉（唯一归档视图）：右侧滑出面板，清单 + 行动作两栏（流程图/恢复）。 */
 .delegate-archive-drawer {
   position: absolute; top: 0; right: 0; bottom: 0; width: 340px; max-width: 86%;
-  z-index: 46; overflow-y: auto; padding: 12px 12px 16px;
+  z-index: 46; overflow-y: auto; padding: var(--ds-space-3) var(--ds-space-3) var(--ds-space-4);
   background: var(--glass-bg, var(--color-surface));
   border-left: 1px solid var(--color-border);
   box-shadow: -12px 0 36px rgba(0, 0, 0, 0.28);
-  display: flex; flex-direction: column; gap: 2px;
+  display: flex; flex-direction: column; gap: var(--ds-space-half);
   animation: delegate-drawer-in 0.18s ease;
 }
 @keyframes delegate-drawer-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 .delegate-archive-drawer-head {
-  display: flex; align-items: center; gap: 8px; min-width: 0;
+  display: flex; align-items: center; gap: var(--ds-space-2); min-width: 0;
   font: 600 12px/1.6 -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 0.02em;
-  color: var(--color-text); padding: 0 4px 8px;
+  color: var(--color-text); padding: 0 var(--ds-space-1) var(--ds-space-2);
 }
 .delegate-archive-drawer-close {
   margin-left: auto; flex-shrink: 0; width: 22px; height: 22px;
   display: inline-flex; align-items: center; justify-content: center;
-  border: none; border-radius: 6px; background: transparent; color: var(--color-text-muted);
+  border: none; border-radius: var(--ds-radius-chip); background: transparent; color: var(--color-text-muted);
   cursor: pointer;
 }
 .delegate-archive-drawer-close:hover { background: var(--color-frame-hover, rgba(128,128,128,0.12)); color: var(--color-text); }
@@ -585,8 +585,8 @@ const STRUCT_ARCHIVE_CSS = `
 /* hidden 属性守卫：author display:flex 会压过 UA 的 [hidden]{display:none}。 */
 .delegate-archive-drawer[hidden] { display: none; }
 .delegate-archive-row {
-  display: flex; align-items: center; gap: 8px; min-width: 0;
-  padding: 7px 6px; border-radius: 8px; border: none;
+  display: flex; align-items: center; gap: var(--ds-space-2); min-width: 0;
+  padding: 7px var(--ds-space-1h); border-radius: var(--ds-radius-input); border: none;
   background: transparent; color: inherit; width: 100%;
 }
 .delegate-archive-row:nth-child(odd) { background: var(--color-frame-hover, rgba(128,128,128,0.06)); }
@@ -599,9 +599,9 @@ const STRUCT_ARCHIVE_CSS = `
   font: 500 10px/1.5 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text-muted);
 }
-.delegate-archive-row-actions { flex-shrink: 0; display: inline-flex; gap: 4px; }
+.delegate-archive-row-actions { flex-shrink: 0; display: inline-flex; gap: var(--ds-space-1); }
 .delegate-archive-act {
-  flex-shrink: 0; padding: 2px 8px; border-radius: 7px; cursor: pointer;
+  flex-shrink: 0; padding: var(--ds-space-half) var(--ds-space-2); border-radius: 7px; cursor: pointer;
   font: 500 10.5px/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
   background: var(--glass-control-bg, transparent);
   border: 1px solid var(--glass-control-border, rgba(128,128,128,0.35));
@@ -609,12 +609,12 @@ const STRUCT_ARCHIVE_CSS = `
 }
 .delegate-archive-act:hover:not(:disabled) { background: var(--color-frame-hover, rgba(128,128,128,0.12)); color: rgb(var(--sapphire)); border-color: rgb(var(--sapphire) / 0.4); }
 .delegate-archive-act:disabled { opacity: 0.5; cursor: default; }
-.delegate-archive-empty { padding: 10px 6px; font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted); }
+.delegate-archive-empty { padding: var(--ds-space-glass-x) var(--ds-space-1h); font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted); }
 /* 自动归档到达 toast（§D：fm-exit 到达反馈——「#N 已完成并归档」+ 5s 撤销）。 */
 .delegate-archive-toast {
   position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
-  z-index: 47; display: flex; align-items: center; gap: 10px; min-width: 0;
-  padding: 8px 14px; border-radius: 12px;
+  z-index: 47; display: flex; align-items: center; gap: var(--ds-space-glass-x); min-width: 0;
+  padding: var(--ds-space-2) 14px; border-radius: var(--ds-radius-xl);
   background: var(--glass-bg, var(--color-surface));
   border: 1px solid var(--color-border);
   box-shadow: 0 10px 36px rgba(0, 0, 0, 0.35);
@@ -623,7 +623,7 @@ const STRUCT_ARCHIVE_CSS = `
 }
 .delegate-archive-toast[hidden] { display: none; }
 .delegate-archive-toast-undo {
-  flex-shrink: 0; padding: 1px 10px; border-radius: 8px; cursor: pointer;
+  flex-shrink: 0; padding: 1px var(--ds-space-glass-x); border-radius: var(--ds-radius-input); cursor: pointer;
   font: 500 11px/1.7 -apple-system, BlinkMacSystemFont, sans-serif;
   background: rgb(var(--sapphire) / 0.12); color: rgb(var(--sapphire));
   border: 1px solid rgb(var(--sapphire) / 0.35);
@@ -631,8 +631,8 @@ const STRUCT_ARCHIVE_CSS = `
 .delegate-archive-toast-undo:hover { background: rgb(var(--sapphire) / 0.2); }
 /* L2 卡内子代理/flow 徽标（§D：与 §B 行内徽标同件同语言）。 */
 .delegate-card-kids, .delegate-card-flow {
-  flex-shrink: 0; display: inline-flex; align-items: center; gap: 2px;
-  padding: 0 4px; border-radius: 6px;
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: var(--ds-space-half);
+  padding: 0 var(--ds-space-1); border-radius: var(--ds-radius-chip);
   background: var(--color-frame-hover, rgba(128,128,128,0.12));
   color: var(--color-text-muted);
 }

@@ -169,6 +169,7 @@ export async function resolveMsgToken(token, onUpdate) {
   } catch {
     engine = null;
   }
+  /** @type {{status:'ok', data:{text:string,ts:number,sessionId:string,sessionName:string,local:boolean}}|{status:'miss'}} */
   const result = engine
     ? { status: 'ok', data: engine }
     : local
@@ -378,7 +379,7 @@ export function installMsgTokenChip() {
   installed = true;
   document.addEventListener('click', (e) => {
     if (!(e.target instanceof Element)) return;
-    const chip = e.target.closest('.msg-token-chip');
+    const chip = /** @type {HTMLElement|null} */ (e.target.closest('.msg-token-chip'));
     if (!chip) return;
     e.preventDefault();
     e.stopPropagation();

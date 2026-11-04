@@ -435,7 +435,7 @@ function renderWorkScheduleSection() {
       <span class="settings-label">${t('settings.workSchedule')}</span>
       ${toggleHTML({ on: enabled, id: 'toggle-schedule', label: t('settings.workSchedule') })}
     </div>
-    <div id="schedule-editor" style="display:${enabled ? 'block' : 'none'};padding:4px 0 8px;">
+    <div id="schedule-editor" style="display:${enabled ? 'block' : 'none'};padding:var(--ds-space-1) 0 var(--ds-space-2);">
       <div class="segment-list" id="segment-list">${segRows}</div>
       <button class="cfg-btn cfg-btn-add" id="btn-add-segment">${t('settings.addSegment')}</button>
       <div class="cfg-hint">${t('settings.workScheduleOnHint')}</div>
@@ -445,8 +445,8 @@ function renderWorkScheduleSection() {
          must remain committable (Save) / abandonable (Reset). The segments
          themselves stay in the DOM (renderScheduleEditorRows rebuilds from
          the draft on re-enable), so nothing is cleared on toggle-off. -->
-    <div class="cfg-hint" id="schedule-dirty-hint" style="display:${scheduleDraft !== null ? 'block' : 'none'};margin-top:6px;color:var(--color-text-muted)">${t('settings.scheduleDirtyHint')}</div>
-    <div style="display:${scheduleDraft !== null ? 'flex' : 'none'};gap:8px;margin-top:8px" id="schedule-actions">
+    <div class="cfg-hint" id="schedule-dirty-hint" style="display:${scheduleDraft !== null ? 'block' : 'none'};margin-top:var(--ds-space-1h);color:var(--color-text-muted)">${t('settings.scheduleDirtyHint')}</div>
+    <div style="display:${scheduleDraft !== null ? 'flex' : 'none'};gap:var(--ds-space-2);margin-top:var(--ds-space-2)" id="schedule-actions">
       <button class="cfg-btn cfg-btn-primary" id="btn-save-schedule">${t('settings.scheduleSave')}</button>
       <button class="cfg-btn" id="btn-reset-schedule">${t('settings.scheduleReset')}</button>
     </div>
@@ -562,7 +562,7 @@ function renderTtlSection() {
       <div class="cfg-hint">${t('settings.ttlEnabledHint')}</div>
       ${rowHtml('settings.ttlMinutesLabel', 'settings.ttlMinutesHint', 'ttl-minutes', cfg.ttlMinutes ?? TTL_DEFAULTS.ttlMinutes)}
       ${rowHtml('settings.keepRecentLabel', 'settings.keepRecentHint', 'ttl-keep-recent', cfg.keepRecent ?? TTL_DEFAULTS.keepRecent)}
-      <div style="display:flex;gap:8px;margin-top:8px">
+      <div style="display:flex;gap:var(--ds-space-2);margin-top:var(--ds-space-2)">
         <button class="cfg-btn cfg-btn-primary" id="btn-save-ttl">${t('settings.ttlSave')}</button>
       </div>
     </div>`;
@@ -714,7 +714,7 @@ function renderSttSection() {
         </label>
         <input class="cfg-input" id="stt-apikey" type="password" value="" placeholder="${t(configured ? 'settings.sttApiKeyConfiguredPlaceholder' : 'settings.sttApiKeyPlaceholder')}" autocomplete="off" ${enabled ? '' : 'disabled'}>
         <div class="cfg-hint">${t('settings.sttHint')}</div>
-        <div style="display:flex;gap:8px;margin-top:8px">
+        <div style="display:flex;gap:var(--ds-space-2);margin-top:var(--ds-space-2)">
           <button class="cfg-btn cfg-btn-primary" id="btn-save-stt">${t('settings.sttSave')}</button>
           <button class="cfg-btn" id="btn-clear-stt">${t('settings.sttClear')}</button>
         </div>
@@ -1000,7 +1000,7 @@ export function renderSettings() {
             <button type="button" class="cfg-eye-btn" id="jev-key-eye" tabindex="-1" aria-label="${t('settings.jevKeyRefHide')}" aria-pressed="false" title="${t('settings.jevKeyRefHide')}">${eyeOffSvg}</button>
           </div>
           <div class="cfg-hint">${t('settings.jevHint')}</div>
-          <div style="display:flex;gap:8px;margin-top:8px">
+          <div style="display:flex;gap:var(--ds-space-2);margin-top:var(--ds-space-2)">
             <button class="cfg-btn cfg-btn-primary" id="btn-save-jev">${t('settings.save')}</button>
             ${jevTestButtonHTML()}
             <span class="inline-state" id="jev-save-state" role="status" aria-live="polite"></span>
@@ -1056,14 +1056,14 @@ export function renderSettings() {
     <div class="settings-section">
       <div class="settings-section-title">${t('settings.advanced')}</div>
       <button class="cfg-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
-      ${SHOW_RERUN_ONBOARDING ? `<button class="cfg-btn" id="btn-rerun-onboarding" style="margin-left:8px">${t('settings.rerunOnboarding')}</button>` : ''}
+      ${SHOW_RERUN_ONBOARDING ? `<button class="cfg-btn" id="btn-rerun-onboarding" style="margin-left:var(--ds-space-2)">${t('settings.rerunOnboarding')}</button>` : ''}
       <!-- 文件缓存行（M2 · 设计 v1 §6.4/§7 表5）：占用读数（nfCacheStats 同步 seam，
            分桶明细进 title）+ 清空键（nfCacheReset seam，两段式确认 = 按钮第二击
            即确认位，同 btn-restart-gateway 先例——共用 #delete-box 弹窗其确认键
            文案是「删除」，复用会把本键错标成删除）。 -->
       <div class="settings-row" id="nf-cache-row">
         <span class="settings-label">${t('settings.fileCache')}</span>
-        <span style="display:flex;align-items:center;gap:8px">
+        <span style="display:flex;align-items:center;gap:var(--ds-space-2)">
           <span id="nf-cache-usage" role="status" style="font-size:var(--mfs-min, 12px);color:var(--color-text-secondary)">…</span>
           <button class="cfg-btn cfg-btn-sm" id="btn-clear-nf-cache" type="button">${t('settings.fileCacheClear')}</button>
         </span>
@@ -1082,10 +1082,10 @@ export function renderSettings() {
       <div class="settings-section-title">${t('settings.about')}</div>
       <div class="about-info">
         <div>${brand.productName} ${state.serverVersion || '...'}</div>
-        <div style="margin-top:4px;font-size:var(--mfs-min, 12px);color:var(--color-text-secondary)">${t('settings.connection')}: ${state.connected
+        <div style="margin-top:var(--ds-space-1);font-size:var(--mfs-min, 12px);color:var(--color-text-secondary)">${t('settings.connection')}: ${state.connected
           ? statusIcon('circle-check', 14, 'st-ok') + ' <span style="color:var(--status-word)">' + t('settings.connected') + '</span>'
           : statusIcon('wifi-off', 14, 'st-err') + ' <span style="color:var(--status-word)">' + t('settings.disconnected') + '</span>'}</div>
-        <div style="margin-top:10px;display:flex;align-items:center;gap:8px">
+        <div style="margin-top:var(--ds-space-glass-x);display:flex;align-items:center;gap:var(--ds-space-2)">
           <button class="cfg-btn cfg-btn-sm" id="btn-restart-gateway">${t('settings.restart')}</button>
           <span id="restart-status" role="status" style="font-size:var(--mfs-min, 12px);line-height:18px;min-height:18px;flex:1;min-width:0;color:var(--color-text-muted)"></span>
         </div>

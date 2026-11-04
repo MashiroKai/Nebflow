@@ -69,6 +69,7 @@ object PresenceCandidateProbe:
   def isUnreportableAddress(address: String): Boolean =
     val trimmed = Option(address).map(_.trim).getOrElse("")
     if trimmed.isEmpty then true
+    else if EndpointPreference.isIpv6Literal(trimmed) then isUnreportableV6(trimmed)
     else
       octets(trimmed) match
         case None => false // 非 IPv4 字面量：不在此判据范围内
@@ -80,6 +81,59 @@ object PresenceCandidateProbe:
             (a == 127) || // 回环
             (a >= 224 && a <= 239) || // 组播
             (a == 255 && b == 255 && o(2) == 255 && o(3) == 255) // 广播
+
+  /**
+   * IPv6 侧的「结构性不可达」（IPv6 优先批 2026-11-04）——与 v4 判据**同一语义**：
+   *  - `::`（未指定）与 `::1`（回环）：对端拨的是它自己 / 拨不到；
+   *  - `fe80::/10`（链路本地）：跨链路零价值，是 v6 版 APIPA（本批 v4 头号污染源的对应物）；
+   *  - `ff00::/8`（组播）：建连无意义。
+   *
+   * 🔴 全局单播（`2000::/3`）与 ULA（`fc00::/7`，含 Tailscale `fd7a:115c:a1e0::/48`）
+   * **必须放行**：v6 优先改造的目的就是让它们进候选面；tailnet ULA 与 `100.64/10` 同权。
+   * scope id（`fe80::1%en0`）先剥离再判——带 scope 的链路本地照样是链路本地。
+   */
+  private def isUnreportableV6(host: String): Boolean =
+    val h = host.stripPrefix("[").stripSuffix("]").toLowerCase
+    val noScope = h.indexOf('%') match
+      case -1 => h
+      case i  => h.substring(0, i)
+    if noScope == "::" || noScope == "::1" || noScope == "0:0:0:0:0:0:0:0" || noScope == "0:0:0:0:0:0:0:1" then true
+    else
+      firstHextet(noScope) match
+        case None => false
+        case Some(h0) =>
+          (h0 >= 0xfe80 && h0 <= 0xfebf) || // 链路本地 fe80::/10
+            (h0 >= 0xff00 && h0 <= 0xffff) // 组播 ff00::/8
+
+  /** v6 字面量的首个 hextet（压缩形态以 `::` 开头 ⇒ 0）；非法 ⇒ None（放行，不在此判据内）。 */
+  private def firstHextet(h: String): Option[Int] =
+    if h.startsWith(":") then Some(0)
+    else
+      val head = h.takeWhile(_ != ':')
+      if head.isEmpty then Some(0) else scala.util.Try(Integer.parseInt(head, 16)).toOption
+
+  /**
+   * IPv6 优先排序（IPv6 优先批 2026-11-04）——纯函数，spec 直测。
+   *
+   * 规则（三条，缺一不可）：
+   *  1. **v6 在前**：双栈主机把 v6 候选先报给对端（对端可能只有 v6 可达）；
+   *  2. **v4 必留槽位**：v6 最多占 [[MaxV6Slots]] 条，其余 v6 排到 v4 之后——否则一台有
+   *     4+ 条 v6（运营商给每台机器一堆）的机器会把唯一那条可用 v4 挤出
+   *     [[MaxReportedEndpoints]] 的 4 条上限，对端就只剩拨不动的 v6；
+   *  3. **无 v6 ⇒ 原样返回**（逐字节相同）：无 v6 环境下行为零变化。
+   *
+   * 只重排、不删：条数上限仍由 [[sanitizeReported]] 一处封顶。
+   */
+  def preferV6(endpoints: List[NeblinkEndpoint], maxV6Slots: Int = MaxV6Slots): List[NeblinkEndpoint] =
+    val (v6, v4) = endpoints.partition(ep => EndpointPreference.isIpv6Literal(ep.address))
+    if v6.isEmpty then endpoints
+    else
+      val cap = math.max(1, maxV6Slots)
+      val (headV6, tailV6) = v6.splitAt(cap)
+      headV6 ++ v4 ++ tailV6
+
+  /** v4 之前的 v6 名额上限（见 [[preferV6]] 规则 2）。 */
+  val MaxV6Slots: Int = 2
 
   /**
    * 网卡名是否「已知隧道/虚拟适配器」——旧 marker 表（`NeblinkClient.isLikelyVirtualNic:
@@ -103,8 +157,9 @@ object PresenceCandidateProbe:
    * ① 上报面卫生（修 C-3）：丢不可路由地址 + 丢隧道网卡的非 tailnet 地址 + 去重 + 封顶。
    *
    * 三条不变量：
-   *  - **保序**：只删不重排——排序权仍归 `EndpointPreference.rank`（tailnet → 同 /24 → 其余）。
-   *    本批**不改**排序（audit.md §4③ 三条理由）。
+   *  - **职责边界**：过滤（丢不可路由 / 丢隧道网卡的非 tailnet 地址）、去重、封顶**由本函数负责**；
+   *    **排序不由本函数负责**——由调用点前置的 [[preferV6]]（v6 前置 + v4 必留槽位）与
+   *    `EndpointPreference.rank`（tailnet → 同 /24 → 其余）共同决定；本函数在已排好的序列上只删不重排。
    *  - **不误杀首选项**：`100.64/10` 地址即使挂在 `utun`（macOS tailscale 的真实形态）
    *    也照样保留。
    *  - **永不返回空**：过滤后为空 ⇒ 原样返回入参（沿用 `NeblinkClient.detectLocalEndpoints`
@@ -120,7 +175,10 @@ object PresenceCandidateProbe:
     else
       val reportable = endpoints.filterNot(ep => isUnreportableAddress(ep.address))
       val noTunnels =
-        reportable.filterNot(ep => isTunnelNicLabel(ep.label) && !EndpointPreference.isTailscaleHost(ep.address))
+        reportable.filterNot(ep =>
+          isTunnelNicLabel(ep.label) &&
+            !EndpointPreference.isTailscaleHost(ep.address) && !EndpointPreference.isTailnetV6(ep.address)
+        )
       // 隧道网卡被全部丢掉时退回上一档（仍比「什么都不报」强）。
       val kept = if noTunnels.nonEmpty then noTunnels else reportable
       val deduped = kept.foldLeft(List.empty[NeblinkEndpoint]) { (acc, ep) =>

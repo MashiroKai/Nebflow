@@ -1,0 +1,12 @@
+=========== A. 同 worktree 重复调用 · 现状（每调用冷启）: bench-1 ===========
+A-cold-1                     wall=   6.7s  sbtJVMpeak=  641MB  rc=0
+A-cold-2                     wall=   4.9s  sbtJVMpeak=  481MB  rc=0
+A-cold-3                     wall=   5.1s  sbtJVMpeak=  571MB  rc=0
+--- swap/compressed @ 14:32:40 ---
+total = 4096.00M  used = 2518.62M  free = 1577.38M  (encrypted)
+compressor: Pages occupied by compressor:            267432.
+load1: { 12.02 14.31 13.01 }
+
+=========== B. 同 worktree 重复调用 · 常驻 server: bench-1 ===========
+server active.json: {"uri":"local:///Users/kaiyu/.sbt/1.0/server/b3ac1e1009277e7db809/sock"}
+server idle RSS (编译前) = 407MB
