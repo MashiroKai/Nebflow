@@ -414,6 +414,11 @@ pid 78176: 03:03:32 uptime
 - 没有重启、没有 kill 任何进程；`~/.stand/run` 下的锁与 pid 未被读取以外的任何操作触碰。
 - F1-F8 **一个都没修**（按派单：发现风险只带回，不动手）。
 
+**遗留在盘上的东西（作者可自行清理）**
+- `/Volumes/KINGSTON/nebflow-root-rehearsal.sparsebundle` —— 副本卷，**已卸载，占 87 GB**；删除命令见 `README.md`。
+- `/Volumes/KINGSTON/rehearsal-evidence/` —— 大件清单（真根前后全量指纹、副本各阶段指纹、`migration-report.sample.json` 109 MB 等，约 1.7 GB）；删除前建议先按 §9 复核真根。
+- 内部盘没有留下任何东西（`/tmp` 未使用）。
+
 **与 brief 的偏差（都已在上文标注理由）**
 1. brief 说"下次重启会触发一次性迁移" —— 与代码不符，作者已发更正；本报告按更正口径写（§0）。
 2. brief 建议 `/tmp/root-migration-rehearsal-<ts>/` —— 内部盘仅 11 GiB 空闲/99% 占用，放不下且会危及生产实例；改用外置盘上的 110 GiB APFS sparse bundle（§2.2）。
