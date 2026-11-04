@@ -14,6 +14,7 @@ last_verified: 2026-09-03
 - **先复用后新建**——新建样式前查既有等价物，有则精确匹配。
 - 设计 tokens 来自 `app/globals.css` 的 Tailwind v4 `@theme`：`--color-primary`、`--color-accent`、`--color-card`、`--color-card-border`、`--color-muted`、`--color-foreground`、`--color-background`——**永不裸写 hex**。
 - 圆角、阴影、间距从既有值里选，不发明新值；同组件处处同款。
+- **刻度指针（design-scale 批 2026-11-04）**：客户端（Stand 面板 `web/`）的四类几何刻度——圆角 / 边距 / 文字离边缘的距离 / 字号——已定版为「档 = 变量名 + 值 + 用在哪」的四表，出处 = stand 仓 `AGENTS.md §21 设计规范·设计规格刻度`（精简版）+ 仓内设计规格刻度规范件（完整四表 + 收敛判定 + 迁移清单），并有常驻防漂移闸 `scripts/check-design-spec-sync.mjs`（spec 表 ↔ 运行时令牌 ↔ 账本三向同值）。**官网域仍以 `app/globals.css` 的 `@theme` 为唯一单源**：两端点数不同（客户端 4px 栅格 + 11 档圆角；官网 Tailwind 尺度），刻度**不互通**——做官网时按本节既有值取形，做客户端面时按上面四表取值，禁把一端的档搬到另一端。
 
 ## 视觉原则
 

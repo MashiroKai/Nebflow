@@ -812,7 +812,10 @@ export default {
   'settings.thinkingMode': 'Thinking Mode',
   'settings.llmLog': 'LLM Logging',
   'settings.workSchedule': 'Freeze time (non-work hours)',
-  'settings.workScheduleOnHint': 'During a freeze window the agent parks after each tool round — no LLM calls (zero token cost) — and resumes automatically when the window ends. The input bar and mic are disabled during a freeze; click "Skip this freeze" to unfreeze immediately.',
+  // Self-explaining batch (2026-11-04, rule 8): the trailing "click Skip this freeze to
+  // unfreeze immediately" taught an action the button label already carries (action-label
+  // retention). What stays is the freeze-window fact.
+  'settings.workScheduleOnHint': 'During a freeze window the agent parks after each tool round — no LLM calls (zero token cost) — and resumes automatically when the window ends. The input bar and mic are disabled during a freeze.',
   'settings.workScheduleOffHint': 'Off by default. When off, all agents work around the clock exactly as today.',
   'settings.addSegment': 'Add freeze segment',
   'settings.removeSegment': 'Remove segment',
@@ -2273,7 +2276,9 @@ export default {
   'neblink.reachDirect': 'Direct P2P connection established',
   'neblink.reachRelay': 'Reachable via server relay',
   'neblink.reachServerOnly': 'Online — no direct data path',
-  'neblink.loggedOutHint': 'Not signed in — click the avatar above to sign in with your {lowerBrand} account; signing in joins the network automatically.',
+  // Self-explaining batch (2026-11-04, rule 8): dropped the trailing "signing in joins
+  // the network automatically" (behaviour teaching). State + next step stay.
+  'neblink.loggedOutHint': 'Not signed in — click the avatar above to sign in with your {lowerBrand} account',
   // Defect A (2026-09-18): two readings of the signed-out panel — (1) the
   // "clean up and sign in again" entry (local credential-file class only);
   // (2) the status-face degradation line (a non-2xx `/status` used to be silent).
@@ -2305,8 +2310,13 @@ export default {
   'fleet.title': 'Update all devices',
   'fleet.subtitle': 'This device v{current} → target v{target} · stages: {stages}',
   'fleet.stages': 'prepare → download → verify → switch → restart → self-check → done',
-  'fleet.blocking': 'Updating — please wait. Current stage "{stage}", {eta}. This console is unavailable during the update and resumes automatically when it finishes.',
-  'fleet.reconnecting': 'The device has started restarting; waiting for it to come back (this page resumes automatically, no manual refresh needed).',
+  // Self-explaining batch (2026-11-04, rule 8, same family as the rule's counter-example 2):
+  // "please wait" / "this console is unavailable … resumes automatically" taught waiting and
+  // promised behaviour; what stays is the state fact (stage name + ETA).
+  'fleet.blocking': 'Updating — current stage "{stage}", {eta}.',
+  // Was "…waiting for it to come back (this page resumes automatically, no manual refresh
+  // needed)" — behaviour teaching plus a parenthetical. Now a state fact.
+  'fleet.reconnecting': 'This device is restarting — waiting to reconnect.',
   'fleet.eta': 'ETA 3–5 minutes',
   'fleet.empty': 'No devices to update right now.',
   'fleet.close': 'Close',
@@ -2321,7 +2331,9 @@ export default {
   'fleet.versionUnknown': 'version unknown',
   'fleet.attempt': 'attempt {n}',
   'fleet.manualTitle': 'Needs a manual update (too old or not remotely updatable)',
-  'fleet.manualHow': 'Open the console on that device → Settings → check for updates, or run the install script',
+  // `fleet.manualHow` removed (self-explaining batch 2026-11-04, rule 8 counter-example 1):
+  // it was the "open the console on that device → Settings → …" walkthrough. Why this row
+  // cannot be pushed is carried by the capability badge; the row keeps name + version.
   'fleet.pendingTitle': 'Waiting for the device to come online (pushed automatically)',
   'fleet.summary.counts': '{updated} updated, {failed} failed, {manual} need a manual update, {pending} waiting to come online',
   'fleet.summary.all-consistent': 'All devices consistent',
@@ -2345,9 +2357,12 @@ export default {
   'fleet.stage.waiting-online': 'waiting for the device',
   'fleet.stage.cancelled': 'stopped',
   'fleet.failure.download-failed': 'download failed',
-  'fleet.failure.download-failed.advice': 'Try "Retry failed" after the network recovers; if it keeps failing, update that device manually.',
+  // Self-explaining batch (2026-11-04, rule 8): dropped the second clause ("update that
+  // device manually …") — the capability badge already states it (duplicate explanation).
+  // What stays is the failure closure: cause + next step, one sentence.
+  'fleet.failure.download-failed.advice': 'Try "Retry failed" after the network recovers.',
   'fleet.failure.verify-failed': 'checksum/size check failed',
-  'fleet.failure.verify-failed.advice': 'Retry once; if it still fails the package source is wrong — update that device manually and keep the log.',
+  'fleet.failure.verify-failed.advice': 'Retry once; if it still fails the package source is wrong.',
   'fleet.failure.switch-rolled-back': 'rolled back (the new version did not take hold)',
   'fleet.failure.switch-rolled-back.advice': 'It rolled back to a working version and keeps serving; read that device log, then update it manually.',
   'fleet.failure.healthcheck-failed': 'health check failed after restart',
@@ -2749,7 +2764,10 @@ export default {
   'plugins.sourceUnreachable': 'source unreachable, keeping the local version',
   'plugins.sourceNotInstalled': 'not installed',
   'plugins.sourceUpdate': 'Update',
-  'plugins.sourceUpdateTitle': 'Pull and activate: v{from} → v{to} (zero restart; the local version stays if this fails)',
+  // Self-explaining batch (2026-11-04, rule 8): dropped the parenthetical "(zero restart;
+  // the local version stays if this fails)" — capability claim + behaviour promise. The
+  // version-migration fact v{from} → v{to} stays.
+  'plugins.sourceUpdateTitle': 'Pull and activate: v{from} → v{to}',
   'plugins.sourceUpdated': '{name} updated',
   'explorer.loading': 'Loading...',
   'explorer.empty': 'Empty',
