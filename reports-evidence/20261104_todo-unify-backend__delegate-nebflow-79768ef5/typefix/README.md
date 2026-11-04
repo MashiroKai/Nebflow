@@ -105,9 +105,23 @@ store 6/6（惰性拉真源 / 完成·撤回 / 字段级 patch / 广播收敛 / 
 + capsule-create 8/8（加号 / 空白建 / 防误触 / 重要度落库 / 三帧 / 动画护栏 / 手机 375）。
 零后端、零 sbt、未触碰 6138。
 
-## 8. 未做 / 开放项
+## 8. 提交与收束态
+
+```
+06675f9ec chore(evidence): 类型门禁回归跑动 todo-capsule-create.spec 重生成的 panel 截图（渲染噪声级差异，断言全绿）
+d0135c588 chore(evidence): 类型门禁修复提交后在 ddf7e3e43 树复跑 check-js-types（EXIT=0）+ 收束态 range 核对
+ddf7e3e43 fix(type-gate): checkJs 13 错清零（EXIT=1 → EXIT=0），零基线豁免
+```
+`git status --porcelain` = 仅剩 `?? .../persist2/`（**并行节点**正在写的持久化实测目录，mtime 持续更新，非本节点产物，原样留置未纳管）。
+`main = 4828151c2` 在会话内被作者前移，本分支 HEAD 目前**不在其之上**（落后），合入由合并层/后续追平节点处理。
+
+附注：`tests/todo-capsule-create.spec.mjs` 自带 `page.screenshot()`（`panel/01..05*.png`），
+跑本批 spec 会重写这些证据图 ⇒ 已随本次提交收编（字节差异为渲染噪声，14/14 断言全绿）。
+
+## 9. 未做 / 开放项
 
 1. ws.js 2 条的归属：存量（近路批 `3858e3eb7`），本批已修但**未**回写/挑拣到近路批分支——等 dispatcher 裁定。
 2. 未跑 sbt / 后端测试（本节点改动面为纯注释，零逻辑变更）。
-3. 未 push、未合并、未 kill / 重启任何 sbt / java / nebflow 进程。
-4. 提交时工作树里另有 **5 张 `panel/*.png` 的未提交改动**（mtime 17:58，由并行节点写盘，非本节点产物）——未纳入本次提交，原样留置。
+3. 未 push、未合并 main、未 kill / 重启任何 sbt / java / nebflow 进程。
+4. 本工作树被并行节点共用：`persist2/` 的写入与 sbt 组装日志均来自并行会话，本节点未触碰。
+
