@@ -1,0 +1,21 @@
+[bigroot] rehearsal root = /Volumes/rehearsal/root
+[bigroot] pre-migrate ladder = flat (effective=/Volumes/rehearsal/root), PathUtil.dataRoot=/Volumes/rehearsal/root
+  PASS  pre-migrate ladder is flat (no layout.json) - flat
+  PASS  pre-migrate effective root == machine root 
+[bigroot] top-level entries before migrate = 104
+15:18:58.096 [36mINFO [0m nebflow.root.layout - [migrate] copying 104 entries, 40.57GB total -> /Volumes/rehearsal/root/pending-claim/20261104-150021 (pending claim — no account signed in)
+[bigroot] MIGRATE finished in 1119.3 s
+[bigroot] pendingClaim=true accountSub=None
+[bigroot] target=/Volumes/rehearsal/root/pending-claim/20261104-150021
+[bigroot] movedEntries=104 -> List((), .archived-tools-2d, .nebflow, .plugin-presence.json, .plugin-staging, .stats.json, C:, D:, NEBFLOW.md, README.md, Soul.md, Tools, User.md, agents, agents-backups, agents-disabled-20261015, archive, archived-agents, archives, ask, attach-uploads, backups, base-drift.json, bg-task-logs, bin, browser-data, browser-use, cache, canvas_tabs.json, card-design-prompt.md, card-templates, chains, checkin-records, delegates, design-explore, docs, dropbox, evidence, flows, folders, friend-remarks.json, general, history, imgcache, input_history.jsonl, install-manifest.json, llm-queue, logs, mail-dedup.json, mailbox-reconcile.json, media, memory, memory-archive, memory-backups, memory-db, memory.md, merge-channel, merge-ledger.json, merge-quarantine, neblink, onboarding.json, peer-descriptions.json, pending-asks.json, perception, plots, plugin-repos, plugin-sources, plugins, plugins-backups, portal-uplink-deadletter, preferences.json, profile-db, projects, prompts, quarantine, quarantine-20261022, reminders, repair-backups, scheduled-tasks, search-index, sessions, skills, sop-backups, staging-archive-20260913_202752, stt-config.json.bak, subagent-tasks, tasks, tasks-history.jsonl, tasks-v2-history.jsonl, tasks-v2.json, tasks.json, teams, tmp, tool-results, transfer, tts-config.json, uploads, usage-log.jsonl, usage-pattern.json, usage-records, voice-models, weekly-report, work, workspace-items)
+[bigroot] migration-report.json = 109.2 MiB at /Volumes/rehearsal/root/migration-report.json
+  PASS  migration-report.json written 
+  PASS  layout.json written 
+  PASS  pointer NOT written on migrate (pending-claim branch) 
+  PASS  movedEntries covers every pre-migrate top-level entry except layout-managed ones 
+[bigroot] post-migrate STARTUP PATH (RootLadder.resolve) = unauthenticated in 0.0 s, effective=/Volumes/rehearsal/root/unauthenticated
+  PASS  startup path resolves the unauthenticated layer (layout marker + no pointer) 
+  PASS  startup path does NOT create a second pending-claim copy - dirs=ArraySeq(20261104-150021)
+[bigroot] --skip-rollback: stopping after migrate
+
+[driver] completed with 0 failure(s)

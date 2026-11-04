@@ -1,0 +1,10 @@
+[copy] replicating 105 top-level entries
+rsync(5736): error: /Users/kaiyu/.stand/sessions/d7c3cb54-dd90-4f3f-bbf6-e7898c425cff/mailbox/pending/000000000003-delegate-nebflow-4d30d543.json: open (2) in /Users/kaiyu/.stand: No such file or directory
+rsync(5736): error: /Users/kaiyu/.stand/sessions/delegate-nebflow-5022b4e0/injection-queues.json: open (2) in /Users/kaiyu/.stand: No such file or directory
+rsync(5736): error: /Users/kaiyu/.stand/sessions/delegate-nebflow-76417e90/held-receipts.json: open (2) in /Users/kaiyu/.stand: No such file or directory
+rsync(5736): error: /Users/kaiyu/.stand/sessions/delegate-nebflow-76417e90/injection-queues.json: open (2) in /Users/kaiyu/.stand: No such file or directory
+rsync(5736): error: unexpected end of file
+[copy] rsync exit=1 elapsed=1002s
+ 42G	/Volumes/rehearsal/root
+  556904
+      27
