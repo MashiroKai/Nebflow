@@ -1527,6 +1527,9 @@ export default {
   // 控件明示全文行数；收起文案与 aria-expanded 联动（收起态回显行数）。
   'chat.toolExpandMore': '展开全部 {n} 行',
   'chat.toolCollapse': '收起',
+  // 工具卡图片引用件（tool-card-image-face 批 2026-11-04）：工具卡 = 摘要面，
+  // 卡内图片一律折叠成「🖼 图片 ×N」引用，点开走灯箱——绝不内嵌渲染。
+  'chat.toolImgRef': '🖼 图片 ×{n}',
   // pop-upgrade 批(2026-10-03):Pop 工件面(叠卡/文件卡片)文案
   'chat.popExpand': '展开 {n}',
   'chat.popCollapse': '收起',
