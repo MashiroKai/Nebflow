@@ -5,7 +5,8 @@ import cats.effect.std.Mutex
 import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.shared.NebflowLogger
+import nebflow.db.{DbHandle, DbHost, ReadResult}
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
  * Scheduled-task persistence（引擎侧文件存储：每会话一个 `<sessionId>.json`）。
@@ -22,9 +23,24 @@ import nebflow.shared.NebflowLogger
  * 方法（upsertTaskByName = removeByNameUnlocked + addUnlocked，同一 permit
  * 内原子完成，spec 钉并发语义）。
  */
-class ScheduledTaskStore(baseDir: os.Path):
+class ScheduledTaskStore(
+  baseDir: os.Path,
+  /**
+   * db 接线第一阶 C6（待办/定时任务面落库）：显式注入缝（测试传临时根句柄）。
+   * 缺省 + 生产默认目录构造（SharedResources:57）⇒ 自开共享句柄（DbHost，
+   * best-effort——失败回落纯旧档行为）；测试传临时路径 ⇒ 不自开，零波及。
+   */
+  db: Option[DbHandle] = None
+):
+
+  import ScheduledTaskStore.*
 
   private val logger = NebflowLogger.forName("nebflow.scheduled-task.store")
+
+  /** db 影子面句柄（None = 未接线/自开失败 ⇒ 影子腿与恢复读全部 no-op）。 */
+  private val dbHandle: Option[DbHandle] = db.orElse(
+    Option.when(baseDir == defaultBaseDir)(DbHost.openBestEffort(PathUtil.dataRoot.toNIO)).flatten
+  )
 
   /**
    * 全库读写互斥：任何文件读/改/写都必须持有（见类注）。CE 3.5 的 Mutex 无
@@ -52,14 +68,83 @@ class ScheduledTaskStore(baseDir: os.Path):
       decode[List[ScheduledTask]](os.read(f)) match
         case Right(list) => list
         case Left(err) =>
-          logger.warnSync(s"Failed to parse scheduled tasks for $sessionId: ${err.getMessage}")
-          Nil
+          // 静默面收编（db 接线第一阶 C6/D-5，标签③派生面）：坏档不再静默折叠成
+          // Nil——隔离（字节保全，Quarantine）+ WARN + db 影子恢复读；db 无档/不可读
+          // ⇒ 按缺席起步（调用方随后 save 覆盖销毁的正是这份**已隔离**的坏档）。
+          val iso = nebflow.db.Quarantine.quarantine(f.toNIO, System.currentTimeMillis())
+          logger.warnSync(
+            s"scheduled-tasks file corrupt for $sessionId: ${err.getMessage} " +
+              s"quarantined=${iso.map(_.toString).getOrElse("-")}; trying db shadow restore"
+          )
+          dbHandle match
+            case None => Nil
+            case Some(h) =>
+              restoreFromDbSync(h, sessionId) match
+                case Right(tasks) => tasks
+                case Left(why) =>
+                  logger.warnSync(s"db shadow restore unavailable for $sessionId: $why")
+                  Nil
   }
 
+  /** 坏档 db 恢复读（同步腿，只在 loadUnlocked 的 blocking 区内调用）。 */
+  private def restoreFromDbSync(h: DbHandle, sessionId: String): Either[String, List[ScheduledTask]] =
+    import cats.effect.unsafe.implicits.global
+    try
+      h.liveScheduleTasks(sessionId).unsafeRunSync() match
+        case ReadResult.Absent()       => Left("db 面无该会话调度流")
+        case ReadResult.Corrupt(k, ev) => Left(s"db 面 Corrupt($k, $ev)")
+        case ReadResult.Present(rows) =>
+          val tasks = rows.flatMap(_.taskDef.as[ScheduledTask].toOption)
+          if tasks.isEmpty then Left("db 面活任务折叠为空") else Right(tasks)
+    catch case e: Throwable => Left(s"db 读异常: ${e.getMessage}")
+
+  /**
+   * 整档覆盖写 + db 影子差量：先读旧档（decode 成功才算基线——坏档情形由
+   * loadUnlocked 的隔离/恢复腿负责，这里静默取空基线），与 new 列表做差量写穿。
+   */
   private def saveUnlocked(sessionId: String, tasks: List[ScheduledTask]): IO[Unit] =
     ensureBaseDir *> IO.blocking {
-      os.write.over(sessionFile(sessionId), tasks.asJson.noSpaces)
+      val f = sessionFile(sessionId)
+      val before =
+        if os.exists(f) then decode[List[ScheduledTask]](os.read(f)).getOrElse(Nil)
+        else Nil
+      os.write.over(f, tasks.asJson.noSpaces)
+      before
+    }.flatMap { before =>
+      shadowDiff(sessionId, before, tasks)
     }
+
+  // ------------------------------------------------------------------
+  // db 影子写（C6）—— 写穿 best-effort：任何 db 故障 ⇒ WARN + 跳过，绝不阻断主链
+  // ------------------------------------------------------------------
+
+  /**
+   * 差量写穿：旧列表 vs 新列表 ⇒ 新增/变更行 `appendScheduleTask`（同 id 取最后
+   * 行的折叠语义 = 天然 upsert），消失行 `tombstoneScheduleTask`。句柄 None ⇒
+   * no-op；单行写失败只 WARN 该腿（其余行继续），保旧档为主读面。
+   */
+  private def shadowDiff(sessionId: String, before: List[ScheduledTask], after: List[ScheduledTask]): IO[Unit] =
+    dbHandle match
+      case None => IO.unit
+      case Some(h) =>
+        val now = System.currentTimeMillis()
+        val beforeById = before.iterator.map(t => t.id -> t).toMap
+        val afterById = after.iterator.map(t => t.id -> t).toMap
+        val upserts = after.filterNot(t => beforeById.get(t.id).contains(t))
+        val deletes = before.filterNot(t => afterById.contains(t.id))
+        val legs =
+          upserts.map(t =>
+            h.appendScheduleTask(sessionId, t.asJson, now).attempt.flatMap {
+              case Left(e) => logger.warn(s"db shadow appendScheduleTask failed ($sessionId/${t.id}): ${e.getMessage}")
+              case Right(_) => IO.unit
+            }
+          ) ++ deletes.map(t =>
+            h.tombstoneScheduleTask(sessionId, t.id, now).attempt.flatMap {
+              case Left(e) => logger.warn(s"db shadow tombstone failed ($sessionId/${t.id}): ${e.getMessage}")
+              case Right(_) => IO.unit
+            }
+          )
+        legs.sequence_.void
 
   /** 持锁读-改-写单会话文件：f 纯函数变换，返回 (新列表, 结果)。 */
   private def modifySession[A](sessionId: String)(f: List[ScheduledTask] => (List[ScheduledTask], A)): IO[A] =
@@ -92,7 +177,22 @@ class ScheduledTaskStore(baseDir: os.Path):
             case Left(_) => () // unreadable: leave untouched
         }
       removed.result()
+  }.flatMap { dropped =>
+    // db 影子：跨会话整名清理 ⇒ 逐个 tombstone（各自 sessionId）
+    dropped.foldLeft(IO.unit) { (acc, t) =>
+      acc *> shadowTombstone(t.sessionId, t.id)
+    }.as(dropped)
   }
+
+  /** 单行 tombstone 影子腿（句柄 None ⇒ no-op；失败 WARN 不抛）。 */
+  private def shadowTombstone(sessionId: String, taskId: String): IO[Unit] =
+    dbHandle match
+      case None => IO.unit
+      case Some(h) =>
+        h.tombstoneScheduleTask(sessionId, taskId, System.currentTimeMillis()).attempt.flatMap {
+          case Left(e) => logger.warn(s"db shadow tombstone failed ($sessionId/$taskId): ${e.getMessage}")
+          case Right(_) => IO.unit
+        }
 
   private def scanUnlocked(filter: ScheduledTask => Boolean, sort: Boolean): IO[List[ScheduledTask]] =
     IO.blocking {
@@ -238,3 +338,8 @@ class ScheduledTaskStore(baseDir: os.Path):
         }
 
 end ScheduledTaskStore
+
+object ScheduledTaskStore:
+  /** 生产默认存储目录（SharedResources 装配点同值；默认根判别的基准）。
+   *  def 而非 val：PathUtil.dataRoot 是测试换根缝，须每次求值。 */
+  def defaultBaseDir: os.Path = PathUtil.dataRoot / "scheduled-tasks"
