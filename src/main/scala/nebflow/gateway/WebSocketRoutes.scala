@@ -11,7 +11,7 @@ import nebflow.actor.{ActorSystem as RootActorSystem, *}
 import nebflow.agent.*
 import nebflow.core.*
 import nebflow.core.entity.EntityLoader
-import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
+import nebflow.core.flow.{FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
 import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
@@ -295,11 +295,12 @@ class WebSocketRoutes(
         // 一个来源（应用级 `safety.defaultMode`，见 SharedResources）。此前每建立
         // 一次连接就用盘上 meta 值写桶的路径（2026-09-12 前）以及"内存覆盖"路径
         // （2026-09-12–09-13）都已随覆盖层删除。
-        registerRootInteraction(sessionId, recordingWsSend) *>
-        initFlowTree(sessionId, ref, pr, safetyMode)
-          .handleErrorWith(e => logger.error(s"initFlowTree failed for session $sessionId: ${e.getMessage}"))
-          .start
-          .as(ref)
+        // 团队功能删除批（team-feature-deletion-20261104）阶段 1：此处原为
+        // `initFlowTree(...)` —— 每个 root 会话 spawn 就无条件建一棵 FlowTreeActor
+        // （团队树）并注册进 FlowTreeRegistry。该无条件路径已断：团队面整体退役，
+        // 不再有「连接即建树」的生产者。FlowTreeActor 类型本体保留（惰性入口
+        // FlowTreeRegistry.getOrCreate 仍在，阶段 3 才删类型）。
+        registerRootInteraction(sessionId, recordingWsSend).as(ref)
     }
 
   end doSpawnRootAgent
@@ -486,35 +487,11 @@ class WebSocketRoutes(
     ConfigService.setSafetyDefaultMode(mode) *>
       wsHub.broadcast(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
 
-  /** Create and register a FlowTreeActor for a session. Fire-and-forget via .start. */
-  private def initFlowTree(
-    sessionId: String,
-    agentRef: nebflow.actor.ActorRef[AgentCommand],
-    projectRoot: String,
-    safetyMode: String = "confirm-edits"
-  ): IO[Unit] =
-    val config = FlowTreeActor.TreeConfig(
-      parentAgentRef = agentRef,
-      wsSend = Some(makeRecordingWsSend(sessionId, (json: Json) => wsHub.broadcast(json))),
-      sessionId = Some(sessionId),
-      resources = sharedResources,
-      projectRoot = projectRoot,
-      safetyMode = safetyMode
-    )
-    for
-      // ⑦ (2026-08-24): mark restore in flight BEFORE spawn so a concurrent
-      // GET /api/teams/mounted (awaitRestore) waits for restoreTeams to
-      // finish instead of fast-pathing past it and returning an empty list.
-      // The completion signal always fires (signalRestoreComplete in the
-      // actor setup, even for a zero-team home), so the wait is bounded to
-      // the restore itself — no fixed stall.
-      _ <- FlowTreeRegistry.markRestoreStarted
-      treeRef <- rootSystem.spawn(FlowTreeActor(config), s"flow-tree-$sessionId")
-      _ <- FlowTreeRegistry.register(sessionId, treeRef)
-      _ = logger.info(s"FlowTreeActor created for session $sessionId (pipelines auto-restored on startup)")
-    yield ()
-
-  end initFlowTree
+  // 团队功能删除批（team-feature-deletion-20261104）阶段 1：`initFlowTree`
+  // （原 :490-517）整段删除 —— 它是「每次 root 会话 spawn 就无条件建一棵团队树」
+  // 的唯一定义面（markRestoreStarted + spawn FlowTreeActor + FlowTreeRegistry.register）。
+  // FlowTreeActor 与 TeamSessionRegistry 类型**本阶段完整保留**（阶段 3 才动），
+  // 树仍可经惰性入口 `FlowTreeRegistry.getOrCreate`（LoadTool 腿）按需建立。
 
   /** Stop and remove the root AgentActor for a session. */
   private def removeRootAgent(sessionId: String): IO[Unit] =
@@ -1380,19 +1357,15 @@ class WebSocketRoutes(
                     )
                     activeMeta <- sessionStore.getActiveMeta
                     agentName = activeMeta.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
-                    // ⑦ (2026-08-24): restore mounted teams right on WS connect — not
-                    // only on first user message. Team mount recovery lives in
-                    // FlowTreeActor startup (restoreTeams → TeamSessionRegistry), and
-                    // the actor is only created alongside the root agent. After a
-                    // restart, a client that connects but sends no message would leave
-                    // /api/teams/mounted empty → "No active teams" panel. ensureRootAgent
-                    // is idempotent (existing ref is returned) and chains initFlowTree
-                    // on first spawn, so a plain call covers both the cold start (new
-                    // agent → tree → restore) and the warm path (existing agent/tree →
-                    // no-op).
+                    // ⑦ (2026-08-24): 原为「WS connect 即恢复已挂团队」——挂在
+                    // initFlowTree → FlowTreeActor.restoreTeams 上。团队功能删除批
+                    // 阶段 1 已断掉 initFlowTree（见 :490 注），此处**只保留** root
+                    // agent 的确保（ensureRootAgent 幂等，冷启 spawn / 热路径原样返回）；
+                    // 团队恢复腿随之不存在。/api/teams/mounted 在阶段 1 的中间态见
+                    // reports-evidence/team-feature-deletion/stage1/README.md §4。
                     _ <- activeMeta.traverse_(meta =>
                       ensureRootAgent(meta.id).void.handleErrorWith(e =>
-                        logger.warn(s"WS-connect team restore failed for session ${meta.id}: ${e.getMessage}")
+                        logger.warn(s"WS-connect root agent ensure failed for session ${meta.id}: ${e.getMessage}")
                       )
                     )
                     _ <- sessionService.sendSessionList(perConnJsonSend, agentName)

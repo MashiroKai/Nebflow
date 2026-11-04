@@ -306,11 +306,10 @@ object FlowTreeActor:
             .error(s"restoreTeams failed: ${e.getMessage}\n${e.getStackTrace.take(5).map(_.toString).mkString("\n")}")
             .void
         )
-        // Notify frontend that teams are now available
-        restoredNames <- flowNamesRef.get
-        _ <- restoredNames.toList.traverse_ { (name, _) =>
-          emit(config, "treeBranchMounted", "name" -> name.asJson, "type" -> "team".asJson)
-        }
+        // 团队功能删除批（team-feature-deletion-20261104）阶段 1：此处原有「恢复
+        // 完成后逐个团队广播一条「树分支已挂载」WS 帧」的腿，随该死帧一并删除
+        // （前端 handler 2026-09-05 已删，全仓零消费者；帧名与另两条同族死帧见
+        // reports-evidence/team-feature-deletion/stage1/README.md §3）。
         _ <- FlowTreeRegistry.signalRestoreComplete
         _ <-
           if !config.disableFileWatcher then
@@ -379,7 +378,6 @@ object FlowTreeActor:
             )
             _ <- flowNamesRef.update(_ + (baseName -> teamDef.name))
             _ <- persistTeams(flowNamesRef, cfg)
-            _ <- emit(cfg, "treeBranchMounted", "name" -> baseName.asJson, "type" -> "team".asJson)
             _ <- logger.info(s"Team '$baseName' mounted (team: ${teamDef.name})")
           yield ()
     yield ()
@@ -418,7 +416,6 @@ object FlowTreeActor:
           logger.info(s"Hot reload: added agent '$name' to '$instanceName'")
       }
 
-      _ <- emit(cfg, "treeBranchUpdated", "name" -> instanceName.asJson)
       _ <- logger.info(s"Hot reload '$instanceName': agents +${added.size} -${removed.size}")
     yield ()
 
