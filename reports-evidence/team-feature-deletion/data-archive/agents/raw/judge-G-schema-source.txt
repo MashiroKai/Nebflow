@@ -1,0 +1,25 @@
+# J-G  why the global agent library CANNOT host a team declaration (path is the judge, not JSON)
+--- src/main/scala/nebflow/core/entity/EntityLoader.scala:141-146 (category inferred from DIRECTORY PATH) ---
+        // Infer category from directory path (not from JSON field)
+        val dirStr = dir.toString()
+        val inferredCategory =
+          if dirStr.contains("/teams/") then "team"
+          else if dirStr.contains("/flows/") then "flow"
+          else "standalone"
+--- src/main/scala/nebflow/core/entity/EntityTypes.scala:21 (category field comment) ---
+  category: String = "standalone", // computed by EntityLoader from path, NOT read from JSON
+--- src/main/scala/nebflow/agent/AgentLibrary.scala:234-247 (agent.json schema: no team/teams field) ---
+private case class AgentJson(
+  name: String,
+  displayName: Option[String] = None,
+  description: Option[String] = None,
+  useWhen: Option[String] = None,
+  tools: List[String] = List("*"),
+  mcpServers: Option[List[String]] = None,
+  avatar: Option[String] = None,
+  voice: Option[Boolean] = None,
+  model: Option[AgentModelConfig] = None,
+  preset: Option[String] = None,
+  category: Option[String] = None,
+  skills: Option[List[String]] = None,
+  flows: Option[List[String]] = None
