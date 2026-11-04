@@ -310,7 +310,9 @@ object FlowTreeActor:
         // 完成后逐个团队广播一条「树分支已挂载」WS 帧」的腿，随该死帧一并删除
         // （前端 handler 2026-09-05 已删，全仓零消费者；帧名与另两条同族死帧见
         // reports-evidence/team-feature-deletion/stage1/README.md §3）。
-        _ <- FlowTreeRegistry.signalRestoreComplete
+        // 阶段 2（同一批）：恢复完成信号 `FlowTreeRegistry.signalRestoreComplete`
+        // 也已随 /api/teams/mounted 与其等待腿一并删除 —— 该信号在本批之后
+        // 零消费者，保留它等于保留一条无人等待的握手。
         _ <-
           if !config.disableFileWatcher then
             startFileWatcher(ctx, config)

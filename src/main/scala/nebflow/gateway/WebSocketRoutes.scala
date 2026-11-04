@@ -490,8 +490,10 @@ class WebSocketRoutes(
   // 团队功能删除批（team-feature-deletion-20261104）阶段 1：`initFlowTree`
   // （原 :490-517）整段删除 —— 它是「每次 root 会话 spawn 就无条件建一棵团队树」
   // 的唯一定义面（markRestoreStarted + spawn FlowTreeActor + FlowTreeRegistry.register）。
-  // FlowTreeActor 与 TeamSessionRegistry 类型**本阶段完整保留**（阶段 3 才动），
-  // 树仍可经惰性入口 `FlowTreeRegistry.getOrCreate`（LoadTool 腿）按需建立。
+  // FlowTreeActor 与 TeamSessionRegistry 类型**本阶段完整保留**（阶段 3 才动）。
+  // 阶段 2（同一批）：注释里那条「树仍可经惰性入口 getOrCreate（LoadTool 腿）按需
+  // 建立」的腿也已摘掉（Load 工具的 team 分支删除）；`getOrCreate` 本体与下面的
+  // `unregister` 拆除路径原位保留，留待阶段 3 连同类型一并处置。
 
   /** Stop and remove the root AgentActor for a session. */
   private def removeRootAgent(sessionId: String): IO[Unit] =
@@ -1362,7 +1364,8 @@ class WebSocketRoutes(
                     // 阶段 1 已断掉 initFlowTree（见 :490 注），此处**只保留** root
                     // agent 的确保（ensureRootAgent 幂等，冷启 spawn / 热路径原样返回）；
                     // 团队恢复腿随之不存在。/api/teams/mounted 在阶段 1 的中间态见
-                    // reports-evidence/team-feature-deletion/stage1/README.md §4。
+                    // reports-evidence/team-feature-deletion/stage1/README.md §4；
+                    // 该路由本身已在阶段 2 退役（见 PresenceRoutes 同位墓碑注）。
                     _ <- activeMeta.traverse_(meta =>
                       ensureRootAgent(meta.id).void.handleErrorWith(e =>
                         logger.warn(s"WS-connect root agent ensure failed for session ${meta.id}: ${e.getMessage}")
@@ -3251,7 +3254,8 @@ object WebSocketRoutes:
    * Team agents are LONG-LIVED: activateAgent registers them on the first
    * Mail and they stay in the registry while idle, waiting for the next
    * Mail. "In the registry" says nothing about running — gate them on the
-   * same busy signal /api/teams/mounted uses (markBusy/markIdle around each
+   * same busy signal the (team-feature-deletion stage 2 retired)
+   * /api/teams/mounted used (markBusy/markIdle around each
    * team turn), otherwise every browser refresh reports idle team agents
    * back as running ghosts in the bg-agent dropdown.
    *

@@ -588,23 +588,24 @@ private[gateway] object PresenceRoutes:
       // here — the classify pass recorded it as 仓内零调用点 (no FE/CLI/BE caller)
       // and the 11-route takedown was authorised by the author.
 
-      // GET /teams/mounted — return all mounted teams with agent status
-      // NOTE: Router mounts this under /api prefix, so full path is /api/teams/mounted
-      case req @ GET -> Root / "teams" / "mounted" =>
-        withAuth(req) {
-          for
-            _ <- nebflow.core.flow.FlowTreeRegistry.awaitRestore(3000L)
-            teamsJson <- buildMountedTeamsJson()
-            result <- Ok(Json.obj("teams" -> teamsJson))
-          yield result
-        }
+      // (团队功能删除批 team-feature-deletion-20261104 阶段 2) GET /teams/mounted
+      // 在此 RETIRED：它的数据源是 TeamSessionRegistry.listMountedTeams，只有
+      // FlowTreeActor 填充；阶段 1 断掉每会话无条件建树后该表恒空，读面只剩
+      // 一条「awaitRestore 等一个永不到来的信号 → 返回 {"teams":[]}」的空壳。
+      // 前端零调用点（grep src/main/resources/web/：仅 ws.js:1590 一条历史注释），
+      // CLI/BE 亦零调用。判定依据见
+      // reports-evidence/team-feature-deletion/stage2/README.md §B。
+      // 随之删除的还有 FlowTreeRegistry 的恢复等待腿（awaitRestore /
+      // markRestoreStarted / signalRestoreComplete / restoreStarted / restoreDone）
+      // —— 该腿的唯一生产者是 FlowTreeActor setup，唯一消费者就是本路由。
 
       // (2026-09-20 device-face hardening batch) 11-route takedown, authorised by
       // the author: GET /running-flows, GET /flow/dag/:name, GET /teams and
       // GET /teams/status/:sessionId were RETIRED here — each was 仓内零调用点 in
       // the classify pass (no FE/CLI/BE caller). The live siblings
-      // (/teams/mounted, /teams/mailbox/*, /teams/def/*, /teams/mail-queue/*,
-      // /team/rules/*) are untouched.
+      // (/teams/mailbox/*, /teams/def/*, /teams/mail-queue/*,
+      // /team/rules/*) are untouched. (/teams/mounted left this list in the
+      // team-feature-deletion stage 2 — see the tombstone above.)
 
       // GET /teams/mailbox/:sessionId/:teamName — mail history for a team
       case req @ GET -> Root / "teams" / "mailbox" / sessionId / flowName =>
@@ -2120,12 +2121,15 @@ private[gateway] object PresenceRoutes:
                 os.write(tmp, content)
                 os.move.over(tmp, rulesDir / "rules.md")
               }
-              // Trigger reload so changes take effect on next activation
-              _ <- FlowTreeRegistry.treesRef.get.flatMap { treeMap =>
-                treeMap.values.toList.traverse_ { treeRef =>
-                  treeRef ! TreeCommand.ReloadDefinition(teamName)
-                }
-              }
+              // (团队功能删除批 team-feature-deletion-20261104 阶段 2) 此处原有
+              // 「写后热重载」腿：遍历 FlowTreeRegistry.treesRef，向每棵团队树发
+              // TreeCommand.ReloadDefinition(teamName) 以让 rules.md 改动对下次激活
+              // 立即生效。该腿已删 —— 它是团队挂载树的最后一条只写消费者，阶段 1
+              // 之后既无树可发也无帧回传。**端点本身保留**（判定见
+              // reports-evidence/team-feature-deletion/stage2/README.md §C）：
+              // rules.md 是盘上真配置文件，仍有非树读面（ContextRefresher:638 /
+              // MailTool:2299 / 本文件的 GET /team/rules），且前端
+              // web/js/flowViewers.js:174 是活的写调用方。
               result <- Ok(Json.obj("saved" -> true.asJson))
             yield result
         }
@@ -2694,51 +2698,12 @@ private[gateway] object PresenceRoutes:
   // (GET/PUT /agents/:name/model), which reads agent.json directly through
   // `SchemePolicy`.
 
-  /**
-   * Build mounted teams JSON for the frontend (GET /api/teams/mounted).
-   *  Reads from live TeamSessionRegistry runtime state. Each team is a card with
-   *  agent tiles showing status.
-   */
-  private def buildMountedTeamsJson(): IO[Json] =
-    for
-      teamsMap <- nebflow.core.flow.TeamSessionRegistry.listMountedTeams
-      teams <- EntityLoader.listTeams()
-      teamsList <- teamsMap.toList.sortBy(_._1).traverse { (instanceName, agents) =>
-        val teamDefOpt = teams.get(instanceName)
-        // Only render agents declared in team.json (lead + members). Delegate /
-        // SubTask sub-agents are no longer registered in TeamSessionRegistry
-        // (no Mail identity), so no ghost tiles can appear here; the filter
-        // remains as defense-in-depth. Fall back to all agents when the team
-        // definition is missing (legacy behavior).
-        val memberNames = teamDefOpt.map(td => (td.lead :: td.members).toSet)
-        for
-          agentsJson <- agents
-            .filter((name, _) => memberNames.forall(_.contains(name)))
-            .traverse { (agentName, sid) =>
-              nebflow.core.flow.TeamSessionRegistry.isBusy(sid).map { busy =>
-                Json.obj(
-                  "name" -> agentName.asJson,
-                  "sessionId" -> sid.asJson,
-                  "status" -> (if busy then "running" else "idle").asJson,
-                  "manager" -> teamDefOpt.exists(_.lead == agentName).asJson
-                )
-              }
-            }
-          // Team Manager task tool (#D 2026-08-25): the team panel renders a
-          // Tasks section from this array (flowTeams.js buildTasksSection,
-          // frontend phase-2 contract A1: id/subject/status/blockedBy/blocks).
-          // Read straight from the team task store directory (scope key
-          // "team:<name>") — empty array for teams with no tasks yet.
-          tasks <- FileTaskStore.list(TaskStore.teamScopeKey(instanceName))
-        yield Json.obj(
-          "name" -> instanceName.asJson,
-          "type" -> "team".asJson,
-          "agents" -> agentsJson.asJson,
-          "tasks" -> tasks.asJson
-        )
-        end for
-      }
-    yield teamsList.asJson
+  // (团队功能删除批 team-feature-deletion-20261104 阶段 2) `buildMountedTeamsJson`
+  // 曾在此（原 :2701-2745）：为 GET /api/teams/mounted 拼「已挂团队 + agent 磁贴
+  // 状态 + 团队任务」的响应体。路由与它的唯一调用方一并删除，故整段移除；
+  // 它读的 TeamSessionRegistry.listMountedTeams / isBusy 本体不动（阶段 3 才处置
+  // 该类型本体），此时只是失去本消费者。判定见
+  // reports-evidence/team-feature-deletion/stage2/README.md §B。
 
   // ── Flow editor helpers ──────────────────────────────────
 

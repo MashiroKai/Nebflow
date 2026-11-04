@@ -817,7 +817,11 @@ private[agent] object AgentFinishTurn:
   end finishTurnCont
 
   /**
-   * Team busy signal for the /api/teams/mounted status fallback (busyMap).
+   * Team busy signal (busyMap). Consumers: `filterActiveAgents` in
+   * WebSocketRoutes (bg-agent dropdown) — the GET /api/teams/mounted status
+   * fallback that this comment used to name was retired in the
+   * team-feature-deletion stage 2, but the busy marking stays: it is what
+   * keeps idle long-lived team agents out of the "running" list.
    * The frontend prefers realtime agentStart/agentDone events, but on page
    * load / event loss it falls back to the mounted status field — which stays
    * idle forever unless something writes the busyMap. Only team agents

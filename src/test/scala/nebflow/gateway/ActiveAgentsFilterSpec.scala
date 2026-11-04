@@ -16,8 +16,9 @@ import nebflow.actor.ActorRef
  * running rows" in the Teams panel (2026-08-16 report).
  *
  * filterActiveAgents now gates Team entries on the same busy signal
- * /api/teams/mounted uses (TeamSessionRegistry.markBusy/markIdle, driven by
- * markTeamBusy/markTeamIdle around each team agent turn). Task-lifecycle
+ * the (team-feature-deletion stage 2 retired) GET /api/teams/mounted used —
+ * TeamSessionRegistry.markBusy/markIdle, driven by
+ * markTeamBusy/markTeamIdle around each team agent turn. Task-lifecycle
  * kinds (Delegate/Ephemeral/Flow/SubTask) remain presence-based: they
  * unregister on completion.
  *

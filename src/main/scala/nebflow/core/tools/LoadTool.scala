@@ -5,28 +5,33 @@ import cats.syntax.all.*
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.entity.{EntityLoader, FlowDagDef, TeamDef}
-import nebflow.core.flow.{FlowTreeRegistry, TreeCommand}
-import nebflow.shared.{NebflowLogger, PathUtil}
+import nebflow.core.entity.{EntityLoader, FlowDagDef}
+import nebflow.shared.PathUtil
 
+/**
+ * Flow-definition validator.
+ *
+ * 团队功能删除批（team-feature-deletion-20261104）阶段 2：本工具原有的
+ * `type: "team"` 分支（读 teams/<name>/team.json → 校验 → `FlowTreeRegistry
+ * .getOrCreate` → `TreeCommand.MountTeam`）已整体摘除 —— 那是「团队挂载」的
+ * 最后一条生产腿，随挂载入口一起下线。判定与依据见
+ * reports-evidence/team-feature-deletion/stage2/README.md §A（工具本身保留：
+ * `type: "flow"` 是**非团队**用途 —— 只校验 DAG 定义，不挂载任何东西）。
+ */
 object LoadTool extends Tool:
-  private val logger = NebflowLogger.forName("nebflow.tools.load")
-
   val name = "Load"
 
   // `def` + s-interpolation（home 硬编码 → 运行时动态化批 2026-09-11）：定义文件
   // 路径走 PathUtil.dataRootRenderValue —— 默认 home ⇒ `~/.nebflow/...`（与旧字面
   // 逐字节一致），隔离实例 ⇒ 该实例 home 绝对路径。
   def description =
-    s"""Load a Team or Flow definition from disk, validate it, and activate it.
+    s"""Load a Flow definition from disk and validate it.
 
 Actions:
-- type "team": Read ${PathUtil.dataRootRenderValue}/teams/<name>/team.json, validate structure + agent references, then mount.
-  If valid, the Team is immediately ready — Mail the lead to trigger work.
 - type "flow": Read ${PathUtil.dataRootRenderValue}/flows/<name>.json, validate DAG structure + agent references.
   Reports syntax errors, missing agents, dangling routes, etc.
 
-Use this after writing or editing team.json / flow.json files. Always loads the latest from disk — no separate create/update distinction."""
+Use this after writing or editing flow.json files. Always loads the latest from disk — no separate create/update distinction."""
 
   val inputSchema = JsonObject.fromIterable(
     List(
@@ -34,12 +39,12 @@ Use this after writing or editing team.json / flow.json files. Always loads the 
       "properties" -> Json.obj(
         "type" -> Json.obj(
           "type" -> "string".asJson,
-          "enum" -> List("team", "flow").map(_.asJson).asJson,
-          "description" -> "\"team\" to load + mount a team, \"flow\" to validate a flow definition".asJson
+          "enum" -> List("flow").map(_.asJson).asJson,
+          "description" -> "\"flow\" to validate a flow definition".asJson
         ),
         "name" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Team or Flow name (matches the JSON filename without .json)".asJson
+          "description" -> "Flow name (matches the JSON filename without .json)".asJson
         )
       ),
       "required" -> List("type", "name").asJson
@@ -61,90 +66,11 @@ Use this after writing or editing team.json / flow.json files. Always loads the 
     if name.isEmpty then IO.pure(Left(ToolError("Missing 'name'")))
     else
       entityType match
-        case "team" => loadTeam(name, ctx)
         case "flow" => loadFlow(name)
-        case _ => IO.pure(Left(ToolError(s"Unknown type '$entityType'. Use 'team' or 'flow'.")))
+        case _ => IO.pure(Left(ToolError(s"Unknown type '$entityType'. Use 'flow'.")))
 
   // ============================================================
-  // Team: validate + mount
-  // ============================================================
-
-  private def loadTeam(name: String, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val jsonPath = PathUtil.dataRoot / "teams" / name / "team.json"
-    for
-      fileExists <- IO.blocking(os.exists(jsonPath))
-      result <-
-        if !fileExists then IO.pure(Left(ToolError(s"Team file not found: teams/$name/team.json")))
-        else
-          IO.blocking(os.read(jsonPath)).flatMap { raw =>
-            jsonParse(raw).flatMap(_.as[TeamDef]) match
-              case Right(teamDef) => validateAndMount(teamDef, ctx)
-              case Left(parseErr) =>
-                IO.pure(
-                  Left(
-                    ToolError(
-                      s"""JSON parse error in teams/$name/team.json:
-                     |$parseErr
-                     |
-                     |Common issues:
-                     |- Missing required fields: name, description, lead
-                     |- Wrong field types (e.g. members must be an array of strings)
-                     |- Trailing commas or unquoted strings""".stripMargin
-                    )
-                  )
-                )
-          }
-    yield result
-
-    end for
-
-  end loadTeam
-
-  /**
-   * Agent-name set a team's references may resolve against: global agents ∪
-   * the team's own local agents (teams/<name>/agents/). Team-local agents are
-   * invisible to listAgents() — validating against the global set alone made
-   * every Load(team=...) fail with "lead/member agent not found" for teams
-   * whose agents live under the team directory.
-   */
-  private[tools] def teamValidationNames(team: TeamDef): IO[Set[String]] =
-    for
-      global <- EntityLoader.listAgents()
-      local <- EntityLoader.listTeamAgents(team.name)
-    yield global.keySet ++ local.keySet
-
-  private def validateAndMount(team: TeamDef, ctx: ToolContext): IO[Either[ToolError, String]] =
-    for
-      agentNames <- teamValidationNames(team)
-      errors = EntityLoader.validateTeam(team, agentNames)
-      result <-
-        if errors.nonEmpty then
-          IO.pure(
-            Left(
-              ToolError(
-                s"""Team '${team.name}' validation failed:
-               |${errors.map("  - " + _).mkString("\n")}
-               |
-               |Fix the issues in teams/${team.name}/team.json and Load again.""".stripMargin
-              )
-            )
-          )
-        else
-          for
-            treeRef <- FlowTreeRegistry.getOrCreate(ctx)
-            _ <- treeRef ! TreeCommand.MountTeam(team)
-            agentCount = team.members.size + 1
-            _ <- logger.info(s"Team '${team.name}' loaded and mounted ($agentCount agents)")
-          yield Right(
-            s"""Team '${team.name}' loaded and mounted successfully ($agentCount agents).
-               |Lead: ${team.lead}
-               |Members: ${team.members.mkString(", ")}
-               |Trigger by Mailing the lead: Mail("${team.lead}", "your task")""".stripMargin.trim
-          )
-    yield result
-
-  // ============================================================
-  // Flow: validate only (mounted as part of team)
+  // Flow: validate only
   // ============================================================
 
   private def loadFlow(name: String): IO[Either[ToolError, String]] =

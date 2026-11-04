@@ -5,68 +5,24 @@ import nebflow.actor.{ActorRef, ActorSystem}
 import nebflow.core.tools.ToolContext
 import nebflow.shared.NebflowLogger
 
-import scala.concurrent.duration.*
-
 /**
  * Global registry mapping session IDs to their FlowTreeActor.
  *
- * LoadTool uses this to find or create the FlowTreeActor
- * for the current session. The FlowTreeActor registers itself on
- * creation and unregisters on shutdown.
+ * 团队功能删除批（team-feature-deletion-20261104）阶段 2：
+ *  - 「恢复等待腿」整体删除（原 restoreDone / restoreStarted /
+ *    markRestoreStarted / signalRestoreComplete / awaitRestore /
+ *    awaitRestoreUsing）—— 它的唯一消费者是 GET /api/teams/mounted（同批删除），
+ *    生产者是 FlowTreeActor setup，删后无悬空；
+ *  - 惰性建树入口 `getOrCreate` 仍在原位（阶段 2 不删——它的调用方 Load 工具的
+ *    team 分支已摘，但类型本体与注册表一起留到阶段 3 处置）。
+ * 判定与依据见 reports-evidence/team-feature-deletion/stage2/README.md §B。
  */
 object FlowTreeRegistry:
   private val trees = Ref.unsafe[IO, Map[String, ActorRef[TreeCommand]]](Map.empty)
   private val logger = NebflowLogger.forName("nebflow.flow.registry")
 
-  /**
-   * Signal: completed after the first FlowTreeActor finishes restoreFlows.
-   *  /api/flows awaits this so the frontend doesn't get an empty list on first fetch.
-   */
-  private val restoreDone: cats.effect.Deferred[IO, Unit] = cats.effect.Deferred.unsafe[IO, Unit]
-
-  /**
-   * Whether any FlowTreeActor has begun restoring. AwaitRestore fast-paths
-   * while this is false: no actor means there is nothing to restore, so
-   * waiting for the completion signal (whose only producer is a FlowTreeActor
-   * setup) would just burn the full timeout — observed as a fixed ~3s stall
-   * on EVERY /api/teams/mounted request against an empty home.
-   */
-  private val restoreStarted: Ref[IO, Boolean] = Ref.unsafe[IO, Boolean](false)
-
-  def treesRef: cats.effect.Ref[IO, Map[String, ActorRef[TreeCommand]]] = trees
-
-  /** Signal that restoreFlows has completed (idempotent — only first call matters). */
-  def signalRestoreComplete: IO[Unit] = restoreDone.complete(()).void.handleErrorWith(_ => IO.unit)
-
-  /** Mark that a FlowTreeActor restore is (about to be) in flight. */
-  def markRestoreStarted: IO[Unit] = restoreStarted.set(true)
-
-  /**
-   * Wait up to `timeoutMs` for restoreFlows to complete.
-   *
-   * Fast paths: (a) restore already completed — Deferred.get returns at once;
-   * (b) no FlowTreeActor has ever started restoring — the completion signal
-   * has no producer in flight, so the wait would always run the full timeout
-   * for nothing (empty home: every request stalled ~3s). Only a genuinely
-   * in-flight restore waits, bounded by `timeoutMs`.
-   */
-  def awaitRestore(timeoutMs: Long = 3000L): IO[Unit] =
-    awaitRestoreUsing(restoreDone, restoreStarted, timeoutMs)
-
-  /** Testable core of awaitRestore over explicit state (see awaitRestore). */
-  private[flow] def awaitRestoreUsing(
-    done: cats.effect.Deferred[IO, Unit],
-    started: Ref[IO, Boolean],
-    timeoutMs: Long
-  ): IO[Unit] =
-    done.tryGet.flatMap {
-      case Some(_) => IO.unit
-      case None =>
-        started.get.flatMap {
-          case false => IO.unit
-          case true => done.get.timeoutTo(timeoutMs.millis, IO.unit).void
-        }
-    }
+  // `treesRef` 曾在此：整张 树 map 的裸访问器，阶段 2 的唯一消费者是
+  // POST /api/team/rules 的写后热重载腿（已删），删后零调用点 ⇒ 一并移除。
 
   def register(sessionId: String, ref: ActorRef[TreeCommand]): IO[Unit] =
     trees.update(_ + (sessionId -> ref))
@@ -94,11 +50,7 @@ object FlowTreeRegistry:
             val safetyModeIO = resources.effectiveSafetyMode
               .map(nebflow.core.SafetyMode.toString)
 
-            // Mark restore in flight BEFORE the actor spawns (via the
-            // safety-mode fetch prefix): once an actor is coming up,
-            // awaitRestore must wait for its restore signal instead of
-            // fast-pathing past it.
-            (markRestoreStarted *> safetyModeIO).flatMap { safetyMode =>
+            safetyModeIO.flatMap { safetyMode =>
               // Compute projectsDir from folderId
               val projectsDir = (ctx.sessionStore, ctx.folderId) match
                 case (Some(store), Some(fid)) =>
