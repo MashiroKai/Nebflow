@@ -53,7 +53,14 @@ object GuardDocs:
     version: Int,
     source: String, // "provider-avoid"
     avoidUntil: Map[String, Long], // key → epoch ms（现状 avoidUntilRef 形）
-    updatedAt: Long
+    updatedAt: Long,
+    /**
+     * 熔断（Down）面：key → downSince epoch ms（现状 statesRef 的 Down 子集——
+     * 轮 B 增量：任务面「provider 故障/熔断/避坑窗口」双面落盘；D-10 原文只列软避窗，
+     * 设计件 §1.3 位点 15「软避/健康窗」同病面。reason 为诊断字段不入档（重水合
+     * 时以固定口径回填）；旧档无此字段 ⇒ 空 map（Option 兜底，向后兼容）。
+     */
+    down: Map[String, Long] = Map.empty
   )
 
   object AvoidGuardDoc:
@@ -62,7 +69,8 @@ object GuardDocs:
         "version" -> Json.fromInt(d.version),
         "source" -> Json.fromString(d.source),
         "avoidUntil" -> d.avoidUntil.asJson,
-        "updatedAt" -> Json.fromLong(d.updatedAt)
+        "updatedAt" -> Json.fromLong(d.updatedAt),
+        "down" -> d.down.asJson
       )
     given Decoder[AvoidGuardDoc] = c =>
       for
@@ -70,10 +78,15 @@ object GuardDocs:
         source <- c.downField("source").as[String]
         rawAvoid <- c.downField("avoidUntil").as[Option[Map[String, Long]]]
         updatedAt <- c.downField("updatedAt").as[Long]
+        rawDown <- c.downField("down").as[Option[Map[String, Long]]]
       yield AvoidGuardDoc(version, source,
         rawAvoid match
           case Some(m) => m
           case None => Map.empty,
-        updatedAt)
+        updatedAt,
+        rawDown match
+          case Some(m) => m
+          case None => Map.empty
+      )
 
 end GuardDocs
