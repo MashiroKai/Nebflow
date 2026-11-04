@@ -39,7 +39,9 @@ import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
 import { taskBadgeCount } from './taskPanel.js';
 import { todoStore } from '../todoStore.js';
-import { pushPage, logEvent, touchLayer } from './navController.js';
+import { pushPage, touchLayer } from './navController.js';
+// 层事件流水（循环门禁修复批 2026-11-04）：事件走叶子 navEvents.js 单点。
+import { logEvent } from './navEvents.js';
 import { paintSlot } from '../agentProfile.js';
 import { brand } from '../brand.js';
 import { bindIdHeadFade } from './sessionHead.js';

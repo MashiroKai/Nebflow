@@ -30,7 +30,10 @@ import {
 } from '../taskList.js';
 import { mountTodoFaceInto } from '../todoFace.js';
 import { todoStore } from '../todoStore.js';
-import { logEvent } from './navController.js';
+// 层事件流水（循环门禁修复批 2026-11-04）：打事件取叶子 navEvents.js，不再静态
+// import navController.js —— 后者 import 本模块的 ensureTaskPanel/closeTaskPanel
+// （页面收编），两条边互为反向即 SCC[2]（scripts/check-circular.mjs）。
+import { logEvent } from './navEvents.js';
 
 const CHECK_SVG = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.6 6.2l1.7 1.7 3.1-3.6"/></svg>';
 const MEMBER_PREVIEW_MAX = 2;
