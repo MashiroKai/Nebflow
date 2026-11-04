@@ -106,8 +106,11 @@ const SID_RETRY_MAX = 40;
 /** @type {Array<{id:string,name:string,color:string,local?:boolean}>} 分组表
  *  （真源面 = project 投影；夹具面 = __seed 给定）。 */
 let tags = [];
-/** @type {Array<{id:string,tagId:string|null,title:string,notes:string,due:number|null,
- *   priority:number,completed:boolean,createdAt:number,sessionId:string,project:string|null}>} */
+/** 行形状单点（读口 + 乐观行 + 真源映射三处同形；改字段先改这里）。 */
+/** @typedef {{id:string,tagId:string|null,title:string,notes:string,due:number|null,
+ *   priority:number,completed:boolean,completedAt:number|null,createdAt:number,
+ *   sessionId:string,project:string|null}} TodoRow */
+/** @type {Array<TodoRow>} */
 let items = [];
 /** 分组 chips 行序（本地展示态；后端无顺序字段）。 @type {string[]} */
 let tagOrder = [];
@@ -689,7 +692,9 @@ function subscribe(fn) {
 
 // ── 测试缝（__ 前缀 = 非产品路径）────────────────────────────────────────
 
-/** 夹具模式：既有 shots/几何 spec 的数据注入腿（语义与换血前逐字一致）。 */
+/** 夹具模式：既有 shots/几何 spec 的数据注入腿（语义与换血前逐字一致）。
+ *  @param {{tagList?: Array<any>, itemList?: Array<any>, order?: string[]}} [seed] 三个面
+ *    全部可选（缺省 = 该面不动）；整体省略 = 空夹具（未知键忽略，与换血前一致）。 */
 function seed({ tagList, itemList, order } = {}) {
   fixtureMode = true;
   if (sidRetryTimer) { clearTimeout(sidRetryTimer); sidRetryTimer = null; }

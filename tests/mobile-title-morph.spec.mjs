@@ -684,9 +684,12 @@ process.on('uncaughtException', (e) => { flush(); console.error(e); process.exit
     // ③ 设置（overlay 收编面，主滚轴 = #settings-content）
     await openPage(page, 'settings', '#mobile-pages .mobile-page.live[data-page="settings"] #settings-modal');
     await panelLeg(page, 'settings', 'settings/chromium-light', 'settings-chromium-light');
-    // ④ 待办（in-flow 页）
-    await openTodo(page);
-    await panelLeg(page, 'todo', 'todo/chromium-light', 'todo-chromium-light');
+    // ④ 待办（in-flow 页）—— ⛔ 腿退役（入口收敛批 todo-unify-entry-collapse
+    // 2026-11-04）：#todo-page 整面退役、推送腿（nf:mobile-todo-entry）摘除 ⇒
+    // 页面栈里不再有 todo 页，页面壳标题形变对该面无测点。现役待办面 = 顶带
+    // 胶囊 + 展开面板（非页面栈成员）。原文留档：
+    // await openTodo(page);
+    // await panelLeg(page, 'todo', 'todo/chromium-light', 'todo-chromium-light');
     // ⑤ 降级腿
     await degradeLeg(page);
   } finally {

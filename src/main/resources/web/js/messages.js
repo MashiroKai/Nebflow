@@ -41,9 +41,14 @@ import { TRUST_SEALED } from './featureFlags.js';
 // （新鲜度 ≠ 可行动量，闭合相关性判据）。
 import { pendingAskCount } from './askPending.js';
 import { actionableTotal, onActionableChanged } from './actionable.js';
-// 改版批（2026-10-31）：消息列表顶部「待办事项」入口行（scheduled-task.js
-// 渲染核；行随本容器双端同现——手机端整容器收编进消息页）。
-import { buildTodoEntryRow } from './scheduled-task.js';
+// 【入口收敛批 todo-unify-entry-collapse 2026-11-04】改版批（2026-10-31）的
+// 消息列表顶部「待办事项」入口行（scheduled-task.js buildTodoEntryRow）**退役**：
+// 待办唯一入口 = 顶带 #top-overlays 内的待办胶囊（js/todoFace.js，双端同现，
+// 点开即展开面板）。入口行承载的信息（待销账待办数徽标 / 最早一条摘录）由
+// 胶囊面接管——计数 = 胶囊及其展开面板头部的同一个计数节点（.tfl-cap-faces），
+// 摘录 = 展开面板列表首行；行本身不再渲染（import 随撤，函数体保留在
+// scheduled-task.js，注释退役、零物理删除）。
+// import { buildTodoEntryRow } from './scheduled-task.js';
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 // 本模块的好友会话输入框（作者点名的面）此前**零组字判定** —— 组字 Enter 会
 // 直接 doSend()。
@@ -638,10 +643,12 @@ function renderListInner() {
   if (!box) return;
   box.innerHTML = '';
   updateBadge();
-  // 改版批（2026-10-31）：「待办事项」入口行置顶——待办是引擎面（kind=todo
-  // 台账），不依赖 neblink 社交登录态 ⇒ 无条件渲染（登录空态/空会话态都在，
-  // 像联系人页的「设备/发起群聊」入口）。不挂 .fm-conv-row（真会话行定位面）。
-  box.appendChild(buildTodoEntryRow());
+  // 【入口收敛批 todo-unify-entry-collapse 2026-11-04】「待办事项」入口行退役：
+  // 待办唯一入口 = 顶带待办胶囊（双端同现，点开即展开面板），本列表不再置顶
+  // 任何非会话行 —— 消息列表 = 纯会话名册。承载信息去向见文件头 import 注记：
+  // 待销账数 = 胶囊计数节点（.tfl-cap-faces，展开时同节点搬进面板头），
+  // 最早一条摘录 = 展开面板列表首行。旧渲染核保留于 scheduled-task.js。
+  // box.appendChild(buildTodoEntryRow());
   // 本拍 DOM 与内容指纹对齐（下一次可比对 ⇒ 相同则零重建）。三条出口（登录空态 /
   // 列表空态 / 全量重建）都在此落位 —— `#fm-conversations` 是 index.html 的静态
   // 节点 ⇒ 上面 `!box` 一支只在极早期（HTML 未挂载）可达，不参与指纹。

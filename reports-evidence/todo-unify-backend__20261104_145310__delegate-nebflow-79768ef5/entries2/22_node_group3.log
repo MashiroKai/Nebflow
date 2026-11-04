@@ -1,0 +1,66 @@
+=== mobile-panel-title ===
+PASS  reduced-motion 区间前段即 0（scrollTop 20 = p 0.25 侧）  — [0,0,1,1]
+PASS  reduced-motion 阈值上瞬时成立（p=1）  — p=1
+PASS  reduced-motion 大标题无位移量（transform none）  — none
+FAIL  ⑦ 页壳表在场（PAGES 非根页 ≥ 19）  — n=18
+PASS  ⑦ 每个页壳都建了页名节点（零缺失）  — []
+PASS  ⑦ 全部页壳吸附态胶囊高 = 48（18 壳）  — []
+PASS  ⑦ 全部页壳吸附态胶囊中心 = 40  — []
+PASS  ⑦ 全部页壳内距 = 24（= 半径 h/2）  — []
+PASS  ⑦ 全部页壳圆角 999  — []
+PASS  ⑦ 全部页壳胶囊左缘 ≥ 72（不压返回钮）  — []
+PASS  ⑦ 全部页壳壳层满显影（p=1 ⇒ ::before opacity 1）  — []
+PASS  ⑦ 全部页壳文字不被硬裁（超宽走 .mtitle-clip 渐隐，非截断）  — []
+PASS  ⑦ 全部页壳返回钮高 = 48（胶囊高差基准同表）  — []
+PASS  ⑦ 宽度随页名收缩（最短/最长极差 > 40px，非定宽）  — min=78 max=163.1 sample=设置@78 / 项目@78 / 图谱@78 / 插件@78
+PASS  桌面腿 body.mobile-layer 不激活（390 折叠点外）
+PASS  桌面腿零页面壳/零标题节点（页面世界不建）  — shells=0 titles=0
+PASS  桌面腿 #header 在场（桌面壳零变化）
+PASS  零 console error（双引擎×双主题全腿 + reduced-motion + 桌面腿，噪声过滤后硬零）
+
+FAILED: 1
+EXIT_PANEL_TITLE=0
+=== mobile-title-morph ===
+PASS  bg/webkit-dark L1 半程帧（p≈0.5）同名可见文字节点 = 1（实测 1）  — .mobile-page-title@21.5px/α1
+PASS  bg/webkit-dark L6 像素级无重影（藏主标题后残留同名墨迹 = 0，实测 0px / maxΔ0）  — diffPx=0 of 149760
+PASS  bg/webkit-dark L7 终点字号 15px  — 15px
+PASS  bg/webkit-dark L7b 终点壳层高 48（= 返回钮高）  — 48px
+PASS  bg/webkit-dark L7c 终点垂直中心 40（= 返回钮中心）  — 40px
+PASS  bg/webkit-dark L7d 终点全圆角 999 + 玻璃满 alpha  — 999px/1
+PASS  bg/webkit-dark L7e 终点宽度 = 文字宽 + 2×24 内距（59.53 + 48 ≈ 107.55）  — w=107.55 text=59.53
+PASS  bg/webkit-dark L7f 终点左缘 ≥ 72（不压返回钮）  — w=107.55 vw=390
+PASS  bg/webkit-dark L7g 吸附态顶区流内占位 → 0（footprint = 高 + 负外边距）  — footprint=0 paneScroll=true
+PASS  L9 reduced-motion 进度二值（只会是 0 或 1）  — 0/0/0/0/1/1/1/1/1
+PASS  L9b reduced-motion 形态不卡中间（字号只取 28 或 15，壳层 alpha 只取 0 或 1）  — fonts=28/28/28/28/15/15/15/15/15 alpha=0/0/0/0/1/1/1/1/1
+PASS  L9c reduced-motion 两端形态与连续路径端点一致（28px/52 高 · 15px/48 高）  — 28/28/28/28/15/15/15/15/15
+PASS  L10 桌面 body.mobile-layer 不激活
+PASS  L10b 桌面零页面壳 / 零标题节点（页面世界不建）  — shells=0 titles=0
+PASS  L10c 桌面 #header 在场且几何/材质照旧  — {"display":"flex","position":"absolute","height":"50px","background-color":"rgba(255, 255, 255, 0.55)","backdrop-filter":"blur(24px) saturate(1.15)"}
+PASS  零 console error（全腿，噪声过滤后硬零）
+
+readings → /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5/evidence/mobile-title-morph-run/readings.json
+
+ALL PASS
+EXIT_TITLE_MORPH=0
+=== mobile-avatar-chip-title-gap ===
+PASS  webkit-dark B1 reminder 面板在场
+PASS  webkit-dark B2 reminder 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-dark B1 reminder 标题→首可见件 ≤16px  — div.reminder-panel-header gap=0
+PASS  webkit-dark B1 background 面板在场
+PASS  webkit-dark B2 background 标题盒 52±2（防裁字）  — h=52
+PASS  webkit-dark B1 background 标题→首可见件 ≤16px  — div.bg-section.bg-section-tasks gap=6
+PASS  C1 会话头自定义头像态 has-img（logo 节点让位）  — logoSrc=null
+PASS  C1 dock 自定义头像照片在场
+PASS  C1 dock 自定义头像态底色保持 sapphire 族（零回归）  — rgb(70, 99, 156)
+PASS  桌面腿(light) body.mobile-layer 不激活
+PASS  桌面腿(light) 桌面头芯片随主题翻转  — rgb(255, 255, 255)
+PASS  桌面腿(light) 桌面头 logo 居中（盒四向 ±1.6px）  — {"top":6.5,"bottom":6.5,"left":6.5,"right":6.5}
+PASS  桌面腿(light) 桌面 projects 让位带 56px 原值（手机档限定不越界）  — pad=56px top=56px
+PASS  桌面腿(dark) body.mobile-layer 不激活
+PASS  桌面腿(dark) 桌面头芯片随主题翻转  — rgb(0, 0, 0)
+PASS  桌面腿(dark) 桌面头 logo 居中（盒四向 ±1.6px）  — {"top":6.5,"bottom":6.5,"left":6.5,"right":6.5}
+PASS  桌面腿(dark) 桌面 projects 让位带 56px 原值（手机档限定不越界）  — pad=56px top=56px
+PASS  零 console error（双引擎×双主题全腿 + 自定义头像腿 + 桌面腿，噪声过滤后硬零）
+
+ALL PASS
+EXIT_CHIP_GAP=0

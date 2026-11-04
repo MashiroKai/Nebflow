@@ -1,0 +1,420 @@
+
+══ desktop 1280 light ══
+[1280-light] overdue-state {"cap":{"x":508.4,"y":74,"w":71.2,"h":26},"bar":{"x":310,"w":468,"cx":544},"text":"1 逾期","aria":"1 逾期"}
+[1280-light] metrics {"capW":71.2,"capH":26,"widthRatio":0.152,"centerDx":0,"lineBoxDy":0,"dotDy":0,"padL":12,"padR":12,"contentGapL":12,"contentGapR":12,"dotD":6}
+  PASS ⑤[1280-light] 逾期态显示「1 逾期」
+  PASS ⑤[1280-light] 逾期态「待办」面不可见
+  PASS ⑤[1280-light] 逾期态「待办」面 aria-hidden
+  PASS ⑤[1280-light] 胶囊 aria-label = 逾期读数
+  PASS ①[1280-light] 胶囊宽度 < 输入区 × 40%
+  PASS ②[1280-light] 胶囊中心 ↔ 输入区中线 ≤1px
+  PASS ③[1280-light] 文字行盒中心 ↔ 胶囊中心 ≤1px
+  PASS ③[1280-light] 圆点 cy ↔ 文字 cy ≤1px
+  PASS ④[1280-light] 左右内距差 ≤1px
+  PASS ④[1280-light] 计算内距左右相等
+  PASS 样式[1280-light] 圆角 999（胶囊）
+  PASS ⑤[1280-light] 逾期态无横向溢出
+[1280-light] todo-state {"cap":{"x":508.4,"w":71.2,"h":26},"text":"8 待办","aria":"8 待办"}
+  PASS ⑤[1280-light] 无逾期时只显示待办
+  PASS ⑤[1280-light] 无逾期文案 = 8 待办
+  PASS ⑤[1280-light] 无逾期时「逾期」面 aria-hidden
+  PASS ⑤[1280-light] 两态宽度逐值相等（0px 差）
+  PASS ⑤[1280-light] 两态高度逐值相等（≤1px）
+  PASS ②[1280-light] 无逾期态中心仍居中
+  PASS ①[1280-light] 三位数（128 待办）仍在 40% 以内
+  PASS ①[1280-light] 三位数无横向溢出
+  PASS ①[1280-light] 三位数宽度由内容驱动（> 8 待办宽）
+  PASS 样式[1280-light] 焦点可见描边
+[1280-light] open {"card":{"x":334,"y":114,"w":420,"h":411.8,"cx":544},"bar":{"cx":544},"state":"open"}
+[1280-light] panelMetrics {"panelW":420,"panelH":411.8,"panelCenterDx":0,"panelBottomToArea":292.3,"areaH":82}
+  PASS ⑥[1280-light] 面板展开且可见
+  PASS ⑥[1280-light] 面板水平居中（↔ 输入区中线 ≤1px）
+  PASS ⑥[1280-light] 面板在视口内
+  PASS ⑥[1280-light] 面板不与输入区重叠（面板底 ≤ 输入区顶）
+  PASS ⑥[1280-light] 面板复用既有列表（8 行）
+  FAIL ⑥[1280-light] 展开后胶囊尺寸不变 — 30/26 vs 71.2/26
+  FAIL ⑥[1280-light] Esc 收起（焦点在输入框） — open
+  FAIL ⑥[1280-light] 收起后胶囊尺寸不变 — 30/26
+  PASS ⑥[1280-light] 收起后胶囊仍居中
+  FAIL ⑥[1280-light] 收起钮收起
+  PASS ⑥[1280-light] 点外部收起
+  FAIL desktop 1280-light threw — page.click: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for locator('#task-list .tfl-capsule')[22m
+[2m    - locator resolved to <button type="button" aria-label="1 逾期" aria-expanded="true" class="tfl-capsule has-overdue is-overdue">…</button>[22m
+[2m  - attempting click action[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m    - waiting 20ms[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m      - waiting 100ms[22m
+[2m    55 × waiting for element to be visible, enabled and stable[22m
+[2m       - element is not visible[22m
+[2m     - retrying click action[22m
+[2m       - waiting 500ms[22m
+
+
+══ desktop 1280 dark ══
+[1280-dark] overdue-state {"cap":{"x":508.4,"y":74,"w":71.2,"h":26},"bar":{"x":310,"w":468,"cx":544},"text":"1 逾期","aria":"1 逾期"}
+[1280-dark] metrics {"capW":71.2,"capH":26,"widthRatio":0.152,"centerDx":0,"lineBoxDy":0,"dotDy":0,"padL":12,"padR":12,"contentGapL":12,"contentGapR":12,"dotD":6}
+  PASS ⑤[1280-dark] 逾期态显示「1 逾期」
+  PASS ⑤[1280-dark] 逾期态「待办」面不可见
+  PASS ⑤[1280-dark] 逾期态「待办」面 aria-hidden
+  PASS ⑤[1280-dark] 胶囊 aria-label = 逾期读数
+  PASS ①[1280-dark] 胶囊宽度 < 输入区 × 40%
+  PASS ②[1280-dark] 胶囊中心 ↔ 输入区中线 ≤1px
+  PASS ③[1280-dark] 文字行盒中心 ↔ 胶囊中心 ≤1px
+  PASS ③[1280-dark] 圆点 cy ↔ 文字 cy ≤1px
+  PASS ④[1280-dark] 左右内距差 ≤1px
+  PASS ④[1280-dark] 计算内距左右相等
+  PASS 样式[1280-dark] 圆角 999（胶囊）
+  PASS ⑤[1280-dark] 逾期态无横向溢出
+[1280-dark] todo-state {"cap":{"x":508.4,"w":71.2,"h":26},"text":"8 待办","aria":"8 待办"}
+  PASS ⑤[1280-dark] 无逾期时只显示待办
+  PASS ⑤[1280-dark] 无逾期文案 = 8 待办
+  PASS ⑤[1280-dark] 无逾期时「逾期」面 aria-hidden
+  PASS ⑤[1280-dark] 两态宽度逐值相等（0px 差）
+  PASS ⑤[1280-dark] 两态高度逐值相等（≤1px）
+  PASS ②[1280-dark] 无逾期态中心仍居中
+  PASS ①[1280-dark] 三位数（128 待办）仍在 40% 以内
+  PASS ①[1280-dark] 三位数无横向溢出
+  PASS ①[1280-dark] 三位数宽度由内容驱动（> 8 待办宽）
+  PASS 样式[1280-dark] 焦点可见描边
+[1280-dark] open {"card":{"x":334,"y":114,"w":420,"h":411.8,"cx":544},"bar":{"cx":544},"state":"open"}
+[1280-dark] panelMetrics {"panelW":420,"panelH":411.8,"panelCenterDx":0,"panelBottomToArea":292.3,"areaH":82}
+  PASS ⑥[1280-dark] 面板展开且可见
+  PASS ⑥[1280-dark] 面板水平居中（↔ 输入区中线 ≤1px）
+  PASS ⑥[1280-dark] 面板在视口内
+  PASS ⑥[1280-dark] 面板不与输入区重叠（面板底 ≤ 输入区顶）
+  PASS ⑥[1280-dark] 面板复用既有列表（8 行）
+  FAIL ⑥[1280-dark] 展开后胶囊尺寸不变 — 30/26 vs 71.2/26
+  FAIL ⑥[1280-dark] Esc 收起（焦点在输入框） — open
+  FAIL ⑥[1280-dark] 收起后胶囊尺寸不变 — 30/26
+  PASS ⑥[1280-dark] 收起后胶囊仍居中
+  FAIL ⑥[1280-dark] 收起钮收起
+  FAIL ⑥[1280-dark] 点外部收起
+  FAIL desktop 1280-dark threw — page.click: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for locator('#task-list .tfl-capsule')[22m
+[2m    - locator resolved to <button type="button" aria-label="1 逾期" aria-expanded="true" class="tfl-capsule has-overdue is-overdue">…</button>[22m
+[2m  - attempting click action[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m    - waiting 20ms[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m      - waiting 100ms[22m
+[2m    55 × waiting for element to be visible, enabled and stable[22m
+[2m       - element is not visible[22m
+[2m     - retrying click action[22m
+[2m       - waiting 500ms[22m
+
+
+══ desktop 1440 light ══
+[1440-light] overdue-state {"cap":{"x":548.4,"y":74,"w":71.2,"h":26},"bar":{"x":310,"w":548,"cx":584},"text":"1 逾期","aria":"1 逾期"}
+[1440-light] metrics {"capW":71.2,"capH":26,"widthRatio":0.13,"centerDx":0,"lineBoxDy":0,"dotDy":0,"padL":12,"padR":12,"contentGapL":12,"contentGapR":12,"dotD":6}
+  PASS ⑤[1440-light] 逾期态显示「1 逾期」
+  PASS ⑤[1440-light] 逾期态「待办」面不可见
+  PASS ⑤[1440-light] 逾期态「待办」面 aria-hidden
+  PASS ⑤[1440-light] 胶囊 aria-label = 逾期读数
+  PASS ①[1440-light] 胶囊宽度 < 输入区 × 40%
+  PASS ②[1440-light] 胶囊中心 ↔ 输入区中线 ≤1px
+  PASS ③[1440-light] 文字行盒中心 ↔ 胶囊中心 ≤1px
+  PASS ③[1440-light] 圆点 cy ↔ 文字 cy ≤1px
+  PASS ④[1440-light] 左右内距差 ≤1px
+  PASS ④[1440-light] 计算内距左右相等
+  PASS 样式[1440-light] 圆角 999（胶囊）
+  PASS ⑤[1440-light] 逾期态无横向溢出
+[1440-light] todo-state {"cap":{"x":548.4,"w":71.2,"h":26},"text":"8 待办","aria":"8 待办"}
+  PASS ⑤[1440-light] 无逾期时只显示待办
+  PASS ⑤[1440-light] 无逾期文案 = 8 待办
+  PASS ⑤[1440-light] 无逾期时「逾期」面 aria-hidden
+  PASS ⑤[1440-light] 两态宽度逐值相等（0px 差）
+  PASS ⑤[1440-light] 两态高度逐值相等（≤1px）
+  PASS ②[1440-light] 无逾期态中心仍居中
+  PASS ①[1440-light] 三位数（128 待办）仍在 40% 以内
+  PASS ①[1440-light] 三位数无横向溢出
+  PASS ①[1440-light] 三位数宽度由内容驱动（> 8 待办宽）
+  PASS 样式[1440-light] 焦点可见描边
+[1440-light] open {"card":{"x":374,"y":114,"w":420,"h":411.8,"cx":584},"bar":{"cx":584},"state":"open"}
+[1440-light] panelMetrics {"panelW":420,"panelH":411.8,"panelCenterDx":0,"panelBottomToArea":292.3,"areaH":82}
+  PASS ⑥[1440-light] 面板展开且可见
+  PASS ⑥[1440-light] 面板水平居中（↔ 输入区中线 ≤1px）
+  PASS ⑥[1440-light] 面板在视口内
+  PASS ⑥[1440-light] 面板不与输入区重叠（面板底 ≤ 输入区顶）
+  PASS ⑥[1440-light] 面板复用既有列表（8 行）
+  FAIL ⑥[1440-light] 展开后胶囊尺寸不变 — 30/26 vs 71.2/26
+  FAIL ⑥[1440-light] Esc 收起（焦点在输入框） — open
+  FAIL ⑥[1440-light] 收起后胶囊尺寸不变 — 30/26
+  PASS ⑥[1440-light] 收起后胶囊仍居中
+  FAIL ⑥[1440-light] 收起钮收起
+  FAIL ⑥[1440-light] 点外部收起
+  FAIL desktop 1440-light threw — page.click: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for locator('#task-list .tfl-capsule')[22m
+[2m    - locator resolved to <button type="button" aria-label="1 逾期" aria-expanded="true" class="tfl-capsule has-overdue is-overdue">…</button>[22m
+[2m  - attempting click action[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m    - waiting 20ms[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m      - waiting 100ms[22m
+[2m    54 × waiting for element to be visible, enabled and stable[22m
+[2m       - element is not visible[22m
+[2m     - retrying click action[22m
+[2m       - waiting 500ms[22m
+
+
+══ desktop 1440 dark ══
+[1440-dark] overdue-state {"cap":{"x":548.4,"y":74,"w":71.2,"h":26},"bar":{"x":310,"w":548,"cx":584},"text":"1 逾期","aria":"1 逾期"}
+[1440-dark] metrics {"capW":71.2,"capH":26,"widthRatio":0.13,"centerDx":0,"lineBoxDy":0,"dotDy":0,"padL":12,"padR":12,"contentGapL":12,"contentGapR":12,"dotD":6}
+  PASS ⑤[1440-dark] 逾期态显示「1 逾期」
+  PASS ⑤[1440-dark] 逾期态「待办」面不可见
+  PASS ⑤[1440-dark] 逾期态「待办」面 aria-hidden
+  PASS ⑤[1440-dark] 胶囊 aria-label = 逾期读数
+  PASS ①[1440-dark] 胶囊宽度 < 输入区 × 40%
+  PASS ②[1440-dark] 胶囊中心 ↔ 输入区中线 ≤1px
+  PASS ③[1440-dark] 文字行盒中心 ↔ 胶囊中心 ≤1px
+  PASS ③[1440-dark] 圆点 cy ↔ 文字 cy ≤1px
+  PASS ④[1440-dark] 左右内距差 ≤1px
+  PASS ④[1440-dark] 计算内距左右相等
+  PASS 样式[1440-dark] 圆角 999（胶囊）
+  PASS ⑤[1440-dark] 逾期态无横向溢出
+[1440-dark] todo-state {"cap":{"x":548.4,"w":71.2,"h":26},"text":"8 待办","aria":"8 待办"}
+  PASS ⑤[1440-dark] 无逾期时只显示待办
+  PASS ⑤[1440-dark] 无逾期文案 = 8 待办
+  PASS ⑤[1440-dark] 无逾期时「逾期」面 aria-hidden
+  PASS ⑤[1440-dark] 两态宽度逐值相等（0px 差）
+  PASS ⑤[1440-dark] 两态高度逐值相等（≤1px）
+  PASS ②[1440-dark] 无逾期态中心仍居中
+  PASS ①[1440-dark] 三位数（128 待办）仍在 40% 以内
+  PASS ①[1440-dark] 三位数无横向溢出
+  PASS ①[1440-dark] 三位数宽度由内容驱动（> 8 待办宽）
+  PASS 样式[1440-dark] 焦点可见描边
+[1440-dark] open {"card":{"x":374,"y":114,"w":420,"h":411.8,"cx":584},"bar":{"cx":584},"state":"open"}
+[1440-dark] panelMetrics {"panelW":420,"panelH":411.8,"panelCenterDx":0,"panelBottomToArea":292.3,"areaH":82}
+  PASS ⑥[1440-dark] 面板展开且可见
+  PASS ⑥[1440-dark] 面板水平居中（↔ 输入区中线 ≤1px）
+  PASS ⑥[1440-dark] 面板在视口内
+  PASS ⑥[1440-dark] 面板不与输入区重叠（面板底 ≤ 输入区顶）
+  PASS ⑥[1440-dark] 面板复用既有列表（8 行）
+  FAIL ⑥[1440-dark] 展开后胶囊尺寸不变 — 30/26 vs 71.2/26
+  FAIL ⑥[1440-dark] Esc 收起（焦点在输入框） — open
+  FAIL ⑥[1440-dark] 收起后胶囊尺寸不变 — 30/26
+  PASS ⑥[1440-dark] 收起后胶囊仍居中
+  FAIL ⑥[1440-dark] 收起钮收起
+  FAIL ⑥[1440-dark] 点外部收起
+  FAIL desktop 1440-dark threw — page.click: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for locator('#task-list .tfl-capsule')[22m
+[2m    - locator resolved to <button type="button" aria-label="1 逾期" aria-expanded="true" class="tfl-capsule has-overdue is-overdue">…</button>[22m
+[2m  - attempting click action[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m    - waiting 20ms[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m      - waiting 100ms[22m
+[2m    55 × waiting for element to be visible, enabled and stable[22m
+[2m       - element is not visible[22m
+[2m     - retrying click action[22m
+[2m       - waiting 500ms[22m
+
+
+══ desktop 1440 reduced-motion ══
+[1440-dark-reduced] overdue-state {"cap":{"x":548.4,"y":74,"w":71.2,"h":26},"bar":{"x":310,"w":548,"cx":584},"text":"1 逾期","aria":"1 逾期"}
+[1440-dark-reduced] metrics {"capW":71.2,"capH":26,"widthRatio":0.13,"centerDx":0,"lineBoxDy":0,"dotDy":0,"padL":12,"padR":12,"contentGapL":12,"contentGapR":12,"dotD":6}
+  PASS ⑤[1440-dark-reduced] 逾期态显示「1 逾期」
+  PASS ⑤[1440-dark-reduced] 逾期态「待办」面不可见
+  PASS ⑤[1440-dark-reduced] 逾期态「待办」面 aria-hidden
+  PASS ⑤[1440-dark-reduced] 胶囊 aria-label = 逾期读数
+  PASS ①[1440-dark-reduced] 胶囊宽度 < 输入区 × 40%
+  PASS ②[1440-dark-reduced] 胶囊中心 ↔ 输入区中线 ≤1px
+  PASS ③[1440-dark-reduced] 文字行盒中心 ↔ 胶囊中心 ≤1px
+  PASS ③[1440-dark-reduced] 圆点 cy ↔ 文字 cy ≤1px
+  PASS ④[1440-dark-reduced] 左右内距差 ≤1px
+  PASS ④[1440-dark-reduced] 计算内距左右相等
+  PASS 样式[1440-dark-reduced] 圆角 999（胶囊）
+  PASS ⑤[1440-dark-reduced] 逾期态无横向溢出
+[1440-dark-reduced] todo-state {"cap":{"x":548.4,"w":71.2,"h":26},"text":"8 待办","aria":"8 待办"}
+  PASS ⑤[1440-dark-reduced] 无逾期时只显示待办
+  PASS ⑤[1440-dark-reduced] 无逾期文案 = 8 待办
+  PASS ⑤[1440-dark-reduced] 无逾期时「逾期」面 aria-hidden
+  PASS ⑤[1440-dark-reduced] 两态宽度逐值相等（0px 差）
+  PASS ⑤[1440-dark-reduced] 两态高度逐值相等（≤1px）
+  PASS ②[1440-dark-reduced] 无逾期态中心仍居中
+  PASS ①[1440-dark-reduced] 三位数（128 待办）仍在 40% 以内
+  PASS ①[1440-dark-reduced] 三位数无横向溢出
+  PASS ①[1440-dark-reduced] 三位数宽度由内容驱动（> 8 待办宽）
+  PASS 样式[1440-dark-reduced] 焦点可见描边
+[1440-dark-reduced] open {"card":{"x":374,"y":114,"w":420,"h":411.8,"cx":584},"bar":{"cx":584},"state":"open"}
+[1440-dark-reduced] panelMetrics {"panelW":420,"panelH":411.8,"panelCenterDx":0,"panelBottomToArea":292.3,"areaH":82}
+  PASS ⑥[1440-dark-reduced] 面板展开且可见
+  PASS ⑥[1440-dark-reduced] 面板水平居中（↔ 输入区中线 ≤1px）
+  PASS ⑥[1440-dark-reduced] 面板在视口内
+  PASS ⑥[1440-dark-reduced] 面板不与输入区重叠（面板底 ≤ 输入区顶）
+  PASS ⑥[1440-dark-reduced] 面板复用既有列表（8 行）
+  FAIL ⑥[1440-dark-reduced] 展开后胶囊尺寸不变 — 30/26 vs 71.2/26
+  PASS ⑥[1440-dark-reduced] Esc 收起（焦点在输入框）
+  PASS ⑥[1440-dark-reduced] 收起后胶囊尺寸不变
+  PASS ⑥[1440-dark-reduced] 收起后胶囊仍居中
+  PASS ⑥[1440-dark-reduced] 收起钮收起
+  PASS ⑥[1440-dark-reduced] 点外部收起
+  FAIL desktop 1440-dark-reduced threw — page.click: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for locator('#task-list .tfl-capsule')[22m
+[2m    - locator resolved to <button type="button" aria-label="1 逾期" aria-expanded="true" class="tfl-capsule has-overdue is-overdue">…</button>[22m
+[2m  - attempting click action[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m    - waiting 20ms[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m      - waiting 100ms[22m
+[2m    59 × waiting for element to be visible, enabled and stable[22m
+[2m       - element is not visible[22m
+[2m     - retrying click action[22m
+[2m       - waiting 500ms[22m
+
+
+══ mobile 375 light ══
+  PASS 手机[375-light] 桌面胶囊槽位在手机层显示
+  PASS 手机[375-light] 手机层胶囊可见
+  FAIL 手机[375-light] 手机展开面正常（行数 = 8） — 0
+  PASS 手机[375-light] 手机面无胶囊
+  PASS 手机零 console error [375-light]
+
+══ mobile 375 dark ══
+  PASS 手机[375-dark] 桌面胶囊槽位在手机层显示
+  PASS 手机[375-dark] 手机层胶囊可见
+  FAIL 手机[375-dark] 手机展开面正常（行数 = 8） — 0
+  PASS 手机[375-dark] 手机面无胶囊
+  PASS 手机零 console error [375-dark]
+
+──── todo-capsule-redesign: 153 pass / 27 fail ────
+FAILED:
+  - ⑥[1280-light] 展开后胶囊尺寸不变 — 30/26 vs 71.2/26
+  - ⑥[1280-light] Esc 收起（焦点在输入框） — open
+  - ⑥[1280-light] 收起后胶囊尺寸不变 — 30/26
+  - ⑥[1280-light] 收起钮收起
+  - desktop 1280-light threw — page.click: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for locator('#task-list .tfl-capsule')[22m
+[2m    - locator resolved to <button type="button" aria-label="1 逾期" aria-expanded="true" class="tfl-capsule has-overdue is-overdue">…</button>[22m
+[2m  - attempting click action[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m    - waiting 20ms[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m      - waiting 100ms[22m
+[2m    55 × waiting for element to be visible, enabled and stable[22m
+[2m       - element is not visible[22m
+[2m     - retrying click action[22m
+[2m       - waiting 500ms[22m
+
+  - ⑥[1280-dark] 展开后胶囊尺寸不变 — 30/26 vs 71.2/26
+  - ⑥[1280-dark] Esc 收起（焦点在输入框） — open
+  - ⑥[1280-dark] 收起后胶囊尺寸不变 — 30/26
+  - ⑥[1280-dark] 收起钮收起
+  - ⑥[1280-dark] 点外部收起
+  - desktop 1280-dark threw — page.click: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for locator('#task-list .tfl-capsule')[22m
+[2m    - locator resolved to <button type="button" aria-label="1 逾期" aria-expanded="true" class="tfl-capsule has-overdue is-overdue">…</button>[22m
+[2m  - attempting click action[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m    - waiting 20ms[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m      - waiting 100ms[22m
+[2m    55 × waiting for element to be visible, enabled and stable[22m
+[2m       - element is not visible[22m
+[2m     - retrying click action[22m
+[2m       - waiting 500ms[22m
+
+  - ⑥[1440-light] 展开后胶囊尺寸不变 — 30/26 vs 71.2/26
+  - ⑥[1440-light] Esc 收起（焦点在输入框） — open
+  - ⑥[1440-light] 收起后胶囊尺寸不变 — 30/26
+  - ⑥[1440-light] 收起钮收起
+  - ⑥[1440-light] 点外部收起
+  - desktop 1440-light threw — page.click: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for locator('#task-list .tfl-capsule')[22m
+[2m    - locator resolved to <button type="button" aria-label="1 逾期" aria-expanded="true" class="tfl-capsule has-overdue is-overdue">…</button>[22m
+[2m  - attempting click action[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m    - waiting 20ms[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m      - waiting 100ms[22m
+[2m    54 × waiting for element to be visible, enabled and stable[22m
+[2m       - element is not visible[22m
+[2m     - retrying click action[22m
+[2m       - waiting 500ms[22m
+
+  - ⑥[1440-dark] 展开后胶囊尺寸不变 — 30/26 vs 71.2/26
+  - ⑥[1440-dark] Esc 收起（焦点在输入框） — open
+  - ⑥[1440-dark] 收起后胶囊尺寸不变 — 30/26
+  - ⑥[1440-dark] 收起钮收起
+  - ⑥[1440-dark] 点外部收起
+  - desktop 1440-dark threw — page.click: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for locator('#task-list .tfl-capsule')[22m
+[2m    - locator resolved to <button type="button" aria-label="1 逾期" aria-expanded="true" class="tfl-capsule has-overdue is-overdue">…</button>[22m
+[2m  - attempting click action[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m    - waiting 20ms[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m      - waiting 100ms[22m
+[2m    55 × waiting for element to be visible, enabled and stable[22m
+[2m       - element is not visible[22m
+[2m     - retrying click action[22m
+[2m       - waiting 500ms[22m
+
+  - ⑥[1440-dark-reduced] 展开后胶囊尺寸不变 — 30/26 vs 71.2/26
+  - desktop 1440-dark-reduced threw — page.click: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for locator('#task-list .tfl-capsule')[22m
+[2m    - locator resolved to <button type="button" aria-label="1 逾期" aria-expanded="true" class="tfl-capsule has-overdue is-overdue">…</button>[22m
+[2m  - attempting click action[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m    - waiting 20ms[22m
+[2m    2 × waiting for element to be visible, enabled and stable[22m
+[2m      - element is not visible[22m
+[2m    - retrying click action[22m
+[2m      - waiting 100ms[22m
+[2m    59 × waiting for element to be visible, enabled and stable[22m
+[2m       - element is not visible[22m
+[2m     - retrying click action[22m
+[2m       - waiting 500ms[22m
+
+  - 手机[375-light] 手机展开面正常（行数 = 8） — 0
+  - 手机[375-dark] 手机展开面正常（行数 = 8） — 0
+EXIT=1

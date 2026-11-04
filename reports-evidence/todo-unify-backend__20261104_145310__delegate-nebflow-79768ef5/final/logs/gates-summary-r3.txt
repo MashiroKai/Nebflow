@@ -1,0 +1,6 @@
+GATE r3_01_make_frontend_gates EXIT=0 :: make frontend-gates
+GATE r3_02_check_circular EXIT=0 :: node scripts/check-circular.mjs
+GATE r3_03_check_component_contract EXIT=0 :: node scripts/check-component-contract.mjs
+GATE r3_04_check_design_spec_sync EXIT=0 :: node scripts/check-design-spec-sync.mjs
+GATE r3_05_check_js_types EXIT=0 :: node scripts/check-js-types.mjs
+GATE r3_06_check_process_artifacts EXIT=0 :: bash scripts/check-process-artifacts.sh

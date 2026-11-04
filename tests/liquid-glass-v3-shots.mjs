@@ -152,7 +152,9 @@ async function assertBatch(page, theme) {
 
   // F1 悬浮族：手机顶缘圆钮 / canvas 圆钮 / ask 开合钮（扩面三族同档）。
   /* 圆钮 blur 在 ::before 折射层（liquid-glass.css 架构），探针读伪元素。 */
-  const fab = page.locator('#mobile-fab-layer .mh-chrome-btn[data-chrome="tasks"]');
+  // 入口收敛批 2026-11-04：左上「任务」圆钮退役（待办入口收敛到胶囊）⇒
+  // 顶缘悬浮圆钮的材质门（F1 fill/blur）改钉现役唯一键（搜索），材质档不变。
+  const fab = page.locator('#mobile-fab-layer .mh-chrome-btn[data-chrome="search"]');
   if (await fab.count()) {
     const f = await fab.first().evaluate((el) => {
       const cs = getComputedStyle(el);
@@ -185,7 +187,7 @@ async function shotMobile(colorScheme) {
   await page.waitForTimeout(250);
   await page.screenshot({ path: join(OUT, `${tag}-root.png`) });
 
-  const fab = page.locator('#mobile-fab-layer .mh-chrome-btn[data-chrome="tasks"]');
+  const fab = page.locator('#mobile-fab-layer .mh-chrome-btn[data-chrome="search"]');
   const box = await fab.boundingBox();
   await page.screenshot({
     path: join(OUT, `${tag}-fab-closeup.png`),

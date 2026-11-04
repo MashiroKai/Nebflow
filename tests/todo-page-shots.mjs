@@ -1,6 +1,10 @@
 // todo-page-shots.mjs — 待办体系改版批（2026-10-31）截图取证脚本（自足，零后端）。
-// 产出：桌面亮/暗 × 待办页打开、手机亮/暗 × 待办页下钻，共 4 张入
-// .nebflow/evidence/20261031_todo-inbox-redesign/shots/。
+// ⚠ 入口收敛批 todo-unify-entry-collapse 2026-11-04 改写：#todo-page 整面退役
+// （DOM 保留、不可达）+ 消息列表「待办事项」入口行撤除 ⇒ 本脚本不再拍待办页，
+// 改拍现役待办面（顶带待办胶囊 / 胶囊展开面板 / 消息列表零入口行）。
+// 产出：桌面亮/暗 × {messages-no-entry, capsule, capsule-expanded}、
+//       手机亮/暗 × {capsule, capsule-expanded, messages-no-entry}，
+//       入 .nebflow/evidence/20261031_todo-inbox-redesign/shots/。
 // 运行：node tests/todo-page-shots.mjs
 
 import { chromium } from 'playwright';
@@ -92,28 +96,35 @@ async function boot(browser, { viewport, colorScheme }) {
 const browser = await chromium.launch();
 try {
   for (const colorScheme of ['light', 'dark']) {
-    // 桌面：消息列表面 + 待办页打开。
+    // 桌面：消息列表面（入口行已退役 = 纯会话名册）+ 胶囊静默态/展开态。
     const d = await boot(browser, { viewport: { width: 1440, height: 900 }, colorScheme });
     await d.page.locator('#messages-btn').click().catch(() => {});
     await d.page.waitForTimeout(300);
     await d.page.screenshot({ path: join(OUT, `desktop-${colorScheme}-messages-entry.png`) });
-    await d.page.evaluate(async () => { const m = await import('/js/scheduled-task.js'); m.openTodoPage(); });
-    await d.page.waitForSelector('#todo-page.open');
+    await d.page.waitForSelector('#task-list .tfl-capsule', { timeout: 8000 });
+    await d.page.screenshot({ path: join(OUT, `desktop-${colorScheme}-todo-capsule.png`) });
+    await d.page.locator('#task-list .tfl-capsule').click();
+    await d.page.waitForSelector('#task-list .tfl-card[data-state="open"]', { timeout: 8000 });
     await d.page.waitForTimeout(400);
-    await d.page.screenshot({ path: join(OUT, `desktop-${colorScheme}-todo-page.png`) });
+    await d.page.screenshot({ path: join(OUT, `desktop-${colorScheme}-todo-capsule-expanded.png`) });
     await d.ctx.close();
 
-    // 手机：消息页入口行 + 层级下钻待办页（先点 dock 消息键到根页——首启
-    // 默认落在 chat 根页，消息页体未 live 时入口行不可见）。
+    // 手机：胶囊（唯一入口）静默态 / 展开态 + 消息页零入口行（先点 dock 消息键
+    // 到根页——首启默认落在 chat 根页）。
     const m = await boot(browser, { viewport: { width: 390, height: 780 }, colorScheme });
+    await m.page.waitForSelector('#task-list .tfl-capsule', { timeout: 8000 });
+    await m.page.waitForTimeout(300);
+    await m.page.screenshot({ path: join(OUT, `mobile-${colorScheme}-todo-capsule.png`) });
+    await m.page.locator('#task-list .tfl-capsule').click();
+    await m.page.waitForSelector('#task-list .tfl-card[data-state="open"]', { timeout: 8000 });
+    await m.page.waitForTimeout(400);
+    await m.page.screenshot({ path: join(OUT, `mobile-${colorScheme}-todo-capsule-expanded.png`) });
+    await m.page.locator('#task-list .tfl-collapse-btn').click();
+    await m.page.waitForTimeout(400);
     await m.page.locator('#mobile-dock .dock-key[data-dock="messages"]').click();
-    await m.page.waitForSelector('.mobile-page[data-page="messages"].live .fm-todo-entry', { timeout: 8000 });
+    await m.page.waitForSelector('.mobile-page[data-page="messages"].live', { timeout: 8000 });
     await m.page.waitForTimeout(300);
     await m.page.screenshot({ path: join(OUT, `mobile-${colorScheme}-messages-entry.png`) });
-    await m.page.locator('.mobile-page[data-page="messages"] .fm-todo-entry').click();
-    await m.page.waitForSelector('.mobile-page[data-page="todo"] #todo-page.open');
-    await m.page.waitForTimeout(400);
-    await m.page.screenshot({ path: join(OUT, `mobile-${colorScheme}-todo-page.png`) });
     await m.ctx.close();
   }
   console.log('SHOTS OK →', OUT);

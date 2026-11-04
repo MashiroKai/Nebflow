@@ -2,7 +2,12 @@
    入口 = 消息列表顶部「待办事项」行（.fm-todo-entry，friends.css fm-row 家族）；
    本文件只管：页壳（桌面玻璃 overlay ⇄ 手机收编页）、分组签、待批准 chip、
    入口行图标。行/圆钮/逾期/overdue 语言全部复用 reminder.css reminder-row 族
-   （含 completing/removing 动画），零复制。 */
+   （含 completing/removing 动画），零复制。
+
+   ⛔ 入口收敛批 todo-unify-entry-collapse 2026-11-04：#todo-page 整面退役
+   （DOM 保留在 index.html、不可达），入口行 .fm-todo-entry 亦撤除 ⇒ 本文件
+   全部规则当前无渲染宿主（页壳/分组签/chip/入口行图标）。按本仓退役惯例
+   **样式保留不物理删除**：同一批 DOM 仍挂在 index.html，回切只需恢复入口。 */
 
 /* ── 页壳（桌面 = 玻璃 overlay 页；.open 开合，reminder-panel 同款语义） ── */
 #todo-page {

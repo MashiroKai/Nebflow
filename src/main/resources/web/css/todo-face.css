@@ -54,8 +54,9 @@
      面板就被顶下去）。relative 让槽位成为最近的定位祖先，`top:100%` 即「胶囊
      行底」；同时本节点 overflow 为 visible，面板不被裁剪（裁剪只沿包含块链生效）。
    · 胶囊宽/高/翻面口径**一字未改**（--tfl-cap-h 26 / 两态叠层严格等宽）。
-   · 手机层 `#task-list` 仍由 mobileLayer.css 整条 display:none 压死（手机共用
-     的是 .tfl-mobile 展开面），本块对手机零影响。 */
+   · 手机层也显示胶囊（胶囊面交互批 2026-11-04 ⑤：mobileLayer.css 的整条
+     display:none 退役）—— 手机层 = 顶带内同一条居中胶囊行，点击长出的是本卡
+     那张桌面腿浮层（手机任务页的 .tfl-mobile 页面态是另一条腿）；空态不显示。 */
 #task-list {
   /* 老规则（css/taskList.css）给的是顶带通栏 #task-list { padding:0 8px;
      max-height:0; overflow:hidden; display:flex; flex-direction:column } ——
@@ -603,13 +604,30 @@
 }
 
 /* ── 列表 ─────────────────────────────────────────────────────────────── */
+/* 列表包裹层（胶囊面交互批 2026-11-04）：列表 + 右下角新建加号 + 撤回条的
+   共同定位祖先。加号绝对压在**列表区**右下角（不是卡片右下角）⇒ 与底部
+   Add footer 永不重叠；列表末行让位由 .tfl-list 的 padding-bottom 给出。 */
+.tfl-list-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* 加号直径（桌面档 34px；手机档 44px 见 css/mobileLayer.css 同名变量覆盖） */
+  --tfl-fab-size: 34px;
+}
 .tfl-list {
   flex: 1 1 auto;
   min-height: 0;
   max-height: 44vh;
   overflow-y: auto;
   scrollbar-width: none;
-  padding: var(--ds-space-half) var(--ds-space-1h) var(--ds-space-1h);
+  /* 末行让位 = 加号直径 + 呼吸位（加号绝不压列表末行：机械判据见
+     tests/todo-capsule-create.spec.mjs ① 与 ⑧）。
+     收口 merge 2026-11-04：本行取本批（加号让位）为准，数值口径换成 main
+     design-scale 令牌（half=2px / 1h=6px / 1=4px，与 main 侧原值逐位等值）。 */
+  padding: var(--ds-space-half) var(--ds-space-1h)
+    calc(var(--ds-space-1h) + var(--tfl-fab-size) + var(--ds-space-1));
   outline: none;
 }
 .tfl-list::-webkit-scrollbar { display: none; }
@@ -915,6 +933,97 @@
 .tfl-add-ic-done { color: var(--tfl-green); }
 .tfl-add-ic-done svg { stroke: var(--tfl-glyph); }
 
+/* ── 右下角新建加号（胶囊面交互批 · 作者令 2026-11-04 ①）───────────────────
+   形态参考 Apple 待办：小而克制的圆钮、次级色（--color-text 8% 底 / 60% 墨），
+   桌面 34px（32–40 量级内）；手机 44px 触摸档（css/mobileLayer.css 覆盖
+   --tfl-fab-size）。位置 = 列表包裹层右下角，与 Add footer 同一右缘语言。
+   毛玻璃底：滚动行会从钮下穿过，纯半透明底会透出文字 ⇒ 补 blur（卡片同源）。 */
+.tfl-fab-add {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tfl-fab-size);
+  height: var(--tfl-fab-size);
+  padding: 0;
+  border: 0.5px solid color-mix(in srgb, var(--color-text) 12%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, transform 0.15s;
+}
+.tfl-fab-add:hover {
+  background: color-mix(in srgb, var(--color-text) 14%, transparent);
+  color: color-mix(in srgb, var(--color-text) 85%, transparent);
+}
+.tfl-fab-add:active { transform: scale(0.94); }
+.tfl-fab-add:focus-visible {
+  outline: 1.5px solid color-mix(in srgb, var(--color-text) 45%, transparent);
+  outline-offset: 1px;
+}
+.tfl-fab-add svg { width: 15px; height: 15px; }
+.tfl-fab-add[hidden] { display: none; }
+
+/* ── 行尾删除钮（作者令 2026-11-04 ④「删除」）────────────────────────────
+   桌面 hover 渐显（不抢主视觉、布局位常驻 ⇒ 行宽零跳动）；手机常显 + 44px
+   命中面（::after 外扩，见 css/mobileLayer.css）。 */
+.tfl-del {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-text) 30%, transparent);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.15s, color 0.15s;
+}
+.tfl-row:hover .tfl-del, .tfl-del:focus-visible { opacity: 1; }
+.tfl-del:hover { color: var(--tfl-red-o); }
+.tfl-del svg { width: 13px; height: 13px; }
+
+/* ── 完成后撤回条（取消完成的可达路径，作者令 2026-11-04 ④）──────────────
+   浮在列表底部中央（加号之上），6s 自动收起；配色沿用教学气泡 token
+   （黑底胶囊 + 次级白字，双主题同黑 = 复刻口径），无需新色值。 */
+.tfl-undo {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--tfl-fab-size) + 14px);
+  transform: translateX(-50%);
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--tfl-hint-stroke);
+  background: var(--tfl-hint-bg);
+  color: var(--tfl-hint-text);
+  font: 500 11px/1 ui-monospace, SFMono-Regular, monospace;
+  animation: tfl-fade-in 0.2s ease backwards;
+}
+.tfl-undo[hidden] { display: none; }
+.tfl-undo-btn {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--tfl-cyan);
+  font: 500 11px/1 ui-monospace, SFMono-Regular, monospace;
+  cursor: pointer;
+}
+.tfl-undo-btn:hover { filter: brightness(1.25); }
+
 /* ── 手机变体（页面即展开态：无胶囊、高度随页面体）──────────────────────
    重做批：桌面胶囊/浮层两条规则（.tfl-capsule 小件、.tfl-card absolute 浮层）
    一律不得带崩手机 —— 手机腿在此整条回退成流内块。 */
@@ -938,6 +1047,9 @@
   .tfl-card, .tfl-panel, .tfl-capsule, .tfl-chip, .tfl-chip-dot,
   .tfl-row, .tfl-edit-wrap, .tfl-complete-fill, .tfl-complete-fill svg,
   .tfl-filterbar, .tfl-tag-popover, .tfl-hint, .tfl-switch-knob,
-  .tfl-switch-knob-wrap, .tfl-cap-face { transition: none !important; animation: none !important; }
+  .tfl-switch-knob-wrap, .tfl-cap-face, .tfl-fab-add, .tfl-del, .tfl-undo {
+    transition: none !important;
+    animation: none !important;
+  }
   .tfl-row.tfl-row-enter, .tfl-create-row { animation: none !important; }
 }

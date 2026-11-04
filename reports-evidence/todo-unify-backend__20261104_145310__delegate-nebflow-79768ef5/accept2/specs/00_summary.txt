@@ -1,0 +1,9 @@
+10_todo_store_backend EXIT=0
+11_todo_capsule_create EXIT=0
+12_todo_entry_collapse EXIT=0
+13_todo_split EXIT=0
+20_canvas_ask_dock EXIT=1
+21_canvas_ask_resize EXIT=0
+22_console_ask_grow EXIT=1
+canvas-ask-dock EXIT=0
+console-ask-grow EXIT=0

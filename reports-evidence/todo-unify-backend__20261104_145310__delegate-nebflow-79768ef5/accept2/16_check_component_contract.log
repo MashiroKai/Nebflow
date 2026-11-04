@@ -1,0 +1,11 @@
+component-contract：236 个 js / 41 个 css / 面 32 个 / 命中文档 129 个 / 基线条目 130 个
+  R1 no-attach-shadow = 0
+  R2 cross-face-dom = 158
+  R3 event-literal = 113
+  R4 component-dom-leak = 0
+  R5 bare-innerhtml = 666
+  TOTAL = 937
+  ↑ js/askDock.js: bareInnerHtml 5 → 2（改善，建议下次 --update-baseline 收紧）
+  ↑ js/mobile/navController.js: crossFaceDom 9 → 8（改善，建议下次 --update-baseline 收紧）
+  ↑ js/mobile/socialSearch.js: 全部归零（改善，建议下次 --update-baseline 收紧）
+PASS: 五条组件契约（light DOM / 跨面 DOM / 事件字面量 / 组件内部类名 / 裸 innerHTML）零新增，均不超基线。

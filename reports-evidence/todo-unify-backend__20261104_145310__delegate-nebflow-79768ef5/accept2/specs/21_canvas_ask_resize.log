@@ -1,0 +1,94 @@
+
+Running 2 tests using 1 worker
+
+[1/2] tests/canvas-ask-resize.spec.mjs:396:1 › a,b,c · 拖拽改尺寸 + send/stop 与主会话完全统一
+tests/canvas-ask-resize.spec.mjs:396:1 › a,b,c · 拖拽改尺寸 + send/stop 与主会话完全统一
+PASS  c1 `.ds-turn-btn` 基类全 css 树恰一份定义（单一组件类）  — defs=1 ["css/design-system.css:1"]
+
+PASS  c2 ask.css 里 `.ask-input .ask-send` 零规则（面板不再自带第二套形态）  — rules=0
+
+PASS  c3 ask.css 里 `.ask-input .ask-stop` 零规则（同上）  — rules=0
+
+PASS  c4 input.css `#send-btn` 块零几何声明（宽高/圆角已上抬组件层）  — geom=false
+
+PASS  c5 input.css `#stop-btn` 无几何块残留  — geom=false
+
+PASS  c6 主会话 DOM 挂同一组件类（index.html #send-btn/#stop-btn）  — <button id="send-btn" class="ds-turn-btn ds-turn-btn--send"> | <button id="stop-btn" class="ds-turn-btn ds-turn-btn--stop">
+
+PASS  c7 面板 DOM 挂同一组件类（askDock.js）  — {"send":true,"stop":true}
+
+PASS  a1 拖柄存在（.ask-dock [data-ask-resize]）  — {"x":869,"y":253,"w":44,"h":44,"top":253,"bottom":297,"left":869,"visible":true}
+
+PASS  a2 拖柄可见（display/visibility/opacity 三关 + 面积 > 0）  — visible=true
+
+PASS  a3 热区几何 ≥44×44（本体即热区，boundingRect 直接达标 —— Apple HIG）  — 44.0×44.0
+
+PASS  a4 命中面实证：热区两轴中点内缩 2px + 中心 elementFromPoint 全回到拖柄（44×44 真可点）  — [{"ok":true,"at":"div.ds-resize-handle","x":891,"y":255},{"ok":true,"at":"div.ds-resize-handle","x":891,"y":295},{"ok":true,"at":"div.ds-resize-handle","x":871,"y":275},{"ok":true,"at":"div.ds-resize-handle","x":911,"y":275},{"ok":true,"at":"div.ds-resize-handle","x":891,"y":275}]
+
+PASS  a5 拖柄在面板左上角（左缘 ≤ 面板左缘 + 2，顶缘 ≤ 面板顶缘 + 2）  — handle=(869.0,253.0) dock=(883.0,267.0)
+
+PASS  b1a 拖拽后面板变宽（← 拖 −120 ⇒ 宽增 ≥40px，且不越出画布面板）  — 宽 372.0 → 435.0 (+63.0) panel=798.0..1270.0
+
+PASS  b1b 拖拽后面板变高（↑ 拖 −160 ⇒ 列高增 ≥120px）  — 列高 316.0 → 476.0 (+160.0)
+
+PASS  b1c 拖大后输入条完整在视口内（穿底由中线 mask 承担，不再要求零相交）  — {"col":{"w":435,"h":476,"top":133,"bottom":609,"left":820,"right":1255},"input":{"x":820,"y":571,"w":435,"h":56,"top":571,"bottom":627}}
+
+PASS  b2a 极大态受上限约束：面板顶距视口顶 ≥44（顶保险带，拖柄永远完整可点）  — dock.top=127.0 (viewport h=720)
+
+PASS  b2b 极大态不拖出视口：左缘 ≥12 安全缝、右缘 ≤ 视口宽  — left=820.0 right=1255.0 vw=1280
+
+PASS  b2c 极大态拖柄仍在视口内且可点（两轴中点 + 中心命中）  — handle.top=113.0 left=806.0 hit=[{"ok":true,"at":"div.ds-resize-handle","x":828,"y":115},{"ok":true,"at":"div.ds-resize-handle","x":828,"y":155},{"ok":true,"at":"div.ds-resize-handle","x":808,"y":135},{"ok":true,"at":"div.ds-resize-handle","x":848,"y":135},{"ok":true,"at":"div.ds-resize-handle","x":828,"y":135}]
+
+PASS  b2d 极大态输入条完整在视口内（穿底段由中线 mask 负责，不再要求零相交）  — overlap=true input.bottom=627.0
+
+PASS  b2e 极大态整体仍在画布面板内容框内（宽/顶都不越面板：面板 overflow:hidden ⇒ 越界即裁）  — dock=820.0/127.0/1255.0 panel=798.0/16.0/1270.0
+
+PASS  b2f 极限幂等：重复极大拖拽后宽高不再增长（上下限真的在生效，不是被内容撑住）  — w 435.0→435.0 colH 482.0→482.0 top=127.0 contentTop=17.0
+
+PASS  b3a 极小态受宽度下限约束（≥260px）  — w=260.0
+
+PASS  b3b 极小态受高度下限约束（列 ≥120px）  — col.h=120.0
+
+PASS  b3c 极小态输入条完整在视口内（同上：穿底由 mask 承担）  — {"col":{"w":260,"h":120,"top":459,"bottom":579,"left":995,"right":1255},"input":{"x":995,"y":571,"w":260,"h":56,"top":571,"bottom":627}}
+
+PASS  b3d 极小态仍可用：发送钮在位可见、几何 ≥36（未塌陷）  — send=40.0×40.0 visible=true
+
+PASS  b3e 极小态拖柄热区仍 ≥44×44  — 44.0×44.0
+
+PASS  c8 主会话图标已渲染（#send-btn svg 在位 ⇒ 逐属性比较有对象）
+
+PASS  c9 send：同组件类 + 圆形 + 语义绿墨 + 画布 chrome 40 档（12:52 ② 改判）  — {"dock":{"cls":"ask-send ds-turn-btn ds-turn-btn--send","width":"40px","height":"40px","borderRadius":"50%","padding":"0px","flexShrink":"0","bg":"rgba(255, 255, 255, 0.55)","borderColor":"rgba(255, 255, 255, 0.35)","color":"rgb(7, 193, 96)","iconW":"18px","iconH":"18px","strokeW":"2px","hitInset":{"top":"-3px","right":"-3px","bottom":"-3px","left":"-3px"},"hitBox":{"w":44,"h":44},"box":{"w":40,"h":40,"left":1207,"top":579},"insideInput":true,"hitPoints":[{"ok":true,"at":"button.ask-send.ds-turn-btn.ds-turn-btn--send","x":1227,"y":581},{"ok":true,"at":"button.ask-send.ds-turn-btn.ds-turn-btn--send","x":1227,"y":617},{"ok":true,"at":"button.ask-send.ds-turn-btn.ds-turn-btn--send","x":1209,"y":599},{"ok":true,"at":"button.ask-send.ds-turn-btn.ds-turn-btn--send","x":1245,"y":599},{"ok":true,"at":"button.ask-send.ds-turn-btn.ds-turn-btn--send","x":1227,"y":599}]},"diff":{"width":["36px","40px"],"height":["36px","40px"],"bg":["rgb(7, 193, 96)","rgba(255, 255, 255, 0.55)"],"borderColor":["rgb(6, 173, 86)","rgba(255, 255, 255, 0.35)"],"color":["rgb(255, 255, 255)","rgb(7, 193, 96)"],"strokeW":["2.5px","2px"]}}
+
+PASS  c10 stop：同组件类 + 圆形 + 语义红墨 + 画布 chrome 40 档  — {"dock":{"cls":"ask-stop ds-turn-btn ds-turn-btn--stop","width":"40px","height":"40px","borderRadius":"50%","padding":"0px","flexShrink":"0","bg":"rgba(255, 255, 255, 0.55)","borderColor":"rgba(255, 255, 255, 0.35)","color":"rgb(244, 67, 54)","iconW":"18px","iconH":"18px","strokeW":"2px","hitInset":{"top":"min(0px, 50% - 22px)","right":"min(0px, 50% - 22px)","bottom":"min(0px, 50% - 22px)","left":"min(0px, 50% - 22px)"},"hitBox":null,"box":{"w":0,"h":0,"left":0,"top":0},"insideInput":false,"hitPoints":[{"ok":false,"at":"body.deck-look-v2.canvas-open","x":0,"y":2},{"ok":false,"at":"null","x":0,"y":-2},{"ok":false,"at":"body.deck-look-v2.canvas-open","x":2,"y":0},{"ok":false,"at":"null","x":-2,"y":0},{"ok":false,"at":"body.deck-look-v2.canvas-open","x":0,"y":0}]},"diff":{"width":["36px","40px"],"height":["36px","40px"],"bg":["rgb(244, 67, 54)","rgba(255, 255, 255, 0.55)"],"borderColor":["rgba(0, 0, 0, 0)","rgba(255, 255, 255, 0.35)"],"color":["rgb(255, 255, 255)","rgb(244, 67, 54)"],"strokeW":["2.5px","2px"]}}
+
+PASS  c11 两处都挂同一 .ds-* 组件类（send）  — ds-turn-btn ds-turn-btn--send | ask-send ds-turn-btn ds-turn-btn--send
+
+PASS  c12 两处都挂同一 .ds-* 组件类（stop）  — ds-turn-btn ds-turn-btn--stop | ask-stop ds-turn-btn ds-turn-btn--stop
+
+PASS  c13 圆形几何两处成立（主会话 36 档不动；dock = 画布 chrome 40 档，12:52 ②）  — {"main":["36px","50%","18px"],"dock":["40px","50%","18px"]}
+
+PASS  z1 页面零 pageerror
+
+[2/2] tests/canvas-ask-resize.spec.mjs:551:1 › m · 手机腿：同一实现同一组件（两处逐属性相等 + 拖柄 ≥44）
+tests/canvas-ask-resize.spec.mjs:551:1 › m · 手机腿：同一实现同一组件（两处逐属性相等 + 拖柄 ≥44）
+PASS  m1 手机层拖柄在位且热区 ≥44×44（与桌面同一元素、同一实现）  — 44.0×44.0 visible=true
+
+PASS  m2 手机层命中面实证（两轴中点 + 中心回到拖柄）  — [{"ok":true,"at":"div.ds-resize-handle","x":32,"y":266},{"ok":true,"at":"div.ds-resize-handle","x":32,"y":306},{"ok":true,"at":"div.ds-resize-handle","x":12,"y":286},{"ok":true,"at":"div.ds-resize-handle","x":52,"y":286},{"ok":true,"at":"div.ds-resize-handle","x":32,"y":286}]
+
+PASS  m3 手机层拖拽同样生效（宽或列高有变化且不越视口）  — w 366.0→364.0 col 388.2→528.0 left=12.0
+
+PASS  m4 手机层拖到极大仍受顶保险带约束（重夹同一实现）  — top=99.0 overlap=true hit=[{"ok":true,"at":"div.ds-resize-handle","x":34,"y":87},{"ok":true,"at":"div.ds-resize-handle","x":34,"y":127},{"ok":true,"at":"div.ds-resize-handle","x":14,"y":107},{"ok":true,"at":"div.ds-resize-handle","x":54,"y":107},{"ok":true,"at":"div.ds-resize-handle","x":34,"y":107}]
+
+PASS  m5 手机层 send：同组件类 + 44 档（作者令 13:52：48 → 44）+ 语义绿走墨色  — {"dock":{"cls":"ask-send ds-turn-btn ds-turn-btn--send","width":"44px","height":"44px","borderRadius":"50%","padding":"0px","flexShrink":"0","bg":"rgba(255, 255, 255, 0.55)","borderColor":"rgba(255, 255, 255, 0.35)","color":"rgb(7, 193, 96)","iconW":"20px","iconH":"20px","strokeW":"2px","hitInset":{"top":"-1px","right":"-1px","bottom":"-1px","left":"-1px"},"hitBox":{"w":44,"h":44},"box":{"w":44,"h":44,"left":324,"top":656},"insideInput":true,"hitPoints":[{"ok":true,"at":"button.ask-send.ds-turn-btn.ds-turn-btn--send","x":346,"y":658},{"ok":true,"at":"button.ask-send.ds-turn-btn.ds-turn-btn--send","x":346,"y":698},{"ok":true,"at":"button.ask-send.ds-turn-btn.ds-turn-btn--send","x":326,"y":678},{"ok":true,"at":"button.ask-send.ds-turn-btn.ds-turn-btn--send","x":366,"y":678},{"ok":true,"at":"button.ask-send.ds-turn-btn.ds-turn-btn--send","x":346,"y":678}]},"diff":{"width":["48px","44px"],"height":["48px","44px"],"bg":["rgb(7, 193, 96)","rgba(255, 255, 255, 0.55)"],"borderColor":["rgb(6, 173, 86)","rgba(255, 255, 255, 0.35)"],"color":["rgb(255, 255, 255)","rgb(7, 193, 96)"],"iconW":["22px","20px"],"iconH":["22px","20px"],"strokeW":["2.5px","2px"]}}
+
+PASS  m6 手机层 stop：同组件类 + 44 档 + 语义红走墨色  — {"dock":{"cls":"ask-stop ds-turn-btn ds-turn-btn--stop","width":"44px","height":"44px","borderRadius":"50%","padding":"0px","flexShrink":"0","bg":"rgba(255, 255, 255, 0.55)","borderColor":"rgba(255, 255, 255, 0.35)","color":"rgb(244, 67, 54)","iconW":"20px","iconH":"20px","strokeW":"2px","hitInset":{"top":"min(0px, 50% - 22px)","right":"min(0px, 50% - 22px)","bottom":"min(0px, 50% - 22px)","left":"min(0px, 50% - 22px)"},"hitBox":null,"box":{"w":0,"h":0,"left":0,"top":0},"insideInput":false,"hitPoints":[{"ok":false,"at":"div.canvas-md-scroll.canvas-viewer-safe-top","x":0,"y":2},{"ok":false,"at":"null","x":0,"y":-2},{"ok":false,"at":"div.canvas-md-scroll.canvas-viewer-safe-top","x":2,"y":0},{"ok":false,"at":"null","x":-2,"y":0},{"ok":false,"at":"div.canvas-md-scroll.canvas-viewer-safe-top","x":0,"y":0}]},"diff":{"width":["48px","44px"],"height":["48px","44px"],"bg":["rgb(244, 67, 54)","rgba(255, 255, 255, 0.55)"],"borderColor":["rgba(0, 0, 0, 0)","rgba(255, 255, 255, 0.35)"],"color":["rgb(255, 255, 255)","rgb(244, 67, 54)"],"iconW":["22px","20px"],"iconH":["22px","20px"],"strokeW":["2.5px","2px"]}}
+
+PASS  m7 手机档 send ≡ stop 四项逐项相等（宽/高/圆角/图标边长）+ 圆角 = 半边长 22 + 内距 0  — {"send":{"w":"44px","h":"44px","r":22,"icon":"20px","pad":"0px"},"stop":{"w":"44px","h":"44px","r":22,"icon":"20px","pad":"0px"}}
+
+PASS  m8 手机档几何 = token 单源（--mcv-size-circle 44 / --mcv-icon 20，零组件字面量）  — {"tokenSize":"44px","tokenIcon":"20px","send":{"w":"44px","h":"44px","r":22,"icon":"20px","pad":"0px"},"stop":{"w":"44px","h":"44px","r":22,"icon":"20px","pad":"0px"}}
+
+PASS  m9 手机档热区 ≥44 且零外溢（::after 解析命中盒 = 44×44 视觉边框盒；5 点命中实证 + 全在输入条内）  — {"send":{"box":{"w":44,"h":44,"left":324,"top":656},"hitBox":{"w":44,"h":44},"inset":{"top":"-1px","right":"-1px","bottom":"-1px","left":"-1px"},"inside":true,"hit":[true,true,true,true,true]},"stop":{"box":{"w":44,"h":44,"left":324,"top":656},"hitBox":{"w":44,"h":44},"inset":{"top":"-1px","right":"-1px","bottom":"-1px","left":"-1px"},"inside":true,"hit":[true,true,true,true,true]}}
+
+PASS  m10 主会话腿手机档不随本批（48/22 原档 —— 2026-11-03 22:15 报障批成果，本令只收面板底钮）  — {"main":["48px","22px"]}
+
+  2 passed (25.8s)

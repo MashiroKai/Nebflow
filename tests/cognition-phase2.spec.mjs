@@ -189,14 +189,17 @@ try {
   ok(r1 && !r1.timedLeak, 'R1g 定时任务不混入待办页');
 
   // ── R2 可行动徽标分面：提醒徽标 = 已超时定时任务（未来任务不上，=0）；
-  //      入口行徽标 = 待销账待办数（=1） ─────────────────────────────
+  //      待销账待办数（原入口行徽标）= 顶带待办胶囊计数（=1） ─────────────
+  // 入口收敛批 todo-unify-entry-collapse 2026-11-04：消息列表「待办事项」入口行
+  // 退役 ⇒ 其徽标腿改读接班的胶囊计数节点（.tfl-capsule-count，同一 scope:all
+  // 收件箱真源；镜像行不入人待办面）。
   const badge = await page.evaluate(() => {
     const b = document.querySelector('#reminder-btn .reminder-badge');
-    const entry = document.querySelector('.fm-todo-entry .fm-row-badge');
-    return { reminder: b ? b.textContent : '0', entry: entry && !entry.hidden ? entry.textContent : '0' };
+    const cap = document.querySelector('#task-list .tfl-capsule-count');
+    return { reminder: b ? b.textContent : '0', capsule: cap ? cap.textContent.trim() : '' };
   });
   ok(badge.reminder === '0', `R2a 提醒徽标 = 已超时定时任务数（=${badge.reminder}，未来定时任务排除）`);
-  ok(badge.entry === '1', `R2b 入口行徽标 = 待销账待办数（=${badge.entry}）`);
+  ok(badge.capsule === '1 待办', `R2b 待销账待办数 = 胶囊计数（=${badge.capsule}）`);
 
   // ── R3 打卡发送 completeTodo（留痕销账腿） ─────────────────────────
   await page.click('#todo-page-body .reminder-row[data-id="td-0001"] .reminder-circle');
@@ -205,11 +208,15 @@ try {
     'R3 completeTodo 帧带正确 id');
   ok(captures.completeTodo.length === 1 && captures.completeTodo[0].sessionId === 'sess-1',
     'R3b completeTodo 帧带行自身 sessionId（跨会话寻址）');
+  // 引擎回执（scheduledTaskCompleted）到达 ⇒ 胶囊读数归零（原入口行徽标同语义：
+  // 打卡 = 销账；胶囊面读 todoStore，真源回执是它唯一的收敛源）。
+  push({ type: 'scheduledTaskCompleted', task: currentTasks.find((t) => t.id === TODO_ID), completedAt: Date.now() });
+  await sleep(400);
   const afterCheckin = await page.evaluate(() => {
-    const entry = document.querySelector('.fm-todo-entry .fm-row-badge');
-    return entry && !entry.hidden ? entry.textContent : '0';
+    const cap = document.querySelector('#task-list .tfl-capsule-count');
+    return cap ? cap.textContent.trim() : '';
   });
-  ok(afterCheckin === '0', `R3c 打卡后入口行徽标归零（=${afterCheckin}）`);
+  ok(afterCheckin === '0 待办', `R3c 打卡回执后待销账读数归零（胶囊 =${afterCheckin}）`);
 
   // ── R5 actionable.js 单件：提供者聚合 + 变更广播 ────────────────────
   const r5 = await page.evaluate(async () => {
@@ -239,7 +246,10 @@ try {
     const body = document.querySelector('#todo-page-body');
     const rows = body ? Array.from(body.querySelectorAll('.reminder-row')) : [];
     const weeklyRow = rows.find((r) => r.dataset.id === 'td-week');
-    const badge = document.querySelector('.fm-todo-entry .fm-row-badge');
+    // 入口收敛批 2026-11-04：入口行徽标退役 ⇒ 读数改取胶囊计数节点
+    // （同 scope:all 收件箱真源；周报待办也是 kind=todo 人待办行）。
+    const capEl = document.querySelector('#task-list .tfl-capsule-count');
+    const badge = capEl ? { hidden: false, textContent: capEl.textContent.trim() } : null;
     return {
       notifs,
       weeklyFirst: rows.length > 0 && rows[0].dataset.id === 'td-week',
@@ -256,7 +266,7 @@ try {
   ok(r6.weeklyCheckin && r6.weeklyCancel, 'R6d 周报条目带打卡销账钮 + 取消 ×（P2 闭合回路）');
   ok(r6.weeklyText.includes('打卡周报') && r6.weeklyText.includes('趋势↑'),
     'R6e 条目文案 = 反悬念结论（来源动作在）');
-  ok(r6.badge === '1', `R6f 徽标 +1（周报待办 = 可行动量，=${r6.badge}）`);
+  ok(r6.badge === '1 待办', `R6f 胶囊读数 +1（周报待办 = 人待办面一行，=${r6.badge}）`);
 
   // ── R7 截图 + 零错误 ────────────────────────────────────────────────
   mkdirSync(SHOTS_DIR, { recursive: true });

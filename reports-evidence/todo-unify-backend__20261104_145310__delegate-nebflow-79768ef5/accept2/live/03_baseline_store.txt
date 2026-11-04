@@ -1,0 +1,6 @@
+# 真源快照 baseline @ 2026-11-04T11:24:34.950Z
+# 目录: /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/qa-acc2-todo-accept/scheduled-tasks
+sessionId=47d92893-02f3-4df9-948a-3fffdcb7b2d0；孤立实例初始真源
+
+（目录下无 .json 文件：/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/qa-acc2-todo-accept/scheduled-tasks 不存在或为空）
+## DoneRecord 文件: /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/qa-acc2-todo-accept/checkin-records/done-records.jsonl（0 行）

@@ -121,13 +121,14 @@ for (const scheme of ['dark', 'light']) {
     const s = (await import('/js/state.js')).default;
     return s.activeSessionId === rootSid && s.ws && s.ws.readyState === 1;
   }, SID, { timeout: 20000 });
-  // 待办入口行 + 设备行 + 好友行齐 → 会话头 logo img 可绘。
+  // 设备行 + 好友行齐 → 会话头 logo img 可绘。
+  // （入口收敛批 2026-11-04：原「待办入口行 .fm-todo-entry/.fm-todo-icon」参考件
+  // 已随消息列表入口行退役摘除，本快门不再等它。）
   await page.waitForFunction(() => {
-    const todo = document.querySelector('.fm-todo-entry .fm-todo-icon');
     const dev = document.querySelector('.fm-conv-row[data-device="1"]');
     const fr = document.querySelector('.fm-conv-row:not([data-device="1"])');
     const logo = document.querySelector('#agent-avatar-btn .agent-avatar-stand-logo img');
-    return !!todo && !!dev && !!fr && !!logo && logo.complete && logo.naturalWidth > 0;
+    return !!dev && !!fr && !!logo && logo.complete && logo.naturalWidth > 0;
   }, { timeout: 20000 });
   await page.waitForTimeout(600);
 
@@ -159,18 +160,16 @@ for (const scheme of ['dark', 'light']) {
     };
   });
 
-  // ① 待办圆框 = 设备行圆框同规格（家族类 + 几何/底/描边一致）
-  ok(`${tag} ① 待办图标挂 .fm-avatar 家族类`, /fm-avatar/.test(probe.todoCls) && /fm-avatar-40/.test(probe.todoCls) && /fm-todo-icon/.test(probe.todoCls), probe.todoCls);
-  ok(`${tag} ① 圆框几何一致（40px + r50%）`,
-    probe.todoRadius === '50%' && probe.devRadius === '50%'
-    && Math.abs(parseFloat(probe.todoW) - parseFloat(probe.devW)) < 0.5,
-    `todo=${probe.todoW}/${probe.todoRadius} dev=${probe.devW}/${probe.devRadius}`);
-  ok(`${tag} ① 圆框底/描边与设备行一致`,
-    probe.todoBg === probe.devBg && probe.todoBorder === probe.devBorder && probe.todoBg === probe.frBg,
-    `bg todo=${probe.todoBg} dev=${probe.devBg} border todo=${probe.todoBorder} dev=${probe.devBorder}`);
-  ok(`${tag} ① 底/描边非透明（玻璃 etched 在场）`,
-    probe.todoBg !== 'rgba(0, 0, 0, 0)' && probe.todoBorder !== 'rgba(0, 0, 0, 0)',
-    `bg=${probe.todoBg} border=${probe.todoBorder}`);
+  // ① 待办圆框 = 设备行圆框同规格 —— ⛔ 腿退役（入口收敛批
+  // todo-unify-entry-collapse 2026-11-04）：消息列表「待办事项」入口行撤除，
+  // 参考件 `.fm-todo-entry .fm-todo-icon` 已不在 DOM ⇒ 该组 5 条对比断言无对象。
+  // 保留的同族护栏 = 设备/好友行读数（下面 ② 组 + R0 零 console error）。
+  // 原断言留档：
+  // ok(`${tag} ① 待办图标挂 .fm-avatar 家族类`, ...);
+  // ok(`${tag} ① 圆框几何一致（40px + r50%）`, ...);
+  // ok(`${tag} ① 圆框底/描边与设备行一致`, ...);
+  // ok(`${tag} ① 底/描边非透明（玻璃 etched 在场）`, ...);
+  console.log(`RETIRED ${tag} ① 待办入口行圆框对比腿（入口行退役）`);
   ok(`${tag} ① 设备行平台字形在场`, probe.devSvg, '');
   // ② 会话头无头像 = stand logo（零人形/零首字母牌）
   ok(`${tag} ② 会话头 = stand logo 可绘`, probe.slotLogo, '');

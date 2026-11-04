@@ -1,0 +1,25 @@
+== main advance detected 2026-11-04 17:27:03 ==
+$ git log -1 --oneline main
+995142a5f Merge branch 'delegate/delegate-nebflow-1d300d2e'
+$ git rev-parse main
+995142a5f99760e8d948361fc1691e4f45617e8d
+
+== 新增的 main 提交（d2fc65c82..main）==
+995142a5f Merge branch 'delegate/delegate-nebflow-1d300d2e'
+043b5f693 ops(worktree-cleanup): 盘 283 棵 delegate 树，删除 163 棵干净已合树（无 --force，逐棵复核），回收 ≈70Gi 可用磁盘
+1bfe6892d Merge branch 'delegate/delegate-nebflow-b1d91721'
+15f175813 Merge branch 'main' into delegate/delegate-nebflow-b1d91721
+d6d3a77f3 fix(web): 断两个静态 import 环 — msgQuote→reference / taskPanel→navController（check-circular 红→绿）
+
+== 这批新 main 改的文件（web/tests/scripts/Makefile）==
+ Makefile                                          |   9 +-
+ src/main/resources/web/js/mobile/chatChrome.js    |   4 +-
+ src/main/resources/web/js/mobile/navController.js |  13 +-
+ src/main/resources/web/js/mobile/navEvents.js     |  29 +++
+ src/main/resources/web/js/mobile/searchFace.js    |   2 +-
+ src/main/resources/web/js/mobile/socialSearch.js  |   2 +-
+ src/main/resources/web/js/mobile/taskPanel.js     |   5 +-
+ src/main/resources/web/js/msgQuote.js             |  13 +-
+ src/main/resources/web/js/refModel.js             | 227 ++++++++++++++++++++++
+ src/main/resources/web/js/reference.js            | 222 ++-------------------
+ 10 files changed, 301 insertions(+), 225 deletions(-)

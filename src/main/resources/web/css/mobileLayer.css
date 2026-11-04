@@ -499,7 +499,11 @@ body.mobile-layer #header {
    左 = 任务（徽标 = taskBadgeCount 镜像）；右 = 搜索。v2 换代：48px 正圆
    液体玻璃（liquid-glass.css .g2-fab 材质：blur 16/sat 1.8 双档、上半镜面
    高光、spring 按压 scale(.88)、边缘光折射）；top:16px 左右 16px 悬浮顶缘
-   （设计稿 §3.1），z 高于渐隐带（30 > 25）。 */
+   （设计稿 §3.1），z 高于渐隐带（30 > 25）。
+   ⛔ 入口收敛批 todo-unify-entry-collapse 2026-11-04：左「任务」键退役 ⇒ 现役
+   只剩右「搜索」键；[data-chrome='tasks'] 与 .mh-chrome-badge 两条规则的宿主
+   已不存在（样式按退役惯例保留，与 `.mh-chrome-btn[data-chrome='search']` 的
+   定位几何无耦合：两键各自 absolute 定位，抽走一键不影响另一键）。 */
 body.mobile-layer #mobile-fab-layer {
   height: 0;
   z-index: 30;
@@ -2755,9 +2759,45 @@ body.mobile-layer .mf-social-sealed-sub {
 /* ── 附件条 v4（uifix 批 2026-10-22）：手机层单行 + 「+N」折叠差异 ── */
 body.mobile-layer #attachment-preview { flex-wrap: nowrap; }
 
-/* ── 任务带退场：#task-list 自动浮条由任务页接替 ──────────────────── */
-body.mobile-layer #task-list {
-  display: none !important;
+/* ── 待办胶囊上手机层（胶囊面交互批 2026-11-04 ⑤；作者令「手机层胶囊必须
+   可见」）────────────────────────────────────────────────────────────────
+   原规则「任务带退场：#task-list 自动浮条由任务页接替 ⇒ 整条 display:none
+   !important」**退役**：胶囊成为手机端的待办入口，照常显示在顶带
+   #top-overlays 内（身份头之下 96+safe 的那一行，居中），点击自胶囊向下长出
+   同一张 .tfl-card 面板（宽 min(420px, 100vw − 32px)，见 css/todo-face.css
+   几何单源块）。
+   · 空态仍整条不显示（.has-tasks 缺席）⇒ 不占带、不推挤聊天；
+   · 有行时带高 +38px（26 胶囊 + 12 呼吸位），#chat 让位由 js/main.js
+     bandBottom() 的 ResizeObserver 自动跟随（零 JS 改动，与桌面同一条链）。
+   · 触控档：胶囊本体 26px 高（两态等宽不变量动不得），命中面经 ::after 外扩到
+     ≥44px（绝对定位伪元素 ⇒ 零布局影响、等宽口径不变）。
+   · 入口退役（左悬浮圆钮 / taskPanel 圆钮）归下游 entries 节点，本批不动。 */
+body.mobile-layer #task-list { display: block !important; }
+body.mobile-layer #task-list:not(.has-tasks) { display: none !important; }
+body.mobile-layer .tfl-capsule { position: relative; }
+body.mobile-layer .tfl-capsule::after {
+  content: '';
+  position: absolute;
+  top: -9px;
+  bottom: -9px;
+  left: -10px;
+  right: -10px;
+  border-radius: inherit;
+}
+
+/* 胶囊面件在手机层的尺寸口径（同一实现两套尺寸：桌面 34 / 手机 44）：
+   · 右下角加号 = 44px 触摸档圆形钮；
+   · 行尾删除 = 常显 + 44px 命中面（::after 外扩，视觉件仍小而克制）；
+   · 三个新件在手机上不吃 reduced-motion 之外的额外动画（沿用桌面规则）。 */
+body.mobile-layer .tfl-list-wrap { --tfl-fab-size: 44px; }
+body.mobile-layer .tfl-del { opacity: 1; position: relative; }
+body.mobile-layer .tfl-del::after {
+  content: '';
+  position: absolute;
+  top: -13px;
+  bottom: -13px;
+  left: -13px;
+  right: -13px;
 }
 
 /* ── 面板合并批沿袭：profile 面板独立面退役；手机记忆键退场 ────────── */

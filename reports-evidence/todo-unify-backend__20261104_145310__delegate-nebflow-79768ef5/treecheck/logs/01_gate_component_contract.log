@@ -1,0 +1,28 @@
+component-contract：234 个 js / 40 个 css / 面 32 个 / 命中文档 130 个 / 基线条目 130 个
+  R1 no-attach-shadow = 0
+  R2 cross-face-dom = 159
+  R3 event-literal = 113
+  R4 component-dom-leak = 0
+  R5 bare-innerhtml = 670
+  TOTAL = 942
+  ↑ js/askDock.js: bareInnerHtml 5 → 2（改善，建议下次 --update-baseline 收紧）
+
+FAIL 17 项：
+  js/todoFace.js:0  [baseline-bareInnerHtml] 裸 innerHTML =（走 mdHtmlGate / 构建器） 从基线 13 增到 16（只许减不许增）
+  js/todoFace.js:127  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+  js/todoFace.js:146  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+  js/todoFace.js:161  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+  js/todoFace.js:192  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+  js/todoFace.js:333  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+  js/todoFace.js:345  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+  js/todoFace.js:358  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+  js/todoFace.js:364  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+  js/todoFace.js:368  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+  js/todoFace.js:393  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+  js/todoFace.js:397  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+  js/todoFace.js:639  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+  js/todoFace.js:791  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+  js/todoFace.js:819  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+  js/todoFace.js:1462  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+  js/todoFace.js:1577  [R5 bare-innerhtml] 裸 innerHTML = 赋值——写 DOM 走 mdHtmlGate / 构建器（绕过净化面 = 回退）
+EXIT=1

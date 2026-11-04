@@ -86,12 +86,13 @@ const dom = {
     await pg.waitForSelector(sel, { timeout: 15000 });
     await pg.waitForTimeout(500);
   },
-  async todo(pg) {
-    await dom.workbench(pg);
-    await pg.evaluate(() => document.dispatchEvent(new CustomEvent('nf:mobile-todo-entry')));
-    await pg.waitForSelector('#mobile-pages .mobile-page.live[data-page="todo"] #todo-page .reminder-row', { timeout: 15000 });
-    await pg.waitForTimeout(500);
-  },
+  // ⛔ 腿退役（入口收敛批 2026-11-04，见调用点注记）：原文留档，恢复入口即可复用。
+  // async todo(pg) {
+  //   await dom.workbench(pg);
+  //   await pg.evaluate(() => document.dispatchEvent(new CustomEvent('nf:mobile-todo-entry')));
+  //   await pg.waitForSelector('#mobile-pages .mobile-page.live[data-page="todo"] #todo-page .reminder-row', { timeout: 15000 });
+  //   await pg.waitForTimeout(500);
+  // },
   // 主滚轴：**最外层**有余量的纵向滚动器（与 navController.primaryScroller /
   // refreshRoll 判据同源）——按距 section 的层级取最小者；页体自身可滚即它。
   scroll(pg, pid, v) {
@@ -141,11 +142,13 @@ for (const scheme of ['light', 'dark']) {
     await dom.scroll(pg, 'projects', 32);
     await shot(pg, `${scheme}-projects-mid`);
 
-    // 待办：静止 / 吸附
-    await dom.todo(pg);
-    await shot(pg, `${scheme}-todo-rest`);
-    await dom.scroll(pg, 'todo', 300);
-    await shot(pg, `${scheme}-todo-snapped`);
+    // 待办：静止 / 吸附 —— ⛔ 腿退役（入口收敛批 todo-unify-entry-collapse
+    // 2026-11-04）：#todo-page 整面退役、推送腿摘除 ⇒ 页面栈无 todo 页，
+    // 两段式标题吸附对该面无测点（现役待办面 = 顶带胶囊，非页面栈成员）。
+    // await dom.todo(pg);
+    // await shot(pg, `${scheme}-todo-rest`);
+    // await dom.scroll(pg, 'todo', 300);
+    // await shot(pg, `${scheme}-todo-snapped`);
     console.log(`[shots] ${scheme} mid-p=${JSON.stringify(midInfo)}`);
   } finally {
     await browser.close();

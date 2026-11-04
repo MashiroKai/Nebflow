@@ -1,0 +1,23 @@
+{
+  "order": [
+    "PERSIST-⑤-低重要度",
+    "PERSIST-⑤-高重要度"
+  ],
+  "store": [
+    {
+      "id": "c4b28374",
+      "content": "PERSIST-①-新建高重要度",
+      "priority": 3
+    },
+    {
+      "id": "ed6d984c",
+      "content": "PERSIST-⑤-低重要度",
+      "priority": 1
+    },
+    {
+      "id": "eac5a68c",
+      "content": "PERSIST-⑤-高重要度",
+      "priority": 0
+    }
+  ]
+}

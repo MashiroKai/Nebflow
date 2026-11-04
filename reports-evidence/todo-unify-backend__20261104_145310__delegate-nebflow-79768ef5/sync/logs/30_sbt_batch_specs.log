@@ -1,0 +1,9 @@
+$ cd /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5
+$ which sbt
+/Users/kaiyu/.stand/bin/sbt
+$ ls -la ~/.stand/bin/sbt
+lrwxr-xr-x@ 1 kaiyu  staff  52 11月  4 14:38 /Users/kaiyu/.stand/bin/sbt -> /Users/kaiyu/.local/share/nebflow-local/bin/sbt-gate
+
+$ sbt 'Test/compile' 'testOnly nebflow.core.scheduler.TodoScheduleSpec nebflow.core.scheduler.TodoPriorityCompletionSpec nebflow.core.scheduler.ScheduleCardContractSpec nebflow.core.scheduler.AskTodoBridgeSpec nebflow.core.scheduler.TodoMissCountSpec nebflow.gateway.TodoUnifyFramesSpec'
+[sbt-gate] waiting for /Users/kaiyu/.stand/run/sbt.lock (another sbt holds the heavy-work gate; bypass: SBT_GATE=off sbt …)
+[sbt-gate] STILL waiting ~5min. escape hatch: SBT_GATE=off sbt …

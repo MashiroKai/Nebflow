@@ -391,6 +391,8 @@ test.describe('三种会话页头同构 + 悬浮身份头（375×812）', () => 
           paddingBottom: ncs.paddingBottom, paddingLeft: ncs.paddingLeft,
           borderRadius: ncs.borderRadius, background: ncs.backgroundColor,
         } : null,
+        // 入口收敛批 todo-unify-entry-collapse 2026-11-04：主对话左上「任务」键
+        // 退役 ⇒ 该读数恒 null（只作日志留痕，无断言依赖；现役左槽为空）。
         taskKey: r(document.querySelector('.mh-chrome-btn[data-chrome="tasks"]')),
         searchKey: r(document.querySelector('.mh-chrome-btn[data-chrome="search"]')),
       };

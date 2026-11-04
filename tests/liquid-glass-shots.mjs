@@ -108,17 +108,13 @@ async function shotMobile(colorScheme) {
   await page.waitForTimeout(250);
   await page.screenshot({ path: join(OUT, `${tag}-scrolled.png`) });
 
-  // 折射边缘特写：左圆钮 + 右圆钮区域 3× 裁切（彩色内容在带下 ⇒ 边缘光畸变可读）。
-  const fab = page.locator('#mobile-fab-layer .mh-chrome-btn[data-chrome="tasks"]');
-  const box = await fab.boundingBox();
-  await page.screenshot({
-    path: join(OUT, `${tag}-fab-closeup.png`),
-    clip: { x: Math.max(0, box.x - 28), y: Math.max(0, box.y - 28), width: box.width + 56, height: box.height + 56 },
-  });
+  // 折射边缘特写：右圆钮（搜索）区域 3× 裁切（彩色内容在带下 ⇒ 边缘光畸变可读）。
+  // 入口收敛批 todo-unify-entry-collapse 2026-11-04：左上「任务」圆钮退役 ⇒
+  // 原左钮特写腿无对象，视网膜特写统一落在现役唯一顶缘圆钮（搜索键）上。
   const search = page.locator('#mobile-fab-layer .mh-chrome-btn[data-chrome="search"]');
   const sbox = await search.boundingBox();
   await page.screenshot({
-    path: join(OUT, `${tag}-fab-closeup-r.png`),
+    path: join(OUT, `${tag}-fab-closeup.png`),
     clip: { x: Math.max(0, sbox.x - 28), y: Math.max(0, sbox.y - 28), width: sbox.width + 56, height: sbox.height + 56 },
   });
   await browser.close();
@@ -166,7 +162,8 @@ async function shotFallback() {
   await seedColorfulRows(page);
   await page.waitForTimeout(250);
   await page.screenshot({ path: join(OUT, 'fallback-light-root.png') });
-  const fab = page.locator('#mobile-fab-layer .mh-chrome-btn[data-chrome="tasks"]');
+  // 入口收敛批 2026-11-04：左上「任务」圆钮退役 ⇒ 特写改拍现役唯一顶缘圆钮（搜索）。
+  const fab = page.locator('#mobile-fab-layer .mh-chrome-btn[data-chrome="search"]');
   const box = await fab.boundingBox();
   await page.screenshot({
     path: join(OUT, 'fallback-light-fab-closeup.png'),
