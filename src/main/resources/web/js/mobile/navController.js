@@ -56,7 +56,11 @@ import { key } from '../branding.js';
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '../sidebar.js';
 import { createIconsIn } from '../utils.js';
 import { ensureSocialPage, syncSocialFaces } from './socialFaces.js';
-import { ensureTaskPanel, closeTaskPanel } from './taskPanel.js';
+// ⛔ 【入口收敛批 todo-unify-entry-collapse 2026-11-04】任务面板（taskPanel.js）的
+// 页面收编腿退役：'tasks' 页（聊天头左上圆钮 push）已随待办入口收敛撤除，本模块
+// 不再需要 ensureTaskPanel/closeTaskPanel —— import 撤除（模块内已无引用），
+// taskPanel.js 因此无任何 import 方（见该文件头退役注记）。
+// import { ensureTaskPanel, closeTaskPanel } from './taskPanel.js';
 // 层事件流水（循环门禁修复批 2026-11-04）：叶子模块，taskPanel 等打事件方直取它，
 // 本模块只写 + 在 activateNav 挂 window（见该定义处注释）。
 import { logEvent, navLayerEvents } from './navEvents.js';
@@ -115,12 +119,20 @@ export const PAGES = [
   { id: 'graph',    tabId: 'wiki-graph', icon: 'sparkles',      zh: '图谱',     en: 'Wiki Graph' },
   { id: 'plugins',  tabId: 'plugins',  icon: 'puzzle',          zh: '插件',     en: 'Plugins' },
   { id: 'usage',    tabId: null,       icon: 'bar-chart-3',     zh: 'token 用量', en: 'Usage' },
-  { id: 'tasks',    tabId: null,       icon: 'list-todo',       zh: '任务',     en: 'Tasks' },
+  // ⛔ 【退役】入口收敛批 todo-unify-entry-collapse 2026-11-04：'tasks' 页撤除
+  // （入口 = 聊天头左上「任务」圆钮，已随待办入口收敛退役；手机端待办唯一入口
+  // = 顶带待办胶囊，点开即展开面板，不再需要第二个页面腿）。
+  // { id: 'tasks',    tabId: null,       icon: 'list-todo',       zh: '任务',     en: 'Tasks' },
   { id: 'search',   tabId: null,       icon: 'search',          zh: '搜索',     en: 'Search' },
   { id: 'reminder', tabId: null,       icon: 'alarm-clock',     zh: '定时任务', en: 'Scheduled' },
   // 改版批（2026-10-31 作者令）：待办事项页——入口 = 消息列表顶部行（桌面 =
   // #todo-page 玻璃 overlay；手机 = 本详情页收编同一 DOM，层级下钻左上返回）。
-  { id: 'todo',     tabId: null,       icon: 'list-checks',     zh: '待办事项', en: 'To-Dos' },
+  // ⛔ 【整面退役】todo-unify-entry-collapse 2026-11-04：#todo-page 处置 = (a)
+  // 整面退役（DOM 保留在 index.html、不可达）。两个入口（消息列表入口行 /
+  // `nf:mobile-todo-entry` → pushPage('todo')）同时撤除后，本页已无触发器；
+  // 待办面唯一实现 = 顶带胶囊 + 展开面板（js/todoFace.js / todoStore 真源）。
+  // 理由全文见 js/scheduled-task.js openTodoPage 的退役注记。
+  // { id: 'todo',     tabId: null,       icon: 'list-checks',     zh: '待办事项', en: 'To-Dos' },
   { id: 'daemon',   tabId: null,       icon: 'heart-pulse',     zh: '心跳',     en: 'Daemons' },
   { id: 'background', tabId: null,     icon: 'square-terminal', zh: '后台任务', en: 'Background' },
   { id: 'profile',  tabId: null,       icon: 'bot',             zh: '智能体', en: 'Agent' },
@@ -566,8 +578,11 @@ const overlayFaceByPage = {
   daemon: '#daemon-panel',
   background: '#bg-dropdown',
   profile: '#memory-modal',
-  tasks: '#mobile-task-panel',
-  todo: '#todo-page',
+  // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：'tasks'（#mobile-task-panel）
+  // 与 'todo'（#todo-page）两个页面腿已整面退役（见 PAGES 同批注记），不再有
+  // 页面收编 → overlay 面向；DOM 载体原样保留（不可达面）。
+  // tasks: '#mobile-task-panel',
+  // todo: '#todo-page',
 };
 
 /** 把 overlay 内容面移入页面体（幂等；锚点照 paneAnchors 惯例记录）。 */
@@ -650,13 +665,16 @@ async function ensurePanelContent(pageId) {
     case 'reminder':
       if (!document.querySelector('#reminder-panel.open')) clickDesktopBtn('reminder-btn');
       break;
-    case 'todo':
-      // 改版批（2026-10-31）：待办页无桌面钮（入口 = 消息列表行）——直调
-      // scheduled-task.js 开合臂；overlay 首开此刻建态，收编由 syncOverlayFaces 对账。
-      import('../scheduled-task.js')
-        .then((m) => m.openTodoPage())
-        .catch((e) => console.error('[mobile-layer] todo', e));
-      break;
+    // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：'todo' 页整面退役（PAGES
+    // 与 overlayFaceByPage 的同批注记）——本分支不再可达（无 pushPage('todo')），
+    // 原文留档，零物理删除：
+    // case 'todo':
+    //   // 改版批（2026-10-31）：待办页无桌面钮（入口 = 消息列表行）——直调
+    //   // scheduled-task.js 开合臂；overlay 首开此刻建态，收编由 syncOverlayFaces 对账。
+    //   import('../scheduled-task.js')
+    //     .then((m) => m.openTodoPage())
+    //     .catch((e) => console.error('[mobile-layer] todo', e));
+    //   break;
     case 'daemon':
       if (!document.querySelector('#daemon-panel.open')) clickDesktopBtn('daemon-btn');
       break;
@@ -675,12 +693,15 @@ async function ensurePanelContent(pageId) {
         if (ap.openProfilePanel) ap.openProfilePanel();
       } catch (e) { console.error('[mobile-layer] profile', e); }
       break;
-    case 'tasks':
-      ensureTaskPanel();
-      // 面板惰性建出 —— 建好即挂关闭对账 + 收编（X 关闭 → hidden → 弹栈）。
-      ensureOverlayReconcile('tasks', '#mobile-task-panel', (el) => !!el.hidden, ['hidden']);
-      syncOverlayFaces();
-      break;
+    // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：'tasks' 页整面退役（PAGES
+    // 与 overlayFaceByPage 的同批注记）——本分支不再可达（无 pushPage('tasks')），
+    // 原文留档，零物理删除：
+    // case 'tasks':
+    //   ensureTaskPanel();
+    //   // 面板惰性建出 —— 建好即挂关闭对账 + 收编（X 关闭 → hidden → 弹栈）。
+    //   ensureOverlayReconcile('tasks', '#mobile-task-panel', (el) => !!el.hidden, ['hidden']);
+    //   syncOverlayFaces();
+    //   break;
     default:
       break;
   }
@@ -2302,11 +2323,11 @@ function closePageFace(pageId) {
     case 'reminder':
       document.querySelector('#reminder-panel')?.classList.remove('open');
       break;
-    case 'todo':
-      // 改版批（2026-10-31）：待办页出栈 ⇒ overlay 载体关态（收编面归还由
-      // syncOverlayFaces 对账；桌面 outside-close 同源语义）。
-      document.querySelector('#todo-page')?.classList.remove('open');
-      break;
+    // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：'todo' 页整面退役（PAGES
+    // 同批注记）；原文留档，零物理删除：
+    // case 'todo':
+    //   document.querySelector('#todo-page')?.classList.remove('open');
+    //   break;
     case 'daemon':
       document.querySelector('#daemon-panel')?.classList.remove('open');
       break;
@@ -2316,9 +2337,11 @@ function closePageFace(pageId) {
     case 'profile':
       import('../memory.js').then((m) => m.closeMemoryModal?.()).catch(() => { /* 未载即未开 */ });
       break;
-    case 'tasks':
-      closeTaskPanel(true);
-      break;
+    // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：'tasks' 页整面退役，closeTaskPanel
+    // 的 import 已撤（taskPanel.js 无 import 方）；原文留档，零物理删除：
+    // case 'tasks':
+    //   closeTaskPanel(true);
+    //   break;
     case 'canvas':
       // 双页叠开修复批①（2026-10-31）：离页即归还活动文档 pane（头注既有契约
       // 「canvas 页离开 = 面归还、文档保留」的兑现——修前默认 no-op，pane 滞留
@@ -2470,7 +2493,9 @@ const CLOSE_WATCH = [
   { page: 'settings', sel: '#settings-overlay', off: (el) => !el.classList.contains('on'), attr: ['class'] },
   { page: 'search', sel: '#search-overlay', off: (el) => !el.classList.contains('on'), attr: ['class'] },
   { page: 'reminder', sel: '#reminder-panel', off: (el) => !el.classList.contains('open'), attr: ['class'] },
-  { page: 'todo', sel: '#todo-page', off: (el) => !el.classList.contains('open'), attr: ['class'] },
+  // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：'todo' 页整面退役 ⇒ 关闭对账
+  // 无对象（#todo-page 不再有 .open 开合路径）；原文留档：
+  // { page: 'todo', sel: '#todo-page', off: (el) => !el.classList.contains('open'), attr: ['class'] },
   { page: 'daemon', sel: '#daemon-panel', off: (el) => !el.classList.contains('open'), attr: ['class'] },
   { page: 'background', sel: '#bg-dropdown', off: (el) => el.classList.contains('hidden'), attr: ['class'] },
   { page: 'profile', sel: '#memory-overlay', off: (el) => !el.classList.contains('on'), attr: ['class'] },
@@ -2787,8 +2812,10 @@ function watchCanvasEvents() {
   document.addEventListener('canvas-independent-changed', onSwitch);
   // 「手机接入」入口行已撤除（作者令 2026-10-31 22:55）——nf:mobile-social-entry
   // 事件环外发腿随之摘除，联系人页无 social 页 push 路径。
-  // 改版批（2026-10-31）：消息列表「待办事项」入口行的手机层推页腿。
-  document.addEventListener('nf:mobile-todo-entry', () => pushPage('todo'));
+  // ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：消息列表「待办事项」入口行已撤
+  // ⇒ 它的手机层推页腿（事件环外发 nf:mobile-todo-entry → pushPage('todo')）随之
+  // 摘除；手机端待办唯一入口 = 顶带待办胶囊（点开即展开面板）。原文留档：
+  // document.addEventListener('nf:mobile-todo-entry', () => pushPage('todo'));
   document.addEventListener('nf:mobile-goto', (e) => {
     const page = (/** @type {CustomEvent<{page?: string}>} */ (e)).detail?.page;
     if (page && PAGE_BY_ID.get(page)?.dock) dockTo(page);

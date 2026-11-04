@@ -499,7 +499,11 @@ body.mobile-layer #header {
    左 = 任务（徽标 = taskBadgeCount 镜像）；右 = 搜索。v2 换代：48px 正圆
    液体玻璃（liquid-glass.css .g2-fab 材质：blur 16/sat 1.8 双档、上半镜面
    高光、spring 按压 scale(.88)、边缘光折射）；top:16px 左右 16px 悬浮顶缘
-   （设计稿 §3.1），z 高于渐隐带（30 > 25）。 */
+   （设计稿 §3.1），z 高于渐隐带（30 > 25）。
+   ⛔ 入口收敛批 todo-unify-entry-collapse 2026-11-04：左「任务」键退役 ⇒ 现役
+   只剩右「搜索」键；[data-chrome='tasks'] 与 .mh-chrome-badge 两条规则的宿主
+   已不存在（样式按退役惯例保留，与 `.mh-chrome-btn[data-chrome='search']` 的
+   定位几何无耦合：两键各自 absolute 定位，抽走一键不影响另一键）。 */
 body.mobile-layer #mobile-fab-layer {
   height: 0;
   z-index: 30;

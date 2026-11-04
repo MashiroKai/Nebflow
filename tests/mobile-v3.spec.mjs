@@ -6,9 +6,9 @@
 //   T1 【换代】五栏底 dock：五键序（消息/联系人/对话/canvas/设置逐字）、
 //      图标+标签结构、切换 home/top、active 态、根页返回=聊天根、
 //      退役浮层零残留（.mh-dd/.mh-scrim/body.mh-v3/#canvas-panel 不落地）
-//   T2 【换代】任务页面板：聊天头任务键徽标 + push 页收编面板 + 分组序
-//      （运行/排队——作者令 10-31：终态行不进手机端列表）+ 六级卡（状态点/标题/
-//      进度/状态词/成员预览 +N 溢出）+ X 关闭对账（面板 hidden + 弹栈）
+//   T2 【换代 · 入口收敛批 2026-11-04】任务页面板退役护栏：聊天头「任务」键
+//      / 'tasks' 导航页 / #mobile-task-panel 全零命中（pushPage 为 no-op），
+//      待办唯一入口 = 顶带待办胶囊槽 #top-overlays > #task-list
 //   T3 profile 面板进出入 + 头像 localStorage 持久化 + 名称回车保存
 //   T4 登录卡形态：单键制 + 官方横排 lockup（currentColor）+ 社交键退役
 //   T5 顶栏无时间断言（v3① 口径守护）
@@ -228,59 +228,47 @@ test('T1 five-tab dock: author-order keys, icon+label structure, switching, acti
   expect(pageErrors).toEqual([]);
 });
 
-test('T2 tasks page: chrome key badge, page-adopted panel, active-only list (running/queued; terminal filtered out), six-level cards, X close reconcile', async ({ page }) => {
+test('T2 tasks entry retired: chrome tasks key / tasks page / task panel all absent; capsule (top band) is the sole to-do entry', async ({ page }) => {
   const pageErrors = [];
   page.on('pageerror', (e) => pageErrors.push(e.message));
   await seedTasks(page);
 
-  // 聊天头任务键（chatChrome）徽标 = 在册任务数（collectChains 同源：运行 7 + 排队 3；
-  // 终态 #70/#71 不过现役闸，interrupt #72 在列）。
-  await expect(page.locator('.mh-chrome-btn[data-chrome="tasks"] .mh-chrome-badge')).toHaveText('10');
+  // ⛔ 入口收敛批 todo-unify-entry-collapse 2026-11-04（改写说明，不删测试）：
+  // 原 T2 钉「聊天头任务键徽标 → push 任务页收编 #mobile-task-panel → 组长卡
+  // 分组序/六级卡/X 关闭对账」。该面的入口（聊天头左上任务圆钮）与页面
+  // （'tasks' 导航页 + #mobile-task-panel）已整面退役，待办唯一入口 = 顶带
+  // 待办胶囊 ⇒ 原断言对象全部消失，本测试转为**退役护栏**（防回退）+ 入口
+  // 接班断言。旧卡渲染核代码仍在 js/mobile/taskPanel.js（注释退役、零删除）。
 
-  // 点任务键 → push「任务」详情页；面板收编进页面体（浮层形态退役）。
-  await page.locator('.mh-chrome-btn[data-chrome="tasks"]').click();
-  expect(await page.evaluate(() => window.__nfMobileNav)).toMatchObject({ home: 'chat', top: 'tasks' });
-  const panel = page.locator('.mobile-page[data-page="tasks"] #mobile-task-panel');
-  await expect(panel).toBeVisible();
-  // 面板在页面体内（收编判据）而非 body 直挂浮层。
-  expect(await panel.evaluate((el) => !!el.closest('.mobile-page-body'))).toBe(true);
-  // 头部统计：16 单元（#61 链 5 成员 + #62 链 3 + 5 薄块 + 排队 3——终态 2 行不计）
-  // · 7 运行 —— unitCount 与任务列表同一算法（chainProgressMeta 同源口径）。
-  await expect(panel.locator('.tp-stats')).toContainText('16');
-  await expect(panel.locator('.tp-stats')).toContainText('7');
-  // 分组序：运行中 → 排队（作者令 10-31：已完成组整组退役，标签只出两组）。
-  const labels = await panel.locator('.tp-grp').allTextContents();
-  expect(labels.length).toBe(2);
-  expect(labels[0]).toContain('运行中');
-  expect(labels[1]).toContain('排队');
-  // 各组卡数：7 / 3；终态行（completed/failed）零进列表。
-  const cards = panel.locator('.tp-card');
-  await expect(cards).toHaveCount(10);
-  await expect(panel.locator('.tp-card.tp-running')).toHaveCount(7);
-  await expect(panel.locator('.tp-card.tp-queued')).toHaveCount(3);
-  await expect(panel.locator('.tp-card.tp-done')).toHaveCount(0);
-  for (const gone of ['#70', '#71']) {
-    await expect(panel.locator('.tp-ttl', { hasText: gone })).toHaveCount(0);
-  }
-  // 六级卡：#61 富成员链 = 标题 + 进度 1/5 + 状态词 + 成员预览 2 行 + 「+2」溢出。
-  const c61 = panel.locator('.tp-card', { hasText: '#61' });
-  await expect(c61.locator('.tp-meta')).toContainText('1/5');
-  await expect(c61.locator('.tp-word')).not.toBeEmpty();
-  await expect(c61.locator('.tp-mem')).toHaveCount(2);
-  await expect(c61.locator('.tp-mem-more')).toHaveText('+2');
-  // interrupted（#72）保留在运行组：灰点 tp-g-stop（重启对账批语义——尸体系可见、
-  // 禁借 done 勾绿；活跃过滤批后不再随终态组退场）。
-  const c72 = panel.locator('.tp-card', { hasText: '#72' });
-  await expect(c72).toHaveCount(1);
-  await expect(c72).toHaveClass(/tp-running/);
-  await expect(c72.locator('.tp-g-stop')).toHaveCount(1);
-  await expect(c72.locator('.tp-word')).not.toBeEmpty();
-  // 页面壳「<」关闭 → 对账弹栈（面板 hidden + top 回聊天根）。面板头 X 已随
-  // 重复返回钮清查批在页面壳内退场（手机层唯一出页键 = 页面壳「<」）。
-  await expect(panel.locator('.tp-x')).toBeHidden();
-  await page.locator('.mobile-page[data-page="tasks"] .mobile-back-btn').click();
-  await expect(page.locator('#mobile-task-panel')).toBeHidden();
-  expect(await page.evaluate(() => window.__nfMobileNav?.top)).toBe('chat');
+  // ① 任务键/任务面板零命中（含徽标腿）。
+  await expect(page.locator('.mh-chrome-btn[data-chrome="tasks"]')).toHaveCount(0);
+  await expect(page.locator('#mobile-task-panel')).toHaveCount(0);
+  await expect(page.locator('.tp-card')).toHaveCount(0);
+  // 悬浮钮层仍在，只剩右上搜索键（不是把整层撤了）。
+  await expect(page.locator('#mobile-fab-layer .mh-chrome-btn')).toHaveCount(1);
+  await expect(page.locator('.mh-chrome-btn[data-chrome="search"]')).toBeVisible();
+
+  // ② 导航缝：'tasks' / 'todo' 页已从 PAGES 撤除 ⇒ pushPage 是 no-op（零页面、
+  //    零面板），栈顶仍为聊天根。
+  const pushed = await page.evaluate(async () => {
+    const nav = await import('/js/mobile/navController.js');
+    nav.pushPage('tasks');
+    nav.pushPage('todo');
+    await new Promise((r) => setTimeout(r, 300));
+    return {
+      top: window.__nfMobileNav?.top,
+      tasksPage: document.querySelectorAll('.mobile-page[data-page="tasks"]').length,
+      todoPage: document.querySelectorAll('.mobile-page[data-page="todo"]').length,
+      panel: document.querySelectorAll('#mobile-task-panel').length,
+    };
+  });
+  expect(pushed).toMatchObject({ top: 'chat', tasksPage: 0, todoPage: 0, panel: 0 });
+
+  // ③ 待办入口接班 = 顶带胶囊槽（#top-overlays > #task-list；空态则整条不显示，
+  //    本夹具无待办数据 ⇒ 只钉挂载点与零残留，不钉可见）。
+  await expect(page.locator('#top-overlays > #task-list')).toHaveCount(1);
+  await expect(page.locator('#task-list .tfl-capsule')).toHaveCount(1);
+
   expect(pageErrors).toEqual([]);
 });
 
@@ -387,9 +375,10 @@ test('T5 header retired on mobile (liquid-glass v2 2026-10-31); top edge = fade 
   await expect(fade).toBeVisible();
   expect(await fade.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe('none');
   expect(await fade.evaluate((el) => getComputedStyle(el).height)).toBe('88px');
-  // 悬浮圆钮层：任务/搜索双键在场且可见（48px v2 液体玻璃正圆）。
-  await expect(page.locator('#mobile-fab-layer .mh-chrome-btn')).toHaveCount(2);
-  await expect(page.locator('.mh-chrome-btn[data-chrome="tasks"]')).toBeVisible();
+  // 悬浮圆钮层：入口收敛批 2026-11-04 后只剩右上「搜索」键（48px v2 液体玻璃
+  // 正圆）；左上「任务」键已随待办入口收敛退役（待办入口 = 顶带待办胶囊）。
+  await expect(page.locator('#mobile-fab-layer .mh-chrome-btn')).toHaveCount(1);
+  await expect(page.locator('.mh-chrome-btn[data-chrome="tasks"]')).toHaveCount(0);
   await expect(page.locator('.mh-chrome-btn[data-chrome="search"]')).toBeVisible();
   // 页标题入流：头像 + 会话名迁入 .g2-chat-head（首位、可见）。
   // 会话页头同构批（件二+件三，2026-11-02）取代「单行三段式批」的 fixed 真顶栏：
@@ -412,8 +401,11 @@ test('T6 gutter retired: content full-width, desktop shells gone, task-list auto
   for (const sel of ['#activity-bar', '#sidebar', '.edge-bar-right', '#sidebar-toggle', '#canvas-toggle-btn']) {
     await expect(page.locator(sel)).toBeHidden();
   }
-  // r4 任务自动浮条退役（面板 face = mh-tpanel）。
-  await expect(page.locator('#task-list')).toBeHidden();
+  // r4 任务自动浮条（旧 delegate 卡自动带）退役 —— 现行语义（胶囊面交互批
+  // 2026-11-04 ⑤ + 入口收敛批 todo-unify-entry-collapse 2026-11-04）：
+  // #task-list 槽位在手机层**现役**，承载待办胶囊（.tfl-capsule）；本夹具零待办
+  // ⇒ 槽内无胶囊行、槽本身零高（不带旧 .task-chain-block 自动浮条）。
+  await expect(page.locator('#task-list .task-chain-block')).toHaveCount(0);
   // 附件条 in-flow：不再是 fixed 让位带（首行入流）。
   const att = page.locator('#attachment-preview');
   const attPos = await att.evaluate((el) => getComputedStyle(el).position);

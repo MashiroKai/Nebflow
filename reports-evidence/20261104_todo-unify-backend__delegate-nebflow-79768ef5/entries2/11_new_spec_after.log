@@ -1,0 +1,53 @@
+
+Running 2 tests using 1 worker
+
+[1/2] tests/todo-entry-collapse.spec.mjs:149:1 › ①③④ 桌面 1280×800：入口行退役、胶囊唯一入口且可展开、面板承载计数/逾期/四签/分组
+  1) tests/todo-entry-collapse.spec.mjs:149:1 › ①③④ 桌面 1280×800：入口行退役、胶囊唯一入口且可展开、面板承载计数/逾期/四签/分组 ───
+
+    Error: expect(locator).toHaveText(expected) failed
+
+    Locator: locator('#task-list .tfl-row[data-id="d1"] .tfl-row-badge')
+    Expected: "stand"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toHaveText" with timeout 5000ms
+      - waiting for locator('#task-list .tfl-row[data-id="d1"] .tfl-row-badge')
+
+
+      225 |   await expect(page.locator('#task-list .tfl-row')).toHaveCount(2);
+      226 |   await expect(page.locator('#task-list .tfl-row[data-id="x1"]')).toHaveCount(0);
+    > 227 |   await expect(page.locator('#task-list .tfl-row[data-id="d1"] .tfl-row-badge')).toHaveText('stand');
+          |                                                                                  ^
+      228 |   // 回到 All（总条目）：分组筛选可回退。
+      229 |   await page.locator('#task-list .tfl-chip-all').click();
+      230 |   await expect(page.locator('#task-list .tfl-row')).toHaveCount(5);
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5/tests/todo-entry-collapse.spec.mjs:227:82
+
+    Error Context: test-results/todo-entry-collapse-①③④-桌面-5544e-、胶囊唯一入口且可展开、面板承载计数-逾期-四签-分组/error-context.md
+
+
+[2/2] tests/todo-entry-collapse.spec.mjs:251:1 › ②③④⑤ 手机 375×812：任务圆钮/任务页退役，胶囊是唯一入口且可展开，信息不丢
+  2) tests/todo-entry-collapse.spec.mjs:251:1 › ②③④⑤ 手机 375×812：任务圆钮/任务页退役，胶囊是唯一入口且可展开，信息不丢 ────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: true
+    Received: false
+
+      313 |     const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      314 |     return !!(hit && (hit === cap || cap.contains(hit)));
+    > 315 |   })).toBe(true);
+          |       ^
+      316 |   await page.screenshot({ path: join(SHOT_DIR, 'mobile-375-capsule.png') });
+      317 |
+      318 |   // ── ④ 展开面板：计数 + 逾期读数（信息不丢，与桌面同源同读数）──
+        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5/tests/todo-entry-collapse.spec.mjs:315:7
+
+    Error Context: test-results/todo-entry-collapse-②③④⑤-手-c23e2-任务圆钮-任务页退役，胶囊是唯一入口且可展开，信息不丢/error-context.md
+
+
+  2 failed
+    tests/todo-entry-collapse.spec.mjs:149:1 › ①③④ 桌面 1280×800：入口行退役、胶囊唯一入口且可展开、面板承载计数/逾期/四签/分组 ────
+    tests/todo-entry-collapse.spec.mjs:251:1 › ②③④⑤ 手机 375×812：任务圆钮/任务页退役，胶囊是唯一入口且可展开，信息不丢 ─────────

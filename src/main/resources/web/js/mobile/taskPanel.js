@@ -1,5 +1,20 @@
 // mobile/taskPanel.js — 任务面（dock 批改写：浮层 → 「任务」详情页面板）。
 //
+// ⛔ 【整模块退役】入口收敛批 todo-unify-entry-collapse 2026-11-04（作者硬口径：
+//   待办入口收敛到胶囊一处）。本模块 = 手机上待办面的**第二套实现**（入口 =
+//   聊天头左上「任务」圆钮 → pushPage('tasks') → 本面板 ensurePanel 惰性建
+//   #mobile-task-panel，面板体挂 todoFace.mountTodoFaceInto）。本批撤掉：
+//     · 入口圆钮（js/mobile/chatChrome.js，注释留档）；
+//     · 导航页 'tasks' 与其 overlay 收编/对账（js/mobile/navController.js）；
+//     · 徽标读数 taskBadgeCount 的唯一调用方（chatChrome 的 syncTaskBadge）。
+//   ⇒ 本模块**已无任何 import 方**（navController / chatChrome 的 import 均已撤），
+//   不再随任意入口加载。承载信息去向 = 顶带待办胶囊（双端同现）：
+//   待办数 = 胶囊计数节点 `.tfl-cap-faces`（逾期翻面 / 未完成计数 / 计数翻牌），
+//   展开时**同一节点**搬进面板头 `.tfl-header-count`；列表/新建/完成/删除/
+//   重要度四签/分组 = 胶囊展开面板（js/todoFace.js）。
+//   代码按本仓惯例**零物理删除**（buildCard 旧渲染核、ensurePanel、ensureTaskPanel、
+//   closeTaskPanel、isTaskPanelOpen、taskBadgeCount 全部原样保留），仅注释退役。
+//
 // ★ 任务面换血（ReminderIsland 复刻批 · 作者令 2026-11-02 20:02）：本面板体 =
 //   待办列表（todoFace.mountTodoFaceInto——手机端入口维持本文件接线的「任务」
 //   左侧悬浮圆钮不变，内容换血为 ReminderIsland 复刻待办列表）。旧 delegate 卡
@@ -49,7 +64,9 @@ export function isTaskPanelOpen() {
   return !!(panel && !panel.hidden);
 }
 
-/** 面板壳（惰性一件；挂 body 级 —— fixed 几何自带，无包含块陷阱）。 */
+/** 面板壳（惰性一件；挂 body 级 —— fixed 几何自带，无包含块陷阱）。
+ *  ⛔ 【退役】todo-unify-entry-collapse 2026-11-04：本面板 = 已退役任务页的载体
+ *  （#mobile-task-panel），导航页 'tasks' 撤除后无任何路径调用本函数；代码保留。 */
 function ensurePanel() {
   if (panel) return panel;
   panel = document.createElement('div');

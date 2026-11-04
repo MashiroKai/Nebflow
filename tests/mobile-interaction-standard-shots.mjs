@@ -167,11 +167,15 @@ const hubTo = async (page, face) => {
 
 /** 一帧 = 一面。 */
 const PANELS = [
+  // ⛔ 入口收敛批 todo-unify-entry-collapse 2026-11-04：原「聊天头左上『任务』
+  // 圆钮 → #mobile-task-panel 任务页」入口与页面整面退役；待办唯一入口 = 顶带
+  // 待办胶囊（展开面板 = 现役待办面）。本帧改拍胶囊展开面板（同一 .tfl-* 实现），
+  // 空白待办数据下胶囊整条不显示 ⇒ 该帧退化为聊天根（零入口面可拍）。
   {
     id: 'tasks',
     open: async (page) => {
-      await page.locator('.mh-chrome-btn[data-chrome="tasks"]').click();
-      await page.waitForTimeout(520);
+      const cap = page.locator('#task-list .tfl-capsule');
+      if (await cap.count()) { await cap.click(); await page.waitForTimeout(520); }
     },
   },
   { id: 'reminder', open: (page) => hubTo(page, 'reminder') },
@@ -179,7 +183,8 @@ const PANELS = [
   { id: 'settings', open: (page) => hubTo(page, 'settings') },
   { id: 'projects', open: (page) => hubTo(page, 'projects') },
   { id: 'usage', open: (page) => hubTo(page, 'usage') },
-  { id: 'todo', open: (page) => hubTo(page, 'todo') },
+  // ⛔ 入口收敛批 2026-11-04：'todo' 页（#todo-page）整面退役 ⇒ hub 行不存在。
+  // { id: 'todo', open: (page) => hubTo(page, 'todo') },
   { id: 'plugins', open: (page) => hubTo(page, 'plugins') },
   { id: 'background', open: (page) => hubTo(page, 'background') },
 ];

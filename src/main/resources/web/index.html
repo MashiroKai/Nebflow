@@ -638,7 +638,11 @@
          activity bar #todo-btn 与侧边栏 #panel-todo；入口 = 消息列表顶部
          「待办事项」行（随 #fm-conversations 双端同现），内页 = #todo-page
          提醒事项风格独立页（桌面玻璃 overlay ⇄ 手机 pushPage 收编，见
-         scheduled-task.js / navController.js / css/todo-page.css）。 -->
+         scheduled-task.js / navController.js / css/todo-page.css）。
+         ⛔ 入口收敛批 todo-unify-entry-collapse 2026-11-04：上述入口行与手机
+         推页腿**都已退役**，待办唯一入口 = 顶带待办胶囊 #task-list
+         （#top-overlays 内，双端同现，点开即展开面板）；#todo-page 整面退到
+         不可达（DOM 保留）。 -->
     <button id="projects-btn" class="activity-btn" title="Projects"><i data-lucide="folder-kanban"></i></button>
     <!-- Wiki document graph (wiki-graph batch, 2026-10-14; icon wiring batch,
          2026-10-15: lucide sparkles replaced by the C2 hub-spoke inline SVG —
@@ -825,7 +829,14 @@
          顶部「待办事项」行；桌面 = 玻璃 overlay 页开合（.open），手机层由
          navController 收编进 pushPage 详情页。分组：已到期（浮顶）/待决策/
          待批准/计划；圆钮打勾销账；跨会话收件箱（scope:all）。渲染核 =
-         scheduled-task.js。 -->
+         scheduled-task.js。
+         ⛔ 【整面退役】入口收敛批 todo-unify-entry-collapse 2026-11-04 —— 处置
+         =(a) 整面退役：**DOM 原样保留于此、但已不可达**（消息列表入口行撤除 +
+         手机 pushPage('todo') 导航页撤除，见 js/messages.js、js/scheduled-task.js、
+         js/mobile/navController.js 同批注记）。理由：同一待办面已有更新的完整
+         实现 = 顶带待办胶囊 + 展开面板（js/todoFace.js，真源 = todoStore ↔
+         ScheduledTaskStore），两套并存必然状态分叉。本页渲染核/CSS 未删，
+         按本仓退役惯例注释留档。 -->
     <div id="todo-page" class="scroll-under-glass">
       <div class="todo-page-header">
         <div class="todo-page-title" data-i18n="todo.entryTitle">待办事项</div>
