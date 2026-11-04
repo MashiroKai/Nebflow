@@ -54,7 +54,6 @@ import { pushPage, touchLayer } from './navController.js';
 import { logEvent } from './navEvents.js';
 import { paintSlot } from '../agentProfile.js';
 import { brand } from '../brand.js';
-import { bindIdHeadFade } from './sessionHead.js';
 
 /** @type {HTMLButtonElement|null} */
 let taskBtn = null;
@@ -66,8 +65,6 @@ let fabLayer = null;
 let chatHead = null;
 /** @type {MutationObserver|null} 聊天清空路径守望（见 activateChatChrome 注记）。 */
 let headMo = null;
-/** @type {(() => void)|null} 身份头滚动渐隐解绑（sessionHead.bindIdHeadFade）。 */
-let unbindHeadFade = null;
 /** @type {Array<() => void>} */
 let unsubs = [];
 
@@ -141,8 +138,16 @@ export function activateChatChrome() {
     headMo.observe(chat, { childList: true });
     /* 滚动渐隐（会话页头同构批）：滚动源 = #chat 自身（#chat 内有滚轴时优先；
        页面栈/输入卡挤压等极端态下 #main 内的滚轴不参与 —— 与好友/群/设备面
-       的「取最大 scrollTop」口径同源）。渐隐只改 opacity（rAF 合帧，值不变不写）。 */
-    unbindHeadFade = bindIdHeadFade(chatHead, chat);
+       的「取最大 scrollTop」口径同源）。渐隐只改 opacity（rAF 合帧，值不变不写）。
+       🔴 **主对话腿已摘（顶部身份头常显批 2026-11-04，作者报障「跟主 agent 的
+       对话窗口 agent 头像和 agent name 都不显示」）**：本驱动器 11-02 同构批接入
+       后，scrollTop ≥ 64px 会把**整块**（头像 + 名字）推到 opacity 0 并置
+       visibility:hidden —— 而手机端对话进场即落底（任何超过一屏的会话 scrollTop
+       恒 ≫ 64），于是这个身份头在**有内容的会话里 100% 不可见**，且连带
+       `pointer-events:auto` 的头像一起退场 = profile 面板入口不可达（功能损失，
+       不只是视觉）。主对话 = 身份常显面，不再随滚动隐没；好友/群/设备会话
+       （sessionHead.createSessionIdentityHead + 各自的 bindIdHeadFade 调用点）
+       的悬浮身份头口径**零改动** —— 上一批的渐隐设计在那里保留。 */
     /* 顶栏建层广播已随机制退役（会话页头同构批）：悬浮身份头不在流内、main.js
        的顶让位不再按它实测（回 bandBottom 单一真值），故无需通知观察器重取。 */
   }
@@ -249,7 +254,6 @@ export function activateChatChrome() {
     // 消息流身份头随 Muse 式悬浮头像批退役（挂出链已摘，DOM 无此节点）。
     document.querySelectorAll('#agent-avatar-btn .agent-avatar-stand-logo').forEach((n) => n.remove());
     // 身份头滚动渐隐解绑（会话页头同构批）：#chat 上是同一个监听，拆除必须对称注销。
-    if (unbindHeadFade) { try { unbindHeadFade(); } catch { /* 解绑失败不阻断归还 */ } unbindHeadFade = null; }
     chatHead?.style.removeProperty('--idhead-p');
     // 归位重绘（桌面腿 2026-11-01）：摘除走的是同名类（注入档 + paintSlot 自绘档
     // 一并中招）——归还桌面形态前必须补一次 paintSlot，否则空槽挂到下一个事件。
