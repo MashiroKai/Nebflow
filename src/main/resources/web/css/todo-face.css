@@ -785,16 +785,17 @@
 }
 .tfl-switch.on .tfl-switch-knob-wrap { background: var(--tfl-green-solid); }
 .tfl-switch.on .tfl-switch-knob { transform: translateX(11px); }
-.tfl-due-input {
-  border-radius: 6px;
-  padding: 3px 8px;
-  font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
-  color: var(--color-text, #000);
-  background: var(--glass-etched-bg, rgba(128, 128, 128, 0.08));
-  border: 1px solid var(--glass-etched-border, rgba(128, 128, 128, 0.15));
-  outline: none;
+/* 截止时刻面（time-wheel-picker 批 2026-11-03）：原生 datetime-local 退役 ⇒
+   值域载体是隐藏输入（.tfl-due-input），可见面 = 同款 `.tw-trigger`
+   （样式单源 = timeWheel.css；此处只管行内伸展与密度）。 */
+.tfl-due-holder {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
 }
-.tfl-due-input:focus { border-color: var(--glass-etched-border-focus, rgba(91, 127, 191, 0.4)); }
+.tfl-due-holder .tw-trigger { flex: 1 1 auto; min-width: 0; }
+.tfl-due-input { display: none; }
 
 /* 行标题输入（编辑/创建共用） */
 .tfl-row-title-input {

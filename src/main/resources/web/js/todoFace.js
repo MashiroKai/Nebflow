@@ -36,6 +36,11 @@ import { createIconsIn } from './utils.js';
 import { isImeComposing } from './imeGuard.js';
 import { sessionShowsNodeEntries } from './taskList.js';
 import { todoStore, TAG_COLOR_PRESETS, PRIORITY_COLORS, PRIORITY_LABEL_KEYS } from './todoStore.js';
+// 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16/22:20）：
+// 待办截止时刻从裸 `<input type="datetime-local">` 收编为同款点选面。交互单源
+// = ./timeWheel.js；隐藏输入 `.tfl-due-input` 保留为值域载体（saveEditing /
+// saveCreate 读面零改）。
+import { pointTriggerHTML, attachTimeTriggers, msToLocalInput } from './timeWheel.js';
 
 const REDUCED_MOTION = typeof matchMedia === 'function' &&
   matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -133,6 +138,32 @@ function dueInputValue(ms) {
   const d = new Date(ms);
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** 截止时刻面（时间滚轮选择器批 2026-11-03）：同款点选钮 + 隐藏值域输入。
+ *  隐藏输入保留 `.tfl-due-input` 类与 datetime-local 串值域 ⇒ 既有读面
+ *  （saveEditing / saveCreate 的 `new Date(dueEl.value)`）零改动；
+ *  面板确认后经 attachTimeTriggers 的 onPointChange 回写。
+ *  @param {number} ms 初始时刻 */
+function dueFieldEls(ms) {
+  const date = dueInputValue(ms).slice(0, 10);
+  const time = dueInputValue(ms).slice(11, 16);
+  const holder = el('div', 'tfl-due-holder');
+  holder.innerHTML = pointTriggerHTML({ date, time, label: t('timewheel.deadline') });
+  const hidden = el('input', 'tfl-due-input');
+  hidden.type = 'hidden';
+  hidden.value = dueInputValue(ms);
+  holder.appendChild(hidden);
+  attachTimeTriggers(holder, {
+    onPointChange: (btn) => {
+      const next = `${btn.dataset.date}T${btn.dataset.time}`;
+      const at = new Date(next).getTime();
+      if (!Number.isNaN(at)) hidden.value = msToLocalInput(at);
+    },
+  });
+  // 面板点击不冒泡到行体（行体点击 = 保存/进编辑）
+  holder.addEventListener('click', (e) => e.stopPropagation());
+  return { holder, hidden };
 }
 
 // ── 面实例 ───────────────────────────────────────────────────────────────
@@ -653,18 +684,17 @@ class TodoFace {
     toggle.setAttribute('aria-checked', String(hasDue));
     toggle.appendChild(el('span', 'tfl-switch-label', hasDue ? t('todoface.hasDue') : t('todoface.noDue')));
     toggle.appendChild(el('span', 'tfl-switch-knob-wrap', '')).appendChild(el('span', 'tfl-switch-knob'));
-    const dueInput = el('input', 'tfl-due-input');
-    dueInput.type = 'datetime-local';
-    dueInput.value = dueInputValue(item.due != null ? item.due : Date.now() + 3600_000);
-    dueInput.style.display = hasDue ? '' : 'none';
+    // 截止时间开关 + 同款时间滚轮点选面（time-wheel-picker 批 2026-11-03）
+    const { holder: dueHolder, hidden: dueInput } = dueFieldEls(item.due != null ? item.due : Date.now() + 3600_000);
+    dueHolder.style.display = hasDue ? '' : 'none';
     toggle.addEventListener('click', () => {
       hasDue = !hasDue;
       toggle.classList.toggle('on', hasDue);
       toggle.setAttribute('aria-checked', String(hasDue));
       toggle.querySelector('.tfl-switch-label').textContent = hasDue ? t('todoface.hasDue') : t('todoface.noDue');
-      dueInput.style.display = hasDue ? '' : 'none';
+      dueHolder.style.display = hasDue ? '' : 'none';
     });
-    dueRow.append(toggle, dueInput);
+    dueRow.append(toggle, dueHolder);
     panel.appendChild(dueRow);
     this.editDraft = { notesEl: notes, dueInput, get hasDue() { return hasDue; } };
     return panel;
@@ -720,25 +750,23 @@ class TodoFace {
     toggle.setAttribute('aria-checked', 'false');
     toggle.appendChild(el('span', 'tfl-switch-label', t('todoface.noDue')));
     toggle.appendChild(el('span', 'tfl-switch-knob-wrap', '')).appendChild(el('span', 'tfl-switch-knob'));
-    const dueInput = el('input', 'tfl-due-input');
-    dueInput.type = 'datetime-local';
-    dueInput.value = dueInputValue(Date.now() + 3600_000);
-    dueInput.style.display = 'none';
+    const { holder: dueHolder } = dueFieldEls(Date.now() + 3600_000);
+    dueHolder.style.display = 'none';
     toggle.addEventListener('click', () => {
       hasDue = !hasDue;
       toggle.classList.toggle('on', hasDue);
       toggle.setAttribute('aria-checked', String(hasDue));
       toggle.querySelector('.tfl-switch-label').textContent = hasDue ? t('todoface.hasDue') : t('todoface.noDue');
-      dueInput.style.display = hasDue ? '' : 'none';
+      dueHolder.style.display = hasDue ? '' : 'none';
     });
-    dueRow.append(toggle, dueInput);
+    dueRow.append(toggle, dueHolder);
     panel.appendChild(dueRow);
     wrap.appendChild(panel);
     row.appendChild(wrap);
     // 创建行非文本区点击 = 保存（复刻 onTapGesture 语义；输入框 click 不冒泡触发）
     row.addEventListener('click', (e) => {
-      if (e.target === this.createTitle || e.target === notes || e.target === dueInput) return;
-      if (e.target.closest('.tfl-edit-prio-btn') || e.target.closest('.tfl-switch')) return;
+      if (e.target === this.createTitle || e.target === notes) return;
+      if (e.target.closest('.tfl-edit-prio-btn') || e.target.closest('.tfl-switch') || e.target.closest('.tfl-due-holder')) return;
       this.saveCreate();
     });
     // 展开后聚焦标题（ReminderIsland onAppear 聚焦等价：web 无懒实例化竞态，

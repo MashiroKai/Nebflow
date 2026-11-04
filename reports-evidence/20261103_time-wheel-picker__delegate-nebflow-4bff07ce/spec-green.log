@@ -1,0 +1,51 @@
+PASS  T2 五落点源码零裸 datetime-local / type=time 输入
+PASS  T2 五落点全部 import timeWheel.js（落点=设置冻结/provider 级/provider per-model/定时任务/待办）
+PASS  T1 唯一 Wheel 实现 = js/timeWheel.js  — js/timeWheel.js
+PASS  T1 唯一选择器面板 DOM = js/timeWheel.js  — js/timeWheel.js
+PASS  T10 timeWheel.css 零 #hex 色值字面量
+PASS  T10 timeWheel.css 零 rgb()/rgba() 数字字面量（全走 var(--…) 或 rgb(var(--sapphire) / α)）
+PASS  T11 timeWheel.css 含 prefers-reduced-motion 退化块
+PASS  T1 index.html 挂了 timeWheel.css
+PASS  L1 冻结时段：段行渲染同款触发钮（2 段夹具）  — count=2
+PASS  L1 冻结时段：dataset 值域逐字回读（09:00-12:00 / 23:00-07:00）  — [{"start":"09:00","end":"12:00","cross":false},{"start":"23:00","end":"07:00","cross":true}]
+PASS  L1 冻结时段：跨午夜段带行内徽标（23:00>07:00）
+PASS  L4 24h 字段脸（无 AM/PM，形如 HH:mm-HH:mm）  — 09:00 - 12:00
+PASS  T3 触发钮热区 ≥44×44（设置冻结段）  — {"w":131,"h":44}
+PASS  T9 >768px ⇒ popover 皮  — {"open":true,"mode":"range","sheet":false,"popover":true,"zIndex":"10001"}
+PASS  T9 popover z=10001（高于设置浮层 10000）  — 10001
+PASS  T2 时段面板 = 4 轮（时/分 × 起止）  — cols=4
+PASS  T6 分钟 5 步进（aria-valuenow % 5 === 0）  — [0,0]
+PASS  T7 起=止 ⇒ 确定钮 disabled + 等值错误行 show  — {"disabled":true,"equalShow":true,"crossShow":false}
+PASS  T7 起=止 ⇒ 跨零点提示不抢戏（互斥）
+PASS  T5 起>止 ⇒ 跨零点提示条在（含「次日」）  — 跨零点时段：至次日 07:00 结束（合法，同现役跨午夜语义）
+PASS  T5 跨零点是合法态（确定钮可用）
+PASS  T8 ESC 还原（dataset 逐字不变 + 面板收起）  — {"start":"09:00","end":"12:00"} → {"start":"09:00","end":"12:00","open":false}
+PASS  R7 确认腿写回原子段字段（08:00-12:00 一颗整体）  — {"start":"08:00","end":"12:00","text":"08:00 - 12:00"}
+PASS  L1 改动进草稿（显式保存语义：schedule-actions 出现）  — flex
+PASS  L2 provider 级不可用时段：2 段同款触发钮（无文本框）  — ["14:00-18:00|1,2,3,4,5","23:00-07:00|"]
+PASS  L2 provider 级：from/to/days 全部保真（5 工作日 + 跨午夜无 days）  — ["14:00-18:00|1,2,3,4,5","23:00-07:00|"]
+PASS  O1 裁定：按星期编辑面同款（data-days-allowed 在位）  — 2
+PASS  L3 per-model 不可用时段：每行模型都有编辑面（2 行）  — ["kimi-k2","kimi-k3"]
+PASS  L3 per-model：既有 09:00-10:00 保真渲染 + 无窗行空态  — [{"id":"kimi-k2","winRows":1,"winTriggers":1,"values":["09:00-10:00"]},{"id":"kimi-k3","winRows":0,"winTriggers":0,"values":[]}]
+PASS  T3 热区 ≥44（per-model 加行钮）  — {"w":114,"h":44}
+PASS  L2 快捷档：provider 不可用时段含「全天」四档  — 全天 / 深夜 23–08 / 白天 09–18 / 午后 14–18
+PASS  O1 裁定：星期多选面在场且回显 5 个工作日  — {"visible":true,"selected":5,"total":8}
+PASS  L2 保存：provider 级两段逐字落盘（含 days = [1,2,3,4,5]）  — [{"from":"14:00","to":"18:00","days":[1,2,3,4,5]},{"from":"23:00","to":"07:00"}]
+PASS  L3 保存：per-model 段由行内 DOM 收编（kimi-k2 保 09:00-10:00，kimi-k3 无键）  — [[{"from":"09:00","to":"10:00"}],null]
+PASS  模态离场（保存后 overlay 摘除）
+PASS  L4 定时任务：触发时刻 = 同款点选钮（零裸 datetime-local）  — {"triggers":1,"bareInputs":0,"hidden":true,"value":"2026-11-04T10:55","face":"11/4 10:55"}
+PASS  L4 值域载体 = 隐藏 #reminder-time-input（datetime-local 串保真）  — 2026-11-04T10:55
+PASS  T4 点选钮字段脸 = M/D + HH:mm（24h，无 AM/PM）  — 11/4 10:55
+PASS  L4 点选面板 = 日期列 + 时 + 分（3 轮）  — {"mode":"point","cols":3,"bareInRange":0}
+PASS  L5 待办截止：创建面板 = 同款点选钮（零裸 datetime-local）  — {"triggers":1,"bare":0,"holders":1}
+PASS  L5 待办截止：开关打开后点选面在场（同款组件）  — {"open":true,"triggers":1}
+PASS  L5 待办截止：打开的是同一单例面板（point 模式）  — {"open":true,"mode":"point","sheet":false,"popover":true,"zIndex":"10001"}
+PASS  T12 全程零 pageerror / console.error
+PASS  手机层 boot
+PASS  T9 ≤768px 或手机层 ⇒ sheet 皮（含 grabber）  — {"open":true,"mode":"range","sheet":true,"popover":false,"zIndex":"11000","grabber":true,"bodyMobile":true,"vw":390}
+PASS  T9 sheet z=11000（盖过手机层页面壳）  — 11000
+PASS  O3 冻结黑名单落点：「全天」档隐藏（presetsFor(freeze)）  — 深夜 23–08 / 白天 09–18 / 午后 14–18
+PASS  T12 手机层零 pageerror / console.error
+PASS  T11 reduced-motion ⇒ 面板动画退化（animation:none）  — [{"cs":"tw-pop-in","cls":"tw-panel popover in"},{"anim":"none","btnTrans":"0s"}]
+
+ALL PASS

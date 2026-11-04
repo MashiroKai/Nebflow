@@ -19,6 +19,10 @@ import { fetchProviderModels } from '../providerModels.js';
 import { modelTestButtonHTML, testResultsBlockHTML, bindModelTestButtons } from './modelTestButton.js';
 // 弹窗退场批（作者令 2026-10-31②）：手机层 provider 编辑窗铺满屏 + 左上返回（= 取消腿，桌面零变化）。
 import { mobileSheetBack } from '../mobile/popSheet.js';
+// 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16/22:20）：
+// provider 级与 per-model 级 unavailableWindows 的编辑面都收编为「段列表 + 原子段字段」，
+// 交互单源 = ../timeWheel.js（禁第二份实现）。
+import { rangeTriggerHTML, attachTimeTriggers } from '../timeWheel.js';
 
 // ── Provider protocol face: display ←→ stored value (protoface-ui batch,
 // 2026-09-22) ────────────────────────────────────────────────────────────────
@@ -326,10 +330,10 @@ function showProviderModal(existingName, existingData, onSave) {
   const initialModels = p.models.length > 0 ? p.models.map(m => ({
     ...m,
   })) : [{id: '', contextWindow: 1000000}];
-  // 模型不可用时段（model-schedule-unavailable 批 2026-10-29）：provider 级窗口
-  // 序列化成「14:00-18:00, 23:00-07:00」文本框形态（days 属手编面，回读仅展示
-  // from-to，保存会丢 days——文本框形状装不下，属显式降级并注记于设计件 §5）。
-  const uwText = (p.unavailableWindows || []).map(w => `${w.from}-${w.to}`).join(', ');
+  // 模型不可用时段（model-schedule-unavailable 批 2026-10-29；滚轮批 2026-11-03 收编）：
+  // 文本框逗号串 → 段列表（每段一颗原子段字段），days 由面板的星期多选面编辑，
+  // 保存形状仍是后端的 `{from,to,days?}`（wire 契约零改）。
+  const uwList = Array.isArray(p.unavailableWindows) ? p.unavailableWindows : [];
   // 明文直显（作者令 2026-10-27）：编辑既有 provider 时，config 读面上的
   // "***" 用回读真值替换（revealProviderApiKeys 已在设置页打开时预取、卡点
   // 点击时再兜一次）；回读未落地/失败 ⇒ '' = 既有空态（占位符提示留为 ***
@@ -347,7 +351,7 @@ function showProviderModal(existingName, existingData, onSave) {
         { value: 'openai', label: 'chat/completions' },
       ]},
       {key: 'models', label: t('provider.models'), type: 'models', value: initialModels},
-      {key: 'unavailableWindows', label: t('provider.unavailableWindows'), type: 'text', value: uwText, placeholder: t('provider.unavailableWindowsPlaceholder')},
+      {key: 'unavailableWindows', label: t('provider.unavailableWindows'), type: 'windows', value: uwList},
     ],
     onConfirm(values) {
       const name = values.name.trim();
@@ -385,49 +389,39 @@ function showProviderModal(existingName, existingData, onSave) {
         // validator's output value (the raw string never reaches the payload).
         // The B5 persistence key rides along unchanged — dropping it here would
         // silently wipe the engine-side clamp bound on every save.
-        /** @type {{id:string, contextWindow:number, modelMaxContext?:number}} */
+        /** @type {{id:string, contextWindow:number, modelMaxContext?:number, unavailableWindows?:{from:string,to:string,days?:number[]}[]}} */
         const checked = { id: m.id, contextWindow: res.value };
         if (Number.isFinite(m.modelMaxContext) && m.modelMaxContext > 0) checked.modelMaxContext = m.modelMaxContext;
+        if (Array.isArray(m.unavailableWindows) && m.unavailableWindows.length) checked.unavailableWindows = m.unavailableWindows;
         checkedModels.push(checked);
       }
       // Vision is never written from this form (B1 裁定 2026-08-25): the
       // edit-modal checkbox snapshot polluted nebflow.json ModelConfig.vision
       // (inline outranks models.json runtime annotations). An explicit inline
       // vision set by hand rides through untouched; new models omit the key.
-      // 模型不可用时段（model-schedule-unavailable 批）：模型行的 provider 级
-      // 之外的 per-model unavailableWindows 按 id 原样携带——models 数组在保存
-      // 时整体替换，不带即静默抹掉手编规则（深合并对数组是整体覆盖）。
+      // per-model 不可用时段（model-schedule-unavailable 批，滚轮批 2026-11-03 收编）：
+      // 现在行内有编辑面 ⇒ DOM 即真相（checked.unavailableWindows 已由行内段列表
+      // 收集）；键缺席 = 该模型不设限制（models 数组整体替换，缺席即删净）。
+      // vision 仍按 id 从 p.models 回填（无编辑面，手编值保真）。
       const modelsOut = checkedModels.map(m => {
         const prev = (p.models || []).find(x => x.id === m.id);
-        const withVision = prev && prev.vision !== undefined ? { ...m, vision: prev.vision } : m;
-        if (prev && Array.isArray(prev.unavailableWindows) && prev.unavailableWindows.length) {
-          return { ...withVision, unavailableWindows: prev.unavailableWindows };
-        }
-        return withVision;
+        return prev && prev.vision !== undefined ? { ...m, vision: prev.vision } : m;
       });
-      // provider 级不可用时段解析 + 校验（同 validateContextWindow 的拒存先例）：
-      // 逗号/空白分隔的 HH:mm-HH:mm；非法 → toast + abort（不落任何东西）；
-      // 清空 → 显式 null（深合并删键）；带 days 的手编规则在文本框回读会丢
-      // days（见 uwText 注记）——只在字段被改动时才覆盖，未动过的原始值原样
-      // 回写以保全 days。
-      const rawUw = (values.unavailableWindows || '').trim();
-      /** @type {Array<{from: string, to: string}>|null} */
-      let unavailableWindows = null;
-      if (rawUw) {
-        unavailableWindows = [];
-        for (const part of rawUw.split(/[,，;；\s]+/).filter(Boolean)) {
-          const m = /^([01]\d|2[0-3]):([0-5]\d)-([01]\d|2[0-3]):([0-5]\d)$/.exec(part);
-          if (!m) {
-            window.__showToast?.(t('provider.unavailableWindowsInvalid', { value: part }), 'error');
-            return;
-          }
-          unavailableWindows.push({ from: `${m[1]}:${m[2]}`, to: `${m[3]}:${m[4]}` });
+      // provider 级不可用时段：DOM 段列表即真相（时间滚轮选择器批 2026-11-03）。
+      // 旧的「逗号分隔 HH:mm-HH:mm 文本框 + 正则解析」腿整体退役——它的两个
+      // 结构性缺陷随之消失：①编辑永不下传（div 无 .value，values 恒 undefined
+      // 走「未改动」分支）；②手工输入回读会丢 days。现在 from/to/days 都在
+      // 触发钮 dataset 上，空列表 = 显式 null（深合并删键）。
+      const uwIn = Array.isArray(values.unavailableWindows) ? values.unavailableWindows : [];
+      // 起止相等是非法窗口（backend config.scala:9-35）；面板已禁用确认钮，
+      // 此处兜一层拒存（同 validateContextWindow 的先例）。
+      for (const w of uwIn) {
+        if (!w.from || !w.to || w.from === w.to) {
+          window.__showToast?.(t('provider.unavailableWindowsInvalid', { value: `${w.from}-${w.to}` }), 'error');
+          return;
         }
-        if (unavailableWindows.length === 0) unavailableWindows = null;
       }
-      const uwOut = rawUw
-        ? unavailableWindows
-        : (Array.isArray(p.unavailableWindows) && p.unavailableWindows.length ? p.unavailableWindows : null);
+      const uwOut = uwIn.length ? uwIn : null;
       onSave(name, {
         baseUrl,
         apiKey,
@@ -482,6 +476,52 @@ function wireProtocolHelper() {
 }
 
 // --- Generic modal ---
+
+/** 一段「不可用时段」行（原子段字段 + 按星期徽标 + 删除）。
+ *  值域 = 触发钮 dataset（data-start / data-end / data-days），wire 形状仍 {from,to,days?}。
+ *  @param {{from?:string, to?:string, days?:number[]}} w */
+function windowRowHTML(w) {
+  const days = Array.isArray(w.days) ? w.days.filter((d) => d >= 1 && d <= 7) : [];
+  const hasDays = days.length > 0 && days.length < 7;
+  return `
+        <div class="tw-row" data-window-row>
+          ${rangeTriggerHTML({
+            start: w.from || '14:00',
+            end: w.to || '18:00',
+            label: t('provider.unavailableWindows'),
+            presets: 'standard',
+            daysAllowed: true,
+            days: hasDays ? days : null,
+          })}
+          <span class="tw-row-note" data-window-days${hasDays ? '' : ' hidden'}>${hasDays ? t('provider.unavailableWindowsDays') + ' · ' + days.join(',') : ''}</span>
+          <button type="button" class="tw-del" data-window-remove title="${t('settings.removeSegment')}" aria-label="${t('settings.removeSegment')}">×</button>
+        </div>`;
+}
+
+/** @param {{from?:string,to?:string,days?:number[]}[]} list */
+function windowsRowsHTML(list) {
+  const rows = (list || []).map((w) => windowRowHTML(w)).join('').trim();
+  return rows || `<div class="tw-empty">${t('provider.unavailableWindowsEmpty')}</div>`;
+}
+
+/** 从弹窗当前 DOM 收集段列表（唯一读面，正则解析已退役）。
+ *  @param {HTMLElement} host */
+function collectWindows(host) {
+  const out = [];
+  host.querySelectorAll('[data-window-row] [data-tw-range]').forEach((node) => {
+    const btn = /** @type {HTMLElement} */ (node);
+    /** @type {{from:string,to:string,days?:number[]}} */
+    const w = { from: btn.dataset.start || '', to: btn.dataset.end || '' };
+    const raw = btn.dataset.days;
+    if (raw) {
+      const days = String(raw).split(',').map(Number).filter((d) => d >= 1 && d <= 7).sort((a, b) => a - b);
+      if (days.length && days.length < 7) w.days = days;
+    }
+    out.push(w);
+  });
+  return out;
+}
+
 function showModal({title, fields, onConfirm}) {
   // Remove existing modal
   document.getElementById('cfg-modal')?.remove();
@@ -506,6 +546,10 @@ function showModal({title, fields, onConfirm}) {
             f.type === 'models' ? `<div class="cfg-models-container" data-field="${f.key}">
               ${f.value.map((m, i) => renderModelRow(m, i)).join('')}
               <button class="cfg-model-add" type="button">${t('model.add')}</button>
+            </div>` :
+            f.type === 'windows' ? `<div class="tw-windows" data-field="${f.key}" data-windows>
+              ${windowsRowsHTML(f.value)}
+              <button class="tw-add-row" type="button" data-window-add>${t('provider.unavailableWindowsAdd')}</button>
             </div>` :
             f.password ? `<div class="cfg-password-wrap"><input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" autocomplete="off" ${f.disabled ? 'disabled' : ''}><button class="cfg-eye-btn" type="button" tabindex="-1" aria-label="Toggle visibility">${eyeOffSvg}</button></div>` :
             f.type === 'number' ? `<input class="cfg-input" type="number" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.min != null ? `min="${f.min}"` : ''} ${f.disabled ? 'disabled' : ''}>` :
@@ -563,6 +607,9 @@ function showModal({title, fields, onConfirm}) {
       row.innerHTML = renderModelRowContent();
       container.insertBefore(row, btn);
       row.querySelector('.cfg-model-remove').addEventListener('click', () => row.remove());
+      // 新行的 per-model 段列表同样接同款滚轮（与既有行零差异）。
+      const newHost = /** @type {HTMLElement|null} */ (row.querySelector('[data-windows]'));
+      if (newHost) bindWindows(newHost);
       (/** @type {HTMLElement} */ (row.querySelector('.cfg-model-id'))).focus();
     });
   });
@@ -582,15 +629,63 @@ function showModal({title, fields, onConfirm}) {
     });
   });
 
+  // ── 不可用时段组（时间滚轮选择器批 2026-11-03）：段行 + 加行/删行 + 滚轮面板。
+  // 交互单源 = ../timeWheel.js（这里只做行级增删与徽标刷新，禁第二份面板）。
+  /** @param {HTMLElement} host */
+  const bindWindows = (host) => {
+    // 加行：追加一段默认 14:00–18:00，空态占位随之摘除。
+    host.querySelector('[data-window-add]')?.addEventListener('click', () => {
+      host.querySelector('.tw-empty')?.remove();
+      host.querySelector('[data-window-add]')?.insertAdjacentHTML('beforebegin', windowRowHTML({ from: '14:00', to: '18:00' }));
+      const rows = host.querySelectorAll('[data-window-row]');
+      const last = /** @type {HTMLElement|undefined} */ (rows[rows.length - 1]);
+      /** @type {HTMLElement|null} */ (last?.querySelector('[data-tw-range]'))?.focus();
+    });
+    // 删行：删空回到空态占位（保存时 collectWindows 得空数组 = 清空语义）。
+    host.addEventListener('click', (ev) => {
+      const btn = ev.target instanceof Element ? ev.target.closest('[data-window-remove]') : null;
+      if (!btn) return;
+      ev.preventDefault();
+      btn.closest('[data-window-row]')?.remove();
+      if (!host.querySelector('[data-window-row]')) {
+        host.insertAdjacentHTML('afterbegin', `<div class="tw-empty">${t('provider.unavailableWindowsEmpty')}</div>`);
+      }
+    });
+    // 滚轮确认后刷新「按星期」徽标（星期多选与时段同一面板，O1 裁定）。
+    attachTimeTriggers(host, {
+      onRangeChange: (btn) => {
+        const row = btn.closest('[data-window-row]');
+        const note = row && /** @type {HTMLElement|null} */ (row.querySelector('[data-window-days]'));
+        if (!note) return;
+        const raw = btn.dataset.days || '';
+        const days = raw ? raw.split(',').filter(Boolean) : [];
+        if (days.length) {
+          note.textContent = `${t('provider.unavailableWindowsDays')} · ${days.join(',')}`;
+          note.hidden = false;
+        } else {
+          note.textContent = '';
+          note.hidden = true;
+        }
+      },
+    });
+  };
+  // provider 级 + 每个 per-model 行的段列表都接同一份绑定（同款交互）。
+  overlay.querySelectorAll('[data-field="unavailableWindows"], [data-model-windows]').forEach(bindWindows);
+
   const close = () => overlay.remove();
   document.getElementById('cfg-modal-cancel').addEventListener('click', close);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   document.getElementById('cfg-modal-save').addEventListener('click', () => {
     const values = {};
-    overlay.querySelectorAll('[data-field]:not([data-field="models"])').forEach(el => {
+    // 段列表组（models / unavailableWindows）以各自专用读面收集，不走 .value。
+    overlay.querySelectorAll('[data-field]:not([data-field="models"]):not([data-field="unavailableWindows"])').forEach(el => {
       const field = /** @type {HTMLElement & {value: string}} */ (el);
       values[field.dataset.field] = field.value;
     });
+    // 不可用时段：DOM 是唯一真相（时间滚轮选择器批 2026-11-03）——旧的逗号
+    // 正则解析腿已退役，空列表 = 显式清空（null）。
+    const uwHost = /** @type {HTMLElement|null} */ (overlay.querySelector('[data-field="unavailableWindows"]'));
+    if (uwHost) values.unavailableWindows = collectWindows(uwHost);
     // Collect models
     const modelsContainer = overlay.querySelector('[data-field="models"]');
     if (modelsContainer) {
@@ -605,7 +700,7 @@ function showModal({title, fields, onConfirm}) {
         // showProviderModal.onConfirm check point against the provider-reported
         // truth (validateContextWindow) and never rides into the saved payload.
         const ctxEl = /** @type {HTMLInputElement|null} */ (row.querySelector('.cfg-model-ctx'));
-        /** @type {{id:string, contextWindowRaw:string, modelMaxContext?:number}} */
+        /** @type {{id:string, contextWindowRaw:string, modelMaxContext?:number, unavailableWindows?:{from:string,to:string,days?:number[]}[]}} */
         const entry = { id, contextWindowRaw: ctxEl ? ctxEl.value : '' };
         // B5 persistence contract (llmstallfix batch, merged): the provider-
         // reported truth upper bound is carried on the row as data-model-max
@@ -617,6 +712,10 @@ function showModal({title, fields, onConfirm}) {
         // tighten opportunistically).
         const maxCtx = ctxEl ? parseInt(ctxEl.dataset.modelMax || '', 10) : NaN;
         if (Number.isFinite(maxCtx) && maxCtx > 0) entry.modelMaxContext = maxCtx;
+        // per-model 不可用时段（滚轮批）：行内段列表是唯一真相；空列表 = 该模型
+        // 不设限制（保存时该键缺席，深合并对数组整体覆盖 ⇒ 等价于删净）。
+        const mwHost = /** @type {HTMLElement|null} */ (row.querySelector('[data-model-windows]'));
+        entry.unavailableWindows = mwHost ? collectWindows(mwHost) : [];
         values.models.push(entry);
       });
     }
@@ -640,10 +739,19 @@ function renderModelRowContent(m) {
   // output cap is an internal engine constant, not user config.
   // 连接性测试钮（fourfix 批 ②件）：行尾一枚——data-test-provider 是渲染时已知
   // 名（add 弹窗为空串），绑定面在点击时读表单 name 字段现值（getProvider）。
+  // per-model 不可用时段（时间滚轮选择器批 2026-11-03，作者令 22:20「编辑面也
+  // 采用同款的滚轮」）：弹窗里每行模型下方一段同款段列表——provider 级与
+  // per-model 级共用同一组件与同一 wire 形状 {from,to,days?}，禁止两套交互。
+  // 行布局：`.cfg-model-row` 在 timeWheel.css 里加 flex-wrap，本块 flex-basis:100%
+  // 独占整行（不动 sidebar.css 里既有的行内 flex 规则）。
   return `${idField}
 <input class="cfg-input cfg-model-ctx" type="number" value="${ctx}"${maxAttr} placeholder="${t('model.contextPlaceholder')}">
 ${modelTestButtonHTML('', id)}
-<button class="cfg-model-remove" type="button" title="${t('provider.remove')}">&times;</button>`;
+<button class="cfg-model-remove" type="button" title="${t('provider.remove')}">&times;</button>
+<div class="tw-windows cfg-model-windows" data-model-windows data-windows>
+  ${windowsRowsHTML(m && Array.isArray(m.unavailableWindows) ? m.unavailableWindows : [])}
+  <button class="tw-add-row" type="button" data-window-add>${t('provider.unavailableWindowsAdd')}</button>
+</div>`;
 }
 
 function renderModelRow(m, index) {
