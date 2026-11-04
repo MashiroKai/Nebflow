@@ -34,7 +34,7 @@
   max-height: 85vh;
   padding: 0;
   overflow: hidden;
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -104,7 +104,7 @@
   flex-direction: column;
   gap: 10px;
   padding: 14px 16px;
-  border-radius: 14px;
+  border-radius: var(--ds-radius-card-md);
   border: 1px solid var(--glass-border);
   background: var(--glass-etched-bg);
   min-width: 0;
@@ -192,7 +192,7 @@
   box-sizing: border-box;
   padding: 6px 8px;
   font: 400 12px -apple-system, BlinkMacSystemFont, sans-serif;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-border);
   background: var(--glass-etched-bg);
   color: var(--color-frame-input-text, var(--color-frame-text));
@@ -227,7 +227,7 @@
   gap: 4px;
   padding: 8px 10px;
   border: 1px solid var(--glass-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--glass-etched-bg);
   min-width: 0;
 }
@@ -318,7 +318,7 @@
   display: block;
   width: 200px;
   height: 200px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 6px 18px rgba(0, 0, 0, 0.1);
 }
 /* Vendor-missing fallback: the verification URL itself, kept breakable. */
@@ -395,7 +395,7 @@
   color: inherit;
   text-align: left;
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
 }
 .social-item-row:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.4);

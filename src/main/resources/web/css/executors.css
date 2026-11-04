@@ -35,7 +35,7 @@
   gap: 12px;
   padding: 12px 14px;
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));
-  border-radius: 10px;
+  border-radius: var(--ds-radius-card-sm);
   background: var(--panel-bg, transparent);
   transition: border-color 0.15s ease, background 0.15s ease;
 }
@@ -55,7 +55,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: rgba(128, 128, 128, 0.08);
   color: var(--text-primary, #ddd);
 }
@@ -136,7 +136,7 @@
   color: var(--text-primary, #ddd);
   font-size: var(--ds-fs-hint);
   padding: 5px 12px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   cursor: pointer;
 }
 

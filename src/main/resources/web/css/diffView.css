@@ -22,7 +22,7 @@
 /* One file entry (details/summary = click to expand the diff) */
 .nf-fc {
   border: 1px solid var(--color-border, rgba(128, 128, 128, 0.25));
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   overflow: hidden;
   background: var(--color-bg, transparent);
 }
@@ -69,7 +69,7 @@
 .nf-fc-badge {
   font-size: 10px;
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   white-space: nowrap;
   border: 1px solid transparent;
 }
@@ -91,7 +91,7 @@
   font-size: 10px;
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
   border: 1px solid var(--color-border, rgba(128, 128, 128, 0.3));
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   padding: 0 5px;
   white-space: nowrap;
 }
@@ -214,7 +214,7 @@
   max-width: 100%;
   min-width: 0;
   padding: 4px 12px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   border: 1px solid var(--glass-border);
   background:
     linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
@@ -297,7 +297,7 @@
 .nf-rcpt-top:focus-visible {
   outline: 2px solid var(--btn-focus-ring);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
 }
 /* 单行卡面行：弹性一行不换行；整条 hover = 可点击反馈——sapphire 微底 +
    inset hairline 描边微变（克制档，给块级 hover 留层次；不糊满整条）。负边距补偿
@@ -309,7 +309,7 @@
   min-width: 0;
   margin: -2px -6px;
   padding: 2px 6px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
   transition: background-color 0.15s ease, box-shadow 0.15s ease;
 }
@@ -338,7 +338,7 @@
   line-height: 1.3;
   padding: 1px 9px;
   border: 1px solid var(--color-border);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 .nf-rcpt-pill:hover {
@@ -436,7 +436,7 @@
      （B1 ≤24px 判红实证 25.05px）。 */
   line-height: 1.3;
   color: var(--color-text-muted);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   white-space: nowrap;
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
@@ -466,7 +466,7 @@ span.nf-rcpt-note { cursor: default; }
 .nf-rcpt-note:focus-visible {
   outline: 1px solid var(--color-border);
   outline-offset: 2px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
 }
 .nf-rcpt-note[aria-pressed='true'] .nf-rcpt-note-add,
 .nf-rcpt-note[aria-pressed='true'] .nf-rcpt-note-del {

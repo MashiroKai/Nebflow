@@ -56,7 +56,7 @@
   color: var(--color-frame-text-bright);
   padding: 10px 16px;
   margin: 16px 0 0 0;
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   font-size: 14px;
   font-weight: 500;
   display: flex;
@@ -123,7 +123,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   flex-shrink: 0;
   transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
@@ -154,7 +154,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   flex-shrink: 0;
   transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
@@ -189,7 +189,7 @@
   gap: 5px;
   background: rgba(7,193,96,0.15);
   /* Capsule + thin ring — the "oval ring" around the count */
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   border: 1px solid rgba(7,193,96,0.35);
   padding: 2px 9px;
   font-size: var(--ds-fs-hint);
@@ -223,7 +223,7 @@
      dropped (this is why the capsule looked "gone"). */
   background: rgb(var(--accent-agent-light) / 0.15);
   /* Capsule + thin ring — the "oval ring" around the count */
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   border: 1px solid rgb(var(--accent-agent-light) / 0.35);
   padding: 2px 9px;
   font-size: var(--ds-fs-hint);
@@ -974,7 +974,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .chat-sk-bubble {
   height: 38px;
   max-width: 80%;
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   border-bottom-left-radius: 4px;
   background-color: var(--glass-bub-ai-bg);
   background-image: linear-gradient(90deg,
@@ -1024,7 +1024,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
                       压成 0.6」的特异度陷阱来源。 */
   color: var(--color-text);
   padding: 2px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   transition: opacity 0.15s;
 }
 .msg-copy:hover { opacity: 0.6; }
@@ -1154,7 +1154,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: inline-block;
   margin-left: 6px;
   padding: 0 5px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   font-size: 9px;
   line-height: 14px;
   letter-spacing: 0.4px;
@@ -1178,14 +1178,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: #888;
   font-size: var(--ds-fs-meta);
   padding: 3px 8px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   max-width: 160px;
   margin-top: 2px;
 }
 .bubble.user.att-bubble .att-img {
   max-width: 180px;
   max-height: 180px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   display: block;
 }
 .bubble.user.att-bubble .att-file-tag {
@@ -1213,7 +1213,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.user .att-ref-card {
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 6px 10px;
   margin-top: 2px;
   color: var(--color-text);
@@ -1270,7 +1270,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex; align-items: center; gap: 11px;
   background: var(--color-surface);
   border: 1px solid rgba(0, 0, 0, 0.05);
-  border-radius: 12px; padding: 11px 13px;
+  border-radius: var(--ds-radius-xl); padding: 11px 13px;
   width: 300px; max-width: 100%;
   color: var(--color-text); font-size: var(--ds-fs-hint); cursor: pointer;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
@@ -1342,7 +1342,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-bottom-left-radius: 4px;
   box-shadow: var(--glass-bub-ai-shadow);
 }
-.bubble.ai img, .bubble.injected img, .ask-bub.ai img { max-width: 220px; max-height: 220px; border-radius: 8px; display: block; margin-top: 4px; }
+.bubble.ai img, .bubble.injected img, .ask-bub.ai img { max-width: 220px; max-height: 220px; border-radius: var(--ds-radius-input); display: block; margin-top: 4px; }
 /* 件① 失败占位（2026-09-15 作者现场报）：思考流里的图片节点跨帧存活后，加载失败的
    图不再每帧重建——这里给它的终态一个**稳定**的占位盒（定高 + 虚线边 + alt 文本），
    塌缩-撑开循环随之终止（不重试、不隐藏功能）。最高特异性：0,3,1 > 上面 0,2,1。 */
@@ -1351,7 +1351,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   box-sizing: border-box;
   padding: 12px 10px;
   border: 1px dashed rgba(128, 128, 128, 0.45);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: transparent;
   color: var(--color-text-muted);
   font-size: var(--ds-fs-hint);
@@ -1359,7 +1359,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.ai .file-tag {
   background: rgba(0,0,0,0.06);
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   font-size: var(--ds-fs-hint);
   margin-top: 4px;
   display: inline-block;
@@ -1380,7 +1380,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.ai pre, .bubble.injected pre, .ask-bub.ai pre {
   background: #f5f5f5;
   padding: 8px 12px 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   overflow-x: auto;
   font-size: var(--ds-fs-hint);
   margin: 6px 0;
@@ -1392,7 +1392,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .bubble.ai pre::-webkit-scrollbar-thumb, .bubble.injected pre::-webkit-scrollbar-thumb, .ask-bub.ai pre::-webkit-scrollbar-thumb {
   background: rgba(0,0,0,0.15);
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
 }
 .bubble.ai pre::-webkit-scrollbar-thumb:hover, .bubble.injected pre::-webkit-scrollbar-thumb:hover, .ask-bub.ai pre::-webkit-scrollbar-thumb:hover {
   background: rgba(0,0,0,0.25);
@@ -1417,7 +1417,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   gap: 4px;
   padding: 3px 8px;
   border: 1px solid rgba(0,0,0,0.12);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: rgba(255,255,255,0.8);
   color: #666;
   font-size: var(--ds-fs-meta);
@@ -1502,7 +1502,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   margin-top: 4px;
   padding: 2px 8px 2px 6px;
   background: var(--color-surface);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   box-shadow: 0px 0px 0px 1px rgba(0,0,0,0.04), 0px 1px 3px rgba(0,0,0,0.03);
   user-select: none;
   width: fit-content;
@@ -1603,7 +1603,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   overflow-y: auto;
   overflow-x: auto;
   background: rgba(0,0,0,0.03);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 10px 12px;
   border: 1px solid var(--color-frame-border);
 }
@@ -1632,7 +1632,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   line-height: 1.5;
 }
 .tool-stream-body::-webkit-scrollbar-track { background: transparent; }
-.tool-stream-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 2px; }
+.tool-stream-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: var(--ds-radius-thin); }
 .tool-stream-body::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.2); }
 
 /* ui-status-redesign（S8 / 盘点 #30）：粉底红字卡 → 中性 surface 卡＋行首红
@@ -1642,7 +1642,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--status-word);
   border: 1px solid var(--color-border);
   border-left: 2px solid var(--status-error-icon);
-  border-radius: 10px;
+  border-radius: var(--ds-radius-card-sm);
   padding: 8px 14px;
   font-size: var(--ds-fs-body);
   max-width: 85%;
@@ -1654,7 +1654,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 
 /* ---------- Notice Cards (system / stage notifications) ---------- */
 .notice-card {
-  border-radius: 10px;
+  border-radius: var(--ds-radius-card-sm);
   padding: 8px 14px;
   font-size: var(--ds-fs-body);
   max-width: 85%;
@@ -1673,7 +1673,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   padding: 7px 14px;
   font-size: var(--ds-fs-hint);
   background: var(--color-surface);
@@ -1740,13 +1740,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   .tool-stream-body { background: rgba(255,255,255,0.04); }
   .tool-stream-body pre.tool-body-pre { color: #b0b3ba; }
   .tool-stream-body pre.tool-body-pre .cursor { background: #7b7e88; }
-  .tool-stream-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
+  .tool-stream-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: var(--ds-radius-thin); }
 
   /* 思考窗硬上限暗档：同一窗口长度（max-height 是长度非颜色，双主题同值），
      仅滚动条墨色随主题翻转（与 .tool-card .body.open 暗档同值）。 */
   .thinking-content { scrollbar-color: rgba(255,255,255,0.15) transparent; }
   .thinking-content::-webkit-scrollbar-track { background: transparent; }
-  .thinking-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+  .thinking-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: var(--ds-radius-thin); }
 
   .history-loader { color: #656870; }
   .history-loader .history-spinner { border-color: #282b33; border-top-color: #7b7e88; }
@@ -1836,7 +1836,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   margin-top: 6px;
   padding: 12px 16px;
   background: linear-gradient(180deg, var(--ask-card-top), var(--ask-card-bot));
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   border: 1px solid var(--ask-card-bd);
   box-shadow: var(--ask-card-shadow), var(--ask-card-highlight);
 }
@@ -1857,7 +1857,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .option-btn {
   padding: 5px 12px;
   border: 1px solid rgba(145, 170, 210, 0.25);
-  border-radius: 14px;
+  border-radius: var(--ds-radius-card-md);
   background: rgba(145, 170, 210, 0.04);
   font-size: var(--ds-fs-body);
   cursor: pointer;
@@ -1906,7 +1906,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   align-items: flex-start;
   gap: 8px;
   text-align: left;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   padding: 7px 12px;
   width: 100%;
   box-sizing: border-box;
@@ -1921,7 +1921,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   height: 15px;
   margin-top: 2px;
   border: 1.5px solid rgba(145, 170, 210, 0.45);
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   position: relative;
   background: transparent;
   transition: background var(--dur-2) ease, border-color var(--dur-2) ease;
@@ -1947,7 +1947,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   margin-top: 8px;
   padding: 8px 12px;
   border: 1px solid var(--ask-line-strong);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-body); /* 13.5px 半档判偏整改（设计语言批 2026-10-21）：正文/输入同档 13px */
   outline: none;
   box-sizing: border-box;
@@ -1987,7 +1987,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   min-width: 0;
   padding: 8px 12px;
   border: 1px solid var(--ask-line-strong);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-body);
   font-family: inherit;
   line-height: 1.55;
@@ -2011,7 +2011,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   justify-content: center;
   background: none;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
   color: var(--color-text-muted);
   line-height: 0;
@@ -2040,7 +2040,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex: 0 0 auto;
   padding: 8px 6px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: none;
   color: var(--color-text-dim);
   font-size: var(--ds-fs-body);
@@ -2057,7 +2057,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex: 0 0 auto;
   padding: 8px 16px;
   border: none;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   background: linear-gradient(180deg, var(--ask-green), var(--ask-green-deep));
   color: #fff;
   font-size: var(--ds-fs-row);
@@ -2170,7 +2170,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex: 0 0 auto;
   width: 56px;
   height: 40px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   overflow: hidden;
   display: flex;
   background: var(--color-surface);
@@ -2395,7 +2395,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   margin: 0 12px;
   font-size: 12.5px;
   padding: 4px 12px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
 }
 .ob-skip {
   position: absolute;
@@ -2403,7 +2403,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   right: 6px;
   font-size: var(--ds-fs-hint);
   padding: 2px 8px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   transition: background 0.15s, color 0.15s, border-color 0.15s,
               box-shadow 0.15s, opacity 0.15s;
 }
@@ -2474,7 +2474,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: linear-gradient(180deg, var(--ask-green), var(--ask-green-deep));
   color: #fff;
   border: none;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   font-size: var(--ds-fs-row);
   font-weight: 600;
   letter-spacing: 0.3px;
@@ -2515,7 +2515,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 2px 4px;
   color: var(--color-text-dim);
   font-size: var(--ds-fs-body);
@@ -2546,7 +2546,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   padding: 13px 14px;
   background: linear-gradient(180deg, var(--ask-card-top), var(--ask-card-bot));
   border: 1px solid var(--ask-card-bd);
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   box-shadow: var(--ask-card-shadow), var(--ask-card-highlight);
   animation: ob-card-in 200ms ease-out;
 }
@@ -2568,7 +2568,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .opt-row.wide .option-btn {
   text-align: left;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
 }
 .option-text {
   flex: 1;
@@ -2608,7 +2608,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex: 1;
   padding: 8px 12px;
   border: 1px solid var(--ask-line-strong);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-row);
   outline: none;
   box-sizing: border-box;
@@ -2710,7 +2710,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   padding: 10px 14px;
   background: var(--glass-bub-ai-bg);
   border: 1px solid var(--glass-bub-ai-border);
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   border-bottom-left-radius: 4px;
   box-shadow: var(--glass-bub-ai-shadow);
 }
@@ -2802,7 +2802,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    multi 腿的「其他…」带勾选框、保持表格行语义。 */
 .option-opts:not(.multi) .opt-other {
   border: 1px dashed var(--ask-line-strong);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   margin-top: 8px;
   padding: 8px 12px;
   color: var(--color-frame-text);
@@ -2820,7 +2820,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   width: auto;
   padding: 5px 14px;
   border: 1px solid var(--ask-line-strong);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: transparent;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
@@ -2839,7 +2839,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* 「都不是，我自己说」= 虚线自由入口（同 .opt-other 语言） */
 .ask-card .opt-row .option-btn.opt-ghost {
   border: 1px dashed var(--ask-line-strong);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   margin-top: 0;
   padding: 8px 12px;
   color: var(--color-frame-text);
@@ -2911,7 +2911,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   gap: 6px;
   padding: 5px 10px;
   border: 1px solid var(--glass-control-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-body);
   line-height: 1.4;
   background: var(--glass-control-bg);
@@ -2984,7 +2984,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   justify-content: center;
   font-size: 14px;
   padding: 0;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   transition: opacity 0.15s;
 }
 .notif-close:hover {
@@ -3019,7 +3019,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   gap: 8px;
   padding: 5px 10px;
   border: 1px solid var(--glass-control-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-body);
   line-height: 1.4;
   text-align: left;
@@ -3051,7 +3051,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-text-muted);
   padding: 1px 7px;
   background: rgba(128,128,128,0.1);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   max-width: 40%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3080,7 +3080,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   align-items: center;
   gap: 5px;
   background: color-mix(in srgb, var(--color-warning) 15%, transparent);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
   padding: 2px 9px;
   font-size: var(--ds-fs-hint);
@@ -3101,7 +3101,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   align-items: center;
   gap: 5px;
   background: color-mix(in srgb, var(--color-text-muted) 15%, transparent);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   border: 1px solid color-mix(in srgb, var(--color-text-muted) 40%, transparent);
   padding: 2px 9px;
   font-size: var(--ds-fs-hint);
@@ -3111,7 +3111,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 #held-receipts-indicator .pa-dot {
   background: var(--color-text-muted);
-  border-radius: 2px; /* 方点：与问题胶囊的脉冲圆点形差 */
+  border-radius: var(--ds-radius-thin); /* 方点：与问题胶囊的脉冲圆点形差 */
   animation: none;
 }
 #held-receipts-indicator.hidden { display: none; }
@@ -3128,7 +3128,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   0%, 100% { box-shadow: 0 0 0 0 transparent; }
   30% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-warning) 45%, transparent); }
 }
-.row.ai.ask-card-flash { animation: askCardFlash 1.2s ease 2; border-radius: 8px; }
+.row.ai.ask-card-flash { animation: askCardFlash 1.2s ease 2; border-radius: var(--ds-radius-input); }
 @media (prefers-reduced-motion: reduce) {
   .ask-pending-row,
   .ask-pending-next { animation: none; }
@@ -3215,14 +3215,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 /* 滚动条外观沿用 .tool-card .body.open 同档（细、透明轨），亮暗双主题同构。 */
 .thinking-content::-webkit-scrollbar-track { background: transparent; }
-.thinking-content::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 2px; }
+.thinking-content::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: var(--ds-radius-thin); }
 .thinking-content p {
   margin: 0.3em 0;
 }
 .thinking-content pre {
   margin: 0.3em 0;
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   font-size: var(--ds-fs-hint);
 }
 
@@ -3255,7 +3255,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .turn-header:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.6);
   outline-offset: 1px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
 }
 .turn-header .nf-chevron { flex-shrink: 0; transition: transform 0.2s ease; }
 /* expanded affordance: the chevron turns to point down (2026-10-03 demo) */
@@ -3337,7 +3337,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: #b8941e;
   padding: 6px 14px;
   font-size: var(--ds-fs-hint);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   margin-bottom: 10px;
   z-index: 20;
   box-shadow: 0 1px 4px rgba(0,0,0,0.1);
@@ -3503,7 +3503,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   width: 100%;
 }
 .html-card-wrap {
-  border-radius: 10px;
+  border-radius: var(--ds-radius-card-sm);
   overflow: hidden;
   border: 1px solid var(--color-border);
   background: var(--color-bg);
@@ -3565,7 +3565,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   gap: 6px;
   padding: 6px 10px;
   margin-bottom: 8px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   font-size: var(--ds-fs-hint);
   font-weight: 400;
   line-height: 1.4;
@@ -3624,7 +3624,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: block;
   margin-top: 4px;
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: var(--glass-etched-bg);
   border: 1px solid var(--sapphire-edge);
   font-family: ui-monospace, SFMono-Regular, monospace;
@@ -3650,7 +3650,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .error-escalation-card {
   margin: 10px 14px 4px 14px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-card-sm);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
   border-left: 2px solid rgb(var(--amber) / 0.55);
@@ -3702,7 +3702,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .error-escalation-actions button {
   pointer-events: auto;
   font: 500 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 4px 10px;
   cursor: pointer;
   white-space: nowrap;
@@ -3752,7 +3752,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   padding: 14px 16px;
   margin-bottom: 8px;
   border: 1px solid rgb(var(--sapphire) / 0.35);
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -3828,7 +3828,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   line-height: 1.4;
   padding: 6px 10px;
   background: var(--glass-etched-bg);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-border);
 }
 .wsp-crumb {
@@ -3843,7 +3843,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   max-height: 360px;
   overflow-y: auto;
   border: 1px solid var(--glass-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--glass-etched-bg);
 }
 /* List row — hairline separators, no rounded hover pills (baseline row shape) */
@@ -3883,7 +3883,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: var(--glass-etched-bg);
   color: var(--color-frame-input-text);
   border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 4px 10px;
   font-size: var(--ds-fs-hint);
   font-family: inherit;
@@ -3899,7 +3899,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .wsp-mkdir-ok {
   font-size: var(--ds-fs-hint);
   padding: 4px 12px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   cursor: pointer;
   font-family: inherit;
   border: 1px solid rgba(91, 127, 191, 0.35);
@@ -3941,7 +3941,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .wsp-cancel, .wsp-pick, .wsp-mkdir {
   font-size: var(--ds-fs-hint);
   padding: 6px 16px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   cursor: pointer;
   font-family: inherit;
   border: 1px solid var(--glass-border);
@@ -4001,7 +4001,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   padding: 6px 10px;
   font-size: var(--ds-fs-hint);
   font-family: inherit;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-border);
   background: var(--glass-etched-bg);
   color: var(--color-frame-text);
@@ -4015,7 +4015,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .wsp-goto-btn {
   font-size: var(--ds-fs-btn);
   padding: 6px 14px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   cursor: pointer;
   font-family: inherit;
   border: 1px solid var(--glass-border);
@@ -4037,7 +4037,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-frame-text-muted);
   margin-bottom: 8px;
   padding: 5px 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-border);
   line-height: 1.4;
@@ -4057,7 +4057,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--status-word);
   margin-bottom: 8px;
   padding: 5px 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--status-error-icon) 32%, transparent);
   border-left: 2px solid var(--status-error-icon);
@@ -4130,7 +4130,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
     0 2px 8px rgba(0, 0, 0, 0.06),
@@ -4588,7 +4588,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   box-sizing: border-box;
   padding: 12px 10px;
   border: 1px dashed rgba(128, 128, 128, 0.45);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: transparent;
   color: var(--color-text-muted);
   font-size: var(--ds-fs-hint);
@@ -4617,7 +4617,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .dur-chip {
   position: absolute; right: 8px; bottom: 8px;
   background: rgba(0, 0, 0, 0.55); color: #fff;
-  font-size: var(--ds-fs-meta); padding: 2px 7px; border-radius: 4px;
+  font-size: var(--ds-fs-meta); padding: 2px 7px; border-radius: var(--ds-radius-badge);
   pointer-events: none; font-variant-numeric: tabular-nums;
 }
 .vd-progress {
@@ -4642,7 +4642,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    the old hard 200×256 crop box. */
 .pop-media-flat {
   width: 220px; aspect-ratio: 4 / 3;
-  border-radius: 14px; overflow: hidden;
+  border-radius: var(--ds-radius-card-md); overflow: hidden;
   box-shadow: 0 5px 16px rgba(0, 0, 0, 0.16); background: #17191f;
   /* 复验批 (2026-10-06 16:47): the whole-card click IS the Canvas open (三修 ②),
      so the flat face carries the same pointer affordance the stack layers
@@ -4656,7 +4656,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex; align-items: center; gap: 11px;
   background: var(--color-surface);
   border: 1px solid rgba(0, 0, 0, 0.05);
-  border-radius: 12px; padding: 11px 13px;
+  border-radius: var(--ds-radius-xl); padding: 11px 13px;
   width: 300px; max-width: 100%; cursor: pointer;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   transition: box-shadow 0.15s, transform 0.12s;
@@ -4713,7 +4713,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .pop-warn {
   font-size: var(--ds-fs-meta); color: var(--color-text-dim);
   background: rgba(128, 128, 128, 0.1);
-  border-radius: 6px; padding: 4px 9px;
+  border-radius: var(--ds-radius-chip); padding: 4px 9px;
   max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
@@ -4750,7 +4750,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   position: absolute; top: 8px; right: 8px; z-index: 6;
   width: 28px; height: 28px;
   display: flex; align-items: center; justify-content: center;
-  border: none; border-radius: 8px;
+  border: none; border-radius: var(--ds-radius-input);
   background: rgba(0, 0, 0, 0.45); color: #fff;
   cursor: pointer;
   opacity: 0;
@@ -4819,7 +4819,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .nf-lightbox-canvas {
   flex-shrink: 0;
   display: flex; align-items: center; gap: 6px;
-  border: none; border-radius: 999px;
+  border: none; border-radius: var(--ds-radius-pill);
   padding: 7px 14px; font-size: var(--ds-fs-hint); font-family: inherit;
   background: rgba(255, 255, 255, 0.14); color: #fff;
   cursor: pointer;
@@ -4832,7 +4832,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   max-width: 100%;
   max-height: calc(90vh - 60px);
   object-fit: contain;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   background: transparent;
 }
 /* The lightbox reuses the face family's terminal-failure mark. */
@@ -4941,7 +4941,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    是 fm-att-component-lib 批既有口径），故本规则只列 out 侧。 */
 .row.user-media .pop-media-flat,
 .fm-msg.out .fm-att-list .pop-media-flat {
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   border-bottom-right-radius: 4px;
   box-shadow: none;
 }
@@ -4967,7 +4967,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    the uifix3 ① mirrored forms — only the paint changes. */
 .row.user-media .pop-stack-view .media-layer,
 .fm-msg.out .fm-att-list .pop-stack-view .media-layer {
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   border-bottom-right-radius: 4px;
   box-shadow: none;
 }
@@ -4991,13 +4991,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   padding: 7px 10px 7px 7px;
   background: var(--color-surface-2, rgba(127, 127, 127, 0.08));
   border: 1px solid var(--glass-etched-border, rgba(91, 127, 191, 0.10));
-  border-radius: 10px;
+  border-radius: var(--ds-radius-card-sm);
   box-shadow: none;
 }
 .row.user-media .file-card .fc-icon,
 .fm-msg.out .fm-att-list .file-card .fc-icon {
   width: 28px; height: 28px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   font-size: 8.5px;
 }
 .row.user-media .fc-name,
@@ -5030,7 +5030,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .search-source-chip {
   border: 1px solid var(--color-border, rgba(128, 128, 128, 0.25));
   background: transparent; color: var(--color-text-muted, #8a8f99);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   padding: 4px 12px; font-size: var(--ds-fs-hint); font-family: inherit;
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
@@ -5058,7 +5058,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   position: relative;
   display: flex; flex-direction: column;
   border: 1px solid var(--color-border, rgba(128, 128, 128, 0.18));
-  border-radius: 10px;
+  border-radius: var(--ds-radius-card-sm);
   background: rgba(128, 128, 128, 0.06);
   overflow: hidden;
   cursor: pointer;
@@ -5082,7 +5082,7 @@ object.search-media-thumb { object-fit: initial; }
 /* Video duration badge (lazy <video preload=metadata> fill). */
 .search-media-dur {
   position: absolute; right: 6px; bottom: 30px;
-  padding: 2px 6px; border-radius: 6px;
+  padding: 2px 6px; border-radius: var(--ds-radius-chip);
   background: rgba(0, 0, 0, 0.65); color: #fff;
   font-size: var(--ds-fs-meta); font-variant-numeric: tabular-nums;
   pointer-events: none;
@@ -5094,7 +5094,7 @@ object.search-media-thumb { object-fit: initial; }
   margin: 10px 0 0 10px;
   min-width: 40px; height: 26px;
   display: inline-flex; align-items: center; justify-content: center;
-  padding: 0 7px; border-radius: 6px;
+  padding: 0 7px; border-radius: var(--ds-radius-chip);
   background: rgba(64, 132, 240, 0.14); color: #7fb0f5;
   font-size: 10px; font-weight: 700; letter-spacing: 0.02em;
 }
@@ -5109,7 +5109,7 @@ object.search-media-thumb { object-fit: initial; }
 /* Source badge + time — the alignment markers (主题三). */
 .search-media-source {
   position: absolute; top: 6px; left: 6px;
-  padding: 2px 7px; border-radius: 999px;
+  padding: 2px 7px; border-radius: var(--ds-radius-pill);
   font-size: 10px;
   background: rgba(0, 0, 0, 0.55); color: #fff;
   pointer-events: none;
@@ -5118,7 +5118,7 @@ object.search-media-thumb { object-fit: initial; }
 .search-media-source.src-agent { background: rgba(9, 105, 218, 0.82); }
 .search-media-time {
   position: absolute; top: 6px; right: 6px;
-  padding: 2px 6px; border-radius: 6px;
+  padding: 2px 6px; border-radius: var(--ds-radius-chip);
   font-size: 10px;
   background: rgba(0, 0, 0, 0.55); color: rgba(255, 255, 255, 0.92);
   pointer-events: none;
@@ -5140,7 +5140,7 @@ object.search-media-thumb { object-fit: initial; }
 .msg-quote-block {
   margin: 0 0 6px;
   padding: 6px 10px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   background: rgba(0, 0, 0, 0.035);
   box-shadow: none;
   font-size: var(--ds-fs-hint);
@@ -5181,7 +5181,7 @@ object.search-media-thumb { object-fit: initial; }
   flex: 0 0 auto;
   width: var(--nf-qicon-size, 16px);
   height: var(--nf-qicon-size, 16px);
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   overflow: hidden;
   display: inline-flex;
   align-items: center;
@@ -5199,7 +5199,7 @@ object.search-media-thumb { object-fit: initial; }
 .nf-qicon.fc-icon {
   width: var(--nf-qicon-size, 16px);
   height: var(--nf-qicon-size, 16px);
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   font-size: 7px;
   font-weight: 800;
   letter-spacing: 0;
@@ -5244,7 +5244,7 @@ object.search-media-thumb { object-fit: initial; }
 .msg-quote-att-media {
   width: 48px;
   height: 48px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   overflow: hidden;
   flex: 0 0 auto;
   background: rgba(0, 0, 0, 0.06);
@@ -5262,7 +5262,7 @@ object.search-media-thumb { object-fit: initial; }
   gap: 6px;
   max-width: 180px;
   padding: 3px 8px 3px 4px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: rgba(0, 0, 0, 0.06);
   font-size: var(--ds-fs-meta);
   line-height: 1.3;
@@ -5274,7 +5274,7 @@ object.search-media-thumb { object-fit: initial; }
   min-width: 20px;
   height: 20px;
   padding: 0 3px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: rgba(0, 0, 0, 0.08);
   display: inline-flex;
   align-items: center;
@@ -5300,7 +5300,7 @@ object.search-media-thumb { object-fit: initial; }
   outline: 2px solid rgb(var(--sapphire) / 0.5);
   outline-offset: 1px;
 }
-.row.quote-target-flash { animation: msgQuoteTargetFlash 1.8s ease; border-radius: 12px; }
+.row.quote-target-flash { animation: msgQuoteTargetFlash 1.8s ease; border-radius: var(--ds-radius-xl); }
 @keyframes msgQuoteTargetFlash {
   0% { background: var(--sapphire-tint-15); }
   100% { background: transparent; }
@@ -5411,7 +5411,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
 .ap-pane .ap-avatar-box:focus-visible {
   outline: 2px solid rgba(91, 127, 191, 0.45);
   outline-offset: 2px;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
 }
 .ap-pane .ap-avatar-img {
   width: 72px;
@@ -5480,7 +5480,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   min-width: 0;
   height: 34px;
   padding: 0 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-border);
   background: var(--glass-etched-bg, rgba(0, 0, 0, 0.025));
   color: var(--color-text);
@@ -5509,7 +5509,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   max-width: 100%;
   padding: 1px 8px;
   margin: 0 1px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border, rgba(91, 127, 191, 0.08));
   background: rgba(0, 0, 0, 0.045);
   color: var(--color-text);
@@ -5546,7 +5546,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   flex-direction: column;
   gap: 8px;
   padding: 12px 14px;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
   font-size: var(--ds-fs-body);
   color: var(--color-text);

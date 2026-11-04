@@ -1051,7 +1051,7 @@ function ensureExplorerSearch() {
   input.className = 'explorer-search-input';
   input.placeholder = t('explorer.searchPlaceholder');
   input.setAttribute('aria-label', t('explorer.searchPlaceholder'));
-  input.setAttribute('style', 'flex:1 1 auto;min-width:0;padding:4px 8px;border-radius:8px;'
+  input.setAttribute('style', 'flex:1 1 auto;min-width:0;padding:4px 8px;border-radius:var(--ds-radius-input);'
     + 'border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);'
     + 'color:inherit;font:12.5px/1.4 inherit;');
   input.addEventListener('input', () => applyTreeFilter(input.value));

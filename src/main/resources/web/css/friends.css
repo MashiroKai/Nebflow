@@ -58,7 +58,7 @@ body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
   align-items: center;
   gap: 10px;
   padding: 7px 10px; /* 桌面档（12:50 批前基准；手机层 9px 见头部覆盖块） */
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   cursor: pointer;
   transition: background 0.15s ease;
 }
@@ -198,7 +198,7 @@ body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
   font-family: inherit;
   font-weight: 500;
   line-height: 1.4;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   border: 1px solid var(--glass-etched-border);
   background: var(--glass-etched-bg);
   color: var(--color-text, #000);
@@ -266,7 +266,7 @@ body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
   min-width: 0;
   padding: 6px 10px;
   font-size: var(--ds-fs-body);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border);
   background: var(--glass-etched-bg);
   color: var(--color-text, #000);
@@ -293,7 +293,7 @@ button.fm-search-btn {
   font-family: inherit;
   font-weight: 500;
   padding: 6px 12px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   color: var(--color-text, #000);
   background: var(--glass-send-bg);
   border: 1px solid var(--glass-send-border);
@@ -336,7 +336,7 @@ button.fm-search-btn:focus-visible {
 /* 结果区（命中 / 未找到 / 加载 / 失败 共用容器卡）：独立块，整宽 */
 .fm-result-card {
   padding: 10px;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
 }
@@ -419,7 +419,7 @@ button.fm-search-btn:focus-visible {
   min-width: 0;
   padding: 5px 10px;
   font-size: var(--ds-fs-hint);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border);
   background: var(--glass-bg);
   color: var(--color-text, #000);
@@ -438,7 +438,7 @@ button.fm-search-btn:focus-visible {
 button.fm-verify-cancel {
   font-family: inherit;
   font-weight: 400;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   color: var(--color-text, #000);
   background: var(--glass-send-bg);
   border: 1px solid var(--glass-send-border);
@@ -483,7 +483,7 @@ button.fm-verify-cancel:focus-visible {
   align-items: center;
   gap: 10px;
   padding: 7px 10px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   cursor: pointer;
   transition: background 0.15s ease;
 }
@@ -539,7 +539,7 @@ button.fm-req-accept {
   font-family: inherit;
   font-weight: 500;
   padding: 4px 12px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   color: var(--color-text, #000);
   background: var(--glass-send-bg-active);
   border: 1px solid var(--glass-send-border);
@@ -567,7 +567,7 @@ button.fm-req-decline {
   font-family: inherit;
   font-weight: 400;
   padding: 4px 12px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   color: var(--color-text, #000);
   background: var(--glass-send-bg);
   border: 1px solid var(--glass-send-border);
@@ -640,7 +640,7 @@ button.fm-req-decline:focus-visible {
   max-width: 92vw;
   height: 70vh;
   max-height: 80vh;
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   display: flex;
   flex-direction: column;
   padding: 0;
@@ -692,7 +692,7 @@ button.fm-req-decline:focus-visible {
        扩张全部落在盒外** ⇒ 群名文本与成员数文本的**渲染位置与改前逐像素相同**
        （窗头高度亦仍为 64px 档，该行 26px < 40px 头像行；读数见报告 §P2/§P3）。
      · 非群窗不挂 `fm-modal-title-btn` 类 ⇒ 好友/设备窗零影响（设备窗无本类）。 */
-.fm-modal-title-btn { cursor: pointer; border-radius: 6px; padding: 4px 8px; margin: -4px -8px; }
+.fm-modal-title-btn { cursor: pointer; border-radius: var(--ds-radius-chip); padding: 4px 8px; margin: -4px -8px; }
 /* 类已挂在 `.fm-modal-name` 自身 ⇒ hover 规则必须是**同元素**（原 `.fm-modal-title-btn
    .fm-modal-name` 后代式选择器随迁后失效，见上）。 */
 .fm-modal-name.fm-modal-title-btn:hover { color: var(--color-primary); }
@@ -737,7 +737,7 @@ button.fm-req-decline:focus-visible {
   font-size: var(--ds-fs-hint);
   font-weight: 500;
   padding: 4px 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border);
   background: transparent;
   color: var(--color-text);
@@ -778,7 +778,7 @@ button.fm-req-decline:focus-visible {
   box-sizing: border-box;
   padding: 8px 12px;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   background: rgba(0, 0, 0, 0.03);
   box-shadow: inset 0 0 0 1px var(--glass-etched-border);
   font-family: inherit;
@@ -829,7 +829,7 @@ button.fm-req-decline:focus-visible {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   box-shadow: inset 0 0 0 1px var(--glass-etched-border);
 }
 .fm-fwd-empty {
@@ -890,7 +890,7 @@ button.fm-req-decline:focus-visible {
   justify-content: space-between;
   gap: 8px;
   padding: 8px 12px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   background: var(--glass-etched-bg);
   box-shadow: inset 0 0 0 1px var(--glass-etched-border);
   font-size: var(--ds-fs-hint);
@@ -952,7 +952,7 @@ button.fm-req-decline:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   font-size: var(--ds-fs-lead);
   color: var(--color-text-muted, #888);
   cursor: pointer;
@@ -984,7 +984,7 @@ button.fm-req-decline:focus-visible {
   font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, #888);
   background: var(--glass-etched-bg);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
 }
 
 /* Message flow — 气泡几何 / 出向底色 / 元信息 pill / 时间排版 = 与 dropbox 面
@@ -1156,7 +1156,7 @@ button.fm-req-decline:focus-visible {
 .fm-upload-progress {
   flex-basis: 100%;
   height: 3px;
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
   background: var(--glass-etched-border);
   overflow: hidden;
 }
@@ -1238,7 +1238,7 @@ button.fm-req-decline:focus-visible {
   content: '';
   position: absolute;
   inset: -14px -10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
 }
 /* 外链标识（明显可辨，不靠配色单打）：右上小箭头，与 `target=_blank` 语义同源，
    点击仍走二次确认（messages.js onMdExtClick）。 */
@@ -1261,7 +1261,7 @@ button.fm-req-decline:focus-visible {
   max-width: 100%;
   padding: 2px 8px;
   border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--glass-etched-bg);
   text-decoration: none;
   overflow: hidden;
@@ -1317,7 +1317,7 @@ button.fm-req-decline:focus-visible {
 .fm-msg-md pre {
   background: var(--color-frame-hover);
   padding: 8px 12px 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   margin: 6px 0;
   overflow-x: auto;
   line-height: 1.45;
@@ -1429,7 +1429,7 @@ button.fm-req-decline:focus-visible {
   height: 13px;
   padding: 1px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: transparent;
   color: var(--color-text);
   opacity: 0.35;
@@ -1489,7 +1489,7 @@ body.mobile-layer .fm-msg-act::after {
   width: 100%;
   height: max(100%, var(--mhit, 44px));
   transform: translate(-50%, -50%);
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
 }
 
 /* ── 发送态 / 失败态载面 = **气泡左侧单一槽位**（sendstate 批，2026-09-18）──────
@@ -1596,7 +1596,7 @@ body > .fm-context-menu { z-index: 10001; }
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   color: var(--color-text-muted);
   cursor: pointer;
   font: inherit;
@@ -1658,7 +1658,7 @@ body > .fm-context-menu { z-index: 10001; }
   font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   border: 1px solid var(--color-frame-border-light);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   padding: 0 5px;
   line-height: 16px;
   white-space: nowrap;
@@ -1673,7 +1673,7 @@ body > .fm-context-menu { z-index: 10001; }
   font: inherit;
   font-size: var(--ds-fs-hint);
   padding: 5px 12px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   cursor: pointer;
 }
 .pf-save:disabled { opacity: 0.55; cursor: default; }
@@ -1699,7 +1699,7 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-quote-block {
   margin-bottom: 6px;
   padding: 6px 10px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   background: rgba(0, 0, 0, 0.035);
   box-shadow: none;
   font-size: var(--ds-fs-hint);
@@ -1736,7 +1736,7 @@ body > .fm-context-menu { z-index: 10001; }
   outline: 2px solid rgb(var(--sapphire) / 0.5);
   outline-offset: 1px;
 }
-.fm-msg.fm-quote-target { animation: fmQuoteTargetFlash 1.8s ease; border-radius: 12px; }
+.fm-msg.fm-quote-target { animation: fmQuoteTargetFlash 1.8s ease; border-radius: var(--ds-radius-xl); }
 @keyframes fmQuoteTargetFlash {
   0% { background: var(--sapphire-tint-15); }
   100% { background: transparent; }
@@ -1828,7 +1828,7 @@ body > .fm-context-menu { z-index: 10001; }
   font-size: var(--ds-fs-hint);
   font-weight: 500;
   padding: 8px 14px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   border: 1px solid var(--glass-etched-border);
   background: transparent;
   color: var(--color-text);
@@ -1905,7 +1905,7 @@ body > .fm-context-menu { z-index: 10001; }
   padding: 5px 14px;
   /* 同族按钮圆角档（.fm-forward-btn 8px / .fm-search-input 8px /
      .fm-req-decline 8px）——现状 0px 方角是全站按钮族（5/8/10px）之外的孤例。 */
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   opacity: 0.85;
 }
 .fm-load-more:hover { opacity: 1; }
@@ -2026,7 +2026,7 @@ body > .fm-context-menu { z-index: 10001; }
   font-size: 10px;
   line-height: 1;
   padding: 2px 5px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: rgb(var(--sapphire) / 0.12);
   color: rgb(var(--sapphire) / 0.95);
   align-self: center;
@@ -2042,7 +2042,7 @@ body > .fm-context-menu { z-index: 10001; }
   height: 26px;
   border: none;
   background: transparent;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   color: var(--color-text-muted, #888);
   cursor: pointer;
 }
@@ -2080,7 +2080,7 @@ body > .fm-context-menu { z-index: 10001; }
   align-items: center;
   gap: 8px;
   padding: 4px 2px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   min-width: 0;
 }
 .fm-member-row:hover { background: var(--glass-control-bg-hover); }
@@ -2097,7 +2097,7 @@ body > .fm-context-menu { z-index: 10001; }
   flex-shrink: 0;
   font-size: 10px;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: rgb(var(--sapphire) / 0.12);
   color: rgb(var(--sapphire) / 0.95);
 }
@@ -2144,7 +2144,7 @@ body > .fm-context-menu { z-index: 10001; }
    🔴 选择器**限定在本抽屉内**（`.fm-group-settings` 后代）⇒ 不波及抽屉外的
    `.fm-msg-btn`（`contacts.js:744`「发消息」键同用该类名，那是另一个面）。 */
 .fm-group-settings button {
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
 }
 
 /* ══ 建群对话框（fm-modal 骨架复用；好友多选名册）════════════════════════════
@@ -2197,7 +2197,7 @@ body > .fm-context-menu { z-index: 10001; }
   max-height: 42vh;
   min-height: 120px;
   border: 1px solid rgb(var(--sapphire) / 0.1);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 4px;
 }
 .fm-pick-row {
@@ -2205,7 +2205,7 @@ body > .fm-context-menu { z-index: 10001; }
   align-items: center;
   gap: 8px;
   padding: 6px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
   min-width: 0;
 }
@@ -2238,13 +2238,13 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-pick-modal .fm-pick-list {
   max-height: none; /* 滚动上移到 .fm-pick-body（单一滚动容器） */
   min-height: 132px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   gap: 2px;
 }
 .fm-pick-modal .fm-pick-row {
   gap: 10px;
   padding: 7px 10px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 /* 选中态（判别面三重可辨，**禁只靠颜色微差**）：① 行底 sapphire 淡染
@@ -2337,7 +2337,7 @@ body > .fm-context-menu { z-index: 10001; }
   padding: 2px 4px 6px; gap: 6px;
 }
 .fm-device-fleet-bar .fleet-btn {
-  font-size: var(--ds-fs-meta); padding: 4px 10px; border-radius: 8px; cursor: pointer;
+  font-size: var(--ds-fs-meta); padding: 4px 10px; border-radius: var(--ds-radius-input); cursor: pointer;
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-frame-text);
@@ -2365,7 +2365,7 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-att-device-progress {
   flex-basis: 100%;
   height: 3px;
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
   background: var(--glass-etched-border);
   overflow: hidden;
 }
@@ -2403,7 +2403,7 @@ body > .fm-context-menu { z-index: 10001; }
   align-items: center;
   gap: 4px;
   padding: 3px 9px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-btn);
   font-family: inherit;
   color: var(--color-text-muted);
@@ -2437,7 +2437,7 @@ body > .fm-context-menu { z-index: 10001; }
   flex-direction: column;
   gap: 6px;
   padding: 8px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
 }
 .fm-device-desc-input {
   width: 100%;
@@ -2453,7 +2453,7 @@ body > .fm-context-menu { z-index: 10001; }
 }
 .fm-device-desc-actions button {
   padding: 3px 12px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-btn);
   font-family: inherit;
   cursor: pointer;

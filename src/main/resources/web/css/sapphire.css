@@ -444,7 +444,7 @@
      一律压过 .cfg-btn / .cfg-btn-primary 的常态与 hover 声明（本文件最后加载）。 */
   background: var(--ctl-send-bg);
   border: 1px solid var(--ctl-send-border);
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   padding: 5px 12px;
   font-family: inherit;
   font-weight: 500;
@@ -652,7 +652,7 @@ button.glass-control.fm-login-btn {
   width: 100%;
   box-sizing: border-box;
   padding: 10px 20px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   font-family: inherit;
   font-size: var(--ds-fs-body);
   font-weight: 500;
@@ -807,7 +807,7 @@ button.glass-control.fm-login-btn:disabled {
   margin-top: 4px;
   padding: 2px var(--ds-space-3);
   background: var(--color-surface);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   box-shadow: var(--msg-meta-card-shadow);
   font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
@@ -912,7 +912,7 @@ button.glass-control.fm-login-btn:disabled {
 /* file card — 单一类名 .msg-file-card（③A5）；out 变体是修饰态，不是第二份规则 */
 .msg-file-card {
   padding: 8px 12px;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   background: var(--glass-etched-bg, rgba(128, 128, 128, 0.06));
   border: 1px solid var(--glass-etched-border, rgba(128, 128, 128, 0.12));
   min-width: 180px;

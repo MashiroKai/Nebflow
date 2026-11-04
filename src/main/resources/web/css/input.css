@@ -17,7 +17,7 @@
 #input-bar {
   position: relative;
   pointer-events: auto;
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   /* 瘦身批：垂直内 padding 8px → 6px（横向 12px 不动；mic-orb 64px/图标钮 36px
      为静息态高度驱动件，本项在输入态（textarea 驱动行高）再省 4px）。 */
   padding: 6px 12px;
@@ -95,7 +95,7 @@
 .error-abandon-btn {
   pointer-events: auto;
   font: 500 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 3px 10px;
   cursor: pointer;
   transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
@@ -191,7 +191,7 @@
   color: rgb(var(--sapphire));
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
   transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
     color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
@@ -287,7 +287,7 @@
   flex: none;
   min-width: 28px;
   height: 28px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -313,7 +313,7 @@
 .att-thumb {
   width: 28px; height: 28px;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-border);
   box-sizing: border-box;
   display: block;
@@ -328,7 +328,7 @@
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
   padding: 0 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-hint);
   color: var(--color-text);
 }
@@ -357,7 +357,7 @@
   box-sizing: border-box;
   background: rgb(var(--sapphire) / 0.06);
   border: 1px solid rgb(var(--sapphire) / 0.25);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 0 10px;
   font-size: var(--ds-fs-hint);
   color: var(--color-text);
@@ -426,7 +426,7 @@
   max-width: 100%;
   background: rgb(var(--sapphire) / 0.06);
   border: 1px solid rgb(var(--sapphire) / 0.25);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 0 6px;
   font-size: var(--ds-fs-hint);
   color: var(--color-text);
@@ -494,7 +494,7 @@
   max-height: 56px;              /* header + 2 行摘要的固定 footprint */
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 5px 8px;
   align-items: flex-start;
 }
@@ -555,7 +555,7 @@
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   padding: 0;
 }
 .att-ref-expand:hover,
@@ -598,7 +598,7 @@
   --nf-qicon-size: 18px;
   width: 18px;
   height: 18px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
 }
 .att-ref .att-ref-icon .nf-qicon.is-thumb { background: rgba(0, 0, 0, 0.06); }
 .att-ref .att-ref-icon .nf-qicon.fc-icon { font-size: 8px; }
@@ -620,7 +620,7 @@
   border-left: 2px solid var(--status-error-icon, var(--color-error));
   color: var(--status-word, var(--color-text));
   padding: 3px 10px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   font-size: var(--ds-fs-hint);
   transition: opacity 0.3s ease;
 }
@@ -673,7 +673,7 @@
 #input {
   border: none;
   background: transparent;
-  border-radius: 18px;
+  border-radius: var(--ds-radius-2xl);
   /* 瘦身批：垂直内 padding 8px → 6px（横向 14px 不动；多行增长逻辑读
      scrollHeight，与本 padding 无耦合）。 */
   padding: 6px 14px;
@@ -1001,7 +1001,7 @@
   backdrop-filter: blur(20px) saturate(1.15);
   -webkit-backdrop-filter: blur(20px) saturate(1.15);
   border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 14px;
+  border-radius: var(--ds-radius-card-md);
   padding: 10px 14px;
   display: none;
   align-items: center;
@@ -1075,7 +1075,7 @@
   bottom: 100%;
   left: 12px;
   right: 12px;
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   margin-bottom: 8px;
   max-height: 240px;
   overflow-y: auto;
@@ -1116,7 +1116,7 @@ html[data-theme="dark"] #mention-dropdown {
 .slash-item {
   padding: 8px 12px;
   margin: 0 6px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   cursor: pointer;
   display: flex;
   flex-direction: column;
@@ -1154,7 +1154,7 @@ html[data-theme="dark"] #mention-dropdown {
   letter-spacing: 0.3px;
   text-transform: uppercase;
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   margin: 0 6px;
   line-height: 1.4;
   vertical-align: middle;
@@ -1173,7 +1173,7 @@ html[data-theme="dark"] #mention-dropdown {
   cursor: pointer;
   color: var(--color-text-muted);
   padding: 4px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   transition: color 0.15s, background 0.15s;
 }
 .slash-item:hover .slash-delete {
@@ -1191,7 +1191,7 @@ html[data-theme="dark"] #mention-dropdown {
 .mention-item {
   padding: 8px 12px;
   margin: 0 6px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   cursor: pointer;
   display: flex;
   flex-direction: column;
@@ -1258,7 +1258,7 @@ html.no-backdrop #mention-dropdown {
   opacity: 1;
   margin-bottom: 4px;
   overflow-y: auto;
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   /* Sapphire glass — identical material to #input-bar（材质迁 glass.css
      面级浮件档：--glass-bg + blur24 sat1.15 双写 + --cv-shadow + 折射线） */
 }
@@ -1288,7 +1288,7 @@ html.no-backdrop #mention-dropdown {
   padding: 0;
   border: none;
   background: transparent;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   cursor: pointer;
   color: var(--color-text-muted);
   transition: background 0.15s, color 0.15s;
@@ -1367,7 +1367,7 @@ html.no-backdrop #mention-dropdown {
 .queue-item-att-thumb {
   width: 24px;
   height: 24px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   object-fit: cover;
   border: 1px solid var(--glass-border);
   flex-shrink: 0;
@@ -1377,7 +1377,7 @@ html.no-backdrop #mention-dropdown {
   color: var(--color-text-muted);
   background: var(--glass-etched-bg);
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   white-space: nowrap;
   max-width: 80px;
   overflow: hidden;
@@ -1388,7 +1388,7 @@ html.no-backdrop #mention-dropdown {
   color: var(--color-text-muted);
   background: var(--glass-etched-bg);
   padding: 2px 5px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   flex-shrink: 0;
 }
 .queue-item-actions {
@@ -1400,7 +1400,7 @@ html.no-backdrop #mention-dropdown {
 .queue-item-btn {
   font-size: var(--ds-fs-meta);
   padding: 3px 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border);
   background: var(--glass-etched-bg);
   color: var(--color-text);

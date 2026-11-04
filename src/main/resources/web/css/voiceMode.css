@@ -34,7 +34,7 @@ body.voice-mode-active #queue-bar {
   position: absolute;
   inset: 0;
   z-index: 260;
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   overflow: hidden;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);

@@ -24,7 +24,7 @@ export function showStaleTabHint() {
   bar.setAttribute('style', [
     'position:fixed', 'top:10px', 'left:50%', 'transform:translateX(-50%)',
     'z-index:2147483000', 'display:flex', 'align-items:center', 'gap:10px',
-    'padding:9px 12px 9px 16px', 'border-radius:12px',
+    'padding:9px 12px 9px 16px', 'border-radius:var(--ds-radius-xl)',
     'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
     'font:13px/1.4 -apple-system,"Segoe UI",sans-serif',
     'box-shadow:0 6px 24px rgba(0,0,0,0.28)',
@@ -40,7 +40,7 @@ export function showStaleTabHint() {
   const btn = document.createElement('button');
   btn.textContent = '刷新页面';
   btn.setAttribute('style', [
-    'flex:0 0 auto', 'border:none', 'border-radius:8px', 'padding:6px 14px',
+    'flex:0 0 auto', 'border:none', 'border-radius:var(--ds-radius-input)', 'padding:6px 14px',
     'background:#4f7cff', 'color:#fff', 'font:600 13px/1 -apple-system,"Segoe UI",sans-serif',
     'cursor:pointer',
   ].join(';'));

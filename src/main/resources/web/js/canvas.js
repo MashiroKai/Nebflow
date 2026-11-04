@@ -1041,7 +1041,7 @@ function showExternalConflict(entry) {
   bar.setAttribute('style', [
     'display:flex', 'align-items:center', 'gap:10px',
     'margin:8px 10px', 'padding:8px 10px 8px 12px',
-    'border-radius:10px',
+    'border-radius:var(--ds-radius-button)',
     'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
     'font:12.5px/1.4 -apple-system,"Segoe UI",sans-serif',
     'border:1px solid rgba(255,255,255,0.12)',
@@ -1326,7 +1326,7 @@ function renderUrlPane(pane, url) {
   bar.style.cssText = 'flex:none;display:flex;align-items:center;gap:12px;' +
     'height:32px;padding:0 12px;min-width:0;' +
     'border-bottom:1px solid var(--color-border);' +
-    'font-size:12px;color:var(--color-text-muted);user-select:none';
+    'font-size:var(--ds-fs-hint);color:var(--color-text-muted);user-select:none';
 
   const host = document.createElement('span');
   let hostText = url;
@@ -4809,7 +4809,7 @@ function cardWindowBootFace(fileName) {
   el.style.cssText =
     'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;' +
     'display:flex;flex-direction:column;align-items:center;gap:10px;padding:22px 30px;' +
-    'border:1px solid var(--glass-border,#e0e1e4);border-radius:14px;' +
+    'border:1px solid var(--glass-border,#e0e1e4);border-radius:var(--ds-radius-card-md);' +
     'background:var(--glass-bg,#fff);color:var(--color-text,#1b1e26);' +
     "font:13px/1.6 -apple-system,'Segoe UI',sans-serif;text-align:center;max-width:78vw;";
   const dot = document.createElement('div');
@@ -4824,12 +4824,12 @@ function cardWindowBootFace(fileName) {
   title.textContent = fileName || t('canvas.loadingFile');
   const hint = document.createElement('div');
   hint.className = 'nf-cw-hint';
-  hint.style.cssText = 'font-size:12px;color:var(--color-text-muted,#8b8e96);display:none;';
+  hint.style.cssText = 'font-size:var(--ds-fs-hint);color:var(--color-text-muted,#8b8e96);display:none;';
   const retry = document.createElement('button');
   retry.className = 'nf-cw-retry';
   retry.textContent = t('canvas.retry');
   retry.style.cssText =
-    'display:none;margin-top:2px;padding:5px 16px;border-radius:8px;cursor:pointer;' +
+    'display:none;margin-top:2px;padding:5px 16px;border-radius:var(--ds-radius-input);cursor:pointer;' +
     'border:1px solid var(--glass-control-border,#d8d9dd);background:var(--glass-control-bg,transparent);' +
     'color:inherit;font-size:var(--ds-fs-hint);';
   retry.addEventListener('click', () => { try { location.reload(); } catch { /* 无历环境 */ } });

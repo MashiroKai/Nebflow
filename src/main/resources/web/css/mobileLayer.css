@@ -523,7 +523,7 @@ body.mobile-layer .mh-chrome-badge {
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: var(--status-word);
   color: var(--ds-ink-inverse);
   font-size: var(--mfs-min);
@@ -567,7 +567,7 @@ body.mobile-layer #mobile-dock {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   align-items: stretch;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
   backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
@@ -729,7 +729,7 @@ body.mobile-layer .dock-badge.is-count {
   height: 16px;
   min-width: 16px;
   padding: 0 4px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   box-sizing: border-box;
   display: flex;          /* 居中不靠 line-height：描边吃掉盒高后仍垂直居中 */
   align-items: center;
@@ -1165,7 +1165,7 @@ body.mobile-layer .mh-tpanel .tp-empty {
 body.mobile-layer .mh-tpanel .tp-card {
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   padding: 8px 10px;
   flex: none;
 }
@@ -1330,7 +1330,7 @@ body.mobile-layer #mh-search-kind {
   width: 100%;
   height: 30px;
   font-size: var(--mfs-min);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
 }
 /* 说明/空态脚注（面板底缘；11px muted，安全区兜底）。 */
 body.mobile-layer .mh-search-foot {
@@ -1345,7 +1345,7 @@ body.mobile-layer .mh-search-foot {
 body.mobile-layer #search-modal .search-result {
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   padding: 8px 10px;
   margin-bottom: 6px;
 }
@@ -1429,7 +1429,7 @@ body.mobile-layer #bg-dropdown .bg-dropdown-empty {
 body.mobile-layer #bg-dropdown .bg-section {
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   margin: 6px;
   overflow: hidden;
 }
@@ -1519,7 +1519,7 @@ body.mobile-layer .mh-memory-cards::-webkit-scrollbar { display: none; }
 body.mobile-layer .mh-memory-card {
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   padding: 9px 11px;
 }
 body.mobile-layer .mh-memory-card-title {
@@ -1687,7 +1687,7 @@ body.mobile-layer .mf-strip-chip {
   max-width: 66px;
   height: 32px;
   padding: 0 var(--mpad-x);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   /* 宿主零描边零底（渐隐热区修复批）：视觉材质全在 ::after。chip 是 <button>，
      UA 默认 2px outset 黑描边必须显式归零 —— 迁移删掉旧 glass-border 行时若
      不补这条，UA 按钮描边就浮出来（T7 宿主零描边钉抓到过）。 */
@@ -1811,7 +1811,7 @@ body.mobile-layer .mf-strip-chip::before {
   width: max(100%, var(--mhit, 44px));
   height: max(100%, var(--mhit, 44px));
   transform: translate(-50%, -50%) scale(calc(1 / var(--rsc, 1)));
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
 }
 /* 中签（当前签）= **同一枚签放大**，不是另一个组件（作者令 2026-11-02 09:00
    「样式应该要是和两边的统一……不许换底色、加描边」）：本档只给两件事 ——
@@ -2013,7 +2013,7 @@ body.mobile-layer .mf-dots {
      错行 42px」的根因。定位腿见文件尾块（position/bottom/居中）。 */
   margin: 0;
   padding: 0 12px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   border: 1px solid var(--glass-border);
   background: var(--ds-wash-16);
   -webkit-backdrop-filter: blur(10px) saturate(1.2);
@@ -2041,7 +2041,7 @@ body.mobile-layer .mf-dots::before {
   top: 50%;
   height: max(100%, var(--mtap-lg, 48px));
   transform: translateY(-50%);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
 }
 body.mobile-layer .mf-dots.is-grip {
   transform: scale(1.14);
@@ -2199,7 +2199,7 @@ body.mobile-layer .mf-deck-card {
   height: min(74%, 520px);
   overflow: hidden;
   border: 1px solid var(--card-border);
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   background: var(--card-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
@@ -2318,7 +2318,7 @@ body.mobile-layer .mf-deck-thumb .thumb-page {
   width: 58%; height: 82%;
   background: var(--card-bg);
   border: 1px solid var(--th-border);
-  border-radius: 6px; padding: 12px 14px;
+  border-radius: var(--ds-radius-chip); padding: 12px 14px;
   box-shadow: var(--ds-shadow-thumb);
 }
 body.mobile-layer .mf-deck-thumb .thumb-page .ln { height: 6px; margin-bottom: 8px; }
@@ -2326,12 +2326,12 @@ body.mobile-layer .mf-deck-thumb .thumb-flow { position: absolute; inset: 0; dis
 body.mobile-layer .mf-deck-thumb .thumb-flow svg { width: 78%; height: 68%; color: var(--color-frame-text-muted); }
 body.mobile-layer .mf-deck-thumb .thumb-browser { position: absolute; inset: 0; padding: 10px 12px; }
 body.mobile-layer .mf-deck-thumb .thumb-browser .bar {
-  height: 16px; border-radius: 6px; background: var(--bar-3);
+  height: 16px; border-radius: var(--ds-radius-chip); background: var(--bar-3);
   border: 1px solid var(--th-border); margin-bottom: 9px;
   display: flex; align-items: center; gap: 3px; padding: 0 6px;
 }
 body.mobile-layer .mf-deck-thumb .thumb-browser .bar i { width: 5px; height: 5px; border-radius: 50%; background: var(--bar-1); display: block; }
-body.mobile-layer .mf-deck-thumb .thumb-browser .blk { height: 18px; border-radius: 4px; background: var(--bar-2); margin-bottom: 7px; }
+body.mobile-layer .mf-deck-thumb .thumb-browser .blk { height: 18px; border-radius: var(--ds-radius-badge); background: var(--bar-2); margin-bottom: 7px; }
 body.mobile-layer .mf-deck-thumb .thumb-browser .blk.b2 { width: 64%; }
 /* ── 真实内容快照（作者令 2026-11-02 21:47 §三「做好各卡片的快照，让堆叠视觉
    能看到卡片内容」，并明确「不是标题占位、是真实内容的缩放」）──────────
@@ -2479,7 +2479,7 @@ body.mobile-layer .mf-hub-rows {
   flex-direction: column;
   background: var(--color-surface);
   border: none;
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   overflow: hidden;
   box-shadow: var(--ds-shadow-card);
 }
@@ -2534,7 +2534,7 @@ body.mobile-layer .mf-me-entry {
   min-height: 64px;
   padding: 10px 16px;
   border: none;
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   background: var(--color-surface);
   box-shadow: var(--ds-shadow-card);
   color: var(--color-text);
@@ -2618,7 +2618,7 @@ body.mobile-layer .mf-me-card {
   gap: 12px;
   margin: 12px 14px 0;
   padding: 16px;
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   background: var(--color-surface);
   box-shadow: var(--ds-shadow-card);
 }
@@ -2698,7 +2698,7 @@ body.mobile-layer .mf-me-edit {
   margin: 12px 14px 0;
   padding: 12px 16px;
   min-height: 44px; /* 触控最小高档（同 .mf-me-entry 家族） */
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   font-size: var(--mfs-body);
   font-weight: 500;
   cursor: pointer;
@@ -2724,7 +2724,7 @@ body.mobile-layer .mf-social-sealed {
 }
 body.mobile-layer .mf-social-sealed-skel {
   height: 56px;
-  border-radius: 14px;
+  border-radius: var(--ds-radius-card-md);
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
 }
@@ -2916,7 +2916,7 @@ body.mobile-layer #mobile-pages .team-card.project-card {
   max-width: none;
   margin: 0;
   flex: 0 0 auto;
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   padding: 10px 14px;
 }
 body.mobile-layer #mobile-pages .team-card.project-card .team-card-header {
@@ -2995,7 +2995,7 @@ body.mobile-layer #mobile-pages .plugins-card-list {
 body.mobile-layer #mobile-pages .plugins-card {
   width: 100%;
   max-width: none;
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   padding: 12px 14px;
 }
 body.mobile-layer #mobile-pages .plugins-card.blocked {
@@ -3179,7 +3179,7 @@ body.mobile-layer .mh-search-bar {
   padding: 0 14px;
   height: 44px;
   flex: none;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
@@ -3255,7 +3255,7 @@ body.mobile-layer .mh-scope-chip {
   flex: none;
   height: 30px;
   padding: 0 12px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-frame-text);
@@ -3312,7 +3312,7 @@ body.mobile-layer .mh-sr-row {
   width: 100%;
   padding: 8px 10px;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   background: transparent;
   color: var(--color-frame-text);
   font-family: inherit;
@@ -3344,7 +3344,7 @@ body.mobile-layer .mh-sr-snippet {
 body.mobile-layer .mh-sr-snippet mark {
   background: rgb(var(--sapphire) / 0.30);
   color: inherit;
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
   padding: 0 1px;
 }
 /* 跳转定位闪烁：sapphire 底 1.6s 渐隐（消息行 reveal 缝）。 */
@@ -3354,7 +3354,7 @@ body.mobile-layer .mh-sr-snippet mark {
 }
 body.mobile-layer .fm-flow .fm-msg.fm-reveal-flash {
   animation: mhRevealFlash 1.6s ease-out both;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
 }
 @media (prefers-reduced-motion: reduce) {
   body.mobile-layer .fm-flow .fm-msg.fm-reveal-flash { animation-duration: 0.01s; }
@@ -3501,7 +3501,7 @@ body.mobile-layer .fm-context-menu {
 body.mobile-layer .fm-context-menu button:not(.mfs-back) {
   width: 100%;
   min-height: 44px;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
   color: var(--color-frame-text, var(--color-text));
@@ -3851,7 +3851,7 @@ body.mobile-layer #attachment-preview .att-file {
   height: var(--mtap);
   padding: 0;
   gap: 0;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: transparent;
   border: none;
   justify-content: center;
@@ -3869,7 +3869,7 @@ body.mobile-layer #attachment-preview .att-file > .att-file-icon {
   display: flex;
   width: var(--mtap);
   height: var(--mtap);
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   box-sizing: border-box;
   border: 1px solid var(--glass-border);
   align-items: center;
@@ -4074,7 +4074,7 @@ body.mobile-layer #mobile-pages .project-unmount-btn {
   width: var(--mtap);
   height: var(--mtap);
   min-width: var(--mtap);
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
 }
 body.mobile-layer #mobile-pages .project-unmount-btn svg {
   width: var(--micon-sm);
@@ -4115,7 +4115,7 @@ body.mobile-layer #settings-modal .cfg-model-test {
   position: relative;
   min-width: var(--mtap);
   min-height: var(--mtap);
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
 }
 body.mobile-layer #settings-modal .cfg-model-test .st-ic {
   width: var(--mfs-min);
@@ -4515,7 +4515,7 @@ body.mobile-layer :is(.mh-idhead-name, .mh-idhead > #session-name) {
   max-width: min(220px, calc(100vw - 144px)); /* 左右各留 72 的双钮足印 */
   margin: 0;
   padding: 3px 14px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
   backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
@@ -4871,7 +4871,7 @@ body.mobile-layer :is(.duration-badge .msg-copy, .duration-badge-time)::after {
   width: 100%;
   height: max(100%, var(--mhit));
   transform: translate(-50%, -50%);
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
 }
 /* 时间徽标是键盘可达的文字件（span + tabindex），命中区与图标键同档 44 高。 */
 

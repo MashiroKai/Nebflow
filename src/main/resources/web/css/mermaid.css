@@ -23,7 +23,7 @@
 .nf-mermaid .nf-mermaid-ph {
   width: 72%;
   min-height: 56px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--color-frame-hover);
   animation: nfMermaidPulse 1.2s ease-in-out infinite;
 }
@@ -43,7 +43,7 @@
 .nf-mermaid-error .nf-mermaid-body {
   display: block;
   border: 1px solid var(--sapphire-edge-strong);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 8px 10px;
   background: var(--sapphire-edge);
   min-height: 0;
@@ -83,7 +83,7 @@
 .nf-mermaid-src {
   margin: 8px 0 0;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: var(--color-frame-hover);
   overflow-x: auto;
   font-size: var(--ds-fs-hint);

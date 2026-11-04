@@ -59,7 +59,7 @@ const FLEET_CSS = `
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border); border-radius: 20px;
+  border: 1px solid var(--glass-border); border-radius: var(--ds-radius-shell);
   box-shadow: 0px 2px 8px rgba(0, 0, 0, 0.04), 0px 8px 24px rgba(0, 0, 0, 0.06);
   overflow: hidden;
 }
@@ -74,7 +74,7 @@ const FLEET_CSS = `
 }
 .fleet-title { font-size: 14px; font-weight: 600; color: var(--color-frame-text); flex: 1; }
 .fleet-close {
-  background: none; border: none; cursor: pointer; padding: 4px; border-radius: 6px;
+  background: none; border: none; cursor: pointer; padding: 4px; border-radius: var(--ds-radius-chip);
   color: var(--color-frame-text-muted); display: flex; align-items: center;
 }
 .fleet-close:hover { background: var(--glass-control-bg-hover); color: var(--color-frame-text); }
@@ -82,11 +82,11 @@ const FLEET_CSS = `
 .fleet-sub { font-size: var(--ds-fs-hint); color: var(--color-frame-text-muted); margin-bottom: 10px; line-height: 1.5; }
 .fleet-blocking {
   font-size: var(--ds-fs-hint); color: var(--color-frame-text); padding: 8px 10px; margin-bottom: 10px;
-  border-radius: 10px; background: var(--glass-control-bg);
+  border-radius: var(--ds-radius-button); background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border); line-height: 1.5;
 }
 .fleet-row {
-  border: 1px solid var(--color-frame-border-light); border-radius: 10px;
+  border: 1px solid var(--color-frame-border-light); border-radius: var(--ds-radius-button);
   padding: 8px 10px; margin-bottom: 8px; cursor: pointer;
 }
 .fleet-row:hover { background: var(--glass-control-bg-hover); }
@@ -99,16 +99,16 @@ const FLEET_CSS = `
   padding-top: 6px; border-top: 1px dashed var(--color-frame-border-light); line-height: 1.5;
   word-break: break-word;
 }
-.fleet-bar { height: 3px; border-radius: 2px; background: var(--glass-control-bg); margin-top: 6px; overflow: hidden; }
+.fleet-bar { height: 3px; border-radius: var(--ds-radius-thin); background: var(--glass-control-bg); margin-top: 6px; overflow: hidden; }
 .fleet-bar > i { display: block; height: 100%; background: var(--color-frame-text-dim); width: 0; transition: width 0.3s; }
 .fleet-badge {
-  font-size: 10px; padding: 1px 6px; border-radius: 6px; flex-shrink: 0;
+  font-size: 10px; padding: 1px 6px; border-radius: var(--ds-radius-chip); flex-shrink: 0;
   border: 1px solid var(--glass-control-border); color: var(--color-frame-text-muted);
 }
 .fleet-summary { font-size: var(--ds-fs-hint); color: var(--color-frame-text); line-height: 1.6; margin: 10px 0 4px; }
 .fleet-foot { padding: 10px 16px 14px; display: flex; gap: 8px; justify-content: flex-end; }
 .fleet-btn {
-  font-size: var(--ds-fs-hint); padding: 6px 12px; border-radius: 10px; cursor: pointer;
+  font-size: var(--ds-fs-hint); padding: 6px 12px; border-radius: var(--ds-radius-button); cursor: pointer;
   border: 1px solid var(--glass-control-border); background: var(--glass-control-bg);
   color: var(--color-frame-text);
 }

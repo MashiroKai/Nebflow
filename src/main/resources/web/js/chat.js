@@ -1863,7 +1863,7 @@ export function renderStillProcessingNotice(sid, rung = 0) {
   const text = document.createElement('span');
   text.textContent = t('chat.stillProcessing');
   card.appendChild(text);
-  const btnCss = 'padding:4px 12px;border-radius:6px;border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:var(--ds-fs-body);font-family:inherit;';
+  const btnCss = 'padding:4px 12px;border-radius:var(--ds-radius-chip);border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:var(--ds-fs-body);font-family:inherit;';
   // ① 首次动作：`chat.retry`（文案不变、语义变为**需确认**）——turn 仍在跑时不发 interrupt，
   //    只把行推进到确认态；turn 已结束（busy 已清）则直接重发，无需确认。
   const retryBtn = document.createElement('button');
@@ -1972,7 +1972,7 @@ function renderTerminalRow(sid, i18nKey, dataset = {}) {
   card.appendChild(text);
   const btn = document.createElement('button');
   btn.textContent = t('chat.retry');
-  btn.style.cssText = 'padding:4px 12px;border-radius:6px;border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:var(--ds-fs-body);font-family:inherit;';
+  btn.style.cssText = 'padding:4px 12px;border-radius:var(--ds-radius-chip);border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:var(--ds-fs-body);font-family:inherit;';
   btn.onmouseenter = () => { btn.style.background = 'var(--color-frame-active)'; };
   btn.onmouseleave = () => { btn.style.background = 'var(--color-frame-hover)'; };
   btn.onclick = () => {
@@ -3129,7 +3129,7 @@ function renderAskAttachments(box, attachments, originLabel) {
     const foldBtn = document.createElement('button');
     foldBtn.type = 'button';
     foldBtn.className = 'glass-control ask-att-fold-btn';
-    foldBtn.style.cssText = 'font-size: 11px; padding: 2px 10px;';
+    foldBtn.style.cssText = 'font-size: var(--ds-fs-meta); padding: 2px 10px;';
     foldBtn.setAttribute('aria-expanded', 'false');
     foldBtn.textContent = t('askUser.attFoldTotal', { n: String(fileEntries.length) });
     foldBtn.onclick = () => {
@@ -3224,7 +3224,7 @@ export function renderAskUser(items, askSessionId, agentName, requestId, source,
     const badge = document.createElement('div');
     badge.className = 'ask-user-source';
     badge.textContent = badgeLabel;
-    badge.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin-bottom: 8px; padding: 2px 8px; background: var(--color-surface, rgba(255,255,255,0.06)); border-radius: 6px; display: inline-block;';
+    badge.style.cssText = 'font: 600 11px -apple-system, sans-serif; color: var(--color-text-muted, #888); margin-bottom: 8px; padding: 2px 8px; background: var(--color-surface, rgba(255,255,255,0.06)); border-radius: var(--ds-radius-chip); display: inline-block;';
     bubble.appendChild(badge);
   }
   appendChatRow(chat, row);

@@ -127,13 +127,31 @@ for (const abs of files) {
     if (isCss && isTokenDecl(mLine)) return rawLine;
 
     let line = rawLine;
-    const declRe = /(^|[;{])(\s*)([a-zA-Z-]+)(\s*:\s*)([^;{}]+)/g;
+    // JS 里的声明常以引号/逗号起头（`'padding:9px 12px', 'border-radius:12px',`）——
+    // CSS 只认 `;`/`{` 起头，JS 额外认 `'` `"` `,`。值在第一个引号处截断，引号后
+    // 的内容原样接回（只改值，不动引号结构）。
+    const declRe = isCss
+      ? /(^|[;{])(\s*)([a-zA-Z-]+)(\s*:\s*)([^;{}]+)/g
+      : /(^|[;{,'"])(\s*)([a-zA-Z-]+)(\s*:\s*)([^;{}]+)/g;
     let m;
     const edits = [];
     while ((m = declRe.exec(mLine)) !== null) {
       const prop = m[3].toLowerCase();
       const valueStart = m.index + m[1].length + m[2].length + m[3].length + m[4].length;
-      const valueText = m[5];
+      const valueRaw = m[5];
+      let valueText = valueRaw;
+      let suffix = '';
+      if (!isCss) {
+        // JS 的样式串常以 `', '` 分隔（'padding:…', 'border-radius:…'）：值在第一个
+        // 引号处截断，并把**扫描游标拨回值尾**——否则第一条声明会把整行剩余部分
+        // 吞进自己的值里，后面的声明永远看不见（这是实测到的真 bug，不是理论风险）。
+        const qi = valueRaw.search(/['"]/);
+        if (qi >= 0) {
+          suffix = valueRaw.slice(qi);
+          valueText = valueRaw.slice(0, qi);
+          declRe.lastIndex = valueStart + valueText.length;
+        }
+      }
       let replacement = null;
       let why = null;
       let recordVal = null;   // 需裁定表里的「值」列：档外原子优先，便于逐值归并

@@ -48,7 +48,7 @@ const STRIP_CSS = `<style id="${STRIP_CSS_ID}">
 .bgws-idle { color: var(--status-warn-icon); font-weight: 500; }
 .bgws-task {
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   padding: 1px 4px;
   margin-left: -4px;
 }

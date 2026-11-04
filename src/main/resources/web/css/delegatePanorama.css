@@ -65,7 +65,7 @@
   font: 500 9.5px/1 var(--font-mono, ui-monospace, monospace);
   color: var(--color-text-dim);
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
 }
@@ -78,7 +78,7 @@
   max-width: 1408px;
 }
 .dvp-band {
-  border-radius: 18px;
+  border-radius: var(--ds-radius-2xl);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-border);
   overflow: hidden;
@@ -229,7 +229,7 @@
 /* ── 节点卡 · 通用（无边玻璃；层次靠明暗差，状态只上点/环/徽标）────────────── */
 .dvp-nd {
   position: absolute;
-  border-radius: 14px;
+  border-radius: var(--ds-radius-card-md);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
@@ -334,7 +334,7 @@
   text-overflow: ellipsis;
   max-width: 100%;
   padding: 4px 7px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
 }
@@ -527,7 +527,7 @@
   justify-content: center;
   font: 500 11px/1.4 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
-  border-radius: 14px;
+  border-radius: var(--ds-radius-card-md);
 }
 .dvp-done-block:hover { color: var(--color-text); }
 
@@ -537,7 +537,7 @@
   text-align: center;
   font: 400 12.5px/1.6 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
-  border-radius: 18px;
+  border-radius: var(--ds-radius-2xl);
   border: 1px dashed var(--color-border);
   background: var(--glass-etched-bg);
 }
@@ -548,7 +548,7 @@
   align-items: center;
   gap: 20px;
   padding: 11px 18px;
-  border-radius: 18px;
+  border-radius: var(--ds-radius-2xl);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-border);
   flex-wrap: wrap;
@@ -586,7 +586,7 @@
 .dvp-lg-shape {
   width: 12px;
   height: 12px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   flex: 0 0 auto;
 }
 .dvp-lg-shape.sh-root { border: 1px dashed var(--color-border); }

@@ -44,7 +44,7 @@ const PANEL_CSS = `
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border-radius: 16px; border: 1px solid var(--sapphire-edge);
+  border-radius: var(--ds-radius-card-lg); border: 1px solid var(--sapphire-edge);
   box-shadow:
     inset 0 -1px 0 0 rgba(91, 127, 191, 0.025),
     inset 1px 0 0 0 rgba(91, 127, 191, 0.02),
@@ -64,7 +64,7 @@ const PANEL_CSS = `
 .daemon-config-close {
   background: none; border: 1px solid transparent; cursor: pointer;
   width: 24px; height: 24px; display: flex; align-items: center;
-  justify-content: center; border-radius: 6px; padding: 0;
+  justify-content: center; border-radius: var(--ds-radius-chip); padding: 0;
   color: var(--color-frame-text-muted);
 }
 .daemon-config-close:hover {
@@ -78,7 +78,7 @@ const PANEL_CSS = `
 .daemon-config-label { font-size: var(--ds-fs-hint); font-weight: 500; color: var(--color-text-muted); }
 .daemon-config-input, .daemon-config-select {
   font: inherit; font-size: var(--ds-fs-body); padding: 7px 9px;
-  border-radius: 8px; border: 1px solid var(--color-border);
+  border-radius: var(--ds-radius-input); border: 1px solid var(--color-border);
   background: var(--color-surface); color: var(--color-text);
 }
 .daemon-config-input:focus, .daemon-config-select:focus {
@@ -92,7 +92,7 @@ const PANEL_CSS = `
 }
 .daemon-config-btn {
   font: inherit; font-size: var(--ds-fs-body); font-weight: 500; cursor: pointer;
-  padding: 6px 14px; border-radius: 10px;
+  padding: 6px 14px; border-radius: var(--ds-radius-button);
   border: 1px solid var(--color-border);
   background: var(--glass-control-bg); color: var(--color-text);
 }
@@ -105,7 +105,7 @@ const PANEL_CSS = `
 /* ui-status-redesign：错误词转中性字，红由词前 circle-x 图标承载（.st-err token）。 */
 .daemon-config-status.error { color: var(--status-word); }
 .daemon-config-status .st-ic { margin-right: 4px; }
-.daemon-config-iframe { width: 100%; height: 420px; border: 0; border-radius: 8px; background: var(--color-surface); }
+.daemon-config-iframe { width: 100%; height: 420px; border: 0; border-radius: var(--ds-radius-input); background: var(--color-surface); }
 </style>`;
 
 let overlay = null;

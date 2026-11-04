@@ -1635,7 +1635,7 @@
 .agent-mgr-card:hover { background: rgba(0,0,0,0.03); }
 .agent-mgr-avatar {
   width: 32px; height: 32px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: rgba(91,127,191,0.10);
   color: rgb(91,127,191);
   font: 600 14px -apple-system, sans-serif;
@@ -1665,7 +1665,7 @@
   color: var(--color-frame-text-muted);
   background: var(--color-frame-border);
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
 }
 .agent-mgr-model-pill.fallback {
   color: rgb(91,127,191);
@@ -1705,7 +1705,7 @@
 }
 .agent-detail-avatar {
   width: 48px; height: 48px;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   background: rgba(91,127,191,0.10);
   color: rgb(91,127,191);
   font: 600 22px -apple-system, sans-serif;
@@ -1774,7 +1774,7 @@
   display: flex; align-items: center; gap: 8px;
   padding: 8px 12px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: rgba(0,0,0,0.02);
   cursor: grab;
 }
@@ -1813,7 +1813,7 @@
 .agent-detail-model-add select {
   width: 100%; height: 28px;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: rgba(0,0,0,0.02);
   color: var(--color-text);
   font: 500 11px -apple-system, sans-serif;
@@ -1864,7 +1864,7 @@
   color: var(--color-text);
   background: rgba(0,0,0,0.02);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 12px;
   resize: none;
   outline: none;
@@ -1879,7 +1879,7 @@
   font: 500 12px -apple-system, sans-serif;
   padding: 5px 16px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--ctl-neutral-bg);
   color: var(--ctl-neutral-ink);
   cursor: pointer;
@@ -1898,7 +1898,7 @@
 .agent-detail-prompt-toggle {
   display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; padding: 0;
-  border: 1px solid var(--color-border); border-radius: 6px;
+  border: 1px solid var(--color-border); border-radius: var(--ds-radius-chip);
   background: transparent; cursor: pointer;
   color: var(--color-text-muted); flex-shrink: 0;
   transition: all 0.15s;
@@ -1921,7 +1921,7 @@
   font: 500 11px -apple-system, sans-serif;
   padding: 3px 12px;
   border: 1px solid var(--color-border);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -1946,7 +1946,7 @@
   min-height: 0;
   overflow-y: auto;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   scrollbar-color: var(--color-frame-border) transparent;
 }
 
@@ -1991,7 +1991,7 @@
   row-gap: 4px;
   background: var(--glass-etched-bg, rgba(128,128,128,0.06));
   border: 1px solid var(--glass-etched-border, rgba(128,128,128,0.14));
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 6px 8px 6px 12px;
 }
 .segment-row .seg-label {
@@ -2008,7 +2008,7 @@
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.1);
   border: 1px solid rgb(var(--sapphire) / 0.22);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   padding: 2px 6px;
   flex-shrink: 0;
 }
@@ -2017,7 +2017,7 @@
   background: var(--glass-etched-bg);
   color: var(--color-frame-input-text);
   border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 4px 8px;
   font-size: var(--ds-fs-body);
   font-family: inherit;
@@ -2039,7 +2039,7 @@
   font-size: var(--ds-fs-mobile-callout);
   line-height: 1;
   padding: 2px 6px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   flex-shrink: 0;
   transition: background 0.15s, color 0.15s;
 }
@@ -2111,7 +2111,7 @@
   height: 24px;
   padding: 0;
   border: 1px solid var(--color-frame-border-light);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: none;
   cursor: pointer;
   flex: none;
@@ -2125,7 +2125,7 @@
 .orb-theme-seg {
   display: inline-flex;
   border: 1px solid var(--color-frame-border-light);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   overflow: hidden;
   flex: none;
 }
@@ -2237,7 +2237,7 @@
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border: 1px solid var(--glass-control-border);
-  border-radius: 10px;
+  border-radius: var(--ds-radius-card-sm);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge),
@@ -2278,7 +2278,7 @@
 }
 .plugins-card-head[data-plugin-item] {
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 2px 4px;
   margin: -2px -4px;
   transition: background 0.15s;
@@ -2391,7 +2391,7 @@
   gap: 5px;
   font: 500 10px ui-monospace, SFMono-Regular, monospace;
   padding: 3px 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   cursor: pointer;
   background: var(--glass-control-bg);
   border: 1px solid color-mix(in srgb, var(--status-error-icon) 28%, transparent);
@@ -2428,7 +2428,7 @@
   margin-right: auto;
   font: 500 10px ui-monospace, SFMono-Regular, monospace;
   padding: 3px 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   cursor: pointer;
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
@@ -2449,7 +2449,7 @@
 .plugins-state-pill {
   font: 500 9px -apple-system, sans-serif;
   padding: 1px 7px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid transparent;
   white-space: nowrap;
   color: var(--color-frame-text-muted);
@@ -2492,7 +2492,7 @@
 .plugins-comp {
   font: 500 9px ui-monospace, SFMono-Regular, monospace;
   padding: 1px 7px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-frame-text-muted);
@@ -2552,7 +2552,7 @@
   flex-shrink: 0;
   font: 500 9px -apple-system, sans-serif;
   padding: 1px 7px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   color: rgb(var(--amber));
   background: rgb(var(--amber) / 0.1);
   border: 1px solid rgb(var(--amber) / 0.25);
@@ -2584,7 +2584,7 @@
   color: var(--color-frame-text-muted);
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   padding: 3px 10px;
   cursor: pointer;
   text-align: left;
@@ -2634,7 +2634,7 @@
   width: 36px;
   height: 20px;
   padding: 0;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   flex-shrink: 0;
   cursor: pointer;
   background: var(--glass-control-bg);
@@ -2695,7 +2695,7 @@
   border: 1px solid var(--color-frame-border-light);
   background: transparent;
   color: var(--color-frame-text-muted);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   width: 22px;
   height: 22px;
   display: inline-flex;
@@ -2744,7 +2744,7 @@
   margin-top: 10px;
   padding: 8px 10px;
   border: 1px solid var(--color-frame-border-light);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--color-frame-bg, transparent);
 }
 .cfg-test-results:empty { display: none; }
@@ -2778,7 +2778,7 @@
   margin-top: 6px;
   max-width: 132px;
   max-height: 132px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--color-frame-border-light);
   background: var(--color-frame-bg, transparent);
 }

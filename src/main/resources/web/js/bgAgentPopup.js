@@ -60,7 +60,7 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
 }
 .bgagent-strip-toggle:hover .bgagent-strip-briefline { color: var(--color-text, inherit); }
 .bgagent-strip-chip {
-  flex-shrink: 0; padding: 1px 8px; border-radius: 8px;
+  flex-shrink: 0; padding: 1px 8px; border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-meta); font-weight: var(--ds-fw-title);
   letter-spacing: var(--ds-ls-body);
   color: var(--ds-text-muted);

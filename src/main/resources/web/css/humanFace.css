@@ -11,7 +11,7 @@
 .nf-human-card {
   margin: 8px 0;
   padding: 10px 14px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-card-sm);
   background: var(--sapphire-edge, var(--color-frame-hover));
   border: 1px solid var(--color-frame-border-light, var(--color-frame-border));
 }
@@ -23,7 +23,7 @@
    形态照仓内 nf-fc / flow-blocked-raw 两处 <details> 先例。 */
 .nf-human-details {
   margin: 6px 0;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
 }
 
 .nf-human-details > summary {
@@ -34,7 +34,7 @@
   font-weight: 500;
   color: var(--color-text-muted);
   padding: 4px 2px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
 }
 
 .nf-human-details > summary::-webkit-details-marker { display: none; }
@@ -68,5 +68,5 @@
   color: var(--color-text-muted, #6b7280);
   background: var(--color-frame-hover, rgba(128, 128, 128, 0.08));
   border: 1px solid var(--color-frame-border-light, var(--color-frame-border, rgba(128, 128, 128, 0.2)));
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
 }

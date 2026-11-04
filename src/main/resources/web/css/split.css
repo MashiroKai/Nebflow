@@ -76,7 +76,7 @@
   flex: 1;
   min-width: 0;
   border: 1px solid var(--color-primary, #3b82f6);
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: var(--color-bg, #fff);
   color: var(--color-text);
   font-size: var(--ds-fs-hint);
@@ -100,7 +100,7 @@
   -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
   backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
   border: 1px solid var(--glass-border, rgba(0,0,0,0.08));
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   box-shadow: 0 4px 16px rgba(0,0,0,0.12);
   padding: 4px;
   min-width: 120px;
@@ -118,7 +118,7 @@
   font-size: var(--ds-fs-btn);
   font-family: inherit;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   transition: background 0.1s;
 }
 .explorer-context-menu button:hover,
@@ -175,7 +175,7 @@
 #explorer-tree::-webkit-scrollbar { width: 4px; }
 #explorer-tree::-webkit-scrollbar-thumb {
   background: rgba(128, 128, 128, 0.15);
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
 }
 /* #303 E3: constant blank bottom drop area inside .explorer-root — guarantees a
    visible "drop to move to root" landing zone even when the root list is full. */
@@ -231,7 +231,7 @@
   -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
   backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
   border: 1px solid var(--glass-border, var(--color-frame-border));
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.20), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
   z-index: 100;
   white-space: nowrap;
@@ -302,11 +302,11 @@
 .explorer-item.explorer-folder.drop-target {
   background: rgb(var(--sapphire) / 0.14);
   box-shadow: inset 0 0 0 1px rgb(var(--sapphire) / 0.45);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
 }
 .explorer-root.drop-target {
   box-shadow: inset 0 0 0 1px rgb(var(--sapphire) / 0.35);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
 }
 .explorer-item.drop-invalid,
 .explorer-root.drop-invalid {
@@ -516,7 +516,7 @@ button.dev-chip {
   -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
   backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
   border: 1px solid var(--glass-border, var(--color-frame-border));
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.20), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
   z-index: 100;
   animation: explorerPickupIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
@@ -1419,7 +1419,7 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
   overflow: hidden;
   border: 1px solid var(--g2-input-border);
   border-bottom-color: transparent;   /* 件三统一批：同 #header 底缘透明（内容穿底不衬线） */
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   /* 材质 = #input-bar 现行 g2 配方逐项同源（CR2-5 钉）：液体玻璃 v2/v3 批后
      #input-bar 升 --g2-input-*（liquid-glass.css 覆写），环胶囊随齐 —— 竖环
      回退批 2026-10-31 复锚（此前 --glass-bg/--cv-shadow 旧 token 与 ref 脱钩，
@@ -1571,7 +1571,7 @@ body.canvas-open:not(.mobile-layer) #canvas-head-close { display: inline-flex; }
   z-index: auto;
   visibility: hidden;
   pointer-events: none;
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   overflow: hidden;
   perspective: 1150px;
   perspective-origin: 50% 10%;
@@ -1802,7 +1802,7 @@ body.mobile-layer #canvas-head-close { display: none !important; }
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   width: 58%; height: 82%;
   background: var(--color-surface);
-  border: 1px solid var(--th-border); border-radius: 4px; padding: 10px 12px;
+  border: 1px solid var(--th-border); border-radius: var(--ds-radius-badge); padding: 10px 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 .deck-card .thumb-page .ln { height: 5px; margin-bottom: 6px; }
@@ -1815,7 +1815,7 @@ body.mobile-layer #canvas-head-close { display: none !important; }
   display: flex; align-items: center; gap: 3px; padding: 0 5px;
 }
 .deck-card .thumb-browser .bar i { width: 4px; height: 4px; border-radius: 50%; background: var(--bar-1); display: block; }
-.deck-card .thumb-browser .blk { height: 16px; border-radius: 4px; background: var(--bar-2); margin-bottom: 6px; }
+.deck-card .thumb-browser .blk { height: 16px; border-radius: var(--ds-radius-badge); background: var(--bar-2); margin-bottom: 6px; }
 .deck-card .thumb-browser .blk.b2 { width: 64%; }
 
 /* ── 底部提示 + 计数：UI 批 ①（作者令 2026-10-21）整体退役——deck-foot 元素
@@ -2081,7 +2081,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 .canvas-md-viewer pre {
   background: var(--color-frame-input-bg, #f5f5f5);
   padding: 8px 12px 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   overflow-x: auto;
   font-size: var(--ds-fs-hint);
   margin: 6px 0;
@@ -2090,7 +2090,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 }
 .canvas-md-viewer pre::-webkit-scrollbar { height: 4px; }
 .canvas-md-viewer pre::-webkit-scrollbar-track { background: transparent; }
-.canvas-md-viewer pre::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.2); border-radius: 2px; }
+.canvas-md-viewer pre::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.2); border-radius: var(--ds-radius-thin); }
 .canvas-md-viewer pre code { background: none; padding: 0; font-size: var(--ds-fs-hint); }
 .canvas-md-viewer code {
   background: rgba(128,128,128,0.1);
@@ -2118,7 +2118,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 .canvas-md-viewer a { color: var(--color-primary); }
 .canvas-md-viewer hr { border: none; border-top: 1px solid var(--color-border); margin: 8px 0; }
 .canvas-md-viewer strong { font-weight: 600; }
-.canvas-md-viewer img { max-width: 100%; border-radius: 8px; }
+.canvas-md-viewer img { max-width: 100%; border-radius: var(--ds-radius-input); }
 
 /* ── EPUB Reader — paginated ──
    P0 止血批（设计稿 20261030 §1.2/§2.1/§6）：三主题档（data-epub-theme）+
@@ -2173,7 +2173,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 .epub-reader-content h1 { font-size: 22px; }
 .epub-reader-content h2 { font-size: 18px; }
 .epub-reader-content h3 { font-size: var(--ds-fs-mobile-callout); }
-.epub-reader-content img { max-width: 100%; border-radius: 8px; }
+.epub-reader-content img { max-width: 100%; border-radius: var(--ds-radius-input); }
 .epub-reader-content a { color: inherit; text-decoration: underline; }
 .epub-reader-content blockquote {
   margin: 1em 0;
@@ -2189,7 +2189,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   display: block;
   min-width: 96px;
   min-height: 64px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px dashed var(--color-border);
   background: var(--color-frame-input-bg, rgba(127, 127, 127, 0.08));
 }
@@ -2210,7 +2210,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   z-index: 20;
   width: min(92%, 420px);
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -2252,7 +2252,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   min-width: 32px;
   height: 30px;
   padding: 0 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-text);
@@ -2291,7 +2291,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   flex: none;
   width: 32px;
   height: 32px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   cursor: pointer;
@@ -2331,7 +2331,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   width: 100%;
   height: 4px;
   margin: 0;
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
   background: var(--color-frame-hover, var(--color-border));
   outline: none;
   cursor: pointer;
@@ -2392,7 +2392,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   z-index: 21;
   width: 208px;
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -2407,7 +2407,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   min-width: 56px;
   height: 30px;
   padding: 0 8px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-text);
@@ -2463,7 +2463,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   font-size: var(--ds-fs-body);
   min-height: 36px;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2562,7 +2562,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 }
 mark.nf-anno {
   padding: 0 1px;
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
   color: inherit; /* 文字色 = 主题墨色，只底色区分（颜色归主题管同 §1.2 纪律） */
   background: var(--anno-yellow);
   cursor: pointer; /* 点高亮出编辑条（浮动条四色/笔记/删除） */
@@ -2581,7 +2581,7 @@ mark.nf-anno[data-anno-stale] {
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -2604,7 +2604,7 @@ mark.nf-anno[data-anno-stale] {
   box-sizing: border-box;
   margin: 6px 0;
   padding: 8px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-control-border);
   background: var(--color-frame-input-bg, rgba(127, 127, 127, 0.08));
   color: var(--color-text);
@@ -2638,7 +2638,7 @@ mark.nf-anno[data-anno-stale] {
   font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   border: 1px dashed var(--color-text-muted);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   padding: 0 4px;
 }
 .epub-anno-group-label {
@@ -2728,7 +2728,7 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
 .canvas-image-viewport img {
   display: block;
   max-width: none; /* natural size; visual size is transform scale */
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   transform-origin: 0 0;
   will-change: transform;
   -webkit-user-drag: none; /* Safari: no native drag ghost (see draggable=false in viewImage) */
@@ -2764,7 +2764,7 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   display: block;
   max-width: 100%;
   max-height: 100%;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
 }
 
 /* ── PDF viewer (pdf.js canvas render, zoomable) ── */
@@ -2796,7 +2796,7 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
 }
 .pdf-page {
   background: #fff; /* PDFs are authored for paper — page canvas keeps white */
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.06);
 }
 
@@ -2966,7 +2966,7 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   padding: 4px 12px;
   font-size: var(--ds-fs-meta);
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -3165,7 +3165,7 @@ html.ui-init #canvas-panel {
   top: 50%; left: 50%;
   transform: translate(-50%, -50%);
   width: 4px; height: 36px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: var(--color-text-muted);
   opacity: 0.25;
   transition: opacity 0.2s, background 0.2s, height 0.2s, width 0.2s;
@@ -3287,8 +3287,8 @@ body.col-resizing #canvas-panel { transition: none; }
 .nf-findbar-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
 
 /* Find hit marks (both the app-document face and the iframe face). */
-mark.nf-find-hit { background: rgba(255, 213, 0, 0.45); color: inherit; border-radius: 2px; }
-mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border-radius: 2px; }
+mark.nf-find-hit { background: rgba(255, 213, 0, 0.45); color: inherit; border-radius: var(--ds-radius-thin); }
+mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border-radius: var(--ds-radius-thin); }
 
 /* ── Wikilinks (rendered markdown) ──────────────────────────────── */
 .canvas-md-viewer a.nf-wikilink {
@@ -3341,7 +3341,7 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 /* Reference-jump flash: the target paragraph glows once (~1.8s) then settles. */
 .canvas-md-viewer .nf-jump-flash {
   animation: nfJumpFlash 1.8s ease;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
 }
 @keyframes nfJumpFlash {
   0%   { background: rgba(94, 106, 210, 0.30); box-shadow: 0 0 0 6px rgba(94, 106, 210, 0.12); }
@@ -3417,7 +3417,7 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.15);
   border: 1px solid var(--glass-border, var(--wg-border));
-  border-radius: 12px; padding: 10px 14px;
+  border-radius: var(--ds-radius-xl); padding: 10px 14px;
   box-shadow: var(--frost-shadow, 0 8px 28px rgba(0, 0, 0, 0.10));
   pointer-events: none;
   color: var(--wg-foreground);
@@ -3458,7 +3458,7 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   padding: 10px 14px;
   box-shadow: var(--frost-shadow, 0 8px 28px rgba(0, 0, 0, 0.10));
   color: var(--color-frame-text-bright, var(--color-text));
@@ -3511,7 +3511,7 @@ a.nf-term {
   max-width: min(38%, calc(100% - 240px));
   padding: 0 12px 0 10px;
   border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -3593,7 +3593,7 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--frost-shadow);
   color: var(--color-frame-text); font: inherit; font-size: 12.5px;
-  border-radius: 10px; padding: 5px 8px; outline: none; cursor: pointer;
+  border-radius: var(--ds-radius-button); padding: 5px 8px; outline: none; cursor: pointer;
   appearance: none;
 }
 .wg-switch-select:focus-visible { border-color: var(--glass-etched-border-focus, var(--color-frame-active)); }
@@ -3618,7 +3618,7 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 10px; padding: 5px 10px;
+  border-radius: var(--ds-radius-button); padding: 5px 10px;
   box-shadow: var(--frost-shadow);
 }
 .wg-search:focus-within { border-color: var(--glass-etched-border-focus, var(--color-frame-active)); }
@@ -3638,7 +3638,7 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--frost-shadow);
-  color: var(--color-frame-text-muted); border-radius: 999px; padding: 3px 10px;
+  color: var(--color-frame-text-muted); border-radius: var(--ds-radius-pill); padding: 3px 10px;
   font: inherit; font-size: var(--ds-fs-hint); cursor: pointer; outline: none;
   white-space: nowrap;
 }
@@ -3665,13 +3665,13 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 .wg-detail-body .close {
   flex: none; width: 22px; height: 22px;
   border: 0; background: transparent; color: var(--color-frame-text-muted); cursor: pointer;
-  border-radius: 6px; font-size: 14px; line-height: 22px;
+  border-radius: var(--ds-radius-chip); font-size: 14px; line-height: 22px;
 }
 .wg-detail-body .close:hover { color: var(--color-frame-text); background: var(--color-frame-hover); }
 .wg-detail-body .badges { display: flex; gap: 5px; flex-wrap: wrap; margin: 6px 0 9px; }
 .wg-detail-body .badge {
   font-size: 10.5px; color: var(--color-frame-text-muted);
-  border: 1px solid var(--color-frame-border); border-radius: 999px; padding: 1px 8px;
+  border: 1px solid var(--color-frame-border); border-radius: var(--ds-radius-pill); padding: 1px 8px;
 }
 .wg-detail-body .summary { color: var(--color-frame-text-muted); font-size: var(--ds-fs-hint); line-height: 1.5; margin: 0 0 10px; }
 .wg-detail-body h3 {
@@ -3835,7 +3835,7 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
   right: 58px;
   z-index: 31;
   padding: 3px 9px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   font-size: var(--ds-fs-meta);
   line-height: 1.4;
   letter-spacing: 0.02em;
@@ -3853,7 +3853,7 @@ body:not(.mobile-layer):not(.card-window) #canvas-slide[data-independent] .canva
   margin-left: auto;
   margin-right: 30px;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   font-size: 10px;
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.12);

@@ -130,7 +130,7 @@
   width: 100%;
   box-sizing: border-box;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--nf-chip-border);
   background: var(--nf-chip-bg);
   color: var(--color-text);
@@ -153,7 +153,7 @@
 #nf-quickinput-host .quick-input-list .monaco-list-row {
   color: var(--color-text);
   font-size: var(--ds-fs-body);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
 }
 
 #nf-quickinput-host .quick-input-list .quick-input-list-entry {

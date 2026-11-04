@@ -19,7 +19,7 @@
 .neblink-login-btn {
   width: 100%;
   padding: 10px 16px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: none;
   /* 主操作 = 墨族单源（2026-10-30 按钮体系批：绿实底 → --btn-primary-*，
      随面板主题 ink-swap） */
@@ -63,7 +63,7 @@
   flex: 1 1 auto;
   min-width: 0;
   padding: 9px 10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--color-frame-border, var(--color-border));
   background: var(--color-frame-input-bg, var(--color-bg));
   color: var(--color-frame-text, var(--color-text));
@@ -93,7 +93,7 @@
   gap: 6px;
   margin-top: 8px;
   padding: 6px 8px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   border: 1px solid var(--color-frame-border);
   border-left: 3px solid var(--color-warning);
   background: var(--color-frame-input-bg);
@@ -132,7 +132,7 @@
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   font-size: var(--ds-fs-body);
   background: var(--color-bg);
   border: 1px solid var(--color-border);
@@ -193,7 +193,7 @@
   font-size: var(--ds-fs-meta);
   padding: 2px 8px;
   border: 1px solid var(--color-border);
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: none;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -216,7 +216,7 @@
   font-size: var(--ds-fs-meta);
   padding: 2px 8px;
   border: 1px solid var(--color-border);
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: none;
   color: var(--color-text);
   cursor: pointer;
@@ -265,7 +265,7 @@
   color: var(--color-text-muted);
   cursor: pointer;
   padding: 4px 8px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   display: flex;
   align-items: center;
   transition: color 0.15s, background 0.15s;
@@ -295,7 +295,7 @@
 .neblink-switch-btn {
   flex: 1;
   padding: 8px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid rgba(7, 193, 96, 0.14);
   background: rgba(7, 193, 96, 0.14);
   color: #07c160;
@@ -319,7 +319,7 @@
 .neblink-logout-btn {
   flex: 1;
   padding: 8px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-body);
   font-weight: 500;
 }

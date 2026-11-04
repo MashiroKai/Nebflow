@@ -208,11 +208,11 @@ function renderDownloadFallback(pane, { absPath, fileName, size, objectUrl }, re
       </svg>
       <div style="text-align:center;">
         <div style="font-weight:600;color:var(--color-text);margin-bottom:4px">${escapeHtml(fileName || 'PowerPoint')}</div>
-        <div style="font-size:12px;opacity:0.6">${formatSize(size || 0)}</div>
-        <div style="font-size:13px;opacity:0.85;margin-top:6px">此环境无预览能力</div>
-        <div style="font-size:12px;opacity:0.75;max-width:420px;margin-top:6px">${escapeHtml(reason)}</div>
+        <div style="font-size:var(--ds-fs-hint);opacity:0.6">${formatSize(size || 0)}</div>
+        <div style="font-size:var(--ds-fs-body);opacity:0.85;margin-top:6px">此环境无预览能力</div>
+        <div style="font-size:var(--ds-fs-hint);opacity:0.75;max-width:420px;margin-top:6px">${escapeHtml(reason)}</div>
       </div>
-      <a class="nf-pptx-download" href="#" download="${escapeHtml(fileName || 'presentation.pptx')}" style="font-size:13px;color:var(--color-primary);text-decoration:none;padding:6px 16px;border:1px solid var(--color-primary);border-radius:8px;">Download to view</a>
+      <a class="nf-pptx-download" href="#" download="${escapeHtml(fileName || 'presentation.pptx')}" style="font-size:var(--ds-fs-body);color:var(--color-primary);text-decoration:none;padding:6px 16px;border:1px solid var(--color-primary);border-radius:var(--ds-radius-input);">Download to view</a>
     </div>`;
 
   const link = /** @type {HTMLAnchorElement|null} */ (pane.querySelector('a.nf-pptx-download'));
@@ -319,13 +319,13 @@ function renderFirstPagePreview(pane, { absPath, fileName, size, objectUrl }, bl
   pane.innerHTML = `
     <div class="canvas-md-viewer" style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:24px 0;">
       <img alt="${escapeHtml(fileName || 'preview')}" src="${url}"
-        style="max-width:min(920px,94%);border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.15);background:#fff;">
-      <div style="font-size:12px;color:var(--color-text-muted);opacity:0.75;text-align:center;">
+        style="max-width:min(920px,94%);border-radius:var(--ds-radius-input);box-shadow:0 2px 8px rgba(0,0,0,.15);background:#fff;">
+      <div style="font-size:var(--ds-fs-hint);color:var(--color-text-muted);opacity:0.75;text-align:center;">
         Quick Look preview — first page only (${escapeHtml(diag.converter || 'qlmanage')})<br>
         ${escapeHtml(fileName || '')} · ${formatSize(size || 0)}
       </div>
       <a class="nf-pptx-download" href="#" download="${escapeHtml(fileName || 'presentation.pptx')}"
-        style="font-size:13px;color:var(--color-primary);text-decoration:none;padding:6px 16px;border:1px solid var(--color-primary);border-radius:8px;">Download full file</a>
+        style="font-size:var(--ds-fs-body);color:var(--color-primary);text-decoration:none;padding:6px 16px;border:1px solid var(--color-primary);border-radius:var(--ds-radius-input);">Download full file</a>
     </div>`;
   const link = /** @type {HTMLAnchorElement|null} */ (pane.querySelector('a.nf-pptx-download'));
   if (!link || (!absPath && !objectUrl)) return;
@@ -379,7 +379,7 @@ function buildLoadingPane(pane) {
   const loadLabel = document.createElement('div');
   loadLabel.textContent = 'Loading presentation...';
   const loadProgress = document.createElement('div');
-  loadProgress.style.cssText = 'font-size:12px;opacity:0.7;font-variant-numeric:tabular-nums;';
+  loadProgress.style.cssText = 'font-size:var(--ds-fs-hint);opacity:0.7;font-variant-numeric:tabular-nums;';
   loadProgress.hidden = true;
   loadingBox.append(loadLabel, loadProgress);
   pane.innerHTML = '';

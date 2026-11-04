@@ -22,7 +22,7 @@ const DAEMON_CSS = `
 #daemon-btn {
   background: none; border: 1px solid transparent; cursor: pointer; padding: 0;
   width: 28px; height: 28px; display: flex; align-items: center;
-  justify-content: center; border-radius: 6px;
+  justify-content: center; border-radius: var(--ds-radius-chip);
   color: var(--color-frame-text-muted); position: relative;
   flex-shrink: 0; transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
@@ -47,7 +47,7 @@ const DAEMON_CSS = `
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border-radius: 16px; border: 1px solid var(--sapphire-edge);
+  border-radius: var(--ds-radius-card-lg); border: 1px solid var(--sapphire-edge);
   box-shadow:
     inset 0 -1px 0 0 rgba(91, 127, 191, 0.025),
     inset 1px 0 0 0 rgba(91, 127, 191, 0.02),
@@ -98,7 +98,7 @@ const DAEMON_CSS = `
 /* ── Close Button ── */
 .daemon-close-btn {
   display: flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; border: 1px solid transparent; border-radius: 6px;
+  width: 22px; height: 22px; border: 1px solid transparent; border-radius: var(--ds-radius-chip);
   background: transparent; cursor: pointer; transition: all 0.15s; opacity: 0.7;
 }
 .daemon-close-btn { color: var(--color-text-muted); }
@@ -121,7 +121,7 @@ const DAEMON_CSS = `
 }
 .daemon-panel-body::-webkit-scrollbar { width: 4px; }
 .daemon-panel-body::-webkit-scrollbar-track { background: transparent; }
-.daemon-panel-body::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.15); border-radius: 2px; }
+.daemon-panel-body::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.15); border-radius: var(--ds-radius-thin); }
 @media (prefers-color-scheme: dark) {
   .daemon-panel-body::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.10); }
 }
@@ -133,7 +133,7 @@ const DAEMON_CSS = `
 .daemon-empty {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   padding: 40px 16px 36px; gap: 6px; user-select: none;
-  border-radius: 10px; margin: 0 4px;
+  border-radius: var(--ds-radius-button); margin: 0 4px;
 }
 .daemon-empty-text { font-size: var(--ds-fs-hint); color: var(--color-text); opacity: 0.3; letter-spacing: -0.01em; }
 .daemon-empty-hint { font-size: var(--ds-fs-meta); color: var(--color-text); opacity: 0.18; letter-spacing: -0.01em; }
@@ -141,7 +141,7 @@ const DAEMON_CSS = `
 /* ── Daemon Row ── */
 .daemon-row {
   display: flex; align-items: center; gap: 10px; padding: 9px 10px;
-  border-radius: 10px; margin: 1px 0; transition: background 0.15s;
+  border-radius: var(--ds-radius-button); margin: 1px 0; transition: background 0.15s;
 }
 .daemon-row.anim { animation: daemonRowIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
 .daemon-row.anim:nth-child(1) { animation-delay: 0ms; }
@@ -196,7 +196,7 @@ const DAEMON_CSS = `
 }
 .daemon-autostart:hover { opacity: 1; }
 .daemon-autostart-track {
-  position: relative; width: 26px; height: 15px; border-radius: 8px;
+  position: relative; width: 26px; height: 15px; border-radius: var(--ds-radius-input);
   background: rgba(128, 128, 128, 0.28);
   transition: background 0.2s; flex-shrink: 0;
 }

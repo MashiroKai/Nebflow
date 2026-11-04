@@ -15,8 +15,13 @@ import { join, relative, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
-const CSS_DIR = join(ROOT, 'src/main/resources/web/css');
-const JS_DIR = join(ROOT, 'src/main/resources/web/js');
+const argv0 = process.argv.slice(2);
+const WR = argv0.includes('--web-root') ? argv0[argv0.indexOf('--web-root') + 1] : null;
+/** 静态根：缺省 = 本工作树；`--web-root <dir>` 可指向别处（如纯净 HEAD 树），
+ *  这样「改前 / 改后」用的是**同一把尺**，不会因工具本身改判而虚报。 */
+const WEB = WR || join(ROOT, 'src/main/resources/web');
+const CSS_DIR = join(WEB, 'css');
+const JS_DIR = join(WEB, 'js');
 const COMMENT_RE = /\/\*[\s\S]*?\*\//g;
 
 // ── 令牌表（同值 → 令牌名）；值取自 design-system.css 实测声明行 ──────────
@@ -83,9 +88,13 @@ export function measureFile(abs) {
   const bump = (bag, v) => { bag[v] = (bag[v] || 0) + 1; };
   src.split('\n').forEach((line) => {
     if (isCss && isTokenDeclLine(line)) return;
-    for (const decl of line.matchAll(/(^|[;{\s])([a-z-]+)\s*:\s*([^;}]+)/g)) {
+    const declRe = isCss
+      ? /(^|[;{\s])([a-z-]+)\s*:\s*([^;}]+)/g
+      : /(^|[;{,'"\s])([a-z-]+)\s*:\s*([^;}]+)/g;
+    for (const decl of line.matchAll(declRe)) {
       const prop = decl[2].toLowerCase();
-      const raw = decl[3].trim();
+      let raw = decl[3].trim();
+      if (!isCss) { const qi = raw.search(/['"]/); if (qi >= 0) raw = raw.slice(0, qi).trim(); }
       if (prop === 'font-size') {
         const first = raw.split(/\s+/)[0];
         if (SEMANTIC.has(first.toLowerCase())) return;
@@ -112,7 +121,7 @@ export function measureAll() {
   const totals = { fs: {}, radius: {}, space: {} };
   const perFile = {};
   for (const abs of files) {
-    const rel = relative(join(ROOT, 'src/main/resources/web'), abs).replaceAll('\\', '/');
+    const rel = relative(WEB, abs).replaceAll('\\', '/');
     const m = measureFile(abs);
     perFile[rel] = m;
     merge(totals.fs, m.fs); merge(totals.radius, m.radius); merge(totals.space, m.space);

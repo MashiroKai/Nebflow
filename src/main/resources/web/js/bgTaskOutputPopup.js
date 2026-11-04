@@ -150,7 +150,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   cursor: pointer; font-size: var(--ds-fs-mobile-callout); line-height: 1;
   opacity: 0.7; transition: opacity 0.15s;
   padding: 2px 4px; color: var(--color-text);
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   flex-shrink: 0;
   background: none; border: none;
 }
@@ -203,7 +203,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   overflow: auto;
   background: #f5f5f5;
   border: 1px solid var(--color-frame-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   font: 400 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--color-text);
   white-space: pre-wrap;

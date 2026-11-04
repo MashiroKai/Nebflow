@@ -36,7 +36,7 @@
 .nav-agent {
   width: 44px;
   padding: 4px 0;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   border: 1px solid transparent; /* reserves edge space for glass hover */
   display: flex;
   flex-direction: column;
@@ -120,7 +120,7 @@
 .nav-item {
   width: 40px;
   height: 40px;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   border: 1px solid transparent; /* reserves edge space for glass hover */
   background: transparent;
   display: flex;
@@ -162,7 +162,7 @@
   flex-shrink: 0;
   margin: 16px 4px 10px;
   max-height: calc(100vh - 26px);
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   overflow: hidden;
   padding: 10px 0;
   background: var(--glass-bg);
@@ -264,7 +264,7 @@ body.sidebar-collapsed #activity-bar {
 .activity-btn {
   width: 36px;
   height: 36px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   border: 1px solid transparent; /* reserves edge space for glass hover */
   background: transparent;
   color: var(--color-frame-text-muted);

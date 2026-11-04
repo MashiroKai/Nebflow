@@ -152,7 +152,7 @@ function showBanner(source) {
   bar.style.cssText =
     'position:fixed;left:50%;transform:translateX(-50%);bottom:24px;z-index:2147483647;' +
     'display:flex;align-items:center;gap:8px;max-width:92vw;padding:10px 16px;' +
-    'border-radius:12px;background:rgba(28,30,38,0.92);color:#f4f5f7;' +
+    'border-radius:var(--ds-radius-xl);background:rgba(28,30,38,0.92);color:#f4f5f7;' +
     "font:13px/1.5 -apple-system,'Segoe UI',sans-serif;" +
     'box-shadow:0 6px 24px rgba(0,0,0,0.28);border:1px solid rgba(255,255,255,0.12);' +
     'backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);';

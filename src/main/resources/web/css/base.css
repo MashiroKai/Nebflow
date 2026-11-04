@@ -217,7 +217,7 @@ body.sidebar-collapsed #sidebar {
   border: 1px solid transparent; /* reserves edge space for glass hover */
   background: none;
   color: var(--color-frame-text-muted);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
   margin-right: 6px;
   flex-shrink: 0;
@@ -305,7 +305,7 @@ body.sidebar-collapsed #sidebar {
   height: 28px;
   padding: 0;
   border: 1px solid transparent; /* reserves edge space for glass hover */
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: transparent;
   color: var(--color-frame-text-muted);
   cursor: pointer;
@@ -344,7 +344,7 @@ body.sidebar-collapsed #sidebar {
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   padding: 4px;
   display: none;
   flex-direction: column;
@@ -383,7 +383,7 @@ body.sidebar-collapsed #sidebar {
   gap: 8px;
   padding: 6px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: transparent;
   color: var(--color-frame-text);
   font-size: var(--ds-fs-body);
@@ -425,7 +425,7 @@ body.sidebar-collapsed #sidebar {
   backdrop-filter: blur(16px) saturate(1.4);
   -webkit-backdrop-filter: blur(16px) saturate(1.4);
   border: 0.5px solid var(--border-light, rgba(0, 0, 0, 0.06));
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   padding: 12px 14px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
   font-size: var(--ds-fs-body);
@@ -448,7 +448,7 @@ body.sidebar-collapsed #sidebar {
 }
 .global-perm-toast-btn {
   border: 0.5px solid var(--border-light, rgba(0, 0, 0, 0.08));
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 4px 12px;
   font-size: var(--ds-fs-btn);
   cursor: pointer;

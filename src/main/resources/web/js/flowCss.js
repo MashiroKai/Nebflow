@@ -20,12 +20,12 @@ export const FLOW_CSS = `
   display: flex; flex-wrap: wrap; align-content: flex-start; gap: 14px;
 }
 .team-scroll::-webkit-scrollbar { width: 8px; }
-.team-scroll::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+.team-scroll::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: var(--ds-radius-badge); }
 
 /* Team card */
 .team-card {
   flex: 1 1 280px; min-width: 260px; max-width: 460px;
-  border-radius: 16px; background: var(--color-surface);
+  border-radius: var(--ds-radius-card-lg); background: var(--color-surface);
   border: 1px solid var(--glass-border);
   box-shadow: 0 2px 8px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.03);
   overflow: hidden; display: flex; flex-direction: column;
@@ -56,7 +56,7 @@ export const FLOW_CSS = `
 /* Pending mail-queue badge on the Inbox button — hidden when count is 0 */
 .team-mail-badge {
   position: absolute; top: -5px; right: -5px; min-width: 15px; height: 15px;
-  padding: 0 4px; border-radius: 8px; background: var(--color-primary, #07c160);
+  padding: 0 4px; border-radius: var(--ds-radius-input); background: var(--color-primary, #07c160);
   color: #fff; font: 600 9px/15px -apple-system, sans-serif; text-align: center;
   box-shadow: 0 0 0 2px var(--color-surface); pointer-events: none;
 }
@@ -93,7 +93,7 @@ export const FLOW_CSS = `
 .team-flow-tags { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px 14px; }
 .team-flow-tag {
   font: 500 11px -apple-system, sans-serif; color: var(--color-primary, #07c160);
-  padding: 3px 10px; border-radius: 20px; border: 1px solid var(--color-primary, #07c160);
+  padding: 3px 10px; border-radius: var(--ds-radius-shell); border: 1px solid var(--color-primary, #07c160);
   opacity: 0.7; cursor: pointer; transition: opacity 0.15s, background 0.15s; white-space: nowrap;
 }
 .team-flow-tag:hover { opacity: 1; background: rgba(7,193,96,0.08); }
@@ -109,7 +109,7 @@ export const FLOW_CSS = `
    ⚠ 本段在 FLOW_CSS 模板串内 ⇒ 注释里禁用反引号（会提前终止模板串，checkJs 门禁会红）。 */
 .team-empty .team-empty-cta {
   display: inline-flex; align-items: center; gap: 6px;
-  height: 32px; padding: 0 16px; border-radius: 10px; margin-top: 4px;
+  height: 32px; padding: 0 16px; border-radius: var(--ds-radius-button); margin-top: 4px;
   font: 500 12.5px -apple-system, sans-serif;
 }
 .team-empty .team-empty-cta svg { width: 14px; height: 14px; }
@@ -120,7 +120,7 @@ export const FLOW_CSS = `
 /* DAG flow card */
 .dag-card {
   flex: 1 1 320px; min-width: 300px; max-width: 520px;
-  border-radius: 16px; background: var(--color-surface);
+  border-radius: var(--ds-radius-card-lg); background: var(--color-surface);
   border: 1px solid var(--glass-border);
   box-shadow: 0 2px 8px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.03);
   overflow: hidden; display: flex; flex-direction: column;
@@ -140,7 +140,7 @@ export const FLOW_CSS = `
   margin: 0 14px 14px; align-self: flex-start;
   font: 600 11px -apple-system, sans-serif; color: var(--status-word);
   background: transparent; border: 1px solid color-mix(in srgb, var(--status-error-icon) 40%, transparent);
-  border-radius: 8px; padding: 5px 14px; cursor: pointer;
+  border-radius: var(--ds-radius-input); padding: 5px 14px; cursor: pointer;
   transition: background 0.15s, opacity 0.15s;
 }
 .dag-card-cancel:hover { background: color-mix(in srgb, var(--status-error-icon) 8%, transparent); color: var(--status-error-icon); }
@@ -149,13 +149,13 @@ export const FLOW_CSS = `
   margin: 0 14px 14px; align-self: flex-start;
   font: 600 11px -apple-system, sans-serif; color: var(--color-text);
   background: transparent; border: 1px solid var(--glass-border);
-  border-radius: 8px; padding: 5px 14px; cursor: pointer;
+  border-radius: var(--ds-radius-input); padding: 5px 14px; cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
 .dag-card-close:hover { background: var(--glass-control-bg-hover); border-color: var(--color-primary, #07c160); }
 .dag-card-desc { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); padding: 10px 14px 0; }
 .dag-nodes { padding: 14px; display: flex; flex-direction: column; align-items: center; gap: 0; }
-.dag-node { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: 12px; border: 1.5px solid var(--glass-border); background: var(--color-surface); cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; min-width: 180px; position: relative; }
+.dag-node { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: var(--ds-radius-xl); border: 1.5px solid var(--glass-border); background: var(--color-surface); cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; min-width: 180px; position: relative; }
 .dag-node:hover { border-color: var(--color-primary, #07c160); box-shadow: 0 0 0 3px rgba(7,193,96,0.10); }
 .dag-node.pending { opacity: 0.5; }
 .dag-node.running { border-color: var(--color-primary, #07c160); box-shadow: 0 0 0 3px rgba(7,193,96,0.10); }
@@ -170,12 +170,12 @@ export const FLOW_CSS = `
 .dag-node-agent { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); }
 .dag-node-output { font: 400 10px ui-monospace, SFMono-Regular, monospace; color: var(--color-text-muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
 .dag-edge { width: 2px; height: 20px; background: var(--glass-border); margin: 0 auto; position: relative; }
-.dag-edge-label { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font: 400 9px -apple-system, sans-serif; color: var(--color-text-muted); background: var(--color-surface); padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
+.dag-edge-label { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font: 400 9px -apple-system, sans-serif; color: var(--color-text-muted); background: var(--color-surface); padding: 1px 5px; border-radius: var(--ds-radius-badge); white-space: nowrap; }
 
 /* Overlay viewer — fixed within pane, centered, ignores scroll */
 .flow-viewer-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 60; pointer-events: auto; animation: flow-viewer-fade 0.18s ease; }
 @keyframes flow-viewer-fade { from { opacity: 0; } to { opacity: 1; } }
-.flow-viewer { position: relative; width: calc(100% - 48px); max-height: calc(100% - 48px); display: flex; flex-direction: column; background: var(--glass-bg); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15); backdrop-filter: blur(var(--glass-blur)) saturate(1.15); border: 1px solid var(--glass-border); border-radius: 18px; overflow: hidden; box-shadow: 0px 8px 32px rgba(0,0,0,0.16); }
+.flow-viewer { position: relative; width: calc(100% - 48px); max-height: calc(100% - 48px); display: flex; flex-direction: column; background: var(--glass-bg); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15); backdrop-filter: blur(var(--glass-blur)) saturate(1.15); border: 1px solid var(--glass-border); border-radius: var(--ds-radius-2xl); overflow: hidden; box-shadow: 0px 8px 32px rgba(0,0,0,0.16); }
 .flow-viewer-header { display: flex; align-items: center; gap: 8px; padding: 11px 16px; border-bottom: 1px solid var(--glass-border); flex-shrink: 0; }
 .flow-viewer-title { font: 600 13px -apple-system, sans-serif; color: var(--color-text); }
 .flow-viewer-close { margin-left: auto; cursor: pointer; font-size: var(--ds-fs-mobile-callout); line-height: 1; opacity: 0.5; transition: opacity 0.15s; padding: 0 4px; color: var(--color-text-muted); z-index: 10; display: inline-flex; align-items: center; }
@@ -184,14 +184,14 @@ export const FLOW_CSS = `
 .flow-viewer .code-copy-btn { right: 40px; }
 .flow-viewer-body { flex: 1; overflow-y: auto; padding: 14px 18px; scrollbar-color: var(--color-frame-border) transparent; }
 .flow-viewer-footer { display: flex; align-items: center; gap: 8px; justify-content: flex-end; padding: 10px 16px; border-top: 1px solid var(--glass-border); flex-shrink: 0; }
-.flow-viewer-save { font: 600 12px -apple-system, sans-serif; color: var(--btn-primary-ink, #fff); background: var(--btn-primary-bg, #111827); border: none; border-radius: 8px; padding: 6px 16px; cursor: pointer; transition: opacity 0.15s; }
+.flow-viewer-save { font: 600 12px -apple-system, sans-serif; color: var(--btn-primary-ink, #fff); background: var(--btn-primary-bg, #111827); border: none; border-radius: var(--ds-radius-input); padding: 6px 16px; cursor: pointer; transition: opacity 0.15s; }
 .flow-viewer-save:hover { opacity: 0.88; }
 .flow-viewer-save:disabled { opacity: 0.5; cursor: default; }
 .flow-viewer-status { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); margin-right: auto; }
 
 /* Mail records */
 .flow-mail-empty { font: 400 12px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; text-align: center; padding: 40px 0; }
-.flow-mail-row { display: flex; flex-direction: column; gap: 5px; padding: 12px 14px; border: 1px solid rgba(128,128,128,0.12); border-radius: 8px; background: rgba(128,128,128,0.06); margin-bottom: 8px; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+.flow-mail-row { display: flex; flex-direction: column; gap: 5px; padding: 12px 14px; border: 1px solid rgba(128,128,128,0.12); border-radius: var(--ds-radius-input); background: rgba(128,128,128,0.06); margin-bottom: 8px; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
 .flow-mail-row:hover { background: rgba(128,128,128,0.10); border-color: rgba(128,128,128,0.18); }
 .flow-mail-row.expanded { background: rgba(128,128,128,0.10); border-color: rgba(91,127,191,0.25); }
 .flow-mail-meta { display: flex; align-items: center; gap: 6px; font: 500 11px -apple-system, sans-serif; flex-wrap: wrap; }
@@ -210,7 +210,7 @@ export const FLOW_CSS = `
 .flow-mail-content p:first-child { margin-top: 0; } .flow-mail-content p:last-child { margin-bottom: 0; } .flow-mail-content p { margin: 4px 0; }
 .flow-mail-content ul, .flow-mail-content ol { margin: 4px 0 4px 18px; padding: 0; } .flow-mail-content li { margin: 2px 0; }
 .flow-mail-content code { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 1px 4px; border-radius: 3px; font-size: 0.9em; font-family: ui-monospace, SFMono-Regular, monospace; word-break: break-all; }
-.flow-mail-content pre { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 8px 12px 10px; border-radius: 8px; overflow-x: auto; font-size: var(--ds-fs-hint); margin: 6px 0; line-height: 1.4; }
+.flow-mail-content pre { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 8px 12px 10px; border-radius: var(--ds-radius-input); overflow-x: auto; font-size: var(--ds-fs-hint); margin: 6px 0; line-height: 1.4; }
 .flow-mail-content pre code { background: none; padding: 0; font-size: var(--ds-fs-hint); word-break: normal; }
 .flow-mail-content blockquote { border-left: 3px solid var(--color-border); margin: 6px 0; padding-left: 10px; color: var(--color-text-muted); }
 .flow-mail-content h1, .flow-mail-content h2, .flow-mail-content h3, .flow-mail-content h4 { margin: 8px 0 4px 0; font-weight: 600; }
@@ -219,7 +219,7 @@ export const FLOW_CSS = `
 .flow-mail-content th, .flow-mail-content td { border: 1px solid var(--color-border); padding: 4px 8px; }
 .flow-mail-content th { background: var(--color-frame-input-bg, #f5f5f5); }
 .flow-mail-content a { color: var(--color-primary); } .flow-mail-content hr { border: none; border-top: 1px solid var(--color-border); margin: 8px 0; }
-.flow-mail-content strong { font-weight: 600; } .flow-mail-content img { max-width: 100%; border-radius: 8px; }
+.flow-mail-content strong { font-weight: 600; } .flow-mail-content img { max-width: 100%; border-radius: var(--ds-radius-input); }
 
 /* Mailbox sections (Pending / History) */
 .flow-mail-section { margin-bottom: 14px; }
@@ -236,7 +236,7 @@ export const FLOW_CSS = `
 .flow-mail-queue-tag { font: 500 10px -apple-system, sans-serif; color: rgb(91, 127, 191); background: rgba(91,127,191,0.08); padding: 1px 6px; border-radius: 5px; flex-shrink: 0; }
 .flow-mail-cancel {
   font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted);
-  background: transparent; border: 1px solid rgba(128,128,128,0.25); border-radius: 6px;
+  background: transparent; border: 1px solid rgba(128,128,128,0.25); border-radius: var(--ds-radius-chip);
   padding: 2px 8px; cursor: pointer; flex-shrink: 0;
   transition: color 0.15s, border-color 0.15s;
 }
@@ -247,30 +247,30 @@ export const FLOW_CSS = `
 .flow-def-section { margin-bottom: 16px; }
 .flow-def-section h3 { font: 600 12px -apple-system, sans-serif; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 6px; }
 .flow-def-meta { font: 400 12px -apple-system, sans-serif; color: var(--color-text); line-height: 1.5; }
-.flow-agent-block { border: 1px solid rgba(128,128,128,0.12); border-radius: 10px; background: rgba(128,128,128,0.06); padding: 14px 16px; margin-bottom: 16px; }
-.flow-agent-block-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border-radius: 8px; padding: 6px 10px; }
+.flow-agent-block { border: 1px solid rgba(128,128,128,0.12); border-radius: var(--ds-radius-button); background: rgba(128,128,128,0.06); padding: 14px 16px; margin-bottom: 16px; }
+.flow-agent-block-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border-radius: var(--ds-radius-input); padding: 6px 10px; }
 .flow-agent-block-name { font: 600 13px -apple-system, sans-serif; color: var(--color-text); border-left: 3px solid rgb(91, 127, 191); padding-left: 8px; }
 .flow-agent-block.is-manager .flow-agent-block-name { border-left-color: var(--color-primary, #07c160); }
-.flow-agent-block-badge { font: 500 10px -apple-system, sans-serif; color: var(--color-primary, #07c160); border: 1px solid var(--color-primary, #07c160); border-radius: 4px; padding: 1px 5px; }
+.flow-agent-block-badge { font: 500 10px -apple-system, sans-serif; color: var(--color-primary, #07c160); border: 1px solid var(--color-primary, #07c160); border-radius: var(--ds-radius-badge); padding: 1px 5px; }
 .flow-agent-block-ext { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); }
 .flow-agent-block-field { margin-top: 8px; } .flow-agent-block-field:first-of-type { margin-top: 4px; }
 .flow-agent-block-label { display: block; font: 600 10px -apple-system, sans-serif; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3px; }
 .flow-agent-block-text { font: 400 12.5px -apple-system, sans-serif; color: var(--color-text); line-height: 1.55; word-break: break-word; }
 .flow-agent-block-text p:first-child { margin-top: 0; } .flow-agent-block-text p:last-child { margin-bottom: 0; }
-.flow-agent-block-text code { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 1px 5px; border-radius: 4px; font-size: 0.9em; }
-.flow-agent-block-text pre { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 8px 10px; border-radius: 6px; overflow-x: auto; }
+.flow-agent-block-text code { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 1px 5px; border-radius: var(--ds-radius-badge); font-size: 0.9em; }
+.flow-agent-block-text pre { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 8px 10px; border-radius: var(--ds-radius-chip); overflow-x: auto; }
 .flow-agent-block-empty { color: var(--color-text-muted); opacity: 0.6; font-style: italic; }
 .flow-agent-block-duty { font: 400 12px -apple-system, sans-serif; color: var(--color-text); white-space: pre-wrap; line-height: 1.5; margin: 4px 0; }
 .flow-agent-block-tools { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); margin-top: 4px; }
-.flow-agent-block-tools code { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 1px 5px; border-radius: 4px; margin-right: 3px; }
-.flow-def-edit { width: 100%; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); color: var(--color-frame-input-text, var(--color-text)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: 8px; padding: 8px 10px; font: 400 12px ui-monospace, SFMono-Regular, monospace; resize: vertical; outline: none; min-height: 60px; line-height: 1.5; transition: border-color 0.15s; }
+.flow-agent-block-tools code { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 1px 5px; border-radius: var(--ds-radius-badge); margin-right: 3px; }
+.flow-def-edit { width: 100%; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); color: var(--color-frame-input-text, var(--color-text)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: var(--ds-radius-input); padding: 8px 10px; font: 400 12px ui-monospace, SFMono-Regular, monospace; resize: vertical; outline: none; min-height: 60px; line-height: 1.5; transition: border-color 0.15s; }
 .flow-def-edit:focus { border-color: var(--glass-etched-border-focus, rgba(91,127,191,0.35)); }
 .flow-def-edit.flow-def-edit-sm { min-height: 44px; }
 .flow-def-tools { display: flex; flex-wrap: wrap; gap: 5px; }
-.flow-def-tool { display: inline-flex; align-items: center; gap: 4px; font: 500 11px -apple-system, sans-serif; color: var(--color-frame-text-dim, var(--color-text-muted)); cursor: pointer; user-select: none; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: 6px; padding: 3px 8px; transition: all 0.15s; }
+.flow-def-tool { display: inline-flex; align-items: center; gap: 4px; font: 500 11px -apple-system, sans-serif; color: var(--color-frame-text-dim, var(--color-text-muted)); cursor: pointer; user-select: none; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: var(--ds-radius-chip); padding: 3px 8px; transition: all 0.15s; }
 .flow-def-tool.checked { border-color: rgba(91, 127, 191, 0.5); color: rgb(91, 127, 191); background: rgba(91, 127, 191, 0.08); }
 .flow-def-source { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.6; margin-bottom: 3px; }
-.flow-agent-block-readonly { font: 400 12px -apple-system, sans-serif; color: var(--color-text); line-height: 1.5; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: 8px; padding: 8px 10px; }
+.flow-agent-block-readonly { font: 400 12px -apple-system, sans-serif; color: var(--color-text); line-height: 1.5; background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); border-radius: var(--ds-radius-input); padding: 8px 10px; }
 .flow-def-tabs { display: flex; gap: 2px; position: sticky; top: 0; background: var(--glass-bg); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15); backdrop-filter: blur(var(--glass-blur)) saturate(1.15); border-bottom: 1px solid var(--glass-border); padding: 6px 2px 0; margin: -14px -18px 12px; z-index: 2; }
 .flow-def-tab { padding: 6px 12px; font: 500 12px -apple-system, sans-serif; color: var(--color-text-muted); background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; cursor: pointer; font-family: inherit; margin-bottom: -1px; transition: color 0.2s, border-color 0.2s; display: inline-flex; align-items: center; gap: 4px; }
 .flow-def-tab:hover { color: var(--color-text); }
@@ -365,14 +365,14 @@ export const FLOW_CSS = `
 /* ── Per-agent model config in definition viewer ── */
 .flow-agent-model-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .flow-agent-model-current { font: 500 10px -apple-system, sans-serif; color: var(--color-text-muted); }
-.flow-agent-model-current.fallback { color: rgb(91, 127, 191); background: rgba(91,127,191,0.10); padding: 2px 8px; border-radius: 6px; }
+.flow-agent-model-current.fallback { color: rgb(91, 127, 191); background: rgba(91,127,191,0.10); padding: 2px 8px; border-radius: var(--ds-radius-chip); }
 /* panelscheme 批（2026-09-21）：非可设 agent 的方案来源注记（只读位，替换原下拉）。 */
 .flow-agent-model-note { font: 400 12px -apple-system, sans-serif; color: var(--color-text-muted); padding: 4px 0; }
 .flow-agent-model-fbs { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-.flow-agent-model-fb { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); padding: 2px 8px; border-radius: 6px; }
+.flow-agent-model-fb { font: 400 10px -apple-system, sans-serif; color: var(--color-text-muted); background: var(--glass-etched-bg, rgba(0,0,0,0.025)); border: 1px solid var(--glass-etched-border, var(--glass-border)); padding: 2px 8px; border-radius: var(--ds-radius-chip); }
 
 /* ── Agent popup header model badge ── */
-.flow-agent-model-badge { font: 500 10px -apple-system, sans-serif; color: rgb(91, 127, 191); background: rgba(91,127,191,0.08); padding: 2px 8px; border-radius: 6px; margin-left: 4px; }
+.flow-agent-model-badge { font: 500 10px -apple-system, sans-serif; color: rgb(91, 127, 191); background: rgba(91,127,191,0.08); padding: 2px 8px; border-radius: var(--ds-radius-chip); margin-left: 4px; }
 
 /* ══ Solar-system flow visualization (P5) ══ */
 /* 🔴 flowmaptab-retire（#1228 两裁② 停用清单面 4）：per-project 布局面整块摘除——
@@ -392,7 +392,7 @@ export const FLOW_CSS = `
   -webkit-backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur, 10px)) saturate(1.15);
   border: 1px solid var(--glass-border, rgba(255,255,255,0.12));
-  border-radius: 14px;
+  border-radius: var(--ds-radius-card-md);
   padding: 8px 10px;
   box-sizing: border-box;
   box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.04);
@@ -519,7 +519,7 @@ export const FLOW_CSS = `
 .flow-list-count { font: 400 11px -apple-system, sans-serif; color: var(--color-text-muted); opacity: 0.7; }
 .flow-def-card {
   flex: 1 1 300px; min-width: 280px; max-width: 480px;
-  border-radius: 14px; background: var(--color-surface);
+  border-radius: var(--ds-radius-card-md); background: var(--color-surface);
   border: 1px solid var(--glass-border);
   box-shadow: 0 2px 8px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.03);
   overflow: hidden; display: flex; flex-direction: column;
@@ -565,11 +565,11 @@ export const FLOW_CSS = `
   overflow-y: auto; padding: 14px;
 }
 .stellar-container::-webkit-scrollbar { width: 8px; }
-.stellar-container::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+.stellar-container::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: var(--ds-radius-badge); }
 
 .stellar-card {
   max-width: 700px; margin: 0 auto 20px;
-  border-radius: 16px; background: var(--color-surface);
+  border-radius: var(--ds-radius-card-lg); background: var(--color-surface);
   border: 1px solid var(--glass-border);
   box-shadow: 0 2px 8px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.03);
   overflow: hidden; display: flex; flex-direction: column;
@@ -579,7 +579,7 @@ export const FLOW_CSS = `
   border-bottom: 1px solid var(--color-border);
 }
 .stellar-title { font: 600 15px -apple-system; color: var(--color-text); }
-.stellar-status { font: 500 11px ui-monospace; padding: 2px 8px; border-radius: 6px; text-transform: uppercase; }
+.stellar-status { font: 500 11px ui-monospace; padding: 2px 8px; border-radius: var(--ds-radius-chip); text-transform: uppercase; }
 .stellar-status.running { color: var(--color-primary); background: rgba(91,127,191,0.1); }
 .stellar-status.completed { color: #34c759; background: rgba(52,199,89,0.1); }
 .stellar-status.failed { color: #ff3b30; background: rgba(255,59,48,0.1); }
@@ -641,7 +641,7 @@ export const FLOW_CSS = `
 .flow-defs-grid { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
 .flow-def-card {
   flex: 1 1 240px; min-width: 220px; max-width: 360px;
-  border-radius: 12px; background: var(--color-surface);
+  border-radius: var(--ds-radius-xl); background: var(--color-surface);
   border: 1px solid var(--glass-border);
   padding: 14px; display: flex; flex-direction: column; gap: 6px;
 }
@@ -651,7 +651,7 @@ export const FLOW_CSS = `
 .flow-def-view-btn {
   align-self: flex-start; font: 500 11px -apple-system;
   color: var(--color-primary, #5b7fbf); background: none;
-  border: 1px solid rgba(91,127,191,0.3); border-radius: 6px;
+  border: 1px solid rgba(91,127,191,0.3); border-radius: var(--ds-radius-chip);
   padding: 4px 10px; cursor: pointer; transition: all 0.15s;
 }
 .flow-def-view-btn:hover { background: rgba(91,127,191,0.08); }

@@ -314,7 +314,7 @@ export async function createEditor(container, opts) {
           'right:12px',
           'bottom:10px',
           'padding:6px 10px',
-          'border-radius:8px',
+          'border-radius:var(--ds-radius-input)',
           'border:1px solid var(--color-border, rgba(128,128,128,0.35))',
           'background:var(--color-surface, rgba(127,127,127,0.12))',
           'color:var(--color-text, #e8eaed)',

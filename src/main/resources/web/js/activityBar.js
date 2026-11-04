@@ -584,7 +584,7 @@ function injectLoginModalStyles() {
   -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
   border: 1px solid var(--glass-border, rgba(255,255,255,0.1));
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
     0px 2px 8px rgba(0, 0, 0, 0.04),
@@ -678,7 +678,7 @@ function injectLoginModalStyles() {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   padding: 10px 16px;
   font-size: 14px;
   font-weight: 500;
