@@ -1,0 +1,19 @@
+# KAI (40742cd4, Windows) — collected via Bash device=KAI, local time 14:17:03+0800
+## uname
+MINGW64_NT-10.0-22621 KAI 3.4.10-87d57229.x86_64 2024-02-14 x86_64 Msys (live 14:06)
+## winver
+Microsoft Windows [Version 10.0.22621.1992] (live 14:06)
+## /proc/meminfo
+MemTotal: 16679076 kB / MemFree 8127660 kB (live 14:07)
+## cpu
+12 logical / 6 physical — AMD Ryzen 5 5600 6-Core (live 14:07, nproc=12)
+## disk C:
+238G total, 73G avail, 70% used (live 14:07)
+## toolchain (live probes 14:06-14:08)
+java: openjdk 21.0.12.1 Temurin LTS (PATH java, C:/Program Files/Eclipse Adoptium/jdk-21.0.12.101-hotspot)
+sbt: /c/Users/Kai/sbt/bin/sbt (version 未测得：sbt launcher 在但未跑 --version，避免占其 CPU)
+node: v24.14.0
+python3: ABSENT (command not found)
+py: ABSENT (command not found)
+ffmpeg: ABSENT (command not found)
+git: git version 2.45.2.windows.1
