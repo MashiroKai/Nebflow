@@ -41,24 +41,24 @@
      最窄侧栏贴边临界，不在本批 named 范围。） */
 /* 手机层覆盖块（21:36 追加令）：以下逐条压上方桌面基值， specificity
    （元素+双类）高于裸类规则，无需 !important；桌面与手机渲染互不越界。 */
-body.mobile-layer .fm-row { padding: 9px 10px; }
-body.mobile-layer .fm-avatar-36 { font-size: 16px; }
-body.mobile-layer .fm-avatar-40 { font-size: 17px; }
-body.mobile-layer .fm-row-name { font-size: 16px; line-height: 1.4; }
-body.mobile-layer .fm-row-sub { font-size: 13px; line-height: 1.4; }
-body.mobile-layer .fm-remark-edit { font-size: 16px; }
-body.mobile-layer .fm-nf-label { font-size: 16px; }
-body.mobile-layer .fm-conv-time { font-size: 12px; }
+body.mobile-layer .fm-row { padding: 9px var(--ds-space-glass-x); }
+body.mobile-layer .fm-avatar-36 { font-size: var(--ds-fs-mobile-callout); }
+body.mobile-layer .fm-avatar-40 { font-size: var(--ds-fs-lead); }
+body.mobile-layer .fm-row-name { font-size: var(--ds-fs-mobile-callout); line-height: 1.4; }
+body.mobile-layer .fm-row-sub { font-size: var(--ds-fs-body); line-height: 1.4; }
+body.mobile-layer .fm-remark-edit { font-size: var(--ds-fs-mobile-callout); }
+body.mobile-layer .fm-nf-label { font-size: var(--ds-fs-mobile-callout); }
+body.mobile-layer .fm-conv-time { font-size: var(--ds-fs-hint); }
 body.mobile-layer .fm-conv-summary { font-size: 14px; }
-body.mobile-layer .fm-req-time { font-size: 12px; }
+body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
 
 /* ── Shared row/list primitives ─────────────────────────── */
 .fm-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 10px; /* 桌面档（12:50 批前基准；手机层 9px 见头部覆盖块） */
-  border-radius: 10px;
+  gap: var(--ds-space-glass-x);
+  padding: 7px var(--ds-space-glass-x); /* 桌面档（12:50 批前基准；手机层 9px 见头部覆盖块） */
+  border-radius: var(--ds-radius-button);
   cursor: pointer;
   transition: background 0.15s ease;
 }
@@ -90,7 +90,7 @@ body.mobile-layer .fm-req-time { font-size: 12px; }
 
 .fm-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .fm-avatar-36 { width: 36px; height: 36px; font-size: 14px; }
-.fm-avatar-40 { width: 40px; height: 40px; font-size: 15px; }
+.fm-avatar-40 { width: 40px; height: 40px; font-size: var(--ds-fs-title); }
 
 /* ① 设备行头像（作者 2026-09-15：「设备在消息列表里的头像应该要和在联系人面板里
    一致」）：字形 = `platformDisplay` 单点（`neblink.js:401-414`）产出的平台 `<svg>`，
@@ -103,7 +103,7 @@ body.mobile-layer .fm-req-time { font-size: 12px; }
 .fm-row-meta { flex: 1; min-width: 0; }
 
 .fm-row-name {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   color: var(--color-text, #000);
   overflow: hidden;
@@ -112,7 +112,7 @@ body.mobile-layer .fm-req-time { font-size: 12px; }
 }
 
 .fm-row-sub {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -157,7 +157,7 @@ body.mobile-layer .fm-req-time { font-size: 12px; }
   flex-shrink: 0;
   min-width: 16px;
   height: 16px;
-  padding: 0 4px;
+  padding: 0 var(--ds-space-1);
   border-radius: 9999px;
   background: var(--color-primary);
   color: #fff;
@@ -171,7 +171,7 @@ body.mobile-layer .fm-req-time { font-size: 12px; }
 
 .fm-status-text {
   flex-shrink: 0;
-  font-size: 11px; /* 状态词保持 11px：180px 最窄侧栏被拉黑行贴边临界（L6 无溢出断言），不在本批 named 范围 */
+  font-size: var(--ds-fs-meta); /* 状态词保持 11px：180px 最窄侧栏被拉黑行贴边临界（L6 无溢出断言），不在本批 named 范围 */
   color: var(--color-text-muted, #888);
 }
 
@@ -193,12 +193,12 @@ body.mobile-layer .fm-req-time { font-size: 12px; }
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  padding: 2px 6px;
-  font-size: 13px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
+  font-size: var(--ds-fs-body);
   font-family: inherit;
   font-weight: 500;
   line-height: 1.4;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   border: 1px solid var(--glass-etched-border);
   background: var(--glass-etched-bg);
   color: var(--color-text, #000);
@@ -214,9 +214,9 @@ body.mobile-layer .fm-req-time { font-size: 12px; }
 .fm-remark-edit:focus-visible { border-color: rgb(var(--sapphire) / 0.5); }
 
 .fm-empty {
-  padding: 24px 12px;
+  padding: var(--ds-space-6) var(--ds-space-3);
   text-align: center;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, #888);
   line-height: 1.6;
 }
@@ -226,12 +226,12 @@ body.mobile-layer .fm-req-time { font-size: 12px; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 32px 12px;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-8) var(--ds-space-3);
 }
 
 .fm-login-text {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, #888);
   text-align: center;
   line-height: 1.6;
@@ -241,10 +241,10 @@ body.mobile-layer .fm-req-time { font-size: 12px; }
 #fm-contacts-body {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 8px 10px;
+  padding: var(--ds-space-1) var(--ds-space-2) var(--ds-space-glass-x);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ds-space-1);
 }
 
 /* 搜索块（0906 布局修复）：列布局 = 输入行 + 独立整宽结果区。
@@ -252,21 +252,21 @@ body.mobile-layer .fm-req-time { font-size: 12px; }
 .fm-search-block {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 4px 2px 8px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-1) var(--ds-space-half) var(--ds-space-2);
 }
 
 .fm-search {
   display: flex;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 
 .fm-search-input {
   flex: 1;
   min-width: 0;
-  padding: 6px 10px;
-  font-size: 13px;
-  border-radius: 8px;
+  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  font-size: var(--ds-fs-body);
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border);
   background: var(--glass-etched-bg);
   color: var(--color-text, #000);
@@ -289,11 +289,11 @@ body.mobile-layer .fm-req-time { font-size: 12px; }
    「填充差 + 字重差」表达，暗档背景 Δ = .10（≥ 裁定红线 .08）。 */
 button.fm-search-btn {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-btn);
   font-family: inherit;
   font-weight: 500;
-  padding: 6px 12px;
-  border-radius: 8px;
+  padding: var(--ds-space-1h) var(--ds-space-3);
+  border-radius: var(--ds-radius-input);
   color: var(--color-text, #000);
   background: var(--glass-send-bg);
   border: 1px solid var(--glass-send-border);
@@ -335,8 +335,8 @@ button.fm-search-btn:focus-visible {
 
 /* 结果区（命中 / 未找到 / 加载 / 失败 共用容器卡）：独立块，整宽 */
 .fm-result-card {
-  padding: 10px;
-  border-radius: 12px;
+  padding: var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-xl);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
 }
@@ -359,7 +359,7 @@ button.fm-search-btn:focus-visible {
 .fm-result-person {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
   min-width: 0;
 }
 
@@ -369,13 +369,13 @@ button.fm-search-btn:focus-visible {
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
+  gap: var(--ds-space-1h);
+  margin-top: var(--ds-space-2);
 }
 
 /* 卡内空态文案收紧（列表级 .fm-empty 的 24px 竖排距在卡内过大） */
-.fm-result-card .fm-empty { padding: 14px 12px; }
-.fm-result-card .fm-empty-hint { margin: -6px 12px 2px; }
+.fm-result-card .fm-empty { padding: 14px var(--ds-space-3); }
+.fm-result-card .fm-empty-hint { margin: -6px var(--ds-space-3) var(--ds-space-half); }
 
 /* 加载态：区域级三点脉冲（reduced-motion 退化静态点） */
 .fm-searching {
@@ -383,7 +383,7 @@ button.fm-search-btn:focus-visible {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  padding: 12px;
+  padding: var(--ds-space-3);
 }
 
 .fm-searching i {
@@ -397,15 +397,15 @@ button.fm-search-btn:focus-visible {
 .fm-searching i:nth-child(2) { animation-delay: 0.2s; }
 .fm-searching i:nth-child(3) { animation-delay: 0.4s; }
 
-.fm-add-btn { flex-shrink: 0; font-size: 12px; padding: 5px 12px; }
+.fm-add-btn { flex-shrink: 0; font-size: var(--ds-fs-btn); padding: 5px var(--ds-space-3); }
 
 /* ② 验证附言框入场：旧形态「点加好友 → 框瞬间出现」是突兀跳变。淡入 + 2px 上浮
    220ms ease-out（作者常例 200–400ms ease-out）；只在用户动作后出现
    （verify 态仅由「加好友」/ 搜索提交进入，非背景刷新重建）。 */
 .fm-verify-box {
   display: flex;
-  gap: 6px;
-  margin-top: 8px;
+  gap: var(--ds-space-1h);
+  margin-top: var(--ds-space-2);
   animation: fm-rise-in 220ms ease-out both;
 }
 
@@ -417,16 +417,16 @@ button.fm-search-btn:focus-visible {
 .fm-verify-input {
   flex: 1;
   min-width: 0;
-  padding: 5px 10px;
-  font-size: 12px;
-  border-radius: 8px;
+  padding: 5px var(--ds-space-glass-x);
+  font-size: var(--ds-fs-hint);
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border);
   background: var(--glass-bg);
   color: var(--color-text, #000);
   outline: none;
 }
 
-.fm-verify-box .glass-control { flex-shrink: 0; font-size: 12px; padding: 5px 12px; }
+.fm-verify-box .glass-control { flex-shrink: 0; font-size: var(--ds-fs-hint); padding: 5px var(--ds-space-3); }
 
 /* ③ 同框「取消」键（2026-09-14 交付批）：旧形态**零自有样式**——sapphire.css 的
    发送族选择器用 `:not(.fm-verify-cancel)` 把它排除后，本键吃 UA 默认（实测
@@ -438,7 +438,7 @@ button.fm-search-btn:focus-visible {
 button.fm-verify-cancel {
   font-family: inherit;
   font-weight: 400;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   color: var(--color-text, #000);
   background: var(--glass-send-bg);
   border: 1px solid var(--glass-send-border);
@@ -481,9 +481,9 @@ button.fm-verify-cancel:focus-visible {
 .fm-nf-entry {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
-  border-radius: 10px;
+  gap: var(--ds-space-glass-x);
+  padding: 7px var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-button);
   cursor: pointer;
   transition: background 0.15s ease;
 }
@@ -510,36 +510,36 @@ button.fm-verify-cancel:focus-visible {
 
 .fm-nf-icon svg { width: 17px; height: 17px; }
 
-.fm-nf-label { flex: 1; font-size: 13px; font-weight: 500; color: var(--color-text, #000); }
+.fm-nf-label { flex: 1; font-size: var(--ds-fs-body); font-weight: 500; color: var(--color-text, #000); }
 
 .fm-nf-chevron { color: var(--color-text-muted, #888); display: flex; }
 .fm-nf-chevron svg { width: 14px; height: 14px; }
 
 /* ②「新的朋友」区展开入场（旧形态 = 瞬间插入）。与验证框共用 fm-rise-in。 */
-.fm-requests { padding: 2px 0 4px; animation: fm-rise-in 200ms ease-out both; }
+.fm-requests { padding: var(--ds-space-half) 0 var(--ds-space-1); animation: fm-rise-in 200ms ease-out both; }
 
 .fm-req-group {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: var(--color-text-muted, #888);
-  margin: 8px 10px 2px;
+  margin: var(--ds-space-2) var(--ds-space-glass-x) var(--ds-space-half);
 }
 
 /* 请求行：放不下就换行（R5/R6）——动作区整体落到第二行右对齐，绝不挤压文本、
    绝不被 .panel{overflow:hidden} 裁掉（180px 现状：拒绝键右缘 268.6 > 面板右缘
    239 被裁；.fm-row-meta 仅 8.42px / 0px）。 */
-.fm-req-row { cursor: default; flex-wrap: wrap; row-gap: 6px; }
+.fm-req-row { cursor: default; flex-wrap: wrap; row-gap: var(--ds-space-1h); }
 .fm-req-row:hover { background: transparent; }
 
-.fm-req-btns { display: flex; gap: 6px; flex: 0 0 auto; margin-left: auto; }
+.fm-req-btns { display: flex; gap: var(--ds-space-1h); flex: 0 0 auto; margin-left: auto; }
 
 /* 同意 = 主操作（中性玻璃顶档 + 500 字重；描边随态递进） */
 button.fm-req-accept {
-  font-size: 12px;
+  font-size: var(--ds-fs-btn);
   font-family: inherit;
   font-weight: 500;
-  padding: 4px 12px;
-  border-radius: 8px;
+  padding: var(--ds-space-1) var(--ds-space-3);
+  border-radius: var(--ds-radius-input);
   color: var(--color-text, #000);
   background: var(--glass-send-bg-active);
   border: 1px solid var(--glass-send-border);
@@ -563,11 +563,11 @@ button.fm-req-accept:focus-visible {
 
 /* 拒绝 = 次操作（中性玻璃 rest 档 + 400 字重 + 全量四态 ramp） */
 button.fm-req-decline {
-  font-size: 12px;
+  font-size: var(--ds-fs-btn);
   font-family: inherit;
   font-weight: 400;
-  padding: 4px 12px;
-  border-radius: 8px;
+  padding: var(--ds-space-1) var(--ds-space-3);
+  border-radius: var(--ds-radius-input);
   color: var(--color-text, #000);
   background: var(--glass-send-bg);
   border: 1px solid var(--glass-send-border);
@@ -609,25 +609,25 @@ button.fm-req-decline:focus-visible {
 #fm-conversations {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 8px 10px;
+  padding: var(--ds-space-1) var(--ds-space-2) var(--ds-space-glass-x);
 }
 
-.fm-conv-top { display: flex; align-items: baseline; gap: 8px; }
+.fm-conv-top { display: flex; align-items: baseline; gap: var(--ds-space-2); }
 
 .fm-conv-time {
   flex-shrink: 0;
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
   font-variant-numeric: tabular-nums;
 }
 
-.fm-conv-bottom { display: flex; align-items: center; gap: 8px; }
+.fm-conv-bottom { display: flex; align-items: center; gap: var(--ds-space-2); }
 
 .fm-conv-summary {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, #888);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -640,7 +640,7 @@ button.fm-req-decline:focus-visible {
   max-width: 92vw;
   height: 70vh;
   max-height: 80vh;
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   display: flex;
   flex-direction: column;
   padding: 0;
@@ -669,8 +669,8 @@ button.fm-req-decline:focus-visible {
 .fm-modal-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 16px 12px 20px;
+  gap: var(--ds-space-glass-x);
+  padding: var(--ds-space-3) var(--ds-space-4) var(--ds-space-3) var(--ds-space-5);
 }
 
 /* 会话窗头头像槽（40px 档；**窗头头像槽**，三类全挂（作者 2026-09-21 16:54 令
@@ -680,7 +680,7 @@ button.fm-req-decline:focus-visible {
    或标题首字母那一枚／`.fm-avatar-device svg`。类名与几何均既有 ⇒ 零新规则。 */
 .fm-modal-avatar { flex-shrink: 0; display: inline-flex; align-items: center; }
 
-.fm-modal-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.fm-modal-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: var(--ds-space-2); }
 
 /* H（决策卡 C/D/G/H）→ **收窄**（作者 2026-09-17 令：「让 header 可点击展开的范围
    只是群名和按钮」）：群设置入口的第二挂点 = **群名本身**（`.fm-modal-name`），不再是
@@ -692,7 +692,7 @@ button.fm-req-decline:focus-visible {
        扩张全部落在盒外** ⇒ 群名文本与成员数文本的**渲染位置与改前逐像素相同**
        （窗头高度亦仍为 64px 档，该行 26px < 40px 头像行；读数见报告 §P2/§P3）。
      · 非群窗不挂 `fm-modal-title-btn` 类 ⇒ 好友/设备窗零影响（设备窗无本类）。 */
-.fm-modal-title-btn { cursor: pointer; border-radius: 6px; padding: 4px 8px; margin: -4px -8px; }
+.fm-modal-title-btn { cursor: pointer; border-radius: var(--ds-radius-chip); padding: var(--ds-space-1) var(--ds-space-2); margin: -4px -8px; }
 /* 类已挂在 `.fm-modal-name` 自身 ⇒ hover 规则必须是**同元素**（原 `.fm-modal-title-btn
    .fm-modal-name` 后代式选择器随迁后失效，见上）。 */
 .fm-modal-name.fm-modal-title-btn:hover { color: var(--color-primary); }
@@ -712,7 +712,7 @@ button.fm-req-decline:focus-visible {
 .fm-modal-title-btn:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 0; }
 
 .fm-modal-name {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--color-frame-text-bright, #1b1e26);
@@ -726,7 +726,7 @@ button.fm-req-decline:focus-visible {
    `--color-frame-text-muted`；按钮圆角 8px 与全站按钮档一致：主窗口
    `.search-modal` 内的 8px 档）。🔴 计数文案沿用既有 i18n key（不改文案）。 */
 .fm-modal-select-count {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted, var(--color-text-muted, #888));
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
@@ -734,10 +734,10 @@ button.fm-req-decline:focus-visible {
 .fm-fwd-cancel {
   flex-shrink: 0;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
-  padding: 4px 10px;
-  border-radius: 8px;
+  padding: var(--ds-space-1) var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border);
   background: transparent;
   color: var(--color-text);
@@ -768,21 +768,21 @@ button.fm-req-decline:focus-visible {
 .fm-fwd-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 16px 4px;
+  gap: var(--ds-space-glass-x);
+  padding: var(--ds-space-3) var(--ds-space-4) var(--ds-space-1);
   min-height: 0;
 }
 /* 附言 = 下沉面（比面板底更暗；亮/暗两档各一值，与引用块的 D1 同族口径）。 */
 .fm-fwd-note {
   width: 100%;
   box-sizing: border-box;
-  padding: 8px 12px;
+  padding: var(--ds-space-2) var(--ds-space-3);
   border: none;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   background: rgba(0, 0, 0, 0.03);
   box-shadow: inset 0 0 0 1px var(--glass-etched-border);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   line-height: 1.45;
   color: var(--color-text);
   resize: none;
@@ -795,17 +795,17 @@ button.fm-req-decline:focus-visible {
   .fm-fwd-note { background: rgba(255, 255, 255, 0.05); }
 }
 /* 已选回显（chip 平铺，可单个移除） */
-.fm-fwd-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.fm-fwd-chips { display: flex; flex-wrap: wrap; gap: var(--ds-space-2); }
 .fm-fwd-chips:empty { display: none; }
 .fm-fwd-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 8px 3px 8px;
+  gap: var(--ds-space-1h);
+  padding: 3px var(--ds-space-2) 3px var(--ds-space-2);
   border-radius: 9999px;
   background: var(--glass-etched-bg);
   box-shadow: inset 0 0 0 1px var(--glass-etched-border);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
 }
 .fm-fwd-chip-x {
@@ -829,20 +829,20 @@ button.fm-req-decline:focus-visible {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   box-shadow: inset 0 0 0 1px var(--glass-etched-border);
 }
 .fm-fwd-empty {
-  padding: 12px;
-  font-size: 12px;
+  padding: var(--ds-space-3);
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted, var(--color-text-muted, #888));
   text-align: center;
 }
 .fm-fwd-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-3);
   background: transparent;
   border: none;
   font-family: inherit;
@@ -870,14 +870,14 @@ button.fm-req-decline:focus-visible {
 .fm-fwd-row.on .fm-fwd-check { background: rgb(var(--sapphire)); border-color: rgb(var(--sapphire)); color: #fff; }
 .fm-fwd-row-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .fm-fwd-row-name {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .fm-fwd-row-sub {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted, var(--color-text-muted, #888));
   overflow: hidden;
   text-overflow: ellipsis;
@@ -888,12 +888,12 @@ button.fm-req-decline:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px;
-  border-radius: 10px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border-radius: var(--ds-radius-button);
   background: var(--glass-etched-bg);
   box-shadow: inset 0 0 0 1px var(--glass-etched-border);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 .fm-fwd-target-label { color: var(--color-frame-text-muted, var(--color-text-muted, #888)); }
 .fm-fwd-target-name {
@@ -907,13 +907,13 @@ button.fm-req-decline:focus-visible {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 8px;
-  padding: 12px 16px 14px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-3) var(--ds-space-4) 14px;
   border-top: 1px solid var(--glass-etched-border);
 }
 
 .fm-modal-id {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -931,8 +931,8 @@ button.fm-req-decline:focus-visible {
 .fm-trust-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 11px;
+  gap: var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   line-height: 1;
   color: rgb(var(--sapphire) / 0.95);
@@ -952,8 +952,8 @@ button.fm-req-decline:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  font-size: 17px;
+  border-radius: var(--ds-radius-chip);
+  font-size: var(--ds-fs-lead);
   color: var(--color-text-muted, #888);
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
@@ -970,7 +970,7 @@ button.fm-req-decline:focus-visible {
   border-radius: 9999px;
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text, #000);
   z-index: 2;
   pointer-events: none;
@@ -978,13 +978,13 @@ button.fm-req-decline:focus-visible {
 
 .fm-offline-bar,
 .fm-blocked-bar {
-  margin: 0 16px 6px;
-  padding: 6px 10px;
+  margin: 0 var(--ds-space-4) var(--ds-space-1h);
+  padding: var(--ds-space-1h) var(--ds-space-glass-x);
   text-align: center;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, #888);
   background: var(--glass-etched-bg);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
 }
 
 /* Message flow — 气泡几何 / 出向底色 / 元信息 pill / 时间排版 = 与 dropbox 面
@@ -995,8 +995,8 @@ button.fm-req-decline:focus-visible {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 8px 16px 10px;
+  gap: var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-4) var(--ds-space-glass-x);
   border-top: 1px solid var(--glass-etched-border);
 }
 
@@ -1006,8 +1006,8 @@ button.fm-req-decline:focus-visible {
    （亮/暗同源，无新字面量色值）。 */
 .fm-flow-status {
   margin: auto;
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   text-align: center;
   color: var(--color-frame-text-muted, var(--color-text-muted, #888));
@@ -1034,8 +1034,8 @@ button.fm-req-decline:focus-visible {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
-  margin-top: 8px;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-2);
   min-width: 0;
   max-width: 100%;
 }
@@ -1063,7 +1063,7 @@ button.fm-req-decline:focus-visible {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 2px;
+  gap: var(--ds-space-half);
   min-width: 0;
 }
 .file-card.fm-att { flex-wrap: wrap; }
@@ -1078,8 +1078,8 @@ button.fm-req-decline:focus-visible {
    48px = pill margin 32 + flex gap 16）；本段只是把「哪侧朝中轴」按行侧镜像过来 ——
    fm 调用点**不传**任何位置类 opts（见 popArtifacts.buildMediaStack 头注）。 */
 .fm-msg .pop-stack-area { width: max-content; max-width: 100%; }
-.fm-msg.out .pop-stack-area > .pill { margin-right: 32px; }
-.fm-msg.in .pop-stack-area > .pill { order: 3; margin-left: 32px; }
+.fm-msg.out .pop-stack-area > .pill { margin-right: var(--ds-space-8); }
+.fm-msg.in .pop-stack-area > .pill { order: 3; margin-left: var(--ds-space-8); }
 .fm-msg.out .pop-stack-view .media-layer.layer-mid { transform: translateX(-14px) rotate(-2deg); }
 .fm-msg.out .pop-stack-view .media-layer.layer-back { transform: translateX(-26px) rotate(-3.5deg); }
 
@@ -1124,8 +1124,8 @@ button.fm-req-decline:focus-visible {
 .fm-upload-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin: 0 16px 6px;
+  gap: var(--ds-space-2);
+  margin: 0 var(--ds-space-4) var(--ds-space-1h);
 }
 .fm-upload-list[hidden] { display: none; }
 
@@ -1152,11 +1152,11 @@ button.fm-req-decline:focus-visible {
 .fm-upload-failed { border-color: var(--status-error-icon); }
 /* ui-status-redesign（盘点 #42 同族 / S5）：失败注记词转中性字 + 词前图标。 */
 .fm-upload-failed .fm-upload-note { color: var(--status-word); }
-.fm-upload-failed .fm-upload-note .st-ic { width: 11px; height: 11px; margin-right: 4px; vertical-align: -1px; }
+.fm-upload-failed .fm-upload-note .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); vertical-align: -1px; }
 .fm-upload-progress {
   flex-basis: 100%;
   height: 3px;
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
   background: var(--glass-etched-border);
   overflow: hidden;
 }
@@ -1173,8 +1173,8 @@ button.fm-req-decline:focus-visible {
   border-radius: 5px;
   background: transparent;
   color: var(--color-text, #000);
-  font-size: 11px;
-  padding: 1px 8px;
+  font-size: var(--ds-fs-meta);
+  padding: 1px var(--ds-space-2);
   cursor: pointer;
 }
 .fm-upload-cancel:hover { background: var(--color-frame-hover); }
@@ -1182,7 +1182,7 @@ button.fm-req-decline:focus-visible {
 
 /* 附件消息的正文（与占位正文区分：占位文本被隐藏时不留空行） */
 .fm-msg-text { white-space: pre-wrap; }
-.fm-msg-text:not(:last-child) { margin-bottom: 2px; }
+.fm-msg-text:not(:last-child) { margin-bottom: var(--ds-space-half); }
 
 /* ── 正文 markdown 面（fm-md-social 批 · 2026-11-02 19:30 作者令）───────────────
    「好友/群聊/设备里的聊天也要支持渲染 markdown」。渲染器 = 主会话同一条
@@ -1214,14 +1214,14 @@ button.fm-req-decline:focus-visible {
    才真的产生滚动。 */
 .fm-msg-bubble:has(> .fm-msg-text.fm-msg-md) { min-width: 0; max-width: 100%; }
 
-.fm-msg-md p { margin: 4px 0; }
+.fm-msg-md p { margin: var(--ds-space-1) 0; }
 .fm-msg-md p:first-child { margin-top: 0; }
 .fm-msg-md p:last-child { margin-bottom: 0; }
 /* 全局 reset（base.css `* { margin:0; padding:0 }`）把 ul/ol 缩进清零 ⇒ 圆点会掉到
    气泡左内边距之外（chat.css 同款注释）。此处补回 18px 档。 */
-.fm-msg-md ul, .fm-msg-md ol { margin: 4px 0 4px 18px; padding: 0; }
-.fm-msg-md li { margin: 2px 0; }
-.fm-msg-md li > p { margin: 2px 0; }
+.fm-msg-md ul, .fm-msg-md ol { margin: var(--ds-space-1) 0 var(--ds-space-1) 18px; padding: 0; }
+.fm-msg-md li { margin: var(--ds-space-half) 0; }
+.fm-msg-md li > p { margin: var(--ds-space-half) 0; }
 .fm-msg-md strong, .fm-msg-md b { font-weight: 600; }
 .fm-msg-md em { font-style: italic; }
 .fm-msg-md del { text-decoration: line-through; opacity: 0.75; }
@@ -1238,7 +1238,7 @@ button.fm-req-decline:focus-visible {
   content: '';
   position: absolute;
   inset: -14px -10px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
 }
 /* 外链标识（明显可辨，不靠配色单打）：右上小箭头，与 `target=_blank` 语义同源，
    点击仍走二次确认（messages.js onMdExtClick）。 */
@@ -1257,11 +1257,11 @@ button.fm-req-decline:focus-visible {
 .fm-msg-md a.md-ext-img {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   max-width: 100%;
-  padding: 2px 8px;
+  padding: var(--ds-space-half) var(--ds-space-2);
   border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--glass-etched-bg);
   text-decoration: none;
   overflow: hidden;
@@ -1273,14 +1273,14 @@ button.fm-req-decline:focus-visible {
 .fm-msg-md a.md-ext-img::after {
   content: '↗';
   position: static;
-  margin-left: 2px;
+  margin-left: var(--ds-space-half);
   opacity: 0.72;
   pointer-events: none;
 }
 
 .fm-msg-md h1, .fm-msg-md h2, .fm-msg-md h3,
 .fm-msg-md h4, .fm-msg-md h5, .fm-msg-md h6 {
-  margin: 8px 0 4px;
+  margin: var(--ds-space-2) 0 var(--ds-space-1);
   font-weight: 600;
   line-height: 1.35;
 }
@@ -1291,24 +1291,24 @@ button.fm-req-decline:focus-visible {
 
 .fm-msg-md blockquote {
   border-left: 3px solid var(--color-border);
-  margin: 6px 0;
-  padding-left: 10px;
+  margin: var(--ds-space-1h) 0;
+  padding-left: var(--ds-space-glass-x);
   color: var(--color-text-muted);
 }
 .fm-msg-md hr {
   border: none;
   border-top: 1px solid var(--color-border);
-  margin: 8px 0;
+  margin: var(--ds-space-2) 0;
 }
 
 /* 行内代码：等宽 + 底纹（与 chat.css `.bubble.ai code` 同形，取色换 token）。 */
 .fm-msg-md code {
   background: var(--color-frame-hover);
-  padding: 1px 4px;
+  padding: 1px var(--ds-space-1);
   border-radius: 3px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   /* 可读辅助字下限 13px（Apple footnote 档）：气泡正文 13px ⇒ 代码不得更小。 */
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   word-break: break-all;
 }
 
@@ -1316,9 +1316,9 @@ button.fm-req-decline:focus-visible {
    的既有表达法；mask 只在溢出侧生效，短代码块不产生视觉差）。 */
 .fm-msg-md pre {
   background: var(--color-frame-hover);
-  padding: 8px 12px 10px;
-  border-radius: 8px;
-  margin: 6px 0;
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-input);
+  margin: var(--ds-space-1h) 0;
   overflow-x: auto;
   line-height: 1.45;
   scrollbar-color: var(--color-border) transparent;
@@ -1328,15 +1328,15 @@ button.fm-req-decline:focus-visible {
 .fm-msg-md pre code {
   background: none;
   padding: 0;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   word-break: normal;
   white-space: pre;
 }
 /* 复制按钮的定位上下文（渲染管线注入 `.code-block-wrap` + `.code-copy-btn`，
    按钮是 absolute；缺这条会落到最近定位祖先 = 气泡右上角压住内容 ——
    flowMap.css `.fm-md` 段同款注释、同一处修补）。 */
-.fm-msg-md .code-block-wrap { position: relative; margin: 6px 0; }
-.fm-msg-md .code-block-wrap pre { margin: 0; padding-top: 12px; }
+.fm-msg-md .code-block-wrap { position: relative; margin: var(--ds-space-1h) 0; }
+.fm-msg-md .code-block-wrap pre { margin: 0; padding-top: var(--ds-space-3); }
 /* 复制钮热区 ≥44×44（Apple HIG）：本体保持既有小钮视觉，::before 外扩命中盒。
    触摸端（hover:none）常显（无 hover 可依赖）。 */
 .fm-msg-md .code-copy-btn { position: absolute; }
@@ -1356,15 +1356,15 @@ button.fm-req-decline:focus-visible {
   max-width: 100%;
   overflow-x: auto;
   border-collapse: collapse;
-  margin: 6px 0;
-  font-size: 13px;
+  margin: var(--ds-space-1h) 0;
+  font-size: var(--ds-fs-body);
   scrollbar-color: var(--color-border) transparent;
   -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent 100%);
   mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent 100%);
 }
 .fm-msg-md th, .fm-msg-md td {
   border: 1px solid var(--color-border);
-  padding: 4px 8px;
+  padding: var(--ds-space-1) var(--ds-space-2);
   white-space: nowrap;
   text-align: left;
 }
@@ -1379,12 +1379,12 @@ button.fm-req-decline:focus-visible {
    🔴 `.fm-msg-agent-badge` 已随 F1 单源化移出本规则（现状 = `sapphire.css` 的
    `.agent-badge, .fm-msg-agent-badge` 一处定义；禁在此复写第二份）。 */
 .fm-msg-forwarded-badge {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: var(--color-frame-text-muted, var(--color-text-muted, #888));
   background: var(--glass-etched-bg);
   border-radius: 9999px;
-  padding: 1px 8px;
+  padding: 1px var(--ds-space-2);
 }
 
 /* 操作组（复制 / 转发）= 常显。作者 2026-09-12 裁定 3：「复制和转发按钮一直
@@ -1394,7 +1394,7 @@ button.fm-req-decline:focus-visible {
 .fm-msg-actions {
   display: inline-flex;
   align-items: center;
-  gap: 6px;   /* S18：现状 2px → 6px ⇒ 时间→按钮 = 6(pill gap) + 1(divider) + 6 = 13px，
+  gap: var(--ds-space-1h);   /* S18：现状 2px → 6px ⇒ 时间→按钮 = 6(pill gap) + 1(divider) + 6 = 13px，
                  与主对话实测 13px 档一致（同时把「复制 ↔ 转发」间距拉到 6px，见 E3） */
   opacity: 1;
   transition: opacity 0.15s;   /* S20：现状 .12s ease → 归一 .15s（全站动画 150-300ms 纪律） */
@@ -1429,7 +1429,7 @@ button.fm-req-decline:focus-visible {
   height: 13px;
   padding: 1px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: transparent;
   color: var(--color-text);
   opacity: 0.35;
@@ -1489,7 +1489,7 @@ body.mobile-layer .fm-msg-act::after {
   width: 100%;
   height: max(100%, var(--mhit, 44px));
   transform: translate(-50%, -50%);
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
 }
 
 /* ── 发送态 / 失败态载面 = **气泡左侧单一槽位**（sendstate 批，2026-09-18）──────
@@ -1557,7 +1557,7 @@ body.mobile-layer .fm-msg-act::after {
   border: 1px solid var(--status-error-icon);
   background: transparent;
   color: var(--status-error-icon);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   line-height: 1;
   cursor: pointer;
@@ -1596,7 +1596,7 @@ body > .fm-context-menu { z-index: 10001; }
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   color: var(--color-text-muted);
   cursor: pointer;
   font: inherit;
@@ -1607,11 +1607,11 @@ body > .fm-context-menu { z-index: 10001; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  padding: 10px 16px 8px;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-glass-x) var(--ds-space-4) var(--ds-space-2);
 }
 .pf-hero-name {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   color: var(--color-text);
   text-align: center;
@@ -1621,7 +1621,7 @@ body > .fm-context-menu { z-index: 10001; }
   white-space: nowrap;
 }
 .pf-hero-sub {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-secondary);
   text-align: center;
   max-width: 100%;
@@ -1632,33 +1632,33 @@ body > .fm-context-menu { z-index: 10001; }
 .pf-fields {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 4px 16px 8px;
+  gap: var(--ds-space-glass-x);
+  padding: var(--ds-space-1) var(--ds-space-4) var(--ds-space-2);
 }
 .pf-field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-top: 8px;
+  gap: var(--ds-space-1);
+  padding-top: var(--ds-space-2);
   border-top: 1px solid var(--color-frame-border-light);
 }
 .pf-field:first-child { border-top: none; padding-top: 0; }
 .pf-field-head {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--ds-space-2);
 }
 .pf-label {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-text-secondary);
   flex: none;
 }
 /* 「本地缓存·未同步」标记：字段真源在上游、上游当前无接口 ⇒ 必须可见（禁假装已同步）。 */
 .pf-cache-hint {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   border: 1px solid var(--color-frame-border-light);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   padding: 0 5px;
   line-height: 16px;
   white-space: nowrap;
@@ -1666,21 +1666,21 @@ body > .fm-context-menu { z-index: 10001; }
 .pf-field-foot {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--ds-space-2);
 }
 .pf-save {
   flex: none;
   font: inherit;
-  font-size: 12px;
-  padding: 5px 12px;
-  border-radius: 10px;
+  font-size: var(--ds-fs-hint);
+  padding: 5px var(--ds-space-3);
+  border-radius: var(--ds-radius-button);
   cursor: pointer;
 }
 .pf-save:disabled { opacity: 0.55; cursor: default; }
 .pf-note {
   margin: 0;
-  padding: 2px 16px 14px;
-  font-size: 12px;
+  padding: var(--ds-space-half) var(--ds-space-4) 14px;
+  font-size: var(--ds-fs-hint);
   line-height: 17px;
   color: var(--color-text-muted);
 }
@@ -1697,12 +1697,12 @@ body > .fm-context-menu { z-index: 10001; }
    🔴 仍不加左缘指示条 / 高亮条（设计硬约束「无 accent bars」）。
    🔴 文本 2 行封顶落在内层 `.fm-quote-text`（块盒本身不夹取）。 */
 .fm-quote-block {
-  margin-bottom: 6px;
-  padding: 6px 10px;
-  border-radius: 10px;
+  margin-bottom: var(--ds-space-1h);
+  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-button);
   background: rgba(0, 0, 0, 0.035);
   box-shadow: none;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.45;
   color: var(--color-text-muted, #888);
   white-space: pre-wrap;
@@ -1736,7 +1736,7 @@ body > .fm-context-menu { z-index: 10001; }
   outline: 2px solid rgb(var(--sapphire) / 0.5);
   outline-offset: 1px;
 }
-.fm-msg.fm-quote-target { animation: fmQuoteTargetFlash 1.8s ease; border-radius: 12px; }
+.fm-msg.fm-quote-target { animation: fmQuoteTargetFlash 1.8s ease; border-radius: var(--ds-radius-xl); }
 @keyframes fmQuoteTargetFlash {
   0% { background: var(--sapphire-tint-15); }
   100% { background: transparent; }
@@ -1757,12 +1757,12 @@ body > .fm-context-menu { z-index: 10001; }
    + 5/8 内边距），不按稿面另造「下沉面 + 10px 圆角」第二套。
    `[hidden]` 必须压过 display ⇒ 用 `:not([hidden])`。 */
 .fm-quote-strip {
-  padding: 0 16px 10px;
+  padding: 0 var(--ds-space-4) var(--ds-space-glass-x);
 }
 .fm-quote-strip:not([hidden]) { display: block; }
 .fm-quote-strip .att-ref { max-width: 100%; }
 /* ❌ 的落位（形态/材质在 input.css 的共享块；此处只定宿主内的排布）。 */
-.fm-quote-remove { align-self: center; margin-left: 8px; }
+.fm-quote-remove { align-self: center; margin-left: var(--ds-space-2); }
 .fm-quote-remove:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
 
 /* ── ③ 多选态：勾选面（固定左列）+ 头部计数 + 等分动作条 ──────────────────
@@ -1811,12 +1811,12 @@ body > .fm-context-menu { z-index: 10001; }
    动作**等分**（`flex:1`）。可用动作 = 转发 / 逐条转发 / 合并转发（二期）+ 退出 ——
    实际接线 3 项（转发=转发窗口（D7）/ 逐条转发=既有目标选择器 / 退出），合并转发标二期。 */
 .fm-select-bar {
-  padding: 10px 16px 12px;
+  padding: var(--ds-space-glass-x) var(--ds-space-4) var(--ds-space-3);
   border-top: 1px solid var(--glass-etched-border);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, #888);
 }
-.fm-select-bar:not([hidden]) { display: flex; align-items: center; gap: 8px; }
+.fm-select-bar:not([hidden]) { display: flex; align-items: center; gap: var(--ds-space-2); }
 /* 🔴 计数件**整个从底部条撤除**（D5）：宿主 = 窗头 `.fm-modal-select-count`，
    底部条内**零** `.fm-select-count` 节点 ⇒ 此处**不保留**旧选择器规则（留则成死规则：
    没有任何 DOM 命中它，且会误导「计数还在条里、只是被藏起来」）。`modalEls.selectCount`
@@ -1825,10 +1825,10 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-select-exit {
   flex: 1;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
-  padding: 8px 14px;
-  border-radius: 10px;
+  padding: var(--ds-space-2) 14px;
+  border-radius: var(--ds-radius-button);
   border: 1px solid var(--glass-etched-border);
   background: transparent;
   color: var(--color-text);
@@ -1843,8 +1843,8 @@ body > .fm-context-menu { z-index: 10001; }
 /* Input bar */
 .fm-input-bar {
   display: flex;
-  gap: 8px;
-  padding: 10px 16px 14px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-glass-x) var(--ds-space-4) 14px;
   border-top: 1px solid var(--glass-etched-border);
 }
 
@@ -1898,14 +1898,14 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-load-more-row {
   display: flex;
   justify-content: center;
-  padding: 8px 0 4px;
+  padding: var(--ds-space-2) 0 var(--ds-space-1);
 }
 .fm-load-more {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   padding: 5px 14px;
   /* 同族按钮圆角档（.fm-forward-btn 8px / .fm-search-input 8px /
      .fm-req-decline 8px）——现状 0px 方角是全站按钮族（5/8/10px）之外的孤例。 */
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   opacity: 0.85;
 }
 .fm-load-more:hover { opacity: 1; }
@@ -1914,10 +1914,10 @@ body > .fm-context-menu { z-index: 10001; }
 /* 未找到态的常识提示行（主文案下方的次要说明） */
 .fm-empty-hint {
   text-align: center;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
   opacity: 0.8;
-  margin: -16px 12px 12px;
+  margin: -16px var(--ds-space-3) var(--ds-space-3);
   line-height: 1.5;
 }
 
@@ -1925,10 +1925,10 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-req-time {
   flex-shrink: 0;
   align-self: center;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
   margin-left: auto;
-  padding-left: 8px;
+  padding-left: var(--ds-space-2);
 }
 
 /* 搜索按钮 disabled 态已迁到本文件上方的中性灰族块（button.fm-search-btn:disabled
@@ -2025,8 +2025,8 @@ body > .fm-context-menu { z-index: 10001; }
   flex-shrink: 0;
   font-size: 10px;
   line-height: 1;
-  padding: 2px 5px;
-  border-radius: 4px;
+  padding: var(--ds-space-half) 5px;
+  border-radius: var(--ds-radius-badge);
   background: rgb(var(--sapphire) / 0.12);
   color: rgb(var(--sapphire) / 0.95);
   align-self: center;
@@ -2042,7 +2042,7 @@ body > .fm-context-menu { z-index: 10001; }
   height: 26px;
   border: none;
   background: transparent;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   color: var(--color-text-muted, #888);
   cursor: pointer;
 }
@@ -2052,35 +2052,35 @@ body > .fm-context-menu { z-index: 10001; }
 /* 群设置抽屉（窗头下方、消息区上方；可滚动） */
 .fm-group-settings {
   border-bottom: 1px solid rgb(var(--sapphire) / 0.12);
-  padding: 10px 14px 12px;
+  padding: var(--ds-space-glass-x) 14px var(--ds-space-3);
   max-height: 46vh;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
 }
-.fm-gs-section { display: flex; flex-direction: column; gap: 6px; }
+.fm-gs-section { display: flex; flex-direction: column; gap: var(--ds-space-1h); }
 /* 抽屉「群信息头」规则组（`.fm-gs-head` / `-avatar` / `-meta` / `-name` / `-sub`）
    已按作者 2026-09-17 令**整组删除**：该块（组合头像 + 群名 + 成员数）在展开面板里
    是会话窗头的重复显示。删除理由 = 唯一消费方 `friendGroups.buildGroupSettings` 的
    首块同批摘除 ⇒ 留则成为死规则（本仓既有先例：`.fm-forward-btn`、`.fm-device-note`
    均按「避免死 CSS」同批随块删除）。成员数仍有独立面 = `.fm-gs-count`（下方保留）。 */
-.fm-gs-title { font-size: 11px; font-weight: 600; color: var(--color-text-muted, #888); }
-.fm-gs-title-row { display: flex; align-items: baseline; gap: 6px; }
-.fm-gs-count { font-size: 11px; color: var(--color-text-muted, #888); }
-.fm-gs-rename { display: flex; gap: 6px; align-items: center; }
-.fm-gs-rename-input { flex: 1; min-width: 0; font-size: 12px; padding: 5px 8px; }
+.fm-gs-title { font-size: var(--ds-fs-meta); font-weight: 600; color: var(--color-text-muted, #888); }
+.fm-gs-title-row { display: flex; align-items: baseline; gap: var(--ds-space-1h); }
+.fm-gs-count { font-size: var(--ds-fs-meta); color: var(--color-text-muted, #888); }
+.fm-gs-rename { display: flex; gap: var(--ds-space-1h); align-items: center; }
+.fm-gs-rename-input { flex: 1; min-width: 0; font-size: var(--ds-fs-hint); padding: 5px var(--ds-space-2); }
 .fm-gs-rename-input:disabled { opacity: 0.55; cursor: default; }
-.fm-gs-save { flex-shrink: 0; font-size: 12px; padding: 5px 12px; }
+.fm-gs-save { flex-shrink: 0; font-size: var(--ds-fs-hint); padding: 5px var(--ds-space-3); }
 
 /* 成员行（显示名 + 角色标签 + 操作位：设/撤管理员 + 移出群聊） */
 .fm-member-list { display: flex; flex-direction: column; }
 .fm-member-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 2px;
-  border-radius: 6px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1) var(--ds-space-half);
+  border-radius: var(--ds-radius-chip);
   min-width: 0;
 }
 .fm-member-row:hover { background: var(--glass-control-bg-hover); }
@@ -2097,7 +2097,7 @@ body > .fm-context-menu { z-index: 10001; }
   flex-shrink: 0;
   font-size: 10px;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: rgb(var(--sapphire) / 0.12);
   color: rgb(var(--sapphire) / 0.95);
 }
@@ -2106,11 +2106,11 @@ body > .fm-context-menu { z-index: 10001; }
    **归一为 12px 文字键档**（= `.fm-gs-action` 的 12px / 5px 12px），材质仍由
    sapphire 的 Glass Control Pattern B 承担（本规则只定尺寸档，零色值）。 */
 .fm-gs-kick,
-.fm-gs-role { flex-shrink: 0; font-size: 12px; padding: 5px 12px; }
+.fm-gs-role { flex-shrink: 0; font-size: var(--ds-fs-hint); padding: 5px var(--ds-space-3); }
 
 /* 抽屉动作区（添加成员 / 退群 / 解散；owner 禁退群提示） */
-.fm-gs-actions { gap: 8px; }
-.fm-gs-action { align-self: flex-start; font-size: 12px; padding: 5px 12px; }
+.fm-gs-actions { gap: var(--ds-space-2); }
+.fm-gs-action { align-self: flex-start; font-size: var(--ds-fs-btn); padding: 5px var(--ds-space-3); }
 /* 危险键色值单源化（E4）→ ui-status-redesign（S10 / 盘点 #47）演进：常显危险
    文字键字转常规色，危险语义由键内 unplug 红图标承载（friendGroups.js 注入），
    hover 时刻整键（字＋图标）转红 = 交互红保留（铁律三）。--color-danger 的
@@ -2118,8 +2118,8 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-gs-danger { color: var(--color-text); }
 .fm-gs-danger .st-ic { color: var(--status-error-icon); margin-right: 5px; }
 .fm-gs-danger:hover, .fm-gs-danger:hover .st-ic { color: var(--btn-danger-ink); }
-.fm-gs-hint { font-size: 11px; color: var(--color-text-muted, #888); }
-.fm-gs-picker { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.fm-gs-hint { font-size: var(--ds-fs-meta); color: var(--color-text-muted, #888); }
+.fm-gs-picker { display: flex; flex-direction: column; gap: var(--ds-space-2); margin-top: var(--ds-space-1h); }
 .fm-gs-picker .fm-msg-btn { align-self: flex-start; }
 
 /* ── 群设置抽屉的按键圆角（uifix 批 · 作者令 2026-09-17）────────────────────
@@ -2144,7 +2144,7 @@ body > .fm-context-menu { z-index: 10001; }
    🔴 选择器**限定在本抽屉内**（`.fm-group-settings` 后代）⇒ 不波及抽屉外的
    `.fm-msg-btn`（`contacts.js:744`「发消息」键同用该类名，那是另一个面）。 */
 .fm-group-settings button {
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
 }
 
 /* ══ 建群对话框（fm-modal 骨架复用；好友多选名册）════════════════════════════
@@ -2174,12 +2174,12 @@ body > .fm-context-menu { z-index: 10001; }
   align-self: center;
   display: inline-flex;
   align-items: center;
-  padding: 1px 8px;
+  padding: 1px var(--ds-space-2);
   border: 1px solid var(--glass-etched-border);
   border-radius: 9999px;
   background: var(--glass-etched-bg);
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   line-height: 1.6;
   font-variant-numeric: tabular-nums;
@@ -2197,15 +2197,15 @@ body > .fm-context-menu { z-index: 10001; }
   max-height: 42vh;
   min-height: 120px;
   border: 1px solid rgb(var(--sapphire) / 0.1);
-  border-radius: 8px;
-  padding: 4px;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-1);
 }
 .fm-pick-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px;
-  border-radius: 6px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
   min-width: 0;
 }
@@ -2230,21 +2230,21 @@ body > .fm-context-menu { z-index: 10001; }
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 2px 16px 12px;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-half) var(--ds-space-4) var(--ds-space-3);
 }
 /* 列表区行几何 = 联系人面板 `.fm-row` 同族值（gap 10px / padding 7px 10px /
    radius 10px；头像仍 36px 档）⇒ 名册行高与联系人面板一致。 */
 .fm-pick-modal .fm-pick-list {
   max-height: none; /* 滚动上移到 .fm-pick-body（单一滚动容器） */
   min-height: 132px;
-  border-radius: 10px;
-  gap: 2px;
+  border-radius: var(--ds-radius-button);
+  gap: var(--ds-space-half);
 }
 .fm-pick-modal .fm-pick-row {
-  gap: 10px;
-  padding: 7px 10px;
-  border-radius: 10px;
+  gap: var(--ds-space-glass-x);
+  padding: 7px var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-button);
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 /* 选中态（判别面三重可辨，**禁只靠颜色微差**）：① 行底 sapphire 淡染
@@ -2273,7 +2273,7 @@ body > .fm-context-menu { z-index: 10001; }
 }
 .fm-pick-modal .fm-pick-row.on .fm-pick-tick svg { opacity: 1; }
 /* 空态引导（0 人可邀）：可读引导文案（i18n `contacts.createGroupEmpty`） */
-.fm-pick-modal .fm-pick-list .fm-empty { padding: 26px 16px; }
+.fm-pick-modal .fm-pick-list .fm-empty { padding: 26px var(--ds-space-4); }
 /* 创建键尺寸档：材质与四态（rest / hover / active / disabled）由 `sapphire.css`
    的 Glass 主键 `:is()` 族**单源**承载（与发送键族同一条规则 ⇒ 禁用语义零复制）。
    本行只给本面字号 = 12px（= 抽屉动作键 `.fm-gs-action` 既有字号档），几何沿用
@@ -2285,15 +2285,15 @@ body > .fm-context-menu { z-index: 10001; }
    改成 near-black —— 既有行为，本批**不复制**（复制 = 把绿底上的深墨带进新面板）。
    ⇒ §⑥ 四态逐值对照里只有 hover/active 的 `color` 一项刻意不等；
    disabled / rest / 掉线 三档**逐值全等**（含 `color`）。 */
-.fm-create-submit { font-size: 12px; }
+.fm-create-submit { font-size: var(--ds-fs-btn); }
 /* 操作区：主键右贴边 + 与主体分段的分隔线（与抽屉各段同族的「段」语义） */
 .fm-pick-foot {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  padding: 12px 16px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-3) var(--ds-space-4);
   border-top: 1px solid var(--glass-etched-border);
 }
 
@@ -2302,7 +2302,7 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-invite-row { cursor: default; }
 
 /* 群成员小头像（28px 档；成员行密度高于列表行） */
-.fm-avatar-28 { width: 28px; height: 28px; font-size: 12px; }
+.fm-avatar-28 { width: 28px; height: 28px; font-size: var(--ds-fs-hint); }
 
 /* 群气泡发送者名（仅入站；名册未到时空槽，hydrate 后就地回填）。
    宽度上限**不写死数值**：消费消息列宽的单源 token `--msg-bubble-max-w`
@@ -2310,9 +2310,9 @@ body > .fm-context-menu { z-index: 10001; }
    本面写死字面量即失去「改一处两侧同步」，门禁 `check-msgstyle-single-source.mjs`
    直接判红。token 值未变（78%）⇒ 本行计算值逐字等价。 */
 .fm-msg-sender {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
-  margin: 0 4px 2px;
+  margin: 0 var(--ds-space-1) var(--ds-space-half);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2327,17 +2327,17 @@ body > .fm-context-menu { z-index: 10001; }
 
 /* 设备展开体容器（②：设备入口 = 「新的朋友」同族折叠结构，本容器 = 其展开体；
    原静态段标题 `.fm-section-title` 随该形态作废 —— 标签已上移到入口行 `.fm-nf-label`）。 */
-.fm-device-list { margin-top: 2px; }
+.fm-device-list { margin-top: var(--ds-space-half); }
 
 /* 全设备统一更新（fleet 批 2026-11-01）：设置·设备页的「全部更新」条。
    动作本体与进度全部在 `js/fleetUpdate.js` 的阻塞卡里（零新视觉家族）——本处只做
    **入口行几何**：右贴边、与设备列表同缩进；材质沿用 glass-control token（零裸 hex）。 */
 .fm-device-fleet-bar {
   display: flex; justify-content: flex-end; align-items: center;
-  padding: 2px 4px 6px; gap: 6px;
+  padding: var(--ds-space-half) var(--ds-space-1) var(--ds-space-1h); gap: var(--ds-space-1h);
 }
 .fm-device-fleet-bar .fleet-btn {
-  font-size: 11px; padding: 4px 10px; border-radius: 8px; cursor: pointer;
+  font-size: var(--ds-fs-meta); padding: var(--ds-space-1) var(--ds-space-glass-x); border-radius: var(--ds-radius-input); cursor: pointer;
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-frame-text);
@@ -2353,10 +2353,10 @@ body > .fm-context-menu { z-index: 10001; }
 /* 设备文件卡状态位（卡 D4 语义保留；fm-att-card-unify 批：宿主 = 主会话卡面 ——
    文件卡/媒体卡都是 flex 容器，整行挂件用 `flex-basis:100%` 通吃两种宿主；
    媒体卡的状态行落媒体面下方（上缘 4px 呼吸）。类名零改名（QA 钩子同源）。 */
-.fm-att-device-status { flex-basis: 100%; margin-top: 2px; font-size: 11px; color: var(--color-text-muted, #888); }
+.fm-att-device-status { flex-basis: 100%; margin-top: var(--ds-space-half); font-size: var(--ds-fs-meta); color: var(--color-text-muted, #888); }
 .fm-att-device-path {
   flex-basis: 100%;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2365,7 +2365,7 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-att-device-progress {
   flex-basis: 100%;
   height: 3px;
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
   background: var(--glass-etched-border);
   overflow: hidden;
 }
@@ -2388,23 +2388,23 @@ body > .fm-context-menu { z-index: 10001; }
       注：原 P10 留存明示条 `.fm-device-note` 已被 ⑤b 删除（作者令：不要显示该信息）。
    ② 本机所发气泡的送达/已读状态位（设备回执读面，§8.7 device_message_receipts）。 */
 .fm-device-desc {
-  margin: 0 16px 6px;
+  margin: 0 var(--ds-space-4) var(--ds-space-1h);
   /* devrow：本行现在**只承载展开面板**（键已上窗头行）——收起态无子节点，
      由下方 `:empty` 整条隐去（禁留空行占位）。展开态面板占满一行。 */
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  font-size: 12px;
+  gap: var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
 }
 /* devrow 收起态：面板不在场 ⇒ 本行零子节点 ⇒ 整条不占位（不留 6px 尾距）。 */
 .fm-device-desc:empty { display: none; }
 .fm-device-desc-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   padding: 3px 9px;
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--ds-radius-input);
+  font-size: var(--ds-fs-btn);
   font-family: inherit;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -2435,13 +2435,13 @@ body > .fm-context-menu { z-index: 10001; }
   flex: 1 1 100%;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px;
-  border-radius: 10px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-2);
+  border-radius: var(--ds-radius-button);
 }
 .fm-device-desc-input {
   width: 100%;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   resize: vertical;
   min-height: 44px;
@@ -2449,12 +2449,12 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-device-desc-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 .fm-device-desc-actions button {
-  padding: 3px 12px;
-  border-radius: 8px;
-  font-size: 12px;
+  padding: 3px var(--ds-space-3);
+  border-radius: var(--ds-radius-input);
+  font-size: var(--ds-fs-btn);
   font-family: inherit;
   cursor: pointer;
 }
@@ -2464,9 +2464,9 @@ body > .fm-context-menu { z-index: 10001; }
 .fm-device-desc-cancel { color: var(--color-text-muted); }
 .fm-device-desc-actions button:disabled { cursor: not-allowed; opacity: 0.6; }
 .fm-msg-device-receipt {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
-  margin-left: 6px;
+  margin-left: var(--ds-space-1h);
 }
 .fm-msg-device-receipt[data-receipt-state='read'] {
   color: rgb(var(--sapphire));

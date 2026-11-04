@@ -7,19 +7,19 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 6px 8px 0;
-  gap: 8px;
+  padding: var(--ds-space-1h) var(--ds-space-2) 0;
+  gap: var(--ds-space-2);
 }
 .neblink-login-hint {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-text-muted);
   text-align: center;
   line-height: 1.5;
 }
 .neblink-login-btn {
   width: 100%;
-  padding: 10px 16px;
-  border-radius: 8px;
+  padding: var(--ds-space-glass-x) var(--ds-space-4);
+  border-radius: var(--ds-radius-input);
   border: none;
   /* 主操作 = 墨族单源（2026-10-30 按钮体系批：绿实底 → --btn-primary-*，
      随面板主题 ink-swap） */
@@ -35,14 +35,14 @@
   text-align: center;
   font-size: 14px;
   color: var(--color-text-muted);
-  padding: 16px 0;
+  padding: var(--ds-space-4) 0;
 }
 
 /* Inline error/info messages */
 .neblink-error {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-error);
-  margin-bottom: 8px;
+  margin-bottom: var(--ds-space-2);
   word-break: break-word;
 }
 
@@ -52,18 +52,18 @@
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--ds-space-2);
 }
 .neblink-paircode-row {
   display: flex;
-  gap: 8px;
+  gap: var(--ds-space-2);
   width: 100%;
 }
 .neblink-paircode-input {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 9px 10px;
-  border-radius: 8px;
+  padding: 9px var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--color-frame-border, var(--color-border));
   background: var(--color-frame-input-bg, var(--color-bg));
   color: var(--color-frame-text, var(--color-text));
@@ -79,7 +79,7 @@
   flex: 0 0 auto;
   width: auto;
   padding: 9px 14px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 .neblink-paircode-btn:disabled { opacity: 0.6; cursor: default; }
 
@@ -90,15 +90,15 @@
 .neblink-kicked-notice {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  margin-top: 8px;
-  padding: 6px 8px;
-  border-radius: 6px;
+  gap: var(--ds-space-1h);
+  margin-top: var(--ds-space-2);
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  border-radius: var(--ds-radius-chip);
   border: 1px solid var(--color-frame-border);
   border-left: 3px solid var(--color-warning);
   background: var(--color-frame-input-bg);
   color: var(--color-frame-text-muted);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.45;
 }
 .neblink-kicked-dot {
@@ -115,7 +115,7 @@
 /* Logged-in device list — sits directly under the avatar in the unified
    account block (2026-09-06); the old inner section label is retired. */
 .neblink-logged-in {
-  margin-top: 10px;
+  margin-top: var(--ds-space-glass-x);
 }
 
 /* Peers list */
@@ -130,10 +130,10 @@
 .neblink-peer {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  font-size: 13px;
+  gap: var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-button);
+  font-size: var(--ds-fs-body);
   background: var(--color-bg);
   border: 1px solid var(--color-border);
   transition: border-color 0.15s, background 0.15s;
@@ -164,7 +164,7 @@
 .neblink-peer-name:hover { color: var(--color-primary); }
 
 .neblink-peer-status {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
 }
 
@@ -172,7 +172,7 @@
    device can no longer masquerade as online. Colors reuse existing tokens
    (--color-success matches .neblink-update-status.done; muted for offline). */
 .neblink-presence {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -190,10 +190,10 @@
 
 /* Peer update button */
 .neblink-peer-update-btn {
-  font-size: 11px;
-  padding: 2px 8px;
+  font-size: var(--ds-fs-meta);
+  padding: var(--ds-space-half) var(--ds-space-2);
   border: 1px solid var(--color-border);
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: none;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -209,14 +209,14 @@
 .neblink-update-inline {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   flex-shrink: 0;
 }
 .neblink-ch-btn {
-  font-size: 11px;
-  padding: 2px 8px;
+  font-size: var(--ds-fs-meta);
+  padding: var(--ds-space-half) var(--ds-space-2);
   border: 1px solid var(--color-border);
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: none;
   color: var(--color-text);
   cursor: pointer;
@@ -231,8 +231,8 @@
   color: var(--color-warning);
 }
 .neblink-ch-cancel {
-  font-size: 11px;
-  padding: 2px 6px;
+  font-size: var(--ds-fs-meta);
+  padding: var(--ds-space-half) var(--ds-space-1h);
   border: none;
   background: none;
   color: var(--color-text-muted);
@@ -245,7 +245,7 @@
    并固定改版口径：后续任何发射点必须 = 词前 lucide 图标（updating=loader-circle
    / done=circle-check / error=circle-x，色走 --status-*-icon token）＋ 中性词。 */
 .neblink-update-status {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   flex-shrink: 0;
   white-space: nowrap;
   max-width: 160px;
@@ -264,8 +264,8 @@
   border: none;
   color: var(--color-text-muted);
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 6px;
+  padding: var(--ds-space-1) var(--ds-space-2);
+  border-radius: var(--ds-radius-chip);
   display: flex;
   align-items: center;
   transition: color 0.15s, background 0.15s;
@@ -289,17 +289,17 @@
    （.neblink-switch-modal 族）仍随 DOM 一并删除、零残留。 */
 .neblink-account-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 12px;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-3);
 }
 .neblink-switch-btn {
   flex: 1;
-  padding: 8px;
-  border-radius: 8px;
+  padding: var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
   border: 1px solid rgba(7, 193, 96, 0.14);
   background: rgba(7, 193, 96, 0.14);
   color: #07c160;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
@@ -318,16 +318,16 @@
    那种绿实心主键（本键是退出，不是修复动作）。 */
 .neblink-logout-btn {
   flex: 1;
-  padding: 8px;
-  border-radius: 8px;
-  font-size: 13px;
+  padding: var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
+  font-size: var(--ds-fs-body);
   font-weight: 500;
 }
 
 /* 只读登录态行（谁登录着，无动作入口）。 */
 .neblink-account-ro {
-  margin-top: 12px;
-  font-size: 12px;
+  margin-top: var(--ds-space-3);
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
   text-align: center;
   word-break: break-all;
