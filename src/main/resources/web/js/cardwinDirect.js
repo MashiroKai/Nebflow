@@ -190,7 +190,7 @@ export async function navigateCardWindowDirect(win, plan, fallbackUrl, tabId) {
         '<!doctype html><meta charset="utf-8"><title>…</title>' +
         '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;' +
         'background:#f6f7f9;font:13px/1.6 -apple-system,\'Segoe UI\',sans-serif;color:#6a737d">' +
-        '<div style="text-align:center"><div style="font-size:22px;margin-bottom:8px">⧉</div>' +
+        '<div style="text-align:center"><div style="font-size:22px;margin-bottom:var(--ds-space-2)">⧉</div>' +
         '正在打开独立窗口…</div></body>'
       );
       win.document.close();

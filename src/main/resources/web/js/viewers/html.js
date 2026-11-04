@@ -478,7 +478,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   // Directory of the HTML file, for resolving relative paths
   const dir = absPath ? absPath.substring(0, absPath.lastIndexOf('/')) : '';
 
-  let html = content || '<!DOCTYPE html><html><body><p style="color:#999;padding:20px">Empty HTML file</p></body></html>';
+  let html = content || '<!DOCTYPE html><html><body><p style="color:#999;padding:var(--ds-space-5)">Empty HTML file</p></body></html>';
 
   // 1. Convert local file paths in src/href to /api/nf-file URLs (one batched
   //    ticket mint; the credential is a per-path ticket, never the token).
@@ -535,7 +535,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   <\/script>`;
 
   // 6. Assemble srcdoc with base styles (transparent bg, theme-aware, scrollable)
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}mark.nf-find-hit{background:rgba(255,213,0,0.45);color:inherit;}mark.nf-find-current{background:rgba(94,106,210,0.55);color:#fff;}</style></head><body>${html}${refSelectScript}${localLinkNavScript()}${frameFindMarkup()}${zoomBridgeScript}${svgInlineScript}${imgClickMarkup}${anchorNavScript}${themePropScript}</body></html>`;
+  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}${graphvizCSS}html,body{margin:0;padding:0;font-size:var(--ds-fs-title);line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg,var(--color-surface,white));color:var(--color-text,#1a1a1a);overflow:auto;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}img{max-width:100%;height:auto;}mark.nf-find-hit{background:rgba(255,213,0,0.45);color:inherit;}mark.nf-find-current{background:rgba(94,106,210,0.55);color:#fff;}</style></head><body>${html}${refSelectScript}${localLinkNavScript()}${frameFindMarkup()}${zoomBridgeScript}${svgInlineScript}${imgClickMarkup}${anchorNavScript}${themePropScript}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.style.width = '100%';
@@ -673,9 +673,9 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
     const bar = document.createElement('div');
     bar.className = 'nf-frame-nav-bar';
     bar.dataset.nfFrameNavigated = '1';
-    bar.style.cssText = 'flex:none;display:flex;align-items:center;gap:10px;padding:6px 12px;' +
+    bar.style.cssText = 'flex:none;display:flex;align-items:center;gap:var(--ds-space-glass-x);padding:var(--ds-space-1h) var(--ds-space-3);' +
       'border-bottom:1px solid var(--color-border);background:var(--color-surface);' +
-      'color:var(--color-text-muted);font-size:12px;line-height:1.4';
+      'color:var(--color-text-muted);font-size:var(--ds-fs-hint);line-height:1.4';
     const text = document.createElement('span');
     text.textContent = 'This preview frame navigated away from the document.';
     text.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
@@ -683,7 +683,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
     back.type = 'button';
     back.className = 'glass-control nf-frame-nav-back';
     back.textContent = 'Back to document';
-    back.style.cssText = 'flex:none;cursor:pointer;font-size:12px;white-space:nowrap';
+    back.style.cssText = 'flex:none;cursor:pointer;font-size:var(--ds-fs-hint);white-space:nowrap';
     back.addEventListener('click', () => { backToDocument(); });
     bar.append(text, back);
     pane.insertBefore(bar, iframe);
@@ -701,7 +701,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
       /** @type {any} */ (pane)._nfZoomDestroy?.();  // frame navigated away — retire the zoom engine with it
       pane.innerHTML = '';
       const note = document.createElement('div');
-      note.style.cssText = 'padding:32px;text-align:center;color:var(--color-text-muted);font-size:13px;line-height:1.6';
+      note.style.cssText = 'padding:var(--ds-space-8);text-align:center;color:var(--color-text-muted);font-size:var(--ds-fs-body);line-height:1.6';
       note.textContent = 'This HTML page navigated its preview frame to the application URL (client-side router). Rendering was stopped to prevent recursive nesting.';
       pane.appendChild(note);
       return;

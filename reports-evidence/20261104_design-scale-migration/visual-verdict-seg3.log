@@ -1,0 +1,31 @@
+SHA-SAME     app-empty-dark.png                   逐字节相同
+SHA-SAME     app-empty-light.png                  逐字节相同
+SHA-SAME     bgtask-panel-dark.png                逐字节相同
+SHA-SAME     bgtask-panel-light.png               逐字节相同
+SHA-SAME     canvas-code-tab-dark.png             逐字节相同
+SHA-SAME     canvas-code-tab-light.png            逐字节相同
+NOISE-BOUND  canvas-html-tab-dark.png             diff=29px ≤ 同树噪声上限=29px bbox={"x0":1,"y0":1,"x1":550,"y1":864} 同树证据=post-seg3-space↔post-seg3-space-b:29px post-seg3-html-c↔post-seg3-html-d:29px
+NOISE-BOUND  canvas-html-tab-light.png            diff=17px ≤ 同树噪声上限=17px bbox={"x0":1,"y0":1,"x1":550,"y1":864} 同树证据=ab-B1↔ab-B2:17px
+SHA-SAME     canvas-image-tab-dark.png            逐字节相同
+SHA-SAME     canvas-image-tab-light.png           逐字节相同
+NOISE-BOUND  canvas-markdown-code-tab-dark.png    diff=6px ≤ 同树噪声上限=6px bbox={"x0":1,"y0":860,"x1":3,"y1":864} 同树证据=post-seg3-space↔post-seg3-space-b:6px post-seg2-radius↔post-seg2-radius-b:6px
+NOISE-BOUND  canvas-markdown-code-tab-light.png   diff=5px ≤ 同树噪声上限=5px bbox={"x0":1,"y0":862,"x1":3,"y1":864} 同树证据=pre-change-run1↔pre-change-run2:5px ab-B1↔ab-B2:5px ab2-A3↔ab2-A4:5px
+NOISE-BOUND  canvas-markdown-tab-dark.png         diff=6px ≤ 同树噪声上限=6px bbox={"x0":1,"y0":860,"x1":3,"y1":864} 同树证据=post-seg3-space↔post-seg3-space-b:6px post-seg2-radius↔post-seg2-radius-b:6px ab-B1↔ab-B2:6px ab2-A3↔ab2-A4:6px
+SHA-SAME     canvas-markdown-tab-light.png        逐字节相同
+SHA-SAME     canvas-txt-tab-dark.png              逐字节相同
+SHA-SAME     canvas-txt-tab-light.png             逐字节相同
+SHA-SAME     chat-messages-dark.png               逐字节相同
+SHA-SAME     chat-messages-light.png              逐字节相同
+SHA-SAME     deck-cards-dark.png                  逐字节相同
+SHA-SAME     deck-cards-light.png                 逐字节相同
+SHA-SAME     explorer-tree-dark.png               逐字节相同
+SHA-SAME     explorer-tree-light.png              逐字节相同
+SHA-SAME     modal-confirm-dark.png               逐字节相同
+SHA-SAME     modal-confirm-light.png              逐字节相同
+SHA-SAME     settings-llm-empty-dark.png          逐字节相同
+NOISE-BOUND  settings-llm-empty-light.png         diff=97px ≤ 同树噪声上限=97px bbox={"x0":941,"y0":747,"x1":966,"y1":768} 同树证据=post-seg3-space↔post-seg3-space-b:97px pre-change-run1↔pre-change-run2:97px
+SHA-SAME     settings-panel-dark.png              逐字节相同
+SHA-SAME     settings-panel-light.png             逐字节相同
+
+合计 28 场景：SHA-SAME 22 · NOISE-BOUND 6 · DRIFT 0
+VERDICT: PASS —— 全部场景逐字节相同或落在同树噪声带内

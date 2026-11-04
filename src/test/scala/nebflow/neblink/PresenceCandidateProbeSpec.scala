@@ -261,3 +261,23 @@ class PresenceCandidateProbeSpec extends munit.FunSuite:
     assert(chosen.exists(e => e.address == "192.168.1.145"), s"v4 候选必须在 4 条上限内：$chosen")
     assert(chosen.head.address.startsWith("2408:"), s"v6 优先：$chosen")
   }
+
+  // ===== tailnet v6 豁免对称（本批修复的验真点）=====
+
+  test("v6: 隧道网卡上的 tailnet v6 ULA 与 100.64/10 同权保留（豁免不得只认 v4）") {
+    val tailnetV6 = ep("fd7a:115c:a1e0::1", kind = "tailscale", label = "utun3")
+    val lanV4 = ep("192.168.1.145", label = "en0")
+    val got = PresenceCandidateProbe.sanitizeReported(List(tailnetV6, lanV4))
+    assert(
+      got.exists(_.address == "fd7a:115c:a1e0::1"),
+      s"macOS 上 tailnet 跑在 utun*，其 v6 ULA 是首选直连面——存在普通候选时也不得被结构性丢弃：$got"
+    )
+    assertEquals(got.map(_.address), List("fd7a:115c:a1e0::1", "192.168.1.145"), "保序：只删不重排")
+  }
+
+  test("v6: 隧道网卡上的非 tailnet 公网 v6 仍被丢（豁免只给 tailnet，不给所有 utun 地址）") {
+    val publicV6 = ep("2001:db8::1", label = "utun3")
+    val lanV4 = ep("192.168.1.145", label = "en0")
+    val got = PresenceCandidateProbe.sanitizeReported(List(publicV6, lanV4))
+    assertEquals(got.map(_.address), List("192.168.1.145"), "utun 上的普通公网 v6 属于隧道污染面，必须丢")
+  }

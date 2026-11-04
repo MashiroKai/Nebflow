@@ -21,13 +21,13 @@
   max-height: 86vh;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px 18px 18px;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-4) 18px 18px;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   box-shadow: 0 4px 24px var(--glass-control-glow);
   animation: ud-in 0.15s ease-out;
   overflow: hidden auto;
@@ -61,7 +61,7 @@
   flex-shrink: 0;
 }
 #usage-title {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--color-text);
@@ -71,18 +71,18 @@
 #usage-summary {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-shrink: 0;
 }
 .ud-card {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
-  border-radius: 8px;
-  padding: 8px 10px;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
   min-width: 0;
 }
 .ud-card-label {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: var(--color-text-muted);
   white-space: nowrap;
@@ -90,14 +90,14 @@
   text-overflow: ellipsis;
 }
 .ud-card-value {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
 }
 .ud-card-sub {
   font-size: 10px;
@@ -111,30 +111,30 @@
 .ud-trend { color: rgb(var(--sapphire) / 0.9); }
 
 /* ── Controls (v1.3: three independent groups) ───────────────────── */
-.ud-filters { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; }
+.ud-filters { display: flex; gap: var(--ds-space-1h); flex-shrink: 0; flex-wrap: wrap; }
 /* stats range + summary cards (ruling ④) */
-.ud-stats { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
-.ud-stats-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ud-stats { display: flex; flex-direction: column; gap: var(--ds-space-2); flex-shrink: 0; }
+.ud-stats-row { display: flex; align-items: center; gap: var(--ds-space-2); flex-wrap: wrap; }
 .ud-stats-label {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: var(--color-text-muted);
 }
 .ud-sranges {
   display: flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: 8px;
+  gap: var(--ds-space-half);
+  padding: var(--ds-space-half);
+  border-radius: var(--ds-radius-input);
   background: var(--glass-etched-bg);
 }
 .ud-srange {
   border: none;
   background: transparent;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text-muted);
-  padding: 3px 10px;
-  border-radius: 6px;
+  padding: 3px var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
@@ -148,25 +148,25 @@
 .ud-heat-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-wrap: wrap;
   flex-shrink: 0;
 }
 .ud-hdims {
   display: flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: 8px;
+  gap: var(--ds-space-half);
+  padding: var(--ds-space-half);
+  border-radius: var(--ds-radius-input);
   background: var(--glass-etched-bg);
 }
 .ud-hdim {
   border: none;
   background: transparent;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text-muted);
-  padding: 3px 10px;
-  border-radius: 6px;
+  padding: 3px var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
@@ -177,7 +177,7 @@
   font-weight: 600;
 }
 .ud-dimlabel {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: rgb(var(--sapphire) / 0.9);
   font-variant-numeric: tabular-nums;
@@ -190,11 +190,11 @@
 .ud-select {
   appearance: none;
   -webkit-appearance: none;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text);
-  padding: 4px 22px 4px 10px;
-  border-radius: 8px;
+  padding: var(--ds-space-1) 22px var(--ds-space-1) var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-input);
   max-width: 140px;
   background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%);
   background-position: calc(100% - 12px) 55%, calc(100% - 8px) 55%;
@@ -204,19 +204,19 @@
 .ud-select:disabled { opacity: 0.5; cursor: not-allowed; }
 .ud-colormode, .ud-drill-dims {
   display: flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: 8px;
+  gap: var(--ds-space-half);
+  padding: var(--ds-space-half);
+  border-radius: var(--ds-radius-input);
   background: var(--glass-etched-bg);
 }
 .ud-cm, .ud-dim {
   border: none;
   background: transparent;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text-muted);
-  padding: 3px 10px;
-  border-radius: 6px;
+  padding: 3px var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
@@ -238,7 +238,7 @@
 #usage-heatwrap {
   --ud-cell: 11px;
   display: flex;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
   align-items: flex-start;
   flex-shrink: 0;
   animation: ud-fade 0.15s ease-out;
@@ -252,7 +252,7 @@
   overflow-y: hidden;
   min-width: 0;
   flex: 1;
-  padding-bottom: 2px;
+  padding-bottom: var(--ds-space-half);
   scrollbar-width: thin;
 }
 #usage-heatmain { min-width: max-content; }
@@ -260,10 +260,10 @@
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: calc(var(--ud-cell, 11px) + 2px);
-  gap: 0 2px;
+  gap: 0 var(--ds-space-half);
   font-size: 10px;
   color: var(--color-text-muted);
-  margin-bottom: 4px;
+  margin-bottom: var(--ds-space-1);
   height: 12px;
   width: max-content;
 }
@@ -273,14 +273,14 @@
   grid-auto-flow: column;
   grid-template-rows: repeat(7, var(--ud-cell, 11px));
   grid-auto-columns: var(--ud-cell, 11px);
-  gap: 2px;
+  gap: var(--ds-space-half);
   width: max-content;
 }
 .ud-week { display: contents; }
 .ud-cell {
   width: var(--ud-cell, 11px);
   height: var(--ud-cell, 11px);
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
   cursor: pointer;
   border: none;
   padding: 0;
@@ -324,16 +324,16 @@
 #usage-legend {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ds-space-1);
   align-items: flex-start;
   flex-shrink: 0;
-  padding-top: 16px;
+  padding-top: var(--ds-space-4);
 }
 .ud-legend-row { display: flex; align-items: center; gap: 3px; }
 .ud-legend-swatch {
   width: 10px;
   height: 10px;
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
 }
 .ud-legend-label {
   font-size: 10px;
@@ -345,17 +345,17 @@
 /* empty state */
 .ud-empty {
   text-align: center;
-  padding: 32px 0;
+  padding: var(--ds-space-8) 0;
   color: var(--color-text-muted);
 }
 .ud-empty[hidden] { display: none; }
-.ud-empty-title { font-size: 14px; font-weight: 600; color: var(--color-text); margin-bottom: 4px; }
-.ud-empty-hint { font-size: 12px; }
+.ud-empty-title { font-size: 14px; font-weight: 600; color: var(--color-text); margin-bottom: var(--ds-space-1); }
+.ud-empty-hint { font-size: var(--ds-fs-hint); }
 
 /* ── Intraday curve (v1.3, ruling ③) ──────────────────────────────── */
 .ud-curve {
   border-top: 1px solid var(--color-border);
-  padding-top: 10px;
+  padding-top: var(--ds-space-glass-x);
   animation: ud-curve-in 0.2s ease-out;
   flex-shrink: 0;
 }
@@ -367,16 +367,16 @@
 .ud-curve-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: var(--ds-space-2);
+  margin-bottom: var(--ds-space-2);
 }
-.ud-curve-title { font-size: 13px; font-weight: 600; color: var(--color-text); }
+.ud-curve-title { font-size: var(--ds-fs-body); font-weight: 600; color: var(--color-text); }
 .ud-drill-open { margin-left: auto; }
 .ud-curve-body {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
-  border-radius: 8px;
-  padding: 8px 10px;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
 }
 .ud-curve-svg { display: block; width: 100%; height: 132px; }
 .ud-curve-bar { fill: rgb(var(--sapphire) / 0.55); }
@@ -394,16 +394,16 @@
   font-variant-numeric: tabular-nums;
 }
 .ud-curve-empty {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
-  padding: 24px 0;
+  padding: var(--ds-space-6) 0;
   text-align: center;
 }
 
 /* ── Drilldown drawer (v1.3 secondary panel) ─────────────────────── */
 .ud-drill {
   border-top: 1px solid var(--color-border);
-  padding-top: 10px;
+  padding-top: var(--ds-space-glass-x);
   animation: ud-slide 0.2s ease-out;
   flex-shrink: 0;
 }
@@ -420,19 +420,19 @@
 .ud-drill-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: var(--ds-space-2);
+  margin-bottom: var(--ds-space-2);
 }
-#usage-drill-title { font-size: 13px; font-weight: 600; color: var(--color-text); }
+#usage-drill-title { font-size: var(--ds-fs-body); font-weight: 600; color: var(--color-text); }
 .ud-drill-dims { margin-left: auto; }
-#usage-rank { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
-.ud-rank-group-title { font-size: 11px; font-weight: 500; color: var(--color-text-muted); margin-bottom: 3px; }
+#usage-rank { display: flex; flex-direction: column; gap: var(--ds-space-1h); margin-bottom: var(--ds-space-glass-x); }
+.ud-rank-group-title { font-size: var(--ds-fs-meta); font-weight: 500; color: var(--color-text-muted); margin-bottom: 3px; }
 .ud-rank-row {
   display: grid;
   grid-template-columns: minmax(60px, 140px) 1fr 52px;
   align-items: center;
-  gap: 8px;
-  font-size: 11px;
+  gap: var(--ds-space-2);
+  font-size: var(--ds-fs-meta);
   color: var(--color-text);
 }
 .ud-rank-key { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -448,21 +448,21 @@
 .ud-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
   font-variant-numeric: tabular-nums;
 }
 .ud-table th {
   text-align: left;
   font-weight: 500;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
-  padding: 4px 8px;
+  padding: var(--ds-space-1) var(--ds-space-2);
   border-bottom: 1px solid var(--color-border);
   white-space: nowrap;
 }
 .ud-table td {
-  padding: 4px 8px;
+  padding: var(--ds-space-1) var(--ds-space-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -471,12 +471,12 @@
 .ud-table tbody tr:hover { background: var(--glass-etched-bg); }
 .ud-table .num { text-align: right; }
 .ud-drill-empty, .ud-drill-error {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
-  padding: 12px 0;
+  padding: var(--ds-space-3) 0;
   text-align: center;
 }
-.ud-retry { margin-left: 8px; }
+.ud-retry { margin-left: var(--ds-space-2); }
 
 /* ── Tooltip ──────────────────────────────────────────────────────── */
 .ud-tooltip {
@@ -487,10 +487,10 @@
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-control-blur)) saturate(1.15);
   border: 1px solid var(--glass-control-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   box-shadow: 0 2px 12px var(--glass-control-glow);
-  padding: 6px 10px;
-  font-size: 11px;
+  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  font-size: var(--ds-fs-meta);
   color: var(--color-text);
   font-variant-numeric: tabular-nums;
   max-width: 260px;
