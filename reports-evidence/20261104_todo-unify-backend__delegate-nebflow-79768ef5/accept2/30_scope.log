@@ -51,3 +51,303 @@ f3bc0a7be Merge branch 'delegate/delegate-nebflow-4280aa54' — presence 收尾�
  tests/todo-page-shots.mjs                         |  37 +-
  tests/todo-split.spec.mjs                         | 305 ++++++------
  37 files changed, 1944 insertions(+), 435 deletions(-)
+## files touched by batch outside web/tests:
+ .../accept2/10_gates_summary.txt                   |  18 +
+ .../accept2/11_make_frontend_gates.log             |  47 ++
+ .../accept2/12_check_design_tokens.log             |  30 +
+ .../accept2/13_check_msgstyle.log                  |   9 +
+ .../accept2/14_check_self_explaining.log           |   2 +
+ .../accept2/15_check_circular.log                  |   1 +
+ .../accept2/16_check_component_contract.log        |  11 +
+ .../accept2/17_check_process_artifacts.log         |   3 +
+ .../accept2/18_check_design_spec_sync.log          |   4 +
+ .../accept2/19_check_js_types.log                  |   2 +
+ .../accept2/20_type_baseline_diff.log              |   6 +
+ .../accept2/30_scope.log                           |  53 ++
+ .../accept2/40_entry_and_shots.log                 |  27 +
+ .../accept2/50_final_git.log                       |   5 +
+ .../accept2/README.md                              |  53 ++
+ .../accept2/before/00_worktree_add.log             |   2 +
+ .../accept2/before/10_rerun_stdout.log             |  70 ++
+ .../accept2/before/11_rerun_stderr.log             |   0
+ .../f1-desktop-1280x800-capsule+entryrow.png       | Bin 0 -> 188800 bytes
+ ...mobile-375x812-chat-fab+capsule-displaynone.png | Bin 0 -> 99178 bytes
+ .../before/f6-mobile-375x812-messages-entryrow.png | Bin 0 -> 77066 bytes
+ .../accept2/before/ws-frames-desktop.json          | 727 +++++++++++++++++++++
+ .../live/00_gateway_boot_console_takeover.txt      |   2 +
+ .../accept2/live/00_run_full.stderr.txt            |   0
+ .../accept2/live/00_run_full.stdout.txt            |  85 +++
+ .../accept2/live/03_baseline_live.txt              |  10 +
+ .../accept2/live/03_baseline_store.txt             |   6 +
+ .../accept2/live/10_new_store.txt                  |  10 +
+ .../accept2/live/11_new_after_reload.txt           |  27 +
+ .../accept2/live/20_complete_done_records.txt      |   2 +
+ .../accept2/live/20_complete_store.txt             |  11 +
+ .../accept2/live/21_complete_after_reload.txt      |  22 +
+ .../accept2/live/30_uncomplete_store.txt           |  13 +
+ .../accept2/live/31_uncomplete_after_reload.txt    |  36 +
+ .../accept2/live/40_delete_store.txt               |  13 +
+ .../accept2/live/41_delete_after_reload.txt        |  21 +
+ .../accept2/live/50_priority_order_before.txt      |  23 +
+ .../accept2/live/51_priority_order_after.txt       |  23 +
+ .../accept2/live/52_priority_after_reload.txt      |  23 +
+ .../accept2/live/60_cross_baseline.txt             |  47 ++
+ .../accept2/live/61_cross_create.txt               |  64 ++
+ .../accept2/live/62_cross_complete.txt             |  33 +
+ .../accept2/live/63_cross_priority.txt             |  52 ++
+ .../accept2/live/90_final_live_state.txt           |  62 ++
+ .../accept2/live/90_final_store_dump.txt           |  14 +
+ .../accept2/live/91_page_errors.txt                |  16 +
+ .../accept2/live/92_ws_frames.txt                  |  53 ++
+ .../accept2/live/95_handcat_store.log              | 108 +++
+ .../accept2/live/99_summary.json                   | 234 +++++++
+ .../accept2/live/shots/10_desktop_new_created.png  | Bin 0 -> 195858 bytes
+ .../live/shots/11_desktop_new_after_reload.png     | Bin 0 -> 195928 bytes
+ .../accept2/live/shots/20_desktop_completed.png    | Bin 0 -> 194814 bytes
+ .../shots/21_desktop_completed_after_reload.png    | Bin 0 -> 192739 bytes
+ .../accept2/live/shots/30_desktop_uncompleted.png  | Bin 0 -> 195388 bytes
+ .../accept2/live/shots/40_desktop_deleted.png      | Bin 0 -> 192763 bytes
+ .../live/shots/51_desktop_priority_changed.png     | Bin 0 -> 199804 bytes
+ .../accept2/live/shots/61_mobile_sees_new.png      | Bin 0 -> 36425 bytes
+ .../accept2/live/shots/62_mobile_sees_complete.png | Bin 0 -> 36381 bytes
+ .../accept2/live/shots/63_mobile_sees_priority.png | Bin 0 -> 36369 bytes
+ .../accept2/shots.mjs                              | 233 +++++++
+ .../a1_desktop_1280x800_single_entry_capsule.png   | Bin 0 -> 57852 bytes
+ .../shots/a2_desktop_1280x800_expanded_fab.png     | Bin 0 -> 71081 bytes
+ .../accept2/shots/b1_desktop_create_row.png        | Bin 0 -> 76278 bytes
+ .../shots/b2_desktop_create_filled_priority.png    | Bin 0 -> 79213 bytes
+ .../accept2/shots/b3_desktop_create_submitted.png  | Bin 0 -> 76049 bytes
+ .../shots/b4_desktop_create_after_reload.png       | Bin 0 -> 76320 bytes
+ .../c1_mobile_375x812_single_entry_capsule.png     | Bin 0 -> 30226 bytes
+ .../shots/c2_mobile_375x812_expanded_fab.png       | Bin 0 -> 47743 bytes
+ .../accept2/specs/00_summary.txt                   |   9 +
+ .../accept2/specs/00_worktree_add.log              |   3 +
+ .../accept2/specs/01_worktree_add2.log             |   3 +
+ .../accept2/specs/10_todo_store_backend.log        |  10 +
+ .../accept2/specs/11_todo_capsule_create.log       |  12 +
+ .../accept2/specs/12_todo_entry_collapse.log       |   6 +
+ .../accept2/specs/13_todo_split.log                |  10 +
+ .../accept2/specs/20_canvas_ask_dock.log           |   4 +
+ .../accept2/specs/21_canvas_ask_resize.log         |  94 +++
+ .../accept2/specs/22_console_ask_grow.log          |   4 +
+ .../accept2/specs/30_canvas-ask-dock.log           |  81 +++
+ .../accept2/specs/30_console-ask-grow.log          |  18 +
+ .../entries2/00a_baseline_frontend_gates.log       |  48 ++
+ .../entries2/00b_baseline_js_types.log             |   3 +
+ .../entries2/01_js_types_after_retire.log          |   6 +
+ .../entries2/02_frontend_gates_after_retire.log    |  48 ++
+ .../entries2/10_new_spec_before_red.log            |  64 ++
+ .../entries2/11_new_spec_after.log                 |  53 ++
+ .../entries2/12_new_spec_after_fix.log             |  78 +++
+ .../entries2/13_split_and_new.log                  | 140 ++++
+ .../entries2/14_new_and_split_run2.log             |  32 +
+ .../entries2/20_pw_suite.log                       | 163 +++++
+ .../entries2/21_node_group2.log                    |  28 +
+ .../entries2/22_node_group3.log                    |  66 ++
+ .../entries2/23_node_group4.log                    |  26 +
+ .../entries2/30_gates.log                          |  27 +
+ .../entries2/40_respec_run.log                     |  59 ++
+ .../entries2/41_face_shots_base_tree.log           | 341 ++++++++++
+ .../entries2/50_final_specs_and_shots.log          | 380 +++++++++++
+ .../entries2/60_final_gates.log                    |  77 +++
+ .../entries2/README.md                             | 194 ++++++
+ .../shots/desktop-1280-capsule-expanded.png        | Bin 0 -> 89755 bytes
+ .../entries2/shots/desktop-1280-capsule.png        | Bin 0 -> 63614 bytes
+ .../entries2/shots/mobile-375-capsule-expanded.png | Bin 0 -> 57445 bytes
+ .../entries2/shots/mobile-375-capsule.png          | Bin 0 -> 30283 bytes
+ .../shots/mobile-375-messages-no-entry.png         | Bin 0 -> 24767 bytes
+ .../panel/01_fab_desktop_open.png                  | Bin 0 -> 72590 bytes
+ .../panel/02_fab_click_createrow.png               | Bin 0 -> 76538 bytes
+ .../panel/03_blank_footer_createrow.png            | Bin 0 -> 72914 bytes
+ .../panel/04_mobile_capsule.png                    | Bin 0 -> 32414 bytes
+ .../panel/05_mobile_panel_open.png                 | Bin 0 -> 51459 bytes
+ .../panel/README.md                                |  57 ++
+ .../panel/logs/01_new_spec_todo_capsule_create.log |  12 +
+ .../panel/logs/10_before_face_shots.log            | 340 ++++++++++
+ .../panel/logs/11_before_capsule_shots.log         | 410 ++++++++++++
+ .../panel/logs/12_after_face_shots.log             | 344 ++++++++++
+ .../panel/logs/13_after_capsule_shots.log          | 415 ++++++++++++
+ .../panel/logs/14_after_face_shots_final.log       | 340 ++++++++++
+ .../panel/logs/15_after_capsule_shots_final.log    | 418 ++++++++++++
+ .../panel/logs/16_before_capsule_shots_env.log     | 412 ++++++++++++
+ .../logs/17_after_capsule_shots_newassert.log      | 420 ++++++++++++
+ .../panel/logs/18_before_capsule_shots_rerun.log   | 412 ++++++++++++
+ .../panel/logs/20_gate_design_tokens.log           |  30 +
+ .../panel/logs/21_gate_msgstyle.log                |   9 +
+ .../panel/logs/22_gate_self_explaining.log         |  18 +
+ .../panel/shots-after/d-1280-dark-open.png         | Bin 0 -> 230506 bytes
+ .../panel/shots-after/d-1280-light-open-panel.png  | Bin 0 -> 71578 bytes
+ .../panel/shots-after/d-1280-light-open.png        | Bin 0 -> 237622 bytes
+ .../panel/shots-after/d-1280-light-overdue.png     | Bin 0 -> 167080 bytes
+ .../panel/shots-after/d-1280-light-todo.png        | Bin 0 -> 166777 bytes
+ .../panel/shots-after/d-1440-light-open-panel.png  | Bin 0 -> 71578 bytes
+ .../panel/shots-after/d-add-mid-chromium-light.png | Bin 0 -> 508 bytes
+ .../panel/shots-after/m-375-dark-todo-page.png     | Bin 0 -> 60867 bytes
+ .../panel/shots-after/m-375-light-todo-page.png    | Bin 0 -> 62001 bytes
+ .../panel/shots-before/d-1280-dark-open.png        | Bin 0 -> 226189 bytes
+ .../panel/shots-before/d-1280-light-open-panel.png | Bin 0 -> 68573 bytes
+ .../panel/shots-before/d-1280-light-open.png       | Bin 0 -> 234945 bytes
+ .../panel/shots-before/d-1280-light-overdue.png    | Bin 0 -> 167070 bytes
+ .../panel/shots-before/d-1280-light-todo.png       | Bin 0 -> 167184 bytes
+ .../panel/shots-before/d-1440-light-open-panel.png | Bin 0 -> 68573 bytes
+ .../shots-before/d-add-mid-chromium-light.png      | Bin 0 -> 508 bytes
+ .../panel/shots-before/m-375-dark-todo-page.png    | Bin 0 -> 56733 bytes
+ .../panel/shots-before/m-375-light-todo-page.png   | Bin 0 -> 60324 bytes
+ .../persist2/00_gateway_boot_console_takeover.txt  |  13 +
+ .../persist2/00_sbt_assembly.log                   |  20 +
+ .../persist2/01_tree_registration.txt              |  18 +
+ .../persist2/02_tree_during_build.txt              |  16 +
+ .../persist2/03_baseline_live.txt                  |  10 +
+ .../persist2/03_baseline_store.txt                 |   6 +
+ .../persist2/05_handcat_jq_final_store.txt         |  25 +
+ .../persist2/06_tree_at_final_run.txt              |  17 +
+ .../persist2/10_new_store.txt                      |  10 +
+ .../persist2/10_run_full.stderr.txt                |   0
+ .../persist2/10_run_full.stdout.txt                |  85 +++
+ .../persist2/11_new_after_reload.txt               |  27 +
+ .../persist2/20_complete_done_records.txt          |   2 +
+ .../persist2/20_complete_store.txt                 |  11 +
+ .../persist2/21_complete_after_reload.txt          |  22 +
+ .../persist2/30_uncomplete_store.txt               |  13 +
+ .../persist2/31_uncomplete_after_reload.txt        |  36 +
+ .../persist2/40_delete_store.txt                   |  13 +
+ .../persist2/41_delete_after_reload.txt            |  21 +
+ .../persist2/50_priority_order_before.txt          |  23 +
+ .../persist2/51_priority_order_after.txt           |  23 +
+ .../persist2/52_priority_after_reload.txt          |  23 +
+ .../persist2/60_cross_baseline.txt                 |  47 ++
+ .../persist2/61_cross_create.txt                   |  64 ++
+ .../persist2/62_cross_complete.txt                 |  33 +
+ .../persist2/63_cross_priority.txt                 |  52 ++
+ .../persist2/90_final_live_state.txt               |  62 ++
+ .../persist2/90_final_store_dump.txt               |  14 +
+ .../persist2/91_page_errors.txt                    |  16 +
+ .../persist2/92_ws_frames.txt                      |  53 ++
+ .../43c37951-8f8d-49d4-a0e2-a2c7b1084616.json      |   1 +
+ .../97_final_store_artifact/done-records.jsonl     |   4 +
+ .../persist2/99_summary.json                       | 234 +++++++
+ .../persist2/README.md                             | 108 +++
+ .../persist2/shots/10_desktop_new_created.png      | Bin 0 -> 195935 bytes
+ .../persist2/shots/11_desktop_new_after_reload.png | Bin 0 -> 195959 bytes
+ .../persist2/shots/20_desktop_completed.png        | Bin 0 -> 194893 bytes
+ .../shots/21_desktop_completed_after_reload.png    | Bin 0 -> 193163 bytes
+ .../persist2/shots/30_desktop_uncompleted.png      | Bin 0 -> 195485 bytes
+ .../persist2/shots/40_desktop_deleted.png          | Bin 0 -> 192921 bytes
+ .../persist2/shots/51_desktop_priority_changed.png | Bin 0 -> 199769 bytes
+ .../persist2/shots/61_mobile_sees_new.png          | Bin 0 -> 36445 bytes
+ .../persist2/shots/62_mobile_sees_complete.png     | Bin 0 -> 36354 bytes
+ .../persist2/shots/63_mobile_sees_priority.png     | Bin 0 -> 36384 bytes
+ .../persist2/todo-persist-live.mjs                 | 687 +++++++++++++++++++
+ .../sync/README.md                                 | 123 ++++
+ .../sync/RUNS.md                                   | 114 ++++
+ .../sync/logs/01_pre_merge_state.log               |  16 +
+ .../sync/logs/02_merge.log                         | 449 +++++++++++++
+ .../sync/logs/03_merge_commit.log                  |  16 +
+ .../sync/logs/04_no_regression_diff.log            | 237 +++++++
+ .../sync/logs/05_main_utils_diff.log               | 184 ++++++
+ .../sync/logs/06_api_surface_check.log             |  13 +
+ .../sync/logs/07_range_check.log                   | 321 +++++++++
+ .../sync/logs/08_merge_commit_amended.log          |  10 +
+ .../sync/logs/10_gate_frontend_gates.log           |  46 ++
+ .../sync/logs/11_gate_design_spec_sync.log         |   6 +
+ .../sync/logs/12_gate_component_contract.log       |  28 +
+ .../sync/logs/13_gate_process_artifacts.log        |   5 +
+ .../sync/logs/14_gate_component_contract_fixed.log |  11 +
+ .../sync/logs/15_gate_frontend_gates_postfix.log   |  46 ++
+ .../sync/logs/16_gate_design_spec_sync_postfix.log |   6 +
+ .../logs/17_gate_process_artifacts_postfix.log     |   5 +
+ .../sync/logs/18_api_adaptation_static.log         |  10 +
+ .../sync/logs/20_spec_capsule_and_store.log        |  22 +
+ .../sync/logs/21_spec_todo_split.log               |  14 +
+ .../sync/logs/22_shots_todo_face.log               | 342 ++++++++++
+ .../sync/logs/23_shots_todo_page.log               |   4 +
+ .../sync/logs/24_yield_chain_probe.log             |  20 +
+ .../sync/logs/25_yield_chain_probe_final.log       |  20 +
+ .../sync/logs/30_sbt_batch_specs.log               |   9 +
+ .../sync/logs/40_final_no_regression.log           |  31 +
+ .../sync/logs/41_main_advanced.log                 |  25 +
+ .../sync/logs/42_merge2.log                        |  22 +
+ .../sync/logs/43_merge2_commit.log                 |  13 +
+ .../sync/logs/44_final_scope_round2.log            |  25 +
+ .../sync/logs/50_gate_frontend_gates.log           |  50 ++
+ .../sync/logs/51_gate_design_spec_sync.log         |   7 +
+ .../sync/logs/52_gate_component_contract.log       |  12 +
+ .../sync/logs/53_gate_process_artifacts.log        |   6 +
+ .../sync/logs/54_spec_capsule_and_store.log        |  22 +
+ .../sync/logs/55_spec_todo_split.log               |  14 +
+ .../sync/logs/56_yield_chain_probe.log             |  20 +
+ .../sync/logs/57_shots_todo_face.log               | 342 ++++++++++
+ .../sync/logs/58_shots_todo_page.log               |   4 +
+ .../sync/logs/60_sbt_batch_specs.log               |   6 +
+ .../sync/logs/70_merge3.log                        |  33 +
+ .../sync/logs/71_merge3_surface_check.log          |  39 ++
+ .../sync/logs/80_gate_frontend_gates.log           |  50 ++
+ .../sync/logs/81_gate_design_spec_sync.log         |   7 +
+ .../sync/logs/82_gate_component_contract.log       |  16 +
+ .../sync/logs/83_gate_process_artifacts.log        |   6 +
+ .../sync/logs/84_spec_capsule_and_store.log        |  22 +
+ .../sync/logs/85_spec_todo_split.log               |  14 +
+ .../sync/logs/86_yield_chain_probe.log             |  20 +
+ .../sync/logs/87_shots_todo_face.log               | 342 ++++++++++
+ .../sync/logs/88_shots_todo_page.log               |   4 +
+ ...ponent_contract_main_regression_attribution.log |  17 +
+ .../sync/logs/90_merge4.log                        |  11 +
+ .../sync/logs/91_gate_frontend_gates.log           |  49 ++
+ .../sync/logs/92_gate_design_spec_sync.log         |   6 +
+ .../sync/logs/93_gate_component_contract.log       |  12 +
+ .../sync/logs/94_gate_process_artifacts.log        |   5 +
+ .../sync/logs/95_yield_chain_probe.log             |  19 +
+ .../sync/logs/96_spec_capsule_and_store.log        |  21 +
+ .../sync/logs/97_spec_todo_split.log               |  13 +
+ .../sync/reverify_round2.sh                        |  34 +
+ .../sync/reverify_round3.sh                        |  34 +
+ .../sync/run_playwright_specs.sh                   |  24 +
+ .../sync/run_shots.sh                              |  22 +
+ .../sync/yield_chain_probe.json                    | 142 ++++
+ .../sync/yield_chain_probe.mjs                     | 254 +++++++
+ .../sync/yield_desktop_capsule.png                 | Bin 0 -> 60383 bytes
+ .../sync/yield_desktop_expanded.png                | Bin 0 -> 69225 bytes
+ .../sync/yield_mobile_capsule.png                  | Bin 0 -> 32420 bytes
+ .../sync/yield_mobile_expanded.png                 | Bin 0 -> 44233 bytes
+ .../treecheck/README.md                            | 177 +++++
+ .../treecheck/capsule_giveway_probe.mjs            | 311 +++++++++
+ .../treecheck/logs/01_gate_component_contract.log  |  28 +
+ .../treecheck/logs/02_gate_process_artifacts.log   |   4 +
+ .../logs/03_gate_component_contract_after_fix.log  |  10 +
+ .../treecheck/logs/03_range_check.log              |  79 +++
+ .../treecheck/logs/04_specs_todo_batch.log         |  26 +
+ .../treecheck/logs/05_capsule_giveway_probe.log    |  29 +
+ .../treecheck/logs/06_gate_frontend_gates.log      |  46 ++
+ .../treecheck/logs/07_gate_design_spec_sync.log    |   6 +
+ .../treecheck/logs/08_gate_component_contract.log  |  11 +
+ .../treecheck/logs/09_gate_process_artifacts.log   |   5 +
+ .../treecheck/logs/10_capsule_geometry_shots.log   | 420 ++++++++++++
+ .../treecheck/logs/20_postmerge_frontend_gates.log |  49 ++
+ .../logs/21_postmerge_design_spec_sync.log         |   6 +
+ .../logs/22_postmerge_component_contract.log       |  11 +
+ .../logs/23_postmerge_process_artifacts.log        |   5 +
+ .../treecheck/logs/24_postmerge_specs.log          |  26 +
+ .../treecheck/logs/25_postmerge_giveway_probe.log  |  29 +
+ .../treecheck/logs/26_final_range_check.log        |  40 ++
+ .../treecheck/logs/27_final_process_artifacts.log  |   5 +
+ .../treecheck/logs/28_final_component_contract.log |  11 +
+ .../treecheck/shots/d-1280-band-grown-giveway.png  | Bin 0 -> 177312 bytes
+ .../treecheck/shots/d-1280-capsule-giveway.png     | Bin 0 -> 164760 bytes
+ .../shots/d-1280-capsule-panel-giveway.png         | Bin 0 -> 245490 bytes
+ .../treecheck/shots/m-375-capsule-visible.png      | Bin 0 -> 101568 bytes
+ .../typefix/01_before_check_js_types.log           |   7 +
+ .../typefix/02_before_tsc_raw.log                  |  16 +
+ .../typefix/03_after_check_js_types.log            |   3 +
+ .../typefix/04_ws_attribution.log                  |  88 +++
+ .../typefix/05_probe_at_3858e3eb7.log              |  15 +
+ .../typefix/06_postcommit_check_js_types.log       |   4 +
+ .../typefix/07_final_status.log                    |  15 +
+ .../typefix/README.md                              | 127 ++++
+ .../typefix/logs/10_frontend_gates.log             |  49 ++
+ .../typefix/logs/11_design_spec_sync.log           |   6 +
+ .../typefix/logs/12_component_contract.log         |  12 +
+ .../typefix/logs/13_process_artifacts.log          |   5 +
+ .../typefix/logs/14_circular.log                   |   3 +
+ .../typefix/logs/15_specs.log                      |  21 +
+ 297 files changed, 15443 insertions(+)
+(empty above = 本批零越界)
