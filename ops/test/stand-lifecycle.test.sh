@@ -26,6 +26,13 @@ SRC_RESTART_SHIM="$REPO_ROOT/ops/bin/nebflow-restart-shim"
 
 PASS=0; FAIL=0
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/stand-lifecycle.XXXXXX")"
+# 隔离实例误伤批 2026-11-04 §2：沙箱必须把「本品牌默认根」搬进沙箱，否则
+# 隔离根法则（R ≠ 默认根 ⇒ 继承来的端口 env 不算显式、品牌缺省口拒绝）会把既有
+# 全部用例改判。做法：HOME 指向沙箱，STAND_HOME=$SANDBOX/.stand = $HOME/.stand
+# ⇒ 沙箱内是**默认根**（历史语义逐字保留）；新用例显式用 $SANDBOX/canary 之类
+# 的**隔离根**验新法则。Real home 另存一份供 stand-jdk 体检面使用。
+REAL_HOME="$HOME"
+export HOME="$SANDBOX"
 FAKE_LOG="$SANDBOX/fake-java.log"
 PYTHON="$(command -v python3 || true)"
 cleanup() { rm -rf "$SANDBOX" 2>/dev/null; }
@@ -46,8 +53,10 @@ assert_eq()      { # <desc> <want> <got>
 
 # ── 沙箱脚手架 ────────────────────────────────────────────
 fresh_sandbox() { # 每个 case 重建: bin/(stand+nebflow+库+jars) + fake java + home
-    rm -rf "$SANDBOX"/*
-    mkdir -p "$SANDBOX/bin/versions/2026.10.25" "$SANDBOX/fakebin" "$SANDBOX/home"
+    # 隐藏根必须一起清: `*` 不匹配点开头 ⇒ .stand/.nebflow 里的 .pid 记账与
+    # restart-detached-*.log 会跨用例泄漏（旧日志被判成本用例的点火证据）。
+    rm -rf "$SANDBOX"/* "$SANDBOX"/.[!.]* "$SANDBOX"/..?* 2>/dev/null
+    mkdir -p "$SANDBOX/bin/versions/2026.10.25" "$SANDBOX/fakebin" "$SANDBOX/.stand" "$SANDBOX/.nebflow"
     : > "$SANDBOX/bin/versions/2026.10.25/stand-assembly-2026.10.25.jar"
     printf '2026.10.25\n' > "$SANDBOX/bin/current-version"
     : > "$SANDBOX/bin/nebflow-assembly-2026.9.19.jar"   # nebflow 入口 winsort 面
@@ -81,14 +90,14 @@ FAKEJAVA
     cp "$SRC_AUTOSTART" "$SANDBOX/bin/stand-autostart.sh"
     cp "$SRC_AUTOSTART_SHIM" "$SANDBOX/bin/nebflow-autostart.sh"
     chmod +x "$SANDBOX/bin/stand-autostart.sh" "$SANDBOX/bin/nebflow-autostart.sh"
-    mkdir -p "$SANDBOX/home/logs"
-    : > "$SANDBOX/home/logs/nebflow.log"
+    mkdir -p "$SANDBOX/.stand/logs"
+    : > "$SANDBOX/.stand/logs/nebflow.log"
     : > "$FAKE_LOG"
 }
 
 run_stand() { # $@: stand 子命令; 返回 rc, stdout+stderr 捕获在 RUN_OUT
     RUN_OUT="$(cd "$SANDBOX" && \
-        STAND_HOME="$SANDBOX/home" \
+        STAND_HOME="$SANDBOX/.stand" \
         STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
         FAKE_LOG="$FAKE_LOG" \
         "$SANDBOX/bin/stand" "$@" 2>&1)"
@@ -98,7 +107,7 @@ run_stand() { # $@: stand 子命令; 返回 rc, stdout+stderr 捕获在 RUN_OUT
 run_stand_on() { # <port> $@: 同 run_stand, 以 STAND_GATEWAY_PORT 把端口告知被测脚本
     local _port="$1"; shift
     RUN_OUT="$(cd "$SANDBOX" && \
-        STAND_HOME="$SANDBOX/home" \
+        STAND_HOME="$SANDBOX/.stand" \
         STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
         STAND_GATEWAY_PORT="$_port" \
         FAKE_LOG="$FAKE_LOG" \
@@ -108,7 +117,7 @@ run_stand_on() { # <port> $@: 同 run_stand, 以 STAND_GATEWAY_PORT 把端口告
 
 run_nebflow() { # $@: nebflow 子命令 (品牌隔离面: 只认 NEBFLOW_* env)
     RUN_OUT="$(cd "$SANDBOX" && \
-        NEBFLOW_HOME="$SANDBOX/home" \
+        NEBFLOW_HOME="$SANDBOX/.nebflow" \
         NEBFLOW_JAVA_BIN="$SANDBOX/fakebin/java" \
         FAKE_LOG="$FAKE_LOG" \
         "$SANDBOX/bin/nebflow" "$@" 2>&1)"
@@ -118,7 +127,7 @@ run_nebflow() { # $@: nebflow 子命令 (品牌隔离面: 只认 NEBFLOW_* env)
 run_nebflow_on() { # <port> $@: 同 run_nebflow, 以 NEBFLOW_GATEWAY_PORT 把端口告知被测脚本
     local _port="$1"; shift
     RUN_OUT="$(cd "$SANDBOX" && \
-        NEBFLOW_HOME="$SANDBOX/home" \
+        NEBFLOW_HOME="$SANDBOX/.nebflow" \
         NEBFLOW_JAVA_BIN="$SANDBOX/fakebin/java" \
         NEBFLOW_GATEWAY_PORT="$_port" \
         FAKE_LOG="$FAKE_LOG" \
@@ -194,6 +203,19 @@ start_fixture() { # <port> <marker|foreign> [name] — 起假冒监听; echo pid
     else
         ( cd / && exec "$SANDBOX/fakebin/plain-listener" "$_port" ) >/dev/null 2>&1 &
     fi
+    _pid=$!
+    wait_listener "$_port" 30 || { kill "$_pid" 2>/dev/null; echo "LISTEN_TIMEOUT"; return 1; }
+    echo "$_pid"
+}
+
+start_marker_home() { # <port> <home> — marker 监听器, argv 带 `--home <home>`
+    # 隔离实例误伤批 2026-11-04: 停机面的 home 归属门只认「命令行可证的 home」
+    # (--home / --home= / -Duser.home=)。C 监听器忽略多余 argv, ps 显示 exec 后的
+    # 真实命令行 = <.../stand-assembly-fixture> <port> --home <home> ⇒ 身份门(marker)
+    # 与 home 门(可证)同时成立 —— 正是引擎 daemon 子进程的形状 (DaemonSpawn:109)。
+    local _port="$1" _home="$2" _pid
+    make_fixture marker || { echo "NO_FIXTURE"; return 1; }
+    ( cd / && exec "$SANDBOX/fakebin/stand-assembly-fixture" "$_port" --home "$_home" ) >/dev/null 2>&1 &
     _pid=$!
     wait_listener "$_port" 30 || { kill "$_pid" 2>/dev/null; echo "LISTEN_TIMEOUT"; return 1; }
     echo "$_pid"
@@ -285,15 +307,15 @@ fresh_sandbox
 P4=$(pick_free_port)
 FIX4=$(start_fixture "$P4" marker)
 if case "$FIX4" in ''|*[!0-9]*) false ;; *) true ;; esac; then
-    echo "$FIX4" > "$SANDBOX/home/.pid"
-    echo "meta" > "$SANDBOX/home/.pid.meta"
+    echo "$FIX4" > "$SANDBOX/.stand/.pid"
+    echo "meta" > "$SANDBOX/.stand/.pid.meta"
     run_stand_on "$P4" stop; RC=$?
     assert_rc "stop hit rc" 0 "$RC"
     assert_contains "stop message" "stand stopped" "$RUN_OUT"
     if wait_gone "$P4"; then ok "port freed"; else bad "port still held after stop"; fi
     if kill -0 "$FIX4" 2>/dev/null; then bad "listener pid alive"; else ok "listener pid dead"; fi
-    if [ -e "$SANDBOX/home/.pid" ]; then bad ".pid not cleaned"; else ok ".pid cleaned"; fi
-    if [ -e "$SANDBOX/home/.pid.meta" ]; then bad ".pid.meta not cleaned"; else ok ".pid.meta cleaned"; fi
+    if [ -e "$SANDBOX/.stand/.pid" ]; then bad ".pid not cleaned"; else ok ".pid cleaned"; fi
+    if [ -e "$SANDBOX/.stand/.pid.meta" ]; then bad ".pid.meta not cleaned"; else ok ".pid.meta cleaned"; fi
 else
     bad "case 4 skipped: fixture failed ($FIX4)"
 fi
@@ -313,21 +335,21 @@ chmod +x "$SANDBOX/fakebin/stand-assembly-wedge"
 ( "$SANDBOX/fakebin/stand-assembly-wedge" ) >/dev/null 2>&1 &
 WEDGED=$!
 sleep 0.2
-echo "$WEDGED" > "$SANDBOX/home/.pid"
+echo "$WEDGED" > "$SANDBOX/.stand/.pid"
 run_stand_on "$P5" stop; RC=$?
 assert_rc "wedged stop rc" 0 "$RC"
 if kill -0 "$WEDGED" 2>/dev/null; then bad "wedged pid survived"; else ok "wedged pid killed (pid-file leg)"; fi
-if [ -e "$SANDBOX/home/.pid" ]; then bad ".pid not cleaned"; else ok ".pid cleaned"; fi
+if [ -e "$SANDBOX/.stand/.pid" ]; then bad ".pid not cleaned"; else ok ".pid cleaned"; fi
 
 # ── 6. stop 双空 (没进程 + 陈年死 pid 文件) → not running rc=0, 记账清 ──
 t "case 6: stop miss (nothing alive, stale pid) -> 'not running' rc=0 + cleanup"
 fresh_sandbox
 P6=$(pick_free_port)
-echo "999999" > "$SANDBOX/home/.pid"   # 造陈年记账
+echo "999999" > "$SANDBOX/.stand/.pid"   # 造陈年记账
 run_stand_on "$P6" stop; RC=$?
 assert_rc "stop miss rc" 0 "$RC"
 assert_contains "stop miss message" "not running" "$RUN_OUT"
-if [ -e "$SANDBOX/home/.pid" ]; then bad "stale .pid not cleaned"; else ok "stale .pid cleaned"; fi
+if [ -e "$SANDBOX/.stand/.pid" ]; then bad "stale .pid not cleaned"; else ok "stale .pid cleaned"; fi
 
 # ── 7. stop 撞外姓进程 → 身份门拒杀 rc=1, 进程存活 ──
 t "case 7: stop foreign occupant -> identity gate refuses rc=1, process survives"
@@ -391,12 +413,12 @@ fi
 
 # ── 12. stand-jdk check 体检面 ──
 t "case 12: stand-jdk check against real pinned JDK"
-if [ -x "$HOME/.stand/jdk-21/bin/java" ]; then
-    JDK_OUT="$(STAND_HOME="$HOME/.stand" bash "$SRC_JDK" check 2>&1)"; RC=$?
+if [ -x "$REAL_HOME/.stand/jdk-21/bin/java" ]; then
+    JDK_OUT="$(STAND_HOME="$REAL_HOME/.stand" bash "$SRC_JDK" check 2>&1)"; RC=$?
     assert_rc "stand-jdk check rc" 0 "$RC"
 else
     echo "  (host pinned JDK absent — negative probe instead)"
-    JDK_OUT="$(STAND_HOME="$SANDBOX/home" bash "$SRC_JDK" check 2>&1)"; RC=$?
+    JDK_OUT="$(STAND_HOME="$SANDBOX/.stand" bash "$SRC_JDK" check 2>&1)"; RC=$?
     assert_rc "stand-jdk check rc (absent)" 1 "$RC"
 fi
 
@@ -414,7 +436,7 @@ assert_lacks "no ANSI escape in non-TTY" "$(printf '\033[')" "$RUN_OUT"
 t "case 14: banner TTY wide (pty, cols>=80) -> candidate A art"
 fresh_sandbox
 P14=$(pick_free_port)
-PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
     STAND_GATEWAY_PORT="$P14" FAKE_LOG="$FAKE_LOG" STAND_BANNER_COLS=100 \
     TERM=xterm-256color \
     script -q "$SANDBOX/pty-a.txt" "$SANDBOX/bin/stand" start 2>&1)"
@@ -427,7 +449,7 @@ assert_contains "candidate A block art" "███████" "$(cat "$SANDBOX
 t "case 15: banner NO_COLOR under pty -> plain single line"
 fresh_sandbox
 P15=$(pick_free_port)
-PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
     STAND_GATEWAY_PORT="$P15" FAKE_LOG="$FAKE_LOG" NO_COLOR=1 STAND_BANNER_COLS=100 \
     TERM=xterm-256color \
     script -q "$SANDBOX/pty-b.txt" "$SANDBOX/bin/stand" start 2>&1)"
@@ -440,7 +462,7 @@ assert_lacks "NO_COLOR kills art" "███████" "$(cat "$SANDBOX/pty-b
 t "case 16: banner narrow (cols<80) -> candidate B two-line"
 fresh_sandbox
 P16=$(pick_free_port)
-PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
     STAND_GATEWAY_PORT="$P16" FAKE_LOG="$FAKE_LOG" STAND_BANNER_COLS=40 \
     TERM=xterm-256color \
     script -q "$SANDBOX/pty-c.txt" "$SANDBOX/bin/stand" start 2>&1)"
@@ -454,7 +476,7 @@ assert_lacks "narrow has no wide top bar" "███████" "$(cat "$SANDB
 t "case 17: STAND_BANNER=C override -> single-line wordmark"
 fresh_sandbox
 P17=$(pick_free_port)
-PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+PTY_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
     STAND_GATEWAY_PORT="$P17" FAKE_LOG="$FAKE_LOG" STAND_BANNER=C STAND_BANNER_COLS=100 \
     TERM=xterm-256color \
     script -q "$SANDBOX/pty-d.txt" "$SANDBOX/bin/stand" start 2>&1)"
@@ -472,7 +494,7 @@ assert_rc "nebflow start miss rc" 0 "$RC"
 assert_eq "java exec'd (ARGS+PORTS+HOMEVARS)" "3" "$(FAKE_LOG_LINES)"
 assert_contains "nebflow jar wired" "nebflow-assembly-2026.9.19.jar" "$(cat "$FAKE_LOG")"
 assert_contains "nebflow port pinned" "PORTS:|$P18" "$(cat "$FAKE_LOG")"
-assert_contains "nebflow home pinned" "HOMEVARS:|$SANDBOX/home" "$(cat "$FAKE_LOG")"
+assert_contains "nebflow home pinned" "HOMEVARS:|$SANDBOX/.nebflow" "$(cat "$FAKE_LOG")"
 assert_lacks "no STAND_GATEWAY_PORT write" "PORTS:$P18|" "$(cat "$FAKE_LOG")"
 
 # ── 19. 隔离: 端口解析各只认自家 env (行为证明: 对家变量指的口上有活监听也绝不探它) ──
@@ -482,7 +504,7 @@ P19A=$(pick_free_port); P19B=$(pick_free_port)
 # 对家变量 NEBFLOW_GATEWAY_PORT=P19B 上放一个 stand 品牌监听器; stand 自家口 P19A 空着
 FIX19=$(start_fixture "$P19B" marker)
 if case "$FIX19" in ''|*[!0-9]*) false ;; *) true ;; esac; then
-    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
         STAND_GATEWAY_PORT="$P19A" NEBFLOW_GATEWAY_PORT="$P19B" FAKE_LOG="$FAKE_LOG" \
         "$SANDBOX/bin/stand" stop 2>&1)"; RC=$?
     assert_rc "stand stop ignores NEBFLOW_* var rc" 0 "$RC"
@@ -492,7 +514,7 @@ if case "$FIX19" in ''|*[!0-9]*) false ;; *) true ;; esac; then
     kill "$FIX19" 2>/dev/null; wait_gone "$P19B" >/dev/null
     FIX19B=$(start_fixture "$P19A" marker nebflow-fixture)
     if case "$FIX19B" in ''|*[!0-9]*) false ;; *) true ;; esac; then
-        RUN_OUT="$(cd "$SANDBOX" && NEBFLOW_HOME="$SANDBOX/home" NEBFLOW_JAVA_BIN="$SANDBOX/fakebin/java" \
+        RUN_OUT="$(cd "$SANDBOX" && NEBFLOW_HOME="$SANDBOX/.nebflow" NEBFLOW_JAVA_BIN="$SANDBOX/fakebin/java" \
             NEBFLOW_GATEWAY_PORT="$P19B" STAND_GATEWAY_PORT="$P19A" FAKE_LOG="$FAKE_LOG" \
             "$SANDBOX/bin/nebflow" stop 2>&1)"; RC=$?
         assert_rc "nebflow stop ignores STAND_* var rc" 0 "$RC"
@@ -510,20 +532,20 @@ fi
 t "case 20: stop does not cross-kill (two homes, two ports, side by side)"
 fresh_sandbox
 P20A=$(pick_free_port); P20B=$(pick_free_port)
-mkdir -p "$SANDBOX/homeB"
+mkdir -p "$SANDBOX/.nebflow"
 FIX20A=$(start_fixture "$P20A" marker)                      # stand 品牌侧监听器
 FIX20B=$(start_fixture "$P20B" marker nebflow-fixture)      # nebflow 品牌侧监听器
 if case "$FIX20A" in ''|*[!0-9]*) false ;; *) true ;; esac && case "$FIX20B" in ''|*[!0-9]*) false ;; *) true ;; esac; then
-    echo "$FIX20A" > "$SANDBOX/home/.pid"
-    echo "$FIX20B" > "$SANDBOX/homeB/.pid"
-    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+    echo "$FIX20A" > "$SANDBOX/.stand/.pid"
+    echo "$FIX20B" > "$SANDBOX/.nebflow/.pid"
+    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
         STAND_GATEWAY_PORT="$P20A" FAKE_LOG="$FAKE_LOG" \
         "$SANDBOX/bin/stand" stop 2>&1)"; RC=$?
     assert_rc "stand stop rc" 0 "$RC"
     if wait_gone "$P20A"; then ok "stand side stopped"; else bad "stand side still held"; fi
     if kill -0 "$FIX20B" 2>/dev/null; then ok "nebflow side untouched by stand stop"; else bad "stand stop killed nebflow side"; fi
-    if [ "$(cat "$SANDBOX/homeB/.pid" 2>/dev/null)" = "$FIX20B" ]; then ok "nebflow home .pid untouched"; else bad "nebflow home .pid disturbed"; fi
-    RUN_OUT="$(cd "$SANDBOX" && NEBFLOW_HOME="$SANDBOX/homeB" NEBFLOW_JAVA_BIN="$SANDBOX/fakebin/java" \
+    if [ "$(cat "$SANDBOX/.nebflow/.pid" 2>/dev/null)" = "$FIX20B" ]; then ok "nebflow home .pid untouched"; else bad "nebflow home .pid disturbed"; fi
+    RUN_OUT="$(cd "$SANDBOX" && NEBFLOW_HOME="$SANDBOX/.nebflow" NEBFLOW_JAVA_BIN="$SANDBOX/fakebin/java" \
         NEBFLOW_GATEWAY_PORT="$P20B" FAKE_LOG="$FAKE_LOG" \
         "$SANDBOX/bin/nebflow" stop 2>&1)"; RC=$?
     assert_rc "nebflow stop rc" 0 "$RC"
@@ -538,7 +560,7 @@ fresh_sandbox
 P21=$(pick_free_port)
 FIX21=$(start_fixture "$P21" marker nebflow-fixture)
 if case "$FIX21" in ''|*[!0-9]*) false ;; *) true ;; esac; then
-    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
         STAND_GATEWAY_PORT="$P21" FAKE_LOG="$FAKE_LOG" \
         "$SANDBOX/bin/stand" stop 2>&1)"; RC=$?
     assert_rc "stand stop refuses nebflow marker rc" 1 "$RC"
@@ -566,16 +588,16 @@ fresh_sandbox
 P23=$(pick_free_port)
 FIX23=$(start_fixture "$P23" marker)
 if case "$FIX23" in ''|*[!0-9]*) false ;; *) true ;; esac; then
-    echo "$FIX23" > "$SANDBOX/home/.pid"
+    echo "$FIX23" > "$SANDBOX/.stand/.pid"
     _L23_BEFORE=$(FAKE_LOG_LINES)
-    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
         STAND_GATEWAY_PORT="$P23" FAKE_LOG="$FAKE_LOG" \
         "$SANDBOX/bin/stand" restart --dry-run 2>&1)"; RC=$?
     assert_rc "dry-run arm rc" 0 "$RC"
     assert_contains "dry-run armed message" "DRY-RUN armed" "$RUN_OUT"
     _L23=""
     for _i in $(seq 1 80); do
-        _L23="$(cat "$SANDBOX/home"/logs/restart-detached-*.log 2>/dev/null || true)"
+        _L23="$(cat "$SANDBOX/.stand"/logs/restart-detached-*.log 2>/dev/null || true)"
         case "$_L23" in *"verdict:"*) break ;; esac
         sleep 0.1
     done
@@ -588,7 +610,7 @@ if case "$FIX23" in ''|*[!0-9]*) false ;; *) true ;; esac; then
     if kill -0 "$FIX23" 2>/dev/null; then ok "engine untouched by fake ignition"; else bad "fake ignition killed the engine"; fi
     if wait_gone "$P23" >/dev/null 2>&1; then bad "port should still be held"; else ok "port still held (engine alive)"; fi
     assert_eq "zero java exec'd by dry-run" "$_L23_BEFORE" "$(FAKE_LOG_LINES)"
-    if [ -e "$SANDBOX/home/.restart-detached.pid" ]; then bad "restart guard not cleaned"; else ok "restart guard cleaned"; fi
+    if [ -e "$SANDBOX/.stand/.restart-detached.pid" ]; then bad "restart guard not cleaned"; else ok "restart guard cleaned"; fi
     kill "$FIX23" 2>/dev/null; wait_gone "$P23" >/dev/null
 else
     bad "case 23 skipped: fixture failed ($FIX23)"
@@ -601,13 +623,14 @@ run_nebflow restart; RC=$?
 assert_rc "nebflow bare restart refused rc" 2 "$RC"
 assert_contains "refusal hint names the detached face" "--detached" "$RUN_OUT"
 P24=$(pick_free_port)
-RUN_OUT="$(cd "$SANDBOX" && NEBFLOW_HOME="$SANDBOX/home" NEBFLOW_JAVA_BIN="$SANDBOX/fakebin/java" \
+RUN_OUT="$(cd "$SANDBOX" && NEBFLOW_HOME="$SANDBOX/.nebflow" NEBFLOW_JAVA_BIN="$SANDBOX/fakebin/java" \
     NEBFLOW_GATEWAY_PORT="$P24" FAKE_LOG="$FAKE_LOG" \
     "$SANDBOX/bin/nebflow" restart --dry-run 2>&1)"; RC=$?
 assert_rc "nebflow dry-run arm rc" 0 "$RC"
 _L24=""
 for _i in $(seq 1 80); do
-    _L24="$(cat "$SANDBOX/home"/logs/restart-detached-*.log 2>/dev/null || true)"
+    # nebflow 品牌的 home 是它自己的默认根（$SANDBOX/.nebflow），点火器日志落在那里。
+    _L24="$(cat "$SANDBOX/.nebflow"/logs/restart-detached-*.log 2>/dev/null || true)"
     case "$_L24" in *"verdict:"*) break ;; esac
     sleep 0.1
 done
@@ -618,15 +641,15 @@ assert_contains "nebflow dry-run verdict OK" "verdict: DRY-RUN OK" "$_L24"
 t "case 25: stale restart guard (alive non-igniter pid) -> WARN + overwrite + proceed"
 fresh_sandbox
 P25=$(pick_free_port)
-echo "$$" > "$SANDBOX/home/.restart-detached.pid"   # 套件自身 bash: 活着但不是点火器
-RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+echo "$$" > "$SANDBOX/.stand/.restart-detached.pid"   # 套件自身 bash: 活着但不是点火器
+RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
     STAND_GATEWAY_PORT="$P25" FAKE_LOG="$FAKE_LOG" \
     "$SANDBOX/bin/stand" restart --dry-run 2>&1)"; RC=$?
 assert_rc "arm proceeds past stale guard rc" 0 "$RC"
 assert_contains "stale guard warning" "stale restart guard" "$RUN_OUT"
 assert_contains "arm completed anyway" "DRY-RUN armed" "$RUN_OUT"
 for _i in $(seq 1 80); do
-    _L25="$(cat "$SANDBOX/home"/logs/restart-detached-*.log 2>/dev/null || true)"
+    _L25="$(cat "$SANDBOX/.stand"/logs/restart-detached-*.log 2>/dev/null || true)"
     case "$_L25" in *"verdict:"*) break ;; esac
     sleep 0.1
 done
@@ -653,14 +676,14 @@ assert_eq "declared defaults are distinct ports" "1" \
 assert_eq "declared defaults are distinct homes" "1" \
     "$([ "$(printf '%s' "$_D26" | sed -n 's/^home=//p')" != "$(printf '%s' "$_D26N" | sed -n 's/^home=//p')" ] && echo 1 || echo 0)"
 # env 只认自家: 对家 env 不得改写本品牌读数
-_D26E="$(cd "$SANDBOX" && STAND_GATEWAY_PORT=25111 NEBFLOW_GATEWAY_PORT=25112 STAND_HOME="$SANDBOX/home" NEBFLOW_HOME="$SANDBOX/homeB" \
+_D26E="$(cd "$SANDBOX" && STAND_GATEWAY_PORT=25111 NEBFLOW_GATEWAY_PORT=25112 STAND_HOME="$SANDBOX/.stand" NEBFLOW_HOME="$SANDBOX/.nebflow" \
     "$SANDBOX/bin/stand" __brand-defaults 2>&1)"
 assert_contains "stand port reads own env only" "port=25111" "$_D26E"
-assert_contains "stand home reads own env only" "home=$SANDBOX/home" "$_D26E"
-_D26EN="$(cd "$SANDBOX" && STAND_GATEWAY_PORT=25111 NEBFLOW_GATEWAY_PORT=25112 STAND_HOME="$SANDBOX/home" NEBFLOW_HOME="$SANDBOX/homeB" \
+assert_contains "stand home reads own env only" "home=$SANDBOX/.stand" "$_D26E"
+_D26EN="$(cd "$SANDBOX" && STAND_GATEWAY_PORT=25111 NEBFLOW_GATEWAY_PORT=25112 STAND_HOME="$SANDBOX/.stand" NEBFLOW_HOME="$SANDBOX/.nebflow" \
     "$SANDBOX/bin/nebflow" __brand-defaults 2>&1)"
 assert_contains "nebflow port reads own env only" "port=25112" "$_D26EN"
-assert_contains "nebflow home reads own env only" "home=$SANDBOX/homeB" "$_D26EN"
+assert_contains "nebflow home reads own env only" "home=$SANDBOX/.nebflow" "$_D26EN"
 
 # ── 27. 双实例并存批: 端口被对家品牌实例占用 → 报错点名「另一实例」──
 t "case 27: start hits the OTHER brand instance -> refusal names the peer instance"
@@ -686,20 +709,20 @@ fi
 # ── 28. 2026-11-03 改名批: 弃用垫片 nebflow-restart.sh → stand-restart.sh 转发 + --check 只读 ──
 t "case 28: deprecation shim forwards to stand-restart.sh (verbatim args) and --check is read-only"
 fresh_sandbox
-STAND_HOME="$SANDBOX/home" NEBFLOW_RESTART_PORT=25891 \
-    RUN_OUT="$("$SANDBOX/bin/nebflow-restart.sh" --check 2>&1)"; RC=$?
+RUN_OUT="$(STAND_HOME="$SANDBOX/.stand" NEBFLOW_RESTART_PORT=25891 \
+    "$SANDBOX/bin/nebflow-restart.sh" --check 2>&1)"; RC=$?
 assert_rc "shim --check rc" 0 "$RC"
 assert_contains "shim prints deprecation line" "nebflow-restart.sh is deprecated — use stand-restart.sh" "$RUN_OUT"
 assert_contains "forwarded check output reached (status line)" "watchdog=" "$RUN_OUT"
 assert_contains "forwarded --check verdict present" "状态:" "$RUN_OUT"
 # 参数逐字透传: 未知旗标原样到达正文脚本（正文解析器忽略它, 仍走 --check 默认面）
-STAND_HOME="$SANDBOX/home" NEBFLOW_RESTART_PORT=25891 \
-    RUN_OUT="$("$SANDBOX/bin/nebflow-restart.sh" --check --totally-unknown-flag 2>&1)"; RC=$?
+RUN_OUT="$(STAND_HOME="$SANDBOX/.stand" NEBFLOW_RESTART_PORT=25891 \
+    "$SANDBOX/bin/nebflow-restart.sh" --check --totally-unknown-flag 2>&1)"; RC=$?
 assert_rc "shim forwards unknown flags verbatim (body ignores, rc unchanged)" 0 "$RC"
 # 垫片缺失正文时的报错指引（临时挪走正文再恢复）
 mv "$SANDBOX/bin/stand-restart.sh" "$SANDBOX/bin/stand-restart.sh.hidden"
-STAND_HOME="$SANDBOX/home" NEBFLOW_RESTART_PORT=25891 \
-    RUN_OUT="$("$SANDBOX/bin/nebflow-restart.sh" --check 2>&1)"; RC=$?
+RUN_OUT="$(STAND_HOME="$SANDBOX/.stand" NEBFLOW_RESTART_PORT=25891 \
+    "$SANDBOX/bin/nebflow-restart.sh" --check 2>&1)"; RC=$?
 assert_rc "shim without body rc" 66 "$RC"
 assert_contains "shim missing-body guidance" "shim cannot forward" "$RUN_OUT"
 mv "$SANDBOX/bin/stand-restart.sh.hidden" "$SANDBOX/bin/stand-restart.sh"
@@ -710,23 +733,23 @@ fresh_sandbox
 P29=$(pick_free_port)
 FIX29=$(start_fixture "$P29" marker)
 if case "$FIX29" in ''|*[!0-9]*) false ;; *) true ;; esac; then
-    echo "$FIX29" > "$SANDBOX/home/.pid"
+    echo "$FIX29" > "$SANDBOX/.stand/.pid"
     # 腿1: stand-restart.sh --check (沙箱 home + 沙箱端口 ⇒ 四信号全绿, 无任何信号发送)
-    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" NEBFLOW_RESTART_PORT="$P29" \
+    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" NEBFLOW_RESTART_PORT="$P29" \
         "$SANDBOX/bin/stand-restart.sh" --check 2>&1)"; RC=$?
     assert_rc "restart-script --check rc" 0 "$RC"
     assert_contains "check face reads four signals" "状态:" "$RUN_OUT"
     if kill -0 "$FIX29" 2>/dev/null; then ok "--check did not terminate the live engine"; else bad "--check killed the live engine"; fi
-    if [ ! -e "$SANDBOX/home/logs/watchdog-paused" ]; then ok "--check leaves no watchdog pause flag"; else bad "--check created watchdog pause flag"; fi
+    if [ ! -e "$SANDBOX/.stand/logs/watchdog-paused" ]; then ok "--check leaves no watchdog pause flag"; else bad "--check created watchdog pause flag"; fi
     # 腿2: stand restart --dry-run (假点火, 与 case 23 同语义 — 此处只断「进程零终止」)
-    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/home" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
         STAND_GATEWAY_PORT="$P29" FAKE_LOG="$FAKE_LOG" \
         "$SANDBOX/bin/stand" restart --dry-run 2>&1)"; RC=$?
     assert_rc "dry-run arm rc" 0 "$RC"
     assert_contains "dry-run armed message" "DRY-RUN armed" "$RUN_OUT"
     _L29=""
     for _i in $(seq 1 80); do
-        _L29="$(cat "$SANDBOX/home"/logs/restart-detached-*.log 2>/dev/null || true)"
+        _L29="$(cat "$SANDBOX/.stand"/logs/restart-detached-*.log 2>/dev/null || true)"
         case "$_L29" in *"verdict:"*) break ;; esac
         sleep 0.1
     done
@@ -783,13 +806,13 @@ fresh_sandbox
 # 转发面验证用替身正文（真正文会 exec sbt——测试绝不真起实例）; 语义同 case 28 手法。
 printf '#!/bin/bash\nprintf "%%s\\n" "$*" > "%s/body-got.txt"\n' "$SANDBOX" > "$SANDBOX/bin/stand-autostart.sh"
 chmod +x "$SANDBOX/bin/stand-autostart.sh"
-RUN_OUT="$(HOME="$SANDBOX/home" "$SANDBOX/bin/nebflow-autostart.sh" --some-flag val 2>&1)"; RC=$?
+RUN_OUT="$(HOME="$SANDBOX/.stand" "$SANDBOX/bin/nebflow-autostart.sh" --some-flag val 2>&1)"; RC=$?
 assert_rc "autostart shim forward rc" 0 "$RC"
 assert_contains "autostart shim prints deprecation line" "nebflow-autostart.sh is deprecated — use stand-autostart.sh" "$RUN_OUT"
 assert_eq "autostart shim forwards args verbatim" "--some-flag val" "$(cat "$SANDBOX/body-got.txt")"
 # 正文缺失时的报错指引（挪走正文再恢复）
 mv "$SANDBOX/bin/stand-autostart.sh" "$SANDBOX/bin/stand-autostart.sh.hidden"
-RUN_OUT="$(HOME="$SANDBOX/home" "$SANDBOX/bin/nebflow-autostart.sh" 2>&1)"; RC=$?
+RUN_OUT="$(HOME="$SANDBOX/.stand" "$SANDBOX/bin/nebflow-autostart.sh" 2>&1)"; RC=$?
 assert_rc "autostart shim without body rc" 66 "$RC"
 assert_contains "autostart shim missing-body guidance" "shim cannot forward" "$RUN_OUT"
 mv "$SANDBOX/bin/stand-autostart.sh.hidden" "$SANDBOX/bin/stand-autostart.sh"
@@ -801,6 +824,142 @@ if grep -q 'exec python3 .*stand-setsid-exec\.py' "$SRC_AUTOSTART" \
 else
     bad "autostart body helper wiring wrong (old-name path refs or missing new exec line)"
 fi
+
+# ══════════════════════════════════════════════════════════
+# 隔离实例误伤批 2026-11-04 —— spec A / B / C 的 shell 面（红→绿机械验收）
+# 现场事实（已核查，勿再考古）:
+#   canary  pid 68701  home /tmp/seal-canary-home  端口 6411（端口是真隔离的）
+#   生产    pid 44339  home ~/.stand               端口 6138
+#   死亡命令可见前缀: `cat /tmp/seal-canary-home/.pid; echo;
+#     STAND_HOME=/tmp/seal-canary-home …/bin/stand`（截断在动词前，无 --port）
+#   ⇒ 一次 STAND_HOME=/tmp/seal-canary-home 的 stand CLI 调用停掉的是 home=~/.stand/
+#     端口=6138 的 44339，而不是 home=/tmp/seal-canary-home 的 68701 —— 目标集合只按
+#     端口/品牌认实例、从不看 home。主因即此；端口解析链的 6138 兜底是同一缺口的另
+#     一半（防下一次的硬化），不是本事故主因。
+# 沙箱约定: HOME=$SANDBOX ⇒ $SANDBOX/.stand 是**默认根**（生产形态），
+#           $SANDBOX/canary 是**隔离根**（canary 形态）。
+# ══════════════════════════════════════════════════════════
+
+# ── 32. spec A: 隔离根里没有实例 → not running rc=0，且"生产形态"监听器零信号 ──
+t "spec A: isolated root without a live instance → not running rc=0, zero kill on the other root's instance"
+fresh_sandbox
+PA=$(pick_free_port); PPROD=$(pick_free_port)
+mkdir -p "$SANDBOX/canary"
+# 判据前置（零探针，只读解析面）: 隔离根必须解析到**它自己**声明的端口，绝不静默
+# 变成品牌缺省 6138 —— 事故里那句 `STAND_HOME=/tmp/seal-canary-home … stand` 就是
+# 在没有 --port 的情况下解析出了 6138。本断言不碰任何 socket（__brand-defaults 只
+# 求解端口链），因此在 HEAD 实现上也能安全跑出红证据（在 HEAD 上会打印 6138）。
+printf '{"port": 21098}\n' > "$SANDBOX/canary/nebflow.json"
+_DA="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/canary" "$SANDBOX/bin/stand" __brand-defaults 2>&1)"
+assert_contains "spec A isolated root resolves its OWN declared port" "port=21098" "$_DA"
+assert_lacks "spec A isolated root never silently becomes 6138" "port=6138" "$_DA"
+PA=21098
+rm -f "$SANDBOX/canary/nebflow.json"
+FIXPROD=$(start_marker_home "$PPROD" "$SANDBOX/.stand")   # 生产形态: home=$SANDBOX/.stand
+if case "$FIXPROD" in ''|*[!0-9]*) false ;; *) true ;; esac; then
+    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/canary" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+        FAKE_LOG="$FAKE_LOG" "$SANDBOX/bin/stand" stop --port "$PA" 2>&1)"; RC=$?
+    assert_rc "spec A not-running rc" 0 "$RC"
+    assert_contains "spec A not-running message" "not running" "$RUN_OUT"
+    assert_lacks "spec A never mentions the other root's port" "$PPROD" "$RUN_OUT"
+    if kill -0 "$FIXPROD" 2>/dev/null; then ok "spec A: production-shaped instance untouched (zero signal)"; else bad "spec A: production-shaped instance was killed"; fi
+    if wait_listener "$PPROD" 5; then ok "spec A: production-shaped port still listening"; else bad "spec A: production-shaped port lost"; fi
+    kill "$FIXPROD" 2>/dev/null; wait_gone "$PPROD" >/dev/null
+else
+    bad "spec A skipped: fixture failed ($FIXPROD)"
+fi
+
+# ── 32b. spec A 反向面: 隔离根无端口声明且无实例 → "not running" rc=0（绝不回落 6138）──
+t "spec A reverse: undeclared isolated root with no live instance → not running rc=0, never 6138"
+fresh_sandbox
+PDECL=$(pick_free_port)
+mkdir -p "$SANDBOX/canary"
+# 零真实探针纪律: 本用例把 lsof 换成一个**只记录、永远说没监听**的空壳。这样即使实现
+# 回落到品牌缺省口 6138（HEAD 的行为），也绝不会真的去探/碰生产实例 —— 它只会在
+# LSOF_LOG 里留下一次「查过 6138」的痕迹，那就是本用例的红证据。
+LSOF_LOG="$SANDBOX/lsof-queries.log"; : > "$LSOF_LOG"
+mkdir -p "$SANDBOX/fakebin-nolsof"
+cat > "$SANDBOX/fakebin-nolsof/lsof" <<'FAKELSOF'
+#!/bin/bash
+printf '%s\n' "$*" >> "$LSOF_LOG"
+exit 0
+FAKELSOF
+chmod +x "$SANDBOX/fakebin-nolsof/lsof"
+FIXDECL=$(start_marker_home "$PDECL" "$SANDBOX/.stand")     # "生产形态"监听器: 本根的邻居
+if case "$FIXDECL" in ''|*[!0-9]*) false ;; *) true ;; esac; then
+    RUN_OUT="$(cd "$SANDBOX" && PATH="$SANDBOX/fakebin-nolsof:$PATH" LSOF_LOG="$LSOF_LOG" \
+        STAND_HOME="$SANDBOX/canary" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+        FAKE_LOG="$FAKE_LOG" "$SANDBOX/bin/stand" stop 2>&1)"; RC=$?
+    assert_rc "spec A reverse: not-running rc" 0 "$RC"
+    assert_contains "spec A reverse: not-running message" "not running" "$RUN_OUT"
+    assert_lacks "spec A reverse: never probes the brand default 6138" "6138" "$(cat "$LSOF_LOG")"
+    assert_lacks "spec A reverse: never names 6138 in its output" "6138" "$RUN_OUT"
+    if kill -0 "$FIXDECL" 2>/dev/null; then ok "spec A reverse: neighbouring instance untouched (zero signal)"; else bad "spec A reverse: neighbouring instance was killed"; fi
+    kill "$FIXDECL" 2>/dev/null; wait_gone "$PDECL" >/dev/null
+else
+    bad "spec A reverse skipped: fixture failed ($FIXDECL)"
+fi
+
+# ── 33. spec B: 目标实例 home ≠ 调用 home → 拒绝 + 点名两个 home + 零信号 ──
+t "spec B: target home differs from caller home → refuse naming both homes, zero signal"
+fresh_sandbox
+PB=$(pick_free_port)
+mkdir -p "$SANDBOX/canary"
+FIXB=$(start_marker_home "$PB" "$SANDBOX/.stand")         # 目标: home=$SANDBOX/.stand
+if case "$FIXB" in ''|*[!0-9]*) false ;; *) true ;; esac; then
+    echo "$FIXB" > "$SANDBOX/.stand/.pid"                 # 生产形态自己那本账
+    RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/canary" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+        FAKE_LOG="$FAKE_LOG" "$SANDBOX/bin/stand" stop --port "$PB" 2>&1)"; RC=$?
+    assert_rc "spec B refusal rc" 1 "$RC"
+    assert_contains "spec B names the target home" "$SANDBOX/.stand" "$RUN_OUT"
+    assert_contains "spec B names the caller home" "$SANDBOX/canary" "$RUN_OUT"
+    assert_contains "spec B declares zero signal" "zero signal" "$RUN_OUT"
+    assert_lacks "spec B is not a stop" "stand stopped" "$RUN_OUT"
+    if kill -0 "$FIXB" 2>/dev/null; then ok "spec B: target survived (zero signal)"; else bad "spec B: target was killed"; fi
+    if wait_listener "$PB" 5; then ok "spec B: target port still listening"; else bad "spec B: target port lost"; fi
+    kill "$FIXB" 2>/dev/null; wait_gone "$PB" >/dev/null
+    # 反向对照: 同一个目标, 从**它自己的 home** 发起的 stop 必须放行（不是「谁都不许停」）
+    FIXB2=$(start_marker_home "$PB" "$SANDBOX/.stand")
+    if case "$FIXB2" in ''|*[!0-9]*) false ;; *) true ;; esac; then
+        RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+            FAKE_LOG="$FAKE_LOG" "$SANDBOX/bin/stand" stop --port "$PB" 2>&1)"; RC=$?
+        assert_rc "spec B reverse: home-matched stop rc" 0 "$RC"
+        if wait_gone "$PB"; then ok "spec B reverse: home-matched stop really stopped it"; else bad "spec B reverse: port still held"; fi
+    else
+        bad "spec B reverse skipped: fixture failed ($FIXB2)"
+    fi
+else
+    bad "spec B skipped: fixture failed ($FIXB)"
+fi
+
+# ── 34. spec C: canary 启动（隔离根、未显式给端口）→ 不占生产默认口 6138 ──
+t "spec C: isolated-root start takes its own config port (never 6138); no declaration → hard refusal, zero JVM"
+fresh_sandbox
+mkdir -p "$SANDBOX/canary"
+printf '{"port": 21099}\n' > "$SANDBOX/canary/nebflow.json"
+PC_OWN=21099
+: > "$FAKE_LOG"
+# 继承来的 STAND_GATEWAY_PORT=6138 是父 shell 给生产实例的那一个: 隔离根必须忽略它并 WARN。
+RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/canary" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+    STAND_GATEWAY_PORT=6138 FAKE_LOG="$FAKE_LOG" "$SANDBOX/bin/stand" start 2>&1)"; RC=$?
+assert_rc "spec C start rc" 0 "$RC"
+assert_contains "spec C pins the root's own config port" "PORTS:$PC_OWN|$PC_OWN" "$(cat "$FAKE_LOG")"
+assert_lacks "spec C never pins 6138" "PORTS:6138|6138" "$(cat "$FAKE_LOG")"
+assert_contains "spec C WARN names the ignored inherited env" "ignoring inherited STAND_GATEWAY_PORT=6138" "$RUN_OUT"
+# 无声明（无 --port、无 config）⇒ 硬拒 rc=3, 绝不回落品牌缺省口, 零 JVM
+: > "$FAKE_LOG"
+rm -f "$SANDBOX/canary/nebflow.json"
+RUN_OUT="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/canary" STAND_JAVA_BIN="$SANDBOX/fakebin/java" \
+    FAKE_LOG="$FAKE_LOG" "$SANDBOX/bin/stand" start 2>&1)"; RC=$?
+assert_rc "spec C undeclared port refusal rc" 3 "$RC"
+assert_contains "spec C refusal names the brand default it refuses" "6138" "$RUN_OUT"
+assert_contains "spec C refusal asks for --port" "--port" "$RUN_OUT"
+assert_eq "spec C refusal exec'd no JVM" "0" "$(FAKE_LOG_LINES)"
+# 默认根（生产形态）行为逐字不变: 无 config 时端口解析仍是品牌缺省 6138。
+# 只断言**解析结果**（__brand-defaults 零探针、零 JVM）——绝不对真 6138 跑 start 探针。
+_DC="$(cd "$SANDBOX" && STAND_HOME="$SANDBOX/.stand" STATUS_HIDE=1 "$SANDBOX/bin/stand" __brand-defaults 2>&1)"
+assert_contains "spec C default root keeps the brand default 6138" "port=6138" "$_DC"
+: > "$FAKE_LOG"
 
 echo
 echo "== summary: PASS=$PASS FAIL=$FAIL =="
