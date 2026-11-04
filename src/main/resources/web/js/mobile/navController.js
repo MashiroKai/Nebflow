@@ -1775,6 +1775,7 @@ function buildCanvasPage(body) {
   const host = document.createElement('div');
   host.className = 'mf-cv-host';
   bindDocSwipe(host);
+  bindStripSwipe(strip);
   const dots = document.createElement('div');
   dots.className = 'mf-dots';
   dots.hidden = true;
@@ -1812,6 +1813,136 @@ function buildCanvasPage(body) {
   // 字体算出的截断点。document.fonts 缺失（老 WebView）则跳过，无副作用。
   document.fonts?.ready?.then(() => { fitRingLabels(); }).catch(() => {});
   void stackView;
+}
+
+// ══ 顶部环签横滑切签（ui-final-four ②；作者令 2026-11-04 13:04 逐字
+// 「把canvas顶部的标签 支持左右滑的手势现在也没了」）══════════════════════
+// 史检（本腿第一步，结论先行）：签条**从未**有过切签手势 —— 全史（git log -60
+// 逐版 navController.js）对 `.mf-strip` / `.mf-strip-chip` 的 pointer 绑定命中数
+// 恒为 0（chip 只绑 click）；切卡横滑一直是**内容区**那条腿（bindDocSwipe，
+// dc7c965bb 引入，至今在场）。作者读到的「没了」= 签条横拖**响应面退化**：
+// 9a992ea68（2026-11-02 08:39 标签栏重做）把签条从 in-flow `overflow-x:auto`
+// 签行（横拖 = 原生横滚）改成离流覆盖带（overflow:visible + 带 pointer-events:
+// none + 签 touch-action:manipulation）⇒ 横拖在签上零响应、零位移、零切签。
+// 故本腿 = **加法**：只给签本体加横滑切签（内容是环式的既有语义一字不动 ——
+// tests/mobile-canvas-sheet.spec.mjs T3 钉死）。判据三条：
+//   ① 横滑真的切签（setActiveTab → syncCanvasPage；非「整段禁切」凑绿）；
+//   ② 端点**非环式**：首/尾越界一律阻尼回弹，active 不变、不越界、不闪白；
+//   ③ 纵拖一律不认领（axis=y 时不 setPointerCapture、不 preventDefault，原生
+//      滚动路径保持）；横滑判定 = 双条件（|dx| ≥ 1.2×|dy| ∧ |dx| ≥ 8px），
+//      轴锁后单次成立不来回翻转。
+const STRIP_AXIS_PX = 8;        // 轴锁最小位移（与内容区 SWIPE_AXIS_PX 同参）
+const STRIP_AXIS_RATIO = 1.2;   // 横滑判据：|dx| ≥ 1.2×|dy|（两条件缺一不认）
+const STRIP_SWITCH_PX = 48;     // 提交阈（与内容区 SWIPE_SWITCH_PX 同参）
+const STRIP_BOUNCE_K = 0.35;    // 端点越界段阻尼（跟手 0.35 折 = 回弹手感）
+
+/** 签条横滑切签（非环式端点；只认签上的指针序列）。
+ *  跟手位移 = 签组统一变量 `--sdx`（chip 的 transform 链里加一项，布局零改、
+ *  环位姿 --rdx 照旧各算各的）；松手先摘 `.is-swiping`（恢复 CSS 过渡）再写 0
+ *  ⇒ 真回弹（不靠 JS 补间）。探针 `window.__nfStripSwipe` = 只读判据面。
+ *  @param {HTMLElement} strip */
+function bindStripSwipe(strip) {
+  /** @type {{id: number, x0: number, y0: number, axis: 'x'|'y'|null}|null} */
+  let g = null;
+  /** 横滑后必须吞掉的那一次 click（否则松手瞬间 chip 的 click 腿会把刚切好的
+   *  签再切一次 / 展开中签全名）。 */
+  let swallowClick = false;
+  const probe = { axis: /** @type {string|null} */ (null), claims: 0, switches: 0, bounces: 0, lastDx: 0, lastOffset: 0 };
+  (/** @type {any} */ (window)).__nfStripSwipe = probe;
+  const writeOffset = (px) => {
+    strip.style.setProperty('--sdx', `${px.toFixed(1)}px`);
+    probe.lastOffset = +px.toFixed(1);
+  };
+  const ringState = () => {
+    const docs = docTabs();
+    const i = docs.findIndex((d) => d.id === activeDocId());
+    return { i, n: docs.length, atStart: i <= 0, atEnd: i < 0 || i >= docs.length - 1 };
+  };
+  /** 端点越界段阻尼（首签右滑 / 尾签左滑 —— 非环式，不许环绕）。 */
+  const rubberBand = (dx, s) => ((s.atEnd && dx < 0) || (s.atStart && dx > 0) ? dx * STRIP_BOUNCE_K : dx);
+  const drop = () => { g = null; strip.classList.remove('is-swiping'); };
+
+  strip.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const target = e.target instanceof Element ? e.target : null;
+    if (!target) return;
+    // 仲裁①原样保留（内容手势面起手永不接管；签条不压在内容面上，本闸是
+    // 「内容优先」硬口径的延续，防未来叠加层/标记面把内容手势漏进切签腿）。
+    if (target.closest(CONTENT_GESTURE_SELECTOR)) return;
+    if (docTabs().length < 2) return;     // 单签 / 空态：切签无对象
+    if (g) return;
+    swallowClick = false;
+    probe.axis = null;
+    g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, axis: null };
+  });
+
+  strip.addEventListener('pointermove', (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    // 双指 = pinch（调尺寸/缩放）：解除已武装的签条手势，让位内容操作。
+    if (e.isPrimary === false) { drop(); writeOffset(0); return; }
+    const dx = e.clientX - g.x0;
+    const dy = e.clientY - g.y0;
+    if (!g.axis) {
+      const ax = Math.abs(dx);
+      const ay = Math.abs(dy);
+      if (ax >= STRIP_AXIS_PX && ax >= STRIP_AXIS_RATIO * ay) g.axis = 'x';
+      else if (ay >= STRIP_AXIS_PX) g.axis = 'y';
+      else return;                                    // 死区内：不判定（点按路径原样）
+      probe.axis = g.axis;
+      if (g.axis === 'y') return;                     // 纵拖：零 capture / 零 preventDefault
+      // 横轴锁后**单次**成立（不来回翻转）：此刻才抢 capture + 关过渡（跟手）。
+      try { strip.setPointerCapture(e.pointerId); } catch { /* 合成事件无 capture */ }
+      swallowClick = true;
+      strip.classList.add('is-swiping');
+      probe.claims += 1;
+    }
+    if (g.axis !== 'x') return;
+    e.preventDefault();
+    probe.lastDx = dx;
+    writeOffset(rubberBand(dx, ringState()));
+  });
+
+  const finish = (e) => {
+    if (!g || e.pointerId !== g.id) return;
+    const { axis } = g;
+    g = null;
+    strip.classList.remove('is-swiping');
+    if (axis !== 'x') return;                 // 纵拖 / 死区：零接管、零归位写入
+    const dx = probe.lastDx;
+    const s = ringState();
+    const dir = dx < 0 ? 1 : -1;              // 左滑 = 下一张签，右滑 = 上一张签
+    const nextIdx = s.i + dir;
+    const canSwitch = Math.abs(dx) >= STRIP_SWITCH_PX && s.n > 1 && s.i >= 0
+      && nextIdx >= 0 && nextIdx < s.n;       // 端点非环式：越界一律回弹
+    // 弹簧归位：先摘 `.is-swiping`（恢复 CSS transform 过渡）并强制一次样式刷新，
+    // 再写 0 —— 同一帧「摘类 + 改值」在 WebKit 按无过渡直跳（实测），刷新后写值
+    // 才是真回弹；换签腿同样归零（新环位姿接管位移，不叠双重偏移）。
+    void strip.offsetWidth;
+    writeOffset(0);
+    // 吞 click 的旗有看门狗：pointercancel 路径不会到来 click，若旗滞留会吞掉
+    // 下一次真实的键盘/辅助点击（指针路径的 pointerdown 已重置，这里再兜一层）。
+    if (swallowClick) setTimeout(() => { swallowClick = false; }, 400);
+    if (canSwitch) {
+      probe.switches += 1;
+      logEvent('card-switch', { via: 'strip-swipe', dir });
+      switchToIndex(nextIdx);
+    } else {
+      probe.bounces += 1;
+      logEvent('strip-swipe-bounce', {
+        dir, edge: s.atStart ? 'start' : (s.atEnd ? 'end' : 'none'), dx: Math.round(dx),
+      });
+    }
+  };
+  strip.addEventListener('pointerup', finish);
+  strip.addEventListener('pointercancel', finish);
+
+  // 横滑吞 click（捕获阶段先于 chip 自身的 click 腿）。
+  strip.addEventListener('click', (e) => {
+    if (!swallowClick) return;
+    swallowClick = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
 }
 
 /** 文档区横滑切卡（轴锁 8px / 阈 48px；环式；纵滚零劫持 —— 卡头手势同参数）。

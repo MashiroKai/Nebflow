@@ -191,6 +191,12 @@ async function readPinnedBar(page, pageId) {
     document.body.appendChild(probe);
     const tokenBg = getComputedStyle(probe).backgroundColor;
     probe.remove();
+    // 件七（2026-11-04 搜索扁平化批）：扁平场底单源 = --color-surface（同法探针）。
+    const probe2 = document.createElement('span');
+    probe2.style.background = 'var(--color-surface)';
+    document.body.appendChild(probe2);
+    const tokenSurface = getComputedStyle(probe2).backgroundColor;
+    probe2.remove();
 
     const dock = body?.querySelector(':scope > .mh-search-dock') || null;
     const bar = dock?.querySelector('.mh-search-bar') || null;
@@ -207,8 +213,10 @@ async function readPinnedBar(page, pageId) {
       pageTop: rectOf(section)?.top ?? null,
       bg: cs?.backgroundColor ?? null,
       tokenBg,
+      tokenSurface,
       radius: cs?.borderRadius ?? null,
       shadow: cs?.boxShadow ?? null,
+      backdrop: cs ? (cs.webkitBackdropFilter || cs.backdropFilter || 'none') : null,
       transform: cs?.transform ?? null,
       inputValue: input?.value ?? null,
       inputPlaceholder: input?.placeholder ?? null,
@@ -254,13 +262,17 @@ function expectPinnedGeometry(st, pageId) {
   expect(st.bar.h, `${pageId}: 44px`).toBe(44);
   expect(st.bar.left, `${pageId}: left 16`).toBe(16);
   expect(st.bar.right, `${pageId}: right 359`).toBe(359);
-  expect(st.radius, `${pageId}: 999px 全圆角`).toBe('999px');
+  // 材质换代（件七 2026-11-04 作者令「改为扁平化设计」）：旧「999px 胶囊 +
+  // --glass-control-bg + 三重 inset 玻璃影」判据随批退役 ⇒ 扁平场判据
+  // （底 = --color-surface 单源 / 圆角 0 / 无毛玻璃 / 无投影）。判据面单源 =
+  // tests/mobile-search-flat.spec.mjs（本 spec 只留同口径对偶）。
+  expect(st.radius, `${pageId}: 扁平场圆角 0`).toBe('0px');
   // 贴页面顶（dock 顶 padding 8px，允许 0-12 摆动）。
   expect(st.bar.top - st.pageTop, `${pageId}: 贴页面顶`).toBeLessThanOrEqual(12);
   expect(st.bar.top - st.pageTop).toBeGreaterThanOrEqual(0);
-  // 材质 = 玻璃包单源（--glass-control-bg）+ 三重影（含 inset）。
-  expect(st.bg, `${pageId}: 材质单源`).toBe(st.tokenBg);
-  expect(st.shadow, `${pageId}: inset 高光/底缘`).toContain('inset');
+  expect(st.bg, `${pageId}: 扁平场底 = --color-surface 单源`).toBe(st.tokenSurface);
+  expect(st.backdrop, `${pageId}: 无毛玻璃（backdrop-filter none）`).toBe('none');
+  expect(st.shadow, `${pageId}: 无投影`).toBe('none');
   expect(st.transform, `${pageId}: 无 transform（常驻不位移）`).toBe('none');
   // 旧浮钮语汇在这两页退役。
   expect(st.fabCount, `${pageId}: 右上搜索浮钮退役`).toBe(0);
@@ -498,29 +510,31 @@ test('P9 sealed mode: neither pinned bar nor fab search on the two tabs', async 
 test.describe('light scheme material', () => {
   test.use({ colorScheme: 'light' });
 
-  test('P10 light: pinned bar fill = --glass-control-bg 亮档（0.60）单源', async ({ page }) => {
+  // 件七（2026-11-04 扁平化）：材质判据从玻璃包改扁平场（--color-surface 亮档
+  // #ffffff）——判据仍是「条底 == token 解析值」的单源对偶，只换 token 面。
+  test('P10 light: pinned bar fill = --color-surface 亮档（#ffffff）单源', async ({ page }) => {
     const errors = watchErrors(page);
     await bootApp(page, { friends: true });
     await dockTo(page, 'messages');
     const st = await readPinnedBar(page, 'messages');
-    expect(st.tokenBg).toBe('rgba(255, 255, 255, 0.6)');
-    expect(st.bg).toBe(st.tokenBg);
+    expect(st.tokenSurface).toBe('rgb(255, 255, 255)');
+    expect(st.bg).toBe(st.tokenSurface);
     await dockTo(page, 'contacts');
     const ct = await readPinnedBar(page, 'contacts');
-    expect(ct.bg).toBe(ct.tokenBg);
+    expect(ct.bg).toBe(ct.tokenSurface);
     expect(errors).toEqual([]);
   });
 });
 
-test('P10b dark: pinned bar fill = --glass-control-bg 暗档（0.14）单源', async ({ page }) => {
+test('P10b dark: pinned bar fill = --color-surface 暗档（#1c1f27）单源', async ({ page }) => {
   const errors = watchErrors(page);
   await bootApp(page, { friends: true });
   await dockTo(page, 'messages');
   const st = await readPinnedBar(page, 'messages');
-  expect(st.tokenBg).toBe('rgba(255, 255, 255, 0.14)');
-  expect(st.bg).toBe(st.tokenBg);
+  expect(st.tokenSurface).toBe('rgb(28, 31, 39)');
+  expect(st.bg).toBe(st.tokenSurface);
   await dockTo(page, 'contacts');
   const ct = await readPinnedBar(page, 'contacts');
-  expect(ct.bg).toBe(ct.tokenBg);
+  expect(ct.bg).toBe(ct.tokenSurface);
   expect(errors).toEqual([]);
 });
