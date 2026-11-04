@@ -515,8 +515,7 @@ private[gateway] object WsFileOpsHandlers:
                   0,
                   0
                 )
-            )
-            wsSend(errorFrame(err, cancelled = err == nebflow.core.tools.BrowseGetCursor.Cancelled))
+            ) *> wsSend(errorFrame(err, cancelled = err == nebflow.core.tools.BrowseGetCursor.Cancelled))
           case Right(res) =>
             IO.blocking {
               val bytes = os.read.bytes(res.path)
@@ -529,8 +528,7 @@ private[gateway] object WsFileOpsHandlers:
               val totalMs = (System.nanoTime() - openT0) / 1000000L
               logger.info(
                 timingLine(peer.deviceName, "pull", res.size, probeMs, res.elapsedMs, totalMs, res.chunks, res.chunkSize, res.window)
-              )
-              wsSend(contentFrame(bytes, pickup, mtimeMs, sha, cached = false))
+              ) *> wsSend(contentFrame(bytes, pickup, mtimeMs, sha, cached = false))
             }
         }
 
@@ -574,10 +572,12 @@ private[gateway] object WsFileOpsHandlers:
                             nebflow.core.tools.FileOpenCache.ensurePickup(peer.deviceId, remotePath, hit.bytes)
                           (pickup, scala.util.Try(os.mtime(pickup)).getOrElse(0L))
                         }.flatMap { case (pickup, mtimeMs) =>
+                          // 🔴 顺序纪律（2026-11-04 e2e 实测抓到的坑）：`NebflowLogger.info`
+                          // 返回 IO[Unit]，裸写在同一块里会被**丢弃不执行**（本批首版即如此，
+                          // 引擎重启后跑真机 e2e 一行都没打出来）——这里必须 `*>` 串起来。
                           logger.info(
                             s"[file-open-cache] remote hit ${peer.deviceName}:$remotePath (${hit.bytes.length}B) — pull skipped"
-                          )
-                          logger.info(
+                          ) *> logger.info(
                             timingLine(
                               peer.deviceName,
                               "cache-hit",
@@ -589,8 +589,7 @@ private[gateway] object WsFileOpsHandlers:
                               0,
                               0
                             )
-                          )
-                          IO(nebflow.core.tools.FileOpenCache.noteRemotePullSkip())
+                          ) *> IO(nebflow.core.tools.FileOpenCache.noteRemotePullSkip())
                             *> wsSend(contentFrame(hit.bytes, pickup, mtimeMs, hit.sha16, cached = true))
                         }
                     }
