@@ -97,6 +97,11 @@ class FallbackExhaustedError(
     // **失败族标签**，并把上游原话（截断）带出来。
     def familyOf(a: FallbackAttempt): String =
       a.reason match
+        // vision 能力不匹配（flysin 收口批 2026-11-04）：机制上是 400（Format），
+        // 但语义上「这条腿不收图」——不是我们的形状 bug，重试一百次也不会好。
+        // 归到 format 族里，作者只能读到「provider 失败了」这种笼统面；单列
+        // 一族并点名模型，才是可理解的错误条目。
+        case _ if ImageCapabilityRejection.isRejection(a.message.getOrElse("")) => "image-capability"
         case Some(FailoverReason.RateLimit)       => "quota"    // 额度/频率闸：等得来
         case Some(FailoverReason.Overloaded)      => "overload"
         case Some(FailoverReason.Auth)            => "auth"     // key/权限问题：等不来
@@ -119,6 +124,12 @@ class FallbackExhaustedError(
     val verdict =
       if families == List("quota") || families == List("quota", "overload") then
         "\nquota-class failure: upstream quota/rate window exhausted — waits are meaningful, the request shape is not at fault"
+      else if families.contains("image-capability") then
+        // 能力不匹配的判词必须说清「谁不收图」+「怎么办」——这是作者报障
+        // （2026-11-03 22:23/22:36）里读不出来的那两件事。
+        val models = ImageCapabilityRejection.rejectingModels(attempts)
+        s"\nimage-capability failure: ${models.mkString("、")} does not accept image input " +
+          "(plain-text model) — pick a vision-capable model or remove the image; retrying will not help"
       else if families.contains("format") then
         "\nformat-class failure: at least one provider rejected the request/response shape (400) — see the [wire] line for provider, model, request block sequence and response types"
       else ""

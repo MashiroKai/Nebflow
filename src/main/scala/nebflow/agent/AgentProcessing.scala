@@ -406,8 +406,6 @@ private[agent] object AgentProcessing:
                 )
               val errMsg = error match
                 case e: FallbackExhaustedError =>
-                  val attemptSummaries =
-                    e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
                   // visionfix (甲): the user-facing "images could not be sent"
                   // text is gated on whether THIS turn carried images, so the
                   // predicate must be fed the very message list the failed call
@@ -416,11 +414,14 @@ private[agent] object AgentProcessing:
                   // fall back to the state's messages for error instances built
                   // elsewhere (e.g. rethrown wrappers) so the flag is never
                   // silently lost. `hadImageIn` is the single predicate.
+                  //
+                  // flysin 收口批（2026-11-04）：字段装配收口到
+                  // `NebflowError.llmFailure`（与 ChatRoutes 同一装配点）——
+                  // 「谁拒收图片」的判据不许在各调用点各拼一份，否则总有一处
+                  // 忘了传，作者在那里就重新看到笼统的 provider 失败。
                   val turnHadImage =
                     e.hadImage || nebflow.llm.LlmInterface.hadImageIn(cleanedState.messages)
-                  NebflowError.toUserMessage(
-                    NebflowError.LlmFailed(e.getMessage, attemptSummaries, hadImage = turnHadImage)
-                  )
+                  NebflowError.toUserMessage(NebflowError.llmFailure(e, hadImage = turnHadImage))
                 case e: ToolPipelineError =>
                   e.message
                 case e: LoopDetectedError =>

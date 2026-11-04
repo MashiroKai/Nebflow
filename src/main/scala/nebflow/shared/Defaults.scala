@@ -1789,6 +1789,46 @@ object Defaults:
    */
   val MemoryRecallTimeoutSec: Int = 300
 
+  // ---- 邮件 / 心跳进程封存（seal 批 2026-11-03；作者令逐字「邮件和心跳进程功能，
+  //      进入封存，发布剔除，本地sbt run 可用。」）----
+  //
+  // 「封存」= 代码全留、默认关闭、不再随实例启动——**封的是进程/定时器**，不是工具本体：
+  // `Mail` 工具的单次投递、daemon 面板的单次 start/stop 调用都照旧可用（那些是工具
+  // 调用面，不是后台进程）。开关单点在本对函数，接线点经
+  // [[nebflow.core.boot.ProcessSeal]]（零注册记账 + 一行封存说明日志）。
+  //
+  // 复活（本机开发/复盘）：`sbt run` 加 `-Dnebflow.mail.process.enabled=true`
+  // `-Dnebflow.heartbeat.enabled=true`（或用 `-D…=true` 的 `sbt -J` 形式），无需改码。
+  // 发布剔除 = 打包脚本 / Dockerfile 里显式写 `-D…=false`（同一 mainClass，装配级默认）。
+
+  /**
+   * 邮件后台进程总开关（默认 **false = 封存**）。关 = 以下后台面零注册：
+   *   - 邮件感知守护进程（`perception-daemon`：IMAP 轮询/sweep/digest/spool/idle 五循环，
+   *     经心跳（daemon 家族）托管）——`PerceptionDaemonDock.prepare` 直接 None（不写 token
+   *     不 upsert），`DaemonService` boot 门再挡（历史 `daemons.json` 残留条目也不拉）；
+   *   - 分发器回复打包窗定时腿（`MailTool.dispatcherMailWindowMs` ⇒ 0 = 关窗，单条直投）；
+   *   - 设备邮件 15s 回执超时腿（`DeviceMailAck.await` 不挂腿）；
+   *   - held 回执催注扫描（`HeldDeliveryWatchdog.run` 不进 boot 链）。
+   * system prop `nebflow.mail.process.enabled`（每次调用现读——`MemoryRecallEnabled`
+   * 同款 kill-switch 先例，测试/运维可即时翻转）。
+   */
+  def MailProcessEnabled: Boolean =
+    sys.props.getOrElse("nebflow.mail.process.enabled", "false").toBoolean
+
+  /**
+   * 心跳进程总开关（默认 **false = 封存**）。此处的「心跳进程」= **daemon 家族托管
+   * 进程**（作者 2026-10-29 裁定逐字「独立daemon吧 正好和我们心跳进程合并 那就是管daemon的」；
+   * 前端 `#daemon-btn` 的 title 即「心跳进程」，见 GLOSSARY.md 感知行）。
+   *
+   * 关 = boot 扇出零 spawn（`DaemonService.autoStart` 的 boot 门全挡）、随之零
+   * reader/monitor/health-check/low-rate-takeover/auto-restart 纤维；面板与
+   * `start/stop` 单次调用面保留（工具本体不封）。孤儿回收（`reclaimStaleDaemons`）
+   * **保留**：一次性清理上一实例遗留的子进程，属收尸不属进程。
+   * system prop `nebflow.heartbeat.enabled`（同上，现读）。
+   */
+  def HeartbeatProcessEnabled: Boolean =
+    sys.props.getOrElse("nebflow.heartbeat.enabled", "false").toBoolean
+
   // ---- STT（语音输入，可配置转录服务，#295）----
 
   /** STT 默认模型（OpenAI 兼容音频转录 API 的公共模型名，非用户配置）。 */

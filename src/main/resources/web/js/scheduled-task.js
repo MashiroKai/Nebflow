@@ -29,6 +29,10 @@ import { registerActionableProvider, notifyActionableChanged } from './actionabl
 // 腿退役后本文件零聊天流 DOM 注入（卡片唯一呈现 = 注入 user 帧专属卡分支）。
 // ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16/22:20）：
+// 定时任务的触发时刻从裸 `<input type="datetime-local">` 收编为同款点选面
+// （日期列 + 时/分滚轮）。交互单源 = ./timeWheel.js（禁第二份实现）。
+import { pointTriggerHTML, paintPointTrigger, attachTimeTriggers, msToLocalInput } from './timeWheel.js';
 
 // Inline locale getter to avoid caching issues with module imports
 function getLocale() {
@@ -660,7 +664,7 @@ function buildInlineCreate() {
   wrap.id = 'reminder-inline-create';
 
   const dtStr = toLocalDatetimeString(defaultTriggerAt());
-  const minStr = toLocalDatetimeString(new Date());
+  const [dtDate, dtTime] = dtStr.split('T');
 
   wrap.innerHTML = `
     <div class="reminder-inline-main">
@@ -671,7 +675,8 @@ function buildInlineCreate() {
     <div class="reminder-inline-detail">
       <div class="reminder-time-row">
         <i data-lucide="clock"></i>
-        <input type="datetime-local" id="reminder-time-input" value="${dtStr}" min="${minStr}">
+        ${pointTriggerHTML({ date: dtDate, time: dtTime, label: t('task.triggerTime') })}
+        <input type="hidden" id="reminder-time-input" value="${dtStr}">
       </div>
       <div class="reminder-repeat-row">
         <i data-lucide="repeat"></i>
@@ -688,7 +693,6 @@ function buildInlineCreate() {
   const input = /** @type {HTMLInputElement|null} */ (wrap.querySelector('#reminder-inline-input'));
   const timeInput = /** @type {HTMLInputElement|null} */ (wrap.querySelector('#reminder-time-input'));
   const repeatSeg = wrap.querySelector('#reminder-repeat-seg');
-
   // Repeat segmented control — the active pill is currentRepeat; values match
   // ScheduleTool schema ("hourly"|"daily"|"weekly"; "once" omits repeat).
   if (repeatSeg) {
@@ -721,10 +725,18 @@ function buildInlineCreate() {
     });
   }
 
-  // Update min when time input is focused (prevents stale past-time validation)
-  if (timeInput) {
-    timeInput.addEventListener('focus', () => {
-      timeInput.min = toLocalDatetimeString(new Date());
+  // 触发时刻 = 时间滚轮点选面（time-wheel-picker 批 2026-11-03）：面板确认后
+  // 把 date/time 回写成 `#reminder-time-input` 的 datetime-local 串，下游
+  // saveInlineTask 的 `new Date(value).getTime()` 腿保持不变（单一写入点）。
+  // 旧的 `focus → 刷 min` 现已无意义（min 约束随原生控件一起退役；过期时刻由
+  // saveInlineTask 的 ≤now+60s 自动顺延兜底，语义不变）。
+  if (wrap.querySelector('[data-tw-point]')) {
+    attachTimeTriggers(wrap, {
+      onPointChange: (btn) => {
+        if (!timeInput) return;
+        const ms = new Date(`${btn.dataset.date}T${btn.dataset.time}`).getTime();
+        if (!Number.isNaN(ms)) timeInput.value = msToLocalInput(ms);
+      },
     });
   }
 
@@ -1018,7 +1030,9 @@ function saveInlineTask() {
 
   const triggerAt = new Date(timeInput.value).getTime();
   if (!triggerAt || isNaN(triggerAt)) {
-    timeInput.focus();
+    // 触发时刻已由滚轮面维护（值恒合法）；兜底把焦点交给那颗触发钮，
+    // hidden 输入不可聚焦。
+    /** @type {HTMLElement|null} */ (document.querySelector('#reminder-inline-create [data-tw-point]'))?.focus();
     return;
   }
 

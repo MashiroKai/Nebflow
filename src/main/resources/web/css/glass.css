@@ -467,8 +467,11 @@ body.mobile-layer .g2-fab:active {
    token 随渐隐带保留在 stand-tokens.css，不随 --g2-fab-* 退役）
    ── ui-unification-20261103-doc-ask-fade（作者令 2026-11-03）：材质段整段收编到
    design-system.css 的 `.ds-edge-fade` 单源（本节点只挂类 + 本面差异档：手机层
-   恒显/落位/带高/z 序）。「一套渐隐、两处成员」——文档阅读面 Ask 面板的 .ask-veil
-   是同一类的第二个成员，材质零复制（禁在此再写第二份 veil/blur/mask）。
+   恒显/落位/带高/z 序）。
+   ── ask-fade-content-opacity（作者令 2026-11-04）：「一套渐隐、两处成员」解体——
+   Ask 面板 .ask-veil 退役（遮罩条手法被作者否：渐隐须是内容本体透明度渐到 0），
+   其渐隐改走 ask.css .ask-col 的内容级 mask；本类成员只剩主对话窗一处，单源
+   纪律不变（禁在此再写第二份 veil/blur/mask）。
    降级档（@supports 无 backdrop / html.no-backdrop）同批收编到该类。 */
 #g2-edge-fade {
   display: none;
