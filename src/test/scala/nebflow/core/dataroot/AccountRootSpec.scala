@@ -1,5 +1,7 @@
 package nebflow.core.dataroot
 
+import cats.effect.unsafe.implicits.global
+
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
 
