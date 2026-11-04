@@ -8,7 +8,9 @@
 //     一个胶囊」）：宽度由内容决定（内联 flex + 左右对称内距），有逾期时**翻面**
 //     成「N 逾期」（红字），两态外框宽高严格相等（宽度由 inline-grid 叠层取两态
 //     最大自然宽，构造上恒等）；点开 = 自胶囊向上生长的浮层面板。
-//     手机 = 左侧悬浮圆钮照旧（chatChrome FAB），点开进任务页 = 本面展开态。
+//     手机 = 胶囊同样显示（胶囊面交互批 2026-11-04 ⑤：mobileLayer.css 的整条
+//     display:none 退役）；任务页（mobile/taskPanel.js 圆钮入口）照旧是页面即
+//     展开态的另一条腿，入口退役归下游 entries 节点。
 //   · 展开态 = ReminderIsland ReminderListView 整体复刻：极简头（计数/筛选/收起）、
 //     可折叠筛选栏（All + 标签 chips + 新建 + 重要度四签）、列表行（重要度点/
 //     mono 标题/备注/截止时间/标签徽标/完成钮三段动画）、行内编辑面板、行内创建行、
@@ -108,6 +110,10 @@ const SPRING = {
   hintIn: { response: 0.3,  damping: 0.85 },
 };
 
+/** 空白区建：pointerdown → click 位移超过此值即判为拖动/滑屏（不建）。
+ *  8px = 手指抖动余量；与 tests/todo-capsule-create.spec.mjs ③ 同值。 */
+const BLANK_DRAG_PX = 8;
+
 // ── 小件 ────────────────────────────────────────────────────────────────
 
 function el(tag, cls, text) {
@@ -122,6 +128,8 @@ const CHECK_CIRCLE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx
 const PENCIL_CIRCLE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="currentColor"/><path d="M8.2 15.8l.6-2.6 5.2-5.2 2 2-5.2 5.2-2.6.6z" fill="rgba(0,0,0,0.55)" stroke="rgba(0,0,0,0.35)" stroke-width="0.6" stroke-linejoin="round"/></svg>';
 const XMARK_CIRCLE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="currentColor"/><path d="M8.4 8.4l7.2 7.2M15.6 8.4l-7.2 7.2" stroke="rgba(0,0,0,0.55)" stroke-width="2.2" stroke-linecap="round"/></svg>';
 const CHECK_SVG = '<svg viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7.4l3 3L11 4.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+// 行尾删除（细线 ×，克制；不用填充圆钮——与完成钮的实心语义区分，避免被读成「已完成」）
+const X_SVG = '<svg viewBox="0 0 14 14" aria-hidden="true"><path d="M3.6 3.6l6.8 6.8M10.4 3.6l-6.8 6.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
 const CLOCK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
 
 /** 截止时间文案（ReminderIsland = style:.time 纯时刻；web 面条目常跨天，
@@ -183,6 +191,8 @@ class TodoFace {
     this.creatingTag = false;
     // 完成动画在飞行集（renderRows 跳过重建，动画完整落地后再销账）
     this.completingRows = new Set();
+    // 删除在飞行集（同款：退场动画期间不重入）
+    this.deletingRows = new Set();
     this.completingEls = new Map();
     this.expandedJustRendered = false;
     // chips 拖拽/滚动
@@ -248,6 +258,10 @@ class TodoFace {
     this.panel = el('div', 'tfl-panel');
     this.buildHeader();
     this.buildFilterBar();
+    // 列表包裹层（胶囊面交互批 2026-11-04）：列表 + 右下角新建加号 + 撤回条
+    // 三者共一个定位祖先 —— 加号压不到列表末行（列表内距让位由 CSS 承担），
+    // 撤回条浮在列表底部中央而不是页面级 absolute（手机页面态无定位卡容器）。
+    this.listWrap = el('div', 'tfl-list-wrap');
     this.listScroll = el('div', 'tfl-list');
     this.listScroll.tabIndex = -1;
     this.listScroll.setAttribute('role', 'listbox');
@@ -255,9 +269,14 @@ class TodoFace {
     this.listScroll.addEventListener('keydown', (e) => this.onListKey(e));
     this.listInner = el('div', 'tfl-list-inner');
     this.listScroll.appendChild(this.listInner);
+    this.listWrap.appendChild(this.listScroll);
+    this.buildFab();
+    this.buildUndoBar();
     this.footer = el('div', 'tfl-footer');
-    this.panel.append(this.header, this.filterWrap, this.listScroll, this.footer);
+    this.panel.append(this.header, this.filterWrap, this.listWrap, this.footer);
     this.card.appendChild(this.panel);
+    // 空白区建（作者令 2026-11-04 ②）：列表空白 / footer 空白点击 ⇒ 行内新建
+    this.bindBlankCreate();
     // DOM 顺序 = 面板在前、胶囊在后（面板排在胶囊上方；声明顺序即视觉顺序）
     this.mount.appendChild(this.card);
     this.mount.appendChild(this.capsule);
@@ -348,6 +367,132 @@ class TodoFace {
       btn.addEventListener('click', () => this.startCreate());
     }
     this.footer.appendChild(btn);
+  }
+
+  /* ── 右下角新建加号（胶囊面交互批 · 作者令 2026-11-04 ①）──────────────────
+     形态口径：小而克制的圆钮（桌面 34px / 手机 44px，两套尺寸口径在 CSS
+     `.tfl-fab-add` + `body.mobile-layer` 分支里），次级色（--color-text 8% 底 /
+     60% 墨），不抢主视觉；位置 = 列表包裹层右下角（absolute），列表末行让位由
+     `.tfl-list { padding-bottom }` 给出 ⇒ 永不压住最后一行。
+     行为 = 复用既有行内创建行（startCreate → buildCreateRow → saveCreate 同一
+     条路径，不另开写口）。创建行开在场时本钮仍常驻（不清场）：重复点按由
+     startCreate 的幂等闸吸收 —— 同一条创建行，绝不开第二条。 */
+  buildFab() {
+    const fab = el('button', 'tfl-fab-add');
+    fab.type = 'button';
+    fab.title = t('todoface.fabAdd');
+    fab.setAttribute('aria-label', t('todoface.fabAdd'));
+    fab.innerHTML = '<i data-lucide="plus"></i>';
+    fab.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!this.expanded) return;
+      this.startCreate();
+    });
+    this.fabAdd = fab;
+    this.listWrap.appendChild(fab);
+  }
+
+  /* ── 撤回条（完成后的撤销路径；作者令 2026-11-04 ④「取消完成必须可达」）────
+     完成帧发出后浮出一条 `已完成 · 撤回`，点击 = todoStore.uncompleteItem
+     （uncompleteTodo 帧 + 行回可见面）。6s 自动消失；reduced-motion 下无过渡。 */
+  buildUndoBar() {
+    const bar = el('div', 'tfl-undo');
+    bar.hidden = true;
+    bar.setAttribute('role', 'status');
+    this.undoText = el('span', 'tfl-undo-text', t('todoface.completedToast'));
+    this.undoBtn = el('button', 'tfl-undo-btn', t('todoface.undo'));
+    this.undoBtn.type = 'button';
+    this.undoBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.undoComplete();
+    });
+    bar.append(this.undoText, this.undoBtn);
+    this.undoBar = bar;
+    this.listWrap.appendChild(bar);
+  }
+
+  /** 完成后的撤回窗口（单条：后完成覆盖前一条的撤回目标，与系统提示同语义）。 */
+  showUndo(id) {
+    if (!this.undoBar) return;
+    this.undoId = id;
+    this.undoBar.hidden = false;
+    clearTimeout(this.undoTimer);
+    this.undoTimer = setTimeout(() => this.hideUndo(), 6000);
+  }
+
+  hideUndo() {
+    clearTimeout(this.undoTimer);
+    this.undoId = null;
+    if (this.undoBar) this.undoBar.hidden = true;
+  }
+
+  /** 取消完成（uncompleteTodo 帧）—— 行回到可见面，计数翻牌回滚。 */
+  undoComplete() {
+    const id = this.undoId;
+    this.hideUndo();
+    if (!id) return;
+    todoStore.uncompleteItem(id);
+  }
+
+  /* ── 空白区建（作者令 2026-11-04 ②「点击空白处也能创建」）──────────────────
+     落点 = `.tfl-list` 的空白（行之间的空隙 / 列表下方的空白）与 `.tfl-footer`
+     的空白（Add footer 之外的留白）。命中即 startCreate（同一 saveCreate 路径）。
+
+     **防误触口径（四条，逐条落在此处 + tests/todo-capsule-create.spec.mjs）**：
+      ① 互斥：新建行已开 或 卡内任一输入框聚焦 ⇒ 不打断、不重开（直接 return）；
+      ② 命中排除：点击落在行 / 创建行 / chip / 按钮 / 编辑面板 / 筛选栏 / 表头 /
+         加号钮 / 滚动条 ⇒ 不触发（浏览器滚动条命中目标是宿主元素本身，按
+         clientWidth 判别，见 isScrollbarClick）；
+      ③ 滚动抑制：pointerdown → click 位移 > 8px（拖动列表 / 滑屏）⇒ 不触发；
+      ④ 触摸同口径：只挂 `click`（桌面与触摸由浏览器统一派发一次），**不**另挂
+         touchend ⇒ 无双发；位移判据在触摸端同样生效。 */
+  bindBlankCreate() {
+    const hosts = [this.listScroll, this.footer];
+    for (const host of hosts) {
+      host.addEventListener('pointerdown', (e) => {
+        // 只记起点：位移判据在 click 拍消费（③）。
+        this.blankDown = { x: e.clientX, y: e.clientY, target: e.target, host };
+      });
+      host.addEventListener('click', (e) => this.onBlankClick(e, host));
+    }
+  }
+
+  /** 点击是否落在「可建空白」上（口径见 bindBlankCreate 四条注解）。 */
+  onBlankClick(e, host) {
+    const down = this.blankDown;
+    this.blankDown = null;
+    if (this.destroyed || !this.expanded) return;
+    // ① 互斥：创建行在开 / 任一输入框聚焦 ⇒ 不打断不重开
+    if (this.creating || this.editingId != null) return;
+    const active = document.activeElement;
+    if (active && this.card.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+    // ② 命中排除：可交互件（行/chip/按钮/编辑面板/筛选栏/表头/加号/滚动条）
+    const tgt = e.target;
+    if (tgt && tgt.closest && tgt.closest(
+      '.tfl-row, .tfl-create-row, .tfl-chip, .tfl-chip-add, .tfl-chip-arrow, .tfl-edit-panel, '
+      + '.tfl-filter-wrap, .tfl-header, .tfl-fab-add, .tfl-add-btn, .tfl-undo, '
+      + 'button, input, textarea, a, [role="button"]',
+    )) return;
+    if (this.isScrollbarClick(e, host)) return;
+    // ③ 滚动抑制：位移 > 8px = 拖动/滑屏，不是点击
+    if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > BLANK_DRAG_PX) return;
+    // ④ 单一事件源（click）⇒ 触摸端不会双发；此处直接进创建。
+    if (!this.editingTagId && !this.creatingTag) this.startCreate();
+  }
+
+  /** 滚动条命中：指针横/纵向落在宿主的内容盒之外（轨道区）。 */
+  isScrollbarClick(e, host) {
+    if (!host || !host.getBoundingClientRect) return false;
+    const r = host.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    const sbw = host.offsetWidth - host.clientWidth;
+    const sbh = host.offsetHeight - host.clientHeight;
+    if (sbw > 0 && x > host.clientWidth) return true;
+    if (sbh > 0 && y > host.clientHeight) return true;
+    return false;
   }
 
   // ── 渲染 ──────────────────────────────────────────────────────────────
@@ -513,6 +658,9 @@ class TodoFace {
   renderFooter() {
     this.buildFooter();
     this.footer.style.display = todoStore.isAllView() ? 'none' : '';
+    // 加号常在场（创建行开时不清场）：重复点按由 startCreate 的幂等闸吸收
+    // （同一条创建行，绝不开第二条）——「重复点击零新行」的机械判据。
+    if (this.fabAdd) this.fabAdd.hidden = false;
   }
 
   renderRows() {
@@ -620,6 +768,7 @@ class TodoFace {
     }
     row.appendChild(main);
     row.appendChild(this.buildCompleteButton(item));
+    row.appendChild(this.buildDeleteButton(item, row));
     if (editing) {
       row.classList.add('tfl-row-editing');
       const wrap = el('div', 'tfl-edit-wrap');
@@ -641,6 +790,23 @@ class TodoFace {
     return btn;
   }
 
+  /** 行尾删除钮（作者令 2026-11-04 ④「删除 = 行尾 ×」）：桌面 hover 渐显、
+   *  手机常显 44px 触摸档（CSS `body.mobile-layer .tfl-del`）。stopPropagation
+   *  ⇒ 不触发主区「点行进编辑」。 */
+  buildDeleteButton(item, row) {
+    const btn = el('button', 'tfl-del');
+    btn.type = 'button';
+    btn.setAttribute('aria-label', t('todoface.del'));
+    btn.title = t('todoface.del');
+    btn.innerHTML = X_SVG;
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.performDelete(item.id, row);
+    });
+    return btn;
+  }
+
   /** 完成三段动画（performComplete 逐帧迁移）：
    *  0s 圆环→绿填 spring(0.3,0.7)；+0.15s 对勾 scale spring(0.2,0.6)；
    *  +0.5s 行淡出上移 easeOut 0.3；+0.8s 真删除（store completeItem）。 */
@@ -658,11 +824,27 @@ class TodoFace {
         (this.completingEls = this.completingEls || new Map()).set(id, rowEl);
       }
       todoStore.completeItem(id);
+      // 完成 = 行退场 + 完成帧（三段动画/计数翻牌全程未改）；退场后给撤回窗口，
+      // 取消完成的唯一可达路径（作者令 2026-11-04 ④）。
+      this.showUndo(id);
       setTimeout(() => { // 下一拍重渲后销账（避免本拍把在飞 DOM 接回去）
         this.completingRows.delete(id);
         if (this.completingEls) this.completingEls.delete(id);
       }, 0);
     }, 800);
+  }
+
+  /** 行尾删除（物理删除 `deleteScheduledTask`；与「完成」语义区分，不可逆）。
+   *  形态：行尾 ×，桌面 hover 渐显、手机常显且 44px 触摸档（CSS）；点击先播
+   *  退场（tfl-row-removing 同款过渡），180ms 后发帧，视觉与数据同拍收敛。 */
+  performDelete(id, rowEl) {
+    if (this.deletingRows.has(id)) return;
+    this.deletingRows.add(id);
+    if (rowEl) rowEl.classList.add('tfl-row-removing');
+    setTimeout(() => {
+      todoStore.removeItem(id);
+      this.deletingRows.delete(id);
+    }, 180);
   }
 
   buildEditPanel(item) {
@@ -747,9 +929,10 @@ class TodoFace {
     });
     panel.appendChild(notes);
     const prioRow = el('div', 'tfl-edit-prio');
-    this.createPrio = 0;
+    // 重要度选择跨重渲保持（store 广播重画时不清场）；startCreate 时重置为 0。
+    if (this.createPrio == null) this.createPrio = 0;
     for (let p = 0; p <= 3; p++) {
-      const b = el('button', 'tfl-edit-prio-btn' + (p === 0 ? ' selected' : ''));
+      const b = el('button', 'tfl-edit-prio-btn' + (p === this.createPrio ? ' selected' : ''));
       b.type = 'button';
       b.style.setProperty('--tag-color', PRIORITY_COLORS[p]);
       b.appendChild(el('span', 'tfl-chip-dot'));
@@ -828,8 +1011,15 @@ class TodoFace {
   }
 
   startCreate() {
+    // 幂等闸（胶囊面交互批）：创建行已开 ⇒ 只把焦点送回标题，绝不开第二条。
+    // 三条入口（footer Add / 右下角加号 / 空白区点击）共用此闸。
+    if (this.creating) {
+      if (this.createTitle && this.createTitle.isConnected) this.createTitle.focus();
+      return;
+    }
     this.saveEditing(); // 互斥（复刻 collapseEditingRow）
     this.creating = true;
+    this.createPrio = 0; // 每次新开重置重要度（重渲不清场，见 buildCreateRow）
     this.expandedJustRendered = true;
     this.renderRows();
     this.renderFooter();

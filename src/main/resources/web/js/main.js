@@ -4437,7 +4437,14 @@ watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿
     // under the band.
     chat.scrollTop = st + delta;
   };
-  const ro = new ResizeObserver(syncTopReserve);
+  /* 写入延到下一帧（胶囊面交互批 2026-11-04 ⑤ 连带修）：
+     RO 回调里直接写 #chat 的 padding-top / --chat-top-clip，在 WebKit 上会触发
+     「ResizeObserver loop completed with undelivered notifications」——带内一有
+     内容（手机层待办胶囊上手机层后默认有、ask-pending-bar/通知横幅同理；HEAD
+     上把 bar 造出内容即可复现同一句）就报一次 console error，污染「零 console
+     error」类断言。改为 rAF 一跳再写：语义不变（reserve 仍是带底实测驱动、幂等
+     轻写），只是把写动作移出 RO 投递周期，浏览器不再判为环。 */
+  const ro = new ResizeObserver(() => { requestAnimationFrame(syncTopReserve); });
   ro.observe(header);
   ro.observe(overlays);
   // 手机端白屏批：渐隐带 #g2-edge-fade 是 bandBottom() 的成员且随手机层

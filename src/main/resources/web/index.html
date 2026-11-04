@@ -872,8 +872,9 @@
            让位链自动跟随：js/main.js bandBottom() 读 #top-overlays 实测盒 ⇒
            胶囊出现即把 #chat 的 padding-top 让出（top-reserve 观察器挂在
            #top-overlays 的 ResizeObserver 上，零 JS 改动）。
-           手机层不受影响：body.mobile-layer #task-list 照旧整条 display:none
-           （css/mobileLayer.css:2656）。 -->
+           手机层也显示胶囊（胶囊面交互批 2026-11-04 ⑤：原 mobileLayer.css 的
+           「整条 display:none」退役）—— 胶囊即手机端待办入口，身份头之下居中
+           一行；空态（无 .has-tasks）仍整条不显示。 -->
       <div id="task-list"></div>
       <!-- D6 批 F2: pending-AskUser persistent bar (one row per unanswered
            question: source · summary, click = scroll to card + highlight) -->
