@@ -928,6 +928,7 @@ final class NeblinkPresenceService(
       val client = HttpClient
         .newBuilder()
         .proxy(java.net.ProxySelector.of(null)) // bypass HTTP proxy for P2P
+        .connectTimeout(java.time.Duration.ofMillis(PresenceCandidateProbe.MaxConnectTimeoutMs)) // 黑洞候选的 TCP 建连不再无限在飞
         .build()
       val wsBuilder = client.newWebSocketBuilder()
       // A1: our deviceId rides the handshake HEADER (primary carrier on every

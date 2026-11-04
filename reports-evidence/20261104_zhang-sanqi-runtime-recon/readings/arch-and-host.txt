@@ -1,0 +1,18 @@
+# 本机宿主读数（2026-11-04 14:2x）
+# 命令：uname -m ; sw_vers ; command -v lima limactl colima docker qemu-system-aarch64 ; sysctl -n kern.hv_support
+
+arch            : arm64
+macOS           : 26.4 / 25.4.0
+hv_support      : 1
+lima                  : not installed
+limactl               : not installed
+colima                : not installed
+docker                : /usr/local/bin/docker
+qemu-system-aarch64   : not installed
+
+## 判据
+  · 本机 arm64；stand front/14 服务镜像 = linux/amd64（构建脚本硬编码）。
+  · macOS 载体按设计只能是 Lima/Apple VZ 的 Linux 来宾（platform-distribution.md:23、:73-78）；
+    本机当前未装 lima/limactl/colima，只有 docker（Docker Desktop）。
+  · ⇒ 今天要在这台 Mac 上跑起来，最小路径是「Lima arm64 来宾 + 镜像重建为 arm64」或
+    「来宾内 qemu binfmt 跑 amd64（有性能代价）」。两条都不在现有制品里。
