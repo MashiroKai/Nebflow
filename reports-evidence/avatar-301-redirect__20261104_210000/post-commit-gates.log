@@ -1,0 +1,8 @@
+== 2026-11-04 21:12:31 CST post-commit gates
+make frontend-gates exit=0
+checkJs: 0 errors (baseline 0, zero-gate files: 3)
+checkJs PASS: no new errors above baseline.
+check-js-types exit=0
+✓ legacy-domain gate clean: bare nebflow.space = 0 outside whitelist (24 whitelisted hit(s) in frozen/tool paths)
+legacy-domain exit=0
+type-baseline diff: 

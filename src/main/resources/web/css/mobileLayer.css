@@ -2818,6 +2818,11 @@ body.mobile-layer #header .header-center {
    dock 带 + 间隙，桌面 JS 零改动。 */
 body.mobile-layer #input-area {
   bottom: 0;
+  /* 收窄批 2026-11-04（审计 D 档 R69 手机腿）：输入卡与下方 dock 胶囊**同一
+     左右边距**（--dock-inset-x）——改前 0.0 / 0.0（顶满），与胶囊的 12px 边距
+     两套语言。留白走本层外距，条内 padding 不动。 */
+  padding-left: var(--dock-inset-x);
+  padding-right: var(--dock-inset-x);
   padding-bottom: calc(
     var(--dock-h) + var(--dock-center-lift, 0px) + var(--dock-inset-b, 0px) +
     var(--dock-gap, 0px) + env(safe-area-inset-bottom, 0px)

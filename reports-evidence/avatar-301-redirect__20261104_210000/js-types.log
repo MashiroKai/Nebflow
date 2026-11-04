@@ -1,0 +1,4 @@
+== 2026-11-04 20:57:48 CST node scripts/check-js-types.mjs (typescript 5.5.4 via shared node_modules symlink)
+checkJs: 0 errors (baseline 0, zero-gate files: 3)
+checkJs PASS: no new errors above baseline.
+exit=0

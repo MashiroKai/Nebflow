@@ -1,0 +1,140 @@
+[RED RUN START] 2026-11-04 20:50:28 CST
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap -Xmx2600m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-a6b3f239-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-a6b3f239/project
+[info] compiling 2 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-a6b3f239/project/target/scala-2.12/sbt-1.0/classes ...
+[info] done compiling
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-a6b3f239/)
+[info] compiling 748 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-a6b3f239/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 1052 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-a6b3f239/target/scala-3.5.2/test-classes ...
+[info] done compiling
+[warn] javaOptions will be ignored, fork is set to false
+20:53:11.847 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+20:53:12.022 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+20:53:12.040 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+20:53:12.056 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+20:53:12.067 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+20:53:12.093 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+20:53:12.104 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+20:53:12.118 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+20:53:12.193 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-peer-avatar-spec4310349639656011567/device.json — minted deviceId=98764012-0ccc-57de-a03a-b7f6e769be61 (scope=home|60cec32c-a05f-5d4a-ac9d-cbd2e610dcef, machine-code derived) and persisted
+[32mnebflow.gateway.PeerAvatarRouteSpec:[0m
+[32m  + [0m[32msha256Hex: 已知向量 + 纯函数性[0m [90m0.106s[0m
+[32m  + [0m[32mauth gate: no token -> 403（出生即闸；先于任何分派）[0m [90m0.882s[0m
+[32m  + [0m[32mfriendService absent -> 404 NebLink not enabled（fail-closed）[0m [90m0.152s[0m
+[32m  + [0m[32mfriend with avatar -> 200 + 字节 + Content-Type + sha256 头 + ETag + Cache-Control[0m [90m0.267s[0m
+[32m  + [0m[32mIf-None-Match 命中 -> 304 零重传；不命中 -> 200 全量[0m [90m0.019s[0m
+[32m  + [0m[32m非好友 / 好友无头像 -> 404 no avatar（不是开放代理）[0m [90m0.017s[0m
+[32m  + [0m[32m上游头像非 200 -> 502（客户端按失败退避，不污染既有缓存）[0m [90m0.012s[0m
+[91m==> X [0m[91mnebflow.gateway.PeerAvatarRouteSpec[0m.[91m同源 301 ⇒ 跟随跳转返回终点字节（修复前：502 upstream HTTP 301）[0m  [90m0.024s[0m munit.ComparisonFailException: src/test/scala/nebflow/gateway/PeerAvatarRouteSpec.scala:386
+385:      runWith(fs)(authed("/avatars/u1")).flatMap { resp =>
+[7m386:        assertEquals(resp.status, Status.Ok)[0m
+387:        assertEquals(header(resp, "X-Avatar-Sha256"), Some(AvatarSha))
+values are not the same
+[1m=> Obtained[0m
+Status(
+  code = 502
+)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+ Status(
+[91m-  code = 200[0m
+[92m+  code = 502[0m
+ )
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.gateway.PeerAvatarRouteSpec.$init$$$anonfun$8$$anonfun$1$$anonfun$1[0m[1m([0m[1mPeerAvatarRouteSpec.scala[0m:[1m386[0m[1m)[0m
+[90m    at [0m[90mblocking @ nebflow.llm.decision.PluginAllocatorMachine$.jevLeg[0m[90m([0m[90mPluginAllocatorMachine.scala[0m:[90m182[0m[90m)[0m
+[90m    at [0m[90mhandleError @ nebflow.neblink.AvatarProxy$.$init$$$anonfun$1[0m[90m([0m[90mAvatarProxy.scala[0m:[90m86[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.neblink.AvatarProxy$.fetch[0m[90m([0m[90mAvatarProxy.scala[0m:[90m33[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.gateway.NeblinkRoutes$$anon$1.applyOrElse$$anonfun$7$$anonfun$1[0m[90m([0m[90mNeblinkRoutes.scala[0m:[90m397[0m[90m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.neblink.FriendService.applyFriendBios[0m[90m([0m[90mFriendService.scala[0m:[90m209[0m[90m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.neblink.FriendService.applyRemarks[0m[90m([0m[90mFriendService.scala[0m:[90m152[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.neblink.FriendService.listFriends$$anonfun$2[0m[90m([0m[90mFriendService.scala[0m:[90m1040[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.neblink.FriendService.listFriends$$anonfun$2[0m[90m([0m[90mFriendService.scala[0m:[90m1040[0m[90m)[0m
+[90m    at [0m[90mblocking @ nebflow.llm.decision.PluginAllocatorMachine$.jevLeg[0m[90m([0m[90mPluginAllocatorMachine.scala[0m:[90m182[0m[90m)[0m
+[90m    at [0m[90mhandleErrorWith @ nebflow.neblink.NeblinkClient.sendRequestTimed[0m[90m([0m[90mNeblinkClient.scala[0m:[90m1741[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.neblink.NeblinkClient.withSession[0m[90m([0m[90mNeblinkClient.scala[0m:[90m1185[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.neblink.NeblinkClient.withSessionJson[0m[90m([0m[90mNeblinkClient.scala[0m:[90m1343[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.neblink.FriendService.withClient[0m[90m([0m[90mFriendService.scala[0m:[90m288[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.neblink.FriendService.listFriends[0m[90m([0m[90mFriendService.scala[0m:[90m1037[0m[90m)[0m
+[91m==> X [0m[91mnebflow.gateway.PeerAvatarRouteSpec[0m.[91m自指 301 循环 ⇒ 跳数上限拒绝（502，不无限跟随）[0m  [90m0.01s[0m munit.FailException: src/test/scala/nebflow/gateway/PeerAvatarRouteSpec.scala:405 error should name the redirect failure, got: upstream HTTP 301
+404:          val err = body.hcursor.downField("error").as[String].toOption.getOrElse("")
+[7m405:          assert(err.contains("redirect"), s"error should name the redirect failure, got: $err")[0m
+406:          // 上限 = 1 + MaxRedirects 次单跳（起点 + 3 跳）
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.gateway.PeerAvatarRouteSpec.$init$$$anonfun$9$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mPeerAvatarRouteSpec.scala[0m:[1m405[0m[1m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mmodify @ fs2.internal.Scope.close[0m[90m([0m[90mScope.scala[0m:[90m262[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mrethrow$extension @ fs2.Compiler$Target.compile$$anonfun$1[0m[90m([0m[90mCompiler.scala[0m:[90m157[0m[90m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Pull$.goCloseScope$1$$anonfun$1$$anonfun$3[0m[90m([0m[90mPull.scala[0m:[90m1216[0m[90m)[0m
+[90m    at [0m[90mupdate @ fs2.internal.Scope.releaseChildScope[0m[90m([0m[90mScope.scala[0m:[90m227[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[91m==> X [0m[91mnebflow.gateway.PeerAvatarRouteSpec[0m.[91m白名单外跳转 ⇒ 拒跟 + 502，且第三方源站零命中（不是开放代理）[0m  [90m0.013s[0m munit.FailException: src/test/scala/nebflow/gateway/PeerAvatarRouteSpec.scala:419 error should name the redirect refusal, got: upstream HTTP 302
+418:          val err = body.hcursor.downField("error").as[String].toOption.getOrElse("")
+[7m419:          assert(err.contains("redirect"), s"error should name the redirect refusal, got: $err")[0m
+420:          assertEquals(origin.hits("/a.jpg"), 0)
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.gateway.PeerAvatarRouteSpec.$init$$$anonfun$10$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mPeerAvatarRouteSpec.scala[0m:[1m419[0m[1m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mmodify @ fs2.internal.Scope.close[0m[90m([0m[90mScope.scala[0m:[90m262[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mrethrow$extension @ fs2.Compiler$Target.compile$$anonfun$1[0m[90m([0m[90mCompiler.scala[0m:[90m157[0m[90m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Pull$.goCloseScope$1$$anonfun$1$$anonfun$3[0m[90m([0m[90mPull.scala[0m:[90m1216[0m[90m)[0m
+[90m    at [0m[90mupdate @ fs2.internal.Scope.releaseChildScope[0m[90m([0m[90mScope.scala[0m:[90m227[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[91m==> X [0m[91mnebflow.gateway.PeerAvatarRouteSpec[0m.[91m网关字节缓存：同一 URL 第二次请求零回源（含 If-None-Match ⇒ 304）[0m  [90m0.014s[0m munit.ComparisonFailException: src/test/scala/nebflow/gateway/PeerAvatarRouteSpec.scala:433
+432:        _ = assertEquals(b1.toSeq, AvatarBytes.toSeq)
+[7m433:        _ = assertEquals(header(r1, "X-Avatar-Cache"), Some("miss"))[0m
+434:        _ = assertEquals(origin.hits("/a.jpg"), 1)
+values are not the same
+[1m=> Obtained[0m
+None
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-Some([0m
+[91m-  value = "miss"[0m
+[91m-)[0m
+[92m+None[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.gateway.PeerAvatarRouteSpec.$init$$$anonfun$11$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mPeerAvatarRouteSpec.scala[0m:[1m433[0m[1m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mmodify @ fs2.internal.Scope.close[0m[90m([0m[90mScope.scala[0m:[90m262[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mrethrow$extension @ fs2.Compiler$Target.compile$$anonfun$1[0m[90m([0m[90mCompiler.scala[0m:[90m157[0m[90m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Compiler$Target.flatMap[0m[90m([0m[90mCompiler.scala[0m:[90m163[0m[90m)[0m
+[90m    at [0m[90mflatMap @ fs2.Pull$.fs2$Pull$$$_$interruptGuard$1[0m[90m([0m[90mPull.scala[0m:[90m960[0m[90m)[0m
+[32m  + [0m[32m未登录（已配置 + 无会话）-> 401 code=neblink_not_logged_in[0m [90m0.109s[0m
+[error] Failed: Total 12, Failed 4, Errors 0, Passed 8
+[error] Failed tests:
+[error] 	nebflow.gateway.PeerAvatarRouteSpec
+[error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[error] Total time: 156 s (0:02:36.0), completed 2026年11月4日 20:53:12
+[RED RUN EXIT] rc=1 at 2026-11-04 20:53:12 CST

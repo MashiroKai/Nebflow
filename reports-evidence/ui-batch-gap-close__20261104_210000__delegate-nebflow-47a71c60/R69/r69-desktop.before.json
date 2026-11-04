@@ -1,0 +1,159 @@
+{
+  "left": 0,
+  "right": 0,
+  "want": 16,
+  "geo": {
+    "viewport": {
+      "w": 1440,
+      "h": 900
+    },
+    "bodyClass": "deck-look-v2 canvas-open",
+    "mobileLayer": false,
+    "main": {
+      "left": 310,
+      "right": 858,
+      "top": 0,
+      "bottom": 900,
+      "width": 548,
+      "height": 900
+    },
+    "chat": {
+      "left": 310,
+      "right": 858,
+      "top": 0,
+      "bottom": 900,
+      "width": 548,
+      "height": 900
+    },
+    "sidebar": {
+      "left": 60,
+      "right": 296,
+      "top": 16,
+      "bottom": 890,
+      "width": 236,
+      "height": 874
+    },
+    "canvas": {
+      "left": 878,
+      "right": 1430,
+      "top": 16,
+      "bottom": 890,
+      "width": 552,
+      "height": 874
+    },
+    "inputArea": {
+      "left": 310,
+      "right": 858,
+      "top": 818,
+      "bottom": 900,
+      "width": 548,
+      "height": 82
+    },
+    "inputBar": {
+      "left": 310,
+      "right": 858,
+      "top": 818,
+      "bottom": 896,
+      "width": 548,
+      "height": 78
+    },
+    "inputAreaCss": {
+      "paddingLeft": "0px",
+      "paddingRight": "0px",
+      "paddingBottom": "4px",
+      "marginLeft": "0px",
+      "marginRight": "0px",
+      "marginBottom": "0px",
+      "maxWidth": "none",
+      "bottom": "0px"
+    },
+    "inputBarCss": {
+      "paddingLeft": "12px",
+      "paddingRight": "12px",
+      "paddingBottom": "6px",
+      "marginLeft": "0px",
+      "marginRight": "0px",
+      "marginBottom": "0px",
+      "maxWidth": "none",
+      "bottom": "0px"
+    },
+    "mainCss": {
+      "paddingLeft": "0px",
+      "paddingRight": "0px",
+      "paddingBottom": "0px",
+      "marginLeft": "10px",
+      "marginRight": "10px",
+      "marginBottom": "0px",
+      "maxWidth": "none",
+      "bottom": "0px"
+    },
+    "chatPadBottom": "84px",
+    "lastRowClass": "row ai",
+    "lastBubble": {
+      "borderRadius": "16px 16px 16px 4px",
+      "bottomLeft": "4px",
+      "bottomRight": "16px",
+      "cls": "bubble ai"
+    },
+    "allBubbles": [
+      {
+        "borderRadius": "16px 16px 16px 4px",
+        "bottomLeft": "4px",
+        "bottomRight": "16px",
+        "cls": "bubble ai"
+      },
+      {
+        "borderRadius": "16px 16px 4px 16px",
+        "bottomLeft": "16px",
+        "bottomRight": "4px",
+        "cls": "bubble user"
+      },
+      {
+        "borderRadius": "16px 16px 16px 4px",
+        "bottomLeft": "4px",
+        "bottomRight": "16px",
+        "cls": "bubble ai"
+      },
+      {
+        "borderRadius": "16px 16px 4px 16px",
+        "bottomLeft": "16px",
+        "bottomRight": "4px",
+        "cls": "bubble user"
+      },
+      {
+        "borderRadius": "16px 16px 16px 4px",
+        "bottomLeft": "4px",
+        "bottomRight": "16px",
+        "cls": "bubble ai"
+      },
+      {
+        "borderRadius": "16px 16px 4px 16px",
+        "bottomLeft": "16px",
+        "bottomRight": "4px",
+        "cls": "bubble user"
+      },
+      {
+        "borderRadius": "16px 16px 16px 4px",
+        "bottomLeft": "4px",
+        "bottomRight": "16px",
+        "cls": "bubble ai"
+      },
+      {
+        "borderRadius": "16px 16px 4px 16px",
+        "bottomLeft": "16px",
+        "bottomRight": "4px",
+        "cls": "bubble user"
+      },
+      {
+        "borderRadius": "16px 16px 16px 4px",
+        "bottomLeft": "4px",
+        "bottomRight": "16px",
+        "cls": "bubble ai"
+      }
+    ],
+    "chatScroll": {
+      "top": 0,
+      "h": 900
+    }
+  }
+}

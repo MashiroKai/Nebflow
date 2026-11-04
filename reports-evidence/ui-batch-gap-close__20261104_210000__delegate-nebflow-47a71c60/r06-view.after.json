@@ -1,0 +1,7 @@
+{
+  "hit": {
+    "insideChip": true,
+    "hitCls": "tfl-chip tfl-chip-tag"
+  },
+  "view": "tag-work"
+}
