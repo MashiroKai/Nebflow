@@ -65,3 +65,9 @@
 `node_modules`（git 忽略，不入提交）。`sbt scalafmtCheckAll` 在本 worktree 上**改前即红**
 （`nebflow/perception/PerceptionService.scala:1211`，本批未触碰该文件，见 `scalafmt-check.log`）；
 本批新增的 6 个 Scala 文件已用 `scalafmtOnly` 过格式器（`scalafmt-only-new-files.log`）。
+
+### 提交后复跑（`gates/post-commit-gates.log`，commit `374f1c800`）
+
+`make frontend-gates` / `check-js-types` / `check-legacy-domain` 三条**全部 EXIT=0**，
+其中 `fixture-secrets` 扫 760 文件 0 命中、`checkJs: 0 errors (baseline 0)`、
+`legacy-domain: 0 bare retired-domain literal(s) outside the whitelist`。
