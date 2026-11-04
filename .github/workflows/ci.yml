@@ -65,6 +65,16 @@ jobs:
         # miss the other" drift that ③A1/③A3/③A5 exist to prevent).
         # Same logic locally: node scripts/check-msgstyle-single-source.mjs
         run: node scripts/check-msgstyle-single-source.mjs
+      - name: Design spec scale sync (spec table <-> token source)
+        # design-scale gate (author order 2026-11-04: "把我们对圆角 边距 文字离边缘
+        # 的距离 各文字的大小 写进spec和前端开发包"): the four scales (radius /
+        # spacing / text-to-edge padding / font size) live in ONE spec table inside
+        # the design-language plugin's references/design-language-tokens.md. This
+        # gate fails on drift in BOTH directions - a spec row whose token is
+        # missing or carrying another value, and a --ds-{fs,radius,space}-* token
+        # born in code without a spec row - plus the --dl-* ledger mirror.
+        # Same logic locally: node scripts/check-design-spec-sync.mjs (or `make frontend-gates`)
+        run: node scripts/check-design-spec-sync.mjs
       - name: Design tokens (literal -> var(--ds-*) sentinel)
         # Design-token gate (design-system-token-batch 2026-11-02): every design
         # literal has exactly one home. Two tiers - a per-file baseline that may
