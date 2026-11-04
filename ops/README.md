@@ -20,10 +20,22 @@
 | `ops/bin/stand-jar-pull` | —（不入 live：与仓绑定，从仓内跑） | **KAI → Mac jar 流转（KAI 主线迁移批 2026-10-26）**：拉 KAI 出包位最新 jar → SHA 对账 → 原子落位 → 切指针 → start 指针解析验证（`--verify`/`--dry-run` 零触碰预演；用法一页：`ops/stand-jar-pull.md`） |
 | `release/install.sh` `release/install.ps1` | release 出包路径 | release 安装器：`stand` 主命令 + `nebflow` legacy 转发垫片（与本目录 CLI 的隔离契约分工见 REBRAND「双命令并存」） |
 | `ops/test/stand-lifecycle.test.sh` | —（不入 live） | 守卫的纯 bash 断言测试（沙箱化，零真实 daemon；覆盖 stand+nebflow 两品牌隔离、`restart --dry-run` 假点火、`restart --help` 三面口径、`stand-restart.sh`/`stand-autostart.sh` 弃用垫片的零副作用面） |
-| `ops/bin/sbt-gate` | `~/.stand/bin/sbt`（**PATH 首位**，遮蔽 `/opt/homebrew/bin/sbt`） | **sbt 全局串行闸 + 默认堆帽**（内存即时缓解批 M1，2026-11-04）：flock 并发 1、默认 `-Xmx1500m`（显式 `-Xmx` 尊重用户值）、排队可见（waiting/acquired）、超时放行 + `SBT_GATE=off` 逃生口、`run/console` 服务形态旁路。日志 `~/.stand/logs/sbt-gate.log` |
 | `ops/memsample.sh` | `~/.stand/bin/memsample.sh` | 60s 内存环形采样器（M4，2026-11-04）：宿主端口**从运行实例解析**（`.pid` → `lsof`；不再写死 8080），列追加 `hostPid,hostPort,compressedMB,totalMemMB`（压缩内存此前完全不在任何 RSS 里）。launchd 作业 `com.nebflow.memsample`（StartInterval=60） |
-| `ops/test/sbt-gate.test.sh` | —（不入 live） | sbt 闸的沙箱化自测（假 sbt，零真实构建）：串行/排队可见/`SBT_GATE=off` 旁路/服务形态旁路/堆帽与 override/超时放行 |
 | `ops/test/release-pipeline.test.sh` | —（不入 live） | release.sh 的纯 bash 断言测试（沙箱化：假构建/假冒烟/假 java + fixture git 仓） |
+
+## 本机构建预算（**不在本仓** · 指针）
+
+sbt 重活串行闸 + 默认堆帽**属本机设置层**（作者裁定 2026-11-04 14:31：「本机的构建预算跟我们
+产品是无关的，它应该是我们本机的一个设置，跟我们 stand 应该是隔离的，不影响 stand」）。
+实现、自测、配置都不在本仓：
+
+- 权威副本 `~/.local/share/nebflow-local/bin/sbt-gate`，自测 `…/bin/sbt-gate.test.sh`，装/卸 `…/bin/local-install.sh`
+- 配置 `~/.config/nebflow/local-budget.conf`（默认堆帽 `-Xmx1500m`、等锁超时 900s，逃生口 `SBT_GATE=off`）
+- 部署位 `~/.stand/bin/sbt` → symlink 到上者（PATH 首位，遮蔽 `/opt/homebrew/bin/sbt`）
+- 边界判据与正反例：`~/.local/share/nebflow-local/README.md`
+
+本仓**不持有**该实现、不检测、不假设它存在。产品侧只有**只读消费方**：
+`ops/stand-restart.sh` 起 sbt 时「垫片存在就用它、不存在就用系统 `sbt`」，两条腿都正常工作。
 
 ## 部署（Mac 侧）
 
@@ -44,10 +56,10 @@ cp "$REPO/ops/bin/nebflow-restart-shim" ~/.stand/bin/nebflow-restart.sh && chmod
 # nebflow 根 (9.19 自有根): 真入口 + 库
 cp "$REPO/ops/bin/nebflow"     ~/.nebflow/bin/nebflow   && chmod +x ~/.nebflow/bin/nebflow
 cp "$REPO/ops/bin/stand-cli-lib.sh" ~/.nebflow/bin/stand-cli-lib.sh
-# 内存即时缓解批（2026-11-04）: sbt 全局闸垫片 + 内存采样器（权威副本 = 仓内）
-cp "$REPO/ops/bin/sbt-gate"    ~/.stand/bin/sbt          && chmod +x ~/.stand/bin/sbt   # PATH 首位，遮蔽 homebrew sbt
+# 内存即时缓解批（2026-11-04）: 内存采样器（权威副本 = 仓内）
+# 注: 同批的 sbt 全局闸垫片**已外置到本机设置层**（2026-11-04 剥离批，见上节「本机构建预算」），
+#     本仓不再持有它，部署本目录时也无需安装它——缺它是正常状态。
 cp "$REPO/ops/memsample.sh"    ~/.stand/bin/memsample.sh && chmod +x ~/.stand/bin/memsample.sh
-bash "$REPO/ops/test/sbt-gate.test.sh"          # 闸自测：全绿再依赖
 bash ~/.stand/bin/stand-jdk check        # pinned JDK 体检
 bash "$REPO/ops/test/stand-lifecycle.test.sh"   # 回归：全绿再部署
 ```
