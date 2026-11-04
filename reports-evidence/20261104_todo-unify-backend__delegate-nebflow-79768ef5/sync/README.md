@@ -7,35 +7,40 @@
 
 ## 0. 一句话结论
 
-**两轮 merge，两轮均零冲突**（`git merge` exit 0，无人工解冲突）。执行期间本地 `main`
-ref 推进了两次，故追平了两次：第一轮到 `d2fc65c82`（树 `fa6526fb8`），第二轮到
-**`995142a5f`（当前 `git rev-list --count HEAD..main` = 0）**，最终 HEAD =
-**`f70dccb9f`**（parents = `f7dba5ef9` + `995142a5f`）。
-五道门禁 + 本批 spec + 让位链实测在最终树全绿；门禁初跑时 `component-contract` 曾红
-16 条（`js/todoFace.js` 裸 innerHTML 计数 13→15），判定为**本批引入**并就地修两处调用点
-（commit `f7dba5ef9`），复跑转绿 —— **baseline 文件零改动**。
+**四轮 merge，四轮均零冲突**（`git merge` exit 0，全程无人工解冲突）。执行期间本地
+`main` ref 被并发节点持续推进了四次，故追平了四次：
+`d2fc65c82` → `995142a5f` → `0960a0898` → **`51309ec51`（最终，`HEAD..main` = 0）**。
+最终 HEAD = **`02c61d914`**。最终树上**五道门禁全绿 + 本批 spec 全绿 + 让位链实测 7/7**。
+
+本节点两处实质工程动作：
+1. `component-contract` 因本批新增的两个控件红了 16 条（`js/todoFace.js` 裸 innerHTML
+   计数 13→15），就地修两处调用点（commit `f7dba5ef9`），**baseline 文件零改动**；
+2. 逐轮把 main 侧并发增量吸收进来，并在每轮复跑门禁 / spec / 让位链，证明吸收无回归。
+
+> 读数十行摘要见同目录 **`RUNS.md`**（按轮次列 exit code + 原始日志路径）。
+> 第三节记录的第二次 `component-contract` 红（`js/mobile/socialSearch.js`）经证据判定为
+> **main 侧存量**，随后由 main 自己的 `c00c8db47` 修好，第四轮追平后转绿。
 
 ## 1. 合到的 tip 与环境事实
 
 | 项 | 值 |
 |---|---|
-| 第一轮 main tip | `d2fc65c828960595c81dd3cdffdcad7e37b028e6` — `d2fc65c82 Merge branch 'delegate/delegate-nebflow-8b0a8e45'` |
-| 第一轮 merge commit | `fa6526fb8`（parents = `6b883302f` + `d2fc65c82`） |
-| 第二轮 main tip（**最终**） | `995142a5f99760e8d948361fc1691e4f45617e8d` — `995142a5f Merge branch 'delegate/delegate-nebflow-1d300d2e'` |
-| 第二轮 merge commit（**最终 HEAD**） | `f70dccb9f`（parents = `f7dba5ef9` + `995142a5f`） |
+| **最终 main tip** | `51309ec51 Merge branch 'fix/mobile-search-innerhtml' — component-contract R5 由红转绿` |
+| **最终 HEAD** | `02c61d914`（evidence）／其下 `7c26c4519` = 第四次 merge |
+| 四次 merge commit | `fa6526fb8`（→d2fc65c82）· `f70dccb9f`（→995142a5f）· `2223b7159`（→0960a0898）· `7c26c4519`（→51309ec51） |
 | `git rev-list --count HEAD..main` | **0**（不漂移） |
 | 本分支 merge 前 tip | `6b883302f`（panel：加号/空白建/重要度/完成撤回/删除/手机层胶囊） |
-| merge-base（两轮共同） | `0d9b1b874`（todoStore 换血 tip —— 已在 main 内） |
+| merge-base（四轮共同） | `0d9b1b874`（todoStore 换血 tip —— 已在 main 内） |
 | `git fetch` | **不通**（`origin` github 443 超时 75s）⇒ main tip 一律取本地 ref |
 
 `941a11a13`（main 侧「Merge branch 'delegate/delegate-nebflow-79768ef5'」）与 `0d9b1b874`
 在 main 内；作者那次 `--no-ff` 合入的**时点早于 panel 提交**（当时分支 tip 是 `0d9b1b874`），
 所以 panel 成果（`6b883302f`）不在 main 里 —— 两端不存在并存，按普通 merge 处理。
 
-第二轮 main 增量（与本批面**零交集**）：`d6d3a77f3` 断两个静态 import 环
-（`msgQuote→reference` / `taskPanel→navController`，涉及 `msgQuote.js` / `reference.js` /
-新 `refModel.js` / `mobile/*` 共 9 个前端文件）、`043b5f693` worktree 清理（仅证据文档）、
-`Makefile` +9 行（`check-circular` 归口）。
+四轮 main 增量与本批面的关系：第 1–3 轮全部**零交集**（main 动的是 dom/events/component
+入口登记、自解释文案、断 import 环、手机搜索扁平化等他批面）；第 4 轮只动
+`js/mobile/socialSearch.js`（他批修 R5 红）。**本批面从未与 main 相撞，故四轮都不需要
+「谁让谁」的裁决。**
 
 ## 2. 冲突处置（逐文件）
 
