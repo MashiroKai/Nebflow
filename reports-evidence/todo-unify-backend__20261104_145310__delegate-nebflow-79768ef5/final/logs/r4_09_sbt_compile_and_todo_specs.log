@@ -2,3 +2,8 @@ $ sbt -batch compile "testOnly <6 待办 spec>"（收口终树 a01b24cd3 / merge
 [sbt-gate] waiting for /Users/kaiyu/.stand/run/sbt.lock (another sbt holds the heavy-work gate; bypass: SBT_GATE=off sbt …)
 [sbt-gate] STILL waiting ~5min. escape hatch: SBT_GATE=off sbt …
 [sbt-gate] STILL waiting ~10min. escape hatch: SBT_GATE=off sbt …
+[sbt-gate] WARNING: waited 901s (>= SBT_GATE_TIMEOUT_SECS=900s) — proceeding WITHOUT the gate.
+[sbt-gate]          memory risk returns for this run; raise SBT_GATE_TIMEOUT_SECS or use SBT_GATE=off explicitly.
+/Users/kaiyu/.stand/bin/sbt: line 202: syntax error near unexpected token `('
+/Users/kaiyu/.stand/bin/sbt: line 202: `      say "WARNING: waited ${waited}s — proceeding WITHOUT the gate (memory risk returns)"'
+SBT_EXIT=2

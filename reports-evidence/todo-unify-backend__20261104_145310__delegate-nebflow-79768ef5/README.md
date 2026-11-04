@@ -31,8 +31,11 @@
 > `r5` 汇总：`final/logs/gates-summary-r5.txt`（6 条命令全 EXIT=0）+ `r5_01..r5_06_*.log`；
 > 基线零改动：`r5_07_baseline_diff.txt`（type-baseline diff 0 行且内容仍 `{"total":0,"files":{}}`；allowlist sha256 与 main 同值）；
 > 范围：`r5_08_scope.txt`（37 文件，`src/main/scala` / `src/test/scala` **空**）；
-> 批 spec：`r5_10_batch_specs.log`（22 passed）；Scala：`r4_09_sbt_compile_and_todo_specs.log`
-> （52 passed / EXIT=0，跑在 `dd109b130` 树；`r5_09_scala_surface_stable.txt` 机械证明其后 Scala 面零变化）。
+> 批 spec：`r5_10_batch_specs.log`（22 passed）；**Scala（终树实测）**：
+> `r5_09_sbt_compile_and_todo_specs.log` ⇒ `compile [success]` + `Passed: Total 52, Failed 0, Errors 0` + `SBT_EXIT=0`
+> （入口 `~/.stand/bin/sbt` 自报 `[sbt-gate]`；`ops/bin/sbt-gate` 已不在仓内）。
+> 注：`r4_09_*.log` 的 `SBT_EXIT=2` ≠ 测试红 —— 那是 `sbt-gate` 包装脚本在 900s 等锁超时分支自身的
+> shell 语法错（`~/.stand/bin/sbt:202`），`sbt` 根本没被执行；锁空出后重跑即 `r5_09`（绿）。
 
 | 文件 | 内容 / 读数 |
 |---|---|
