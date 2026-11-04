@@ -7,25 +7,35 @@
 
 ## 0. 一句话结论
 
-merge **零冲突**（`git merge` exit 0，无人工解冲突）；合到 main tip **`d2fc65c82`**；
-merge commit **`fa6526fb8`**（parents = `6b883302f` + `d2fc65c82`）。
-五道门禁合后全绿；门禁初跑时 `component-contract` 曾红 16 条（`js/todoFace.js` 裸
-`innerHTML` 计数 13→15），判定为**本批引入**并就地修两处调用点，复跑转绿——**baseline
-文件零改动**。
+**两轮 merge，两轮均零冲突**（`git merge` exit 0，无人工解冲突）。执行期间本地 `main`
+ref 推进了两次，故追平了两次：第一轮到 `d2fc65c82`（树 `fa6526fb8`），第二轮到
+**`995142a5f`（当前 `git rev-list --count HEAD..main` = 0）**，最终 HEAD =
+**`f70dccb9f`**（parents = `f7dba5ef9` + `995142a5f`）。
+五道门禁 + 本批 spec + 让位链实测在最终树全绿；门禁初跑时 `component-contract` 曾红
+16 条（`js/todoFace.js` 裸 innerHTML 计数 13→15），判定为**本批引入**并就地修两处调用点
+（commit `f7dba5ef9`），复跑转绿 —— **baseline 文件零改动**。
 
 ## 1. 合到的 tip 与环境事实
 
 | 项 | 值 |
 |---|---|
-| main tip（本地 ref） | `d2fc65c828960595c81dd3cdffdcad7e37b028e6` — `d2fc65c82 Merge branch 'delegate/delegate-nebflow-8b0a8e45'` |
+| 第一轮 main tip | `d2fc65c828960595c81dd3cdffdcad7e37b028e6` — `d2fc65c82 Merge branch 'delegate/delegate-nebflow-8b0a8e45'` |
+| 第一轮 merge commit | `fa6526fb8`（parents = `6b883302f` + `d2fc65c82`） |
+| 第二轮 main tip（**最终**） | `995142a5f99760e8d948361fc1691e4f45617e8d` — `995142a5f Merge branch 'delegate/delegate-nebflow-1d300d2e'` |
+| 第二轮 merge commit（**最终 HEAD**） | `f70dccb9f`（parents = `f7dba5ef9` + `995142a5f`） |
+| `git rev-list --count HEAD..main` | **0**（不漂移） |
 | 本分支 merge 前 tip | `6b883302f`（panel：加号/空白建/重要度/完成撤回/删除/手机层胶囊） |
-| merge-base | `0d9b1b874`（todoStore 换血 tip —— 已在 main 内） |
-| merge commit | `fa6526fb8` |
+| merge-base（两轮共同） | `0d9b1b874`（todoStore 换血 tip —— 已在 main 内） |
 | `git fetch` | **不通**（`origin` github 443 超时 75s）⇒ main tip 一律取本地 ref |
 
 `941a11a13`（main 侧「Merge branch 'delegate/delegate-nebflow-79768ef5'」）与 `0d9b1b874`
 在 main 内；作者那次 `--no-ff` 合入的**时点早于 panel 提交**（当时分支 tip 是 `0d9b1b874`），
 所以 panel 成果（`6b883302f`）不在 main 里 —— 两端不存在并存，按普通 merge 处理。
+
+第二轮 main 增量（与本批面**零交集**）：`d6d3a77f3` 断两个静态 import 环
+（`msgQuote→reference` / `taskPanel→navController`，涉及 `msgQuote.js` / `reference.js` /
+新 `refModel.js` / `mobile/*` 共 9 个前端文件）、`043b5f693` worktree 清理（仅证据文档）、
+`Makefile` +9 行（`check-circular` 归口）。
 
 ## 2. 冲突处置（逐文件）
 

@@ -1,0 +1,40 @@
+# 范围核对（复跑：main 已被作者前移到 995142a5f，且本分支已再次合入 main）
+
+$ git rev-parse --short main; git log -1 --oneline main
+995142a5f
+995142a5f Merge branch 'delegate/delegate-nebflow-1d300d2e'
+
+$ git merge-base --is-ancestor main HEAD && echo 'main IS ancestor of HEAD'
+main IS ancestor of HEAD
+
+$ git diff --stat main..HEAD -- src/main/resources/web src/main/scala tests
+ src/main/resources/web/css/mobileLayer.css |  42 ++-
+ src/main/resources/web/css/todo-face.css   | 117 ++++++-
+ src/main/resources/web/index.html          |   5 +-
+ src/main/resources/web/js/locales/en.js    |   4 +
+ src/main/resources/web/js/locales/zh-CN.js |   4 +
+ src/main/resources/web/js/main.js          |   9 +-
+ src/main/resources/web/js/todoFace.js      | 230 +++++++++++-
+ tests/todo-capsule-create.spec.mjs         | 537 +++++++++++++++++++++++++++++
+ tests/todo-capsule-redesign-shots.mjs      |  10 +-
+ 9 files changed, 942 insertions(+), 16 deletions(-)
+(空 = 无差)
+
+$ git diff --name-status main..HEAD -- src/main/resources/web src/main/scala tests Makefile
+M	src/main/resources/web/css/mobileLayer.css
+M	src/main/resources/web/css/todo-face.css
+M	src/main/resources/web/index.html
+M	src/main/resources/web/js/locales/en.js
+M	src/main/resources/web/js/locales/zh-CN.js
+M	src/main/resources/web/js/main.js
+M	src/main/resources/web/js/todoFace.js
+A	tests/todo-capsule-create.spec.mjs
+M	tests/todo-capsule-redesign-shots.mjs
+
+$ git log --oneline -6
+096408f90 chore(evidence): todo-unify 批证据归档——Sync 中断遗留 sync/ 收编 + 门禁补跑与让位链实测读数
+f70dccb9f Merge branch 'main' into delegate/delegate-nebflow-79768ef5
+995142a5f Merge branch 'delegate/delegate-nebflow-1d300d2e'
+f7dba5ef9 fix(todo): 胶囊面两个新控件改由 DOM API 装配（component-contract R5）
+043b5f693 ops(worktree-cleanup): 盘 283 棵 delegate 树，删除 163 棵干净已合树（无 --force，逐棵复核），回收 ≈70Gi 可用磁盘
+1bfe6892d Merge branch 'delegate/delegate-nebflow-b1d91721'
