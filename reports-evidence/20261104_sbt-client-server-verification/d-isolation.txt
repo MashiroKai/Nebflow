@@ -1,0 +1,35 @@
+=== 隔离测试：3 worktree 各植入唯一标记类，在同一聚合 server 上分别编译 ===
+标记类: wt1→ZzIsolationProbe1, wt2→ZzIsolationProbe2, wt3→ZzIsolationProbe3
+
+--- 编译 wt1（server: {file:///private/tmp/sbtbench-1}root/compile）---
+  [info] compiling 1 Scala source to /private/tmp/sbtbench-1/target/scala-3.5.2/classes ...
+  [info] done compiling
+  [[32msuccess[0m] Total time: 3 s, completed Nov 4, 2026, 2:42:49 PM
+
+断言 A: 编 wt1 后，标记类的分布
+  sbtbench-1: 标记类 2 个 -> ZzIsolationProbe1$.class ZzIsolationProbe1.class 
+  sbtbench-2: 标记类 0 个 -> 
+  sbtbench-3: 标记类 0 个 -> 
+断言 B: 本次编译触碰了哪些 worktree 的产物（-newer /tmp/iso-before.tmp）
+  sbtbench-1: 新/改动文件 18
+  sbtbench-2: 新/改动文件 0
+  sbtbench-3: 新/改动文件 0
+
+--- 编译 wt2 ---
+  [info] compiling 1 Scala source to /private/tmp/sbtbench-2/target/scala-3.5.2/classes ...
+  [info] done compiling
+  [[32msuccess[0m] Total time: 3 s, completed Nov 4, 2026, 2:42:53 PM
+
+断言 C: 编 wt2 后标记类分布（各归各位）
+  sbtbench-1: ZzIsolationProbe1$.class ZzIsolationProbe1.class 
+  sbtbench-2: ZzIsolationProbe2$.class ZzIsolationProbe2.class 
+  sbtbench-3: 
+
+--- 同一构建根再编一次（增量热态）---
+  [[32msuccess[0m] Total time: 0 s, completed Nov 4, 2026, 2:42:54 PM
+
+断言 D: 三个 target 的构建根互不相同（路径证据）
+  sbtbench-1 产物根: /private/tmp/sbtbench-1
+  sbtbench-2 产物根: /private/tmp/sbtbench-2
+  sbtbench-3 产物根: 
+DONE
