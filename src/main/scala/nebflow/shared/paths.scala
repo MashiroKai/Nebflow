@@ -227,9 +227,16 @@ object PathUtil:
   // Single point: every data-root derivation must go through this value or the
   // Branding.homeDirName default — no scattered literals.
 
-  private var _machineRootOverride: Option[os.Path] = None
-  private var _effectiveOverride: Option[os.Path] = None
-  private var _layerCache: Option[nebflow.core.root.RootLayer] = None
+  // 两个覆盖位都在 setter 的 `synchronized` 里写、在无锁读路径上读 ⇒ 用 `@volatile` 保证可见性
+  // （与今日语义同：换根不是并发热切换机制，只是不许读线程看到撕裂/陈旧值）。
+  @volatile private var _machineRootOverride: Option[os.Path] = None
+  @volatile private var _effectiveOverride: Option[os.Path] = None
+
+  /**
+   * 有效根分档的进程级快照（`@volatile`：定案后是无锁读 —— `dataRoot` 是热路径，
+   * 全仓 490 处引用，不能为了一次性定档让每次取根都过锁）。`None` = 尚未定档。
+   */
+  @volatile private var _layerCache: Option[nebflow.core.root.RootLayer] = None
 
   /**
    * 平铺钉死语义（契约 §1）：一个值同时当机器层与有效根。**签名与可重复赋值语义不变** ——
@@ -268,16 +275,19 @@ object PathUtil:
    *
    * 单一事实来源：`dataRoot` 与 `RootLadder.current` 都读这里，避免两处缓存各自漂移。
    */
-  private[nebflow] def resolvedLayer: nebflow.core.root.RootLayer = synchronized {
+  private[nebflow] def resolvedLayer: nebflow.core.root.RootLayer =
     _layerCache match
-      case Some(layer) => layer
-      case None =>
-        val layer = _effectiveOverride match
-          case Some(pinned) => nebflow.core.root.RootLayer.Flat(machineRoot, pinned)
-          case None => nebflow.core.root.RootLadder.resolve(machineRoot)
-        _layerCache = Some(layer)
-        layer
-  }
+      case Some(layer) => layer // 快照命中：无锁（热路径）
+      case None => synchronized {
+          _layerCache match
+            case Some(layer) => layer
+            case None =>
+              val layer = _effectiveOverride match
+                case Some(pinned) => nebflow.core.root.RootLayer.Flat(machineRoot, pinned)
+                case None => nebflow.core.root.RootLadder.resolve(machineRoot)
+              _layerCache = Some(layer)
+              layer
+        }
 
   /**
    * 有效根（语义自本批起 = 有效根，契约 §1）：账号层根 / 未登录层根 / 平铺根。
