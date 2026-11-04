@@ -60,11 +60,23 @@ const SCOPES = [
 /** 常驻搜索条所属页（其余面的搜索入口零触碰）。 */
 const PAGE_IDS = ['messages', 'contacts'];
 
+/** 件七（作者令 2026-11-04 13:07「向上滚动内容的时候则收为悬浮在顶部右上角
+ *  的一个搜索按钮」）阈值算术**单源**：
+ *   · COLLAPSE_AT = 24px：内容上滚过 24px ⇒ 收起成右上浮钮；
+ *   · EXPAND_AT = 4px：滚回 4px 以内（回顶部）⇒ 再展开；
+ *   · 4..24 = **回滞带**，带内状态不翻转（防抖边：收/展各只有一次阈值穿越）。
+ *  断言侧读同一组常量（tests/mobile-search-flat.spec.mjs 判据 ②③）。 */
+const COLLAPSE_AT = 24;
+const EXPAND_AT = 4;
+/** 过渡锁：收起/展开动画期间不吃滚动翻转（≥ 样式侧 --mhsc-dur 280ms + 余量）。 */
+const STATE_LOCK_MS = 360;
+
 /**
  * @typedef {{
  *   pageId: string, dock: HTMLElement, bar: HTMLElement, input: HTMLInputElement,
  *   clear: HTMLButtonElement, scopeRow: HTMLElement|null, status: HTMLElement|null,
  *   results: HTMLElement|null, note: HTMLElement|null,
+ *   fab: HTMLElement|null, expandedHeight: number, stateLockUntil: number,
  * }} SearchBar
  */
 
@@ -258,11 +270,16 @@ function ensureBar(pageId) {
   const bar = {
     pageId, dock, bar: parts.row, input: parts.input, clear: parts.clear,
     scopeRow: null, status: null, results: null, note: null,
+    fab: null, expandedHeight: 0, stateLockUntil: 0,
   };
   if (pageId === 'messages') Object.assign(bar, fillMessagesBar(dock, parts));
   else fillContactsBar(dock, parts);
   body.insertBefore(dock, body.firstChild);
   if (typeof lucide !== 'undefined') createIconsIn(dock);
+  // 件七（2026-11-04）：收起浮钮 + 收起过渡收尾 + 页内滚动探针。
+  bar.fab = ensureSearchFab(bar);
+  bindDockTransition(bar);
+  bindPageScroll(bar);
   bars.set(pageId, bar);
   return bar;
 }
@@ -273,6 +290,7 @@ function destroyBar(pageId) {
   if (!bar) return;
   bars.delete(pageId);
   bar.dock.remove();
+  bar.fab?.remove();
   if (pageId === 'messages') {
     resetMsgSearch();
     msgStatus = null;
@@ -511,6 +529,95 @@ async function runSearch() {
     : `${t('mhsearch.noResults')} · ${t('mhsearch.noResultsHint')}`);
 }
 
+// ── 件七：滚动收起 / 右上浮钮（作者令 2026-11-04 13:07）─────────────────
+//
+// 形态（作者令逐字「向上滚动内容的时候则收为悬浮在顶部右上角的一个搜索按钮
+// 样式和主会话的一致」）：
+//   · 判据类 = .mh-search-collapsed（挂 .mh-search-dock）∪ 浮钮 .is-on；
+//     样式与过渡时长单源在 css/mobileSearchFlat.css，本模块零内联样式面
+//     （仅过渡期写 height 像素起点，见 setCollapsed）。
+//   · 浮钮视觉 = 主会话 #search-btn 同族（css/chat.css:146-174 档位），图标
+//     同一 lucide search 源（index.html #search-btn 用同一条 data-lucide）。
+//   · 收起过渡 = height 从实测像素连续收到 0；过渡结束回写 height:auto
+//     （展开态零钳制，面板重渲零漂移）。
+//   · 两页都要（消息 + 联系人）；有查询（.has-query）不自动收起 —— 否则
+//     结果场被收掉、「.has-query 让位 / 清空回列表」的既有语义被破坏。
+//   · 点浮钮 = 展开并聚焦输入框（可直接键入，判据 ⑥）。
+
+/** 建一枚收起浮钮（每页一枚，住在页面 section 直接子级：固定定位相对视口，
+ *  页面非 live 时随 section 的 visibility:hidden 自然退场；幂等）。 */
+function ensureSearchFab(bar) {
+  const section = pageSection(bar.pageId);
+  if (!section) return null;
+  let fab = /** @type {HTMLButtonElement|null} */ (section.querySelector(':scope > .mh-search-fab'));
+  if (!fab) {
+    fab = document.createElement('button');
+    fab.type = 'button';
+    fab.className = 'mh-search-fab';
+    fab.setAttribute('aria-label', bar.input.placeholder || 'search');
+    fab.title = bar.input.placeholder || 'search';
+    fab.innerHTML = '<i data-lucide="search"></i>';
+    if (typeof lucide !== 'undefined') createIconsIn(fab);
+    section.append(fab);
+  }
+  fab.addEventListener('click', () => {
+    setCollapsed(bar, false);
+    // 展开并聚焦：activeElement 命中 .mh-search-input，可直接键入（判据 ⑥）。
+    bar.input.focus();
+    logEvent('mh-search-fab', { page: bar.pageId });
+  });
+  return fab;
+}
+
+/** 收起/展开的唯一写点（样式态零第二实现）。
+ *  过渡起点必须是**像素实测量**（height:auto 不可插值）⇒ 收/展各写一次起点。 */
+function setCollapsed(bar, collapsed) {
+  const dock = bar.dock;
+  if (!dock.isConnected) return;
+  if (dock.classList.contains('mh-search-collapsed') === collapsed) return;
+  const startH = collapsed ? dock.offsetHeight : 0;
+  if (collapsed) bar.expandedHeight = startH;
+  const endH = collapsed ? 0 : (bar.expandedHeight || dock.scrollHeight || 52);
+  dock.style.height = `${startH}px`;
+  void dock.offsetHeight;                 // 先落起点（同步重排）再换终值
+  dock.classList.toggle('mh-search-collapsed', collapsed);
+  bar.fab?.classList.toggle('is-on', collapsed);
+  dock.style.height = `${endH}px`;
+  bar.stateLockUntil = performance.now() + STATE_LOCK_MS;
+}
+
+/** 过渡收尾：收/展动画结束回写 height:auto（零内联钳制；下次收起重新实测）。 */
+function bindDockTransition(bar) {
+  bar.dock.addEventListener('transitionend', (e) => {
+    if (e.target !== bar.dock || e.propertyName !== 'height') return;
+    bar.dock.style.height = '';
+  });
+}
+
+/** 页内滚动探针（scroll 不冒泡 ⇒ 挂 section 捕获相位；navController.bindRollProbe
+ *  同族纪律）。读数 = **真实滚动容器的** scrollTop（消息页 #fm-conversations /
+ *  联系人页 #fm-contacts-body；查询态结果场 .mh-search-results 由 has-query 闸挡掉）。
+ *  上滚过 COLLAPSE_AT(24) 收起；滚回 EXPAND_AT(4) 以内（回顶部）展开；
+ *  4..24 = 回滞带。防抖边四闸 = 过渡锁 / 有查询 / 焦点在条内 / 事件源非滚动容器。 */
+function bindPageScroll(bar) {
+  const section = pageSection(bar.pageId);
+  if (!section) return;
+  section.addEventListener('scroll', (e) => {
+    if (!bar.dock.isConnected) return;
+    const src = /** @type {HTMLElement|null} */ (e.target);
+    if (!src || src === section || typeof src.scrollTop !== 'number') return;
+    const y = src.scrollTop;
+    const collapsed = bar.dock.classList.contains('mh-search-collapsed');
+    if (performance.now() < bar.stateLockUntil) return;
+    if (bar.dock.classList.contains('has-query') || document.activeElement === bar.input) return;
+    if (!collapsed) {
+      if (y > COLLAPSE_AT) setCollapsed(bar, true);
+    } else if (y <= EXPAND_AT) {
+      setCollapsed(bar, false);
+    }
+  }, { capture: true, passive: true });
+}
+
 // ── 生命周期 ─────────────────────────────────────────────────────────
 
 export function activateSocialSearch() {
@@ -536,6 +643,11 @@ export function activateSocialSearch() {
       bar.input.setAttribute('aria-label', bar.input.placeholder);
       bar.clear.title = t('mhsearch.clear');
       bar.clear.setAttribute('aria-label', t('mhsearch.clear'));
+      // 件七：收起浮钮的无障碍名随语言面同拍。
+      if (bar.fab) {
+        bar.fab.setAttribute('aria-label', bar.input.placeholder);
+        bar.fab.title = bar.input.placeholder;
+      }
       bar.scopeRow?.querySelectorAll('.mh-scope-chip').forEach((c) => {
         const def = SCOPES.find((s) => s.value === (/** @type {HTMLElement} */ (c)).dataset.scope);
         if (def) c.textContent = t(def.labelKey);

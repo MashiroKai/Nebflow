@@ -3841,7 +3841,7 @@ function renderAttachmentFace(att, opts) {
     wrap.setAttribute('role', 'button');
     wrap.tabIndex = 0;
     if (o.ariaLabel) wrap.setAttribute('aria-label', o.ariaLabel);
-    wrap.addEventListener('click', o.onClick);
+    wrap.addEventListener('click', /** @type {EventListener} */ (/** @type {any} */ (o.onClick)));
     wrap.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); o.onClick(e); }
     });

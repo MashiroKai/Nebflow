@@ -2017,8 +2017,11 @@ function buildMediaAttachmentCard(att, kind, name, src) {
   const face = buildMediaFlat(item, { onOpen: null, corner: dlBtn });
   card.appendChild(face);
   if (kind === 'device') appendDeviceExtras(card, att, kind);
-  const els = (face.popFaces && face.popFaces[0] && face.popFaces[0].els.length)
-    ? face.popFaces[0].els
+  // checkJs：`popFaces` 是卡语言组件挂在面元素上的句柄（见 popArtifacts.js:739 的
+  // `area.popFaces = …`），断言面只放行类型，运行期仍是同一枚 DOM 节点。
+  const faceAny = /** @type {any} */ (face);
+  const els = (faceAny.popFaces && faceAny.popFaces[0] && faceAny.popFaces[0].els.length)
+    ? faceAny.popFaces[0].els
     : [face.querySelector('img, video')].filter(Boolean);
   attachMediaBytes(card, att, kind, src, els, { video: item.kind === 'video' });
   // 可点判据（与改前逐字同表）：`ready` / 设备有本机件；`uploading` 乐观面**不挂**
@@ -2295,6 +2298,8 @@ function paintInlineFrame(img, url, dims) {
  *  @param {string} kind `attStateOf` 的结果（`ready` / `device` / …）
  *  @param {{kind:'blob',file:File}|{kind:'path',path:string}|{kind:'none'}} [src] 设备面字节源
  *    （调用方 `attachmentCard` 已算好；缺席时本函数自算，**同一单点**）
+ *  @param {HTMLImageElement} [imgEl] 出帧媒体面（`buildMediaFlat` 面内那枚；缺席 ⇒
+ *    本函数直接返回 false，见函数体首行守卫——仅为 checkJs 参数序放行而标注可选）
  *  @returns {boolean} 是否挂了直显槽
  *
  *  ── ③ 预览盒（作者 2026-09-19 01:29 令：**按原图真实宽高比**；fm-att-card-unify 批

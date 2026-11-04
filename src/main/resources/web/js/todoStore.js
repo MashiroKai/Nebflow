@@ -240,7 +240,7 @@ export const todoStore = {
   createTag, updateTag, deleteTag, reorderTag,
   subscribe,
   /** 测试缝：确定性种子（shots 夹具用；__ 前缀 = 非产品路径）。 */
-  __seed({ tagList, itemList, order } = {}) {
+  __seed({ tagList, itemList, order } = /** @type {any} */ ({})) {
     if (Array.isArray(tagList)) {
       tags = tagList.map((x) => ({ id: String(x.id), name: String(x.name), color: String(x.color) }));
       tagOrder = tags.map((x) => x.id);
