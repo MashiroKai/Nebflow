@@ -1,0 +1,58 @@
+
+=== side-tab-legibility · engine=chromium · web=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-47a71c60/src/main/resources/web · out=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-47a71c60/evidence/side-tab-legibility ===
+PASS  [chromium/dark]  G0 三签几何在位  — on=side-b 邻签=side-a(side-l),side-c(side-r)
+PASS  [chromium/dark]  G1 perspective 生效（转盘有空间感）  — perspective=1200px
+PASS  [chromium/dark]  L1 邻签文字对比度 ≥4.5:1 · side-a  — 代表点(设备px 0,21 / CSS 95.67,44.34) fg=#d2d4d8 bg=#151a22 比值=11.764:1；字形核 56px 中位=10.522:1 最小=9.181:1 最大=11.764:1（≥4.5 占 56/56）
+PASS  [chromium/dark]  L1 邻签文字对比度 ≥4.5:1 · side-c  — 代表点(设备px 20,20 / CSS 278.78,42.09) fg=#d1d3d7 bg=#151a22 比值=11.648:1；字形核 43px 中位=10.383:1 最小=9.605:1 最大=11.648:1（≥4.5 占 43/43）
+PASS  [chromium/dark]  L1b 中签文字对比度 ≥4.5:1（未被邻签改动带坏）  — 代表点(设备px 12,8 / CSS 154,33.7) fg=#e8eaed bg=#161a23 比值=14.445:1 核中位=14.445:1
+PASS  [chromium/dark]  L2① 无横跨签条的底色/遮罩盒子（带 background/backdrop 的盒子不越出自己那枚签）  — 带底盒子 3 个：chip[side-a]::after=54.55px / chip[side-b]::after=117.7px / chip[side-c]::after=54.55px；越界=0
+PASS  [chromium/dark]  L2② 条本体零底色零 backdrop（不是遮罩元素）  — strip bgImage=none bgAlpha=0 backdrop=none
+PASS  [chromium/dark]  L2③ 渐隐只落在 label / 签 ::after 的 mask 上（+ 条边 14px 羽化），宿主签本体零 mask  — 带 mask 面：.mf-strip / chip[side-a]::after / chip[side-a] > mf-strip-label / chip[side-c]::after / chip[side-c] > mf-strip-label；宿主带 mask 的签=0
+PASS  [chromium/dark]  L2④ 邻签渐隐在内容层（label 与 ::after 都是方向 linear-gradient），非覆盖条  — side-a label=lg after=lg / side-c label=lg after=lg
+PASS  [chromium/dark]  L2⑤ 中签两向都清晰（label mask=none，11:23 既有裁定不破）  — 中签 labelMask=none
+PASS  [chromium/dark]  L2⑥ 条边 14px 羽化带与可见签渲染盒零交集  — 可见签 x/right：side-a:66.42/120.97 side-b:128.65/246.35 side-c:254.03/308.58（羽化带 0–14 / 361–375）
+PASS  [chromium/dark]  L2⑦ 宿主签本体零底色（玻璃材质只在 ::after；UA 默认 buttonface 必须归零）  — 宿主 backgroundColor=rgba(0, 0, 0, 0)；bgImage=none；borderW=0px
+PASS  [chromium/dark]  L2⑧ 基础档跟手位移（--sdx → 位移链）生效（reduce 档须逐项同构的基准读数）  — --sdx=-30px ⇒ Δtx=-30px（tx -53.5→-83.5）
+PASS  [chromium/dark]  L3① computed transition-duration ≤300ms  — 邻签 transition-duration=0.28s, 0.22s, 0.22s, 0.22s | 0.28s, 0.22s, 0.22s, 0.22s（property=transform, opacity, filter, max-width）⇒ 280ms
+PASS  [chromium/dark]  L3② 邻签实测 rotateY 分量 |θ| ≈ 24°（matrix3d 按 m22 归一化反解）  — side-a:24°(--rrot=24.0deg, --rsc=0.870) / side-c:-24°(--rrot=-24.0deg, --rsc=0.870)；中签 θ=0°
+PASS  [chromium/dark]  L3③ 一次切换的墙钟耗时（触发 → transform transitionend）≈280ms 且不超 340ms  — transform transitionend @ 284ms（该次切换全部 transitionend：filter@225.8ms/elapsed 220ms max-width@225.8ms/elapsed 220ms opacity@225.8ms/elapsed 220ms transform@284ms/elapsed 280ms transform@284ms/elapsed 280ms）
+PASS  [chromium/dark]  L5 起手/落定两帧确有变化（切换真的发生）  — 起手帧 vs 落定帧 差异像素 8.81%（阈值 >1%）
+PASS  [chromium/dark]  L5 中间帧 ≥3 帧（旋转进行中，与起手/落定帧都不同）  — 6 帧中间态 / 共连拍 8 帧：49.2ms(起6.54%/落5.11%) 90.9ms(起8.01%/落4.93%) 142.2ms(起7.68%/落4.33%) 184.2ms(起8.18%/落3.18%) 221.6ms(起9.01%/落2.46%) 278.8ms(起8.82%/落1.46%) 333.2ms(起8.81%/落0%) 373.1ms(起8.81%/落0%)
+PASS  [chromium/dark]  L6 中/邻签 11 项视觉属性逐项相等（样式同源，唯一差异面 = 渐隐 mask）  — 差异键=无
+PASS  [chromium/dark]  E 零 pageerror  — 0
+PASS  [chromium/light]  G0 三签几何在位  — on=side-b 邻签=side-a(side-l),side-c(side-r)
+PASS  [chromium/light]  G1 perspective 生效（转盘有空间感）  — perspective=1200px
+PASS  [chromium/light]  L1 邻签文字对比度 ≥4.5:1 · side-a  — 代表点(设备px 0,21 / CSS 95.67,44.34) fg=#31343b bg=#fafafb 比值=11.948:1；字形核 54px 中位=9.467:1 最小=7.055:1 最大=11.948:1（≥4.5 占 54/54）
+PASS  [chromium/light]  L1 邻签文字对比度 ≥4.5:1 · side-c  — 代表点(设备px 20,20 / CSS 278.78,42.09) fg=#33363d bg=#fafafb 比值=11.598:1；字形核 43px 中位=8.791:1 最小=6.946:1 最大=11.598:1（≥4.5 占 43/43）
+PASS  [chromium/light]  L1b 中签文字对比度 ≥4.5:1（未被邻签改动带坏）  — 代表点(设备px 12,8 / CSS 154,33.7) fg=#1b1e26 bg=#fafbfc 比值=16.083:1 核中位=16.083:1
+PASS  [chromium/light]  L2① 无横跨签条的底色/遮罩盒子（带 background/backdrop 的盒子不越出自己那枚签）  — 带底盒子 3 个：chip[side-a]::after=54.55px / chip[side-b]::after=117.7px / chip[side-c]::after=54.55px；越界=0
+PASS  [chromium/light]  L2② 条本体零底色零 backdrop（不是遮罩元素）  — strip bgImage=none bgAlpha=0 backdrop=none
+PASS  [chromium/light]  L2③ 渐隐只落在 label / 签 ::after 的 mask 上（+ 条边 14px 羽化），宿主签本体零 mask  — 带 mask 面：.mf-strip / chip[side-a]::after / chip[side-a] > mf-strip-label / chip[side-c]::after / chip[side-c] > mf-strip-label；宿主带 mask 的签=0
+PASS  [chromium/light]  L2④ 邻签渐隐在内容层（label 与 ::after 都是方向 linear-gradient），非覆盖条  — side-a label=lg after=lg / side-c label=lg after=lg
+PASS  [chromium/light]  L2⑤ 中签两向都清晰（label mask=none，11:23 既有裁定不破）  — 中签 labelMask=none
+PASS  [chromium/light]  L2⑥ 条边 14px 羽化带与可见签渲染盒零交集  — 可见签 x/right：side-a:66.42/120.97 side-b:128.65/246.35 side-c:254.03/308.58（羽化带 0–14 / 361–375）
+PASS  [chromium/light]  L2⑦ 宿主签本体零底色（玻璃材质只在 ::after；UA 默认 buttonface 必须归零）  — 宿主 backgroundColor=rgba(0, 0, 0, 0)；bgImage=none；borderW=0px
+PASS  [chromium/light]  L2⑧ 基础档跟手位移（--sdx → 位移链）生效（reduce 档须逐项同构的基准读数）  — --sdx=-30px ⇒ Δtx=-30px（tx -53.5→-83.5）
+PASS  [chromium/light]  L3① computed transition-duration ≤300ms  — 邻签 transition-duration=0.28s, 0.22s, 0.22s, 0.22s | 0.28s, 0.22s, 0.22s, 0.22s（property=transform, opacity, filter, max-width）⇒ 280ms
+PASS  [chromium/light]  L3② 邻签实测 rotateY 分量 |θ| ≈ 24°（matrix3d 按 m22 归一化反解）  — side-a:24°(--rrot=24.0deg, --rsc=0.870) / side-c:-24°(--rrot=-24.0deg, --rsc=0.870)；中签 θ=0°
+PASS  [chromium/light]  L3③ 一次切换的墙钟耗时（触发 → transform transitionend）≈280ms 且不超 340ms  — transform transitionend @ 290.1ms（该次切换全部 transitionend：filter@230.9ms/elapsed 220ms max-width@230.9ms/elapsed 220ms opacity@230.9ms/elapsed 220ms transform@290.1ms/elapsed 280ms transform@290.1ms/elapsed 280ms）
+PASS  [chromium/light]  L5 起手/落定两帧确有变化（切换真的发生）  — 起手帧 vs 落定帧 差异像素 5.87%（阈值 >1%）
+PASS  [chromium/light]  L5 中间帧 ≥3 帧（旋转进行中，与起手/落定帧都不同）  — 6 帧中间态 / 共连拍 8 帧：44.9ms(起5.58%/落3.81%) 94.3ms(起6.05%/落3.79%) 135.1ms(起6.13%/落3.24%) 178.8ms(起6.1%/落2.43%) 218.7ms(起6.11%/落1.97%) 260.4ms(起5.92%/落1.36%) 300.8ms(起5.87%/落0.01%) 340.9ms(起5.87%/落0%)
+PASS  [chromium/light]  L6 中/邻签 11 项视觉属性逐项相等（样式同源，唯一差异面 = 渐隐 mask）  — 差异键=无
+PASS  [chromium/light]  E 零 pageerror  — 0
+PASS  [chromium/dark/reduce]  L4① reduce ⇒ computed transform 退化为 2D matrix()（无 matrix3d ⇒ 无 rotateY 分量）  — 中签=matrix(1.1, 0, 0, 1.1, -53.5, -16) 邻签=matrix(0.87, 0, 0, 0.87, -126.5, -16) | matrix(0.87, 0, 0, 0.87, 60.5, -16)
+PASS  [chromium/dark/reduce]  L4② reduce ⇒ 旋转不生效（--rrot 仍被 JS 写入但不进 transform）  — --rrot 仍写：side-a=24.0deg,side-c=-24.0deg；transform 含 matrix3d=false
+PASS  [chromium/dark/reduce]  L4③ reduce ⇒ 切签仍生效（活动签真的换了）  — side-b → side-c
+PASS  [chromium/dark/reduce]  L4④ reduce ⇒ 位移仍生效（切签过程位移插值：过渡期内 ≥1 帧中间态）  — 起手 vs 落定 11.25%；中间态 5 帧（23.2ms:起9.01%/落7.61% 40.7ms:起10.05%/落6.97% 65.3ms:起10.11%/落5.16% 81.2ms:起9.97%/落4.6% 98.3ms:起10.04%/落4.11%）
+PASS  [chromium/dark/reduce]  L4⑤ reduce ⇒ 手势跟手位移（--sdx）仍在位移链里（退化为无旋转，不是无位移）  — --sdx=-30px ⇒ Δtx=-30px（期望 -30±1.2；归零后 Δ=0）tx -53.55→-83.55→-53.55
+PASS  [chromium/dark/reduce]  E reduce 零 pageerror  — 0
+PASS  [chromium/light/reduce]  L4① reduce ⇒ computed transform 退化为 2D matrix()（无 matrix3d ⇒ 无 rotateY 分量）  — 中签=matrix(1.1, 0, 0, 1.1, -53.5, -16) 邻签=matrix(0.87, 0, 0, 0.87, -126.5, -16) | matrix(0.87, 0, 0, 0.87, 60.5, -16)
+PASS  [chromium/light/reduce]  L4② reduce ⇒ 旋转不生效（--rrot 仍被 JS 写入但不进 transform）  — --rrot 仍写：side-a=24.0deg,side-c=-24.0deg；transform 含 matrix3d=false
+PASS  [chromium/light/reduce]  L4③ reduce ⇒ 切签仍生效（活动签真的换了）  — side-b → side-c
+PASS  [chromium/light/reduce]  L4④ reduce ⇒ 位移仍生效（切签过程位移插值：过渡期内 ≥1 帧中间态）  — 起手 vs 落定 10.06%；中间态 5 帧（23.1ms:起9.19%/落6.14% 49.8ms:起9.58%/落4.95% 73.9ms:起9.42%/落3.94% 94ms:起9.32%/落3.3% 114.8ms:起9.27%/落3%）
+PASS  [chromium/light/reduce]  L4⑤ reduce ⇒ 手势跟手位移（--sdx）仍在位移链里（退化为无旋转，不是无位移）  — --sdx=-30px ⇒ Δtx=-30px（期望 -30±1.2；归零后 Δ=0）tx -53.55→-83.55→-53.55
+PASS  [chromium/light/reduce]  E reduce 零 pageerror  — 0
+
+--- chromium: 52 PASS / 0 FAIL ---
+READINGS: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-47a71c60/evidence/side-tab-legibility/readings-chromium.json
+RESULT: GREEN

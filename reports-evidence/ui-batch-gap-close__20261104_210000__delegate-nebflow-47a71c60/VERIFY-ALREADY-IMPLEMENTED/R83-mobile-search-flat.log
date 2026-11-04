@@ -1,0 +1,6 @@
+
+Running 1 test using 1 worker
+
+  ✓  1 tests/mobile-search-flat.spec.mjs:328:1 › mobile-search-flat: messages + contacts（六组判据，双页同源） (8.0s)
+
+  1 passed (9.2s)

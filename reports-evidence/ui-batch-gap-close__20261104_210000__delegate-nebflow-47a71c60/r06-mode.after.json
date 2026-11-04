@@ -1,0 +1,15 @@
+{
+  "beforeX": "none",
+  "mode": {
+    "rowDeleting": true,
+    "trashArmed": "true",
+    "xCount": 4,
+    "xDisplays": [
+      "flex",
+      "flex",
+      "flex",
+      "flex"
+    ],
+    "chipCount": 4
+  }
+}
