@@ -1,0 +1,52 @@
+[cmp] report entries=104 aggregate entries=104
+[cmp] entry digest mismatches: 37
+[cmp] report files=556912
+[cmp]   verified 100000/556912 files…
+[cmp]   verified 200000/556912 files…
+[cmp]   verified 300000/556912 files…
+[cmp]   verified 400000/556912 files…
+[cmp]   verified 500000/556912 files…
+[cmp] file digest mismatches: 0
+[cmp] unlisted files in target: 0
+
+[cmp] FAIL — 42 problem(s):
+   .plugin-presence.json: entry sha256 report=8b576fbd4024 agg=6fcc738eacc8
+   .plugin-staging: kind report=dir agg=D
+   .plugin-staging: entry sha256 report=e3b0c44298fc agg=n/a
+   .stats.json: entry sha256 report=686ad3019432 agg=7355fd52d0f3
+   NEBFLOW.md: entry sha256 report=2c14031b0a5c agg=3da4e6cf0d71
+   README.md: entry sha256 report=2d057dcf8928 agg=0a58f2ec9328
+   Soul.md: entry sha256 report=f50e4a5031e8 agg=19202ef718f7
+   User.md: entry sha256 report=89ae28340286 agg=15c29e942281
+   attach-uploads: kind report=dir agg=D
+   attach-uploads: entry sha256 report=e3b0c44298fc agg=n/a
+   backups: entry sha256 report=873c7f1a32fc agg=4fafd5709bdc
+   backups: bytes report=958987950 agg=958986008
+   base-drift.json: entry sha256 report=977068a41cdd agg=ed14d260c84e
+   canvas_tabs.json: entry sha256 report=900190bd3aa9 agg=c6dd2aad4f85
+   card-design-prompt.md: entry sha256 report=635b05b65a82 agg=47b62eaa6b0e
+   card-templates: kind report=dir agg=D
+   card-templates: entry sha256 report=e3b0c44298fc agg=n/a
+   friend-remarks.json: entry sha256 report=2cfc8c522b63 agg=7bfd626e810e
+   input_history.jsonl: entry sha256 report=eaf19a4a3380 agg=a43e2c962819
+   install-manifest.json: entry sha256 report=601ad6997ff2 agg=c3dc57f31004
+   mail-dedup.json: entry sha256 report=8c9637855fdb agg=1b7b094a939e
+   mailbox-reconcile.json: entry sha256 report=9f50468e2385 agg=41b78e5270e4
+   memory.md: entry sha256 report=f7463b2b4278 agg=729d3f81c9b4
+   merge-ledger.json: entry sha256 report=35092c5b656e agg=c1f49495acac
+   onboarding.json: entry sha256 report=976b7e1d2804 agg=74b62ef54063
+   peer-descriptions.json: entry sha256 report=ca3d163bab05 agg=139753851dda
+   pending-asks.json: entry sha256 report=1fefbfcde237 agg=1535a22d2f3b
+   portal-uplink-deadletter: kind report=dir agg=D
+   portal-uplink-deadletter: entry sha256 report=e3b0c44298fc agg=n/a
+   preferences.json: entry sha256 report=48a75d3186ab agg=19663f6a4531
+   projects: entry sha256 report=a9cc00a8631b agg=b5bebe5743b6
+   projects: bytes report=19116619468 agg=19103139000
+   search-index: kind report=dir agg=D
+   search-index: entry sha256 report=e3b0c44298fc agg=n/a
+   stt-config.json.bak: entry sha256 report=5b3437606489 agg=1cff34d2d2d7
+   tasks-history.jsonl: entry sha256 report=a6e29d36e3b0 agg=532325d4e920
+   tasks-v2-history.jsonl: entry sha256 report=c35631f1a038 agg=d3f4e6c3289e
+   tasks-v2.json: entry sha256 report=386565d47c44 agg=1fb0b427a3a9
+   tasks.json: entry sha256 report=560b959ab2b0 agg=41f8491252f1
+   tts-config.json: entry sha256 report=d45c95df2884 agg=c710e2def0ea

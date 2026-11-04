@@ -1,0 +1,38 @@
+[bigroot] rehearsal root = /Volumes/rehearsal/root
+[bigroot] pre-migrate ladder = flat (effective=/Volumes/rehearsal/root), PathUtil.dataRoot=/Volumes/rehearsal/root
+  PASS  pre-migrate ladder is flat (no layout.json) - flat
+  PASS  pre-migrate effective root == machine root 
+[bigroot] top-level entries before migrate = 105
+Exception in thread "main" java.nio.file.NoSuchFileException: /Volumes/rehearsal/root/backups/pre-migrate-20261010T100730/projects/slideblocks/.nebflow/Agent.md
+	at java.base/sun.nio.fs.UnixException.translateToIOException(UnixException.java:92)
+	at java.base/sun.nio.fs.UnixException.rethrowAsIOException(UnixException.java:106)
+	at java.base/sun.nio.fs.UnixException.rethrowAsIOException(UnixException.java:111)
+	at java.base/sun.nio.fs.UnixFileSystemProvider.newByteChannel(UnixFileSystemProvider.java:262)
+	at java.base/java.nio.file.Files.newByteChannel(Files.java:380)
+	at java.base/java.nio.file.Files.newByteChannel(Files.java:432)
+	at java.base/java.nio.file.spi.FileSystemProvider.newInputStream(FileSystemProvider.java:420)
+	at java.base/java.nio.file.Files.newInputStream(Files.java:160)
+	at os.Path.getInputStream(Path.scala:594)
+	at os.read$bytes$.apply(ReadWriteOps.scala:274)
+	at nebflow.core.root.RootLayout$.copyTree(RootLayout.scala:226)
+	at nebflow.core.root.RootLayout$.copyTree$$anonfun$2(RootLayout.scala:224)
+	at scala.collection.immutable.List.map(List.scala:251)
+	at nebflow.core.root.RootLayout$.copyTree(RootLayout.scala:224)
+	at nebflow.core.root.RootLayout$.copyTree$$anonfun$2(RootLayout.scala:224)
+	at scala.collection.immutable.List.map(List.scala:251)
+	at nebflow.core.root.RootLayout$.copyTree(RootLayout.scala:224)
+	at nebflow.core.root.RootLayout$.copyTree$$anonfun$2(RootLayout.scala:224)
+	at scala.collection.immutable.List.map(List.scala:251)
+	at nebflow.core.root.RootLayout$.copyTree(RootLayout.scala:224)
+	at nebflow.core.root.RootLayout$.copyTree$$anonfun$2(RootLayout.scala:224)
+	at scala.collection.immutable.List.map(List.scala:251)
+	at nebflow.core.root.RootLayout$.copyTree(RootLayout.scala:224)
+	at nebflow.core.root.RootLayout$.copyTree$$anonfun$2(RootLayout.scala:224)
+	at scala.collection.immutable.List.map(List.scala:251)
+	at nebflow.core.root.RootLayout$.copyTree(RootLayout.scala:224)
+	at nebflow.core.root.RootLayout$.$anonfun$4(RootLayout.scala:97)
+	at scala.collection.immutable.List.map(List.scala:251)
+	at nebflow.core.root.RootLayout$.migrate(RootLayout.scala:93)
+	at nebflow.core.dataroot.RehearsalDriver$.bigroot(RehearsalDriver.scala:86)
+	at nebflow.core.dataroot.RehearsalDriver$.main(RehearsalDriver.scala:35)
+	at nebflow.core.dataroot.RehearsalDriver.main(RehearsalDriver.scala)
