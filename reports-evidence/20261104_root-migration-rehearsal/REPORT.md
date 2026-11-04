@@ -269,7 +269,7 @@ find ~/.stand -type l ! -exec test -e {} \; -print    # 列出全部断链（读
    ps -p <pid> -o pid,etime,command
    ```
    **期望**：(a) 无输出；(b) 项目/账本照旧；(c) 新进程活着。
-5. **（可选）日志抽查**：不应出现 `[migrate]`、`ROOT-POINTER-DAMAGED`、`UNAUTHENTICATED-LAYER` 行。出现 `[migrate]` ⇒ 立即按 §8.5 处置（该行只可能来自本次未合入的接线批）。
+5. **（可选）日志抽查**：不应出现 `[migrate]`、`ROOT-POINTER-DAMAGED`、`UNAUTHENTICATED-LAYER` 行。若出现 `[migrate]` ⇒ 说明有别的批把迁移接线合进来了，按 §5.4 的容错口径核（不写 `layout.json` ⇒ 仍是 flat），并清掉 `pending-claim/` 残片后再回来复核本 checklist。
 
 > 判据总结：**重启前后 `ls` 的六个布局物都必须为空，且 `~/.stand/projects` 内容不变** ⇒ 证明零行为变化。
 
