@@ -1,4 +1,10 @@
+---
+type: process
+status: superseded
+---
 # llm-provider 可信基化第一段：审计范围计划（开工第一动作）
+
+> 过程件。正式交付件见 [[20261104_230447_scala-llm-provider-audit-redesign__delegate-nebflow-0bd60c6b]]；轮 B guard 档背景见 [[20261104_152049_scala-db-wiring-plan-phase1__delegate-nebflow-678885ee]]。
 
 - 类型：过程件（审计计划，非交付件）
 - 轮次：零代码轮——只出全貌审计件 + 重筑设计方案；实现=作者过目后的第二段
