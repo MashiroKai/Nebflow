@@ -6,7 +6,7 @@ import io.circe.parser.parse
 import nebflow.shared.Defaults
 import os.Path
 
-case class GatewayConfig(host: Host, port: Port)
+case class GatewayConfig(host: Host, port: Port, portVia: String = "brand default port")
 
 object GatewayConfig:
   private val DefaultHost: Host = Host.fromString("0.0.0.0").get
@@ -63,25 +63,62 @@ object GatewayConfig:
   private def bindable(p: Port): Option[Port] = if p.value > 0 then Some(p) else None
 
   private[nebflow] def resolvePort(
-      cliOverride: Option[Int],
-      envValue: Option[String],
-      configPort: Option[Int]
+    cliOverride: Option[Int],
+    envValue: Option[String],
+    configPort: Option[Int]
   ): Port =
-    cliOverride
-      .flatMap(Port.fromInt)
-      .flatMap(bindable)
-      .orElse(envValue.flatMap(_.toIntOption).flatMap(Port.fromInt).flatMap(bindable))
-      .orElse(configPort.flatMap(Port.fromInt).flatMap(bindable))
-      .getOrElse(DefaultPort)
+    resolvePortVerdict(cliOverride, envValue, configPort, overridden = false) match
+      case nebflow.shared.InstanceScope.PortVerdict.Resolved(p, _, _) => Port.fromInt(p).get
+      case nebflow.shared.InstanceScope.PortVerdict.Refused(_) => DefaultPort
 
-  def load: IO[GatewayConfig] = IO.delay {
+  /**
+   * 端口解析链的**唯一实现**（隔离实例误伤批 2026-11-04 §2 收口）：
+   * 委托 [[nebflow.shared.InstanceScope.decide]]——与 CLI 侧 `GatewayClient.readPort`
+   * 同链同序（单一口径，不另抄一份）。`overridden` = 数据根不是默认根：
+   *   · 默认根：`--port` > env > config `port` > 品牌缺省口（历史行为逐字不变）；
+   *   · 被覆盖（隔离实例）：`--port` > 该根的 config `port` > **拒绝**——
+   *     继承来的 env 端口不算显式（WARN 点名），品牌缺省口绝不静默兜底。
+   */
+  private[nebflow] def resolvePortVerdict(
+    cliOverride: Option[Int],
+    envValue: Option[String],
+    configPort: Option[Int],
+    overridden: Boolean
+  ): nebflow.shared.InstanceScope.PortVerdict =
+    nebflow.shared.InstanceScope.decide(
+      nebflow.shared.InstanceScope.PortInputs(
+        cliPort = cliOverride,
+        envPortName = s"${nebflow.shared.Branding.envPrefix}_GATEWAY_PORT",
+        envPort = envValue,
+        configPort = configPort,
+        sourceName = nebflow.shared.Branding.configFileName,
+        brandDefaultPort = Defaults.brandDefaultPort,
+        root = nebflow.shared.PathUtil.dataRoot,
+        overridden = overridden
+      )
+    )
+
+  private def build(): GatewayConfig =
     // L3 rebrand compat: dual-prefix env read (brand prefix first, legacy
     // NEBFLOW_ fallback) — identical prefixes collapse to one variable.
     val host = nebflow.shared.Branding
       .env("GATEWAY_HOST")
       .flatMap(Host.fromString)
       .getOrElse(DefaultHost)
-    val port = resolvePort(_portOverride, nebflow.shared.Branding.env("GATEWAY_PORT"), configFilePort())
-    GatewayConfig(host, port)
-  }
+    val caller = nebflow.shared.InstanceScope.liveCaller
+    resolvePortVerdict(
+      _portOverride,
+      nebflow.shared.Branding.env("GATEWAY_PORT"),
+      configFilePort(),
+      caller.overridden
+    ) match
+      case nebflow.shared.InstanceScope.PortVerdict.Resolved(p, via, warnings) =>
+        warnings.foreach(w => System.err.println(w))
+        GatewayConfig(host, Port.fromInt(p).get, via)
+      case nebflow.shared.InstanceScope.PortVerdict.Refused(reason) =>
+        // fail-closed：隔离实例没有自己的端口声明时绝不抢品牌缺省口。
+        throw new nebflow.shared.PortRefusal(reason)
+  end build
+
+  def load: IO[GatewayConfig] = IO.delay(build())
 end GatewayConfig

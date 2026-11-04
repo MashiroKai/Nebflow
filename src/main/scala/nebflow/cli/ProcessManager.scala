@@ -2,7 +2,7 @@ package nebflow.cli
 
 import cats.effect.IO
 import nebflow.gateway.StaleProcessGuard
-import nebflow.shared.PathUtil
+import nebflow.shared.{InstanceScope, PathUtil}
 
 import scala.collection.mutable.ListBuffer
 
@@ -55,10 +55,18 @@ object ProcessManager:
     pollMs: Long = 100L,
     metaRead: () => Option[PidMeta.Meta] = () => PidMeta.read(),
     startInstantMs: Long => Option[Long] = ProcessManager.processStartInstantMs,
-    gatewayPortOverride: Option[Int] = None
+    gatewayPortOverride: Option[Int] = None,
+    /**
+     * 目标 pid 的 home 归属证明（隔离实例误伤批 2026-11-04 §1）—— 默认走
+     * [[InstanceScope.proveHome]] 的四条腿：`--home`（引擎 daemon 子进程恒带）、
+     * `-Duser.home`、命令行里出现本根路径、本根 `.pid` 记账。spec 注入即零真实信号。
+     */
+    homeProof: (Long, Option[String]) => InstanceScope.HomeProof = (pid, cmd) =>
+      InstanceScope.proveHome(cmd, pid, PathUtil.dataRoot.toString, ProcessManager.readPid())
   )
 
   sealed trait StopOutcome
+
   object StopOutcome:
     case object NotRunning extends StopOutcome
     final case class Stopped(message: String) extends StopOutcome
@@ -123,14 +131,28 @@ object ProcessManager:
         case Right(pid) =>
           deps.readCmd(pid) match
             case Some(cmd) if StaleProcessGuard.isNebflowCommandLine(cmd) =>
-              IO.blocking(stopVerified(pid, cmd, opts, deps))
+              homeGate(pid, Some(cmd), deps) match
+                case Some(refusal) => IO.pure(StopOutcome.Refused(refusal))
+                case None => IO.blocking(stopVerified(pid, cmd, opts, deps))
             case Some(cmd) =>
               IO.pure(StopOutcome.Refused(refusalLine(pid, Some(cmd))))
             case None =>
               // Command line unreadable on every leg (Windows foreign-pid
               // shape, or a hardened sandbox) — degraded identity chain.
-              degradedOutcome(pid, opts, deps)
+              homeGate(pid, None, deps) match
+                case Some(refusal) => IO.pure(StopOutcome.Refused(refusal))
+                case None => degradedOutcome(pid, opts, deps)
       }
+
+  /**
+   * home 归属门（隔离实例误伤批 2026-11-04 §1）：目标 pid 的有效 home 必须先证明是
+   * 本次调用的 home R，否则**拒绝且零信号**——这正是今日事故的形状（隔离 canary 把
+   * 生产实例当成自家实例停掉）。判据单一来源 [[InstanceScope.homeRefusal]]；
+   * home 不一致 / 无法判定都落到 Refused（fail-closed，`--force` 也不绕过：
+   * 它不是「所有权」问题，是「这不是你的实例」）。
+   */
+  private def homeGate(pid: Long, cmd: Option[String], deps: StopDeps): Option[String] =
+    InstanceScope.homeRefusal(deps.homeProof(pid, cmd), PathUtil.dataRoot.toString, failClosedWhenUnknown = true)
 
   /** The piece-1 refusal line — single spelling, reused by both branches. */
   private def refusalLine(pid: Long, cmd: Option[String]): String =
@@ -238,11 +260,18 @@ object ProcessManager:
             val metaState = meta match
               case None => "no .pid.meta"
               case Some(m) =>
-                s".pid.meta startedBy=${m.startedBy}${if m.pid.contains(pid) then "" else s" names pid ${m.pid.getOrElse("-")}"}" +
+                s".pid.meta startedBy=${m.startedBy}${
+                    if m.pid.contains(pid) then "" else s" names pid ${m.pid.getOrElse("-")}"
+                  }" +
                   s"${if m.startedAt.isEmpty then " without startedAt" else ""}"
             s"no pid-meta/start-time identity ($metaState) and the pid does not listen on the " +
-              s"gateway port $gatewayPort (listening: ${if listeningPorts.isEmpty then "none" else listeningPorts.sorted.mkString(",")})"
+              s"gateway port $gatewayPort (listening: ${
+                  if listeningPorts.isEmpty then "none" else listeningPorts.sorted.mkString(",")
+                })"
         DegradedIdentity.Refused(why)
+      end if
+    end if
+  end degradedIdentity
 
   /** Start-time match tolerance: the meta is written seconds after spawn; 10 min absorbs slow boots. */
   private[cli] val DegradedToleranceMs: Long = 600_000L
@@ -254,49 +283,80 @@ object ProcessManager:
    * the refusal carries the piece-1 line plus the chain's failure detail.
    */
   private def degradedOutcome(pid: Long, opts: StopOptions, deps: StopDeps): IO[StopOutcome] =
-    resolveGatewayPort(deps).flatMap { port =>
-      IO.blocking {
-        val verdict = degradedIdentity(
-          pid,
-          deps.metaRead(),
-          deps.startInstantMs(pid),
-          deps.listeningPortsOf(pid),
-          port
+    resolveGatewayPort(deps).flatMap {
+      case None =>
+        // 隔离实例误伤批 2026-11-04 §2：本根的端口**无法确定**时绝不假装知道——
+        // 旧面在这里回落品牌缺省口（6138/6140），隔离实例于是把生产实例的端口
+        // 当成「自己的端口」取证（假的 same-source 证明）。fail-closed。
+        IO.pure(
+          StopOutcome.Refused(
+            refusalLine(pid, None) +
+              s" (degraded checks: cannot resolve the gateway port of this instance's home " +
+              s"${PathUtil.dataRoot} — an isolated root must declare its port; the brand default " +
+              "port is never assumed)"
+          )
         )
-        verdict match
-          case refused: DegradedIdentity.Refused =>
-            StopOutcome.Refused(refusalLine(pid, None) + s" (degraded checks: ${refused.reason})")
-          case passed: DegradedPass =>
-            // Synthetic marker-free command line: the dev-host gate inside
-            // stopVerified must NOT pattern-match a fake string. It is safe
-            // by construction here — MetaTime only passes for
-            // launcher/restart-script children (never dev hosts) and
-            // PortSameSource never passes on a protected port.
-            stopVerified(pid, s"(identity via degraded chain: ${passed.layer})", opts, deps, Some(passed.layer))
-      }
+      case Some(port) =>
+        IO.blocking {
+          val verdict = degradedIdentity(
+            pid,
+            deps.metaRead(),
+            deps.startInstantMs(pid),
+            deps.listeningPortsOf(pid),
+            port
+          )
+          verdict match
+            case refused: DegradedIdentity.Refused =>
+              StopOutcome.Refused(refusalLine(pid, None) + s" (degraded checks: ${refused.reason})")
+            case passed: DegradedPass =>
+              // Synthetic marker-free command line: the dev-host gate inside
+              // stopVerified must NOT pattern-match a fake string. It is safe
+              // by construction here — MetaTime only passes for
+              // launcher/restart-script children (never dev hosts) and
+              // PortSameSource never passes on a protected port.
+              stopVerified(pid, s"(identity via degraded chain: ${passed.layer})", opts, deps, Some(passed.layer))
+        }
     }
 
   /**
    * Gateway port resolution — the SAME source the CLI's gateway-facing
-   * commands use (GatewayClient.readPort: --port > GATEWAY_PORT >
-   * Defaults.brandDefaultPort). Specs inject `gatewayPortOverride`; the live face
-   * resolves lazily (only when the degraded face is actually entered).
-   * Resolution failure falls back to Defaults.brandDefaultPort (readPort's own
-   * default).
+   * commands use, now through the single caliber [[InstanceScope.decide]]:
+   * `--port` > (default root only) `GATEWAY_PORT` > config `port` key >
+   * (default root only) brand default port. **None** = the port of this
+   * invocation's home cannot be determined (isolated root without a
+   * declared port) — never silently the brand default (隔离实例误伤批
+   * 2026-11-04 §2; the pre-batch code fell back to it, which is exactly how
+   * an isolated caller got a fake "same source" identity proof on 6138).
+   * Specs inject `gatewayPortOverride`; the live face resolves lazily.
    */
-  private def resolveGatewayPort(deps: StopDeps): IO[Int] =
+  private def resolveGatewayPort(deps: StopDeps): IO[Option[Int]] =
     deps.gatewayPortOverride match
-      case Some(p) => IO.pure(p)
+      case Some(p) => IO.pure(Some(p))
       case None =>
-        GatewayClient.readPort
-          .handleError(_ => nebflow.shared.Defaults.brandDefaultPort)
+        IO.blocking {
+          val caller = InstanceScope.liveCaller
+          InstanceScope.decide(
+            InstanceScope.PortInputs(
+              cliPort = GatewayClient.portOverrideSnapshot,
+              envPortName = s"${nebflow.shared.Branding.envPrefix}_GATEWAY_PORT",
+              envPort = nebflow.shared.Branding.env("GATEWAY_PORT"),
+              configPort = nebflow.gateway.GatewayConfig.configFilePort(),
+              sourceName = nebflow.shared.Branding.configFileName,
+              brandDefaultPort = nebflow.shared.Defaults.brandDefaultPort,
+              root = caller.root,
+              overridden = caller.overridden
+            )
+          ) match
+            case InstanceScope.PortVerdict.Resolved(p, _, _) => Some(p)
+            case InstanceScope.PortVerdict.Refused(_) => None
+        }
 
   private def stopVerified(
-      pid: Long,
-      cmd: String,
-      opts: StopOptions,
-      deps: StopDeps,
-      degradedVia: Option[String] = None
+    pid: Long,
+    cmd: String,
+    opts: StopOptions,
+    deps: StopDeps,
+    degradedVia: Option[String] = None
   ): StopOutcome =
     // Hard gate: a dev-host-marked process listening on 8080/8097 is never
     // stoppable through this face — --force does not bypass it. The ports
@@ -338,8 +398,7 @@ object ProcessManager:
           targets.foreach(deps.destroyForcibly)
           waitUntil(deps, pid, deps.forceTimeoutMs)
 
-        if deps.isRunning(pid) then
-          return StopOutcome.Failed(s"process $pid did not exit after TERM/KILL")
+        if deps.isRunning(pid) then return StopOutcome.Failed(s"process $pid did not exit after TERM/KILL")
 
         // Piece 3: port-release confirmation from the TARGET pid's own
         // listener set. Empty after death (or lsof unavailable) = released /
@@ -351,12 +410,15 @@ object ProcessManager:
           while busy.nonEmpty && System.currentTimeMillis() < deadline do
             if deps.pollMs > 0 then Thread.sleep(deps.pollMs)
             busy = remaining.filter(deps.listenerAlive)
-          if busy.nonEmpty then
-            return StopOutcome.Failed(s"ports still served after stop: ${busy.mkString(", ")}")
+          if busy.nonEmpty then return StopOutcome.Failed(s"ports still served after stop: ${busy.mkString(", ")}")
 
         removePid()
         val base = declaration.getOrElse(s"${nebflow.shared.Branding.productName} stopped (pid $pid)")
         StopOutcome.Stopped(degradedVia.fold(base)(via => s"$base — identity via degraded chain: $via"))
+
+    end match
+
+  end stopVerified
 
   private def waitUntil(deps: StopDeps, pid: Long, timeoutMs: Long): Boolean =
     val deadline = System.currentTimeMillis() + timeoutMs
@@ -383,8 +445,8 @@ object ProcessManager:
    * carries an sbt marker — the root of a managed sbt tree.
    */
   private[cli] def sbtRootFromChain(
-      chain: List[Long],
-      readCmd: Long => Option[String]
+    chain: List[Long],
+    readCmd: Long => Option[String]
   ): Option[Long] =
     // nearest sbt ancestor = closest to the target, i.e. first found walking up
     chain.find(pid => readCmd(pid).exists(isSbtCommandLine))
@@ -398,10 +460,10 @@ object ProcessManager:
    * Result ordered top-down (root side first).
    */
   private[cli] def treeKillSet(
-      chain: List[Long],
-      sbtRoot: Option[Long],
-      descendantsOf: Long => List[Long],
-      readCmd: Long => Option[String]
+    chain: List[Long],
+    sbtRoot: Option[Long],
+    descendantsOf: Long => List[Long],
+    readCmd: Long => Option[String]
   ): Either[String, List[Long]] =
     sbtRoot match
       case Some(root) if chain.contains(root) =>
@@ -413,7 +475,9 @@ object ProcessManager:
               case Some(c) if StaleProcessGuard.isNebflowCommandLine(c) || isSbtCommandLine(c) =>
                 Right(m)
               case Some(c) =>
-                Left(s"member $m is not a verified ${nebflow.shared.Branding.productName}/sbt process: ${StaleProcessGuard.truncate(c)}")
+                Left(
+                  s"member $m is not a verified ${nebflow.shared.Branding.productName}/sbt process: ${StaleProcessGuard.truncate(c)}"
+                )
               case None =>
                 Left(s"member $m command line unreadable — refusing the whole tree")
           }
