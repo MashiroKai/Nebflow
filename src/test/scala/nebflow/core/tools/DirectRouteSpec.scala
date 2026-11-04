@@ -153,7 +153,7 @@ class DirectRouteSpec extends CatsEffectSuite:
     assert(plans.forall(_.via == "relay"))
     assert(plans.forall(_.reasons.contains(RouteReason.TailscaleStopped)), "命中缓存也必须带着同一个原因码")
     assert(plans.tail.forall(_.probeCached), "除第一次外全部是缓存命中（ms ≈ 0）")
-    assertEquals(plans.tail.map(_.probeMs).distinct, List(0L))
+    assertEquals(plans.tail.map(_.probeMs).distinct.toList, List(0L))
     assertEquals(cached.stats, (1L, 9L))
     // 负证据窗口（首次失败 = 60s）到期 ⇒ 重探一次。
     now += 61_000L

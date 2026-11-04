@@ -700,8 +700,10 @@ object EndpointPreference:
    * 只认 v4 的地方」的典型。所有候选 URL 都必须经这里。
    */
   def urlOf(host: String, port: Int): String =
-    val h = Option(host).getOrElse("").trim
-    if isIpv6Literal(h) then s"http://[$h]:$port" else s"http://$h:$port"
+    val raw = Option(host).getOrElse("").trim
+    // 已带方括号的输入先剥掉再判/再拼：否则会拼出 `http://[[fd7a::1]]:6138`（spec 抓到的形态）。
+    val bare = raw.stripPrefix("[").stripSuffix("]")
+    if isIpv6Literal(bare) then s"http://[$bare]:$port" else s"http://$raw:$port"
 
   /** `/24` prefix key (`"198.51.100."`) — the cheap "same LAN?" approximation. */
   def subnet24(host: String): Option[String] =

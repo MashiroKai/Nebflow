@@ -202,7 +202,10 @@ class EndpointPreferenceSpec extends CatsEffectSuite:
     assertEquals(EndpointPreference.urlOf("[fd7a:115c:a1e0::2]", 6138), "http://[fd7a:115c:a1e0::2]:6138")
     // 拼出来的形态必须能被 URI 解析，并且 hostOf 能取回同一个地址（闭环判据）。
     val uri = java.net.URI.create(EndpointPreference.urlOf("fd7a:115c:a1e0::2", 6138))
-    assertEquals(uri.getHost, "fd7a:115c:a1e0::2")
+    // 🔴 JDK 的 `URI.getHost` 对 IPv6 字面量**保留方括号**（RFC 3986 的 authority 原样）——
+    // 这正是「v6 地址不能塞进只认 v4 的地方」的第二层：凡是要拿 host 再拼东西的地方，
+    // 必须先剥方括号（`hostOf` 已经这么做）。
+    assertEquals(uri.getHost, "[fd7a:115c:a1e0::2]")
     assertEquals(uri.getPort, 6138)
     assertEquals(EndpointPreference.hostOf(EndpointPreference.urlOf("fd7a:115c:a1e0::2", 6138)), "fd7a:115c:a1e0::2")
   }

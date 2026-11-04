@@ -118,13 +118,15 @@ object RouteTriStateMeasureMain:
       val afterProbe = TailnetProbe.stub(verdict)
       val afterPlan = DirectRoute.planSync("KAI", List(TailnetCandidate), afterProbe)
       val t1 = System.nanoTime()
-      val afterDialed =
+      val afterDialed: Option[Either[Throwable, Option[String]]] =
         if afterPlan.attempt.isEmpty then None
         else
-          P2pReachability
-            .probeConcurrently(afterPlan.attempt, P2pProbePolicy.ProbeConnectTimeoutMs)
-            .attempt
-            .unsafeRunSync()
+          Some(
+            P2pReachability
+              .probeConcurrently(afterPlan.attempt, P2pProbePolicy.ProbeConnectTimeoutMs)
+              .attempt
+              .unsafeRunSync()
+          )
       val afterMs = (System.nanoTime() - t1) / 1000000L
       emit(
         s"tristate_$id",

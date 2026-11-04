@@ -272,12 +272,13 @@ object Parse:
 
   def parse(stdout: String, stderr: String = "", exitCode: Int = 0): TailnetVerdict =
     val out = Option(stdout).getOrElse("")
-    parseJson(out).toOption.flatMap(_.asObject) match
-      case Some(obj) =>
-        obj.get("BackendState").flatMap(_.asString) match
+    val obj = parseJson(out).toOption.flatMap(_.asObject).map(_.toMap)
+    obj match
+      case Some(m) =>
+        m.get("BackendState").flatMap(_.asString) match
           case Some("Running") =>
-            val selfIps = stringSet(obj.get("Self"))
-            val peers = obj.get("Peer").flatMap(_.asObject).map(normalizePeers).getOrElse(Set.empty)
+            val selfIps = stringSet(m.get("Self"))
+            val peers = m.get("Peer").flatMap(_.asObject).map(o => normalizePeers(o.toMap)).getOrElse(Set.empty)
             if selfIps.isEmpty then
               TailnetVerdict.Unavailable(RouteReason.TailscaleNoAddress, "BackendState=Running, Self.TailscaleIPs empty")
             else TailnetVerdict.Ready(selfIps, peers, "Running")
@@ -300,18 +301,17 @@ object Parse:
     case other                                           => s"tailscale-${other.toLowerCase}"
 
   /** 只取 `Online == true` 的 peer，并合并其 `TailscaleIPs`（v4/v6 都收）。 */
-  private def normalizePeers(peers: io.circe.JsonObject): Set[String] =
-    peers.toList
-      .flatMap { case (_, v) =>
-        val peer = v.asObject
-        val online = peer.flatMap(_.get("Online")).flatMap(_.asBoolean).getOrElse(false)
-        if online then stringSet(peer) else Nil
+  private def normalizePeers(peers: Map[String, Json]): Set[String] =
+    peers.values
+      .flatMap { v =>
+        val online = v.asObject.flatMap(o => o.toMap.get("Online")).flatMap(_.asBoolean).getOrElse(false)
+        if online then stringSet(Some(v)) else Nil
       }
       .toSet
 
   /** 一个节点的 `TailscaleIPs`（数组）→ 字符串集合；缺失/空 ⇒ 空集。 */
   private def stringSet(node: Option[Json]): Set[String] =
-    node.flatMap(_.asObject).flatMap(_.get("TailscaleIPs")).flatMap(_.asArray) match
+    node.flatMap(_.asObject).flatMap(o => o.toMap.get("TailscaleIPs")).flatMap(_.asArray) match
       case Some(arr) => arr.flatMap(_.asString).map(_.trim).filter(_.nonEmpty).toSet
       case None      => Set.empty
 
