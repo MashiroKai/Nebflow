@@ -2,8 +2,9 @@
 
 分支 `delegate/delegate-nebflow-79768ef5` · 工作区
 `/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5`
-收口 merge 目标 = **本地 main `a0597efdd`**；merge 提交 **`333d17b2d`**（冲突唯一处
-`css/todo-face.css`）。收口节点 = 收尾（land）节点，**未合 main / 未 push / 未重启任何进程**。
+收口 merge 目标 = **本地 main `9a134bd5b`**（第一轮合的是 `a0597efdd` = `333d17b2d`，随后 main 又推进 5 个提交
+⇒ 第二轮 merge `633402681`，报告口径以 `9a134bd5b` 为准）。收口节点 = 收尾（land）节点，
+**未合 main / 未 push / 未重启任何进程**。
 
 ## 1. 结论（三行）
 
@@ -13,20 +14,22 @@
 3. 范围核对：`git diff main..HEAD --stat -- src/main/resources/web src/main/scala tests` = **37 文件**
    （web 15 + tests 22；Scala 侧 = 0 —— 后端段已由作者合并点 `941a11a13` 带上 main）。
 
-## 2. 收口节点新增证据（`final/`）
+## 2. 收口节点新增证据（`final/`，两轮：`01..09` = main `a0597efdd` 树；`r2_01..r2_10` = main `9a134bd5b` 树）
 
 | 文件 | 内容 / 读数 |
 |---|---|
 | `final/logs/gates-summary.txt` | 八道门禁一行一读数（EXIT 汇总） |
-| `final/logs/01_make_frontend_gates.log` | `make frontend-gates`（design-tokens + msgstyle + self-explaining + circular）EXIT=0 |
-| `final/logs/02_check_circular.log` | `circular-deps PASS: 236 files, acyclic` EXIT=0 |
-| `final/logs/03_check_component_contract.log` | `PASS 五条组件契约零新增`（TOTAL=937，R1/R4=0）EXIT=0 |
-| `final/logs/04_check_design_spec_sync.log` | `PASS —— spec 表与令牌源逐条同值（39 条对位）` EXIT=0 |
-| `final/logs/05_check_js_types.log` | `checkJs: 0 errors (baseline 0, zero-gate files: 3)` EXIT=0 |
-| `final/logs/06_check_process_artifacts.log` | `git ls-files evidence/ reports/ docs/ = 0 违规` EXIT=0 |
-| `final/logs/07_type_baseline_check.txt` | `git diff main..HEAD -- tests/type-baseline.json` = **空**（零豁免机械证明） |
-| `final/logs/08_sbt_compile_and_todo_specs.log` | `sbt -batch compile scalafmtCheckAll "scalafix --check" testOnly <6 待办 spec>`（现役入口 `~/.stand/bin/sbt` = sbt-gate 包装，`ops/bin/sbt-gate` 已不在仓内） |
-| `final/logs/09_postmerge_batch_specs.log` | merge 后本批四 spec 复跑：`22 passed (51.8s)` / `SPECS_EXIT=0`（store 6 + capsule-create 8 + entry-collapse 2 + split 6）——design-scale 令牌迁移合入后胶囊面零回归 |
+| `final/logs/01_make_frontend_gates.log` · `r2_01_…` | `make frontend-gates`（design-tokens + msgstyle + self-explaining + circular）两轮均 EXIT=0 |
+| `final/logs/02_check_circular.log` · `r2_02_…` | `circular-deps PASS: 236 files, acyclic` EXIT=0 |
+| `final/logs/03_check_component_contract.log` · `r2_03_…` | `PASS 五条组件契约零新增`（TOTAL=937，R1/R4=0）EXIT=0 |
+| `final/logs/04_check_design_spec_sync.log` · `r2_04_…` | `PASS —— spec 表与令牌源逐条同值（39 条对位）` EXIT=0 |
+| `final/logs/05_check_js_types.log` · `r2_05_…` | `checkJs: 0 errors (baseline 0, zero-gate files: 3)` EXIT=0 |
+| `final/logs/06_check_process_artifacts.log` · `r2_06_…` | `git ls-files evidence/ reports/ docs/ = 0 违规（0 个被白名单豁免；清单 0 条生效）` EXIT=0 |
+| `final/logs/07_type_baseline_check.txt` · `r2_08_…` | `git diff main..HEAD -- tests/type-baseline.json` = **空**（零豁免机械证明） |
+| `final/logs/r2_07_allowlist_check.txt` | `scripts/process-artifacts-allowlist.txt` 与 main **逐字节相同**（sha256 `ea95c18b4c0b8261951e6502098377549c081ecfb3c81c859adb82f1b31ec90e`，diff 空） |
+| `final/logs/08_sbt_compile_and_todo_specs.log` | 第一轮（含 `scalafmtCheckAll`）`SBT_EXIT=1` —— **红点在 main 侧既有文件**（`PerceptionService.scala:1211` / `PerceptionDaemonLifecycleSpec.scala:62` 等），`compile` 本身 `[success]`；本批 `src/main/scala` / `src/test/scala` 相对 main **零 diff** |
+| `final/logs/r2_09_sbt_compile_and_todo_specs.log` | **Scala 真绿证据**：`sbt -batch compile "testOnly <6 待办 spec>"` ⇒ `compile [success] Total time: 19 s` + `Passed: Total 52, Failed 0, Errors 0, Passed 52` + `SBT_EXIT=0`（入口 = `~/.stand/bin/sbt`，脚本自报 `[sbt-gate]`；`ops/bin/sbt-gate` 已不在仓内） |
+| `final/logs/09_postmerge_batch_specs.log` · `r2_10_…` | 本批四 spec 复跑：`22 passed` / `SPECS_EXIT=0`（store 6 + capsule-create 8 + entry-collapse 2 + split 6） |
 
 ## 3. 按节点列文件 + 一句话结论
 
