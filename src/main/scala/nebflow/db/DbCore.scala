@@ -29,6 +29,9 @@ object Db:
   /** 数据根下的 db 树目录名（设计 §3.2(b)）。 */
   val TreeName: String = "db"
 
+  /** avoid 档固定 source 口径（与 writeAvoidGuard 单档路径对齐；宿主写穿共用）。 */
+  val AvoidGuardSource: String = "provider-avoid"
+
   def open(cfg: DbConfig): IO[DbHandle] = IO.blocking {
     val dbRoot = cfg.dataRoot.resolve(TreeName)
     Files.createDirectories(dbRoot)
@@ -727,6 +730,34 @@ final class DbHandle private[db] (
   def readAvoidGuard(source: String): IO[ReadResult[GuardDocs.AvoidGuardDoc]] = IO.blocking {
     // source 参数保持 API 对称；avoid 面 = 单档 provider-avoid.json。
     readWholeDoc(avoidGuardPath, guardDecoder[GuardDocs.AvoidGuardDoc])
+  }
+
+  /**
+   * 步 5（D-10，avoid 面）：三态折保守向。坏 ⇒ 隔离 + **有界**保守窗——
+   * `conservativeKeys` 全部软避至 `now + conservativeWindowMs`（自愈：窗到自然放回，
+   * 探测/真请求照常恢复）。**不取** notify 的 `Long.MaxValue` 形：avoid 若永久全避 ⇒
+   * filterCandidates 恒空 ⇒ LLM 全链阻塞（宁可少用不可全灭）。down 面保守向不适用
+   * （未知键集无从保守；有界 avoid 已覆盖「不锤坏 provider」的窗口语义）。
+   */
+  def recoverAvoidGuardConservative(
+    now: Long,
+    conservativeKeys: List[String],
+    conservativeWindowMs: Long
+  ): IO[GuardDocs.AvoidGuardDoc] = IO.blocking {
+    readWholeDoc(avoidGuardPath, guardDecoder[GuardDocs.AvoidGuardDoc]) match
+      case ReadResult.Present(doc) => doc // D-10：重启不归零
+      case ReadResult.Absent() =>
+        GuardDocs.AvoidGuardDoc(1, Db.AvoidGuardSource, Map.empty, now, Map.empty) // 真·全新
+      case ReadResult.Corrupt(kind, ev) =>
+        log.warn("guard recovery: provider-avoid corrupt ({}) — conservative bounded avoid " +
+          "({} key(s), {}ms) + quarantined", kind, conservativeKeys.size, conservativeWindowMs)
+        Quarantine.quarantine(ev, now).foreach(_ => quarantinedN.incrementAndGet())
+        GuardDocs.AvoidGuardDoc(
+          version = 1,
+          source = Db.AvoidGuardSource,
+          avoidUntil = conservativeKeys.map(k => k -> (now + math.max(0L, conservativeWindowMs))).toMap,
+          updatedAt = now
+        )
   }
 
   // ── 恢复腿（§3.11 执行面）─────────────────────────────────────────────────
