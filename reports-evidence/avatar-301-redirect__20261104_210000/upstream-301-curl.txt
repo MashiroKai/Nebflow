@@ -1,0 +1,21 @@
+== upstream 301 evidence (old friend-avatar domain family) ==
+--- 2026-11-04 20:50:34 CST GET https://mashiro.staging.nebflow.space/
+HTTP/2 301 
+cache-control: public, max-age=0, must-revalidate
+content-type: text/plain
+date: Wed, 04 Nov 2026 12:50:35 GMT
+location: https://staging.mystand.space/
+server: Vercel
+strict-transport-security: max-age=63072000
+x-vercel-id: hkg1::hl9wt-1793796635231-97acd64d48cc
+
+--- 2026-11-04 20:50:35 CST GET https://mashiro.staging.nebflow.space/avatars/x.png
+HTTP/2 301 
+cache-control: public, max-age=0, must-revalidate
+content-type: text/plain
+date: Wed, 04 Nov 2026 12:50:35 GMT
+location: https://staging.mystand.space/avatars/x.png
+server: Vercel
+strict-transport-security: max-age=63072000
+x-vercel-id: hkg1::4fcmw-1793796635659-9de88219615e
+

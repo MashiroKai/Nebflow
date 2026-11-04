@@ -379,7 +379,21 @@ private[gateway] object NeblinkRoutes:
       // 响应面（方案卡 §3 前置项逐条）：字节 + `Content-Type` 原样透传，
       //   带 `X-Avatar-Sha256` + `ETag`（强 ETag = 内容 sha）+ `Cache-Control: private`；
       //    `If-None-Match` 命中 ⇒ **304**（零重传 —— 客户端「hash 未变 ⇒ 复用旧 blob」的
-      //    判据面）。上游非 200 ⇒ 502（客户端按失败退避，不污染既有缓存）。
+      //    判据面）。上游取不到字节 ⇒ 502（客户端按失败退避，不污染既有缓存）。
+      //
+      // 2026-11-04 旧域 301 批（本 case 的第二道修复，缺它则字节缓存永远建不起来）：
+      //   ① **跟随跳转**：上游 3xx 不再当失败 —— 好友头像 URL 仍指旧域
+      //      `mashiro.staging.nebflow.space`，域名迁移后该域 301 到
+      //      `staging.mystand.space`（2026-11-04 20:50 CST 实测），旧体把 301 折成
+      //      502 `upstream HTTP 301` ⇒ 浏览器直连自己会跟（画面看不出坏），
+      //      服务端这条腿永远取不到字节。跳转策略（跳数上限 + 同源/产品域族白名单
+      //      + 拒 https→http 降级）在 `AvatarProxy.jdkFetch`，**不**放宽本路由的
+      //      「客户端只给 userId」的 SSRF 边界。
+      //   ② **网关侧字节缓存**（`AvatarByteCache.shared`，按源 URL 键，TTL 10 min，
+      //      条目数/总字节有界）：旧体在 `If-None-Match` 判定**之前**就回源，于是
+      //      「第二次请求」与第一次等价、每次都回源。现在命中即零上游往返（304 也
+      //      用条目里存的 sha 判），失败不入缓存。`X-Avatar-Cache: hit|miss`
+      //      是这条通路自证用的响应头（客户端不消费，排障/验收可读）。
       case req @ GET -> Root / "avatars" / userId =>
         withAuth(req) {
           sharedResources.friendService match
@@ -394,38 +408,57 @@ private[gateway] object NeblinkRoutes:
                     resp.friends.find(_.userId == wanted).flatMap(_.avatar).filter(_.nonEmpty) match
                       case None => NotFound(Json.obj("error" -> "no avatar".asJson))
                       case Some(url) =>
-                        AvatarProxy.fetch(AvatarProxy.jdkFetch)(url).flatMap {
-                          case Right((contentType, bytes)) =>
-                            val sha = AvatarProxy.sha256Hex(bytes)
-                            val etag = "\"" + sha + "\""
-                            val inm = req.headers.get(CIString("If-None-Match")).map(_.head.value.trim).getOrElse("")
-                            if inm.nonEmpty && inm.contains(sha) then
-                              IO.pure(
-                                Response[IO](Status.NotModified)
-                                  .withHeaders(Headers(Header.Raw(CIString("ETag"), etag)))
-                              )
-                            else
-                              // 显式字节流实体（同 /neblink/avatar 与附件下载先例：裸
-                              // `Ok(Array[Byte])` 会命中 circe 的 byte 数组编码器，把字节
-                              // 变成 JSON 数字数组 ⇒ 图片损坏）。
-                              val ct = org.http4s.headers.`Content-Type`
-                                .parse(contentType)
-                                .getOrElse(org.http4s.headers.`Content-Type`(MediaType.application.`octet-stream`))
-                              IO.pure(
-                                Response[IO](Status.Ok)
-                                  .withEntity(fs2.Stream.emits(bytes).covary[IO])
-                                  .withHeaders(
-                                    Headers(
-                                      ct,
-                                      Header.Raw(CIString("ETag"), etag),
-                                      Header.Raw(CIString("X-Avatar-Sha256"), sha),
-                                      Header.Raw(CIString("Cache-Control"), "private, max-age=3600")
-                                    )
+                        // 2026-11-04 旧域 301 批：**字节缓存优先** + `X-Avatar-Cache`
+                        // 自证头。旧体每次请求都无条件回源（`AvatarProxy.fetch` 在
+                        // `If-None-Match` 判定之前），上游一 301（旧域迁移后跳走）就
+                        // 恒 502 且缓存永远建不起来。现在：命中 ⇒ 零上游往返（连 304
+                        // 都靠条目里存的 sha，不回源算）；未命中 ⇒ 取一次并落
+                        // `AvatarByteCache.shared`（TTL 10 min，按源 URL 键）。
+                        def renderAvatar(entry: AvatarByteCache.Entry, cacheState: String): IO[Response[IO]] =
+                          val inm = req.headers.get(CIString("If-None-Match")).map(_.head.value.trim).getOrElse("")
+                          if inm.nonEmpty && inm.contains(entry.sha256) then
+                            IO.pure(
+                              Response[IO](Status.NotModified)
+                                .withHeaders(
+                                  Headers(
+                                    Header.Raw(CIString("ETag"), entry.etag),
+                                    Header.Raw(CIString("X-Avatar-Cache"), cacheState)
                                   )
-                              )
-                            end if
-                          case Left(err) =>
-                            BadGateway(Json.obj("error" -> err.asJson))
+                                )
+                            )
+                          else
+                            // 显式字节流实体（同 /neblink/avatar 与附件下载先例：裸
+                            // `Ok(Array[Byte])` 会命中 circe 的 byte 数组编码器，把字节
+                            // 变成 JSON 数字数组 ⇒ 图片损坏）。
+                            val ct = org.http4s.headers.`Content-Type`
+                              .parse(entry.contentType)
+                              .getOrElse(org.http4s.headers.`Content-Type`(MediaType.application.`octet-stream`))
+                            IO.pure(
+                              Response[IO](Status.Ok)
+                                .withEntity(fs2.Stream.emits(entry.bytes).covary[IO])
+                                .withHeaders(
+                                  Headers(
+                                    ct,
+                                    Header.Raw(CIString("ETag"), entry.etag),
+                                    Header.Raw(CIString("X-Avatar-Sha256"), entry.sha256),
+                                    Header.Raw(CIString("X-Avatar-Cache"), cacheState),
+                                    Header.Raw(CIString("Cache-Control"), "private, max-age=3600")
+                                  )
+                                )
+                            )
+                          end if
+                        end renderAvatar
+
+                        val avatarCache = AvatarByteCache.shared
+                        avatarCache.get(url).flatMap {
+                          case Some(hit) => renderAvatar(hit, "hit")
+                          case None =>
+                            avatarCache
+                              .getOrFetch(url)(AvatarProxy.fetch(AvatarProxy.jdkFetch)(url))
+                              .flatMap {
+                                case Right(entry) => renderAvatar(entry, "miss")
+                                case Left(err) => BadGateway(Json.obj("error" -> err.asJson))
+                              }
                         }
                 }
               end if
