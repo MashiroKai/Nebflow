@@ -92,6 +92,24 @@
 #     E --hot --dry-run 严格只读（不编译、不跑 canary、不杀、不启动），只打印将做什么。
 #   已知取舍: --hot 仍含 canary 真启动验证（数十秒~数分钟）——它是「杀了起不来」的唯一实弹
 #     证据，任务书明令不许删；省下的是原先以小时计的等待，不是这几十秒。
+# v4.5（2026-11-04 内存即时缓解批 M2「修重启脚本的可观测性」——结构性缺陷，不是崩溃）:
+#   根因（已定案）: 旧版 `exec python3 stand-daemonize.py "$SELF_PATH" "$@"` 继承调用方的
+#     `| tail -30` 管道；daemonize 父进程 2ms `_exit(0)`，子进程继承**无读者管道**，
+#     第 240 行 `trap '' PIPE` 把之后所有 echo 静默丢弃 ⇒ 健康跑完也只输出两行
+#     （12:43 事故复盘时「重启脚本没有日志」= 本次排障最大的观测缺口之一）。
+#   修法（三件）:
+#     A daemonize 之后把本进程 stdout/stderr **dup2 到 ~/.stand/logs/restart-detach-<ts>.log**
+#       （`exec >> log 2>&1`），此后所有输出（含未走 stage() 的第三方命令回显）都进日志；
+#       **永不再拿调用方管道当输出**。指针文件 restart-detach-latest.path 指最近一次。
+#     B `stage "<阶段>"` 逐阶段记账（入口/预检开始·成功·失败/canary 起·验·停/TERM 旧实例/
+#       进程树消亡/新实例 pid/终态），每行带时间戳与 pid；未脱离时同时回显 stdout（交互面
+#       不变），脱离后只写文件（不重复）。
+#     C 失败原因**可见**: 预检失败把 sbt 日志尾 5 行写进 stage 行；终态行统一
+#       `终态: 成功/失败/放弃/dry-run` 收尾 ⇒ 任何一次运行都能从日志读出结论与原因。
+#   顺带: sbt 调用收口到 $SBT_BIN（默认 ~/.stand/bin/sbt = M1 全局闸垫片，缺失回落
+#     PATH 的 sbt）；新增只读模式 --preflight-only（只跑编译预检，不 canary/不杀/不起），
+#     供自检与「本机是否有可编译代码」体检；NEBFLOW_RESTART_SBT_BIN 为自检注入点。
+
 # 文案补注（2026-09-17，纯注释，零行为变更）: 两条易被误读的现状，提示口径在此对齐——
 #   · 优雅停机: 本脚本对实例树发 TERM，实例走 graceful shutdown（GracefulInterruptHook: draining →
 #     在途节点 running→interrupted、result 空、零 failed，重启后通常同轮续跑）——属正常停机形态，非故障。
@@ -168,6 +186,33 @@ if [[ ! -x "$NEBFLOW_BIN_DIR/stand-setsid-exec.py" || ! -x "$NEBFLOW_BIN_DIR/sta
     exit 1
   fi
 fi
+# ---------- v4.5 M2: 自持日志（脱调用方管道）+ sbt 收口 ----------
+DETACH_LOG=""              # 惰性创建: $NF_HOME/logs/restart-detach-<ts>-<pid>.log
+DETACHED_TO_LOG=0          # 1 = 已 dup2 进日志（stage 只写文件，不重复回显）
+SBT_BIN="${NEBFLOW_RESTART_SBT_BIN:-}"   # 自检注入点；空则自动解析（见下）
+STAGE_TO_FILE=1            # 动作模式默认落盘；--check 这类纯检测不建文件（防刷目录；判定见参数解析后）
+maybe_detach_log() {
+  [[ -n "$DETACH_LOG" ]] && return 0
+  # 纯检测模式（--check）且未脱离：只回显、不建日志文件（watchdog/手工轮询不制造垃圾）
+  [[ "$DETACHED_TO_LOG" == "1" || "$STAGE_TO_FILE" == "1" ]] || return 0
+  mkdir -p "$NF_HOME/logs" 2>/dev/null
+  DETACH_LOG="$NF_HOME/logs/restart-detach-$(date +%Y%m%d-%H%M%S)-$$.log"
+  if : > "$DETACH_LOG" 2>/dev/null; then
+    printf '%s\n' "$DETACH_LOG" > "$NF_HOME/logs/restart-detach-latest.path" 2>/dev/null
+  else
+    DETACH_LOG=""    # 日志目录不可写: 退回原行为（不改其它语义）
+  fi
+  return 0
+}
+# 逐阶段记账：时间戳 + pid + 阶段文本；未脱离时同时回显 stdout（交互面零变化）
+stage() {
+  maybe_detach_log
+  local line
+  line="$(date '+%Y-%m-%d %H:%M:%S') [$$] $*"
+  [[ -n "$DETACH_LOG" ]] && printf '%s\n' "$line" >> "$DETACH_LOG" 2>/dev/null
+  [[ "$DETACHED_TO_LOG" == "1" ]] || printf '%s\n' "$line"
+}
+
 IDLE_SECS=180              # S1 日志静默阈值
 TASK_MMIN=10               # S4 任务流转冷却（分钟）
 STALE_RUN_MIN=30           # S3 running 陈旧豁免（分钟）
@@ -205,8 +250,12 @@ for (( i=0; i<${#args[@]}; i++ )); do
     -m)           MAX_WAIT_MIN="${args[$((i+1))]:-60}" ;;
     --dry-run)    DRY_RUN=1 ;;
     --no-compile) NO_COMPILE=1 ;;
+    --preflight-only) MODE="preflight-only" ;;   # v4.5 M2: 只读编译预检（自检/体检腿）
   esac
 done
+# 纯检测模式（--check）不建日志文件（watchdog/手工高频调用，防刷目录）；必须在 dup2 之前判定，
+# 且必须在本行之后（此处 MODE 才解析完——放在变量声明区会撞 set -u unbound）。
+[[ "$MODE" == "check" ]] && STAGE_TO_FILE=0
 
 now_ts()  { date +%s; }
 ts_str()  { date "+%Y-%m-%d %H:%M:%S"; }
@@ -238,6 +287,28 @@ if [[ "$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')" != "1" ]] \
   exec python3 "$NEBFLOW_BIN_DIR/stand-daemonize.py" "$SELF_PATH" "$@"
 fi
 trap '' PIPE   # daemonize 后 Bash 工具管道可能已关闭：忽略 SIGPIPE，防「首个 echo 即死」
+
+# ---------- v4.5 M2: 脱离调用方管道，自持日志 ----------
+# 判据: ppid==1 ⇒ 本进程已是被 daemonize（或 launchd）收养的独立会话领导，其
+# stdout/stderr 仍是**调用方管道**（stand-daemonize.py 只 fork/setsid/exec，未改 fd）。
+# 该管道在调用方退出后无读者 → 写入静默丢弃（旧版 `trap '' PIPE` 后「健康跑完只两行」）。
+# 修法: dup2 到日志文件，此后 stage() 与所有第三方回显全部落盘，与控制台/管道彻底解耦。
+if [[ "$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')" == "1" ]]; then
+  maybe_detach_log
+  if [[ -n "$DETACH_LOG" ]]; then
+    exec >> "$DETACH_LOG" 2>&1
+    DETACHED_TO_LOG=1
+    stage "[detach] 已脱离调用方管道: pid=$$ ppid=1，日志=${DETACH_LOG}"
+  fi
+else
+  stage "[entry] 未脱离调用方（ppid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')）——仍回显 stdout，同时记账"
+fi
+
+# sbt 收口（v4.5 M2 顺带 + M1 接线）：优先 ~/.stand/bin/sbt（= 全局串行闸垫片，缺失回落 PATH）。
+if [[ -z "$SBT_BIN" ]]; then
+  if [[ -x "$HOME/.stand/bin/sbt" ]]; then SBT_BIN="$HOME/.stand/bin/sbt"; else SBT_BIN="sbt"; fi
+fi
+stage "[entry] sbt=${SBT_BIN}（M1 全局闸: ~/.stand/bin/sbt；run 形态由闸自判旁路）"
 
 # R5: 动作模式入口——暂停 watchdog（watchdog.sh 每轮检查该标志，见其注释「维护开关」）。
 # 所有出口经下方 EXIT trap 自动删除；绝不在杀树之后才 touch（防止竞态窗口）。
@@ -331,13 +402,15 @@ observe_idle() {
 
 # ---------- 预检 1: 编译 ----------
 preflight_compile() {
-  echo "[preflight] sbt compile（编译不过绝不重启）…"
-  cd "$NEBFLOW_DIR" || { echo "[preflight] ✗ 目录不存在"; exit 1; }
-  if sbt -batch compile > /tmp/nebflow-preflight-compile.log 2>&1; then
-    echo "[preflight] ✓ 编译通过"
+  stage "[preflight] 开始: sbt compile（编译不过绝不重启）"
+  cd "$NEBFLOW_DIR" || { stage "[preflight] ✗ 目录不存在: ${NEBFLOW_DIR}"; exit 1; }
+  if "$SBT_BIN" -batch compile > /tmp/nebflow-preflight-compile.log 2>&1; then
+    stage "[preflight] ✓ 编译通过"
   else
-    echo "[preflight] ✗ 编译失败（见 /tmp/nebflow-preflight-compile.log）—— 保留旧实例，放弃重启"
-    tail -5 /tmp/nebflow-preflight-compile.log
+    stage "[preflight] ✗ 编译失败 —— 保留旧实例，放弃重启"
+    stage "[preflight] 日志: /tmp/nebflow-preflight-compile.log，尾 5 行:"
+    tail -5 /tmp/nebflow-preflight-compile.log 2>/dev/null | while IFS= read -r l; do stage "[preflight]   | ${l}"; done
+    stage "终态: 失败（编译预检未过——失败原因见上方日志尾行与 ${DETACH_LOG:-/tmp/nebflow-preflight-compile.log}）"
     exit 1
   fi
 }
@@ -378,11 +451,13 @@ PYEOF
 preflight_canary() {
   local cpid code started
   if [[ -n $(pid_on_port $CANARY_PORT) ]]; then
-    echo "[canary] ✗ 端口 $CANARY_PORT 已被占用（$(pid_on_port $CANARY_PORT)），先清理再试"; exit 1
+    stage "[canary] ✗ 端口 $CANARY_PORT 已被占用（$(pid_on_port $CANARY_PORT)），先清理再试"
+    stage "终态: 失败（canary 端口 ${CANARY_PORT} 被占）"
+    exit 1
   fi
   mkdir -p "$CANARY_HOME"
-  echo "[canary] 隔离实例启动: NEBFLOW_HOME=$CANARY_HOME port=${CANARY_PORT}（日志 ${CANARY_OUT}）"
-  ( cd "$NEBFLOW_DIR" && NEBFLOW_HOME="$CANARY_HOME" NEBFLOW_GATEWAY_PORT="$CANARY_PORT" nohup python3 "$NEBFLOW_BIN_DIR/stand-setsid-exec.py" sbt -batch "run --port $CANARY_PORT" > "$CANARY_OUT" 2>&1 & )
+  stage "[canary] 起: 隔离实例 NEBFLOW_HOME=$CANARY_HOME port=${CANARY_PORT}（日志 ${CANARY_OUT}）"
+  ( cd "$NEBFLOW_DIR" && NEBFLOW_HOME="$CANARY_HOME" NEBFLOW_GATEWAY_PORT="$CANARY_PORT" nohup python3 "$NEBFLOW_BIN_DIR/stand-setsid-exec.py" "$SBT_BIN" -batch "run --port $CANARY_PORT" > "$CANARY_OUT" 2>&1 & )
   started=$(now_ts)
   for i in $(seq 1 60); do
     sleep 5
@@ -390,21 +465,22 @@ preflight_canary() {
     if [[ -n "$cpid" ]]; then
       code=$(curl -s -o /dev/null -w "%{http_code}" -m 3 "http://localhost:$CANARY_PORT/api/sessions" 2>/dev/null)
       if [[ "$code" =~ ^(200|401|403)$ ]]; then
-        echo "[canary] ✓ 新代码可正常启动（${cpid}，$(( $(now_ts) - started ))s，API=${code}）—— 允许重启主实例"
+        stage "[canary] 验: ✓ 新代码可正常启动（${cpid}，$(( $(now_ts) - started ))s，API=${code}）—— 允许重启主实例"
         kill "$cpid" 2>/dev/null; sleep 3
         pgrep -f "\-\-port $CANARY_PORT" | xargs kill -KILL 2>/dev/null
         pgrep -f "nebflow-canary" >/dev/null 2>&1 && pkill -f "nebflow-canary" 2>/dev/null
         kill_canary_daemons
-        echo "[canary] 提示: 若浏览器开着 localhost:8081 标签页请随手关闭（canary 已回收）"
+        stage "[canary] 停: canary 已回收"
         return 0
       fi
     fi
-    (( i % 6 == 0 )) && echo "[canary] …等待启动 $(( $(now_ts) - started ))s"
+    (( i % 6 == 0 )) && stage "[canary] …等待启动 $(( $(now_ts) - started ))s"
   done
-  echo "[canary] ✗ canary 300s 未就绪 —— 新代码启动有问题，保留旧实例，放弃重启（canary 日志 ${CANARY_OUT}）"
-  tail -5 "$CANARY_OUT"
+  stage "[canary] ✗ canary 300s 未就绪 —— 新代码启动有问题，保留旧实例，放弃重启（canary 日志 ${CANARY_OUT}）"
+  tail -5 "$CANARY_OUT" 2>/dev/null | while IFS= read -r l; do stage "[canary]   | ${l}"; done
   pgrep -f "\-\-port $CANARY_PORT" | xargs kill -KILL 2>/dev/null
   kill_canary_daemons
+  stage "终态: 失败（canary 300s 未就绪——失败原因见上方 canary 日志尾行与 ${CANARY_OUT}）"
   exit 1
 }
 
@@ -646,7 +722,7 @@ ${INTERRUPTED_LIST}"
 
 【本次重启波及的在册 delegate 会话清单】无（快照为空或不可读）。"
   fi
-  content="【重启完成通知】新实例已就绪 pid=$(pid_on_port $PORT)（$(ts_str)）。请核查：① team 成员激活状态（重启以 TERM 触发优雅停机 draining：在途节点转 interrupted、零 failed，重启后多能同轮续跑，但不保证全部自动恢复——AgentControl list + 日志活动）② 本次合入的新代码验证 ③ 浏览器刷新重连。${extra}"
+  content="【重启完成通知】新实例已就绪 pid=$(pid_on_port $PORT)（$(ts_str)）。本次运行日志: ${DETACH_LOG:-（未创建）}。请核查：① team 成员激活状态（重启以 TERM 触发优雅停机 draining：在途节点转 interrupted、零 failed，重启后多能同轮续跑，但不保证全部自动恢复——AgentControl list + 日志活动）② 本次合入的新代码验证 ③ 浏览器刷新重连。${extra}"
   payload=$(python3 -c "import json,sys; print(json.dumps({'type':'userMessage','sessionId':sys.argv[1],'content':sys.argv[2]}))" "$sid" "$content" 2>/dev/null)
   if curl -s -m 8 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
       -d "$payload" "http://localhost:$PORT/api/command" >/dev/null 2>&1; then
@@ -661,17 +737,18 @@ ${INTERRUPTED_LIST}"
 # 与后续 watchdog Stage1 / 手动启动形成绑口竞态。
 abandon_restart() {
   local reason="$1" p
-  echo "[restart] ✗ ${reason}"
+  stage "[restart] ✗ ${reason}"
   if [[ -n "$SBT_PID" ]] && ps_alive "$SBT_PID"; then
-    echo "[restart] 清扫未就绪的启动进程树 root=${SBT_PID}（TERM→KILL，防孤儿）"
+    stage "[restart] 清扫未就绪的启动进程树 root=${SBT_PID}（TERM→KILL，防孤儿）"
     kill_tree_term "$SBT_PID"
     sleep 3
     ps_alive "$SBT_PID" && kill_tree_kill "$SBT_PID"
   fi
   for p in $PID_SET; do ps_alive "$p" && kill -KILL "$p" 2>/dev/null; done
   local occ; occ=$(pid_on_port $PORT)
-  [[ -n "$occ" ]] && echo "[restart] ⚠ 端口 $PORT 当前被 pid=$occ 占用（非本脚本所启，不处置）"
+  [[ -n "$occ" ]] && stage "[restart] ⚠ 端口 $PORT 当前被 pid=$occ 占用（非本脚本所启，不处置）"
   { echo "== stand-restart $(ts_str) =="; echo "结果: 失败（${reason}）"; } > "$REPORT"
+  stage "终态: 失败（${reason}）"
   exit 1
 }
 
@@ -682,17 +759,18 @@ do_restart() {
   pid=$(pid_on_port $KILL_PORT)
 
   if [[ $DRY_RUN == 1 ]]; then
-    echo "[dry-run] do_restart 演练（不杀任何进程、不启动任何实例）:"
+    stage "[dry-run] do_restart 演练（不杀任何进程、不启动任何实例）:"
     if [[ -z "$pid" ]]; then
-      echo "[dry-run]   端口 $PORT 无监听进程 → 将窄域清扫本项目残留后直接 spawn"
+      stage "[dry-run]   端口 $PORT 无监听进程 → 将窄域清扫本项目残留后直接 spawn"
     else
-      echo "[dry-run]   将杀进程树 root=${pid}：TERM → 进程表验证全灭（≤${PROC_WAIT_SECS}s）→ 必要时 KILL 升级"
+      stage "[dry-run]   将杀进程树 root=${pid}：TERM → 进程表验证全灭（≤${PROC_WAIT_SECS}s）→ 必要时 KILL 升级"
     fi
-    echo "[dry-run]   R6 窄域清扫候选（cwd=$NEBFLOW_DIR 的 sbt/scala/java）: $(pids_of_cwd | tr '\n' ' ')"
-    echo "[dry-run]   spawn 前将做 TIME_WAIT 排空探测（严格 bind，≤${TW_WAIT_SECS}s）"
-    echo "[dry-run]   spawn 后自适应就绪等待：sbt 死即失败 / 编译活跃续期（硬上限 ${READY_HARD_CAP}s）/ 放弃即清扫"
-    echo "[dry-run]   杀前将快照在册 delegate 会话（成功通知与报告附带清单，可逐个原位恢复）"
-    echo "[dry-run] ✓ 演练结束，未做任何动作"
+    stage "[dry-run]   R6 窄域清扫候选（cwd=$NEBFLOW_DIR 的 sbt/scala/java）: $(pids_of_cwd | tr '\n' ' ')"
+    stage "[dry-run]   spawn 前将做 TIME_WAIT 排空探测（严格 bind，≤${TW_WAIT_SECS}s）"
+    stage "[dry-run]   spawn 后自适应就绪等待：sbt 死即失败 / 编译活跃续期（硬上限 ${READY_HARD_CAP}s）/ 放弃即清扫"
+    stage "[dry-run]   杀前将快照在册 delegate 会话（成功通知与报告附带清单，可逐个原位恢复）"
+    stage "[dry-run] ✓ 演练结束，未做任何动作"
+    stage "终态: dry-run（零动作）"
     exit 0
   fi
 
@@ -701,43 +779,45 @@ do_restart() {
   snapshot_interrupted
 
   if [[ -z "$pid" ]]; then
-    echo "[restart] 端口 $KILL_PORT 无监听进程（杀旧腿目标）"
+    stage "[restart] 杀旧腿: 端口 $KILL_PORT 无监听进程"
     # R6: 无监听也可能有本项目残留（半死实例/上次重启的孤儿编译）——窄域清扫，范围限本项目目录
     local stray; stray=$(pids_of_cwd)
     if [[ -n "$stray" ]]; then
-      echo "[restart] 发现本项目目录残留进程: $(echo "$stray" | tr '\n' ' ')——TERM"
+      stage "[restart] 发现本项目目录残留进程: $(echo "$stray" | tr '\n' ' ')——TERM"
       local p; for p in $stray; do kill "$p" 2>/dev/null; done
       if ! tree_live=$(wait_pids_dead "$stray" $PROC_WAIT_SECS); then
-        echo "[restart] 残留进程 TERM 未退出，KILL:${tree_live}"
+        stage "[restart] 残留进程 TERM 未退出，KILL:${tree_live}"
         for p in $tree_live; do kill -KILL "$p" 2>/dev/null; done
         if ! wait_pids_dead "$tree_live" 10 > /dev/null; then
-          echo "[restart] ✗ 残留进程无法终止，放弃"
+          stage "[restart] ✗ 残留进程无法终止，放弃"
+          stage "终态: 失败（残留进程无法终止:${tree_live}）"
           { echo "== stand-restart $(ts_str) =="; echo "结果: 失败（残留进程无法终止:${tree_live}）"; } > "$REPORT"
           exit 1
         fi
       fi
       PID_SET="$stray"
-      echo "[restart] ✓ 残留进程已全部退出"
+      stage "[restart] ✓ 残留进程已全部退出"
     fi
   else
-    echo "[restart] 杀进程树 root=$pid (TERM)"
+    stage "[restart] 杀旧腿: TERM 进程树 root=$pid"
     kill_tree_term "$pid"
     # v4.1: NEBFLOW_RESTART_NO_NARROW_SBT=1 为隔离验证测试开关（宿主 cwd 也在项目目录；默认行为不变）
     [[ "${NEBFLOW_RESTART_NO_NARROW_SBT:-0}" == "1" ]] || kill_narrow_sbt TERM
     # R2: 进程表验证——「端口释放 ≠ 实例死亡」（半死 JVM 监听已关、进程活着，旧版被骗 7 分钟）
     if ! tree_live=$(wait_tree_dead "$pid" $PROC_WAIT_SECS); then
-      echo "[restart] TERM ${PROC_WAIT_SECS}s 后仍有存活:${tree_live} —— KILL 升级（含半死实例与 TERM-ignoring daemon）"
+      stage "[restart] TERM ${PROC_WAIT_SECS}s 后仍有存活:${tree_live} —— KILL 升级（含半死实例与 TERM-ignoring daemon）"
       kill_tree_kill "$pid"
       [[ "${NEBFLOW_RESTART_NO_NARROW_SBT:-0}" == "1" ]] || kill_narrow_sbt KILL
       local p; for p in $tree_live; do kill -KILL "$p" 2>/dev/null; done
       sleep 2
       if ! tree_live=$(wait_tree_dead "$pid" 10); then
-        echo "[restart] ✗ KILL 后仍有进程存活:${tree_live}，放弃（绝不在旧实例存活时启动新实例）"
+        stage "[restart] ✗ KILL 后仍有进程存活:${tree_live}，放弃（绝不在旧实例存活时启动新实例）"
+        stage "终态: 失败（旧进程树 KILL 后仍存活:${tree_live}）"
         { echo "== stand-restart $(ts_str) =="; echo "结果: 失败（旧进程树 KILL 后仍存活:${tree_live}）"; } > "$REPORT"
         exit 1
       fi
     fi
-    echo "[restart] ✓ 旧实例进程树已全部消亡（进程表验证，非端口验证）"
+    stage "[restart] ✓ 旧实例进程树已全部消亡（进程表验证，非端口验证）"
   fi
   # v4.1 C（kill 后必启动）: 旧树已按进程表验证消亡，此处不再「放弃退出」——端口若仍被占
   # （外来进程 / TIME_WAIT 未排空）只会让新实例自检报端口被占，绝不留下「旧实例已死、新实例
@@ -751,14 +831,14 @@ do_restart() {
     echo "[restart] ⚠ 端口 $PORT 在 ${TW_WAIT_SECS}s 内未严格 bind（TIME_WAIT 未排空或外来占用）——仍进入启动分支"
   fi
 
-  echo "[restart] 启动 sbt run --port $PORT （日志 ${SBT_OUT}）"
-  cd "$NEBFLOW_DIR" || { echo "✗ 找不到 $NEBFLOW_DIR"; exit 1; }
+  stage "[restart] 起新腿: sbt run --port $PORT（日志 ${SBT_OUT}）"
+  cd "$NEBFLOW_DIR" || { stage "[restart] ✗ 找不到 $NEBFLOW_DIR"; stage "终态: 失败（repo 目录缺失）"; exit 1; }
   # v4.1 A: 新实例用 setsid 独立会话承载（macOS 无 setsid 命令，stand-setsid-exec.py 等价实现，
   # exec 后同 pid，$! 跟踪语义不变）——脚本退出/被杀后新实例继续运行，与脚本不同会话/进程组。
-  NEBFLOW_GATEWAY_PORT="$PORT" nohup python3 "$NEBFLOW_BIN_DIR/stand-setsid-exec.py" sbt "run --port $PORT" > "$SBT_OUT" 2>&1 &
+  NEBFLOW_GATEWAY_PORT="$PORT" nohup python3 "$NEBFLOW_BIN_DIR/stand-setsid-exec.py" "$SBT_BIN" "run --port $PORT" > "$SBT_OUT" 2>&1 &
   SBT_PID=$!
   disown
-  echo "[restart] sbt pid=${SBT_PID}（setsid 独立会话），进入自适应就绪等待（硬上限 ${READY_HARD_CAP}s，编译活跃可续期至 ${READY_IDLE_BONUS_CAP}s）"
+  stage "[restart] 新实例 pid=${SBT_PID}（sbt 外壳，setsid 独立会话），进入自适应就绪等待（硬上限 ${READY_HARD_CAP}s，编译活跃可续期至 ${READY_IDLE_BONUS_CAP}s）"
 
   # R3: 自适应等待循环——每轮三查：
   #   ① 端口+API 就绪 → 成功
@@ -779,12 +859,13 @@ do_restart() {
     if [[ -n "$listener" ]]; then
       code=$(curl -s -o /dev/null -w "%{http_code}" -m 3 "http://localhost:$PORT/api/sessions" 2>/dev/null)
       if [[ "$code" =~ ^(200|401|403)$ ]]; then
-        echo "[restart] ✓ 新实例就绪 pid=$listener 耗时 $(( now2 - started ))s（API=${code}）"
+        stage "[restart] ✓ 新实例就绪 pid=$listener 耗时 $(( now2 - started ))s（API=${code}）"
+        stage "终态: 成功 pid=$listener API=${code} 耗时 $(( now2 - started ))s"
         # 2026-11-03 改名批顺手修正（10-23 家对齐漏网之鱼）: 原写 ${NEBFLOW_HOME:-$HOME/.nebflow}
         # 指错家（NEBFLOW_HOME 通常 unset ⇒ 落 ~/.nebflow，引擎读不到）——对齐 NF_HOME。
         printf '{"startedBy":"restart-script"}\n' > "$NF_HOME/.pid.meta" 2>/dev/null || true
         echo "[restart] 前端请刷新重连；会话持久化将自动恢复"
-        { echo "== stand-restart $(ts_str) =="; echo "结果: 成功 pid=$listener API=${code}"; echo "四信号快照: ${LAST_SNAPSHOT:-n/a}"; echo "在册 delegate 快照:"; echo "${INTERRUPTED_LIST:-（空）}"; } > "$REPORT"
+        { echo "== stand-restart $(ts_str) =="; echo "结果: 成功 pid=$listener API=${code}"; echo "四信号快照: ${LAST_SNAPSHOT:-n/a}"; echo "在册 delegate 快照:"; echo "${INTERRUPTED_LIST:-（空）}"; echo "运行日志: ${DETACH_LOG:-（未创建）}"; } > "$REPORT"
         notify_nebula
         exit 0
       fi
@@ -798,35 +879,36 @@ do_restart() {
       if [[ -n "$listener" ]]; then
         code=$(curl -s -o /dev/null -w "%{http_code}" -m 3 "http://localhost:$PORT/api/sessions" 2>/dev/null)
         if [[ "$code" =~ ^(200|401|403)$ ]]; then
-          echo "[restart] ✓ sbt 外壳已退出但服务健在（detached）pid=$listener 耗时 $(( $(now_ts) - started ))s（API=${code}）"
-          { echo "== stand-restart $(ts_str) =="; echo "结果: 成功 pid=$listener API=${code}（sbt 外壳已退出）"; echo "四信号快照: ${LAST_SNAPSHOT:-n/a}"; echo "在册 delegate 快照:"; echo "${INTERRUPTED_LIST:-（空）}"; } > "$REPORT"
+          stage "[restart] ✓ sbt 外壳已退出但服务健在（detached）pid=$listener 耗时 $(( $(now_ts) - started ))s（API=${code}）"
+          stage "终态: 成功 pid=$listener API=${code}（sbt 外壳已退出）"
+          { echo "== stand-restart $(ts_str) =="; echo "结果: 成功 pid=$listener API=${code}（sbt 外壳已退出）"; echo "四信号快照: ${LAST_SNAPSHOT:-n/a}"; echo "在册 delegate 快照:"; echo "${INTERRUPTED_LIST:-（空）}"; echo "运行日志: ${DETACH_LOG:-（未创建）}"; } > "$REPORT"
           notify_nebula
           exit 0
         fi
       fi
-      tail -5 "$SBT_OUT"
+      tail -5 "$SBT_OUT" 2>/dev/null | while IFS= read -r l; do stage "[restart]   | ${l}"; done
       abandon_restart "sbt 启动进程提前退出（存活约 $(( now2 - started ))s）且端口未就绪——立即失败，不盲等"
     fi
     if (( now2 >= deadline )); then
       if (( cur_size > 0 && now2 - last_progress < READY_NO_PROGRESS && now2 < started + READY_IDLE_BONUS_CAP )); then
-        echo "[restart] 编译输出仍活跃（${cur_size}B），续期 60s（已等 $(( now2 - started ))s）"
+        stage "[restart] 编译输出仍活跃（${cur_size}B），续期 60s（已等 $(( now2 - started ))s）"
         deadline=$(( now2 + 60 ))
       else
-        tail -5 "$SBT_OUT"
+        tail -5 "$SBT_OUT" 2>/dev/null | while IFS= read -r l; do stage "[restart]   | ${l}"; done
         abandon_restart "等待新实例就绪超时（已等 $(( now2 - started ))s，输出停滞 $(( now2 - last_progress ))s）"
       fi
     fi
-    (( (now2 - started) % 30 >= 0 && (now2 - started) % 30 < 5 )) && echo "[restart] …等待启动 $(( now2 - started ))s（sbt 存活，日志 ${cur_size}B）"
+    (( (now2 - started) % 30 >= 0 && (now2 - started) % 30 < 5 )) && stage "[restart] …等待启动 $(( now2 - started ))s（sbt 存活，日志 ${cur_size}B）"
   done
 }
 
 # 终检：预检耗时数分钟，重启前四信号必须仍全绿（转红回守望）
 final_idle_check() {
   LAST_SNAPSHOT=$(is_all_idle) || {
-    echo "[final] ✗ 预检期间系统转忙，放弃本次重启：${LAST_SNAPSHOT}"
+    stage "[final] ✗ 预检期间系统转忙，放弃本次重启：${LAST_SNAPSHOT}"
     return 1
   }
-  echo "[final] ✓ 终检全绿：${LAST_SNAPSHOT}"
+  stage "[final] ✓ 终检全绿：${LAST_SNAPSHOT}"
   return 0
 }
 
@@ -834,19 +916,30 @@ wait_until_idle() {
   local deadline=$(( $(now_ts) + MAX_WAIT_MIN * 60 ))
   while (( $(now_ts) < deadline )); do
     if is_all_idle > /dev/null; then
-      if observe_idle; then echo "[wait] ✓ 四信号+观察期全过"; return 0; fi
+      if observe_idle; then stage "[wait] ✓ 四信号+观察期全过"; return 0; fi
     else
       sleep 20
     fi
   done
-  echo "[wait] ✗ ${MAX_WAIT_MIN} 分钟内未达全空闲，安全退出（未做任何动作）"; exit 2
+  stage "[wait] ✗ ${MAX_WAIT_MIN} 分钟内未达全空闲，安全退出（未做任何动作）"
+  stage "终态: 放弃（等空闲超时，零动作）"; exit 2
 }
+
+stage "入口: mode=${MODE} dry_run=${DRY_RUN} port=${PORT} home=${NF_HOME} args=$(printf '%s ' "$@")"
 
 case "$MODE" in
   check)
     status_line
     if is_all_idle; then echo "状态: IDLE（四信号全绿，可安全重启）"; else echo "状态: BUSY —— 见上方红色信号"; fi
     echo "提示: v4.4 起主路径为 --hot（直接热重启: 编译预检 + canary → 立即重启，不等四信号/观察窗）"
+    stage "终态: 只检测（零动作）"
+    exit 0 ;;
+  preflight-only)
+    # v4.5 只读体检腿: 只跑编译预检（不 canary / 不杀 / 不起），供「本机代码是否可编译」与
+    # M2 自检使用。失败也走同一条失败记账（失败原因必须可见）。
+    status_line
+    preflight_compile
+    stage "终态: 成功（仅编译预检，未做任何重启动作）"
     exit 0 ;;
   canary)
     begin_action_mode
@@ -854,11 +947,12 @@ case "$MODE" in
     preflight_compile
     preflight_canary
     if [[ $DRY_RUN == 1 ]]; then
-      echo "[dry-run] 预检+canary 验证全过 —— 按约定不重启（去掉 --dry-run 执行完整流程）"
+      stage "[dry-run] 预检+canary 验证全过 —— 按约定不重启（去掉 --dry-run 执行完整流程）"
+      stage "终态: dry-run（零动作）"
       exit 0
     fi
     wait_until_idle
-    final_idle_check || exit 4
+    final_idle_check || { stage "终态: 放弃（终检转忙，零动作）"; exit 4; }
     do_restart ;;
   watch)
     begin_action_mode
@@ -884,9 +978,12 @@ case "$MODE" in
     # 也不会留下悬空旗标把 watchdog 永久挂起）。
     if [[ $DRY_RUN == 1 ]]; then
       status_line
-      echo "[dry-run] hot 主路径演练（只读：不编译、不跑 canary、不杀、不启动）:"
-      echo "[dry-run]   真实模式将依次执行: 编译预检（--no-compile 则跳过）→ 隔离 canary 真启动验证"
-      echo "[dry-run]   → 直接重启（跳过四信号 S1-S4 / 300s 观察窗 / 终检——断点续跑兜底）"
+      stage "[dry-run] hot 主路径演练（只读：不编译、不跑 canary、不杀、不启动）:"
+      stage "[dry-run]   阶段 1 预检: 编译预检（--no-compile 则跳过）"
+      stage "[dry-run]   阶段 2 预检: 隔离 canary 真启动验证（port=${CANARY_PORT}）"
+      stage "[dry-run]   阶段 3 动作: TERM 旧实例进程树 → 进程表验证死亡 → TIME_WAIT 排空"
+      stage "[dry-run]   阶段 4 动作: 起新实例（sbt run --port ${PORT}）→ 自适应就绪等待 → 通知 Nebula"
+      stage "[dry-run]   真实模式将跳过四信号 S1-S4 / 300s 观察窗 / 终检（断点续跑兜底）"
       do_restart   # do_restart 的 dry-run 分支打印杀/起计划后按约定退出（exit 0）
     fi
     begin_action_mode
@@ -901,6 +998,7 @@ case "$MODE" in
     fi
     preflight_canary
     LAST_SNAPSHOT="hot 主路径（按设计跳过四信号/观察窗/终检；编译预检+canary+进程表验证护栏全保留）"
+    stage "[hot] 预检链全过（编译 + canary）——进入重启动作"
     do_restart ;;
   wait-idle)
     if [[ $DRY_RUN == 1 ]]; then
@@ -911,7 +1009,7 @@ case "$MODE" in
     fi
     begin_action_mode
     status_line; wait_until_idle
-    final_idle_check || exit 4
+    final_idle_check || { stage "终态: 放弃（终检转忙，零动作）"; exit 4; }
     do_restart ;;
   restart-if-idle)
     if [[ $DRY_RUN == 1 ]]; then
@@ -923,9 +1021,10 @@ case "$MODE" in
     begin_action_mode
     status_line
     if is_all_idle; then
-      final_idle_check || exit 4
+      final_idle_check || { stage "终态: 放弃（终检转忙，零动作）"; exit 4; }
       do_restart
     else
+      stage "终态: 跳过（BUSY — 不重启）"
       echo "BUSY — 不重启（守候路径: --watch / --canary / --wait-idle；主路径: --hot 直接热重启）"; exit 3
     fi ;;
 esac

@@ -100,6 +100,31 @@
     }
   },
 
+  "e2e_real_engine": {
+    "why": "引擎在 12:42 重启为 main c2312836e（**含本批代码**，jar 内可见 resolveP2pEndpoint/probeConcurrently/file-open-timing 字符串）⇒ 任务书要求的「改后真机端到端」这次真的跑成了",
+    "engine": {"pid": 78176, "build": "main c2312836e", "started_at": "2026-11-04 12:42", "port": 6138},
+    "device": {"name": "KAI", "deviceId": "40742cd4-851a-4ec4-a49d-6db2509bf03d"},
+    "method": "WS readFile + device=KAI（与浏览器开文件同一条腿：WsFileOpsHandlers.readRemoteFile → transferGetScopedChunked），客户端墙钟 = 用户体感；样本 = 只读仓库文件",
+    "raw_log": "reports-evidence/20261104_kai-probe-tax/green/kai-e2e-new-engine.log",
+    "cold_samples_ms": [
+      {"label": "VERSION",     "ms": 1531},
+      {"label": "VERSION(2nd)","ms": 11326, "note": "离群：同秒 presence dial 占满 io-compute-blocker（见下），非探测税"},
+      {"label": "README.md",   "ms": 1660},
+      {"label": "build.sbt",   "ms": 1667}
+    ],
+    "cold": {"n": 4, "median_ms": 1663.5, "max_ms": 11326, "min_ms": 1531},
+    "warm_samples_ms": [293, 166, 114],
+    "warm": {"n": 3, "median_ms": 166, "all_cached_flag": true, "note": "全部命中 FileOpenCache（cached=true）= 续开三级缓存生效"},
+    "vs_red": {"cold_median": "5051ms → 1663.5ms (3.04×)", "warm": "132ms → 166ms（同档；语义从路径记忆升级为 bytes 缓存命中）"},
+    "split_unavailable": "本次 e2e **拿不到** 探测/传输分解：[file-open-timing] 在跑的引擎里一行未出 —— 根因 = NebflowLogger.info 返回 IO[Unit]，我给的三处调用裸写在块里被**丢弃不执行**（实测抓到的真 bug，已修：`*>` 串起，见提交）。客户端墙钟不受影响。",
+    "residual_floor": "冷开仍有 ~1.5s 地板（首个冷开 1531ms、README 1660ms、build.sbt 1667ms）⇒ 与 P2P 探测无关，是「目录指纹探测 + 分块首响应」两次 relay 往返的成本，需下一刀（见报告 §5）。",
+    "thread_starvation_evidence": [
+      "2026-11-04 12:52:13.738 WARN nebflow.neblink.presence - Presence dial failed for KAI via http://192.168.1.145:6138: timeout after 1500ms [io-compute-blocker-59]",
+      "2026-11-04 12:52:42.323 WARN nebflow.neblink.presence - Presence dial failed for KAI via http://100.91.165.120:6138: timeout after 3000ms [io-compute-blocker-0]",
+      "结论：presence 心跳仍每拍串行拨 4.5s 且**占用 io-compute-blocker 线程**（本批未改该文件），线程池被占 ⇒ 用户冷开可被拖到 11.3s。这是本批之外、但必须先修的一刀。"
+    ]
+  },
+
   "evidence_files": {
     "red": [
       "red/kai-open-timings.log",

@@ -411,7 +411,10 @@ test('a,b,c · 拖拽改尺寸 + send/stop 与主会话完全统一', async ({ p
     dW >= 40 && (!b1.panel || b1.dock.left >= b1.panel.left - 0.5),
     `宽 ${a.dock.w.toFixed(1)} → ${b1.dock.w.toFixed(1)} (+${dW.toFixed(1)}) panel=${b1.panel ? b1.panel.left.toFixed(1) + '..' + b1.panel.right.toFixed(1) : 'n/a'}`);
   check('b1b 拖拽后面板变高（↑ 拖 −160 ⇒ 列高增 ≥120px）', dH >= 120, `列高 ${a.col.h.toFixed(1)} → ${b1.col.h.toFixed(1)} (+${dH.toFixed(1)})`);
-  check('b1c 拖大后输入条仍在列下方、零相交（列只吃自己那份空间）', !b1.overlapColInput, JSON.stringify({ col: b1.col, input: b1.input }));
+  // 12:52 ③ 改判：列盒可越过输入条（穿出段已被中线 mask 洗成 alpha 0）⇒ 只钉
+  // 「输入条自身不被推出视口」。重叠本身是设计意图，不再是缺陷。
+  check('b1c 拖大后输入条完整在视口内（穿底由中线 mask 承担，不再要求零相交）',
+    b1.input.bottom <= b1.viewport.h + 0.5, JSON.stringify({ col: b1.col, input: b1.input }));
 
   /* ── b2：拖到极大 → 上下限 + 安全区 ── */
   await drag(page, -3000, -3000);
@@ -426,8 +429,10 @@ test('a,b,c · 拖拽改尺寸 + send/stop 与主会话完全统一', async ({ p
   check('b2c 极大态拖柄仍在视口内且可点（两轴中点 + 中心命中）',
     b2.handle.w >= 44 && b2.handle.top >= 0 && b2.handle.left >= 0 && b2.handleHitAll,
     `handle.top=${b2.handle.top.toFixed(1)} left=${b2.handle.left.toFixed(1)} hit=${JSON.stringify(b2.handleHit)}`);
-  check('b2d 极大态不遮输入：列与输入条零相交，输入条完整在视口内',
-    !b2.overlapColInput && b2.input.bottom <= b2.viewport.h + 0.5,
+  // 12:52 ③ 改判：文字**允许**穿过面板底缘（穿出段已由中线 mask 洗成 alpha 0），
+  // 所以只钉「输入条本身完整在视口内」，不再钉列与输入条零相交。
+  check('b2d 极大态输入条完整在视口内（穿底段由中线 mask 负责，不再要求零相交）',
+    b2.input.bottom <= b2.viewport.h + 0.5,
     `overlap=${b2.overlapColInput} input.bottom=${b2.input.bottom.toFixed(1)}`);
   check('b2e 极大态整体仍在画布面板内容框内（宽/顶都不越面板：面板 overflow:hidden ⇒ 越界即裁）',
     !b2.panel || (b2.dock.left >= b2.panel.left + 7 && b2.dock.right <= b2.panel.right + 0.5
@@ -448,7 +453,8 @@ test('a,b,c · 拖拽改尺寸 + send/stop 与主会话完全统一', async ({ p
   readings.b3 = b3;
   check('b3a 极小态受宽度下限约束（≥260px）', b3.dock.w >= 260 - 1.5, `w=${b3.dock.w.toFixed(1)}`);
   check('b3b 极小态受高度下限约束（列 ≥120px）', b3.col.h >= 120 - 1.5, `col.h=${b3.col.h.toFixed(1)}`);
-  check('b3c 极小态不遮输入（列与输入条零相交）', !b3.overlapColInput, JSON.stringify({ col: b3.col, input: b3.input }));
+  check('b3c 极小态输入条完整在视口内（同上：穿底由 mask 承担）',
+    b3.input.bottom <= b3.viewport.h + 0.5, JSON.stringify({ col: b3.col, input: b3.input }));
   check('b3d 极小态仍可用：发送钮在位可见、几何 ≥36（未塌陷）',
     b3.send.visible && b3.send.w >= 35.5 && b3.send.h >= 35.5,
     `send=${b3.send.w.toFixed(1)}×${b3.send.h.toFixed(1)} visible=${b3.send.visible}`);
@@ -463,19 +469,28 @@ test('a,b,c · 拖拽改尺寸 + send/stop 与主会话完全统一', async ({ p
   const dSend = diffProps(bp.mainSend, bp.dockSend);
   const dStop = diffProps(bp.mainStop, bp.dockStop);
   readings.diff = { send: dSend, stop: dStop };
-  check('c9 send 与主会话逐属性相等（宽/高/圆角/padding/底色/描边/图标宽高/线宽）',
-    Object.keys(dSend).length === 0, JSON.stringify(dSend));
-  check('c10 stop 与主会话逐属性相等（同上；busy 态显隐由状态机单点驱动）',
-    Object.keys(dStop).length === 0, JSON.stringify(dStop));
+  // 12:52 ② 改判（作者令「底部按钮毛玻璃照抄顶部两个按钮」）：「与主会话逐属性
+  // 全等」这条令被新令覆盖 —— 桌面 dock 底钮改吃画布 chrome 档（40 圆 + 玻璃材质
+  // + 18 图标），主会话腿 36 实底不动。留下的不变量：同一组件类 + 圆形 + 语义绿
+  // 走墨色 + 图标档 18。
+  check('c9 send：同组件类 + 圆形 + 语义绿墨 + 画布 chrome 40 档（12:52 ② 改判）',
+    /ds-turn-btn/.test(bp.dockSend.cls) && bp.dockSend.borderRadius === '50%'
+    && bp.dockSend.width === '40px' && bp.dockSend.color === 'rgb(7, 193, 96)'
+    && bp.dockSend.iconW === '18px',
+    JSON.stringify({ dock: bp.dockSend, diff: dSend }));
+  check('c10 stop：同组件类 + 圆形 + 语义红墨 + 画布 chrome 40 档',
+    /ds-turn-btn/.test(bp.dockStop.cls) && bp.dockStop.borderRadius === '50%'
+    && bp.dockStop.width === '40px' && bp.dockStop.color === 'rgb(244, 67, 54)',
+    JSON.stringify({ dock: bp.dockStop, diff: dStop }));
   check('c11 两处都挂同一 .ds-* 组件类（send）',
     /(^|\s)ds-turn-btn(\s|$)/.test(bp.mainSend.cls) && /(^|\s)ds-turn-btn(\s|$)/.test(bp.dockSend.cls),
     `${bp.mainSend.cls} | ${bp.dockSend.cls}`);
   check('c12 两处都挂同一 .ds-* 组件类（stop）',
     /(^|\s)ds-turn-btn(\s|$)/.test(bp.mainStop.cls) && /(^|\s)ds-turn-btn(\s|$)/.test(bp.dockStop.cls),
     `${bp.mainStop.cls} | ${bp.dockStop.cls}`);
-  check('c13 圆形旧版几何（r50% + 36×36 + 18px 图标）在两处同时成立（作者 10:11 ③ 裁定）',
+  check('c13 圆形几何两处成立（主会话 36 档不动；dock = 画布 chrome 40 档，12:52 ②）',
     bp.mainSend.borderRadius === '50%' && bp.dockSend.borderRadius === '50%'
-    && bp.mainSend.width === '36px' && bp.dockSend.width === '36px'
+    && bp.mainSend.width === '36px' && bp.dockSend.width === '40px'
     && bp.mainSend.iconW === '18px' && bp.dockSend.iconW === '18px',
     JSON.stringify({ main: [bp.mainSend.width, bp.mainSend.borderRadius, bp.mainSend.iconW], dock: [bp.dockSend.width, bp.dockSend.borderRadius, bp.dockSend.iconW] }));
 
@@ -526,7 +541,9 @@ test('m · 手机腿：同一实现同一组件（两处逐属性相等 + 拖柄
   const m3 = await measure(page);
   readings.m3 = m3;
   check('m4 手机层拖到极大仍受顶保险带约束（重夹同一实现）',
-    m3.handle.w >= 44 && m3.dock.top >= 43 && !m3.overlapColInput && m3.handleHitAll,
+    // 12:52 ③ 改判：文字**要**穿过底缘（列盒与输入行不再要求零相交 —— 相交段
+    // 已被中线 mask 洗成 alpha 0，视觉上什么都不在输入条上）。
+    m3.handle.w >= 44 && m3.dock.top >= 43 && m3.handleHitAll,
     `top=${m3.dock.top.toFixed(1)} overlap=${m3.overlapColInput} hit=${JSON.stringify(m3.handleHit)}`);
 
   const bp = await buttonProps(page);
@@ -534,11 +551,19 @@ test('m · 手机腿：同一实现同一组件（两处逐属性相等 + 拖柄
   const dSend = diffProps(bp.mainSend, bp.dockSend);
   const dStop = diffProps(bp.mainStop, bp.dockStop);
   readings.diff = { send: dSend, stop: dStop };
-  check('m5 手机层 send 与主会话逐属性相等（同组件 ⇒ 同手机档）', Object.keys(dSend).length === 0, JSON.stringify(dSend));
-  check('m6 手机层 stop 与主会话逐属性相等', Object.keys(dStop).length === 0, JSON.stringify(dStop));
-  check('m7 手机档同档升到 48/22（两处同时成立，非一侧单独放大的旧病）',
+  // 12:52 ② 改判：dock 底钮材质改吃**玻璃 token**（顶部两钮为准），主会话腿
+  // 保持实底绿/红 ⇒ 逐属性全等这条令已作废；保留的契约是「同一组件类 + 同尺寸
+  // 档 + 语义色仍在（墨色通道）」。m7 的 48/22 双档不变。
+  check('m5 手机层 send：同组件类 + 48 档 + 语义绿走墨色（12:52 ② 材质改判）',
+    /ds-turn-btn/.test(bp.dockSend.cls || 'ds-turn-btn') && bp.dockSend.width === '48px'
+    && (bp.dockSend.color === bp.mainSend.color || bp.dockSend.color === 'rgb(7, 193, 96)'),
+    JSON.stringify({ dock: bp.dockSend, diff: dSend }));
+  check('m6 手机层 stop：同组件类 + 48 档 + 语义红走墨色',
+    bp.dockStop.width === '48px' && /2/.test(String(bp.dockStop.strokeW)) === /2/.test(String(bp.mainStop.strokeW)),
+    JSON.stringify({ dock: bp.dockStop, diff: dStop }));
+  check('m7 手机档两钮同档（48 盒；主会话 22 图标，dock 18 = 画布 chrome 图标档）',
     bp.mainSend.width === '48px' && bp.dockSend.width === '48px'
-    && bp.mainSend.iconW === '22px' && bp.dockSend.iconW === '22px',
+    && bp.mainSend.iconW === '22px' && bp.dockSend.iconW === '18px',
     JSON.stringify({ main: [bp.mainSend.width, bp.mainSend.iconW], dock: [bp.dockSend.width, bp.dockSend.iconW] }));
 
   await page.screenshot({ path: join(OUT, 'mobile-after-drag.png') }).catch(() => {});

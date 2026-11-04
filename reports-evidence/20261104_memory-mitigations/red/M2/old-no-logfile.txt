@@ -1,0 +1,10 @@
+=== old script: 有无落盘机制 ===
+grep -c restart-detach -> 0
+238:  exec python3 "$NEBFLOW_BIN_DIR/stand-daemonize.py" "$SELF_PATH" "$@"
+=== 复现：调用方管道无读者（| head -c 1） ⇒ 旧版输出全丢 ===
+captured_by_caller_bytes=1
+persisted_logs=0
+=== 对比：新版同一场景（dead-reader pipe） ===
+new_log=/Users/kaiyu/.stand/logs/restart-detach-20261104-133530-51229.log
+new_log_lines=18
+new_log_last=2026-11-04 13:35:31 [51229] 终态: dry-run（零动作）
