@@ -112,3 +112,13 @@ $ git diff main..HEAD --stat -- src/main/resources/web src/main/scala tests
   `reports-evidence/20261104_todo-unify-backend__delegate-nebflow-79768ef5/`（旧制，已被 main 的
   命名迁移批改名），收口时把旧制目录下的 accept2/entries2/panel/persist2/sync/treecheck/typefix
   全部并入本目录，旧目录已删除（内容零丢失）。
+
+## 7. 已并入 main（手动合并回执 · 收口后补记）
+
+- main `579af6acf` → **`9ea4b3748 Merge branch 'delegate/delegate-nebflow-79768ef5'`**（`--no-ff`，双亲 `579af6acf` + `1eacdfd2b`，自动合并零冲突）。
+- 分支已全量入 main：`git rev-list --left-right --count main...delegate/delegate-nebflow-79768ef5` = `1  0`。
+- 合并后 main 树上复核：产品范围仍 **37 文件**（web 15 + tests 22），`src/main/scala` / `src/test/scala` **零 diff**；`tests/type-baseline.json` 仍为 `{"total":0,"files":{}}`（空基线、零豁免）。
+- 手动合并原因：merge-queue 放行投递通道为进程内闭包、实例重启后无人接（修复 `d989779a8` / `ee415538b` 已在 main，需重启生效），按队列自带替代路径执行。
+- 细节见 `final/MERGE-LANDED.md`（含重启后自检四条）。
+- 本条与 `final/MERGE-LANDED.md` **留在工作树未提交**：分支已全量并入 main，再提交会使分支重新分叉（ahead=1）需再走一轮合并；纯证据、零产品代码，可随时一条提交并入。
+
