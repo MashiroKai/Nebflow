@@ -7,7 +7,7 @@ import io.circe.Json
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.PresenceServicePort
-import nebflow.core.tools.{P2pPathDecision, P2pProbePolicy, P2pReachability}
+import nebflow.core.tools.{DirectRoute, P2pPathDecision, P2pProbePolicy, P2pReachability, RoutePlan}
 import nebflow.shared.{NebflowLogger, PeerInfo, TransportLog}
 
 import java.net.URI
@@ -456,19 +456,59 @@ final class NeblinkPresenceService(
           )
 
   /**
-   * One dial ROUND (F-D ①/②): pick the candidates to try — candidates judged dead
-   * are skipped so a black-holed address stops eating the round budget — then walk
-   * them in preference order until one answers or the round budget runs out.
+   * One dial ROUND (F-D ①/② + 三档选路): pick the candidates to try — 档位不可用的候选
+   * 先被**跳过**（三档选路批 2026-11-04），剩下的再按 F-D 剔除窗过滤——then walk them in
+   * preference order until one answers or the round budget runs out.
    *
    * 🔴 全部候选都在剔除窗内时**不判死也不空转**：只半开探测最优候选（成本上界
    * = 1×budget），其余等恢复路径（TTL 到期 / 名册变化 / 梯子收手复位）。
+   *
+   * 🔴 三档选路（本批）：① Tailscale 档**探测为不可用**（`tailscale-stopped` 等）⇒ 该档
+   * 候选在本拍被整档丢弃（`plan.attempt` 里没有它们），**一个字节都不拨**；候选全被丢光
+   * ⇒ 直接落 relay（`decision=relay-route(...)`），不再「排第一 → 拨 3000ms → 失败回落」。
+   * 检测器未接入时 fail-open（`plan.reasons` 里是 `tailscale-unprobed`，行为与改前逐字节相同）。
    */
   private def dialRound(peer: PeerInfo, candidates: List[String], id: DeviceIdentity): IO[Unit] =
     val startedAtMs = System.currentTimeMillis()
-    val live = candidates.filterNot(ep => isSuppressed(peer.deviceId, ep, startedAtMs))
+    DirectRoute.plan(peer.deviceName, candidates).flatMap { plan =>
+      if plan.isEmpty then routeSkippedRound(peer, candidates, plan, startedAtMs)
+      else dialGatedRound(peer, plan, id, startedAtMs)
+    }
+
+  end dialRound
+
+  /** 选路裁定「本拍没有该拨的直连候选」时的一轮：零拨号、零探测，直接落 relay 决策。 */
+  private def routeSkippedRound(
+    peer: PeerInfo,
+    candidates: List[String],
+    plan: RoutePlan,
+    startedAtMs: Long
+  ): IO[Unit] =
+    val round = PresenceDialRound(Nil, candidates, truncated = false, Nil, startedAtMs)
+    IO(dialRounds.put(peer.deviceId, round)) *>
+      dialRoundLog(
+        peer,
+        endpoints = candidates.size,
+        dialed = 0,
+        dialMs = 0L,
+        cacheHit = false,
+        decision = s"relay-route(${plan.reasons.mkString(",")})",
+        ledgerNote = None,
+        route = Some(plan.summary)
+      )
+
+  /** 档位过滤后的真拨一轮（F-D 剔除窗 + 共用负缓存 + 并发拨号的既有语义，零改动）。 */
+  private def dialGatedRound(
+    peer: PeerInfo,
+    plan: RoutePlan,
+    id: DeviceIdentity,
+    startedAtMs: Long
+  ): IO[Unit] =
+    val gated = plan.attempt
+    val live = gated.filterNot(ep => isSuppressed(peer.deviceId, ep, startedAtMs))
     val (toTry, skipped, probeOnly) =
-      if live.nonEmpty then (live, candidates.filterNot(live.contains), false)
-      else (candidates.take(1), candidates.drop(1), true)
+      if live.nonEmpty then (live, gated.filterNot(live.contains), false)
+      else (gated.take(1), gated.drop(1), true)
     val preamble =
       if probeOnly then
         logger.debug(s"All candidates suppressed for ${peer.deviceName} — half-open probing ${toTry.head}")
@@ -481,11 +521,11 @@ final class NeblinkPresenceService(
       reachCacheHitMs(peer, startedAtMs).flatMap {
         // P3：共用真源命中 ⇒ **零成本轮**（不拨任何候选、0ms）。改前这里要串行付满
         // 两个候选的预算（4500ms）才能得出同一结论。
-        case Some(leftMs) => cacheSkippedRound(peer, candidates, skipped, leftMs)
-        case None         => liveRound(peer, toTry, skipped, id, startedAtMs, probeOnly)
+        case Some(leftMs) => cacheSkippedRound(peer, gated, skipped, leftMs, plan)
+        case None         => liveRound(peer, toTry, skipped, id, startedAtMs, probeOnly, plan)
       }
 
-  end dialRound
+  end dialGatedRound
 
   /**
    * P3：共用可达性真源命中？返回**剩余窗口**（ms）；`None` = 无负证据 / 未接账本。
@@ -515,7 +555,8 @@ final class NeblinkPresenceService(
     peer: PeerInfo,
     candidates: List[String],
     skipped: List[String],
-    leftMs: Long
+    leftMs: Long,
+    plan: RoutePlan
   ): IO[Unit] =
     val round = PresenceDialRound(Nil, skipped, truncated = false, Nil, System.currentTimeMillis())
     IO(dialRounds.put(peer.deviceId, round)) *>
@@ -526,7 +567,8 @@ final class NeblinkPresenceService(
         dialMs = 0L,
         cacheHit = true,
         decision = s"relay-negative-cache(${leftMs}ms left)",
-        ledgerNote = None
+        ledgerNote = None,
+        route = Some(plan.summary)
       )
 
   /** 真拨一轮：跑候选 → 写轮记录 → 写共用账本 → 一条结构化行（P4）。 */
@@ -536,7 +578,8 @@ final class NeblinkPresenceService(
     skipped: List[String],
     id: DeviceIdentity,
     startedAtMs: Long,
-    probeOnly: Boolean
+    probeOnly: Boolean,
+    plan: RoutePlan
   ): IO[Unit] =
     val t0 = System.nanoTime()
     dialCandidates(peer, toTry, id, startedAtMs, probeOnly).flatMap { outcome =>
@@ -572,7 +615,8 @@ final class NeblinkPresenceService(
               if outcome.winner.isDefined then "p2p"
               else if probeOnly then "relay-half-open-no-answer"
               else "relay-no-answer",
-            ledgerNote = ledgerNote
+            ledgerNote = ledgerNote,
+            route = Some(plan.summary)
           ) *>
             (if outcome.truncated then
                logger.info(
@@ -629,18 +673,28 @@ final class NeblinkPresenceService(
     dialMs: Long,
     cacheHit: Boolean,
     decision: String,
-    ledgerNote: Option[Int]
+    ledgerNote: Option[Int],
+    /**
+     * 三档选路读数（本批）：`via=… reasons=… probeMs=… tiers=…`。
+     *
+     * 为什么塞进本行而不是另起一条 `[route]` 行：本函数有「决策迁移才落 INFO」的行数纪律
+     * （改前一天 101–175 条 INFO 的教训）。选路读数并进来 ⇒ 一台恒走 relay 的设备仍然只有
+     * 决策迁移时的那几行，**原因码与探测耗时不额外收税也不额外刷屏**。
+     */
+    route: Option[String] = None
   ): IO[Unit] =
     val poolLabel = if schedule.dedicatedPool then s"${PresenceDialPool.ThreadNamePrefix}*" else "io-blocking(legacy)"
     val tail = ledgerNote.fold("")(n => s" negative=#$n window=${P2pProbePolicy.negativeWindowMs(n)}ms")
+    val routeTail = route.map(r => s" route[$r]").getOrElse("")
     val line =
       s"[presence-dial] device=${peer.deviceName} endpoints=$endpoints dialed=$dialed " +
         s"concurrent=${schedule.concurrent} pool=$poolLabel dialMs=$dialMs cacheHit=$cacheHit " +
-        s"decision=$decision$tail"
+        s"decision=$decision$tail$routeTail"
     // 去重键只取**决策类别**（`relay-negative-cache(84213ms left)` 里的剩余毫秒每拍都变，
     // 拿整条当键 ⇒ 每拍都算「迁移」⇒ 每拍发 INFO，行数纪律当场失效）。
     val decisionKey = decision.takeWhile(_ != '(')
-    val stateKey = s"$decisionKey|hit=$cacheHit|concurrent=${schedule.concurrent}"
+    val stateKey =
+      s"$decisionKey|hit=$cacheHit|concurrent=${schedule.concurrent}" + route.map(r => s"|$r").getOrElse("")
     val changed = Option(lastLoggedRoundKey.put(peer.deviceId, stateKey)).forall(_ != stateKey)
     if changed then logger.info(line) else logger.debug(line)
 

@@ -4904,53 +4904,77 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* ═══════════════════════════════════════════════════════════════════════════
    attach-bubble-unify (2026-10-20 author ruling 「用户发送附件与气泡设计语言统一
    ——微信式：附件是气泡的一部分而非独立异形卡」): the USER side's media/file
-   faces join the USER BUBBLE family — same radius (16px + the 4px bottom-right
-   tail of .bubble/.bubble.user), same backing color (var(--glass-bub-user-bg),
-   统一玻璃批起 = 气泡档 token，与 .bubble.user 逐值同源),
-   same column cap (80%, .bubble), no standing card chrome (border/drop shadow
-   go). Strictly scoped to the user row (.row.user-media); LLM Pop rows keep
-   their faces verbatim (「agent 发的媒体卡维持现设计不动」). Geometry the authored
-   rulings pin — 220px stack/flat boxes, peek transforms, pill clearances
-   (uifix3 ① above) — is deliberately untouched: only the PAINT changes.
-   Theme note: the hue single-source --color-bubble-user has no dark override
-   (base.css), so the unified face is the same green in light and dark —
-   identical to the user text bubble on both themes by construction.
+   faces join the **USER side of the session they live in**.
+
+   ⚠ fm-media-bubble-color 改判（作者令 2026-11-04 16:39「社交窗口对话 气泡颜色
+   不统一 应该和文字的气泡一个颜色」）—— 本节此前的注释声称「same backing color
+   (var(--glass-bub-user-bg)) … identical to the user text bubble on both themes
+   by construction」。该断言**只在主会话成立**：主会话用户文字气泡 = 微信绿
+   （--glass-bub-user-bg = --color-bubble-user #95ec69 90%），而社交通道（`.fm-` 面）
+   的文字气泡走 sapphire 族 —— 出向 var(--sapphire-tint-15)、入向
+   var(--glass-etched-bg)（sapphire.css:779-788）。肇事批次 a3342618c
+   （fm-att-component-lib 2026-11-02）把主会话那条绿色规则**作用域外扩**地逐字复制
+   进 `.fm-msg.out` 卡区，于是社交通道出现「绿色媒体卡 + 蓝灰文字气泡」的双色对话。
+   本批改判（事实陈述，勿再照抄旧口径）：
+     · 主会话 `.row.user-media` —— 继续走 --glass-bub-user-bg（用户气泡绿，**原本就对，
+       本批不动**）；
+     · 社交通道 `.fm-msg.out` —— 镜像**出向**文字气泡 token var(--sapphire-tint-15)；
+     · 社交通道 `.fm-msg.in`  —— 镜像**入向**文字气泡 token var(--glass-etched-bg)
+       （须压过 .pop-media-flat 基座 #17191f 与暗档 #101318）。
+   几何一律不动：出向媒体面仍是气泡剪影（16px + 4px 右下尾角 + 零阴影零边框）；
+   入向媒体面保持 Pop 板卡族几何（14px + 卡影，既有「入向维持板卡族」口径不变），
+   本批只收敛**底色**这一个维度。
+
+   Theme note: no token above has a per-theme literal in this file — --sapphire-tint-15
+   亮暗同值，--glass-etched-bg / --glass-bub-user-bg 各自在 sapphire.css / glass.css
+   里亮暗对定义，媒体面与**同向**文字气泡因此逐值同源、逐字同色。
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* Width cap = the bubble's own cap (.bubble max-width 80%), not the artifact
    family's 78% — 同宽度约束. */
 .row.user-media .pop-group { max-width: 80%; }
 
-/* Image / video / audio flat face — bubble silhouette. Backing = the user
-   bubble color (visible while bytes load, under the transparent media, and in
-   the failed face); the media element itself goes transparent so the bubble
-   color carries. Letterboxing is a non-issue: the renderer pins the box to the
-   media's own ratio (zcode-484 D1/D3).
-   fm-att-component-lib 批（2026-11-02）：社交通道**出向**（.fm-msg.out 卡区）逐字
-   并入同一条规则（选择器扩列，值单源零第二套——fm 出向附件 = 用户侧，同一「附件是
-   气泡的一部分」语言；入向保持 LLM Pop 板卡族不动）。 */
+/* Media face geometry — 气泡剪影（出向三面共用；入向媒体面不吃这条，见上段）.
+   fm 出向：`.fm-msg.out .fm-att-list .pop-media-flat` 与主会话用户面同形。
+   fm 入向：不加边框（作者令「圆角内裁、不额外加框」；入向文字气泡那 1px
+   var(--glass-etched-border) 是**文字**气泡的边，媒体面不复制 —— 卡不带边缘
+   是 fm-att-component-lib 批既有口径），故本规则只列 out 侧。 */
 .row.user-media .pop-media-flat,
 .fm-msg.out .fm-att-list .pop-media-flat {
   border-radius: 16px;
   border-bottom-right-radius: 4px;
   box-shadow: none;
-  background: var(--glass-bub-user-bg);
 }
+
+/* Media face paint — 各面 = 本向文字气泡 token（零字面量，值单源在 token 层）。
+   可见性：字节未到时容器底色直接透出；加载成功时媒体元素自身 transparent（下条）；
+   失败态 .nf-img-failed 也是 transparent（见上方既有规则）⇒ 三种字节态同底色。 */
+.row.user-media .pop-media-flat { background: var(--glass-bub-user-bg); }
+.fm-msg.out .fm-att-list .pop-media-flat { background: var(--sapphire-tint-15); }
+.fm-msg.in .fm-att-list .pop-media-flat { background: var(--glass-etched-bg); }
+
+/* 媒体元素自身必须透明 —— 覆盖 `.pop-img,.pop-video{background:#17191f}` 基座与
+   暗档 #101318（chat.css 上方两处），否则容器底色被一道留黑盖住，占位/失败/加载
+   三态颜色各不一致。主会话用户面（.row.user-media，2026-10-20 批既有腿，原样保留）
+   + 社交通道两向一律（`.fm-msg` 覆盖面，与行侧无关）。 */
 .row.user-media .pop-img,
 .row.user-media .pop-video,
-.fm-msg.out .fm-att-list .pop-img,
-.fm-msg.out .fm-att-list .pop-video { background: transparent; }
+.fm-msg .fm-att-list .pop-img,
+.fm-msg .fm-att-list .pop-video { background: transparent; }
 
-/* Multi-image stack: front AND the two peeking layers carry the same bubble
-   silhouette. Peek transforms / drag axis / pill geometry stay the uifix3 ①
-   mirrored forms — only the paint changes. (fm 出向同规则，同上批注。) */
+/* Multi-image stack: the front AND the two peeking layers carry the same bubble
+   silhouette / same 本向 token. Peek transforms / drag axis / pill geometry stay
+   the uifix3 ① mirrored forms — only the paint changes. */
 .row.user-media .pop-stack-view .media-layer,
 .fm-msg.out .fm-att-list .pop-stack-view .media-layer {
   border-radius: 16px;
   border-bottom-right-radius: 4px;
   box-shadow: none;
-  background: var(--glass-bub-user-bg);
 }
+.row.user-media .pop-stack-view .media-layer { background: var(--glass-bub-user-bg); }
+.fm-msg.out .fm-att-list .pop-stack-view .media-layer { background: var(--sapphire-tint-15); }
+/* 入向叠卡层：只改底色（压过 .ds-media-card 的 --ds-media-letterbox 留黑底）。 */
+.fm-msg.in .fm-att-list .pop-stack-view .media-layer { background: var(--glass-etched-bg); }
 
 /* File card — 统一 chip 族（2026-10-22 作者令「附件卡=统一 chip 族」：与 AskUser
    附件卡 / Pop 文件卡同族的紧凑 chip——底 = AskUser 附件卡同款 --color-surface-2

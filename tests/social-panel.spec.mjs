@@ -824,6 +824,9 @@ async function afterSuite(browser, base) {
     'tests/toast-glass.spec.mjs',
     'tests/social-panel.spec.mjs',
     'tests/social-panel-fix-shots.mjs', // social-fix-confirm: this batch's shot script
+    'tests/fixtures/fm-media-bubble/harness.html', // fm-media-bubble-color: the probe's fixture page
+    'tests/fm-media-bubble-color-probe.spec.mjs',  // fm-media-bubble-color: the P1–P4 evidence probe
+    'tests/fm-media-bubble-color.spec.mjs',        // fm-media-bubble-color: the C1–C8 acceptance gate
     // 🔴 B merge-site wave face (A-line b6088aa7 — the SAME 17-commit round as
     //    the socpanel-min content above): the eng-deferred-cancel batch rides
     //    this wave. On the A line these files are invisible to this audit
