@@ -25,6 +25,13 @@ import nebflow.shared.Defaults
  *  - 正文（stdout+[stderr] / 错误串）截到末尾 `Defaults.BgNotifyTailLines` 行
  *    （prop `nebflow.bg.notifyTailLines`，默认 20），截断时附标注行：总行数 +
  *    jobId 指回（面板行点击开详情卡看全文）；
+ *  - 截断标注与**读线程尾窗标注**（`shell.scala` / `OutputTailWindow`，T5 批）
+ *    采用**同一形态** `[truncated: showing last N of M lines — full output: …]`，
+ *    两者只差「全文在哪」这一段的指针：读线程面给**绝对路径**（`stand-bash-*.log`
+ *    溢写文件），通知面给 `background-tasks panel, job <id>`（详情卡）。为什么
+ *    必须同形态：同一份输出会在两个面各截一次（读线程尾窗 2000 行/50KB → 通知面
+ *    20 行），两套说法会让读者以为是两种不同的丢失；同形态下「丢了什么、全文在
+ *    哪」一眼可读，且外层指针（jobId）恒是最终回看面；
  *  - 零输出正文 = `[no output]`（悬空冒号消失——截图现场形态不再出现）；
  *  - 耗时 = 注册 → 终态的墙钟差（`BgTaskRegistry.unregisterReturning` 供
  *    startedAtMs），缺席（注册行已被清）时段落省略。
@@ -121,6 +128,11 @@ object BgNotifyPayload:
   /**
    * 正文截尾：≤ tailN 行原样返回；超出 ⇒ 末尾 tailN 行 + 截断标注行（总行数 +
    * jobId 指回详情卡）。行数按 `\n` 切分（先去尾部换行，空正文不算行）。
+   *
+   * 标注形态**与读线程尾窗标注统一**（T5 批，见对象头 §2）：
+   * `[truncated: showing last N of M lines — full output: …]`——本面把
+   * 「full output」指成面板详情卡（jobId），读线程面指成溢写文件绝对路径。
+   * 不用 markdown、不加句号：标注本身是一行机器可读的回看指针。
    */
   private[tools] def tailWithMarker(body: String, tailN: Int, jobId: String): (String, Boolean, Long) =
     val trimmed = body.stripSuffix("\n")

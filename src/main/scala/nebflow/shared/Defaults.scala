@@ -446,6 +446,32 @@ object Defaults:
     sys.props.getOrElse("nebflow.bg.notifyTailLines", "20").toInt
 
   /**
+   * Bash 读线程**尾窗行数上限**（bash overhaul T5，作者令 2026-11-04「组织优化
+   * bash，用业界成熟做法完整实现，一步到位」）：读线程只保留命令输出的**最后**
+   * 本值行（与 [[BashTailBytes]] 取小，行粒度回退），越过预算即把**完整输出**
+   * 溢写进 `<java.io.tmpdir>/stand-bash-<epochMs>-<rand>.log` 并在回执末行回路径。
+   *
+   * 为什么是**尾**而不是头：构建/测试日志的价值集中在末尾（失败点、断言、堆栈），
+   * 头部多是启动横幅。旧口径「保头 10MB 丢尾」与「通知面只带尾 20 行」两个面各丢
+   * 一头（缺陷 D6），业界成熟做法（pi `truncateTail`）统一为保尾 + 全文落盘。
+   *
+   * 2000 行 ≈ 一个完整 sbt 测试失败段（栈帧 + 汇总），单条命令上下文的可读上限。
+   * 纯常量（不留 prop 缝）：改它会直接改**模型可见回执**的形态，属契约级变更，
+   * 应由代码评审承担，不做运行时可漂移。
+   */
+  val BashTailLines: Int = 2000
+
+  /**
+   * Bash 读线程**尾窗字节上限**（同 T5 批）：与 [[BashTailLines]] **同时**满足才
+   * 算进预算（取小）——防「少而巨行」（压缩日志/minified JSON）把上下文撑爆。
+   *
+   * 50KB 的量级依据：一手工具的上下文预算里「一条命令回执」应远小于摘要预算
+   * （模型侧一次回执吃掉的 token 约 12–15k，绝大多数命令远低于此），而 50KB 足够
+   * 装下真实报错段；再大的部分一律由溢写文件承担（回执只回路径）。
+   */
+  val BashTailBytes: Long = 50L * 1024L
+
+  /**
    * Background job idle timeout — if a background command produces no output
    * for this many seconds, it is automatically cancelled and the agent is
    * notified with a timeout error. This prevents delegate/subtask agents from

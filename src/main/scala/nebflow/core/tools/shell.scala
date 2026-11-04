@@ -4,7 +4,7 @@ import cats.effect.*
 import cats.effect.std.Mutex
 import cats.syntax.all.*
 import nebflow.core.util.ProcessTree
-import nebflow.shared.{Defaults, NebflowLogger, PathUtil}
+import nebflow.shared.{Defaults, NebflowLogger}
 
 import java.io.File
 import java.lang.Process
@@ -595,17 +595,19 @@ final class ShellSession private (
   // ------------------------------------------------------------------
 
   /**
-   * 命令输出窗口（2026-11-04 内存即时缓解批 M3）。
+   * 命令输出窗口（bash overhaul T5，作者令 2026-11-04「组织优化 bash」；取代
+   * 2026-11-04 内存即时缓解批 M3 的「首 64KB + 尾 64KB」双窗）。
    *
-   * 改前：`MaxOutputSize = 10MB` 的 StringBuilder —— **每条命令的 stdout / stderr 各**
-   * 最多驻留 10MB（事故日实测峰值 ≈20MB），敲满即丢弃，全量还拿不到。见
-   * `ShellOutputSpillSpec` 的验红读数（100MB 输出 → 堆 +13027KB、可见内容 10MB）。
-   *
-   * 改后：内存只留**首 64KB + 尾 64KB**，超限部分溢写落盘（`<dataRoot>/shell-spill/`），
-   * 全量可从盘上回看。100MB 输出下堆增长 ≤1MB（同 spec 验绿读数）。
+   * 口径统一：构建/测试日志的价值集中在**尾部错误**——窗口只保**尾**段（最后
+   * `Defaults.BashTailLines` 行、`Defaults.BashTailBytes` 字节，行粒度回退，取小），
+   * 一旦累计输出越过保留预算，从该点起把**完整输出**（含已读头段）镜像溢写进
+   * `<java.io.tmpdir>/stand-bash-<epochMs>-<rand>.log`，回执末行回路径。改前
+   * M3 保「首+尾」会把 11MiB 流的头部约 2MB 也灌进上下文（构建日志头部通常是
+   * 无害的启动横幅），T5 头部只进溢写文件、不进上下文。堆占用与输出总量解耦
+   * 的目标不变（100MB 输出堆增长 ≤1MB，`ShellOutputSpillSpec` 红绿双侧实测）。
    */
-  private val OutputHeadKeep = OutputSpill.HeadBytes
-  private val OutputTailKeep = OutputSpill.TailBytes
+  private val OutputTailKeepLines = Defaults.BashTailLines
+  private val OutputTailKeepBytes = Defaults.BashTailBytes
 
   private val isWindows: Boolean =
     sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
@@ -1404,7 +1406,7 @@ final class ShellSession private (
     onLine: String => Unit = _ => (),
     isProcessExited: () => Boolean = () => true,
     exitGraceMs: Long = 250L,
-    spillDir: os.Path = OutputSpill.dir(PathUtil.dataRoot)
+    spillDir: os.Path = OutputSpill.defaultDir
   ): String =
     // On Windows, detect whether the output is UTF-8 or system ANSI code page
     // (GBK on Chinese Windows). Git Bash and Python (with PYTHONUTF8=1) output
@@ -1420,9 +1422,10 @@ final class ShellSession private (
       else (is, StandardCharsets.UTF_8)
 
     Using.resource(new java.io.BufferedReader(new java.io.InputStreamReader(stream, charset))) { reader =>
-      // M3（2026-11-04）: 攒输出的容器从「10MB StringBuilder」换成「首 64KB + 尾 64KB
-      // 内存窗口 + 全量溢写文件」——堆占用与输出总量解耦（100MB 输出堆增长 ≤1MB）。
-      val out = new OutputSpillBuffer(OutputHeadKeep, OutputTailKeep, spillDir)
+      // T5（2026-11-04）: 攒输出的容器从「10MB StringBuilder」（M3 前的保头截断）
+      // 换成「滚动尾窗（≤2000 行 ∧ ≤50KB）+ 全量溢写文件」——堆占用与输出总量
+      // 解耦，且上下文里只有尾部（构建/测试的错误就在尾巴上）。
+      val out = new OutputTailWindow(OutputTailKeepLines, OutputTailKeepBytes, spillDir)
       var line: String = null
       var exitedAtMs = -1L
       var done = false
@@ -1878,53 +1881,56 @@ object ShellSession:
 end ShellSession
 
 /**
- * 工具输出窗口常量与溢写目录（2026-11-04 内存即时缓解批 M3）。
+ * 滚动尾窗 + 全量溢写（bash overhaul T5，作者令 2026-11-04「组织优化 bash」；
+ * 取代 M3 的「首 64KB + 尾 64KB + dataRoot/shell-spill」三件套）。
  *
- * 语义：命令输出在内存里只保留**首 64KB + 尾 64KB**，中间段落与全文溢写进
- * `<dataRoot>/shell-spill/<CMD-ID>.log`。堆占用由此与输出总量解耦——改前
- * 「10MB StringBuilder/流」在事故日构成 ≈20MB 常驻峰值，改后 100MB 输出堆增长 ≤1MB
- * （`ShellOutputSpillSpec` 红绿双侧实测）。
+ * 语义（业界成熟做法，pi `truncateTail` 一格：保最后 N 行/字节 + 全文落盘回路径）：
+ * 命令输出在内存里只保留**滚动尾窗**——最后 `Defaults.BashTailLines`(2000) 行且
+ * `Defaults.BashTailBytes`(50KB) 以内（行粒度回退，取小）；一旦累计输出越过保留
+ * 预算，从该点起把**完整输出**（从第一行起，含已读头段）镜像溢写进
+ * `<java.io.tmpdir>/stand-bash-<epochMs>-<rand>.log`，回执末行回绝对路径。上下文
+ * 只有尾部——构建/测试日志的错误就在尾巴上，头部横幅不值得灌进上下文。
  *
- * 保留期 [[RetainMs]]（24h）：开新溢写文件时顺带清一次同龄以上旧文件（best-effort，
- * 失败不影响命令执行）——溢写文件是排障/回看用的，不是持久数据。
+ * 与 BgTaskOutputStore 的关系（两条留存面各司其职，互不接管）：本溢写文件只服务
+ * **进程读取面**（前台回执 / 后台 ProcessResult.stdout，单命令生命期）；后台任务的
+ * 面板全文留存腿走 BgTaskOutputStore.lineSink（jobId 键控、详情卡回看）——溢写文件
+ * **不**接入 store，避免同一输出双写双账。
+ *
+ * 目录取舍：溢写落 OS tmp 而非 dataRoot——文件是「本命令上下文的延伸」，进程级
+ * 生命期，无跨命令价值；不设清理定时任务（OS tmp 自清，macOS/Linux/tmpreaper 均
+ * 会回收；dataRoot 版 M3 曾带 24h sweep，OS 层自清后该机制退役）。
  */
 private[tools] object OutputSpill:
 
-  /** 内存头窗：首 64KB（原文保留，便于看清「命令开头说了什么」）。 */
-  val HeadBytes: Int = 64 * 1024
+  /** 溢写目录单点（`java.io.tmpdir`）。OS tmp 自清 ⇒ 无清理任务。 */
+  def defaultDir: os.Path = os.Path(java.nio.file.Paths.get(sys.props.getOrElse("java.io.tmpdir", "/tmp")))
 
-  /** 内存尾窗：尾 64KB（保末尾——错误/结果通常在结尾）。 */
-  val TailBytes: Int = 64 * 1024
-
-  /** 溢写保留期：24h。 */
-  val RetainMs: Long = 24L * 60 * 60 * 1000L
-
-  /** 溢写目录单点（`<dataRoot>/shell-spill`）。 */
-  def dir(dataRoot: os.Path): os.Path = dataRoot / "shell-spill"
+  /** 溢写文件名（含秒级时间戳 + 12 位随机段，同秒冲突靠随机段避让；随机段无 `-`）。 */
+  def newFileName(nowMs: Long): String =
+    val rand = java.util.UUID.randomUUID().toString.replace("-", "").take(12)
+    s"stand-bash-$nowMs-$rand.log"
 
 /**
- * 首尾窗口 + 溢写文件的输出容器（`readStream` 单点消费）。
+ * 滚动尾窗 + 溢写文件的输出容器（`readStream` 单点消费；bash overhaul T5）。
  *
  * 线程模型：单读线程 append（stdout / stderr 各一条读线程、各持一个实例），
  * `result()` 在同一线程尾部调用；锁仅防御性（无并发读写场景）。
  *
- * 失败容忍：溢写不可写（磁盘满 / 权限）→ 标 `spillFailed`，退化为「首窗 + 尾窗 +
+ * 失败容忍：溢写不可写（磁盘满 / 权限）→ 标 `spillFailed`，退化为「尾窗 +
  * 明示丢弃注记」，**绝不向上抛异常**（命令本身的成败不能被输出采集拖垮）。
  */
-private[tools] final class OutputSpillBuffer(
-  headKeep: Int,
-  tailKeep: Int,
+private[tools] final class OutputTailWindow(
+  tailKeepLines: Int,
+  tailKeepBytes: Long,
   spillDir: os.Path
 ) extends AutoCloseable:
 
   private val lock = new Object
-  private val head = new StringBuilder
-  private val tail = new java.util.ArrayDeque[String]()
-  private var headBytes: Long = 0L
+  private val tail = new java.util.ArrayDeque[String]() // 有界结构：尾窗即全部驻留内存
   private var tailBytes: Long = 0L
+  private var tailLines: Int = 0
   private var totalBytes: Long = 0L
   private var totalLines: Long = 0L
-  private var headFull: Boolean = false
   private var writer: java.io.BufferedWriter = null
   private var spillPath: os.Path = null
   private var spillFailed: Boolean = false
@@ -1933,28 +1939,31 @@ private[tools] final class OutputSpillBuffer(
   def bytes: Long = lock.synchronized(totalBytes)
   def lines: Long = lock.synchronized(totalLines)
 
-  /** 溢写文件路径（未被截断 / 写失败时为 None）。 */
+  /** 溢写文件路径（未溢出 / 写失败时为 None）。 */
   def overflowPath: Option[String] = lock.synchronized(Option(spillPath).map(_.toString))
 
+  /** 已溢出（= 需要回执标注；含溢写失败——同样要标注「全文拿不到」）。 */
+  def overflowed: Boolean = lock.synchronized(spillPath != null)
+
   def append(line: String): Unit = lock.synchronized {
-    val len = line.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + 1
+    val len = line.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + 1 // +\n
     totalBytes += len
     totalLines += 1
-    if !headFull && headBytes + len <= headKeep then
-      head.append(line).append('\n')
-      headBytes += len
-    else
-      headFull = true
-      spill(line)
-      tail.addLast(line)
-      tailBytes += len
-      // 尾窗裁到 tailKeep 以内，至少留一行（单行超限也保它，尾窗不空）
-      while tail.size() > 1 && tailBytes > tailKeep do
-        val dropped = tail.removeFirst()
-        tailBytes -= dropped.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + 1
+    // 溢出判据：累计输出已越过尾窗预算 ⇒ 从此行起整流镜像（含头段——writer 落
+    // 地时先回放已读的尾窗行，保证盘上是**完整**输出、从第一行起）。
+    if totalBytes > tailKeepBytes || totalLines > tailKeepLines then spill(line)
+    tail.addLast(line)
+    tailLines += 1
+    tailBytes += len
+    // 尾窗裁剪：行数与字节双上限，行粒度回退（至少留一行——单行超限也保它）
+    while tail.size() > 1 && (tailLines > tailKeepLines || tailBytes > tailKeepBytes) do
+      val dropped = tail.removeFirst()
+      val dl = dropped.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + 1
+      tailBytes -= dl
+      tailLines -= 1
   }
 
-  /** 首次调用时建文件并把内存头窗内容一并写入（盘上 = 全量）。 */
+  /** 首次触发时建文件并**回放已读尾窗全部历史行**（盘上 = 从第一行起的完整输出）。 */
   private def spill(line: String): Unit =
     if spillFailed then ()
     else
@@ -1962,14 +1971,17 @@ private[tools] final class OutputSpillBuffer(
         if writer == null then
           val dir = spillDir
           if !os.exists(dir) then os.makeDir.all(dir)
-          sweep(dir)
-          val p = dir / s"cmd-${java.util.UUID.randomUUID().toString.take(12)}.log"
+          val p = dir / OutputSpill.newFileName(System.currentTimeMillis())
           spillPath = p
           writer = java.nio.file.Files.newBufferedWriter(
             p.toNIO,
             java.nio.charset.StandardCharsets.UTF_8
           )
-          writer.write(head.toString)
+          // 回放：此刻驻留内存的行 = 这条流已读过的全部行（本容器单读线程持有）
+          val it = tail.iterator()
+          while it.hasNext do
+            writer.write(it.next())
+            writer.write("\n")
         writer.write(line)
         writer.write("\n")
       catch
@@ -1981,33 +1993,36 @@ private[tools] final class OutputSpillBuffer(
           spillFailed = true
           writer = null
 
-  /** 开新文件时清一次超期溢写（best-effort；任何异常都不外溢）。 */
-  private def sweep(dir: os.Path): Unit =
-    try
-      val now = System.currentTimeMillis()
-      os.list(dir).foreach { p =>
-        try
-          if os.isFile(p) && now - os.mtime(p) > OutputSpill.RetainMs then os.remove(p)
-        catch case _: Throwable => ()
-      }
-    catch case _: Throwable => ()
-
   /**
-   * 收口结果：未超限 ⇒ 原文；超限 ⇒ 首窗 + 折叠注记（含全量字节数与溢写路径）+ 尾窗。
-   * 注记里保留 `truncated` 一词（既有消费方/spec 按它识别折叠）。
+   * 收口结果：未溢出 ⇒ 原文（逐字节同改前）；溢出 ⇒ 尾窗 + 末行标注
+   * `[Output truncated: showing last N of M lines — full output: <绝对路径>]`
+   * （溢写写失败时路径段换成明示丢弃，标注保留 `Output truncated` 前缀供消费方识别）。
    */
   def result(): String = lock.synchronized {
-    if !headFull then
-      val s = head.toString
+    if spillPath == null then
+      // 未溢出：原文**逐字节不变**（每行 + `\n`，末尾换行照旧；空白输出为 ""）——
+      // 与改前 10MB 保头版本、M3 首尾窗口版本的短输出回执完全一致，不加任何标记。
+      val s =
+        if tail.isEmpty then ""
+        else
+          val sb = new java.lang.StringBuilder(tailBytes.toInt + 16)
+          val it = tail.iterator()
+          while it.hasNext do
+            sb.append(it.next())
+            sb.append('\n')
+          sb.toString
       if s.trim.isEmpty then "" else s
     else
-      val sb = new StringBuilder(head.toString)
+      val pathPart =
+        if spillFailed then "full output unavailable — spill file write failed"
+        else s"full output: ${spillPath.toString}"
+      val sb = new java.lang.StringBuilder(tailBytes.toInt + 256)
+      val it = tail.iterator()
+      while it.hasNext do
+        sb.append(it.next())
+        sb.append('\n')
+      sb.append(s"[Output truncated: showing last $tailLines of $totalLines lines — $pathPart]")
       sb.append('\n')
-      sb.append(s"[output truncated in memory: ${totalBytes} bytes / ${totalLines} lines total; ")
-      if spillPath != null then sb.append(s"full output spilled to ${spillPath}")
-      else sb.append("spill file unavailable — middle section dropped")
-      sb.append("]\n")
-      tail.forEach(l => { sb.append(l); sb.append('\n') })
       sb.toString
   }
 
