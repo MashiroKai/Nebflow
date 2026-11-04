@@ -1,0 +1,174 @@
+{
+  "_comment": "check-self-explaining.mjs 存量基线（self-explaining-cleanup 批 2026-11-04）：每条 = 一条**判定留存**的命中（铁律 8 细则 b 保留清单的落点：状态事实/失败收口/动作标签/空态下一步/tooltip 事实句）。只许降不许升：加条目 = 声称「这是事实不是说明书」，必须在批报告里点名理由；升基线 = 放水。重锚：node scripts/check-self-explaining.mjs --update-baseline",
+  "generatedAt": "2026-11-04T07:33:55.167Z",
+  "counts": {
+    "behavior-teaching": 3,
+    "path-guidance": 17,
+    "capability-claim": 7
+  },
+  "total": 27,
+  "allow": [
+    {
+      "file": "src/main/resources/web/js/locales/en.js",
+      "rule": "behavior-teaching",
+      "key": "settings.workScheduleOnHint",
+      "text": "During a freeze window the agent parks after each tool round — no LLM calls (zero token cost) — and resumes automatically when the window ends. The input bar an"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/en.js",
+      "rule": "path-guidance",
+      "key": "settings.jevHealthFallback",
+      "text": "Jev unavailable → fell back to llm"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/en.js",
+      "rule": "path-guidance",
+      "key": "chat.compacted",
+      "text": "Context compacted: {before} → {after} messages{detail}"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/en.js",
+      "rule": "path-guidance",
+      "key": "delegate.archive.openFlow",
+      "text": "Flow →"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/en.js",
+      "rule": "path-guidance",
+      "key": "fleet.subtitle",
+      "text": "This device v{current} → target v{target} · stages: {stages}"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/en.js",
+      "rule": "path-guidance",
+      "key": "fleet.stages",
+      "text": "prepare → download → verify → switch → restart → self-check → done"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/en.js",
+      "rule": "capability-claim",
+      "key": "fleet.manualTitle",
+      "text": "Needs a manual update (too old or not remotely updatable)"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/en.js",
+      "rule": "capability-claim",
+      "key": "fleet.summary.out-of-sync",
+      "text": "Versions are not unified yet (remotely updatable devices are listed)"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/en.js",
+      "rule": "capability-claim",
+      "key": "fleet.capability.self-reported",
+      "text": "remotely updatable (self-reported)"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/en.js",
+      "rule": "capability-claim",
+      "key": "fleet.capability.version-threshold",
+      "text": "remotely updatable (version OK)"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/en.js",
+      "rule": "path-guidance",
+      "key": "plugins.sourceUpdateTitle",
+      "text": "Pull and activate: v{from} → v{to}"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/en.js",
+      "rule": "path-guidance",
+      "key": "content.plugin.nebflow-plugin-creator.desc",
+      "text": "Plugin packager — nodes gain the full-pipeline ability to package a capability requirement into a compliant plugin pack (three-input analysis → pack generation "
+    },
+    {
+      "file": "src/main/resources/web/js/locales/en.js",
+      "rule": "path-guidance",
+      "key": "content.skill.nebflow-plugin-creator/plugin-packaging.desc",
+      "text": "Execution manual for packaging a capability requirement into a compliant {brand} plugin pack — the whole pipeline (three-input form determination: migrating an "
+    },
+    {
+      "file": "src/main/resources/web/js/locales/en.js",
+      "rule": "behavior-teaching",
+      "key": "social.remote.safetyKey",
+      "text": "Security boundary: a remote-access link is equivalent to an access credential — never forward it to anyone."
+    },
+    {
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "rule": "path-guidance",
+      "key": "settings.jevHealthFallback",
+      "text": "Jev 不可用 → 已回退 llm"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "rule": "path-guidance",
+      "key": "chat.compacted",
+      "text": "上下文已压缩：{before} → {after} 条消息{detail}"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "rule": "path-guidance",
+      "key": "delegate.archive.openFlow",
+      "text": "流程图 →"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "rule": "path-guidance",
+      "key": "neblink.loggedOutHint",
+      "text": "未登录 —— 点击上方头像登录 {lowerBrand} 账号"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "rule": "path-guidance",
+      "key": "fleet.subtitle",
+      "text": "本机 v{current} → 目标 v{target} · 阶段：{stages}"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "rule": "path-guidance",
+      "key": "fleet.stages",
+      "text": "准备 → 下载 → 校验 → 切换 → 重启 → 自检 → 完成"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "rule": "capability-claim",
+      "key": "fleet.capability.self-reported",
+      "text": "可远控更新（自报支持）"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "rule": "capability-claim",
+      "key": "fleet.capability.version-threshold",
+      "text": "可远控更新（版本达标）"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "rule": "capability-claim",
+      "key": "fleet.branch.push",
+      "text": "直接推送"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "rule": "path-guidance",
+      "key": "plugins.sourceUpdateTitle",
+      "text": "拉取并生效：v{from} → v{to}"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "rule": "path-guidance",
+      "key": "content.plugin.nebflow-plugin-creator.desc",
+      "text": "插件封装器包——节点获得把能力需求封装为合规插件包的全流程执行能力（三输入分析→包生成→机械自检→落盘即生效的交付自检）。适用于把已有 skill 或能力封装成插件、做一个能 Y 的新插件、写 plugin.json 与 SKILL.md、插件描述质量体检、跑包校验脚本等任务。内含 skills：plugin-pack"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "rule": "path-guidance",
+      "key": "content.skill.nebflow-plugin-creator/plugin-packaging.desc",
+      "text": "把能力需求封装为合规 {brand} 插件包的执行手册——三输入形态判定（既有 skill 迁移 / MCP server 配置 / 口头能力描述）→生成→机械自检→交付全流程，含六分叉处置与「落盘即生效」的交付口径；适用于节点被分配「封装插件 / 做插件」类任务时按本手册执行。"
+    },
+    {
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "rule": "behavior-teaching",
+      "key": "social.remote.safetyKey",
+      "text": "安全边界：远程访问链接等同于访问凭据，请勿转发给他人。"
+    }
+  ]
+}

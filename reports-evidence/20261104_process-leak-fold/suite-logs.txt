@@ -1,0 +1,12 @@
+### turn/工具卡 全套（6 spec）
+[55/56] tests/turn-terminal-replay.spec.mjs:300:1 › TO3 busyTail + terminal 工具尾段：数据面完成判据闭合（exchangeComplete 同读一戳）
+[56/56] tests/turn-terminal-replay.spec.mjs:307:1 › TO4 形态红线：TO1 的 header 点开可展（与 live 同形）
+  56 passed (49.7s)
+
+### canvas-ask-dock
+
+=== canvas-ask-dock: 76 pass, 0 fail ===
+
+### console-ask-grow
+
+after: 14 PASS / 0 FAIL

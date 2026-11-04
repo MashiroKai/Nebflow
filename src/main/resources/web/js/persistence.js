@@ -881,7 +881,7 @@ export function restoreFromStorage(opts = {}) {
           + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
           '<div class="content"><div class="label">' + lHtml + '</div></div>';
-        mountToolCardBody(card, { detailHtml, promptText, content: m.content, label: m.label });
+        mountToolCardBody(card, { detailHtml, promptText, content: m.content, label: m.label, labelTail: lParts[1] || '' });
         row.appendChild(card);
         chat.appendChild(row);
         if (hasBody) attachToolClick(card);
@@ -1354,7 +1354,7 @@ function buildHistoryRow(m, i, ctx) {
           + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
           '<div class="content"><div class="label">' + lHtml + '</div></div>';
-        mountToolCardBody(card, { detailHtml, promptText, content: m.content, label: m.label });
+        mountToolCardBody(card, { detailHtml, promptText, content: m.content, label: m.label, labelTail: lParts[1] || '' });
         row.appendChild(card);
         fragment.appendChild(row);
         if (hasBody) attachToolClick(card);

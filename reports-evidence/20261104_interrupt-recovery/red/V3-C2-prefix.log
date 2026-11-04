@@ -1,0 +1,66 @@
+=== [C2-RED] 改动前（src/main/scala 已 stash）· IR_LEG=V3 sbt testOnly InterruptRecoveryLegsSpec ===
+(NodeMessageReplayQueueSpec 暂时移出源码树：它引用改后才有的 NodeEngine.replayPendingNodeMessages，编译红另存 red/NodeMessageReplayQueue-prefix.log)
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap -Xmx1500m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-70e8d8ab-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab/)
+[info] compiling 1 Scala source to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab/target/scala-3.5.2/test-classes ...
+[info] done compiling
+[warn] javaOptions will be ignored, fork is set to false
+14:52:32.156 [36mINFO [0m nebflow.agent.startup-recovery - [delegate-revival] 1 eligible orphan(s) queued for revival: delegate-nebflow-v3-persisted(rev=0)
+14:52:32.245 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mir-leg-delegate-nebflow-v3-persisted/delegate[0m event=spawn detail=parent=- msgs=2
+14:52:32.267 [36mINFO [0m nebflow.agent.supervisor - BackoffSupervisor: watching delegate-nebflow-v3-persisted for crash recovery (maxRestarts=2)
+14:52:32.272 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mir-leg-delegate-nebflow-v3-persisted/delegate[0m event=queues-recovered detail=imm=1 events=0 replayFiltered=0
+14:52:32.372 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-nebflow-v3-persisted' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/ir-seat-v3a3521422339526269173/.nebflow/flow-maps/delegate-nebflow-v3-persisted, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/ir-seat-v3a3521422339526269173, root=self) — one delegate one map
+14:52:32.380 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mir-leg-delegate-nebflow-v3-persisted/delegate[0m event=start detail=msgs=2
+14:52:32.381 [36mINFO [0m nebflow.agent.delegate-revival - [delegate-revival] revived delegate-nebflow-v3-persisted (agent=nebflow, revival #1, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/ir-seat-v3a3521422339526269173, transcript=2 msgs, parentLive=false) — supervision chain rebuilt (BackoffSupervisor watching again)
+14:52:32.717 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mir-leg-delegate-nebflow-v3-persisted/delegate[0m event=turn-complete detail=msgs=3 textLen=31 textStreamed=true thinking=0 model=-
+14:52:32.719 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mir-leg-delegate-nebflow-v3-persisted/delegate[0m event=immediate-input-injected-at-turn-end detail=batch=1 texts=[NODE-MESSAGE] V3_QUEUED_INSTRUCTION ple
+14:52:32.732 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mir-leg-delegate-nebflow-v3-persisted/delegate[0m event=turn-complete detail=msgs=5 textLen=31 textStreamed=true thinking=0 model=-
+14:52:32.760 [36mINFO [0m nebflow.agent.supervisor - BackoffSupervisor: delegate delegate-nebflow-v3-persisted ended its turn WITHOUT a delegate_report (matrix complete×idle: chainsInFlight=false, emptyTurn=false) — reminder armed, NO terminal verdict, parent NOT notified
+[LEG V3a] persisted queue replayed after restart = true
+[LEG V3a] pre-crash context intact = true
+[LEG V3a] transcript messages = 6
+14:52:32.896 [33mWARN [0m nebflow.node.engine - NodeMessage: node 'n-v3b' (n-v3b) session cache self-healed -> node-v3b-session (cached=-, sessionRef=node-v3b-session)
+14:52:32.897 [36mINFO [0m nebflow.node.engine - NodeMessage -> node 'n-v3b' (n-v3b) injected at turn boundary (session node-v3b-session, 53 chars)
+[LEG V3b] sendNodeMessage result = Right(Message delivered to running node 'n-v3b' — it will be injected at the next turn boundary ([NODE-MESSAGE] header). Trace: flow-map-events.jsonl (node-message/injected).)
+[LEG V3b] probe actor received = 1 message(s) (stands for: the receiving process died before persisting)
+[LEG V3b] durable replay surfaces after a SUCCESSFUL delivery: injection-queues=false, transcript=false, node.task=false, node-message-ledger=false
+[LEG V3b] ledger rows for this message = 
+[LEG V3b] flow-map-events trace lines (NOT replayed by anyone — audit D5) = 1
+[LEG V3b]   event: {"ts":1793775152896,"type":"node-message","project":"v3b","nodeId":"n-v3b","summary":"injected -> live session node-v3b-session: [NODE-MESSAGE] V3_INFLIGHT_INSTRUCTION do not lose me"}
+[32mnebflow.core.project.InterruptRecoveryLegsSpec:[0m
+[33m==> s [0m[33mnebflow.core.project.InterruptRecoveryLegsSpec[0m.[33mV1 自动复活（无人工 Mail）: 跑到一半（standby 等自家链节点）的 delegate 重启后必须原位复活并继续干活 —— 现状停在 failed[0m[33m skipped[0m [90m0.005s[0m
+[33m==> s [0m[33mnebflow.core.project.InterruptRecoveryLegsSpec[0m.[33mV2 墓碑: 人工 cancel 过的 delegate 重启后不得复活（boot sweep / 原位续命判定 / 二次 boot 三条腿都守住墓碑）[0m[33m skipped[0m [90m0.001s[0m
+[91m==> X [0m[91mnebflow.core.project.InterruptRecoveryLegsSpec[0m.[91mV3 节点消息: node 消息投递成功即可重启重放（已落盘的确实重放；fire-and-forget 窗口必须补持久化）[0m  [90m1.24s[0m munit.FailException: src/test/scala/nebflow/core/project/InterruptRecoveryLegsSpec.scala:526 RED(V3): a successful node-message delivery must be durable on a restart-consumed surface (injection-queues.json / transcript / node task / node-message ledger). Pre-fix NodeDelivery.scala:317 tells the actor and returns Right with ZERO bytes on disk — a crash before the receiver's persistQueues (AgentProcessing.scala:1650) loses the message forever; only the flow-map event line remains (NodeDelivery.scala:332-338) and nothing replays it.
+525:            "(NodeDelivery.scala:332-338) and nothing replays it."
+[7m526:        )[0m
+527:        _ = assert(
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.project.InterruptRecoveryLegsSpec.$init$$$anonfun$3$$anonfun$3$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$3$$anonfun$3$$anonfun$6[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m526[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.project.InterruptRecoveryLegsSpec.evidence[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m186[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.InterruptRecoveryLegsSpec.$init$$$anonfun$3$$anonfun$3$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$3$$anonfun$3[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m506[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.InterruptRecoveryLegsSpec.$init$$$anonfun$3$$anonfun$3$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$3$$anonfun$3[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m506[0m[1m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.FileChangeTracker$.create[0m[90m([0m[90mfilewatch.scala[0m:[90m248[0m[90m)[0m
+[90m    at [0m[90mvoidError$extension @ fs2.Stream.$anonfun$5$$anonfun$1[0m[90m([0m[90mStream.scala[0m:[90m559[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.InterruptRecoveryLegsSpec.$init$$$anonfun$3$$anonfun$3$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$3[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m500[0m[1m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.FileChangeTracker$.create[0m[90m([0m[90mfilewatch.scala[0m:[90m248[0m[90m)[0m
+[90m    at [0m[90mhandleErrorWith @ nebflow.core.project.NodeMessageLedger$.load[0m[90m([0m[90mNodeMessageLedger.scala[0m:[90m182[0m[90m)[0m
+[90m    at [0m[90mmap @ nebflow.core.project.NodeMessageLedger$.entries[0m[90m([0m[90mNodeMessageLedger.scala[0m:[90m207[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.InterruptRecoveryLegsSpec.$init$$$anonfun$3$$anonfun$3$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m493[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.InterruptRecoveryLegsSpec.$init$$$anonfun$3$$anonfun$3$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m493[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.InterruptRecoveryLegsSpec.$init$$$anonfun$3$$anonfun$3$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m493[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.InterruptRecoveryLegsSpec.$init$$$anonfun$3$$anonfun$3$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m492[0m[1m)[0m
+[90m    at [0m[90mmap @ nebflow.core.project.FlowMapStore.getNode[0m[90m([0m[90mFlowMapStore.scala[0m:[90m79[0m[90m)[0m
+[33m==> s [0m[33mnebflow.core.project.InterruptRecoveryLegsSpec[0m.[33mV4 幂等: 复活后已完成 turn 数不变，且必须存在机器可读的已完成步骤断点（现状无断点台账）[0m[33m skipped[0m [90m0.001s[0m
+[33m==> s [0m[33mnebflow.core.project.InterruptRecoveryLegsSpec[0m.[33mV5 收尾: 干完只缺报告的会话（workReport 在 / reportStatus 缺）重启后必须自动收尾并通知父会话[0m[33m skipped[0m [90m0.0s[0m
+[33m==> s [0m[33mnebflow.core.project.InterruptRecoveryLegsSpec[0m.[33mV5 反向: 没干完（在飞 running 行）的会话仍走复活腿， 收尾腿不得误吞、不得投已完成通知[0m[33m skipped[0m [90m0.0s[0m
+[error] Failed: Total 6, Failed 1, Errors 0, Passed 0, Skipped 5
+[error] Failed tests:
+[error] 	nebflow.core.project.InterruptRecoveryLegsSpec
+[error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[error] Total time: 9 s, completed 2026年11月4日 14:52:33
+=== exit=1 ===

@@ -181,8 +181,12 @@ test('L4 真·开轮 user 行仍是轮边界（相邻两轮各一枚 header）',
   pinGuard(c.midTurnStamped === 0, '普通用户行不被标成插话（守卫钉）');
 });
 
-// ── L5 推不出 ⇒ 维持现状（不许劣化）：无 durationMs 的失败/进行中段仍然平铺 ──
-test('L5 判据缺失（无 terminal / 无 durationMs）：维持平铺，不误折', async ({ page }) => {
+// ── L5 判据缺失（无 terminal / 无 durationMs）────────────────────────────
+// 过程泄漏修复批（作者令 2026-11-04 14:14）改判：无终态判据的段**不再平铺裸卡**
+// （裸卡 + 8 行预览 = 作者报的泄露本体）——改为中性摘要行（无 ✻ 成功文案，
+// data-nf-turn-unconfirmed）+ 过程行折叠，明细仍可点开。旧「排障平铺」面被本令
+// 取代；「不猜」不变量（不盖 midTurn、不编造成败）原样保留。
+test('L5 判据缺失（无 terminal / 无 durationMs）：中性摘要行 + 过程折叠，不猜不编造', async ({ page }) => {
   const T = 1750000000000;
   const failed = [
     { type: 'user', text: '会失败的轮', timestamp: T },
@@ -191,13 +195,16 @@ test('L5 判据缺失（无 terminal / 无 durationMs）：维持平铺，不误
     { type: 'tool', label: 'Bash', summary: 'boom2', content: '', isError: true },
   ];
   const c = await replay(page, failed);
-  pinGuard(c.headers === 0, `无终态 ⇒ 无 header（got ${c.headers}）`);
-  pinGuard(c.toolsTucked === 0, '工具卡保持可见（排障平铺，09-05 裁定不回归）');
+  pinGuard(c.headers === 2, `两个未终态段各一枚中性摘要行（got ${c.headers}）`);
+  pinGuard(c.toolsTucked === c.tools, `过程行全部折叠（got ${c.toolsTucked}/${c.tools}）`);
   pinGuard(c.midTurnStamped === 0 && c.midTurnInferred === 0, '推不出就不标（不许猜）');
+  const unconfirmed = await page.evaluate(() =>
+    [...document.querySelectorAll('#chat > .turn-header')].every(h => h.dataset.nfTurnUnconfirmed === '1'));
+  pinGuard(unconfirmed, '中性摘要行带 data-nf-turn-unconfirmed（不编造成败）');
 });
 
-// ── L6 busyTail 守卫：进行中尾段仍 open（瞬态语义不回归）──
-test('L6 busyTail：末段无 terminal 时不折叠（瞬态语义不回归）', async ({ page }) => {
+// ── L6 busyTail 守卫：在飞尾段同样折叠（瞬态不漏过程）──
+test('L6 busyTail：末段无 terminal 时折叠为中性摘要行（不摊开在飞过程）', async ({ page }) => {
   const T = 1750000000000;
   const msgs = [
     { type: 'user', text: '断线时在跑的轮', timestamp: T },
@@ -205,7 +212,7 @@ test('L6 busyTail：末段无 terminal 时不折叠（瞬态语义不回归）',
     { type: 'ai', text: '想一半。', timestamp: T + 3000 },
   ];
   const c = await replay(page, msgs, { busyTail: true });
-  pinGuard(c.headers === 0, `在跑尾段无 header（got ${c.headers}）`);
-  pinGuard(c.toolsTucked === 0, '在跑尾段工具卡保持可见');
+  pinGuard(c.headers === 1, `在飞尾段有中性摘要行（got ${c.headers}）`);
+  pinGuard(c.toolsTucked === c.tools, '在飞尾段工具卡折叠（live 出生态折叠同形）');
 });
 
