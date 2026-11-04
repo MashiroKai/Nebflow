@@ -21,7 +21,7 @@
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
 import { scheduleSearch } from '../chatSearch.js';
-import { logEvent } from './navController.js';
+import { logEvent } from './navEvents.js';
 
 /** 角色档位（值 = chatSearch data-kind 词表；label 键与桌面 type 徽标同源）。
  *  2026-10-30 作者令①：tool 档退役（搜索结果只搜对话，tool 行不入结果）。 */
