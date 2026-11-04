@@ -6,11 +6,11 @@
 
 website 是官网（mystand.space）开发与发布包：节点获得 Next.js/Tailwind 前端实现、设计 tokens 复用与三端响应式排版、Vercel 生产部署双域发布三块能力。内含 3 个 skill：
 
-- `skills/website-frontend/`——官网前端开发域知识：Next.js 16 App Router + React 19 + TypeScript strict、Tailwind v4 `@theme` tokens、i18n `[lang]` 动态路由与词典、组件复用纪律、API Route Handlers 与认证模式、性能规范、代码安全（XSS/JWT/env 变量）与验证流。
+- `skills/website-frontend/`——官网前端开发域知识：Next.js 16 App Router + React 19 + TypeScript strict、Tailwind v4 `@theme` tokens、i18n `[lang]` 动态路由与词典、组件复用纪律、API Route Handlers 与认证模式、性能规范、代码安全（XSS/JWT/env 变量）、**页面文案自解释硬规则（官域实例化：四类禁止/保留清单/词典面/机械判据）**与验证流。
 - `skills/website-design/`——官网视觉设计域知识：设计 tokens 复用纪律（永不裸写 hex）、层级/间距节奏/排版/动效规范、硬约束（无 emoji、克制高级感、wordmark 全小写）、Pop 目检与三端响应式验证流。
 - `skills/deploy-website/`——官网发布纪律：push 生产分支即触发 Vercel 自动生产部署、手动兜底通道、发布验收（部署 API 状态或线上内容指纹）与缓存误判防线。
 
-**包纪律一句话**：本包只服务 mystand.space 官域——结构与 API 归 frontend、视觉归 design、发布归 deploy；Nebflow 主仓前端不在本包（另配 `frontend-dev`），其他网站不适用本包。
+**包纪律一句话**：本包只服务 mystand.space 官域——结构与 API 归 frontend、视觉归 design、发布归 deploy；Nebflow 主仓前端不在本包（本包不覆盖主仓 web/ 任何面），其他网站不适用本包。
 
 ## 2. 安装与启用
 
@@ -39,7 +39,7 @@ website/                       （包根）
 
 | 任务面 | 用哪个 skill | 关键纪律（速查） |
 |---|---|---|
-| 页面/组件/API/TS 逻辑实现 | website-frontend | 新建前先查既有组件；i18n 永远 zh/en 双语同支持；改后验证三件套（页面渲染/构建检查/`tsc --noEmit`）；无法验证必须明说，不许声称已验证 |
+| 页面/组件/API/TS 逻辑实现 | website-frontend | 新建前先查既有组件；i18n 永远 zh/en 双语同支持；**改页面文案先过「自解释」四类禁止清单（能力说明/路径指引/行为教学/重复说明），词典面 zh+en 同批落**；改后验证三件套（页面渲染/构建检查/`tsc --noEmit`）；无法验证必须明说，不许声称已验证 |
 | 视觉设计/配色/动效/布局 | website-design | 先复用后新建，tokens 从 `@theme` 取、永不裸写 hex；无 emoji、克制高级感；wordmark 全小写属既裁口径，改动前先低成本对比展示 |
 | 发布上线 | deploy-website | push 生产分支 ⇒ Vercel 自动生产部署；发布验收走部署 API 状态或线上内容指纹；**禁用 `?cb=` 查询串绕缓存**（静态预渲染路由不参与缓存键，只会读到陈旧边缘缓存造成「没部署」误判） |
 
@@ -51,7 +51,7 @@ website/                       （包根）
 
 | skill 路径（自 skills/） | 一句话括注 |
 |---|---|
-| website-frontend/SKILL.md | 官网前端域知识：技术标准、代码安全（XSS/JWT/env）、验证流与交付口径 |
+| website-frontend/SKILL.md | 官网前端域知识：技术标准、代码安全（XSS/JWT/env）、**文案自解释硬规则（官域实例化）**、验证流与交付口径 |
 | website-design/SKILL.md | 官网视觉域知识：tokens 复用、视觉原则、硬约束、三端验证流 |
 | deploy-website/SKILL.md | 官网发布纪律：push 即部署、验收与缓存误判防线、实例侧信息指涉 |
 
@@ -60,7 +60,7 @@ website/                       （包根）
 - 改官网**页面结构/新页面/API 路由/TypeScript 逻辑** → `website-frontend`。
 - 改官网**视觉**（配色、间距、动效、排版、响应式）→ `website-design`（结构性与 API 逻辑归 website-frontend）。
 - 要**发布上线**（部署、发布验收）→ `deploy-website`（前端/设计改动先按各自验证流自验过再走发布）。
-- 任务是 **Nebflow 主仓 web/ 前端** → 不在本包：另配 `frontend-dev`。
+- 任务是 **Nebflow 主仓 web/ 前端** → 不在本包（本包只服务 mystand.space 官域）。
 - 目标**不是 mystand.space**（其他网站）→ 不适用本包。
 - 三者常连用：一次官网迭代 ＝ frontend 改结构 ＋ design 对视觉 ＋ deploy 发布，各走各的验证流。
 
@@ -79,6 +79,7 @@ website/                       （包根）
 ## 9. 维护约定
 
 - **分工边界同步**：frontend 与 design 的「结构性 vs 视觉」边界若调整，两侧 SKILL.md 与本文件 §4 同步。
+- **自解释规则单点**：官域文案自解释的规则正文只在 `website-frontend/SKILL.md`「自解释」节（出处原话＋四类禁止清单＋保留清单＋机械判据＋边界判例＋双域/词典面细则）；本文件只做指针摘要，改口径先改正文再回改摘要（机械校验 M17 判本节四件齐，缺件即 FAIL）。
 - **部署口径更新**：自动部署/验收/缓存判据的口径变化随 `deploy-website/SKILL.md` 演进，本文件只保持速查与指针一致。
 - **域边界不放宽**：「仅限 mystand.space 域」是包级硬约束，扩域须先改 description 与本文件 §1/§6。
 - **本文件定位**：Plugin.md 是分配注入面（作者令 2026-10-21「plugin.md = 插件必要文件机制」批）——插件分配时整文注入给 agent；SKILL.md 是按需查阅权威，两者不一致时以 SKILL.md 为准并回改本文。
