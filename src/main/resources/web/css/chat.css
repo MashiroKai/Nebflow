@@ -2138,6 +2138,15 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   opacity: 0.5;
   cursor: default;
 }
+/* 只读附件面豁免（ui-unification-20261103-askuser-attach）：附件 chip 自带
+   role=button（可点 = 下载/降级重试），落进上一条置灰档——但「查看附件」≠
+   「重新作答」（lockOptionBox 的 `.ask-attachments-wrap` JS 豁免同语义）⇒
+   置灰档对附件区整块豁免，已决卡附件照常可点可读（F5 豁免语义不回退）。 */
+.option-box.resolved .ask-attachments-wrap [role="button"],
+.option-box.resolved .ask-attachments-wrap button {
+  opacity: 1;
+  cursor: pointer;
+}
 /* 自由输入面在已决卡里是「答案记录」而非控件（历史回放把 Other 原文恢复进 textarea）：
    只锁交互，显式压回 UA 的 disabled 灰字色，保住可读性与可复制性。 */
 .option-box.resolved .option-custom-input {
@@ -2247,6 +2256,93 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
     animation: none;
   }
 }
+
+/* ══ AskUser 卡附件区（ui-unification-20261103-askuser-attach 2026-11-04）════
+   作者令（IMG_1725 实拍 + 原话）：卡内附件与输入框附件「同源」；图片/视频以
+   **叠卡**形态内嵌（点击即预览）；文件卡左上角挂**来源标签**；默认只显缩略图/
+   前 N 个——卡身不再随件数线性膨胀。
+   形态单源声明（本段只放「卡区宿主差异档」，零第二套形）：
+   · 媒体 = popArtifacts 标准叠卡组件（`.ds-media-stack` 族——design-system.css
+     §⑨ 形态唯一家；单件 = `.pop-media-flat` 平面卡）。卡内容宽 <「钮 32 缝 +
+     220 卡脸」时钮折行到卡脸上方（friends.css 窄宿主同法：wrap，非第二几何）。
+   · 文件 chip = chat.js `renderAttachmentFace` 单源（输入框附件条同一函数）；
+     `.att-file` 基座形在 css/input.css 单点，此处只加可点态 / 折叠收件 / 降级态。
+   · 全部令牌走 --ds-*（check-design-tokens.mjs 计数只减不增）。 */
+/* 卡内叠卡宿主：窄卡（手机 ~302px 内容宽）装不下横排 [钮|卡脸] ⇒ 折行，
+   「展开 N」钮升到卡脸上方成一行（展开展开的自然读序：先钮后脸）。 */
+.option-box .pop-stack-area { flex-wrap: wrap; row-gap: 8px; width: 100%; }
+.option-box .pop-stack-area > .pill { margin-right: 0; order: -1; }
+.option-box .pop-media-flat { max-width: 100%; }
+/* 卡内文件 chip：可点档（role=button）光标 + 键盘焦点环；高度放 auto（降级态
+   原因档/重试键要折行）。基座 28px 档仍是下限（min-height）。 */
+.option-box .att-file.ask-att-file {
+  height: auto;
+  min-height: 28px;
+  max-width: 100%;
+  flex-wrap: wrap;
+  row-gap: 2px;
+  cursor: pointer;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.option-box .att-file.ask-att-file:focus-visible {
+  outline: 2px solid var(--ds-focus-ring);
+  outline-offset: 2px;
+}
+.option-box .att-file.ask-att-file .att-file-name { max-width: 100%; }
+/* 折叠收件（>3 枚默认只显前 3）：两成特异度压过 .att-file 的 inline-flex
+   基座（input.css 后载，同特异性会反压 —— 见 input.css 基座闸先例）。 */
+.ask-attachments-wrap .ask-att-folded { display: none; }
+/* 来源标签的行间余量：标签是绝对定位 notch（top 负值压在 chip 描边上），
+   列表 inline gap 8px 压不住 ⇒ 首个 chip 由 list padding-top 让位、后续 chip
+   由相邻边距补 4px（inline style gap 不可被类规则覆盖，故走 margin 而非 gap）。 */
+.ask-attachments-wrap .ask-attachments-list { padding-top: 12px; }
+.ask-attachments-wrap .ask-attachments-list > .att-file + .att-file { margin-top: 4px; }
+/* 来源标签（文件卡左上角，作者令例「AskUser · 图片缩放确认」）：错位 notch 形
+   —— 压在 chip 上描边上，底 = 卡面底色把描边「洗断」。标签比 chip 宽是常态
+   （chip 随文件名收窄，标签是来源摘要）⇒ 上限按卡内容宽给，超长走**模糊淡出**
+   （mask 渐隐，作者铁律「禁省略号」——与 .att-file-name 手机档同语言），
+   pointer-events:none ⇒ 越界部分不吃点击。
+   输入框条不传 origin ⇒ 本槽零消费（桌面输入条逐像素不动）。 */
+.att-file .ds-att-origin {
+  position: absolute;
+  top: -7px;
+  left: 6px;
+  max-width: min(260px, calc(100vw - 32px));
+  padding: 0 6px;
+  font-size: var(--ds-fs-meta);
+  line-height: 14px;
+  font-weight: var(--ds-fw-title);
+  letter-spacing: var(--ds-ls-label);
+  color: var(--ds-text-muted);
+  background: var(--ds-surface);
+  border: 1px solid var(--ds-etched-border);
+  border-radius: var(--ds-radius-badge);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(90deg, black 0, black calc(100% - 10px), transparent 100%);
+  mask-image: linear-gradient(90deg, black 0, black calc(100% - 10px), transparent 100%);
+  pointer-events: none;
+}
+/* 降级态（探针不可读 / 下载链失败）：虚线描边 + 原因档 + 重试下载真动作
+   （IMG_1725 ⑤a「fig3b_cabin_zoom.png · 不可用」裸奔形态退役——原因 + 动作）。 */
+.att-file.ask-att-unavailable { border-style: dashed; }
+.att-file .ask-att-reason {
+  flex-basis: 100%;
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-warn-icon);
+}
+.att-file .ask-att-retry {
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-warn-icon);
+  cursor: pointer;
+  padding: 0;
+}
+.att-file .ask-att-retry:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 2px; }
 
 /* ---------- Chat-native onboarding (onboarding-redesign-spec §8.4) ---------- */
 /* Typewriter simulation: paragraph stack + blinking cursor + skip button.
@@ -4676,8 +4772,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   .pop-expand-view .media-layer.quote-item-flash { animation-duration: 0.01s; }
 }
 
-/* ── the in-stream lightbox (AC-S1) — WeChat-style zoom overlay ── */
-.nf-lightbox {
+/* ── the in-stream lightbox (AC-S1) — WeChat-style zoom overlay ──
+   预览层收编批（ui-unification-20261103-askuser-attach 2026-11-04）：本块只服务
+   **媒体灯箱**（popArtifacts openMediaLightbox），类名加差异档修饰
+   `.nf-lightbox--media`——与看图灯箱（css/lightbox.css，`.nf-lightbox` +
+   `.on` 显隐）同名撞车的机制根因（后载者 display:none 压过本块 display:flex ⇒
+   实测「点卡片放大毫无反应」）。两灯箱同一套开合词法（`.on` = 可视态），形各自一档。 */
+.nf-lightbox.nf-lightbox--media {
   position: fixed; inset: 0; z-index: 3200; /* above search-overlay (310), below the modal family (11000) */
   display: flex; align-items: center; justify-content: center;
   background: rgba(0, 0, 0, 0.78);
@@ -4689,7 +4790,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 /* UI-G: the subagent window gate removes animation chrome via .nf-static on
    the VIEW container; the lightbox mounts on document.body — clamp it there. */
-.nf-static .nf-lightbox, body .nf-static ~ .nf-lightbox { animation: none; }
+.nf-static .nf-lightbox.nf-lightbox--media, body .nf-static ~ .nf-lightbox.nf-lightbox--media { animation: none; }
 .nf-lightbox-stage {
   display: flex; flex-direction: column; gap: 10px;
   max-width: min(92vw, 1100px);

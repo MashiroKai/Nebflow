@@ -1620,6 +1620,18 @@ export default {
   'askUser.attachmentUnavailable': 'unavailable',
   'askUser.attachmentPreview': 'Preview {name}',
   'askUser.attachmentDownload': 'Download {name}',
+  // ui-unification-20261103-askuser-attach batch (2026-11-04, IMG_1725): the
+  // attachment area unifies with the input strip + embedded media stack + source
+  // tag + folding; the unavailable state carries a REASON tier and an action
+  // (the bare "unavailable" wording retires per ⑤a).
+  'askUser.attUnavailable_missing': 'File missing or moved',
+  'askUser.attUnavailable_denied': 'No read permission (session/ticket expired)',
+  'askUser.attUnavailable_network': 'Network unreachable — retry later',
+  'askUser.attUnavailable_unsupported': 'Preview not supported for this type',
+  'askUser.attCanDownload': 'download available',
+  'askUser.attRetryDownload': 'Retry download',
+  'askUser.attDownloadFailed': 'Download failed',
+  'askUser.attFoldTotal': '{n} total',
     'askUser.pendingTitle': 'Pending questions',
   // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
   // 补投静默批（2026-10-29）：词条去机制名——"held by the sub-agent barrier"

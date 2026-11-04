@@ -487,7 +487,14 @@ export function openMediaLightbox(item) {
   closeMediaLightbox();
 
   const overlay = document.createElement('div');
-  overlay.className = 'nf-lightbox';
+  // 预览层收编批（ui-unification-20261103-askuser-attach 2026-11-04）：本层与
+  // css/lightbox.js 的看图灯箱**同名** `.nf-lightbox`，两份基座声明撞车 ——
+  // lightbox.css 后载（index.html:80 > chat.css:53）⇒ 它的 `display:none` 压过本层
+  // 的 `display:flex`，实测「点卡片放大毫无反应」的机制根因（作者报障「点击没反应」
+  // 同族）。修法：本层挂**差异档修饰类** `nf-lightbox--media` + `on`（= 可视态档，
+  // 两灯箱同一套开合词法），基座形仍归 chat.css 的 `.nf-lightbox.nf-lightbox--media`
+  // 一档；看图灯箱（lightbox.js，`.on` 显隐）逐字不变。
+  overlay.className = 'nf-lightbox nf-lightbox--media on';
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-label', item.name || 'media');
   const stage = document.createElement('div');

@@ -1563,6 +1563,17 @@ export default {
   'askUser.attachmentUnavailable': '不可用',
   'askUser.attachmentPreview': '预览 {name}',
   'askUser.attachmentDownload': '下载 {name}',
+  // ui-unification-20261103-askuser-attach 批（2026-11-04，IMG_1725 实拍）：附件区
+  // 同源化 + 叠卡 + 来源标签 + 折叠；不可用态给**原因档**与可执行动作（⑤a「· 不可用」
+  // 裸奔退役）。
+  'askUser.attUnavailable_missing': '文件不存在或已被移动',
+  'askUser.attUnavailable_denied': '暂无读取权限（登录态/票据失效）',
+  'askUser.attUnavailable_network': '网络不可达，稍后可重试',
+  'askUser.attUnavailable_unsupported': '该类型暂不支持预览',
+  'askUser.attCanDownload': '可尝试下载',
+  'askUser.attRetryDownload': '重试下载',
+  'askUser.attDownloadFailed': '下载未成功',
+  'askUser.attFoldTotal': '共 {n} 个',
     'askUser.pendingTitle': '待回答问题',
   // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
   // 补投静默批（2026-10-29）：词条去机制名——「被子代理屏障扣留」（引擎内部

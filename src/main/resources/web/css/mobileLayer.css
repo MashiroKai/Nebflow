@@ -3847,6 +3847,51 @@ body.mobile-layer #attachment-preview .att-file .att-remove svg {
 
 
 /* ═══════════════════════════════════════════════════════════════════════
+   AskUser 卡附件区 · 手机档（ui-unification-20261103-askuser-attach 2026-11-04）
+   作者实拍 IMG_1725：卡内 png 显「· 不可用」、两张 md 大图标卡竖排把卡撐长。
+   本段只放手机层差异档（桌面层 = css/chat.css 卡区段，零触碰）：
+   ① 文件 chip 升 --mtap(44) 热区档（本文件 2026-11-02 交互标准同款），名字走
+      --mfs-min(13) 可读档；长名**模糊淡出**（mask 渐隐——作者铁律「不用省略号」，
+      .mf-deck-title 同款语言；span 盒随 flex-basis 撑足后短名墨迹吃不到渐隐带）；
+   ② 来源标签（.ds-att-origin）可读字 --mfs-min；
+   ③ 降级原因档/重试键同升 --mfs-min，重试键热区 --mtap；
+   ④ 折叠键（共 N 个）/「展开 N」钮 44 热区档；
+   ⑤ 附件区标题词 --mfs-min。
+   令牌全走 --mfs-*/--mtap 桥（--ds-* 手机字号层），零新色值。 */
+body.mobile-layer .option-box .att-file.ask-att-file {
+  min-height: var(--mtap);
+  padding: 10px 12px;
+}
+body.mobile-layer .option-box .att-file.ask-att-file > .att-file-name {
+  flex: 0 1 210px;
+  min-width: 0;
+  max-width: none;
+  font-size: var(--mfs-min);
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(90deg, black 0, black calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(90deg, black 0, black calc(100% - 16px), transparent 100%);
+}
+body.mobile-layer .option-box .att-file .ds-att-origin {
+  top: -10px;
+  font-size: var(--mfs-min);
+  line-height: 18px;
+}
+body.mobile-layer .att-file .ask-att-reason { font-size: var(--mfs-min); }
+body.mobile-layer .att-file .ask-att-retry {
+  min-height: var(--mtap);
+  padding: 0 12px;
+  font-size: var(--mfs-min);
+}
+body.mobile-layer .ask-attachments-wrap .ask-att-fold-btn {
+  min-height: var(--mtap);
+  min-width: var(--mtap);
+  font-size: var(--mfs-min);
+}
+body.mobile-layer .option-box .pop-stack-area > .pill { min-height: var(--mtap); }
+body.mobile-layer .option-box .ask-attachments-head { font-size: var(--mfs-min); }
+
+
+/* ═══════════════════════════════════════════════════════════════════════
    手机端交互标准 · 全量套用批（作者令 2026-11-02）
    ───────────────────────────────────────────────────────────────────────
    字号的**单一取值点**已在上方各面板块内就地换成 var(--mfs-*)（本文件除

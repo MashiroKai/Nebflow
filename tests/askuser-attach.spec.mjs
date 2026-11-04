@@ -475,9 +475,11 @@ test.describe('Reply attachment rendering — image inline + lightbox, non-image
     const box = await renderAnsweredCard(page, [
       { id: 'ra1', seq: 1, name: 'photo.png', path: PHOTO, sha256: 's1', size: PHOTO_BYTES.length, mime: 'image/png', kind: 'image' },
     ]);
-    const img = box.locator('.ask-attachments-wrap img');
+    // ui-unification-20261103-askuser-attach：媒体面 = 标准平面媒体卡（.pop-media-flat）
+    // —— 卡语言组件库单点，形态与主会话逐字同款。
+    const img = box.locator('.ask-attachments-wrap .pop-media-flat img');
     await expect(img).toBeVisible();
-    // 真字节解码成功 = 内联直显链路（nfViewerSource ⇒ /api/nf-file）全通。
+    // 真字节解码成功 = 内联直显链路（hydrateMedia ⇒ /api/nf-file）全通。
     await expect.poll(async () => img.evaluate((i) => i.naturalWidth), { timeout: 15000 }).toBeGreaterThan(0);
     // 零 Canvas 依赖：无标签页、无 workspace-open-item 派发、URL 不触 /canvas。
     expect(await noNewCanvasOpen(page)).toBe(0);
@@ -489,26 +491,27 @@ test.describe('Reply attachment rendering — image inline + lightbox, non-image
     const box = await renderAnsweredCard(page, [
       { id: 'ra1', seq: 1, name: 'photo.png', path: PHOTO, sha256: 's1', size: PHOTO_BYTES.length, mime: 'image/png', kind: 'image' },
     ]);
-    const imgBtn = box.locator('button.ask-attachment-image');
-    await expect(imgBtn).toBeVisible();
-    await expect(imgBtn).toHaveAttribute('aria-label', 'Preview photo.png');
-    await expect.poll(async () => imgBtn.locator('img').evaluate((i) => i.naturalWidth), { timeout: 15000 }).toBeGreaterThan(0);
+    const face = box.locator('.ask-attachments-wrap .pop-media-flat');
+    await expect(face).toBeVisible();
+    await expect.poll(async () => face.locator('img').evaluate((i) => i.naturalWidth), { timeout: 15000 }).toBeGreaterThan(0);
 
-    await imgBtn.click();
-    await expect(page.locator('.nf-lightbox.on')).toBeVisible(); // lightbox 大图，非 Canvas
+    await face.click();
+    // 卡语言灯箱（popArtifacts openMediaLightbox 单点，挂载即可见）——非 Canvas。
+    await expect(page.locator('.nf-lightbox')).toBeVisible();
     expect(await noNewCanvasOpen(page)).toBe(0);
     await expectNoCanvasTab(page);
     expect(page.url()).not.toContain('/canvas');
 
-    await page.keyboard.press('Escape'); // ESC 关闭（lightbox 既有语义）
-    await expect(page.locator('.nf-lightbox.on')).toHaveCount(0);
+    await page.keyboard.press('Escape'); // ESC 关闭（灯箱既有语义）
+    await expect(page.locator('.nf-lightbox')).toHaveCount(0);
   });
 
   test('non-image reply attachment click downloads via the ticket rail — no Canvas', async ({ page }) => {
     const box = await renderAnsweredCard(page, [
       { id: 'ra2', seq: 1, name: 'notes.txt', path: NOTES, sha256: 's2', size: 16, mime: 'text/plain', kind: 'file' },
     ]);
-    const btn = box.locator('button.ob-compare-btn', { hasText: 'notes.txt' });
+    // 同源文件 chip（renderAttachmentFace —— 输入框附件条同一函数）。
+    const btn = box.locator('.att-file.is-clickable', { hasText: 'notes.txt' });
     await expect(btn).toBeVisible();
     await expect(btn).toHaveAttribute('aria-label', 'Download notes.txt');
 
