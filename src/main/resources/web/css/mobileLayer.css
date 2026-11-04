@@ -4748,7 +4748,7 @@ body.mobile-layer :is(#nf-cache-usage, #schedule-off-hint, #stt-status-hint, #mo
    pre/code 同档（代码块也属「用户要读的字」）。 */
 body.mobile-layer :is(.ds-tool-card, .ds-tool-card pre, .ds-tool-card .ds-tool-card__preview,
   .ds-tool-card .detail-cmd, .ds-tool-card .label, .ds-tool-card .label .tool-detail,
-  .ds-tool-card__toggle, .ds-tool-card .tool-mail-msg code, .ds-tool-card .tool-mail-msg pre) {
+  .ds-tool-card__status, .ds-tool-card .tool-mail-msg code, .ds-tool-card .tool-mail-msg pre) {
   font-size: var(--mfs-min);
 }
 /* 消息面同族（气泡内 code/pre、消息 meta、时间徽标） */
