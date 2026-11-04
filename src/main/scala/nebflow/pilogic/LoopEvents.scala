@@ -32,6 +32,8 @@ object LoopError:
   final case class ProviderFailed(message: String) extends LoopError(message)
   final case class HookRunFatal(point: String, hookId: String, cause: String) extends LoopError(s"$point: $cause")
   final case class InvalidContinuation(message: String) extends LoopError(message)
+  /** RunGate（#42 before_drive 对位）Veto 的落点：门拒了整趟，run 未跑任何轮。 */
+  final case class RunGated(reason: String) extends LoopError(s"run gated: $reason")
   case object BudgetExhausted extends LoopError("budget exhausted")
 
 /** 收尾四态（设计 §Ⅱ.1；穷举，编译期封闭）。 */
@@ -42,8 +44,11 @@ enum RunOutcome:
   case Aborted(cause: AbortCause)
   /** error 路径（含 BudgetExhausted）。 */
   case Failed(cause: LoopError)
-  /** postRun.Settle 强制续轮后的簿记复入态。 */
-  case SettledExtra(continuations: Int)
+  /** postRun.Settle 强制续轮后的簿记复入态：continuations=续轮次数。
+    * newMessages 为增量轮补载荷（对方案 §Ⅱ.1 纸面形的偏离，理由：方案 §Ⅱ.1 自己钉死的
+    * 不变量「newMessages 既是返回值又是收尾事件载荷」须对一切自然收尾路径成立——
+    * settle 强制续轮后的收尾若不带消息即违反该不变量）。 */
+  case SettledExtra(continuations: Int, newMessages: Vector[LoopMessage])
 
 /** 单轮收尾局（TurnEnded 载荷）。 */
 enum TurnEndOutcome:
@@ -91,6 +96,12 @@ object EventSink:
         def emit(e: LoopEvent): F[Unit] = ref.update(_ :+ e)
       (sink, ref.get)
     }
+
+  /** 拉模型桥（设计 §Ⅱ.3 EventSink companion 第三件）：要拉模型的消费者经 Queue 适配——
+    * 用 cats-effect-std Queue 而非 fs2（§Ⅱ.3(c)「不把 fs2 类型焊进事件面」；fs2 消费者
+    * 自行以 fs2.Stream.fromQueueUnterminated 适配，属接线层裁量）。16 签名增量轮落地。 */
+  def toChannel[F[_]](q: cats.effect.std.Queue[F, LoopEvent]): EventSink[F] =
+    e => q.offer(e)
 
   /** 崩溃兜底助手（§Ⅱ.4(4)；对位 pi runWithLifecycle → handleRunFailure：
     * 循环崩溃对下游仍呈现为一次正常收尾——合成 TurnEnded(空)+RunEnded 终态对）。 */

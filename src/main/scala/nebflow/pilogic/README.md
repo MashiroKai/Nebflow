@@ -12,11 +12,13 @@ G-1…G-5 显式预留壳；一切轮数/成本/墙钟上限皆为构造参数�
 |---|---|
 | `KernelEvent.scala` | 内核事件 envelope（对拍 db D-12；本模块新增于 §Ⅳ 布局） |
 | `LoopCore.scala` | `AgentLoop.run/continueFrom`、`LoopState`（run-local 值传递）、分支语义 |
+| `LoopRuntime.scala` | 双层 while 循环体实现（增量轮）+ 采纳 29 位点挂接 + `SitePayloads` + `SessionStages` |
 | `LoopEvents.scala` | `LoopEvent` 密封层级、`EventSink[F]`、`synthesizeTruncatedEvents` |
-| `HookPoints.scala` | `HookPoint` 分类学（采纳族 + Reserved G-1…G-5）、`HookCapability` 四元组 |
+| `HookPoints.scala` | `HookPoint` 分类学（采纳族 + Reserved G-1…G-5）、`HookCapability` 四元组、`Backpressure`（L-11） |
 | `HookRegistry.scala` | 不可变注册表、COW 快照、`HookOrder` |
-| `HookDispatch.scala` | Interceptor/Observer 单点分派、`HookErrorPolicy`、隔离包装 |
+| `HookDispatch.scala` | Interceptor/Observer 单点分派、`HookErrorPolicy`、隔离包装、`DropGates`（L-11 丢弃档） |
 | `Provider.scala` | `ProviderPort[F]`、请求/响应/流块、`AbortSignal[F]` |
+| `Tools.scala` | `ToolCall`/`ToolExecutionResult`/`ToolSpec`（L-5 校验件）/`ToolExecutor[F]`（增量轮） |
 | `Policy.scala` | `LoopPolicy` / `RetryPolicy` / `CostMeter` / `TokenBudget` |
 | `Sequence.scala` | `TurnNumber` / `MessageSeq`、单写者分配 |
 

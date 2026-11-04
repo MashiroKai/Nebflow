@@ -22,22 +22,37 @@ enum StopReason:
 trait AbortSignal[F[_]]:
   def aborted: F[Boolean]
 
-/** 请求装配产物（prepareRequest 面：不可追加消息的约束属 16 签名全量轮）。 */
+/** 请求装配产物（prepareRequest 面；#64「不可追加消息」约束由循环在 providerPort.Payload
+ * 位强制：整块替换不得改变消息条数）。system=system 消息内容（null=无）；headers=provider
+ * 边界头表（JsonObject，#16 位改写对象）。 */
 final case class ProviderRequest(
     model: String,
+    system: Option[Json],
     messages: Vector[LoopMessage],
     options: Json,
+    headers: Json,
 )
 
-/** 应答（message 定稿 + 停止原因）。 */
+/** 应答（message 定稿 + 停止原因 + 抽取好的工具调用——stopReason=ToolUse 时非空）。 */
 final case class ProviderResponse(
     message: LoopMessage,
     stopReason: StopReason,
+    toolCalls: Vector[ToolCall] = Vector.empty,
 )
 
-/** 流式块（ProviderChunked 观察位载荷形状；L-11 背压档分位点声明属下一增量轮）。 */
+/** 流式块（ProviderChunked 观察位载荷形状；L-11 拍板=该位点 Dropping 丢弃档）。 */
 final case class ProviderChunk(delta: Json)
 
-/** 模型边界端口：接线层把现有 llm adapter 适配到此处，循环只认此口。 */
+/** provider 边界产物：有序块序列 + 终响应（16 签名增量轮形状——适配层内部真流式，
+ * 循环侧契约=有序块+终态；fs2 升级为接线期裁量，不焊进本面）。 */
+final case class ProviderStream(
+    chunks: Vector[ProviderChunk] = Vector.empty,
+    response: ProviderResponse,
+)
+
+/** 模型边界端口：接线层把现有 llm adapter 适配到此处，循环只认此口。
+ * 流式腿契约：返回有序块序列+终响应；循环逐块转发（message.Delta 事件+providerPort.Chunked
+ * 观察位）后消费终响应。中止编码为 stopReason=Aborted（契约同上）；抛出异常=可重试失败
+ * （RetryPolicy 管），与 stopReason=Error（provider 自报失败、硬退出不重试）分道。 */
 trait ProviderPort[F[_]]:
-  def stream(req: ProviderRequest, signal: AbortSignal[F]): F[ProviderResponse]
+  def stream(req: ProviderRequest, signal: AbortSignal[F]): F[ProviderStream]

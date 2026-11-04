@@ -19,6 +19,10 @@ final case class LoopPolicy(
   def exceedsTokens(spent: Long): Boolean =
     tokenBudget.exists(_.limit < spent)
 
+  /** 墙钟谓词（elapsed 由循环用 Clock.monotonic 差值计算——纯值进、纯值出，时钟不落策略件）。 */
+  def exceedsWallClock(elapsed: FiniteDuration): Boolean =
+    wallClock.exists(_ <= elapsed)
+
 end LoopPolicy
 
 object LoopPolicy:
