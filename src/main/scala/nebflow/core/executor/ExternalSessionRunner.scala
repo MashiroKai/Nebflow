@@ -142,17 +142,19 @@ object ExternalSessionRunner:
             for
               // 引擎加固批 2026-10-09（P1-2 外部腿接纪律）：外部 CLI 与内部腿走
               // **同一** DelegateWorkspace.prepare——git 工作区 = 判定机（jev/small
-              // -judge）裁决 + 分支 `delegate/<id>` + worktree 座位（cwd = worktree
-              // +分支）；非 git 工作区 = None（旧形态逐字：座位 = 原 workspace）。
-              // 判定机两层全败 = prepare 内部 fail-open 反转判是（分支纪律不丢）。
+              // 判定机已删（delegate-param-decisions 2026-11-04）：外部腿无 worktree
+              // 参数 ⇒ 零分配就地座位 + 分支 `delegate/<id>`；非 git 工作区 = None
+              // （座位 = 原 workspace）。
               // 归属修复批（2026-10-30）：设备项目跳过本机判定腿——外部 CLI 是 host
               // 本地进程，设备仓的 worktree/分支纪律不适用于 host 座位（在 brain 下
               // 建 worktree = 归属错）；binding=None = 旧形态逐字。
               binding <-
                 if spec.deviceProject then IO.pure(None)
                 else
+                  // 外部执行器腿没有 `worktree` 参数（工具面已显式拒收）⇒ 零分配：
+                  // 就地跑道（分支 `delegate/<id>` 照建，共享 HEAD 不动）。
                   DelegateWorkspace
-                    .prepare(spec.workspace, spec.task, sessionId)
+                    .prepareInPlace(spec.workspace, sessionId)
                     .handleErrorWith(e =>
                       logger
                         .warn(
@@ -186,8 +188,8 @@ object ExternalSessionRunner:
                     worktree = binding.flatMap(_.worktree),
                     baseBranch = binding.flatMap(_.baseBranch),
                     projectWorkspace = binding.map(_.baseWs),
-                    // P2-3 判据面：判定机裁决随记录持久化
-                    worktreeJudged = binding.flatMap(_.worktreeJudged),
+                    // 判定机已删（delegate-param-decisions 批 2026-11-04）：恒 None。
+                    worktreeJudged = None,
                     // G1 编排模式初值（delegate-ui 批 2026-10-08）：外部执行器零平台
                     // 工具注入（无 Subagent/AgentFlow 可调）⇒ 恒 single，无升级腿。
                     orchestrationMode = Some(DelegateRegistry.ModeSingle)

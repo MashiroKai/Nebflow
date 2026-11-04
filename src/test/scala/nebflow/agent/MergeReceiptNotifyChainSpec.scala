@@ -15,7 +15,18 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk, SubAgentTask, ThinkingConfig}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  PathUtil,
+  StreamChunk,
+  SubAgentTask,
+  ThinkingConfig
+}
 
 import scala.concurrent.duration.*
 
@@ -172,7 +183,6 @@ class MergeReceiptNotifyChainSpec extends CatsEffectSuite:
   private def installScriptedJudge(): Unit =
     DelegateJudge.DelegateJudgePort.install(
       new DelegateJudge.DelegateJudgePort.Face:
-        def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(None)
         override def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
           IO.pure(
             Some(
@@ -267,15 +277,25 @@ class MergeReceiptNotifyChainSpec extends CatsEffectSuite:
     yield
       // 停靠面：父零通知（「合并前的中间态不吵」——修复前红态：此时父已收到 work result）
       assertEquals(parentEventsNow(parkedEvents), Nil, s"park phase must NOT notify the parent, got: $parkedEvents")
-      assertEquals(parkedWorkReport, Some(workText), "the work result must be preserved into the registry slot at park time")
+      assertEquals(
+        parkedWorkReport,
+        Some(workText),
+        "the work result must be preserved into the registry slot at park time"
+      )
       // 合并落地面：恰一次 completed 终态回执 = 判词行 + 工作结果全文一次到齐
       val ext = parentEventsNow(events)
       assertEquals(ext.size, 1, s"exactly ONE merge receipt must reach the dispatcher, got: $events")
       assertEquals(ext.head.eventType, "completed")
       assertEquals(ext.head.correlationId, Some(childSid))
-      assert(ext.head.payload.contains("[delegate-judge] verdict: completed"), s"verdict line missing: ${ext.head.payload}")
+      assert(
+        ext.head.payload.contains("[delegate-judge] verdict: completed"),
+        s"verdict line missing: ${ext.head.payload}"
+      )
       assert(ext.head.payload.contains(mergeText), s"merge-round final text missing: ${ext.head.payload}")
-      assert(ext.head.payload.contains(workText), s"the preserved work result must ride the single receipt: ${ext.head.payload}")
+      assert(
+        ext.head.payload.contains(workText),
+        s"the preserved work result must ride the single receipt: ${ext.head.payload}"
+      )
       // 交付回执落盘（补投机器面）
       assert(receipt.isDefined, "the terminal delivery receipt must be recorded")
       assertEquals(receipt.map(_.eventType), Some("completed"))
@@ -360,7 +380,10 @@ class MergeReceiptNotifyChainSpec extends CatsEffectSuite:
       assertEquals(ext.size, 1, s"exactly ONE terminal notification for the aborted merge round, got: $events")
       assertEquals(ext.head.eventType, "cancelled")
       assert(ext.head.payload.contains("merge-window-timeout"), s"cancel reason must ride: ${ext.head.payload}")
-      assert(ext.head.payload.contains(workText), s"the preserved work result must ride the aborted-round terminal: ${ext.head.payload}")
+      assert(
+        ext.head.payload.contains(workText),
+        s"the preserved work result must ride the aborted-round terminal: ${ext.head.payload}"
+      )
     end for
   }
 

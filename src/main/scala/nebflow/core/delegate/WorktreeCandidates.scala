@@ -310,16 +310,16 @@ object WorktreeCandidates:
         s"- `${c.dirName}` — $who$title; branch ${c.branch.getOrElse("(detached)")} @ ${c.headSha.getOrElse("?")}; " +
           s"last active ${ageText(c.lastActiveMs)}; **${c.status}**$work$sample"
       }
-      s"""# Existing delegate worktrees (reuse candidates)
+      s"""# Existing delegate worktrees (name reuse candidates)
 
-Worktrees that already exist under `$baseWs/.nebflow/worktrees/` (snapshot at session assembly — `Delegate` runs a live re-check before honoring a reuse request). By default a new Delegate creates a FRESH worktree — that stays the safe default: two unrelated batches must never share one tree.
+Worktrees that already exist under `$baseWs/.nebflow/worktrees/` (snapshot at session assembly — `Delegate` re-reads them live before honoring a name).
 
-Reuse one only when the new task CONTINUES work that sits in that tree (same files, same intent). Status words:
-- **orphan** = its delegate is gone but the tree still holds work (uncommitted changes and/or commits ahead of the base branch) — the case where a fresh worktree would silently strand the previous work. Prefer these.
+`Delegate(worktree="<name>", …)` uses the name as-is: an existing tree with that exact directory name is REUSED (never a second directory), and a new name creates `<worktreeRoot>/<name>` on branch `delegate/<name>`. A write-task MUST pass a name; omitting `worktree` allocates nothing and runs the delegate in place in the shared project workspace — that is the read-only channel only.
+
+Reuse a listed tree when the new task CONTINUES work that sits in it (same files, same intent). Status words:
+- **orphan** = its delegate is gone but the tree still holds work (uncommitted changes and/or commits ahead of the base branch) — the case where a new tree would silently strand the previous work. Prefer these.
 - **active** = a live session is working in this tree right now. Reuse is REFUSED (two agents editing one tree) unless you pass `force=true` — do not force unless you are sure that session is not touching these files.
 - **done** = its delegate is gone and the tree is clean; reusing buys nothing.
-
-To continue in one, call `Delegate(worktree="<delegate-id|dirName|abs path>", task=…)`. Omit the parameter and the default fresh-worktree allocation is unchanged.
 
 ${lines.mkString("\n")}$more"""
 
@@ -349,7 +349,109 @@ ${lines.mkString("\n")}$more"""
     val Active: String = "DELEGATE_WORKTREE_ACTIVE"
     /** 座位存在但不可用（未登记/无 checkout/status 不可执行——缺陷二四查拒）。 */
     val NotReady: String = "DELEGATE_WORKTREE_NOT_READY"
+    /** 名字不合法（不是 ref-safe 的 worktree 名——含路径分隔符 / 隐藏名 / 过长）。 */
+    val BadName: String = "DELEGATE_WORKTREE_BAD_NAME"
   end RefuseCode
+
+  /**
+   * `worktree` 参数的座位计划（delegate-param-decisions 批 2026-11-04）：
+   * 缺省 ⇒ [[InPlace]]（**零分配**，只读任务通道）；精确 name / 旧口径命中 ⇒
+   * [[Reuse]]；都没命中 ⇒ [[Create]]（按名建树的调用方动作）。
+   */
+  enum SeatPlan:
+    /** `worktree` 参数缺省：一棵树都不建，就地坐在项目工作区（只读任务通道）。 */
+    case InPlace
+
+    /** 复用既有树（`source` = [[DelegateWorkspace.SeatSource]] 的 exact-name / legacy）。 */
+    case Reuse(candidate: Candidate, source: String)
+
+    /** 按 `worktree` 参数给的名字新建（`<worktreeRoot>/<name>`，分支 `delegate/<name>`）。 */
+    case Create(name: String)
+  end SeatPlan
+
+  /** worktree 名的机械判据（ref-safe：字母数字与 `-_.@`，不以点开头，≤64 字）。 */
+  def nameIsSafe(n: String): Boolean =
+    n.nonEmpty && n.length <= 64 && !n.startsWith(".") &&
+      n.forall(c => c.isLetterOrDigit || "-_.@".contains(c))
+
+  /**
+   * `worktree` 参数解析（**纯读 + 纯函数，零模型调用**——作者令 2026-11-04：
+   * 「填的内容就是 worktree 的 name」）。
+   *
+   * 顺序（命中哪条必须回给调用方，不许静默）：
+   *   ① **精确 name**：worktree 根下同名目录（`dirName == 参数`，精确相等，不做
+   *      后缀/模糊匹配）× 被判 `active` 且未 `force` ⇒ 拒（防错配红线）；
+   *   ② **旧口径次选**：delegate id / 目录名 / 绝对路径（[[resolve]] 逐字逻辑）；
+   *   ③ 都没命中 ⇒ [[SeatPlan.Create]]（同名目录被非 worktree 占用 ⇒ 显式拒，
+   *      绝不在名字被占时悄悄换个名字建第二棵树）。
+   */
+  def resolveNamed(
+    inv: Inventory,
+    baseWs: String,
+    target: String,
+    force: Boolean
+  ): Either[(String, String), SeatPlan] =
+    val t = target.trim.stripSuffix("/")
+    if t.isEmpty then Left((RefuseCode.BadName, "the worktree parameter is empty"))
+    else
+      // ① 精确 name（只在参数是合法名字时按 name 解释；含 `/` 的形态直接走旧口径）。
+      val exact = Option.when(nameIsSafe(t))(inv.all.find(_.dirName == t)).flatten
+      exact match
+        case Some(c) if c.status == Status.Active && !force =>
+          Left((RefuseCode.Active, activeMessage(c)))
+        case Some(c) => Right(SeatPlan.Reuse(c, DelegateWorkspace.SeatSource.ExactName))
+        case None =>
+          // ② 旧口径次选（delegate id / 目录名 / 绝对路径）。
+          resolve(inv, t, force) match
+            case Decision.Reuse(Some(c), _) => Right(SeatPlan.Reuse(c, DelegateWorkspace.SeatSource.Legacy))
+            case Decision.Reuse(None, path) =>
+              Right(SeatPlan.Reuse(candidateAt(path, baseWs), DelegateWorkspace.SeatSource.Legacy))
+            case Decision.Refuse(RefuseCode.NotFound, _) =>
+              // ③ 按 name 新建。
+              if !nameIsSafe(t) then
+                Left(
+                  (
+                    RefuseCode.BadName,
+                    s"'$t' is neither an existing worktree nor a usable worktree NAME — a name holds only letters, " +
+                      "digits, '-', '_', '.' or '@' (no path separators, no leading dot, ≤64 chars)"
+                  )
+                )
+              else if os.exists(os.Path(baseWs) / ".nebflow" / "worktrees" / t) then
+                Left(
+                  (
+                    RefuseCode.NotReady,
+                    s"the path '$baseWs/.nebflow/worktrees/$t' already exists but is not a registered worktree of this " +
+                      "repo — clean it up or pass a different name"
+                  )
+                )
+              else Right(SeatPlan.Create(t))
+            case Decision.Refuse(code, msg) => Left((code, msg))
+
+  /** 活会话持有的拒绝文案（精确 name 腿与旧口径腿同源）。 */
+  private def activeMessage(c: Candidate): String =
+    s"worktree '${c.dirName}' is held by a LIVE session (${c.delegateId.getOrElse("?")}) — " +
+      "two agents must not edit one tree. Either let that session finish (its result arrives as a system message), " +
+      "pass a different worktree name, or pass force=true if you are certain the live session is not touching these files."
+
+  /** 清单外的合法 worktree 路径 → 最小候选（复用腿的输入形状）。 */
+  private def candidateAt(path: String, baseWs: String): Candidate =
+    val p = os.Path(path)
+    val dirty = GitWorktrees.dirtyPaths(p).getOrElse(Nil)
+    Candidate(
+      dirName = p.last,
+      path = path,
+      branch = GitWorktrees.currentBranch(p),
+      headSha = GitWorktrees.headSha(p),
+      delegateId = None,
+      title = "",
+      baseBranch = GitWorktrees.currentBranch(os.Path(baseWs)),
+      aheadOfBase = 0,
+      dirty = dirty.size,
+      dirtySample = dirty.take(5).map(_.take(80)),
+      lastActiveMs = GitWorktrees.headCommitEpoch(p).map(_ * 1000L).getOrElse(0L),
+      status = Status.Done,
+      live = false
+    )
 
   /**
    * 解析续用目标并裁决（纯函数 + 清单查找，零 IO 副作用）。
@@ -399,7 +501,7 @@ ${lines.mkString("\n")}$more"""
             Decision.Refuse(
               RefuseCode.NotFound,
               s"no worktree matches '$t' — pass a delegate id, a directory name under .nebflow/worktrees/, or an absolute path to an existing git worktree. " +
-                "Omitting the parameter creates a fresh worktree (the default)."
+                "Omitting the parameter allocates no worktree at all (read-only channel — it runs in place in the shared workspace)."
             )
   end resolve
 

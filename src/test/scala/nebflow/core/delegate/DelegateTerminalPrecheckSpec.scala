@@ -64,8 +64,6 @@ class DelegateTerminalPrecheckSpec extends CatsEffectSuite:
   /** 判定机在场的证明件：被问即炸——确定性预检必须零 LLM 消耗。 */
   private class ExplodingJudge extends DelegateJudge.DelegateJudgePort.Face:
 
-    def decideWorktree(task: String): IO[Option[Boolean]] =
-      IO.raiseError(new RuntimeException("judge must NOT be consulted when the deterministic precheck fires"))
 
     def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
       IO.raiseError(new RuntimeException("judge must NOT be consulted when the deterministic precheck fires"))

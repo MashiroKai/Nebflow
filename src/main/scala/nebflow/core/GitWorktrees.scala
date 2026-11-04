@@ -221,6 +221,48 @@ object GitWorktrees:
   end createWorktree
 
   /**
+   * Create a worktree at an **exactly named** directory（delegate-param-decisions 批
+   * 2026-11-04 · 作者令「填的内容就是 worktree 的 name」）。
+   *
+   * 与 [[createWorktree]] 的唯一差异 = **不做目录候选派生**：路径恒为
+   * `<ws>/.nebflow/worktrees/<name>`（不试 `<name>-2`…）。名字被占就是错——
+   * 调用方本来就要先按 name 查「已存在 ⇒ 复用」，走到这里还撞名 = 现场不干净，
+   * 必须显式报出来而不是悄悄换个名字建第二棵树。
+   *
+   * 建后照走 [[validateAllocation]] 四查（同 [[createWorktree]]：`git worktree add`
+   * 返回 0 不等于座位可用）。
+   */
+  def createNamedWorktree(
+    ws: os.Path,
+    name: String,
+    branch: String,
+    baseRef: String = "HEAD"
+  ): Either[String, Created] =
+    val root = ws / ".nebflow" / "worktrees"
+    val path = root / name
+    if os.exists(path) then
+      Left(s"worktree path already exists: $path (a name hit must reuse that tree, never create a second one)")
+    else
+      os.makeDir.all(root)
+      git(ws, "worktree", "add", "-b", branch, path.toString, baseRef)
+        .flatMap { _ =>
+          val problems = validateAllocation(ws, path.toString)
+          if problems.isEmpty then Right(Created(name, path))
+          else
+            val msg = s"worktree allocation post-validation failed for '$path': ${problems.mkString("; ")}"
+            logger.warn(msg)
+            Left(msg)
+        }
+        .leftMap { err =>
+          logger.warn(s"git worktree add failed for branch '$branch' at '$path': $err")
+          err
+        }
+
+    end if
+
+  end createNamedWorktree
+
+  /**
    * Worktree 座位可用性四查（引擎会话治理专项 · 缺陷二；分配腿与续用腿共用）。
    * 返回问题清单（空 = 可用座位）。判据全部是**机械读数**：
    *   ① `git worktree list`（以 ws 为仓）里能看到该目录 —— 未登记的目录不是座位；
@@ -239,12 +281,15 @@ object GitWorktrees:
       Try(git(p, "rev-parse", "--show-toplevel")).toOption.flatMap(_.toOption).map(_.trim) match
         case None =>
           problems += "rev-parse --show-toplevel unreadable (no git checkout at this path)"
-        case Some(top) if java.nio.file.Paths.get(top).toRealPath() != java.nio.file.Paths.get(p.toString).toRealPath() =>
+        case Some(top)
+            if java.nio.file.Paths.get(top).toRealPath() != java.nio.file.Paths.get(p.toString).toRealPath() =>
           problems += s"toplevel '$top' is not this directory (not a checkout — parent repo resolution)"
         case _ => ()
       if headSha(p).isEmpty then problems += "HEAD does not resolve (checkout incomplete)"
       if dirtyPaths(p).isEmpty then problems += "git status not runnable in this directory"
     problems.toList
+
+  end validateAllocation
 
   /**
    * Create a plain branch (no checkout, no worktree) — the S13 no-worktree

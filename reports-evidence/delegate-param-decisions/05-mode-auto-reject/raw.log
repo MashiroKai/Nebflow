@@ -1,0 +1,15 @@
+nebflow.core.delegate.ModeParamSpec:
+  + P1 纯函数形态：resolve 返回 Either（无 IO / 无端口）——零模型调用是类型级保证 0.003s
+  + P2 不填 mode ⇒ 确定性 kernel（leg=default，理由里写明 zero model calls） 0.001s
+  + P2b 显式 kernel/dispatcher 原样采纳（大小写/空白容忍，leg=param） 0.0s
+  + P3 显式 auto ⇒ 明确报错（含引导语），绝不静默映射成 kernel 0.001s
+  + P3b 值域外的词 ⇒ 显式报错（enum 单点来自 DualModeConfig.ModeWords） 0.001s
+  + P4 旧双模式总闸配置已退役：nebflow.json 里怎么写都不改变解析结果 0.001s
+  + P5 值域词表与 schema enum 同源（ModeWords = kernel|dispatcher，无 auto） 0.001s
+
+nebflow.agent.DualModeGrayReleaseSpec:
+  + GR1 盘上 mode 直读：没有闸门把 kernel/dispatcher 藏起来（显式选择永不被静默吞掉） 0.002s
+  + GR2 不填 mode ⇒ 确定性 kernel（leg=default），auto 被显式拒绝 0.0s
+  + GR3 全链形态一（dispatcher）：参数给 dispatcher ⇒ 读面 ⇒ 面 fork ⇒ Subagent 工具内拒 0.003s
+  + GR4 全链形态二（kernel）：不填 mode ⇒ kernel ⇒ 编排面整体退场 0.002s
+  + GR5 分配器已删除：auto 在参数解析点就报错（引导语在文案里），不存在任何模型判定兜底 0.001s

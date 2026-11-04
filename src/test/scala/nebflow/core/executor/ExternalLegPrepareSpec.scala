@@ -12,11 +12,10 @@ import scala.concurrent.duration.*
 /**
  * 外部执行器腿接纪律判读（引擎加固批 2026-10-09，P1-2）：
  *
- *  - ① spawn 前同一 [[nebflow.core.delegate.DelegateWorkspace.prepare]]：git 工作区
- *    = 分支 `delegate/<id>` ＋ worktree 座位（进程 cwd = worktree）；记录四键 +
- *    worktreeJudged 落库；spawn 行审计键（worktreeJudged/judgeLeg）在链上；brief
- *    行进会话历史。判定机缺席 = fail-open 反转（judgeLeg=fail-open）——分支纪律
- *    不因判定机缺席而丢；
+ *  - ① spawn 前的座位腿（delegate-param-decisions 批后 = **零分配就地腿**）：git
+ *    工作区 = 分支 `delegate/<id>` ＋ 就地座位（进程 cwd = 项目工作区；外部腿没有
+ *    `worktree` 参数，工具面显式拒收）；记录四键落库、spawn 行 `seat` 键在链上、
+ *    brief 行进会话历史。判定机已删除——spawn 行不再有 worktreeJudged/judgeLeg；
  *  - ② 判定机判 ready-to-merge ⇒ 真并入 MergeQueue（外部通道条目，channelKind=
  *    external）→ 放行时账实核对命中（分支头已是基分支祖先）⇒ 关账 merged +「已落地」
  *    收尾通知走续聊通道（CLI resume——夹具用 /bin/echo 假 CLI spawn）；合并轮 settle
@@ -96,7 +95,7 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
       }
     loop()
 
-  test("① external spawn prepares the SAME branch+worktree seat; record + spawn-row audit keys + brief line land") {
+  test("① external spawn prepares the SAME branch + IN-PLACE seat (zero allocation); record + spawn-row `seat` key + brief line land") {
     val system = ActorSystem(s"el-1-${scala.util.Random.nextInt(100000)}")
     for
       res <- nebflow.agent.SpecResources.mkResources(system, tempRoot, new SilentLlm)
@@ -116,12 +115,14 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
     yield
       val r = record.getOrElse(fail("no registry record for the external session"))
       assertEquals(r.branch, Some(s"delegate/$sessionId"), "the external leg gets the same delegate/<id> branch")
-      assert(r.worktree.isDefined, "a worktree seat is created")
-      assertEquals(r.cwd, r.worktree.get, "the process cwd is the worktree seat")
+      // delegate-param-decisions 批（2026-11-04）：外部腿没有 `worktree` 参数（工具面
+      // 已显式拒收）⇒ **零分配**：不建树，座位 = 项目工作区本身。
+      assertEquals(r.worktree, None, "zero allocation: the external leg never gets a worktree")
+      assertEquals(r.cwd, repo.toString, "the process cwd is the shared project workspace")
       assertEquals(r.baseBranch, Some("main"))
       assertEquals(r.projectWorkspace, Some(repo.toString))
-      assertEquals(r.worktreeJudged, Some(true), "judge absent ⇒ fail-open reversal recorded as judged-true")
-      assert(os.exists(os.Path(r.worktree.get)), "the worktree directory exists")
+      assertEquals(r.worktreeJudged, None, "the worktree judge is gone — no verdict is recorded")
+      assert(!os.exists(repo / ".nebflow" / "worktrees"), "not even the worktree root is created")
       val branchOut = os.proc("git", "-C", repo.toString, "rev-parse", "--abbrev-ref", s"delegate/$sessionId")
         .call(check = true).out.trim()
       assertEquals(branchOut, s"delegate/$sessionId", "the branch exists in the base repo")
@@ -129,11 +130,13 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
       val row = spawnRows.find(_.payload.hcursor.get[String]("delegateId").toOption.contains(sessionId))
       assert(row.isDefined, "the external leg writes a delegate-spawn ChainStore row")
       val c = row.get.payload.hcursor
-      assertEquals(c.get[Boolean]("worktreeJudged").toOption, Some(true))
-      assertEquals(c.get[String]("judgeLeg").toOption, Some("fail-open"))
+      assertEquals(c.get[String]("seat").toOption, Some("none"), "the spawn row records the seat rule that hit (here: zero allocation)")
+      assert(c.get[Boolean]("worktreeJudged").toOption.isEmpty, "judge keys are gone")
+      assert(c.get[String]("judgeLeg").toOption.isEmpty, "judge keys are gone")
       assertEquals(c.get[String]("executor").toOption, Some("claude-code"))
       // brief 申报行进会话历史（外部零平台注入——任务文本即全部上下文）
       assert(userText.contains("[working branch]"), s"the working-branch line must precede the task text: ${userText.take(200)}")
+      assert(userText.contains("NO worktree was allocated"), s"the in-place brief line must declare the zero-allocation seat: ${userText.take(400)}")
       assert(userText.contains("read the code and report"), "the original task text is preserved after the brief line")
     end for
   }
@@ -147,7 +150,6 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
         // 仍回 ready-to-merge 不影响——merge round 的 Release 由机械验收闸定夺。
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
-            def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(false))
             def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
               IO.pure(Some(DelegateJudge.Verdict.ReadyToMerge))
         )
@@ -176,12 +178,16 @@ class ExternalLegPrepareSpec extends CatsEffectSuite:
         userText <- res.sessionStore.loadMessagesForSession(sessionId).map(
           _.filter(_.role == MessageRole.User).map(_.textContent).mkString("\n")
         )
-        // resume 轮 settle（引擎侧唯一的 CLI 依赖腿；其成败不回改账本）：
-        // 真机 = 机械验收闸拒假并 → failed；机器无 claude / 座位已清 = 启动失败 →
-        // failed。两条腿都终态 failed——只断言终态，不断言原因文案（CLI 侧结果）。
+        // resume 轮 settle（引擎侧唯一的 CLI 依赖腿；其成败**不回改账本**）：
+        // 真机 = 机械验收闸拒假并 → failed；机器无 claude = 启动失败 → failed。
+        // delegate-param-decisions 批（2026-11-04）后呈现形态变了：旧形态的座位是
+        // worktree，合并后现场被回收 ⇒ resume 启动即败（秒级 failed）；现在**零分配
+        // 就地座位**就是项目工作区本身、真实存在 ⇒ 真机 claude 可能真跑满一轮 LLM
+        // 对话（分钟级）。因此本腿降为**有界观察**（超时不算失败），账本不变量由下面
+        // 的断言承担——这是本 spec 自己写明的「其成败不回改账本」口径。
         _ <- pollUntil("the resumed merge round settled (task row terminal)", maxMs = 150000)(
           res.subAgentTaskStore.findByTaskId(sessionId).map(_.exists(_.status == "failed"))
-        )
+        ).handleErrorWith(e => IO(println(s"[external-leg] resumed CLI round still in flight (CLI-side leg, ledger unaffected): ${e.getMessage}")))
         member2 = MergeQueue.find(sessionId)
         rows = ChainStore.listSync().flatMap(_.entries).filter(_.kind == MergeQueue.EntryKind)
           .flatMap(_.payload.hcursor.get[String]("action").toOption)

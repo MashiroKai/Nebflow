@@ -66,12 +66,6 @@ class DelegateJudgeMachineSpec extends FunSuite:
     assertEquals(DelegateJudgeMachine.parseVerdict(""), None)
   }
 
-  test("parseWorktree: {\"worktree\": bool} parses; garbage rejects") {
-    assertEquals(DelegateJudgeMachine.parseWorktree("{\"worktree\":true}"), Some(true))
-    assertEquals(DelegateJudgeMachine.parseWorktree("```json\n{\"worktree\": false}\n```"), Some(false))
-    assertEquals(DelegateJudgeMachine.parseWorktree("{\"worktree\":\"yes\"}"), None)
-  }
-
   test("extractJsonObject: first {...} to last } wins (tolerates leading/trailing prose)") {
     val j = DelegateJudgeMachine.extractJsonObject("""intro {"a":{"b":1}} outro""")
     assertEquals(
