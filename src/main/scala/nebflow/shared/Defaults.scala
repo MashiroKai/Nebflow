@@ -549,6 +549,26 @@ object Defaults:
   def BgGateWaitTimeoutMs: Long =
     sys.props.getOrElse("nebflow.bgtask.gate.timeoutMs", (2 * 60 * 60 * 1000L).toString).toLong
 
+  /**
+   * **R5 · delegate 回合尾等待屏障的空闲上限**（ms，默认 15min；0/负 = 关闭本腿）。
+   *
+   * 与 [[BgGateWaitTimeoutMs]]（墙钟总额 2h）互补：总额管的是「等太久」，空闲上限
+   * 管的是「等的东西根本不动」。等待集里每个后台作业最近都没有新输出（且已超此
+   * 上限）⇒ 放行回合收尾，带诚实注记交付父会话。
+   *
+   * 实证（停顿审计 20261104_164800 §4-R5）：`delegate-nebflow-79c40e17` 14:17:34
+   * 起被一个 `Find stand-website dir` 作业吊住 1h49m（未到 2h 总额）⇒ 回合永不
+   * 收尾 ⇒ 无 Completed ⇒ 合并窗 leg 永不安装 ⇒ 队头不可投递、整条合并队列 2h
+   * 零放行。墙钟总额是这条链的最后兜底，但它太粗——空闲上限是切断这条上游的
+   * 精细闸。
+   *
+   * system prop `nebflow.bgtask.turnend.idleCapMs`（`BgGateWaitTimeoutMs` 同款
+   * 现读先例；生产无在线翻转路由，改值需重启宿主）。委托侧构造器缝见
+   * `BackoffSupervisor(bgIdleCapMs = …)`（spec 注入点）。
+   */
+  def BgTurnEndIdleCapMs: Long =
+    sys.props.getOrElse("nebflow.bgtask.turnend.idleCapMs", (15 * 60 * 1000L).toString).toLong
+
   // ── 节点生命周期收敛批（noderpt 批 A 段，2026-09-11 作者裁定）───────────────
   //
   // 完成门的**两条腿**各自独立开关（同一闸门、两个判据）：
