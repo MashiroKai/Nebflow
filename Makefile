@@ -82,7 +82,7 @@ quality-gate:
 # 但**本地**这条腿没有它 —— 断环的人跑 `make check` 看不到读数，存量环就是这么红着
 # 过夜的（CI 侧实证见批报告）。CI 那条腿照旧，这里补的是本地防回退。
 # 只跑前端门禁：`make frontend-gates`；全量静态检查：`make check`。
-FRONTEND_GATES := design-tokens msgstyle self-explaining circular
+FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -90,6 +90,10 @@ frontend-gates:
 	node scripts/check-msgstyle-single-source.mjs
 	node scripts/check-self-explaining.mjs
 	node scripts/check-circular.mjs
+	@# 证据/夹具是高熵长令牌的落点（2026-11-04 两小件批 · 件三）：`tests/fixtures/` 与
+	@# `reports-evidence/` 里出现「敏感键名 ∧ 值 ≥32 字符 ∧ 字符集 ≥3 类」的字面量即红
+	@# （占位词豁免）。判据与运行期脱敏词表同族（`nebflow.shared.SecretKeys`）。
+	node scripts/check-fixture-secrets.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 视觉回归基线门禁（tests/visual/，2026-11-01 采纳批）──────────────────────

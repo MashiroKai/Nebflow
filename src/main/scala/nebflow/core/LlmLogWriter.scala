@@ -643,14 +643,17 @@ object LlmLogWriter:
    *
    * 可见性 `private[nebflow]`（非 `private[core]`）：消费点之一是
    * `nebflow.llm.interface`（A3 的日志腿），它不在 `nebflow.core` 子树内。
+   *
+   * 🔴 2026-11-04 两小件批 · 件一：**键表已收归单一真源**
+   * [[nebflow.shared.SecretKeys.redactText]]。旧实现自带三条正则（bearer /
+   * `authorization|api-key` / `sk-`），`deviceToken` / `accessToken` /
+   * `refreshToken` / `clientSecret` / `password` 一个都不在表里 —— 读
+   * `~/.stand/neblink/config.json` 做诊断时该值就是这么原样回显进会话的。
+   * 现在本函数只是真源的一层薄委托：新增/删减凭据词根一律改
+   * `SecretKeys.Roots`，不许在本处再写第四份键表。
    */
   private[nebflow] def redactSecrets(s: String): String =
-    if s == null || s.isEmpty then s
-    else
-      s
-        .replaceAll("(?i)bearer\\s+[A-Za-z0-9._\\-]{8,}", "Bearer <redacted>")
-        .replaceAll("(?i)(authorization|api[_-]?key|x-api-key)(\"?\\s*[:=]\\s*\"?)[^\",\\s}]+", "$1$2<redacted>")
-        .replaceAll("sk-[A-Za-z0-9_\\-]{12,}", "sk-<redacted>")
+    nebflow.shared.SecretKeys.redactText(s)
 
   /**
    * **400/4xx provider 响应体的常驻取证面**（案① A5；作者令「随案① 落地带上」）。
