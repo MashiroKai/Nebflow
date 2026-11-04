@@ -58,13 +58,39 @@ class ShellOutputSpillSpec extends FunSuite:
         served += n
         n
 
-  /** 稳定化的已用堆读数（两次 GC + 短眠，抹掉垃圾峰值）。 */
+  /**
+   * 稳定化的已用堆读数：多轮 `System.gc` + 短眠，取**最小值**（= 保留集大小）。
+   * 单轮 GC 留 eden 垃圾 ⇒ 读数会被 ~1MB 级噪声带偏；取 4 轮最小值的目的是让
+   * 「100MB 输出后的保留量」这唯一被测属性可复现（改前 13MB / 改后 <1MB 量级差 10 倍，
+   * 与噪声 1MB 同量级，必须压噪——本 spec 曾在 1110KB 处误红一次）。
+   */
   private def usedHeapBytes(): Long =
-    System.gc()
-    Thread.sleep(150L)
-    System.gc()
-    val rt = Runtime.getRuntime
-    rt.totalMemory() - rt.freeMemory()
+    var min = Long.MaxValue
+    var i = 0
+    while i < 4 do
+      System.gc()
+      Thread.sleep(150L)
+      val rt = Runtime.getRuntime
+      val v = rt.totalMemory() - rt.freeMemory()
+      if v < min then min = v
+      i += 1
+    min
+
+  /**
+   * 收敛读数：反复「GC + 读堆」直到相邻两次差 < 128KB（最多 8 轮），取最小值。
+   * 理由：测试 JVM 里 munit / cats-effect 计算池仍在分配，单次读数会被 ~1MB 级
+   * 他人分配带偏（本 spec 实测曾在 1110KB / 1527KB 处误红，真值仅数百 KB）。
+   * 收敛把「他人噪声」压到阈值以下，测的才是「本条命令的保留量」。
+   */
+  private def convergedUsedHeapBytes(): Long =
+    var prev = -1L
+    var cur = usedHeapBytes()
+    var i = 0
+    while i < 8 && (prev < 0 || math.abs(cur - prev) > 128 * 1024) do
+      prev = cur
+      cur = usedHeapBytes()
+      i += 1
+    if prev > 0 then math.min(prev, cur) else cur
 
   private val MB = 1024L * 1024L
 
@@ -76,11 +102,15 @@ class ShellOutputSpillSpec extends FunSuite:
 
   test("M3: 100MB 输出经 readStream 后堆增长 ≤ 1MB（内存只留首尾 64KB）") {
     withSpillDir { spill =>
+      // 预热：先用 1MB 输出把读线程/缓冲/JIT 跑到稳态，剔除一次性分配对读数的干扰
+      val warm = session.readStream(new SynthLinesStream(1L * MB, 1024), _ => (), () => true, 50L, spill)
+      assert(warm.nonEmpty, "预热读为空")
+      os.list(spill).foreach(p => os.remove(p))
       val stream = new SynthLinesStream(100L * MB, 1024)
-      val before = usedHeapBytes()
+      val before = convergedUsedHeapBytes()
       val out = session.readStream(stream, _ => (), () => true, 250L, spill)
-      val after = usedHeapBytes()
-      val delta = after - before
+      val after = convergedUsedHeapBytes()
+      val delta = math.max(0L, after - before)
       val spilled = os.list(spill).map(p => os.size(p)).sum
       val msg =
         s"heapBefore=${before / 1024}KB heapAfter=${after / 1024}KB heapDelta=${delta / 1024}KB outLen=${out.length} spilledBytes=$spilled"

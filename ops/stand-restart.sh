@@ -190,8 +190,11 @@ fi
 DETACH_LOG=""              # 惰性创建: $NF_HOME/logs/restart-detach-<ts>-<pid>.log
 DETACHED_TO_LOG=0          # 1 = 已 dup2 进日志（stage 只写文件，不重复回显）
 SBT_BIN="${NEBFLOW_RESTART_SBT_BIN:-}"   # 自检注入点；空则自动解析（见下）
+STAGE_TO_FILE=1            # 动作模式默认落盘；--check 这类纯检测不建文件（防刷目录；判定见参数解析后）
 maybe_detach_log() {
   [[ -n "$DETACH_LOG" ]] && return 0
+  # 纯检测模式（--check）且未脱离：只回显、不建日志文件（watchdog/手工轮询不制造垃圾）
+  [[ "$DETACHED_TO_LOG" == "1" || "$STAGE_TO_FILE" == "1" ]] || return 0
   mkdir -p "$NF_HOME/logs" 2>/dev/null
   DETACH_LOG="$NF_HOME/logs/restart-detach-$(date +%Y%m%d-%H%M%S)-$$.log"
   if : > "$DETACH_LOG" 2>/dev/null; then
@@ -250,6 +253,9 @@ for (( i=0; i<${#args[@]}; i++ )); do
     --preflight-only) MODE="preflight-only" ;;   # v4.5 M2: 只读编译预检（自检/体检腿）
   esac
 done
+# 纯检测模式（--check）不建日志文件（watchdog/手工高频调用，防刷目录）；必须在 dup2 之前判定，
+# 且必须在本行之后（此处 MODE 才解析完——放在变量声明区会撞 set -u unbound）。
+[[ "$MODE" == "check" ]] && STAGE_TO_FILE=0
 
 now_ts()  { date +%s; }
 ts_str()  { date "+%Y-%m-%d %H:%M:%S"; }
