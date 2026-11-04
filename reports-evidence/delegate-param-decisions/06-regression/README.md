@@ -36,3 +36,9 @@ nebflow.core.delegate.DeviceWorktreeResolutionSpec:
   + spawn 行契约：workspaceSeat 键 additive——传则落键，缺省则键缺席（旧行字节零漂移） 0.001s
   + spawn 行契约：座位来源键 seat / seatName（本批新增——命中哪条规则可审计） 0.0s
 ```
+
+## 合并 main 之后复跑（基线推进校验）
+
+`main` 在批内推进了三次（`010683d27` → `d21aa81ec` → `ac18e3ca3` → `f538a8073`）。本批提交后把 `main` 合进分支
+（无冲突），再用**同一条命令**复跑：`06-regression/postmerge-test.log` 读数
+`Failed: Total 407, Failed 2, Errors 0, Passed 404, Skipped 1` —— 与合并前逐字相同（同样只剩两条存量红）。
