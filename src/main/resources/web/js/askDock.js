@@ -309,7 +309,32 @@ function applyDockSize(w, h) {
   el.dock.style.setProperty('--ask-dock-w', W + 'px');
   el.dock.style.setProperty('--ask-col-maxh', H + 'px');
   lastSize = { w: W, h: H };
+  syncTruncLine();
   return lastSize;
+}
+
+/**
+ * 作者令 2026-11-04 12:52 ③：文字**穿过**对话框底缘、在**对话框高度的中部**截断。
+ * 截断线不是常量——它随面板高变（拖拽改高后仍恒在中线），所以由尺寸状态机写：
+ *   · `--ask-trunc-h` = 面板高的一半（mask alpha = 0 的那条线 = 对话框 50%）；
+ *   · `--ask-col-overhang` = 列盒向下越过面板底缘的量（文字真的画到边界之外，
+ *     边界上没有硬切口）。
+ * 纯几何量、零字面量（读当帧实测盒；两个兜底值只防首帧未定尺寸）。
+ */
+let truncObserver = null;
+
+function syncTruncLine() {
+  if (!el || !el.dock) return;
+  const d = el.dock.getBoundingClientRect();
+  if (!d.height) return;
+  // 中线 = 面板高 × 50%（作者令的**定义**，不改写成「至少多少」）。
+  const mid = Math.round(d.height / 2);
+  const fade = parseFloat(getComputedStyle(el.dock).getPropertyValue('--ask-fade-h')) || 64;
+  el.dock.style.setProperty('--ask-trunc-h', mid + 'px');
+  // 渐出起坡 = 中线 − 26px，且必须落在顶缘衰减区**之后**（否则渐变会倒着写、
+  // 出现「先实后虚再实」的错序）。两个值都由 JS 算，CSS 只消费。
+  el.dock.style.setProperty('--ask-trunc-from', Math.max(fade, mid - 26) + 'px');
+  el.dock.style.setProperty('--ask-col-overhang', Math.round(mid * 0.18) + 'px');
 }
 
 let lastSize = null; // 最近一次落下的尺寸（视口变化时按同一目标重夹）
@@ -439,6 +464,11 @@ function mount() {
     stop: dock.querySelector('.ask-stop'),
   };
   bindResize();
+  // 截断线跟着**实测盒**走：面板高随内容/拖拽变化（不是一次性写死）。
+  if (typeof ResizeObserver === 'function') {
+    truncObserver = new ResizeObserver(() => syncTruncLine());
+    truncObserver.observe(dock);
+  }
 
   fab.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
   dock.addEventListener('click', (e) => e.stopPropagation());
@@ -676,6 +706,10 @@ async function open() {
   el.fab.classList.add('open');
   el.fab.classList.remove('pulse');
   render();
+  // 截断线/下越量按**开态首帧的实测盒**重算（open 之前 dock 还 closed，高度是
+  // 收起档 ⇒ 必须等布局落定再写，否则 --ask-trunc-h 会锁在首帧的矮值上）。
+  syncTruncLine();
+  requestAnimationFrame(() => syncTruncLine());
   askOpen(s);
   syncSeat();
   setTimeout(() => { try { el.input.focus(); } catch { /* detached */ } }, 260);

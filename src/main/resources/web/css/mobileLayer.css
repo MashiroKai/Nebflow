@@ -4819,6 +4819,24 @@ body.mobile-layer :is(
   mask-image: linear-gradient(90deg, black 0, black calc(100% - 14px), transparent 100%);
 }
 
+/* ── 作者令 2026-11-04 13:03①（回归撤除）：**列表行**回省略号截断 ─────────
+   报障逐字：「现在文字右侧都有一个渐隐效果是怎么回事」。根因 = 上一条 H4
+   「长名模糊淡出」把右缘 mask 套到了**消息/待办/会话列表的行文本**上
+   （.fm-conv-summary 每行末尾都是一条 14px 淡出带 ⇒ 整列读作「字没写完」）。
+   作者口径修正（与本条并存、不冲突）：
+     · 内容级 alpha 渐隐**仅**用于「穿边」场合 —— Ask 列顶缘、顶部签两侧；
+     · **列表行末尾一律省略号**（行内右侧还有时间/角标等邻件，渐隐带会与它们
+       糊成一团，且与「这行有更多内容」的语义相悖）。
+   保留 .fm-row-name（表单行字段，非列表行）的既有模糊淡出。 */
+/* 选择器写成 body.mobile-layer.mobile-layer 是**刻意加倍体裁**：上面 H4 那条
+   :is() 与本条同特异度，靠源码顺序决胜负太脆（后续谁再插一条就会翻盘）——
+   本条要的是「列表行恒无横向渐隐」这一不变量，所以用特异度把它钉死。 */
+body.mobile-layer.mobile-layer :is(.fm-conv-summary, .todo-entry-summary, .entry-name) {
+  -webkit-mask-image: none;
+  mask-image: none;
+  text-overflow: ellipsis;
+}
+
 /* ── .ds-* 组件类在手机档取值 ─────────────────────────────────────────
    作者令「同一套 --ds-* 槽位」的消费腿：桌面/手机是**同一套类**，手机档把
    字档与热区抬到 --mfs-* / --ds-hit-row，形状（圆角/材质/影）继续由
