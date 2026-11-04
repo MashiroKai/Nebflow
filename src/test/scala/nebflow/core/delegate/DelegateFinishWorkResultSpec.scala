@@ -139,7 +139,6 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
     IO {
       DelegateJudge.DelegateJudgePort.install(
         new DelegateJudge.DelegateJudgePort.Face:
-          def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(false))
           def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] = IO.pure(Some(verdict))
       )
     } *> io <* IO(DelegateJudge.DelegateJudgePort.clear())

@@ -210,7 +210,6 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         // 执行体（DelegateJudgeMachine.face），先装会被覆盖（测试装配顺序面）。
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
-            def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(false))
             def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
               IO.pure(Some(DelegateJudge.Verdict.ReadyToMerge))
         )
@@ -293,7 +292,6 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         // 同②：真判定机在 mkResources 构造行安装，fake 必须后装才生效。
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
-            def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(false))
             def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
               IO.pure(Some(DelegateJudge.Verdict.ReadyToMerge))
         )
@@ -331,7 +329,6 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         // 同②③：真判定机在 mkResources 构造行安装，fake 必须后装才生效。
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
-            def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(false))
             def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
               IO.pure(Some(DelegateJudge.Verdict.ReadyToMerge))
         )
@@ -737,7 +734,6 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         // fake 判定机（后装覆盖真机——同②③⑤装配序）：捕获 gitDigest 输入
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
-            def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(false))
             def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
               IO { captured += input; Some(DelegateJudge.Verdict.Completed) }
         )
@@ -891,7 +887,6 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         // 判定机裁定 completed（「无可并之物」的误判形态——引擎凭确定性读数翻转）。
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
-            def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(false))
             def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
               IO.pure(Some(DelegateJudge.Verdict.Completed))
         )
@@ -990,7 +985,6 @@ class DelegateTerminalSpec extends CatsEffectSuite:
         res <- SpecResources.mkResources(system, tempRoot, new SilentLlm)
         _ = DelegateJudge.DelegateJudgePort.install(
           new DelegateJudge.DelegateJudgePort.Face:
-            def decideWorktree(task: String): IO[Option[Boolean]] = IO.pure(Some(false))
             def judgeTerminal(input: DelegateJudge.TerminalInput): IO[Option[DelegateJudge.Verdict]] =
               IO.pure(Some(DelegateJudge.Verdict.ReadyToMerge))
         )

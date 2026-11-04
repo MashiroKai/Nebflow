@@ -11,7 +11,13 @@ import nebflow.shared.NebflowLogger
  * DeviceGitPort —— 设备项目的**设备侧 git 面**（跨设备 worktree 归属修复批
  * 2026-10-30，作者报障：设备项目 delegate 的 worktree 被建在编排机 brain 下）。
  *
- * 语义 = [[DelegateWorkspace.prepareDevice]] 的两态裁量的执行通道：
+ * 语义 = 设备项目 git 读/建通道的端口形态。**delegate-param-decisions 批（2026-11-04）
+ * 之后本端口在生产路径上零消费点**：设备项目的座位腿不再建树（`worktree` 参数在设备
+ * 项目上显式拒 = `DELEGATE_WORKTREE_REMOTE`；缺省 = 就地使用设备工作区），原消费方
+ * `DelegateWorkspace.prepareDevice` 已删除。保留原因：`sq` 转义与标记行解析是设备
+ * shell 通道的既有原语，fake 面仍由 `DeviceWorktreeResolutionSpec` 覆盖——**若将来恢复
+ * 设备侧建树须重新接线并同步本注释**（当前保留属待裁清理项，已在批报告里登记）。
+ *
  *   - 真身（RemoteFace）= 设备通道 Bash 下发（[[RemoteExecutor]]）——探测设备
  *     workspace 是否 git 仓、读基分支/基 SHA、在 `<设备workspace>/.stand-worktrees/`
  *     下建 worktree（分支纪律同本机腿：`delegate/<id>`）；

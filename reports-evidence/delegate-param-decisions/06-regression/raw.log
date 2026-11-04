@@ -1,0 +1,29 @@
+nebflow.core.tools.DelegateToolSpec:
+  + schema: exactly task/name/project/executor/worktree/force/mode — legacy parameters stay gone 0.003s
+  + name parameter: short-name guidance is model-visible (dispatch prompt face) 0.001s
+  + description carries the hard facts (self-contained brief / delegate: address / no concurrency cap) 0.001s
+  + summarize: task first-line label — stray keys must NOT surface 0.001s
+  + task is required: empty task fails with a self-describing error 0.001s
+  + kernel definition missing => fail-safe built-in def, NOT a refusal (kernelgen-ext 2026-09-26) 0.003s
+  + code-defined def: stray disk files CANNOT influence the kernel prompt (single source = code, builtin-def 2026-10-03) 0.005s
+  + code-defined def carries the kernel contract (when-to-use / boundary / plugin pointer) 0.001s
+  + unified-delegate: default workspace is created and the call reaches spawn prerequisites 0.001s
+  + unified-delegate: an unmounted project is an explicit refusal, nothing spawned 0.003s
+  + continuation address: the receipt-facing constant is the delegate: form 0.0s
+  + no agent library: resolution no longer depends on it — the call reaches the spawn prerequisites 0.001s
+  + target is fixed to the built-in kernel def — a non-kernel agent named in the call is impossible 0.001s
+  + depth limit still applies (kernel is a leaf, depth < MaxDepth required) 0.002s
+  + no hard concurrency limit: description and the code-defined prompt carry the no-limit wording in sync 0.0s
+  + the concurrency gate stays retired at the source face (the 5th concurrent spawn is admitted - nothing rejects it) 0.001s
+  + device face removed: a stray device key is NOT consumed — the call proceeds to the spawn prerequisite 0.001s
+  + device face removed 负控: no device parameter ⇒ identical behaviour (local runs are the only mode) 0.002s
+  + nebflow tool face = BaseTools + AskUserQuestion + Subagent + AgentFlow (10 items) and excludes orchestration/message tools 0.0s
+  + subagent tool face is read-only five — no write, no shell, no message 0.001s
+  + nebflow agent.json declaration is inert (ConvergedAgentNames) — mechanism-fixed only 0.0s
+
+nebflow.core.delegate.DeviceWorktreeResolutionSpec:
+  + 态① 设备项目的座位腿不再问设备 git：本机不建任何树（判定机与设备建树腿均已删除） 0.01s
+  + 态② 设备项目 + worktree 参数 = 显式拒（文案含 DELEGATE_WORKTREE_REMOTE 与出路） 0.002s
+  + spawn 行契约：workspaceSeat 键 additive——传则落键，缺省则键缺席（旧行字节零漂移） 0.001s
+  + spawn 行契约：座位来源键 seat / seatName（本批新增——命中哪条规则可审计） 0.0s
+  + sq shell 转义: 空格/单引号路径内嵌安全（设备本地路径禁裸拼的唯一转义点） 0.0s

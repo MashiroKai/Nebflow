@@ -670,13 +670,12 @@ Read / Glob / Grep / WebSearch / WebFetch. You have NO write tools, no shell: if
       CompactPreamble.linesIterator.take(2).mkString("\n").replace("\r", "")
 
   // ═══════════════════════════════════════════════════════════════════
-  // 分区四：分类器前导（2 份；消费点 llm/decision/{JevAllocator,DelegateModeMachine}.scala）
+  // 分区四：分类器前导（1 份；消费点 llm/decision/JevAllocator.scala）
   // ═══════════════════════════════════════════════════════════════════
   //
-  // 🔴 这两份**已经分叉**（同一问题的两套措辞：Jev 面提到「(1) brief + (2) 插件目录」，
-  // mode 面只提「one dispatched task brief」）。本批**只搬运、不改措辞**——各自原文各存一份，
-  // 分叉的裁定（取哪份 / 是否统一）单独登记给作者，不在本批动手。
-  // 消费点保留原名 `StatePreamble` 作转派，调用点零改动。
+  // 曾有 2 份（Jev 面 / mode 面，措辞已分叉）。delegate-param-decisions 批
+  // （2026-11-04）删掉 mode 分配器 ⇒ `ModeStatePreamble` 零消费者，一并移除；
+  // 现存 1 份，消费点保留原名 `StatePreamble` 作转派，调用点零改动。
   object Classifiers:
 
     /** JeV 分配器前导（`JevAllocator.StatePreamble` 原文；单行拼接字面量，不得改行）。 */
@@ -688,11 +687,5 @@ Read / Glob / Grep / WebSearch / WebFetch. You have NO write tools, no shell: if
         "packages may be needed for one task: judge each package independently, and count a package as " +
         "\"needed\" only when the task's primary purpose cannot be properly executed without the capability " +
         "that package provides."
-
-    /** mode 判定前导（`DelegateModeMachine.StatePreamble` 原文；单行拼接字面量，不得改行）。 */
-    val ModeStatePreamble: String =
-      "You are auditing task dispatch in an agent-orchestration platform. Below is one dispatched task brief, " +
-        "verbatim. It may contain platform boilerplate (default-clause templates, citation paths, workspace " +
-        "footers) - ignore boilerplate; judge the task's substantive purpose. Judge from the task text alone."
 
 end PromptCatalog

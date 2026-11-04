@@ -491,10 +491,12 @@ case class SharedResources(
         AskUserAnswerBridge.ref(target, items, requestId, ctx)
   )
 
-  // worktree-judge-fifo 批（#1224 增补 §3.1）：delegate 判定机注册（⑦ Jev 优先
-  // ＋SmallJudge 兜底——执行体在 llm.decision.DelegateJudgeMachine，core 只见
+  // worktree-judge-fifo 批（#1224 增补 §3.1）：delegate **终态**判定机注册（⑦ Jev
+  // 优先＋SmallJudge 兜底——执行体在 llm.decision.DelegateJudgeMachine，core 只见
   // DelegateJudgePort 注册器，分层纪律同 DelegateBudgetPort 三先例）。注册点 =
-  // 本构造行（生产 boot 与测试装配共用）。
+  // 本构造行（生产 boot 与测试装配共用）。**spawn 腿已删**（delegate-param-decisions
+  // 批 2026-11-04：worktree 判定改由参数决定，spawn 路径零模型调用）——本端口只剩
+  // judgeTerminal 一个方法。
   nebflow.core.delegate.DelegateJudge.DelegateJudgePort.install(
     nebflow.llm.decision.DelegateJudgeMachine.face(providerRegistry)
   )
@@ -539,15 +541,6 @@ case class SharedResources(
     )
   )
 
-  // 双模式批（2026-10-28）：delegate 模式选择器注册（JeV 问对→LLM fallback→
-  // fail-open kernel 三态——PluginAllocatorMachine 同族机制同缝同序；执行体在
-  // llm.decision.DelegateModeMachine，core 只见 core.delegate.DelegateModeAllocator
-  // 注册器，分层纪律同上）。总闸（delegate.dualMode.enabled，缺省 false）在调用侧
-  // 判——本注册面惰性在场，闸关 = 零调用。
-  nebflow.core.delegate.DelegateModeAllocator.install(
-    nebflow.llm.decision.DelegateModeMachine.face(providerRegistry)
-  )
-
   // D1（steward 批 2026-10-23）：后台任务通知「持久补投」面注册——BashTool 完成
   // 回调的改道/补投腿经 BgInboxPort 消费（core 不 import agent 的分层纪律，
   // DelegateJudgePort 同款 M2 形态）；实现 = 持久注入队 append（CompactionQueueStore，
@@ -568,7 +561,9 @@ case class SharedResources(
         if rootId.trim.isEmpty then
           nebflow.shared.NebflowLogger
             .forName("nebflow.merge-queue")
-            .warn(s"[merge-queue] no responsible session for owner-gone '${m.delegateId}' — escalation dropped with this line")
+            .warn(
+              s"[merge-queue] no responsible session for owner-gone '${m.delegateId}' — escalation dropped with this line"
+            )
           IO.unit
         else
           val event = nebflow.actor.AgentCommand.ExternalEvent(
@@ -633,7 +628,9 @@ case class SharedResources(
       .resolveRootSessionId(Some(agentRegistry), m.delegateId, m.parentSessionId)
       .flatMap { rootId =>
         if rootId.trim.isEmpty then
-          logger943.warn(s"[merge-queue] no responsible session for '$kind' notify '${m.delegateId}' — dropped with this line")
+          logger943.warn(
+            s"[merge-queue] no responsible session for '$kind' notify '${m.delegateId}' — dropped with this line"
+          )
           IO.unit
         else
           val event = nebflow.actor.AgentCommand.ExternalEvent(
@@ -654,7 +651,9 @@ case class SharedResources(
           nebflow.core.tools.BgNotifyDelivery
             .deliverToRootOrInbox(Some(actorSystem), Some(agentRegistry), rootId, event)
             .void
-            .handleErrorWith(e => logger943.warn(s"[merge-queue] '$kind' notify delivery failed for '${m.delegateId}': ${e.getMessage}"))
+            .handleErrorWith(e =>
+              logger943.warn(s"[merge-queue] '$kind' notify delivery failed for '${m.delegateId}': ${e.getMessage}")
+            )
       }
   }
 

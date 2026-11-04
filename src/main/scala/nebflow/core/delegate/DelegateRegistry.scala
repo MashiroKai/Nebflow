@@ -212,7 +212,17 @@ object DelegateRegistry:
      * 血缘。审计面：AgentControl 列表行尾标注、ChainStore `delegate-resume-derived`
      * 行、面板会话详情。缺省 None：旧盘面照常解码（cliSessionId 同款纪律）。
      */
-    resumedFrom: Option[String] = None
+    resumedFrom: Option[String] = None,
+    /**
+     * 就地腿的派发时快照：spawn 时工作区 HEAD（delegate-param-decisions 批
+     * 2026-11-04 · 作者补充令第 2 条机械护栏）。**只在 `worktree` 参数缺省
+     * （零分配 ⇒ 就地跑道）时落值**——收尾时 [[DelegateTerminal.inPlaceWriteAlarm]]
+     * 拿它比对「本任务没分配 worktree 却动了项目工作区」，命中即回执标红。
+     * `None` = 有树 / 非 git / 旧盘面记录（照常解码）。
+     */
+    seatSnapshotSha: Option[String] = None,
+    /** 就地腿的派发时快照：spawn 时 `git status --porcelain` 的路径集（同上）。 */
+    seatSnapshotDirty: Option[List[String]] = None
   )
 
   private def dir: os.Path = PathUtil.dataRoot / "delegates"
@@ -653,6 +663,8 @@ object DelegateRegistry:
       frozenReason <- c.get[Option[String]]("frozenReason")
       frozenDetail <- c.get[Option[String]]("frozenDetail")
       resumedFrom <- c.get[Option[String]]("resumedFrom")
+      seatSnapshotSha <- c.get[Option[String]]("seatSnapshotSha")
+      seatSnapshotDirty <- c.get[Option[List[String]]]("seatSnapshotDirty")
     yield Record(
       id,
       executor,
@@ -685,22 +697,25 @@ object DelegateRegistry:
       frozenSince,
       frozenReason,
       frozenDetail,
-      resumedFrom
+      resumedFrom,
+      seatSnapshotSha,
+      seatSnapshotDirty
     )
 
   /**
-   * 双模式批：delegate 会话的**生效执行形态**读数（工具面/挂载面分叉的单点判据）。
-   * `None` = 双模式总闸关（Inert 态——行为逐字节回退现状，读盘上的 mode 也绝不
-    * 分叉）∨ 非 delegate 会话 ∨ 记录缺席/未判定。消费方（buildAllowedToolSet 等）
-    * 对 None 恒走现状路径——「闸关 = 现行为逐字节」的读面保证。
+   * delegate 会话的**生效执行形态**读数（工具面/挂载面分叉的单点判据）。
+   *
+   * delegate-param-decisions 批（2026-11-04）：**双模式总闸退役**——模式现在是
+   * `Delegate` 工具的参数（不填 = 确定性 kernel），记录里的 mode 就是权威读面；
+   * 不再有「闸关 ⇒ 盘上有 mode 也不分叉」的 Inert 态（那个闸会让显式
+   * `mode="dispatcher"` 在缺省配置下静默失效）。`None` 只留给「非 delegate 会话 /
+   * 记录缺席 / 本批之前的存量记录」——对 None 消费方恒走现状路径（零迁移）。
    */
   def modeFaceOf(sessionId: Option[String]): Option[String] =
-    if !DualModeConfig.enabledNow then None
-    else
-      sessionId.filter(sid => DelegateSessions.isDelegateSession(Some(sid))) match
-        case None => None
-        case Some(sid) =>
-          find(sid).flatMap(_.mode).filter(DualModeConfig.isModeWord)
+    sessionId.filter(sid => DelegateSessions.isDelegateSession(Some(sid))) match
+      case None => None
+      case Some(sid) =>
+        find(sid).flatMap(_.mode).filter(DualModeConfig.isModeWord)
 
   /**
    * 后台任务归属批（作者令 2026-10-31「后台任务行标归属」）：开启任务的会话的

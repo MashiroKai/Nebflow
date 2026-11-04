@@ -38,14 +38,10 @@ class DualModeToolFaceSpec extends FunSuite:
   override def beforeEach(context: munit.BeforeEach): Unit =
     tmp = os.temp.dir(prefix = "dual-mode-face")
     PathUtil.setDataRoot(tmp / "data")
-    System.clearProperty(DualModeConfig.SysPropEnabled)
 
   override def afterEach(context: munit.AfterEach): Unit =
-    System.clearProperty(DualModeConfig.SysPropEnabled)
     PathUtil.setDataRoot(originalRoot)
     os.remove.all(tmp)
-
-  private def gateOn(): Unit = System.setProperty(DualModeConfig.SysPropEnabled, "true")
 
   private def mkModeRecord(id: String, mode: String): Unit =
     DelegateRegistry.put(
@@ -70,7 +66,11 @@ class DualModeToolFaceSpec extends FunSuite:
   // ── 挂载面 ──────────────────────────────────────────────────────────────────
 
   test("F1 kernel 腿：编排面整体退场（Subagent/AgentFlow/node 四件全摘 + node_report 摘除），Mail/delegate_report 保留") {
-    val set = CoreProbe.allowedWithDelegateMode(probeDef, delegateSession = true, delegateMode = Some(DualModeConfig.ModeKernel))
+    val set = CoreProbe.allowedWithDelegateMode(
+      probeDef,
+      delegateSession = true,
+      delegateMode = Some(DualModeConfig.ModeKernel)
+    )
     KernelStripped.foreach { t =>
       assert(!set.contains(t), s"kernel face must strip the orchestration face: $t (got: ${set.toList.sorted})")
     }
@@ -87,8 +87,15 @@ class DualModeToolFaceSpec extends FunSuite:
   }
 
   test("F2 dispatcher 腿：Subagent 摘除，AgentFlow + node 四件保留（编排本体）；node_report 现状事实源不达（flow 节点专属）") {
-    val set = CoreProbe.allowedWithDelegateMode(probeDef, delegateSession = true, delegateMode = Some(DualModeConfig.ModeDispatcher))
-    assert(!set.contains("Subagent"), "dispatcher face strips Subagent (Q2: recon subagent is not an orchestration face)")
+    val set = CoreProbe.allowedWithDelegateMode(
+      probeDef,
+      delegateSession = true,
+      delegateMode = Some(DualModeConfig.ModeDispatcher)
+    )
+    assert(
+      !set.contains("Subagent"),
+      "dispatcher face strips Subagent (Q2: recon subagent is not an orchestration face)"
+    )
     assert(set.contains("AgentFlow"), "dispatcher keeps AgentFlow (inline DAG convenience face)")
     NodeFace.foreach { t =>
       assert(set.contains(t), s"dispatcher keeps the node face: $t (got: ${set.toList.sorted})")
@@ -109,7 +116,11 @@ class DualModeToolFaceSpec extends FunSuite:
   }
 
   test("F4 非 delegate 会话 + mode=dispatcher ⇒ 零分叉（挂载面判据 = delegateSession ∧ mode 两条件）") {
-    val set = CoreProbe.allowedWithDelegateMode(probeDef, delegateSession = false, delegateMode = Some(DualModeConfig.ModeDispatcher))
+    val set = CoreProbe.allowedWithDelegateMode(
+      probeDef,
+      delegateSession = false,
+      delegateMode = Some(DualModeConfig.ModeDispatcher)
+    )
     // 非 delegate 基线面本就无 node 四件（那是 delegateSession 尾段）——本条钉的是
     // Subagent/AgentFlow 不因 mode 参数而被摘（挂载面分叉需要两条件同时成立）。
     Set("Subagent", "AgentFlow").foreach { t =>
@@ -120,24 +131,30 @@ class DualModeToolFaceSpec extends FunSuite:
 
   // ── 工具内第二保险 ──────────────────────────────────────────────────────────
 
-  private def faceCtx(sessionId: Option[String]): ToolContext = ToolContext(projectRoot = tmp.toString, sessionId = sessionId)
+  private def faceCtx(sessionId: Option[String]): ToolContext =
+    ToolContext(projectRoot = tmp.toString, sessionId = sessionId)
 
   test("F5 SubagentTool：kernel/dispatcher 会话显式拒（DUAL_MODE_FACE_REMOVED）；闸关 = 现行为腿") {
-    gateOn()
     mkModeRecord("delegate-nebflow-f5k", DualModeConfig.ModeKernel)
     mkModeRecord("delegate-nebflow-f5d", DualModeConfig.ModeDispatcher)
-    val kernel = SubagentTool.call(JsonObject("prompt" -> "look around".asJson), faceCtx(Some("delegate-nebflow-f5k"))).unsafeRunSync()
+    val kernel = SubagentTool
+      .call(JsonObject("prompt" -> "look around".asJson), faceCtx(Some("delegate-nebflow-f5k")))
+      .unsafeRunSync()
     assert(kernel.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")), kernel.toString)
-    val dispatcher = SubagentTool.call(JsonObject("prompt" -> "look around".asJson), faceCtx(Some("delegate-nebflow-f5d"))).unsafeRunSync()
+    val dispatcher = SubagentTool
+      .call(JsonObject("prompt" -> "look around".asJson), faceCtx(Some("delegate-nebflow-f5d")))
+      .unsafeRunSync()
     assert(dispatcher.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")), dispatcher.toString)
     // 闸关：同一会话形态（无记录 ⇒ mode=None）= 现行为（缺参校验错误，绝不出双模式文案）。
     val gateOff = SubagentTool.call(JsonObject.empty, faceCtx(Some("delegate-nebflow-f5x"))).unsafeRunSync()
     assert(gateOff.left.exists(_.message.contains("Missing required parameter")), gateOff.toString)
-    assert(!gateOff.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")), "gate-off must never produce the dual-mode error")
+    assert(
+      !gateOff.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")),
+      "gate-off must never produce the dual-mode error"
+    )
   }
 
   test("F6 AgentFlowTool：kernel 会话显式拒（DUAL_MODE_FACE_REMOVED）；闸关 = 非 kernel 错误路径") {
-    gateOn()
     mkModeRecord("delegate-nebflow-f6k", DualModeConfig.ModeKernel)
     val valid = JsonObject(
       "steps" -> io.circe.Json.arr(
@@ -150,12 +167,15 @@ class DualModeToolFaceSpec extends FunSuite:
     // 亦非 kernel 文案——双模式批零痕迹）。
     val gateOff = AgentFlowTool.call(valid, faceCtx(Some("delegate-nebflow-f6x"))).unsafeRunSync()
     assert(gateOff.isLeft, gateOff.toString)
-    assert(!gateOff.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")), "gate-off must never produce the dual-mode error")
+    assert(
+      !gateOff.left.exists(_.message.contains("DUAL_MODE_FACE_REMOVED")),
+      "gate-off must never produce the dual-mode error"
+    )
   }
 
   // ── 声明面/记录面 ───────────────────────────────────────────────────────────
 
-  test("F7 DelegateTool schema 声明 mode enum（kernel|dispatcher|auto）") {
+  test("F7 DelegateTool schema 声明 mode enum（kernel|dispatcher，无 auto）") {
     val schema = nebflow.core.tools.DelegateTool.inputSchema
     val modeJ = (for
       props <- schema("properties")
@@ -165,12 +185,17 @@ class DualModeToolFaceSpec extends FunSuite:
     assert(modeJ.isDefined, s"the Delegate schema must declare the mode parameter: keys=${schema.keys}")
     val enumVals: List[String] =
       modeJ.flatMap(_.asObject).flatMap(_("enum")).flatMap(_.asArray).map(_.toList.flatMap(_.asString)).getOrElse(Nil)
-    assertEquals(enumVals, List("kernel", "dispatcher", "auto"), s"mode enum must be kernel|dispatcher|auto; mode=$modeJ")
-    // worktree 裁定回写（作者 2026-10-29 18:12）：schema 文案不得再宣称 dispatcher
-    // 本体「no worktree」——判定机照走，节点层 seal。
+    assertEquals(
+      enumVals,
+      List("kernel", "dispatcher"),
+      s"mode enum must be kernel|dispatcher (the allocator is gone, so auto is no longer a legal word); mode=$modeJ"
+    )
+    // delegate-param-decisions 批（2026-11-04）：判定机已删除 ⇒ schema 里不许再出现
+    // 「worktree judge」；且必须写明「不填 = 确定性 kernel + 没有分配器」。
     val desc = modeJ.flatMap(_.asObject).flatMap(_("description")).flatMap(_.asString).getOrElse("")
-    assert(!desc.contains("zero plugins, no worktree"), s"the retracted no-worktree claim must be gone: $desc")
-    assert(desc.contains("worktree judge"), s"the schema states the dispatcher goes through the worktree judge: $desc")
+    assert(!desc.contains("worktree judge"), s"the removed judge must not be advertised: $desc")
+    assert(desc.contains("no allocator"), s"the description states the allocator is gone: $desc")
+    assert(desc.contains("deterministically"), s"the omitted-mode fallback is deterministic: $desc")
   }
 
   // ── 分发器提示词两段（2026-10-29 作者补令 · DispatcherDisciplineLine 单点）──
@@ -178,19 +203,31 @@ class DualModeToolFaceSpec extends FunSuite:
   test("F9 分发器纪律段：subagent-via-nodes 用法指导逐点在案（自足 task / out 边回流 / verifier+loop 判定）") {
     val line = nebflow.core.tools.DelegateTool.DispatcherDisciplineLine
     assert(line.contains("Subagent tool is gone by design"), "the removal is explained, not silent")
-    assert(line.contains("SELF-CONTAINED"), "node tasks must be self-contained (nodes see none of the dispatcher's context)")
+    assert(
+      line.contains("SELF-CONTAINED"),
+      "node tasks must be self-contained (nodes see none of the dispatcher's context)"
+    )
     assert(line.contains("completion notifications"), "results flow back via out edges / completion notifications")
-    assert(line.contains("verifier node with a (fail)<worker>:loop back edge"), "judgment steps route through verifier+loop")
+    assert(
+      line.contains("verifier node with a (fail)<worker>:loop back edge"),
+      "judgment steps route through verifier+loop"
+    )
   }
 
   test("F10 分发器纪律段：整链一次编写纪律（一次 ChainWrite 给全链；NodeEdit 只精修不拼链）+ 座位共享精确化") {
     val line = nebflow.core.tools.DelegateTool.DispatcherDisciplineLine
-    assert(line.contains("ONE ChainWrite call"), "the whole chain — multi-node complex chains included — rides one call")
+    assert(
+      line.contains("ONE ChainWrite call"),
+      "the whole chain — multi-node complex chains included — rides one call"
+    )
     assert(line.contains("never assemble a chain node-by-node"), "piecemeal NodeEdit chain-building is forbidden")
     assert(line.contains("not for building it"), "NodeEdit is refinement-only")
     // worktree 裁定（2026-10-29 18:12）：座位共享而非「无 worktree」——旧表述必须消失。
     assert(!line.contains("no branches and no worktrees"), s"the retracted claim must be gone: $line")
-    assert(line.contains("inside this session's worktree seat"), "the shared-seat semantics are stated (sharing, not nesting)")
+    assert(
+      line.contains("inside this session's worktree seat"),
+      "the shared-seat semantics are stated (sharing, not nesting)"
+    )
     assert(line.contains("never create branches or worktrees"), "the node-layer seal is stated")
     assert(line.contains("`deps`"), "the write-scope serialization discipline stays")
   }
@@ -205,14 +242,23 @@ class DualModeToolFaceSpec extends FunSuite:
     assert(line.contains("pure orchestration"), s"identity header names the doctrine: $line")
     assert(line.contains("you never execute it yourself"), "zero-hands-on identity clause")
     // kernel=自己干 / dispatcher=只编排 的语义分界：两模式共享同一 system prompt
-    //（NebflowDelegatePrompt 通篇 executor 框架——「Simple work → you do it
+    // （NebflowDelegatePrompt 通篇 executor 框架——「Simple work → you do it
     // yourself」），分界只能由本段的开场覆盖句承载。
-    assert(line.contains("overrides the executor framing"), "the shared-seat executor framing must be explicitly overridden")
-    assert(line.contains("simple work → you do it yourself"), "the overridden seat phrase is quoted verbatim (unambiguous target)")
+    assert(
+      line.contains("overrides the executor framing"),
+      "the shared-seat executor framing must be explicitly overridden"
+    )
+    assert(
+      line.contains("simple work → you do it yourself"),
+      "the overridden seat phrase is quoted verbatim (unambiguous target)"
+    )
     assert(line.contains("executor tier of your seat is OFF"), "the executor tier is named as off in this mode")
     assert(line.contains("mode violation, not a shortcut"), "task-work Write/Edit/Bash is a violation clause")
     assert(line.contains("only read the map, the files and git facts"), "the dispatcher's own calls stay read-only")
-    assert(line.contains("simple work → a one-node chain"), "the fallback for simple work is a chain node, never personal work")
+    assert(
+      line.contains("simple work → a one-node chain"),
+      "the fallback for simple work is a chain node, never personal work"
+    )
   }
 
   test("F11b 分发器纪律段（9.19 口径）：拆解/接令盘点/收拢/推进度四段逐点在案") {
@@ -228,9 +274,15 @@ class DualModeToolFaceSpec extends FunSuite:
     assert(line.contains("synthesize across nodes"), "collection = cross-node synthesis on arrival")
     assert(line.contains("dispatch summary"), "final text = conclusion-first dispatch summary, not a transcript")
     // 推进度（修链不修活）
-    assert(line.contains("the repair is a chain edit, never your own hands"), "advancement = chain edit, zero hands-on repair")
+    assert(
+      line.contains("the repair is a chain edit, never your own hands"),
+      "advancement = chain edit, zero hands-on repair"
+    )
     // 插件发现行消解（PluginDiscoveryLine 的 declare 邀请对 dispatcher 不适用）
-    assert(line.contains("query-only for you"), "the [plugin discovery] declare invitation is neutralized for the dispatcher")
+    assert(
+      line.contains("query-only for you"),
+      "the [plugin discovery] declare invitation is neutralized for the dispatcher"
+    )
   }
 
   test("F11c 两模式提示词语义分界：kernel 腿无模式段（brief 零 dispatcher 文本），语义差异由工具面 + 本段承载") {
@@ -238,10 +290,12 @@ class DualModeToolFaceSpec extends FunSuite:
     // 注入面逐字节锚在 core.tools 侧 DualModeBriefInjectionSpec（assembleBrief
     // 为 private[tools]，跨包不可及——本条钉常量面身份）。
     val line = nebflow.core.tools.DelegateTool.DispatcherDisciplineLine
-    assert(!line.contains("kernel"), "the dispatcher section never mentions the kernel mode (modes must not cross-reference)")
+    assert(
+      !line.contains("kernel"),
+      "the dispatcher section never mentions the kernel mode (modes must not cross-reference)"
+    )
     assert(line.contains("Dispatcher mode"), "the section is unmistakably labeled for the dispatcher mode")
   }
-
 
   test("F8 SubAgentTask mode 字段：缺键容忍（旧盘面照读解码 None）；在键透传") {
     val legacy = """{"taskId":"delegate-nebflow-f8","parentSessionId":"p","agentName":"nebflow","prompt":"p",

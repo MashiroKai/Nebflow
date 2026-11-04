@@ -57,10 +57,8 @@ class DualModeDispatcherScopeSpec extends CatsEffectSuite:
   override def beforeEach(context: munit.BeforeEach): Unit =
     (nebflow.core.project.ProjectRuntimeRegistry.clear *> nebflow.core.project.DelegateFlowHosts.clear).unsafeRunSync()
     PathUtil.setDataRoot(tempRoot)
-    System.setProperty(DualModeConfig.SysPropEnabled, "true")
 
   override def afterEach(context: munit.AfterEach): Unit =
-    System.clearProperty(DualModeConfig.SysPropEnabled)
     System.clearProperty(nebflow.core.delegate.DelegateFlowMapLifecycle.SysPropGraceMs)
     (nebflow.core.project.ProjectRuntimeRegistry.clear *> nebflow.core.project.DelegateFlowHosts.clear).unsafeRunSync()
 
