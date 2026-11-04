@@ -299,4 +299,53 @@ class NearPathStatsSpec extends FunSuite:
     ))
     assertEquals(info.status, Status.Forbidden, "loopback-info keeps its session gate (unchanged by this batch)")
 
+  // ── 身份像素面（闸③ 腿 B，近路批 2026-11-04 四道闸根因修复）────────────────
+  // 判据 = 「环回 socket ∧ expect == 本机 deviceId」；其余一律 404。
+  // 这一面是 WebKit 上唯一还能发出去的取证形态（fetch 被 mixed content 拦），
+  // 所以它的**反例**比正例更要紧：任何非环回来源（= 远端设备/他人的浏览器）
+  // 都拿不到图 ⇒ 前端绝不跳走。
+
+  private def pixel(
+    remote: Option[com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]],
+    expect: Option[String],
+    own: Option[String]
+  ): Response[IO] =
+    val uri = expect.fold("/api/health/loopback-pixel.png")(
+      e => s"/api/health/loopback-pixel.png?expect=$e"
+    )
+    HealthRoutes.LoopbackPixel
+      .reply(SpecRequests.withRemote(Request[IO](Method.GET, Uri.unsafeFromString(uri)), remote), own)
+      .unsafeRunSync()
+
+  test("identity pixel: loopback leg + expect == own deviceId => 200 PNG with the sentinel dimensions"):
+    val resp = pixel(Some(SpecRequests.LoopbackV4), Some("dev-own"), Some("dev-own"))
+    assertEquals(resp.status, Status.Ok)
+    assertEquals(header(resp, "Content-Type"), Some("image/png"))
+    assertEquals(header(resp, "Cache-Control"), Some("no-store"), "身份换了必须立刻看到新答案")
+    val bytes = resp.body.compile.toVector.unsafeRunSync().toArray
+    assertEquals(bytes.length, 71, "固定 71 B 哨兵图（进程内常量，零写盘）")
+    // PNG 签名 + IHDR 宽高 = 哨兵（前端靠 naturalWidth/Height 判同机，双写常量钉死）
+    assertEquals(bytes.take(8).toList, List(0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A).map(_.toByte))
+    def be32(off: Int): Int =
+      ((bytes(off) & 0xFF) << 24) | ((bytes(off + 1) & 0xFF) << 16) |
+        ((bytes(off + 2) & 0xFF) << 8) | (bytes(off + 3) & 0xFF)
+    assertEquals(be32(16), HealthRoutes.LoopbackPixel.Width)
+    assertEquals(be32(20), HealthRoutes.LoopbackPixel.Height)
+    assertEquals(HealthRoutes.LoopbackPixel.Width, 5, "与 web/js/ws.js NEARPATH_PIXEL_W 双写")
+    assertEquals(HealthRoutes.LoopbackPixel.Height, 3, "与 web/js/ws.js NEARPATH_PIXEL_H 双写")
+
+  test("identity pixel: expect mismatch / missing expect / no minted identity => 404 (never a body)"):
+    assertEquals(pixel(Some(SpecRequests.LoopbackV4), Some("dev-other"), Some("dev-own")).status, Status.NotFound)
+    assertEquals(pixel(Some(SpecRequests.LoopbackV4), None, Some("dev-own")).status, Status.NotFound)
+    assertEquals(pixel(Some(SpecRequests.LoopbackV4), Some(""), Some("dev-own")).status, Status.NotFound)
+    assertEquals(pixel(Some(SpecRequests.LoopbackV4), Some("dev-own"), None).status, Status.NotFound,
+      "本机身份未铸 ⇒ 谁都不答（不许凭 expect 自证）")
+
+  test("identity pixel: NON-loopback sources never get the image (remote device / other account / tunnel bridge)"):
+    for remote <- List(Some(SpecRequests.Lan), Some(SpecRequests.Public), None) do
+      val resp = pixel(remote, Some("dev-own"), Some("dev-own"))
+      assertEquals(resp.status, Status.NotFound,
+        s"remote=$remote must never prove same-machine (expect matches, leg does not)")
+      assertEquals(header(resp, "Access-Control-Allow-Origin"), None, "404 也不带任何 CORS 头")
+
 end NearPathStatsSpec
