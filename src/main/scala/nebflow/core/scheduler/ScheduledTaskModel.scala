@@ -81,10 +81,31 @@ case class ScheduledTask(
    * 自由文本标签（引擎不持项目注册表权威——标签即数据）；存量文件无此键 →
    * None（withDefaults 零迁移）。定/待两面通用（定时任务面 UI 暂不消费）。
    */
-  project: Option[String] = None
+  project: Option[String] = None,
+  /**
+   * 重要度（待办体系统一批 2026-11-04）：0 = 无（缺省）/ 1 低 / 2 中 / 3 高。
+   * 越界一律钳位到 0..3（[[ScheduledTask.clampPriority]] 单点，create 与 WS patch
+   * 都过它——库内不可能出现 4/‑1，前端排序无须再防）。存量文件无此键 → 0
+   * （ConfiguredCodec + withDefaults 缺键回默认值，先例 missCount；spec 钉）。
+   * 仅待办面消费；定时任务面字段恒 0、语义零改动。
+   */
+  priority: Int = 0,
+  /**
+   * 完成时刻（待办体系统一批 2026-11-04）：None = 未完成；Some(ms) = 已完成。
+   * 🔴 这是**软删标记**——`completeTodo` 不再物理删行（DoneRecord 只增不改续
+   * 写 + 行留库 ⇒ 取消完成可一键回退、周报数据源不断；旧「删行」路径把二者
+   * 都做绝了）。已完成行：不进 scope:"all" 收件箱默认面、不进 getAllTodos /
+   * getAllDueTodos 等读口 ⇒ **绝不被 scheduler 浮出**（见 Store 读口与
+   * ScheduledTaskActor.surfaceTodos 双闸）。取消完成 = 置回 None（幂等）。
+   * 存量文件无此键 → None（withDefaults 零迁移）。
+   */
+  completedAt: Option[Long] = None
 ):
   /** true = 待办面（周期浮出直至销账），false = 定时任务面（现状）。 */
   def isTodo: Boolean = kind.contains(ScheduledTask.KindTodo)
+
+  /** true = 已完成（软删标记置位）——读口/触发面据此排除。 */
+  def isCompleted: Boolean = completedAt.isDefined
 
 end ScheduledTask
 
@@ -99,6 +120,24 @@ object ScheduledTask:
   /** kind 等值比较：None 与 Some(KindTask) 同面。 */
   def sameKind(a: Option[String], b: Option[String]): Boolean =
     a.getOrElse(KindTask) == b.getOrElse(KindTask)
+
+  /** 重要度下界（0 = 无/未分级）。 */
+  val PriorityMin: Int = 0
+
+  /** 重要度上界（3 = 高）。 */
+  val PriorityMax: Int = 3
+
+  /** 重要度钳位单点：越界收进 [PriorityMin, PriorityMax]（0..3 之外的读数只可能
+   *  来自老/手改文件或旧前端，一律收敛，库内不出现越界值）。 */
+  def clampPriority(n: Int): Int = math.max(PriorityMin, math.min(PriorityMax, n))
+
+  /**
+   * 收件箱排序键（服务端权威，2026-11-04）：未完成优先 → priority 降序 →
+   * triggerAt 升序（下次浮出早者先）→ createdAt 升序（稳定兜底，同键不抖动）。
+   * 全键可**从每行数据本身算出** ⇒ 前端只消费服务端顺序，不许自己内存重排。
+   */
+  def todoSortKey(t: ScheduledTask): (Int, Int, Long, Long) =
+    (if t.isCompleted then 1 else 0, -t.priority, t.triggerAt, t.createdAt)
 
   // 存量文件向后兼容（2026-09-06 实证 + 2026-10-29 修正）：缺键回构造器默认值。
   // 🔴 deriveCodec（generic.semiauto）只对 **Option 字段** 容忍缺键——非 Option
@@ -120,7 +159,10 @@ object ScheduledTask:
     name: Option[String] = None,
     kind: Option[String] = None,
     condition: Option[String] = None,
-    project: Option[String] = None
+    project: Option[String] = None,
+    /** 重要度 0..3（越界钳位，见 [[ScheduledTask.clampPriority]]）；kind=todo 的
+     *  唯一创建点即此处，定时任务面调用方不传 = 0（逐字节现状）。 */
+    priority: Int = 0
   ): ScheduledTask =
     val normalizedKind = kind.map(_.trim.toLowerCase).filter(_.nonEmpty)
     ScheduledTask(
@@ -136,7 +178,8 @@ object ScheduledTask:
       name = name.map(_.trim).filter(_.nonEmpty),
       kind = normalizedKind.filter(_ == KindTodo), // 非 "todo" 值一律归定时任务面
       condition = condition.map(_.trim).filter(_.nonEmpty),
-      project = project.map(_.trim).filter(_.nonEmpty)
+      project = project.map(_.trim).filter(_.nonEmpty),
+      priority = clampPriority(priority)
     )
 
   end create
