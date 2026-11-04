@@ -10,8 +10,19 @@ P4 退避与可观测。
 | `red/measure-legacy.json` | 改前口径（`PresenceDialSchedule.LegacySerial`：串行 + `IO.blocking` + 无共用真源）的全部实测行 |
 | `green/measure-production.json` | 改后口径（`PresenceDialSchedule.Production`：并发上限 4 + `presence-dial-*` 专用池 + 共用 `P2pReachability`）的全部实测行 |
 | `red/full-run-raw.log` / `green/full-run-raw.log` | 同一进程的完整原始输出（两臂在同一进程、同一方法、同一端点集内先后跑） |
-| `*_spec-*.log` | spec 运行日志（红→绿判据的机器可判形态） |
-| `*_regress-neblink.log` | 既有套件回归（Total/Failed） |
+| `specs/*.log` | spec 运行日志（红→绿判据的机器可判形态） |
+| `regress-*.log` | 既有套件回归（Total/Failed） |
+
+## 五项硬验收读数（速查）
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| 一轮拨号总耗时（KAI 两候选，真机黑洞） | 4628 ms | **3020 ms**（≈max 而非 Σ） |
+| compute 线程被占用 / 轮 | 4516 ms | **0 ms** |
+| 负缓存命中单轮 | 4522 ms | **0 ms** |
+| 同池文件打开同形任务 p99（12 线程池 × 12 路拨号） | 93 ms | **13 ms** |
+| 端点全不可达整轮上限 | 5014 ms（风暴臂：12 路合计占 compute 30058 ms） | **2512 ms**（compute 占用 0 ms） |
+
 
 ## 方法（为什么这组数可对比）
 
