@@ -200,3 +200,22 @@ lightbox 与 toast。**归类例外**：`socialPanel.js` 的入口按钮在活�
 | 四行拓扑 | four-line topology | 终态信息流向四行：north(web, cli, bridge, social)→gateway；gateway→organic-server & capability-server；organic-server→capability-server & shared；capability-server→shared；`mem-engine` / `skill-engine` 挂 capability 的 direct-call 面。 | 规划态：终态机器落点 = `scripts/check-scala-layers.mjs` 的 `LAYER_ORDER`（B1 起渐次成形） |
 
 **大小写裁定（2026-09-30，B0）**：组件名全小写（`organic-server`、`capability-server` 等）；句首位置按英文惯例首字母大写。已核：两仓 src / scripts / tests / docs 内组件名 organic 零出现（seed 插件设计语料含英文语义词 organic，非代码标识符），无存量需扫。
+
+## 12. 数据根三层（B1 批次，2026-11-04 落地）
+
+> **批次说明（2026-11-04）**：作者三层数据根裁定的词条（派单九条裁定 1/5/9 + 契约
+> `reports-evidence/20261104_b1-dataroot/design-api.md`）。术语随实现落地入表；
+> 机制的完整解释在契约与落点处，本表只管名字。
+
+| 术语 | English / 代码拼写 | 定义 | 权威落点 |
+|---|---|---|---|
+| 三层数据根 | three-layer data root | 机器层 / 账号层 / 未登录层三档「有效根」的统称，由启动序按指针与 layout 标记定档。 | `src/main/scala/nebflow/core/root/RootLadder.scala` |
+| 机器层 | machine root / `machineRoot` | 全机共享、与账号无关的根：`bin/`、jar、生命周期 `logs/`、`.pid`/`.pid.meta`、`daemons*.json`、`auth.json`、`layout.json`、`active-account`。解析链 = 今日 dataRoot 链（`--home` > `STAND_HOME` > `NEBFLOW_HOME` > 默认 `~/.stand`）。 | `PathUtil.machineRoot`（`src/main/scala/nebflow/shared/paths.scala`） |
+| 账号层 | account layer / account root | 一个账号的私有根 `machineRoot/accounts/<dirNameOf(sub)>`（0700）：设备身份、`neblink/`、`secrets/`、`projects/`、`sessions/`、tasks、memory、模型与所有 `.env`。 | `AccountRoot.accountRoot`（`src/main/scala/nebflow/core/root/AccountRoot.scala`） |
+| 未登录层 | unauthenticated layer | 装机到首次登录之间的有效根 `machineRoot/unauthenticated/`：只开登录面、**不铸** `device.json`（fail-closed 守卫）。 | `RootLayer.Unauthenticated` + `DeviceIdentity.loadOrCreate` 守卫（`src/main/scala/nebflow/neblink/NeblinkModel.scala`） |
+| active-account 指针 | active-account pointer | 机器层单文件指针（0600），指明当前账号；缺失 + 有 layout 标记 ⇒ 未登录层；坏档 ⇒ 降级平铺档（绝不把数据根「弄丢」）。 | `AccountRoot.pointerPath` / `readPointer` |
+| profile.json | account profile | 账号根下的账号档案 `{accountSub, email, createdAt, hostPromptDeclinedAt}`，也是「本目录是账号根」的唯一判据（阶梯第 0 档）。 | `AccountProfile` / `AccountRoot.isAccountRoot` |
+| layout.json | layout marker | 机器层布局标记 `{"layout":"accounts-v1"}`；**无它 ⇒ 一律按老平铺根处理**（兼容红线：平铺根字节不变）。 | `LayoutMarker` / `AccountRoot.readLayoutMarker` |
+| 待认领区 | pending-claim area | `machineRoot/pending-claim/<ts>/`：平铺数据在「尚未登录」时迁入的中转位置，登录后认领进账号根；绝不被认作生效根。 | `RootLayout.migrate`（`MigrationReport.pendingClaim`，`src/main/scala/nebflow/core/root/RootLayout.scala`） |
+| owner 账号校验 | owner guard | 「本引擎服务的账号 == 凭据里的 owner」等值判定；不等 ⇒ 拒服务并点名双方 + 建议 `stand logout`（owner-account-mismatch）。 | `OwnerGuard.check`（`src/main/scala/nebflow/core/root/Guards.scala`） |
+| deviceId scope | device id scope | 设备 id 派生的账号域成分：账号档 = `acct|<accountSub>`（非默认机器根再带 `\|iso\|<hash>` 隔离后缀）；平铺/隔离档保持 `default` / `home\|<hash>` 不变。 | `DeviceIdentity.deviceIdScope`（`src/main/scala/nebflow/neblink/NeblinkModel.scala`） |

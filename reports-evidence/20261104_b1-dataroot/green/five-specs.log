@@ -1,0 +1,39 @@
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-42b0596b-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-42b0596b/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-42b0596b/)
+[warn] javaOptions will be ignored, fork is set to false
+12:12:28.230 [33mWARN [0m nebflow.root.account - [root] ROOT-POINTER-DAMAGED — /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/b1-red-5138399159002271394/active-account is not a decodable active-account pointer (exhausted input); serving the flat data root instead of hiding it (sign in again to rewrite the pointer)
+[32mnebflow.core.dataroot.AccountRootSpec:[0m
+[32m  + [0m[32mV1: layout.json 在场且无 active-account 指针 ⇒ 未登录层（root = machineRoot/unauthenticated）[0m [90m0.225s[0m
+[32m  + [0m[32mV1: 未登录层拒绝铸造设备身份（UNAUTHENTICATED-LAYER，fail-closed）且全树零 device.json[0m [90m0.12s[0m
+[32m  + [0m[32mV1: 未登录层不借账号层 / 平铺面的 device.json（'账号层无 device.json' 的隔离证明）[0m [90m0.008s[0m
+[32m  + [0m[32mV1: 指针坏档 ⇒ 降级 flat（绝不落未登录层，A6）[0m [90m0.006s[0m
+[32m  + [0m[32m指针读写：roundtrip 四字段、0600、clearPointer 只删指针（不删账号目录）[0m [90m0.006s[0m
+[32m  + [0m[32mV5: ensureAccountDir ⇒ accounts/<dirNameOf(sub)>，权限 0700，幂等[0m [90m0.002s[0m
+[32m  + [0m[32mV5/dirNameOf: '|' 不能当目录名（Windows 非法）⇒ x-<sha256 前 24>；可读档原样；稳定且单射[0m [90m0.008s[0m
+[32m  + [0m[32mprofile.json: 四字段（accountSub/email/createdAt/hostPromptDeclinedAt）可存可读 + 0600 + isAccountRoot[0m [90m0.004s[0m
+[32m  + [0m[32mV1/V5: 指针可用 ⇒ RootLayer.Account；--home <账号根> 走第 0 档并还原机器层根[0m [90m0.004s[0m
+[32mnebflow.core.dataroot.AccountIsolationSpec:[0m
+[32m  + [0m[32mV3: A/B 两账号各写 projects/secrets/tasks 样本 ⇒ 切到 B 后目录读取 + 工具面双证都看不到 A[0m [90m0.069s[0m
+[32m  + [0m[32mV3: 账号根目录名映射不同（'|' 形态与可读形态）时同样隔离，且两个根互不为前缀[0m [90m0.006s[0m
+[32mnebflow.core.dataroot.AutoStartHomeSpec:[0m
+[32m  + [0m[32mV6: programArguments 尾部追加 --home <账号根>（jar 形态与 bundle 形态），None 逐字节等于今日（A12）[0m [90m0.002s[0m
+[32m  + [0m[32mV6: launchd plist 渲染文本含 --home <账号根>（只渲染不落盘、不跑 launchctl）[0m [90m0.002s[0m
+[32m  + [0m[32mV6: desktop entry 的 Exec= 行含 --home <账号根>（Linux 面纯渲染断言，本机不落盘）[0m [90m0.003s[0m
+[32m  + [0m[32mV6: schtasks 命令行含 --home <账号根>（Windows 面纯渲染断言；本机 = macOS，不可执行侧）[0m [90m0.002s[0m
+12:12:28.397 [36mINFO [0m nebflow.root.layout - [migrate] copying 5 entries, 239B total -> /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/b1-red-4715308579264787647/accounts/acct-first
+12:12:28.409 [36mINFO [0m nebflow.root.layout - [rollback] flat layout restored (originals untouched); report kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/b1-red-4715308579264787647/migration-report.json
+12:12:28.419 [36mINFO [0m nebflow.root.layout - [migrate] copying 5 entries, 240B total -> /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/b1-red-14738654002676367065/pending-claim/20261104-121228 (pending claim — no account signed in)
+[32mnebflow.core.dataroot.LegacyRootMigrationSpec:[0m
+[32m  + [0m[32mV4: 平铺根 + 首个账号 ⇒ migrate 一次性归入该账号目录、原件逐条 sha256 不变、rollback 回到 flat[0m [90m0.031s[0m
+[32m  + [0m[32mV4: 未登录时 migrate ⇒ 落 pending-claim/<ts>/、不写指针、且不被认作生效根[0m [90m0.014s[0m
+[32mnebflow.core.dataroot.OwnerGuardSpec:[0m
+[32m  + [0m[32mV2: 本引擎服务的账号 ≠ 凭据 owner ⇒ 拒启（owner-account-mismatch），文案点名两个 sub + 行动建议[0m [90m0.001s[0m
+[32m  + [0m[32mV2: 凭据里没有 owner 锚（None）⇒ fail-open 放行，不新增拒绝面[0m [90m0.001s[0m
+[32m  + [0m[32mV2: 账号与 owner 相同 ⇒ 放行（等值判定，不多拒）[0m [90m0.0s[0m
+[32m  + [0m[32m禁热切（§0 总则 2）：同一根 ⇒ 放行；进程内二次换根 ⇒ hot-switch-forbidden[0m [90m0.001s[0m
+[info] Passed: Total 21, Failed 0, Errors 0, Passed 21
+[success] Total time: 2 s, completed 2026年11月4日 12:12:28
+EXIT=0
