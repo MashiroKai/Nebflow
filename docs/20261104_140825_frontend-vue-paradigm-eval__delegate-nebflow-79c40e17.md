@@ -12,7 +12,9 @@ related: ["[[20261102_234917_design-language-recon__dlc-frontend]]", "[[index]]"
 
 # 前端范式评估：引入 Vue 类组件库开发范式
 
-> 只评估、不实现。本件全部读数在 `delegate/delegate-nebflow-79c40e17`（已 ff 到 main tip `0b1dcbb97`，全部读数在该 tip 复测）实测，复现命令见 §7。零源码改动：`git diff main --stat` 只有本文件。
+> 只评估、不实现。本件全部读数在 `delegate/delegate-nebflow-79c40e17`（已 ff 到 main tip `0b1dcbb97`，全部读数在该 tip 复测）实测，复现命令见 §7。零源码改动：分支 diff 只含本文件。
+>
+> 追记（2026-11-04 晚，main tip `7f8051ce5`）：本件已随 merge `90d2a6491`（双亲 f979f6cd7 + 13772a8b5）入 main。此后 main 又落一批 ask 面改动（ask.css 413→417 行、mobile send/stop 截图与 resize spec 微调）——不触碰本件任何结论与推荐；试点面（Ask 面板）的规模读数按 +4 行口径理解即可。
 >
 > 上游与相邻件：设计语言现状勘察见 [[20261102_234917_design-language-recon__dlc-frontend]]；术语口径见 [[glossary]]；文档总入口见 [[index]]。
 
@@ -256,7 +258,7 @@ related: ["[[20261102_234917_design-language-recon__dlc-frontend]]", "[[index]]"
 | 候选 | 规模 | spec 爆炸半径 | 活跃度（近 3 天） | 判断 |
 |---|---|---|---|---|
 | Canvas / 消息流 | `canvas.js` 5,384 + `messages.js` 6,928 | 45 spec 引 `#canvas*` | 极高 | ❌ 太大、太热 |
-| **Ask 面板** | `askDock.js` 1,010 + `ask.css` 413 | **15 spec** 引 `.ask-dock/.ask-fab/.ask-col/.ask-send`（`.ask-` 宽口径 64，但其中多为 AskUser 卡，非本面） | 高（11-03/11-04 有 resize / fade / send-stop 三批） | ✅ **首选**（收益可测），但需冻结窗口 |
+| **Ask 面板** | `askDock.js` 1,010 + `ask.css` 413 | **15 spec** 引 `.ask-dock/.ask-fab/.ask-col/.ask-send`（`.ask-` 宽口径 64，但其中多为 AskUser 卡，非本面） | 高（11-03/11-04 有 resize / fade / send-stop 三批；合并当晚 main 又落一批微调——活跃度佐证） | ✅ **首选**（收益可测），但需冻结窗口 |
 | **待办胶囊（静默态）** | `todoFace.js` 1,601（胶囊段为其一部分）+ `todo-face.css` 943 | 11 spec 引 `todo` | 中（11-02 重做批已收口） | ✅ **低风险备选**（收益小） |
 
 **选 Ask 面板当首刀，四条理由**：
