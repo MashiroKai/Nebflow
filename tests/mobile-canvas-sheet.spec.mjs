@@ -531,6 +531,10 @@ test('T7 chip 胶囊同族 + 横向圆环几何（居中 / 缩径 / 连续减淡
   expect(m.hostBorder).toBe('0px');
   expect(m.hostBlur).toBe('none');
   // 环带几何：高 72、双侧渐隐 mask（让位浮钮 68px 内清零）。
+  // 可读字批（ui-unification-20261103-canvas-stack-view，2026-11-03 12:59 作者令）：
+  // 环曲线按「两侧标签清晰可读（有效字号 ≥13px / 对比度 ≥4.5:1）+ 切换带旋转
+  // 感」重定 —— 中签 1.10、邻签 0.87 / op 0.901 / blur 0.40px / 步距 93.5px、
+  // 侧签宽档 66px。本块断言值同步换代（旧 1.14 / 0.80 / 0.66 / 0.70 / 95 / 68）。
   expect(m.stripH).toBe(72);
   expect(m.mask).toContain('linear-gradient');
   // 当前签 = 环心：居中（cx = 375/2 附近）、零偏移、全不透明、无模糊。
@@ -541,15 +545,16 @@ test('T7 chip 胶囊同族 + 横向圆环几何（居中 / 缩径 / 连续减淡
   // 对齐修正批（2026-11-02 09:00）：纵向弧深整条退役 —— `--rdy` 变量不再写，
   // transform 里也没有 dy 项，签心恒 y=40（几何断言在 T13 里机械钉死）。
   expect(on.rdy).toBe('');
-  expect(on.rsc).toBe('1.140');
+  expect(on.rsc).toBe('1.100');
   expect(on.op).toBe(1);
   expect(on.rbl).toBe('0.00px');
-  // 邻位（|k|=1）：外移一步、缩径、连续减淡、连续轻模糊；两侧对称；**不下沉**。
+  // 邻位（|k|=1）：外移一步、缩径、**近全不透明**（0.901 —— 可读字批，旧 0.66）、
+  // 极轻模糊（0.40px —— 旧 0.70 糊字半边）；两侧对称；**不下沉**。
   const nb = m.chips.filter((c) => !c.on).sort((a, b) => a.cx - b.cx);
-  expect(nb.map((c) => c.rdx)).toEqual(['-95.0px', '95.0px']);
-  expect(nb.map((c) => c.rsc)).toEqual(['0.800', '0.800']);
-  expect(nb.map((c) => c.op)).toEqual([0.66, 0.66]);
-  expect(nb.map((c) => c.rbl)).toEqual(['0.70px', '0.70px']);
+  expect(nb.map((c) => c.rdx)).toEqual(['-93.5px', '93.5px']);
+  expect(nb.map((c) => c.rsc)).toEqual(['0.870', '0.870']);
+  expect(nb.map((c) => c.op)).toEqual([0.9, 0.9]);   // = --rop 0.90（可读字批）
+  expect(nb.map((c) => c.rbl)).toEqual(['0.40px', '0.40px']);
   // 垂直中心 = 两颗悬浮钮中心（同一悬浮带栅格）；命中盒永不压钮。
   expect(Math.abs(on.cy - m.closeCy)).toBeLessThanOrEqual(2);
   expect(Math.abs(on.cy - m.stackCy)).toBeLessThanOrEqual(2);
@@ -571,14 +576,14 @@ test('T9 环外签（|k|≥2）：零透明零命中（位姿仍算 —— 换�
   })));
   // 环序 [1,2,3,4,5]，活动 = 5 ⇒ k = [1,2,-2,-1,0]（最近环绕）。
   expect(st.map((c) => c.id)).toEqual(['r1', 'r2', 'r3', 'r4', 'r5']);
-  expect(st.map((c) => c.rdx)).toEqual(['95.0px', '190.0px', '-190.0px', '-95.0px', '0.0px']);
+  expect(st.map((c) => c.rdx)).toEqual(['93.5px', '187.0px', '-187.0px', '-93.5px', '0.0px']);
   expect(st.map((c) => c.far)).toEqual([false, true, true, false, false]);
   expect(st[1].op).toBe(0);
   expect(st[1].pe).toBe('none');
   expect(st[1].tabIndex).toBe(-1);
   // 曲线在环外触底（scale 触底、blur 封顶）而不归零 —— 换签轨迹连续。
   expect(st[1].rsc).toBe('0.600');
-  expect(st[1].rbl).toBe('2.60px');
+  expect(st[1].rbl).toBe('2.40px');
   expect(st[4].on).toBe(true);
   expect(errors).toEqual([]);
 });
@@ -773,9 +778,15 @@ test('T13 对齐修正批五条 + 中签两端零虚化渐隐批六条机械断�
     expect({ n, rampLeft: ramp.rampLeft }).toEqual({ n, rampLeft: expect.any(Number) });
     expect(ramp.rampLeft).toBeLessThanOrEqual(5);
     expect(ramp.rampRight).toBeLessThanOrEqual(5);
-    // 端点列仍有墨（不是被洗成透明）
-    expect(ramp.firstRatio).toBeGreaterThan(0.5);
-    expect(ramp.lastRatio).toBeGreaterThan(0.5);
+    // 端点仍有墨（不是被洗成透明）—— 判据换代（可读字批 2026-11-03
+    // ui-unification-20261103-canvas-stack-view）：旧判据比「最外侧有墨列 vs 内部
+    // 中位」的**单列对比度比**，字阶从 13px 抬到 15px 后末字（全角「）」）的收笔
+    // 笔画变细，末列对比度落在 0.08 附近 —— 是**字形形状**不是淡化（同帧 mask
+    // 计算样式腿 = none、斜坡带仍 ≤5）。改判「墨迹跨度顶到 label 几何两端」：
+    // 裁切帧在 label 左右各留 2px，故有墨列须落在最外 2px 内；真被 mask 渐隐时
+    // 首墨列会被推内 14–18 设备像素（上一批实测），本判据对字形粗细不敏感。
+    expect(ramp.inkFrom).toBeLessThanOrEqual(3);
+    expect(ramp.inkTo).toBeGreaterThanOrEqual(ramp.width - 4);
 
     // ── ② 两侧邻签渐隐与模糊原样保留（作者上一批「越到边缘越模糊」不撤）
     const nbs = p.chips.filter((c) => !c.on && c.op > 0.01);
