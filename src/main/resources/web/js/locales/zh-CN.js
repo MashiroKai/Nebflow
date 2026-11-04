@@ -768,7 +768,9 @@ export default {
   'settings.thinkingMode': '思考模式',
   'settings.llmLog': 'LLM 日志记录',
   'settings.workSchedule': '冻结时间（非工作时间）',
-  'settings.workScheduleOnHint': '在冻结时段内，agent 在工具执行完成后自动冻结，不调用 LLM（零 token 消耗），到点自动恢复继续。期间输入栏与麦克风禁用，点击「跳过本次」即可立即解冻。',
+  // 自解释批（2026-11-04 铁律 8）：原文尾句「点击「跳过本次」即可立即解冻」= 行为教学，
+  // 删除——「跳过本次」按钮名即动作（细则 b 动作标签）。保留的是冻结期间的事实状态。
+  'settings.workScheduleOnHint': '冻结时段内 agent 在工具执行完成后暂停，不调用 LLM（零 token 消耗），到点自动恢复。期间输入栏与麦克风禁用。',
   'settings.workScheduleOffHint': '默认关闭。关闭时所有 agent 全天候工作，行为与现状完全一致。',
   'settings.addSegment': '添加冻结时段',
   'settings.removeSegment': '删除该时段',
@@ -2200,7 +2202,9 @@ export default {
   'neblink.reachDirect': 'P2P 直连已建立',
   'neblink.reachRelay': '可经服务器中继',
   'neblink.reachServerOnly': '在线——暂无直连通道',
-  'neblink.loggedOutHint': '未登录 —— 点击上方头像登录 {lowerBrand} 账号，登录后自动入网',
+  // 自解释批（2026-11-04 铁律 8）：删尾句「登录后自动入网」= 行为教学/能力说明；
+  // 「未登录」+「点击上方头像登录」= 空态状态 + 下一步动作（细则 b 空态，保留）。
+  'neblink.loggedOutHint': '未登录 —— 点击上方头像登录 {lowerBrand} 账号',
   // 缺陷 A（2026-09-18）：未登录面板的两条读数 —— ①「清理并重登」入口（只在
   // 本地凭据文件类分类下渲染）；②状态面降级（`/status` 非 2xx 的可见读数，修前静默）。
   'neblink.cleanupRelogin': '清理并重登',
@@ -2229,8 +2233,12 @@ export default {
   'fleet.title': '全设备统一更新',
   'fleet.subtitle': '本机 v{current} → 目标 v{target} · 阶段：{stages}',
   'fleet.stages': '准备 → 下载 → 校验 → 切换 → 重启 → 自检 → 完成',
-  'fleet.blocking': '正在更新，请稍候——当前阶段「{stage}」，{eta}。更新期间本控制台不可用，完成后自动接续。',
-  'fleet.reconnecting': '设备已发起重启，正在等待它回来（回到本页会自动接续，不需要手动刷新）。',
+  // 自解释批（2026-11-04 铁律 8 反例 2 同族）：原「正在更新，请稍候……更新期间本控制台
+  // 不可用，完成后自动接续」= 行为教学（教用户等）+ 能力承诺；改为状态事实：阶段名 + ETA。
+  'fleet.blocking': '正在更新——当前阶段「{stage}」，{eta}。',
+  // 原「设备已发起重启，正在等待它回来（回到本页会自动接续，不需要手动刷新）」= 行为教学 +
+  // 括号补注；改为状态事实：重启中 / 等待重连（细则 b 状态事实）。
+  'fleet.reconnecting': '本机已发起重启——等待重连。',
   'fleet.eta': '预计 3–5 分钟',
   'fleet.empty': '暂无可更新的设备。',
   'fleet.close': '关闭',
@@ -2245,7 +2253,10 @@ export default {
   'fleet.versionUnknown': '版本未知',
   'fleet.attempt': '第 {n} 次尝试',
   'fleet.manualTitle': '需手动更新（版本过旧或无法远控）',
-  'fleet.manualHow': '到该设备上打开控制台 → 设置 → 检查更新，或运行安装脚本',
+  // `fleet.manualHow` 已删（自解释批 2026-11-04 铁律 8 反例 1 原样点名）：路径指引
+  // 「到该设备上打开控制台 → 设置 → 检查更新」。用户要的是「这行为什么不能一键推」，
+  // 由上面的事实徽标（`fleet.capability.*` / `fleet.stage.manual`）承载；行内只剩
+  // 设备名 + 版本（事实）。渲染点 `fleetUpdate.js` 的手动行徽标同批摘除。
   'fleet.pendingTitle': '待上线（上线后自动补推）',
   'fleet.summary.counts': '{updated} 台已更新、{failed} 台失败、{manual} 台需手动、{pending} 台待上线',
   // 收口状态（引擎 `FleetSummary.status` 的 messageKey 面）
@@ -2273,9 +2284,12 @@ export default {
   'fleet.stage.cancelled': '已中断',
   // 失败五类 + 可操作建议（`fleet.failure.<wire>` / `.advice`）
   'fleet.failure.download-failed': '下载失败',
-  'fleet.failure.download-failed.advice': '建议：网络恢复后点「重试失败项」；多次失败请在该设备上手动更新。',
+  // 自解释批（2026-11-04 铁律 8）：删两条 advice 的第二句「多次失败请在该设备上手动更新」
+  // ——能力徽标（需手动更新）已说明该事实（重复说明）；保留「失败原因 + 下一步」的失败收口
+  // （细则 b 失败收口，一句话）。
+  'fleet.failure.download-failed.advice': '建议：网络恢复后点「重试失败项」。',
   'fleet.failure.verify-failed': '校验不过（安装包与本机记录不符）',
-  'fleet.failure.verify-failed.advice': '建议：重试一次；仍不过说明包源有问题，请在该设备上手动更新并保留日志。',
+  'fleet.failure.verify-failed.advice': '建议：重试一次；仍不过说明包源有问题。',
   'fleet.failure.switch-rolled-back': '切换回滚（新版本未站住，已退回上一版）',
   'fleet.failure.switch-rolled-back.advice': '建议：已自动回滚到可用版本，本机仍在正常服务；请查看该设备日志后手动更新。',
   'fleet.failure.healthcheck-failed': '自检没过（重启后健康检查失败）',
@@ -2674,7 +2688,9 @@ export default {
   'plugins.sourceUnreachable': '远端不可达，保持本地版本',
   'plugins.sourceNotInstalled': '未安装',
   'plugins.sourceUpdate': '更新',
-  'plugins.sourceUpdateTitle': '拉取并生效：v{from} → v{to}（零重启；失败则本地版本不变）',
+  // 自解释批（2026-11-04 铁律 8）：删括号补注「（零重启；失败则本地版本不变）」——能力说明
+  // + 行为承诺；保留版本迁移事实 v{from} → v{to}（细则 c 正例 1 同形）。
+  'plugins.sourceUpdateTitle': '拉取并生效：v{from} → v{to}',
   'plugins.sourceUpdated': '{name} 已更新',
   'explorer.loading': '加载中...',
   'explorer.empty': '空',
