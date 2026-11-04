@@ -666,6 +666,43 @@ object EndpointPreference:
   def isTailscaleHost(host: String): Boolean =
     octets(host).exists(o => o(0) == 100 && o(1) >= 64 && o(1) <= 127)
 
+  /**
+   * Tailscale 的 IPv6 ULA 段 `fd7a:115c:a1e0::/48`（IPv6 优先批 2026-11-04）。
+   *
+   * WHY 只认这一个 /48：它是 Tailscale 官方分配给 tailnet 的 ULA（`fd7a:115c:a1e0::/48`），
+   * 与 `100.64/10` 是同一张网的两个地址族。**不**把任意 `fc00::/7` ULA 当 tailnet：
+   * 别的 overlay（ZeroTier `fd00::/8` 自定义段、企业 VPN）也有 ULA，误判会让「① 档」
+   * 的门（Tailscale 服务探测）去管一条根本不是 tailnet 的地址。
+   */
+  def isTailnetV6(host: String): Boolean =
+    val h = Option(host).getOrElse("").trim.toLowerCase.stripPrefix("[").stripSuffix("]")
+    h.startsWith(TailnetV6Prefix) || h == "fd7a:115c:a1e0::"
+
+  /** Tailscale ULA 前缀（小写、带尾冒号）—— [[isTailnetV6]] 的唯一常量来源。 */
+  val TailnetV6Prefix: String = "fd7a:115c:a1e0:"
+
+  /**
+   * 主机是否是 IPv6 字面量（含方括号形态）。
+   *
+   * 用途只有一个：**URL 拼装必须给 v6 加方括号**（`http://[fd7a::1]:6138`），否则
+   * `URI.create` 会把端口当成地址的一部分而抛异常 / 解析成别的主机。判据按「含冒号且
+   * 不是 v4 字面量」——比正则更保守的地方也在此：主机名不会含冒号，误判面为零。
+   */
+  def isIpv6Literal(host: String): Boolean =
+    val h = Option(host).getOrElse("").trim.stripPrefix("[").stripSuffix("]")
+    h.contains(":") && octets(h).isEmpty
+
+  /**
+   * `(host, port)` → `http://…` 的唯一拼装点（IPv6 自动加方括号）。
+   *
+   * WHY 单列：改前 `NeblinkClient.toNeblinkPeers` 里是裸的 `s"http://${ep.address}:${ep.port}"`，
+   * v6 地址会拼出 `http://fd7a:115c:a1e0::1:6138`（URI 解析直接报错）——即「v6 地址塞进
+   * 只认 v4 的地方」的典型。所有候选 URL 都必须经这里。
+   */
+  def urlOf(host: String, port: Int): String =
+    val h = Option(host).getOrElse("").trim
+    if isIpv6Literal(h) then s"http://[$h]:$port" else s"http://$h:$port"
+
   /** `/24` prefix key (`"198.51.100."`) — the cheap "same LAN?" approximation. */
   def subnet24(host: String): Option[String] =
     octets(host).map(o => s"${o(0)}.${o(1)}.${o(2)}.")
@@ -674,7 +711,15 @@ object EndpointPreference:
   def localPrefixesOf(localAddresses: List[String]): Set[String] =
     localAddresses.flatMap(subnet24).toSet
 
-  /** Lower = tried first. 0 = Tailscale/CGNAT, 1 = same `/24` as a local NIC, 2 = the rest. */
+  /**
+   * Lower = tried first. 0 = Tailscale/CGNAT, 1 = same `/24` as a local NIC, 2 = the rest.
+   *
+   * 🔴 `rank` 是**纯排序提示**，不是「① 档可用」的判据（三档选路批 2026-11-04 作者裁定）：
+   * 「地址像 tailnet」只说明它属于那张网，**不说明这台机器的 Tailscale 服务在跑、也不说明
+   * 对端在这张网上 online**。可用性判据与门控唯一落在 `nebflow.core.tools.DirectRoute`
+   * （服务运行态 + 本机 tailnet 地址 + 对端 netmap online 三条全中；不中则整档跳过后落
+   * relay，而不是「排第一再失败回落」）。本函数保持纯、零探测，排序语义与改前逐字节相同。
+   */
   def rank(url: String, localPrefixes: Set[String]): Int =
     val host = hostOf(url)
     if isTailscaleHost(host) then 0
