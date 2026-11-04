@@ -2,6 +2,8 @@ package nebflow.core.project
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
+import nebflow.db.DbHandle
+import nebflow.db.format.GuardDocs
 import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.*
@@ -158,7 +160,15 @@ final class DispatchNotify(
    * **定档推导**用（[[DispatchNotify.completionTier]]），不改变回合边界本身；
    * spec 注入小值使「档位公式」可确定性断言。
    */
-  roundSpanMs: Long = DispatchNotify.DefaultRoundSpanMs
+  roundSpanMs: Long = DispatchNotify.DefaultRoundSpanMs,
+  /**
+   * db 接线第一阶（冷却 guard 档，设计 D-10）：failed/cancelled 窗口态的持久
+   * 落点。`None`（缺省）= 现状纯内存（重启重置——既有测试/隔离路径零变化）；
+   * `Some(handle)` = 窗口态写穿 db guard 小档 + 首用前重水合（重启冷却不归零，
+   * 未 markSent 节点的重启补投不再打穿冷却 ⇒ 不重发风暴，#144 家族）。
+   * 生产由 [[DispatchNotify.forEngine]] 自开注入；测试直构缺省 None。
+   */
+  guardDb: Option[DbHandle] = None
 ):
   private val logger = NebflowLogger.forName("nebflow.project.dispatch-notify")
 
@@ -207,6 +217,54 @@ final class DispatchNotify(
   /** cancelled 通知项目级窗口状态（与 failedGuard **各自独立**——R1 账务裁定）。 */
   private case class CancelledGuardState(cancelledAt: List[Long] = Nil, cooldownUntil: Long = 0L)
   private val cancelledGuard: Ref[IO, CancelledGuardState] = Ref.unsafe[IO, CancelledGuardState](CancelledGuardState())
+
+  // ── db 接线第一阶：冷却 guard 档（设计 D-10；#144 头条病灶直接修复）─────────
+  //
+  // 窗口态此前纯内存（`:188` 注释自认「重启重置可接受」）——重启后冷却归零 +
+  // 未 markSent 节点仍在 redeliver 候选集 ⇒ 每次重启重扫把整批失败再通知一遍
+  // （重发风暴）。接线语义：
+  //   写：每次窗口裁决后把 (failedAt 窗口, cooldownUntil) 写穿 db guard 小档
+  //       （锁内五步整档；best-effort——失败只 WARN 不拦通知链）；
+  //   读：首次窗口裁决前重水合（Present ⇒ 原值恢复；Absent ⇒ 空态；Corrupt ⇒
+  //       保守向全部仍在冷却 + 隔离——宁可少发不可风暴，V8）。
+  // 两个 guard 各一份小档（source 带项目名 ⇒ 项目间不互染）。
+
+  /** guard 小档的 source 口径（文件名 = `notify-<slug>.json`，项目名入 slug 隔离）。 */
+  private val failedGuardSource: String = s"dispatch-notify:failed:$projectName"
+  private val cancelledGuardSource: String = s"dispatch-notify:cancelled:$projectName"
+
+  /** 重水合一次性闸（benign race：并发首用双读同一档，结果幂等）。 */
+  private val guardsLoaded: Ref[IO, Boolean] = Ref.unsafe[IO, Boolean](false)
+
+  private def loadGuardsOnce: IO[Unit] =
+    guardsLoaded.get.flatMap { loaded =>
+      if loaded then IO.unit
+      else
+        val hydrate = guardDb match
+          case Some(db) =>
+            for
+              now <- IO(System.currentTimeMillis())
+              failedDoc <- db.recoverNotifyGuardConservative(failedGuardSource, now)
+              cancelledDoc <- db.recoverNotifyGuardConservative(cancelledGuardSource, now)
+              _ <- failedGuard.set(FailedGuardState(failedDoc.failedAt, failedDoc.cooldownUntil))
+              _ <- cancelledGuard.set(
+                CancelledGuardState(cancelledDoc.failedAt, cancelledDoc.cooldownUntil))
+            yield ()
+          case None => IO.unit
+        hydrate *> guardsLoaded.set(true)
+    }
+
+  /** 窗口态写穿（best-effort：db 故障只 WARN，回落「本进程内冷却仍有效」）。 */
+  private def persistGuard(source: String, windowAt: List[Long], cooldownUntil: Long): IO[Unit] =
+    guardDb match
+      case Some(db) =>
+        db.writeNotifyGuard(GuardDocs.NotifyGuardDoc(
+          version = 1, source = source, failedAt = windowAt,
+          cooldownUntil = cooldownUntil, updatedAt = System.currentTimeMillis()))
+          .handleErrorWith(e =>
+            logger.warn(s"dispatch-notify guard persist failed ($source): ${e.getMessage}"))
+      case None => IO.unit
+
 
   /** cancelled 预算耗尽 single-flight（与 completion/failed 三方分账）。 */
   private val cancelledBudgetEscalated: Ref[IO, Boolean] = Ref.unsafe[IO, Boolean](false)
@@ -465,53 +523,57 @@ final class DispatchNotify(
    * source 不可判定）。护栏链（窗口/预算/去重/补投/tell-then-mark）逐字未改。
    */
   private def failedAttempt(node: NodeDef): IO[Unit] =
+    loadGuardsOnce *> // db 接线：首用前重水合（None 时为 no-op）
     failedGuard
       .modify { g =>
         val now = System.currentTimeMillis()
         val recent = g.failedAt.filter(t => now - t <= failedWindowMs) :+ now
-        if now < g.cooldownUntil then (g.copy(failedAt = recent), FailedWindowVerdict.Suppress)
+        if now < g.cooldownUntil then (g.copy(failedAt = recent), (g.copy(failedAt = recent), FailedWindowVerdict.Suppress))
         else if recent.size >= failedWindowThreshold then
-          (g.copy(failedAt = recent, cooldownUntil = now + failedCooldownMs), FailedWindowVerdict.CooldownOn)
-        else (g.copy(failedAt = recent), FailedWindowVerdict.Proceed)
+          val ng = g.copy(failedAt = recent, cooldownUntil = now + failedCooldownMs)
+          (ng, (ng, FailedWindowVerdict.CooldownOn))
+        else (g.copy(failedAt = recent), (g.copy(failedAt = recent), FailedWindowVerdict.Proceed))
       }
-      .flatMap {
-        case FailedWindowVerdict.Proceed =>
-          // 触发前现读等待者清单（E-③）：停等下游随通知告知分发器
-          // （补投扫描路径同此口，清单一致）。Q4：文本在入队时成型，投递与预算
-          // 计数在窗口结束时由 [[flushBatch]] 单点完成。
-          // 文本成形前现读抑制态——抑制态 ⇒ 抑制变体（改劝），其余逐字不变。
-          for
-            waiters <- waitingSuccessors(node.id)
-            suppressedBy <- userCancelSuppression(node)
-            text = suppressedBy match
-              case Some(up) => suppressedFailedNotifyTaskText(node, waiters, up)
-              case None => failedNotifyTaskText(node, waiters)
-            _ <- enqueueNotify(NotifyReason.Failed, node, text)
-          yield ()
-        case FailedWindowVerdict.Suppress =>
-          // 冷却期内：不触发、不 markSent——节点留在 redeliver 候选集，冷却结束后下轮
-          // 扫描自然补投（延迟触发而非永久丢失，设计 §3）。
-          logger.warn(
-            s"Project '$projectName' node '${node.name}' (${node.id}) failed during failure-notify cooldown — suppressed (unmarked; redelivered after cooldown)"
-          )
-        case FailedWindowVerdict.CooldownOn =>
-          // 窗口阈值触达：合并单条升级（含最新失败信息，FeedbackRouter §3.2 同语义）+
-          // 置 cooldown；本次不触发分发器、不 markSent（冷却结束补投）。
-          val text =
-            s"[dispatch-notify] 项目「$projectName」${failedWindowMs / 60000} 分钟内节点失败通知达 $failedWindowThreshold 次——进入 ${failedCooldownMs / 60000} 分钟冷却：" +
-              s"期间 failed 通知暂停触发分发器（未通知节点保持未标记，冷却结束自动补投），冷却结束自动恢复。\n" +
-              s"最新失败节点「${node.name}」(${node.id})：${node.result.map(_.take(300)).getOrElse("(无错误文本)")}"
-          FlowMapEventLog.append(
-            workspace,
-            projectName,
-            node.id,
-            "dispatch-notify",
-            s"failure window threshold ($failedWindowThreshold in ${failedWindowMs / 60000}min) → cooldown ${failedCooldownMs / 60000}min on, dispatcher notify paused, supervisor notice (merged, latest node '${node.name}')"
-          ) *>
-            escalate(text, node.name) *>
+      .flatTap { (ng, _) => persistGuard(failedGuardSource, ng.failedAt, ng.cooldownUntil) } // 写穿 db guard 档
+      .flatMap { (_, verdict) =>
+        verdict match
+          case FailedWindowVerdict.Proceed =>
+            // 触发前现读等待者清单（E-③）：停等下游随通知告知分发器
+            // （补投扫描路径同此口，清单一致）。Q4：文本在入队时成型，投递与预算
+            // 计数在窗口结束时由 [[flushBatch]] 单点完成。
+            // 文本成形前现读抑制态——抑制态 ⇒ 抑制变体（改劝），其余逐字不变。
+            for
+              waiters <- waitingSuccessors(node.id)
+              suppressedBy <- userCancelSuppression(node)
+              text = suppressedBy match
+                case Some(up) => suppressedFailedNotifyTaskText(node, waiters, up)
+                case None => failedNotifyTaskText(node, waiters)
+              _ <- enqueueNotify(NotifyReason.Failed, node, text)
+            yield ()
+          case FailedWindowVerdict.Suppress =>
+            // 冷却期内：不触发、不 markSent——节点留在 redeliver 候选集，冷却结束后下轮
+            // 扫描自然补投（延迟触发而非永久丢失，设计 §3）。
             logger.warn(
-              s"Project '$projectName' failure-notify window threshold reached (${failedWindowThreshold}/${failedWindowMs / 60000}min) — cooldown ${failedCooldownMs / 60000}min on, merged supervisor notice sent (latest node '${node.name}' ${node.id})"
+              s"Project '$projectName' node '${node.name}' (${node.id}) failed during failure-notify cooldown — suppressed (unmarked; redelivered after cooldown)"
             )
+          case FailedWindowVerdict.CooldownOn =>
+            // 窗口阈值触达：合并单条升级（含最新失败信息，FeedbackRouter §3.2 同语义）+
+            // 置 cooldown；本次不触发分发器、不 markSent（冷却结束补投）。
+            val text =
+              s"[dispatch-notify] 项目「$projectName」${failedWindowMs / 60000} 分钟内节点失败通知达 $failedWindowThreshold 次——进入 ${failedCooldownMs / 60000} 分钟冷却：" +
+                s"期间 failed 通知暂停触发分发器（未通知节点保持未标记，冷却结束自动补投），冷却结束自动恢复。\n" +
+                s"最新失败节点「${node.name}」(${node.id})：${node.result.map(_.take(300)).getOrElse("(无错误文本)")}"
+            FlowMapEventLog.append(
+              workspace,
+              projectName,
+              node.id,
+              "dispatch-notify",
+              s"failure window threshold ($failedWindowThreshold in ${failedWindowMs / 60000}min) → cooldown ${failedCooldownMs / 60000}min on, dispatcher notify paused, supervisor notice (merged, latest node '${node.name}')"
+            ) *>
+              escalate(text, node.name) *>
+              logger.warn(
+                s"Project '$projectName' failure-notify window threshold reached (${failedWindowThreshold}/${failedWindowMs / 60000}min) — cooldown ${failedCooldownMs / 60000}min on, merged supervisor notice sent (latest node '${node.name}' ${node.id})"
+              )
       }
 
   /**
@@ -660,42 +722,50 @@ final class DispatchNotify(
    * 与「事故可见性」解耦的关键：预算压的是**触发分发器新会话**的成本，不是留痕。
    */
   private def cancelledAttempt(node: NodeDef): IO[Unit] =
+    loadGuardsOnce *> // db 接线：首用前重水合（None 时为 no-op）
     cancelledGuard
       .modify { g =>
         val now = System.currentTimeMillis()
         val recent = g.cancelledAt.filter(t => now - t <= cancelledWindowMs) :+ now
-        if now < g.cooldownUntil then (g.copy(cancelledAt = recent), CancelledWindowVerdict.Suppress)
+        if now < g.cooldownUntil then
+          val ng = g.copy(cancelledAt = recent)
+          (ng, (ng, CancelledWindowVerdict.Suppress))
         else if recent.size >= cancelledWindowThreshold then
-          (g.copy(cancelledAt = recent, cooldownUntil = now + cancelledCooldownMs), CancelledWindowVerdict.CooldownOn)
-        else (g.copy(cancelledAt = recent), CancelledWindowVerdict.Proceed)
+          val ng = g.copy(cancelledAt = recent, cooldownUntil = now + cancelledCooldownMs)
+          (ng, (ng, CancelledWindowVerdict.CooldownOn))
+        else
+          val ng = g.copy(cancelledAt = recent)
+          (ng, (ng, CancelledWindowVerdict.Proceed))
       }
-      .flatMap {
-        case CancelledWindowVerdict.Proceed =>
-          // Q4：同一 reason 的件在窗口内合并为一次注入（预算按一次注入计）。
-          // 文本构建改为 IO（需现读链归属链 id）——入队与去重链逐字不变。
-          waitingSuccessors(node.id).flatMap(waiters =>
-            cancelledNotifyTaskText(node, waiters).flatMap(text => enqueueNotify(NotifyReason.Cancelled, node, text))
-          )
-        case CancelledWindowVerdict.Suppress =>
-          logger.warn(
-            s"Project '$projectName' node '${node.name}' (${node.id}) cancelled during cancel-notify cooldown — suppressed (unmarked; redelivered after cooldown)"
-          )
-        case CancelledWindowVerdict.CooldownOn =>
-          val text =
-            s"[dispatch-notify] 项目「$projectName」${cancelledWindowMs / 60000} 分钟内节点取消通知达 $cancelledWindowThreshold 次——进入 ${cancelledCooldownMs / 60000} 分钟冷却：" +
-              s"期间 cancelled 通知暂停触发分发器（未通知节点保持未标记，冷却结束自动补投），冷却结束自动恢复。\n" +
-              s"最新取消节点「${node.name}」(${node.id})：${node.result.map(_.take(300)).getOrElse("(无取消原因)")}"
-          FlowMapEventLog.append(
-            workspace,
-            projectName,
-            node.id,
-            "dispatch-notify",
-            s"cancel window threshold ($cancelledWindowThreshold in ${cancelledWindowMs / 60000}min) → cooldown ${cancelledCooldownMs / 60000}min on, dispatcher notify paused, supervisor notice (merged, latest node '${node.name}')"
-          ) *>
-            escalate(text, node.name) *>
-            logger.warn(
-              s"Project '$projectName' cancel-notify window threshold reached (${cancelledWindowThreshold}/${cancelledWindowMs / 60000}min) — cooldown ${cancelledCooldownMs / 60000}min on, merged supervisor notice sent (latest node '${node.name}' ${node.id})"
+      .flatTap { (ng, _) => persistGuard(cancelledGuardSource, ng.cancelledAt, ng.cooldownUntil) } // 写穿 db guard 档
+      .flatMap { (_, verdict) =>
+        verdict match
+          case CancelledWindowVerdict.Proceed =>
+            // Q4：同一 reason 的件在窗口内合并为一次注入（预算按一次注入计）。
+            // 文本构建改为 IO（需现读链归属链 id）——入队与去重链逐字不变。
+            waitingSuccessors(node.id).flatMap(waiters =>
+              cancelledNotifyTaskText(node, waiters).flatMap(text => enqueueNotify(NotifyReason.Cancelled, node, text))
             )
+          case CancelledWindowVerdict.Suppress =>
+            logger.warn(
+              s"Project '$projectName' node '${node.name}' (${node.id}) cancelled during cancel-notify cooldown — suppressed (unmarked; redelivered after cooldown)"
+            )
+          case CancelledWindowVerdict.CooldownOn =>
+            val text =
+              s"[dispatch-notify] 项目「$projectName」${cancelledWindowMs / 60000} 分钟内节点取消通知达 $cancelledWindowThreshold 次——进入 ${cancelledCooldownMs / 60000} 分钟冷却：" +
+                s"期间 cancelled 通知暂停触发分发器（未通知节点保持未标记，冷却结束自动补投），冷却结束自动恢复。\n" +
+                s"最新取消节点「${node.name}」(${node.id})：${node.result.map(_.take(300)).getOrElse("(无取消原因)")}"
+            FlowMapEventLog.append(
+              workspace,
+              projectName,
+              node.id,
+              "dispatch-notify",
+              s"cancel window threshold ($cancelledWindowThreshold in ${cancelledWindowMs / 60000}min) → cooldown ${cancelledCooldownMs / 60000}min on, dispatcher notify paused, supervisor notice (merged, latest node '${node.name}')"
+            ) *>
+              escalate(text, node.name) *>
+              logger.warn(
+                s"Project '$projectName' cancel-notify window threshold reached (${cancelledWindowThreshold}/${cancelledWindowMs / 60000}min) — cooldown ${cancelledCooldownMs / 60000}min on, merged supervisor notice sent (latest node '${node.name}' ${node.id})"
+              )
       }
 
   /**
@@ -1279,7 +1349,9 @@ object DispatchNotify:
     emitUpdated: NodeDef => IO[Unit],
     budgetMax: Int = DefaultBudget,
     triggerOverride: Option[String => IO[Unit]] = None,
-    windowMs: Long = DefaultWindowMs
+    windowMs: Long = DefaultWindowMs,
+    /** db 接线（D-10）：None = 生产自开共享句柄（best-effort）；Some = 显式注入（隔离/测试）。 */
+    guardDb: Option[DbHandle] = None
   ): DispatchNotify =
     new DispatchNotify(
       store,
@@ -1289,7 +1361,15 @@ object DispatchNotify:
       emitUpdated,
       triggerOverride.getOrElse(defaultTrigger(projectName, rootSessionId)),
       budgetMax,
-      windowMs = if triggerOverride.isDefined then 0L else windowMs
+      windowMs = if triggerOverride.isDefined then 0L else windowMs,
+      // 生产激活位：装配点（NodeEngine）不在接线解禁面 ⇒ 此处自开共享句柄
+      // （同数据根全宿主共享一个 INSTANCE.lock 句柄）；open 失败 ⇒ None ⇒
+      // 回落纯内存现状（重启重置），best-effort 不拦装配。
+      // triggerOverride 存在 = 测试接缝 ⇒ 不自开生产根（防测试写真实数据根）。
+      guardDb = guardDb.orElse {
+        if triggerOverride.isDefined then None
+        else nebflow.db.DbHost.openBestEffort(nebflow.shared.PathUtil.dataRoot.toNIO)
+      }
     )
 
 end DispatchNotify
