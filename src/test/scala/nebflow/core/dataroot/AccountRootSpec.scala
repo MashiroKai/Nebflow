@@ -43,8 +43,9 @@ import nebflow.shared.PathUtil
  *    故权限断言按 POSIX 平台假设执行（Windows runner 上跳过，并在断言文案里写明）。
  *
  * 隔离纪律：每个用例的样本根一律 `Files.createTempDirectory("b1-red-")`（⇒ `/tmp/b1-red-*`），
- * 用完即删；**绝不读写生产根 `~/.stand`**（用例开头 `PathUtil.dataRoot` 的读取只是恢复进程级换根用的
- * 旧值捕获 —— 在未换根状态下它是纯路径构造（HOME 环境变量分支），零磁盘访问）。
+ * 用完即删；**绝不读写生产根 `~/.stand`**。用例开头 `PathUtil.dataRoot` 的读取只是恢复进程级换根用的
+ * 旧值捕获：未换根状态下它是纯路径构造（HOME 环境变量分支），实现落地后至多多出几次阶梯的
+ * `os.exists` 存在性探测（§2）—— **零内容读写、零写盘**，样本数据的读写一律发生在 /tmp 样本根内。
  */
 class AccountRootSpec extends munit.FunSuite:
 
