@@ -950,10 +950,15 @@ private[project] trait NodeStarter:
                 def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
                   event match
                     case AgentEvent.Completed(_, messages) =>
-                      // 完成门（noderpt 批 A 段 2026-09-11 作者裁定）——同一闸门两条腿：
-                      //   腿 1「后台任务存活」（`bgGateHoldEnabled`，默认 false = 封存）：
-                      //     关 ⇒ **不查** BgTaskRegistry.waitingFor，直接用空等待集走放行
-                      //     分支（hold/armCap 代码逐字保留，开 flag 即恢复逐字旧行为）；
+                      // 完成门（noderpt 批 A 段 2026-09-11 作者裁定；缺省面 T4 批
+                      // 2026-11-04 作者令 + 自查件 D2 翻转）——同一闸门两条腿：
+                      //   腿 1「后台任务存活」（`bgGateHoldEnabled`，默认 true =
+                      //     默认保结果）：开 ⇒ 查 BgTaskRegistry.waitingFor，等待集
+                      //     非空 ⇒ hold + armCap 兜底计时器（下方既有路径），任务全部
+                      //     完成后自动续；要丢弃结果必须显式
+                      //     `-Dnebflow.bgGate.completionHold=false`（或 nebflow.json
+                      //     同名键经启动面转成 -D）⇒ 关 ⇒ 不查等待集，直接用空等待集
+                      //     走放行分支（hold/armCap 代码逐字保留，显式关即封存面）；
                       //   腿 2「未申报 node_report」（`reportGateHoldEnabled`，默认 true）：
                       //     放行前非消费读申报槽——空 ⇒ **不终态化**（节点保持 Running、
                       //     会话存活）并起表（只置不重）；非空 ⇒ 清表后放行，终态点 drain
@@ -963,7 +968,7 @@ private[project] trait NodeStarter:
                           // P2 death-watch 活性复检（与 delegate 闸同病灶同收口）：
                           // hold 前探活等待集并收割活性死行（进程已死/属主已殁 ⇒
                           // 注销 + 代行终态 + 沿等待链注入），复检后再决 hold——
-                          // 零墙钟（活性 = 内核进程事实）。未开 flag 的封存面零变化。
+                          // 零墙钟（活性 = 内核进程事实）。显式关（封存面）时零变化。
                           nebflow.core.tools.BgTaskReaper
                             .reapDead(Some(resources.actorSystem), Some(resources.agentRegistry))
                             .flatTap { r =>
@@ -1013,8 +1018,9 @@ private[project] trait NodeStarter:
                         else
                           BgTaskRegistry.drainFailures(sessionId).flatMap { failures =>
                             if failures.isEmpty then
-                              // 放行分支（腿 1 封存后 Completed 直达此处）。放行前的
-                              // 腿 2 判定 = 未申报闸。
+                              // 放行分支（腿 1 缺省开：等待集为空——无名下任务或 hold
+                              // 已全部释放/收割——时 Completed 到此；显式关 = 封存面时
+                              // Completed 直达此处）。放行前的腿 2 判定 = 未申报闸。
                               def releaseNow: IO[Behavior[AgentEvent]] =
                                 holdEmitted.get.flatMap { held =>
                                   disarmCap *> holdEmitted.set(false) *>

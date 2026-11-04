@@ -44,6 +44,28 @@
 //   仅闸新问题不清理（自然衰减 §9-8）。白名单前端单点 = mdHtmlGate.js。
 // 移动（#988 同律）：气泡列 touch-action: pan-y 原生纵滚；canvasGestures 的
 // zoneOf 对 .ask-dock/.ask-fab 返回 ''（surface 归属制，横滑零切卡）。
+//
+// ══ 组件化范式试点批（ask-paradigm-a，2026-11-03）══════════════════════════
+// 本文件是「vanilla 组件范式」的**唯一试点面**（不扩散到任何其它面）：形态从
+// 「一段自己拼 DOM 的插件代码」改成真组件 `<nf-ask-dock>`（light DOM）——
+//   · 宿主 = `<nf-ask-dock>`，挂在原 mountHost() 决定的宿主里（桌面 #canvas-panel /
+//     手机层 body，判据原样）；原 `.ask-fab` 与 `.ask-dock` **两个节点移进组件内部**，
+//     仍是宿主里的兄弟关系（light DOM，`document.querySelector('.ask-fab')` 照旧命中）。
+//   · 宿主零布局盒：css/ask.css 的 `nf-ask-dock { display: contents; }`——它不出盒、
+//     不建定位包含块，所以 `.ask-fab` / `.ask-dock` 的绝对定位包含块仍是
+//     #canvas-panel，几何与改前逐值一致（批报告附改前后 getBoundingClientRect 读数）。
+//   · 对外只三个方法：open() / close() / syncSession()（语义 = 原 open / close /
+//     syncToActiveTab）。模块导出面收敛为 initAskDock() + INTERNAL_CLASSES。
+//   · 内部渲染一律走 js/dom.js 的 h()/frag()（禁 HTML 串）；**唯一例外**是 markdown
+//     渲染腿（renderMarkdownWithMath 的返回值落到 ai 气泡），见 render() 的注释。
+//   · 拖拽改尺寸的几何状态机（bindResize 起）**保持命令式原样**——它正是要验证的
+//     「组件范式与命令式几何共存」：状态机只管 el 引用与 CSS 变量，不碰渲染树。
+//   · 生命周期口径（component.js）：connectedCallback 清空 → template() 返回值
+//     appendChild → mount(el, ctx)。**关键设计**：template 返回的是**同一对节点**
+//     （模块级 el 缓存），所以宿主迁移（手机层 ↔ 桌面层，见 wireOnce 的 body
+//     class 观察器）走的是「节点搬家」而不是「重建」——拖过的尺寸、已渲染的转录、
+//     流式中的气泡、绑定过的监听全部原样保留，与改前「appendChild 搬两个节点」
+//     逐字节同义。ctx.on 登记的全局监听随断开自动拆、重连自动挂回。
 
 import { key } from './branding.js';
 import state from './state.js';
@@ -59,6 +81,21 @@ import { isAskableFile } from './mdHtmlGate.js';
 // 统一实现（主会话同源）——组字期 Enter 只确认候选不发送、组字结束后才发送、
 // Shift+Enter 换行；生成中发送钮转中断钮（与主会话 send/stop 同律）。
 import { bindComposerKeys, createTurnToggle, requestTurnInterrupt, isImeComposing } from './input/composer.js';
+// 组件化范式试点批（ask-paradigm-a）：DOM 构形走 dom.js 的 h()/frag()（零 HTML 串），
+// 元素注册与生命周期走 component.js 的 define()（light DOM，禁开阴影根）。
+import { h, frag } from './dom.js';
+import { define } from './component.js';
+
+/**
+ * 组件内部结构类名（单点声明；门禁 scripts/check-component-contract.mjs R4 的解析面）。
+ * 对外只有一个方法面（open/close/syncSession）——**定义模块以外**的 web/js/** 文件
+ * 拿这些类名当选择器即红（tests/** 除外：15 个既有 spec 直查它们是验收面，不是违规）。
+ * @type {string[]}
+ */
+export const INTERNAL_CLASSES = [
+  'ask-fab', 'ask-dock', 'ask-col', 'ask-colwrap', 'ask-input',
+  'ask-bub', 'ask-send', 'ask-stop', 'ask-sess-dot',
+];
 
 // ── 文案（i18n 键 = key('locale')，navController tt 同源）─────────────────
 function tt(zh, en) {
@@ -68,18 +105,47 @@ function tt(zh, en) {
   return /^zh/i.test(lang) ? zh : en;
 }
 
+// ── 图标（lucide 同族线性图标；SVG 命名空间构形）────────────────────────
+// 为什么不用 h()：dom.js 的 h() 走 document.createElement，只能造 **HTML 命名空间**
+// 元素——`<svg>`/`<path>` 落在 HTML 命名空间里不参与 SVG 绘制（图标会整块消失）。
+// 因此这里用一个同口径的微型构造器：createElementNS + setAttribute + appendChild，
+// 同样零 HTML 串、零 innerHTML（门禁 R5 计数为 0）。
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/**
+ * 造一个 SVG 命名空间节点。
+ * @param {string} tag SVG 标签名
+ * @param {Record<string, string>} [attrs] 属性表（viewBox 等大小写敏感名原样写）
+ * @param {Node[]} [children] 子节点
+ * @returns {SVGElement}
+ */
+function svgNode(tag, attrs, children) {
+  const node = document.createElementNS(SVG_NS, tag);
+  if (attrs) for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, value);
+  if (children) for (const child of children) node.appendChild(child);
+  return node;
+}
+
+const STROKE = { fill: 'none', stroke: 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
+
 const ICONS = {
-  chat: '<svg class="ask-fab-ic-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>',
-  close: '<svg class="ask-fab-ic-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>',
-  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
+  chat: () => svgNode('svg', { class: 'ask-fab-ic-chat', viewBox: '0 0 24 24', 'stroke-width': '2', ...STROKE },
+    [svgNode('path', { d: 'M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z' })]),
+  close: () => svgNode('svg', { class: 'ask-fab-ic-close', viewBox: '0 0 24 24', 'stroke-width': '2.2', ...STROKE },
+    [svgNode('path', { d: 'm18 15-6-6-6 6' })]),
+  send: () => svgNode('svg', { viewBox: '0 0 24 24', 'stroke-width': '2.4', ...STROKE },
+    [svgNode('path', { d: 'M12 19V5M5 12l7-7 7 7' })]),
   // 中断钮（输入行为包批）：与主会话 #stop-btn 同语（lucide square 族）——红圆白方停标。
-  stop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
+  stop: () => svgNode('svg', { viewBox: '0 0 24 24', 'stroke-width': '2.4', ...STROKE },
+    [svgNode('rect', { x: '6', y: '6', width: '12', height: '12', rx: '2' })]),
 };
 
 /** @type {Map<string, {sid: string, fileName: string, msgs: Array<{role: string, text: string}>, stateSent: boolean, unread: boolean, busy?: boolean, lastFrameAt?: number}>} */
 const sessions = new Map(); // key: absPath
-let el = null; // { fab, dock, col, input, send, stop }（v2.1：ghost/sess/handoff 件随减法退场；输入行为包批 + stop）
-let turnToggle = null; // 中断状态机（createTurnToggle；mount 时建，单 dock 对）
+let el = null; // 组件内部节点引用 { fab, dock, col, colwrap, inputRow, resize, input, send, stop }（建一次，跨宿主迁移复用）
+let root = null; // 组件宿主元素 <nf-ask-dock>（迁移时搬它）
+let wired = false; // 元素级监听/观察器已绑（节点复用 ⇒ 只绑一次）
+let turnToggle = null; // 中断状态机（createTurnToggle；建一次，单 dock 对）
 let currentFile = ''; // absPath of the active file entry ('' = 非文件卡)
 let inited = false;
 
@@ -203,6 +269,127 @@ function mountHost() {
     : document.getElementById('canvas-panel');
 }
 
+// ── 组件内部 DOM（建一次；跨宿主迁移复用同一对节点）──────────────────────
+
+/** 入口钮（.ask-fab）：chat/close 两枚图标 + 未读绿点。 */
+function buildFab() {
+  return h('button', {
+    type: 'button',
+    class: 'ask-fab',
+    title: tt('问这份文件（ask mode）', 'Ask this file (ask mode)'),
+    'aria-label': tt('问这份文件', 'Ask this file'),
+  }, [
+    ICONS.chat(),
+    ICONS.close(),
+    h('span', { class: 'ask-sess-dot', 'aria-hidden': 'true' }),
+  ]);
+}
+
+/**
+ * 对话框（.ask-dock）：拖柄 + 气泡列 + 输入条。
+ * v2.1 减法（作者令 2026-10-28 22:42）：输入条只留右侧发送钮；ghost 提示行 /
+ * session 徽标不渲染。输入行为包批（2026-11-02）：textarea rows=1 承载 Shift+Enter；
+ * + 中断钮 .ask-stop（busy 态与发送钮互换）。顶缘渐隐 = 内容级 mask（2026-11-04
+ * ask-fade-content-opacity 批）——面板内不渲染任何渐隐元素，渐隐本体在 ask.css
+ * .ask-col 的 mask-image。
+ * 类序契约：发送/中断两钮的 className **首 token** 必须是身份钩子 .ask-send /
+ * .ask-stop（canvas-ask-dock spec T6a 读首 token），其后才是主会话组件类
+ * `ds-turn-btn ds-turn-btn--send|--stop`（design-system.css §①b 单源）。
+ *
+ * 组件化范式试点批：两个按钮的 class 串从标记属性改成 h() 的 attrs 落
+ * setAttribute，**串内容逐字不变**。下面这两行是原标记形态的**逐字引文**（不是
+ * 构造点，构造点是 buildDock 里的 h() 调用）：canvas-ask-resize.spec 的 c7 判据
+ * 在**源码文本面**按这两串逐字核对「面板 DOM 挂同一组件类」，而该 spec 属本批
+ * 不许改动的验收面 —— 故在此保留逐字引用，改 class 串必须两处同改：
+ *   <button class="ask-send ds-turn-btn ds-turn-btn--send">
+ *   <button class="ask-stop ds-turn-btn ds-turn-btn--stop">
+ */
+function buildDock() {
+  const handle = h('div', {
+    class: 'ds-resize-handle',
+    'data-ask-resize': true,
+    role: 'separator',
+    tabindex: '0',
+    'aria-label': tt('拖拽调整面板大小', 'Resize panel'),
+    title: tt('拖拽调整面板大小（←→ 改宽 / ↑↓ 改高）', 'Drag to resize (←→ width / ↑↓ height)'),
+  }, [
+    h('span', { class: 'ds-resize-grip', 'aria-hidden': 'true' }, [h('i'), h('i'), h('i')]),
+  ]);
+
+  const input = h('textarea', {
+    rows: '1',
+    placeholder: tt('针对这份文件提问…', 'Ask about this file…'),
+    'aria-label': tt('提问', 'Question'),
+  });
+  const send = h('button', {
+    type: 'button',
+    class: 'ask-send ds-turn-btn ds-turn-btn--send',
+    'aria-label': tt('发送', 'Send'),
+  }, [ICONS.send()]);
+  const stop = h('button', {
+    type: 'button',
+    class: 'ask-stop ds-turn-btn ds-turn-btn--stop',
+    'aria-label': tt('停止回答', 'Stop answering'),
+  }, [ICONS.stop()]);
+
+  return h('div', { class: 'ask-dock closed' }, [
+    handle,
+    // main（ask-fade-content-opacity 批）已把 .ask-veil 遮罩条退役——渐隐归
+    // .ask-col 的 mask-image，本组件不复活任何渐隐元素。
+    h('div', { class: 'ask-colwrap' }, [h('div', { class: 'ask-col' })]),
+    h('div', { class: 'ask-input' }, [input, send, stop]),
+  ]);
+}
+
+/** 造内部 DOM + 绑元素级监听（只跑一次；节点跨宿主迁移复用）。 */
+function ensureInner() {
+  if (el) return;
+  const fab = buildFab();
+  const dock = buildDock();
+  el = {
+    fab,
+    dock,
+    col: dock.querySelector('.ask-col'),
+    colwrap: dock.querySelector('.ask-colwrap'),
+    inputRow: dock.querySelector('.ask-input'),
+    resize: dock.querySelector('[data-ask-resize]'),
+    input: dock.querySelector('textarea'),
+    send: dock.querySelector('.ask-send'),
+    stop: dock.querySelector('.ask-stop'),
+  };
+  bindResize();
+  // 截断线跟着**实测盒**走：面板高随内容/拖拽变化（不是一次性写死）。
+  if (typeof ResizeObserver === 'function') {
+    truncObserver = new ResizeObserver(() => syncTruncLine());
+    truncObserver.observe(dock);
+  }
+  wireElements();
+}
+
+/** 组件模板：返回**同一对节点**（frag 只是把它们搬进 fragment，不复制）。 */
+function template() {
+  ensureInner();
+  return frag(el.fab, el.dock);
+}
+
+/**
+ * 挂载组件宿主：在 mountHost() 决定的宿主里确保 `<nf-ask-dock>` 在场（幂等）。
+ * appendChild 那一拍内 connectedCallback 同步跑完（template → mount），所以返回时
+ * el 引用已就绪。
+ * @returns {any} 组件宿主元素（null = 宿主面不存在）
+ */
+function mountRoot() {
+  const host = mountHost();
+  if (!host) return null;
+  let node = host.querySelector(':scope > nf-ask-dock');
+  if (!node) {
+    node = document.createElement('nf-ask-dock');
+    host.appendChild(node);
+  }
+  root = node;
+  return node;
+}
+
 // ── 拖拽改尺寸（作者令 2026-11-04「允许用户交互拖拽调整对话框大小（拖柄可见、
 //    热区 ≥44px，按 Apple HIG）」）─────────────────────────────────────────
 // 设计取舍（样张 canvas-ask-resize/mockup.html 即基线）：
@@ -221,6 +408,8 @@ function mountHost() {
 //     恒在最下方，永不被列压住。
 //   · 一切形态/配色走 --ds-* 槽（design-system.css `.ds-resize-handle`），本段只
 //     做几何与状态机。
+// 组件化范式试点批：**本段原样保留命令式形态**（直接读写 el 与 CSS 变量，不经过
+// 渲染树）——它正是试点要验证的「组件范式与命令式几何状态机共存」那一面。
 
 /** 从面板计算样式读一个 px 令牌（缺/非数值回落 fallback）。 */
 function dsPx(name, fallback) {
@@ -299,13 +488,13 @@ function headerObstacles() {
 }
 
 /** 落尺寸（夹取后写两条 CSS 变量；返回实际生效值，供断言/复位用）。 */
-function applyDockSize(w, h) {
+function applyDockSize(w, hgt) {
   if (!el) return null;
   const L = resizeLimits();
   const W = Math.round(Math.min(Math.max(w, L.minW), L.maxW));
   // 高度上限依赖**落定宽度**（把手位置决定它与哪个浮钮叠压）⇒ 先定宽再夹高，
   // 一遍算清，不做「夹宽→夹高→回头再夹宽」的收敛循环。
-  const H = Math.round(Math.min(Math.max(h, L.minH), L.maxHFor(W)));
+  const H = Math.round(Math.min(Math.max(hgt, L.minH), L.maxHFor(W)));
   el.dock.style.setProperty('--ask-dock-w', W + 'px');
   el.dock.style.setProperty('--ask-col-maxh', H + 'px');
   lastSize = { w: W, h: H };
@@ -341,12 +530,12 @@ let lastSize = null; // 最近一次落下的尺寸（视口变化时按同一�
 
 /** 拖柄状态机（pointer capture + 键盘；桌面/手机同一段）。 */
 function bindResize() {
-  const h = el.resize;
-  if (!h) return;
+  const handle = el.resize;
+  if (!handle) return;
   let active = false;
   let grabX = 0, grabY = 0, baseW = 0, baseH = 0;
 
-  h.addEventListener('pointerdown', (e) => {
+  handle.addEventListener('pointerdown', (e) => {
     if (e.button !== undefined && e.button !== 0) return;
     const r = el.dock.getBoundingClientRect();
     active = true;
@@ -356,14 +545,14 @@ function bindResize() {
     // 基线高 = 列的**实测**高（内容短时 < --ask-col-maxh，用 CSS 声明值会让
     // 第一次拖动就跳一大截）。
     baseH = el.col.getBoundingClientRect().height;
-    try { h.setPointerCapture(e.pointerId); } catch { /* 合成事件无 pointerId */ }
-    h.dataset.resizing = 'true';
+    try { handle.setPointerCapture(e.pointerId); } catch { /* 合成事件无 pointerId */ }
+    handle.dataset.resizing = 'true';
     el.dock.classList.add('is-resizing');
     e.preventDefault();
     e.stopPropagation();
   });
 
-  h.addEventListener('pointermove', (e) => {
+  handle.addEventListener('pointermove', (e) => {
     if (!active) return;
     // 右/下钉位 ⇒ 鼠标向左移（dx < 0）变宽、向上移（dy < 0）变高。
     applyDockSize(baseW + (grabX - e.clientX), baseH + (grabY - e.clientY));
@@ -373,18 +562,18 @@ function bindResize() {
   const end = (e) => {
     if (!active) return;
     active = false;
-    if (h.hasPointerCapture && e && e.pointerId !== undefined) {
-      try { h.releasePointerCapture(e.pointerId); } catch { /* 已释放 */ }
+    if (handle.hasPointerCapture && e && e.pointerId !== undefined) {
+      try { handle.releasePointerCapture(e.pointerId); } catch { /* 已释放 */ }
     }
-    delete h.dataset.resizing;
+    delete handle.dataset.resizing;
     el.dock.classList.remove('is-resizing');
   };
-  h.addEventListener('pointerup', end);
-  h.addEventListener('pointercancel', end);
+  handle.addEventListener('pointerup', end);
+  handle.addEventListener('pointercancel', end);
 
   // 键盘同源（←→ 改宽 / ↑↓ 改高）：拖柄是 tabindex=0 的 separator，键盘用户
   // 拿得到的必须是**同一个**尺寸状态机，不是第二套。
-  h.addEventListener('keydown', (e) => {
+  handle.addEventListener('keydown', (e) => {
     const step = dsPx('--ds-resize-step', 16);
     const r = el.dock.getBoundingClientRect();
     const cur = lastSize || { w: r.width, h: el.col.getBoundingClientRect().height };
@@ -405,74 +594,12 @@ function reclampSize() {
   applyDockSize(lastSize.w, lastSize.h);
 }
 
-function mount() {
-  const host = mountHost();
-  if (!host || host.querySelector(':scope > .ask-fab')) return;
+// ── 元素级监听（只绑一次：节点跨宿主迁移复用，重绑会叠双份）─────────────────
 
-  const fab = document.createElement('button');
-  fab.type = 'button';
-  fab.className = 'ask-fab';
-  fab.title = tt('问这份文件（ask mode）', 'Ask this file (ask mode)');
-  fab.setAttribute('aria-label', tt('问这份文件', 'Ask this file'));
-  fab.innerHTML = ICONS.chat + ICONS.close + '<span class="ask-sess-dot" aria-hidden="true"></span>';
-
-  const dock = document.createElement('div');
-  dock.className = 'ask-dock closed';
-  // v2.1 减法（作者令 2026-10-28 22:42）：输入条只留右侧发送钮；ghost 提示
-  // 行 / session 徽标不渲染（显示面删掉不必要的消息）。
-  // 输入行为包批（2026-11-02）：① <textarea rows=1> 承载 Shift+Enter 换行（键位
-  // 契约与主会话逐一对齐；单行视觉不变，超行自动长高封顶）；② + 中断钮
-  // .ask-stop（busy 态与发送钮互换，主会话 #stop-btn 同律；包状态机驱动）。
-  // 顶缘渐隐 = 内容级 mask（2026-11-04 ask-fade-content-opacity 批，作者令 09:22
-  // 逐字：「canvas Ask 的这个渐隐，应该是对消息什么的降低透明度到 0 的过程，而不是
-  // 放一个过渡的条在哪，整体要是透明无边框的」）。①-批的独立视觉层 .ask-veil
-  // （.ds-edge-fade：veil 渐层底色 + backdrop blur）随本批退役——它是一块带底色的
-  // 遮罩条，不是内容透明度；面板内不再渲染任何渐隐元素，渐隐本体移到 ask.css
-  // .ask-col 的 mask-image（内容滚动穿顶时自身 alpha 渐到 0）。
-  dock.innerHTML =
-    '<div class="ds-resize-handle" data-ask-resize role="separator" tabindex="0" aria-label="' +
-      tt('拖拽调整面板大小', 'Resize panel') + '" title="' +
-      tt('拖拽调整面板大小（←→ 改宽 / ↑↓ 改高）', 'Drag to resize (←→ width / ↑↓ height)') + '">' +
-      '<span class="ds-resize-grip" aria-hidden="true"><i></i><i></i><i></i></span>' +
-    '</div>' +
-    // main（ask-fade-content-opacity 批）已把 .ask-veil 遮罩条退役——合并取 main
-    // 侧（渐隐归 .ask-col 的 mask-image），本批只加拖柄，不复活任何渐隐元素。
-    '<div class="ask-colwrap"><div class="ask-col"></div></div>' +
-    '<div class="ask-input">' +
-    '<textarea rows="1" placeholder="' + tt('针对这份文件提问…', 'Ask about this file…') + '" aria-label="' + tt('提问', 'Question') + '"></textarea>' +
-    // 转回合按钮（作者令 ui-unification-20261103-canvas-ask-resize「发送按钮与终止
-    // 按钮样式与主会话完全统一」）：两枚按钮挂**主会话同一个组件类**
-    // `ds-turn-btn ds-turn-btn--send|--stop`（design-system.css §①b 单源）。
-    // `.ask-send` / `.ask-stop` 留作身份钩子（既有 spec 定位 + 类序断言
-    // canvas-ask-dock T6a 读 className[0]），本批起在 ask.css 里**零规则**。
-    '<button type="button" class="ask-send ds-turn-btn ds-turn-btn--send" aria-label="' + tt('发送', 'Send') + '">' + ICONS.send + '</button>' +
-    '<button type="button" class="ask-stop ds-turn-btn ds-turn-btn--stop" aria-label="' + tt('停止回答', 'Stop answering') + '">' + ICONS.stop + '</button>' +
-    '</div>';
-
-  host.appendChild(fab);
-  host.appendChild(dock);
-
-  el = {
-    fab,
-    dock,
-    col: dock.querySelector('.ask-col'),
-    colwrap: dock.querySelector('.ask-colwrap'),
-    inputRow: dock.querySelector('.ask-input'),
-    resize: dock.querySelector('[data-ask-resize]'),
-    input: dock.querySelector('textarea'),
-    send: dock.querySelector('.ask-send'),
-    stop: dock.querySelector('.ask-stop'),
-  };
-  bindResize();
-  // 截断线跟着**实测盒**走：面板高随内容/拖拽变化（不是一次性写死）。
-  if (typeof ResizeObserver === 'function') {
-    truncObserver = new ResizeObserver(() => syncTruncLine());
-    truncObserver.observe(dock);
-  }
-
-  fab.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
-  dock.addEventListener('click', (e) => e.stopPropagation());
-  dock.addEventListener('pointerdown', (e) => e.stopPropagation());
+function wireElements() {
+  el.fab.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+  el.dock.addEventListener('click', (e) => e.stopPropagation());
+  el.dock.addEventListener('pointerdown', (e) => e.stopPropagation());
   // 中断状态机实例（包工厂）：busy()/idle() 驱动发送↔中断钮互换（applyTurnChrome
   // 与主会话 setBusy/clearBusy 同一实现）。
   turnToggle = createTurnToggle({
@@ -489,39 +616,48 @@ function mount() {
   // 键盘/IME/发送判定 = 主会话同一实现（包装配；组字期 Enter 只确认候选）。
   bindComposerKeys(el.input, { onSend: () => { submit(); } });
   el.input.addEventListener('focus', syncSeat);
+}
 
+/** 全局监听（每次连入登记；断开由基座 ctx.on 自动拆——迁移不留双份）。 */
+function wireGlobals(ctx) {
+  // 收起三通路之二：Esc。（输入行为包批：组字期 Esc = 输入法取消候选——键属
+  // 输入法，不收起 dock；键位契约与主会话一致——主会话 Esc 同样让渡组字键。）
+  ctx.on(document, 'keydown', (e) => {
+    if (el && isImeComposing(e, el.input)) return;
+    if (e.key === 'Escape' && isOpen() && isCanvasVisible()) { close(); }
+  });
+  ctx.on(document, 'canvas-tab-switched', onTabSwitch);
+  ctx.on(document, 'canvas-tab-closed', onTabClosed);
+  ctx.on(window, 'resize', () => { syncSeat(); reclampSize(); });
+  // 批⑨：手机层根页切换（nf:mobile-nav）重落可见性闸——离开 canvas 页即隐。
+  ctx.on(document, 'nf:mobile-nav', () => syncGate());
+  // 批⑩：阅读器底栏挂载完成 → 座位重算（底栏入角落浮件占用集，见 syncSeat）。
+  ctx.on(document, 'nf-reader-mounted', () => syncSeat());
   // 收起三通路之一：点击画布空白（#canvas-content 本体 = 无浮层处；卡片内
   // 点击/文本选择不受扰——panes/浮件自有 target）。
   const content = document.getElementById('canvas-content');
   if (content) {
-    content.addEventListener('click', (e) => {
+    ctx.on(content, 'click', (e) => {
       if (e.target === content && isOpen()) close();
     });
   }
-  // 收起三通路之二：Esc。（输入行为包批：组字期 Esc = 输入法取消候选——键属
-  // 输入法，不收起 dock；键位契约与主会话一致——主会话 Esc 同样让渡组字键。）
-  document.addEventListener('keydown', (e) => {
-    if (el && isImeComposing(e, el.input)) return;
-    if (e.key === 'Escape' && isOpen() && isCanvasVisible()) { close(); }
-  });
+}
 
-  document.addEventListener('canvas-tab-switched', onTabSwitch);
-  document.addEventListener('canvas-tab-closed', onTabClosed);
-  window.addEventListener('resize', () => { syncSeat(); reclampSize(); });
-  // 批⑨：手机层根页切换（nf:mobile-nav）重落可见性闸——离开 canvas 页即隐。
-  document.addEventListener('nf:mobile-nav', () => syncGate());
-  // 批⑩：阅读器底栏挂载完成 → 座位重算（底栏入角落浮件占用集，见 syncSeat）。
-  document.addEventListener('nf-reader-mounted', () => syncSeat());
-  // 批⑨：手机层开/关（body.mobile-layer 起落）迁移 FAB/dock 宿主——同一对
-  // 元素在 #canvas-panel（absolute 锚面板）与 body（fixed 钉视口）间搬移。
+// ── 一次性观察器（应用级生命周期；不问组件连接态）─────────────────────────
+
+function wireObserversOnce() {
+  // 批⑨：手机层开/关（body.mobile-layer 起落）迁移组件宿主——同一对元素在
+  // #canvas-panel（absolute 锚面板）与 body（fixed 钉视口）间搬移。搬的是
+  // `<nf-ask-dock>` 本身；基座的断开/连入走「同一对节点」路径（见 template），
+  // 因此尺寸/转录/流式气泡/监听全部原样保留。
   if (typeof MutationObserver === 'function') {
     let mobileOn = document.body.classList.contains('mobile-layer');
     new MutationObserver(() => {
       const now = document.body.classList.contains('mobile-layer');
-      if (now === mobileOn || !el) return;
+      if (now === mobileOn || !root) return;
       mobileOn = now;
-      const h = mountHost();
-      if (h && el.fab.parentElement !== h) { h.appendChild(el.fab); h.appendChild(el.dock); }
+      const host = mountHost();
+      if (host && root.parentElement !== host) host.appendChild(root);
       syncGate();
       syncSeat();
       reclampSize(); // 层切换 = 钉位/视口语境变化，已拖过的尺寸按新上下限重夹
@@ -546,9 +682,46 @@ function mount() {
     // WS 重连：会话状态标脏，下次打开时 askOpen 重新回放（服务端为权威）。
     for (const s of sessions.values()) s.stateSent = false;
   });
-
-  syncSeat();
 }
+
+/**
+ * 组件挂载钩子（基座在 connectedCallback 里调用；宿主迁移时也会再进一次）。
+ * @param {any} host 组件宿主 `<nf-ask-dock>`（实例方法面挂在这里）
+ * @param {any} ctx 基座实例上下文（ctx.on 登记的监听随断开自动拆）
+ */
+function onMount(host, ctx) {
+  root = host;
+  // 对外方法面：**只此三个**（语义 = 原 open / close / syncToActiveTab）。
+  // 内部结构（类名/节点）不出组件门——外部一律走这三条腿。
+  host.open = open;
+  host.close = close;
+  host.syncSession = syncToActiveTab;
+  const reattached = wired; // 二次连入 = 宿主迁移（手机层 ↔ 桌面层）
+  if (!wired) {
+    wired = true;
+    wireObserversOnce();
+  }
+  wireGlobals(ctx);
+  if (!reattached) { syncSeat(); return; } // 首挂：与改前 mount() 尾部逐字同义
+  // 宿主迁移后补一拍（同一批节点、同一份会话状态；全部幂等）
+  syncGate();
+  syncUnreadDot();
+  syncSeat();
+  reclampSize();
+  if (isOpen()) {
+    render();
+    syncTruncLine();
+    requestAnimationFrame(() => syncTruncLine());
+  }
+  if (turnToggle) {
+    const s = activeSession();
+    if (s && s.busy) turnToggle.busy();
+    else turnToggle.idle();
+  }
+}
+
+// 组件注册（light DOM；tag 必须 nf- 前缀，由 component.js.define 硬闸）。
+define({ tag: 'nf-ask-dock', template, mount: onMount });
 
 function isCanvasVisible() {
   return document.body.classList.contains('canvas-open');
@@ -670,9 +843,9 @@ function syncSeat() {
   const floats = panel.querySelectorAll('.epub-reader-nav');
   let occupied = 0;
   floats.forEach((f) => {
-    const h = /** @type {HTMLElement} */ (f);
-    if (!(h instanceof HTMLElement) || h.hidden || h.offsetParent === null) return;
-    const r = h.getBoundingClientRect();
+    const box = /** @type {HTMLElement} */ (f);
+    if (!(box instanceof HTMLElement) || box.hidden || box.offsetParent === null) return;
+    const r = box.getBoundingClientRect();
     if (r.width === 0 && r.height === 0) return;
     occupied = Math.max(occupied, panelRect.bottom - r.top);
   });
@@ -695,6 +868,7 @@ function syncUnreadDot() {
   if (!isOpen()) el.fab.classList.toggle('pulse', unread); // pulse=未读唤回提示（已读收起不再脉动）
 }
 
+/** 组件方法 open()：打开对话框（原型 open() 的对外契约，签名不变）。 */
 async function open() {
   // 非文件卡入口已被可见性闸摘除；可问面硬闸复核（批⑩ 同律：md/html +
   // 电子书扩展名白名单；§7-A4 冗余守卫双层防呆）。
@@ -715,6 +889,7 @@ async function open() {
   setTimeout(() => { try { el.input.focus(); } catch { /* detached */ } }, 260);
 }
 
+/** 组件方法 close()：收起对话框（原型 close() 的对外契约，签名不变）。 */
 function close() {
   if (!el) return;
   el.dock.classList.add('closed');
@@ -738,10 +913,12 @@ function render() {
   // 呈现（收进不可见处；主会话回问在 consumeFrame 已按 §7 落 user 族）。
   const vis = s.msgs.filter((m) => m.role !== 'sys');
   vis.forEach((m, i) => {
-    const b = document.createElement('div');
-    b.className = 'ask-bub ' + (m.role === 'user' ? 'user' : 'ai');
+    const b = h('div', { class: 'ask-bub ' + (m.role === 'user' ? 'user' : 'ai') });
     // ① 修复批 2026-10-31：ai 族走主会话渲染腿（markdown 全套）；user 族
     // 维持 textContent（用户输入纯文本面，与主会话一致）。渲染腿复用不重写。
+    // ⚠ **本模块唯一的 HTML 落点 = markdown 渲染腿**（renderMarkdownWithMath 的
+    // 返回值只能经元素 innerHTML 落到 ai 气泡：它是既有渲染腿的产物，自带
+    // marked+KaTeX 护栏）；业务 DOM（气泡壳、图标、拖柄、输入条）一律走 h()/frag()。
     if (m.role === 'user') b.textContent = m.text;
     else b.innerHTML = renderMarkdownWithMath(m.text);
     // 弹幕感：越靠上（越旧）越透明（样张按龄渐隐同律）。
@@ -757,12 +934,13 @@ function render() {
 function updateStreamingBubble(s) {
   if (!el || s !== activeSession()) return;
   const last = s.msgs[s.msgs.length - 1];
-  let node = el.col.lastElementChild;
+  const node = el.col.lastElementChild;
   if (!node || !node.classList.contains('ai')) {
     render();
     return;
   }
   // 主会话流式同律：cache:false 直解析（每帧重解析增长文本，不进 LRU 挤占）。
+  // （同一 HTML 落点：markdown 渲染腿，见 render() 的注释。）
   node.innerHTML = last ? renderMarkdownWithMath(last.text, true, { cache: false }) : '';
   el.col.scrollTop = el.col.scrollHeight;
 }
@@ -845,9 +1023,7 @@ let streamPersistAt = 0; // 流式落盘节流拍（持久批；800ms 一写，d
 function appendTyping() {
   if (!el) return;
   removeTyping();
-  const tp = document.createElement('div');
-  tp.className = 'ask-bub typing';
-  tp.innerHTML = '<i></i><i></i><i></i>';
+  const tp = h('div', { class: 'ask-bub typing' }, [h('i'), h('i'), h('i')]);
   el.col.appendChild(tp);
   el.col.scrollTop = el.col.scrollHeight;
   typingNode = tp;
@@ -1004,7 +1180,7 @@ function consumeFrame(msg) {
 export function initAskDock() {
   if (inited) return;
   inited = true;
-  mount();
+  mountRoot();
   if (el) syncToActiveTab();
   setAskFrameSink(consumeFrame);
 }

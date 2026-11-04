@@ -1,0 +1,19 @@
+=== baseline: git stash push -u -- src ===
+=== sbt testOnly Mvp2DeviceRoutesSpec on BASELINE (零本批改动) ===
+==> X nebflow.gateway.Mvp2DeviceRoutesSpec.GET /conversations 透传设备行 kind/deviceId；legacy 行两键缺席（§8.1）  0.683s munit.FailException: src/test/scala/nebflow/gateway/Mvp2DeviceRoutesSpec.scala:193 route fell through
+[error] Failed: Total 8, Failed 1, Errors 0, Passed 7
+=== git stash pop ===
+
+修改尚未加入提交（使用 "git add" 和/或 "git commit -a"）
+丢弃了 refs/stash@{0}（c67161e330f02fd426dd0119783b5bdf6e99c057）
+=== src 改动已回 ===
+ M src/main/scala/nebflow/core/scheduler/DoneRecordStore.scala
+ M src/main/scala/nebflow/core/scheduler/ScheduledTaskActor.scala
+ M src/main/scala/nebflow/core/scheduler/ScheduledTaskModel.scala
+ M src/main/scala/nebflow/core/scheduler/ScheduledTaskStore.scala
+ M src/main/scala/nebflow/core/scheduler/WeeklyReport.scala
+ M src/main/scala/nebflow/gateway/WsTasksWorkspaceHandlers.scala
+?? reports-evidence/20261104_todo-unify-backend__delegate-nebflow-79768ef5/backend/
+?? src/test/scala/nebflow/core/scheduler/TodoPriorityCompletionSpec.scala
+?? src/test/scala/nebflow/gateway/TodoUnifyFramesSpec.scala
+BLOCK_EXIT=0

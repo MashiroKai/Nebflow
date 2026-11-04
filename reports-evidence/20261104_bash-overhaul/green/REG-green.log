@@ -1,0 +1,154 @@
+### [REG] sbt "testOnly nebflow.core.tools.BashToolSpec nebflow.core.tools.BashForegroundBudgetSpec nebflow.core.tools.BashAutoBackgroundSpec nebflow.core.tools.BashBackgroundHardTimeoutSpec nebflow.core.tools.BashPersistentBgTaskSpec nebflow.core.tools.BgTaskRegistrySpec nebflow.core.tools.BgTaskLedgerSpec nebflow.core.tools.BgNotifyPayloadSpec nebflow.core.tools.BgTaskCancelSpec nebflow.core.tools.BgTaskOutputDiskSpec nebflow.core.tools.ShellOutputSpillSpec"
+### started: 2026-11-04 15:31:58
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap -Xmx1500m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-485bb4f4-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/)
+[warn] javaOptions will be ignored, fork is set to false
+15:32:04.448 INFO  nebflow.handlers - - - Tool Bash START: echo e2e-t2-marker
+nebflow.core.tools.BashToolSpec:
+  + cwd 不存在 ⇒ 显式失败：InvalidCwdError + 原始入参/绝对路径/触发点三件套 0.272s
+  + cwd 存在但不是目录（普通文件） ⇒ 显式失败：not a directory 0.003s
+  + cwd 为空串 ⇒ 显式失败（不视为「用默认目录」） 0.002s
+  + 相对 cwd 不存在 ⇒ 显式失败（诊断里的解析后绝对路径 = user.dir 拼接，非裸相对串） 0.002s
+  + 端到端（BashTool 面）：沙箱根不存在 ⇒ 工具返回可诊断错误（Left），而非静默在别处执行 0.1s
+  + 正向：合法 cwd（显式目录）⇒ 命令在该目录执行，结果 cwd = 该目录 0.705s
+  + 正向：默认会话（无 initialDir ⇒ JVM user.dir）仍绿——存量路径零改动 0.648s
+15:32:05.839 INFO  nebflow.handlers - - - Tool Bash START: python3 -c "import time; time.sleep(8); print('clone-done')"
+15:32:07.878 INFO  nebflow.shell - [bg-job-graph] register jobId=e1375834 instance=092b4bda session=default cause=adoptAsBackgroundJob
+15:32:14.534 WARN  nebflow.bg-notify - [bg-notify-undeliverable] background job e1375834 reached 'completed' but this delivery has NO agent ref and NO target session — nothing to address; output retained in BgTaskOutputStore (jobId lookup)
+15:32:14.535 INFO  nebflow.core.tools.BashTool$ - Background job e1375834 callback: completed (exit 0 · 6.6s) sessionId=
+15:32:14.754 INFO  nebflow.shell - [bg-job-graph] remove jobId=e1375834 instance=092b4bda session=default cause=getBackgroundResult
+15:32:14.757 INFO  nebflow.handlers - - - Tool Bash START: python3 -c "import time; time.sleep(12); print('should-never-see-this')"
+15:32:18.862 WARN  nebflow.shell - Foreground command idle for 4s (no output, no CPU progress) — killing: python3 -c "import time; time.sleep(12); print('should-never-see-this')"
+15:32:19.184 INFO  nebflow.handlers - - - Tool Bash START: python3 -c "import time; time.sleep(9); print('adopted-survivor')"
+15:32:21.186 INFO  nebflow.shell - [bg-job-graph] register jobId=e6ed27c8 instance=092b4bda session=default cause=adoptAsBackgroundJob
+15:32:21.231 INFO  nebflow.shell - Foreground no-progress ceiling retired — command adopted as background job: python3 -c "import time; time.sleep(9); print('adopted-survivor')"
+15:32:28.858 WARN  nebflow.bg-notify - [bg-notify-undeliverable] background job e6ed27c8 reached 'completed' but this delivery has NO agent ref and NO target session — nothing to address; output retained in BgTaskOutputStore (jobId lookup)
+15:32:28.858 INFO  nebflow.core.tools.BashTool$ - Background job e6ed27c8 callback: completed (exit 0 · 7.7s) sessionId=
+15:32:29.005 INFO  nebflow.shell - [bg-job-graph] remove jobId=e6ed27c8 instance=092b4bda session=default cause=getBackgroundResult
+15:32:29.007 INFO  nebflow.handlers - - - Tool Bash START: for i in 1 2 3 4 5 6 7 8 9 10; do echo tick-$i; sleep 1; done
+15:32:31.009 INFO  nebflow.shell - [bg-job-graph] register jobId=c59e154e instance=092b4bda session=default cause=adoptAsBackgroundJob
+15:32:39.763 WARN  nebflow.bg-notify - [bg-notify-undeliverable] background job c59e154e reached 'completed' but this delivery has NO agent ref and NO target session — nothing to address; output retained in BgTaskOutputStore (jobId lookup)
+15:32:39.764 INFO  nebflow.core.tools.BashTool$ - Background job c59e154e callback: completed (exit 0 · 8.8s) sessionId=
+15:32:39.873 INFO  nebflow.shell - [bg-job-graph] remove jobId=c59e154e instance=092b4bda session=default cause=getBackgroundResult
+15:32:39.881 INFO  nebflow.handlers - - - Tool Bash START timeout=3600000ms: sleep 8 && echo clamped-done
+15:32:41.883 INFO  nebflow.shell - [bg-job-graph] register jobId=cca2a21a instance=092b4bda session=default cause=adoptAsBackgroundJob
+15:32:48.560 WARN  nebflow.bg-notify - [bg-notify-undeliverable] background job cca2a21a reached 'completed' but this delivery has NO agent ref and NO target session — nothing to address; output retained in BgTaskOutputStore (jobId lookup)
+15:32:48.560 INFO  nebflow.core.tools.BashTool$ - Background job cca2a21a callback: completed (exit 0 · 6.7s) sessionId=
+15:32:48.723 INFO  nebflow.shell - [bg-job-graph] remove jobId=cca2a21a instance=092b4bda session=default cause=getBackgroundResult
+15:32:48.725 INFO  nebflow.handlers - - - Tool Bash START: echo short-cmd-ok
+nebflow.core.tools.BashForegroundBudgetSpec:
+  + N-1 default face: budget default = 120s, prop-compressible, config default carries it; MAX_TIMEOUT unchanged 0.001s
+  + N-2+N-4 today's clone regression: SILENT no-output command auto-backgrounds at the 2s budget (not stall-killed), receipt carries job id + query hint, result delivered on completion 8.92s
+  + N-3 OLD-face control (对照): same silent command with NO budget hits the 600s-class ceiling kill — the incident path 4.427s
+  + N-5 adopted job survives past the (compressed) no-progress ceiling — adoption retires the ceiling 9.823s
+  + N-2b chatty command backgrounds at the budget too — criterion is TIME, not output liveness 10.87s
+  + N-6 explicit timeout hint is clamped to the configured budget (author's zero-blocking ruling wins) 8.848s
+  + N-7 engine short-command family regression: fast commands stay foreground with real output (default config) 0.657s
+15:32:49.395 INFO  nebflow.handlers - - - Tool Bash START timeout=2000ms: sleep 10 && echo auto-bg-done
+15:32:51.398 INFO  nebflow.shell - [bg-job-graph] register jobId=489dfb69 instance=092b4bda session=default cause=adoptAsBackgroundJob
+15:33:00.089 WARN  nebflow.bg-notify - [bg-notify-undeliverable] background job 489dfb69 reached 'completed' but this delivery has NO agent ref and NO target session — nothing to address; output retained in BgTaskOutputStore (jobId lookup)
+15:33:00.089 INFO  nebflow.core.tools.BashTool$ - Background job 489dfb69 callback: completed (exit 0 · 8.7s) sessionId=
+15:33:00.252 INFO  nebflow.shell - [bg-job-graph] remove jobId=489dfb69 instance=092b4bda session=default cause=getBackgroundResult
+15:33:00.269 INFO  nebflow.shell - [bg-job-graph] register jobId=65d8c719 instance=092b4bda session=default cause=executeBackground
+15:33:08.989 WARN  nebflow.bg-notify - [bg-notify-undeliverable] background job 65d8c719 reached 'completed' but this delivery has NO agent ref and NO target session — nothing to address; output retained in BgTaskOutputStore (jobId lookup)
+15:33:08.990 INFO  nebflow.core.tools.BashTool$ - Background job 65d8c719 callback: completed (exit 0 · 8.7s) sessionId=
+15:33:09.100 INFO  nebflow.shell - [bg-job-graph] remove jobId=65d8c719 instance=092b4bda session=default cause=getBackgroundResult
+15:33:09.407 INFO  nebflow.shell - [bg-job-graph] register jobId=adopt1 instance=9be07c9e session=auto-bg-adopt cause=adoptAsBackgroundJob
+15:33:11.817 INFO  nebflow.shell - [bg-job-graph] remove jobId=adopt1 instance=9be07c9e session=auto-bg-adopt cause=getBackgroundResult
+15:33:12.122 INFO  nebflow.shell - [bg-job-graph] register jobId=adoptc instance=e1386df6 session=auto-bg-cancel cause=adoptAsBackgroundJob
+15:33:12.262 INFO  nebflow.shell - [bg-job-graph] remove jobId=adoptc instance=e1386df6 session=auto-bg-cancel cause=cancelBackgroundJob
+nebflow.core.tools.BashAutoBackgroundSpec:
+  + A-1 explicit wait budget auto-backgrounds a still-running command (receipt + job id, process alive, result delivered on completion) 10.861s
+  + A-5 default threshold arm: MAX_TIMEOUT reads the compressible prop per call (default-arm plumbing) 0.002s
+  + A-2 waiting-type background task survives past the old 30min/4h hard cap (compressed config proves the wiring exemption) 8.845s
+  + A-3 adopted foreground execution: deferred + on_complete fire with the real output; health face same as native bg 2.716s
+  + A-4 adopted job explicit cancel kills the still-running process tree 0.95s
+15:33:12.785 INFO  nebflow.shell - [bg-job-graph] register jobId=b1 instance=cf56fbe4 session=bg-hard-1 cause=executeBackground
+15:33:18.958 WARN  nebflow.shell - Background job b1 stalled 2s after 6s (no output, no CPU) — killing
+15:33:19.111 INFO  nebflow.shell - [bg-job-graph] remove jobId=b1 instance=cf56fbe4 session=bg-hard-1 cause=getBackgroundResult
+15:33:19.132 INFO  nebflow.shell - [bg-job-graph] register jobId=b2 instance=04162ff6 session=bg-hard-2 cause=executeBackground
+15:33:25.968 INFO  nebflow.shell - [bg-job-graph] remove jobId=b2 instance=04162ff6 session=bg-hard-2 cause=cancelBackgroundJob
+15:33:25.970 INFO  nebflow.shell - [bg-job-graph] register jobId=b3 instance=7ca45cb2 session=bg-hard-3 cause=executeBackground
+15:33:32.108 WARN  nebflow.shell - Background job b3 stalled 2s after 6s (no output, no CPU) — killing
+15:33:32.487 INFO  nebflow.shell - [bg-job-graph] remove jobId=b3 instance=7ca45cb2 session=bg-hard-3 cause=getBackgroundResult
+nebflow.core.tools.BashBackgroundHardTimeoutSpec:
+  + B-1+B-4: background sleep 3600 killed by injected hard timeout + stuck window 6.328s
+  + B-2: CPU-busy background task survives idle exemption AND hard-timeout stall guard 6.857s
+  + B-3: output-then-stall background task killed after hard timeout + stuck window 6.52s
+15:33:32.501 INFO  nebflow.shell - [bg-job-graph] register jobId=p1 instance=57e7fe9c session=bg-pers-1 cause=executeBackground
+15:33:39.314 INFO  nebflow.shell - [bg-job-graph] remove jobId=p1 instance=57e7fe9c session=bg-pers-1 cause=cancelBackgroundJob
+15:33:39.316 INFO  nebflow.shell - [bg-job-graph] register jobId=p2 instance=402ba3c3 session=bg-pers-2 cause=executeBackground
+15:33:44.422 WARN  nebflow.shell - Background job p2 stalled 2s after 5s (no output, no CPU) — killing
+15:33:44.734 INFO  nebflow.shell - [bg-job-graph] remove jobId=p2 instance=402ba3c3 session=bg-pers-2 cause=getBackgroundResult
+nebflow.core.tools.BashPersistentBgTaskSpec:
+  + P1: persistent background sleep survives injected hard timeout + stall window (server exemption) 6.817s
+  + P2: non-persistent (waiting-type) same params still killed by guard — existing semantics unchanged 5.42s
+  + P3: BashTool inputSchema carries persistent guidance 0.001s
+  + P4: waitingFor matches own + root-scoped tasks, filters persistent 0.002s
+  + P5: markFailed/drainFailures consume-on-read, session-scoped, persists until drained 0.005s
+nebflow.core.tools.BgTaskRegistrySpec:
+  + activeTasksJson groups sub-agent task under rootSessionId, not executor sessionId 0.015s
+  + activeTasksJson falls back to executor sessionId when rootSessionId is empty 0.001s
+  + unregister removes the task from the snapshot (no ghost entries) 0.0s
+  + originFor derives category+label from registering session id prefix 0.001s
+  + activeTasksJson carries origin/originLabel/kind for the origin chip (snapshot path) 0.001s
+  + register defaults keep backward compatibility (origin=nebula, empty label) 0.001s
+  + activeTasksJson carries ownerName on the snapshot path (注册帧与快照同源) 0.0s
+  + activeTasksJson carries outputLines (0 for unbuffered tasks) 0.001s
+  + activeTasksJson outputLines reflects BgTaskOutputStore buffered line count 0.001s
+  + waitingBySession groups own tasks by sessionId (children-rooted stay on the child row) 0.001s
+  + waitingBySession filters persistent (service) tasks out of the waiting set 0.001s
+nebflow.core.tools.BgTaskLedgerSpec:
+  + L1 完成事件落账→pending→消费出账（先落账本再投递的账面；永不蒸发） 0.028s
+  + L2 orphan 登记（cap 孤儿）→ 迟到 completion 原位升级（kind 不降级） 0.005s
+  + L3 竞态保护：已完成的条目不被迟到的 markOrphaned 降级 0.003s
+  + L4 回合尾栅栏（spec ③）：非空集必有栅栏；同集不重发警告；空集清栅栏 0.005s
+  + L5 判重拆分（spec ② 幂等面）：转录命中/在途命中 ⇒ 只消费不重注 0.002s
+  + L6 警告文案（spec ①）：任务数 + id + 描述 + 起止齐全 0.004s
+  + G1 回合尾门（BgTurnEndGate）：非空集 = 栅栏 + 首拍警告；同集 = 仅栅栏 0.005s
+  + G2 回合尾门：空集清栅栏、零警告（正常收尾路径零行为漂移） 0.003s
+  + G3 空 sessionId 全 no-op（无主任务不落账不挂栅栏） 0.001s
+nebflow.core.tools.BgNotifyPayloadSpec:
+  + ①a 完成 payload 含 exit 0、耗时与输出尾段（成功任务一眼可判） 0.001s
+  + ①b 非零退出码照常在（exit 2）且 stderr 段保留 0.001s
+  + ①c 远程腿（无退出码）耗时段仍在、不出现 exit 字样 0.0s
+  + ①d 零输出 = [no output] 占位（悬空冒号形态消灭——作者截图现场） 0.001s
+  + ②a 30 行输出 tail=20：只带末尾 20 行 + 截断标注（总行数 + jobId） 0.003s
+  + ②b 全文落盘面：通知截尾后 BgTaskOutputStore 仍可整段读回（跳全文入口） 0.015s
+  + ②c 行数上限可配置（nebflow.bg.notifyTailLines prop） 0.001s
+  + ③a 失败 payload 含错误尾段与耗时段 0.001s
+  + ③b 失败错误超行数同样截尾标注 0.001s
+  + formatDuration 三档 0.0s
+15:33:44.865 INFO  nebflow.shell - [bg-job-graph] register jobId=n1 instance=15b2293b session=bgcancel-1n cause=executeBackground
+15:33:44.866 INFO  nebflow.shell - [bg-job-graph] register jobId=n2 instance=15b2293b session=bgcancel-1n cause=executeBackground
+15:33:44.866 INFO  nebflow.shell - [bg-job-graph] register jobId=n3 instance=15b2293b session=bgcancel-1n cause=executeBackground
+15:33:44.996 INFO  nebflow.shell - [bg-job-graph] remove jobId=n2 instance=15b2293b session=bgcancel-1n cause=cancelBackgroundJob
+15:33:45.317 INFO  nebflow.shell - [bg-job-graph] remove jobId=n1 instance=15b2293b session=bgcancel-1n cause=cancelBackgroundJob
+15:33:45.638 INFO  nebflow.shell - [bg-job-graph] remove jobId=n3 instance=15b2293b session=bgcancel-1n cause=cancelBackgroundJob
+nebflow.core.tools.BgTaskCancelSpec:
+  + 1/N local：N 条在册杀 1 条——其余存活，帧/留存区/通知到位 0.775s
+  + remote 腿：bg-cancel 传输确认 ⇒ 行取走 + 帧 + 留存区；桩入参精确 (device, jobId) 0.003s
+  + remote 腿：传输 Left ⇒ 整体 Left 且行保留（未落终态） 0.003s
+  + 未知 jobId ⇒ Left（可读）；竞速已终态 ⇒ Left 零双注 0.003s
+nebflow.core.tools.BgTaskOutputDiskSpec:
+  + LogWriter appends lines; bytesWritten counts line bytes (+newline) 0.005s
+  + LogWriter cap: stops writing past the cap and marks persistTruncated 0.002s
+  + meta round-trips (writeMeta/readMeta); missing = None 0.014s
+  + readSlice: offset semantics mirror the in-memory buffer (line-aligned, nextOffset, eof flag) 0.002s
+  + readSlice: missing log = None (meta-only tasks serve empty output at the store layer) 0.001s
+  + sweep keeps the newest N pairs (log+meta deleted together) 0.055s
+  + store round-trip with persistence on: fillRemote lands in memory AND on disk; read falls back to disk after retention miss 0.006s
+  + A1: the truncation marker names the job's output-retention file — absolute, existing, and readable 0.006s
+[M3-evidence] heapBefore=217777KB heapAfter=217873KB heapDelta=96KB outLen=51394 spilledBytes=104857600
+nebflow.core.tools.ShellOutputSpillSpec:
+  + M3: 100MB 输出经 readStream 后堆增长 ≤ 1MB（内存只留滚动尾窗 ≤2000 行 ∧ ≤50KB） 4.898s
+  + M3: 返回给调用方的可见内容 ≤ 256KB 且带截断注记（尾窗 + 全文落盘路径） 0.327s
+  + M3: 小输出逐字节不变（< 64KB 不截断、不落盘，行为与改前一致） 0.06s
+[info] Passed: Total 72, Failed 0, Errors 0, Passed 72
+[success] Total time: 109 s (0:01:49.0), completed 2026年11月4日 15:33:51
+### finished: 2026-11-04 15:33:51 · elapsed=113s

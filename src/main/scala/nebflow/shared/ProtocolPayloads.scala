@@ -32,7 +32,16 @@ final case class Counters(
   /** fp → 曾 L1 终止过的集合（同 fp 复发 → 直接 L2，D3）。 */
   terminatedFps: Set[String] = Set.empty,
   /** fp → 失败过的 turn 集合（S3；该 fp 任一次成功即整条清除）。 */
-  crossTurn: Map[String, Set[String]] = Map.empty
+  crossTurn: Map[String, Set[String]] = Map.empty,
+  /**
+   * T3（bash overhaul 2026-11-04）：同 fp 的 **非 Work** 类调用（LoopGuard
+   * 的 `CallKind.Query` / `CallKind.Wait`）连续计数。纯**正向指标**数据面——
+   * 只在恰达 `LoopGuard.Config.queryWarnAfter` 时发一次 L0 nudge，不参与任何
+   * Terminate/Freeze 判据（失败照旧走 S1/S3 的 streakFp/streakCount）。
+   * turn 边界与 R-call 连续计数一起归零。
+   */
+  lastNonWorkFp: String = "",
+  lastNonWorkCount: Int = 0
 ):
   /** AgentControl list 的 loop×N 展示值（两路连续计数的较大者）。 */
   def repeatStreak: Int = math.max(lastCallCount, lastTextCount)
