@@ -743,31 +743,41 @@ const SWIPE_SWITCH_PX = 48;
 //   · |k|=2 = ±190px：被环带 mask 咬掉 + 曲线归零 = 读作已绕到圈外
 //     （.is-far 零透明零命中）；
 //   · 露出半径 RING_VISIBLE = 1 —— 环带净宽只容得下「中签 + 左右各一枚邻签」。
-const RING_DX1 = 95;
+const RING_DX1 = 93.5;
 const RING_VISIBLE = 1;
-// 宽度档住 CSS（唯一视觉源）：两侧签 `.mf-strip-chip` max-width 68px、中签
+// 宽度档住 CSS（唯一视觉源）：两侧签 `.mf-strip-chip` max-width 66px、中签
 // `.mf-strip-chip.on` max-width 112px —— JS 只给 scale，不改宽，两者相乘才是
-// 渲染宽度（中签 112×1.14 = 127.7 / 邻签 68×0.80 = 54.4）。
+// 渲染宽度（中签 112×1.10 = 123.2 / 邻签 66×0.87 = 57.4）。
 // 连续曲线（作者令「越到边缘越模糊」+「不用…号」）：三条量全按 t = min(|k|,2)/2
 // ∈ [0,1] 连续单调取值，不再分三档跳；k 取整数，故实际采样点 = |k| 0/1/2，
 // 其余行只为证明曲线连续（拖动换签的过渡帧即落在这些 t 上）。
-//   t   |k|   scale           opacity        blur
-//   0    0    1.140           1.000          0.00px   ← 中签
-//   0.25 0.5  0.958           0.841          0.19px
-//   0.5  1    0.800           0.660          0.70px   ← 邻签（唯一可见的非中签）
-//   0.75 1.5  0.674           0.435          1.51px
-//   1    2    0.600           0.000          2.60px   ← 与 .is-far 的无缝点
-// 三条曲线（指数取值的由来）：scale 用 (1−t)^1.43 使邻签落 0.80（旧 0.82，
-// 略小一档让中签的「稍微大一点」可读）；op 用 (1−t)^0.6 —— 指数 < 1 ⇒ 前段
-// 掉得陡、后段收敛，邻签 0.66（旧 0.78）仍清晰可辨，|k|≥2 归零衔接 .is-far；
-// blur 用 t^1.9 —— 指数 > 1 ⇒ 起手温柔（邻签仅 0.70px，不糊字）、边缘陡增
-// （2.60px 糊成一团 = 「直接模糊隐藏」的读感）。三条全单调 ⇒ 越靠边越淡越糊。
-const RING_SCALE_ON = 1.14;      // 中签缩径（旧 1.0 —— 作者令「中间的稍微大一点」）
+//   t   |k|   scale           opacity        blur        rotY
+//   0    0    1.100           1.000          0.00px      0.0°
+//   0.25 0.5  0.988           0.951          0.10px      −12.0°
+//   0.5  1    0.870           0.901          0.40px      −24.0°  ← 邻签（唯一可见的非中签）
+//   0.75 1.5  0.735           0.772          1.05px      −36.0°
+//   1    2    0.600           0.000          2.40px      −48.0°  ← 与 .is-far 的无缝点
+// 三条曲线（**可读字批 2026-11-03 12:59 作者令**重定 —— 「两边的标签尽量能清晰
+// 显现」+「切换要有旋转感」）：
+//   · scale 用 (1−t)^0.889：邻签 0.87（旧 0.80）—— 字号档 × 0.87 ≥13px 可读
+//     下限（基档 --mfs-sub 15 ⇒ 13.05px 有效），|k|≥2 仍触底 0.60 保轨迹连续；
+//   · op 用 (1−t)^0.15：邻签 0.901（旧 0.66 —— 作者判「近乎不可见」的根因面）——
+//     指数 < 0.2 ⇒ 前段几乎平坦（邻签保持全可见），只在 |k| 1→2 的最后一段
+//     陡降到 0，与 .is-far 无缝衔接（可见集恒 = |k| ≤ 1）；
+//   · blur 用 t^2.6（MAX 2.40）：邻签 0.40px（旧 0.70 —— 糊字半边来源），
+//     边缘 2.40px 仍「糊成一团」＝越靠边越糊的读感保留；
+//   · rotY = −24°·k：**转盘位姿**（见 layoutRing 的 --rrot）。环是横向圆环，
+//     邻签绕圆心转到侧面 ⇒ 环绕 Y 轴转 24°（左邻右缘退到纸面里、右邻对称），
+//     换签时 k 变动 ⇒ 位移 + 缩径 + 旋转三者同步插值 = 「转盘转过去」的动效
+//     （纯淡入淡出被否 —— 作者令「不要纯淡入淡出」）。
+const RING_SCALE_ON = 1.10;      // 中签缩径（旧 1.14：与邻签 0.87 的宽度差仍 >2×）
 const RING_SCALE_MIN = 0.60;     // 环外下限（|k| ≥ 2）
-const RING_SCALE_POW = 1.4327;   // s = MIN + (ON − MIN)·(1−t)^P ⇒ |k|=1 恰 0.800
-const RING_OP_POW = 0.60;        // op = (1−t)^P ⇒ |k|=1 0.660、|k|=2 恰 0
-const RING_BLUR_MAX = 2.60;      // blur = MAX·t^P ⇒ |k|=1 0.70px、|k|=2 2.60px
-const RING_BLUR_POW = 1.9;
+const RING_SCALE_POW = 0.889;    // s = MIN + (ON − MIN)·(1−t)^P ⇒ |k|=1 恰 0.870
+const RING_OP_POW = 0.15;        // op = (1−t)^P ⇒ |k|=1 0.901、|k|=2 恰 0
+const RING_BLUR_MAX = 2.40;      // blur = MAX·t^P ⇒ |k|=1 0.40px、|k|=2 2.40px
+const RING_BLUR_POW = 2.6;
+/** 邻签绕 Y 轴转角（转盘位姿；单位 °，符号 = 环形偏移 k 的负值）。 */
+const RING_ROT_Y_DEG = 24;
 
 // ── 底部小点指示器（作者令：1 个标签不显示 / 2 个起显示 / 最多 3 点）──────
 // 省略策略（申报，批文档 §3「小点数量规则」）：n > 3 时点数**恒为 3**，点位 =
@@ -958,6 +968,11 @@ function layoutRing() {
     el.style.setProperty('--rsc', p.s.toFixed(3));
     el.style.setProperty('--rop', p.op.toFixed(2));
     el.style.setProperty('--rbl', `${p.blur.toFixed(2)}px`);
+    /* 转盘位姿（可读字批 2026-11-03）：邻签绕 Y 轴 −24°×k —— 环是横向圆环，
+       邻签绕到圆心侧面 ⇒ 左邻右缘退进纸面、右邻对称；换签时 k 变 ⇒ 位移 +
+       缩径 + 旋转同步插值（CSS transform 过渡）＝「转盘转过去」。中签 k=0
+       恒 0°（正面朝向读者，不受透视变形 ⇒ 文字恒正）。 */
+    el.style.setProperty('--rrot', `${(-RING_ROT_Y_DEG * k).toFixed(1)}deg`);
     el.classList.toggle('on', k === 0);
     el.classList.toggle('is-far', Math.abs(k) > RING_VISIBLE);
     /* 胶囊边缘渐隐批（作者令 2026-11-02 21:47 §一）：**朝中心一侧清晰、朝外
@@ -967,7 +982,11 @@ function layoutRing() {
        只用视觉层（mask），不动 DOM 文本 ⇒ 读屏/title 拿到的仍是全名。 */
     el.classList.toggle('side-l', k < 0);
     el.classList.toggle('side-r', k > 0);
-    el.style.setProperty('--rfade', `${Math.min(1, Math.abs(k)) * 55}%`);
+    /* 可读字批（2026-11-03 12:59 作者令「希望两边标签的文字尽量能清晰显现」）：
+       朝外渐隐带宽 55% → 18% —— 旧值把邻签朝外半边**连同文字**整块吃掉（作者
+       实拍「2026…」近乎不可见的主因之一）；18% 只羽化最外缘（约 10px），文字
+       主体恒实色，与字色档（--ds-text）/不透明度 0.901 三件一起构成 ≥4.5:1。 */
+    el.style.setProperty('--rfade', `${Math.min(1, Math.abs(k)) * 18}%`);
     el.setAttribute('aria-selected', k === 0 ? 'true' : 'false');
     el.tabIndex = Math.abs(k) <= 1 ? 0 : -1;
   }
@@ -1405,6 +1424,19 @@ function mountDeckSnapNode(slot, node, srcW, kind) {
   const slotW = Math.max(1, slot.clientWidth || (deckUI ? deckCardW() : 320));
   if (kind === 'img') {
     /** @type {HTMLElement} */ (node).classList.add('mf-deck-snap-img');
+    /* 图片快照腿的几何单源 = 槽盒（CSS `.mf-deck-snap[data-kind="img"]
+       .mf-deck-snap-inner { inset:0 }` ⇒ img 的 100%/100% + object-fit:contain
+       有确定盒可解 = 按槽宽等比铺满、高受限时居中留白）。
+       但克隆节点带的是**阅读面当时的内联变换**（viewers/image.js 的
+       `translate(tx,ty) scale(s)`）—— 那是「按阅读视口算的适屏比」，原样带进
+       卡槽就是作者实拍的「缩略图缩成中间一小块四周全白」（实测渲染宽 = 槽宽
+       的 0.349 = 旧 fit 的 s 值，不是槽盒几何）。故此处必须掐掉内联几何：
+       卡面是**只读缩放面**，视觉尺寸只由槽盒决定，与源视口的缩放态无关。 */
+    const imgEl = /** @type {HTMLElement} */ (node);
+    imgEl.style.transform = '';
+    imgEl.style.transformOrigin = '';
+    imgEl.style.width = '';
+    imgEl.style.height = '';
     inner.appendChild(node);
   } else {
     const k = srcW > 0 ? slotW / srcW : 1;
