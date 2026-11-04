@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<!-- fm-media-bubble harness — 社交通道（`.fm-` 面）**媒体气泡 vs 文字气泡**取证夹具
+     （作者令 2026-11-04 16:39「社交窗口对话 气泡颜色不统一 应该和文字的气泡一个颜色」）。
+
+     纪律（本夹具的全部存在理由）：
+       ① **不复制、不内联手写任何颜色/圆角/阴影**——所有被读的 computed 值必须来自
+          仓库里真实出货的 CSS。本页只负责「结构 + 载入次序」。
+       ② CSS 载入次序逐条照 src/main/resources/web/index.html 的真实次序（相对序）：
+          base(50) → chat(53) → friends(68) → design-system(109) → sapphire(110)
+          → glass(116)。同特异性时后载者胜 ⇒ 次序错会假绿/假红，故必须照抄。
+       ③ DOM 结构逐类名对齐 messages.js / popArtifacts.js 的**真实渲染出口**：
+          · 消息行 bubbleEl()            messages.js:3157-3190  `.fm-msg.out|.in`
+            > `.fm-msg-bubble`（泡）+ 兄弟 `.fm-att-list`（卡区，卡不在泡内）
+          · 平面媒体附件 buildMediaAttachmentCard()  messages.js:2011-2033
+            `.fm-att.fm-att-<kind>.fm-att-media > .pop-media-flat`
+            > `.pop-media > img.pop-img` + 角标 `.pop-media-canvas`（popArtifacts.js:935-948 / 572）
+          · 叠卡 buildMediaStackGroup()  messages.js:2056-2086
+            `.fm-att.fm-att-stack > .pop-stack-area.ds-media-stack`
+            > `.pill` + `.pop-stack-view > .media-layer.{layer-front,mid,back}`
+            （层类口服 = popArtifacts.js:758-759）
+          · 文件卡 buildFileAttachmentCard()  messages.js:2093-2117
+            `div.file-card.fm-att.fm-att-<kind> > .fc-icon + .fc-meta(.fc-name/.fc-sub)` + 尾键 `.fm-att-dl`
+          · 失败态 markMediaFailed()  popArtifacts.js:302-310 —— `.pop-img.nf-img-failed`
+            + 注记行 `.nf-media-failed-note` 挂在**元素父节点**（= `.pop-media`）
+       ④ 一页四种媒体形态 × 出/入双向，每向**并排一份同向文字气泡作对照基准**：
+          ① 单图 `.pop-media-flat`
+          ② 文件卡 `.file-card`（chip 族，非气泡族 —— 判据见 spec 的「差异项」字段）
+          ③ 多图并列 `.pop-stack-view`（前卡 + 中/背两层 peek）
+          ④ 未加载占位（无字节 `.pop-img`）+ 加载失败态（`.nf-img-failed`）
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>fm-media-bubble harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/friends.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/design-system.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/sapphire.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/glass.css">
+  <style>
+    /* 仅应用外壳的**定位**替身（真实 app 把消息列放在窗口中央）。此处刻意
+       零颜色/零圆角/零阴影声明——凡被读取的外观值都必须来自上面六张真表。 */
+    html, body { margin: 0; }
+    #fm-shell {
+      width: 680px;
+      max-width: 100vw;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      padding-bottom: 24px;
+    }
+    /* 取证页需要「一页到底」的静态渲染：真实 app 的 `.fm-flow`（friends.css:993-1001）
+       是 `flex:1; overflow-y:auto` 的内滚容器 ⇒ 内容超出视口即被裁，整页截图只能拿到
+       首屏那两种形态。此处只解除**滚动与伸展**这一个布局开关（零颜色/零圆角/零阴影），
+       让四种形态 + 出/入双向同时可见。 */
+    .fm-flow { overflow: visible; flex: none; }
+  </style>
+</head>
+<body>
+<div id="fm-shell">
+  <!-- ═══════════ 出向 .fm-msg.out ═══════════ -->
+  <div class="fm-flow" data-probe="flow">
+    <div class="fm-flow-status">▼ 出向 out · 文字气泡基准（本向对照）</div>
+
+    <!-- 基准：出向文字气泡 -->
+    <div class="fm-msg out" data-probe-row="out-text">
+      <div class="fm-msg-bubble" data-probe="out-text">对照基准：出向文字气泡</div>
+    </div>
+
+    <div class="fm-flow-status">① 单图 .pop-media-flat</div>
+    <!-- ① 单图平面媒体卡（messages.js:2011 buildMediaAttachmentCard） -->
+    <div class="fm-msg out fm-msg-atts" data-probe-row="out-flat">
+      <div class="fm-att-list">
+        <div class="fm-att fm-att-ready fm-att-media" data-att-state="ready">
+          <div class="pop-media-flat" data-probe="out-flat">
+            <div class="pop-media"><img class="pop-img" alt="IMG_1711.png" draggable="false"></div>
+            <button type="button" class="fm-att-dl pop-media-canvas msg-copy msg-dl" data-probe="out-canvas" aria-label="下载"></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fm-flow-status">② 文件卡 .file-card（chip 族）</div>
+    <!-- ② 文件卡（messages.js:2093 buildFileAttachmentCard → popArtifacts:966 buildFileCard） -->
+    <div class="fm-msg out fm-msg-atts" data-probe-row="out-file">
+      <div class="fm-att-list">
+        <div class="file-card fm-att fm-att-ready fm-att-previewable" data-probe="out-file" role="button" tabindex="0">
+          <div class="fc-icon pdf" aria-hidden="true">PDF</div>
+          <div class="fc-meta">
+            <div class="fc-name">季度报告.pdf</div>
+            <div class="fc-sub">PDF · 1.2 MB</div>
+          </div>
+          <button type="button" class="fm-att-dl msg-copy msg-dl" aria-label="下载"></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="fm-flow-status">③ 多图并列 .pop-stack-view（前卡 + 中/背 peek）</div>
+    <!-- ③ 叠卡（messages.js:2056 buildMediaStackGroup → popArtifacts:671-736 buildMediaStack） -->
+    <div class="fm-msg out fm-msg-atts" data-probe-row="out-stack">
+      <div class="fm-att-list">
+        <div class="fm-att fm-att-stack" data-att-state="ready">
+          <div class="pop-stack-area ds-media-stack">
+            <button type="button" class="pill ds-media-stack__pill">展开 3</button>
+            <div class="pop-stack-view ds-media-stack__view">
+              <div class="media-layer ds-media-card layer-back" data-probe="out-stack-back">
+                <div class="pop-media"><img class="pop-img" alt="IMG_1709.png" draggable="false"></div>
+              </div>
+              <div class="media-layer ds-media-card layer-mid" data-probe="out-stack-mid">
+                <div class="pop-media"><img class="pop-img" alt="IMG_1710.png" draggable="false"></div>
+              </div>
+              <div class="media-layer ds-media-card layer-front" data-probe="out-stack-front">
+                <div class="pop-media"><img class="pop-img" alt="IMG_1711.png" draggable="false"></div>
+              </div>
+            </div>
+            <div class="pop-expand-view ds-media-stack__expand"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fm-flow-status">④ 未加载占位 / 加载失败 .nf-img-failed</div>
+    <!-- ④ 未加载占位（无字节 .pop-img）+ 失败态（.nf-img-failed + 注记行） -->
+    <div class="fm-msg out fm-msg-atts" data-probe-row="out-pending">
+      <div class="fm-att-list">
+        <div class="fm-att fm-att-uploading fm-att-media" data-att-state="uploading">
+          <div class="pop-media-flat" data-probe="out-pending">
+            <div class="pop-media"><img class="pop-img" data-no-bytes alt="" draggable="false"></div>
+          </div>
+        </div>
+        <div class="fm-att fm-att-unreadable fm-att-media" data-att-state="unreadable">
+          <div class="pop-media-flat" data-probe="out-failed">
+            <div class="pop-media">
+              <img class="pop-img nf-img-failed" alt="IMG_0001.png" draggable="false">
+              <div class="nf-media-failed-note">IMG_0001.png · 字节未到达</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ 入向 .fm-msg.in ═══════════ -->
+  <div class="fm-flow" data-probe="flow-in">
+    <div class="fm-flow-status">▼ 入向 in · 文字气泡基准（本向对照）</div>
+
+    <div class="fm-msg in" data-probe-row="in-text">
+      <div class="fm-msg-bubble" data-probe="in-text">对照基准：入向文字气泡</div>
+    </div>
+
+    <div class="fm-flow-status">① 单图 .pop-media-flat</div>
+    <div class="fm-msg in fm-msg-atts" data-probe-row="in-flat">
+      <div class="fm-att-list">
+        <div class="fm-att fm-att-ready fm-att-media" data-att-state="ready">
+          <div class="pop-media-flat" data-probe="in-flat">
+            <div class="pop-media"><img class="pop-img" alt="IMG_1713.png" draggable="false"></div>
+            <button type="button" class="fm-att-dl pop-media-canvas msg-copy msg-dl" data-probe="in-canvas" aria-label="下载"></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fm-flow-status">② 文件卡 .file-card（chip 族）</div>
+    <div class="fm-msg in fm-msg-atts" data-probe-row="in-file">
+      <div class="fm-att-list">
+        <div class="file-card fm-att fm-att-ready fm-att-previewable" data-probe="in-file" role="button" tabindex="0">
+          <div class="fc-icon md" aria-hidden="true">MD</div>
+          <div class="fc-meta">
+            <div class="fc-name">周报-第45周.md</div>
+            <div class="fc-sub">MD · 8.4 KB</div>
+          </div>
+          <button type="button" class="fm-att-dl msg-copy msg-dl" aria-label="下载"></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="fm-flow-status">③ 多图并列 .pop-stack-view（前卡 + 中/背 peek）</div>
+    <div class="fm-msg in fm-msg-atts" data-probe-row="in-stack">
+      <div class="fm-att-list">
+        <div class="fm-att fm-att-stack" data-att-state="ready">
+          <div class="pop-stack-area ds-media-stack">
+            <button type="button" class="pill ds-media-stack__pill">展开 3</button>
+            <div class="pop-stack-view ds-media-stack__view">
+              <div class="media-layer ds-media-card layer-back" data-probe="in-stack-back">
+                <div class="pop-media"><img class="pop-img" alt="IMG_1714.png" draggable="false"></div>
+              </div>
+              <div class="media-layer ds-media-card layer-mid" data-probe="in-stack-mid">
+                <div class="pop-media"><img class="pop-img" alt="IMG_1715.png" draggable="false"></div>
+              </div>
+              <div class="media-layer ds-media-card layer-front" data-probe="in-stack-front">
+                <div class="pop-media"><img class="pop-img" alt="IMG_1716.png" draggable="false"></div>
+              </div>
+            </div>
+            <div class="pop-expand-view ds-media-stack__expand"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="fm-flow-status">④ 未加载占位 / 加载失败 .nf-img-failed</div>
+    <div class="fm-msg in fm-msg-atts" data-probe-row="in-pending">
+      <div class="fm-att-list">
+        <div class="fm-att fm-att-uploading fm-att-media" data-att-state="uploading">
+          <div class="pop-media-flat" data-probe="in-pending">
+            <div class="pop-media"><img class="pop-img" data-no-bytes alt="" draggable="false"></div>
+          </div>
+        </div>
+        <div class="fm-att fm-att-unreadable fm-att-media" data-att-state="unreadable">
+          <div class="pop-media-flat" data-probe="in-failed">
+            <div class="pop-media">
+              <img class="pop-img nf-img-failed" alt="IMG_0002.png" draggable="false">
+              <div class="nf-media-failed-note">IMG_0002.png · 字节未到达</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  // 已到达字节的媒体面：给 `<img>` 一个**真实解码成功**的字节源 = 1×1 全透明 SVG。
+  // 两个理由：① 无 src 的 `<img>` 在 Chromium 里画「破图图标 + alt 文本」，会污染整页
+  // 截图；② 全透明内容让**容器底色**原样透出——正对上位设计口径「媒体元素自身
+  // background:transparent，容器底色承载气泡色」（chat.css:4939-4942 / 4945-4953）。
+  // 未加载占位（`[data-no-bytes]`）与失败态（`.nf-img-failed`）刻意不赋 src = 真实两态。
+  const PX = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'></svg>";
+  document.querySelectorAll('img.pop-img').forEach((el) => {
+    if (el.hasAttribute('data-no-bytes') || el.classList.contains('nf-img-failed')) return;
+    el.alt = '';
+    el.src = PX;
+  });
+</script>
+</body>
+</html>
