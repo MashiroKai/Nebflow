@@ -1579,6 +1579,10 @@ export default {
   // mirrors aria-expanded (collapsed state echoes the count).
   'chat.toolExpandMore': 'Expand all {n} lines',
   'chat.toolCollapse': 'Collapse',
+  // Tool-card image ref chip (tool-card-image-face batch, 2026-11-04): a tool
+  // card is a summary face — images fold into a "🖼 N image(s)" reference that
+  // opens the lightbox; never rendered inline.
+  'chat.toolImgRef': '🖼 {n} image(s)',
   // pop-upgrade batch (2026-10-03): Pop artifact faces (media stack / file cards)
   'chat.popExpand': 'Expand {n}',
   'chat.popCollapse': 'Collapse',
