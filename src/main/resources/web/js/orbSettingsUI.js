@@ -120,7 +120,7 @@ export function renderAppearanceSection() {
         <span class="cfg-hint">${t('settings.appearance.preview')}</span>
       </div>
     </div>
-    <div style="margin-top:8px">
+    <div style="margin-top:var(--ds-space-2)">
       <button class="cfg-btn" id="orb-appearance-reset">${t('settings.appearance.reset')}</button>
     </div>
   </div>`;

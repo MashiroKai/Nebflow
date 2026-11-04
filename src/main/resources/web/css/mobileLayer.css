@@ -526,8 +526,8 @@ body.mobile-layer .mh-chrome-badge {
   right: -4px;
   min-width: 16px;
   height: 16px;
-  padding: 0 4px;
-  border-radius: 999px;
+  padding: 0 var(--ds-space-1);
+  border-radius: var(--ds-radius-pill);
   background: var(--status-word);
   color: var(--ds-ink-inverse);
   font-size: var(--mfs-min);
@@ -571,7 +571,7 @@ body.mobile-layer #mobile-dock {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   align-items: stretch;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
   backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
@@ -581,14 +581,14 @@ body.mobile-layer #mobile-dock {
 body.mobile-layer .dock-key {
   position: relative;
   min-width: 0;
-  padding: 6px 2px 4px;
+  padding: var(--ds-space-1h) var(--ds-space-half) var(--ds-space-1);
   border: none;
   background: none;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: var(--ds-space-half);
   color: var(--color-frame-text-muted);
   cursor: pointer;
   touch-action: manipulation;
@@ -633,7 +633,7 @@ body.mobile-layer .dock-key.active .dock-label { font-weight: 600; }
    ⇒ 描边收进 44px 足印内，中键外径/dock 胶囊几何零变化。 */
 body.mobile-layer .dock-key.dock-key-center {
   justify-content: center;
-  padding: 2px;
+  padding: var(--ds-space-half);
 }
 body.mobile-layer .dock-key.dock-key-center .dock-center {
   flex: none;
@@ -732,8 +732,8 @@ body.mobile-layer .dock-badge.is-count {
   width: auto;
   height: 16px;
   min-width: 16px;
-  padding: 0 4px;
-  border-radius: 999px;
+  padding: 0 var(--ds-space-1);
+  border-radius: var(--ds-radius-pill);
   box-sizing: border-box;
   display: flex;          /* 居中不靠 line-height：描边吃掉盒高后仍垂直居中 */
   align-items: center;
@@ -1103,8 +1103,8 @@ body.mobile-layer .mh-tpanel[hidden] { display: none; }
 body.mobile-layer .mh-tpanel .tp-hd {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 11px 8px 7px 13px;
+  gap: var(--ds-space-2);
+  padding: 11px var(--ds-space-2) 7px 13px;
   font-size: var(--mfs-callout);
   font-weight: 600;
   color: var(--color-frame-text-bright, var(--color-frame-text));
@@ -1145,10 +1145,10 @@ body.mobile-layer .mh-tpanel .tp-x {
 body.mobile-layer .mh-tpanel .tp-x svg { width: 13px; height: 13px; }
 body.mobile-layer .mh-tpanel .tp-bd {
   overflow-y: auto;
-  padding: 0 10px 12px;
+  padding: 0 var(--ds-space-glass-x) var(--ds-space-3);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   scrollbar-width: none;
 }
 body.mobile-layer .mh-tpanel .tp-bd::-webkit-scrollbar { display: none; }
@@ -1157,27 +1157,27 @@ body.mobile-layer .mh-tpanel .tp-grp {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-frame-text-muted);
-  padding: 7px 4px 1px;
+  padding: 7px var(--ds-space-1) 1px;
   flex: none;
 }
 body.mobile-layer .mh-tpanel .tp-empty {
   font-size: var(--mfs-min);
   color: var(--color-frame-text-muted);
-  padding: 18px 6px;
+  padding: 18px var(--ds-space-1h);
   text-align: center;
 }
 body.mobile-layer .mh-tpanel .tp-card {
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
-  border-radius: 12px;
-  padding: 8px 10px;
+  border-radius: var(--ds-radius-xl);
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
   flex: none;
 }
 body.mobile-layer .mh-tpanel .tp-card.tp-static { cursor: default; }
 body.mobile-layer .mh-tpanel .tp-c-hd {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   font-size: var(--mfs-callout);
   color: var(--color-text);
   min-width: 0;
@@ -1212,10 +1212,10 @@ body.mobile-layer .mh-tpanel .tp-word {
 }
 /* ⑤ 成员预览：运行中卡限 2 行 + 「+n」 */
 body.mobile-layer .mh-tpanel .tp-members {
-  margin: 6px 0 0 16px;
+  margin: var(--ds-space-1h) 0 0 var(--ds-space-4);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ds-space-1);
 }
 body.mobile-layer .mh-tpanel .tp-mem {
   display: flex;
@@ -1334,12 +1334,12 @@ body.mobile-layer #mh-search-kind {
   width: 100%;
   height: 30px;
   font-size: var(--mfs-min);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
 }
 /* 说明/空态脚注（面板底缘；11px muted，安全区兜底）。 */
 body.mobile-layer .mh-search-foot {
   flex: none;
-  padding: 8px 14px calc(8px + env(safe-area-inset-bottom, 0px));
+  padding: var(--ds-space-2) 14px calc(8px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--glass-border);
   font-size: var(--mfs-min);
   line-height: 1.5;
@@ -1349,9 +1349,9 @@ body.mobile-layer .mh-search-foot {
 body.mobile-layer #search-modal .search-result {
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
-  border-radius: 12px;
-  padding: 8px 10px;
-  margin-bottom: 6px;
+  border-radius: var(--ds-radius-xl);
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  margin-bottom: var(--ds-space-1h);
 }
 /* 登录墙卡：内容面宽安全边距。 */
 body.mobile-layer .nebflow-login-modal {
@@ -1364,7 +1364,7 @@ body.mobile-layer .mh-rd-grp {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-frame-text-muted);
-  padding: 7px 4px 1px;
+  padding: 7px var(--ds-space-1) 1px;
   flex: none;
 }
 body.mobile-layer .reminder-row.disabled { opacity: 0.72; }
@@ -1372,7 +1372,7 @@ body.mobile-layer .reminder-row.disabled { opacity: 0.72; }
 /* P4 心跳进程：进程行两行化（308→全宽下仍适用：动作钮换行尾对齐）。 */
 body.mobile-layer #daemon-panel .daemon-row {
   flex-wrap: wrap;
-  row-gap: 4px;
+  row-gap: var(--ds-space-1);
 }
 body.mobile-layer #daemon-panel .daemon-info {
   flex: 1 1 calc(100% - 92px);
@@ -1394,7 +1394,7 @@ body.mobile-layer #daemon-panel .daemon-command {
 }
 /* 脚注（daemonFace.js 填 .daemon-panel-footer）。 */
 body.mobile-layer .mh-daemon-foot {
-  padding: 8px 14px calc(8px + env(safe-area-inset-bottom, 0px));
+  padding: var(--ds-space-2) 14px calc(8px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--glass-border);
   font-size: var(--mfs-min);
   line-height: 1.5;
@@ -1415,7 +1415,7 @@ body.mobile-layer #bg-dropdown .bg-dropdown-list {
   min-height: 0;
 }
 body.mobile-layer #bg-dropdown .bg-task-row {
-  padding: 6px 12px;
+  padding: var(--ds-space-1h) var(--ds-space-3);
 }
 /* 面板树批（2026-10-29 ①）：手机密度行的派生树缩进——双类锚压过上行单类密度
    简写；缩进宽档（18px > 基线 12px）+ 左引导竖线（chat.css 桌面形 2px 原样生效）。 */
@@ -1423,7 +1423,7 @@ body.mobile-layer #bg-dropdown .bg-task-row.bg-task-row-child {
   padding-left: 18px;
 }
 body.mobile-layer #bg-dropdown .bg-dropdown-empty {
-  padding: 10px 12px;
+  padding: var(--ds-space-glass-x) var(--ds-space-3);
 }
 /* 面板分区批（2026-10-29 ③ · 作者报障「后台任务和子智能体混在一起」）：手机端
    两节升格为**两张内嵌卡**——玻璃载体（morph 形变面）内各节独立卡面（边界 +
@@ -1433,12 +1433,12 @@ body.mobile-layer #bg-dropdown .bg-dropdown-empty {
 body.mobile-layer #bg-dropdown .bg-section {
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
-  border-radius: 12px;
-  margin: 6px;
+  border-radius: var(--ds-radius-xl);
+  margin: var(--ds-space-1h);
   overflow: hidden;
 }
 body.mobile-layer #bg-dropdown .mh-bg-grp {
-  padding: 6px 12px 2px;
+  padding: var(--ds-space-1h) var(--ds-space-3) var(--ds-space-half);
   border-top: none;
 }
 body.mobile-layer #bg-dropdown [hidden] { display: none; }
@@ -1485,7 +1485,7 @@ body.mobile-layer #memory-modal .ap-pane {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 4px 4px 10px;
+  padding: var(--ds-space-1) var(--ds-space-1) var(--ds-space-glass-x);
   scrollbar-width: none;
 }
 body.mobile-layer #memory-modal .ap-pane::-webkit-scrollbar { display: none; }
@@ -1499,7 +1499,7 @@ body.mobile-layer #memory-modal .ap-pane .ap-avatar-box .agent-avatar-stand-logo
 body.mobile-layer .mh-memory-edit {
   margin-left: auto;
   height: 26px;
-  padding: 0 12px;
+  padding: 0 var(--ds-space-3);
   border-radius: 13px;
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
@@ -1513,17 +1513,17 @@ body.mobile-layer .mh-memory-cards {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 6px 10px 12px;
+  padding: var(--ds-space-1h) var(--ds-space-glass-x) var(--ds-space-3);
   scrollbar-width: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 body.mobile-layer .mh-memory-cards::-webkit-scrollbar { display: none; }
 body.mobile-layer .mh-memory-card {
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   padding: 9px 11px;
 }
 body.mobile-layer .mh-memory-card-title {
@@ -1552,7 +1552,7 @@ body.mobile-layer .mh-memory-card-foot {
   font-variant-numeric: tabular-nums;
 }
 body.mobile-layer .mh-memory-empty {
-  padding: 24px 8px;
+  padding: var(--ds-space-6) var(--ds-space-2);
   text-align: center;
   font-size: var(--mfs-min);
   color: var(--color-frame-text-muted);
@@ -1691,7 +1691,7 @@ body.mobile-layer .mf-strip-chip {
   max-width: 66px;
   height: 32px;
   padding: 0 var(--mpad-x);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   /* 宿主零描边零底（渐隐热区修复批）：视觉材质全在 ::after。chip 是 <button>，
      UA 默认 2px outset 黑描边必须显式归零 —— 迁移删掉旧 glass-border 行时若
      不补这条，UA 按钮描边就浮出来（T7 宿主零描边钉抓到过）。 */
@@ -1815,7 +1815,7 @@ body.mobile-layer .mf-strip-chip::before {
   width: max(100%, var(--mhit, 44px));
   height: max(100%, var(--mhit, 44px));
   transform: translate(-50%, -50%) scale(calc(1 / var(--rsc, 1)));
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
 }
 /* 中签（当前签）= **同一枚签放大**，不是另一个组件（作者令 2026-11-02 09:00
    「样式应该要是和两边的统一……不许换底色、加描边」）：本档只给两件事 ——
@@ -2008,7 +2008,7 @@ body.mobile-layer .mf-dots {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   /* 高度单源 = .mf-canvas-page 上的 --mf-dots-h（文件尾「canvas 底部控件浮层带
      批」块）：底部可滚余量要按它算，两处不得各写一把尺。 */
   height: var(--mf-dots-h, 26px);
@@ -2016,8 +2016,8 @@ body.mobile-layer .mf-dots {
      原位（flex 末件 + margin 6/10 = 42px）把文档宿主整体抬高，正是「底部钮
      错行 42px」的根因。定位腿见文件尾块（position/bottom/居中）。 */
   margin: 0;
-  padding: 0 12px;
-  border-radius: 999px;
+  padding: 0 var(--ds-space-3);
+  border-radius: var(--ds-radius-pill);
   border: 1px solid var(--glass-border);
   background: var(--ds-wash-16);
   -webkit-backdrop-filter: blur(10px) saturate(1.2);
@@ -2045,7 +2045,7 @@ body.mobile-layer .mf-dots::before {
   top: 50%;
   height: max(100%, var(--mtap-lg, 48px));
   transform: translateY(-50%);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
 }
 body.mobile-layer .mf-dots.is-grip {
   transform: scale(1.14);
@@ -2169,7 +2169,7 @@ body.mobile-layer .mf-stack-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px 10px;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) var(--ds-space-4) var(--ds-space-glass-x);
 }
 body.mobile-layer .mf-stack-count {
   font-size: var(--mfs-min);
@@ -2186,7 +2186,7 @@ body.mobile-layer .mf-deck {
   z-index: 1;
   flex: 1;
   min-height: 0;
-  margin: 4px 0 calc(16px + env(safe-area-inset-bottom, 0px));
+  margin: var(--ds-space-1) 0 calc(16px + env(safe-area-inset-bottom, 0px));
   touch-action: none;   /* 手势区：横拖换卡 / 纵拖收面或关卡，全部自己接管 */
   overflow: hidden;
   perspective: 1200px;
@@ -2203,7 +2203,7 @@ body.mobile-layer .mf-deck-card {
   height: min(74%, 520px);
   overflow: hidden;
   border: 1px solid var(--card-border);
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   background: var(--card-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
@@ -2233,9 +2233,9 @@ body.mobile-layer .mf-deck-top {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   height: 46px;
-  padding: 0 10px 0 14px;
+  padding: 0 var(--ds-space-glass-x) 0 14px;
   border-bottom: 1px solid var(--th-border);
 }
 body.mobile-layer .mf-deck-icon {
@@ -2322,20 +2322,20 @@ body.mobile-layer .mf-deck-thumb .thumb-page {
   width: 58%; height: 82%;
   background: var(--card-bg);
   border: 1px solid var(--th-border);
-  border-radius: 6px; padding: 12px 14px;
+  border-radius: var(--ds-radius-chip); padding: var(--ds-space-3) 14px;
   box-shadow: var(--ds-shadow-thumb);
 }
-body.mobile-layer .mf-deck-thumb .thumb-page .ln { height: 6px; margin-bottom: 8px; }
+body.mobile-layer .mf-deck-thumb .thumb-page .ln { height: 6px; margin-bottom: var(--ds-space-2); }
 body.mobile-layer .mf-deck-thumb .thumb-flow { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 body.mobile-layer .mf-deck-thumb .thumb-flow svg { width: 78%; height: 68%; color: var(--color-frame-text-muted); }
-body.mobile-layer .mf-deck-thumb .thumb-browser { position: absolute; inset: 0; padding: 10px 12px; }
+body.mobile-layer .mf-deck-thumb .thumb-browser { position: absolute; inset: 0; padding: var(--ds-space-glass-x) var(--ds-space-3); }
 body.mobile-layer .mf-deck-thumb .thumb-browser .bar {
-  height: 16px; border-radius: 6px; background: var(--bar-3);
+  height: 16px; border-radius: var(--ds-radius-chip); background: var(--bar-3);
   border: 1px solid var(--th-border); margin-bottom: 9px;
-  display: flex; align-items: center; gap: 3px; padding: 0 6px;
+  display: flex; align-items: center; gap: 3px; padding: 0 var(--ds-space-1h);
 }
 body.mobile-layer .mf-deck-thumb .thumb-browser .bar i { width: 5px; height: 5px; border-radius: 50%; background: var(--bar-1); display: block; }
-body.mobile-layer .mf-deck-thumb .thumb-browser .blk { height: 18px; border-radius: 4px; background: var(--bar-2); margin-bottom: 7px; }
+body.mobile-layer .mf-deck-thumb .thumb-browser .blk { height: 18px; border-radius: var(--ds-radius-badge); background: var(--bar-2); margin-bottom: 7px; }
 body.mobile-layer .mf-deck-thumb .thumb-browser .blk.b2 { width: 64%; }
 /* ── 真实内容快照（作者令 2026-11-02 21:47 §三「做好各卡片的快照，让堆叠视觉
    能看到卡片内容」，并明确「不是标题占位、是真实内容的缩放」）──────────
@@ -2361,7 +2361,7 @@ body.mobile-layer .mf-deck-snap-inner {
    排出来的正文宽度与归档视觉一致。 */
 body.mobile-layer .mf-deck-snap-inner .canvas-md-viewer {
   max-width: none !important;
-  padding: 16px 20px !important;
+  padding: var(--ds-space-4) var(--ds-space-5);
   background: transparent !important;
 }
 body.mobile-layer .mf-deck-snap-img {
@@ -2421,7 +2421,7 @@ body.mobile-layer .mf-cv-empty {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   color: var(--color-frame-text-muted);
 }
 body.mobile-layer .mf-cv-empty[hidden] { display: none; }
@@ -2469,21 +2469,21 @@ body.mobile-layer #mobile-pages .flowmap-nav-bar .flowmap-back-btn {
    单源），暗档经 --color-surface / --color-text 双档自动解析。 */
 body.mobile-layer .mf-hub {
   flex: none;
-  padding: 14px 14px 8px;
+  padding: 14px 14px var(--ds-space-2);
 }
 body.mobile-layer .mf-hub-label {
   font-size: var(--mfs-min);
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-text-muted);
-  padding: 4px 10px 10px;
+  padding: var(--ds-space-1) var(--ds-space-glass-x) var(--ds-space-glass-x);
 }
 body.mobile-layer .mf-hub-rows {
   display: flex;
   flex-direction: column;
   background: var(--color-surface);
   border: none;
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   overflow: hidden;
   box-shadow: var(--ds-shadow-card);
 }
@@ -2496,9 +2496,9 @@ body.mobile-layer .mf-hub-row {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--ds-space-3);
   min-height: 50px;
-  padding: 0 16px;
+  padding: 0 var(--ds-space-4);
   border: none;
   background: transparent;
   color: var(--color-text);
@@ -2533,12 +2533,12 @@ body.mobile-layer .mf-hub-chev svg { width: 16px; height: 16px; }
 body.mobile-layer .mf-me-entry {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin: 12px 14px 0;
+  gap: var(--ds-space-3);
+  margin: var(--ds-space-3) 14px 0;
   min-height: 64px;
-  padding: 10px 16px;
+  padding: var(--ds-space-glass-x) var(--ds-space-4);
   border: none;
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   background: var(--color-surface);
   box-shadow: var(--ds-shadow-card);
   color: var(--color-text);
@@ -2598,7 +2598,7 @@ body.mobile-layer .mf-me-meta {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-space-half);
 }
 body.mobile-layer .mf-me-name {
   font-size: var(--mfs-body);
@@ -2619,10 +2619,10 @@ body.mobile-layer .mf-me-sub {
 body.mobile-layer .mf-me-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin: 12px 14px 0;
-  padding: 16px;
-  border-radius: 16px;
+  gap: var(--ds-space-3);
+  margin: var(--ds-space-3) 14px 0;
+  padding: var(--ds-space-4);
+  border-radius: var(--ds-radius-card-lg);
   background: var(--color-surface);
   box-shadow: var(--ds-shadow-card);
 }
@@ -2636,13 +2636,13 @@ body.mobile-layer .mf-me-names {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-space-half);
 }
 body.mobile-layer .mf-me-card .mf-me-name { font-size: var(--mfs-body); }
 body.mobile-layer .mf-me-login { flex: none; }
 /* 分组标签与账号行沿用 mf-hub 家族（mf-me-grouplabel 复用 mf-hub-label 口径，
    个人主页分组与 hub 分组视觉同族）。 */
-body.mobile-layer .mf-me-grouplabel { margin: 0 14px; padding-left: 10px; padding-right: 10px; }
+body.mobile-layer .mf-me-grouplabel { margin: 0 14px; padding-left: var(--ds-space-glass-x); padding-right: var(--ds-space-glass-x); }
 /* 个人主页账号行卡（无 .mf-hub 容器兜边距，壳级补 14px 侧距；分组标签紧贴其上）。 */
 body.mobile-layer .mobile-page[data-page="me"] .mf-hub-rows { margin: 0 14px; }
 /* 入口行右值（当前读数，如用户名/绑定的邮箱）。 */
@@ -2656,15 +2656,15 @@ body.mobile-layer .mf-hub-row-val {
   white-space: nowrap;
 }
 /* 层级子页字段行（label + 只读 value；卡与 hairline 同 hub 族）。 */
-body.mobile-layer .mf-me-fields { margin: 12px 14px 0; }
+body.mobile-layer .mf-me-fields { margin: var(--ds-space-3) 14px 0; }
 body.mobile-layer .mf-me-field {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--ds-space-3);
   min-height: 50px;
-  padding: 0 16px;
+  padding: 0 var(--ds-space-4);
   font-size: var(--mfs-body);
   color: var(--color-text);
 }
@@ -2699,10 +2699,10 @@ body.mobile-layer .mf-me-edit {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 12px 14px 0;
-  padding: 12px 16px;
+  margin: var(--ds-space-3) 14px 0;
+  padding: var(--ds-space-3) var(--ds-space-4);
   min-height: 44px; /* 触控最小高档（同 .mf-me-entry 家族） */
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   font-size: var(--mfs-body);
   font-weight: 500;
   cursor: pointer;
@@ -2710,7 +2710,7 @@ body.mobile-layer .mf-me-edit {
 }
 /* 提示文案（账号服务能力口径；件四起 = 「只展示真实读数」）。 */
 body.mobile-layer .mf-me-hint {
-  margin: 12px 24px 0;
+  margin: var(--ds-space-3) var(--ds-space-6) 0;
   font-size: var(--mfs-min);
   line-height: 1.5;
   color: var(--color-text-muted);
@@ -2723,17 +2723,17 @@ body.mobile-layer .mf-social-sealed {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 16px 14px;
+  gap: var(--ds-space-glass-x);
+  padding: var(--ds-space-4) 14px;
 }
 body.mobile-layer .mf-social-sealed-skel {
   height: 56px;
-  border-radius: 14px;
+  border-radius: var(--ds-radius-card-md);
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
 }
 body.mobile-layer .mf-social-sealed-note {
-  margin-top: 10px;
+  margin-top: var(--ds-space-glass-x);
   text-align: center;
   font-size: var(--mfs-sub);
   font-weight: 600;
@@ -2888,7 +2888,7 @@ body.mobile-layer .ask-dock .ds-turn-btn {
    before 78 / after 58）。canvas 页 ask 输入条为独立组件（ask.css .ask-input
    自带几何，与主会话不共组件/几何 token）——按令分开实现先不动。 */
 body.mobile-layer #input-bar {
-  padding: 4px 12px;
+  padding: var(--ds-space-1) var(--ds-space-3);
 }
 body.mobile-layer #mic-orb-wrap {
   margin: -8px 0;
@@ -2947,8 +2947,8 @@ body.mobile-layer #mobile-pages .team-scroll {
   display: flex;
   flex-direction: column;
   flex-wrap: nowrap;
-  gap: 12px;
-  padding: 12px 12px calc(24px + env(safe-area-inset-bottom, 0px));
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-3) var(--ds-space-3) calc(24px + env(safe-area-inset-bottom, 0px));
 }
 body.mobile-layer #mobile-pages .team-scroll::-webkit-scrollbar { display: none; }
 body.mobile-layer #mobile-pages .team-card.project-card {
@@ -2956,16 +2956,16 @@ body.mobile-layer #mobile-pages .team-card.project-card {
   max-width: none;
   margin: 0;
   flex: 0 0 auto;
-  border-radius: 16px;
-  padding: 10px 14px;
+  border-radius: var(--ds-radius-card-lg);
+  padding: var(--ds-space-glass-x) 14px;
 }
 body.mobile-layer #mobile-pages .team-card.project-card .team-card-header {
-  padding: 2px 0 8px;
+  padding: var(--ds-space-half) 0 var(--ds-space-2);
 }
 body.mobile-layer #mobile-pages .team-card-title {
   font-size: var(--mfs-sub);
   font-weight: 600;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 body.mobile-layer #mobile-pages .project-card-name {
   overflow: hidden;
@@ -2974,16 +2974,16 @@ body.mobile-layer #mobile-pages .project-card-name {
 }
 body.mobile-layer #mobile-pages .team-card-summary {
   font-size: var(--mfs-sub);
-  margin-top: 4px;
+  margin-top: var(--ds-space-1);
 }
 body.mobile-layer #mobile-pages .project-fields {
   gap: 5px;
-  margin-top: 8px;
-  padding-top: 8px;
+  margin-top: var(--ds-space-2);
+  padding-top: var(--ds-space-2);
 }
 body.mobile-layer #mobile-pages .project-field {
   font-size: var(--mfs-sub);
-  gap: 8px;
+  gap: var(--ds-space-2);
   min-width: 0;
 }
 body.mobile-layer #mobile-pages .project-field-value {
@@ -3000,8 +3000,8 @@ body.mobile-layer #mobile-pages .wiki-graph-pane {
 }
 body.mobile-layer #mobile-pages .wiki-toolbar {
   flex-wrap: nowrap;
-  gap: 6px;
-  padding: 8px 12px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-2) var(--ds-space-3);
 }
 body.mobile-layer #mobile-pages .wiki-toolbar-search {
   flex: 1;
@@ -3025,18 +3025,18 @@ body.mobile-layer #mobile-pages .wx-zoom {
 
 /* ── P10 插件：插件卡全宽单列 + 封禁整卡降透明 ────────────────────────── */
 body.mobile-layer #mobile-pages #plugins-content {
-  padding: 12px 12px calc(24px + env(safe-area-inset-bottom, 0px));
+  padding: var(--ds-space-3) var(--ds-space-3) calc(24px + env(safe-area-inset-bottom, 0px));
 }
 body.mobile-layer #mobile-pages .plugins-card-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--ds-space-3);
 }
 body.mobile-layer #mobile-pages .plugins-card {
   width: 100%;
   max-width: none;
-  border-radius: 16px;
-  padding: 12px 14px;
+  border-radius: var(--ds-radius-card-lg);
+  padding: var(--ds-space-3) 14px;
 }
 body.mobile-layer #mobile-pages .plugins-card.blocked {
   opacity: 0.55;
@@ -3062,8 +3062,8 @@ body.mobile-layer #mobile-pages .mobile-page-body > #usage-dashboard {
      面内节奏由既有 gap:12px（ud-header h=0 空头 → ud-filters）承担，改后
      标题→首块 = 12px 与 daemon/settings/reminder 全站一致。滚入态顶缘由
      --g2-veil 渐隐带承底（settings/daemon 同型），零裸贴。 */
-  padding: 0 12px calc(24px + env(safe-area-inset-bottom, 0px));
-  gap: 12px;
+  padding: 0 var(--ds-space-3) calc(24px + env(safe-area-inset-bottom, 0px));
+  gap: var(--ds-space-3);
 }
 body.mobile-layer #mobile-pages #usage-dashboard::-webkit-scrollbar { display: none; }
 body.mobile-layer #mobile-pages #usage-summary {
@@ -3209,17 +3209,17 @@ body.mobile-layer .mh-search-dock {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 8px 0 0;
+  padding: var(--ds-space-2) 0 0;
 }
 body.mobile-layer .mh-search-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 0 16px;
+  gap: var(--ds-space-2);
+  margin: 0 var(--ds-space-4);
   padding: 0 14px;
   height: 44px;
   flex: none;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
@@ -3285,8 +3285,8 @@ body.mobile-layer .mobile-page[data-page="messages"] .mh-search-dock.has-query ~
 /* 范围 chips（全部/好友/设备/群聊）：mf-strip-chip 语言同源。 */
 body.mobile-layer .mh-scope-row {
   display: flex;
-  gap: 6px;
-  padding: 10px 16px 2px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-glass-x) var(--ds-space-4) var(--ds-space-half);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -3294,8 +3294,8 @@ body.mobile-layer .mh-scope-row::-webkit-scrollbar { display: none; }
 body.mobile-layer .mh-scope-chip {
   flex: none;
   height: 30px;
-  padding: 0 12px;
-  border-radius: 999px;
+  padding: 0 var(--ds-space-3);
+  border-radius: var(--ds-radius-pill);
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-frame-text);
@@ -3314,14 +3314,14 @@ body.mobile-layer .mh-scope-chip.on {
 body.mobile-layer .mh-scope-chip:active { transform: scale(0.95); }
 /* 状态行（aria-live）与脚注。 */
 body.mobile-layer .mh-search-status {
-  padding: 8px 20px 0;
+  padding: var(--ds-space-2) var(--ds-space-5) 0;
   font-size: var(--mfs-min);
   color: var(--color-frame-text-muted);
   min-height: 26px;
 }
 body.mobile-layer .mh-search-status[hidden] { display: none; }
 body.mobile-layer .mh-search-note {
-  padding: 4px 20px 8px;
+  padding: var(--ds-space-1) var(--ds-space-5) var(--ds-space-2);
   font-size: var(--mfs-min);
   color: var(--color-frame-text-muted);
 }
@@ -3330,10 +3330,10 @@ body.mobile-layer .mh-search-results {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 2px 10px 12px;
+  padding: var(--ds-space-half) var(--ds-space-glass-x) var(--ds-space-3);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-space-half);
   scrollbar-width: none;
 }
 body.mobile-layer .mh-search-results::-webkit-scrollbar { display: none; }
@@ -3341,18 +3341,18 @@ body.mobile-layer .mh-sr-group {
   font-size: var(--mfs-min);
   font-weight: 600;
   color: var(--color-frame-text-muted);
-  padding: 10px 10px 2px;
+  padding: var(--ds-space-glass-x) var(--ds-space-glass-x) var(--ds-space-half);
   flex: none;
 }
 body.mobile-layer .mh-sr-row {
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-space-half);
   width: 100%;
-  padding: 8px 10px;
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
   border: none;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   background: transparent;
   color: var(--color-frame-text);
   font-family: inherit;
@@ -3365,7 +3365,7 @@ body.mobile-layer .mh-sr-row + .mh-sr-row { border-top: 1px solid var(--color-bo
 body.mobile-layer .mh-sr-meta {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--ds-space-2);
   font-size: var(--mfs-min);
   color: var(--color-frame-text-muted);
 }
@@ -3384,7 +3384,7 @@ body.mobile-layer .mh-sr-snippet {
 body.mobile-layer .mh-sr-snippet mark {
   background: rgb(var(--sapphire) / 0.30);
   color: inherit;
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
   padding: 0 1px;
 }
 /* 跳转定位闪烁：sapphire 底 1.6s 渐隐（消息行 reveal 缝）。 */
@@ -3394,7 +3394,7 @@ body.mobile-layer .mh-sr-snippet mark {
 }
 body.mobile-layer .fm-flow .fm-msg.fm-reveal-flash {
   animation: mhRevealFlash 1.6s ease-out both;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
 }
 @media (prefers-reduced-motion: reduce) {
   body.mobile-layer .fm-flow .fm-msg.fm-reveal-flash { animation-duration: 0.01s; }
@@ -3407,7 +3407,7 @@ body.mobile-layer .fm-flow .fm-msg.fm-reveal-flash {
    为免同页两枚输入框并存，手机层把桌面块内输入行（.fm-search）收起，只保留
    其结果卡（.fm-result-card，in-flow 推挤下方好友列表）；桌面零改动。 */
 body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-block {
-  padding: 10px 2px 0;
+  padding: var(--ds-space-glass-x) var(--ds-space-half) 0;
 }
 body.mobile-layer #mobile-pages .mobile-page[data-page="contacts"] .fm-search-block > .fm-search {
   display: none;
@@ -3527,26 +3527,26 @@ body.mobile-layer .fm-context-menu {
   display: flex !important;
   flex-direction: column;
   justify-content: center;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
   background: var(--color-bg);
   border: none !important;
   border-radius: 0 !important;
   box-shadow: none !important;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
-  padding: calc(72px + env(safe-area-inset-top, 0px)) 16px calc(24px + env(safe-area-inset-bottom, 0px));
+  padding: calc(72px + env(safe-area-inset-top, 0px)) var(--ds-space-4) calc(24px + env(safe-area-inset-bottom, 0px));
   z-index: 320;
   overflow-y: auto;
 }
 body.mobile-layer .fm-context-menu button:not(.mfs-back) {
   width: 100%;
   min-height: 44px;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border);
   color: var(--color-frame-text, var(--color-text));
   font-size: var(--mfs-body);
-  padding: 10px 14px;
+  padding: var(--ds-space-glass-x) 14px;
   text-align: center;
 }
 body.mobile-layer .fm-context-menu button.danger:not(.mfs-back) {
@@ -3571,7 +3571,7 @@ body.mobile-layer .nf-term-tip.touch {
   box-shadow: none !important;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
-  padding: calc(72px + env(safe-area-inset-top, 0px)) 20px calc(24px + env(safe-area-inset-bottom, 0px));
+  padding: calc(72px + env(safe-area-inset-top, 0px)) var(--ds-space-5) calc(24px + env(safe-area-inset-bottom, 0px));
   z-index: 320;
   overflow-y: auto;
 }
@@ -3579,7 +3579,7 @@ body.mobile-layer .nf-term-tip.touch .tt { font-size: var(--mfs-body); }
 body.mobile-layer .nf-term-tip.touch .ts {
   -webkit-line-clamp: unset;
   font-size: var(--mfs-sub);
-  margin-top: 8px;
+  margin-top: var(--ds-space-2);
 }
 
 /* ── D 族：灯箱（本就已全屏）——只补返回钮层级与触击安全。 ────────────── */
@@ -3597,7 +3597,7 @@ body.mobile-layer #settings-modal .settings-collapse-chevron { transform: rotate
 /* 收编进子页的折叠体：页体已带 72px 顶让位，补侧距与底距即可
    （节点不在 #settings-modal 子树 ⇒ 上方的 display:none 不命中，零 important）。 */
 body.mobile-layer .mobile-page-body > .settings-collapse-body {
-  padding: 4px 16px calc(20px + env(safe-area-inset-bottom, 0px));
+  padding: var(--ds-space-1) var(--ds-space-4) calc(20px + env(safe-area-inset-bottom, 0px));
 }
 /* 接管模态在场：注入返回钮隐藏（强制二选一，无取消语义可挂）。 */
 body.mobile-layer #modal-overlay.takeover-live .mfs-back { display: none !important; }
@@ -3624,21 +3624,21 @@ body.mobile-layer #modal-overlay #takeover-box {
   border: 1px solid var(--nfc-border) !important;
   transform: none !important;
   animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
-  padding: 32px 24px 28px !important;
+  padding: var(--ds-space-8) var(--ds-space-6) 28px;
   overflow-y: auto;
 }
 /* 手机档字阶（家族 token 的移动档：标题 21→20 收一档，正文 14→17 抬到可读线）。 */
-body.mobile-layer #takeover-box .nfc-title { font-size: 20px; }
+body.mobile-layer #takeover-box .nfc-title { font-size: var(--ds-fs-display); }
 body.mobile-layer #takeover-box .nfc-body {
-  font-size: 17px;
+  font-size: var(--ds-fs-lead);
   line-height: 1.45;
   max-width: none;
 }
-body.mobile-layer #takeover-box .nfc-error { font-size: 13px; }
+body.mobile-layer #takeover-box .nfc-error { font-size: var(--ds-fs-body); }
 /* 动作行：等宽双钮一行（窄屏不挤压），热区 48px ≥ 44px 规范线。 */
 body.mobile-layer #takeover-box .nfc-actions {
   justify-content: stretch;
-  gap: 12px;
+  gap: var(--ds-space-3);
   margin-top: 28px;
 }
 body.mobile-layer #takeover-box .nfc-actions .g2-pill {
@@ -3646,13 +3646,13 @@ body.mobile-layer #takeover-box .nfc-actions .g2-pill {
   min-width: 0;
   height: 48px;
   min-height: 48px;
-  padding: 0 12px;
-  font-size: 15px;
+  padding: 0 var(--ds-space-3);
+  font-size: var(--ds-fs-mobile-sub);
 }
 /* 承接层：卡片四周留白（不贴边）+ 内容垂直居中（消灭下方 2/3 空白）。 */
 body.mobile-layer #modal-overlay.takeover-live {
   background: var(--color-bg);
-  padding: calc(16px + env(safe-area-inset-top, 0px)) 16px
+  padding: calc(16px + env(safe-area-inset-top, 0px)) var(--ds-space-4)
     calc(16px + env(safe-area-inset-bottom, 0px)) !important;
   align-items: center;
   justify-content: center;
@@ -3891,7 +3891,7 @@ body.mobile-layer #attachment-preview .att-file {
   height: var(--mtap);
   padding: 0;
   gap: 0;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: transparent;
   border: none;
   justify-content: center;
@@ -3909,7 +3909,7 @@ body.mobile-layer #attachment-preview .att-file > .att-file-icon {
   display: flex;
   width: var(--mtap);
   height: var(--mtap);
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   box-sizing: border-box;
   border: 1px solid var(--glass-border);
   align-items: center;
@@ -3964,7 +3964,7 @@ body.mobile-layer #attachment-preview .att-file .att-remove svg {
    令牌全走 --mfs-*/--mtap 桥（--ds-* 手机字号层），零新色值。 */
 body.mobile-layer .option-box .att-file.ask-att-file {
   min-height: var(--mtap);
-  padding: 10px 12px;
+  padding: var(--ds-space-glass-x) var(--ds-space-3);
 }
 body.mobile-layer .option-box .att-file.ask-att-file > .att-file-name {
   flex: 0 1 210px;
@@ -3983,7 +3983,7 @@ body.mobile-layer .option-box .att-file .ds-att-origin {
 body.mobile-layer .att-file .ask-att-reason { font-size: var(--mfs-min); }
 body.mobile-layer .att-file .ask-att-retry {
   min-height: var(--mtap);
-  padding: 0 12px;
+  padding: 0 var(--ds-space-3);
   font-size: var(--mfs-min);
 }
 body.mobile-layer .ask-attachments-wrap .ask-att-fold-btn {
@@ -4091,7 +4091,7 @@ body.mobile-layer #reminder-panel .schedule-card-ref {
   display: inline-flex;
   align-items: center;
   min-height: 32px;
-  padding: 0 10px;
+  padding: 0 var(--ds-space-glass-x);
 }
 body.mobile-layer #reminder-panel .schedule-card-chip::after,
 body.mobile-layer #reminder-panel .schedule-card-ref::after {
@@ -4114,7 +4114,7 @@ body.mobile-layer #mobile-pages .project-unmount-btn {
   width: var(--mtap);
   height: var(--mtap);
   min-width: var(--mtap);
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
 }
 body.mobile-layer #mobile-pages .project-unmount-btn svg {
   width: var(--micon-sm);
@@ -4155,7 +4155,7 @@ body.mobile-layer #settings-modal .cfg-model-test {
   position: relative;
   min-width: var(--mtap);
   min-height: var(--mtap);
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
 }
 body.mobile-layer #settings-modal .cfg-model-test .st-ic {
   width: var(--mfs-min);
@@ -4245,7 +4245,7 @@ body.mobile-layer #mh-search-kind-row { height: auto; }
 body.mobile-layer .mh-sr-row {
   justify-content: center;
   min-height: var(--mrow);
-  padding: var(--mgap) 10px;
+  padding: var(--mgap) var(--ds-space-glass-x);
 }
 
 /* 记忆/智能体合并面板的「编辑/完成」药丸：26 → 44。 */
@@ -4267,7 +4267,7 @@ body.mobile-layer .mf-hub-chev svg { width: var(--micon-sm); height: var(--micon
 body.mobile-layer .fm-row {
   align-items: center;
   min-height: var(--mrow);
-  padding: 0 10px;
+  padding: 0 var(--ds-space-glass-x);
 }
 
 /* 社交/好友请求动作钮与行内按钮族。 */
@@ -4353,7 +4353,7 @@ body.mobile-layer #usage-dashboard .ud-dim {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 12px;
+  padding: 0 var(--ds-space-3);
 }
 
 /* ── 项目面：矩形「查看 / 编辑」文字链 + 两枚 40px 浮动圆钮 ───────────────
@@ -4363,7 +4363,7 @@ body.mobile-layer #mobile-pages .project-link-btn {
   display: inline-flex;
   align-items: center;
   min-height: var(--mtap);
-  padding: 0 4px;
+  padding: 0 var(--ds-space-1);
 }
 /* 浮动圆钮 40 → 48（与站内全部悬浮圆钮 --mtap-lg 同档）。 */
 body.mobile-layer .proj-create-fab,
@@ -4400,7 +4400,7 @@ body.mobile-layer #search-modal .cfg-btn-sm {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 0 12px;
+  padding: 0 var(--ds-space-3);
 }
 
 /* ── 登录/账号键（.fm-login-btn 335×38、#login-unified 132×37.5、#stt-status-hint）──
@@ -4541,7 +4541,7 @@ body.mobile-layer .mh-idhead .mh-idhead-avatar {
    放大字母/设备字形 —— 与 .fm-avatar-40 的 15/17px、20px 字形同一等比口径
    〔56/40 = 1.4〕，逐档读数见批文档断言表）。群组合头像（.fm-avgrid）的球径
    走容器 cqw，随容器自动等比，无需本条。 */
-body.mobile-layer .mh-idhead .mh-idhead-avatar .fm-avatar { font-size: 20px; }
+body.mobile-layer .mh-idhead .mh-idhead-avatar .fm-avatar { font-size: var(--ds-fs-display); }
 body.mobile-layer .mh-idhead .mh-idhead-avatar .fm-avatar-device svg { width: 28px; height: 28px; }
 /* ③ 名字玻璃胶囊（**四种会话同一条规则**）：绝对定位挂在头像正下方居中，
    不参与居中计算；padding 3/14、圆角 999、--glass-bg + blur/saturate 玻璃单源
@@ -4555,11 +4555,11 @@ body.mobile-layer :is(.mh-idhead-name, .mh-idhead > #session-name) {
   max-width: min(220px, calc(100vw - 144px)); /* 左右各留 72 的双钮足印 */
   margin: 0;
   padding: 3px 14px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
   backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
-  font-size: 15px;
+  font-size: var(--ds-fs-mobile-sub);
   font-weight: 600;
   line-height: 1.2;
   letter-spacing: -0.01em;
@@ -4643,7 +4643,7 @@ body.mobile-layer #top-overlays {
      · `#settings-profile-overlay` 铺平：overlay/box 两个类名已在上面 A 族的
        选择器里，本块只补「本面自己的内边距 + 字段行触控高」。 */
 body.mobile-layer .settings-identity-card {
-  margin: 4px 0 10px;
+  margin: var(--ds-space-1) 0 var(--ds-space-glass-x);
 }
 body.mobile-layer .settings-avatar-entry {
   min-width: 68px;
@@ -4911,7 +4911,7 @@ body.mobile-layer :is(.duration-badge .msg-copy, .duration-badge-time)::after {
   width: 100%;
   height: max(100%, var(--mhit));
   transform: translate(-50%, -50%);
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
 }
 /* 时间徽标是键盘可达的文字件（span + tabindex），命中区与图标键同档 44 高。 */
 

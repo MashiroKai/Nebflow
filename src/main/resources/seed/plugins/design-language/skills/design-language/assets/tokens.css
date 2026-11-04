@@ -91,6 +91,7 @@
   --dl-r-2xl: 18px;     /* 大卡/工具卡档（Apple rounded.lg） */
   --dl-r-shell: 20px;   /* 弹窗外壳（全站唯一弹窗圆角） */
   --dl-r-pill: 999px;
+  --dl-r-thin: 2px;     /* 细件例外槽：滚动条拇指/进度条/微圆点（禁他处复用） */
 
   /* ── ④ 阴影三族 ── */
   --dl-shadow-panel:
@@ -116,6 +117,7 @@
   --dl-sp-12: 48px;   /* 区块级留白（Carbon $spacing-09） */
   --dl-sp-16: 64px;   /* 大区块留白（Carbon $spacing-10） */
   --dl-sp-glass-x: 10px; /* 玻璃条横缝既有值档；迁移向 --dl-sp-2/3 渐进收 */
+  --dl-sp-1h: 6px;       /* 半步件缝例外档：图标+文字小缝/chip 内距（实测最高频，禁作块距） */
 
   /* ── ⑤ 密度档（含 NVIDIA 密度联动机制；与 --ds-density-* 同值） ── */
   --dl-density-row: 44px;          /* regular 行带（触控热区档） */

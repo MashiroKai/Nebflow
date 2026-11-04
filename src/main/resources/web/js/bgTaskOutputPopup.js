@@ -100,8 +100,8 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 
 /* Header：同 .flow-agent-header（顶缘折射线 + 底部 hairline）。 */
 .bgt-header {
-  display: flex; align-items: center; gap: 6px;
-  padding: 10px 16px;
+  display: flex; align-items: center; gap: var(--ds-space-1h);
+  padding: var(--ds-space-glass-x) var(--ds-space-4);
   border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
   position: relative;
@@ -147,10 +147,10 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 .bgt-state-label--failed { color: var(--status-word); }
 .bgt-state-chip .st-ic { width: 11px; height: 11px; }
 .bgt-close {
-  cursor: pointer; font-size: 16px; line-height: 1;
+  cursor: pointer; font-size: var(--ds-fs-mobile-callout); line-height: 1;
   opacity: 0.7; transition: opacity 0.15s;
-  padding: 2px 4px; color: var(--color-text);
-  border-radius: 4px;
+  padding: var(--ds-space-half) var(--ds-space-1); color: var(--color-text);
+  border-radius: var(--ds-radius-badge);
   flex-shrink: 0;
   background: none; border: none;
 }
@@ -167,8 +167,8 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
    中性字，红由左侧 2px 描边（图案）＋行首 circle-alert 图标承载。 */
 .bgt-error {
   flex-shrink: 0;
-  display: flex; align-items: flex-start; gap: 6px;
-  padding: 6px 16px;
+  display: flex; align-items: flex-start; gap: var(--ds-space-1h);
+  padding: var(--ds-space-1h) var(--ds-space-4);
   font: 400 11px -apple-system, sans-serif;
   color: var(--status-word);
   border-bottom: 1px solid var(--glass-border);
@@ -184,7 +184,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
    复制：.bgt-body 复用代码块 .code-block-wrap 容器 class——.code-copy-btn
    的 hover 浮现（chat.css）与玻璃主题（sapphire.css Pattern B / dark 档）
    零复制生效；padding-top 抬高给右上角浮层按钮留位（28px = 按钮高+余量）。 */
-.bgt-body { flex: 1; min-height: 0; display: flex; position: relative; padding: 0 12px 10px; }
+.bgt-body { flex: 1; min-height: 0; display: flex; position: relative; padding: 0 var(--ds-space-3) var(--ds-space-glass-x); }
 /* 复制按钮落进输出框内（2026-09-12 作者令：「复制按钮需要在输出框内」）。
    公共定位（chat.css:1043-1046 .code-copy-btn）为 absolute top:4px/right:4px，
    定位祖先是最近的 position:relative 容器 .bgt-body（padding: 0 12px 10px）
@@ -199,11 +199,11 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 .bgt-output {
   flex: 1;
   margin: 0;
-  padding: 28px 14px 12px;
+  padding: 28px 14px var(--ds-space-3);
   overflow: auto;
   background: #f5f5f5;
   border: 1px solid var(--color-frame-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   font: 400 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--color-text);
   white-space: pre-wrap;
@@ -219,7 +219,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 .bgt-placeholder {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  padding: 16px;
+  padding: var(--ds-space-4);
   font: 400 12px -apple-system, sans-serif;
   color: var(--color-text-muted);
   text-align: center;
@@ -232,8 +232,8 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
    与代码块同款交互同款样式，见 .bgt-body 的 code-block-wrap 复用。） */
 .bgt-footer {
   flex-shrink: 0;
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 16px;
+  display: flex; align-items: center; gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-4);
   border-top: 1px solid var(--glass-border);
   position: relative;
 }
@@ -254,7 +254,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
   min-width: 0;
-  display: inline-flex; align-items: center; gap: 6px;
+  display: inline-flex; align-items: center; gap: var(--ds-space-1h);
 }
 .bgt-meta-text {
   min-width: 0;
