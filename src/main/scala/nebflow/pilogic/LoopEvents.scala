@@ -1,0 +1,115 @@
+package nebflow.pilogic
+
+import cats.Applicative
+import cats.effect.Sync
+import cats.effect.kernel.Ref
+import io.circe.Json
+
+/** 事件与出口（设计 §Ⅱ.3/§Ⅱ.4）：LoopEvent 密封层级 + EventSink[F] 推送面 + 崩溃合成助手。
+  * L-2 采纳推荐档 (c)：自建 EventSink 接口——push 对位 scala 现状双腿、隔离单点化、不把 fs2 焊进事件面。
+  */
+
+/** 循环消息模型（本轮最小垂直切片占位：role + content JSON；完整消息模型桥接属接线期）。 */
+enum LoopMessageRole:
+  case System
+  case User
+  case Assistant
+  case ToolResult
+
+final case class LoopMessage(role: LoopMessageRole, content: Json)
+
+/** 中止原因（RunOutcome.Aborted 载荷）。 */
+sealed trait AbortCause extends Product with Serializable
+object AbortCause:
+  case object UserRequested extends AbortCause
+  final case class External(reason: String) extends AbortCause
+
+/** 循环错误（RunOutcome.Failed 载荷；BudgetExhausted=预算停路径）。 */
+sealed trait LoopError extends Product with Serializable
+object LoopError:
+  final case class ProviderFailed(message: String) extends LoopError
+  final case class HookRunFatal(point: String, hookId: String, cause: String) extends LoopError
+  final case class InvalidContinuation(message: String) extends LoopError
+  case object BudgetExhausted extends LoopError
+
+/** 收尾四态（设计 §Ⅱ.1；穷举，编译期封闭）。 */
+enum RunOutcome:
+  /** 自然/显式结束；newMessages 与 RunEnded 事件载荷同源（pi 关键不变量）。 */
+  case Completed(newMessages: Vector[LoopMessage])
+  /** 外部中断（provider 契约把中断编码为 stopReason=Aborted，不抛异常）。 */
+  case Aborted(cause: AbortCause)
+  /** error 路径（含 BudgetExhausted）。 */
+  case Failed(cause: LoopError)
+  /** postRun.Settle 强制续轮后的簿记复入态。 */
+  case SettledExtra(continuations: Int)
+
+/** 单轮收尾局（TurnEnded 载荷）。 */
+enum TurnEndOutcome:
+  case Natural
+  case ExplicitEnd
+  case Error(message: String)
+  case Aborted
+  case Truncated
+
+/** 循环事件（设计 §Ⅱ.3，穷举 12——对位 pi AgentEvent 10 + HookErrored + BudgetReported）。
+  * 分支器密封穷举：每个分支的产出含事件——不发事件的分支类型不成立（病灶 #3 的编译期免疫）。 */
+enum LoopEvent:
+  case RunStarted
+  case TurnStarted(turn: TurnNumber)
+  case MessageStarted(seq: MessageSeq)
+  case MessageDelta(seq: MessageSeq, chunk: Json)
+  case MessageEnded(seq: MessageSeq, message: LoopMessage)
+  case ToolExecutionStarted(id: String, name: String)
+  case ToolExecutionDelta(id: String, partial: Json)
+  case ToolExecutionEnded(id: String, result: Json, isError: Boolean)
+  case TurnEnded(
+    turn: TurnNumber,
+    message: Option[LoopMessage],
+    toolResults: Vector[LoopMessage],
+    outcome: TurnEndOutcome,
+  )
+  case RunEnded(outcome: RunOutcome)
+  case HookErrored(point: String, hookId: String, cause: String)
+  case BudgetReported(snapshot: CostSnapshot)
+
+/** 事件出口（L-2 自建）：循环推事件给 sink；sink 是接口，实现自由（WS 帧/审计行/合批下沉为接线期适配层）。
+  * emit 是总函数——类型上没有「返回值被忽略」的口子，实现抛错由 sink 适配层隔离。 */
+trait EventSink[F[_]]:
+  def emit(e: LoopEvent): F[Unit]
+
+object EventSink:
+
+  /** 缺省 Noop。 */
+  def noop[F[_]: Applicative]: EventSink[F] = _ => Applicative[F].unit
+
+  /** 测试/断言用收集 sink（验收 A-5 载体）。 */
+  def collecting[F[_]: Sync]: F[(EventSink[F], F[Vector[LoopEvent]])] =
+    Ref.of[F, Vector[LoopEvent]](Vector.empty).map { ref =>
+      val sink = new EventSink[F]:
+        def emit(e: LoopEvent): F[Unit] = ref.update(_ :+ e)
+      (sink, ref.get)
+    }
+
+  /** 崩溃兜底助手（§Ⅱ.4(4)；对位 pi runWithLifecycle → handleRunFailure：
+    * 循环崩溃对下游仍呈现为一次正常收尾——合成 TurnEnded(空)+RunEnded 终态对）。 */
+  def synthesizeTruncatedEvents(
+      activeTurn: Option[TurnNumber],
+      aborted: Boolean,
+  ): Vector[LoopEvent] =
+    val outcome: RunOutcome =
+      if aborted then RunOutcome.Aborted(AbortCause.External("truncated"))
+      else RunOutcome.Failed(LoopError.ProviderFailed("loop truncated"))
+    activeTurn match
+      case Some(t) =>
+        Vector(
+          LoopEvent.TurnEnded(
+            t,
+            None,
+            Vector.empty,
+            if aborted then TurnEndOutcome.Aborted else TurnEndOutcome.Error("loop truncated"),
+          ),
+          LoopEvent.RunEnded(outcome),
+        )
+      case None => Vector(LoopEvent.RunEnded(outcome))
+
+end EventSink
