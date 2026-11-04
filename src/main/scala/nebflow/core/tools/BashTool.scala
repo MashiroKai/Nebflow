@@ -1112,8 +1112,33 @@ Git safety:
   private def isNodeSession(ctx: ToolContext): Boolean =
     ctx.sessionId.exists(_.startsWith(nebflow.core.project.NodeEngine.SessionPrefix))
 
-  /** Build an on_complete callback that notifies agent + frontend + logs. */
-  private def makeNotifyCallback(
+  /**
+   * Build the terminal-completion callback: agent + frontend + ledger + output retention.
+   *
+   * **T2 契约（bash overhaul，作者令 2026-11-04）——恒有回调、先落账再推送、绝不
+   * 静默丢弃**（事实源 §D5/§M3/§5.1-A1·A3；业界依据 = dsh「结算通知推会话 + 忙时
+   * next-step inbox + awaited 去重」）：
+   *
+   *  1. 返回 `Some(...)` **恒定**——旧形态 `ctx.agentActorRef.map{...}` 让「无 agent
+   *     上下文」（REST 直调 / pre-spawn / 设备腿）整条回调链静默缺席：不注销行、
+   *     不终态化输出留存、不落账本、不通知（缺陷 D5）。可见性放宽到
+   *     `private[tools]`，供同包 spec 直调判红。
+   *  2. 链内顺序**钉死**（每一环 fail-soft，任一环失败都不阻断后续；但**投递失败
+   *     绝不吞账本**——顺序本身即保证）：
+   *     `BgTaskRegistry.unregisterReturning` → `BgTaskOutputStore.finalizeTask`
+   *     （fail-soft）→ `BgTaskLedger.recordCompletion`（**无条件**，fail-soft +
+   *     日志）→ 前端 WS 帧 → agent 事件。
+   *  3. 无 `agentActorRef` ⇒ 只跳过「推给它自己的 actor」那一段：投递面转
+   *     [[BgNotifyDelivery.deliverAgentEvent]] 的 `None` 门（持久补投腿），
+   *     事件照样有落点，绝不 IO.unit 蒸发。
+   *  4. `awaited` 去重（[[BgTaskRegistry.markAwaited]] 的反面消费）：注销行带
+   *     `awaited=true`（终态结果已被 BgWait 当面收走）⇒ **只跳过 agent 推送**
+   *     （审计 `bg-notify-awaited-skip`），账本行与输出留存照做。
+   *  5. 忙时下一站 = 既有 next-step 收件口：目标会话在 Processing 时事件入
+   *     `pendingEvents`、回合边界统一 drain（`AgentProcessing.scala:1360-1441`），
+   *     不另立第二套队列（详见 deliverAgentEvent 文档）。
+   */
+  private[tools] def makeNotifyCallback(
     command: String,
     desc: Option[String],
     ctx: ToolContext,
@@ -1121,7 +1146,7 @@ Git safety:
     tailN: Option[Int] = None,
     gateOwned: Boolean = false
   ): Option[Either[Throwable, ProcessResult] => IO[Unit]] =
-    ctx.agentActorRef.map { ref => (result: Either[Throwable, ProcessResult]) =>
+    Some { (result: Either[Throwable, ProcessResult]) =>
       val firstLine = command.split('\n').headOption.getOrElse(command).take(80)
       val description = desc.getOrElse(firstLine)
       // 通知详情批（作者报障 2026-10-24「后台任务通知很不详细甚至有截断」）：注销
@@ -1129,6 +1154,11 @@ Git safety:
       // 前置（旧链在负载定型后才 unregister，取不到）。
       val finishedAtMs = System.currentTimeMillis()
       BgTaskRegistry.unregisterReturning(jobId).flatMap { registered =>
+        // awaited 去重读数（T2 契约 3）：注销即读——markAwaited 写的是同一行，
+        // `unregisterReturning` 的原子取回就是终局读数（两拍分开读会漏掉「读后、
+        // 注销前」落下的标记）。行已消失 = 极早终态/重复回调 ⇒ 视为未 awaited。
+        val awaited = registered.exists(_.awaited)
+
         val durationMs = registered.map(st => (finishedAtMs - st.startedAtMs).max(0L))
         val (eventType, payload, metadata, exitInfo, exitCodeOpt, errHintOpt, storeStatus) = result match
           case Right(pr) =>
@@ -1213,19 +1243,31 @@ Git safety:
         // BgNotifyDelivery。无 actorSystem（harness）保持旧行为直投。
         // ref ! 返回 IO[Unit] already — do NOT wrap in IO() or it
         // becomes IO[IO[Unit]] (double-wrapped, fires at construction time).
-        val notifyAgent = BgNotifyDelivery.deliverAgentEvent(
-          targetRef = Some(ref),
-          targetSessionId = ctx.sessionId,
-          system = ctx.actorSystem,
-          registry = ctx.sharedResources.map(_.agentRegistry),
-          projectName = ctx.projectName,
-          flowNodeId = ctx.flowNodeId,
-          jobId = jobId,
-          source = "background-task",
-          eventType = eventType,
-          payload = payload,
-          metadata = metadata
-        )
+        // T2 契约 1/3：`targetRef` 传 **ctx 原值**（可能是 None）——
+        //   - None ⇒ deliverAgentEvent 的 None 门（有目标会话 = 持久补投腿；连会话
+        //     都没有 = 响亮 WARN + 审计），事件绝不蒸发；
+        //   - awaited（终态结果已被 BgWait 当面交付）⇒ 跳过推送这一整段
+        //     （账本与输出留存已在上面无条件落完），审计 `bg-notify-awaited-skip`。
+        val notifyAgent =
+          if awaited then
+            logger.info(
+              s"[bg-notify-awaited-skip] background job $jobId ($eventType): terminal result was already delivered by an awaiting caller (BgWait) — agent push skipped; ledger row + output retention kept",
+              "sessionId" -> ctx.sessionId.getOrElse("")
+            )
+          else
+            BgNotifyDelivery.deliverAgentEvent(
+              targetRef = ctx.agentActorRef,
+              targetSessionId = ctx.sessionId,
+              system = ctx.actorSystem,
+              registry = ctx.sharedResources.map(_.agentRegistry),
+              projectName = ctx.projectName,
+              flowNodeId = ctx.flowNodeId,
+              jobId = jobId,
+              source = "background-task",
+              eventType = eventType,
+              payload = payload,
+              metadata = metadata
+            )
 
         // Notify frontend via WS so the indicator dismisses. 通知详情批：终态帧
         // 补 exitCode / durationMs / finishedAt 三个只增键（面板行 exit chip 与
@@ -1254,38 +1296,40 @@ Git safety:
         // doesn't prevent the other.
         // 输出查看批：终态翻转 + 进留存区（completed/failed；cancelled 走 WS
         // cancelBackgroundJob / reclaimSession 的 finalizeTask，幂等防双写）。
-        // P2 first-terminal-wins：行已被显式取消/death-watch 收割取走（None）
-        // ⇒ 终态已有人落（通知+账本齐）——本迟到腿只补输出留存区（幂等翻转），
-        // 不重注账本/不重发通知（防「terminated→completed」双注）。
+        // T2 契约 2（顺序钉死）：finalize → **无条件** recordCompletion → 前端帧 →
+        // agent 事件。P2 first-terminal-wins 的**闸门退场**（原 `alreadyTerminal`
+        // 跳过三段的写法会连带吃掉「无 agent 上下文/迟到腿」的全部落账——那正是
+        // 缺陷 D5 的一半）：幂等改由各面自身承担——`finalizeTask` 首终态胜出、
+        // `recordCompletion` 同 jobId 原位替换、注入队 correlationId 幂等。行已不在
+        // 册的事实只进日志，不再改行为。
         val alreadyTerminal = registered.isEmpty
         BgTaskOutputStore
           .finalizeTask(jobId, storeStatus, exitCodeOpt, errHintOpt)
           .handleErrorWith(e2 => logger.warn(s"bg-output finalize failed for job $jobId: ${e2.getMessage}")) *>
           gateLedger *>
-          // 完成事件持久账本（修复批 2026-10-24「先落账本再投递」）：事件与输出
-          // 尾段先落账，再走投递——投递面任何一环失联（目标会话 idle 无栅栏 /
-          // 直投未唤醒 / 激活 Deferred），账本条目挂起，会话下次唤醒由补投腿
-          // （AgentActor.flushPendingLedgerCompletions）先补投未消费事件，永不
-          // 蒸发。fail-soft：账本故障绝不阻断投递。
-          (if alreadyTerminal then IO.unit
-           else
-             BgTaskLedger
-               .recordCompletion(
-                 ctx.sessionId.getOrElse(""),
-                 jobId,
-                 description,
-                 eventType,
-                 payload
-               )
-               .handleErrorWith(e2 => logger.warn(s"bg-ledger record failed for job $jobId: ${e2.getMessage}"))
-          ) *>
+          // 完成事件持久账本（修复批 2026-10-24「先落账本再投递」+ T2 无条件化）：
+          // 事件与输出尾段先落账，再走投递——投递面任何一环失联（目标会话 idle /
+          // 无栅栏 / 直投未唤醒 / 激活 Deferred / 根本没有 agent ref），账本条目
+          // 挂起，会话下次唤醒由补投腿（AgentActor.flushPendingLedgerCompletions）
+          // 先补投未消费事件，永不蒸发。fail-soft：账本故障绝不阻断投递；反之
+          // **投递失败也绝不吞账本**（顺序在前）。
+          BgTaskLedger
+            .recordCompletion(
+              ctx.sessionId.getOrElse(""),
+              jobId,
+              description,
+              eventType,
+              payload
+            )
+            .handleErrorWith(e2 => logger.warn(s"bg-ledger record failed for job $jobId: ${e2.getMessage}")) *>
+          notifyFrontend.void *>
+          notifyAgent *>
           logger.info(
             s"Background job $jobId callback: $eventType$exitInfo" +
-              (if alreadyTerminal then " (row already terminal — output store only, no re-notify)" else ""),
+              (if alreadyTerminal then " (row already terminal — recorded + retained anyway, T2 durable-first)" else "") +
+              (if awaited then " (awaited — agent push suppressed)" else ""),
             "sessionId" -> ctx.sessionId.getOrElse("")
-          ) *>
-          (if alreadyTerminal then IO.unit
-           else notifyFrontend.void *> notifyAgent)
+          )
       }
     }
 
