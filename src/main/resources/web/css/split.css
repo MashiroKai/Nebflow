@@ -3127,11 +3127,17 @@ html.ui-init #canvas-panel {
 
 /* Main — fills remaining space (flex:1).
    Left/right margins create gaps with adjacent panels.
-   position: relative anchors absolute-positioned children (header, dropdowns). */
+   position: relative anchors absolute-positioned children (header, dropdowns).
+   底缘基准批 2026-11-04（审计 D 档 R69/R70 收口批 · 台账 #1475⑤）：底距 0 → 10px
+   —— **三个同高列（#sidebar / #main / #canvas-panel）此后共用同一档底距**
+   （侧栏/画布本就在各自 margin 里带 var(--ds-space-glass-x)），#input-area 是
+   #main 的 bottom:0 绝对层 ⇒ 输入条底缘随之与侧栏/画布底缘逐像素齐平（改前
+   差 6/10px）。手机层由 mobileLayer.css `body.mobile-layer #main{margin:0}` 承接，
+   逐字节不变；卡片窗由 split.css `body.card-window #main{margin:0 !important}` 承接。 */
 #main {
   flex: 1;
   min-width: 0;
-  margin: 0 var(--ds-space-glass-x);
+  margin: 0 var(--ds-space-glass-x) var(--ds-space-glass-x);
   position: relative;
 }
 
