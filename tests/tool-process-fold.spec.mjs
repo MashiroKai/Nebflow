@@ -176,11 +176,12 @@ test('A2 冷刷新（该轮未收尾，末段无终态判据）：过程行按 l
       `未收尾轮的工具卡折叠（got ${fp.toolRowsTucked}/${fp.toolRows}）`);
     pinNewFace(fp.thinkRowsTucked === fp.thinkRows,
       `未收尾轮的思考行折叠（got ${fp.thinkRowsTucked}/${fp.thinkRows}）`);
-    pinNewFace(fp.cardFaces.every((c) => c.bodyHeight === 0),
-      `未收尾轮明细体高度 0（got ${JSON.stringify(fp.cardFaces.map((c) => c.bodyHeight))}）`);
+    // P2 面：折叠态默认面不得渲染正文行（改前 = 8 行 preview 常驻 + 卡高 297px）
+    pinNewFace(fp.cardFaces.every((c) => c.preLines === 0),
+      `未收尾轮工具卡默认面不渲染正文（got ${JSON.stringify(fp.cardFaces.map((c) => c.preLines))} 行）`);
     pinNewFace(project(fp).processVisibleText <= 1,
       `未收尾轮过程面可见文本 ≈ 0（got ${project(fp).processVisibleText} 字）`);
-    pinGuard(fp.header.present, '未收尾轮有可点摘要行（明细不丢：点开即见）');
+    pinNewFace(fp.header.present, '未收尾轮有可点摘要行（明细不丢：点开即见）');
     // 展开后明细完整回归（内容不丢的机械证明）
     await page.evaluate(() => window.__clickHeader());
     await page.waitForTimeout(80);
@@ -196,7 +197,8 @@ test('A3 回放建的中性摘要行被 live 终态采用：全场仍恰一枚�
   const { context, page, pageErrors } = await newPage(browser);
   try {
     const before = await page.evaluate((msgs) => window.__replayTurn(msgs, { busy: true }), BUSY);
-    pinGuard(before.headers === 1, `在飞回放恰一枚摘要行（got ${before.headers}）`);
+    // 改前（红腿）：在飞回放零摘要行（整段平铺）⇒ 新面钉方向反转成立。
+    pinNewFace(before.headers === 1, `在飞回放恰一枚摘要行（got ${before.headers}）`);
     const neutral = await page.evaluate(() => {
       const h = document.querySelector('#chat > .turn-header');
       return {
@@ -204,20 +206,23 @@ test('A3 回放建的中性摘要行被 live 终态采用：全场仍恰一枚�
         text: h ? (h.querySelector('.turn-header-text') || {}).textContent || '' : '',
       };
     });
-    pinNewFace(neutral.unconfirmed === true, '在飞回放的摘要行带 data-nf-turn-unconfirmed（不编造成败）');
-    pinNewFace(!/到站/.test(neutral.text), `中性摘要行不含成功文案（got ${JSON.stringify(neutral.text)}）`);
+    pinNewFace(neutral.unconfirmed === true && !/到站/.test(neutral.text),
+      `中性摘要行带 data-nf-turn-unconfirmed 且不含成功文案（got ${JSON.stringify(neutral)}）`);
 
     const after = await page.evaluate(() => window.__finishLiveTurn({}));
     console.log('[A3] after.project =', JSON.stringify(project(after)));
-    pinGuard(after.headers === 1, `live 收尾后仍恰一枚摘要行（got ${after.headers}）`);
-    const done = await page.evaluate(() => {
-      const h = document.querySelector('#chat > .turn-header');
-      return { unconfirmed: h ? h.dataset.nfTurnUnconfirmed === '1' : null,
-        text: h ? (h.querySelector('.turn-header-text') || {}).textContent || '' : '' };
-    });
-    pinGuard(done.unconfirmed === false, '收尾后中性标记卸下（同一枚节点被采用改写）');
-    pinGuard(/harness-model/.test(done.text), `收尾后摘要行带模型段（got ${JSON.stringify(done.text)}）`);
-    pinGuard(after.toolRowsTucked === after.toolRows, '收尾后过程行仍折叠');
+    // 收尾后的结构契约（绿腿；红腿在飞面本就无摘要行，此处不适用）
+    if (!RED) {
+      pinGuard(after.headers === 1, `live 收尾后仍恰一枚摘要行（got ${after.headers}）`);
+      const done = await page.evaluate(() => {
+        const h = document.querySelector('#chat > .turn-header');
+        return { unconfirmed: h ? h.dataset.nfTurnUnconfirmed === '1' : null,
+          text: h ? (h.querySelector('.turn-header-text') || {}).textContent || '' : '' };
+      });
+      pinGuard(done.unconfirmed === false, '收尾后中性标记卸下（同一枚节点被采用改写）');
+      pinGuard(/harness-model/.test(done.text), `收尾后摘要行带模型段（got ${JSON.stringify(done.text)}）`);
+      pinGuard(after.toolRowsTucked === after.toolRows, '收尾后过程行仍折叠');
+    }
     pinGuard(pageErrors.length === 0, `零页面错误（${pageErrors.join(' | ')}）`);
   } finally { await context.close(); }
 });
@@ -234,11 +239,13 @@ test('B 断网重连（该轮已完成）：重放默认态不得出现明细正
 
     const after = await page.evaluate(() => window.__fingerprint());
     console.log('[B] after.project  =', JSON.stringify(project(after)));
-    pinNewFace(after.toolRowsTucked === after.toolRows,
+    // 守卫：该轮已完成（段内有 writer terminal 戳）⇒ 两棵树都该折叠（改前已由
+    // replay-terminal 批覆盖）。本批的差异面在「无终态判据」的段（A2/B2/E）。
+    pinGuard(after.toolRowsTucked === after.toolRows,
       `重连后工具卡全部折叠（got ${after.toolRowsTucked}/${after.toolRows}）`);
-    pinNewFace(after.cardFaces.every((c) => c.bodyHeight === 0),
+    pinGuard(after.cardFaces.every((c) => c.bodyHeight === 0),
       `重连后工具卡明细体高度为 0（got ${JSON.stringify(after.cardFaces.map((c) => c.bodyHeight))}）`);
-    pinNewFace(after.thinkFaces.every((t) => t.contentHeight === 0),
+    pinGuard(after.thinkFaces.every((t) => t.contentHeight === 0),
       `重连后思考正文高度为 0（got ${JSON.stringify(after.thinkFaces.map((t) => t.contentHeight))}）`);
     pinGuard(after.header.present, '重连后摘要行在场（可点展开）');
     pinGuard(pageErrors.length === 0, `零页面错误（${pageErrors.join(' | ')}）`);
@@ -260,8 +267,8 @@ test('B2 断网重连（断线时该轮仍在飞）：默认态同样不得摊�
       `在飞轮重放后工具卡全部折叠（got ${after.toolRowsTucked}/${after.toolRows}）`);
     pinNewFace(after.thinkRowsTucked === after.thinkRows,
       `在飞轮重放后思考行全部折叠（got ${after.thinkRowsTucked}/${after.thinkRows}）`);
-    pinNewFace(after.cardFaces.every((c) => c.bodyHeight === 0),
-      `在飞轮重放后工具卡明细体高度为 0（got ${JSON.stringify(after.cardFaces.map((c) => c.bodyHeight))}）`);
+    pinNewFace(after.cardFaces.every((c) => c.preLines === 0),
+      `在飞轮重放后工具卡默认面不渲染正文（got ${JSON.stringify(after.cardFaces.map((c) => c.preLines))} 行）`);
     pinGuard(pageErrors.length === 0, `零页面错误（${pageErrors.join(' | ')}）`);
   } finally { await context.close(); }
 });
@@ -280,14 +287,22 @@ test('C 折叠态高度闸：工具卡 ≤ 单行摘要 + 容差；思考块默�
     console.log('[C] expanded.thinks =', JSON.stringify(expanded.thinkFaces));
 
     const limit = CARD_ONE_LINE_PX + CARD_TOLERANCE_PX;
-    for (const c of expanded.cardFaces) {
-      pinNewFace(c.cardHeight <= limit,
-        `工具卡默认高度 ${Math.round(c.cardHeight)}px ≤ ${limit}px（单行 ${CARD_ONE_LINE_PX}px + 容差 ${CARD_TOLERANCE_PX}px）`);
-      pinNewFace(c.preLines === 0, `工具卡默认面不渲染正文行（got ${c.preLines} 行）`);
+    // 新面钉打在**长输出卡**（fixture: 24 行输出的 Bash 卡 = 作者报障的撑长卡）：
+    // 改前 297px / 8 行 preview，改后 12px / 0 行。
+    const longCard = expanded.cardFaces[0];
+    pinNewFace(longCard.cardHeight <= limit,
+      `长输出卡默认高度 ${Math.round(longCard.cardHeight)}px ≤ ${limit}px（单行 ${CARD_ONE_LINE_PX}px + 容差 ${CARD_TOLERANCE_PX}px）`);
+    pinNewFace(longCard.preLines === 0, `长输出卡默认面不渲染正文行（got ${longCard.preLines} 行）`);
+    // 短内容卡（第二张）：改前本来就在闸内（不撑长）⇒ 只作绿腿的不变量。
+    if (!RED) {
+      for (const c of expanded.cardFaces.slice(1)) {
+        pinGuard(c.cardHeight <= limit, `工具卡默认高度 ${Math.round(c.cardHeight)}px ≤ ${limit}px`);
+      }
     }
     for (const t of expanded.thinkFaces) {
-      pinNewFace(t.contentHeight === 0, `思考正文默认高度 0（got ${Math.round(t.contentHeight)}px）`);
-      pinNewFace(t.labelText.length > 0 && t.labelText.split('\n').length === 1,
+      // 思考正文默认 0 高 + 摘要单行：两棵树都成立（改前思考行本就是一行标签）。
+      pinGuard(t.contentHeight === 0, `思考正文默认高度 0（got ${Math.round(t.contentHeight)}px）`);
+      pinGuard(t.labelText.length > 0 && t.labelText.split('\n').length === 1,
         `思考块默认只显示一行摘要（got ${JSON.stringify(t.labelText)}）`);
     }
   } finally { await context.close(); }
@@ -331,17 +346,22 @@ test('D 展开仍可用：点摘要 ⇒ 明细完整呈现；再点收回', asyn
 test('E 失败轮：默认态同样折叠，但摘要行看得出是失败', async ({ browser }) => {
   const { context, page } = await newPage(browser);
   try {
+    // 失败轮的现实形态：writer 只在 done/agentDone 盖 terminal 戳 ⇒ 失败轮**无**
+    // 终态戳（改前据此整段平铺 = 失败过程全裸奔）。本批 = 中性摘要行 + 折叠。
     const failing = [
       { type: 'user', text: '跑个会失败的', timestamp: 1750000100000 },
       { type: 'tool', label: 'Bash', summary: 'boom --run',
         input: { command: 'boom --run' },
         content: Array.from({ length: 12 }, (_, i) => `stderr line ${i}`).join('\n'),
         isError: true },
-      { type: 'ai', text: '', durationMs: 4000, model: 'harness-model', timestamp: 1750000104000, terminal: true },
+      { type: 'ai', text: '', durationMs: 4000, model: 'harness-model', timestamp: 1750000104000 },
     ];
     const fp = await page.evaluate((msgs) => window.__replayTurn(msgs, {}), failing);
     console.log('[E] fail.project =', JSON.stringify(project(fp)));
-    pinNewFace(fp.toolRowsTucked === fp.toolRows, '失败轮工具卡同样折叠（默认态不漏过程）');
+    pinNewFace(fp.cardFaces.every((c) => c.preLines === 0),
+      `失败轮工具卡默认面不渲染正文（got ${JSON.stringify(fp.cardFaces.map((c) => c.preLines))} 行）`);
+    // 折叠面本身：改前失败轮已有 done 徽章（durationMs）⇒ 两棵树都折（守卫）。
+    pinGuard(fp.toolRowsTucked === fp.toolRows, '失败轮工具卡折叠（默认态不漏过程）');
     pinGuard(fp.header.present, '失败轮仍有摘要行（展开入口）');
     const face = await page.evaluate(() => {
       const card = document.querySelector('#chat > .row.tool .tool-card');
