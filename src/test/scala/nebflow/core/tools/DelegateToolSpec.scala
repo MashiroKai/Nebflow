@@ -353,11 +353,16 @@ class DelegateToolSpec extends CatsEffectSuite:
   // ---------- 5. 内核工具面常量（装配面单点来源） ----------
 
   test(
-    "nebflow tool face = BaseTools + AskUserQuestion + Subagent + AgentFlow (9 items) and excludes orchestration/message tools"
+    "nebflow tool face = BaseTools + AskUserQuestion + Subagent + AgentFlow (10 items) and excludes orchestration/message tools"
   ):
     val face = nebflow.agent.AgentCore.NebflowFixedTools
     assertEquals(face, nebflow.agent.AgentCore.BaseTools + "AskUserQuestion" + "Subagent" + "AgentFlow")
-    assertEquals(face.size, 9)
+    // bash overhaul T1（2026-11-04，作者令「组织优化 bash，用业界成熟做法完整实现」）：
+    // `BaseTools` 六件 → **七件**（+`BgWait`，后台任务的唯一等待原语）⇒ 本面九件 → **十件**。
+    // 计数随机制面变更（非为过测放宽）：带 `device` 者仍恰为六件（`RemoteExecutor.remoteableTools`
+    // 未动，`BgWait` 刻意不入远端注入面——等待是本机语义），该不变式由
+    // `RemoteableDeviceParamSpec` 逐件钉死。
+    assertEquals(face.size, 10)
     // R2 2026-09-12 承继：执行 agent 面零 Mail（无消息工具）；编排/管控/退役件
     // 一律不在（Delegate 派发、AgentControl 管控归 Nebula；Task/NodeMessage 已删净）。
     Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "node_report", "AgentControl", "Mail", "Pop")
