@@ -1,0 +1,11 @@
+=== B: 常驻 server（真 sbt 启动，SBT_OPTS=-Xmx1500m）: bench-1 ===
+server boot-to-ready = 4.0s
+idle RSS (编译前) = 369MB
+B-server-1(boot)           wall=   1.6s rc=0
+RSS after first compile = 617MB
+B-server-2                 wall=   0.6s rc=0
+B-server-3                 wall=   0.6s rc=0
+idle RSS (3 次编译后) = 636MB
+swap: total = 4096.00M  used = 2518.62M  free = 1577.38M  (encrypted)
+load: { 8.97 12.32 12.50 }
+DONE
