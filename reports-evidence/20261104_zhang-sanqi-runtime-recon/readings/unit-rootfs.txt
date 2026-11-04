@@ -1,0 +1,38 @@
+# executord 镜像层逐条清单 —— 证明"镜像里没有 Linux 发行版"
+# 命令：tar -tvf images/stand-services/executord/oci/blobs/sha256/2244831801...ec31
+# 层大小 3,256,320 B；条目数 22（完整列出，未截断）
+
+drwxr-xr-x ./                      drwxr-xr-x ./etc/
+drwxr-xr-x ./etc/cap/             -rw-r--r-- ./etc/cap/onion.json          326 B
+drwxr-xr-x ./etc/cap/units/       -rwxr-xr-x ./etc/cap/units/agentd.json     912 B
+                                  -rwxr-xr-x ./etc/cap/units/canvasd.json    428 B
+                                  -rwxr-xr-x ./etc/cap/units/executord.json  533 B
+                                  -rwxr-xr-x ./etc/cap/units/identityd.json  545 B
+                                  -rwxr-xr-x ./etc/cap/units/linkd.json      998 B
+                                  -rwxr-xr-x ./etc/cap/units/llmgw.json      493 B
+                                  -rwxr-xr-x ./etc/cap/units/mcpd.json       439 B
+                                  -rwxr-xr-x ./etc/cap/units/memd.json       413 B
+                                  -rwxr-xr-x ./etc/cap/units/permd.json      510 B
+                                  -rwxr-xr-x ./etc/cap/units/plugd.json      445 B
+                                  -rwxr-xr-x ./etc/cap/units/projectd.json  1080 B
+                                  -rwxr-xr-x ./etc/cap/units/schedd.json     441 B
+                                  -rwxr-xr-x ./etc/cap/units/sysd.json       638 B
+                                  -rwxr-xr-x ./etc/cap/units/workspaced.json 523 B
+drwxr-xr-x ./usr/                 （其余为 /usr/bin/capd 多调用二进制与目录项）
+
+## 镜像 config（摘）
+  "architecture": "amd64", "os": "linux",
+  "Entrypoint": ["/usr/bin/capd","executord"], "WorkingDir": "/data"
+  Labels: org.stand.cap.kernel=cap-kernel-0.1.0,
+          org.stand.cap.kernel.digest=sha256:31282531d5...,
+          org.stand.cap.layer.digest=sha256:2244831801...
+
+## 结论
+  镜像 = 1 个 Rust 多调用二进制 capd + 12~14 份 unit json + 一份 onion.json。
+  没有 /bin/sh、没有 glibc 发行版、没有 JDK、没有 python、没有 sbt。
+  ⇒ "同一个 Linux 环境"**不是**由镜像提供的；镜像只提供"应用 payload"。
+     Linux 环境本身来自 star-core / star-host（同一 Linux 用户态构建，三种载体各装一份）。
+  对照：docs/design/platform-distribution.md:32「Runtime 层（Linux 用户态）：
+        star-core / star-host；同一 Linux 构建跨三种载体」。
+        体积：star-core 3.1MB、star-host 48MB、star-device ~2.2-2.3GB
+        （docs/design/platform-distribution.md:45-47）。
