@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "stand-dev",
-  "version": "1.1.0",
-  "description": "stand-dev 包——节点获得 stand 本体全栈开发综合能力：需求拆解/技术调研/trade-off 选型/并行调研（方法章）、设计规格书与视觉评审（设计章）、QA 验证（五维审核/隔离冒烟/验红实证）、web 前端实现（Sapphire Glass/视觉铁律）、Scala 后端开发（actor 分层/prompt cache/工具设计）、引擎纪律（合并发版/文档提示词/插件封装）。适用于开发 stand：设计规格书、视觉评审、改前端页面、写 Scala 后端、交付前验证、合并发版、写文档提示词、封装插件。内含 skills：stand-dev（六章总纲 + 21 份 references + 包校验脚本）。不适用于官网 mystand.space（另配 website）与通用文档制作（另配 document-production）。组件面：无 mcp.json、无工具扩展。",
+  "version": "1.2.0",
+  "description": "stand-dev 包——节点获得 stand 本体全栈开发综合能力：需求拆解/技术调研/trade-off 选型/并行调研（方法章）、设计规格书与视觉评审（设计章）、QA 验证（五维审核/隔离冒烟/验红实证）、web 前端实现（Sapphire Glass/视觉铁律）、Scala 后端开发（actor 分层/prompt cache/工具设计/工具链全谱/最小可信基）、引擎纪律（合并发版/文档提示词/插件封装）。适用于开发 stand：设计规格书、视觉评审、改前端页面、写 Scala 后端、交付前验证、合并发版、写文档提示词、封装插件。内含 skills：stand-dev（六章总纲 + 21 份 references + 包校验脚本）。不适用于官网 mystand.space（另配 website）与通用文档制作（另配 document-production）。组件面：无 mcp.json、无工具扩展。",
   "keywords": [
     "stand",
     "开发",
@@ -15,6 +15,9 @@
     "前端",
     "后端",
     "Scala",
+    "munit",
+    "scalafmt",
+    "可信基",
     "QA",
     "验证",
     "合并",
