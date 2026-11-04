@@ -52,7 +52,7 @@ website/                       （包根）
 | skill 路径（自 skills/） | 一句话括注 |
 |---|---|
 | website-frontend/SKILL.md | 官网前端域知识：技术标准、代码安全（XSS/JWT/env）、**文案自解释硬规则（官域实例化）**、验证流与交付口径 |
-| website-design/SKILL.md | 官网视觉域知识：tokens 复用、视觉原则、硬约束、三端验证流 |
+| website-design/SKILL.md | 官网视觉域知识：tokens 复用、视觉原则、硬约束、三端验证流、**客户端四类几何刻度的指针与「两端刻度不互通」边界** |
 | deploy-website/SKILL.md | 官网发布纪律：push 即部署、验收与缓存误判防线、实例侧信息指涉 |
 
 ## 6. 选 skill 决策树
