@@ -1,31 +1,40 @@
 // ask-sheet-fade-height.spec.mjs — 文档阅读面 Ask 面板「上缘渐隐 + 消息区加高」机械
-// 断言集（ui-unification-20261103-doc-ask-fade）。
+// 断言集（ui-unification-20261103-doc-ask-fade 立项；2026-11-04 ask-fade-content-opacity
+// 批按作者裁定改判据 —— 见下）。
 //
-// 作者令（2026-11-03 实拍 IMG_1720 / IMG_1721）：「文档里 Ask 对话窗口有两个调整：
-// 1. 上边缘过渡：现在上方边缘有很明显的截断。我想要的效果是像主对话窗口那样，做一个
-// 慢慢渐渐隐去的消失效果来做过渡。2. 窗口高度：把 Ask 对话窗口里消息区域的高度再调高
-// 一点，让它能有更多空间显示内容」。
+// 作者令①（2026-11-03 实拍 IMG_1720 / IMG_1721）：「上边缘过渡：现在上方边缘有很明显
+// 的截断。我想要的效果是像主对话窗口那样，做一个慢慢渐渐隐去的消失效果来做过渡」+
+// 「把 Ask 对话窗口里消息区域的高度再调高一点」。
+// 作者令②（2026-11-04 09:22 逐字）：「canvas Ask 的这个渐隐，应该是对消息什么的降低
+// 透明度到 0 的过程，而不是放一个过渡的条在哪，整体要是透明无边框的」。
 //
-// 病根（本批实证，见 evidence/doc-ask-fade/README.md）：现盘 .ask-colwrap 同时挂
-// ① 顶部留白 padding-top = --ask-fade-h（内容在带底之下起排）② 列 mask 渐隐。
-// 两者叠加后「渐隐带只盖住那段空白留白」：内容在带底沿以 mask≈1.0 的满不透明度进入
-// ⇒ 视觉上就是一条硬切线（截断）。主对话窗 #g2-edge-fade 的形态相反——内容在带顶
-// 起排、滚入带内被 veil 渐层+毛玻璃「先糊后没」，没有第二条 mask 参与。
+// 病根（①-批引入，②-批实证）：①-批把主对话窗的「渐隐带」形态搬进 Ask——一个
+// 独立的绝对定位视觉层 .ask-veil（挂 .ds-edge-fade：veil 渐层背景 + backdrop-filter
+// blur/saturate + 自身 mask）。它不是内容透明度，而是**一块带底色的遮罩条**：面板
+// 背后是文档正文（面板本身透明），veil 的 0.92→0 亮色渐层把背后内容洗成一条可见的
+// 乳白横带；气泡跨带时 = 一条「被切掉的卡片边」。作者②-令要的是**内容本体 alpha
+// 渐到 0**：mask 作用在滚动容器（= 内容层）自身的绘制结果上，零背景/零边框/零浮影/
+// 零 backdrop-filter ⇒ 面板整体透明无边框、没有任何可见过渡元素。
 //
-// 四套断言（同脚本同判据，改前必红 / 改后必绿）：
-//   A 上缘渐隐（像素级） —— A0 内容起排点 = 带顶（带盖内容，不是盖留白）；A1 带内
-//     亮度剖面从顶到底单调变深且跨度 ≥60（有真渐隐）；A2 带内相邻采样行跳变 ≤45
-//     （无可见直线边界）；A3 带顶 8px 内无截断残留（切缘处的深色内容被判据「吃掉」）；
-//     A5 带底沿两侧亮度差 ≤30（带与下方内容连续，无硬切缝）。
-//   B 渐隐带仍可交互 —— B1 带内 elementFromPoint 命中滚动容器/内容（不被 mask 裁掉、
-//     不被视觉层拦住）；B2 带内滚轮真的滚得动；B3 视觉层 pointer-events:none；
-//     B4 内容宿主零 mask（坑②：mask 参与 hit-test 裁剪）。
-//   C 消息区加高 —— C1 列可视高 ≥320（改前 194 必红）；C2 输入条与列不重叠且输入条
+// 判据（同脚本同判据，改前必红 / 改后必绿）：
+//   A 渐隐本体 = 内容级 mask —— A0 面板内**零**渐隐带元素（.ds-edge-fade / .ask-veil
+//     计数 0；①-批形态必红）；A0b mask 作用在滚动容器内容层（.ask-col 计算样式
+//     mask-image = to bottom 渐变、起点 transparent、终点 = --ask-fade-h；.ask-colwrap
+//     零 mask）；A1 带内亮度剖面从顶到底变深且跨度 ≥60（有真渐隐）；A2 带内相邻采样行
+//     跳变 ≤45（无可见直线边界）；A3 带顶内容 alpha≈0（深色探针在带顶被吃到只剩背景）；
+//     A5 带底沿两侧亮度差 ≤30（无硬切缝）。
+//   B 渐隐不影响交互 —— B1 带内 elementFromPoint 命中滚动容器/内容（mask 不裁 hit-test）；
+//     B2 带内滚轮真的滚得动；B3 内容宿主 mask 存在但 pointer-events 正常（auto）。
+//   T 整体透明无边框 —— T1 面板/滚动容器（dock / colwrap / col）背景透明（background-color
+//     全透明 + background-image none）；T2 无边框/分隔线（border-style none 或宽 0）；
+//     T3 无浮影/内阴影（box-shadow none）；T4 面板零 backdrop-filter（不磨玻璃）。
+//   C 消息区加高 —— C1 列可视高 ≥320（①-批前 194 必红）；C2 输入条与列不重叠且输入条
 //     热区 ≥44；C3 背后文档仍留可读区（面板顶距视口顶 ≥28%）；C4 内容真的溢出可滚。
-//   D 与主对话窗同源 —— D1 #g2-edge-fade 与 .ask-veil 挂同一个 .ds-* 渐隐带类；
-//     D2 两者材质计算样式逐项相等（veil 渐层 / blur+saturate / 两段式 mask）；
-//     D3 ask.css 的 .ask-veil 块内零材质声明（不许第二套实现）；D4 glass.css 的
-//     #g2-edge-fade 块内同样零材质声明（材质只在 .ds-edge-fade 一处）。
+//   D 爆炸半径 —— D1 主对话窗 #g2-edge-fade 仍在且仍挂 .ds-edge-fade（本批只改 Ask，
+//     主窗不动）；D2 ask.css 源零 veil 痕迹（无 .ask-veil / backdrop-filter /
+//     --ds-fade-veil）；D3 ask.css .ask-col 块内有内容级 mask-image（唯一实现）；
+//     D4 glass.css #g2-edge-fade 块内零材质（主窗单源纪律不变）；D5 design-system.css
+//     .ds-edge-fade 配方完整（主窗材质单源不破）；D6 askDock.js 源不再渲染渐隐带元素。
 //   E 同族竖排 bug（实拍表格首列「还挂旧数／不需动／待办」逐字竖排）—— E1 窄列短标签
 //     不逐字折行（首列文本行块数 = 1）；E2 表格字号 ≥13px（iOS HIG 可读字档）。
 //
@@ -223,25 +232,69 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     await page.waitForTimeout(800);
     await page.waitForSelector('.ask-dock:not(.closed) .ask-col .ask-bub', { timeout: 8000 });
 
-    /* ── 几何读数（C 组 + E 组）──────────────────────────────────────── */
+    /* ── 几何 + 计算样式读数（A/T/C/E 组共用）────────────────────────────
+       veil 已退役（②-批）⇒ 不再读 .ask-veil 几何；改读「渐隐带元素计数 + 三个容器
+       的计算样式（背景/边框/浮影/backdrop-filter/mask）」。 */
     const geo = await page.evaluate(() => {
       const r = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { top: +b.top.toFixed(1), bottom: +b.bottom.toFixed(1), left: +b.left.toFixed(1), right: +b.right.toFixed(1), w: +b.width.toFixed(1), h: +b.height.toFixed(1) }; };
       const colwrap = document.querySelector('.ask-colwrap');
       const col = document.querySelector('.ask-col');
-      const veil = document.querySelector('.ask-colwrap .ask-veil');
       const dock = document.querySelector('.ask-dock');
       const input = document.querySelector('.ask-input');
       const send = document.querySelector('.ask-input .ask-send');
       const mdock = document.getElementById('mobile-dock');
       const cs = (el) => (el ? getComputedStyle(el) : null);
+      const fadeH = col ? parseFloat(cs(col).getPropertyValue('--ask-fade-h')) || 0 : 0;
+      // 透明/无边框/无浮影读数（T 组）：背景色透明等价形有多解（transparent /
+      // rgba(0, 0, 0, 0)），统一判 alpha=0；背景图必须 none（否则 = 一块渐变色块）。
+      const paint = (el) => {
+        if (!el) return null;
+        const g = cs(el);
+        const bc = String(g.backgroundColor).replace(/\s+/g, '');
+        const alphaOf = (s) => {
+          const m = s.match(/^rgba?\(([^)]+)\)$/);
+          if (!m) return s === 'transparent' ? 0 : 1;
+          const parts = m[1].split(',').map((v) => parseFloat(v));
+          return parts.length >= 4 ? parts[3] : 1;
+        };
+        return {
+          bgColor: bc, bgAlpha: alphaOf(bc), bgImage: String(g.backgroundImage),
+          borderStyle: g.borderTopStyle, borderWidth: parseFloat(g.borderTopWidth) || 0,
+          borderRightWidth: parseFloat(g.borderRightWidth) || 0,
+          boxShadow: String(g.boxShadow),
+          backdrop: String(g.backdropFilter || g.webkitBackdropFilter || 'none'),
+          mask: String(g.maskImage || g.webkitMaskImage || 'none'),
+          pointerEvents: g.pointerEvents,
+        };
+      };
       return {
-        colwrap: r(colwrap), col: r(col), veil: r(veil), dock: r(dock), input: r(input), send: r(send), mobileDock: r(mdock),
+        colwrap: r(colwrap), col: r(col), dock: r(dock), input: r(input), send: r(send), mobileDock: r(mdock),
+        fadeH,
         colClientH: col ? col.clientHeight : 0,
         colPadTop: col ? parseFloat(cs(col).paddingTop) || 0 : 0,
         // 带净空在滚动容器内（padding box 才是裁剪/渐隐区）⇒ 静态可见内容高 = client − padding-top
         colContentH: col ? Math.round(col.clientHeight - (parseFloat(cs(col).paddingTop) || 0)) : 0,
         colScrollH: col ? col.scrollHeight : 0,
-        veilPointerEvents: cs(veil) ? cs(veil).pointerEvents : null,
+        // A0：面板内渐隐带元素计数（①-批形态 = 1，②-批 = 0）
+        fadeLayerCount: document.querySelectorAll('.ask-dock .ds-edge-fade, .ask-dock .ask-veil').length,
+        veilEls: document.querySelectorAll('.ask-veil').length,
+        // A0d：面板内「带渐变背景的元素」（= 可见过渡条/色块的 DOM 形态；作者令
+        // 「而不是放一个过渡的条在哪」⇒ 面板内不许有任何真渐变背景的层）。
+        // 排除两类非目标：① .ask-bub 消息内容（气泡自带材质域）；② 退化平涂渐变
+        // （全 stop 同色 = 平涂色块的 CSS 写法，如用户气泡 sapphire tint 复合层——
+        // 不是「过渡条」形态）。veil 遮罩条 = 0.92→0.45→0 三档真渐变 ⇒ 必红。
+        gradientLayers: dock
+          ? Array.from(dock.querySelectorAll('*'))
+            .filter((e) => !e.hasAttribute('data-test-fixture') && !e.classList.contains('ask-bub'))
+            .map((e) => ({ cls: String(e.className || e.tagName), img: getComputedStyle(e).backgroundImage }))
+            .filter((x) => {
+              if (!x.img || x.img === 'none') return false;
+              const stops = (x.img.match(/rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}/g) || []);
+              if (stops.length === 0) return true;
+              return !stops.every((s) => s === stops[0]);
+            })
+          : [],
+        paintDock: paint(dock), paintColwrap: paint(colwrap), paintCol: paint(col),
         colwrapMask: cs(colwrap) ? String(cs(colwrap).maskImage) : null,
         colMask: cs(col) ? String(cs(col).maskImage) : null,
         viewportH: window.innerHeight,
@@ -249,6 +302,48 @@ test.describe('doc ask sheet · top fade + message area height', () => {
       };
     });
     readings.geo = geo;
+
+    /* ── A0/A0b 渐隐本体 = 内容级 mask（②-批核心判据：不是一条遮罩条）──────── */
+    // A0「过渡条彻底移除」：面板内不许存在任何渐隐带/遮罩层元素（.ds-edge-fade 成员
+    // 在 Ask 面板 = ①-批的 .ask-veil 遮罩条；它带 veil 渐层底色 ⇒ 可见色块）。
+    check('A0 面板内零渐隐带遮罩元素（.ds-edge-fade / .ask-veil 计数 = 0；①-批形态必红）',
+      geo.fadeLayerCount === 0 && geo.veilEls === 0,
+      JSON.stringify({ inDock: geo.fadeLayerCount, veilAnywhere: geo.veilEls }));
+    // A0d「不许放一个过渡的条在哪」：面板内任何元素都不许带渐变背景（遮罩条/色块
+    // 的通用 DOM 形态；夹具探针 data-test-fixture 除外）。veil 遮罩条 = background
+    // linear-gradient ⇒ ①-批形态必红。
+    check('A0d 面板内零带渐变背景的元素（无任何过渡条/色块层；①-批 veil 必红）',
+      (geo.gradientLayers || []).length === 0,
+      JSON.stringify(geo.gradientLayers));
+    // A0b「渐隐作用在内容层」：mask-image 挂在滚动容器（内容）本体上，起点 transparent、
+    // 终点 = --ask-fade-h；外框 colwrap 零 mask（不许在容器/伪元素上再垫一层）。
+    // 注：Chromium 计算值会省略默认方向 "to bottom"（= 竖直向下），故按「起点透明 @0
+    // → 终点不透明 @--ask-fade-h」判形，不硬要求字面 "to bottom"。
+    const maskOfCol = String(geo.colMask || 'none').replace(/\s+/g, ' ');
+    check('A0b mask 作用在内容层（.ask-col mask-image：起点 transparent @0 → 全实 @--ask-fade-h）',
+      /linear-gradient\(/.test(maskOfCol)
+      && /(rgba\(0, 0, 0, 0\)|transparent) 0px/.test(maskOfCol)
+      && new RegExp(`(^|[^\\d.])${Math.round(geo.fadeH)}px\\)$`).test(maskOfCol),
+      JSON.stringify({ mask: maskOfCol, fadeH: geo.fadeH }));
+    check('A0c 外框零 mask（渐隐不在容器上另垫一层）', String(geo.colwrapMask || 'none') === 'none', String(geo.colwrapMask));
+
+    /* ── T 整体透明无边框（②-批：面板本体零底色/零边框/零分隔线/零内阴影）──── */
+    const paintChecks = [
+      ['T1 面板/滚动容器背景透明（dock/colwrap/col 背景 alpha = 0 且无背景图）',
+        (p) => !!p && p.bgAlpha === 0 && /^none$/.test(p.bgImage),
+        (p) => ({ bg: p && p.bgColor, img: p && p.bgImage })],
+      ['T2 无边框/无分隔线（dock/colwrap/col 边框宽 = 0 或 style none）',
+        (p) => !!p && (p.borderWidth === 0 || /^none$/.test(p.borderStyle)) && p.borderRightWidth === 0,
+        (p) => ({ w: p && p.borderWidth, style: p && p.borderStyle, rw: p && p.borderRightWidth })],
+      ['T3 无浮影/无内阴影（dock/colwrap/col box-shadow = none）',
+        (p) => !!p && /^none$/.test(p.boxShadow), (p) => p && p.boxShadow],
+      ['T4 面板零 backdrop-filter（不磨玻璃 = 不会成为一块乳白罩）',
+        (p) => !!p && /^none$/.test(p.backdrop), (p) => p && p.backdrop],
+    ];
+    for (const [name, pred, detail] of paintChecks) {
+      const pass = pred(geo.paintDock) && pred(geo.paintColwrap) && pred(geo.paintCol);
+      check(name, !!pass, JSON.stringify({ dock: detail(geo.paintDock), colwrap: detail(geo.paintColwrap), col: detail(geo.paintCol) }));
+    }
 
     /* ── E 同族竖排 bug（表格首列短标签）──────────────────────────────── */
     const tableProbe = await page.evaluate(() => {
@@ -268,12 +363,12 @@ test.describe('doc ask sheet · top fade + message area height', () => {
 
     /* ── C 消息区高度 ─────────────────────────────────────────────────── */
     check('C1 列可视高 ≥320px（作者令「消息区域再调高一点」；改前 194 必红）', geo.colClientH >= 320, `colClientH=${geo.colClientH}`);
-    // F1 短会话不雾化：带净空 = 带高且落在滚动容器内 ⇒ 内容盒顶 ≥ 带底沿
-    // （会话只有一两条消息时，首条完整清晰；旧形态「保留区在容器外」对短会话本就成立，
-    //  但滚动态永不入带 = 硬切 —— 本条钉住「静态清晰 + 动态穿带」两件事的前提）。
-    check('F1 带净空 = 带高且 ≥ 带底沿（会话短时首条不被带雾化）',
-      !!geo.col && !!geo.veil && geo.colPadTop >= geo.veil.h - 0.5 && geo.col.top + geo.colPadTop >= geo.veil.top + geo.veil.h - 1,
-      JSON.stringify({ padTop: geo.colPadTop, veilH: geo.veil && geo.veil.h, contentTop: geo.col && +(geo.col.top + geo.colPadTop).toFixed(1) }));
+    // F1 短会话不雾化：内容级 mask 的衰减区 = 滚动容器顶 --ask-fade-h，列 padding-top
+    // ≥ 该高 ⇒ 静态（会话短）时首条落在衰减区之下、完整清晰；滚动时消息穿过衰减区
+    // 自然淡到 0（「渐隐只作用于视觉」两件事互不打架）。
+    check('F1 静态内容让开衰减区（colPaddingTop ≥ --ask-fade-h；会话短时首条不被洗掉）',
+      !!geo.col && geo.fadeH > 0 && geo.colPadTop >= geo.fadeH - 0.5,
+      JSON.stringify({ padTop: geo.colPadTop, fadeH: geo.fadeH, contentTop: geo.col && +(geo.col.top + geo.colPadTop).toFixed(1) }));
     check('C1b 静态可见内容高 ≥300（= 列高 − 带净空；旧形态 194 必红）', geo.colContentH >= 300, `colContentH=${geo.colContentH}`);
     check('C2 输入条不与消息列重叠（input.top ≥ col.bottom − 0.5）', !!geo.input && !!geo.col && geo.input.top >= geo.col.bottom - 0.5,
       JSON.stringify({ inputTop: geo.input && geo.input.top, colBottom: geo.col && geo.col.bottom }));
@@ -307,20 +402,39 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     const geo2 = await page.evaluate(() => {
       const r = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { top: +b.top.toFixed(1), bottom: +b.bottom.toFixed(1), left: +b.left.toFixed(1), right: +b.right.toFixed(1), w: +b.width.toFixed(1), h: +b.height.toFixed(1) }; };
       const col = document.querySelector('.ask-col');
-      const veil = document.querySelector('.ask-colwrap .ask-veil');
+      const fadeH = parseFloat(getComputedStyle(col).getPropertyValue('--ask-fade-h')) || 0;
       return {
-        col: r(col), veil: r(veil), probeEl: r(document.getElementById('__fade_probe')),
+        col: r(col), fadeH, probeEl: r(document.getElementById('__fade_probe')),
         scrollTop: col.scrollTop, scrollH: col.scrollHeight, clientH: col.clientHeight,
       };
     });
     readings.geo2 = geo2;
 
-    // A0 结构：内容起排点 = 带顶（带盖内容而非盖留白）
-    check('A0 渐隐带盖在内容上（col.top ≤ veil.top + 1；旧形态 = 内容在带底之下起排）',
-      !!geo2.col && !!geo2.veil && geo2.col.top <= geo2.veil.top + 1,
-      JSON.stringify({ colTop: geo2.col && geo2.col.top, veilTop: geo2.veil && geo2.veil.top }));
+    // A3-结构：深色探针确实铺满渐隐衰减区（探针顶 ≤ 列顶 + fadeH ⇒ 剖面量的是
+    // 「探针本体被内容级 mask 洗掉」的过程，不是空白）
+    const bandTop = geo2.col.top;
+    const bandH = geo2.fadeH;
+    check('A3-结构 深色探针铺满衰减区（probe.top ≤ col.top + fadeH；量的是内容被洗掉的过程）',
+      !!geo2.probeEl && geo2.probeEl.top <= bandTop + bandH + 1,
+      JSON.stringify({ probeTop: geo2.probeEl && geo2.probeEl.top, bandTop, bandH }));
 
-    const band = geo2.veil;
+    // 渐隐衰减区 = 列顶 fadeH（内容级 mask 起点透明 → fadeH 处全实）。
+    // 面板整体透明（T1）⇒ 衰减区背后透出文档正文文字 —— 为让亮度剖面只反映
+    // 「探针内容 alpha」而非背后文字噪声，采样前沿列矩形垫一块纯底色板（夹具操作：
+    // 只改采样环境、不触产品代码；实况截图已在上面取好，是真实透底状态）。
+    await page.evaluate(() => {
+      const col = document.querySelector('.ask-col');
+      const cb = col.getBoundingClientRect();
+      const slab = document.createElement('div');
+      slab.id = '__fade_backdrop';
+      slab.setAttribute('data-test-fixture', 'uniform-backdrop');
+      slab.style.cssText = 'position:fixed;pointer-events:none;z-index:255;background:#f5f6f8;'
+        + `left:${cb.left - 4}px;top:${cb.top - 4}px;width:${cb.width + 8}px;height:${cb.height + 8}px;`;
+      document.body.appendChild(slab);
+    });
+    await page.waitForTimeout(120);
+
+    const band = { top: bandTop, bottom: bandTop + bandH, h: bandH, left: geo2.col.left, right: geo2.col.right };
     const clipY = Math.max(0, band.top - 12);
     const clipH = Math.min(844 - clipY, Math.ceil(band.h) + 60);
     const buf = await page.screenshot({ clip: { x: 0, y: clipY, width: 390, height: clipH } });
@@ -334,7 +448,7 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     });
     const L_top = series[0][1];
     const L_bot = series[series.length - 1][1];
-    const span = +(L_top - L_bot).toFixed(1);
+    const span = +(L_top - L_bot).toFixed(1);   // 顶 = 探针被洗掉（≈背景亮色），底 = 深色探针全实
     let maxJump = 0, maxAt = 0, inversions = 0;
     for (let i = 1; i < series.length; i++) {
       const d = series[i][1] - series[i - 1][1];   // 向下变深 ⇒ 负值
@@ -348,20 +462,20 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     const seamJump = +Math.abs((seamProf.series[0] ? seamProf.series[0][1] : 0) - (seamProf.series[seamProf.series.length - 1][1] || 0)).toFixed(1);
     readings.fade = { L_top, L_bot, span, maxJump, maxAt, inversions, seamJump, series, band, clipY };
 
-    check('A1 带内亮度剖面有真渐隐（顶亮底深，跨度 ≥60；硬切/空带必红）', span >= 60, `span=${span} top=${L_top} bottom=${L_bot}`);
-    check('A2 带内无可见直线边界（相邻采样行跳变 ≤45）', maxJump <= 45, `maxJump=${maxJump}@y${maxAt}`);
+    check('A1 衰减区内亮度剖面有真渐隐（顶 ≈ 背景亮、底 = 探针全实，跨度 ≥60；无渐隐/硬切必红）', span >= 60, `span=${span} top=${L_top} bottom=${L_bot}`);
+    check('A2 衰减区内无可见直线边界（相邻采样行跳变 ≤45）', maxJump <= 45, `maxJump=${maxJump}@y${maxAt}`);
     check('A2b 剖面单调（向下变深的逆序步数 ≤2）', inversions <= 2, `inversions=${inversions}`);
-    check('A3 带顶切缘无截断残留（带顶 8px 亮度 ≥190 = 深色内容被 veil 吃掉）', L_top >= 190, `L_top=${L_top}`);
-    check('A5 带底沿两侧连续（跳变 ≤30；旧形态在带底硬切必红）', seamJump <= 30, `seamJump=${seamJump}`);
+    check('A3 衰减区顶内容 alpha≈0（顶部亮度 ≥190 = 深色探针被洗到只剩背景）', L_top >= 190, `L_top=${L_top}`);
+    check('A5 衰减区底沿两侧连续（跳变 ≤30；硬切必红）', seamJump <= 30, `seamJump=${seamJump}`);
 
-    /* ── B 渐隐带仍可交互 ─────────────────────────────────────────────── */
+    /* ── B 渐隐不影响交互 ─────────────────────────────────────────────── */
     const hits = await page.evaluate(() => {
       const col = document.querySelector('.ask-col');
-      const veil = document.querySelector('.ask-colwrap .ask-veil');
-      const vb = veil.getBoundingClientRect();
+      const fadeH = parseFloat(getComputedStyle(col).getPropertyValue('--ask-fade-h')) || 0;
       const cb = col.getBoundingClientRect();
+      const bandTop2 = cb.top;
       const xs = [cb.left + cb.width / 2, cb.left + 40, cb.right - 40];
-      const ys = [vb.top + vb.height * 0.25, vb.top + vb.height * 0.5, vb.top + vb.height * 0.8];
+      const ys = [bandTop2 + fadeH * 0.25, bandTop2 + fadeH * 0.5, bandTop2 + fadeH * 0.8];
       const out = [];
       for (const x of xs) for (const y of ys) {
         const el = document.elementFromPoint(x, y);
@@ -375,11 +489,10 @@ test.describe('doc ask sheet · top fade + message area height', () => {
       return out;
     });
     readings.hits = hits;
-    check('B1 带内命中滚动容器/内容（不被 mask 裁掉、不被视觉层拦住）', hits.every((h) => h.inCol && !h.isVeil),
+    check('B1 衰减区内命中滚动容器/内容（内容级 mask 不裁 hit-test、无遮罩层拦手势）', hits.every((h) => h.inCol && !h.isVeil),
       JSON.stringify(hits.map((h) => `${h.y}:${h.tag}`)));
-    check('B3 视觉层 pointer-events:none（不是栏）', geo.veilPointerEvents === 'none', geo.veilPointerEvents);
-    check('B4 内容宿主零 mask（坑②：mask 参与 hit-test 裁剪）', geo.colwrapMask === 'none' && geo.colMask === 'none',
-      JSON.stringify({ colwrap: geo.colwrapMask, col: geo.colMask }));
+    check('B3 内容宿主可交互（.ask-col pointer-events ≠ none）', geo.paintCol && geo.paintCol.pointerEvents !== 'none',
+      geo.paintCol && geo.paintCol.pointerEvents);
 
     // 先落到可滚中段（滚轮要有余量才滚得动）
     const beforeScroll = await page.evaluate(() => {
@@ -390,10 +503,9 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     });
     const wheelAt = await page.evaluate(() => {
       const col = document.querySelector('.ask-col');
-      const veil = document.querySelector('.ask-colwrap .ask-veil');
-      const vb = veil.getBoundingClientRect();
+      const fadeH = parseFloat(getComputedStyle(col).getPropertyValue('--ask-fade-h')) || 0;
       const cb = col.getBoundingClientRect();
-      return { x: Math.round(cb.left + cb.width / 2), y: Math.round(vb.top + vb.height * 0.4) };
+      return { x: Math.round(cb.left + cb.width / 2), y: Math.round(cb.top + fadeH * 0.4) };
     });
     // 先滚回带区（滚轮会移动内容；用 scrollTop 复位保证采样可复现）
     await page.evaluate(({ y }) => { const c = document.querySelector('.ask-col'); c.scrollTop = y; }, { y: beforeScroll });
@@ -403,42 +515,52 @@ test.describe('doc ask sheet · top fade + message area height', () => {
     await page.waitForTimeout(260);
     const afterScroll = await page.evaluate(() => document.querySelector('.ask-col').scrollTop);
     readings.wheel = { beforeScroll, afterScroll };
-    check('B2 带内滚轮真的滚得动（渐隐带未被 hit-test 裁掉）', afterScroll - beforeScroll >= 10,
+    check('B2 衰减区内滚轮真的滚得动（内容级 mask 不裁滚动手势）', afterScroll - beforeScroll >= 10,
       JSON.stringify({ beforeScroll, afterScroll }));
 
-    /* ── D 与主对话窗同源 ─────────────────────────────────────────────── */
+    /* ── 实况截图：面板滚到中段（气泡接近上缘自然淡出、无条无色块）────────
+       先拆夹具（探针 + 底色板），回到真实透底状态。 */
+    await page.evaluate(() => {
+      document.getElementById('__fade_probe')?.remove();
+      document.getElementById('__fade_backdrop')?.remove();
+      const c = document.querySelector('.ask-col');
+      c.scrollTop = Math.max(0, Math.round((c.scrollHeight - c.clientHeight) / 2));
+    });
+    await page.waitForTimeout(300);
+    await page.screenshot({ path: join(OUT, 'ask-sheet-midscroll.png') });
+    const mTop = Math.max(0, Math.round(geo.col.top - 24));
+    await page.screenshot({
+      path: join(OUT, 'ask-sheet-midscroll-band.png'),
+      clip: { x: 0, y: mTop, width: 390, height: Math.min(260, 844 - mTop) },
+    });
+
+    /* ── D 爆炸半径（本批只改 Ask：主对话窗 #g2-edge-fade 原样不动）──────── */
     const d = await page.evaluate(() => {
-      const askVeil = document.querySelector('.ask-colwrap .ask-veil');
       const mainFade = document.getElementById('g2-edge-fade');
+      const askDock = document.querySelector('.ask-dock');
       const pick = (el) => {
         if (!el) return null;
         const cs = getComputedStyle(el);
         return {
-          cls: el.className,
+          cls: String(el.className),
           bg: cs.backgroundImage,
           bf: cs.backdropFilter || cs.webkitBackdropFilter,
           mask: cs.maskImage || cs.webkitMaskImage,
           pe: cs.pointerEvents,
         };
       };
-      return { askVeil: pick(askVeil), mainFade: pick(mainFade) };
+      return {
+        mainFade: pick(mainFade),
+        askFadeLayers: askDock ? askDock.querySelectorAll('.ds-edge-fade, .ask-veil').length : -1,
+      };
     });
     readings.shared = d;
-    const fadeClasses = (s) => String(s || '').split(/\s+/).filter((c) => /^ds-.*fade/.test(c));
-    const askFadeCls = fadeClasses(d.askVeil && d.askVeil.cls);
-    const mainFadeCls = fadeClasses(d.mainFade && d.mainFade.cls);
-    check('D1 Ask 视觉层与 #g2-edge-fade 挂同一个 .ds-* 渐隐带类', askFadeCls.length > 0 && askFadeCls.some((c) => mainFadeCls.includes(c)),
-      JSON.stringify({ ask: d.askVeil && d.askVeil.cls, main: d.mainFade && d.mainFade.cls }));
-    const norm = (v) => String(v || '').replace(/\s+/g, ' ').trim();
-    check('D2 两者材质计算样式同源（veil 渐层 / blur+saturate / 两段式 mask 逐项相等）',
-      !!d.askVeil && !!d.mainFade
-      && norm(d.askVeil.bg) === norm(d.mainFade.bg)
-      && norm(d.askVeil.bf) === norm(d.mainFade.bf)
-      && norm(d.askVeil.mask) === norm(d.mainFade.mask)
-      && d.askVeil.pe === 'none' && d.mainFade.pe === 'none',
-      JSON.stringify({ ask: [norm(d.askVeil.bg).slice(0, 24), norm(d.askVeil.bf), norm(d.askVeil.mask).slice(0, 24)], main: [norm(d.mainFade.bg).slice(0, 24), norm(d.mainFade.bf), norm(d.mainFade.mask).slice(0, 24)] }));
+    check('D1 主对话窗 #g2-edge-fade 仍在且仍挂 .ds-edge-fade（本批不动主窗）',
+      !!d.mainFade && /ds-edge-fade/.test(d.mainFade.cls) && /linear-gradient/.test(d.mainFade.mask),
+      JSON.stringify(d.mainFade && { cls: d.mainFade.cls, mask: String(d.mainFade.mask).slice(0, 40) }));
+    check('D1b Ask 面板内零 .ds-edge-fade/ask-veil 成员（与主窗解耦，不再共用遮罩条手法）', d.askFadeLayers === 0, `count=${d.askFadeLayers}`);
 
-    // 静态面：材质只在 .ds-edge-fade 一处（消费面不许第二套实现）
+    // 静态面：ask.css 源零 veil 痕迹 + .ask-col 块承载内容级 mask；主窗单源纪律不变
     const blockOf = (file, selector) => {
       const src = readFileSync(join(WEB, 'css', file), 'utf8');
       const i = src.indexOf(selector);
@@ -447,20 +569,32 @@ test.describe('doc ask sheet · top fade + message area height', () => {
       const close = src.indexOf('}', open);
       return open < 0 || close < 0 ? '' : src.slice(open, close);
     };
-    const askVeilBlock = blockOf('ask.css', '.ask-colwrap .ask-veil');
+    const askCssSrc = readFileSync(join(WEB, 'css', 'ask.css'), 'utf8');
+    const askColBlock = blockOf('ask.css', '.ask-col {');
     const g2Block = blockOf('glass.css', '#g2-edge-fade {');
     const dsBlock = blockOf('design-system.css', '.ds-edge-fade {');
-    readings.blocks = { askVeilBlock: askVeilBlock.slice(0, 400), g2Block: g2Block.slice(0, 400), dsBlock: dsBlock.slice(0, 700) };
-    check('D3 ask.css .ask-veil 块内零材质声明（无 backdrop-filter / 渐层 —— 不许第二套形态）',
-      !!askVeilBlock && !/backdrop-filter/.test(askVeilBlock) && !/gradient/.test(askVeilBlock),
-      askVeilBlock.replace(/\s+/g, ' ').slice(0, 120));
-    check('D4 glass.css #g2-edge-fade 块内零材质声明（材质只在 .ds-edge-fade 一处）',
+    const askDockJs = readFileSync(join(WEB, 'js', 'askDock.js'), 'utf8');
+    // 注释剥离后再判「源零 veil 痕迹」（注释里叙述退役史属正常，不算实现残留）
+    const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    const askCssCode = stripComments(askCssSrc);
+    const askDockJsCode = stripComments(askDockJs);
+    readings.blocks = { askColBlock: askColBlock.slice(0, 500), g2Block: g2Block.slice(0, 400), dsBlock: dsBlock.slice(0, 700) };
+    check('D2 ask.css 实现面零 veil 痕迹（无 .ask-veil 选择器 / 无 backdrop-filter / 无 --ds-fade-veil）',
+      !/\.ask-veil/.test(askCssCode) && !/backdrop-filter/.test(askCssCode) && !/--ds-fade-veil/.test(askCssCode),
+      JSON.stringify({ askVeilSelector: /\.ask-veil/.test(askCssCode), bf: /backdrop-filter/.test(askCssCode), veilTok: /--ds-fade-veil/.test(askCssCode) }));
+    check('D3 ask.css .ask-col 块承载内容级 mask-image（渐变 + transparent 起点）',
+      !!askColBlock && /mask-image/.test(askColBlock) && /linear-gradient/.test(askColBlock) && /transparent/.test(askColBlock),
+      askColBlock.replace(/\s+/g, ' ').slice(0, 160));
+    check('D4 glass.css #g2-edge-fade 块内零材质声明（主窗材质只在 .ds-edge-fade 一处）',
       !!g2Block && !/backdrop-filter/.test(g2Block) && !/gradient/.test(g2Block),
       g2Block.replace(/\s+/g, ' ').slice(0, 120));
-    check('D5 design-system.css 的 .ds-edge-fade 承载完整配方（veil 渐层 + blur/saturate + 两段式 mask + pointer-events:none）',
+    check('D5 design-system.css 的 .ds-edge-fade 配方完整（主窗单源不破：veil 渐层 + blur/saturate + mask + pointer-events:none）',
       !!dsBlock && /var\(--ds-fade-veil\)/.test(dsBlock) && /blur\(var\(--ds-fade-blur\)\)/.test(dsBlock)
       && /saturate\(var\(--ds-fade-sat\)\)/.test(dsBlock) && /mask-image/.test(dsBlock) && /pointer-events:\s*none/.test(dsBlock),
       dsBlock.replace(/\s+/g, ' ').slice(0, 160));
+    check('D6 askDock.js 实现面不再渲染渐隐带元素（无 ds-edge-fade / ask-veil 挂载）',
+      !/ds-edge-fade/.test(askDockJsCode) && !/ask-veil/.test(askDockJsCode),
+      JSON.stringify({ edgeFade: /ds-edge-fade/.test(askDockJsCode), veil: /ask-veil/.test(askDockJsCode) }));
 
     check('Z 页面零 pageerror', !(readings.pageErrors && readings.pageErrors.length), JSON.stringify(readings.pageErrors || []));
 
