@@ -225,4 +225,9 @@ object ProbeTaxMeasureMain:
     measureTransfer(fiveMb, ChunkSizing.chunkSizeFor(fiveMb.toLong), ChunkSizing.windowFor(ChunkSizing.chunkSizeFor(fiveMb.toLong)), 43)
     measureTransfer(fiveMb, ChunkSizing.chunkSizeFor(fiveMb.toLong), ChunkSizing.windowFor(ChunkSizing.chunkSizeFor(fiveMb.toLong)), 43)
 
+    // 🔴 收尾纪律（2026-11-04 e2e 收口时踩到）：`import cats.effect.unsafe.implicits.global`
+    // 的 IORuntime 工作线程是**非 daemon**，不 shutdown ⇒ main 返回后 JVM 挂住不退
+    // （实测连开两次都留了一个 0% CPU 的僵尸 JVM）。夹具必须自退。
+    cats.effect.unsafe.IORuntime.global.shutdown()
+
 end ProbeTaxMeasureMain
