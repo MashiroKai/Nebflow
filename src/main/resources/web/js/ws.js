@@ -20,6 +20,15 @@ import { probeNearPath } from './nearpath.js';
 // 接管误报根修批（2026-11-02）：同一模块的 deviceClientId 也是 ws 握手要带的
 // 实例身份（`?clientId=`）——同一条零环依赖，不新增边。
 import { refreshAutoBinding, deviceClientId } from './deviceIdentity.js';
+// 断连风暴修复批（2026-11-04 作者报障「一直弹 连接断开 正在重连」）：退避的
+// 「何时归零」抽成纯件——flap（握手成功但几秒必死）不得再清零退避。纯逻辑、
+// 零依赖叶子（零环），机制级判据见 tests/ws-backoff.test.mjs。
+import {
+  backoffDelayMs,
+  attemptsAfterClose,
+  BASE_RECONNECT_DELAY,
+  MAX_RECONNECT_DELAY,
+} from './wsBackoff.js';
 
 // Long-lived token cookie name follows the brand namespace. This is one of
 // the legacy credential copies the B' hook retires (purgeLongLivedCopies
@@ -446,14 +455,18 @@ export function onDisconnect(callback) {
 // ---------- Reconnection state ----------
 // No hard limit on attempts - this is a desktop app; the connection should
 // always recover from sleep / wake, network changes, or server restarts.
+//
+// 断连风暴修复批（2026-11-04）：退避**不再**因握手成功而清零（旧口径见
+// wsBackoff.js 头注）——清零判据改为「这条连接活够了 STABLE_CONN_MS」。
+// flap 形态（开得起来、2–9s 必死）因此逐拍升档直到 30s 封顶，重连频率随着
+// 故障持续而下降，而不是恒定 2–3s 一直弹横幅。
 let reconnectAttempts = 0;
 let reconnectTimer = null;
-const BASE_RECONNECT_DELAY = 2000;
-const MAX_RECONNECT_DELAY = 30000;
+/** 本次连接握手成功时刻（0 = 尚未成功过）；与 reconnectAttempts 配对使用。 */
+let connOpenedAt = 0;
 
 function reconnectDelay() {
-  const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
-  return delay * (0.8 + Math.random() * 0.4);
+  return backoffDelayMs(reconnectAttempts);
 }
 
 function scheduleReconnect() {
@@ -469,7 +482,9 @@ function scheduleReconnect() {
 /** Force immediate reconnect, skipping exponential backoff. */
 export function forceReconnect() {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  // 显式动作（唤醒探针判死／用户点重连）⇒ 归零是人给的意图，不走 flap 判据。
   reconnectAttempts = 0;
+  connOpenedAt = 0;
   // Close the old connection cleanly before opening a new one - prevents orphan sockets.
   if (state.ws) {
     try { state.ws.onclose = null; state.ws.close(); } catch (_) {}
@@ -1330,7 +1345,11 @@ export function connect() {
     // 入场加载卡（接管/入场同族批 2026-11-01 作者令③）：「连接主机」项的真实
     // 完成信号（index.html 门脚本定义；typeof 防御——面不在场即零副作用）。
     try { window.__nfEntry && window.__nfEntry.mark && window.__nfEntry.mark('host', 'done'); } catch (_) {}
-    reconnectAttempts = 0;
+    // 断连风暴修复批（2026-11-04）：这里**不再**无条件 `reconnectAttempts = 0`。
+    // 握手成功不等于连接健康——flap 形态下每次握手都成功，一清零就把退避钉死在
+    // 基值（旧口径 = 恒定 2–3s 一次重连，即作者看到的「一直弹」）。现在只记
+    // 「何时开起来的」，由 onclose 按存活时长（STABLE_CONN_MS）决定是否归零。
+    connOpenedAt = Date.now();
     state.connected = true;
     hbMisses = 0;             // freezetimeout B2: 新连接从零计 miss
     shelteredMisses = 0;      // 传输遮蔽窗计数同清零（本地回路短路批）
@@ -1391,6 +1410,14 @@ export function connect() {
   state.ws.onclose = () => {
     state.connected = false;
     syncSendButtonConnState();
+    // 断连风暴修复批（2026-11-04）：退避归零的判据 = 这条连接**活够了**才归零。
+    // 存活时长 ≥ STABLE_CONN_MS ⇒ 健康连接的正常断开（睡醒/换网/服务端重启），
+    // 下一次重连用基值 2s；< STABLE_CONN_MS ⇒ flap（开得起来、几秒必死），保持
+    // 升档，由下面的 scheduleReconnect 继续 +1 ⇒ 2s→4s→8s→16s→30s 封顶。
+    // 必须先于 scheduleReconnect 算——它读 reconnectAttempts 定本拍时长。
+    const lifetimeMs = connOpenedAt ? Date.now() - connOpenedAt : -1;
+    reconnectAttempts = attemptsAfterClose(reconnectAttempts, { opened, lifetimeMs });
+    connOpenedAt = 0;
     disconnectCallbacks.forEach(cb => { try { cb(); } catch (e) { console.error('[ws] disconnect callback error:', e); } });
     if (state.heartbeat) { clearInterval(state.heartbeat); state.heartbeat = null; }
     if (!opened) {
