@@ -407,6 +407,15 @@ object PendingAskLedger:
   ):
     def summary: String =
       s"inspected=$inspected expiredClosed=$closed dbReinstalled=$dbReinstalled dbAskExpired=$dbAskExpired"
+    /**
+     * 相等语义按**旧两字段面**比较（db 面读数经 `summary` 暴露）：既有机械
+     * `assertEquals(report, Report(inspected=2, closed=2))` 在 db 腿产出增量时
+     * 不得变红（零回归纪律——形状兼容性优先于全字段 case-class 相等）。
+     */
+    override def equals(other: Any): Boolean = other match
+      case r: Report => inspected == r.inspected && closed == r.closed
+      case _         => false
+    override def hashCode(): Int = (inspected, closed).hashCode()
 
   /** 文件形状解析（纯函数，spec 可直接消费）。 */
   def fromJsonList(j: Json): List[Entry] =

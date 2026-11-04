@@ -61,6 +61,14 @@ object DbHost:
   /** 该根是否已持有句柄（测试/诊断面）。 */
   def isOpen(dataRoot: Path): Boolean = handles.containsKey(dataRoot)
 
+  /**
+   * 只查不开：已 memoize 的句柄（None = 本进程尚未有人开过该根）。
+   * 供**无实例态的审计面**（如 FlowMapEventLog——object、装配点不在解禁面）
+   * 接线用：写穿影子仅在生产宿主（SessionStore/PendingAskLedger/DispatchNotify）
+   * boot 期已注册句柄后激活 ⇒ 测试 JVM 永不因静态 lookup 打开真实数据根。
+   */
+  def peek(dataRoot: Path): Option[DbHandle] = Option(handles.get(dataRoot))
+
   /** 关闭并注销指定根的句柄（测试面；生产由 shutdown hook 收口）。 */
   def release(dataRoot: Path): Unit =
     val h = handles.remove(dataRoot)
