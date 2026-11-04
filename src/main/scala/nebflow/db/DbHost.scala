@@ -1,5 +1,7 @@
 package nebflow.db
 
+import cats.effect.Fiber
+import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import org.slf4j.LoggerFactory
 
@@ -29,11 +31,15 @@ object DbHost:
 
   private val handles = new ConcurrentHashMap[Path, DbHandle]()
 
+  /** 遗忘刀 sweep fiber 面（D-9 接线：开根 arm / release 取消；见 [[RetentionSweeper]]）。 */
+  private val sweepers = new ConcurrentHashMap[Path, Fiber[IO, Throwable, Unit]]()
+
   @volatile private var shutdownHookInstalled: Boolean = false
 
   /**
-   * best-effort 打开（或复用）数据根的共享句柄。
-   * 成功 ⇒ memoize 并返回；失败 ⇒ WARN + None（不 memoize，下次重试）。
+   * best-effort 打开（或复用）数据根的共享句柄。成功 ⇒ memoize + 挂遗忘刀 sweep
+   * （避让门内嵌：sweep 先等 recoverPendingD8——门不开永不跑）。
+   * 失败 ⇒ WARN + None（不 memoize，下次重试）。
    */
   def openBestEffort(dataRoot: Path): Option[DbHandle] =
     try
@@ -45,6 +51,7 @@ object DbHost:
           Option(handles.get(dataRoot)).getOrElse {
             val h = Db.open(DbConfig(dataRoot = dataRoot)).unsafeRunSync()
             handles.put(dataRoot, h)
+            sweepers.put(dataRoot, RetentionSweeper.arm(h))
             installShutdownHook()
             log.info("db handle opened for data root {} (generation {})", dataRoot,
               h.instanceLockGeneration)
@@ -69,8 +76,12 @@ object DbHost:
    */
   def peek(dataRoot: Path): Option[DbHandle] = Option(handles.get(dataRoot))
 
-  /** 关闭并注销指定根的句柄（测试面；生产由 shutdown hook 收口）。 */
+  /** 关闭并注销指定根的句柄（测试面；生产由 shutdown hook 收口）。sweep fiber 随手取消。 */
   def release(dataRoot: Path): Unit =
+    val f = sweepers.remove(dataRoot)
+    if f != null then
+      try f.cancel.unsafeRunSync()
+      catch case _: Throwable => ()
     val h = handles.remove(dataRoot)
     if h != null then
       try h.close()

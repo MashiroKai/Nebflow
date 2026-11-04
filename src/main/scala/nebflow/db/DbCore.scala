@@ -1,6 +1,7 @@
 package nebflow.db
 
 import cats.effect.IO
+import cats.effect.kernel.Deferred
 import io.circe.syntax.*
 import io.circe.{Json, parser}
 import nebflow.db.format.{EventEnvelope, GuardDocs, PendingRecord, ScheduleRecord,
@@ -245,6 +246,15 @@ final class DbHandle private[db] (
 
   // Batched 档脏面（flush/close 收口）。
   private val dirtyBatched = new ConcurrentHashMap[Path, java.lang.Boolean]()
+
+  /**
+   * §3.11 步 3 完成门（遗忘刀避让窗基线，乙件 S16→S17 同语义：清扫不得在 boot
+   * 恢复完成前跑）——[[recoverPendingD8]] 成功即开；[[RetentionSweeper]] 先等此门。
+   * 门永不开 ⇒ sweep 永不跑（fail-safe：未恢复就绝不遗忘）。
+   */
+  private val recoveryGate: Deferred[IO, Unit] = Deferred.unsafe[IO, Unit]
+
+  private[db] def awaitRecoveryComplete: IO[Unit] = recoveryGate.get
 
   private def assertWritable(): Unit =
     if lostGeneration || !instanceLock.stillHeld then
@@ -762,39 +772,43 @@ final class DbHandle private[db] (
 
   // ── 恢复腿（§3.11 执行面）─────────────────────────────────────────────────
 
-  def recoverPendingD8(): IO[Recovery.PendingPlan] = IO.blocking {
-    val now = System.currentTimeMillis()
-    // 不可再生面（三标签①）：坏 ⇒ 隔离 + 显式拒绝（由调用方裁定，绝不静默空起步）。
-    List(PendingStream.Permission, PendingStream.Ask).foreach { stream =>
-      readPendingSync(stream) match
-        case ReadResult.Corrupt(kind, ev) =>
-          Quarantine.quarantine(ev, now).foreach(_ => quarantinedN.incrementAndGet())
-          throw DbError.StreamCorrupt(
-            s"pending recovery refused: ${stream.fileName} $kind — 已隔离 $ev；" +
-              "pending 面不可再生，处置（重放/人工核档）由调用方裁定后重试", ev)
-        case _ => ()
+  def recoverPendingD8(): IO[Recovery.PendingPlan] =
+    IO.blocking {
+      val now = System.currentTimeMillis()
+      // 不可再生面（三标签①）：坏 ⇒ 隔离 + 显式拒绝（由调用方裁定，绝不静默空起步）。
+      List(PendingStream.Permission, PendingStream.Ask).foreach { stream =>
+        readPendingSync(stream) match
+          case ReadResult.Corrupt(kind, ev) =>
+            Quarantine.quarantine(ev, now).foreach(_ => quarantinedN.incrementAndGet())
+            throw DbError.StreamCorrupt(
+              s"pending recovery refused: ${stream.fileName} $kind — 已隔离 $ev；" +
+                "pending 面不可再生，处置（重放/人工核档）由调用方裁定后重试", ev)
+          case _ => ()
+      }
+      val permLatest = readLatestPending(PendingStream.Permission) match
+        case ReadResult.Present(rows) => rows
+        case _ => Nil
+      val askLatest = readLatestPending(PendingStream.Ask) match
+        case ReadResult.Present(rows) => rows
+        case _ => Nil
+      val plan = Recovery.planPendingRecovery(permLatest ++ askLatest)
+      // ask 过期关闭：本腿为其追加终态行（V6 不变式：孤儿 ask == 0）。
+      withGates(s"pending:${PendingStream.Ask.fileName}") {
+        appendRowsUnderGate(pendingFile(PendingStream.Ask), validatorFor[PendingRecord],
+          plan.expiredAsks.map { row =>
+            val seq = counter.next()
+            PendingRecord.closeRow(row, seq, now, Recovery.ExpiredCloseBy,
+              Recovery.ExpiredCloseReason).asJson.noSpaces
+          })
+      }
+      if plan.reinstall.nonEmpty then
+        log.warn("pending recovery (D-8): {} permission card(s) to reinstall: {}",
+          plan.reinstall.size, plan.reinstall.map(_.requestId).mkString(","))
+      plan
+    }.flatMap { plan =>
+      // 避让门开锁（幂等）：恢复腿成功 ⇒ 遗忘刀调度可起步（S16→S17）。
+      recoveryGate.complete(()).attempt.as(plan)
     }
-    val permLatest = readLatestPending(PendingStream.Permission) match
-      case ReadResult.Present(rows) => rows
-      case _ => Nil
-    val askLatest = readLatestPending(PendingStream.Ask) match
-      case ReadResult.Present(rows) => rows
-      case _ => Nil
-    val plan = Recovery.planPendingRecovery(permLatest ++ askLatest)
-    // ask 过期关闭：本腿为其追加终态行（V6 不变式：孤儿 ask == 0）。
-    withGates(s"pending:${PendingStream.Ask.fileName}") {
-      appendRowsUnderGate(pendingFile(PendingStream.Ask), validatorFor[PendingRecord],
-        plan.expiredAsks.map { row =>
-          val seq = counter.next()
-          PendingRecord.closeRow(row, seq, now, Recovery.ExpiredCloseBy,
-            Recovery.ExpiredCloseReason).asJson.noSpaces
-        })
-    }
-    if plan.reinstall.nonEmpty then
-      log.warn("pending recovery (D-8): {} permission card(s) to reinstall: {}",
-        plan.reinstall.size, plan.reinstall.map(_.requestId).mkString(","))
-    plan
-  }
 
   def orphanOpenAsks(): IO[Int] = IO.blocking {
     readLatestPending(PendingStream.Ask) match
