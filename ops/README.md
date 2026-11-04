@@ -14,7 +14,7 @@
 | `ops/bin/stand-jdk` | `~/.stand/bin/stand-jdk` | pinned JDK（`$STAND_HOME/jdk-21`）自愈 installer（装 / 修 / 体检） |
 | `ops/stand-autostart.sh` | `~/.stand/bin/stand-autostart.sh` | 开机自启入口（v2：从 main 树 `sbt run` 起，带 6138 端口守卫；2026-11-03 双根分家批由 `nebflow-autostart.sh` git mv 改名——stand 的自启住 stand 家，旧名留弃用垫片转发） |
 | `ops/bin/nebflow-autostart-shim` | `~/.stand/bin/nebflow-autostart.sh` | **旧名弃用垫片**（2026-11-03 双根分家批）：打印弃用提示后 `exec` 转发同目录 `stand-autostart.sh`，参数逐字透传。launchd 现挂 `com.nebflow.gateway` 作业的 ProgramArguments 仍指旧名路径，经垫片继续工作（改 plist 属 launchd 操作，须作者裁定） |
-| `ops/stand-restart.sh` | `~/.stand/bin/stand-restart.sh` | 开发实例自重启工具 v4.2（**开发者/编排侧**：编译预检 + 隔离 canary + 四信号空闲 + 观察窗；2026-11-03 改名批由 `nebflow-restart.sh` git mv 而来，verbatim 入库，改动仍走它自己的版本纪律） |
+| `ops/stand-restart.sh` | `~/.stand/bin/stand-restart.sh` | 开发实例自重启工具 v4.4（**开发者/编排侧**；v4.4 主路径 `--hot` = 直接热重启：编译预检 + 隔离 canary → 立即重启，跳过四信号/观察窗——断点续跑兜底〔作者令 2026-11-03 17:59〕；`--canary`/`--watch`/`--wait-idle` 守候语义保留；`--force` 语义收敛=等同 `--hot`；2026-11-03 改名批由 `nebflow-restart.sh` git mv 而来，verbatim 入库，改动仍走它自己的版本纪律） |
 | `ops/bin/nebflow-restart-shim` | `~/.stand/bin/nebflow-restart.sh` | **旧名弃用垫片**（2026-11-03 改名批）：打印 `nebflow-restart.sh is deprecated — use stand-restart.sh` 后 `exec` 转发同目录 `stand-restart.sh "$@"`，参数逐字透传（与 CLI 改名「老 nebflow 命令留垫片转发」同一手法） |
 | `ops/release.sh` | —（不入 live：与仓绑定，从仓内跑） | **发版流水线（工程化 M2）**：`stage` → `approve` → `rollback` / `tag`，显式批准门（见下节） |
 | `ops/bin/stand-jar-pull` | —（不入 live：与仓绑定，从仓内跑） | **KAI → Mac jar 流转（KAI 主线迁移批 2026-10-26）**：拉 KAI 出包位最新 jar → SHA 对账 → 原子落位 → 切指针 → start 指针解析验证（`--verify`/`--dry-run` 零触碰预演；用法一页：`ops/stand-jar-pull.md`） |
@@ -179,7 +179,7 @@ bash ops/release.sh status    # 只读: 指针 / previous / staged 状态
 
 ## 内建分离式重启/两阶段更新（台账 #916 · 2026-10-26）
 
-引擎内建（`nebflow.cli.DetachedApply`），设计件：`docs/design/20261026_detached-apply-restart-update-spec.zh-CN.md`。
+引擎内建（`nebflow.cli.DetachedApply`），设计件：`~/.stand/projects/stand/.stand/docs/design/20261026_detached-apply-restart-update-spec.zh-CN.md`（文档库落位 = 项目注册目录 `.stand/docs/`，不在仓库 `docs/`，见「文档落位」条）。
 
 **`stand restart` 三条腿（作者裁定 2026-11-03 07:45：restart 的 CLI 从用户角度设计，用户不用编译版 stand）**
 
@@ -220,7 +220,7 @@ restart 失败 = `phase=failed` + 写因留证（stop 腿失败 rc=3 / start 健
 
 ### CLI 零 JVM detached 面（`restart --detached` / `--dry-run`，2026-10-27 批）
 
-与上节 jar 面**互补不冲突**（设计件：`docs/design/20261027_cli-isolation-and-detached-restart-spec.zh-CN.md`）：
+与上节 jar 面**互补不冲突**（设计件：`~/.stand/projects/stand/.stand/docs/design/20261027_cli-isolation-and-detached-restart-spec.zh-CN.md`）：
 
 - `stand restart --detached`：CLI 层双 fork 孤儿化点火器（过继 launchd，ppid=1）
   + 点火前自检 ppid=1（不达标 ABORT rc=3，引擎分毫未动）+ stop 腿（launcher

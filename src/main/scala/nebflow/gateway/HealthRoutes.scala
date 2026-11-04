@@ -109,6 +109,30 @@ private[gateway] object HealthRoutes:
             Ok(Json.obj("port" -> ctx.gatewayPort.asJson))
         }
 
+      // 近路「命中/回落」上报面（近路批·引擎侧可观测面，2026-11-04；审计
+      // `20261104_103020_local-acceleration-audit.md` §2.4/§8-1 的落点）。**零凭据**：
+      // 与 /health/conn 同级无 withAuth（页面入座前后都要能报，载荷只有计数）；
+      // 计数与日志全在 [[NearPathStats]]（进程内，不落盘）。应答恒 204 —— 观测面
+      // 不产生错误码（坏 body / 非法 event / 超限 = 静默丢弃）。
+      case req @ POST -> Root / "health" / "nearpath-event" =>
+        NearPathStats.event(req).map(_.putHeaders(nearPathCorsHeaders(req)*))
+
+      // 近路事件上报的预检腿（跨源 JSON POST 必先 OPTIONS；此前该路径落空 ⇒ 浏览器
+      // 不可读 ⇒ 事件永远到不了引擎 = 「靠猜」的根因之一）。非白名单 origin = 裸 204。
+      case req @ OPTIONS -> Root / "health" / "nearpath-event" =>
+        NoContent().map(_.putHeaders(nearPathCorsHeaders(req)*))
+
+      // 近路读数端点的预检腿（只读 GET,跨源读同样要 CORS；无简单请求豁免）。
+      case req @ OPTIONS -> Root / "health" / "nearpath" =>
+        NoContent().map(_.putHeaders(nearPathCorsHeaders(req)*))
+
+      // 近路读数面（只读、零凭据、no-store）：`{"hit","miss","reasons","hitLastAt",
+      // "missLastAt","redeemedLoopback"}` —— 键集合是对前端的契约（近路批逐字对接），
+      // 新增键只能走新端点。载荷全来自 [[NearPathStats]] 的内存计数。
+      case req @ GET -> Root / "health" / "nearpath" =>
+        Ok(NearPathStats.payload)
+          .map(_.putHeaders((nearPathCorsHeaders(req) :+ NoStoreHeader)*))
+
       // 连接面只读读数（R-1b conn-guard 批，设计件 §C④-4）：零凭据面（仅
       // 对端 IP + 计数 + 上限/超时口径 + fd 代理）。与 /health 同级无令牌门
       // （watchdog/作者探视用）；不含任何 header/body/token 内容。
@@ -256,6 +280,44 @@ private[gateway] object HealthRoutes:
       )
 
   end probeCorsHeaders
+
+  /** 近路读数端点的应答头：不缓存（计数每秒都在变，缓存即撒谎）。 */
+  private val NoStoreHeader: Header.ToRaw =
+    Header.Raw(org.typelevel.ci.CIString("Cache-Control"), "no-store")
+
+  /**
+   * 近路事件/读数的 CORS 家族（近路批 2026-11-04）：与 [[probeCorsHeaders]] **同一
+   * 白名单、同一头形状**，只有两点不同，且两点都是本面的语义必需：
+   *
+   *  1. **不限腿**：上报方可能是环回腿页面（近路已走通时的 hit），也可能是隧道腿页面
+   *     （回落时的 miss）——「隧道腿与环回腿两侧都可能来打」。白名单仍只有我们自己的
+   *     门户/中继 origin（不是 `*`），跨设备/公网页面照旧读不到、写不进。
+   *  2. `Allow-Methods` 含 **POST**（probeCorsHeaders 只有 GET/OPTIONS：探测面是只读）。
+   *
+   * 载荷零敏感面（计数 + 原因 token），因此环回腿限制对本面没有披露收益，只有
+   * 「隧道腿报不上来」的代价 ⇒ 白名单即闸。
+   */
+  def nearPathCorsHeaders(req: Request[IO]): List[Header.ToRaw] =
+    val allowed = requestOrigin(req).exists(o => canonicalOrigin(o).exists(allowedProbeOrigins.contains))
+    if !allowed then Nil
+    else
+      List(
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Origin"), requestOrigin(req).getOrElse("")),
+        Header.Raw(org.typelevel.ci.CIString("Vary"), "Origin"),
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Methods"), "GET, POST, OPTIONS"),
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Headers"), "content-type"),
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Private-Network"), "true"),
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Max-Age"), ProbeCorsMaxAge)
+      )
+
+  end nearPathCorsHeaders
+
+  /** 请求自申报的 Origin（仅 CORS 白名单比对用；腿判定另走 LoopbackLeg）。 */
+  private def requestOrigin(req: Request[IO]): Option[String] =
+    req.headers.headers
+      .find(h => h.name.toString.equalsIgnoreCase("Origin"))
+      .map(_.value.trim)
+      .filter(_.nonEmpty)
 
   /** 白名单 origin 集（纯函数，spec 直读）：门户 base + 门户 env 覆盖 + 中继 origin。 */
   private[gateway] def allowedProbeOrigins: Set[String] =

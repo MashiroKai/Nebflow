@@ -198,8 +198,10 @@ plt.savefig('<ws>/chart.svg', format='svg')
 
 A markdown/HTML report that belongs to a project's knowledge base (project
 review, investigation record, design note) MUST be delivered into the
-project's document vault: `<workspace>/docs/`, attachments under
-`<workspace>/docs/attachments/`, written in the Obsidian-compatible style
+project's document vault: `<data_root>/projects/<project>/.stand/docs/` (the
+project's registration dir, next to its `project.json` — author ruling
+2026-11-03), attachments under `<vault>/attachments/`, written in the
+Obsidian-compatible style
 carried by the `wiki-docs` skill of this plugin. Concretely:
 
 - Title = first H1; the document cites the documents it builds on with

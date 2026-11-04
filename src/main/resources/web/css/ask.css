@@ -7,7 +7,8 @@
  * 形态 = 样张 v2.1（docs/design/20261028_canvas-ask-mode-mockup-v2.html，作者八条令
  * 2026-10-28 17:5x + v2.1 减法令 22:42「简约一点。不需要两个箭头，就右侧一个发送
  * 按钮」）→ canvas 右下角入口钮 → 点击输入条从按钮位置向上长出（输入 + 右侧唯一
- * 发送钮）→ 气泡列升腾按龄渐隐 → 列顶渐变模糊过渡带 → 零面板/零弹窗/零遮罩。
+ * 发送钮）→ 气泡列升腾按龄渐隐 → 列顶内容级 mask 渐隐（ask-fade-content-opacity
+ * 批 2026-11-04：消息 alpha 渐到 0，零遮罩条/零底色/零边框）→ 零面板/零弹窗/零遮罩。
  *
  * 三修③（作者令 2026-10-29「ask 输入条/气泡对齐 canvas 统一风格，不新造风格」）：
  * 自造毛玻璃材质（--ask-bub-* 与 --ask-input-* 两族、品牌蓝渐变面 + 自带外投影）
@@ -46,8 +47,9 @@
   --ask-fab-bottom: 24px;        /* 钮距画布下缘（JS 随通栏底栏实测让位） */
   --ask-dock-w: 372px;           /* 覆盖层宽（= 输入框档宽） */
   --ask-col-maxh: 316px;         /* 气泡列 max-height（小巧不占 canvas） */
-  --ask-fade-h: 64px;            /* 顶部渐隐带高（.ds-edge-fade 成员=主对话窗同一类；
-                                 * 同值即列内带净空 —— 内容静态在带下、滚动穿带渐隐） */
+  --ask-fade-h: 64px;            /* 顶缘渐隐衰减区高（内容级 mask：transparent 0 →
+                                  * currentColor 本值；= 列 padding 净空，静态首条
+                                  * 在衰减区之下完整清晰） */
   --z-ask-dock: 24;              /* < 顶行 30（排他 z 序：永不入顶行） */
   --ask-dot-ring: rgba(255, 255, 255, 0.9);  /* 通知点描边圈（暗档翻 #0b0e14） */
   --ask-link: #1d4ed8;           /* cite 徽标链色（亮档） */
@@ -150,47 +152,49 @@ body.mobile-layer .ask-dock .ds-resize-handle { left: 0; }
 .ask-dock.is-resizing .ask-bub { border-color: rgb(var(--sapphire) / 0.35); }
 
 
-/* 气泡列：从按钮位置长出；顶缘过渡 = 主对话窗同一套渐隐带（作者令 2026-11-03）
- * ── ui-unification-20261103-doc-ask-fade（作者实拍 IMG_1720/1721：「现在上方边缘有
- * 很明显的截断。我想要的效果是像主对话窗口那样，做一个慢慢渐渐隐去的消失效果」）──
- * 病根（本批实证）：旧形态把「带」架在**空白留白**上——.ask-colwrap 挂
- * padding-top:--ask-fade-h 让内容在带底之下起排，同时给 colwrap 挂一条 mask 渐隐；
- * 两者叠加 ⇒ 内容在带底沿以 mask≈1.0 的满不透明度进入，带本身底下什么都没有。
- * 视觉上就是一条横切线（作者看到的「截断」），而 mask 那条「渐隐」只在空白区生效。
- * 本批改为**主对话窗同形态**：内容在带顶起排（带净空 = 带高、落在**滚动容器之内**
- * ⇒ 滚动时内容穿进带区被 veil 渐层 + 毛玻璃「先糊后没」；静态时首条在带下完整清晰），
- * 内容宿主零 mask（坑②：mask 参与 hit-test 裁剪 ⇒ 旧形态带内点不到也滚不动）。
- * 带材质零自带：全部来自 design-system.css `.ds-edge-fade` 单源
- * （`--ds-fade-veil` / `--ds-fade-blur` / `--ds-fade-sat` / 两段式 mask），本文件只留
- * 几何差异档（左右缩进 / 带高 / z 序）。 */
+/* 气泡列：从按钮位置长出；顶缘渐隐 = 内容本体 alpha 渐到 0（作者令 2026-11-04
+ * 09:22 逐字：「canvas Ask 的这个渐隐，应该是对消息什么的降低透明度到 0 的过程，
+ * 而不是放一个过渡的条在哪，整体要是透明无边框的」）
+ * ── ask-fade-content-opacity 批（推翻 ①-批形态）──
+ * 病根（①-批 ui-unification-20261103-doc-ask-fade 实证）：渐隐本体被做成一块
+ * **独立遮罩条**——.ask-colwrap 内挂 .ask-veil（.ds-edge-fade 成员：veil 渐层底色
+ * rgba(245,246,248,.92→0) + backdrop blur/saturate + 自身 mask）。面板本体透明、
+ * 背后是文档正文 ⇒ veil 渐层把背后内容洗成一条可见的乳白横带（作者看到的「过渡
+ * 条」）；气泡跨带沿 = 一条被切掉的卡片边。这不是「消息透明度渐到 0」，是「盖一层
+ * 渐变色块」——与本令逐字相悖。
+ * 本批改法：**渐隐带元素整体退役**（.ask-veil 不再渲染，面板内零 .ds-edge-fade
+ * 成员），渐隐本体 = 滚动容器自身绘制结果的 mask（作用在内容层：.ask-col 无背景
+ * 无边框，其绘制输出只有气泡 ⇒ mask 只吃内容 alpha，不碰任何容器底色）：
+ *   · mask 起点 transparent → --ask-fade-h 处全实：消息滚近列顶时自身 alpha 线性
+ *     渐到 0，「降低透明度到 0 的过程」逐字落地；
+ *   · 列 padding-top ≥ --ask-fade-h（衰减区在滚动容器之内）：静态（会话短）首条
+ *     落在衰减区之下完整清晰；滚动时消息穿区自然淡出；
+ *   · 交互不受影响（Chromium/WebKit 实证：mask 不参与 hit-test/滚动手势裁剪——
+ *     spec B1/B2 同一断言改前改后均绿）；输入条在 dock 布局里位于列外，天然在
+ *     衰减层之外不受渐变影响。
+ * 本文件零 veil 材质残留（--ds-fade-veil / backdrop-filter 一概不引）；主对话窗
+ * #g2-edge-fade 的遮罩条手法照旧（本批只改 Ask，爆炸半径不扩大）。 */
 .ask-colwrap {
   position: relative; width: 100%;
   max-height: var(--ask-col-maxh);
   display: flex; flex-direction: column; justify-content: flex-end;
 }
 .ask-col {
-  /* 列可视高 = 总档（带净空在**滚动容器之内**，见下 —— 不再从列高里扣）。 */
+  /* 列可视高 = 总档（衰减区净空在滚动容器之内，见上 —— 不再从列高里扣）。 */
   width: 100%; max-height: var(--ask-col-maxh); overflow-y: auto;
   display: flex; flex-direction: column; gap: 7px; align-items: flex-end;
-  /* 带净空（本批关键改动）：保留区 = --ask-fade-h，且必须落在**滚动容器之内**。
-   * · 滚动容器的裁剪盒 = padding box ⇒ 内容向上滚时会穿进这段保留区，正好被
-   *   带顶的 veil 渐层「先糊后没」（= 主对话窗的滚入渐隐）；
-   * · 内容静态（会话短）时首条落在保留区之下 = 完整清晰，不会被带雾化（1 条消息
-   *   的场景不会被整条洗掉）；
-   * · 旧形态把这段保留区挂在 .ask-colwrap（滚动容器**之外**）⇒ 内容永远进不了带，
-   *   在带底沿以满不透明度起排 = 作者看到的硬切线（本批病根）。
-   * 文档会话批②（2026-11-01）：横 padding 归零 —— 气泡区左右缘与输入条
-   * 逐像素对齐（同宽同缘）；纵向保留 6/2 呼吸留白。 */
+  /* 内容级渐隐（本批关键改动）：mask 作用在滚动容器自身绘制结果上（本元素无
+   * 背景/边框 ⇒ 输出 = 气泡内容），顶缘 --ask-fade-h 内内容 alpha 渐到 0。
+   * mask 颜色只取 alpha 通道 ⇒ 用 currentColor（无裸色值，GU2-7 同律）。 */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, currentColor var(--ask-fade-h));
+  mask-image: linear-gradient(to bottom, transparent 0, currentColor var(--ask-fade-h));
+  /* 衰减区净空（保留①-批几何）：内容静态在衰减区之下起排 = 首条完整清晰；
+   * 滚动时内容穿进衰减区被 mask 洗掉。横 padding 归零（文档会话批②：气泡区
+   * 左右缘与输入条逐像素对齐）；纵向保留 6/2 呼吸留白。 */
   padding: calc(var(--ask-fade-h) + 6px) 0 2px;
   scrollbar-width: none; touch-action: pan-y; /* #988：列内纵滚原生，手势零劫持 */
 }
 .ask-col::-webkit-scrollbar { display: none; }
-/* 顶部渐隐带：类 = .ds-edge-fade（与 #g2-edge-fade 同一个实现），本块只声明
- * 本面差异档 —— 带高 / 落位 / z 序。**禁在本块再写 veil 渐层 / blur / mask**。 */
-.ask-colwrap .ask-veil {
-  height: var(--ask-fade-h);
-  z-index: 2;           /* 气泡(0) < 带 2 */
-}
 
 /* 玻璃气泡（三修③：材质 = canvas --cv-* 单源）。统一按钮玻璃批 2026-11-01：
  * 气泡禁独立 backdrop-filter（滚动性能纪律）⇒ 消费 glass.css 气泡半透明实底
@@ -283,7 +287,7 @@ body.mobile-layer .ask-dock {
   /* 消息区加高（作者令 2026-11-03 ②「把 Ask 对话窗口里消息区域的高度再调高一点，
    * 让它能有更多空间显示内容」）：250 → clamp(320, 46vh, 420)。
    * 实测 390×844（同一脚本同判据，evidence doc-ask-fade）：列高 194 → 388，
-   * 静态可见内容高 194 → 326（= 388 − 带净空 56 − 呼吸 6）⇒ +132px（+68%）。
+   * 静态可见内容高 194 → 326（= 388 − 渐隐净空 56 − 呼吸 6）⇒ +132px（+68%）。
    * 下界 320 保小屏（SE 667 ⇒ 46vh=307 被抬到 320）；上界 420 保「背后文档仍留
    * 可读区」（390×844 时面板顶距视口顶 = 264.8px ≈ 31%）。 */
   --ask-col-maxh: clamp(320px, 46vh, 420px);

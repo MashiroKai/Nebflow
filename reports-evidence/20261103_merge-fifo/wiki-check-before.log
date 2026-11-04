@@ -1,0 +1,35 @@
+wiki-docs 校验：29 条违规（/Users/kaiyu/Claude code/Stand/docs）
+
+── broken-link（1）──
+  20261102_161500_keyboard-layer-monaco-quickinput__delegate-nebflow-17658d72.md:8  引用目标不存在：[[20261102_132051_replace-nebflow-ui-with-vscode__delegate-nebflow-5313652f]]（既非文档也非已注册词条——补词条声明块或改引文档）
+
+── orphan-doc（28）──
+  actor-mailbox-pattern-review.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  agent-icon-design-guide.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  architecture/JARVIS_PHASE1_SPEC.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  architecture/JARVIS_PHASE1_SUMMARY.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design-memory-v2.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/20260928_nodeprogress-node-task-card.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/analysis.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/architecture-optimization-proposal.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/card-rendering-protocol.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/ci-testing.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/cli-design.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/flow-engine.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/flow-tree.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/git-management.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/hook-system-demo.html:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/inter-agent-mail.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/memory-system.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/mesh-sync-v2.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/multi-view-refactor.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/session-reminder.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/sync-design.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/sync-mvp.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  design/telemetry-dashboard.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  evidence/20260929_0200_brief-transport-silent-truncation.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  flow-redesign-plan.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  issues/023-decouple-core-from-agent.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+  reviews/arch-refactor-doc-review.html:1  零出链且零入链——至少引用词表或 index，接入图谱
+  reviews/scala-rust-diff.md:1  零出链且零入链——至少引用词表或 index，接入图谱
+

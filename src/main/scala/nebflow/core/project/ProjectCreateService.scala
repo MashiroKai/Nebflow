@@ -88,14 +88,17 @@ object ProjectCreateService:
   val AgentMdTemplate: String = ""
 
   /**
-   * 装配形模板（台账 #913 ③，2026-10-26）：基模板 + fleet 纪律节。
-   * `fleet.enforceExplicitDevice` 关 = 节为空串 = 与 [[AgentMdTemplate]] 字节相等
-   * （向后兼容零变化）；开 = 新脚手架的 AGENTS.md 带「Fleet device discipline」节
-   * （dispatcher 纪律同步——六件工具强制显式 device + 项目 device 标注的查询面）。
+   * 装配形模板（台账 #913 ③，2026-10-26）：基模板 + fleet 纪律节 + 文档落位节。
+   * `fleet.enforceExplicitDevice` 关 = fleet 节为空串（向后兼容的那半条不变）；
+   * 文档落位节（作者令 2026-11-03 20:02：docs 落项目注册目录 `.stand/docs/`）恒
+   * 常驻——它是本批的落位单源在人读面的载体，任何新建项目的 AGENTS.md 自带。
    * 消费点 = 全部脚手架写面（本地 create/幂等重挂补缺、设备腿远端脚手架），禁有
-   * 调用点仍直用基模板（否则开关下面板内字节二态）。
+   * 调用点仍直用基模板（否则面板内字节二态）。
    */
-  def AgentMdTemplateFull: String = AgentMdTemplate + nebflow.core.device.FleetConfig.agentsMdSection
+  def AgentMdTemplateFull: String =
+    AgentMdTemplate +
+      nebflow.core.device.FleetConfig.agentsMdSection +
+      ProjectStore.docsLandingSection
 
   /**
    * Create + idempotently mount. `name` defaults to the workspace basename.
@@ -547,14 +550,25 @@ object ProjectCreateService:
                   // ② 本机项目：同样必须真实存在（create 时的目录后来被删 = 拒绝
                   //    重挂，零写入）才补缺脚手架。
                   if ProjectStore.deviceOrigin(pd).isDefined then
-                    mountProject(pd, created = false)
+                    // 设备项目同样补文档库（它在引擎侧注册目录，不是设备盘面）——
+                    // 补缺幂等，故与直挂并行安全。
+                    ProjectStore
+                      .ensureLedgerDocs(resolvedName)
+                      .flatMap(item =>
+                        mountProject(pd, created = false, scaffold = Some(ProjectStore.ScaffoldReport(List(item))))
+                      )
                   else
                     IO.blocking(ProjectMountPreflight.checkLocalWorkspace(workspace, PathUtil.dataRoot)).flatMap {
                       case Some(refusal) => IO.pure(Left(ToolError(refusal)))
                       case None =>
                         ProjectStore
                           .ensureScaffold(os.Path(workspace, PathUtil.dataRoot), AgentMdTemplateFull)
-                          .flatMap(report => mountProject(pd, created = false, scaffold = Some(report)))
+                          .flatMap(report =>
+                            ProjectStore.ensureLedgerDocs(resolvedName).flatMap { ledger =>
+                              val merged = ProjectStore.ScaffoldReport(report.items :+ ledger)
+                              mountProject(pd, created = false, scaffold = Some(merged))
+                            }
+                          )
                     }
                 case Some(pd) =>
                   IO.pure(

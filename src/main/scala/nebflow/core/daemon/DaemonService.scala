@@ -97,7 +97,22 @@ final class DaemonService(
         else IO.unit
       }
 
-  /** Stop all running daemons. Called on gateway shutdown. */
+  /**
+   * seal 批（2026-11-03）：**孤儿收尸**单点。`autoStart` 内部本来就先收尸再拉起；
+   * 心跳封存后 `autoStart` 不跑，但上一实例被 SIGKILL 时遗留的子进程（含
+   * `perception-daemon`）仍会继续跑——那会让「封存」名不副实。故 boot 门在
+   * **两态都**执行本腿：只 kill 我们自己 marker + startTime 对得上的进程
+   * （用户手起的服务永不触碰），属收尸不属进程，一次性、零常驻。
+   */
+  def reclaimStaleOrphans(): IO[Unit] = reclaimStaleDaemons()
+
+  /**
+   * Stop all running daemons. Called on gateway shutdown.
+   *
+   * seal 批（2026-11-03）：本腿**不封**——它是引擎退出时的收尸面（把本进程起的
+   * daemon 一起带走），不是心跳/邮件的后台进程；心跳封存后 `autoStart` 不跑，
+   * 这里自然也没东西可停（幂等空转）。
+   */
   def stopAll(): IO[Unit] =
     entries.get.flatMap { map =>
       val running = map.values.filter(_.status == DaemonStatus.Running).toList

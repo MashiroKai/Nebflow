@@ -88,7 +88,7 @@ object DelegateTool extends Tool:
 **Rules:**
 - Do NOT duplicate the delegate's work — work on something else and let the result arrive as a system message.
 - The ack is not the result.
-- Landing discipline (KG audit ①): when the task produces knowledge documents (designs, audits, research, conclusions), state in the brief that they land in the registered project workspace's `docs/` subtree (Obsidian format: frontmatter + ≥1 wikilink); `reports/` is for pure process files (batch run reports) only. Validation command for the closing report: `python3 <dataRoot>/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --root <workspace>/docs`.
+- Landing discipline (KG audit ①, author ruling 2026-11-03): when the task produces knowledge documents (designs, audits, research, conclusions), state in the brief that they land in the project's REGISTRATION dir vault `<dataRoot>/projects/<project>/.stand/docs/` — next to `project.json`, NOT in the project workspace repo's `docs/` (Obsidian format: frontmatter + ≥1 wikilink); `reports/` is for pure process files (batch run reports) only. Validation command for the closing report: `python3 <dataRoot>/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --project <project>`.
 - **Limits:** No hard concurrency limit — in-flight delegates run concurrently.
 - **Safety**: NEVER send signals to or kill any sbt/java/nebflow process — you run inside a Nebflow instance; killing it kills you and the user's session. Process inspection with `ps` (read-only) is fine."""
 
@@ -914,7 +914,14 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     /** 面板命名批（2026-10-31）：批次短名（Record 落盘 + agentStart 帧注入）。 */
     shortName: Option[String] = None,
     /** 续用腿（worktree-reuse-selection 批）：命中候选（None = 新建缺省）。 */
-    reuseCandidate: Option[nebflow.core.delegate.WorktreeCandidates.Candidate] = None
+    reuseCandidate: Option[nebflow.core.delegate.WorktreeCandidates.Candidate] = None,
+    /**
+     * 续命血缘（会话续命名与位修正批 2026-11-03 · 作者 16:51 裁定②）：本派生是
+     * 续命兜底腿（原位续不可恢复）时 = 被继承的原 delegate 会话 id——Record 落盘
+     * `resumedFrom`（审计 + AgentControl/面板显示面）。None = 新鲜派发/原位续
+     * （原位续同一身份，无血缘）。
+     */
+    resumedFrom: Option[String] = None
   ): IO[Either[ToolError, (String, String)]] =
     val childDepth = parentDepth + 1
     val agentName = agentDef.name
@@ -1029,7 +1036,8 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
               sessionDevice,
               sessionDeviceWorkspace,
               modeDecision = decision,
-              shortName = shortName
+              shortName = shortName,
+              resumedFrom = resumedFrom
             )
         }
     }
@@ -1072,7 +1080,10 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
     shortName: Option[String] = None,
     /** 续用腿（worktree-reuse-selection 批 2026-11-02）：命中候选（None = 新建缺省
      *  ——行为逐字节不变）。 */
-    reuseCandidate: Option[nebflow.core.delegate.WorktreeCandidates.Candidate] = None
+    reuseCandidate: Option[nebflow.core.delegate.WorktreeCandidates.Candidate] = None,
+    /** 续命血缘（会话续命名与位修正批 2026-11-03）：派生腿 = 原 delegate id；
+     *  新鲜派发 = None（Record 落盘 `resumedFrom`，审计与显示面数据源）。 */
+    resumedFrom: Option[String] = None
   ): IO[Either[ToolError, (String, String)]] =
     val agentName = agentDef.name
     val isDispatcher = modeDecision.exists(_.mode == DualModeConfig.ModeDispatcher)
@@ -1272,7 +1283,10 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               orchestrationMode = Some(DelegateRegistry.ModeSingle),
               // 双模式批（设计 §7.3）：执行形态落记录——总闸关 = None（存量形态
               // 零迁移）；总闸开 = kernel|dispatcher（spawn 时终身属性）。
-              mode = modeDecision.map(_.mode)
+              mode = modeDecision.map(_.mode),
+              // 续命血缘（会话续命名与位修正批 2026-11-03）：派生腿落原 delegate id
+              // （审计 + 显示面）；新鲜派发/原位续 = None（零字段，旧行字节不变）。
+              resumedFrom = resumedFrom
             )
           )
         )
@@ -1302,6 +1316,10 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               workspaceSeat =
                 if sessionDevice.isDefined && binding.isEmpty then sessionDeviceWorkspace
                 else None
+            ).deepMerge(
+              // 续命血缘（会话续命名与位修正批 2026-11-03）：派生腿落 resumedFrom 键
+              // （链账本可查「这一代派生自谁」）；新鲜派发零键（旧行字节不变）。
+              resumedFrom.map(r => io.circe.Json.obj("resumedFrom" -> r.asJson)).getOrElse(io.circe.Json.obj())
             )
           )
         )

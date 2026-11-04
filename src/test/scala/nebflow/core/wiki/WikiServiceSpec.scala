@@ -263,4 +263,26 @@ class WikiServiceSpec extends CatsEffectSuite:
       case other => fail(s"expected Right, got $other")
     }
   }
+  test("WS-9 落位单源（作者令 2026-11-03）：注册目录 .stand/docs 有文档即为该项目的 vault") {
+    // beta 原本无 vault（legacy stub 面）——本测试把它的 vault 建在**注册目录**，
+    // 断言图谱读的是新落位而非 workspace（alpha 仍留在 workspace docs/ = 未迁移回落面，
+    // 由既有 WS-* 各条持续覆盖）。
+    val betaLedger = tempRoot / "projects" / "beta" / ".stand" / "docs"
+    os.makeDir.all(betaLedger)
+    os.write.over(betaLedger / "ledger-note.md", "# Ledger note\n\nSee [[alpha-note]].\n")
+    os.write.over(betaLedger / "alpha-note.md", "# Alpha note\n\nBack to [[ledger-note]].\n")
+    svc.graph(Some("beta")).map { g =>
+      val nodes = g.hcursor.downField("nodes").as[List[io.circe.Json]].getOrElse(Nil)
+      val rels = nodes.flatMap(n => str(n, "rel")).filter(_.endsWith(".md")).sorted
+      assertEquals(rels, List("alpha-note.md", "ledger-note.md"), "注册目录 vault 被识别为 beta 的文档库")
+      assert(
+        str(g.hcursor.downField("view").as[io.circe.Json].getOrElse(io.circe.Json.Null), "id").isDefined ||
+          g.hcursor.downField("stats").downField("docs").as[Long].toOption.contains(2L),
+        "beta 不再是 stub 项目（docs 计数 = 2）"
+      )
+      // 反向断言：vault 根 = 注册目录（不是 workspace/docs）
+      assertEquals(nebflow.core.project.ProjectStore.ledgerDocsDir("beta"), betaLedger)
+    }
+  }
+
 end WikiServiceSpec

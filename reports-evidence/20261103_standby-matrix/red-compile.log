@@ -1,0 +1,49 @@
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-3e517a60-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-3e517a60/project
+[info] compiling 2 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-3e517a60/project/target/scala-2.12/sbt-1.0/classes ...
+[info] done compiling
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-3e517a60/)
+[info] compiling 728 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-3e517a60/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 1013 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-3e517a60/target/scala-3.5.2/test-classes ...
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-3e517a60/src/test/scala/nebflow/core/delegate/DelegateCompletionMatrixSpec.scala:26:11 
+[error] 26 |    import DelegateCompletionMatrix.*
+[error]    |           ^^^^^^^^^^^^^^^^^^^^^^^^
+[error]    |           Not found: DelegateCompletionMatrix
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-3e517a60/src/test/scala/nebflow/core/delegate/DelegateCompletionMatrixSpec.scala:34:11 
+[error] 34 |    import DelegateCompletionMatrix.*
+[error]    |           ^^^^^^^^^^^^^^^^^^^^^^^^
+[error]    |           Not found: DelegateCompletionMatrix
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-3e517a60/src/test/scala/nebflow/core/delegate/DelegateCompletionMatrixSpec.scala:72:37 
+[error] 72 |    assertEquals(DelegateStandbyCare.effectiveDelay(1, d, 50L, floorMs = 600_000L, answers = 0), 50L, "首档（还没应答过）照旧")
+[error]    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]    |value effectiveDelay is not a member of object nebflow.core.delegate.DelegateStandbyCare
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-3e517a60/src/test/scala/nebflow/core/delegate/DelegateCompletionMatrixSpec.scala:74:26 
+[error] 74 |      DelegateStandbyCare.effectiveDelay(1, d, 50L, floorMs = 600_000L, answers = 1),
+[error]    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]    |value effectiveDelay is not a member of object nebflow.core.delegate.DelegateStandbyCare
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-3e517a60/src/test/scala/nebflow/core/delegate/DelegateCompletionMatrixSpec.scala:79:26 
+[error] 79 |      DelegateStandbyCare.effectiveDelay(2, d, 50L, floorMs = 600_000L, answers = 0),
+[error]    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]    |value effectiveDelay is not a member of object nebflow.core.delegate.DelegateStandbyCare
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-3e517a60/src/test/scala/nebflow/core/delegate/DelegateCompletionMatrixSpec.scala:84:26 
+[error] 84 |      DelegateStandbyCare.effectiveDelay(4, List(10_000L, 30_000L, 60_000L), 600_000L, floorMs = 600_000L, answers = 1),
+[error]    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]    |value effectiveDelay is not a member of object nebflow.core.delegate.DelegateStandbyCare
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-3e517a60/src/test/scala/nebflow/core/delegate/DelegateCompletionMatrixSpec.scala:88:37 
+[error] 88 |    assertEquals(DelegateStandbyCare.effectiveDelay(2, d, 50L, floorMs = 0L, answers = 1), 50L, "floor=0 ⇒ 纯退避序（spec 提速用）")
+[error]    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]    |value effectiveDelay is not a member of object nebflow.core.delegate.DelegateStandbyCare
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-3e517a60/src/test/scala/nebflow/core/delegate/DelegateCompletionMatrixSpec.scala:89:26 
+[error] 89 |    assertEquals(Defaults.DelegateStandbyNudgeAnswerFloorMs, 600_000L, "缺省下限 = 10min")
+[error]    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]    |value DelegateStandbyNudgeAnswerFloorMs is not a member of object nebflow.shared.Defaults
+[error] 8 errors found
+[error] (Test / compileIncremental) Compilation failed
+[error] Total time: 96 s (0:01:36.0), completed 2026年11月3日 18:34:46

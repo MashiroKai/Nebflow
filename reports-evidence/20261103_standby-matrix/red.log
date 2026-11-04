@@ -1,0 +1,111 @@
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-3e517a60-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-3e517a60/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-3e517a60/)
+[info] compiling 1012 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-3e517a60/target/scala-3.5.2/test-classes ...
+[info] done compiling
+[warn] javaOptions will be ignored, fork is set to false
+18:39:12.264 [36mINFO [0m nebflow.core.delegate.standby-care - [standby-care] reminder sequence exhausted for delegate-nebflow-standby-answer (matrix idlenudge, 4 nudge(s)) — this standby period goes SILENT (pure event-driven waiting: Mail wakes; zero timeout; re-declarations no longer re-arm)
+[standby-answer-spec] rows=4 gaps=List(202, 301, 405) state=Some(CareState(4,true,3,IdleNudge)) live=false
+18:39:13.756 [36mINFO [0m nebflow.core.delegate.standby-care - [standby-care] reminder sequence exhausted for delegate-nebflow-standby-silent (matrix idlenudge, 1 nudge(s)) — this standby period goes SILENT (pure event-driven waiting: Mail wakes; zero timeout; re-declarations no longer re-arm)
+18:39:14.740 [36mINFO [0m nebflow.core.delegate.standby-care - [standby-care] reminder sequence exhausted for delegate-nebflow-standby-declared-silent (matrix declared, 4 nudge(s)) — this standby period goes SILENT (pure event-driven waiting: Mail wakes; zero timeout; re-declarations no longer re-arm)
+18:39:15.176 [36mINFO [0m nebflow.core.delegate.standby-care - [standby-care] reminder sequence exhausted for delegate-nebflow-standby-floor (matrix idlenudge, 3 nudge(s)) — this standby period goes SILENT (pure event-driven waiting: Mail wakes; zero timeout; re-declarations no longer re-arm)
+[standby-floor-spec] rows=3 gaps=List(50, 51) state=Some(CareState(3,true,2,IdleNudge))
+[32mnebflow.core.delegate.DelegateStandbyCareAnswerSpec:[0m
+[91m==> X [0m[91mnebflow.core.delegate.DelegateStandbyCareAnswerSpec[0m.[91m① armDecision: 新期待命 StartFresh；同期待命重申 = 应答消费；fiber 已死 ⇒ 续档；穷尽 ⇒ 静默；换型不回首档[0m  [90m0.108s[0m munit.ComparisonFailException: src/test/scala/nebflow/core/delegate/DelegateStandbyCareAnswerSpec.scala:173
+172:      "🔴 换型 ≠ 新待命期起点：单调续档（改前红：换型 ⇒ StartFresh ⇒ 退避序回第 1 档 ⇒ 分钟级连戳）"
+[7m173:    )[0m
+174:    assertEquals(
+🔴 换型 ≠ 新待命期起点：单调续档（改前红：换型 ⇒ StartFresh ⇒ 退避序回第 1 档 ⇒ 分钟级连戳）
+[1m=> Obtained[0m
+StartFresh()
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-ResumeAt([0m
+[91m-  attempt = 3[0m
+[91m-)[0m
+[92m+StartFresh()[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.delegate.DelegateStandbyCareAnswerSpec.$init$$$anonfun$1[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m173[0m[1m)[0m
+[32m  + [0m[32m② 未申报腿重申（arm 同型再调用）= 应答消费 ⇒ 提醒按档序递进、③ 条数封顶后静默[0m [90m3.237s[0m
+[32m  + [0m[32m③ 序列穷尽后再重申：零新提醒（本期待命期静默，只保留终态判定）[0m [90m0.75s[0m
+[91m==> X [0m[91mnebflow.core.delegate.DelegateStandbyCareAnswerSpec[0m.[91m④ 申报 standby ⇒ 零 caretaker / 零记账 / 零注入（stand by×complete = silent queue）[0m  [90m0.594s[0m munit.ComparisonFailException: src/test/scala/nebflow/core/delegate/DelegateStandbyCareAnswerSpec.scala:295
+294:    program.map { case (live, state, rows) =>
+[7m295:      assertEquals(rows, Nil, s"🔴 申报待命腿必须零注入（改前红：Declared 腿照常催 —— 作者 18:14「都已经报了 stand by 了，还通知什么」），实际=${rows.map(_._2.take(80))}")[0m
+296:      assertEquals(live, false, "申报待命腿不得武装 caretaker")
+🔴 申报待命腿必须零注入（改前红：Declared 腿照常催 —— 作者 18:14「都已经报了 stand by 了，还通知什么」），实际=List(<system-reminder>
+[delegate-standby] You are parked in standby. Reminder #1 of t, <system-reminder>
+[delegate-standby] You are parked in standby. Reminder #2 of t, <system-reminder>
+[delegate-standby] You are parked in standby. Reminder #3 of t, <system-reminder>
+[delegate-standby] You are parked in standby. Reminder #4 of t)
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[91m-Nil[0m
+[92m+List([0m
+[92m+  Tuple2([0m
+[92m+    _1 = 1793702354496,[0m
+[92m+    _2 = """<system-reminder>[0m
+[92m+[delegate-standby] You are parked in standby. Reminder #1 of the backoff sequence (0s, then every 0min ×3). Still waiting? Reply briefly or re-declare delegate_report(category="standby"); reached the end state? Report finish|merge so the verdict sequence can run.[0m
+[92m+【待命看护】你已停靠待命。这是退避提醒 #1（0s, then every 0min ×3）。仍在等？简短回复或重申 delegate_report(category="standby")；已到终态？报 finish/merge 让判词序运行。[0m
+[92m+</system-reminder>"""[0m
+[92m+  ),[0m
+[92m+  Tuple2([0m
+[92m+    _1 = 1793702354578,[0m
+[92m+    _2 = """<system-reminder>[0m
+[92m+[delegate-standby] You are parked in standby. Reminder #2 of the backoff sequence (0s, then every 0min ×3). Still waiting? Reply briefly or re-declare delegate_report(category="standby"); reached the end state? Report finish|merge so the verdict sequence can run.[0m
+[92m+【待命看护】你已停靠待命。这是退避提醒 #2（0s, then every 0min ×3）。仍在等？简短回复或重申 delegate_report(category="standby")；已到终态？报 finish/merge 让判词序运行。[0m
+[92m+</system-reminder>"""[0m
+[92m+  ),[0m
+[92m+  Tuple2([0m
+[92m+    _1 = 1793702354659,[0m
+[92m+    _2 = """<system-reminder>[0m
+[92m+[delegate-standby] You are parked in standby. Reminder #3 of the backoff sequence (0s, then every 0min ×3). Still waiting? Reply briefly or re-declare delegate_report(category="standby"); reached the end state? Report finish|merge so the verdict sequence can run.[0m
+[92m+【待命看护】你已停靠待命。这是退避提醒 #3（0s, then every 0min ×3）。仍在等？简短回复或重申 delegate_report(category="standby")；已到终态？报 finish/merge 让判词序运行。[0m
+[92m+</system-reminder>"""[0m
+[92m+  ),[0m
+[92m+  Tuple2([0m
+[92m+    _1 = 1793702354740,[0m
+[92m+    _2 = """<system-reminder>[0m
+[92m+[delegate-standby] You are parked in standby. Reminder #4 of the backoff sequence (0s, then every 0min ×3). Still waiting? Reply briefly or re-declare delegate_report(category="standby"); reached the end state? Report finish|merge so the verdict sequence can run.[0m
+[92m+【待命看护】你已停靠待命。这是退避提醒 #4（0s, then every 0min ×3）。仍在等？简短回复或重申 delegate_report(category="standby")；已到终态？报 finish/merge 让判词序运行。[0m
+[92m+This is the LAST reminder of the sequence — the session returns to pure event-driven waiting (Mail wakes it anytime; nothing is killed; no timeout).[0m
+[92m+【提醒穷尽】这是本序列最后一条提醒——此后回纯事件驱动等待（Mail 随时唤醒；零杀零超时）。[0m
+[92m+</system-reminder>"""[0m
+[92m+  )[0m
+[92m+)[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.delegate.DelegateStandbyCareAnswerSpec.$init$$$anonfun$4$$anonfun$1[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m295[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$1[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m292[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$1[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m292[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$1[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m291[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m290[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m289[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m289[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m288[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m288[0m[1m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.FileChangeTracker$.create[0m[90m([0m[90mfilewatch.scala[0m:[90m248[0m[90m)[0m
+[91m==> X [0m[91mnebflow.core.delegate.DelegateStandbyCareAnswerSpec[0m.[91m⑤ 实测间隔：delays=50ms / floor=600ms ⇒ 相邻提醒间隔 ≥ floor（不出现分钟级连戳形态）[0m  [90m2.579s[0m munit.FailException: src/test/scala/nebflow/core/delegate/DelegateStandbyCareAnswerSpec.scala:346 🔴 应答后/第 2 档起的间隔必须 ≥ floor 600ms（改前红：无 floor ⇒ 复读 ~50ms，正是作者报障的分钟级连戳形态），实际 gaps=List(50, 51)
+345:        s"🔴 应答后/第 2 档起的间隔必须 ≥ floor 600ms（改前红：无 floor ⇒ 复读 ~50ms，正是作者报障的分钟级连戳形态），实际 gaps=$gaps"
+[7m346:      )[0m
+347:      assertEquals(state.map(_.attempt), Some(3), "记账面：已发 3 档")
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.delegate.DelegateStandbyCareAnswerSpec.$init$$$anonfun$5$$anonfun$1[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m346[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3$$anonfun$2[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m336[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3$$anonfun$2[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m336[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m334[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.$anonfun$4$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$3[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m334[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.answersLoop$2[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m322[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.answersLoop$2[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m322[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.answersLoop$2$$anonfun$2[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m325[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.answersLoop$2[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m322[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.delegate.DelegateStandbyCareAnswerSpec.answersLoop$2[0m[1m([0m[1mDelegateStandbyCareAnswerSpec.scala[0m:[1m322[0m[1m)[0m
+[32mnebflow.core.delegate.DelegateStandbyCareSpec:[0m
+[32m  + [0m[32mdelayFor: short tiers each once, then the long tier flat[0m [90m0.001s[0m
+[32m  + [0m[32mtotalAttempts: short count + long cap[0m [90m0.0s[0m
+[32m  + [0m[32mnudgePayload: <system-reminder> form; bilingual (en + zh) registered; IdleNudge demands an explicit standby-or-finish declaration; Declared carries the detail; the last reminder names the zero-timeout tail[0m [90m0.004s[0m
+[32m  + [0m[32mdelaysDesc: short chain + long tier wording[0m [90m0.0s[0m
+[32m  + [0m[32mstandby slot writers: parkStandby/clearStandby round-trip, idempotent no-op, missing record explicit Left[0m [90m0.01s[0m
+[error] Failed: Total 10, Failed 3, Errors 0, Passed 7
+[error] Failed tests:
+[error] 	nebflow.core.delegate.DelegateStandbyCareAnswerSpec
+[error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[error] Total time: 114 s (0:01:54.0), completed 2026年11月3日 18:39:17

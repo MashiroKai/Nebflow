@@ -6,6 +6,7 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.*
 import nebflow.core.AgentRuntimePort
+import nebflow.core.delegate.CancelCascade
 import nebflow.core.flow.TeamSessionRegistry
 import nebflow.shared.Defaults
 
@@ -561,6 +562,24 @@ When to use:
           val readOnly =
             if !cancelable(rec) && !teamManageable then " （read-only）" else ""
           val taskLabel = (task.map(_.description).getOrElse("") + readOnly).trim
+          // 会话续命名与位修正批（2026-11-03 · A 部分）：任务列显示名走**去叠加读影**
+          // （[[nebflow.core.delegate.SessionResumption.stripContinuationPrefix]] 单点）
+          // ——续命派生代的存量 description 行带 `continuation:` 叠加前缀，此处读面
+          // 归一（纯读投影，零写盘），面板/AgentControl 行名逐代稳定 = 第一代名。
+          val taskLabelClean = nebflow.core.delegate.SessionResumption.stripContinuationPrefix(taskLabel)
+          // 续命血缘（B 部分）：派生代在 task 列尾标注来源（审计可读）——血缘在
+          // DelegateRegistry.Record.resumedFrom（本批新增槽），任务行不动。
+          val lineage =
+            if rec.kind == AgentKind.Delegate then
+              try
+                nebflow.core.delegate.DelegateRegistry
+                  .find(rec.sessionId)
+                  .flatMap(_.resumedFrom)
+                  .filter(_.nonEmpty)
+                  .map(f => s" ←resumed:$f")
+                  .getOrElse("")
+              catch case _: Throwable => ""
+            else ""
           // issue #31 Fix D: barrier snapshot — phantom visibility. outstanding>0
           // on an idle session with no in-flight work = a batch member hung / died
           // without a terminal event; held>0 = results parked waiting for the batch.
@@ -601,7 +620,7 @@ When to use:
             fmtMillis(if rec.startedAt > 0 then now - rec.startedAt else 0),
             fmtMillis(if rec.lastActivityMs > 0 then now - rec.lastActivityMs else 0),
             task.map(_.retryCount.toString).getOrElse("-"),
-            if taskLabel.nonEmpty then taskLabel.take(48) else "-"
+            if taskLabelClean.nonEmpty then (taskLabelClean + lineage).take(64) else lineage.take(64)
           )
         }
     yield
@@ -642,7 +661,8 @@ When to use:
             fmtMillis(math.max(0L, now - t.spawnedAt)),
             fmtMillis(math.max(0L, now - t.spawnedAt)),
             t.retryCount.toString,
-            (t.description + " [orphan: no live actor — lost to a process crash; swept at next startup]").take(60)
+            (nebflow.core.delegate.SessionResumption.stripContinuationPrefix(t.description) +
+              " [orphan: no live actor — lost to a process crash; swept at next startup]").take(60)
           )
         }
       // 外部行（#1225）：address 列内外统一（源 DelegateRegistry）；stuck?/phase/
@@ -666,7 +686,9 @@ When to use:
           fmtMillis(math.max(0L, now - o.startedAtMs)),
           "-",
           "-",
-          rec.title.take(48)
+          // 会话续命名与位修正批（A 部分）：外部行同走去叠加读影（存量续命代
+          // 记录的 title 带 `continuation:` 叠加前缀——读面归一，零写盘）。
+          nebflow.core.delegate.SessionResumption.displayTitle(rec).take(48)
         )
       }
       val table =
@@ -941,6 +963,43 @@ When to use:
     by: String = "the user panel",
     notifyWs: Option[io.circe.Json => IO[Unit]] = None
   ): IO[Either[ToolError, String]] =
+    // ── 缺陷七 · cancel 级联（引擎会话治理专项，作者 2026-11-03 15:09 报障逐字
+    // 「你杀掉父会话，子会话也应该一并关闭，但是现在好像是只会清理父会话，子会话
+    // 变成孤儿」）：级联**后序**编队（先孙后子、父最后结算），在两条成功腿的文案
+    // 尾部追加逐条处置报告（killed / already-terminal / refused）。本项目域会话
+    // （dispatcher-/node-）另解析 flow map 的节点 sessionRef 作种子——注册表行没有
+    // parentSessionId 边，属主边只在图盘上。
+    val cascadeLeg: String => IO[String] = finalText =>
+      projectSeeds(resources, rec).flatMap(seeds =>
+        CancelCascade
+          .cascade(
+            new CancelCascade.Port:
+              def registry = resources.agentRegistry.get
+              def tombstoned = IO
+                .blocking(nebflow.core.delegate.DelegateRegistry.list())
+                .map(_.filter(_.cancelRequestedAt.isDefined).map(_.id).toSet)
+                .handleError(_ => Set.empty[String])
+              def cancelChild(kid: nebflow.actor.AgentRecord, why: String) =
+                // 同一原语递归（cascade=false 防二次走查；报告逐条如实）。
+                doCancel(resources, kid, why, by = s"$by (cascade)", notifyWs = None)
+                  .flatMap {
+                    case Right(_)  => IO.pure(Right(()))
+                    case Left(err) => IO.pure(Left(err.message))
+                  }
+                  .handleErrorWith(e => IO.pure(Left(Option(e.getMessage).getOrElse(e.getClass.getSimpleName))))
+          ,
+            rec.sessionId,
+            seeds
+          )
+      ).map { steps =>
+        if steps.nonEmpty then
+          logger.info(
+            s"[cancel-cascade] ${rec.sessionId}: ${steps.count(_.outcome == CancelCascade.Outcome.Killed)} killed, " +
+              s"${steps.count(_.outcome == CancelCascade.Outcome.AlreadyTerminal)} already-terminal, " +
+              s"${steps.count(_.outcome == CancelCascade.Outcome.Refused)} refused"
+          )
+        finalText + CancelCascade.report(steps)
+      }
     val reasonSuffix = if reason.nonEmpty then s" — $reason" else ""
     rec.supervisorRef match
       case Some(sup) =>
@@ -977,20 +1036,17 @@ When to use:
             else IO.pure(true) // 无任务行语义的形态：投递即成功（旧语义逐字）
           verifiedIo.flatMap {
             case true =>
-              panelFrame *>
-                IO.pure(
-                  Right(
-                    if rec.kind == AgentKind.Flow then
-                      s"Cancel sent for Project session '${rec.sessionId}' — it will be unregistered and the agent stopped" +
-                        (if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix) then
-                           "; the node settles to status=cancelled and its result is NOT delivered"
-                         else "") + "."
-                    else
-                      s"Cancel sent to supervisor for '${rec.sessionId}' and CONFIRMED (task row settled to cancelled). " +
-                        "The parent session receives a cancelled notification. A cancel tombstone is on record — " +
-                        "this instance can never be revived across restarts."
-                  )
-                )
+              panelFrame *> cascadeLeg(
+                if rec.kind == AgentKind.Flow then
+                  s"Cancel sent for Project session '${rec.sessionId}' — it will be unregistered and the agent stopped" +
+                    (if rec.sessionId.startsWith(nebflow.core.project.NodeEngine.SessionPrefix) then
+                       "; the node settles to status=cancelled and its result is NOT delivered"
+                     else "") + "."
+                else
+                  s"Cancel sent to supervisor for '${rec.sessionId}' and CONFIRMED (task row settled to cancelled). " +
+                    "The parent session receives a cancelled notification. A cancel tombstone is on record — " +
+                    "this instance can never be revived across restarts."
+              ).map(Right(_))
             case false =>
               // 监督者路径未确认（监督者已死/超窗未结算）——降级兜底直落终态。
               // 兜底不重复父通知（正路若迟到，其通知仍会到——双发比假成功诚实）。
@@ -1012,14 +1068,14 @@ When to use:
                         .handleErrorWith(e => logger.warn(s"cancel fallback taskStore update failed: ${e.getMessage}"))
                     else IO.unit
                   taskUpdate *> resources.agentRegistry.update(_ - rec.sessionId) *>
-                    (rec.ref ! AgentCommand.Stop(s"agent-control-cancel-fallback$reasonSuffix")).as(
-                      Right(
+                    (rec.ref ! AgentCommand.Stop(s"agent-control-cancel-fallback$reasonSuffix")).flatMap { _ =>
+                      cascadeLeg(
                         s"Cancel sent to supervisor for '${rec.sessionId}' but the terminal state was NOT confirmed " +
                           s"within ${verifyBudget}ms — fallback terminal state written directly " +
                           "(task row cancelled, registry entry removed, agent stopped). If the supervisor settles later, " +
                           "its terminal event still wins (first-terminal-wins). Cancel tombstone is on record."
-                      )
-                    )
+                      ).map(Right(_))
+                    }
                 }
           }
         }
@@ -1068,16 +1124,45 @@ When to use:
               .handleErrorWith(e => logger.warn(s"cancel taskStore update failed: ${e.getMessage}"))
           else IO.unit
         tombstoneWrite *> notify *> taskUpdate *> resources.agentRegistry.update(_ - rec.sessionId) *>
-          (rec.ref ! AgentCommand.Stop(s"agent-control-cancel$reasonSuffix")).as(
-            Right(
+          (rec.ref ! AgentCommand.Stop(s"agent-control-cancel$reasonSuffix")).flatMap { _ =>
+            cascadeLeg(
               s"Terminated '${rec.sessionId}' directly (no supervisor on record — fallback path). " +
                 "Registry entry removed (cancel tombstone retained); parent notified if applicable."
-            )
-          )
+            ).map(Right(_))
+          }
 
     end match
 
   end doCancel
+
+  /**
+   * 项目域级联种子（缺陷七 · cancel 级联的项目腿）：`dispatcher-*` / `node-*` 会话在
+   * 统一注册表里**没有 `parentSessionId` 边**——属主边只活在 flow map 的节点
+   * `sessionRef` 上（crash-recovery 批 D1 落库）。因此取消一个项目会话时，先按它
+   * 归属的项目（`AgentRecord.project`）取回该项目的在飞节点会话 id 作种子，再交给
+   * [[CancelCascade.cascade]] 统一编队/报告（非项目域 = 空集，fail-soft 零动作）。
+   */
+  private def projectSeeds(resources: AgentRuntimePort, rec: AgentRecord): IO[List[String]] =
+    if rec.kind != AgentKind.Flow then IO.pure(Nil)
+    else
+      rec.project match
+        case None => IO.pure(Nil)
+        case Some(project) =>
+          nebflow.core.project.ProjectRuntimeRegistry
+            .get(project)
+            .flatMap {
+              case None => IO.pure(Nil)
+              case Some(rt) =>
+                rt.store.snapshot.map { snap =>
+                  snap.nodes.values.toList
+                    .filter(n => !nebflow.core.project.NodeLifecycle.Terminal.contains(n.status))
+                    .flatMap(_.sessionRef)
+                    .filter(id => id != rec.sessionId)
+                }
+            }
+            .handleErrorWith(e =>
+              logger.warn(s"[cancel-cascade] project seeds for '${rec.sessionId}' unresolved: ${e.getMessage}").as(Nil)
+            )
 
   /**
    * F3(b) 如实化（loop-detected 报告 §6-F3，2026-08-30）：Team 成员 restart

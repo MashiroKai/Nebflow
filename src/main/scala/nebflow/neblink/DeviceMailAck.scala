@@ -6,7 +6,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.DeviceMailAckPort
 import nebflow.core.tools.RelayExecAudit
-import nebflow.shared.{DeviceMail, NebflowLogger}
+import nebflow.shared.{Defaults, DeviceMail, NebflowLogger}
 
 import scala.concurrent.duration.*
 
@@ -104,7 +104,15 @@ object DeviceMailAck:
                 "(receipt arrived before this send's registration; matched from the early-ack buffer, " +
                 "no timeout leg armed)"
             ) *> audit("ack-race-resolved", targetDeviceId, eventId, "receipt arrived before registration")
-        else timeoutLeg(eventId, targetDeviceId).start.void
+        else if Defaults.MailProcessEnabled then timeoutLeg(eventId, targetDeviceId).start.void
+        else
+          // seal 批（2026-11-03，作者令「邮件和心跳进程功能，进入封存…」）：超时腿是
+          // 一条后台定时器（15 s 睡眠纤维）⇒ 封存即**不挂**。登记/ack 关联/审计全部
+          // 保留（那是功能本体，不是进程）；复活 = `-Dnebflow.mail.process.enabled=true`。
+          logger.info(
+            "[seal] 邮件后台投递进程已封存（nebflow.mail.process.enabled=false）——不注册后台进程/定时器：" +
+              s"DeviceMailAck.timeoutLeg（eventId=$eventId，登记保留、回执到达照常关联）"
+          )
     yield eventId
 
     end for

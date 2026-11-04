@@ -535,26 +535,14 @@
   opacity: 0.35;
   flex-shrink: 0;
 }
-.reminder-time-row input[type="datetime-local"] {
+/* 触发时刻面：时间滚轮选择器批（2026-11-03）后不再是原生 datetime-local
+   输入框，而是同款 `.tw-trigger`（样式单源 = timeWheel.css）；此处只声明
+   它在行内的伸展（行布局归本文件）。 */
+.reminder-time-row .tw-trigger {
   flex: 1;
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 12px;
-  font-family: inherit;
-  color: var(--color-text);
-  background: var(--glass-etched-bg);
-  outline: none;
-  border: 1px solid var(--glass-etched-border);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  min-width: 0;
 }
-.reminder-time-row input[type="datetime-local"]:focus {
-  border-color: var(--glass-etched-border-focus);
-  box-shadow: 0 0 0 2px rgba(91, 127, 191, 0.08);
-}
-.reminder-time-row input[type="datetime-local"]::-webkit-calendar-picker-indicator {
-  opacity: 0.3;
-  cursor: pointer;
-}
+.reminder-time-row input[type="hidden"] { display: none; }
 
 /* ── Inline Repeat Selector (segmented control) ───────────────────────── */
 .reminder-repeat-row {
@@ -842,16 +830,6 @@
   .reminder-inline-create {
     background: rgba(91, 127, 191, 0.04);
     border-color: rgba(91, 127, 191, 0.10);
-  }
-
-  .reminder-time-row input[type="datetime-local"] {
-    background: rgba(255, 255, 255, 0.04);
-    border-color: rgba(91, 127, 191, 0.08);
-    color: #e0e0e0;
-  }
-  .reminder-time-row input[type="datetime-local"]:focus {
-    border-color: rgba(91, 127, 191, 0.30);
-    box-shadow: 0 0 0 2px rgba(91, 127, 191, 0.10);
   }
 
   .reminder-repeat-seg button.active {

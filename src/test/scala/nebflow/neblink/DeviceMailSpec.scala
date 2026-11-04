@@ -6,7 +6,7 @@ import cats.effect.{IO, Ref}
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import munit.FunSuite
+import munit.{AfterEach, FunSuite}
 import nebflow.actor.{
   ActorSystem as NebActorSystem,
   AgentCommand,
@@ -41,9 +41,15 @@ class DeviceMailSpec extends FunSuite:
   PathUtil.setDataRoot(tempRoot)
 
   override def beforeEach(context: BeforeEach): Unit =
+    // seal 批（2026-11-03）：本 spec 的 ⑥/⑦ 判「15s 超时腿在场时的行为」，而封存默认
+    // 不挂该腿 ⇒ 逐用例复活、用例后清干净（并行关闭，套件间零残留）。
+    nebflow.core.boot.ProcessSealProps.enableMail()
     DeviceMailInbox.resetForTest()
     if os.exists(tempRoot) then os.remove.all(tempRoot)
     os.makeDir.all(tempRoot)
+
+  override def afterEach(context: AfterEach): Unit =
+    nebflow.core.boot.ProcessSealProps.clearAll()
 
   /** 契约原文（**逐字**引用任务书冻结文本；本批禁改）。 */
   private val contractPayloadText =

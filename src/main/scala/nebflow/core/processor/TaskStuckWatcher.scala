@@ -845,6 +845,34 @@ object TaskStuckWatcher:
             nebflow.core.delegate.DelegateDeliveryReceipts
               .sweep(resources)
               .handleErrorWith(e => logger.warn(s"[delegate-delivery] sweep failed: ${e.getMessage}").void)
+              .void *>
+            // ── 引擎会话治理专项 · 缺陷七 ②（2026-11-03 作者报障「你杀掉父会话，
+            // 子会话也应该一并关闭，但是现在好像是只会清理父会话，子会话变成孤儿」）：
+            // 孤儿子会话检测。判据 = **在案事实**（父取消墓碑 / 归档旗在案）∧ 子仍在
+            // 注册表里活；处置按 `nebflow.session.orphan.action`（默认 cancel ⇒ 墓碑 +
+            // Cancelled/Stop + 任务行终态化，面板不再有「运行中」残留；report ⇒ 只留
+            // 审计 + 通知根会话）。搭本既有扫描拍，零新增定时器；幂等（子行消失后不再命中）。
+            nebflow.core.delegate.ChildOrphanWatch
+              .scan(resources)
+              .handleErrorWith(e => logger.warn(s"[child-orphan-watch] sweep failed: ${e.getMessage}").void)
+              .void *>
+            // ── 引擎会话治理专项 · 缺陷四（2026-11-03 作者令）：main 漂移无通知 ──
+            // 在飞 delegate 的基分支 tip 被别人推进 ⇒ `[base-moved] old→new + 文件
+            // 列表` 注入该 delegate（复用 DelegateNotify 通道）；同一 tip 只通知一次
+            // （状态文件节流）。搭本既有扫描拍，零新增定时器。
+            nebflow.core.delegate.BaseDriftWatch
+              .scan(nebflow.core.delegate.BaseDriftWatch.fromResources(resources))
+              .handleErrorWith(e => logger.warn(s"[base-drift] sweep failed: ${e.getMessage}").void)
+              .void *>
+            // ── merge-fifo 批 2026-11-03（作者报障「两个会话都已经报了 merge，为什么
+            // 还没收到通知」）：合并队列**活性守卫**。入队只在回合终态腿发生，任何让
+            // 那条腿没跑成的路径（重启打断 / 判定降级 / 提前收尾）都会让有交付提交
+            // 的分支永远不进队——本拍把「Idle + 有未并交付 + 任务行 running/restarting
+            // + 账本无开放条目 + 静默够久」的漏网成员补进队并通知（幂等：账本有开放
+            // 条目即零动作）。搭本既有扫描拍，零新增定时器。
+            nebflow.core.delegate.MergeEnqueueWatch
+              .scan(resources)
+              .handleErrorWith(e => logger.warn(s"[merge-enqueue-watch] sweep failed: ${e.getMessage}").void)
               .void
       }
 

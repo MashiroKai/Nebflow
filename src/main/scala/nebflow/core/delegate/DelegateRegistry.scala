@@ -204,7 +204,15 @@ object DelegateRegistry:
      * 怎么唤醒」四项回执里「为什么/保留了什么」的持久承载面（回执只是一条消息，
      * 本槽是它的盘上真源）。None = 非冻结。
      */
-    frozenDetail: Option[String] = None
+    frozenDetail: Option[String] = None,
+    /**
+     * **续命血缘**（会话续命名与位修正批 2026-11-03 · 作者 16:48/16:51 报障）：
+     * 本会话是**派生**出来的时（原位续不可恢复：cancel 墓碑 / 转录损坏），值 =
+     * 被继承的原 delegate 会话 id。原位续（同 sessionId）恒 None——同一身份不需要
+     * 血缘。审计面：AgentControl 列表行尾标注、ChainStore `delegate-resume-derived`
+     * 行、面板会话详情。缺省 None：旧盘面照常解码（cliSessionId 同款纪律）。
+     */
+    resumedFrom: Option[String] = None
   )
 
   private def dir: os.Path = PathUtil.dataRoot / "delegates"
@@ -554,6 +562,57 @@ object DelegateRegistry:
       }
 
   /**
+   * 重启打断旗摘除（会话续命名与位修正批 2026-11-03）：原位续命成功 = 打断结束
+   * ——`restartInterruptedAt = None`。幂等：未旗 = Right 零写。查无记录 = `Left`。
+   * 写锁同缝串行（与墓碑/归档写同缝——单记录读-改-写互斥）。
+   */
+  def clearRestartInterrupted(id: String): Either[String, Unit] =
+    if !validId(id) then Left(s"clearRestartInterrupted: invalid session id '$id'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"clearRestartInterrupted: no registry record for '$id'")
+          case Some(rec) =>
+            if rec.restartInterruptedAt.isEmpty then Right(())
+            else
+              try
+                put(rec.copy(restartInterruptedAt = None))
+                Right(())
+              catch case e: Throwable => Left(s"clearRestartInterrupted: write failed: ${e.getMessage}")
+      }
+
+  /**
+   * 续命血缘单写（会话续命名与位修正批 2026-11-03）：派生腿（原位续不可恢复）
+   * 在新会话记录上落 `resumedFrom = <原 delegate id>`。幂等：已落 = 原值零重写
+   * （血缘是终身事实，首写权威）。查无记录 = `Left`（血缘只对真实 spawn 生效）。
+   */
+  def markResumedFrom(id: String, fromDelegateId: String): Either[String, Unit] =
+    if !validId(id) then Left(s"markResumedFrom: invalid session id '$id'")
+    else if !validId(fromDelegateId) then Left(s"markResumedFrom: invalid origin id '$fromDelegateId'")
+    else
+      writeLock.synchronized {
+        find(id) match
+          case None => Left(s"markResumedFrom: no registry record for '$id'")
+          case Some(rec) =>
+            rec.resumedFrom match
+              case Some(existing) => Right(()) // 幂等：首写权威
+              case None =>
+                try
+                  put(rec.copy(resumedFrom = Some(fromDelegateId)))
+                  Right(())
+                catch case e: Throwable => Left(s"markResumedFrom: write failed: ${e.getMessage}")
+      }
+
+  /**
+   * 显示名读数（会话续命名与位修正批 · A 部分单点消费）：任务账 title 的**去叠加
+   * 形态**（[[SessionResumption.displayTitle]] 单点剥离）——AgentControl 列表 /
+   * 快照面 / 任务行显示统一取本口径。剥空回落批次短名 → 会话 id。**纯读投影，
+   * 零写盘**（存量污染行当场读干净，不改历史）。
+   */
+  def displayTitleOf(id: String): String =
+    find(id).map(SessionResumption.displayTitle(_)).getOrElse(id)
+
+  /**
    * JSON 编解码（circe）：Encoder = generic 派生；Decoder = **手工容错形态**——
    * 新扩的 Option 字段缺键时按 None 读（存量记录零迁移）。deriveDecoder 缺键即
    * 失败会让 `find`/`list` 把旧记录静默吞掉（catch → None），禁。
@@ -593,6 +652,7 @@ object DelegateRegistry:
       frozenSince <- c.get[Option[Long]]("frozenSince")
       frozenReason <- c.get[Option[String]]("frozenReason")
       frozenDetail <- c.get[Option[String]]("frozenDetail")
+      resumedFrom <- c.get[Option[String]]("resumedFrom")
     yield Record(
       id,
       executor,
@@ -624,7 +684,8 @@ object DelegateRegistry:
       standbySince,
       frozenSince,
       frozenReason,
-      frozenDetail
+      frozenDetail,
+      resumedFrom
     )
 
   /**

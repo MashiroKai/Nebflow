@@ -157,12 +157,11 @@ class ChatRoutes(
     llmReq: Option[LlmRequest]
   ): Throwable => IO[org.http4s.Response[IO]] = {
     case e: FallbackExhaustedError =>
-      val attemptSummaries =
-        e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
       val hadImg = e.hadImage || llmReq.exists(nabflowHadImage)
-      val msg = NebflowError.toUserMessage(
-        NebflowError.LlmFailed(e.getMessage, attemptSummaries, hadImage = hadImg)
-      )
+      // flysin 收口批（2026-11-04）：与 AgentProcessing 同源——统一走
+      // `NebflowError.llmFailure`（唯一的字段装配点）。上游明说「该模型不收图」
+      // 时点名模型，别让 REST/OpenAI 面回落到笼统的 provider 失败。
+      val msg = NebflowError.toUserMessage(NebflowError.llmFailure(e, hadImage = hadImg))
       BadGateway(Json.obj("error" -> msg.asJson, "attempts" -> e.attempts.asJson))
     case other =>
       val msg = NebflowError.toUserMessage(

@@ -188,7 +188,12 @@ class ProjectStoreSpec extends CatsEffectSuite:
       val (pd, report) = first.toOption.get
       assertEquals(pd.name, "cw-one")
       assertEquals(pd.workspace, ws9.toString)
-      assertEquals(report.createdCount, 3)
+      assertEquals(report.createdCount, 4, "workspace 三件 + 注册目录文档库 .stand/docs/")
+      assert(report.items.exists(i => i.item == ".stand/docs/" && i.created), report.render)
+      assert(
+        os.isDir(PathUtil.dataRoot / "projects" / "cw-one" / ".stand" / "docs"),
+        "新建项目必须自动建注册目录文档库（作者令 2026-11-03）"
+      )
       assert(report.render.contains("AGENTS.md created"), report.render)
       assert(second.isLeft, "定义已存在仍返 Left —— 防覆盖语义不变（禁改成「已存在也写」）")
       assert(second.swap.toOption.get.contains("already exists"), second.swap.toOption.get)
@@ -347,5 +352,52 @@ class ProjectStoreSpec extends CatsEffectSuite:
     yield
       assert(missing == Left("Project 'no-such-project' not found"), missing.toString)
       assert(invalid.isLeft, "path traversal refused")
+
+  // ── 文档库落位单源（作者令 2026-11-03 20:02）─────────────────────────
+
+  test("ledgerDocs: registration-dir vault path + idempotent scaffold + AGENTS.md landing section"):
+    val name = "ledger-one"
+    val wsL = tempRoot / "ws-ledger"
+    os.makeDir.all(wsL)
+    for
+      first <- ProjectStore.ensureLedgerDocs(name)
+      second <- ProjectStore.ensureLedgerDocs(name)
+      _ <- ProjectStore.create(name, wsL.toString, None, "# t")
+    yield
+      // ① 路径公式：projects/<name>/.stand/docs（与 project.json 同级，不在 workspace）
+      assertEquals(ProjectStore.ledgerDocsDir(name), PathUtil.dataRoot / "projects" / name / ".stand" / "docs")
+      assertEquals(ProjectStore.ledgerDocsAttachments(name), ProjectStore.ledgerDocsDir(name) / "attachments")
+      // ② 幂等：首建 created、再建 skipped（语义两态不退化）
+      assert(first.created, first.detail)
+      assert(!second.created, second.detail)
+      // ③ 落位说明节（人读面载体）：新路径 + 反旧路径 + 校验命令三件齐
+      val sec = ProjectStore.docsLandingSection
+      assert(sec.contains(".stand/docs/"), sec)
+      assert(sec.contains("--project"), sec)
+      assert(sec.contains("NOT the knowledge vault"), sec)
+
+  test("localVault read-side resolution: ledger first, workspace fallback, ledger when both empty"):
+    val name = "vault-res"
+    val wsV = tempRoot / "ws-vault-res"
+    os.makeDir.all(wsV)
+    ProjectStore.create(name, wsV.toString, None, "# t").unsafeRunSync()
+    val pd = ProjectStore.load(name).unsafeRunSync().getOrElse(fail("project missing"))
+    val ledger = ProjectStore.ledgerDocsDir(name)
+    val wsVault = wsV / "docs"
+
+    // ① 两侧都空 ⇒ ledger（canonical 写面）
+    assertEquals(ProjectStore.localVault(pd), ledger, "both empty → registration dir (new writes land here)")
+    // ② 只有 workspace docs ⇒ 回落（未迁移项目零影响）
+    os.makeDir.all(wsVault)
+    os.write.over(wsVault / "legacy.md", "# legacy\n")
+    assertEquals(ProjectStore.localVault(pd), wsVault, "not-yet-migrated project keeps reading the workspace vault")
+    // ③ 注册目录有文档 ⇒ 优先（迁移完成后落位单源生效）
+    os.write.over(ledger / "migrated.md", "# migrated\n")
+    assertEquals(ProjectStore.localVault(pd), ledger, "ledger wins once it has docs")
+    // ④ 非文档件不算 vault（hasDocs 只认 .md/.markdown/.html）
+    assert(ProjectStore.hasDocs(wsVault))
+    os.makeDir.all(tempRoot / "not-a-vault")
+    os.write.over(tempRoot / "not-a-vault" / "x.txt", "x")
+    assert(!ProjectStore.hasDocs(tempRoot / "not-a-vault"), "txt/二进制不算文档库里的一篇")
 
 end ProjectStoreSpec

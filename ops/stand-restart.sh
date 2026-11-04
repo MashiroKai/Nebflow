@@ -1,5 +1,7 @@
 #!/bin/bash
-# stand-restart.sh — stand 开发实例自重启工具 v4.2（外部工具，不属于 stand 源码）
+# stand-restart.sh — stand 开发实例自重启工具 v4.4（外部工具，不属于 stand 源码）
+#   v4.4（2026-11-03 作者令 17:59）主路径 = **直接热重启**（--hot）：跳过四信号空闲守候与
+#   300s 观察窗，护栏一条不删。旧「等全部在飞工作做完再重启」路径降为显式可选。
 # 改名沿革（2026-11-03 落地，作者令 2026-10-29「这个脚本是不是也改改名为stand了」）:
 #   本脚本原名 nebflow-restart.sh，git mv 保历史改名 stand-restart.sh；旧名
 #   ~/.stand/bin/nebflow-restart.sh 保留为弃用垫片（打印弃用提示后 exec 转发本脚本，
@@ -8,7 +10,8 @@
 #   同批（2026-11-03 双根分家批）: 两个 helper 随本工具归属 stand 改名——
 #   nebflow-setsid-exec.py → stand-setsid-exec.py、nebflow-daemonize.py → stand-daemonize.py
 #   （live 侧 mv 改名，内容零改动；正文内 9 处引用同步）。
-# 定位: 开发者/编排侧工具（sbt 编译预检 + 隔离 canary + 四信号空闲 + 观察窗），
+# 定位: 开发者/编排侧工具（v4.4 主路径 --hot = 直接热重启: sbt 编译预检 + 隔离 canary →
+#   立即重启；四信号空闲 + 观察窗为 --canary/--watch/--wait-idle 的显式可选项），
 #   服务对象是「本机有源码树、在跑开发实例」的场景——终端用户（官网安装版）的重启面
 #   是 `stand restart`（jar 面 #916 detached apply），与本脚本无关。
 # ⚠️ 调用方式: 必须以路径直接调用（例: ~/.stand/bin/stand-restart.sh --canary）。
@@ -16,20 +19,23 @@
 #    规范位回退兜底，但直接调用始终是最可靠方式）。
 # ⚠️ 运行安全铁律（2026-08-19 00:20 事故：验证 Ctrl+C 修复的 agent 对 ps 定位进程发信号，
 #    误杀宿主 Nebflow，用户断连重启）:
-#    - 本脚本是唯一允许对 Nebflow 主实例执行终止/重启的开发工具，且必须走四信号+canary 护栏
+#    - 本脚本是唯一允许对 Nebflow 主实例执行终止/重启的开发工具，且必须走护栏链
+#      （v4.4: 编译预检 + 隔离 canary + 进程表验证 + TW 排空 是**必备链**；四信号空闲守候
+#      仅在 --canary/--watch/--wait-idle 显式指定时启用——作者令 2026-11-03 17:59）
 #    - 除本脚本外，任何场景（验证 shutdown/Ctrl+C、测试、排查）一律禁止对 sbt/java/nebflow
 #      进程 kill/pkill/发信号——先走隔离 canary 实例（NEBFLOW_HOME 隔离 + 独立端口）
 #    - 裸调用（无参数）= 只检测不动作（--check），任何重启动作都必须显式指定模式
-# 安全设计（用户要求"绝不中断任何工作"）:
+# 安全设计（用户要求"绝不中断任何工作"→ v4.4 收敛为"绝不杀了起不来"）:
 #   预检:   sbt compile 失败立即放弃，旧实例不动（绝不"杀了起不来"）
 #   Canary: 隔离 NEBFLOW_HOME + 独立端口真实启动验证，通过才动主实例
+#   —— 以下四信号守候自 v4.4 起**不再是主路径前置**（--hot 跳过全部四项与观察窗）：
 #   空闲:   四信号合取（v3）——任一信号活跃即 BUSY:
 #     S1 日志静默   $NF_HOME/logs/nebflow.log ≥180s 无写入（LLM 思考期可能无日志，故仅作首道防线）
 #     S2 Mail 队列  $NF_HOME/sessions/*/mail-queue.json 全部为空/不存在（防 Mail 传递间隙误杀）
 #     S3 子任务     $NF_HOME/subagent-tasks/*/*.json 无 status=running（≥30min 未更新的 running 视为陈旧忽略并记日志）
 #     S4 任务流转   $NF_HOME/tasks/*/*.json 近 10min 无 mtime 变化（任务状态变化即写入）
-#   观察期: 四信号首次全绿后进入 5 分钟观察窗，每 30s 复查，任一转红即重置重新等待
-#   终检:   canary 预检耗时数分钟，重启前再查一次四信号，转红则放弃本次回到守望
+#   观察期: 四信号首次全绿后进入 5 分钟观察窗，每 30s 复查，任一转红即重置重新等待（仅守候模式）
+#   终检:   canary 预检耗时数分钟，重启前再查一次四信号，转红则放弃本次回到守望（仅守候模式）
 # v4.0（2026-08-30，根因报告 docs/Nebflow/20260830_restart-script-stability.md）:
 #   R2 杀后验证「进程死亡」而非「端口释放」: TERM 后按进程树快照轮询进程表直至全灭（≤45s），
 #      超时对存活者 KILL 升级；进程全灭后再做 TIME_WAIT 排空轮询（与 SingleInstanceGuard 同语义的
@@ -64,6 +70,28 @@
 #     同步走 SELF_PATH（$0 失效时同样回退规范位）。
 #   B AGENTS.md 隔离配方硬化: canary/最终 spawn 补 NEBFLOW_GATEWAY_PORT env 保险（fork-proof，
 #     即使 argv 解析链断裂也不回落 8080）。
+# v4.4（2026-11-03 17:59 作者令，逐字：「我觉得需要修改一下重启脚本，直接热重启就行了，因为
+#   我们是**可以支持断点续跑**的。不需要等待它们完成。」）——主路径 = 直接热重启:
+#   判断依据（断点续跑已支持，等做完属过时设计）:
+#     · 会话原位恢复 InPlace resume 已合 main（ef432e972）：重启后同 sessionId 复活、转录回放、
+#       链 scope 重挂 ⇒ 在飞 delegate/节点会话被 TERM 打断是**可恢复**的，不是丢失。
+#     · 优雅停机本身已是「draining → 在途节点 running→interrupted、result 空、零 failed」，
+#       重启后通常同轮续跑（见下方 2026-09-17 文案补注）。
+#     ⇒ 四信号守候 + 300s 观察窗所换取的「零打断」收益，已是拿小时级延迟买一份本来就能恢复的
+#       保险；作者裁定不再等，改为重启后按通知清单逐个原位恢复。
+#   改动:
+#     A 新增 --hot（主路径，推荐）: 编译预检 → 隔离 canary 真启动验证 → **跳过**四信号 S1-S4
+#       与 300s 观察窗、跳过终检 → TERM 优雅停机 → 进程表验证死亡 → TW 排空/严格 bind →
+#       自适应启动等待 → 成功通知。护栏一条未删，只删「等待」。
+#     B --force 语义收敛为「等同直接热重启」（保留编译预检；--no-compile 逃生舱语义不变）。
+#       旧 force 只跳日志空闲，与 hot 差异已无意义，解析期映射到同一流程。
+#     C --canary / --watch / --wait-idle / --restart-if-idle 原语义**逐字保留**（守四信号，
+#       供「真的不能被打断」的场合）；watchdog Stage1 的 --restart-if-idle 腿不受影响。
+#     D 成功通知增强: 重启动作前快照 ~/.stand/delegates/*.json 的在册（未归档/未取消）会话，
+#       通知正文与 /tmp/stand-restart-last-run.txt 附带清单，作者拿到通知即可逐个原位恢复。
+#     E --hot --dry-run 严格只读（不编译、不跑 canary、不杀、不启动），只打印将做什么。
+#   已知取舍: --hot 仍含 canary 真启动验证（数十秒~数分钟）——它是「杀了起不来」的唯一实弹
+#     证据，任务书明令不许删；省下的是原先以小时计的等待，不是这几十秒。
 # 文案补注（2026-09-17，纯注释，零行为变更）: 两条易被误读的现状，提示口径在此对齐——
 #   · 优雅停机: 本脚本对实例树发 TERM，实例走 graceful shutdown（GracefulInterruptHook: draining →
 #     在途节点 running→interrupted、result 空、零 failed，重启后通常同轮续跑）——属正常停机形态，非故障。
@@ -79,16 +107,20 @@
 #   环境变量名保留 NEBFLOW_RESTART_* 旧前缀不改（兼容既有注入面；引擎侧 DetachedApply.scala
 #   注记也引用 NEBFLOW_RESTART_PORT——改名不改契约）。数据根可用 STAND_HOME 注入（与 CLI
 #   stand 品牌解析链同源），缺省 ~/.stand。
-# 用法:
+# 用法（v4.4: 主路径 = --hot；四信号守候降为显式可选）:
 #   stand-restart.sh [无参数]           等价 --check：仅检测四信号状态，不动作（安全默认）
 #   stand-restart.sh --check            仅检测四信号状态，不动作
-#   stand-restart.sh --canary           最稳路径（推荐）: 编译预检 → canary 验证 → 四信号+观察期 → 重启
+#   stand-restart.sh --hot              ★主路径（2026-11-03 作者令）: 直接热重启——
+#                                       编译预检 → 隔离 canary 验证 → 立即重启
+#                                       （跳过四信号 S1-S4、300s 观察窗与终检；断点续跑兜底）
+#   stand-restart.sh --hot --dry-run    主路径演练：只读打印将做什么，不编译/不 canary/不杀/不启动
+#   stand-restart.sh --force            现等同 --hot（语义收敛，编译预检保留；--no-compile 逃生舱不变）
+#   stand-restart.sh --canary           守候路径（真的不能被打断时用）: 编译预检 → canary → 四信号+观察期 → 重启
 #   stand-restart.sh --watch [-m M]     守望模式: 持续等待全 agent 完成后自动重启（默认最多 24h，可 -m 指定分钟）
 #   stand-restart.sh --wait-idle [-m M] 等待四信号空闲+观察期后重启（默认最多 60 分钟）
 #   stand-restart.sh --restart-if-idle 立即探测四信号：空闲则重启，忙则拒绝（exit 3，零动作）
 #                                        （R2 回炉 2026-09-22 F1 接线：此前该旗标无解析臂 ⇒ 静默落入 --check）
 #   stand-restart.sh [--idle-secs N]    空闲则重启（轻量场景，仍走四信号）
-#   stand-restart.sh --force            强制重启: 跳过空闲检测，但保留编译预检（R4，编译失败不杀旧实例）
 #   stand-restart.sh --force --no-compile  逃生舱: 连编译预检也跳过（双重警告，风险自负）
 #   通用: --dry-run 全部预检验证后退出不重启
 # 旧名入口: nebflow-restart.sh（弃用垫片，打印提示后转发本脚本，参数逐字透传）
@@ -141,7 +173,9 @@ TASK_MMIN=10               # S4 任务流转冷却（分钟）
 STALE_RUN_MIN=30           # S3 running 陈旧豁免（分钟）
 OBSERVE_SECS=300           # 观察窗时长
 OBSERVE_STEP=30            # 观察窗复查步长
-MODE="check"               # 默认只检测不动作（安全）; 重启必须显式: canary | watch | wait-idle | restart-if-idle | force
+MODE="check"               # 默认只检测不动作（安全）; 重启必须显式: hot | canary | watch | wait-idle | restart-if-idle
+                           # v4.4: hot 为主路径；force 解析期映射到 hot（同流程，FORCE_ALIAS 记原始旗标）
+FORCE_ALIAS=0              # 请求字面为 --force（v4.4 语义已收敛到 --hot，仅用于提示文案）
 MAX_WAIT_MIN=60
 DRY_RUN=0
 NO_COMPILE=0               # R4 逃生舱: --force --no-compile 显式跳过编译预检
@@ -155,14 +189,16 @@ SPAWN_GRACE=30             # sbt 启动宽限（进程瞬死但可能正在 deta
 SBT_PID=""                 # R3: spawn 的 sbt 子进程
 PID_SET=""                 # R2: 杀前进程树快照（放弃路径清扫用）
 LAST_SNAPSHOT=""
+INTERRUPTED_LIST=""        # v4.4 D: 重启前快照的在册 delegate 会话清单（成功通知/报告附带）
 
 args=("$@")
 for (( i=0; i<${#args[@]}; i++ )); do
   case "${args[$i]}" in
     --check)      MODE="check" ;;
+    --hot)        MODE="hot" ;;
     --canary)     MODE="canary" ;;
     --watch)      MODE="watch"; MAX_WAIT_MIN=1440 ;;
-    --force)      MODE="force" ;;
+    --force)      MODE="hot"; FORCE_ALIAS=1 ;;   # v4.4 B: force 语义收敛 = 等同 --hot（编译预检+canary 全保留）
     --wait-idle)  MODE="wait-idle" ;;
     --restart-if-idle) MODE="restart-if-idle" ;;   # R2 回炉（2026-09-22 F1）：解析环补臂——此前旗标被静默吞掉、MODE 落回 check ⇒ watchdog Stage1 优雅入口不可达（case 臂 restart-if-idle 成死代码）
     --idle-secs)  IDLE_SECS="${args[$((i+1))]:-180}" ;;
@@ -526,6 +562,55 @@ wait_tw_drained() {
   done
 }
 
+# ---------- v4.4 D: 重启前快照「在册」delegate 会话（成功通知/报告附带，据此逐个原位恢复） ----------
+# 取 $NF_HOME/delegates/*.json（引擎每会话落一份）：未归档（archivedAt=null）且未被请求取消
+# （cancelRequestedAt=null）且未申报完成（reportStatus!=finish）即「在册」。状态标注供作者判断
+# 恢复次序：standby=已挂起待命 / frozen=冻结 / report:merge=待合入 / in-flight=在飞未报。
+# 恢复语义见文件头 v4.4 注（InPlace resume：同 sessionId 复活、转录回放、链 scope 重挂）。
+snapshot_interrupted() {
+  INTERRUPTED_LIST=$(python3 - "$NF_HOME/delegates" <<'PYEOF'
+import glob, json, os, sys
+root = sys.argv[1]
+rows = []
+for f in sorted(glob.glob(os.path.join(root, "*.json"))):
+    try:
+        d = json.load(open(f))
+    except Exception:
+        continue
+    if not isinstance(d, dict):
+        continue
+    if d.get("archivedAt") or d.get("cancelRequestedAt"):
+        continue            # 已归档 / 已请求取消 —— 不会被「打断」
+    if d.get("reportStatus") == "finish":
+        continue            # 已申报完成
+    if d.get("standbySince"):
+        state = "standby"
+    elif d.get("frozenSince"):
+        state = "frozen"
+    elif d.get("reportStatus"):
+        state = "report:%s" % d.get("reportStatus")
+    else:
+        state = "in-flight"
+    title = (d.get("title") or d.get("name") or "").strip().replace("\n", " ")
+    if len(title) > 48:
+        title = title[:47] + "\u2026"
+    rows.append("- %s [%s] task=%s branch=%s %s" % (
+        d.get("id"), state, d.get("taskId") or "-", d.get("branch") or "-", title))
+if rows:
+    print("共 %d 个在册会话:" % len(rows))
+    print("\n".join(rows[:40]))
+    if len(rows) > 40:
+        print("\u2026\uff08\u5176\u4f59 %d \u4e2a\u7565\uff0c\u5168\u91cf\u89c1 %s\uff09" % (len(rows) - 40, root))
+PYEOF
+)
+  if [[ -n "$INTERRUPTED_LIST" ]]; then
+    local first="${INTERRUPTED_LIST%%$'\n'*}"
+    echo "[snapshot] ${first}（重启后可按清单原位恢复）"
+  else
+    echo "[snapshot] 无在册 delegate 会话（或 ${NF_HOME}/delegates 不可读）"
+  fi
+}
+
 # ---------- 重启完成通知 ----------
 # 用户 2026-08-25 21:21 要求：重启完成后必须触发通知 Nebula（此前只写报告文件，
 # 新实例里的 Nebula 不知道重启发生 → 16:27 Backend 失活 1h 无人发现）。
@@ -550,7 +635,18 @@ except Exception:
   if [[ -z "$sid" ]]; then
     echo "[notify] ✗ 找不到 Nebula 会话（agentName=Nebula），跳过通知"; return 1
   fi
-  content="【重启完成通知】新实例已就绪 pid=$(pid_on_port $PORT)（$(ts_str)）。请核查：① team 成员激活状态（重启以 TERM 触发优雅停机 draining：在途节点转 interrupted、零 failed，重启后多能同轮续跑，但不保证全部自动恢复——AgentControl list + 日志活动）② 本次合入的新代码验证 ③ 浏览器刷新重连。"
+  local extra=""   # v4.4 D: 附带在册会话清单——作者拿到通知即可逐个原位恢复（InPlace resume）
+  if [[ -n "$INTERRUPTED_LIST" ]]; then
+    extra="
+
+【本次重启波及的在册 delegate 会话清单——请逐个原位恢复（InPlace resume，同 sessionId 复活）】
+${INTERRUPTED_LIST}"
+  else
+    extra="
+
+【本次重启波及的在册 delegate 会话清单】无（快照为空或不可读）。"
+  fi
+  content="【重启完成通知】新实例已就绪 pid=$(pid_on_port $PORT)（$(ts_str)）。请核查：① team 成员激活状态（重启以 TERM 触发优雅停机 draining：在途节点转 interrupted、零 failed，重启后多能同轮续跑，但不保证全部自动恢复——AgentControl list + 日志活动）② 本次合入的新代码验证 ③ 浏览器刷新重连。${extra}"
   payload=$(python3 -c "import json,sys; print(json.dumps({'type':'userMessage','sessionId':sys.argv[1],'content':sys.argv[2]}))" "$sid" "$content" 2>/dev/null)
   if curl -s -m 8 -X POST -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
       -d "$payload" "http://localhost:$PORT/api/command" >/dev/null 2>&1; then
@@ -595,9 +691,14 @@ do_restart() {
     echo "[dry-run]   R6 窄域清扫候选（cwd=$NEBFLOW_DIR 的 sbt/scala/java）: $(pids_of_cwd | tr '\n' ' ')"
     echo "[dry-run]   spawn 前将做 TIME_WAIT 排空探测（严格 bind，≤${TW_WAIT_SECS}s）"
     echo "[dry-run]   spawn 后自适应就绪等待：sbt 死即失败 / 编译活跃续期（硬上限 ${READY_HARD_CAP}s）/ 放弃即清扫"
+    echo "[dry-run]   杀前将快照在册 delegate 会话（成功通知与报告附带清单，可逐个原位恢复）"
     echo "[dry-run] ✓ 演练结束，未做任何动作"
     exit 0
   fi
+
+  # v4.4 D: 杀前快照在册 delegate 会话——重启后作者按清单逐个原位恢复，不必另查。
+  # 放在任何 kill 之前：TERM 之后的引擎状态不可再当「被打断者」的证据。
+  snapshot_interrupted
 
   if [[ -z "$pid" ]]; then
     echo "[restart] 端口 $KILL_PORT 无监听进程（杀旧腿目标）"
@@ -683,7 +784,7 @@ do_restart() {
         # 指错家（NEBFLOW_HOME 通常 unset ⇒ 落 ~/.nebflow，引擎读不到）——对齐 NF_HOME。
         printf '{"startedBy":"restart-script"}\n' > "$NF_HOME/.pid.meta" 2>/dev/null || true
         echo "[restart] 前端请刷新重连；会话持久化将自动恢复"
-        { echo "== stand-restart $(ts_str) =="; echo "结果: 成功 pid=$listener API=${code}"; echo "四信号快照: ${LAST_SNAPSHOT:-n/a}"; } > "$REPORT"
+        { echo "== stand-restart $(ts_str) =="; echo "结果: 成功 pid=$listener API=${code}"; echo "四信号快照: ${LAST_SNAPSHOT:-n/a}"; echo "在册 delegate 快照:"; echo "${INTERRUPTED_LIST:-（空）}"; } > "$REPORT"
         notify_nebula
         exit 0
       fi
@@ -698,7 +799,7 @@ do_restart() {
         code=$(curl -s -o /dev/null -w "%{http_code}" -m 3 "http://localhost:$PORT/api/sessions" 2>/dev/null)
         if [[ "$code" =~ ^(200|401|403)$ ]]; then
           echo "[restart] ✓ sbt 外壳已退出但服务健在（detached）pid=$listener 耗时 $(( $(now_ts) - started ))s（API=${code}）"
-          { echo "== stand-restart $(ts_str) =="; echo "结果: 成功 pid=$listener API=${code}（sbt 外壳已退出）"; echo "四信号快照: ${LAST_SNAPSHOT:-n/a}"; } > "$REPORT"
+          { echo "== stand-restart $(ts_str) =="; echo "结果: 成功 pid=$listener API=${code}（sbt 外壳已退出）"; echo "四信号快照: ${LAST_SNAPSHOT:-n/a}"; echo "在册 delegate 快照:"; echo "${INTERRUPTED_LIST:-（空）}"; } > "$REPORT"
           notify_nebula
           exit 0
         fi
@@ -745,6 +846,7 @@ case "$MODE" in
   check)
     status_line
     if is_all_idle; then echo "状态: IDLE（四信号全绿，可安全重启）"; else echo "状态: BUSY —— 见上方红色信号"; fi
+    echo "提示: v4.4 起主路径为 --hot（直接热重启: 编译预检 + canary → 立即重启，不等四信号/观察窗）"
     exit 0 ;;
   canary)
     begin_action_mode
@@ -773,20 +875,32 @@ case "$MODE" in
     final_idle_check || { echo "[$(ts_str)] 终检失败，10 分钟后重新守望"; sleep 600; exec "$0" --watch -m $MAX_WAIT_MIN; }
     echo "[$(ts_str)] 全部检查通过，执行重启"
     do_restart ;;
-  force)
-    begin_action_mode
-    # R4: force 只跳过日志空闲等待，编译预检必须保留——「绝不杀了起不来」对 force 同样成立
+  hot)
+    # v4.4 主路径（作者令 2026-11-03 17:59）: 直接热重启——--force 解析期映射到本臂（FORCE_ALIAS）。
+    # 护栏链全保留: 编译预检 → 隔离 canary 真启动验证 → TERM 优雅停机 → 进程表验证死亡
+    #   → TW 排空/严格 bind → 自适应启动等待 → 成功通知（附在册会话清单）。
+    # 跳过的只有「等待」: 四信号 S1-S4、300s 观察窗、终检（断点续跑兜底，见文件头 v4.4 注）。
+    # dry-run 必须先于 begin_action_mode：演练不 touch watchdog 暂停旗标（零副作用，中途被杀
+    # 也不会留下悬空旗标把 watchdog 永久挂起）。
     if [[ $DRY_RUN == 1 ]]; then
-      echo "[dry-run] force 演练（只读：不编译、不杀、不启动）："
-      do_restart
+      status_line
+      echo "[dry-run] hot 主路径演练（只读：不编译、不跑 canary、不杀、不启动）:"
+      echo "[dry-run]   真实模式将依次执行: 编译预检（--no-compile 则跳过）→ 隔离 canary 真启动验证"
+      echo "[dry-run]   → 直接重启（跳过四信号 S1-S4 / 300s 观察窗 / 终检——断点续跑兜底）"
+      do_restart   # do_restart 的 dry-run 分支打印杀/起计划后按约定退出（exit 0）
     fi
+    begin_action_mode
+    status_line
+    [[ $FORCE_ALIAS == 1 ]] && echo "[force] v4.4 语义收敛: --force 现等同 --hot（编译预检 + canary 全保留；确需连编译也跳过: --force --no-compile）"
     if [[ $NO_COMPILE == 1 ]]; then
-      echo "[force] ⚠⚠ --no-compile：显式跳过编译预检——若代码编译失败将「杀了起不来」，风险自负"
-      echo "[force] ⚠⚠ 此逃生舱仅用于「实例已死且确信代码可编译」的紧急场景"
+      echo "[hot] ⚠⚠ --no-compile：显式跳过编译预检——若代码编译失败将「杀了起不来」，风险自负"
+      echo "[hot] ⚠⚠ 此逃生舱仅用于「实例已死且确信代码可编译」的紧急场景"
     else
-      echo "[force] R4：保留编译预检（编译失败不杀旧实例；确需跳过请用 --force --no-compile）"
+      echo "[hot] 主路径=直接热重启（作者令 2026-11-03 17:59：断点续跑兜底，不再等四信号空闲）"
       preflight_compile
     fi
+    preflight_canary
+    LAST_SNAPSHOT="hot 主路径（按设计跳过四信号/观察窗/终检；编译预检+canary+进程表验证护栏全保留）"
     do_restart ;;
   wait-idle)
     if [[ $DRY_RUN == 1 ]]; then
@@ -812,6 +926,6 @@ case "$MODE" in
       final_idle_check || exit 4
       do_restart
     else
-      echo "BUSY — 不重启（--watch / --canary / --wait-idle / --force）"; exit 3
+      echo "BUSY — 不重启（守候路径: --watch / --canary / --wait-idle；主路径: --hot 直接热重启）"; exit 3
     fi ;;
 esac

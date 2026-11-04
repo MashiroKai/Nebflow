@@ -1206,9 +1206,11 @@
    ui-unification-20261103-doc-ask-fade（作者令 2026-11-03 实拍 IMG_1720/IMG_1721）：
    「上边缘过渡：现在上方边缘有很明显的截断。我想要的效果是像主对话窗口那样，做一个
    慢慢渐渐隐去的消失效果来做过渡」。
-   本类是**主对话窗顶缘滚入渐隐带**（glass.css 原 `#g2-edge-fade` 材质段）的收编体：
-   聊天根（`#g2-edge-fade`）与文档阅读面 Ask 面板（`.ask-veil`）同为成员，两处只留
-   **差异档**（高度 / 落位 / z 序 / 左右缩进，由消费面声明）。
+   本类是**主对话窗顶缘滚入渐隐带**（glass.css 原 `#g2-edge-fade` 材质段）的收编体。
+   成员史：①-批曾收编 Ask 面板 .ask-veil 为第二成员；2026-11-04 ask-fade-content-opacity
+   批作者裁定「渐隐应该是消息透明度渐到 0 的过程，不是放一条过渡带」⇒ .ask-veil
+   退役，Ask 渐隐改走 ask.css .ask-col 的内容级 mask（零底色零 backdrop）。本类
+   成员回归单员 = 主对话窗；两处形态自此分治。
    材质三件（顺序不可拆，缺一件就退化成一条色带）：
      ① veil 渐层 `--ds-fade-veil`（色 = 页面底色族 ⇒ 本身几乎不可见，作用是把内容
         「洗掉」而不是盖一块色）；
@@ -1224,7 +1226,7 @@
       保持可滚可点（Ask 面板原「colwrap 挂 mask」的形态即栽在这里，本批已摘）；
    ③ mask 里的颜色只为取 alpha 通道，故用 `currentColor` + `color-mix()` 表达
       0.55 中间档（严格面：设计体系层整文件零裸色值，见 scripts/check-design-tokens.mjs）。
-   本类**不定高**（聊天根 `--ds-fade-height` 88px / Ask 面板 `--ask-fade-h`）、
+   本类**不定高**（消费面自行声明，现盘 = 聊天根 `--ds-fade-height` 88px）、
    **不定 z 序**、**不定左右缩进** —— 由消费面声明。 */
 .ds-edge-fade {
   position: absolute;

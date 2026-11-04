@@ -11,8 +11,12 @@ import org.http4s.dsl.io.*
 
 /**
  * `GET /api/wiki/graph`                — merged document graph over every project's
- *                                        `<workspace>/docs` ROOT vault (pre-#744-B
- *                                        shape, byte-compatible). Projects bound to
+ *                                        ROOT vault (resolved by
+ *                                        `ProjectStore.localVault` =
+ *                                        `projects/<name>/.stand/docs`, falling back
+ *                                        to the workspace `docs/` for not-yet-migrated
+ *                                        projects; pre-#744-B shape, byte-compatible).
+ *                                        Projects bound to
  *                                        peer devices are scanned on the peer via the
  *                                        scoped browse channel and degrade to stub
  *                                        nodes when unreachable.
@@ -41,8 +45,10 @@ import org.http4s.dsl.io.*
  * `GET /api/wiki/remote-doc`           — single-file fetch from a peer device
  *                                        (`device` + `path` query params) for opening
  *                                        remote docs read-only.
- * `POST /api/wiki/vault`               — idempotently scaffold `<workspace>/docs/attachments`
- *                                        for a local project (`{"project": name}`).
+ * `POST /api/wiki/vault`               — idempotently scaffold the vault
+ *                                        (`projects/<name>/.stand/docs`) and its
+ *                                        `attachments/` for a local project
+ *                                        (`{"project": name}`).
  *
  * All routes need auth (withAuth). Mounted via RestApiRoutes.routes; the first
  * path segment ("wiki") is disjoint from every sibling domain.

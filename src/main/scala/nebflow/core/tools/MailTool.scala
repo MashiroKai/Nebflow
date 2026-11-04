@@ -233,9 +233,17 @@ object MailTool extends Tool:
   private val dispatcherMailState: Ref[IO, DispatcherMailState] =
     Ref.unsafe[IO, DispatcherMailState](DispatcherMailState())
 
-  /** 生效窗长（现读 prop `nebflow.mail.dispatcherBatchMs`，默认 5000；`≤ 0` = 关窗）。 */
+  /**
+   * 生效窗长（现读 prop `nebflow.mail.dispatcherBatchMs`，默认 5000；`≤ 0` = 关窗）。
+   *
+   * seal 批（2026-11-03，作者令「邮件和心跳进程功能，进入封存，发布剔除，本地sbt run
+   * 可用。」）：`Defaults.MailProcessEnabled == false` ⇒ **恒 0 = 关窗**——打包窗是
+   * 一条后台定时腿（`IO.sleep(windowMs).start`，见 `enqueueDispatcherReply`），封存即
+   * 不挂它；投递本体不受影响（每条直投，`Some(text)` 旁路，与 prop 手设 0 同一条路径）。
+   */
   private[tools] def dispatcherMailWindowMs: Long =
-    sys.props.getOrElse("nebflow.mail.dispatcherBatchMs", "5000").trim.toLongOption.getOrElse(5000L)
+    if !Defaults.MailProcessEnabled then 0L
+    else sys.props.getOrElse("nebflow.mail.dispatcherBatchMs", "5000").trim.toLongOption.getOrElse(5000L)
 
   /** 生效条数上限（现读 prop `nebflow.mail.dispatcherBatchMax`，默认 10；`< 1` 归一到 1）。 */
   private[tools] def dispatcherMailBatchMax: Int =
@@ -795,7 +803,8 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
 
   private def rootFace: String = "\"delegate:<id>\"/\"kernel:<id>\"（续聊）或 \"node:<节点id或名>\"（已登记 delegate 链）——项目地址（project:<名> 或裸挂载项目名）不是 Mail 面，派发走 Delegate"
   private def dispatcherFace: String = "\"Nebula\"（root）或 \"node:<节点id或名>\""
-  private def delegateFace: String = "\"node:<节点id或名>\"（你自己作用域链图内的节点）"
+  private def delegateFace: String =
+    "\"node:<节点id或名>\"（你自己作用域链图内的节点）或 \"Nebula\"（向根会话汇报中间读数/阻断——续命派生实例同享此腿）"
 
   /** 分层地址面的显式越界报错（细则：错误消息必须指明**该角色的合法地址面**）。 */
   private def outOfFaceError(address: String, role: SenderRole): ToolError =
@@ -911,9 +920,21 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
             )
           )
         case SenderRole.Teamish => None // 既有 canMailRoot 闸不变
-        // S6=C：delegate 会话的面 = 自己作用域的 node: 腿——Nebula 地址 = 显式越界
-        // （合法面文案指明；零静默兜底，与 canMailRoot 的 team 闸语义不同层不混）。
-        case SenderRole.Delegate => Some(IO.pure(Left(outOfFaceError(address, role))))
+        // 会话续命名与位修正批（2026-11-03 · 作者 16:53 缺陷⑧）：delegate 会话的
+        // **Nebula 腿**回归——此前 delegate 面上 Nebula 地址 = 显式越界，续命派生
+        // 实例（乃至原 delegate）连向根会话汇报中间读数/阻断报告的通道都没有
+        // （作者截图实证：派生体只被允许 `node:*`，损失全部实时可见性）。现按
+        // **dispatcher 同款腿**投递（同一 `deliverToRootAgent` 单点：root 会话解析
+        // 走 `ctx.rootSessionId` 优先 → session meta 唯一 Nebula 兜底，零新机制）。
+        // 落点仍是 root 议会话，不是「自己给自己发」（发信者恒排除，见 resolveRoots）。
+        case SenderRole.Delegate =>
+          Some(
+            countMailUsage(
+              deliverToRootAgent(address, withChainAnnotation(message, chainId), blocks, ctx, system),
+              chainId,
+              ctx
+            )
+          )
     else if role == SenderRole.Root then
       // Nebula 的裸名形态 = 裸项目名。Project-trigger 拆除后：命中已挂载项目 ⇒
       // 与 `project:` 形态同款显式拒绝（零触发）；未命中 ⇒ 显式 unresolvable。
@@ -1283,9 +1304,9 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                     // 案A 待命唤醒（2026-10-31 批 · 状态矩阵批收编）：live delegate
                     // 收到 Mail ⇒ 待命宣告消费——清 standbySince + 申报槽
                     // （clearStandby）。唤醒轮若无新申报，回合收尾按矩阵未申报腿
-                    // 分流（提醒补报，绝不静默判完成）；standby-care caretaker 以
-                    // standbySince 清零为自取消信号，绝不在 Mail 唤醒轮中途再注入
-                    // 提醒。fail-soft：清槽失败只 WARN，绝不阻断 Mail 投递。
+                    // 分流（提醒补报，绝不静默判完成）；未申报腿的 standby-care
+                    // caretaker 以 standbySince 置位为静默信号（申报待命 = 零提醒：
+                    // 作者 2026-11-03 18:14「都已经报了 stand by 了，还通知什么」）。
                     //
                     // ═══ 错误冻结唤醒腿（错误冻结批 2026-11-01 · 作者令「冻结态
                     // 方便被唤醒 接着做」「别丢上下文」）═══
@@ -1403,7 +1424,25 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     if record.parentSessionId.isEmpty then IO.pure(None)
     else res.agentRegistry.get.map(_.get(record.parentSessionId).map(_.ref))
 
-  /** 终态 delegate 的续起：补充信息即新输入，座位/项目/台账继承记录。 */
+  /**
+   * 终态 delegate 的续命腿（会话续命名与位修正批 2026-11-03 · 作者 16:48/16:51/16:53
+   * 三段报障）——**两段式**：
+   *
+   *   ① **原位续优先**（[[nebflow.core.delegate.SessionResumption.resumeInPlace]]）：
+   *      会话未 live 但历史完好（含引擎重启 TERM 终态）⇒ 沿用原 sessionId，转录作为
+   *      initialMessages 重放、补充信息追加为同一会话下一轮，作用域图按同一 id 重挂
+   *      ⇒ 链节点归属（`rootSessionId`）与事件路由**分毫不动**。这是作者 16:51 的
+   *      结构性要求：「下面的节点依赖于它，你新派生的，这些节点的归属无法落上去」。
+   *   ② **派生只作不可恢复的兜底**（cancel 墓碑 / 转录损坏）：落 `resumedFrom=<原 id>`，
+   *      并把旧 scope 的图与链账本**移交**给新会话（[[nebflow.core.project.ScopeHandover]]，
+   *      含 `ownerMigration` 审计行）——绝不留下「节点挂在死会话名下、活实例收不到
+   *      事件」的孤悬终态（作者 16:53 缺陷⑨）。
+   *
+   * **显示名（A 部分）**：两段腿的描述恒取任务账 title 的**去叠加形态**
+   * （[[nebflow.core.delegate.SessionResumption.displayTitle]]）——旧腿此处写的是
+   * `s"continuation: ${record.title}"`，逐代叠加成「continuation: continuation:
+   * continuation: …」不可辨识（四代会话链实证）。现在第 N 代与第 1 代同名。
+   */
   private def continueDelegate(
     record: DelegateRegistry.Record,
     id: String,
@@ -1412,6 +1451,88 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
     system: ActorSystem,
     res: AgentRuntimePort,
     parentRef: Option[ActorRef[AgentCommand]]
+  ): IO[Either[ToolError, String]] =
+    val displayTitle = nebflow.core.delegate.SessionResumption.displayTitle(record)
+    // 转录读数（原位可行性判据：读不出来 = 无现场可重放 ⇒ 派生腿）。
+    val transcriptProbe: IO[Either[String, Int]] =
+      res.sessionStore
+        .loadMessagesForSession(id)
+        .map(msgs => Right(msgs.size): Either[String, Int])
+        .handleError(e => Left(e.getMessage))
+    transcriptProbe.flatMap { probe =>
+      nebflow.core.delegate.SessionResumption.judge(record, probe.left.toOption, probe.getOrElse(0)) match
+        case nebflow.core.delegate.SessionResumption.Verdict.InPlace(_, _) =>
+          resumeDelegateInPlace(record, id, message, ctx, system, res, displayTitle, parentRef)
+        case nebflow.core.delegate.SessionResumption.Verdict.Derive(reason) =>
+          deriveDelegateContinuation(record, id, message, ctx, system, res, displayTitle, parentRef, reason)
+    }
+
+  /** ① 原位续腿：同 id、转录追加、链归属不变（回执逐项说破）。 */
+  private def resumeDelegateInPlace(
+    record: DelegateRegistry.Record,
+    id: String,
+    message: String,
+    ctx: ToolContext,
+    system: ActorSystem,
+    res: AgentRuntimePort,
+    displayTitle: String,
+    parentRef: Option[ActorRef[AgentCommand]]
+  ): IO[Either[ToolError, String]] =
+    val brief =
+      s"""[supplement for the SAME delegate session $id — resumed in place; your history is loaded above]
+[workspace] ${record.cwd} (file tools need absolute paths; Bash cwd is not guaranteed)
+
+$message"""
+    nebflow.core.delegate.SessionResumption
+      .resumeInPlace(nebflow.core.delegate.SessionResumption.Deps(res, system, ctx.wsSend), record, brief)
+      .map {
+        case Right(out) =>
+          record.taskId.foreach { tid =>
+            scala.util.Try(
+              TaskLedgerStore
+                .open()
+                .appendNoteSync(
+                  tid,
+                  s"Mail supplement → resumed IN PLACE (same session ${out.delegateId}, transcript ${out.transcriptMessages} msgs appended)",
+                  from = TaskLedgerHistory.Origins.Nebula,
+                  actor = TaskLedgerHistory.Actors.Nebula
+                )
+            )
+          }
+          val parentNote =
+            if out.parentLive then ""
+            else
+              s"\nNOTE: the original parent session '${record.parentSessionId}' is not live right now, so this continuation's " +
+                "result CANNOT be delivered back to it automatically — the outcome is logged loudly and recorded in the task panel."
+          Right(
+            s"[delegate #$id] No live actor was holding this instance — your message RESUMED IT IN PLACE: " +
+              s"**same session id** (`$id`), transcript appended (${out.transcriptMessages} messages replayed, nothing rewritten), " +
+              "same workspace and task ledger. The batch's chain nodes keep their owner, so their completion events and " +
+              s"supplements still reach this session. Display name: \"$displayTitle\" (stable across generations).$parentNote"
+          )
+        case Left(reason) =>
+          // 原位续失败：**显式报错**，绝不静默改走派生（派生 = id 增殖 + 归属断裂，
+          // 正是本批要根治的形态）。记录与转录全在盘上，重试同一条腿即可。
+          Left(
+            ToolError(
+              s"DELEGATE_RESUME_IN_PLACE_FAILED: could not resume delegate '$id' in place: $reason. " +
+                "The registry record, the transcript and the scope map are all preserved — retry the Mail, or cancel the " +
+                "instance explicitly (cancel = tombstone ⇒ a later Mail derives a fresh session with the chain handed over)."
+            )
+          )
+      }
+
+  /** ② 派生兜底腿：落 resumedFrom + scope 移交（ownerMigration 审计）。 */
+  private def deriveDelegateContinuation(
+    record: DelegateRegistry.Record,
+    id: String,
+    message: String,
+    ctx: ToolContext,
+    system: ActorSystem,
+    res: AgentRuntimePort,
+    displayTitle: String,
+    parentRef: Option[ActorRef[AgentCommand]],
+    deriveReason: String
   ): IO[Either[ToolError, String]] =
     val brief =
       s"""[continuation of delegate $id — the instance finished; this supplement is your new primary instruction]
@@ -1425,7 +1546,9 @@ $message"""
         // （DelegateTool.spawnKernel）同路；节点面恒走 entry，两来源机械可分。
         agentDef = nebflow.core.entity.BuiltinAgents.delegateEntry(DelegateTool.KernelAgentName).map(_.toAgentDef).get,
         task = brief,
-        description = s"continuation: ${record.title}",
+        // A 部分：显示名 = 任务账 title 的去叠加形态（旧形态 `continuation: ${record.title}`
+        // 逐代叠加，四代会话链实证不可辨识）。
+        description = displayTitle,
         workspace = record.cwd,
         project = record.project,
         taskId = record.taskId,
@@ -1437,55 +1560,68 @@ $message"""
         // 续聊结果在 notifyParentAndStop 的 None 分支被静默丢弃。
         parentRef = parentRef,
         // 续聊腿 wsSend 桥接批（2026-11-01 报障「delegate 会话详情面板部分会话正文空白，
-        // 只剩归因徽章行」）——**判别变量 = 该会话由本腿（Mail 续聊）起的**：
-        //   此前恒传 `None` ⇒ `DelegateTool.routeWsSend` 的 base 退化成
-        //   `(_) => IO.unit`（DelegateTool.scala:229）⇒ 该会话的**全部流帧在发射处即被
-        //   吞掉**：既无 live 广播，也到不了根会话的录制层
-        //   （`WebSocketRoutes#makeRecordingWsSend`，ai/tool/thinking 三类 .ui.json 行的
-        //   **唯一**写者），于是该会话 ui.json 只剩注入行——注入行由
-        //   `AgentActor#emitInjectedUserEvent` 直写 SessionStore（不经 wsSend，见该处
-        //   bluebubble 批注释），所以面板里「归因徽章行」（注入行 = DELEGATE · NEBULA）
-        //   照常渲染，正文（助手文本 / 工具过程 / 思考块）一条都没有。
-        //   修法 = 与同族腿对齐：外置执行器续聊腿
-        //   （本文件上方 `ExternalSessionRunner.continueExternal(wsSend = ctx.wsSend)`）
-        //   与新鲜派发腿（`DelegateTool.spawnKernel(wsSend = ctx.wsSend)`）都传调用方
-        //   wsSend；续聊腿传 ctx.wsSend 后 spawnBackground 内的 routeWsSend 照旧给帧盖
-        //   nodeSessionId = 新会话 id，录制层按该 id 落盘，live 广播同时恢复。
-        //   数据实证（2026-11-01 实盘）：105/105 条 `[continuation of delegate …]` 会话
-        //   ui.json 的 ai+tool 行数 = 0；非续聊会话 1021/1021 有行。
+        // 只剩归因徽章行」）——判别变量 = 该会话由本腿（Mail 续聊）起的，传 ctx.wsSend
+        // 后 spawnBackground 内的 routeWsSend 照旧给帧盖 nodeSessionId = 新会话 id，
+        // 录制层按该 id 落盘，live 广播同时恢复。
         wsSend = ctx.wsSend,
         parentSessionId = Some(record.parentSessionId),
-        rootSessionId = record.parentSessionId
+        rootSessionId = record.parentSessionId,
+        // B 部分：派生血缘（审计 + 显示面）+ 归属接管（scope 移交见下）。
+        resumedFrom = Some(id)
       )
-      .map {
-        case Left(err) => Left(err)
+      .flatMap {
+        case Left(err) => IO.pure(Left(err))
         case Right((newId, _)) =>
-          record.taskId.foreach { tid =>
-            scala.util.Try(
-              TaskLedgerStore
-                .open()
-                .appendNoteSync(
-                  tid,
-                  s"Mail supplement → continued as $newId",
-                  from = TaskLedgerHistory.Origins.Nebula,
-                  actor = TaskLedgerHistory.Actors.Nebula
-                )
+          // ⑨ scope 移交（引擎侧发起——派生体无权访问旧 scope，见作者 16:53 实证）：
+          // 卸旧宿主 → 搬移图/归档/链账本 → 重挂新宿主（重开已换图的目录）。
+          nebflow.core.project.ScopeHandover
+            .handoverAndRemount(
+              fromDelegateId = id,
+              fromRecord = record,
+              toDelegateId = newId,
+              toBaseWorkspace = record.cwd,
+              toProject = record.project,
+              toEngineCwd = record.cwd,
+              system = system,
+              resources = res,
+              wsSend = ctx.wsSend
             )
-          }
-          val legacy =
-            if id != newId then s" (the finished instance $id stays archived; this is a fresh session)" else ""
-          val parentLiveNote = parentRef match
-            // 父不 live：立即说破（Mail 时点可见），终态还有监督者兜底告警——双端都不静默。
-            case None =>
-              s"\nNOTE: the original parent session '${record.parentSessionId}' is not live right now, so this continuation's " +
-                "result CANNOT be delivered back to it automatically — when the session finishes the outcome is logged loudly " +
-                "and recorded in the task panel instead of being injected."
-            case Some(_) => ""
-          Right(
-            s"[delegate #$id] Instance was not live — your message CONTINUED the delegate as a fresh session $newId$legacy, same workspace and task ledger. Its result is delivered back when it finishes.$parentLiveNote"
-          )
+            .handleErrorWith(e =>
+              IO.pure(Left(s"scope handover failed: ${e.getMessage}"): Either[String, nebflow.core.project.ScopeHandover.HandoverReport])
+            )
+            .map { handover =>
+              record.taskId.foreach { tid =>
+                scala.util.Try(
+                  TaskLedgerStore
+                    .open()
+                    .appendNoteSync(
+                      tid,
+                      s"Mail supplement → continued as $newId (resumedFrom $id; reason: $deriveReason)",
+                      from = TaskLedgerHistory.Origins.Nebula,
+                      actor = TaskLedgerHistory.Actors.Nebula
+                    )
+                )
+              }
+              val handoverNote = handover match
+                case Right(r) if r.moved =>
+                  s" The original scope map's chain was HANDED OVER to this session (${r.activeNodes} active + ${r.archivedNodes} " +
+                    "archived nodes, ownerMigration recorded) — the nodes keep reporting here."
+                case Right(_) =>
+                  " (The original instance had no chain map left to hand over.)"
+                case Left(reason) => s" WARNING: the chain handover failed ($reason) — the old nodes may not reach this session."
+              val parentLiveNote = parentRef match
+                // 父不 live：立即说破（Mail 时点可见），终态还有监督者兜底告警——双端都不静默。
+                case None =>
+                  s"\nNOTE: the original parent session '${record.parentSessionId}' is not live right now, so this continuation's " +
+                    "result CANNOT be delivered back to it automatically — when the session finishes the outcome is logged loudly " +
+                    "and recorded in the task panel instead of being injected."
+                case Some(_) => ""
+              Right(
+                s"[delegate #$id] The original session could not be resumed in place ($deriveReason), so it CONTINUED as a new " +
+                  s"session $newId (resumedFrom=$id), same workspace and task ledger, display name \"$displayTitle\".$handoverNote$parentLiveNote"
+              )
+            }
       }
-  end continueDelegate
 
   // ============================================================
   // 附件面路线 A——`attachments` 通用附件面

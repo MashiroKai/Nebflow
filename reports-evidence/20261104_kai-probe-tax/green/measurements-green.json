@@ -1,0 +1,115 @@
+{
+  "batch": "2026-11-04 kai-probe-tax (GREEN / 改后)",
+  "generated_at": "2026-11-04",
+  "harness": {
+    "main": "nebflow.core.tools.ProbeTaxMeasureMain (Test scope, 可重跑)",
+    "run": "sbt \"Test/runMain nebflow.core.tools.ProbeTaxMeasureMain\"",
+    "runs_captured": [
+      "reports-evidence/20261104_kai-probe-tax/green/harness-raw.log",
+      "reports-evidence/20261104_kai-probe-tax/green/harness-raw-run3.log"
+    ],
+    "code_under_test": "生产本体：P2pReachability.probeConcurrently / P2pProbePolicy / BrowseGetLoop.run(window)",
+    "not_a_stub": "探针 = 真 HTTP GET /api/health；传送 = 真 socket、真 5 MiB 字节、对端桩注入 43ms 单程 RTT（实测 relay RTT 档位）"
+  },
+
+  "probe_real_kai_endpoints": {
+    "endpoints": ["http://100.91.165.120:6138", "http://192.168.1.145:6138"],
+    "state_during_measurement": "两个端点均为 SYN 黑洞（HTTP 探针 connected=false），与改前红数采集期同态",
+    "legacy_serial_ms":       [4657, 4666, 4822],
+    "concurrent_cold_ms":     [1527, 1517, 1506],
+    "negative_cache_hit_ms":  [0, 0, 0],
+    "expired_half_open":      {"hit": false, "note": "窗口到期 ⇒ 判据放行（一次半开探测），判断本身 0ms"},
+    "per_endpoint_legacy": [
+      {"endpoint": "http://100.91.165.120:6138", "ms": [3155, 3164, 3317], "connected": false},
+      {"endpoint": "http://192.168.1.145:6138", "ms": [1501, 1501, 1503], "connected": false}
+    ],
+    "median": {"legacy_serial": 4666, "concurrent_cold": 1517, "negative_cache_hit": 0},
+    "speedup": {"serial_to_concurrent": 3.08, "serial_to_negative_cache": "∞ (0ms)"}
+  },
+
+  "probe_control_rfc5737": {
+    "endpoints": ["http://203.0.113.7:6138", "http://198.51.100.9:6138"],
+    "why": "对照组：本机透明代理会让裸 TCP connect 对任意地址『秒连』，用 RFC 5737 TEST-NET 钉住『HTTP 探针不被代理骗』这件事",
+    "legacy_serial_ms":      [4502, 4511, 4516],
+    "concurrent_cold_ms":    [1202, 1204, 1219],
+    "negative_cache_hit_ms": [0, 0, 0],
+    "median": {"legacy_serial": 4511, "concurrent_cold": 1204, "negative_cache_hit": 0},
+    "speedup": {"serial_to_concurrent": 3.75}
+  },
+
+  "transfer_production_pipeline": {
+    "bytes": 5242880,
+    "rtt_ms": 43,
+    "path": "生产 BrowseGetLoop（分块拉取 + 本侧自算块/整件摘要 + 落盘）",
+    "variants": [
+      {
+        "label": "改前语义 serial",
+        "chunkSize": 524288,
+        "window": 1,
+        "chunks": 10,
+        "ms": [905, 684, 953, 598, 1143, 661],
+        "median_ms": 794.5,
+        "bytesIntact": true,
+        "shaMatch": true
+      },
+      {
+        "label": "流水线 window=4（块长不变）",
+        "chunkSize": 524288,
+        "window": 4,
+        "chunks": 10,
+        "ms": [507, 293, 272, 255, 292, 260],
+        "median_ms": 282,
+        "bytesIntact": true,
+        "shaMatch": true
+      },
+      {
+        "label": "自适应块长 + 窗口（chunkSizeFor(5MiB)=1MiB, windowFor=8）",
+        "chunkSize": 1048576,
+        "window": 8,
+        "chunks": 5,
+        "ms": [181, 173, 154, 155, 174, 256],
+        "median_ms": 173.5,
+        "bytesIntact": true,
+        "shaMatch": true
+      }
+    ],
+    "speedup": {"serial_to_window4": 2.82, "serial_to_adaptive": 4.58},
+    "correctness": "全部 bytesIntact=true / shaMatch=true（流水线不改顺序语义：按 index 升序校验落盘，摘要不符同块重拉）"
+  },
+
+  "cold_open_projection": {
+    "caveat": "⚠ 这不是在运行实例上复测的端到端读数——引擎不可重启（本批硬约束），且不得另起实例（同数据根 / 抢端口 / 会在生产设备表新增行）。下表 = 红数（真机实测）+ 本批分层实测的合成推演，每一项输入都有实测出处。",
+    "inputs": {
+      "red_cold_median_ms": 5051,
+      "red_probe_tax_measured_ms": 4502,
+      "red_residual_non_probe_ms": 549,
+      "red_residual_basis": "5051 - 4502 = 549（同一台 KAI、同一 read 腿；warm 会话 132ms = 纯 transport+往返，冷开多出的 ~417ms 为路径记忆/负证据缺失仍要走的既有判定腿）",
+      "green_probe_first_ms": 1517,
+      "green_probe_cached_ms": 0.0
+    },
+    "cases": [
+      {"case": "改后首个整窗外冷开（负缓存空，两个候选全死）", "probe_ms": 1517, "total_ms": 2066, "verdict": "未达 <1s（下一刀见报告 §5）"},
+      {"case": "改后窗口内冷开（负缓存命中；窗口 60s 起指数退避，5 次失败后 15min）", "probe_ms": 0, "total_ms": 549, "verdict": "达标 <1s"},
+      {"case": "改后端点真活（探通即放行）", "probe_ms": "≈RTT+一跳 (实测同网段 1ms 档 / Tailscale 100ms 档)", "total_ms": "<600ms 且走 P2P 直传", "verdict": "达标（P2P 命中时比 relay 更短）"},
+      {"case": "改前对照（红，实测）", "probe_ms": 4502, "total_ms": 5051, "verdict": "中位 5051ms / 最大 10032ms"}
+    ],
+    "warm_open": {
+      "red_measured_median_ms": 132,
+      "red_measured_n": 6,
+      "green_note": "60s 内续开在改前也不付探测税（路径记忆 60s 内有效）⇒ 本批不改续开语义，仅大件续开受益于流水线（多块文件的 3~4.6 倍）"
+    }
+  },
+
+  "evidence_files": {
+    "red": [
+      "red/kai-open-timings.log",
+      "red/presence-dial-tax.log",
+      "red/measurements-red.json"
+    ],
+    "green": [
+      "green/harness-raw.log",
+      "green/harness-raw-run3.log",
+      "green/measurements-green.json"
+    ]
+  }
+}

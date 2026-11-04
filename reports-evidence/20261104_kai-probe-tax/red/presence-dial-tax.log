@@ -1,0 +1,25 @@
+# RED evidence — presence dial 税（改前）
+# 每 30s 一拍、每拍串行拨两个候选（3000ms + 1500ms = 4.5s），今日重试总数：
+158
+
+## 末 12 条 dial failed（含时刻，可验 30s 拍 + 4.5s 串行）
+2026-11-04 10:53:07.948 [io-compute-blocker-47] WARN  nebflow.neblink.presence - Presence dial failed for KAI via http://192.168.1.145:6138: timeout after 1500ms (dial target 192.168.1.145:6138; tried 2 candidate endpoint(s))
+2026-11-04 10:53:36.510 [io-compute-blocker-16] WARN  nebflow.neblink.presence - Presence dial failed for KAI via http://100.91.165.120:6138: timeout after 3000ms (dial target 100.91.165.120:6138; tried 2 candidate endpoint(s))
+2026-11-04 10:58:38.755 [io-compute-blocker-52] WARN  nebflow.neblink.presence - Presence dial failed for KAI via http://192.168.1.145:6138: timeout after 1500ms (dial target 192.168.1.145:6138; tried 2 candidate endpoint(s))
+2026-11-04 10:59:07.358 [io-compute-blocker-62] WARN  nebflow.neblink.presence - Presence dial failed for KAI via http://100.91.165.120:6138: timeout after 3000ms (dial target 100.91.165.120:6138; tried 2 candidate endpoint(s))
+2026-11-04 10:59:08.878 [io-compute-blocker-62] WARN  nebflow.neblink.presence - Presence dial failed for KAI via http://192.168.1.145:6138: timeout after 1500ms (dial target 192.168.1.145:6138; tried 2 candidate endpoint(s))
+2026-11-04 10:59:37.412 [io-compute-blocker-82] WARN  nebflow.neblink.presence - Presence dial failed for KAI via http://100.91.165.120:6138: timeout after 3000ms (dial target 100.91.165.120:6138; tried 2 candidate endpoint(s))
+2026-11-04 10:59:38.921 [io-compute-blocker-82] WARN  nebflow.neblink.presence - Presence dial failed for KAI via http://192.168.1.145:6138: timeout after 1500ms (dial target 192.168.1.145:6138; tried 2 candidate endpoint(s))
+2026-11-04 11:00:07.606 [io-compute-blocker-18] WARN  nebflow.neblink.presence - Presence dial failed for KAI via http://100.91.165.120:6138: timeout after 3000ms (dial target 100.91.165.120:6138; tried 2 candidate endpoint(s))
+2026-11-04 11:00:09.122 [io-compute-blocker-18] WARN  nebflow.neblink.presence - Presence dial failed for KAI via http://192.168.1.145:6138: timeout after 1500ms (dial target 192.168.1.145:6138; tried 2 candidate endpoint(s))
+2026-11-04 11:00:37.681 [io-compute-blocker-11] WARN  nebflow.neblink.presence - Presence dial failed for KAI via http://100.91.165.120:6138: timeout after 3000ms (dial target 100.91.165.120:6138; tried 2 candidate endpoint(s))
+2026-11-04 11:00:39.210 [io-compute-blocker-11] WARN  nebflow.neblink.presence - Presence dial failed for KAI via http://192.168.1.145:6138: timeout after 1500ms (dial target 192.168.1.145:6138; tried 2 candidate endpoint(s))
+2026-11-04 11:01:07.750 [io-compute-blocker-35] WARN  nebflow.neblink.presence - Presence dial failed for KAI via http://100.91.165.120:6138: timeout after 3000ms (dial target 100.91.165.120:6138; tried 2 candidate endpoint(s))
+
+## 死端点抑制记录（F-D：timeout × 5 后才抑制 300s）
+2026-11-04 10:53:06.432 [io-compute-blocker-47] WARN  nebflow.neblink.presence - Presence endpoint suppressed for KAI via http://100.91.165.120:6138: timeout × 5 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+2026-11-04 10:53:07.948 [io-compute-blocker-47] WARN  nebflow.neblink.presence - Presence endpoint suppressed for KAI via http://192.168.1.145:6138: timeout × 5 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+2026-11-04 11:00:37.683 [io-compute-blocker-11] WARN  nebflow.neblink.presence - Presence endpoint suppressed for KAI via http://100.91.165.120:6138: timeout × 5 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+2026-11-04 11:00:39.213 [io-compute-blocker-11] WARN  nebflow.neblink.presence - Presence endpoint suppressed for KAI via http://192.168.1.145:6138: timeout × 5 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+2026-11-04 11:03:13.828 [io-compute-3] INFO  nebflow.handlers - nebflow 【实施批 B · 砍掉跨设备文件的「探测税」与串行搬运开销（KAI 冷开 5–10s → 亚秒级）】 Tool Bash START: cd /tmp && grep -c "Presence endpoint suppressed" ~/.stand/logs/stand.log; grep "Presence endpoint s
+  (cd /tmp && grep -c "Presence endpoint suppressed" ~/.stand/logs/stand.log; grep "Presence endpoint suppressed" ~/.sta...) OK (716ms)

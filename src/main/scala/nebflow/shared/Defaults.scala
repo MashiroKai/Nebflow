@@ -919,6 +919,21 @@ object Defaults:
   /** 扫描拍频（秒）——稿 §3.2 的 30s 档（HeldDeliveryScanIntervalSec 同款形态）。 */
   val BgLifecycleScanIntervalSec: Int = 30
 
+  // ── 合并队列活性守卫（merge-fifo 批 2026-11-03 · 作者报障「两个会话都已经报了
+  // merge，为什么还没收到通知」）────────────────────────────────────────────
+
+  /**
+   * [[nebflow.core.delegate.MergeEnqueueWatch]] 的静默阈值（秒）：会话 Idle 且
+   * 最后一次 agent 侧活动距今 ≥ 本值、分支上仍有未并交付提交、任务行
+   * running/restarting、账本又没有开放条目 ⇒ 判「漏排」（申报腿与终态腿双失），
+   * 由守卫拍补入队 + `watch-queued` 通知。
+   *
+   * 10min 的取值理由：申报 `merge` 之后终态腿通常在秒级内跑完（同一回合收尾），
+   * 10min 静默后仍未入队 = 那条腿确实没跑成，而不是「还在同一个回合里」。可经
+   * 系统属性 `nebflow.merge.enqueueWatch.idleSec` 覆盖（spec 用 0/999/1000 探边界）。
+   */
+  val MergeEnqueueWatchIdleSec: Long = 600L
+
   /**
    * 自基线观测窗 K（ms）：任务头 K 分钟的活跃间隔采样窗，到龄冻结中位为基线
    * （稿 §3.3「任务头 K 分钟的观测中位×系数」；§9-② 建议先自基线+全局默认档）。
@@ -977,7 +992,8 @@ object Defaults:
     sys.props
       .get("nebflow.delegate.standby.nudgeDelaysMs")
       .map { raw =>
-        val parsed = raw.split(",").toList.map(_.trim).filter(_.nonEmpty).flatMap(s => scala.util.Try(s.toLong).toOption)
+        val parsed =
+          raw.split(",").toList.map(_.trim).filter(_.nonEmpty).flatMap(s => scala.util.Try(s.toLong).toOption)
         if parsed.nonEmpty then parsed else List(10_000L, 30_000L, 60_000L)
       }
       .getOrElse(List(10_000L, 30_000L, 60_000L))
@@ -994,6 +1010,18 @@ object Defaults:
    */
   def DelegateStandbyNudgeLongMax: Int =
     sys.props.getOrElse("nebflow.delegate.standby.nudgeLongMax", "3").toInt
+
+  /**
+   * **应答后提醒下限**（ms，缺省 600000 = 10min · prop
+   * `nebflow.delegate.standby.answerFloorMs`）——作者 2026-11-03 18:14 裁定的退避
+   * 判据：「会话已经答过（重申待命/无变化）之后，绝不再 1 分钟连戳」。口径 =
+   * 同一待命期内 `answers > 0` **或** `attempt >= 2` 的相邻提醒间隔一律取
+   * `max(退避档, floor)`（见 [[nebflow.core.delegate.DelegateStandbyCare.effectiveDelay]]）；
+   * 首档（会话尚未被提醒过）照旧走短档，保留「刚空等就提醒」的及时性。
+   * prop 覆写 = 单值毫秒（spec 用 600 跑真 caretaker 验实测间隔）。
+   */
+  def DelegateStandbyNudgeAnswerFloorMs: Long =
+    sys.props.getOrElse("nebflow.delegate.standby.answerFloorMs", (10 * 60 * 1000L).toString).toLong
 
   // ── Delegate 错误冻结（错误冻结批 2026-11-01 · 作者令「所有因错误状态的
   //    delegate 应该上报之后 要能保留状态 冻结态 方便被唤醒 接着做」）────────
@@ -1761,6 +1789,46 @@ object Defaults:
    */
   val MemoryRecallTimeoutSec: Int = 300
 
+  // ---- 邮件 / 心跳进程封存（seal 批 2026-11-03；作者令逐字「邮件和心跳进程功能，
+  //      进入封存，发布剔除，本地sbt run 可用。」）----
+  //
+  // 「封存」= 代码全留、默认关闭、不再随实例启动——**封的是进程/定时器**，不是工具本体：
+  // `Mail` 工具的单次投递、daemon 面板的单次 start/stop 调用都照旧可用（那些是工具
+  // 调用面，不是后台进程）。开关单点在本对函数，接线点经
+  // [[nebflow.core.boot.ProcessSeal]]（零注册记账 + 一行封存说明日志）。
+  //
+  // 复活（本机开发/复盘）：`sbt run` 加 `-Dnebflow.mail.process.enabled=true`
+  // `-Dnebflow.heartbeat.enabled=true`（或用 `-D…=true` 的 `sbt -J` 形式），无需改码。
+  // 发布剔除 = 打包脚本 / Dockerfile 里显式写 `-D…=false`（同一 mainClass，装配级默认）。
+
+  /**
+   * 邮件后台进程总开关（默认 **false = 封存**）。关 = 以下后台面零注册：
+   *   - 邮件感知守护进程（`perception-daemon`：IMAP 轮询/sweep/digest/spool/idle 五循环，
+   *     经心跳（daemon 家族）托管）——`PerceptionDaemonDock.prepare` 直接 None（不写 token
+   *     不 upsert），`DaemonService` boot 门再挡（历史 `daemons.json` 残留条目也不拉）；
+   *   - 分发器回复打包窗定时腿（`MailTool.dispatcherMailWindowMs` ⇒ 0 = 关窗，单条直投）；
+   *   - 设备邮件 15s 回执超时腿（`DeviceMailAck.await` 不挂腿）；
+   *   - held 回执催注扫描（`HeldDeliveryWatchdog.run` 不进 boot 链）。
+   * system prop `nebflow.mail.process.enabled`（每次调用现读——`MemoryRecallEnabled`
+   * 同款 kill-switch 先例，测试/运维可即时翻转）。
+   */
+  def MailProcessEnabled: Boolean =
+    sys.props.getOrElse("nebflow.mail.process.enabled", "false").toBoolean
+
+  /**
+   * 心跳进程总开关（默认 **false = 封存**）。此处的「心跳进程」= **daemon 家族托管
+   * 进程**（作者 2026-10-29 裁定逐字「独立daemon吧 正好和我们心跳进程合并 那就是管daemon的」；
+   * 前端 `#daemon-btn` 的 title 即「心跳进程」，见 GLOSSARY.md 感知行）。
+   *
+   * 关 = boot 扇出零 spawn（`DaemonService.autoStart` 的 boot 门全挡）、随之零
+   * reader/monitor/health-check/low-rate-takeover/auto-restart 纤维；面板与
+   * `start/stop` 单次调用面保留（工具本体不封）。孤儿回收（`reclaimStaleDaemons`）
+   * **保留**：一次性清理上一实例遗留的子进程，属收尸不属进程。
+   * system prop `nebflow.heartbeat.enabled`（同上，现读）。
+   */
+  def HeartbeatProcessEnabled: Boolean =
+    sys.props.getOrElse("nebflow.heartbeat.enabled", "false").toBoolean
+
   // ---- STT（语音输入，可配置转录服务，#295）----
 
   /** STT 默认模型（OpenAI 兼容音频转录 API 的公共模型名，非用户配置）。 */
@@ -1908,15 +1976,17 @@ object Defaults:
    */
   def brandDefaultPort: Int = brandDefaultPortFor(Branding.lowerName)
 
-  /** 命令品牌 → 其缺省端口（双实例并存批 2026-10-30 的读数面单点；分家批换源）。
+  /**
+   * 命令品牌 → 其缺省端口（双实例并存批 2026-10-30 的读数面单点；分家批换源）。
    *  `stand` = [[GatewayPort]]（6138），`nebflow` = [[NebflowBrandGatewayPort]]（6140）。
    *  认不出的品牌返回 `"?"`（调用方据此只说「对家实例」，不编数字）。
-   *  CLI 侧同名真值在 `ops/bin/stand-cli-lib.sh` 的 `stand_brand_default_port`。 */
+   *  CLI 侧同名真值在 `ops/bin/stand-cli-lib.sh` 的 `stand_brand_default_port`。
+   */
   def legacyPortOf(brand: String): String =
     brand match
       case "nebflow" => NebflowBrandGatewayPort.toString
-      case "stand"   => GatewayPort.toString
-      case _         => "?"
+      case "stand" => GatewayPort.toString
+      case _ => "?"
 end Defaults
 
 /**

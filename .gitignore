@@ -32,6 +32,10 @@ tmp/
 # 目录（src/web/docs/ 之类），那是误伤面而不是防线。三目录形态须与门禁
 # scripts/check-process-artifacts.sh 的 GUARDED_DIRS 逐目录对齐
 # （evidence/ reports/ 的同名规则块见本文件尾部）。
+# 落位（作者令 2026-11-03 20:02）：项目知识文档**不再住**仓库根 docs/——vault 根
+# = 项目注册目录 `<data_root>/projects/<project>/.stand/docs/`（与 project.json
+# 同级）。本行仍保留为防线：万一有人再往根 docs/ 写，它也不会入库；迁移脚本
+# `scripts/wiki-docs-migration/migrate_docs_to_ledger.py` 负责把存量搬去新家。
 /docs/
 test-envs.sh
 # CHANGELOG.md / CODEBASE.md are kept OUT of git tracking by author ruling

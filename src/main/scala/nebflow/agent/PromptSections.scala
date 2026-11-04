@@ -771,11 +771,20 @@ External executors receive the task text only — no platform tools or plugins a
    * Falls back to the raw template if the script fails or output is invalid JSON.
    */
   private def renderWithScript(template: String, script: os.Path, ctx: PromptContext): String =
+    // 品牌围栏（引擎会话治理专项 · 缺陷五，2026-11-03）：端口**不再只以跨品牌名
+    // `NEBFLOW_GATEWAY_PORT` 出现在提示词渲染面**——本品牌专属名（stand 构建 =
+    // `STAND_GATEWAY_PORT`）是主名；遗留名保留给既有 data.sh（`${NEBFLOW_GATEWAY_PORT:-…}`）
+    // 的**脚本读取**（只活在这个渲染子进程里，绝不进会话环境——会话环境的围栏在
+    // [[nebflow.core.tools.ShellEnvCordon]]）。两个名字同源同值。
+    val brandPortVar = nebflow.core.tools.ShellEnvCordon.brandPortVar(nebflow.shared.Branding.envPrefix)
+    val portValue =
+      sys.props.getOrElse("nebflow.gateway.port", nebflow.shared.Defaults.brandDefaultPort.toString)
     val envVars = Map(
       "CHAT_WIDTH" -> ctx.chatWidth.toString,
       "NEBFLOW_VERSION" -> nebflow.Version.string,
       "NEBFLOW_PID" -> sys.props.getOrElse("nebflow.gateway.pid", java.lang.ProcessHandle.current().pid().toString),
-      "NEBFLOW_GATEWAY_PORT" -> sys.props.getOrElse("nebflow.gateway.port", nebflow.shared.Defaults.brandDefaultPort.toString),
+      brandPortVar -> portValue,
+      "NEBFLOW_GATEWAY_PORT" -> portValue,
       // 数据根供给（home 硬编码 → 运行时动态化批 2026-09-11；P3）：data.sh 的
       // JSON 由它派生 `data_root` 字段。命名避 NEBFLOW_HOME（env/sysprop 既名，
       // 语义不同：这里是**本实例**数据根的绝对路径）。

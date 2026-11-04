@@ -398,16 +398,21 @@ function mount() {
   // 输入行为包批（2026-11-02）：① <textarea rows=1> 承载 Shift+Enter 换行（键位
   // 契约与主会话逐一对齐；单行视觉不变，超行自动长高封顶）；② + 中断钮
   // .ask-stop（busy 态与发送钮互换，主会话 #stop-btn 同律；包状态机驱动）。
-  // 顶缘渐隐视觉层 = design-system.css `.ds-edge-fade`（与主对话窗 #g2-edge-fade
-  // 同一个类：author 令 2026-11-03「像主对话窗口那样，做一个慢慢渐渐隐去的消失
-  // 效果」；本文件只挂类，材质零自带 —— 禁在此另造第二套渐隐）。
+  // 顶缘渐隐 = 内容级 mask（2026-11-04 ask-fade-content-opacity 批，作者令 09:22
+  // 逐字：「canvas Ask 的这个渐隐，应该是对消息什么的降低透明度到 0 的过程，而不是
+  // 放一个过渡的条在哪，整体要是透明无边框的」）。①-批的独立视觉层 .ask-veil
+  // （.ds-edge-fade：veil 渐层底色 + backdrop blur）随本批退役——它是一块带底色的
+  // 遮罩条，不是内容透明度；面板内不再渲染任何渐隐元素，渐隐本体移到 ask.css
+  // .ask-col 的 mask-image（内容滚动穿顶时自身 alpha 渐到 0）。
   dock.innerHTML =
     '<div class="ds-resize-handle" data-ask-resize role="separator" tabindex="0" aria-label="' +
       tt('拖拽调整面板大小', 'Resize panel') + '" title="' +
       tt('拖拽调整面板大小（←→ 改宽 / ↑↓ 改高）', 'Drag to resize (←→ width / ↑↓ height)') + '">' +
       '<span class="ds-resize-grip" aria-hidden="true"><i></i><i></i><i></i></span>' +
     '</div>' +
-    '<div class="ask-colwrap"><div class="ask-col"></div><div class="ask-veil ds-edge-fade" aria-hidden="true"></div></div>' +
+    // main（ask-fade-content-opacity 批）已把 .ask-veil 遮罩条退役——合并取 main
+    // 侧（渐隐归 .ask-col 的 mask-image），本批只加拖柄，不复活任何渐隐元素。
+    '<div class="ask-colwrap"><div class="ask-col"></div></div>' +
     '<div class="ask-input">' +
     '<textarea rows="1" placeholder="' + tt('针对这份文件提问…', 'Ask about this file…') + '" aria-label="' + tt('提问', 'Question') + '"></textarea>' +
     // 转回合按钮（作者令 ui-unification-20261103-canvas-ask-resize「发送按钮与终止

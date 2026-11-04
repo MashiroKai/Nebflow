@@ -180,6 +180,9 @@ jlink \
   --output "$RUNTIME"
 
 # ── .deb ──
+# 发布剔除（seal 批 2026-11-03，作者令「邮件和心跳进程功能，进入封存，发布剔除，本地
+# sbt run 可用。」）：发布与本地 `sbt run` 共用同一 mainClass ⇒ 剔除落在**装配层**
+# （jpackage `--java-options` 把两条 `-D…=false` 写进启动器）。本地 run 不经本脚本。
 jpackage \
   --name "$PRODUCT_NAME" \
   --type deb \
@@ -189,12 +192,15 @@ jpackage \
   --arguments --server \
   --java-options "--add-opens=java.base/java.lang=ALL-UNNAMED" \
   --java-options "-Xmx1g" \
+  --java-options "-Dnebflow.mail.process.enabled=false" \
+  --java-options "-Dnebflow.heartbeat.enabled=false" \
   --runtime-image "$RUNTIME" \
   --icon "$ICON_FILE" \
   --app-version "$APP_VERSION" \
   --dest "$OUT"
 
 # ── app-image tar.gz (distribution-agnostic fallback) ──
+# 同上：app-image 是发布面（分发用），两条封存属性一并写进启动器；与 .deb 同源。
 APP_IMAGE_ROOT="build/app-image-root"
 rm -rf "$APP_IMAGE_ROOT"
 mkdir -p "$APP_IMAGE_ROOT"
@@ -207,6 +213,8 @@ jpackage \
   --arguments --server \
   --java-options "--add-opens=java.base/java.lang=ALL-UNNAMED" \
   --java-options "-Xmx1g" \
+  --java-options "-Dnebflow.mail.process.enabled=false" \
+  --java-options "-Dnebflow.heartbeat.enabled=false" \
   --runtime-image "$RUNTIME" \
   --icon "$ICON_FILE" \
   --dest "$APP_IMAGE_ROOT"

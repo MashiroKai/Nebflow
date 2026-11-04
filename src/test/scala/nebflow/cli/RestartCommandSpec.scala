@@ -14,11 +14,20 @@ import nebflow.shared.PathUtil
  */
 class RestartCommandSpec extends FunSuite:
 
+  /**
+   * 隔离根（临时数据根）。自 隔离实例误伤批 2026-11-04 起，被覆盖的数据根**必须**
+   * 自带端口声明才允许起实例（绝不静默回落品牌缺省口 6138）——本 spec 的临时根
+   * 因此写一份 `nebflow.json` 声明自己的端口；这条纪律本身由
+   * `IsolatedInstanceScopeSpec` 的 spec A/C 正面钉。
+   */
+  private val TempRootPort = 21033
+
   private def withTempRoot(f: => Unit): Unit =
     val original = PathUtil.dataRoot
     val tmp = os.temp.dir(prefix = "restart-spec-")
     try
       PathUtil.setDataRoot(tmp)
+      os.write.over(tmp / "nebflow.json", s"""{"port": $TempRootPort}""", createFolders = true)
       f
     finally
       PathUtil.setDataRoot(original)
@@ -137,9 +146,14 @@ class RestartCommandSpec extends FunSuite:
 
       val launches2 = scala.collection.mutable.ListBuffer[Int]()
       val res = RestartCommand
-        .runRestart(ProcessManager.StopOptions(force = true), deps, (_, _, _) => IO {
-          launches2 += 1; ExitCode.Success
-        })
+        .runRestart(
+          ProcessManager.StopOptions(force = true),
+          deps,
+          (_, _, _) =>
+            IO {
+              launches2 += 1; ExitCode.Success
+            }
+        )
         .unsafeRunSync()
       assert(res.isInstanceOf[CliResult.Exit], res.toString)
       assertEquals(launches2.size, 1)

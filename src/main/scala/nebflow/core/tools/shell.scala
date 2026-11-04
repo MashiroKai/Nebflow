@@ -590,6 +590,15 @@ final class ShellSession private (
     // exactly as it was — the inherited parent environment, unfiltered, as
     // before this batch.
     if secretEnv.nonEmpty then secretEnv.foreach { case (k, v) => pb.environment().put(k, v) }
+    // 环境品牌围栏（缺陷五）：非 nebflow 品牌摘 NEBFLOW_GATEWAY_PORT、写本品牌
+    // 专属名（stand 构建 = STAND_GATEWAY_PORT）。判据单点 = ShellEnvCordon。
+    val cordon = ShellEnvCordon.decide(
+      pb.environment().keySet().toArray.map(_.toString).toSet,
+      nebflow.shared.Branding.envPrefix,
+      ShellEnvCordon.port
+    )
+    cordon.removals.foreach(k => pb.environment().remove(k))
+    cordon.additions.foreach { case (k, v) => pb.environment().put(k, v) }
     pb.redirectErrorStream(false) // stdout/stderr separated
     pb
 
