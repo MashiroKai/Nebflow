@@ -1044,14 +1044,14 @@ function ensureExplorerSearch() {
   // 注意：光设 `hidden` 属性**打不过**内联 display（UA 的 [hidden]{display:none} 优先级最低）
   // —— 这里连 display 一起关，展开时一起开。踩过一次：属性 true 但行照样占位，
   // 整棵树下移，14 张基线全 DIFF。
-  row.setAttribute('style', 'display:none;align-items:center;gap:6px;padding:2px 8px 6px;');
+  row.setAttribute('style', 'display:none;align-items:center;gap:var(--ds-space-1h);padding:var(--ds-space-half) var(--ds-space-2) var(--ds-space-1h);');
   const input = document.createElement('input');
   input.type = 'search';
   input.id = 'explorer-search';
   input.className = 'explorer-search-input';
   input.placeholder = t('explorer.searchPlaceholder');
   input.setAttribute('aria-label', t('explorer.searchPlaceholder'));
-  input.setAttribute('style', 'flex:1 1 auto;min-width:0;padding:4px 8px;border-radius:var(--ds-radius-input);'
+  input.setAttribute('style', 'flex:1 1 auto;min-width:0;padding:var(--ds-space-1) var(--ds-space-2);border-radius:var(--ds-radius-input);'
     + 'border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);'
     + 'color:inherit;font:12.5px/1.4 inherit;');
   input.addEventListener('input', () => applyTreeFilter(input.value));

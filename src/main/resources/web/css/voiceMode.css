@@ -75,9 +75,9 @@ body.voice-mode-active #queue-bar {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   text-align: center;
-  padding: 22px 14px 8px;
+  padding: 22px 14px var(--ds-space-2);
   pointer-events: none;
   transform: scale(0.8);
   opacity: 0;

@@ -15,11 +15,11 @@
 .tw-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   min-width: 124px;
   min-height: 44px;
   box-sizing: border-box;
-  padding: 0 12px;
+  padding: 0 var(--ds-space-3);
   font-family: inherit;
   font-size: var(--ds-fs-body);
   font-weight: 500;
@@ -45,7 +45,7 @@
   flex: none;
   color: var(--color-text-muted);
 }
-.tw-tv { display: inline-flex; align-items: baseline; gap: 2px; }
+.tw-tv { display: inline-flex; align-items: baseline; gap: var(--ds-space-half); }
 .tw-dash {
   font-style: normal;
   color: var(--color-text-muted);
@@ -74,7 +74,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   border-radius: var(--ds-radius-shell);
-  padding: 10px 14px 12px;
+  padding: var(--ds-space-glass-x) 14px var(--ds-space-3);
   transform-origin: top left;
 }
 .tw-panel.popover.in {
@@ -102,7 +102,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   overflow-y: auto;
   border-radius: var(--ds-radius-shell) var(--ds-radius-shell) 0 0;
   border-bottom: none;
-  padding: 6px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+  padding: var(--ds-space-1h) var(--ds-space-4) calc(14px + env(safe-area-inset-bottom, 0px));
   transform-origin: bottom center;
 }
 .tw-panel.sheet.in {
@@ -126,7 +126,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   border-radius: var(--ds-radius-pill);
   background: var(--color-text-muted);
   opacity: 0.45;
-  margin: 2px auto 6px;
+  margin: var(--ds-space-half) auto var(--ds-space-1h);
   touch-action: none;
   cursor: grab;
 }
@@ -135,8 +135,8 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
 .tw-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 2px 0 8px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-half) 0 var(--ds-space-2);
 }
 .tw-title {
   flex: 1;
@@ -152,7 +152,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   min-width: 44px;
   min-height: 44px;
   box-sizing: border-box;
-  padding: 0 10px;
+  padding: 0 var(--ds-space-glass-x);
   font-family: inherit;
   font-size: var(--ds-fs-body);
   font-weight: 500;
@@ -176,8 +176,8 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  padding: 0 2px;
+  gap: var(--ds-space-half);
+  padding: 0 var(--ds-space-half);
 }
 .tw-col {
   position: relative;
@@ -244,7 +244,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
 }
 .tw-sep {
   flex: none;
-  padding: 0 6px;
+  padding: 0 var(--ds-space-1h);
   font-size: var(--ds-fs-body);
   font-weight: 500;
   color: var(--color-text-muted);
@@ -256,8 +256,8 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
 .tw-days {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 10px 0 2px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-glass-x) 0 var(--ds-space-half);
 }
 .tw-days[hidden],
 .tw-chips[hidden] { display: none; }
@@ -265,7 +265,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   align-self: center;
   font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
-  padding-right: 2px;
+  padding-right: var(--ds-space-half);
 }
 .tw-chip {
   display: inline-flex;
@@ -274,7 +274,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   min-width: 44px;
   min-height: 44px;
   box-sizing: border-box;
-  padding: 0 12px;
+  padding: 0 var(--ds-space-3);
   font-family: inherit;
   font-size: var(--ds-fs-hint);
   font-weight: 500;
@@ -294,13 +294,13 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   background: rgb(var(--sapphire) / 0.12);
   border-color: rgb(var(--sapphire) / 0.45);
 }
-.tw-day { min-width: 44px; padding: 0 8px; }
+.tw-day { min-width: 44px; padding: 0 var(--ds-space-2); }
 
 /* ══ 状态行（跨零点 / 起止相等，互斥）════════════════════════════════════ */
 .tw-status {
   display: none;
-  margin-top: 8px;
-  padding: 6px 10px;
+  margin-top: var(--ds-space-2);
+  padding: var(--ds-space-1h) var(--ds-space-glass-x);
   border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-hint);
   font-weight: 500;
@@ -322,8 +322,8 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
 .tw-input-row {
   display: none;
   align-items: center;
-  gap: 8px;
-  margin-top: 8px;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-2);
 }
 .tw-input-row.show { display: flex; }
 .tw-in {
@@ -331,7 +331,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   min-width: 0;
   min-height: 44px;
   box-sizing: border-box;
-  padding: 0 10px;
+  padding: 0 var(--ds-space-glass-x);
   font-family: inherit;
   font-size: var(--ds-fs-body);
   font-weight: 500;
@@ -351,9 +351,9 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-error-icon) 10%, transparent);
 }
 .tw-input-toggle {
-  margin-top: 4px;
+  margin-top: var(--ds-space-1);
   min-height: 44px;
-  padding: 0 8px;
+  padding: 0 var(--ds-space-2);
   font-family: inherit;
   font-size: var(--ds-fs-meta);
   font-weight: 500;
@@ -374,9 +374,9 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
 .tw-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-wrap: wrap;
-  padding: 4px 0;
+  padding: var(--ds-space-1) 0;
 }
 .tw-row-label {
   font-size: var(--ds-fs-hint);
@@ -390,7 +390,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   background: rgb(var(--sapphire) / 0.1);
   border: 1px solid rgb(var(--sapphire) / 0.22);
   border-radius: var(--ds-radius-chip);
-  padding: 2px 6px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -423,7 +423,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   align-items: center;
   justify-content: center;
   min-height: 44px;
-  margin-top: 6px;
+  margin-top: var(--ds-space-1h);
   padding: 0 14px;
   font-family: inherit;
   font-size: var(--ds-fs-hint);
@@ -439,13 +439,13 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
 .tw-empty {
   font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
-  padding: 6px 0;
+  padding: var(--ds-space-1h) 0;
 }
 /* 段列表容器（provider 级不可用时段 / per-model 不可用时段共用一个盒子） */
 .tw-windows {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-space-half);
   align-items: flex-start;
   width: 100%;
 }
@@ -458,15 +458,15 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
 .cfg-model-windows {
   flex: 1 1 100%;
   min-width: 0;
-  margin: 2px 0 6px;
-  padding-left: 2px;
+  margin: var(--ds-space-half) 0 var(--ds-space-1h);
+  padding-left: var(--ds-space-half);
   border-left: 2px solid var(--glass-etched-border);
 }
 
 /* ══ 手机层（body.mobile-layer）局部适配：列宽与胶囊随屏宽铺开 ═══════════ */
 body.mobile-layer .tw-panel.sheet .tw-col { width: 62px; }
 body.mobile-layer .tw-panel.sheet .tw-col-date { width: 120px; }
-body.mobile-layer .tw-row { gap: 10px; }
+body.mobile-layer .tw-row { gap: var(--ds-space-glass-x); }
 
 /* ══ reduced-motion：皮动画全退化（既有纪律）═════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {

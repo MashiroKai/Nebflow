@@ -6,7 +6,7 @@
    values outside the reserved-height skeleton. */
 
 .nf-mermaid {
-  margin: 6px 0;
+  margin: var(--ds-space-1h) 0;
 }
 
 .nf-mermaid .nf-mermaid-body {
@@ -44,7 +44,7 @@
   display: block;
   border: 1px solid var(--sapphire-edge-strong);
   border-radius: var(--ds-radius-input);
-  padding: 8px 10px;
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
   background: var(--sapphire-edge);
   min-height: 0;
 }
@@ -52,7 +52,7 @@
 .nf-mermaid-errrow {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-wrap: wrap;
   font-size: var(--ds-fs-hint);
 }
@@ -81,8 +81,8 @@
 .nf-mermaid-srcbtn:hover { text-decoration: underline; }
 
 .nf-mermaid-src {
-  margin: 8px 0 0;
-  padding: 8px 10px;
+  margin: var(--ds-space-2) 0 0;
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
   border-radius: var(--ds-radius-chip);
   background: var(--color-frame-hover);
   overflow-x: auto;

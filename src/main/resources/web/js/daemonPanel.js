@@ -57,7 +57,7 @@ const PANEL_CSS = `
 #daemon-config-overlay.open { display: flex; }
 .daemon-config-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 14px; border-bottom: 1px solid var(--color-border);
+  padding: var(--ds-space-3) 14px; border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
 }
 .daemon-config-title { font-size: 14px; font-weight: 600; color: var(--color-text); }
@@ -74,7 +74,7 @@ const PANEL_CSS = `
 }
 .daemon-config-close svg { width: 14px; height: 14px; }
 .daemon-config-body { padding: 14px; overflow-y: auto; flex: 1; }
-.daemon-config-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+.daemon-config-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: var(--ds-space-3); }
 .daemon-config-label { font-size: var(--ds-fs-hint); font-weight: 500; color: var(--color-text-muted); }
 .daemon-config-input, .daemon-config-select {
   font: inherit; font-size: var(--ds-fs-body); padding: 7px 9px;
@@ -87,12 +87,12 @@ const PANEL_CSS = `
 .daemon-config-check { display: flex; align-items: center; gap: 7px; font-size: var(--ds-fs-body); color: var(--color-text); }
 .daemon-config-hint { font-size: var(--ds-fs-meta); color: var(--color-text-muted); }
 .daemon-config-footer {
-  display: flex; justify-content: flex-end; gap: 8px;
-  padding: 12px 14px; border-top: 1px solid var(--color-border); flex-shrink: 0;
+  display: flex; justify-content: flex-end; gap: var(--ds-space-2);
+  padding: var(--ds-space-3) 14px; border-top: 1px solid var(--color-border); flex-shrink: 0;
 }
 .daemon-config-btn {
   font: inherit; font-size: var(--ds-fs-body); font-weight: 500; cursor: pointer;
-  padding: 6px 14px; border-radius: var(--ds-radius-button);
+  padding: var(--ds-space-1h) 14px; border-radius: var(--ds-radius-button);
   border: 1px solid var(--color-border);
   background: var(--glass-control-bg); color: var(--color-text);
 }
@@ -104,7 +104,7 @@ const PANEL_CSS = `
 .daemon-config-status { font-size: var(--ds-fs-hint); color: var(--color-text-muted); margin-right: auto; }
 /* ui-status-redesign：错误词转中性字，红由词前 circle-x 图标承载（.st-err token）。 */
 .daemon-config-status.error { color: var(--status-word); }
-.daemon-config-status .st-ic { margin-right: 4px; }
+.daemon-config-status .st-ic { margin-right: var(--ds-space-1); }
 .daemon-config-iframe { width: 100%; height: 420px; border: 0; border-radius: var(--ds-radius-input); background: var(--color-surface); }
 </style>`;
 

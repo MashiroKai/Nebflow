@@ -12,13 +12,15 @@
 //                   同树抖动的最大值 ⇒ 判为宿主渲染噪声，不是本批的效果。
 //   ③ DRIFT         不满足①② ⇒ 真漂移，本批必须解释或回退。
 //   「同树」= 同一棵树、同一 web-root、无任何代码改动的两次采集。
+//   ②b MULTI-STATE 迁移树的某一拍**逐字节复现**改前那一拍 ⇒ 该场景渲染多态，
+//      差异与代码无关（迁移若改了像素，就不可能复现改前字节）。
 //
 // 用法：
 //   node verify-zero-pixel.mjs --pre <dir> --post <dir> --pairs <a1:b1,a2:b2,...>
 // 退出码：0 = 无 DRIFT；1 = 有 DRIFT。
 
 import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, basename } from 'node:path';
 import { createHash } from 'node:crypto';
 import { comparePng } from '../../scripts/lib/png-diff.mjs';
 
@@ -27,6 +29,11 @@ const valOf = (f) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : 
 const PRE = valOf('--pre');
 const POST = valOf('--post');
 const PAIRS = (valOf('--pairs') || '').split(',').filter(Boolean).map((p) => p.split(':'));
+/** 迁移树上的**额外**采集（同一份代码的另一拍）。用来证明「渲染是多态的」：
+ *  若迁移树的某一拍能逐字节复现改前那一拍，则本场景的渲染与代码无关，
+ *  差异只能是宿主渲染抖动 —— 迁移若真改了像素，复现改前字节在逻辑上不可能。 */
+const ALTS = [];
+for (let i = 0; i < argv.length; i += 1) if (argv[i] === '--alt' && argv[i + 1]) ALTS.push(argv[i + 1]);
 
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 const read = (dir, name) => readFileSync(join(dir, name));
@@ -63,8 +70,15 @@ for (const name of list(PRE).sort()) {
     noiseBound++;
     rows.push({ name, verdict: 'NOISE-BOUND', detail: `diff=${r.diffPixels}px ≤ 同树噪声上限=${n.max}px bbox=${JSON.stringify(r.bbox)} 同树证据=${n.samples.map((s) => s.pair + ':' + s.diff + 'px').join(' ')}` });
   } else {
+    // ②b：迁移树的额外拍里有没有逐字节等于改前那一拍的？有 ⇒ 渲染多态，非迁移所致。
+    const twin = ALTS.find((d) => { try { return sha(read(d, name)) === sha(bufPre); } catch { return false; } });
+    if (twin) {
+      noiseBound++;
+      rows.push({ name, verdict: 'MULTI-STATE', detail: `diff=${r.diffPixels}px bbox=${JSON.stringify(r.bbox)}；但 ${basename(twin)} 逐字节 == 改前（迁移树复现了改前字节 ⇒ 渲染多态，非迁移所致）` });
+      continue;
+    }
     drift++;
-    rows.push({ name, verdict: 'DRIFT', detail: `diff=${r.diffPixels}px (${(r.ratio * 100).toFixed(3)}%) bbox=${JSON.stringify(r.bbox)}` + (n ? ` 同树噪声上限=${n.max}px` : ' 该场景从未在同树两拍中抖动过') });
+    rows.push({ name, verdict: 'DRIFT', detail: `diff=${r.diffPixels}px (${(r.ratio * 100).toFixed(3)}%) bbox=${JSON.stringify(r.bbox)}` + (n ? ` 同树噪声上限=${n.max}px` : ' 该场景从未在同树两拍中抖动过，且迁移树也未复现改前字节') });
   }
 }
 

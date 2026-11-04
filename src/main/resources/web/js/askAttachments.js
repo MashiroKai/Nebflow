@@ -137,7 +137,7 @@ function addChip(c, file) {
   chip.className = 'ask-answer-attach-chip';
   chip.tabIndex = 0;
   chip.style.cssText =
-    'position:relative;display:flex;align-items:center;gap:9px;padding:6px 10px 6px 6px;border-radius:var(--ds-radius-button);' +
+    'position:relative;display:flex;align-items:center;gap:9px;padding:var(--ds-space-1h) var(--ds-space-glass-x) var(--ds-space-1h) var(--ds-space-1h);border-radius:var(--ds-radius-button);' +
     'overflow:hidden;max-width:260px;border:1px solid var(--color-border,rgba(128,128,128,0.35));' +
     'background:var(--color-surface-2,rgba(127,127,127,0.08));';
   const isImage = (item.mime || '').startsWith('image/');
@@ -166,7 +166,7 @@ function addChip(c, file) {
     'font-size:var(--ds-fs-hint);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px;';
   const sub = document.createElement('div');
   sub.style.cssText =
-    'font-size:10.5px;color:var(--color-text-muted,#888);margin-top:1px;display:flex;gap:6px;align-items:center;';
+    'font-size:10.5px;color:var(--color-text-muted,#888);margin-top:1px;display:flex;gap:var(--ds-space-1h);align-items:center;';
   sub.textContent = t('askUser.attachUploading', { n: '0' });
   meta.append(nameEl, sub);
   const rm = document.createElement('button');
@@ -337,12 +337,12 @@ export function mountAnswerAttachments(box, opts) {
   const btnRow = box.querySelector('.option-btn-row');
   const zone = document.createElement('div');
   zone.className = 'ask-answer-attach-zone';
-  zone.style.cssText = 'margin-top:12px;';
+  zone.style.cssText = 'margin-top:var(--ds-space-3);';
 
   const head = document.createElement('div');
   head.style.cssText =
-    'display:flex;align-items:center;gap:6px;font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;' +
-    'color:var(--color-text-muted,#888);letter-spacing:.3px;margin-bottom:6px;';
+    'display:flex;align-items:center;gap:var(--ds-space-1h);font:600 11px -apple-system,BlinkMacSystemFont,sans-serif;' +
+    'color:var(--color-text-muted,#888);letter-spacing:.3px;margin-bottom:var(--ds-space-1h);';
   const headClip = document.createElement('span');
   headClip.style.cssText = 'display:inline-flex;color:var(--color-text-muted,#888);';
   headClip.innerHTML = SVG_PAPERCLIP;
@@ -354,13 +354,13 @@ export function mountAnswerAttachments(box, opts) {
 
   const chips = document.createElement('div');
   chips.className = 'ask-answer-attach-chips';
-  chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;';
+  chips.style.cssText = 'display:flex;flex-wrap:wrap;gap:var(--ds-space-2);';
 
   const emptyBtn = document.createElement('button');
   emptyBtn.type = 'button';
   emptyBtn.className = 'ask-answer-attach-empty';
   emptyBtn.style.cssText =
-    'display:flex;align-items:center;gap:7px;width:100%;padding:9px 12px;border-radius:9px;' +
+    'display:flex;align-items:center;gap:7px;width:100%;padding:9px var(--ds-space-3);border-radius:9px;' +
     'border:1px dashed var(--color-border,rgba(128,128,128,0.35));background:transparent;' +
     'color:var(--color-text-muted,#888);font:inherit;font-size:var(--ds-fs-hint);cursor:pointer;text-align:left;';
   const emptyIco = document.createElement('span');
@@ -394,7 +394,7 @@ export function mountAnswerAttachments(box, opts) {
   overlay.className = 'ask-answer-drop-overlay';
   overlay.setAttribute('aria-hidden', 'true');
   overlay.style.cssText =
-    'position:absolute;inset:0;z-index:5;border-radius:11px;display:none;align-items:center;justify-content:center;gap:10px;' +
+    'position:absolute;inset:0;z-index:5;border-radius:11px;display:none;align-items:center;justify-content:center;gap:var(--ds-space-glass-x);' +
     'background:color-mix(in srgb, var(--color-surface,rgba(20,22,28,0.9)) 88%, transparent);' +
     'border:2px dashed var(--color-primary,#07c160);color:var(--color-primary,#07c160);' +
     'font-weight:600;font-size:14px;pointer-events:none;';
@@ -504,7 +504,7 @@ export function mountAnsweredBadge(box, n) {
   badge.className = 'ask-answer-attach-badge';
   badge.textContent = t('askUser.attachCountBadge', { n: String(n) });
   badge.style.cssText =
-    'float:right;margin:0 0 6px 10px;font-size:10.5px;font-weight:600;padding:2px 9px;border-radius:var(--ds-radius-pill);' +
+    'float:right;margin:0 0 var(--ds-space-1h) var(--ds-space-glass-x);font-size:10.5px;font-weight:600;padding:var(--ds-space-half) 9px;border-radius:var(--ds-radius-pill);' +
     'letter-spacing:.3px;background:color-mix(in srgb, var(--color-primary,#07c160) 14%, transparent);' +
     'color:var(--color-primary,#07c160);';
   box.insertBefore(badge, box.firstChild);

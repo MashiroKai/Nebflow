@@ -478,7 +478,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   // Directory of the HTML file, for resolving relative paths
   const dir = absPath ? absPath.substring(0, absPath.lastIndexOf('/')) : '';
 
-  let html = content || '<!DOCTYPE html><html><body><p style="color:#999;padding:20px">Empty HTML file</p></body></html>';
+  let html = content || '<!DOCTYPE html><html><body><p style="color:#999;padding:var(--ds-space-5)">Empty HTML file</p></body></html>';
 
   // 1. Convert local file paths in src/href to /api/nf-file URLs (one batched
   //    ticket mint; the credential is a per-path ticket, never the token).
@@ -673,7 +673,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
     const bar = document.createElement('div');
     bar.className = 'nf-frame-nav-bar';
     bar.dataset.nfFrameNavigated = '1';
-    bar.style.cssText = 'flex:none;display:flex;align-items:center;gap:10px;padding:6px 12px;' +
+    bar.style.cssText = 'flex:none;display:flex;align-items:center;gap:var(--ds-space-glass-x);padding:var(--ds-space-1h) var(--ds-space-3);' +
       'border-bottom:1px solid var(--color-border);background:var(--color-surface);' +
       'color:var(--color-text-muted);font-size:var(--ds-fs-hint);line-height:1.4';
     const text = document.createElement('span');
@@ -701,7 +701,7 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
       /** @type {any} */ (pane)._nfZoomDestroy?.();  // frame navigated away — retire the zoom engine with it
       pane.innerHTML = '';
       const note = document.createElement('div');
-      note.style.cssText = 'padding:32px;text-align:center;color:var(--color-text-muted);font-size:var(--ds-fs-body);line-height:1.6';
+      note.style.cssText = 'padding:var(--ds-space-8);text-align:center;color:var(--color-text-muted);font-size:var(--ds-fs-body);line-height:1.6';
       note.textContent = 'This HTML page navigated its preview frame to the application URL (client-side router). Rendering was stopped to prevent recursive nesting.';
       pane.appendChild(note);
       return;

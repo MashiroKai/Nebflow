@@ -1,19 +1,19 @@
 {
   "class": "space",
-  "applied": false,
-  "totalMigrated": 1846,
+  "applied": true,
+  "totalMigrated": 1877,
   "perToken": {
-    "--ds-space-half": 291,
-    "--ds-space-1h": 405,
-    "--ds-space-3": 274,
-    "--ds-space-2": 532,
-    "--ds-space-1": 343,
-    "--ds-space-glass-x": 351,
-    "--ds-space-4": 146,
-    "--ds-space-6": 32,
-    "--ds-space-8": 10,
+    "--ds-space-half": 292,
+    "--ds-space-1h": 409,
+    "--ds-space-3": 280,
+    "--ds-space-2": 545,
+    "--ds-space-1": 349,
+    "--ds-space-glass-x": 357,
+    "--ds-space-4": 147,
+    "--ds-space-6": 34,
+    "--ds-space-8": 11,
     "--ds-space-12": 2,
-    "--ds-space-5": 36
+    "--ds-space-5": 37
   },
   "perFile": {
     "css/ask.css": 6,
@@ -55,13 +55,14 @@
     "css/voiceMode.css": 2,
     "js/activityBar.js": 14,
     "js/agentFileViewer.js": 1,
-    "js/askAttachments.js": 9,
+    "js/askAttachments.js": 10,
     "js/bgAgentPopup.js": 4,
     "js/bgAgentWorkStrip.js": 4,
     "js/bgTaskOutputPopup.js": 11,
-    "js/canvas.js": 8,
+    "js/canvas.js": 15,
     "js/cardRegistry.js": 1,
-    "js/chat.js": 5,
+    "js/cardwinDirect.js": 1,
+    "js/chat.js": 7,
     "js/daemonPanel.js": 6,
     "js/daemons.js": 11,
     "js/delegateChainView.js": 16,
@@ -73,15 +74,18 @@
     "js/input.js": 1,
     "js/main.js": 1,
     "js/modal.js": 1,
+    "js/monacoEditor.js": 1,
     "js/neblink.js": 1,
+    "js/orbSettingsUI.js": 1,
     "js/perception.js": 3,
     "js/sessionGate.js": 2,
     "js/sidebar/imagegenSection.js": 2,
     "js/sidebar/pathRules.js": 1,
-    "js/sidebar.js": 6,
-    "js/viewers/html.js": 2,
+    "js/sidebar.js": 15,
+    "js/staleTabHint.js": 4,
+    "js/viewers/html.js": 4,
     "js/viewers/largeText.js": 9,
-    "js/viewers/pptx.js": 9
+    "js/viewers/pptx.js": 12
   },
   "needsRuling": [
     {
@@ -566,7 +570,7 @@
     },
     {
       "file": "css/design-system.css",
-      "line": 669,
+      "line": 683,
       "prop": "padding",
       "value": "1px 7px",
       "decl": "1px 7px",
@@ -574,7 +578,7 @@
     },
     {
       "file": "css/design-system.css",
-      "line": 760,
+      "line": 774,
       "prop": "margin-top",
       "value": "1px",
       "decl": "1px",
@@ -582,7 +586,7 @@
     },
     {
       "file": "css/design-system.css",
-      "line": 935,
+      "line": 949,
       "prop": "margin",
       "value": "18px",
       "decl": "var(--ds-space-1) 0 var(--ds-space-1) 18px",
@@ -590,7 +594,7 @@
     },
     {
       "file": "css/design-system.css",
-      "line": 973,
+      "line": 987,
       "prop": "margin",
       "value": "1px",
       "decl": "1px 0",
@@ -598,7 +602,7 @@
     },
     {
       "file": "css/design-system.css",
-      "line": 974,
+      "line": 988,
       "prop": "padding",
       "value": "1px",
       "decl": "1px var(--ds-space-2)",
@@ -3035,6 +3039,22 @@
       "value": "14px",
       "decl": "14px",
       "why": "间距档外值 14px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/sidebar.js",
+      "line": 453,
+      "prop": "margin-top",
+      "value": "-2px",
+      "decl": "-2px",
+      "why": "间距档外值 -2px（4px 栅格 + 两例外档均无同值令牌）"
+    },
+    {
+      "file": "js/sidebar.js",
+      "line": 927,
+      "prop": "margin-top",
+      "value": "-4px",
+      "decl": "-4px",
+      "why": "间距档外值 -4px（4px 栅格 + 两例外档均无同值令牌）"
     }
   ]
 }

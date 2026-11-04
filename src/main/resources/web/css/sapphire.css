@@ -445,7 +445,7 @@
   background: var(--ctl-send-bg);
   border: 1px solid var(--ctl-send-border);
   border-radius: var(--ds-radius-button);
-  padding: 5px 12px;
+  padding: 5px var(--ds-space-3);
   font-family: inherit;
   font-weight: 500;
   cursor: pointer;
@@ -651,7 +651,7 @@ button.glass-control.fm-login-btn {
   display: block;
   width: 100%;
   box-sizing: border-box;
-  padding: 10px 20px;
+  padding: var(--ds-space-glass-x) var(--ds-space-5);
   border-radius: var(--ds-radius-button);
   font-family: inherit;
   font-size: var(--ds-fs-body);
@@ -803,9 +803,9 @@ button.glass-control.fm-login-btn:disabled {
 .dropbox-msg-meta {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 4px;
-  padding: 2px var(--ds-space-3);
+  gap: var(--ds-space-1h);
+  margin-top: var(--ds-space-1);
+  padding: var(--ds-space-half) var(--ds-space-3);
   background: var(--color-surface);
   border-radius: var(--ds-radius-chip);
   box-shadow: var(--msg-meta-card-shadow);
@@ -851,7 +851,7 @@ button.glass-control.fm-login-btn:disabled {
   font-weight: 500;
   letter-spacing: normal;
   text-transform: none;
-  padding: 1px 8px;
+  padding: 1px var(--ds-space-2);
   border-radius: 9999px;
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
@@ -866,7 +866,7 @@ button.glass-control.fm-login-btn:disabled {
    本值（否则该行会多出 4px 底距、与时间文本错位）。
    🔴 作用域 = 主对话行（`.agent-row`）；**不是**组件的第二份定义 —— 组件定义
    仍只有上面那一个块（本行只是该组件在特定宿主里的落位几何）。 */
-.agent-row > .agent-badge { margin-bottom: 4px; }
+.agent-row > .agent-badge { margin-bottom: var(--ds-space-1); }
 
 /* time — 10px 等宽栈 + tabular-nums（主对话框 chat.css:1157-1162）
    S06/S07：取色与不透明度收敛到主对话口径 = `--color-text` + opacity .35
@@ -911,7 +911,7 @@ button.glass-control.fm-login-btn:disabled {
 
 /* file card — 单一类名 .msg-file-card（③A5）；out 变体是修饰态，不是第二份规则 */
 .msg-file-card {
-  padding: 8px 12px;
+  padding: var(--ds-space-2) var(--ds-space-3);
   border-radius: var(--ds-radius-xl);
   background: var(--glass-etched-bg, rgba(128, 128, 128, 0.06));
   border: 1px solid var(--glass-etched-border, rgba(128, 128, 128, 0.12));

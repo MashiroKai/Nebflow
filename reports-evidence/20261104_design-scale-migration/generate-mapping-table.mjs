@@ -30,6 +30,9 @@ const CLASSES = [
 const lines = [];
 lines.push('# 迁移映射表（design-scale 迁移批 2026-11-04）');
 lines.push('');
+lines.push('数据源：`premap-<class>.json` —— 迁移器打在**纯净 HEAD 树**上的 dry-run 明细，');
+lines.push('即「改前有多少处该迁」，与 apply 顺序/重复执行无关（可复算）。');
+lines.push('');
 lines.push('判据：**只收解析后 computed 值完全相同的映射**（零像素变化）。换不到同值令牌的');
 lines.push('一律不动，见文末「需作者裁定」清单。解析值列由 `generate-mapping-table.mjs` 现读');
 lines.push('`design-system.css` 生成，不是手抄。');
@@ -38,7 +41,7 @@ lines.push('');
 let grand = 0;
 for (const [key, label, prop] of CLASSES) {
   let data;
-  try { data = JSON.parse(readFileSync(join(DIR, `needs-ruling-${key}.json`), 'utf8')); } catch { continue; }
+  try { data = JSON.parse(readFileSync(join(DIR, `premap-${key}.json`), 'utf8')); } catch { continue; }
   const perToken = data.perToken || {};
   // 每个令牌 → 它吸收的字面量值（从声明反推：解析值 == 字面量）
   const rows = Object.entries(perToken).sort((a, b) => b[1] - a[1]).map(([tok, n]) => {
@@ -60,7 +63,7 @@ lines.push('## 需作者裁定（本批**未动**，理由 = 无解析值相同�
 lines.push('');
 for (const [key, label] of CLASSES) {
   let data;
-  try { data = JSON.parse(readFileSync(join(DIR, `needs-ruling-${key}.json`), 'utf8')); } catch { continue; }
+  try { data = JSON.parse(readFileSync(join(DIR, `premap-${key}.json`), 'utf8')); } catch { continue; }
   const byVal = {};
   for (const n of data.needsRuling || []) {
     const k = n.value;

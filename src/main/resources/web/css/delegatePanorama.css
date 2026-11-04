@@ -15,7 +15,7 @@
 .dvp-root {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--ds-space-4);
   min-width: 0;
 }
 .dvp-toolbar {
@@ -29,10 +29,10 @@
   color: var(--color-text-muted);
   white-space: nowrap;
 }
-.dvp-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.dvp-pills { display: flex; gap: var(--ds-space-1h); flex-wrap: wrap; }
 .dvp-pill {
   height: 26px;
-  padding: 0 12px;
+  padding: 0 var(--ds-space-3);
   border-radius: var(--r-pill, 999px);
   border: 1px solid transparent;
   background: transparent;
@@ -55,7 +55,7 @@
   gap: 5px;
   font: 400 10.5px/1 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
-  padding: 5px 10px;
+  padding: 5px var(--ds-space-glass-x);
   border-radius: var(--r-pill, 999px);
   border: 1px solid var(--glass-etched-border);
   background: var(--glass-etched-bg);
@@ -87,7 +87,7 @@
 .dvp-band-head {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--ds-space-3);
   padding: 13px 18px 11px;
   border-bottom: 1px solid var(--glass-border);
   min-width: 0;
@@ -104,7 +104,7 @@
 .dvp-band-ws {
   font: 400 10.5px/1 var(--font-mono, ui-monospace, monospace);
   color: var(--color-text-muted);
-  padding: 3px 8px;
+  padding: 3px var(--ds-space-2);
   border-radius: var(--r-sm, 6px);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
@@ -113,11 +113,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dvp-band-counts { display: flex; gap: 5px; margin-left: 6px; flex: 0 0 auto; }
+.dvp-band-counts { display: flex; gap: 5px; margin-left: var(--ds-space-1h); flex: 0 0 auto; }
 .dvp-cnt {
   font: 500 10px/1 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
-  padding: 3px 8px;
+  padding: 3px var(--ds-space-2);
   border-radius: var(--r-pill, 999px);
   border: 1px solid var(--glass-etched-border);
   background: var(--glass-etched-bg);
@@ -132,7 +132,7 @@
 .dvp-band-n {
   font: 400 10.5px/1 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
-  margin-left: 12px;
+  margin-left: var(--ds-space-3);
   white-space: nowrap;
 }
 
@@ -160,7 +160,7 @@
 .dvp-rb-word {
   font: 500 9px/1 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
-  margin-left: 4px;
+  margin-left: var(--ds-space-1);
   letter-spacing: 0.02em;
 }
 .dvp-rb-st.cur .dvp-rb-word { color: rgb(var(--sapphire-glow, var(--sapphire))); }
@@ -204,7 +204,7 @@
   font: 500 9px/1 var(--font-ui, -apple-system, sans-serif);
   letter-spacing: 0.06em;
   color: var(--color-text-muted);
-  padding: 3px 8px;
+  padding: 3px var(--ds-space-2);
   border-radius: var(--r-pill, 999px);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
@@ -214,7 +214,7 @@
   position: absolute;
   right: 14px;
   height: 20px;
-  padding: 0 10px;
+  padding: 0 var(--ds-space-glass-x);
   border-radius: var(--r-pill, 999px);
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
@@ -240,7 +240,7 @@
   display: flex;
   flex-direction: column;
   gap: 5px;
-  padding: 10px 12px;
+  padding: var(--ds-space-glass-x) var(--ds-space-3);
   cursor: pointer;
   transition: filter 0.15s, box-shadow 0.15s;
   z-index: 5;
@@ -264,7 +264,7 @@
   border: 1px solid var(--glass-border);
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.05);
   border-radius: 11px;
-  padding: 8px 10px;
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
   gap: 3px;
 }
 /* 汇点合并窗活跃：蓝晶呼吸 */
@@ -275,7 +275,7 @@
 }
 
 /* 卡内结构 */
-.dvp-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dvp-head { display: flex; align-items: center; gap: var(--ds-space-1h); min-width: 0; }
 .dvp-exec {
   flex: 0 0 auto;
   width: 16px;
@@ -299,7 +299,7 @@
   min-width: 0;
   flex: 1 1 auto;
 }
-.dvp-st { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+.dvp-st { display: flex; align-items: center; gap: var(--ds-space-1); flex: 0 0 auto; }
 .dvp-st-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-text-muted); }
 .dvp-st-dot.run { background: rgb(var(--brand-green)); }
 .dvp-st-dot.done { background: var(--status-success-icon); }
@@ -308,11 +308,11 @@
   font: 500 10px/1 var(--font-ui, -apple-system, sans-serif);
   color: var(--status-word, var(--color-text-muted));
 }
-.dvp-meta { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.dvp-meta { display: flex; flex-wrap: wrap; gap: var(--ds-space-1); min-width: 0; }
 .dvp-chip {
   font: 500 9px/1.4 var(--font-mono, ui-monospace, monospace);
   color: var(--color-text-dim);
-  padding: 2.5px 6px;
+  padding: 2.5px var(--ds-space-1h);
   border-radius: 5px;
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
@@ -333,7 +333,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
-  padding: 4px 7px;
+  padding: var(--ds-space-1) 7px;
   border-radius: var(--ds-radius-chip);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
@@ -341,14 +341,14 @@
 .dvp-report b { font-weight: 500; color: var(--color-text-dim); }
 
 /* 任务根幽卡内结构 */
-.dvp-task-top { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.dvp-task-top { display: flex; gap: var(--ds-space-1); align-items: center; flex-wrap: wrap; }
 .dvp-task-title {
   font: 600 12px/1.3 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-top: 4px;
+  margin-top: var(--ds-space-1);
 }
 /* 汇点 */
 .dvp-sink-name {
@@ -391,9 +391,9 @@
   left: 10px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   height: 18px;
-  padding: 0 8px;
+  padding: 0 var(--ds-space-2);
   border-radius: var(--r-pill, 999px);
   font: 600 9.5px/1 var(--font-ui, -apple-system, sans-serif);
   letter-spacing: 0.02em;
@@ -533,7 +533,7 @@
 
 /* ── 空态 ──────────────────────────────────────────────────────────────────── */
 .dvp-empty {
-  padding: 48px 20px;
+  padding: var(--ds-space-12) var(--ds-space-5);
   text-align: center;
   font: 400 12.5px/1.6 var(--font-ui, -apple-system, sans-serif);
   color: var(--color-text-muted);
@@ -546,7 +546,7 @@
 .dvp-legend {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: var(--ds-space-5);
   padding: 11px 18px;
   border-radius: var(--ds-radius-2xl);
   background: var(--glass-etched-bg);
@@ -559,7 +559,7 @@
   font: 600 9.5px/1 var(--font-ui, -apple-system, sans-serif);
   letter-spacing: 0.06em;
   color: var(--color-text-muted);
-  margin-right: 2px;
+  margin-right: var(--ds-space-half);
 }
 .dvp-lg-item {
   display: flex;

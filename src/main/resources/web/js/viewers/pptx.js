@@ -202,17 +202,17 @@ function stageShellHtml() {
  *  必须显式说人话＋给下载，不许裸失败。 */
 function renderDownloadFallback(pane, { absPath, fileName, size, objectUrl }, reason) {
   pane.innerHTML = `
-    <div class="canvas-md-viewer" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--color-text-muted);">
+    <div class="canvas-md-viewer" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--ds-space-3);color:var(--color-text-muted);">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.4">
         <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
       </svg>
       <div style="text-align:center;">
-        <div style="font-weight:600;color:var(--color-text);margin-bottom:4px">${escapeHtml(fileName || 'PowerPoint')}</div>
+        <div style="font-weight:600;color:var(--color-text);margin-bottom:var(--ds-space-1)">${escapeHtml(fileName || 'PowerPoint')}</div>
         <div style="font-size:var(--ds-fs-hint);opacity:0.6">${formatSize(size || 0)}</div>
-        <div style="font-size:var(--ds-fs-body);opacity:0.85;margin-top:6px">此环境无预览能力</div>
-        <div style="font-size:var(--ds-fs-hint);opacity:0.75;max-width:420px;margin-top:6px">${escapeHtml(reason)}</div>
+        <div style="font-size:var(--ds-fs-body);opacity:0.85;margin-top:var(--ds-space-1h)">此环境无预览能力</div>
+        <div style="font-size:var(--ds-fs-hint);opacity:0.75;max-width:420px;margin-top:var(--ds-space-1h)">${escapeHtml(reason)}</div>
       </div>
-      <a class="nf-pptx-download" href="#" download="${escapeHtml(fileName || 'presentation.pptx')}" style="font-size:var(--ds-fs-body);color:var(--color-primary);text-decoration:none;padding:6px 16px;border:1px solid var(--color-primary);border-radius:var(--ds-radius-input);">Download to view</a>
+      <a class="nf-pptx-download" href="#" download="${escapeHtml(fileName || 'presentation.pptx')}" style="font-size:var(--ds-fs-body);color:var(--color-primary);text-decoration:none;padding:var(--ds-space-1h) var(--ds-space-4);border:1px solid var(--color-primary);border-radius:var(--ds-radius-input);">Download to view</a>
     </div>`;
 
   const link = /** @type {HTMLAnchorElement|null} */ (pane.querySelector('a.nf-pptx-download'));
@@ -317,7 +317,7 @@ function renderFirstPagePreview(pane, { absPath, fileName, size, objectUrl }, bl
   trackPaneBlobUrl(pane, url);
   pane.classList.add('scrollable');
   pane.innerHTML = `
-    <div class="canvas-md-viewer" style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:24px 0;">
+    <div class="canvas-md-viewer" style="display:flex;flex-direction:column;align-items:center;gap:var(--ds-space-3);padding:var(--ds-space-6) 0;">
       <img alt="${escapeHtml(fileName || 'preview')}" src="${url}"
         style="max-width:min(920px,94%);border-radius:var(--ds-radius-input);box-shadow:0 2px 8px rgba(0,0,0,.15);background:#fff;">
       <div style="font-size:var(--ds-fs-hint);color:var(--color-text-muted);opacity:0.75;text-align:center;">
@@ -325,7 +325,7 @@ function renderFirstPagePreview(pane, { absPath, fileName, size, objectUrl }, bl
         ${escapeHtml(fileName || '')} · ${formatSize(size || 0)}
       </div>
       <a class="nf-pptx-download" href="#" download="${escapeHtml(fileName || 'presentation.pptx')}"
-        style="font-size:var(--ds-fs-body);color:var(--color-primary);text-decoration:none;padding:6px 16px;border:1px solid var(--color-primary);border-radius:var(--ds-radius-input);">Download full file</a>
+        style="font-size:var(--ds-fs-body);color:var(--color-primary);text-decoration:none;padding:var(--ds-space-1h) var(--ds-space-4);border:1px solid var(--color-primary);border-radius:var(--ds-radius-input);">Download full file</a>
     </div>`;
   const link = /** @type {HTMLAnchorElement|null} */ (pane.querySelector('a.nf-pptx-download'));
   if (!link || (!absPath && !objectUrl)) return;
@@ -358,7 +358,7 @@ function buildShell(unitsHtml, slideDims, zoom) {
   }).join('\n');
   return '<!doctype html><html><head><meta charset="utf-8"><style>' +
     'html,body{margin:0;padding:0;background:#f2f3f5;}' +
-    '.deck{display:flex;flex-direction:column;align-items:center;padding:24px 0;gap:16px;}' +
+    '.deck{display:flex;flex-direction:column;align-items:center;padding:var(--ds-space-6) 0;gap:var(--ds-space-4);}' +
     '.slidebox{background:#fff;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.15);}' +
     '</style></head><body><div class="deck">' + boxes + '</div></body></html>';
 }
@@ -375,7 +375,7 @@ function buildShell(unitsHtml, slideDims, zoom) {
 function buildLoadingPane(pane) {
   const loadingBox = document.createElement('div');
   loadingBox.className = 'canvas-md-viewer';
-  loadingBox.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--color-text-muted);';
+  loadingBox.style.cssText = 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--ds-space-2);color:var(--color-text-muted);';
   const loadLabel = document.createElement('div');
   loadLabel.textContent = 'Loading presentation...';
   const loadProgress = document.createElement('div');
@@ -557,7 +557,7 @@ async function renderFrontendPptx(pane, { absPath, fileName, size, objectUrl }, 
     pane.innerHTML = '';
     pane.classList.add('scrollable');
     const wrap = document.createElement('div');
-    wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;padding:16px 0;';
+    wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;padding:var(--ds-space-4) 0;';
     const frame = document.createElement('iframe');
     frame.setAttribute('sandbox', '');
     frame.title = fileName || 'presentation.pptx';

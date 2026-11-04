@@ -27,7 +27,7 @@
      前靠边的形态」）：冷启动批⑦（5f8657cfc）加的水平内距 16px 整段回退为
      0（= eb8832dd2 起历史旧值），桌面消息行回归贴边。手机端现行 16px 不在
      本批范围 —— 由 mobile.css ≤768px 媒体查询承接保形。 */
-  padding: 8px 0 36px;
+  padding: var(--ds-space-2) 0 36px;
   display: flex;
   flex-direction: column;
   overscroll-behavior: contain;
@@ -54,8 +54,8 @@
      折射细线不动（作者只裁底缘）。 */
   border-bottom-color: transparent;
   color: var(--color-frame-text-bright);
-  padding: 10px 16px;
-  margin: 16px 0 0 0;
+  padding: var(--ds-space-glass-x) var(--ds-space-4);
+  margin: var(--ds-space-4) 0 0 0;
   border-radius: var(--ds-radius-shell);
   font-size: 14px;
   font-weight: 500;
@@ -76,7 +76,7 @@
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25);
 }
-#header .header-left { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+#header .header-left { flex: 0 0 auto; display: flex; align-items: center; gap: var(--ds-space-1h); }
 #header .header-brand { color: var(--color-frame-text-bright); font-weight: 600; font-size: var(--ds-fs-title); }
 /* #header is position:absolute (already a containing block), so .header-center
    pins the session name to the true horizontal center instead of flex remaining
@@ -88,14 +88,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   z-index: 10;
   pointer-events: none; /* don't block clicks on left/right buttons */
   max-width: 70%;
   overflow: hidden;
 }
 #header .header-center > * { pointer-events: auto; } /* #session-name / #memory-btn stay clickable */
-#header .header-right { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 4px; }
+#header .header-right { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: var(--ds-space-1); }
 #header #session-name {
   color: var(--color-frame-text-bright);
   font-size: var(--ds-fs-title);
@@ -191,7 +191,7 @@
   /* Capsule + thin ring — the "oval ring" around the count */
   border-radius: var(--ds-radius-pill);
   border: 1px solid rgba(7,193,96,0.35);
-  padding: 2px 9px;
+  padding: var(--ds-space-half) 9px;
   font-size: var(--ds-fs-hint);
   color: var(--color-primary);
   cursor: pointer;
@@ -225,7 +225,7 @@
   /* Capsule + thin ring — the "oval ring" around the count */
   border-radius: var(--ds-radius-pill);
   border: 1px solid rgb(var(--accent-agent-light) / 0.35);
-  padding: 2px 9px;
+  padding: var(--ds-space-half) 9px;
   font-size: var(--ds-fs-hint);
   /* Unified panel spec §6.2 (20260830): counter hue = agent blue; light theme
      deepened (#46639c, 5.96:1) to clear WCAG 4.5 — replaces the P0 dark-mode
@@ -353,7 +353,7 @@
 .bg-dropdown-list .bg-task-row-head:first-child { border-top: none; }
 /* 双类锚（0,2,0）压过 .bg-task-row 的 padding 简写（源序在后——单类锚必输）。 */
 .bg-task-row.bg-task-row-child {
-  padding-left: 16px;
+  padding-left: var(--ds-space-4);
   border-left: 2px solid var(--color-frame-border);
 }
 .bg-task-row-child .bg-task-name { font-size: var(--ds-fs-hint); }
@@ -482,7 +482,7 @@
 .bg-task-badge {
   font-size: var(--ds-fs-meta);
   font-weight: var(--ds-fw-btn);
-  padding: 1px 6px;
+  padding: 1px var(--ds-space-1h);
   border-radius: var(--ds-radius-chip);
   background: var(--ds-control-bg);
   border: var(--ds-border-width) solid var(--ds-control-border);
@@ -942,8 +942,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 10px 0;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-glass-x) 0;
   font-size: var(--ds-fs-hint);
   color: #999;
   min-height: 36px;
@@ -957,7 +957,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .history-end {
   text-align: center;
-  padding: 10px 0 6px;
+  padding: var(--ds-space-glass-x) 0 var(--ds-space-1h);
   font-size: var(--ds-fs-meta);
   color: #bbb;
   user-select: none;
@@ -968,7 +968,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    （用户位 = --color-bubble-user 底 + 白光扫）。挂载/摘除单点 =
    historyIndicators.showChatSkeleton / hideChatSkeleton（historyPage 处理器同帧
    摘除 ⇒ 加载完成让位零跳变）；prefers-reduced-motion 降级为静态浅底。 */
-.chat-skeleton { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; }
+.chat-skeleton { display: flex; flex-direction: column; gap: var(--ds-space-half); padding: var(--ds-space-1h) 0; }
 .chat-sk-row { display: flex; justify-content: flex-start; animation: fadeIn 0.2s ease; }
 .chat-sk-row-me { justify-content: flex-end; }
 .chat-sk-bubble {
@@ -996,7 +996,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .row {
   display: flex;
-  margin: 6px 0;
+  margin: var(--ds-space-1h) 0;
   animation: fadeIn 0.2s ease;
 }
 .row.prepend-skip-anim { animation: none; }
@@ -1023,7 +1023,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
                       同值；同时消除 R25「copied 被 `.row:hover .msg-copy:hover`(0,4,0)
                       压成 0.6」的特异度陷阱来源。 */
   color: var(--color-text);
-  padding: 2px;
+  padding: var(--ds-space-half);
   border-radius: var(--ds-radius-badge);
   transition: opacity 0.15s;
 }
@@ -1053,10 +1053,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .copy-failed-live {
   font-size: 10px;
   color: var(--status-word);
-  margin-left: 4px;
+  margin-left: var(--ds-space-1);
   white-space: nowrap;
 }
-.copy-failed-live .st-ic { width: 10px; height: 10px; margin-right: 2px; vertical-align: -1px; }
+.copy-failed-live .st-ic { width: 10px; height: 10px; margin-right: var(--ds-space-half); vertical-align: -1px; }
 
 /* Recall button (same base style as copy, with hover feedback) */
 .duration-badge .msg-recall {
@@ -1152,7 +1152,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
  * carries a `delivery` field. */
 .delivery-badge {
   display: inline-block;
-  margin-left: 6px;
+  margin-left: var(--ds-space-1h);
   padding: 0 5px;
   border-radius: var(--ds-radius-badge);
   font-size: 9px;
@@ -1168,7 +1168,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-text-muted);
   background: none;
   padding: 0;
-  margin-left: 4px;
+  margin-left: var(--ds-space-1);
 }
 .delivery-immediate::before {
   content: '· ';
@@ -1177,10 +1177,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: rgba(0,0,0,0.04);
   color: #888;
   font-size: var(--ds-fs-meta);
-  padding: 3px 8px;
+  padding: 3px var(--ds-space-2);
   border-radius: var(--ds-radius-input);
   max-width: 160px;
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
 }
 .bubble.user.att-bubble .att-img {
   max-width: 180px;
@@ -1214,8 +1214,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
   border-radius: var(--ds-radius-input);
-  padding: 6px 10px;
-  margin-top: 2px;
+  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  margin-top: var(--ds-space-half);
   color: var(--color-text);
   font-size: var(--ds-fs-hint);
   cursor: pointer;
@@ -1223,7 +1223,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.user .att-ref-card-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   font-weight: 600;           /* card title weight (铁律 标题 600) */
 }
 .bubble.user .att-ref-card-icon {
@@ -1247,7 +1247,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.user .att-ref-card-source {
   color: var(--color-text-muted);
   font-weight: 400;
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1255,7 +1255,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.user .att-ref-card-content {
   color: var(--color-text);
   font-weight: 400;
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -1275,7 +1275,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-text); font-size: var(--ds-fs-hint); cursor: pointer;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   transition: box-shadow 0.15s, transform 0.12s;
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
 }
 .bubble.user .att-ref-card.file-lang:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.09); }
 .bubble.user .att-ref-card.file-lang:active { transform: scale(0.985); }
@@ -1296,7 +1296,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .att-task-line {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -1342,14 +1342,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-bottom-left-radius: 4px;
   box-shadow: var(--glass-bub-ai-shadow);
 }
-.bubble.ai img, .bubble.injected img, .ask-bub.ai img { max-width: 220px; max-height: 220px; border-radius: var(--ds-radius-input); display: block; margin-top: 4px; }
+.bubble.ai img, .bubble.injected img, .ask-bub.ai img { max-width: 220px; max-height: 220px; border-radius: var(--ds-radius-input); display: block; margin-top: var(--ds-space-1); }
 /* 件① 失败占位（2026-09-15 作者现场报）：思考流里的图片节点跨帧存活后，加载失败的
    图不再每帧重建——这里给它的终态一个**稳定**的占位盒（定高 + 虚线边 + alt 文本），
    塌缩-撑开循环随之终止（不重试、不隐藏功能）。最高特异性：0,3,1 > 上面 0,2,1。 */
 .bubble.ai img.nf-img-failed {
   min-height: 44px;
   box-sizing: border-box;
-  padding: 12px 10px;
+  padding: var(--ds-space-3) var(--ds-space-glass-x);
   border: 1px dashed rgba(128, 128, 128, 0.45);
   border-radius: var(--ds-radius-input);
   background: transparent;
@@ -1358,10 +1358,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .bubble.ai .file-tag {
   background: rgba(0,0,0,0.06);
-  padding: 3px 8px;
+  padding: 3px var(--ds-space-2);
   border-radius: var(--ds-radius-badge);
   font-size: var(--ds-fs-hint);
-  margin-top: 4px;
+  margin-top: var(--ds-space-1);
   display: inline-block;
 }
 /* Markdown element styles — shared by .bubble.ai, .bubble.injected and
@@ -1372,18 +1372,18 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    need the same element rules: the global * {margin:0;padding:0} reset strips
    ul/ol indentation, which drops list markers OUTSIDE the bubble's left
    padding, and an unstyled pre overflows the bubble horizontally. */
-.bubble.ai p, .bubble.injected p, .ask-bub.ai p { margin: 4px 0; }
+.bubble.ai p, .bubble.injected p, .ask-bub.ai p { margin: var(--ds-space-1) 0; }
 .bubble.ai p:first-child, .bubble.injected p:first-child, .ask-bub.ai p:first-child { margin-top: 0; }
 .bubble.ai p:last-child, .bubble.injected p:last-child, .ask-bub.ai p:last-child { margin-bottom: 0; }
-.bubble.ai ul, .bubble.ai ol, .bubble.injected ul, .bubble.injected ol, .ask-bub.ai ul, .ask-bub.ai ol { margin: 4px 0 4px 18px; padding: 0; }
-.bubble.ai li, .bubble.injected li, .ask-bub.ai li { margin: 2px 0; }
+.bubble.ai ul, .bubble.ai ol, .bubble.injected ul, .bubble.injected ol, .ask-bub.ai ul, .ask-bub.ai ol { margin: var(--ds-space-1) 0 var(--ds-space-1) 18px; padding: 0; }
+.bubble.ai li, .bubble.injected li, .ask-bub.ai li { margin: var(--ds-space-half) 0; }
 .bubble.ai pre, .bubble.injected pre, .ask-bub.ai pre {
   background: #f5f5f5;
-  padding: 8px 12px 10px;
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-glass-x);
   border-radius: var(--ds-radius-input);
   overflow-x: auto;
   font-size: var(--ds-fs-hint);
-  margin: 6px 0;
+  margin: var(--ds-space-1h) 0;
   line-height: 1.4;
   scrollbar-color: rgba(0,0,0,0.15) transparent;
 }
@@ -1402,11 +1402,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* Code block wrapper & copy button */
 .bubble.ai .code-block-wrap, .bubble.injected .code-block-wrap, .ask-bub.ai .code-block-wrap {
   position: relative;
-  margin: 6px 0;
+  margin: var(--ds-space-1h) 0;
 }
 .bubble.ai .code-block-wrap pre, .bubble.injected .code-block-wrap pre, .ask-bub.ai .code-block-wrap pre {
   margin: 0;
-  padding-top: 12px;
+  padding-top: var(--ds-space-3);
 }
 .code-copy-btn {
   position: absolute;
@@ -1414,8 +1414,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   right: 4px;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
+  gap: var(--ds-space-1);
+  padding: 3px var(--ds-space-2);
   border: 1px solid rgba(0,0,0,0.12);
   border-radius: var(--ds-radius-chip);
   background: rgba(255,255,255,0.8);
@@ -1448,21 +1448,21 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .bubble.ai code, .bubble.injected code, .ask-bub.ai code {
   background: rgba(0,0,0,0.05);
-  padding: 1px 4px;
+  padding: 1px var(--ds-space-1);
   border-radius: 3px;
   font-size: var(--ds-fs-hint);
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 .bubble.ai blockquote, .bubble.injected blockquote, .ask-bub.ai blockquote {
   border-left: 3px solid var(--color-border);
-  margin: 6px 0;
-  padding-left: 10px;
+  margin: var(--ds-space-1h) 0;
+  padding-left: var(--ds-space-glass-x);
   color: var(--color-text-muted);
 }
 .bubble.ai h1, .bubble.ai h2, .bubble.ai h3, .bubble.ai h4,
 .bubble.injected h1, .bubble.injected h2, .bubble.injected h3, .bubble.injected h4,
 .ask-bub.ai h1, .ask-bub.ai h2, .ask-bub.ai h3, .ask-bub.ai h4 {
-  margin: 8px 0 4px 0;
+  margin: var(--ds-space-2) 0 var(--ds-space-1) 0;
   font-weight: 600;
 }
 .bubble.ai h1, .bubble.injected h1, .ask-bub.ai h1 { font-size: var(--ds-fs-mobile-callout); }
@@ -1470,19 +1470,19 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.ai h3, .bubble.injected h3, .ask-bub.ai h3 { font-size: 14px; }
 .bubble.ai table, .bubble.injected table, .ask-bub.ai table {
   border-collapse: collapse;
-  margin: 6px 0;
+  margin: var(--ds-space-1h) 0;
   font-size: var(--ds-fs-hint);
 }
 .bubble.ai th, .bubble.ai td, .bubble.injected th, .bubble.injected td, .ask-bub.ai th, .ask-bub.ai td {
   border: 1px solid var(--color-border);
-  padding: 4px 8px;
+  padding: var(--ds-space-1) var(--ds-space-2);
 }
 .bubble.ai th, .bubble.injected th, .ask-bub.ai th { background: #f5f5f5; }
 /* 2026-10-30 按钮量产批登记收敛项：chat 链接全面蓝化 —— 设计系统蓝
    rgb(var(--sapphire))（#5b7fbf 单源 triplet，亮暗同值可读），原
    var(--color-primary) 品牌绿退役为链接色（绿保留给主操作/通知点族）。 */
 .bubble.ai a, .bubble.injected a, .ask-bub.ai a { color: rgb(var(--sapphire)); }
-.bubble.ai hr, .bubble.injected hr, .ask-bub.ai hr { border: none; border-top: 1px solid #eee; margin: 8px 0; }
+.bubble.ai hr, .bubble.injected hr, .ask-bub.ai hr { border: none; border-top: 1px solid #eee; margin: var(--ds-space-2) 0; }
 .bubble.ai strong, .bubble.injected strong, .ask-bub.ai strong { font-weight: 600; }
 
 /* Agent badge — 曾在此定义（`chat.css` 与 `split.css` 双份声明 = D2 缺陷：后者
@@ -1498,9 +1498,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .duration-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 4px;
-  padding: 2px 8px 2px 6px;
+  gap: var(--ds-space-1h);
+  margin-top: var(--ds-space-1);
+  padding: var(--ds-space-half) var(--ds-space-2) var(--ds-space-half) var(--ds-space-1h);
   background: var(--color-surface);
   border-radius: var(--ds-radius-chip);
   box-shadow: 0px 0px 0px 1px rgba(0,0,0,0.04), 0px 1px 3px rgba(0,0,0,0.03);
@@ -1529,8 +1529,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .thinking-indicator {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 0;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-half) 0;
 }
 .thinking-dot {
   width: 5px;
@@ -1553,7 +1553,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-text-muted);
   font-weight: 400;
   letter-spacing: -0.01em;
-  margin-left: 2px;
+  margin-left: var(--ds-space-half);
 }
 .thinking-timer {
   font-size: var(--ds-fs-body);
@@ -1598,13 +1598,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* Streaming tool argument body — shown while LLM generates tool call input.
    Styled like thinking-content: clean, muted, and unobtrusive. */
 .tool-stream-body {
-  margin-top: 6px;
+  margin-top: var(--ds-space-1h);
   max-height: 45vh;
   overflow-y: auto;
   overflow-x: auto;
   background: rgba(0,0,0,0.03);
   border-radius: var(--ds-radius-input);
-  padding: 10px 12px;
+  padding: var(--ds-space-glass-x) var(--ds-space-3);
   border: 1px solid var(--color-frame-border);
 }
 .tool-stream-body pre.tool-body-pre {
@@ -1622,7 +1622,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: var(--color-primary);
   vertical-align: text-bottom;
   animation: blink 1s steps(2) infinite;
-  margin-left: 2px;
+  margin-left: var(--ds-space-half);
 }
 /* hljs output in streaming body — larger font to match */
 .tool-stream-body .hljs,
@@ -1643,19 +1643,19 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border: 1px solid var(--color-border);
   border-left: 2px solid var(--status-error-icon);
   border-radius: var(--ds-radius-card-sm);
-  padding: 8px 14px;
+  padding: var(--ds-space-2) 14px;
   font-size: var(--ds-fs-body);
   max-width: 85%;
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--ds-space-2);
 }
-.error-card .st-ic { width: 14px; height: 14px; margin: 2px 0 0; flex-shrink: 0; }
+.error-card .st-ic { width: 14px; height: 14px; margin: var(--ds-space-half) 0 0; flex-shrink: 0; }
 
 /* ---------- Notice Cards (system / stage notifications) ---------- */
 .notice-card {
   border-radius: var(--ds-radius-card-sm);
-  padding: 8px 14px;
+  padding: var(--ds-space-2) 14px;
   font-size: var(--ds-fs-body);
   max-width: 85%;
 }
@@ -1672,7 +1672,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .compact-card {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   border-radius: var(--ds-radius-xl);
   padding: 7px 14px;
   font-size: var(--ds-fs-hint);
@@ -1833,8 +1833,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    设计语言批 2026-10-21：内距归栅格 12px 16px（13px 14px 斜数判偏整改）；
    圆角 16 = 浮层卡档（账本 design-language §4/§7）。 */
 .option-box {
-  margin-top: 6px;
-  padding: 12px 16px;
+  margin-top: var(--ds-space-1h);
+  padding: var(--ds-space-3) var(--ds-space-4);
   background: linear-gradient(180deg, var(--ask-card-top), var(--ask-card-bot));
   border-radius: var(--ds-radius-card-lg);
   border: 1px solid var(--ask-card-bd);
@@ -1846,16 +1846,16 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   letter-spacing: 0.2px;
   line-height: 1.55;
   color: var(--color-text);
-  margin-bottom: 8px;
+  margin-bottom: var(--ds-space-2);
 }
 .option-opts {
   display: flex;
   flex-wrap: wrap;
   gap: 0;
-  margin-bottom: 8px;
+  margin-bottom: var(--ds-space-2);
 }
 .option-btn {
-  padding: 5px 12px;
+  padding: 5px var(--ds-space-3);
   border: 1px solid rgba(145, 170, 210, 0.25);
   border-radius: var(--ds-radius-card-md);
   background: rgba(145, 170, 210, 0.04);
@@ -1904,10 +1904,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .option-opts.multi .option-btn {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--ds-space-2);
   text-align: left;
   border-radius: var(--ds-radius-button);
-  padding: 7px 12px;
+  padding: 7px var(--ds-space-3);
   width: 100%;
   box-sizing: border-box;
 }
@@ -1919,7 +1919,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex: 0 0 auto;
   width: 15px;
   height: 15px;
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
   border: 1.5px solid rgba(145, 170, 210, 0.45);
   border-radius: var(--ds-radius-badge);
   position: relative;
@@ -1944,8 +1944,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .option-custom-input {
   display: block;
   width: 100%;
-  margin-top: 8px;
-  padding: 8px 12px;
+  margin-top: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-3);
   border: 1px solid var(--ask-line-strong);
   border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-body); /* 13.5px 半档判偏整改（设计语言批 2026-10-21）：正文/输入同档 13px */
@@ -1978,14 +1978,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    交互逻辑零变化（type password↔text、值只进 secretValues 槽）。 */
 .option-secret-row {
   display: flex;
-  gap: 8px;
+  gap: var(--ds-space-2);
   align-items: center;
-  margin-top: 8px;
+  margin-top: var(--ds-space-2);
 }
 .option-secret-input {
   flex: 1;
   min-width: 0;
-  padding: 8px 12px;
+  padding: var(--ds-space-2) var(--ds-space-3);
   border: 1px solid var(--ask-line-strong);
   border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-body);
@@ -2005,7 +2005,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex-shrink: 0;
   width: 24px;
   height: 24px;
-  padding: 4px;
+  padding: var(--ds-space-1);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2024,7 +2024,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .option-secret-eye:focus-visible { border-color: var(--glass-control-border); }
 .option-secret-hint {
-  margin-top: 8px;
+  margin-top: var(--ds-space-2);
   font-size: var(--ds-fs-hint);
   line-height: 1.5;
   color: var(--color-text-muted);
@@ -2032,13 +2032,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .option-btn-row {
   display: flex;
   justify-content: space-between;
-  gap: 8px;
-  margin-top: 8px;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-2);
 }
 /* 取消 = 纯文字次级（style-1 纪律：卡内零填充色零投影；墨色按钮退场） */
 .option-cancel {
   flex: 0 0 auto;
-  padding: 8px 6px;
+  padding: var(--ds-space-2) var(--ds-space-1h);
   border: none;
   border-radius: var(--ds-radius-input);
   background: none;
@@ -2055,7 +2055,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* 确认 = L3 主行动（品牌绿实底渐变 + 绿影，半径 12 与 16 卡面同族） */
 .option-confirm {
   flex: 0 0 auto;
-  padding: 8px 16px;
+  padding: var(--ds-space-2) var(--ds-space-4);
   border: none;
   border-radius: var(--ds-radius-xl);
   background: linear-gradient(180deg, var(--ask-green), var(--ask-green-deep));
@@ -2067,7 +2067,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   box-shadow: var(--ask-btn-shadow);
   transition: filter 0.2s ease-out, opacity 0.12s ease-out;
 }
@@ -2085,11 +2085,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .option-desc {
   font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
   font-weight: normal;
 }
 .option-answer {
-  margin-top: 6px;
+  margin-top: var(--ds-space-1h);
   font-size: var(--ds-fs-body);
   color: var(--color-primary);
   font-weight: 400;
@@ -2100,7 +2100,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
     muted 并斜体 —— 零新增颜色 token（`--color-text-muted` 是本文件既有变量），也不给
     「待定」任何强调色：它不是结果读数，是「读不到结果」的如实标注。 */
 .option-answer-pending {
-  margin-top: 6px;
+  margin-top: var(--ds-space-1h);
   font-size: var(--ds-fs-body);
   color: var(--color-text-muted);
   font-style: italic;
@@ -2160,7 +2160,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .option-btn.has-preview {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
 }
 .option-btn.has-preview .option-text {
   text-align: left;
@@ -2201,7 +2201,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
      52×36, guaranteeing every aspect ratio ≥2px of ink-free breathing room on
      all four sides (a square icon renders 36×36, fully inside the slot). */
   margin: 0;
-  padding: 2px;
+  padding: var(--ds-space-half);
   display: block;
   opacity: 0;                     /* §6: fade in on load (see .nf-loaded) */
   transition: opacity 0.2s ease-out;
@@ -2244,9 +2244,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* AskUser canvas comparison button (direction C §4.1) — glass control,
    sits above the option box. */
 .ob-compare-btn {
-  margin-bottom: 6px;
+  margin-bottom: var(--ds-space-1h);
   font-size: var(--ds-fs-btn);
-  padding: 4px 12px;
+  padding: var(--ds-space-1) var(--ds-space-3);
   transition: background 0.15s, color 0.15s, border-color 0.15s,
               box-shadow 0.15s, opacity 0.15s;
 }
@@ -2270,7 +2270,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    · 全部令牌走 --ds-*（check-design-tokens.mjs 计数只减不增）。 */
 /* 卡内叠卡宿主：窄卡（手机 ~302px 内容宽）装不下横排 [钮|卡脸] ⇒ 折行，
    「展开 N」钮升到卡脸上方成一行（展开展开的自然读序：先钮后脸）。 */
-.option-box .pop-stack-area { flex-wrap: wrap; row-gap: 8px; width: 100%; }
+.option-box .pop-stack-area { flex-wrap: wrap; row-gap: var(--ds-space-2); width: 100%; }
 .option-box .pop-stack-area > .pill { margin-right: 0; order: -1; }
 .option-box .pop-media-flat { max-width: 100%; }
 /* 卡内文件 chip：可点档（role=button）光标 + 键盘焦点环；高度放 auto（降级态
@@ -2280,10 +2280,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   min-height: 28px;
   max-width: 100%;
   flex-wrap: wrap;
-  row-gap: 2px;
+  row-gap: var(--ds-space-half);
   cursor: pointer;
-  padding-top: 4px;
-  padding-bottom: 4px;
+  padding-top: var(--ds-space-1);
+  padding-bottom: var(--ds-space-1);
 }
 .option-box .att-file.ask-att-file:focus-visible {
   outline: 2px solid var(--ds-focus-ring);
@@ -2296,8 +2296,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* 来源标签的行间余量：标签是绝对定位 notch（top 负值压在 chip 描边上），
    列表 inline gap 8px 压不住 ⇒ 首个 chip 由 list padding-top 让位、后续 chip
    由相邻边距补 4px（inline style gap 不可被类规则覆盖，故走 margin 而非 gap）。 */
-.ask-attachments-wrap .ask-attachments-list { padding-top: 12px; }
-.ask-attachments-wrap .ask-attachments-list > .att-file + .att-file { margin-top: 4px; }
+.ask-attachments-wrap .ask-attachments-list { padding-top: var(--ds-space-3); }
+.ask-attachments-wrap .ask-attachments-list > .att-file + .att-file { margin-top: var(--ds-space-1); }
 /* 来源标签（文件卡左上角，作者令例「AskUser · 图片缩放确认」）：错位 notch 形
    —— 压在 chip 上描边上，底 = 卡面底色把描边「洗断」。标签比 chip 宽是常态
    （chip 随文件名收窄，标签是来源摘要）⇒ 上限按卡内容宽给，超长走**模糊淡出**
@@ -2309,7 +2309,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   top: -7px;
   left: 6px;
   max-width: min(260px, calc(100vw - 32px));
-  padding: 0 6px;
+  padding: 0 var(--ds-space-1h);
   font-size: var(--ds-fs-meta);
   line-height: 14px;
   font-weight: var(--ds-fw-title);
@@ -2351,19 +2351,19 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   position: relative; /* anchor for the absolute skip button */
 }
 .ob-body {
-  margin-top: 4px;
+  margin-top: var(--ds-space-1);
 }
 .ob-para {
   margin: 0;
 }
 .ob-para + .ob-para {
-  margin-top: 4px;
+  margin-top: var(--ds-space-1);
 }
 .ob-cursor {
   display: inline-block;
   width: 1px;
   height: 1em;
-  margin-left: 2px;
+  margin-left: var(--ds-space-half);
   vertical-align: text-bottom;
   background: var(--color-text);
   animation: ob-blink 1s steps(2) infinite;
@@ -2392,9 +2392,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .ob-flow-skip-wrap .ob-flow-skip {
   pointer-events: auto;
-  margin: 0 12px;
+  margin: 0 var(--ds-space-3);
   font-size: 12.5px;
-  padding: 4px 12px;
+  padding: var(--ds-space-1) var(--ds-space-3);
   border-radius: var(--ds-radius-pill);
 }
 .ob-skip {
@@ -2402,7 +2402,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   top: 6px;
   right: 6px;
   font-size: var(--ds-fs-hint);
-  padding: 2px 8px;
+  padding: var(--ds-space-half) var(--ds-space-2);
   border-radius: var(--ds-radius-chip);
   transition: background 0.15s, color 0.15s, border-color 0.15s,
               box-shadow 0.15s, opacity 0.15s;
@@ -2431,8 +2431,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    translucent-green send-button accent). */
 .ob-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 10px;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-glass-x);
 }
 .ob-actions button {
   transition: background 0.15s, color 0.15s, border-color 0.15s,
@@ -2464,7 +2464,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* The field face's probe row (uifix3 ②): settings-dialog layout — fetch button
    + live status line above the model entry. Reuses the card's glass material;
    the strings come from the settings provider modal's own locale keys. */
-.ob-fetch-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.ob-fetch-row { display: flex; align-items: center; gap: var(--ds-space-2); margin: var(--ds-space-1h) 0; }
 .ob-fetch-row .ob-fetch-btn { flex-shrink: 0; }
 .ob-fetch-row .ob-fetch-status { font-size: var(--ds-fs-hint); color: var(--color-text-muted); min-width: 0; }
 /* L3 主行动（askuser-hybrid）：品牌绿实底渐变 + 绿影；墨色/半透明绿底退场。
@@ -2478,7 +2478,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: var(--ds-fs-row);
   font-weight: 600;
   letter-spacing: 0.3px;
-  padding: 8px 16px;
+  padding: var(--ds-space-2) var(--ds-space-4);
   box-shadow: var(--ask-btn-shadow);
 }
 .glass-control.ob-primary:hover,
@@ -2501,7 +2501,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   filter: none;
 }
 .ob-probing {
-  margin-top: 8px;
+  margin-top: var(--ds-space-2);
   font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
 }
@@ -2516,7 +2516,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   border-radius: var(--ds-radius-input);
-  padding: 2px 4px;
+  padding: var(--ds-space-half) var(--ds-space-1);
   color: var(--color-text-dim);
   font-size: var(--ds-fs-body);
 }
@@ -2542,7 +2542,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-text);
 }
 .ask-card {
-  margin-top: 12px;
+  margin-top: var(--ds-space-3);
   padding: 13px 14px;
   background: linear-gradient(180deg, var(--ask-card-top), var(--ask-card-bot));
   border: 1px solid var(--ask-card-bd);
@@ -2555,12 +2555,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: var(--ds-fs-meta);
   letter-spacing: 1.2px;
   color: var(--color-text-dim);
-  margin-bottom: 2px;
+  margin-bottom: var(--ds-space-half);
 }
 .opt-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 .opt-row.wide {
   flex-direction: column;
@@ -2586,7 +2586,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .option-btn .option-check {
   display: inline-block;
-  margin-right: 8px;
+  margin-right: var(--ds-space-2);
 }
 .option-btn.opt-ghost {
   background: transparent;
@@ -2600,13 +2600,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .free-row {
   display: flex;
-  gap: 8px;
-  margin-top: 8px;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-2);
   align-items: center;
 }
 .option-input {
   flex: 1;
-  padding: 8px 12px;
+  padding: var(--ds-space-2) var(--ds-space-3);
   border: 1px solid var(--ask-line-strong);
   border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-row);
@@ -2629,17 +2629,17 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .chip-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-glass-x);
 }
 /* Context-window row (personal-agent batch 2026-10-04, author item ②): the
    model question's "set the context size" control. Revealed when a configured
    candidate is picked; reuses .option-input / .glass-control, zero new colors. */
 .ctx-row {
   display: flex;
-  gap: 8px;
+  gap: var(--ds-space-2);
   align-items: center;
-  margin-top: 8px;
+  margin-top: var(--ds-space-2);
   flex-wrap: wrap;
 }
 .ctx-row .ctx-label {
@@ -2658,7 +2658,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 12.5px;
   line-height: 2;
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
 }
 .write-lines .wl {
   color: var(--color-text-muted);
@@ -2707,7 +2707,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    （ghost 座）依旧零面，.ask-card 照旧直接浮在纸上——文字入泡、卡不上泡。
    旧「15px 内容轴」对齐（HYBRID §4.2）随题文入泡让位（作者令优先）。 */
 .bubble.ai.ob-ghost-seat .ob-body {
-  padding: 10px 14px;
+  padding: var(--ds-space-glass-x) 14px;
   background: var(--glass-bub-ai-bg);
   border: 1px solid var(--glass-bub-ai-border);
   border-radius: var(--ds-radius-card-lg);
@@ -2719,7 +2719,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: var(--ds-fs-title);
   font-weight: 600;
   letter-spacing: 0.2px;
-  margin-top: 4px;
+  margin-top: var(--ds-space-1);
 }
 
 /* ── 表格行控件（style-1 纪律）：选项 = 分隔线行 + 1.5px radio 线稿圈；
@@ -2729,10 +2729,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .ask-card .opt-row .option-btn {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
   width: 100%;
   box-sizing: border-box;
-  padding: 9px 6px;
+  padding: 9px var(--ds-space-1h);
   border: none;
   border-top: 1px solid var(--ask-line);
   border-radius: 0;
@@ -2763,7 +2763,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex: 0 0 auto;
   width: 14px;
   height: 14px;
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
   border: 1.5px solid var(--color-text-dim);
   border-radius: 50%;
 }
@@ -2795,7 +2795,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex-direction: column;
   align-items: stretch;
   gap: 0;
-  margin-top: 8px;
+  margin-top: var(--ds-space-2);
 }
 
 /* 「其他…」（单选腿）= 1px 虚线自由输入入口（hybrid .opt-other 形态）；
@@ -2803,8 +2803,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .option-opts:not(.multi) .opt-other {
   border: 1px dashed var(--ask-line-strong);
   border-radius: var(--ds-radius-input);
-  margin-top: 8px;
-  padding: 8px 12px;
+  margin-top: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-3);
   color: var(--color-frame-text);
 }
 .option-opts:not(.multi) .opt-other::before { display: none; }
@@ -2841,7 +2841,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border: 1px dashed var(--ask-line-strong);
   border-radius: var(--ds-radius-input);
   margin-top: 0;
-  padding: 8px 12px;
+  padding: var(--ds-space-2) var(--ds-space-3);
   color: var(--color-frame-text);
 }
 .ask-card .opt-row .option-btn.opt-ghost::before { display: none; }
@@ -2898,9 +2898,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 4px 12px;
-  margin: 0 8px;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-1) var(--ds-space-3);
+  margin: 0 var(--ds-space-2);
   max-height: 120px;
   overflow-y: auto;
 }
@@ -2908,8 +2908,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .notif-item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
+  gap: var(--ds-space-1h);
+  padding: 5px var(--ds-space-glass-x);
   border: 1px solid var(--glass-control-border);
   border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-body);
@@ -3003,9 +3003,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 4px 12px;
-  margin: 0 8px;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-1) var(--ds-space-3);
+  margin: 0 var(--ds-space-2);
   max-height: 120px;
   overflow-y: auto;
 }
@@ -3016,8 +3016,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .ask-pending-next {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 10px;
+  gap: var(--ds-space-2);
+  padding: 5px var(--ds-space-glass-x);
   border: 1px solid var(--glass-control-border);
   border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-body);
@@ -3082,7 +3082,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: color-mix(in srgb, var(--color-warning) 15%, transparent);
   border-radius: var(--ds-radius-pill);
   border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
-  padding: 2px 9px;
+  padding: var(--ds-space-half) 9px;
   font-size: var(--ds-fs-hint);
   color: var(--color-warning);
   cursor: pointer;
@@ -3103,7 +3103,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: color-mix(in srgb, var(--color-text-muted) 15%, transparent);
   border-radius: var(--ds-radius-pill);
   border: 1px solid color-mix(in srgb, var(--color-text-muted) 40%, transparent);
-  padding: 2px 9px;
+  padding: var(--ds-space-half) 9px;
   font-size: var(--ds-fs-hint);
   color: var(--color-text-dim);
   cursor: pointer;
@@ -3142,7 +3142,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .thinking-bubble {
   background: transparent !important;
-  padding: 6px 12px !important;
+  padding: var(--ds-space-1h) var(--ds-space-3);
   font-size: var(--ds-fs-body);
 }
 .thinking-label {
@@ -3150,13 +3150,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
      chevron. Flex layout kept only so the streaming pulse dots stay aligned. */
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.4px;
   opacity: 0.45;
-  margin-bottom: 2px;
+  margin-bottom: var(--ds-space-half);
   color: var(--color-text-muted);
 }
 .thinking-label.collapsible {
@@ -3210,7 +3210,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
      data-nf-think-lines（chat.js 单点写入，spec 读数锚）。 */
   max-height: 7.5em;
   overflow-y: auto;
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
   scrollbar-color: rgba(0,0,0,0.15) transparent;
 }
 /* 滚动条外观沿用 .tool-card .body.open 同档（细、透明轨），亮暗双主题同构。 */
@@ -3221,7 +3221,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .thinking-content pre {
   margin: 0.3em 0;
-  padding: 4px 8px;
+  padding: var(--ds-space-1) var(--ds-space-2);
   border-radius: var(--ds-radius-badge);
   font-size: var(--ds-fs-hint);
 }
@@ -3238,10 +3238,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .turn-header {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   max-width: 85%;
-  margin: 2px 0;
-  padding: 3px 12px;
+  margin: var(--ds-space-half) 0;
+  padding: 3px var(--ds-space-3);
   font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text-dim);
@@ -3320,7 +3320,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   width: 2px;
   height: 1em;
   background: var(--color-primary);
-  margin-left: 2px;
+  margin-left: var(--ds-space-half);
   animation: blink 1s infinite;
   vertical-align: text-bottom;
 }
@@ -3335,10 +3335,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   top: 8px;
   background: rgba(217,165,65,0.15);
   color: #b8941e;
-  padding: 6px 14px;
+  padding: var(--ds-space-1h) 14px;
   font-size: var(--ds-fs-hint);
   border-radius: var(--ds-radius-chip);
-  margin-bottom: 10px;
+  margin-bottom: var(--ds-space-glass-x);
   z-index: 20;
   box-shadow: 0 1px 4px rgba(0,0,0,0.1);
 }
@@ -3360,7 +3360,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: #fff;
   padding: 1px 5px;
   border-radius: 3px;
-  margin-right: 6px;
+  margin-right: var(--ds-space-1h);
   vertical-align: middle;
   line-height: 1.4;
 }
@@ -3379,14 +3379,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   text-transform: uppercase;
   letter-spacing: 0.4px;
   opacity: 0.55;
-  margin-bottom: 2px;
+  margin-bottom: var(--ds-space-half);
 }
 
 /* ===== Ask mode input indicator ===== */
 #ask-indicator {
   display: none;
   align-items: center;
-  gap: 2px;
+  gap: var(--ds-space-half);
   position: absolute;
   left: 8px;
   top: 50%;
@@ -3411,7 +3411,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: 14px;
   line-height: 1;
   opacity: 0.6;
-  padding: 0 2px;
+  padding: 0 var(--ds-space-half);
 }
 #ask-indicator-cancel:hover {
   opacity: 1;
@@ -3421,7 +3421,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 #skill-indicator {
   display: none;
   align-items: center;
-  gap: 2px;
+  gap: var(--ds-space-half);
   position: absolute;
   left: 8px;
   top: 50%;
@@ -3453,7 +3453,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: 14px;
   line-height: 1;
   opacity: 0.6;
-  padding: 0 2px;
+  padding: 0 var(--ds-space-half);
 }
 #skill-indicator-cancel:hover {
   opacity: 1;
@@ -3463,7 +3463,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 #compact-indicator {
   display: none;
   align-items: center;
-  gap: 2px;
+  gap: var(--ds-space-half);
   position: absolute;
   left: 8px;
   top: 50%;
@@ -3488,7 +3488,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: 14px;
   line-height: 1;
   opacity: 0.6;
-  padding: 0 2px;
+  padding: 0 var(--ds-space-half);
 }
 #compact-indicator-cancel:hover {
   opacity: 1;
@@ -3524,8 +3524,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .html-card-warning {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
   border-bottom: 1px solid var(--color-border);
   font-size: var(--ds-fs-hint);
   line-height: 1.45;
@@ -3536,7 +3536,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .html-card-warning-list {
   margin: 0;
-  padding-left: 16px;
+  padding-left: var(--ds-space-4);
   color: var(--color-text-muted);
   word-break: break-all;
 }
@@ -3562,9 +3562,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .perm-danger-banner {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  margin-bottom: 8px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  margin-bottom: var(--ds-space-2);
   border-radius: var(--ds-radius-chip);
   font-size: var(--ds-fs-hint);
   font-weight: 400;
@@ -3606,14 +3606,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .perm-source-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   background: rgba(139, 92, 246, 0.12);
   color: #8b5cf6;
-  padding: 3px 10px;
+  padding: 3px var(--ds-space-glass-x);
   border-radius: 9999px;
   font-size: var(--ds-fs-meta);
   font-weight: 500;
-  margin-bottom: 10px;
+  margin-bottom: var(--ds-space-glass-x);
 }
 .perm-source-badge svg {
   flex-shrink: 0;
@@ -3622,8 +3622,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* Inline code for showing command/file detail in permission prompt */
 .perm-detail-code {
   display: block;
-  margin-top: 4px;
-  padding: 4px 8px;
+  margin-top: var(--ds-space-1);
+  padding: var(--ds-space-1) var(--ds-space-2);
   border-radius: var(--ds-radius-badge);
   background: var(--glass-etched-bg);
   border: 1px solid var(--sapphire-edge);
@@ -3648,15 +3648,15 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    为文本 chip：主操作「重启并续跑」amber 字，其余中性字，hover 才起淡底。
    No overlay dimming (per the standing no-overlay ruling). */
 .error-escalation-card {
-  margin: 10px 14px 4px 14px;
-  padding: 10px 12px;
+  margin: var(--ds-space-glass-x) 14px var(--ds-space-1) 14px;
+  padding: var(--ds-space-glass-x) var(--ds-space-3);
   border-radius: var(--ds-radius-card-sm);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
   border-left: 2px solid rgb(var(--amber) / 0.55);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   color: var(--color-text);
 }
 .error-escalation-card .error-icon {
@@ -3668,7 +3668,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .error-escalation-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   font-weight: 600;
   font-size: var(--ds-fs-body);
   letter-spacing: -0.01em;
@@ -3695,15 +3695,15 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .error-escalation-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-wrap: wrap;
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
 }
 .error-escalation-actions button {
   pointer-events: auto;
   font: 500 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   border-radius: var(--ds-radius-input);
-  padding: 4px 10px;
+  padding: var(--ds-space-1) var(--ds-space-glass-x);
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
@@ -3747,10 +3747,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .ws-pick-target {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--ds-space-3);
   width: 100%;
-  padding: 14px 16px;
-  margin-bottom: 8px;
+  padding: 14px var(--ds-space-4);
+  margin-bottom: var(--ds-space-2);
   border: 1px solid rgb(var(--sapphire) / 0.35);
   border-radius: var(--ds-radius-xl);
   background: var(--glass-bg);
@@ -3769,7 +3769,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .ws-pick-target:active { transform: translateY(0); }
 .ws-pick-target:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
 .ws-pick-target svg { flex: 0 0 auto; color: rgb(var(--sapphire) / 0.9); }
-.ws-pick-texts { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ws-pick-texts { display: flex; flex-direction: column; gap: var(--ds-space-half); min-width: 0; }
 .ws-pick-title { font-size: 14px; font-weight: 600; color: var(--color-text); }
 .ws-pick-target.picking { pointer-events: none; opacity: 0.75; }
 .ws-pick-target.picking .ws-pick-title { color: rgb(var(--sapphire) / 0.9); }
@@ -3777,7 +3777,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .ws-pick-echo {
   font-size: 12.5px;
   color: rgb(var(--sapphire) / 0.95);
-  margin: -2px 0 8px;
+  margin: -2px 0 var(--ds-space-2);
   word-break: break-all;
 }
 
@@ -3808,13 +3808,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: var(--ds-fs-title);
   font-weight: 600;
   color: var(--color-frame-text-bright);
-  margin-bottom: 12px;
+  margin-bottom: var(--ds-space-3);
 }
 /* picker-device-switch 批（2026-10-30）：面板顶部设备选择行——复用全局
    .dev-row/.dev-btn/.dev-menu 族（projectPanel.css），仅间距按面板基调微调；
    下拉菜单收窄一档（面板宽 520px，不必 300px 起步）。 */
 .wsp-dev-row {
-  margin-bottom: 10px;
+  margin-bottom: var(--ds-space-glass-x);
 }
 .wsp-dev-row .dev-menu {
   min-width: 240px;
@@ -3823,10 +3823,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .wsp-crumbs {
   font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted);
-  margin-bottom: 10px;
+  margin-bottom: var(--ds-space-glass-x);
   word-break: break-all;
   line-height: 1.4;
-  padding: 6px 10px;
+  padding: var(--ds-space-1h) var(--ds-space-glass-x);
   background: var(--glass-etched-bg);
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-border);
@@ -3850,9 +3850,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .wsp-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   width: 100%;
-  padding: 8px 12px;
+  padding: var(--ds-space-2) var(--ds-space-3);
   border: none;
   border-bottom: 1px solid var(--color-frame-border-light);
   border-radius: 0;
@@ -3873,7 +3873,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   cursor: default;
   justify-content: center;
   text-align: center;
-  padding: 24px 12px;
+  padding: var(--ds-space-6) var(--ds-space-3);
   font-size: var(--ds-fs-hint);
 }
 /* 行内新建文件夹行 —— 复用列表行基底；输入框对齐共享 .modal-input 蚀刻风格 */
@@ -3884,7 +3884,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-frame-input-text);
   border: 1px solid var(--glass-etched-border);
   border-radius: var(--ds-radius-input);
-  padding: 4px 10px;
+  padding: var(--ds-space-1) var(--ds-space-glass-x);
   font-size: var(--ds-fs-hint);
   font-family: inherit;
   outline: none;
@@ -3898,7 +3898,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .wsp-mkdir-ok {
   font-size: var(--ds-fs-hint);
-  padding: 4px 12px;
+  padding: var(--ds-space-1) var(--ds-space-3);
   border-radius: var(--ds-radius-input);
   cursor: pointer;
   font-family: inherit;
@@ -3917,7 +3917,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   cursor: pointer;
   color: var(--color-frame-text-muted);
   font-size: var(--ds-fs-title);
-  padding: 2px 6px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
 }
 .wsp-mkdir-no:hover { color: var(--color-frame-text); }
 /* Footer action row — neutral button family; new-folder entry on the left
@@ -3925,7 +3925,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .wsp-foot {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   margin-top: 14px;
 }
 .wsp-cur {
@@ -3937,10 +3937,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.wsp-foot-btns { display: flex; gap: 8px; flex: 0 0 auto; }
+.wsp-foot-btns { display: flex; gap: var(--ds-space-2); flex: 0 0 auto; }
 .wsp-cancel, .wsp-pick, .wsp-mkdir {
   font-size: var(--ds-fs-hint);
-  padding: 6px 16px;
+  padding: var(--ds-space-1h) var(--ds-space-4);
   border-radius: var(--ds-radius-input);
   cursor: pointer;
   font-family: inherit;
@@ -3991,14 +3991,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .wsp-goto,
 .wsp-search {
   display: flex;
-  gap: 6px;
-  margin-bottom: 8px;
+  gap: var(--ds-space-1h);
+  margin-bottom: var(--ds-space-2);
 }
 .wsp-goto-input,
 .wsp-search-input {
   flex: 1;
   min-width: 0;
-  padding: 6px 10px;
+  padding: var(--ds-space-1h) var(--ds-space-glass-x);
   font-size: var(--ds-fs-hint);
   font-family: inherit;
   border-radius: var(--ds-radius-input);
@@ -4014,7 +4014,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .wsp-goto-btn {
   font-size: var(--ds-fs-btn);
-  padding: 6px 14px;
+  padding: var(--ds-space-1h) 14px;
   border-radius: var(--ds-radius-input);
   cursor: pointer;
   font-family: inherit;
@@ -4035,8 +4035,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .wsp-note {
   font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
-  margin-bottom: 8px;
-  padding: 5px 10px;
+  margin-bottom: var(--ds-space-2);
+  padding: 5px var(--ds-space-glass-x);
   border-radius: var(--ds-radius-input);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-border);
@@ -4044,7 +4044,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .wsp-note-hint {
   color: var(--color-frame-text-dim);
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
 }
 
 /* C: inline path error — ui-status-redesign（S9 同族 / 盘点 #34）：红底红边红字框
@@ -4052,11 +4052,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .wsp-err {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   font-size: var(--ds-fs-meta);
   color: var(--status-word);
-  margin-bottom: 8px;
-  padding: 5px 10px;
+  margin-bottom: var(--ds-space-2);
+  padding: 5px var(--ds-space-glass-x);
   border-radius: var(--ds-radius-input);
   background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--status-error-icon) 32%, transparent);
@@ -4073,7 +4073,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* Empty-state second line (the way out), under the .wsp-empty fact line */
 .wsp-empty-hint {
   color: var(--color-frame-text-dim);
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
 }
 
 /* Clear button (project-root mode) — danger family, same values as the
@@ -4120,9 +4120,9 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   z-index: 25; /* above #chat, below #header (30) and the input bar (20) */
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   height: 28px;
-  padding: 0 12px;
+  padding: 0 var(--ds-space-3);
   font: 500 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   letter-spacing: 0;
   color: var(--color-text);
@@ -4203,10 +4203,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
      — the old flex-start + a chevron margin-top band-aid left the 12px
      chevron ink riding high against the 18px text line. */
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   max-width: 85%;
-  margin: 2px 0;
-  padding: 3px 12px;
+  margin: var(--ds-space-half) 0;
+  padding: 3px var(--ds-space-3);
   font-size: var(--ds-fs-hint);
   /* zcode-484 batch: ONE text row, fixed. The explicit px line-height makes the
      single-row height deterministic (it is also what the slot's fixed height
@@ -4242,7 +4242,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   inset: 0;
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
   min-width: 0;
   animation: nf-wl-in 0.3s ease both;
 }
@@ -4495,7 +4495,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    demo/pop-upgrade-demo.html (git-ignored via `.gitignore:38` `*demo*.html`).
    ═════════════════════════════════════════════════════════════════════════ */
 
-.row.pop-artifact { display: flex; justify-content: flex-start; margin: 8px 0 10px; }
+.row.pop-artifact { display: flex; justify-content: flex-start; margin: var(--ds-space-2) 0 var(--ds-space-glass-x); }
 /* footer 信息条落位（Pop 交付卡 footer 批，作者令 2026-11-01 16:19）：LLM Pop 行
    转**列向**——徽章（.duration-badge，buildPopArtifactRow 行尾追加）落卡片组下方、
    左缘对齐（AI 行族同侧；用户侧 .row.user-media 经 .row.user 的 column+flex-end
@@ -4504,7 +4504,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .row.pop-artifact:not(.user) { flex-direction: column; align-items: flex-start; }
 .pop-group {
   display: flex; flex-direction: column; align-items: flex-start;
-  gap: 10px; min-width: 0;
+  gap: var(--ds-space-glass-x); min-width: 0;
   /* 2026-10-30 收敛批：消费消息列宽单源 token（--msg-bubble-max-w，值的家 =
      sapphire.css「Shared message surface」③A3 判据——面内零字面量，改一处两侧同步；
      写死 78% 被 scripts/check-msgstyle-single-source.mjs「A3 面内不得再写死 78%」判红）。 */
@@ -4586,7 +4586,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .pop-img.nf-img-failed, .pop-video.nf-img-failed, .pop-audio.nf-img-failed {
   min-height: 44px;
   box-sizing: border-box;
-  padding: 12px 10px;
+  padding: var(--ds-space-3) var(--ds-space-glass-x);
   border: 1px dashed rgba(128, 128, 128, 0.45);
   border-radius: var(--ds-radius-input);
   background: transparent;
@@ -4595,7 +4595,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   object-fit: contain;
 }
 .nf-media-failed-note {
-  margin-top: 6px;
+  margin-top: var(--ds-space-1h);
   font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
   overflow-wrap: anywhere;
@@ -4609,7 +4609,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   pointer-events: auto; transition: opacity 0.25s;
 }
 .play-ring::after {
-  content: ''; display: block; margin-left: 4px;
+  content: ''; display: block; margin-left: var(--ds-space-1);
   border-style: solid; border-width: 10px 0 10px 17px;
   border-color: transparent transparent transparent rgba(255, 255, 255, 0.95);
 }
@@ -4617,7 +4617,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .dur-chip {
   position: absolute; right: 8px; bottom: 8px;
   background: rgba(0, 0, 0, 0.55); color: #fff;
-  font-size: var(--ds-fs-meta); padding: 2px 7px; border-radius: var(--ds-radius-badge);
+  font-size: var(--ds-fs-meta); padding: var(--ds-space-half) 7px; border-radius: var(--ds-radius-badge);
   pointer-events: none; font-variant-numeric: tabular-nums;
 }
 .vd-progress {
@@ -4698,7 +4698,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   position: absolute; bottom: calc(100% + 9px); right: -6px;
   background: #1b1e26; color: #fff;
   font-size: var(--ds-fs-meta); font-weight: 500; white-space: nowrap;
-  padding: 5px 10px; border-radius: 7px;
+  padding: 5px var(--ds-space-glass-x); border-radius: 7px;
   opacity: 0; transform: translateY(3px);
   pointer-events: none; transition: opacity 0.16s, transform 0.16s;
   z-index: 5;
@@ -4713,7 +4713,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .pop-warn {
   font-size: var(--ds-fs-meta); color: var(--color-text-dim);
   background: rgba(128, 128, 128, 0.1);
-  border-radius: var(--ds-radius-chip); padding: 4px 9px;
+  border-radius: var(--ds-radius-chip); padding: var(--ds-space-1) 9px;
   max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
@@ -4740,7 +4740,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    `user` class (popArtifacts.buildUserMediaRow), so .row.user's
    align-items:flex-end owns the sender side; inside the group every card
    mirrors the same side (mixed 220px stack + 300px file cards stay flush). */
-.row.user-media { display: flex; justify-content: flex-start; margin: 8px 0 10px; }
+.row.user-media { display: flex; justify-content: flex-start; margin: var(--ds-space-2) 0 var(--ds-space-glass-x); }
 .row.user-media .pop-group { align-items: flex-end; }
 
 /* Canvas secondary entry on a media CARD (flat faces + expanded stack layers).
@@ -4802,12 +4802,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    the VIEW container; the lightbox mounts on document.body — clamp it there. */
 .nf-static .nf-lightbox.nf-lightbox--media, body .nf-static ~ .nf-lightbox.nf-lightbox--media { animation: none; }
 .nf-lightbox-stage {
-  display: flex; flex-direction: column; gap: 10px;
+  display: flex; flex-direction: column; gap: var(--ds-space-glass-x);
   max-width: min(92vw, 1100px);
   max-height: 90vh;
 }
 .nf-lightbox-head {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; align-items: center; gap: var(--ds-space-3);
   justify-content: space-between;
 }
 .nf-lightbox-name {
@@ -4818,7 +4818,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .nf-lightbox-canvas {
   flex-shrink: 0;
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: var(--ds-space-1h);
   border: none; border-radius: var(--ds-radius-pill);
   padding: 7px 14px; font-size: var(--ds-fs-hint); font-family: inherit;
   background: rgba(255, 255, 255, 0.14); color: #fff;
@@ -4839,7 +4839,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .nf-lightbox-media.nf-img-failed {
   min-width: 220px; min-height: 44px;
   box-sizing: border-box;
-  padding: 12px 10px;
+  padding: var(--ds-space-3) var(--ds-space-glass-x);
   border: 1px dashed rgba(255, 255, 255, 0.4);
   object-fit: none;
 }
@@ -4866,7 +4866,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    keep the mirrored margin (below). Expanded state: same margin reads as a
    wider gap beside the expand column — flat, no chrome there. Geometry
    otherwise untouched. */
-.row.pop-artifact:not(.user) .pop-stack-area > .pill { margin-left: 32px; }
+.row.pop-artifact:not(.user) .pop-stack-area > .pill { margin-left: var(--ds-space-8); }
 
 /* 三修批 uifix3 ① (2026-10-06 21:36 作者双截图令) — mirrored for the
    2026-10-30 fan design: the USER-side stack mirrors the fan INTO the chat
@@ -4899,7 +4899,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .row.pop-artifact.user .pop-stack-view .media-layer.layer-mid { transform: translateX(-14px) rotate(-2deg); }
 .row.pop-artifact.user .pop-stack-view .media-layer.layer-back { transform: translateX(-26px) rotate(-3.5deg); }
 .row.pop-artifact.user .pop-stack-area { width: max-content; }
-.row.pop-artifact.user .pop-stack-area > .pill { margin-right: 32px; }
+.row.pop-artifact.user .pop-stack-area > .pill { margin-right: var(--ds-space-8); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    attach-bubble-unify (2026-10-20 author ruling 「用户发送附件与气泡设计语言统一
@@ -4988,7 +4988,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   width: auto;
   max-width: 264px;
   gap: 9px;
-  padding: 7px 10px 7px 7px;
+  padding: 7px var(--ds-space-glass-x) 7px 7px;
   background: var(--color-surface-2, rgba(127, 127, 127, 0.08));
   border: 1px solid var(--glass-etched-border, rgba(91, 127, 191, 0.10));
   border-radius: var(--ds-radius-card-sm);
@@ -5007,7 +5007,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   max-width: 150px;
 }
 .row.user-media .fc-sub,
-.fm-msg.out .fm-att-list .fc-sub { color: var(--color-text-muted); font-size: 10.5px; margin-top: 2px; }
+.fm-msg.out .fm-att-list .fc-sub { color: var(--color-text-muted); font-size: 10.5px; margin-top: var(--ds-space-half); }
 /* Click affordance survives the de-chrome: the standing shadow is gone, the
    hover shadow stays (matches the artifact family's hover feedback). */
 .row.user-media .file-card:hover,
@@ -5022,16 +5022,16 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* Source chips row (全部来源 / 用户 / 助手) — lives in .search-controls, shown
    only under the typed media tabs. */
 #search-source-chips {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: var(--ds-space-1h);
   width: 100%;
-  margin-top: 8px;
+  margin-top: var(--ds-space-2);
 }
 #search-source-chips[hidden] { display: none; }
 .search-source-chip {
   border: 1px solid var(--color-border, rgba(128, 128, 128, 0.25));
   background: transparent; color: var(--color-text-muted, #8a8f99);
   border-radius: var(--ds-radius-pill);
-  padding: 4px 12px; font-size: var(--ds-fs-hint); font-family: inherit;
+  padding: var(--ds-space-1) var(--ds-space-3); font-size: var(--ds-fs-hint); font-family: inherit;
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
@@ -5043,7 +5043,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 
 /* Week/month group headers (本周 / {n} 月). */
 .search-media-group-header {
-  margin: 14px 2px 8px;
+  margin: 14px var(--ds-space-half) var(--ds-space-2);
   font-size: var(--ds-fs-hint); font-weight: 600;
   color: var(--color-text-muted, #8a8f99);
 }
@@ -5052,7 +5052,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .search-media-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
 }
 .search-media-card {
   position: relative;
@@ -5074,7 +5074,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 object.search-media-thumb { object-fit: initial; }
 .search-media-broken .search-media-thumb { object-fit: contain; opacity: 0.45; }
 .search-media-name {
-  padding: 6px 8px 8px;
+  padding: var(--ds-space-1h) var(--ds-space-2) var(--ds-space-2);
   font-size: var(--ds-fs-hint); color: var(--color-text, #e8eaed);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   min-width: 0;
@@ -5082,7 +5082,7 @@ object.search-media-thumb { object-fit: initial; }
 /* Video duration badge (lazy <video preload=metadata> fill). */
 .search-media-dur {
   position: absolute; right: 6px; bottom: 30px;
-  padding: 2px 6px; border-radius: var(--ds-radius-chip);
+  padding: var(--ds-space-half) var(--ds-space-1h); border-radius: var(--ds-radius-chip);
   background: rgba(0, 0, 0, 0.65); color: #fff;
   font-size: var(--ds-fs-meta); font-variant-numeric: tabular-nums;
   pointer-events: none;
@@ -5091,7 +5091,7 @@ object.search-media-thumb { object-fit: initial; }
 /* Link / file cards: icon + text rows. */
 .search-media-ext {
   flex-shrink: 0; align-self: flex-start;
-  margin: 10px 0 0 10px;
+  margin: var(--ds-space-glass-x) 0 0 var(--ds-space-glass-x);
   min-width: 40px; height: 26px;
   display: inline-flex; align-items: center; justify-content: center;
   padding: 0 7px; border-radius: var(--ds-radius-chip);
@@ -5100,8 +5100,8 @@ object.search-media-thumb { object-fit: initial; }
 }
 .search-media-ext.generic { background: rgba(128, 128, 128, 0.16); color: var(--color-text-muted, #8a8f99); }
 .search-media-ext.link { background: rgba(64, 132, 240, 0.14); color: #7fb0f5; }
-.search-media-linkbody { min-width: 0; padding: 6px 8px 8px; }
-.search-media-linkbody .search-media-name { padding: 0 0 2px; }
+.search-media-linkbody { min-width: 0; padding: var(--ds-space-1h) var(--ds-space-2) var(--ds-space-2); }
+.search-media-linkbody .search-media-name { padding: 0 0 var(--ds-space-half); }
 .search-media-url {
   font-size: var(--ds-fs-meta); color: var(--color-text-muted, #8a8f99);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -5109,7 +5109,7 @@ object.search-media-thumb { object-fit: initial; }
 /* Source badge + time — the alignment markers (主题三). */
 .search-media-source {
   position: absolute; top: 6px; left: 6px;
-  padding: 2px 7px; border-radius: var(--ds-radius-pill);
+  padding: var(--ds-space-half) 7px; border-radius: var(--ds-radius-pill);
   font-size: 10px;
   background: rgba(0, 0, 0, 0.55); color: #fff;
   pointer-events: none;
@@ -5118,7 +5118,7 @@ object.search-media-thumb { object-fit: initial; }
 .search-media-source.src-agent { background: rgba(9, 105, 218, 0.82); }
 .search-media-time {
   position: absolute; top: 6px; right: 6px;
-  padding: 2px 6px; border-radius: var(--ds-radius-chip);
+  padding: var(--ds-space-half) var(--ds-space-1h); border-radius: var(--ds-radius-chip);
   font-size: 10px;
   background: rgba(0, 0, 0, 0.55); color: rgba(255, 255, 255, 0.92);
   pointer-events: none;
@@ -5138,8 +5138,8 @@ object.search-media-thumb { object-fit: initial; }
    见下方 .msg-quote-composite 段 —— 带引用文本行把引用块与气泡包进同一
    气泡驱宽复合盒，引用块渲染宽 = 气泡宽（窄气泡跟着窄），不再 ≤ 100% 行宽。 */
 .msg-quote-block {
-  margin: 0 0 6px;
-  padding: 6px 10px;
+  margin: 0 0 var(--ds-space-1h);
+  padding: var(--ds-space-1h) var(--ds-space-glass-x);
   border-radius: var(--ds-radius-button);
   background: rgba(0, 0, 0, 0.035);
   box-shadow: none;
@@ -5152,7 +5152,7 @@ object.search-media-thumb { object-fit: initial; }
      缩略带/降级注记跨两列整行（`.msg-quote-atts` / `.msg-quote-note` 下方声明）。 */
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  column-gap: 6px;
+  column-gap: var(--ds-space-1h);
   align-items: start;
 }
 .msg-quote-block .msg-quote-text {
@@ -5226,7 +5226,7 @@ object.search-media-thumb { object-fit: initial; }
 .msg-quote-composite .bubble.user { max-width: 100%; }
 .msg-quote-composite .msg-quote-block { width: 0; min-width: 100%; }
 /* 降级注记（「原消息已删除」；.fm-quote-note 同族：再降一档不透明度）。 */
-.msg-quote-note { opacity: 0.75; font-size: var(--ds-fs-meta); margin-top: 2px; grid-column: 1 / -1; }
+.msg-quote-note { opacity: 0.75; font-size: var(--ds-fs-meta); margin-top: var(--ds-space-half); grid-column: 1 / -1; }
 .msg-quote-note:empty { display: none; }
 /* 引用块附件缩略带（附件批 2026-10-31 作者令「引用要支持你发的文件 图片等」）：
    被引消息带文件/图片附件 ⇒ 摘要行下挂缩略。图片/视频 = 48px 方缩略
@@ -5237,8 +5237,8 @@ object.search-media-thumb { object-fit: initial; }
 .msg-quote-atts {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 4px;
+  gap: var(--ds-space-1);
+  margin-top: var(--ds-space-1);
   grid-column: 1 / -1;
 }
 .msg-quote-att-media {
@@ -5259,9 +5259,9 @@ object.search-media-thumb { object-fit: initial; }
 .msg-quote-att-file {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   max-width: 180px;
-  padding: 3px 8px 3px 4px;
+  padding: 3px var(--ds-space-2) 3px var(--ds-space-1);
   border-radius: var(--ds-radius-chip);
   background: rgba(0, 0, 0, 0.06);
   font-size: var(--ds-fs-meta);
@@ -5328,7 +5328,7 @@ object.search-media-thumb { object-fit: initial; }
    + 2 border）。手机 375 形态在 mobileLayer.css（56px 大头像 + 纵排），零触碰。 */
 body:not(.mobile-layer) #header .header-center {
   flex-direction: row;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   padding-top: 0;
 }
 #agent-avatar-btn {
@@ -5394,15 +5394,15 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
 .ap-pane {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
 }
 #memory-modal[data-pane='memory'] .ap-pane { display: none; }
 .ap-pane .ap-avatar-box {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 8px 0 2px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-2) 0 var(--ds-space-half);
   border: none;
   background: none;
   cursor: pointer;
@@ -5468,7 +5468,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
 .ap-pane .ap-namerow {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
 }
 .ap-pane .ap-name-label {
   flex: none;
@@ -5479,7 +5479,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   flex: 1;
   min-width: 0;
   height: 34px;
-  padding: 0 10px;
+  padding: 0 var(--ds-space-glass-x);
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-border);
   background: var(--glass-etched-bg, rgba(0, 0, 0, 0.025));
@@ -5494,7 +5494,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted, #98a2b3);
   line-height: 1.65;
-  padding: 8px 2px 0;
+  padding: var(--ds-space-2) var(--ds-space-half) 0;
   border-top: 1px solid var(--glass-border);
 }
 
@@ -5507,7 +5507,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
 .msg-token-chip {
   display: inline-block;
   max-width: 100%;
-  padding: 1px 8px;
+  padding: 1px var(--ds-space-2);
   margin: 0 1px;
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border, rgba(91, 127, 191, 0.08));
@@ -5544,8 +5544,8 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   z-index: 10002; /* contextMenu 面板族同档（body > .fm-context-menu = 10001）之上 */
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-3) 14px;
   border-radius: var(--ds-radius-xl);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
   font-size: var(--ds-fs-body);
@@ -5554,7 +5554,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
 .msg-token-pop-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   min-width: 0;
   font-size: var(--ds-fs-hint);
 }
@@ -5620,7 +5620,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   opacity: 0.75;
   word-break: break-all;
   border-top: 1px solid var(--glass-border);
-  padding-top: 6px;
+  padding-top: var(--ds-space-1h);
 }
 @media (prefers-reduced-motion: reduce) {
   .msg-token-chip { transition: none; }

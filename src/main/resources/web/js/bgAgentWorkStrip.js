@@ -26,10 +26,10 @@ const STRIP_CSS = `<style id="${STRIP_CSS_ID}">
 /* 「会话在做什么」条：弹窗头下、聊天体上的窄条（玻璃语言，零新设计词）。 */
 .bgws {
   border-bottom: 1px solid var(--glass-border);
-  padding: 6px 16px;
+  padding: var(--ds-space-1h) var(--ds-space-4);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ds-space-1);
   flex-shrink: 0;
   font: 400 11px -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
@@ -37,7 +37,7 @@ const STRIP_CSS = `<style id="${STRIP_CSS_ID}">
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.bgws-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.bgws-row { display: flex; align-items: center; gap: var(--ds-space-1h); min-width: 0; }
 .bgws-label {
   flex-shrink: 0;
   font-weight: 500;
@@ -49,7 +49,7 @@ const STRIP_CSS = `<style id="${STRIP_CSS_ID}">
 .bgws-task {
   cursor: pointer;
   border-radius: var(--ds-radius-chip);
-  padding: 1px 4px;
+  padding: 1px var(--ds-space-1);
   margin-left: -4px;
 }
 .bgws-task:hover { background: var(--color-frame-hover); }

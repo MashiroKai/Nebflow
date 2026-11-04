@@ -16,8 +16,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 6px 16px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1h) var(--ds-space-4);
   font-size: var(--ds-fs-hint);
   color: var(--color-text);
   background: var(--glass-bg);

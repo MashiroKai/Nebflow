@@ -1,5 +1,5 @@
 #task-list {
-  padding: 0 8px;
+  padding: 0 var(--ds-space-2);
   margin: 0;
   max-height: 0;
   overflow: hidden;
@@ -11,7 +11,7 @@
   /* 2026-09-08 作者令：面板头钉顶——滚动边界内移到 .task-body-inner，
      外层收敛为 hidden（双滚动条防线），高度预算语义不变（整卡含 header ≤50vh）。*/
   overflow: hidden;
-  padding: 2px 8px 4px;
+  padding: var(--ds-space-half) var(--ds-space-2) var(--ds-space-1);
   /* flex column 链：has-tasks → card → body → inner，逐层 min-height:0
      让高度约束传到底，inner 才获得可滚动的确定高度。 */
   display: flex;
@@ -28,7 +28,7 @@
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-card-md);
-  padding: 8px 12px 6px;
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-1h);
   box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.15);
 }
 @media (prefers-color-scheme: dark) {
@@ -40,8 +40,8 @@
 .task-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: var(--ds-space-2);
+  margin-bottom: var(--ds-space-1);
   font-size: var(--ds-fs-hint);
   cursor: default;
   /* 钉顶头：位于滚动容器（.task-body-inner）之外的兄弟节点，天然不随
@@ -134,7 +134,7 @@
   font-size: var(--ds-fs-hint);
   font-weight: 400;
   color: var(--color-text-muted, #888);
-  padding: 4px 2px;
+  padding: var(--ds-space-1) var(--ds-space-half);
 }
 
 /* 旧任务行 CSS（.task-item/.task-check*/.task-label/.task-desc/.task-meta/
@@ -161,7 +161,7 @@
 .task-node {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--ds-space-2);
   padding: 3px 0;
   font-size: var(--ds-fs-body);
   line-height: 1.4;
@@ -274,17 +274,17 @@
 
 /* Project group header (node-owned classes; visual values follow the group
    header design language). Rows nest 10px under the header. */
-.task-node-group { margin-top: 4px; }
+.task-node-group { margin-top: var(--ds-space-1); }
 .task-node-group-header {
   font-size: 10px;
   font-weight: 600;
   color: var(--color-text-muted, #888);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  margin: 6px 2px 2px;
+  margin: var(--ds-space-1h) var(--ds-space-half) var(--ds-space-half);
   cursor: default;
 }
-.task-node-group .task-node { margin-left: 10px; }
+.task-node-group .task-node { margin-left: var(--ds-space-glass-x); }
 
 /* ── 重启对账（2026-10-22）：打断徽标 + 折叠前会话灰腿 ─────────────────────
    徽标 = 行内首槽小胶囊（与 word 槽同 muted 语言，橙警示描边——打断 ≠ 失败红、
@@ -326,10 +326,10 @@
 .task-chain-folded {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   height: 20px;
   margin: 1px 0 1px 18px; /* 头行缩进（与成员行 nest 首级同节奏） */
-  padding-right: 6px;
+  padding-right: var(--ds-space-1h);
   cursor: pointer;
   opacity: 0.72;
 }
@@ -418,7 +418,7 @@
 }
 /* ── Narrow viewport (§10 A12, 裁定 F3): tighten the header at ≤480px. ── */
 @media (max-width: 480px) {
-  .task-header { gap: 4px; }
+  .task-header { gap: var(--ds-space-1); }
   .task-stats {
     min-width: 0;
     overflow: hidden;
@@ -435,7 +435,7 @@
    rows (.task-chain-member, 22px). Fold twisty rotates via the header's
    aria-expanded; leaf headers carry an invisible placeholder (text column
    alignment discipline). */
-.task-chain-block { margin: 2px 0; }
+.task-chain-block { margin: var(--ds-space-half) 0; }
 
 .task-chain-twisty {
   flex: 0 0 auto;
@@ -458,7 +458,7 @@
   flex: 0 1 auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   min-width: 0;
   margin-top: 3px;
   border-radius: var(--ds-radius-chip);
@@ -489,10 +489,10 @@
 .task-chain-member {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   height: var(--task-chain-node-h);
   box-sizing: border-box;
-  padding: 0 4px 0 calc(16px + min(var(--nest, 0), var(--task-chain-nest-cap)) * var(--task-chain-nest-step));
+  padding: 0 var(--ds-space-1) 0 calc(16px + min(var(--nest, 0), var(--task-chain-nest-cap)) * var(--task-chain-nest-step));
   font-size: var(--ds-fs-meta);
   line-height: 1;
   cursor: pointer;
@@ -630,7 +630,7 @@
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--ds-space-half);
 }
 .task-delegate-btn {
   display: inline-flex;

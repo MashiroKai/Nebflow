@@ -121,7 +121,7 @@
 
 #nf-quickinput-host .quick-input-header,
 #nf-quickinput-host .quick-input-and-message {
-  padding: 10px 12px 6px;
+  padding: var(--ds-space-glass-x) var(--ds-space-3) var(--ds-space-1h);
   border-bottom: 1px solid var(--nf-chip-border);
   background: transparent;
 }
@@ -129,7 +129,7 @@
 #nf-quickinput-host .quick-input-box input {
   width: 100%;
   box-sizing: border-box;
-  padding: 8px 10px;
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--nf-chip-border);
   background: var(--nf-chip-bg);
@@ -144,7 +144,7 @@
 }
 
 #nf-quickinput-host .quick-input-list {
-  padding: 4px 6px 6px;
+  padding: var(--ds-space-1) var(--ds-space-1h) var(--ds-space-1h);
 }
 
 /* 行：**不改布局**（.monaco-list-row 是虚拟列表的行，display/height 都被内联管着，
@@ -157,7 +157,7 @@
 }
 
 #nf-quickinput-host .quick-input-list .quick-input-list-entry {
-  padding-left: 2px;
+  padding-left: var(--ds-space-half);
 }
 
 #nf-quickinput-host .quick-input-list .monaco-highlighted-label {
@@ -190,7 +190,7 @@
    它是**行内**元素（.quick-input-list-separator 住在 22px 的行里），所以用
    line-height 撑满而不是 padding —— padding 会把它挤出所在行（首版的「只剩一条线」）。 */
 #nf-quickinput-host .quick-input-list .quick-input-list-separator {
-  padding: 0 2px;
+  padding: 0 var(--ds-space-half);
   font-size: 9.5px;
   font-weight: 600;
   letter-spacing: 0.7px;

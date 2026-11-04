@@ -950,7 +950,7 @@
 .ds-tool-card .tool-mail-msg li { margin: var(--ds-space-half) 0; }
 .ds-tool-card .tool-mail-msg code {
   background: color-mix(in srgb, var(--ds-text) 5%, transparent);
-  padding: 1px 4px;
+  padding: 1px var(--ds-space-1);
   border-radius: var(--ds-radius-badge);
   font-size: var(--ds-fs-meta);
   font-family: var(--ds-font-mono);

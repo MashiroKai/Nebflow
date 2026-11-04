@@ -146,7 +146,7 @@ html[data-theme="dark"] {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
   width: 100%;
   margin: var(--nfc-gap-block) 0 0;
 }
@@ -188,8 +188,8 @@ html[data-theme="dark"] {
 .nfc-error {
   width: 100%;
   box-sizing: border-box;
-  margin: 16px 0 0;
-  padding: 6px 10px;
+  margin: var(--ds-space-4) 0 0;
+  padding: var(--ds-space-1h) var(--ds-space-glass-x);
   border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-hint);   /* 12px 既有档 = --ds-fs-hint 同值 */
   line-height: 1.5;
@@ -221,7 +221,7 @@ html[data-theme="dark"] {
 .nfc-steps {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--ds-space-2);
   width: 100%;
   margin: var(--nfc-gap-title) 0 0;
   text-align: center;
@@ -230,7 +230,7 @@ html[data-theme="dark"] {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
   font-size: var(--nfc-body-size);
   line-height: 1.5;
   color: var(--nfc-subtle);

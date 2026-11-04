@@ -28,7 +28,7 @@ import { lookupAvatar, rememberAvatarProfile, lastKnownAvatarProfile, forgetAvat
 function showLoginSuccessBanner(message) {
   const banner = document.createElement('div');
   banner.textContent = message;
-  banner.style.cssText = 'position:fixed;top:50px;left:50%;transform:translateX(-50%);background:var(--color-surface,rgba(20,25,35,0.92));color:var(--color-text);padding:8px 16px;border-radius:var(--ds-radius-input);z-index:1000;font-size:var(--ds-fs-body);box-shadow:0 2px 12px rgba(0,0,0,0.15);border:1px solid var(--glass-border);transition:opacity 0.3s;';
+  banner.style.cssText = 'position:fixed;top:50px;left:50%;transform:translateX(-50%);background:var(--color-surface,rgba(20,25,35,0.92));color:var(--color-text);padding:var(--ds-space-2) var(--ds-space-4);border-radius:var(--ds-radius-input);z-index:1000;font-size:var(--ds-fs-body);box-shadow:0 2px 12px rgba(0,0,0,0.15);border:1px solid var(--glass-border);transition:opacity 0.3s;';
   document.body.appendChild(banner);
   setTimeout(() => { banner.style.opacity = '0'; }, 2700);
   setTimeout(() => banner.remove(), 3000);

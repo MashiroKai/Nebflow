@@ -4,7 +4,7 @@
    sidebar.css); kept separate here since the panel is its own module. */
 
 #executors-content {
-  padding: 16px 20px;
+  padding: var(--ds-space-4) var(--ds-space-5);
   overflow-y: auto;
   height: 100%;
   box-sizing: border-box;
@@ -13,27 +13,27 @@
 .executor-loading {
   color: var(--text-secondary, #888);
   font-size: var(--ds-fs-body);
-  padding: 24px 4px;
+  padding: var(--ds-space-6) var(--ds-space-1);
 }
 
 .executor-hint {
   font-size: var(--ds-fs-hint);
   line-height: 1.5;
   color: var(--text-secondary, #888);
-  margin-bottom: 12px;
+  margin-bottom: var(--ds-space-3);
 }
 
 .executor-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--ds-space-2);
 }
 
 .executor-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-3) 14px;
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));
   border-radius: var(--ds-radius-card-sm);
   background: var(--panel-bg, transparent);
@@ -70,14 +70,14 @@
   font-weight: 600;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-wrap: wrap;
 }
 
 .executor-card-desc {
   font-size: var(--ds-fs-hint);
   color: var(--text-secondary, #888);
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -135,7 +135,7 @@
   background: transparent;
   color: var(--text-primary, #ddd);
   font-size: var(--ds-fs-hint);
-  padding: 5px 12px;
+  padding: 5px var(--ds-space-3);
   border-radius: var(--ds-radius-input);
   cursor: pointer;
 }

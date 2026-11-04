@@ -3,20 +3,20 @@
 
 /* Section container */
 .nf-filechanges {
-  margin-top: 10px;
+  margin-top: var(--ds-space-glass-x);
 }
 .nf-filechanges-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 
 /* File list */
 .nf-filechanges-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin-top: 6px;
+  gap: var(--ds-space-1);
+  margin-top: var(--ds-space-1h);
 }
 
 /* One file entry (details/summary = click to expand the diff) */
@@ -29,8 +29,8 @@
 .nf-fc-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
+  gap: var(--ds-space-2);
+  padding: 5px var(--ds-space-2);
   cursor: pointer;
   user-select: none;
   font-size: var(--ds-fs-hint);
@@ -68,7 +68,7 @@
 /* change-type badges */
 .nf-fc-badge {
   font-size: 10px;
-  padding: 1px 6px;
+  padding: 1px var(--ds-space-1h);
   border-radius: var(--ds-radius-badge);
   white-space: nowrap;
   border: 1px solid transparent;
@@ -103,7 +103,7 @@
   overflow: auto;
 }
 .nf-fc-empty {
-  padding: 8px;
+  padding: var(--ds-space-2);
   font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
 }
@@ -114,7 +114,7 @@
 }
 .nf-diff-body {
   margin: 0;
-  padding: 6px 0;
+  padding: var(--ds-space-1h) 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--ds-fs-meta);
   line-height: 1.5;
@@ -122,7 +122,7 @@
   overflow-x: auto;
 }
 .nf-diff-row {
-  padding: 0 8px;
+  padding: 0 var(--ds-space-2);
 }
 .nf-diff-add {
   background: rgba(63, 185, 80, 0.15);
@@ -166,7 +166,7 @@
   min-height: 0;
   min-width: 0;
   overflow: auto;
-  padding: 56px 0 12px;
+  padding: 56px 0 var(--ds-space-3);
 }
 /* ── 粘顶文件头标题胶囊（2026-10-22 作者三令批）────────────────────────────
    作者令①居中 ②全量 frosted token ③动画节奏放慢（慢一点/自然一点/流畅一点，
@@ -201,7 +201,7 @@
   z-index: 2;
   display: flex;
   justify-content: center;
-  padding: 6px 12px 4px;
+  padding: var(--ds-space-1h) var(--ds-space-3) var(--ds-space-1);
   font-size: var(--ds-fs-hint);
   min-width: 0;
   pointer-events: none;
@@ -209,11 +209,11 @@
 .fcv-headpill {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   width: fit-content;
   max-width: 100%;
   min-width: 0;
-  padding: 4px 12px;
+  padding: var(--ds-space-1) var(--ds-space-3);
   border-radius: var(--ds-radius-pill);
   border: 1px solid var(--glass-border);
   background:
@@ -257,15 +257,15 @@
   to   { box-shadow: var(--frost-shadow), 0 4px 14px rgba(0, 0, 0, 0.10); }
 }
 .fcv-view .nf-diff-body {
-  padding: 6px 8px 8px;
+  padding: var(--ds-space-1h) var(--ds-space-2) var(--ds-space-2);
 }
 /* 手机层文件条（mobile-layer = 左栏面板退场层，diffCanvas 仅在该层渲染）：
    pills 横滚，行族 = .nf-fc 复用；选中态与左栏面板同式（背景 + 阴影）。 */
 .fcv-filestrip {
   display: flex;
-  gap: 4px;
+  gap: var(--ds-space-1);
   overflow-x: auto;
-  padding: 8px 12px;
+  padding: var(--ds-space-2) var(--ds-space-3);
   border-bottom: 1px solid var(--color-border, rgba(128, 128, 128, 0.2));
 }
 .fcv-filestrip .nf-fc {
@@ -305,10 +305,10 @@
 .nf-rcpt-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   min-width: 0;
   margin: -2px -6px;
-  padding: 2px 6px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
   border-radius: var(--ds-radius-chip);
   cursor: pointer;
   transition: background-color 0.15s ease, box-shadow 0.15s ease;
@@ -387,14 +387,14 @@
 .nf-rcpt-summary {
   display: none;
   align-items: baseline;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   min-width: 0;
   font-size: var(--ds-fs-hint);
   color: var(--color-text);
 }
 .nf-rcpt-top[aria-expanded='true'] + .nf-rcpt-summary {
   display: flex;
-  margin-top: 4px;
+  margin-top: var(--ds-space-1);
 }
 .nf-rcpt-summary-text {
   flex: 1 1 auto;
@@ -424,7 +424,7 @@
   display: inline-flex;
   align-items: baseline;
   flex: 0 0 auto;
-  gap: 4px;
+  gap: var(--ds-space-1);
   padding: 1px 9px;
   margin: 0;
   border: 1px solid var(--color-border);
@@ -475,7 +475,7 @@ span.nf-rcpt-note { cursor: default; }
 /* 展开态间距：摘要/正文只在可见时计费（折叠 display:none ⇒ 零高度贡献）。 */
 .nf-rcpt-summary + .injected-content,
 .nf-rcpt-top[aria-expanded='true'] + .injected-content {
-  margin-top: 6px;
+  margin-top: var(--ds-space-1h);
 }
 
 /* ── 左栏「变更文件」面板（#panel-filechanges，拆面板批 2026-10-22）────────
@@ -494,13 +494,13 @@ span.nf-rcpt-note { cursor: default; }
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 8px;
+  padding: var(--ds-space-2);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ds-space-1);
 }
 .nfp-empty {
-  padding: 10px 6px;
+  padding: var(--ds-space-glass-x) var(--ds-space-1h);
   font-size: var(--ds-fs-hint);
   line-height: 1.5;
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
@@ -508,7 +508,7 @@ span.nf-rcpt-note { cursor: default; }
 .nfp-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ds-space-1);
 }
 .nfp-list .nf-fc {
   cursor: pointer;
@@ -527,7 +527,7 @@ span.nf-rcpt-note { cursor: default; }
    装载态 + 失败可见反馈面。颜色只用既有 --color-* token（禁裸 hex）。 ── */
 /* 流式渲染进行中：Canvas 阅读器首帧的装载态行（渲染完成即移除）。 */
 .nf-diff-loading {
-  padding: 8px 6px;
+  padding: var(--ds-space-2) var(--ds-space-1h);
   font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
   animation: nf-diff-loading-pulse 1.2s ease-in-out infinite;

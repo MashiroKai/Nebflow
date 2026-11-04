@@ -24,7 +24,10 @@ import { join, relative, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
-const WEB = join(ROOT, 'src/main/resources/web');
+// `--web-root <dir>` = 改别的静态根（如纯净 HEAD 树）。dry-run 打在这一边上，
+// 得到的逐令牌计数就是「改前有多少处该迁」，不受 apply 顺序 / 重复 apply 影响。
+const WR = process.argv.includes('--web-root') ? process.argv[process.argv.indexOf('--web-root') + 1] : null;
+const WEB = WR || join(ROOT, 'src/main/resources/web');
 const CSS_DIR = join(WEB, 'css');
 const JS_DIR = join(WEB, 'js');
 const OUT_DIR = fileURLToPath(new URL('./', import.meta.url));

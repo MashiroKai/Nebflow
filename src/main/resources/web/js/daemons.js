@@ -87,13 +87,13 @@ const DAEMON_CSS = `
 /* ── Panel Header ── */
 .daemon-panel-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 14px 6px; flex-shrink: 0;
+  padding: var(--ds-space-3) 14px var(--ds-space-1h); flex-shrink: 0;
 }
 .daemon-panel-title {
   font-size: var(--ds-fs-body); font-weight: 600; color: var(--color-text);
   letter-spacing: -0.02em;
 }
-.daemon-panel-header-right { display: flex; align-items: center; gap: 4px; }
+.daemon-panel-header-right { display: flex; align-items: center; gap: var(--ds-space-1); }
 
 /* ── Close Button ── */
 .daemon-close-btn {
@@ -116,7 +116,7 @@ const DAEMON_CSS = `
 
 /* ── Panel Body ── */
 .daemon-panel-body {
-  flex: 1; overflow-y: auto; padding: 4px 6px 8px; min-height: 80px;
+  flex: 1; overflow-y: auto; padding: var(--ds-space-1) var(--ds-space-1h) var(--ds-space-2); min-height: 80px;
   overscroll-behavior: contain;
 }
 .daemon-panel-body::-webkit-scrollbar { width: 4px; }
@@ -132,15 +132,15 @@ const DAEMON_CSS = `
 /* ── Empty State ── */
 .daemon-empty {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  padding: 40px 16px 36px; gap: 6px; user-select: none;
-  border-radius: var(--ds-radius-button); margin: 0 4px;
+  padding: 40px var(--ds-space-4) 36px; gap: var(--ds-space-1h); user-select: none;
+  border-radius: var(--ds-radius-button); margin: 0 var(--ds-space-1);
 }
 .daemon-empty-text { font-size: var(--ds-fs-hint); color: var(--color-text); opacity: 0.3; letter-spacing: -0.01em; }
 .daemon-empty-hint { font-size: var(--ds-fs-meta); color: var(--color-text); opacity: 0.18; letter-spacing: -0.01em; }
 
 /* ── Daemon Row ── */
 .daemon-row {
-  display: flex; align-items: center; gap: 10px; padding: 9px 10px;
+  display: flex; align-items: center; gap: var(--ds-space-glass-x); padding: 9px var(--ds-space-glass-x);
   border-radius: var(--ds-radius-button); margin: 1px 0; transition: background 0.15s;
 }
 .daemon-row.anim { animation: daemonRowIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) backwards; }
@@ -190,7 +190,7 @@ const DAEMON_CSS = `
 
 /* ── Auto-start Toggle (small switch) ── */
 .daemon-autostart {
-  display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: var(--ds-space-1); flex-shrink: 0;
   cursor: pointer; user-select: none; opacity: 0.75;
   transition: opacity 0.15s;
 }
@@ -217,9 +217,9 @@ const DAEMON_CSS = `
 }
 
 /* ── Action Buttons ── */
-.daemon-actions { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.daemon-actions { display: flex; align-items: center; gap: var(--ds-space-1); flex-shrink: 0; }
 .daemon-btn {
-  font: 500 11px -apple-system, sans-serif; padding: 4px 10px;
+  font: 500 11px -apple-system, sans-serif; padding: var(--ds-space-1) var(--ds-space-glass-x);
   border-radius: 7px; border: 1px solid transparent;
   background: var(--glass-control-bg);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);

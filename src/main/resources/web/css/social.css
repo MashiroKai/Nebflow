@@ -56,10 +56,10 @@
      existing values only). Measured asymmetry: the title sat 21px from the
      modal edge, the close button 15px; cards measured 21/21 and the embedded
      appId box 16/16 — the header chrome was the one unequal layer. */
-  padding: 14px 20px 12px 20px;
+  padding: 14px var(--ds-space-5) var(--ds-space-3) var(--ds-space-5);
   border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
-  gap: 8px;
+  gap: var(--ds-space-2);
 }
 #social-modal-title {
   font-size: var(--ds-fs-title);
@@ -67,7 +67,7 @@
   color: var(--color-frame-text-bright);
 }
 .social-modal-body {
-  padding: 16px 20px 20px;
+  padding: var(--ds-space-4) var(--ds-space-5) var(--ds-space-5);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -76,7 +76,7 @@
 }
 
 /* ── Sections ───────────────────────────────────────────────────────────── */
-.social-section { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.social-section { display: flex; flex-direction: column; gap: var(--ds-space-2); min-width: 0; }
 /* 🔴 Author ruling 2026-09-23 (Part A): the remote-access section is WITHHELD
    from the visible face (`hidden` in index.html) — hidden, not deleted, so its
    DOM, JS consumers and locale keys all survive and restoring it is one
@@ -98,12 +98,12 @@
 /* weixin-scanbind (2026-10-03, 极简 pass): the rhythm loosens one step — the
    list breathes at 10px, the cards carry 14px air — all values stay in the
    existing token/length family (no new colour, radius or breakpoint). */
-.social-card-list { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.social-card-list { display: flex; flex-direction: column; gap: var(--ds-space-glass-x); min-width: 0; }
 .social-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
+  gap: var(--ds-space-glass-x);
+  padding: 14px var(--ds-space-4);
   border-radius: var(--ds-radius-card-md);
   border: 1px solid var(--glass-border);
   background: var(--glass-etched-bg);
@@ -112,7 +112,7 @@
 .social-card-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-wrap: wrap;
   min-width: 0;
 }
@@ -177,10 +177,10 @@
 .social-card-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 12px;
+  gap: var(--ds-space-2) var(--ds-space-3);
   min-width: 0;
 }
-.social-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.social-field { display: flex; flex-direction: column; gap: var(--ds-space-1); min-width: 0; }
 .social-field-label {
   font-size: var(--ds-fs-meta);
   font-weight: 500;
@@ -190,7 +190,7 @@
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
-  padding: 6px 8px;
+  padding: var(--ds-space-1h) var(--ds-space-2);
   font: 400 12px -apple-system, BlinkMacSystemFont, sans-serif;
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-border);
@@ -212,8 +212,8 @@
   color: var(--status-word);
   overflow-wrap: anywhere;
 }
-.social-card-hint .st-ic { width: 12px; height: 12px; margin-right: 4px; vertical-align: -2px; }
-.social-card-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.social-card-hint .st-ic { width: 12px; height: 12px; margin-right: var(--ds-space-1); vertical-align: -2px; }
+.social-card-actions { display: flex; align-items: center; gap: var(--ds-space-2); flex-wrap: wrap; }
 .social-save-state { font-size: 10px; color: var(--color-frame-text-muted); }
 
 /* ── feishu-panel: two-face scanBind card ───────────────────────────────────
@@ -224,14 +224,14 @@
 .social-live {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
   border: 1px solid var(--glass-border);
   border-radius: var(--ds-radius-input);
   background: var(--glass-etched-bg);
   min-width: 0;
 }
-.social-live-row { display: flex; gap: 8px; font-size: var(--ds-fs-meta); line-height: 1.45; min-width: 0; }
+.social-live-row { display: flex; gap: var(--ds-space-2); font-size: var(--ds-fs-meta); line-height: 1.45; min-width: 0; }
 .social-live-value { color: var(--color-frame-text); overflow-wrap: anywhere; }
 /* 🔴 socpanel-min wave-2 (author ruling 2026-10-01), removal readings taken in
    this tree before deleting (emitter grep over the web JS and HTML sources):
@@ -264,15 +264,15 @@
 
 /* ── Remote-access section (令②): an independent section, NOT a channel card.
    This batch renders it inert on purpose — no link, no QR, no address. ──── */
-.social-remote-card { gap: 10px; }
+.social-remote-card { gap: var(--ds-space-glass-x); }
 .social-remote-note {
   font-size: var(--ds-fs-meta);
   line-height: 1.5;
   color: var(--color-frame-text);
   border-left: 2px solid var(--color-frame-text-dim);
-  padding-left: 8px;
+  padding-left: var(--ds-space-2);
 }
-.social-remote-safety { display: flex; flex-direction: column; gap: 4px; }
+.social-remote-safety { display: flex; flex-direction: column; gap: var(--ds-space-1); }
 .social-remote-safety-line {
   font-size: var(--ds-fs-meta);
   line-height: 1.45;
@@ -282,7 +282,7 @@
 /* ── Narrow viewports (design §B.2: existing 480 / 768 values only) ─────── */
 @media (max-width: 768px) {
   #social-modal { max-width: calc(100vw - 24px); max-height: 90vh; }
-  .social-modal-body { padding: 12px 14px 16px; gap: 14px; }
+  .social-modal-body { padding: var(--ds-space-3) 14px var(--ds-space-4); gap: 14px; }
 }
 @media (max-width: 480px) {
   /* Fields go single-column; the pill + switch row may wrap without pushing
@@ -304,8 +304,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 6px 0 2px;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-1h) 0 var(--ds-space-half);
   min-width: 0;
 }
 .social-scan-qr {
@@ -415,7 +415,7 @@
 .social-item-line {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-wrap: wrap;
   min-width: 0;
 }

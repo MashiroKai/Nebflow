@@ -9,8 +9,8 @@
 /* 框内 → 人面子卡片：安静的内容卡面（结论/关键数字/图表的呈现默认值）。
    玻璃质感引用 sapphire token 单源；亮暗双主题随 CSS 变量自动翻转。 */
 .nf-human-card {
-  margin: 8px 0;
-  padding: 10px 14px;
+  margin: var(--ds-space-2) 0;
+  padding: var(--ds-space-glass-x) 14px;
   border-radius: var(--ds-radius-card-sm);
   background: var(--sapphire-edge, var(--color-frame-hover));
   border: 1px solid var(--color-frame-border-light, var(--color-frame-border));
@@ -22,7 +22,7 @@
 /* 框外 → 细节抽屉：默认收起的 <details>。summary 行 = 弱化的可点行，
    形态照仓内 nf-fc / flow-blocked-raw 两处 <details> 先例。 */
 .nf-human-details {
-  margin: 6px 0;
+  margin: var(--ds-space-1h) 0;
   border-radius: var(--ds-radius-input);
 }
 
@@ -33,7 +33,7 @@
   font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text-muted);
-  padding: 4px 2px;
+  padding: var(--ds-space-1) var(--ds-space-half);
   border-radius: var(--ds-radius-chip);
 }
 
@@ -41,7 +41,7 @@
 .nf-human-details > summary::before {
   content: "▸";
   display: inline-block;
-  margin-right: 6px;
+  margin-right: var(--ds-space-1h);
   font-size: 10px;
   transition: transform 0.12s ease;
 }
@@ -59,7 +59,7 @@
 .nf-output { display: block; }
 .bubble .nf-output-raw-pre {
   margin: 0;
-  padding: 8px 10px;
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: var(--ds-fs-hint);
   line-height: 1.55;
