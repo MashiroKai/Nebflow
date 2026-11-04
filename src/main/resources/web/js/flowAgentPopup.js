@@ -159,7 +159,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
    Bottom padding ≥12px: visual gap above the glass input bar (popup-input-polish §I). */
 .flow-agent-chat {
   flex: 1; overflow-y: auto;
-  padding: 12px 16px 12px;
+  padding: var(--ds-space-3) var(--ds-space-4) var(--ds-space-3);
   display: flex; flex-direction: column;
   overscroll-behavior: contain;
   scrollbar-color: var(--color-frame-border) transparent;
@@ -168,8 +168,8 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 /* Footer status bar — matches #input-bar glassmorphism + sapphire refraction */
 .flow-agent-footer {
   flex-shrink: 0;
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 16px;
+  display: flex; align-items: center; gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-4);
   border-top: 1px solid var(--glass-border);
   position: relative;
   /* 2026-08-24 frozen-input spec §4: 300ms material transition */
@@ -252,7 +252,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   height: 13px;
   color: rgb(var(--amber));
   vertical-align: -2px;
-  margin-right: 4px;
+  margin-right: var(--ds-space-1);
   flex-shrink: 0;
 }
 .flow-agent-footer .fa-task .fa-task-text {
@@ -279,7 +279,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 .flow-agent-footer .fa-phase {
   font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
-  margin-left: 2px;
+  margin-left: var(--ds-space-half);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -298,7 +298,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
    sapphire. Read-only kinds grey out instead of hiding (permission matrix). */
 .flow-agent-footer .fa-manage {
   margin-left: auto;
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: var(--ds-space-2);
   flex-shrink: 0;
 }
 .flow-agent-footer .fa-mgmt-btn {

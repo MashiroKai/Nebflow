@@ -157,8 +157,9 @@ object PresenceCandidateProbe:
    * ① 上报面卫生（修 C-3）：丢不可路由地址 + 丢隧道网卡的非 tailnet 地址 + 去重 + 封顶。
    *
    * 三条不变量：
-   *  - **保序**：只删不重排——排序权仍归 `EndpointPreference.rank`（tailnet → 同 /24 → 其余）。
-   *    本批**不改**排序（audit.md §4③ 三条理由）。
+   *  - **职责边界**：过滤（丢不可路由 / 丢隧道网卡的非 tailnet 地址）、去重、封顶**由本函数负责**；
+   *    **排序不由本函数负责**——由调用点前置的 [[preferV6]]（v6 前置 + v4 必留槽位）与
+   *    `EndpointPreference.rank`（tailnet → 同 /24 → 其余）共同决定；本函数在已排好的序列上只删不重排。
    *  - **不误杀首选项**：`100.64/10` 地址即使挂在 `utun`（macOS tailscale 的真实形态）
    *    也照样保留。
    *  - **永不返回空**：过滤后为空 ⇒ 原样返回入参（沿用 `NeblinkClient.detectLocalEndpoints`
@@ -174,7 +175,10 @@ object PresenceCandidateProbe:
     else
       val reportable = endpoints.filterNot(ep => isUnreportableAddress(ep.address))
       val noTunnels =
-        reportable.filterNot(ep => isTunnelNicLabel(ep.label) && !EndpointPreference.isTailscaleHost(ep.address))
+        reportable.filterNot(ep =>
+          isTunnelNicLabel(ep.label) &&
+            !EndpointPreference.isTailscaleHost(ep.address) && !EndpointPreference.isTailnetV6(ep.address)
+        )
       // 隧道网卡被全部丢掉时退回上一档（仍比「什么都不报」强）。
       val kept = if noTunnels.nonEmpty then noTunnels else reportable
       val deduped = kept.foldLeft(List.empty[NeblinkEndpoint]) { (acc, ep) =>

@@ -91,7 +91,7 @@ body.mobile-layer .mh-search-fab {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: none;
   border: 1px solid transparent; /* reserves edge space for glass hover（同 #search-btn） */
   color: var(--color-frame-text-muted);

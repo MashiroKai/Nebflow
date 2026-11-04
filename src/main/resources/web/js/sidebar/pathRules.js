@@ -194,7 +194,7 @@ export function handleBrowseResult(data) {
 
   if (entries.length === 0) {
     const emptyHint = document.createElement('div');
-    emptyHint.style.cssText = 'text-align:center;padding:24px;color:var(--color-frame-text-muted);font-size:12px;';
+    emptyHint.style.cssText = 'text-align:center;padding:var(--ds-space-6);color:var(--color-frame-text-muted);font-size:var(--ds-fs-hint);';
     emptyHint.textContent = t('pathPicker.empty');
     list.appendChild(emptyHint);
     return;

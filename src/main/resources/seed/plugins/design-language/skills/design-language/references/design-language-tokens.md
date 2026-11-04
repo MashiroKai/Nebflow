@@ -161,7 +161,7 @@
 | 2xl | `--ds-radius-2xl` | 18px | 工具卡、大卡（Apple rounded.lg） |
 | shell | `--ds-radius-shell` | 20px | 弹窗外壳（全站唯一弹窗圆角） |
 | pill | `--ds-radius-pill` | 999px | 胶囊、开关、圆钮、按钮族现行形态（9999px 写法归此） |
-| 例外槽（待建） | `--ds-radius-thin` 2px | 2px | 滚动条拇指、进度条、微圆点（细件专属，禁他处复用） |
+| 例外槽（2026-11-04 实施批出生） | `--ds-radius-thin` | 2px | 滚动条拇指、进度条、微圆点（细件专属，禁他处复用） |
 | 形态（不入刻度） | — | `50%` / `0` / `inherit` / `calc()` | 正圆（头像·圆点·圆钮）、贴边直角屏、承袭父级、动态计算 |
 
 ### 2.2 间距刻度（4px 栅格 10 档 + 2 例外档）
@@ -170,7 +170,7 @@
 |---|---|---|---|
 | half | `--ds-space-half` | 2px | 4px 栅格外半步微缝（图标与角标、紧贴件） |
 | 1 | `--ds-space-1` | 4px | 紧排件缝、行内图标与文字 |
-| 例外·半步（待建 `--ds-space-1h`） | 6px | 6px | 图标+文字小缝、chip 内距（实测 349 处，见 §3-②） |
+| 例外·半步（`--ds-space-1h`，2026-11-04 实施批出生） | `--ds-space-1h` | 6px | 图标+文字小缝、chip 内距（实测 349 处，见 §3-②） |
 | 2 | `--ds-space-2` | 8px | 控件间 gap、行内距、按钮行 |
 | 例外·玻璃条横缝 | `--ds-space-glass-x` | 10px | 玻璃条/胶囊横缝既有档（迁移向 8/12 渐进收） |
 | 3 | `--ds-space-3` | 12px | 卡内块距、行横距、节内块距 |
@@ -270,7 +270,7 @@ Ask 气泡的 9×13 是主对话 10×14 的近似复制 ⇒ 收敛主对话槽�
 |---|---|---|---|
 | 7px | 26 | `var(--ds-radius-input)` 8px | `.project-open-btn` projectPanel.css:75 / `.fwd-tip` chat.css:4701 / `.path-chip` projectPanel.css:725 |
 | 3px | 21 | `var(--ds-radius-badge)` 4px | `.bubble.ai code` chat.css:1452 / `.cfg-card-badge` sidebar.css:1159 / `.reminder-overdue-tag` reminder.css:453 |
-| 2px | 21 | `待建 --ds-radius-thin` | 滚动条拇指规则 12 处 / `.dropbox-file-progress` dropbox.css:254 / `.pa-dot` chat.css:3114 |
+| 2px | 21 | `--ds-radius-thin`（实施批已出生） | 滚动条拇指规则 12 处 / `.dropbox-file-progress` dropbox.css:254 / `.pa-dot` chat.css:3114 |
 | 5px | 17 | `var(--ds-radius-chip)` 6px | `.ask-cite` ask.css:231 / `.dvp-chip` delegatePanorama.css:316 / `.tfl-chip` todo-face.css:395 |
 | 9999px | 14 | `var(--ds-radius-pill)` 999px | friends.css×9 / dropbox.css×2 |
 | 9px | 8 | `var(--ds-radius-button)` 10px | `.fc-icon` chat.css:4667 / `.att-chip` perception.css:363 |
@@ -282,7 +282,7 @@ Ask 气泡的 9×13 是主对话 10×14 的近似复制 ⇒ 收敛主对话槽�
 
 | 现值 | 处数（padding+gap+margin） | 目标 |
 |---|---|---|
-| 6px | 349 | `待建 --ds-space-1h`（半步档；未批前保持现状，禁新增） |
+| 6px | 349 | `--ds-space-1h`（半步档；2026-11-04 实施批已出生并迁移） |
 | 5px | 114 | 4px（紧排）/ 6px（件缝），逐处按语义复核 |
 | 3px | 93 | 2px（半步微缝）/ 4px |
 | 7px | 66 | 6px（半步）/ 8px |
@@ -359,6 +359,7 @@ node scripts/check-design-spec-sync.mjs --json   # 机器读
 | `--ds-radius-2xl` | `18px` | 工具卡、大卡 |
 | `--ds-radius-shell` | `20px` | 弹窗外壳 |
 | `--ds-radius-pill` | `999px` | 胶囊、开关、圆钮 |
+| `--ds-radius-thin` | `2px` | 细件例外槽：滚动条拇指/进度条/微圆点（禁他处复用） |
 | `--ds-space-half` | `2px` | 半步微缝 |
 | `--ds-space-1` | `4px` | 紧排件缝 |
 | `--ds-space-2` | `8px` | 控件间 gap、行内距 |
@@ -370,6 +371,7 @@ node scripts/check-design-spec-sync.mjs --json   # 机器读
 | `--ds-space-12` | `48px` | 区块级留白 |
 | `--ds-space-16` | `64px` | 大区块级留白 |
 | `--ds-space-glass-x` | `10px` | 玻璃条横缝既有档（迁移向 8/12） |
+| `--ds-space-1h` | `6px` | 半步件缝例外档：图标+文字小缝、chip 内距 |
 | `--ds-fs-meta` | `11px` | meta/徽标/小节标签（可读下限） |
 | `--ds-fs-hint` | `12px` | hint/caption |
 | `--ds-fs-btn` | `12px` | 按钮文字 |

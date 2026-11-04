@@ -65,8 +65,8 @@
      回退为 0（桌面回归靠边），手机端现行 16px 不在本批范围 —— 由本媒体
      查询承接，保持 ≤768px 视口的现行形态逐字节不变。 */
   #chat {
-    padding-left: 16px;
-    padding-right: 16px;
+    padding-left: var(--ds-space-4);
+    padding-right: var(--ds-space-4);
   }
 
   /* Rich message content must scroll inside its box, never widen the page. */
@@ -84,7 +84,7 @@
   #main input[type='text'],
   #main input[type='password'],
   #main input:not([type]) {
-    font-size: 16px;
+    font-size: var(--ds-fs-mobile-callout);
   }
 
   /* Notch / home indicator: keep the composer clear of system chrome

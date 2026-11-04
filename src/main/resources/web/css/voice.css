@@ -37,7 +37,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   flex-shrink: 0;
   transition: background 0.15s, color 0.15s, opacity 0.15s, border-color 0.15s, box-shadow 0.15s;
 }

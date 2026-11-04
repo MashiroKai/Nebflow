@@ -65,7 +65,7 @@
   /* 胶囊与顶栏/聊天之间的呼吸位（4px 栅格）：6px 上 + 6px 下。槽位在顶带内，
      其下缘即 #chat 让位的观测点之一（js/main.js bandBottom 读 #top-overlays
      实测盒 ⇒ 胶囊出现即把消息列让出）。 */
-  padding: 6px 8px;
+  padding: var(--ds-space-1h) var(--ds-space-2);
   margin: 0;
   max-height: none;
   overflow: visible;
@@ -78,7 +78,7 @@
 }
 #task-list.has-tasks {
   max-height: none;
-  padding: 6px 8px;
+  padding: var(--ds-space-1h) var(--ds-space-2);
   display: block;
   overflow: visible;
   flex-direction: initial;
@@ -299,8 +299,8 @@
 .tfl-header {
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 4px 10px;
+  gap: var(--ds-space-half);
+  padding: var(--ds-space-1) var(--ds-space-glass-x);
   border-bottom: 1px solid color-mix(in srgb, var(--color-text, #000) 8%, transparent);
   flex-shrink: 0;
 }
@@ -319,8 +319,8 @@
 .tfl-header-count.has-faces {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: var(--ds-space-1h);
+  font-size: var(--ds-fs-body);
   font-weight: 600;
   color: color-mix(in srgb, var(--color-text, #000) 78%, transparent);
 }
@@ -340,7 +340,7 @@
   height: 24px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: transparent;
   color: color-mix(in srgb, var(--color-text, #000) 35%, transparent);
   cursor: pointer;
@@ -359,10 +359,10 @@
   border-bottom: 1px solid color-mix(in srgb, var(--color-text, #000) 8%, transparent);
 }
 .tfl-filterbar {
-  padding: 4px 10px 6px;
+  padding: var(--ds-space-1) var(--ds-space-glass-x) var(--ds-space-1h);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ds-space-1);
   opacity: 0;
   transform: translateY(-8px);
   transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
@@ -371,7 +371,7 @@
 .tfl-chips-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   min-width: 0;
 }
 .tfl-chips-viewport {
@@ -382,14 +382,14 @@
 .tfl-chips-track {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   will-change: transform;
 }
 .tfl-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 6px;
+  gap: var(--ds-space-1);
+  padding: 3px var(--ds-space-1h);
   min-height: 26px;
   border: 0.8px solid transparent;
   border-radius: 5px;
@@ -471,7 +471,7 @@
   height: 26px;
   padding: 0;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: transparent;
   color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
   cursor: pointer;
@@ -519,8 +519,8 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 2px 7px;
-  border-radius: 999px;
+  padding: var(--ds-space-half) 7px;
+  border-radius: var(--ds-radius-pill);
   background: var(--tfl-hint-bg);
   border: 0.5px solid var(--tfl-hint-stroke);
   color: var(--tfl-hint-text);
@@ -550,8 +550,8 @@
   position: fixed;
   z-index: 10002;
   width: 220px;
-  padding: 10px;
-  border-radius: 8px;
+  padding: var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-input);
   background: var(--tfl-pop-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -564,7 +564,7 @@
 .tfl-tag-popover.open { opacity: 1; transform: none; }
 .tfl-tag-name {
   width: 100%;
-  padding: 6px 8px;
+  padding: var(--ds-space-1h) var(--ds-space-2);
   border: none;
   border-radius: 5px;
   background: color-mix(in srgb, var(--color-text, #fff) 10%, transparent);
@@ -575,9 +575,9 @@
 .tfl-tag-colors {
   display: grid;
   grid-template-columns: repeat(5, 26px);
-  gap: 6px;
+  gap: var(--ds-space-1h);
   justify-content: center;
-  margin-top: 8px;
+  margin-top: var(--ds-space-2);
 }
 .tfl-tag-color {
   width: 26px;
@@ -609,18 +609,18 @@
   max-height: 44vh;
   overflow-y: auto;
   scrollbar-width: none;
-  padding: 2px 6px 6px;
+  padding: var(--ds-space-half) var(--ds-space-1h) var(--ds-space-1h);
   outline: none;
 }
 .tfl-list::-webkit-scrollbar { display: none; }
-.tfl-list-inner { display: flex; flex-direction: column; gap: 2px; }
+.tfl-list-inner { display: flex; flex-direction: column; gap: var(--ds-space-half); }
 
 .tfl-row {
   display: flex;
   align-items: flex-start;
   gap: 5px;
-  padding: 3px 6px;
-  border-radius: 4px;
+  padding: 3px var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
   background: color-mix(in srgb, var(--color-text, #000) 4%, transparent);
   border: 0.6px solid transparent;
   transition: opacity 0.3s ease-out, transform 0.3s ease-out, background 0.15s, border-color 0.15s;
@@ -635,7 +635,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  margin-top: 6px;
+  margin-top: var(--ds-space-1h);
 }
 .tfl-row-main {
   flex: 1 1 auto;
@@ -648,7 +648,7 @@
 .tfl-row-titleline {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   min-width: 0;
 }
 .tfl-row-title {
@@ -686,7 +686,7 @@
   white-space: nowrap;
   font: 400 9px/1.4 ui-monospace, SFMono-Regular, monospace;
   color: color-mix(in srgb, var(--color-text, #000) 55%, transparent);
-  padding: 1.5px 4px;
+  padding: 1.5px var(--ds-space-1);
   border-radius: 3px;
   background: color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 12%, transparent);
   border: 0.5px solid color-mix(in srgb, var(--tag-color, var(--color-text, #000)) 25%, transparent);
@@ -761,18 +761,18 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 6px;
-  padding: 6px 6px 6px 16px;
-  margin-top: 2px;
-  border-radius: 4px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-1h) var(--ds-space-1h) var(--ds-space-1h) var(--ds-space-4);
+  margin-top: var(--ds-space-half);
+  border-radius: var(--ds-radius-badge);
   background: color-mix(in srgb, var(--color-text, #000) 5%, transparent);
 }
 .tfl-edit-notes {
   border: none;
   outline: none;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: color-mix(in srgb, var(--color-text, #000) 6%, transparent);
-  padding: 3px 6px;
+  padding: 3px var(--ds-space-1h);
   font: 400 10px/1.4 ui-monospace, SFMono-Regular, monospace;
   color: color-mix(in srgb, var(--color-text, #000) 70%, transparent);
 }
@@ -782,10 +782,10 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 3px 6px;
+  padding: 3px var(--ds-space-1h);
   min-height: 26px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: transparent;
   color: color-mix(in srgb, var(--color-text, #000) 45%, transparent);
   font: 400 10px/1.2 -apple-system, BlinkMacSystemFont, sans-serif;
@@ -814,11 +814,11 @@
 .tfl-switch-knob-wrap {
   width: 26px;
   height: 15px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: color-mix(in srgb, var(--color-text, #000) 20%, transparent);
   display: flex;
   align-items: center;
-  padding: 2px;
+  padding: var(--ds-space-half);
   transition: background 0.15s;
 }
 .tfl-switch-knob {
@@ -860,18 +860,18 @@
 .tfl-create-row {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-space-half);
   animation: tfl-fade-in 0.28s ease backwards;
 }
 .tfl-create-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 6px;
-  border-radius: 4px;
+  gap: var(--ds-space-1h);
+  padding: 3px var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
   background: color-mix(in srgb, var(--color-text, #000) 5%, transparent);
 }
-.tfl-create-panel { padding-left: 6px; }
+.tfl-create-panel { padding-left: var(--ds-space-1h); }
 
 /* 空态 */
 .tfl-empty {
@@ -887,14 +887,14 @@
 /* ── 底部 Add footer（单标签视图常驻创建入口）─────────────────────────── */
 .tfl-footer {
   flex-shrink: 0;
-  padding: 6px 10px 8px;
+  padding: var(--ds-space-1h) var(--ds-space-glass-x) var(--ds-space-2);
   border-top: 1px solid color-mix(in srgb, var(--color-text, #000) 8%, transparent);
 }
 .tfl-add-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   width: 100%;
   height: 30px;
   padding: 0;
@@ -926,7 +926,7 @@
   transform: none;
   width: auto;
   height: auto;
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   animation: none;
   transform-origin: center;
 }
