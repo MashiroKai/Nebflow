@@ -1,0 +1,33 @@
+$ git merge --no-edit main   # 追平 0960a0898
+自动合并 src/main/resources/web/css/mobileLayer.css
+自动合并 src/main/resources/web/index.html
+自动合并 src/main/resources/web/js/todoFace.js
+Merge made by the 'ort' strategy.
+ src/main/resources/web/css/friends.css            |  34 ++
+ src/main/resources/web/css/mobileLayer.css        |  52 +-
+ src/main/resources/web/css/mobileSearchFlat.css   | 158 +++++
+ src/main/resources/web/css/sapphire.css           |  20 +-
+ src/main/resources/web/index.html                 |   1 +
+ src/main/resources/web/js/canvas.js               |  18 +-
+ src/main/resources/web/js/chat.js                 |   2 +-
+ src/main/resources/web/js/chat/msgTokenChip.js    |   3 +-
+ src/main/resources/web/js/messages.js             |   9 +-
+ src/main/resources/web/js/mobile/navController.js | 131 ++++
+ src/main/resources/web/js/mobile/socialSearch.js  | 112 ++++
+ src/main/resources/web/js/perception.js           |  12 +-
+ src/main/resources/web/js/todoFace.js             |   4 +-
+ tests/canvas-top-tabs-swipe.spec.mjs              | 493 +++++++++++++++
+ tests/mobile-pinned-search.spec.mjs               |  38 +-
+ tests/mobile-search-flat.spec.mjs                 | 511 ++++++++++++++++
+ tests/msg-footer-align.spec.mjs                   | 707 ++++++++++++++++++++++
+ tests/side-tab-legibility.spec.mjs                | 702 +++++++++++++++++++++
+ 18 files changed, 2964 insertions(+), 43 deletions(-)
+ create mode 100644 src/main/resources/web/css/mobileSearchFlat.css
+ create mode 100644 tests/canvas-top-tabs-swipe.spec.mjs
+ create mode 100644 tests/mobile-search-flat.spec.mjs
+ create mode 100644 tests/msg-footer-align.spec.mjs
+ create mode 100644 tests/side-tab-legibility.spec.mjs
+EXIT=0
+
+$ git status --porcelain
+?? reports-evidence/20261104_todo-unify-backend__delegate-nebflow-79768ef5/sync/logs/70_merge3.log
