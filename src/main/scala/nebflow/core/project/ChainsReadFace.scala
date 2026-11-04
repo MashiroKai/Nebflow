@@ -218,7 +218,12 @@ object ChainsReadFace:
                   "projectKey" -> q.projectKey.asJson,
                   "ahead" -> q.ahead.asJson,
                   "holder" -> q.holder.fold(Json.Null)(_.asJson),
-                  "state" -> q.state.asJson
+                  "state" -> q.state.asJson,
+                  // R1（队头不再堵死全队批 2026-11-04）：退避跳过窗与显式「请人工处理」
+                  // 降级态——面板据此标红，不再显示成「正常排队中」。
+                  "blockedRounds" -> q.blockedRounds.asJson,
+                  "skipped" -> q.skipUntilMs.exists(_ > System.currentTimeMillis()).asJson,
+                  "needsHuman" -> q.needsHuman.fold(Json.Null)(_.asJson)
                 )
               )
               .add(

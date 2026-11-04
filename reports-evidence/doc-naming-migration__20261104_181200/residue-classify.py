@@ -9,6 +9,7 @@
   keep-frozen   冻结迁移账本：`docs-migration-sha256-table*` / `docs-landing-ledger-migration*`
                 —— 迁移时刻的逐文件 sha256 对照（源侧 docs/ 未改名），重写会破坏逐行可复核性
   keep-history  「原落库名 / 原名」沿革行：那句话本身就在记载改名，重写即抹掉沿革
+  keep-mapping-pair 旧名与新名同现一行（旧→新对照表行）：旧名是样本，不是待解析引用
   keep-ellipsis 截断省略写法（含 `…`）：不是可解析路径
   keep-crosstree 跨树引用：指向 repo `docs/` 或 `reports/` 过程件树、或本 vault 从未存在过的文档名
                 （不在本批改名范围，无映射可换；硬改 = 编造文件名）
@@ -57,6 +58,9 @@ def main():
                         cat = 'keep-history'
                     elif '…' in tok:
                         cat = 'keep-ellipsis'
+                    elif resolvable and (m.get(base) or m.get(base + '.md')) in line:
+                        # 旧名与新名同现一行 = 旧→新对照表行，旧名是样本不是引用
+                        cat = 'keep-mapping-pair'
                     elif resolvable:
                         cat = 'VIOLATION'
                     else:
