@@ -1,0 +1,25 @@
+$ git rev-parse HEAD
+f70dccb9fcf218b35de12d1548f7b8577433ea99
+
+$ git diff --stat 6b883302f..HEAD -- <本批 9 文件>
+ src/main/resources/web/css/mobileLayer.css |  2 +-
+ src/main/resources/web/js/locales/en.js    | 44 +++++++++++++++++++++++-------
+ src/main/resources/web/js/locales/zh-CN.js | 39 ++++++++++++++++++++------
+ src/main/resources/web/js/main.js          |  8 ++++++
+ src/main/resources/web/js/todoFace.js      | 38 ++++++++++++++++++++++++--
+ 5 files changed, 108 insertions(+), 23 deletions(-)
+
+$ git diff main..HEAD --stat -- src/main/resources/web src/main/scala tests
+ src/main/resources/web/css/mobileLayer.css |  42 ++-
+ src/main/resources/web/css/todo-face.css   | 117 ++++++-
+ src/main/resources/web/index.html          |   5 +-
+ src/main/resources/web/js/locales/en.js    |   4 +
+ src/main/resources/web/js/locales/zh-CN.js |   4 +
+ src/main/resources/web/js/main.js          |   9 +-
+ src/main/resources/web/js/todoFace.js      | 230 +++++++++++-
+ tests/todo-capsule-create.spec.mjs         | 537 +++++++++++++++++++++++++++++
+ tests/todo-capsule-redesign-shots.mjs      |  10 +-
+ 9 files changed, 942 insertions(+), 16 deletions(-)
+
+$ git rev-list --count HEAD..main   # 落后 main 的提交数
+0

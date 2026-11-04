@@ -1,0 +1,20 @@
+$ cd /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5
+$ node reports-evidence/.../sync/yield_chain_probe.mjs
+{
+  "capsuleInTopOverlays": true,
+  "capsuleInTaskList": true,
+  "reserveFollowsBand": true,
+  "contentClearsBand": true,
+  "expandGrowsBand": false,
+  "mobileLayerCapsuleVisible": true,
+  "zeroConsoleErrors": true
+}
+
+[desktop-1440] collapsed : bandBottom=114 chatTop=0 padTop=122 expected=122 clearance=8 capsule={"w":71.2,"h":26,"top":74,"bottom":100}
+[desktop-1440] expanded  : bandBottom=114 padTop=122 expected=122 clearance=8
+
+[mobile-375] collapsed : bandBottom=142 chatTop=0 padTop=150 expected=150 clearance=8 capsule={"w":71.2,"h":26,"top":102,"bottom":128}
+[mobile-375] expanded  : bandBottom=142 padTop=150 expected=150 clearance=8
+
+PASS=false  consoleErrors=0
+EXIT=1

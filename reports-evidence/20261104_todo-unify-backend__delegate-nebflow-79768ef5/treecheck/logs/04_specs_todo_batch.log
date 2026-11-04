@@ -1,0 +1,26 @@
+
+Running 20 tests using 1 worker
+
+  ✓   1 tests/todo-capsule-create.spec.mjs:242:1 › ① 右下角加号：34px 圆钮贴列表右下角且不压末行，点击 ⇒ 行内新建行出现并聚焦 (3.7s)
+  ✓   2 tests/todo-capsule-create.spec.mjs:289:1 › ② 空白区点击建：列表空白 ⇒ 新建并聚焦；footer 空白 ⇒ 新建并聚焦 (5.1s)
+  ✓   3 tests/todo-capsule-create.spec.mjs:320:1 › ③ 防误触①②：创建行在开 / 输入框聚焦 ⇒ 重复点击零新行；行/chip/筛选栏 ⇒ 不触发 (5.6s)
+  ✓   4 tests/todo-capsule-create.spec.mjs:359:1 › ④ 防误触③：pointerdown→up 位移 > 8px（拖动/滑屏）⇒ 不进入新建 (5.1s)
+  ✓   5 tests/todo-capsule-create.spec.mjs:397:1 › ⑤ 新建择重要度 ⇒ createScheduledTask 帧带 priority（落库，不是只排内存） (4.5s)
+  ✓   6 tests/todo-capsule-create.spec.mjs:423:1 › ⑥ 完成 / 撤回（取消完成）/ 删除 ⇒ completeTodo / uncompleteTodo / deleteScheduledTask 三帧 (6.7s)
+  ✓   7 tests/todo-capsule-create.spec.mjs:461:1 › ⑦ 动画护栏：展开仍走 spring 形变路径（内联 scale 逐帧写入→落地清空）；计数翻牌与逾期翻面仍在 (5.3s)
+  ✓   8 tests/todo-capsule-create.spec.mjs:504:1 › ⑧ 手机 375：body.mobile-layer 下胶囊可见、可展开，加号 44px 触摸档 (3.0s)
+  ✓   9 tests/todo-split.spec.mjs:158:1 › ①② 分家渲染 + 入口行徽标：提醒面纯定时任务（徽标=超时 1），侧边栏 todo 槽退役，入口行徽标=6 (3.3s)
+  ✓  10 tests/todo-split.spec.mjs:194:1 › ③ 提醒事项页：分组固定序（已到期浮顶→待决策→待批准→计划），镜像行零圆钮，页头计数=6 (4.2s)
+  ✓  11 tests/todo-split.spec.mjs:235:1 › ④ 闭环：镜像行点击跳回卡片（零 pageerror）；销账帧 ⇒ 徽标收敛；圆钮 ⇒ completeTodo 带行自身 sessionId (6.1s)
+  ✓  12 tests/todo-split.spec.mjs:271:1 › ⑤ 待办创建：纯文本内联创建 ⇒ createScheduledTask 帧带 kind:todo；乐观行落收件箱面，提醒面零混入 (4.1s)
+  ✓  13 tests/todo-split.spec.mjs:298:1 › ⑦ 项目维度（追加令①②）：筛选 chips 单选生效（计划组行随滤）；✎ 编辑 ⇒ updateScheduledTask 帧带 content+project (3.7s)
+  ✓  14 tests/todo-split.spec.mjs:347:1 › ⑥ 手机层级下钻：375 视口入口行在消息页；点击 ⇒ todo 详情页收编 #todo-page、返回钮在 (2.9s)
+  ✓  15 tests/todo-store-backend.spec.mjs:269:1 › ① 首次挂载惰性拉真源：listScheduledTasks{scope:"all"} 一发 + 渲染面取到回执数据（后端排序权威，chips 行序不参与） (2.0s)
+  ✓  16 tests/todo-store-backend.spec.mjs:308:1 › ② completeItem ⇒ completeTodo 帧（跨会话行带行自身 sessionId）+ 乐观退场 + 回执收敛 + uncomplete 回退 (2.4s)
+  ✓  17 tests/todo-store-backend.spec.mjs:347:1 › ③ updateItem(priority/title) ⇒ updateScheduledTask 字段级 patch；removeItem ⇒ deleteScheduledTask；新建 ⇒ createScheduledTask{kind:"todo"} (2.2s)
+  ✓  18 tests/todo-store-backend.spec.mjs:417:1 › ④ 服务端广播/清单回执 ⇒ 可见面收敛（零用户操作） (2.6s)
+  ✓  19 tests/todo-store-backend.spec.mjs:451:1 › ⑤ __seed 测试缝不破：夹具数据注入仍可用（旧排序语义 + dataSource=fixture + 零写帧），__live 回真源 (1.9s)
+  ✓  20 tests/todo-store-backend.spec.mjs:507:1 › ⑥ 服务端显式拒绝 ⇒ 回滚 + console.error（不静默吞） (1.4s)
+
+  20 passed (1.3m)
+EXIT=0

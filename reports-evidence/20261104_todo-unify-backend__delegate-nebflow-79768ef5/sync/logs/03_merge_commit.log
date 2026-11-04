@@ -1,0 +1,16 @@
+$ git log --oneline -5
+e6f0c5a7c Merge branch 'main' into delegate/delegate-nebflow-79768ef5
+6b883302f feat(todo): 胶囊面交互——右下角加号/空白建/重要度落库/完成撤回/删除/手机层胶囊
+d2fc65c82 Merge branch 'delegate/delegate-nebflow-8b0a8e45'
+85f0844ad Merge branch 'main' into delegate/delegate-nebflow-8b0a8e45 (分支追平 main 6eb8d3f3e：仅 root-migration 取证 REPORT.md，零交集)
+6eb8d3f3e Merge branch 'delegate/delegate-nebflow-24f88015'
+
+$ git rev-parse HEAD
+e6f0c5a7c8af2516c106464b490829582aaf47c8
+
+$ git log -1 --oneline main
+d2fc65c82 Merge branch 'delegate/delegate-nebflow-8b0a8e45'
+
+$ git status
+## delegate/delegate-nebflow-79768ef5
+?? reports-evidence/20261104_todo-unify-backend__delegate-nebflow-79768ef5/sync/
