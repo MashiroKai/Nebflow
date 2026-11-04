@@ -121,3 +121,20 @@ V2 之外四条全红；V2 的绿不是「验收已通过」，而是「这条�
   台账形态扩写 `checkpointArtifacts(...)`，但不得退化为「只断言转录还在」（那是现状已绿项）。
 - 既有 `DelegateRevivalSpec` V10 把「standby 重启不复活」写成期望——V1 转绿时该用例必然冲突，属**同批语义变更**，
   由修复批一并裁决（作者 2026-11-04 11:27 裁定：链等待形态必须自动复活）。
+
+---
+
+## 7. C-2 批（node 消息持久化）追加的红件（2026-11-04）
+
+本目录原有 `V1.log … V5.log` = harness 节点 `ad770bfdb` 在**改前**跑出的红证，**一字未动**。
+C-2 批在同一「改前」形态（`git stash push -- src/main/scala`）下追加三份红件：
+
+| 文件 | 内容 | 改前读数 |
+|---|---|---|
+| `V3-C2-prefix.log` | `IR_LEG=V3 sbt testOnly InterruptRecoveryLegsSpec`（V3b 判据已含台账面 + STRICT 断言；V3c 为 C-2 新增） | `durable replay surfaces … injection-queues=false, transcript=false, node.task=false, node-message-ledger=false`；`ledger rows for this message =`（空）；`Failed: Total 6, Failed 1` |
+| `NodeMessagePersistence-prefix.log` | `sbt testOnly NodeMessagePersistenceSpec`（S1 落盘前置 / S2 重放幂等 / S3 terminal 拒收） | `ledger rows = 0`、`prompt carries marker = false`；`Failed: Total 3, Failed 2, Passed 1`（绿的一条 = S3 不变量护栏，本批未改） |
+| `NodeMessageReplayQueue-prefix.log` | `sbt testOnly NodeMessageReplayQueueSpec`（S4 队列兜底回放） | 编译即红：`value replayPendingNodeMessages is not a member of NodeEngine`（改前无此腿） |
+
+> V3b 的 `durable` 判据在 C-2 批新增第四个持久面（`<workspace>/.nebflow/node-messages.jsonl`）：
+> 这不是放宽——V3c 证明该面**被重启回放腿消费**（resume prompt 回放 + 消费后零重放），
+> 且 V3b 另加 STRICT 断言（台账行必须在场）。改前四面全空，判据语义不变。

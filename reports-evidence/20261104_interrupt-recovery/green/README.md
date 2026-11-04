@@ -24,7 +24,7 @@ IR_LEG=V1 sbt "testOnly nebflow.core.project.InterruptRecoveryLegsSpec"
 | V4 幂等 | `checkpoint artifacts = 0` | `machine-readable checkpoint artifacts = 1`（`sessions/delegate-nebflow-v4/revival-checkpoint.json`）；nudge 携断点句（`Completed-work checkpoint … 4 transcript messages, … completed assistant turn(s) … must NOT be redone`）；3 个已完成 round 全在；`revivalCount=Some(1)` | 新增 `RevivalCheckpoint`，复活腿写点 |
 | V5 收尾（cb580112 形态） | 父邮箱 0 条、completed 行不在 sweep 视野 | `parent mailbox events = 1`（携 workReport 全文）、`reportStatus = Some(finish)`、`sweep report: terminalized=0 revived=0` | 新增 boot 收尾腿 `finalizeCompletedUnreported` |
 | V5 反向（没干完） | 新增用例 | 绿：`revived=1`、行 `running`、父邮箱 0 条、`reportStatus=None` | 同一条腿的判据闸（completed ∧ workReport ∧ reportStatus 缺席） |
-| V3 节点消息持久化 | 红 | **仍红**（不在本节点验收面，属审计 D5：`NodeDelivery` fire-and-forget 窗口） | — |
+| V3 节点消息持久化 | 红 | **C-2 批已转绿**（见 `green/V3.log` 与 `green/C2-node-message-persistence.md`）：台账面 `node-message-ledger=true`、`boot#1 resume prompt carries the message = true`、`boot#2 … AGAIN = false`、`final ledger state = Some(consumed)` | — （C-1 未改；C-2 批补：`NodeMessageLedger` + 落盘前置 + 回放两腿） |
 
 > 读日志提示：V1 台架的 `[LEG V1/bb1] next turn started (LLM requests) = 0` 是**等待前**的
 > 采样（台架顺序：先打印 evidence，再 `waitUntil` 断言下一 turn）。紧随其后的 lifecycle
@@ -86,7 +86,10 @@ nudge（`Completed-work checkpoint … must NOT be redone`）。
 
 ## 5. 未做 / 开放
 
-- V3（node 消息持久化，D5）不在本节点验收面，仍红。
+- ~~V3（node 消息持久化，D5）不在本节点验收面，仍红。~~ **C-2 批已闭环**：V3b/V3c 转绿，
+  新增 `NodeMessagePersistenceSpec`（S1/S2/S3）与 `NodeMessageReplayQueueSpec`（S4），
+  读数见本目录 `V3.log`、`NodeMessagePersistence.log`、`NodeMessageReplayQueue.log`、
+  `regression-A.log`、`regression-B.log` 与设计/取证件 `C2-node-message-persistence.md`。
 - D3（运行期 watchdog 无复活腿）未做：本批只改 boot 链（watchdog 仍是收殓腿）。
 - D7（salvage 只搬末条 assistant 文本）未做。
 - 压缩处重述只覆盖 `AgentProcessing`（全量）与 `AgentPingpong`（乒乓）两个装态点；

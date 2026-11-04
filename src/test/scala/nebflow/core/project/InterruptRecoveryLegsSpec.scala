@@ -394,6 +394,13 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
   //   探针 actor 就是把「接收方还没落盘就被杀」这一现实窗口钉成确定性：投递成功
   //   ⇒ 消息必须已经落在可重放的持久面上（修复方向：先写 task/队列再投，或收方
   //   回执后才算投递成功）。
+  //
+  // 🔧 C-2 修复批（2026-11-04）对台架的**唯一**改动：V3b 的 `durable` 判据加入第四个
+  //   持久面 —— `<workspace>/.nebflow/node-messages.jsonl`（`NodeMessageLedger`，
+  //   发送侧在 tell **之前** append 的账）。为何不是放宽：该面前缀由 V3c 证明「重启
+  //   回放腿真的读它」（boot 认领把未消费消息拼进 resume prompt；消费后再 boot 零重放）；
+  //   V3b 另加 STRICT 断言（台账行必须在场）⇒ 原红证（red/V3.log）语义不变：改前四面
+  //   全空，改后台账面有账且**可回放**。
   // ══════════════════════════════════════════════════════════════════════════════
 
   test(
@@ -475,15 +482,21 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
           emitEvent = (_: String, _: String, _: Json) => IO.unit
         )
         res <- engine.sendNodeMessage(nodeId, text)
-        // 投递后的持久面（重启会消费的三处：注入队列 / 转录 / 节点 task）
+        // 投递后的持久面（重启会消费的四处：注入队列 / 转录 / 节点 task / **node 消息台账**）
+        // C-2 追加第四面：`<workspace>/.nebflow/node-messages.jsonl`（NodeMessageLedger，
+        // append-only；发送侧在 tell **之前**落盘 ⇒ 关闭 fire-and-forget 窗口）。
+        // 这不是放宽判据：该面由 V3c 证明**重启回放腿真的读它**（resume prompt 回放）。
         queue <- nebflow.agent.CompactionQueueStore.load(sid)
         transcript <- fx.sessionStore.loadMessagesForSession(sid).attempt.map(_.getOrElse(Nil))
         node <- store.getNode(nodeId)
         probeSeen <- seen.get
+        ledgerEntries <- NodeMessageLedger.entries(ws.toString).map(_.filter(_.text.contains("V3_INFLIGHT_INSTRUCTION")))
+        ledgered = ledgerEntries.nonEmpty
         durable =
           queue.exists(q => q.imms.exists(_.text.contains("V3_INFLIGHT_INSTRUCTION"))) ||
             transcript.exists(_.textContent.contains("V3_INFLIGHT_INSTRUCTION")) ||
-            node.exists(_.task.exists(_.contains("V3_INFLIGHT_INSTRUCTION")))
+            node.exists(_.task.exists(_.contains("V3_INFLIGHT_INSTRUCTION"))) ||
+            ledgered
         eventLines <- IO
           .blocking {
             val f = ws / ".nebflow" / FlowMapEventLog.FileName
@@ -494,7 +507,8 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
           (Seq(
             s"sendNodeMessage result = $res",
             s"probe actor received = ${probeSeen.size} message(s) (stands for: the receiving process died before persisting)",
-            s"durable replay surfaces after a SUCCESSFUL delivery: injection-queues=${queue.exists(q => q.imms.exists(_.text.contains("V3_INFLIGHT_INSTRUCTION")))}, transcript=${transcript.exists(_.textContent.contains("V3_INFLIGHT_INSTRUCTION"))}, node.task=${node.exists(_.task.exists(_.contains("V3_INFLIGHT_INSTRUCTION")))}",
+            s"durable replay surfaces after a SUCCESSFUL delivery: injection-queues=${queue.exists(q => q.imms.exists(_.text.contains("V3_INFLIGHT_INSTRUCTION")))}, transcript=${transcript.exists(_.textContent.contains("V3_INFLIGHT_INSTRUCTION"))}, node.task=${node.exists(_.task.exists(_.contains("V3_INFLIGHT_INSTRUCTION")))}, node-message-ledger=$ledgered",
+            s"ledger rows for this message = ${ledgerEntries.map(e => s"${e.id}=${e.event}").mkString(", ")}",
             s"flow-map-events trace lines (NOT replayed by anyone — audit D5) = ${eventLines.size}"
           ) ++ eventLines.map(l => s"  event: $l"))*
         )
@@ -505,10 +519,100 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
         _ = assert(
           durable,
           "RED(V3): a successful node-message delivery must be durable on a restart-consumed surface " +
-            "(injection-queues.json / transcript / node task). Today NodeDelivery.scala:317 tells the actor and " +
-            "returns Right with ZERO bytes on disk — a crash before the receiver's persistQueues " +
+            "(injection-queues.json / transcript / node task / node-message ledger). Pre-fix NodeDelivery.scala:317 " +
+            "tells the actor and returns Right with ZERO bytes on disk — a crash before the receiver's persistQueues " +
             "(AgentProcessing.scala:1650) loses the message forever; only the flow-map event line remains " +
             "(NodeDelivery.scala:332-338) and nothing replays it."
+        )
+        _ = assert(
+          ledgered,
+          "V3b(STRICT, post-C-2): the ledger row is written by the SENDER before the tell — no other surface may be the only witness"
+        )
+      yield ()
+    }
+
+    // ── V3c（C-2 新增）：台账面**确实**被重启回放腿消费 —— 幂等证明 ──
+    // V3b 只证明「投递成功时有盘面」；本腿证明那盘面**是重启会读的**，且只读一次：
+    //   ① 未消费消息 ⇒ boot 快段认领把它拼进 resume prompt（节点续跑上下文完整 + 该消息在）
+    //   ② 会话消费后再 boot 一次 ⇒ 绝不重复注入（转录标记 = 权威幂等判据）
+    withFx("v3c") { fx =>
+      val sid = "node-v3c-session"
+      val nodeId = "n-v3c"
+      for
+        ws <- IO.blocking { val d = fx.tmp / "ws-v3c"; os.makeDir.all(d); d }
+        store <- FlowMapStore.open("v3c", ws.toString)
+        probeSeen <- Ref.of[IO, List[String]](Nil)
+        probe <- fx.system.spawn(probeBehavior(probeSeen), "v3c-node-probe")
+        _ <- fx.resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref = probe, AgentKind.Delegate, sid)))
+        _ <- store.mutate(s =>
+          s.copy(nodes = s.nodes + (nodeId -> NodeDef(
+            id = nodeId,
+            name = "n-v3c",
+            agent = "general",
+            status = NodeLifecycle.Running,
+            sessionRef = Some(sid),
+            createdAt = System.currentTimeMillis() - 1000L
+          )))
+        )
+        _ <- fx.sessionStore.saveMessagesForSession(
+          sid,
+          List(Message(MessageRole.User, Left("V3C_BRIEF")), Message(MessageRole.Assistant, Left("V3C_DONE_STEP")))
+        )
+        engine = new NodeEngine(
+          store,
+          fx.system,
+          fx.resources,
+          wsSendFn = (_: Json) => IO.unit,
+          workspace = ws.toString,
+          rootSessionId = "nebula-root",
+          projectName = "v3c",
+          emitEvent = (_: String, _: String, _: Json) => IO.unit
+        )
+        // 运行中注入（探针不落盘 = 接收方死在持久化前）
+        res <- engine.sendNodeMessage(nodeId, "V3C_INFLIGHT do not lose me")
+        entries <- NodeMessageLedger.entries(ws.toString)
+        msgId = entries.headOption.map(_.id).getOrElse("")
+        // ── 重启 #1：boot 快段认领 ⇒ resume prompt 必须带这条消息（关联回「被灭了」的现实窗口）──
+        node0 <- store.getNode(nodeId).map(_.get)
+        claim1 <- engine.bootRecoveryClaim(node0)
+        prompt1 = claim1.flatMap(_.toOption).map(_.resumePrompt).getOrElse("")
+        // 节点续跑的首轮 = resume prompt ⇒ 写进转录（真实 resume 的形态）
+        _ <- fx.sessionStore.saveMessagesForSession(
+          sid,
+          List(
+            Message(MessageRole.User, Left("V3C_BRIEF")),
+            Message(MessageRole.Assistant, Left("V3C_DONE_STEP")),
+            Message(MessageRole.User, Left(prompt1))
+          )
+        )
+        // ── 重启 #2：再来一次崩溃 + boot ⇒ 已消费，零重放 ──
+        _ <- store
+          .mutate(s => s.copy(nodes = s.nodes.updated(nodeId, s.nodes(nodeId).copy(status = NodeLifecycle.Running))))
+        node1 <- store.getNode(nodeId).map(_.get)
+        claim2 <- engine.bootRecoveryClaim(node1)
+        prompt2 = claim2.flatMap(_.toOption).map(_.resumePrompt).getOrElse("")
+        finalEntries <- NodeMessageLedger.entries(ws.toString)
+        _ <- evidence("V3c")(
+          s"sendNodeMessage = ${res.map(_.take(50))}",
+          s"ledger id = $msgId (state after send = ${entries.headOption.map(_.event)})",
+          s"boot#1 resume prompt carries the message = ${prompt1.contains(NodeMessageLedger.markerOf(msgId)) && prompt1.contains("V3C_INFLIGHT do not lose me")}",
+          s"boot#1 pre-crash context restored = ${prompt1.contains("history restored from disk (2 messages")}",
+          s"boot#2 resume prompt carries the message AGAIN = ${prompt2.contains(NodeMessageLedger.markerOf(msgId))} (must be false)",
+          s"final ledger state = ${finalEntries.find(_.id == msgId).map(_.event)}"
+        )
+        _ = assert(res.isRight, s"V3c: delivery must succeed, got $res")
+        _ = assert(
+          prompt1.contains(NodeMessageLedger.markerOf(msgId)) && prompt1.contains("V3C_INFLIGHT do not lose me"),
+          "V3c: the restart replay leg must hand the delivered-but-unconsumed message to the resumed node"
+        )
+        _ = assert(
+          prompt1.contains("history restored from disk (2 messages"),
+          "V3c: node context recovery — pre-crash transcript + breakpoint pointer still present"
+        )
+        _ = assertEquals(finalEntries.find(_.id == msgId).map(_.event), Some(NodeMessageLedger.Consumed), "V3c: consumed closes the ledger")
+        _ = assert(
+          !prompt2.contains(NodeMessageLedger.markerOf(msgId)),
+          "V3c IDEMPOTENCY: a consumed node message must never be replayed twice"
         )
       yield ()
     }
