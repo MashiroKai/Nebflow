@@ -271,7 +271,7 @@ echo ~/.nebflow/docs/<域>/report.html
 
 ## 人读交付体例（节点 result 的一屏摘要与人读件共用）
 
-给**人**看的文档与给机器看的取证件是两类东西：人读件落 `~/.nebflow/docs/<域>/`（活文档 `<topic>.md`、阶段件 `<YYYYMMDD>_<HHMMSS>_<topic>.md`），取证件/过程件落 `<ws>/.nebflow/{Spec,evidence,reports,tasks,results,tmp}/`；写在 `<ws>/.nebflow/**` 下再声明「人读」无效，要给人看必须外移。
+给**人**看的文档与给机器看的取证件是两类东西：人读件落 `~/.nebflow/docs/<域>/`（活文档 `<topic>.md`、阶段件 `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md`——**topic 前置、时间块后置**，topic 用小写 kebab（英文/拼音）或原样中文，禁用 report/doc/notes 这类空词单独成题；同秒冲突在时间块后接 `-<n>`，有归属才带 chainId 尾段、不得编造），取证件/过程件落 `<ws>/.nebflow/{Spec,evidence,reports,tasks,results,tmp}/`；写在 `<ws>/.nebflow/**` 下再声明「人读」无效，要给人看必须外移。
 
 **首屏四段骨架（顺序固定）**：
 
