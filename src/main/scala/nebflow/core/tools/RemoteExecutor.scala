@@ -91,8 +91,14 @@ private[nebflow] object P2pPathDecision:
     val list = if peer.endpoints.nonEmpty then peer.endpoints else List(peer.address)
     list.filter(_.nonEmpty).sorted.distinct.mkString("|")
 
-  /** Path-memory entry: which transport last succeeded, when, and for which address set. */
-  final case class PathMemory(method: String, atMs: Long, addressKey: String)
+  /**
+   * Path-memory entry: which transport last succeeded, when, for which address set,
+   * and (p2p only) **which endpoint actually answered**.
+   *
+   * 砍探测税批（2026-11-04）：`endpoint` 是新增读数——P2P 成功时记住**赢的那个端点**，
+   * 记忆新鲜时直接复用它、**不再付一次探测**（否则每次下发都要重拨一遍才能知道打谁）。
+   */
+  final case class PathMemory(method: String, atMs: Long, addressKey: String, endpoint: String = "")
 
   def isFresh(mem: PathMemory, nowMs: Long): Boolean = nowMs - mem.atMs < PathMemoryTtlMs
 
@@ -106,12 +112,25 @@ private[nebflow] object P2pPathDecision:
    * so the window always expires and P2P is re-probed at least once per TTL. P2P
    * successes *do* renew (staying on P2P is the desired state).
    */
-  def record(existing: Option[PathMemory], method: String, peer: PeerInfo, nowMs: Long): PathMemory =
+  def record(
+    existing: Option[PathMemory],
+    method: String,
+    peer: PeerInfo,
+    nowMs: Long,
+    endpoint: String = ""
+  ): PathMemory =
     val key = addressKey(peer)
     existing match
       case Some(m) if method == "relay" && m.method == "relay" && m.addressKey == key && isFresh(m, nowMs) =>
         m // no renewal — see scaladoc
-      case _ => PathMemory(method, nowMs, key)
+      case _ =>
+        // 端点只在 p2p 记忆上有效；未带端点的 p2p 续记沿用同地址集的既有端点
+        // （`raceP2PAndRelay` 这一层拿不到端点，不能让记忆退化成「下次再探一次」）。
+        val ep =
+          if method != "p2p" then ""
+          else if endpoint.nonEmpty then endpoint
+          else existing.filter(m => m.method == "p2p" && m.addressKey == key).map(_.endpoint).getOrElse("")
+        PathMemory(method, nowMs, key, ep)
 
 end P2pPathDecision
 
@@ -279,11 +298,11 @@ class RemoteExecutor(
   @volatile private var lastSuccessPath: Map[String, P2pPathDecision.PathMemory] = Map.empty
 
   /**
-   * Negative P2P evidence (A): deviceId → timestamp of the last real P2P
-   * failure. Only a fresh entry here (see [[P2pPathDecision.NegativeCacheTtlMs]])
-   * justifies bypassing P2P — "no presence WS" no longer does.
+   * Negative P2P evidence (A) —— 砍探测税批（2026-11-04）起**真源**移到
+   * [[P2pReachability]] 账本：带指数退避窗口 + 地址集失效 + 成功即清。
+   * 改前这里是 `deviceId → 时间戳` + 固定 60 s 常量 ⇒ 每分钟重付一次探测税。
    */
-  @volatile private var p2pFailures: Map[String, Long] = Map.empty
+  private def reachLedger: P2pReachability = P2pReachability.current
 
   /**
    * Read the cached transport **only if** it is both TTL-fresh and still refers
@@ -297,10 +316,19 @@ class RemoteExecutor(
       lastSuccessPath = lastSuccessPath.removed(peer.deviceId)
     usable.map(_.method)
 
-  private def recordPathMemory(peer: PeerInfo, method: String): IO[Unit] = IO {
+  /** 记忆里那个**真答过话的端点**（P2P 记忆新鲜时直接复用，省一次探测）。 */
+  private def rememberedEndpoint(peer: PeerInfo): Option[String] =
+    val now = System.currentTimeMillis()
+    P2pPathDecision
+      .reusable(lastSuccessPath.get(peer.deviceId), peer, now)
+      .filter(_.method == "p2p")
+      .map(_.endpoint)
+      .filter(_.nonEmpty)
+
+  private def recordPathMemory(peer: PeerInfo, method: String, endpoint: String = ""): IO[Unit] = IO {
     lastSuccessPath = lastSuccessPath.updated(
       peer.deviceId,
-      P2pPathDecision.record(lastSuccessPath.get(peer.deviceId), method, peer, System.currentTimeMillis())
+      P2pPathDecision.record(lastSuccessPath.get(peer.deviceId), method, peer, System.currentTimeMillis(), endpoint)
     )
   }
 
@@ -310,11 +338,15 @@ class RemoteExecutor(
 
   /** Record real P2P failure evidence (A) — the ONLY thing that bypasses P2P. */
   private def recordP2pFailure(peer: PeerInfo): IO[Unit] = IO {
-    p2pFailures = p2pFailures.updated(peer.deviceId, System.currentTimeMillis())
+    val n = reachLedger.noteFailure(peer.deviceId, P2pPathDecision.addressKey(peer), System.currentTimeMillis())
+    logger.info(
+      s"[p2p-probe] device=${peer.deviceName} negative evidence #$n " +
+        s"window=${P2pProbePolicy.negativeWindowMs(n)}ms"
+    )
   }
 
-  private def hasRecentP2pFailure(deviceId: String): Boolean =
-    p2pFailures.get(deviceId).exists(ts => System.currentTimeMillis() - ts < P2pPathDecision.NegativeCacheTtlMs)
+  private def hasRecentP2pFailure(peer: PeerInfo): Boolean =
+    reachLedger.shouldSkip(peer.deviceId, P2pPathDecision.addressKey(peer), System.currentTimeMillis())
 
   /**
    * HTTP backend for a probe budget (A): the short-connect backend when the
@@ -539,7 +571,9 @@ class RemoteExecutor(
       params,
       60.seconds,
       "",
-      P2pPathDecision.probeBudget(true),
+      // 砍探测税批（2026-11-04）：连接级失败不再靠重试硬扛（每次重试都是一个
+      // connect 超时），回落 relay 本来就是即时的 —— 重试只会把税加倍。
+      P2pPathDecision.probeBudget(false),
       kind = "capture"
     )
       .flatMap {
@@ -641,7 +675,10 @@ class RemoteExecutor(
       params,
       60.seconds,
       "",
-      P2pPathDecision.probeBudget(true),
+      // 砍探测税批（2026-11-04）：浏览腿是**多下发腿**（1 次目录探针 + N 块），
+      // 改前每次下发都付一遍 P2P 探测税且带 3 次重试 ⇒ 税 × 4 × 11。这里改为
+      // fast-fail 预算：探测由 `resolveP2pEndpoint` 一次付清（且带负缓存）。
+      P2pPathDecision.probeBudget(false),
       kind = "browse"
     ).flatMap {
       case Right(out) => IO.pure(Right(out))
@@ -661,7 +698,20 @@ class RemoteExecutor(
 
   // ---- M2（2026-10-20）：浏览取件分块拉取腿（进度/取消/续传/逐块校验） ----
 
-  final case class ScopedFetchResult(path: os.Path, size: Long, wholeSha256: String)
+  /**
+   * 分块取件结果。`chunks` / `chunkSize` / `window` / `elapsedMs` 是砍串行搬运批
+   * （2026-11-04）新增的**读数键**——只为「每次开文件的耗时打到日志」那条硬要求服务
+   * （`[file-open-timing]` 行），不参与任何判据。
+   */
+  final case class ScopedFetchResult(
+    path: os.Path,
+    size: Long,
+    wholeSha256: String,
+    chunks: Long = 0L,
+    chunkSize: Int = 0,
+    window: Int = 0,
+    elapsedMs: Long = 0L
+  )
 
   /**
    * 浏览面**单件取件 · 分块拉取腿**（设计 v1 §7 M2-1）：改前 `transferGetScoped` 单请求
@@ -678,14 +728,22 @@ class RemoteExecutor(
    *
    * @param onProgress (bytesReceived, totalBytes, lastChunkMs)——每块落盘后回调（权威
    *   读数 = 落盘长度，禁假进度）；`lastChunkMs` = 刚落那块的往返耗时（前端停滞阈依据）。
+   * @param totalBytesHint 整件字节数的**提示**（来自目录指纹，可缺省 `0`）——只用来选块长
+   *   档位与流水线窗口（[[ChunkSizing]]），不参与任何校验/判据。
    */
   def transferGetScopedChunked(
     peer: PeerInfo,
     remotePath: String,
-    onProgress: (Long, Long, Long) => IO[Unit]
+    onProgress: (Long, Long, Long) => IO[Unit],
+    totalBytesHint: Long = 0L
   ): IO[Either[String, ScopedFetchResult]] =
     val target = PointerPickup.pickupPath(peer.deviceId, remotePath)
     val (flag, unregister) = BrowseFetchRegistry.register(peer.deviceId, remotePath)
+    // 块长按**整件大小**选档（调用方已从目录指纹拿到 size 时就不必慢启动），
+    // 窗口按在飞字节预算派生。两者是纯函数（`ChunkSizing`），此处只取值。
+    val chunkSize = ChunkSizing.chunkSizeFor(totalBytesHint)
+    val window = ChunkSizing.windowFor(chunkSize)
+    val startedNs = System.nanoTime()
     def fetchChunk(index: Int, chunkSize: Int, wantWholeSha: Boolean): IO[Either[String, BrowseGetCursor.ChunkReply]] =
       val params = JsonObject(
         "direction" -> "get".asJson,
@@ -707,10 +765,21 @@ class RemoteExecutor(
       if flag.get then IO.unit // 已叫停：不再外发进度帧（终态帧随后）
       else onProgress(bytes, total, ms)
     BrowseGetLoop
-      .run(target, fetchChunk, progress, flag)
+      .run(target, fetchChunk, progress, flag, startChunkSize = chunkSize, window = window)
       .guarantee(unregister)
       .map {
-        case Right((path, size, sha)) => Right(ScopedFetchResult(path, size, sha))
+        case Right((path, size, sha)) =>
+          Right(
+            ScopedFetchResult(
+              path,
+              size,
+              sha,
+              chunks = if chunkSize > 0 then (size + chunkSize - 1) / chunkSize else 0L,
+              chunkSize = chunkSize,
+              window = window,
+              elapsedMs = (System.nanoTime() - startedNs) / 1000000L
+            )
+          )
         case Left(err) => Left(err)
       }
 
@@ -1312,6 +1381,17 @@ class RemoteExecutor(
     val all = if peer.endpoints.nonEmpty then peer.endpoints else List(peer.address)
     all.filter(_.nonEmpty).distinct
 
+  /**
+   * P2P 下发入口（砍探测税批 2026-11-04 重写）。
+   *
+   * 改前：`p2pExecuteCandidates` **串行**挨个拨候选，每个付满一个 connect 超时
+   * （实测两个候选各 SYN 黑洞 ⇒ 3 000 ms + 1 500 ms），且负证据只活 60 s。
+   * 改后三步（见 [[resolveP2pEndpoint]]）：
+   *
+   *   ① 路径记忆新鲜且`method=p2p` ⇒ 直接用记忆里的端点（**零探测**）；
+   *   ② 负缓存命中（[[P2pReachability]]）⇒ 直接报「不可达」，调用方零成本走 relay；
+   *   ③ 否则**并发探测全部候选、首胜即放行**，全不通则写负证据（指数退避窗口）。
+   */
   private def p2pExecute(
     peer: PeerInfo,
     toolName: String,
@@ -1321,37 +1401,99 @@ class RemoteExecutor(
   ): IO[Either[ToolError, String]] =
     for
       selfDeviceId <- neblinkService.identity.map(_.deviceId)
-      // C1: 每个候选短超时串行短路，首个成功者即本次直连端点。
-      result <- p2pExecuteCandidates(p2pCandidates(peer), peer, selfDeviceId, toolName, params, timeout, budget)
+      decision <- resolveP2pEndpoint(peer, budget)
+      result <- decision.endpoint match
+        case Some(endpoint) =>
+          p2pExecuteAt(peer, endpoint, selfDeviceId, toolName, params, timeout, budget).flatMap {
+            case r @ Right(_) => recordPathMemory(peer, "p2p", endpoint).as(r)
+            case l @ Left(_)  => IO.pure(l)
+          }
+        case None =>
+          IO.pure(
+            Left(
+              ToolError(
+                if decision.negativeHit then
+                  s"Cannot reach ${peer.deviceName}: P2P endpoint(s) known unreachable " +
+                    s"(negative cache, no probe paid; tried ${p2pCandidates(peer).size} candidate endpoint(s))"
+                else
+                  s"Cannot reach ${peer.deviceName}: no candidate endpoint answered " +
+                    s"(probed ${decision.probed} endpoint(s) concurrently in ${decision.probeMs}ms)"
+              )
+            )
+          )
     yield result
 
   /**
-   * Walk the candidate list, short-circuiting on the first success (C1 目标口径
-   * §3.3). Only a *connection-level* failure moves on to the next candidate —
-   * an HTTP 403/5xx proves the endpoint is up, so hopping would just burn the
-   * budget on a peer that is answering.
+   * 端点解析（**唯一判据点**）：记忆 → 负缓存 → 并发探测。返回
+   * [[P2pReachability.Decision]]（端点 + 探测读数），读数随日志外发供本批取数。
    */
-  private def p2pExecuteCandidates(
-    candidates: List[String],
+  private def resolveP2pEndpoint(
     peer: PeerInfo,
-    selfDeviceId: String,
-    toolName: String,
-    params: JsonObject,
-    timeout: FiniteDuration,
     budget: P2pPathDecision.ProbeBudget
-  ): IO[Either[ToolError, String]] =
-    candidates match
-      case Nil =>
-        IO.pure(Left(ToolError(s"Cannot reach ${peer.deviceName}: no usable endpoint address")))
-      case endpoint :: rest =>
-        p2pExecuteAt(peer, endpoint, selfDeviceId, toolName, params, timeout, budget).flatMap {
-          case r @ Right(_) => IO.pure(r)
-          case Left(err) if rest.nonEmpty && isTransientError(err) =>
-            p2pExecuteCandidates(rest, peer, selfDeviceId, toolName, params, timeout, budget)
-          case l => IO.pure(l)
-        }
+  ): IO[P2pReachability.Decision] =
+    val now = System.currentTimeMillis()
+    val addressKey = P2pPathDecision.addressKey(peer)
+    rememberedEndpoint(peer) match
+      case Some(ep) =>
+        IO.pure(P2pReachability.Decision(Some(ep), probed = 0, probeMs = 0L, negativeHit = false, probeFailed = false))
+      case None =>
+        if reachLedger.shouldSkip(peer.deviceId, addressKey, now) then
+          val left = reachLedger.negativeRemainingMs(peer.deviceId, addressKey, now).getOrElse(0L)
+          IO(reachLedger.noteSkip()) *> logger.info(
+            s"[p2p-probe] device=${peer.deviceName} decision=relay (negative cache, ${left}ms left, 0ms paid)"
+          )
+          IO.pure(
+            P2pReachability.Decision(None, probed = 0, probeMs = 0L, negativeHit = true, probeFailed = false)
+          )
+        else
+          val candidates = p2pCandidates(peer)
+          // 探测预算：短连接预算（fast-fail）与硬上限取小——探测本身不该比下发更贵。
+          val probeBudgetMs =
+            math.min(budget.connectTimeout.toMillis, P2pProbePolicy.ProbeConnectTimeoutMs.toLong).toInt
+          val t0 = System.nanoTime()
+          IO(reachLedger.noteProbeAttempt()) *>
+            P2pReachability.probeConcurrently(candidates, probeBudgetMs).map { winner =>
+              val ms = (System.nanoTime() - t0) / 1000000L
+              winner match
+                case Some(ep) =>
+                  // 探通即清账（负证据的可失效条件之一）：端点回来了就不该继续旁路。
+                  reachLedger.noteSuccess(peer.deviceId)
+                  logger.info(
+                    s"[p2p-probe] device=${peer.deviceName} decision=p2p endpoint=$ep " +
+                      s"probed=${candidates.size} probeMs=$ms (concurrent, first-wins)"
+                  )
+                  P2pReachability.Decision(
+                    Some(ep),
+                    probed = candidates.size,
+                    probeMs = ms,
+                    negativeHit = false,
+                    probeFailed = false
+                  )
+                case None =>
+                  val n = reachLedger.noteFailure(peer.deviceId, addressKey, System.currentTimeMillis())
+                  logger.info(
+                    s"[p2p-probe] device=${peer.deviceName} decision=relay " +
+                      s"probed=${candidates.size} probeMs=$ms (all timed out; negative #$n " +
+                      s"window=${P2pProbePolicy.negativeWindowMs(n)}ms)"
+                  )
+                  P2pReachability.Decision(
+                    None,
+                    probed = candidates.size,
+                    probeMs = ms,
+                    negativeHit = false,
+                    probeFailed = true
+                  )
+            }
+  end resolveP2pEndpoint
 
-  /** One P2P HTTP dispatch against one concrete endpoint. */
+  /**
+   * 改前的「串行挨个拨候选」实现已随砍探测税批（2026-11-04）**退役**：其判据
+   * （首成功者即短路）被 [[resolveP2pEndpoint]] 的「并发探测 + 首胜即放行」取代
+   * ——语义不变（第一个通的就是要打的那个），成本从「候选数 × 预算」降到
+   * 「单端点预算」。删除而非保留的理由：留下就会有人再调它，税就回来了。
+   *
+   * One P2P HTTP dispatch against one concrete endpoint.
+   */
   private def p2pExecuteAt(
     peer: PeerInfo,
     endpoint: String,
@@ -1529,7 +1671,7 @@ class RemoteExecutor(
         val directOnline = neblinkService.presenceServiceOpt.exists(_.isConnected(peer.deviceId))
         // A: 负证据驱动 —— 只有「有近期真实 P2P 失败证据」才旁路，否则尝试 P2P。
         val memoryOpt = getPathMemory(peer)
-        val recentP2pFailure = hasRecentP2pFailure(peer.deviceId)
+        val recentP2pFailure = hasRecentP2pFailure(peer)
         val skipP2p = P2pPathDecision.shouldSkipP2pForRelay(memoryOpt, recentP2pFailure, relayAvailable)
         val budget = P2pPathDecision.probeBudget(directOnline)
 

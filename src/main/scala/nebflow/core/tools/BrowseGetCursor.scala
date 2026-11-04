@@ -1,6 +1,7 @@
 package nebflow.core.tools
 
 import cats.effect.IO
+import cats.syntax.all.*
 import io.circe.Json
 import nebflow.dropbox.ChunkedTransfer
 import nebflow.shared.AttachContract
@@ -210,6 +211,52 @@ object BrowseFetchRegistry:
 end BrowseFetchRegistry
 
 /**
+ * 块长与流水线窗口的判据（纯函数，spec 直测；**唯一出处**——禁在调用点散落魔数）。
+ *
+ * 两条轴，都在「内存上界」下取：
+ *
+ *   - **块长按文件大小**：小件用 512 KiB（取消/进度粒度细，用户点取消最多丢一块），
+ *     中件 1 MiB，大件 2 MiB（relay 链路上块太少会让 RTT 又变成主项，故不取 4 MiB
+ *     上限——`AttachContract.MaxChunkSize` 只是对端接受上限，不是最优节奏）。
+ *   - **窗口按块长反比**：`window × chunkSize ≤ InFlightByteBudget`，再夹到
+ *     `[MinWindow, MaxWindow]`——即「同时在飞的字节」有界，与文件大小无关。
+ */
+object ChunkSizing:
+
+  /** 在飞字节预算（8 MiB）：一波最多压这么多字节在内存里（含对端回帧的 base64）。 */
+  val InFlightByteBudget: Long = 8L * 1024 * 1024
+
+  /** 窗口硬下限：1 = 改前的纯串行；生产下限取 2（否则流水线等于没开）。 */
+  val MinWindow: Int = 2
+
+  /** 窗口硬上限：再宽只会放大内存与失败时的浪费，不改善 RTT 摊销。 */
+  val MaxWindow: Int = 8
+
+  /** 块长的三档（升序）。 */
+  val SmallChunk: Int = 512 * 1024
+  val MediumChunk: Int = 1024 * 1024
+  val LargeChunk: Int = 2 * 1024 * 1024
+
+  /**
+   * 会话块长（整会话恒定——`AttachContract.indexForOffset` 的索引算术依赖它）。
+   * 入参是**整件字节数**；未知（0/负数）⇒ 慢启动档 512 KiB。
+   */
+  def chunkSizeFor(totalBytes: Long): Int =
+    if totalBytes <= 0L then SmallChunk
+    else if totalBytes <= 4L * 1024 * 1024 then SmallChunk // ≤4 MiB：最多 8 块，粒度优先
+    else if totalBytes <= 16L * 1024 * 1024 then MediumChunk // ≤16 MiB：最多 16 块
+    else LargeChunk
+
+  /** 流水线窗口（在飞字节预算 / 块长，夹到 `[MinWindow, MaxWindow]`）。 */
+  def windowFor(chunkSize: Int): Int =
+    if chunkSize <= 0 then MinWindow
+    else
+      val byBudget = (InFlightByteBudget / chunkSize.toLong).toInt
+      math.max(MinWindow, math.min(MaxWindow, byBudget))
+
+end ChunkSizing
+
+/**
  * 分块拉取循环（**唯一驱动点**，`RemoteExecutor.transferGetScopedChunked` 消费）。
  *
  * `fetch` = 单块取数效应（调用方注入 P2P/relay 双腿 dispatch——本循环零传输面依赖，
@@ -217,8 +264,23 @@ end BrowseFetchRegistry
  * ① 传输失败（fetch 回 Left，有 1s 间隔拍）；② 块摘要不符（不符块零写盘，同块重拉）。
  * 续传语义使重试安全：`applyChunk` 幂等对齐；取消旗标在每块前后各查一次。
  *
- * 整件流程：首请求 = index 0 + `wantWholeSha256`（拿整件元数据 + 对端整件摘要，会话
- * 级一次付清）→ `restore` 对齐既有部分件 → 逐块 → 字节齐 ⇒ `verifyWhole` 收口。
+ * == 流水线（砍串行搬运开销，作者令 2026-11-04） ==
+ *
+ * 改前是**纯串行**：`fetch(0) → 落盘 → fetch(1) → …`，每块一次完整往返 ⇒ 链路
+ * RTT 直接乘块数（relay 腿 RTT 实测 43 ms 量级，5 MiB / 512 KiB = 10 块）。
+ * 改后按**窗口**并发：一波内 `window` 块同时在飞（`parTraverse`，受
+ * [[ChunkSizing.InFlightByteBudget]] 与 [[ChunkSizing.MaxWindow]] 双重上限），
+ * 全部回来再**按 index 升序**逐块校验落盘（顺序写盘语义与改前逐字节相同——续传
+ * 判据 `expectedIndex` 不容乱序），然后进入下一波。
+ *
+ * 为什么是「波次」而不是「连续流水」：落盘必须严格有序，而 `applyChunk` 的目标是
+ * 单文件追加；波次把「并发取数」与「顺序落盘」解耦，实现小、语义可读、背压天然
+ * （一波未回不发下一波）——代价是波内最慢块决定波时长，收益上限 = 窗口宽度。
+ *
+ * 内存上界 = `window × chunkSize ≤ InFlightByteBudget`（8 MiB 量级），与文件大小无关。
+ *
+ * 整件流程：首请求 = 起始 index + `wantWholeSha256`（拿整件元数据 + 对端整件摘要，
+ * 会话级一次付清）→ `restore` 对齐既有部分件 → 逐波 → 字节齐 ⇒ `verifyWhole` 收口。
  * legacy 回应（旧对端，无 `chunkSha256`）= 整件单发消费（大小闸照把——保留引导大件
  * 走 dropbox 通道的既有行为），同样回整件摘要（本侧自算——hash 账本副键的免费来源）。
  *
@@ -227,6 +289,8 @@ end BrowseFetchRegistry
  *
  * @param startChunkSize 拉取节奏（缺省 512KiB 慢启动起点）；生产恒缺省，spec/未来
  *   自适应调速以参数注入——块长不上 wire 判据，对端只按 index 切片。
+ * @param window 同时在飞的块数（`0` ⇒ 由 [[ChunkSizing.windowFor]] 按块长与内存预算派生；
+ *   `1` = 改前的纯串行语义，spec 用它做 A/B 对照）。
  */
 object BrowseGetLoop:
 
@@ -239,8 +303,10 @@ object BrowseGetLoop:
     onProgress: (Long, Long, Long) => IO[Unit],
     cancelled: AtomicBoolean,
     retriesPerChunk: Int = 2,
-    startChunkSize: Int = BrowseGetLoop.StartChunkSize
+    startChunkSize: Int = BrowseGetLoop.StartChunkSize,
+    window: Int = 0
   ): IO[Either[String, (os.Path, Long, String)]] =
+    val effWindow = if window > 0 then window else ChunkSizing.windowFor(startChunkSize)
     IO.blocking {
       if os.exists(target) && os.isFile(target) then os.size(target) else 0L
     }.flatMap { existingSize =>
@@ -276,13 +342,27 @@ object BrowseGetLoop:
                         case Left(err) => IO.pure(Left(err))
                         case Right(_) =>
                           onProgress(cursor.bytesReceived, cursor.totalBytes, ms).flatMap { _ =>
-                            loop(cursor, fetch, onProgress, cancelled, retriesPerChunk, retriesPerChunk, startChunkSize)
+                            loop(
+                              cursor,
+                              fetch,
+                              onProgress,
+                              cancelled,
+                              retriesPerChunk,
+                              retriesPerChunk,
+                              startChunkSize,
+                              effWindow
+                            )
                           }
                       }
                 }
           }
     }
 
+  /**
+   * 一波流水线：`window` 块同时在飞（并发取数）→ 按 index 升序逐块校验落盘 →
+   * 下一波。顺序落盘是硬约束（`BrowseGetCursor.expectedIndex` 只接受下一个位置），
+   * 因此并发面**只在取数**，不在写盘。
+   */
   private def loop(
     cursor: BrowseGetCursor,
     fetch: (Int, Int, Boolean) => IO[Either[String, BrowseGetCursor.ChunkReply]],
@@ -290,30 +370,76 @@ object BrowseGetLoop:
     cancelled: AtomicBoolean,
     retriesPerChunk: Int,
     digestRetriesLeft: Int,
-    chunkSize: Int
+    chunkSize: Int,
+    window: Int
   ): IO[Either[String, (os.Path, Long, String)]] =
     if cursor.bytesReceived >= cursor.totalBytes then finish(cursor, onProgress)
     else if cancelled.get then IO.pure(Left(BrowseGetCursor.Cancelled))
     else
-      val idx = cursor.expectedIndex
-      attemptChunk(fetch, idx, chunkSize, wantWhole = false, cancelled, attemptsLeft = retriesPerChunk + 1)
-        .flatMap {
-          case Left(err) => IO.pure(Left(err))
-          case Right((reply, ms)) =>
-            cursor.noteWholeSha(reply.wholeSha256.getOrElse(""))
-            applyChunkReply(cursor, reply).flatMap {
-              case Left(err) if err.startsWith("CHUNK_DIGEST_MISMATCH") && digestRetriesLeft > 0 && !cancelled.get =>
-                // 块摘要不符（传输损伤）＝**同块重拉**（续传语义下安全：applyChunk 先校验
-                // 后落盘——不符块零字节写盘，重拉从同一续传点继续）。上限 retriesPerChunk
-                // 次/块，防对端持续坏块打转。
-                loop(cursor, fetch, onProgress, cancelled, retriesPerChunk, digestRetriesLeft - 1, chunkSize)
-              case Left(err) => IO.pure(Left(err))
-              case Right(_) =>
-                onProgress(cursor.bytesReceived, cursor.totalBytes, ms).flatMap { _ =>
-                  loop(cursor, fetch, onProgress, cancelled, retriesPerChunk, retriesPerChunk, chunkSize)
-                }
-            }
+      val remainingChunks = ((cursor.totalBytes - cursor.bytesReceived) + chunkSize - 1) / chunkSize
+      val width = math.max(1, math.min(window.toLong, remainingChunks)).toInt
+      val firstIdx = cursor.expectedIndex
+      val indexes = (firstIdx until firstIdx + width).toList
+      // 并发取数（`parTraverse` 保序返回）：一波即一次流水线窗口。
+      indexes
+        .parTraverse(idx =>
+          attemptChunk(fetch, idx, chunkSize, wantWhole = false, cancelled, attemptsLeft = retriesPerChunk + 1)
+        )
+        .flatMap { replies =>
+          applyWave(
+            cursor,
+            replies,
+            fetch,
+            onProgress,
+            cancelled,
+            retriesPerChunk,
+            digestRetriesLeft,
+            chunkSize
+          ).flatMap {
+            case Left(err) => IO.pure(Left(err))
+            case Right(_) if cancelled.get => IO.pure(Left(BrowseGetCursor.Cancelled))
+            case Right(_) =>
+              loop(cursor, fetch, onProgress, cancelled, retriesPerChunk, retriesPerChunk, chunkSize, window)
+          }
         }
+
+  /** 按 index 升序应用一波的块；摘要不符 ⇒ 同块重拉（上限 `retriesPerChunk` 次）。 */
+  private def applyWave(
+    cursor: BrowseGetCursor,
+    replies: List[Either[String, (BrowseGetCursor.ChunkReply, Long)]],
+    fetch: (Int, Int, Boolean) => IO[Either[String, BrowseGetCursor.ChunkReply]],
+    onProgress: (Long, Long, Long) => IO[Unit],
+    cancelled: AtomicBoolean,
+    retriesPerChunk: Int,
+    digestRetriesLeft: Int,
+    chunkSize: Int
+  ): IO[Either[String, Unit]] =
+    def step(rest: List[Either[String, (BrowseGetCursor.ChunkReply, Long)]]): IO[Either[String, Unit]] =
+      rest match
+        case Nil => IO.pure(Right(()))
+        case Left(err) :: _ => IO.pure(Left(err))
+        case Right((reply, ms)) :: tail =>
+          cursor.noteWholeSha(reply.wholeSha256.getOrElse(""))
+          applyChunkReply(cursor, reply).flatMap {
+            case Right(_) =>
+              onProgress(cursor.bytesReceived, cursor.totalBytes, ms).flatMap(_ => step(tail))
+            case Left(err) if err.startsWith("CHUNK_DIGEST_MISMATCH") && digestRetriesLeft > 0 && !cancelled.get =>
+              // 块摘要不符（传输损伤）＝**同块重拉**（续传语义下安全：applyChunk 先校验
+              // 后落盘——不符块零字节写盘，重拉从同一续传点继续）。上限 retriesPerChunk
+              // 次/波，防对端持续坏块打转。
+              attemptChunk(fetch, reply.chunkIndex, chunkSize, wantWhole = false, cancelled, retriesPerChunk + 1)
+                .flatMap {
+                  case Left(err2) => IO.pure(Left(err2))
+                  case Right((again, ms2)) =>
+                    applyChunkReply(cursor, again).flatMap {
+                      case Left(err3) => IO.pure(Left(err3))
+                      case Right(_) =>
+                        onProgress(cursor.bytesReceived, cursor.totalBytes, ms2).flatMap(_ => step(tail))
+                    }
+                }
+            case Left(err) => IO.pure(Left(err))
+          }
+    step(replies)
 
   private def attemptChunk(
     fetch: (Int, Int, Boolean) => IO[Either[String, BrowseGetCursor.ChunkReply]],

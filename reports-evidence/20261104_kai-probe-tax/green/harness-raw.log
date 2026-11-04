@@ -1,0 +1,15 @@
+MEASURE env {"pid":87847,"note":"real sockets, real 5MiB bytes"}
+MEASURE probe {"set":"kai","mode":"legacy-serial","endpoints":2,"ms":4666,"per":[{"endpoint":"http://100.91.165.120:6138","ms":3164,"connected":false},{"endpoint":"http://192.168.1.145:6138","ms":1501,"connected":false}]}
+MEASURE probe {"set":"kai","mode":"concurrent-cold","endpoints":2,"winner":null,"ms":1517}
+MEASURE probe {"set":"kai","mode":"negative-cache-hit","hit":true,"consecutive":1,"windowMs":60000,"ms":0}
+MEASURE probe {"set":"kai","mode":"negative-cache-expired-half-open","hit":false,"ms":0}
+MEASURE probe {"set":"blackhole-rfc5737","mode":"legacy-serial","endpoints":2,"ms":4511,"per":[{"endpoint":"http://203.0.113.7:6138","ms":1506,"connected":false},{"endpoint":"http://198.51.100.9:6138","ms":3004,"connected":false}]}
+MEASURE probe {"set":"blackhole-rfc5737","mode":"concurrent-cold","endpoints":2,"winner":null,"ms":1204}
+MEASURE probe {"set":"blackhole-rfc5737","mode":"negative-cache-hit","hit":true,"consecutive":1,"windowMs":60000,"ms":0}
+MEASURE probe {"set":"blackhole-rfc5737","mode":"negative-cache-expired-half-open","hit":false,"ms":0}
+MEASURE transfer {"bytes":5242880,"chunkSize":524288,"window":1,"chunks":10,"rttMs":43,"ms":953,"bytesIntact":true,"shaMatch":true}
+MEASURE transfer {"bytes":5242880,"chunkSize":524288,"window":1,"chunks":10,"rttMs":43,"ms":598,"bytesIntact":true,"shaMatch":true}
+MEASURE transfer {"bytes":5242880,"chunkSize":524288,"window":4,"chunks":10,"rttMs":43,"ms":272,"bytesIntact":true,"shaMatch":true}
+MEASURE transfer {"bytes":5242880,"chunkSize":524288,"window":4,"chunks":10,"rttMs":43,"ms":255,"bytesIntact":true,"shaMatch":true}
+MEASURE transfer {"bytes":5242880,"chunkSize":1048576,"window":8,"chunks":5,"rttMs":43,"ms":154,"bytesIntact":true,"shaMatch":true}
+MEASURE transfer {"bytes":5242880,"chunkSize":1048576,"window":8,"chunks":5,"rttMs":43,"ms":155,"bytesIntact":true,"shaMatch":true}
