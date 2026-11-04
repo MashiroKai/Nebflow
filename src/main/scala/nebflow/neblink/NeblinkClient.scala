@@ -292,7 +292,10 @@ class NeblinkClient(
 
       val physical = allNics.filterNot(isLikelyVirtualNic)
       val preferred = toEndpoints(physical)
-      val chosen = if preferred.nonEmpty then preferred else toEndpoints(allNics) // never lose all endpoints
+      val raw = if preferred.nonEmpty then preferred else toEndpoints(allNics) // never lose all endpoints
+      // 上报面卫生（presence-direct 批 C-3）：丢链路本地/未指定/组播地址、丢隧道网卡的非 tailnet
+      // 地址、去重、封顶 4 条；过滤后为空则原样返回 ⇒ 永不失去全部候选。保序，排序权仍在 EndpointPreference。
+      val chosen = PresenceCandidateProbe.sanitizeReported(raw)
       cachedLocalPrefixes = EndpointPreference.localPrefixesOf(chosen.map(_.address))
       chosen
     catch case _: Exception => Nil
