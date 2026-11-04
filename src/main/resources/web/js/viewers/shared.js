@@ -321,7 +321,7 @@ function markUnsolvedLink(a) {
   const s = document.createElement('span');
   s.setAttribute('data-nf-link-unsolved-note', '1');
   s.textContent = ' (local link: no path to open from this preview)';
-  s.style.cssText = 'font-size:11px;color:var(--color-text-muted,#8b8e96);';
+  s.style.cssText = 'font-size:var(--ds-fs-meta);color:var(--color-text-muted,#8b8e96);';
   if (a.parentNode) a.parentNode.insertBefore(s, a.nextSibling);
 }
 export { markUnsolvedLink };

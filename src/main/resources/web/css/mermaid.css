@@ -6,7 +6,7 @@
    values outside the reserved-height skeleton. */
 
 .nf-mermaid {
-  margin: 6px 0;
+  margin: var(--ds-space-1h) 0;
 }
 
 .nf-mermaid .nf-mermaid-body {
@@ -23,7 +23,7 @@
 .nf-mermaid .nf-mermaid-ph {
   width: 72%;
   min-height: 56px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: var(--color-frame-hover);
   animation: nfMermaidPulse 1.2s ease-in-out infinite;
 }
@@ -43,8 +43,8 @@
 .nf-mermaid-error .nf-mermaid-body {
   display: block;
   border: 1px solid var(--sapphire-edge-strong);
-  border-radius: 8px;
-  padding: 8px 10px;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
   background: var(--sapphire-edge);
   min-height: 0;
 }
@@ -52,9 +52,9 @@
 .nf-mermaid-errrow {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-wrap: wrap;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 
 .nf-mermaid-errlabel {
@@ -73,7 +73,7 @@
   border: none;
   background: none;
   padding: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-btn);
   font-weight: 500;
   color: rgb(var(--sapphire));
   cursor: pointer;
@@ -81,12 +81,12 @@
 .nf-mermaid-srcbtn:hover { text-decoration: underline; }
 
 .nf-mermaid-src {
-  margin: 8px 0 0;
-  padding: 8px 10px;
-  border-radius: 6px;
+  margin: var(--ds-space-2) 0 0;
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-chip);
   background: var(--color-frame-hover);
   overflow-x: auto;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   max-height: 240px;
 }

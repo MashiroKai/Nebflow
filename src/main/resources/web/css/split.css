@@ -8,14 +8,14 @@
   position: relative;
 }
 .explorer-header {
-  padding: 10px 14px 4px;
+  padding: var(--ds-space-glass-x) 14px var(--ds-space-1);
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
 }
 .explorer-title {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   color: var(--color-frame-text-muted);
   text-transform: uppercase;
@@ -48,7 +48,7 @@
 }
 .explorer-actions {
   display: flex;
-  gap: 2px;
+  gap: var(--ds-space-half);
   align-items: center;
   flex: 0 0 auto; /* picker-device-switch 批：常驻 chip 入列后动作排不得被压缩 */
 }
@@ -76,14 +76,14 @@
   flex: 1;
   min-width: 0;
   border: 1px solid var(--color-primary, #3b82f6);
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: var(--color-bg, #fff);
   color: var(--color-text);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-family: inherit;
-  padding: 2px 6px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
   outline: none;
-  margin-left: 4px;
+  margin-left: var(--ds-space-1);
 }
 .explorer-creating {
   display: flex;
@@ -100,9 +100,9 @@
   -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
   backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
   border: 1px solid var(--glass-border, rgba(0,0,0,0.08));
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-  padding: 4px;
+  padding: var(--ds-space-1);
   min-width: 120px;
 }
 .explorer-context-menu button,
@@ -111,14 +111,14 @@
   display: block;
   width: 100%;
   text-align: left;
-  padding: 5px 10px;
+  padding: 5px var(--ds-space-glass-x);
   border: none;
   background: none;
   color: var(--color-text);
-  font-size: 12px;
+  font-size: var(--ds-fs-btn);
   font-family: inherit;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   transition: background 0.1s;
 }
 .explorer-context-menu button:hover,
@@ -158,16 +158,16 @@
 .explorer-context-menu hr {
   border: none;
   border-top: 1px solid var(--glass-border, rgba(0,0,0,0.06));
-  margin: 4px 0;
+  margin: var(--ds-space-1) 0;
 }
 /* canvas-stack：叠卡右键菜单（引用/关闭/关闭其他）与 explorer 菜单同构的分隔线 */
 .canvas-tab-context-menu hr {
   border: none;
   border-top: 1px solid var(--glass-border, rgba(0,0,0,0.06));
-  margin: 4px 0;
+  margin: var(--ds-space-1) 0;
 }
 #explorer-tree {
-  padding: 2px 0 8px;
+  padding: var(--ds-space-half) 0 var(--ds-space-2);
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -175,7 +175,7 @@
 #explorer-tree::-webkit-scrollbar { width: 4px; }
 #explorer-tree::-webkit-scrollbar-thumb {
   background: rgba(128, 128, 128, 0.15);
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
 }
 /* #303 E3: constant blank bottom drop area inside .explorer-root — guarantees a
    visible "drop to move to root" landing zone even when the root list is full. */
@@ -191,11 +191,11 @@
 .explorer-item {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
+  gap: var(--ds-space-1);
+  padding: 3px var(--ds-space-2);
   cursor: pointer;
   user-select: none;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
@@ -225,13 +225,13 @@
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 6px 5px 12px;
+  gap: var(--ds-space-2);
+  padding: 5px var(--ds-space-1h) 5px var(--ds-space-3);
   background: var(--glass-bg, rgba(255, 255, 255, 0.92));
   -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
   backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
   border: 1px solid var(--glass-border, var(--color-frame-border));
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.20), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
   z-index: 100;
   white-space: nowrap;
@@ -243,7 +243,7 @@
   to   { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
 }
 .explorer-selection-count {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-frame-text);
 }
@@ -252,8 +252,8 @@
    （铁律三）。 */
 .explorer-selection-delete {
   pointer-events: auto; /* only the button is clickable inside the bar */
-  padding: 3px 12px;
-  font-size: 12px;
+  padding: 3px var(--ds-space-3);
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-frame-text);
   background: transparent;
@@ -302,11 +302,11 @@
 .explorer-item.explorer-folder.drop-target {
   background: rgb(var(--sapphire) / 0.14);
   box-shadow: inset 0 0 0 1px rgb(var(--sapphire) / 0.45);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
 }
 .explorer-root.drop-target {
   box-shadow: inset 0 0 0 1px rgb(var(--sapphire) / 0.35);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
 }
 .explorer-item.drop-invalid,
 .explorer-root.drop-invalid {
@@ -358,20 +358,20 @@
 
 /* ── Loading / Empty / Error ── */
 .explorer-loading {
-  padding: 4px 20px;
-  font-size: 11px;
+  padding: var(--ds-space-1) var(--ds-space-5);
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   opacity: 0.4;
 }
 .explorer-empty {
-  padding: 4px 20px;
-  font-size: 11px;
+  padding: var(--ds-space-1) var(--ds-space-5);
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   opacity: 0.3;
 }
 .explorer-error {
-  padding: 4px 20px;
-  font-size: 11px;
+  padding: var(--ds-space-1) var(--ds-space-5);
+  font-size: var(--ds-fs-meta);
   color: rgb(239, 68, 68);
   opacity: 0.6;
 }
@@ -385,9 +385,9 @@
 .dev-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   margin-left: 7px;
-  padding: 2px 7px;
+  padding: var(--ds-space-half) 7px;
   border-radius: 7px;
   background: rgb(var(--sapphire) / 0.12);
   color: rgb(var(--sapphire));
@@ -435,7 +435,7 @@
 }
 button.dev-chip {
   border: none;
-  padding: 2px 7px;
+  padding: var(--ds-space-half) 7px;
   font: 600 10px/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
 }
 .dev-chip .chev {
@@ -510,13 +510,13 @@ button.dev-chip {
   right: 10px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px 6px 10px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1h) var(--ds-space-2) var(--ds-space-1h) var(--ds-space-glass-x);
   background: var(--glass-bg, rgba(255, 255, 255, 0.92));
   -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
   backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.2);
   border: 1px solid var(--glass-border, var(--color-frame-border));
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.20), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
   z-index: 100;
   animation: explorerPickupIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
@@ -533,7 +533,7 @@ button.dev-chip {
 .explorer-pickup-bar .bar-msg {
   flex: 1;
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -541,7 +541,7 @@ button.dev-chip {
 }
 .explorer-pickup-bar .bar-act {
   flex: 0 0 auto;
-  padding: 3px 10px;
+  padding: 3px var(--ds-space-glass-x);
   font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-frame-text);
   background: transparent;
@@ -875,7 +875,7 @@ body:not(.mobile-layer) .canvas-header .canvas-close-btn {
   flex: 1;
   overflow: hidden;
   margin-top: 0;
-  padding: 0 0 8px;
+  padding: 0 0 var(--ds-space-2);
   display: flex;
   flex-direction: column;
   position: relative;
@@ -1352,7 +1352,7 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
 }
 .canvas-title.is-dirty .t-dot { display: block; }
 .canvas-title .t-name {
-  font-size: 12px; font-weight: 500; color: var(--color-frame-text-bright, var(--color-text));
+  font-size: var(--ds-fs-hint); font-weight: 500; color: var(--color-frame-text-bright, var(--color-text));
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
 
@@ -1401,7 +1401,7 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   /* 固定几何（2026-10-25 胶囊固定尺寸批，作者令「全部胶囊面统一固定宽高」）：
      环页签胶囊与标题头主胶囊同一 token 档（--capsule-h 36 / --capsule-w 180）——
      修前 fit-content（max-width 150）随内容自适应；环几何（canvas.js layout()
@@ -1412,14 +1412,14 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
   height: var(--capsule-h, 36px);
   width: var(--capsule-w, 180px);
   max-width: min(var(--capsule-w, 180px), 92vw);
-  padding: 4px 10px;
+  padding: var(--ds-space-1) var(--ds-space-glass-x);
   /* 标题溢出收口（作者令 2026-10-26「任何状态下不得出界」）：胶囊本体兜底
      overflow:hidden —— .cr-name ellipsis 为主收口（flex 链 min-width:0），本体
      裁切为兜底（过渡中途/字体度量抖动等任何态，文字绝不越过胶囊圆角边界）。 */
   overflow: hidden;
   border: 1px solid var(--g2-input-border);
   border-bottom-color: transparent;   /* 件三统一批：同 #header 底缘透明（内容穿底不衬线） */
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   /* 材质 = #input-bar 现行 g2 配方逐项同源（CR2-5 钉）：液体玻璃 v2/v3 批后
      #input-bar 升 --g2-input-*（liquid-glass.css 覆写），环胶囊随齐 —— 竖环
      回退批 2026-10-31 复锚（此前 --glass-bg/--cv-shadow 旧 token 与 ref 脱钩，
@@ -1432,7 +1432,7 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
     inset 0 1px 0 var(--g2-input-specular),
     0 8px 24px var(--g2-input-shadow);
   color: var(--color-frame-text-bright, var(--color-text));
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   line-height: 1;
   white-space: nowrap;
@@ -1494,7 +1494,7 @@ body.canvas-deck-narrow .canvas-title { max-width: none; }
 .cr-capsule.is-center {
   z-index: 3;
   gap: 7px;
-  padding: 4px calc(7px + var(--cr-popw, 0px)) 4px 12px;
+  padding: var(--ds-space-1) calc(7px + var(--cr-popw, 0px)) var(--ds-space-1) var(--ds-space-3);
   background: transparent;
   border-color: transparent;
   box-shadow: none;
@@ -1571,7 +1571,7 @@ body.canvas-open:not(.mobile-layer) #canvas-head-close { display: inline-flex; }
   z-index: auto;
   visibility: hidden;
   pointer-events: none;
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   overflow: hidden;
   perspective: 1150px;
   perspective-origin: 50% 10%;
@@ -1670,7 +1670,7 @@ body.mobile-layer #canvas-head-close { display: none !important; }
   align-items: center;
   gap: 7px;
   height: 38px;
-  padding: 0 34px 0 12px;   /* uifix ③e：右留 × 钮位（24px + 边距） */
+  padding: 0 34px 0 var(--ds-space-3);   /* uifix ③e：右留 × 钮位（24px + 边距） */
   min-width: 0;
   border-bottom: 1px solid var(--th-border);
   background: var(--th-bg);
@@ -1696,7 +1696,7 @@ body.mobile-layer #canvas-head-close { display: none !important; }
 .deck-card .card-thumb {
   flex: 1;
   min-height: 0;
-  margin: 12px;
+  margin: var(--ds-space-3);
   border-radius: 9px;
   overflow: hidden;
   position: relative;
@@ -1758,7 +1758,7 @@ body.mobile-layer #canvas-head-close { display: none !important; }
 }
 .deck-card .card-snap-inner .canvas-md-viewer {
   max-width: none !important;
-  padding: 16px 20px !important;
+  padding: var(--ds-space-4) var(--ds-space-5);
   background: transparent !important;
 }
 .deck-card .card-snap-img {
@@ -1802,20 +1802,20 @@ body.mobile-layer #canvas-head-close { display: none !important; }
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   width: 58%; height: 82%;
   background: var(--color-surface);
-  border: 1px solid var(--th-border); border-radius: 4px; padding: 10px 12px;
+  border: 1px solid var(--th-border); border-radius: var(--ds-radius-badge); padding: var(--ds-space-glass-x) var(--ds-space-3);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
-.deck-card .thumb-page .ln { height: 5px; margin-bottom: 6px; }
+.deck-card .thumb-page .ln { height: 5px; margin-bottom: var(--ds-space-1h); }
 .deck-card .thumb-flow { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
 .deck-card .thumb-flow svg { width: 78%; height: 68%; color: var(--color-text-muted); }
-.deck-card .thumb-browser { position: absolute; inset: 0; padding: 8px 10px; }
+.deck-card .thumb-browser { position: absolute; inset: 0; padding: var(--ds-space-2) var(--ds-space-glass-x); }
 .deck-card .thumb-browser .bar {
   height: 14px; border-radius: 5px; background: var(--bar-3);
-  border: 1px solid var(--th-border); margin-bottom: 8px;
+  border: 1px solid var(--th-border); margin-bottom: var(--ds-space-2);
   display: flex; align-items: center; gap: 3px; padding: 0 5px;
 }
 .deck-card .thumb-browser .bar i { width: 4px; height: 4px; border-radius: 50%; background: var(--bar-1); display: block; }
-.deck-card .thumb-browser .blk { height: 16px; border-radius: 4px; background: var(--bar-2); margin-bottom: 6px; }
+.deck-card .thumb-browser .blk { height: 16px; border-radius: var(--ds-radius-badge); background: var(--bar-2); margin-bottom: var(--ds-space-1h); }
 .deck-card .thumb-browser .blk.b2 { width: 64%; }
 
 /* ── 底部提示 + 计数：UI 批 ①（作者令 2026-10-21）整体退役——deck-foot 元素
@@ -2049,29 +2049,29 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 }
 
 .canvas-md-viewer {
-  padding: 20px 24px;
+  padding: var(--ds-space-5) var(--ds-space-6);
   font-size: 14px;
   line-height: 1.55;
   color: var(--color-text);
   word-break: break-word;
 }
 /* Markdown element styling — mirrors .bubble.ai */
-.canvas-md-viewer p { margin: 4px 0; }
+.canvas-md-viewer p { margin: var(--ds-space-1) 0; }
 .canvas-md-viewer p:first-child { margin-top: 0; }
 .canvas-md-viewer p:last-child { margin-bottom: 0; }
-.canvas-md-viewer ul, .canvas-md-viewer ol { margin: 4px 0 4px 18px; padding: 0; }
-.canvas-md-viewer li { margin: 2px 0; }
+.canvas-md-viewer ul, .canvas-md-viewer ol { margin: var(--ds-space-1) 0 var(--ds-space-1) 18px; padding: 0; }
+.canvas-md-viewer li { margin: var(--ds-space-half) 0; }
 .canvas-md-viewer h1, .canvas-md-viewer h2, .canvas-md-viewer h3, .canvas-md-viewer h4 {
-  margin: 8px 0 4px 0;
+  margin: var(--ds-space-2) 0 var(--ds-space-1) 0;
   font-weight: 600;
 }
-.canvas-md-viewer h1 { font-size: 16px; }
-.canvas-md-viewer h2 { font-size: 15px; }
+.canvas-md-viewer h1 { font-size: var(--ds-fs-mobile-callout); }
+.canvas-md-viewer h2 { font-size: var(--ds-fs-title); }
 .canvas-md-viewer h3 { font-size: 14px; }
 /* Code block wrapper & copy button — mirror .bubble.ai styles */
 .canvas-md-viewer .code-block-wrap {
   position: relative;
-  margin: 6px 0;
+  margin: var(--ds-space-1h) 0;
 }
 .canvas-md-viewer .code-block-wrap pre {
   margin: 0;
@@ -2080,45 +2080,45 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 
 .canvas-md-viewer pre {
   background: var(--color-frame-input-bg, #f5f5f5);
-  padding: 8px 12px 10px;
-  border-radius: 8px;
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-input);
   overflow-x: auto;
-  font-size: 12px;
-  margin: 6px 0;
+  font-size: var(--ds-fs-hint);
+  margin: var(--ds-space-1h) 0;
   line-height: 1.4;
   scrollbar-color: rgba(128,128,128,0.2) transparent;
 }
 .canvas-md-viewer pre::-webkit-scrollbar { height: 4px; }
 .canvas-md-viewer pre::-webkit-scrollbar-track { background: transparent; }
-.canvas-md-viewer pre::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.2); border-radius: 2px; }
-.canvas-md-viewer pre code { background: none; padding: 0; font-size: 12px; }
+.canvas-md-viewer pre::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.2); border-radius: var(--ds-radius-thin); }
+.canvas-md-viewer pre code { background: none; padding: 0; font-size: var(--ds-fs-hint); }
 .canvas-md-viewer code {
   background: rgba(128,128,128,0.1);
-  padding: 1px 4px;
+  padding: 1px var(--ds-space-1);
   border-radius: 3px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 .canvas-md-viewer blockquote {
   border-left: 3px solid var(--color-border);
-  margin: 6px 0;
-  padding-left: 10px;
+  margin: var(--ds-space-1h) 0;
+  padding-left: var(--ds-space-glass-x);
   color: var(--color-text-muted);
 }
 .canvas-md-viewer table {
   border-collapse: collapse;
-  margin: 6px 0;
-  font-size: 12px;
+  margin: var(--ds-space-1h) 0;
+  font-size: var(--ds-fs-hint);
 }
 .canvas-md-viewer th, .canvas-md-viewer td {
   border: 1px solid var(--color-border);
-  padding: 4px 8px;
+  padding: var(--ds-space-1) var(--ds-space-2);
 }
 .canvas-md-viewer th { background: var(--color-surface, #f5f5f5); font-weight: 600; }
 .canvas-md-viewer a { color: var(--color-primary); }
-.canvas-md-viewer hr { border: none; border-top: 1px solid var(--color-border); margin: 8px 0; }
+.canvas-md-viewer hr { border: none; border-top: 1px solid var(--color-border); margin: var(--ds-space-2) 0; }
 .canvas-md-viewer strong { font-weight: 600; }
-.canvas-md-viewer img { max-width: 100%; border-radius: 8px; }
+.canvas-md-viewer img { max-width: 100%; border-radius: var(--ds-radius-input); }
 
 /* ── EPUB Reader — paginated ──
    P0 止血批（设计稿 20261030 §1.2/§2.1/§6）：三主题档（data-epub-theme）+
@@ -2134,8 +2134,8 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 8px 16px;
-  font-size: 11px;
+  padding: var(--ds-space-2) var(--ds-space-4);
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   flex-shrink: 0;
   border-bottom: 1px solid var(--color-border);
@@ -2148,8 +2148,8 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   position: relative;
 }
 .epub-reader-content {
-  padding: 24px 36px;
-  font-size: 16px;
+  padding: var(--ds-space-6) 36px;
+  font-size: var(--ds-fs-mobile-callout);
   line-height: 1.8;
   /* 三主题底/墨（设计稿 §1.2 对比度硬指标：纸质 ≈11.5:1，明亮/暗夜 ≥4.5:1）。
      --epub-bg/--epub-fg 由 epub.js 按档位写入（值 = THEMES 表，亮/暗档即
@@ -2172,12 +2172,12 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 }
 .epub-reader-content h1 { font-size: 22px; }
 .epub-reader-content h2 { font-size: 18px; }
-.epub-reader-content h3 { font-size: 16px; }
-.epub-reader-content img { max-width: 100%; border-radius: 8px; }
+.epub-reader-content h3 { font-size: var(--ds-fs-mobile-callout); }
+.epub-reader-content img { max-width: 100%; border-radius: var(--ds-radius-input); }
 .epub-reader-content a { color: inherit; text-decoration: underline; }
 .epub-reader-content blockquote {
   margin: 1em 0;
-  padding-left: 12px;
+  padding-left: var(--ds-space-3);
   border-left: 3px solid var(--color-border);
   /* 引用色 = 主题墨色 75% 混透明（color-mix，无新 token）：纸/暗主题下
      对比度均 ≥4.5:1（旧 --color-text-muted 直涂在米白底仅 ~3.2:1）。 */
@@ -2189,7 +2189,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   display: block;
   min-width: 96px;
   min-height: 64px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px dashed var(--color-border);
   background: var(--color-frame-input-bg, rgba(127, 127, 127, 0.08));
 }
@@ -2209,21 +2209,21 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   transform: translateX(-50%);
   z-index: 20;
   width: min(92%, 420px);
-  padding: 10px 12px;
-  border-radius: 12px;
+  padding: var(--ds-space-glass-x) var(--ds-space-3);
+  border-radius: var(--ds-radius-xl);
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--frost-shadow);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 .epub-reader-menu[hidden] { display: none; }
 .epub-menu-title {
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
-  margin-bottom: 8px;
+  margin-bottom: var(--ds-space-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2232,15 +2232,15 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 .epub-menu-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 6px 0;
+  gap: var(--ds-space-1h);
+  margin: var(--ds-space-1h) 0;
   flex-wrap: wrap;
 }
 .epub-menu-label {
   flex: none;
   min-width: 44px;
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 .epub-menu-value {
   min-width: 44px;
@@ -2251,12 +2251,12 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   flex: none;
   min-width: 32px;
   height: 30px;
-  padding: 0 10px;
-  border-radius: 8px;
+  padding: 0 var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-text);
-  font-size: 12px;
+  font-size: var(--ds-fs-btn);
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -2268,7 +2268,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 .epub-menu-close {
   display: block;
   width: 100%;
-  margin-top: 8px;
+  margin-top: var(--ds-space-2);
 }
 
 /* ── 统一阅读底栏（阅读器 P1 批，设计稿 §2.2；epub/txt/md 共内核）─────────
@@ -2280,8 +2280,8 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   position: relative; /* ⋯ 弹出菜单的锚 */
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 16px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1h) var(--ds-space-4);
   flex-shrink: 0;
   border-top: 1px solid var(--color-border);
   min-height: 44px;
@@ -2291,7 +2291,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   flex: none;
   width: 32px;
   height: 32px;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   cursor: pointer;
@@ -2310,7 +2310,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 .epub-nav-info {
   flex: none;
   min-width: 84px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -2331,7 +2331,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   width: 100%;
   height: 4px;
   margin: 0;
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
   background: var(--color-frame-hover, var(--color-border));
   outline: none;
   cursor: pointer;
@@ -2391,14 +2391,14 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   bottom: calc(100% + 6px);
   z-index: 21;
   width: 208px;
-  padding: 10px 12px;
-  border-radius: 12px;
+  padding: var(--ds-space-glass-x) var(--ds-space-3);
+  border-radius: var(--ds-radius-xl);
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--frost-shadow);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 .epub-bar-menu[hidden] { display: none; }
 .epub-menu-wide { width: 100%; }
@@ -2406,12 +2406,12 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   flex: 1 1 auto;
   min-width: 56px;
   height: 30px;
-  padding: 0 8px;
-  border-radius: 8px;
+  padding: 0 var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-control-border);
   background: var(--glass-control-bg);
   color: var(--color-text);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   box-sizing: border-box;
 }
 /* TOC 抽屉（§2.1：桌面左侧毛玻璃抽屉；移动底部弹出；无 overlay 暗化） */
@@ -2424,14 +2424,14 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   z-index: 22;
   display: flex;
   flex-direction: column;
-  padding: 10px 8px;
+  padding: var(--ds-space-glass-x) var(--ds-space-2);
   border-right: 1px solid var(--glass-border);
   border-radius: 0 12px 12px 0;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--frost-shadow);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   box-sizing: border-box;
 }
 .epub-toc[hidden] { display: none; }
@@ -2439,12 +2439,12 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 2px 6px 8px;
+  padding: var(--ds-space-half) var(--ds-space-1h) var(--ds-space-2);
   flex: none;
 }
 .epub-toc-title {
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
 }
 .epub-toc-list {
@@ -2452,7 +2452,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-space-half);
   min-height: 0;
 }
 .epub-toc-item {
@@ -2460,10 +2460,10 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   border: none;
   background: transparent;
   color: var(--color-text);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   min-height: 36px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-input);
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2524,9 +2524,9 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   position: absolute;
   inset: 0;
   overflow-y: auto;
-  padding: 24px 36px;
+  padding: var(--ds-space-6) 36px;
   box-sizing: border-box;
-  font-size: 16px;
+  font-size: var(--ds-fs-mobile-callout);
   line-height: 1.8;
   background: var(--color-surface);
   color: var(--color-text);
@@ -2548,7 +2548,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
   border-top: 1px dashed var(--color-border, rgba(128, 128, 128, 0.35));
 }
 @media (max-width: 560px) {
-  .canvas-txt-scroll { padding: 16px 18px; font-size: 15px; }
+  .canvas-txt-scroll { padding: var(--ds-space-4) 18px; font-size: var(--ds-fs-title); }
 }
 
 /* ── 标注面（阅读器 P3 批，设计稿 §4.2）────────────────────────────────────
@@ -2562,7 +2562,7 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 }
 mark.nf-anno {
   padding: 0 1px;
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
   color: inherit; /* 文字色 = 主题墨色，只底色区分（颜色归主题管同 §1.2 纪律） */
   background: var(--anno-yellow);
   cursor: pointer; /* 点高亮出编辑条（浮动条四色/笔记/删除） */
@@ -2579,9 +2579,9 @@ mark.nf-anno[data-anno-stale] {
   z-index: 25;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: 10px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  border-radius: var(--ds-radius-button);
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -2602,17 +2602,17 @@ mark.nf-anno[data-anno-stale] {
 .epub-anno-textarea {
   width: 100%;
   box-sizing: border-box;
-  margin: 6px 0;
-  padding: 8px;
-  border-radius: 8px;
+  margin: var(--ds-space-1h) 0;
+  padding: var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-control-border);
   background: var(--color-frame-input-bg, rgba(127, 127, 127, 0.08));
   color: var(--color-text);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-family: inherit;
   resize: vertical;
 }
-.epub-anno-item { display: flex; align-items: center; gap: 6px; text-align: start; }
+.epub-anno-item { display: flex; align-items: center; gap: var(--ds-space-1h); text-align: start; }
 .epub-anno-dot {
   flex: none;
   width: 10px;
@@ -2631,19 +2631,19 @@ mark.nf-anno[data-anno-stale] {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 .epub-anno-stale {
   flex: none;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   border: 1px dashed var(--color-text-muted);
-  border-radius: 6px;
-  padding: 0 4px;
+  border-radius: var(--ds-radius-chip);
+  padding: 0 var(--ds-space-1);
 }
 .epub-anno-group-label {
-  padding: 8px 10px 2px;
-  font-size: 11px;
+  padding: var(--ds-space-2) var(--ds-space-glass-x) var(--ds-space-half);
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   color: var(--color-text-muted);
 }
@@ -2651,8 +2651,8 @@ mark.nf-anno[data-anno-stale] {
 /* 移动底栏（§2.2：下一页交点右区/横滑；触控热区 ≥40px；底高让位 safe-area） */
 @media (max-width: 768px) {
   .epub-reader-nav {
-    gap: 6px;
-    padding: 4px 10px calc(4px + env(safe-area-inset-bottom, 0px));
+    gap: var(--ds-space-1h);
+    padding: var(--ds-space-1) var(--ds-space-glass-x) calc(4px + env(safe-area-inset-bottom, 0px));
     min-height: 48px;
   }
   .epub-nav-btn { width: 40px; height: 40px; }
@@ -2682,14 +2682,14 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
 
 /* ── YAML viewer ── */
 .canvas-yaml-viewer {
-  padding: 16px 0;
+  padding: var(--ds-space-4) 0;
   font-family: 'SF Mono', 'Monaco', 'Cascadia Code', monospace;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   line-height: 1.6;
 }
 .canvas-yaml-viewer pre {
   margin: 0;
-  padding: 0 16px;
+  padding: 0 var(--ds-space-4);
   white-space: pre-wrap;
   word-wrap: break-word;
 }
@@ -2702,8 +2702,8 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 16px 16px 0;
-  gap: 10px;
+  padding: var(--ds-space-4) var(--ds-space-4) 0;
+  gap: var(--ds-space-glass-x);
   height: 100%;
 }
 /* .image-info（文件名+体积标签行）退役 — 2026-10-25 胶囊去重令（作者报障
@@ -2728,7 +2728,7 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
 .canvas-image-viewport img {
   display: block;
   max-width: none; /* natural size; visual size is transform scale */
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   transform-origin: 0 0;
   will-change: transform;
   -webkit-user-drag: none; /* Safari: no native drag ghost (see draggable=false in viewImage) */
@@ -2755,8 +2755,8 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 16px;
-  gap: 10px;
+  padding: var(--ds-space-4);
+  gap: var(--ds-space-glass-x);
   height: 100%;
 }
 /* .image-info 已随 2026-10-25 胶囊去重令退役（见上 .canvas-image-viewer 注）。 */
@@ -2764,7 +2764,7 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   display: block;
   max-width: 100%;
   max-height: 100%;
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
 }
 
 /* ── PDF viewer (pdf.js canvas render, zoomable) ── */
@@ -2779,9 +2779,9 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   border-radius: 0;
 }
 .pdf-loading {
-  padding: 24px;
+  padding: var(--ds-space-6);
   text-align: center;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
 }
 .pdf-pages {
@@ -2791,12 +2791,12 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 16px;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-4);
 }
 .pdf-page {
   background: #fff; /* PDFs are authored for paper — page canvas keeps white */
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.06);
 }
 
@@ -2829,7 +2829,7 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   z-index: 5;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   padding: var(--cv-pad-bar-sm, 4px);
   border-radius: var(--cv-radius-bar-sm, 10px);
   background: var(--cv-bg, var(--glass-bg));
@@ -2907,7 +2907,7 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
      全站最小可读档，手机层（mobileLayer.css ①b）已取同值 ⇒ 两腿一致。
      只改字号不改进位逻辑：读数仍是行内文本、宽度随内容（百分比数字用
      tabular-nums 定宽防跳）。 */
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
 }
@@ -2954,8 +2954,8 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
 }
 .xlsx-sheet-bar {
   display: flex;
-  gap: 2px;
-  padding: 8px 12px;
+  gap: var(--ds-space-half);
+  padding: var(--ds-space-2) var(--ds-space-3);
   border-bottom: 1px solid var(--color-border);
   overflow-x: auto;
   scrollbar-width: none;
@@ -2963,10 +2963,10 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
 }
 .xlsx-sheet-bar::-webkit-scrollbar { display: none; }
 .xlsx-sheet-tab {
-  padding: 4px 12px;
-  font-size: 11px;
+  padding: var(--ds-space-1) var(--ds-space-3);
+  font-size: var(--ds-fs-meta);
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
@@ -2990,12 +2990,12 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
 .xlsx-sheet-content table {
   border-collapse: collapse;
   width: 100%;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 .xlsx-sheet-content td,
 .xlsx-sheet-content th {
   border: 1px solid var(--color-border, rgba(128,128,128,0.12));
-  padding: 3px 8px;
+  padding: 3px var(--ds-space-2);
   white-space: nowrap;
   text-align: left;
 }
@@ -3006,10 +3006,10 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
 
 /* ── Error / Empty ── */
 .canvas-error {
-  padding: 24px;
+  padding: var(--ds-space-6);
   text-align: center;
   color: rgb(239, 68, 68);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 /* 台账 #912 件1（作者令 2026-10-26 12:02「提示文字不得被 CanvasHeader 胶囊
    遮挡」）：canvas 卡窗内错误面板的顶部清空带 —— .canvas-error 常规流顶对齐
@@ -3032,10 +3032,10 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
   min-height: 180px;
   height: 100%;
-  padding: 24px;
+  padding: var(--ds-space-6);
 }
 .nf-progress-pane[data-nf-progress='determinate'] .nf-progress-spinner { display: none; }
 .nf-progress-pane[data-nf-progress='indeterminate'] .nf-progress-ring { display: none; }
@@ -3054,18 +3054,18 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   transform-origin: 50% 50%;
   transition: stroke-dashoffset 0.15s linear;
 }
-.nf-progress-pct { font-size: 12px; color: var(--color-text-muted, rgba(128,128,128,0.8)); }
-.nf-progress-label { font-size: 12px; color: var(--color-text-muted, rgba(128,128,128,0.8)); }
+.nf-progress-pct { font-size: var(--ds-fs-hint); color: var(--color-text-muted, rgba(128,128,128,0.8)); }
+.nf-progress-label { font-size: var(--ds-fs-hint); color: var(--color-text-muted, rgba(128,128,128,0.8)); }
 .nf-error-subject {
-  margin-top: 6px;
-  font-size: 11px;
+  margin-top: var(--ds-space-1h);
+  font-size: var(--ds-fs-meta);
   opacity: 0.65;
   word-break: break-all;
 }
 .viewer-retry-btn {
-  margin-top: 12px;
-  padding: 4px 14px;
-  font-size: 12px;
+  margin-top: var(--ds-space-3);
+  padding: var(--ds-space-1) 14px;
+  font-size: var(--ds-fs-btn);
   cursor: pointer;
 }
 .canvas-loading {
@@ -3131,7 +3131,7 @@ html.ui-init #canvas-panel {
 #main {
   flex: 1;
   min-width: 0;
-  margin: 0 10px;
+  margin: 0 var(--ds-space-glass-x);
   position: relative;
 }
 
@@ -3165,7 +3165,7 @@ html.ui-init #canvas-panel {
   top: 50%; left: 50%;
   transform: translate(-50%, -50%);
   width: 4px; height: 36px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: var(--color-text-muted);
   opacity: 0.25;
   transition: opacity 0.2s, background 0.2s, height 0.2s, width 0.2s;
@@ -3252,7 +3252,7 @@ body.col-resizing #canvas-panel { transition: none; }
    行内、查找条在行下方，两者空间正交，结构排他取代碰运气式让位。 */
 .nf-findbar {
   position: absolute; top: var(--cv-head-clear, 56px); right: 14px; z-index: 30;
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: var(--ds-space-1h);
   padding: var(--cv-pad-bar, 6px 8px);
   border-radius: var(--cv-radius-bar, 12px);
   border: 1px solid var(--cv-border, var(--glass-border));
@@ -3268,27 +3268,27 @@ body.col-resizing #canvas-panel { transition: none; }
 }
 .nf-findbar-input {
   width: var(--cv-findbar-w, 200px); border: none; outline: none; background: transparent;
-  color: var(--color-text); font-size: 13px;
+  color: var(--color-text); font-size: var(--ds-fs-body);
   font-family: inherit;
 }
 .nf-findbar-input::placeholder { color: var(--color-text-muted); opacity: .7; }
 .nf-findbar-count {
   min-width: var(--cv-findbar-count-w, 44px); text-align: center;
-  font-size: 11px; color: var(--color-text-muted);
+  font-size: var(--ds-fs-meta); color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
 }
 .nf-findbar-btn {
   width: var(--cv-size-btn, 26px); height: var(--cv-size-btn, 26px); border-radius: var(--cv-radius-btn-sm, 7px);
   border: none; background: transparent; color: var(--color-text-muted);
-  cursor: pointer; font-size: 13px; line-height: 1;
+  cursor: pointer; font-size: var(--ds-fs-body); line-height: 1;
   display: flex; align-items: center; justify-content: center;
   transition: background .15s ease, color .15s ease;
 }
 .nf-findbar-btn:hover { background: var(--cv-hover-bg); color: var(--color-text); }
 
 /* Find hit marks (both the app-document face and the iframe face). */
-mark.nf-find-hit { background: rgba(255, 213, 0, 0.45); color: inherit; border-radius: 2px; }
-mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border-radius: 2px; }
+mark.nf-find-hit { background: rgba(255, 213, 0, 0.45); color: inherit; border-radius: var(--ds-radius-thin); }
+mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border-radius: var(--ds-radius-thin); }
 
 /* ── Wikilinks (rendered markdown) ──────────────────────────────── */
 .canvas-md-viewer a.nf-wikilink {
@@ -3310,8 +3310,8 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
    references only. Rendered ONLY when the doc is in a vault AND has ≥1
    backlink — docs outside every vault (repo reports/ 等) stay silent. */
 .canvas-md-viewer .nf-backlinks {
-  margin: 22px 0 2px;
-  padding-top: 10px;
+  margin: 22px 0 var(--ds-space-half);
+  padding-top: var(--ds-space-glass-x);
   border-top: 1px solid var(--color-border, #ddd);
   font-size: 12.5px;
   color: var(--color-text-dim, #6b6e76);
@@ -3323,25 +3323,25 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 }
 .canvas-md-viewer .nf-backlinks summary:hover { opacity: 1; }
 .canvas-md-viewer .nf-backlinks ul {
-  margin: 8px 0 2px 18px;
+  margin: var(--ds-space-2) 0 var(--ds-space-half) 18px;
   padding: 0;
 }
-.canvas-md-viewer .nf-backlinks li { margin: 4px 0; }
+.canvas-md-viewer .nf-backlinks li { margin: var(--ds-space-1) 0; }
 .canvas-md-viewer .nf-backlinks .nf-backlink-anchor {
-  margin-left: 6px;
-  font-size: 11px;
+  margin-left: var(--ds-space-1h);
+  font-size: var(--ds-fs-meta);
   opacity: 0.7;
 }
 .canvas-md-viewer .nf-backlinks .nf-backlink-project {
-  margin-left: 6px;
-  font-size: 11px;
+  margin-left: var(--ds-space-1h);
+  font-size: var(--ds-fs-meta);
   opacity: 0.6;
 }
 
 /* Reference-jump flash: the target paragraph glows once (~1.8s) then settles. */
 .canvas-md-viewer .nf-jump-flash {
   animation: nfJumpFlash 1.8s ease;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
 }
 @keyframes nfJumpFlash {
   0%   { background: rgba(94, 106, 210, 0.30); box-shadow: 0 0 0 6px rgba(94, 106, 210, 0.12); }
@@ -3417,17 +3417,17 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   -webkit-backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur, 20px)) saturate(1.15);
   border: 1px solid var(--glass-border, var(--wg-border));
-  border-radius: 12px; padding: 10px 14px;
+  border-radius: var(--ds-radius-xl); padding: var(--ds-space-glass-x) 14px;
   box-shadow: var(--frost-shadow, 0 8px 28px rgba(0, 0, 0, 0.10));
   pointer-events: none;
   color: var(--wg-foreground);
 }
-.wg-tip .tt { font-weight: 500; font-size: 13px; margin-bottom: 3px; word-break: break-all; }
+.wg-tip .tt { font-weight: 500; font-size: var(--ds-fs-body); margin-bottom: 3px; word-break: break-all; }
 .wg-tip .ts {
-  color: var(--wg-muted); font-size: 12px;
+  color: var(--wg-muted); font-size: var(--ds-fs-hint);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
-.wg-tip .td { color: var(--wg-muted); font-size: 11px; margin-top: 5px; font-variant-numeric: tabular-nums; }
+.wg-tip .td { color: var(--wg-muted); font-size: var(--ds-fs-meta); margin-top: 5px; font-variant-numeric: tabular-nums; }
 
 /* Paragraph-snapshot mode (段落级引用批): the § title + the target PARAGRAPH,
    not the whole doc — a slightly wider window with a 6-line clamp. */
@@ -3436,7 +3436,7 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
 .wg-tip.para .ts {
   -webkit-line-clamp: 6;
   line-height: 1.55;
-  margin-bottom: 2px;
+  margin-bottom: var(--ds-space-half);
 }
 .wg-tip.para .td { color: var(--color-frame-text-dim, var(--wg-muted)); }
 
@@ -3458,22 +3458,22 @@ mark.nf-find-current { background: rgba(94, 106, 210, 0.55); color: #fff; border
   -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.35));
-  border-radius: 12px;
-  padding: 10px 14px;
+  border-radius: var(--ds-radius-xl);
+  padding: var(--ds-space-glass-x) 14px;
   box-shadow: var(--frost-shadow, 0 8px 28px rgba(0, 0, 0, 0.10));
   color: var(--color-frame-text-bright, var(--color-text));
   pointer-events: none;
   cursor: default;
 }
 .nf-term-tip.touch { pointer-events: auto; cursor: pointer; }
-.nf-term-tip .tt { font-weight: 600; font-size: 13px; margin-bottom: 3px; word-break: break-word; }
+.nf-term-tip .tt { font-weight: 600; font-size: var(--ds-fs-body); margin-bottom: 3px; word-break: break-word; }
 .nf-term-tip .ts {
   color: var(--color-frame-text, var(--color-text-muted));
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.55;
   display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
 }
-.nf-term-tip .td { color: var(--color-frame-text-dim, var(--color-text-muted)); font-size: 11px; margin-top: 5px; }
+.nf-term-tip .td { color: var(--color-frame-text-dim, var(--color-text-muted)); font-size: var(--ds-fs-meta); margin-top: 5px; }
 
 /* 词条引用的视觉面（F3）：resolved 词条链接 = 点线底纹（区别于普通文档级
    wikilink 的纯色亮面）；兜底腿的 unresolved 短形引用同纹（hover 可出泡的
@@ -3509,15 +3509,15 @@ a.nf-term {
   align-items: center;
   height: var(--capsule-h, 36px);
   max-width: min(38%, calc(100% - 240px));
-  padding: 0 12px 0 10px;
+  padding: 0 var(--ds-space-3) 0 var(--ds-space-glass-x);
   border: 1px solid var(--glass-border);
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--frost-shadow);
   color: var(--color-frame-text-bright, var(--color-text));
-  font-size: 12px;
+  font-size: var(--ds-fs-btn);
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -3542,7 +3542,7 @@ body.mobile-layer #canvas-refback-btn {
 .wg-panebar { display: none; }
 body.mobile-layer #mobile-pages .wg-panebar {
   position: absolute; top: 10px; left: 12px; right: 12px; z-index: 6;
-  display: flex; flex-direction: column; gap: 8px;
+  display: flex; flex-direction: column; gap: var(--ds-space-2);
   pointer-events: none;
 }
 body.mobile-layer #mobile-pages .wg-panebar > * { pointer-events: auto; }
@@ -3568,8 +3568,8 @@ body.mobile-layer #mobile-pages .wg-chips { flex-wrap: nowrap; overflow-x: auto;
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  gap: 10px;
-  padding: 2px 12px 10px;
+  gap: var(--ds-space-glass-x);
+  padding: var(--ds-space-half) var(--ds-space-3) var(--ds-space-glass-x);
   overflow: hidden;
   container-type: inline-size;
   container-name: wgside;
@@ -3577,15 +3577,15 @@ body.mobile-layer #mobile-pages .wg-chips { flex-wrap: nowrap; overflow-x: auto;
 body.wg-side-active #panel-sessions .wg-side { display: flex; }
 body.wg-side-active #panel-sessions #explorer-section { display: none; }
 
-.wg-side-head { flex: none; padding: 2px 2px 0; }
+.wg-side-head { flex: none; padding: var(--ds-space-half) var(--ds-space-half) 0; }
 .wg-side-title {
-  font-size: 11px; font-weight: 600; color: var(--color-frame-text-muted);
+  font-size: var(--ds-fs-meta); font-weight: 600; color: var(--color-frame-text-muted);
   text-transform: uppercase; letter-spacing: 0.5px;
 }
 
 /* Project switcher (#744-B): one vault = one graph; glass-chip material —
    same --glass-* family as .wg-search below (禁各画各的). */
-.wg-switch { margin-top: 6px; }
+.wg-switch { margin-top: var(--ds-space-1h); }
 .wg-switch-select {
   width: 100%;
   border: 1px solid var(--glass-border); background: var(--glass-bg);
@@ -3593,14 +3593,14 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--frost-shadow);
   color: var(--color-frame-text); font: inherit; font-size: 12.5px;
-  border-radius: 10px; padding: 5px 8px; outline: none; cursor: pointer;
+  border-radius: var(--ds-radius-button); padding: 5px var(--ds-space-2); outline: none; cursor: pointer;
   appearance: none;
 }
 .wg-switch-select:focus-visible { border-color: var(--glass-etched-border-focus, var(--color-frame-active)); }
 .wg-switch-select option { color: var(--color-frame-text); background: var(--color-surface, #fff); }
 
 /* Breadcrumb row (#744-B drill-in views): X › sub › …, last crumb static. */
-.wg-crumbs { flex: none; font-size: 11.5px; color: var(--color-frame-text-muted); padding: 0 2px; }
+.wg-crumbs { flex: none; font-size: 11.5px; color: var(--color-frame-text-muted); padding: 0 var(--ds-space-half); }
 .wg-crumbs .crumb {
   border: 0; background: transparent; padding: 0; font: inherit; font-size: 11.5px;
   color: var(--color-frame-text-muted); cursor: pointer;
@@ -3613,12 +3613,12 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
    --glass-border/--frost-shadow，禁各画各的）。 */
 .wg-search {
   flex: none;
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: var(--ds-space-2);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 10px; padding: 5px 10px;
+  border-radius: var(--ds-radius-button); padding: 5px var(--ds-space-glass-x);
   box-shadow: var(--frost-shadow);
 }
 .wg-search:focus-within { border-color: var(--glass-etched-border-focus, var(--color-frame-active)); }
@@ -3628,7 +3628,7 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   color: var(--color-frame-text); font: inherit; font-size: 12.5px; width: 100%;
 }
 .wg-search-input::placeholder { color: var(--color-frame-text-muted); }
-.wg-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.wg-chips { display: flex; gap: var(--ds-space-1h); flex-wrap: wrap; }
 /* chips 与搜索框同属 frosted 家族（2026-10-22 作者令「全站一套毛玻璃」）：
    --glass-bg / blur(--glass-blur) saturate(1.15) / --glass-border /
    --frost-shadow —— 与 chat header 同 token，仅无 sapphire-refraction 顶缘线
@@ -3638,8 +3638,8 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   box-shadow: var(--frost-shadow);
-  color: var(--color-frame-text-muted); border-radius: 999px; padding: 3px 10px;
-  font: inherit; font-size: 12px; cursor: pointer; outline: none;
+  color: var(--color-frame-text-muted); border-radius: var(--ds-radius-pill); padding: 3px var(--ds-space-glass-x);
+  font: inherit; font-size: var(--ds-fs-hint); cursor: pointer; outline: none;
   white-space: nowrap;
 }
 .wg-chip:hover { color: var(--color-frame-text); }
@@ -3655,38 +3655,38 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
   flex: 1; min-height: 60px;
   overflow-y: auto; overscroll-behavior: contain;
   border-top: 1px solid var(--color-frame-border);
-  padding-top: 10px;
+  padding-top: var(--ds-space-glass-x);
 }
-.wg-detail-empty { color: var(--color-frame-text-dim); font-size: 12px; padding: 2px 0 6px; }
+.wg-detail-empty { color: var(--color-frame-text-dim); font-size: var(--ds-fs-hint); padding: var(--ds-space-half) 0 var(--ds-space-1h); }
 .wg-detail-body header {
-  display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ds-space-2);
 }
 .wg-detail-body h2 { font-size: 14px; font-weight: 500; line-height: 1.4; word-break: break-all; }
 .wg-detail-body .close {
   flex: none; width: 22px; height: 22px;
   border: 0; background: transparent; color: var(--color-frame-text-muted); cursor: pointer;
-  border-radius: 6px; font-size: 14px; line-height: 22px;
+  border-radius: var(--ds-radius-chip); font-size: 14px; line-height: 22px;
 }
 .wg-detail-body .close:hover { color: var(--color-frame-text); background: var(--color-frame-hover); }
-.wg-detail-body .badges { display: flex; gap: 5px; flex-wrap: wrap; margin: 6px 0 9px; }
+.wg-detail-body .badges { display: flex; gap: 5px; flex-wrap: wrap; margin: var(--ds-space-1h) 0 9px; }
 .wg-detail-body .badge {
   font-size: 10.5px; color: var(--color-frame-text-muted);
-  border: 1px solid var(--color-frame-border); border-radius: 999px; padding: 1px 8px;
+  border: 1px solid var(--color-frame-border); border-radius: var(--ds-radius-pill); padding: 1px var(--ds-space-2);
 }
-.wg-detail-body .summary { color: var(--color-frame-text-muted); font-size: 12px; line-height: 1.5; margin: 0 0 10px; }
+.wg-detail-body .summary { color: var(--color-frame-text-muted); font-size: var(--ds-fs-hint); line-height: 1.5; margin: 0 0 var(--ds-space-glass-x); }
 .wg-detail-body h3 {
   font-size: 10.5px; font-weight: 500; color: var(--color-frame-text-muted); letter-spacing: .8px;
-  margin: 12px 0 5px; text-transform: uppercase;
+  margin: var(--ds-space-3) 0 5px; text-transform: uppercase;
 }
 .wg-detail-body ul { list-style: none; margin: 0; padding: 0; }
 .wg-detail-body li { margin: 3px 0; }
 .wg-detail-body li.ghost { color: var(--color-frame-text-dim); }
 .wg-detail-body .ref-anchor {
   color: var(--color-frame-text-dim); font-size: 10.5px;
-  margin-left: 6px; font-variant-numeric: tabular-nums; word-break: break-all;
+  margin-left: var(--ds-space-1h); font-variant-numeric: tabular-nums; word-break: break-all;
 }
 .wg-detail-body .ref {
-  border: 0; background: transparent; padding: 0; font: inherit; font-size: 12px; cursor: pointer;
+  border: 0; background: transparent; padding: 0; font: inherit; font-size: var(--ds-fs-hint); cursor: pointer;
   color: var(--color-frame-text); text-align: left; display: block; width: 100%;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -3694,10 +3694,10 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 .wg-detail-body .path {
   font: 10.5px ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--color-frame-text-muted); word-break: break-all;
-  background: var(--glass-control-bg); border-radius: 7px; padding: 5px 8px; margin-top: 10px;
+  background: var(--glass-control-bg); border-radius: 7px; padding: 5px var(--ds-space-2); margin-top: var(--ds-space-glass-x);
 }
 .wg-detail-body .openbtn {
-  margin-top: 10px; width: 100%; padding: 7px 0;
+  margin-top: var(--ds-space-glass-x); width: 100%; padding: 7px 0;
   border: 1px solid var(--color-frame-text-bright); border-radius: 9px;
   background: var(--color-frame-text-bright); color: var(--color-surface);
   font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer;
@@ -3710,7 +3710,7 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 .wg-broken {
   flex: none; max-height: 132px; overflow-y: auto; overscroll-behavior: contain;
   border-top: 1px dashed var(--color-frame-border);
-  padding-top: 8px;
+  padding-top: var(--ds-space-2);
 }
 .wg-broken.none { display: none; }
 .wg-broken h3 {
@@ -3720,7 +3720,7 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 .wg-broken .row {
   display: block; width: 100%; text-align: left;
   border: 0; background: transparent; padding: 0; font: inherit;
-  font-size: 11px; color: var(--color-frame-text-muted); margin: 3px 0;
+  font-size: var(--ds-fs-meta); color: var(--color-frame-text-muted); margin: 3px 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer;
 }
 .wg-broken .row b { color: var(--color-frame-text); font-weight: 500; }
@@ -3729,7 +3729,7 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 
 /* Stats line (统计行): N 篇文档 · N 条引用 · N 条未解析. */
 .wg-stats {
-  flex: none; padding-top: 8px;
+  flex: none; padding-top: var(--ds-space-2);
   border-top: 1px solid var(--color-frame-border);
   color: var(--color-frame-text-muted); font-size: 11.5px;
   font-variant-numeric: tabular-nums;
@@ -3738,16 +3738,16 @@ body.wg-side-active #panel-sessions #explorer-section { display: none; }
 /* Input-convention legend line (图例注明, 作者令 2026-10-22): the wheel/pinch
    contract lives here — the canvas itself stays pure. */
 .wg-hint {
-  flex: none; padding-top: 4px;
+  flex: none; padding-top: var(--ds-space-1);
   color: var(--color-frame-text-dim); font-size: 10.5px;
 }
 
 /* Narrow panel (container query — the sidebar column is resizable; the
    先例 face keyed off the pane width, this one keys off the face width). */
 @container wgside (max-width: 209px) {
-  .wg-side { gap: 8px; padding: 2px 8px 8px; }
-  .wg-chip { padding: 2px 8px; font-size: 11px; }
-  .wg-detail-body h2 { font-size: 13px; }
+  .wg-side { gap: var(--ds-space-2); padding: var(--ds-space-half) var(--ds-space-2) var(--ds-space-2); }
+  .wg-chip { padding: var(--ds-space-half) var(--ds-space-2); font-size: var(--ds-fs-meta); }
+  .wg-detail-body h2 { font-size: var(--ds-fs-body); }
   .wg-detail-body .summary { font-size: 11.5px; }
   .wg-broken .row { font-size: 10.5px; }
 }
@@ -3778,8 +3778,8 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
 /* 批⑤：堆叠态顶部标签数（前景序/总数；空串即隐） */
 .canvas-title .t-count {
   flex: none;
-  margin-left: 6px;
-  font-size: 11px;
+  margin-left: var(--ds-space-1h);
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
@@ -3835,8 +3835,8 @@ body:not(.mobile-layer) .canvas-header .canvas-title { flex: 1; min-width: 0; }
   right: 58px;
   z-index: 31;
   padding: 3px 9px;
-  border-radius: 999px;
-  font-size: 11px;
+  border-radius: var(--ds-radius-pill);
+  font-size: var(--ds-fs-meta);
   line-height: 1.4;
   letter-spacing: 0.02em;
   color: rgb(var(--sapphire));
@@ -3853,7 +3853,7 @@ body:not(.mobile-layer):not(.card-window) #canvas-slide[data-independent] .canva
   margin-left: auto;
   margin-right: 30px;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--ds-radius-pill);
   font-size: 10px;
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.12);
@@ -3958,7 +3958,7 @@ body.card-window #canvas-panel .canvas-header {
 /* 卡窗胶囊 padding 归一（尺寸一致批 2026-10-25）：旧 8px 顶 pad 是 40px 高
    形态（height:auto 时代）的配套；胶囊高度统一 36 后 8+4+26 合并钮=38 溢出
    2px，归一回统一档 4px（与主窗 .canvas-header 同一条 padding 链）。 */
-body.card-window #canvas-panel .canvas-header { padding-top: 4px; }
+body.card-window #canvas-panel .canvas-header { padding-top: var(--ds-space-1); }
 /* 卡窗卡头「合并」钮 —— 件三统一批（2026-10-28）：与面板 .canvas-pop-btn
    同语言 ghost 小钮（26px 档 / 8px 圆角 / 静默透明 + hover 抬亮玻璃），
    修前 --glass-control 自绘 chip 面退役 —— 胶囊行视觉语言与面板完全同款。 */

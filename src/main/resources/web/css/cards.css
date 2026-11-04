@@ -146,7 +146,7 @@ html[data-theme="dark"] {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
   width: 100%;
   margin: var(--nfc-gap-block) 0 0;
 }
@@ -156,7 +156,7 @@ html[data-theme="dark"] {
 .nfc-actions .g2-pill {
   height: 34px;
   padding: 0 18px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 .nfc-actions .g2-pill:disabled { cursor: not-allowed; }
 
@@ -180,7 +180,7 @@ html[data-theme="dark"] {
 .nfc-link:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.5);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
 }
 
 /* ── 错误行（S9 同族配方自 modal.css 迁入：中性字 + 红左缘 + 淡红底；
@@ -188,9 +188,9 @@ html[data-theme="dark"] {
 .nfc-error {
   width: 100%;
   box-sizing: border-box;
-  margin: 16px 0 0;
-  padding: 6px 10px;
-  border-radius: 8px;
+  margin: var(--ds-space-4) 0 0;
+  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-hint);   /* 12px 既有档 = --ds-fs-hint 同值 */
   line-height: 1.5;
   text-align: left;
@@ -221,7 +221,7 @@ html[data-theme="dark"] {
 .nfc-steps {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--ds-space-2);
   width: 100%;
   margin: var(--nfc-gap-title) 0 0;
   text-align: center;
@@ -230,7 +230,7 @@ html[data-theme="dark"] {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--ds-space-glass-x);
   font-size: var(--nfc-body-size);
   line-height: 1.5;
   color: var(--nfc-subtle);

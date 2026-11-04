@@ -4,7 +4,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 8px 0;
+  padding: var(--ds-space-2) 0;
   flex-shrink: 0;
   overflow: hidden;
   min-height: 0;
@@ -28,26 +28,26 @@
   width: 24px;
   height: 1px;
   background: var(--glass-border-dark);
-  margin: 4px 0;
+  margin: var(--ds-space-1) 0;
   flex-shrink: 0;
 }
 
 /* Agent icon in nav bar */
 .nav-agent {
   width: 44px;
-  padding: 4px 0;
-  border-radius: 12px;
+  padding: var(--ds-space-1) 0;
+  border-radius: var(--ds-radius-xl);
   border: 1px solid transparent; /* reserves edge space for glass hover */
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  margin-bottom: 2px;
+  margin-bottom: var(--ds-space-half);
   background: transparent;
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
   position: relative;
-  gap: 2px;
+  gap: var(--ds-space-half);
 }
 .nav-agent:hover {
   background: var(--glass-control-bg-hover);
@@ -120,7 +120,7 @@
 .nav-item {
   width: 40px;
   height: 40px;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   border: 1px solid transparent; /* reserves edge space for glass hover */
   background: transparent;
   display: flex;
@@ -128,7 +128,7 @@
   justify-content: center;
   cursor: pointer;
   color: var(--color-frame-text-muted);
-  margin-bottom: 4px;
+  margin-bottom: var(--ds-space-1);
   position: relative;
   flex-shrink: 0;
   transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
@@ -157,14 +157,14 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   width: 48px;
   flex-shrink: 0;
-  margin: 16px 4px 10px;
+  margin: var(--ds-space-4) var(--ds-space-1) var(--ds-space-glass-x);
   max-height: calc(100vh - 26px);
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   overflow: hidden;
-  padding: 10px 0;
+  padding: var(--ds-space-glass-x) 0;
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
@@ -190,7 +190,7 @@
 body.sidebar-collapsed #activity-bar {
   width: 48px;
   opacity: 1;
-  margin: 16px 4px 10px;
+  margin: var(--ds-space-4) var(--ds-space-1) var(--ds-space-glass-x);
 }
 /* prefers-reduced-motion: squash the Side Bar collapse animation
    (transition itself lives in base.css with the --panel-* tokens). */
@@ -264,7 +264,7 @@ body.sidebar-collapsed #activity-bar {
 .activity-btn {
   width: 36px;
   height: 36px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   border: 1px solid transparent; /* reserves edge space for glass hover */
   background: transparent;
   color: var(--color-frame-text-muted);
@@ -320,7 +320,7 @@ body.sidebar-collapsed #activity-bar {
 /* 2026-09-06 区块统一：未登录态只剩 logo（头像入口渲染）+ 这一句说明，
    原 .neblink-logged-out 容器/独立 logo/加粗标题行一并退役。 */
 .neblink-logged-out-hint {
-  font-size: 12px; color: var(--color-text-muted);
+  font-size: var(--ds-fs-hint); color: var(--color-text-muted);
   text-align: center;
 }
 

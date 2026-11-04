@@ -116,7 +116,15 @@
   --ds-space-half: 2px;    /* Carbon $spacing-01：4px 栅格外半步微缝档 */
   --ds-space-12: 48px;     /* Carbon $spacing-09：区块级留白 */
   --ds-space-16: 64px;     /* Carbon $spacing-10：大区块留白 */
-  --ds-space-glass-x: 10px; /* 玻璃条横缝既有值档（--cv-pad-bar 语境）；迁移向 --ds-space-2/3 由门禁渐进收 */
+  --ds-space-glass-x: 10px; /* 10px 例外档。**命名债**：本槽原本只为玻璃条横缝（--cv-pad-bar 语境）
+                               出生，2026-11-04 迁移批按定版文档 §3 把它当作 10px 的**唯一**归属档，
+                               实测 351 处消费里多数不是玻璃条 ⇒ 槽名比语义窄。改名属作者裁定项
+                               （建议 --ds-space-1x「2.5 栅格档」），本批不动名字，只如实记账。 */
+  /* 半步件缝例外档（design-scale-spec 2026-11-04 §2.2/§3 登记，本批出生）：
+     6px 是实测最高频间距档（349 处），集中在「图标+文字小缝」「chip 内距」——
+     收敛 4px 会让密集控件贴死，收敛 8px 会让每行膨胀，故以具名半步档收编，
+     **限定小件内缝**（行/卡的块距仍走栅格 8/12/16）。值 = 现盘 6px 逐字搬迁。 */
+  --ds-space-1h: 6px;
   --ds-density-row-compact: 36px; /* 紧凑行档（= --cv-head-h 胶囊行带值 36px） */
   --ds-row-pad: 8px 12px;              /* 列表行静息档 */
   --ds-row-pad-tight: 8px 10px;
@@ -145,6 +153,12 @@
   --ds-radius-card-lg: 16px; /* 聊天浮层卡 */
   --ds-radius-shell: 20px;   /* 弹窗外壳（全站统一值） */
   --ds-radius-pill: 999px;
+  /* 细件例外槽（design-scale-spec 2026-11-04 §2.1/§3 登记，本批出生）：
+     2px 不是「差一点的 badge」，是细件几何 —— 8px 宽滚动条拇指上归 4px 会变药丸、
+     改滚动条观感。故立具名例外槽，**只许细件用**（滚动条拇指 / 进度条 / 微圆点）；
+     任何「想让边角再柔一点」的诉求走 badge/chip，禁在此槽身上找补。
+     值 = 现盘 21 处 2px 的逐字搬迁，计算值零漂移。 */
+  --ds-radius-thin: 2px;
 
   /* ── ⑥ 阴影（3 族；SKILL.md §4，禁族外自造）── */
   --ds-shadow-panel: var(--frost-shadow);
@@ -936,7 +950,7 @@
 .ds-tool-card .tool-mail-msg li { margin: var(--ds-space-half) 0; }
 .ds-tool-card .tool-mail-msg code {
   background: color-mix(in srgb, var(--ds-text) 5%, transparent);
-  padding: 1px 4px;
+  padding: 1px var(--ds-space-1);
   border-radius: var(--ds-radius-badge);
   font-size: var(--ds-fs-meta);
   font-family: var(--ds-font-mono);

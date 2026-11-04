@@ -54,13 +54,13 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
 /* 收起式摘要条（WF-01）：默认收起 = 一行（任务 chip + brief 摘要 + 结果词 +
    展开 chevron）；点开 = 任务 brief 全文 + 判词 + 报告全文（九点⑦正文不丢）。 */
 .bgagent-strip-toggle {
-  display: flex; align-items: center; gap: 8px; min-width: 0; width: 100%;
-  padding: 2px 0; border: none; background: transparent; color: inherit;
+  display: flex; align-items: center; gap: var(--ds-space-2); min-width: 0; width: 100%;
+  padding: var(--ds-space-half) 0; border: none; background: transparent; color: inherit;
   font: inherit; text-align: left; cursor: pointer;
 }
 .bgagent-strip-toggle:hover .bgagent-strip-briefline { color: var(--color-text, inherit); }
 .bgagent-strip-chip {
-  flex-shrink: 0; padding: 1px 8px; border-radius: 8px;
+  flex-shrink: 0; padding: 1px var(--ds-space-2); border-radius: var(--ds-radius-input);
   font-size: var(--ds-fs-meta); font-weight: var(--ds-fw-title);
   letter-spacing: var(--ds-ls-body);
   color: var(--ds-text-muted);
@@ -110,7 +110,7 @@ if (typeof document !== 'undefined' && !document.getElementById('bgagent-delegat
   max-height: 88px; overflow-y: auto;
 }
 .bgagent-strip-verdict {
-  display: flex; align-items: baseline; gap: 8px; min-width: 0;
+  display: flex; align-items: baseline; gap: var(--ds-space-2); min-width: 0;
   font-size: var(--ds-fs-hint); color: var(--ds-text);
 }
 .bgagent-strip-verdict-word { flex-shrink: 0; font-weight: 500; }

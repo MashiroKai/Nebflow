@@ -8,8 +8,8 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
-  padding: 12px 18px;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-3) 18px;
   padding-right: 56px; /* §5.8b 2026-09-04 修订：让出右上悬浮钮（16+40）+ 徽章区，摘要尾字不再被遮 */
   border-bottom: 1px solid var(--color-border);
   flex: 0 0 auto;
@@ -30,7 +30,7 @@
 .flowmap-view-filter {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex: 0 0 auto;
   white-space: nowrap;
 }
@@ -47,7 +47,7 @@
 }
 
 .flowmap-loading {
-  padding: 48px 24px;
+  padding: var(--ds-space-12) var(--ds-space-6);
   text-align: center;
   font: 400 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
@@ -111,7 +111,7 @@
 .fm-node > * { flex: 0 0 auto; }
 .fm-node:hover { filter: brightness(1.04); }
 
-.fm-node-head { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; justify-content: center; }
+.fm-node-head { display: flex; align-items: center; gap: var(--ds-space-1h); margin-bottom: var(--ds-space-half); justify-content: center; }
 
 /* 终态卡状态词（2026-09-07 状态保真批）：主图终态卡 head 行 glyph 旁文本——
    死亡节点（重启收敛 failed/cancelled）的真实终态一眼可辨，不再是孤减号线。
@@ -129,8 +129,8 @@
 .fm-worktree-badge {
   font: 600 9px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   letter-spacing: 0.02em;
-  padding: 2px 5px;
-  border-radius: 4px;
+  padding: var(--ds-space-half) 5px;
+  border-radius: var(--ds-radius-badge);
   background: rgb(var(--sapphire) / 0.15);
   color: rgb(var(--sapphire) / 1);
   border: 1px solid rgb(var(--sapphire) / 0.3);
@@ -149,8 +149,8 @@
 .fm-flag-badge {
   font: 600 9px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   letter-spacing: 0.02em;
-  padding: 2px 5px;
-  border-radius: 4px;
+  padding: var(--ds-space-half) 5px;
+  border-radius: var(--ds-radius-badge);
   border: 1px solid;
   white-space: nowrap;
 }
@@ -206,7 +206,7 @@
      与家族一致（仅尺寸略小），配色通道唯一。 */
   font-size: 8.5px;
   letter-spacing: 0;
-  padding: 2px 3px;
+  padding: var(--ds-space-half) 3px;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -234,7 +234,7 @@
   max-width: 100%;
   font: 500 9px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   padding: 1.5px 5px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   border: 1px solid;
   white-space: nowrap;
   overflow: hidden;
@@ -253,7 +253,7 @@
 .flow-node-cfg-line {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 12px;
+  gap: var(--ds-space-1) var(--ds-space-3);
   opacity: 1;
 }
 .flow-node-cfg {
@@ -267,8 +267,8 @@
   text-transform: uppercase;
   letter-spacing: 0.03em;
   padding: 1px 5px;
-  margin-right: 4px;
-  border-radius: 4px;
+  margin-right: var(--ds-space-1);
+  border-radius: var(--ds-radius-badge);
   background: var(--color-frame-hover);
   color: var(--color-text-muted);
 }
@@ -278,7 +278,7 @@
   font: 400 10px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
-  margin-left: 4px;
+  margin-left: var(--ds-space-1);
 }
 
 /* barrier 提示（多入边合并节点） */
@@ -293,8 +293,8 @@
 .fm-desc {
   font: 400 10px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
-  margin-top: 2px;
-  padding: 3px 6px;
+  margin-top: var(--ds-space-half);
+  padding: 3px var(--ds-space-1h);
   border-radius: 5px;
   background: var(--color-frame-hover);
   white-space: nowrap;
@@ -330,22 +330,22 @@
 .flow-blocked-panel {
   border: 1px solid rgb(var(--amber) / 0.4);
   background: rgb(var(--amber) / 0.07);
-  border-radius: 10px;
-  padding: 10px 12px;
-  margin: 10px 0;
+  border-radius: var(--ds-radius-button);
+  padding: var(--ds-space-glass-x) var(--ds-space-3);
+  margin: var(--ds-space-glass-x) 0;
 }
-.flow-blocked-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.flow-blocked-head { display: flex; align-items: center; gap: var(--ds-space-2); flex-wrap: wrap; }
 .flow-blocked-badge {
   font: 700 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: rgb(var(--amber));
   letter-spacing: 0.02em;
-  display: inline-flex; align-items: center; gap: 4px; /* 内联 SVG 旗（2026-09-06 禁 ⚑ 字符） */
+  display: inline-flex; align-items: center; gap: var(--ds-space-1); /* 内联 SVG 旗（2026-09-06 禁 ⚑ 字符） */
 }
 .flow-blocked-badge .flow-blocked-flag { width: 11px; height: 11px; flex: 0 0 auto; }
 .flow-blocked-category {
   font: 600 10px/1.4 ui-monospace, SFMono-Regular, monospace;
-  padding: 2px 7px;
-  border-radius: 999px;
+  padding: var(--ds-space-half) 7px;
+  border-radius: var(--ds-radius-pill);
   border: 1px solid rgb(var(--amber) / 0.5);
   background: rgb(var(--amber) / 0.14);
   color: rgb(var(--amber));
@@ -355,14 +355,14 @@
   color: var(--color-text-muted);
   margin-left: auto;
 }
-.flow-blocked-row { margin-top: 8px; }
+.flow-blocked-row { margin-top: var(--ds-space-2); }
 .flow-blocked-label {
   display: inline-block;
   font: 600 9px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   background: rgb(var(--amber) / 0.14);
   color: rgb(var(--amber));
 }
@@ -373,7 +373,7 @@
   word-break: break-word;
   margin-top: 3px;
 }
-.flow-blocked-raw { margin-top: 10px; }
+.flow-blocked-raw { margin-top: var(--ds-space-glass-x); }
 .flow-blocked-raw > summary {
   cursor: pointer;
   font: 500 11px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -381,7 +381,7 @@
   user-select: none;
 }
 .flow-blocked-raw > summary:hover { color: var(--color-text); }
-.flow-blocked-raw[open] > summary { margin-bottom: 6px; }
+.flow-blocked-raw[open] > summary { margin-bottom: var(--ds-space-1h); }
 /* 2026-09-11 滚动一体化批：原 max-height:300px + overflow-y:auto 的区内滚动条已删
    ——展开后原文随详情卡同一滚动容器（.fm-detail-body）铺开。`<details>` 折叠结构
    本身保留（既有设计，非本批对象）。共享 class `.flow-agent-block-readonly` 本体
@@ -391,8 +391,8 @@
   overflow-y: auto;
   white-space: pre-wrap;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 8px 10px;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
 }
 /* 本卡内该区的区内滚动清零（2026-09-11 滚动一体化批）：`.flow-blocked-raw` 不止本卡用
    （flowViewers.js:117 的 agent 结果查看器同款结构）⇒ 上面那条全局规则原样保留，只在
@@ -553,7 +553,7 @@
    .solar-node（124px 宽、绝对定位 left/top），故与节点卡同框共存、同色板。零新色值
    （token 全取 flowCss/本文件既有变量）。状态色由卡根状态类（running/completed…）
    沿用节点卡着色，状态词/计数 glyph 各自着色（与 .fm-st-word / .solar-node-status 同源）。 */
-.fm-chain-card { gap: 2px; }
+.fm-chain-card { gap: var(--ds-space-half); }
 /* 状态词活动态色（running=链色 / pending=弱化 / blocked=琥珀）：终态三色已在
    .fm-st-word.completed/.failed/.cancelled 定义（2026-09-07 状态保真批），此处补活动态。 */
 .fm-st-word.running { color: rgb(var(--sapphire)); }
@@ -564,7 +564,7 @@
   margin-left: auto; flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
   width: 16px; height: 16px; padding: 0; border: 0; background: none;
-  cursor: pointer; color: var(--color-text-muted); opacity: 0.75; border-radius: 4px;
+  cursor: pointer; color: var(--color-text-muted); opacity: 0.75; border-radius: var(--ds-radius-badge);
   transition: opacity 0.15s ease, background 0.15s ease;
 }
 .fm-chain-chev:hover { opacity: 1; background: rgba(128, 128, 128, 0.14); }
@@ -585,7 +585,7 @@
   margin-left: auto; flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
   width: 16px; height: 16px; padding: 0; border: 0; background: none;
-  cursor: pointer; color: var(--color-error); opacity: 0.6; border-radius: 4px;
+  cursor: pointer; color: var(--color-error); opacity: 0.6; border-radius: var(--ds-radius-badge);
   transition: opacity 0.15s ease, background 0.15s ease;
 }
 .fm-chain-cancel:hover { opacity: 1; background: rgba(128, 128, 128, 0.14); }
@@ -605,7 +605,7 @@
    复用节点卡 glyph 色板类（.solar-node-status.ok/.err/.warn），running 用链色圆点。
    ui-status-redesign（盘点 #20）：「图标＋数字全红」→ 数字转中性字，红/绿/琥珀
    只留在 glyph（.solar-node-status token 档）上。 */
-.fm-chain-count { display: inline-flex; align-items: center; gap: 2px; color: var(--color-text-muted); }
+.fm-chain-count { display: inline-flex; align-items: center; gap: var(--ds-space-half); color: var(--color-text-muted); }
 .fm-chain-count.completed { color: var(--status-word); }
 .fm-chain-count.failed { color: var(--status-word); }
 .fm-chain-count.cancelled { color: var(--color-text-muted); }
@@ -665,7 +665,7 @@
   align-items: center;
   justify-content: center;
   gap: 3px;
-  margin-top: 4px;
+  margin-top: var(--ds-space-1);
   font: 400 10px ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--color-text-muted);
   min-width: 0;
@@ -682,14 +682,14 @@
 .flowmap-legend {
   display: flex;
   gap: 14px;
-  row-gap: 6px;
+  row-gap: var(--ds-space-1h);
   flex-wrap: wrap;
   align-items: center;
-  padding: 8px 4px 2px;
+  padding: var(--ds-space-2) var(--ds-space-1) var(--ds-space-half);
   font: 400 11px -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
 }
-.fm-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.fm-legend-item { display: inline-flex; align-items: center; gap: var(--ds-space-1h); }
 .fm-legend-swatch {
   display: inline-block;
   width: 22px;
@@ -761,7 +761,7 @@
 /* 计数徽章（§4.3：team-mail-badge 构型；计数 = 面板链条目数，TTL 清理同步减） */
 .fm-archive-badge {
   position: absolute; top: -5px; right: -5px;
-  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+  min-width: 16px; height: 16px; padding: 0 var(--ds-space-1); border-radius: var(--ds-radius-input);
   background: rgb(var(--sapphire)); color: #fff;
   font: 500 10px/16px -apple-system, BlinkMacSystemFont, sans-serif; text-align: center;
   box-shadow: 0 0 0 2px var(--color-bg); pointer-events: none;
@@ -780,7 +780,7 @@
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border); border-radius: 18px;
+  border: 1px solid var(--glass-border); border-radius: var(--ds-radius-2xl);
   box-shadow: var(--fm-panel-shadow);
   z-index: 60;
   transform-origin: calc(100% - 20px) 0;           /* §6.1 原点 = 悬浮钮圆心 */
@@ -793,7 +793,7 @@
 .fm-archive-panel.open { opacity: 1; transform: scale(1) translateY(0); pointer-events: auto; }
 .fm-archive-panel.closing { transition-duration: 0.16s; transition-timing-function: ease; }
 .fm-panel-head {
-  display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+  display: flex; align-items: center; gap: var(--ds-space-2); flex: 0 0 auto;
   padding: 11px 14px; border-bottom: 1px solid var(--color-border);
 }
 .fm-panel-title { font: 600 13px/1.3 -apple-system, BlinkMacSystemFont, sans-serif; }
@@ -801,14 +801,14 @@
 .fm-panel-close {
   margin-left: auto; border: none; background: transparent; cursor: pointer;
   font: 400 16px/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
-  opacity: 0.5; padding: 2px 4px; transition: opacity 0.15s;
+  opacity: 0.5; padding: var(--ds-space-half) var(--ds-space-1); transition: opacity 0.15s;
   display: inline-flex; align-items: center; /* 内联 SVG 叉（2026-09-06 禁 ✕ 字符） */
 }
 .fm-panel-close svg { width: 12px; height: 12px; display: block; }
 .fm-panel-close:hover { opacity: 1; }
-.fm-panel-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); border-radius: 4px; }
+.fm-panel-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); border-radius: var(--ds-radius-badge); }
 .fm-panel-body {
-  flex: 1; overflow-y: auto; padding: 12px 14px;
+  flex: 1; overflow-y: auto; padding: var(--ds-space-3) 14px;
   scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent;
 }
 .fm-panel-empty {
@@ -820,15 +820,15 @@
    读取指引）改由**列表态**承载：本行 + 成员行可点开（详情窗按需取结果全文）。
    用语零新色值（`--color-text-muted` + `--color-border` 同 panel-head 分隔线）。 */
 .fm-panel-guide {
-  flex: 0 0 auto; padding: 8px 14px; border-top: 1px solid var(--color-border);
+  flex: 0 0 auto; padding: var(--ds-space-2) 14px; border-top: 1px solid var(--color-border);
   font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); opacity: 0.8;
 }
 
 /* 链条目（§5.3：flow-mail-row 构型；条目 = 链）*/
 .fm-entry {
-  border: 1px solid rgba(128, 128, 128, 0.12); border-radius: 8px;
-  background: rgba(128, 128, 128, 0.06); margin-bottom: 8px; padding: 10px 12px;
+  border: 1px solid rgba(128, 128, 128, 0.12); border-radius: var(--ds-radius-input);
+  background: rgba(128, 128, 128, 0.06); margin-bottom: var(--ds-space-2); padding: var(--ds-space-glass-x) var(--ds-space-3);
   cursor: pointer; user-select: none; -webkit-user-select: none;
   transition: background 0.15s, border-color 0.15s;
 }
@@ -840,7 +840,7 @@
   0% { background: rgba(91, 127, 191, 0.28); }
   100% { background: rgba(128, 128, 128, 0.06); }
 }
-.fm-entry-row1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.fm-entry-row1 { display: flex; align-items: center; gap: var(--ds-space-1h); min-width: 0; }
 .fm-entry-st { flex: 0 0 auto; display: inline-flex; }
 .fm-entry-st svg { width: 12px; height: 12px; display: block; }
 /* ui-status-redesign（盘点 #21）：glyph 色值归状态 token（图案承载）。 */
@@ -866,7 +866,7 @@
 .fm-entry-nodes {
   flex: 0 0 auto; font: 500 10px/1 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); border: 1px solid rgba(128, 128, 128, 0.18);
-  border-radius: 6px; padding: 2px 5px; font-variant-numeric: tabular-nums;
+  border-radius: var(--ds-radius-chip); padding: var(--ds-space-half) 5px; font-variant-numeric: tabular-nums;
 }
 .fm-entry-time {
   flex: 0 0 auto; margin-left: auto; font: 400 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
@@ -888,18 +888,18 @@
   color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* 链内成员列表（§5.5：展开后逐节点条目，点击 → 右侧详情）*/
-.fm-entry-members { display: none; margin-top: 8px; border-top: 1px solid rgba(128, 128, 128, 0.12); padding-top: 8px; }
+.fm-entry-members { display: none; margin-top: var(--ds-space-2); border-top: 1px solid rgba(128, 128, 128, 0.12); padding-top: var(--ds-space-2); }
 .fm-entry.expanded .fm-entry-members { display: block; }
 .fm-member {
   display: block; width: 100%; text-align: left;
   border: 1px solid rgba(128, 128, 128, 0.1); border-radius: 7px;
-  background: rgba(128, 128, 128, 0.03); margin-bottom: 6px; padding: 7px 9px;
+  background: rgba(128, 128, 128, 0.03); margin-bottom: var(--ds-space-1h); padding: 7px 9px;
   cursor: pointer; transition: background 0.15s, border-color 0.15s;
 }
 .fm-member:last-child { margin-bottom: 0; }
 .fm-member:hover { background: rgba(128, 128, 128, 0.09); border-color: rgba(128, 128, 128, 0.16); }
 .fm-member:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); }
-.fm-member-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.fm-member-row { display: flex; align-items: center; gap: var(--ds-space-1h); min-width: 0; }
 .fm-member-name {
   flex: 0 1 auto; min-width: 0; font: 500 11.5px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -917,7 +917,7 @@
 .fm-member-go { flex: 0 0 auto; display: inline-flex; color: var(--color-text-muted); opacity: 0.55; }
 .fm-member-go svg { width: 10px; height: 10px; display: block; }
 .fm-member-preview {
-  margin-top: 2px; font: 400 10.5px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
+  margin-top: var(--ds-space-half); font: 400 10.5px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
@@ -929,7 +929,7 @@
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border); border-radius: 18px;
+  border: 1px solid var(--glass-border); border-radius: var(--ds-radius-2xl);
   box-shadow: var(--fm-panel-shadow);
   z-index: 70;
   opacity: 0; transform: translateX(24px);
@@ -948,7 +948,7 @@
    分栏（常见布局）时 dock 为同位 overlay 形态且完整可见，不再悬出视图体。 */
 .fm-detail.dock-left { right: 404px; }
 .fm-detail-head {
-  display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+  display: flex; align-items: center; gap: var(--ds-space-2); flex: 0 0 auto;
   padding: 11px 14px; border-bottom: 1px solid var(--color-border); min-width: 0;
 }
 .fm-detail-st { flex: 0 0 auto; display: inline-flex; }
@@ -966,14 +966,14 @@
 .fm-detail-close {
   margin-left: auto; flex: 0 0 auto; border: none; background: transparent; cursor: pointer;
   font: 400 16px/1 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
-  opacity: 0.5; padding: 2px 4px; transition: opacity 0.15s;
+  opacity: 0.5; padding: var(--ds-space-half) var(--ds-space-1); transition: opacity 0.15s;
   display: inline-flex; align-items: center; /* 内联 SVG 叉（2026-09-06 禁 ✕ 字符） */
 }
 .fm-detail-close svg { width: 12px; height: 12px; display: block; }
 .fm-detail-close:hover { opacity: 1; }
-.fm-detail-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); border-radius: 4px; }
+.fm-detail-close:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.55); border-radius: var(--ds-radius-badge); }
 .fm-detail-body {
-  flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px;
+  flex: 1; min-height: 0; overflow-y: auto; padding: var(--ds-space-3) 14px;
   display: flex; flex-direction: column; /* 卡内唯一竖向滚动容器（2026-09-11 滚动一体化批） */
   scrollbar-width: thin; scrollbar-color: var(--color-frame-border) transparent;
 }
@@ -983,7 +983,7 @@
 .fm-detail-body > * { flex: 0 0 auto; }
 .fm-detail-meta {
   font: 400 11px/1.7 -apple-system, BlinkMacSystemFont, sans-serif;
-  color: var(--color-text-muted); margin-bottom: 10px; word-break: break-all;
+  color: var(--color-text-muted); margin-bottom: var(--ds-space-glass-x); word-break: break-all;
 }
 .fm-detail-meta b { font-weight: 500; color: var(--color-text-dim); }
 /* 描述区块（2026-09-06 显示优化批）：元数据区之后、结果区之前，左边线引用式 */
@@ -991,7 +991,7 @@
   font: 400 11.5px/1.55 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text);
   border-left: 2px solid rgb(var(--sapphire) / 0.45);
-  padding: 2px 0 2px 8px; margin: -4px 0 10px;
+  padding: var(--ds-space-half) 0 var(--ds-space-half) var(--ds-space-2); margin: -4px 0 var(--ds-space-glass-x);
   white-space: pre-wrap; word-break: break-word;
 }
 /* ── 详情完整配置 KV 栅格（2026-09-07 节点详情完整配置批）：label 列 auto 自适应
@@ -999,7 +999,7 @@
    字号/配色复用 fm-detail-meta 语言，零新 token ── */
 .fm-detail-kv {
   display: grid; grid-template-columns: auto minmax(0, 1fr);
-  column-gap: 10px; row-gap: 3px; margin: 0 0 2px;
+  column-gap: var(--ds-space-glass-x); row-gap: 3px; margin: 0 0 var(--ds-space-half);
 }
 .fm-detail-kv-label {
   font: 400 11px/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
@@ -1012,13 +1012,13 @@
 .fm-detail-kv-val.muted { color: var(--color-text-muted); }
 .fm-detail-sec {
   font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
-  color: var(--color-text-dim); margin: 10px 0 4px;
+  color: var(--color-text-dim); margin: var(--ds-space-glass-x) 0 var(--ds-space-1);
 }
 .fm-detail-task {
   font: 400 11.5px/1.55 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted);
   white-space: pre-wrap; word-break: break-word;
-  border: 1px solid rgba(128, 128, 128, 0.12); border-radius: 8px; background: rgba(128, 128, 128, 0.05);
-  padding: 8px 10px;
+  border: 1px solid rgba(128, 128, 128, 0.12); border-radius: var(--ds-radius-input); background: rgba(128, 128, 128, 0.05);
+  padding: var(--ds-space-2) var(--ds-space-glass-x);
   /* 2026-09-11 滚动一体化批：原 max-height:140px + overflow-y:auto（区内滚动）已删
      ——任务全文随整卡同一滚动容器铺开。 */
 }
@@ -1033,16 +1033,16 @@
   color: var(--color-text); word-break: break-word; overflow-wrap: anywhere;
 }
 /* markdown 正文（flow-mail-content 同语言）*/
-.fm-md p { margin: 4px 0; }
+.fm-md p { margin: var(--ds-space-1) 0; }
 .fm-md p:first-child { margin-top: 0; }
 .fm-md p:last-child { margin-bottom: 0; }
-.fm-md ul, .fm-md ol { margin: 4px 0 4px 18px; }
-.fm-md li { margin: 2px 0; }
+.fm-md ul, .fm-md ol { margin: var(--ds-space-1) 0 var(--ds-space-1) 18px; }
+.fm-md li { margin: var(--ds-space-half) 0; }
 .fm-md code {
-  background: var(--color-frame-hover); padding: 1px 4px; border-radius: 3px;
+  background: var(--color-frame-hover); padding: 1px var(--ds-space-1); border-radius: 3px;
   font: 400 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all;
 }
-.fm-md pre { background: var(--color-frame-hover); padding: 8px 12px; border-radius: 8px; overflow-x: auto; margin: 6px 0; }
+.fm-md pre { background: var(--color-frame-hover); padding: var(--ds-space-2) var(--ds-space-3); border-radius: var(--ds-radius-input); overflow-x: auto; margin: var(--ds-space-1h) 0; }
 /* 代码块复制按钮的定位上下文（2026-09-11 滚动一体化批附带修复，验收口径 D）：
    renderMarkdown 注入的 .code-copy-btn 为 absolute 定位（top:4px/right:4px），而
    .fm-md 此前缺 `.code-block-wrap { position: relative }`（.bubble.ai 与
@@ -1050,17 +1050,17 @@
    右上角，恰好压住 .fm-detail-close：opacity:0 不挡命中测试，实测 elementFromPoint
    命中 .code-copy-btn ⇒ 关闭按钮不可点（改前读数见本批 evidence）。规则同族复用，
    零新视觉样式族。 */
-.fm-md .code-block-wrap { position: relative; margin: 6px 0; }
+.fm-md .code-block-wrap { position: relative; margin: var(--ds-space-1h) 0; }
 .fm-md pre code { background: none; padding: 0; word-break: normal; }
-.fm-md blockquote { border-left: 3px solid var(--color-border); margin: 6px 0; padding-left: 10px; color: var(--color-text-muted); }
-.fm-md h1, .fm-md h2, .fm-md h3, .fm-md h4, .fm-md h5, .fm-md h6 { margin: 8px 0 4px; font-weight: 600; }
+.fm-md blockquote { border-left: 3px solid var(--color-border); margin: var(--ds-space-1h) 0; padding-left: var(--ds-space-glass-x); color: var(--color-text-muted); }
+.fm-md h1, .fm-md h2, .fm-md h3, .fm-md h4, .fm-md h5, .fm-md h6 { margin: var(--ds-space-2) 0 var(--ds-space-1); font-weight: 600; }
 .fm-md h3, .fm-md h4 { font-size: 12.5px; }
-.fm-md h5, .fm-md h6 { font-size: 12px; }
-.fm-md table { display: block; overflow-x: auto; border-collapse: collapse; margin: 6px 0; font-size: 11.5px; }
+.fm-md h5, .fm-md h6 { font-size: var(--ds-fs-hint); }
+.fm-md table { display: block; overflow-x: auto; border-collapse: collapse; margin: var(--ds-space-1h) 0; font-size: 11.5px; }
 .fm-md th, .fm-md td { border: 1px solid var(--color-border); padding: 3px 7px; }
 .fm-md th { background: var(--color-frame-hover); }
 .fm-md a { color: rgb(var(--sapphire)); }
-.fm-md hr { border: none; border-top: 1px solid var(--color-border); margin: 8px 0; }
+.fm-md hr { border: none; border-top: 1px solid var(--color-border); margin: var(--ds-space-2) 0; }
 .fm-md strong { font-weight: 600; }
 .fm-md .md-empty { font-style: italic; color: var(--color-text-muted); opacity: 0.7; }
 /* 错误态（ui-status-redesign 盘点 #25，收编 flowMapArchive.js 原 inline 覆盖）：
