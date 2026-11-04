@@ -257,7 +257,11 @@ find ~/.stand -type l ! -exec test -e {} \; -print    # 列出全部断链（读
    ls -A ~/.stand | grep -E '^(accounts|unauthenticated|pending-claim|active-account|layout\.json|migration-report\.json)$'
    ```
    **期望：无输出**（六个布局物都不存在）。有输出 ⇒ 停手，说明已发生迁移，别重启，先回来。
-2. **正常停止引擎**（用产品自己的停止动作，不要 `kill -9`；本演练全程没有重启、没有 kill 任何会话）。
+2. **用官方工具重启**：`ops/stand-restart.sh`（v4.4）。三条使用纪律（脚本头注）：
+   - **必须以路径直接调用**（例 `~/.stand/bin/stand-restart.sh --hot`），禁止 `source`/`eval`；
+   - **裸调用 = 只检测不动作**（`--check`），任何重启动作都要显式指定模式；
+   - 它自带「sbt 编译预检（编不过就不动旧实例）+ 隔离 canary」护栏链 —— 这正是"绝不杀了起不来"的保障。
+   除本脚本外，**不要**对 sbt/java/nebflow 进程 `kill`/`pkill`/发信号（本演练全程未做过）。
 3. **启动引擎**（照常）。
 4. **重启后立即核验三条**：
    ```
@@ -280,12 +284,13 @@ find ~/.stand -type l ! -exec test -e {} \; -print    # 列出全部断链（读
 前置条件（缺一不可，否则不要开始）：
 - [ ] P1 磁盘空闲 ≥ **1.1 × 数据量**（今天 93.6 GB ⇒ 需 ~103 GB 空闲；当前只有 11 GiB ⇒ **现在就不满足**）
 - [ ] P2 F3 的 19 条断链已处理（删除或修复）：`find ~/.stand -type l ! -exec test -e {} \; -print`
-- [ ] P3 越界链接（38 条）已决定处置（保留=接受把根外内容复制进根；删除=更干净）
+- [ ] P3 越界链接（39 条）已决定处置（保留=接受把根外内容复制进根；删除=更干净）
 - [ ] P4 接线批已加入「迁移期无活实例」闸（§5.3 的 ①②③ 任一）
 - [ ] P5 账本已备份（`tar` 到外部盘：`tasks-v2.json`、`memory/`、`sessions/`、`projects/*/project.json`）
 
 执行次序（顺序即安全边界）：
-1. **停止旧实例**（产品停止动作），确认端口上无本品牌实例：
+1. **停止旧实例**：用 `stand stop`（`CliRouter` 的 stop 命令；需要时 `stand stop --force`）。**注意** `ops/stand-restart.sh` 没有「只停不起」模式（其模式只有 `check|hot|canary|watch|force|wait-idle|restart-if-idle|preflight-only`），所以这一步不要拿它凑。
+   然后确认端口上无本品牌实例：
    ```
    lsof -nP -iTCP:<port> -sTCP:LISTEN    # 期望：无输出
    ```

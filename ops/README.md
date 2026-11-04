@@ -81,6 +81,87 @@ home/端口/JDK 覆写 env 各只认自家变量，stop 双探针（自家端口
 cp ~/.stand/bin/stand ~/.stand/bin/stand.bak-$(date +%Y%m%d-%H%M%S)
 ```
 
+## sbt 常驻 server（`sbt --client`）—— 条件性建议 · **默认不启用**（2026-11-04 复核批）
+
+> **归属**：本主题属「本机构建预算」（见上节指针）。**实现与配置在 `~/.local/share/nebflow-local/`**，
+> 本节只留**复核记录与判定**（读数、机制坑、重启判据），供将来条件变化时直接复用；
+> 采集器 `~/.local/share/nebflow-local/bin/sbt-server-bench.sh`。
+>
+> **结论：本机（16GB / swap 已用 61%）实测净负，默认维持现状（每次冷启）。本节是条件性建议，
+> 不是推荐配置**。什么时候再考虑启用，见本节末「重启判据」。
+
+### 机制（先钉三条会被踩的物理事实）
+
+1. **server 按「构建根」注册与寻址**：每个构建根自己一份 `<build>/project/target/active.json`
+   指向 `~/.sbt/1.0/server/<hash>/sock`。**两个 worktree = 两个 server**，不是「6 个 worktree
+   共享一个编译进程」。能共享的只有「同一 worktree 内的多次调用」。
+2. **常驻 server 必须用「真 sbt」启动，不能经闸垫片** `~/.stand/bin/sbt`：闸会把重活锁
+   （`~/.stand/run/sbt.lock`）交给它 exec 的真 sbt 子进程，而 server 常驻不退 ⇒ **锁被永久占用**，
+   全机器下一次编译就卡在 waiting（本批复核时实测踩到，闸日志见 `waiting for …sbt.lock`）。
+   正确起法是绕开垫片直接用 `/opt/homebrew/bin/sbt`（或 `SBT_GATE=off`）。
+3. `sbt --client` 需要 sbtn 原生客户端（`~/.cache/sbt/boot/sbtn/<版本>/sbtn`），首次使用会联网
+   下载；离线或代理不可用时 `--client` 整条路不可用，只能冷启。
+
+### 手工启用（不需要任何新代码）
+
+```bash
+WT=/path/to/worktree
+# 起常驻 server（绕开闸垫片；堆帽沿用闸口径 1500m）
+( cd "$WT" && nohup bash -c "exec sleep infinity | exec env SBT_OPTS='-Xmx1500m' /opt/homebrew/bin/sbt" \
+      >/tmp/sbt-server.log 2>&1 & )
+# 之后同一个 worktree 内的调用走热 server（~0.6s 往返，而不是每次约 5s 冷启）
+( cd "$WT" && /opt/homebrew/bin/sbt --client compile )
+# 关掉（内存立刻回吐；不关就一直常驻）
+( cd "$WT" && /opt/homebrew/bin/sbt --client shutdown )
+```
+
+闸的并发=1 语义不受影响的前提是：**走 server 的调用必须仍受闸串行**。手工上面这套是**绕过闸**的
+（`--client` 不经垫片），多会话并发时会出现「server 在编译 + 另一个会话的闸调用也在编译」，
+即闸的并发=1 失效——这也是本批**没有把它接进闸**的原因之一（接线版需要闸翻译命令 + 超时旁路，
+设计见知识文档，未落地）。
+
+### 实测读数（2026-11-04 14:2x，本机 16GB / 12 核 / JDK23 / sbt 1.10.10）
+
+| 场景 | 现状（每次冷启） | 常驻 server | 备注 |
+|---|---|---|---|
+| 同 worktree 重复调用（目标已热） | **6.7 / 4.9 / 5.1 s**（mean 5.6s） | **1.6 s（首连）/ 0.6 / 0.6 s** | 收益 ≈ **4.5–5 s/次**，即这类短调用快 ~8 倍 |
+| 新 worktree 首次调用（全量编译 741 源） | 98.7 / 84.0 / 88.5 s | server 帮不上（编译时间一分不省）；聚合形态下首次触达反而 **+3~4 s** | 收益在这一类为 **0** |
+| 常驻内存（每构建根一个 server） | 调用结束即退出，常驻 **0** | 空闲 **369 MB** → 编译后 **617–636 MB** | 6 个活跃 worktree ⇒ **2.2–3.8 GB 常驻** |
+| server 冷启动（单构建根） | — | **4.0 s**（boot → ready） | 聚合多构建根形态：**3 个构建根 116.6 s** |
+| 聚合形态（一个 JVM 承载多构建根，`RootProject`） | — | 3 构建根空闲 **587 MB**、每构建根首触达 **8.4–9.5 s**、重复 0.6–0.9 s | 见下节，**不建议** |
+
+按闸日志真实流量折算（本机今日 n=68 次调用、median 11 s、≤15 s 短调用占 59%、总墙钟 3 429 s）：
+全量命中热 server 约省 **240 s ≈ 7%** 的 sbt 墙钟，换成「每次调用省 4.5 s × 短调用次数」也是同一量级。
+**7% 的墙钟换 2.2–3.8 GB 常驻**，在本机（swap 2519/4096 MB = 61%、压缩内存约 4.2 GB、load1 12）是净负——
+这正是 M1 闸当初要压的同一类内存压力。
+
+### 跨 worktree 共享（聚合形态）：技术可行，但**不建议**
+
+`RootProject(file("<worktree>"))` 聚合可以把多个构建根装进**同一个 JVM**，各自加载自己的
+`project/` 定义、各自写自己的 `target/`（实测见知识文档 §4），因此「物理上不可能共享」要修正为
+「sbt server 原生不支持跨根，但可用聚合 build 绕过」。不采用的理由是实测出来的：
+
+- **冷启 116.6 s**（3 个构建根），每多一个活跃 worktree 都要付这份加载成本；
+- 每构建根**首次触达 8.4–9.5 s**，比冷启（5–6.7 s）更慢；
+- 对 build 定义有硬要求：`build.sbt` 里任何 **CWD 相对路径**（本仓 `IO.read(file("VERSION"))`）
+  在聚合根下会 `FileNotFoundException`，必须在聚合根摆副本（实测踩到并绕过）；
+- 注册表一变就要 `reload` 或重建 server，新 worktree 频繁出现的场景下抖动明显。
+
+### 复测方法（数字变了先复测再决定）
+
+```bash
+# 采集器在本机设置层（与本机预算同属一处，不进产品仓）
+BENCH=~/.local/share/nebflow-local/bin/sbt-server-bench.sh
+bash "$BENCH" baseline-3wt -- /tmp/wt1 "compile" -- /tmp/wt2 "compile"
+# 输出 /tmp/sbt-server-bench/<label>.log（原始输出）与 .summary.tsv（wall/sbtRssMB/allRssMB/gateWait/rc）
+```
+
+### 重启判据（满足任一条再谈启用）
+
+- 机器内存 ≥ 32 GB，或 `sysctl vm.swapusage` 的 used 长期 < 20%；
+- 或 sbt 调用量级再上一个数量级（例如常驻 > 200 次/小时），使 4.5 s/次 × N 的绝对收益压过常驻成本；
+- 或将来 sbt 2.x 提供原生多构建根 server（届时「每 worktree 一个 400–600 MB」这条成本项消失）。
+
 ## 2026-10-25 修复批（双病）
 
 **病1 · 双启动无守卫**（病历：`stand start` ×2 → 双 daemon 86244/86479，第二个
