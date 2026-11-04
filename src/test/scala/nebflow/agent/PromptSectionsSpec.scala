@@ -572,7 +572,7 @@ class PromptSectionsSpec extends munit.FunSuite:
 
   /** 正文行（英文批 prompt-en-slim-impl：中→英；语义与判据逐条不变）。 */
   private val traceBodyLine =
-    "- Provenance goes only into the filename tail: stage doc `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md` (no suffix when unattributed); the body carries zero metadata header."
+    "- Provenance goes only into the filename tail: stage doc `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md` (topic first, time after; no suffix when unattributed); the body carries zero metadata header."
 
   test("文档溯源段恒注入（最小 PromptContext，order 350）：段名 + 正文行逐字"):
     withIsolatedDataRoot {

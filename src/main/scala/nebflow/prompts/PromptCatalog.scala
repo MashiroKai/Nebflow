@@ -261,7 +261,7 @@ The project currently has no independent process-evidence source for past states
 Reason: the evidence tier decides what may be ASSERTED, just as the reading convention decides what can be SEEN. Two corollaries: a figure you have yourself retracted never returns as evidence through quotation, and the tier rule governs PAST-EVENT claims only - a current-state reading stays a verified fact and is not demoted.
 
 ## Document provenance
-Stage docs `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md`; no chain means no suffix; no metadata header.
+Stage docs `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md` (topic first, time after); no chain means no suffix; no metadata header.
 """
 
     val NebflowNodePrompt =

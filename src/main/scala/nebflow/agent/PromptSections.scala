@@ -296,7 +296,7 @@ Before wrapping up call `node_report` — reporting IS the wrap-up action, not a
   val traceSection: String =
     """## Document provenance
       |
-      |- Provenance goes only into the filename tail: stage doc `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md` (no suffix when unattributed); the body carries zero metadata header.""".stripMargin
+      |- Provenance goes only into the filename tail: stage doc `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md` (topic first, time after; no suffix when unattributed); the body carries zero metadata header.""".stripMargin
 
   // ============================================================
   // 根代理路由纪律（冷启动路由批 2026-09-17；order 370，条件 isRootAgent）
