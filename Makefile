@@ -1,5 +1,5 @@
 .PHONY: compile run assembly clean install \
-  lint fmt fix fmt-check check quality-gate check-visual visual-baseline
+  lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
 # Respects user-set COURSIER_REPOSITORIES; only runs detection if unset
@@ -24,8 +24,12 @@ VERSION := $(shell cat VERSION)
 SCALA_DIR := $(notdir $(wildcard target/scala-*))
 
 # L2 rebrand: brand values from repo-root brand.conf (single edit point).
-LOWER_NAME := $(shell sed -n 's/^lowerName[[:space:]]*=[[:space:]]*//p' brand.conf | sed 's/[[:space:]]#.*$$//; s/[[:space:]]*$$//' | head -1)
-PRODUCT_NAME := $(shell sed -n 's/^productName[[:space:]]*=[[:space:]]*//p' brand.conf | sed 's/[[:space:]]#.*$$//; s/[[:space:]]*$$//' | head -1)
+# `\#` 转义（self-explaining-cleanup 批 2026-11-04 修）：sed 模式里的裸 `#` 会让
+# GNU make 把它当**注释起点**，吞掉后面的 `)` ⇒ 整份 Makefile 直接
+# `*** unterminated call to function 'shell'` 拒绝解析，**任何** target 都跑不了
+# （含本批新加的 frontend-gates）。转义后 make 与 sed 都解析为字面 `#`。
+LOWER_NAME := $(shell sed -n 's/^lowerName[[:space:]]*=[[:space:]]*//p' brand.conf | sed 's/[[:space:]]\#.*$$//; s/[[:space:]]*$$//' | head -1)
+PRODUCT_NAME := $(shell sed -n 's/^productName[[:space:]]*=[[:space:]]*//p' brand.conf | sed 's/[[:space:]]\#.*$$//; s/[[:space:]]*$$//' | head -1)
 
 install: assembly
 	@echo "Installing $(PRODUCT_NAME) $(VERSION)..."
@@ -51,12 +55,37 @@ fix:
 fmt-check:
 	sbt scalafmtCheckAll
 
-check: compile fmt-check lint
+check: compile fmt-check lint frontend-gates
+	node scripts/check-component-contract.mjs
 	@echo "All automated checks passed."
+
+# 前端组件契约门禁（单独一条腿，不依赖 sbt）
+component-contract:
+	node scripts/check-component-contract.mjs
+	@echo "Frontend component contract gate passed."
 
 quality-gate:
 	sbt compile scalafmtCheckAll "scalafix --check"
 	@echo "Quality gate passed."
+
+# ── 前端静态门禁（self-explaining-cleanup 批 2026-11-04 归口）────────────────
+# 三道 node 静态哨兵，零依赖零端口（不需要浏览器、不碰宿主实例 6138）：
+#   · design-tokens   设计字面量 → 令牌（存量基线只降不升 + 严格面零跑偏）
+#   · msgstyle        消息面同值字面量单源（共享层 = css/sapphire.css）
+#   · self-explaining 页面文案自解释（铁律 8：禁能力说明/路径指引/行为教学/重复说明；
+#                     存量基线只降不升、新语言包零容忍）
+# 归口动机（本批实测）：design-tokens 与 msgstyle 早就存在，但既不在 `make check`
+# 也不在 CI —— 等于「写了门禁没人跑」，规则回退零成本。本 target 是**唯一入口**，
+# CI 的 `Frontend static gates` 步调的就是它（单一真源，别在 CI 里另抄一遍命令）。
+# 只跑前端门禁：`make frontend-gates`；全量静态检查：`make check`。
+FRONTEND_GATES := design-tokens msgstyle self-explaining
+
+frontend-gates:
+	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
+	node scripts/check-design-tokens.mjs
+	node scripts/check-msgstyle-single-source.mjs
+	node scripts/check-self-explaining.mjs
+	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
 
 # ── 视觉回归基线门禁（tests/visual/，2026-11-01 采纳批）──────────────────────
 # 按**宿主平台键**取基准图目录 tests/visual/baseline/<platform>/（platform 由脚本

@@ -23,6 +23,14 @@ object ToolRegistry:
       "Grep" -> GrepTool,
       // Shell
       "Bash" -> BashTool,
+      // BgWait（bash overhaul T1，作者令 2026-11-04）：**后台任务的唯一等待原语**——
+      // 有界等待（到期不杀任务），阻塞上限与前台等待预算同源
+      // （ctx.bashConfig.foregroundWaitBudgetMs，不自造第二个上限）。全仓注册使
+      // agent.json 声明可解析；真实授能面 = AgentCore.BaseTools → NebflowFixedTools
+      // （执行 agent 面 + legacy catch-all）。**不在** RemoteExecutor.remoteableTools
+      // / FleetConfig.RemoteableToolNames：等待是本机语义（任务图在本地会话里），
+      // 跨设备腿由注册表探测承接（ShellSession.waitBackgroundResults ② 腿）。
+      "BgWait" -> BgWaitTool,
       // Web
       "WebSearch" -> WebSearchTool,
       "WebFetch" -> WebFetchTool,

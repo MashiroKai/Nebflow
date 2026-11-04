@@ -1,0 +1,4 @@
+[entry] report entries=104 matched=102 explained(symlink-bearing)=2 unexplained=0
+   explained: backups — entry contains symlink(s): migrate dereferences them (F2)
+   explained: projects — entry contains symlink(s): migrate dereferences them (F2)
+[entry] PASS — every entry digest/bytes matches the report with RootLayout's own scheme

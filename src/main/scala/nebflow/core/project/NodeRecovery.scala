@@ -273,6 +273,257 @@ private[project] trait NodeRecovery:
         )).void *> IO.pure(true)
     }
 
+  // ── C-2 台账回放（2026-11-04）────────────────────────────────────────────
+  //
+  // `node:` 消息的**重启重放腿**：发送侧 `sendNodeMessage` 已把每条消息在投递前落进
+  // [[NodeMessageLedger]]（append-only）；本腿在 boot 认领时把「投了但未被消费」的
+  // 消息重新送进节点的 resume prompt（续跑第一输入）。
+  //
+  // 幂等三闸（同一消息绝不二次注入/二次执行）：
+  //   ① 台账状态：`consumed`/`dead` 终态跳过（纯函数 [[ReplayPlan.of]]）；
+  //   ② 转录命中 `消息号 <id>`：crash 落在「接收方已消费、台账未标」窗口 ⇒ 转录是权威
+  //      ⇒ append `consumed` 并跳过（绝不重复注入）；
+  //   ③ 回放过的条目状态翻 `replayed`：第二次 boot 不再重放（文案里仍带标记 ⇒ 节点
+  //      自己也能认出「这条我已收到」）。
+  //
+  // `dead`（终态拒拒收一致性，裁定④）：节点已终态的消息**永不**进入 resume prompt——
+  // 新会话不存在，文本没有读者，注入只会变成幽灵指令。
+  //
+  // 留痕：每条实际进 prompt 的消息追加一行 `boot-recovery` 事件（禁止静默自愈纪律）。
+
+  /** 回放计划（纯函数——spec 可直接单测，无 IO）。 */
+  private[project] object ReplayPlan:
+    final case class Item(entry: NodeMessageLedger.Entry, why: String)
+    /**
+     * @param items 需要回放进 resume prompt 的条目
+     * @param consumedIds 台账未终态、但**转录已含标记**的条目（crash 落在「已消费未记账」
+     *        窗口）——转录是权威，调用方补 `consumed` 行且**绝不**重复注入
+     * @param terminalIds 已是终态（consumed/dead）的条目（零动作）
+     */
+    final case class Plan(items: List[Item], consumedIds: List[String], terminalIds: List[String])
+
+    /**
+     * 从全量台账行挑出该节点的回放候选。
+     * @param ledgerAll 全部台账行（调用方 load 一次，避免多次扫盘）
+     * @param transcriptHas 标记命中函数（消息号 => 转录是否已含）——调用方注入，保持纯函数
+     */
+    def of(
+      nodeId: String,
+      ledgerAll: List[NodeMessageLedger.Row],
+      transcriptHas: String => Boolean
+    ): Plan =
+      val entries = NodeMessageLedger.fold(ledgerAll).filter(_.nodeId == nodeId)
+      val (terminal, rest) = entries.partition(_.isTerminal)
+      val (consumed, live) = rest.partition(e => transcriptHas(e.id))
+      Plan(
+        items = live.map(e => Item(e, why(e))),
+        consumedIds = consumed.map(_.id),
+        terminalIds = terminal.map(e => s"${e.id}(${e.event})")
+      )
+
+    private def why(e: NodeMessageLedger.Entry): String = e.event match
+      case NodeMessageLedger.Queued =>
+        "crash between the ledger write and the delivery tell (the fire-and-forget window closed before any consumer persisted it)"
+      case NodeMessageLedger.Injected =>
+        "tell accepted but the receiver died before persisting (the turn never reached the transcript nor the injection queue)"
+      case NodeMessageLedger.Replayed =>
+        "a previous replay landed before the session died again — replaying once more so the resumed turn still carries it"
+      case other => other
+
+  end ReplayPlan
+
+  /**
+   * 快段回放腿（[[bootRecoveryClaim]] resume 两分支调用，claim 事务**之后**）：
+   * 读台账 → 挑该节点候选 → 转录命中者判 `consumed`（幂等②）→ 幸存条目拼成
+   * `ResumeContext.resumePrompt` 的附录（带 `[NODE-MESSAGE]` 原头 + 幂等标记）→
+   * 实际回放者翻 `replayed` 并落 `boot-recovery` 事件行。
+   * 全程 fail-soft：台账读失败 = 零候选（不阻断认领）。
+   */
+  private def ledgerReplayAppendix(nodeId: String, node: NodeDef): IO[String] =
+    NodeMessageLedger
+      .load(workspace)
+      .flatMap { rows =>
+        val readTranscript: IO[List[nebflow.shared.Message]] =
+          node.sessionRef match
+            case Some(sid) => resources.sessionStore.loadMessagesForSession(sid).attempt.map(_.getOrElse(Nil))
+            case None      => IO.pure(Nil)
+        readTranscript.flatMap { transcript =>
+          val plan = ReplayPlan.of(nodeId, rows, id => NodeMessageLedger.inMessages(transcript, id))
+          val byId = rows.groupBy(_.id)
+          def lastRow(id: String): Option[NodeMessageLedger.Row] = byId.get(id).flatMap(_.lastOption)
+          // 幂等②写面：转录已含标记 ⇒ 台账终态化（永不再回放）。
+          val consumeMarks = plan.consumedIds.traverse_(id =>
+            lastRow(id)
+              .map(r =>
+                NodeMessageLedger.appendSoft(
+                  workspace,
+                  r.copy(
+                    event = NodeMessageLedger.Consumed,
+                    ts = System.currentTimeMillis(),
+                    detail = Some("transcript already carries the message marker (consumed before the crash; ledger closed at boot)")
+                  )
+                )
+              )
+              .getOrElse(IO.unit)
+          )
+          if plan.items.isEmpty then consumeMarks.as("")
+          else
+            val lines = plan.items.map { it =>
+              s"- [NODE-MESSAGE] ${NodeMessageLedger.markerOf(it.entry.id)}：${it.entry.text}（重启回放：原始投递未确认消费 — ${it.why}）"
+            }
+            consumeMarks *>
+              plan.items.traverse_(it =>
+                NodeMessageLedger.appendSoft(
+                  workspace,
+                  NodeMessageLedger.Row(
+                    id = it.entry.id,
+                    event = NodeMessageLedger.Replayed,
+                    nodeId = it.entry.nodeId,
+                    nodeName = it.entry.nodeName,
+                    text = it.entry.text,
+                    route = it.entry.route,
+                    ts = System.currentTimeMillis(),
+                    detail = Some(s"replayed into the resume prompt (session=${node.sessionRef.getOrElse("-")})")
+                  )
+                )
+              ) *>
+              FlowMapEventLog
+                .append(
+                  workspace,
+                  projectName,
+                  nodeId,
+                  NodeEngine.BootRecoveryEventType,
+                  s"node-message replay: ${plan.items.size} message(s) re-injected into the resume prompt " +
+                    s"(ids: ${plan.items.map(_.entry.id).mkString(", ")}; skipped: ${plan.terminalIds.mkString(",")})"
+                ) *>
+              logger
+                .info(
+                  s"[boot-recovery] node '${node.name}' ($nodeId): ${plan.items.size} node-message(s) replayed into the resume prompt " +
+                    s"(${plan.items.map(_.entry.id).mkString(", ")}); ${plan.consumedIds.size} already consumed, ${plan.terminalIds.size} terminal"
+                )
+                .as(
+                  s"\n\n== 分发器补充（NodeMessage 重启回放 · C-2） ==\n" +
+                    "以下消息在你的上次会话里已投递但**未被消费**（不在恢复的历史里）——按已收到的指令执行，勿重做已完成步骤。\n" +
+                    lines.mkString("\n")
+                )
+        }
+      }
+      .handleErrorWith(e =>
+        logger
+          .warn(
+            s"[boot-recovery] node-message ledger replay failed for node $nodeId: ${Option(e.getMessage).getOrElse(e.toString)} — resume continues without replay"
+          )
+          .as("")
+      )
+
+  /**
+   * 队列兜底回放腿（[[ProjectCrashRecovery.recoverProject]] / delegate 作用域 sweep 在
+   * claim 循环之后各调一次）：**没有被认领**的节点（wiring/pending 等）若台账里还躺着
+   * 「已排队未投递」的消息，说明崩溃落在「台账 `queued` 之后、task 追加之前」这一微窗口
+   * ——task 没有正文，回放靠把消息**追加进 task**（== 分发器补充 == 段，随 flow-map
+   * 落盘、节点启动 buildInput 必读）并翻 `appended`。
+   *
+   * 幂等：task 正文已带标记（同一消息追加过）⇒ 只补状态行，零重复追加；终态节点 ⇒
+   * `dead`（裁定④：终态不再收消息）；本次 boot 已认领（在 bootRecoveryQueue）⇒ 跳过
+   * （resume prompt 回放腿负责，绝不同时走两腿）。返回实际动作条数（0 = 零日志噪音）。
+   */
+  private[project] def replayPendingNodeMessages(): IO[Int] =
+    NodeMessageLedger
+      .load(workspace)
+      .flatMap { rows =>
+        val pending = NodeMessageLedger.fold(rows).filter(_.pending)
+        if pending.isEmpty then IO.pure(0)
+        else
+          (bootRecoveryQueue.get, store.snapshot).flatMapN { (claimed, snap) =>
+            pending
+              .filterNot(e => claimed.contains(e.nodeId))
+              .foldLeft(IO.pure(0)) { (acc, e) =>
+                acc.flatMap { n =>
+                  snap.nodes.get(e.nodeId) match
+                    case None =>
+                      logger
+                        .warn(
+                          s"[boot-recovery] node-message ${e.id} orphaned: node ${e.nodeId} is gone from the flow map — ledger left as-is"
+                        )
+                        .as(n)
+                    case Some(node) if NodeLifecycle.Terminal.contains(node.status) =>
+                      NodeMessageLedger
+                        .transition(workspace, e, NodeMessageLedger.Dead, Some(s"node terminal (${node.status}) at boot"))
+                        .as(n)
+                    case Some(node) =>
+                      if NodeMessageLedger.inText(node.task.getOrElse(""), e.id) then
+                        // 幂等：正文已带标记 ⇒ 已追加过（只是状态行没写完）
+                        NodeMessageLedger
+                          .transition(workspace, e, NodeMessageLedger.Appended, Some("task already carries the marker"))
+                          .as(n)
+                      else
+                        val sec =
+                          s"${NodeEngine.nodeMessageSection(undelivered = true)} · ${NodeMessageLedger.markerOf(e.id)}"
+                        store
+                          .mutate { st =>
+                            st.nodes.get(e.nodeId) match
+                              case Some(fresh) =>
+                                st.copy(nodes =
+                                  st.nodes.updated(
+                                    e.nodeId,
+                                    fresh.copy(task = Some(fresh.task.getOrElse("") + s"\n\n$sec\n${e.text}"))
+                                  )
+                                )
+                              case None => st
+                          }
+                          .flatMap { _ =>
+                            FlowMapEventLog.append(
+                              workspace,
+                              projectName,
+                              e.nodeId,
+                              NodeEngine.NodeMessageEventType,
+                              s"replayed into task at boot (status=${node.status}): ${e.text}"
+                            ) *> NodeMessageLedger
+                              .transition(
+                                workspace,
+                                e,
+                                NodeMessageLedger.Appended,
+                                Some("replayed into the task at boot (never delivered before the crash)")
+                              )
+                              .as(n + 1)
+                          }
+              }
+            }
+          }
+      }
+      .handleErrorWith(e =>
+        logger
+          .warn(s"[boot-recovery] node-message queue replay failed: ${Option(e.getMessage).getOrElse(e.toString)}")
+          .as(0)
+      )
+
+  /** 慢段收尾（[[bootRecoveryStart]] 之后）：已进转录的回放条目翻 `consumed`。 */
+  private[project] def markReplayedConsumed(nodeId: String): IO[Unit] =
+    store.getNode(nodeId).flatMap {
+      case None => IO.unit
+      case Some(node) =>
+        node.sessionRef.traverse_(sid =>
+          resources.sessionStore.loadMessagesForSession(sid).attempt.flatMap {
+            case Right(msgs) =>
+              NodeMessageLedger.entries(workspace).flatMap { entries =>
+                entries
+                  .filter(e =>
+                    e.nodeId == nodeId && e.event == NodeMessageLedger.Replayed && NodeMessageLedger.inMessages(msgs, e.id)
+                  )
+                  .traverse_(e =>
+                    NodeMessageLedger.transition(
+                      workspace,
+                      e,
+                      NodeMessageLedger.Consumed,
+                      Some(s"replayed message consumed (marker found in session=$sid transcript)")
+                    )
+                  )
+              }
+            case Left(_) => IO.unit
+          }
+        )
+    }
+
   // ── boot-time 崩溃恢复（crash-recovery 批 2026-09-07，设计 §3.2 快段/慢段）──
   //
   // 快段（同步秒级）：对崩溃残留 status=Running（kill -9 / 无钩子机会）**或**
@@ -300,6 +551,32 @@ private[project] trait NodeRecovery:
    * 节点级异常不在此吞——调用方（sweep）逐节点 handleErrorWith，残余 Running 由
    * watchdog 兜底（R4）。
    */
+  /**
+   * 台账 `dead` 终态化（终态拒收一致性）：节点已终态/判死时，其未消费的 `node:` 消息
+   * 永不回放（受裁定④约束——终态节点不收消息，新会话不存在，文本没有读者）。
+   */
+  private def ledgerDeadMark(nodeId: String, why: String): IO[Unit] =
+    NodeMessageLedger.pendingFor(workspace, nodeId).flatMap { pending =>
+      pending.traverse_(e => NodeMessageLedger.transition(workspace, e, NodeMessageLedger.Dead, Some(why)))
+    }
+
+  /**
+   * 认领成功后的台账回放收口（幂等③）：`Some(Right(ctx))` 才补回放附录——认领 CAS
+   * 败方（并发终态化/已被处置）**不得**回放（消息留待人工处置，账仍 pending 可查）。
+   * 其余结果原样透传（Left/None 零动作）。
+   */
+  private def withLedgerReplay(
+    n: NodeDef,
+    outcome: Option[Either[String, NodeEngine.ResumeContext]]
+  ): IO[Option[Either[String, NodeEngine.ResumeContext]]] =
+    outcome match
+      case Some(Right(ctx)) =>
+        ledgerReplayAppendix(n.id, n).map { appendix =>
+          if appendix.isEmpty then Some(Right(ctx))
+          else Some(Right(ctx.copy(resumePrompt = ctx.resumePrompt + appendix)))
+        }
+      case other => IO.pure(other)
+
   def bootRecoveryClaim(n: NodeDef): IO[Option[Either[String, NodeEngine.ResumeContext]]] =
     // 资格判据扩展（中断恢复语义批 2026-09-13，spec §2.4 #2）：Running ∪ Interrupted
     // ——优雅关机现场（interrupted）与崩溃现场（Running，kill -9 / 无钩子机会）同一
@@ -324,6 +601,9 @@ private[project] trait NodeRecovery:
                     NodeEngine.BootRecoveryEventType,
                     s"failed (class c): $reason"
                   ) *>
+                    // C-2：节点以 failed 收场 ⇒ 其未消费的 node 消息永不回放（`dead`）——
+                    // 与裁定④「终态拒收」同口径：新会话不存在，注入只会变成幽灵指令。
+                    ledgerDeadMark(n.id, s"node failed at boot-recovery (class c): $reason") *>
                     logger.warn(s"[boot-recovery] node '${n.name}' (${n.id}) failed: $reason").as(Some(Left(reason)))
                 case _ =>
                   logger
@@ -416,7 +696,7 @@ private[project] trait NodeRecovery:
                         loopResumePhase = Some(phase)
                       ),
                       s"loop dual-session resume (worker=$workerSid msgs=${workerMsgs.size}, verify=${verifySid.getOrElse("-")} msgs=${verifyMsgs.size}, round=$round, phase=$phase)"
-                    )
+                    ).flatMap(withLedgerReplay(n, _))
                   }
               case Right(_) =>
                 failClaim(
@@ -445,7 +725,7 @@ private[project] trait NodeRecovery:
                   ),
                   s"resume (sessionRef=$sid msgs=${msgs.size}${n.bgWait
                       .fold("")(w => s", bgWait cleared: ${w.take(120)}")})"
-                )
+                ).flatMap(withLedgerReplay(n, _))
               case Right(_) =>
                 failClaim(s"crash recovery: session transcript lost/corrupt (sessionRef=$sid)")
               case Left(e) =>
@@ -464,7 +744,9 @@ private[project] trait NodeRecovery:
   def bootRecoveryStart(nodeId: String, ctx: NodeEngine.ResumeContext): IO[Unit] =
     bootRecoveryQueue.update(_ - nodeId) *>
       logger.info(s"[boot-recovery] node $nodeId rehydrating (session=${ctx.sessionId})") *>
-      startNode(nodeId, Some(ctx))
+      startNode(nodeId, Some(ctx)) *>
+      // C-2 收尾（幂等③的观测面）：续跑会话已把回放文本写进转录 ⇒ 台账翻 `consumed`。
+      markReplayedConsumed(nodeId)
 
   /**
    * 本引擎是否拥有该会话（P2 定位键修正的实例侧入口，**只读** store 扫描）。

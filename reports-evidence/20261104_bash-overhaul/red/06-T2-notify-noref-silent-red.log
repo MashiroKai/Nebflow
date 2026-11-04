@@ -1,0 +1,29 @@
+## repro: cd <worktree> && sbt -batch "testOnly nebflow.core.tools.BashOverhaulNotifySpec"
+==> X nebflow.core.tools.BashOverhaulNotifySpec.T2: targetRef=None + targetSessionId=Some ⇒ a persistent pending-redelivery marker is written (old code: silent IO.unit ⇒ RED)  1.095s munit.ComparisonFailException: src/test/scala/nebflow/core/tools/BashOverhaulNotifySpec.scala:149
+148:        "a completion event with no agent ref must NOT vanish — it must persist a pending-redelivery marker to the target session's own inbox"
+149:      )
+150:      assertEquals(
+a completion event with no agent ref must NOT vanish — it must persist a pending-redelivery marker to the target session's own inbox
+=> Obtained
+0
+=> Diff (- expected, + obtained)
+-1
++0
+    at munit.FunSuite.assertEquals(FunSuite.scala:13)
+    at nebflow.core.tools.BashOverhaulNotifySpec.$init$$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2(BashOverhaulNotifySpec.scala:149)
+    at apply @ nebflow.core.tools.BashOverhaulNotifySpec.$init$$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1(BashOverhaulNotifySpec.scala:142)
+    at map @ nebflow.core.tools.BashOverhaulNotifySpec.$init$$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1(BashOverhaulNotifySpec.scala:142)
+    at blocking @ nebflow.core.tools.ShellSession.runProcess(shell.scala:760)
+    at flatMap @ nebflow.core.tools.BashOverhaulNotifySpec.$init$$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1(BashOverhaulNotifySpec.scala:141)
+    at flatMap @ nebflow.core.tools.BashOverhaulNotifySpec.$init$$$anonfun$1$$anonfun$1$$anonfun$2(BashOverhaulNotifySpec.scala:134)
+    at blocking @ nebflow.core.tools.ShellSession.runProcess(shell.scala:760)
+    at handleErrorWith @ nebflow.core.SessionStore.saveIndex$$anonfun$1(SessionStore.scala:666)
+    at flatMap @ nebflow.core.SessionStore.saveIndex(SessionStore.scala:655)
+    at set @ nebflow.core.tools.ShellSession.touch$$anonfun$2(shell.scala:175)
+    at blocking @ nebflow.core.tools.ShellSession.runProcess(shell.scala:760)
+    at blocking @ nebflow.core.tools.ShellSession.runProcess(shell.scala:760)
+    at delay @ nebflow.core.SessionStore.saveSessionMessages(SessionStore.scala:652)
+    at flatMap @ nebflow.core.SessionStore.saveSessionMessages(SessionStore.scala:652)
+  + T2: targetRef=None + targetSessionId=None ⇒ still no crash (nothing to address, must stay a no-op) 0.015s
+13:23:24.700 WARN  nebflow.shell - Command timeout (2s) reached — killing process tree: sleep 12 && echo device-bg-done
+nebflow.core.tools.DeviceBashAutoBackgroundSpec:

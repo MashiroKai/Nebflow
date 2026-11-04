@@ -100,10 +100,15 @@ export function createFrameParser(onText, onClose) {
  * @param {object} opts
  * @param {string} opts.root          static root (repo/worktree root)
  * @param {(peer: object, msg: any) => void} opts.onMessage  scripted peer replies
+ * @param {Array|(() => Array)} [opts.messages]  getHistory 应答载荷（缺省 =
+ *        replayFixtureMessages()，既有调用方逐字节同形）。tool-process-fold 批
+ *        追加：该套件需要「thinking + 2 次工具调用 + 长输出 + terminal 行」的
+ *        形状，而默认夹具没有 terminal 戳 ⇒ 无法表达「回放折叠」的场景。
  * @returns {Promise<{port:number, close:Promise<void>, dropAll:()=>void,
  *                    sockets:Set<object>, close:()=>void}>}
  */
-export function createReplayServer({ root, onMessage }) {
+export function createReplayServer({ root, onMessage, messages }) {
+  const fixtureFor = () => (typeof messages === 'function' ? messages() : (messages || replayFixtureMessages()));
   const sockets = new Set();
   const log = []; // 诊断轨迹：conn/http/ws 事件（spec 失败时可读）
 
@@ -155,12 +160,13 @@ export function createReplayServer({ root, onMessage }) {
             log.push(`ws-recv ${msg && msg.type}`);
             if (msg && msg.type === 'ping') { peer.send({ type: 'pong' }); return; }
             if (msg && msg.type === 'getHistory') {
+              const payload = fixtureFor();
               peer.send({
                 type: 'historyPage',
                 sessionId: msg.sessionId,
-                messages: replayFixtureMessages(),
+                messages: payload,
                 offset: 0,
-                total: 6,
+                total: Array.isArray(payload) ? payload.length : 6,
                 hasMore: false,
               });
               log.push('ws-send historyPage');

@@ -44,6 +44,33 @@ jobs:
         # writer of el.dataset.imeComposing. Violations are listed as file:line.
         # Same logic locally: node scripts/check-ime-guard.mjs
         run: node scripts/check-ime-guard.mjs
+      - name: Component contract (frontend component paradigm gate)
+        # ask-paradigm-a batch (2026-11-03): the Ask surface now ships as a real
+        # component (<nf-ask-dock>, light DOM, outward face = open/close/syncSession).
+        # A contract that only lives in a document is NOT a contract - nothing warns
+        # the next person who copies the pattern. This step pins the five rules the
+        # batch actually paid for, any one of them failing the job:
+        #   R1 light DOM only            no attachShadow anywhere in web/js, web/css,
+        #                                index.html (SHADOW_ALLOWLIST is per-file and
+        #                                must carry a written reason - no wildcards).
+        #   R2 no cross-face DOM lookups getElementById('<face>-...') / '#<face>-...'
+        #                                inside querySelector(All)/closest from a
+        #                                module of ANOTHER face. The face table is
+        #                                derived from web/css/*.css at run time (no
+        #                                second hand-maintained list).
+        #   R3 no bare event literals    new CustomEvent('<literal>') at a new site.
+        #                                Sanctioned form: new CustomEvent(EVENTS.X).
+        #   R4 no component DOM leak     another module selecting on a component's
+        #                                INTERNAL_CLASSES - the outward face is the
+        #                                method surface, the structure is private.
+        #   R5 no bare innerHTML =       at a new site (DOM writes go through
+        #                                mdHtmlGate / builders).
+        # Legacy hits are frozen in scripts/component-contract-baseline.json: counts
+        # may only go DOWN, and a file OUTSIDE the baseline must be all-zero (raising
+        # the baseline = letting water in, it needs a per-item justification).
+        # Offline and hermetic: pure static text scan, no network, no credentials.
+        # Same logic locally: node scripts/check-component-contract.mjs
+        run: node scripts/check-component-contract.mjs
       - name: Console takeover identity guard (single-instance identity chain)
         # 身份必达批 gate (author report 2026-11-03: "手机端和电脑端同时在线，没有
         # 被挤掉"): console single-instance only kicks when BOTH sides carry a
@@ -65,6 +92,33 @@ jobs:
         # miss the other" drift that ③A1/③A3/③A5 exist to prevent).
         # Same logic locally: node scripts/check-msgstyle-single-source.mjs
         run: node scripts/check-msgstyle-single-source.mjs
+      - name: Design tokens (literal -> var(--ds-*) sentinel)
+        # Design-token gate (design-system-token-batch 2026-11-02): every design
+        # literal has exactly one home. Two tiers - a per-file baseline that may
+        # only go DOWN (any new literal in a known file fails), and a strict face
+        # (settings structure + design-system layer) that must stay literal-free.
+        # It existed since 2026-11-02 but was in no CI job and in no default make
+        # target (self-explaining-cleanup batch 2026-11-04 found and fixed that:
+        # a gate nobody runs is not a gate).
+        # Same logic locally: node scripts/check-design-tokens.mjs (or `make frontend-gates`)
+        run: node scripts/check-design-tokens.mjs
+      - name: Self-explaining copy (rule 8 — no teaching sentences in UI text)
+        # Copy self-explanation gate (author ruling 2026-11-04 12:46 "好的前端设计
+        # 应该是自解释的"; rule text = plugins/stand-dev references/frontend/
+        # visual-style.md 铁律 8). Judged face = locale values (js/locales/*.js)
+        # + index.html text nodes, comments stripped by syntax (the rule's raw
+        # grep only strips line comments, so block/HTML comments showed up as 10
+        # false positives out of 37).
+        # THREE mechanical classes from rule 8(e) - path guidance / behaviour
+        # teaching / capability claim - plus EN twins (the rule's word list is
+        # Chinese-only while the rule itself says "zh/en 双版同禁").
+        # Fourth class (duplicate explanation) has NO mechanical criterion: it is
+        # a documented blind spot, not a silent one.
+        # Baseline = scripts/self-explaining-baseline.json: every entry is a
+        # KEPT hit (state fact / failure closure / action label / empty-state next
+        # step / tooltip fact). Only shrinks; a new locale file tolerates zero.
+        # Same logic locally: node scripts/check-self-explaining.mjs (or `make frontend-gates`)
+        run: node scripts/check-self-explaining.mjs
       - name: Design spec scale sync (spec table <-> token source)
         # design-scale gate (author order 2026-11-04: "把我们对圆角 边距 文字离边缘
         # 的距离 各文字的大小 写进spec和前端开发包"): the four scales (radius /

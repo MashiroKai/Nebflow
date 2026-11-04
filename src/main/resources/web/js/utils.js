@@ -1351,12 +1351,16 @@ export function buildToolDetail(inputJson, label) {
   }
 }
 
-// ═══ 工具卡折叠单源（ui-unification-20261103-chat-stream）══════════════════
-// 「执行命令 — N 行输出」信息密度收敛：长输出默认折叠为 ≤TOOL_PREVIEW_LINES 行
-// 预览 + 明确展开/收起控件（aria-expanded 联动），全文只在展开瞬间进 DOM、
-// 收起即卸（无泄漏）。三条默认渲染腿（chat.js renderTool + persistence.js 历史
-// 与存储两腿）统一经 mountToolCardBody 建体；attachToolClick 兼任折叠状态机
-// （整卡可点习惯保留，控件是显式主路径）。
+// ═══ 工具卡折叠单源（ui-unification-20261103-chat-stream → 过程泄漏修复批 2026-11-04）═══
+// 「执行命令 — N 行输出」信息密度收敛的**第二版**：默认面 = 一行摘要（工具名 +
+// 单行关键参数 + 状态 + 图片引用件），正文与结果默认不进 DOM，整卡点击才装配
+// 全文、再点卸下（懒渲染，理由见 mountToolCardBody 头注）。三条默认渲染腿
+// （chat.js renderTool + persistence.js 历史与存储两腿）统一经 mountToolCardBody
+// 建体；attachToolClick 兼任折叠状态机（整卡可点习惯保留，aria-expanded + title
+// 联动，退役的第二行控件见 design-system.css ⑦ 段注）。
+// 第一版（6f6b6a81d）的「≤TOOL_PREVIEW_LINES 行可见预览」即作者报的
+// 「折叠态被撑长」回归面：TOOL_PREVIEW_LINES / capLines 仅作为 mountToolFold
+// 非全文档的兼容读数保留（当前无生产腿走该档）。
 export const TOOL_PREVIEW_LINES = 8;
 
 /** card → 全文装配闭包 `(host) => void`（WeakMap 随卡生灭；折叠卡展开时的
@@ -1453,13 +1457,19 @@ function toolImgRefEl(paths, alts) {
 }
 
 /**
- * 往容器装卡体正文（三条腿单源）：文本段走既有高亮/转义管线，图片段装引用件。
+ * 往容器装卡体正文（展开面单源）：文本段走既有高亮/转义管线，图片段装引用件。
+ * 过程泄漏修复批（2026-11-04）后**只有展开面**走这里——默认面 = 单行摘要行
+ * （label 行 + 图片引用件），正文与结果默认不进 DOM（懒装配）。
  * @param {HTMLElement} container
- * @param {{detailHtml?:string, promptText?:string|null, content?:string|null, label?:string}} spec
- * @param {boolean} full true=全文（展开面），false=预览面（≤TOOL_PREVIEW_LINES 行）
+ * @param {{detailHtml?:string, promptText?:string|null, content?:string|null, label?:string, labelTail?:string}} spec
+ * @param {boolean} full true=全文（展开面），false=预览面（≤TOOL_PREVIEW_LINES 行，遗留）
  */
-function mountToolFold(container, { detailHtml = '', promptText = null, content = null, label = '' }, full) {
+function mountToolFold(container, { detailHtml = '', promptText = null, content = null, label = '', labelTail = '' }, full) {
   if (detailHtml) container.insertAdjacentHTML('beforeend', detailHtml);
+  // 摘要行只显 label 首行（单行摘要面）；label 第二行（"Tool(args)\n  (detail)" 形态
+  // 的参数行）在这里随展开面回归，内容不因折叠而丢。
+  if (labelTail) container.insertAdjacentHTML('beforeend',
+    '<div class="detail-cmd">' + escapeHtml(labelTail.trim()) + '</div>');
   if (promptText) {
     const p = full ? { text: promptText } : capLines(promptText, TOOL_PREVIEW_LINES);
     container.insertAdjacentHTML('beforeend',
@@ -1506,53 +1516,71 @@ export function foldToolCardMedia(root) {
 }
 
 /**
- * 建工具卡体（三条默认腿单源）：折叠预览 + 控件 + .body 空壳 hook。
- * 前置：card.innerHTML 已含 icon + .content + .label（本函数只往 .content 追加）。
- * 短内容（≤ 阈值）不折叠：.body 直接收全文（遗留形态，点击开合）。
- * 返回 { hasBody } —— 真值时腿据此挂 attachToolClick。
+ * 建工具卡体（三条默认腿单源）。
+ * 前置：card.innerHTML 已含 icon + .content + .label（本函数只往 .content 组装）。
+ *
+ * ══ 过程泄漏修复批（作者令 2026-11-04 14:14 · 问题②「折叠态被撑长」）═══════
+ * 改前（ui-unification-20261103-chat-stream，commit 6f6b6a81d）：默认面 =
+ * `.ds-tool-card__preview` 里 capLines(content, 8) 的**8 行预览** + `.detail-cmd`
+ * 命令全文 + 展开控件 —— 卡还没点开就已经 264px 高（实测：24 行输出的 Bash 卡
+ * `previewHeight=264px / cardHeight=297px`），作者「之前都只是一行简单的摘要，
+ * 点击后才会呈现结果；现在还没点击，内容和结果就已经很长了」。
+ *
+ * 改后（本批）：默认面 = **一行摘要**——
+ *   icon（状态：✓ / ✕）+ label 首行（工具名 — 单行关键参数，CSS nowrap +
+ *   ellipsis 超长截断）+ 失败时的「失败」状态词 + 图片引用件（内联 chip）。
+ * 正文/结果/命令全文/delegate prompt **默认一律不进 DOM**（懒装配：全文只在
+ * 展开瞬间由 FOLD_BODIES 闭包装配，收起即卸）——默认面可见高度 = 0（正文面），
+ * 卡片高度 = 一行。
+ *
+ * 取舍说明（任务要求「懒渲染 vs display:none + aria-hidden 二者择一说明理由」）：
+ * 选**懒渲染**。理由 = 本批的判据是「默认态不得出现明细」；display:none 虽然
+ * 视觉等价，但 24 行 × N 张卡的正文仍会进 DOM 并参与 hljs 高亮 + 布局度量
+ * （#922 perf 台账同族成本），且「DOM 里有」与「默认态不渲染」在机械断言上不可
+ * 区分（回归可借 display 反转复发）。懒渲染把「默认态有没有明细」变成 DOM 结构
+ * 事实，断言打的是结构而不是样式开关。
+ *
+ * 返回 { hasBody } —— 真值时腿据此挂 attachToolClick（整卡可点 = 展开/收起）。
  */
-export function mountToolCardBody(card, { detailHtml = '', promptText = null, content = null, label = '' }) {
+export function mountToolCardBody(card, { detailHtml = '', promptText = null, content = null, label = '', labelTail = '' }) {
   const contentEl = card.querySelector('.content');
   if (!contentEl) return { hasBody: false };
-  const contentLines = content ? String(content).split('\n').length : 0;
-  const promptLines = promptText ? String(promptText).split('\n').length : 0;
-  const overThreshold = contentLines > TOOL_PREVIEW_LINES + 1 || promptLines > TOOL_PREVIEW_LINES + 1;
-  if (!overThreshold) {
-    // 阈值内（或无可折叠正文）：遗留形态——.body 直接收全文，点击开合。
-    if (detailHtml || promptText || content) {
-      const body = document.createElement('div');
-      body.className = 'body';
-      mountToolFold(body, { detailHtml, promptText, content, label }, true);
-      contentEl.appendChild(body);
-      foldToolCardMedia(body);
-      return { hasBody: true };
-    }
-    return { hasBody: false };
-  }
-  // 折叠面：预览（≤N 行）+ 明确控件
+  // ── ① 单行摘要面 ──────────────────────────────────────────────────────
   const preview = document.createElement('div');
   preview.className = 'ds-tool-card__preview';
-  mountToolFold(preview, { detailHtml, promptText, content, label }, false);
-  foldToolCardMedia(preview);
-  const toggle = document.createElement('button');
-  toggle.type = 'button';
-  toggle.className = 'ds-tool-card__toggle';
-  toggle.setAttribute('aria-expanded', 'false');
-  const total = (content ? String(content).split('\n').length : 0)
-    + (promptText ? String(promptText).split('\n').length : 0);
-  toggle.textContent = t('chat.toolExpandMore', { n: total });
-  preview.appendChild(toggle);
+  // label 行（工具名 — 单行关键参数）搬进摘要壳：CSS 单行 nowrap + ellipsis。
+  const labelEl = contentEl.querySelector('.label');
+  if (labelEl) preview.appendChild(labelEl);
+  // 失败必须看得出（作者边界：不许把失败藏起来）——状态词随摘要行（成功由 ✓
+  // 图标承载，不再加字：每卡都写「成功」= 纯噪声，visual-style 自解释铁律）。
+  if (card.querySelector('.icon.err')) {
+    const st = document.createElement('span');
+    st.className = 'ds-tool-card__status';
+    st.textContent = t('chat.toolStatusFailed');
+    preview.appendChild(st);
+  }
+  // 图片引用件（tool-card-image-face 批语义不变）：卡内图片一律折叠成内联
+  // 「🖼 图片 ×N」chip，点击走灯箱单点——摘要行内联，不占额外高度、绝不内嵌。
+  if (content) {
+    for (const block of splitToolBodyImages(String(content))) {
+      if (block.kind === 'img') preview.appendChild(toolImgRefEl(block.paths, block.alts));
+    }
+  }
   contentEl.appendChild(preview);
-  // 全文槽：.body 空壳（折叠态零内容零可见；遗留 .body hook 断言面兼容）
+
+  // ── ② 全文槽：空壳（折叠态零内容、零可见高度；.body hook 恒在）────────
+  if (!detailHtml && !promptText && !content && !labelTail) return { hasBody: false };
   const body = document.createElement('div');
   body.className = 'body';
   contentEl.appendChild(body);
+  const total = (content ? String(content).split('\n').length : 0)
+    + (promptText ? String(promptText).split('\n').length : 0);
   card.dataset.nfToolFoldTotal = String(total);
-  // 全文装配闭包：展开瞬间 mountToolFold 重建全文面（图片引用件同权折叠），
-  // 收起即卸（无泄漏）。图片段在预览里被行数帽截掉时，闭包把「图片 ×N」
-  // 引用件补到 host 尾（splitToolBodyImages 只见到被截文本）。
+  card.setAttribute('aria-expanded', 'false');
+  // 展开提示走 title（无视觉噪声的可达性面；i18n 键沿用同批成对键）
+  card.title = t('chat.toolExpandMore', { n: total });
   FOLD_BODIES.set(card, (host) => {
-    mountToolFold(host, { detailHtml, promptText, content, label }, true);
+    mountToolFold(host, { detailHtml, promptText, content, label, labelTail }, true);
   });
   return { hasBody: true };
 }
@@ -1574,17 +1602,14 @@ export function attachToolClick(card) {
         body.innerHTML = '';
         body.classList.remove('open');
       }
-      const preview = card.querySelector('.ds-tool-card__preview');
-      if (preview) preview.style.display = opening ? 'none' : '';
-      const toggle = card.querySelector('.ds-tool-card__toggle');
-      if (toggle) {
-        toggle.setAttribute('aria-expanded', opening ? 'true' : 'false');
-        toggle.textContent = opening
-          ? t('chat.toolCollapse')
-          : t('chat.toolExpandMore', { n: Number(card.dataset.nfToolFoldTotal || 0) });
-      }
+      // aria-expanded 与 title 跟着状态走（摘要行常驻可见，不随展开消失）
+      card.setAttribute('aria-expanded', opening ? 'true' : 'false');
+      card.title = opening
+        ? t('chat.toolCollapse')
+        : t('chat.toolExpandMore', { n: Number(card.dataset.nfToolFoldTotal || 0) });
     } else {
       body.classList.toggle('open');
+      card.setAttribute('aria-expanded', body.classList.contains('open') ? 'true' : 'false');
     }
   });
 }

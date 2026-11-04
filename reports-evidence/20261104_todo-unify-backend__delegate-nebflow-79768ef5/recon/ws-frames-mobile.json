@@ -1,0 +1,226 @@
+{
+  "reads": {
+    "taskListDisplay": "none",
+    "taskListRect": {
+      "w": 0,
+      "h": 0
+    },
+    "fabBox": {
+      "x": 16,
+      "y": 16,
+      "w": 48,
+      "h": 48
+    },
+    "fabBadge": "8",
+    "mobileTaskPanelPresent": false
+  },
+  "entryVisible": true,
+  "panelRows": 8,
+  "frames": [
+    {
+      "seq": 76,
+      "at": 1793774861526,
+      "tag": "mobile",
+      "type": "takeoverIdentify",
+      "raw": "{\"type\":\"takeoverIdentify\",\"clientId\":\"64bc4bcc-f091-4481-9aea-b8aa0c6c4967\"}"
+    },
+    {
+      "seq": 77,
+      "at": 1793774861526,
+      "tag": "mobile",
+      "type": "setVoiceMuted",
+      "raw": "{\"type\":\"setVoiceMuted\",\"muted\":false}"
+    },
+    {
+      "seq": 78,
+      "at": 1793774861526,
+      "tag": "mobile",
+      "type": "getSkills",
+      "raw": "{\"type\":\"getSkills\"}"
+    },
+    {
+      "seq": 79,
+      "at": 1793774861526,
+      "tag": "mobile",
+      "type": "getTeams",
+      "raw": "{\"type\":\"getTeams\"}"
+    },
+    {
+      "seq": 80,
+      "at": 1793774861526,
+      "tag": "mobile",
+      "type": "memoryStatus",
+      "raw": "{\"type\":\"memoryStatus\"}"
+    },
+    {
+      "seq": 81,
+      "at": 1793774861526,
+      "tag": "mobile",
+      "type": "getLlmLog",
+      "raw": "{\"type\":\"getLlmLog\"}"
+    },
+    {
+      "seq": 82,
+      "at": 1793774861526,
+      "tag": "mobile",
+      "type": "getConfig",
+      "raw": "{\"type\":\"getConfig\"}"
+    },
+    {
+      "seq": 83,
+      "at": 1793774861526,
+      "tag": "mobile",
+      "type": "getToolsList",
+      "raw": "{\"type\":\"getToolsList\"}"
+    },
+    {
+      "seq": 84,
+      "at": 1793774861526,
+      "tag": "mobile",
+      "type": "getModelOptions",
+      "raw": "{\"type\":\"getModelOptions\",\"sessionId\":null}"
+    },
+    {
+      "seq": 85,
+      "at": 1793774861527,
+      "tag": "mobile",
+      "type": "fleetUpdateSnapshot",
+      "raw": "{\"type\":\"fleetUpdateSnapshot\"}"
+    },
+    {
+      "seq": 86,
+      "at": 1793774861527,
+      "tag": "mobile",
+      "type": "listAgents",
+      "raw": "{\"type\":\"listAgents\"}"
+    },
+    {
+      "seq": 87,
+      "at": 1793774861527,
+      "tag": "mobile",
+      "type": "getPendingAsks",
+      "raw": "{\"type\":\"getPendingAsks\"}"
+    },
+    {
+      "seq": 88,
+      "at": 1793774861527,
+      "tag": "mobile",
+      "type": "getActiveBgTasks",
+      "raw": "{\"type\":\"getActiveBgTasks\"}"
+    },
+    {
+      "seq": 89,
+      "at": 1793774861527,
+      "tag": "mobile",
+      "type": "getActiveAgents",
+      "raw": "{\"type\":\"getActiveAgents\"}"
+    },
+    {
+      "seq": 90,
+      "at": 1793774861527,
+      "tag": "mobile",
+      "type": "listSessions",
+      "raw": "{\"type\":\"listSessions\"}"
+    },
+    {
+      "seq": 91,
+      "at": 1793774861689,
+      "tag": "mobile",
+      "type": "getHeldReceipts",
+      "raw": "{\"type\":\"getHeldReceipts\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 92,
+      "at": 1793774861690,
+      "tag": "mobile",
+      "type": "listDir",
+      "raw": "{\"type\":\"listDir\",\"sessionId\":\"todo-shell-root\",\"path\":\"\",\"rootPath\":null}"
+    },
+    {
+      "seq": 93,
+      "at": 1793774861690,
+      "tag": "mobile",
+      "type": "listScheduledTasks",
+      "raw": "{\"type\":\"listScheduledTasks\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 94,
+      "at": 1793774861690,
+      "tag": "mobile",
+      "type": "listScheduledTasks",
+      "raw": "{\"type\":\"listScheduledTasks\",\"sessionId\":\"todo-shell-root\",\"scope\":\"all\"}"
+    },
+    {
+      "seq": 95,
+      "at": 1793774861690,
+      "tag": "mobile",
+      "type": "getTaskList",
+      "raw": "{\"type\":\"getTaskList\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 96,
+      "at": 1793774861690,
+      "tag": "mobile",
+      "type": "getHistory",
+      "raw": "{\"type\":\"getHistory\",\"sessionId\":\"todo-shell-root\",\"limit\":50}"
+    },
+    {
+      "seq": 97,
+      "at": 1793774861700,
+      "tag": "mobile",
+      "type": "listAgents",
+      "raw": "{\"type\":\"listAgents\"}"
+    },
+    {
+      "seq": 98,
+      "at": 1793774861701,
+      "tag": "mobile",
+      "type": "getHeldReceipts",
+      "raw": "{\"type\":\"getHeldReceipts\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 99,
+      "at": 1793774861701,
+      "tag": "mobile",
+      "type": "listDir",
+      "raw": "{\"type\":\"listDir\",\"sessionId\":\"todo-shell-root\",\"path\":\"\",\"rootPath\":null}"
+    },
+    {
+      "seq": 100,
+      "at": 1793774861701,
+      "tag": "mobile",
+      "type": "listScheduledTasks",
+      "raw": "{\"type\":\"listScheduledTasks\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 101,
+      "at": 1793774861701,
+      "tag": "mobile",
+      "type": "listScheduledTasks",
+      "raw": "{\"type\":\"listScheduledTasks\",\"sessionId\":\"todo-shell-root\",\"scope\":\"all\"}"
+    },
+    {
+      "seq": 102,
+      "at": 1793774861701,
+      "tag": "mobile",
+      "type": "getTaskList",
+      "raw": "{\"type\":\"getTaskList\",\"sessionId\":\"todo-shell-root\"}"
+    },
+    {
+      "seq": 103,
+      "at": 1793774861701,
+      "tag": "mobile",
+      "type": "listAgents",
+      "raw": "{\"type\":\"listAgents\"}"
+    },
+    {
+      "seq": 104,
+      "at": 1793774861952,
+      "tag": "mobile",
+      "type": "watchSubscribe",
+      "raw": "{\"type\":\"watchSubscribe\",\"sessionId\":\"todo-shell-root\",\"rootPath\":null,\"dirs\":[\"\"]}"
+    }
+  ],
+  "consoleErrors": [],
+  "pageErrors": []
+}

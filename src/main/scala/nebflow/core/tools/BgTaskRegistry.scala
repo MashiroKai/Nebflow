@@ -106,7 +106,20 @@ object BgTaskRegistry:
      * 一次、行内承载、快照（activeTasksJson）与实时信封（backgroundTaskUpdate）
      * 同源携带。
      */
-    ownerName: String = ""
+    ownerName: String = "",
+    /**
+     * awaited 去重标记（bash overhaul T2 · 作者令 2026-11-04；契约钉死为**尾字段 +
+     * 缺省值**——既有构造点（register 位置参数 + spec 的 `ActiveTask(...)`）逐字
+     * 不变）。
+     *
+     * 语义（业界依据：dsh「结算通知推会话 + 忙时 next-step inbox + awaited 去重」）：
+     * 终态结果**已被等待者直接收走**（[[BgWaitTool]] 把 `[completed]/[failed]` 结果
+     * 当面交付给 agent）⇒ 完成回调不再把同一 jobId 推第二遍——但账本行与输出留存
+     * **照做**（durable-then-push 的两条腿不因去重而缺席）。写缝 = [[markAwaited]]
+     * （唯一生产写点 BgWaitTool.call），读点 = 完成回调在注销时取回的行
+     * （[[unregisterReturning]] 的原子读数，禁第二事实源）。
+     */
+    awaited: Boolean = false
   )
 
   /**
@@ -347,6 +360,32 @@ object BgTaskRegistry:
         val removed = m.get(jobId)
         (m - jobId, removed)
       }
+
+  /**
+   * awaited 去重的**写缝**（bash overhaul T2 契约；唯一生产调用点 =
+   * [[BgWaitTool.call]] 终态交付之后）。语义：本 jobId 的终态结果已由等待者
+   * **当面收走**，完成回调（BashTool.makeNotifyCallback）投递前读到该标记即
+   * **只跳过 agent 推送**，账本行与输出留存照做。
+   *
+   * 原子写与既有缝同款（单 `Ref.modify`：判定 + 写入一次完成，并发 markAwaited
+   * 与 unregisterReturning 无读到半态）。行不存在 ⇒ false（极早终态 / 重复回调：
+   * 没有行可标，无副作用；调用方按 `.attempt.void` best-effort 消费）。
+   */
+  def markAwaited(jobId: String): IO[Boolean] =
+    tasks.modify { m =>
+      m.get(jobId) match
+        case None => (m, false)
+        case Some(t) => (m + (jobId -> t.copy(awaited = true)), true)
+    }
+
+  /**
+   * awaited 读数（spec 判据 / 取证面）：行在册且已标记 ⇒ true；行不存在（终态
+   * 回调已注销）⇒ false。**消费点不读本缝**——完成回调读的是
+   * [[unregisterReturning]] 原子取回的那一行（注销即读，无两拍竞态）；本缝是
+   * 「在册任务是否已被等待者收走」的可观测面。
+   */
+  def isAwaited(jobId: String): IO[Boolean] =
+    tasks.get.map(_.get(jobId).exists(_.awaited))
 
   /**
    * #391 机制 E：移除某 session 的全部任务并返回它们——restart/Stop 联动时

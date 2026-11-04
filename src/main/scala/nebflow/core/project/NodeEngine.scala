@@ -101,10 +101,13 @@ class NodeEngine(
    */
   notifyDeliveryTarget: Option[DispatchNotify.DeliveryTarget] = None,
   /**
-   * 完成门腿 1 开关（noderpt 批 A 段 2026-09-11）：后台任务存活是否拦节点终态化。
-   * None = 现读 `Defaults.BgGateCompletionHold`（生产默认 **false = 封存**：不查
-   * `BgTaskRegistry.waitingFor`，hold 代码与 armCap 逐字保留、打开即恢复旧行为）；
-   * Some = spec 显式注入（避开全局 prop 的跨 suite 污染，测试矩阵双态各一条）。
+   * 完成门腿 1 开关（noderpt 批 A 段 2026-09-11；缺省面 T4 批 2026-11-04 翻转）：
+   * 后台任务存活是否拦节点终态化。None = 现读 `Defaults.BgGateCompletionHold`
+   * （生产默认 **true = 默认保结果**：查 `BgTaskRegistry.waitingFor` 并 hold，任务
+   * 全部完成后自动续；要丢弃必须显式 `-Dnebflow.bgGate.completionHold=false` 或
+   * `nebflow.json` 同名键经启动面转成 `-D`）；Some = spec 显式注入（避开全局 prop
+   * 的跨 suite 污染，
+   * 测试矩阵双态各一条）。
    */
   bgGateCompletionHold: Option[Boolean] = None,
   /**

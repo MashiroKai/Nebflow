@@ -1,0 +1,17 @@
+### [T4] sbt "testOnly nebflow.core.tools.BashOverhaulGateSpec"
+### started: 2026-11-04 15:31:28
+[sbt-gate] gate acquired after 1s
+[sbt-gate] heap cap -Xmx1500m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-485bb4f4-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/)
+[warn] javaOptions will be ignored, fork is set to false
+nebflow.core.tools.BashOverhaulGateSpec:
+  + T4: default face — BgGateCompletionHold must default to TRUE (old default false ⇒ RED) 0.094s
+  + T4: explicit -Dnebflow.bgGate.completionHold=false keeps it false (opt-out preserved) 0.001s
+  + T4: explicit -Dnebflow.bgGate.completionHold=true keeps it true (opt-in identical) 0.001s
+[info] Passed: Total 3, Failed 0, Errors 0, Passed 3
+[success] Total time: 2 s, completed 2026年11月4日 15:31:34
+### finished: 2026-11-04 15:31:34 · elapsed=6s

@@ -1,0 +1,120 @@
+=== isolated instance smoke · 2026-11-04 15:53:41 ===
+worktree=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4
+home=/tmp/bashoverhaul-03bd8b  port=6413  (production pid 78176 must stay untouched)
+prod-pid-before: 78176 /Library/Java/JavaVirtualMachines/temurin-23.jdk/Contents/Home/bin/java @/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/sbt-args9258139839522995993.tmp
+sbt shell pid=58246 (my own process)
+[sbt-gate] service-mode command — long-lived JVM, heavy-work lock skipped
+[sbt-gate] heap cap -Xmx1500m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-485bb4f4-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/)
+[info] running (fork) nebflow.Main --home /tmp/bashoverhaul-03bd8b --port 6413 --no-browser
+OpenJDK 64-Bit Server VM warning: Option ZGenerational was deprecated in version 23.0 and will likely be removed in a future release.
+15:53:50.208 [33mWARN [0m nebflow.modelchain - model-chain migration: preset 'general' carries no chain; not migrated to registry
+15:53:50.209 [36mINFO [0m nebflow.modelchain - model-chain migration: preset catalog sealed at model-presets.json.sealed-20261104T155350
+15:53:50.218 [36mINFO [0m nebflow.gateway - LLM log recording: disabled (persisted=none → default off) | retention=armed (3-day window, independent of the write switch)
+15:53:50.782 [36mINFO [0m nebflow.search.index - search-index: face 'chat' opened at /tmp/bashoverhaul-03bd8b/search-index/chat.db (cap=2000 chars/row)
+15:53:50.796 [36mINFO [0m nebflow.search.index - search-index rebuild: face 'chat' reconciled 1 session(s)
+15:53:50.972 [36mINFO [0m nebflow.core.sandbox.SandboxRuntime$ - sandbox provider=host — 宿主直跑，无包裹（Bash 不再 fail-closed）
+15:53:50.976 [36mINFO [0m nebflow.gateway - stand 2026.10.26-beta.2
+15:53:50.976 [36mINFO [0m nebflow.gateway - No LLM provider configured — open the web UI to set up
+15:53:51.204 [36mINFO [0m nebflow.agent.interaction - Pending-ask boot reconcile: 0 leftover(s)
+15:53:51.205 [36mINFO [0m nebflow.gateway - Pending-ask boot reconcile: inspected=0 expiredClosed=0
+15:53:51.401 [36mINFO [0m nebflow.plugin.sources - [plugin-sources] backfill: 1 recorded, 0 already recorded, 0 failed — package directories untouched
+15:53:51.421 [36mINFO [0m nebflow.plugin - Plugin 'visual-report' audit record refreshed (digest 82820502a2f9…, 83 file(s), 83 file snapshot(s))
+15:53:51.422 [36mINFO [0m nebflow.core.seed - Seed: plugin 'visual-report' installed + trust record written
+15:53:51.471 [36mINFO [0m nebflow.plugin - Plugin 'slideblocks' audit record refreshed (digest 725886ab19e2…, 43 file(s), 43 file snapshot(s))
+15:53:51.471 [36mINFO [0m nebflow.core.seed - Seed: plugin 'slideblocks' installed + trust record written
+15:53:51.495 [36mINFO [0m nebflow.plugin - Plugin 'web-search-toolkit' audit record refreshed (digest c9dc259f5074…, 4 file(s), 4 file snapshot(s))
+15:53:51.495 [36mINFO [0m nebflow.core.seed - Seed: plugin 'web-search-toolkit' installed + trust record written
+15:53:51.533 [36mINFO [0m nebflow.plugin - Plugin 'browser-use' audit record refreshed (digest 7e4c4b9086a9…, 22 file(s), 22 file snapshot(s))
+15:53:51.533 [36mINFO [0m nebflow.core.seed - Seed: plugin 'browser-use' installed + trust record written
+15:53:51.560 [36mINFO [0m nebflow.plugin - Plugin 'computer-use' audit record refreshed (digest a800d3e603aa…, 8 file(s), 8 file snapshot(s))
+15:53:51.560 [36mINFO [0m nebflow.core.seed - Seed: plugin 'computer-use' installed + trust record written
+15:53:51.634 [36mINFO [0m nebflow.plugin - Plugin 'document-production' audit record refreshed (digest 6e8ebe11df2f…, 112 file(s), 112 file snapshot(s))
+15:53:51.634 [36mINFO [0m nebflow.core.seed - Seed: plugin 'document-production' installed + trust record written
+15:53:51.637 [36mINFO [0m nebflow.core.seed - Seed: fresh home seeded 6 item(s) (v1.0.0)
+15:53:52.175 [36mINFO [0m nebflow.plugin.sources - [plugin-sources] 'stand-dev' provenance recorded — via=git kind=git digest=9e9c9b691040… (engine-only provenance write point)
+15:53:52.219 [36mINFO [0m nebflow.plugin - Plugin 'stand-dev' audit record refreshed (digest 9e9c9b691040…, 31 file(s), 31 file snapshot(s))
+15:53:52.221 [36mINFO [0m nebflow.plugin.sync - [plugin-sync] 'stand-dev' installed from its source — v1.2.0 at db1a44c271dd… (source: git · git.ustc.edu.cn/kaiyu/stand-dev @main)
+15:53:52.228 [36mINFO [0m nebflow.gateway - Boot dispatcher wake: boot=1793778829399-58685 projects=0 woken=0 skipped=0 failed=0
+15:53:52.230 [36mINFO [0m nebflow.gateway - Merge-queue boot reconcile: alreadyMerged=0 () droppedEmpty=0 ownerGone=0 () preserved=0 ()
+15:53:52.232 [36mINFO [0m nebflow.gateway - Msg-token boot reconcile: scanned=0 loaded=0 prunedSessions=0 prunedMappings=0
+15:53:52.266 [36mINFO [0m nebflow.neblink.device - no device.json at /tmp/bashoverhaul-03bd8b/device.json — minted deviceId=82798f60-1e09-5bd4-97f0-bb18ba6d401a (scope=home|257f1d5b-121c-5bc5-87e4-c81df486f14a, machine-code derived) and persisted
+15:53:52.306 [36mINFO [0m nebflow.neblink.relay - Starting relay tunnel to NebLink Server
+15:53:52.314 [36mINFO [0m nebflow.neblink - P6 probe: addDataHandler size-after=1 svc=561873913
+15:53:52.314 [36mINFO [0m nebflow.dropbox - P6 probe: dropbox data handler registered ns=561873913
+15:53:52.324 [36mINFO [0m nebflow.scheduled-task - Starting scheduled task service (10s poll interval)
+15:53:52.326 [36mINFO [0m nebflow.neblink - P6 probe: addDataHandler size-after=2 svc=561873913
+15:53:52.327 [36mINFO [0m nebflow.device-delegate - DeviceDelegate receive face armed (channel: delegate-spawn/result/accept) ns=561873913
+15:53:52.328 [36mINFO [0m nebflow.neblink - P6 probe: addDataHandler size-after=3 svc=561873913
+15:53:52.329 [36mINFO [0m nebflow.neblink.identity - AgentIdentitySync receive face armed (channel: agent-identity, kind: identity-sync)
+15:53:52.334 [36mINFO [0m nebflow.neblink - P6 probe: addDataHandler size-after=4 svc=561873913
+15:53:52.334 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:53:52.336 [36mINFO [0m nebflow.neblink.session-sync - AgentSessionSync faces armed (channel: agent-session, kind: session-sync, projected rows: 0)
+15:53:52.365 [36mINFO [0m nebflow.conn-guard - conn-guard enabled=true wsPerIpCap=64 wsTotalCap=1024 warnPct=80 snapshotSec=60 trusted=[127.0.0.1,::1,0:0:0:0:0:0:0:1]
+15:53:52.755 [36mINFO [0m nebflow.gateway - gateway listening on 0.0.0.0:6413
+15:53:52.756 [36mINFO [0m nebflow.gateway - static tree: dev web/ sources
+15:53:52.756 [36mINFO [0m nebflow.gateway - access URL: http://localhost:6413 (token in ~/.nebflow/auth.json)
+15:53:52.882 [36mINFO [0m nebflow.bridge - Bridge plugin 'feishu' unregistered
+15:53:52.883 [36mINFO [0m nebflow.bridge - Bridge plugin 'weixin-ilink' unregistered
+15:53:52.884 [36mINFO [0m nebflow.bridge - No bridge plugins configured
+15:53:52.892 [36mINFO [0m nebflow.seal - [seal] 邮件后台投递进程已封存（nebflow.mail.process.enabled=false）——不注册后台进程/定时器：HeldDeliveryWatchdog
+15:53:52.898 [36mINFO [0m nebflow.gateway - Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop
+15:53:52.919 [36mINFO [0m nebflow.gateway - Initializing global MCP servers...
+15:53:52.920 [36mINFO [0m nebflow.gateway - MCP servers initialized
+15:53:52.923 [36mINFO [0m nebflow.tools - No external tools loaded
+15:53:54.350 [36mINFO [0m nebflow.seal - [seal] 邮件后台投递进程已封存（nebflow.mail.process.enabled=false）——不注册后台进程/定时器：perception-daemon（dock prepare/upsert）
+15:54:02.337 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:54:12.339 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:54:22.342 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:54:32.343 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:54:42.345 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:54:52.347 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:54:52.775 [36mINFO [0m nebflow.conn-guard - conn-guard snapshot ws=0/1024 perIpCap=64 trackedIps=1/1024 overflow=0 accepted=0 rejected=0 reqTotal=30 reqUntracked=0 top=[] tunnelReq=0 tunnelRejected=0
+15:55:02.351 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:55:12.353 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:55:22.354 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:55:32.356 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:55:42.358 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:55:52.360 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:55:52.760 [36mINFO [0m nebflow.conn-guard - conn-guard snapshot ws=0/1024 perIpCap=64 trackedIps=1/1024 overflow=0 accepted=0 rejected=0 reqTotal=64 reqUntracked=0 top=[] tunnelReq=0 tunnelRejected=0
+15:56:02.362 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:56:12.365 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:56:14.838 [33mWARN [0m nebflow.ws - WebSocket auth failed from 127.0.0.1
+15:56:22.367 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:56:32.370 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:56:42.373 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:56:52.299 [36mINFO [0m nebflow.ws - WebSocket client connected
+15:56:52.377 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:56:52.394 [36mINFO [0m nebflow.agent.lifecycle - [32mNebula-a0b18ea8[0m [35mNebula/a0b18ea8[0m event=spawn detail=parent=- msgs=0
+15:56:52.410 [36mINFO [0m nebflow.flow.tree - FlowTreeActor started for session Some(a0b18ea8-2771-4638-8522-384cbb4546ca)
+15:56:52.761 [36mINFO [0m nebflow.conn-guard - conn-guard snapshot ws=0/1024 perIpCap=64 trackedIps=1/1024 overflow=0 accepted=1 rejected=0 reqTotal=97 reqUntracked=0 top=[] tunnelReq=0 tunnelRejected=0
+15:57:02.379 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:57:12.382 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:57:22.385 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:57:32.388 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:57:42.391 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:57:52.394 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:57:52.761 [36mINFO [0m nebflow.conn-guard - conn-guard snapshot ws=0/1024 perIpCap=64 trackedIps=1/1024 overflow=0 accepted=1 rejected=0 reqTotal=127 reqUntracked=0 top=[] tunnelReq=0 tunnelRejected=0
+
+### 人工补探（脚本自动探测用了错误路径 /health=404，正确面 = /api/health；见下方注记）
+[probe] GET /api/health -> 200   (GET /health -> 404)
+[probe] WS ws://127.0.0.1:6413/ws?clientId=e2e-smoke  (Authorization: Bearer <auth.json 内容>) -> 握手成功，已接受 Bearer 文件令牌轨
+[probe] {"type":"getToolsList"} -> {"type":"toolsList"} 计数 39
+[probe] HAS_BGWAIT=True   HAS_BASH=True
+[probe] tool names: AgentControl,AgentFlow,AskUserQuestion,Bash,BgWait,ChainWrite,Curl,Delegate,Edit,EmailSend,Glob,Grep,ListFriends,Load,Mail,NodeCancel,NodeEdit,NodeList,Pop,Project,Read,Schedule,SendMessage,SubTask,Subagent,Task,TaskInfo,TaskSearch,TeamTaskCreate,TeamTaskList,TeamTaskUpdate,WebFetch,WebSearch,Write,delegate_report,generate_image,message_record_search,node_report,send_message_to_main_chat
+[note] 脚本自动段的探测口径错在两处（记录在案，不粉饰）：① health 路径应为 /api/health；② auth.json 是 JSON 字面串（`"<token>"`），直接 read() 会带上引号 ⇒ 首轮 WS 403。人工补探用 json.load 取值后通过。
+15:58:02.397 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:58:12.400 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+prod-pid-78176-before-kill: 78176
+15:58:17.536 [36mINFO [0m nebflow.gateway - shutting down...
+[error] nonzero exit code returned from runner: 143
+[error] (Compile / run) nonzero exit code returned from runner: 143
+[error] Total time: 273 s (0:04:33.0), completed 2026年11月4日 15:58:17
+[teardown] sent TERM to my instance pid 58685 (three-way verified: pidfile=meta=port-owner); exited after ~2s
+prod-pid-78176-after-kill: 78176
+port-6413-listen-after: 
+sbt-shell-58246-exited

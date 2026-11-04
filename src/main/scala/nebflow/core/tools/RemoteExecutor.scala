@@ -222,24 +222,50 @@ class RemoteExecutor(
     bgWaitFibers.get.map(_.contains(jobId))
 
   /**
+   * T7（作者令 2026-11-04）：**外部腿的等待句柄登记**——设备腿（`BashTool` 的
+   * `ctx.isRemoteExec` 支）在本实例收编对端请求的命令时，其终态腿不是本类的 HTTP
+   * fiber，但台账行 `kind="remote"` 的死亡看护（[[BgTaskLiveness.probeRemote]]）只
+   * 读本图。登记进去 = 收编行在收割器面前 Alive（句柄在图 = 终态腿在飞），命令跑完
+   * （或取消）即由登记者出图（见 [[unregisterWaitFiber]]）。
+   */
+  private[tools] def registerWaitFiber(jobId: String, fiber: Fiber[IO, Throwable, Unit]): IO[Unit] =
+    bgWaitFibers.update(_ + (jobId -> fiber))
+
+  /** 外部腿出图（与 [[registerWaitFiber]] 成对；缺键 no-op）。 */
+  private[tools] def unregisterWaitFiber(jobId: String): IO[Unit] =
+    bgWaitFibers.update(_ - jobId)
+
+  /**
    * P2 单任务取消**传输腿**（簿记/通知归 BgTaskCancel 统一面）：① 取消本侧
    * 等待 fiber（在图才取消；缺席 = 终态腿已走完，簿记方 first-terminal-wins
    * 判读）；② 对端 `bg-cancel` 动作经 [[executeViaBestPath]] 下发（relay 优先/
    * P2P 兜底同既有腿，确认帧 = 动作响应）杀对端进程树。
    *
-   * 对端不可达/未登记 ⇒ Left（可读原因）——调用方照收本地终态（等待 fiber 已
-   * 取消，通知绝路；残留对端进程随自然终态/对端重启消亡），回执如实带原因。
-   * 零墙钟新增：BgCancel 往返只消费既有 connect 超时档。
+   * T7（作者令 2026-11-04）：`cancelLocalWait=false` —— **从终态腿内部**调用时
+   * （bgHttpWaitTimeout 到点，契约 3「先 bg-cancel 再收行」）必须跳过本侧 fiber 的
+   * 取消：那条 fiber 就是调用者自己，自取消会在落终态之前把整条终态腿打断（终态
+   * 事件绝路 = 行残留病灶）。只发对端 bg-cancel，本侧 fiber 由它自己的收行路径终结。
+   * 外部调用方（BgTaskCancel 面）保持缺省 true = 既有语义逐字节不变。
    */
   private[tools] def requestPeerCancel(deviceName: String, jobId: String): IO[Either[String, String]] =
+    requestPeerCancel(deviceName, jobId, cancelLocalWait = true)
+
+  private[tools] def requestPeerCancel(
+    deviceName: String,
+    jobId: String,
+    cancelLocalWait: Boolean
+  ): IO[Either[String, String]] =
     resolvePeerByName(deviceName).flatMap {
       case None => IO.pure(Left(s"device '$deviceName' not found among peers (already unpaired/offline?)"))
       case Some(peer) =>
-        val cancelWait = bgWaitFibers.get.flatMap { fibers =>
-          fibers.get(jobId) match
-            case Some(fib) => fib.cancel.as(true)
-            case None      => IO.pure(false)
-        }
+        val cancelWait =
+          if !cancelLocalWait then IO.pure(false)
+          else
+            bgWaitFibers.get.flatMap { fibers =>
+              fibers.get(jobId) match
+                case Some(fib) => fib.cancel.as(true)
+                case None      => IO.pure(false)
+            }
         val confirm = executeViaBestPath(
           peer,
           "BgCancel",
@@ -1006,18 +1032,27 @@ class RemoteExecutor(
   /**
    * Execute a remote command in the foreground until it completes.
    *
-   * #26（2026-08-30 用户裁定「Bash 工具不再自动转后台」）：删除 30s 自动转后台
-   * ——远程前台调用一直等到 HTTP 返回（或 BgTimeout 网络超时兜底），返回真实
-   * 输出，不产生「[Remote command moved to background]」占位。
+   * #26（2026-08-30 用户裁定「Bash 工具不再自动转后台」）：曾删除 30s 自动转后台。
    *
-   * 远程执行无本地进程树、无进程级进展探测（HTTP 等待中无法区分「命令在跑」
-   * 与「设备无响应」），因此：
-   * - 进程侧活动心跳（每 30s touch **processActivityMs**，2026-09-10 换轴前写的是
-   *   lastActivityMs）——「对端还在等」的旁证；**不再**参与卡死判据，远程长命令
-   *   的看护改由工具相位判据承担（单个工具调用超 ToolPhaseStuckMs 且 turn 未完成
-   *   → TaskStuckWatcher 分级恢复）
-   * - 真挂起（设备无响应）由 BgTimeout（3600s 网络超时）兜底——远程固有局限：
-   *   无法像本地 Bash 一样用输出/CPU 停滞检测，网络层超时是唯一防线
+   * 🔴 T7（bash overhaul，作者令 2026-11-04，自查件 D9 M6/§4）**恢复并重建**该语义：
+   * 「不自动转后台」的实质诉求是**不杀、不丢**，而不是让主会话无限阻塞——设备腿
+   * 前台因此改为**与本地前台腿同构**：
+   *  - 唯一等待上限 = `min(显式 timeout, ctx.bashConfig.foregroundWaitBudgetMs)`
+   *    （与 `BashTool.executeForeground` **同源单点**；显式 timeout 只收窄，禁第二个上限）；
+   *  - 预算内返回 ⇒ 真结果直通（行为与改前逐字节一致，含远端错误如实左路）；
+   *  - 到点未完成 ⇒ **收编**：本侧铸 jobId（同时作为 `bgJobId` 下发对端 ⇒ 对端
+   *    `RemoteExecCancelRegistry` 与它自己那份收编行用**同一个 id**），登记
+   *    `BgTaskRegistry`（`kind="remote"`，origin = 设备名）、起心跳、把仍在飞的 HTTP
+   *    调用挂成本侧后台任务，回与本地 auto-background **逐字同形**的回执
+   *    （[[RemoteExecutor.autoBackgroundReceipt]]，`isError=false`），可被 `BgWait`
+   *    等、可被 `BgTaskCancel` 按同一 id 取消（对端 bg-cancel ⇒ 精确杀对端进程树）；
+   *  - 该 HTTP fiber 的等待上限仍是 [[bgHttpWaitTimeout]]（1h 网络兜底 / persistent 豁免）；
+   *    上限到点 ⇒ **先** `requestPeerCancel`（行仍在运行才发）**再**落终态
+   *    （[[remoteTerminalLeg]]，契约 3）。
+   *
+   * 远程执行无本地进程树、无进程级进展探测（HTTP 等待中无法区分「命令在跑」与
+   * 「设备无响应」），因此保留既有旁证：等待期间每 30s touch **processActivityMs**
+   * （不参与卡死判据）；真挂起由网络超时兜底。
    */
   private def executeForegroundSync(
     peer: PeerInfo,
@@ -1025,10 +1060,22 @@ class RemoteExecutor(
     params: JsonObject,
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    val remoteParams = ensureRemoteTimeout(RemoteExecutor.stripLocalBgFlags(params))
+    // 上限同源单点（与本地前台腿同一个值、同一处钳法）：显式 timeout 只收窄。
+    val budgetMs = math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs)
+    val explicitMs = params("timeout").flatMap(_.asNumber).flatMap(_.toLong).filter(_ > 0L)
+    val waitBudgetMs = explicitMs.fold(budgetMs)(_.min(budgetMs))
+    // 收编用 jobId 先行铸出（下发对端 + 本侧登记行/回执/等待/取消 同一 id）。
+    val jobId = java.util.UUID.randomUUID().toString.take(8)
+    val networkCap = RemoteExecutor.bgHttpWaitTimeout(persistent = false)
+    val remoteParams = ensureRemoteTimeout(
+      RemoteExecutor.stripLocalBgFlags(params).add("bgJobId", jobId.asJson),
+      networkCap
+    )
     val commandStr = params("command").flatMap(_.asString).getOrElse(toolName)
     val firstLine = commandStr.split('\n').headOption.getOrElse(commandStr).take(80)
     val description = s"[${peer.deviceName}] ${params("description").flatMap(_.asString).getOrElse(firstLine)}"
+    val outputPath = RemoteBgOutputLog.parseRedirect(commandStr).getOrElse("")
+    val startedAtMs = System.currentTimeMillis()
 
     for
       // 进程侧活动心跳（2026-09-10 换轴）：等待期间每 30s 刷新
@@ -1036,9 +1083,23 @@ class RemoteExecutor(
       // 还活着」不等于 agent 侧有进展；旧写点与 BashTool 活动桥同属事故根因族）。
       // 本侧旗标（run_in_background/persistent）与后台腿同法摘除，不过线。
       hbFiber <- (IO.sleep(30.seconds) *> touchAgentActivity(ctx)).foreverM.start
-      r <- executeViaBestPath(peer, toolName, remoteParams, RemoteExecutor.BgTimeout, ctx.projectRoot)
+      // racePair（不是 race）：落败侧必须继续活着——预算到点时那条 HTTP 调用要被
+      // 收编，绝不取消（取消 = 设备侧白跑一条命令且结果无人接收）。
+      execFiber <- executeViaBestPath(peer, toolName, remoteParams, networkCap, ctx.projectRoot).start
+      raced <- IO.racePair(joinResult(execFiber), IO.sleep(waitBudgetMs.millis))
+      result <- (raced match
+        case Left((winOutcome, budgetFiber)) =>
+          // 预算内完成 —— 既有真结果直通（成功/远端错误逐字不变）。
+          budgetFiber.cancel *> unwrapOutcome(winOutcome)
+        case Right(_) =>
+          // 预算到点仍在跑 —— 收编，命令不杀，回执 isError=false。
+          adoptRemoteForeground(peer, ctx, jobId, description, execFiber, waitBudgetMs, outputPath, startedAtMs)
+      ).handleErrorWith(e =>
+        // 兜底：执行 fiber 崩溃/被取消也不能把工具调用整条打挂（与改前同域）。
+        IO.pure(Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}")))
+      )
       _ <- hbFiber.cancel
-    yield r
+    yield result
   end executeForegroundSync
 
   /**
@@ -1055,6 +1116,102 @@ class RemoteExecutor(
             case None => (m, ())
         }
       case _ => IO.unit
+
+  /**
+   * Join 语义的小工具（与 `BashTool.joinResult` 同形；本类收编腿 join 的是
+   * `Fiber[IO, Throwable, Either[ToolError, String]]`——Succeeded 取内层 attempt 值、
+   * Errored 重抛、Canceled 视为被打断并升为 InterruptedException）。
+   */
+  private def unwrapOutcome[A](oc: cats.effect.kernel.Outcome[IO, Throwable, A]): IO[A] =
+    oc match
+      case cats.effect.kernel.Outcome.Succeeded(fa) => fa
+      case cats.effect.kernel.Outcome.Errored(e)    => IO.raiseError[A](e)
+      case cats.effect.kernel.Outcome.Canceled() =>
+        IO.raiseError[A](new InterruptedException("remote wait fiber cancelled"))
+
+  private def joinResult[A](fiber: Fiber[IO, Throwable, A]): IO[A] =
+    fiber.join.flatMap(unwrapOutcome)
+
+  /**
+   * T7（作者令 2026-11-04）：把仍在飞的远端前台调用**收编**为本侧后台任务
+   * （登记台账 / 心跳 / 挂终态腿），回执 = [[RemoteExecutor.autoBackgroundReceipt]]
+   * ——与本地 auto-background 逐字同形。
+   *
+   * 与 [[executeRemoteBackground]] 同一台账面、同一终态腿、同一回执构造点；差别只在
+   * 「命令已经在下发途中」（不重发命令，join 既有 HTTP fiber）。
+   *
+   * `denySpawnIfFinalized` 守卫**不适用**：那是「创建之前拦住一次创建」的闸，而这里
+   * 命令已经在设备上跑着；拦住它等于让一条真在跑的命令失去台账行（结果绝路）。会话
+   * 终态场景由终态腿的 first-terminal-wins 兜住。
+   */
+  private def adoptRemoteForeground(
+    peer: PeerInfo,
+    ctx: ToolContext,
+    jobId: String,
+    description: String,
+    execFiber: Fiber[IO, Throwable, Either[ToolError, String]],
+    waitedMs: Long,
+    outputPath: String,
+    startedAtMs: Long
+  ): IO[Either[ToolError, String]] =
+    val (bgOrigin, bgOriginLabel) = BgTaskRegistry.deviceOrigin(peer.deviceName)
+    for
+      _ <- logger.info(
+        s"Remote foreground call $jobId on ${peer.deviceName} reached the wait budget (${waitedMs}ms) — " +
+          "adopted as a background job (command NOT killed, HTTP wait continues)"
+      )
+      _ <- emitBgTaskStarted(ctx, jobId, description, bgOrigin, bgOriginLabel)
+      _ <- BgTaskRegistry.register(
+        jobId,
+        ctx.sessionId.getOrElse(""),
+        description,
+        "remote",
+        ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
+        false,
+        bgOrigin,
+        bgOriginLabel,
+        peer.deviceName,
+        outputPath,
+        nebflow.core.delegate.DelegateRegistry.modeFaceOf(ctx.sessionId).getOrElse(""),
+        nebflow.core.delegate.DelegateRegistry.ownerNameOf(ctx.sessionId).getOrElse("")
+      )
+      doneRef <- IO.ref(false)
+      _ <- startRemoteHeartbeat(ctx, jobId, description, doneRef)
+      // 收编的终态腿：join 既有 HTTP fiber（同一句柄，不重发命令）⇒ 终态落账 + 通知。
+      _ <- IO(attachRemoteBgFiber(peer, ctx, jobId, description, execFiber, doneRef, outputPath, startedAtMs))
+    yield Right(RemoteExecutor.autoBackgroundReceipt(jobId, waitedMs))
+  end adoptRemoteForeground
+
+  /** 收编腿的终态腿挂载：join 既有 fiber ⇒ [[remoteTerminalLeg]] ⇒ doneRef。 */
+  private def attachRemoteBgFiber(
+    peer: PeerInfo,
+    ctx: ToolContext,
+    jobId: String,
+    description: String,
+    execFiber: Fiber[IO, Throwable, Either[ToolError, String]],
+    doneRef: Ref[IO, Boolean],
+    outputPath: String,
+    startedAtMs: Long
+  ): Unit =
+    val completionIO =
+      joinResult(execFiber).attempt
+        .flatMap {
+          case Right(res) =>
+            remoteTerminalLeg(peer, ctx, jobId, description, res, outputPath, startedAtMs)
+          case Left(e) =>
+            remoteTerminalLeg(
+              peer,
+              ctx,
+              jobId,
+              description,
+              Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}")),
+              outputPath,
+              startedAtMs
+            )
+        }
+        .flatMap(_ => doneRef.set(true))
+    runRemoteBgFiber(completionIO, jobId, ctx, description, doneRef)
+  end attachRemoteBgFiber
 
   /**
    * Launch the HTTP call in a detached fiber; notify agent + frontend when done.
@@ -1075,18 +1232,105 @@ class RemoteExecutor(
   ): Unit =
     val completionIO =
       executeViaBestPath(peer, toolName, params, waitTimeout, ctx.projectRoot)
-        .flatMap {
-          case Right(output) =>
-            notifyRemoteBgResult(ctx, jobId, description, Right(output), peer.deviceName, outputPath, startedAtMs)
-          case Left(err) =>
-            notifyRemoteBgResult(ctx, jobId, description, Left(err.message), peer.deviceName, outputPath, startedAtMs)
-        }
+        .flatMap(res => remoteTerminalLeg(peer, ctx, jobId, description, res, outputPath, startedAtMs))
         .flatMap(_ => doneRef.set(true))
+    runRemoteBgFiber(completionIO, jobId, ctx, description, doneRef)
+  end startRemoteBgFiber
 
-    // P2：等待 fiber 句柄入图/出图与 fiber 生命同括号——cancel 经句柄图精确
-    // 打断本任务等待（1/N：只动指定 jobId 的 fiber），death-watch 以「句柄在图」
-    // 为远端活性读数。guarantee 保证取消路径也出图（无双写）。崩溃腿收在
-    // fiber 体内（.start 后子 fiber 错误不再外抛）：WS failed + 注销行 + 停心跳。
+  /**
+   * 终态腿的**唯一落点**（T7 契约 3，作者令 2026-11-04）：远端后台任务的 HTTP
+   * 等待上限（[[RemoteExecutor.bgHttpWaitTimeout]]）到点时，**先**向对端下发
+   * `bg-cancel`（行仍在运行才发）**再**落本侧终态——上限到点 ≠ 杀对端进程，
+   * 改前收行只写一条「timed out」，对端那条命令继续裸跑到自然终态，谁也不再管它。
+   *
+   * 语义边界：
+   *  - **真结果**（成功/远端明确报错）⇒ 直接落终态，绝不发 bg-cancel（对端命令已结束）。
+   *  - **等待上限到点**（[[RemoteExecutor.isWaitCapTimeout]] 判据）⇒ ① 行仍在册 ⇒
+   *    对端 bg-cancel（`cancelLocalWait=false`：本 fiber 就是终态腿自己，自取消会在
+   *    落终态前打断它）② 对端确认失败也照落本侧终态，并**如实带原因**（不吞、不假装
+   *    已杀）③ first-terminal-wins 由 [[notifyRemoteBgResult]] 的注销判空保持。
+   *  - **对端已先行收编**（它自己的前台预算先到点，回执先到）⇒ 本侧代理行按
+   *    「命令已在设备侧继续」如实落终态（[[RemoteExecutor.peerAdoptionHandoffBody]]），
+   *    不再伪装成「跑完」。
+   */
+  private def remoteTerminalLeg(
+    peer: PeerInfo,
+    ctx: ToolContext,
+    jobId: String,
+    description: String,
+    res: Either[ToolError, String],
+    outputPath: String,
+    startedAtMs: Long
+  ): IO[Unit] =
+    res match
+      case Right(out) if RemoteExecutor.isPeerAdoptionReceipt(jobId, out) =>
+        logger.info(
+          s"Remote background task $jobId was adopted by ${peer.deviceName} first (peer foreground budget) — " +
+            "settling the host-side proxy row with the handoff body"
+        ) *>
+          notifyRemoteBgResult(
+            ctx,
+            jobId,
+            description,
+            Right(RemoteExecutor.peerAdoptionHandoffBody(jobId, peer.deviceName, out)),
+            peer.deviceName,
+            outputPath,
+            startedAtMs
+          )
+      case Right(out) =>
+        notifyRemoteBgResult(ctx, jobId, description, Right(out), peer.deviceName, outputPath, startedAtMs)
+      case Left(err) if RemoteExecutor.isWaitCapTimeout(err.message) =>
+        // 契约 3：行仍在运行才发取消（行已不在册 ⇒ 终态已有人落，直接如实收行）。
+        BgTaskRegistry.find(jobId).flatMap {
+          case None =>
+            logger.info(
+              s"Remote background task $jobId hit the HTTP wait cap but its registry row is already gone — " +
+                "terminal already settled elsewhere, no peer cancel"
+            ) *>
+              notifyRemoteBgResult(ctx, jobId, description, Left(err.message), peer.deviceName, outputPath, startedAtMs)
+          case Some(_) =>
+            requestPeerCancel(peer.deviceName, jobId, cancelLocalWait = false)
+              .attempt
+              .map(
+                _.fold(
+                  e =>
+                    s"\n[bg-cancel ERROR] peer cancel dispatch failed: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}",
+                  cancelRes => RemoteExecutor.peerCancelNote(cancelRes)
+                )
+              )
+              .flatMap(note =>
+                notifyRemoteBgResult(
+                  ctx,
+                  jobId,
+                  description,
+                  Left(err.message + note),
+                  peer.deviceName,
+                  outputPath,
+                  startedAtMs
+                )
+              )
+        }
+      case Left(err) =>
+        notifyRemoteBgResult(ctx, jobId, description, Left(err.message), peer.deviceName, outputPath, startedAtMs)
+  end remoteTerminalLeg
+
+  /**
+   * P2：等待 fiber 句柄入图/出图与 fiber 生命同括号——cancel 经句柄图精确
+   * 打断本任务等待（1/N：只动指定 jobId 的 fiber），death-watch 以「句柄在图」
+   * 为远端活性读数。guarantee 保证取消路径也出图（无双写）。崩溃腿收在
+   * fiber 体内（.start 后子 fiber 错误不再外抛）：WS failed + 注销行 + 停心跳。
+   *
+   * 两个调用方共用本单点：① [[startRemoteBgFiber]]（显式 run_in_background 的
+   * 远端腿，自己起 HTTP）② [[attachRemoteBgFiber]]（T7 前台收编腿，join 已在飞的
+   * HTTP）——两条路径的终态/取消/死亡看护因此逐字节同面。
+   */
+  private def runRemoteBgFiber(
+    completionIO: IO[Unit],
+    jobId: String,
+    ctx: ToolContext,
+    description: String,
+    doneRef: Ref[IO, Boolean]
+  ): Unit =
     dispatcher.unsafeRunAndForget(
       completionIO
         .handleErrorWith(e =>
@@ -1103,7 +1347,8 @@ class RemoteExecutor(
         .void
         .handleErrorWith(e => logger.warn(s"Remote background fiber registration failed for $jobId: ${e.getMessage}"))
     )
-  end startRemoteBgFiber
+  end runRemoteBgFiber
+
 
   // ---- WS helpers (match BashTool's backgroundTaskUpdate format) ----
 
@@ -1881,6 +2126,55 @@ object RemoteExecutor:
    */
   def bgHttpWaitTimeout(persistent: Boolean): FiniteDuration =
     if persistent then PersistentBgHttpTimeout else BgTimeout
+
+  // ---- T7（作者令 2026-11-04）：设备腿前台对齐本地腿的四块判据（纯函数，spec 直测）----
+
+  /** 自动转后台回执的**唯一构造点**（本地腿 `BashTool.autoBackground` 与设备腿
+   *  `RemoteExecutor.executeForegroundSync` / `BashTool` 的 remote 支共用）。
+   *
+   * 禁止第二份字符串：契约 1 要求「与本地 auto-background **逐字同形**」，而
+   * 「两处写法看起来一样」不是同形——只有同一个函数才保证。改文案只改这里。
+   */
+  def autoBackgroundReceipt(jobId: String, waitedMs: Long): String =
+    s"[Background job started] Job ID: $jobId\n" +
+      s"Auto-backgrounded after ${waitedMs / 1000}s in the foreground (wait budget reached — the command was NOT killed). " +
+      "It keeps running in the background and you will be automatically notified when it finishes — continue with other work or finish your turn. " +
+      s"""Wait with BgWait (jobIds: ["$jobId"]) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
+
+  /**
+   * 「对端已先行收编」判据：对端实例的前台预算先到点 ⇒ 它把命令收编进它自己的后台
+   * 并对本次 HTTP 调用回了收编回执（回执头 + **同一个** jobId，因为 host 把 id 随
+   * `bgJobId` 下发了）。本侧代理行据此如实落终态，绝不把它当成命令自己跑完的输出
+   * （否则「输出 = 一条回执」= 结果被吞）。
+   */
+  def isPeerAdoptionReceipt(jobId: String, output: String): Boolean =
+    output.startsWith(s"[Background job started] Job ID: $jobId\n")
+
+  /** 对端已收编时的本侧终态正文（如实说明命令还在设备上跑、去哪取输出）。 */
+  def peerAdoptionHandoffBody(jobId: String, deviceName: String, receipt: String): String =
+    s"[Adopted on $deviceName] Job ID: $jobId\n" +
+      "The device reached its own foreground budget first and adopted the command into ITS background " +
+      "registry under the SAME job id — the command was NOT killed and may still be running there. " +
+      s"""Its live state and output live on that device: ask for them with Bash (device: "$deviceName", background_job_id: "$jobId").\n""" +
+      receipt
+
+  /**
+   * 「等待上限到点」判据（契约 3 的触发面）：远端 HTTP 等待被网络层上限打断
+   * （`Command timed out on <device> after Ns: …`、relay 侧的 timeout 文案、或底层
+   * `timeout` / `timed out` 措辞）。**这是「本侧不再等」，不是「对端命令失败」**
+   * ——所以它必须触发「先 bg-cancel 再收行」，而不是当普通错误收行。
+   */
+  def isWaitCapTimeout(message: String): Boolean =
+    val lower = message.toLowerCase
+    lower.contains("timed out") || lower.contains("timeout")
+
+  /** bg-cancel 结果的如实注记（确认失败也照落终态，但绝不假装已杀）。 */
+  def peerCancelNote(result: Either[String, String]): String =
+    result match
+      case Left(reason) => s"\n[bg-cancel ERROR] peer cancel dispatch failed: $reason"
+      case Right(msg) if msg.contains("UNCONFIRMED") =>
+        s"\n[bg-cancel NOT confirmed] $msg — the command may still be running on the device."
+      case Right(msg) => s"\n[bg-cancel] $msg"
 
   /**
    * `bg-cancel` 动作往返的等待上限（P2 单任务取消批）：独立短档——取消确认是
