@@ -1,6 +1,6 @@
 package nebflow.pilogic
 
-import cats.{MonadThrow, Sync}
+import cats.MonadThrow
 import cats.effect.Concurrent
 import cats.effect.kernel.Ref
 import cats.syntax.all.*
@@ -19,10 +19,14 @@ import io.circe.Json
   * provider_stream_event 顺序 await 拖慢流的自认病，不照抄）。
   */
 
-/** 分派结果：观察族=Observed（无返值通道）；拦截族=Decided（聚合后最终效果，引擎必读）。 */
+/** 分派结果：观察族=Observed（无返值通道）；拦截族=Decided（聚合后最终效果，引擎必读）。
+  * endRequested=turn.Ended 位的 EndRun/Veto 读取辅助（循环收尾档判定）。 */
 enum DispatchResult:
   case Observed
   case Decided(effect: HookEffect)
+  def endRequested: Boolean = this match
+    case DispatchResult.Decided(HookEffect.EndRun | HookEffect.Veto(_)) => true
+    case _                                                             => false
 
 /** L-11 丢弃档的 run-scoped 单槽忙门集：run 开始时对快照内 Dropping 位观察件逐个构建
   * （Ref.of 安全构造——模块内禁 Ref.unsafe，A-4 grep 门），随 run 生灭；按 HookId 键控。
@@ -31,8 +35,9 @@ final class DropGates[F[_]] private[pilogic] (private[pilogic] val map: Map[Hook
 
 object DropGates:
   def none[F[_]]: DropGates[F] = new DropGates(Map.empty)
-  /** 循环 run 开始时调用：为快照内一切 Dropping 位观察件建门。 */
-  def of[F[_]: Sync](snapshot: HookSnapshot[F]): F[DropGates[F]] =
+  /** 循环 run 开始时调用：为快照内一切 Dropping 位观察件建门（Ref.of 经 Ref.Make
+    * 从 Concurrent 派生——安全构造，模块内禁 Ref.unsafe，A-4 grep 门保持）。 */
+  def of[F[_]: Concurrent](snapshot: HookSnapshot[F]): F[DropGates[F]] =
     val ids = snapshot.entries.collect {
       case o: ObserverEntry[F] if o.point.backpressure == Backpressure.Dropping => o.id
     }
@@ -49,7 +54,7 @@ object HookDispatch:
       input: Json,
       snapshot: HookSnapshot[F],
       sink: EventSink[F],
-      gates: DropGates[F] = DropGates.none,
+      gates: DropGates[F] = DropGates.none[F],
   ): F[DispatchResult] =
     val handlers = snapshot.orderedAt(point)
     point.aggregate match
@@ -80,8 +85,8 @@ object HookDispatch:
     }
 
   /** 丢弃档观察腿（L-11）：忙门空闲 ⇒ 后台投递（不 await，生产者即刻返回）；门忙 ⇒ 丢帧。
-    * 投递 fiber 自带隔离与释门（guarantee）——异常照发 HookErrored（错误通道不丢），只有
-    * 帧可丢；这是「声明的有损通道」，丢帧非错误故无事件（设计 §Ⅵ L-11 推荐档）。 */
+    * 投递 fiber 自带隔离与释门（attempt 后必释）——异常照发 HookErrored（错误通道不丢），
+    * 只有帧可丢；这是「声明的有损通道」，丢帧非错误故无事件（设计 §Ⅵ L-11 推荐档）。 */
   private def observeDropping[F[_]: Concurrent](
       point: HookPoint,
       o: ObserverEntry[F],
@@ -96,10 +101,9 @@ object HookDispatch:
         gate.modify(busy => (true, !busy)).flatMap { wasFree =>
           if !wasFree then F.unit // 丢帧：上一帧仍在投递中
           else
-            observeSequential[F](point, o, input, sink)
-              .guarantee(gate.set(false))
-              .start
-              .void
+            F.start(
+              observeSequential[F](point, o, input, sink).attempt.flatMap(_ => gate.set(false))
+            ).void
         }
 
   /** 隔离单点：hook 异常 → HookErrored 事件 + 策略裁决。

@@ -30,6 +30,10 @@ trait AgentLoop[F[_]]:
 
 object AgentLoop:
 
+  /** 双层 while 循环体实现入口（增量轮：trait 契约 → 可运行实现，见 LoopRuntime.scala；
+    * Clock 供墙钟预算谓词（A-2 三元之一）单调计时）。 */
+  def make[F[_]: cats.effect.Concurrent: cats.effect.kernel.Clock]: AgentLoop[F] = new LoopRuntime[F]
+
   /** continueFrom 前置校验（验收 A-8；独立成函数供分派层/测试复用，两校验照抄 pi :76-82）：
     * 上下文空 ⇒ 拒；末条 assistant ⇒ 拒。 */
   def validateContinuation(context: LoopContext): Either[LoopError.InvalidContinuation, Unit] =

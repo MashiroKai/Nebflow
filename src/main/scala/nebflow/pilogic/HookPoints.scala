@@ -38,7 +38,7 @@ enum Aggregate:
   * pi 文档自认「慢 handler 拖慢流」是病（pi-agent-hooks.md A3 面）。pilogic 不照抄：
   * 逐流块的高频观察位（providerPort.Chunked）声明 Dropping——观察者在忙时新帧直接丢弃
   * （声明的有损通道，非错误、不发 HookErrored），生产者永不因观察者阻塞；
-  * 语义类位点（message.*/tool.*/turn.*）声明 Sequential——顺序档，事件序即观察序。
+  * 语义类位点（message、tool、turn 三族）声明 Sequential——顺序档，事件序即观察序。
   * 声明随位点走（单源），引擎 dispatch 按声明执行：Dropping 档经注册件持有的单槽忙门
   * （Ref[F,Boolean]）+ 非阻塞投递实现「忙即丢」。作者可整体翻转为照抄 pi
   * （改位点的本字段即可，引擎零改动）。
