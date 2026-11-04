@@ -33,6 +33,9 @@ import { settingsIdentityCardHTML, paintSettingsIdentity } from './settingsIdent
 // 设置页「更新」功能退役，未来由官网统一检测更新取代。重启面（restartStatus/
 // restartResult 帧消费）留在本文件（见 bindSettingsEvents 后的模块级订阅）。
 import { toggleHTML, setToggleState } from './toggle.js';
+// 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16/22:20）：
+// 冻结时段 = 原子段字段（整段一颗触发钮），交互单源 = js/timeWheel.js。
+import { HHMM_RE, toMin, rangeTriggerHTML, paintRangeTrigger, attachTimeTriggers } from './timeWheel.js';
 import { authHeaders } from './flowHelpers.js';
 import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities.js';
 import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.js';
@@ -451,19 +454,18 @@ function renderWorkScheduleSection() {
 }
 
 /**
- * One segment row — start/end HH:mm inputs + remove. A small sapphire hint is
- * shown when the segment crosses midnight (start > end): the freeze window
- * spans into the next day (blacklist semantics).
+ * One segment row — 原子段字段（整段「09:00-12:00」一颗触发钮，作者令 2026-11-01 16:46
+ * 「8:00-12:00 应该是一个整体」）+ remove。跨零点的行内 sapphire 徽标保留
+ * （start > end = 冻结窗跨入次日，黑名单语义）。交互组件单源 = js/timeWheel.js。
  */
 function buildSegmentRowHtml(s, i) {
-  const crossMidnight = HHMM_RE.test(s.start) && HHMM_RE.test(s.end)
-    && toMin(s.start) > toMin(s.end);
+  const start = HHMM_RE.test(s.start) ? s.start : '09:00';
+  const end = HHMM_RE.test(s.end) ? s.end : '12:00';
+  const crossMidnight = toMin(start) > toMin(end);
   return `
     <div class="segment-row" data-seg-index="${i}">
       <span class="seg-label">${t('settings.segmentLabel', { n: i + 1 })}</span>
-      <input class="time-input" value="${escapeHtml(s.start || '')}" data-role="start" autocomplete="off" spellcheck="false">
-      <span class="seg-label">${t('settings.segmentTo')}</span>
-      <input class="time-input" value="${escapeHtml(s.end || '')}" data-role="end" autocomplete="off" spellcheck="false">
+      ${rangeTriggerHTML({ start, end, label: t('settings.segmentEdit'), presets: 'freeze' })}
       ${crossMidnight ? `<span class="seg-cross-midnight">${t('settings.segmentCrossMidnight')}</span>` : ''}
       <button class="seg-remove" title="${t('settings.removeSegment')}" aria-label="${t('settings.removeSegment')}">×</button>
     </div>`;
@@ -721,14 +723,18 @@ function renderSttSection() {
 }
 
 /**
- * Collect segments currently in the editor (all rows, raw values).
+ * Collect segments currently in the editor (all rows). 值域单源 = 原子段触发钮的
+ * dataset（data-start/data-end）——整段一个字段，无半边输入框可取。
  */
 function collectSegments() {
   const rows = document.querySelectorAll('#segment-list .segment-row');
-  return Array.from(rows).map(row => ({
-    start: (/** @type {HTMLInputElement|null} */ (row.querySelector('[data-role="start"]')))?.value.trim() || '',
-    end: (/** @type {HTMLInputElement|null} */ (row.querySelector('[data-role="end"]')))?.value.trim() || ''
-  }));
+  return Array.from(rows).map((row) => {
+    const btn = /** @type {HTMLElement|null} */ (row.querySelector('[data-tw-range]'));
+    return {
+      start: btn ? (btn.dataset.start || '') : '',
+      end: btn ? (btn.dataset.end || '') : ''
+    };
+  });
 }
 
 /** Rebuild the segment rows (used for the F2 default on first enable). */
@@ -737,9 +743,6 @@ function renderScheduleEditorRows(segs) {
   if (!list) return;
   list.innerHTML = segs.map((s, i) => buildSegmentRowHtml(s, i)).join('');
 }
-
-const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
-function toMin(hhmm) { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; }
 
 /**
  * Blacklist validation contract (user ruling 2026-08-19 23:16): HH:mm format;
@@ -758,12 +761,12 @@ function validateSegments(segs) {
   return null;
 }
 
-/** In-place toggle of a row's cross-midnight hint (no rebuild → no focus loss
- *  while the user clicks from the start input into the end input). */
+/** In-place toggle of a row's cross-midnight hint（值域单源 = 原子段触发钮 dataset）。 */
 function updateSegmentRowHint(row) {
   if (!row) return;
-  const start = row.querySelector('[data-role="start"]')?.value.trim() || '';
-  const end = row.querySelector('[data-role="end"]')?.value.trim() || '';
+  const btn = /** @type {HTMLElement|null} */ (row.querySelector('[data-tw-range]'));
+  const start = btn ? (btn.dataset.start || '') : '';
+  const end = btn ? (btn.dataset.end || '') : '';
   const cross = HHMM_RE.test(start) && HHMM_RE.test(end) && toMin(start) > toMin(end);
   let hint = row.querySelector('.seg-cross-midnight');
   if (cross && !hint) {
@@ -1536,8 +1539,10 @@ function bindSettingsEvents(content, cfg) {
     const list = document.getElementById('segment-list');
     if (!list) return;
     const idx = list.children.length;
-    list.insertAdjacentHTML('beforeend', buildSegmentRowHtml({ start: '', end: '' }, idx));
-    (/** @type {HTMLElement|null} */ (list.querySelector(`[data-seg-index="${idx}"] [data-role="start"]`)))?.focus();
+    // 新段 = 合法默认段（09:00-12:00）：原子段字段没有「空值」这一状态
+    // （空串不是 HH:mm，且面板只能产出合法的 HH:mm 二元组）。
+    list.insertAdjacentHTML('beforeend', buildSegmentRowHtml({ start: '09:00', end: '12:00' }, idx));
+    (/** @type {HTMLElement|null} */ (list.querySelector(`[data-seg-index="${idx}"] [data-tw-range]`)))?.focus();
     markScheduleDirty();
   });
 
@@ -1816,12 +1821,16 @@ document.addEventListener('click', (e) => {
   markScheduleDirty();   // #334: local draft only — Save commits
 });
 
-document.addEventListener('change', (e) => {
-  const settings = document.getElementById('settings-content');
-  if (!settings || !(e.target instanceof Element) || !settings.contains(e.target)) return;
-  if (!e.target.classList.contains('time-input')) return;
-  updateSegmentRowHint(e.target.closest('.segment-row'));
-  markScheduleDirty();   // #334: local draft only — Save commits
+// 时段选择器（原子段字段 = 整段一颗触发钮，js/timeWheel.js 单源）：
+// 委托单点绑定——面板确认回写 dataset 后刷新行内跨零点徽标 + 落本地草稿。
+// 精确输入行（.tw-in）在面板内、不走 settings 容器，故不再需要 change 委托。
+attachTimeTriggers(document, {
+  onRangeChange(btn) {
+    const row = btn.closest('.segment-row');
+    if (!row) return;
+    updateSegmentRowHint(row);
+    markScheduleDirty();   // #334: local draft only — Save commits
+  },
 });
 
 // Listen for config validation errors
