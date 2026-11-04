@@ -144,6 +144,11 @@ class AllowedToolSetSpec extends FunSuite:
         "Write",
         "Edit",
         "Bash",
+        // bash overhaul T1（2026-11-04）：`BaseTools` 六件 → 七件（+`BgWait`，后台任务的
+        // 唯一等待原语）⇒ 一切 `BaseTools` 派生的授权面同步 +1。team 面的差异化部分
+        // （Mail / SubTask / TeamTask*）零变化；`BgWait` 不进远端注入面（见
+        // `RemoteExecutor.remoteableTools`，恒六件）。
+        "BgWait",
         "Mail",
         "SubTask",
         "TeamTaskCreate",

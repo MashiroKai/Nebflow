@@ -1,0 +1,52 @@
+=== solo AdaptiveThrottleSpec re-verify start: 2026-11-04 19:20:39 ===
+[sbt-gate] waiting for /Users/kaiyu/.stand/run/sbt.lock (another sbt holds the heavy-work gate; bypass: SBT_GATE=off sbt …)
+[sbt-gate] STILL waiting ~5min. escape hatch: SBT_GATE=off sbt …
+[sbt-gate] STILL waiting ~10min. escape hatch: SBT_GATE=off sbt …
+[sbt-gate] WARNING: waited 902s (>= SBT_GATE_TIMEOUT_SECS=900s) — proceeding WITHOUT the gate.
+[sbt-gate]          memory risk returns for this run; raise SBT_GATE_TIMEOUT_SECS or use SBT_GATE=off explicitly.
+[sbt-gate] heap cap not injected: SBT_OPTS already carries -Xmx (explicit wins)
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-485bb4f4-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/)
+[warn] javaOptions will be ignored, fork is set to false
+19:35:47.316 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit unlimited -> 9 (rung 90%, inFlight=10, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+19:35:47.407 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 9 -> 7 (rung 70%, inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+19:35:47.408 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 7 -> 5 (rung 50%, inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+19:35:47.409 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 5 -> 2 (rung floor(2), inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+19:35:47.414 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit unlimited -> 9 (rung 90%, inFlight=10, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+19:35:47.415 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 9 -> 7 (rung 70%, inFlight=10, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+19:35:47.415 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 7 -> 5 (rung 50%, inFlight=10, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+19:35:47.415 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 5 -> 2 (rung floor(2), inFlight=10, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+19:35:47.418 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test loosen concurrency limit 2 -> 5 (rung 50%, quiet=60000ms)
+19:35:47.418 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test loosen concurrency limit 5 -> 7 (rung 70%, quiet=60000ms)
+19:35:47.419 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 7 -> 5 (rung 50%, inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+19:35:47.419 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test loosen concurrency limit 9 -> unlimited (rung 100%, quiet=60000ms)
+19:35:47.419 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test loosen concurrency limit 7 -> 9 (rung 90%, quiet=60000ms)
+19:35:47.420 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test loosen concurrency limit 5 -> 7 (rung 70%, quiet=60000ms)
+19:35:47.422 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit unlimited -> 1 (rung 90%, inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+19:35:47.422 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 1 -> 1 (rung 70%, inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+19:35:47.423 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 1 -> 1 (rung 50%, inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+19:35:47.423 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit 1 -> 1 (rung floor(1), inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+19:35:48.438 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit unlimited -> 2 (rung 90%, inFlight=0, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+19:35:48.595 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit unlimited -> 4 (rung 90%, inFlight=5, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+19:35:48.915 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit unlimited -> 5 (rung 90%, inFlight=6, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+19:35:48.918 [36mINFO [0m nebflow.llm.throttle - [adaptive-throttle] api.zhipu.test downgrade concurrency limit unlimited -> 2 (rung 90%, inFlight=3, trigger=account-level 429: "statusCode: 429, response: {"type":"error","error":{"type":"rate_limit_error","code":"1302","message":"[1302][您的账户已达到速率限制，请您控制请求频率]"}}")
+[32mnebflow.llm.AdaptiveThrottleSpec:[0m
+[32m  + [0m[32mT1 状态机：429 连续触发 → 90%/70%/50% → 硬下限；基线取首刀在飞数，档内不回升[0m [90m0.006s[0m
+[32m  + [0m[32mT1b 运行面：在飞 10 收 429 → cap 9；新请求排队受 cap 约束；再收 429 → 7 → 5 → floor[0m [90m0.309s[0m
+[32m  + [0m[32mT2 回松：静默窗逐档升（floor→50→70→90→不限）每档消耗一窗；中途 429 立即再降[0m [90m0.008s[0m
+[32m  + [0m[32mT2b 状态机：静默窗钟面消耗语义（quietSince += window，非静默重置为 now）[0m [90m0.001s[0m
+[32m  + [0m[32mT3 FIFO：满闸下按到达顺序放行，全部请求最终完成（零拒绝）[0m [90m1.011s[0m
+[32m  + [0m[32mT4 非账户级 429、配额体 429、非 RateLimit 分类 → 一律不降档[0m [90m0.002s[0m
+[32m  + [0m[32mT4b 判定单点：账户级码/文本命中，裸数字不误报[0m [90m0.001s[0m
+[32m  + [0m[32mT5 总闸关 = 纯透传零行为（acquire 不排队、429 不建状态、健康面零键）[0m [90m0.002s[0m
+[32m  + [0m[32mT6 热读：enabled 翻转即刻生效（关→开→关，无重启）[0m [90m0.003s[0m
+[32m  + [0m[32mT7 GatedAdapter：降档后并发 ≤ cap 且全部请求完成（排队而非拒绝）[0m [90m0.473s[0m
+[32m  + [0m[32mT8 多 provider（账户键）：A 账户 429 降档不影响 B 账户[0m [90m0.004s[0m
+[32m  + [0m[32mT9 healthJson：有闸才有键；载荷含 limit/rung/inFlight/queued[0m [90m0.133s[0m
+[32m  + [0m[32mT10 配置：llm.adaptiveThrottle 半节解码为缺省而非抛；缺节 = None[0m [90m0.036s[0m
+[info] Passed: Total 13, Failed 0, Errors 0, Passed 13
+[success] Total time: 4 s, completed 2026年11月4日 19:35:49
+=== exit: 0 at 2026-11-04 19:35:49 ===
