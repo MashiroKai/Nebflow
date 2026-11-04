@@ -206,16 +206,84 @@ object PathUtil:
    * Single point: every data-root derivation must go through this value or
    * the Branding.homeDirName default — no scattered literals.
    */
-  private var _dataRootOverride: Option[os.Path] = None
+  // ── 三层数据根（B1 批，契约 reports-evidence/20261104_b1-dataroot/design-api.md §1/§2）──
+  //
+  // 语义自本批起分两层：
+  //   · **机器层根**（machineRoot）= 全机共享、与账号无关的根（bin/ jar、生命周期 logs/、.pid、
+  //     daemons*.json、auth.json、layout.json、active-account）。解析链与今日 dataRoot 逐字相同；
+  //   · **有效根**（dataRoot）= 账号层根 / 未登录层根 / 平铺根，由 `RootLadder` 阶梯从机器层根派生。
+  //
+  // 三条不可动的总则：
+  //   1. 无 `layout.json` 的平铺根，一切字节不变（既有 713 处 `setDataRoot` 引用与隔离实例的全部前提）；
+  //   2. 进程级单值、禁热切 —— 登录成功后写指针 + 重启进程，进程内不二次换根；
+  //   3. 机器层先于账号层可写 —— 即使账号根不存在/不可读/未登录，引擎也必须起得来并说清原因。
+  //
+  // 数据根覆盖优先级（数据根指向切换批, 2026-10）不变：
+  //   1. CLI --home flag          ( setDataRoot / setMachineRoot — isolation / canary )
+  //   2. STAND_HOME env           ( first-priority env, brand prefix )
+  //   3. NEBFLOW_HOME env         ( legacy compat — old scripts / launchd units keep working )
+  //   4. default directory        ( ~/.stand; legacy-only machines fall back to ~/.nebflow
+  //                                 + a one-line hint, see resolveDefaultDataRoot )
+  // Single point: every data-root derivation must go through this value or the
+  // Branding.homeDirName default — no scattered literals.
 
-  def setDataRoot(path: os.Path): Unit = _dataRootOverride = Some(path)
+  private var _machineRootOverride: Option[os.Path] = None
+  private var _effectiveOverride: Option[os.Path] = None
+  private var _layerCache: Option[nebflow.core.root.RootLayer] = None
 
-  def dataRoot: os.Path =
-    _dataRootOverride.getOrElse(
-      Branding.env("HOME") match
-        case Some(home) => os.Path(home, os.pwd)
-        case None => resolvedDefaultRoot
-    )
+  /**
+   * 平铺钉死语义（契约 §1）：一个值同时当机器层与有效根。**签名与可重复赋值语义不变** ——
+   * 713 处测试引用、`--home` 隔离实例、canary 全部零字节变化（它们从来没有账号层）。
+   */
+  def setDataRoot(path: os.Path): Unit = synchronized {
+    _machineRootOverride = Some(path)
+    _effectiveOverride = Some(path)
+    _layerCache = None
+  }
+
+  /**
+   * 生产启动序唯一调用点（契约 §1/§8.1）：只钉机器层根，有效根交给 `nebflow.core.root.RootLadder`
+   * 阶梯派生。两个 setter 都允许重复调用（测试面需要）；「禁热切」是生产启动面的约束，由
+   * `nebflow.core.root.LoginGuard.checkHotSwitch` 在 CLI / 网关入口判，不在这里硬拦。
+   */
+  def setMachineRoot(path: os.Path): Unit = synchronized {
+    _machineRootOverride = Some(path)
+    _effectiveOverride = None
+    _layerCache = None
+  }
+
+  /** 机器层根 = `--home` / `STAND_HOME` / `NEBFLOW_HOME` / 默认 `~/.stand`（今日 dataRoot 的解析链原样搬来）。 */
+  def machineRoot: os.Path =
+    _machineRootOverride.getOrElse(envOrDefaultRoot)
+
+  private def envOrDefaultRoot: os.Path =
+    Branding.env("HOME") match
+      case Some(home) => os.Path(home, os.pwd)
+      case None => resolvedDefaultRoot
+
+  /**
+   * 有效根的分档（进程级单值，定案一次；`setDataRoot` / `setMachineRoot` 是唯一的搬手）：
+   *  - 显式换根（`setDataRoot`）⇒ 平铺档，有效根 = 那个值（钉死语义，不探盘）；
+   *  - 否则 ⇒ `RootLadder.resolve(machineRoot)` 的阶梯判定（account / unauthenticated / flat）。
+   *
+   * 单一事实来源：`dataRoot` 与 `RootLadder.current` 都读这里，避免两处缓存各自漂移。
+   */
+  private[nebflow] def resolvedLayer: nebflow.core.root.RootLayer = synchronized {
+    _layerCache match
+      case Some(layer) => layer
+      case None =>
+        val layer = _effectiveOverride match
+          case Some(pinned) => nebflow.core.root.RootLayer.Flat(machineRoot, pinned)
+          case None => nebflow.core.root.RootLadder.resolve(machineRoot)
+        _layerCache = Some(layer)
+        layer
+  }
+
+  /**
+   * 有效根（语义自本批起 = 有效根，契约 §1）：账号层根 / 未登录层根 / 平铺根。
+   * 平铺档恒等于 [[machineRoot]] ⇒ 无布局标记的既有机器字节不变。
+   */
+  def dataRoot: os.Path = resolvedLayer.root
 
   // ── 数据根渲染层（home 硬编码 → 运行时动态化批，2026-09-11）─────────────
   //
@@ -293,9 +361,9 @@ object PathUtil:
       case Some(p) => root / os.SubPath(normalized.drop(p.length).stripPrefix("/"))
       case None =>
         // 绝对 ref（POSIX 前导 / 或 Windows 盘符斜杠形态）按契约原样返回。
-        if normalized.startsWith("/") || normalized.matches("[A-Za-z]:/.*") then
-          os.Path(normalized, os.pwd)
+        if normalized.startsWith("/") || normalized.matches("[A-Za-z]:/.*") then os.Path(normalized, os.pwd)
         else root / os.SubPath(normalized)
+  end resolveRootRef
 
   /**
    * The legacy data-root directory name, HARDCODED — it is a historical
