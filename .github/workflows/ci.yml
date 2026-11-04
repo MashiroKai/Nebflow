@@ -44,6 +44,33 @@ jobs:
         # writer of el.dataset.imeComposing. Violations are listed as file:line.
         # Same logic locally: node scripts/check-ime-guard.mjs
         run: node scripts/check-ime-guard.mjs
+      - name: Component contract (frontend component paradigm gate)
+        # ask-paradigm-a batch (2026-11-03): the Ask surface now ships as a real
+        # component (<nf-ask-dock>, light DOM, outward face = open/close/syncSession).
+        # A contract that only lives in a document is NOT a contract - nothing warns
+        # the next person who copies the pattern. This step pins the five rules the
+        # batch actually paid for, any one of them failing the job:
+        #   R1 light DOM only            no attachShadow anywhere in web/js, web/css,
+        #                                index.html (SHADOW_ALLOWLIST is per-file and
+        #                                must carry a written reason - no wildcards).
+        #   R2 no cross-face DOM lookups getElementById('<face>-...') / '#<face>-...'
+        #                                inside querySelector(All)/closest from a
+        #                                module of ANOTHER face. The face table is
+        #                                derived from web/css/*.css at run time (no
+        #                                second hand-maintained list).
+        #   R3 no bare event literals    new CustomEvent('<literal>') at a new site.
+        #                                Sanctioned form: new CustomEvent(EVENTS.X).
+        #   R4 no component DOM leak     another module selecting on a component's
+        #                                INTERNAL_CLASSES - the outward face is the
+        #                                method surface, the structure is private.
+        #   R5 no bare innerHTML =       at a new site (DOM writes go through
+        #                                mdHtmlGate / builders).
+        # Legacy hits are frozen in scripts/component-contract-baseline.json: counts
+        # may only go DOWN, and a file OUTSIDE the baseline must be all-zero (raising
+        # the baseline = letting water in, it needs a per-item justification).
+        # Offline and hermetic: pure static text scan, no network, no credentials.
+        # Same logic locally: node scripts/check-component-contract.mjs
+        run: node scripts/check-component-contract.mjs
       - name: Console takeover identity guard (single-instance identity chain)
         # 身份必达批 gate (author report 2026-11-03: "手机端和电脑端同时在线，没有
         # 被挤掉"): console single-instance only kicks when BOTH sides carry a

@@ -1,5 +1,5 @@
 .PHONY: compile run assembly clean install \
-  lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates
+  lint fmt fix fmt-check check quality-gate check-visual visual-baseline frontend-gates component-contract
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
 # Respects user-set COURSIER_REPOSITORIES; only runs detection if unset
@@ -56,7 +56,13 @@ fmt-check:
 	sbt scalafmtCheckAll
 
 check: compile fmt-check lint frontend-gates
+	node scripts/check-component-contract.mjs
 	@echo "All automated checks passed."
+
+# 前端组件契约门禁（单独一条腿，不依赖 sbt）
+component-contract:
+	node scripts/check-component-contract.mjs
+	@echo "Frontend component contract gate passed."
 
 quality-gate:
 	sbt compile scalafmtCheckAll "scalafix --check"
