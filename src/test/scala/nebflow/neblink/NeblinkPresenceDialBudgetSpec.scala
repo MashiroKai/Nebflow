@@ -77,12 +77,13 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
   private def withStack[A](
     serverPort: Int,
     budget: DialBudget = DialBudget.Default,
-    eviction: EvictionPolicy = EvictionPolicy.Default
+    eviction: EvictionPolicy = EvictionPolicy.Default,
+    schedule: PresenceDialSchedule = PresenceDialSchedule.Production
   )(use: (NeblinkService, NeblinkPresenceService) => IO[A]): IO[A] =
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         ms <- NeblinkService.createForTest(serverPort, dispatcher, 300.millis)
-        ps = new NeblinkPresenceService(ms, serverPort, budget, eviction)(dispatcher)
+        ps = new NeblinkPresenceService(ms, serverPort, budget, eviction, schedule)(dispatcher)
         _ = ms.setPresenceService(ps)
         out <- use(ms, ps).guarantee(ps.disconnectAll().handleErrorWith(_ => IO.unit))
       yield out
@@ -342,7 +343,11 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
 
   test("F-D ② 负控：健康端点跨多拍从不被剔除，且每拍都必须被拨（黑洞候选第 5 次超时后才剔除）") {
     val srv = new PresenceWsFixture() // 立即握手 ⇒ 活着
-    withStack(srv.port) { (_, ps) =>
+    // 🔴 口径注明（presence-dial-overhaul 批 2026-11-04）：本用例考的是 F-D 剔除账本的
+    // **逐拍同步记账**（每个候选都由本轮拨完并当场记账）。并发口径下首胜即返回，输者的
+    // 记账是异步的（可能落在下一拍）——那不是剔除策略变了，是调度变了。所以这里钉在
+    // **串行口径**上验剔除策略本身；并发口径的优势/上界由 `NeblinkPresenceDialConcurrencySpec` 钉。
+    withStack(srv.port, schedule = PresenceDialSchedule.LegacySerial) { (_, ps) =>
       val deadEp = s"http://127.0.0.2:${srv.port}" // 环回别名黑洞：TCP 永不回包（超时类）
       val liveEp = srv.endpoint
       val p = peer("mix", List(deadEp, liveEp))
@@ -509,11 +514,35 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
     }.map { case (beatMs, dialMs, round) =>
       assertEquals(round.attempted, List(epA, epB))
       assert(beatMs < 500L, s"syncPeers 本体必须立刻返回（拨号 fork 出去）: ${beatMs}ms")
-      val bound = DialBudget.Default.roundUpperBoundMs(List(epA, epB))
-      assertEquals(bound, 3_000L)
-      assert(dialMs >= 2_500L, s"拨号腿实测 $dialMs ms ≈ 2×1500ms（预算真的被用满）")
+      // presence-dial-overhaul 批（2026-11-04 P1）：拨号腿由**串行 Σ 预算**改为
+      // **并发 max 预算** ⇒ 上界读数从 3000ms(=2×1500ms) 变成 1500ms(=max)。
+      // 判据④（不跨拍）不但仍成立，且余量从 15× 拉到 30×。
+      val bound = PresenceDialSchedule.Production.roundUpperBoundMs(List(epA, epB), DialBudget.Default)
+      assertEquals(bound, 1_500L, "并发口径单轮上界 = max(单候选预算)，不是 Σ")
+      assert(dialMs >= 1_200L, s"拨号腿实测 $dialMs ms ≈ 1×1500ms（并发 max，改前是 ≈3000ms）")
       assert(dialMs <= bound + 1_600L, s"拨号腿实测 $dialMs ms 必须落在单轮上界 ${bound}ms 附近")
       assert(bound < NeblinkPresenceService.SyncBeatFloorMs, "单轮上界 < 45s 拍 ⇒ 一个 peer 的拨号腿不会跨到下一拍")
+    }
+  }
+
+  test("P1 对照（同方法、只翻调度开关）：改前串行口径的拨号腿 ≈ Σ 预算，是本批收益的对照臂") {
+    val port = closedPort()
+    val epA = s"http://127.0.0.2:$port"
+    val epB = s"http://127.0.0.3:$port"
+    assume(!windowsBlackholeUnsupported, "Windows 环回无黑洞语义（127/8 全段 ECONNREFUSED）⇒ 对照臂跳过")
+    withStack(port, schedule = PresenceDialSchedule.LegacySerial) { (_, ps) =>
+      val p = peer("beatLegacy", List(epA, epB))
+      for
+        t1 <- IO.monotonic
+        _ <- ps.connect(p)
+        dialMs <- IO.monotonic.map(d => (d - t1).toMillis)
+        round <- IO(roundOf(ps, "beatLegacy"))
+      yield (dialMs, round)
+    }.map { case (dialMs, round) =>
+      assertEquals(round.attempted, List(epA, epB), "串行口径：两个候选都拨过（首胜才短路）")
+      val serialBound = DialBudget.Default.roundUpperBoundMs(List(epA, epB))
+      assertEquals(serialBound, 3_000L, "串行口径单轮上界 = Σ(单候选预算)")
+      assert(dialMs >= 2_500L, s"改前口径实测 $dialMs ms ≈ 2×1500ms（Σ，本批要砍掉的成本）")
     }
   }
 
@@ -733,7 +762,9 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
   test("T6 §4 行为臂：合法（活）候选跨名册缺席既不入窗也不被跳过；黑洞候选保持置窗（名册缺席≠清账原因）") {
     val srv = new PresenceWsFixture()
     val deadEp = s"http://127.0.0.2:${srv.port}" // timeout 轴黑洞（LAN 档 = §4 三类的同一档）
-    withStack(srv.port) { (ms, ps) =>
+    // 🔴 口径注明（presence-dial-overhaul 批）：逐拍剔除记账（第 5 拍置窗）是串行调度下的
+    // 读数；并发口径下首胜即返回 ⇒ 本用例与 F-D ② 负控同款，钉在串行口径验剔除策略本身。
+    withStack(srv.port, schedule = PresenceDialSchedule.LegacySerial) { (ms, ps) =>
       val liveEp = srv.endpoint
       val p = peer("nocollateral", List(deadEp, liveEp))
       val acc = scala.collection.mutable.ListBuffer.empty[PresenceDialRound]

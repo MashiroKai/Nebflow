@@ -1,12 +1,13 @@
 package nebflow.neblink
 
-import cats.effect.IO
+import cats.effect.{Deferred, IO, Ref}
 import cats.effect.std.Dispatcher
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.PresenceServicePort
+import nebflow.core.tools.{P2pPathDecision, P2pProbePolicy, P2pReachability}
 import nebflow.shared.{NebflowLogger, PeerInfo, TransportLog}
 
 import java.net.URI
@@ -186,6 +187,26 @@ enum DialFailureClass(val label: String):
 private[neblink] final case class DialFailure(reason: String, cls: DialFailureClass)
 
 /**
+ * 单条候选的拨号结局（presence-dial-overhaul 批 P1 的收口类型）。
+ *
+ * `LostRace` **不是失败**：并发拨号下另一个候选先拨通了，本条自己退掉连接（发布闸
+ * [[NeblinkPresenceService]] `publishGate`）——它既不进 F-D 剔除账本，也不覆盖 `dialStatus`，
+ * 否则「输者」每次都记一笔会把刚拨通的赢家判成「拨号失败」。
+ */
+private[neblink] enum DialAttempt:
+  case Won(endpoint: String)
+  case Failed(endpoint: String, failure: DialFailure)
+  case LostRace(endpoint: String, failure: DialFailure)
+
+/** 一轮拨号的收口读数（`winner` = 拨通的那个候选；`attempted` 恒为按择优序的候选表）。 */
+private[neblink] final case class DialRoundOutcome(
+  attempted: List[String],
+  truncated: Boolean,
+  failures: List[(String, DialFailureClass)],
+  winner: Option[String]
+)
+
+/**
  * Manages outgoing WebSocket presence connections to NebLink peers.
  *
  * When device A discovers device B via the NebLink Server, A opens a persistent
@@ -229,7 +250,31 @@ final class NeblinkPresenceService(
   neblinkService: NeblinkService,
   serverPort: Int,
   dialBudget: DialBudget = DialBudget.Default,
-  eviction: EvictionPolicy = EvictionPolicy.Default
+  eviction: EvictionPolicy = EvictionPolicy.Default,
+  /**
+   * 拨号的**调度与线程归属**（presence-dial-overhaul 批 2026-11-04 P1/P2）。
+   *
+   * 生产恒为 [[PresenceDialSchedule.Production]]（并发 + 专用阻塞池）；`GatewayMain`
+   * 不传这个参数。[[PresenceDialSchedule.LegacySerial]] 只给实测夹具做「改前同一方法」
+   * 对照，**不参与任何生产装配**。
+   */
+  schedule: PresenceDialSchedule = PresenceDialSchedule.Production,
+  /**
+   * 可达性**共用真源**（同批 P3）：与文件腿（`RemoteExecutor.resolveP2pEndpoint`）共用
+   * 同一份负缓存与 TTL。
+   *
+   * - `Some(P2pReachability.current)`：**生产的唯一装配**（`GatewayMain` 显式传，见源码护栏
+   *   `NeblinkPresenceDialConcurrencySpec`）。负证据在两条腿之间**互相看见**——文件腿 pay 过
+   *   的探测税，presence 不再 pay 第二遍（这正是今天「探测税 + 拨号税」重复付费的根）；
+   *   反过来 presence 拨不通也立刻让文件腿零成本走 relay。
+   * - `None`（缺省）：**只**用于排程类 spec 的隔离——那些用例逐拍断言「第 N 拍拨了哪几个
+   *   候选」，共用账本会让第 2 拍起被负缓存跳过，测的就不是排程了。
+   *
+   * 🔴 为什么缺省是 `None` 而不是 `Some(current)`：这条路在**进程内单例**上，若缺省就共享，
+   * 20 个既有 spec 会在同一个账本上互相投毒（`Test / parallelExecution := false` 但 JVM 不换），
+   * 变成难以复现的「第 N 拍莫名不拨」。生产装配面收敛在 `GatewayMain` 一处 + 源码护栏钉住。
+   */
+  reachLedger: Option[P2pReachability] = None
 )(dispatcher: Dispatcher[IO])
     extends PresenceServicePort: // 严格DAG第⑥步第二批裁定(2026-09-27,R3):原地混入 core 窄视图(isConnected,RemoteExecutor probe budget 读数)
   private val logger = NebflowLogger.forName("nebflow.neblink.presence")
@@ -282,6 +327,9 @@ final class NeblinkPresenceService(
 
   /** deviceId -> last outcome key we already logged, for C3 log rate-limiting. */
   private val lastLoggedDialKey = new ConcurrentHashMap[String, String]()
+
+  /** deviceId -> last round-decision key we already logged (P4 决策迁移边判据)。 */
+  private val lastLoggedRoundKey = new ConcurrentHashMap[String, String]()
 
   /** deviceId -> shape of the most recent dial round (F-D readings). */
   private val dialRounds = new ConcurrentHashMap[String, PresenceDialRound]()
@@ -421,81 +469,390 @@ final class NeblinkPresenceService(
         )
       else IO.unit
     preamble *>
-      dialCandidates(peer, toTry, id, startedAtMs, Nil, Nil, probeOnly).flatMap {
-        case (attempted, truncated, failures) =>
-          val round = PresenceDialRound(attempted, skipped, truncated, failures, startedAtMs)
-          IO(dialRounds.put(peer.deviceId, round)) *>
-            (if truncated then
-               logger.info(
-                 s"Presence dial round for ${peer.deviceName} hit the ${dialBudget.roundBudgetMs}ms round budget " +
-                   s"after ${attempted.size} candidate(s) — the remaining candidate(s) wait for the next beat"
-               )
-             else IO.unit)
+      reachCacheHitMs(peer, startedAtMs).flatMap {
+        // P3：共用真源命中 ⇒ **零成本轮**（不拨任何候选、0ms）。改前这里要串行付满
+        // 两个候选的预算（4500ms）才能得出同一结论。
+        case Some(leftMs) => cacheSkippedRound(peer, candidates, skipped, leftMs)
+        case None         => liveRound(peer, toTry, skipped, id, startedAtMs, probeOnly)
       }
 
   end dialRound
 
   /**
-   * Try candidates left-to-right; on success record the winner and write it back as
-   * the peer's `address` (so a subsequent `p2pExecute` — which also walks the
-   * candidate list — starts from the endpoint proven reachable), otherwise record
-   * the failure and move to the next candidate.
+   * P3：共用可达性真源命中？返回**剩余窗口**（ms）；`None` = 无负证据 / 未接账本。
    *
-   * Returns `(endpoints actually dialed in order, truncatedByRoundBudget,
-   * failures-in-dial-order)`. Stops early when the round budget is spent (never
-   * before the first attempt, so a round always makes progress) — the untried tail
-   * waits for the next beat. `truncated` is strictly the budget case: a
-   * short-circuit on SUCCESS is not truncation.
+   * 判据只有一处定义（`P2pPathDecision.addressKey` + `P2pReachability.negativeRemainingMs`），
+   * presence 与文件腿读的是**同一份**账本、**同一条**退避曲线（[[P2pProbePolicy.negativeWindowMs]]），
+   * 绝不各造一套探测。
+   */
+  private def reachCacheHitMs(peer: PeerInfo, nowMs: Long): IO[Option[Long]] =
+    reachLedger match
+      case None => IO.pure(None)
+      case Some(ledger) =>
+        IO(ledger.negativeRemainingMs(peer.deviceId, P2pPathDecision.addressKey(peer), nowMs)).map {
+          case hit @ Some(_) =>
+            ledger.noteSkip()
+            hit
+          case None => None
+        }
+
+  /**
+   * 负缓存命中面的一轮：**一个字节都不拨**（耗时 ≈0ms）。
+   *
+   * 为什么不写 `dialStatus`：C3 语义里那条记录的含义是「**拨过**、结论是这个」；本拍没拨，
+   * 写进去会让「直连腿为何没成」的归因面撒谎。留痕走结构化行（`decision=relay-negative-cache`）。
+   */
+  private def cacheSkippedRound(
+    peer: PeerInfo,
+    candidates: List[String],
+    skipped: List[String],
+    leftMs: Long
+  ): IO[Unit] =
+    val round = PresenceDialRound(Nil, skipped, truncated = false, Nil, System.currentTimeMillis())
+    IO(dialRounds.put(peer.deviceId, round)) *>
+      dialRoundLog(
+        peer,
+        endpoints = candidates.size,
+        dialed = 0,
+        dialMs = 0L,
+        cacheHit = true,
+        decision = s"relay-negative-cache(${leftMs}ms left)",
+        ledgerNote = None
+      )
+
+  /** 真拨一轮：跑候选 → 写轮记录 → 写共用账本 → 一条结构化行（P4）。 */
+  private def liveRound(
+    peer: PeerInfo,
+    toTry: List[String],
+    skipped: List[String],
+    id: DeviceIdentity,
+    startedAtMs: Long,
+    probeOnly: Boolean
+  ): IO[Unit] =
+    val t0 = System.nanoTime()
+    dialCandidates(peer, toTry, id, startedAtMs, probeOnly).flatMap { outcome =>
+      val dialMs = (System.nanoTime() - t0) / 1000000L
+      val round = PresenceDialRound(outcome.attempted, skipped, outcome.truncated, outcome.failures, startedAtMs)
+      IO(dialRounds.put(peer.deviceId, round)) *>
+        noteReachOutcome(peer, outcome, probeOnly).flatMap { ledgerNote =>
+          dialRoundLog(
+            peer,
+            endpoints = toTry.size,
+            dialed = outcome.attempted.size,
+            dialMs = dialMs,
+            cacheHit = false,
+            decision =
+              if outcome.winner.isDefined then "p2p"
+              else if probeOnly then "relay-half-open-no-answer"
+              else "relay-no-answer",
+            ledgerNote = ledgerNote
+          ) *>
+            (if outcome.truncated then
+               logger.info(
+                 s"Presence dial round for ${peer.deviceName} truncated after ${outcome.attempted.size} candidate(s) " +
+                   s"(concurrency cap ${math.max(1, schedule.maxConcurrentPerRound)} / round budget " +
+                   s"${dialBudget.roundBudgetMs}ms) — the remaining candidate(s) wait for the next beat"
+               )
+             else IO.unit)
+        }
+    }
+
+  /**
+   * P3 写面：本轮结论写回**共用账本**（`Success` ⇒ 立刻清账；全不通 ⇒ 负证据 +1 阶）。
+   *
+   * `probeOnly`（全部候选都在 F-D 剔除窗内时的那一次半开探测）**不写账本**：否则每拍的
+   * 半开探测会把共用窗口无限续期，文件腿就永远等不到「该重探了」（与既有
+   * [[noteEndpointFailure]] 的 `probeOnly` 口径同一条理由）。
+   *
+   * `truncated`（本轮只拨了并发上限内的一批，队尾还没试）同样**不写**：那批没试过的候选
+   * 里可能就有活的，写负证据会让下一拍直接跳过它们（判据只能基于「**全部**候选都试过」）。
+   */
+  private def noteReachOutcome(
+    peer: PeerInfo,
+    outcome: DialRoundOutcome,
+    probeOnly: Boolean
+  ): IO[Option[Int]] =
+    reachLedger match
+      case None => IO.pure(None)
+      case Some(ledger) =>
+        if probeOnly || outcome.truncated || outcome.attempted.isEmpty then IO.pure(None)
+        else
+          outcome.winner match
+            case Some(_) =>
+              IO(ledger.noteSuccess(peer.deviceId)).as(None)
+            case None =>
+              IO(
+                Some(
+                  ledger.noteFailure(peer.deviceId, P2pPathDecision.addressKey(peer), System.currentTimeMillis())
+                )
+              )
+
+  /**
+   * P4：**一条**结构化拨号行 —— 端点数 / 并发耗时 / 命中缓存与否 / 结论。
+   *
+   * 🔴 行数纪律：今天日志刚降完噪，这里绝不再刷。判据 = **决策迁移边**：
+   * 决策（含 cacheHit/concurrent 两项口径）与上一条相同 ⇒ 只落 DEBUG；变了 ⇒ 落一行 INFO。
+   * 后果：一台连不上的设备**每天至多个位数** INFO 行（改前 `Presence dial failed` 一天
+   * 101–175 条），拨号耗时读数则随时可用 `debug` 打开。
+   */
+  private def dialRoundLog(
+    peer: PeerInfo,
+    endpoints: Int,
+    dialed: Int,
+    dialMs: Long,
+    cacheHit: Boolean,
+    decision: String,
+    ledgerNote: Option[Int]
+  ): IO[Unit] =
+    val poolLabel = if schedule.dedicatedPool then s"${PresenceDialPool.ThreadNamePrefix}*" else "io-blocking(legacy)"
+    val tail = ledgerNote.fold("")(n => s" negative=#$n window=${P2pProbePolicy.negativeWindowMs(n)}ms")
+    val line =
+      s"[presence-dial] device=${peer.deviceName} endpoints=$endpoints dialed=$dialed " +
+        s"concurrent=${schedule.concurrent} pool=$poolLabel dialMs=$dialMs cacheHit=$cacheHit " +
+        s"decision=$decision$tail"
+    val stateKey = s"$decision|hit=$cacheHit|concurrent=${schedule.concurrent}"
+    val changed = Option(lastLoggedRoundKey.put(peer.deviceId, stateKey)).forall(_ != stateKey)
+    if changed then logger.info(line) else logger.debug(line)
+
+  end dialRoundLog
+
+  /**
+   * Try candidates — serially (改前形态，仅实测对照) or concurrently (P1, 生产口径);
+   * on success record the winner and write it back as the peer's `address`.
+   *
+   * 改前（P1 之前）：串行 left-to-right，每个候选付满自己的预算（黑两个候选 = 4500ms）。
+   * 改后（P1，[[schedule.concurrent]]）：**同一拍内把候选并发拨出**（上限
+   * [[PresenceDialSchedule.maxConcurrentPerRound]]，超出的候选本轮截断、下一拍继续），
+   * **第一个拨通的放行、其余立刻取消**——一轮总耗时 ≈ max(单候选)，不是 Σ(候选)。
+   * 取消臂（`truncated`/输家）把刚建起的 WS 亲手关掉（`LostRace`），绝不留下半开连接。
+   * 成功路径行为逐字节不变：赢的候选写回 `peer.address`（C1 择优）、记 `dialStatus`、
+   * 清 F-D 账本——判据与读数（`PresenceDialRound`）也照旧。
+   *
+   * Returns the round outcome (attempted order / truncated / failures / winner).
    */
   private def dialCandidates(
     peer: PeerInfo,
     toTry: List[String],
     id: DeviceIdentity,
     startedAtMs: Long,
-    attemptedRev: List[String],
-    failuresRev: List[(String, DialFailureClass)],
     probeOnly: Boolean
-  ): IO[(List[String], Boolean, List[(String, DialFailureClass)])] =
+  ): IO[DialRoundOutcome] =
+    if schedule.concurrent then dialCandidatesConcurrent(peer, toTry, id, startedAtMs, probeOnly)
+    else dialCandidatesSerial(peer, toTry, id, startedAtMs, probeOnly)
+
+  /** 改前形态（串行拨，逐候选付满预算）——保留给 `PresenceDialSchedule.LegacySerial` 实测对照。 */
+  private def dialCandidatesSerial(
+    peer: PeerInfo,
+    toTry: List[String],
+    id: DeviceIdentity,
+    startedAtMs: Long,
+    probeOnly: Boolean
+  ): IO[DialRoundOutcome] =
     toTry match
-      case Nil => IO.pure((attemptedRev.reverse, false, failuresRev.reverse))
+      case Nil => IO.pure(DialRoundOutcome(Nil, truncated = false, Nil, None))
       case endpoint :: rest =>
-        if attemptedRev.nonEmpty && System.currentTimeMillis() - startedAtMs >= dialBudget.roundBudgetMs then
-          IO.pure((attemptedRev.reverse, true, failuresRev.reverse))
+        if System.currentTimeMillis() - startedAtMs >= dialBudget.roundBudgetMs then
+          IO.pure(DialRoundOutcome(Nil, truncated = true, Nil, None))
         else
-          resolveDialTarget(endpoint) match
-            case None =>
-              recordDialOutcome(peer, endpoint, Some(s"unparseable endpoint: $endpoint")) *>
-                noteEndpointFailure(peer, endpoint, DialFailureClass.Other, probeOnly) *>
-                dialCandidates(
-                  peer,
-                  rest,
-                  id,
-                  startedAtMs,
-                  endpoint :: attemptedRev,
-                  (endpoint, DialFailureClass.Other) :: failuresRev,
-                  probeOnly
-                )
-            case Some((host, port)) =>
-              IO.blocking(openConnection(peer, host, port, id, dialBudget.budgetMsFor(endpoint))).flatMap {
-                case Right(_) =>
-                  noteEndpointSuccess(peer, endpoint) *>
-                    recordDialOutcome(peer, endpoint, None) *>
-                    (if endpoint != peer.address then neblinkService.upsertPeer(peer.copy(address = endpoint))
-                     else IO.unit) *>
-                    IO.pure(((endpoint :: attemptedRev).reverse, false, failuresRev.reverse))
-                case Left(failure) =>
-                  recordDialOutcome(peer, endpoint, Some(failure.reason)) *>
-                    noteEndpointFailure(peer, endpoint, failure.cls, probeOnly) *>
-                    dialCandidates(
-                      peer,
-                      rest,
-                      id,
-                      startedAtMs,
-                      endpoint :: attemptedRev,
-                      (endpoint, failure.cls) :: failuresRev,
-                      probeOnly
+          dialOne(peer, endpoint, id, probeOnly).flatMap { attempt =>
+            attempt match
+              case DialAttempt.Won(_) =>
+                IO.pure(DialRoundOutcome(List(endpoint), truncated = false, Nil, Some(endpoint)))
+              case DialAttempt.LostRace(_, _) =>
+                // 串行口径没有竞速者：LostRace 只可能来自发布闸拒绝，按失败处理。
+                IO.pure(DialRoundOutcome(List(endpoint), truncated = false, List((endpoint, DialFailureClass.Other)), None))
+              case DialAttempt.Failed(_, failure) =>
+                dialCandidatesSerial(peer, rest, id, startedAtMs, probeOnly).map {
+                  case DialRoundOutcome(attempted, truncated, failures, winner) =>
+                    DialRoundOutcome(
+                      endpoint :: attempted,
+                      truncated,
+                      (endpoint, failure.cls) :: failures,
+                      winner
                     )
-              }
+                }
+          }
+
+  /**
+   * P1：**并发拨号**（生产口径）。批内候选**同时**拨（封顶 `maxConcurrentPerRound`，
+   * 超出的本轮截断、下一拍继续——F-D 既有语义），**第一个拨通的放行，其余立刻取消**。
+   *
+   * 成本上界 = **单批内最大的单候选预算**（黑 KAI 两候选 = 3000ms，不是 4500ms）；
+   * 取消臂的半开连接由发布闸 + `retireAllFor("lost-race")` 收干净，绝不堆积。
+   * 赢家照旧走成功面（C1 择优 / C3 状态 / F-D 清账）；输家按各自结局记 `failures`。
+   */
+  private def dialCandidatesConcurrent(
+    peer: PeerInfo,
+    toTry: List[String],
+    id: DeviceIdentity,
+    startedAtMs: Long,
+    probeOnly: Boolean
+  ): IO[DialRoundOutcome] =
+    val cap = math.max(1, schedule.maxConcurrentPerRound)
+    val (batch, overflow) = toTry.splitAt(cap)
+    val truncated = overflow.nonEmpty
+    if batch.isEmpty then IO.pure(DialRoundOutcome(Nil, truncated = false, Nil, None))
+    else
+      Deferred[IO, String].flatMap { won =>
+        // 发布闸：批内**只有一个候选**有权发布连接（谁先过闸谁是赢家，其余自退 = LostRace）。
+        // 每轮一个闸（不是字段）：同一 service 会并发服务多个设备的轮。
+        val publishGate = new java.util.concurrent.atomic.AtomicBoolean(false)
+        // 每轮的本地收账表（不用字段：同一 service 可能并发服务多个设备的轮）。
+        Ref.of[IO, Vector[(String, DialAttempt)]](Vector.empty).flatMap { acc =>
+          val racers: List[IO[(String, DialAttempt)]] = batch.map { endpoint =>
+            dialOne(peer, endpoint, id, probeOnly, publishGate).flatMap { attempt =>
+              acc.update(_ :+ (endpoint -> attempt)) *>
+                // 首胜放行：先填 won 再返回；late loser 的 complete 是幂等的 no-op
+                //（`get` 的那臂已经拿到赢家）。
+                (attempt match
+                  case DialAttempt.Won(_) => won.complete(endpoint).void.as((endpoint, attempt))
+                  case other              => IO.pure((endpoint, other))
+                )
+            }.handleErrorWith(e =>
+              // 拨号体自身异常（池满等）按失败收账，绝不让一个候选炸掉整轮。
+              val f = DialFailure(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}", DialFailureClass.Other)
+              val att = DialAttempt.Failed(endpoint, f)
+              acc.update(_ :+ (endpoint -> att)) *>
+                IO.raiseError[(String, DialAttempt)](e)
+            )
+          }
+
+          def finish(winOpt: Option[String]): IO[DialRoundOutcome] =
+            acc.get.flatMap { results =>
+              val ordered = batch.flatMap(ep => results.collectFirst { case (e, a) if e == ep => (e, a) })
+              val failures =
+                if winOpt.isDefined then
+                  ordered.collect { case (ep, DialAttempt.Failed(_, f)) => (ep, f.cls) }
+                else
+                  ordered.map {
+                    case (ep, DialAttempt.Failed(_, f))   => (ep, f.cls)
+                    case (ep, DialAttempt.LostRace(_, _)) => (ep, DialFailureClass.Other)
+                    case (ep, DialAttempt.Won(_))         => (ep, DialFailureClass.Other)
+                  }
+              // 🔴 输者**已经在 `openConnection` 里退役了自己的那条 conn**（它根本没进
+              // `connections`，`removeIfCurrent` 摘不到 ⇒ 什么也摘不掉；只关自己的 socket）。
+              // 这里**绝不能再做 `retireAllFor(deviceId)`**：那会把刚发布的赢家连接也关掉
+              // ——「拨通了又被自己关掉」正是本批要消灭的伪掉线形态。
+              IO.pure(
+                DialRoundOutcome(
+                  // `attempted` = **本轮真起跑的所有候选**（批内全量并发拨出），按择优序。
+                  // 🔴 不是「已返回结局的那几个」：首胜即返回时输者还在拨，但它**确实被拨了**，
+                  // 漏报会让 F-D 的「每拍都拨了哪几个候选」读数撒谎（判据：账本按实拨记账）。
+                  attempted = batch,
+                  truncated = truncated,
+                  failures = failures,
+                  winner = winOpt
+                )
+              )
+            }
+
+          val allProbes = racers.parSequence.map { results =>
+            results.collect { case (_, DialAttempt.Won(ep)) => ep }.headOption
+          }
+          val firstWin = won.get.map(Some(_))
+          // 两臂都以 tryGet 收口（P2pReachability.probeConcurrently 的同刻竞争教训复用）：
+          // 最后一个 racers 恰好自己赢了并把 won 填掉、与「全部结束」几乎同刻 ⇒
+          // 把「全部结束」无条件读成 None 会把一次成功读成全败。
+          val allDone = allProbes.flatMap(res => won.tryGet.map(_.orElse(res)))
+          IO.race(firstWin, allDone).map(_.merge).flatMap(winOpt => finish(winOpt))
+        }
+      }
+
+  /**
+   * 拨**一条**候选，并把结局（成功 / 失败 / 输掉竞速）连同读数一起收口。
+   *
+   * 拨号体（[[openConnection]]，纯阻塞）**一律**经 [[dialBlocking]] 提交——生产口径下
+   * 它跑在 [[PresenceDialPool]] 的 `presence-dial-*` 线程上，**绝不占用 `io-compute-*`**
+   * （P2）；只有实测对照臂 `PresenceDialSchedule.LegacySerial` 才走改前的 `IO.blocking`。
+   */
+  private def dialOne(
+    peer: PeerInfo,
+    endpoint: String,
+    id: DeviceIdentity,
+    probeOnly: Boolean,
+    publishGate: java.util.concurrent.atomic.AtomicBoolean = null
+  ): IO[DialAttempt] =
+    resolveDialTarget(endpoint) match
+      case None =>
+        val failure = DialFailure(s"unparseable endpoint: $endpoint", DialFailureClass.Other)
+        recordDialOutcome(peer, endpoint, Some(failure.reason)) *>
+          noteEndpointFailure(peer, endpoint, DialFailureClass.Other, probeOnly).as(
+            DialAttempt.Failed(endpoint, failure)
+          )
+      case Some((host, port)) =>
+        val budgetMs = dialBudget.budgetMsFor(endpoint)
+        dialBlocking(s"${peer.deviceName}@$endpoint") {
+          openConnection(peer, host, port, id, budgetMs, publishGate)
+        }.flatMap {
+          case Right(_) =>
+            noteEndpointSuccess(peer, endpoint) *>
+              recordDialOutcome(peer, endpoint, None) *>
+              (if endpoint != peer.address then neblinkService.upsertPeer(peer.copy(address = endpoint)) else IO.unit) *>
+              IO.pure(DialAttempt.Won(endpoint))
+          case Left(failure) if failure.reason == NeblinkPresenceService.LostDialRaceReason =>
+            // 竞速输者：既不是失败也不该抢 C1 择优 ⇒ 不写 F-D 账本、不覆盖 dialStatus。
+            IO.pure(DialAttempt.LostRace(endpoint, failure))
+          case Left(failure) =>
+            recordDialOutcome(peer, endpoint, Some(failure.reason)) *>
+              noteEndpointFailure(peer, endpoint, failure.cls, probeOnly).as(
+                DialAttempt.Failed(endpoint, failure)
+              )
+        }.handleErrorWith { e =>
+          // 池饱和 / 未预期异常：记一次失败（绝不吞、也绝不在调用方线程上兜底重拨）。
+          val failure = DialFailure(
+            s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}".trim,
+            DialFailureClass.Other
+          )
+          recordDialOutcome(peer, endpoint, Some(failure.reason)).as(DialAttempt.Failed(endpoint, failure))
+        }
+
+  /**
+   * 拨号体的线程归属读数（P2 的取数面）：拨了几次、其中几次落在 `io-compute-*` 上、
+   * 在 compute 线程上累计阻塞了多少毫秒、在专用池上累计多少毫秒。
+   *
+   * 生产口径的期望值很硬：**`onCompute` 恒 0**。夹具（`PresenceDialMeasureMain`）与
+   * `NeblinkPresenceDialConcurrencySpec` 都读这一份——同一份真值，不各造一套埋点。
+   */
+  private final case class DialThreadStats(dials: Int, onCompute: Int, msOnCompute: Long, msOnPool: Long)
+
+  private var dialStats = DialThreadStats(0, 0, 0L, 0L)
+
+  private var lastDialThread: String = ""
+
+  /** `(dials, onCompute, msOnCompute, msOnPool)` —— P2 读数（报告/夹具/spec 共用）。 */
+  private[neblink] def dialThreadStats: (Int, Int, Long, Long) = synchronized {
+    (dialStats.dials, dialStats.onCompute, dialStats.msOnCompute, dialStats.msOnPool)
+  }
+
+  /** 最近一次执行拨号体的线程名（空串 = 还没拨过）。 */
+  private[neblink] def lastDialThreadName: String = synchronized(lastDialThread)
+
+  /** 清零读数（夹具按「改前/改后同一方法各一遍」分臂取数）。 */
+  private[neblink] def resetDialThreadStats(): Unit = synchronized {
+    dialStats = DialThreadStats(0, 0, 0L, 0L)
+    lastDialThread = ""
+  }
+
+  private def noteDialThread(thread: String, blockedMs: Long): Unit = synchronized {
+    lastDialThread = thread
+    val onCompute = PresenceDialPool.isComputeThreadName(thread)
+    dialStats = DialThreadStats(
+      dialStats.dials + 1,
+      dialStats.onCompute + (if onCompute then 1 else 0),
+      dialStats.msOnCompute + (if onCompute then blockedMs else 0L),
+      dialStats.msOnPool + (if onCompute then 0L else blockedMs)
+    )
+  }
+
+  /** 拨号体的线程归属（P2）：专用阻塞池 vs 改前 `IO.blocking`（仅实测对照臂）。 */
+  private def dialBlocking[A](where: String)(body: => A): IO[A] =
+    val guarded: () => A = () =>
+      val t0 = System.nanoTime()
+      val thread = Thread.currentThread().getName
+      try body
+      finally noteDialThread(thread, (System.nanoTime() - t0) / 1000000L)
+    if schedule.dedicatedPool then PresenceDialPool.run(where)(guarded())
+    else IO.blocking(guarded())
 
   /**
    * Blocking dial of a single host+port with the caller's per-candidate budget.
@@ -513,7 +870,8 @@ final class NeblinkPresenceService(
     host: String,
     port: Int,
     id: DeviceIdentity,
-    budgetMs: Long
+    budgetMs: Long,
+    publishGate: AtomicBoolean = null
   ): Either[DialFailure, Unit] =
     // deviceId-compat (2026-09-22, chain neblink-lifecycle-fix leg B): the dial
     // walks the handshake in a small local closure so the legacy-400 retry gets
@@ -586,6 +944,12 @@ final class NeblinkPresenceService(
         // 「上线即死」的在册 conn，并在 ~15s 后制造一次**伪掉线 + 重连**（本批要消灭的形态）。
         retireConnection(conn, "closed during handshake")
         Left(DialFailure("closed during handshake", DialFailureClass.Other))
+      else if publishGate != null && !publishGate.compareAndSet(false, true) then
+        // P1（presence-dial-overhaul 批）：并发竞速的**输者**。本臂握手也成功了，但另一臂
+        // 已经发布（谁先过闸谁是赢家）⇒ 🔴 绝不顶替赢家：退役自己这条刚建起的连接并回报
+        // `LostRace`（不计 F-D 账本、不覆盖 dialStatus——它既不是失败也不该抢 C1 择优）。
+        retireConnection(conn, "lost concurrent dial race")
+        Left(DialFailure(NeblinkPresenceService.LostDialRaceReason, DialFailureClass.Other))
       else
         // ① 无条件先退役同 deviceId 的现役 conn（幂等；禁游离心跳线程）——
         //    任何换连接路径都必须走这一步。
@@ -1107,7 +1471,7 @@ final class NeblinkPresenceService(
     IO(forgetDevice(peer.deviceId)) *>
       logger.info(
         s"Reconnect gave up after $attempt attempts " +
-          s"(drain bound ≈${NeblinkPresenceService.ladderDrainUpperBoundMs(attempt, dialBudget.roundUpperBoundMs(candidatesOf(peer))) / 1000}s " +
+          s"(drain bound ≈${NeblinkPresenceService.ladderDrainUpperBoundMs(attempt, schedule.roundUpperBoundMs(candidatesOf(peer), dialBudget)) / 1000}s " +
           s"@ ${dialBudget.roundBudgetMs}ms/round); dead-endpoint verdicts reset for ${peer.deviceName} — " +
           s"handing back to the ${NeblinkPresenceService.SyncBeatFloorMs / 1000}s sync beat"
       )
@@ -1334,6 +1698,28 @@ object NeblinkPresenceService:
   /** 一轮拨号的时长上界（Σ 候选预算，受 `roundBudgetMs` 封顶）。 */
   def dialRoundUpperBoundMs(candidates: List[String], budget: DialBudget): Long =
     budget.roundUpperBoundMs(candidates)
+
+  /**
+   * 并发拨号（P1）下一轮拨号的**时长上界**：单批内**最大的**单候选预算，不是 Σ。
+   *
+   * 这条公式是「改前 4500ms → 改后 3000ms」的机器可判形式：KAI 两个候选（tailnet 3000ms
+   * + LAN 1500ms）串行 Σ = 4500ms，并发 max = 3000ms。`reconnectGaveUp` 的梯子时长读数
+   * 也改用它，否则报给作者的上界会比实际慢一倍。
+   */
+  def concurrentDialRoundUpperBoundMs(
+    candidates: List[String],
+    budget: DialBudget,
+    schedule: PresenceDialSchedule = PresenceDialSchedule.Production
+  ): Long =
+    schedule.roundUpperBoundMs(candidates, budget)
+
+  /**
+   * 并发拨号「输者」的结局原因（[[DialAttempt.LostRace]]）。
+   *
+   * 🔴 它不是失败：另一个候选先拨通了，本条自己退掉刚建起的连接。记进 F-D 剔除账本或
+   * 覆盖 `dialStatus` 都会把「一次成功的拨号」写成「一次失败的拨号」。
+   */
+  val LostDialRaceReason: String = "lost concurrent dial race"
 
   /** 梯子全部耗尽的时长上界（每轮拨号 + 每次退避）——收手日志的读数来源。 */
   def ladderDrainUpperBoundMs(attempts: Int, roundMs: Long): Long =

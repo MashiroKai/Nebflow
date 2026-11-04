@@ -1,0 +1,548 @@
+[sbt-gate] SBT_GATE=off — gate bypassed (no serialization, no heap cap)
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-76417e90-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-76417e90/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-76417e90/)
+[warn] javaOptions will be ignored, fork is set to false
+[32mnebflow.neblink.NeblinkModelSpec:[0m
+[32m  + [0m[32mDeviceIdentity serialization roundtrip[0m [90m0.185s[0m
+[32m  + [0m[32mDeviceIdentity loadOrCreate has non-empty deviceSecret[0m [90m0.094s[0m
+[32m  + [0m[32mDeviceIdentity has valid UUID format deviceId after loadOrCreate[0m [90m0.001s[0m
+[32m  + [0m[32mDeviceIdentity platform is one of expected values[0m [90m0.002s[0m
+[32m  + [0m[32mPeerInfo serialization roundtrip[0m [90m0.007s[0m
+[32m  + [0m[32mPeerInfo default lastSeen is current time[0m [90m0.001s[0m
+[32m  + [0m[32mPeerInfo default deviceSecret is empty string[0m [90m0.0s[0m
+[32m  + [0m[32mNeblinkConfig default values[0m [90m0.003s[0m
+[32m  + [0m[32mNeblinkConfig serialization roundtrip[0m [90m0.006s[0m
+[32m  + [0m[32membeddedDefault carries the product hosted-auth constants[0m [90m0.0s[0m
+[32m  + [0m[32meffectiveLogto falls back to embeddedDefault when config has no logto block[0m [90m0.001s[0m
+[32m  + [0m[32meffectiveLogto prefers an explicit logto block over the embedded default[0m [90m0.001s[0m
+[32m  + [0m[32mlogto block with only endpoint + pkceClientId decodes (clientId optional)[0m [90m0.001s[0m
+[32m  + [0m[32mraw logto field stays None without a block (device-flow legacy proxy unaffected)[0m [90m0.0s[0m
+[32mnebflow.neblink.PortalWireContractV1Spec:[0m
+[32m  + [0m[32mvector file pins the frozen contract identity (contract file + version v1.3)[0m [90m0.0s[0m
+[32m  + [0m[32mthe 28 frozen v1 vectors are preserved byte-for-byte at the head of the v1.1 file[0m [90m0.006s[0m
+[32m  + [0m[32mthe 40 frozen v1.1 vectors are preserved byte-for-byte at the head of the v1.3 file[0m [90m0.006s[0m
+[32m  + [0m[32mevery frame in the inventory has at least one positive and one negative vector[0m [90m0.001s[0m
+[32m  + [0m[32mvector ids are unique (each vector registers exactly one munit test)[0m [90m0.0s[0m
+[32m  + [0m[32mConsoleTicketResult: expiresInSec without ticket is a field_conflict (iff on BOTH success fields)[0m [90m0.005s[0m
+[32m  + [0m[32mrelay_request-pos-1 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.003s[0m
+[32m  + [0m[32mrelay_request-neg-1 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.001s[0m
+[32m  + [0m[32mrelay_response-pos-1 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.001s[0m
+[32m  + [0m[32mrelay_response-neg-1 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mhttp_request-pos-1 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.002s[0m
+[32m  + [0m[32mhttp_request-neg-1 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mhttp_response-pos-1 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.004s[0m
+[32m  + [0m[32mhttp_response-neg-1 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mbody_frame-pos-1 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.002s[0m
+[32m  + [0m[32mbody_frame-neg-1 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mws_open-pos-1 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.001s[0m
+[32m  + [0m[32mws_open-neg-1 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mws_open_result-pos-1 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.001s[0m
+[32m  + [0m[32mws_open_result-neg-1 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mws_frame-pos-1 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.001s[0m
+[32m  + [0m[32mws_frame-neg-1 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.001s[0m
+[32m  + [0m[32mws_close-pos-1 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.001s[0m
+[32m  + [0m[32mws_close-neg-1 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.001s[0m
+[32m  + [0m[32mConsoleTicketMint-pos-1 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.0s[0m
+[32m  + [0m[32mConsoleTicketMint-neg-1 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.001s[0m
+[32m  + [0m[32mConsoleTicketResult-pos-1 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.0s[0m
+[32m  + [0m[32mConsoleTicketResult-neg-1 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mBindingControl-pos-1 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.001s[0m
+[32m  + [0m[32mBindingControl-neg-1 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mMigrationChunk-pos-1 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.002s[0m
+[32m  + [0m[32mMigrationChunk-neg-1 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32menvelope-neg-1 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32menvelope-neg-2 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.001s[0m
+[32m  + [0m[32mws_open-pos-2 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.001s[0m
+[32m  + [0m[32mws_open-neg-2 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mws_open-pos-3 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.0s[0m
+[32m  + [0m[32mhttp_response-pos-2 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.001s[0m
+[32m  + [0m[32mhttp_response-neg-2 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mhttp_response-neg-3 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mhttp_response-pos-3 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.0s[0m
+[32m  + [0m[32mhttp_response-pos-4 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.0s[0m
+[32m  + [0m[32menvelope-neg-3 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mws_open-pos-4 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.0s[0m
+[32m  + [0m[32mbody_frame-neg-2 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mrelay_request-pos-2 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.0s[0m
+[32m  + [0m[32mws_data_frame-pos-1 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.002s[0m
+[32m  + [0m[32mws_data_frame-pos-2 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.001s[0m
+[32m  + [0m[32mws_data_frame-pos-3 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.0s[0m
+[32m  + [0m[32mws_data_frame-pos-4 [positive]: canonical encode is byte-identical to the frozen wire[0m [90m0.0s[0m
+[32m  + [0m[32mws_data_frame-neg-1 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mws_data_frame-neg-2 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.001s[0m
+[32m  + [0m[32mws_data_frame-neg-3 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mws_data_frame-neg-4 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mws_data_frame-neg-5 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32m  + [0m[32mws_data_frame-neg-6 [negative]: decode is rejected exactly as the expect block demands[0m [90m0.0s[0m
+[32mnebflow.neblink.PortalWsMessageAssemblerSpec:[0m
+[32m  + [0m[32mUTF-16 surrogate split across callbacks is encoded only after joining[0m [90m0.001s[0m
+[32m  + [0m[32mUTF-8 byte cap is enforced even when the character count is smaller[0m [90m0.0s[0m
+[32m  + [0m[32munterminated text and binary fragments cannot grow without bound[0m [90m0.0s[0m
+[32m  + [0m[32mbinary fragments join and successive messages remain separate[0m [90m0.0s[0m
+[32m  + [0m[32mmixed fragment kinds are refused and buffered content is discarded[0m [90m0.001s[0m
+java.lang.IllegalStateException: supervisor already shutdown
+[32mnebflow.neblink.NeblinkGracePeriodSpec:[0m
+[32m  + [0m[32mremovePeer does NOT immediately remove the peer[0m [90m0.236s[0m
+[32m  + [0m[32mupsertPeer cancels pending removal — peer stays in list[0m [90m0.71s[0m
+[32m  + [0m[32mpeer IS removed after grace period expires without reconnect[0m [90m0.709s[0m
+[32m  + [0m[32mdouble removePeer schedules only one removal[0m [90m0.708s[0m
+[32m  + [0m[32mnotifyPeersChanged fires exactly once on real removal[0m [90m0.709s[0m
+[32m  + [0m[32mnotifyPeersChanged does NOT fire when reconnect cancels removal[0m [90m0.707s[0m
+14:05:06.700 [33mWARN [0m nebflow.neblink.friends - message_new for c-ack arrived with no local cursor — materialized with unread=1 (push preceded conversations refresh; server unreadCount stays authoritative baseline)
+14:05:06.713 [36mINFO [0m nebflow.neblink.friends - friend_pull conversationId=c-ack trigger=event:message_new eventId=message-41 after=40 serverMax=41 pulled=1 dispatched=1 skipped=0 reasons=[] pullAnchor=41 dispatchedMax=41 reason=<none>
+14:05:06.714 [36mINFO [0m nebflow.neblink.friends - friend_event processed: type=message_new id=message-41
+14:05:06.717 [33mWARN [0m nebflow.neblink.friends - message_new for c-ack2 arrived with no local cursor — materialized with unread=1 (push preceded conversations refresh; server unreadCount stays authoritative baseline)
+14:05:06.718 [36mINFO [0m nebflow.neblink.friends - friend_pull conversationId=c-ack2 trigger=event:message_new eventId=message-7 after=6 serverMax=7 pulled=1 dispatched=1 skipped=0 reasons=[] pullAnchor=7 dispatchedMax=7 reason=<none>
+14:05:06.718 [36mINFO [0m nebflow.neblink.friends - friend_event processed: type=message_new id=message-7
+14:05:06.721 [33mWARN [0m nebflow.neblink.friends - message_new for c-dup arrived with no local cursor — materialized with unread=1 (push preceded conversations refresh; server unreadCount stays authoritative baseline)
+14:05:06.721 [36mINFO [0m nebflow.neblink.friends - friend_pull conversationId=c-dup trigger=event:message_new eventId=message-9 after=8 serverMax=9 pulled=1 dispatched=1 skipped=0 reasons=[] pullAnchor=9 dispatchedMax=9 reason=<none>
+14:05:06.722 [36mINFO [0m nebflow.neblink.friends - friend_event processed: type=message_new id=message-9
+14:05:06.723 [36mINFO [0m nebflow.neblink.friends - friend_event duplicate eventId=message-9 type=message_new conversationId=c-dup reason=duplicate_eventId (at-least-once replay; already acked, pull skipped — pull is idempotent on first sight)
+14:05:06.733 [33mWARN [0m nebflow.neblink.friends - listFriends failed: Not logged in
+14:05:06.733 [36mINFO [0m nebflow.neblink.friends - friend_event processed: type=friend_request id=friend-evt-12
+14:05:06.734 [36mINFO [0m nebflow.neblink.friends - friend_pull conversationId=c-nomessage trigger=event:message_new_self eventId=8c1f-uuid after=12 serverMax=13 pulled=1 dispatched=1 skipped=0 reasons=[] pullAnchor=13 dispatchedMax=13 reason=<none>
+14:05:06.734 [36mINFO [0m nebflow.neblink.friends - friend_event processed: type=message_new_self id=8c1f-uuid
+14:05:06.737 [36mINFO [0m nebflow.neblink.friends - friend_pull conversationId=c-self trigger=event:message_new_self eventId=message-77 after=76 serverMax=77 pulled=1 dispatched=1 skipped=0 reasons=[] pullAnchor=77 dispatchedMax=77 reason=<none>
+14:05:06.737 [36mINFO [0m nebflow.neblink.friends - friend_event processed: type=message_new_self id=message-77
+14:05:06.738 [33mWARN [0m nebflow.neblink.friends - message_new for c-none arrived with no local cursor — materialized with unread=1 (push preceded conversations refresh; server unreadCount stays authoritative baseline)
+14:05:06.739 [36mINFO [0m nebflow.neblink.friends - friend_pull conversationId=c-none trigger=event:message_new eventId=message-5 after=4 serverMax=5 pulled=1 dispatched=1 skipped=0 reasons=[] pullAnchor=5 dispatchedMax=5 reason=<none>
+14:05:06.739 [36mINFO [0m nebflow.neblink.friends - friend_event processed: type=message_new id=message-5
+14:05:06.740 [33mWARN [0m nebflow.neblink.friends - message_new for c-boom arrived with no local cursor — materialized with unread=1 (push preceded conversations refresh; server unreadCount stays authoritative baseline)
+14:05:06.740 [36mINFO [0m nebflow.neblink.friends - friend_pull conversationId=c-boom trigger=event:message_new eventId=message-6 after=5 serverMax=6 pulled=1 dispatched=1 skipped=0 reasons=[] pullAnchor=6 dispatchedMax=6 reason=<none>
+14:05:06.740 [36mINFO [0m nebflow.neblink.friends - friend_event processed: type=message_new id=message-6
+[32mnebflow.neblink.FriendAckProducerSpec:[0m
+[32m  + [0m[32mackFrame：冻结形状 {"type":"ack","eventId":"message-<id>"}（键名/取值即协议）[0m [90m0.004s[0m
+[32m  + [0m[32mmessage-<id> 帧处理完成后 ack 一次，且位于广播/补拉之后[0m [90m0.247s[0m
+[32m  + [0m[32m重复帧（同 eventId）仍须 ack —— at-least-once 重放靠 ack 才退得掉[0m [90m0.005s[0m
+[32m  + [0m[32m非消息面 eventId（friend-evt-<rowId> / 无前缀 uuid）一律不 ack（本批靶只有 message-<id>）[0m [90m0.011s[0m
+[32m  + [0m[32mmessage_new_self 若带 message-<id> 形 eventId ⇒ 仍 ack（判据是 eventId 形状，不是事件名）[0m [90m0.002s[0m
+[32m  + [0m[32m未接线（ackSender=None）⇒ 显式 no-op，消费链不受影响[0m [90m0.002s[0m
+[32m  + [0m[32mackSender 抛错 ⇒ 绝不吃掉处理（未读/补拉照常，且不冒泡）[0m [90m0.003s[0m
+[32mnebflow.neblink.LogtoPasswordFlowSpec:[0m
+[32m  + [0m[32mmergeCookies: 空 jar 起步、Set-Cookie 属性剥离、同名覆盖、空值删除、确定性序[0m [90m0.002s[0m
+[32m  + [0m[32mparseRedirectQuery: code+state 提取、url-decode、缺 code/state 即 Left[0m [90m0.001s[0m
+[32m  + [0m[32minteractionAuthorizeUrl: AC+PKCE 参数齐全、无 prompt 位（与浏览器路径的差异点）[0m [90m0.002s[0m
+[32m  + [0m[32midentifierTypeOf: 含 @ ⇒ email，否则 username[0m [90m0.0s[0m
+[32m  + [0m[32mclassifyFailure: invalid_credentials / rate / transport / 其余落 Protocol（不带凭据）[0m [90m0.002s[0m
+[32m  + [0m[32mparseVerification / parseSubmit: 契约字段缺失即 Protocol[0m [90m0.001s[0m
+[32m  + [0m[32msignIn happy path: 交互挂载→密码识别→identification→submit→取码→换票；cookie 全程携带[0m [90m0.009s[0m
+[32m  + [0m[32msignIn: 密码错 ⇒ InvalidCredentials；任何 Failure 载荷零回显（不含密码）[0m [90m0.001s[0m
+[32m  + [0m[32msignIn: state 不匹配（CSRF 判据）⇒ Protocol(redirect)；回调无 code ⇒ Protocol[0m [90m0.003s[0m
+[32m  + [0m[32msignIn: authorize 腿失败（非 2xx/3xx）⇒ classify 落 Protocol；传输层 0 ⇒ Transport[0m [90m0.001s[0m
+[dead-0] listFriends
+[live-1] listFriends
+[dead-0] listFriends
+[dead-0] listFriends
+14:05:06.777 [33mWARN [0m nebflow.neblink.friends - listFriends failed: HTTP 403: {"error":"Missing or invalid token"}
+[32mnebflow.neblink.FriendServiceClientRefSpec:[0m
+[32m  + [0m[32mF1 nail: swapping the authoritative client is enough — FriendService follows the hot-swap[0m [90m0.002s[0m
+[32m  + [0m[32mF4 nail: listFriends (REST direct) surfaces Left; refreshFriends folds to empty[0m [90m0.001s[0m
+[32m  + [0m[32mclient-less state (logged out) surfaces Not logged in[0m [90m0.0s[0m
+14:05:06.786 [33mWARN [0m nebflow.neblink.friends - message_new for c-boot arrived with no local cursor — materialized with unread=1 (push preceded conversations refresh; server unreadCount stays authoritative baseline)
+14:05:06.786 [36mINFO [0m nebflow.neblink.friends - friend_pull conversationId=c-boot trigger=event:message_new eventId=e-boot after=6 serverMax=7 pulled=1 dispatched=1 skipped=0 reasons=[] pullAnchor=7 dispatchedMax=7 reason=<none>
+14:05:06.786 [36mINFO [0m nebflow.neblink.friends - friend_event processed: type=message_new id=e-boot
+[32mnebflow.neblink.FriendUnreadCursorRebuildSpec:[0m
+[32m  + [0m[32m#309-L1 cursor 缺席：首条推送的 +1 必须落账（不再 no-op），并给出回落信号[0m [90m0.001s[0m
+[32m  + [0m[32m#309-L2 反向断言：穷举 cursor 状态 × 增量，不存在任何「未读 +1 被静默吞掉」的路径[0m [90m0.003s[0m
+[32m  + [0m[32m#309-L3 真通路：boot 期推送先于 refreshConversations 到达 ⇒ 未读落账 1 且补拉发生[0m [90m0.002s[0m
+[32m  + [0m[32m#309-L4 回归（验红下的绿对偶）：mergeUnread / setRead / advanceAnchor / localMaxId / readAnchor / unreadSnapshot 语义未破（setRead 判据按 §3.5 拆字段更新）[0m [90m0.005s[0m
+[32mnebflow.neblink.AttachmentPreviewContractSpec:[0m
+[32m  + [0m[32mdialects: both known spellings are registered; key order is derived; unknown ids are refused[0m [90m0.003s[0m
+[32m  + [0m[32mreceive: both dialects parse to one internal shape, each identified by its OWN key set[0m [90m0.006s[0m
+[32m  + [0m[32msend: one internal value is spelled two ways, chosen by the dialect id argument[0m [90m0.002s[0m
+[32m  + [0m[32munknown dialect: the receive side falls back to no-preview; the send side refuses explicitly[0m [90m0.002s[0m
+[32m  + [0m[32mroundtrip: parse then encode (own dialect) is the identity on the wire shape, both dialects[0m [90m0.0s[0m
+[32m  + [0m[32mabsent preview: the key is omitted (never null) and the legacy payload is byte-identical[0m [90m0.001s[0m
+[32m  + [0m[32mcaps: from / 长边 / digest spelling / b64 length each have an exact boundary — in BOTH dialects[0m [90m0.011s[0m
+[32m  + [0m[32mold server face: an attachment without preview decodes cleanly and keeps every legacy value[0m [90m0.001s[0m
+[32m  + [0m[32mkey order: legacy prefix is byte-identical and preview is appended last (both dialects)[0m [90m0.001s[0m
+14:05:06.834 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-race-seq-1 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:06.839 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack received — eventId=message-race-seq-1 target=dev-b (receipt arrived before this send's registration; matched from the early-ack buffer, no timeout leg armed)
+[ackfix-spec] 等待中… 剩余 11s
+[ackfix-spec] 等待中… 剩余 6s
+[ackfix-spec] 等待中… 剩余 1s
+[ackfix-spec] 等待中… 剩余 0s
+14:05:22.864 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-race-win-1 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+[ackfix-spec] 等待中… 剩余 11s
+[ackfix-spec] 等待中… 剩余 6s
+14:05:37.875 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack matched late — eventId=message-race-win-1 target=dev-b (receipt had already arrived, but only entered the early-ack buffer after this send's registration check had run; the 15s wait window is NOT a delivery verdict)
+[ackfix-spec] 等待中… 剩余 1s
+[ackfix-spec] 等待中… 剩余 0s
+[ackfix-spec] 等待中… 剩余 11s
+[ackfix-spec] 等待中… 剩余 6s
+14:05:53.884 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] ack TIMEOUT after 15s — eventId=message-true-timeout target=dev-offline (delivery receipt not seen; the send itself is NOT retried)
+[ackfix-spec] 等待中… 剩余 1s
+[ackfix-spec] 等待中… 剩余 0s
+14:05:54.903 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-0 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.904 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-1 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.905 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-2 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.905 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-3 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.905 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-4 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.906 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-5 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.906 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-6 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.907 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-7 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.907 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-8 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.907 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-9 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.908 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-10 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.908 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-11 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.909 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-12 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.909 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-13 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.909 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-14 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.910 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-15 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.910 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-16 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.910 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-17 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.911 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-18 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.911 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-19 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.912 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-20 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.912 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-21 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.912 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-22 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.912 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-23 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.913 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-24 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.913 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-25 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.913 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-26 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.914 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-27 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.914 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-28 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.914 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-29 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.915 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-30 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.915 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-31 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.915 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-32 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.916 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-33 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.916 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-34 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.916 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-35 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.917 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-36 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.917 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-37 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.918 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-38 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.918 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-39 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.918 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-40 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.919 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-41 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.919 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-42 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.919 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-43 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.920 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-44 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.920 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-45 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.920 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-46 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.921 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-47 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.921 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-48 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.921 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-49 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.922 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-50 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.922 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-51 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.922 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-52 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.923 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-53 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.923 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-54 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.923 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-55 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.924 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-56 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.924 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-57 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.933 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-58 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.933 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-59 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.934 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-60 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.936 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-61 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.936 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-62 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.937 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-63 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.939 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.939 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-64 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.939 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.939 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-65 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.940 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.940 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-66 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.940 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.941 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-67 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.941 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.941 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-68 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.942 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.942 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-69 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.942 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.942 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-70 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.943 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.943 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-71 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.943 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.943 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-72 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.944 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.944 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-73 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.944 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.944 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-74 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.945 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.945 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-75 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.945 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.945 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-76 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.946 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.946 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-77 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.946 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.946 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-78 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.947 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.947 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-79 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.947 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.947 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-80 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.948 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.948 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-81 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.949 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.949 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-82 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.949 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] early-ack buffer overflow — 1 oldest entry dropped (capacity=64); the dropped acks are NOT re-associated
+14:05:54.950 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-bulk-83 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:05:54.950 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack received — eventId=message-bulk-83 target=dev-b (receipt arrived before this send's registration; matched from the early-ack buffer, no timeout leg armed)
+14:05:54.953 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-orphan-1 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+[ackfix-spec] 等待中… 剩余 27s
+[ackfix-spec] 等待中… 剩余 22s
+[ackfix-spec] 等待中… 剩余 17s
+[ackfix-spec] 等待中… 剩余 12s
+[ackfix-spec] 等待中… 剩余 7s
+[ackfix-spec] 等待中… 剩余 2s
+[ackfix-spec] 等待中… 剩余 0s
+14:06:26.970 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] ack UNMATCHED — eventId=message-orphan-1 has no pending send in this process (held in the early-ack buffer for 30s and never claimed by any registration: an ack for another device's or another leg's send, or a receipt whose send was never registered)
+14:06:26.971 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-touch-1 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:06:26.974 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack received — eventId=message-normal-1 target=dev-b elapsed_ms=0
+[32mnebflow.neblink.DeviceMailAckRaceSpec:[0m
+[32m  + [0m[32m新增①时序竞态（顺序构造，= X1）：ack 先到、登记后到 ⇒ 无假 UNMATCHED、无假 TIMEOUT、不挂超时腿[0m [90m16.022s[0m
+[32m  + [0m[32m新增②残余交错窗（覆盖 R1 ③）：登记的先查早于缓冲写入 ⇒ 超时腿到点再查缓冲并降为 INFO[0m [90m16.03s[0m
+[32m  + [0m[32m新增③正控（= X2③）：对端确实不回 ⇒ 真超时仍判出（`delivery receipt not seen` 必须仍在）[0m [90m16.02s[0m
+[32m  + [0m[32m新增④有界性（= X5）：容量上界 + 溢出丢最旧（不崩 / 不误判 / 不无界增长）[0m [90m0.051s[0m
+[32m  + [0m[32m新增⑤措辞准确性：到期未认领的 ack 文案自称「进程内」而不再自称「本会话」[0m [90m32.021s[0m
+[32m  + [0m[32m回归：正常命中路径行为不变（登记后 ack ⇒ ack-received + elapsed_ms，缓冲零参与）[0m [90m0.003s[0m
+14:06:27.025 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec8400488450962723065/home-b1/device.json — minted deviceId=db247fc0-714e-590e-bd64-06310eab81c4 (scope=home|dc38f559-1d8d-5280-a47c-0d3321e527ad, machine-code derived) and persisted
+14:06:27.070 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec8400488450962723065/home-a1/device.json — minted deviceId=66189b50-4821-5364-983f-539d6bbbcfe2 (scope=home|811239e7-f333-563d-a91b-8c1089bb80fb, machine-code derived) and persisted
+14:06:27.586 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-warmup via http://127.0.0.1:49235 (dial target 127.0.0.1:49235)
+14:06:27.601 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=132 cacheHit=false decision=p2p
+14:06:27.606 [36mINFO [0m nebflow.rest-api - conn-guard: presence session superseded device=66189b50-4821-5364-983f-539d6bbbcfe2 ip=127.0.0.1 — previous session closed (per-device single-session)
+14:06:27.608 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-peer-b1 via http://127.0.0.1:49235 (dial target 127.0.0.1:49235)
+14:06:27.608 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-peer-b1 endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=6 cacheHit=false decision=p2p
+14:06:27.616 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-warmup, auto-reconnecting...
+14:06:27.622 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-warmup via http://127.0.0.1:49235: ConnectException (dial target 127.0.0.1:49235; tried 1 candidate endpoint(s))
+14:06:27.623 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=7 cacheHit=false decision=relay-no-answer
+14:06:29.616 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-peer-b1, auto-reconnecting...
+14:06:29.641 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec15612336984458587061/home-b2/device.json — minted deviceId=974517c0-7d0d-5de9-82e7-31c0cf0d165e (scope=home|323f5a50-6f68-5e0a-a09c-2aa86d236076, machine-code derived) and persisted
+14:06:29.660 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec15612336984458587061/home-a2/device.json — minted deviceId=d78255fc-b3db-5490-a866-b92e24df1f7c (scope=home|9a22ad4c-0f22-5985-9d01-52074cafe639, machine-code derived) and persisted
+14:06:29.670 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-warmup via http://127.0.0.1 (dial target 127.0.0.1:49254)
+14:06:29.671 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=5 cacheHit=false decision=p2p
+14:06:29.674 [36mINFO [0m nebflow.rest-api - conn-guard: presence session superseded device=d78255fc-b3db-5490-a866-b92e24df1f7c ip=127.0.0.1 — previous session closed (per-device single-session)
+14:06:29.675 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-peer-b2 via http://127.0.0.1 (dial target 127.0.0.1:49254)
+14:06:29.675 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-peer-b2 endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=4 cacheHit=false decision=p2p
+14:06:29.677 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-warmup, auto-reconnecting...
+14:06:29.679 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-warmup via http://127.0.0.1: ConnectException (dial target 127.0.0.1:49254; tried 1 candidate endpoint(s))
+14:06:29.679 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-no-answer
+14:06:31.680 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-peer-b2, auto-reconnecting...
+14:06:31.704 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec13396241127443292582/home-a3/device.json — minted deviceId=67c3b6dc-35ab-5574-8b35-1e9d3f5c9543 (scope=home|2b6deb95-e67f-5e6c-abc1-ccd71b066652, machine-code derived) and persisted
+14:06:31.723 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec13396241127443292582/home-b3/device.json — minted deviceId=2a9004de-763b-563c-b136-f31a7c7b13e5 (scope=home|81710a25-1d75-540e-a99b-bb909d19c0d4, machine-code derived) and persisted
+14:06:31.733 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-warmup via http://127.0.0.1:49277 (dial target 127.0.0.1:49277)
+14:06:31.734 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=5 cacheHit=false decision=p2p
+14:06:31.735 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-peer-dead via http://127.0.0.1: ConnectException (dial target 127.0.0.1:49278; tried 1 candidate endpoint(s))
+14:06:31.735 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-peer-dead endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-no-answer
+14:06:31.738 [36mINFO [0m nebflow.rest-api - conn-guard: presence session superseded device=2a9004de-763b-563c-b136-f31a7c7b13e5 ip=127.0.0.1 — previous session closed (per-device single-session)
+14:06:31.740 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-peer-live via http://127.0.0.1:49277 (dial target 127.0.0.1:49277)
+14:06:31.740 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-peer-live endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=4 cacheHit=false decision=p2p
+14:06:31.741 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-warmup, auto-reconnecting...
+14:06:31.743 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-warmup via http://127.0.0.1:49277: ConnectException (dial target 127.0.0.1:49277; tried 1 candidate endpoint(s))
+14:06:31.743 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-no-answer
+java.lang.IllegalStateException: supervisor already shutdown
+14:06:33.851 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec12807695015056156867/home-ea/device.json — minted deviceId=202a023e-735d-52d3-8a02-bb53235789f2 (scope=home|6b60a03e-3b0c-5fea-97a8-fd3864f7251e, machine-code derived) and persisted
+14:06:33.887 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec12807695015056156867/home-eb/device.json — minted deviceId=beaa75cc-ae27-5028-b389-97fd1982e122 (scope=home|b58b1a8a-781d-5e9e-bc18-afc2da96190f, machine-code derived) and persisted
+14:06:33.902 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-warmup via http://127.0.0.1:49303 (dial target 127.0.0.1:49303)
+14:06:33.903 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=6 cacheHit=false decision=p2p
+14:06:33.906 [36mINFO [0m nebflow.rest-api - conn-guard: presence session superseded device=202a023e-735d-52d3-8a02-bb53235789f2 ip=127.0.0.1 — previous session closed (per-device single-session)
+14:06:33.909 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for ISOLATED-B via http://127.0.0.1:49303 (dial target 127.0.0.1:49303)
+14:06:33.909 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=ISOLATED-B endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=5 cacheHit=false decision=p2p
+14:06:33.910 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-warmup, auto-reconnecting...
+14:06:33.913 [36mINFO [0m nebflow.rest-api - conn-guard: presence session superseded device=202a023e-735d-52d3-8a02-bb53235789f2 ip=127.0.0.1 — previous session closed (per-device single-session)
+14:06:33.915 [36mINFO [0m nebflow.neblink.presence - Reconnected to Dev-warmup after 1 attempt(s)
+14:06:33.915 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for ISOLATED-A via http://127.0.0.1:49302 (dial target 127.0.0.1:49302)
+14:06:33.916 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=ISOLATED-A endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=4 cacheHit=false decision=p2p
+14:06:33.917 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: ISOLATED-B, auto-reconnecting...
+14:06:35.923 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-warmup, auto-reconnecting...
+14:06:35.924 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for ISOLATED-B via http://127.0.0.1:49303: HTTP/1.1 header parser received no bytes (dial target 127.0.0.1:49303; tried 1 candidate endpoint(s))
+14:06:35.924 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=ISOLATED-B endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=2006 cacheHit=false decision=relay-no-answer
+14:06:35.926 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-warmup via http://127.0.0.1:49303: ConnectException (dial target 127.0.0.1:49303; tried 1 candidate endpoint(s))
+14:06:35.926 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=2 cacheHit=false decision=relay-no-answer
+14:06:36.928 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for ISOLATED-B via http://127.0.0.1:49303: ConnectException (dial target 127.0.0.1:49303; tried 1 candidate endpoint(s))
+14:06:37.927 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: ISOLATED-A, auto-reconnecting...
+14:06:37.954 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec15769870772438660080/home-b5/device.json — minted deviceId=c2249489-0b44-5d86-b2f8-8bbf20c650fb (scope=home|a76414a1-4ad8-586e-b5fd-3f57873cc385, machine-code derived) and persisted
+14:06:37.976 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec15769870772438660080/home-a5/device.json — minted deviceId=54441e7d-66d0-5179-856a-53b345e05c84 (scope=home|e68ed812-a409-5bcb-b369-6b3ee6aa7fa1, machine-code derived) and persisted
+14:06:37.985 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-warmup via http://127.0.0.1:49324 (dial target 127.0.0.1:49324)
+14:06:37.985 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=4 cacheHit=false decision=p2p
+14:06:37.988 [36mINFO [0m nebflow.rest-api - conn-guard: presence session superseded device=54441e7d-66d0-5179-856a-53b345e05c84 ip=127.0.0.1 — previous session closed (per-device single-session)
+14:06:37.989 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for INBOUND via http://127.0.0.1:49324 (dial target 127.0.0.1:49324)
+14:06:37.989 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=INBOUND endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=3 cacheHit=false decision=p2p
+14:06:37.990 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-warmup, auto-reconnecting...
+14:06:37.991 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-warmup via http://127.0.0.1:49324: ConnectException (dial target 127.0.0.1:49324; tried 1 candidate endpoint(s))
+14:06:37.991 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-no-answer
+14:06:39.996 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: INBOUND, auto-reconnecting...
+[32mnebflow.neblink.NeblinkPresenceServiceSpec:[0m
+[32m  + [0m[32mdial honours the candidate endpoint's port[0m [90m2.632s[0m
+[32m  + [0m[32mfalls back to the local port when the candidate carries none[0m [90m2.064s[0m
+[32m  + [0m[32mdial failure line prints the resolved dial target[0m [90m2.078s[0m
+[32m  + [0m[32me2e: an isolated instance pair (loopback, non-8080) reaches each other's presence route[0m [90m4.17s[0m
+[32m  + [0m[32mregression: an inbound peer (endpoints = Nil) still dials the port in its address[0m [90m2.069s[0m
+14:06:40.039 [36mINFO [0m nebflow.neblink.device - no device.json at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-76417e90/target/test-device-mail-race/device.json — minted deviceId=aeb509b7-69c2-5031-8203-6a8f0e2c2dc5 (scope=home|f60c528d-a2c6-587a-beed-aece805b7a4a, machine-code derived) and persisted
+14:06:40.776 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Device-flap via http://127.0.0.1:9: ConnectException (dial target 127.0.0.1:9; tried 1 candidate endpoint(s))
+14:06:40.777 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Device-flap endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=10 cacheHit=false decision=relay-no-answer
+14:06:41.473 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Device-relay-only via http://127.0.0.1:9: ConnectException (dial target 127.0.0.1:9; tried 1 candidate endpoint(s))
+14:06:41.473 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Device-relay-only endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-no-answer
+14:06:42.203 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Device-seen via http://127.0.0.1:9: ConnectException (dial target 127.0.0.1:9; tried 1 candidate endpoint(s))
+14:06:42.203 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Device-seen endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=14 cacheHit=false decision=relay-no-answer
+14:06:42.205 [36mINFO [0m nebflow.neblink.discovery - NebLink client hot-swapped
+14:06:42.918 [36mINFO [0m nebflow.neblink.discovery - NebLink client hot-swapped
+14:06:42.921 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Device-newcomer via http://127.0.0.1:9: ConnectException (dial target 127.0.0.1:9; tried 1 candidate endpoint(s))
+14:06:42.921 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Device-newcomer endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-no-answer
+14:06:44.339 [36mINFO [0m nebflow.neblink.discovery - NebLink client hot-swapped
+14:06:44.356 [36mINFO [0m nebflow.neblink.discovery - NebLink client hot-swapped
+14:06:44.358 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Device-peer-2 via http://127.0.0.1:9: ConnectException (dial target 127.0.0.1:9; tried 1 candidate endpoint(s))
+14:06:44.358 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Device-peer-2 endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-no-answer
+14:06:44.359 [36mINFO [0m nebflow.neblink.discovery - NebLink client hot-swapped
+[32mnebflow.neblink.NeblinkPresenceConvergenceSpec:[0m
+[32m  + [0m[32msyncPeers evicts ghost peers absent from the server response[0m [90m0.744s[0m
+[32m  + [0m[32msyncPeers eviction is cancelled when the peer reappears in time[0m [90m0.716s[0m
+[32m  + [0m[32msyncPeers keeps listed peers that never had a WS connection[0m [90m0.708s[0m
+[32m  + [0m[32msyncPeers refreshes lastSeen for listed peers (drives C3 freshness)[0m [90m0.018s[0m
+[32m  + [0m[32mheartbeat path evicts ghost peers (doHeartbeat uses syncPeers)[0m [90m0.72s[0m
+[32m  + [0m[32mheartbeat path adds new peers and evicts vanished ones in one cycle[0m [90m0.708s[0m
+[32m  + [0m[32monlineFreshnessMs: 90s floor matches server TTL, 2x interval slack above it[0m [90m0.001s[0m
+[32m  + [0m[32misPeerOnline: fresh peer online, aged-out peer offline, future skew tolerated[0m [90m0.001s[0m
+[32m  + [0m[32mDeviceStatusUpdate offline push flips a listed peer offline immediately[0m [90m0.006s[0m
+[32m  + [0m[32mDeviceStatusUpdate online push flips the peer back and cancels pending removal[0m [90m0.706s[0m
+[32m  + [0m[32moffline-flagged server peers are never freshened by sync (toNeblinkPeers honors online flag)[0m [90m0.003s[0m
+[32m  + [0m[32mrelay tunnel frame parser accepts camelCase and snake_case deviceId (C6 wire)[0m [90m0.008s[0m
+[32m  + [0m[32mDeviceStatusUpdate frame without deviceId is ignored, not fatal[0m [90m0.001s[0m
+[32m  + [0m[32mDeviceStatusUpdate status-string frame (current server wire) flips a peer online/offline (fix-client-events #1)[0m [90m0.002s[0m
+[32m  + [0m[32mDeviceStatusUpdate status:string is case-insensitive (ONLINE/OFFLINE tolerated)[0m [90m0.002s[0m
+[32m  + [0m[32mDeviceStatusUpdate online:boolean still wins when both spellings are present (back-compat)[0m [90m0.001s[0m
+[32m  + [0m[32m② 心跳腿：服务端名册回传本机自身时不得进设备面（self 条目被剔除）[0m [90m0.002s[0m
+[32m  + [0m[32m② 发现腿：discoverViaServer 同样不得把本机自身写进设备面[0m [90m0.004s[0m
+14:06:44.361 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Device-peer-3 via http://127.0.0.1:9: ConnectException (dial target 127.0.0.1:9; tried 1 candidate endpoint(s))
+14:06:44.361 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Device-peer-3 endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-no-answer
+14:06:44.388 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-kick-park-spec9923951650419929700/device.json — minted deviceId=dc34ddb2-c27f-54c0-b9ba-b38ec19eab1e (scope=home|4abb78ba-4869-590d-a95d-cd841ab3205f, machine-code derived) and persisted
+14:06:44.403 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+14:06:44.404 [36mINFO [0m nebflow.neblink.relay - Starting relay tunnel to NebLink Server
+14:06:44.415 [36mINFO [0m nebflow.neblink.relay - Relay tunnel connected: ws://127.0.0.1:49382/api/device/relay-ws?deviceId=dc34ddb2-c27f-54c0-b9ba-b38ec19eab1e portalV2=false
+14:06:44.459 [33mWARN [0m nebflow.neblink.relay - Relay tunnel: server sent Disconnect — this device was signed in elsewhere; auto-reconnect/re-register is parked until an explicit user login
+14:06:44.460 [36mINFO [0m nebflow.neblink.relay - Relay tunnel disconnected after 0s, reconnecting (step 0, short-lived streak 0)...
+14:06:52.501 [36mINFO [0m nebflow.neblink.relay - Relay tunnel disconnected: stop() — tunnel torn down (logout local teardown); status no longer reports this tunnel connected
+14:06:52.526 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-kick-park-spec9503841257319932872/device.json — minted deviceId=33859034-000d-5001-8a64-678c79da7194 (scope=home|1809078a-66dd-59d4-9cc7-a6dfffe64880, machine-code derived) and persisted
+14:06:52.529 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+14:06:52.530 [36mINFO [0m nebflow.neblink.relay - Starting relay tunnel to NebLink Server
+14:06:52.531 [36mINFO [0m nebflow.neblink.relay - Relay tunnel connected: ws://127.0.0.1:49412/api/device/relay-ws?deviceId=33859034-000d-5001-8a64-678c79da7194 portalV2=false
+14:06:52.582 [33mWARN [0m nebflow.neblink.relay - Relay tunnel: server sent Disconnect — this device was signed in elsewhere; auto-reconnect/re-register is parked until an explicit user login
+14:06:52.582 [36mINFO [0m nebflow.neblink.relay - Relay tunnel disconnected after 0s, reconnecting (step 0, short-lived streak 0)...
+14:06:56.636 [36mINFO [0m nebflow.neblink.relay - Relay tunnel: explicit user login — kick park lifted, reconnecting
+14:06:56.642 [36mINFO [0m nebflow.neblink.relay - Relay tunnel connected: ws://127.0.0.1:49412/api/device/relay-ws?deviceId=33859034-000d-5001-8a64-678c79da7194 portalV2=false
+14:06:56.691 [36mINFO [0m nebflow.neblink.relay - Relay tunnel disconnected: stop() — tunnel torn down (logout local teardown); status no longer reports this tunnel connected
+14:06:56.719 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-kick-park-spec4044705209059499610/device.json — minted deviceId=0fd8fbce-f2c5-57cf-a1bf-623d26918039 (scope=home|a14132e4-8fd5-5d32-a52f-b335b56f5b7c, machine-code derived) and persisted
+14:06:56.733 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+14:06:56.733 [36mINFO [0m nebflow.neblink.relay - Starting relay tunnel to NebLink Server
+14:06:56.735 [36mINFO [0m nebflow.neblink.relay - Relay tunnel connected: ws://127.0.0.1:49431/api/device/relay-ws?deviceId=0fd8fbce-f2c5-57cf-a1bf-623d26918039 portalV2=false
+14:06:56.786 [33mWARN [0m nebflow.neblink.relay - Relay tunnel: server sent Disconnect — this device was signed in elsewhere; auto-reconnect/re-register is parked until an explicit user login
+14:06:56.786 [36mINFO [0m nebflow.neblink.relay - Relay tunnel disconnected after 0s, reconnecting (step 0, short-lived streak 0)...
+14:06:56.828 [33mWARN [0m nebflow.neblink.client - NebLink auto-login suppressed [self-heal:spec-parked]: this device was signed out elsewhere (server-forced disconnect) — waiting for an explicit user login
+14:06:56.828 [33mWARN [0m nebflow.neblink.client - NebLink auto-login suppressed [login]: this device was signed out elsewhere (server-forced disconnect) — waiting for an explicit user login
+[kick-nail/gates] parked logins=1→1 registers=0→0 tokens=0 sessionRejections=0
+14:06:58.836 [36mINFO [0m nebflow.neblink.relay - Relay tunnel: explicit user login — kick park lifted, reconnecting
+14:06:58.845 [33mWARN [0m nebflow.neblink.relay - Relay tunnel upgrade rejected (auth): HTTP 403 — body: {"error":"Missing or invalid token"} — attempting session self-heal (re-login)
+14:06:58.847 [36mINFO [0m nebflow.neblink.client - Heartbeat failed (HTTP 403: {"error":"Missing or invalid token"}), re-logging in...
+14:06:58.847 [33mWARN [0m nebflow.neblink.client - NebLink session rejected by server (401/403 auth) — attempting silent re-login [relay-upgrade-auth-reject]
+14:06:58.849 [36mINFO [0m nebflow.neblink.client - Device token rejected by NebLink Server — attempting Logto silent re-login
+14:06:58.850 [36mINFO [0m nebflow.neblink.client - Device token rejected by NebLink Server — attempting Logto silent re-login
+14:06:58.854 [36mINFO [0m nebflow.neblink.relogin - [logto-ac] attempting refresh-token rotation with a stored pre-O5 credential — O5: authorize no longer requests offline_access (alwaysIssueRefreshToken=false), so no refresh_token is issued for a new login
+14:06:58.854 [36mINFO [0m nebflow.neblink.relogin - [logto-ac] attempting refresh-token rotation with a stored pre-O5 credential — O5: authorize no longer requests offline_access (alwaysIssueRefreshToken=false), so no refresh_token is issued for a new login
+14:06:58.906 [36mINFO [0m nebflow.neblink.relogin - [logto-ac] silent re-login succeeded
+14:06:58.906 [36mINFO [0m nebflow.neblink.relogin - [logto-ac] silent re-login succeeded
+14:06:58.908 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+14:06:58.908 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+14:06:58.909 [33mWARN [0m nebflow.neblink.relay - Relay tunnel session self-heal: re-login OK — retrying with the refreshed token
+14:06:58.909 [36mINFO [0m nebflow.neblink.relay - Relay tunnel disconnected: stop() — tunnel torn down (logout local teardown); status no longer reports this tunnel connected
+[32mnebflow.neblink.NeblinkRelayTunnelKickParkSpec:[0m
+[32m  + [0m[32mkick: a server `disconnect` frame emits the passive notice AND parks reconnects (zero attempts, zero re-login)[0m [90m8.139s[0m
+[32m  + [0m[32mkick: only an explicit user login lifts the park (the automatic path must not)[0m [90m4.191s[0m
+[32m  + [0m[32mkick: while parked the automatic legs are refused with ZERO HTTP; an explicit user login releases them and the register leg runs again[0m [90m2.217s[0m
+[32m  + [0m[32mstatusJson: the kick fields are additive; the pre-案-B shape is unchanged when not kicked[0m [90m0.001s[0m
+14:06:58.949 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+14:06:58.952 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+14:06:58.953 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+14:06:58.954 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+14:06:58.955 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+14:06:58.956 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+14:06:58.980 [36mINFO [0m nebflow.neblink.devicemail - [device-mail] received agent_mail (event stream envelope) from_device=KAI-MBP from_device_id=dev-a chars=7 eventId=message-1000000000000001
+14:06:58.987 [36mINFO [0m nebflow.neblink.devicemail - [device-mail] injected into Nebula root session 6cf91801 (from_device=KAI-MBP, source=deviceMail, type=INFO)
+14:06:58.988 [36mINFO [0m nebflow.neblink.devicemail - [device-mail] ack sent to the server: eventId=message-1000000000000001 (injection persisted)
+14:06:59.294 [33mWARN [0m nebflow.neblink.devicemail - [device-mail] ignored top-level 'agent_mail' frame: the v2.1 entry is the 'friend_event' event-stream envelope (single entry — nothing injected)
+14:06:59.927 [36mINFO [0m nebflow.neblink.devicemail - [device-mail] received agent_mail (event stream envelope) from_device=KAI-MBP from_device_id=dev-a chars=7 eventId=<none>
+14:06:59.928 [36mINFO [0m nebflow.neblink.devicemail - [device-mail] injected into Nebula root session ba4ff042 (from_device=KAI-MBP, source=deviceMail, type=INFO)
+14:06:59.928 [36mINFO [0m nebflow.neblink.devicemail - [device-mail] injection persisted but the frame carries no eventId ⇒ no ack (receipt uncorrelated)
+14:07:00.233 [33mWARN [0m nebflow.neblink.devicemail - [device-mail] ignored malformed 'agent_mail' event: missing/blank 'from_device_id' (fail-closed — nothing injected, no bubble rendered, no ack sent)
+14:07:00.234 [33mWARN [0m nebflow.neblink.devicemail - [device-mail] ignored malformed 'agent_mail' event: missing 'event.payload' (fail-closed — nothing injected, no bubble rendered, no ack sent)
+14:07:00.536 [36mINFO [0m nebflow.neblink.devicemail - [device-mail] received agent_mail (event stream envelope) from_device=KAI-MBP from_device_id=dev-a chars=7 eventId=message-fail-1
+14:07:00.538 [33mWARN [0m nebflow.neblink.devicemail - [device-mail] injection attempt 1/3 failed — retrying in 2s
+14:07:02.541 [33mWARN [0m nebflow.neblink.devicemail - [device-mail] injection attempt 2/3 failed — retrying in 2s
+14:07:04.546 [33mWARN [0m nebflow.neblink.devicemail - [device-mail] injection FAILED and is NOT silent: no live Nebula root session (NEBULA_ROOT_UNRESOLVED) — nothing injected (attempts=3)
+14:07:04.550 [33mWARN [0m nebflow.neblink.devicemail - [device-mail] ack NOT sent (injection failed, so the event is not processed): eventId=message-fail-1
+14:07:04.859 [36mINFO [0m nebflow.neblink.devicemail - [device-mail] received agent_mail (event stream envelope) from_device=KAI-MBP from_device_id=dev-a chars=7 eventId=message-nowire-1
+14:07:04.859 [33mWARN [0m nebflow.neblink.devicemail - [device-mail] injection attempt 1/3 failed — retrying in 2s
+14:07:06.859 [33mWARN [0m nebflow.neblink.devicemail - [device-mail] injection attempt 2/3 failed — retrying in 2s
+14:07:08.861 [33mWARN [0m nebflow.neblink.devicemail - [device-mail] injection FAILED and is NOT silent: DeviceMailInbox is not wired (no resources) — injection skipped (attempts=3)
+14:07:08.862 [33mWARN [0m nebflow.neblink.devicemail - [device-mail] ack NOT sent (injection failed, so the event is not processed): eventId=message-nowire-1
+14:07:08.863 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack received — eventId=message-m-77 target=dev-b elapsed_ms=0
+14:07:08.864 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-nope arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:07:08.865 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-m-race arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:07:08.866 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack received — eventId=message-m-race target=dev-b (receipt arrived before this send's registration; matched from the early-ack buffer, no timeout leg armed)
+14:07:39.870 [33mWARN [0m nebflow.neblink.devicemail.ack - [device-mail] ack TIMEOUT after 15s — eventId=message-m-offline-1 target=dev-offline (delivery receipt not seen; the send itself is NOT retried)
+14:07:40.872 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-m-offline-1 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+[32mnebflow.neblink.DeviceMailSpec:[0m
+[32m  + [0m[32mpayload: 恰契约五键，逐键等值（对契约原文比对，非自造期望）[0m [90m0.004s[0m
+[32m  + [0m[32mpayload: to_nebula 恒 true（契约不变量）[0m [90m0.0s[0m
+[32m  + [0m[32mparse: 契约原文 ⇒ Right（from_device 展示名 / from_device_id / 正文）[0m [90m0.002s[0m
+[32m  + [0m[32mparse fail-closed: 未知 type / 缺字段 / to_nebula 非真 / 空正文 一律 Left（禁崩溃、禁误渲染）[0m [90m0.002s[0m
+[32m  + [0m[32m注入头行逐字 + eventId 前缀单点（message-<id> 形态）[0m [90m0.0s[0m
+[32m  + [0m[32mretired: the Mail schema has NO `device` key (parameter face 6 keys, required stays [message] — address is the only target)[0m [90m0.01s[0m
+[32m  + [0m[32mdevice face: any stale `device=` call refuses with MAIL_DEVICE_UNSUPPORTED (even address+device double-filled — the device guard outranks the old exclusivity gate)[0m [90m0.005s[0m
+[32m  + [0m[32mretired: the target face is address-only — double-missing still reads MAIL_TARGET_MISSING and names the retirement[0m [90m0.001s[0m
+[32m  + [0m[32m端点形态：POST {url}/api/relay/{target}/mail，body = 契约五键载荷本体[0m [90m0.005s[0m
+[32m  + [0m[32m响应缺 id ⇒ 空串（不伪造 id；ack 关联面显式可判）[0m [90m0.001s[0m
+[32m  + [0m[32mB 批：`delivered` 加性读取三态（显式 true / 显式 false / 非布尔值）[0m [90m0.004s[0m
+[32m  + [0m[32m收件腿（v2.1 单一入场）：事件流信封 ⇒ 注入本机 Nebula —— 头行逐字 + source=deviceMail + INFO + sender=from_device[0m [90m0.335s[0m
+[32m  + [0m[32m收件腿（v2.1 单一入场负控）：顶层裸 agent_mail 帧不再是入口 —— 零注入、零 ack、零告警[0m [90m0.308s[0m
+[32m  + [0m[32m收件腿（非本批事件）：普通 friend_event / 其它帧 ⇒ 零副作用（原样交回既有路径）[0m [90m0.321s[0m
+[32m  + [0m[32m收件腿：信封未带 eventId ⇒ 注入照常、不回 ack（显式登记，不静默）[0m [90m0.309s[0m
+[32m  + [0m[32m收件腿：畸形载荷（缺字段/未知 event.type/缺 payload）⇒ 忽略 + 不注入 + 不告警（老版本对端降级不崩）[0m [90m0.305s[0m
+[32m  + [0m[32m收件腿：无 live Nebula root ⇒ 重试后告警帧（注入失败禁静默）[0m [90m4.32s[0m
+[32m  + [0m[32m收件腿：未接线 ⇒ 显式失败（不静默成功）[0m [90m4.007s[0m
+[32m  + [0m[32mack：eventId 关联命中 ⇒ 出队（pending 归零）；未知 message- 族 ⇒ 不静默（WARN 路径可跑）[0m [90m0.002s[0m
+[32m  + [0m[32mack 时序竞态（ackfix 批）：ack 先到、登记后到 ⇒ 命中缓冲、不挂超时腿（无残留）[0m [90m16.004s[0m
+[32m  + [0m[32mack：无响应 id ⇒ @unkeyed 占位（禁伪造 id，超时行据此可判）[0m [90m0.001s[0m
+[32m  + [0m[32mack 边界（v2.1 ②）：超时窗内无 ack ⇒ 到点出队为「未确认」，零重发、零补投[0m [90m16.004s[0m
+14:07:40.911 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-persist-spec9148028135191471599/device.json — minted deviceId=98ace875-3070-5a51-a5fc-e81c79557e83 (scope=home|a6003ca5-7f28-5f88-a3ce-078cbf8733fd, machine-code derived) and persisted
+14:07:40.938 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-persist-spec15139048212744150198/device.json — minted deviceId=3239dabc-5be5-5865-a93c-adfc5d264e8e (scope=home|010afd0a-6230-5363-96ab-f9277aae88c7, machine-code derived) and persisted
+14:07:40.963 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-persist-spec10227599648313291072/device.json — minted deviceId=f8d12ea1-c59a-5d7c-9652-d5e77f9f3032 (scope=home|1daa7a19-c9fe-59eb-b43f-8e48019173d9, machine-code derived) and persisted
+14:07:40.986 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-persist-spec5031790578656051387/device.json — minted deviceId=276715d7-8c8c-59e5-abf9-7640fb70d05c (scope=home|b8e242b8-83e5-5769-9f93-e28c6ba5751e, machine-code derived) and persisted
+14:07:41.010 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-persist-spec16497414926176944267/device.json — minted deviceId=8ab16cfb-1dbf-5c1f-95ec-816c0adef221 (scope=home|70dfff91-d3e5-536e-9d14-d470c4e3a9b3, machine-code derived) and persisted
+14:07:41.012 [33mWARN [0m nebflow.neblink.devicecred - device.json still carries the deprecated `deviceToken` field — it is NOT the outbound credential source (neblink/config.json is, see NeblinkClient) and its value is ignored on read; nothing is deleted (migration-style), cleanup is a separate batch
+14:07:41.033 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-persist-spec454665507298750929/device.json — minted deviceId=75698725-40b4-5dbf-8b6c-a91e3fd0b264 (scope=home|9f7753c6-a824-5a80-9cfa-dff5da62424e, machine-code derived) and persisted
+[32mnebflow.neblink.NeblinkEnrollmentPersistSpec:[0m
+[32m  + [0m[32mpersist writes deviceToken into config.json (startup session-recovery precondition)[0m [90m0.038s[0m
+[32m  + [0m[32mpersist preserves unrelated top-level config sections (logto, agentMessaging)[0m [90m0.025s[0m
+[32m  + [0m[32mpersisted config reads back via NeblinkConfig.load (round-trip)[0m [90m0.025s[0m
+[32m  + [0m[32mo5fix: persist lands the identity when the login carries an id_token but NO refresh token[0m [90m0.024s[0m
+[32m  + [0m[32mo5fix: a login carrying no logto data at all must not wipe the stored block (覆盖写不劣于现状)[0m [90m0.024s[0m
+[32m  + [0m[32mo5fix: an incoming id_token replaces the stored identity; a foreign serverUrl never carries over[0m [90m0.025s[0m
+[32mnebflow.neblink.FriendAttachMirrorProbeSpec:[0m
+[32m  + [0m[32mA-1 (red nail): attachments survive the gateway re-encode (decode -> asJson)[0m [90m0.003s[0m
+[32m  + [0m[32mA-1/§B.3: a message without attachments re-encodes byte-identically (no `attachments` key, no null)[0m [90m0.0s[0m
+[32m  + [0m[32mA-1/§B.3: an explicit empty array is equivalent to 'no attachments' (key omitted)[0m [90m0.0s[0m
+[32m  + [0m[32mA-1/§B.7: expired attachments keep name+size and the expired state[0m [90m0.001s[0m
+14:07:41.049 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack buffered — eventId=message-probe-1 arrived with no pending send in this process (a send for it may still be registering: its HTTP response has not returned yet); held 30s for the registration, no verdict yet
+14:07:41.050 [36mINFO [0m nebflow.neblink.devicemail.ack - [device-mail] ack received — eventId=message-probe-1 target=dev-p (receipt arrived before this send's registration; matched from the early-ack buffer, no timeout leg armed)
+[ackfix-probe] 等待中… 剩余 11s
+[ackfix-probe] 等待中… 剩余 6s
+[ackfix-probe] 等待中… 剩余 1s
+[ackfix-probe] 等待中… 剩余 0s
+[32mnebflow.neblink.DeviceMailAckRaceProbeSpec:[0m
+[32m  + [0m[32mX1 判据（同构造双向）：ack 先到、登记后到 ⇒ 禁假 UNMATCHED、禁假 TIMEOUT[0m [90m16.011s[0m
+14:07:57.096 [33mWARN [0m nebflow.neblink.client - NebLink outbound request failed bucket=other bucketCount=1 method=POST path=/api/device/heartbeat at=2026-11-04T06:07:57.093635Z errorClass=ConnectException error=java.net.ConnectException
+[instrument] [33mWARN [0m nebflow.neblink.client - NebLink outbound request failed bucket=other bucketCount=1 method=POST path=/api/device/heartbeat at=2026-11-04T06:07:57.093635Z errorClass=ConnectException error=java.net.ConnectException
+14:07:57.506 [33mWARN [0m nebflow.neblink.client - NebLink outbound request failed bucket=HttpTimeoutException bucketCount=1 method=GET path=/api/health at=2026-11-04T06:07:57.506343Z errorClass=HttpTimeoutException error=request timed out
+[instrument] [33mWARN [0m nebflow.neblink.client - NebLink outbound request failed bucket=HttpTimeoutException bucketCount=1 method=GET path=/api/health at=2026-11-04T06:07:57.506343Z errorClass=HttpTimeoutException error=request timed out
+[factory] lookups=4 (3x Direct15s + 1x SystemProxy10s) constructions=1
+[reuse] shared-client client ports=List(49668, 49668) (expect 1 distinct) ; per-call client ports=List(49669, 49670) (expect 2 distinct)
+[32mnebflow.neblink.OutboundTransportPolicySpec:[0m
+[32m  + [0m[32mbucketOf separates the five buckets, most specific class first[0m [90m0.004s[0m
+[32m  + [0m[32mpathShapeOf drops host + query and masks identifier segments[0m [90m0.003s[0m
+[32m  + [0m[32ma real unreachable target is bucketed as 'other', logged once, and the Left text is unchanged[0m [90m0.022s[0m
+[32m  + [0m[32ma real request timeout lands in the HttpTimeoutException bucket[0m [90m0.407s[0m
+[32m  + [0m[32mthe factory memoizes one client per policy, with the two policies' timeouts/proxy preserved[0m [90m0.002s[0m
+[32m  + [0m[32mthe shared client reuses its TCP connection; the pre-change per-call clients do not[0m [90m0.04s[0m
