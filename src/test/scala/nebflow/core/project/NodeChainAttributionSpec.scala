@@ -38,7 +38,7 @@ import scala.concurrent.duration.*
  *  - ②首条消息链头（§9.2 项 7）：有链 → `[chain: <title> (<chainId>) · N 节点]`
  *    单行注入；无链 → 整块不注入（不注空行、零占位）
  *  - ③文件名尾溯源提示段（§9.2 项 8 注入面；R-3 取代原「元数据头模板」）：段紧随
- *    链头，教 `<YYYYMMDD>_<HHMMSS>_<topic>__<chainId>.md` 尾段形态与「正文零元数据头」
+ *    链头，教 `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md` 尾段形态与「正文零元数据头」
  *    ——注入面**不得再含 front matter 段**（无 `---` 行、无八键白名单行；T1 负断言钉死）
  *  - ③bis 存量元数据头键数口径（**历史**，2026-09-10 作者裁定）：仅作存量读取侧
  *    （`index-backfill.py` legacy 路径）的判据记录，不再由引擎注入（T2）
