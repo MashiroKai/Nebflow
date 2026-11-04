@@ -61,7 +61,7 @@
   flex-shrink: 0;
 }
 #usage-title {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--color-text);
@@ -82,7 +82,7 @@
   min-width: 0;
 }
 .ud-card-label {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: var(--color-text-muted);
   white-space: nowrap;
@@ -90,7 +90,7 @@
   text-overflow: ellipsis;
 }
 .ud-card-value {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--color-text);
@@ -116,7 +116,7 @@
 .ud-stats { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
 .ud-stats-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .ud-stats-label {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: var(--color-text-muted);
 }
@@ -130,7 +130,7 @@
 .ud-srange {
   border: none;
   background: transparent;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text-muted);
   padding: 3px 10px;
@@ -162,7 +162,7 @@
 .ud-hdim {
   border: none;
   background: transparent;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text-muted);
   padding: 3px 10px;
@@ -177,7 +177,7 @@
   font-weight: 600;
 }
 .ud-dimlabel {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: rgb(var(--sapphire) / 0.9);
   font-variant-numeric: tabular-nums;
@@ -190,7 +190,7 @@
 .ud-select {
   appearance: none;
   -webkit-appearance: none;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text);
   padding: 4px 22px 4px 10px;
@@ -212,7 +212,7 @@
 .ud-cm, .ud-dim {
   border: none;
   background: transparent;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text-muted);
   padding: 3px 10px;
@@ -350,7 +350,7 @@
 }
 .ud-empty[hidden] { display: none; }
 .ud-empty-title { font-size: 14px; font-weight: 600; color: var(--color-text); margin-bottom: 4px; }
-.ud-empty-hint { font-size: 12px; }
+.ud-empty-hint { font-size: var(--ds-fs-hint); }
 
 /* ── Intraday curve (v1.3, ruling ③) ──────────────────────────────── */
 .ud-curve {
@@ -370,7 +370,7 @@
   gap: 8px;
   margin-bottom: 8px;
 }
-.ud-curve-title { font-size: 13px; font-weight: 600; color: var(--color-text); }
+.ud-curve-title { font-size: var(--ds-fs-body); font-weight: 600; color: var(--color-text); }
 .ud-drill-open { margin-left: auto; }
 .ud-curve-body {
   background: var(--glass-bg);
@@ -394,7 +394,7 @@
   font-variant-numeric: tabular-nums;
 }
 .ud-curve-empty {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
   padding: 24px 0;
   text-align: center;
@@ -423,16 +423,16 @@
   gap: 8px;
   margin-bottom: 8px;
 }
-#usage-drill-title { font-size: 13px; font-weight: 600; color: var(--color-text); }
+#usage-drill-title { font-size: var(--ds-fs-body); font-weight: 600; color: var(--color-text); }
 .ud-drill-dims { margin-left: auto; }
 #usage-rank { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
-.ud-rank-group-title { font-size: 11px; font-weight: 500; color: var(--color-text-muted); margin-bottom: 3px; }
+.ud-rank-group-title { font-size: var(--ds-fs-meta); font-weight: 500; color: var(--color-text-muted); margin-bottom: 3px; }
 .ud-rank-row {
   display: grid;
   grid-template-columns: minmax(60px, 140px) 1fr 52px;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text);
 }
 .ud-rank-key { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -448,14 +448,14 @@
 .ud-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
   font-variant-numeric: tabular-nums;
 }
 .ud-table th {
   text-align: left;
   font-weight: 500;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   padding: 4px 8px;
   border-bottom: 1px solid var(--color-border);
@@ -471,7 +471,7 @@
 .ud-table tbody tr:hover { background: var(--glass-etched-bg); }
 .ud-table .num { text-align: right; }
 .ud-drill-empty, .ud-drill-error {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
   padding: 12px 0;
   text-align: center;
@@ -490,7 +490,7 @@
   border-radius: 8px;
   box-shadow: 0 2px 12px var(--glass-control-glow);
   padding: 6px 10px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text);
   font-variant-numeric: tabular-nums;
   max-width: 260px;

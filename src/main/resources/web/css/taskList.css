@@ -42,7 +42,7 @@
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   cursor: default;
   /* 钉顶头：位于滚动容器（.task-body-inner）之外的兄弟节点，天然不随
      内容滚走；flex-shrink:0 防 50vh 高度压力下头部被压缩。 */
@@ -131,7 +131,7 @@
 
 /* ── Empty zone state (C27, §15.5/§15.6) ── */
 .task-empty {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 400;
   color: var(--color-text-muted, #888);
   padding: 4px 2px;
@@ -163,7 +163,7 @@
   align-items: flex-start;
   gap: 8px;
   padding: 3px 0;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   line-height: 1.4;
   cursor: pointer;
   border-radius: 6px;
@@ -253,7 +253,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 400;
   color: var(--color-text-muted, #888);
 }
@@ -340,7 +340,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
 }
 .task-chain-folded-word {
@@ -493,7 +493,7 @@
   height: var(--task-chain-node-h);
   box-sizing: border-box;
   padding: 0 4px 0 calc(16px + min(var(--nest, 0), var(--task-chain-nest-cap)) * var(--task-chain-nest-step));
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 1;
   cursor: pointer;
   border-radius: 6px;

@@ -320,7 +320,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 600;
   color: color-mix(in srgb, var(--color-text, #000) 78%, transparent);
 }

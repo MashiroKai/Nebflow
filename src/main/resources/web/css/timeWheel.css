@@ -21,7 +21,7 @@
   box-sizing: border-box;
   padding: 0 12px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--color-text);
@@ -141,7 +141,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
 .tw-title {
   flex: 1;
   text-align: center;
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   line-height: 1.3;
 }
@@ -154,7 +154,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   box-sizing: border-box;
   padding: 0 10px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   color: var(--color-text-muted);
   background: transparent;
@@ -207,7 +207,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: var(--ds-fs-display);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--color-text);
@@ -215,7 +215,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   transform: scale(0.94);
   pointer-events: none;
 }
-.tw-col-date .tw-item { font-size: 13px; }
+.tw-col-date .tw-item { font-size: var(--ds-fs-body); }
 .tw-band {
   position: absolute;
   left: 0;
@@ -245,7 +245,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
 .tw-sep {
   flex: none;
   padding: 0 6px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   color: var(--color-text-muted);
 }
@@ -263,7 +263,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
 .tw-chips[hidden] { display: none; }
 .tw-days-label {
   align-self: center;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
   padding-right: 2px;
 }
@@ -276,7 +276,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   box-sizing: border-box;
   padding: 0 12px;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text-muted);
   background: var(--glass-control-bg);
@@ -302,7 +302,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   margin-top: 8px;
   padding: 6px 10px;
   border-radius: var(--ds-radius-input);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   line-height: 1.45;
 }
@@ -333,7 +333,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   box-sizing: border-box;
   padding: 0 10px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--color-text);
@@ -355,7 +355,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   min-height: 44px;
   padding: 0 8px;
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: var(--color-text-muted);
   background: transparent;
@@ -379,12 +379,12 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   padding: 4px 0;
 }
 .tw-row-label {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
   flex-shrink: 0;
 }
 .tw-row-note {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.1);
@@ -404,7 +404,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   box-sizing: border-box;
   padding: 0;
   font-family: inherit;
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   line-height: 1;
   color: var(--color-text-muted);
   background: transparent;
@@ -426,7 +426,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
   margin-top: 6px;
   padding: 0 14px;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text);
   background: var(--glass-control-bg);
@@ -437,7 +437,7 @@ html.no-backdrop .tw-panel { background: var(--color-surface); }
 }
 .tw-add-row:hover { background: var(--glass-control-bg-hover); }
 .tw-empty {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
   padding: 6px 0;
 }

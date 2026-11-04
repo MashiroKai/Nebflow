@@ -156,7 +156,7 @@ html[data-theme="dark"] {
 .nfc-actions .g2-pill {
   height: 34px;
   padding: 0 18px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 .nfc-actions .g2-pill:disabled { cursor: not-allowed; }
 

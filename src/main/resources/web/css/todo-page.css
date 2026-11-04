@@ -53,7 +53,7 @@
   flex-shrink: 0;
 }
 .todo-page-title {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--color-frame-text);
@@ -64,7 +64,7 @@
   gap: 6px;
 }
 .todo-page-count {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
   color: var(--color-frame-text-muted);
@@ -115,7 +115,7 @@
 
 /* ── 分组签（苹果提醒事项小标题语言：小号、淡、计数） ─────────────── */
 .todo-grp {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   letter-spacing: 0.01em;
   color: var(--color-frame-text-muted);
@@ -174,7 +174,7 @@
   border: 1px solid var(--glass-control-border, rgba(91, 127, 191, 0.18));
   background: none;
   color: var(--color-frame-text-muted);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   line-height: 18px;
   padding: 0 9px;
@@ -241,7 +241,7 @@
   border: none;
   background: none;
   color: var(--color-frame-text);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   outline: none;
 }
 .reminder-inline-project input::placeholder {

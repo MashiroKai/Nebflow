@@ -1315,7 +1315,7 @@ function renderUrlPane(pane, url) {
   // (javascript:, data:, file:) so the sandbox stays meaningful.
   if (!/^https?:\/\//i.test(url)) {
     const err = document.createElement('div');
-    err.style.cssText = 'padding:24px;font-size:13px;color:var(--color-text-muted)';
+    err.style.cssText = 'padding:24px;font-size:var(--ds-fs-body);color:var(--color-text-muted)';
     err.textContent = '无法显示该链接：仅支持 http/https 网页。';
     pane.appendChild(err);
     return;
@@ -1356,7 +1356,7 @@ function renderUrlPane(pane, url) {
   // ── Bottom hint strip — always visible (embedding refusal is undetectable) ──
   const hint = document.createElement('div');
   hint.style.cssText = 'flex:none;display:flex;align-items:center;justify-content:center;gap:6px;' +
-    'padding:4px 12px;font-size:11px;color:var(--color-text-muted);opacity:.7;user-select:none';
+    'padding:4px 12px;font-size:var(--ds-fs-meta);color:var(--color-text-muted);opacity:.7;user-select:none';
   const hintText = document.createElement('span');
   hintText.textContent = '如果页面没有显示，可能是该网站不允许嵌入';
   const hintLink = document.createElement('a');
@@ -1418,10 +1418,10 @@ function renderFilePlaceholder(paneEl, errorMsg, absPath) {
   ].join(';');
   const iconRow = document.createElement('div');
   iconRow.textContent = t('canvas.unreadableTitle');
-  iconRow.style.cssText = 'font-weight:600;color:var(--color-text);font-size:15px;';
+  iconRow.style.cssText = 'font-weight:600;color:var(--color-text);font-size:var(--ds-fs-title);';
   const path = document.createElement('div');
   path.textContent = absPath || '';
-  path.style.cssText = 'font-family:var(--font-mono,monospace);font-size:12px;word-break:break-all;';
+  path.style.cssText = 'font-family:var(--font-mono,monospace);font-size:var(--ds-fs-hint);word-break:break-all;';
   const hint = document.createElement('div');
   hint.textContent = `${readErrorHint(errorMsg)}${errorMsg ? ' ' + errorMsg : ''}`;
   wrap.append(iconRow, path, hint);
@@ -4820,7 +4820,7 @@ function cardWindowBootFace(fileName) {
     'animation:nf-cardwin-spin 0.9s linear infinite;';
   const title = document.createElement('div');
   title.className = 'nf-cw-title';
-  title.style.cssText = 'font-weight:600;font-size:13px;max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  title.style.cssText = 'font-weight:600;font-size:var(--ds-fs-body);max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
   title.textContent = fileName || t('canvas.loadingFile');
   const hint = document.createElement('div');
   hint.className = 'nf-cw-hint';
@@ -4831,7 +4831,7 @@ function cardWindowBootFace(fileName) {
   retry.style.cssText =
     'display:none;margin-top:2px;padding:5px 16px;border-radius:8px;cursor:pointer;' +
     'border:1px solid var(--glass-control-border,#d8d9dd);background:var(--glass-control-bg,transparent);' +
-    'color:inherit;font-size:12px;';
+    'color:inherit;font-size:var(--ds-fs-hint);';
   retry.addEventListener('click', () => { try { location.reload(); } catch { /* 无历环境 */ } });
   el.append(dot, title, hint, retry);
   const style = document.createElement('style');

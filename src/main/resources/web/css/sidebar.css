@@ -1166,7 +1166,7 @@
   background: none;
   border: none;
   color: var(--color-frame-text-muted);
-  font-size: 16px;
+  font-size: var(--ds-fs-mobile-callout);
   cursor: pointer;
   padding: 0 4px;
   line-height: 1;
@@ -1719,7 +1719,7 @@
   margin-left: 8px;
   padding: 1px 8px;
   border-radius: 9px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 16px;
   vertical-align: middle;
   background: rgba(var(--sapphire-rgb, 60, 130, 246), 0.12);
@@ -1729,7 +1729,7 @@
 
 .agent-detail-builtin-note {
   margin-top: 4px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   opacity: 0.7;
 }
 
@@ -1995,14 +1995,14 @@
   padding: 6px 8px 6px 12px;
 }
 .segment-row .seg-label {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
   flex-shrink: 0;
 }
 /* Cross-midnight hint — a freeze segment whose start > end spans into the
    next day (e.g. 23:00-08:00). Sapphire chip, same language as .frozen-status. */
 .seg-cross-midnight {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   white-space: nowrap;
   color: rgb(var(--sapphire));
@@ -2019,7 +2019,7 @@
   border: 1px solid var(--glass-etched-border);
   border-radius: 8px;
   padding: 4px 8px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-family: inherit;
   font-variant-numeric: tabular-nums;
   text-align: center;
@@ -2036,7 +2036,7 @@
   border: none;
   color: var(--color-text-muted);
   cursor: pointer;
-  font-size: 16px;
+  font-size: var(--ds-fs-mobile-callout);
   line-height: 1;
   padding: 2px 6px;
   border-radius: 6px;
@@ -2095,7 +2095,7 @@
 }
 .orb-slot-label {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted);
   min-width: 0;
 }
@@ -2116,10 +2116,10 @@
   cursor: pointer;
   flex: none;
 }
-.orb-slot-hex { width: 82px; flex: none; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.orb-slot-hex { width: 82px; flex: none; font-family: ui-monospace, Menlo, monospace; font-size: var(--ds-fs-hint); }
 .orb-warn {
   color: #d9a53a;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   padding: 1px 0 3px 8px;
 }
 .orb-theme-seg {

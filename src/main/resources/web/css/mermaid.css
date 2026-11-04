@@ -54,7 +54,7 @@
   align-items: baseline;
   gap: 8px;
   flex-wrap: wrap;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 
 .nf-mermaid-errlabel {
@@ -73,7 +73,7 @@
   border: none;
   background: none;
   padding: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-btn);
   font-weight: 500;
   color: rgb(var(--sapphire));
   cursor: pointer;
@@ -86,7 +86,7 @@
   border-radius: 6px;
   background: var(--color-frame-hover);
   overflow-x: auto;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   max-height: 240px;
 }

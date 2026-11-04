@@ -147,7 +147,7 @@ const POPUP_CSS = `<style id="bgt-output-popup-css">
 .bgt-state-label--failed { color: var(--status-word); }
 .bgt-state-chip .st-ic { width: 11px; height: 11px; }
 .bgt-close {
-  cursor: pointer; font-size: 16px; line-height: 1;
+  cursor: pointer; font-size: var(--ds-fs-mobile-callout); line-height: 1;
   opacity: 0.7; transition: opacity 0.15s;
   padding: 2px 4px; color: var(--color-text);
   border-radius: 4px;

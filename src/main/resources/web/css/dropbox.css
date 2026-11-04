@@ -36,7 +36,7 @@
   align-items: center;
   gap: 8px;
   padding: 8px 16px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 
 /* Tabs */
@@ -48,7 +48,7 @@
 }
 .dropbox-tab {
   padding: 6px 14px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   border: none;
   background: none;
   color: var(--color-text-muted);
@@ -85,7 +85,7 @@
   flex: 1;
   min-height: 240px;
   resize: vertical;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   line-height: 1.5;
   font-family: inherit;
   padding: 10px;
@@ -112,7 +112,7 @@
   background: var(--glass-etched-bg, rgba(128, 128, 128, 0.08));
   border: 1px solid var(--glass-etched-border, rgba(128, 128, 128, 0.15));
   color: var(--color-frame-text-muted, #888);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
 }
 
 .dropbox-info-badge.dot {
@@ -122,7 +122,7 @@
 
 .dropbox-info-desc {
   color: var(--color-frame-text-muted, #888);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   margin-left: auto;
 }
 
@@ -147,7 +147,7 @@
 .dropbox-flow-status {
   margin: auto;
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   text-align: center;
   color: var(--color-frame-text-muted, var(--color-text-muted, #888));
@@ -209,7 +209,7 @@
   min-width: 0;
 }
 .dropbox-file-name {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   color: var(--color-frame-text, #333);
   white-space: nowrap;
@@ -217,7 +217,7 @@
   text-overflow: ellipsis;
 }
 .dropbox-file-info-line {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted, #888);
   white-space: nowrap;
   overflow: hidden;
@@ -237,7 +237,7 @@
 
 .dropbox-file-status-text {
   margin-top: 4px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
 }
 .dropbox-file-status-text.completed { color: #34c759; }
 .dropbox-file-status-text.transferring { color: var(--color-frame-text-muted, #888); }
@@ -267,7 +267,7 @@
   align-items: flex-start;
   gap: 6px;
   color: var(--status-word);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   white-space: pre-wrap;
   word-break: break-word;
 }

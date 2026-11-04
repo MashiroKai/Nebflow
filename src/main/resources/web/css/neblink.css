@@ -11,7 +11,7 @@
   gap: 8px;
 }
 .neblink-login-hint {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-text-muted);
   text-align: center;
   line-height: 1.5;
@@ -40,7 +40,7 @@
 
 /* Inline error/info messages */
 .neblink-error {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-error);
   margin-bottom: 8px;
   word-break: break-word;
@@ -79,7 +79,7 @@
   flex: 0 0 auto;
   width: auto;
   padding: 9px 14px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 .neblink-paircode-btn:disabled { opacity: 0.6; cursor: default; }
 
@@ -98,7 +98,7 @@
   border-left: 3px solid var(--color-warning);
   background: var(--color-frame-input-bg);
   color: var(--color-frame-text-muted);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.45;
 }
 .neblink-kicked-dot {
@@ -133,7 +133,7 @@
   gap: 10px;
   padding: 8px 10px;
   border-radius: 10px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   background: var(--color-bg);
   border: 1px solid var(--color-border);
   transition: border-color 0.15s, background 0.15s;
@@ -164,7 +164,7 @@
 .neblink-peer-name:hover { color: var(--color-primary); }
 
 .neblink-peer-status {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
 }
 
@@ -172,7 +172,7 @@
    device can no longer masquerade as online. Colors reuse existing tokens
    (--color-success matches .neblink-update-status.done; muted for offline). */
 .neblink-presence {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -190,7 +190,7 @@
 
 /* Peer update button */
 .neblink-peer-update-btn {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   padding: 2px 8px;
   border: 1px solid var(--color-border);
   border-radius: 4px;
@@ -213,7 +213,7 @@
   flex-shrink: 0;
 }
 .neblink-ch-btn {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   padding: 2px 8px;
   border: 1px solid var(--color-border);
   border-radius: 4px;
@@ -231,7 +231,7 @@
   color: var(--color-warning);
 }
 .neblink-ch-cancel {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   padding: 2px 6px;
   border: none;
   background: none;
@@ -245,7 +245,7 @@
    并固定改版口径：后续任何发射点必须 = 词前 lucide 图标（updating=loader-circle
    / done=circle-check / error=circle-x，色走 --status-*-icon token）＋ 中性词。 */
 .neblink-update-status {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   flex-shrink: 0;
   white-space: nowrap;
   max-width: 160px;
@@ -299,7 +299,7 @@
   border: 1px solid rgba(7, 193, 96, 0.14);
   background: rgba(7, 193, 96, 0.14);
   color: #07c160;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
@@ -320,14 +320,14 @@
   flex: 1;
   padding: 8px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
 }
 
 /* 只读登录态行（谁登录着，无动作入口）。 */
 .neblink-account-ro {
   margin-top: 12px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
   text-align: center;
   word-break: break-all;

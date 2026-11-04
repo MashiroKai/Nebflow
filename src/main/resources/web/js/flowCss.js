@@ -178,7 +178,7 @@ export const FLOW_CSS = `
 .flow-viewer { position: relative; width: calc(100% - 48px); max-height: calc(100% - 48px); display: flex; flex-direction: column; background: var(--glass-bg); -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15); backdrop-filter: blur(var(--glass-blur)) saturate(1.15); border: 1px solid var(--glass-border); border-radius: 18px; overflow: hidden; box-shadow: 0px 8px 32px rgba(0,0,0,0.16); }
 .flow-viewer-header { display: flex; align-items: center; gap: 8px; padding: 11px 16px; border-bottom: 1px solid var(--glass-border); flex-shrink: 0; }
 .flow-viewer-title { font: 600 13px -apple-system, sans-serif; color: var(--color-text); }
-.flow-viewer-close { margin-left: auto; cursor: pointer; font-size: 16px; line-height: 1; opacity: 0.5; transition: opacity 0.15s; padding: 0 4px; color: var(--color-text-muted); z-index: 10; display: inline-flex; align-items: center; }
+.flow-viewer-close { margin-left: auto; cursor: pointer; font-size: var(--ds-fs-mobile-callout); line-height: 1; opacity: 0.5; transition: opacity 0.15s; padding: 0 4px; color: var(--color-text-muted); z-index: 10; display: inline-flex; align-items: center; }
 .flow-viewer-close svg { width: 12px; height: 12px; display: block; }
 .flow-viewer-close:hover { opacity: 1; }
 .flow-viewer .code-copy-btn { right: 40px; }
@@ -210,12 +210,12 @@ export const FLOW_CSS = `
 .flow-mail-content p:first-child { margin-top: 0; } .flow-mail-content p:last-child { margin-bottom: 0; } .flow-mail-content p { margin: 4px 0; }
 .flow-mail-content ul, .flow-mail-content ol { margin: 4px 0 4px 18px; padding: 0; } .flow-mail-content li { margin: 2px 0; }
 .flow-mail-content code { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 1px 4px; border-radius: 3px; font-size: 0.9em; font-family: ui-monospace, SFMono-Regular, monospace; word-break: break-all; }
-.flow-mail-content pre { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 8px 12px 10px; border-radius: 8px; overflow-x: auto; font-size: 12px; margin: 6px 0; line-height: 1.4; }
-.flow-mail-content pre code { background: none; padding: 0; font-size: 12px; word-break: normal; }
+.flow-mail-content pre { background: var(--color-frame-input-bg, rgba(0,0,0,0.05)); padding: 8px 12px 10px; border-radius: 8px; overflow-x: auto; font-size: var(--ds-fs-hint); margin: 6px 0; line-height: 1.4; }
+.flow-mail-content pre code { background: none; padding: 0; font-size: var(--ds-fs-hint); word-break: normal; }
 .flow-mail-content blockquote { border-left: 3px solid var(--color-border); margin: 6px 0; padding-left: 10px; color: var(--color-text-muted); }
 .flow-mail-content h1, .flow-mail-content h2, .flow-mail-content h3, .flow-mail-content h4 { margin: 8px 0 4px 0; font-weight: 600; }
-.flow-mail-content h1 { font-size: 16px; } .flow-mail-content h2 { font-size: 15px; } .flow-mail-content h3 { font-size: 14px; }
-.flow-mail-content table { display: block; overflow-x: auto; max-width: 100%; border-collapse: collapse; margin: 6px 0; font-size: 12px; }
+.flow-mail-content h1 { font-size: var(--ds-fs-mobile-callout); } .flow-mail-content h2 { font-size: var(--ds-fs-title); } .flow-mail-content h3 { font-size: 14px; }
+.flow-mail-content table { display: block; overflow-x: auto; max-width: 100%; border-collapse: collapse; margin: 6px 0; font-size: var(--ds-fs-hint); }
 .flow-mail-content th, .flow-mail-content td { border: 1px solid var(--color-border); padding: 4px 8px; }
 .flow-mail-content th { background: var(--color-frame-input-bg, #f5f5f5); }
 .flow-mail-content a { color: var(--color-primary); } .flow-mail-content hr { border: none; border-top: 1px solid var(--color-border); margin: 8px 0; }

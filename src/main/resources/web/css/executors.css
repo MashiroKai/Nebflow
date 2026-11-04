@@ -12,12 +12,12 @@
 
 .executor-loading {
   color: var(--text-secondary, #888);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   padding: 24px 4px;
 }
 
 .executor-hint {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   color: var(--text-secondary, #888);
   margin-bottom: 12px;
@@ -66,7 +66,7 @@
 }
 
 .executor-card-name {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 600;
   display: flex;
   align-items: center;
@@ -75,7 +75,7 @@
 }
 
 .executor-card-desc {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--text-secondary, #888);
   margin-top: 2px;
   overflow: hidden;
@@ -84,7 +84,7 @@
 }
 
 .executor-card-path {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text-secondary, #777);
   margin-top: 3px;
@@ -94,7 +94,7 @@
 }
 
 .executor-card-pending {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: #d97709;
   margin-top: 3px;
 }
@@ -134,7 +134,7 @@
   border: 1px solid var(--border-color, rgba(128, 128, 128, 0.3));
   background: transparent;
   color: var(--text-primary, #ddd);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   padding: 5px 12px;
   border-radius: 8px;
   cursor: pointer;

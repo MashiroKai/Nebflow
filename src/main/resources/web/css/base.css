@@ -386,7 +386,7 @@ body.sidebar-collapsed #sidebar {
   border-radius: 6px;
   background: transparent;
   color: var(--color-frame-text);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   cursor: pointer;
   text-align: left;
   transition: background 0.12s;
@@ -428,7 +428,7 @@ body.sidebar-collapsed #sidebar {
   border-radius: 12px;
   padding: 12px 14px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 .global-perm-toast-title {
   font-weight: 600;
@@ -450,7 +450,7 @@ body.sidebar-collapsed #sidebar {
   border: 0.5px solid var(--border-light, rgba(0, 0, 0, 0.08));
   border-radius: 8px;
   padding: 4px 12px;
-  font-size: 12px;
+  font-size: var(--ds-fs-btn);
   cursor: pointer;
   background: var(--bg-tertiary, rgba(255, 255, 255, 0.6));
 }

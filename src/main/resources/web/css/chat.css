@@ -77,7 +77,7 @@
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25);
 }
 #header .header-left { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
-#header .header-brand { color: var(--color-frame-text-bright); font-weight: 600; font-size: 15px; }
+#header .header-brand { color: var(--color-frame-text-bright); font-weight: 600; font-size: var(--ds-fs-title); }
 /* #header is position:absolute (already a containing block), so .header-center
    pins the session name to the true horizontal center instead of flex remaining
    space — it stays centered regardless of left/right button widths. */
@@ -98,7 +98,7 @@
 #header .header-right { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 4px; }
 #header #session-name {
   color: var(--color-frame-text-bright);
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   white-space: nowrap;
   user-select: none;
@@ -192,7 +192,7 @@
   border-radius: 999px;
   border: 1px solid rgba(7,193,96,0.35);
   padding: 2px 9px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-primary);
   cursor: pointer;
   transition: background 0.2s;
@@ -226,7 +226,7 @@
   border-radius: 999px;
   border: 1px solid rgb(var(--accent-agent-light) / 0.35);
   padding: 2px 9px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   /* Unified panel spec §6.2 (20260830): counter hue = agent blue; light theme
      deepened (#46639c, 5.96:1) to clear WCAG 4.5 — replaces the P0 dark-mode
      color:var(--color-text) stopgap; the token is theme-aware and readable in
@@ -446,7 +446,7 @@
   white-space: nowrap;
 }
 .bg-task-state {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   /* Unified panel spec §3.1: state word is L4 (400) — yields hierarchy to
      the primary name (0825 spec had it 500; superseded by the type ramp). */
   font-weight: 400;
@@ -843,7 +843,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* meta 行（第二读数）：state 词 + chip 群 + 行数/耗时，单一横向槽。 */
 .bg-task-meta { display: flex; align-items: center; gap: var(--ds-space-1); flex-wrap: wrap; }
 .bg-task-desc {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text);
   white-space: nowrap;
   overflow: hidden;
@@ -944,7 +944,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   justify-content: center;
   gap: 6px;
   padding: 10px 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: #999;
   min-height: 36px;
 }
@@ -958,7 +958,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .history-end {
   text-align: center;
   padding: 10px 0 6px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: #bbb;
   user-select: none;
 }
@@ -1090,7 +1090,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   align-items: center;
   padding: 1px;
   color: var(--color-error);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 700;
   line-height: 1;
   cursor: help;
@@ -1176,7 +1176,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.user.att-bubble {
   background: rgba(0,0,0,0.04);
   color: #888;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   padding: 3px 8px;
   border-radius: 8px;
   max-width: 160px;
@@ -1190,7 +1190,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .bubble.user.att-bubble .att-file-tag {
   color: #888;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 /* @-mention tag (mention-render batch, 2026-09-27): blue clickable route
    marker inside message text — the author's order (verbatim 「为蓝色」) makes
@@ -1217,7 +1217,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   padding: 6px 10px;
   margin-top: 2px;
   color: var(--color-text);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   cursor: pointer;
 }
 .bubble.user .att-ref-card-head {
@@ -1272,7 +1272,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border: 1px solid rgba(0, 0, 0, 0.05);
   border-radius: 12px; padding: 11px 13px;
   width: 300px; max-width: 100%;
-  color: var(--color-text); font-size: 12px; cursor: pointer;
+  color: var(--color-text); font-size: var(--ds-fs-hint); cursor: pointer;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   transition: box-shadow 0.15s, transform 0.12s;
   margin-top: 2px;
@@ -1284,7 +1284,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .bubble.user .att-ref-card.file-lang .att-ref-card-content {
-  font-size: 11px; color: var(--color-text-muted); margin-top: 3px;
+  font-size: var(--ds-fs-meta); color: var(--color-text-muted); margin-top: 3px;
 }
 @media (prefers-color-scheme: dark) {
   .bubble.user .att-ref-card.file-lang { border-color: var(--color-border); }
@@ -1300,7 +1300,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
   line-height: 1.4;
   padding: 1px 0;
@@ -1354,13 +1354,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-radius: 8px;
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 .bubble.ai .file-tag {
   background: rgba(0,0,0,0.06);
   padding: 3px 8px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   margin-top: 4px;
   display: inline-block;
 }
@@ -1382,7 +1382,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   padding: 8px 12px 10px;
   border-radius: 8px;
   overflow-x: auto;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   margin: 6px 0;
   line-height: 1.4;
   scrollbar-color: rgba(0,0,0,0.15) transparent;
@@ -1397,7 +1397,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .bubble.ai pre::-webkit-scrollbar-thumb:hover, .bubble.injected pre::-webkit-scrollbar-thumb:hover, .ask-bub.ai pre::-webkit-scrollbar-thumb:hover {
   background: rgba(0,0,0,0.25);
 }
-.bubble.ai pre code, .bubble.injected pre code, .ask-bub.ai pre code { background: none; padding: 0; font-size: 12px; }
+.bubble.ai pre code, .bubble.injected pre code, .ask-bub.ai pre code { background: none; padding: 0; font-size: var(--ds-fs-hint); }
 
 /* Code block wrapper & copy button */
 .bubble.ai .code-block-wrap, .bubble.injected .code-block-wrap, .ask-bub.ai .code-block-wrap {
@@ -1420,7 +1420,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-radius: 6px;
   background: rgba(255,255,255,0.8);
   color: #666;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-family: inherit;
   cursor: pointer;
   opacity: 0;
@@ -1450,7 +1450,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: rgba(0,0,0,0.05);
   padding: 1px 4px;
   border-radius: 3px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 .bubble.ai blockquote, .bubble.injected blockquote, .ask-bub.ai blockquote {
@@ -1465,13 +1465,13 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   margin: 8px 0 4px 0;
   font-weight: 600;
 }
-.bubble.ai h1, .bubble.injected h1, .ask-bub.ai h1 { font-size: 16px; }
-.bubble.ai h2, .bubble.injected h2, .ask-bub.ai h2 { font-size: 15px; }
+.bubble.ai h1, .bubble.injected h1, .ask-bub.ai h1 { font-size: var(--ds-fs-mobile-callout); }
+.bubble.ai h2, .bubble.injected h2, .ask-bub.ai h2 { font-size: var(--ds-fs-title); }
 .bubble.ai h3, .bubble.injected h3, .ask-bub.ai h3 { font-size: 14px; }
 .bubble.ai table, .bubble.injected table, .ask-bub.ai table {
   border-collapse: collapse;
   margin: 6px 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 .bubble.ai th, .bubble.ai td, .bubble.injected th, .bubble.injected td, .ask-bub.ai th, .ask-bub.ai td {
   border: 1px solid var(--color-border);
@@ -1549,14 +1549,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   50% { opacity: 0.85; transform: scale(1.1); }
 }
 .thinking-indicator-label {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-text-muted);
   font-weight: 400;
   letter-spacing: -0.01em;
   margin-left: 2px;
 }
 .thinking-timer {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
@@ -1609,7 +1609,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .tool-stream-body pre.tool-body-pre {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   white-space: pre;
   color: var(--color-text-muted);
@@ -1628,7 +1628,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .tool-stream-body .hljs,
 .tool-stream-body .hljs code {
   background: transparent !important;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
 }
 .tool-stream-body::-webkit-scrollbar-track { background: transparent; }
@@ -1644,7 +1644,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-left: 2px solid var(--status-error-icon);
   border-radius: 10px;
   padding: 8px 14px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   max-width: 85%;
   display: flex;
   align-items: flex-start;
@@ -1656,7 +1656,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .notice-card {
   border-radius: 10px;
   padding: 8px 14px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   max-width: 85%;
 }
 
@@ -1675,7 +1675,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   gap: 8px;
   border-radius: 12px;
   padding: 7px 14px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   color: var(--color-text-muted);
@@ -1841,7 +1841,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   box-shadow: var(--ask-card-shadow), var(--ask-card-highlight);
 }
 .option-q {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   letter-spacing: 0.2px;
   line-height: 1.55;
@@ -1859,7 +1859,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border: 1px solid rgba(145, 170, 210, 0.25);
   border-radius: 14px;
   background: rgba(145, 170, 210, 0.04);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   cursor: pointer;
   color: var(--color-text);
   /* 设计语言批 2026-10-21：transition 禁 all——逐属性 + 时长 token
@@ -1948,7 +1948,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   padding: 8px 12px;
   border: 1px solid var(--ask-line-strong);
   border-radius: 8px;
-  font-size: 13px; /* 13.5px 半档判偏整改（设计语言批 2026-10-21）：正文/输入同档 13px */
+  font-size: var(--ds-fs-body); /* 13.5px 半档判偏整改（设计语言批 2026-10-21）：正文/输入同档 13px */
   outline: none;
   box-sizing: border-box;
   resize: none;
@@ -1988,7 +1988,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   padding: 8px 12px;
   border: 1px solid var(--ask-line-strong);
   border-radius: 8px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-family: inherit;
   line-height: 1.55;
   background: transparent;
@@ -2025,7 +2025,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .option-secret-eye:focus-visible { border-color: var(--glass-control-border); }
 .option-secret-hint {
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   color: var(--color-text-muted);
 }
@@ -2043,7 +2043,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-radius: 8px;
   background: none;
   color: var(--color-text-dim);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   cursor: pointer;
 }
 .option-cancel:hover { color: var(--color-text); }
@@ -2060,7 +2060,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-radius: 12px;
   background: linear-gradient(180deg, var(--ask-green), var(--ask-green-deep));
   color: #fff;
-  font-size: 13.5px;
+  font-size: var(--ds-fs-row);
   font-weight: 600;
   letter-spacing: 0.3px;
   cursor: pointer;
@@ -2083,14 +2083,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   cursor: default;
 }
 .option-desc {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   margin-top: 2px;
   font-weight: normal;
 }
 .option-answer {
   margin-top: 6px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-primary);
   font-weight: 400;
 }
@@ -2101,7 +2101,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
     「待定」任何强调色：它不是结果读数，是「读不到结果」的如实标注。 */
 .option-answer-pending {
   margin-top: 6px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-text-muted);
   font-style: italic;
   font-weight: 400;
@@ -2245,7 +2245,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    sits above the option box. */
 .ob-compare-btn {
   margin-bottom: 6px;
-  font-size: 12px;
+  font-size: var(--ds-fs-btn);
   padding: 4px 12px;
   transition: background 0.15s, color 0.15s, border-color 0.15s,
               box-shadow 0.15s, opacity 0.15s;
@@ -2401,7 +2401,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   position: absolute;
   top: 6px;
   right: 6px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   padding: 2px 8px;
   border-radius: 6px;
   transition: background 0.15s, color 0.15s, border-color 0.15s,
@@ -2466,7 +2466,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    the strings come from the settings provider modal's own locale keys. */
 .ob-fetch-row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
 .ob-fetch-row .ob-fetch-btn { flex-shrink: 0; }
-.ob-fetch-row .ob-fetch-status { font-size: 12px; color: var(--color-text-muted); min-width: 0; }
+.ob-fetch-row .ob-fetch-status { font-size: var(--ds-fs-hint); color: var(--color-text-muted); min-width: 0; }
 /* L3 主行动（askuser-hybrid）：品牌绿实底渐变 + 绿影；墨色/半透明绿底退场。
    hover/active 守卫压过 sapphire 的 button.glass-control:hover 换肤（(0,3,0)
    > 其 (0,2,1)），绿实底在两档任何挂法下不掉玻璃。 */
@@ -2475,7 +2475,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: #fff;
   border: none;
   border-radius: 12px;
-  font-size: 13.5px;
+  font-size: var(--ds-fs-row);
   font-weight: 600;
   letter-spacing: 0.3px;
   padding: 8px 16px;
@@ -2502,7 +2502,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .ob-probing {
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
 }
 .ob-probing.ok {
@@ -2518,7 +2518,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-radius: 8px;
   padding: 2px 4px;
   color: var(--color-text-dim);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 .glass-control.ob-ghost:hover,
 .glass-control.ob-ghost:active {
@@ -2552,7 +2552,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 /* 题头（hybrid §5 梯队：meta 11px/字距 1.2；下距交给后续件的 margin-top 凑 10px 节奏） */
 .ask-meta {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   letter-spacing: 1.2px;
   color: var(--color-text-dim);
   margin-bottom: 2px;
@@ -2578,7 +2578,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .option-text small {
   display: block;
   color: var(--color-text-dim);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   margin-top: 1px;
 }
 .option-btn.picked .option-text small {
@@ -2609,7 +2609,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   padding: 8px 12px;
   border: 1px solid var(--ask-line-strong);
   border-radius: 8px;
-  font-size: 13.5px;
+  font-size: var(--ds-fs-row);
   outline: none;
   box-sizing: border-box;
   background: transparent;
@@ -2643,7 +2643,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex-wrap: wrap;
 }
 .ctx-row .ctx-label {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
   white-space: nowrap;
 }
@@ -2716,7 +2716,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 /* 题干（卡引言）在浮层语言里抬一档：15px/600（BRIEF §4.4 下限之上） */
 .bubble.ai.ob-ghost-seat .ob-para.ob-question {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   letter-spacing: 0.2px;
   margin-top: 4px;
@@ -2741,7 +2741,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   backdrop-filter: none;
   box-shadow: none;
   color: var(--color-text);
-  font-size: 13.5px;
+  font-size: var(--ds-fs-row);
   text-align: left;
   transition: color 0.15s ease, background 0.15s ease;
 }
@@ -2826,7 +2826,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   backdrop-filter: none;
   box-shadow: none;
   color: var(--color-frame-text);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 .chip-row .option-btn::before { content: none; }
 .chip-row .option-btn:not(.picked):hover {
@@ -2912,7 +2912,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   padding: 5px 10px;
   border: 1px solid var(--glass-control-border);
   border-radius: 8px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   line-height: 1.4;
   background: var(--glass-control-bg);
   -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
@@ -3020,7 +3020,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   padding: 5px 10px;
   border: 1px solid var(--glass-control-border);
   border-radius: 8px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   line-height: 1.4;
   text-align: left;
   background: var(--glass-control-bg);
@@ -3046,7 +3046,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .ask-pending-source {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   color: var(--color-text-muted);
   padding: 1px 7px;
@@ -3070,7 +3070,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    的既有计数语义（= 待办条数）不被新控件污染。 */
 .ask-pending-next {
   justify-content: center;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
 }
 .ask-pending-next:hover { color: var(--color-text); }
@@ -3083,7 +3083,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
   padding: 2px 9px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-warning);
   cursor: pointer;
   transition: background 0.2s;
@@ -3104,7 +3104,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--color-text-muted) 40%, transparent);
   padding: 2px 9px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-dim);
   cursor: pointer;
   transition: background 0.2s;
@@ -3143,7 +3143,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .thinking-bubble {
   background: transparent !important;
   padding: 6px 12px !important;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
 }
 .thinking-label {
   /* Pre-#345 look restored (2026-08-24 ruling): small caps muted label, no
@@ -3200,7 +3200,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .thinking-content {
   color: var(--color-text-muted);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   line-height: 1.5;
   /* 思考窗硬上限（作者 2026-10-07 令「思考过程要限制一个最大窗口进行流式，
      不要占满整个屏幕。比如最多 5 行」）：流式与展开两态同窗——7.5em = 5 行 ×
@@ -3223,7 +3223,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   margin: 0.3em 0;
   padding: 4px 8px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 
 /* ── #346 v2 turn-level collapse: persistent stats header ────────────────
@@ -3242,7 +3242,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   max-width: 85%;
   margin: 2px 0;
   padding: 3px 12px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text-dim);
   opacity: 0.9;
@@ -3336,7 +3336,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: rgba(217,165,65,0.15);
   color: #b8941e;
   padding: 6px 14px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   border-radius: 6px;
   margin-bottom: 10px;
   z-index: 20;
@@ -3527,7 +3527,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   gap: 4px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--color-border);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.45;
 }
 .html-card-warning-head {
@@ -3541,7 +3541,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   word-break: break-all;
 }
 .html-card-warning-list code {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text);
 }
 
@@ -3566,7 +3566,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   padding: 6px 10px;
   margin-bottom: 8px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 400;
   line-height: 1.4;
 }
@@ -3611,7 +3611,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: #8b5cf6;
   padding: 3px 10px;
   border-radius: 9999px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   margin-bottom: 10px;
 }
@@ -3628,7 +3628,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: var(--glass-etched-bg);
   border: 1px solid var(--sapphire-edge);
   font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text);
   word-break: break-all;
   white-space: pre-wrap;
@@ -3670,7 +3670,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   align-items: center;
   gap: 8px;
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   letter-spacing: -0.01em;
 }
 .error-escalation-title-text {
@@ -3680,14 +3680,14 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   white-space: nowrap;
 }
 .error-escalation-meta {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
   line-height: 1.45;
 }
 /* 「继续等待」提示行（盘点 #32 字收敛）：12px 提示句转中性字——琥珀只在图标
    （.error-icon）与左缘描边（图案载体）上。 */
 .error-escalation-wait {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--status-word);
   font-weight: 500;
   line-height: 1.4;
@@ -3805,7 +3805,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   overflow: hidden; /* 覆写共享玻璃卡的 overflow-y:auto——列表内部滚动 */
 }
 .wsp-title {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   color: var(--color-frame-text-bright);
   margin-bottom: 12px;
@@ -3821,7 +3821,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 /* Breadcrumb etched strip — app directory-browser baseline values */
 .wsp-crumbs {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted);
   margin-bottom: 10px;
   word-break: break-all;
@@ -3858,7 +3858,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-radius: 0;
   background: none;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-frame-text);
   cursor: pointer;
   text-align: left;
@@ -3874,7 +3874,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   justify-content: center;
   text-align: center;
   padding: 24px 12px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 /* 行内新建文件夹行 —— 复用列表行基底；输入框对齐共享 .modal-input 蚀刻风格 */
 .wsp-mkdir-input {
@@ -3885,7 +3885,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border: 1px solid var(--glass-etched-border);
   border-radius: 8px;
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-family: inherit;
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
@@ -3897,7 +3897,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
     0 0 0 4px rgba(91, 127, 191, 0.04);
 }
 .wsp-mkdir-ok {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   padding: 4px 12px;
   border-radius: 8px;
   cursor: pointer;
@@ -3916,7 +3916,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   background: transparent;
   cursor: pointer;
   color: var(--color-frame-text-muted);
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   padding: 2px 6px;
 }
 .wsp-mkdir-no:hover { color: var(--color-frame-text); }
@@ -3939,7 +3939,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .wsp-foot-btns { display: flex; gap: 8px; flex: 0 0 auto; }
 .wsp-cancel, .wsp-pick, .wsp-mkdir {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   padding: 6px 16px;
   border-radius: 8px;
   cursor: pointer;
@@ -3978,7 +3978,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .wsp-foot .pick-note {
   flex: 1;
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 1.45;
   color: var(--color-frame-text-muted);
 }
@@ -3999,7 +3999,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex: 1;
   min-width: 0;
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-family: inherit;
   border-radius: 8px;
   border: 1px solid var(--glass-border);
@@ -4013,7 +4013,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-color: rgba(91, 127, 191, 0.5);
 }
 .wsp-goto-btn {
-  font-size: 12px;
+  font-size: var(--ds-fs-btn);
   padding: 6px 14px;
   border-radius: 8px;
   cursor: pointer;
@@ -4033,7 +4033,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    breadcrumb, muted ink, so it reads as a status line not an alert. Second
    line = the way out (search / direct entry), dimmer than the fact above. */
 .wsp-note {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
   margin-bottom: 8px;
   padding: 5px 10px;
@@ -4053,7 +4053,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--status-word);
   margin-bottom: 8px;
   padding: 5px 10px;
@@ -4207,7 +4207,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   max-width: 85%;
   margin: 2px 0;
   padding: 3px 12px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   /* zcode-484 batch: ONE text row, fixed. The explicit px line-height makes the
      single-row height deterministic (it is also what the slot's fixed height
      below mirrors) and survives the terminal morph being removed by the
@@ -4300,7 +4300,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex: 1 1 auto;
   min-width: 0;
   margin-left: -4px; /* label gap 10px 的视觉续接（细节是 label 的延长流） */
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-dim);
 }
 .nf-wl-item:has(.nf-wl-detail) > .nf-wl-label {
@@ -4315,7 +4315,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    行内右侧若有其它元素（如下方 .nf-wl-detail 细节行/完成态摘要），它们**不**
    与本徽标同排：detail 是 label 的延长流（自己的 flex 段），完成态摘要落在
    下一行 —— 计时不会跟着它们跑回右缘。 */
-.nf-wl-hint { margin-left: 0; font-size: 12px; flex: none; }
+.nf-wl-hint { margin-left: 0; font-size: var(--ds-fs-hint); flex: none; }
 
 /* ── 尾部 fade：左缘 + 溢出门控（ui-polish 2026-10-08，作者令「右侧文字和
    光标太暗」）────────────────────────────────────────────────────────────
@@ -4385,7 +4385,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .nf-wl-x::before {
   content: "\2715";
   display: block; width: 16px; line-height: 16px; text-align: center;
-  font-size: 13px; font-weight: 700; color: var(--status-error-icon);
+  font-size: var(--ds-fs-body); font-weight: 700; color: var(--status-error-icon);
 }
 .nf-wl-x svg { display: none; }
 .nf-wl-item.is-error .nf-wl-label { color: var(--status-word); }
@@ -4591,12 +4591,12 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border-radius: 8px;
   background: transparent;
   color: var(--color-text-muted);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   object-fit: contain;
 }
 .nf-media-failed-note {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
   overflow-wrap: anywhere;
 }
@@ -4617,7 +4617,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .dur-chip {
   position: absolute; right: 8px; bottom: 8px;
   background: rgba(0, 0, 0, 0.55); color: #fff;
-  font-size: 11px; padding: 2px 7px; border-radius: 4px;
+  font-size: var(--ds-fs-meta); padding: 2px 7px; border-radius: 4px;
   pointer-events: none; font-variant-numeric: tabular-nums;
 }
 .vd-progress {
@@ -4681,8 +4681,8 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .fc-icon.zip  { background: linear-gradient(135deg, #d7a05a, #a8743a); }
 .fc-icon.data, .fc-icon.code { background: linear-gradient(135deg, #9aa2b1, #6f7684); }
 .fc-meta { min-width: 0; }
-.fc-name { font-size: 13.5px; font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fc-sub { font-size: 11px; color: var(--color-text-muted); margin-top: 3px; }
+.fc-name { font-size: var(--ds-fs-row); font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-sub { font-size: var(--ds-fs-meta); color: var(--color-text-muted); margin-top: 3px; }
 .fwd-btn {
   margin-left: auto; flex-shrink: 0;
   width: 30px; height: 30px; border-radius: 50%;
@@ -4697,7 +4697,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .fwd-tip {
   position: absolute; bottom: calc(100% + 9px); right: -6px;
   background: #1b1e26; color: #fff;
-  font-size: 11px; font-weight: 500; white-space: nowrap;
+  font-size: var(--ds-fs-meta); font-weight: 500; white-space: nowrap;
   padding: 5px 10px; border-radius: 7px;
   opacity: 0; transform: translateY(3px);
   pointer-events: none; transition: opacity 0.16s, transform 0.16s;
@@ -4711,7 +4711,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 
 /* failed-paths chip under the artifacts */
 .pop-warn {
-  font-size: 11px; color: var(--color-text-dim);
+  font-size: var(--ds-fs-meta); color: var(--color-text-dim);
   background: rgba(128, 128, 128, 0.1);
   border-radius: 6px; padding: 4px 9px;
   max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -4812,7 +4812,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 }
 .nf-lightbox-name {
   color: rgba(255, 255, 255, 0.92);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   min-width: 0;
 }
@@ -4820,7 +4820,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex-shrink: 0;
   display: flex; align-items: center; gap: 6px;
   border: none; border-radius: 999px;
-  padding: 7px 14px; font-size: 12px; font-family: inherit;
+  padding: 7px 14px; font-size: var(--ds-fs-hint); font-family: inherit;
   background: rgba(255, 255, 255, 0.14); color: #fff;
   cursor: pointer;
   transition: background 0.15s;
@@ -5031,7 +5031,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   border: 1px solid var(--color-border, rgba(128, 128, 128, 0.25));
   background: transparent; color: var(--color-text-muted, #8a8f99);
   border-radius: 999px;
-  padding: 4px 12px; font-size: 12px; font-family: inherit;
+  padding: 4px 12px; font-size: var(--ds-fs-hint); font-family: inherit;
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
@@ -5044,7 +5044,7 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* Week/month group headers (本周 / {n} 月). */
 .search-media-group-header {
   margin: 14px 2px 8px;
-  font-size: 12px; font-weight: 600;
+  font-size: var(--ds-fs-hint); font-weight: 600;
   color: var(--color-text-muted, #8a8f99);
 }
 
@@ -5075,7 +5075,7 @@ object.search-media-thumb { object-fit: initial; }
 .search-media-broken .search-media-thumb { object-fit: contain; opacity: 0.45; }
 .search-media-name {
   padding: 6px 8px 8px;
-  font-size: 12px; color: var(--color-text, #e8eaed);
+  font-size: var(--ds-fs-hint); color: var(--color-text, #e8eaed);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   min-width: 0;
 }
@@ -5084,7 +5084,7 @@ object.search-media-thumb { object-fit: initial; }
   position: absolute; right: 6px; bottom: 30px;
   padding: 2px 6px; border-radius: 6px;
   background: rgba(0, 0, 0, 0.65); color: #fff;
-  font-size: 11px; font-variant-numeric: tabular-nums;
+  font-size: var(--ds-fs-meta); font-variant-numeric: tabular-nums;
   pointer-events: none;
 }
 .search-media-dur:empty { display: none; }
@@ -5103,7 +5103,7 @@ object.search-media-thumb { object-fit: initial; }
 .search-media-linkbody { min-width: 0; padding: 6px 8px 8px; }
 .search-media-linkbody .search-media-name { padding: 0 0 2px; }
 .search-media-url {
-  font-size: 11px; color: var(--color-text-muted, #8a8f99);
+  font-size: var(--ds-fs-meta); color: var(--color-text-muted, #8a8f99);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* Source badge + time — the alignment markers (主题三). */
@@ -5143,7 +5143,7 @@ object.search-media-thumb { object-fit: initial; }
   border-radius: 10px;
   background: rgba(0, 0, 0, 0.035);
   box-shadow: none;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.45;
   color: var(--color-text-muted, #888);
   max-width: 100%;
@@ -5226,7 +5226,7 @@ object.search-media-thumb { object-fit: initial; }
 .msg-quote-composite .bubble.user { max-width: 100%; }
 .msg-quote-composite .msg-quote-block { width: 0; min-width: 100%; }
 /* 降级注记（「原消息已删除」；.fm-quote-note 同族：再降一档不透明度）。 */
-.msg-quote-note { opacity: 0.75; font-size: 11px; margin-top: 2px; grid-column: 1 / -1; }
+.msg-quote-note { opacity: 0.75; font-size: var(--ds-fs-meta); margin-top: 2px; grid-column: 1 / -1; }
 .msg-quote-note:empty { display: none; }
 /* 引用块附件缩略带（附件批 2026-10-31 作者令「引用要支持你发的文件 图片等」）：
    被引消息带文件/图片附件 ⇒ 摘要行下挂缩略。图片/视频 = 48px 方缩略
@@ -5264,7 +5264,7 @@ object.search-media-thumb { object-fit: initial; }
   padding: 3px 8px 3px 4px;
   border-radius: 6px;
   background: rgba(0, 0, 0, 0.06);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 1.3;
   flex: 0 0 auto;
 }
@@ -5343,7 +5343,7 @@ body:not(.mobile-layer) #header .header-center {
   overflow: hidden;
   cursor: pointer;
   color: #fff;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 600;
   /* 默认头像芯片随主题换色（作者令 2026-11-01 20:42「浅色主题=白底黑 logo，
      深色主题=黑底白 logo」）：原蓝渐变（首字母牌时代遗产）退役，换双主题
@@ -5431,7 +5431,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 28px;
+  font-size: var(--ds-fs-title-lg);
   font-weight: 600;
   color: #fff;
   background: linear-gradient(145deg, #5b7fbf, #3c568c);
@@ -5472,7 +5472,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
 }
 .ap-pane .ap-name-label {
   flex: none;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted, #98a2b3);
 }
 .ap-pane .ap-name-input {
@@ -5484,14 +5484,14 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   border: 1px solid var(--glass-border);
   background: var(--glass-etched-bg, rgba(0, 0, 0, 0.025));
   color: var(--color-text);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   outline: none;
 }
 .ap-pane .ap-name-input:focus {
   border-color: var(--glass-etched-border-focus, rgba(91, 127, 191, 0.35));
 }
 .ap-pane .ap-note {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted, #98a2b3);
   line-height: 1.65;
   padding: 8px 2px 0;
@@ -5513,7 +5513,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   border: 1px solid var(--glass-etched-border, rgba(91, 127, 191, 0.08));
   background: rgba(0, 0, 0, 0.045);
   color: var(--color-text);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   line-height: 1.5;
   cursor: pointer;
@@ -5548,7 +5548,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   padding: 12px 14px;
   border-radius: 12px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.08);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-text);
 }
 .msg-token-pop-head {
@@ -5556,7 +5556,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 .msg-token-pop-sender {
   font-weight: 600;
@@ -5564,7 +5564,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
 }
 .msg-token-pop-session {
   color: var(--color-frame-text-muted, #98a2b3);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5573,7 +5573,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
 .msg-token-pop-time {
   margin-left: auto;
   color: var(--color-frame-text-muted, #98a2b3);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
@@ -5581,7 +5581,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.5;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   max-height: 46vh;
   overflow-y: auto;
 }
@@ -5591,14 +5591,14 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
 }
 .msg-token-pop-body.msg-token-pop-miss {
   color: var(--color-frame-text-muted, #98a2b3);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 /* 附件指示（msgchip-provenance 批 2026-11-01）：正文剥掉附件路径指针行后，用它承载
    「这条消息带附件」这一事实。视觉 = 头部 muted 小字同档（不抢正文，也不出现在
    body.textContent 里——正文面保持纯文本契约）。 */
 .msg-token-pop-attach {
   color: var(--color-frame-text-muted, #98a2b3);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 1.4;
 }
 .msg-token-pop-attach[hidden] { display: none; }
@@ -5607,7 +5607,7 @@ body:not(.mobile-layer) #agent-avatar-btn .agent-avatar-logo-img {
   border: none;
   background: none;
   padding: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 500;
   color: var(--color-text-muted, #6b7280);
   cursor: pointer;

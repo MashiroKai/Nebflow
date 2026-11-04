@@ -100,7 +100,7 @@ export function startInlineNewSession() {
   input.className = 'new-session-input';
   input.type = 'text';
   input.placeholder = t('session.namePlaceholder');
-  input.style.cssText = 'width:100%;background:var(--color-frame-input-bg);border:1px solid var(--color-frame-input-border);border-radius:6px;padding:6px 10px;color:var(--color-frame-input-text);font-size:13px;font-family:inherit;outline:none;';
+  input.style.cssText = 'width:100%;background:var(--color-frame-input-bg);border:1px solid var(--color-frame-input-border);border-radius:6px;padding:6px 10px;color:var(--color-frame-input-text);font-size:var(--ds-fs-body);font-family:inherit;outline:none;';
   wrapper.appendChild(input);
   sessionList.prepend(wrapper);
   input.focus();

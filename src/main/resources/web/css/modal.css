@@ -90,7 +90,7 @@
   border: 1px solid var(--glass-etched-border);
   border-radius: 8px;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-family: ui-monospace, SFMono-Regular, monospace;
   line-height: 1.5;
   resize: vertical;
@@ -135,7 +135,7 @@
 #conflict-keep-both,
 #memory-modal-actions button,
 #rules-modal-actions button {
-  font-size: 12px;
+  font-size: var(--ds-fs-btn);
   padding: 6px 16px;
   border-radius: 8px;
   cursor: pointer;
@@ -267,7 +267,7 @@
   width: 340px;
 }
 #modal-title {
-  font-size: 16px;
+  font-size: var(--ds-fs-mobile-callout);
   font-weight: 600;
   color: var(--color-frame-text-bright);
   margin-bottom: 16px;
@@ -297,7 +297,7 @@
   display: none;
 }
 #delete-title {
-  font-size: 16px;
+  font-size: var(--ds-fs-mobile-callout);
   font-weight: 600;
   color: var(--color-frame-text-bright);
   margin-bottom: 12px;
@@ -331,7 +331,7 @@
   display: none;
 }
 #conflict-title {
-  font-size: 16px;
+  font-size: var(--ds-fs-mobile-callout);
   font-weight: 600;
   color: var(--color-frame-text-bright);
   margin-bottom: 12px;
@@ -393,7 +393,7 @@
 }
 #memory-modal.show { display: block; }
 #memory-modal-title {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   color: var(--color-frame-text-bright);
   margin-bottom: 12px;
@@ -410,7 +410,7 @@
 }
 .merged-tab {
   padding: 6px 14px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   border: none;
   background: none;
@@ -443,7 +443,7 @@
 }
 .memory-tab {
   padding: 6px 14px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   border: none;
   background: none;
   color: var(--color-frame-text-muted);
@@ -479,7 +479,7 @@
 }
 #rules-modal.show { display: block; }
 #rules-modal-title {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   color: var(--color-frame-text-bright);
   margin-bottom: 12px;
@@ -603,7 +603,7 @@
   flex-shrink: 0;
 }
 #search-modal-title {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   color: var(--color-frame-text-bright);
 }
@@ -623,7 +623,7 @@
   border: 1px solid var(--glass-etched-border);
   border-radius: 8px;
   padding: 8px 12px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-family: inherit;
   outline: none;
   box-sizing: border-box;
@@ -641,7 +641,7 @@
   gap: 8px;
   flex-wrap: wrap;
 }
-.search-filters .cfg-select { width: auto; font-size: 12px; }
+.search-filters .cfg-select { width: auto; font-size: var(--ds-fs-hint); }
 #search-go { margin-left: auto; }
 
 /* ── Category tabs (v3.1, WeChat retrieval-window paradigm) ─────────────── */
@@ -661,7 +661,7 @@
   border: none;
   padding: 0 10px;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 400;
   color: var(--color-frame-text-muted);
   cursor: pointer;
@@ -700,7 +700,7 @@
   justify-content: center;
   width: 14px; height: 14px;
   border-radius: 50%;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 1;
   color: var(--color-frame-text-muted);
   cursor: pointer;
@@ -770,13 +770,13 @@
   margin-bottom: 8px;
 }
 .cal-title {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 600;
   color: var(--color-frame-text-bright);
 }
 .cal-pills { display: flex; gap: 6px; }
 .cal-pill {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   padding: 2px 8px;
   border-radius: 999px;
   cursor: pointer;
@@ -805,7 +805,7 @@
   background: transparent;
   border: none;
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-family: inherit;
   color: var(--color-frame-text);
   border-radius: 6px;
@@ -839,7 +839,7 @@
   background: transparent;
   border: none;
   border-radius: 50%;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 400;
   font-family: inherit;
   color: var(--color-frame-text);
@@ -870,7 +870,7 @@
   background: transparent;
   border: none;
   padding: 2px 4px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-family: inherit;
   color: var(--color-frame-text-muted);
   cursor: pointer;
@@ -881,7 +881,7 @@
   background: transparent;
   border: none;
   padding: 4px 6px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-family: inherit;
   color: var(--color-frame-text-muted);
   cursor: pointer;
@@ -892,7 +892,7 @@
 .search-sentinel { height: 1px; }
 #search-status {
   padding: 4px 16px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
   flex-shrink: 0;
 }
@@ -907,7 +907,7 @@
 .search-hint {
   text-align: center;
   padding: 32px 16px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted);
 }
 .search-result {
@@ -924,7 +924,7 @@
   margin-bottom: 3px;
 }
 .search-result-session {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 600;
   color: var(--color-frame-text-bright);
   overflow: hidden;
@@ -957,7 +957,7 @@
 }
 .search-result-time {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
@@ -969,10 +969,10 @@
   content: '↗';
   margin-left: 5px;
   opacity: 0.65;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
 }
 .search-result-preview {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   color: var(--color-frame-text-dim);
   overflow: hidden;
@@ -995,7 +995,7 @@
   align-items: baseline;
   gap: 6px;
   padding: 10px 10px 2px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
 }
 .search-group-header .search-result-session { max-width: 70%; }
@@ -1028,7 +1028,7 @@
   margin-top: 6px;
   padding: 6px 8px;
   border-radius: 8px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 1.45;
   color: var(--status-word);
   background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
@@ -1088,7 +1088,7 @@
   max-width: 400px;
   padding: 12px 16px;
   border-radius: var(--ds-radius-xl);   /* 12px 既有档 = --ds-radius-xl 同值 */
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   line-height: 1.4;
   opacity: 0;
   transform: translateY(10px);
@@ -1130,7 +1130,7 @@
   display: inline-block;
   margin-left: 10px;
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
   text-decoration: none;
   cursor: pointer;
@@ -1157,7 +1157,7 @@
   overflow: visible;
 }
 .onboarding-title {
-  font-size: 20px;
+  font-size: var(--ds-fs-display);
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--color-text);
@@ -1172,7 +1172,7 @@
    红由左侧 2px 描边＋淡红底（图案载体）承载。词前图标需动 onboarding.js（该文件
    现带他人既有暂存改动，本批禁触）——留待与 onboarding-ux 批合流时补图标。 */
 .onboarding-error {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--status-word);
   margin-top: 12px;
   word-break: break-word;
@@ -1182,7 +1182,7 @@
   border-left: 2px solid var(--status-error-icon);
 }
 .onboarding-status {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-text-muted);
   margin-top: 12px;
 }
@@ -1216,7 +1216,7 @@
   flex-shrink: 0;
 }
 .mp-title {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   color: var(--color-frame-text-bright);
 }
@@ -1260,7 +1260,7 @@
 }
 .mp-load-error-icon { color: var(--color-text-muted); }
 .mp-load-error-title { font-size: 14px; font-weight: 600; color: var(--color-text); }
-.mp-load-error-hint { font-size: 12px; color: var(--color-text-muted); max-width: 360px; }
+.mp-load-error-hint { font-size: var(--ds-fs-hint); color: var(--color-text-muted); max-width: 360px; }
 .mp-load-error-retry { margin-top: 4px; }
 .mp-close { flex-shrink: 0; }
 /* Divergence banner — visibility is owned by the dep-visibility widget
@@ -1313,7 +1313,7 @@
   flex-shrink: 0;
 }
 .config-drill-title {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   color: var(--color-frame-text-bright);
 }

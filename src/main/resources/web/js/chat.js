@@ -1863,7 +1863,7 @@ export function renderStillProcessingNotice(sid, rung = 0) {
   const text = document.createElement('span');
   text.textContent = t('chat.stillProcessing');
   card.appendChild(text);
-  const btnCss = 'padding:4px 12px;border-radius:6px;border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:13px;font-family:inherit;';
+  const btnCss = 'padding:4px 12px;border-radius:6px;border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:var(--ds-fs-body);font-family:inherit;';
   // ① 首次动作：`chat.retry`（文案不变、语义变为**需确认**）——turn 仍在跑时不发 interrupt，
   //    只把行推进到确认态；turn 已结束（busy 已清）则直接重发，无需确认。
   const retryBtn = document.createElement('button');
@@ -1972,7 +1972,7 @@ function renderTerminalRow(sid, i18nKey, dataset = {}) {
   card.appendChild(text);
   const btn = document.createElement('button');
   btn.textContent = t('chat.retry');
-  btn.style.cssText = 'padding:4px 12px;border-radius:6px;border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:13px;font-family:inherit;';
+  btn.style.cssText = 'padding:4px 12px;border-radius:6px;border:1px solid var(--color-frame-border);background:var(--color-frame-hover);color:var(--color-frame-text);cursor:pointer;font-size:var(--ds-fs-body);font-family:inherit;';
   btn.onmouseenter = () => { btn.style.background = 'var(--color-frame-active)'; };
   btn.onmouseleave = () => { btn.style.background = 'var(--color-frame-hover)'; };
   btn.onclick = () => {
@@ -2825,7 +2825,7 @@ export function showOptions(container, questions, onConfirm, doneLabel, onCancel
     if (answerAttachments.length) {
       const countLine = document.createElement('div');
       countLine.className = 'option-answer';
-      countLine.style.cssText = 'color: var(--color-text-muted, #888); font-size: 12px;';
+      countLine.style.cssText = 'color: var(--color-text-muted, #888); font-size: var(--ds-fs-hint);';
       countLine.textContent = t('askUser.attachAnswerCount', { n: String(answerAttachments.length) });
       box.appendChild(countLine);
       mountAnsweredBadge(box, answerAttachments.length);

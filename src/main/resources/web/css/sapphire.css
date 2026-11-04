@@ -654,7 +654,7 @@ button.glass-control.fm-login-btn {
   padding: 10px 20px;
   border-radius: 10px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   line-height: 1.25;
   text-align: center;
@@ -809,7 +809,7 @@ button.glass-control.fm-login-btn:disabled {
   background: var(--color-surface);
   border-radius: 6px;
   box-shadow: var(--msg-meta-card-shadow);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
   user-select: none;
   width: fit-content;
@@ -847,7 +847,7 @@ button.glass-control.fm-login-btn:disabled {
 .agent-badge,
 .fm-msg-agent-badge {
   display: inline-block;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   letter-spacing: normal;
   text-transform: none;

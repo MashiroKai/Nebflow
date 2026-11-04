@@ -84,7 +84,7 @@
   #main input[type='text'],
   #main input[type='password'],
   #main input:not([type]) {
-    font-size: 16px;
+    font-size: var(--ds-fs-mobile-callout);
   }
 
   /* Notch / home indicator: keep the composer clear of system chrome

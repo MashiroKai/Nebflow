@@ -67,7 +67,7 @@
   align-items: center;
   gap: 8px;
   padding: 4px 6px 6px 6px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: rgb(var(--amber) / 1);
   user-select: none;
 }
@@ -81,7 +81,7 @@
   min-width: 0;
   flex: 1;
   color: var(--color-text);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -185,7 +185,7 @@
   gap: 4px;
   flex-shrink: 0;
   padding: 3px 8px;
-  font-size: 12px;
+  font-size: var(--ds-fs-btn);
   font-weight: 500;
   white-space: nowrap;
   color: rgb(var(--sapphire));
@@ -294,7 +294,7 @@
   background: var(--glass-etched-bg, rgba(0, 0, 0, 0.025));
   border: 1px solid var(--glass-border);
   color: var(--color-text-muted, #8b8e96);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   padding: 0 7px;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
@@ -329,7 +329,7 @@
   border: 1px solid var(--glass-etched-border);
   padding: 0 10px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
 }
 .att-file .att-file-name {
@@ -359,7 +359,7 @@
   border: 1px solid rgb(var(--sapphire) / 0.25);
   border-radius: 8px;
   padding: 0 10px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
   position: relative;
   max-width: 100%;                 /* never exceed the chips container (B13) */
@@ -428,7 +428,7 @@
   border: 1px solid rgb(var(--sapphire) / 0.25);
   border-radius: 8px;
   padding: 0 6px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
   overflow: hidden;              /* A1 */
   cursor: pointer;
@@ -468,7 +468,7 @@
 .att-ref-meta {
   display: none;
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 1.5;
   min-width: 0;
   white-space: pre-line;
@@ -522,7 +522,7 @@
 }
 .att-ref-fm-date {
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   flex-shrink: 0;
 }
 .att-ref-fm-text {
@@ -621,7 +621,7 @@
   color: var(--status-word, var(--color-text));
   padding: 3px 10px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   transition: opacity 0.3s ease;
 }
 .att-error-fade { opacity: 0; }
@@ -677,7 +677,7 @@
   /* 瘦身批：垂直内 padding 8px → 6px（横向 14px 不动；多行增长逻辑读
      scrollHeight，与本 padding 无耦合）。 */
   padding: 6px 14px;
-  font-size: 14.5px;
+  font-size: var(--ds-fs-bubble);
   outline: none;
   width: 100%;
   line-height: 1.4;
@@ -1049,7 +1049,7 @@
 }
 .voice-hint {
   color: rgba(255,255,255,0.55);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   flex-shrink: 0;
 }
 
@@ -1107,7 +1107,7 @@ html[data-theme="dark"] #mention-dropdown {
    option，键盘导航/行序零影响）；字号取元信息档 11px/500。 */
 .dd-group-title {
   padding: 4px 16px 6px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   letter-spacing: 0.04em;
   color: var(--color-text-muted);
@@ -1130,17 +1130,17 @@ html[data-theme="dark"] #mention-dropdown {
   background: var(--dd-row-active);
 }
 .slash-cmd {
-  font-size: 14.5px;
+  font-size: var(--ds-fs-bubble);
   font-weight: 500;
   line-height: 1.5;
   color: var(--color-text);
 }
 .slash-desc {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
 }
 .slash-when {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   opacity: 0.7;
   display: block;
@@ -1204,13 +1204,13 @@ html[data-theme="dark"] #mention-dropdown {
   background: var(--dd-row-active);
 }
 .mention-name {
-  font-size: 14.5px;
+  font-size: var(--ds-fs-bubble);
   font-weight: 500;
   line-height: 1.5;
   color: var(--color-text);
 }
 .mention-path {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   color: var(--color-text-muted);
   white-space: nowrap;
@@ -1220,7 +1220,7 @@ html[data-theme="dark"] #mention-dropdown {
 /* Zero-match state: informational line, not a clickable row. */
 .mention-empty {
   padding: 8px 16px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
   cursor: default;
 }
@@ -1270,7 +1270,7 @@ html.no-backdrop #mention-dropdown {
   align-items: center;
   gap: 8px;
   padding: 8px 16px 4px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   cursor: default;
 }
 .queue-bar-title {
@@ -1345,7 +1345,7 @@ html.no-backdrop #mention-dropdown {
 .queue-item-text {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   line-height: 1.4;
   color: var(--color-text);
   white-space: nowrap;
@@ -1398,7 +1398,7 @@ html.no-backdrop #mention-dropdown {
   flex-shrink: 0;
 }
 .queue-item-btn {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   padding: 3px 10px;
   border-radius: 8px;
   border: 1px solid var(--glass-etched-border);
@@ -1418,7 +1418,7 @@ html.no-backdrop #mention-dropdown {
 }
 .queue-item-btn.recall {
   padding: 3px 7px;
-  font-size: 12px;
+  font-size: var(--ds-fs-btn);
   color: var(--color-text-muted);
   border-color: transparent;
   background: transparent;
@@ -1432,7 +1432,7 @@ html.no-backdrop #mention-dropdown {
 }
 .queue-item-btn.remove {
   padding: 3px 7px;
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   line-height: 1;
   color: var(--color-text-muted);
   border-color: transparent;
@@ -1456,7 +1456,7 @@ html.no-backdrop #mention-dropdown {
   opacity: 0.85;
 }
 .queue-item-failed-note {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--status-word, var(--color-text));
   flex-shrink: 0;
   white-space: nowrap;

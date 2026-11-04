@@ -33,7 +33,7 @@
   padding: 5px 8px;
   cursor: pointer;
   user-select: none;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   min-width: 0;
 }
 .nf-fc-row:hover {
@@ -46,7 +46,7 @@
 }
 .nf-fc-path {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -55,7 +55,7 @@
 }
 .nf-fc-counts {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   white-space: nowrap;
 }
 .nf-fc-added {
@@ -104,7 +104,7 @@
 }
 .nf-fc-empty {
   padding: 8px;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
 }
 
@@ -116,7 +116,7 @@
   margin: 0;
   padding: 6px 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 1.5;
   white-space: pre;
   overflow-x: auto;
@@ -202,7 +202,7 @@
   display: flex;
   justify-content: center;
   padding: 6px 12px 4px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   min-width: 0;
   pointer-events: none;
 }
@@ -389,7 +389,7 @@
   align-items: baseline;
   gap: 6px;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
 }
 .nf-rcpt-top[aria-expanded='true'] + .nf-rcpt-summary {
@@ -406,7 +406,7 @@
 .nf-rcpt-hash {
   flex: 0 0 auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
 }
 /* 块二：diff 统计胶囊（版式批①②③——该批**合并**的代码量变化「+新增 −删除」）：
@@ -431,7 +431,7 @@
   background: none;
   font: inherit;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   /* 行距 1.3 显式落定：不落则继承泡体正文行距，mono 段撑破单行带
      （B1 ≤24px 判红实证 25.05px）。 */
   line-height: 1.3;
@@ -484,7 +484,7 @@ span.nf-rcpt-note { cursor: default; }
    铁律 5「侧边栏激活态用阴影，不用竖线」）。 */
 .nfp-meta {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
   white-space: nowrap;
   overflow: hidden;
@@ -501,7 +501,7 @@ span.nf-rcpt-note { cursor: default; }
 }
 .nfp-empty {
   padding: 10px 6px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
 }
@@ -528,7 +528,7 @@ span.nf-rcpt-note { cursor: default; }
 /* 流式渲染进行中：Canvas 阅读器首帧的装载态行（渲染完成即移除）。 */
 .nf-diff-loading {
   padding: 8px 6px;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, rgba(128, 128, 128, 0.9));
   animation: nf-diff-loading-pulse 1.2s ease-in-out infinite;
 }
@@ -539,7 +539,7 @@ span.nf-rcpt-note { cursor: default; }
 /* 面板 meta 槽的失败文案（打开链 import/容器失败——禁静默无响应）。 */
 .nfp-meta-err {
   color: var(--color-danger, #d64545);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
 }
 /* 打开失败行的行内标记（下次成功开图时移除）。 */
 .nf-fc-openfail {

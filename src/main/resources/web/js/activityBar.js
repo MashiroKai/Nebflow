@@ -622,7 +622,7 @@ function injectLoginModalStyles() {
   display: flex; justify-content: space-between; align-items: center;
   padding: 12px 16px; border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.05));
 }
-.login-modal-header h3 { font-size: 15px; margin: 0; color: var(--color-text); font-weight: 600; letter-spacing: -0.01em; }
+.login-modal-header h3 { font-size: var(--ds-fs-title); margin: 0; color: var(--color-text); font-weight: 600; letter-spacing: -0.01em; }
 .login-modal-close {
   background: none; border: none; color: var(--color-text-muted);
   font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1;
@@ -630,24 +630,24 @@ function injectLoginModalStyles() {
 }
 .login-modal-close:hover { opacity: 1; }
 .login-modal-body { padding: 16px; text-align: center; }
-.login-hint { font-size: 13px; color: var(--color-text-muted); margin-bottom: 14px; line-height: 1.55; }
+.login-hint { font-size: var(--ds-fs-body); color: var(--color-text-muted); margin-bottom: 14px; line-height: 1.55; }
 .login-user-code {
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-size: 26px; font-weight: 600; letter-spacing: 2px;
   color: var(--color-primary); margin-bottom: 4px;
   font-variant-numeric: tabular-nums;
 }
-.login-code-caption { font-size: 12px; color: var(--color-text-muted); margin-bottom: 14px; }
+.login-code-caption { font-size: var(--ds-fs-hint); color: var(--color-text-muted); margin-bottom: 14px; }
 /* Key stack. The two tiers are ONE family (sapphire.css 登录键族块):
    primary = green solid (cfg-btn-primary carries the white ink),
    secondary = same geometry, glass material. Geometry itself lives in the
    family block (single source) — this block only stacks the keys. */
 .login-actions { display: flex; flex-direction: column; gap: 8px; }
-.login-waiting { margin-top: 12px; font-size: 12px; color: var(--color-text-muted); }
+.login-waiting { margin-top: 12px; font-size: var(--ds-fs-hint); color: var(--color-text-muted); }
 .login-success { font-size: 14px; color: var(--color-primary); padding: 12px 0; }
 /* ui-status-redesign（S11 / 盘点 G3）：全盘点对比度最差件（#e57373 白底 2.8:1 ✗）
    → 中性正文（回到 ~10:1 级）＋行首 octagon-alert 红图标（activityBar.js 注入）。 */
-.login-error-msg { font-size: 13px; color: var(--status-word); margin-bottom: 14px; line-height: 1.5; display: flex; align-items: flex-start; gap: 8px; }
+.login-error-msg { font-size: var(--ds-fs-body); color: var(--status-word); margin-bottom: 14px; line-height: 1.5; display: flex; align-items: flex-start; gap: 8px; }
 .login-error-msg .st-ic { width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0; }
 /* Social one-click keys (2026-10-15 login-card batch) — LAYOUT/TYPOGRAPHY
    ONLY: the keys carry the .login-modal-btn family classes (sapphire.css
@@ -665,7 +665,7 @@ function injectLoginModalStyles() {
 .login-lockup { color: var(--color-text); display: block; margin-bottom: 2px; }
 .login-lockup .stand-lockup { width: 136px; height: 25px; display: block; }
 .login-card-title { font-size: 15.5px; font-weight: 600; color: var(--color-text); margin: 0; letter-spacing: -0.01em; }
-.login-sub2 { font-size: 11px; color: var(--color-text-muted); line-height: 1.55; }
+.login-sub2 { font-size: var(--ds-fs-meta); color: var(--color-text-muted); line-height: 1.55; }
 .login-idle .login-hint b { color: var(--color-text); font-weight: 500; }
 /* 主键 = 官网登录卡同款（mystand.space/login 的 .auth 主键，作者补充令）：
    单色反白实色、无图标、全宽居中、rounded-lg、14px/500、hover 提阶、disabled .6。

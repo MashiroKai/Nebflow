@@ -3588,13 +3588,13 @@ body.mobile-layer #modal-overlay #takeover-box {
   overflow-y: auto;
 }
 /* 手机档字阶（家族 token 的移动档：标题 21→20 收一档，正文 14→17 抬到可读线）。 */
-body.mobile-layer #takeover-box .nfc-title { font-size: 20px; }
+body.mobile-layer #takeover-box .nfc-title { font-size: var(--ds-fs-display); }
 body.mobile-layer #takeover-box .nfc-body {
-  font-size: 17px;
+  font-size: var(--ds-fs-lead);
   line-height: 1.45;
   max-width: none;
 }
-body.mobile-layer #takeover-box .nfc-error { font-size: 13px; }
+body.mobile-layer #takeover-box .nfc-error { font-size: var(--ds-fs-body); }
 /* 动作行：等宽双钮一行（窄屏不挤压），热区 48px ≥ 44px 规范线。 */
 body.mobile-layer #takeover-box .nfc-actions {
   justify-content: stretch;
@@ -3607,7 +3607,7 @@ body.mobile-layer #takeover-box .nfc-actions .g2-pill {
   height: 48px;
   min-height: 48px;
   padding: 0 12px;
-  font-size: 15px;
+  font-size: var(--ds-fs-mobile-sub);
 }
 /* 承接层：卡片四周留白（不贴边）+ 内容垂直居中（消灭下方 2/3 空白）。 */
 body.mobile-layer #modal-overlay.takeover-live {
@@ -4501,7 +4501,7 @@ body.mobile-layer .mh-idhead .mh-idhead-avatar {
    放大字母/设备字形 —— 与 .fm-avatar-40 的 15/17px、20px 字形同一等比口径
    〔56/40 = 1.4〕，逐档读数见批文档断言表）。群组合头像（.fm-avgrid）的球径
    走容器 cqw，随容器自动等比，无需本条。 */
-body.mobile-layer .mh-idhead .mh-idhead-avatar .fm-avatar { font-size: 20px; }
+body.mobile-layer .mh-idhead .mh-idhead-avatar .fm-avatar { font-size: var(--ds-fs-display); }
 body.mobile-layer .mh-idhead .mh-idhead-avatar .fm-avatar-device svg { width: 28px; height: 28px; }
 /* ③ 名字玻璃胶囊（**四种会话同一条规则**）：绝对定位挂在头像正下方居中，
    不参与居中计算；padding 3/14、圆角 999、--glass-bg + blur/saturate 玻璃单源
@@ -4519,7 +4519,7 @@ body.mobile-layer :is(.mh-idhead-name, .mh-idhead > #session-name) {
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
   backdrop-filter: blur(var(--glass-blur, 24px)) saturate(var(--cv-saturate, 1.15));
-  font-size: 15px;
+  font-size: var(--ds-fs-mobile-sub);
   font-weight: 600;
   line-height: 1.2;
   letter-spacing: -0.01em;

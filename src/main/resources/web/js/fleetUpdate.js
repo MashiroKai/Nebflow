@@ -79,9 +79,9 @@ const FLEET_CSS = `
 }
 .fleet-close:hover { background: var(--glass-control-bg-hover); color: var(--color-frame-text); }
 .fleet-body { padding: 12px 16px; overflow-y: auto; flex: 1; }
-.fleet-sub { font-size: 12px; color: var(--color-frame-text-muted); margin-bottom: 10px; line-height: 1.5; }
+.fleet-sub { font-size: var(--ds-fs-hint); color: var(--color-frame-text-muted); margin-bottom: 10px; line-height: 1.5; }
 .fleet-blocking {
-  font-size: 12px; color: var(--color-frame-text); padding: 8px 10px; margin-bottom: 10px;
+  font-size: var(--ds-fs-hint); color: var(--color-frame-text); padding: 8px 10px; margin-bottom: 10px;
   border-radius: 10px; background: var(--glass-control-bg);
   border: 1px solid var(--glass-control-border); line-height: 1.5;
 }
@@ -90,12 +90,12 @@ const FLEET_CSS = `
   padding: 8px 10px; margin-bottom: 8px; cursor: pointer;
 }
 .fleet-row:hover { background: var(--glass-control-bg-hover); }
-.fleet-row-main { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.fleet-row-main { display: flex; align-items: center; gap: 8px; font-size: var(--ds-fs-body); }
 .fleet-row-name { color: var(--color-frame-text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fleet-row-ver { font-size: 11px; color: var(--color-frame-text-muted); flex-shrink: 0; }
-.fleet-row-stage { font-size: 11px; color: var(--color-frame-text-muted); flex-shrink: 0; }
+.fleet-row-ver { font-size: var(--ds-fs-meta); color: var(--color-frame-text-muted); flex-shrink: 0; }
+.fleet-row-stage { font-size: var(--ds-fs-meta); color: var(--color-frame-text-muted); flex-shrink: 0; }
 .fleet-row-detail {
-  font-size: 11px; color: var(--color-frame-text-muted); margin-top: 6px;
+  font-size: var(--ds-fs-meta); color: var(--color-frame-text-muted); margin-top: 6px;
   padding-top: 6px; border-top: 1px dashed var(--color-frame-border-light); line-height: 1.5;
   word-break: break-word;
 }
@@ -105,10 +105,10 @@ const FLEET_CSS = `
   font-size: 10px; padding: 1px 6px; border-radius: 6px; flex-shrink: 0;
   border: 1px solid var(--glass-control-border); color: var(--color-frame-text-muted);
 }
-.fleet-summary { font-size: 12px; color: var(--color-frame-text); line-height: 1.6; margin: 10px 0 4px; }
+.fleet-summary { font-size: var(--ds-fs-hint); color: var(--color-frame-text); line-height: 1.6; margin: 10px 0 4px; }
 .fleet-foot { padding: 10px 16px 14px; display: flex; gap: 8px; justify-content: flex-end; }
 .fleet-btn {
-  font-size: 12px; padding: 6px 12px; border-radius: 10px; cursor: pointer;
+  font-size: var(--ds-fs-hint); padding: 6px 12px; border-radius: 10px; cursor: pointer;
   border: 1px solid var(--glass-control-border); background: var(--glass-control-bg);
   color: var(--color-frame-text);
 }

@@ -90,7 +90,7 @@ const DAEMON_CSS = `
   padding: 12px 14px 6px; flex-shrink: 0;
 }
 .daemon-panel-title {
-  font-size: 13px; font-weight: 600; color: var(--color-text);
+  font-size: var(--ds-fs-body); font-weight: 600; color: var(--color-text);
   letter-spacing: -0.02em;
 }
 .daemon-panel-header-right { display: flex; align-items: center; gap: 4px; }
@@ -135,8 +135,8 @@ const DAEMON_CSS = `
   padding: 40px 16px 36px; gap: 6px; user-select: none;
   border-radius: 10px; margin: 0 4px;
 }
-.daemon-empty-text { font-size: 12px; color: var(--color-text); opacity: 0.3; letter-spacing: -0.01em; }
-.daemon-empty-hint { font-size: 11px; color: var(--color-text); opacity: 0.18; letter-spacing: -0.01em; }
+.daemon-empty-text { font-size: var(--ds-fs-hint); color: var(--color-text); opacity: 0.3; letter-spacing: -0.01em; }
+.daemon-empty-hint { font-size: var(--ds-fs-meta); color: var(--color-text); opacity: 0.18; letter-spacing: -0.01em; }
 
 /* ── Daemon Row ── */
 .daemon-row {
@@ -173,17 +173,17 @@ const DAEMON_CSS = `
 .daemon-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .daemon-name-row { display: flex; align-items: baseline; gap: 5px; }
 .daemon-name {
-  font-size: 13px; font-weight: 500; color: var(--color-text);
+  font-size: var(--ds-fs-body); font-weight: 500; color: var(--color-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: -0.01em;
 }
 .daemon-name.clickable { cursor: pointer; text-decoration: none; transition: color 0.15s; }
 .daemon-name.clickable:hover { color: rgb(91, 127, 191); text-decoration: none; }
 .daemon-port {
-  font-size: 11px; color: var(--color-text-muted); opacity: 0.6;
+  font-size: var(--ds-fs-meta); color: var(--color-text-muted); opacity: 0.6;
   flex-shrink: 0; font-variant-numeric: tabular-nums;
 }
 .daemon-command {
-  font-size: 11px; color: var(--color-text-muted); opacity: 0.4;
+  font-size: var(--ds-fs-meta); color: var(--color-text-muted); opacity: 0.4;
   font-family: ui-monospace, SFMono-Regular, monospace;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }

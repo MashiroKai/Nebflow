@@ -115,7 +115,7 @@
   box-shadow: var(--ds-shadow-palette);
   color: var(--color-text);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   overflow: hidden;
 }
 
@@ -152,7 +152,7 @@
    元素的对齐由 Monaco 自己的 flex 结构负责。 */
 #nf-quickinput-host .quick-input-list .monaco-list-row {
   color: var(--color-text);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   border-radius: 8px;
 }
 
@@ -205,7 +205,7 @@
 #nf-quickinput-host .quick-input-list .quick-input-list-entry-keybinding,
 #nf-quickinput-host .quick-input-list .monaco-keybinding {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   opacity: 0.85;
 }
@@ -213,7 +213,7 @@
 #nf-quickinput-host .quick-input-list .monaco-keybinding > .monaco-keybinding-key {
   border: none;
   background: transparent;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
 }
 

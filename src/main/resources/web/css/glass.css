@@ -309,7 +309,7 @@ html[data-theme="light"] {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   letter-spacing: 0.01em;
   font-family: inherit;

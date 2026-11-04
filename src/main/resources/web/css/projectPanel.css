@@ -166,7 +166,7 @@
 .project-unm-ws {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   opacity: 0.7;
   white-space: nowrap;
@@ -495,7 +495,7 @@
 .proj-create-panel { width: 520px; }
 .proj-create-label {
   display: block;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-dim);
   margin-bottom: 6px;
 }
@@ -562,7 +562,7 @@
 .proj-create-path {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-dim);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -761,7 +761,7 @@
   font: 600 9px/1 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text-muted);
 }
-.creating-row .step-t { font-size: 11px; color: var(--color-frame-text-dim); }
+.creating-row .step-t { font-size: var(--ds-fs-meta); color: var(--color-frame-text-dim); }
 .creating-row .step-sep { color: var(--color-frame-text-muted); opacity: 0.55; }
 
 /* ── ui-device-faces 批（2026-10-10）面C：项目卡设备徽标 ─────────────────────
@@ -836,7 +836,7 @@
   justify-content: flex-end;
   gap: 8px;
 }
-.project-desc-save { font-size: 12px; padding: 5px 14px; }
+.project-desc-save { font-size: var(--ds-fs-hint); padding: 5px 14px; }
 .project-desc-cancel {
   border: none;
   background: transparent;

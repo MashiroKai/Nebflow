@@ -1,0 +1,877 @@
+{
+  "class": "radius",
+  "applied": false,
+  "totalMigrated": 571,
+  "perToken": {
+    "--ds-radius-chip": 102,
+    "--ds-radius-button": 68,
+    "--ds-radius-xl": 39,
+    "--ds-radius-input": 168,
+    "--ds-radius-badge": 71,
+    "--ds-radius-shell": 13,
+    "--ds-radius-pill": 38,
+    "--ds-radius-card-lg": 20,
+    "--ds-radius-thin": 21,
+    "--ds-radius-card-sm": 9,
+    "--ds-radius-card-md": 15,
+    "--ds-radius-2xl": 7
+  },
+  "perFile": {
+    "css/base.css": 6,
+    "css/cards.css": 2,
+    "css/chat.css": 104,
+    "css/delegatePanorama.css": 8,
+    "css/diffView.css": 9,
+    "css/dropbox.css": 3,
+    "css/executors.css": 3,
+    "css/flowMap.css": 19,
+    "css/friends.css": 45,
+    "css/glass.css": 1,
+    "css/humanFace.css": 4,
+    "css/input.css": 25,
+    "css/keyboard.css": 2,
+    "css/lightbox.css": 2,
+    "css/mermaid.css": 3,
+    "css/mobileLayer.css": 35,
+    "css/mobileSearchFlat.css": 1,
+    "css/modal.css": 22,
+    "css/nav.css": 4,
+    "css/neblink.css": 9,
+    "css/perception.css": 15,
+    "css/projectPanel.css": 17,
+    "css/reminder.css": 15,
+    "css/sapphire.css": 4,
+    "css/secrets.css": 8,
+    "css/sidebar.css": 28,
+    "css/social.css": 6,
+    "css/split.css": 46,
+    "css/taskList.css": 8,
+    "css/todo-face.css": 11,
+    "css/todo-page.css": 4,
+    "css/usage.css": 13,
+    "css/voice.css": 1,
+    "css/voiceMode.css": 1,
+    "js/activityBar.js": 2,
+    "js/askAttachments.js": 2,
+    "js/bgAgentPopup.js": 1,
+    "js/bgAgentWorkStrip.js": 1,
+    "js/bgTaskOutputPopup.js": 2,
+    "js/canvas.js": 2,
+    "js/cardRegistry.js": 1,
+    "js/chat.js": 3,
+    "js/daemonPanel.js": 5,
+    "js/daemons.js": 7,
+    "js/delegateChainView.js": 7,
+    "js/explorer.js": 1,
+    "js/fleetUpdate.js": 7,
+    "js/flowCss.js": 35,
+    "js/input.js": 1,
+    "js/modal.js": 1,
+    "js/neblink.js": 1,
+    "js/perception.js": 1,
+    "js/viewers/largeText.js": 4,
+    "js/viewers/pptx.js": 3
+  },
+  "needsRuling": [
+    {
+      "file": "css/base.css",
+      "line": 256,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/cards.css",
+      "line": 356,
+      "prop": "border-radius",
+      "value": "1px",
+      "decl": "1px",
+      "why": "圆角 1px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 1452,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3362,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 3613,
+      "prop": "border-radius",
+      "value": "9999px",
+      "decl": "9999px",
+      "why": "圆角 9999px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4667,
+      "prop": "border-radius",
+      "value": "9px",
+      "decl": "9px",
+      "why": "圆角 9px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/chat.css",
+      "line": 4701,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 266,
+      "prop": "border-radius",
+      "value": "11px",
+      "decl": "11px",
+      "why": "圆角 11px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 316,
+      "prop": "border-radius",
+      "value": "5px",
+      "decl": "5px",
+      "why": "圆角 5px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/delegatePanorama.css",
+      "line": 377,
+      "prop": "border-radius",
+      "value": "5px",
+      "decl": "5px",
+      "why": "圆角 5px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/dropbox.css",
+      "line": 111,
+      "prop": "border-radius",
+      "value": "9999px",
+      "decl": "9999px",
+      "why": "圆角 9999px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/dropbox.css",
+      "line": 155,
+      "prop": "border-radius",
+      "value": "9999px",
+      "decl": "9999px",
+      "why": "圆角 9999px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/executors.css",
+      "line": 106,
+      "prop": "border-radius",
+      "value": "9px",
+      "decl": "9px",
+      "why": "圆角 9px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 298,
+      "prop": "border-radius",
+      "value": "5px",
+      "decl": "5px",
+      "why": "圆角 5px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 895,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 1042,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/flowMap.css",
+      "line": 1127,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 15,
+      "prop": "border-radius",
+      "value": "9999px",
+      "decl": "9999px",
+      "why": "圆角 9999px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 161,
+      "prop": "border-radius",
+      "value": "9999px",
+      "decl": "9999px",
+      "why": "圆角 9999px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 805,
+      "prop": "border-radius",
+      "value": "9999px",
+      "decl": "9999px",
+      "why": "圆角 9999px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 941,
+      "prop": "border-radius",
+      "value": "9999px",
+      "decl": "9999px",
+      "why": "圆角 9999px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 970,
+      "prop": "border-radius",
+      "value": "9999px",
+      "decl": "9999px",
+      "why": "圆角 9999px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1015,
+      "prop": "border-radius",
+      "value": "9999px",
+      "decl": "9999px",
+      "why": "圆角 9999px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1173,
+      "prop": "border-radius",
+      "value": "5px",
+      "decl": "5px",
+      "why": "圆角 5px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1308,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 1386,
+      "prop": "border-radius",
+      "value": "9999px",
+      "decl": "9999px",
+      "why": "圆角 9999px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2179,
+      "prop": "border-radius",
+      "value": "9999px",
+      "decl": "9999px",
+      "why": "圆角 9999px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/friends.css",
+      "line": 2265,
+      "prop": "border-radius",
+      "value": "9999px",
+      "decl": "9999px",
+      "why": "圆角 9999px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 1499,
+      "prop": "border-radius",
+      "value": "13px",
+      "decl": "13px",
+      "why": "圆角 13px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/mobileLayer.css",
+      "line": 2289,
+      "prop": "border-radius",
+      "value": "3.5px",
+      "decl": "3.5px",
+      "why": "圆角 3.5px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 681,
+      "prop": "border-radius",
+      "value": "1px",
+      "decl": "1px",
+      "why": "圆角 1px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 942,
+      "prop": "border-radius",
+      "value": "5px",
+      "decl": "5px",
+      "why": "圆角 5px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 987,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/modal.css",
+      "line": 1369,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 167,
+      "prop": "border-radius",
+      "value": "11px",
+      "decl": "11px",
+      "why": "圆角 11px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 305,
+      "prop": "border-radius",
+      "value": "5px",
+      "decl": "5px",
+      "why": "圆角 5px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 363,
+      "prop": "border-radius",
+      "value": "9px",
+      "decl": "9px",
+      "why": "圆角 9px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/perception.css",
+      "line": 372,
+      "prop": "border-radius",
+      "value": "5px",
+      "decl": "5px",
+      "why": "圆角 5px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 75,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 104,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 725,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/projectPanel.css",
+      "line": 775,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 50,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 453,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 682,
+      "prop": "border-radius",
+      "value": "5px",
+      "decl": "5px",
+      "why": "圆角 5px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/reminder.css",
+      "line": 742,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/sapphire.css",
+      "line": 855,
+      "prop": "border-radius",
+      "value": "9999px",
+      "decl": "9999px",
+      "why": "圆角 9999px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1159,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1599,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1617,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 1721,
+      "prop": "border-radius",
+      "value": "9px",
+      "decl": "9px",
+      "why": "圆角 9px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2085,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/sidebar.css",
+      "line": 2509,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 41,
+      "prop": "border-radius",
+      "value": "5px",
+      "decl": "5px",
+      "why": "圆角 5px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 65,
+      "prop": "border-radius",
+      "value": "5px",
+      "decl": "5px",
+      "why": "圆角 5px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 261,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 391,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 549,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 905,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 1007,
+      "prop": "border-radius",
+      "value": "1px",
+      "decl": "1px",
+      "why": "圆角 1px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 1644,
+      "prop": "border-radius",
+      "value": "17px",
+      "decl": "17px",
+      "why": "圆角 17px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 1700,
+      "prop": "border-radius",
+      "value": "9px",
+      "decl": "9px",
+      "why": "圆角 9px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 1772,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 1813,
+      "prop": "border-radius",
+      "value": "5px",
+      "decl": "5px",
+      "why": "圆角 5px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2098,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2372,
+      "prop": "border-radius",
+      "value": "1px",
+      "decl": "1px",
+      "why": "圆角 1px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2429,
+      "prop": "border-radius",
+      "value": "0 12px 12px 0",
+      "decl": "0 12px 12px 0",
+      "why": "圆角组合值（0 12px 12px 0）—— 组合形态无人裁定，保字面量"
+    },
+    {
+      "file": "css/split.css",
+      "line": 2670,
+      "prop": "border-radius",
+      "value": "12px 12px 0 0",
+      "decl": "12px 12px 0 0",
+      "why": "圆角组合值（12px 12px 0 0）—— 组合形态无人裁定，保字面量"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3697,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/split.css",
+      "line": 3701,
+      "prop": "border-radius",
+      "value": "9px",
+      "decl": "9px",
+      "why": "圆角 9px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/taskList.css",
+      "line": 204,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/timeWheel.css",
+      "line": 103,
+      "prop": "border-radius",
+      "value": "var(--ds-radius-shell) var(--ds-radius-shell) 0 0",
+      "decl": "var(--ds-radius-shell) var(--ds-radius-shell) 0 0",
+      "why": "圆角组合值（var(--ds-radius-shell) var(--ds-radius-shell) 0 0）—— 组合形态无人裁定，保字面量"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 254,
+      "prop": "border-radius",
+      "value": "24px 24px 19px 19px",
+      "decl": "24px 24px 19px 19px",
+      "why": "圆角组合值（24px 24px 19px 19px）—— 组合形态无人裁定，保字面量"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 395,
+      "prop": "border-radius",
+      "value": "5px",
+      "decl": "5px",
+      "why": "圆角 5px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 492,
+      "prop": "border-radius",
+      "value": "5px",
+      "decl": "5px",
+      "why": "圆角 5px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 569,
+      "prop": "border-radius",
+      "value": "5px",
+      "decl": "5px",
+      "why": "圆角 5px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 690,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/todo-face.css",
+      "line": 902,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/todo-page.css",
+      "line": 181,
+      "prop": "border-radius",
+      "value": "9999px",
+      "decl": "9999px",
+      "why": "圆角 9999px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/usage.css",
+      "line": 441,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "css/usage.css",
+      "line": 445,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/askAttachments.js",
+      "line": 146,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/askAttachments.js",
+      "line": 179,
+      "prop": "border-radius",
+      "value": "0 10px 0 8px",
+      "decl": "0 10px 0 8px",
+      "why": "圆角组合值（0 10px 0 8px）—— 组合形态无人裁定，保字面量"
+    },
+    {
+      "file": "js/askAttachments.js",
+      "line": 363,
+      "prop": "border-radius",
+      "value": "9px",
+      "decl": "9px",
+      "why": "圆角 9px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/askAttachments.js",
+      "line": 397,
+      "prop": "border-radius",
+      "value": "11px",
+      "decl": "11px",
+      "why": "圆角 11px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/canvas.js",
+      "line": 1057,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/canvas.js",
+      "line": 1062,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/daemons.js",
+      "line": 223,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/daemons.js",
+      "line": 238,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/delegateChainView.js",
+      "line": 604,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/explorer.js",
+      "line": 1078,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 50,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 84,
+      "prop": "border-radius",
+      "value": "11px",
+      "decl": "11px",
+      "why": "圆角 11px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 212,
+      "prop": "border-radius",
+      "value": "3px",
+      "decl": "3px",
+      "why": "圆角 3px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 236,
+      "prop": "border-radius",
+      "value": "5px",
+      "decl": "5px",
+      "why": "圆角 5px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 306,
+      "prop": "border-radius",
+      "value": "9px",
+      "decl": "9px",
+      "why": "圆角 9px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 348,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 537,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 552,
+      "prop": "border-radius",
+      "value": "7px",
+      "decl": "7px",
+      "why": "圆角 7px 无同值令牌（改档即改像素）"
+    },
+    {
+      "file": "js/flowCss.js",
+      "line": 559,
+      "prop": "border-radius",
+      "value": "5px",
+      "decl": "5px",
+      "why": "圆角 5px 无同值令牌（改档即改像素）"
+    }
+  ]
+}

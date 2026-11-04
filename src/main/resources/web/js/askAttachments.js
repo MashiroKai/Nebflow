@@ -297,7 +297,7 @@ function upload(c, item) {
       retry.type = 'button';
       retry.textContent = t('askUser.attachRetry');
       retry.style.cssText =
-        'border:none;background:none;color:var(--color-warning,#ff9800);font:inherit;font-size:11px;' +
+        'border:none;background:none;color:var(--color-warning,#ff9800);font:inherit;font-size:var(--ds-fs-meta);' +
         'cursor:pointer;padding:0;';
       retry.addEventListener('click', () => { if (!c.locked) upload(c, item); });
       item.sub.append(fmtSize(item.size) + ' · ', errIc, errSpan, ' ', retry);
@@ -362,7 +362,7 @@ export function mountAnswerAttachments(box, opts) {
   emptyBtn.style.cssText =
     'display:flex;align-items:center;gap:7px;width:100%;padding:9px 12px;border-radius:9px;' +
     'border:1px dashed var(--color-border,rgba(128,128,128,0.35));background:transparent;' +
-    'color:var(--color-text-muted,#888);font:inherit;font-size:12px;cursor:pointer;text-align:left;';
+    'color:var(--color-text-muted,#888);font:inherit;font-size:var(--ds-fs-hint);cursor:pointer;text-align:left;';
   const emptyIco = document.createElement('span');
   emptyIco.style.cssText = 'display:inline-flex;flex:none;';
   emptyIco.innerHTML = SVG_IMAGE;
