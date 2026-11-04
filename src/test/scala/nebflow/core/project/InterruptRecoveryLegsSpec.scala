@@ -645,6 +645,53 @@ class InterruptRecoveryLegsSpec extends CatsEffectSuite:
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // V5 反向用例（分发器 2026-11-04 11:29 补充令）：**没干完**的会话仍走复活腿，
+  // 绝不进「完成未报告」收尾腿、绝不向父会话投「已完成」通知。
+  // 判据同源：收尾腿的机械判据 = 任务行 completed ∧ registry.workReport 非空 ∧
+  // reportStatus 缺席；在飞行（running）不满足第一条 ⇒ 只可能被复活。
+  // ══════════════════════════════════════════════════════════════════════════
+
+  test(
+    "V5 反向: 没干完（在飞 running 行）的会话仍走复活腿， 收尾腿不得误吞、不得投已完成通知"
+  ) {
+    assume(legEnabled("V5"), "IR_LEG filter: V5 not selected")
+    withFx("v5-negative") { fx =>
+      val child = "delegate-nebflow-v5-open"
+      for
+        parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
+        _ <- fx.store.recordTask(mkTask(child, parent.id, status = "running"))
+        _ <- IO(
+          DelegateRegistry.put(
+            mkRecord(child, parent.id, fx.seat.toString)
+              .copy(workReport = Some("V5_PARTIAL_NOTE_MUST_NOT_BE_FINALIZED"), reportStatus = None)
+          )
+        )
+        _ <- fx.sessionStore.saveMessagesForSession(
+          child,
+          List(Message(MessageRole.User, Left("V5_OPEN_BRIEF")), Message(MessageRole.Assistant, Left("started, no result yet")))
+        )
+        report <- sweepWith(fx)
+        row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
+        events <- mailboxEvents(fx, parent.id).map(_.filter(_.correlationId.contains(child)))
+        rec <- IO(DelegateRegistry.find(child))
+        _ <- evidence("V5/negative")(
+          s"sweep report: ${report.summary}",
+          s"task row status = ${row.status} (revival keeps it running = 没干完仍在干)",
+          s"parent mailbox events for child = ${events.size} (must be 0: 收尾腿不得对在飞工作投已完成)",
+          s"registry reportStatus = ${rec.flatMap(_.reportStatus)} (must be None)"
+        )
+        _ = assert(
+          report.revived.contains(child),
+          s"RED(V5-neg): an in-flight (unfinished) delegate must still go through the revival leg — report=${report.summary}"
+        )
+        _ = assertEquals(row.status, "running", "V5-neg: the revived row is Processing, never finalized")
+        _ = assertEquals(rec.flatMap(_.reportStatus), None, "V5-neg: no delivered-report state for unfinished work")
+        _ = assertEquals(events, Nil, s"V5-neg: no completion notice may reach the parent: $events")
+      yield ()
+    }
+  }
+
   // ── 辅助 ──────────────────────────────────────────────────────────────────
 
   /** 探针 actor：收下消息即「被中断」——不落盘（钉死 send→persist 崩溃窗口）。 */

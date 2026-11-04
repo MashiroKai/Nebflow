@@ -1190,8 +1190,13 @@ private[agent] object AgentProcessing:
                     )
                 }
                 .handleErrorWith(_ => IO.unit)
+              // 收殓回执重感知腿（中断恢复批 2026-11-04 · 审计 D1）：压缩正是「一次
+              // 性注入被抹除」的那一拍——父会话若有未确认的重启丢失通知（持久提醒账
+              // `<dataRoot>/sessions/<sid>/restart-loss-ledger.json`），把一句
+              // `<system-reminder>` 重述拼在压缩后历史的尾部（每条至多 2 次，24h 自清）。
+              // 无账 = os.exists 快路 None（零行为漂移）。
               val compactedState = state
-                .withMessages(compactedMessages)
+                .withMessages(compactedMessages ++ RestartLossLedger.restatementForTail(state.sessionId, compactedMessages).toList)
                 .withPendingCompaction(None)
                 .withCompactionFailures(0)
                 .withEmptyResponseRetries(0)
