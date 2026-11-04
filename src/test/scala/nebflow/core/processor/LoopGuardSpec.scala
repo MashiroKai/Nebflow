@@ -366,4 +366,79 @@ class LoopGuardSpec extends FunSuite:
     assert(msg.endsWith("</system-reminder>"))
   }
 
+  // ── bash overhaul 红相 R1–R5（作者令 2026-11-04「组织优化 bash，用业界成熟
+  //    做法完整实现，一步到位」）────────────────────────────────────────────
+  //
+  // 事实源：`docs/20261104_110500_our-bash-tool-defects.md` D1/D3（现场 A/B：10 次
+  // 同参 `Bash(background_job_id=…)` 查询 → R-call 第 10 拍 Terminate → 节点/delegate
+  // 失败）+ 调研件 §5.3 的修法（查询/等待类调用不计 R-call，但**仍计 S1**，另加一条
+  // 「只提醒」的正向指标）。
+  //
+  // 判据口径（本组断言即验收面）：
+  //   - 查询类调用 = `Bash` 且 args 带 `background_job_id` 且 `command` 为空 ⇒ 不计
+  //     R-call 连续计数（「不同调用才刷新计数」的旧折叠逻辑对定时采样失效）；
+  //   - 等待类调用 = `BgWait` ⇒ 同上不计 R-call；
+  //   - **补偿**（不得把失败也豁免掉）：查询返回 isError 时照旧计 S1/S3（8 连败 = Terminate）；
+  //   - 正向指标：同参查询次数达 5（`queryWarnAfter` 缺省 5）只发一次 L0 nudge，
+  //     文案必须指向等待原语 `BgWait`，**永不 Terminate**；
+  //   - 非查询的 Bash 工作调用（`{"command":"ls"}`）口径**不得松动**（10 连 = Terminate）。
+
+  private val bgQueryArgs: Json = Json.obj("background_job_id" -> "abc".asJson, "command" -> "".asJson)
+
+  private def bgQueryEvent(isError: Boolean = false, err: String = ""): LoopGuard.RoundEvent =
+    LoopGuard.RoundEvent("Bash", bgQueryArgs, isError = isError, errorText = err, permissionDenied = false)
+
+  private def repeat(n: Int, ev: LoopGuard.RoundEvent): (Counters, LoopGuard.Verdict) =
+    (1 to n).foldLeft((Counters.Empty, LoopGuard.Verdict.Pass: LoopGuard.Verdict)) { case ((cnt, _), _) =>
+      LoopGuard.evaluate(List(ev), "t1", cnt, cfg)
+    }
+
+  private def assertNotTerminal(v: LoopGuard.Verdict, what: String): Unit =
+    v match
+      case t: LoopGuard.Verdict.Terminate => fail(s"$what must NOT Terminate (got: ${t.msg})")
+      case f: LoopGuard.Verdict.Freeze    => fail(s"$what must NOT Freeze (got: ${f.msg})")
+      case _                              => ()
+
+  test("R1 (bash overhaul): 20 identical Bash QUERY calls in one turn never Terminate/Freeze") {
+    // 现场 A/B 的精确形态：同参 `background_job_id` 查询，全部成功（isError=false）。
+    // 旧代码第 10 次 R-call 命中 identicalCallHard ⇒ Terminate（红）。
+    val (_, v) = repeat(20, bgQueryEvent())
+    assertNotTerminal(v, "identical background_job_id polling (the incident shape)")
+  }
+
+  test("R2 (bash overhaul): 10 identical Bash WORK calls still Terminate — the old口径 is not loosened") {
+    // 对照臂：查询豁免**不得**扩大到整个 Bash 工具（工作调用口径逐字不变）。
+    val (_, v) = repeat(10, okEv("Bash", Json.obj("command" -> "ls".asJson)))
+    v match
+      case LoopGuard.Verdict.Terminate(msg, _) =>
+        assert(msg.contains("10 times in a row"), s"work-loop keeps the R-call verdict text: $msg")
+      case other => fail(s"identical work calls must still Terminate at 10, got $other")
+  }
+
+  test("R3 (bash overhaul): 8 identical FAILED queries still Terminate (S1 single point kept)") {
+    // 补偿臂：查询豁免只免 R-call，**不免 S1**——`[Background job not found]` 连发 8 次照杀。
+    val (_, v) = repeat(8, bgQueryEvent(isError = true, err = "[Background job not found] Job ID: abc"))
+    v match
+      case LoopGuard.Verdict.Terminate(msg, _) =>
+        assert(msg.contains("failed 8 times"), s"S1 hard(8) must still fire on failed queries: $msg")
+      case other => fail(s"failed queries must still Terminate at S1 hard(8), got $other")
+  }
+
+  test("R4 (bash overhaul): the 5th identical query yields Warn naming BgWait (L0 nudge, never Terminate)") {
+    // 正向指标 queryWarnAfter（缺省 5）：第 5 拍给一次 L0 提示，指向等待原语。
+    val (c4, v4) = repeat(4, bgQueryEvent())
+    assertNotTerminal(v4, "the 4th identical query")
+    val (_, v5) = LoopGuard.evaluate(List(bgQueryEvent()), "t1", c4, cfg)
+    v5 match
+      case LoopGuard.Verdict.Warn(msg) =>
+        assert(msg.contains("BgWait"), s"the nudge must point at the wait primitive, got: $msg")
+      case other => fail(s"expected Warn (L0 nudge) at the 5th identical query, got $other")
+  }
+
+  test("R5 (bash overhaul): 20 identical BgWait calls never Terminate (a bounded wait is not a loop)") {
+    val waitEv = okEv("BgWait", Json.obj("jobIds" -> List("abc").asJson, "deadline" -> 5000.asJson))
+    val (_, v) = repeat(20, waitEv)
+    assertNotTerminal(v, "repeated bounded waits (BgWait)")
+  }
+
 end LoopGuardSpec
