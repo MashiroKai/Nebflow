@@ -130,7 +130,11 @@ function buildBarRow(placeholder) {
   clear.className = 'mh-search-clear';
   clear.title = t('mhsearch.clear');
   clear.setAttribute('aria-label', t('mhsearch.clear'));
-  clear.innerHTML = '<i data-lucide="x"></i>';
+  // 构建器而非 HTML 串（component-contract R5）：clear 是刚 createElement 出来的
+  // 新元素，无需 HTML 解析面；图标仍是同一个 lucide 'x'，尺寸/位置零变化。
+  const clearIcon = document.createElement('i');
+  clearIcon.dataset.lucide = 'x';
+  clear.append(clearIcon);
   clear.addEventListener('click', () => {
     input.value = '';
     row.classList.remove('has-text');
@@ -556,7 +560,11 @@ function ensureSearchFab(bar) {
     fab.className = 'mh-search-fab';
     fab.setAttribute('aria-label', bar.input.placeholder || 'search');
     fab.title = bar.input.placeholder || 'search';
-    fab.innerHTML = '<i data-lucide="search"></i>';
+    // 构建器而非 HTML 串（component-contract R5）：同 lucide 'search' 图标，
+    // 尺寸/位置零变化；既有 createIconsIn(fab) 调用原样保留。
+    const fabIcon = document.createElement('i');
+    fabIcon.dataset.lucide = 'search';
+    fab.append(fabIcon);
     if (typeof lucide !== 'undefined') createIconsIn(fab);
     section.append(fab);
   }
