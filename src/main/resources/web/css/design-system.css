@@ -749,6 +749,10 @@
   background: var(--ds-etched-bg);
   color: var(--ds-text);
   cursor: pointer;
+  /* 越界闸（tool-card-image-face 批 2026-11-04）：卡内任何子元素的外接矩形
+     都不许越出卡壳——越界内容裁掉（卡体自身永不「漏」到流里）。子级滚动
+     容器（.body.open）在自己的盒内照常滚动。 */
+  overflow: hidden;
   transition: background var(--ds-dur-hover) var(--ds-ease-std);
 }
 .ds-tool-card:hover,
@@ -827,6 +831,10 @@
   scrollbar-color: color-mix(in srgb, var(--ds-text) 15%, transparent) transparent;
 }
 .ds-tool-card pre.tool-body-pre { white-space: pre; }
+/* 预览面折行（同批）：预览是「摘要读数」不是逐字文档——长行折行而非横向溢出
+   （越界闸之上的第二道，内容仍可读）。展开态全文槽保留 `white-space: pre` +
+   .body.open 自身的横向滚动（逐字保真，作者手势不变）。 */
+.ds-tool-card .ds-tool-card__preview pre.tool-body-pre { white-space: pre-wrap; word-break: break-all; }
 .ds-tool-card pre.hljs {
   white-space: pre-wrap;
   word-break: break-all;
@@ -856,6 +864,10 @@
   border-bottom: 1px solid var(--ds-border-hairline);
   padding-bottom: var(--ds-space-1);
   margin-bottom: var(--ds-space-1);
+  /* 越界闸之二（tool-card-image-face 批 2026-11-04）：命令/参数行含无断点长串
+     （base64、一行式脚本、git patch）时逐字溢出卡壳 2000px 级——真读数见批文档
+     §改前。断行闸打在这里：内容自己收进盒内，不靠外层裁切。 */
+  overflow-wrap: anywhere;
 }
 .ds-tool-card .delegate-prompt {
   border-bottom: 1px solid var(--ds-border-hairline);
@@ -932,6 +944,34 @@
 .ds-tool-card .tool-mail-msg strong { font-weight: var(--ds-fw-title); }
 /* 链接蓝化同登记项（chat 链接全面蓝化，与 .bubble.ai a 同 token 同源）。 */
 .ds-tool-card .tool-mail-msg a { color: rgb(var(--sapphire)); }
+
+/* ── 卡内图片引用件（tool-card-image-face 批 2026-11-04）───────────────
+   语义：工具卡 = 摘要面（命令/参数 + 行数 + 状态）。图片**绝不内嵌渲染**——
+   md 图片语法与漏网 <img> 一律折叠成这枚引用件（utils.js foldToolCardMedia /
+   splitToolBodyImages 单点），点击走灯箱（lightbox.js 唯一出口）。
+   兜底闸：任何路径漏进来的 <img> 在卡内一律不渲染（新腿零回归成本）。 */
+.ds-tool-card img { display: none; }
+.ds-tool-card .tool-img-ref {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  margin: 1px 0;
+  padding: 1px var(--ds-space-2);
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-meta);
+  line-height: var(--ds-lh-tight);
+  color: var(--ds-text-muted);
+  background: var(--ds-control-bg-hover);
+  border: none;
+  border-radius: var(--ds-radius-badge);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background var(--ds-dur-hover) var(--ds-ease-std), color var(--ds-dur-hover) var(--ds-ease-std);
+}
+.ds-tool-card .tool-img-ref:hover { color: var(--ds-text); background: var(--ds-veil-focus); }
+.ds-tool-card .tool-img-ref:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 1px; }
 
 /* ══ ⑧ 侧栏族（.ds-side-*）——ui-unification-20261103-sidebar ═══════════
    侧栏导航项的**形态唯一家**：行基座 / 紧凑树行 / 行主文案 / 行 meta /
