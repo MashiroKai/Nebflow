@@ -1,0 +1,45 @@
+=== [V5] IR_LEG=V5 sbt "testOnly nebflow.core.project.InterruptRecoveryLegsSpec" ===
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-70e8d8ab-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab/)
+[warn] javaOptions will be ignored, fork is set to false
+[LEG V5] sweep report: terminalized=0 revived=0 () revivalSkipped=0
+[LEG V5] task row status = Some(completed) (completed = 活已干完)
+[LEG V5] registry workReport present = true, reportStatus = None
+[LEG V5] parent mailbox events for child after restart = 0
+[LEG V5] today: completed 行不在 sweep 视野（:313-316）⇒ 既不终态化也不通知（cb580112 形态）
+[32mnebflow.core.project.InterruptRecoveryLegsSpec:[0m
+[33m==> s [0m[33mnebflow.core.project.InterruptRecoveryLegsSpec[0m.[33mV1 自动复活（无人工 Mail）: 跑到一半（standby 等自家链节点）的 delegate 重启后必须原位复活并继续干活 —— 现状停在 failed[0m[33m skipped[0m [90m0.005s[0m
+[33m==> s [0m[33mnebflow.core.project.InterruptRecoveryLegsSpec[0m.[33mV2 墓碑: 人工 cancel 过的 delegate 重启后不得复活（boot sweep / 原位续命判定 / 二次 boot 三条腿都守住墓碑）[0m[33m skipped[0m [90m0.0s[0m
+[33m==> s [0m[33mnebflow.core.project.InterruptRecoveryLegsSpec[0m.[33mV3 节点消息: node 消息投递成功即可重启重放（已落盘的确实重放；fire-and-forget 窗口必须补持久化）[0m[33m skipped[0m [90m0.001s[0m
+[33m==> s [0m[33mnebflow.core.project.InterruptRecoveryLegsSpec[0m.[33mV4 幂等: 复活后已完成 turn 数不变，且必须存在机器可读的已完成步骤断点（现状无断点台账）[0m[33m skipped[0m [90m0.0s[0m
+[91m==> X [0m[91mnebflow.core.project.InterruptRecoveryLegsSpec[0m.[91mV5 收尾: 干完只缺报告的会话（workReport 在 / reportStatus 缺）重启后必须自动收尾并通知父会话[0m  [90m0.342s[0m munit.FailException: src/test/scala/nebflow/core/project/InterruptRecoveryLegsSpec.scala:635 RED(V5): a delegate that finished its work but never delivered its closing report must NOT stay silently dead across a restart — the boot legs must either auto-finalize it or put it into a delivered-pending-report state AND notify the parent. Today the completed row is outside the sweep's in-flight scan (SubAgentStartupRecovery.scala:313-316) and no leg reads workReport/reportStatus, so the parent's inbox stays empty forever.
+634:            "workReport/reportStatus, so the parent's inbox stays empty forever."
+[7m635:        )[0m
+636:        _ = assert(
+[90m    at [0m[90mmunit.FunSuite.assert[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.project.InterruptRecoveryLegsSpec.$init$$$anonfun$5$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$5[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m635[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.project.InterruptRecoveryLegsSpec.evidence[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m186[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.InterruptRecoveryLegsSpec.$init$$$anonfun$5$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m621[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.InterruptRecoveryLegsSpec.$init$$$anonfun$5$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m621[0m[1m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.FileChangeTracker$.create[0m[90m([0m[90mfilewatch.scala[0m:[90m248[0m[90m)[0m
+[90m    at [0m[90mhandleErrorWith @ nebflow.core.mail.SessionMailbox$.scanTaken[0m[90m([0m[90mSessionMailbox.scala[0m:[90m264[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.InterruptRecoveryLegsSpec.mailboxEvents$$anonfun$1[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m182[0m[1m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.FileChangeTracker$.create[0m[90m([0m[90mfilewatch.scala[0m:[90m248[0m[90m)[0m
+[90m    at [0m[90mhandleErrorWith @ nebflow.core.mail.SessionMailbox$.scanPending[0m[90m([0m[90mSessionMailbox.scala[0m:[90m238[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.InterruptRecoveryLegsSpec.mailboxEvents[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m181[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.InterruptRecoveryLegsSpec.$init$$$anonfun$5$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m620[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.InterruptRecoveryLegsSpec.$init$$$anonfun$5$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m620[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.project.InterruptRecoveryLegsSpec.$init$$$anonfun$5$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m619[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.InterruptRecoveryLegsSpec.$init$$$anonfun$5$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mInterruptRecoveryLegsSpec.scala[0m:[1m619[0m[1m)[0m
+[90m    at [0m[90mmap @ nebflow.agent.MailboxBootSweep$.run$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[90m([0m[90mMailboxBootSweep.scala[0m:[90m107[0m[90m)[0m
+[90m    at [0m[90mblocking @ nebflow.core.FileChangeTracker$.create[0m[90m([0m[90mfilewatch.scala[0m:[90m248[0m[90m)[0m
+[90m    at [0m[90mhandleErrorWith @ nebflow.agent.MailboxBootSweep$.nonEmptyBoxCount[0m[90m([0m[90mMailboxBootSweep.scala[0m:[90m209[0m[90m)[0m
+[error] Failed: Total 5, Failed 1, Errors 0, Passed 0, Skipped 4
+[error] Failed tests:
+[error] 	nebflow.core.project.InterruptRecoveryLegsSpec
+[error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[error] Total time: 2 s, completed 2026年11月4日 13:03:35
+=== [V5] exit=1 (日志: reports-evidence/20261104_interrupt-recovery/red/V5.log) ===
