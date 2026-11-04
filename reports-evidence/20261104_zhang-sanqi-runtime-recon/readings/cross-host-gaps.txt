@@ -1,0 +1,79 @@
+# 跨机面边界原文（逐条给 路径:行号；路径相对各仓根）
+# 这些是本批"能不能直接拿来做跨机算力调度"的判据锚点，不是转述。
+
+## A. 有原语：任务下发/查状态/取输出/取消（但只在**单机**）
+cap/units/executord.json (feat/stand-parity-flow)  capabilities 全文：
+  executor.list / executor.default.set / executor.run / executor.run.get
+  executor.output / executor.cancel / executor.quiesce / executor.health
+cap/crates/executord/src/lib.rs:1-6 模块自述：
+  「上游 core/executor/ExecutorRegistry 的分域形态…本版只做检测与默认选择，不 spawn 进程
+    ——外部执行腿后续接 executor.spawn。」  ← 注意：run 走外部 CLI（zcode/claude-code/codex）
+executord Run snapshot 字段：taskId/executor/status/totalBytes/totalLines/output/nextOffset/
+  startedAtMs/finishedAtMs/exitCode/errorHint/cliSessionId/task/cwd（lib.rs:141-166）
+
+## B. 跨机通道：**不通**
+cap/crates/linkd/src/lib.rs:7
+  「v0 不做网络传输/relay/vsock；先落 UDS 上的数据面语义。」
+  ⇒ link.peer.register / link.mail.* / link.file.* 只是**同机 UDS** 上的语义，
+    不是跨机 poke。设备互联的"传输腿"没有落码。
+docs/design/05-distribution.md:196-212
+  「L4 只能被控机本地执行（分布性由层推出）」——核侧只产生"已判定的命令"，
+  跨机腿只做下发，落地执行在设备本机；跨机不换层位、不产生跨机主体。
+  同件 §三「跨机一跳＝独立网络腿（核侧发起·同步请求-响应最小形·无服务器推送）」，
+  通道形态=ⓑ；改判⟶ⓐ（长连）的触发条件=需设备侧主动推送。
+docs/design/05-distribution.md:166-172 三态分列：缺席⇒126+device_absent；断连⇒1；未落⇒126。
+
+## C. relay 隧道：**能跨机，但形态是"反向 Web 隧道"，不是作业通道**
+docs/design/relay-tunnel.md:6-7
+  「每台电脑跑完整 Stand server；中心 relay 只做反向隧道和主机名路由；
+    浏览器访问 https://<route>.<domain>/，与本地访问同功能。」
+docs/design/relay-tunnel.md:21-24  relay 维护 route→隧道 内存表；不解析业务帧，只转发字节。
+docs/design/relay-tunnel.md:132  「每设备并发流上限 64」；:137「每设备并发流上限 64；隧道空闲 60s 回收」
+docs/design/relay-tunnel.md:136-137 明确不承诺：「MVP 的 relay 能看到明文 HTTP/WS；
+  在 P5 前不得对外称零知识或端到端加密。」
+
+## D. 应用面协议（唯一可跨机复用的"下发原语"）
+docs/design/triple-app-standard.md §5：
+  POST /app/v1/command  {id, op, args} → {id, ok, result}
+  · id 由客户端生成，服务端按 id 幂等（同 id 重放返回首次结果）
+  · 未知 op 必须拒绝（fail-closed）
+  事件流：GET /app/v1/events（SSE/NDJSON，topic+seq+回放）
+实测 op 面（cap/apps/stand/src/main.rs, feat/stand-parity-flow）：
+  :5040  ("POST","/app/v1/command") => app_v1_command(...)
+  :8783  "session.create"   :8799 "session.list"   :8802 "session.history"
+  :8811  "turn.submit"      :8926-8929 turn.started / turn.done / turn.error / session.opened
+  :147   DELEGATE_CONTROL_CAPABILITIES = ["delegate.create","delegate.health"]
+  ⇒ 这就是"下发一轮任务 + 流式取事件 + 终态"的原语，且是**标准 HTTP+SSE**，
+    不绑定传输，理论上可指向任意可达主机的 18080。
+
+## E. 存储面：**没有跨机共享文件系统**
+docs/design/storage-plane.md:50
+  「不是目标（v0/v1）：替代 ext4 卷、做通用可写 VFS、做内核文件系统、做分布式一致性」
+docs/design/storage-plane.md:259
+  v4 阶段才做「对象存储后端、分布式 catalog、OCI registry API → 跨机共享；单写者/租约」
+docs/design/storage-plane.md:65-78  ~/.star 全部是**本机路径**；:99 FUSE 只读视图也是本机挂载。
+⇒ 「共享文件系统」在它这里是**明确排除项**，不是待办细节。
+
+## F. 资源与隔离（有机制）
+docs/design/oci-superset.md:56-63
+  两档：轻档＝宿主进程 + cgroup 域（宿主内核 BPF，cgroup id 键）；
+        强隔离档＝每单元一 KVM microVM（Firecracker 首选）。
+  轻档诚实边界：「无 seccomp/userns/cap 收窄/overlay——非安全边界」。
+  轻档实测启动 3.6ms（裸进程 0.8ms）。
+docs/design/oci-superset.md:78-82 执法映射：
+  ①只读 rootfs ②只挂本单元 vol ③默认无网卡 ④VMM 进程入宿主 cgroup（cpu/mem/pids 限额）
+  ⑤不暴露宿主目录（无 virtiofs/9p）⑥镜像 digest 钉住。
+docs/design/oci-superset.md:103-108 已落批次：
+  批88「每设备 cgroup 限额 cpu.weight/memory.max/pids.max 回读」
+  批89「cpu.max/租约/GC：cpu_quota/cpu_period；slot 磁盘租约；DEVICE-GC」
+
+## G. macOS 载体
+docs/design/platform-distribution.md:23   macOS = Lima / Apple VZ（Linux 来宾）
+docs/design/platform-distribution.md:73-78「不做 kext/原生 BPF：Apple VZ + Linux 来宾」；
+  首版已落 deploy/macos/（Lima VZ 模板、Ubuntu 6.8 + BPF LSM、star-oci 摄入、8787 端口转发、
+  SwiftUI/WKWebView 消费 org.star.ui）；分发形态＝公证 .app + Lima 模板/最小 VM 镜像。
+deploy/macos/README.md:20-34 状态表（Lima VZ 模板 v1 / BPF LSM 已验证 / Triple.app ad-hoc 已签未公证 /
+  「Full Cuttlefish inside Lima: not yet」「star1 kernel inside Lima: not yet」
+  「Host UI ↔ control-plane forwarding: not yet」）
+deploy/macos/README.md:138-146 out of scope：原生 macOS cgroups/BPF/LSM 替换、
+  Firecracker/KVM/Cuttlefish 在 macOS 上跑、probe 全量 arm64 移植。
