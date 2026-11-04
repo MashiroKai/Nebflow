@@ -1,6 +1,7 @@
 package nebflow.pilogic
 
 import cats.Applicative
+import io.circe.Json
 
 /** 循环核心（设计 §Ⅱ.1/§Ⅱ.4；任务书语「LoopEngine」即本 trait——命名从设计 §Ⅱ.1 AgentLoop）。
   *
@@ -29,6 +30,10 @@ trait AgentLoop[F[_]]:
 
 object AgentLoop:
 
+  /** 双层 while 循环体实现入口（增量轮：trait 契约 → 可运行实现，见 LoopRuntime.scala；
+    * Clock 供墙钟预算谓词（A-2 三元之一）单调计时）。 */
+  def make[F[_]: cats.effect.Concurrent: cats.effect.kernel.Clock]: AgentLoop[F] = new LoopRuntime[F]
+
   /** continueFrom 前置校验（验收 A-8；独立成函数供分派层/测试复用，两校验照抄 pi :76-82）：
     * 上下文空 ⇒ 拒；末条 assistant ⇒ 拒。 */
   def validateContinuation(context: LoopContext): Either[LoopError.InvalidContinuation, Unit] =
@@ -44,19 +49,36 @@ final case class LoopContext(messages: Vector[LoopMessage]):
   def lastMessage: Option[LoopMessage] = messages.lastOption
   def appended(m: LoopMessage): LoopContext = LoopContext(messages :+ m)
 
-/** 本次 run 工具面快照（N3：工具是数据；执行器由接线层注入——pilogic 只管批编排与 terminate 语义）。 */
-final case class ToolSet(toolNames: Vector[String])
+/** 本次 run 工具面快照（N3：工具是数据；执行器由接线层注入——pilogic 只管批编排与 terminate 语义）。
+  * specs = L-5 重校验件来源（无 spec 的工具 = 不可校验，原始/改参同权放行）。 */
+final case class ToolSet(toolNames: Vector[String], specs: Vector[ToolSpec] = Vector.empty):
+  def specOf(name: String): Option[ToolSpec] = specs.find(_.name == name)
 
 object ToolSet:
   val empty: ToolSet = ToolSet(Vector.empty)
+  def of(specs: ToolSpec*): ToolSet = ToolSet(specs.map(_.name).toVector, specs.toVector)
 
 /** finishTurn 决策（§Ⅱ.4(1)）。 */
 enum TurnDecision:
   case End
   case Continue(reason: String)
 
+/** finishTurn 回调快照（④面 #63：决策早于 TurnEnded 事件——时序由循环保证）。 */
+final case class TurnSnapshot(
+    turn: TurnNumber,
+    message: Option[LoopMessage],
+    toolResults: Vector[ToolExecutionResult],
+    stopReason: StopReason,
+)
+
 /** run 启动种子（§Ⅱ.2）：一切外部依赖经此注入；`policy` 是唯一上限来源。
-  * steering/follow-up 回调（④面）为 Option 注入，缺省无。 */
+  * steering/follow-up 回调（④面）为 Option 注入，缺省无。
+  * 增量轮补注（对方案 §Ⅱ.2 纸面形的显式增补，收尾报告列偏离表）：
+  *   - executor：#64/#68 工具执行器注入位（设计 §Ⅳ「执行器由接线层注入」的载具）；
+  *   - finishTurn：④面 #63 决策回调（None ⇒ 循环自然规则：有工具结果须回填 ⇒ Continue）；
+  *   - model：请求模型标识（None ⇒ 空串=适配层自选缺省）；
+  *   - options：请求选项基线 Json（preRequest.Options 位的改写起点；thinkingLevel 键约定
+  *     供 thinkingLevel.Selected diff 位读取）。 */
 final case class RunSeed[F[_]](
     context: LoopContext,
     tools: ToolSet,
@@ -67,8 +89,12 @@ final case class RunSeed[F[_]](
     provider: ProviderPort[F],
     meter: CostMeter[F],
     signal: AbortSignal[F],
+    executor: ToolExecutor[F],
     getSteeringMessages: Option[F[Vector[LoopMessage]]] = None,
     getFollowUpMessages: Option[F[Vector[LoopMessage]]] = None,
+    finishTurn: Option[TurnSnapshot => F[TurnDecision]] = None,
+    model: Option[String] = None,
+    options: Json = Json.obj(),
 )
 
 object RunSeed:
@@ -78,6 +104,7 @@ object RunSeed:
       provider: ProviderPort[F],
       meter: CostMeter[F],
       signal: AbortSignal[F],
+      executor: ToolExecutor[F],
   ): RunSeed[F] = RunSeed(
     context = context,
     tools = ToolSet.empty,
@@ -88,6 +115,7 @@ object RunSeed:
     provider = provider,
     meter = meter,
     signal = signal,
+    executor = executor,
   )
 
 /** 循环状态：run-local case class，逐轮值传递（病灶 #1 结构性免疫：模块内禁 object 可变态 /

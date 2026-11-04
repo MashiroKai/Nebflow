@@ -32,6 +32,26 @@ enum Aggregate:
   /** 后者胜（providerPort.Payload/Headers、cache warming 族；Proceed=弃权）。 */
   case LastWins
 
+/** 观察位背压档（L-11 拍板：分位点声明，不照抄 pi 全局顺序档）。
+  *
+  * 采纳理由（写进代码即写进报告）：pi 的 provider_stream_event 对每个流事件顺序 await——
+  * pi 文档自认「慢 handler 拖慢流」是病（pi-agent-hooks.md A3 面）。pilogic 不照抄：
+  * 逐流块的高频观察位（providerPort.Chunked）声明 Dropping——观察者在忙时新帧直接丢弃
+  * （声明的有损通道，非错误、不发 HookErrored），生产者永不因观察者阻塞；
+  * 语义类位点（message、tool、turn 三族）声明 Sequential——顺序档，事件序即观察序。
+  * 声明随位点走（单源），引擎 dispatch 按声明执行：Dropping 档经注册件持有的单槽忙门
+  * （Ref[F,Boolean]）+ 非阻塞投递实现「忙即丢」。作者可整体翻转为照抄 pi
+  * （改位点的本字段即可，引擎零改动）。
+  * 拦截族位点无背压语义（返值必读，天然同步）——恒 Sequential（惰性值）。 */
+enum Backpressure:
+  /** 顺序档：dispatch 逐个 await，事件序=观察序（语义类位缺省）。 */
+  case Sequential
+  /** 丢弃档：观察者忙时新帧丢弃、生产者不阻塞（高频流块位 providerPort.Chunked 缺省）。 */
+  case Dropping
+
+object Backpressure:
+  val default: Backpressure = Backpressure.Sequential
+
 /** 错误策略（设计 §Ⅲ.4）：缺省档随位点固定；注册方可收紧不可放宽（severity: Continue<Block<FailRun）。
   * 隔离先例（亲读）：core/hooks/HookRunner.scala:40-52 双臂 recoverWith——continueOnError=true ⇒
   * WARN + 继续上下文；false ⇒ block。本模块把双臂策略化为位点级三档。 */
@@ -49,24 +69,34 @@ object HookErrorPolicy:
     case Block    => 1
     case FailRun  => 2
 
-/** 拦截族效果（§Ⅲ.1）：dispatch 单点必被消费。位点入参/改写值本轮以 Json 承载——
-  * 位点专属 Event/Value 类型（P#Event 形）属 16 签名全量增量轮。 */
+/** 拦截族效果（§Ⅲ.1）：dispatch 单点必被消费。位点入参/改写值以 Json 承载（位点专属
+  * payload 编解码单源在 LoopRuntime 的 SitePayloads——16 签名增量轮保持切片轮 Json 载体
+  * 形状，P#Event 路径依赖类型化为接线期升级项，见收尾报告偏离表）。
+  * Patch/Terminate 为增量轮补效果：Patch=#45「patch 与 replace 显式分档」的类型级落点
+  * （pi ①②两面在同一位点语义相反处钉死）；Terminate=#37「terminate 早停语义与批语义
+  * 同处定义」的载体（循环层解释为全批一致早停）。 */
 sealed trait HookEffect extends Product with Serializable
 object HookEffect:
   /** 弃权/放行。 */
   case object Proceed extends HookEffect
-  /** 改写值（Chain 链式传递 / LastWins 后者胜）。 */
+  /** 改写值=整块替换（Chain 链式传递 / LastWins 后者胜）。 */
   final case class Modify(newValue: Json) extends HookEffect
-  /** 否决（Session.* 预留位首个 Veto 即止）。 */
+  /** 增量补丁：与当前值 deepMerge（undefined 删键语义=键置 Null，接线层解释）——
+    * 与 Modify 显式分档，防「整块替换」暗吞未声明字段（#45 改造）。 */
+  final case class Patch(delta: Json) extends HookEffect
+  /** 否决（Session.* 预留位首个 Veto 即止；RunGate/ToolPre 亦用）。 */
   final case class Veto(reason: String) extends HookEffect
   /** 阻断该操作（Tool.Pre fail-closed；terminate=工具批早停语义由循环层解释）。 */
   final case class Block(reason: String, terminate: Boolean) extends HookEffect
-  /** 注入消息（preRun.Inject 族）。 */
+  /** 注入消息（preRun.Inject / postRun.FollowUp 族）。 */
   final case class Inject(messages: Vector[LoopMessage]) extends HookEffect
   /** 强制续轮（postRun.Settle 族）。 */
   case object ContinueRun extends HookEffect
   /** 强制收轮（TurnEnded 位点的显式 End 优先）。 */
   case object EndRun extends HookEffect
+  /** 工具批一致早停（#37：ToolPre Block(terminate=true) / ToolPost 的批停通道；
+    * 循环层语义=剩余未开始调用得合成结果、本批终止、当轮强制收轮）。 */
+  final case class Terminate(reason: String) extends HookEffect
 
 /** 拦截族接口：返回 HookEffect，引擎【必须】读——dispatch 单点是唯一 match，无忽略通道。 */
 trait Interceptor[F[_]]:
@@ -86,6 +116,8 @@ sealed trait HookPoint extends Product with Serializable:
   def aggregate: Aggregate
   /** 缺省错误策略。 */
   def defaultErrorPolicy: HookErrorPolicy
+  /** 观察位背压档（L-11 分位点声明；拦截族恒惰性 Sequential——返值必读天然同步）。 */
+  def backpressure: Backpressure = Backpressure.default
   /** 对位命名（设计 §Ⅲ.1 / pi 原名）。 */
   def display: String
 
@@ -156,11 +188,14 @@ object HookPoint:
     val defaultErrorPolicy = HookErrorPolicy.Continue
     val display = "providerPort.Responded"
 
-  /** #18 provider_stream_event：逐流事件观察（背压档 L-11 分位点声明属下一轮）。 */
+  /** #18 provider_stream_event：逐流事件观察。L-11 拍板=本位点声明 Dropping（丢弃档）——
+    * 不照抄 pi 顺序档：pi 对每流事件顺序 await、慢 handler 直接拖慢流消费是其自认病；
+    * 此处观察者忙时新帧丢弃（声明的有损通道），生产者永不因观察者阻塞。 */
   case object ProviderChunked extends HookPoint:
     val capability = HookCapability.observe
     val aggregate = Aggregate.AllRun
     val defaultErrorPolicy = HookErrorPolicy.Continue
+    override val backpressure = Backpressure.Dropping
     val display = "providerPort.Chunked"
 
   /** #28 message_start。 */
@@ -185,12 +220,21 @@ object HookPoint:
     val display = "message.Ended"
 
   /** #36/#48/#56/#68 tool_call/before_tool/beforeToolCall/beforeToolCall 合并单一 ToolPre
-    * （改参重校验开关 L-5=位点级常量，两实现语义相反处钉死）；fail-closed 缺省照抄。 */
+    * （改参重校验开关 L-5=位点级常量，两实现语义相反处钉死）；fail-closed 缺省照抄。
+    *
+    * L-5 拍板（增量轮）：revalidateModifiedArgs=true——ToolPre 改参后**重校验**。
+    * 采纳理由：pi ①②两面相反（①面 tool_call 改参不重校验 / ②面 before_tool.args 重校验）
+    * 正说明此处必须单点钉死；scala 线模型自传参的信任面窄，改参不重校验=坏参直送执行器
+    * （绕过权限/契约校验的通道）。校验件=ToolSet.specs 内该工具的 ToolSpec.validateArgs；
+    * 重校验失败 ⇒ 弃改参、不执行、合成错误结果 + HookErrored（fail-closed 不回落）。
+    * 此常量随位点走（单源），非逐 hook 自选。 */
   case object ToolPre extends HookPoint:
     val capability = HookCapability(mutateParam = true, mutateResult = false, veto = true, returnRead = true)
     val aggregate = Aggregate.FirstWins
     val defaultErrorPolicy = HookErrorPolicy.Block
     val display = "tool.Pre"
+    /** L-5：改参后重校验（位点级常量，非注册方参数）。 */
+    val revalidateModifiedArgs: Boolean = true
 
   /** #37/#49/#57/#69 tool_result/after_tool/afterTool/afterToolCall 合并单一 ToolPost。 */
   case object ToolPost extends HookPoint:
