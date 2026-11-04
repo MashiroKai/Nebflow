@@ -1,0 +1,452 @@
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap -Xmx1500m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-42b0596b-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-42b0596b/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-42b0596b/)
+[warn] javaOptions will be ignored, fork is set to false
+13:43:18.477 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/friend-api-spec104808164448977069/device.json — minted deviceId=806a3fb0-c2c4-534f-adf8-198a46e66e27 (scope=home|958c352b-9c66-5edd-86c1-3741b3186bce, machine-code derived) and persisted
+13:43:18.534 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/friend-api-spec7933591531396442760/device.json — minted deviceId=ea82932d-d5b0-5af7-bd09-61929acb2b66 (scope=home|f0bce0ae-91ba-55d3-9dbe-193bbffea3c0, machine-code derived) and persisted
+13:43:18.607 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.630 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.640 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.648 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.661 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.678 [36mINFO [0m nebflow.neblink.friends - friend_pull conversationId=c1 trigger=send:user eventId=<none> after=4 serverMax=1 pulled=1 dispatched=1 skipped=0 reasons=[] pullAnchor=1 dispatchedMax=1 reason=<none>
+13:43:18.685 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.688 [36mINFO [0m nebflow.neblink.friends - friend_pull conversationId=c1 trigger=send:user eventId=<none> after=4 serverMax=1 pulled=1 dispatched=1 skipped=0 reasons=[] pullAnchor=1 dispatchedMax=1 reason=<none>
+13:43:18.695 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.699 [36mINFO [0m nebflow.neblink.friends - friend_pull conversationId=c1 trigger=send:user eventId=<none> after=4 serverMax=1 pulled=1 dispatched=1 skipped=0 reasons=[] pullAnchor=1 dispatchedMax=1 reason=<none>
+13:43:18.703 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.707 [36mINFO [0m nebflow.neblink.friends - friend_pull conversationId=c1 trigger=send:user eventId=<none> after=4 serverMax=1 pulled=1 dispatched=1 skipped=0 reasons=[] pullAnchor=1 dispatchedMax=1 reason=<none>
+13:43:18.711 [36mINFO [0m nebflow.neblink.friends - friend_pull conversationId=c1 trigger=send:user eventId=<none> after=1 serverMax=1 pulled=1 dispatched=0 skipped=1 reasons=[not_ahead_of_dispatchedMax] pullAnchor=1 dispatchedMax=1 reason=not_ahead_of_dispatchedMax
+13:43:18.713 [33mWARN [0m nebflow.neblink.friends - friend_pull_skipped conversationId=c1 trigger=send:user eventId=<none> pulled=1 dispatched=0 skipped=1 messageId=1 reason=not_ahead_of_dispatchedMax reasons=[not_ahead_of_dispatchedMax] skippedIds=[1] pullAnchor=1 dispatchedMax=1
+13:43:18.717 [36mINFO [0m nebflow.neblink.friends - friend_pull conversationId=c1 trigger=send:user eventId=<none> after=1 serverMax=1 pulled=1 dispatched=0 skipped=1 reasons=[not_ahead_of_dispatchedMax] pullAnchor=1 dispatchedMax=1 reason=not_ahead_of_dispatchedMax
+13:43:18.717 [33mWARN [0m nebflow.neblink.friends - friend_pull_skipped conversationId=c1 trigger=send:user eventId=<none> pulled=1 dispatched=0 skipped=1 messageId=1 reason=not_ahead_of_dispatchedMax reasons=[not_ahead_of_dispatchedMax] skippedIds=[1] pullAnchor=1 dispatchedMax=1
+13:43:18.721 [36mINFO [0m nebflow.neblink.friends - friend_pull conversationId=c1 trigger=send:user eventId=<none> after=1 serverMax=1 pulled=1 dispatched=0 skipped=1 reasons=[not_ahead_of_dispatchedMax] pullAnchor=1 dispatchedMax=1 reason=not_ahead_of_dispatchedMax
+13:43:18.721 [33mWARN [0m nebflow.neblink.friends - friend_pull_skipped conversationId=c1 trigger=send:user eventId=<none> pulled=1 dispatched=0 skipped=1 messageId=1 reason=not_ahead_of_dispatchedMax reasons=[not_ahead_of_dispatchedMax] skippedIds=[1] pullAnchor=1 dispatchedMax=1
+13:43:18.726 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.889 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.914 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.923 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.933 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.940 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.948 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.955 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.962 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.967 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.975 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.981 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.989 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:18.995 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.002 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.009 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.017 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.026 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.033 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.039 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.045 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.052 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.054 [36mINFO [0m nebflow.neblink.friends - friend_pull conversationId=c1 trigger=send:user eventId=<none> after=4 serverMax=1 pulled=1 dispatched=1 skipped=0 reasons=[] pullAnchor=1 dispatchedMax=1 reason=<none>
+13:43:19.059 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.063 [33mWARN [0m nebflow.neblink.client - NebLink outbound request failed bucket=other bucketCount=1 method=POST path=/api/friends/:id/messages at=2026-11-04T05:43:19.061933Z errorClass=ConnectException error=java.net.ConnectException
+13:43:19.088 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/friend-api-spec3367910391518452733/device.json — minted deviceId=25955bff-d522-5963-8c41-40760aefe984 (scope=home|698b957f-08fa-5a56-a21e-fce6797094cb, machine-code derived) and persisted
+13:43:19.114 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/friend-api-spec8064228860920542913/device.json — minted deviceId=b7d1fe8d-5158-5c66-a807-9d5d407eb4d3 (scope=home|8738138f-1986-59cd-afdf-66db00940fb0, machine-code derived) and persisted
+13:43:19.126 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.133 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.143 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.151 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.168 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.178 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+[32mnebflow.gateway.FriendApiRoutesSpec:[0m
+[32m  + [0m[32mauth gate: no token -> 403[0m [90m0.878s[0m
+[32m  + [0m[32mfriendService absent -> 404 NebLink not enabled[0m [90m0.031s[0m
+[32m  + [0m[32mconfigured + no session -> 401 neblink_not_logged_in (未登录不再与上游错共 502 面)[0m [90m0.093s[0m
+[32m  + [0m[32munconfigured + no session -> still 404 NebLink not enabled (neblinkOff 保持可表达)[0m [90m0.031s[0m
+[32m  + [0m[32mGET /friends proxies upstream friend list[0m [90m0.08s[0m
+[32m  + [0m[32mGET /friends/requests normalizes flat upstream into nested from-shape[0m [90m0.01s[0m
+[32m  + [0m[32mGET /friends passes blocked flag and tolerates null profile fields[0m [90m0.008s[0m
+[91m==> X [0m[91mnebflow.gateway.FriendApiRoutesSpec[0m.[91mGET /conversations proxies conversation summaries[0m  [90m0.01s[0m munit.FailException: src/test/scala/nebflow/gateway/FriendApiRoutesSpec.scala:339 route fell through
+338:  ): IO[Response[IO]] =
+[7m339:    mkRoutes(fs, ms).routes(req).value.map(_.getOrElse(fail("route fell through")))[0m
+340:
+[90m    at [0m[90mmunit.Assertions.fail[0m[90m([0m[90mAssertions.scala[0m:[90m274[0m[90m)[0m
+[90m    at [0m[90mmunit.Assertions.fail$[0m[90m([0m[90mAssertions.scala[0m:[90m24[0m[90m)[0m
+[90m    at [0m[90mmunit.FunSuite.fail[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.gateway.FriendApiRoutesSpec.runWith$$anonfun$1$$anonfun$1[0m[1m([0m[1mFriendApiRoutesSpec.scala[0m:[1m339[0m[1m)[0m
+[90m    at [0m[90mscala.Option.getOrElse[0m[90m([0m[90mOption.scala[0m:[90m201[0m[90m)[0m
+[1m    at [0m[1mnebflow.gateway.FriendApiRoutesSpec.runWith$$anonfun$1[0m[1m([0m[1mFriendApiRoutesSpec.scala[0m:[1m339[0m[1m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[32m  + [0m[32mPOST /friends/:id/messages sends as user and returns upstream body[0m [90m0.025s[0m
+[32m  + [0m[32mP2-b 加性①：带 clientMsgId ⇒ 网关把该键透传到上游（原文含键、body 原样）[0m [90m0.01s[0m
+[32m  + [0m[32mP2-b 加性②：无键（旧客户端）⇒ 上游请求体逐字节同形（键集/键序零变化）[0m [90m0.01s[0m
+[32m  + [0m[32mP2-b 幂等：同键重复 ⇒ 回放同一行；无键重复 ⇒ 各落新行（服务端语义镜像）[0m [90m0.023s[0m
+[32m  + [0m[32mP2-b 群腿：原文转发 ⇒ clientMsgId 直达上游，且同键两次只落一行[0m [90m0.161s[0m
+[32m  + [0m[32mGET /conversations/:id/messages passes after/limit and returns message array[0m [90m0.023s[0m
+[32m  + [0m[32mPOST /conversations/:id/read marks read[0m [90m0.01s[0m
+[32m  + [0m[32mGET /users/lookup?q= proxies lookup result[0m [90m0.009s[0m
+[32m  + [0m[32mlookup without q -> 400[0m [90m0.007s[0m
+[32m  + [0m[32mGET /users/lookup passes through new-form (username/displayName/avatar) payload unchanged[0m [90m0.008s[0m
+[32m  + [0m[32mGET /users/search?q= proxies search result (contract hit shape)[0m [90m0.009s[0m
+[32m  + [0m[32mGET /users/search passes through miss shape unchanged[0m [90m0.007s[0m
+[32m  + [0m[32msearch without q -> 400[0m [90m0.005s[0m
+[32m  + [0m[32mPUT /users/me/neblink-id proxies custom id ([U3])[0m [90m0.007s[0m
+[32m  + [0m[32mPUT /users/me/neblink-id without neblinkId -> 400[0m [90m0.006s[0m
+[32m  + [0m[32mGET /users/me/neblink-id/available proxies availability ([U3])[0m [90m0.007s[0m
+[32m  + [0m[32mPOST /friends/:id/block proxies upstream ok[0m [90m0.006s[0m
+[32m  + [0m[32mPOST /friends/:id/unblock proxies upstream ok[0m [90m0.007s[0m
+[32m  + [0m[32mPOST /friends/:id/unblock upstream 403 not_blocker -> 502 with error passthrough[0m [90m0.006s[0m
+[32m  + [0m[32mGET /friends upstream auth-rejection 403 -> 502 (F4: load-failure ≠ empty list)[0m [90m0.008s[0m
+[32m  + [0m[32mrcptcode A1：上游 403 not_friends ⇒ 网关 403 + 体逐字（禁折 502）[0m [90m0.008s[0m
+[32m  + [0m[32mrcptcode A2：上游 403 not_blocker（同域另一枚语义码）⇒ 403 + 体逐字[0m [90m0.009s[0m
+[32m  + [0m[32mrcptcode A3：上游 400 REPLY_TARGET_INVALID ⇒ 400 + 体逐字（非 502、非 200）[0m [90m0.006s[0m
+[32m  + [0m[32mrcptcode A4：上游 429（客户端未知码）⇒ 429 逐字（禁折算成 502/200）[0m [90m0.007s[0m
+[32m  + [0m[32mrcptcode A5：上游 500 ⇒ 500 逐字（禁折 502，禁伪装成功）[0m [90m0.006s[0m
+[32m  + [0m[32mrcptcode A6：上游 201（真实成功码）⇒ 201 逐字 + 体字段保持（行为变化 ①读数）[0m [90m0.007s[0m
+[32m  + [0m[32mrcptcode A7：传输失败（上游不可达）⇒ 仍 502（`Left` 通道语义逐字不变）[0m [90m0.009s[0m
+[32m  + [0m[32mrcptcode A8a：Not logged in 特判保留（已配置 ⇒ 401+code）[0m [90m0.029s[0m
+[32m  + [0m[32mrcptcode A8b：未配置的**发送腿** ⇒ 404 NebLink not enabled（neblinkOff 保持可表达）[0m [90m0.026s[0m
+[32m  + [0m[32mPUT /friends/:id/remark → 200 {ok:true}（本地态、零上游往返）[0m [90m0.01s[0m
+[32m  + [0m[32mPUT /friends/:id/remark 缺参 → 400（键缺席 / null / 非字符串都算缺参）；空串 = 清除[0m [90m0.01s[0m
+[32m  + [0m[32mPUT /friends/:id/remark 未认证 → 403（withAuth 先于任何备注写面）[0m [90m0.009s[0m
+[32m  + [0m[32m备注端到端：PUT → GET /friends 出参 remark 变值；空串再清回 null（键恒在）[0m [90m0.015s[0m
+[32m  + [0m[32m备注只按 userId 命中：好友档案 remark 不串行（u3 未设 ⇒ null）[0m [90m0.008s[0m
+[91m==> X [0m[91mnebflow.gateway.FriendApiRoutesSpec[0m.[91mconversations 内嵌 friend 档案同样带备注值（冻结契约 2：两处下发口径一致）[0m  [90m0.008s[0m munit.FailException: src/test/scala/nebflow/gateway/FriendApiRoutesSpec.scala:339 route fell through
+338:  ): IO[Response[IO]] =
+[7m339:    mkRoutes(fs, ms).routes(req).value.map(_.getOrElse(fail("route fell through")))[0m
+340:
+[90m    at [0m[90mmunit.Assertions.fail[0m[90m([0m[90mAssertions.scala[0m:[90m274[0m[90m)[0m
+[90m    at [0m[90mmunit.Assertions.fail$[0m[90m([0m[90mAssertions.scala[0m:[90m24[0m[90m)[0m
+[90m    at [0m[90mmunit.FunSuite.fail[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.gateway.FriendApiRoutesSpec.runWith$$anonfun$1$$anonfun$1[0m[1m([0m[1mFriendApiRoutesSpec.scala[0m:[1m339[0m[1m)[0m
+[90m    at [0m[90mscala.Option.getOrElse[0m[90m([0m[90mOption.scala[0m:[90m201[0m[90m)[0m
+[1m    at [0m[1mnebflow.gateway.FriendApiRoutesSpec.runWith$$anonfun$1[0m[1m([0m[1mFriendApiRoutesSpec.scala[0m:[1m339[0m[1m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+13:43:19.221 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.229 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.236 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+13:43:19.242 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+[mvp2-device-spec] upstream requests:
+  POST /api/conversations/dev:dev-peer/read {"lastReadMessageId":11}
+  GET /api/conversations/dev:dev-peer/receipts 
+13:43:19.262 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+[mvp2-device-spec] device send upstream requests:
+  POST /api/devices/dev-local/messages {"body":"hello"}
+  POST /api/devices/dev-local/messages {"body":"hello","clientMsgId":"dup-1"}
+13:43:19.272 [36mINFO [0m nebflow.neblink.client - Logged into NebLink Server: 0 peer(s)
+[32mnebflow.gateway.Mvp2DeviceRoutesSpec:[0m
+[91m==> X [0m[91mnebflow.gateway.Mvp2DeviceRoutesSpec[0m.[91mGET /conversations 透传设备行 kind/deviceId；legacy 行两键缺席（§8.1）[0m  [90m0.008s[0m munit.FailException: src/test/scala/nebflow/gateway/Mvp2DeviceRoutesSpec.scala:193 route fell through
+192:  private def run(fs: FriendService)(req: Request[IO]): IO[Response[IO]] =
+[7m193:    mkRoutes(Some(fs)).routes(req).value.map(_.getOrElse(fail("route fell through")))[0m
+194:
+[90m    at [0m[90mmunit.Assertions.fail[0m[90m([0m[90mAssertions.scala[0m:[90m274[0m[90m)[0m
+[90m    at [0m[90mmunit.Assertions.fail$[0m[90m([0m[90mAssertions.scala[0m:[90m24[0m[90m)[0m
+[90m    at [0m[90mmunit.FunSuite.fail[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.gateway.Mvp2DeviceRoutesSpec.run$$anonfun$1$$anonfun$1[0m[1m([0m[1mMvp2DeviceRoutesSpec.scala[0m:[1m193[0m[1m)[0m
+[90m    at [0m[90mscala.Option.getOrElse[0m[90m([0m[90mOption.scala[0m:[90m201[0m[90m)[0m
+[1m    at [0m[1mnebflow.gateway.Mvp2DeviceRoutesSpec.run$$anonfun$1[0m[1m([0m[1mMvp2DeviceRoutesSpec.scala[0m:[1m193[0m[1m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[90m    at [0m[90m>>$extension @ org.http4s.HttpRoutes$.of$$anonfun$1[0m[90m([0m[90mHttpRoutes.scala[0m:[90m80[0m[90m)[0m
+[32m  + [0m[32mGET /conversations/{id}/messages 透传 senderDeviceId；legacy 消息行不带该键（§8.7）[0m [90m0.007s[0m
+[32m  + [0m[32mlegacy 直聊消息（上游无 senderDeviceId）出参**不含**该键（加性扩面不污染 legacy）[0m [90m0.006s[0m
+[32m  + [0m[32m回执面：POST /read 写游标 → GET /receipts 读到同源终态（§8.7）[0m [90m0.02s[0m
+[32m  + [0m[32mPOST /devices/{id}/messages 透传 201；幂等回放仍 201（§8.6）[0m [90m0.01s[0m
+[32m  + [0m[32mPOST /devices/{id}/messages：origin 非 user ⇒ 400 且零上游往返（P3 伪造面）[0m [90m0.007s[0m
+[32m  + [0m[32mNebLink 未配置 ⇒ 两个新面均 404 NebLink not enabled（fail-closed，不改语义）[0m [90m0.004s[0m
+[32m  + [0m[32m两个新面均需 auth（无 token ⇒ 403，零上游往返）[0m [90m0.003s[0m
+13:43:19.458 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-11aa22bb' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dnr-r1-2949567379893921171/.nebflow/flow-maps/delegate-general-11aa22bb, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dnr-r1-2949567379893921171, root=self) — one delegate one map
+13:43:19.464 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] unmounted scope 'delegate-general-11aa22bb' — engine instance gone, on-disk state kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dnr-r1-2949567379893921171/.nebflow/flow-maps/delegate-general-11aa22bb (write-through)
+13:43:19.482 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-11aa22bb' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dnr-r1-2949567379893921171/.nebflow/flow-maps/delegate-general-11aa22bb, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dnr-r1-2949567379893921171, root=self) — one delegate one map
+13:43:49.614 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-22bb33cc' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dnr-r2-226096482429806542/.nebflow/flow-maps/delegate-general-22bb33cc, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dnr-r2-226096482429806542, root=self) — one delegate one map
+13:43:49.616 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] unmounted scope 'delegate-general-22bb33cc' — engine instance gone, on-disk state kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dnr-r2-226096482429806542/.nebflow/flow-maps/delegate-general-22bb33cc (write-through)
+13:43:49.618 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-22bb33cc' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dnr-r2-226096482429806542/.nebflow/flow-maps/delegate-general-22bb33cc, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dnr-r2-226096482429806542, root=self) — one delegate one map
+13:44:19.779 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-33cc44dd' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dnr-r3-6222022228653814665/.nebflow/flow-maps/delegate-general-33cc44dd, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dnr-r3-6222022228653814665, root=self) — one delegate one map
+13:44:19.780 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] unmounted scope 'delegate-general-33cc44dd' — engine instance gone, on-disk state kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dnr-r3-6222022228653814665/.nebflow/flow-maps/delegate-general-33cc44dd (write-through)
+13:44:19.782 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-33cc44dd' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dnr-r3-6222022228653814665/.nebflow/flow-maps/delegate-general-33cc44dd, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dnr-r3-6222022228653814665, root=self) — one delegate one map
+13:44:49.983 [33mWARN [0m nebflow.node.engine - Root session 'nebula-root' not found — node result parked for redelivery scan (nodeName=n-r4)
+[32mnebflow.core.project.DelegateNotifyRedirectSpec:[0m
+[91m==> X [0m[91mnebflow.core.project.DelegateNotifyRedirectSpec[0m.[91mR1: explicit (pass)Nebula edge delivers to the live creator delegate exactly once, with the notify-redirected audit landing on the base workspace (NotifyRule consumed)[0m  [90m30.23s[0m java.lang.AssertionError: waitUntil: condition not met in time
+[1m    at [0m[1mnebflow.core.project.DelegateNotifyRedirectSpec.go$1$$anonfun$1[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m158[0m[1m)[0m
+[1m    at [0m[1mnebflow.core.project.DelegateNotifyRedirectSpec.go$1$$anonfun$adapted$1[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m154[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.hostNode[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m169[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.hostNode[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m169[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.rehydrateViaSweep$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m242[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.DelegateNotifyRedirectSpec.go$1[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m154[0m[1m)[0m
+[1m    at [0m[1m>> @ nebflow.core.project.DelegateNotifyRedirectSpec.go$1$$anonfun$1[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m159[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.hostNode[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m169[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.hostNode[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m169[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.rehydrateViaSweep$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m242[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.DelegateNotifyRedirectSpec.go$1[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m154[0m[1m)[0m
+[91m==> X [0m[91mnebflow.core.project.DelegateNotifyRedirectSpec[0m.[91mR2: bare 'Nebula' (implicit gate = signal exit marker) delivers NOTHING even with the creator live — the ledger-only branch is untouched[0m  [90m30.145s[0m java.lang.AssertionError: waitUntil: condition not met in time
+[1m    at [0m[1mnebflow.core.project.DelegateNotifyRedirectSpec.go$1$$anonfun$1[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m158[0m[1m)[0m
+[1m    at [0m[1mnebflow.core.project.DelegateNotifyRedirectSpec.go$1$$anonfun$adapted$1[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m154[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.hostNode[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m169[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.hostNode[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m169[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.rehydrateViaSweep$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m242[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.DelegateNotifyRedirectSpec.go$1[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m154[0m[1m)[0m
+[1m    at [0m[1m>> @ nebflow.core.project.DelegateNotifyRedirectSpec.go$1$$anonfun$1[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m159[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.hostNode[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m169[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.hostNode[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m169[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.rehydrateViaSweep$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m242[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.DelegateNotifyRedirectSpec.go$1[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m154[0m[1m)[0m
+[91m==> X [0m[91mnebflow.core.project.DelegateNotifyRedirectSpec[0m.[91mR3: dead creator ⇒ PARKED with zero bystander delivery and outcome=parked audit; revival redelivers exactly once[0m  [90m30.159s[0m java.lang.AssertionError: waitUntil: condition not met in time
+[1m    at [0m[1mnebflow.core.project.DelegateNotifyRedirectSpec.go$1$$anonfun$1[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m158[0m[1m)[0m
+[1m    at [0m[1mnebflow.core.project.DelegateNotifyRedirectSpec.go$1$$anonfun$adapted$1[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m154[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.hostNode[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m169[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.hostNode[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m169[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.rehydrateViaSweep$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m242[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.DelegateNotifyRedirectSpec.go$1[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m154[0m[1m)[0m
+[1m    at [0m[1m>> @ nebflow.core.project.DelegateNotifyRedirectSpec.go$1$$anonfun$1[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m159[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.hostNode[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m169[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.hostNode[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m169[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateNotifyRedirectSpec.rehydrateViaSweep$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m242[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.DelegateNotifyRedirectSpec.go$1[0m[1m([0m[1mDelegateNotifyRedirectSpec.scala[0m:[1m154[0m[1m)[0m
+[32m  + [0m[32mR4: the per-project engine (ProjectRoot) never writes the notify-redirected audit line[0m [90m0.156s[0m
+13:44:50.105 [36mINFO [0m nebflow.agent.interaction - InteractionRequest kind=AskUser requestId=panel-b0b010e4e4f74168 root=nebula-root sourceAgent=Nebula
+13:44:50.106 [36mINFO [0m nebflow.audit - event=ask kind=AskUser requestId=panel-b0b010e4e4f74168 sourceSession=nebula-root rootSessionId=nebula-root sourceAgent=Nebula firstQuestion=Project 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器（可逐级浏览、新建文件夹，含隐藏目录）；选择后即完成创建。
+13:44:50.130 [36mINFO [0m nebflow.agent.interaction - InteractionAnswered requestId=panel-b0b010e4e4f74168 kind=AskUser approved=None answers=Some(1)
+13:44:50.131 [36mINFO [0m nebflow.audit - event=answer requestId=panel-b0b010e4e4f74168 sourceSession=nebula-root rootSessionId=nebula-root kind=AskUser via=card answersJoined=__cancelled__
+13:44:50.137 [36mINFO [0m nebflow.agent.interaction - InteractionRequest kind=AskUser requestId=panel-2f4c3bda292f4ef2 root=nebula-root sourceAgent=Nebula
+13:44:50.137 [36mINFO [0m nebflow.audit - event=ask kind=AskUser requestId=panel-2f4c3bda292f4ef2 sourceSession=nebula-root rootSessionId=nebula-root sourceAgent=Nebula firstQuestion=Project 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器（可逐级浏览、新建文件夹，含隐藏目录）；选择后即完成创建。
+13:44:50.138 [33mWARN [0m nebflow.agent.interaction - InteractionAnswered dropped: answer shape does not match kind=AskUser of requestId=panel-2f4c3bda292f4ef2 — card RETAINED (requestId=panel-2f4c3bda292f4ef2, root=nebula-root)
+13:44:50.393 [36mINFO [0m nebflow.agent.interaction - InteractionAnswered requestId=panel-2f4c3bda292f4ef2 kind=AskUser approved=None answers=Some(1)
+13:44:50.393 [36mINFO [0m nebflow.audit - event=answer requestId=panel-2f4c3bda292f4ef2 sourceSession=nebula-root rootSessionId=nebula-root kind=AskUser via=card answersJoined=/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-42b0596b/target/test-project-create-panel/ws-pick-beta
+13:44:50.560 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-project-dispatcher[0m [35mdispatcher/trigger-proj/dispatch[0m event=spawn detail=parent=- msgs=0
+13:44:50.575 [36mINFO [0m nebflow.project.actor - Project 'trigger-proj' dispatcher session spawned: dispatcher-2a35a09a
+13:44:50.588 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-project-dispatcher[0m [35mdispatcher/trigger-proj/dispatch[0m event=start detail=msgs=0
+13:44:50.803 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-project-dispatcher[0m [35mdispatcher/trigger-proj/dispatch[0m event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+13:44:59.446 [36mINFO [0m nebflow.project.actor - Project 'trigger-proj' dispatcher session dispatcher-2a35a09a idle 8s >= window 8s — destroyed (next dispatch spawns a fresh session)
+13:44:59.446 [36mINFO [0m nebflow.agent - Interrupt: no InteractionHub spawned — nothing to clean for session=dispatcher-2a35a09a (no hub slot can exist without the hub)
+13:44:59.500 [36mINFO [0m nebflow.agent.interaction - InteractionRequest kind=AskUser requestId=panel-fc190403bab44858 root=nebula-root sourceAgent=Nebula
+13:44:59.500 [36mINFO [0m nebflow.audit - event=ask kind=AskUser requestId=panel-fc190403bab44858 sourceSession=nebula-root rootSessionId=nebula-root sourceAgent=Nebula firstQuestion=Project 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器（可逐级浏览、新建文件夹，含隐藏目录）；选择后即完成创建。
+13:44:59.552 [36mINFO [0m nebflow.agent.interaction - InteractionAnswered requestId=panel-fc190403bab44858 kind=AskUser approved=None answers=Some(1)
+13:44:59.552 [36mINFO [0m nebflow.audit - event=answer requestId=panel-fc190403bab44858 sourceSession=nebula-root rootSessionId=nebula-root kind=AskUser via=card answersJoined=__cancelled__
+13:44:59.553 [36mINFO [0m nebflow.agent.interaction - InteractionRequest kind=AskUser requestId=panel-97d7e70888f94cee root=nebula-root sourceAgent=Nebula
+13:44:59.553 [36mINFO [0m nebflow.audit - event=ask kind=AskUser requestId=panel-97d7e70888f94cee sourceSession=nebula-root rootSessionId=nebula-root sourceAgent=Nebula firstQuestion=Project 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器（可逐级浏览、新建文件夹，含隐藏目录）；选择后即完成创建。
+13:44:59.553 [36mINFO [0m nebflow.agent.interaction - InteractionAnswered requestId=panel-97d7e70888f94cee kind=AskUser approved=None answers=Some(1)
+13:44:59.553 [36mINFO [0m nebflow.audit - event=answer requestId=panel-97d7e70888f94cee sourceSession=nebula-root rootSessionId=nebula-root kind=AskUser via=card answersJoined=
+13:44:59.554 [36mINFO [0m nebflow.agent.interaction - InteractionRequest kind=AskUser requestId=panel-ea9bd0235e384317 root=nebula-root sourceAgent=Nebula
+13:44:59.554 [36mINFO [0m nebflow.audit - event=ask kind=AskUser requestId=panel-ea9bd0235e384317 sourceSession=nebula-root rootSessionId=nebula-root sourceAgent=Nebula firstQuestion=Project 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器（可逐级浏览、新建文件夹，含隐藏目录）；选择后即完成创建。
+13:44:59.554 [36mINFO [0m nebflow.agent.interaction - InteractionAnswered requestId=panel-ea9bd0235e384317 kind=AskUser approved=None answers=Some(1)
+13:44:59.554 [36mINFO [0m nebflow.audit - event=answer requestId=panel-ea9bd0235e384317 sourceSession=nebula-root rootSessionId=nebula-root kind=AskUser via=card answersJoined=relative/path
+13:44:59.578 [36mINFO [0m nebflow.project.store - Project 'occ-arch' archived (marker written to project.json; files untouched)
+[32mnebflow.core.project.ProjectCreatePanelSpec:[0m
+[91m==> X [0m[91mnebflow.core.project.ProjectCreatePanelSpec[0m.[91m①（R2 后）已知路径直建：project.json 字段落盘 + 脚手架 + 幂等挂载 + Mail 提示[0m  [90m0.055s[0m munit.ComparisonFailException: src/test/scala/nebflow/core/project/ProjectCreatePanelSpec.scala:258
+257:        "AGENTS.md 默认空模板（作者 2026-09-18 裁定）：创建路径落盘的也是 0 字节空文件，内容由用户自持"
+[7m258:      )[0m
+259:      assert(os.isDir(ws / ".nebflow"), "workspace .nebflow/ scaffold must exist")
+AGENTS.md 默认空模板（作者 2026-09-18 裁定）：创建路径落盘的也是 0 字节空文件，内容由用户自持
+[1m=> Obtained[0m
+## Document landing (docs discipline)
+
+Knowledge documents (designs, audits, rulings, research, Obsidian notes) land in the
+project's OWN registration dir, not in this workspace:
+
+- vault root = `<data_root>/projects/<this project>/.stand/docs/` — created for you at
+  project creation; attachments go to `<vault>/attachments/`.
+- The workspace `docs/` dir is NOT the knowledge vault (it stays for transient process
+  output and is gitignored in this repo). Deliverables written there are not indexed.
+- Format: Obsidian (YAML frontmatter `type:` / `status:` + at least one `[[wikilink]]`).
+- Validate before closing: `python3 <data_root>/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --project <this project>` (exit 0 = compliant).
+
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[92m+## Document landing (docs discipline)[0m
+ ∙
+[92m+Knowledge documents (designs, audits, rulings, research, Obsidian notes) land in the[0m
+[92m+project's OWN registration dir, not in this workspace:[0m
+[92m+[0m
+[92m+- vault root = `<data_root>/projects/<this project>/.stand/docs/` — created for you at[0m
+[92m+  project creation; attachments go to `<vault>/attachments/`.[0m
+[92m+- The workspace `docs/` dir is NOT the knowledge vault (it stays for transient process[0m
+[92m+  output and is gitignored in this repo). Deliverables written there are not indexed.[0m
+[92m+- Format: Obsidian (YAML frontmatter `type:` / `status:` + at least one `[[wikilink]]`).[0m
+[92m+- Validate before closing: `python3 <data_root>/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --project <this project>` (exit 0 = compliant).[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.project.ProjectCreatePanelSpec.$init$$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mProjectCreatePanelSpec.scala[0m:[1m258[0m[1m)[0m
+[90m    at [0m[90munsafeRunSync @ nebflow.gateway.FriendApiRoutesSpec.mkResources[0m[90m([0m[90mFriendApiRoutesSpec.scala[0m:[90m311[0m[90m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.actor.LocalActorSystem.stopAll[0m[90m([0m[90mActorSystem.scala[0m:[90m110[0m[90m)[0m
+[1m    at [0m[1mhandleErrorWith @ nebflow.core.project.ProjectCreatePanelSpec.$init$$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1[0m[1m([0m[1mProjectCreatePanelSpec.scala[0m:[1m237[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.ProjectCreatePanelSpec.$init$$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1[0m[1m([0m[1mProjectCreatePanelSpec.scala[0m:[1m237[0m[1m)[0m
+[90m    at [0m[90mupdate @ fs2.internal.Scope.releaseChildScope[0m[90m([0m[90mScope.scala[0m:[90m227[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.ProjectCreatePanelSpec.$init$$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mProjectCreatePanelSpec.scala[0m:[1m236[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.project.ProjectCreatePanelSpec.$init$$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProjectCreatePanelSpec.scala[0m:[1m235[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.ProjectCreatePanelSpec.$init$$$anonfun$3$$anonfun$1$$anonfun$1$$anonfun$1[0m[1m([0m[1mProjectCreatePanelSpec.scala[0m:[1m235[0m[1m)[0m
+[32m  + [0m[32m② 缺省 workspace → AskUser 式面板 pending 产生（真实 hub；空 options + dirPicker，2026-09-09 作者裁定）[0m [90m0.072s[0m
+[32m  + [0m[32m③ 用户点选目录浏览器返回的路径 → 创建链走通；pending 期间 agent 形态负载不消费面板槽（#43 语义）[0m [90m0.287s[0m
+[32m  + [0m[32m④ 创建后 Task(project=…) 触发分发器：agentStart 带 dispatcher 会话 id（真实拉起）[0m [90m9.068s[0m
+[32m  + [0m[32m⑤ 同名同 workspace → 幂等 already-exists；同名异 workspace → 明确报错[0m [90m0.007s[0m
+[32m  + [0m[32m⑥ 取消哨兵与空答案 → 搁置消息不创建；非绝对自由输入 → 明确报错不创建[0m [90m0.059s[0m
+[32m  + [0m[32m⑦ 缺省 path 且无 agent 会话 → 立即明确报错（harness/REST 直调不悬挂）[0m [90m0.001s[0m
+[32m  + [0m[32m⑧ 新 name × workspace 已被别的 name 占用 → 默认拒绝（可行动报错 + 零写盘）[0m [90m0.007s[0m
+[32m  + [0m[32m⑨ 归一化变体（尾斜杠 / 大小写差异）→ 同样被拒（占用判据与幂等判据同一归一函数）[0m [90m0.01s[0m
+[32m  + [0m[32m⑩ 占用者含 archived 定义 → 同拒（保守默认「宁误拒不误建」；占用者本体零改动）[0m [90m0.006s[0m
+[91m==> X [0m[91mnebflow.core.project.ProjectCreatePanelSpec[0m.[91m⑪ 幂等挂载路径补缺脚手架：删 AGENTS.md → 重挂恢复 + 逐件文案；既有件字节不变[0m  [90m0.008s[0m munit.ComparisonFailException: src/test/scala/nebflow/core/project/ProjectCreatePanelSpec.scala:761
+760:        s"AGENTS.md 默认空模板（作者 2026-09-18 裁定）：补回的文件内容必须为空，实测 ${restoredText.length} 字符"
+[7m761:      )[0m
+762:      assertEquals(giAfter, giBefore, ".gitignore 必须逐字节不变（已含 .nebflow/ 行）")
+AGENTS.md 默认空模板（作者 2026-09-18 裁定）：补回的文件内容必须为空，实测 753 字符
+[1m=> Obtained[0m
+## Document landing (docs discipline)
+
+Knowledge documents (designs, audits, rulings, research, Obsidian notes) land in the
+project's OWN registration dir, not in this workspace:
+
+- vault root = `<data_root>/projects/<this project>/.stand/docs/` — created for you at
+  project creation; attachments go to `<vault>/attachments/`.
+- The workspace `docs/` dir is NOT the knowledge vault (it stays for transient process
+  output and is gitignored in this repo). Deliverables written there are not indexed.
+- Format: Obsidian (YAML frontmatter `type:` / `status:` + at least one `[[wikilink]]`).
+- Validate before closing: `python3 <data_root>/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --project <this project>` (exit 0 = compliant).
+
+[1m=> Diff[0m ([91m- expected[0m, [92m+ obtained[0m)
+[92m+## Document landing (docs discipline)[0m
+ ∙
+[92m+Knowledge documents (designs, audits, rulings, research, Obsidian notes) land in the[0m
+[92m+project's OWN registration dir, not in this workspace:[0m
+[92m+[0m
+[92m+- vault root = `<data_root>/projects/<this project>/.stand/docs/` — created for you at[0m
+[92m+  project creation; attachments go to `<vault>/attachments/`.[0m
+[92m+- The workspace `docs/` dir is NOT the knowledge vault (it stays for transient process[0m
+[92m+  output and is gitignored in this repo). Deliverables written there are not indexed.[0m
+[92m+- Format: Obsidian (YAML frontmatter `type:` / `status:` + at least one `[[wikilink]]`).[0m
+[92m+- Validate before closing: `python3 <data_root>/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --project <this project>` (exit 0 = compliant).[0m
+[90m    at [0m[90mmunit.FunSuite.assertEquals[0m[90m([0m[90mFunSuite.scala[0m:[90m13[0m[90m)[0m
+[1m    at [0m[1mnebflow.core.project.ProjectCreatePanelSpec.$init$$$anonfun$13$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mProjectCreatePanelSpec.scala[0m:[1m761[0m[1m)[0m
+[90m    at [0m[90munsafeRunSync @ nebflow.gateway.FriendApiRoutesSpec.mkResources[0m[90m([0m[90mFriendApiRoutesSpec.scala[0m:[90m311[0m[90m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[90m    at [0m[90mflatMap @ nebflow.actor.LocalActorSystem.stopAll[0m[90m([0m[90mActorSystem.scala[0m:[90m110[0m[90m)[0m
+[1m    at [0m[1mhandleErrorWith @ nebflow.core.project.ProjectCreatePanelSpec.$init$$$anonfun$13$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1[0m[1m([0m[1mProjectCreatePanelSpec.scala[0m:[1m745[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.ProjectCreatePanelSpec.$init$$$anonfun$13$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1[0m[1m([0m[1mProjectCreatePanelSpec.scala[0m:[1m745[0m[1m)[0m
+[90m    at [0m[90mupdate @ fs2.internal.Scope.releaseChildScope[0m[90m([0m[90mScope.scala[0m:[90m227[0m[90m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.ProjectCreatePanelSpec.$init$$$anonfun$13$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mProjectCreatePanelSpec.scala[0m:[1m744[0m[1m)[0m
+[1m    at [0m[1mapply @ nebflow.core.project.ProjectCreatePanelSpec.$init$$$anonfun$13$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mProjectCreatePanelSpec.scala[0m:[1m743[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.ProjectCreatePanelSpec.$init$$$anonfun$13$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2[0m[1m([0m[1mProjectCreatePanelSpec.scala[0m:[1m743[0m[1m)[0m
+[32m  + [0m[32m⑫ ④-11(b) NodeList 载荷 meta 增 workspace 权威键（既有键名/类型语义不变）[0m [90m0.021s[0m
+13:44:59.685 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-1a2b3c4d' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h1-15151160377099769073/.nebflow/flow-maps/delegate-general-1a2b3c4d, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h1-15151160377099769073, root=self) — one delegate one map
+13:44:59.686 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] unmounted scope 'delegate-general-1a2b3c4d' — engine instance gone, on-disk state kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h1-15151160377099769073/.nebflow/flow-maps/delegate-general-1a2b3c4d (write-through)
+13:44:59.736 [33mWARN [0m nebflow.delegate.flow-hosts - delegate flow-host mount REFUSED: invalid scope id '../escape' (charset contract [a-zA-Z0-9._-], ≤128) — delegate continues without a scope map
+13:44:59.788 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-2b3c4d5e' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h2-3457093724693679260/.nebflow/flow-maps/delegate-general-2b3c4d5e, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h2-3457093724693679260, root=self) — one delegate one map
+13:44:59.790 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] unmounted scope 'delegate-general-2b3c4d5e' — engine instance gone, on-disk state kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h2-3457093724693679260/.nebflow/flow-maps/delegate-general-2b3c4d5e (write-through)
+13:44:59.846 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-3c4d5e6f' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h3-8395299612141273159/.nebflow/flow-maps/delegate-general-3c4d5e6f, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h3-8395299612141273159, root=self) — one delegate one map
+13:44:59.847 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] unmounted scope 'delegate-general-3c4d5e6f' — engine instance gone, on-disk state kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h3-8395299612141273159/.nebflow/flow-maps/delegate-general-3c4d5e6f (write-through)
+13:44:59.849 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-3c4d5e6f' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h3-8395299612141273159/.nebflow/flow-maps/delegate-general-3c4d5e6f, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h3-8395299612141273159, root=self) — one delegate one map
+13:45:30.014 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-4d5e6f7a' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h3b-2994149105102042038/.nebflow/flow-maps/delegate-general-4d5e6f7a, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h3b-2994149105102042038, root=self) — one delegate one map
+13:45:30.015 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] unmounted scope 'delegate-general-4d5e6f7a' — engine instance gone, on-disk state kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h3b-2994149105102042038/.nebflow/flow-maps/delegate-general-4d5e6f7a (write-through)
+13:45:30.017 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-4d5e6f7a' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h3b-2994149105102042038/.nebflow/flow-maps/delegate-general-4d5e6f7a, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h3b-2994149105102042038, root=self) — one delegate one map
+13:45:50.075 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-5e6f7a8b' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h5-14959793611323815629/.nebflow/flow-maps/delegate-general-5e6f7a8b, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h5-14959793611323815629, root=self) — one delegate one map
+13:45:50.076 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] unmounted scope 'delegate-general-5e6f7a8b' — engine instance gone, on-disk state kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h5-14959793611323815629/.nebflow/flow-maps/delegate-general-5e6f7a8b (write-through)
+13:45:50.078 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-5e6f7a8b' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h5-14959793611323815629/.nebflow/flow-maps/delegate-general-5e6f7a8b, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h5-14959793611323815629, root=self) — one delegate one map
+13:46:20.136 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-6f7a8b9c' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h6-9751170611295755957/.nebflow/flow-maps/delegate-general-6f7a8b9c, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h6-9751170611295755957, root=self) — one delegate one map
+13:46:20.138 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-7a8b9c0d' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h6-9751170611295755957/.nebflow/flow-maps/delegate-general-7a8b9c0d, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h6-9751170611295755957, root=self) — one delegate one map
+13:46:20.141 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] unmounted scope 'delegate-general-7a8b9c0d' — engine instance gone, on-disk state kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h6-9751170611295755957/.nebflow/flow-maps/delegate-general-7a8b9c0d (write-through)
+13:46:20.187 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-8b9c0d1e' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h7-13945612082736077580/.nebflow/flow-maps/delegate-general-8b9c0d1e, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h7-13945612082736077580, root=self) — one delegate one map
+13:46:20.194 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] unmounted scope 'delegate-general-8b9c0d1e' — engine instance gone, on-disk state kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dfh-h7-13945612082736077580/.nebflow/flow-maps/delegate-general-8b9c0d1e (write-through)
+[32mnebflow.core.project.DelegateFlowHostsSpec:[0m
+[32m  + [0m[32mH1: mount lays the scope map on disk, roots the engine at the delegate itself, and is idempotent[0m [90m0.069s[0m
+[32m  + [0m[32mH1b: invalid scope id refused fail-soft (delegate continues without a scope map)[0m [90m0.051s[0m
+[32m  + [0m[32mH2: unmount kills the instance but disk state survives; remount restores the graph (write-through)[0m [90m0.055s[0m
+[91m==> X [0m[91mnebflow.core.project.DelegateFlowHostsSpec[0m.[91mH3/H4: sweep rehydrates a crashed scope node to completion; with the creator dead the result is RETAINED (Parked, no bypass, no dispatcher notify), and a second pass is a no-op[0m  [90m30.094s[0m java.lang.AssertionError: waitUntil: condition not met in time
+[1m    at [0m[1mnebflow.core.project.DelegateFlowHostsSpec.go$1$$anonfun$1[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m173[0m[1m)[0m
+[1m    at [0m[1mnebflow.core.project.DelegateFlowHostsSpec.go$1$$anonfun$adapted$1[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m169[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.hostNode[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m185[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.hostNode[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m185[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m362[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.DelegateFlowHostsSpec.go$1[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m169[0m[1m)[0m
+[90m    at [0m[90m>> @ nebflow.core.project.DelegateNotifyRedirectSpec.go$1$$anonfun$1[0m[90m([0m[90mDelegateNotifyRedirectSpec.scala[0m:[90m159[0m[90m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.hostNode[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m185[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.hostNode[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m185[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.$init$$$anonfun$6$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$2$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m362[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.DelegateFlowHostsSpec.go$1[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m169[0m[1m)[0m
+[91m==> X [0m[91mnebflow.core.project.DelegateFlowHostsSpec[0m.[91mH3b: class-c residue (no sessionRef) fails through the existing deliverFailed chain inside the scope[0m  [90m20.13s[0m java.lang.AssertionError: waitUntil: condition not met in time
+[1m    at [0m[1mnebflow.core.project.DelegateFlowHostsSpec.go$1$$anonfun$1[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m173[0m[1m)[0m
+[1m    at [0m[1mnebflow.core.project.DelegateFlowHostsSpec.go$1$$anonfun$adapted$1[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m169[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.hostNode[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m185[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.hostNode[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m185[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.$init$$$anonfun$7$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m400[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.DelegateFlowHostsSpec.go$1[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m169[0m[1m)[0m
+[90m    at [0m[90m>> @ nebflow.core.project.DelegateNotifyRedirectSpec.go$1$$anonfun$1[0m[90m([0m[90mDelegateNotifyRedirectSpec.scala[0m:[90m159[0m[90m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.hostNode[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m185[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.hostNode[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m185[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.$init$$$anonfun$7$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m400[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.DelegateFlowHostsSpec.go$1[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m169[0m[1m)[0m
+[91m==> X [0m[91mnebflow.core.project.DelegateFlowHostsSpec[0m.[91mH5: with the delegate session live, the completed node delivers to the delegate itself exactly once (self-rooted routing)[0m  [90m30.066s[0m java.lang.AssertionError: waitUntil: condition not met in time
+[1m    at [0m[1mnebflow.core.project.DelegateFlowHostsSpec.go$1$$anonfun$1[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m173[0m[1m)[0m
+[1m    at [0m[1mnebflow.core.project.DelegateFlowHostsSpec.go$1$$anonfun$adapted$1[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m169[0m[1m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.hostNode[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m185[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.hostNode[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m185[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m435[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.DelegateFlowHostsSpec.go$1[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m169[0m[1m)[0m
+[90m    at [0m[90m>> @ nebflow.core.project.DelegateNotifyRedirectSpec.go$1$$anonfun$1[0m[90m([0m[90mDelegateNotifyRedirectSpec.scala[0m:[90m159[0m[90m)[0m
+[90m    at [0m[90mget @ nebflow.gateway.RestApiCtx.checkAuth[0m[90m([0m[90mRestApiCtx.scala[0m:[90m127[0m[90m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.hostNode[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m185[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.hostNode[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m185[0m[1m)[0m
+[1m    at [0m[1mmap @ nebflow.core.project.DelegateFlowHostsSpec.$init$$$anonfun$8$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$2$$anonfun$1$$anonfun$2[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m435[0m[1m)[0m
+[1m    at [0m[1mflatMap @ nebflow.core.project.DelegateFlowHostsSpec.go$1[0m[1m([0m[1mDelegateFlowHostsSpec.scala[0m:[1m169[0m[1m)[0m
+[32m  + [0m[32mH6: orphan reap keeps hosts with live sessions or active graphs; reaps dead+all-terminal hosts[0m [90m0.057s[0m
+[32m  + [0m[32mH7: DelegateTerminal.onTerminalCleanup unmounts the scope host (lifecycle close-out wiring)[0m [90m0.055s[0m
+[error] Failed: Total 75, Failed 11, Errors 0, Passed 64
+[error] Failed tests:
+[error] 	nebflow.gateway.FriendApiRoutesSpec
+[error] 	nebflow.core.project.DelegateNotifyRedirectSpec
+[error] 	nebflow.gateway.Mvp2DeviceRoutesSpec
+[error] 	nebflow.core.project.ProjectCreatePanelSpec
+[error] 	nebflow.core.project.DelegateFlowHostsSpec
+[error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[error] Total time: 184 s (0:03:04.0), completed 2026年11月4日 13:46:20
