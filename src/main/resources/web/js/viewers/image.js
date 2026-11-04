@@ -305,6 +305,9 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
 
     // ── Transform state: img at translate(tx,ty) scale(s), origin 0 0 ──
     let s = 1, tx = 0, ty = 0;
+    /** 上一次适屏写下的比例（「容器变了但用户还停在适屏档」的判据 —— 见下方
+     *  geometry 重适屏块；0 = 尚未适屏过）。 */
+    let lastFitS = 0;
     const iw = img.naturalWidth || 1, ih = img.naturalHeight || 1;
 
     const apply = () => { img.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`; };
@@ -314,6 +317,7 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
       s = Math.min(vw / iw, vh / ih, 1);
       tx = (vw - iw * s) / 2;
       ty = (vh - ih * s) / 2;
+      lastFitS = s;
       apply();
     };
     fit();
@@ -346,7 +350,13 @@ async function viewImage(pane, { absPath, fileName, size, objectUrl }) {
     // geometry settles — until the user takes over zoom/pan manually.
     let userTouched = false;
     const geometryObserver = new ResizeObserver(() => {
-      if (!userTouched && pane.isConnected) fit();
+      if (!pane.isConnected) return;
+      // 跟随条件（stack-view 三处批① 2026-11-03）：用户从未碰过 **或** 用户仍
+      // 停在初始适屏档（s === lastFitS —— 没主动调过档）。旧判据 `!userTouched`
+      // 把「轻触过图片」当成「用户接管了缩放」，容器一变（转屏/分屏/层翻转）
+      // 图就冻在旧容器的像素宽上 —— 作者实拍「只占 1/3–1/2 宽」的成因面
+      // （机械复现：横屏后 358/668 = 0.536）。
+      if (!userTouched || s === lastFitS) fit();
     });
     geometryObserver.observe(viewport);
 

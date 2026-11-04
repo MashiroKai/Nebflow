@@ -1617,6 +1617,11 @@ body.mobile-layer .mf-strip {
   z-index: 20;
   overflow: visible;
   touch-action: pan-y;
+  /* 转盘透视（可读字批 2026-11-03 12:59）：邻签绕 Y 轴 −24°×k（layoutRing 写
+     --rrot）需要父级给透视深度，否则 rotateY 只是横向压扁、没有「转过去」的
+     空间感。1200px = 与 .mf-deck 卡列同档（浮层近距透视，形变克制——邻签
+     近缘只放大约 1.01 倍，不啃两边浮钮的净空）。 */
+  perspective: 1200px;
 }
 /* 签本体接回点击/手势（带 pointer-events:none 不下传 —— 上方透传悬浮批②）。 */
 body.mobile-layer .mf-strip-chip { pointer-events: auto; }
@@ -1661,7 +1666,7 @@ body.mobile-layer .mf-strip-chip {
   display: flex;
   align-items: center;
   justify-content: center;
-  max-width: 68px;
+  max-width: 66px;
   height: 32px;
   padding: 0 var(--mpad-x);
   border-radius: 999px;
@@ -1669,8 +1674,19 @@ body.mobile-layer .mf-strip-chip {
      UA 默认 2px outset 黑描边必须显式归零 —— 迁移删掉旧 glass-border 行时若
      不补这条，UA 按钮描边就浮出来（T7 宿主零描边钉抓到过）。 */
   border: 0;
-  color: var(--color-frame-text-muted);
-  font-size: var(--mfs-min);
+  /* 字色档（可读字批 2026-11-03 12:59）：muted 档（--color-frame-text-muted
+     #717379）在玻璃底上算出来 4.46:1，再乘邻签不透明度 0.66 只剩 2.49:1 ——
+     正是作者判「近乎不可见」的量化根因。改取主字色槽 --ds-text（§design-
+     system 令牌单源；亮 #1b1e26 / 暗 #e8eaed）：亮档合成后 7.4:1、暗档 5.6:1，
+     双双过 WCAG 正文 4.5:1。层次（中签 > 邻签）改由**尺寸 + 缩径 + 不透明度 +
+     旋转透视**承担，不再靠字色压暗（T13⑥「中/邻签逐项同源」照旧成立：本档是
+     全组共用基档，不是邻签特例）。 */
+  color: var(--ds-text);
+  /* 字号档（同令）：13px × 邻签缩径 0.87 = 11.3px < 手机可读下限 13 ⇒ 基档上抬
+     一档 --mfs-sub（15 = Apple subheadline 档，桥到 --ds-fs-mobile-sub）：
+     邻签有效 15×0.87 = 13.05px ✓、中签 15×1.10 = 16.5px（旧 14.8）。全组共用
+     同一档 ⇒ 「样式与两边统一」的既有裁定不破。 */
+  font-size: var(--mfs-sub);
   font-weight: 500;
   cursor: pointer;
   /* 视觉本体 = 32px × scale（环位姿以它为基准）；热区不靠放大本体，走 ::before
@@ -1681,18 +1697,26 @@ body.mobile-layer .mf-strip-chip {
   white-space: nowrap;
   touch-action: manipulation;
   /* 纵向零偏移铁律：签心 = top 40 + translateY(-50%)，缩放围绕盒中心对称 ⇒
-     缩放后中心不动，全组纸签严格同一水平线（对齐修正批，取代旧 --rdy 弧深）。 */
+     缩放后中心不动，全组纸签严格同一水平线（对齐修正批，取代旧 --rdy 弧深）。
+     转盘位姿（可读字批 2026-11-03 12:59）：末段叠 rotateY(var(--rrot)) ——
+     邻签绕圆心转到侧面（layoutRing 写 −24°×k），换签时与位移/缩径同一 transform
+     过渡插值 = 旋转感（作者令「不要纯淡入淡出」）；transform-style flat 下每枚
+     签独立吃 .mf-strip 的透视 = 各自绕自身中轴转，不互相穿透。 */
   transform-origin: center center;
-  transform: translate(calc(-50% + var(--rdx, 0px)), -50%) scale(var(--rsc, 1));
+  transform: translate(calc(-50% + var(--rdx, 0px)), -50%) scale(var(--rsc, 1)) rotateY(var(--rrot, 0deg));
   opacity: var(--rop, 1);
   filter: blur(var(--rbl, 0px));
   transition:
-    transform var(--dur-2, 320ms) cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform var(--dur-switch, 280ms) cubic-bezier(0.22, 0.61, 0.36, 1),
     opacity 220ms ease,
     filter 220ms ease,
     max-width 220ms ease;
   will-change: transform, opacity;
 }
+/* 切换动效时长单源（作者令「旋转过渡时长 ≤300ms、不阻塞输入」）：旧 --dur-2
+   档 320ms 超限，签面切换独立取 280ms —— 位移+旋转在窗内完成，输入永不阻塞
+   （transition 只作用于绘制，pointer 命中面随帧更新，无输入锁）。 */
+body.mobile-layer .mf-strip-chip { --dur-switch: 280ms; }
 /* 玻璃视觉层（::after 迁移承载面）：宿主的材质四件套全部落在这里 —— 玻璃底
    （顶缘折射线渐变 + --glass-bg）、描边（--glass-border，底缘透明化）、
    box-shadow。`inset:0` 贴齐宿主盒（尺寸随 max-width 档 68/112 与展开钳制
@@ -1979,21 +2003,16 @@ body.mobile-layer .mf-dots.is-grip {
   background: var(--ds-wash-26);
   cursor: grabbing;
 }
-/* 手势区提示（一次性、极轻）：右侧一枚小箭头对，读作「这里能滑」。纯装饰
-   （aria-hidden），不占交互 —— 手势的可点等价入口是工具条的 X / 堆叠钮与
-   环标签上的签（见 navController 头注）。 */
-body.mobile-layer .mf-dots::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  right: -14px;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: currentColor;
-  opacity: 0.28;
-  transform: translateY(-50%);
-}
+/* ── 幽灵点退役（可读字批 2026-11-03 12:59，作者实拍 IMG_1723）──────────────
+   「下面那三个点好像也有点问题：旁边多出了一个小点，导致现在整体不是居中的
+   状态」。根因 = 本档原来在这里挂的一枚**纯装饰点**（`::after`：4px 圆点、
+   right:-14px、opacity .28），用途是「手势区提示（这里能滑）」。它绝对定位，
+   不占 flex 流 ⇒ **胶囊盒本身仍严格居中**（实测 cx = 195 = vw/2，误差 0），
+   但视觉上胶囊右侧多出一枚孤立小点 ⇒ 人眼读成「整体偏左 + 多一个点」。
+   判据对照：`.mf-dot` 实数恒 = 卡片数（3 卡 3 点，syncDots 单源），幽灵点
+   就是这一枚伪元素。手势的可发现性改由**可点等价入口**承担（环签可点换签 /
+   工具条 ✕ 与堆叠钮 / 点条轻触跳签本身），不靠一枚残点提示 —— 按根因删除，
+   不用 margin 硬凑居中（那只会把幽灵点连同胶囊一起推偏）。 */
 body.mobile-layer .mf-dot {
   flex: none;
   width: 5.5px;
@@ -2021,6 +2040,14 @@ body.mobile-layer .mf-dot.on {
 @media (prefers-reduced-motion: reduce) {
   body.mobile-layer .mf-dot,
   body.mobile-layer .mf-dots { transition: none; }
+  /* 环签转盘位姿退化（作者令 2026-11-03 12:59「prefers-reduced-motion 下退化
+     为无旋转位移」）：**只去旋转分量**，位移 + 缩径照旧插值 —— 换签仍是位置
+     变化（给「在哪一张」的空间线索），但不再有绕轴旋转的动效。旋转分量整条
+     从 transform 里删掉（不是把角度设 0：保留 rotateY() 会让比例矩阵多一项，
+     计算样式面仍带 rotate 分量 = 判据面失真）。 */
+  body.mobile-layer .mf-strip-chip {
+    transform: translate(calc(-50% + var(--rdx, 0px)), -50%) scale(var(--rsc, 1));
+  }
 }
 /* 文档区横滑邻卡圆环（批③：横拖时拖向侧露玻璃描边圆环 = 桌面上下滚动的
    横屏变体；进深 = 拖距/换卡阈 0→1，松手即退）。半露圆（54px，缘外 20px），
@@ -2288,6 +2315,16 @@ body.mobile-layer .mf-deck-snap-img {
   height: 100%;
   object-fit: contain;
   display: block;
+}
+/* 图片腿的 inner 必须**有确定盒**（可读字批 2026-11-03 12:59 ①）：img 的
+   width/height 100% + object-fit:contain 只有在两个方向都确定时才按「等比铺满
+   + 居中留白」渲染；旧态 inner 是绝对定位且无尺寸（shrink-to-fit）⇒ 百分比
+   悬空，图退化成中间一小块（作者实拍「缩略图占比非常非常小」的几何面；实测
+   渲染宽 = 槽宽 0.349）。inset:0 把它钉成快照框本体 ⇒ 宽图按槽宽铺满、高受限
+   时上下居中留白。md/代码/网页腿不吃本档（它们走 card-snap 同款「原宽渲染 +
+   scale」，inner 的宽高由 JS 写）。 */
+body.mobile-layer .mf-deck-snap[data-kind="img"] .mf-deck-snap-inner {
+  inset: 0;
 }
 body.mobile-layer .mf-deck-thumb.has-snap { padding: 0; }
 /* 开合动画：收合态卡列自落位（下移 18px + 缩 0.96 + 零透明），.open 逐张就位；
