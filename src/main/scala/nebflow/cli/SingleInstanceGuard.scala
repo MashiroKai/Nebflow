@@ -50,6 +50,20 @@ object SingleInstanceGuard:
    */
   final case class OtherInstance(brand: String, url: String) extends PortState
 
+  /**
+   * 端口被**另一个 home 的活实例**占着（隔离实例误伤批 2026-11-04 §2 立类）。
+   *
+   * 背景（2026-11-03 22:59 事故）：`STAND_HOME=/tmp/seal-canary-home` 的隔离 canary
+   * 解析到了品牌缺省口 6138、撞上生产实例。旧分类把「同品牌 + 端口被占」一律判成
+   * [[NebflowInstance]] ⇒ **focus existing 并静默借用**（宿主实例被当成自己的），
+   * 或（`GatewayMain.ensureSingleInstance` 侧）当成 verified stale ⇒ destroyForcibly。
+   * 判据换代：占用者的 home（`--home` 命令行腿为主）≠ 本实例的 home ⇒ 本类：
+   * **拒绝启动**并点名（占用者 home/端口/pid + 建议 `--port`），绝不 focus、绝不 kill；
+   * 只有显式 `--takeover` 才允许接管。
+   * 同 home 的 [[NebflowInstance]] 行为保持现状（focus existing）。
+   */
+  final case class OtherHomeInstance(home: String, url: String, pid: Long = -1L) extends PortState
+
   final case class ForeignOccupant(detail: String) extends PortState
 
   /**
@@ -111,6 +125,10 @@ object SingleInstanceGuard:
    * listener — kernel TIME_WAIT sockets only.
    */
   private[cli] def probeOnce(host: String, port: Int): Either[Unit, PortState] =
+    probeOnce(host, port, nebflow.shared.PathUtil.dataRoot.toString)
+
+  /** 同 [[probeOnce]]，但 home 归属判据用显式 `ownRoot`（spec 注入面 → 零进程依赖）。 */
+  private[cli] def probeOnce(host: String, port: Int, ownRoot: String): Either[Unit, PortState] =
     if strictBindOk(host, port) then Right(PortFree)
     else if connectAccepted(port) then
       Right(
@@ -122,18 +140,100 @@ object SingleInstanceGuard:
             //     拒启并点名，**零路径证据要求**。10-18 的 rename 兼容腿（「无路径
             //     证据的 nebflow 词当自家人 focus」）被本裁定退役：双产品世界里
             //     品牌词即身份，跨品牌永不 focus（改名前构建的健康面早已淘汰）。
-            //   · 同品牌词 ⇒ 自家实例，但先过一遍路径证据兜底：listener 命令行
-            //     落在**另一个**品牌根下（极老构建健康面无品牌词、或混装 shim 的
-            //     残留态）仍升级为 [[OtherInstance]] —— 三元组的家腿在此闭合。
+            //   · 同品牌词 ⇒ 自家实例，但先过 home 归属判据（隔离实例误伤批
+            //     2026-11-04）：listener 的 home ≠ 本实例 home ⇒ [[OtherHomeInstance]]
+            //     拒启点名，**绝不 focus、绝不 kill**（canary 撞生产口即此形）。
             // 端口腿恒成立：被探口就是冲突口本身。
-            if brand == OwnBrand then
-              otherRootOccupant(port) match
-                case Some((_, _, root)) => OtherInstance(root.stripPrefix("."), url)
-                case None               => NebflowInstance(url)
-            else OtherInstance(brand, url)
+            classifyOccupant(brand, url, ownRoot, occupantHomeOf(port, ownRoot))
           case None => ForeignOccupant(s"port $port is held by another program")
       )
     else Left(())
+
+  /**
+   * 占用者归属分类核心（纯函数，spec 直驱零 socket）：
+   *   · 已知异品牌 ⇒ [[OtherInstance]]（跨品牌贬斥，10-31 红线不变）；
+   *   · 同品牌但占用者 home 可证且 ≠ 本实例 home ⇒ [[OtherHomeInstance]]（本批新语义）；
+   *   · 其余 ⇒ [[NebflowInstance]]（同 home：focus existing，行为保持现状）。
+   */
+  private[cli] def classifyOccupant(
+    brand: String,
+    url: String,
+    ownRoot: String,
+    occupant: Option[(Long, String)]
+  ): PortState =
+    if brand != OwnBrand then OtherInstance(brand, url)
+    else
+      occupant match
+        case Some((pid, home)) if !nebflow.shared.InstanceScope.samePath(home, ownRoot) =>
+          OtherHomeInstance(home, url, pid)
+        case _ => NebflowInstance(url)
+
+  /**
+   * 端口 listener 里「home 可证且不是本实例 home」的那一个（pid, home）。
+   * 复用 [[InstanceScope.proveHome]] 的命令行腿——单一实现，不另造第二套解析。
+   * 只认 `--home` / `-Duser.home` 腿（`ownPidFilePid=None`）：**探出来的 pid 来源
+   * 不证明归属** ⇒ 无证据时返回 None（调用方保持 focus 语义，绝不据此 kill）。
+   */
+  private[cli] def occupantHomeOf(port: Int, ownRoot: String): Option[(Long, String)] =
+    try
+      nebflow.gateway.StaleProcessGuard
+        .portListenerPids(port)
+        .filterNot(_ == ProcessHandle.current.pid)
+        .iterator
+        .flatMap(pid =>
+          nebflow.gateway.StaleProcessGuard
+            .readCommandLine(pid)
+            .flatMap(cmd =>
+              nebflow.shared.InstanceScope.homeFromCommandLine(cmd) match
+                case Some((home, _)) if !nebflow.shared.InstanceScope.samePath(home, ownRoot) =>
+                  Some((pid, nebflow.shared.InstanceScope.normalizePath(home)))
+                case _ => None
+            )
+        )
+        .nextOption()
+    catch case _: Exception => None
+
+  // ── 显式 --takeover 的接管面（隔离实例误伤批 2026-11-04 §2）─────────────
+
+  /** 接管面的注入缝（spec：零真实信号）。 */
+  final case class PreemptDeps(
+    listeners: Int => List[Long] = nebflow.gateway.StaleProcessGuard.portListenerPids,
+    readCmd: Long => Option[String] = nebflow.gateway.StaleProcessGuard.readCommandLine,
+    destroyForcibly: Long => Unit = pid => ProcessHandle.of(pid).ifPresent(_.destroyForcibly())
+  )
+
+  final case class PreemptResult(killed: List[Long], refused: List[String])
+
+  /**
+   * 显式 `--takeover` 才走的接管腿：只对**home 可证且 ≠ 本实例 home** 的 listener
+   * 发信号；home 无法判定的 listener **一律不碰**（fail-closed，返回拒绝行）。
+   * 默认（无 `--takeover`）永不调用本函数——见 [[PreemptPolicy]] 的机械断言
+   * （spec D）。
+   */
+  def preemptOtherHome(
+    port: Int,
+    ownRoot: String,
+    deps: PreemptDeps = PreemptDeps()
+  ): PreemptResult =
+    val pairs = deps.listeners(port).filterNot(_ == ProcessHandle.current.pid)
+    val decided = pairs.map { pid =>
+      val home = deps.readCmd(pid).flatMap(nebflow.shared.InstanceScope.homeFromCommandLine).map(_._1)
+      (pid, home)
+    }
+    val (mine, others) = decided.partition {
+      case (_, Some(h)) => nebflow.shared.InstanceScope.samePath(h, ownRoot)
+      case (_, None) => true // 无法判定 ⇒ 归「自己」一侧 = 不碰
+    }
+    val killed = others.map(_._1)
+    killed.foreach(deps.destroyForcibly)
+    val refused = mine.map {
+      case (pid, Some(h)) => s"pid $pid belongs to this home ($h) — --takeover never touches its own instance"
+      case (pid, None) =>
+        s"pid $pid home is unprovable from its command line — fail-closed, no signal sent even with --takeover"
+    }
+    PreemptResult(killed, refused)
+
+  end preemptOtherHome
 
   /**
    * 端口 listener 里「命令行根落在另一个品牌数据根下」的那一个（pid, cmdline, root）。
@@ -221,7 +321,8 @@ object SingleInstanceGuard:
   /** 健康面探测结果：品牌标记 + 聚焦 URL。 */
   private[cli] final case class ProbeHit(brand: String, url: String)
 
-  /** Probe health without the system proxy. Recognize the current/legacy
+  /**
+   * Probe health without the system proxy. Recognize the current/legacy
    * product names, or the full legacy health shape, rather than arbitrary
    * responses containing a product/version key.
    *
@@ -261,7 +362,9 @@ object SingleInstanceGuard:
                 if legacyShape then Some(ProbeHit(OwnBrand, s"http://localhost:$port")) else None
           }
           hit
+        end if
       finally conn.disconnect()
+      end try
     }.toOption.flatten
 
   /**

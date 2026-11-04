@@ -461,8 +461,8 @@ object DetachedApply:
 |  return 1
 |}
 |stop_old() {
-|  log "stop leg: $$LAUNCHER stop (hardened TERM→KILL inside launcher)$oldPidNote"
-|  "$$LAUNCHER" stop >> "$$LOG" 2>&1 || log "stop leg rc=$$? (port-free gate below is the authority)"
+|  log "stop leg: $$LAUNCHER stop --port $$PORT (hardened TERM→KILL inside launcher)$oldPidNote"
+|  "$$LAUNCHER" stop --port "$$PORT" >> "$$LOG" 2>&1 || log "stop leg rc=$$? (port-free gate below is the authority)"
 |  __dl=$$(($$(date +%s) + STOP_DEADLINE ))
 |  while [ "$$(date +%s)" -lt "$$__dl" ]; do
 |    if port_free; then log "stop leg: port $$PORT free"; return 0; fi
@@ -472,8 +472,8 @@ object DetachedApply:
 |  return 1
 |}
 |start_new() {
-|  log "start leg: $$LAUNCHER start"
-|  "$$LAUNCHER" start >> "$$LOG" 2>&1 || log "start leg rc=$$? (readiness judged by health gate)"
+|  log "start leg: $$LAUNCHER start --port $$PORT"
+|  "$$LAUNCHER" start --port "$$PORT" >> "$$LOG" 2>&1 || log "start leg rc=$$? (readiness judged by health gate)"
 |  wait_health "$$HEALTH_DEADLINE" "start leg"
 |}
 |rollback() { # <cause> — update only
@@ -492,9 +492,9 @@ object DetachedApply:
 |      mv -f "$$__q" "$$__q.bak-$$(date '+%Y%m%d-%H%M%S')" && log "quarantined staged jar: $$__q"
 |    else log "staged jar not found for quarantine ($$__q)"; fi
 |  fi
-|  "$$LAUNCHER" stop >> "$$LOG" 2>&1 || true
+|  "$$LAUNCHER" stop --port "$$PORT" >> "$$LOG" 2>&1 || true
 |  sleep 1
-|  "$$LAUNCHER" start >> "$$LOG" 2>&1 || true
+|  "$$LAUNCHER" start --port "$$PORT" >> "$$LOG" 2>&1 || true
 |  if wait_health "$$HEALTH_DEADLINE" "rollback leg"; then
 |    set_phase rolled-back "$$1"
 |    log "rollback complete — previous version serving"

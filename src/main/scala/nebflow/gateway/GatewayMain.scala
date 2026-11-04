@@ -64,7 +64,9 @@ object GatewayMain extends IOApp:
         .flatMap(pid =>
           StaleProcessGuard
             .readCommandLine(pid)
-            .flatMap(cmd => StaleProcessGuard.otherInstanceRoot(cmd, PathUtil.dataRoot.toString).map(root => (pid, cmd, root)))
+            .flatMap(cmd =>
+              StaleProcessGuard.otherInstanceRoot(cmd, PathUtil.dataRoot.toString).map(root => (pid, cmd, root))
+            )
         )
         .toList
         .headOption
@@ -74,6 +76,38 @@ object GatewayMain extends IOApp:
             s"[startup] REFUSING to start: port $port is held by the OTHER instance (pid $pid, rooted at a " +
               s"foreign brand home '…/$root/…'; this instance roots at ${PathUtil.dataRoot}) — " +
               s"command: ${StaleProcessGuard.truncate(cmd)}; stop that instance or pick another port"
+          logger.error(detail).unsafeRunSync()
+          throw new IllegalStateException(detail)
+        case None => ()
+      // ── home 归属证明门（隔离实例误伤批 2026-11-04 §1，最小局部增量）─────────
+      // 事故形状：作者用 `sbt run` 起生产实例 —— 命令行里**没有任何 home 片段**
+      // （没有 `--home` / `-Duser.home`），但带 `GatewayMain` / `/target/` 标记 ⇒
+      // `isNebflowCommandLine`=true ⇒ [[StaleProcessGuard.classify]] 判 verified
+      // stale ⇒ destroyForcibly。即「按品牌词认家、认不出就当自家旧实例杀」在
+      // sbt-run 生产实例上等于直接放行杀掉。本门把它反过来：**有 home 归属证明
+      // 才可动；无证明 ⇒ 拒启 + 零信号**（绝不走到下面的 destroyForcibly）。
+      // 归属证明腿与 `stop` 面同一实现：[[InstanceScope.proveHome]]（命令行
+      // `--home`/`-Duser.home`、命令行含本根路径、本根 `.pid` 记账）。
+      val unowned = StaleProcessGuard
+        .portListenerPids(port)
+        .filterNot(_ == ProcessHandle.current.pid)
+        .iterator
+        .flatMap { pid =>
+          val cmd = StaleProcessGuard.readCommandLine(pid)
+          InstanceScope.proveHome(cmd, pid, PathUtil.dataRoot.toString, nebflow.cli.ProcessManager.readPid()) match
+            case InstanceScope.HomeProof.Same(_, _) => None
+            case InstanceScope.HomeProof.Other(home, via) => Some((pid, cmd, s"its home is $home ($via)"))
+            case InstanceScope.HomeProof.Unknown(_, detail) => Some((pid, cmd, s"its home cannot be proven ($detail)"))
+        }
+        .toList
+        .headOption
+      unowned match
+        case Some((pid, cmd, why)) =>
+          val detail =
+            s"[startup] REFUSING to start: port $port is held by pid $pid and $why — this instance roots at " +
+              s"${PathUtil.dataRoot}; different data roots are different instances, so it is NEVER killed " +
+              s"here (fail-closed, zero signal). Command: ${StaleProcessGuard.truncate(cmd.getOrElse("<unreadable>"))}. " +
+              "Stop it from its own home, pass --takeover to take over explicitly, or pick another port."
           logger.error(detail).unsafeRunSync()
           throw new IllegalStateException(detail)
         case None => ()
@@ -501,7 +535,9 @@ object GatewayMain extends IOApp:
               // 只能靠手动重进）。结构变更写穿、滑动触摸 60s 守护落盘；置
               // NEBFLOW_GATEWAY_SESSION_PERSIST=0 即回到纯内存旧行为（应急闸）。
               val sessionSnapshotFile =
-                if sys.env.get("NEBFLOW_GATEWAY_SESSION_PERSIST").exists(v => v == "0" || v.equalsIgnoreCase("off") || v.equalsIgnoreCase("false"))
+                if sys.env
+                    .get("NEBFLOW_GATEWAY_SESSION_PERSIST")
+                    .exists(v => v == "0" || v.equalsIgnoreCase("off") || v.equalsIgnoreCase("false"))
                 then None
                 else Some(PathUtil.dataRoot / "gateway-sessions.json")
               val gatewaySessions = GatewaySessionStore.unsafeCreate(persistenceFile = sessionSnapshotFile)
@@ -517,8 +553,7 @@ object GatewayMain extends IOApp:
               // 同款；只读 sessions 真源，绝不回写）。写路径钩子 = 既有
               // sessionChangedHook 单缝（不新增写面）；冷建/对账走 boot 后台
               // fiber（下方），不阻塞启动，建库期间查询降级旧全扫（§4.6 R1/R4）。
-              val chatSearchAdapter = new nebflow.core.search.chat.ChatSearchAdapter(
-                PathUtil.dataRoot / "sessions")
+              val chatSearchAdapter = new nebflow.core.search.chat.ChatSearchAdapter(PathUtil.dataRoot / "sessions")
               nebflow.core.search.SearchIndexService.register(chatSearchAdapter, PathUtil.dataRoot).unsafeRunSync()
               sessionStore.setSessionChangedHook { sid =>
                 IO(nebflow.core.search.SearchIndexService.markSessionChanged(sid))
@@ -531,10 +566,12 @@ object GatewayMain extends IOApp:
                   // datalayer-spec 批（C1 冷建）：全量对账后台 fiber——逐会话
                   // 指纹比对，缺失/陈旧者重建；不阻塞 boot（§4.3）；零超时红线：
                   // 不设 wall-clock 超时，完成读数走日志（`search-index rebuild:`）。
-                  (sessionStore.listSessionsIncludeUnindexed.flatMap { sessions =>
-                    nebflow.core.search.SearchIndexService.fullRebuild(
-                      "chat", sessions.map(_.id))
-                  }.start).void
+                  (sessionStore.listSessionsIncludeUnindexed
+                    .flatMap { sessions =>
+                      nebflow.core.search.SearchIndexService.fullRebuild("chat", sessions.map(_.id))
+                    }
+                    .start)
+                    .void
                 }
                 .flatMap { _ =>
                   // Single-session architecture: guarantee the primary agent Nebula
@@ -637,7 +674,8 @@ object GatewayMain extends IOApp:
                           // 台账 #916 detached-apply boot 对账：上一个 OS 托管 apply 若死在
                           // 中途（registered/stopped/starting…），这里只记证据 + 改写
                           // interrupted 相，绝不据 state 自启/自停——选取面只认 pointer/winsort。
-                          nebflow.cli.DetachedApply.reconcileOnBoot(nebflow.shared.PathUtil.dataRoot)
+                          nebflow.cli.DetachedApply
+                            .reconcileOnBoot(nebflow.shared.PathUtil.dataRoot)
                             .flatMap(wl => wl.map(l => logger.warn(l)).getOrElse(IO.unit)) *>
                           (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
                            else
@@ -744,9 +782,7 @@ object GatewayMain extends IOApp:
                                     actorSystem
                                       .spawn(
                                         nebflow.agent.InteractionHub(
-                                          Some((sid: String) =>
-                                            sharedResources.agentRegistry.get.map(_.contains(sid))
-                                          ),
+                                          Some((sid: String) => sharedResources.agentRegistry.get.map(_.contains(sid))),
                                           Some(pendingAskLedger),
                                           Some(askTodoBridge)
                                         ),
@@ -854,8 +890,8 @@ object GatewayMain extends IOApp:
                                     pendingAskLedger
                                       .bootReconcile(
                                         broadcast = json => wsHub.broadcast(json),
-                                        appendReceipt = (rootSid, msg) =>
-                                          sessionStore.appendUiMessages(rootSid, List(msg)),
+                                        appendReceipt =
+                                          (rootSid, msg) => sessionStore.appendUiMessages(rootSid, List(msg)),
                                         retireAskTodo = (rid: String) => askTodoBridge.retire(rid)
                                       )
                                       .attempt
@@ -1078,7 +1114,9 @@ object GatewayMain extends IOApp:
                                   // 启动、绝不影响其他包。幂等：装回后下次 boot 走 "already present"。
                                   // 用户显式卸载（plugins.removed 标记）优先，不自愈装回。
                                   val sourcePluginHeal: IO[Unit] =
-                                    nebflow.core.plugin.PluginSourceSync.selfHeal().void
+                                    nebflow.core.plugin.PluginSourceSync
+                                      .selfHeal()
+                                      .void
                                       .handleErrorWith(e =>
                                         IO(
                                           nebflow.shared.NebflowLogger
@@ -1155,7 +1193,7 @@ object GatewayMain extends IOApp:
                                   // daemonService autoStart 块（构造序：dock 依赖
                                   // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
                                   // 契约由 dock 腿逐字保持。
-                                  hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> taskIndexBackfill                                   *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
+                                  hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeCrashSweep *> projectBootWake *> mergeQueueBootSweep *> msgTokensBootReconcile *> projectTtlScanner *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> succeedPortGate(
                                     cfg,
                                     sharedResources.healthMonitor
                                   ) *> {
@@ -1173,11 +1211,11 @@ object GatewayMain extends IOApp:
                                     // --- Bridge Manager (plugins: telegram, etc.) ---
                                     val bridgeInjectRef: Ref[IO, Option[
                                       (
-                                          String,
-                                          String,
-                                          Option[String],
-                                          Option[nebflow.bridge.BridgeOrigin],
-                                          List[nebflow.bridge.BridgeAttachment]
+                                        String,
+                                        String,
+                                        Option[String],
+                                        Option[nebflow.bridge.BridgeOrigin],
+                                        List[nebflow.bridge.BridgeAttachment]
                                       ) => IO[Unit]
                                     ]] =
                                       Ref.unsafe(None)
@@ -1571,32 +1609,37 @@ object GatewayMain extends IOApp:
                                             wsHub
                                               .broadcast(io.circe.Json.obj("type" -> "peerListChanged".asJson))
                                               .handleErrorWith(e =>
-                                                logger.warn(s"[fleet] peerListChanged broadcast failed: ${e.getMessage}")
+                                                logger
+                                                  .warn(s"[fleet] peerListChanged broadcast failed: ${e.getMessage}")
                                               ) *>
                                               // 🔴 晚绑定必须**每次事件现读**：`.get()` 是纯 Option 读，
                                               // 写在回调构造处会被**求值一次**（此处协调器还没建：fleetUpdateRef
                                               // 在下方 Dropbox 段之后才 set ⇒ fold 恒走 IO.unit ⇒ 哨兵腿注册即死）。
                                               // e2e ⑦ 三轮实测坐实：回调触发、名册在线，却零 `sentinel consulted`。
                                               // 现在把「读 ref」放进 IO 里（`IO(...).flatMap`），语义与注释一致。
-                                              IO(fleetUpdateRef.get()).flatMap {
-                                                case None =>
-                                                  logger.info("[fleet] peer-change event seen but no fleet coordinator yet — sentinel skipped")
-                                                case Some(f) =>
-                                                  neblinkService.peers
-                                                    .flatMap { ps =>
-                                                      // 留痕（fleet e2e ⑦ 抓到的可诊断性缺口：修前哨兵不动作时
-                                                      // 日志里**一行痕迹都没有**，只能靠读源码猜是「回调没触发」
-                                                      // 还是「触发了但名册/在线态判掉」。这是 peer 变更事件
-                                                      // （非周期）上的一行，不是定时器噪声。
-                                                      logger.info(
-                                                        s"[fleet] peer-change sentinel sweep: peers=" +
-                                                          ps.map(p => s"${p.deviceId}(online=${p.lastSeen > 0})")
-                                                            .mkString(",")
-                                                      ) *> ps.traverse_(p => f.onPeerOnline(p.deviceId))
-                                                    }
-                                              }.handleErrorWith(e =>
-                                                logger.warn(s"[fleet] sentinel callback failed: ${e.getMessage}")
-                                              )
+                                              IO(fleetUpdateRef.get())
+                                                .flatMap {
+                                                  case None =>
+                                                    logger.info(
+                                                      "[fleet] peer-change event seen but no fleet coordinator yet — sentinel skipped"
+                                                    )
+                                                  case Some(f) =>
+                                                    neblinkService.peers
+                                                      .flatMap { ps =>
+                                                        // 留痕（fleet e2e ⑦ 抓到的可诊断性缺口：修前哨兵不动作时
+                                                        // 日志里**一行痕迹都没有**，只能靠读源码猜是「回调没触发」
+                                                        // 还是「触发了但名册/在线态判掉」。这是 peer 变更事件
+                                                        // （非周期）上的一行，不是定时器噪声。
+                                                        logger.info(
+                                                          s"[fleet] peer-change sentinel sweep: peers=" +
+                                                            ps.map(p => s"${p.deviceId}(online=${p.lastSeen > 0})")
+                                                              .mkString(",")
+                                                        ) *> ps.traverse_(p => f.onPeerOnline(p.deviceId))
+                                                      }
+                                                }
+                                                .handleErrorWith(e =>
+                                                  logger.warn(s"[fleet] sentinel callback failed: ${e.getMessage}")
+                                                )
                                           ) *>
                                           // Wire the WS data channel send function so other services
                                           // (e.g. DropboxService) can send P2P messages via presenceService.
@@ -1665,9 +1708,11 @@ object GatewayMain extends IOApp:
                                               // 引擎重启后从上一次落盘任务恢复（在飞行标「失联」，
                                               // 绝不假装还在跑）；幂等，HTTP/WS 首次读也会再碰一次。
                                               dispatcher.unsafeRunAndForget(
-                                                fleetUpdate.restore().handleErrorWith(e =>
-                                                  logger.warn(s"[fleet] restore failed at boot: ${e.getMessage}")
-                                                )
+                                                fleetUpdate
+                                                  .restore()
+                                                  .handleErrorWith(e =>
+                                                    logger.warn(s"[fleet] restore failed at boot: ${e.getMessage}")
+                                                  )
                                               )
                                               val sharedResourcesWithBridge =
                                                 sharedResourcesLive.copy(
@@ -1689,7 +1734,11 @@ object GatewayMain extends IOApp:
                                               val weeklyReportWorkspace: IO[Option[os.Path]] =
                                                 nebflow.core.project.ProjectStore
                                                   .list()
-                                                  .map(_.filter(pd => nebflow.core.project.ProjectStore.deviceOrigin(pd).isEmpty))
+                                                  .map(
+                                                    _.filter(pd =>
+                                                      nebflow.core.project.ProjectStore.deviceOrigin(pd).isEmpty
+                                                    )
+                                                  )
                                                   .map(_.sortBy(_.name).headOption)
                                                   .map(_.map(pd => os.Path(pd.workspace)))
                                                   .map(_.filter(p => os.exists(p)))
@@ -1700,9 +1749,17 @@ object GatewayMain extends IOApp:
                                               val weeklyReportAttachments: IO[Option[os.Path]] =
                                                 nebflow.core.project.ProjectStore
                                                   .list()
-                                                  .map(_.filter(pd => nebflow.core.project.ProjectStore.deviceOrigin(pd).isEmpty))
+                                                  .map(
+                                                    _.filter(pd =>
+                                                      nebflow.core.project.ProjectStore.deviceOrigin(pd).isEmpty
+                                                    )
+                                                  )
                                                   .map(_.sortBy(_.name).headOption)
-                                                  .map(_.map(pd => nebflow.core.project.ProjectStore.ledgerDocsAttachments(pd.name)))
+                                                  .map(
+                                                    _.map(pd =>
+                                                      nebflow.core.project.ProjectStore.ledgerDocsAttachments(pd.name)
+                                                    )
+                                                  )
                                               val weeklyReport = new nebflow.core.scheduler.WeeklyReportGenerator(
                                                 sharedResourcesWithBridge.scheduledTaskStore,
                                                 sharedResourcesWithBridge.doneRecordStore,
@@ -1847,7 +1904,9 @@ object GatewayMain extends IOApp:
                                                         ) *>
                                                         up.traverse_(PerceptionDaemonDock.handshake)
                                                           .handleErrorWith(e =>
-                                                            logger.warn(s"perception daemon handshake failed: ${e.getMessage}")
+                                                            logger.warn(
+                                                              s"perception daemon handshake failed: ${e.getMessage}"
+                                                            )
                                                           )
                                                     )
                                               )
@@ -1869,7 +1928,8 @@ object GatewayMain extends IOApp:
                                                   )
                                                   logger.info(
                                                     s"console-takeover: single-instance gate " +
-                                                      (if ConsoleTakeover.defaultEnabled then "on" else "OFF (zero-drift)")
+                                                      (if ConsoleTakeover.defaultEnabled then "on"
+                                                       else "OFF (zero-drift)")
                                                   )
                                                   ConnGuard.create(connGuardLogger).flatMap { connGuard =>
                                                     EmberServerBuilder
@@ -1993,7 +2053,11 @@ object GatewayMain extends IOApp:
                                                         //     单点计数（信封 IP 键）。
                                                         val gatewayApp: org.http4s.HttpApp[IO] = Router(
                                                           "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> ConsoleTakeoverRoutes
-                                                            .routes(gatewaySessions, consoleTakeover, logger) <+> restApiRoutes
+                                                            .routes(
+                                                              gatewaySessions,
+                                                              consoleTakeover,
+                                                              logger
+                                                            ) <+> restApiRoutes
                                                             .presenceWsRoutes(wsb) <+> StaticRoutes
                                                             .pluginAssetsRoutes(
                                                               tokenRef,

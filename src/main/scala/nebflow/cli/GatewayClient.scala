@@ -153,18 +153,46 @@ object GatewayClient:
 
   /**
    * Single port resolver, SAME chain and order as the engine's bind face
-   * (`GatewayConfig.resolvePort`, 双生分家批 2026-10-31)：explicit CLI override >
-   * `GATEWAY_PORT` env > config `port` key > brand default port
-   * (`Defaults.brandDefaultPort` — stand 6138 / nebflow 6140; 端口对调批 2026-10-25
-   * was 8080).
+   * (`GatewayConfig.resolvePortVerdict`, 双生分家批 2026-10-31；隔离实例误伤批
+   * 2026-11-04 收口到 [[nebflow.shared.InstanceScope.decide]] 单一口径)：
+   *   显式 `--port` > `GATEWAY_PORT` env（**仅当数据根是默认根**）> config `port` 键 >
+   *   品牌缺省端口（**仅当数据根是默认根**）。
+   * 数据根被覆盖（隔离实例 / `--home` / `STAND_HOME`）时，继承来的 env 端口不算显式、
+   * 品牌缺省口不再兜底：解析不到就抛 [[nebflow.shared.PortRefusal]]（要求显式 `--port`），
+   * 绝不静默落到生产口 6138/6140。
    * Every CLI-side port read goes through here — no second mechanism.
    */
   def readPort: IO[Int] = IO.blocking {
-    portOverride
-      .orElse(nebflow.shared.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption))
-      .orElse(nebflow.gateway.GatewayConfig.configFilePort())
-      .getOrElse(nebflow.shared.Defaults.brandDefaultPort)
+    GatewayClient.resolvePortVerdict() match
+      case nebflow.shared.InstanceScope.PortVerdict.Resolved(port, _, warnings) =>
+        warnings.foreach(w => System.err.println(w))
+        port
+      case nebflow.shared.InstanceScope.PortVerdict.Refused(reason) =>
+        throw new nebflow.shared.PortRefusal(reason)
   }
+
+  /** 当前 `--port` 覆盖值（只读快照；stop 面的降级链与 `readPort` 同源）。 */
+  private[cli] def portOverrideSnapshot: Option[Int] = portOverride
+
+  /** `readPort` 的纯解析（注入面：spec 直接驱全矩阵，零 env 依赖）。 */
+  private[cli] def resolvePortVerdict(
+    root: os.Path = nebflow.shared.PathUtil.dataRoot,
+    overridden: Boolean = nebflow.shared.InstanceScope.liveCaller.overridden,
+    envValue: Option[String] = nebflow.shared.Branding.env("GATEWAY_PORT"),
+    configPort: Option[Int] = nebflow.gateway.GatewayConfig.configFilePort()
+  ): nebflow.shared.InstanceScope.PortVerdict =
+    nebflow.shared.InstanceScope.decide(
+      nebflow.shared.InstanceScope.PortInputs(
+        cliPort = portOverride,
+        envPortName = s"${nebflow.shared.Branding.envPrefix}_GATEWAY_PORT",
+        envPort = envValue,
+        configPort = configPort,
+        sourceName = nebflow.shared.Branding.configFileName,
+        brandDefaultPort = nebflow.shared.Defaults.brandDefaultPort,
+        root = root,
+        overridden = overridden
+      )
+    )
 
   /**
    * T8 wording for a non-2xx gateway response. The detail prefers the body's
