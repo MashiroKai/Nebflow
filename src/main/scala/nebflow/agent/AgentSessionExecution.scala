@@ -581,7 +581,18 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             val msg = attempt.message.getOrElse(s"${attempt.providerId}/${attempt.model} failed, retrying...")
             state.wsSend(AgentStreamEvent.RetryStatus(msg).toJson(ctx.self.path.name, isSubagent, sessionIdOpt))
           }
-        val turnId = state.currentTurnId + 1
+        // ── pi-logic 接线点 1/2（轮 A 织入，PiLoopWiring）：TurnNumber 序域取号 +
+        //     run 边界判定（ledger.runKey ≠ loopTurnKey ⇒ 新 run ⇒ RunStarted 审计行 +
+        //     KernelEvent 影子 + 账本推进）+ 轮起点审计行。全部纯增日志面——帧/消息流零改动。──
+        val turnId = PiLoopWiring.nextTurnNumber(state.currentTurnId).value
+        val piBoundary = PiLoopWiring.runBoundary(state.pilogicLedger, state.loopTurnKey, turnId)
+        val piBridge = PiLoopWiring.bridge(state,
+          if piBoundary.fresh then piBoundary.ledger else state.pilogicLedger)(
+          (ev, d) => logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, ev, d))
+        val piLedger =
+          if piBoundary.fresh then piBridge.runStart(piBoundary.ledger) // RunStarted 行+run-started KernelEvent
+          else state.pilogicLedger
+        piBridge.turnStart(turnId)
         // 方案 B（审计 20260903）：当轮 LLM 请求关联 id——生成于派发前，同时
         // 传给 LlmLogWriter（router JSONL 的 request_id）并附入 ConsumeResult
         // （工具执行轮经 ToolContext.requestId 流入 tools JSONL），两类日志
@@ -1091,7 +1102,10 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                   // 成功调用不计）超限 → 抛 TurnBudgetExceeded（Permanent 分类，
                   // llm-fail-retry 不会再触发）→ 下方 .attempt 捕获后发 LlmFailed，
                   // turn 快速失败并给用户明确原因。
-                  IO.raiseWhen(stateForLlm.execution.llmCallsThisTurn >= Fallback.MaxTurnLlmCalls)(
+                  // ── pi-logic 接线点 3（轮 A 织入）：per-turn LLM 重试闸 → RetryPolicy
+                  //     策略位（数值单源仍是 Fallback.MaxTurnLlmCalls，归属显式化；
+                  //     谓词等价：旧 `>= MaxTurnLlmCalls` ≡ `!allows`，阈值/异常/文案逐字）──
+                  IO.raiseWhen(PiLoopWiring.turnRetryExceeded(stateForLlm.execution.llmCallsThisTurn))(
                     new TurnBudgetExceeded(
                       turnId,
                       stateForLlm.execution.llmCallsThisTurn
@@ -1100,6 +1114,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                     // 审计 20260903 子项⑤：request 行在流派发时落盘（旧批量版
                     // 在流收集完成后才写，request→response 时间戳全部 <1.2s 失真）。
                     LlmLogWriter.logRequest(request, llmRequestId, isSubagent, isCompactTurn) *>
+                    // pi-logic 接线点 1：LLM 流起点审计行（MessageStarted——纯增日志）。
+                    IO(piBridge.messageStart(turnId)) *>
                     resources.llm
                       .sendStream(request, onAttempt = Some(onAttemptCb))
                       // B2（RC-2，2026-10-04）：携带本轮 LLM 轮次标识 (round, block)。
@@ -1129,6 +1145,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                       .toList
                       .flatMap { chunks =>
                         val cr = aggregateChunks(chunks)
+                        // pi-logic 接线点 1：LLM 聚合完成位审计行（MessageEnded——纯增日志）。
+                        piBridge.messageEnd(turnId, cr.stopReason, cr.toolCalls.nonEmpty)
                         // Track runtime model for this session
                         val trackModel = sessionIdOpt match
                           case Some(sid) if cr.model.isDefined =>
@@ -1160,13 +1178,20 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                       }
                       .attempt
                       .flatMap {
+                        // pi-logic 接线点 4（PiLoopTranslator 影子面）：完成腿事件——
+                        // Left=失败轮收束（TurnEnded(Error) 审计行）；Right 的轮收束在
+                        // 六分支/ToolsComplete（影子事件序随主链真实序）。
                         case Right(r) => ctx.self ! LlmComplete(r, replyTo, turnId)
-                        case Left(e) => ctx.self ! LlmFailed(e, replyTo, turnId)
+                        case Left(e) =>
+                          IO(piBridge.llmFailedTurnEnd(turnId)) *> (ctx.self ! LlmFailed(e, replyTo, turnId))
                       }
                       .handleErrorWith { e =>
                         NebflowLogger
                           .forName("nebflow.agent")
                           .warn(s"pipeLlmCall failed: ${e.getMessage}")
+                          // pi-logic 接线期四件 ④（崩溃兜底）：synthesizeTruncatedEvents
+                          // 合成终态对经桥 audit 面——「循环崩溃对下游仍呈现为一次正常收尾」。
+                          .flatMap(_ => PiLoopWiring.crashTailIO(piBridge, turnId))
                           .flatMap(_ => ctx.self ! LlmFailed(e, replyTo, turnId))
                       }
                 )
@@ -1181,6 +1206,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                        stateWithBranch.withLastMaintenanceDelegateCount(stateWithReminder.delegateCount)
                      else stateWithBranch)
                       .withLastDispatch(Some(LastDispatch(isToolExecution = false)))
+                      // pi-logic 接线点 1：run 账本随 state 值传递（本 dispatch 的推进结果）。
+                      .copy(pilogicLedger = piLedger)
                     // 方案 C（2026-08-18 误杀修复）：成功调用不计入预算——llmCallsThisTurn
                     // 仅在 AgentActor 的 LlmFailed 重试分支递增，正常工具循环（读→改→
                     // 编译→再改）每次成功继续调用都不再 +1。
@@ -1200,21 +1227,23 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                   s"err=${e.getMessage.take(120)}"
                 )
               ) *>
-                (ctx.self ! LlmFailed(
-                  ToolPipelineError(
-                    s"Turn context build failed after ${ContextBuildTimeout.toSeconds}s " +
-                      s"(file lock or blocking read?): ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
-                  ),
-                  replyTo,
-                  turnId
-                )) *>
+              // pi-logic 四件 ④（崩溃兜底）：context-build 超时/失败 = 轮崩溃——合成终态对。
+              PiLoopWiring.crashTailIO(piBridge, turnId) *>
+              (ctx.self ! LlmFailed(
+                ToolPipelineError(
+                  s"Turn context build failed after ${ContextBuildTimeout.toSeconds}s " +
+                    s"(file lock or blocking read?): ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
+                ),
+                replyTo,
+                turnId
+              )) *>
                 IO.pure(
                   processing(
                     agentDef,
                     resources,
                     depth,
                     parentRef,
-                    state.withCurrentTurnId(turnId)
+                    state.withCurrentTurnId(turnId).copy(pilogicLedger = piLedger)
                   )
                 )
         yield result
@@ -1244,6 +1273,11 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     val permissionDenialsRef = cats.effect.Ref.unsafe[IO, Map[String, Int]](Map.empty)
     val isSubagent = depth > 0
     val sessionIdOpt = state.sessionId
+    // ── pi-logic 接线点 9（轮 A 织入）：批腿事件（toolExecution.Started/Ended 审计行，
+    //     与既有 ToolStart/ToolEnd 帧同步落）；批本体 parTraverse 并行**不动**——
+    //     runBatch 串行 vs 主链并行 = 语义分歧 D-B 上报，割接轮作者裁。──
+    val piBridge = PiLoopWiring.bridge(state, state.pilogicLedger)(
+      (ev, d) => logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, ev, d))
 
     val io = for
       // Executor gate reads the CURRENT def — the same refresh source the
@@ -1405,14 +1439,16 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       freshResults <- filteredCalls.parTraverse { call =>
         val skipStreaming = call.name == "AskUserQuestion"
         val callCtx = toolCtx.copy(toolCallId = call.id)
-        (if !skipStreaming then
-           emitStreamIO(
-             state.wsSend,
-             AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(call)),
-             isSubagent,
-             sessionIdOpt
-           )
-         else IO.unit) *>
+        // pi-logic 接线点 9：单调用起点审计行（与 ToolStart 帧位同步——纯增日志）。
+        IO(piBridge.toolStart(call.id, call.name)) *>
+          ((if !skipStreaming then
+             emitStreamIO(
+               state.wsSend,
+               AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(call)),
+               isSubagent,
+               sessionIdOpt
+             )
+           else IO.unit) *>
           (
             // WebSearch P0: kimi's native $web_search round-trip — the caller
             // echoes the model's arguments back VERBATIM as the tool result
@@ -1481,26 +1517,29 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 logToolStructured(call, callCtx, r).as((call, r))
             }
             .flatTap { (call, r) =>
-              if call.name != "AskUserQuestion" then
-                val summary = summarizeToolResult(call, r.content)
-                val frontendContent = r.frontendContent.getOrElse(r.content)
-                emitStreamIO(
-                  state.wsSend,
-                  AgentStreamEvent.ToolEnd(
-                    nebflow.core.summarizeToolCall(call),
-                    summary,
-                    frontendContent,
-                    r.isError,
-                    input = Some(call.input)
-                  ),
-                  isSubagent,
-                  sessionIdOpt
-                )
-              else IO.unit
+              // pi-logic 接线点 9：单调用收束审计行（与 ToolEnd 帧位同步——纯增日志）。
+              IO(piBridge.toolEnd(call.id, r.isError)) *>
+                (if call.name != "AskUserQuestion" then
+                  val summary = summarizeToolResult(call, r.content)
+                  val frontendContent = r.frontendContent.getOrElse(r.content)
+                  emitStreamIO(
+                    state.wsSend,
+                    AgentStreamEvent.ToolEnd(
+                      nebflow.core.summarizeToolCall(call),
+                      summary,
+                      frontendContent,
+                      r.isError,
+                      input = Some(call.input)
+                    ),
+                    isSubagent,
+                    sessionIdOpt
+                  )
+                else IO.unit)
             }
             .flatMap { (call, r) =>
               ToolResultGuard.guardResult(call, r, state.sessionId.getOrElse("default")).map(r => (call, r))
             }
+          )
       }
       guardedBatch <- ToolResultGuard.guardBatch(freshResults, state.sessionId.getOrElse("default"))
       droppedResults <- droppedCalls.traverse { call =>
@@ -1631,12 +1670,14 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
 
     for _ <- ctx.forkTurn(io.handleErrorWith { e =>
         val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
-        NebflowLogger.forName("nebflow.agent").warn(s"pipeToolExecutions failed (this should be rare): $msg")
-        ctx.self ! LlmFailed(
-          ToolPipelineError(s"Tool execution pipeline failed: $msg"),
-          replyTo,
-          state.currentTurnId
-        )
+        NebflowLogger.forName("nebflow.agent").warn(s"pipeToolExecutions failed (this should be rare): $msg") *>
+          // pi-logic 四件 ④（崩溃兜底）：工具管线失败 = 轮崩溃——合成终态对（审计面）。
+          PiLoopWiring.crashTailIO(piBridge, state.execution.currentTurnId) *>
+          (ctx.self ! LlmFailed(
+            ToolPipelineError(s"Tool execution pipeline failed: $msg"),
+            replyTo,
+            state.currentTurnId
+          ))
       })
     yield
       // loopCounters 不在此写回——它在 forkTurn 的异步 IO 内计算，行为返回时

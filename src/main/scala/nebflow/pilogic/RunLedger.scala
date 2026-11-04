@@ -20,13 +20,16 @@ final case class RunLedger(
     runId: String,
     /** 会话域 KernelEvent 序（跨 run 连续；0 = 尚未发过任何 KernelEvent 行）。 */
     seqInSession: Long,
+    /** run 起点 dispatch 轮号（L-8 生产者侧映射：MessageSeq = turnId − startTurn + 1，
+      * 每 run 重置、run 内单调）。 */
+    startTurn: Long,
 ):
   def nextSeq: RunLedger = copy(seqInSession = seqInSession + 1L)
   def closed: RunLedger = copy(runId = "")
 
 object RunLedger:
-  val empty: RunLedger = RunLedger(runKey = 0L, runId = "", seqInSession = 0L)
+  val empty: RunLedger = RunLedger(runKey = 0L, runId = "", seqInSession = 0L, startTurn = 0L)
 
-  /** 开新 run：runKey/runId 换新，seqInSession 继承（会话域连续——L-8 消费侧）。 */
-  def start(runKey: Long, runId: String, carry: RunLedger): RunLedger =
-    RunLedger(runKey = runKey, runId = runId, seqInSession = carry.seqInSession)
+  /** 开新 run：runKey/runId/起点换新，seqInSession 继承（会话域连续——L-8 消费侧）。 */
+  def start(runKey: Long, runId: String, carry: RunLedger, startTurn: Long): RunLedger =
+    RunLedger(runKey = runKey, runId = runId, seqInSession = carry.seqInSession, startTurn = startTurn)
