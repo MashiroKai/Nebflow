@@ -34,6 +34,15 @@ private[agent] object AgentFinishTurn:
     result: ConsumeResult,
     pending: List[AgentCommand]
   )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
+    // ── pi-logic 接线点 5（轮 A 织入）：六分支分类（classifyLlmComplete 只读镜像下方
+    //     ladder 条件——分类结果仅入事件载荷，不参与路由）+ 非工具分支的 TurnEnded
+    //     审计行。工具分支（tool-batch）的轮收束在 ToolsComplete（接线点 6）——影子
+    //     事件序随主链真实序（决策先于批，pilogic 循环序批先于决策——映射差异 D-A 记录）。──
+    val piBranch = PiLoopWiring.classifyLlmComplete(state, result)
+    if piBranch != "tool-batch" then
+      PiLoopWiring.bridge(state, state.pilogicLedger)((ev, d) =>
+        logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, ev, d))
+        .branchTurnEnd(state.execution.currentTurnId, piBranch)
     // Single-stage compaction (2026-08-31 redesign): the former Save stage is
     // gone — compaction only compresses. Every pending compaction is a
     // Compact turn: tools disabled (pipeLlmCall sets tools=Some(Nil)),
@@ -434,7 +443,20 @@ private[agent] object AgentFinishTurn:
             .flatMap(mailboxIdleTaken =>
               MailboxDrain
                 .injectIdleTurn(agentDef, resources, depth, parentRef, updatedState, mailboxIdleTaken)
-                .map(_.getOrElse(idle(agentDef, resources, depth, parentRef, updatedState)))
+                .map {
+                  case Some(b) => b // pi-logic：注入轮续 run（同 loopTurnKey）——不发 RunEnded
+                  case None =>
+                    // ── pi-logic 接线点 1（轮 A 织入）：真 idle = run 自然收口
+                    //     （RunEnded 审计行 + run-ended KernelEvent + 账本关 run）。──
+                    val piLedgerDone =
+                      if updatedState.pilogicLedger.runId.nonEmpty then
+                        PiLoopWiring.bridge(updatedState, updatedState.pilogicLedger)((ev, d) =>
+                          logAgentEvent(agentDef, depth, updatedState.sessionId, updatedState.sessionName, ev, d))
+                          .runEnd("completed", updatedState.pilogicLedger)
+                      else updatedState.pilogicLedger
+                    idle(agentDef, resources, depth, parentRef,
+                      updatedState.copy(pilogicLedger = piLedgerDone))
+                }
             )
       yield result
       end for

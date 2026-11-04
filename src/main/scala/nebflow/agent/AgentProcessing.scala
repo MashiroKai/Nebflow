@@ -51,7 +51,8 @@ private[agent] object AgentProcessing:
 
       // --- LLM completed ---
       case LlmComplete(result, replyTo, turnId) =>
-        if turnId != state.currentTurnId then
+        // pi-logic 接线点 2（轮 A 织入）：stale 判定经 TurnNumber 类型化（数值语义不变）。
+        if PiLoopWiring.isStaleTurn(turnId, state.currentTurnId) then
           logAgentEvent(
             agentDef,
             depth,
@@ -133,7 +134,8 @@ private[agent] object AgentProcessing:
         end if
 
       case LlmFailed(error, replyTo, turnId, msg) =>
-        if turnId != state.currentTurnId then
+        // pi-logic 接线点 2（轮 A 织入）：stale 判定经 TurnNumber 类型化（数值语义不变）。
+        if PiLoopWiring.isStaleTurn(turnId, state.currentTurnId) then
           logAgentEvent(
             agentDef,
             depth,
@@ -144,6 +146,11 @@ private[agent] object AgentProcessing:
           )
           IO.pure(processing(agentDef, resources, depth, parentRef, state, pending))
         else
+          // pi-logic 接线点 4（PiLoopTranslator 影子面）：失败轮收束审计行
+          // （TurnEnded(Error)——重试/冻结去留由下方 handler 决定，轮本身已收束）。
+          PiLoopWiring.bridge(state, state.pilogicLedger)((ev, d) =>
+            logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, ev, d))
+            .llmFailedTurnEnd(turnId)
           val cleanedState = msg match
             case Some(cnt) => state.withLoopCounters(cnt) // Block 3：L1 终止的计数器写回
             case None => state
@@ -596,7 +603,7 @@ private[agent] object AgentProcessing:
         // a synthesized ``ConsumeResult`` — a second, fabricated artifact face
         // — and nothing reads the checkpoint here: the actor stops and
         // ``retryFromCheckpoint`` is unreachable from a stopped behavior.
-        val stoppedState = state
+        val stoppedState0 = state
           .copy(execution =
             state.execution
               .copy(
@@ -604,6 +611,15 @@ private[agent] object AgentProcessing:
                 stopDeferred = false
               )
           )
+        // ── pi-logic 接线点 1/④（轮 A 织入）：deferred stop = run 收口（行为停止面）。──
+        val stoppedState =
+          if stoppedState0.pilogicLedger.runId.nonEmpty then
+            val ledgerAfter =
+              PiLoopWiring.bridge(stoppedState0, stoppedState0.pilogicLedger)((ev, d) =>
+                logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, ev, d))
+                .runEnd("stopped-deferred", stoppedState0.pilogicLedger)
+            stoppedState0.copy(pilogicLedger = ledgerAfter)
+          else stoppedState0
         for
           _ <- IO(
             logAgentEvent(
@@ -636,6 +652,11 @@ private[agent] object AgentProcessing:
       // through here — it stops the actor.
 
       case tc: ToolsComplete =>
+        // ── pi-logic 接线点 6（轮 A 织入）：tool.BatchSettled 位点 + 工具轮收束审计行
+        //     （批结果落地即轮收束，下一 dispatch = 下一轮——影子事件序随主链真实序）。──
+        PiLoopWiring.bridge(state, state.pilogicLedger)((ev, d) =>
+          logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, ev, d))
+          .toolsComplete(tc.results.size, tc.results.count(_._2.isError))
         val toolCalls = tc.results.map((call, _) => call)
         val assistantBlocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
         tc.thinking.foreach(t => assistantBlocks += ContentBlock.Thinking(t, tc.thinkingSignature))
@@ -1039,9 +1060,18 @@ private[agent] object AgentProcessing:
           // `currentTurnId + 1` 取号处；2026-09-25 行号引用修正)。
           // compactui 批（2026-09-15 事故 ②）：dropCompactionScratch 必须在
           // withPendingCompaction(None) **之前**应用（判据依赖作业仍在）。
+          // ── pi-logic 接线点 1/④（轮 A 织入）：Interrupt = run 收口（Aborted 形；
+          //     账本关 run 随 interruptedState 值传递——idle 无在飞 run 时零发）。──
+          val piLedgerAfterInterrupt =
+            if state.pilogicLedger.runId.nonEmpty then
+              PiLoopWiring.bridge(state, state.pilogicLedger)((ev, d) =>
+                logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, ev, d))
+                .runEnd("aborted", state.pilogicLedger)
+            else state.pilogicLedger
           val interruptedState = dropCompactionScratch(state).resetForInterrupt
             .withCurrentTurnId(state.execution.currentTurnId + 1)
             .withPendingCompaction(None)
+            .copy(pilogicLedger = piLedgerAfterInterrupt)
           idle(agentDef, resources, depth, parentRef, interruptedState)
         end for
 

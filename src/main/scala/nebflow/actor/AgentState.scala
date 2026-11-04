@@ -802,7 +802,14 @@ case class AgentState(
    * 全部既有构造点（named-apply 走伴生）零改动；合成 apply 仅 .copy 消费。
    * 非 pingpong 会话恒为空值（行为零漂移，spec §G1）。
    */
-  pingpong: PingpongState
+  pingpong: PingpongState,
+  /**
+   * pi-logic 接线层 run 账本（轮 A 接线期四件 ③）：不可变值经 state 值传递
+   * （病灶 #1 免疫纪律——接线层零 object 可变态）。同 pingpong：🔴 无默认参
+   * （E046），默认 RunLedger.empty 由伴生 apply 提供；AgentState 不持久化 ⇒
+   * 零迁移。actor 包对 pilogic（叶子）单向引用——pilogic 禁反向 import 保持。
+   */
+  pilogicLedger: nebflow.pilogic.RunLedger
 )
 
 object AgentState:
@@ -897,7 +904,9 @@ object AgentState:
     sessionDeviceWorkspace: Option[String] = None,
     loopTurnKey: Long = 0L,
     /** 乒乓压缩旁车状态（spec §H1-1）：默认空 = 全部既有构造点零改动。 */
-    pingpong: PingpongState = PingpongState()
+    pingpong: PingpongState = PingpongState(),
+    /** pi-logic run 账本（轮 A 接线）：默认空 = 全部既有构造点零改动。 */
+    pilogicLedger: nebflow.pilogic.RunLedger = nebflow.pilogic.RunLedger.empty
   ): AgentState =
     val interaction = (pendingAskUser, pendingPermission) match
       case (None, None) => None
@@ -946,7 +955,8 @@ object AgentState:
       None,
       nebflow.shared.Counters.Empty,
       loopTurnKey,
-      pingpong
+      pingpong,
+      pilogicLedger
     )
   end apply
 end AgentState
