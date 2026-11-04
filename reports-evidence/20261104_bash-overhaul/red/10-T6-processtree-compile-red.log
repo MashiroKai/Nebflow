@@ -1,0 +1,48 @@
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/util/ProcessTreeSpec.scala:41:25 
+[error] 41 |      import ProcessTree.Plan
+[error]    |                         ^^^^
+[error]    |      value Plan is not a member of object nebflow.core.util.ProcessTree
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/util/ProcessTreeSpec.scala:42:31 
+[error] 42 |      assertEquals(ProcessTree.platformPlan("Windows 11"), Plan.TaskKill, "Windows must use taskkill /T")
+[error]    |                   ^^^^^^^^^^^^^^^^^^^^^^^^
+[error]    |value platformPlan is not a member of object nebflow.core.util.ProcessTree
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/util/ProcessTreeSpec.scala:42:59 
+[error] 42 |      assertEquals(ProcessTree.platformPlan("Windows 11"), Plan.TaskKill, "Windows must use taskkill /T")
+[error]    |                                                           ^^^^
+[error]    |                                                         Not found: Plan
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/util/ProcessTreeSpec.scala:43:31 
+[error] 43 |      assertEquals(ProcessTree.platformPlan("Windows 10"), Plan.TaskKill, "Windows 10 same leg")
+[error]    |                   ^^^^^^^^^^^^^^^^^^^^^^^^
+[error]    |value platformPlan is not a member of object nebflow.core.util.ProcessTree
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/util/ProcessTreeSpec.scala:43:59 
+[error] 43 |      assertEquals(ProcessTree.platformPlan("Windows 10"), Plan.TaskKill, "Windows 10 same leg")
+[error]    |                                                           ^^^^
+[error]    |                                                         Not found: Plan
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/util/ProcessTreeSpec.scala:45:20 
+[error] 45 |        ProcessTree.platformPlan("Mac OS X"),
+[error]    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+[error]    |value platformPlan is not a member of object nebflow.core.util.ProcessTree
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/util/ProcessTreeSpec.scala:46:8 
+[error] 46 |        Plan.SignalStopThenKill,
+[error]    |        ^^^^
+[error]    |        Not found: Plan
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/util/ProcessTreeSpec.scala:49:31 
+[error] 49 |      assertEquals(ProcessTree.platformPlan("Linux"), Plan.TermThenKill, "Linux keeps TERM→KILL")
+[error]    |                   ^^^^^^^^^^^^^^^^^^^^^^^^
+[error]    |value platformPlan is not a member of object nebflow.core.util.ProcessTree
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/util/ProcessTreeSpec.scala:49:54 
+[error] 49 |      assertEquals(ProcessTree.platformPlan("Linux"), Plan.TermThenKill, "Linux keeps TERM→KILL")
+[error]    |                                                      ^^^^
+[error]    |                                                      Not found: Plan
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/util/ProcessTreeSpec.scala:55:29 
+[error] 55 |      val args = ProcessTree.taskkillArgs(4242)
+[error]    |                 ^^^^^^^^^^^^^^^^^^^^^^^^
+[error]    |value taskkillArgs is not a member of object nebflow.core.util.ProcessTree

@@ -1,0 +1,15 @@
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/tools/BashOverhaulNotifySpec.scala:201:26 
+[error] 201 |      _ <- BgTaskRegistry.markAwaited(jobId)
+[error]     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value markAwaited is not a member of object nebflow.core.tools.BgTaskRegistry - did you mean BgTaskRegistry.markFailed?
+[error] -- [E173] Reference Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/tools/BashOverhaulNotifySpec.scala:230:27 
+[error] 230 |      cbRaw <- IO(BashTool.makeNotifyCallback("echo noref-done", None, ctx, jobId))
+[error]     |                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |method makeNotifyCallback cannot be accessed as a member of nebflow.core.tools.BashTool.type from class BashOverhaulNotifySpec.
+[error]     |  private method makeNotifyCallback can only be accessed from object BashTool in package nebflow.core.tools.
+[error] -- [E173] Reference Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/tools/BashOverhaulNotifySpec.scala:259:11 
+[error] 258 |        BashTool
+[error] 259 |          .makeNotifyCallback("echo order-done", None, ctx, jobId)
+[error]     |        ^
+[error]     |method makeNotifyCallback cannot be accessed as a member of nebflow.core.tools.BashTool.type from class BashOverhaulNotifySpec.
+[error]     |  private method makeNotifyCallback can only be accessed from object BashTool in package nebflow.core.tools.
