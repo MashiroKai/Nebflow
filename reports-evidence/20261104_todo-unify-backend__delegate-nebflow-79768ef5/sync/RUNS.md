@@ -4,19 +4,25 @@
 **最终验收树**：第三轮追平 main `0960a0898`（`git rev-list --count HEAD..main` = 0）
 所有日志在 `logs/`，文件名前缀 = 轮次与序号。
 
-> 轮次说明：本节点执行期间本地 `main` ref **推进了三次**（本机 `git fetch` 不通，
-> main 由并发节点持续推进）。三轮分别追平 `d2fc65c82` → `995142a5f` → `0960a0898`，
-> 三次 `git merge` **全部 exit 0、零冲突**。
-> **下表以第三轮（最终树）为准**（日志 80–88）；第一/二轮（10–58）保留作对照。
+> 轮次说明：本节点执行期间本地 `main` ref **推进了四次**（本机 `git fetch` 不通，
+> main 由并发节点持续推进）。四轮分别追平 `d2fc65c82` → `995142a5f` → `0960a0898`
+> → `51309ec51`，**四次 `git merge` 全部 exit 0、零冲突**。
+> **下表以第四轮（最终树，日志 90–97）为准**；前三轮（10–88）保留作对照。
+>
+> 第四轮唯一增量 = main 的 `c00c8db47 fix(mobile-search): 裸 innerHTML 改 DOM 构建器`
+> + 其合并 `51309ec51`（仅 `js/mobile/socialSearch.js` 12 行），恰好修掉第三轮我归因为
+> **main 引入**的那条 `component-contract` 红 —— 追平后该门禁**转绿**，闭环见 §1.1。
 
-## 一、门禁（最终树 0960a0898）
+## 一、门禁（最终树 51309ec51）
 
 | 门禁 | exit | 日志 |
 |---|---|---|
-| `make frontend-gates`（design-tokens + msgstyle + self-explaining） | **0** | `logs/80_gate_frontend_gates.log` |
-| `node scripts/check-design-spec-sync.mjs` | **0** | `logs/81_gate_design_spec_sync.log` |
-| `node scripts/check-component-contract.mjs` | **1 —— main 侧存量红，非本批引入，不阻塞（归因见下）** | `logs/82_gate_component_contract.log` |
-| `bash scripts/check-process-artifacts.sh` | **0** | `logs/83_gate_process_artifacts.log` |
+| `make frontend-gates`（design-tokens + msgstyle + self-explaining） | **0** | `logs/91_gate_frontend_gates.log` |
+| `node scripts/check-design-spec-sync.mjs` | **0** | `logs/92_gate_design_spec_sync.log` |
+| `node scripts/check-component-contract.mjs` | **0** | `logs/93_gate_component_contract.log` |
+| `bash scripts/check-process-artifacts.sh` | **0** | `logs/94_gate_process_artifacts.log` |
+
+**五道门禁全绿（最终树）。** 前三轮的两次红与处置见 §1.1。
 
 ### 1.1 `component-contract` 的两次红：一次本批、一次 main
 
@@ -43,26 +49,31 @@
 `8847eb940 feat(ui): 收尾四件 … 手机搜索扁平化+收起`。按批令「是 main 引入的贴证据
 单列并说明不阻塞」处置：**不在本节点修**（该文件归另一批所有）、**不动 baseline**。
 
-## 二、spec（最终树 0960a0898）
+**闭环**：第四轮追平时 main 已带 `c00c8db47 fix(mobile-search): 裸 innerHTML 改 DOM
+构建器，component-contract 由红转绿`（`51309ec51` 合入）。追平后本树
+`logs/93_gate_component_contract.log` = **exit 0**。即：该红由 main 侧另一批自行修复，
+本节点全程未碰 `socialSearch.js`、未碰 baseline。
+
+## 二、spec（最终树 51309ec51）
 
 | 用例 | 结果 | 日志 |
 |---|---|---|
-| `tests/todo-capsule-create.spec.mjs` + `tests/todo-store-backend.spec.mjs` | **14 passed**（8 + 6），exit 0 | `logs/84_spec_capsule_and_store.log` |
-| `tests/todo-split.spec.mjs` | **6 passed**，exit 0 | `logs/85_spec_todo_split.log` |
-| `tests/todo-face-shots.mjs` | **96 PASS / 8 FAIL**，FAIL 集与 panel 基线**逐条同名**（`diff` 为空） | `logs/87_shots_todo_face.log` |
+| `tests/todo-capsule-create.spec.mjs` + `tests/todo-store-backend.spec.mjs` | **14 passed**（8 + 6），exit 0 | `logs/96_spec_capsule_and_store.log` |
+| `tests/todo-split.spec.mjs` | **6 passed**，exit 0 | `logs/97_spec_todo_split.log` |
+| `tests/todo-face-shots.mjs` | **96 PASS / 8 FAIL**，FAIL 集与 panel 基线**逐条同名**（`diff` 为空） | `logs/87_shots_todo_face.log`（第三轮树；第四轮 main 增量只动 `socialSearch.js`，与本批面零交集，未重跑 shots） |
 | `tests/todo-page-shots.mjs` | `SHOTS OK`，exit 0 | `logs/88_shots_todo_page.log` |
 
 `todo-face-shots` 的 8 条红 = `swipe-down deletes tag` ×4（四引擎/主题各一）+
 级联的 `desktopScenario … threw: page.click Timeout` ×4。panel 节点改前/改后两次实测
 同为 **96 PASS / 8 FAIL** 且 FAIL 集相同（`panel/logs/14_after_face_shots_final.log`），
-本轮 `diff` 亦为空 ⇒ **既有存量标尺问题，非本批引入，非 merge 引入**。
+第三轮 `diff` 亦为空 ⇒ **既有存量标尺问题，非本批引入，非 merge 引入**。
 
-## 三、胶囊让位链实测（最终树 0960a0898）
+## 三、胶囊让位链实测（最终树 51309ec51）
 
 自足探针 `yield_chain_probe.mjs`（静态路由 + 最小 WS 夹具，零后端 / 零 sbt / 零 6138），
 产出 `yield_chain_probe.json` + 4 张关键帧 `yield_{desktop,mobile}_{capsule,expanded}.png`。
 
-判据全绿（`EXIT=0`，`logs/86_yield_chain_probe.log`；JSON 见 `yield_chain_probe.json`）：
+判据全绿（`EXIT=0`，`logs/95_yield_chain_probe.log`；JSON 见 `yield_chain_probe.json`）：
 
 | 判据 | 结果 |
 |---|---|
