@@ -1,5 +1,5 @@
 .PHONY: compile run assembly clean install \
-  lint fmt fix fmt-check check quality-gate check-visual visual-baseline
+  lint fmt fix fmt-check check quality-gate check-visual visual-baseline component-contract
 
 # Auto-detect fastest Maven mirror (Aliyun for China, Maven Central otherwise)
 # Respects user-set COURSIER_REPOSITORIES; only runs detection if unset
@@ -51,8 +51,20 @@ fix:
 fmt-check:
 	sbt scalafmtCheckAll
 
+# ── 前端组件契约门禁（ask-paradigm-a 批 2026-11-03）─────────────────────────
+# why：契约必须配门禁，只写文档的契约等于没做。五条（light DOM 不许 attachShadow /
+# 跨面 DOM 不许直查 / 事件名不许裸字面量 / 组件内部类名不许外泄 / 不许裸 innerHTML）
+# 任一条回退即红，存量走基线且只减不增（scripts/component-contract-baseline.json）。
+# 挂 check 尾部：纯静态文本扫描，零端口零依赖亚秒级，与 compile/fmt-check/lint 同属
+# 「提交前必过」面。只改 web/ 想快跑单条：make component-contract。
 check: compile fmt-check lint
+	node scripts/check-component-contract.mjs
 	@echo "All automated checks passed."
+
+# 前端组件契约门禁（单独一条腿，不依赖 sbt）
+component-contract:
+	node scripts/check-component-contract.mjs
+	@echo "Frontend component contract gate passed."
 
 quality-gate:
 	sbt compile scalafmtCheckAll "scalafix --check"
