@@ -4,7 +4,7 @@ import cats.effect.*
 import cats.effect.std.Mutex
 import cats.syntax.all.*
 import nebflow.core.util.ProcessTree
-import nebflow.shared.{Defaults, NebflowLogger}
+import nebflow.shared.{Defaults, NebflowLogger, PathUtil}
 
 import java.io.File
 import java.lang.Process
@@ -507,7 +507,18 @@ final class ShellSession private (
   // Internals
   // ------------------------------------------------------------------
 
-  private val MaxOutputSize = 10 * 1024 * 1024 // 10MB
+  /**
+   * 命令输出窗口（2026-11-04 内存即时缓解批 M3）。
+   *
+   * 改前：`MaxOutputSize = 10MB` 的 StringBuilder —— **每条命令的 stdout / stderr 各**
+   * 最多驻留 10MB（事故日实测峰值 ≈20MB），敲满即丢弃，全量还拿不到。见
+   * `ShellOutputSpillSpec` 的验红读数（100MB 输出 → 堆 +13027KB、可见内容 10MB）。
+   *
+   * 改后：内存只留**首 64KB + 尾 64KB**，超限部分溢写落盘（`<dataRoot>/shell-spill/`），
+   * 全量可从盘上回看。100MB 输出下堆增长 ≤1MB（同 spec 验绿读数）。
+   */
+  private val OutputHeadKeep = OutputSpill.HeadBytes
+  private val OutputTailKeep = OutputSpill.TailBytes
 
   private val isWindows: Boolean =
     sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
@@ -1305,7 +1316,8 @@ final class ShellSession private (
     is: java.io.InputStream,
     onLine: String => Unit = _ => (),
     isProcessExited: () => Boolean = () => true,
-    exitGraceMs: Long = 250L
+    exitGraceMs: Long = 250L,
+    spillDir: os.Path = OutputSpill.dir(PathUtil.dataRoot)
   ): String =
     // On Windows, detect whether the output is UTF-8 or system ANSI code page
     // (GBK on Chinese Windows). Git Bash and Python (with PYTHONUTF8=1) output
@@ -1321,10 +1333,10 @@ final class ShellSession private (
       else (is, StandardCharsets.UTF_8)
 
     Using.resource(new java.io.BufferedReader(new java.io.InputStreamReader(stream, charset))) { reader =>
-      val sb = new StringBuilder
+      // M3（2026-11-04）: 攒输出的容器从「10MB StringBuilder」换成「首 64KB + 尾 64KB
+      // 内存窗口 + 全量溢写文件」——堆占用与输出总量解耦（100MB 输出堆增长 ≤1MB）。
+      val out = new OutputSpillBuffer(OutputHeadKeep, OutputTailKeep, spillDir)
       var line: String = null
-      val truncationMarker = "\n[Output truncated due to size limit]\n"
-      var truncated = false
       var exitedAtMs = -1L
       var done = false
 
@@ -1336,13 +1348,7 @@ final class ShellSession private (
             if line == null then done = true // EOF
             else
               onLine(line)
-              if !truncated then
-                sb.append(line).append("\n")
-                if sb.length > MaxOutputSize then
-                  val trimTo = math.max(0, MaxOutputSize - truncationMarker.length)
-                  sb.setLength(trimTo)
-                  sb.append(truncationMarker)
-                  truncated = true
+              out.append(line)
           else if isProcessExited() then
             val now = System.currentTimeMillis()
             if exitedAtMs < 0 then exitedAtMs = now
@@ -1356,8 +1362,8 @@ final class ShellSession private (
           case _: java.io.IOException => done = true
       end while
 
-      val s = sb.toString()
-      if s.trim.isEmpty then "" else s
+      try out.result()
+      finally out.close()
     }
 
   end readStream
@@ -1783,3 +1789,142 @@ object ShellSession:
           }
     }
 end ShellSession
+
+/**
+ * 工具输出窗口常量与溢写目录（2026-11-04 内存即时缓解批 M3）。
+ *
+ * 语义：命令输出在内存里只保留**首 64KB + 尾 64KB**，中间段落与全文溢写进
+ * `<dataRoot>/shell-spill/<CMD-ID>.log`。堆占用由此与输出总量解耦——改前
+ * 「10MB StringBuilder/流」在事故日构成 ≈20MB 常驻峰值，改后 100MB 输出堆增长 ≤1MB
+ * （`ShellOutputSpillSpec` 红绿双侧实测）。
+ *
+ * 保留期 [[RetainMs]]（24h）：开新溢写文件时顺带清一次同龄以上旧文件（best-effort，
+ * 失败不影响命令执行）——溢写文件是排障/回看用的，不是持久数据。
+ */
+private[tools] object OutputSpill:
+
+  /** 内存头窗：首 64KB（原文保留，便于看清「命令开头说了什么」）。 */
+  val HeadBytes: Int = 64 * 1024
+
+  /** 内存尾窗：尾 64KB（保末尾——错误/结果通常在结尾）。 */
+  val TailBytes: Int = 64 * 1024
+
+  /** 溢写保留期：24h。 */
+  val RetainMs: Long = 24L * 60 * 60 * 1000L
+
+  /** 溢写目录单点（`<dataRoot>/shell-spill`）。 */
+  def dir(dataRoot: os.Path): os.Path = dataRoot / "shell-spill"
+
+/**
+ * 首尾窗口 + 溢写文件的输出容器（`readStream` 单点消费）。
+ *
+ * 线程模型：单读线程 append（stdout / stderr 各一条读线程、各持一个实例），
+ * `result()` 在同一线程尾部调用；锁仅防御性（无并发读写场景）。
+ *
+ * 失败容忍：溢写不可写（磁盘满 / 权限）→ 标 `spillFailed`，退化为「首窗 + 尾窗 +
+ * 明示丢弃注记」，**绝不向上抛异常**（命令本身的成败不能被输出采集拖垮）。
+ */
+private[tools] final class OutputSpillBuffer(
+  headKeep: Int,
+  tailKeep: Int,
+  spillDir: os.Path
+) extends AutoCloseable:
+
+  private val lock = new Object
+  private val head = new StringBuilder
+  private val tail = new java.util.ArrayDeque[String]()
+  private var headBytes: Long = 0L
+  private var tailBytes: Long = 0L
+  private var totalBytes: Long = 0L
+  private var totalLines: Long = 0L
+  private var headFull: Boolean = false
+  private var writer: java.io.BufferedWriter = null
+  private var spillPath: os.Path = null
+  private var spillFailed: Boolean = false
+
+  /** 全量字节数 / 行数（含未驻留内存的部分）。 */
+  def bytes: Long = lock.synchronized(totalBytes)
+  def lines: Long = lock.synchronized(totalLines)
+
+  /** 溢写文件路径（未被截断 / 写失败时为 None）。 */
+  def overflowPath: Option[String] = lock.synchronized(Option(spillPath).map(_.toString))
+
+  def append(line: String): Unit = lock.synchronized {
+    val len = line.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + 1
+    totalBytes += len
+    totalLines += 1
+    if !headFull && headBytes + len <= headKeep then
+      head.append(line).append('\n')
+      headBytes += len
+    else
+      headFull = true
+      spill(line)
+      tail.addLast(line)
+      tailBytes += len
+      // 尾窗裁到 tailKeep 以内，至少留一行（单行超限也保它，尾窗不空）
+      while tail.size() > 1 && tailBytes > tailKeep do
+        val dropped = tail.removeFirst()
+        tailBytes -= dropped.getBytes(java.nio.charset.StandardCharsets.UTF_8).length + 1
+  }
+
+  /** 首次调用时建文件并把内存头窗内容一并写入（盘上 = 全量）。 */
+  private def spill(line: String): Unit =
+    if spillFailed then ()
+    else
+      try
+        if writer == null then
+          val dir = spillDir
+          if !os.exists(dir) then os.makeDir.all(dir)
+          sweep(dir)
+          val p = dir / s"cmd-${java.util.UUID.randomUUID().toString.take(12)}.log"
+          spillPath = p
+          writer = java.nio.file.Files.newBufferedWriter(
+            p.toNIO,
+            java.nio.charset.StandardCharsets.UTF_8
+          )
+          writer.write(head.toString)
+        writer.write(line)
+        writer.write("\n")
+      catch
+        case e: java.io.IOException =>
+          spillFailed = true
+          try if writer != null then writer.close() catch case _: java.io.IOException => ()
+          writer = null
+        case e: RuntimeException =>
+          spillFailed = true
+          writer = null
+
+  /** 开新文件时清一次超期溢写（best-effort；任何异常都不外溢）。 */
+  private def sweep(dir: os.Path): Unit =
+    try
+      val now = System.currentTimeMillis()
+      os.list(dir).foreach { p =>
+        try
+          if os.isFile(p) && now - os.mtime(p) > OutputSpill.RetainMs then os.remove(p)
+        catch case _: Throwable => ()
+      }
+    catch case _: Throwable => ()
+
+  /**
+   * 收口结果：未超限 ⇒ 原文；超限 ⇒ 首窗 + 折叠注记（含全量字节数与溢写路径）+ 尾窗。
+   * 注记里保留 `truncated` 一词（既有消费方/spec 按它识别折叠）。
+   */
+  def result(): String = lock.synchronized {
+    if !headFull then
+      val s = head.toString
+      if s.trim.isEmpty then "" else s
+    else
+      val sb = new StringBuilder(head.toString)
+      sb.append('\n')
+      sb.append(s"[output truncated in memory: ${totalBytes} bytes / ${totalLines} lines total; ")
+      if spillPath != null then sb.append(s"full output spilled to ${spillPath}")
+      else sb.append("spill file unavailable — middle section dropped")
+      sb.append("]\n")
+      tail.forEach(l => { sb.append(l); sb.append('\n') })
+      sb.toString
+  }
+
+  override def close(): Unit = lock.synchronized {
+    try if writer != null then { writer.flush(); writer.close() } catch case _: java.io.IOException => ()
+    writer = null
+  }
