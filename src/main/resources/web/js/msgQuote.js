@@ -29,13 +29,18 @@
 
 import { t } from './i18n.js';
 import { showPopupMenu } from './contextMenu.js';
-import { makeReference } from './reference.js';
+// 循环门禁修复批（2026-11-04）：本模块只要**模型**（makeReference = 行描述符 →
+// Reference 对象），故从叶子 refModel.js 取，不再静态 import reference.js 的渲染面
+// ——后者会连带把 popArtifacts 拉进本模块的静态闭包，与
+// popArtifacts → msgQuote 的有意边成 SCC[3]（scripts/check-circular.mjs）。
+// reference.js 保留 makeReference 同名 re-export 作兼容面。
+import { makeReference } from './refModel.js';
 import state from './state.js';
 // 引用牌图标化批（2026-11-02 11:00 作者令）：气泡引用块与 composer chip 的「类型
 // 图标」同一实现（图片=真缩略 / 文档=.fc-icon 原图标 / 文字=引用入口图标），单点 =
-// quoteLogo.js（对两个宿主都是叶子方向 ⇒ 既有的 msgQuote↔reference↔popArtifacts
-// 环不加深，见 check-circular 读数）。footer 引用键的字形也从这里取（QUOTE_ENTRY_ICON，
-// 图标统一批 2026-11-02 12:58：键与引用牌同一枚，零第二份 path）。
+// quoteLogo.js（对两个宿主都是叶子方向 ⇒ 引用面静态闭包不增边）。footer 引用键的
+// 字形也从这里取（QUOTE_ENTRY_ICON，图标统一批 2026-11-02 12:58：键与引用牌同一枚，
+// 零第二份 path）。
 import { quoteTypeIcon, QUOTE_ENTRY_ICON } from './quoteLogo.js';
 
 // ── id ──────────────────────────────────────────────────────────────────
