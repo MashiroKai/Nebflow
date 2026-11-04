@@ -2,8 +2,11 @@ package nebflow.llm
 
 import cats.effect.IO
 import cats.effect.kernel.{Deferred, Ref}
+import cats.effect.std.Mutex
 import cats.syntax.all.*
 import nebflow.core.ProviderHealthPort
+import nebflow.db.format.GuardDocs
+import nebflow.db.{DbHandle, DbHost}
 import nebflow.shared.*
 
 import scala.concurrent.duration.*
@@ -58,8 +61,101 @@ object ProviderHealthMonitor:
  * Up providers are never probed proactively — the first real request after
  * a provider comes back online will naturally discover if it is still healthy.
  */
-final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHealthPort:
+/**
+ * db 接线二阶 B2（D-10 + M37 教训）：构造缝 `db`（测试注入）；生产激活 = `DbHost.peek`
+ * **只查不开**（C5 FlowMapEventLog 先例——createLlm 被 8+ 测试直调，openBestEffort 会
+ * 令测试 JVM 开真实数据根，禁；boot 序已验证 sessionStore:547 生产根自开先于
+ * createLlm:555 ⇒ peek 稳定命中）。
+ */
+final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandle] = None)
+    extends ProviderHealthPort:
   private val logger = NebflowLogger.forName("nebflow.llm.health")
+
+  /**
+   * guard 档句柄（lazy：首用一次求值）。None = 未接线（全部落盘腿 no-op，现状行为）。
+   * 坏档写拒绝（V3）在 writeAvoidGuard 内——hydration 先行隔离后写腿自然恢复。
+   */
+  private lazy val guardDb: Option[DbHandle] =
+    db.orElse(DbHost.peek(PathUtil.dataRoot.toNIO))
+
+  /**
+   * 窗口态写穿串行闸：快照两 ref → 整档五步写，防止并发转换交错丢更新
+   * （advisory 面：丢一档的代价 = 下次转换重写自愈）。
+   */
+  private lazy val guardWriteLock: Mutex[IO] =
+    import cats.effect.unsafe.implicits.global
+    Mutex[IO].unsafeRunSync()
+
+  /** 首用一次性重水合门（DispatchNotify C2 同形）：started 单飞 + gate 等待。 */
+  private val guardsHydrated: Ref[IO, Boolean] = Ref.unsafe(false)
+  private val hydrateStarted: Ref[IO, Boolean] = Ref.unsafe(false)
+  private val hydrateGate: Deferred[IO, Unit] = Deferred.unsafe[IO, Unit]
+
+  private def ensureGuards: IO[Unit] =
+    guardsHydrated.get.flatMap { done =>
+      if done then IO.unit
+      else
+        hydrateStarted.getAndSet(true).flatMap { started =>
+          if started then hydrateGate.get
+          else hydrateGuards.guarantee(hydrateGate.complete(()).attempt.void)
+        } *> guardsHydrated.set(true)
+    }
+
+  /**
+   * 重水合（§3.11 步 5，D-10）：Present ⇒ 避坑窗 + 熔断面回填（运行时已有键优先——
+   * 内存态比盘新）；Absent ⇒ 空；Corrupt ⇒ 保守向（有界全避 + 隔离，库侧腿）。
+   * best-effort：db 故障 ⇒ WARN + 现状内存起步（绝不阻断）。
+   */
+  private def hydrateGuards: IO[Unit] =
+    guardDb match
+      case None => IO.unit
+      case Some(h) =>
+        val candidates: IO[List[ModelCandidate]] =
+          if registry == null then IO.pure(Nil) else registry.getCandidates()
+        (for
+          now <- IO(System.currentTimeMillis())
+          keys <- candidates.map(_.map(c => key(c.providerId, c.model)).distinct)
+          doc <- h.recoverAvoidGuardConservative(now, keys, Defaults.QuotaAvoidWindowMs)
+          _ <- avoidUntilRef.update(m =>
+            m ++ doc.avoidUntil.filter((_, until) => until > System.currentTimeMillis())
+              .filterNot((k, _) => m.contains(k)))
+          _ <- statesRef.update(s =>
+            doc.down.foldLeft(s) { (acc, kv) =>
+              acc.get(kv._1) match
+                case Some(HealthState.Down(_, _)) | Some(HealthState.Up) => acc
+                case None => acc.updated(kv._1, HealthState.Down(
+                  s"recovered from guard (persisted down since ${kv._2})", kv._2))
+            })
+        yield ()).handleErrorWith { e =>
+          logger.warn(s"provider-avoid guard hydration failed (degrade to in-memory): ${e.getMessage}")
+        }
+
+  /**
+   * 窗口态写穿（best-effort：db 故障只 WARN，回落「本进程内窗口仍有效」——与
+   * DispatchNotify.persistGuard 同形）。avoid 档写过期窗剪枝（防无界增长）。
+   */
+  private def persistGuardDoc(): IO[Unit] =
+    guardDb match
+      case None => IO.unit
+      case Some(h) =>
+        guardWriteLock.lock.surround {
+          for
+            now <- IO(System.currentTimeMillis())
+            avoids <- avoidUntilRef.get.map(_.filter((_, until) => until > now))
+            downs <- statesRef.get.map(_.collect {
+              case (k, HealthState.Down(_, since)) => k -> since
+            })
+            _ <- h.writeAvoidGuard(GuardDocs.AvoidGuardDoc(
+              version = 1,
+              source = nebflow.db.Db.AvoidGuardSource,
+              avoidUntil = avoids,
+              updatedAt = now,
+              down = downs
+            )).handleErrorWith { e =>
+              logger.warn(s"provider-avoid guard persist failed: ${e.getMessage}")
+            }
+          yield ()
+        }
 
   private val statesRef: Ref[IO, Map[String, HealthState]] = Ref.unsafe(Map.empty)
 
@@ -100,29 +196,35 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
   private def key(providerId: String, model: String): String =
     s"$providerId/$model"
 
-  /** Mark a candidate as Down. No-op if already Down. */
+  /** Mark a candidate as Down. No-op if already Down. Persisted (B2：转换时写穿). */
   def markDown(providerId: String, model: String, reason: String): IO[Unit] =
-    val k = key(providerId, model)
-    statesRef.get.flatMap { states =>
-      states.get(k) match
-        case Some(HealthState.Down(_, _)) => IO.unit
-        case _ =>
-          statesRef
-            .set(states.updated(k, HealthState.Down(reason, System.currentTimeMillis())))
-            .*>(logger.warn(s"Provider $k marked DOWN: $reason"))
+    ensureGuards *> {
+      val k = key(providerId, model)
+      statesRef.get.flatMap { states =>
+        states.get(k) match
+          case Some(HealthState.Down(_, _)) => IO.unit
+          case _ =>
+            statesRef
+              .set(states.updated(k, HealthState.Down(reason, System.currentTimeMillis())))
+              .*>(logger.warn(s"Provider $k marked DOWN: $reason"))
+              .*>(persistGuardDoc())
+      }
     }
 
-  /** Mark a candidate as Up and wake waiters. No-op if already Up. */
+  /** Mark a candidate as Up and wake waiters. No-op if already Up. Persisted（B2）. */
   def markUp(providerId: String, model: String): IO[Unit] =
-    val k = key(providerId, model)
-    statesRef.get.flatMap { states =>
-      states.get(k) match
-        case Some(HealthState.Down(_, _)) =>
-          statesRef
-            .set(states.updated(k, HealthState.Up))
-            .*>(logger.info(s"Provider $k recovered (UP)"))
-            .*>(signalRecovery())
-        case _ => IO.unit
+    ensureGuards *> {
+      val k = key(providerId, model)
+      statesRef.get.flatMap { states =>
+        states.get(k) match
+          case Some(HealthState.Down(_, _)) =>
+            statesRef
+              .set(states.updated(k, HealthState.Up))
+              .*>(logger.info(s"Provider $k recovered (UP)"))
+              .*>(signalRecovery())
+              .*>(persistGuardDoc())
+          case _ => IO.unit
+      }
     }
 
   /**
@@ -140,13 +242,16 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
    * spec 可缩窗模拟（生产值见 Defaults）。
    */
   def softAvoid(providerId: String, model: String, windowMs: Long, label: String = "timeout"): IO[Unit] =
-    val k = key(providerId, model)
-    avoidUntilRef
-      .update(_.updated(k, System.currentTimeMillis() + windowMs))
-      .*>(logger.warn(s"Provider $k soft-avoided for ${windowMs}ms ($label — NOT evicted, no probe)"))
+    ensureGuards *> {
+      val k = key(providerId, model)
+      avoidUntilRef
+        .update(_.updated(k, System.currentTimeMillis() + windowMs))
+        .*>(logger.warn(s"Provider $k soft-avoided for ${windowMs}ms ($label — NOT evicted, no probe)"))
+        .*>(persistGuardDoc())
+    }
 
   /** 当前软回避截止时刻（观测 / spec 断言用）。 */
-  private[llm] def getAvoidUntil: IO[Map[String, Long]] = avoidUntilRef.get
+  private[llm] def getAvoidUntil: IO[Map[String, Long]] = ensureGuards *> avoidUntilRef.get
 
   /**
    * Partition candidates into (up, down) based on current health state.
@@ -159,19 +264,21 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
   def filterCandidates(
     candidates: List[ModelCandidate]
   ): IO[(List[ModelCandidate], List[ModelCandidate])] =
-    for
-      states <- statesRef.get
-      avoids <- avoidUntilRef.get
-    yield
-      val now = System.currentTimeMillis()
-      def avoided(c: ModelCandidate): Boolean =
-        avoids.get(key(c.providerId, c.model)).exists(_ > now)
-      val (eligible, _) = candidates.partition(c => !avoided(c))
-      eligible.partition { c =>
-        states.get(key(c.providerId, c.model)) match
-          case Some(HealthState.Down(_, _)) => false
-          case _ => true
-      }
+    ensureGuards *> {
+      for
+        states <- statesRef.get
+        avoids <- avoidUntilRef.get
+      yield
+        val now = System.currentTimeMillis()
+        def avoided(c: ModelCandidate): Boolean =
+          avoids.get(key(c.providerId, c.model)).exists(_ > now)
+        val (eligible, _) = candidates.partition(c => !avoided(c))
+        eligible.partition { c =>
+          states.get(key(c.providerId, c.model)) match
+            case Some(HealthState.Down(_, _)) => false
+            case _ => true
+        }
+    }
 
   /**
    * Block until at least one of the given candidates is Up again.
@@ -223,7 +330,7 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
 
   /** Snapshot of all health states (for UI / logging). */
   def getStates: IO[Map[String, HealthState]] =
-    statesRef.get
+    ensureGuards *> statesRef.get
 
   /**
    * Candidates currently marked Down — across ALL chains, not just the default
@@ -234,9 +341,11 @@ final class ProviderHealthMonitor(registry: ProviderRegistry) extends ProviderHe
    * restart). Refs whose provider/model was removed from config are skipped.
    */
   private[llm] def downCandidates(): IO[List[ModelCandidate]] =
-    statesRef.get.flatMap { states =>
-      states.collect { case (k, HealthState.Down(_, _)) => k }.toList.flatTraverse { k =>
-        registry.getCandidateForRef(k).map(_.toList)
+    ensureGuards *> {
+      statesRef.get.flatMap { states =>
+        states.collect { case (k, HealthState.Down(_, _)) => k }.toList.flatTraverse { k =>
+          registry.getCandidateForRef(k).map(_.toList)
+        }
       }
     }
 
