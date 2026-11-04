@@ -324,6 +324,24 @@ body.mobile-layer {
   --mtap: var(--ds-hit-row);
   --mtap-lg: var(--ds-hit-tap-lg);
   --mhit: var(--ds-hit-row);
+  /* ── Ask 面板底钮手机档 = 画布圆钮档（sapphire.css --cv-size-circle 40）的手机腿
+     ── 作者令 2026-11-04 13:52（逐字）：「手机端的发送按钮和终止按钮 小一点」。
+     桌面 40 档一个字不动（上批 12:52 口径原样）；手机档由此降一档 48 → 44。
+       --mcv-size-circle  44px 视觉边长（消费点 = 面板输入条 send/stop 两钮）
+       --mcv-icon         20px 圆内图标：按桌面 40 档的 18:40 比例等比收
+                              44 × 18/40 = 19.8 → **取整 20**（与 --micon-sm 同值，
+                              落在手机图标阶梯 22/20/24 内；CSS 的 calc 不能做
+                              px/px 比值运算，故取整值在令牌层出生一次，消费面
+                              一律 var()，组件零字面量）
+     热区：44 视觉径即命中径（design-system.css `.ds-turn-btn::after` 的
+     min(0,(100% − --ds-turn-hit 44)/2) 在 44 本体上收到 0）⇒ HIG 44 下限恰好
+     达标，无需透明外扩，故也**不溢出**输入条/面板边界去压邻居控件。
+     为什么不在 body.mobile-layer 里整体改 --cv-size-circle：那会同时抬走手机层
+     全部 .g2-fab 基准钮（返回钮/chrome 键/canvas 页 ✕ 与层叠钮/会话页三点——
+     它们的 48 档是各自块的显式口径，基类一改就是一次范围外视觉回归）。本组
+     token 只服务面板底钮这一档，主会话腿（--mtap-lg 48 / --micon 22）不读它。 */
+  --mcv-size-circle: 44px;
+  --mcv-icon: 20px;
   /* ── 顶部悬浮 chrome 簇几何（内容起点让位批 2026-11-02 作者令： 「内容都需要
      从按钮下开始，只有向上滑动的时候才允许从按钮下过」）──
      簇 = 页头零高带里那几颗 48px 悬浮圆钮（返回钮 / canvas 页 ✕ 与层叠钮 /
@@ -2755,6 +2773,26 @@ body.mobile-layer #input-area {
 body.mobile-layer .ds-turn-btn {
   --ds-turn-btn-size: var(--mtap-lg);
   --ds-turn-btn-icon: var(--micon);
+}
+
+/* ── Ask 面板底钮手机档收窄（作者令 2026-11-04 13:52 逐字「手机端的发送按钮和
+   终止按钮 小一点」；ui-unification-20261103 mobile-send-stop）──────────────
+   只收**面板底钮**这一档：48 → 44（圆角随组件层 50% 恒等于半边长 22，图标
+   18 → 20 = 44×18/40 取整，内距 0 不变）；桌面 40 档一个字不动。
+   落地形状 = **只换组件槽的供源**（--ds-turn-btn-size / --ds-turn-btn-icon 改喂
+   上一段的手机档 token --mcv-size-circle/--mcv-icon），几何声明仍全部归
+   design-system.css ⇒ 组件零字面量，改数值只改 token 一处。
+   ① 为何不是改 `--mtap-lg`：那是手机层全族悬浮钮的 48 档（返回钮/chrome 键/
+      canvas 工具钮/光球/dock 同尺，canvas-chrome-size-align 钉死），动它 = 全站
+      手机腿一起变。
+   ② 为何本块加 `.ask-dock` 宿主：上面 `body.mobile-layer .ds-turn-btn` 是**全组件**
+      手机档（主会话 #send-btn/#stop-btn 48/22 —— 2026-11-03 22:15 作者报障批
+      的成果，本令不撤），本块更具体 ⇒ 只命中 Canvas Ask 面板输入条那两钮。
+   ③ ask.css 的 `max(画布 chrome 档 40, 组件槽)` 取大者：桌面腿取 40（未变），
+      手机腿取本块 44（> 40）⇒ 桌面/手机两档各走各的，互不牵动。 */
+body.mobile-layer .ask-dock .ds-turn-btn {
+  --ds-turn-btn-size: var(--mcv-size-circle);
+  --ds-turn-btn-icon: var(--mcv-icon);
 }
 
 /* ── 输入卡垂直收窄批（2026-11-01 22:1x 作者令「收窄输入框的上下高度，
