@@ -1,0 +1,4 @@
+$ node scripts/check-js-types.mjs   # tsc 5.5.4（pinned devDependency，借用主仓 node_modules 符号链接）
+checkJs: 0 errors (baseline 0, zero-gate files: 3)
+checkJs PASS: no new errors above baseline.
+EXIT=0

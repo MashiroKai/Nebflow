@@ -1,0 +1,55 @@
+$ # 件二 改后：同一路由体（字节缓存优先 + X-Avatar-Cache 自证头）
+      // 2026-11-04 两小件批 · 件二（旧域 301 批的收口）：**网关侧字节缓存**。
+      // 对端路由 `/api/neblink/avatars/:userId` 在 a6b3ad30 批已接
+      // `AvatarByteCache`（TTL 10 min / 64 条 / 16MB / 单条 2MB + 最旧淘汰 +
+      // 失败不入缓存 + `X-Avatar-Cache: hit|miss` 自证头），本路由（**自己**的头像）
+      // 当时明写「走的还是无缓存路径」，于是设置页/列表每次打开都要回源一次远端
+      // 头像；上游一旦慢/跳转，本路由就恒 502 且缓存永远建不起来。现在与对端路由
+      // 共用同一个 `AvatarByteCache.shared` 实例与同一套语义（按源 URL 键 ⇒ 换头像
+      // 即 URL 变 ⇒ 自然 miss，无失效逻辑；失败不写条目 ⇒ 不记忆失败态）。
+      // 保留本路由既有的 `private, max-age=300`（#538 家族保守值：5 分钟内浏览器
+      // 零往返，叠上网关 10 分钟缓存 ⇒ 真正回源最多每 10 分钟一次）。
+      case req @ GET -> Root / "neblink" / "avatar" =>
+        withNeblink(req) { ms =>
+          ms.identity.flatMap { id =>
+            id.avatarUrl.filter(_.nonEmpty) match
+              case None => NotFound(Json.obj("error" -> "no avatar".asJson))
+              case Some(url) =>
+                val avatarCache = AvatarByteCache.shared
+                def renderAvatar(entry: AvatarByteCache.Entry, cacheState: String): IO[Response[IO]] =
+                  // Explicit byte-stream entity: bare Ok(Array[Byte]) resolves to
+                  // the circe generic encoder in this scope (circe encodes byte
+                  // arrays as JSON number arrays — the bytes would be mangled).
+                  val ct = org.http4s.headers.`Content-Type`
+                    .parse(entry.contentType)
+                    .getOrElse(org.http4s.headers.`Content-Type`(MediaType.application.`octet-stream`))
+                  IO.pure(
+                    Response[IO](Status.Ok)
+                      .withEntity(fs2.Stream.emits(entry.bytes).covary[IO])
+                      .withHeaders(Headers(
+                        ct,
+                        Header.Raw(CIString("X-Avatar-Sha256"), entry.sha256),
+                        // 自证头（客户端不消费；排障/验收可读）：hit = 零上游往返。
+                        Header.Raw(CIString("X-Avatar-Cache"), cacheState),
+                        // 二次加载清剿批（2026-10-24）：同族对端路由
+                        // /api/neblink/avatars/:userId 早已带 ETag+304 + private,
+                        // max-age=3600（line ~390）；本路由（自己的头像）此前零缓存
+                        // 策略 ⇒ 设置页/列表每次开都全额重拉远源头像。对齐 #538 家族
+                        // 的保守值（300 ≪ 身份切换窗）：5 分钟内零往返。
+                        Header.Raw(CIString("Cache-Control"), "private, max-age=300")
+                      ))
+                  )
+                avatarCache.get(url).flatMap {
+                  case Some(hit) => renderAvatar(hit, "hit")
+                  case None =>
+                    avatarCache
+                      .getOrFetch(url)(AvatarProxy.fetch(AvatarProxy.jdkFetch)(url))
+                      .flatMap {
+                        case Right(entry) => renderAvatar(entry, "miss")
+                        case Left(err) => BadGateway(Json.obj("error" -> err.asJson))
+                      }
+                }
+          }
+        }
+
+      // 对端头像同源只读路由（sessperf Phase B 前置项 · 作者 2026-09-20 18:55 令 B）。

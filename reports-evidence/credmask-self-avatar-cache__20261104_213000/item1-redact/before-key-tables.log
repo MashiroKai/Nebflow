@@ -1,0 +1,41 @@
+$ # 件一 改前：四份各自的键表（HEAD=d21aa81ec）
+$ git show HEAD:src/main/scala/nebflow/core/LlmLogWriter.scala | sed -n "/redactSecrets(s: String)/,+6p"
+  private[nebflow] def redactSecrets(s: String): String =
+    if s == null || s.isEmpty then s
+    else
+      s
+        .replaceAll("(?i)bearer\\s+[A-Za-z0-9._\\-]{8,}", "Bearer <redacted>")
+        .replaceAll("(?i)(authorization|api[_-]?key|x-api-key)(\"?\\s*[:=]\\s*\"?)[^\",\\s}]+", "$1$2<redacted>")
+        .replaceAll("sk-[A-Za-z0-9_\\-]{12,}", "sk-<redacted>")
+
+$ git show HEAD:src/main/scala/nebflow/neblink/RelayTunnelDiagnostics.scala | sed -n "/def redact(s: String)/,+7p"
+  private[neblink] def redact(s: String): String =
+    s
+      .replaceAll("(?i)bearer\\s+[A-Za-z0-9._~+/-]+=*", "Bearer <redacted>")
+      .replaceAll("eyJ[A-Za-z0-9_-]{6,}\\.[A-Za-z0-9_-]{6,}(\\.[A-Za-z0-9_-]+)?", "<redacted-jwt>")
+      .replaceAll(
+        "(?i)\"(token|sessiontoken|devicetoken|refresh_token|access_token)\"\\s*:\\s*\"[^\"]*\"",
+        "\"$1\":\"<redacted>\""
+      )
+
+$ git show HEAD:src/main/scala/nebflow/cli/ConfigCommand.scala | sed -n "/def isSecretKey/,+8p"
+  private[cli] def isSecretKey(key: String): Boolean =
+    val k = key.toLowerCase.filter(_.isLetterOrDigit)
+    val named =
+      k.contains("apikey") || k.contains("secret") || k.contains("password") ||
+        k.contains("passwd") || k.contains("credential")
+    // "token" only when it is a singular credential-ish name, never a plural quota
+    val tokenish = k.startsWith("token") || k.endsWith("token")
+    named || tokenish
+
+
+$ git show HEAD:src/main/scala/nebflow/core/McpToolGate.scala | sed -n "/object GateRedact/,+8p"
+object GateRedact:
+  private val SecretKeyHints = List("password", "token", "secret", "credential", "key")
+  private val MaxValueChars = 120
+  private val MaxSummaryChars = 600
+
+  def isSecretKey(k: String): Boolean =
+    val l = k.toLowerCase
+    SecretKeyHints.exists(l.contains)
+

@@ -40,6 +40,15 @@ const WHITELIST = [
   'scripts/check-legacy-domain.mjs', // b) 门禁自身：判据正则字面（自排除，同 check-user-knowledge.sh 惯例）
   'reports/',                     // a) 历史批次报告（冻结封存）
   'evidence/',                    // a) 取证/实测原始件（冻结封存）
+  // a) 批次证据根（2026-11-04 两小件批新增，逐条理由入批报告正文）：
+  //    2026-11 起的批次实测/门禁原始输出落在 `reports-evidence/<topic>__<stamp>/`，它与
+  //    上面两条是**同一类**——冻结的取证原件，改写即毁证。实测触发点有两处，都是「引文」
+  //    而不是「链接」：① 头像 301 批的 `post-commit-gates.log` 第 6 行原样引用了**旧版**
+  //    本门禁的成功文案（`bare <旧裸域> = 0 outside whitelist`）；② 本批 `gates/
+  //    check-legacy-domain.log` 原样引用了同一条失败输出。两处都不是浏览器入口、也不是
+  //    任何会被产品解析的地址 ⇒ 与 a) 类同口径放行；本批同时把成功文案改成不再打印裸域
+  //    字面量（见 [[CleanMessage]]），后续批次的取证不会再复制这条引文。
+  'reports-evidence/',
   'tests/fixtures/',              // a) 冻结测试夹具（canvas-html 快照等）
   'src/test/resources/official-fixtures/', // a) 官方第三方插件夹具（parser 回归）
   'scripts/rebrand.sh',           // b) 换域工具自身：旧域是其替换源模式
@@ -90,4 +99,10 @@ if (hits.length > 0) {
   console.error('— do not widen it silently.');
   process.exit(1);
 }
-console.log(`✓ legacy-domain gate clean: bare nebflow.space = 0 outside whitelist (${offenders.length} whitelisted hit(s) in frozen/tool paths)`);
+// 成功文案（2026-11-04 两小件批）：**不再打印裸域字面量**。旧文案把旧裸域原样写进
+// stdout，而批次会把自己的门禁输出原样存进证据目录 ⇒ 下一个人跑本门禁时，证据件里的
+// 这句「清白宣告」反而成了新的命中（良性自反）。文案改为不含裸域的措辞。
+console.log(
+  '[legacy-domain] clean: 0 bare retired-domain literal(s) outside the whitelist ' +
+    `(${offenders.length} whitelisted hit(s) in frozen/tool paths)`
+);

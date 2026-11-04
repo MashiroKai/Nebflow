@@ -1,0 +1,5 @@
+checkJs gate: TypeScript not found at node_modules/typescript.
+  Fix: npm install   (typescript is a pinned devDependency)
+  This gate no longer falls back to npx: that path bypassed the pinned
+  typescript version and could silently produce untrustworthy results.
+EXIT=2

@@ -120,7 +120,7 @@
   "type": "tool",
   "label": "Bash\n  (cd /Users/kaiyu/.stand && echo \"=== 服务端地址:\"; grep -oE '\"serverUrl\"[^,]*' nebflow.json neblink/config.json 2>/dev/null...)",
   "summary": "5 lines of output",
-  "content": "[读 NebLink 配置找服务端地址]\n(cwd: /Users/kaiyu/.stand)\n=== 服务端地址:\n=== 尝试列 peers（只读）:\n{'enabled': True, 'syncIntervalSec': 45, 'neblinkServer': {'url': 'https://neblink.nebflow.space', 'networkId': 'ad71113b-b480-462f-badf-dfed5632df22', 'secret': '', 'deviceToken': 'XwOeQBoKWkYoVQXUYxARnzgaFa-bU6MYg2RVWhQKdR8'}, 'logto': {'endpoint': 'https://auth.nebflow.space', 'clientId': '', 'pkceClientId': 'csxh16ca",
+  "content": "[读 NebLink 配置找服务端地址]\n(cwd: /Users/kaiyu/.stand)\n=== 服务端地址:\n=== 尝试列 peers（只读）:\n{'enabled': True, 'syncIntervalSec': 45, 'neblinkServer': {'url': 'https://neblink.nebflow.space', 'networkId': 'ad71113b-b480-462f-badf-dfed5632df22', 'secret': '', 'deviceToken': 'placeholder-device-token-rotated-20261104'}, 'logto': {'endpoint': 'https://auth.nebflow.space', 'clientId': '', 'pkceClientId': 'csxh16ca",
   "isError": false
  },
  {
