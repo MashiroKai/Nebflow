@@ -2,9 +2,20 @@
 
 分支 `delegate/delegate-nebflow-79768ef5` · 工作区
 `/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5`
-收口 merge 目标 = **本地 main `9a134bd5b`**（第一轮合的是 `a0597efdd` = `333d17b2d`，随后 main 又推进 5 个提交
-⇒ 第二轮 merge `633402681`，报告口径以 `9a134bd5b` 为准）。收口节点 = 收尾（land）节点，
-**未合 main / 未 push / 未重启任何进程**。
+**报告口径 = 本地 main `579af6acf`**（`git log -1 --oneline main`：`Merge branch 'delegate/delegate-nebflow-cff8a531'` = 断连风暴修复批）。
+本批收口期间 main 一路推进，共合四轮：`a0597efdd`→`333d17b2d`；`9a134bd5b`→`633402681`；
+`a01b24cd3`→`dd109b130`；**`579af6acf` → `f17442426`（终轮，`git rev-list --count HEAD..main` = 0）**。
+收口节点 = 收尾（land）节点，**未合 main / 未 push / 未重启任何进程**。
+
+### merge 口径（逐文件，谁让谁）
+
+| 文件 | 取谁 | 为什么 |
+|---|---|---|
+| `css/todo-face.css` `.tfl-list` padding | 本批（加号让位）+ main 令牌 | 加号让位是本批功能（`todo-capsule-create` ①⑧ 判据）；main `--ds-space-*` 是等值迁移 ⇒ 合成 `calc(var(--ds-space-1h) + var(--tfl-fab-size) + var(--ds-space-1))`，像素等值 |
+| `web/js/ws.js` | **main 逻辑 + 本批类型标注重新 applicate** | main「断连风暴修复批」抽 `wsBackoff.js`（`attemptsAfterClose` / `connOpenedAt`）是更新的正确逻辑；本批 Typefix 的 `Gate1Result`/`Gate2Result` typedef 与 `/** @type {...} */` 收敛 cast 重新贴回同一文件（自动合成零冲突）⇒ `check-js-types` 仍 EXIT=0 |
+| `src/main/scala/**`（含 `GatewayMain.scala`） | main（已含本批） | 本批 `AskTodoBridge` 广播接线已由作者合并点 `941a11a13` 带上 main ⇒ 本批 Scala 面**零 diff**，分发器预期的 `GatewayMain` 冲突未发生 |
+| 其余 web/tests 本批面 | 本批 hunk，main 其余全收 | 本批 = 入口收敛 / 数据面换血 / 胶囊交互；main = 令牌等值迁移 + 命名迁移，均不相交 ⇒ `git diff main..HEAD` 只列本批 hunk |
+| `scripts/process-artifacts-allowlist.txt`、`tests/type-baseline.json`、各门禁基线 | main（零改动） | 门禁面禁改；sha256 与内容双证见 §2 |
 
 ## 1. 结论（三行）
 
@@ -14,7 +25,14 @@
 3. 范围核对：`git diff main..HEAD --stat -- src/main/resources/web src/main/scala tests` = **37 文件**
    （web 15 + tests 22；Scala 侧 = 0 —— 后端段已由作者合并点 `941a11a13` 带上 main）。
 
-## 2. 收口节点新增证据（`final/`，两轮：`01..09` = main `a0597efdd` 树；`r2_01..r2_10` = main `9a134bd5b` 树）
+## 2. 收口节点新增证据（`final/`，五轮复跑：`01..09` = main `a0597efdd` 树；`r2_*` = `9a134bd5b`；`r3_*` = 改截图落点树；`r4_*` = `a01b24cd3`；**`r5_*` = 终树 main `579af6acf`（含 `ws.js` 退避重写）**）
+
+> 八道门禁在**每一轮**都是本节点在自己这棵树上跑出来的绿；报告读数以 `r5_*` 为准。
+> `r5` 汇总：`final/logs/gates-summary-r5.txt`（6 条命令全 EXIT=0）+ `r5_01..r5_06_*.log`；
+> 基线零改动：`r5_07_baseline_diff.txt`（type-baseline diff 0 行且内容仍 `{"total":0,"files":{}}`；allowlist sha256 与 main 同值）；
+> 范围：`r5_08_scope.txt`（37 文件，`src/main/scala` / `src/test/scala` **空**）；
+> 批 spec：`r5_10_batch_specs.log`（22 passed）；Scala：`r4_09_sbt_compile_and_todo_specs.log`
+> （52 passed / EXIT=0，跑在 `dd109b130` 树；`r5_09_scala_surface_stable.txt` 机械证明其后 Scala 面零变化）。
 
 | 文件 | 内容 / 读数 |
 |---|---|

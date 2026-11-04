@@ -1,0 +1,41 @@
+=== scope ===
+ src/main/resources/web/css/mobileLayer.css        |  48 +-
+ src/main/resources/web/css/todo-face.css          | 120 ++++-
+ src/main/resources/web/css/todo-page.css          |   7 +-
+ src/main/resources/web/index.html                 |  20 +-
+ src/main/resources/web/js/locales/en.js           |   4 +
+ src/main/resources/web/js/locales/zh-CN.js        |   4 +
+ src/main/resources/web/js/main.js                 |   9 +-
+ src/main/resources/web/js/messages.js             |  21 +-
+ src/main/resources/web/js/mobile/chatChrome.js    |  47 +-
+ src/main/resources/web/js/mobile/navController.js |  85 ++--
+ src/main/resources/web/js/mobile/taskPanel.js     |  19 +-
+ src/main/resources/web/js/scheduled-task.js       |  37 +-
+ src/main/resources/web/js/todoFace.js             | 230 ++++++++-
+ src/main/resources/web/js/todoStore.js            |  11 +-
+ src/main/resources/web/js/ws.js                   |  14 +-
+ tests/cognition-phase2.spec.mjs                   |  28 +-
+ tests/conversation-heads-unify.spec.mjs           |   2 +
+ tests/desktop-avatarfix-shots.mjs                 |  29 +-
+ tests/liquid-glass-shots.mjs                      |  15 +-
+ tests/liquid-glass-v3-shots.mjs                   |   6 +-
+ tests/mobile-avatar-chip-title-gap.spec.mjs       |   5 +-
+ tests/mobile-dock.spec.mjs                        |  31 +-
+ tests/mobile-interaction-standard-shots.mjs       |  11 +-
+ tests/mobile-muse-head-restore-shots.mjs          |  15 +-
+ tests/mobile-muse-head-same-row-shots.mjs         |  12 +-
+ tests/mobile-panel-title.spec.mjs                 |  29 +-
+ tests/mobile-taskpanel-active-only-shots.mjs      |  27 +-
+ tests/mobile-title-morph.spec.mjs                 |   9 +-
+ tests/mobile-touch-target.spec.mjs                |  14 +-
+ tests/mobile-two-stage-title-shots.mjs            |  25 +-
+ tests/mobile-v3.spec.mjs                          | 104 ++---
+ tests/todo-capsule-create.spec.mjs                | 539 ++++++++++++++++++++++
+ tests/todo-capsule-redesign-shots.mjs             |  10 +-
+ tests/todo-entry-collapse.spec.mjs                | 389 ++++++++++++++++
+ tests/todo-face-shots.mjs                         |  68 +--
+ tests/todo-page-shots.mjs                         |  37 +-
+ tests/todo-split.spec.mjs                         | 305 ++++++------
+ 37 files changed, 1951 insertions(+), 435 deletions(-)
+--- scala only ---
+(空 = 与 main 一致)
