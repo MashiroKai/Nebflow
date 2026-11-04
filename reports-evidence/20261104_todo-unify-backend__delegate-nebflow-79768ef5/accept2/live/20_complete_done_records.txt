@@ -1,0 +1,2 @@
+# /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/qa-acc2-todo-accept/checkin-records/done-records.jsonl
+{"taskId":"c4b28374","name":null,"content":"PERSIST-①-新建高重要度","sessionId":"47d92893-02f3-4df9-948a-3fffdcb7b2d0","doneAt":1793791482392,"via":"ws"}

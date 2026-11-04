@@ -1,0 +1,18 @@
+READ light {"top":{"w":0,"h":0,"pad":"0px","radius":"50%"},"send":{"w":0,"h":0,"pad":"0px","radius":"50%"},"sendBf":"blur(24px) saturate(1.15)","topBf":"blur(24px) saturate(1.15)","bubBf":"blur(24px) saturate(1.15)","dock":{"h":176.6,"bottom":807},"trunc":88,"hit":44,"arm":{"top":"2px","left":"2px","right":"0px","bottom":"0px","radius":"7px"}}
+PASS  C1 底钮与顶钮几何一致（宽/高/内距/圆角/图标边长逐项相等）  — {"send":{"w":0,"h":0,"pad":"0px","radius":"50%"},"top":{"w":0,"h":0,"pad":"0px","radius":"50%"},"sendIcon":0,"topIcon":0}
+PASS  C2 毛玻璃同源（底钮/顶钮的 backdrop-filter + 背景 + 描边解析值一致）  — {"send":{"bf":"blur(24px) saturate(1.15)","bg":"rgba(255, 255, 255, 0.55)","border":"1px rgba(255, 255, 255, 0.35)","radius":"50%"},"top":{"bf":"blur(24px) saturate(1.15)","bg":"rgba(255, 255, 255, 0.55)","border":"1px rgba(255, 255, 255, 0.35)","radius":"50%"}}
+PASS  C3 Ask 气泡吃同一套毛玻璃（backdrop-filter 与顶钮一致且非 none）  — {"bub":"blur(24px) saturate(1.15)","top":"blur(24px) saturate(1.15)"}
+PASS  C4 截断线 = 面板高度 × 50%（±2px）且列内容不被硬裁（colwrap overflow:visible + mask 终停在该线）  — {"truncPx":88,"half":88.3,"overflow":"visible","lastStop":{"color":"rgba(0, 0, 0, 0)","px":88},"mask":"linear-gradient(rgba(0, 0, 0, 0) 0px, rgb(27, 30, 38) 56px, rgb(27, 30, 38) 64px, rgba(0, 0, 0, 0) 88px)"}
+PASS  C5 截断由内容 mask 承担、零可见遮罩条（dock 内无 .ds-edge-fade / .ask-veil 元素）  — verdict=veil 计数
+PASS  C6 拖柄：命中带仍 ≥44（不回退）+ 可见形态 = 直角弧（仅上/左两条边臂 + 左上圆角）  — {"hit":44,"arm":{"top":"2px","left":"2px","right":"0px","bottom":"0px","radius":"7px"}}
+PASS  C7 列表行右缘渐隐撤除（无 mask + 省略号截断；手机层规则探针）  — {"mask":"none","overflow":"ellipsis"}
+READ dark {"top":{"w":0,"h":0,"pad":"0px","radius":"50%"},"send":{"w":0,"h":0,"pad":"0px","radius":"50%"},"sendBf":"blur(24px) saturate(1.15)","topBf":"blur(24px) saturate(1.15)","bubBf":"blur(24px) saturate(1.15)","dock":{"h":176.6,"bottom":807},"trunc":88,"hit":44,"arm":{"top":"2px","left":"2px","right":"0px","bottom":"0px","radius":"7px"}}
+PASS  G1 首帧 = 胶囊盒（面板从胶囊长出来：首帧高≈胶囊高、宽≈胶囊宽）  — {"first":{"t":0,"w":71.2,"h":26,"top":74,"left":508.4},"cap":{"w":71.203125,"h":26}}
+PASS  G2 宽高随时间单调增长（生长而非淡入：非首帧即全尺寸）  — {"h0":26,"hN":172.4,"hMonotonic":true,"wMonotonic":true}
+PASS  G3 全程同一个元素在变形（.tfl-card 恒为同一节点、面板是其子件）
+PASS  G4 L2 计数是同一个 DOM 节点左移成标题（搬进 .tfl-header-count 槽）  — {"inHeader":true}
+PASS  G5 L3 计数更新时在宿主上播一次翻转（.tfl-count-flip 挂上、文本为终值）  — {"missing":false,"flipped":true,"anim":"tfl-count-flip","hostClass":"tfl-header-count has-faces tfl-count-flip","text":"0 待办0 逾期"}
+PASS  G6 L4 反向收起沿同一路径（高度单调收缩回胶囊档、计数节点回胶囊）  — {"missing":false,"first":{"h":172.4,"w":420},"last":{"h":26,"w":30},"n":20,"cap":{"w":30,"h":26},"state":"capsule","countBack":true}
+PASS  Z1 全程零 pageerror  — []
+
+after: 14 PASS / 0 FAIL

@@ -1,0 +1,27 @@
+PASS  桌面 .fm-todo-entry 缺席
+PASS  桌面手机任务圆钮 [data-chrome="tasks"] 缺席
+PASS  桌面 #mobile-task-panel 缺席
+PASS  桌面 #todo-page 不可达（DOM 留档、无入口）
+PASS  桌面胶囊在场可见（唯一入口）
+PASS  胶囊逾期翻面态（is-overdue）在场
+PASS  桌面胶囊可展开（.tfl-card[data-state=open]）
+PASS  桌面右下角加号 .tfl-fab-add 在场可见
+PASS  帧1 加号 → 行内新建行出现并聚焦标题输入
+PASS  新建面板重要度四签在场
+PASS  帧2 填标题 + 选中「高」重要度
+PASS  帧3 提交后行出现在列表
+PASS  提交发出 createScheduledTask 帧且 priority=3（落库口径）  — {"type":"createScheduledTask","priority":3,"kind":"todo"}
+PASS  帧4 刷新后胶囊计数可见
+PASS  帧4 刷新后新建行仍在（.tfl-row 命中）
+PASS  桌面零 pageerror  — []
+PASS  手机 .fm-todo-entry 缺席
+PASS  手机左上角任务圆钮 [data-chrome="tasks"] 缺席
+PASS  手机 #mobile-task-panel 缺席
+PASS  手机 #task-list 不再被 display:none 压死
+PASS  手机胶囊在场可见（唯一入口）
+PASS  手机胶囊在视口内（顶带一行）  — {"x":151.890625,"y":102,"width":71.203125,"height":26}
+PASS  手机胶囊可展开（面板宽 ≤ 375−32）  — {"x":16,"y":142,"width":343,"height":241.984375}
+PASS  手机右下角加号 44px 触摸档  — {"x":306,"y":330.984375,"width":44,"height":44}
+PASS  手机零 pageerror  — []
+
+=== accept2 入口收敛 + 截图: 25 PASS / 0 FAIL ===

@@ -1,0 +1,53 @@
+## git diff main..HEAD --stat -- src/main/resources/web src/main/scala tests
+ tests/todo-split.spec.mjs                          | 305 ++++---
+ 107 files changed, 4767 insertions(+), 3276 deletions(-)
+
+## main moved forward: rev-list 0fffa26b5..main = 19 commits
+a0597efdd Merge branch 'delegate/delegate-nebflow-71767a56'
+5d39447a3 docs(naming): 收口报告 —— 残留 101 处分类、断链 A=2(既有)、R5 反向验证、门禁与合并快照
+2996e6fbb Merge branch 'delegate/delegate-nebflow-71767a56'
+462ea139f docs(naming): 残留分类表（96 处逐条判据）+ 其他项目待迁移清单（只扫不改）
+88d495f17 Merge branch 'main' into delegate/delegate-nebflow-71767a56
+7cdeb3495 feat(wiki-docs): check_wiki_docs 加 R5 doc-naming —— 新制文件名进机械校验（运行时与 seed 副本 cmp 一致）
+925637496 docs(naming): 迁移资产入库 —— manifest/映射表/断链扫描/引用改写脚本与读数
+f3bc0a7be Merge branch 'delegate/delegate-nebflow-4280aa54' — presence 收尾补丁：tailnet v6 豁免对称（隧道网卡豁免补上 isTailnetV6）
+
+## batch range = merge-base 0fffa26b5..HEAD (our merge base at 712242e85)
+ src/main/resources/web/css/mobileLayer.css        |  48 +-
+ src/main/resources/web/css/todo-face.css          | 117 ++++-
+ src/main/resources/web/css/todo-page.css          |   7 +-
+ src/main/resources/web/index.html                 |  20 +-
+ src/main/resources/web/js/locales/en.js           |   4 +
+ src/main/resources/web/js/locales/zh-CN.js        |   4 +
+ src/main/resources/web/js/main.js                 |   9 +-
+ src/main/resources/web/js/messages.js             |  21 +-
+ src/main/resources/web/js/mobile/chatChrome.js    |  47 +-
+ src/main/resources/web/js/mobile/navController.js |  85 ++--
+ src/main/resources/web/js/mobile/taskPanel.js     |  19 +-
+ src/main/resources/web/js/scheduled-task.js       |  37 +-
+ src/main/resources/web/js/todoFace.js             | 230 ++++++++-
+ src/main/resources/web/js/todoStore.js            |  11 +-
+ src/main/resources/web/js/ws.js                   |  14 +-
+ tests/cognition-phase2.spec.mjs                   |  28 +-
+ tests/conversation-heads-unify.spec.mjs           |   2 +
+ tests/desktop-avatarfix-shots.mjs                 |  29 +-
+ tests/liquid-glass-shots.mjs                      |  15 +-
+ tests/liquid-glass-v3-shots.mjs                   |   6 +-
+ tests/mobile-avatar-chip-title-gap.spec.mjs       |   5 +-
+ tests/mobile-dock.spec.mjs                        |  31 +-
+ tests/mobile-interaction-standard-shots.mjs       |  11 +-
+ tests/mobile-muse-head-restore-shots.mjs          |  15 +-
+ tests/mobile-muse-head-same-row-shots.mjs         |  12 +-
+ tests/mobile-panel-title.spec.mjs                 |  29 +-
+ tests/mobile-taskpanel-active-only-shots.mjs      |  27 +-
+ tests/mobile-title-morph.spec.mjs                 |   9 +-
+ tests/mobile-touch-target.spec.mjs                |  14 +-
+ tests/mobile-two-stage-title-shots.mjs            |  25 +-
+ tests/mobile-v3.spec.mjs                          | 104 ++---
+ tests/todo-capsule-create.spec.mjs                | 537 ++++++++++++++++++++++
+ tests/todo-capsule-redesign-shots.mjs             |  10 +-
+ tests/todo-entry-collapse.spec.mjs                | 387 ++++++++++++++++
+ tests/todo-face-shots.mjs                         |  68 +--
+ tests/todo-page-shots.mjs                         |  37 +-
+ tests/todo-split.spec.mjs                         | 305 ++++++------
+ 37 files changed, 1944 insertions(+), 435 deletions(-)
