@@ -33,9 +33,9 @@ PASS  O1 裁定：星期多选面在场且回显 5 个工作日  — {"visible":
 PASS  L2 保存：provider 级两段逐字落盘（含 days = [1,2,3,4,5]）  — [{"from":"14:00","to":"18:00","days":[1,2,3,4,5]},{"from":"23:00","to":"07:00"}]
 PASS  L3 保存：per-model 段由行内 DOM 收编（kimi-k2 保 09:00-10:00，kimi-k3 无键）  — [[{"from":"09:00","to":"10:00"}],null]
 PASS  模态离场（保存后 overlay 摘除）
-PASS  L4 定时任务：触发时刻 = 同款点选钮（零裸 datetime-local）  — {"triggers":1,"bareInputs":0,"hidden":true,"value":"2026-11-04T10:55","face":"11/4 10:55"}
-PASS  L4 值域载体 = 隐藏 #reminder-time-input（datetime-local 串保真）  — 2026-11-04T10:55
-PASS  T4 点选钮字段脸 = M/D + HH:mm（24h，无 AM/PM）  — 11/4 10:55
+PASS  L4 定时任务：触发时刻 = 同款点选钮（零裸 datetime-local）  — {"triggers":1,"bareInputs":0,"hidden":true,"value":"2026-11-04T11:06","face":"11/4 11:06"}
+PASS  L4 值域载体 = 隐藏 #reminder-time-input（datetime-local 串保真）  — 2026-11-04T11:06
+PASS  T4 点选钮字段脸 = M/D + HH:mm（24h，无 AM/PM）  — 11/4 11:06
 PASS  L4 点选面板 = 日期列 + 时 + 分（3 轮）  — {"mode":"point","cols":3,"bareInRange":0}
 PASS  L5 待办截止：创建面板 = 同款点选钮（零裸 datetime-local）  — {"triggers":1,"bare":0,"holders":1}
 PASS  L5 待办截止：开关打开后点选面在场（同款组件）  — {"open":true,"triggers":1}
