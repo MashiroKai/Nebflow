@@ -1154,7 +1154,7 @@ class TodoFace {
     document.addEventListener('pointerdown', this.outsideHandler, true);
     this.escHandler = (e) => {
       if (e.key !== 'Escape' || !this.expanded || this.destroyed) return;
-      if (isImeComposing(e)) return;
+      if (isImeComposing(e, null)) return;
       // 列表内的 Esc 由 onListKey 分层处理（行编辑/创建行/popover 优先），
       // 此处只在焦点不在面板子树内时才接管 —— 避免同一次按键双重动作。
       if (this.card.contains(document.activeElement)) return;
@@ -1390,7 +1390,7 @@ class TodoFace {
     const r0 = drag.frozen.get(drag.id);
     if (!r0) return;
     const center = r0.left + r0.width / 2 + dx + (drag.centerAdjust || 0);
-    const order = todoStore.tags;
+    const order = /** @type {any[]} */ (todoStore.tags);   // checkJs：indexOf 的入参族见下方登记（既有面，非本批引入）
     const idx = order.findIndex((x) => x.id === drag.id);
     for (const other of order) {
       if (other.id === drag.id) continue;

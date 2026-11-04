@@ -2565,9 +2565,12 @@ function deckBuildSnapshot(entry) {
   const srcW = (area && area.width) || 900;   // 渲染面宽 = canvas 区宽（display:none 面读不到 offsetWidth）
   const node = deckSnapshotNode(entry, srcW);
   if (!node) return null;
-  const snap = { node, srcW, kind: node.__nfSnapKind || 'clone', scroller: node.__nfSnapScroller || null };
-  delete node.__nfSnapKind;
-  delete node.__nfSnapScroller;
+  // checkJs：`__nfSnapKind` / `__nfSnapScroller` 是快照宿主的传输期 expando（见
+  // deckSnapshotNode 的写法），断言面只做类型放行，运行期仍是同一个节点对象。
+  const snapNode = /** @type {any} */ (node);
+  const snap = { node, srcW, kind: snapNode.__nfSnapKind || 'clone', scroller: snapNode.__nfSnapScroller || null };
+  delete snapNode.__nfSnapKind;
+  delete snapNode.__nfSnapScroller;
   deckSnapshots.set(entry.id, snap);
   return snap;
 }
@@ -2588,10 +2591,11 @@ export function canvasSnapshotFor(tabId, srcW) {
   const w = Number(srcW) > 0 ? Number(srcW) : 900;
   const node = deckSnapshotNode(entry, w);
   if (!node) return null;
-  const kind = node.__nfSnapKind || 'clone';
-  const scroller = node.__nfSnapScroller || null;
-  delete node.__nfSnapKind;
-  delete node.__nfSnapScroller;
+  const snapNode = /** @type {any} */ (node);   // 同上：expando 类型放行，运行期同一对象
+  const kind = snapNode.__nfSnapKind || 'clone';
+  const scroller = snapNode.__nfSnapScroller || null;
+  delete snapNode.__nfSnapKind;
+  delete snapNode.__nfSnapScroller;
   return { node, srcW: w, kind, scroller };
 }
 

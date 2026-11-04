@@ -1,0 +1,158 @@
+/* mobileSearchFlat.css — 手机搜索扁平化 + 滚动收起（ui-final-four · 件七；
+   作者令 2026-11-04 13:07 逐字：「手机端 把联系人和消息的顶部的搜索款 改为
+   扁平化设计 同时默认展开 向上滚动内容的时候则收为悬浮在顶部右上角的一个
+   搜索按钮 样式和主会话的一致」）
+
+   本文件 = 件七的样式单源。**css/mobileLayer.css 零改动**（别的腿所有）：
+   · ① 扁平化：本文件在 index.html 里晚于 mobileLayer.css 载入，同特异度
+     后到者胜 ⇒ 逐项覆盖 3104-3121 的玻璃胶囊（底 / 描边 / 投影 /
+     backdrop-filter 全撤）。扁平场底 = --color-surface，分隔线 =
+     --color-border，一律既有 token，零新色值字面量。
+   · ② 默认展开：展开 = 缺省态（没有 .mh-search-collapsed 即展开），
+     本文件不引入任何「初始收起」语汇。
+   · ③ 滚动收起：判据类 .mh-search-collapsed（挂 .mh-search-dock，由
+     js/mobile/socialSearch.js 的滚动探针写）。收起 = 常驻条整块连续退场：
+     height（JS 写实测像素起点）+ opacity 同曲线过渡 ⇒ 中间帧是真实的
+     部分高度帧，无瞬切；同时右上角浮钮连续显影（opacity 过渡）。
+     阈值算术单源 = socialSearch.js（COLLAPSE_AT 24 / EXPAND_AT 4，回滞带
+     4..24），本文件只管形态与时长。
+   · ④ 收起浮钮 .mh-search-fab = 主会话 #search-btn 同族档位
+     （css/chat.css:146-174）：28×28 / 圆角 6px / 16px 图标 /
+     transparent 底 + 1px transparent 描边（hover/focus 才上玻璃，同包
+     --glass-control-* token）/ color: var(--color-frame-text-muted)。
+     触屏热区 ≥44 由伪元素外扩承担（mobileLayer.css .mf-strip-chip::before
+     同款写法 + --mhit 档），视觉本体恒 28×28（计算样式与渲染一致）。
+   · 图标 = socialSearch.js 克隆 index.html #search-btn 的同一 svg 串
+     （单一图标源，禁第二套图形）。
+
+   门禁红线：新 css 文件色值字面量必须为 0（check-design-tokens
+   new-file-literals）；圆角只落 6px / 0 / 50%；无 font-size 字面量。 */
+
+/* ── 过渡时长/曲线单源（收起与展开同速；收/扩阈值在 JS）────────────── */
+body.mobile-layer .mh-search-dock {
+  --mhsc-dur: 280ms;
+  --mhsc-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  transition:
+    height var(--mhsc-dur, 280ms) var(--mhsc-ease, cubic-bezier(0.4, 0, 0.2, 1)),
+    padding-top var(--mhsc-dur, 280ms) var(--mhsc-ease, cubic-bezier(0.4, 0, 0.2, 1)),
+    opacity var(--mhsc-dur, 280ms) var(--mhsc-ease, cubic-bezier(0.4, 0, 0.2, 1));
+}
+
+/* ── ① 扁平化：撤玻璃胶囊（覆盖 mobileLayer.css:3104-3121）──────────────
+   底 = 既有面 token（--color-surface，深浅双主题）；分隔线 = 既有
+   --color-border；圆角 0（胶囊 999 退役，扁平场）；投影/毛玻璃零。
+   输入行仍可辨：填充底 vs 页面底 --color-bg 有档差 + 一条底部分隔线；
+   字色 / placeholder 档位不动（继承 mobileLayer.css:3130-3140 =
+   --color-frame-text / --color-frame-text-muted，对比度不低于现状）。 */
+body.mobile-layer .mh-search-bar {
+  background: var(--color-surface);
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+  transition:
+    border-color var(--mhsc-dur, 280ms) var(--mhsc-ease, cubic-bezier(0.4, 0, 0.2, 1)),
+    background-color var(--mhsc-dur, 280ms) var(--mhsc-ease, cubic-bezier(0.4, 0, 0.2, 1));
+}
+/* 收起中的场不重描（分隔线随退场同步转 transparent，禁硬切）。 */
+body.mobile-layer .mh-search-dock.mh-search-collapsed .mh-search-bar {
+  border-bottom-color: transparent;
+  background: transparent;
+}
+/* 结果行/范围 chips 的玻璃残迹压平（同族，零色值字面量；静止态不显示）。 */
+body.mobile-layer .mh-search-dock .mh-scope-chip {
+  background: transparent;
+  border-color: var(--color-border);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+/* ── ③ 滚动收起终态（高度由 JS 逐帧过渡，终态由本类钉死）────────────── */
+body.mobile-layer .mh-search-dock.mh-search-collapsed {
+  height: 0;
+  padding-top: 0;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* ── ④ 收起浮钮：主会话 #search-btn 同族（chat.css:146-174 逐档同源）─── */
+body.mobile-layer .mh-search-fab {
+  position: fixed;
+  top: calc(16px + env(safe-area-inset-top, 0px));
+  right: 16px;
+  z-index: 200;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: none;
+  border: 1px solid transparent; /* reserves edge space for glass hover（同 #search-btn） */
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--mhsc-dur, 280ms) var(--mhsc-ease, cubic-bezier(0.4, 0, 0.2, 1)),
+    visibility 0s linear var(--mhsc-dur, 280ms),
+    background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+/* hover / focus = 同族玻璃态（#search-btn:hover 同包 token）。 */
+body.mobile-layer .mh-search-fab:hover,
+body.mobile-layer .mh-search-fab:focus-visible {
+  background: var(--glass-control-bg-hover);
+  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+  border-color: var(--glass-control-border);
+  box-shadow:
+    inset 0 1px 0 var(--glass-control-highlight),
+    inset 0 -1px 0 var(--glass-control-underedge);
+  color: var(--color-frame-text);
+}
+body.mobile-layer .mh-search-fab svg {
+  width: 16px;
+  height: 16px;
+}
+/* 收起态 = 浮钮连续显影（visibility 立刻切，opacity 走 --mhsc-dur 过渡）。 */
+body.mobile-layer .mh-search-fab.is-on {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    opacity var(--mhsc-dur, 280ms) var(--mhsc-ease, cubic-bezier(0.4, 0, 0.2, 1)),
+    background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+/* 触屏热区外扩（视觉本体不动）：44×44 中心外扩，体感热区达 Apple 档。 */
+body.mobile-layer .mh-search-fab::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, var(--mhit, 44px));
+  height: max(100%, var(--mhit, 44px));
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+}
+
+/* ── reduced-motion：二值语义保留，过渡压近零（同 mobileLayer.css 惯例）。 */
+@media (prefers-reduced-motion: reduce) {
+  body.mobile-layer .mh-search-dock {
+    --mhsc-dur: 1ms;
+  }
+}
+
+/* ── 验收读数归档（实测值见 tests/mobile-search-flat.spec.mjs 的
+   evidence/…/search7/readings.json）：
+   初始展开 = .mh-search-bar 44×343 @ (16, 8)，rect.left/right = 16/359，
+   backdrop-filter none / border-top 0 / radius 0px / box-shadow none；
+   dock 初始高 = 消息页 66 / 联系人页 52（8 padding + 44 bar + 消息页结果区
+   2+12 留白）；收起终态 = dock 高 0、浮钮 28×28 rect.right = 359 /
+   rect.top = 16+safe；回滚到顶 = dock 高复原、bar rect 与初始逐值相同。 */

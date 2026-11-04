@@ -1692,13 +1692,29 @@ body.mobile-layer .mf-strip-chip {
      UA 默认 2px outset 黑描边必须显式归零 —— 迁移删掉旧 glass-border 行时若
      不补这条，UA 按钮描边就浮出来（T7 宿主零描边钉抓到过）。 */
   border: 0;
-  /* 字色档（可读字批 2026-11-03 12:59）：muted 档（--color-frame-text-muted
-     #717379）在玻璃底上算出来 4.46:1，再乘邻签不透明度 0.66 只剩 2.49:1 ——
-     正是作者判「近乎不可见」的量化根因。改取主字色槽 --ds-text（§design-
-     system 令牌单源；亮 #1b1e26 / 暗 #e8eaed）：亮档合成后 7.4:1、暗档 5.6:1，
-     双双过 WCAG 正文 4.5:1。层次（中签 > 邻签）改由**尺寸 + 缩径 + 不透明度 +
-     旋转透视**承担，不再靠字色压暗（T13⑥「中/邻签逐项同源」照旧成立：本档是
-     全组共用基档，不是邻签特例）。 */
+  /* 宿主零底色（读数实测批 ui-final-four ③，2026-11-04）：上面那句只归零了描边，
+     **底色漏了** —— `<button>` 的 UA 默认 buttonface 还在（Chromium #efefef /
+     WebKit #c0c0c0）。::after 是 z-index:-1 的负层，按绘制序它画在宿主自身底色
+     **之上** ⇒ 玻璃底（暗档 rgba(24,28,38,.68)）实际叠在一层浅灰实色上，
+     合成后签面 = #5d6067 而不是设计面的 #161a23（实测：暗档邻签文字对比度
+     4.11–4.79:1，字形核中位 4.42:1，**不过 4.5:1**；上一批自报 12.05:1 是按令牌
+     算的、不是实测）。归零后暗档实测回到 10:1 量级，亮档不受影响（亮档本来就是
+     浅底，glass 0.55 白叠加后与旧值同档）。
+     `background: transparent` 同时把 UA 的 appearance 内阴影一并抹掉。 */
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  /* 字色档（可读字批 2026-11-03 12:59；**实测值 2026-11-04 复量重写**）：muted 档
+     （--color-frame-text-muted #717379）在玻璃底上算出来 4.46:1，再乘邻签不透明度
+     0.66 只剩 2.49:1 —— 正是作者判「近乎不可见」的量化根因。改取主字色槽
+     --ds-text（§design-system 令牌单源；亮 #1b1e26 / 暗 #e8eaed）。
+     实测（tests/side-tab-legibility.spec.mjs L1，真渲染像素对法，深/浅双主题 ×
+     双引擎一致）：邻签朝中心半幅代表点 暗 11.76:1 / 亮 11.95:1；字形核中位
+     暗 10.52:1 / 亮 9.47:1；中签 暗 14.45:1 / 亮 16.08:1 —— 双双远过 WCAG 正文
+     4.5:1。（上一批自报的「亮 7.4、暗 5.6 / 12.05」是按令牌折算、未含 UA 默认
+     buttonface 的浅底：实测暗档曾只有 4.11–4.79:1，根因见上方 background:transparent。）
+     层次（中签 > 邻签）改由**尺寸 + 缩径 + 不透明度 + 旋转透视**承担，不再靠字色
+     压暗（T13⑥「中/邻签逐项同源」照旧成立：本档是全组共用基档，不是邻签特例）。 */
   color: var(--ds-text);
   /* 字号档（同令）：13px × 邻签缩径 0.87 = 11.3px < 手机可读下限 13 ⇒ 基档上抬
      一档 --mfs-sub（15 = Apple subheadline 档，桥到 --ds-fs-mobile-sub）：
@@ -1713,7 +1729,11 @@ body.mobile-layer .mf-strip-chip {
      的 mask 渐隐处理（**不用省略号**，作者令「不用…号，直接模糊隐藏」）。 */
   overflow: visible;
   white-space: nowrap;
-  touch-action: manipulation;
+  /* 签条横滑切签批（ui-final-four ②，2026-11-04）：旧 `manipulation` 把横轴
+     平移也让给浏览器（= 横拖在签上读作原生滚动尝试），改成 `pan-y` ——
+     横轴收归指针管线（bindStripSwipe），纵轴仍原样让给原生滚动路径（签上
+     纵拖零劫持：JS 侧 axis=y 不抢 capture、不 preventDefault）。 */
+  touch-action: pan-y;
   /* 纵向零偏移铁律：签心 = top 40 + translateY(-50%)，缩放围绕盒中心对称 ⇒
      缩放后中心不动，全组纸签严格同一水平线（对齐修正批，取代旧 --rdy 弧深）。
      转盘位姿（可读字批 2026-11-03 12:59）：末段叠 rotateY(var(--rrot)) ——
@@ -1721,7 +1741,10 @@ body.mobile-layer .mf-strip-chip {
      过渡插值 = 旋转感（作者令「不要纯淡入淡出」）；transform-style flat 下每枚
      签独立吃 .mf-strip 的透视 = 各自绕自身中轴转，不互相穿透。 */
   transform-origin: center center;
-  transform: translate(calc(-50% + var(--rdx, 0px)), -50%) scale(var(--rsc, 1)) rotateY(var(--rrot, 0deg));
+  /* 位移链 = 环位姿（--rdx，layoutRing 逐签写）+ 签条跟手（--sdx，strip 条级
+     统一写、全体签同幅跟随）。两量都是长度 ⇒ 一条 calc 里相加，环几何零改；
+     无手势时 --sdx 缺省 0px（渲染与改前逐位一致）。 */
+  transform: translate(calc(-50% + var(--rdx, 0px) + var(--sdx, 0px)), -50%) scale(var(--rsc, 1)) rotateY(var(--rrot, 0deg));
   opacity: var(--rop, 1);
   filter: blur(var(--rbl, 0px));
   transition:
@@ -1735,6 +1758,10 @@ body.mobile-layer .mf-strip-chip {
    档 320ms 超限，签面切换独立取 280ms —— 位移+旋转在窗内完成，输入永不阻塞
    （transition 只作用于绘制，pointer 命中面随帧更新，无输入锁）。 */
 body.mobile-layer .mf-strip-chip { --dur-switch: 280ms; }
+/* 签条横滑跟手态（bindStripSwipe 加 / 摘）：`.is-swiping` 在带上一条 —— 跟手段
+   过渡关零（指到哪跟到哪）；摘类后恢复 280ms 过渡再写 --sdx:0 ⇒ 端点阻尼段的
+   越界偏移与松手归零都读作**真回弹**（位移归零可机械断言）。 */
+body.mobile-layer .mf-strip.is-swiping .mf-strip-chip { transition: none; }
 /* 玻璃视觉层（::after 迁移承载面）：宿主的材质四件套全部落在这里 —— 玻璃底
    （顶缘折射线渐变 + --glass-bg）、描边（--glass-border，底缘透明化）、
    box-shadow。`inset:0` 贴齐宿主盒（尺寸随 max-width 档 68/112 与展开钳制
@@ -2064,7 +2091,12 @@ body.mobile-layer .mf-dot.on {
      从 transform 里删掉（不是把角度设 0：保留 rotateY() 会让比例矩阵多一项，
      计算样式面仍带 rotate 分量 = 判据面失真）。 */
   body.mobile-layer .mf-strip-chip {
-    transform: translate(calc(-50% + var(--rdx, 0px)), -50%) scale(var(--rsc, 1));
+    /* 位移链必须与前档**逐项同构**（ui-final-four ③ 实测补漏，2026-11-04）：
+       签条横滑批（②）把 `var(--sdx, 0px)` 加进了基础档的位移链，本条覆盖没跟上
+       ⇒ reduce 档下跟手位移被整条吃掉（实测：写 --sdx:-30px，Δtx=0px；基础档
+       同读数 -30px）。跟手位移属「位移」不属「动效」——按作者令「退化为无旋转
+       位移」，它必须留着。 */
+    transform: translate(calc(-50% + var(--rdx, 0px) + var(--sdx, 0px)), -50%) scale(var(--rsc, 1));
   }
 }
 /* 文档区横滑邻卡圆环（批③：横拖时拖向侧露玻璃描边圆环 = 桌面上下滚动的
