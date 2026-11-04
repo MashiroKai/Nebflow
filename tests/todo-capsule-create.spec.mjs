@@ -27,7 +27,9 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = join(HERE, '..', 'src', 'main', 'resources', 'web');
-const SHOT_DIR = join(HERE, '..', 'reports-evidence', '20261104_todo-unify-backend__delegate-nebflow-79768ef5', 'panel');
+// 截图落点：证据目录按 2026-11-04 文档命名新制 `<topic>__<time>`（收口批改写；
+// 旧制时间打头目录已被 main 的命名迁移批改名，本行随即跟上，断言零改动）。
+const SHOT_DIR = join(HERE, '..', 'reports-evidence', 'todo-unify-backend__20261104_145310__delegate-nebflow-79768ef5', 'panel');
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
