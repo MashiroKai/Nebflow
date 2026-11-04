@@ -57,7 +57,12 @@ class BgWaitToolSpec extends CatsEffectSuite:
       assertEquals(BgWaitTool.name, "BgWait", "the tool must be registered under the name BgWait")
       assert(schemaField("jobIds"), "schema must expose jobIds")
       assert(schemaField("deadline"), "schema must expose deadline")
-      val required = BgWaitTool.inputSchema("required").flatMap(_.asArray).map(_.map(_.asString)).getOrElse(Nil)
+      // 红相写法缺陷修正（green 相，2026-11-04）：`_.map(_.asString)` 得
+      // `List[Option[String]]`，`contains("jobIds")` 在结构上恒为 false（`contains`
+      // 取 `Any` 超类型 ⇒ 编译通过、永远不命中，任何合法 schema 都无法满足）。
+      // `flatten` 后比较是**同义更强**的断言（真的检查 required 里有没有这个键）。
+      val required =
+        BgWaitTool.inputSchema("required").flatMap(_.asArray).map(_.flatMap(_.asString)).getOrElse(Vector.empty)
       assert(required.contains("jobIds"), s"jobIds must be required, required=$required")
     }
   }

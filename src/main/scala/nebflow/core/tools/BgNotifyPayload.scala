@@ -27,8 +27,10 @@ import nebflow.shared.Defaults
  *    jobId 指回（面板行点击开详情卡看全文）；
  *  - 截断标注与**读线程尾窗标注**（`shell.scala` / `OutputTailWindow`，T5 批）
  *    采用**同一形态** `[truncated: showing last N of M lines — full output: …]`，
- *    两者只差「全文在哪」这一段的指针：读线程面给**绝对路径**（`stand-bash-*.log`
- *    溢写文件），通知面给 `background-tasks panel, job <id>`（详情卡）。为什么
+ *    两者只差「全文在哪」这一段的指针：读线程面给**溢写文件绝对路径**
+ *    （`stand-bash-*.log`），通知面给**输出留存文件的绝对路径**
+ *    （`BgTaskOutputStore.readableOutputPath`，A1；路径不存在才回落
+ *    `background-tasks panel, job <id>` 面板指针，绝不编造路径）。为什么
  *    必须同形态：同一份输出会在两个面各截一次（读线程尾窗 2000 行/50KB → 通知面
  *    20 行），两套说法会让读者以为是两种不同的丢失；同形态下「丢了什么、全文在
  *    哪」一眼可读，且外层指针（jobId）恒是最终回看面；
@@ -127,11 +129,14 @@ object BgNotifyPayload:
 
   /**
    * 正文截尾：≤ tailN 行原样返回；超出 ⇒ 末尾 tailN 行 + 截断标注行（总行数 +
-   * jobId 指回详情卡）。行数按 `\n` 切分（先去尾部换行，空正文不算行）。
+   * 全文指针）。行数按 `\n` 切分（先去尾部换行，空正文不算行）。
    *
    * 标注形态**与读线程尾窗标注统一**（T5 批，见对象头 §2）：
    * `[truncated: showing last N of M lines — full output: …]`——本面把
-   * 「full output」指成面板详情卡（jobId），读线程面指成溢写文件绝对路径。
+   * 「full output」指成**输出留存文件的绝对路径**（`BgTaskOutputStore.readableOutputPath`，
+   * A1：路径存在才给，agent 能直接读）；该路径不可得（落盘未开启 / 文件未落地 /
+   * 远端留存留在对端）⇒ 回落面板指针 `background-tasks panel, job <id>`，
+   * **绝不编造路径**。读线程面指成溢写文件绝对路径，两面同骨、只差「全文在哪」。
    * 不用 markdown、不加句号：标注本身是一行机器可读的回看指针。
    */
   private[tools] def tailWithMarker(body: String, tailN: Int, jobId: String): (String, Boolean, Long) =
@@ -141,8 +146,13 @@ object BgNotifyPayload:
       val lines = trimmed.split("\n")
       if lines.length <= tailN then (trimmed, false, lines.length.toLong)
       else
+        // A1（分发器裁定 2026-11-04）：可读绝对路径优先——存在才给。
+        val pointer = BgTaskOutputStore
+          .readableOutputPath(jobId)
+          .map(p => s"full output: $p")
+          .getOrElse(s"full output: background-tasks panel, job $jobId")
         val marker =
-          s"[truncated: showing last $tailN of ${lines.length} lines — full output: background-tasks panel, job $jobId]"
+          s"[truncated: showing last $tailN of ${lines.length} lines — $pointer]"
         (lines.takeRight(tailN).mkString("\n") + "\n" + marker, true, lines.length.toLong)
   end tailWithMarker
 

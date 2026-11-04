@@ -128,7 +128,7 @@ Per job, in the order given: `[completed] Job ID: X (exit N · <duration>)` + th
         Left("[BgWait requires jobIds] pass the background job id(s) you are blocked on, e.g. jobIds: [\"ab12cd34\"]")
       case Some(json) =>
         val raw = json.asArray.map(_.flatMap(_.asString)).orElse(json.asString.map(List(_))).getOrElse(Nil)
-        val ids = raw.map(_.trim).filter(_.nonEmpty).distinct
+        val ids = raw.map(_.trim).filter(_.nonEmpty).distinct.toList
         if ids.isEmpty then
           Left("[BgWait requires at least one job id] jobIds must be a non-empty array of job ids, e.g. [\"ab12cd34\"]")
         else Right(ids)
