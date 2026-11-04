@@ -56,8 +56,9 @@ Service-type background jobs (persistent):
 - Waiting-type (default): the system waits for it to complete and you are notified. No time limit — background jobs run to completion (the idle/stuck sensor only alerts; use cancel_background_job: true to kill).
 - persistent jobs are EXEMPT from the idle/hard-timeout/stall guards — a server that sits idle is healthy. They run until you cancel them (cancel_background_job: true) or the session ends. You own their lifecycle; the frontend indicator stays visible.
 
-Querying background jobs (background_job_id):
-- Only query when you receive a "stuck" notification or the user asks about a job's status.
+Waiting on background jobs (BgWait):
+- `BgWait` is the ONLY sanctioned way to wait on a background job inside a turn: it blocks (bounded) until the jobIds you list are terminal or its deadline is reached, and it NEVER kills a job. Its deadline defaults to — and is capped at — the same foreground wait budget as Bash.
+- Do NOT repeat `background_job_id` status queries. `background_job_id` now has exactly two uses: cancelling (`cancel_background_job: true`), and checking a job's state after a stuck notification.
 
 Do not use Bash when a dedicated tool exists:
 | Task | Use | Not Bash |
@@ -97,7 +98,7 @@ Git safety:
         ),
         "run_in_background" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
-          "description" -> "Run the command in the background. You will be automatically notified when it finishes — continue with other work or end your turn, the result will come to you.".asJson
+          "description" -> "Run the command in the background. You will be automatically notified when it finishes — continue with other work or end your turn, the result will come to you. Blocked on it inside this turn? Wait with BgWait (jobIds: [\"<jobId>\"]).".asJson
         ),
         "persistent" -> io.circe.Json.obj(
           "type" -> "boolean".asJson,
@@ -673,7 +674,8 @@ Git safety:
                       )
                       _ <- emitBgTaskStarted(ctx, jobId, bgDescription, persistent)
                     yield Right(
-                      s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn."
+                      s"[Background job started] Job ID: $jobId\nThe command is running in the background. You will be automatically notified when it finishes — continue with other work or finish your turn. " +
+                        s"""Wait with BgWait (jobIds: ["$jobId"]) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
                     )
                     end for
                   end startBg
@@ -924,13 +926,17 @@ Git safety:
     // 回执契约（main-agent-nonblocking 批，裁定原文「转后台时给主 agent 的
     // 回执要含：已转后台 + job 标识 + 如何查询」）：① [Background job started]
     // 头 + ② Job ID + ③ 已转后台说明（Auto-backgrounded after … NOT killed）
-    // + ④ 完成通知承诺 + ⑤ 查询/取消方式（background_job_id /
-    // cancel_background_job）。
+    // + ④ 完成通知承诺 + ⑤ 等待方式（BgWait 唯一有界等待原语）/取消方式
+    // （background_job_id + cancel_background_job）。
+    // 🔴 bash overhaul T1（作者令 2026-11-04）：原回执里「随时查询进度」式的
+    // `background_job_id` 邀请是**受逼轮询**的来源（缺陷 D3——提示词禁止轮询，回执却
+    // 邀请轮询，而当时没有任何等待原语）。现回执只给两条合法出路：真被阻塞 ⇒
+    // BgWait 一次有界等待；否则结束回合等通知。
     yield Right(
       s"[Background job started] Job ID: $jobId\n" +
         s"Auto-backgrounded after ${waitedMs / 1000}s in the foreground (wait budget reached — the command was NOT killed). " +
         "It keeps running in the background and you will be automatically notified when it finishes — continue with other work or finish your turn. " +
-        s"Query progress anytime with background_job_id: $jobId; cancel it with background_job_id: $jobId + cancel_background_job: true."
+        s"""Wait with BgWait (jobIds: ["$jobId"]) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
     )
 
   /**

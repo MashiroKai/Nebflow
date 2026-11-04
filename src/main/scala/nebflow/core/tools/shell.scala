@@ -351,6 +351,93 @@ final class ShellSession private (
       yield res
     }
 
+  /**
+   * **有界等待原语**（bash overhaul T1，作者令 2026-11-04「用业界成熟做法完整实现，
+   * 一步到位」）：等到所列后台任务**全部终态**或**期限到**（先到者），**绝不杀任务、
+   * 绝不 cancel**。
+   *
+   * 业界依据（调研件 §0-1/§4）：DeepSeek Harness 的 `job_output(wait: true,
+   * timeout_ms)`——有界等待，等超时不杀 job，直接回「仍在跑」，由完成通知接管。
+   * 本方法即那条语义在会话任务图上的执行面（工具面 = `BgWaitTool`）。
+   *
+   * 两条腿（id 的归属决定走哪条）：
+   *  ① **本会话任务图内**（显式 run_in_background / 前台转后台收编）：逐任务
+   *    `BackgroundJob.deferred.get` 与**同一个** `deadlineMs` race；只把**已终态**
+   *    的条目放进返回 Map（未终态 = 该 id 缺席，调用方据此渲染 `[still running]`）。
+   *    用 `deferred.get` 而不是 `getBackgroundResult`：等待是**观察**，不消费任务图
+   *    条目（终态条目的回收仍归完成回调与 5min 清理 fiber，职责不重叠）。
+   *  ② **不在本会话任务图里**（设备腿 / 别会话 / 已离开本图）：回落
+   *    `BgTaskRegistry.find` 每 `RegistryProbeIntervalMs` 探一次，直到行消失或到期；
+   *    行消失 = 终态已由别处记账（终态回调注销）⇒ 从 `BgTaskOutputStore` 取终态
+   *    读数与尾段折算回报。
+   *
+   * 🔴 预算纪律：`deadlineMs` 由调用方（`BgWaitTool`）按 `ctx.bashConfig
+   * .foregroundWaitBudgetMs` 钳好传进来——**本方法不收第二个上限、也不自造**。
+   * 🔴 读面纪律：不 `checkAlive`、不取 `lifecycleMutex`、不 `touch`——长等待绝不许
+   * 攥住会话锁（否则 cancel/execute 被阻塞）；会话已销毁时任务图读面照常返回空。
+   */
+  def waitBackgroundResults(
+    ids: Seq[String],
+    deadlineMs: Long
+  ): IO[Map[String, Either[Throwable, ProcessResult]]] =
+    val waitMs = math.max(1L, deadlineMs)
+    val wanted = ids.toList.map(_.trim).filter(_.nonEmpty).distinct
+    if wanted.isEmpty then IO.pure(Map.empty[String, Either[Throwable, ProcessResult]])
+    else
+      backgroundJobs.get.flatMap { jobs =>
+        val inGraph: List[(String, BackgroundJob)] = wanted.flatMap(id => jobs.get(id).map(id -> _))
+        val graphIds = inGraph.map(_._1).toSet
+        val others = wanted.filterNot(graphIds.contains)
+        val graphRaces: List[IO[Option[(String, Either[Throwable, ProcessResult])]]] =
+          inGraph.map { case (id, job) =>
+            // IO.race 的两种结果同型（都 Option[...]）：fold 合流——Left/Right 都表示
+            // 「这一路的结果」，只是赢家不同（deferred 已终态 / 期限先到）。
+            IO.race(
+              job.deferred.get.map(r => Option(id -> r)),
+              IO.sleep(waitMs.millis).as(Option.empty[(String, Either[Throwable, ProcessResult])])
+            ).map(_.fold(identity, identity))
+          }
+        val registryWaits: List[IO[Option[(String, Either[Throwable, ProcessResult])]]] =
+          others.map(id => waitOneViaRegistry(id, waitMs))
+        // 并行 race：总阻塞上限 = **一个** waitMs（不是每任务各一个）——语义 = 至多
+        // 一次 LLM 往返；顺序等待会让 N 个任务叠加成 N×预算（越界即第二个上限）。
+        (graphRaces ++ registryWaits).parSequence.map(_.flatten.toMap)
+      }
+
+  /** 注册表探测拍间隔（不是等待上限——上限只有一个，见 [[waitBackgroundResults]]）。 */
+  private val RegistryProbeIntervalMs: Long = 500L
+
+  /**
+   * 注册表腿（不在本会话任务图里的任务）：行在 = 仍未终态（注册行只在该任务的
+   * 终态回调里被注销）；行消失 ⇒ 从输出留存区取终态读数。到期仍未终态 ⇒ None。
+   */
+  private def waitOneViaRegistry(
+    jobId: String,
+    budgetMs: Long
+  ): IO[Option[(String, Either[Throwable, ProcessResult])]] =
+    val deadlineAt = System.currentTimeMillis() + budgetMs
+    def loop: IO[Option[(String, Either[Throwable, ProcessResult])]] =
+      BgTaskRegistry.find(jobId).flatMap {
+        case Some(_) =>
+          if System.currentTimeMillis() >= deadlineAt then IO.pure(None)
+          else IO.sleep(RegistryProbeIntervalMs.millis) *> loop
+        case None =>
+          BgTaskOutputStore.read(jobId, 0L).map { entry =>
+            entry.flatMap { o =>
+              if o.status == "running" then None
+              else if o.status == "completed" then
+                Some(jobId -> Right(ProcessResult(o.output, "", o.exitCode.getOrElse(0), "")))
+              else
+                Some(
+                  jobId -> Left(
+                    new RuntimeException(o.errorHint.getOrElse(s"job $jobId ended with status '${o.status}'"))
+                  )
+                )
+            }
+          }
+      }
+    loop
+
   /** Get health info for a running background job (does not remove the job). */
   def getBackgroundJobHealth(jobId: String): IO[Option[BackgroundJobHealth]] =
     lifecycleMutex.lock.surround {
