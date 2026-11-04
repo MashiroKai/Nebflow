@@ -158,8 +158,10 @@ html[data-theme="dark"] {
    （输入条改皮）/ --g2-ink-*（墨玻璃药丸增量）三族随 F1 退役整体删除——
    悬浮件材质权交还 --cv-*（sapphire.css 单源，glass.css 组装）；墨玻璃增量
    迁 glass.css --ig-*（变体⑤定稿）。仅存子族 = 顶缘滚入渐隐带（M9 待作者裁
-   维持现状）与 .ask-veil 同配方消费的 --g2-veil / --g2-fade-*，消费者 =
-   glass.css #g2-edge-fade + ask.css .ask-veil。三态解析结构同 --btn-ink-* 族：
+   维持现状）消费的 --g2-veil / --g2-fade-*，消费者 = glass.css #g2-edge-fade
+   （ask.css .ask-veil 曾同配方消费，2026-11-04 ask-fade-content-opacity 批随
+   遮罩条手法退役；Ask 渐隐改走内容级 mask，不再引本子族）。三态解析结构同
+   --btn-ink-* 族：
    :root = 亮档默认（无 data-theme 且系统亮时的解析面），html[data-theme]
    强制档优先，无属性回退 prefers-color-scheme。 */
 :root {
