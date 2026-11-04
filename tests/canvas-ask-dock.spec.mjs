@@ -495,9 +495,10 @@ try {
       dockFilter: dcs.backdropFilter || dcs.webkitBackdropFilter,
     };
   });
-  ok('F3 顶缘渐隐 = 内容级 mask（面板内零遮罩条元素；.ask-col mask 起点 transparent → fade-h）',
+  ok('F3 顶缘渐隐 = 内容级 mask（面板内零遮罩条元素；.ask-col mask 起点 transparent → fade-h；'
+    + '作者令 12:52 ③ 追加的中线截断同为同一层 mask 的第二段）',
     f3.fadeLayers === 0 && /linear-gradient/.test(f3.colMask) && /transparent|rgba\(0, 0, 0, 0\)/.test(f3.colMask)
-      && f3.fadeH > 0 && f3.colMask.includes(`${Math.round(f3.fadeH)}px)`),
+      && f3.fadeH > 0 && new RegExp(`\\b${Math.round(f3.fadeH)}px\\b`).test(f3.colMask),
     JSON.stringify({ layers: f3.fadeLayers, mask: f3.colMask, fadeH: f3.fadeH }));
   ok('F3-b 整体透明无边框（dock 零背景/零边框/零浮影/零 backdrop-filter；外框零 mask）',
     f3.dockBg === 'rgba(0, 0, 0, 0)' && parseFloat(f3.dockBorder) === 0 && f3.dockShadow === 'none'
@@ -692,11 +693,16 @@ try {
   ok('T12c 气泡材质 = #header 玻璃模板', matSame(mat.bub, mat.header), JSON.stringify({ bub: mat.bub, ref: mat.header }));
   const greenFaces = await page.evaluate(() => ({
     send: getComputedStyle(document.querySelector('.ask-input .ask-send')).backgroundColor,
+    sendInk: getComputedStyle(document.querySelector('.ask-input .ask-send')).color,
     dot: getComputedStyle(document.querySelector('.ask-fab .ask-sess-dot')).backgroundColor,
   }));
   // v3 实现批（作者 12:32「其它面板发送钮跟随主对话」）：墨族档退役，考古绿
   // --ctl-send-bg（#07C160）回归——与主对话发送键同源（input.css 基准）。
-  ok('T12d 发送钮 = 微信绿跟随主对话（--ctl-send-*，#07C160）', greenFaces.send === 'rgb(7, 193, 96)', greenFaces.send);
+  // 12:52 批改判（作者令「底部按钮毛玻璃照抄顶部两个按钮」）：发送钮材质吃玻璃
+  // token（--cv-bg 玻璃底），微信绿改走**墨色**通道（.ds-turn-btn--send color =
+  // --ctl-send-bg）——两条作者令并存 ⇒ 材质令优先于底色令，语义绿保留在 icon 上。
+  ok('T12d 发送钮 = 微信绿跟随主对话（--ctl-send-*，#07C160）',
+    greenFaces.send === 'rgb(7, 193, 96)' || greenFaces.sendInk === 'rgb(7, 193, 96)', JSON.stringify(greenFaces));
   ok('T12e 通知点底色 = --color-primary 品牌绿（#07c160，身份/状态色冻结保留）', greenFaces.dot === 'rgb(7, 193, 96)', greenFaces.dot);
   await shot(page, 't12-unified-style');
 

@@ -184,9 +184,32 @@
   justify-content: center;
   white-space: nowrap;
 }
-/* 当期面：逾期优先（is-overdue 在胶囊上） */
+/* 当期面：逾期优先（is-overdue 在胶囊上；展开后计数搬到面板头，状态镜像到
+   `.tfl-header-count` —— 同一节点、同一套可见性规则，见「生长」段） */
 .tfl-capsule:not(.is-overdue) .tfl-cap-face-overdue,
 .tfl-capsule.is-overdue .tfl-cap-face-todo { visibility: hidden; }
+
+/* ── L3 计数翻转（作者令 2026-11-03 14:53「同时待办更新，这计数要有翻转的
+   效果」）：读数**真的变了**那一拍，在计数当前所在宿主上播一次 rotateX 翻牌
+   （方向统一：由上缘向下翻 ⇒ 0deg → −90deg → 0deg，视觉即「旧牌翻面、新牌
+   落下」）。多条同时变化只翻一次 —— JS 侧同一拍只挂一次类、文本恒写终值，
+   动画纯粹是视觉层，读数永不半途。 */
+.tfl-count-flip {
+  animation: tfl-count-flip 0.32s cubic-bezier(0.2, 0.7, 0.3, 1);
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+}
+@keyframes tfl-count-flip {
+  0%   { transform: perspective(320px) rotateX(0deg);   opacity: 1; }
+  45%  { transform: perspective(320px) rotateX(-88deg); opacity: 0.15; }
+  55%  { transform: perspective(320px) rotateX(88deg);  opacity: 0.15; }
+  100% { transform: perspective(320px) rotateX(0deg);   opacity: 1; }
+}
+/* L5 降级：reduced-motion 下翻转整条退役（换读数即换读数，不做动画） */
+@media (prefers-reduced-motion: reduce) {
+  .tfl-count-flip { animation: none; }
+}
+
 /* 翻面淡入：JS 在读数翻面那一拍挂 `.tfl-cap-flip`（260ms 后摘），只让当期面
    播 —— 旧面在同一帧已 visibility:hidden ⇒ 过渡中永不出现并排帧，外框宽高
    零变化（宽由 max-content 叠层决定，高由单行行高决定，动画只动 opacity/
@@ -282,10 +305,32 @@
   flex-shrink: 0;
 }
 .tfl-header-count {
+  display: inline-block;
+  min-width: 0;
   font: 500 11px/1.2 ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: color-mix(in srgb, var(--color-text, #000) 40%, transparent);
 }
+/* ── L2 标题计数 = 胶囊那颗计数节点（搬家后的同一 DOM 节点）─────────────
+   `.has-faces` = 展开态：胶囊的 `.tfl-cap-faces` 整块搬进本槽（JS
+   moveCountInto），所以这里要接住它的可见性/翻面状态 —— 状态类镜像在槽上
+   （is-overdue），可见性规则与胶囊侧逐条对齐（当期面可见、非当期面 hidden
+   ⇒ 槽内永不并排两态）。字号放大到标题档（作者令「放大成标题那个待办计数」）。 */
+.tfl-header-count.has-faces {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--color-text, #000) 78%, transparent);
+}
+.tfl-header-count.has-faces .tfl-cap-faces { justify-items: start; }
+.tfl-header-count:not(.is-overdue) .tfl-cap-face-overdue,
+.tfl-header-count.is-overdue .tfl-cap-face-todo { visibility: hidden; }
+.tfl-header-count.is-overdue { color: var(--tfl-red-o); }
+/* 搬家的连续位移层：JS 逐帧写 transform（位移+缩放 FLIP），此处只给个合成提示 */
+.tfl-cap-faces { will-change: transform; }
+
 .tfl-header-spacer { flex: 1; }
 .tfl-icon-btn {
   display: flex;
