@@ -1359,7 +1359,9 @@ export function buildToolDetail(inputJson, label) {
 // （整卡可点习惯保留，控件是显式主路径）。
 export const TOOL_PREVIEW_LINES = 8;
 
-/** card → 全文构建闭包（WeakMap 随卡生灭；折叠卡展开时的全文注入源）。 */
+/** card → 全文装配闭包 `(host) => void`（WeakMap 随卡生灭；折叠卡展开时的
+ *  全文注入源）。闭包只**装**不返回 HTML 串：图片引用件是带 listener 的
+ *  元素，串化会掉接线（tool-card-image-face 批）。 */
 const FOLD_BODIES = new WeakMap();
 
 /** delegate 入参的 prompt 原文（buildDelegatePromptHtml 的文本源，供预览截断）。 */
@@ -1374,24 +1376,133 @@ export function delegatePromptRaw(inputJson) {
 /** 行数封顶：≤ n+1 行原文返回；超出取首 n 行 + 余量计数（「全文 N 行」读数）。 */
 function capLines(text, n) {
   const lines = String(text).split('\n');
-  if (lines.length <= n + 1) return { text: String(text), more: 0 };
+  if (lines.length <= n + 1) return { text: String(text), more: lines.length - n };
   return { text: lines.slice(0, n).join('\n'), more: lines.length - n };
 }
 
-/** 折叠/展开两面的正文 HTML（同一渲染路径，仅截断口径不同；full=true 全文）。 */
-function toolFoldHtml({ detailHtml, promptText, content, label }, full) {
-  const parts = [];
-  if (detailHtml) parts.push(detailHtml);
+// ══ 工具卡图片引用面（tool-card-image-face 批 2026-11-04）═════════════════
+// 作者令：「图片是还是会存在工具卡片泄露出来的问题」。语义裁定：工具卡 = 摘要面
+// （命令/参数 + 行数 + 状态），图片**绝不内嵌渲染**——折叠预览与展开全文同权。
+// 卡内图片一律折叠为「🖼 图片 ×N」引用件（.tool-img-ref），点击走灯箱单点
+// （lightbox.js 唯一出口，本地路径自动票据取数）——绝不内嵌渲染。
+//
+// 注入路径（本批实证，全库 200k+ 工具行扫描 2026-11-04）：
+//   ① 工具结果正文里的 md 图片语法（`![alt](src)`，44 条 /Users|file:|data: 形态：
+//      Read md 返图 / Bash cat md / Write 落 md 再回读）—— 本批 string 级折叠；
+//   ② Mail 工具卡正文走 renderMarkdownWithMath（chat.js 卡内 markdown 面）——
+//      marked 把图片语法渲染成真 <img>（同一批 foldToolCardMedia DOM 兜底收口）。
+//
+// 面定义：只认**块级独立行**的 md 图片语法（^/$ 锚）——正文行内的 `![…](…)`
+// （例如 Bash 输出里碰巧出现的 shell 语法）原样保留，不做图片解读。
+
+/** 独立行 md 图片语法：alt 不跨行，src 不含空白/括号（与链接目标惯例一致）。 */
+const RE_TOOL_MD_IMG_LINE = /^[ \t]*!\[([^\]\n]*)\]\(([^()\s]+)[ \t]*\)[ \t]*$/;
+
+/**
+ * 工具正文切片：正文行原样保留，连续图片行并成一组（合成「图片 ×N」）。
+ * @param {string} src
+ * @returns {Array<{kind:'text', text:string}|{kind:'img', paths:string[], alts:string[]}>}
+ */
+function splitToolBodyImages(src) {
+  /** @type {Array<{kind:'text', text:string}|{kind:'img', paths:string[], alts:string[]}>} */
+  const blocks = [];
+  /** @type {string[]} */
+  let buf = [];
+  /** @type {{kind:'img', paths:string[], alts:string[]}|null} */
+  let cur = null;
+  const flushText = () => {
+    if (!buf.length) return;
+    blocks.push({ kind: 'text', text: buf.join('\n') });
+    buf = [];
+  };
+  for (const line of String(src || '').split('\n')) {
+    const m = RE_TOOL_MD_IMG_LINE.exec(line);
+    if (m) {
+      if (!cur) { flushText(); cur = { kind: 'img', paths: [], alts: [] }; blocks.push(cur); }
+      cur.paths.push(m[2]);
+      cur.alts.push(m[1]);
+      continue;
+    }
+    cur = null;
+    buf.push(line);
+  }
+  flushText();
+  return blocks;
+}
+
+/**
+ * 「🖼 图片 ×N」引用件（灯箱单点出口；卡内零 <img>）。
+ * @param {string[]} paths 图片地址（本地绝对路径 / data: / http(s)）
+ * @param {string[]} alts
+ */
+function toolImgRefEl(paths, alts) {
+  const ref = document.createElement('button');
+  ref.type = 'button';
+  ref.className = 'tool-img-ref';
+  const label = t('chat.toolImgRef', { n: paths.length });
+  ref.textContent = label;
+  ref.setAttribute('aria-label', label);
+  ref.dataset.imgCount = String(paths.length);
+  ref.addEventListener('click', (e) => {
+    e.stopPropagation(); // 不触发卡片折叠状态机（整卡可点）
+    // 动态 import：utils 是叶子模块，lightbox 依赖链（nfFileCache/popSheet）
+    // 都回指 utils——静态 import 会成环。
+    import('./lightbox.js').then((lb) => lb.openLightbox(paths[0], alts[0] || ''));
+  });
+  return ref;
+}
+
+/**
+ * 往容器装卡体正文（三条腿单源）：文本段走既有高亮/转义管线，图片段装引用件。
+ * @param {HTMLElement} container
+ * @param {{detailHtml?:string, promptText?:string|null, content?:string|null, label?:string}} spec
+ * @param {boolean} full true=全文（展开面），false=预览面（≤TOOL_PREVIEW_LINES 行）
+ */
+function mountToolFold(container, { detailHtml = '', promptText = null, content = null, label = '' }, full) {
+  if (detailHtml) container.insertAdjacentHTML('beforeend', detailHtml);
   if (promptText) {
     const p = full ? { text: promptText } : capLines(promptText, TOOL_PREVIEW_LINES);
-    parts.push('<div class="delegate-prompt"><span class="delegate-prompt-label">Prompt</span><pre class="tool-body-pre">' + escapeHtml(p.text) + '</pre></div>');
+    container.insertAdjacentHTML('beforeend',
+      '<div class="delegate-prompt"><span class="delegate-prompt-label">Prompt</span><pre class="tool-body-pre">' + escapeHtml(p.text) + '</pre></div>');
   }
-  if (content) {
-    const src = full ? content : capLines(content, TOOL_PREVIEW_LINES).text;
-    const highlighted = renderHighlightedContent(src, label);
-    parts.push(highlighted || '<pre class="tool-body-pre">' + escapeHtml(src) + '</pre>');
+  if (!content) return;
+  const src = full ? String(content) : capLines(content, TOOL_PREVIEW_LINES).text;
+  for (const block of splitToolBodyImages(src)) {
+    if (block.kind === 'img') { container.appendChild(toolImgRefEl(block.paths, block.alts)); continue; }
+    const highlighted = renderHighlightedContent(block.text, label);
+    container.insertAdjacentHTML('beforeend',
+      highlighted || '<pre class="tool-body-pre">' + escapeHtml(block.text) + '</pre>');
   }
-  return parts.join('');
+}
+
+/**
+ * DOM 兜底收口：卡内任何漏网 <img>（Mail 卡 markdown 面、未来新腿）一律换成
+ * 「🖼 图片 ×N」引用件——工具卡是摘要面，图片永不内嵌（语义单点）。
+ * 连续同父图片合成一件。
+ * @param {Element|null} root 工具卡元素
+ * @returns {number} 折叠掉的 <img> 数
+ */
+export function foldToolCardMedia(root) {
+  if (!root || typeof root.querySelectorAll !== 'function') return 0;
+  const imgs = Array.from(root.querySelectorAll('img'));
+  if (!imgs.length) return 0;
+  const groups = [];
+  for (const img of imgs) {
+    const last = groups[groups.length - 1];
+    if (last && last.parent === img.parentNode && last.tail === img.previousElementSibling) {
+      last.items.push(img);
+      last.tail = img;
+    } else {
+      groups.push({ parent: img.parentNode, items: [img], tail: img });
+    }
+  }
+  for (const g of groups) {
+    const paths = g.items.map(i => i.getAttribute('src') || '').filter(Boolean);
+    const alts = g.items.map(i => i.getAttribute('alt') || '');
+    if (paths.length) g.parent.insertBefore(toolImgRefEl(paths, alts), g.items[0]);
+    g.items.forEach(i => i.remove());
+  }
+  return imgs.length;
 }
 
 /**
@@ -1408,12 +1519,12 @@ export function mountToolCardBody(card, { detailHtml = '', promptText = null, co
   const overThreshold = contentLines > TOOL_PREVIEW_LINES + 1 || promptLines > TOOL_PREVIEW_LINES + 1;
   if (!overThreshold) {
     // 阈值内（或无可折叠正文）：遗留形态——.body 直接收全文，点击开合。
-    const html = toolFoldHtml({ detailHtml, promptText, content, label }, true);
-    if (html) {
+    if (detailHtml || promptText || content) {
       const body = document.createElement('div');
       body.className = 'body';
-      body.innerHTML = html;
+      mountToolFold(body, { detailHtml, promptText, content, label }, true);
       contentEl.appendChild(body);
+      foldToolCardMedia(body);
       return { hasBody: true };
     }
     return { hasBody: false };
@@ -1421,7 +1532,8 @@ export function mountToolCardBody(card, { detailHtml = '', promptText = null, co
   // 折叠面：预览（≤N 行）+ 明确控件
   const preview = document.createElement('div');
   preview.className = 'ds-tool-card__preview';
-  preview.innerHTML = toolFoldHtml({ detailHtml, promptText, content, label }, false);
+  mountToolFold(preview, { detailHtml, promptText, content, label }, false);
+  foldToolCardMedia(preview);
   const toggle = document.createElement('button');
   toggle.type = 'button';
   toggle.className = 'ds-tool-card__toggle';
@@ -1436,7 +1548,12 @@ export function mountToolCardBody(card, { detailHtml = '', promptText = null, co
   body.className = 'body';
   contentEl.appendChild(body);
   card.dataset.nfToolFoldTotal = String(total);
-  FOLD_BODIES.set(card, () => toolFoldHtml({ detailHtml, promptText, content, label }, true));
+  // 全文装配闭包：展开瞬间 mountToolFold 重建全文面（图片引用件同权折叠），
+  // 收起即卸（无泄漏）。图片段在预览里被行数帽截掉时，闭包把「图片 ×N」
+  // 引用件补到 host 尾（splitToolBodyImages 只见到被截文本）。
+  FOLD_BODIES.set(card, (host) => {
+    mountToolFold(host, { detailHtml, promptText, content, label }, true);
+  });
   return { hasBody: true };
 }
 
@@ -1450,7 +1567,8 @@ export function attachToolClick(card) {
       // 折叠状态机：全文只在展开瞬间进 DOM，收起即卸（往返无泄漏）。
       const opening = !body.classList.contains('open');
       if (opening) {
-        body.innerHTML = buildFull();
+        body.innerHTML = '';
+        buildFull(body);          // 装配式（图片引用件带 listener，不能串化）
         body.classList.add('open');
       } else {
         body.innerHTML = '';
