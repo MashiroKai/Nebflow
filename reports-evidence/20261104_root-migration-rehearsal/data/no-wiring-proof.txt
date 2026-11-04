@@ -45,3 +45,10 @@ drwxr-xr-x@ 81 kaiyu  staff   2592 11月  4 14:00 ..
 ./src/test/scala/nebflow/core/dataroot/LegacyRootMigrationSpec.scala:91:      val report: MigrationReport = RootLayout.migrate(machineRoot)
 ./src/test/scala/nebflow/core/dataroot/LegacyRootMigrationSpec.scala:122:      RootLayout.rollback(report)
 ./src/test/scala/nebflow/core/dataroot/LegacyRootMigrationSpec.scala:148:      val report = RootLayout.migrate(machineRoot)
+
+=== E. 复验：演练收尾时在 main 新 tip 上重跑（main 在演练期间前进多次）===
+main tip = c5c50719c Merge branch 'delegate/delegate-nebflow-4280aa54' — presence 直连根修：候选地址预探（PresenceCandidateProbe）+ 取证
+src/main/scala 中 RootLayout.migrate / RootLayout.rollback 调用点数量 = 0
+root 包文件（main tip）= src/main/scala/nebflow/core/root/AccountRoot.scala src/main/scala/nebflow/core/root/Guards.scala src/main/scala/nebflow/core/root/RootLadder.scala src/main/scala/nebflow/core/root/RootLayout.scala 
+真根现有布局物数量 = 0
+(以上复核于 2026-11-04 16:07:01 执行；结论：§0 的三条证据在最新 main 上依然成立)
