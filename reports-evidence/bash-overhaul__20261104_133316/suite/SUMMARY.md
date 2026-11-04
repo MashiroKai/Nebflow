@@ -227,3 +227,17 @@ git worktree remove --force /tmp/bashoverhaul-baseline-aade799e
 **全量 `sbt test` 跑完（9085 例），本批引入的回归 0 条**；41 条红全部经「detached 基线 77afefc77 逐用例对照」证实为改前即红或负载/顺序间歇，
 本批 2 条真红已修并复跑转绿（`fix-verify-01.log`）。全量不是「全绿」，是「**本批零红 + 既有红逐条有据**」——按此口径交付，不粉饰。
 
+---
+
+## 8. 证据导航（收口批补 · 单一入口，不另建 INDEX 文件）
+
+| 面 | 路径（相对本证据根） | 读什么 |
+|---|---|---|
+| 红相 | `red/SUMMARY.md` | 缺陷复现（D1–D11 现场）、改前基线读数、15 处红相边界 |
+| 绿相 | `green/SUMMARY.md` | 逐 T 绿读数、M3 内存不变量、断言变更逐条依据、绿相 src 改动 3 处 |
+| 端到端 | `e2e/NUMBERS.md` | 改前/改后对照（10 次查询即死 vs 2 次调用、送达延迟 3ms）、逐用例读数、隔离实例冒烟 |
+| 全量 | 本文件 §1-§7 | 三轮跑（含一次作废）、48 红逐条归属、基线命令、修复依据 |
+| 跨批相交 | `green/T7-post-merge-parity.md` | route-tiers 批与 T7 同改 `RemoteExecutor.scala` 的逐 hunk 不相交裁定 + 运行时复核待补 |
+| 知识文档（库内） | `<dataRoot>/projects/stand/.stand/docs/bash-tool-overhaul__20261104_194409__bash-overhaul-20261104-v3.md` | 收口报告：T1–T7 红→绿总表、LoopGuard 新判据逐字口径、提示词删改前后对照、刻意未做项与开放项 |
+
+
