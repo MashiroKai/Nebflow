@@ -28,8 +28,16 @@ import munit.FunSuite
  */
 class MailDispatcherReplyBatchSpec extends FunSuite:
 
+  // seal 批（2026-11-03）：本 spec 判的是**打包窗在场时**的行为，而封存默认关窗
+  // （`Defaults.MailProcessEnabled == false ⇒ windowMs = 0`）⇒ 每条用例前显式复活，
+  // 用例后清干净（`Test / parallelExecution := false`，套件间零残留）。
   override def beforeEach(context: munit.BeforeEach): Unit =
+    nebflow.core.boot.ProcessSealProps.enableMail()
     // clear the in-process buffer before each case (single Ref, shared across suites)
+    MailTool.flushDispatcherReplies().unsafeRunSync()
+
+  override def afterEach(context: munit.AfterEach): Unit =
+    nebflow.core.boot.ProcessSealProps.clearAll()
     MailTool.flushDispatcherReplies().unsafeRunSync()
 
   test("A · empty-window flush is a no-op (no injection, no error)"):
