@@ -186,6 +186,17 @@ object ProjectCrashRecovery:
       }
       resumed = outcomes.collect { case (id, Some(Right(ctx))) => (id, ctx) }
       failedReasons: List[String] = outcomes.collect { case (_, Some(Left(reason))) => reason }
+      // C-2 队列兜底回放（2026-11-04）：**未被认领**的节点（wiring/pending 等）台账里
+      // 的「已排队未投递」消息追加进 task（见 NodeRecovery.replayPendingNodeMessages）。
+      // 必须跑在 claim 循环**之后**：已认领节点归 resume prompt 回放腿，两腿不相交。
+      // fail-soft（内部已兜）：回放失败不阻断 boot 汇总/慢段。
+      replayed <- rt.engine.replayPendingNodeMessages()
+      _ <-
+        if replayed <= 0 then IO.unit
+        else
+          logger.info(
+            s"[boot-recovery] project '${rt.project.name}': $replayed node-message(s) replayed into their node tasks (never delivered before the crash)"
+          )
       actions = resumed.size + failedReasons.size
       _ <-
         if actions == 0 then IO.unit
@@ -514,6 +525,14 @@ object ProjectCrashRecovery:
                         }
                       resumed = outcomes.collect { case (id, Some(Right(ctx))) => (id, ctx) }
                       failed = outcomes.count(_._2.exists(_.isLeft))
+                      // C-2 队列兜底回放（同项目 sweep 腿；delegate 作用域同判据）。
+                      replayed <- h.engine.replayPendingNodeMessages()
+                      _ <-
+                        if replayed <= 0 then IO.unit
+                        else
+                          logger.info(
+                            s"[boot-recovery] delegate scope '$scope': $replayed node-message(s) replayed into their node tasks"
+                          )
                       _ = logger.info(
                         s"[boot-recovery] delegate scope '$scope': ${resumed.size} node(s) claimed for rehydrate, $failed failed (events in ${h.baseWorkspace}/.nebflow/flow-map-events.jsonl; no dispatcher notify — creator-delegate routing lands with N1 cut 3)"
                       )

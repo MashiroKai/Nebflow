@@ -1,0 +1,403 @@
+[sbt-gate] SBT_GATE=off — gate bypassed (no serialization, no heap cap)
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-76417e90-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-76417e90/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-76417e90/)
+[info] compiling 4 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-76417e90/target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 1 Scala source to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-76417e90/target/scala-3.5.2/test-classes ...
+[info] done compiling
+[warn] javaOptions will be ignored, fork is set to false
+16:07:36.542 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presence-dial-overhaul11497320355930716901/device.json — minted deviceId=6d491d55-166b-564f-bf35-452e42db5501 (scope=home|096d09b8-da88-5d7b-8d86-11ac55ad0483, machine-code derived) and persisted
+16:07:38.313 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-race via http://127.0.0.3:64283: timeout after 1500ms (dial target 127.0.0.3:64283; tried 2 candidate endpoint(s))
+16:07:38.316 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-race via http://127.0.0.2:64283: timeout after 1500ms (dial target 127.0.0.2:64283; tried 2 candidate endpoint(s))
+16:07:38.321 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-race via http://127.0.0.3:64283: timeout after 1500ms (dial target 127.0.0.3:64283; tried 2 candidate endpoint(s))
+16:07:38.325 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-race endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=1694 cacheHit=false decision=relay-no-answer
+16:07:39.874 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-race via http://127.0.0.2:64283: timeout after 1500ms (dial target 127.0.0.2:64283; tried 2 candidate endpoint(s))
+16:07:41.386 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-race via http://127.0.0.3:64283: timeout after 1500ms (dial target 127.0.0.3:64283; tried 2 candidate endpoint(s))
+16:07:41.386 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-race endpoints=2 dialed=2 concurrent=false pool=io-blocking(legacy) dialMs=3024 cacheHit=false decision=relay-no-answer
+16:07:41.429 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presence-dial-overhaul12425826181190531079/device.json — minted deviceId=0def8e96-6266-55c8-a88c-24f4039c6df8 (scope=home|eb1872d2-d9a0-5dd2-8423-771ab694a3e0, machine-code derived) and persisted
+16:07:42.942 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-capped via http://127.0.0.3:64300: timeout after 1500ms (dial target 127.0.0.3:64300; tried 6 candidate endpoint(s))
+16:07:42.943 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-capped via http://127.0.0.5:64300: timeout after 1500ms (dial target 127.0.0.5:64300; tried 6 candidate endpoint(s))
+16:07:42.944 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-capped via http://127.0.0.2:64300: timeout after 1500ms (dial target 127.0.0.2:64300; tried 6 candidate endpoint(s))
+16:07:42.944 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-capped via http://127.0.0.4:64300: timeout after 1500ms (dial target 127.0.0.4:64300; tried 6 candidate endpoint(s))
+16:07:42.944 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-capped via http://127.0.0.5:64300: timeout after 1500ms (dial target 127.0.0.5:64300; tried 6 candidate endpoint(s))
+16:07:42.946 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-capped endpoints=6 dialed=4 concurrent=true pool=presence-dial-* dialMs=1512 cacheHit=false decision=relay-no-answer
+16:07:42.946 [36mINFO [0m nebflow.neblink.presence - Presence dial round for Dev-capped truncated after 4 candidate(s) (concurrency cap 4 / round budget 12000ms) — the remaining candidate(s) wait for the next beat
+16:07:42.983 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presence-dial-overhaul3514727288496785069/device.json — minted deviceId=278385f7-9e46-5c7f-9cf7-5271f48c3a3e (scope=home|60342d34-8dd3-53cc-9a45-5457899474c8, machine-code derived) and persisted
+16:07:43.422 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-firstwin via http://127.0.0.1:64308 (dial target 127.0.0.1:64308)
+16:07:43.425 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-firstwin endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=439 cacheHit=false decision=p2p
+16:07:43.457 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presence-dial-overhaul5201012690257373749/device.json — minted deviceId=fc548420-c311-5f97-8de9-ac494f67048b (scope=home|13677857-1c89-562a-a7a7-0705a03b9a48, machine-code derived) and persisted
+16:07:45.033 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-c3-det via http://127.0.0.3:64311: timeout after 1500ms (dial target 127.0.0.3:64311; tried 2 candidate endpoint(s))
+16:07:45.033 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-c3-det via http://127.0.0.2:64311: timeout after 1500ms (dial target 127.0.0.2:64311; tried 2 candidate endpoint(s))
+16:07:45.034 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-c3-det via http://127.0.0.3:64311: timeout after 1500ms (dial target 127.0.0.3:64311; tried 2 candidate endpoint(s))
+16:07:45.034 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-c3-det endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=1516 cacheHit=false decision=relay-no-answer
+16:07:46.546 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-c3-det via http://127.0.0.2:64311: timeout after 1500ms (dial target 127.0.0.2:64311; tried 2 candidate endpoint(s))
+16:07:46.547 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-c3-det via http://127.0.0.3:64311: timeout after 1500ms (dial target 127.0.0.3:64311; tried 2 candidate endpoint(s))
+16:07:48.056 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-c3-det via http://127.0.0.2:64311: timeout after 1500ms (dial target 127.0.0.2:64311; tried 2 candidate endpoint(s))
+16:07:48.057 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-c3-det via http://127.0.0.3:64311: timeout after 1500ms (dial target 127.0.0.3:64311; tried 2 candidate endpoint(s))
+16:07:49.562 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-c3-det via http://127.0.0.2:64311: timeout after 1500ms (dial target 127.0.0.2:64311; tried 2 candidate endpoint(s))
+16:07:49.569 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-c3-det via http://127.0.0.3:64311: timeout after 1500ms (dial target 127.0.0.3:64311; tried 2 candidate endpoint(s))
+16:07:51.073 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-c3-det via http://127.0.0.2:64311: timeout after 1500ms (dial target 127.0.0.2:64311; tried 2 candidate endpoint(s))
+16:07:51.073 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-c3-det via http://127.0.0.3:64311: timeout after 1500ms (dial target 127.0.0.3:64311; tried 2 candidate endpoint(s))
+16:07:51.076 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-c3-det via http://127.0.0.3:64311: timeout × 5 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+16:07:51.076 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-c3-det via http://127.0.0.2:64311: timeout × 5 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+16:07:51.107 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presence-dial-overhaul3905740675285079331/device.json — minted deviceId=dc536537-69bb-5fee-ab6e-381f9b80165e (scope=home|71d6acb1-b442-59b0-9103-6d8b3d8f326d, machine-code derived) and persisted
+16:07:51.112 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-thread via http://127.0.0.1:64420: ConnectException (dial target 127.0.0.1:64420; tried 1 candidate endpoint(s))
+16:07:51.113 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-thread endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=3 cacheHit=false decision=relay-no-answer
+16:07:51.121 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-thread via http://127.0.0.1:64420: ConnectException (dial target 127.0.0.1:64420; tried 1 candidate endpoint(s))
+16:07:51.121 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-thread endpoints=1 dialed=1 concurrent=false pool=io-blocking(legacy) dialMs=2 cacheHit=false decision=relay-no-answer
+16:07:51.150 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presence-dial-overhaul1408482384312239644/device.json — minted deviceId=db0b496c-f31d-5d59-9f50-d401ac3aaf25 (scope=home|c7be6fbd-cec1-5318-b3b8-84eb4e74050c, machine-code derived) and persisted
+16:07:51.156 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-shared endpoints=1 dialed=0 concurrent=true pool=presence-dial-* dialMs=0 cacheHit=true decision=relay-negative-cache(59998ms left)
+16:07:51.181 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presence-dial-overhaul12191324132632764360/device.json — minted deviceId=3602f214-1398-55d9-a42f-764b884b7250 (scope=home|f56f8ebf-bdfe-57c1-8dfb-2d0255f3408a, machine-code derived) and persisted
+16:07:51.185 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-writer via http://127.0.0.1:64426: ConnectException (dial target 127.0.0.1:64426; tried 1 candidate endpoint(s))
+16:07:51.187 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-writer endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-no-answer negative=#1 window=60000ms
+16:07:51.210 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presence-dial-overhaul12763733686187192197/device.json — minted deviceId=907bc85e-0de9-5bce-ac04-5f771e8f58a6 (scope=home|6ad68361-6218-5ef1-be41-3dd53dde373c, machine-code derived) and persisted
+16:07:51.213 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-clearer via http://127.0.0.1:64429: ConnectException (dial target 127.0.0.1:64429; tried 1 candidate endpoint(s))
+16:07:51.213 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-clearer endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-no-answer negative=#1 window=60000ms
+16:07:51.217 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-clearer via http://127.0.0.1:64430 (dial target 127.0.0.1:64430)
+16:07:51.217 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-clearer endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=2 cacheHit=false decision=p2p
+16:07:51.241 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presence-dial-overhaul9442233701367065492/device.json — minted deviceId=52428b18-481b-52a6-b0a0-67c8a3701d1e (scope=home|17636b7c-afad-575d-8f9a-f4f6409ef95a, machine-code derived) and persisted
+16:07:51.243 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-logged via http://127.0.0.1:64435: ConnectException (dial target 127.0.0.1:64435; tried 1 candidate endpoint(s))
+16:07:51.244 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-logged endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-no-answer
+16:07:51.270 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presence-dial-overhaul17845148320077550929/device.json — minted deviceId=e8784a24-1ce8-5898-b83e-79a5207d3dca (scope=home|4df50f04-9796-5331-95c0-0ecda085db3e, machine-code derived) and persisted
+16:07:51.272 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-cachedlog endpoints=1 dialed=0 concurrent=true pool=presence-dial-* dialMs=0 cacheHit=true decision=relay-negative-cache(60000ms left)
+[32mnebflow.neblink.NeblinkPresenceDialConcurrencySpec:[0m
+[32m  + [0m[32mP3 护栏：GatewayMain 的生产装配必须显式 reachLedger = Some(P2pReachability.current)[0m [90m0.152s[0m
+[32m  + [0m[32mP2 护栏：拨号体只有 dialBlocking 一个线程归属收口点，且不许直连 IO.blocking[0m [90m0.006s[0m
+[32m  + [0m[32mP1 读数：并发上界 = max(单候选预算)，串行上界 = Σ（纯映射对照）[0m [90m0.017s[0m
+[32m  + [0m[32mP1 实拨：并发轮 ≈ max（1×预算），串行对照臂 ≈ Σ（2×预算）——同方法只翻调度开关[0m [90m5.066s[0m
+[32m  + [0m[32mP1 并发度有界：6 候选一轮只拨 4，其余截断留痕（truncated=true）等下一拍[0m [90m1.551s[0m
+[32m  + [0m[32mP1 首胜：死者在前 + 活者在后，活者拨通即赢，且不等黑洞候选付满预算[0m [90m0.481s[0m
+[32m  + [0m[32mC3 收口确定性：并发全败时 dialStatus.endpoint 恒 = 择优序末尾候选（一轮写一次，不是竞速）[0m [90m7.65s[0m
+[32m  + [0m[32mP2 实拨：生产口径拨号体落在 presence-dial-*；改前口径落在 io-compute-*（红证据）[0m [90m0.043s[0m
+[32m  + [0m[32mP2 断言本体：拨号体跑在非专用池线程 ⇒ PresenceDialThreadViolation 当场炸红[0m [90m0.003s[0m
+[32m  + [0m[32mP3 零成本轮：共用真源命中负缓存 ⇒ 不拨任何候选、0ms、不覆盖 dialStatus[0m [90m0.034s[0m
+[32m  + [0m[32mP3 写面：真拨全不通 ⇒ 失败写回**共用**账本；地址集变化 ⇒ 判据失效（不跨地址集复用）[0m [90m0.028s[0m
+[32m  + [0m[32mP3 成功清账：任一成功 ⇒ 该设备负证据立刻清（含旧地址集的条目，noteSuccess 按 deviceId 清）[0m [90m0.03s[0m
+[32m  + [0m[32mP4 结构化行：一条 [presence-dial] 带齐五项读数，决策不变只落 DEBUG 不再发 INFO[0m [90m0.029s[0m
+[32m  + [0m[32mP4 零成本轮也留一条结构化行（decision=relay-negative-cache），重复决策不再发 INFO[0m [90m0.025s[0m
+16:07:51.338 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fdpres-spec8546584249821691895/device.json — minted deviceId=709dcbd7-d284-56ff-805f-5b6af244f522 (scope=home|f4498f59-36a5-5ea9-bfd9-9f153be9bb88, machine-code derived) and persisted
+16:07:53.556 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-warmup via http://127.0.0.1:64441 (dial target 127.0.0.1:64441)
+16:07:53.557 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=2216 cacheHit=false decision=p2p
+16:07:55.774 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-slow via http://127.0.0.1:64441 (dial target 127.0.0.1:64441)
+16:07:55.774 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-slow endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=2216 cacheHit=false decision=p2p
+16:07:55.798 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fdpres-spec4275524971765361685/device.json — minted deviceId=acc63e2c-e6a3-52ce-9e8c-163f191e0d4e (scope=home|35b0153e-0b4b-54de-9aa6-50b2be96cad9, machine-code derived) and persisted
+16:07:57.305 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-slow1500 via http://127.0.0.1:64457: timeout after 1500ms (dial target 127.0.0.1:64457; tried 1 candidate endpoint(s))
+16:07:57.306 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-slow1500 endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1506 cacheHit=false decision=relay-no-answer
+16:07:57.332 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fdpres-spec17957781820605346868/device.json — minted deviceId=93e39daa-b510-5360-a50c-93e755c30304 (scope=home|feb95f08-03ec-5a36-aad4-6b5ae2770f00, machine-code derived) and persisted
+16:07:57.336 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-evict via http://127.0.0.1:64464: ConnectException (dial target 127.0.0.1:64464; tried 2 candidate endpoint(s))
+16:07:57.336 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-evict via http://127.0.0.1:64465: ConnectException (dial target 127.0.0.1:64465; tried 2 candidate endpoint(s))
+16:07:57.336 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-evict endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=2 cacheHit=false decision=relay-no-answer
+16:07:57.338 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-evict via http://127.0.0.1:64464: ConnectException (dial target 127.0.0.1:64464; tried 2 candidate endpoint(s))
+16:07:57.338 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-evict via http://127.0.0.1:64465: ConnectException (dial target 127.0.0.1:64465; tried 2 candidate endpoint(s))
+16:07:57.340 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-evict via http://127.0.0.1:64465: refused × 3 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+16:07:57.340 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-evict via http://127.0.0.1:64464: ConnectException (dial target 127.0.0.1:64464; tried 2 candidate endpoint(s))
+16:07:57.340 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-evict via http://127.0.0.1:64464: refused × 3 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+16:07:57.340 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-evict via http://127.0.0.1:64465: ConnectException (dial target 127.0.0.1:64465; tried 2 candidate endpoint(s))
+16:07:57.341 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-evict via http://127.0.0.1:64464: ConnectException (dial target 127.0.0.1:64464; tried 2 candidate endpoint(s))
+16:07:57.341 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-evict endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-half-open-no-answer
+16:07:57.364 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fdpres-spec6638823027859613517/device.json — minted deviceId=0d971c9a-3c14-5dc7-812d-a83b6ce1d5c0 (scope=home|9f3fffac-8d74-5c12-bb14-b27b5d72f864, machine-code derived) and persisted
+16:07:58.867 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-mix via http://127.0.0.2:64480: timeout after 1500ms (dial target 127.0.0.2:64480; tried 2 candidate endpoint(s))
+16:07:58.871 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-mix via http://127.0.0.1:64480 (dial target 127.0.0.1:64480)
+16:07:58.871 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-mix endpoints=2 dialed=2 concurrent=false pool=io-blocking(legacy) dialMs=1505 cacheHit=false decision=p2p
+16:07:58.956 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-mix, auto-reconnecting...
+16:08:00.463 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-mix via http://127.0.0.2:64480: timeout after 1500ms (dial target 127.0.0.2:64480; tried 2 candidate endpoint(s))
+16:08:00.466 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-mix via http://127.0.0.1:64480 (dial target 127.0.0.1:64480)
+16:08:00.466 [36mINFO [0m nebflow.neblink.presence - Reconnected to Dev-mix after 1 attempt(s)
+16:08:00.562 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-mix, auto-reconnecting...
+16:08:02.074 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-mix via http://127.0.0.2:64480: timeout after 1500ms (dial target 127.0.0.2:64480; tried 2 candidate endpoint(s))
+16:08:02.077 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-mix via http://127.0.0.1:64480 (dial target 127.0.0.1:64480)
+16:08:02.077 [36mINFO [0m nebflow.neblink.presence - Reconnected to Dev-mix after 1 attempt(s)
+16:08:02.163 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-mix, auto-reconnecting...
+16:08:03.668 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-mix via http://127.0.0.2:64480: timeout after 1500ms (dial target 127.0.0.2:64480; tried 2 candidate endpoint(s))
+16:08:03.670 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-mix via http://127.0.0.1:64480 (dial target 127.0.0.1:64480)
+16:08:03.670 [36mINFO [0m nebflow.neblink.presence - Reconnected to Dev-mix after 1 attempt(s)
+16:08:03.761 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-mix, auto-reconnecting...
+16:08:05.272 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-mix via http://127.0.0.2:64480: timeout after 1500ms (dial target 127.0.0.2:64480; tried 2 candidate endpoint(s))
+16:08:05.272 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-mix via http://127.0.0.2:64480: timeout × 5 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+16:08:05.275 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-mix via http://127.0.0.1:64480 (dial target 127.0.0.1:64480)
+16:08:05.275 [36mINFO [0m nebflow.neblink.presence - Reconnected to Dev-mix after 1 attempt(s)
+16:08:05.365 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-mix, auto-reconnecting...
+16:08:05.369 [36mINFO [0m nebflow.neblink.presence - Reconnected to Dev-mix after 1 attempt(s)
+16:08:05.495 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fdpres-spec8575996915700607291/device.json — minted deviceId=191d7646-9926-5c98-a324-e55d4c266158 (scope=home|8925ce00-73da-5b36-a443-3b9b3f36510e, machine-code derived) and persisted
+16:08:06.998 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-blackhole via http://127.0.0.3:64513: timeout after 1500ms (dial target 127.0.0.3:64513; tried 2 candidate endpoint(s))
+16:08:07.005 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-blackhole via http://127.0.0.2:64513: timeout after 1500ms (dial target 127.0.0.2:64513; tried 2 candidate endpoint(s))
+16:08:07.005 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-blackhole via http://127.0.0.3:64513: timeout after 1500ms (dial target 127.0.0.3:64513; tried 2 candidate endpoint(s))
+16:08:07.005 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-blackhole endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=1508 cacheHit=false decision=relay-no-answer
+16:08:08.512 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-blackhole via http://127.0.0.2:64513: timeout after 1500ms (dial target 127.0.0.2:64513; tried 2 candidate endpoint(s))
+16:08:08.515 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-blackhole via http://127.0.0.3:64513: timeout after 1500ms (dial target 127.0.0.3:64513; tried 2 candidate endpoint(s))
+16:08:08.548 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fdpres-spec2780794837150782937/device.json — minted deviceId=7f6543cf-b5e3-5d81-9738-6860cce10a70 (scope=home|a83a898b-86c2-5cac-95a7-ef9cadc05465, machine-code derived) and persisted
+16:08:08.552 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-giveup via http://127.0.0.1:64525: ConnectException (dial target 127.0.0.1:64525; tried 2 candidate endpoint(s))
+16:08:08.553 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-giveup via http://127.0.0.1:64524: ConnectException (dial target 127.0.0.1:64524; tried 2 candidate endpoint(s))
+16:08:08.553 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-giveup via http://127.0.0.1:64525: ConnectException (dial target 127.0.0.1:64525; tried 2 candidate endpoint(s))
+16:08:08.553 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-giveup endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=2 cacheHit=false decision=relay-no-answer
+16:08:08.556 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-giveup via http://127.0.0.1:64524: ConnectException (dial target 127.0.0.1:64524; tried 2 candidate endpoint(s))
+16:08:08.556 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-giveup via http://127.0.0.1:64525: ConnectException (dial target 127.0.0.1:64525; tried 2 candidate endpoint(s))
+16:08:08.559 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-giveup via http://127.0.0.1:64524: ConnectException (dial target 127.0.0.1:64524; tried 2 candidate endpoint(s))
+16:08:08.559 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-giveup via http://127.0.0.1:64525: ConnectException (dial target 127.0.0.1:64525; tried 2 candidate endpoint(s))
+16:08:08.559 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-giveup via http://127.0.0.1:64524: refused × 3 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+16:08:08.559 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-giveup via http://127.0.0.1:64525: refused × 3 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+16:08:08.562 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-giveup via http://127.0.0.1:64524: ConnectException (dial target 127.0.0.1:64524; tried 2 candidate endpoint(s))
+16:08:08.562 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-giveup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=2 cacheHit=false decision=relay-half-open-no-answer
+16:08:08.564 [36mINFO [0m nebflow.neblink.presence - Reconnect gave up after 20 attempts (drain bound ≈481s @ 12000ms/round); dead-endpoint verdicts reset for Dev-giveup — handing back to the 45s sync beat
+16:08:08.568 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-giveup via http://127.0.0.1:64525: ConnectException (dial target 127.0.0.1:64525; tried 2 candidate endpoint(s))
+16:08:08.568 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-giveup endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=3 cacheHit=false decision=relay-no-answer
+16:08:08.598 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fdpres-spec15883081636668239882/device.json — minted deviceId=fbfe2675-8742-50fa-a98c-5e8e9d021eb5 (scope=home|131d4de8-78ab-5f78-913f-10196c10baf5, machine-code derived) and persisted
+16:08:08.605 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-rename via http://127.0.0.1:64544: ConnectException (dial target 127.0.0.1:64544; tried 2 candidate endpoint(s))
+16:08:08.606 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-rename via http://127.0.0.1:64545: ConnectException (dial target 127.0.0.1:64545; tried 2 candidate endpoint(s))
+16:08:08.606 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-rename endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=5 cacheHit=false decision=relay-no-answer
+16:08:08.609 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-rename via http://127.0.0.1:64544: ConnectException (dial target 127.0.0.1:64544; tried 2 candidate endpoint(s))
+16:08:08.609 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-rename via http://127.0.0.1:64545: ConnectException (dial target 127.0.0.1:64545; tried 2 candidate endpoint(s))
+16:08:08.615 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-rename via http://127.0.0.1:64544: ConnectException (dial target 127.0.0.1:64544; tried 2 candidate endpoint(s))
+16:08:08.615 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-rename via http://127.0.0.1:64544: refused × 3 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+16:08:08.616 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-rename via http://127.0.0.1:64545: ConnectException (dial target 127.0.0.1:64545; tried 2 candidate endpoint(s))
+16:08:08.617 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-rename via http://127.0.0.1:64545: refused × 3 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+16:08:08.623 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-rename via http://127.0.0.1:64544: ConnectException (dial target 127.0.0.1:64544; tried 2 candidate endpoint(s))
+16:08:08.624 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-rename endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=2 cacheHit=false decision=relay-half-open-no-answer
+16:08:08.647 [36mINFO [0m nebflow.neblink.presence - Presence candidate list changed for Dev-rename — dead-endpoint verdicts reset
+16:08:08.649 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-rename via http://127.0.0.1:64545: ConnectException (dial target 127.0.0.1:64545; tried 2 candidate endpoint(s))
+16:08:08.650 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-rename via http://127.0.0.1:64544: ConnectException (dial target 127.0.0.1:64544; tried 2 candidate endpoint(s))
+16:08:08.650 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-rename endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-no-answer
+16:08:08.704 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fdpres-spec5209046258696155160/device.json — minted deviceId=328324ec-fe8a-5e93-8293-1fb3e321f9a2 (scope=home|2179744f-4fcf-5415-9b79-fafd7796b80f, machine-code derived) and persisted
+16:08:08.708 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-ttl via http://127.0.0.1:64564: ConnectException (dial target 127.0.0.1:64564; tried 2 candidate endpoint(s))
+16:08:08.709 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-ttl via http://127.0.0.1:64565: ConnectException (dial target 127.0.0.1:64565; tried 2 candidate endpoint(s))
+16:08:08.722 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-ttl endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=16 cacheHit=false decision=relay-no-answer
+16:08:08.743 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-ttl via http://127.0.0.1:64564: ConnectException (dial target 127.0.0.1:64564; tried 2 candidate endpoint(s))
+16:08:08.745 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-ttl via http://127.0.0.1:64565: ConnectException (dial target 127.0.0.1:64565; tried 2 candidate endpoint(s))
+16:08:08.754 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-ttl via http://127.0.0.1:64564: ConnectException (dial target 127.0.0.1:64564; tried 2 candidate endpoint(s))
+16:08:08.755 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-ttl via http://127.0.0.1:64564: refused × 3 (retry after 0s; also reset by namelist change / reconnect-ladder handback)
+16:08:08.755 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-ttl via http://127.0.0.1:64565: ConnectException (dial target 127.0.0.1:64565; tried 2 candidate endpoint(s))
+16:08:08.755 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-ttl via http://127.0.0.1:64565: refused × 3 (retry after 0s; also reset by namelist change / reconnect-ladder handback)
+16:08:08.763 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-ttl via http://127.0.0.1:64564: ConnectException (dial target 127.0.0.1:64564; tried 2 candidate endpoint(s))
+16:08:08.765 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-ttl endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=9 cacheHit=false decision=relay-half-open-no-answer
+16:08:09.370 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-ttl via http://127.0.0.1:64565: ConnectException (dial target 127.0.0.1:64565; tried 2 candidate endpoint(s))
+16:08:09.370 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-ttl via http://127.0.0.1:64564: ConnectException (dial target 127.0.0.1:64564; tried 2 candidate endpoint(s))
+16:08:09.370 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-ttl via http://127.0.0.1:64565: ConnectException (dial target 127.0.0.1:64565; tried 2 candidate endpoint(s))
+16:08:09.370 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-ttl endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=3 cacheHit=false decision=relay-no-answer
+16:08:09.397 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fdpres-spec4922558525695169622/device.json — minted deviceId=b0835e7c-08aa-5774-aa02-c999bcdc8326 (scope=home|4d29c824-063c-5dbb-b90f-1374095e252d, machine-code derived) and persisted
+16:08:10.906 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-beat via http://127.0.0.3:64584: timeout after 1500ms (dial target 127.0.0.3:64584; tried 2 candidate endpoint(s))
+16:08:10.910 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-beat via http://127.0.0.2:64584: timeout after 1500ms (dial target 127.0.0.2:64584; tried 2 candidate endpoint(s))
+16:08:10.910 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-beat via http://127.0.0.3:64584: timeout after 1500ms (dial target 127.0.0.3:64584; tried 2 candidate endpoint(s))
+16:08:10.910 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-beat endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=1511 cacheHit=false decision=relay-no-answer
+16:08:10.955 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fdpres-spec972888868143895609/device.json — minted deviceId=44f02da0-8e66-5c6d-9062-e9f5e9c32b09 (scope=home|4e117a78-2789-5f65-8113-11c6a1203506, machine-code derived) and persisted
+16:08:12.465 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-beatLegacy via http://127.0.0.2:64593: timeout after 1500ms (dial target 127.0.0.2:64593; tried 2 candidate endpoint(s))
+16:08:13.975 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-beatLegacy via http://127.0.0.3:64593: timeout after 1500ms (dial target 127.0.0.3:64593; tried 2 candidate endpoint(s))
+16:08:13.975 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-beatLegacy endpoints=2 dialed=2 concurrent=false pool=io-blocking(legacy) dialMs=3018 cacheHit=false decision=relay-no-answer
+16:08:13.998 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fdpres-spec16678352855504500116/device.json — minted deviceId=85ed5a47-6c12-5df4-a4a2-a94379183908 (scope=home|78ad94b8-54f0-5f4a-9cdf-3dd50610e221, machine-code derived) and persisted
+16:08:14.002 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-ok via http://127.0.0.1:64605 (dial target 127.0.0.1:64605)
+16:08:14.002 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-ok endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=2 cacheHit=false decision=p2p
+16:08:14.028 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fdpres-spec16190895811663009250/device.json — minted deviceId=13650f52-c8ac-5f2d-a018-a420d771e9d9 (scope=home|37b4a30f-ee5b-52fa-9549-68bef4de5c0c, machine-code derived) and persisted
+16:08:15.537 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-axis via http://127.0.0.2:64607: timeout after 1500ms (dial target 127.0.0.2:64607; tried 2 candidate endpoint(s))
+16:08:15.537 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-axis via http://127.0.0.3:64607: timeout after 1500ms (dial target 127.0.0.3:64607; tried 2 candidate endpoint(s))
+16:08:15.537 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-axis via http://127.0.0.3:64607: timeout after 1500ms (dial target 127.0.0.3:64607; tried 2 candidate endpoint(s))
+16:08:15.537 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-axis endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=1507 cacheHit=false decision=relay-no-answer
+16:08:15.558 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fdpres-spec8840786285477439604/device.json — minted deviceId=4a26fa7c-a17d-5bf5-a2db-1ee7680e6592 (scope=home|46554c45-1a89-5995-b767-486bbbd04d37, machine-code derived) and persisted
+16:08:17.062 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-axes via http://127.0.0.2:64615: timeout after 1500ms (dial target 127.0.0.2:64615; tried 2 candidate endpoint(s))
+16:08:17.062 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-axes via http://127.0.0.3:64615: timeout after 1500ms (dial target 127.0.0.3:64615; tried 2 candidate endpoint(s))
+16:08:17.063 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-axes endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=1503 cacheHit=false decision=relay-no-answer
+16:08:18.573 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-axes via http://127.0.0.2:64615: timeout after 1500ms (dial target 127.0.0.2:64615; tried 2 candidate endpoint(s))
+16:08:18.573 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-axes via http://127.0.0.3:64615: timeout after 1500ms (dial target 127.0.0.3:64615; tried 2 candidate endpoint(s))
+16:08:20.083 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-axes via http://127.0.0.2:64615: timeout after 1500ms (dial target 127.0.0.2:64615; tried 2 candidate endpoint(s))
+16:08:20.085 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-axes via http://127.0.0.3:64615: timeout after 1500ms (dial target 127.0.0.3:64615; tried 2 candidate endpoint(s))
+16:08:21.587 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-axes via http://127.0.0.2:64615: timeout after 1500ms (dial target 127.0.0.2:64615; tried 2 candidate endpoint(s))
+16:08:21.587 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-axes via http://127.0.0.3:64615: timeout after 1500ms (dial target 127.0.0.3:64615; tried 2 candidate endpoint(s))
+16:08:23.092 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-axes via http://127.0.0.3:64615: timeout after 1500ms (dial target 127.0.0.3:64615; tried 2 candidate endpoint(s))
+16:08:23.092 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-axes via http://127.0.0.2:64615: timeout after 1500ms (dial target 127.0.0.2:64615; tried 2 candidate endpoint(s))
+16:08:23.092 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-axes via http://127.0.0.3:64615: timeout × 5 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+16:08:23.092 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-axes via http://127.0.0.2:64615: timeout × 5 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+16:08:24.604 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-axes via http://127.0.0.2:64615: timeout after 1500ms (dial target 127.0.0.2:64615; tried 2 candidate endpoint(s))
+16:08:24.605 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-axes endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1511 cacheHit=false decision=relay-half-open-no-answer
+16:08:24.631 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fdpres-spec17156393394351214326/device.json — minted deviceId=647f75a7-269d-539a-b862-93c79c2468d5 (scope=home|55870e76-9bdd-5c80-8af4-faaaf617dad7, machine-code derived) and persisted
+16:08:26.134 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-survive via http://127.0.0.3:64652: timeout after 1500ms (dial target 127.0.0.3:64652; tried 2 candidate endpoint(s))
+16:08:26.134 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-survive via http://127.0.0.2:64652: timeout after 1500ms (dial target 127.0.0.2:64652; tried 2 candidate endpoint(s))
+16:08:26.134 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-survive via http://127.0.0.3:64652: timeout after 1500ms (dial target 127.0.0.3:64652; tried 2 candidate endpoint(s))
+16:08:26.134 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-survive endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=1501 cacheHit=false decision=relay-no-answer
+16:08:27.646 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-survive via http://127.0.0.2:64652: timeout after 1500ms (dial target 127.0.0.2:64652; tried 2 candidate endpoint(s))
+16:08:27.646 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-survive via http://127.0.0.3:64652: timeout after 1500ms (dial target 127.0.0.3:64652; tried 2 candidate endpoint(s))
+16:08:29.154 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-survive via http://127.0.0.2:64652: timeout after 1500ms (dial target 127.0.0.2:64652; tried 2 candidate endpoint(s))
+16:08:29.154 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-survive via http://127.0.0.3:64652: timeout after 1500ms (dial target 127.0.0.3:64652; tried 2 candidate endpoint(s))
+16:08:30.657 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-survive via http://127.0.0.2:64652: timeout after 1500ms (dial target 127.0.0.2:64652; tried 2 candidate endpoint(s))
+16:08:30.657 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-survive via http://127.0.0.3:64652: timeout after 1500ms (dial target 127.0.0.3:64652; tried 2 candidate endpoint(s))
+16:08:32.168 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-survive via http://127.0.0.3:64652: timeout after 1500ms (dial target 127.0.0.3:64652; tried 2 candidate endpoint(s))
+16:08:32.168 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-survive via http://127.0.0.2:64652: timeout after 1500ms (dial target 127.0.0.2:64652; tried 2 candidate endpoint(s))
+16:08:32.169 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-survive via http://127.0.0.3:64652: timeout × 5 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+16:08:32.169 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-survive via http://127.0.0.2:64652: timeout × 5 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+16:08:34.283 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-survive via http://127.0.0.2:64652: timeout after 1500ms (dial target 127.0.0.2:64652; tried 2 candidate endpoint(s))
+16:08:34.283 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-survive endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1511 cacheHit=false decision=relay-half-open-no-answer
+16:08:35.831 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fdpres-spec15309194489668161143/device.json — minted deviceId=8757c4de-ac5d-545e-8853-553265419f47 (scope=home|af171cf6-e99d-5c39-b762-ab9069af0baa, machine-code derived) and persisted
+16:08:35.835 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-readout via http://127.0.0.1:64678: ConnectException (dial target 127.0.0.1:64678; tried 2 candidate endpoint(s))
+16:08:35.835 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-readout via http://127.0.0.1:64677 (dial target 127.0.0.1:64677)
+16:08:35.836 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-readout endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=2 cacheHit=false decision=p2p
+16:08:35.836 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-readout, auto-reconnecting...
+16:08:35.839 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-readout via http://127.0.0.1:64678: ConnectException (dial target 127.0.0.1:64678; tried 2 candidate endpoint(s))
+16:08:35.839 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-readout via http://127.0.0.1:64677 (dial target 127.0.0.1:64677)
+16:08:35.839 [36mINFO [0m nebflow.neblink.presence - Reconnected to Dev-readout after 1 attempt(s)
+16:08:35.938 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-readout, auto-reconnecting...
+16:08:35.940 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-readout via http://127.0.0.1:64678: ConnectException (dial target 127.0.0.1:64678; tried 2 candidate endpoint(s))
+16:08:35.940 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-readout via http://127.0.0.1:64678: refused × 3 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+16:08:35.940 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-readout via http://127.0.0.1:64677 (dial target 127.0.0.1:64677)
+16:08:35.941 [36mINFO [0m nebflow.neblink.presence - Reconnected to Dev-readout after 1 attempt(s)
+16:08:36.040 [36mINFO [0m nebflow.neblink.presence - Presence candidate list changed for Dev-readout — dead-endpoint verdicts reset
+16:08:36.064 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-fdpres-spec15390702560337242898/device.json — minted deviceId=d719bbb3-4b22-5e67-8421-c1a30c2901b9 (scope=home|34eba0f6-8359-5f90-956b-e4628809b975, machine-code derived) and persisted
+16:08:37.572 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-nocollateral via http://127.0.0.2:64688: timeout after 1500ms (dial target 127.0.0.2:64688; tried 2 candidate endpoint(s))
+16:08:37.574 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-nocollateral via http://127.0.0.1:64688 (dial target 127.0.0.1:64688)
+16:08:37.574 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-nocollateral endpoints=2 dialed=2 concurrent=false pool=io-blocking(legacy) dialMs=1508 cacheHit=false decision=p2p
+16:08:37.657 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-nocollateral, auto-reconnecting...
+16:08:39.159 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-nocollateral via http://127.0.0.2:64688: timeout after 1500ms (dial target 127.0.0.2:64688; tried 2 candidate endpoint(s))
+16:08:39.163 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-nocollateral via http://127.0.0.1:64688 (dial target 127.0.0.1:64688)
+16:08:39.163 [36mINFO [0m nebflow.neblink.presence - Reconnected to Dev-nocollateral after 1 attempt(s)
+16:08:39.259 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-nocollateral, auto-reconnecting...
+16:08:40.769 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-nocollateral via http://127.0.0.2:64688: timeout after 1500ms (dial target 127.0.0.2:64688; tried 2 candidate endpoint(s))
+16:08:40.772 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-nocollateral via http://127.0.0.1:64688 (dial target 127.0.0.1:64688)
+16:08:40.772 [36mINFO [0m nebflow.neblink.presence - Reconnected to Dev-nocollateral after 1 attempt(s)
+16:08:40.857 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-nocollateral, auto-reconnecting...
+16:08:42.360 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-nocollateral via http://127.0.0.2:64688: timeout after 1500ms (dial target 127.0.0.2:64688; tried 2 candidate endpoint(s))
+16:08:42.363 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-nocollateral via http://127.0.0.1:64688 (dial target 127.0.0.1:64688)
+16:08:42.363 [36mINFO [0m nebflow.neblink.presence - Reconnected to Dev-nocollateral after 1 attempt(s)
+16:08:42.459 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-nocollateral, auto-reconnecting...
+16:08:43.962 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-nocollateral via http://127.0.0.2:64688: timeout after 1500ms (dial target 127.0.0.2:64688; tried 2 candidate endpoint(s))
+16:08:43.962 [33mWARN [0m nebflow.neblink.presence - Presence endpoint suppressed for Dev-nocollateral via http://127.0.0.2:64688: timeout × 5 (retry after 300s; also reset by namelist change / reconnect-ladder handback)
+16:08:43.966 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-nocollateral via http://127.0.0.1:64688 (dial target 127.0.0.1:64688)
+16:08:43.966 [36mINFO [0m nebflow.neblink.presence - Reconnected to Dev-nocollateral after 1 attempt(s)
+[32mnebflow.neblink.NeblinkPresenceDialBudgetSpec:[0m
+[32m  + [0m[32mF-D ① 地址类别 → 预算映射 + 单轮上界（纯读数；与现状 1500ms 对照）[0m [90m0.002s[0m
+[32m  + [0m[32mF-D ① 实拨：3000ms 档内握手 2200ms 的候选**不再被误判为死**（改前 1500ms 档必判死）[0m [90m4.461s[0m
+[32m  + [0m[32mF-D ① 对照：同一夹具在 1500ms 档（LAN 现状档）下被判死 —— 改前形态复现[0m [90m1.531s[0m
+[32m  + [0m[32mF-D ② 剔除：拒绝类 3 连击后该候选不再被拨；全部剔除时只半开探测最优候选[0m [90m0.035s[0m
+[32m  + [0m[32mF-D ② 负控：健康端点跨多拍从不被剔除，且每拍都必须被拨（黑洞候选第 5 次超时后才剔除）[0m [90m8.127s[0m
+[32m  + [0m[32mF-D ③ 语义：双候选全超时（2 拍 / 每候选 2 次超时）≠ 判死 —— 不剔除、仍在册、仍在拨[0m [90m3.048s[0m
+[32m  + [0m[32mF-D ③ 梯子参数/收手复位：退避曲线 + 真实时长上界读数 + 收手后死端点判定复位（恢复路径③）[0m [90m0.051s[0m
+[32m  + [0m[32mF-D ②/③ 恢复路径②：名册候选集合变化 ⇒ 死端点判定复位（设备换网/换地址/换择优序）[0m [90m0.107s[0m
+[32m  + [0m[32mF-D ② 恢复路径①：剔除有存活期（TTL 到期自动复位，注入 400ms 短 TTL 实测）[0m [90m0.696s[0m
+[32m  + [0m[32mF-D ④ sync 拍一致性：拍子本体不阻塞、拨号腿上界 ≤12s < 45s 拍 ⇒ 不跨拍重叠（实拨读数）[0m [90m1.559s[0m
+[32m  + [0m[32mP1 对照（同方法、只翻调度开关）：改前串行口径的拨号腿 ≈ Σ 预算，是本批收益的对照臂[0m [90m3.045s[0m
+[32m  + [0m[32mF-D ⑤ 零回归：首候选即通的成功路径行为与耗时不变（预算只作用于超时上界）[0m [90m0.03s[0m
+[32m  + [0m[32mT1 轴钉正：黑洞夹具首轮失败类必须是 Timeout（读到 Refused 即硬红，禁静默降级）[0m [90m1.532s[0m
+[32m  + [0m[32mT2 门槛轴可分：timeout 轴第 4 拍不得置窗、第 5 拍末置窗、第 6 拍半开探测（refused 轴第 4 拍早已置窗）[0m [90m9.068s[0m
+[32m  + [0m[32mT3 计数存活跨名册缺席：名册缺席一拍不得清账（改前：账本被抹 ⇒ 回册后从零重累）[0m [90m11.2s[0m
+[32m  + [0m[32mT4 剔除判读面：置窗恰 1 条 suppressed WARN、名册变化恰 1 条 changed INFO（同 run 对照 dial failed > 0）[0m [90m0.235s[0m
+[32m  + [0m[32mT5 §4 正例读数：10/8 · 172.16/12（两沿）· 192.168/16 均 Lan/1500ms；fc00::/7 现落 Other/2500ms（登记不改）[0m [90m0.002s[0m
+[32m  + [0m[32mT6 §4 行为臂：合法（活）候选跨名册缺席既不入窗也不被跳过；黑洞候选保持置窗（名册缺席≠清账原因）[0m [90m8.039s[0m
+16:08:44.136 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dial-status-spec1556392528346885317/device.json — minted deviceId=6e9cd5f0-89b2-5be0-bfb7-ce8d481747c7 (scope=home|4ba27c5e-6257-5512-b449-5a293447d876, machine-code derived) and persisted
+16:08:44.144 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for KAI via http://127.0.0.1:64729: ConnectException (dial target 127.0.0.1:64729; tried 2 candidate endpoint(s))
+16:08:44.144 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for KAI via http://127.0.0.1:64728: ConnectException (dial target 127.0.0.1:64728; tried 2 candidate endpoint(s))
+16:08:44.144 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=KAI endpoints=2 dialed=2 concurrent=true pool=presence-dial-* dialMs=5 cacheHit=false decision=relay-no-answer
+16:08:44.771 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dial-status-spec18319720433235039825/device.json — minted deviceId=b1a52580-0b6b-5712-9717-11a708cd3a0b (scope=home|726483c1-fa2d-5acc-b83f-389f22c861db, machine-code derived) and persisted
+16:08:44.800 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dial-status-spec12361982044624953119/device.json — minted deviceId=ad784a14-9a4a-5d97-9607-835da2b4fa57 (scope=home|342eb458-1fee-597e-b4c6-abb3075f279e, machine-code derived) and persisted
+16:08:44.802 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for KAI via http://127.0.0.1:64740: ConnectException (dial target 127.0.0.1:64740; tried 1 candidate endpoint(s))
+16:08:44.803 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=KAI endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=2 cacheHit=false decision=relay-no-answer
+16:08:44.824 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dial-status-spec16853042759214882949/device.json — minted deviceId=6a0d7c7c-9b07-51ee-9ff2-f70c3d8389ec (scope=home|a218e3e2-f3ae-5e7f-9519-8ebd8bab814f, machine-code derived) and persisted
+16:08:44.825 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for KAI via (no endpoint): no usable endpoint (empty peer address) (dial target (unresolved); tried 0 candidate endpoint(s))
+[32mnebflow.neblink.NeblinkDialStatusRouteSpec:[0m
+[32m  + [0m[32mC3: 拨号失败必须留痕——connect 记录原因/时刻，/neblink/status 可读（改前零留痕不可归因）[0m [90m0.655s[0m
+[32m  + [0m[32mC3: 从未拨过的 peer ⇒ lastDialError/lastDialAt 为 null（'没拨过' 与 '拨失敗' 可区分）[0m [90m0.028s[0m
+[32m  + [0m[32mC3/C1: peer.endpoints 空 ⇒ 退回单 address（单候选行为不回归）[0m [90m0.027s[0m
+[32m  + [0m[32mC3/C1: 空地址 peer ⇒ 留痕为 'no usable endpoint'，不再静默早返[0m [90m0.022s[0m
+[32mnebflow.neblink.PresenceCandidateProbeSpec:[0m
+[32m  + [0m[32m常数与拨号腿口径对齐：上报封顶 4 条 / TCP 建连上界 = 最贵档预算 3000ms[0m [90m0.0s[0m
+[32m  + [0m[32misUnreportableAddress：链路本地/未指定/回环/组播/广播 判为不可上报[0m [90m0.001s[0m
+[32m  + [0m[32misUnreportableAddress：tailnet / 私网 / 公网 一律放行（100.64/10 绝不能被丢）[0m [90m0.0s[0m
+[32m  + [0m[32misTunnelNicLabel：旧 marker 表漏掉的隧道/虚拟适配器被识别[0m [90m0.002s[0m
+[32m  + [0m[32misTunnelNicLabel：真实网卡不误判（含 tailscale 本身：不在 marker 表里）[0m [90m0.001s[0m
+[32m  + [0m[32msanitizeReported：丢污染地址、保序、去重、封顶 4 条[0m [90m0.002s[0m
+[32m  + [0m[32msanitizeReported：同地址不同端口是合法候选（去重键 = address+port）[0m [90m0.0s[0m
+[32m  + [0m[32msanitizeReported：全是污染地址 ⇒ 原样返回入参（never lose all endpoints）[0m [90m0.0s[0m
+[32m  + [0m[32msanitizeReported：只有隧道网卡地址 ⇒ 退到 reportable 档（不返回空）[0m [90m0.0s[0m
+[32m  + [0m[32msanitizeReported：空输入与 max 参数[0m [90m0.001s[0m
+[32m  + [0m[32mmergeObserved：入站观察记录（endpoints = Nil）不得抹掉名册候选[0m [90m0.0s[0m
+[32m  + [0m[32mmergeObserved：改前行为对照——整记录替换会把候选集塌缩成 Nil（本 spec 的验红点）[0m [90m0.0s[0m
+[32m  + [0m[32mmergeObserved：prev = None ⇒ 单条（与改前等价）[0m [90m0.001s[0m
+[32m  + [0m[32mmergeObserved：observed.endpoints 非空 ⇒ 原样返回（名册腿零行为变化）[0m [90m0.0s[0m
+[32m  + [0m[32mmergeObserved：同一源地址重复到达是幂等的（不逐拍侵蚀名册候选）[0m [90m0.001s[0m
+[32m  + [0m[32mmergeObserved：address 恒等于 endpoints.head 不变量[0m [90m0.001s[0m
+[32m  + [0m[32mmergeObserved：空地址退化输入不得产生空候选（回退到既有候选首条）[0m [90m0.0s[0m
+[32m  + [0m[32mmergeObserved：多重观察后候选数封顶 max，且不丢最新观察地址[0m [90m0.0s[0m
+16:08:44.870 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec5966659989970568327/home-b1/device.json — minted deviceId=eef29ace-2390-5250-b48f-1428128ba70c (scope=home|ec2b649b-a330-529f-97ca-b3c55df86d33, machine-code derived) and persisted
+16:08:44.889 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec5966659989970568327/home-a1/device.json — minted deviceId=17cb5d7d-7900-598f-9192-689c6b9446e1 (scope=home|74dc5900-b33f-549d-beef-0117ea0dc574, machine-code derived) and persisted
+16:08:45.034 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-warmup via http://127.0.0.1:64744 (dial target 127.0.0.1:64744)
+16:08:45.034 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=74 cacheHit=false decision=p2p
+16:08:45.039 [36mINFO [0m nebflow.rest-api - conn-guard: presence session superseded device=17cb5d7d-7900-598f-9192-689c6b9446e1 ip=127.0.0.1 — previous session closed (per-device single-session)
+16:08:45.041 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-peer-b1 via http://127.0.0.1:64744 (dial target 127.0.0.1:64744)
+16:08:45.041 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-peer-b1 endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=6 cacheHit=false decision=p2p
+16:08:45.046 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-warmup, auto-reconnecting...
+16:08:45.047 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-warmup via http://127.0.0.1:64744: ConnectException (dial target 127.0.0.1:64744; tried 1 candidate endpoint(s))
+16:08:45.048 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-no-answer
+16:08:47.049 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-peer-b1, auto-reconnecting...
+16:08:47.073 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec15518288689009269173/home-b2/device.json — minted deviceId=38989298-6169-5544-a574-59f76b3bcff2 (scope=home|a13d2a88-9304-530e-af61-6c0f00796998, machine-code derived) and persisted
+16:08:47.095 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec15518288689009269173/home-a2/device.json — minted deviceId=05a6f9cf-a7ca-5302-bf5f-5f7b62654553 (scope=home|6fa95e65-510d-579e-9af7-da3dc8258294, machine-code derived) and persisted
+16:08:47.105 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-warmup via http://127.0.0.1 (dial target 127.0.0.1:64760)
+16:08:47.105 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=5 cacheHit=false decision=p2p
+16:08:47.109 [36mINFO [0m nebflow.rest-api - conn-guard: presence session superseded device=05a6f9cf-a7ca-5302-bf5f-5f7b62654553 ip=127.0.0.1 — previous session closed (per-device single-session)
+16:08:47.110 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-peer-b2 via http://127.0.0.1 (dial target 127.0.0.1:64760)
+16:08:47.110 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-peer-b2 endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=4 cacheHit=false decision=p2p
+16:08:47.112 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-warmup, auto-reconnecting...
+16:08:47.114 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-warmup via http://127.0.0.1: ConnectException (dial target 127.0.0.1:64760; tried 1 candidate endpoint(s))
+16:08:47.114 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-no-answer
+16:08:49.115 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-peer-b2, auto-reconnecting...
+16:08:49.143 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec16867725806479576779/home-a3/device.json — minted deviceId=deeda487-bab1-5a53-851c-05fa31dd8649 (scope=home|c53a468d-528c-5085-80c1-298e021db548, machine-code derived) and persisted
+16:08:49.168 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec16867725806479576779/home-b3/device.json — minted deviceId=7d6397dc-b4bb-5524-b4f7-3264f5a19da9 (scope=home|fdc3b798-eecd-5f7f-a5be-a04c221a8353, machine-code derived) and persisted
+16:08:49.206 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-warmup via http://127.0.0.1:64786 (dial target 127.0.0.1:64786)
+16:08:49.206 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=21 cacheHit=false decision=p2p
+16:08:49.209 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-peer-dead via http://127.0.0.1: ConnectException (dial target 127.0.0.1:64787; tried 1 candidate endpoint(s))
+16:08:49.211 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-peer-dead endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=3 cacheHit=false decision=relay-no-answer
+16:08:49.214 [36mINFO [0m nebflow.rest-api - conn-guard: presence session superseded device=7d6397dc-b4bb-5524-b4f7-3264f5a19da9 ip=127.0.0.1 — previous session closed (per-device single-session)
+16:08:49.218 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-peer-live via http://127.0.0.1:64786 (dial target 127.0.0.1:64786)
+16:08:49.218 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-peer-live endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=6 cacheHit=false decision=p2p
+16:08:49.218 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-warmup, auto-reconnecting...
+16:08:49.223 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-warmup via http://127.0.0.1:64786: ConnectException (dial target 127.0.0.1:64786; tried 1 candidate endpoint(s))
+16:08:49.227 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=5 cacheHit=false decision=relay-no-answer
+16:08:51.224 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-peer-live, auto-reconnecting...
+16:08:51.247 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec6549534636367196686/home-ea/device.json — minted deviceId=afab98bb-4847-5295-a563-a243c5af74b0 (scope=home|837e25d0-ba3a-54fa-bd79-d89756188a7f, machine-code derived) and persisted
+16:08:51.265 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec6549534636367196686/home-eb/device.json — minted deviceId=91d2a7a7-ece4-5271-8ae8-f5da4c579224 (scope=home|7bc11b4e-4649-562b-abb9-406397e6dbec, machine-code derived) and persisted
+16:08:51.277 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-warmup via http://127.0.0.1:64804 (dial target 127.0.0.1:64804)
+16:08:51.277 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=4 cacheHit=false decision=p2p
+16:08:51.281 [36mINFO [0m nebflow.rest-api - conn-guard: presence session superseded device=afab98bb-4847-5295-a563-a243c5af74b0 ip=127.0.0.1 — previous session closed (per-device single-session)
+16:08:51.282 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for ISOLATED-B via http://127.0.0.1:64804 (dial target 127.0.0.1:64804)
+16:08:51.283 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=ISOLATED-B endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=5 cacheHit=false decision=p2p
+16:08:51.284 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-warmup, auto-reconnecting...
+16:08:51.287 [36mINFO [0m nebflow.rest-api - conn-guard: presence session superseded device=afab98bb-4847-5295-a563-a243c5af74b0 ip=127.0.0.1 — previous session closed (per-device single-session)
+16:08:51.288 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for ISOLATED-A via http://127.0.0.1:64803 (dial target 127.0.0.1:64803)
+16:08:51.288 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=ISOLATED-A endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=3 cacheHit=false decision=p2p
+16:08:51.289 [36mINFO [0m nebflow.neblink.presence - Reconnected to Dev-warmup after 1 attempt(s)
+16:08:51.290 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: ISOLATED-B, auto-reconnecting...
+16:08:51.293 [36mINFO [0m nebflow.rest-api - conn-guard: presence session superseded device=afab98bb-4847-5295-a563-a243c5af74b0 ip=127.0.0.1 — previous session closed (per-device single-session)
+16:08:51.294 [36mINFO [0m nebflow.neblink.presence - Reconnected to ISOLATED-B after 1 attempt(s)
+16:08:51.295 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-warmup, auto-reconnecting...
+16:08:53.295 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: ISOLATED-B, auto-reconnecting...
+16:08:53.296 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-warmup via http://127.0.0.1:64804: ConnectException (dial target 127.0.0.1:64804; tried 1 candidate endpoint(s))
+16:08:53.296 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=2000 cacheHit=false decision=relay-no-answer
+16:08:53.297 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for ISOLATED-B via http://127.0.0.1:64804: ConnectException (dial target 127.0.0.1:64804; tried 1 candidate endpoint(s))
+16:08:53.297 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=ISOLATED-B endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-no-answer
+16:08:55.298 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: ISOLATED-A, auto-reconnecting...
+16:08:55.326 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec9291630271273537089/home-b5/device.json — minted deviceId=37cd9eda-7ffe-5371-ad62-90e9d9844030 (scope=home|40e1f9a2-8a02-58d6-aedb-c6736ad41571, machine-code derived) and persisted
+16:08:55.345 [36mINFO [0m nebflow.neblink.device - no device.json at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-presdial-spec9291630271273537089/home-a5/device.json — minted deviceId=aa6de2c2-2a94-5c5e-b70b-a5d0767d63e9 (scope=home|a9aa5c86-2c4d-51ea-aae3-f8c8ac387b71, machine-code derived) and persisted
+16:08:55.354 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for Dev-warmup via http://127.0.0.1:64836 (dial target 127.0.0.1:64836)
+16:08:55.354 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=4 cacheHit=false decision=p2p
+16:08:55.358 [36mINFO [0m nebflow.rest-api - conn-guard: presence session superseded device=aa6de2c2-2a94-5c5e-b70b-a5d0767d63e9 ip=127.0.0.1 — previous session closed (per-device single-session)
+16:08:55.360 [36mINFO [0m nebflow.neblink.presence - Presence dial ok for INBOUND via http://127.0.0.1:64836 (dial target 127.0.0.1:64836)
+16:08:55.360 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: Dev-warmup, auto-reconnecting...
+16:08:55.360 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=INBOUND endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=5 cacheHit=false decision=p2p
+16:08:55.362 [33mWARN [0m nebflow.neblink.presence - Presence dial failed for Dev-warmup via http://127.0.0.1:64836: ConnectException (dial target 127.0.0.1:64836; tried 1 candidate endpoint(s))
+16:08:55.362 [36mINFO [0m nebflow.neblink.presence - [presence-dial] device=Dev-warmup endpoints=1 dialed=1 concurrent=true pool=presence-dial-* dialMs=1 cacheHit=false decision=relay-no-answer
+16:08:57.364 [36mINFO [0m nebflow.neblink.presence - Presence disconnected: INBOUND, auto-reconnecting...
+[32mnebflow.neblink.NeblinkPresenceServiceSpec:[0m
+[32m  + [0m[32mdial honours the candidate endpoint's port[0m [90m2.204s[0m
+[32m  + [0m[32mfalls back to the local port when the candidate carries none[0m [90m2.065s[0m
+[32m  + [0m[32mdial failure line prints the resolved dial target[0m [90m2.109s[0m
+[32m  + [0m[32me2e: an isolated instance pair (loopback, non-8080) reaches each other's presence route[0m [90m4.074s[0m
+[32m  + [0m[32mregression: an inbound peer (endpoints = Nil) still dials the port in its address[0m [90m2.066s[0m
+[32mnebflow.core.tools.P2pReachabilitySpec:[0m
+[32m  + [0m[32mnegativeWindowMs：60s 起、每次翻倍、封顶 15min（0/负数 ⇒ 0）[0m [90m0.001s[0m
+[32m  + [0m[32mprobeTarget：从端点串取 host:port（缺端口 ⇒ 6138；空/无 host ⇒ 显式错误）[0m [90m0.001s[0m
+[32m  + [0m[32m账本：失败 ⇒ 窗口内旁路；到期 ⇒ 不再旁路（半开探测）[0m [90m0.0s[0m
+[32m  + [0m[32m账本：连续失败按退避增长——5 次后一次判决覆盖 15min[0m [90m0.004s[0m
+[32m  + [0m[32m账本：地址集变化 ⇒ 负证据立即失效（新地址可能是通的）[0m [90m0.0s[0m
+[32m  + [0m[32m账本：成功 / 显式作废 ⇒ 立即清账[0m [90m0.001s[0m
+[32m  + [0m[32m账本：读数面（条目数 / 探测数 / 旁路数）单调递增[0m [90m0.0s[0m
+[32m  + [0m[32mprobeConcurrently：探测到真服务的端点 ⇒ 首胜即放行（活桩胜出）[0m [90m0.024s[0m
+[32m  + [0m[32mprobeConcurrently：死候选 + 活桩 ⇒ 首胜即放行，活的那个胜出（并发不串行）[0m [90m0.004s[0m
+[32m  + [0m[32mprobeConcurrently：全部不可服务 ⇒ None，且耗时上界 = 单端点预算（不是候选数 × 预算）[0m [90m0.002s[0m
+[info] Passed: Total 69, Failed 0, Errors 0, Passed 69
+[success] Total time: 97 s (0:01:37.0), completed 2026年11月4日 16:08:57

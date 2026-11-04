@@ -1,0 +1,14 @@
+<configuration>
+  <!-- Rehearsal driver logback: CONSOLE ONLY, no FILE appender.
+       The production logback.xml appends to ${STAND_HOME:-~/.stand}/logs/stand.log,
+       which under a naive driver JVM would write into the REAL data root.
+       This config guarantees the rehearsal JVM cannot touch the real root's logs. -->
+  <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} %msg%n</pattern>
+    </encoder>
+  </appender>
+  <root level="INFO">
+    <appender-ref ref="CONSOLE"/>
+  </root>
+</configuration>

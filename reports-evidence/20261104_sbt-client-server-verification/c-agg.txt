@@ -1,0 +1,49 @@
+// GENERATED test meta — RootProject 聚合 3 个 worktree
+lazy val gt1 = RootProject(file("/private/tmp/sbtbench-1"))
+lazy val gt2 = RootProject(file("/private/tmp/sbtbench-2"))
+lazy val gt3 = RootProject(file("/private/tmp/sbtbench-3"))
+lazy val meta = (project in file(".")).aggregate(gt1, gt2, gt3)
+
+=== 冷启聚合 server（3 构建根加载）===
+server boot(3 构建根) = 4.1s  active={"uri":"local:///Users/kaiyu/.sbt/1.0/server/fbbe5fe48817f4ddfd43/sock"}
+server boot(3 构建根) = 116.6s  active={"uri":"local:///Users/kaiyu/.sbt/1.0/server/fbbe5fe48817f4ddfd43/sock"}
+aggregated server idle RSS = 587MB
+build units loaded: 4
+
+=== 每个 worktree 首调 vs 重复调（同 server）===
+aggregated server idle RSS = 587MB
+build units loaded: 4
+
+=== 每个 worktree 首调 vs 重复调（同 server）===
+agg-wt1-first                      wall=   9.5s rc=0
+agg-wt1-repeat                     wall=   0.7s rc=0
+agg-wt2-first                      wall=   8.4s rc=0
+agg-wt2-repeat                     wall=   0.9s rc=0
+agg-wt3-first                      wall=   9.3s rc=0
+agg-wt3-repeat                     wall=   0.8s rc=0
+
+aggregated server RSS after 3 wt compiled = 134MB
+
+=== 隔离证据：三 worktree 各自 target 产物（时间戳 + 类数 + 抽样哈希）===
+sbtbench-1: classes=5495 recent(<10min)=0 hash3=e2a1b5055027
+sbtbench-2: classes=5495 recent(<10min)=0 hash3=e2a1b5055027
+sbtbench-3: classes=5495 recent(<10min)=0 hash3=e2a1b5055027
+swap: total = 4096.00M  used = 2510.62M  free = 1585.38M  (encrypted)
+load: { 10.95 11.96 12.33 }
+DONE
+agg-wt1-first                      wall=  46.5s rc=0
+agg-wt1-repeat                     wall=   0.6s rc=0
+agg-wt2-first                      wall=   0.7s rc=0
+agg-wt2-repeat                     wall=   0.6s rc=0
+agg-wt3-first                      wall=   0.7s rc=0
+agg-wt3-repeat                     wall=   0.6s rc=0
+
+aggregated server RSS after 3 wt compiled = 59MB
+
+=== 隔离证据：三 worktree 各自 target 产物（时间戳 + 类数 + 抽样哈希）===
+sbtbench-1: classes=5495 recent(<10min)=0 hash3=e2a1b5055027
+sbtbench-2: classes=5495 recent(<10min)=0 hash3=e2a1b5055027
+sbtbench-3: classes=5495 recent(<10min)=0 hash3=e2a1b5055027
+swap: total = 4096.00M  used = 2502.62M  free = 1593.38M  (encrypted)
+load: { 11.23 11.98 12.34 }
+DONE

@@ -1,0 +1,916 @@
+{
+  "_comment": "check-component-contract.mjs 存量基线（前端组件契约门禁，ask-paradigm-a 批 2026-11-03）。数字只许降不许升：判据 = 超过基线即红、基线外新文件出现任何命中即红。**升基线 = 放水，必须逐项说明理由**（在批报告里写清「为什么这一处必须新增」）。重生成：node scripts/check-component-contract.mjs --update-baseline",
+  "generatedAt": "2026-11-04T06:48:46.481Z",
+  "counts": {
+    "js/activityBar.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 4,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/agentFileViewer.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/agentManager.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 12
+    },
+    "js/agentProfile.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/askAttachments.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 6
+    },
+    "js/askDock.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 5,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 5
+    },
+    "js/attachUpload.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/attachmentPreview.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 3
+    },
+    "js/avatarRender.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/bgAgentPopup.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 7
+    },
+    "js/bgAgentWorkStrip.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 3
+    },
+    "js/bgTaskOutputPopup.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 5
+    },
+    "js/canvas.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 3,
+      "eventLiteral": 15,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 10
+    },
+    "js/canvasDrop.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 0
+    },
+    "js/cardRegistry.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/chat/collapsible.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/chat/historyReplay.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 4
+    },
+    "js/chat/injectedRows.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/chat/popArtifact.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/chat.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 10,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 41
+    },
+    "js/chatQueue.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 7
+    },
+    "js/chatSearch.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 59,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 19
+    },
+    "js/chatView.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 1,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 5
+    },
+    "js/colResizer.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 1,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 0
+    },
+    "js/configDrill.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/contacts.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 8,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 8
+    },
+    "js/daemonPanel.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 4
+    },
+    "js/daemons.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 3
+    },
+    "js/delegateChainProvider.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 2,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 0
+    },
+    "js/delegateChainView.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 10
+    },
+    "js/delegatePanoramaView.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/diffCanvas.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 5
+    },
+    "js/diffPanel.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 3
+    },
+    "js/dropbox.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 5
+    },
+    "js/errorRecovery.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/executorsPanel.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 3
+    },
+    "js/explorer/selection.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/explorer.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 8,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 34
+    },
+    "js/fileViewers.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/fleetUpdate.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/flowAgentPopup.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 6
+    },
+    "js/flowMapArchive.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 7
+    },
+    "js/flowMapTab.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 8
+    },
+    "js/flowViewers.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 19
+    },
+    "js/focusTrap.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 2,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 0
+    },
+    "js/friendGroups.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 7,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 7
+    },
+    "js/friendsApi.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 3,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 0
+    },
+    "js/i18n.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 0
+    },
+    "js/input/inputModes.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 1,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 0
+    },
+    "js/input/slashCommands.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/input.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 1,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/keymap.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 0
+    },
+    "js/lightbox.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/main/bgAgents.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/main/historyIndicators.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/main.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 9,
+      "eventLiteral": 4,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 4
+    },
+    "js/managePanel.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/mermaidRenderer.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 3
+    },
+    "js/messages/elements.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/messages/fmComposer.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/messages/friendTrust.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 0
+    },
+    "js/messages.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 3,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 26
+    },
+    "js/micOrb.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 2,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 0
+    },
+    "js/mobile/chatChrome.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 4
+    },
+    "js/mobile/meFace.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 3
+    },
+    "js/mobile/navController.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 9,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 15
+    },
+    "js/mobile/popSheet.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/mobile/searchFace.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 3,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/mobile/sessionHead.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/mobile/socialFaces.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 1,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 0
+    },
+    "js/mobile/socialSearch.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/mobile/taskPanel.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/modal.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/mode.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 3,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 0
+    },
+    "js/modelPanel.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 13
+    },
+    "js/msgQuote.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/neblink.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 0
+    },
+    "js/notificationBanner.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 3
+    },
+    "js/onboarding.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/orbSettingsUI.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/outputTag.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 3
+    },
+    "js/perception.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 21
+    },
+    "js/persistence.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 16
+    },
+    "js/plugins.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 2,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 8
+    },
+    "js/popArtifacts.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 2,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 8
+    },
+    "js/profileFace.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/projectTab.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 26
+    },
+    "js/quoteLogo.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/reference.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 3,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 8
+    },
+    "js/rootName.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 0
+    },
+    "js/scheduled-task.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 14,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 11
+    },
+    "js/secretsPanel.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 8
+    },
+    "js/sessionGate.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/settingsIdentity.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/sidebar/imagegenSection.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 17,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 9
+    },
+    "js/sidebar/jevTestButton.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/sidebar/modelTestButton.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 5
+    },
+    "js/sidebar/pathRules.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 2,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 4
+    },
+    "js/sidebar/providersUi.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 5,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 5
+    },
+    "js/sidebar.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 17,
+      "eventLiteral": 5,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 28
+    },
+    "js/socialPanel.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 3
+    },
+    "js/taskList.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 8
+    },
+    "js/termTip.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/timeWheel.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 4
+    },
+    "js/todoFace.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 1,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 13
+    },
+    "js/usageDashboard.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 14
+    },
+    "js/utils.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 7
+    },
+    "js/viewers/annotations.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 4
+    },
+    "js/viewers/docx.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 4
+    },
+    "js/viewers/epub.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 4
+    },
+    "js/viewers/html.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/viewers/image.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 5
+    },
+    "js/viewers/largeText.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/viewers/markdown.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/viewers/mobi.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 4
+    },
+    "js/viewers/monaco.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/viewers/pdf.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/viewers/pptx.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 5
+    },
+    "js/viewers/readerChrome.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 1,
+      "eventLiteral": 4,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 5
+    },
+    "js/viewers/shared.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 5,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 9
+    },
+    "js/viewers/textReader.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/viewers/video.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 3
+    },
+    "js/viewers/xlsx.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 5
+    },
+    "js/viewers/yaml.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    },
+    "js/viewers/zoom.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 2
+    },
+    "js/voiceMode.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 0
+    },
+    "js/wikiGraph.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 1,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 5
+    },
+    "js/workline.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 4
+    },
+    "js/workspacePicker.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 0,
+      "eventLiteral": 0,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 18
+    },
+    "js/ws.js": {
+      "attachShadow": 0,
+      "crossFaceDom": 2,
+      "eventLiteral": 2,
+      "componentDomLeak": 0,
+      "bareInnerHtml": 1
+    }
+  }
+}

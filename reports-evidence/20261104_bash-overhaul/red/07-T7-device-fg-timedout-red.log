@@ -1,0 +1,26 @@
+## repro: cd <worktree> && sbt -batch "testOnly nebflow.core.tools.DeviceBashAutoBackgroundSpec"
+==> X nebflow.core.tools.DeviceBashAutoBackgroundSpec.T7: remote-exec foreground leg auto-backgrounds at the compressed budget (not a 30s-class timed-out error)  2.432s munit.FailException: src/test/scala/nebflow/core/tools/DeviceBashAutoBackgroundSpec.scala:62 device/remote foreground leg must auto-background at the budget, got the timed-out error path: [Command timed out after 2000ms]
+61:              s"device/remote foreground leg must auto-background at the budget, got the timed-out error path: ${e.message.take(300)}"
+62:            )
+63:      }
+    at munit.Assertions.fail(Assertions.scala:274)
+    at munit.Assertions.fail$(Assertions.scala:24)
+    at munit.FunSuite.fail(FunSuite.scala:13)
+    at nebflow.core.tools.DeviceBashAutoBackgroundSpec.$init$$$anonfun$1$$anonfun$1$$anonfun$1(DeviceBashAutoBackgroundSpec.scala:62)
+    at apply @ nebflow.core.tools.DeviceBashAutoBackgroundSpec.$init$$$anonfun$1$$anonfun$1(DeviceBashAutoBackgroundSpec.scala:63)
+    at flatMap @ nebflow.core.tools.DeviceBashAutoBackgroundSpec.$init$$$anonfun$1$$anonfun$1(DeviceBashAutoBackgroundSpec.scala:56)
+    at blocking @ nebflow.core.tools.ShellSession.runProcess(shell.scala:760)
+    at timeout @ nebflow.core.tools.ShellSession.runProcess$$anonfun$2$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1$$anonfun$1(shell.scala:927)
+    at flatten @ nebflow.core.tools.ShellSession$.<clinit>(shell.scala:1555)
+    at unsafeToFuture @ munit.CatsEffectSuite$$anon$1.applyOrElse(CatsEffectSuite.scala:82)
+[error] Failed: Total 36, Failed 7, Errors 0, Passed 29
+[error] Failed tests:
+[error] 	nebflow.core.tools.BashOverhaulGateSpec
+[error] 	nebflow.core.tools.BashOverhaulTruncationSpec
+[error] 	nebflow.core.tools.DeviceBashAutoBackgroundSpec
+[error] 	nebflow.core.processor.LoopGuardSpec
+[error] 	nebflow.core.tools.BashOverhaulNotifySpec
+[error] (Test / testOnly) sbt.TestsFailedException: Tests unsuccessful
+[error] Total time: 341 s (0:05:41.0), completed 2026年11月4日 13:23:25
+end: 2026-11-04 13:23:25
+sbt exit code: 0

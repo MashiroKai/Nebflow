@@ -148,7 +148,26 @@ object BgNotifyDelivery:
 
   /**
    * 后台任务完成通知的可靠交付（BashTool.makeNotifyCallback 唯一调用点）。
-   * `targetRef` 缺席（REST 直调等无 agent 上下文）= 既有语义零动作。
+   *
+   * **T2 契约（bash overhaul，作者令 2026-11-04）——None 门不得静默**
+   * （缺陷 D5 的投递侧同族缺陷：旧形态 `targetRef match { case None => IO.unit }`
+   * ⇒ 无 agent 上下文的完成事件彻底蒸发，连账本都没有）：
+   *   - `targetRef = None` 且 `targetSessionId` 非空 ⇒ 走 [[Route.Persist]] 腿
+   *     （与「目标死、激活面不可用」**同一条真实写点**：`markEvent` +
+   *     `persistMark` → [[BgInboxPort]]，correlationId 幂等、会话存在守卫在端口
+   *     内）——不新造队列、不新造标记形态；
+   *   - `targetRef = None` 且 `targetSessionId` 也为空 ⇒ **响亮** WARN + 审计
+   *     （语义 `bg-notify-undeliverable`）——「没有地址」是事实，不是沉默的理由；
+   *   - `targetRef = Some` ⇒ 既有三态路由（Direct/Revive/Persist/Undeliverable）
+   *     逐字不变。
+   *
+   * 忙时进 next-step 收件口（契约 4）：本事件经 `ref !` 投给活会话时，若目标会话
+   * 正在 Processing（回合进行中），既有 `ExternalEvent` 处理器把事件**入
+   * `pendingEvents`**（并在 `persistQueues` 落盘），回合边界统一 drain 注入——
+   * 见 `AgentProcessing.scala:1360-1441`（"external-event-queued" 落队注释）。
+   * **这就是本批所说的「忙时 next-step 收件口」，不另立第二套队列**：完成通知
+   * 只是 `ExternalEvent` 的一个 source（`background-task`），入队/去重/重放全部
+   * 复用那条腿。
    */
   def deliverAgentEvent(
     targetRef: Option[ActorRef[AgentCommand]],
@@ -164,7 +183,39 @@ object BgNotifyDelivery:
     metadata: JsonObject
   ): IO[Unit] =
     targetRef match
-      case None => IO.unit
+      case None =>
+        // D5 / T2 None 门：没有 agent ref ≠ 没有落点。
+        targetSessionId.map(_.trim).filter(_.nonEmpty) match
+          case Some(sid) =>
+            // 与「目标死、激活面不可用」同一条持久腿（单写点 persistRoute）：
+            // 标记落**目标会话自己**的注入队，(sid, correlationId) 幂等由
+            // [[BgInboxPort]]（BgInboxBackstop：会话已删即跳过）保证。
+            persistRoute(
+              projectName,
+              flowNodeId,
+              Some(sid),
+              jobId,
+              source,
+              eventType,
+              payload,
+              metadata,
+              "no agent ref in this context (REST / pre-spawn / device leg)"
+            )
+          case None =>
+            // 连目标会话都没有：无处落盘 ⇒ 响亮 WARN + 审计（bg-notify-undeliverable
+            // 语义），**绝不** IO.unit 静默。输出本体仍在 BgTaskOutputStore 可查。
+            logger.warn(
+              s"[bg-notify-undeliverable] background job $jobId reached '$eventType' but this delivery has NO agent ref and " +
+                "NO target session — nothing to address; output retained in BgTaskOutputStore (jobId lookup)"
+            ) *>
+              audit(
+                projectName,
+                flowNodeId,
+                targetSessionId,
+                jobId,
+                "bg-notify-undeliverable",
+                s"background job $jobId completion ($eventType): no agent ref and no target session in this delivery context — notification undeliverable, output retained (jobId lookup)"
+              )
       case Some(ref) =>
         val targetAlive: IO[Boolean] = system match
           // 无 actor 系统 = 无法判活（测试 harness）——按旧侧行为直投，语义零漂移。
@@ -229,15 +280,17 @@ object BgNotifyDelivery:
               case Route.Persist =>
                 // 重启窗口（激活面未装配）：标记落**目标会话自己**的注入队，等它
                 // 复活/新回合时 RecoverPersistedQueues 重放补投给它。
-                persistMark(targetSessionId, markEvent(jobId, targetSessionId, source, eventType, payload, metadata)) *>
-                  auditDeferred(
-                    projectName,
-                    flowNodeId,
-                    targetSessionId,
-                    jobId,
-                    eventType,
-                    "restart window (no activator wired)"
-                  )
+                persistRoute(
+                  projectName,
+                  flowNodeId,
+                  targetSessionId,
+                  jobId,
+                  source,
+                  eventType,
+                  payload,
+                  metadata,
+                  "restart window (no activator wired)"
+                )
               case Route.Undeliverable =>
                 logger.warn(
                   s"[bg-notify-undelivered] background job $jobId reached '$eventType' but target session " +
@@ -327,6 +380,30 @@ object BgNotifyDelivery:
   /** 持久补投：correlationId 幂等键；落**目标会话**注入队（复活轮重放补投给它）。 */
   private def persistMark(targetSessionId: Option[String], mark: AgentCommand.ExternalEvent): IO[Unit] =
     BgInboxPort.append(targetSessionId.getOrElse(""), mark)
+
+  /**
+   * [[Route.Persist]] 腿的**单写点**（T2 契约 2「复用该腿真实写点，别新造队列」）：
+   * 两个入口共用本方法 —— ① 「目标死 + 激活面不可用」（Some(ref) 分支，重启窗口）；
+   * ② 「无 agent ref + 目标会话在场」（None 分支，REST 直调 / pre-spawn / 设备腿）。
+   * 标记形态（`markEvent`：correlationId = `bg-redelivery-<jobId>`、metadata 带
+   * `bgTaskId`/`bgNotifyRedelivered`/`bgNotifyToSession`）与落盘面（[[BgInboxPort]]
+   * → CompactionQueueStore 注入队）两入口逐字同源，禁第二份。
+   */
+  private def persistRoute(
+    projectName: Option[String],
+    flowNodeId: Option[String],
+    targetSessionId: Option[String],
+    jobId: String,
+    source: String,
+    eventType: String,
+    payload: String,
+    metadata: JsonObject,
+    reason: String
+  ): IO[Unit] =
+    persistMark(
+      targetSessionId,
+      markEvent(jobId, targetSessionId, source, eventType, payload, metadata)
+    ) *> auditDeferred(projectName, flowNodeId, targetSessionId, jobId, eventType, reason)
 
   private def auditDeferred(
     projectName: Option[String],

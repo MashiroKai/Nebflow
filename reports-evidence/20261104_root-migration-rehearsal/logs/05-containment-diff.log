@@ -1,0 +1,6 @@
+[diff] before=598957 after=601534
+[diff] ignored-prefixes=['pending-claim', 'accounts', 'migration-report.json', 'layout.json', 'active-account']
+[diff] changed=0 added=0 removed=0
+[diff] layout-managed appeared=2577 disappeared=0
+   (managed, ignored) e.g. ['pending-claim', 'pending-claim/20261104-144346', 'pending-claim/20261104-144346/()']
+[diff] PASS — every non-managed object is byte-identical

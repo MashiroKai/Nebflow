@@ -1315,8 +1315,17 @@ object GatewayMain extends IOApp:
                                     bridgeSetup.flatMap { bridgeManager =>
                                       neblinkServiceF.flatMap { neblinkService =>
                                         // Presence WS service — maintains real-time online/offline via persistent WebSocket connections
+                                        //
+                                        // presence-dial-overhaul 批（2026-11-04 P3）：`reachLedger` **必须**显式接
+                                        // 共用可达性真源（`P2pReachability.current`，与文件腿同一份负缓存/TTL）。
+                                        // 缺省是 `None`（排程类 spec 的隔离用），生产漏传 ⇒ 探测税与拨号税又会各付一遍。
+                                        // 源码护栏：`NeblinkPresenceDialConcurrencySpec` 扫描本文件断言这行仍在。
                                         val presenceService =
-                                          new nebflow.neblink.NeblinkPresenceService(neblinkService, cfg.port.value)(
+                                          new nebflow.neblink.NeblinkPresenceService(
+                                            neblinkService,
+                                            cfg.port.value,
+                                            reachLedger = Some(nebflow.core.tools.P2pReachability.current)
+                                          )(
                                             dispatcher
                                           )
                                         // Late-bound discovery holder for the silent re-login hook: the

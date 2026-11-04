@@ -775,6 +775,9 @@
   font-size: var(--ds-fs-hint);
   overflow: hidden;
   text-overflow: ellipsis;
+  /* 过程泄漏修复批（2026-11-04）：label 行恒单行——超长参数省略号截断，
+     第二行（"Tool(args)\n  (detail)" 的参数行）进展开面（mountToolFold）。 */
+  white-space: nowrap;
 }
 .ds-tool-card .label .tool-detail { color: var(--ds-text-dim); font-size: var(--ds-fs-meta); }
 /* 设备角标：旧「金属渐变字」收编语义档（muted→dim→muted），三色随主题。 */
@@ -797,12 +800,39 @@
   opacity: 0.85;
 }
 
-/* ── 卡体：预览面（默认可见）与全文槽（.body）共用同一套正文排版 ── */
+/* ── 卡体：单行摘要面（默认可见）与全文槽（.body）─────────────────────────
+   过程泄漏修复批（作者令 2026-11-04 14:14 · 问题②）：默认面 = **一行摘要**
+   （icon 状态 + label 首行「工具名 — 单行关键参数」+ 失败状态词 + 图片引用件）。
+   改前（6f6b6a81d）这里是「≤8 行预览 + 命令全文 + 展开控件」，实测 Bash 卡
+   previewHeight=264px / cardHeight=297px，作者「还没点击，内容和结果就已经很长」。
+   正文/结果默认不进 DOM（utils.mountToolCardBody 懒装配）——所以本文件的默认面
+   只有摘要行：可见正文高度恒为 0。超长参数一行省略号截断（nowrap + ellipsis），
+   label 第二行（参数行）被单行壳裁掉，展开面随 mountToolFold 回归（内容不丢）。 */
 .ds-tool-card .ds-tool-card__preview {
-  margin-top: var(--ds-space-1);
-  color: var(--ds-text);
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  min-width: 0;
+  max-width: 100%;
+  /* 单行硬闸：一行文案 + 内联 chip，多出来的（label 第二行）裁掉 */
+  overflow: hidden;
+}
+.ds-tool-card .ds-tool-card__preview .label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ds-tool-card .ds-tool-card__preview .tool-img-ref,
+.ds-tool-card .ds-tool-card__preview .ds-tool-card__status { flex: 0 0 auto; }
+/* 失败状态词（摘要行要看得出成败；成功由 .icon.ok 承载，不加字） */
+.ds-tool-card__status {
+  font-family: var(--ds-font-ui);
   font-size: var(--ds-fs-meta);
-  line-height: 1.4;
+  font-weight: var(--ds-fw-btn);
+  color: var(--ds-danger-icon);
+  white-space: nowrap;
 }
 .ds-tool-card .body {
   color: var(--ds-text);
@@ -892,25 +922,10 @@
   color: var(--ds-text);
 }
 
-/* ── 折叠控件（显式主路径；整卡可点习惯由 attachToolClick 保留）── */
-.ds-tool-card__toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--ds-space-half);
-  margin-top: var(--ds-space-half);
-  padding: 1px var(--ds-space-1);
-  font-family: var(--ds-font-ui);
-  font-size: var(--ds-fs-meta);
-  font-weight: var(--ds-fw-btn);
-  line-height: var(--ds-lh-tight);
-  color: var(--ds-text-muted);
-  background: transparent;
-  border: none;
-  border-radius: var(--ds-radius-badge);
-  cursor: pointer;
-}
-.ds-tool-card__toggle:hover { color: var(--ds-text); background: var(--ds-veil-focus); }
-.ds-tool-card__toggle:focus-visible { outline: 2px solid var(--ds-focus-ring); outline-offset: 1px; }
+/* ── 折叠控件：过程泄漏修复批（2026-11-04）退役 .ds-tool-card__toggle ──────
+   默认面改单行摘要后，展开控件（第二个可见行）不再存在：整卡可点 + 摘要行
+   aria-expanded + title 提示承载同一语义（attachToolClick 维持 aria/title 联动），
+   卡内点击=展开全文、再点收回，语义与改前一致。 */
 
 /* ── Mail 工具：卡内 markdown 正文（自 chat.css 迁入本族，色面走语义档）── */
 .ds-tool-card .tool-mail-msg { font-size: var(--ds-fs-body); line-height: var(--ds-lh-body); color: var(--ds-text); }
