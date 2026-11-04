@@ -203,7 +203,16 @@ private[neblink] final case class DialRoundOutcome(
   attempted: List[String],
   truncated: Boolean,
   failures: List[(String, DialFailureClass)],
-  winner: Option[String]
+  winner: Option[String],
+  /**
+   * 每个失败候选的**原因文本**（C3 归因面）。
+   *
+   * WHY 单列一张表：并发口径下 `dialStatus` 必须由**轮**来收口（一轮一次写），而 C3 的
+   * `dialStatus.error` 需要「该候选自己的原因」。若让每个拨号体各自写 status，两个候选
+   * 同时失败时就是「谁最后写完谁算」——同一台机器同一端点集，两次跑能读出两个不同候选
+   * （实测：`NeblinkDialStatusRouteSpec` C3 在并发臂上间歇性红）。表在轮收口时按择优序取。
+   */
+  failureReasons: Map[String, String] = Map.empty
 )
 
 /**
@@ -533,7 +542,25 @@ final class NeblinkPresenceService(
     dialCandidates(peer, toTry, id, startedAtMs, probeOnly).flatMap { outcome =>
       val dialMs = (System.nanoTime() - t0) / 1000000L
       val round = PresenceDialRound(outcome.attempted, skipped, outcome.truncated, outcome.failures, startedAtMs)
-      IO(dialRounds.put(peer.deviceId, round)) *>
+      // C3 的 `dialStatus` **一轮写一次**（并发口径下候选并行拨，各写各的 = 竞态）：
+      //  - 有赢家 ⇒ `(赢家, None)`（也顺手把输者「迟到写完的失败」挡在外面）；
+      //  - 全败 ⇒ 按**择优序末尾**那个真拨过的候选（= 改前「最后尝试的候选」的确定性等价，
+      //    `NeblinkDialStatusRouteSpec` C3 正是断言这一条）；
+      //  - 一个都没拨（全被截断/预算耗尽）⇒ 不写，保留上一条（别撒谎说「拨过了」）。
+      val statusWrite: IO[Unit] =
+        outcome.winner match
+          case Some(ep) => recordDialOutcome(peer, ep, None)
+          case None =>
+            outcome.attempted.lastOption match
+              case Some(target) =>
+                recordDialOutcome(
+                  peer,
+                  target,
+                  Some(outcome.failureReasons.getOrElse(target, "all candidates in this round failed"))
+                )
+              case None => IO.unit
+      statusWrite *>
+        IO(dialRounds.put(peer.deviceId, round)) *>
         noteReachOutcome(peer, outcome, probeOnly).flatMap { ledgerNote =>
           dialRoundLog(
             peer,
@@ -610,7 +637,10 @@ final class NeblinkPresenceService(
       s"[presence-dial] device=${peer.deviceName} endpoints=$endpoints dialed=$dialed " +
         s"concurrent=${schedule.concurrent} pool=$poolLabel dialMs=$dialMs cacheHit=$cacheHit " +
         s"decision=$decision$tail"
-    val stateKey = s"$decision|hit=$cacheHit|concurrent=${schedule.concurrent}"
+    // 去重键只取**决策类别**（`relay-negative-cache(84213ms left)` 里的剩余毫秒每拍都变，
+    // 拿整条当键 ⇒ 每拍都算「迁移」⇒ 每拍发 INFO，行数纪律当场失效）。
+    val decisionKey = decision.takeWhile(_ != '(')
+    val stateKey = s"$decisionKey|hit=$cacheHit|concurrent=${schedule.concurrent}"
     val changed = Option(lastLoggedRoundKey.put(peer.deviceId, stateKey)).forall(_ != stateKey)
     if changed then logger.info(line) else logger.debug(line)
 
@@ -663,12 +693,13 @@ final class NeblinkPresenceService(
                 IO.pure(DialRoundOutcome(List(endpoint), truncated = false, List((endpoint, DialFailureClass.Other)), None))
               case DialAttempt.Failed(_, failure) =>
                 dialCandidatesSerial(peer, rest, id, startedAtMs, probeOnly).map {
-                  case DialRoundOutcome(attempted, truncated, failures, winner) =>
+                  case DialRoundOutcome(attempted, truncated, failures, winner, failureReasons) =>
                     DialRoundOutcome(
                       endpoint :: attempted,
                       truncated,
                       (endpoint, failure.cls) :: failures,
-                      winner
+                      winner,
+                      failureReasons + (endpoint -> failure.reason)
                     )
                 }
           }
@@ -700,7 +731,7 @@ final class NeblinkPresenceService(
         // 每轮的本地收账表（不用字段：同一 service 可能并发服务多个设备的轮）。
         Ref.of[IO, Vector[(String, DialAttempt)]](Vector.empty).flatMap { acc =>
           val racers: List[IO[(String, DialAttempt)]] = batch.map { endpoint =>
-            dialOne(peer, endpoint, id, probeOnly, publishGate).flatMap { attempt =>
+            dialOne(peer, endpoint, id, probeOnly, publishGate, writeStatus = false).flatMap { attempt =>
               acc.update(_ :+ (endpoint -> attempt)) *>
                 // 首胜放行：先填 won 再返回；late loser 的 complete 是幂等的 no-op
                 //（`get` 的那臂已经拿到赢家）。
@@ -729,6 +760,7 @@ final class NeblinkPresenceService(
                     case (ep, DialAttempt.LostRace(_, _)) => (ep, DialFailureClass.Other)
                     case (ep, DialAttempt.Won(_))         => (ep, DialFailureClass.Other)
                   }
+              val failureReasons = ordered.collect { case (ep, DialAttempt.Failed(_, f)) => ep -> f.reason }.toMap
               // 🔴 输者**已经在 `openConnection` 里退役了自己的那条 conn**（它根本没进
               // `connections`，`removeIfCurrent` 摘不到 ⇒ 什么也摘不掉；只关自己的 socket）。
               // 这里**绝不能再做 `retireAllFor(deviceId)`**：那会把刚发布的赢家连接也关掉
@@ -741,7 +773,8 @@ final class NeblinkPresenceService(
                   attempted = batch,
                   truncated = truncated,
                   failures = failures,
-                  winner = winOpt
+                  winner = winOpt,
+                  failureReasons = failureReasons
                 )
               )
             }
@@ -770,12 +803,24 @@ final class NeblinkPresenceService(
     endpoint: String,
     id: DeviceIdentity,
     probeOnly: Boolean,
-    publishGate: java.util.concurrent.atomic.AtomicBoolean = null
+    publishGate: java.util.concurrent.atomic.AtomicBoolean = null,
+    /**
+     * 是否由本候选自己写 `dialStatus`。
+     *
+     * 串行口径（改前语义）= `true`：每拨一个就写一次，「最后一次尝试」自然等于择优序末尾。
+     * 并发口径 = `false`：多个候选同时写就是竞态（同一台机器两次跑可能读出不同候选）⇒
+     * 由**轮**在 `liveRound` 收口时按择优序写一次（见 [[DialRoundOutcome.failureReasons]]）。
+     */
+    writeStatus: Boolean = true
   ): IO[DialAttempt] =
+    def status(code: String, error: Option[String]): IO[Unit] =
+      // 日志面**恒发**（每个候选拨成什么样都要可归因）；`dialStatus` 面只在串行口径由候选自己写，
+      // 并发口径收敛到轮（`liveRound`），否则两个候选同时失败就是「谁最后写完谁算」。
+      if writeStatus then recordDialOutcome(peer, code, error) else logDialAttempt(peer, code, error)
     resolveDialTarget(endpoint) match
       case None =>
         val failure = DialFailure(s"unparseable endpoint: $endpoint", DialFailureClass.Other)
-        recordDialOutcome(peer, endpoint, Some(failure.reason)) *>
+        status(endpoint, Some(failure.reason)) *>
           noteEndpointFailure(peer, endpoint, DialFailureClass.Other, probeOnly).as(
             DialAttempt.Failed(endpoint, failure)
           )
@@ -786,14 +831,14 @@ final class NeblinkPresenceService(
         }.flatMap {
           case Right(_) =>
             noteEndpointSuccess(peer, endpoint) *>
-              recordDialOutcome(peer, endpoint, None) *>
+              status(endpoint, None) *>
               (if endpoint != peer.address then neblinkService.upsertPeer(peer.copy(address = endpoint)) else IO.unit) *>
               IO.pure(DialAttempt.Won(endpoint))
           case Left(failure) if failure.reason == NeblinkPresenceService.LostDialRaceReason =>
             // 竞速输者：既不是失败也不该抢 C1 择优 ⇒ 不写 F-D 账本、不覆盖 dialStatus。
             IO.pure(DialAttempt.LostRace(endpoint, failure))
           case Left(failure) =>
-            recordDialOutcome(peer, endpoint, Some(failure.reason)) *>
+            status(endpoint, Some(failure.reason)) *>
               noteEndpointFailure(peer, endpoint, failure.cls, probeOnly).as(
                 DialAttempt.Failed(endpoint, failure)
               )
@@ -803,7 +848,7 @@ final class NeblinkPresenceService(
             s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}".trim,
             DialFailureClass.Other
           )
-          recordDialOutcome(peer, endpoint, Some(failure.reason)).as(DialAttempt.Failed(endpoint, failure))
+          status(endpoint, Some(failure.reason)).as(DialAttempt.Failed(endpoint, failure))
         }
 
   /**
@@ -1098,7 +1143,17 @@ final class NeblinkPresenceService(
    */
   private def recordDialOutcome(peer: PeerInfo, endpoint: String, error: Option[String]): IO[Unit] =
     val shown = if endpoint.nonEmpty then endpoint else if peer.address.nonEmpty then peer.address else "(no endpoint)"
-    dialStatuses.put(peer.deviceId, PresenceDialStatus(shown, error, System.currentTimeMillis()))
+    IO(dialStatuses.put(peer.deviceId, PresenceDialStatus(shown, error, System.currentTimeMillis()))) *>
+      logDialAttempt(peer, endpoint, error)
+
+  /**
+   * 拨号结局的**日志面**（C3 归因）：与 [[recordDialOutcome]] 拆开，因为并发口径下
+   * 「谁写 `dialStatus`」必须由**轮**决定（一轮一次，见 `liveRound`），而「每个候选拨成
+   * 什么样」仍然要逐条留痕 —— 混在一起写会让失败行随状态写一起被去重掉
+   * （实测：`NeblinkPresenceDialBudgetSpec` T4 的同 run 对照「dial failed 必须落盘」直接红）。
+   */
+  private def logDialAttempt(peer: PeerInfo, endpoint: String, error: Option[String]): IO[Unit] =
+    val shown = if endpoint.nonEmpty then endpoint else if peer.address.nonEmpty then peer.address else "(no endpoint)"
     val key = s"$shown|${error.getOrElse("")}"
     val changed = Option(lastLoggedDialKey.put(peer.deviceId, key)).forall(_ != key)
     if !changed then IO.unit
@@ -1113,7 +1168,7 @@ final class NeblinkPresenceService(
           logger.info(
             s"Presence dial ok for ${peer.deviceName} via $shown (dial target ${dialTargetLabel(endpoint)})"
           )
-  end recordDialOutcome
+  end logDialAttempt
 
   // ===== F-D ②: 死端点剔除（账本 + 恢复语义） =====
 

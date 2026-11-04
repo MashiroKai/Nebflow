@@ -3,6 +3,7 @@ package nebflow.neblink
 import cats.effect.IO
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
+import cats.syntax.all.*
 import munit.CatsEffectSuite
 import nebflow.core.tools.{P2pPathDecision, P2pReachability}
 import nebflow.shared.{PathUtil, PeerInfo}
@@ -267,6 +268,28 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
   }
 
   // ===== P2 搬离 compute-blocker =====
+
+  test("C3 收口确定性：并发全败时 dialStatus.endpoint 恒 = 择优序末尾候选（一轮写一次，不是竞速）") {
+    assume(!windowsBlackholeUnsupported, "Windows 环回无黑洞语义 ⇒ 本组跳过")
+    val port = closedPort()
+    val epA = s"http://127.0.0.2:$port"
+    val epB = s"http://127.0.0.3:$port"
+    withStack(port, budget = DialBudget(classify = _ => DialAddressClass.Lan)) { (_, ps) =>
+      val p = peer("c3-det", List(epA, epB))
+      // 5 拍全败：并发口径下两个候选**同时**失败，若各自写 dialStatus 就是「谁最后写完谁算」。
+      // 改前实测（全量套件）：`NeblinkDialStatusRouteSpec` C3 间歇性读到 epA 而红。
+      (1 to 5).toList.traverse { i =>
+        ps.connect(p) *> IO(ps.dialStatus("c3-det")).map(st => (i, st))
+      }
+    }.map { samples =>
+      val endpoints = samples.map { case (_, st) => st.map(_.endpoint).getOrElse("<none>") }.distinct
+      assertEquals(endpoints, List(epB), s"5 拍必须全部收口到择优序末尾（实测 ${endpoints.mkString(", ")}）")
+      assert(
+        samples.forall(_._2.exists(_.error.exists(_.nonEmpty))),
+        "每一拍都必须留下失败原因（C3 归因面不得因并发化而丢）"
+      )
+    }
+  }
 
   test("P2 实拨：生产口径拨号体落在 presence-dial-*；改前口径落在 io-compute-*（红证据）") {
     val port = closedPort()
