@@ -127,6 +127,29 @@ html[data-theme='light'] {
 }
 .ask-dock.closed { opacity: 0; transform: translateY(16px) scale(0.6); pointer-events: none; }
 
+/* ═══ 可拖拽改尺寸（作者令 2026-11-04「允许用户交互拖拽调整对话框大小（拖柄
+ *     可见、热区 ≥44px，按 Apple HIG）」）════════════════════════════════
+ * 形态单源 = design-system.css `.ds-resize-handle`（44×44 热区 / 18px 抓手 /
+ * 三态提亮 / nwse-resize 光标 / touch-action:none ——全部走 --ds-resize-* 槽）。
+ * 本文件只声明**落位**：面板左上角，外挂 14px 让抓手的视觉中心正好落在面板角上
+ * （dock 右 14px 钉位，向左/向上 14px 仍在画布内，视觉上不内含任何气泡文字）。
+ * 尺寸本身由 JS 写两条 CSS 变量（--ask-dock-w 宽 / --ask-col-maxh 列高），
+ * 桌面与手机**同一段 JS、同一组变量**——本文件不出现第二套拖拽实现。 */
+.ask-dock .ds-resize-handle { left: -14px; top: -14px; }
+/* 手机层落位差异（**只此一条**，不是第二套实现）：手机层 dock 宽 = 视口 − 24px、
+   右缘钉 12px ⇒ 面板左缘距视口左缘只有 12px，桌面那条「外挂 14px」会把把手推出
+   视口 2px（本批实测：默认态 handle.left = −2）。手机档改**内挂 left:0**（抓手
+   落在面板左上角内侧；气泡右对齐 ⇒ 左上角本就是留白区，零遮挡），外挂量为 0，
+   JS 侧实测外挂量自适应、零分叉。 */
+body.mobile-layer .ask-dock .ds-resize-handle { left: 0; }
+/* 拖拽中：跟手（面板尺寸过渡关掉，不加任何补间），抓手由 [data-resizing] 提亮。 */
+.ask-dock.is-resizing { transition: none; }
+/* 拖拽中面板外缘同步提亮一档（活性蓝既有词汇，与 .ask-input:focus-within 同值）——
+   让「正在改尺寸的是这一块」在抓手之外还有一处回显。 */
+.ask-dock.is-resizing .ask-input,
+.ask-dock.is-resizing .ask-bub { border-color: rgb(var(--sapphire) / 0.35); }
+
+
 /* 气泡列：从按钮位置长出；顶缘过渡 = 主对话窗同一套渐隐带（作者令 2026-11-03）
  * ── ui-unification-20261103-doc-ask-fade（作者实拍 IMG_1720/1721：「现在上方边缘有
  * 很明显的截断。我想要的效果是像主对话窗口那样，做一个慢慢渐渐隐去的消失效果」）──
@@ -222,41 +245,16 @@ html[data-theme='light'] {
   line-height: 1.4; color: var(--color-text); caret-color: var(--color-primary);
 }
 .ask-input textarea::placeholder { color: var(--color-text-muted); }
-/* 发送钮跟随主对话恢复微信绿（液体玻璃 v3 实现批 2026-10-31，作者 12:32 点选
- * 「其它面板发送钮跟随主对话」）：10-30 墨族（--btn-primary-*）恢复为考古绿
- * --ctl-send-* 三档（git c91de8456^ 本块原值 #07C160/#06AD56/#059A4C）；材质 =
- * v3 C1 扁平实底（无 blur/高光/浮影，按压 = 色深一档）；几何 = 32px 正圆保留。 */
-.ask-input .ask-send {
-  flex: none; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; padding: 0;
-  background: var(--ctl-send-bg); color: var(--ctl-send-ink);
-  border: 1px solid var(--ctl-send-border);
-  display: flex; align-items: center; justify-content: center;
-  transition: background-color 0.15s ease, border-color 0.15s ease;
-}
-.ask-input .ask-send:hover {
-  background: var(--ctl-send-bg-hover);
-  border-color: var(--ctl-send-bg-hover);
-}
-.ask-input .ask-send:active {
-  background: var(--ctl-send-bg-active);
-  border-color: var(--ctl-send-bg-active);
-}
-.ask-input .ask-send svg { width: 14px; height: 14px; pointer-events: none; }
-
-/* 中断钮（输入行为包批 2026-11-02）：busy 态与发送钮互换（包状态机驱动显隐，
- * 与主会话 #send-btn/#stop-btn 互换同律）。材质 = 主会话 #stop-btn 同源——
- * --color-error 红实底白标，hover 色深一档（input.css #stop-btn 同式 color-mix）；
- * 几何沿用 .ask-send 32px 正圆档（dock 单行形态不因态互换跳变）。 */
-.ask-input .ask-stop {
-  flex: none; width: 32px; height: 32px; border-radius: 50%; cursor: pointer; padding: 0;
-  background: var(--color-error); color: #fff;
-  border: 1px solid transparent;
-  display: none; /* 默认隐（idle 态发送钮上位）；busy 由包置 flex */
-  align-items: center; justify-content: center;
-  transition: background-color 0.15s ease;
-}
-.ask-input .ask-stop:hover { background: color-mix(in srgb, var(--color-error) 88%, black); }
-.ask-input .ask-stop svg { width: 14px; height: 14px; pointer-events: none; }
+/* 发送钮 / 中断钮：**零本地形态**（作者令 ui-unification-20261103-canvas-ask-resize
+ * 「发送按钮与终止按钮样式与主会话完全统一（同一组件/同一 design-system 令牌，
+ * 不得另做一套）」）。
+ * 本批退役的第二套形态（git 可查）：`.ask-input .ask-send` / `.ask-stop` 曾自带
+ * 32×32 正圆 + 14px 图标（比主会话 36×36 + 18px 小一档），hover/active 三档也各自
+ * 声明 —— 同一对按钮在两条腿各长一套几何，正是本令要收的东西。
+ * 现态：两枚按钮在 DOM 上挂 `ds-turn-btn ds-turn-btn--send|--stop`
+ * （design-system.css §①b 单源），`.ask-send` / `.ask-stop` 只是**身份钩子**
+ * （既有 spec 定位用，本文件零规则）。改形态改那一个组件类，两处同时生效。
+ */
 
 /* ═══ 移动档（body.mobile-layer；E-2 移动列 + #988 命中盒纪律）═══
    Canvas 改造批⑨（2026-10-31 作者令「修 bug：标签页对话按钮消失」）：手机层

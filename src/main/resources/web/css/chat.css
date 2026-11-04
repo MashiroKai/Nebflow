@@ -4268,16 +4268,18 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   mask-image: none;
 }
 /* The label is ONE row while the turn runs: clipped, never wrapped, never
-   ellipsised. `flex: 1 1 auto` makes the label's BOX span the rest of the row.
-   The tail fade lives on `.nf-wl-clip` (below, ui-polish 2026-10-08): the old
-   right-edge mask dissolved exactly the newest text the tail anchor pins to the
-   right edge; the fade now belongs to the LEFT edge and only when the box
-   actually overflows. */
+   ellipsised. `flex: 0 1 auto` = **content-sized**（作者令 2026-11-04 11:22
+   「这个思考中的计时，这个时间和文字靠近，贴在一起，不要分这么远」）：旧值
+   `1 1 auto` 让 label 盒子吃掉整行剩余宽度，计时（.nf-wl-hint）被顶到行右缘
+   ——文字与计时之间的空隙 = 该行剩余空间，宽面板上实测可达 300px 以上。
+   不生长后 label 只占文字本征宽，计时紧贴其后（间距 = 本行 gap = 一个正常
+   字距）。仍可收缩（min-width:0）⇒ 长文本照旧裁剪，尾锚（pinTail 的 1e7
+   clamp）与 `.nf-wl-clip` 左缘渐隐逐字不变。 */
 .nf-wl-label {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: clip;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
 }
 /* ── ② 运行中类型化细节行（toolline-detail 批 2026-10-06）────────────────
@@ -4305,7 +4307,15 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex: 0 1 auto;
   max-width: 55%;
 }
-.nf-wl-hint { margin-left: auto; font-size: 12px; flex: none; }
+/* 计时徽标：**紧跟文字**（作者令 2026-11-04 11:22「时间和文字靠近，贴在一起，
+   不要分这么远」）。旧规则 `margin-left: auto` = 两端对齐，把计时甩到行右缘；
+   叠加 label 的 `flex: 1 1 auto`（旧）后，两者之间的空隙 = 整行剩余宽度。
+   现态：无 auto 外边距，间距只由 `.nf-wl-item` 的 gap（10px ≈ 一个正常字距）
+   承担 ⇒ 整行读作「dots · 思考中 14s」一个视觉群组。
+   行内右侧若有其它元素（如下方 .nf-wl-detail 细节行/完成态摘要），它们**不**
+   与本徽标同排：detail 是 label 的延长流（自己的 flex 段），完成态摘要落在
+   下一行 —— 计时不会跟着它们跑回右缘。 */
+.nf-wl-hint { margin-left: 0; font-size: 12px; flex: none; }
 
 /* ── 尾部 fade：左缘 + 溢出门控（ui-polish 2026-10-08，作者令「右侧文字和
    光标太暗」）────────────────────────────────────────────────────────────

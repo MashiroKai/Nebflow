@@ -585,8 +585,13 @@ try {
   // 输入条按钮面 = 发送 + 中断两枚（中断钮 idle 态 display:none 隐着，busy 才
   // 上位）——转交钮退场契约（v2.1 减法）由 hasHandoff=false + idle 可见按钮唯一
   // （.ask-send）共同钉住；T-IX 批（ask-input-composer.spec）另有 busy 互换全断言。
+  // 转回合按钮单源批（ui-unification-20261103-canvas-ask-resize）：两钮在 DOM 上
+  // 追加了主会话同一组件类 `ds-turn-btn ds-turn-btn--send|--stop`（作者令「发送
+  // 按钮与终止按钮样式与主会话完全统一」）⇒ 本钉由「className 逐字等于 ask-send」
+  // 改为「**首 token** 仍是身份钩子 ask-send」（钩子在前的次序契约不变，组件类
+  // 在场由 canvas-ask-resize.spec 的 c7/c11/c12 独立钉住）。
   ok('T6a v2.1 单箭头 + 中断钮对：转交钮退场，idle 可见按钮唯一 = .ask-send（.ask-stop 隐）',
-    !t6a.hasHandoff && t6a.n === 1 && t6a.cls[0] === 'ask-send' && t6a.stopHidden === true,
+    !t6a.hasHandoff && t6a.n === 1 && String(t6a.cls[0]).split(/\s+/)[0] === 'ask-send' && t6a.stopHidden === true,
     JSON.stringify(t6a));
   // 转交回执（服务端 ack 帧）收进不可见处：零 sys 气泡、气泡总数不变
   const before6b = await page.evaluate(() => document.querySelectorAll('.ask-dock .ask-bub').length);

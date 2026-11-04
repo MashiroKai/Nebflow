@@ -203,6 +203,183 @@ function mountHost() {
     : document.getElementById('canvas-panel');
 }
 
+// ── 拖拽改尺寸（作者令 2026-11-04「允许用户交互拖拽调整对话框大小（拖柄可见、
+//    热区 ≥44px，按 Apple HIG）」）─────────────────────────────────────────
+// 设计取舍（样张 canvas-ask-resize/mockup.html 即基线）：
+//   · **一个把手**在面板左上角，同时改宽（向左拖 = 变宽）与高（向上拖 = 变高）：
+//     面板右缘/下缘是钉位（右下角锚定），所以只有左上角是「自由角」——放一个把
+//     手就够，不必条形分隔件（少一个可点面 = 少一处误触）。
+//   · **桌面与手机同一段实现、同一组 CSS 变量**（宽 = --ask-dock-w，列高 =
+//     --ask-col-maxh）。两档的差别只来自视口实测算出的上下限，不是两套代码。
+//   · 上下限**每次手势现算**（不缓存）：面板钉位随视口/手机底 dock 变化，
+//     缓存的极限值迟早过期。四条硬约束：① 宽不小于 --ds-resize-min-w；
+//     ② 左缘不越过视口 --ds-resize-safe 缝；③ 面板顶距视口顶不小于
+//     --ds-resize-top-guard（44 = 拖柄热区边长）；④ 把手**不与画布头带浮钮
+//     叠压**（`#canvas-head-close` / `#deck-fab` 是 z 250 的 body 级 fixed，
+//     压在面板之上 —— 把手一旦钻进去，那一段就是死区，44 热区名存实亡）
+//     ⇒ 把手本体永远 100% 可点、且输入条与底部安全区在面板自己的 flex 列里
+//     恒在最下方，永不被列压住。
+//   · 一切形态/配色走 --ds-* 槽（design-system.css `.ds-resize-handle`），本段只
+//     做几何与状态机。
+
+/** 从面板计算样式读一个 px 令牌（缺/非数值回落 fallback）。 */
+function dsPx(name, fallback) {
+  const raw = el && el.dock ? getComputedStyle(el.dock).getPropertyValue(name) : '';
+  const v = parseFloat(raw);
+  return Number.isFinite(v) ? v : fallback;
+}
+
+/** 现算上下限（手势每次重算；见上注三条硬约束）。 */
+function resizeLimits() {
+  const r = el.dock.getBoundingClientRect();
+  const gap = parseFloat(getComputedStyle(el.dock).rowGap) || 7; // dock 的列缝
+  const inputH = el.inputRow ? el.inputRow.getBoundingClientRect().height : 0;
+  const safe = dsPx('--ds-resize-safe', 12);
+  const topGuard = dsPx('--ds-resize-top-guard', 44);
+  const minW = dsPx('--ds-resize-min-w', 260);
+  const minH = dsPx('--ds-resize-min-h', 120);
+  // 把手外挂量（ask.css 把它挂到面板左上角外侧 14px）：**上限必须把它算进去**，
+  // 否则面板左缘贴到安全缝时把手会被顶出视口（本批实测 b2c 抓到：dock.left=12
+  // 而 handle.left=−2 ⇒ 命中全丢）。外挂量从 DOM 实测，不在 JS 里复制 14。
+  const hr = el.resize ? el.resize.getBoundingClientRect() : null;
+  const overshoot = hr && hr.width > 0 ? Math.max(0, r.left - hr.left) : 0;
+  // 左侧/顶侧硬界：桌面 = **#canvas-panel 的内容框**（面板 overflow:hidden +
+  // 顶行 z 30 > dock 24「永不入顶行」）——拖过面板上缘会被裁剪，把手随即离开
+  // 命中面（本批实测 b2c：dock.top=44 时把手落进顶行带，五点全丢）。手机层
+  // dock 是 body 级 fixed（offsetParent = null），走视口安全缝。
+  let minLeft = safe;
+  let minTop = topGuard;
+  const host = /** @type {HTMLElement|null} */ (el.dock.offsetParent);
+  if (host && host.id === 'canvas-panel') {
+    const pr = host.getBoundingClientRect();
+    const inset = 8; // 面板圆角 20 的内切安全档（把手左上角落在圆角内）
+    minLeft = Math.max(minLeft, pr.left + inset);
+    minTop = Math.max(minTop, pr.top + inset);
+  }
+  // 顶侧再让开画布自己的头带（.canvas-header 浮层胶囊 + #canvas-tab-bar）：
+  // 实测 b2c 抓到把手顶缘落到 44 时被 `#canvas-head-close.g2-fab` 压住 ⇒ 命中全丢。
+  // 以 #canvas-content 的上缘为「内容区起点」（它就在头带之下），把手必须完整
+  // 落在其下 —— 与 dock z 24 < 顶行 30「永不入顶行」同一口径。
+  const content = el.dock.offsetParent && document.getElementById('canvas-content');
+  if (content && content.offsetParent !== null && !document.body.classList.contains('mobile-layer')) {
+    const cr = content.getBoundingClientRect();
+    if (cr.height > 0) minTop = Math.max(minTop, cr.top + 4);
+  }
+  // 宽：右缘是钉位 ⇒ 左缘（含把手外挂）只需不越过左侧硬界。
+  const maxW = Math.max(minW, Math.floor(r.right - (minLeft + overshoot)));
+  // 高：底缘是钉位 ⇒ 列高上限 = 底缘 − 顶侧硬界 − 输入条 − 列缝
+  //（顶侧硬界 44 > 把手外挂 14 ⇒ 把手顶缘恒完整在界内）。
+  const maxHAt = (topLimit) => Math.max(minH, Math.floor(r.bottom - (topLimit + overshoot) - inputH - gap));
+  /** 给定落定宽度 W 的高度上限：除上述顶侧硬界外，再让开与之叠压的头带浮钮。 */
+  const maxHFor = (W) => {
+    let cap = maxHAt(minTop);
+    // 把手在宽度 W 下的水平跨度（右缘钉位 ⇒ 左缘 = 右缘 − W − 外挂）。
+    const hl = r.right - W - overshoot;
+    const hrr = hl + dsPx('--ds-resize-hit', 44);
+    for (const ob of headerObstacles()) {
+      // 只在与浮钮**水平相交**时让位：面板没拖到那一侧就零代价，
+      // 不为不存在的冲突白扣最大高度（否则窄面板会被凭空压矮一截）。
+      if (hrr > ob.left + 1 && hl < ob.right - 1) cap = Math.min(cap, maxHAt(ob.bottom + 2));
+    }
+    return cap;
+  };
+  return { minW, maxW, minH, maxH: maxHAt(minTop), maxHFor };
+}
+
+/** 画布头带浮钮盒（可见者才计入；display:none 的 0 盒自动跳过 —— 手机层两件都隐）。 */
+function headerObstacles() {
+  const out = [];
+  for (const id of ['canvas-head-close', 'deck-fab']) {
+    const n = document.getElementById(id);
+    if (!n) continue;
+    const b = n.getBoundingClientRect();
+    if (b.width > 0 && b.height > 0) out.push({ left: b.left, right: b.right, bottom: b.bottom });
+  }
+  return out;
+}
+
+/** 落尺寸（夹取后写两条 CSS 变量；返回实际生效值，供断言/复位用）。 */
+function applyDockSize(w, h) {
+  if (!el) return null;
+  const L = resizeLimits();
+  const W = Math.round(Math.min(Math.max(w, L.minW), L.maxW));
+  // 高度上限依赖**落定宽度**（把手位置决定它与哪个浮钮叠压）⇒ 先定宽再夹高，
+  // 一遍算清，不做「夹宽→夹高→回头再夹宽」的收敛循环。
+  const H = Math.round(Math.min(Math.max(h, L.minH), L.maxHFor(W)));
+  el.dock.style.setProperty('--ask-dock-w', W + 'px');
+  el.dock.style.setProperty('--ask-col-maxh', H + 'px');
+  lastSize = { w: W, h: H };
+  return lastSize;
+}
+
+let lastSize = null; // 最近一次落下的尺寸（视口变化时按同一目标重夹）
+
+/** 拖柄状态机（pointer capture + 键盘；桌面/手机同一段）。 */
+function bindResize() {
+  const h = el.resize;
+  if (!h) return;
+  let active = false;
+  let grabX = 0, grabY = 0, baseW = 0, baseH = 0;
+
+  h.addEventListener('pointerdown', (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    const r = el.dock.getBoundingClientRect();
+    active = true;
+    grabX = e.clientX;
+    grabY = e.clientY;
+    baseW = r.width;
+    // 基线高 = 列的**实测**高（内容短时 < --ask-col-maxh，用 CSS 声明值会让
+    // 第一次拖动就跳一大截）。
+    baseH = el.col.getBoundingClientRect().height;
+    try { h.setPointerCapture(e.pointerId); } catch { /* 合成事件无 pointerId */ }
+    h.dataset.resizing = 'true';
+    el.dock.classList.add('is-resizing');
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  h.addEventListener('pointermove', (e) => {
+    if (!active) return;
+    // 右/下钉位 ⇒ 鼠标向左移（dx < 0）变宽、向上移（dy < 0）变高。
+    applyDockSize(baseW + (grabX - e.clientX), baseH + (grabY - e.clientY));
+    e.preventDefault();
+  });
+
+  const end = (e) => {
+    if (!active) return;
+    active = false;
+    if (h.hasPointerCapture && e && e.pointerId !== undefined) {
+      try { h.releasePointerCapture(e.pointerId); } catch { /* 已释放 */ }
+    }
+    delete h.dataset.resizing;
+    el.dock.classList.remove('is-resizing');
+  };
+  h.addEventListener('pointerup', end);
+  h.addEventListener('pointercancel', end);
+
+  // 键盘同源（←→ 改宽 / ↑↓ 改高）：拖柄是 tabindex=0 的 separator，键盘用户
+  // 拿得到的必须是**同一个**尺寸状态机，不是第二套。
+  h.addEventListener('keydown', (e) => {
+    const step = dsPx('--ds-resize-step', 16);
+    const r = el.dock.getBoundingClientRect();
+    const cur = lastSize || { w: r.width, h: el.col.getBoundingClientRect().height };
+    let { w, h: hh } = cur;
+    if (e.key === 'ArrowLeft') w += step;
+    else if (e.key === 'ArrowRight') w -= step;
+    else if (e.key === 'ArrowUp') hh += step;
+    else if (e.key === 'ArrowDown') hh -= step;
+    else return;
+    e.preventDefault();
+    applyDockSize(w, hh);
+  });
+}
+
+/** 视口/座位变化后按同一目标重夹（拖到极限再转屏不可把面板顶出视口）。 */
+function reclampSize() {
+  if (!el || !lastSize) return;
+  applyDockSize(lastSize.w, lastSize.h);
+}
+
 function mount() {
   const host = mountHost();
   if (!host || host.querySelector(':scope > .ask-fab')) return;
@@ -225,11 +402,21 @@ function mount() {
   // 同一个类：author 令 2026-11-03「像主对话窗口那样，做一个慢慢渐渐隐去的消失
   // 效果」；本文件只挂类，材质零自带 —— 禁在此另造第二套渐隐）。
   dock.innerHTML =
+    '<div class="ds-resize-handle" data-ask-resize role="separator" tabindex="0" aria-label="' +
+      tt('拖拽调整面板大小', 'Resize panel') + '" title="' +
+      tt('拖拽调整面板大小（←→ 改宽 / ↑↓ 改高）', 'Drag to resize (←→ width / ↑↓ height)') + '">' +
+      '<span class="ds-resize-grip" aria-hidden="true"><i></i><i></i><i></i></span>' +
+    '</div>' +
     '<div class="ask-colwrap"><div class="ask-col"></div><div class="ask-veil ds-edge-fade" aria-hidden="true"></div></div>' +
     '<div class="ask-input">' +
     '<textarea rows="1" placeholder="' + tt('针对这份文件提问…', 'Ask about this file…') + '" aria-label="' + tt('提问', 'Question') + '"></textarea>' +
-    '<button type="button" class="ask-send" aria-label="' + tt('发送', 'Send') + '">' + ICONS.send + '</button>' +
-    '<button type="button" class="ask-stop" aria-label="' + tt('停止回答', 'Stop answering') + '">' + ICONS.stop + '</button>' +
+    // 转回合按钮（作者令 ui-unification-20261103-canvas-ask-resize「发送按钮与终止
+    // 按钮样式与主会话完全统一」）：两枚按钮挂**主会话同一个组件类**
+    // `ds-turn-btn ds-turn-btn--send|--stop`（design-system.css §①b 单源）。
+    // `.ask-send` / `.ask-stop` 留作身份钩子（既有 spec 定位 + 类序断言
+    // canvas-ask-dock T6a 读 className[0]），本批起在 ask.css 里**零规则**。
+    '<button type="button" class="ask-send ds-turn-btn ds-turn-btn--send" aria-label="' + tt('发送', 'Send') + '">' + ICONS.send + '</button>' +
+    '<button type="button" class="ask-stop ds-turn-btn ds-turn-btn--stop" aria-label="' + tt('停止回答', 'Stop answering') + '">' + ICONS.stop + '</button>' +
     '</div>';
 
   host.appendChild(fab);
@@ -239,10 +426,14 @@ function mount() {
     fab,
     dock,
     col: dock.querySelector('.ask-col'),
+    colwrap: dock.querySelector('.ask-colwrap'),
+    inputRow: dock.querySelector('.ask-input'),
+    resize: dock.querySelector('[data-ask-resize]'),
     input: dock.querySelector('textarea'),
     send: dock.querySelector('.ask-send'),
     stop: dock.querySelector('.ask-stop'),
   };
+  bindResize();
 
   fab.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
   dock.addEventListener('click', (e) => e.stopPropagation());
@@ -281,7 +472,7 @@ function mount() {
 
   document.addEventListener('canvas-tab-switched', onTabSwitch);
   document.addEventListener('canvas-tab-closed', onTabClosed);
-  window.addEventListener('resize', syncSeat);
+  window.addEventListener('resize', () => { syncSeat(); reclampSize(); });
   // 批⑨：手机层根页切换（nf:mobile-nav）重落可见性闸——离开 canvas 页即隐。
   document.addEventListener('nf:mobile-nav', () => syncGate());
   // 批⑩：阅读器底栏挂载完成 → 座位重算（底栏入角落浮件占用集，见 syncSeat）。
@@ -298,6 +489,7 @@ function mount() {
       if (h && el.fab.parentElement !== h) { h.appendChild(el.fab); h.appendChild(el.dock); }
       syncGate();
       syncSeat();
+      reclampSize(); // 层切换 = 钉位/视口语境变化，已拖过的尺寸按新上下限重夹
     }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
   }
   if (typeof ResizeObserver === 'function') {

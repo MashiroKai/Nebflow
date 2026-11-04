@@ -2746,21 +2746,15 @@ body.mobile-layer #input-area {
    桌面基类 36 —— 尺寸失衡即作者所见「发送钮怎么那么大」。现两钮**同块同
    token** 升到 --mtap-lg(48)：send 回归「高频动作抬大档」不撤（附件钮/光球/
    dock 同尺），stop 跟上同档；图标同升 --micon(22)（圆内同视觉重量，
-   input.css 基类 18px 档在手机层被覆盖）。热区 48 天然 ≥44（HIG）。 */
-body.mobile-layer #send-btn,
-body.mobile-layer #stop-btn {
-  position: relative;
-  border-radius: 50%;
-  width: var(--mtap-lg);
-  height: var(--mtap-lg);
-  min-width: var(--mtap-lg);
-  min-height: var(--mtap-lg);
-  padding: 0;
-}
-body.mobile-layer #send-btn svg,
-body.mobile-layer #stop-btn svg {
-  width: var(--micon);
-  height: var(--micon);
+   input.css 基类 18px 档在手机层被覆盖）。热区 48 天然 ≥44（HIG）。
+   转回合按钮单源批（ui-unification-20261103-canvas-ask-resize）：选择器由
+   `#send-btn/#stop-btn` 改挂 `.ds-turn-btn` —— 桌面/手机两档现在**只改组件变量**
+   （--ds-turn-btn-size / --ds-turn-btn-icon），几何声明全部归 design-system.css；
+   同一组件同时服务主会话与 Canvas Ask 面板两处（面板内钮一并升到 48/22，与主
+   会话逐属性相等 = 作者令「完全统一」的手机腿）。 */
+body.mobile-layer .ds-turn-btn {
+  --ds-turn-btn-size: var(--mtap-lg);
+  --ds-turn-btn-icon: var(--micon);
 }
 
 /* ── 输入卡垂直收窄批（2026-11-01 22:1x 作者令「收窄输入框的上下高度，
