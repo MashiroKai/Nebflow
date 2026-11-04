@@ -1,0 +1,133 @@
+{
+ "batch": "2026-11-04 kai-probe-tax (RED / 改前)",
+ "engine": {
+  "pid": 41715,
+  "build": "main",
+  "port": 6138
+ },
+ "device": {
+  "name": "KAI",
+  "deviceId": "40742cd4-851a-4ec4-a49d-6db2509bf03d",
+  "endpoints": [
+   "http://100.91.165.120:6138",
+   "http://192.168.1.145:6138"
+  ]
+ },
+ "method": "agent tool leg (Read with device=KAI) — 与浏览取件腿共用同一 P2P dispatch/负证据机制；耗时取日志 'Tool Read(...) OK (NNNNms)'",
+ "samples": [
+  {
+   "ts": "2026-11-04 10:15:43.981",
+   "tool": "Read",
+   "path": "C:/Users/Kai/stand/VERSION",
+   "ms": 5011
+  },
+  {
+   "ts": "2026-11-04 10:21:12.176",
+   "tool": "Read",
+   "path": "C:/Users/Kai/stand/README.md",
+   "ms": 10032
+  },
+  {
+   "ts": "2026-11-04 10:21:28.240",
+   "tool": "Read",
+   "path": "C:/Users/Kai/stand/README.md",
+   "ms": 92
+  },
+  {
+   "ts": "2026-11-04 10:21:57.575",
+   "tool": "Read",
+   "path": "C:/Users/Kai/stand/build.sbt",
+   "ms": 172
+  },
+  {
+   "ts": "2026-11-04 10:22:32.621",
+   "tool": "Read",
+   "path": "C:/Users/Kai/stand/src/main/scala/nebflow/gateway/HealthRoutes.scala",
+   "ms": 175
+  },
+  {
+   "ts": "2026-11-04 10:23:41.697",
+   "tool": "Read",
+   "path": "C:/Users/Kai/stand/src/main/scala/nebflow/gateway/NfFileRoutes.scala",
+   "ms": 5006
+  },
+  {
+   "ts": "2026-11-04 10:24:51.872",
+   "tool": "Read",
+   "path": "C:/Users/Kai/stand/src/main/scala/nebflow/gateway/NfServeGate.scala",
+   "ms": 5010
+  },
+  {
+   "ts": "2026-11-04 10:24:54.481",
+   "tool": "Read",
+   "path": "C:/Users/Kai/stand/src/main/scala/nebflow/gateway/NfTicketStore.scala",
+   "ms": 169
+  },
+  {
+   "ts": "2026-11-04 10:25:06.524",
+   "tool": "Read",
+   "path": "C:/Users/Kai/.stand/neblink/device.json",
+   "ms": 95
+  },
+  {
+   "ts": "2026-11-04 10:47:39.059",
+   "tool": "Read",
+   "path": "C:/Users/Kai/stand/VERSION",
+   "ms": 10025
+  },
+  {
+   "ts": "2026-11-04 10:49:22.605",
+   "tool": "Read",
+   "path": "C:/Users/Kai/stand/README.md",
+   "ms": 5009
+  },
+  {
+   "ts": "2026-11-04 10:59:09.592",
+   "tool": "Read",
+   "path": "C:/Users/Kai/stand/VERSION",
+   "ms": 5051
+  },
+  {
+   "ts": "2026-11-04 11:00:14.855",
+   "tool": "Read",
+   "path": "C:/Users/Kai/stand/VERSION",
+   "ms": 5053
+  },
+  {
+   "ts": "2026-11-04 11:01:02.917",
+   "tool": "Read",
+   "path": "C:/Users/Kai/stand/README.md",
+   "ms": 95
+  },
+  {
+   "ts": "2026-11-04 11:02:32.063",
+   "tool": "Read",
+   "path": "C:/Users/Kai/stand/VERSION",
+   "ms": 5179
+  }
+ ],
+ "cold": {
+  "n": 9,
+  "median_ms": 5051,
+  "max_ms": 10032,
+  "min_ms": 5006
+ },
+ "warm": {
+  "n": 6,
+  "median_ms": 132.0,
+  "max_ms": 175,
+  "min_ms": 92
+ },
+ "warm_threshold_s": 60,
+ "presence_dial": {
+  "failed_lines_total": 151,
+  "per_round_cost_ms": 4500,
+  "round_period_s": 30,
+  "strikes_before_suppression": 5,
+  "suppression_ttl_s": 300
+ },
+ "endpoint_reachability": {
+  "tailscale_100_91_165_120_6138": "connect blackhole (12s curl timeout, 100% ICMP loss)",
+  "lan_192_168_1_145_6138": "connect blackhole (12s curl timeout, 100% ICMP loss)"
+ }
+}
