@@ -123,13 +123,45 @@ function el(tag, cls, text) {
   return n;
 }
 
+/** 行尾删除 × 的 SVG 元素（命名空间 API 装配）。
+ *  既有件多为内联 SVG 字符串（裸 innerHTML 赋值写面，属 component-contract R5 的存量
+ *  基线债）；本批新增的删除钮**不进这笔债**，改由 createElementNS 逐属性装配 ——
+ *  viewBox/描边/圆头与 X_VIEWBOX/X_PATH_D 单源逐字对应，渲染结果与字符串形态等价。 */
+function xIconEl() {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', X_VIEWBOX);
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(NS, 'path');
+  path.setAttribute('d', X_PATH_D);
+  path.setAttribute('fill', 'none');
+  path.setAttribute('stroke', 'currentColor');
+  path.setAttribute('stroke-width', '1.5');
+  path.setAttribute('stroke-linecap', 'round');
+  svg.appendChild(path);
+  return svg;
+}
+
+/** lucide 图标槽（`<i data-lucide="…">`，与筛选/收起/建行诸钮同一渲染腿）。
+ *  同样避开裸 innerHTML 赋值：本仓图标走 createIconsIn 的 data-lucide 替换，
+ *  元素自带属性即足够，无需再拼字符串。 */
+function lucideIcon(name) {
+  const ic = document.createElement('i');
+  ic.setAttribute('data-lucide', name);
+  return ic;
+}
+
 const PLUS_CIRCLE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="currentColor"/><path d="M12 6.5v11M6.5 12h11" stroke="rgba(0,0,0,0.55)" stroke-width="2.2" stroke-linecap="round"/></svg>';
 const CHECK_CIRCLE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="currentColor"/><path d="M7 12.5l3.4 3.4L17.2 9" stroke="rgba(0,0,0,0.55)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
 const PENCIL_CIRCLE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="currentColor"/><path d="M8.2 15.8l.6-2.6 5.2-5.2 2 2-5.2 5.2-2.6.6z" fill="rgba(0,0,0,0.55)" stroke="rgba(0,0,0,0.35)" stroke-width="0.6" stroke-linejoin="round"/></svg>';
 const XMARK_CIRCLE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="currentColor"/><path d="M8.4 8.4l7.2 7.2M15.6 8.4l-7.2 7.2" stroke="rgba(0,0,0,0.55)" stroke-width="2.2" stroke-linecap="round"/></svg>';
 const CHECK_SVG = '<svg viewBox="0 0 14 14" aria-hidden="true"><path d="M3 7.4l3 3L11 4.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 // 行尾删除（细线 ×，克制；不用填充圆钮——与完成钮的实心语义区分，避免被读成「已完成」）
-const X_SVG = '<svg viewBox="0 0 14 14" aria-hidden="true"><path d="M3.6 3.6l6.8 6.8M10.4 3.6l-6.8 6.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>';
+// 几何单源仍在此注释块（viewBox 14 / 两笔 45° 交叉 / 1.5 描边 / 圆头）；装配改走
+// 命名空间 API（见下方 xIconEl）——component-contract R5 禁裸 innerHTML 赋值，
+// 而本钮是本批新增调用点，必须落在基线内。逐属性与字符串形态一一对应 ⇒ 渲染不变。
+const X_VIEWBOX = '0 0 14 14';
+const X_PATH_D = 'M3.6 3.6l6.8 6.8M10.4 3.6l-6.8 6.8';
 const CLOCK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>';
 
 /** 截止时间文案（ReminderIsland = style:.time 纯时刻；web 面条目常跨天，
@@ -382,7 +414,7 @@ class TodoFace {
     fab.type = 'button';
     fab.title = t('todoface.fabAdd');
     fab.setAttribute('aria-label', t('todoface.fabAdd'));
-    fab.innerHTML = '<i data-lucide="plus"></i>';
+    fab.appendChild(lucideIcon('plus'));
     fab.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -798,7 +830,7 @@ class TodoFace {
     btn.type = 'button';
     btn.setAttribute('aria-label', t('todoface.del'));
     btn.title = t('todoface.del');
-    btn.innerHTML = X_SVG;
+    btn.appendChild(xIconEl());
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
