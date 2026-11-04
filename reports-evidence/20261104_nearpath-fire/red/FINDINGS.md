@@ -164,7 +164,7 @@ rig ingress  https :7443 ──┬─ /api/portal/status           （rig 自答
 | **deviceId 不等** | ✅ 分支可复现，非生产根因 | V7 ⇒ `device_mismatch (127.0.0.1)` |
 | **铸票失败（4xx）** | ✅ 分支可复现，非生产根因 | V9 ⇒ `mint_http_403`；且真实铸票在 rig 里成功 18 次（引擎 `console ticket redeemed`） |
 | **iframe/sandbox 拦住整页跳** | ❌ 排除 | Chromium 裸页（非 iframe）真跳成功，落地 URL 带 `?ticket=`，引擎侧立刻出现 `console ticket redeemed` |
-| **AbortSignal.timeout 4s 不够** | ❌ 排除（本机实测毫秒级） | 闸③ 探测在本机 ~20ms 内返回；闸链全程 < 1.1s（`red/summary.json` 的 `elapsedMs`：Chromium 命中 649–1047ms，拦截分支 550–900ms） |
+| **AbortSignal.timeout 4s 不够** | ❌ 排除（本机实测毫秒级） | 闸③ 探测在观测代理侧「请求到达即被转发并在同毫秒返回」；闸链全程 < 1s（`red/summary.json` 的 `elapsedMs`：Chromium 命中 723ms / 741ms（portal 轴）、527ms / 649ms（回环轴）；拦截分支 542–884ms） |
 
 ---
 
