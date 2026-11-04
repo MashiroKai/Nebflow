@@ -1,12 +1,13 @@
 package nebflow.pilogic
 
+import java.nio.charset.StandardCharsets
+import java.nio.file.{Files, Paths}
 import munit.CatsEffectSuite
 
-import java.nio.file.{Files, Paths, StandardCharsets}
 import scala.jdk.CollectionConverters.*
 
 /** 源码卫生机械判据（对位 db 线 DbSourceHygieneSpec 先例）：A-3 无硬编码帽 / A-4 无全局态 /
-  * 边界禁反向 import。只扫主源码 .scala 的非注释行（注释行以 // 、* 、/* 起头被滤除）。 */
+  * 边界禁反向 import。只扫主源码 .scala 的非注释行（行注释、星号续行、块注释标记起头的行被滤除）。 */
 class PilogicHygieneSpec extends CatsEffectSuite:
 
   private val dir = Paths.get("src", "main", "scala", "nebflow", "pilogic")

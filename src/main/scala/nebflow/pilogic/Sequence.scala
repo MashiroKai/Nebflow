@@ -2,6 +2,7 @@ package nebflow.pilogic
 
 import cats.effect.Sync
 import cats.effect.kernel.Ref
+import cats.syntax.all.*
 
 /** 序域（设计 §Ⅱ.1）：TurnNumber / MessageSeq 单调值对象，从 1 起。
   * 分配器由循环本体（单写者）持有——不暴露自增 API 给调用方，调用方只读；

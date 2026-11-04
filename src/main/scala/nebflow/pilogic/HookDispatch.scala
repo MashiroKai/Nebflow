@@ -1,6 +1,6 @@
 package nebflow.pilogic
 
-import cats.effect.MonadThrow
+import cats.MonadThrow
 import cats.syntax.all.*
 import io.circe.Json
 
@@ -94,20 +94,20 @@ object HookDispatch:
             case Aggregate.FirstWins => F.pure(lastDecisive.getOrElse(HookEffect.Proceed))
             case Aggregate.LastWins  => F.pure(lastDecisive.getOrElse(HookEffect.Proceed))
             case Aggregate.AllRun    => F.pure(HookEffect.Proceed)
-        case e :: tail =>
+        case Some(e) =>
           e.handle(cur).attempt.flatMap {
             case Right(effect) =>
               effect match
-                case HookEffect.Proceed => loop(tail, cur, lastDecisive, modified)
+                case HookEffect.Proceed => loop(rest.tail, cur, lastDecisive, modified)
                 case m @ HookEffect.Modify(v) =>
                   agg match
-                    case Aggregate.Chain     => loop(tail, v, lastDecisive, modified = true)
-                    case Aggregate.LastWins  => loop(tail, v, Some(m), modified = true)
+                    case Aggregate.Chain     => loop(rest.tail, v, lastDecisive, modified = true)
+                    case Aggregate.LastWins  => loop(rest.tail, v, Some(m), modified = true)
                     case Aggregate.FirstWins => F.pure(m)
                     case Aggregate.AllRun    => F.pure(m)
                 case other =>
                   agg match
-                    case Aggregate.LastWins => loop(tail, cur, Some(other), modified)
+                    case Aggregate.LastWins => loop(rest.tail, cur, Some(other), modified)
                     case _                  => F.pure(other)
             case Left(err) =>
               onHookError[F](point, e.id, err, e.errorPolicy, sink).flatMap {
@@ -115,10 +115,10 @@ object HookDispatch:
                   effect match
                     case b @ (_: HookEffect.Block) =>
                       agg match
-                        case Aggregate.LastWins => loop(tail, cur, Some(b), modified)
+                        case Aggregate.LastWins => loop(rest.tail, cur, Some(b), modified)
                         case _                  => F.pure(b) // fail-closed 短路
                     case other => F.pure(other)
-                case None => loop(tail, cur, lastDecisive, modified) // Continue：跳过该 hook
+                case None => loop(rest.tail, cur, lastDecisive, modified) // Continue：跳过该 hook
               }
           }
 

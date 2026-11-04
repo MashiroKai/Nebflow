@@ -51,7 +51,7 @@ final class HookSnapshot[F[_]] private[pilogic] (val entries: Vector[HookEntry[F
   def hookIdsAt(point: HookPoint): Vector[HookId] = orderedAt(point).map(_.id)
   def size: Int = entries.size
 
-/** 不可变 hook 注册表（COW：每个 with*/without 返回新实例，原快照不受影响）。 */
+/** 不可变 hook 注册表（COW：每个 with / without 调用返回新实例，原快照不受影响）。 */
 trait HookRegistry[F[_]]:
   def snapshot: HookSnapshot[F]
   def withInterceptor(

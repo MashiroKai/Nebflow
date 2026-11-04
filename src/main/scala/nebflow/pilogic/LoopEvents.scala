@@ -3,6 +3,7 @@ package nebflow.pilogic
 import cats.Applicative
 import cats.effect.Sync
 import cats.effect.kernel.Ref
+import cats.syntax.all.*
 import io.circe.Json
 
 /** 事件与出口（设计 §Ⅱ.3/§Ⅱ.4）：LoopEvent 密封层级 + EventSink[F] 推送面 + 崩溃合成助手。
@@ -24,13 +25,14 @@ object AbortCause:
   case object UserRequested extends AbortCause
   final case class External(reason: String) extends AbortCause
 
-/** 循环错误（RunOutcome.Failed 载荷；BudgetExhausted=预算停路径）。 */
-sealed trait LoopError extends Product with Serializable
+/** 循环错误（RunOutcome.Failed 载荷；BudgetExhausted=预算停路径）。
+  * 兼作 F 错误通道的 Throwable（HookRunFatal 经 dispatch FailRun 档 raiseError）——类型化错误，不抛裸串。 */
+sealed abstract class LoopError(msg: String) extends Throwable(msg) with Product with Serializable
 object LoopError:
-  final case class ProviderFailed(message: String) extends LoopError
-  final case class HookRunFatal(point: String, hookId: String, cause: String) extends LoopError
-  final case class InvalidContinuation(message: String) extends LoopError
-  case object BudgetExhausted extends LoopError
+  final case class ProviderFailed(message: String) extends LoopError(message)
+  final case class HookRunFatal(point: String, hookId: String, cause: String) extends LoopError(s"$point: $cause")
+  final case class InvalidContinuation(message: String) extends LoopError(message)
+  case object BudgetExhausted extends LoopError("budget exhausted")
 
 /** 收尾四态（设计 §Ⅱ.1；穷举，编译期封闭）。 */
 enum RunOutcome:
