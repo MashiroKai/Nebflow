@@ -449,16 +449,25 @@ export function collapseTurn(view, meta = {}) {
   if (tuckable.length > 0 || rows.some(rowHasOutputFace)) {
     const stats = computeTurnStats(rows);
     const segments = headerSegments(meta, stats);
-    // Same-element settle first (「过程全部展示在这一行」): the live line rolls
-    // its last item out and the stats badge in, then becomes the header.
-    header = settleWorklineAsHeader(view, segments, meta.title || '');
+    // 采用既有摘要行（过程泄漏修复批 2026-11-04）：回放腿给未终态尾段建过一枚
+    // **中性摘要行**（summarizeUnconfirmed）；该轮真正收尾时这枚节点就是本轮的
+    // 摘要行——就地改写文本/状态，绝不并列第二枚（「并列 badge」家族病灶）。
+    header = adoptHeaderAbove(chat, scope);
     if (header) {
+      removeWorkline(view);
+      fillHeaderText(header.querySelector('.turn-header-text'), meta, stats);
+      header.title = meta.title || '';
       header.dataset.turnState = 'done';
+      header.removeAttribute('data-nf-turn-unconfirmed');
       header.setAttribute('aria-expanded', 'false');
       bindHeaderToggle(header);
     } else {
-      header = buildHeader(chat, scope, meta, stats);
+      // Same-element settle first (「过程全部展示在这一行」): the live line rolls
+      // its last item out and the stats badge in, then becomes the header.
+      header = settleWorklineAsHeader(view, segments, meta.title || '');
+      if (!header) header = buildHeader(chat, scope, meta, stats);
       header.dataset.turnState = 'done';
+      header.removeAttribute('data-nf-turn-unconfirmed');
       header.setAttribute('aria-expanded', 'false');
       bindHeaderToggle(header);
     }
@@ -570,6 +579,79 @@ function exchangeComplete(tail) {
   return badgeIdx > stampIdx;
 }
 
+/* ---------- 摘要行归属：scope 顶端的既有 header ---------- */
+
+/**
+ * `scope` 顶上（= 本轮回放段的开头）是否已有一枚摘要行（未终态尾段的中性摘要
+ * 行）。有 ⇒ 返回该节点供 collapseTurn 就地改写；无 ⇒ null（走原 settle/insert）。
+ *
+ * 归属判据（两条硬闸，缺一不可 —— 上一版只挡「真·开轮 user 行」，结果在
+ * `#403`（注入行开新轮）与 turn-single-badge 的 post-closure / busyTail 面上
+ * 越界取走了上一轮**已确认**的 header，两轮并成一枚 = 「badge 并列/融合」家族
+ * 病灶）。修法 = 认「出处」而非「位置」：
+ *   ① 只有带 `data-nf-turn-unconfirmed="1"` 的 header 可被采用 —— 这枚戳只由
+ *      `summarizeUnconfirmed`（回放腿给未终态段建的中性摘要行）写入，已确认轮
+ *      的 header 永不被改写（每轮各一枚，绝不融合）；
+ *   ② 回溯不跨任何 user 行（含注入行、作答行）—— 任何 user 行都是轮边界；
+ *      回放腿把 header 插在段首行之前（buildHeader 的插入点），所以本轮的
+ *      中性摘要行总在命中边界之前。
+ */
+function adoptHeaderAbove(chat, scope) {
+  const first = scope[0];
+  if (!first || first.parentNode !== chat) return null;
+  let n = first.previousElementSibling;
+  while (n) {
+    if (n.classList && n.classList.contains('turn-header')) {
+      return n.dataset && n.dataset.nfTurnUnconfirmed === '1' ? n : null;
+    }
+    if (n.classList && n.classList.contains('user')) return null; // 轮边界：不跨
+    n = n.previousElementSibling;
+  }
+  return null;
+}
+
+/* ---------- 未终态段的过程面折叠（过程泄漏修复批 2026-11-04） ---------- */
+
+/**
+ * 未终态段（段内既无 writer terminal 戳、也无 done 徽章）的**中性摘要行**。
+ *
+ * 根因（本批 P1，作者令 2026-11-04 14:14「断网或者刷新页面……直接把所有的思考
+ * 和工具过程全部呈现出来」）：live 渲染腿的过程行**出生即折叠**——
+ *   chat.js:1057 / :1348  renderTool/Pending → `'row tool nf-tucked'`
+ *   chat.js:4330          appendThinkingDelta → `'row ai thinking-row nf-tucked'`
+ * 这条「出生态折叠」正是流式期间「一行揭示行掩盖思考与工具过程」的真源：过程行
+ * 从来不是「跑完才折」，而是**从来没有可见过**；可见面只有那条流式行 → 终态
+ * settle 成 `.turn-header`。
+ * 回放腿没有出生态折叠（persistence.js 直接把行建成可见态），全靠
+ * `buildTurnSummariesForHistory` 的事后一遍折叠；而那一遍**只折有终态判据的段**
+ * （本文件 :686 `if (!termRow && !badge) return []`、:693 E6）⇒ 任何没有终态判据
+ * 的段（刷新/断网时该轮仍在飞、终态戳缺失的异常收尾、旧转录无徽章）整段平铺，
+ * 思考行与工具卡（含正文）全部现形 = 作者看到的泄露。
+ *
+ * 收敛口径 = **live 那一行摘要**两态同形：未终态段同样建一枚 `.turn-header`
+ * 摘要行（可点 = 明细完整可展开，绝不把内容丢掉）+ 过程行折叠；但**不编造成败**
+ * ——✻ 成功文案只来自 done 徽章的 `data-nf-phrase`，未终态段没有徽章 ⇒ 摘要行
+ * 只出现「模型 · 工具 N 次 · 读写 K 文件」这些过程事实，不出现「到站」式成功句。
+ * 「未确认」在 DOM 上单点可读：`data-nf-turn-unconfirmed="1"`（审计/断言面），
+ * 后续若 live done 帧到达，collapseTurn 会**采用**这枚节点改写（不并列第二枚）。
+ */
+function summarizeUnconfirmed(chat, seg, meta) {
+  if (seg.length === 0) return null;
+  // E5 边界：零过程行（纯文字轮 / 孤立注入）没有可收拢的内容 —— 不立行
+  // （立了就是一枚空壳摘要行，live 腿同样不立）。output 面由调用方另走
+  // buildHeader（output 角标是原文唯一入口）。
+  const tuckable = seg.filter(isTuckableRow);
+  if (tuckable.length === 0) return null;
+  const stats = computeTurnStats(seg);
+  const header = buildHeader(chat, seg, meta || {}, stats);
+  header.dataset.turnState = 'done';
+  header.dataset.nfTurnUnconfirmed = '1';
+  header.setAttribute('aria-expanded', 'false');
+  bindHeaderToggle(header);
+  tuckRows(tuckable);
+  return header;
+}
+
 /* ---------- 旧存量转录的插话推断（tool-card-leak-on-reload 批 2026-11-02） ---------- */
 
 /** 行的时间戳（epoch ms，0 = 不可判）。行级时间只长在 footer 徽章的
@@ -661,6 +743,11 @@ export function buildTurnSummariesForHistory(chat, opts = {}) {
     flush(rows.length);
     markClosed(chat);
   } else if (tail.length > 0) {
+    // 在飞尾段（会话仍 busy）：live 腿的过程行出生即折叠（chat.js 三处
+    // nf-tucked）+ 可见面只有那条流式行 ⇒ 回放同形给一枚中性摘要行
+    // （过程泄漏修复批 2026-11-04，判据见 summarizeUnconfirmed 头注）。
+    const meta0 = { model: '', phrase: '', title: '' };
+    summarizeUnconfirmed(chat, tail, meta0);
     const idx = Array.from(chat.children).indexOf(tail[0]);
     if (idx > 0) markClosedAt(chat, idx);
   } else {
@@ -683,7 +770,13 @@ function summarizeSegment(chat, seg) {
   // （phrase/model 进 header）；terminal 行无徽章时 header 缺 phrase 段照样成立。
   const termRow = findTerminalRow(seg);
   const badge = findDoneBadge(seg);
-  if (!termRow && !badge) return []; // failed/unfinished segment: flat, no header
+  // 未终态段（无 writer terminal 戳、无 done 徽章）：失败收尾 / 异常中断 / 旧转录
+  // 无判据 —— 建**中性摘要行**（无 ✻ 成功文案）+ 过程行折叠：默认态不漏明细，
+  // 明细仍可点开（过程泄漏修复批 2026-11-04，判据见 summarizeUnconfirmed 头注）。
+  if (!termRow && !badge) {
+    summarizeUnconfirmed(chat, seg, { model: '', phrase: '', title: '' });
+    return [];
+  }
   // E6: nothing would remain visible — kept for the heuristic-only face (a badge
   // on an all-tuckable segment = uncertain legacy read, stay flat). A
   // WRITER-STAMPED terminal row is the round-close FACT (data face, not a

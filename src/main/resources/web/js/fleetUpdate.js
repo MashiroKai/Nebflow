@@ -273,12 +273,16 @@ function renderCard() {
 
   const manual = job && Array.isArray(job.manual) ? job.manual : [];
   const pending = job && Array.isArray(job.pending) ? job.pending : [];
+  // 自解释批（2026-11-04 铁律 8）：本行原来是 `fleet.manualHow`（「到该设备上打开控制台 →
+  // 设置 → 检查更新」式路径指引，细则 d 反例 1），已删；改挂**能力徽标事实**
+  // （`fleet.capability.*`「需手动更新（版本过旧）」——细则 e 明列为徽标事实），
+  // 与计划行（`renderPlanRow`）同一取数函数 `capabilityLabel`，一句话都不教。
   const manualHtml = manual.length
     ? `<div class="fleet-sub">${escapeHtml(t('fleet.manualTitle'))}</div>` +
       manual.map((d) => `<div class="fleet-row"><div class="fleet-row-main">
         <span class="fleet-row-name">${escapeHtml(String(d.deviceName || d.deviceId || ''))}</span>
         <span class="fleet-row-ver">${escapeHtml(d.version ? 'v' + d.version : t('fleet.versionUnknown'))}</span>
-        <span class="fleet-badge">${escapeHtml(t('fleet.manualHow'))}</span>
+        <span class="fleet-badge">${escapeHtml(capabilityLabel(d))}</span>
       </div></div>`).join('')
     : '';
   const pendingHtml = pending.length

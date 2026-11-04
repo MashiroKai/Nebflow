@@ -214,16 +214,27 @@ test('B2 纯工具轮徽章·terminal：terminal 行无条件渲染徽章并折�
   pinNewFace(c.headers === 1 && c.toolsTucked === 1, '该轮折叠、工具 tucked');
 });
 
-test('F 失败轮平铺：无 ai 行的段落无 header、工具卡可见（09-05 排障裁定不回归）', async ({ page }) => {
+test('F 失败轮：中性摘要行 + 过程折叠（不摊开明细，明细仍可点开）', async ({ page }) => {
   const c = await replay(page, FAILED_TURN);
-  pinGuard(c.headers === 0, `失败轮无 header（got ${c.headers}）`);
-  pinGuard(c.tools === 1 && c.toolsTucked === 0, '失败轮工具卡保持可见（平铺）');
+  // 过程泄漏修复批（作者令 2026-11-04 14:14）：09-05「失败轮平铺排障」面被本令
+  // 取代——无终态判据的段不再把工具卡/思考正文摊在流里（那正是作者报的泄露本体），
+  // 改为**中性摘要行**（可点展开 = 明细不丢）+ 过程行折叠；「不编造成败」由
+  // data-nf-turn-unconfirmed 承载（✻ 成功文案只来自 done 徽章）。
+  pinGuard(c.headers === 1, `失败轮有中性摘要行（got ${c.headers}）`);
+  pinGuard(c.tools === 1 && c.toolsTucked === 1, '失败轮过程行折叠（默认态不漏明细）');
+  const unconfirmed = await page.evaluate(() =>
+    [...document.querySelectorAll('#chat > .turn-header')].every(h => h.dataset.nfTurnUnconfirmed === '1'));
+  pinGuard(unconfirmed, '中性摘要行带 data-nf-turn-unconfirmed（无成功文案）');
+  // 明细仍可点开（内容不丢）
+  await page.click('#chat > .turn-header');
+  const c2 = await page.evaluate(() => window.__counts());
+  pinGuard(c2.toolsTucked === 0, '点开摘要行 ⇒ 工具卡原位可见（内容不丢）');
 });
 
-test('BT busyTail 尾段 open：无标记尾段不折叠（瞬态语义不回归）', async ({ page }) => {
+test('BT busyTail 尾段：折叠为中性摘要行（不摊开在飞过程）', async ({ page }) => {
   const c = await replay(page, BUSY_TAIL_TURN, { busyTail: true });
-  pinGuard(c.headers === 0, `进行中尾段无 header（got ${c.headers}）`);
-  pinGuard(c.tools === 1 && c.toolsTucked === 0, '尾段工具卡保持可见');
+  pinGuard(c.headers === 1, `进行中尾段有中性摘要行（got ${c.headers}）`);
+  pinGuard(c.tools === 1 && c.toolsTucked === 1, '尾段过程行折叠（live 出生态折叠同形）');
 });
 
 test('BT2 busyTail + terminal 尾段：数据面完成判据闭合尾段', async ({ page }) => {
@@ -274,11 +285,16 @@ test('TO1 退化全工具轮·terminal 工具行：末张裸卡归零（header +
   );
 });
 
-test('TO2 退化全工具轮·legacy（无 terminal 键）：维持平铺（E6 守卫不回归）', async ({ page }) => {
+test('TO2 退化全工具轮·legacy（无 terminal 键）：中性摘要行 + 折叠（不编造成败）', async ({ page }) => {
   const c = await replay(page, DEGENERATE_TOOL_LEGACY);
-  pinGuard(c.headers === 0, `旧转录无判据 ⇒ 无 header（got ${c.headers}）`);
+  // 过程泄漏修复批（作者令 2026-11-04）：无判据段给中性摘要行（unconfirmed 标）
+  // 并折叠过程行——E6「全过程行段保持平铺」在摘要行在场后让位（不会再出现空段）。
+  pinGuard(c.headers === 1, `旧转录无判据 ⇒ 中性摘要行（got ${c.headers}）`);
   pinGuard(c.toolTerminalStamped === 0, '旧行无 terminal 标');
-  pinGuard(c.tools === 1 && c.toolsTucked === 0, '裸工具卡保持可见（平铺，启发式时代现状）');
+  pinGuard(c.tools === 1 && c.toolsTucked === 1, '裸工具卡折进摘要行（默认态不漏明细）');
+  const unconfirmed = await page.evaluate(() =>
+    [...document.querySelectorAll('#chat > .turn-header')].every(h => h.dataset.nfTurnUnconfirmed === '1'));
+  pinGuard(unconfirmed, '中性摘要行带 data-nf-turn-unconfirmed');
 });
 
 test('TO3 busyTail + terminal 工具尾段：数据面完成判据闭合（exchangeComplete 同读一戳）', async ({ page }) => {

@@ -6,7 +6,8 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import nebflow.actor.AgentCommand
 import nebflow.core.SessionStore
-import nebflow.core.delegate.DelegateRegistry
+import nebflow.core.delegate.{ChainStore, DelegateRegistry}
+import nebflow.core.tools.DelegateReportTool
 import nebflow.shared.*
 
 import scala.concurrent.duration.*
@@ -93,6 +94,21 @@ object SubAgentStartupRecovery:
   private val InFlightStatuses = Set("running", "restarting")
 
   /**
+   * 重启丢失行（中断恢复批 2026-11-04 · 任务②）：上一 boot 被收殓判 failed 的孤儿。
+   * 判据全部可从任务行机械求值：`status=failed` ∧ `lastError` 带 [[RestartLossFingerprint]]
+   * 前缀（= 死于重启收殓，不是自身失败的诚实终态——LLM 网络错等自然失败行**不**进
+   * 复活视野，作者原话「只有人工 cancel/close 的才不复活」）。
+   *
+   * 这类行在本批起**仍有复活机会**：进 sweep 视野走同一资格闸（墓碑/预算/座位/
+   * 父会话逐条照守），合格者同 id 复活续跑；不合格者照旧收殓（幂等重写同一终态）。
+   * 防无限循环三闸：任务级预算 `DelegateRevivalMaxPerTask`（达限后每次 boot 都只
+   * 重走收殓，不再 spawn）、boot cap `DelegateRevivalBootCap`、kill-switch。复活
+   * 成功即翻 running + 清指纹（`markRevived`），下一 boot 回到普通在飞判读。
+   */
+  def isRestartLostRow(t: SubAgentTask): Boolean =
+    t.status == "failed" && t.lastError.exists(_.startsWith(RestartLossFingerprint))
+
+  /**
    * 冻结行状态值（错误冻结批 2026-11-01，与 [[nebflow.core.delegate.DelegateFreeze.TaskStatus]]
    * 同串）：冻结行**单独分诊**——不进在飞收殓视野（不能把冻结当在飞孤儿终态化），
    * 有复活腿 ⇒ 判复活（同 id 续原上下文）；无复活腿 ⇒ 原样留着（用户仍可 Mail
@@ -142,9 +158,12 @@ object SubAgentStartupRecovery:
    */
   def sweep(store: SubAgentTaskStore, sessionStore: SessionStore, revival: Option[RevivalDeps]): IO[Report] =
     def settle(): IO[Unit] =
-      markInterruptedRecords(store).void *>
+      // 完成未报告收尾腿（本批 V5/审计 D8）先于标记/对账：干完不报的会话在
+      // 「重启打断旗」落旗之前就被收尾，不会被误标成「中断」。
+      finalizeCompletedUnreported(store, sessionStore, revival.map(_.resources)).void *>
+        markInterruptedRecords(store).void *>
         nebflow.core.delegate.DelegateLedgerReconcile.reconcileInterruptedRecords(store).void
-    inFlightTasks(store).flatMap {
+    inFlightTasks(store, includeRestartLost = revival.isDefined && Defaults.DelegateRevivalEnabled).flatMap {
       case Nil => settle().as(Report())
       case allOrphans =>
         // ── 会话死亡台账结算（2026-10-28 · R1 同族监督持久性面）────────────────
@@ -304,15 +323,22 @@ object SubAgentStartupRecovery:
         )
     }
 
-  /** 在飞任务全量（running/restarting/ready-to-merge；单遍 findAllTasks 后过滤——boot 一次性）。
+  /** 在飞任务全量（running/restarting/ready-to-merge/frozen；单遍 findAllTasks 后过滤——boot 一次性）。
     * [合并融合] 标记腿与 #692 收宽同向：本 helper 服务 boot sweep（一次性全量），
     * 运行期视野走 watchdogSweep 的 findRunningTasks（已加宽 running∨restarting）。
     * [会话死亡台账结算 2026-10-28] ready-to-merge 收入视野——旧视野只有
     * running/restarting，停靠合并轮的行死后永远无人终态化（四行僵尸实证）；
-    * sweep 内按「有无开放合并队列成员」分诊（见 sweep 注）。 */
-  private def inFlightTasks(store: SubAgentTaskStore): IO[List[SubAgentTask]] =
+    * sweep 内按「有无开放合并队列成员」分诊（见 sweep 注）。
+    * [中断恢复批 2026-11-04] `includeRestartLost`：failed ∧ 重启指纹行进复活视野
+    * （任务②）；仅复活腿开启时收（legacy / kill-switch off = 逐字节回本批前现状，
+    * failed 行不进任何处置面）。 */
+  private def inFlightTasks(store: SubAgentTaskStore, includeRestartLost: Boolean = false): IO[List[SubAgentTask]] =
     store.findAllTasks()
-      .map(_.filter(t => InFlightStatuses.contains(t.status) || t.status == "ready-to-merge" || t.status == FrozenStatus))
+      .map { all =>
+        val inFlight =
+          all.filter(t => InFlightStatuses.contains(t.status) || t.status == "ready-to-merge" || t.status == FrozenStatus)
+        if includeRestartLost then inFlight ++ all.filter(isRestartLostRow) else inFlight
+      }
       .handleErrorWith(e => logger.warn(s"[startup-recovery] in-flight scan failed: ${e.getMessage}").as(Nil))
 
   /**
@@ -356,6 +382,142 @@ object SubAgentStartupRecovery:
           logger.info(s"[startup-recovery] restart-interruption marked on $marked delegate record(s)")
         else IO.unit
     yield marked
+
+  /**
+   * ## 完成未报告收尾腿（中断恢复批 2026-11-04 · V5 / 审计 D8 · cb580112 形态）
+   *
+   * 缺陷：活干完、只差收尾报告的会话（实证 cb580112：11:25:20 合并先落地 → 11:25:56
+   * finish 无裁定 → 11:27:41「NO terminal verdict」→ idle）**连 sweep 视野都不进**
+   * ——在飞视野只有 running/restarting/ready-to-merge/frozen，completed 行永远轮不到
+   * 任何人收敛，父会话静默不知道结果已到。
+   *
+   * 机械判据（盘上可求值，与验收台架 README §3 同口径——刻意**不用**「分支已合并」，
+   * 那需要 git 上下文且会与 MergeQueueBootSweep 的分诊抢判）：
+   * {{{
+   *   任务行 status == "completed" ∧ source != "subtask"
+   *   ∧ registry.workReport 非空          （工作轮终稿在盘 = 活真干完了）
+   *   ∧ registry.reportStatus 缺席        （从未交付收尾报告 ⇒ 无人收敛）
+   * }}}
+   * ⇒ **自动收尾**：把 workReport 作为 completed 终态通知投进父会话持久邮箱
+   * （`MailboxProducer.deliver`，identity=taskId ⇒ 与主投递腿同一幂等键）→ 成功后把
+   * 记录置 `reportStatus=finish`（「已交付」态，从此不再进本腿）。
+   *
+   * 幂等/不重复：
+   *  - reportStatus 落槽 ⇒ 下一 boot 判据不成立（一次性）；
+   *  - 邮箱 `mailOnce` identity 去重 + 消费墓碑 ⇒ 不产生第二条同 id 通知
+   *    （`MailboxBootSweep` 的账面合成腿同键，二者互不打架）；
+   *  - 先投递后落态（与 [[recoverOne]] 同序）：投递成功前崩 = 下一 boot 重投（去重兜住），
+   *    落态后崩 = 零动作。
+   * 载体闸：本腿是**邮箱轨**通知腿（生产 boot 恒带 SharedResources）；无载体场
+   * （legacy 测试面 / 无 deps）整体旁路——绝不向无人读的队列写垃圾。父会话已删
+   * ⇒ 不投放、不落态（诚实：没人可通知，残余留在记录与转录里）。
+   */
+  private def finalizeCompletedUnreported(
+    store: SubAgentTaskStore,
+    sessionStore: SessionStore,
+    resources: Option[SharedResources]
+  ): IO[List[String]] =
+    resources match
+      case None => IO.pure(Nil)
+      case Some(rs) =>
+        store.findAllTasks()
+          .map(_.filter(t => t.status == "completed" && t.source != "subtask"))
+          .handleErrorWith(e => logger.warn(s"[startup-recovery] completed-row scan failed: ${e.getMessage}").as(Nil))
+          .flatMap(_.traverseFilter(t => finalizeOne(sessionStore, rs, t)))
+          .flatMap { ids =>
+            if ids.isEmpty then IO.pure(ids)
+            else
+              logger
+                .info(
+                  s"[startup-recovery] completion-finalize: ${ids.size} finished-but-unreported delegate(s) closed " +
+                    s"(work report delivered to the parent mailbox): ${ids.mkString(", ")}"
+                )
+                .as(ids)
+          }
+
+  /** 单行收尾判定（见 [[finalizeCompletedUnreported]] 判据）。返回 Some(taskId) = 已收尾。 */
+  private def finalizeOne(
+    sessionStore: SessionStore,
+    resources: SharedResources,
+    t: SubAgentTask
+  ): IO[Option[String]] =
+    IO.blocking(DelegateRegistry.find(t.taskId)).flatMap {
+      case Some(rec) if rec.workReport.exists(_.trim.nonEmpty) && rec.reportStatus.isEmpty =>
+        val report = rec.workReport.map(_.trim).getOrElse("")
+        val head =
+          s"[completed · closing report delivered by boot sweep] Delegate \"${t.description}\" " +
+            s"(agent=${t.agentName}, session=${t.taskId}) finished its work in an earlier engine lifetime but never " +
+            s"delivered a closing report, so nothing ever converged it. The restart sweep is closing it now — the work " +
+            s"report recorded on its delegate record follows verbatim."
+        val event = AgentCommand.ExternalEvent(
+          source = "delegate",
+          eventType = "completed",
+          payload = s"$head\n$report",
+          metadata = JsonObject(
+            "taskId" -> t.taskId.asJson,
+            "agentName" -> t.agentName.asJson,
+            "description" -> t.description.asJson,
+            "workReport" -> true.asJson,
+            "recoveredBy" -> "completion-finalize".asJson
+          ),
+          correlationId = Some(t.taskId)
+        )
+        for
+          parentExists <- sessionStore.listSessions.map(_.exists(_.id == t.parentSessionId)).handleErrorWith(_ =>
+            IO.pure(false)
+          )
+          delivered <-
+            if !parentExists then IO.pure(Left("parent-session-gone"))
+            else
+              MailboxProducer
+                .deliver(
+                  resources,
+                  t.parentSessionId,
+                  event,
+                  identity = t.taskId,
+                  kind = "delegate-terminal",
+                  coalesce = false,
+                  producer = "completion-finalize"
+                )
+                .attempt
+                .map {
+                  case Right(nebflow.core.mail.SessionMailbox.MailResult.Failed(cause)) => Left(cause)
+                  case Right(nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent) => Right("AlreadyPresent")
+                  case Right(other) => Right(other.toString)
+                  case Left(e) => Left(Option(e.getMessage).getOrElse("deliver-error"))
+                }
+          // 落「已交付」态：报告内容留在 workReport（updateReport 的 preserve-before-
+          // overwrite 保证它不被顶掉），reportStatus=finish ⇒ 本腿一次性。
+          marked <- delivered match
+            case Right(_) =>
+              IO.blocking(DelegateRegistry.updateReport(t.taskId, DelegateReportTool.FinishValue, report, "")).attempt
+            case Left(_) => IO.pure(Right(()))
+          _ <- IO.blocking(
+            ChainStore.appendSync(
+              ChainStore.keyFor(rec.taskId, t.taskId),
+              "delegate-completion-finalize",
+              io.circe.Json.obj(
+                "action" -> "finalized".asJson,
+                "delegateId" -> t.taskId.asJson,
+                "delivery" -> delivered.fold(c => s"FAILED:$c", ok => s"$ok").asJson,
+                "workReportChars" -> report.length.asJson,
+                "parentSessionId" -> t.parentSessionId.asJson
+              )
+            )
+          ).handleErrorWith(e =>
+            logger.warn(s"[startup-recovery] completion-finalize audit row failed for ${t.taskId}: ${e.getMessage}")
+          )
+          _ <- logger.info(
+            s"[startup-recovery] completion-finalize ${t.taskId}: delivery=${delivered.fold(c => s"FAILED($c)", s => s)} " +
+              s"reportStatus=${if delivered.isRight then "finish" else "<unchanged>"} workReportChars=${report.length}" +
+              (marked.fold(m => s" markError=${m.getMessage}", _ => ""))
+          )
+        yield if delivered.isRight then Some(t.taskId) else None
+      case _ => IO.pure(None)
+    }
+      .handleErrorWith(e =>
+        logger.warn(s"[startup-recovery] completion-finalize errored for ${t.taskId}: ${e.getMessage}").as(None)
+      )
 
   /**
    * #692 运行期重启屏障 watchdog 单轮清扫。返回本轮被强制终态化的任务 id。
@@ -472,12 +634,20 @@ object SubAgentStartupRecovery:
       // 补投，宿主侧按 spawnId 判重。本机会话腿语义逐字不变。
       rec = nebflow.core.delegate.DelegateRegistry.find(task.taskId)
       hostDeviceId = rec.flatMap(_.delegatedBy)
-      _ <-
+      // 投递结果（审计 D1 修复腿）：改前 `.void` 把 MailResult.Failed / AlreadyPresent
+      // 一律当成功，而第 3 步无论哪条支路都写「delivered to parent」——文案与两侧可
+      // 感知事实脱节（作者实证：09:09 两条通知注入后 7 分钟被压缩抹除，父会话零记忆）。
+      // 本批起投递结果**如实回传**：进 lastError 文案 + 落一条可观测回执（日志行 +
+      // ChainStore 台账行 + 持久提醒账），判词节点可机械核对。
+      delivery: Either[String, String] <-
         hostDeviceId match
           case Some(host) =>
             // 跨设备腿：落待发区（幂等键 = taskId；内容 = 收殓形态的 delegate-result，
             // 形态与 resultProxyBehavior 的真终态件同构，宿主 handleResult 同一入口）。
-            nebflow.core.delegate.DeviceDelegate.enqueueLostResultNotice(task, host, partial, head)
+            nebflow.core.delegate.DeviceDelegate
+              .enqueueLostResultNotice(task, host, partial, head)
+              .attempt
+              .map(_.fold(e => Left(s"device-outbox:${Option(e.getMessage).getOrElse("error")}"), _ => Right(s"device-outbox:$host")))
           case None =>
             // ═══ P2 邮箱化（终态通知 actor 邮箱化批）：收殓报父改走持久邮箱 ═══
             // delegate 轨：mailOnce 幂等入箱（写成功=必达；门铃 best-effort）——
@@ -497,11 +667,58 @@ object SubAgentStartupRecovery:
                       coalesce = false,
                       producer = "startup-recovery"
                     )
-                    .void
-                case None => notifyOnce(task.parentSessionId, event)
+                    .attempt
+                    .map {
+                      case Right(nebflow.core.mail.SessionMailbox.MailResult.Failed(cause)) => Left(s"mailbox:$cause")
+                      case Right(nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent) => Right("mailbox:AlreadyPresent")
+                      case Right(_) => Right("mailbox:Enqueued")
+                      case Left(e) => Left(s"mailbox:${Option(e.getMessage).getOrElse("error")}")
+                    }
+                case None =>
+                  notifyOnce(task.parentSessionId, event)
+                    .attempt
+                    .map(_.fold(e => Left(s"f2-queue:${Option(e.getMessage).getOrElse("error")}"), _ => Right("f2-queue")))
             // subtask 轨：既有 F2 注入队通知腿逐字保持（P3 全通知面迁移另批）。
-            else if parentExists then notifyOnce(task.parentSessionId, event)
-            else IO.unit
+            else if parentExists then
+              notifyOnce(task.parentSessionId, event)
+                .attempt
+                .map(_.fold(e => Left(s"f2-queue:${Option(e.getMessage).getOrElse("error")}"), _ => Right("f2-queue")))
+            else IO.pure(Left("parent-session-gone"))
+      // 2b. 可观测回执（日志行 + 台账行）+ 持久提醒账（D1「未确认」维度载体）：
+      //     仅邮箱轨落账（生产唯一投递面；F2/跨设备轨不产生本机账目）。账目在
+      //     上下文压缩完成处被重述（`RestartLossLedger.restatementSync`），
+      //     ⇒ 收殓通知在压缩后仍可被父会话重新感知。
+      _ <- delivery match
+        case Right(ok) =>
+          logger.info(s"[startup-recovery] notify receipt ${task.taskId} → parent ${task.parentSessionId.take(16)}: $ok") *>
+            IO.whenA(ok.startsWith("mailbox"))(
+              RestartLossLedger.record(
+                task.parentSessionId,
+                task.taskId,
+                s"${task.description} — $head".take(240)
+              )
+            )
+        case Left(err) =>
+          logger.error(
+            s"[startup-recovery] notify DELIVERY FAILED ${task.taskId} → parent ${task.parentSessionId.take(16)}: $err " +
+              "(the task row will record the failure honestly; the payload remains in the delegate transcript)"
+          )
+      _ <- IO.blocking(
+        ChainStore.appendSync(
+          ChainStore.keyFor(rec.flatMap(_.taskId), task.taskId),
+          "delegate-terminal-delivery",
+          io.circe.Json.obj(
+            "delegateId" -> task.taskId.asJson,
+            "parentSessionId" -> task.parentSessionId.asJson,
+            "delivery" -> delivery.fold(c => s"FAILED:$c", ok => ok).asJson,
+            "delivered" -> delivery.isRight.asJson,
+            "partialResult" -> partial.isDefined.asJson,
+            "lostMarker" -> lostMarkerKey.asJson
+          )
+        )
+      ).handleErrorWith(e =>
+        logger.warn(s"[startup-recovery] delivery receipt row failed for ${task.taskId}: ${e.getMessage}")
+      )
       // 3. Terminalize — after the notify append, so a crash anywhere leaves
       // either (task running + event queued) [retry, no duplicate] or
       // (task failed + event queued) [done]. Never a lost notification.
@@ -510,22 +727,33 @@ object SubAgentStartupRecovery:
         task.taskId,
         status = "failed",
         lastError = Some(
+          // 文案与事实同源（D1）：`delivered` 为 Left 时必须写「投递失败」，绝不写
+          // 「delivered to parent」——任务行是面板/对账/晨报的读面，撒谎会误导排障。
+          // 前缀恒为 [[RestartLossFingerprint]]（failed 行复活腿的判据依赖它）。
           partial match
             case Some(_) =>
               if lostMarkerKey == "lostToWatchdog" then
-                "restarting-barrier stall: no live actor for the in-flight task — watchdog force-terminalized, partial result salvaged and delivered to parent"
+                "restarting-barrier stall: no live actor for the in-flight task — watchdog force-terminalized, partial result salvaged" +
+                  (if delivery.isRight then " and delivered to parent" else s"; parent notification FAILED (${delivery.fold(c => c, _ => "?")})")
               else
-                "process restart during in-flight task — partial result salvaged and delivered to parent (startup recovery V2)"
+                s"$RestartLossFingerprint — partial result salvaged" +
+                  (if delivery.isRight then " and delivered to parent (startup recovery V2)"
+                   else s"; parent notification FAILED (${delivery.fold(c => c, _ => "?")}) — startup recovery V2")
             case None =>
               if lostMarkerKey == "lostToWatchdog" then
-                "restarting-barrier stall: no live actor for the in-flight task — watchdog force-terminalized, result lost, parent notified"
-              else "process restart during in-flight task — result lost, parent notified (startup recovery V2)"
+                "restarting-barrier stall: no live actor for the in-flight task — watchdog force-terminalized, result lost" +
+                  (if delivery.isRight then ", parent notified" else s"; parent notification FAILED (${delivery.fold(c => c, _ => "?")})")
+              else
+                s"$RestartLossFingerprint — result lost" +
+                  (if delivery.isRight then ", parent notified (startup recovery V2)"
+                   else s"; parent notification FAILED (${delivery.fold(c => c, _ => "?")}) — startup recovery V2")
         ),
         completedAt = Some(now)
       )
       _ <- logger.info(
         s"[startup-recovery] orphan ${task.taskId} (${task.agentName}) terminalized; " +
-          s"parent=${task.parentSessionId.take(16)} exists=$parentExists partialResult=${partial.isDefined}" +
+          s"parent=${task.parentSessionId.take(16)} exists=$parentExists partialResult=${partial.isDefined} " +
+          s"delivery=${delivery.fold(c => s"FAILED:$c", ok => ok)}" +
           hostDeviceId.fold("")(h => s" crossDeviceOutbox=$h")
       )
     yield task.taskId

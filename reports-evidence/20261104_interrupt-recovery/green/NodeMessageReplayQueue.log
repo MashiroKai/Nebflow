@@ -1,0 +1,17 @@
+=== [C2-GREEN] sbt "testOnly nebflow.core.project.NodeMessageReplayQueueSpec" ===
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap -Xmx1500m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-70e8d8ab-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab/)
+[warn] javaOptions will be ignored, fork is set to false
+[NMQ S4] replay #1 actions = 1 ; #2 actions = 0 (idempotent)
+[NMQ S4] task carries body = true ; marker occurrences = 1
+[NMQ S4] ledger = nm-s4-fixture=appended
+[32mnebflow.core.project.NodeMessageReplayQueueSpec:[0m
+[32m  + [0m[32mS4 队列兜底回放: 未认领节点的排队消息补进 task（二次 boot 不重复追加）[0m [90m0.357s[0m
+[info] Passed: Total 1, Failed 0, Errors 0, Passed 1
+[success] Total time: 2 s, completed 2026年11月4日 15:04:55
+=== exit=0 ===
