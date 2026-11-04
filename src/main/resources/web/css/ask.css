@@ -143,9 +143,17 @@ html[data-theme='light'] {
    视口 2px（本批实测：默认态 handle.left = −2）。手机档改**内挂 left:0**（抓手
    落在面板左上角内侧；气泡右对齐 ⇒ 左上角本就是留白区，零遮挡），外挂量为 0，
    JS 侧实测外挂量自适应、零分叉。 */
-body.mobile-layer .ask-dock .ds-resize-handle { left: 0; }
+body.mobile-layer .ask-dock .ds-resize-handle {
+  left: 0;
+  /* 手机内挂：臂原点回到把手盒原点（= 面板左上角）。top 沿用桌面 −14
+     （既有手机腿几何，本批不动 —— 只改可见形态，不改命中盒落位）。 */
+  --ds-resize-arm-x: 0px; --ds-resize-arm-y: 14px;
+}
 /* 拖拽中：跟手（面板尺寸过渡关掉，不加任何补间），抓手由 [data-resizing] 提亮。 */
 .ask-dock.is-resizing { transition: none; }
+/* 直角弧的臂原点（作者令 2026-11-04 12:52 ④）：桌面把手外挂 14px ⇒ 臂落
+   14/14（正好压在面板左上角的圆角边上，视觉与玻璃面板一体）；手机内挂 ⇒ 0/0。 */
+.ask-dock .ds-resize-handle { --ds-resize-arm-x: 14px; --ds-resize-arm-y: 14px; }
 /* 拖拽中面板外缘同步提亮一档（活性蓝既有词汇，与 .ask-input:focus-within 同值）——
    让「正在改尺寸的是这一块」在抓手之外还有一处回显。 */
 .ask-dock.is-resizing .ask-input,
@@ -259,6 +267,96 @@ body.mobile-layer .ask-dock .ds-resize-handle { left: 0; }
  * （design-system.css §①b 单源），`.ask-send` / `.ask-stop` 只是**身份钩子**
  * （既有 spec 定位用，本文件零规则）。改形态改那一个组件类，两处同时生效。
  */
+
+/* ═══ 作者令 2026-11-04 12:52 ① + ②：画布底部两钮向顶部两钮看齐 ═══
+   顶部两钮（#canvas-head-close / #deck-fab）实测：40×40 / radius 50% / 图标 18 /
+   内距 0 / 材质 = glass.css 圆钮级浮件档（--glass-bg + blur(24px) saturate(1.15)
+   + --glass-border + --cv-shadow，hover 抬亮 1.05、active 按 0.96）。
+   底部两钮（本面板输入条的发送/终止）此前是主会话的实底回合钮（36 / 实心绿）⇒
+   同一面板里两套按钮语言。本批把它们切成**同一个组件类的画布 chrome 档**：
+   仍是 .ds-turn-btn（单源不变、零第二套形态），只在本面声明尺寸/材质两槽 ——
+   于是「尺寸与顶部一致」「毛玻璃与顶部同源」两条都由 token 保证，不是抄值。
+   语义色不丢：终止档保留 --color-error 字，读数在玻璃上仍可辨。 */
+.ask-dock .ds-turn-btn {
+  /* 尺寸 = max(画布 chrome 档, 组件尺寸槽)：桌面 chrome 40 胜出（= 顶部两钮）；
+     手机层 mobileLayer.css 把 --ds-turn-btn-size 抬到 --mtap-lg 48 ⇒ 取大者
+     48，热区档不因本批回退。 */
+  width: max(var(--cv-size-circle, 40px), var(--ds-turn-btn-size, 0px));
+  height: max(var(--cv-size-circle, 40px), var(--ds-turn-btn-size, 0px));
+
+  border-radius: 50%;
+  padding: 0;
+  border: 1px solid var(--cv-border, var(--glass-border));
+  background: var(--cv-bg, var(--glass-bg));
+  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  box-shadow: var(--cv-shadow);
+  color: var(--color-text);
+  transition: background var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
+              transform var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
+              color var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
+}
+.ask-dock .ds-turn-btn svg { width: var(--cv-icon, 18px); height: var(--cv-icon, 18px); stroke-width: 2; }
+.ask-dock .ds-turn-btn:hover {
+  background: var(--cv-hover-bg, var(--glass-control-bg-hover));
+  transform: scale(var(--cv-hover-scale, 1.05));
+}
+.ask-dock .ds-turn-btn:active { transform: scale(var(--cv-active-scale, 0.96)); }
+/* 语义色不随材质回退：发送仍读「绿」、终止仍读「红」——只是从**实底**改成
+   玻璃上的**墨色**（作者令 12:52 ② 规定材质跟顶部两钮；此前 10:11 规定发送=
+   微信绿 --ctl-send-*，两条并存 ⇒ 材质吃玻璃 token、语义吃色 token）。 */
+.ask-dock .ds-turn-btn--send { color: var(--ctl-send-bg); }
+.ask-dock .ds-turn-btn--stop { color: var(--color-error); }
+.ask-dock .ds-turn-btn:disabled { opacity: 0.35; pointer-events: none; }
+
+/* ═══ 作者令 2026-11-04 12:52 ②：Ask 气泡也吃顶部两钮那套毛玻璃 ═══
+   出处 = 同一组 token（--cv-bg / --cv-blur / --cv-saturate / --cv-border /
+   --cv-shadow），不写字面量；与 glass.css 圆钮档同源 ⇒ 改顶部两钮的材质，
+   气泡一起变。注意这是对「气泡禁独立 backdrop-filter（滚动性能纪律）」的
+   **作者显式改令**：Ask 列最多 ~3 屏内容、非主会话长列表，成本受控。 */
+/* 特异性 = .ask-dock .ask-bub（2 类）而不是 .ask-bub：glass.css（后载）里的
+   `.ask-bub{background:var(--glass-bub-ai-bg)}` 会以同特异度后写胜出，把玻璃底
+   换回半透明实底 —— 作者令要的是**玻璃**，所以这里点名宿主把底也拿回来。 */
+.ask-dock .ask-bub {
+  background: var(--cv-bg, var(--glass-bg));
+  -webkit-backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  backdrop-filter: blur(var(--cv-blur, var(--glass-blur))) saturate(var(--cv-saturate, 1.15));
+  border: 1px solid var(--cv-border, var(--glass-border));
+  box-shadow: var(--cv-shadow);
+}
+.ask-dock .ask-bub.user { background: var(--glass-bub-active-bg); border-color: rgb(var(--sapphire) / 0.35); }
+
+/* ═══ 作者令 2026-11-04 12:52 ③：Ask 底部文字**穿过**对话框底缘、在中部截断 ═══
+   旧态：气泡列被 dock 的底缘硬裁（列高封顶 + 上级裁剪），文字到边就断。
+   新态两条：
+   · **穿过** —— 列盒向下越过 dock 底缘（--ask-col-overhang），overflow 可见 ⇒
+    最新气泡的下半截真的画在对话框边界之外，边界上没有任何硬切口；
+   · **中部截断** —— 内容本体 alpha 在中线（= dock 高的 50%，JS 写
+     --ask-trunc-h）渐到 0：沿用作者今日口径（内容本体透明度到 0、整体透明
+     无边框，`e3022ba07` 同律），**不放任何可见过渡条/遮罩色块**。
+   顶缘渐隐（--ask-fade-h）保留在本 mask 的起点段：两段都是同一层 mask 的
+   alpha 曲线，不是两块遮罩。 */
+.ask-colwrap { overflow: visible; }
+.ask-col {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    currentColor var(--ask-fade-h),
+    currentColor var(--ask-trunc-from, 132px),
+    transparent var(--ask-trunc-h, 158px)
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    currentColor var(--ask-fade-h),
+    currentColor var(--ask-trunc-from, 132px),
+    transparent var(--ask-trunc-h, 158px)
+  );
+  /* 下越量：列盒比可视区多出这么多，最新气泡才能「穿」过底缘（被 mask 洗掉
+     的那截仍在渲染树里，可被断言读到几何）。 */
+  margin-bottom: calc(-1 * var(--ask-col-overhang, 0px));
+  padding-bottom: calc(var(--ask-col-overhang, 0px) + 2px);
+}
 
 /* ═══ 移动档（body.mobile-layer；E-2 移动列 + #988 命中盒纪律）═══
    Canvas 改造批⑨（2026-10-31 作者令「修 bug：标签页对话按钮消失」）：手机层
