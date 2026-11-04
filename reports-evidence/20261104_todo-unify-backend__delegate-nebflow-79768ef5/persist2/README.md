@@ -83,6 +83,7 @@ handleRetake 全 no-op、零漂移」；**生产 6138 不受影响**（未触碰
 | `60_*`–`63_*` | ⑥ 跨端四拍 |
 | `05_handcat_jq_final_store.txt` | 手工 `ls -la` / `cat` / `jq` 直查（绝对路径 + 原始片段） |
 | `90_*` / `91_*` / `92_*` / `99_*` | 收尾总快照、页面错误、写帧计数、结构化汇总 |
+| `97_final_store_artifact/` | 真源**原件副本**（`43c37951….json` = scheduledTaskStore 落盘文件、`done-records.jsonl`），防隔离 HOME（tmp）被清理后证据丢失 |
 | `shots/*.png` | 桌面/手机各步截图 |
 
 ## 5. 未覆盖 / 开放项（不影响本节点判定）
