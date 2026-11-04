@@ -1,0 +1,3 @@
+$ node scripts/check-legacy-domain.mjs   # 修正后（白名单 + 文案去裸域）
+[legacy-domain] clean: 0 bare retired-domain literal(s) outside the whitelist (24 whitelisted hit(s) in frozen/tool paths)
+EXIT=0
