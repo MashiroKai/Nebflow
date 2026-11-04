@@ -14,8 +14,12 @@ import scala.concurrent.duration.*
  * 事故日实测峰值 ≈20MB。本 spec 用合成流（不占真实内存的数据源）驱动真 `readStream`：
  *
  *   - 100MB 输出 → **堆增长 ≤ 1MB**（改前实测 ≈10MB/流，红；改后 ≤1MB，绿）；
- *   - 返回给调用方的可见内容 ≤ ~256KB（首 64KB + 尾 64KB + 截断注记）；
- *   - 超限全量溢写落盘（`<dataRoot>/shell-spill/`），全量可从盘上回看——不再丢弃。
+ *   - 返回给调用方的可见内容 ≤ ~256KB（T5 统一口径后 = 滚动尾窗
+ *     `≤2000 行 ∧ ≤50KB` 取小 + 截断注记，远低于此上界）；
+ *   - 超限全量溢写落盘（注：M3 批落的 `<dataRoot>/shell-spill/` 目录已随 T5
+ *     迁到 `java.io.tmpdir`（`stand-bash-*.log`）；本 spec 注入隔离目录，断言只看
+ *     「注记里给出溢写路径」这一条本质要求，与具体目录无关），全量可从盘上回看
+ *     ——不再丢弃。
  *
  * 合成流纪律：`available()` 如实报告、EOF 正常，读线程按 readStream 既有
  * `ready()` 轮询语义推进（不依赖真管道/真 sbt）。
@@ -100,7 +104,7 @@ class ShellOutputSpillSpec extends FunSuite:
     try f(dir)
     finally try os.remove.all(dir) catch case _: Throwable => ()
 
-  test("M3: 100MB 输出经 readStream 后堆增长 ≤ 1MB（内存只留首尾 64KB）") {
+  test("M3: 100MB 输出经 readStream 后堆增长 ≤ 1MB（内存只留滚动尾窗 ≤2000 行 ∧ ≤50KB）") {
     withSpillDir { spill =>
       // 预热：先用 1MB 输出把读线程/缓冲/JIT 跑到稳态，剔除一次性分配对读数的干扰
       val warm = session.readStream(new SynthLinesStream(1L * MB, 1024), _ => (), () => true, 50L, spill)
@@ -128,12 +132,16 @@ class ShellOutputSpillSpec extends FunSuite:
     }
   }
 
-  test("M3: 返回给调用方的可见内容 ≤ 256KB 且带截断注记（首尾各 64KB）") {
+  test("M3: 返回给调用方的可见内容 ≤ 256KB 且带截断注记（尾窗 + 全文落盘路径）") {
     withSpillDir { spill =>
       val stream = new SynthLinesStream(8L * MB, 1024)
       val out = session.readStream(stream, _ => (), () => true, 250L, spill)
       assert(out.length <= 256 * 1024 + 512, s"可见内容 ${out.length}B 超出首尾窗口上界")
       assert(out.contains("truncated"), s"截断注记缺失——调用方无法感知输出被折叠 (outLen=${out.length})")
+      assert(
+        out.contains("full output: "),
+        s"截断注记必须给出全文指针（T5 统一口径：尾段可见 + 全文路径可读），got tail=${out.takeRight(200)}"
+      )
       assert(os.list(spill).nonEmpty, "8MB 输出未产生溢写文件")
     }
   }

@@ -36,7 +36,7 @@ import {
   openConversation, revealMessage, personLabel, deviceLabel, fmtTime, conversationSnapshot,
 } from '../messages.js';
 import { groupTitleOf } from '../friendGroups.js';
-import { logEvent } from './navController.js';
+import { logEvent } from './navEvents.js';
 // 件一（2026-11-02）「描述进检索」：谓词唯一实现 = 零依赖叶子 `descSearch.js`
 // （桌面联系人本地过滤与手机常驻条共用同一份，禁各写一套 includes）。
 import { descMatches, convDescribeFields } from '../descSearch.js';

@@ -1,0 +1,191 @@
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap -Xmx1500m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-79768ef5-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5/)
+[warn] javaOptions will be ignored, fork is set to false
+[32mnebflow.core.scheduler.DoneRecordStoreSpec:[0m
+[32m  + [0m[32mrecord → loadAll roundtrip（含 name/via）[0m [90m0.248s[0m
+[32m  + [0m[32mbetween 窗口查询：半开区间 [from, to)[0m [90m0.01s[0m
+[32m  + [0m[32m坏行跳过不炸整卷；空文件 = Nil[0m [90m0.01s[0m
+[32mnebflow.core.scheduler.AskTodoBridgeSpec:[0m
+[32m  + [0m[32mattach 落 kind=todo 镜像（name=ask-<requestId>）并广播创建帧[0m [90m0.111s[0m
+[32m  + [0m[32mattach 幂等：同 requestId 重放 = 单份替换[0m [90m0.011s[0m
+[32m  + [0m[32mretire 幂等销账：删除 + 广播；重复 retire / 未知 id = no-op[0m [90m0.016s[0m
+[32m  + [0m[32m空入参护栏：root/requestId 空 ⇒ 零写零广播[0m [90m0.004s[0m
+[32m  + [0m[32m助手：todoContent 无提问方时省略尾缀；requestIdOf 只认 ask- 前缀[0m [90m0.001s[0m
+[32m  + [0m[32mattachPermission 落 perm- 镜像（[待批准] toolName · summary — agent）[0m [90m0.012s[0m
+[32m  + [0m[32mretire 双前缀同清：ask- 与 perm- 镜像一并销账（单边缺失 = no-op）[0m [90m0.016s[0m
+[32m  + [0m[32m助手：permContent 字段回落（toolName → serverId → approval）；permRequestIdOf 只认 perm- 前缀[0m [90m0.001s[0m
+[32m  + [0m[32mattach 带 project 标签落库；payloadProject 提取（project → sourceFlow，空串=未分组）[0m [90m0.01s[0m
+15:10:35.604 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task bc7de719 for session s1: 停机跨过的任务
+15:10:35.616 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task d9fbfbe6 for session s1: 正常运行中的晚点任务
+15:10:35.782 [36mINFO [0m nebflow.scheduled-task - Condition unmet for 3a71121a — re-check at 2026-11-04 15:40
+15:10:35.888 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task 3a71121a for session s1: 分支有新提交才叫
+15:10:35.904 [36mINFO [0m nebflow.scheduled-task - Condition unmet for dcbc4743 — re-check at 2026-11-04 15:40
+15:10:35.914 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task dcbc4743 for session s1: 批次A收尾了才叫
+15:10:35.924 [36mINFO [0m nebflow.scheduled-task - Session s-idle not found, falling back to s1
+15:10:35.928 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task 0a2e7a06 for session s-idle: 每小时例行检查
+15:10:35.928 [36mINFO [0m nebflow.scheduled-task - Session s-idle not found, falling back to s1
+15:10:35.930 [36mINFO [0m nebflow.scheduled-task - Rescheduled recurring task 0a2e7a06 (hourly → downfreqed to daily, reviewFlag set) for 2026-11-05 15:00
+15:10:36.020 [36mINFO [0m nebflow.scheduled-task - Session s-live not found, falling back to s1
+15:10:36.020 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task 3039a491 for session s-live: 每小时例行检查
+15:10:36.020 [36mINFO [0m nebflow.scheduled-task - Session s-live not found, falling back to s1
+15:10:36.021 [36mINFO [0m nebflow.scheduled-task - Rescheduled recurring task 3039a491 (hourly) for 2026-11-04 16:00
+15:10:36.025 [36mINFO [0m nebflow.scheduled-task - Session s-cold not found, falling back to s1
+15:10:36.025 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task c60fd08b for session s-cold: 每小时例行检查
+15:10:36.025 [36mINFO [0m nebflow.scheduled-task - Session s-cold not found, falling back to s1
+15:10:36.026 [36mINFO [0m nebflow.scheduled-task - Rescheduled recurring task c60fd08b (hourly) for 2026-11-04 16:00
+15:10:36.031 [36mINFO [0m nebflow.scheduled-task - Session s-floor not found, falling back to s1
+15:10:36.033 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task 7f0b02e9 for session s-floor: 每小时例行检查
+15:10:36.033 [36mINFO [0m nebflow.scheduled-task - Session s-floor not found, falling back to s1
+15:10:36.034 [36mINFO [0m nebflow.scheduled-task - Rescheduled recurring task 7f0b02e9 (weekly → downfreqed to weekly, reviewFlag set) for 2026-11-11 15:00
+15:10:36.039 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task 14645d02 for session s1: 每日晨检
+15:10:36.040 [36mINFO [0m nebflow.scheduled-task - Rescheduled recurring task 14645d02 (daily) for 2026-11-05 15:09
+15:10:36.051 [36mINFO [0m nebflow.scheduled-task - Merged 2 due tasks into one batched trigger for session s1: 5103c586, 2b799c20
+15:10:36.064 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task 4fed5532 for session sB: B 会话任务
+15:10:36.065 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task 5caf7645 for session sA: A 会话任务
+[32mnebflow.core.scheduler.ScheduleRevivalSpec:[0m
+[32m  + [0m[32mCONCURRENT creates on one session file all survive (f2ef6ff1 race — the exact incident shape)[0m [90m0.074s[0m
+[32m  + [0m[32mconcurrent create + markTriggered + reschedule interleaving keeps every task row[0m [90m0.041s[0m
+[32m  + [0m[32mconcurrent same-name upserts converge to exactly ONE row (upsert is atomic)[0m [90m0.007s[0m
+[32m  + [0m[32mcreated task survives restart equivalence: fresh store instance re-reads it (spec pin)[0m [90m0.003s[0m
+[32m  + [0m[32mlegacy file WITHOUT the new fields decodes fine (idleStreak/reviewFlag 缺键不炸——本批实修)[0m [90m0.004s[0m
+[32m  + [0m[32mone-shot whose trigger point was crossed by downtime fires once with 错过后补跑 marker[0m [90m0.029s[0m
+[32m  + [0m[32mregression: one-shot fired late while the engine was RUNNING gets NO missed marker[0m [90m0.005s[0m
+[32m  + [0m[32mdispatch: prefix routes to the right evaluator; bare command falls back to shell probe[0m [90m0.002s[0m
+[32m  + [0m[32mgit-tip sentinel E2E: baseline first, fires ONLY on tip change, baseline advances[0m [90m0.276s[0m
+[32m  + [0m[32mtask-terminal sentinel E2E: running node waits; terminal status fires[0m [90m0.02s[0m
+[32m  + [0m[32m3 consecutive idle fires -> auto-downfreq hourly→daily + 待审查 flag + payload notice[0m [90m0.018s[0m
+[32m  + [0m[32mtool list shows the 待审查 marker so the author can restore or write off[0m [90m0.082s[0m
+[32m  + [0m[32mactive window resets the streak; a flagged routine stays flagged (sticky, no self-clear)[0m [90m0.006s[0m
+[32m  + [0m[32mno evidence (fresh boot, zero activity records) holds the streak — no reward, no punishment[0m [90m0.005s[0m
+[32m  + [0m[32mweekly routine already at the ladder floor: flag set, no further downfreq[0m [90m0.009s[0m
+[32m  + [0m[32mrecurring fire attaches the previous run's result summary (⑤原文：执行者不用从零考古)[0m [90m0.005s[0m
+[32m  + [0m[32mprevResultSummary: first Ai row in window, newlines flattened, capped at 160 chars; none if no reply[0m [90m0.002s[0m
+[32m  + [0m[32mtwo due tasks in one window and session merge into ONE ExternalEvent (⑥原文)[0m [90m0.013s[0m
+[32m  + [0m[32mtasks in DIFFERENT sessions stay separate injections (merge is per-session)[0m [90m0.011s[0m
+15:10:36.119 [36mINFO [0m nebflow.scheduled-task - Surfacing 1 due todo(s), digest covers 2 unfinished: 28e14be8
+15:10:36.132 [36mINFO [0m nebflow.scheduled-task - Surfacing 1 due todo(s), digest covers 1 unfinished: 6a13b4d8
+15:10:36.138 [36mINFO [0m nebflow.scheduled-task - Surfacing 1 due todo(s), digest covers 1 unfinished: 6a13b4d8
+15:10:36.153 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task legacy01 for session s1: 梦境日审：回顾昨日梦境记录
+15:10:36.160 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task 58e6fb10 for session s1: 定时：汇报进度
+15:10:36.162 [36mINFO [0m nebflow.scheduled-task - Surfacing 1 due todo(s), digest covers 1 unfinished: b01f2e23
+15:10:36.168 [36mINFO [0m nebflow.scheduled-task - Surfacing 1 due todo(s), digest covers 1 unfinished: 6f3492c1
+15:10:36.169 [36mINFO [0m nebflow.scheduled-task - Session s-dead not found, falling back to s-live
+[32mnebflow.core.scheduler.TodoScheduleSpec:[0m
+[32m  + [0m[32mtodo persists across restart-equivalent ops: fresh store instance re-reads it from disk[0m [90m0.006s[0m
+[32m  + [0m[32mlegacy task file (no kind key) still decodes as scheduled-task face; kind=todo decodes as todo[0m [90m0.004s[0m
+[32m  + [0m[32mdue todo never enters the scheduled-task due path; due scheduled task never enters the todo path[0m [90m0.009s[0m
+[32m  + [0m[32mnextTodoSurfaceAt: before 09:00 -> today 09:00; at/after 09:00 -> tomorrow 09:00[0m [90m0.001s[0m
+[32m  + [0m[32mupsert is kind-scoped: a named todo never clobbers a same-name scheduled task[0m [90m0.008s[0m
+[32m  + [0m[32munfinished due todo re-surfaces: ONE digest ExternalEvent with ids + done guidance, then bumped to next 09:00[0m [90m0.022s[0m
+[32m  + [0m[32mperiod honored: after surfacing, next cycle injects nothing until due again (next day)[0m [90m0.015s[0m
+[32m  + [0m[32mwritten-off (done) todo is deleted and never surfaces again[0m [90m0.006s[0m
+[32m  + [0m[32mregression: due legacy one-shot task still fires individually on the old path (and is deleted)[0m [90m0.006s[0m
+[32m  + [0m[32mmixed faces: due task + due todo in one cycle -> task fires old path, todo gets the digest[0m [90m0.009s[0m
+[32m  + [0m[32msession fallback: todo in a dead session surfaces to the active session (restart/open-equivalent)[0m [90m0.007s[0m
+[32m  + [0m[32mdigestPayload: empty -> empty string; non-empty -> count + ids + done/cancel guidance[0m [90m0.002s[0m
+[32m  + [0m[32mtool create kind=todo needs no triggerAt and lands in engine storage at next 09:00[0m [90m0.014s[0m
+[32m  + [0m[32mtool list shows both faces: scheduled section (legacy format) + todos section with ids[0m [90m0.022s[0m
+[32m  + [0m[32mtool done writes off a todo (deleted, panel broadcast); done on a scheduled task is a category error[0m [90m0.031s[0m
+[32m  + [0m[32mtool cancel on a todo reports no-more-surfacing (same id semantics as task cancel)[0m [90m0.018s[0m
+[32m  + [0m[32mtool todo upsert by name converges to a single copy[0m [90m0.018s[0m
+[32m  + [0m[32mroot schedule reminder carries a todos section with ids; task-only session keeps the legacy header[0m [90m0.013s[0m
+[32mnebflow.core.scheduler.TodoPriorityCompletionSpec:[0m
+[32m  + [0m[32m① create 钳位 0..3：越界收敛（9→3 / -4→0 / 缺省→0），kind=task 同点不炸[0m [90m0.002s[0m
+[32m  + [0m[32m① priority / completedAt 随任务 roundtrip 持久化（file 重读）[0m [90m0.004s[0m
+[32m  + [0m[32m② 老库 JSON 无 priority / completedAt 键 ⇒ 0 / None（withDefaults 零迁移）[0m [90m0.001s[0m
+[32m  + [0m[32m② 老库文件（整文件缺新键）经 store 读出：待办仍在、字段回默认、不被当成已完成[0m [90m0.003s[0m
+[32m  + [0m[32m③ 完成（completedAt 置位）：行仍在库里，默认读口不再返回，includeCompleted 可见[0m [90m0.009s[0m
+[32m  + [0m[32m④ 取消完成：completedAt 清空 ⇒ 重回未完成面；再清一次不变（幂等）[0m [90m0.005s[0m
+[32m  + [0m[32m⑤ deleteTask 语义不变：整行物理消失（含已完成的软删行也可被硬删）[0m [90m0.007s[0m
+[32m  + [0m[32m⑥ 已完成 todo 不被浮出：getAllDueTodos 排除（到期也未完成者照常返回）[0m [90m0.003s[0m
+[32m  + [0m[32m⑥ surfaceTodos 二道闸：喂进已完成行也剔掉（digest 不含它、不涨 missCount）[0m [90m0.001s[0m
+[32m  + [0m[32m⑦ todoSortKey：未完成优先 → priority 降序 → triggerAt 升序 → createdAt 升序[0m [90m0.002s[0m
+15:10:36.357 [36mINFO [0m nebflow.scheduled-task - Condition unmet for 536ab2da — re-check at 2026-11-04 15:40
+15:10:36.373 [36mINFO [0m nebflow.scheduled-task - Condition unmet for 2aa5bd2b (daily) — skipped to next cycle 2026-11-05 15:09
+15:10:36.392 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task d1c96979 for session s1: CI 红了才叫醒
+15:10:36.405 [33mWARN [0m nebflow.scheduled-task - Condition watcher 38c8879b unmet for >24h — auto-PAUSED (visible via list; re-arm or cancel it)
+15:10:36.410 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task ad900477 for session s1: 无条件任务
+15:10:36.415 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task missed01 for session s1: 每日例行：晨检
+15:10:36.416 [36mINFO [0m nebflow.scheduled-task - Rescheduled recurring task missed01 (daily) for 2026-11-05 15:10
+15:10:36.422 [36mINFO [0m nebflow.scheduled-task - Triggering scheduled task ontime01 for session s1: 每日例行：晨检
+15:10:36.423 [36mINFO [0m nebflow.scheduled-task - Rescheduled recurring task ontime01 (daily) for 2026-11-05 15:05
+[32mnebflow.core.scheduler.ScheduleInitiativeSpec:[0m
+[32m  + [0m[32mcondition FALSE -> nothing injected, one-shot silently re-armed for re-check[0m [90m0.017s[0m
+[32m  + [0m[32mcondition FALSE on a repeating task -> skips the whole cycle to the next slot[0m [90m0.016s[0m
+[32m  + [0m[32mcondition TRUE -> fires with the condition-met note[0m [90m0.019s[0m
+[32m  + [0m[32mcondition watcher unmet beyond 24h -> auto-PAUSED (visible in list, never fires silently)[0m [90m0.012s[0m
+[32m  + [0m[32mblank/absent condition behaves as the legacy unconditional path[0m [90m0.004s[0m
+[32m  + [0m[32mmissed recurring fires EXACTLY ONCE after recovery, marked 补跑, next snapped to the future[0m [90m0.008s[0m
+[32m  + [0m[32mregression: normally-late recurring (< 1 period) keeps byte-identical behavior — no 补跑 note, next = +1 period[0m [90m0.005s[0m
+[32m  + [0m[32mam/pm forms: 7pm rolls today/tomorrow by the clock; noon; midnight[0m [90m0.006s[0m
+[32m  + [0m[32mweekday forms pick the next strictly-future occurrence (default 09:00), en + zh[0m [90m0.002s[0m
+[32m  + [0m[32mweekday + time combos: 'friday 21:00', 'monday 7pm', '周一 21:30'[0m [90m0.001s[0m
+[32m  + [0m[32mChinese date+period forms: 明天下午3点 / 后天上午9点 / 今天9点 rolls / 晚上11点半 / 大后天[0m [90m0.001s[0m
+[32m  + [0m[32mlegacy accepted forms keep parsing (regression)[0m [90m0.003s[0m
+[32m  + [0m[32mtool create with condition stores the probe; list marks it[0m [90m0.019s[0m
+[32mnebflow.core.scheduler.ScheduleCardContractSpec:[0m
+[32m  + [0m[32m① schedule 分支显式在场，且先于通用注入泡组装（先 return，永不落通用分支）[0m [90m0.006s[0m
+[32m  + [0m[32m①b 卡片结构面：chip/任务名/重复标/时间行/引用行 builder 在场[0m [90m0.001s[0m
+[32m  + [0m[32m② 通用注入泡组装原样保留（非 schedule 源照走既有分支）[0m [90m0.001s[0m
+[32m  + [0m[32m②b 无标记 user 行的绿泡分支在两条史恢复路径原样保留（旧历史行不追溯）[0m [90m0.007s[0m
+[32m  + [0m[32m③ 后端写点：ScheduledTaskActor 落盘带标记 + 卡片载荷，广播为注入 user 帧[0m [90m0.003s[0m
+[32m  + [0m[32m③b live 消费：main.js 读 msg.schedule（缓存落键 + 渲染透传双读点）[0m [90m0.008s[0m
+[32m  + [0m[32m③c 史恢复：persistence.js 两腿透传 m.schedule[0m [90m0.001s[0m
+[32m  + [0m[32m④ BackendNamedSources 登记 schedule（逐字 pin 在 InjectionSourceContractSpec ①）[0m [90m0.002s[0m
+[32m  + [0m[32m⑤ 旧瞬态 toast 注入腿已退役（卡片唯一呈现 = 注入帧专属卡分支）[0m [90m0.003s[0m
+[32m  + [0m[32m⑥ 卡片文案双语键同批落位（zh-CN + en）[0m [90m0.008s[0m
+[32mnebflow.core.scheduler.TodoMissCountSpec:[0m
+[32m  + [0m[32m存量 JSON 无 missCount 键 → 解码 0（零迁移）[0m [90m0.001s[0m
+[32m  + [0m[32mmissCount 随任务持久化 roundtrip[0m [90m0.0s[0m
+[32m  + [0m[32mdigestPayload 旧契约零漂移（无 missStreak 调用面 = 无建议文案）[0m [90m0.001s[0m
+[32m  + [0m[32mdigestPayloadWithStreak：达阈值附建议，未达不附[0m [90m0.001s[0m
+[32m  + [0m[32mMissThreshold = 3（surfaceTodos 增量判定与文案数字同源）[0m [90m0.001s[0m
+15:10:36.587 [36mINFO [0m nebflow.weekly-report - Weekly report surfaced but no active session — inbox entry skipped (report archived)
+15:10:36.588 [36mINFO [0m nebflow.weekly-report - Weekly report written: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5/target/test-weekly-report/ws/reports/20261102_weekly-checkin/REPORT.md
+15:10:36.599 [36mINFO [0m nebflow.weekly-report - Weekly report surfaced but no active session — inbox entry skipped (report archived)
+15:10:36.600 [36mINFO [0m nebflow.weekly-report - Weekly report written: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5/target/test-weekly-report/ws2/reports/20261104_weekly-checkin/REPORT.md
+15:10:36.611 [36mINFO [0m nebflow.weekly-report - Weekly report surfaced but no active session — inbox entry skipped (report archived)
+15:10:36.611 [36mINFO [0m nebflow.weekly-report - Weekly report written: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5/target/test-weekly-report/ws-attach/reports/20261102_weekly-checkin/REPORT.md
+15:10:36.620 [36mINFO [0m nebflow.weekly-report - Weekly report due but no local workspace — skipping (no silent fallback dir)
+15:10:36.630 [36mINFO [0m nebflow.weekly-report - Weekly report written: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5/target/test-weekly-report/ws-inbox/reports/20261102_weekly-checkin/REPORT.md
+15:10:36.638 [36mINFO [0m nebflow.weekly-report - Weekly report written: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5/target/test-weekly-report/ws-inbox/reports/20261103_weekly-checkin/REPORT.md
+15:10:36.643 [36mINFO [0m nebflow.weekly-report - Weekly report surfaced but no active session — inbox entry skipped (report archived)
+15:10:36.643 [36mINFO [0m nebflow.weekly-report - Weekly report written: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-79768ef5/target/test-weekly-report/ws-nosess/reports/20261102_weekly-checkin/REPORT.md
+[32mnebflow.core.scheduler.WeeklyReportSpec:[0m
+[32m  + [0m[32mweekKeyOf：ISO week-based 形态[0m [90m0.002s[0m
+[32m  + [0m[32mlastWeekBounds：上一个完整自然周（周一 00:00 起，7 天）[0m [90m0.001s[0m
+[32m  + [0m[32maggregate：逐日计数 / 最长连打 / 打卡率 / 上周对比[0m [90m0.006s[0m
+[32m  + [0m[32maggregate：无计划不报假红（rate=1）；无上周数据趋势 →[0m [90m0.001s[0m
+[32m  + [0m[32mrenderMarkdown：附录 C 四段 + ```human 围栏 + 热力图引用[0m [90m0.01s[0m
+[32m  + [0m[32mrenderHeatmapSvg：合法 SVG，含周键与总数，7 个色块[0m [90m0.006s[0m
+[32m  + [0m[32m生成器：到期生成 REPORT.md + SVG + marker + 广播；重复 tick 不重复生成[0m [90m0.032s[0m
+[32m  + [0m[32m生成器：停机错过 ⇒ 下次 tick 补生成（catch-up）[0m [90m0.01s[0m
+[32m  + [0m[32m生成器：注入附件落位（作者令 2026-11-03）⇒ SVG 落注册目录 .stand/docs/attachments，不落 workspace docs/[0m [90m0.011s[0m
+[32m  + [0m[32m生成器：无可写工作区 ⇒ 跳过且不写 marker（下次有工作区补生成）[0m [90m0.007s[0m
+[32m  + [0m[32m生成器：周报 Ready ⇒ 待办收件箱入账（§6.4 回填：横幅 → 收件箱浮出，聚合接 digest 面）[0m [90m0.018s[0m
+[32m  + [0m[32m生成器：无活跃会话 ⇒ 跳过收件箱入账（报告与广播不受影响）[0m [90m0.005s[0m
+[32mnebflow.core.scheduler.ScheduledTaskFiringKeySpec:[0m
+[32m  + [0m[32m① firingKey: 同任务逐炮唯一、同炮恒同[0m [90m0.0s[0m
+[32m  + [0m[32m② 逐炮键过 DeliveredReceiptLedger 收件闸：第 2 炮放行、同炮重复仍判重（改前红）[0m [90m0.016s[0m
+[32m  + [0m[32m③ mergedFiringKey: 同窗任务集 + 触发时刻；跨窗必不同、同窗重复恒同[0m [90m0.001s[0m
+[info] Passed: Total 102, Failed 0, Errors 0, Passed 102
+[success] Total time: 4 s, completed 2026年11月4日 15:10:36
+[warn] javaOptions will be ignored, fork is set to false
+[32mnebflow.gateway.TodoUnifyFramesSpec:[0m
+[32m  + [0m[32m① createScheduledTask(kind=todo, priority=7) ⇒ 落库 3（钳位）+ created 帧带三键[0m [90m0.514s[0m
+[32m  + [0m[32m② listScheduledTasks scope:all：默认不含已完成；排序 priority 降序 → triggerAt 升序[0m [90m0.096s[0m
+[32m  + [0m[32m③ completeTodo：行未物删（completedAt 置位）、DoneRecord 一条 via:ws、新帧与老帧同发[0m [90m0.096s[0m
+[32m  + [0m[32m③ completeTodo 幂等：重复打卡不重复写 done 痕、不改首次完成时刻[0m [90m0.094s[0m
+[32m  + [0m[32m④ uncompleteTodo：completedAt 清空、追加 via:undo 反向事件、广播 updated（completed:false）[0m [90m0.08s[0m
+[32m  + [0m[32m④ uncompleteTodo 幂等：本来就未完成 ⇒ 不写 undo 痕，仍回 updated 收敛[0m [90m0.113s[0m
+[32m  + [0m[32m⑤ deleteScheduledTask 仍物理删（帧 scheduledTaskDeleted，库里零行）[0m [90m0.074s[0m
+[32m  + [0m[32m⑥ updateScheduledTask {priority:2}：待办落库并广播全量行；定时任务面 priority 无效[0m [90m0.087s[0m
+[32m  + [0m[32m⑦ completeTodo 后：该 todo 不出现在浮出候选（scheduler 触发面硬闸）[0m [90m0.079s[0m
+[info] Passed: Total 9, Failed 0, Errors 0, Passed 9
+[success] Total time: 2 s, completed 2026年11月4日 15:10:38
+EXIT=0

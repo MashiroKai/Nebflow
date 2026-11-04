@@ -1,0 +1,54 @@
+=== A. Every reference to the root package from production code (src/main/scala), excluding the package itself ===
+src/main/scala/nebflow/core/AutoStartService.scala:4:import nebflow.core.root.{RootLadder, RootLayer}
+src/main/scala/nebflow/core/AutoStartService.scala:195:    RootLadder.current match
+src/main/scala/nebflow/core/AutoStartService.scala:196:      case RootLayer.Account(_, _, root) => Some(root)
+src/main/scala/nebflow/neblink/NeblinkModel.scala:9:import nebflow.core.root.{RootLadder, RootLayer}
+src/main/scala/nebflow/neblink/NeblinkModel.scala:267:    RootLadder.current match
+src/main/scala/nebflow/neblink/NeblinkModel.scala:268:      case RootLayer.Account(machine, sub, _) =>
+src/main/scala/nebflow/neblink/NeblinkModel.scala:290:    RootLadder.current.name == RootLayer.UnauthenticatedName
+src/main/scala/nebflow/neblink/NeblinkModel.scala:294:      s"${RootLayer.UnauthenticatedMarker}: refusing to mint device identity " +
+src/main/scala/nebflow/shared/paths.scala:214:  //   · **有效根**（dataRoot）= 账号层根 / 未登录层根 / 平铺根，由 `RootLadder` 阶梯从机器层根派生。
+src/main/scala/nebflow/shared/paths.scala:239:  @volatile private var _layerCache: Option[nebflow.core.root.RootLayer] = None
+src/main/scala/nebflow/shared/paths.scala:252:   * 生产启动序唯一调用点（契约 §1/§8.1）：只钉机器层根，有效根交给 `nebflow.core.root.RootLadder`
+src/main/scala/nebflow/shared/paths.scala:274:   *  - 否则 ⇒ `RootLadder.resolve(machineRoot)` 的阶梯判定（account / unauthenticated / flat）。
+src/main/scala/nebflow/shared/paths.scala:276:   * 单一事实来源：`dataRoot` 与 `RootLadder.current` 都读这里，避免两处缓存各自漂移。
+src/main/scala/nebflow/shared/paths.scala:278:  private[nebflow] def resolvedLayer: nebflow.core.root.RootLayer =
+src/main/scala/nebflow/shared/paths.scala:286:                case Some(pinned) => nebflow.core.root.RootLayer.Flat(machineRoot, pinned)
+src/main/scala/nebflow/shared/paths.scala:287:                case None => nebflow.core.root.RootLadder.resolve(machineRoot)
+
+=== B. Call sites of migrate / rollback in ALL of src/main/scala ===
+(empty above = no production caller)
+
+=== C. Files defining the four root classes ===
+total 80
+drwxr-xr-x@  6 kaiyu  staff    192 11月  4 14:00 .
+drwxr-xr-x@ 81 kaiyu  staff   2592 11月  4 14:00 ..
+-rw-r--r--@  1 kaiyu  staff  10612 11月  4 14:00 AccountRoot.scala
+-rw-r--r--@  1 kaiyu  staff   5794 11月  4 14:00 Guards.scala
+-rw-r--r--@  1 kaiyu  staff   6562 11月  4 14:00 RootLadder.scala
+-rw-r--r--@  1 kaiyu  staff  11990 11月  4 14:00 RootLayout.scala
+
+=== D. Only callers of migrate/rollback anywhere in the repo ===
+./src/test/scala/nebflow/core/dataroot/RehearsalDriver.scala:14: * 只调用 B1 既有公开 API（`RootLayout.migrate` / `RootLayout.rollback` / `RootLadder.resolve`），
+./src/test/scala/nebflow/core/dataroot/RehearsalDriver.scala:56:    val report = RootLayout.migrate(root)
+./src/test/scala/nebflow/core/dataroot/RehearsalDriver.scala:87:      RootLayout.rollback(report)
+./src/test/scala/nebflow/core/dataroot/RehearsalDriver.scala:137:      val r1 = RootLayout.migrate(root)
+./src/test/scala/nebflow/core/dataroot/RehearsalDriver.scala:147:      val r2 = RootLayout.migrate(root)
+./src/test/scala/nebflow/core/dataroot/RehearsalDriver.scala:152:      RootLayout.rollback(r1)
+./src/test/scala/nebflow/core/dataroot/RehearsalDriver.scala:165:      val r = RootLayout.migrate(root)
+./src/test/scala/nebflow/core/dataroot/RehearsalDriver.scala:181:      RootLayout.rollback(r)
+./src/test/scala/nebflow/core/dataroot/RehearsalDriver.scala:197:      val r = RootLayout.migrate(root)
+./src/test/scala/nebflow/core/dataroot/RehearsalDriver.scala:201:      RootLayout.rollback(r)
+./src/test/scala/nebflow/core/dataroot/RehearsalDriver.scala:214:        val r = RootLayout.migrate(root)
+./src/test/scala/nebflow/core/dataroot/RehearsalDriver.scala:242:          val r = RootLayout.migrate(root)
+./src/test/scala/nebflow/core/dataroot/LegacyRootMigrationSpec.scala:22: * - `RootLayout.migrate(machineRoot): MigrationReport`；`RootLayout.rollback(report)`；
+./src/test/scala/nebflow/core/dataroot/LegacyRootMigrationSpec.scala:91:      val report: MigrationReport = RootLayout.migrate(machineRoot)
+./src/test/scala/nebflow/core/dataroot/LegacyRootMigrationSpec.scala:122:      RootLayout.rollback(report)
+./src/test/scala/nebflow/core/dataroot/LegacyRootMigrationSpec.scala:148:      val report = RootLayout.migrate(machineRoot)
+
+=== E. 复验：演练收尾时在 main 新 tip 上重跑（main 在演练期间前进多次）===
+main tip = c5c50719c Merge branch 'delegate/delegate-nebflow-4280aa54' — presence 直连根修：候选地址预探（PresenceCandidateProbe）+ 取证
+src/main/scala 中 RootLayout.migrate / RootLayout.rollback 调用点数量 = 0
+root 包文件（main tip）= src/main/scala/nebflow/core/root/AccountRoot.scala src/main/scala/nebflow/core/root/Guards.scala src/main/scala/nebflow/core/root/RootLadder.scala src/main/scala/nebflow/core/root/RootLayout.scala 
+真根现有布局物数量 = 0
+(以上复核于 2026-11-04 16:07:01 执行；结论：§0 的三条证据在最新 main 上依然成立)

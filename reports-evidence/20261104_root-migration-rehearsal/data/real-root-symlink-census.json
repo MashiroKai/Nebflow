@@ -1,0 +1,281 @@
+{
+ "total": 2500,
+ "ok_in_root_resolvable": 2442,
+ "broken": [
+  {
+   "path": "projects/stand-website/.nebflow/evidence/20260915-trustpurge-verify/base-tree/node_modules",
+   "target": "/Users/kaiyu/.nebflow/projects/nebflow-website/node_modules"
+  },
+  {
+   "path": "projects/stand-website/.nebflow/evidence/20261017_stand-favicon-pure/prod/shots/profile-light-yG2aN4/RunningChromeVersion",
+   "target": "156.0.8078.4:1"
+  },
+  {
+   "path": "projects/stand-website/.nebflow/evidence/20261017_stand-favicon-pure/prod/shots/profile-light-yG2aN4/SingletonSocket",
+   "target": "/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/com.google.chrome.for.testing.F9C50A/SingletonSocket"
+  },
+  {
+   "path": "projects/stand-website/.nebflow/evidence/20261017_stand-favicon-pure/prod/shots/profile-light-yG2aN4/SingletonCookie",
+   "target": "7927419334178712895"
+  },
+  {
+   "path": "projects/stand-website/.nebflow/evidence/20261017_stand-favicon-pure/prod/shots/profile-light-yG2aN4/SingletonLock",
+   "target": "Mashiros-MacBook-Pro.local-50980"
+  },
+  {
+   "path": "projects/stand-website/.nebflow/worktrees/site-main/node_modules",
+   "target": "/Users/kaiyu/.nebflow/projects/nebflow-website/node_modules"
+  },
+  {
+   "path": "projects/stand-website/.nebflow/worktrees/login-social-quick/node_modules",
+   "target": "/Users/kaiyu/.nebflow/projects/nebflow-website/node_modules"
+  },
+  {
+   "path": "projects/stand-website/.nebflow/reports/evidence/prod-main-push-r2-latest",
+   "target": "/Users/kaiyu/.nebflow/projects/nebflow-website/.nebflow/reports/evidence/prod-main-push-r2-20260915_012940"
+  },
+  {
+   "path": "projects/stand-website/.nebflow/reports/evidence/prod-merge-verify-latest",
+   "target": "/Users/kaiyu/.nebflow/projects/nebflow-website/.nebflow/reports/evidence/prod-merge-verify-20260915_005911"
+  },
+  {
+   "path": "projects/stand-website/.nebflow/reports/evidence/prod-merge-impl-latest",
+   "target": "/Users/kaiyu/.nebflow/projects/nebflow-website/.nebflow/reports/evidence/prod-merge-impl-20260915_005103"
+  },
+  {
+   "path": "projects/link-server/.nebflow/evidence/20260913_002800_caddy-cdn-impl/probe/validate/caddy-bin",
+   "target": "/Users/kaiyu/.nebflow/projects/neblink-server/.nebflow/evidence/20260913_002800_caddy-cdn-impl/bin/caddy"
+  },
+  {
+   "path": "projects/link-server/.nebflow/scratch/loginA-verify-3/indep-build/node_modules",
+   "target": "/Users/kaiyu/.nebflow/projects/neblink-server/.nebflow/scratch/loginA-verify/work-env/node_modules"
+  },
+  {
+   "path": "projects/link-server/.nebflow/scratch/loginA-verify-3/indep-build-noinj/node_modules",
+   "target": "/Users/kaiyu/.nebflow/projects/neblink-server/.nebflow/scratch/loginA-verify/work-env/node_modules"
+  },
+  {
+   "path": "browser-data/RunningChromeVersion",
+   "target": "149.0.7827.155:1"
+  },
+  {
+   "path": "browser-use/profiles/website-staging/RunningChromeVersion",
+   "target": "155.0.8059.40:1"
+  },
+  {
+   "path": "browser-use/profiles/website-staging/SingletonSocket",
+   "target": "/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/com.google.Chrome.ShLb6z/SingletonSocket"
+  },
+  {
+   "path": "browser-use/profiles/website-staging/SingletonCookie",
+   "target": "4946889206887629107"
+  },
+  {
+   "path": "browser-use/profiles/website-staging/SingletonLock",
+   "target": "Mashiros-MacBook-Pro.local-97257"
+  },
+  {
+   "path": "backups/pre-migrate-20261010T100730/projects/slideblocks/.nebflow/Agent.md",
+   "target": "../AGENTS.md"
+  }
+ ],
+ "socket": [],
+ "outside": [
+  {
+   "path": "jdk-21",
+   "target": "/opt/homebrew/opt/openjdk@21",
+   "resolved": "/opt/homebrew/Cellar/openjdk@21/21.0.13.0.2"
+  },
+  {
+   "path": "bin/sbt",
+   "target": "/Users/kaiyu/.local/share/nebflow-local/bin/sbt-gate",
+   "resolved": "/Users/kaiyu/.local/share/nebflow-local/bin/sbt-gate"
+  },
+  {
+   "path": "general/.nebflow/worktrees/delegate-nebflow-3b3b0df2/docs/Nebflow/assets/20260912_fmw2-verify/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "general/.nebflow/worktrees/delegate-nebflow-b50b5cb0/docs/Nebflow/assets/20260912_fmw2-verify/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "general/.nebflow/worktrees/delegate-nebflow-f4ebc8df/docs/Nebflow/assets/20260912_fmw2-verify/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "general/.nebflow/worktrees/delegate-nebflow-072730ae/docs/Nebflow/assets/20260912_fmw2-verify/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "general/.nebflow/worktrees/delegate-nebflow-e57e6f2d/docs/Nebflow/assets/20260912_fmw2-verify/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "projects/\u8de8\u8bbe\u5907\u6d4b\u8bd5/brain/.nebflow/worktrees/delegate-nebflow-62324040/docs/Nebflow/assets/20260912_fmw2-verify/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "projects/link-server/.nebflow/scratch/byui-src-impl/source-rescue/auth-ui/node_modules/playwright-core",
+   "target": "/opt/homebrew/lib/node_modules/playwright-core",
+   "resolved": "/opt/homebrew/lib/node_modules/playwright-core"
+  },
+  {
+   "path": "projects/link-server/.nebflow/scratch/byui-src-impl/source-rescue/auth-ui/node_modules/playwright",
+   "target": "/opt/homebrew/lib/node_modules/playwright",
+   "resolved": "/opt/homebrew/lib/node_modules/playwright"
+  },
+  {
+   "path": "projects/link-server/.nebflow/scratch/byui-src-review/rebuild-env/deploy/docker/byui/auth-ui/node_modules/playwright-core",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules/playwright-core",
+   "resolved": "/opt/homebrew/lib/node_modules/playwright-core"
+  },
+  {
+   "path": "projects/link-server/.nebflow/scratch/byui-src-review/rebuild-env/deploy/docker/byui/auth-ui/node_modules/playwright",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules/playwright",
+   "resolved": "/opt/homebrew/lib/node_modules/playwright"
+  },
+  {
+   "path": "projects/link-server/.nebflow/reports/byui-regauth-impl-2/node_modules/playwright-core",
+   "target": "/opt/homebrew/lib/node_modules/playwright-core",
+   "resolved": "/opt/homebrew/lib/node_modules/playwright-core"
+  },
+  {
+   "path": "projects/link-server/.nebflow/reports/byui-regauth-impl-2/node_modules/playwright",
+   "target": "/opt/homebrew/lib/node_modules/playwright",
+   "resolved": "/opt/homebrew/lib/node_modules/playwright"
+  },
+  {
+   "path": "projects/link-server/.nebflow/reports/byui-regauth-verify/node_modules/playwright-core",
+   "target": "/opt/homebrew/lib/node_modules/playwright-core",
+   "resolved": "/opt/homebrew/lib/node_modules/playwright-core"
+  },
+  {
+   "path": "projects/link-server/.nebflow/reports/byui-regauth-verify/node_modules/playwright",
+   "target": "/opt/homebrew/lib/node_modules/playwright",
+   "resolved": "/opt/homebrew/lib/node_modules/playwright"
+  },
+  {
+   "path": "projects/likemeter/.nebflow/tmp/verify-n-7b5627c4/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "projects/likemeter/.nebflow/tmp/verify-bind-r1/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "projects/likemeter/.nebflow/tmp/verify-ui-opt2/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "projects/gamma-telescope/.nebflow/worktrees/delegate-nebflow-083d916f/docs/Nebflow/assets/20260912_fmw2-verify/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "projects/html-deck-studio/ai-fpga-deck-src/qa/\u62795/tools/wdvenv/bin/\ud835\udf0bthon",
+   "target": "python3.14",
+   "resolved": "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/bin/python3.14"
+  },
+  {
+   "path": "projects/html-deck-studio/ai-fpga-deck-src/qa/\u62795/tools/wdvenv/bin/python3",
+   "target": "python3.14",
+   "resolved": "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/bin/python3.14"
+  },
+  {
+   "path": "projects/html-deck-studio/ai-fpga-deck-src/qa/\u62795/tools/wdvenv/bin/python",
+   "target": "python3.14",
+   "resolved": "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/bin/python3.14"
+  },
+  {
+   "path": "projects/html-deck-studio/ai-fpga-deck-src/qa/\u62795/tools/wdvenv/bin/python3.14",
+   "target": "/opt/homebrew/opt/python@3.14/bin/python3.14",
+   "resolved": "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/bin/python3.14"
+  },
+  {
+   "path": "projects/\u89c6\u89c9\u5de5\u4f5c\u5ba4/.nebflow/worktrees/delegate-nebflow-b2d9ffa5/docs/Nebflow/assets/20260912_fmw2-verify/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "projects/\u89c6\u89c9\u5de5\u4f5c\u5ba4/.nebflow/worktrees/delegate-nebflow-2f894ecd/docs/Nebflow/assets/20260912_fmw2-verify/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "projects/\u89c6\u89c9\u5de5\u4f5c\u5ba4/.nebflow/worktrees/delegate-nebflow-18503752/docs/Nebflow/assets/20260912_fmw2-verify/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "projects/\u89c6\u89c9\u5de5\u4f5c\u5ba4/.nebflow/worktrees/delegate-nebflow-93ce6e8d/docs/Nebflow/assets/20260912_fmw2-verify/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "projects/\u89c6\u89c9\u5de5\u4f5c\u5ba4/.nebflow/worktrees/delegate-nebflow-7e2fb466/docs/Nebflow/assets/20260912_fmw2-verify/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "projects/\u89c6\u89c9\u5de5\u4f5c\u5ba4/.nebflow/worktrees/delegate-nebflow-2ffa929a/docs/Nebflow/assets/20260912_fmw2-verify/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "projects/\u89c6\u89c9\u5de5\u4f5c\u5ba4/.nebflow/worktrees/delegate-nebflow-234aa50f/docs/Nebflow/assets/20260912_fmw2-verify/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "projects/\u89c6\u89c9\u5de5\u4f5c\u5ba4/.nebflow/worktrees/delegate-nebflow-e25cd0c2/docs/Nebflow/assets/20260912_fmw2-verify/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  },
+  {
+   "path": "projects/\u89c6\u89c9\u5de5\u4f5c\u5ba4/node_modules/playwright-core",
+   "target": "/opt/homebrew/lib/node_modules/playwright-core",
+   "resolved": "/opt/homebrew/lib/node_modules/playwright-core"
+  },
+  {
+   "path": "projects/\u89c6\u89c9\u5de5\u4f5c\u5ba4/node_modules/playwright",
+   "target": "/opt/homebrew/lib/node_modules/playwright",
+   "resolved": "/opt/homebrew/lib/node_modules/playwright"
+  },
+  {
+   "path": "mcp/venv/bin/\ud835\udf0bthon",
+   "target": "python3.14",
+   "resolved": "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/bin/python3.14"
+  },
+  {
+   "path": "mcp/venv/bin/python3",
+   "target": "python3.14",
+   "resolved": "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/bin/python3.14"
+  },
+  {
+   "path": "mcp/venv/bin/python",
+   "target": "python3.14",
+   "resolved": "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/bin/python3.14"
+  },
+  {
+   "path": "mcp/venv/bin/python3.14",
+   "target": "/opt/homebrew/opt/python@3.14/bin/python3.14",
+   "resolved": "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/bin/python3.14"
+  },
+  {
+   "path": "docs/Nebflow/assets/20260912_fmw2-verify/node_modules",
+   "target": "/Users/kaiyu/Claude code/Nebflow/node_modules",
+   "resolved": "/Users/kaiyu/Claude code/Stand/node_modules"
+  }
+ ],
+ "stat_fail": []
+}

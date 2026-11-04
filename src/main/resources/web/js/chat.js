@@ -13,7 +13,7 @@ import { voiceEnabled } from './featureFlags.js';
 // 今天仍为纯时钟（formatHm），更早按本地日历日加日期层（昨天/星期X/M月D日/跨年）。
 import { formatHm, formatFooterTime, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
 import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, foldToolCardMedia, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 import { t } from './i18n.js';
 // msgchip-provenance 批（2026-11-01）：渠道/平台来源注记剥离单点（牌窗与气泡共用）。
@@ -1174,6 +1174,10 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
       '<div class="content"><div class="label">' + labelHtml + '</div>' +
       (mailBody ? '<div class="body">' + mailBody + '</div>' : '') + '</div>';
+    // 工具卡图片引用面（tool-card-image-face 批 2026-11-04）：Mail 卡 markdown
+    // 正文里的图片语法被 marked 渲成真 <img> —— 工具卡是摘要面，图片一律折叠为
+    // 「🖼 图片 ×N」引用件（灯箱单点），绝不内嵌渲染。utils 单点兜底。
+    if (mailBody) foldToolCardMedia(card);
     smartScroll();
     if (mailBody) attachToolClick(card);
     return { type: 'tool', label, summary, content: null, isError, input: inputJson };
@@ -1250,7 +1254,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
   card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
     '<div class="content"><div class="label">' + labelHtml + '</div></div>';
-  const { hasBody } = mountToolCardBody(card, { detailHtml, promptText, content, label });
+  const { hasBody } = mountToolCardBody(card, { detailHtml, promptText, content, label, labelTail: labelParts[1] || '' });
   smartScroll();
 
   if (hasBody) attachToolClick(card);

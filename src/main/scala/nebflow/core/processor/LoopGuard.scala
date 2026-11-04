@@ -25,7 +25,12 @@ import nebflow.shared.Counters
  *    文本即计数刷新归零，不跨打断累计（A A A B A A A = B 后 A 从 1 重数）。
  *    成功不清零（同参成功 ×10 同样是循环）；空文本不计不刷新（纯工具轮不
  *    打断文本计数）；exemptTools（轮询类）与权限拒绝不计（轮询等待与 #12
- *    劝停独立治理的既有豁免语义延续）。
+ *    劝停独立治理的既有豁免语义延续）。**T3 调用类别（2026-11-04）**：
+ *    R-call 只针对 Work 类调用——Query（`Bash(background_job_id=…)` 无 command
+ *    的查询态采样）/ Wait（`BgWait` 有界等待）不推进也不清零 R-call 连续计数
+ *    （同参定时采样不是循环信号；现场 A/B：10 次成功的同参查询被误杀），但
+ *    **失败仍计 S1/S3**；另设只提醒的正向指标 queryWarnAfter(5)——同参非 Work
+ *    连续恰达 5 ⇒ 一次 L0 nudge（指向 BgWait），**永不** Terminate/Freeze。
  *  - S3 跨轮同调用：同 fp 在 ≥K(3) 个不同 turn 都失败且无一次成功 → L2 冻结。
  *    L1 终止后同 fp 在后续 turn 立即复发 → 直接 L2（不再给第三次 L1）。
  *
@@ -58,7 +63,14 @@ object LoopGuard:
     identicalCallHard: Int = 10,
     identicalTextHard: Int = 10,
     crossTurnFailureTurns: Int = 3,
-    exemptTools: Set[String] = Set("TaskQuery", "TaskList", "TeamTaskList")
+    exemptTools: Set[String] = Set("TaskQuery", "TaskList", "TeamTaskList"),
+    /**
+     * T3（bash overhaul，作者令 2026-11-04）：同 fp 的 Query/Wait 类调用**连续**
+     * 达此次数 → 仅一次 L0 nudge（指向 `BgWait` 有界等待），**永不**
+     * Terminate/Freeze。热读键 `supervision.loopGuard.queryWarnAfter`；缺键走
+     * 本缺省（不因此把整段 loopGuard 配置打回 Default）。
+     */
+    queryWarnAfter: Int = 5
   )
 
   object Config:
@@ -83,7 +95,18 @@ object LoopGuard:
             textHard <- c.get[Int]("identicalTextHard").toOption
             crossK <- c.get[Int]("crossTurnFailureTurns").toOption
             exempt <- c.get[List[String]]("exemptTools").toOption
-          yield Config(enabled, soft, hard, callHard, textHard, crossK, exempt.toSet)
+          yield Config(
+            enabled,
+            soft,
+            hard,
+            callHard,
+            textHard,
+            crossK,
+            exempt.toSet,
+            // T3：新键不放进上面的 for 链——缺键时只回落本项缺省，
+            // 不把 enabled/阈值/exemptTools 等既有配置一起打回 Default。
+            c.get[Int]("queryWarnAfter").toOption.getOrElse(Config.Default.queryWarnAfter)
+          )
         }
     }.handleErrorWith(_ => IO.pure(None))
       .map(_.getOrElse(Config.Default))
@@ -96,6 +119,60 @@ object LoopGuard:
     errorText: String,
     permissionDenied: Boolean
   )
+
+  // ── 调用类别（T3，bash overhaul 2026-11-04） ───────────────
+
+  /**
+   * 调用类别（作者令 2026-11-04「组织优化 bash，用业界成熟做法完整实现」；
+   * 事实源 `docs/20261104_110500_our-bash-tool-defects.md` §0-2/§3 与 §5.3）。
+   *
+   * 病灶：R-call 判据「同工具 + 同参数连续 identicalCallHard(10) 次、成败皆计、
+   * 成功不清零」把**定时采样**误判成循环——等一个长任务时，连续同参
+   * `Bash(background_job_id=…)` 查询（**成功的**读操作）是唯一合理的动作，却在
+   * 第 10 拍被 Terminate（现场 A/B）。业界没有一家主流产品用「同参 N 次即终止
+   * 会话」。故按调用类别增一维：
+   *
+   *  - `Query`（查询态采样）/ `Wait`（有界等待）**不推进也不清零** R-call 连续
+   *    计数（与 exemptTools/permissionDenied 同姿态：不是循环信号）；
+   *  - 但**失败仍计 S1/S3**——失败查询连发同一错误 8 次照样 Terminate（豁免只
+   *    针对「同参次数」这一维，不放过真正的死循环失败）；
+   *  - 补偿一条**只提醒**的正向指标 `queryWarnAfter`：同参非 Work 连续达该次数
+   *    ⇒ 一次 L0 nudge（指向 `BgWait` 有界等待），**永不** Terminate/Freeze。
+   *
+   * 判据是纯函数、只看 `toolName` + `args`（不改 RoundEvent 形状、不引入第二套
+   * 指纹——非 Work 连续计数复用同一 `fingerprint`）。
+   */
+  sealed trait CallKind
+
+  object CallKind:
+    /** 普通工作调用（会改变世界）：照旧参与 R-call 判据，口径逐字不变。 */
+    case object Work extends CallKind
+
+    /**
+     * 查询态采样：`Bash` 且 `background_job_id` 非空、`command` 缺失/空——
+     * 即「读某个后台任务的当前状态」，不产生新副作用。
+     */
+    case object Query extends CallKind
+
+    /** 有界等待原语：`BgWait`（自带 deadline；重复调用等价于阻塞等待）。 */
+    case object Wait extends CallKind
+
+    /**
+     * 判类口径（逐字）：
+     *  - `toolName == "BgWait"` ⇒ `Wait`；
+     *  - `toolName == "Bash"` 且 `args.background_job_id` 非空 且 `command` 缺失/空 ⇒ `Query`；
+     *  - 否则 ⇒ `Work`。
+     */
+    def classify(toolName: String, args: Json): CallKind =
+      if toolName == "BgWait" then CallKind.Wait
+      else if toolName == "Bash" && nonEmpty(args, "background_job_id") && !nonEmpty(args, "command") then
+        CallKind.Query
+      else CallKind.Work
+
+    /** 字段存在且为非空白字符串（非字符串/缺失一律 false）。 */
+    private def nonEmpty(args: Json, field: String): Boolean =
+      args.hcursor.get[String](field).toOption.exists(_.trim.nonEmpty)
+  end CallKind
 
   sealed trait Verdict extends Product with Serializable
 
@@ -186,6 +263,8 @@ object LoopGuard:
             lastCallFp = "",
             lastCallTool = "",
             lastCallCount = 0,
+            lastNonWorkFp = "",
+            lastNonWorkCount = 0,
             lastTextHash = "",
             lastTextCount = 0
           )
@@ -194,14 +273,35 @@ object LoopGuard:
       // 逐事件折叠：S1 streak（仅失败）/ S3 crossTurn / R-call 连续同参（成败皆计）
       val counted = events.foldLeft(base) { (acc, e) =>
         val fp = fingerprint(e.toolName, e.args)
+        // T3 调用类别（一处判类，全仓唯一）：Query/Wait 不推进也不清零 R-call
+        // 连续计数（同参定时采样不是循环信号——现场 A/B 病灶），但另记一条
+        // **只提醒**的非 Work 连续计数（queryWarnAfter nudge 的数据面）；
+        // 失败仍走下方 S1/S3 折叠（同参失败查询 8 连败照样 Terminate）。
+        val kind = CallKind.classify(e.toolName, e.args)
         // R-call：权限拒绝不计（#12 独立治理）；exemptTools（轮询等待）不计；
-        // 成败皆计、成功不清零——只有「不同的调用」才刷新连续计数（作者裁定⑤）
+        // Query/Wait 类不计；成败皆计、成功不清零——只有「不同的调用」才刷新
+        // 连续计数（作者裁定⑤）
         val (lfp, ltool, lcnt) =
-          if e.permissionDenied || cfg.exemptTools.contains(e.toolName) then
+          if e.permissionDenied || cfg.exemptTools.contains(e.toolName) || kind != CallKind.Work then
             (acc.lastCallFp, acc.lastCallTool, acc.lastCallCount)
           else if acc.lastCallFp == fp then (fp, e.toolName, acc.lastCallCount + 1)
           else (fp, e.toolName, 1)
-        val accR = acc.copy(lastCallFp = lfp, lastCallTool = ltool, lastCallCount = lcnt)
+        // 非 Work 连续计数：同 fp 推进、不同 fp 刷新；被 Work 调用打断即归零
+        // （「连续」语义与 R-call 一致）；权限拒绝/豁免调用不推进也不清零
+        // （它们不是循环信号，也不构成打断——与 R-call 的豁免姿态对齐）
+        val (nwfp, nwcnt) =
+          if e.permissionDenied || cfg.exemptTools.contains(e.toolName) then
+            (acc.lastNonWorkFp, acc.lastNonWorkCount)
+          else if kind == CallKind.Work then ("", 0)
+          else if acc.lastNonWorkFp == fp then (fp, acc.lastNonWorkCount + 1)
+          else (fp, 1)
+        val accR = acc.copy(
+          lastCallFp = lfp,
+          lastCallTool = ltool,
+          lastCallCount = lcnt,
+          lastNonWorkFp = nwfp,
+          lastNonWorkCount = nwcnt
+        )
 
         val counted = e.isError && !cfg.exemptTools.contains(e.toolName) && !e.permissionDenied
         if !counted then
@@ -247,6 +347,10 @@ object LoopGuard:
       val s1Hard = withText.streakCount >= cfg.identicalFailureHard && withText.streakFp.nonEmpty
       val callRepeatHit = withText.lastCallCount >= cfg.identicalCallHard
       val textRepeatHit = withText.lastTextCount >= cfg.identicalTextHard
+      // T3 正向指标：同参非 Work（Query/Wait）连续计数**恰等于** queryWarnAfter
+      // ⇒ 一次性 L0 nudge（只提醒；不参与任何终止/冻结判据）
+      val queryNudgeHit =
+        withText.lastNonWorkFp.nonEmpty && withText.lastNonWorkCount == cfg.queryWarnAfter
 
       val verdict: Verdict =
         crossTurnHit match
@@ -275,6 +379,12 @@ object LoopGuard:
                   Verdict.Terminate(
                     s"loop-detected: the assistant has produced the identical text output ${withText.lastTextCount} rounds in a row — turn terminated. Break the repetition: change the response or stop.",
                     ""
+                  )
+                else if queryNudgeHit then
+                  // T3：只提醒、不处置——查询/等待类重复不是循环信号（业界无
+                  // 「同参 N 次即终止会话」的做法）；指向有界等待原语或回合结束。
+                  Verdict.Warn(
+                    s"the same query/wait call has now been issued ${withText.lastNonWorkCount} times in a row with identical arguments — polling the same handle cannot make progress by itself. Use `BgWait` for a bounded wait, or end your turn and wait for the completion notification instead of re-polling."
                   )
                 else if withText.streakCount == cfg.identicalFailureSoft && withText.streakFp.nonEmpty then
                   Verdict.Warn(

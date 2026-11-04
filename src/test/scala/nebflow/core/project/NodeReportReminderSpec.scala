@@ -163,8 +163,12 @@ class NodeReportReminderSpec extends CatsEffectSuite:
     recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
 
   /**
-   * 挂载引擎：reportGateHold 默认 **true**（生产默认口径）；bgGateCompletionHold 默认
-   * false（① 封存后的生产口径）。
+   * 挂载引擎：reportGateHold 默认 **true**（生产默认口径）；bgGateCompletionHold
+   * **显式注入 false**——本 spec 主题是腿 2（未申报 hold），腿 1 不在主题内 ⇒ 封存
+   * 面（T4 批 2026-11-04 起生产缺省 = **true = 默认保结果**，见
+   * `Defaults.BgGateCompletionHold`；腿 1 缺省开的行为由 `BashOverhaulGateSpec`（缺省
+   * 面）与 `NodeBgCompletionGateSpec`（双态矩阵）覆盖）。这里仍走构造接缝显式注入，
+   * **不**依赖全局 prop 缺省（读写回空，见 NodeEngine 注释）。
    */
   private def mountProject(
     name: String,

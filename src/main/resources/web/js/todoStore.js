@@ -1,21 +1,58 @@
-// todoStore.js — 待办内存仓（ReminderIsland 复刻批 · 作者令 2026-11-02 20:02）
+// todoStore.js — 待办**真源适配器**（待办体系统一批 · 前端数据面换血，2026-11-04）
 //
-// 数据面边界（作者令逐字）：「数据面不接 Apple Reminder——本批先做纯前端复刻
-// （内存态/mock 数据即可，接口留到下一步）」。本文件 = 那条"接口缝"：
-//   · 读口形状复刻 ReminderIsland ReminderManager.fetchVisibleReminders（过滤
-//     !completed + activeTag + 重要度筛选；排序 = 重要度降序 →（All 视图再加）
-//     标签 chips 行序 → 截止时间升序、无截止殿后）；
-//   · 写口形状复刻 createReminder / updateReminder / completeReminder 与
-//     calendar CRUD（createCalendar / updateCalendar / deleteCalendar）+
-//     chips 拖拽重排（calendarOrder 语义，本批内存态不落 localStorage）；
-//   · completeReminder 的「完成记录写入日历」（ReminderConfig.
-//     completionLogCalendarName）= EventKit 侧效应，本批无等价物（对照表申报）。
-// 下一步接自有待办工具时：换本文件实现，渲染层（todoFace.js）零改动。
+// 换血前（ReminderIsland 复刻批 2026-11-02）：本文件 = 261 行纯内存 mock 仓，
+// 模块加载即 `seed()` 注入 8 条假待办，写口只改数组（刷新即回滚）。
+// 换血后（本批）：本文件 = **后端真源适配器**。
+//   · 读：WS `scheduledTaskList {scope:'all'}`（跨会话收件箱回执）→ 映射成既有
+//     读口形状（id / title(=content) / notes / due(=triggerAt) / priority /
+//     completed / createdAt / tagId），读口签名（visibleItems / openCount /
+//     overdueCount / tags / tagById / isAllView / activeTagId /
+//     selectedPriorities）与常量导出**逐字不变** ⇒ 渲染层（todoFace.js /
+//     taskPanel.js）零改动。
+//   · 写：createItem / updateItem / completeItem / uncompleteItem / removeItem
+//     一律发 WS 帧 + **乐观更新** + 帧回执（`scheduledTask*` 广播）收敛；
+//     服务端显式拒绝 ⇒ 回滚 + console.error（**不静默吞**）；另有一次去抖刷新
+//     兜底（跨会话行的广播会被 ws.js 的会话过滤器丢掉，靠刷新收口）。
+//   · 排序：真源面 = 后端 `ScheduledTask.todoSortKey` 的**复算**
+//     （priority 降序 → due(=triggerAt) 升序 → createdAt 升序 → id），
+//     前端不引入任何"只有前端知道"的顺序。
 //
-// 色板 = ReminderConfig.calendarColorPresets / priorityColors 逐值迁入（复刻
-// 常量，非主题 token——数据驱动色随 JS 下发，与 EKCalendar cgColor 同位）。
+// 真源契约（帧表 / 行字段 / 兼容策略）：
+//   reports-evidence/20261104_todo-unify-backend__delegate-nebflow-79768ef5/backend/CONTRACT.md
+//   代码：src/main/scala/nebflow/{core/scheduler,gateway/WsTasksWorkspaceHandlers}.scala
+//
+// ── 字段落库面（诚实申报；机器可读副本 = todoStore.persistence）─────────────
+//   · **真落库**：title ↔ content、priority ↔ priority、completed ↔ completedAt、
+//     tagId ↔ project（后端没有 tag 实体，分组名 = 项目名，见下方「标签面」）。
+//   · **只读真源**：due ↔ triggerAt —— 引擎算出的「下次浮出时刻」，客户端不可写
+//     （`createScheduledTask(kind:todo)` 由服务端 `nextTodoSurfaceAt` 决定，
+//     `updateScheduledTask` 的 patch 面也没有 triggerAt）。本地改 due 只影响当前
+//     页面，下一次真源刷新即回归后端值。
+//   · **仅本地**：notes（后端模型无 notes 字段）、分组色板与 chips 顺序。
+//
+// ── 标签面（tag）处置决定（本批明确申报，不许假装落库）─────────────────────
+//   后端 `ScheduledTask` 只有 `project: Option[String]`，**没有 tag 实体**
+//   （无 tag 表、无颜色、无顺序、无增删帧）。本批取"降级 + 投影"路线：
+//     ① 分组 = `project` 字段的**本地投影**：每个出现过的 project 值 ⇒ 一个分组
+//        （id = `g:<project>`，名 = project），分组成员即该 project 的行 ——
+//        这一层是真源派生，不是假数据；
+//     ② 把行挂到分组 / 新建分组下的行 / 解散分组 = 发
+//        `updateScheduledTask {project}` / `createScheduledTask {project}` —— 真落库；
+//     ③ 分组**颜色与 chips 顺序**纯展示、只在本页有效（后端无对应字段，明确申报）；
+//        重命名分组 = 逐行改 project（真落库）+ 本地改名，颜色/顺序不动。
+//   老内存态的「删标签连带删条目」不再保留：真源行不该因为分组解散被销毁。
+//
+// ── 测试缝 ────────────────────────────────────────────────────────────────
+//   `todoStore.__seed({tagList, itemList, order})` = **夹具模式**（fixture mode）：
+//   照旧把内存摊成给定夹具、退化为纯本地行为（不拉真源、不发写帧），既有
+//   shots/几何 spec 的数据注入腿与旧排序语义原样可用。
+//   `todoStore.__live()` 退出夹具模式并重新拉真源（本批 spec / 面板节点可用）。
 
-/** 标签色板（ReminderIsland ReminderConfig.calendarColorPresets 十色逐值）。 */
+import state from './state.js';
+import { sendWs, onMessage, onReconnect } from './ws.js';
+
+/** 标签色板（ReminderIsland ReminderConfig.calendarColorPresets 十色逐值）。
+ *  真源无 tag 颜色字段 ⇒ 只用于本地展示（按分组名确定性取色）。 */
 export const TAG_COLOR_PRESETS = [
   'rgb(255, 61, 61)',    // red    (1.0, 0.24, 0.24)
   'rgb(255, 148, 0)',    // orange (1.0, 0.58, 0.0)
@@ -30,8 +67,7 @@ export const TAG_COLOR_PRESETS = [
 ];
 
 /** 重要度四色（ReminderIsland priorityColors：None 白 60% / Low cyan /
- *  Med orange / High red；系统色等价值，亮暗同值——数据色不随主题翻转，
- *  与对照表「重要度色」行申报一致）。 */
+ *  Med orange / High red；系统色等价值，亮暗同值——数据色不随主题翻转）。 */
 export const PRIORITY_COLORS = {
   0: 'rgba(255, 255, 255, 0.6)',
   1: 'rgb(50, 173, 230)',   // system cyan
@@ -41,21 +77,53 @@ export const PRIORITY_COLORS = {
 
 export const PRIORITY_LABEL_KEYS = ['todoface.prioNone', 'todoface.prioLow', 'todoface.prioMed', 'todoface.prioHigh'];
 
-/** 新建标签的默认色（ReminderConfig.calendarColorPresets[5] = blue）。 */
+/** 新建分组的默认色。 */
 const DEFAULT_TAG_COLOR = TAG_COLOR_PRESETS[5];
 
-// ── 内存态 ────────────────────────────────────────────────────────────────
+/** 服务端帧型（与 WsTasksWorkspaceHandlers 逐字对齐）。 */
+const FRAME = {
+  list: 'listScheduledTasks',
+  create: 'createScheduledTask',
+  update: 'updateScheduledTask',
+  complete: 'completeTodo',
+  uncomplete: 'uncompleteTodo',
+  remove: 'deleteScheduledTask',
+};
 
-/** @type {Array<{id:string,name:string,color:string}>} */
+/** 后端 ask/permission 镜像行（`name` = ask-<id> / perm-<id>）不属人待办面：
+ *  它们的销账归 ask/permission 流（后端 completeTodo 会把镜像行算进周报），
+ *  收件箱只认人建待办（与本仓 `js/scheduled-task.js` 的镜像行零圆钮同义）。 */
+const MIRROR_NAME_RE = /^(ask|perm)-/;
+
+/** 写帧去抖刷新间隔（跨会话广播被 ws.js 会话过滤器丢弃时的收敛兜底）。 */
+const REFRESH_DEBOUNCE_MS = 400;
+/** 会话 id 未就绪时的重试节拍/上限（有界，成功即停）。 */
+const SID_RETRY_MS = 250;
+const SID_RETRY_MAX = 40;
+
+// ── 状态 ──────────────────────────────────────────────────────────────────
+
+/** @type {Array<{id:string,name:string,color:string,local?:boolean}>} 分组表
+ *  （真源面 = project 投影；夹具面 = __seed 给定）。 */
 let tags = [];
-/** @type {Array<{id:string,tagId:string,title:string,notes:string,due:number|null,priority:number,completed:boolean,createdAt:number}>} */
+/** @type {Array<{id:string,tagId:string|null,title:string,notes:string,due:number|null,
+ *   priority:number,completed:boolean,createdAt:number,sessionId:string,project:string|null}>} */
 let items = [];
-/** chips 行序（calendarOrder 等价；缺省 = tags 数组序）。 @type {string[]} */
+/** 分组 chips 行序（本地展示态；后端无顺序字段）。 @type {string[]} */
 let tagOrder = [];
-/** 当前浏览标签（null = 总条目 All）。 @type {string|null} */
+/** 当前浏览分组（null = 总条目 All）。 @type {string|null} */
 let activeTagId = null;
-/** 重要度筛选（selectedPriorityLevels 等价；空集 = 不过滤）。 @type {Set<number>} */
+/** 重要度筛选（空集 = 不过滤）。 @type {Set<number>} */
 const selectedPriorities = new Set();
+
+/** 夹具模式（__seed 置位）：纯本地，不拉真源、不发写帧、保留旧排序语义。 */
+let fixtureMode = false;
+/** 归档面开关（refresh({includeCompleted:true}) 置位）：拉取面含已完成行。 */
+let wantCompleted = false;
+/** 首拉是否已发出（惰性自动拉：首次 subscribe / 首次读口）。 */
+let pullStarted = false;
+/** 真源回执序号（诊断读数；每次 list 回执 +1）。 */
+let serverSeq = 0;
 
 let uidSeed = 0;
 function uid(prefix) { return `${prefix}${++uidSeed}_${Date.now().toString(36)}`; }
@@ -63,115 +131,533 @@ function uid(prefix) { return `${prefix}${++uidSeed}_${Date.now().toString(36)}`
 const listeners = new Set();
 function emit() { for (const fn of listeners) { try { fn(); } catch { /* listener 断链不传染 */ } } }
 
-// ── 读口（复刻 fetchVisibleReminders + All 视图排序）─────────────────────
+function clampPriority(p) { return Math.min(3, Math.max(0, (p | 0) || 0)); }
+function currentSessionId() { return (state && state.activeSessionId) || ''; }
+
+/** 分组 id（真源面 = `g:<project>`；夹具面沿用 __seed 给定 id）。 */
+function groupId(project) { return `g:${project}`; }
+
+/** 分组名 → 确定性色（后端无颜色字段；同名恒同色，刷新不跳色）。 */
+function colorForName(name) {
+  let h = 0;
+  const s = String(name || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 100000;
+  return TAG_COLOR_PRESETS[h % TAG_COLOR_PRESETS.length];
+}
+
+const warnedFields = new Set();
+/** 未落库字段的显式申报（一次/字段）：本地生效但不发帧，绝不假装已落库。 */
+function warnUnpersisted(field, why) {
+  if (warnedFields.has(field)) return;
+  warnedFields.add(field);
+  console.warn(`[todoStore] field "${field}" is local-only (not persisted): ${why}`);
+}
+
+// ── 真源读：行映射 ────────────────────────────────────────────────────────
+
+/** 后端行（listTaskJson 形状）是否进人待办收件箱面。 */
+function isTodoRow(row) {
+  if (!row || typeof row.id !== 'string' || !row.id) return false;
+  const kind = row.kind == null ? null : String(row.kind);
+  if (kind != null && kind !== 'todo') return false;
+  return !MIRROR_NAME_RE.test(String(row.name || ''));
+}
+
+/** 后端行 → 读口形状（映射单点；渲染层只认这里产出的键）。 */
+function mapRow(row) {
+  const project = row.project == null || row.project === '' ? null : String(row.project);
+  return {
+    id: String(row.id),
+    tagId: project ? groupId(project) : null,
+    project,
+    title: String(row.content == null ? '' : row.content),
+    // 后端模型无 notes 字段（本批申报为仅本地）⇒ 真源面恒空。
+    notes: '',
+    // due ↔ triggerAt：引擎算出的下次浮出时刻（只读真源）。
+    due: Number.isFinite(row.triggerAt) ? row.triggerAt : null,
+    priority: clampPriority(row.priority),
+    completed: row.completed === true || (row.completedAt != null),
+    completedAt: Number.isFinite(row.completedAt) ? row.completedAt : null,
+    createdAt: Number.isFinite(row.createdAt) ? row.createdAt : Date.now(),
+    // 跨会话行级寻址面（写帧必须带**该行**的 sessionId）。
+    sessionId: String(row.sessionId || currentSessionId() || ''),
+  };
+}
+
+/** 分组表 ↔ 真源 project 对账：出现即建组、无行即撤组（夹具模式跳过）。 */
+function syncGroupRegistry() {
+  const live = new Set();
+  for (const it of items) {
+    if (!it.project) continue;
+    live.add(it.project);
+    const id = groupId(it.project);
+    if (!tags.some((t) => t.id === id)) {
+      tags.push({ id, name: it.project, color: colorForName(it.project), local: false });
+      tagOrder.push(id);
+    }
+  }
+  const keep = tags.filter((t) => t.local || !t.name || live.has(t.name) || fixtureMode);
+  if (keep.length !== tags.length) {
+    tags = keep;
+    const ids = new Set(tags.map((t) => t.id));
+    tagOrder = tagOrder.filter((id) => ids.has(id));
+    if (activeTagId != null && !ids.has(activeTagId)) activeTagId = null;
+  }
+}
+
+// ── 真源读：拉取 ──────────────────────────────────────────────────────────
+
+let sidRetryTimer = null;
+let sidRetries = 0;
+let refreshTimer = null;
+
+/**
+ * 请求跨会话收件箱（`scope:'all'`，含默认排除已完成）。
+ * 会话 id 未就绪时**有界重试**（不在无 sessionId 时发帧：ws.js 会把无
+ * sessionId 的非 GLOBAL 回执当会话内事件并把视图切到 primary）。
+ */
+function requestInbox() {
+  if (fixtureMode) return;
+  const sid = currentSessionId();
+  if (!sid) {
+    if (sidRetryTimer || sidRetries >= SID_RETRY_MAX) return;
+    sidRetryTimer = setTimeout(() => {
+      sidRetryTimer = null;
+      sidRetries++;
+      requestInbox();
+    }, SID_RETRY_MS);
+    return;
+  }
+  sidRetries = 0;
+  const frame = { type: FRAME.list, sessionId: sid, scope: 'all' };
+  // opt-in 归档面（panel 节点的"已完成/撤销"视图）：默认路径**不带**该键，
+  // 后端默认不返回已完成行（CONTRACT.md §2）。
+  if (wantCompleted) frame.includeCompleted = true;
+  sendWs(frame);
+}
+
+/** 惰性首拉（首次 subscribe / 首次读口触发；渲染层不必改）。 */
+function maybePull() {
+  if (fixtureMode || pullStarted) return;
+  pullStarted = true;
+  requestInbox();
+}
+
+/** 主动刷新（渲染层挂载点/面板节点可显式调用）。
+ *  `refresh({includeCompleted:true})` = 连已完成行一起拉（归档/撤销视图用）。 */
+function refresh(opts = {}) {
+  if (fixtureMode) return;
+  if (opts && typeof opts.includeCompleted === 'boolean') wantCompleted = opts.includeCompleted;
+  pullStarted = true;
+  requestInbox();
+}
+
+/** 写后收敛：去抖刷新（覆盖被会话过滤器丢弃的跨会话广播）。 */
+function scheduleRefresh() {
+  if (fixtureMode || refreshTimer) return;
+  refreshTimer = setTimeout(() => { refreshTimer = null; requestInbox(); }, REFRESH_DEBOUNCE_MS);
+}
+
+// ── 真源读：帧回执 → 内存摊（收敛单点）──────────────────────────────────
+
+function replaceRow(row) {
+  if (!isTodoRow(row)) return false;
+  const mapped = mapRow(row);
+  const i = items.findIndex((x) => x.id === mapped.id);
+  if (i >= 0) items[i] = mapped;
+  else items.push(mapped);
+  syncGroupRegistry();
+  emit();
+  return true;
+}
+
+function listHandler(msg) {
+  if (fixtureMode) return;
+  // 只认跨会话收件箱面（单会话回执归提醒面板 / scheduled-task.js，不是本仓数据源）。
+  if (msg.scope !== 'all') return;
+  const rows = Array.isArray(msg.tasks) ? msg.tasks : [];
+  const live = rows.filter(isTodoRow).map(mapRow);
+  // 已完成行 = **归档影子**：默认读口（includeCompleted:false）不再下发它们，但
+  // 本会话内刚完成的行要保留寻址能力（uncompleteItem / 归档视图），否则
+  // 「完成 → 刷新 → 撤销」这条回退链会在下一次刷新处断掉。
+  // 影子不进可见面、不计 openCount（visibleItems / openCount 都过滤 completed）。
+  const shadow = items.filter((x) => x.completed && !live.some((y) => y.id === x.id));
+  items = live.concat(shadow);
+  serverSeq++;
+  syncGroupRegistry();
+  emit();
+}
+
+function createdHandler(msg) {
+  if (fixtureMode) return;
+  const row = msg && msg.task;
+  if (!row || !isTodoRow(row)) return;
+  const mapped = mapRow(row);
+  // 乐观行对账：同 content 的在飞临时行就地换 id（保留本地 notes/due 展示位）。
+  const pendingIdx = items.findIndex((x) => String(x.id).startsWith('tmp') && x.title === mapped.title);
+  if (pendingIdx >= 0) items.splice(pendingIdx, 1);
+  if (!items.some((x) => x.id === mapped.id)) items.push(mapped);
+  syncGroupRegistry();
+  emit();
+}
+
+function updatedHandler(msg) {
+  if (fixtureMode) return;
+  const row = msg && msg.task;
+  if (row) { replaceRow(row); return; }
+}
+
+function completedHandler(msg) {
+  if (fixtureMode) return;
+  const row = msg && msg.task;
+  if (row && row.id) {
+    const mapped = mapRow({ ...row, completed: true, completedAt: msg.completedAt != null ? msg.completedAt : row.completedAt });
+    const i = items.findIndex((x) => x.id === mapped.id);
+    if (i >= 0) items[i] = { ...items[i], ...mapped, completed: true };
+    else items.push(mapped);
+    emit();
+    return;
+  }
+  const it = items.find((x) => x.id === msg.id);
+  if (it) { it.completed = true; emit(); }
+}
+
+function deletedHandler(msg) {
+  if (fixtureMode) return;
+  const id = msg && msg.id;
+  if (!id) return;
+  const i = items.findIndex((x) => x.id === id);
+  if (i < 0) return;
+  // 完成兼容双发：后端 completeTodo 同时发 scheduledTaskCompleted + 老帧
+  // scheduledTaskDeleted。老帧对「本地已判完成的行」是影子帧 ⇒ 不摘行
+  // （摘了就让 uncompleteItem / 归档视图失去寻址对象）；真删由去抖刷新收口。
+  if (items[i].completed) return;
+  items.splice(i, 1);
+  syncGroupRegistry();
+  emit();
+}
+
+/** 服务端显式拒绝（带 msgType 的 error 帧）⇒ 回滚 + 报错，不静默吞。 */
+function errorHandler(msg) {
+  if (!msg || !msg.msgType) return;
+  const ourFrames = [FRAME.create, FRAME.update, FRAME.complete, FRAME.uncomplete, FRAME.remove];
+  if (!ourFrames.includes(msg.msgType)) return;
+  console.error(`[todoStore] server rejected ${msg.msgType}: ${msg.message || 'unknown reason'}`);
+  // 创建被拒：撤掉在飞乐观行（旧口径 temp- 前缀，本文件用 tmp 前缀）。
+  if (msg.msgType === FRAME.create) {
+    const i = items.findIndex((x) => String(x.id).startsWith('tmp'));
+    if (i >= 0) { items.splice(i, 1); emit(); }
+  }
+  // 其余：拉一次真源把本地乐观态纠回服务端态（回滚的权威版本）。
+  refresh();
+}
+
+let wired = false;
+function wire() {
+  if (wired) return;
+  wired = true;
+  onMessage('scheduledTaskList', listHandler);
+  onMessage('scheduledTaskCreated', createdHandler);
+  onMessage('scheduledTaskUpdated', updatedHandler);
+  onMessage('scheduledTaskCompleted', completedHandler);
+  onMessage('scheduledTaskDeleted', deletedHandler);
+  onMessage('error', errorHandler);
+  // 重连后重拉（断线期间的写操作/浮出全部补齐）。
+  onReconnect(() => { if (!fixtureMode) requestInbox(); });
+}
+wire();
+
+// ── 读口（签名不变）──────────────────────────────────────────────────────
 
 function tagIndexOf(tagId) {
   const i = tagOrder.indexOf(tagId);
   return i >= 0 ? i : Number.MAX_SAFE_INTEGER;
 }
 
-function baseSorted(list) {
-  // 单标签视图排序：重要度降序 → 截止时间升序（无截止殿后）。
+/** 真源排序 = 后端 `todoSortKey` 的复算：(priority 降序, due 升序, createdAt 升序)。
+ *  已完成已在上游过滤；id 仅作末位确定性 tiebreak。 */
+function sortByBackendFields(list) {
   return [...list].sort((a, b) => {
     if (a.priority !== b.priority) return b.priority - a.priority;
     const ad = a.due, bd = b.due;
-    if (ad != null && bd != null) return ad - bd;
-    if (ad == null && bd == null) return a.createdAt - b.createdAt;
-    return ad == null ? 1 : -1;
+    if (ad != null && bd != null) { if (ad !== bd) return ad - bd; }
+    else if (ad == null && bd != null) return 1;
+    else if (ad != null && bd == null) return -1;
+    if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+    return a.id < b.id ? -1 : (a.id > b.id ? 1 : 0);
   });
 }
 
-/** 可见条目（过滤 + 排序；ReminderManager.fetchVisibleReminders 同语义）。 */
-function visibleItems() {
-  const base = items.filter((it) => !it.completed)
-    .filter((it) => activeTagId == null || it.tagId === activeTagId)
-    .filter((it) => selectedPriorities.size === 0 || selectedPriorities.has(it.priority));
-  if (activeTagId != null) return baseSorted(base);
-  // All 视图：重要度降序 → 标签 chips 行序 → 截止时间。
-  return [...base].sort((a, b) => {
+/** 夹具模式排序（旧内存态语义逐字保留：重要度降序 →（All 视图）分组序 → 截止）。
+ *  🔴 仅 __seed 夹具面走这里；真源面绝不按 chips 行序排（那是只有前端知道的顺序）。 */
+function sortFixture(list, allView) {
+  return [...list].sort((a, b) => {
     if (a.priority !== b.priority) return b.priority - a.priority;
-    const ta = tagIndexOf(a.tagId);
-    const tb = tagIndexOf(b.tagId);
-    if (ta !== tb) return ta - tb;
+    if (allView) {
+      const ta = tagIndexOf(a.tagId), tb = tagIndexOf(b.tagId);
+      if (ta !== tb) return ta - tb;
+    }
     if (a.due != null && b.due != null) return a.due - b.due;
     if (a.due == null && b.due == null) return a.createdAt - b.createdAt;
     return a.due == null ? 1 : -1;
   });
 }
 
+/** 可见条目（过滤 + 排序；真源面顺序 = 后端字段复算）。 */
+function visibleItems() {
+  maybePull();
+  const base = items.filter((it) => !it.completed)
+    .filter((it) => activeTagId == null || it.tagId === activeTagId)
+    .filter((it) => selectedPriorities.size === 0 || selectedPriorities.has(it.priority));
+  return fixtureMode ? sortFixture(base, activeTagId == null) : sortByBackendFields(base);
+}
+
 function orderedTags() {
   return [...tags].sort((a, b) => tagIndexOf(a.id) - tagIndexOf(b.id));
 }
 
-function openCount() { return items.filter((it) => !it.completed).length; }
+function openCount() {
+  maybePull();
+  return items.filter((it) => !it.completed).length;
+}
+
 function overdueCount() {
+  maybePull();
   const now = Date.now();
   return items.filter((it) => !it.completed && it.due != null && it.due < now).length;
 }
 
-// ── 写口（复刻 ReminderManager CRUD）────────────────────────────────────
+// ── 写口（乐观 + 帧 + 回执/刷新收敛；失败回滚并 console.error）──────────
 
-function createItem({ tagId = null, title = '', notes = '', due = null, priority = 0 } = {}) {
-  const id = uid('i');
-  items.push({
-    id, tagId: tagId || (tags[0] ? tags[0].id : null),
-    title: String(title || '').trim(), notes: String(notes || ''),
-    due: Number.isFinite(due) ? due : null,
-    priority: Math.min(3, Math.max(0, priority | 0)),
-    completed: false, createdAt: Date.now(),
-  });
-  emit();
-  return id;
+/** 分组 id → 后端 project 名（"" = 清空归属）。 */
+function projectNameOf(tagId) {
+  if (!tagId) return '';
+  const tag = tags.find((t) => t.id === tagId);
+  return tag ? tag.name : '';
 }
 
-function updateItem(id, patch = {}) {
-  const it = items.find((x) => x.id === id);
-  if (!it) return;
+/**
+ * 新建待办：`createScheduledTask {kind:'todo', sessionId, content, priority, project?}`。
+ * 注意后端对 kind=todo **不采信客户端 triggerAt**（由 `nextTodoSurfaceAt` 决定），
+ * 因此 due 传什么都不会落库（申报为只读真源）。返回本地 id（乐观行）。
+ */
+function createItem({ tagId = null, title = '', notes = '', due = null, priority = 0 } = {}) {
+  const trimmed = String(title || '').trim();
+  const resolvedTagId = tagId || (tags[0] ? tags[0].id : null);
+  const optimistic = {
+    id: uid('tmp'),
+    tagId: resolvedTagId,
+    project: projectNameOf(resolvedTagId) || null,
+    title: trimmed,
+    notes: String(notes || ''),
+    due: Number.isFinite(due) ? due : null,
+    priority: clampPriority(priority),
+    completed: false,
+    completedAt: null,
+    createdAt: Date.now(),
+    sessionId: currentSessionId(),
+  };
+  items.push(optimistic);
+  if (Number.isFinite(due)) warnUnpersisted('due', 'triggerAt is engine-owned (nextTodoSurfaceAt)');
+  if (!fixtureMode) {
+    const sid = currentSessionId();
+    if (!sid) {
+      // 无会话无从落库：撤掉乐观行 + 报错（不静默吞）。
+      items = items.filter((x) => x.id !== optimistic.id);
+      console.error('[todoStore] createItem failed: no active session');
+      emit();
+      return null;
+    }
+    const frame = { type: FRAME.create, kind: 'todo', sessionId: sid, content: trimmed, priority: optimistic.priority };
+    if (optimistic.project) frame.project = optimistic.project;
+    sendWs(frame);
+    scheduleRefresh();
+  }
+  emit();
+  return optimistic.id;
+}
+
+function applyLocalPatch(it, patch) {
   if (typeof patch.title === 'string') it.title = patch.title.trim();
   if (typeof patch.notes === 'string') it.notes = patch.notes;
   if (typeof patch.due === 'number') it.due = patch.due;
   if ('hasDue' in patch && !patch.hasDue) it.due = null;
-  if (typeof patch.priority === 'number') it.priority = Math.min(3, Math.max(0, patch.priority | 0));
-  if (typeof patch.tagId === 'string' && tags.some((tg) => tg.id === patch.tagId)) it.tagId = patch.tagId;
+  if (typeof patch.priority === 'number') it.priority = clampPriority(patch.priority);
+  if (patch.tagId === null) { it.tagId = null; it.project = null; }
+  else if (typeof patch.tagId === 'string' && tags.some((tg) => tg.id === patch.tagId)) {
+    it.tagId = patch.tagId;
+    it.project = projectNameOf(patch.tagId) || null;
+  }
+}
+
+/**
+ * 改字段：一个 `updateScheduledTask` 帧只带变化的 patch 字段
+ * （content / priority / project 是后端认的 patch 面；notes / due 只本地）。
+ */
+function updateItem(id, patch = {}) {
+  const it = items.find((x) => x.id === id);
+  if (!it) return;
+  const before = { ...it };
+  applyLocalPatch(it, patch);
+  if (typeof patch.notes === 'string') warnUnpersisted('notes', 'backend ScheduledTask has no notes field');
+  if (typeof patch.due === 'number' || ('hasDue' in patch && !patch.hasDue)) {
+    warnUnpersisted('due', 'triggerAt is engine-owned (nextTodoSurfaceAt)');
+  }
+  if (!fixtureMode) {
+    const frame = { type: FRAME.update, id: it.id, sessionId: it.sessionId || currentSessionId() };
+    let has = false;
+    if (it.title !== before.title && it.title) { frame.content = it.title; has = true; }
+    if (it.priority !== before.priority) { frame.priority = it.priority; has = true; }
+    if (it.project !== before.project) { frame.project = it.project || ''; has = true; }
+    if (has) {
+      if (!frame.sessionId) {
+        items = items.map((x) => (x.id === id ? before : x));
+        console.error(`[todoStore] updateItem(${id}) failed: no active session`);
+        emit();
+        return;
+      }
+      sendWs(frame);
+      scheduleRefresh();
+    }
+  }
   emit();
 }
 
-/** 完成（ReminderManager.completeReminder 等价：isCompleted=true → 可见面退场）。 */
+/** 完成（软删：后端置 completedAt；行从可见面退场，可 uncomplete 回退）。 */
 function completeItem(id) {
   const it = items.find((x) => x.id === id);
   if (!it) return;
+  const before = { completed: it.completed, completedAt: it.completedAt };
   it.completed = true;
+  it.completedAt = Date.now();
+  if (!fixtureMode) {
+    const sid = it.sessionId || currentSessionId();
+    if (!sid) {
+      it.completed = before.completed;
+      it.completedAt = before.completedAt;
+      console.error(`[todoStore] completeItem(${id}) failed: no addressable session`);
+      emit();
+      return;
+    }
+    sendWs({ type: FRAME.complete, sessionId: sid, id: it.id });
+    scheduleRefresh();
+  }
   emit();
 }
 
+/** 取消完成（`uncompleteTodo`；后端清 completedAt + 追加 DoneRecord(via:"undo")）。 */
+function uncompleteItem(id) {
+  const it = items.find((x) => x.id === id);
+  if (!it) return;
+  const before = { completed: it.completed, completedAt: it.completedAt };
+  it.completed = false;
+  it.completedAt = null;
+  if (!fixtureMode) {
+    const sid = it.sessionId || currentSessionId();
+    if (!sid) {
+      it.completed = before.completed;
+      it.completedAt = before.completedAt;
+      console.error(`[todoStore] uncompleteItem(${id}) failed: no addressable session`);
+      emit();
+      return;
+    }
+    sendWs({ type: FRAME.uncomplete, sessionId: sid, id: it.id });
+    scheduleRefresh();
+  }
+  emit();
+}
+
+/** 物理删除（`deleteScheduledTask`；不可逆，与「完成」区分）。 */
+function removeItem(id) {
+  const it = items.find((x) => x.id === id);
+  if (!it) return;
+  const idx = items.indexOf(it);
+  items = items.filter((x) => x.id !== id);
+  if (!fixtureMode) {
+    const sid = it.sessionId || currentSessionId();
+    if (!sid) {
+      items.splice(idx, 0, it);
+      console.error(`[todoStore] removeItem(${id}) failed: no addressable session`);
+      emit();
+      return;
+    }
+    sendWs({ type: FRAME.remove, sessionId: sid, id: it.id });
+    scheduleRefresh();
+  }
+  syncGroupRegistry();
+  emit();
+}
+
+// ── 分组面（tag = 后端 project 的本地投影；见文件头「标签面」）────────────
+
+/** 新建分组：本地登记（后端无 tag 实体）；该组下第一条行随 project 落库。 */
 function createTag(name, color) {
   const trimmed = String(name || '').trim();
   if (!trimmed) return null;
-  const tag = { id: uid('t'), name: trimmed, color: color || DEFAULT_TAG_COLOR };
-  tags.push(tag);
-  tagOrder = [...tagOrder.filter((id) => tags.some((tg) => tg.id === id)), tag.id];
+  const id = groupId(trimmed);
+  if (!tags.some((t) => t.id === id)) {
+    tags.push({ id, name: trimmed, color: color || colorForName(trimmed), local: true });
+    tagOrder = [...tagOrder.filter((tid) => tags.some((tg) => tg.id === tid)), id];
+  }
   emit();
-  return tag.id;
+  return id;
 }
 
+/** 改分组：颜色纯本地；改名 = 逐行改 project（真落库）+ 本地改名/改 id。 */
 function updateTag(id, patch = {}) {
   const tag = tags.find((x) => x.id === id);
   if (!tag) return;
-  if (typeof patch.name === 'string' && patch.name.trim()) tag.name = patch.name.trim();
   if (typeof patch.color === 'string') tag.color = patch.color;
+  const renamed = typeof patch.name === 'string' && patch.name.trim() ? patch.name.trim() : '';
+  if (renamed && renamed !== tag.name) {
+    const oldName = tag.name;
+    tag.name = renamed;
+    if (!fixtureMode) {
+      const newId = groupId(renamed);
+      for (const it of items) {
+        if (it.project !== oldName) continue;
+        it.project = renamed;
+        it.tagId = newId;
+        const sid = it.sessionId || currentSessionId();
+        if (!sid) { console.error(`[todoStore] rename group: row ${it.id} has no addressable session`); continue; }
+        // 分组名 = 后端 project ⇒ 改名必须落到每一行（真落库，不是本地幻觉）。
+        sendWs({ type: FRAME.update, id: it.id, sessionId: sid, project: renamed });
+      }
+      tag.id = newId;
+      tag.local = true;
+      tagOrder = tagOrder.map((tid) => (tid === id ? newId : tid));
+      if (activeTagId === id) activeTagId = newId;
+      scheduleRefresh();
+    }
+  }
   emit();
 }
 
-/** 删除标签（deleteCalendar 等价：标签连带其条目级联退场）。 */
+/** 解散分组：把组内行的 project 清空（真落库），**不删行**。
+ *  与旧内存态「删标签连带删条目」不同：真源行不因分组解散被销毁（本批申报）。 */
 function deleteTag(id) {
+  const tag = tags.find((x) => x.id === id);
   tags = tags.filter((x) => x.id !== id);
   tagOrder = tagOrder.filter((x) => x !== id);
-  items = items.filter((it) => it.tagId !== id);
+  if (tag && !fixtureMode) {
+    for (const it of items) {
+      if (it.project !== tag.name) continue;
+      it.tagId = null;
+      it.project = null;
+      const sid = it.sessionId || currentSessionId();
+      if (!sid) { console.error(`[todoStore] dissolve group: row ${it.id} has no addressable session`); continue; }
+      sendWs({ type: FRAME.update, id: it.id, sessionId: sid, project: '' });
+    }
+    scheduleRefresh();
+  } else if (tag && fixtureMode) {
+    // 夹具模式保留旧语义（本地级联摘行）——既有 shots 数据注入腿依赖。
+    items = items.filter((it) => it.tagId !== id);
+  }
   if (activeTagId === id) activeTagId = null;
   emit();
 }
 
-/** chips 拖拽重排（reorderCalendar 等价：摘出拖入目标位）。 */
+/** chips 拖拽重排（纯本地展示顺序；后端无顺序字段，明确申报）。 */
 function reorderTag(dragId, targetId) {
   if (dragId === targetId) return;
   const from = tagOrder.indexOf(dragId);
@@ -197,65 +683,76 @@ function togglePriority(p) {
 
 function subscribe(fn) {
   listeners.add(fn);
+  maybePull();
   return () => listeners.delete(fn);
 }
 
-// ── mock 种子（作者令：内存态/mock；__ 前缀 = 测试缝，产品路径不调用）─────
+// ── 测试缝（__ 前缀 = 非产品路径）────────────────────────────────────────
 
-function seed() {
-  const now = Date.now();
-  const H = 3600_000;
-  const work = uid('t'), life = uid('t'), study = uid('t'), idea = uid('t');
-  tags = [
-    { id: work, name: '工作', color: TAG_COLOR_PRESETS[5] },
-    { id: life, name: '生活', color: TAG_COLOR_PRESETS[3] },
-    { id: study, name: '学习', color: TAG_COLOR_PRESETS[7] },
-    { id: idea, name: '灵感', color: TAG_COLOR_PRESETS[1] },
-  ];
-  tagOrder = [work, life, study, idea];
-  items = [
-    { id: uid('i'), tagId: work, title: '修复登录态在手机层的过期提示', notes: '过期后应回到登录页而不是静默 401', due: now + 2 * H, priority: 3, completed: false, createdAt: now - 26 * H },
-    { id: uid('i'), tagId: work, title: '整理验收对照表的动画取帧', notes: '', due: now + 26 * H, priority: 2, completed: false, createdAt: now - 20 * H },
-    { id: uid('i'), tagId: work, title: '回复设计稿第二批意见', notes: '', due: null, priority: 1, completed: false, createdAt: now - 9 * H },
-    { id: uid('i'), tagId: life, title: '缴房租', notes: '', due: now - 3 * H, priority: 3, completed: false, createdAt: now - 50 * H },
-    { id: uid('i'), tagId: life, title: '下班顺路买菜', notes: '番茄 + 鸡蛋 + 青椒', due: now + 5 * H, priority: 2, completed: false, createdAt: now - 30 * H },
-    { id: uid('i'), tagId: life, title: '预约体检', notes: '', due: now + 7 * 24 * H, priority: 0, completed: false, createdAt: now - 80 * H },
-    { id: uid('i'), tagId: study, title: '读《设计中的设计》第三章', notes: '', due: now + 3 * 24 * H, priority: 1, completed: false, createdAt: now - 60 * H },
-    { id: uid('i'), tagId: idea, title: '记录灵感：刘海收展节奏迁移到胶囊', notes: 'spring(0.42, 0.8) 开 / spring(0.45, 1.0) 收', due: null, priority: 1, completed: false, createdAt: now - 4 * H },
-  ];
+/** 夹具模式：既有 shots/几何 spec 的数据注入腿（语义与换血前逐字一致）。 */
+function seed({ tagList, itemList, order } = {}) {
+  fixtureMode = true;
+  if (sidRetryTimer) { clearTimeout(sidRetryTimer); sidRetryTimer = null; }
+  if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
+  if (Array.isArray(tagList)) {
+    tags = tagList.map((x) => ({ id: String(x.id), name: String(x.name), color: String(x.color), local: true }));
+    tagOrder = tags.map((x) => x.id);
+  }
+  if (Array.isArray(order) && order.every((id) => tags.some((x) => x.id === id))) tagOrder = [...order];
+  if (Array.isArray(itemList)) {
+    items = itemList.map((x) => ({
+      id: String(x.id), tagId: x.tagId == null ? null : String(x.tagId),
+      project: null,
+      title: String(x.title || ''),
+      notes: String(x.notes || ''), due: Number.isFinite(x.due) ? x.due : null,
+      priority: clampPriority(x.priority),
+      completed: !!x.completed,
+      completedAt: x.completed ? Date.now() : null,
+      createdAt: Number.isFinite(x.createdAt) ? x.createdAt : Date.now(),
+      sessionId: String(x.sessionId || currentSessionId() || ''),
+    }));
+  }
+  activeTagId = null;
+  selectedPriorities.clear();
+  emit();
 }
 
-seed();
+/** 退出夹具模式并重拉真源（本批 spec / 面板节点用）。 */
+function goLive() {
+  fixtureMode = false;
+  pullStarted = true;
+  requestInbox();
+}
 
 export const todoStore = {
   /** 只读投影（渲染层不持有可变引用）。 */
-  get tags() { return orderedTags(); },
+  get tags() { maybePull(); return orderedTags(); },
   get activeTagId() { return activeTagId; },
   get selectedPriorities() { return new Set(selectedPriorities); },
+  /** 真源面机器可读申报（panel 节点/验收据以判定哪些字段落库）。 */
+  get persistence() {
+    return {
+      title: 'content', priority: 'priority', completed: 'completedAt', tagId: 'project',
+      due: 'read-only:triggerAt', notes: 'local-only', tagColor: 'local-only', tagOrder: 'local-only',
+    };
+  },
+  get dataSource() { return fixtureMode ? 'fixture' : 'backend'; },
+  get serverSeq() { return serverSeq; },
   visibleItems, openCount, overdueCount,
+  /** 归档面（已完成行；按完成时刻降序）。需先 refresh({includeCompleted:true}) 才完整。 */
+  completedItems: () => items.filter((it) => it.completed)
+    .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0)),
   tagById: (id) => tags.find((x) => x.id === id) || null,
   isAllView: () => activeTagId == null,
   setActiveTag, togglePriority,
-  createItem, updateItem, completeItem,
+  /** 显式拉取/刷新（渲染层挂载点可调用；不调用也已惰性自动首拉）。 */
+  init: maybePull,
+  refresh,
+  createItem, updateItem, completeItem, uncompleteItem, removeItem,
   createTag, updateTag, deleteTag, reorderTag,
   subscribe,
-  /** 测试缝：确定性种子（shots 夹具用；__ 前缀 = 非产品路径）。 */
-  __seed({ tagList, itemList, order } = /** @type {any} */ ({})) {
-    if (Array.isArray(tagList)) {
-      tags = tagList.map((x) => ({ id: String(x.id), name: String(x.name), color: String(x.color) }));
-      tagOrder = tags.map((x) => x.id);
-    }
-    if (Array.isArray(order) && order.every((id) => tags.some((x) => x.id === id))) tagOrder = [...order];
-    if (Array.isArray(itemList)) {
-      items = itemList.map((x) => ({
-        id: String(x.id), tagId: String(x.tagId), title: String(x.title || ''),
-        notes: String(x.notes || ''), due: Number.isFinite(x.due) ? x.due : null,
-        priority: Math.min(3, Math.max(0, (x.priority | 0))),
-        completed: !!x.completed, createdAt: Number.isFinite(x.createdAt) ? x.createdAt : Date.now(),
-      }));
-    }
-    activeTagId = null;
-    selectedPriorities.clear();
-    emit();
-  },
+  /** 测试缝：确定性夹具（shots 几何 spec 用；__ 前缀 = 非产品路径）。 */
+  __seed: seed,
+  /** 测试缝：退出夹具模式回真源。 */
+  __live: goLive,
 };

@@ -106,9 +106,11 @@
 #       不变），脱离后只写文件（不重复）。
 #     C 失败原因**可见**: 预检失败把 sbt 日志尾 5 行写进 stage 行；终态行统一
 #       `终态: 成功/失败/放弃/dry-run` 收尾 ⇒ 任何一次运行都能从日志读出结论与原因。
-#   顺带: sbt 调用收口到 $SBT_BIN（默认 ~/.stand/bin/sbt = M1 全局闸垫片，缺失回落
-#     PATH 的 sbt）；新增只读模式 --preflight-only（只跑编译预检，不 canary/不杀/不起），
-#     供自检与「本机是否有可编译代码」体检；NEBFLOW_RESTART_SBT_BIN 为自检注入点。
+#   顺带: sbt 调用收口到 $SBT_BIN（**优雅降级**：~/.stand/bin/sbt 存在就用它——那可能是
+#     本机设置层的包装垫片，也可能什么都没有；不存在就退回 PATH 里的系统 sbt。产品不假设
+#     它被安装、不检测它的语义，本脚本只是只读消费方）；新增只读模式 --preflight-only
+#     （只跑编译预检，不 canary/不杀/不起），供自检与「本机是否有可编译代码」体检；
+#     NEBFLOW_RESTART_SBT_BIN 为自检注入点。
 
 # 文案补注（2026-09-17，纯注释，零行为变更）: 两条易被误读的现状，提示口径在此对齐——
 #   · 优雅停机: 本脚本对实例树发 TERM，实例走 graceful shutdown（GracefulInterruptHook: draining →
@@ -304,11 +306,18 @@ else
   stage "[entry] 未脱离调用方（ppid=$(ps -o ppid= -p $$ 2>/dev/null | tr -d ' ')）——仍回显 stdout，同时记账"
 fi
 
-# sbt 收口（v4.5 M2 顺带 + M1 接线）：优先 ~/.stand/bin/sbt（= 全局串行闸垫片，缺失回落 PATH）。
+# sbt 收口（v4.5 M2 顺带；2026-11-04 本机设置剥离批改为无假设的优雅降级）：
+#   ~/.stand/bin/sbt 存在（本机设置层可能在那里放了包装垫片）⇒ 用它；
+#   不存在 ⇒ 用 PATH 解析出的系统 sbt；两者都没有 ⇒ 明说缺失并让预检自然失败。
+# 本脚本只**消费**那个位置，不检测它的实现、不依赖它存在。
 if [[ -z "$SBT_BIN" ]]; then
-  if [[ -x "$HOME/.stand/bin/sbt" ]]; then SBT_BIN="$HOME/.stand/bin/sbt"; else SBT_BIN="sbt"; fi
+  if [[ -x "$HOME/.stand/bin/sbt" ]]; then
+    SBT_BIN="$HOME/.stand/bin/sbt"
+  else
+    SBT_BIN="$(command -v sbt 2>/dev/null || echo sbt)"   # 兜底留裸名 sbt：缺失时报错信息可读
+  fi
 fi
-stage "[entry] sbt=${SBT_BIN}（M1 全局闸: ~/.stand/bin/sbt；run 形态由闸自判旁路）"
+stage "[entry] sbt=${SBT_BIN}（本机垫片存在则用之，否则系统 sbt；产品不假设其存在）"
 
 # R5: 动作模式入口——暂停 watchdog（watchdog.sh 每轮检查该标志，见其注释「维护开关」）。
 # 所有出口经下方 EXIT trap 自动删除；绝不在杀树之后才 touch（防止竞态窗口）。

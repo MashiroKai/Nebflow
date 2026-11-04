@@ -117,6 +117,28 @@ object BgTaskOutputStore:
   def persistenceDir: Option[os.Path] = persistDir
 
   /**
+   * 终态通知的**可读全文指针**（bash overhaul T5 / A1，分发器裁定 2026-11-04）：
+   * 该 jobId 输出留存文件的**绝对路径**，且**文件确实存在**才返回。
+   *
+   * 为什么需要它：旧标注只说「full output: background-tasks panel, job <id>」——
+   * agent 在面板里翻不到，等于「全文在哪」这一格是空的（作者 T5 口径要求「溢出
+   * 全文落文件并**回路径**」）。
+   *
+   * 判据：`open` 时登记的行 writer 路径（本地腿恒有）→ 回落 `persistDir` 推导的
+   * 同值路径（`bg-task-logs/<jobId>.log`，两处同源）→ **存在性检查**（不回报不存在
+   * 的路径，那会让 agent 去翻一个空地址）。落盘未开启 / 文件尚未落地 / 远端留存
+   * 在对端 ⇒ None，调用方回落面板指针，**绝不编造路径**。
+   *
+   * 纯同步读（volatile + 文件系统探测），可在非 IO 上下文调用（负载组装面）。
+   */
+  def readableOutputPath(jobId: String): Option[String] =
+    val fromWriter = Option(writers.get(jobId)).map(_.path.toString)
+    val fromDir = persistDir.map(dir => BgTaskOutputDisk.logPath(dir, jobId).toString)
+    fromWriter
+      .orElse(fromDir)
+      .filter(p => java.nio.file.Files.isRegularFile(java.nio.file.Paths.get(p)))
+
+  /**
    * 任务开启时建缓冲（BashTool 发起后台任务时调用）。幂等：已存在的 jobId
    * 返回原缓冲（防重复 open 撕出两个缓冲）。返回句柄供调用方造 append sink
    * （sink 捕获 buffer 直连，append 无需查表）；条目被留存淘汰后 sink 若因

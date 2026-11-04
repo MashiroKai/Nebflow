@@ -749,12 +749,114 @@ export function attemptSilentReseat() {
 // `localhost`——Safari 对二者的 PNA/混合内容处理不一致是近路 miss 的头号嫌疑
 // （设计 §6.1），首腿失败自动换 host 重试，预算仍各 4s；命中判据不变（deviceId
 // 等值），双败才记 miss 停留现状。
+// ── 近路批（2026-11-04）根因修复：探针形态 + 闸序 ─────────────────────────────
+// 实测台逐闸钉死（reports-evidence/20261104_nearpath-fire/red/FINDINGS.md）：
+//   · Chromium 四闸全通（真跳 723/741ms）⇒ **本批不许回归**；
+//   · WebKit（Safari 引擎）**死在闸③**：https 页面对 `http://127.0.0.1` 的跨源
+//     fetch 是 active mixed content，网络层之前就被拦（`[blocked] … insecure
+//     content …`），连 HTTP 状态都拿不到 ⇒ 旧代码只能记 `probe_unreachable`，
+//     与「本机没有网关」**不可区分**——这正是旧设计最要命的地方；
+//   · 闸链 window 内 presence 行数 = 0（assert-zero-presence PASS）⇒ 与 P2P 无关。
+//
+// 修法 = 「正证才通过」+「可并行的并起来」，**判据一个字没放宽**：
+//
+//   A. 闸③ 换正证取得方式（两条腿，顺序固定：先现状腿，抛错才换腿）
+//      腿 A = 原 CORS fetch（Chromium 今天就靠它命中，行为逐字保留：
+//             200 ∧ `deviceId` 与闸① 全等）；它**抛错**（策略拦截 / 无 CORS 头 /
+//             连接被拒——三者本就不可区分）才走腿 B。
+//      腿 B = **身份像素**（no-cors `<img>`，WebKit 不拦的被动子资源形态）：
+//             请求 `http://<host>:<port>/api/health/loopback-pixel.png?expect=<闸①
+//             的 deviceId>`；网关新臂（HealthRoutes.LoopbackPixel）只在「请求从
+//             **环回 socket** 进来 ∧ expect == 本机 deviceId」时回一张 5×3 的哨兵
+//             PNG，页面读 `img.naturalWidth/Height`（跨源可读，不受 canvas taint
+//             限制）比对哨兵尺寸。
+//      为什么这张图就是「同机证明」：127.0.0.1/localhost 的 TCP 连接**不可能离开
+//      本机**，能在这条连接上答出「我持有你在闸① 拿到的那个 deviceId」的进程，
+//      只可能是本机那个引擎 ⇒ **环回请求本身就是证明**（候选 e），`<img>` 是
+//      WebKit 里唯一还能发出去的形态（候选 b）。
+//      为什么不用导航型判据（候选 a/c 变体）：导航到无人监听的环回端口 = 浏览器
+//      错误页，作者明令禁止；本实现里导航只发生在「身份已正证」之后，错误页的
+//      唯一来源被结构性消掉。为什么不用本机 https 自签（候选 c）：证书信任是用户
+//      手势级一次性动作，未信任态的证书警告页本身就是错误页，且与「无网关」同样
+//      不可区分。为什么不用同源反代（候选 d）：门户面在 link-server（独立仓
+//      Rust），本仓改不到那一层，本批零行改动。
+//      误判面（写死）：
+//        ①「被策略拦」vs「本机无网关」页面侧不可区分 —— 无所谓：两者都必须停留
+//          隧道腿，方向安全（本实现**永不误跳**，只会误停）；
+//        ②同机别的进程占住同一端口：fetch 腿要它答出 deviceId、像素腿要它答出
+//          expect 匹配的哨兵图 —— 都要求它先知道本机 deviceId（有本地文件读权限
+//          = 已失守，与本批前同一威胁面，未扩大）；
+//        ③像素 200 但尺寸不符（占位进程回图）⇒ 记 `pixel_mismatch` 停留，绝不跳；
+//        ④跨设备场景在闸① deviceId 与闸③ 全等处天然不成立（见下「同机判据」）。
+//
+//   B. 闸序：闸① ∥ 闸②（都是同源隧道腿请求，互不依赖；串行 = 白付一程 RTT）；
+//      闸④ 铸票**只在闸③ 正证之后**发 —— 远端设备/身份不符场景**绝不铸票**
+//      （「不发任何票」是硬判据），所以铸票与探测不并行：再省 ~1 程的代价是回落
+//      路径上多一张废票，判据优先。分段计时进 console + sessionStorage
+//      （`ws_nearpath_timings`），台子从 consoleLines 直接收数，不进任何载荷。
+//
+// 同机判据清单（回执③，逐条写死，顺序 = 短路顺序；任一不成立 ⇒ miss + 停留隧道腿）：
+//   ① 隧道腿页面判别：`/api/portal/status` 200 ∧ `boundHost.deviceId` 非空——只有
+//      经 relay 加载的控制台才有此面（直连/LAN 腿 404 ⇒ 不进链）。
+//   ② 引擎自报端口锚：`/api/health/loopback-info`（withAuth）给 1..65535 的 port。
+//   ③ 环回侧身份全等：腿 A `http://<host>:<port>/api/health` 的 deviceId == ①的
+//      deviceId；腿 B 身份像素 `expect=①的 deviceId` 由网关自比 ∧ 哨兵尺寸全等。
+//      环回地址不可能跨机 ⇒ ③ 成立即「同一台机器上的同一个引擎」。
+//   ④ 铸票面向同一 device：`POST /api/portal/console-ticket` body.deviceId = ① 的
+//      deviceId，2xx ∧ consoleUrl 非空 ∧ 带 `?ticket=`。
+//   ⑤ 落地页自证：导航目标 = ③ 里答出身份的那个 host:port（同一监听面）；票在环
+//      回腿兑换（引擎侧 origin=relay-mint + one-shot，见 ConsoleTicketRoutes），落
+//      错 device 兑换必败 ⇒ 用户看到的是页面自身的失败面，不是本实现的跳转错误页。
+//   ⑥ 零 presence：命中路径不咨询 presence/P2P、不调 `/api/neblink/**`（派发侧硬
+//      判据；实测台断言闸链窗口 presence 行数 = 0）。
+//
+// 失效回落（全部 ⇒ noteLoopbackMiss + return false，**不可能出现浏览器错误页**）：
+//   被策略拦 / 超时 / 读数缺失 / deviceId 不等 / 像素尺寸不符 / 铸票非 2xx / 任何
+//   意外异常。导航只发生在 ③∧④ 全绿的末尾一行。
+//
+// 可观测（回执④）：hit / miss 各打一次 beacon 到 `/api/health/nearpath-event`
+// （hit 在导航前用 sendBeacon —— 导航会掐掉普通 fetch）；reason 用稳定词表；
+// sessionStorage `stand_ws_nearpath_loopback_miss` 照旧写（形状仍是 `{at, reason}`，
+// 旧取证工具与历史证据链不断）；beacon 端点不在（老引擎 404）/ sendBeacon 返回
+// false ⇒ 静默跳过，**绝不影响跳转判定**。
 let loopbackSwitchAttempted = false;
 
 const LOOPBACK_PROBE_HOSTS = ['127.0.0.1', 'localhost'];
 
-/** 近路 miss 原因曝光（sessionStorage 诊断键 + console 一行；命中不写）。 */
-function noteLoopbackMiss(reason) {
+/** 近路事件上报面（近路批 2026-11-04；契约 = 引擎侧 NearPathStats）。 */
+const NEARPATH_EVENT_PATH = '/api/health/nearpath-event';
+/** 身份像素（闸③ 腿 B）：路径与哨兵尺寸与 HealthRoutes.LoopbackPixel 双写，改动须成对。 */
+const NEARPATH_PIXEL_PATH = '/api/health/loopback-pixel.png';
+const NEARPATH_PIXEL_W = 5;
+const NEARPATH_PIXEL_H = 3;
+const NEARPATH_PIXEL_TIMEOUT_MS = 4000;
+
+/**
+ * 近路事件 beacon（观测面；任何失败静默 —— 绝不影响跳转判定）。
+ * reason 词表（稳定 token，引擎侧归一化 `^[a-z0-9_.:-]{1,64}$`）：
+ *   hit  : `fetch`（腿 A 命中）/ `pixel`（腿 B 命中）
+ *   miss : `portal_status_http_<n>` `portal_status_unreachable` `no_bound_host`
+ *          `loopback_info_http_<n>` `loopback_info_unreachable` `no_loopback_port`
+ *          `probe_unreachable` `probe_http_<n>` `pixel_mismatch` `device_mismatch`
+ *          `mint_http_<n>` `mint_unreachable` `mint_no_url` `mint_no_ticket`
+ *          `nearpath_error`
+ */
+function nearPathEvent(event, reason, port) {
+  try {
+    const payload = { event, reason };
+    if (Number.isInteger(port) && port > 0) payload.port = port;
+    if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+      navigator.sendBeacon(NEARPATH_EVENT_PATH, JSON.stringify(payload));
+    }
+  } catch (_) { /* 观测面永不影响判定 */ }
+}
+
+/**
+ * 近路 miss 原因曝光（sessionStorage 诊断键 + console 一行 + miss beacon；命中不写）。
+ * `reason` 同时是 sessionStorage 里的原文（历史证据链格式，可带 host 明细）；
+ * `beaconReason` 是干净 token（缺省同 reason）。
+ */
+function noteLoopbackMiss(reason, beaconReason) {
   try {
     sessionStorage.setItem(
       key('ws_nearpath_loopback_miss'),
@@ -762,6 +864,58 @@ function noteLoopbackMiss(reason) {
     );
   } catch (_) { /* 内存态即可 */ }
   console.info(`[nearpath] loopback probe miss: ${reason}`);
+  nearPathEvent('miss', beaconReason || reason);
+}
+
+/** 分段计时读数（console 一行 + sessionStorage；台子从 consoleLines 直接收数）。 */
+function noteNearPathTimings(seg) {
+  console.info(
+    `[nearpath] timings g1=${seg.g1Ms}ms g2=${seg.g2Ms}ms probe=${seg.probeMs}ms ` +
+      `mint=${seg.mintMs}ms total=${seg.totalMs}ms leg=${seg.leg || '-'}`
+  );
+  try { sessionStorage.setItem(key('ws_nearpath_timings'), JSON.stringify(seg)); } catch (_) {}
+}
+
+/**
+ * 闸③ 腿 B：身份像素探针（`<img>`，no-cors 被动子资源）。
+ * 判据：onload ∧ naturalWidth === 5 ∧ naturalHeight === 3（哨兵尺寸）⇒ 'ok'。
+ * onload 但尺寸不符 ⇒ 'mismatch'（有进程答图，但不是本机网关的哨兵；绝不跳）。
+ * onerror / 超时 ⇒ 'unreachable'（被策略拦 or 无人监听 —— 不可区分，两者都停留）。
+ * 不怕「mixed image 被升级成 https」（Chromium 的 auto-upgrade）：127.0.0.1 是
+ * potentially trustworthy origin，按规范不构成 mixed content；即便某版本升级，
+ * 结果也只是 onerror ⇒ 'unreachable' ⇒ 停留 —— 本腿只在 fetch 已抛错时才走，
+ * 与改动前同结论，不产生新失败面。
+ * @param {string} host
+ * @param {number} port
+ * @param {string} expectId 闸① 的 boundHost.deviceId（网关侧自比）
+ * @returns {Promise<'ok'|'mismatch'|'unreachable'>}
+ */
+function probeLoopbackPixel(host, port, expectId) {
+  return new Promise((resolve) => {
+    try {
+      const img = new Image();
+      let settled = false;
+      const settle = (verdict) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        img.onload = null;
+        img.onerror = null;
+        try { img.src = ''; } catch (_) { /* 卸载不关心 */ }
+        resolve(verdict);
+      };
+      const timer = setTimeout(() => settle('unreachable'), NEARPATH_PIXEL_TIMEOUT_MS);
+      img.onload = () => settle(
+        img.naturalWidth === NEARPATH_PIXEL_W && img.naturalHeight === NEARPATH_PIXEL_H ? 'ok' : 'mismatch'
+      );
+      img.onerror = () => settle('unreachable');
+      img.referrerPolicy = 'no-referrer';
+      img.src = `http://${host}:${port}${NEARPATH_PIXEL_PATH}` +
+        `?expect=${encodeURIComponent(expectId)}&v=${Date.now()}`;
+    } catch (_) {
+      resolve('unreachable');
+    }
+  });
 }
 
 async function attemptLoopbackNearPath() {
@@ -772,59 +926,110 @@ async function attemptLoopbackNearPath() {
   try { last = Number(sessionStorage.getItem(GUARD)) || 0; } catch (_) {}
   if (Date.now() - last < 30000) return false;
   try { sessionStorage.setItem(GUARD, String(Date.now())); } catch (_) {}
+
+  const nowMs = () => ((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now());
+  const t0 = nowMs();
+  const seg = { g1Ms: -1, g2Ms: -1, probeMs: -1, mintMs: -1, totalMs: -1, leg: '' };
+  const stamp = () => Math.round(nowMs() - t0);
+  const fail = (storageReason, beaconReason) => {
+    seg.totalMs = stamp();
+    noteLoopbackMiss(storageReason, beaconReason);
+    noteNearPathTimings(seg);
+    return false;
+  };
+
   try {
-    const status = await fetch('/api/portal/status', {
+    // ── 闸① ∥ 闸②（同源隧道腿，互不依赖；串行 = 白付一程 RTT）──────────────
+    const gate1P = fetch('/api/portal/status', {
       credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(5000),
-    });
-    if (!status.ok) { noteLoopbackMiss(`portal_status_http_${status.status}`); return false; }
-    const deviceId = (await status.json())?.boundHost?.deviceId;
-    if (typeof deviceId !== 'string' || deviceId === '') { noteLoopbackMiss('no_bound_host'); return false; }
-    const info = await fetch('/api/health/loopback-info', {
+    }).then(async (r) => {
+      if (!r.ok) return { ok: false, reason: `portal_status_http_${r.status}` };
+      const id = (await r.json().catch(() => null))?.boundHost?.deviceId;
+      if (typeof id !== 'string' || id === '') return { ok: false, reason: 'no_bound_host' };
+      return { ok: true, deviceId: id };
+    }).catch(() => ({ ok: false, reason: 'portal_status_unreachable' }));
+
+    const gate2P = fetch('/api/health/loopback-info', {
       credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(5000),
-    });
-    if (!info.ok) { noteLoopbackMiss(`loopback_info_http_${info.status}`); return false; }
-    const port = (await info.json())?.port;
-    if (!Number.isInteger(port) || port <= 0 || port > 65535) { noteLoopbackMiss('no_loopback_port'); return false; }
-    // 双 host 探测（小刀①）：127.0.0.1 先行（现状腿），失败换 localhost——首个
-    // 应答 ok 且 deviceId 相等的 host 赢；双败记 miss（PNA 拒答 = fetch throw，
-    // HTTP 非 200 = 别机网关占位，两类原因分开记）。
-    let probe = null;
+    }).then(async (r) => {
+      if (!r.ok) return { ok: false, reason: `loopback_info_http_${r.status}` };
+      const p = (await r.json().catch(() => null))?.port;
+      if (!Number.isInteger(p) || p <= 0 || p > 65535) return { ok: false, reason: 'no_loopback_port' };
+      return { ok: true, port: p };
+    }).catch(() => ({ ok: false, reason: 'loopback_info_unreachable' }));
+
+    const [g1, g2] = await Promise.all([gate1P, gate2P]);
+    seg.g1Ms = stamp();
+    seg.g2Ms = stamp();
+    // 原因归属按闸序（① 先于 ②）：两闸同拍失败时给上游闸的原因，词表与历史证据一致。
+    if (!g1.ok) return fail(g1.reason);
+    if (!g2.ok) return fail(g2.reason);
+    const deviceId = g1.deviceId;
+    const port = g2.port;
+
+    // ── 闸③：环回身份（正证才通过；腿 A 现状腿 → 抛错才换腿 B）──────────────
     let probeHost = '';
-    let lastProbeStatus = 0;
+    let probeLeg = '';        // 'fetch' | 'pixel'
+    let reachedStatus = 0;    // 任一 host 拿到的 HTTP 状态（⇒ 不是被策略拦）
+    let pixelMismatch = false;
     for (const host of LOOPBACK_PROBE_HOSTS) {
+      let blocked = false;
       try {
         const candidate = await fetch(`http://${host}:${port}/api/health`, {
           signal: AbortSignal.timeout(4000), cache: 'no-store',
         });
-        probeHost = host;
-        if (candidate.ok) { probe = candidate; break; }
-        lastProbeStatus = candidate.status;
-      } catch (_) { /* 换下一 host */ }
+        if (candidate.ok) {
+          const probeId = (await candidate.json().catch(() => null))?.deviceId;
+          if (probeId !== deviceId) {
+            seg.probeMs = stamp();
+            return fail(`device_mismatch (${host})`, 'device_mismatch');
+          }
+          probeHost = host;
+          probeLeg = 'fetch';
+          break;
+        }
+        reachedStatus = candidate.status;   // 到 HTTP 层 ⇒ 没被策略拦，无需像素腿
+      } catch (_) {
+        blocked = true;                     // 策略拦截 / 连接被拒 / 主机不可达 —— 不可区分
+      }
+      if (blocked) {
+        const px = await probeLoopbackPixel(host, port, deviceId);
+        if (px === 'ok') { probeHost = host; probeLeg = 'pixel'; break; }
+        if (px === 'mismatch') { pixelMismatch = true; break; }
+      }
     }
-    if (!probe) {
-      noteLoopbackMiss(lastProbeStatus ? `probe_http_${lastProbeStatus}` : 'probe_unreachable');
-      return false; // 本机无网关 / CORS(PNA) 拒答 —— 停留 relay 现状
+    seg.probeMs = stamp();
+    if (!probeHost) {
+      if (pixelMismatch) return fail('pixel_mismatch');
+      return fail(reachedStatus ? `probe_http_${reachedStatus}` : 'probe_unreachable');
     }
-    const probeId = (await probe.json())?.deviceId;
-    if (probeId !== deviceId) { noteLoopbackMiss(`device_mismatch (${probeHost})`); return false; }
+
+    // ── 闸④：铸票（只在 ③ 正证之后 —— 远端/身份不符场景绝不铸票）────────────
     const mint = await fetch('/api/portal/console-ticket', {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId }),
+      body: JSON.stringify({ deviceId }),   // 票永远只面向闸① 的绑定 device
       signal: AbortSignal.timeout(8000),
-    });
-    if (!mint.ok) { noteLoopbackMiss(`mint_http_${mint.status}`); return false; }
-    const consoleUrl = (await mint.json())?.consoleUrl;
-    if (typeof consoleUrl !== 'string' || consoleUrl === '') { noteLoopbackMiss('mint_no_url'); return false; }
+    }).catch(() => null);
+    seg.mintMs = stamp();
+    if (!mint) return fail('mint_unreachable');
+    if (!mint.ok) return fail(`mint_http_${mint.status}`);
+    const consoleUrl = (await mint.json().catch(() => null))?.consoleUrl;
+    if (typeof consoleUrl !== 'string' || consoleUrl === '') return fail('mint_no_url');
     const ticket = new URL(consoleUrl, location.href).searchParams.get('ticket');
-    if (!ticket) { noteLoopbackMiss('mint_no_ticket'); return false; }
-    // 命中 host 即跳转 host（双 host 腿：赢在 localhost 就跳 localhost——跳转目标
-    // 与探测命中面一致，绝不回退硬编码 127.0.0.1 制造死链）。
+    if (!ticket) return fail('mint_no_ticket');
+
+    // 命中：beacon 必须在导航前用 sendBeacon（普通 fetch 会被导航掐掉）；
+    // 跳转 host = ③ 里答出身份的那个 host（双 host 腿赢在谁就跳谁，绝不回退硬编码）。
+    seg.leg = probeLeg;
+    seg.totalMs = stamp();
+    nearPathEvent('hit', probeLeg === 'pixel' ? 'pixel' : 'fetch', port);
+    noteNearPathTimings(seg);
     window.location.href = `http://${probeHost}:${port}/?ticket=${encodeURIComponent(ticket)}`;
     return true;
   } catch (_) {
-    return false;
+    return fail('nearpath_error');
   }
 }
 

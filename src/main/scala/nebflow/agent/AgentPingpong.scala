@@ -568,7 +568,9 @@ private[agent] object AgentPingpong:
     else
       val sMessage = ready.sMessages.head // parse 保证 ≥1（CompactOutcome 恒含摘要消息）
       val delta = state.messages.drop(ready.forkMsgCount)
-      val newList = sMessage :: delta // ① 构建：Δ 零丢失（逐条原位）+ S 打头
+      // 收殓回执重感知腿（中断恢复批 2026-11-04 · 审计 D1）：乒乓换入 = 压缩抹除的
+      // 同一拍，未确认的重启丢失通知在此重述（持久提醒账；无账 = None 零漂移）。
+      val newList = sMessage :: (delta ++ RestartLossLedger.restatementForTail(Some(sid), delta).toList)
       val deltaTurns = countRoundStarts(delta)
       for
         persisted <- resources.sessionStore.durableSwapMessages(sid, newList).attempt // ② 持久化

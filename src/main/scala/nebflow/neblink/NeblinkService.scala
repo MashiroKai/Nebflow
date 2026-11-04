@@ -332,9 +332,13 @@ class NeblinkService private (
       finalPeer <- applyDescOverride(peer)
       newlyOnline <- peersRef.modify { peers =>
         val now = System.currentTimeMillis()
+        // 候选集保真（presence-direct 批 C-1）：入站 presence/announce/handshake 带的记录
+        // `endpoints = Nil`，整记录替换会把名册给的全量候选集抹成单地址（≤1 拍即塌缩）。
+        // 名册腿（endpoints 非空）原样通过 ⇒ 零行为变化。
+        val kept = PresenceCandidateProbe.mergeObserved(peers.get(peer.deviceId), finalPeer)
         val wasOnline = peers.get(peer.deviceId).exists(p => NeblinkService.isPeerOnline(p, now, syncSec))
-        val isOnline = NeblinkService.isPeerOnline(finalPeer, now, syncSec)
-        (peers + (peer.deviceId -> finalPeer), prevIsNew || (isOnline && !wasOnline))
+        val isOnline = NeblinkService.isPeerOnline(kept, now, syncSec)
+        (peers + (peer.deviceId -> kept), prevIsNew || (isOnline && !wasOnline))
       }
       _ <- if newlyOnline then notifyPeersChanged else IO.unit
     yield ()
@@ -389,7 +393,10 @@ class NeblinkService private (
         for
           _ <- pendingRemovals.update(_ - info.deviceId)
           finalPeer <- applyDescOverride(peer)
-          _ <- peersRef.update(_ + (info.deviceId -> finalPeer))
+          // C-1 候选集保真：announce 的 `endpoints = Nil` 不得抹掉名册候选（见 PresenceCandidateProbe）。
+          _ <- peersRef.update { ps =>
+            ps + (info.deviceId -> PresenceCandidateProbe.mergeObserved(ps.get(info.deviceId), finalPeer))
+          }
           _ <- logger.debug(s"Peer announced: ${info.deviceName} at ${peer.address}")
         yield ()
     }
@@ -446,7 +453,10 @@ class NeblinkService private (
     for
       _ <- pendingRemovals.update(_ - deviceId)
       finalPeer <- applyDescOverride(peer)
-      _ <- peersRef.update(_ + (deviceId -> finalPeer))
+      // C-1 候选集保真：handshake 的 `endpoints = Nil` 不得抹掉名册候选（见 PresenceCandidateProbe）。
+      _ <- peersRef.update { ps =>
+        ps + (deviceId -> PresenceCandidateProbe.mergeObserved(ps.get(deviceId), finalPeer))
+      }
       _ <- logger.info(s"Peer joined: $deviceName at $address")
     yield ()
   end handleHandshake

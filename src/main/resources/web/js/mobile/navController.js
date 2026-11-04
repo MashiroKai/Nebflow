@@ -57,6 +57,9 @@ import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from '..
 import { createIconsIn } from '../utils.js';
 import { ensureSocialPage, syncSocialFaces } from './socialFaces.js';
 import { ensureTaskPanel, closeTaskPanel } from './taskPanel.js';
+// 层事件流水（循环门禁修复批 2026-11-04）：叶子模块，taskPanel 等打事件方直取它，
+// 本模块只写 + 在 activateNav 挂 window（见该定义处注释）。
+import { logEvent, navLayerEvents } from './navEvents.js';
 import { buildMeFace } from './meFace.js';
 // 弹窗退场批③（2026-10-31）：设置页折叠配置项 → 层级子页（meFace 同款注入式）。
 import { buildSettingsSubFace, syncSettingsSubFaces, initSettingsSub, SETTINGS_SUB } from './settingsSub.js';
@@ -173,10 +176,10 @@ function tt(zh, en) {
 }
 
 // ── 层事件流水（QA 探针 window.__nfMobileLayerEvents，只读）──────────
-const __nfEvents = [];
-export function logEvent(kind, extra = {}) {
-  __nfEvents.push({ t: Date.now(), kind, ...extra });
-}
+// 循环门禁修复批（2026-11-04）：流水 + logEvent 抽到叶子 navEvents.js —— 这里是
+// 它的**挂载点**（activateNav 把同一数组引用挂 window）。taskPanel/searchFace/
+// socialSearch/chatChrome 打事件时直取叶子，不再反过来 import 本模块（那是 SCC[2]
+// 的一半：本模块 → taskPanel 的页面收编是真集成，不动）。
 
 // ── 首触标记（启动自动展开抑制的判据）────────────────────────────────
 let layerTouched = false;
@@ -2810,7 +2813,7 @@ function watchCanvasEvents() {
 // ── 激活 / 拆除 ─────────────────────────────────────────────────────
 
 export function activateNav() {
-  (/** @type {any} */ (window)).__nfMobileLayerEvents = __nfEvents;
+  (/** @type {any} */ (window)).__nfMobileLayerEvents = navLayerEvents();
   // 堆叠视角只读探针（性能验收 I9：首建耗时 / 缓存命中数 / 缓存条目）。
   (/** @type {any} */ (window)).__nfDeckProbe = () => ({
     lastMs: +deckSnapLastMs.toFixed(2),

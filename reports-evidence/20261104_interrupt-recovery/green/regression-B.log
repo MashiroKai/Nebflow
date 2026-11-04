@@ -1,0 +1,175 @@
+=== [C2-GREEN] 回归 B 组（作用域恢复 ws / barrier 投递 / root 补投）===
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap -Xmx1500m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-70e8d8ab-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab/)
+[warn] javaOptions will be ignored, fork is set to false
+15:03:52.137 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-aaaa0001' (project=spec-project, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dsw-s1-14416722198048621458/.nebflow/flow-maps/delegate-general-aaaa0001, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dsw-s1-14416722198048621458, root=self) — one delegate one map
+15:03:52.139 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] unmounted scope 'delegate-general-aaaa0001' — engine instance gone, on-disk state kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dsw-s1-14416722198048621458/.nebflow/flow-maps/delegate-general-aaaa0001 (write-through)
+15:03:52.208 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-bbbb0002' (project=spec-project, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dsw-s2-10926485373285716610/.nebflow/flow-maps/delegate-general-bbbb0002, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dsw-s2-10926485373285716610, root=self) — one delegate one map
+15:03:52.208 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] unmounted scope 'delegate-general-bbbb0002' — engine instance gone, on-disk state kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dsw-s2-10926485373285716610/.nebflow/flow-maps/delegate-general-bbbb0002 (write-through)
+15:03:52.285 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-cccc0003' (project=spec-project, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dsw-s2b-11371737040054637639/.nebflow/flow-maps/delegate-general-cccc0003, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dsw-s2b-11371737040054637639, root=self) — one delegate one map
+15:03:52.286 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] unmounted scope 'delegate-general-cccc0003' — engine instance gone, on-disk state kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dsw-s2b-11371737040054637639/.nebflow/flow-maps/delegate-general-cccc0003 (write-through)
+15:03:52.348 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-general-dddd0004' (project=spec-project, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dsw-s3-12928821637290598882/.nebflow/flow-maps/delegate-general-dddd0004, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dsw-s3-12928821637290598882, root=self) — one delegate one map
+15:03:52.349 [36mINFO [0m nebflow.delegate.flow-hosts - [delegate-flow-host] unmounted scope 'delegate-general-dddd0004' — engine instance gone, on-disk state kept at /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-dsw-s3-12928821637290598882/.nebflow/flow-maps/delegate-general-dddd0004 (write-through)
+[32mnebflow.core.project.DelegateScopeRecoveryWsSendSpec:[0m
+[32m  + [0m[32mS1 mount(wsSend = None)（boot 重挂腿改前形态）⇒ engine.wsSendFn 是空转，节点帧零落点[0m [90m0.446s[0m
+[32m  + [0m[32mS2 mount(wsSend = Some(sink)) ⇒ 节点帧到点且盖 nodeSessionId/sessionId/rootSessionId（落盘键）[0m [90m0.08s[0m
+[32m  + [0m[32mS2b mount(wsSend = Some(sink)) ⇒ 作用域 flow-map 事件（emitScopeEvent）同样到点[0m [90m0.064s[0m
+[32m  + [0m[32mS3 契约不破：帧自带 nodeSessionId/sessionId ⇒ 路由不覆盖；重挂幂等返回同实例[0m [90m0.064s[0m
+[32m  + [0m[32mS4 防复活钉：boot 重挂腿禁止回退 wsSend=None，GatewayMain 必须给真实广播[0m [90m0.005s[0m
+[32m  + [0m[32mS5 取证件在册：node-* 会话 ui.json 普查脚本可复跑（本批判据来源）[0m [90m0.002s[0m
+[32m  + [0m[32mS6 判定留痕（F2 落地改写）：DeviceDelegate 设备腿必须接进程级广播面（帧必录），注释与代码一致[0m [90m0.001s[0m
+15:03:52.667 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mnode-a/node-f2a[0m event=spawn detail=parent=- msgs=0
+15:03:52.686 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mnode-a/node-f2a[0m event=start detail=msgs=0
+15:03:52.932 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mnode-a/node-f2a[0m event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+15:03:52.965 [36mINFO [0m nebflow.node.engine - Node 'node-a' completed (result 2 chars)
+15:03:52.984 [36mINFO [0m nebflow.node.engine - Node 'node-a' (n-8713494e) terminal (completed) — destroy window opened: sessions node-f2a91b21 stay alive until 1793777632978 (1800s)
+15:03:52.984 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-test-agent[0m [35mnode-b/node-36c[0m event=spawn detail=parent=- msgs=0
+15:03:52.984 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-test-agent[0m [35mnode-b/node-36c[0m event=start detail=msgs=0
+15:03:53.003 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-test-agent[0m [35mnode-b/node-36c[0m event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+15:03:53.008 [36mINFO [0m nebflow.node.engine - Node 'node-b' completed (result 2 chars)
+15:03:53.018 [36mINFO [0m nebflow.node.engine - Node 'node-b' (n-b) terminal (completed) — destroy window opened: sessions node-36c7ea36 stay alive until 1793777633016 (1800s)
+15:03:53.093 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35msrc-a/node-86c[0m event=spawn detail=parent=- msgs=0
+15:03:53.094 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35msrc-a/node-86c[0m event=start detail=msgs=0
+15:03:53.098 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35msrc-b/node-937[0m event=spawn detail=parent=- msgs=0
+15:03:53.098 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35msrc-b/node-937[0m event=start detail=msgs=0
+15:03:53.401 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35msrc-a/node-86c[0m event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+15:03:53.404 [36mINFO [0m nebflow.node.engine - Node 'src-a' completed (result 2 chars)
+15:03:53.404 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35msrc-b/node-937[0m event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+15:03:53.407 [36mINFO [0m nebflow.node.engine - Node 'src-b' completed (result 2 chars)
+15:03:53.416 [36mINFO [0m nebflow.node.engine - Node 'src-a' (n-3b407aac) terminal (completed) — destroy window opened: sessions node-86cb1832 stay alive until 1793777633413 (1800s)
+15:03:53.418 [36mINFO [0m nebflow.node.engine - Node 'src-b' (n-0aeaa39c) terminal (completed) — destroy window opened: sessions node-937181bd stay alive until 1793777633416 (1800s)
+15:03:53.418 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-test-agent[0m [35mmerge-c/node-c57[0m event=spawn detail=parent=- msgs=0
+15:03:53.419 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-test-agent[0m [35mmerge-c/node-c57[0m event=start detail=msgs=0
+15:03:53.728 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-test-agent[0m [35mmerge-c/node-c57[0m event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+15:03:53.730 [36mINFO [0m nebflow.node.engine - Node 'merge-c' completed (result 2 chars)
+15:03:53.740 [36mINFO [0m nebflow.node.engine - Node 'merge-c' (n-merge-c) terminal (completed) — destroy window opened: sessions node-c57e6245 stay alive until 1793777633738 (1800s)
+15:03:53.816 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mdone-a/node-454[0m event=spawn detail=parent=- msgs=0
+15:03:53.816 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mdone-a/node-454[0m event=start detail=msgs=0
+15:03:53.822 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mdone-a/node-454[0m event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+15:03:53.825 [36mINFO [0m nebflow.node.engine - Node 'done-a' completed (result 2 chars)
+15:03:53.833 [36mINFO [0m nebflow.node.engine - Node 'done-a' (n-868514be) has Nebula out-edge(s) but notify=<legacy> — completion root-notify SUPPRESSED (edge kept as declaration, runtime arbitration; R5). Ledger marked to keep the redelivery scan from reviving it.
+15:03:53.835 [36mINFO [0m nebflow.node.engine - Node 'done-a' (n-868514be) terminal (completed) — destroy window opened: sessions node-454302e8 stay alive until 1793777633834 (1800s)
+15:03:53.875 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mconsumer-b/node-e65[0m event=spawn detail=parent=- msgs=0
+15:03:53.876 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mconsumer-b/node-e65[0m event=start detail=msgs=0
+15:03:53.880 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mconsumer-b/node-e65[0m event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+15:03:53.882 [36mINFO [0m nebflow.node.engine - Node 'consumer-b' completed (result 2 chars)
+15:03:53.890 [36mINFO [0m nebflow.node.engine - Node 'consumer-b' (n-6b5e67a4) has Nebula out-edge(s) but notify=<legacy> — completion root-notify SUPPRESSED (edge kept as declaration, runtime arbitration; R5). Ledger marked to keep the redelivery scan from reviving it.
+15:03:53.893 [36mINFO [0m nebflow.node.engine - Node 'consumer-b' (n-6b5e67a4) terminal (completed) — destroy window opened: sessions node-e6588ccc stay alive until 1793777633891 (1800s)
+15:03:53.979 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mdone-a/node-d94[0m event=spawn detail=parent=- msgs=0
+15:03:53.979 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mdone-a/node-d94[0m event=start detail=msgs=0
+15:03:53.984 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mdone-a/node-d94[0m event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+15:03:53.986 [36mINFO [0m nebflow.node.engine - Node 'done-a' completed (result 2 chars)
+15:03:53.994 [36mINFO [0m nebflow.node.engine - Node 'done-a' (n-df871342) has Nebula out-edge(s) but notify=<legacy> — completion root-notify SUPPRESSED (edge kept as declaration, runtime arbitration; R5). Ledger marked to keep the redelivery scan from reviving it.
+15:03:53.996 [36mINFO [0m nebflow.node.engine - Node 'done-a' (n-df871342) terminal (completed) — destroy window opened: sessions node-d9485a4f stay alive until 1793777633995 (1800s)
+15:03:54.054 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-test-agent[0m [35mwiring-w/node-361[0m event=spawn detail=parent=- msgs=0
+15:03:54.054 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-test-agent[0m [35mwiring-w/node-361[0m event=start detail=msgs=0
+15:03:54.061 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-test-agent[0m [35mwiring-w/node-361[0m event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+15:03:54.063 [36mINFO [0m nebflow.node.engine - Node 'wiring-w' completed (result 2 chars)
+15:03:54.072 [36mINFO [0m nebflow.node.engine - Node 'wiring-w' (n-wiring-w) terminal (completed) — destroy window opened: sessions node-36135286 stay alive until 1793777634071 (1800s)
+15:03:54.173 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mrace-a/node-a63[0m event=spawn detail=parent=- msgs=0
+15:03:54.174 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mrace-a/node-a63[0m event=start detail=msgs=0
+15:03:55.680 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mrace-a/node-a63[0m event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+15:03:55.683 [36mINFO [0m nebflow.node.engine - Node 'race-a' completed (result 2 chars)
+15:03:55.693 [36mINFO [0m nebflow.node.engine - Node 'race-a' (n-bcfe5123) terminal (completed) — destroy window opened: sessions node-a6337fdc stay alive until 1793777635692 (1800s)
+15:03:55.694 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-test-agent[0m [35mrace-c/node-d57[0m event=spawn detail=parent=- msgs=0
+15:03:55.694 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-test-agent[0m [35mrace-c/node-d57[0m event=start detail=msgs=0
+15:03:57.199 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-test-agent[0m [35mrace-c/node-d57[0m event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+15:03:57.202 [36mINFO [0m nebflow.node.engine - Node 'race-c' completed (result 2 chars)
+15:03:57.211 [36mINFO [0m nebflow.node.engine - Node 'race-c' (n-race-c) terminal (completed) — destroy window opened: sessions node-d57c69ef stay alive until 1793777637210 (1800s)
+15:03:57.271 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mrun-r/node-a0a[0m event=spawn detail=parent=- msgs=0
+15:03:57.272 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mrun-r/node-a0a[0m event=start detail=msgs=0
+15:03:57.272 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mdone-a/node-2a9[0m event=spawn detail=parent=- msgs=0
+15:03:57.273 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mdone-a/node-2a9[0m event=start detail=msgs=0
+15:03:57.477 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mdone-a/node-2a9[0m event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+15:03:57.480 [36mINFO [0m nebflow.node.engine - Node 'done-a' completed (result 2 chars)
+15:03:57.487 [36mINFO [0m nebflow.node.engine - Node 'done-a' (n-88fed913) has Nebula out-edge(s) but notify=<legacy> — completion root-notify SUPPRESSED (edge kept as declaration, runtime arbitration; R5). Ledger marked to keep the redelivery scan from reviving it.
+15:03:57.489 [36mINFO [0m nebflow.node.engine - Node 'done-a' (n-88fed913) terminal (completed) — destroy window opened: sessions node-2a96bef7 stay alive until 1793777637488 (1800s)
+15:03:58.021 [33mWARN [0m nebflow.node.engine - Root session 'nebula-root' not found — node result parked for redelivery scan (nodeName=node-b)
+15:03:58.021 [36mINFO [0m nebflow.node.engine - root-notify batch flushed event=root-notify-batch-flushed batch=1 windowMs=5000 nodes=n-b
+15:03:58.740 [33mWARN [0m nebflow.node.engine - Root session 'nebula-root' not found — node result parked for redelivery scan (nodeName=merge-c)
+15:03:58.740 [36mINFO [0m nebflow.node.engine - root-notify batch flushed event=root-notify-batch-flushed batch=1 windowMs=5000 nodes=n-merge-c
+15:03:59.072 [33mWARN [0m nebflow.node.engine - Root session 'nebula-root' not found — node result parked for redelivery scan (nodeName=wiring-w)
+15:03:59.073 [36mINFO [0m nebflow.node.engine - root-notify batch flushed event=root-notify-batch-flushed batch=1 windowMs=5000 nodes=n-wiring-w
+15:03:59.778 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mrun-r/node-a0a[0m event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+15:03:59.780 [36mINFO [0m nebflow.node.engine - Node 'run-r' completed (result 2 chars)
+15:03:59.793 [36mINFO [0m nebflow.node.engine - Node 'run-r' (n-5addc781) terminal (completed) — destroy window opened: sessions node-a0a8d28e stay alive until 1793777639792 (1800s)
+15:03:59.793 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-test-agent[0m [35mw-w/node-e76[0m event=spawn detail=parent=- msgs=0
+15:03:59.794 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-test-agent[0m [35mw-w/node-e76[0m event=start detail=msgs=0
+15:03:59.798 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-test-agent[0m [35mw-w/node-e76[0m event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+15:03:59.799 [36mINFO [0m nebflow.node.engine - Node 'w-w' completed (result 2 chars)
+15:03:59.811 [36mINFO [0m nebflow.node.engine - Node 'w-w' (n-w) terminal (completed) — destroy window opened: sessions node-e760c624 stay alive until 1793777639810 (1800s)
+15:03:59.882 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mnode-ttl/node-d1b[0m event=spawn detail=parent=- msgs=0
+15:03:59.883 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mnode-ttl/node-d1b[0m event=start detail=msgs=0
+15:03:59.886 [36mINFO [0m nebflow.agent.lifecycle - [32msubagent-nebflow[0m [35mnode-ttl/node-d1b[0m event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+15:03:59.888 [36mINFO [0m nebflow.node.engine - Node 'node-ttl' completed (result 2 chars)
+15:03:59.896 [36mINFO [0m nebflow.node.engine - Node 'node-ttl' (n-c38cef11) has Nebula out-edge(s) but notify=<legacy> — completion root-notify SUPPRESSED (edge kept as declaration, runtime arbitration; R5). Ledger marked to keep the redelivery scan from reviving it.
+15:03:59.898 [36mINFO [0m nebflow.node.engine - Node 'node-ttl' (n-c38cef11) terminal (completed) — destroy window opened: sessions node-d1b06981 stay alive until 1793777639897 (1800s)
+[32mnebflow.core.project.NodeBarrierDeliverySpec:[0m
+[32m  + [0m[32m② chain: A completes → B receives A's result and starts (fresh.out delivery)[0m [90m0.577s[0m
+[32m  + [0m[32m③ barrier: C starts only after BOTH A and B complete, input carries both results[0m [90m0.73s[0m
+[32m  + [0m[32m④a create-path: completed dangling A + new B with in=[A] → auto delivered and started (D1)[0m [90m0.164s[0m
+[32m  + [0m[32m④b edit-path: completed dangling A + EXISTING wiring W appends in=[A] → auto delivered and started (补齐)[0m [90m0.185s[0m
+[32m  + [0m[32m⑤ race: wire C.in=[A] while A is RUNNING → A completes → C receives result and starts (陈旧 out 不再覆盖)[0m [90m3.102s[0m
+[32m  + [0m[32m⑥ edit-append into partial barrier: appended completed upstream delivered immediately, starts when running upstream finishes[0m [90m2.617s[0m
+[32m  + [0m[32mttl display: terminalized node ttlExpireAt = completedAt + TtlDisplayMs (24h, one-shot)[0m [90m0.105s[0m
+[32m  + [0m[32msanitize: legacy out="null" string in flow-map.json loads as None and persists back as real null[0m [90m0.012s[0m
+15:04:00.011 [36mINFO [0m nebflow.node.engine - Node redelivery scan: re-delivered 1 unconsumed out=Nebula result(s) to root 'v8-root-sid' (fresh=1 stale-merged=0 fixture-excluded=0)
+15:04:00.696 [33mWARN [0m nebflow.node.engine - Root session 'nebula-root' not found — node result parked for redelivery scan (nodeName=race-a)
+15:04:00.696 [36mINFO [0m nebflow.node.engine - root-notify batch flushed event=root-notify-batch-flushed batch=2 windowMs=5000 nodes=n-bcfe5123,n-race-c
+15:04:04.810 [33mWARN [0m nebflow.node.engine - Root session 'nebula-root' not found — node result parked for redelivery scan (nodeName=w-w)
+15:04:04.811 [36mINFO [0m nebflow.node.engine - root-notify batch flushed event=root-notify-batch-flushed batch=1 windowMs=5000 nodes=n-w
+15:04:05.015 [36mINFO [0m nebflow.node.engine - root-notify batch flushed event=root-notify-batch-flushed batch=1 windowMs=5000 nodes=n-done
+[v8-spec] fixture-quiescence round=1 stable=1 sigLen=552 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r117785999948613452347
+[v8-spec] fixture-quiescence round=2 stable=2 sigLen=552 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r117785999948613452347
+[v8-spec] fixture-quiescence round=3 stable=3 sigLen=552 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r117785999948613452347
+15:04:05.859 [36mINFO [0m nebflow.node.engine - Node redelivery scan: re-delivered 1 unconsumed out=Nebula result(s) to root 'v8-root-sid' (fresh=1 stale-merged=0 fixture-excluded=0)
+15:04:10.865 [36mINFO [0m nebflow.node.engine - root-notify batch flushed event=root-notify-batch-flushed batch=1 windowMs=5000 nodes=n-a
+[v8-spec] fixture-quiescence round=1 stable=1 sigLen=548 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r213327881437804684146
+[v8-spec] fixture-quiescence round=2 stable=2 sigLen=548 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r213327881437804684146
+[v8-spec] fixture-quiescence round=3 stable=3 sigLen=548 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r213327881437804684146
+[v8-spec] fixture-quiescence round=1 stable=1 sigLen=551 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r312875515755200922756
+[v8-spec] fixture-quiescence round=2 stable=2 sigLen=551 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r312875515755200922756
+[v8-spec] fixture-quiescence round=3 stable=3 sigLen=551 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r312875515755200922756
+15:04:12.731 [36mINFO [0m nebflow.node.engine - Node redelivery scan: re-delivered 1 unconsumed out=Nebula result(s) to root 'v8-root-sid' (fresh=1 stale-merged=0 fixture-excluded=0)
+15:04:17.735 [36mINFO [0m nebflow.node.engine - root-notify batch flushed event=root-notify-batch-flushed batch=1 windowMs=5000 nodes=n-fail
+[v8-spec] fixture-quiescence round=1 stable=1 sigLen=552 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r417194849718753331128
+[v8-spec] fixture-quiescence round=2 stable=2 sigLen=552 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r417194849718753331128
+[v8-spec] fixture-quiescence round=3 stable=3 sigLen=552 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r417194849718753331128
+15:04:23.595 [36mINFO [0m nebflow.node.engine - root-notify batch flushed event=root-notify-batch-flushed batch=1 windowMs=5000 nodes=n-manual
+[v8-spec] fixture-quiescence round=1 stable=1 sigLen=548 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r56213039373579846116
+[v8-spec] fixture-quiescence round=2 stable=2 sigLen=548 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r56213039373579846116
+[v8-spec] fixture-quiescence round=3 stable=3 sigLen=548 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r56213039373579846116
+15:04:24.440 [36mINFO [0m nebflow.node.engine - [dedup] redelivery 'node-n-marked' -> Nebula suppressed: nebulaDeliveredAt already set (persistent anchor; result already delivered)
+[v8-spec] fixture-quiescence round=1 stable=1 sigLen=559 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r5b13828484424423468230
+[v8-spec] fixture-quiescence round=2 stable=2 sigLen=559 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r5b13828484424423468230
+[v8-spec] fixture-quiescence round=3 stable=3 sigLen=559 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r5b13828484424423468230
+15:04:25.558 [36mINFO [0m nebflow.node.engine - Node redelivery scan: re-delivered 1 unconsumed out=Nebula result(s) to root 'v8-root-sid' (fresh=1 stale-merged=0 fixture-excluded=0)
+15:04:30.571 [36mINFO [0m nebflow.node.engine - root-notify batch flushed event=root-notify-batch-flushed batch=1 windowMs=5000 nodes=n-notify
+[v8-spec] fixture-quiescence round=1 stable=1 sigLen=672 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r64362926807289462886
+[v8-spec] fixture-quiescence round=2 stable=2 sigLen=672 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r64362926807289462886
+[v8-spec] fixture-quiescence round=3 stable=3 sigLen=672 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r64362926807289462886
+15:04:31.502 [36mINFO [0m nebflow.node.engine - [gating] redelivery 'fp' -> 'n-down' skipped: edge on=[pass] excludes failed (source status=failed)
+15:04:31.504 [36mINFO [0m nebflow.node.engine - [gating] redelivery 'cx' -> 'n-down3' skipped: source status=cancelled (a cancelled node's result is never a downstream input)
+15:04:31.511 [33mWARN [0m nebflow.node.engine - Node 'down2' failed: agent 'worker' not found in global library
+15:04:31.523 [36mINFO [0m nebflow.project.dispatch-notify - Project 'v8proj' dispatch-notify batch flushed: reason=failed batch=1 nodes=down2
+[v8-spec] fixture-quiescence round=1 stable=0 sigLen=1033 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r72232931007669288129
+[v8-spec] fixture-quiescence round=2 stable=1 sigLen=1033 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r72232931007669288129
+[v8-spec] fixture-quiescence round=3 stable=2 sigLen=1033 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r72232931007669288129
+[v8-spec] fixture-quiescence round=4 stable=3 sigLen=1033 root=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/v8-r72232931007669288129
+[32mnebflow.core.project.RootDeliveryRedeliverySpec:[0m
+[32m  + [0m[32mR1 GREEN: crash-window result (completed, unmarked) is redelivered to Nebula and marked[0m [90m5.849s[0m
+[32m  + [0m[32mR2 idempotent: second scan does not redeliver (marker dedup)[0m [90m6.052s[0m
+[32m  + [0m[32mR3 missing root ref: scan parks silently (no discard, no false marking)[0m [90m0.817s[0m
+[32m  + [0m[32mR4 failed node results are redelivered too[0m [90m5.851s[0m
+[32m  + [0m[32mR5 manual edit-redelivery (deliverOutTo): unmarked node delivers and marks (first wiring passes)[0m [90m5.846s[0m
+[32m  + [0m[32mR5b M1 guard: manual redelivery of an ALREADY-MARKED node is suppressed (persistent anchor)[0m [90m1.129s[0m
+[32m  + [0m[32mR6 N3: the redelivery scan skips mode=signal EXIT-MARKER edges (never promotes them to a root notify)[0m [90m5.855s[0m
+[32m  + [0m[32mR7 source-status gate selection: failed source needs a failed edge; cancelled source never delivers[0m [90m1.161s[0m
+[info] Passed: Total 23, Failed 0, Errors 0, Passed 23
+[success] Total time: 43 s, completed 2026年11月4日 15:04:32
+=== exit=0 ===

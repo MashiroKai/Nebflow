@@ -1,0 +1,36 @@
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/tools/BgWaitToolSpec.scala:37:4 
+[error] 37 |    BgWaitTool.inputSchema("properties").exists(_.asObject.exists(_.contains(name)))
+[error]    |    ^^^^^^^^^^
+[error]    |    Not found: BgWaitTool
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/tools/BgWaitToolSpec.scala:57:19 
+[error] 57 |      assertEquals(BgWaitTool.name, "BgWait", "the tool must be registered under the name BgWait")
+[error]    |                   ^^^^^^^^^^
+[error]    |                   Not found: BgWaitTool
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/tools/BgWaitToolSpec.scala:60:21 
+[error] 60 |      val required = BgWaitTool.inputSchema("required").flatMap(_.asArray).map(_.map(_.asString)).getOrElse(Nil)
+[error]    |                     ^^^^^^^^^^
+[error]    |                     Not found: BgWaitTool
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/tools/BgWaitToolSpec.scala:68:16 
+[error] 68 |      result <- BgWaitTool.call(
+[error]    |                ^^^^^^^^^^
+[error]    |                Not found: BgWaitTool
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/tools/BgWaitToolSpec.scala:92:16 
+[error] 92 |      result <- BgWaitTool.call(
+[error]    |                ^^^^^^^^^^
+[error]    |                Not found: BgWaitTool
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/src/test/scala/nebflow/core/tools/BgWaitToolSpec.scala:122:16 
+[error] 122 |      result <- BgWaitTool.call(
+[error]     |                ^^^^^^^^^^
+[error]     |                Not found: BgWaitTool
+[error]     |
+[error]     | longer explanation available when compiling with `-explain`
