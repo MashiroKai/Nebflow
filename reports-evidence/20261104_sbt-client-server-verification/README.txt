@@ -56,5 +56,11 @@ d-isolation.txt
 
 复测
 ----
-bash ops/test/sbt-server-bench.sh <label> -- <worktree> "compile" -- <worktree2> "compile"
+采集器已随闸归本机设置层（作者裁定 2026-11-04 14:31：构建预算属本机、不进产品仓）:
+  BENCH=~/.local/share/nebflow-local/bin/sbt-server-bench.sh
+  bash "$BENCH" <label> -- <worktree> "compile" -- <worktree2> "compile"
 产出 $BENCH_OUT/<label>.log + .summary.tsv（wall / sbtRssMB / allRssMB / gateWait / rc）
+
+归属迁移说明: 读数采集于 14:24–14:46，期间 14:37 闸从 ops/bin/sbt-gate 外置到
+~/.local/share/nebflow-local/bin/sbt-gate（部署位 ~/.stand/bin/sbt 改为 symlink）。
+前后语义逐字一致（并发 1 / -Xmx1500m / 900s / SBT_GATE=off）⇒ 本目录读数跨迁移有效。
