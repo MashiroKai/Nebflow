@@ -351,3 +351,49 @@ f3bc0a7be Merge branch 'delegate/delegate-nebflow-4280aa54' — presence 收尾�
  .../typefix/logs/15_specs.log                      |  21 +
  297 files changed, 15443 insertions(+)
 (empty above = 本批零越界)
+
+## 更正：上段列表（排除 web/tests 后）= 本链各节点自落的过程证据目录（reports-evidence/…/{recon,backend,store,panel,sync,treecheck,typefix,persist2,entries2}），
+##   属 process artifacts，不是产品源码越界。真正的越界判据 = src/main/scala 与 src/main/resources 的非 web 子树：
+$ git diff --stat 0fffa26b5..HEAD -- src/main/scala
+(空 = 本批零 Scala 改动)
+$ git diff --stat 0fffa26b5..HEAD -- src/main/resources ":(exclude)src/main/resources/web"
+(空 = web 之外零改动)
+
+## 本批产品/测试文件清单（37 个）
+M	src/main/resources/web/css/mobileLayer.css
+M	src/main/resources/web/css/todo-face.css
+M	src/main/resources/web/css/todo-page.css
+M	src/main/resources/web/index.html
+M	src/main/resources/web/js/locales/en.js
+M	src/main/resources/web/js/locales/zh-CN.js
+M	src/main/resources/web/js/main.js
+M	src/main/resources/web/js/messages.js
+M	src/main/resources/web/js/mobile/chatChrome.js
+M	src/main/resources/web/js/mobile/navController.js
+M	src/main/resources/web/js/mobile/taskPanel.js
+M	src/main/resources/web/js/scheduled-task.js
+M	src/main/resources/web/js/todoFace.js
+M	src/main/resources/web/js/todoStore.js
+M	src/main/resources/web/js/ws.js
+M	tests/cognition-phase2.spec.mjs
+M	tests/conversation-heads-unify.spec.mjs
+M	tests/desktop-avatarfix-shots.mjs
+M	tests/liquid-glass-shots.mjs
+M	tests/liquid-glass-v3-shots.mjs
+M	tests/mobile-avatar-chip-title-gap.spec.mjs
+M	tests/mobile-dock.spec.mjs
+M	tests/mobile-interaction-standard-shots.mjs
+M	tests/mobile-muse-head-restore-shots.mjs
+M	tests/mobile-muse-head-same-row-shots.mjs
+M	tests/mobile-panel-title.spec.mjs
+M	tests/mobile-taskpanel-active-only-shots.mjs
+M	tests/mobile-title-morph.spec.mjs
+M	tests/mobile-touch-target.spec.mjs
+M	tests/mobile-two-stage-title-shots.mjs
+M	tests/mobile-v3.spec.mjs
+A	tests/todo-capsule-create.spec.mjs
+M	tests/todo-capsule-redesign-shots.mjs
+A	tests/todo-entry-collapse.spec.mjs
+M	tests/todo-face-shots.mjs
+M	tests/todo-page-shots.mjs
+M	tests/todo-split.spec.mjs
