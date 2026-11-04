@@ -1,0 +1,39 @@
+# 定位链路（2026-11-04 14:2x 实测）
+# 凭据 ustc-gitlab-pat-final 经 subshell 注入 curl header，未打印/未落盘/未转发
+
+## 0) 线索校正
+   线索给的 "git.kaiyu/sipm" 不是主机名。实测本仓 dev remote：
+     git@git.ustc.edu.cn:kaiyu/stand.git   ⇒ 主机 = git.ustc.edu.cn（USTC GitLab）
+   /Users/kaiyu/.stand/projects/DOSTEL 只是 stand 项目注册目录（project.json），不是 git 仓、无 remote。
+   SSH 免密可用：ssh -T git@git.ustc.edu.cn → "Welcome to GitLab, @kaiyu!"
+
+## 1) 公开 API 搜项目（无鉴权即可）
+   $ curl -s "https://git.ustc.edu.cn/api/v4/projects?search=stand&per_page=20"
+   命中：kaiyu/stand(8663) · kaiyu/stand-dev(9651) · phenol1145/stand-app(9391)
+   stand-app 描述 = "Stand Launcher application package (CLI: triple-launcher; images: triple-images)"
+
+## 2) 搜用户「张安齐」（需鉴权）
+   GET /api/v4/users?search=张安齐  →  3965  phenol1145  张安齐  active
+   与 reports/20261028_143325_dbm-mcp-plugin-pilot 里的 phenol1145 同一账号。
+
+## 3) 该账号名下四个仓（均 private，但 SSH 可读）
+   9391  phenol1145/stand-app      Stand 应用安装包（triple-app 组合声明）
+   9205  phenol1145/triple-star    框架本体（Rust；stand-app 的源分支 = feat/stand-parity-flow@310cfbb）
+   9257  phenol1145/triple-images  镜像库（OCI layout：stand front + 14 服务）
+   9392  phenol1145/tpm            Triple Package Manager
+
+## 4) 克隆（全部成功，到 /tmp/zq-recon）
+   git clone --depth 50 git@git.ustc.edu.cn:phenol1145/stand-app.git
+   git clone --depth 1  git@git.ustc.edu.cn:phenol1145/{triple-star,triple-images,tpm}.git
+   git -C triple-star fetch --depth 1 origin feat/stand-parity-flow
+
+## 5) 一处必须记录的坑（否则会误判"缺件"）
+   triple-app.json 声明 14 个服务（含 executord / sysd，required:true），
+   但 triple-star 默认分支（分支名就叫 triple-star）的 cap/crates/ 里**没有** executord、sysd，
+   cap/units/ 只有 12 份 json。
+   它们在 feat/stand-parity-flow(310cfbb0) 上才存在：
+     cap/crates/executord/{src/lib.rs,src/main.rs,Cargo.toml}
+     cap/crates/sysd/...
+     cap/units/{executord,sysd}.json
+   与 stand-app/README.md:9「源：triple-star 的 feat/stand-parity-flow@310cfbb」自洽。
+   ⇒ 若只读默认分支查，会得出"声明了但没实现"的错误结论。
