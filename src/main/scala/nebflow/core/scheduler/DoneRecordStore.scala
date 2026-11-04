@@ -40,6 +40,14 @@ object DoneRecord:
   val ViaTool: String = "tool"
   val ViaWs: String = "ws"
 
+  /**
+   * 取消完成的反向事件（待办体系统一批 2026-11-04）：`uncompleteTodo` 不删/不改
+   * 已写的完成行（**只增不改**契约不变，见本类头注），而是追加一条 via="undo"
+   * 的反向记录抵销同一 taskId ⇒ 可审计、并发安全；聚合面（WeeklyReport.aggregate）
+   * 按「同 taskId 的 undo 数 ≥ done 数 ⇒ 该条本周计为未完成」解释。
+   */
+  val ViaUndo: String = "undo"
+
 final class DoneRecordStore private (file: JPath, lock: cats.effect.std.Mutex[IO]):
 
   private def ensureParent: IO[Unit] =

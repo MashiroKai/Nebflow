@@ -446,6 +446,32 @@ object Defaults:
     sys.props.getOrElse("nebflow.bg.notifyTailLines", "20").toInt
 
   /**
+   * Bash 读线程**尾窗行数上限**（bash overhaul T5，作者令 2026-11-04「组织优化
+   * bash，用业界成熟做法完整实现，一步到位」）：读线程只保留命令输出的**最后**
+   * 本值行（与 [[BashTailBytes]] 取小，行粒度回退），越过预算即把**完整输出**
+   * 溢写进 `<java.io.tmpdir>/stand-bash-<epochMs>-<rand>.log` 并在回执末行回路径。
+   *
+   * 为什么是**尾**而不是头：构建/测试日志的价值集中在末尾（失败点、断言、堆栈），
+   * 头部多是启动横幅。旧口径「保头 10MB 丢尾」与「通知面只带尾 20 行」两个面各丢
+   * 一头（缺陷 D6），业界成熟做法（pi `truncateTail`）统一为保尾 + 全文落盘。
+   *
+   * 2000 行 ≈ 一个完整 sbt 测试失败段（栈帧 + 汇总），单条命令上下文的可读上限。
+   * 纯常量（不留 prop 缝）：改它会直接改**模型可见回执**的形态，属契约级变更，
+   * 应由代码评审承担，不做运行时可漂移。
+   */
+  val BashTailLines: Int = 2000
+
+  /**
+   * Bash 读线程**尾窗字节上限**（同 T5 批）：与 [[BashTailLines]] **同时**满足才
+   * 算进预算（取小）——防「少而巨行」（压缩日志/minified JSON）把上下文撑爆。
+   *
+   * 50KB 的量级依据：一手工具的上下文预算里「一条命令回执」应远小于摘要预算
+   * （模型侧一次回执吃掉的 token 约 12–15k，绝大多数命令远低于此），而 50KB 足够
+   * 装下真实报错段；再大的部分一律由溢写文件承担（回执只回路径）。
+   */
+  val BashTailBytes: Long = 50L * 1024L
+
+  /**
    * Background job idle timeout — if a background command produces no output
    * for this many seconds, it is automatically cancelled and the agent is
    * notified with a timeout error. This prevents delegate/subtask agents from
@@ -526,8 +552,10 @@ object Defaults:
   // ── 节点生命周期收敛批（noderpt 批 A 段，2026-09-11 作者裁定）───────────────
   //
   // 完成门的**两条腿**各自独立开关（同一闸门、两个判据）：
-  //   腿 1（后台任务存活）：`BgGateCompletionHold` —— 默认 **false = 封存**
-  //     （作者 R1 裁定形态 (a)：代码保留、先不起用、可回退）；
+  //   腿 1（后台任务存活）：`BgGateCompletionHold` —— 默认 **true = 默认保结果**
+  //     （bash-overhaul T4 批，作者令 2026-11-04 + 自查件
+  //     20261104_110500_our-bash-tool-defects.md D2：旧缺省 false ⇒ 「结束回合 =
+  //     丢结果」，与 Bash 工具描述承诺相反；翻转后丢弃必须显式声明）；
   //   腿 2（未申报 node_report）：`NodeReportCompletionHold` —— 默认 **true**
   //     （作者 2026-09-11 裁定：未申报的 Completed 不终态化，节点保持 Running，
   //     由未申报提醒阶梯兜底；申报后下一个 Completed 放行终态化）。
@@ -537,14 +565,23 @@ object Defaults:
   // （`bgGateCompletionHold` / `reportGateHold`）避开全局 prop 的跨 suite 污染。
 
   /**
-   * 完成门腿 1 开关（`nebflow.bgGate.completionHold`，默认 `false` = 封存）：
-   * true = 桥观察 `Completed` 时查 `BgTaskRegistry.waitingFor` 并 hold（今天的行为，
-   * 含 armCap 兜底计时器）；false = 跳过等待集检查直接走放行分支（不再因「后台任务
-   * 还在跑」拦节点）。hold 代码与 armCap 逐字保留，flag 打开即恢复旧行为。
+   * 完成门腿 1 开关（`nebflow.bgGate.completionHold`，默认 `true` = **默认保结果**）：
+   * true = 桥观察 `Completed` 时查 `BgTaskRegistry.waitingFor` 并 hold（含 armCap 兜底
+   * 计时器），名下等待型后台任务全部完成后自动续（配合 `BgWait`：有界等待原语，
+   * 「结束回合 → 后台任务完成 → 自动续」即默认路径）；false = 跳过等待集检查直接走
+   * 放行分支（不再因「后台任务还在跑」拦节点）——**丢弃结果必须显式声明**：
+   * `-Dnebflow.bgGate.completionHold=false` 或 `nebflow.json` 同名键（后者须经启动面
+   * 转成 `-D` 才生效；生产 `nebflow.json` 今日**无**该键 ⇒ 缺省面 = 保结果）。
+   *
+   * 缺省面依据（T4 批，作者令 2026-11-04 + 自查件 D2，
+   * `projects/stand/.stand/docs/20261104_110500_our-bash-tool-defects.md`）：旧缺省
+   * false 让「结束回合 = 丢结果」（通知投给死会话，现场 `bg-notify-undelivered`），
+   * 与工具描述承诺（结束回合不丢结果）恰好相反；且第 10 次同参调用 Terminate 后
+   * 再等十来秒后台任务本可回结果。hold 代码与 armCap 逐字保留，显式关即退回封存面。
    * 每次调用现读（spec/运维可即时翻转）。
    */
   def BgGateCompletionHold: Boolean =
-    sys.props.getOrElse("nebflow.bgGate.completionHold", "false").trim.equalsIgnoreCase("true")
+    sys.props.getOrElse("nebflow.bgGate.completionHold", "true").trim.equalsIgnoreCase("true")
 
   /**
    * 完成门腿 2 开关（`nebflow.noderpt.completionHold`，默认 `true`）：

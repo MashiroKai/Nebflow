@@ -47,6 +47,16 @@ object ScheduledTaskService:
   val MissThreshold: Int = 3
 
   /**
+   * 浮出候选过滤（待办体系统一批 2026-11-04，**纯函数** ⇒ spec 直接钉口径）：
+   * 已完成（completedAt 置位）的待办一律剔除。头道闸在读口
+   * （[[ScheduledTaskStore.getAllDueTodos]] 已过滤），本函数是 actor 侧的二道闸：
+   * 「即使将来有人换读口或直接构造列表，completed 行也进不了 digest、不涨
+   * missCount、不被顺延」。
+   */
+  def surfacedTodos(todos: List[ScheduledTask]): List[ScheduledTask] =
+    todos.filterNot(_.isCompleted)
+
+  /**
    * digest 文案（缺卡调整流版）：[[digestPayload]] 同款，另对 missStreak 集内
    * 的待办逐条附「已连续 N 次浮出未销账——建议降频或拆小，要调整请直接说」。
    * missStreak = 本次浮出后计数将达阈值的待办 id 集（纯函数，now/集合注入）。
@@ -664,7 +674,13 @@ class ScheduledTaskService(
   // 浮出时间推到明晨 09:00。销账/取消 = 从存储删除 ⇒ 永不再浮出。
   // ------------------------------------------------------------
 
-  private def surfaceTodos(dueTodos: List[ScheduledTask]): IO[Unit] =
+  private def surfaceTodos(dueTodosRaw: List[ScheduledTask]): IO[Unit] =
+    // 🔴 触发面二道闸（待办体系统一批 2026-11-04）：已完成（completedAt 置位）的
+    // 待办**绝不许浮出**。头道闸在 read 口（ScheduledTaskStore.getAllDueTodos 已
+    // 过滤 completedAt.isEmpty，本类无处绕过它）；此处再过同一纯函数
+    // ScheduledTaskService.surfacedTodos，保证「即使将来有人换读口/直接构造列表，
+    // completed 行也进不了 digest 与顺延」（spec 钉该函数）。
+    val dueTodos = ScheduledTaskService.surfacedTodos(dueTodosRaw)
     if dueTodos.isEmpty then IO.unit
     else
       for

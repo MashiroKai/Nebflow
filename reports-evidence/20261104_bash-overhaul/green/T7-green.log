@@ -1,0 +1,25 @@
+### [T7] sbt "testOnly nebflow.core.tools.DeviceBashAutoBackgroundSpec nebflow.core.tools.DeviceBgTaskSpec"
+### started: 2026-11-04 15:31:49
+[sbt-gate] gate acquired after 0s
+[sbt-gate] heap cap -Xmx1500m applied via SBT_OPTS
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-485bb4f4-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-485bb4f4/)
+[warn] javaOptions will be ignored, fork is set to false
+15:31:58.015 INFO  nebflow.shell - [bg-job-graph] register jobId=e54a11a1 instance=260b4852 session=device-bg-red-2b265cc2 cause=adoptAsBackgroundJob
+15:31:58.253 INFO  nebflow.shell - [bg-job-graph] remove jobId=e54a11a1 instance=260b4852 session=device-bg-red-2b265cc2 cause=cancelBackgroundJob
+nebflow.core.tools.DeviceBashAutoBackgroundSpec:
+  + T7: remote-exec foreground leg auto-backgrounds at the compressed budget (not a 30s-class timed-out error) 2.595s
+nebflow.core.tools.DeviceBgTaskSpec:
+  + deviceOrigin is the single construction point: category=device, label=device name verbatim 0.003s
+  + activeTasksJson carries the device origin on the snapshot path (refresh recovery) 0.013s
+  + persistent device task is exempt from the wait set (node gate / hot-restart quiesce / bg-wait) 0.004s
+  + persistent flag round-trips through the registry row (ActiveTask.persistent readable) 0.001s
+  + bgHttpWaitTimeout: waiting-type keeps the 1h network guard, persistent gets the long档 0.001s
+  + parsePersistent: default false (waiting-type); explicit true honored 0.0s
+  + stripLocalBgFlags removes run_in_background AND persistent, keeps the rest (flags never cross the wire) 0.001s
+[info] Passed: Total 8, Failed 0, Errors 0, Passed 8
+[success] Total time: 4 s, completed 2026年11月4日 15:31:58
+### finished: 2026-11-04 15:31:58 · elapsed=9s

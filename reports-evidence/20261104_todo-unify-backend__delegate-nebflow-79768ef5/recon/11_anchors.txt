@@ -1,0 +1,264 @@
+########## (a) 三入口锚点 ##########
+--- index.html 胶囊槽位 ---
+877:      <div id="task-list"></div>
+--- index.html 待办页壳 ---
+828:    <div id="todo-page" class="scroll-under-glass">
+--- index.html 消息面板（入口行宿主）---
+621:    <button id="messages-btn" class="activity-btn" data-panel-btn="messages" title="Messages" aria-pressed="false"><i data-lucide="message-circle"></i><span class="activity-badge" id="messages-badge" hidden></span></button>
+686:      <div id="panel-messages" class="panel" data-panel-id="messages">
+688:        <div id="fm-conversations" role="listbox" aria-label="Messages"></div>
+--- todoFace.js 胶囊挂载 ---
+         1	export function renderTodoTaskList(sessionId) {
+         2	  const container = document.getElementById('task-list');
+         3	  if (!container) return;
+         4	  const show = sessionShowsNodeEntries(sessionId);
+         5	  if (!show) {
+         6	    if (desktopFace) { desktopFace.destroy(); desktopFace = null; }
+         7	    container.classList.remove('has-tasks');
+         8	    container.textContent = '';
+         9	    return;
+        10	  }
+        11	  if (!desktopFace) {
+        12	    container.classList.add('has-tasks');
+        13	    container.textContent = '';
+        14	    desktopFace = new TodoFace({});
+        15	    container.appendChild(desktopFace.root);
+        16	  }
+        17	  desktopFace.renderCapsule();
+        18	}
+--- todoFace.js 手机页面挂载 ---
+1595:export function mountTodoFaceInto(container) {
+--- sidebar.js 胶囊调用点 ---
+2461:  renderTodoTaskList(sid);
+--- messages.js 入口行 ---
+644:  box.appendChild(buildTodoEntryRow());
+--- scheduled-task.js 入口行构造/点击臂 ---
+1415:export function buildTodoEntryRow() {
+1457:      document.dispatchEvent(new CustomEvent('nf:mobile-todo-entry'));
+1474:function paintTodoEntry(row) {
+--- scheduled-task.js 待办页开合/请求 ---
+848:function requestTodoInbox() {
+850:    sendWs({ type: 'listScheduledTasks', sessionId: state.activeSessionId, scope: 'all' });
+859:export function openTodoPage() {
+--- mobile 任务圆钮（chatChrome）---
+10://     任务键徽标 = taskBadgeCount 镜像（dock 批机制零变化）；
+40:import { taskBadgeCount } from './taskPanel.js';
+88:  const n = taskBadgeCount();
+189:    pushPage('tasks');
+--- mobile navController TODO 页腿 ---
+120:  { id: 'todo',     tabId: null,       icon: 'list-checks',     zh: '待办事项', en: 'To-Dos' },
+566:  tasks: '#mobile-task-panel',
+567:  todo: '#todo-page',
+650:    case 'todo':
+2171:    case 'todo':
+2657:  document.addEventListener('nf:mobile-todo-entry', () => pushPage('todo'));
+--- 手机层 #task-list 退役规则 ---
+2727:body.mobile-layer #task-list {
+2728-  display: none !important;
+2729-}
+2730-
+
+########## (b) 空壳代码证据 ##########
+--- todoStore.js 行数 ---
+     261 src/main/resources/web/js/todoStore.js
+--- 三无 grep（fetch/localStorage/sessionStorage/WebSocket/EventSource/XMLHttpRequest/sendWs）---
+10://     chips 拖拽重排（calendarOrder 语义，本批内存态不落 localStorage）；
+--- 内存变量 ---
+/** @type {Array<{id:string,name:string,color:string}>} */
+let tags = [];
+/** @type {Array<{id:string,tagId:string,title:string,notes:string,due:number|null,priority:number,completed:boolean,createdAt:number}>} */
+let items = [];
+/** chips 行序（calendarOrder 等价；缺省 = tags 数组序）。 @type {string[]} */
+let tagOrder = [];
+/** 当前浏览标签（null = 总条目 All）。 @type {string|null} */
+let activeTagId = null;
+/** 重要度筛选（selectedPriorityLevels 等价；空集 = 不过滤）。 @type {Set<number>} */
+const selectedPriorities = new Set();
+--- 写口（只改数组 + emit）---
+// ── 写口（复刻 ReminderManager CRUD）────────────────────────────────────
+
+function createItem({ tagId = null, title = '', notes = '', due = null, priority = 0 } = {}) {
+  const id = uid('i');
+  items.push({
+    id, tagId: tagId || (tags[0] ? tags[0].id : null),
+    title: String(title || '').trim(), notes: String(notes || ''),
+    due: Number.isFinite(due) ? due : null,
+    priority: Math.min(3, Math.max(0, priority | 0)),
+    completed: false, createdAt: Date.now(),
+  });
+  emit();
+  return id;
+}
+
+function updateItem(id, patch = {}) {
+  const it = items.find((x) => x.id === id);
+  if (!it) return;
+  if (typeof patch.title === 'string') it.title = patch.title.trim();
+  if (typeof patch.notes === 'string') it.notes = patch.notes;
+  if (typeof patch.due === 'number') it.due = patch.due;
+  if ('hasDue' in patch && !patch.hasDue) it.due = null;
+  if (typeof patch.priority === 'number') it.priority = Math.min(3, Math.max(0, patch.priority | 0));
+  if (typeof patch.tagId === 'string' && tags.some((tg) => tg.id === patch.tagId)) it.tagId = patch.tagId;
+  emit();
+}
+
+/** 完成（ReminderManager.completeReminder 等价：isCompleted=true → 可见面退场）。 */
+function completeItem(id) {
+  const it = items.find((x) => x.id === id);
+  if (!it) return;
+  it.completed = true;
+  emit();
+}
+
+--- mock seed + 模块加载即 seed() ---
+// ── mock 种子（作者令：内存态/mock；__ 前缀 = 测试缝，产品路径不调用）─────
+
+function seed() {
+  const now = Date.now();
+  const H = 3600_000;
+  const work = uid('t'), life = uid('t'), study = uid('t'), idea = uid('t');
+  tags = [
+    { id: work, name: '工作', color: TAG_COLOR_PRESETS[5] },
+    { id: life, name: '生活', color: TAG_COLOR_PRESETS[3] },
+    { id: study, name: '学习', color: TAG_COLOR_PRESETS[7] },
+    { id: idea, name: '灵感', color: TAG_COLOR_PRESETS[1] },
+  ];
+  tagOrder = [work, life, study, idea];
+  items = [
+    { id: uid('i'), tagId: work, title: '修复登录态在手机层的过期提示', notes: '过期后应回到登录页而不是静默 401', due: now + 2 * H, priority: 3, completed: false, createdAt: now - 26 * H },
+    { id: uid('i'), tagId: work, title: '整理验收对照表的动画取帧', notes: '', due: now + 26 * H, priority: 2, completed: false, createdAt: now - 20 * H },
+    { id: uid('i'), tagId: work, title: '回复设计稿第二批意见', notes: '', due: null, priority: 1, completed: false, createdAt: now - 9 * H },
+    { id: uid('i'), tagId: life, title: '缴房租', notes: '', due: now - 3 * H, priority: 3, completed: false, createdAt: now - 50 * H },
+    { id: uid('i'), tagId: life, title: '下班顺路买菜', notes: '番茄 + 鸡蛋 + 青椒', due: now + 5 * H, priority: 2, completed: false, createdAt: now - 30 * H },
+    { id: uid('i'), tagId: life, title: '预约体检', notes: '', due: now + 7 * 24 * H, priority: 0, completed: false, createdAt: now - 80 * H },
+    { id: uid('i'), tagId: study, title: '读《设计中的设计》第三章', notes: '', due: now + 3 * 24 * H, priority: 1, completed: false, createdAt: now - 60 * H },
+    { id: uid('i'), tagId: idea, title: '记录灵感：刘海收展节奏迁移到胶囊', notes: 'spring(0.42, 0.8) 开 / spring(0.45, 1.0) 收', due: null, priority: 1, completed: false, createdAt: now - 4 * H },
+  ];
+}
+
+seed();
+
+--- 测试缝 __seed ---
+  /** 测试缝：确定性种子（shots 夹具用；__ 前缀 = 非产品路径）。 */
+  __seed({ tagList, itemList, order } = {}) {
+    if (Array.isArray(tagList)) {
+      tags = tagList.map((x) => ({ id: String(x.id), name: String(x.name), color: String(x.color) }));
+      tagOrder = tags.map((x) => x.id);
+    }
+    if (Array.isArray(order) && order.every((id) => tags.some((x) => x.id === id))) tagOrder = [...order];
+    if (Array.isArray(itemList)) {
+      items = itemList.map((x) => ({
+        id: String(x.id), tagId: String(x.tagId), title: String(x.title || ''),
+        notes: String(x.notes || ''), due: Number.isFinite(x.due) ? x.due : null,
+        priority: Math.min(3, Math.max(0, (x.priority | 0))),
+        completed: !!x.completed, createdAt: Number.isFinite(x.createdAt) ? x.createdAt : Date.now(),
+      }));
+    }
+    activeTagId = null;
+    selectedPriorities.clear();
+    emit();
+  },
+
+########## (c) 后端真源锚点 ##########
+--- ScheduledTask 字段全集（无 priority/notes/completed）---
+2:  id: String,
+3:  sessionId: String,
+4:  content: String,
+5:  triggerAt: Long,
+6:  createdAt: Long,
+7:  triggered: Boolean = false,
+8:  triggeredAt: Option[Long] = None,
+10:  referencePath: Option[String] = None,
+12:  repeat: Option[String] = None,
+14:  enabled: Boolean = true,
+21:  name: Option[String] = None,
+30:  kind: Option[String] = None,
+39:  condition: Option[String] = None,
+  (grep 字段名)
+11:  id: String,
+12:  sessionId: String,
+13:  content: String,
+14:  triggerAt: Long,
+15:  createdAt: Long,
+16:  triggered: Boolean = false,
+17:  triggeredAt: Option[Long] = None,
+19:  referencePath: Option[String] = None,
+21:  repeat: Option[String] = None,
+23:  enabled: Boolean = true,
+30:  name: Option[String] = None,
+39:  kind: Option[String] = None,
+48:  condition: Option[String] = None,
+54:  conditionState: Option[String] = None,
+60:  idleStreak: Int = 0,  /**
+65:  reviewFlag: Boolean = false,
+70:  lastFiredAt: Option[Long] = None,
+77:  missCount: Int = 0,
+84:  project: Option[String] = None
+--- priority / notes / completed 在模型里是否存在 ---
+  <零匹配 —— 三个字段都不存在>
+--- kind 双面化注释 ---
+  /**
+   * 双面化 kind（2026-10-24 作者令「Schedule 定时工具双面化」）：None /
+   * Some("task") = 定时任务（现状，triggerAt 到点触发一次或按 repeat 续期）；
+   * Some("todo") = 待办——无固定触发时间，triggerAt 复用为**下次浮出时间**
+   * （每日 09:00 汇总注入一次，与定时任务同等引擎侧持久：会话压缩/重启不丢），
+   * 完成 done 销账 / cancel 取消后从存储删除、永不再浮出。存量文件无 kind 键
+   * → 解码 None → 一律按定时任务（老数据零迁移）。
+   */
+  kind: Option[String] = None,
+--- 待办读口 getAllTodos / getAllDueTodos ---
+  /**
+   * Get ALL unfinished todos across all sessions — digest 的内容源（含尚未到
+   * 浮出时间的，汇总语义：一次把未完成待办说全）。
+   */
+  def getAllTodos: IO[List[ScheduledTask]] =
+    storeLock.lock.surround {
+      scanUnlocked(t => t.isTodo && !t.triggered && t.enabled, sort = false)
+        .map(_.sortBy(t => (t.triggerAt, t.createdAt)))
+    }
+
+  /** Get due todos (untriggered, enabled, past surface time) across all sessions. */
+  def getAllDueTodos: IO[List[ScheduledTask]] =
+    storeLock.lock.surround {
+      val now = System.currentTimeMillis()
+      scanUnlocked(t => t.isTodo && !t.triggered && t.enabled && t.triggerAt <= now, sort = false)
+        .map(_.sortBy(t => (t.triggerAt, t.createdAt)))
+    }
+--- 定时读口排除 todo ---
+  /**
+   * Get all due (untriggered, past triggerAt) tasks across all sessions.
+   * 双面化（2026-10-24）：待办（kind=todo）不走定时触发路径——排除之，
+   * 由 getAllDueTodos / ScheduledTaskService.surfaceTodos 的周期浮出面接管。
+   */
+  def getAllDueTasks: IO[List[ScheduledTask]] =
+    storeLock.lock.surround {
+      val now = System.currentTimeMillis()
+      scanUnlocked(t => !t.triggered && t.triggerAt <= now && t.enabled && !t.isTodo, sort = true)
+    }
+--- Actor 浮出腿 ---
+177:      dueTodos <- taskStore.getAllDueTodos
+667:  private def surfaceTodos(dueTodos: List[ScheduledTask]): IO[Unit] =
+713:      nextAt = ScheduledTask.nextTodoSurfaceAt(now, ZoneId.systemDefault())
+--- DoneRecordStore 只增 JSONL ---
+19: * 文件：`~/.stand/checkin-records/done-records.jsonl`，每行一条
+27:final case class DoneRecord(
+49:  def record(r: DoneRecord): IO[Unit] =
+75:  def between(fromMs: Long, toMs: Long): IO[List[DoneRecord]] =
+82:  /** 磁盘位置：`~/.stand/checkin-records/done-records.jsonl`。 */
+85:      (dataRoot / "checkin-records" / "done-records.jsonl").toNIO,
+--- WeeklyReport 聚合 ---
+106:      doneCount = week.length,
+107:      plannedCount = week.length + openTodoCount,
+266:                  openTodos <- taskStore.getAllTodos
+--- Task 台账：TTL 与人待办通道 ---
+114:   * to "agent" so legacy JSON files need zero migration (C1). 任务工具重做后
+115-   * 无新建 human 通道（存量自然 TTL），complete 圆圈路径保留。
+116-   */
+117-  taskKind: String = "agent",
+118-  /**
+50:  // completed/failed 过 6h 清、pending/in_progress 过 2d 清。判据=持久化的
+51-  // createdAt/completedAt 字段（重启后扫描磁盘数据仍生效，非内存定时器）。
+52-  val CompletedTtl: FiniteDuration = 6.hours
+53-  val ActiveTtl: FiniteDuration = 2.days
+--- 前端零 taskKind 消费 ---
+  <web/js 下零匹配 —— 任务台账在人待办面零消费>
