@@ -10,7 +10,7 @@
 |---|---|
 | 工作区 | `/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81` |
 | 分支 | `delegate/delegate-nebflow-98f9ca81` |
-| spec 提交 | `ef74c3f75`（5 files, 976 insertions；`AccountRootSpec` 的 IORuntime import 修补见提交 `2b4cfc1e0`） |
+| spec 提交 | `ef74c3f75`（5 files, 976 insertions；`AccountRootSpec` 的 IORuntime import 修补 + 本日志 = `ff03bf890`） |
 | 运行时间 | 2026-11-04 11:40:31 CST |
 | sbt / JDK | sbt 1.10.10 / Eclipse Adoptium Java 23.0.1 |
 | 命令原文 | `sbt -Dsbt.color=false -Dscala.color=false "Test/compile"` |
