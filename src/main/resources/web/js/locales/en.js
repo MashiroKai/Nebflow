@@ -1578,10 +1578,16 @@ export default {
   // card path, and this placeholder when extraction fails (raw text never in DOM).
   'chat.toolCardUnavailable': 'Card content unavailable (raw data not rendered)',
   // Tool-card fold toggle (ui-unification-20261103-chat-stream): long output
-  // collapses to an <=8-line preview; the toggle names the full line count and
-  // mirrors aria-expanded (collapsed state echoes the count).
+  // collapses by default; the toggle names the full line count and mirrors
+  // aria-expanded. Process-leak fix (2026-11-04): the collapsed face is now a
+  // single summary line — the line count/copy ride the title (accessible, no
+  // visual noise) and the default face renders no preview body at all.
   'chat.toolExpandMore': 'Expand all {n} lines',
   'chat.toolCollapse': 'Collapse',
+  // Failure status word (process-leak fix, 2026-11-04): the summary line must
+  // show success/failure — failure is spelled out (success rides the check
+  // icon; printing "succeeded" on every card is noise).
+  'chat.toolStatusFailed': 'failed',
   // Tool-card image ref chip (tool-card-image-face batch, 2026-11-04): a tool
   // card is a summary face — images fold into a "🖼 N image(s)" reference that
   // opens the lightbox; never rendered inline.

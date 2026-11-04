@@ -1254,7 +1254,7 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
     + (labelParts.length > 1 ? '<br><span class="tool-detail">' + escapeHtml(labelParts[1]) + '</span>' : '');
   card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
     '<div class="content"><div class="label">' + labelHtml + '</div></div>';
-  const { hasBody } = mountToolCardBody(card, { detailHtml, promptText, content, label });
+  const { hasBody } = mountToolCardBody(card, { detailHtml, promptText, content, label, labelTail: labelParts[1] || '' });
   smartScroll();
 
   if (hasBody) attachToolClick(card);
