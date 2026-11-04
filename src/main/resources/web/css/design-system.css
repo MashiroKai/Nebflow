@@ -564,19 +564,20 @@
   height: var(--ds-resize-hit);
   padding: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: flex-start;
   cursor: nwse-resize;
   touch-action: none;
-  border-radius: var(--ds-radius-button);
-  border: 1px solid transparent;
+  /* 命中盒（44×44）保持整块；可见形态交给抓手伪元素 ⇒ 本体背景/描边保持透明
+     （作者令 2026-11-04 12:52「调整 Ask 窗口大小的控件改成一个直角左上角的
+     直角弧度」——旧 10px 圆角方块/抓手圆芯片随本批退役）。 */
+  border-radius: 0;
+  border: none;
   background: transparent;
   color: var(--ds-resize-ink);
   opacity: 0.55;
   z-index: 3;
   transition: opacity var(--ds-dur-hover) var(--ds-ease-std),
-              background-color var(--ds-dur-hover) var(--ds-ease-std),
-              border-color var(--ds-dur-hover) var(--ds-ease-std),
               color var(--ds-dur-hover) var(--ds-ease-std);
 }
 .ds-resize-handle:hover,
@@ -584,32 +585,60 @@
 .ds-resize-handle[data-resizing='true'] {
   opacity: 1;
   color: var(--ds-resize-ink-active);
-  background: var(--ds-resize-bg-active);
-  border-color: var(--ds-resize-border);
   outline: none;
 }
+/* 可见形态 = 左上角直角弧（L 形拐角 + 拐角圆角）：两条边臂沿面板上缘/左缘
+   走到 18px 处收头，拐角 7px 圆角（--ds-radius-chip 档）。紧贴面板外缘
+   （面板自带 12px 圆角，直角臂正好叠在玻璃边上、视觉与面板一体）。
+   hover/拖拽态只提亮（color 加深一档），不改几何。 */
+.ds-resize-handle::before {
+  content: '';
+  position: absolute;
+  /* 臂原点 = 面板左上角在把手盒内的坐标（桌面把手外挂 14px ⇒ 臂落 14/14；
+     手机内挂 ⇒ 0/0）。由宿主面按落位声明，本件不猜。 */
+  left: var(--ds-resize-arm-x, 0);
+  top: var(--ds-resize-arm-y, 0);
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+  border-top: 2px solid currentColor;
+  border-left: 2px solid currentColor;
+  border-top-left-radius: 7px;
+}
 .ds-resize-grip {
+  position: absolute;
+  left: calc(var(--ds-resize-arm-x, 0px) + 5px);
+  top: calc(var(--ds-resize-arm-y, 0px) + 5px);
   width: var(--ds-resize-grip);
   height: var(--ds-resize-grip);
   display: block;
-  position: relative;
-  border: 1px solid currentColor;
-  border-radius: var(--ds-radius-chip);
-  background: var(--ds-etched-bg);
+  border: none;
+  border-radius: 0;
+  background: transparent;
   pointer-events: none;
 }
 .ds-resize-grip i {
   position: absolute;
-  width: var(--ds-border-width);
-  height: 7px;
-  top: 50%;
-  left: 50%;
-  background: currentColor;
-  transform-origin: 50% 50%;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border-left: 1.5px solid currentColor;
+  border-top: 1.5px solid currentColor;
 }
-.ds-resize-grip i:nth-child(1) { transform: translate(-50%, -50%) translate(-3px, 3px) rotate(-45deg); }
-.ds-resize-grip i:nth-child(2) { transform: translate(-50%, -50%) rotate(-45deg); }
-.ds-resize-grip i:nth-child(3) { transform: translate(-50%, -50%) translate(3px, -3px) rotate(-45deg); }
+.ds-resize-grip i:nth-child(1) {
+  transform: translate(2px, 2px);
+  opacity: 0.55;
+}
+.ds-resize-grip i:nth-child(2) {
+  transform: translate(4px, 4px);
+  opacity: 0.35;
+}
+.ds-resize-grip i:nth-child(3) {
+  transform: translate(6px, 6px);
+  opacity: 0.2;
+}
 
 
 /* ② 行：静息无边框盒，hairline 分隔，hover 只做底色 wash（平面族）——

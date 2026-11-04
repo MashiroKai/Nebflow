@@ -1,0 +1,277 @@
+# B1 第二腿（验收 spec 红证据）— Scala 编译红日志
+
+> 产出腿：B1 第二腿「先写验收用例并取红证据」。本腿**只写测试**，不写任何生产代码 / 桩代码。
+> 契约权威：`reports-evidence/20261104_b1-dataroot/design-api.md`（第一腿，commit `9d7d35bba`）。
+> 本文件 = 派单要求的 `red/red-scala.log`：命令原文 + 完整输出 + 关键行摘要 + 无关错误判定。
+
+## 0. 运行现场
+
+| 项 | 值 |
+|---|---|
+| 工作区 | `/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81` |
+| 分支 | `delegate/delegate-nebflow-98f9ca81` |
+| spec 提交 | `ef74c3f75`（5 files, 976 insertions；`AccountRootSpec` 的 IORuntime import 修补 + 本日志 = `ff03bf890`） |
+| 运行时间 | 2026-11-04 11:40:31 CST |
+| sbt / JDK | sbt 1.10.10 / Eclipse Adoptium Java 23.0.1 |
+| 命令原文 | `sbt -Dsbt.color=false -Dscala.color=false "Test/compile"` |
+| 退出码 | 1（**预期红**） |
+| 错误总数 | **37**，其中 100% 落在本腿新增的 5 个 spec 文件 |
+
+### 归因方法（为什么可以断言「红只来自本腿」）
+
+在**未加本腿 spec 的干净工作区**（同 worktree，HEAD = `9d7d35bba`）先跑了一次同命令基线：
+
+```
+[info] compiling 734 Scala sources to .../target/scala-3.5.2/classes ...
+[info] done compiling
+[info] compiling 1020 Scala sources to .../target/scala-3.5.2/test-classes ...
+[info] done compiling
+[success] Total time: 189 s (0:03:09.0), completed 2026年11月4日 11:34:12
+```
+
+⇒ 基线 `Test/compile` **成功（exit 0）**，既有 1020 个测试源零错误。随后加入本腿 5 个 spec 再跑，得到下面
+37 个错误；`grep "\[error\] -- " | grep -v "core/dataroot/"` 结果为空 ⇒ **没有任何既有错误被掩盖或带出来**。
+
+### 补跑 `testOnly` 的说明
+
+`Test/compile` 已失败，故 `sbt "testOnly nebflow.core.dataroot.*"` 不可能产出用例结果（Scala 3 在编译阶段
+就中止，无 class 可跑）。这条路径**不补跑**：红证据的形态就是「编译期缺符号」，而不是「跑起来断言失败」——
+实现腿补齐契约符号后，`Test/compile` 转绿、`testOnly nebflow.core.dataroot.*` 才有意义（那是下一腿的活）。
+
+## 1. 关键行摘要（缺失契约符号 ← 一行一眼）
+
+| 缺失符号（契约出处） | 报错形态 | 命中数 | 命中文件 |
+|---|---|---|---|
+| `nebflow.core.root` 整个包（§2/§3/§4/§5：`AccountRoot` / `ActiveAccount` / `AccountProfile` / `LayoutMarker` / `RootLadder` / `RootLayer` / `RootLayout` / `MigrationReport` / `OwnerGuard` / `LoginGuard` / `Refusal`） | `value root is not a member of nebflow.core - did you mean core.boot?` | 4 条 import 报错 | AccountRootSpec / AccountIsolationSpec / LegacyRootMigrationSpec / OwnerGuardSpec |
+| `PathUtil.setMachineRoot(path)`（§1 `[裁][+]` 生产启动序唯一调用点） | `value setMachineRoot is not a member of object nebflow.shared.PathUtil` | 8 | AccountRootSpec ×5、AccountIsolationSpec ×1、LegacyRootMigrationSpec ×2 |
+| `PathUtil.machineRoot`（§1 `[裁][+]` 机器层根） | `value machineRoot is not a member of object nebflow.shared.PathUtil` | 2 | AccountRootSpec:112、AccountIsolationSpec:115 |
+| `AutoStartService.programArguments(javaBin, jarPath, accountHome)`（§8.2，2 参 → 3 参） | `too many arguments for method programArguments in object AutoStartService: (javaBin: String, jarPath: String): List[String]` | 6 | AutoStartHomeSpec |
+| `AutoStartService.renderDesktopEntry(javaBin, jarPath, accountHome)`（§8.2「Exec= 行同样含 --home」） | `too many arguments for method renderDesktopEntry in object AutoStartService: (javaBin: String, jarPath: String): String` | 2 | AutoStartHomeSpec |
+| `AutoStartService.renderWindowsTaskCmd(javaBin, jarPath, accountHome)`（§8.2「`enableWindows` 的 schtasks /tr cmd 同步追加」的纯渲染面） | `value renderWindowsTaskCmd is not a member of object nebflow.core.AutoStartService` | 2 | AutoStartHomeSpec |
+| （级联）`Not found: refusal` | `import nebflow.core.root.{LoginGuard, OwnerGuard}` 失败 ⇒ `OwnerGuard.check` 返回值类型未定 ⇒ `case Left(refusal)` 绑定失败 | 13 | OwnerGuardSpec |
+
+**13 条 `Not found: refusal` 是同一缺符号的级联噪声**（`Refusal` 未定义 ⇒ `Either[Refusal, Unit]` 无类型 ⇒
+模式变量绑定失败）。实现腿落地 `nebflow.core.root.Guards.scala` 后这些会一起消失，无需逐条修 spec。
+
+## 2. 完整输出（原文，逐字 183 行）
+
+```
+[info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
+[info] loading settings for project delegate-nebflow-98f9ca81-build from plugins.sbt...
+[info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/project
+[info] loading settings for project root from build.sbt...
+[info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/)
+[info] compiling 5 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/target/scala-3.5.2/test-classes ...
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AccountIsolationSpec.scala:8:20 
+[error] 8 |import nebflow.core.root.{AccountProfile, AccountRoot, ActiveAccount, RootLadder, RootLayer}
+[error]   |       ^^^^^^^^^^^^^^^^^
+[error]   |      value root is not a member of nebflow.core - did you mean core.boot?
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AccountIsolationSpec.scala:114:15 
+[error] 114 |      PathUtil.setMachineRoot(machineRoot)
+[error]     |      ^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value setMachineRoot is not a member of object nebflow.shared.PathUtil
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AccountIsolationSpec.scala:115:28 
+[error] 115 |      assertEquals(PathUtil.machineRoot, machineRoot, "机器层根不随账号切换而变")
+[error]     |                   ^^^^^^^^^^^^^^^^^^^^
+[error]     |   value machineRoot is not a member of object nebflow.shared.PathUtil
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AccountRootSpec.scala:8:20 
+[error] 8 |import nebflow.core.root.{AccountProfile, AccountRoot, ActiveAccount, LayoutMarker, RootLadder, RootLayer}
+[error]   |       ^^^^^^^^^^^^^^^^^
+[error]   |      value root is not a member of nebflow.core - did you mean core.boot?
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AccountRootSpec.scala:64:15 
+[error] 64 |      PathUtil.setMachineRoot(root)
+[error]    |      ^^^^^^^^^^^^^^^^^^^^^^^
+[error]    |  value setMachineRoot is not a member of object nebflow.shared.PathUtil
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AccountRootSpec.scala:111:15 
+[error] 111 |      PathUtil.setMachineRoot(root)
+[error]     |      ^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value setMachineRoot is not a member of object nebflow.shared.PathUtil
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AccountRootSpec.scala:112:28 
+[error] 112 |      assertEquals(PathUtil.machineRoot, root, "setMachineRoot 只钉机器层根")
+[error]     |                   ^^^^^^^^^^^^^^^^^^^^
+[error]     |   value machineRoot is not a member of object nebflow.shared.PathUtil
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AccountRootSpec.scala:128:15 
+[error] 128 |      PathUtil.setMachineRoot(root)
+[error]     |      ^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value setMachineRoot is not a member of object nebflow.shared.PathUtil
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AccountRootSpec.scala:166:15 
+[error] 166 |      PathUtil.setMachineRoot(root)
+[error]     |      ^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value setMachineRoot is not a member of object nebflow.shared.PathUtil
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AccountRootSpec.scala:329:15 
+[error] 329 |      PathUtil.setMachineRoot(root)
+[error]     |      ^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value setMachineRoot is not a member of object nebflow.shared.PathUtil
+[error] -- Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AutoStartHomeSpec.scala:82:56 
+[error] 82 |        AutoStartService.programArguments(JavaBin, Jar, None),
+[error]    |                                                        ^^^^
+[error]    |too many arguments for method programArguments in object AutoStartService: (javaBin: String, jarPath: String): List[String]
+[error] -- Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AutoStartHomeSpec.scala:87:62 
+[error] 87 |        AutoStartService.programArguments(JavaBin, BundleJar, None),
+[error]    |                                                              ^^^^
+[error]    |too many arguments for method programArguments in object AutoStartService: (javaBin: String, jarPath: String): List[String]
+[error] -- Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AutoStartHomeSpec.scala:93:72 
+[error] 93 |      val jarArgs = AutoStartService.programArguments(JavaBin, Jar, Some(accountHome))
+[error]    |                                                                    ^^^^^^^^^^^^^^^^^
+[error]    |too many arguments for method programArguments in object AutoStartService: (javaBin: String, jarPath: String): List[String]
+[error] -- Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AutoStartHomeSpec.scala:97:81 
+[error] 97 |      val bundleArgs = AutoStartService.programArguments(JavaBin, BundleJar, Some(accountHome))
+[error]    |                                                                             ^^^^^^^^^^^^^^^^^
+[error]    |too many arguments for method programArguments in object AutoStartService: (javaBin: String, jarPath: String): List[String]
+[error] -- Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AutoStartHomeSpec.scala:104:69 
+[error] 104 |      val args = AutoStartService.programArguments(JavaBin, Jar, Some(accountHome))
+[error]     |                                                                 ^^^^^^^^^^^^^^^^^
+[error]     |too many arguments for method programArguments in object AutoStartService: (javaBin: String, jarPath: String): List[String]
+[error] -- Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AutoStartHomeSpec.scala:122:56 
+[error] 122 |        AutoStartService.programArguments(JavaBin, Jar, None),
+[error]     |                                                        ^^^^
+[error]     |too many arguments for method programArguments in object AutoStartService: (javaBin: String, jarPath: String): List[String]
+[error] -- Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AutoStartHomeSpec.scala:131:72 
+[error] 131 |      val entry = AutoStartService.renderDesktopEntry(JavaBin, Jar, Some(accountHome))
+[error]     |                                                                    ^^^^^^^^^^^^^^^^^
+[error]     |too many arguments for method renderDesktopEntry in object AutoStartService: (javaBin: String, jarPath: String): String
+[error] -- Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AutoStartHomeSpec.scala:136:72 
+[error] 136 |      val noneEntry = AutoStartService.renderDesktopEntry(JavaBin, Jar, None)
+[error]     |                                                                        ^^^^
+[error]     |too many arguments for method renderDesktopEntry in object AutoStartService: (javaBin: String, jarPath: String): String
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AutoStartHomeSpec.scala:148:25 
+[error] 148 |        AutoStartService.renderWindowsTaskCmd(JavaBin, Jar, None),
+[error]     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value renderWindowsTaskCmd is not a member of object nebflow.core.AutoStartService
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/AutoStartHomeSpec.scala:152:33 
+[error] 152 |      val cmd = AutoStartService.renderWindowsTaskCmd(JavaBin, Jar, Some(accountHome))
+[error]     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value renderWindowsTaskCmd is not a member of object nebflow.core.AutoStartService
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/LegacyRootMigrationSpec.scala:6:20 
+[error] 6 |import nebflow.core.root.{AccountProfile, AccountRoot, MigrationReport, RootLadder, RootLayer, RootLayout}
+[error]   |       ^^^^^^^^^^^^^^^^^
+[error]   |      value root is not a member of nebflow.core - did you mean core.boot?
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/LegacyRootMigrationSpec.scala:82:15 
+[error] 82 |      PathUtil.setMachineRoot(machineRoot)
+[error]    |      ^^^^^^^^^^^^^^^^^^^^^^^
+[error]    |  value setMachineRoot is not a member of object nebflow.shared.PathUtil
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/LegacyRootMigrationSpec.scala:174:15 
+[error] 174 |      PathUtil.setMachineRoot(machineRoot)
+[error]     |      ^^^^^^^^^^^^^^^^^^^^^^^
+[error]     |value setMachineRoot is not a member of object nebflow.shared.PathUtil
+[error] -- [E008] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/OwnerGuardSpec.scala:3:20 
+[error] 3 |import nebflow.core.root.{LoginGuard, OwnerGuard}
+[error]   |       ^^^^^^^^^^^^^^^^^
+[error]   |      value root is not a member of nebflow.core - did you mean core.boot?
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/OwnerGuardSpec.scala:43:10 
+[error] 43 |          refusal.code,
+[error]    |          ^^^^^^^
+[error]    |          Not found: refusal
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/OwnerGuardSpec.scala:47:15 
+[error] 47 |        assert(refusal.message.contains(ServedSub), s"文案必须点名本引擎服务的账号：${refusal.message}")
+[error]    |               ^^^^^^^
+[error]    |               Not found: refusal
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/OwnerGuardSpec.scala:47:71 
+[error] 47 |        assert(refusal.message.contains(ServedSub), s"文案必须点名本引擎服务的账号：${refusal.message}")
+[error]    |                                                                       ^^^^^^^
+[error]    |                                                      Not found: refusal
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/OwnerGuardSpec.scala:48:15 
+[error] 48 |        assert(refusal.message.contains(OwnerSub), s"文案必须点名凭据里的 owner：${refusal.message}")
+[error]    |               ^^^^^^^
+[error]    |               Not found: refusal
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/OwnerGuardSpec.scala:48:72 
+[error] 48 |        assert(refusal.message.contains(OwnerSub), s"文案必须点名凭据里的 owner：${refusal.message}")
+[error]    |                                                                        ^^^^^^^
+[error]    |                                                      Not found: refusal
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/OwnerGuardSpec.scala:50:10 
+[error] 50 |          refusal.message.contains("stand logout"),
+[error]    |          ^^^^^^^
+[error]    |          Not found: refusal
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/OwnerGuardSpec.scala:51:47 
+[error] 51 |          s"行动建议必须给出 'stand logout'（§5 逐字模板）：${refusal.message}"
+[error]    |                                               ^^^^^^^
+[error]    |                                               Not found: refusal
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/OwnerGuardSpec.scala:54:10 
+[error] 54 |          refusal.message.contains("stand login"),
+[error]    |          ^^^^^^^
+[error]    |          Not found: refusal
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/OwnerGuardSpec.scala:55:46 
+[error] 55 |          s"行动建议必须给出 'stand login'（§5 逐字模板）：${refusal.message}"
+[error]    |                                              ^^^^^^^
+[error]    |                                              Not found: refusal
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/OwnerGuardSpec.scala:58:10 
+[error] 58 |          refusal.message.contains("owner-account-mismatch"),
+[error]    |          ^^^^^^^
+[error]    |          Not found: refusal
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/OwnerGuardSpec.scala:59:36 
+[error] 59 |          s"稳定码同时出现在文案尾部（§5 逐字模板）：${refusal.message}"
+[error]    |                                    ^^^^^^^
+[error]    |                                    Not found: refusal
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/OwnerGuardSpec.scala:84:21 
+[error] 84 |        assertEquals(refusal.code, "hot-switch-forbidden")
+[error]    |                     ^^^^^^^
+[error]    |                     Not found: refusal
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] -- [E006] Not Found Error: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-98f9ca81/src/test/scala/nebflow/core/dataroot/OwnerGuardSpec.scala:85:15 
+[error] 85 |        assert(refusal.message.nonEmpty, "禁热切的拒绝必须带可行动文案（Refusal 的契约：message 必须可行动）")
+[error]    |               ^^^^^^^
+[error]    |               Not found: refusal
+[error]    |
+[error]    | longer explanation available when compiling with `-explain`
+[error] 37 errors found
+[error] (Test / compileIncremental) Compilation failed
+[error] Total time: 12 s, completed 2026年11月4日 11:40:31
+```
+
+## 3. 与本腿无关的既有错误
+
+**无。** 判定链：
+
+1. 干净工作区基线 `Test/compile` = `[success]`（0 错误，734 main + 1020 test 源）—— 见 §0；
+2. 红跑 37 个错误，`grep "\[error\] -- " … | grep -v "core/dataroot/"` = 空 ⇒ 全部落在
+   `src/test/scala/nebflow/core/dataroot/` 下本腿新增的 5 个文件；
+3. 每个错误要么直接指名缺失契约符号（`setMachineRoot` / `machineRoot` / `nebflow.core.root` /
+   `programArguments` / `renderDesktopEntry` / `renderWindowsTaskCmd`），要么是 `Not found: refusal`
+   这一类**同一缺符号的级联**（13 条，见 §1 末行）。
+
+## 4. 实现腿转绿要落的东西（红→绿的判据，按契约符号逐条）
+
+| spec | 需要落地 | 契约 |
+|---|---|---|
+| `AccountRootSpec` | `nebflow.core.root.{RootLayer, RootLadder, AccountRoot, ActiveAccount, AccountProfile, LayoutMarker}` + `PathUtil.{machineRoot, setMachineRoot}` + 未登录层 `UNAUTHENTICATED-LAYER` 守卫（`DeviceIdentity.loadOrCreate` fail-closed / `readDeviceIdOnly ⇒ None`） | §1、§2、§3、§6.2 |
+| `OwnerGuardSpec` | `nebflow.core.root.{OwnerGuard, LoginGuard, Refusal}`（稳定码 `owner-account-mismatch` / `hot-switch-forbidden`） | §5、§0 总则 2 |
+| `AccountIsolationSpec` | 同上 + 指针换根后 `PathUtil.dataRoot` 走阶梯（内容面保持 `dataRoot` 语义 ⇒ `projects/` `secrets/` `tasks-v2.json` 自动隔离） | §2、§9.2 |
+| `LegacyRootMigrationSpec` | `nebflow.core.root.{RootLayout, MigrationReport}`（复制 + 逐条 sha256 记账 + 原件不动 + `pending-claim/<ts>/` + rollback 回 flat） | §4、A10 |
+| `AutoStartHomeSpec` | `AutoStartService.programArguments/…(…, accountHome: Option[os.Path])`、`renderDesktopEntry(…, accountHome)`、纯渲染 `renderWindowsTaskCmd(javaBin, jarPath, accountHome)`；`None` 分支逐字节等于今日 | §8.2、A12 |
+
+⚠️ 两处签名契约未冻结、由本腿 spec 先钉住的点（实现腿若改形态，**同步回改 spec 与 design-api.md §8.2**，
+不要留两套口径）：`renderDesktopEntry` 的第三参 `Option[os.Path]`、以及 `renderWindowsTaskCmd` 这个纯渲染
+函数名（理由与逐字说明写在该 spec 的类注释里）。
+
+## 5. 红证据的可信度自检
+
+- **红的原因只有一种**：编译期「契约符号不存在 / 语义未实现」，没有一条错误是断言失败或环境问题；
+- **不是假红**：spec 引用的既有 API 全部真实存在（`ProjectStore.listAll`、`SecretsStore.create/list`、
+  `TaskLedgerStore.createSyncReturningId/entriesSync`、`AutoStartService.renderPlist`、
+  `CredentialFileAcl`、`DeviceIdentity.loadOrCreate`），编译期唯一缺的就是契约新增面；
+- **没有为了让 spec 编译而先写生产桩**：`src/main` 零改动（`git status` 只有 `src/test/.../dataroot/` 与本文件）；
+- **生产根零接触**：所有样本根 = `Files.createTempDirectory("b1-red-")`（`/tmp/b1-red-*`），用例
+  `try/finally` 删干净；未起实例、未联网、未 `stand stop/restart`、未 kill 任何进程。

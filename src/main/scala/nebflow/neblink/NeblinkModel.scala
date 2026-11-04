@@ -6,6 +6,7 @@ import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import nebflow.core.*
+import nebflow.core.root.{RootLadder, RootLayer}
 import nebflow.shared.*
 
 import java.util.UUID
@@ -125,13 +126,18 @@ object DeviceIdentity:
    * 只读身份探测（v2.1 阶段 1 出口白名单用）：读现有 device.json 的 deviceId，
    * **零写盘、零铸造**（与 [[loadOrCreate]] 的差异 = 缺文件/坏文件 ⇒ None 而非
    * mint+persist）。读不到 = 本机尚无身份 ⇒ 消费方按「无本机 id」口径降级。
+   *
+   * 未登录层（契约 §6.2）恒 `None`：不铸造、也不读别的层的 id（有效根本就没有
+   * device.json，机器层/账号层里的任何历史遗留身份都不是「本层身份」）。
    */
   def readDeviceIdOnly: Option[String] =
-    try
-      val p = devicePath
-      if !os.exists(p) then None
-      else decode[DeviceIdentity](os.read(p)).toOption.map(_.deviceId)
-    catch case _: Exception => None
+    if isUnauthenticatedLayer then None
+    else
+      try
+        val p = devicePath
+        if !os.exists(p) then None
+        else decode[DeviceIdentity](os.read(p)).toOption.map(_.deviceId)
+      catch case _: Exception => None
 
   /**
    * 只读本机显示名探测（readDeviceIdOnly 同族，设备角标本名批 2026-10-27）：读
@@ -230,23 +236,67 @@ object DeviceIdentity:
   private[neblink] val MachineIdEnv: String = "NEBLINK_MACHINE_ID"
 
   /**
-   * True when the data root was redirected away from `<user.home>/<brand dir>`
+   * True when the MACHINE root was redirected away from `<user.home>/<brand dir>`
    * (CLI `--home`, see Main.scala; or the `<PREFIX>_HOME` env, both funnel
-   * through PathUtil.dataRoot).
+   * through PathUtil.machineRoot).
+   *
+   * 🔴 三层数据根批（B1）判据校正：**机器层根**而不是有效根。账号档下有效根恒为
+   * `~/.stand/accounts/<sub>`（≠ 默认根），若沿用有效根，每个**真实账号**都会被判成
+   * 「隔离 home」—— EnrollGuard 会拒绝生产注册、设备名被扣 `-iso-` 后缀、scope 落到
+   * 路径摘要档。`--home` / `<PREFIX>_HOME` 重定向的既有全部测试引用（`setDataRoot`，
+   * 机器层与有效根同值）逐字零变化。
    */
   private[neblink] def isNonDefaultHome: Boolean =
-    PathUtil.dataRoot.toNIO.toAbsolutePath.normalize !=
+    PathUtil.machineRoot.toNIO.toAbsolutePath.normalize !=
       (os.home / Branding.homeDirName).toNIO.toAbsolutePath.normalize
 
   /**
    * Scope component of the derivation (see the block comment above).
    *
-   * Default data root ⇒ [[DefaultScope]] verbatim（兼容面硬约束：默认 home 的派生
-   * 语义零漂移）; redirected root ⇒ [[isolatedHomeScope]]（熵修复后的隔离 scope，
-   * coldstart DX 批④）。
+   * 判定顺序（契约 `design-api.md` §7，**顺序即契约**）：
+   *   1. 账号档 + 默认机器根 ⇒ `acct|<accountSub>`（作者裁定：deviceId 主键改账号，不用路径哈希）；
+   *   2. 账号档 + 非默认机器根（canary / `--home` / `STAND_HOME`）⇒ `acct|<sub>|iso|<hash>` —— 后缀是
+   *      **隔离保持**，不参与账号识别：若无它，每个账号第一次跑 canary 就会在服务端
+   *      「one-live-session-per-(device, network)」维度撞 id，把作者主客户端踢下线；
+   *   3. 其余（平铺档 / 未登录档）+ 非默认机器根 ⇒ [[isolatedHomeScope]]（**逐字不动**）；
+   *   4. 其余 + 默认机器根 ⇒ [[DefaultScope]]（**逐字不动**，`DeviceIdentitySpec` 钉死）。
+   *
+   * 既有 `device.json` 可解码即沿用（`loadOrCreate` 既有分支不动）⇒ 老用户 id 零漂移。
    */
   private[neblink] def deviceIdScope: String =
-    if isNonDefaultHome then isolatedHomeScope(PathUtil.dataRoot) else DefaultScope
+    RootLadder.current match
+      case RootLayer.Account(machine, sub, _) =>
+        if isNonDefaultMachineRoot then s"acct|$sub|iso|${machineScopeFingerprint(machine)}"
+        else s"acct|$sub"
+      case _ =>
+        if isNonDefaultHome then isolatedHomeScope(PathUtil.dataRoot) else DefaultScope
+
+  /** 机器层根是否非默认（账号档第 1/2 档的判据；与 [[isNonDefaultHome]] 同一套归一化）。 */
+  private[neblink] def isNonDefaultMachineRoot: Boolean =
+    PathUtil.machineRoot.toNIO.toAbsolutePath.normalize !=
+      (os.home / Branding.homeDirName).toNIO.toAbsolutePath.normalize
+
+  /** 机器根的稳定摘要（**隔离保持后缀**：`uuidV5(DeviceIdNamespace, "iso-scope|<归一化机器根>")`）。 */
+  private[neblink] def machineScopeFingerprint(machineRoot: os.Path): String =
+    val normalized = machineRoot.toNIO.toAbsolutePath.normalize.toString
+    uuidV5(DeviceIdNamespace, s"iso-scope|$normalized").toString
+
+  /**
+   * 未登录层守卫（契约 §6.2）：无账号根时可以起引擎、可以开登录页，但**绝不铸设备身份**。
+   * fail-closed 抛出（不静默返回临时 id —— 静默一次就在服务端留一条幽灵设备行，
+   * 正是 `NeblinkModel.scala:178-212` 记录的历史病根）。
+   */
+  private[neblink] def isUnauthenticatedLayer: Boolean =
+    RootLadder.current.name == RootLayer.UnauthenticatedName
+
+  private[neblink] def unauthenticatedLayerRefusal: IllegalStateException =
+    new IllegalStateException(
+      s"${RootLayer.UnauthenticatedMarker}: refusing to mint device identity " +
+        "(no account root); sign in first"
+    )
+
+  private def requireIdentifiableLayer(): Unit =
+    if isUnauthenticatedLayer then throw unauthenticatedLayerRefusal
 
   /**
    * Entropy fix (coldstart DX 批④, 2026-10-14 作者令): the stable scope for a
@@ -419,13 +469,16 @@ object DeviceIdentity:
    * file); otherwise the deterministic derivation supplies the id.
    */
   def loadOrCreate: IO[DeviceIdentity] =
-    for
-      loaded <- IO.blocking(loadOnce())
-      _ <- loaded.log
-      id <-
-        if loaded.needsSave then save(loaded.identity).as(loaded.identity)
-        else IO.pure(loaded.identity)
-    yield id
+    // 未登录层守卫（契约 §6.2）：唯一入口，fail-closed —— 抛在 IO 里，调用方拿到的是异常
+    // 而不是一个「临时 id」（静默一次就在服务端留一条幽灵设备行）。
+    IO.blocking(requireIdentifiableLayer()) *>
+      (for
+        loaded <- IO.blocking(loadOnce())
+        _ <- loaded.log
+        id <-
+          if loaded.needsSave then save(loaded.identity).as(loaded.identity)
+          else IO.pure(loaded.identity)
+      yield id)
 
   private def loadOnce(): Loaded =
     val path = devicePath
