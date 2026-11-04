@@ -14,6 +14,10 @@ wiki-docs SKILL.md 强制条款的机器面（条款与检查一一对应，见 
                             「名 — 定义」分隔约定抽出词条名）；同一文档内词条名
                             不得重复。`[[名]]` 短形引用在文档与词条注册表均未
                             命中 ⇒ R2 断链（引用词条已注册由 R2 断链检查承担）
+  R5 文档命名制           → 阶段件文件名 = `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md`：
+                            主题打头、时间块后置（时间打头 = 旧制 = 违规）；topic 不得
+                            是 report/doc/notes 这类空词单独成题。校验面 = `.md` 文档；
+                            无时间块的活文档（`<topic>.md`）合法；非 `.md` 资产不在本制范围
 
 段落锚（引用语法，与 R2 校验同源）：`[[doc#^块锚]]` 精确到单个段落（名词解释
 场景主形态，词表条目即块锚段落），`[[doc#标题]]` 精确到整节。--graph 导出
@@ -82,7 +86,27 @@ RULES = (
     ("R2", "citation-graph", "文档之间建立论文式引用关系：断链（目标/标题锚/块锚不存在，含引用词条未注册）即缺陷；零出链且零入链的孤儿文档即缺陷（index/glossary 豁免）"),
     ("R3", "concept-first-use", "名词概念第一次出现必须就地解释，或 [[引用]] 已解释它的文档；多篇文档不得各自发明同一概念的定义（词表 = 唯一定义源）"),
     ("R4", "term-registry", "词条注册表面：词表锚段落与 ^term-* 声明块必须按「名 — 定义」分隔约定抽出词条名（词条块结构合法）；同一文档内词条名不得重复；`[[名]]` 短形引用经词条注册表消解（词表命中优先，未注册 = R2 断链）"),
+    ("R5", "doc-naming", "文档命名制：阶段件文件名 = `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md`（topic 前置、时间块后置，`__` 分主题与时间、时间块内用 `_`）；时间打头（`^YYYYMMDD_...`）即旧制即违规；topic 不得是 report/doc/notes 空词单独成题。校验面 = `.md` 文档，无时间块的活文档合法，非 `.md` 资产不在本制范围"),
 )
+
+# ── R5 文档命名制（作者令 2026-11-04 18:12；条款原文见 wiki-docs SKILL.md
+# 「Document naming」唯一命名条款）─────────────────────────────────
+#
+# 合法形态（阶段件）：<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>][.<lang>].md
+#   · topic 前置、时间块后置；topic 与时间之间 `__`，时间块内部 `_`
+#   · 语言后缀（.zh-CN / .en）整体留在最后
+#   · chainId 尾段可缺省，有归属才带
+# 合法形态（活文档）：<topic>[.<lang>].md —— 无时间块，不套时间制
+# 违规：时间打头的旧制名（本制要消灭的形态）、含时间块但不符新制、topic 为空词
+DOC_NAMING_TIME_RE = re.compile(r"(?<!\d)(\d{8})_(\d{6})(?!\d)")
+DOC_NAMING_OK_RE = re.compile(
+    r"^(?P<topic>.+?)__(?P<time>\d{8}_\d{6})"
+    r"(?:__(?P<chain>[A-Za-z0-9][\w.-]*))?"
+    r"(?:\.(?:zh-CN|zh-TW|en|ja))?"
+    r"\.md$"
+)
+DOC_NAMING_OLD_RE = re.compile(r"^\d{8}(?:_|\b)")
+DOC_NAMING_BLAND_TOPICS = {"report", "doc", "docs", "note", "notes", "tmp", "temp", "untitled", "draft", "stage", "output"}
 
 
 # ── 落位解析：项目名 → 文档根（作者令 2026-11-03 20:02，单源）────────────
@@ -666,6 +690,27 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_re
             if not m or not p["text"][:m.start()].strip():
                 add("term-format", rel, p["line"],
                     f"词条块结构非法：{p['anchor']} 抽不出词条名（缺「名 — 定义」分隔）——声明形态「名 — 定义 ^锚」，`^term-*` 或词表锚段落")
+
+    # R5 — 文档命名制：<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md（topic 前置、时间块后置）
+    for rel in sorted(docs):
+        name = rel.rsplit("/", 1)[-1]
+        if not name.lower().endswith(".md"):
+            continue  # 非 .md 资产（html 样张 / 截图 / patch）不在命名制范围
+        if DOC_NAMING_OLD_RE.match(name):
+            add("doc-naming", rel, 1,
+                "旧制文件名（时间打头）——新制为 `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md`："
+                "topic 前置、时间块后置，`__` 分主题与时间；改名并同步全部引用")
+            continue
+        if DOC_NAMING_TIME_RE.search(name):
+            m = DOC_NAMING_OK_RE.match(name)
+            if not m:
+                add("doc-naming", rel, 1,
+                    "文件名含时间块但不符新制形态 `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md`"
+                    "（主题与时间之间必须 `__`、时间块内部 `_`；语言后缀留最后）")
+            elif m.group("topic").strip().lower() in DOC_NAMING_BLAND_TOPICS:
+                add("doc-naming", rel, 1,
+                    f"topic「{m.group('topic')}」是空词，不构成主题——用一句话说清这份文档是什么"
+                    "（小写 kebab 或原样中文），空词不得单独成题")
     return violations
 
 
