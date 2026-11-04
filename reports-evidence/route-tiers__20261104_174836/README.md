@@ -2,16 +2,16 @@
 
 作者裁定 2026-11-04 16:51（逐字）：「然后我们再加一条 就是tailscale是专门做这个的 我们也检测 如果有tailscale的直连服务 就用它的 然后再用我们的 最后relay」。
 
-知识文档：`<dataRoot>/projects/stand/.stand/docs/20261104_173000_route-tiers-tailscale-p2p-relay__delegate-nebflow-4d537ce5.md`
+知识文档：`<dataRoot>/projects/stand/.stand/docs/route-tiers-tailscale-p2p-relay__20261104_173000__delegate-nebflow-4d537ce5.md`
 
 ## 取数命令（任何人可重跑同一组数字）
 
 ```bash
 # ① 真机探测判决 / 缓存「不重复收税」/ 三态 A·B·C 改前→改后对照
-sbt "Test/runMain nebflow.core.tools.RouteTriStateMeasureMain" | tee reports-evidence/20261104_route-tiers/tristate.log
+sbt "Test/runMain nebflow.core.tools.RouteTriStateMeasureMain" | tee reports-evidence/route-tiers__20261104_174836/tristate.log
 
 # ② IPv6 优先的真机候选面（改前只取 Inet4Address 的等价读数在 preV6Behaviour 字段）
-sbt "Test/runMain nebflow.neblink.LocalEndpointReadoutMain" | tee reports-evidence/20261104_route-tiers/ipv6.log
+sbt "Test/runMain nebflow.neblink.LocalEndpointReadoutMain" | tee reports-evidence/route-tiers__20261104_174836/ipv6.log
 
 # ③ 判据 spec（三态 / 缓存退避 / 解析 / 平台路径 / IPv6 排序）
 sbt "testOnly nebflow.core.tools.DirectRouteSpec nebflow.neblink.PresenceCandidateProbeSpec nebflow.neblink.EndpointPreferenceSpec"

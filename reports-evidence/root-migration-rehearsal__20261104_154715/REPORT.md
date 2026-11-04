@@ -296,7 +296,7 @@ find ~/.stand -type l ! -exec test -e {} \; -print    # 列出全部断链（读
    ```
 2. **记录迁移前指纹**（可选但强烈建议，用于事后逐条核对）
    ```
-   python3 reports-evidence/20261104_root-migration-rehearsal/fingerprint.py ~/.stand \
+   python3 reports-evidence/root-migration-rehearsal__20261104_154715/fingerprint.py ~/.stand \
            --out /Volumes/<外部盘>/real-before.tsv
    ```
 3. **触发首次登录**（登录腿内先 migrate 再写指针）。**此步期间不要启动引擎**。

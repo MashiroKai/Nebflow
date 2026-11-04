@@ -204,7 +204,7 @@ lightbox 与 toast。**归类例外**：`socialPanel.js` 的入口按钮在活�
 ## 12. 数据根三层（B1 批次，2026-11-04 落地）
 
 > **批次说明（2026-11-04）**：作者三层数据根裁定的词条（派单九条裁定 1/5/9 + 契约
-> `reports-evidence/20261104_b1-dataroot/design-api.md`）。术语随实现落地入表；
+> `reports-evidence/b1-dataroot__20261104_110844/design-api.md`）。术语随实现落地入表；
 > 机制的完整解释在契约与落点处，本表只管名字。
 
 | 术语 | English / 代码拼写 | 定义 | 权威落点 |

@@ -3,7 +3,7 @@
 **批次**：9.19 版中断恢复实现（机制 + sha + file:line + 今天还在不在）
 **日期**：2026-11-04
 **台架**：`src/test/scala/nebflow/core/project/InterruptRecoveryLegsSpec.scala`
-**脚本**：`reports-evidence/20261104_interrupt-recovery/run.sh`
+**脚本**：`reports-evidence/interrupt-recovery__20261104_114731/run.sh`
 **红证日志**：本目录 `V1.log` … `V5.log`（每腿一份 sbt 原文 + `[LEG Vn]` 证据行）
 
 ---
@@ -37,12 +37,12 @@ V3b 的「fire-and-forget 崩溃窗口」用**探针 actor** 钉成确定性：�
 ```bash
 cd "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab"
 
-bash reports-evidence/20261104_interrupt-recovery/run.sh V1     # → red/V1.log
-bash reports-evidence/20261104_interrupt-recovery/run.sh V2     # → red/V2.log
-bash reports-evidence/20261104_interrupt-recovery/run.sh V3     # → red/V3.log
-bash reports-evidence/20261104_interrupt-recovery/run.sh V4     # → red/V4.log
-bash reports-evidence/20261104_interrupt-recovery/run.sh V5     # → red/V5.log
-bash reports-evidence/20261104_interrupt-recovery/run.sh all    # 顺序全跑
+bash reports-evidence/interrupt-recovery__20261104_114731/run.sh V1     # → red/V1.log
+bash reports-evidence/interrupt-recovery__20261104_114731/run.sh V2     # → red/V2.log
+bash reports-evidence/interrupt-recovery__20261104_114731/run.sh V3     # → red/V3.log
+bash reports-evidence/interrupt-recovery__20261104_114731/run.sh V4     # → red/V4.log
+bash reports-evidence/interrupt-recovery__20261104_114731/run.sh V5     # → red/V5.log
+bash reports-evidence/interrupt-recovery__20261104_114731/run.sh all    # 顺序全跑
 ```
 
 裸 sbt 等价形式（判词节点可任选）：

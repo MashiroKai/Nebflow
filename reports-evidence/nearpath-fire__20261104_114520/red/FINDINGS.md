@@ -239,7 +239,7 @@ node rig/assert-zero-presence.mjs /Users/kaiyu/.stand/logs/stand.log \
 ## 7. 复现步骤（一条命令）
 
 ```bash
-cd /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-be138470/reports-evidence/20261104_nearpath-fire/rig
+cd /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-be138470/reports-evidence/nearpath-fire__20261104_114520/rig
 
 # 0) 一次性准备（只在源码树/classpath 不存在时需要；冷启动 sbt 编译 ~5 分钟）
 sh setup-engine.sh                     # git archive HEAD → /tmp/nearpath-fire/engine-src，sbt 编译 + 导出 classpath

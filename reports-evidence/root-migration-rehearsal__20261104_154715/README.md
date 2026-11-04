@@ -65,13 +65,13 @@ rm -rf /Volumes/KINGSTON/nebflow-root-rehearsal.sparsebundle
 ```bash
 cd <worktree>
 # 1) 临时放回驱动（每次用完即删，勿提交）
-cp reports-evidence/20261104_root-migration-rehearsal/data/RehearsalDriver.scala \
+cp reports-evidence/root-migration-rehearsal__20261104_154715/data/RehearsalDriver.scala \
    src/test/scala/nebflow/core/dataroot/
 sbt -batch "Test/compile" "export Test/fullClasspath" > /tmp/cp.log
 CP=$(grep -E "^/Users/.*test-classes:" /tmp/cp.log | tail -1)
 # 2) 合成场景（秒级，验证各分岔与符号链接风险）
 STAND_HOME=/tmp/x NEBFLOW_HOME=/tmp/x java -Xmx2g \
-  "-Dlogback.configurationFile=$PWD/reports-evidence/20261104_root-migration-rehearsal/logback-driver.xml" \
+  "-Dlogback.configurationFile=$PWD/reports-evidence/root-migration-rehearsal__20261104_154715/logback-driver.xml" \
   -cp "$CP" nebflow.core.dataroot.RehearsalDriver synth /tmp/synth-root
 # 3) 用完删除临时文件
 rm src/test/scala/nebflow/core/dataroot/RehearsalDriver.scala

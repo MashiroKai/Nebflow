@@ -1,6 +1,6 @@
 # 中断恢复验收 · 修复后绿证（green/）
 
-> 台架与断言 = `reports-evidence/20261104_interrupt-recovery/red/README.md`（harness 节点产，
+> 台架与断言 = `reports-evidence/interrupt-recovery__20261104_114731/red/README.md`（harness 节点产，
 > commit ad770bfdb，红证在 `red/`）。本目录只放**修复后复跑**的 sbt 原文，断言一字未改
 > （V1/V2/V4/V5 全绿；V3 属审计 D5 节点消息持久化，不在本节点验收面，仍红）。
 
@@ -8,7 +8,7 @@
 
 ```bash
 cd "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab"
-bash reports-evidence/20261104_interrupt-recovery/run.sh V1 green   # 同法 V2/V4/V5
+bash reports-evidence/interrupt-recovery__20261104_114731/run.sh V1 green   # 同法 V2/V4/V5
 # 裸 sbt 等价：
 IR_LEG=V1 sbt "testOnly nebflow.core.project.InterruptRecoveryLegsSpec"
 ```

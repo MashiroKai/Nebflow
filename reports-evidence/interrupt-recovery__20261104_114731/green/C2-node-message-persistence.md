@@ -120,7 +120,7 @@ delegate 作用域链节点 = `recoverDelegateScopes` → `recoverDelegateScopeO
 
 ```bash
 cd "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-70e8d8ab"
-bash reports-evidence/20261104_interrupt-recovery/run.sh V3 green       # 台架 V3（V3a 护栏 + V3b/V3c）
+bash reports-evidence/interrupt-recovery__20261104_114731/run.sh V3 green       # 台架 V3（V3a 护栏 + V3b/V3c）
 sbt -batch "testOnly nebflow.core.project.NodeMessagePersistenceSpec"     # S1/S2/S3
 sbt -batch "testOnly nebflow.core.project.NodeMessageReplayQueueSpec"     # S4
 ```

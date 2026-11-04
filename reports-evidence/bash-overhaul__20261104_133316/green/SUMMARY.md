@@ -3,7 +3,7 @@
 作者令 2026-11-04（逐字）：「先安排重启，然后组织优化 bash，用业界成熟做法完整实现，一步到位。」
 
 本目录 = **绿相机械证据**：`sbt Test/compile` + 逐 T `sbt "testOnly …"` 的原始输出（ANSI 已剥离）。
-红相对照目录 = `reports-evidence/20261104_bash-overhaul/red/`（断言与「改前必红」形态，本相未改其任何字节）。
+红相对照目录 = `reports-evidence/bash-overhaul__20261104_133316/red/`（断言与「改前必红」形态，本相未改其任何字节）。
 
 - 工作树：`.nebflow/worktrees/delegate-nebflow-485bb4f4`（分支 `delegate/delegate-nebflow-485bb4f4`）
 - 环境：Scala 3.5.2 / sbt 1.10.10（`-Xmx1500m`，本机 sbt 全局串行闸）/ macOS darwin

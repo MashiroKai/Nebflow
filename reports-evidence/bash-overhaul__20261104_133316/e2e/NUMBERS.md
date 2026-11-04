@@ -6,8 +6,8 @@
 1 次 Bash + 1 次 BgWait，会话存活，结果送达延迟 **3ms**（榜首行）。
 
 - spec：`src/test/scala/nebflow/core/tools/BashOverhaulEndToEndSpec.scala`（5 用例 / 全绿）
-- 原始 sbt 输出（ANSI 未剥离）：`reports-evidence/20261104_bash-overhaul/e2e/E2E-02-run.log`
-- 隔离实例冒烟：`reports-evidence/20261104_bash-overhaul/e2e/isolated-smoke.log`
+- 原始 sbt 输出（ANSI 未剥离）：`reports-evidence/bash-overhaul__20261104_133316/e2e/E2E-02-run.log`
+- 隔离实例冒烟：`reports-evidence/bash-overhaul__20261104_133316/e2e/isolated-smoke.log`
 - 复现命令：`sbt -batch "testOnly nebflow.core.tools.BashOverhaulEndToEndSpec"`
 
 ---

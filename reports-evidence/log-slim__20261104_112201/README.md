@@ -1,7 +1,7 @@
-# 20261104_log-slim —— 日志降噪批 C 证据目录
+# log-slim__20261104_112201 —— 日志降噪批 C 证据目录
 
 作者令 2026-11-04 10:43（「日志那个也要修 + 必须交付真实实测结果对比」）的实施证据。
-报告正文：`~/.stand/projects/stand/.stand/docs/20261104_110500_log-noise-reduction.md`。
+报告正文：`~/.stand/projects/stand/.stand/docs/log-noise-reduction__20261104_110500.md`。
 
 ## 目录
 

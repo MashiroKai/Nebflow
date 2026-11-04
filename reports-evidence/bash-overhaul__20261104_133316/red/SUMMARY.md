@@ -5,8 +5,8 @@
 本目录 = **红相机械证据**：只写测试、**零 src/main 改动**，把「改前必红」逐条钉死。
 事实源（本相不重做考古）：
 
-- `~/.stand/projects/stand/.stand/docs/20261104_110500_our-bash-tool-defects.md`（缺陷 D1–D11 + file:line）
-- `~/.stand/projects/stand/.stand/docs/20261104_113008_external-agent-bash-design-survey.md`（业界矩阵 + 防循环解法）
+- `~/.stand/projects/stand/.stand/docs/our-bash-tool-defects__20261104_110500.md`（缺陷 D1–D11 + file:line）
+- `~/.stand/projects/stand/.stand/docs/external-agent-bash-design-survey__20261104_113008.md`（业界矩阵 + 防循环解法）
 
 工作树：`.nebflow/worktrees/delegate-nebflow-485bb4f4`（分支 `delegate/delegate-nebflow-485bb4f4`）。
 环境：Scala 3.5.2 / sbt 1.10.10 / macOS（darwin），**冷编译**（工作树无 `target/`）。
