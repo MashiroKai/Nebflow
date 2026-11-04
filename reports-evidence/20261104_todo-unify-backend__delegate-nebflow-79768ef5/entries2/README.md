@@ -152,7 +152,9 @@ check-js-types               0 errors（`01_js_types_after_retire.log`）
    本批未改 `js/todoFace.js` / `css/todo-face.css`（`git diff 712242e85` 该两文件
    零改动），且该腿代码与基点树**逐字节相同**（`diff` 校验 = identical）；
    同脚本在基点工作树 `/tmp/tfc-base`（detached `712242e85`）复跑
-   `41_face_shots_base_tree.log` 得到**同样的 4 条 FAIL** ⇒ 预存。
+   `41_face_shots_base_tree.log`：**96 PASS / 8 FAIL**，FAIL 集合与本树
+   `50_final_specs_and_shots.log`（**108 PASS / 8 FAIL**，多出的 12 PASS = 手机腿
+   新增的退役/读数断言）**逐条相同** ⇒ 预存，非本批引入。
 
 改后同组只剩 1/2 两条（`40_respec_run.log`：1 failed / 33 passed，唯一红 = D18
 sticky），T6 已按现役语义校正并转绿，T2 已换代为退役护栏并转绿。**未改任何
