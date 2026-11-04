@@ -19,3 +19,8 @@ G-1…G-5 显式预留壳；一切轮数/成本/墙钟上限皆为构造参数�
 | `Provider.scala` | `ProviderPort[F]`、请求/响应/流块、`AbortSignal[F]` |
 | `Policy.scala` | `LoopPolicy` / `RetryPolicy` / `CostMeter` / `TokenBudget` |
 | `Sequence.scala` | `TurnNumber` / `MessageSeq`、单写者分配 |
+
+**增量轮（round 2）范围**：§Ⅱ 16 接口签名全量落地、双层 while 循环体可运行实现
+（trait 契约 → 实现）、采纳 29 位点逐一挂进 dispatch/循环阶段、L-5（Tool.Pre 改参后
+重校验）与 L-11（观察位背压=位点声明，不照抄 pi 顺序档）按方案推荐拍板、§Ⅵ 可自动化
+判据全覆盖。envelope（`KernelEvent`）冻结不改。
