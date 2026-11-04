@@ -918,6 +918,16 @@ function probeLoopbackPixel(host, port, expectId) {
   });
 }
 
+/** 闸① 回执（`/api/portal/status`）：判别式 `ok` 收敛成功/失败两支——
+ *  成功带 deviceId、失败带 reason。对侧字段声明为**可选**而非缺席，是因为本仓
+ *  checkJs 跑在 `strict:false`（无 strictNullChecks）下：该配置里 `if (!r.ok)` 的
+ *  假分支**不做判别式收敛**（falsy 收敛依赖 strictNullChecks），写成两支互斥的
+ *  类型别名会让「失败支读 reason」这句合法代码报 TS2339。运行时形状不变：
+ *  每个回执只带自己那侧的字段，缺省键仍是 undefined。 */
+/** @typedef {{ok:true, deviceId:string, reason?:string} | {ok:false, reason:string, deviceId?:string}} Gate1Result */
+/** 闸② 回执（`/api/health/loopback-info`）：同款判别式，成功带 port。 */
+/** @typedef {{ok:true, port:number, reason?:string} | {ok:false, reason:string, port?:number}} Gate2Result */
+
 async function attemptLoopbackNearPath() {
   if (loopbackSwitchAttempted) return false;
   loopbackSwitchAttempted = true;
@@ -958,7 +968,9 @@ async function attemptLoopbackNearPath() {
       return { ok: true, port: p };
     }).catch(() => ({ ok: false, reason: 'loopback_info_unreachable' }));
 
-    const [g1, g2] = await Promise.all([gate1P, gate2P]);
+    // 回执收敛点：两条腿的 `{ok, ...}` 契约在 Gate1Result / Gate2Result 单点声明
+    // （`ok` 分支对象字面量在 .then 里会被放宽成 boolean，故在此显式收敛到 typedef）。
+    const [g1, g2] = /** @type {[Gate1Result, Gate2Result]} */ (await Promise.all([gate1P, gate2P]));
     seg.g1Ms = stamp();
     seg.g2Ms = stamp();
     // 原因归属按闸序（① 先于 ②）：两闸同拍失败时给上游闸的原因，词表与历史证据一致。

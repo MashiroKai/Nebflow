@@ -1,0 +1,88 @@
+## git log --oneline -8 -- src/main/resources/web/js/ws.js
+3858e3eb7 近路批·四道闸根因修复与同机判据：WebKit 混合内容用身份像素正证替代跨源 fetch，闸①∥闸② 并行，hit/miss beacon 与分段计时
+da3c29ec3 fix(console-takeover): 单实例「挤下线」失效根修——身份在带声明腿（握手 query 不可靠批 2026-11-03）
+1e79ee55a fix(console-takeover): 接管提示改卡片 + 误报根修（身份从会话 id 改浏览器 clientId）
+802520434 Merge branch 'delegate/delegate-nebflow-3b3b1d29' — fleet 全设备统一更新（引擎面）
+3c09fc9e1 fleet 全设备统一更新：一键收敛 + 阻塞式状态卡（fleet 批 2026-11-01）
+ba54d3bfc feat(delegate-frozen): 错误状态 delegate 冻结态（留状态、可唤醒、接着做）
+72840f671 project unmount: console 取消加载面 + 编排侧 remount（同一引擎通路 + 审计 + 真实例冒烟）
+a68b7ec74 feat(takeover+entry): 作者令批（11-01 10:07 三件）——接管必达/卡片同族/入场加载覆盖
+
+## git log --oneline -8 -- src/main/resources/web/js/todoStore.js
+0d9b1b874 feat(todo): todoStore 换血为后端真源适配器（读 scope:all / 写五帧 / 广播收敛）
+e4d9f84ea feat(todo-face): 任务列表换血——ReminderIsland 待办体验复刻（批 2026-11-01 20:02）
+
+## git diff 0d9b1b874^..HEAD --stat -- src/main/resources/web/js/ws.js
+ src/main/resources/web/js/ws.js | 275 +++++++++++++++++++++++++++++++++++-----
+ 1 file changed, 240 insertions(+), 35 deletions(-)
+
+## 引入两处读法的提交（-L 963,974）
+3858e3eb7 近路批·四道闸根因修复与同机判据：WebKit 混合内容用身份像素正证替代跨源 fetch，闸①∥闸② 并行，hit/miss beacon 与分段计时
+
+diff --git a/src/main/resources/web/js/ws.js b/src/main/resources/web/js/ws.js
+--- a/src/main/resources/web/js/ws.js
++++ b/src/main/resources/web/js/ws.js
+@@ -784,10 +963,12 @@
+-    });
+-    if (!info.ok) { noteLoopbackMiss(`loopback_info_http_${info.status}`); return false; }
+-    const port = (await info.json())?.port;
+-    if (!Number.isInteger(port) || port <= 0 || port > 65535) { noteLoopbackMiss('no_loopback_port'); return false; }
+-    // 双 host 探测（小刀①）：127.0.0.1 先行（现状腿），失败换 localhost——首个
+-    // 应答 ok 且 deviceId 相等的 host 赢；双败记 miss（PNA 拒答 = fetch throw，
+-    // HTTP 非 200 = 别机网关占位，两类原因分开记）。
+-    let probe = null;
++    seg.g2Ms = stamp();
++    // 原因归属按闸序（① 先于 ②）：两闸同拍失败时给上游闸的原因，词表与历史证据一致。
++    if (!g1.ok) return fail(g1.reason);
++    if (!g2.ok) return fail(g2.reason);
++    const deviceId = g1.deviceId;
++    const port = g2.port;
+
+## 3858e3eb7 元数据
+3858e3eb798ba996cb35615b3686ffa9c4daef58
+Wed Nov 4 12:18:34 2026 +0800
+MashiroKai
+近路批·四道闸根因修复与同机判据：WebKit 混合内容用身份像素正证替代跨源 fetch，闸①∥闸② 并行，hit/miss beacon 与分段计时
+
+## 0d9b1b874 元数据
+0d9b1b874ac95f4a40b531656507996c57f78a6b
+Wed Nov 4 15:53:14 2026 +0800
+MashiroKai
+feat(todo): todoStore 换血为后端真源适配器（读 scope:all / 写五帧 / 广播收敛）
+
+## 3858e3eb7 与 0d9b1b874 的祖先关系
+
+## 3858e3eb7 是否在 main 上
+3858e3eb7 in main: YES
+## main..HEAD 提交（本分支独有）
+8ba3fcd01 chore(evidence): Sync 索引件对齐四轮 merge 口径（最终 HEAD 02c61d914 / main 51309ec51）
+02c61d914 chore(evidence): 第四轮追平 main 51309ec51 —— 五道门禁在最终树上全绿
+7c26c4519 Merge branch 'main' into delegate/delegate-nebflow-79768ef5
+11afa229c chore(evidence): 第三轮追平 main 0960a0898 —— 门禁/spec/让位链在收束树上复跑
+2223b7159 Merge branch 'main' into delegate/delegate-nebflow-79768ef5
+d8406f6d9 chore(evidence): 提交后在 1484bfaeb 树上复跑 process-artifacts + component-contract（均 EXIT=0）
+1484bfaeb chore(evidence): 收束态复跑读数——再合 main 后门禁四跑 + 本批 20 spec 全绿 + 让位链 18/18 + 范围核对零漂移
+096408f90 chore(evidence): todo-unify 批证据归档——Sync 中断遗留 sync/ 收编 + 门禁补跑与让位链实测读数
+f70dccb9f Merge branch 'main' into delegate/delegate-nebflow-79768ef5
+f7dba5ef9 fix(todo): 胶囊面两个新控件改由 DOM API 装配（component-contract R5）
+fa6526fb8 Merge branch 'main' into delegate/delegate-nebflow-79768ef5
+6b883302f feat(todo): 胶囊面交互——右下角加号/空白建/重要度落库/完成撤回/删除/手机层胶囊
+
+## 本分支独有提交里是否碰过 ws.js（main..HEAD -- ws.js）
+fa6526fb8 Merge branch 'main' into delegate/delegate-nebflow-79768ef5
+[上行为空 = 本分支独有提交零改 ws.js]
+
+## 0d9b1b874 这一提交自身是否碰过 ws.js
+[上行为空 = 本批 todoStore 提交未改 ws.js]
+
+## 3858e3eb7 树上 type-baseline.json
+{
+  "generatedBy": "scripts/check-js-types.mjs --update",
+  "total": 0,
+  "files": {}
+}
+
+## 3858e3eb7 树 todoStore.js 的 3 条（对照：本批换血前的旧内存态）
+// todoStore.js — 待办内存仓（ReminderIsland 复刻批 · 作者令 2026-11-02 20:02）
+//
+// 数据面边界（作者令逐字）：「数据面不接 Apple Reminder——本批先做纯前端复刻
