@@ -48,14 +48,17 @@
 | `toplist.txt` / `rsync-excludes.txt` | 副本的条目白名单与排除清单 |
 | `classpath.txt` | 驱动运行用的测试 classpath |
 
-副本与迁移产物所在的 APFS 卷（sparse bundle，宿主外置盘）：
+副本与迁移产物所在的 APFS 卷（sparse bundle，宿主外置盘）。**演练结束时已卸载**，bundle 仍留在盘上（占 **87 GB**）；确认不需要再复核后可整份删除：
 
 ```
-# 卸载
+# 若已卸载就不用再 detach
+hdiutil attach /Volumes/KINGSTON/nebflow-root-rehearsal.sparsebundle
 hdiutil detach /Volumes/rehearsal
-# 彻底删除副本（约 45 GB；证据清单在 KINGSTON/rehearsal-evidence 里，不受影响）
+# 彻底删除副本（证据清单在 KINGSTON/rehearsal-evidence 里，不受影响）
 rm -rf /Volumes/KINGSTON/nebflow-root-rehearsal.sparsebundle
 ```
+
+另存了 `migration-report.sample.json`（109 MB）= 副本迁移产出的**真实记账文件**原件，供复核格式与规模（真机规模约 2.3 倍）。
 
 ## 复跑方式（不改生产代码）
 

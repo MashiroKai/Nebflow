@@ -13,7 +13,7 @@
 |---|---|---|
 | A | `RootLayout.migrate` / `RootLayout.rollback` 在 **`src/main/scala` 全树零调用点** | `data/no-wiring-proof.txt` 段 B；复验：`git grep -n "RootLayout.migrate\|RootLayout.rollback" main -- src/main/scala` 为空 |
 | B | 生产面对 root 包的全部引用都是**只读**：`PathUtil.resolvedLayer` → `RootLadder.resolve`（纯读）、`AutoStartService` 与 `NeblinkModel` 读 `RootLadder.current` | `paths.scala:278-290`；`AutoStartService.scala:195`；`NeblinkModel.scala:267,290` |
-| C | 三个布局标记在真根**均不存在** ⇒ 阶梯落第 3 档 flat ⇒ `dataRoot == machineRoot` 逐字节相同 | `RootLadder.scala:97-102`；实测 14:00 见 §2.1 |
+| C | 六个布局物在真根**一个都不存在**（3 个标记：`layout.json` / `active-account` / `migration-report.json`；3 个目录：`accounts/` / `unauthenticated/` / `pending-claim/`）⇒ 阶梯落第 3 档 flat ⇒ `dataRoot == machineRoot` 逐字节相同 | `RootLadder.scala:97-102`；实测见 §2.1、§9 |
 
 **推论**：今天的重启 = 与今日行为完全一致 —— 不迁移、不建 `accounts/`、不写 `layout.json`、不产生 `pending-claim/`。B1 目前只是一层能力（含只读快照接入），触发点按契约 §4.1 明确排除 boot（`RootLayout.scala:18-20`：「触发点 = 显式动作，绝不在 boot / `RootLadder.resolve` 里自动跑」）。
 
