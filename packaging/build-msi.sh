@@ -260,6 +260,9 @@ jlink \
   --strip-debug --no-man-pages --no-header-files --compress zip-6 \
   --output "$RUNTIME"
 
+# 发布剔除（seal 批 2026-11-03，作者令「邮件和心跳进程功能，进入封存，发布剔除，本地
+# sbt run 可用。」）：发布与本地 `sbt run` 共用同一 mainClass ⇒ 剔除落在**装配层**
+# （jpackage `--java-options` 把两条 `-D…=false` 写进启动器）。本地 run 不经本脚本。
 jpackage \
   --name "$PRODUCT_NAME" \
   --type msi \
@@ -269,6 +272,8 @@ jpackage \
   --arguments --server \
   --java-options "--add-opens=java.base/java.lang=ALL-UNNAMED" \
   --java-options "-Xmx1g" \
+  --java-options "-Dnebflow.mail.process.enabled=false" \
+  --java-options "-Dnebflow.heartbeat.enabled=false" \
   --runtime-image "$RUNTIME" \
   --app-version "$APP_VERSION" \
   --win-menu --win-shortcut --win-dir-chooser \

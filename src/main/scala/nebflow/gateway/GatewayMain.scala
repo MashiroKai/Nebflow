@@ -9,6 +9,7 @@ import nebflow.actor.{AgentCommand, RootAgentIdentity, contextWindow}
 import nebflow.agent.*
 import nebflow.bridge.*
 import nebflow.core.*
+import nebflow.core.boot.ProcessSeal
 import nebflow.core.daemon.{DaemonService, DaemonStore}
 import nebflow.core.hooks.*
 import nebflow.core.mcp.*
@@ -1830,25 +1831,63 @@ object GatewayMain extends IOApp:
                                               // 绝不阻塞启动（原 perceptionBoot 失败契约逐字）。
                                               // restartOnExit/端口健康探针/pid marker/stopAll 全部为
                                               // 既有心跳语义。
+                                              //
+                                              // seal 批（2026-11-03，作者令「邮件和心跳进程功能，进入封存，
+                                              // 发布剔除，本地sbt run 可用。」）：本扇出被**两族开关分别**包住——
+                                              //   · Mail 关 ⇒ `perception-daemon` 的 prepare/upsert 不跑（不写
+                                              //     boot token、不登记托管条目；`prepare` 自身也读同一开关，双保险）；
+                                              //   · Heartbeat 关 ⇒ daemon 家族 `autoStart` 不跑（零 spawn、零
+                                              //     reader/monitor/health/low-rate-takeover/auto-restart 纤维），
+                                              //     随之 handshake 也不跑（没有可握手的进程）。
+                                              // 关态各留一行 `[seal]` 说明日志；复活 = `-D…=true`（见 Defaults）。
                                               dispatcher.unsafeRunAndForget(
                                                 IO.sleep(2.seconds) *>
-                                                  PerceptionDaemonDock
-                                                    .prepare(DaemonStore(), cfg.port.value)
+                                                  // 收尸腿（两族封存与否都跑，一次性、零常驻）：上一实例被
+                                                  // SIGKILL 时遗留的子进程（含 perception-daemon）继续跑会让
+                                                  // 「封存」名不副实；只 kill marker + startTime 对得上的
+                                                  // 本引擎子进程（用户手起的服务永不触碰）。心跳开启时
+                                                  // autoStart 内部会再收一次（marker 已清 ⇒ no-op）。
+                                                  daemonService
+                                                    .reclaimStaleOrphans()
                                                     .handleErrorWith(e =>
-                                                      logger
-                                                        .warn(s"perception daemon dock prepare failed: ${e.getMessage}")
-                                                        .as(None)
-                                                    )
-                                                    .flatMap(up =>
-                                                      daemonService
-                                                        .autoStart(DaemonStore())
+                                                      logger.warn(s"daemon stale reclaim failed: ${e.getMessage}")
+                                                    ) *>
+                                                  ProcessSeal
+                                                    .whenEnabledOr(
+                                                      ProcessSeal.Realm.Mail,
+                                                      "perception-daemon（dock prepare/upsert）"
+                                                    )(Option.empty[PerceptionDaemonDock.Upserted])(
+                                                      PerceptionDaemonDock
+                                                        .prepare(DaemonStore(), cfg.port.value)
                                                         .handleErrorWith(e =>
-                                                          logger.warn(s"Daemon auto-start failed: ${e.getMessage}")
-                                                        ) *>
-                                                        up.traverse_(PerceptionDaemonDock.handshake)
-                                                          .handleErrorWith(e =>
-                                                            logger.warn(s"perception daemon handshake failed: ${e.getMessage}")
-                                                          )
+                                                          logger
+                                                            .warn(s"perception daemon dock prepare failed: ${e.getMessage}")
+                                                            .as(None)
+                                                        )
+                                                        .flatMap(up =>
+                                                          ProcessSeal
+                                                            .whenEnabledOr(
+                                                              ProcessSeal.Realm.Heartbeat,
+                                                              "DaemonService.autoStart（daemon 家族 boot 扇出）"
+                                                            )(false)(
+                                                              daemonService
+                                                                .autoStart(DaemonStore())
+                                                                .handleErrorWith(e =>
+                                                                  logger.warn(s"Daemon auto-start failed: ${e.getMessage}")
+                                                                )
+                                                                .as(true)
+                                                            )
+                                                            .flatMap(launched =>
+                                                              if launched then
+                                                                up.traverse_(PerceptionDaemonDock.handshake)
+                                                                  .handleErrorWith(e =>
+                                                                    logger.warn(
+                                                                      s"perception daemon handshake failed: ${e.getMessage}"
+                                                                    )
+                                                                  )
+                                                              else IO.unit
+                                                            )
+                                                        )
                                                     )
                                               )
 
@@ -2279,14 +2318,22 @@ object GatewayMain extends IOApp:
                                                           // 台账，到期未注入的回执催注（DrainHeldReceipts，指数退避）、
                                                           // 穷尽置 exhausted 终态 + unread 徽标广播。只催注回执投递、
                                                           // 绝不杀会话——「无超时」哲学不动（投递自检 ≠ 任务超时）。
-                                                          _ <- nebflow.core.processor.HeldDeliveryWatchdog
-                                                            .run(
-                                                              sharedResourcesWithDaemon,
-                                                              wsHub,
-                                                              interval =
-                                                                nebflow.shared.Defaults.HeldDeliveryScanIntervalSec.seconds
-                                                            )
-                                                            .start
+                                                          // seal 批（2026-11-03）：本拍是**邮件后台腿**（held 回执催注），
+                                                          // 经 ProcessSeal 引导——封存下零注册、只留一行 `[seal]` 说明；
+                                                          // 同拍搭车的 MergeQueueCare/DelegateDeliveryReceipts/…
+                                                          // 不属邮件/心跳，不动（见 TaskStuckWatcher 注）。
+                                                          _ <- ProcessSeal.launch(
+                                                            ProcessSeal.Realm.Mail,
+                                                            "HeldDeliveryWatchdog"
+                                                          )(
+                                                            nebflow.core.processor.HeldDeliveryWatchdog
+                                                              .run(
+                                                                sharedResourcesWithDaemon,
+                                                                wsHub,
+                                                                interval =
+                                                                  nebflow.shared.Defaults.HeldDeliveryScanIntervalSec.seconds
+                                                              )
+                                                          )
                                                           // --- Background: BgLifecycleReconciler (后台任务生命周期 P1 批 2026-10-30) ---
                                                           // 健康轨 reconcile 控制器（设计稿 20261030 §3）：每拍比对全表任务观测态
                                                           // （输出行/活动戳），suspect 黄徽+退避提醒、escalated 红徽+编排者通知+

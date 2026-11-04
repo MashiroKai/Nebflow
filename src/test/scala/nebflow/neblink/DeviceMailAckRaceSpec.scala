@@ -8,7 +8,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import io.circe.Json
 import io.circe.parser.parse
-import munit.FunSuite
+import munit.{AfterEach, FunSuite}
 import nebflow.shared.PathUtil
 import org.slf4j.LoggerFactory
 
@@ -53,9 +53,15 @@ class DeviceMailAckRaceSpec extends FunSuite:
   PathUtil.setDataRoot(tempRoot)
 
   override def beforeEach(context: BeforeEach): Unit =
+    // seal 批（2026-11-03）：本 spec 全部判据都要求 15s 超时腿确实挂上（「到点再查缓冲」
+    // 的降级支、真超时正控），而封存默认不挂腿 ⇒ 逐用例复活、用例后清干净。
+    nebflow.core.boot.ProcessSealProps.enableMail()
     DeviceMailAck.resetForTest().unsafeRunSync()
     if os.exists(tempRoot) then os.remove.all(tempRoot)
     os.makeDir.all(tempRoot)
+
+  override def afterEach(context: AfterEach): Unit =
+    nebflow.core.boot.ProcessSealProps.clearAll()
 
   // ── 读数设施 ────────────────────────────────────────────────────────
 
