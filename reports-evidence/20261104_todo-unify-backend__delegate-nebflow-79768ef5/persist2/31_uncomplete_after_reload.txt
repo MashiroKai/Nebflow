@@ -1,0 +1,36 @@
+{
+  "store": [
+    {
+      "id": "45404d4e",
+      "content": "PERSIST-①-新建高重要度",
+      "completedAt": 1793787012060
+    },
+    {
+      "id": "84497934",
+      "content": "PERSIST-③-取消完成",
+      "completedAt": null
+    }
+  ],
+  "live": {
+    "dataSource": "backend",
+    "openCount": 1,
+    "visible": [
+      {
+        "id": "84497934",
+        "title": "PERSIST-③-取消完成",
+        "priority": 1,
+        "completed": false
+      }
+    ],
+    "completed": [
+      {
+        "id": "45404d4e",
+        "title": "PERSIST-①-新建高重要度",
+        "completedAt": 1793787012060
+      }
+    ]
+  },
+  "domTitles": [
+    "PERSIST-③-取消完成"
+  ]
+}

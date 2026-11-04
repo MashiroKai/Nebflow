@@ -1,0 +1,18 @@
+== persist2 验证树登记 @ 2026-11-04 17:49:45 ==
+--- git rev-parse HEAD ---
+8ba3fcd01c7d00978428af78d419c55e0e42f795
+8ba3fcd01
+--- git branch --show-current ---
+delegate/delegate-nebflow-79768ef5
+--- main sha ---
+4828151c2
+--- git status --porcelain ---
+?? reports-evidence/20261104_todo-unify-backend__delegate-nebflow-79768ef5/persist2/
+?? reports-evidence/20261104_todo-unify-backend__delegate-nebflow-79768ef5/typefix/
+--- todoStore.js / ws.js 指纹 ---
+6fc71a4fd3743af29438e27dd270af89cca507b849f7e1aeddba8f9654971d34  src/main/resources/web/js/todoStore.js
+506e4898285cdd3e7f3e7d4ad4db59d83a012a8604ef1aa9a4ce1c874e155035  src/main/resources/web/js/ws.js
+--- 行数 ---
+     758 src/main/resources/web/js/todoStore.js
+    1679 src/main/resources/web/js/ws.js
+    2437 total

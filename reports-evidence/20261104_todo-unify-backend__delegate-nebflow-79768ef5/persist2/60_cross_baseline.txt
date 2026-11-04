@@ -1,0 +1,47 @@
+{
+  "B": {
+    "dataSource": "backend",
+    "openCount": 2,
+    "visible": [
+      {
+        "id": "4e9392d2",
+        "title": "PERSIST-⑤-低重要度",
+        "priority": 1,
+        "completed": false
+      },
+      {
+        "id": "8dc56cb9",
+        "title": "PERSIST-⑤-高重要度",
+        "priority": 0,
+        "completed": false
+      }
+    ],
+    "completed": [
+      {
+        "id": "45404d4e",
+        "title": "PERSIST-①-新建高重要度",
+        "completedAt": 1793787012060
+      }
+    ]
+  },
+  "store": [
+    {
+      "id": "45404d4e",
+      "content": "PERSIST-①-新建高重要度",
+      "priority": 3,
+      "completedAt": 1793787012060
+    },
+    {
+      "id": "4e9392d2",
+      "content": "PERSIST-⑤-低重要度",
+      "priority": 1,
+      "completedAt": null
+    },
+    {
+      "id": "8dc56cb9",
+      "content": "PERSIST-⑤-高重要度",
+      "priority": 0,
+      "completedAt": null
+    }
+  ]
+}
