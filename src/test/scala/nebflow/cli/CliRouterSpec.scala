@@ -347,18 +347,39 @@ class CliRouterSpec extends FunSuite:
     val tmp = os.temp.dir(prefix = "cli-router-port-spec")
     val saved = nebflow.shared.PathUtil.dataRoot
     try
-      // env 腿在场时 config/默认腿不可达；env 沉默时 config "port" 键须生效。
+      // 隔离实例误伤批 2026-11-04 §2 改写：这条用例原先把数据根换成临时目录（= 一个
+      // **被覆盖的根**）却仍断言「继承来的 env 端口优先」，那正是本批要废的法
+      // （隔离根继承 env ⇒ 抢生产口）。现在两面分开钉，断言的强度不变：
+      //   · 默认根：env > config > 品牌缺省（历史链逐字不变）；
+      //   · 被覆盖的根：env **不算显式**（被忽略，绝不成为 6138），config "port" 胜出。
+      val cfgPort = 6199
+      // 默认根面（纯解析，零 env 依赖）
+      nebflow.shared.InstanceScope.decide(
+        nebflow.shared.InstanceScope.PortInputs(
+          cliPort = None,
+          envPortName = "STAND_GATEWAY_PORT",
+          envPort = Some("6137"),
+          configPort = Some(cfgPort),
+          sourceName = "nebflow.json",
+          brandDefaultPort = 6138,
+          root = os.Path("/Users/kaiyu/.stand"),
+          overridden = false
+        )
+      ) match
+        case nebflow.shared.InstanceScope.PortVerdict.Resolved(p, _, w) =>
+          assertEquals(p, 6137)
+          assertEquals(w, Nil)
+        case other => fail(s"default root must keep env-then-config-then-brand: got $other")
+      end match
+      // 被覆盖的根面（走 readPort 的真实链）
       nebflow.shared.PathUtil.setDataRoot(tmp)
-      os.write.over(tmp / "nebflow.json", """{"port": 6199}""", createFolders = true)
-      val expected = nebflow.shared.Branding
-        .env("GATEWAY_PORT")
-        .flatMap(_.toIntOption)
-        .getOrElse(6199)
-      assertEquals(GatewayClient.readPort.unsafeRunSync(), expected)
+      os.write.over(tmp / "nebflow.json", s"""{"port": $cfgPort}""", createFolders = true)
+      assertEquals(GatewayClient.readPort.unsafeRunSync(), cfgPort)
     finally
       GatewayClient.resetPort()
       nebflow.shared.PathUtil.setDataRoot(saved)
       os.remove.all(tmp)
+    end try
   }
 
   // ===== 7. command bodies reached through an injected client (A3) =====

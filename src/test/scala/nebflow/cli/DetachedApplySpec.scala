@@ -54,6 +54,11 @@ class DetachedApplySpec extends CatsEffectSuite:
       "export STAND_GATEWAY_PORT='6138'"
     )
     mustContain.foreach(fragment => assert(s.contains(fragment), s"missing '$fragment' in bash script"))
+    // 隔离实例误伤批 2026-11-04 §2：停/起两腿（含 rollback 腿）把端口**显式**交出去，
+    // 不靠继承 env —— launcher 新法则里隔离根的继承端口不算显式，靠 env 会静默打错口。
+    for leg <- List("stop", "start") do
+      val frag = "\"$LAUNCHER\" " + leg + " --port \"$PORT\""
+      assert(s.contains(frag), s"missing explicit-port $leg leg: $frag")
     // 转义纪律：s-三引号串会处理转义——生成脚本必须拿到**字面**反斜杠序列
     // （printf 的 \n、tr 的 \t\r\n），不能被 Scala 提前变成真实控制字符。
     assert(s.contains("printf '%s apply: %s\\n'"), "printf format must carry a literal backslash-n")
