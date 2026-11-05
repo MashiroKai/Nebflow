@@ -134,16 +134,18 @@
   font: 500 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, sans-serif;
   letter-spacing: 0.02em;
 }
-.fm-st-word.completed { color: var(--status-word); }
-.fm-st-word.failed { color: var(--status-word); }
-.fm-st-word.cancelled { color: var(--status-word); }
+.fm-st-word.completed { color: var(--color-text-dim); }
+.fm-st-word.failed { color: var(--color-text-dim); }
+.fm-st-word.cancelled { color: var(--color-text-dim); }
 /* 状态词的**兜底字色**（edge-render-fix 批 2026-11-05）：上面三条只覆盖终态三值，
    delegate 链视图新态 ready-to-merge（以及将来任何新状态）落在无规则区 ⇒ 继承
    `.fm-node-head` 的 --color-text-muted（实测 #8b8e96 on #fafbfc = **3.16:1**，不足
    AA）。`:not(.running):not(.blocked)` 把两条**有意**的语义色（sapphire / amber）让开，
-   其余一律回中性字 --status-word（#717379 = 4.56:1 ✓）。活动态三值（running /
+   其余一律回中性字 --color-text-dim（#6b6e76 = 4.72:1 ✓；glass 批把卡面底色换成
+   #ffffffF7 压平档后，原 --status-word #717379 掉到 4.38:1 不足 AA，故整族降一档到
+   既有令牌 --color-text-dim，暗档 #9ba0aa = 6.63:1）。活动态三值（running /
    blocked / pending）见下方同款改判——**全族一个字色**，语义色只留在字形上。 */
-.flowmap-card .solar-node.fm-node .fm-st-word { color: var(--status-word); }
+.flowmap-card .solar-node.fm-node .fm-st-word { color: var(--color-text-dim); }
 
 /* worktree 徽标：在 worktree 内工作的节点 */
 .fm-worktree-badge {
@@ -703,16 +705,16 @@
    （token 全取 flowCss/本文件既有变量）。状态色由卡根状态类（running/completed…）
    沿用节点卡着色，状态词/计数 glyph 各自着色（与 .fm-st-word / .solar-node-status 同源）。 */
 .fm-chain-card { gap: var(--ds-space-half); }
-/* 状态词活动态（running / blocked / pending）：**字色一律中性档 --status-word**
+/* 状态词活动态（running / blocked / pending）：**字色一律中性档 --color-text-dim**
    （edge-render-fix 批 2026-11-05 实测改判）。此前 running=sapphire（#5b7fbf 实测
    3.35:1）、blocked=amber（#ff9800 实测 2.15:1）、pending=--color-text-muted
    （#8b8e96 实测 3.16:1）三档全部低于 AA 正文 4.5:1；而 .fm-st-word 自身注释
    （本文件 116-130 行）早已定下口径「状态词一律中性字，语义色由 statusIcon glyph
    承载」——本批把这处漂移收回同一口径：**字的可读性优先，语义色留在 ✓/✗/⚑ 字形与
    静环上**（零新色值、亮暗同源）。 */
-.fm-st-word.running { color: var(--status-word); }
-.fm-st-word.blocked { color: var(--status-word); }
-.fm-st-word.pending { color: var(--status-word); }
+.fm-st-word.running { color: var(--color-text-dim); }
+.fm-st-word.blocked { color: var(--color-text-dim); }
+.fm-st-word.pending { color: var(--color-text-dim); }
 /* 折叠 chevron（点击展开；图标指向右 = 展开语义）。button 载体现成矩形归零。 */
 .fm-chain-chev {
   margin-left: auto; flex: 0 0 auto;
