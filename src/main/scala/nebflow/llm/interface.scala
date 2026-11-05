@@ -648,7 +648,15 @@ object LlmInterface extends LlmRuntime:
                       case None => IO.unit
                     }
                   ),
-                  onProviderExhausted = Some(c => healthMonitor.markDown(c.providerId, c.model, "provider exhausted"))
+                  // 5xx 归批（2026-11-05）：非流面同流面口径——上游暂时不可用
+                  // （500/502/503/504/550）走**冷却窗 + 指数退避**，不 markDown
+                  // （探测空历史必成功 ⇒ 秒回 UP ⇒ 下一发再 5xx 的 flap 风暴）。
+                  // 其余分类（Auth/404/EmptyStream 等确证死亡）维持 markDown。
+                  onProviderExhausted = Some((c, cls) =>
+                    if cls.reason == FailoverReason.ServerError then
+                      healthMonitor.coolDown(c.providerId, c.model, "upstream 5xx (non-stream)")
+                    else healthMonitor.markDown(c.providerId, c.model, "provider exhausted")
+                  )
                 )
                 // 修 2026-10-21 「恢复不回绿」腿②（非流面）：调用成功即清除——
                 // 与流面 winner 同一事件语义：并发请求中途写入的 Down 标记在
@@ -1080,7 +1088,21 @@ object LlmInterface extends LlmRuntime:
                                             // 失败分类恰好过一次）上；内部自判——总闸关 / 非
                                             // RateLimit / 配额体（1308 计划性额度 = 换链腿）/ 非账户级
                                             // 响应体（单请求类，走既有 retry）⇒ no-op，零行为变化。
-                                            val notify = onAttempt.traverse_(_.apply(attempt)) *>
+                                            // 5xx 归批（2026-11-05）：上游暂时不可用 ⇒
+                                            // **provider 级冷却 + 指数退避**（15s→30s→60s→
+                                            // 120s→300s 封顶，窗到期自动半开试探），不走
+                                            // markDown（进探测集只会造 flap：空历史探测秒成功
+                                            // ⇒ 秒回 UP ⇒ 下一发再 500/550）。挂在 notify 上
+                                            // = 每条失败分支恰好执行一次，三条分支零重复。
+                                            val cooldown5xx =
+                                              if classification.reason == FailoverReason.ServerError then
+                                                healthMonitor.coolDown(
+                                                  candidate.providerId,
+                                                  candidate.model,
+                                                  s"upstream 5xx (${classification.statusCode.map(_.toString).getOrElse("n/a")})"
+                                                )
+                                              else IO.unit
+                                            val notify = onAttempt.traverse_(_.apply(attempt)) *> cooldown5xx *>
                                               registry.throttle.onRateLimitSignal(
                                                 candidate.provider.baseUrl,
                                                 classification.reason,

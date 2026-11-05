@@ -94,6 +94,10 @@ object Fallback:
    *
    *   - `"1308"` = zhipu「已达到 5 小时的使用上限」（HTTP 429，17:54:58，当日最后
    *     一条 zhipu 事件；此后无 `recovered (UP)`）——**额度**语义，计划性。
+   *   - `"1310"` = zhipu「您已达到每周/每月使用上限，您的限额将在 … 重置」
+   *     （HTTP 429，2026-11-05 13:32 实测：`{"error":{"type":"rate_limit_error",
+   *     "code":"1310", …}}`）——同属**计划性额度**（重置时刻是未来某日），
+   *     60s 退避重试无意义，正确动作 = 立即换链 + 配额软回避窗。
    *
    * 同族码 `1302`（HTTP 429 ×16，16:58–17:54，「您的账户已达到速率限制，请您控制
    * 请求频率」/ `rate_limit_error`）经现读判读为**频率类**（60s 窗口自愈）⇒
@@ -103,7 +107,7 @@ object Fallback:
    * 403 面不靠码识别（LLM 面唯一实证形态 = kimi 5h 额度闸，错误体
    * `permission_error` + `5-hour usage limit`），见 [[isQuotaError]]。
    */
-  val QuotaUpstreamCodes: Set[String] = Set("1308")
+  val QuotaUpstreamCodes: Set[String] = Set("1308", "1310")
 
   /**
    * 错误体是否携带某上游码：JSON 引号形（`"code":"1308"`）/ 上游 message 前缀形
@@ -242,6 +246,42 @@ object Fallback:
         )
       case e => isNetworkUnreachableThrowable(e)
 
+  /**
+   * 5xx 归批单 attempt 面（2026-11-05）：该次失败是否为「上游暂时不可用」
+   * （500/502/503/504/550，见 [[UpstreamUnavailable]]）。判据 = 分类产物
+   * （reason=ServerError）且 Transient——不看状态码字面，保证 stringly 路径
+   * （无结构化 HttpError）同样命中。
+   */
+  private[llm] def isUpstreamUnavailableAttempt(a: FallbackAttempt): Boolean =
+    a.reason.contains(FailoverReason.ServerError) && a.permanence.contains(ErrorPermanence.Transient)
+
+  /**
+   * 5xx 归批（2026-11-05）的链穷尽判据：**全部** attempt 都是上游暂时不可用
+   * ⇒ 这是「供应商此刻供不出服务」，按退避等待处置（等同 #692 网络不可达等待）：
+   * 不进终态、不烧重试预算、不判失败。与 [[isNetworkUnreachableExhaustion]] 的
+   * 分界：判据全在 5xx 面，且**不要求**排他（混合链 [5xx, 网络] 同样可等待——
+   * 两者都是「等得来」）；但只要有一条**明确拒绝**（auth/format/model）就不等待
+   * ——拒绝等不来，重投只会再被拒（沿用 #692 的作者令判词）。
+   *
+   * 对应作者令（2026-11-05 13:31）：「5xx 不升级为冻结理由」——全链 5xx ⇒ 面板标
+   * 不可用 + 退避等待，不是失败判词。
+   */
+  def isUpstreamUnavailableExhaustion(error: Throwable): Boolean =
+    error match
+      case e: FallbackExhaustedError =>
+        e.attempts.nonEmpty && e.attempts.exists(isUpstreamUnavailableAttempt) &&
+          !e.attempts.exists(isExplicitRejectionAttempt) &&
+          e.attempts.forall(a => isUpstreamUnavailableAttempt(a) || isNetworkClassAttempt(a))
+      case _ => false
+
+  /**
+   * 网络不可达 + 上游不可用（5xx）的统一「可等待」判据——agent 层单一入口
+   * （`AgentProcessing` 的 waiting-network 分支），两个面走同一套退避等待与同一
+   * 个面板状态，避免「5xx 走冻结判死、网络走等待」这种按异常类型分裂的处置。
+   */
+  def isWaitingRetryableExhaustion(error: Throwable): Boolean =
+    isNetworkUnreachableExhaustion(error) || isUpstreamUnavailableExhaustion(error)
+
   private def classifyBase(error: Throwable): ErrorClassification =
     // Check for structured sttp4 HttpError first
     error match
@@ -251,7 +291,7 @@ object Fallback:
           case 401 | 403 => FailoverReason.Auth
           case 404 => FailoverReason.ModelNotFound
           case 429 => FailoverReason.RateLimit
-          case 500 | 502 | 503 => FailoverReason.ServerError
+          case n if UpstreamUnavailable.isStatus(n) => FailoverReason.ServerError
           case 529 => FailoverReason.Overloaded
           case 400 => FailoverReason.Format
           case _ => FailoverReason.ProviderError
@@ -268,7 +308,14 @@ object Fallback:
           case 400 if isContextOverflow => ErrorPermanence.Fatal
           case 401 | 403 | 404 | 400 => ErrorPermanence.Permanent
           case _ => ErrorPermanence.Transient
-        val evict = !(c == 400 && !isContextOverflow)
+        // 5xx 归批（2026-11-05）：上游暂时可用性失败 ⇒ **不参与驱逐**（evict=false）。
+        // 动因同 400（审计 20260903 子项②），但机理相反：5xx 的 provider 确实此刻
+        // 供不出服务，可它**马上就要么好、要么继续坏**——markDown 进探测集后探测
+        // 空历史「hi」秒成功 ⇒ 秒回 UP ⇒ 下一发再 5xx，DOWN/UP flap 风暴。正确动作
+        // = provider 级**冷却窗 + 指数退避**（[[ProviderHealthMonitor.coolDown]]，
+        // 窗到期自动半开试探），不进健康 Down 状态、不进探测集。归类表见
+        // [[UpstreamUnavailable]]。
+        val evict = !(c == 400 && !isContextOverflow) && !UpstreamUnavailable.isStatus(c)
         if c == 400 && !isContextOverflow then
           // 案① A4（chain-llmstall-fix）：结构化 400-Format 与下方 stringly 残余路径
           // **同源收口**——两者都经 [[formatClassification]]，终局语义（Format /
@@ -343,6 +390,17 @@ object Fallback:
           )
         else if msg.contains("timeout") || msg.contains("timed out") then
           ErrorClassification(FailoverReason.Timeout, ErrorPermanence.Permanent, message = Some(error.getMessage))
+        else if UpstreamUnavailable.isUpstreamUnavailableMessage(msg) then
+          // 5xx 归批（2026-11-05）：无结构化状态码的残余路径（文本里带
+          // `statusCode: 550` / `HTTP 550` 等）同样归「上游暂时不可用」——
+          // 同族、同处置（可重试、换 provider、不驱逐、不冻结）。判据在
+          // [[UpstreamUnavailable.isUpstreamUnavailableMessage]]，不认裸数字。
+          ErrorClassification(
+            FailoverReason.ServerError,
+            ErrorPermanence.Transient,
+            message = Some(error.getMessage),
+            evict = false
+          )
         else if msg.contains("auth") || msg.contains("unauthorized") || msg.contains("403") || msg.contains("401") then
           ErrorClassification(FailoverReason.Auth, ErrorPermanence.Permanent, message = Some(error.getMessage))
         else if msg.contains("rate limit") || msg.contains("429") then
@@ -389,7 +447,7 @@ object Fallback:
     action: ModelCandidate => IO[T],
     maxRetries: Int = MaxRetries,
     onAttempt: Option[FallbackAttempt => IO[Unit]] = None,
-    onProviderExhausted: Option[ModelCandidate => IO[Unit]] = None
+    onProviderExhausted: Option[(ModelCandidate, ErrorClassification) => IO[Unit]] = None
   ): IO[FallbackResult[T]] =
 
     def tryWithRetry(
@@ -438,7 +496,10 @@ object Fallback:
           onAttempt.traverse_(_.apply(failAttempt))
           val allFailures = priorFailures :+ failAttempt
 
-          val notifyExhausted = onProviderExhausted.traverse_(_.apply(candidate))
+          // 5xx 归批（2026-11-05）：回调带上分类——「5xx = 冷却，其余 = 驱逐」的
+          // 分流由唯一调用点（interface.scala 的 onProviderExhausted）按 classification
+          // 决定，本层不重复判定。
+          val notifyExhausted = onProviderExhausted.traverse_(_.apply(candidate, classification))
 
           classification.permanence match
             case ErrorPermanence.Fatal =>
