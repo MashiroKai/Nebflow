@@ -7,26 +7,37 @@ package nebflow.core.ask
  * five-tool-redesign__delegate-nebflow-6cf27f86.zh-CN.md）。
  *
  * 覆盖面：
- *   F1  AllowedTools 封闭枚举逐字钉死 = ask 专属两件 + Subagent 只读五件
+ *   F1  AllowedTools 封闭枚举逐字钉死 = ask 专属三件 + Subagent 只读五件
  *   F2  read_file_content 退役：白名单/注册面双缺席
- *   F3  AskExclusiveTools 反剥集 ≠ AllowedTools：只含 ask 专属两件，不碰
+ *   F3  AskExclusiveTools 反剥集 ≠ AllowedTools：只含 ask 专属三件，不碰
  *       通用只读五件（防「反剥连坐主会话读面」回归）
  *   F4  只读五件全员注册（ToolRegistry 在册，ask 早退集可解析成 schema）
  *   F5  promptFor：工具面描述与绑定文件绝对路径注入（Read 的锚）
+ *
+ * gitquery 批（2026-11-05）增补：第三件 = `GitQuery`（只读 git 查询），本 spec 的
+ * F1/F3 逐字期望同批更新；该工具的调用面/逃逸面/截断面在
+ * `nebflow.core.ask.GitQuerySpec`（T1–T7）。
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 final class AskToolFaceSpec extends munit.FunSuite:
 
-  test("F1 AllowedTools = ask 专属两件 + SubagentFixedTools 只读五件（封闭枚举逐字）") {
+  test("F1 AllowedTools = ask 专属三件 + SubagentFixedTools 只读五件（封闭枚举逐字）") {
     assertEquals(
       AskSessions.AllowedTools,
-      Set("message_record_search", "send_message_to_main_chat") ++ nebflow.agent.AgentCore.SubagentFixedTools
+      Set("message_record_search", "send_message_to_main_chat", "GitQuery")
+        ++ nebflow.agent.AgentCore.SubagentFixedTools
     )
     assertEquals(
       AskSessions.AllowedTools,
       Set(
-        "message_record_search", "send_message_to_main_chat",
-        "Read", "Glob", "Grep", "WebSearch", "WebFetch"
+        "message_record_search",
+        "send_message_to_main_chat",
+        "GitQuery",
+        "Read",
+        "Glob",
+        "Grep",
+        "WebSearch",
+        "WebFetch"
       )
     )
   }
@@ -39,8 +50,11 @@ final class AskToolFaceSpec extends munit.FunSuite:
     )
   }
 
-  test("F3 AskExclusiveTools 反剥集只含 ask 专属两件（不碰通用只读五件）") {
-    assertEquals(AskSessions.AskExclusiveTools, Set("message_record_search", "send_message_to_main_chat"))
+  test("F3 AskExclusiveTools 反剥集只含 ask 专属三件（不碰通用只读五件）") {
+    assertEquals(
+      AskSessions.AskExclusiveTools,
+      Set("message_record_search", "send_message_to_main_chat", "GitQuery")
+    )
     assert(AskSessions.AskExclusiveTools.subsetOf(AskSessions.AllowedTools))
     // 反剥集与通用只读面零交集——进了反剥集会连主会话读面一起剥掉。
     val genericReadOnly = Set("Read", "Glob", "Grep", "WebSearch", "WebFetch")
@@ -57,12 +71,13 @@ final class AskToolFaceSpec extends munit.FunSuite:
     }
   }
 
-  test("F5 promptFor：工具面描述五件 + 绑定文件绝对路径注入") {
+  test("F5 promptFor：工具面描述五件 + GitQuery + 绑定文件绝对路径注入") {
     val p = AskContextAssembler.promptFor("笔记.md", "/vault/笔记.md", "【问答上下文】")
     assert(p.contains("Read / Glob / Grep"), clue(p.take(200)))
     assert(p.contains("WebSearch / WebFetch"), clue(p))
     assert(p.contains("message_record_search"), clue(p))
     assert(p.contains("send_message_to_main_chat"), clue(p))
+    assert(p.contains("GitQuery"), "gitquery 批：分身必须知道有只读 git 查询面")
     assert(p.contains("/vault/笔记.md"), "绑定文件绝对路径必须进提示词（Read 锚）")
     assert(!p.contains("read_file_content"), "退役工具名不得残留提示词")
   }
