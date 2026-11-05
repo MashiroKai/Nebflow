@@ -2090,6 +2090,18 @@ export default {
   'canvas.pan': '抓手（或按住空格）',
   'canvas.a11yZoomLevel': '缩放 %d%', // 手机手势批：手机层图片查看 aria-live 档位播报（规格表 §2.8）
   'canvas.imgFailed': '加载失败',
+  // canvas-video-player 批（2026-11-05）：自研视频控件条的无障碍名（aria-label/title，
+  // 不是页面文案 —— 控件面无可见字，除时间读数外零 copy）。
+  'canvas.videoControls': '视频控件',
+  'canvas.videoPlay': '播放',
+  'canvas.videoPause': '暂停',
+  'canvas.videoMute': '静音',
+  'canvas.videoUnmute': '取消静音',
+  'canvas.videoProgress': '进度',
+  'canvas.videoVolume': '音量',
+  'canvas.videoPip': '画中画',
+  'canvas.videoFullscreen': '全屏',
+  'canvas.videoExitFullscreen': '退出全屏',
   'canvas.closeTab': '关闭标签页',
   'canvas.stackToggle': '叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）',
   'canvas.noRef': '该标签页暂不支持引用',

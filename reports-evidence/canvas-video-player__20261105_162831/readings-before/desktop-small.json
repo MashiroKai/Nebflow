@@ -1,0 +1,86 @@
+{
+  "pane": {
+    "l": 711,
+    "t": 17,
+    "r": 1429,
+    "b": 881,
+    "w": 718,
+    "h": 864
+  },
+  "host": {
+    "cls": "canvas-video-viewer",
+    "box": {
+      "l": 711,
+      "t": 17,
+      "r": 1429,
+      "b": 881,
+      "w": 718,
+      "h": 864
+    },
+    "pad": {
+      "l": 16,
+      "r": 16,
+      "t": 16,
+      "b": 16
+    },
+    "contentBox": {
+      "l": 727,
+      "t": 33,
+      "r": 1413,
+      "b": 865,
+      "w": 686,
+      "h": 832
+    }
+  },
+  "video": {
+    "box": {
+      "l": 910,
+      "t": 359,
+      "r": 1230,
+      "b": 539,
+      "w": 320,
+      "h": 180
+    },
+    "intrinsic": {
+      "w": 320,
+      "h": 180
+    },
+    "ar": 1.778
+  },
+  "painted": {
+    "l": 910,
+    "t": 359,
+    "r": 1230,
+    "b": 539,
+    "w": 320,
+    "h": 180
+  },
+  "ratio": {
+    "wOverPane": 0.4457,
+    "hOverPane": 0.2083,
+    "areaOverPane": 0.0929,
+    "wOverAvail": 0.4665,
+    "hOverAvail": 0.2163,
+    "fillW": 0.4665,
+    "fillH": 0.2163
+  },
+  "margins": {
+    "left": 199,
+    "top": 342,
+    "right": 199,
+    "bottom": 342
+  },
+  "caps": {
+    "nativeControls": true
+  },
+  "bar": null,
+  "btnTargets": [],
+  "btnStyles": [],
+  "overlap": {
+    "headerArea": 0,
+    "chromeArea": 0,
+    "barArea": 0,
+    "paintOutsidePane": 0
+  },
+  "outsideAvail": 0
+}
