@@ -210,7 +210,7 @@ import { applyVoiceSeal } from './voiceSeal.js';
 // window.* 挂钩行与顶层 setInterval/addEventListener 挂点保留在 main.js 原位置)。
 import { stopThinkingTimer } from './main/thinkingTimer.js';
 import { applyLocalFreeze, setFrozenBarState, skipCurrentFreeze } from './main/freeze.js';
-import { showHistoryLoader, hideHistoryLoader, showHistoryEnd, clearHistoryIndicators, hideChatSkeleton } from './main/historyIndicators.js';
+import { showHistoryLoader, hideHistoryLoader, showHistoryEnd, clearHistoryIndicators } from './main/historyIndicators.js';
 import { showGlobalPermissionToast, dismissGlobalPermissionToasts } from './main/permToast.js';
 import { updateBgAgentIndicator, bgAgentKindFromSession, renderBgAgentDropdown, armBgUptimeTick, fetchActiveAgentsOnOpen, clearBgStuck, bgScopeRootForBucket, refreshAllBgAgentIndicators } from './main/bgAgents.js';
 // uifix 批（2026-10-22 作者令「附件放在对话框上面，不要遮挡文字」）：附件条 in-flow
@@ -2138,7 +2138,6 @@ onMessage('historyPage', (msg, view) => {
 
   const sid = msg.sessionId;
   hideHistoryLoader();
-  hideChatSkeleton(); // audit ②27：初载骨架卡让位（与渲染同一任务帧 ⇒ 零布局跳变）
   if (!view) return;
 
   // Use explicit flag instead of historyOffset === 0 to prevent double-clear.
