@@ -569,15 +569,22 @@ private[agent] object AgentFinishTurn:
         result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, None)
       yield result
       end for
-    else if state.pendingCompaction.isEmpty && state.execution.pendingImmediateInputs.nonEmpty then
+    // 回合末腿也走**同一个**注入时机判定单点（midturn-injection-timing 批）：
+    // `stage = TurnEnd` 下 immediate 腿照旧开回落注入轮；真人 typeless 帧在该面
+    // 返回 Hold（留队 = 由下方 head-forward 作为新回合送达，不丢消息）。
+    else if state.pendingCompaction.isEmpty && InjectionTiming.hasInjectable(state.execution.pendingImmediateInputs, Nil, InjectionTiming.Stage.TurnEnd, compactionPending = false) then
       // 排队消息逐条注入（2026-09-15 ub 缺陷批，禁合并语义）：turn 末只取队首**一件**
       // immediate input 开一个独立 turn；其余留队，由后续 turn 边界逐条消费（到达顺序
       // 不变，每件各自若干 turn ⇒ 每件各自 roundComplete / 一次 save / 一次 pipeLlmCall）。
       // 原缺陷⑥「整批塞进一个新 turn」已删除。
-      val (immInputs, remainingInputs) = TurnBoundaryDrains.drainHeadExpanded(
+      val turnEndPlan = InjectionTiming.planBoundary(
         state.execution.pendingImmediateInputs,
-        compactionPending = false
-      )(expandRootNotify)
+        Nil,
+        stage = InjectionTiming.Stage.TurnEnd,
+        compactionPending = false,
+        expand = expandRootNotify
+      )
+      val (immInputs, remainingInputs) = (turnEndPlan.immediate, turnEndPlan.remainingImmediate)
       logAgentEvent(
         agentDef,
         depth,
