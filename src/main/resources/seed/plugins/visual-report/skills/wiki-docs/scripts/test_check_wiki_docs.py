@@ -71,8 +71,15 @@ def write(root, rel, text, binary=False):
     return path
 
 
-def doc(body, frontmatter="type: evidence-note\nstatus: open"):
-    return f"---\n{frontmatter}\n---\n\n# sample\n\n{body}\n"
+def doc(body, frontmatter="type: evidence-note\nstatus: open", figure_exempt=True):
+    """夹具文档外壳。
+
+    `figure_exempt=True`（缺省）在正文顶部补一行 `<!-- wiki-figure-exempt:
+    夹具文档 -->`：R19「必须有图」只该在**它的专门用例**里判这些短文本夹具，
+    否则每个断言 R7/R8/R9/R10 的用例都会顺手多出一条 image-required，把断言
+    淹掉。要验 R19 的用例显式传 `figure_exempt=False`。"""
+    head = "<!-- wiki-figure-exempt: 夹具文档，非图文报告 -->\n\n" if figure_exempt else ""
+    return f"---\n{frontmatter}\n---\n\n# sample\n\n{head}{body}\n"
 
 
 def validate(root, strict=True, allow=None, advisories=None, plainwords=None):
@@ -117,8 +124,9 @@ class Fixture(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def run_case(self, body, extra=None, strict=True, allow=None, advisories=None):
-        write(self.root, "sample.md", doc(body))
+    def run_case(self, body, extra=None, strict=True, allow=None, advisories=None,
+                 figure_exempt=True):
+        write(self.root, "sample.md", doc(body, figure_exempt=figure_exempt))
         for rel, text, binary in (extra or []):
             write(self.root, rel, text, binary=binary)
         return validate(self.root, strict=strict, allow=allow, advisories=advisories)
@@ -270,7 +278,10 @@ class TypographyAndAbbrev(Fixture):
         hits = rule_violations(self.run_case(body), "abbrev-expansion")
         self.assertEqual(1, len(hits), hits)
         self.assertIn("GCR", hits[0]["detail"])
-        self.assertEqual(8, hits[0]["line"], "报的是首次出现的那一行（front-matter/H1 之后第 8 行）")
+        # 行号 = 正文里那一行的真实行号（front-matter 5 行 + 夹具的
+        # `wiki-figure-exempt` 声明 2 行 = 第 10 行）。断言的是「报首次出现处」，
+        # 不是某个魔法数字：夹具外壳一改，这里跟着改。
+        self.assertEqual(10, hits[0]["line"], "报的是首次出现的那一行（front-matter/H1/夹具声明之后）")
 
     def test_abbrev_expanded_in_place_passes(self):
         body = ("&emsp;&emsp;银河宇宙线（GCR）是进入大气层之前的高能粒子流，通量随太阳"
@@ -521,6 +532,162 @@ class WritingStyleV2(Fixture):
         graph = [a for a in advisories if a.get("scope") == "graph"]
         self.assertEqual(["lonely.md"], [a["file"] for a in graph],
                          "孤儿文档仍要打印，只是降为建议")
+
+
+class FigureRenderBreakpoints(Fixture):
+    """R17 bare-name-embed / R18 image-in-human-fence（「图不显示」批 2026-11-05）。
+
+    真报障：`![[after-states-dark.png]]` 写在 ```human 围栏里，图实际在
+    `assets/<batch>/after-states-dark.png`。前端 `imageCandidates()` 不递归子目录
+    （R17），`expandImageEmbeds()` 不展开围栏内嵌入（R18）——两个断点各自独立地
+    保证「图不显示」，所以两条都要有独立断言。"""
+
+    def test_bare_name_for_subdir_file_is_flagged_with_the_path_to_write(self):
+        body = ("![[after-states-dark.png]]\n\n"
+                "图 1 八个状态同屏。\n\nSee also [[index#fixture index]].")
+        violations = self.run_case(
+            body, extra=[("assets/batch01/after-states-dark.png", "", True)])
+        hits = rule_violations(violations, "bare-name-embed")
+        self.assertEqual(1, len(hits), violations)
+        self.assertIn("![[assets/batch01/after-states-dark.png]]", hits[0]["detail"],
+                      "违规必须给出应写路径（可粘贴）")
+
+    def test_vault_relative_path_with_subdir_passes(self):
+        body = ("![[assets/batch01/after-states-dark.png]]\n\n"
+                "图 1 八个状态同屏。\n\nSee also [[index#fixture index]].")
+        violations = self.run_case(
+            body, extra=[("assets/batch01/after-states-dark.png", "", True)])
+        self.assertEqual([], rule_violations(violations, "bare-name-embed"), violations)
+
+    def test_bare_name_at_vault_asset_root_is_resolvable_and_passes(self):
+        """`assets/x.png` 在渲染器第 ④ 格里，裸名能命中 ⇒ 不该误报。"""
+        body = ("![[pic.png]]\n\n图 1 一张图。\n\nSee also [[index#fixture index]].")
+        violations = self.run_case(body, extra=[("assets/pic.png", "", True)])
+        self.assertEqual([], rule_violations(violations, "bare-name-embed"), violations)
+
+    def test_ambiguous_basename_lists_candidates(self):
+        body = ("![[pic.png]]\n\n图 1 一张图。\n\nSee also [[index#fixture index]].")
+        violations = self.run_case(body, extra=[
+            ("assets/batchA/pic.png", "", True),
+            ("assets/batchB/pic.png", "", True),
+        ])
+        hits = rule_violations(violations, "bare-name-embed")
+        self.assertEqual(1, len(hits), violations)
+        self.assertIn("assets/batchA/pic.png", hits[0]["detail"])
+        self.assertIn("assets/batchB/pic.png", hits[0]["detail"])
+
+    def test_markdown_and_html_syntax_get_matching_suggestions(self):
+        body = ("![图 1 说明](pic.png)\n\n<img src=\"pic.png\">\n\n"
+                "See also [[index#fixture index]].")
+        violations = self.run_case(body, extra=[("assets/batchA/pic.png", "", True)])
+        hits = rule_violations(violations, "bare-name-embed")
+        details = " ".join(h["detail"] for h in hits)
+        self.assertIn("![](assets/batchA/pic.png)", details)
+        self.assertIn('<img src="assets/batchA/pic.png">', details)
+
+    def test_image_inside_human_fence_is_flagged(self):
+        body = ("```human\n## 结论\n结论一句话。\n\n图：\n"
+                "![[assets/batch01/pic.png]]\n```\n\n"
+                "See also [[index#fixture index]].")
+        violations = self.run_case(body, extra=[("assets/batch01/pic.png", "", True)])
+        hits = rule_violations(violations, "image-in-human-fence")
+        self.assertEqual(1, len(hits), violations)
+        self.assertIn("围栏", hits[0]["detail"])
+
+    def test_image_after_the_fence_passes(self):
+        body = ("```human\n## 结论\n结论一句话。\n```\n\n"
+                "![[assets/batch01/pic.png]]\n\n图 1 一张图。\n\n"
+                "See also [[index#fixture index]].")
+        violations = self.run_case(body, extra=[("assets/batch01/pic.png", "", True)])
+        self.assertEqual([], rule_violations(violations, "image-in-human-fence"), violations)
+
+    def test_dead_reference_is_reported_once_by_r6_only(self):
+        """R6 已经报的死引用，R17 不复述（一处只报一次，修完重跑看下一处）。"""
+        body = ("![[nope.png]]\n\n图 1 一张图。\n\nSee also [[index#fixture index]].")
+        violations = self.run_case(body)
+        self.assertEqual(1, len(image_violations(violations)), violations)
+        self.assertEqual([], rule_violations(violations, "bare-name-embed"), violations)
+
+    def test_legacy_document_is_advisory_not_violation(self):
+        """存量（无时间块的活文档 + 非 strict）只打 advisory，不动退出码。"""
+        advisories = []
+        violations = self.run_case(
+            "![[after-states-dark.png]]\n\n图 1 说明。\n\nSee also [[index#fixture index]].",
+            extra=[("assets/batch01/after-states-dark.png", "", True)],
+            strict=False, advisories=advisories)
+        self.assertEqual([], rule_violations(violations, "bare-name-embed"))
+        self.assertIn("bare-name-embed", {a["rule"] for a in advisories})
+
+
+class FigureFirst(Fixture):
+    """R19 image-required / R20 stacked-detail（以图为主批 2026-11-05 21:24）。
+
+    阈值逐字：R19 = 图片引用或 ```mermaid 块至少一处；R20 = 一个 `##` 章节里
+    连续 ≥12 行逐条细节（列表项 / 代码围栏内的行；mermaid 与表格不算）且该节
+    没有 `<details>`。用例把两个阈值都钉在边界上。"""
+
+    def test_document_without_figure_is_flagged(self):
+        violations = self.run_case("&emsp;&emsp;只有散文，没有图。",
+                                   figure_exempt=False)
+        hits = rule_violations(violations, "image-required")
+        self.assertEqual(1, len(hits), violations)
+        self.assertIn("wiki-figure-exempt", hits[0]["detail"], "违规要给出例外声明写法")
+
+    def test_declared_figure_exemption_passes(self):
+        body = ("<!-- wiki-figure-exempt: 推导型文档，公式逐步变形无法成图 -->\n\n"
+                "&emsp;&emsp;只有散文，但已显式声明例外。")
+        violations = self.run_case(body, figure_exempt=False)
+        self.assertEqual([], rule_violations(violations, "image-required"), violations)
+
+    def test_mermaid_block_counts_as_a_figure(self):
+        body = ("```mermaid\ngraph LR\n  A --> B\n```\n\n"
+                "&emsp;&emsp;图是代码画的也算图。")
+        violations = self.run_case(body, figure_exempt=False)
+        self.assertEqual([], rule_violations(violations, "image-required"), violations)
+
+    def _details_run(self, n):
+        items = "\n".join(f"- 读数 {i}: EXIT 0" for i in range(n))
+        return ("## 一、取证读数\n\n**结论一句话。**\n\n" + items + "\n\n"
+                "±0 行\n\nSee also [[index#fixture index]].")
+
+    def test_twelve_unfolded_detail_lines_are_flagged(self):
+        violations = self.run_case(self._details_run(12))
+        hits = rule_violations(violations, "stacked-detail")
+        self.assertEqual(1, len(hits), violations)
+        self.assertIn("<details>", hits[0]["detail"])
+        self.assertIn("12", hits[0]["detail"])
+
+    def test_eleven_detail_lines_stay_below_the_threshold(self):
+        violations = self.run_case(self._details_run(11))
+        self.assertEqual([], rule_violations(violations, "stacked-detail"), violations)
+
+    def test_same_lines_inside_details_pass(self):
+        items = "\n".join(f"- 读数 {i}: EXIT 0" for i in range(14))
+        body = ("## 一、取证读数\n\n**结论一句话。**\n\n<details>\n<summary>过程</summary>\n\n"
+                + items + "\n\n</details>\n\nSee also [[index#fixture index]].")
+        violations = self.run_case(body)
+        self.assertEqual([], rule_violations(violations, "stacked-detail"), violations)
+
+    def test_table_rows_do_not_count_as_stacked_detail(self):
+        rows = "\n".join(f"| 行 {i} | 0 |" for i in range(16))
+        body = ("## 一、读数表\n\n**结论一句话。**\n\n| 项 | 值 |\n|---|---|\n"
+                + rows + "\n\nSee also [[index#fixture index]].")
+        violations = self.run_case(body)
+        self.assertEqual([], rule_violations(violations, "stacked-detail"),
+                         "表格是压缩形态，不算逐条铺散文")
+
+    def test_fold_exemption_declaration_passes(self):
+        body = ("<!-- wiki-fold-exempt: 结论本身就是逐条读数，已是最简形态 -->\n\n"
+                + self._details_run(14))
+        violations = self.run_case(body)
+        self.assertEqual([], rule_violations(violations, "stacked-detail"), violations)
+
+    def test_legacy_document_is_advisory_not_violation(self):
+        advisories = []
+        violations = self.run_case(self._details_run(14), strict=False,
+                                   advisories=advisories)
+        self.assertEqual([], rule_violations(violations, "stacked-detail"))
+        self.assertIn("stacked-detail", {a["rule"] for a in advisories})
 
 
 class RuleTableHygiene(unittest.TestCase):
