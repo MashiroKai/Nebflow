@@ -5,7 +5,7 @@ status: draft-for-author-ruling
 
 # stand-scala 最小可信基总体设计方案（路线图）
 
-> **一句话**：作者 11-05 12:50 令「目前核心目标就是构建『最小』可信基。按照这个目标给出接下来的设计方案吧」——本件给出「最小」的可机械执行判据、五基清单定案（两已落 + 三待建）、压缩策略面两案对比、按依赖实测重排的构筑批次 DAG、上层引用边界与机械门方案、总验收清单、待拍板整合清单。零代码纯 docs；不推翻已落两基与已拍口径，只设计「接下来怎么走」。
+> **一句话**：作者 11-05 12:50 令「目前核心目标就是构建『最小』可信基。按照这个目标给出接下来的设计方案吧」——本件给出「最小」的可机械执行判据、五基清单定案（两已落 + 三待建）、压缩策略面两案对比、按依赖实测重排的构筑批次 DAG、上层引用边界与机械门方案、总验收清单、待拍板整合清单。零代码纯 docs；不推翻已落两基与已拍口径，只设计「接下来怎么走」。**11-05 补格轮增补（当晚）**：作者 12:58 六基点名中「云端链接器」原文全件零格——本轮补格＝§2.7 现状散面盘点（14 面 file:line 亲读锚点）＋三案落位＋Q-22…Q-29 语义边界问句；格数判定＝维持五基、第六格开放待作者拍板（作者信源仅五字，不立格即不臆测语义边界）；原五基定案、批次 DAG、Q-1…Q-21 编号零改动。
 
 **立论基础（作者口径，逐字在档，不加码）**：19:54「所有仓库代码编写保持最小可信基构建原则。有限确保底层逻辑的正确性」「本次 db 与 pilogic 就是一次可信基的重新构筑」；20:06 可信两定义——①安全性可信＝通过我们设计的测试，②功能完备性可信＝可信基让上层构建不引入新的基础性代码、上层单方向引用下层；20:12 工具链标准全谱（测试+风格质量工具同属标准）；22:50 认可的分析框架——pilogic✓ db✓ llm-provider✗（半基）＋两实缺口（工具执行基、权限判定基）＋一半缺口（压缩策略面）。
 
@@ -20,6 +20,7 @@ status: draft-for-author-ruling
 - 代码基线 = main `996b66377`（本 worktree 同位实测）；`src/main/scala/nebflow/` 下 pilogic 14 件、db 13 件已落。文档件基线：`docs/` 被 `.gitignore:30` 忽略，输入件多为盘上产物，读数以主工作区实测为准。
 - 消费关系实测（本轮 grep，亲证）：pilogic 的主链消费者 = `actor/AgentState.scala`（RunLedger）、`agent/PiLoopWiring.scala`（轮 A 织入）、`core/project/FlowMapEventLog.scala`（KernelEvent）；db 的主链消费者 = PendingAskLedger、HistoryArchiver、DispatchNotify、FlowMapEventLog、ScheduledTaskStore、SessionStore、HealthMonitor、PiLoopWiring 共 8 文件。反向（pilogic→主链、db→主链）零命中。
 - 关键锚点本轮亲读复核（行号为 `996b66377` 现值，非导航件旧值）：工具分发口 `AgentSessionExecution.scala:2110`（`ToolRegistry.TOOL_MAP.get`）；权限闸调用位 `:1471`、判定体 `:1715`（`permissionDecision`）；远端路由 `:2146-2167`（`RemoteExecutor.remoteableTools` 六件）；BashTool 全文零 `fileLockManager` 引用（rg 实测 0 命中）；锁缺省 `core/tools/types.scala:37` `Option = None`；档位阶梯 `core/permissions.scala:28/:34-35/:125-138/:180-195`；权限卡内存槽 `agent/InteractionHub.scala:81`（`Ref.unsafe`，db D-8 重装腿注释同文件在场）；压缩阈值 `shared/CompactThreshold.scala:9-30`（硬编码全局）；ws 闸门 `agent/PiLoopWiring.scala:43/:167`（翻译钉形状、闸门关）；窄口先例 `core/LlmRuntimePort.scala:9-23`；主链真轮帽仍 NOT FOUND（`maxTurns/MaxTurns` 主链零命中，RetryPolicy 闸 `:1105` 只数失败重试）；agent/gateway 直引 `nebflow.llm` 内部 = 10 文件（病-11 的现值，比审计记的 4 文件更宽）。
+- 补格轮基线（11-05 晚，main `33cad0d99`，本 worktree 同位实测）：`996b66377..33cad0d99` 仅 docs 两提交（`e64b796f1`/`01de6e214`）＋合并件，src/ 零位移——上条既有锚点继续有效；「云端链接器」全仓零命中本轮亲测复核（scala/md/json 后缀 rg 含 docs/，零命中）；§2.7 散面表锚点全部为本轮 `33cad0d99` 现值亲读。
 
 ## 一、「最小」的判据句
 
@@ -34,6 +35,8 @@ status: draft-for-author-ruling
 ## 二、基清单定案
 
 **总形**：五基两层。底层两基已落——pilogic（循环与位点，零依赖叶子）、db（事实与持久化，零 nebflow 依赖）；待建三基落其上——llm-provider 基（一次调用的全部故障语义）、权限判定基（一次工具调用的裁决）、工具执行基（一次工具调用的执行管线）；基间允许的依赖仅「向下到 db」与「工具基→权限基」，pilogic 永远零依赖（现状实测维持）。
+
+**口径同步（11-05 补格轮）**：作者 12:58 六基点名的第三件「云端链接器」经§2.7 散面盘点与三案落位，本轮判定＝**维持五基两层，第六格开放**——语义边界未展开（作者信源仅「云端链接器」五字），立格即代作者臆测；其已定部位（远端工具腿，§2.7 丙2）不因补格变动，仍归位工具执行基/权限基既定批次（批 4/批 5）。第六格立否归 Q-22（语义边界）→Q-23（格数）链式拍板；若立，前置依赖倒置手术批（§2.7 案①反证），本路线图批次 DAG 不重排、连接基批以增补轮插入。
 
 ### 2.1 pilogic（已落，最小面确认）
 
@@ -133,6 +136,44 @@ status: draft-for-author-ruling
 
 **推荐甲案起步＋乙案挂账**：把「hook 引擎」诉求拆为三件事逐件对位——事件转发（db events/＋KernelEvent，已落）、可编程操作器（pilogic Interceptor 族，割接轮后可用）、监控位点（EventSink＋db 事件流读面，已落）。三件事在 scala 线均有已落或已排期载体，分层案在出现「跨进程/多服务」或「运行期可编程挂接」的实证需求（J1）前不立项；届时参照 v2 controller 形态立批。裁定归作者（Q-20）。两线不要求同构，作者思想一致性已在此对位中体现。
 
+### 2.7 云端链接器补格（11-05 补格轮：现状散面盘点＋三案落位＋问句，不代裁）
+
+**信源与缺口**：作者 11-05 12:58 逐字「还需要的可信基有工具调用引擎，云端链接器，hook引擎。这些都是非常基础的功能」——点名三件中，工具调用引擎已对位工具执行基（§2.4，与§2.5 权限基成对）、hook 引擎已对位§2.6/Q-20；**「云端链接器」五字之外零展开**，本路线图原文全件零格（分发器 Grep 实测零命中；本轮全仓 rg 复核 scala/md/json 后缀仍零命中）。纪律：不代作者臆测语义边界——本节主产出＝现状散面盘点＋三案落位＋语义边界问句（Q-22…Q-29），不是设计；一切方案均〔提案〕级。
+
+**现状散面盘点（本轮亲读，锚点=`33cad0d99` 现值）**——scala 线一切「对上/对外连接」既有实现面，按语义分三组：
+
+| 组/面 | 实现在哪（锚点） | 现在谁在用 | 与基的关系（判读） |
+|---|---|---|---|
+| 甲1 云客户端本体（登录态/心跳/端点发现/对端名册/更新挂账） | `neblink/NeblinkClient.scala:137-141`（类注释：device login, periodic heartbeat, peer discovery）；heartbeat `:503-538`（POST /api/device/heartbeat，携 endpoints/build/channel/uiPort/update.target） | 唯一构造点 `gateway/GatewayMain.scala:1247-1293`；FriendService/RemoteExecutor/AttachUpload 经它发请求 | 独立面，五基无一承接 |
+| 甲2 身份登录族（浏览器 PKCE/静默重登/无头密码，汇合 device register） | `neblink/LogtoTransport.scala:10-24`（两条登录路径汇合于 /api/device/register；族件 LogtoAuthCode/PkceLoginSession/LogtoSilentRelogin/LogtoPasswordFlow）；`GatewayMain.scala:1254-1276`（401 自愈钩装配） | NeblinkRoutes auth 族路由、NeblinkClient 凭据腿自愈 | 独立面（会话自愈原语） |
+| 甲3 中继隧道（跨网 relay 承载 WS） | `neblink/NeblinkRelayTunnel.scala:21-49`（server↔device B，relay_request/relay_response/ping-pong，always-on、指数退避重连）；relayExec `NeblinkClient.scala:1330-1358`（P2P 不通时的远端执行兜底） | relayExec/relayTransfer/relayNotify 族、门户腿（甲4） | 工具执行基远端腿（R6 位）的承载通道之一 |
+| 甲4 门户隧道（网页端经云门户达本机控制台）＋一次性票据 | `neblink/PortalTunnelBridge.scala:25-55`（downlink http_request/ws_open/ConsoleTicketMint/BindingControl → PortalWireCodec 唯一编码点；HTTP 面直入本机 Router 切片）；`neblink/ConsoleTicketStore.scala:8-31`（账号绑定一次性控制台票据，redeemed-then-destroyed） | 云门户网页端→本机控制台（含 gzip 静态树） | 表示层邻近（J6 边界，Q-29 同族） |
+| 甲5 入网编排（踢停摆/自动重注册/45s 同步拍） | `neblink/NeblinkService.scala:73-94`（停摆位=三消费者共读同一真值：隧道/自动登录/静默重登）；`:451-452`（runSyncCycle=discovery/heartbeat）；NeblinkDiscovery/NeblinkEnrollment/EnrollGuard | `GatewayMain.scala:1299-1324`（setRelayClient/setPresenceService/RemoteExecutor.initialize:1304/发现循环权威持有者） | 独立面（发现/编排原语） |
+| 乙1 设备在线心跳（presence 拨号侧＋受话面） | `neblink/NeblinkPresenceService.scala:192-203`（5s ping/10s 判死、一条连接一条心跳线程同生同灭）；受话面 `gateway/PresenceRoutes.scala:491`（GET /neblink/presence）＋PresenceSessionRegistry（单会话顶替） | 前端面板在线点；AgentSessionSync/IdentitySync 的 sendData 数据通道 | 独立面（判活原语） |
+| 乙2 配对与验签＋fleet 开关 | `core/device/DeviceRegistry.scala:25-26,45`（devices.json 现读盘；分层门禁注释：core 消费方 DeviceDelegate/RemoteExecutor 不得 import neblink）；DeviceHmac；FleetConfig.enforceExplicitDevice（引擎侧消费位 `AgentSessionExecution.scala:2161`） | AgentSessionSync/AgentIdentitySync、DeviceDelegate、RemoteExecutor P2P 签头（`:1377-1395`）、FleetRoster | 权限相邻（allowSpawn 设备白名单）；**自造持久化**（db 基 G4 门存量观察项，Q-26） |
+| 乙3 跨设备文件/文本流（dropbox 域） | `dropbox/DropboxService.scala:57-67`（WS 信令 channel="dropbox"＋HTTP 字节；messages.json 落盘）；`ChunkTransport.scala:9-15`（传输层缝：P2P 主腿/relay 兜底/测试自环共契约，failover offset 不变）；`neblink/FileTransferAction.scala:9-43`（get/put/list/probe；browse 白名单出口） | SendMessage 设备腿（字节底座）、A1 读图回拉、远端文件浏览器 | 通道缝已抽象；messages.json=自造持久化（G4 存量观察项，Q-26） |
+| 乙4 附件上传（E1＋E2×n 分块） | `neblink/AttachUpload.scala:7-24`（唯一分块驱动：桌面腿与网页腿同源）；AttachmentCapability（fail-closed 能力探测）/AttachmentAck（E4 回执闸）/AttachUploadRegistry（取消位） | FriendService.sendAsAgent（桌面腿）、SocialRoutes 网页腿 | 独立面（分块续传原语） |
+| 乙5 跨设备状态投影 | `neblink/AgentSessionSync.scala:11-32`（后台子智能体会话投影，作者令 #929「多设备设计的核心就是透明」；presence sendData＋relay 双腿、LWW 收敛）；`AgentIdentitySync.scala:13-29`（身份收敛同族同构） | SubAgentTaskStore 写钩外推→对端投影仓（RemoteAgentSessions） | 独立面；**上行依赖实证**（AgentSessionSync:7 import nebflow.agent.SubAgentTaskStore） |
+| 丙1 消息面（Mail/SendMessage/DeviceMail） | 注册口 `core/tools/registry.scala:59,100,109`（Mail=统一消息原语三地址腿；SendMessage=A2A 好友/设备/群——`FriendMessageTool.scala:39-45` 职责边界：字节一律 DropboxService.sendLocalFiles；ListFriends 只读名册）；`core/mail/SessionMailbox.scala:13-30`（收件方持久邮箱：磁盘唯一真源、actor 消息只是门铃）；`neblink/DeviceMailInbox.scala:15-38`（跨设备收件腿＋事件号去重闸；账本进程内不落盘=作者待裁项 F2）；`NeblinkClient.scala:1470-1489`（mailUrl 唯一构造点/relayAgentMail） | agent 会话工具面；装配 `GatewayMain.scala:1420`（FriendMessageTool.initialize）、DropboxService.create `:1498` | 工具执行基只接执行口；消息语义（原语/邮箱/去重）无基承接 |
+| 丙2 远端工具腿 | `agent/AgentSessionExecution.scala:2143-2178`（显式 device＞会话默认＞本机三段判据、fleet 强制、stray 豁免、RemoteExecutor.execute）；`core/tools/RemoteExecutor.scala:175-181`（P2P POST /api/neblink/remote-exec＋relay 兜底双路）、`:1853-1857`（remoteableTools=六件 Bash/Read/Write/Edit/Glob/Grep）；RemoteExecCancelRegistry＋`neblink/BgCancelAction.scala`（取消面） | 主链 executeToolInner 远端分支（`:2177-2178`） | **已定位点**：§2.4 反证表「远端执行腿（R6 修后同口）」＋§2.5 远端腿同判（Q-4）＋批 5 取消面收编——本节零新增 |
+| 丙3 外部渠道桥（飞书/微信/邮件感知） | `social/FeishuBridgePlugin.scala:26-49`（feishu-chan 长连接→会话绑定→injectMessage）；`WeixinIlinkBridgePlugin.scala:26-51`（iLink 协议在官方 ClawBot side-car，本仓只做缝）；注入单点 `gateway/WebSocketRoutes.scala:924-946`（THE ONE bridge→session injection point）；`perception/MailClient.scala:13-25`（零第三方依赖 IMAP/SMTP）；`gateway/PerceptionIngestRoutes.scala:63-100`（唯一根才注入 ImmediateInput） | 用户飞书/微信/邮箱↔会话；perception=独立 daemon 进程（DaemonDock 托管） | 人机面邻近（J6）；Q-29 位置待裁 |
+| 丙4 图床/头像代理 | `neblink/AvatarProxy.scala:9-24`（服务端代取本账号头像，非开放代理，只取 identity.avatarUrl） | web 本地优先头像缓存（avatarCache.js） | 表示层（J6） |
+
+消费关系实测（本轮 grep 亲证）：`import nebflow.neblink`＝gateway 14 文件＋neblink 内 2＋agent 1（SharedResources）；actor/cli 零直引；core 经端口缝（NeblinkServicePort/NeblinkClientPort/RelayTunnelPort/WsHubPort）反向消费，分层门禁在场（DeviceRegistry:25-26）。**方向关键读数：neblink 不是叶子**——上行 import 实证三处：`AgentSessionSync.scala:7`（nebflow.agent.SubAgentTaskStore）、`DeviceMailInbox.scala:6-9`（nebflow.actor.AgentCommand＋core.AgentRuntimePort＋core.tools.MailTool）、`NeblinkRelayTunnel.scala:9-11`（nebflow.core.RelayTunnelPort/hotupdate.RemoteUpdateAction/core.tools.ToolRegistry）——连接域现状是**上层编排件**（写钩外推/会话注入/工具路由都在它体内），不是基。
+
+**跨仓漂移读数（J1 证据）**：neblink 客户端在产品线三仓各有一份——本仓 1932 行、`nebflow-cli/src/main/scala/nebflow/neblink/NeblinkClient.scala` 1811 行、`nebflow-bchain/src/main/scala/nebflow/extensions/neblink/NeblinkClient.scala` 1841 行（本轮 wc＋diff 亲测）；字段已漂移：统一更新 M3 ③ 的 HeartbeatResponse `update` 挂账键仅本仓有（cli 件仍为裸对端列表），cli 件尚存本仓已退役的 LogtoDeviceFlow。仓内则相反：唯一实现点纪律密集（AttachUpload「唯一分块驱动」、PortalWireCodec「唯一编码点」、handleBridgeMessage「THE ONE injection point」、统一登录批 #924 三路径收口、hblife 心跳自振批）——**漂移发生在仓外复制体之间，仓内靠逐批整改手工保持同源**；「连接原语若在，三线可同引」正是基的用武之地，但前提是语义边界先钉死。
+
+**三案落位**（判据编号引用；均〔提案〕级）：
+
+| 维度 | 案①：立「云链接基」第六格 | 案②：归位现有基位点（不立新基） | 案③：不立格、挂问句（本轮采） |
+|---|---|---|---|
+| 形状 | 新建基（纸面名 nebflow.linkbase）：连接原语候选六族——会话自愈/心跳判活/端点发现/中继路由/配对验签/分块续传——抽最小 trait 面；门户/好友/dropbox/桥等上层单向引用 | 丙2 随既定批次走（§2.4/§2.5/批4/批5，零增量）；乙2/乙3/丙1 的持久化散面作 db 基扩展观察项（Q-26）；通道缝（ChunkTransport 等）维持现状 | 格数维持五基；语义边界问句 Q-22…Q-29 直问作者；散面表＋六族最小面候选备档，拍板后增补轮落位 |
+| 论据 | 作者逐字点名三基之一且唯一无对位件；J1 跨仓漂移现证（三份客户端字段已漂）；域内整改批密集（#924/attachcl/hblife）＝漂移反复发生的历史负空间 | 丙2 已在五基既定承接面，零增量即接住最贴工具链的一角；J3 现状不满足使案①必先大手术；J6 部分命中（甲4/丙3/丙4 表示层）留上层 | 作者信源仅五字；「连接器」语汇有先例——作者 13:11「db 在我的构想里是后端无关的连接器」——云端链接器＝同一抽象思想的云侧实例，还是独立第六基，五字不可判；最小面无地面真值，立格即臆测语义边界 |
+| 反证 | J3 不满足（上行 import 三实证，见上）；J2 无位点承接（pilogic 位点表无网络/连接域格子）；语义未定先定口＝超编风险（防贪全门正面命中） | 连接域主体（入网/在线/文件流/消息语义）不在任何现有基既定面——案②只接住丙2 一角，甲/乙组仍悬空 | 纯等待零产出——不成立：本轮主产出即问句清单（纪律如此），散面盘点已备档，拍板后无空转 |
+| 判据落位 | J1 仓外成立/仓内不成立（仓内已同源）；J3 前置手术；J4 部分（心跳间隔/端点策略是配置值） | J3 无需（形状零动）；J1/J2 对悬空面未触发 | 判据句两正路（J1/J2）在本仓内证据不足或前置未备——「进基」条件未成就；防漏门亦无新自造信号（存量豁免，Q-26） |
+
+**建议〔提案〕：案③为底座，案②局部已在执行**——维持五基两层口径（§二总形已同步）；第六格开放，归 Q-22（语义边界）→Q-23（格数）链式拍板；散面表已定部位（丙2）随既定批次走，本路线图批次 DAG 零改动。若作者拍板立基（案①）：前置＝依赖倒置手术批（上行 import 清零，J3 门槛），落位＝批 5 后批 6 前插「连接基批」（增补轮，不重排既有批），最小面以 Q-24 答案钉死（防贪全）。**格数最终判定待作者——本节不代裁。**
+
 ## 三、压缩策略面裁定建议（半缺口，不代裁）
 
 现状（亲读）：阈值硬编码全局（`CompactThreshold.scala:9-30`：`cw>300k ⇒ 256k`，否则 `cw×0.8`，注释自宣 hardcoded by design）；压缩管线全在主链引擎内（maybeAutoCompact、0.95 硬护+60s 冷却、FullCompact/应急清理）；G-2 预留四位点保持壳态；db 侧快照+压缩点已接（C7）。
@@ -221,6 +262,14 @@ status: draft-for-author-ruling
 | Q-19 | 基间分层确认：基→db 允许、pilogic 零依赖冻结、工具基→权限基允许？ | 本方案新增 | 确认（现状实测即此形，钉死防漂移） |
 | Q-20 | hook 引擎形态：归一（pilogic hook 面对外化，甲）还是分层（新引擎层，形参照 v2 controller，乙）？ | 作者 12:58/13:11＋本方案§2.6 | 甲案起步＋乙案挂账（J1 漂移实证出现前不立新层；参照件＝v2 canonical-flow 的 controller 形） |
 | Q-21 | db 基要不要为「后端无关连接器」预留 backend 抽象位（现有 JSONL 文件族＝后端之一，pg 潜在实例）？ | 作者 13:11（v2 思想）＋本方案§2.2 | 预留不封死：trait 面（D-3 对冲）即抽象位，维持；pg 第二实例不在本路线图批次内立（J5 单消费位、无漂移实证；抽象未被第二实现检验前不宣称可信），待跨进程/多实例数据共享需求出现再立批。两线不同构、思想一致 |
+| Q-22 | 「云端链接器」指涉边界：A＝仅用户↔云服务器链（link-server 客户端：登录/心跳/发现/中继/门户）；B＝A＋设备间通道（presence/dropbox/附件/投影）；C＝B＋外部渠道（飞书/微信/邮件感知）；D＝云服务器侧组件本身（scala 线之外）？ | 作者 12:58 五字＋§2.7 散面分组（甲/乙/丙） | 无推荐——语义归作者；散面表已按四选项切组备查 |
+| Q-23 | 格数裁定：立第六基（云链接基，案①）还是维持五基＋归位位点（案②/③）？ | 本方案§2.7 三案 | 维持五基直至 Q-22 拍板（语义未展开前立格＝臆测；案③为底座、案②局部已在执行） |
+| Q-24 | （立基才答）最小面＝哪些口：六族原语候选（会话自愈/心跳判活/端点发现/中继路由/配对验签/分块续传）哪些进基、哪些留上层？ | 本方案§2.7 | 无推荐——口清单随 Q-22 边界才能钉死；散面表现网唯一实现点已备档（防贪全） |
+| Q-25 | （立基才答）依赖倒置前置：neblink 上行 import agent/actor/core 三实证（§2.7），是否接受「原语下沉＋注入面上翻」倒置手术批（J3 门槛）？ | 本方案§2.7 | 接受（若立基则无捷径——J3 是判据句硬条件） |
+| Q-26 | 连接域存量自造持久化（devices.json/dropbox messages.json/DeviceMail 去重账本进程内[作者待裁 F2 同族]）是否收编 db 基扩展面（G4 存量豁免注销）？ | 本方案§2.7＋§五 G4 | 收编方向（防漏门口径一致：事实面多制并存即 J1 证据）；批次后置至轮 C 后评估，不进当前 DAG |
+| Q-27 | 「连接器」语汇：13:11「db 是后端无关的连接器」与「云端链接器」是同一抽象思想的两实例（连接器＝后端无关抽象层通名），还是两个独立基？ | 作者 13:11＋12:58 | 待作者——此答直接改写 Q-23 的形状（若同一思想，云链接基可能形同 db：后端无关连接器、传输后端可换，而非六族原语大杂烩） |
+| Q-28 | 云端链接器的「基」落 scala 线还是 link-server 侧仓？（云侧独立演进实证：`NeblinkClient.scala:527-529` 字段与 link-server M2 收侧逐字对齐、`LogtoTransport.scala:26-31` relay 侧退役＝link-server 批次台账 #924） | 本方案§2.7 | 若作者答 D（云侧组件），本路线图只保留客户端对位面＋契约冻结件，scala 侧不立基 |
+| Q-29 | 外部渠道（飞书/微信桥、邮件感知）在基清单的位置：连接域一部分/接线层/永不进基（J6 人机面）？ | 本方案§2.7 丙3 | 接线层（J6：入站注入单点＋出站聚合已是表示/接线形态；协议细节在 side-car/长连接，无基消费者） |
 
 ## 8. 收尾自证
 
@@ -230,5 +279,14 @@ status: draft-for-author-ruling
 - 零代码：本件为纯 docs，src/ 零改动；不 push。
 - 补充输入处置：作者 13:11 令在本轮写作中段到达（§2.6/Q-20/Q-21 三处落位）；其 v2 侧地面真值件当日未落盘（`triple-v2/docs/` 实测无今日文件），本件以在档最近邻 `author-interaction-canonical-flow.md`（本轮亲读 controller＝pub-sub 路由器＋事件拦截器、C1、J5 行）为参照并如实标注——v2 侧真值件落盘后如与该参照有出入，以真值件为准回改§2.6。
 - 自曝：①本会话中途曾因宿主中断恢复一次（重启后从已读材料续写，无材料丢失）；②PTC 未试——纯 docs 轮无需外部工具（既往轮已证 command not found）；③主链 llm 直引文件数（10）与审计件（4）不一致，因审计只数了错误类型 import、本轮数了全量 import——口径差异非证伪，已在§0 标明；④§2.6 编辑期一度误删§三标题行（Edit 匹配失手），当即发现补回，成件无缺；⑤其余未发现。
+
+**补格轮增量自证（11-05 晚，`33cad0d99` 基线，delegate-nebflow-3e54d58f）**：
+
+- 本轮改动＝纯 docs 增量六处：顶部一句话／§0 补格轮基线行／§二总形口径同步段／§2.7 新节（散面表 14 行＋消费读数＋跨仓漂移读数＋三案表＋建议）／Q-22…Q-29 八行／本段。§一判据句、§2.1–2.6、§三–§六、批次 DAG、Q-1…Q-21 原文零改动（红线遵守，diff 可验）。
+- 亲读核验：§2.7 散面表锚点全部为本轮在 `33cad0d99` 现值亲读（Read 逐处复核）；消费关系 grep 本轮亲跑；跨仓读数（cli 1811 行/bchain 1841 行/scala 1932 行＋update 键漂移）本轮 wc＋diff 亲测；「云端链接器」全仓零命中亲测复核。
+- 编辑事故自曝：§2.7 插入时 Edit 匹配曾吞掉§三标题行一次，当即发现补回（与本轮§2.6 的④同型失误，成件无缺——diff 复核§三标题在场）。
+- wiki 校验：本 worktree docs/ 缺未跟踪的兄弟输入件（pilogic/db/导航等件为盘上产物），绝对断链读数＝16 处/8 目标（编辑前后差集法：编辑后同为 16 处/8 目标、零新增——本节零新增 wikilink）；主工作区 docs/ 全量读数以合批后复跑为准。
+- 侦察兵声明：本轮曾派一只读 Subagent 做广度消费地图（包→职责→消费者），本节引用的一切锚点仍为本会话亲读复核——广度线索来自侦察、锚点真值亲读。
+- link-server 仓定位：开发区 18 仓实测无 link-server 名命中（stand-rust＝triple 运行时线；nebflow-cli/nebflow-bchain＝neblink 客户端复制体所在）；云侧组件独立演进的证据面＝本仓注释引用（NeblinkClient:527-529/LogtoTransport:26-31），Q-28 以此为据。
 
 相关：[[20261104_121214_scala-pi-logic-design-v1__delegate-nebflow-6513b1ad|pi-logic 设计 v1]] · [[20261104_121502_scala-db-module-design-v1__delegate-nebflow-006825e8|db 设计 v1]] · [[20261104_230447_scala-llm-provider-audit-redesign__delegate-nebflow-0bd60c6b|llm 审计重筑]] · [[20261104_215400_scala-pi-logic-wiring-a-round-a__delegate-nebflow-9db9d0d1|轮 A 报告]] · [[index]]
