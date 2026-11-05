@@ -12,6 +12,17 @@
 //   · 材质 = 既有玻璃包单源（--glass-control-*，sapphire.css 深浅双主题），
 //     零新色值；CSS 见 mobileLayer.css「常驻搜索条」块。
 //
+// 件八（作者令 2026-11-05 12:28「上滑之后变成一个搜索按钮挂在右上角 … 直接使用
+// 一样的就行」）：条 = **扁平长条 ⇄ 右上角圆钮**的一次性形变，同一 DOM 节点。
+//   · 展开 = 扁平长条（css/mobileSearchFlat.css，微信形态 + 我方圆角档
+//     --ds-radius-input）；收起 = 同节点追加 `.g2-fab`（主会话搜索钮同一个类／
+//     同一套 CSS，glass.css），落位右上角、住在页面体内的常驻搜索带里。
+//   · 判据/阈值单源：本条 COLLAPSE_AT / EXPAND_AT / 带高与过渡曲线分居 JS/CSS，
+//     断言侧读同一组常量（tests/mobile-search-flat.spec.mjs）。
+//   · 旧形态（独立 `.mh-search-fab` 浮钮 + dock.style.height 实测像素过渡）整件
+//     退役：那条路线同时是 bug①（滚动容器几何逐帧变化 → 滚动卡死）与 bug②
+//     （fixed + visibility:visible 自持 → 跨页泄漏）的根因，见 setCollapsed 注。
+//
 // 两面内容臂（数据源 = 桌面既有面/读数，零复制零第二实现）：
 //   · 消息页 = 类微信跨会话聊天记录检索：范围 chips（全部/好友/设备/群聊）+
 //     按会话分组结果 + <mark> 高亮 + 点行跳转定位（messages.js revealMessage
@@ -60,23 +71,23 @@ const SCOPES = [
 /** 常驻搜索条所属页（其余面的搜索入口零触碰）。 */
 const PAGE_IDS = ['messages', 'contacts'];
 
-/** 件七（作者令 2026-11-04 13:07「向上滚动内容的时候则收为悬浮在顶部右上角
- *  的一个搜索按钮」）阈值算术**单源**：
- *   · COLLAPSE_AT = 24px：内容上滚过 24px ⇒ 收起成右上浮钮；
- *   · EXPAND_AT = 4px：滚回 4px 以内（回顶部）⇒ 再展开；
+/** 阈值算术**单源**（作者令 2026-11-04 13:07 + 2026-11-05 12:28 同一条判据）：
+ *   · COLLAPSE_AT = 24px：内容上滚过 24px ⇒ 收起成右上角圆钮；
+ *   · EXPAND_AT = 4px：滚回 4px 以内（回顶部）⇒ 还原为长条；
  *   · 4..24 = **回滞带**，带内状态不翻转（防抖边：收/展各只有一次阈值穿越）。
  *  断言侧读同一组常量（tests/mobile-search-flat.spec.mjs 判据 ②③）。 */
 const COLLAPSE_AT = 24;
 const EXPAND_AT = 4;
-/** 过渡锁：收起/展开动画期间不吃滚动翻转（≥ 样式侧 --mhsc-dur 280ms + 余量）。 */
-const STATE_LOCK_MS = 360;
+// 过渡锁已删除（作者令 2026-11-05 12:28 修批）：带高恒定后收/展不再改滚动容器
+// 几何 ⇒ 不存在「到底被钳回 ⇒ 反向判据再触发」的抖振回路，翻转节流唯一需要的是
+// 回滞带（EXPAND_AT..COLLAPSE_AT）。旧锁是 bug① 的第二个病根：用户在锁窗内继续
+// 上滑，判据被整段丢弃 ⇒ 「上滑了之后动不了」的观感。
 
 /**
  * @typedef {{
  *   pageId: string, dock: HTMLElement, bar: HTMLElement, input: HTMLInputElement,
  *   clear: HTMLButtonElement, scopeRow: HTMLElement|null, status: HTMLElement|null,
  *   results: HTMLElement|null, note: HTMLElement|null,
- *   fab: HTMLElement|null, expandedHeight: number, stateLockUntil: number,
  * }} SearchBar
  */
 
@@ -274,15 +285,14 @@ function ensureBar(pageId) {
   const bar = {
     pageId, dock, bar: parts.row, input: parts.input, clear: parts.clear,
     scopeRow: null, status: null, results: null, note: null,
-    fab: null, expandedHeight: 0, stateLockUntil: 0,
   };
   if (pageId === 'messages') Object.assign(bar, fillMessagesBar(dock, parts));
   else fillContactsBar(dock, parts);
   body.insertBefore(dock, body.firstChild);
   if (typeof lucide !== 'undefined') createIconsIn(dock);
-  // 件七（2026-11-04）：收起浮钮 + 收起过渡收尾 + 页内滚动探针。
-  bar.fab = ensureSearchFab(bar);
-  bindDockTransition(bar);
+  // 件八（2026-11-05）：圆钮 = 条本体的形变态（零第二节点）⇒ 只绑激活腿 + 页内
+  // 滚动探针；收/展的几何全在 css/mobileSearchFlat.css，这里零内联样式。
+  bindBarActivate(bar);
   bindPageScroll(bar);
   bars.set(pageId, bar);
   return bar;
@@ -294,7 +304,6 @@ function destroyBar(pageId) {
   if (!bar) return;
   bars.delete(pageId);
   bar.dock.remove();
-  bar.fab?.remove();
   if (pageId === 'messages') {
     resetMsgSearch();
     msgStatus = null;
@@ -533,80 +542,81 @@ async function runSearch() {
     : `${t('mhsearch.noResults')} · ${t('mhsearch.noResultsHint')}`);
 }
 
-// ── 件七：滚动收起 / 右上浮钮（作者令 2026-11-04 13:07）─────────────────
+// ── 件八：滚动收起 / 右上角圆钮（作者令 2026-11-05 12:28，逐字见文件头）───
 //
-// 形态（作者令逐字「向上滚动内容的时候则收为悬浮在顶部右上角的一个搜索按钮
-// 样式和主会话的一致」）：
-//   · 判据类 = .mh-search-collapsed（挂 .mh-search-dock）∪ 浮钮 .is-on；
-//     样式与过渡时长单源在 css/mobileSearchFlat.css，本模块零内联样式面
-//     （仅过渡期写 height 像素起点，见 setCollapsed）。
-//   · 浮钮视觉 = 主会话 #search-btn 同族（css/chat.css:146-174 档位），图标
-//     同一 lucide search 源（index.html #search-btn 用同一条 data-lucide）。
-//   · 收起过渡 = height 从实测像素连续收到 0；过渡结束回写 height:auto
-//     （展开态零钳制，面板重渲零漂移）。
-//   · 两页都要（消息 + 联系人）；有查询（.has-query）不自动收起 —— 否则
-//     结果场被收掉、「.has-query 让位 / 清空回列表」的既有语义被破坏。
-//   · 点浮钮 = 展开并聚焦输入框（可直接键入，判据 ⑥）。
+// 形态：
+//   · 判据类 = `.mh-search-collapsed`（挂 `.mh-search-dock`）∪ `.g2-fab`（挂条
+//     本体）。**整件只有一个 DOM 节点**（条本体 .mh-search-bar）：收起 = 同一
+//     节点追加 `.g2-fab`（主会话搜索钮同一个类 ⇒ 同一套 CSS，零仿制副本），
+//     展开 = 摘掉。样式与过渡时长单源在 css/mobileSearchFlat.css，本模块**零
+//     内联样式写入**（旧实现写 dock.style.height 实测像素 = bug① 根因，已删）。
+//   · 落位 = 页面体内常驻搜索带（带高常量，收/展不变）⇒ 圆钮在右上角、列表
+//     从其下方起排，不压任何行（旧实现 position:fixed 压住时间列）。
+//   · 反向（下滑/回顶）同一条过渡曲线还原。
+//   · 有查询（.has-query）不自动收起 —— 否则结果场被收掉、「.has-query 让位 /
+//     清空回列表」的既有语义被破坏。
+//   · 点圆钮 = 展开并聚焦输入框（可直接键入）。
 
-/** 建一枚收起浮钮（每页一枚，住在页面 section 直接子级：固定定位相对视口，
- *  页面非 live 时随 section 的 visibility:hidden 自然退场；幂等）。 */
-function ensureSearchFab(bar) {
-  const section = pageSection(bar.pageId);
-  if (!section) return null;
-  let fab = /** @type {HTMLButtonElement|null} */ (section.querySelector(':scope > .mh-search-fab'));
-  if (!fab) {
-    fab = document.createElement('button');
-    fab.type = 'button';
-    fab.className = 'mh-search-fab';
-    fab.setAttribute('aria-label', bar.input.placeholder || 'search');
-    fab.title = bar.input.placeholder || 'search';
-    // 构建器而非 HTML 串（component-contract R5）：同 lucide 'search' 图标，
-    // 尺寸/位置零变化；既有 createIconsIn(fab) 调用原样保留。
-    const fabIcon = document.createElement('i');
-    fabIcon.dataset.lucide = 'search';
-    fab.append(fabIcon);
-    if (typeof lucide !== 'undefined') createIconsIn(fab);
-    section.append(fab);
-  }
-  fab.addEventListener('click', () => {
+/** 点/键激活：收起态下整条 = 一枚按钮（展开 + 聚焦输入）。
+ *  无障碍：收起态补 role=button/tabindex=0/aria-label，展开即摘（输入框自己是焦点面）。 */
+function bindBarActivate(bar) {
+  const activate = (/** @type {Event} */ e) => {
+    if (!bar.dock.classList.contains('mh-search-collapsed')) return;
+    e.preventDefault();
     setCollapsed(bar, false);
-    // 展开并聚焦：activeElement 命中 .mh-search-input，可直接键入（判据 ⑥）。
+    // 展开并聚焦：activeElement 命中 .mh-search-input，可直接键入。
     bar.input.focus();
-    logEvent('mh-search-fab', { page: bar.pageId });
+    logEvent('mh-search-expand', { page: bar.pageId });
+  };
+  bar.bar.addEventListener('click', activate);
+  bar.bar.addEventListener('keydown', (e) => {
+    const k = /** @type {KeyboardEvent} */ (e).key;
+    if (k === 'Enter' || k === ' ' || k === 'Spacebar') activate(e);
   });
-  return fab;
 }
 
-/** 收起/展开的唯一写点（样式态零第二实现）。
- *  过渡起点必须是**像素实测量**（height:auto 不可插值）⇒ 收/展各写一次起点。 */
+/** 收起/展开的唯一写点（样式态零第二实现）：只切类，不写任何几何。
+ *  bug①「上滑后动不了」的结构解：旧实现在 scroll 事件里改滚动容器高度 ⇒ 到底
+ *  时 scrollTop 被钳回 ⇒ 回钳的 scroll 事件又走反向判据 ⇒ 收/展抖动。现在带高
+ *  是常量（CSS `--mhsc-band`），滚动容器几何在收/展全程零变化。 */
 function setCollapsed(bar, collapsed) {
   const dock = bar.dock;
   if (!dock.isConnected) return;
   if (dock.classList.contains('mh-search-collapsed') === collapsed) return;
-  const startH = collapsed ? dock.offsetHeight : 0;
-  if (collapsed) bar.expandedHeight = startH;
-  const endH = collapsed ? 0 : (bar.expandedHeight || dock.scrollHeight || 52);
-  dock.style.height = `${startH}px`;
-  void dock.offsetHeight;                 // 先落起点（同步重排）再换终值
+  // 收/展各只穿一次阈值（回滞带 4..24 见常量块）；动画中途再翻转由 CSS 从当前
+  // 帧继续插值 ⇒ 不需要锁，也就不存在「锁窗内上滑被判据丢弃」。
   dock.classList.toggle('mh-search-collapsed', collapsed);
-  bar.fab?.classList.toggle('is-on', collapsed);
-  dock.style.height = `${endH}px`;
-  bar.stateLockUntil = performance.now() + STATE_LOCK_MS;
+  bar.bar.classList.toggle('g2-fab', collapsed);
+  if (collapsed) {
+    bar.bar.setAttribute('role', 'button');
+    bar.bar.setAttribute('tabindex', '0');
+    bar.bar.setAttribute('aria-expanded', 'false');
+    bar.bar.setAttribute('aria-label', bar.input.placeholder);
+  } else {
+    bar.bar.removeAttribute('role');
+    bar.bar.removeAttribute('tabindex');
+    bar.bar.removeAttribute('aria-expanded');
+    bar.bar.removeAttribute('aria-label');
+  }
 }
 
-/** 过渡收尾：收/展动画结束回写 height:auto（零内联钳制；下次收起重新实测）。 */
-function bindDockTransition(bar) {
-  bar.dock.addEventListener('transitionend', (e) => {
-    if (e.target !== bar.dock || e.propertyName !== 'height') return;
-    bar.dock.style.height = '';
-  });
+/** 路由复位（bug②「按钮泄漏到其他页面」的修点）：圆钮是**条本体的形变态**，
+ *  不是独立浮件 —— 页面一离开 live，收起态立即还原为展开长条；非 live 页面
+ *  的条随页面 `visibility: hidden` 一起退场（结构上不再可能压到别的页面）。
+ *  调用点 = activateSocialSearch 的 `nf:mobile-nav` 监听（同一次路由广播）。 */
+function resetCollapseOutsideLive() {
+  for (const bar of bars.values()) {
+    const sec = pageSection(bar.pageId);
+    if (!sec || !sec.classList.contains('live')) setCollapsed(bar, false);
+  }
 }
 
 /** 页内滚动探针（scroll 不冒泡 ⇒ 挂 section 捕获相位；navController.bindRollProbe
  *  同族纪律）。读数 = **真实滚动容器的** scrollTop（消息页 #fm-conversations /
  *  联系人页 #fm-contacts-body；查询态结果场 .mh-search-results 由 has-query 闸挡掉）。
  *  上滚过 COLLAPSE_AT(24) 收起；滚回 EXPAND_AT(4) 以内（回顶部）展开；
- *  4..24 = 回滞带。防抖边四闸 = 过渡锁 / 有查询 / 焦点在条内 / 事件源非滚动容器。 */
+ *  4..24 = 回滞带。防抖边三闸 = 有查询 / 焦点在条内 / 事件源非滚动容器
+  （过渡锁已删，见 STATE_LOCK 退役注；滚动永远不被拦）。 */
 function bindPageScroll(bar) {
   const section = pageSection(bar.pageId);
   if (!section) return;
@@ -616,7 +626,6 @@ function bindPageScroll(bar) {
     if (!src || src === section || typeof src.scrollTop !== 'number') return;
     const y = src.scrollTop;
     const collapsed = bar.dock.classList.contains('mh-search-collapsed');
-    if (performance.now() < bar.stateLockUntil) return;
     if (bar.dock.classList.contains('has-query') || document.activeElement === bar.input) return;
     if (!collapsed) {
       if (y > COLLAPSE_AT) setCollapsed(bar, true);
@@ -637,6 +646,10 @@ export function activateSocialSearch() {
       if (on) ensureBar(pageId);
       else destroyBar(pageId);
     }
+    // 件八（bug② 修点，作者令 2026-11-05 12:28「这个搜索按钮会泄漏到其他页面」）：
+    // 每次路由广播（navController.renderPages → `nf:mobile-nav`）把**非 live 页**
+    // 的收起态无条件还原为展开长条 —— 回到该页永远是展开的长条，圆钮不会被带走。
+    resetCollapseOutsideLive();
   };
   syncGate();
   document.addEventListener('nf:mobile-nav', syncGate);
@@ -651,10 +664,9 @@ export function activateSocialSearch() {
       bar.input.setAttribute('aria-label', bar.input.placeholder);
       bar.clear.title = t('mhsearch.clear');
       bar.clear.setAttribute('aria-label', t('mhsearch.clear'));
-      // 件七：收起浮钮的无障碍名随语言面同拍。
-      if (bar.fab) {
-        bar.fab.setAttribute('aria-label', bar.input.placeholder);
-        bar.fab.title = bar.input.placeholder;
+      // 件八：收起态的无障碍名随语言面同拍（收起态整条 = 一枚按钮）。
+      if (bar.bar.classList.contains('g2-fab')) {
+        bar.bar.setAttribute('aria-label', bar.input.placeholder);
       }
       bar.scopeRow?.querySelectorAll('.mh-scope-chip').forEach((c) => {
         const def = SCOPES.find((s) => s.value === (/** @type {HTMLElement} */ (c)).dataset.scope);

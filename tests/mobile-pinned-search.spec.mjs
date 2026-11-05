@@ -197,6 +197,13 @@ async function readPinnedBar(page, pageId) {
     document.body.appendChild(probe2);
     const tokenSurface = getComputedStyle(probe2).backgroundColor;
     probe2.remove();
+    // 件八（2026-11-05 12:28 扁平长条批）：浅灰底单源 = --ds-wash-16（微信形态 +
+    // 我方令牌；微信截图只借形态不借数值）。同法探针。
+    const probe3 = document.createElement('span');
+    probe3.style.background = 'var(--ds-wash-16)';
+    document.body.appendChild(probe3);
+    const tokenWash = getComputedStyle(probe3).backgroundColor;
+    probe3.remove();
 
     const dock = body?.querySelector(':scope > .mh-search-dock') || null;
     const bar = dock?.querySelector('.mh-search-bar') || null;
@@ -214,6 +221,7 @@ async function readPinnedBar(page, pageId) {
       bg: cs?.backgroundColor ?? null,
       tokenBg,
       tokenSurface,
+      tokenWash,
       radius: cs?.borderRadius ?? null,
       shadow: cs?.boxShadow ?? null,
       backdrop: cs ? (cs.webkitBackdropFilter || cs.backdropFilter || 'none') : null,
@@ -262,15 +270,14 @@ function expectPinnedGeometry(st, pageId) {
   expect(st.bar.h, `${pageId}: 44px`).toBe(44);
   expect(st.bar.left, `${pageId}: left 16`).toBe(16);
   expect(st.bar.right, `${pageId}: right 359`).toBe(359);
-  // 材质换代（件七 2026-11-04 作者令「改为扁平化设计」）：旧「999px 胶囊 +
-  // --glass-control-bg + 三重 inset 玻璃影」判据随批退役 ⇒ 扁平场判据
-  // （底 = --color-surface 单源 / 圆角 0 / 无毛玻璃 / 无投影）。判据面单源 =
-  // tests/mobile-search-flat.spec.mjs（本 spec 只留同口径对偶）。
-  expect(st.radius, `${pageId}: 扁平场圆角 0`).toBe('0px');
+  // 材质换代（件八 2026-11-05 12:28 作者令「参考微信的扁平化 圆角用我们的就行」）：
+  // 扁平场判据 = 浅灰底 --ds-wash-16 单源 / 圆角 --ds-radius-input 8px / 无毛玻璃 /
+  // 无投影。判据面单源 = tests/mobile-search-flat.spec.mjs（本 spec 只留同口径对偶）。
+  expect(st.radius, `${pageId}: 圆角 = --ds-radius-input 8px`).toBe('8px');
   // 贴页面顶（dock 顶 padding 8px，允许 0-12 摆动）。
   expect(st.bar.top - st.pageTop, `${pageId}: 贴页面顶`).toBeLessThanOrEqual(12);
   expect(st.bar.top - st.pageTop).toBeGreaterThanOrEqual(0);
-  expect(st.bg, `${pageId}: 扁平场底 = --color-surface 单源`).toBe(st.tokenSurface);
+  expect(st.bg, `${pageId}: 扁平场底 = --ds-wash-16 单源`).toBe(st.tokenWash);
   expect(st.backdrop, `${pageId}: 无毛玻璃（backdrop-filter none）`).toBe('none');
   expect(st.shadow, `${pageId}: 无投影`).toBe('none');
   expect(st.transform, `${pageId}: 无 transform（常驻不位移）`).toBe('none');
@@ -512,29 +519,29 @@ test.describe('light scheme material', () => {
 
   // 件七（2026-11-04 扁平化）：材质判据从玻璃包改扁平场（--color-surface 亮档
   // #ffffff）——判据仍是「条底 == token 解析值」的单源对偶，只换 token 面。
-  test('P10 light: pinned bar fill = --color-surface 亮档（#ffffff）单源', async ({ page }) => {
+  test('P10 light: pinned bar fill = --ds-wash-16 单源（浅灰底）', async ({ page }) => {
     const errors = watchErrors(page);
     await bootApp(page, { friends: true });
     await dockTo(page, 'messages');
     const st = await readPinnedBar(page, 'messages');
-    expect(st.tokenSurface).toBe('rgb(255, 255, 255)');
-    expect(st.bg).toBe(st.tokenSurface);
+    expect(st.tokenWash).toBe('rgba(128, 128, 128, 0.16)');
+    expect(st.bg).toBe(st.tokenWash);
     await dockTo(page, 'contacts');
     const ct = await readPinnedBar(page, 'contacts');
-    expect(ct.bg).toBe(ct.tokenSurface);
+    expect(ct.bg).toBe(ct.tokenWash);
     expect(errors).toEqual([]);
   });
 });
 
-test('P10b dark: pinned bar fill = --color-surface 暗档（#1c1f27）单源', async ({ page }) => {
+test('P10b dark: pinned bar fill = --ds-wash-16 单源（浅灰底，双主题同值）', async ({ page }) => {
   const errors = watchErrors(page);
   await bootApp(page, { friends: true });
   await dockTo(page, 'messages');
   const st = await readPinnedBar(page, 'messages');
-  expect(st.tokenSurface).toBe('rgb(28, 31, 39)');
-  expect(st.bg).toBe(st.tokenSurface);
+  expect(st.tokenWash).toBe('rgba(128, 128, 128, 0.16)');
+  expect(st.bg).toBe(st.tokenWash);
   await dockTo(page, 'contacts');
   const ct = await readPinnedBar(page, 'contacts');
-  expect(ct.bg).toBe(ct.tokenSurface);
+  expect(ct.bg).toBe(ct.tokenWash);
   expect(errors).toEqual([]);
 });
