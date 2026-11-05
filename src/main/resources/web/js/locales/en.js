@@ -2312,6 +2312,10 @@ export default {
   // (bgAgents group-head badge word uses the raw data word, not i18n).
   'task.mode.kernel': 'Kernel',
   'task.mode.dispatcher': 'Dispatcher',
+  // Base-drift state slot (`[base-moved]` noise-reduction batch 2026-11-05): how many
+  // times the base branch advanced since this task was dispatched — a STATE FACT only
+  // ("base moved" belongs on the panel, not in the message stream). No mechanism talk.
+  'task.baseDrift': 'base advanced {n}×',
   'bg.modeTitle': 'Execution mode: {mode}',
 
   // NebLink

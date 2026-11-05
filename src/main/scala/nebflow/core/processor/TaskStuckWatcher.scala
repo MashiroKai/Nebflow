@@ -857,9 +857,13 @@ object TaskStuckWatcher:
               .handleErrorWith(e => logger.warn(s"[child-orphan-watch] sweep failed: ${e.getMessage}").void)
               .void *>
             // ── 引擎会话治理专项 · 缺陷四（2026-11-03 作者令）：main 漂移无通知 ──
-            // 在飞 delegate 的基分支 tip 被别人推进 ⇒ `[base-moved] old→new + 文件
-            // 列表` 注入该 delegate（复用 DelegateNotify 通道）；同一 tip 只通知一次
-            // （状态文件节流）。搭本既有扫描拍，零新增定时器。
+            // 在飞 delegate 的基分支 tip 被别人推进 ⇒ **默认静默**（降噪重写
+            // 2026-11-05 作者报障「这个通知也太多了」：worktree 隔离下 base 前进
+            // 本身不构成任何行动要求）。只在**可行动**（移动触及我改过的文件 /
+            // base 历史被改写）时注入一条**聚合**通知（同一任务 ≥30min 最多一条）；
+            // 纯「base 动了」的事实进面板（行 `baseDrift` 键），不进消息流。
+            // 节点侧结构性零命中（节点不建分支/worktree、不写 DelegateRegistry）。
+            // 搭本既有扫描拍，零新增定时器。
             nebflow.core.delegate.BaseDriftWatch
               .scan(nebflow.core.delegate.BaseDriftWatch.fromResources(resources))
               .handleErrorWith(e => logger.warn(s"[base-drift] sweep failed: ${e.getMessage}").void)
