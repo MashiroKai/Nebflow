@@ -103,8 +103,19 @@ object ConsoleTicketRoutes:
                       val redeemedOnLoopback = LoopbackLeg.isLoopback(req)
                       logger.info(
                         s"console ticket redeemed: session established (accountSub=${t.accountSub}, " +
-                          s"origin=${t.origin}, sid=${rec.sessionId.take(8)}…, networkId=${nid.take(24)})"
-                      ) *> IO.pure({
+                          s"origin=${t.origin}, sid=${rec.sessionId.take(8)}…, networkId=${nid.take(24)})" +
+                          // 新标签页归因批（2026-11-05）：兑换行原先只记账号/来源/sid ——
+                          // 「谁打开了这个页面」无从对账（同一时刻冒出第二个控制台时，
+                          // 分不清是门户自动进、前端重座腿、还是某个外部 open）。三个
+                          // 只读面各自带答案：referer = 发起导航的页面 origin+path
+                          // （**去 query**：重座腿的 referer 就带着已花掉的一次性票，
+                          // 票值绝不进日志）、ua = 浏览器/内嵌壳签名、loopback = 这条
+                          // 兑换的 socket 腿（环回腿 = 本机直连腿）。全部 best-effort。
+                          s" [attribution ${Attribution.describe(req, redeemedOnLoopback)}]"
+                      ) *>
+                        // 控制台在用判据（2026-11-05 · 工作过程中开新标签页批）：
+                        // 兑换成功 = 页面刚落地 = 「控制台在用」的服务端事实。
+                        ConsoleActivity.touch("ticket-redeemed") *> IO.pure({
                         if redeemedOnLoopback then NearPathStats.noteRedeemedLoopback()
                         // 独立窗口本机加速批（2026-10-29）：兑换 303 保留 ticket 之外的
                         // 全部 query（card-window=1&path=…&title=…&cwpo=…）—— 直连卡窗
@@ -124,6 +135,27 @@ object ConsoleTicketRoutes:
               }
           }
     }
+
+  /**
+   * 兑换归因面（新标签页归因批 2026-11-05）：只读、best-effort、**绝不带凭据**。
+   *
+   * `referer` 只保留 `scheme://host[:port]/path`——query 一律丢弃（前端三条重座腿
+   * 的 referer 就是 `…/?ticket=<一次性票>`，票值不进日志是硬纪律）。`ua` 截 96 字符
+   * （够区分 Safari/Chrome/内嵌壳，又不至于把整条 UA 塞进日志行）。
+   */
+  private object Attribution:
+    private val RefererKey = org.typelevel.ci.CIString("referer")
+    private val UaKey = org.typelevel.ci.CIString("user-agent")
+
+    private def stripQuery(v: String): String =
+      val q = v.indexOf('?')
+      val noQuery = if q >= 0 then v.substring(0, q) else v
+      if noQuery.length > 160 then noQuery.take(157) + "..." else noQuery
+
+    def describe(req: Request[IO], loopback: Boolean): String =
+      val ref = req.headers.get(RefererKey).map(_.head.value).map(stripQuery).getOrElse("-")
+      val ua = req.headers.get(UaKey).map(_.head.value.take(96)).getOrElse("-")
+      s"referer=$ref ua=$ua loopback=$loopback"
 
   /**
    * Readable result page (same three-part card skeleton as the login

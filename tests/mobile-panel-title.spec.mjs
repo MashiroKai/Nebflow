@@ -654,7 +654,7 @@ async function shellLeg() {
           radius: shell.borderTopLeftRadius || cs.borderTopLeftRadius,
           backH: bb ? +bb.height.toFixed(1) : null,
           clipped: mini.scrollWidth > mini.clientWidth + 1,
-          clippedIsMasked: mini.classList.contains('mtitle-clip'),
+          clippedIsMasked: mini.classList.contains('mtitle-clip'),   // 2026-11-05 起 = 溢出标记类（不再画 mask）
           shellOpacity: +shell.opacity,
         };
         sec.style.removeProperty('--mtitle-p');
@@ -681,7 +681,11 @@ async function shellLeg() {
     ok('⑦ 全部页壳圆角 999', badR.length === 0, JSON.stringify(badR.map((r) => `${r.id}:${r.radius}`)));
     ok('⑦ 全部页壳胶囊左缘 ≥ 72（不压返回钮）', badLeft.length === 0, JSON.stringify(badLeft.map((r) => `${r.id}:${r.left}`)));
     ok('⑦ 全部页壳壳层满显影（p=1 ⇒ ::before opacity 1）', badShell.length === 0, JSON.stringify(badShell.map((r) => `${r.id}:${r.shellOpacity}`)));
-    ok(`⑦ 全部页壳文字不被硬裁（超宽走 .mtitle-clip 渐隐，非截断）`, badClip.length === 0, JSON.stringify(badClip.map((r) => `${r.id}:${r.text}`)));
+    // 端区分批 2026-11-05 09:28：作者令撤掉右缘渐隐 ⇒ 「溢出可见」的承载从
+    // `.mtitle-clip` 的 mask 变成**可见省略号**（基座档 text-overflow:ellipsis）；
+    // `.mtitle-clip` 退为纯溢出标记类。本判据仍是「钳宽态必须打标记」，
+    // 省略号一侧由 tests/mobile-hig-assertions.spec.mjs 的 H4b 机械兜住。
+    ok(`⑦ 全部页壳文字不被硬裁（钳宽态挂 .mtitle-clip 溢出标记，截断走可见省略号）`, badClip.length === 0, JSON.stringify(badClip.map((r) => `${r.id}:${r.text}`)));
     ok('⑦ 全部页壳返回钮高 = 48（胶囊高差基准同表）', badBack.length === 0, JSON.stringify(badBack.map((r) => `${r.id}:${r.backH}`)));
     const ws = live.map((r) => r.w).sort((a, b) => a - b);
     ok('⑦ 宽度随页名收缩（最短/最长极差 > 40px，非定宽）', ws.length > 2 && ws[ws.length - 1] - ws[0] > 40,

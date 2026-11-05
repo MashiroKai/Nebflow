@@ -94,9 +94,11 @@ case class SharedResources(
   runtimeModels: Ref[IO, Map[String, String]] = Ref.unsafe[IO, Map[String, String]](Map.empty),
   /**
    * P1 统一注册表: the single registry for ALL running agents
-   * (Root/Team/Flow/Delegate/Ephemeral). Replaces `subAgentRegistry`; during P1
-   * `rootAgents` and `TeamSessionRegistry.actorMap` remain as dual-written
-   * caches (P3 removes them). Interaction answers route through this map only —
+   * (Root/Flow/Delegate/Ephemeral/SubTask). Replaces `subAgentRegistry`; during
+   * P1 `rootAgents` remained as a dual-written cache. 团队功能删除批
+   * （team-feature-deletion-20261104）阶段 3：另一份 dual-write 缓存（团队会话
+   * 登记表的 actorMap）随团队面整体删除 ⇒ 本表自此是 agent 记录的**唯一**权威。
+   * Interaction answers route through this map only —
    * a lookup miss never spawns a ghost agent.
    */
   agentRegistry: Ref[IO, Map[String, AgentRecord]] = Ref.unsafe[IO, Map[String, AgentRecord]](Map.empty),
@@ -302,6 +304,14 @@ case class SharedResources(
   def spawnAgentActor(system: ActorSystem, p: NodeRunner.SpawnParams): IO[ActorRef[AgentCommand]] =
     val actorName = if p.actorName.nonEmpty then p.actorName else p.sessionId
     for
+      // ── R-3a spawn 期硬闸（actor-tree spec v1 §13.2 #P2）────────────────────────
+      // 闸位 = **spawn 动作本身**（这是全仓 spawn 的唯一实现；NodeRunner 及其
+      // Delegate/SubTask/flow/node/dispatcher/恢复六路调用方全部经此）。判据 =
+      // `parentRef → registry → 父会话身份` 的 kernel 双重证据（mode 记录 ∪
+      // `delegate-kernel-` 前缀），见 core.delegate.KernelChildSpawnGate。
+      // 零行为变化：无父/未解析/非 kernel 身份一律放行（dispatcher 是本闸之后
+      // 唯一被允许派生的 delegate 形态）。
+      _ <- nebflow.core.delegate.KernelChildSpawnGate.check(agentRegistry, p.parentRef, p.sessionId)
       readTracker <- ReadTracker.create
       fileHistory <- FileHistory.create()
       ref <- system.spawn(

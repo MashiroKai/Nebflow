@@ -966,6 +966,10 @@ export default {
   'subagents.fromFlowNode': 'from an AgentFlow node',
   'subagents.fromSubagent': 'from a parent sub-agent',
   'subagents.orphanTip': 'Parent session no longer visible · {sid}',
+  // Orphan-placement batch (2026-11-05 leg ③): head word of the standalone group
+  // holding wild nodes (rows whose parent cannot be resolved). One fact word,
+  // no explanation / no teaching sentence (self-explaining rule 8).
+  'subagents.orphanGroup': 'No parent',
   // Panel-hierarchy batch (2026-10-31 ①): group-head collapse caret a11y/hover
   // text (flips with the collapsed state).
   'subagents.collapseGroup': 'Collapse subtasks',
@@ -977,6 +981,12 @@ export default {
   // icon; tooltip carries the live session count).
   'subagents.kindDispatcher': 'Dispatcher',
   'subagents.kindNode': 'Node',
+  // Term layering batch (2026-11-05, author order): agentflow = the name of the
+  // whole organised behaviour (one orchestration = one agentflow) and the ONE
+  // identity word of an overall row (delegate group head / synthesized
+  // continuation head); the members inside it are nodes (subagents.kindNode
+  // family). Same word face in both locales.
+  'subagents.kindAgentflow': 'AgentFlow',
   'subagents.chainRunning': 'Chain running',
   'subagents.chainRunningTip': 'Delegate delivered, chain still running · {n} session(s)',
   // Task attribution badge (2026-09-27 taskbadge batch): hover tooltip of the
@@ -2341,6 +2351,10 @@ export default {
   // (bgAgents group-head badge word uses the raw data word, not i18n).
   'task.mode.kernel': 'Kernel',
   'task.mode.dispatcher': 'Dispatcher',
+  // Base-drift state slot (`[base-moved]` noise-reduction batch 2026-11-05): how many
+  // times the base branch advanced since this task was dispatched — a STATE FACT only
+  // ("base moved" belongs on the panel, not in the message stream). No mechanism talk.
+  'task.baseDrift': 'base advanced {n}×',
   'bg.modeTitle': 'Execution mode: {mode}',
 
   // NebLink
@@ -3307,4 +3321,41 @@ export default {
   'perception.toPh': 'Recipient address, Enter to add',
   'perception.addrPh': 'Type an address, Enter to add',
   'perception.ccBcc': 'Cc / Bcc',
+  // === schedule-created-card batch (2026-11-05): in-message schedule/todo card ===
+  'schedCard.kindTask': 'Scheduled task',
+  'schedCard.kindTodo': 'Todo',
+  'schedCard.statusActive': 'Active',
+  'schedCard.statusWriting': 'Saving',
+  'schedCard.statusPaused': 'PAUSED',
+  'schedCard.statusDone': 'Done',
+  'schedCard.statusCancelled': 'Cancelled',
+  'schedCard.statusGone': 'Not in list',
+  'schedCard.createdAt': 'created {at}',
+  'schedCard.repeatOnce': 'One-shot',
+  'schedCard.repeat.hourly': 'Hourly',
+  'schedCard.repeat.daily': 'Daily',
+  'schedCard.repeat.weekly': 'Weekly',
+  'schedCard.expand': 'Expand',
+  'schedCard.collapse': 'Collapse',
+  'schedCard.edit': 'Edit',
+  'schedCard.cancel': 'Cancel',
+  'schedCard.save': 'Save',
+  'schedCard.saving': 'Saving',
+  'schedCard.discard': 'Discard',
+  'schedCard.fieldContent': 'Content',
+  'schedCard.fieldProject': 'Project',
+  'schedCard.fieldTriggerAt': 'Trigger at',
+  'schedCard.fieldRepeat': 'Repeat',
+  'schedCard.projectPlaceholder': 'Project label (empty = ungrouped)',
+  'schedCard.confirmCancelAsk': 'Cancelled entries never fire again.',
+  'schedCard.confirmCancel': 'Cancel it',
+  'schedCard.cancelling': 'Cancelling',
+  'schedCard.keep': 'Keep',
+  'schedCard.noChange': 'Nothing changed',
+  'schedCard.readFailed': 'Engine state not read back',
+  'schedCard.errOffline': 'Not connected to the engine — change not submitted',
+  'schedCard.errTimeout': 'No engine receipt — change unconfirmed',
+  'schedCard.errGone': 'Entry no longer exists — change not saved',
+  'schedCard.errEngine': 'Engine rejected: {detail}',
+  'schedCard.errGeneric': 'Write failed — change not saved',
 };

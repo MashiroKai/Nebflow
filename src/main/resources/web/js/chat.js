@@ -15,6 +15,9 @@ import { formatHm, formatFooterTime, toggleTimeFormat, bindTimeToggle } from './
 import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, appendUserTextWithFences, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, foldToolCardMedia, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
+// schedule-created-card 批（2026-11-05）：Schedule 工具创建/编辑成功后落卡片行。
+// 单一调用点 = 本文件 renderTool + persistence.js 两条历史重放腿（同一个 builder）。
+import { scheduleCardRowForTool } from './scheduleCard.js';
 import { t } from './i18n.js';
 // msgchip-provenance 批（2026-11-01）：渠道/平台来源注记剥离单点（牌窗与气泡共用）。
 import { stripChannelProvenance } from './channelProvenance.js';
@@ -1261,6 +1264,19 @@ export function renderTool(label, summary, content, isError, inputJson, sessionI
   smartScroll();
 
   if (hasBody) attachToolClick(card);
+  // ── Schedule 创建/编辑卡片（schedule-created-card 批 2026-11-05）───────────
+  // 作者令：创建定时任务/待办成功时，**消息流里**落一张可原地改/取消的卡片。
+  // 形态沿用 Pop 交付卡的两行制（进程行 = 上面这张既有工具卡，卡片行紧随其
+  // 后；行类名 `row sched-row`），卡体是 light DOM 组件 <nf-sched-card>
+  // （js/scheduleCard.js），写读走 js/scheduleApi.js 的既有 WS 帧（与 Schedule
+  // 工具同一 store）。判据面只在这里接线，卡的所有细节在组件里。
+  const schedRow = scheduleCardRowForTool({
+    label: _toolName, inputJson, content, isError, sessionId: sid,
+  });
+  if (schedRow) {
+    row.after(schedRow);
+    smartScroll();
+  }
   return { type: 'tool', label, summary, content, isError, input: inputJson };
 }
 

@@ -924,6 +924,9 @@ export default {
   'subagents.fromFlowNode': '来自 AgentFlow 节点',
   'subagents.fromSubagent': '来自上层子代理',
   'subagents.orphanTip': '父会话已不可见 · {sid}',
+  // 野节点归置批（2026-11-05 腿③）：野节点（父不可解析的行）独立归置分组的组头词。
+  // 一个事实词（这群行没有父），不是解释句/教学句（自解释铁律 8）。
+  'subagents.orphanGroup': '无父节点',
   // 面板层级批（2026-10-31 ①）：组头折叠 caret 的无障碍/悬停文案（随折叠态翻转）。
   'subagents.collapseGroup': '收起子任务',
   'subagents.expandGroup': '展开子任务',
@@ -932,6 +935,10 @@ export default {
   // 跑的延续态徽标（琥珀词 + workflow 图标；tooltip 带链会话数）。
   'subagents.kindDispatcher': '分发器',
   'subagents.kindNode': '节点',
+  // 术语分层批（2026-11-05 作者令）：agentflow = 整个组织行为的代称（一次编排 =
+  // 一个 agentflow），只作**整体行**（delegate 组头 / 合成延续组头）的身份词；
+  // 该编排里的成员是节点（词走 subagents.kindNode 族）。zh/en 同词面。
+  'subagents.kindAgentflow': 'AgentFlow',
   'subagents.chainRunning': '链运行中',
   'subagents.chainRunningTip': '委托已交付，链仍在运行 · {n} 个会话',
   // 面板行说明批（2026-10-29 ②）：任务摘要次行无文案键（原文上屏）。
@@ -2262,6 +2269,10 @@ export default {
   // 面板组头徽标词（bgAgents 用原始数据词，不经 i18n）。
   'task.mode.kernel': '内核',
   'task.mode.dispatcher': '分发器',
+  // base 漂移状态位（`[base-moved]` 降噪重写批 2026-11-05）：基分支自本任务派发以来
+  // 前进的次数——**只陈述状态事实**（作者令「base 动了放面板可见即可，不进消息流」），
+  // 不解释机制、不给建议。
+  'task.baseDrift': 'base 已前进 {n} 次',
   'bg.modeTitle': '执行模式：{mode}',
 
   // NebLink
@@ -3216,4 +3227,43 @@ export default {
   'perception.toPh': '收件人地址，回车添加',
   'perception.addrPh': '输入地址，回车添加',
   'perception.ccBcc': '抄送/密送',
+  // === schedule-created-card 批（2026-11-05）：消息内嵌定时任务/待办卡片 ===
+  // 文案纪律（铁律 8 自解释）：只写状态事实与决策动词 —— 零能力说明、零路径
+  // 指引、零行为教学。状态词一律「是什么」，不写「你可以…」。
+  'schedCard.kindTask': '定时任务',
+  'schedCard.kindTodo': '待办',
+  'schedCard.statusActive': '进行中',
+  'schedCard.statusWriting': '提交中',
+  'schedCard.statusPaused': 'PAUSED',
+  'schedCard.statusDone': '已完成',
+  'schedCard.statusCancelled': '已取消',
+  'schedCard.statusGone': '已不在列表',
+  'schedCard.createdAt': '建 {at}',
+  'schedCard.repeatOnce': '不重复',
+  'schedCard.repeat.hourly': '每小时',
+  'schedCard.repeat.daily': '每天',
+  'schedCard.repeat.weekly': '每周',
+  'schedCard.expand': '展开',
+  'schedCard.collapse': '收起',
+  'schedCard.edit': '编辑',
+  'schedCard.cancel': '取消',
+  'schedCard.save': '保存',
+  'schedCard.saving': '保存中',
+  'schedCard.discard': '放弃修改',
+  'schedCard.fieldContent': '内容',
+  'schedCard.fieldProject': '项目',
+  'schedCard.fieldTriggerAt': '触发时间',
+  'schedCard.fieldRepeat': '重复',
+  'schedCard.projectPlaceholder': '项目标签（空 = 未分组）',
+  'schedCard.confirmCancelAsk': '取消后不再触发。',
+  'schedCard.confirmCancel': '确认取消',
+  'schedCard.cancelling': '取消中',
+  'schedCard.keep': '保留',
+  'schedCard.noChange': '没有改动',
+  'schedCard.readFailed': '引擎状态未读回',
+  'schedCard.errOffline': '未连接引擎，改动未提交',
+  'schedCard.errTimeout': '引擎未回执，改动未确认',
+  'schedCard.errGone': '条目已不存在，改动未保存',
+  'schedCard.errEngine': '引擎拒绝：{detail}',
+  'schedCard.errGeneric': '写入失败，改动未保存',
 };
