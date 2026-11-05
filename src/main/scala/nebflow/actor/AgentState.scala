@@ -10,9 +10,16 @@ import nebflow.shared.*
  * Display/routing kind of an agent (P1 统一注册表). Replaces the nodeSessionId
  * string-prefix conventions (team-/dag-/delegate-/ephemeral-) as the *identity*
  * discriminator; P3 drops the prefixes entirely and routes by this field.
+ *
+ * **死枚举清理（作者裁定5「删」，2026-11-05 09:38）**：`Ephemeral` 与 `Plan` 已删。
+ * 依据 = 设计件 `actor-as-agent-framework-creation-paths-and-invariants__20261104_214436__
+ * delegate-nebflow-f3849ed1.md` §7.3：两者**全仓无生产者**（只有测试夹具与消费
+ * 白名单），旧语义已被 `SubTask` 覆盖；存量化核（2026-11-05）在数据根
+ * `agents/ sessions/ subagent-tasks/ tasks/` 全量扫描 `"kind": "Ephemeral"|"Plan"`
+ * **零命中** ⇒ 无存量兼容负担。
  */
 enum AgentKind:
-  case Root, Team, Flow, Delegate, Ephemeral, Plan, SubTask
+  case Root, Team, Flow, Delegate, SubTask
 
 /**
  * Unified registry entry — one identity per agent (P1 统一注册表).

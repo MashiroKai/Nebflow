@@ -839,7 +839,7 @@ class FreezeGateSpec extends CatsEffectSuite:
           ),
           sid
         )
-        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Plan, sid, None)))
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
         // 系统注入（Gated）也应放行——豁免优先于 cause
         _ <- ref ! AgentCommand.UserInput("plan this task")
         _ <- waitUntil(System.currentTimeMillis() + 8000)(counter.get.map(_ >= 1))

@@ -634,7 +634,7 @@ private[gateway] object WsSessionChatHandlers:
             case Some(rec) if !nebflow.core.tools.AgentControlTool.cancelable(rec) =>
               cancelReply(
                 ok = false,
-                "error" -> s"Kind ${rec.kind} is read-only (cancelable: Delegate / SubTask / Ephemeral / Project node-dispatcher sessions)".asJson
+                "error" -> s"Kind ${rec.kind} is read-only (cancelable: Delegate / SubTask / Project node-dispatcher sessions)".asJson
               )
             case Some(rec) =>
               val reason = if cReason.nonEmpty then cReason else "cancelled from panel"

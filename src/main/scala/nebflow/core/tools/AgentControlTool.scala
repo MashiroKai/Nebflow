@@ -22,17 +22,17 @@ import scala.concurrent.duration.*
  *  - list    全部后台 agent 表格（kind/status/stuck?/phase/up/idle/retries/task）
  *  - status  单个详情卡片 + 孤儿任务检测（registry 无记录但 task=running）
  *  - cancel  终止任务：supervisor 路径（AgentEvent.Cancelled → notifyParentAndStop
- *            "cancelled"，barrier 正确释放）/ 降级 Stop 路径（Ephemeral bridge
- *            watch 兜底 / 旧记录）
+ *            "cancelled"，barrier 正确释放）/ 降级 Stop 路径（无 supervisor 的
+ *            bridge watch 兜底 / 旧记录）
  *  - restart 断点重启：Stop → BackoffSupervisor Terminated → 恢复持久化消息续跑
  *            （复用 #317 crash resume，零新机制），消耗 supervisor 熔断额度
  *
  * 安全边界（spec §4 矩阵，严格）：
- *  - cancel 白名单：Delegate / SubTask / Ephemeral；Flow 指引 cancelFlow；
+ *  - cancel 白名单：Delegate / SubTask；Flow 指引 cancelFlow；
  *    Team 条件放行：直接父 Manager / root 全局（supervision trio Block 2 §C3）；
  *    杀 Manager 需 confirm+reason 双确认门；Root/自身拒绝（自杀守卫）
  *  - restart 白名单：Delegate(ephemeral) / SubTask；persistent Delegate 无 supervisor
- *    拒绝（提示 cancel + 重新 Delegate）；Ephemeral 无恢复载体拒绝
+ *    拒绝（提示 cancel + 重新 Delegate）
  *  - rootSessionId 必须与调用者同桶（P2 权限原则）
  */
 object AgentControlTool extends Tool:
@@ -47,10 +47,10 @@ object AgentControlTool extends Tool:
 Actions:
 - **list**: table of all live background agents (kind, status, stuck?, phase, uptime, idle time, retry count, task). Use this FIRST when a sub-agent is silent or you suspect it is stuck — "stuck?" marks Processing agents that either produced no agent-side event (LLM chunk / tool batch) for >10min, or have a single tool call running for >10min inside an unfinished turn (same judgement as the automatic watcher — process CPU is irrelevant to it). "phase" shows the in-flight tool call (name + elapsed), which is what tells you whether the agent is executing a tool or has gone silent.
 - **status**: full detail for one agent (pass sessionId from list): state, timings, in-flight tool phase, task prompt excerpt, retry count, last error. Also detects orphan task files (actor gone but task still marked running).
-- **cancel**: terminate an agent's current task. The parent session receives a "cancelled" notification and any wait barrier is released — nobody waits forever. Allowed kinds: Delegate, SubTask, Ephemeral, Project node/dispatcher sessions (node-*/dispatcher-*, settles via the session bridge). With scope="bgTask" + jobId: cancel ONE background task inside the target session instead of the session (local shell job or remote device job) — the session and its other tasks keep running.
+- **cancel**: terminate an agent's current task. The parent session receives a "cancelled" notification and any wait barrier is released — nobody waits forever. Allowed kinds: Delegate, SubTask, Project node/dispatcher sessions (node-*/dispatcher-*, settles via the session bridge). With scope="bgTask" + jobId: cancel ONE background task inside the target session instead of the session (local shell job or remote device job) — the session and its other tasks keep running.
 - **restart**: kill the stuck turn and resume from the last persisted checkpoint (same mechanism as crash recovery — completed work is kept). Allowed kinds: Delegate (ephemeral) and SubTask (both consume the supervisor's restart budget, 2 per 5min; exceeding it fails the task).
 
-Safety rules: you cannot cancel/restart yourself, Root/plan sessions (self-preservation guard), or dag-* Flow workers (flow cancellation goes through cancelFlow / RunningFlowRegistry). Project node/dispatcher sessions (node-*/dispatcher-*) support cancel only (single-shot — no restart; cancel the dispatcher and re-dispatch via Delegate(task=..., project=<name>) — Mail dispatches nothing). Delegate/SubTask/Ephemeral sessions under your own root session are always controllable. Team targets are not manageable at all: the team feature (team members, team Managers and their scope) was retired on 2026-11-04, so the team scope of this tool is gone with it — a `kind: Team` target is refused explicitly rather than silently downgraded.
+Safety rules: you cannot cancel/restart yourself, Root/plan sessions (self-preservation guard), or dag-* Flow workers (flow cancellation goes through cancelFlow / RunningFlowRegistry). Project node/dispatcher sessions (node-*/dispatcher-*) support cancel only (single-shot — no restart; cancel the dispatcher and re-dispatch via Delegate(task=..., project=<name>) — Mail dispatches nothing). Delegate/SubTask sessions under your own root session are always controllable. Team targets are not manageable at all: the team feature (team members, team Managers and their scope) was retired on 2026-11-04, so the team scope of this tool is gone with it — a `kind: Team` target is refused explicitly rather than silently downgraded.
 
 When to use:
 - A delegated task has been silent far longer than expected → list, then status the suspicious session.
@@ -110,7 +110,7 @@ When to use:
    * （直接父 / root 桶 → 放行，并配 Manager 强确认门），该分支随 team scope 整段
    * 删除（作者裁定）——`Team` 现由 [[kindRejection]] 显式拒绝，也不再进本白名单。
    */
-  val CancelableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask, AgentKind.Ephemeral)
+  val CancelableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask)
   private val RestartableKinds: Set[AgentKind] = Set(AgentKind.Delegate, AgentKind.SubTask)
 
   /**
@@ -190,16 +190,16 @@ When to use:
         Some(
           "Team targets are not manageable: the team feature was retired on 2026-11-04 " +
             "(team members / team Managers / team scope are gone, so no caller has a team scope any more). " +
-            "Manage background sessions (Delegate / SubTask / Ephemeral / Project node / dispatcher) instead."
+            "Manage background sessions (Delegate / SubTask / Project node / dispatcher) instead."
         )
-      case AgentKind.Root | AgentKind.Plan =>
-        Some("Root/plan sessions cannot be managed with this tool (self-preservation guard).")
+      case AgentKind.Root =>
+        Some("Root sessions cannot be managed with this tool (self-preservation guard).")
       case k =>
         val allowed = if action == "restart" then RestartableKinds else CancelableKinds
         if allowed.contains(k) then None
         else if action == "restart" then
           Some(
-            s"Ephemeral agents have no supervisor/checkpoint carrier — restart is not supported. Cancel it and spawn a new one."
+            s"$k sessions have no supervisor/checkpoint carrier — restart is not supported. Cancel it and spawn a new one."
           )
         else None
 
@@ -665,7 +665,7 @@ When to use:
              |          (a batch member hung or died without a terminal event — held results never inject until restart).
              |          The HeldDeliveryWatchdog (60s) now nudges undelivered held receipts with exponential backoff; after
              |          ${nebflow.shared.Defaults.HeldDeliveryMaxAttempts} nudges they become unread (+u) and flush ahead of the session's next input.
-             |Cancelable kinds: Delegate / SubTask / Ephemeral, and Project node/dispatcher sessions (node-*/dispatcher-*, cancel settles via the session bridge). Restartable: Delegate(ephemeral) / SubTask.
+             |Cancelable kinds: Delegate / SubTask, and Project node/dispatcher sessions (node-*/dispatcher-*, cancel settles via the session bridge). Restartable: Delegate(ephemeral) / SubTask.
              |Team targets: not manageable (the team feature was retired on 2026-11-04; team scope is gone). Legacy dag-* Flow workers and Root are read-only.$scopeNote""".stripMargin
       Right(summary)
 
@@ -1079,7 +1079,7 @@ When to use:
           )
         )
         val taskUpdate =
-          if rec.kind != AgentKind.Ephemeral && rec.parentSessionId.nonEmpty then
+          if rec.parentSessionId.nonEmpty then
             resources.subAgentTaskStore
               .updateStatus(
                 rec.parentSessionId,
