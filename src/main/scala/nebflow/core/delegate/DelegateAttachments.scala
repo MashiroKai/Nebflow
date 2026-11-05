@@ -74,10 +74,20 @@ object DelegateAttachments:
     /** MIME 类型（按扩展名；未知 = application/octet-stream）。 */
     mime: String,
     /** 是否图片（= 走 Read 的视觉通道）。 */
-    isImage: Boolean
+    isImage: Boolean,
+    /**
+     * 跨设备腿（跨设备附件批 2026-11-05）：该件在**目标设备**上的绝对路径。
+     * `None` = 本机腿（清单给本机副本路径，逐字节沿用旧形态）。
+     * 有值 ⇒ 清单的 `copy:` 行 = **对端路径**（delegate 真正要 Read 的那条），
+     * 本机稳定副本降为溯源行。
+     */
+    remoteCopy: Option[String] = None
   ):
-    /** 清单里让模型 Read 的那条路径（座位树优先——delegate 就在那棵树里干活）。 */
-    def readPath: String = seatCopy.getOrElse(stableCopy)
+    /**
+     * 清单里让模型 Read 的那条路径：跨设备腿 = **对端路径**（本机路径在那台机器上
+     * 不存在，绝不能充数——那正是上一批被拒的静默丢失面）；否则座位树优先。
+     */
+    def readPath: String = remoteCopy.orElse(seatCopy).getOrElse(stableCopy)
 
     /** 单图超过 Read 的视觉上限 ⇒ 清单必须逐件告知（否则「假装看过」）。 */
     def overVisionCap: Boolean =
@@ -86,10 +96,13 @@ object DelegateAttachments:
   end Entry
 
   /** 一次派发的附件计划（空 = 本次未带附件，全链路逐字节零改动）。 */
-  final case class Plan(entries: List[Entry], copyDir: String):
+  final case class Plan(entries: List[Entry], copyDir: String, device: Option[String] = None):
     def isEmpty: Boolean = entries.isEmpty
     def size: Int = entries.size
     def names: List[String] = entries.map(e => fileNameOf(e.readPath))
+
+    /** 跨设备腿（每件的副本都已在目标设备上、且 sha256 已由对端重算比对）。 */
+    def onDevice: Boolean = device.isDefined
 
   def empty: Plan = Plan(Nil, "")
 
@@ -348,8 +361,13 @@ object DelegateAttachments:
   /**
    * 渲染「附件清单」段。`Nil` ⇒ 空串（brief 逐字节不变——既有调用方零漂移）。
    *
-   * 每项给验收要求的五读数：**副本绝对路径 + 字节数 + sha256 + MIME/类型 + 是否图片**，
-   * 外加原路径（追溯）。段首一句把「这不是作者手写正文」说清。
+   * 本机腿（`plan.device` 为空）每项给验收要求的五读数：**副本绝对路径 + 字节数 +
+   * sha256 + MIME/类型 + 是否图片**，外加原路径（追溯）；段首一句把「这不是作者手写
+   * 正文」说清。
+   *
+   * 跨设备腿（`plan.device` 有值）**多两样**、且 `copy:` 行换成**对端绝对路径**：
+   * `device:` 行标明这是哪台机器上的路径、`host:` 行保留本机稳定副本作溯源（并在行里
+   * 明说「本机路径在那台机器上读不到」）。本机腿输出**逐字节不变**。
    */
   def render(plan: Plan): String =
     if plan.isEmpty then ""
@@ -368,39 +386,69 @@ object DelegateAttachments:
         val stable =
           if e.seatCopy.isEmpty then ""
           else s"\n     stable: ${e.stableCopy}"
+        val deviceLines = plan.device.map(dev => s"\n     device: $dev").getOrElse("")
+        val hostLine =
+          if e.remoteCopy.isEmpty then ""
+          else
+            s"\n     host: ${e.stableCopy} (this path exists on the DISPATCHING machine only — it is not readable from the device)"
         s"""  ${i + 1}. copy: ${e.readPath}
      orig: ${e.original}
-     $flags$stable$overCap"""
+     $flags$stable$deviceLines$hostLine$overCap"""
       }
       val discipline =
-        s"""$DisciplineHeader Attachment bytes are NOT in your context — open each `copy` path with Read before using it.
+        if plan.device.isEmpty then
+          s"""$DisciplineHeader Attachment bytes are NOT in your context — open each `copy` path with Read before using it.
 Read returns PNG/JPG/JPEG/GIF/WEBP/BMP as vision-ready image content (you see the picture, not base64), so `image=yes` entries are directly visible to you; if Read answers with text/binary or an error (or a `copy` path is missing, or its sha256 differs from the value above), say so in your final report — never pretend you looked at it.
 In your final report, state which attachments you actually opened, and flag any you did not use (an attachment nobody read is the "delivered but unused" failure this manifest exists to prevent)."""
-      s"""$ManifestHeader The dispatcher attached ${plan.size} file(s) to this brief. They are NOT part of the hand-written task text — hand-written paths in the task above are preserved verbatim and are not rewritten by this section. Each entry: the copy path to Read + its original path + type + image flag + byte count + sha256.
+        else
+          s"""$DisciplineHeader Attachment bytes are NOT in your context, and these `copy` paths are on the DEVICE, not on this machine's disk. Open each `copy` path with Read (the file tools default-route to that device) before using it.
+Read returns PNG/JPG/JPEG/GIF/WEBP/BMP as vision-ready image content (you see the picture, not base64), so `image=yes` entries are directly visible to you; if Read answers with text/binary or an error (or a `copy` path is missing, or its sha256 differs from the value above), say so in your final report — never pretend you looked at it.
+The sha256 values above were re-computed ON THE DEVICE from the bytes it actually wrote (per-chunk digests plus a closing whole-file digest), so a matching value means the file on that disk is byte-identical to the file the dispatcher attached.
+In your final report, state which attachments you actually opened, and flag any you did not use (an attachment nobody read is the "delivered but unused" failure this manifest exists to prevent)."""
+      val header = plan.device match
+        case None =>
+          s"""$ManifestHeader The dispatcher attached ${plan.size} file(s) to this brief. They are NOT part of the hand-written task text — hand-written paths in the task above are preserved verbatim and are not rewritten by this section. Each entry: the copy path to Read + its original path + type + image flag + byte count + sha256."""
+        case Some(dev) =>
+          s"""$ManifestHeader The dispatcher attached ${plan.size} file(s) to this brief. They are NOT part of the hand-written task text — hand-written paths in the task above are preserved verbatim and are not rewritten by this section. Each `copy` path is an ABSOLUTE path ON DEVICE $dev (delivered there before this dispatch, byte-verified on that device); the `host` path is the dispatching machine's copy and is for provenance only."""
+      s"""$header
 ${lines.mkString("\n")}
 $discipline"""
+  end render
 
   /**
    * 派发回执的附件行（可观测面·工具侧）：件数 + 逐件「名字（类型，字节数）」+ 稳定副本
    * 目录。空计划 ⇒ 空串（未带附件的回执逐字节不变）。面板/台账另有 `attachments` 摘要
    * （见 `DelegateTool` 的 delegate-spawn 链行）。
+   *
+   * 跨设备腿：目录那半句换成「已送达设备 X（对端自算 sha256 与原件逐件等值）」——
+   * 回执不得说「stable copies in <本机目录>」这种在半路上就断了的读法。
    */
   def receiptLine(plan: Plan): String =
     if plan.isEmpty then ""
     else
       val items = plan.entries.map(e => s"${fileNameOf(e.readPath)} (${e.mime}, ${e.sizeBytes} B)")
-      s"Attachments: ${plan.size} file(s) — ${items.mkString(", ")}; stable copies in ${plan.copyDir} " +
-        "(sha256 verified against the originals; the brief carries the manifest section)."
+      plan.device match
+        case None =>
+          s"Attachments: ${plan.size} file(s) — ${items.mkString(", ")}; stable copies in ${plan.copyDir} " +
+            "(sha256 verified against the originals; the brief carries the manifest section)."
+        case Some(dev) =>
+          s"Attachments: ${plan.size} file(s) — ${items.mkString(", ")}; delivered to device '$dev' and " +
+            "byte-verified there (the device re-computed each chunk digest and the whole-file sha256; they match the " +
+            "originals). The brief's manifest lists the DEVICE paths the delegate should read; local copies stay in " +
+            plan.copyDir + " for provenance."
 
   /**
    * 台账/面板可观测面的 JSON 摘要（`delegate-spawn` 链行的 `attachments` 键）：逐件
    * 「名字 / 字节数 / sha256 / MIME / 是否图片 / 副本路径」。读面（面板、ledger 查询）
    * 不需要再读盘——清单本身在 brief 里给模型。
+   *
+   * 跨设备腿**加性**两键：`device`（计划级）与逐件 `deviceCopy`（delegate 实际读的对端
+   * 路径）。本机腿键集逐字不变。
    */
   def summaryJson(plan: Plan): Json =
     Json.arr(
       plan.entries.map { e =>
-        Json.obj(
+        val base = Json.obj(
           "name" -> fileNameOf(e.readPath).asJson,
           "bytes" -> e.sizeBytes.asJson,
           "sha256" -> e.sha256.asJson,
@@ -408,6 +456,13 @@ $discipline"""
           "image" -> e.isImage.asJson,
           "copy" -> e.readPath.asJson,
           "original" -> e.original.asJson
+        )
+        val withDevice = plan.device
+          .fold(base)(dev =>
+            Json.fromJsonObject(base.asObject.getOrElse(io.circe.JsonObject.empty).add("device", dev.asJson))
+          )
+        e.remoteCopy.fold(withDevice)(rc =>
+          Json.fromJsonObject(withDevice.asObject.getOrElse(io.circe.JsonObject.empty).add("deviceCopy", rc.asJson))
         )
       }*
     )

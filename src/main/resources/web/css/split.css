@@ -2174,8 +2174,15 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 }
 /* Markdown element styling — mirrors .bubble.ai */
 .canvas-md-viewer p { margin: var(--ds-space-1) 0; }
-/* 段落首行缩进（rich-render 批 2026-11-05，作者令 09:13）：同 .bubble.ai 口径 ——
-   只对 md 阅读面的**直接子** p 生效，列表/引用/表格/卡片内的段落不缩进。 */
+/* 文档正文首行缩进（撤回批 2026-11-05 16:43 作者令第二条「文档只缩进首行」）：
+   中文排版习惯 = 正文段落**首行**缩两字、续行齐左；**只有**首行缩进，没有挂起缩进
+   / 整块左移 / 层级缩进。实现口径：
+     · 只对阅读面的**直接子** p 生效（值走 --ds-text-indent = 2em）；列表项内 /
+       引用块内 / 表格单元格 / 代码块内的段落与块本身都不是直接子 p ⇒ 零缩进，
+       天然不错位（不加例外清单，避免漏一条就歪一片）。
+     · 源文件里以 `&emsp;&emsp;` 起行的段落（文档写作纪律，作者 11:09 令：求
+       Obsidian 与渲染器同形）由 viewers/markdown.js 的段首空白归一剥掉，保证
+       「两字」是恒量而不是 2em + 2em 的四字。 */
 .canvas-md-viewer > p { text-indent: var(--ds-text-indent); }
 .canvas-md-viewer p:first-child { margin-top: 0; }
 .canvas-md-viewer p:last-child { margin-bottom: 0; }
@@ -2243,7 +2250,46 @@ body.canvas-overlay #deck-layer { border-radius: var(--ds-radius-shell); }
 .canvas-md-viewer a { color: var(--color-primary); }
 .canvas-md-viewer hr { border: none; border-top: 1px solid var(--color-border); margin: var(--ds-space-2) 0; }
 .canvas-md-viewer strong { font-weight: 600; }
-.canvas-md-viewer img { max-width: 100%; border-radius: var(--ds-radius-input); }
+/* ── 文档里放图批（作者报障 2026-11-05「文档里只有路径 图片没渲染出来」）──
+   1) 图片尺寸：默认不超过内容列宽（max-width:100%）、保持比例（height:auto 让
+      authored 的 height 属性也按比例缩、object-fit:contain 不裁切）。「点开看
+      原图」= 既有 lightbox 腿（utils.js 给每枚 markdown 图片加 .nf-zoom-img，
+      lightbox.js initLightbox 的文档级委托监听开大图）——不新增第二套。 */
+.canvas-md-viewer img {
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
+  border-radius: var(--ds-radius-input);
+}
+
+/*   2) 取不到图 ⇒ 明确失败占位（原因文案 + 原路径原文），绝不留白。
+      形态与 nf-fence-error（mermaid.css，围栏失败态）同族：同一个 --sapphire-edge
+      底 + 描边 + 圆角 + 字档，读作「这里本来有张图，它没取到」。 */
+.nf-md-img-fail {
+  display: block;
+  border: 1px solid var(--sapphire-edge-strong);
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
+  background: var(--sapphire-edge);
+  margin: var(--ds-space-2) 0;
+}
+.nf-md-img-fail-title {
+  font-size: var(--ds-fs-hint);
+  font-weight: 500;
+  color: var(--color-danger);
+}
+.nf-md-img-fail-reason {
+  margin-top: var(--ds-space-half);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+}
+.nf-md-img-fail-path {
+  display: block;
+  margin-top: var(--ds-space-1);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+  word-break: break-all;
+}
 
 /* ── EPUB Reader — paginated ──
    P0 止血批（设计稿 20261030 §1.2/§2.1/§6）：三主题档（data-epub-theme）+
@@ -2880,22 +2926,219 @@ body.mobile-layer #canvas-content:has(.canvas-tab-pane.active .epub-reader) > .c
   pointer-events: none;
 }
 
-/* ── Video viewer (HTML5 native controls only; canvas-video batch 2026-10-06) ── */
+/* ── Video viewer（canvas-video-player 批 2026-11-05：自研扁平控件 + contain 放大）──
+   作者报障逐字「现在视频在canvas的占比，和样式都很丑，需要优化一下。」
+
+   ── 改前根因（不是「父容器没高度」，是「只有上限没有尺寸」）──────────────
+   改前本块 = `video.canvas-video { max-width:100%; max-height:100% }`。`max-*` 对
+   替换元素只**封顶**，不撑高：没有任何 width/height 声明的 `<video>` 按**内在尺寸**
+   布局（320×180 的片子就停在 320×180）。改前桌面实测（pane 718×864）：画面占宽
+   44.6% × 高 20.8%，面积 9.3%，四边留白 199/342/199/342。大于画布的片子（4K/超宽）
+   由 max-width 封顶，contain 关系**恰好**成立 —— 所以坏的只有「小视频不放大」那一半。
+
+   ── 法则（一条，四个档位一起管，不是硬编码尺寸）──────────────────────
+   画面 = **contain(可用区)**：宽 = min(100cqw, 100cqh × AR)、高 = 宽 ÷ AR，
+   AR 由 viewers/video.js 在 loadedmetadata 写进 `--cvv-ar`（本文件不存第二份宽高比）。
+   小片被放大到边界、4K/超宽/竖屏永远整幅装得下 —— 同一条 min() 的两侧。
+   容器查询单位要求 stage 是 `container-type: size`；不支持 cqw 的引擎走 @supports
+   之外的兜底（width/height 100% + object-fit: contain，contain 语义同样成立，
+   只是元素盒 = 可用区、画面在其中居中，读数上「画面」按 object-fit 反算）。
+
+   ── 可用区（与「底部浮钮让位」机制同一把尺，不另立一把）──────────────
+   顶部 = 卡头胶囊带 --cv-head-clear（手机 --mchrome-clear）；
+   底部 = 既有 `--canvas-bottom-clearance`（viewers/shared.js syncBottomClearance
+   实测发布 = 浮钮带顶到面板底缘 + 12 呼吸）+ 控件条（**流内盒**，不在画面像素上）。
+   控件条是流内兄弟而非 absolute 浮层 ⇒ 画面与控件条在结构上不可能重叠；浮钮带
+   让位照旧只压 padding，两者不重叠也不双计（改前实测 pane 底部留白含浮钮带，
+   改后同一变量继续承担，只是多减一行控件条）。 */
 .canvas-video-viewer {
+  /* 控件档（单点）：桌面 = --ds-hit-control 32；手机层在下方覆盖为
+     --ds-hit-tap-lg 48（HIG 触控下限，热区 ≥44 的硬要求由此档承担）。 */
+  --cvv-btn: var(--ds-hit-control);
+  --cvv-icon: 16px;
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  padding: var(--cv-head-clear, 56px) var(--ds-space-4)
+           calc(var(--canvas-bottom-clearance, 0px) + var(--ds-space-3));
+  gap: var(--ds-space-2);
+}
+/* 手机层：顶让位单源换 --mchrome-clear（簇顶 16 + 钮 48 + 呼吸 8 = 72，
+   mobileLayer.css 簇几何块；与页头/页体同一把尺）。 */
+body.mobile-layer .canvas-video-viewer {
+  --cvv-btn: var(--ds-hit-tap-lg);
+  --cvv-icon: 20px;
+  padding-top: var(--mchrome-clear, 72px);
+  padding-left: var(--ds-space-3);
+  padding-right: var(--ds-space-3);
+}
+/* 舞台（可用区）：尺寸containment 的容器 —— 视频用 cqw/cqh 算 contain 尺寸，
+   容器自身尺寸只由 flex 分配决定（内容不回灌尺寸，无自激环）。 */
+.canvas-video-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--ds-space-4);
-  gap: var(--ds-space-inline-gap);
-  height: 100%;
+  container: nfvideo / size;
 }
-/* .image-info 已随 2026-10-25 胶囊去重令退役（见上 .canvas-image-viewer 注）。 */
-.canvas-video-viewer video.canvas-video {
+/* 兜底（无容器查询单位）：元素盒 = 可用区，画面按 object-fit: contain 居中。
+   注：此处**不设任何背景** —— 留白是真留白，不是遮罩/模糊填充（作者硬约束）。 */
+.canvas-video-stage video.canvas-video {
   display: block;
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
   border-radius: var(--ds-radius-input);
+  -webkit-user-drag: none;
+}
+@supports (width: 1cqw) {
+  .canvas-video-stage video.canvas-video {
+    width: min(100cqw, calc(100cqh * var(--cvv-ar, 1.7778)));
+    height: auto;
+    max-width: 100%;
+    max-height: 100%;
+    aspect-ratio: var(--cvv-ar, 1.7778);
+  }
+}
+
+/* 舞台可聚焦（键盘入口 + 播控键准入闸，见 viewers/video.js 的 canvasVideoFocus 注）：
+   键盘到达时给描边环（环是线不是影，与全站焦点口径一致）；鼠标点进来不画环。 */
+.canvas-video-stage:focus {
+  outline: none;
+}
+.canvas-video-stage:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset);
+  border-radius: var(--ds-radius-input);
+}
+
+/* ── 自研控件条（流内；永不压在画面像素上）────────────────────────────────
+   材质 = 扁平容器档：--ds-control-bg 底 + 1px 描边 + 8 圆角，**零阴影/零渐变**
+   （条本身是容器不是按钮，但风格一致，不引入厚度道具）。 */
+.canvas-video-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  width: 100%;
+  padding: var(--ds-space-1) var(--ds-space-2);
+  background: var(--ds-control-bg);
+  border: 1px solid var(--ds-control-border);
+  border-radius: var(--ds-radius-input);
+}
+/* 控件钮（族名已进 flatButtons.css 登记表；六态由该共享层补齐：hover 关在
+   (hover:hover)、按下缩放、焦点描边环、禁用档、触屏档、减少动效）。
+   本块只给几何与配色 —— 零阴影、零渐变、零位移。 */
+.canvas-video-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--cvv-btn);
+  height: var(--cvv-btn);
+  padding: 0;
+  color: var(--ds-text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ds-radius-chip);
+  cursor: pointer;
+}
+.canvas-video-btn svg {
+  width: var(--cvv-icon);
+  height: var(--cvv-icon);
+  pointer-events: none;
+}
+/* 按下：底色再深一档（缩放由 flatButtons.css 共享层给，两处不重复写同一属性）。 */
+.canvas-video-btn:active {
+  background: var(--btn-press-bg);
+}
+.canvas-video-btn:disabled {
+  cursor: not-allowed;
+}
+/* 时间读数：等宽数字，避免每拍跳宽（timeupdate 4Hz）。 */
+.cvv-time {
+  flex: none;
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-hint);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  padding: 0 var(--ds-space-1);
+}
+
+/* ── 滑轨（进度 / 音量共用一份实现：两条各写一套必然漂移）──────────────
+   命中盒 = 控件档高度（桌面 32 / 手机 48），视觉轨只有 4px —— 「看得细、点得粗」。 */
+:is(.cvv-scrub, .cvv-vol) {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: var(--cvv-btn);
+  cursor: pointer;
+  touch-action: none;
+  border-radius: var(--ds-radius-chip);
+}
+.cvv-scrub { flex: 1 1 auto; min-width: 64px; }
+.cvv-vol { flex: none; width: 72px; }
+.cvv-scrub-track,
+.cvv-vol-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+  border-radius: var(--ds-radius-thin);
+  background: var(--ds-tab-track);
+}
+.cvv-scrub-fill,
+.cvv-vol-fill {
+  position: absolute;
+  left: 0;
+  width: 0;
+  height: 4px;
+  border-radius: var(--ds-radius-thin);
+  background: var(--btn-primary-bg);
+}
+.cvv-scrub-knob,
+.cvv-vol-knob {
+  position: absolute;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--ds-radius-pill);
+  background: var(--btn-primary-bg);
+  transform: translate(-50%, 0);
+  pointer-events: none;
+}
+/* 滑轨键盘焦点：与按钮同一个描边环口径（环是线不是影）。 */
+:is(.cvv-scrub, .cvv-vol):focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset);
+}
+
+/* 音量条 = 桌面档（作者规格「音量（桌面）」）：无 hover 面与手机层都不给 ——
+   手机上音量由系统键管，多一条 72px 的滑轨只会把进度条挤没。 */
+@media (hover: none) {
+  .cvv-vol { display: none; }
+}
+body.mobile-layer .cvv-vol { display: none; }
+
+/* 手机档控件条折两行：进度条独占首行（热区 48 高、可拖），其余钮在次行 ——
+   375 宽单行塞不下「播放 + 时间 + 进度 + 静音 + 画中画 + 全屏」。 */
+body.mobile-layer .canvas-video-bar {
+  flex-wrap: wrap;
+  row-gap: var(--ds-space-1);
+}
+body.mobile-layer .cvv-scrub {
+  order: -1;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+body.mobile-layer .cvv-time {
+  margin-right: auto;   /* 时间贴左、动作钮靠右，中间不摊成一片空 */
 }
 
 /* ── PDF viewer (pdf.js canvas render, zoomable) ── */
