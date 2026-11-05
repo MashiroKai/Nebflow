@@ -1,0 +1,27 @@
+{
+  "coverPresent": false,
+  "coverBox": null,
+  "frameBox": {
+    "l": 727,
+    "t": 219.1,
+    "w": 686,
+    "h": 385.9
+  },
+  "videoBox": {
+    "l": 727,
+    "t": 219.1,
+    "w": 686,
+    "h": 385.9
+  },
+  "radius": "8px",
+  "overflow": "clip",
+  "coverRadius": null,
+  "videoRadius": "8px",
+  "objectFit": "contain",
+  "ar": 1.778,
+  "frameAR": 1.778,
+  "stats": null,
+  "coverPixels": {
+    "missing": ".canvas-tab-pane.active .nf-video-cover"
+  }
+}

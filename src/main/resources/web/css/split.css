@@ -2993,6 +2993,37 @@ body.mobile-layer .canvas-video-viewer {
     aspect-ratio: var(--cvv-ar, 1.7778);
   }
 }
+/* ── 圆角落点（video-cover 批 2026-11-05 复核）────────────────────────────────
+   作者令「canvas 这边还应该做圆角处理」。圆角在**本批之前**就已挂在 `video.canvas-video`
+   上（canvas-video-player 批）：@supports 分支把元素盒算成 min(100cqw, 100cqh × AR)
+   = 画面像素边界 ⇒ 圆角正好切在画面角上。作者仍看到直角，是因为他跑的是该批之前的
+   构建（那时是上面的兜底分支：元素盒 = 可用区，圆角落在比画面大的盒上 ⇒ 视觉直角）。
+   本批曾试「多一层 .canvas-video-frame 画面盒」把圆角与 contain 尺寸一起上移，实测
+   **回退**：包裹层令 `video.parentElement` 不再是可用区舞台，canvas-video-stage.spec.mjs
+   的「可用区即被利用（≥60% pane）」四档全红（0.427/0.417/0.190/0.427）。
+   故本批**零包裹**：圆角与 contain 尺寸单源留在 video 上；新增的封面层按下面的
+   同 AR 盒复刻画面（圆角同档），圆角在封面在位时同样成立。 */
+/* 封面 `<img>`（videoCover.js）在 Canvas 面的定位：**复刻画面盒**，不是复刻舞台。
+   画面盒 = contain(舞台内容区, AR) = 与 `video.canvas-video` 的 @supports 分支
+   **同一条算术**（min(100cqw, 100cqh × --cvv-ar)）；舞台是 `container: nfvideo/size`，
+   故 cqw/cqh 就是同一个内容区 ⇒ 两条盒逐像素相同（spec ⑫c 用 rect 比对钉住）。
+   注：`width:auto;height:auto` 不行 —— 绝对定位的替换元素按**固有尺寸**求宽
+   （JPEG 抓帧 480×270），实测盒 480×270 只盖住画面中间一块（Δ -206/-115.9）。
+   `margin:auto` 负责把这一盒在舞台里居中（与 video 的 flex 居中同结果）。 */
+.canvas-video-stage {
+  position: relative;
+}
+.canvas-video-stage .nf-video-cover {
+  inset: 0;
+  margin: auto;
+  width: min(100cqw, calc(100cqh * var(--cvv-ar, 1.7778)));
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: var(--cvv-ar, 1.7778);
+  object-fit: cover; /* 盒 AR == 画面 AR ⇒ cover 与 contain 等价，不裁不拉 */
+  border-radius: var(--ds-radius-input);
+}
 
 /* 舞台可聚焦（键盘入口 + 播控键准入闸，见 viewers/video.js 的 canvasVideoFocus 注）：
    键盘到达时给描边环（环是线不是影，与全站焦点口径一致）；鼠标点进来不画环。 */

@@ -1,0 +1,131 @@
+{
+  "mode": "after",
+  "webRoot": "/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-tool-video-ui/src/main/resources/web",
+  "results": [
+    {
+      "name": "① 箭头/spinner/文字 中线差 ≤1px",
+      "pass": true,
+      "detail": "max=1"
+    },
+    {
+      "name": "② 工具行无入场渐显（animation:none 且 opacity:1）",
+      "pass": true,
+      "detail": "{\"alignItems\":\"center\",\"gap\":\"8px\",\"animation\":\"none\",\"opacity\":\"1\",\"filter\":\"none\",\"textShadow\":\"none\"}"
+    },
+    {
+      "name": "③ 工具名无左缘 mask / 无尾锚滚动",
+      "pass": true,
+      "detail": "{\"flex\":\"0 0 auto\",\"maxWidth\":\"45%\",\"textOverflow\":\"ellipsis\",\"whiteSpace\":\"nowrap\",\"maskImage\":\"none\",\"scrollLeft\":0,\"fontFamily\":\"-apple-system, \\\"system-ui\\\", \\\"Segoe UI\\\", Roboto, sans-serif\",\"color\":\"rgb(27, 30, 38)\"}"
+    },
+    {
+      "name": "④ 参数右侧省略号截断",
+      "pass": true,
+      "detail": "{\"flex\":\"1 1 auto\",\"textOverflow\":\"ellipsis\",\"whiteSpace\":\"nowrap\",\"maskImage\":\"none\",\"fontFamily\":\"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace\",\"fontSize\":\"11px\",\"color\":\"rgb(107, 110, 118)\",\"marginLeft\":\"0px\",\"scrollLeft\":0,\"scrollWidth\":227,\"clientWidth\":227,\"truncated\":false,\"textLen\":21}"
+    },
+    {
+      "name": "⑤ 参数等宽字（--ds-font-mono）",
+      "pass": true,
+      "detail": "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+    },
+    {
+      "name": "⑥ 工具名 x 三帧恒定（±0.5px）",
+      "pass": true,
+      "detail": "[362,362,362]"
+    },
+    {
+      "name": "⑦ 长参数触发截断（frame3 truncated）",
+      "pass": true,
+      "detail": "[true,true,true]"
+    },
+    {
+      "name": "⑧ 完成态中线差 ≤1px",
+      "pass": true,
+      "detail": "{\"chevronVsLabel\":-1,\"spinVsLabel\":null,\"iconVsLabel\":0,\"detailVsLabel\":null,\"chevronVsRow\":-1}"
+    },
+    {
+      "name": "⑨ 两行态箭头中线差 ≤1px",
+      "pass": true,
+      "detail": "-1"
+    },
+    {
+      "name": "⑩ Canvas 视频封面在场",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "name": "⑪ Canvas 封面有内容（variance > 100）",
+      "pass": true,
+      "detail": "var=8288.71"
+    },
+    {
+      "name": "⑫ Canvas 画面盒圆角 = 8px（--ds-radius-input）",
+      "pass": true,
+      "detail": "8px"
+    },
+    {
+      "name": "⑫b 封面层圆角同档（圆角不被封面盖成直角）",
+      "pass": true,
+      "detail": "cover=8px video=8px"
+    },
+    {
+      "name": "⑫c 封面与画面盒逐像素同框（同 AR contain，误差 ≤1px）",
+      "pass": true,
+      "detail": "cover={\"l\":727,\"t\":219.1,\"w\":686,\"h\":385.9} video={\"l\":727,\"t\":219.1,\"w\":686,\"h\":385.9}"
+    },
+    {
+      "name": "⑬ 对话框视频封面在场且有内容",
+      "pass": true,
+      "detail": "cover=true var=8288.71"
+    },
+    {
+      "name": "⑭ 播放后封面让位",
+      "pass": true,
+      "detail": "{\"cover\":false,\"paused\":false,\"t\":1,\"decoded\":true}"
+    },
+    {
+      "name": "⑭b 对话框内嵌可播（不暂停 + 走帧 + 已解帧）",
+      "pass": true,
+      "detail": "before={\"paused\":true,\"t\":0,\"readyState\":4} after={\"cover\":false,\"paused\":false,\"t\":1,\"decoded\":true}"
+    },
+    {
+      "name": "⑲ Canvas 内嵌可播（自研播放钮 → 不暂停 + 走帧）",
+      "pass": true,
+      "detail": "before={\"paused\":true,\"t\":0,\"readyState\":4,\"controls\":false} after={\"paused\":false,\"t\":1,\"cover\":false}"
+    },
+    {
+      "name": "⑲b Canvas 播放后封面让位",
+      "pass": true,
+      "detail": "{\"paused\":false,\"t\":1,\"cover\":false}"
+    },
+    {
+      "name": "⑮ 懒加载：首屏抓帧数 ≈ 可见数且 < 总数",
+      "pass": true,
+      "detail": "{\"total\":24,\"visibleRowsBeforeScroll\":6,\"grabsBeforeScroll\":6,\"cacheHitsBefore\":0,\"coversBeforeScroll\":6,\"grabsAfterScroll\":12,\"cacheHitsAfter\":0,\"coversAfterScroll\":12,\"fails\":0,\"playheadMax\":0}"
+    },
+    {
+      "name": "⑮b 懒加载：滚到底后才继续抓（抓帧数增长）",
+      "pass": true,
+      "detail": "{\"total\":24,\"visibleRowsBeforeScroll\":6,\"grabsBeforeScroll\":6,\"cacheHitsBefore\":0,\"coversBeforeScroll\":6,\"grabsAfterScroll\":12,\"cacheHitsAfter\":0,\"coversAfterScroll\":12,\"fails\":0,\"playheadMax\":0}"
+    },
+    {
+      "name": "⑮c 抓帧不动用户播放头（currentTime 全 0）",
+      "pass": true,
+      "detail": "0"
+    },
+    {
+      "name": "⑯ 解码失败不挂封面（回现状面）",
+      "pass": true,
+      "detail": "{\"cover\":false,\"failed\":true,\"videoBg\":\"rgba(0, 0, 0, 0)\",\"box\":{\"w\":220,\"h\":165}}"
+    },
+    {
+      "name": "⑰ 竖屏比例不变形（frame AR = 视频 AR）",
+      "pass": true,
+      "detail": "0.563 vs 0.563"
+    },
+    {
+      "name": "⑱ 页面零 JS 异常",
+      "pass": true,
+      "detail": "[]"
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "frames": [
+    {
+      "frame": 1,
+      "labelX": 364,
+      "detailX": 393.89,
+      "detailW": 227.11,
+      "truncated": true,
+      "textLen": 46,
+      "deltas": {
+        "chevronVsLabel": 0,
+        "spinVsLabel": -1,
+        "iconVsLabel": -1,
+        "detailVsLabel": 0,
+        "chevronVsRow": 0
+      }
+    },
+    {
+      "frame": 2,
+      "labelX": 364,
+      "detailX": 386.97,
+      "detailW": 234.03,
+      "truncated": true,
+      "textLen": 70,
+      "deltas": {
+        "chevronVsLabel": 0,
+        "spinVsLabel": -1,
+        "iconVsLabel": -1,
+        "detailVsLabel": 0,
+        "chevronVsRow": 0
+      }
+    },
+    {
+      "frame": 3,
+      "labelX": 364,
+      "detailX": 379.44,
+      "detailW": 241.56,
+      "truncated": true,
+      "textLen": 130,
+      "deltas": {
+        "chevronVsLabel": 0,
+        "spinVsLabel": -1,
+        "iconVsLabel": -1,
+        "detailVsLabel": 0,
+        "chevronVsRow": 0
+      }
+    }
+  ]
+}

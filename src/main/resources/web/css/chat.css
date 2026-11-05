@@ -4535,22 +4535,34 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   margin: var(--ds-space-half) 0;
   padding: var(--ds-space-1) var(--ds-space-3);
   font-size: var(--ds-fs-hint);
-  /* zcode-484 batch: ONE text row, fixed. The explicit px line-height makes the
-     single-row height deterministic (it is also what the slot's fixed height
-     below mirrors) and survives the terminal morph being removed by the
-     `.turn-header` class swap. */
-  line-height: 18px;
+  /* zcode-484 batch: ONE text row, fixed — the line box has to be deterministic
+     (the slot's fixed height below mirrors it) and it must survive the terminal
+     morph, where `.nf-workline` is dropped by the `.turn-header` class swap.
+     row-center 批（作者令 2026-11-05 20:18「> 和 spinner 以及文字，没有上下居中
+     对齐」）：行高**只从令牌取** —— `--ds-lh-body`(1.5) × `--ds-fs-hint`(12px) = 18px，
+     与改前硬写的 `18px` 逐像素同值（改前是档外裸值，本批收编，零几何漂移）。 */
+  line-height: var(--ds-lh-body, 1.5);
   font-weight: 500;
   color: var(--color-text-dim);
   opacity: 0.9;
   position: relative;
   cursor: default;
-  animation: nf-wl-in 0.3s ease both;
+  /* row-center 批：本行**取消入场渐显**（作者令 2026-11-05 20:28「不要有这个模糊
+     的效果……文字要一次性清晰呈现」）。行的出现是一次性落墨，没有从透明到实的
+     过程；退出/换项仍由项级动画承担。 */
 }
 .nf-workline:hover { color: var(--color-text); opacity: 1; }
 /* chevron is centered by the row's align-items:center — no offset needed
-   (the retired `margin-top: 1px` was the flex-start-era band-aid). */
-.nf-workline .nf-chevron { flex-shrink: 0; }
+   (the retired `margin-top: 1px` was the flex-start-era band-aid).
+   row-center 批 · 光学校正（作者令 2026-11-05 20:18「> 和 spinner 以及文字，
+   没有上下居中对齐」）：盒子中线对齐之后，**墨迹中线**仍差 1px —— 12px 文字的
+   墨迹（大写高度带）中心落在行盒中线**上方** 1px（实测：行盒中线 137、`Mail`
+   墨迹中线 136），而箭头与 spinner 的墨迹中心正好是各自盒子中心。故两者上提
+   1px，让「旋转中心 / 箭头墨迹中心」落在文字的墨迹中线上。
+   实现用 `position: relative` 而不是 transform：箭头展开态走 transform: rotate，
+   两者抢同一个属性会互相覆盖。 */
+.nf-workline .nf-chevron,
+.turn-header .nf-chevron { flex-shrink: 0; position: relative; top: -1px; }
 /* The slot IS the line (zcode-484 batch, author ruling 2026-10-04 09:29
    「我要的思考过程以及工具过程的流式，是在一行进行流式，像zcode一样」 — this
    REVERSES the 2026-10-03 UI-A ruling 「思考过程的那一行要能换行显示」, which had
@@ -4562,16 +4574,51 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    summary keeps its wrap contract. */
 .nf-wl-slot {
   position: relative; flex: 1 1 auto; min-width: 0;
-  height: 18px; min-height: 18px; overflow: hidden;
+  /* 行高同源（row-center 批 2026-11-05）：槽高 = 字号 × 行高令牌 = 18px，
+     与 `.nf-workline` 的 line-height 逐像素同值，禁第二处裸 18px。
+     回退值 = 令牌同值（`--ds-fs-hint:12px` / `--ds-lh-body:1.5`，见
+     design-system.css:95/104）：只加载 base.css+chat.css 的页面（tests/fixtures/
+     stream-ux 的 harness 就是这种，它不引 design-system.css）里两个 var 都未定义，
+     `calc()` 在计算值阶段整条失效 ⇒ height 退回 auto ⇒ **绝对定位的项不贡献高度**
+     ⇒ 槽塌成 0（实测 stream-ux A6 的 liveSlotH 红即此）。回退值让几何不依赖引用面。 */
+  height: calc(var(--ds-fs-hint, 12px) * var(--ds-lh-body, 1.5));
+  min-height: calc(var(--ds-fs-hint, 12px) * var(--ds-lh-body, 1.5));
+  overflow: hidden;
 }
+/* row-center 批（作者令 2026-11-05 20:18）：项内三件（图标盒 16 / 文字行盒 18 /
+   细节 15~18）必须**中线同值**。改前 `align-items: flex-start` 让 16px 的图标盒
+   顶对齐、中线比 18px 的文字基线低 1px（实测读数见批报告）。改 center 后三者
+   中线都由行盒中线（9px）决定，与 `.nf-workline` 的行级 center 同一条轴。
+   gap 改 4px 栅格 8px 档（`--ds-space-2`）：工具名与参数之间的**固定**间距即此值
+   （作者令「参数就隔开一点」；10px 是刻度里的「玻璃条」具名例外槽，工具行不该借）。 */
 .nf-wl-item {
   position: absolute;
   inset: 0;
   display: flex;
-  align-items: flex-start;
-  gap: var(--ds-space-inline-gap);
+  align-items: center;
+  gap: var(--ds-space-2, 8px);
   min-width: 0;
   animation: nf-wl-in 0.3s ease both;
+}
+/* ── 工具行定形（作者令 2026-11-05 20:28）─────────────────────────────────
+   「不要有这个模糊的效果，就是直接按 工具名 参数，来显示，工具名保持不动，
+   然后参数就隔开一点，然后流式输出。」
+   本类是工具项的**唯一形态锚**：
+   ① 零入场渐显 —— 文字一次性清晰呈现（旧 `nf-wl-in` 的 opacity 0→1 是「从糊到
+      清」的那一半；另一半是细节 span 的尾锚 + 左缘 mask，随 JS 侧 pinTail 撤除）；
+   ② 行内从左到右三段固定序：图标盒（16px，flex:none）/ 工具名（内容宽，禁生长、
+      禁尾锚）/ 参数（flex:1，向右生长）；
+   ③ 与 .is-done / .is-error 同权重叠加也要压住动画（完成/失败翻转同样不留渐显）。 */
+.nf-wl-item.nf-wl-tool,
+.nf-wl-item.nf-wl-tool.is-done { animation: none; opacity: 1; }
+/* 工具名：**位置不变量**（作者令「工具名保持不动」）。flex:0 0 auto = 不生长也不
+   收缩 —— 参数增长推不动它，x 坐标在整个流式窗内恒定；过长的工具名由 max-width
+   收头并省略号截断（本行高度恒为一行，工具名永不换行）。 */
+.nf-wl-item.nf-wl-tool > .nf-wl-label {
+  flex: 0 0 auto;
+  max-width: 45%;
+  text-overflow: ellipsis;
+  color: var(--color-text);   /* 工具名是这一行的主语，比参数亮一档 */
 }
 /* The terminal morph: the row gains `.turn-header`; the settled badge text
    WRAPS in flow (same ruling as the built header — the full summary is always
@@ -4579,7 +4626,10 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    constraint is lifted: 「过程单行」 governs the streaming window only, and the
    settled summary stays fully legible (I8). */
 .turn-header .nf-wl-slot { height: auto; min-height: 18px; overflow: visible; }
-.nf-wl-item.is-final { position: static; white-space: normal; }
+/* 终态徽章同样「一次性清晰呈现」（作者令 2026-11-05 20:28 的同一批）：settle 由
+   「旧项淡出 + 徽章淡入」改为硬切 —— JS 侧 swap 对 `.is-final` 走同步摘除（见
+   workline.js 的 hardCut），此处关掉徽章自己的入场渐显，否则空槽上又起一次 0→1。 */
+.nf-wl-item.is-final { position: static; white-space: normal; animation: none; opacity: 1; }
 .nf-wl-item.is-final .nf-wl-label {
   white-space: normal;
   /* 2026-10-31 归因行瘦身批：same wrap contract as .turn-header-text — wrap
@@ -4609,28 +4659,36 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   flex: 0 1 auto;
   min-width: 0;
 }
-/* ── ② 运行中类型化细节行（toolline-detail 批 2026-10-06）────────────────
-   muted 小字细节骑在运行项 label 之后：单行（nowrap + 裁剪），新内容在右、
-   旧内容左滑出（worklineToolDetail 的 1e7 尾锚）。字号 11px 降半档，不喧宾，
-   层级由字号承担。label 让位：有细节时 label 收缩为内容宽（封顶 55%），
-   细节占其余空间——无细节时布局逐字节同旧。终态摘除：完成翻转 / header 定稿
-   都走 buildItem 新建项，细节 span 不进终态。UI-G 静态窗随 .nf-static 全局
-   关动画。
-   ui-polish 2026-10-08（作者令「右侧文字太暗」）：细节字色从
-   --color-text-muted（暗档 #7b7e88，页底 ≈4.4:1 @11px，低于 A13 的 4.5:1
-   铁律）提到 --color-text-dim —— 项目标准次级文字档（A13「must clear 4.5:1
-   on the page bg in both themes」），复用既有 token，不发明新色。 */
+/* ── ② 运行中类型化参数行（toolline-detail 批 2026-10-06；tool-name-fixed 批
+   2026-11-05 重定形）──────────────────────────────────────────────────────
+   作者令 2026-11-05 20:28 逐字：「不要有这个模糊的效果，就是直接按 工具名 参数，
+   来显示，工具名保持不动，然后参数就隔开一点，然后流式输出。」
+   · 形态：单行 nowrap；参数从工具名右侧**向右生长**（`flex: 1 1 auto` +
+     `min-width: 0`），静置左对齐；超出行宽时**右端省略号**截断（改前是尾锚 +
+    左缘 mask：可见的是一段没有起点的中间片段，作者读作「糊成一团」）。
+   · 全文入口 = 该 turn 行的既有展开（`.turn-header` 的 chevron/点击 → 工具卡正文
+     含完整参数）。**不另造**截断浮层——展开面已经存在，且是同一份数据。
+   · 等宽字（作者令「参数是命令/路径时用等宽字，避免字符跳动」）：`--ds-font-mono`
+     是令牌层唯一 mono 栈（design-system.css:84），逐字定宽 ⇒ 流式追加时字符不跳。
+   · 字号 11px 降半档（层级由字号承担），字色 = 项目次级文字档 --color-text-dim
+     （ui-polish 2026-10-08 的 A13 对比度裁定，未动）。 */
 .nf-wl-detail {
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: clip;
+  text-overflow: ellipsis;
   flex: 1 1 auto;
   min-width: 0;
-  margin-left: -4px; /* label gap 10px 的视觉续接（细节是 label 的延长流） */
+  margin-left: 0;
   font-size: var(--ds-fs-meta);
+  /* 等宽字 = 令牌 `--ds-font-mono`（design-system.css:84）；回退栈逐字同值 ——
+     只引 base.css+chat.css 的页面（stream-ux harness）里令牌未定义，无回退就落到
+     继承的正文体，参数里的路径/命令会因比例字抖动（本批要钉的正是「参数用等宽」）。 */
+  font-family: var(--ds-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
   color: var(--color-text-dim);
 }
-.nf-wl-item:has(.nf-wl-detail) > .nf-wl-label {
+/* 细节 span 不再挂 `.nf-wl-clip`（尾锚随 JS 撤除 ⇒ 左缘渐隐不会出现）：左侧是
+   参数的真实开头，渐变会把它抹掉。规则保留给思考流（那边尾锚语义不变）。 */
+.nf-wl-item:not(.nf-wl-tool):has(.nf-wl-detail) > .nf-wl-label {
   flex: 0 1 auto;
   max-width: 55%;
 }
@@ -4669,7 +4727,11 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 /* icon cell: a PURE-TEXT spinner / a text check (UI-C) — no SVG rotation, no
    scale-in, no stroke-draw. */
 .nf-wl-icon { width: 16px; height: 16px; flex: none; display: flex; align-items: center; justify-content: center; }
-.nf-wl-spin { width: 14px; height: 14px; border: 0; border-radius: 0; }
+.nf-wl-spin { width: 14px; height: 14px; border: 0; border-radius: 0;
+  /* row-center 批 · 光学校正（同 .nf-chevron 注）：spinner 的墨迹绕自转角心转，
+     转心 = 盒子中心；文字墨迹中线比行盒中线高 1px ⇒ 把转心上提 1px，整圈扫过的
+     画面才以文字为轴。 */
+  position: relative; top: -1px; }
 .nf-wl-spin::before {
   content: "\25DC";
   display: block; width: 14px; line-height: 14px; text-align: center;
@@ -4887,6 +4949,32 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .pop-expand-view .pop-media { height: auto; }
 
 .pop-media { position: relative; width: 100%; height: 100%; }
+/* ── 视频内容封面（video-cover 批 2026-11-05，作者令逐字「不管是在对话框还是
+   canvas，都应该有一个内容预览的一个封面」）─────────────────────────────────
+   `.nf-video-cover` 由 js/videoCover.js 在抓到帧之后**插在 `<video>` 之后**（DOM
+   层序 = 视觉层序：封面在画面之上、播放键/时长/进度之下，零 z-index 战争）。
+   几何逐字对齐画面：`inset: 0` + 与 video 同盒 + 同 `object-fit` ⇒ 封面的落位
+   就是 video 的落位（含 letterbox），点开播放时无缝让位。
+   同一份规则服务**两个宿主**：对话框/叠卡（chat.css 本文档）与 Canvas 视频面
+   （split.css 的 `.canvas-video-frame`，见彼处圆角块）。 */
+.nf-video-cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 0.18s ease;
+}
+.nf-video-cover.is-out { opacity: 0; }
+/* 折叠叠卡层是 cover 语义（.pop-stack-view .pop-video 既有），封面必须同一条法则，
+   否则封面比画面小一圈，露出黑边。 */
+.pop-stack-view .nf-video-cover { object-fit: cover; }
+@media (prefers-reduced-motion: reduce) {
+  .nf-video-cover { transition: none; }
+}
 /* 2026-10-30 fan order: the COLLAPSED stack face crops every entry onto the one
    fixed card face (`object-fit: cover`, the WeChat 「强制放缩到一个大小」
    semantics — the media's own ratio no longer drives the box). Scoped to

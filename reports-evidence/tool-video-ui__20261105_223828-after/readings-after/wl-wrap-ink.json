@@ -1,0 +1,17 @@
+{
+  "chevron": {
+    "inkTop": 142,
+    "inkBottom": 146,
+    "inkCy": 144,
+    "inkH": 4,
+    "px": 14
+  },
+  "label": {
+    "inkTop": 130,
+    "inkBottom": 160,
+    "inkCy": 145,
+    "inkH": 30,
+    "px": 2104
+  },
+  "_dpr": 1
+}

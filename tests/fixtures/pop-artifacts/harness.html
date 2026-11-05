@@ -475,6 +475,9 @@
           natRatio: nw && nh ? +(nw / nh).toFixed(3) : 0,
           type: media ? media.tagName.toLowerCase() : '',
           controls: media && media.tagName === 'VIDEO' ? media.controls : null,
+          // video-cover 批（2026-11-05）：封面是否在位 —— U3 的「播放键去哪了」
+          // 断言按它分支（封面盖住原生控件条 ⇒ 播放键必须回到封面上方）。
+          coverPresent: !!el.querySelector('.nf-video-cover'),
           ringVisible: (() => {
             const ring = el.querySelector('.play-ring');
             return ring ? getComputedStyle(ring).display !== 'none' : false;
