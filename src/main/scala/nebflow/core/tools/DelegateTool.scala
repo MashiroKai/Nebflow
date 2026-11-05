@@ -82,7 +82,7 @@ object DelegateTool extends Tool:
 - `project` (optional): name of a mounted project — the task then runs in that project's workspace. Omit it to run in the default general workspace.
 - `executor` (optional): which executor runs the task. You pick it dynamically per task; omit it for the built-in default (`nebflow`). The available set (with detected external CLIs) is listed in your "Available executors" prompt section. An unavailable pick fails explicitly — there is no silent fallback.
 - `mode` (optional): the execution form, and YOU pick it from the task context — no allocator and no model call decides this any more. `kernel` (the default when you omit the parameter) = minimal single-session executor with no orchestration tools; `dispatcher` = chain-orchestrating dispatcher (composes a per-delegate flow map via ChainWrite/NodeEdit, gets zero plugins itself, and its chain nodes run inside the dispatcher's seat and never create their own worktrees). Pass `dispatcher` yourself whenever the task is a multi-node chain. `auto` is REJECTED explicitly (the allocator was removed) — an omitted `mode` deterministically means `kernel`. Mode is a spawn-time lifetime property: changing it means re-dispatch.
-- `attachments` (optional): an array of ABSOLUTE paths of files on this machine to hand the delegate — the channel for images/documents the author gave you, so their content never has to be re-typed into the brief. Max **9 files** per dispatch, each up to **1024 MB = 1 GiB (1,073,741,824 bytes)**; the caps are the same authored numbers as Mail/FriendMessage (`AttachContract`) and exceeding them is an EXPLICIT error, never a silent truncation. Validation happens at dispatch time — a relative path, a missing path, a non-regular file (directory/device/pipe), an unreadable file or an over-limit file FAILS THE WHOLE DISPATCH and names the offending path; nothing is spawned. Every accepted file is copied into a stable per-dispatch directory (`<worktree>/.nebflow/attachments/<taskId>/` when the delegate sits in a worktree, otherwise `<dataRoot>/delegate-attachments/<taskId>/`) with its sha256 verified against the original, so the temporary upload area being cleaned up later cannot lose it — the originals are only READ, never moved or deleted. A `[附件清单 · attachments manifest]` section is then appended to the END of the brief (a fixed paragraph, distinct from your hand-written text; the paths you typed into `task` stay verbatim) listing per file: copy path + original path + MIME/type + image flag + byte count + sha256. Attachment bytes do NOT enter the delegate's context — it must `Read` the listed copy path. Images (PNG/JPG/JPEG/GIF/WEBP/BMP) come back from `Read` as vision-ready image content, so the delegate sees them directly; a single image above the 10 MiB Read vision cap is refused explicitly by `Read`, and the manifest says so — the delegate is told to report that instead of pretending. Cross-device (a project that executes on another device) is REFUSED: those paths live on this machine's disk and that delegate could never open them.
+- `attachments` (optional): an array of ABSOLUTE paths of files on this machine to hand the delegate — the channel for images/documents the author gave you, so their content never has to be re-typed into the brief. Max **9 files** per dispatch, each up to **1024 MB = 1 GiB (1,073,741,824 bytes)**; the caps are the same authored numbers as Mail/FriendMessage (`AttachContract`) and exceeding them is an EXPLICIT error, never a silent truncation. Validation happens at dispatch time — a relative path, a missing path, a non-regular file (directory/device/pipe), an unreadable file or an over-limit file FAILS THE WHOLE DISPATCH and names the offending path; nothing is spawned. Every accepted file is copied into a stable per-dispatch directory (`<worktree>/.nebflow/attachments/<taskId>/` when the delegate sits in a worktree, otherwise `<dataRoot>/delegate-attachments/<taskId>/`) with its sha256 verified against the original, so the temporary upload area being cleaned up later cannot lose it — the originals are only READ, never moved or deleted. A `[附件清单 · attachments manifest]` section is then appended to the END of the brief (a fixed paragraph, distinct from your hand-written text; the paths you typed into `task` stay verbatim) listing per file: copy path + original path + MIME/type + image flag + byte count + sha256. Attachment bytes do NOT enter the delegate's context — it must `Read` the listed copy path. Images (PNG/JPG/JPEG/GIF/WEBP/BMP) come back from `Read` as vision-ready image content, so the delegate sees them directly; a single image above the 10 MiB Read vision cap is refused explicitly by `Read`, and the manifest says so — the delegate is told to report that instead of pretending. **Cross-device (a project that executes on another device) is DELIVERED, not refused**: the files are transferred to that device in verified chunks (the receiving engine re-computes every chunk digest and the whole-file sha256, which must equal the original exactly) into `<device workspace>/.nebflow/attachments/<taskId>/`, and the manifest then lists those DEVICE-side absolute paths (the dispatching machine's path is kept only as a provenance line, because it does not exist on that device). If the device is offline, refuses the write, runs out of disk, answers with a digest mismatch or runs an engine too old for the verified chunked channel, the whole dispatch FAILS and names the file and the reason — a device-leg dispatch is all-or-nothing exactly like the local one; it never degrades to "a path in the brief that nobody can open".
 - `worktree` (optional): the NAME of the delegate worktree this task runs in. **A task that writes files MUST pass it** — the value is the worktree name: `<worktreeRoot>/<name>` is created on branch `delegate/<name>` when that name does not exist yet, and the SAME tree is reused (never a second directory) when it does. **Omit it ONLY for read-only tasks** (pure search / audit / read-only verification / a report that does not change the repo): with no name no worktree is allocated at all and the delegate runs IN PLACE in the project workspace — it then shares that checkout with you and every other live session, so a write-task that omits the name will collide (two agents, one tree; the engine flags an in-place task that writes when it finishes). Parallel work must give each delegate its own name. Legacy targets still resolve as a second chance (an owning delegate id or an absolute worktree path) and the dispatch receipt states which rule hit.
 - `force` (optional): only meaningful together with `worktree` — override the refusal to reuse a tree that is currently held by a live session. Two agents editing one tree is unsafe — pass true ONLY when you are certain the live session is not touching those files.
 
@@ -144,8 +144,12 @@ object DelegateTool extends Tool:
             "never moved or deleted. A \"[附件清单 · attachments manifest]\" paragraph is appended at the END of the brief " +
             "(per file: copy path + original path + MIME + image flag + bytes + sha256; hand-written paths in `task` stay " +
             "verbatim). Images are visible to the delegate through Read (vision-ready); an image above the 10 MiB Read cap is " +
-            "refused explicitly and the manifest says so. Refused for projects that execute on another device (those paths " +
-            "are not readable there).").asJson
+            "refused explicitly and the manifest says so. A project that executes on another device is DELIVERED, not refused: " +
+            "the files are pushed to that device in verified chunks (the device re-computes each chunk digest and the " +
+            "whole-file sha256 — both must match the original) into <device workspace>/.nebflow/attachments/<taskId>/, and the " +
+            "manifest lists those DEVICE absolute paths (the local path stays as provenance only). Device offline / refused / " +
+            "disk full / digest mismatch / engine too old = the WHOLE dispatch fails and names the file and the reason — never " +
+            "a silent 'path in the brief'.").asJson
         )
       ),
       "required" -> io.circe.Json.arr("task".asJson)
@@ -662,59 +666,63 @@ Advance: the chain's nodes all run in THIS session's workspace (inside this sess
             // 缺省 None = **零分配**（就地跑道，只读任务通道）。
             // 设备项目腿（座位在设备盘）没有本机树可建/可复用 ⇒ 显式拒。
             //
-            // 附件 × 设备座位 = 显式拒（附件传输批 2026-11-05）：本机路径在设备盘上
-            // 不存在，带过去只会变成「清单里有、谁也打不开」的静默丢失面。闸放在
-            // seatPlanIo 这一格 = 与既有早退同点（台账未落、零 spawn 副作用）。
+            // 附件 × 设备座位（跨设备附件批 2026-11-05，作者令「这个也要支持」）：**不再拒**
+            // —— 附件先经 [[nebflow.core.delegate.RemoteAttachments]] 逐块送到**设备盘**的
+            // `<设备 workspace>/.nebflow/attachments/<id>/`（接收端自算块/整件摘要，本机
+            // sha256 与对端重算值逐件等值），清单里给的是**对端绝对路径**。本闸位保持在
+            // 「seatPlan 之前」的判据序，但不再因附件提前失败（送达失败在下面 stage 之后
+            // 显式失败，仍早于任何 spawn）。
             val seatPlanIo: IO[Either[ToolError, WorktreeCandidates.SeatPlan]] =
-              if attachmentPaths.nonEmpty && sessionDevice.isDefined then
-                IO.pure(
-                  Left(
-                    ToolError(
-                      "Delegate: attachments cannot be delivered to a device-resident seat — these files live on THIS " +
-                        s"machine's disk and this project executes on device '${sessionDevice.getOrElse("?")}', which cannot read " +
-                        "those paths. Nothing was dispatched. Cross-device attachment transfer is not wired yet: run the task " +
-                        "host-locally (drop the device origin) or hand the files to that device by another channel. " +
-                        "(DELEGATE_ATTACHMENTS_REMOTE)"
-                    )
-                  )
-                )
-              else
-                reuseTarget match
-                  case None => IO.pure(Right(WorktreeCandidates.SeatPlan.InPlace))
-                  case Some(target) if sessionDevice.isDefined =>
-                    IO.pure(
-                      Left(
-                        ToolError(
-                          s"Delegate: the worktree parameter applies to host-local projects only — this project executes against " +
-                            s"device '${sessionDevice.getOrElse("?")}' and its worktrees live on the device disk, not under this engine's " +
-                            ".nebflow/worktrees. Drop the parameter to run in place on the device. (DELEGATE_WORKTREE_REMOTE)"
-                        )
+              reuseTarget match
+                case None => IO.pure(Right(WorktreeCandidates.SeatPlan.InPlace))
+                case Some(target) if sessionDevice.isDefined =>
+                  IO.pure(
+                    Left(
+                      ToolError(
+                        s"Delegate: the worktree parameter applies to host-local projects only — this project executes against " +
+                          s"device '${sessionDevice.getOrElse("?")}' and its worktrees live on the device disk, not under this engine's " +
+                          ".nebflow/worktrees. Drop the parameter to run in place on the device. (DELEGATE_WORKTREE_REMOTE)"
                       )
                     )
-                  case Some(target) =>
-                    WorktreeCandidates.inventory(workspace).map { inv =>
-                      WorktreeCandidates.resolveNamed(inv, workspace, target, forceReuse) match
-                        case Right(plan) => Right(plan)
-                        case Left((code, msg)) =>
-                          Left(ToolError(s"Delegate: worktree parameter refused — $msg ($code)"))
-                    }
+                  )
+                case Some(target) =>
+                  WorktreeCandidates.inventory(workspace).map { inv =>
+                    WorktreeCandidates.resolveNamed(inv, workspace, target, forceReuse) match
+                      case Right(plan) => Right(plan)
+                      case Left((code, msg)) =>
+                        Left(ToolError(s"Delegate: worktree parameter refused — $msg ($code)"))
+                  }
             seatPlanIo.flatMap {
               case Left(err) => IO.pure(Left(err))
               case Right(seatPlan) =>
                 for
                   rootSid <- callerRootOf(ctx, resources)
                   taskId <- createLedgerEntry(resolvedProject, description)
-                  // 附件稳定副本落地（附件传输批 2026-11-05）：**先于一切 spawn**——
-                  // 复制/校验失败即成显式失败（会话没建、座位树没建，只留一条台账行
-                  // 说明发生过什么）。目录名用 taskId（与回执同号，人/agent 都能对上）；
-                  // 台账缺席时退回落一个 UUID 片段（仍稳定、仍可追溯）。
-                  staged <- DelegateAttachments.stage(
-                    attachmentPaths,
-                    taskId.getOrElse("dispatch-" + java.util.UUID.randomUUID().toString.take(8)),
-                    PathUtil.dataRoot.toNIO
-                  )
+                  // 附件目标（跨设备腿）：设备座位 ⇒ 先解析设备名册 + 设备盘 workspace
+                  // （缺 workspace = 显式 DELEGATE_ATTACHMENT_REMOTE_NO_DEVICE_DIR）。
+                  attachmentTarget <-
+                    if attachmentPaths.isEmpty then
+                      IO.pure[Either[ToolError, Option[RemoteAttachments.Target]]](Right(None))
+                    else
+                      sessionDevice match
+                        case None => IO.pure[Either[ToolError, Option[RemoteAttachments.Target]]](Right(None))
+                        case Some(dev) =>
+                          remoteAttachmentTarget(dev, sessionDeviceWorkspace, ctx).map(_.map(Some(_)))
+                  // 附件稳定副本落地 + （设备腿）跨设备送达（跨设备附件批 2026-11-05）：
+                  // **先于一切 spawn**——复制/校验/送达任一失败即成显式失败（会话没建、
+                  // 座位树没建，只留一条台账行说明发生过什么）。目录名用 taskId（与回执
+                  // 同号，人/agent 都能对上）；台账缺席时退回落一个 UUID 片段。
+                  staged <- attachmentTarget match
+                    case Left(err) =>
+                      IO.pure[Either[ToolError, DelegateAttachments.Plan]](Left(err))
+                    case Right(devTarget) =>
+                      stageAndDeliver(
+                        attachmentPaths,
+                        taskId.getOrElse("dispatch-" + java.util.UUID.randomUUID().toString.take(8)),
+                        devTarget
+                      )
                   result <- staged match
-                    case Left(err) => IO.pure(Left(err))
+                    case Left(err) => IO.pure[Either[ToolError, String]](Left(err))
                     case Right(attachmentPlan) =>
                       for
                         safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
@@ -758,42 +766,59 @@ Advance: the chain's nodes all run in THIS session's workspace (inside this sess
         // 语义；对端用自己的执行器集原生执行——§A.3）。缺省（无 executor 参数）
         // 不进此分支（resolveRequested 已折叠为 Internal）。
         //
-        // 附件 × 设备执行 = 显式拒（附件传输批 2026-11-05）：本机路径在设备侧不存在，
-        // 静默带过去等于「清单里有、谁也打不开」——跨设备搬运不在本批范围，如实说。
-        if attachmentPaths.nonEmpty then
-          IO.pure(
-            Left(
-              ToolError(
-                "Delegate: attachments cannot be delivered to a device-resident project — these files live on THIS " +
-                  s"machine's disk and project '$projectName' executes on device '$deviceName', which cannot read those paths. " +
-                  "Nothing was dispatched. Cross-device attachment transfer is not wired yet: run the task host-locally or " +
-                  "hand the files to that device by another channel. (DELEGATE_ATTACHMENTS_REMOTE)"
+        // 附件 × 设备执行（跨设备附件批 2026-11-05）：**不再拒** —— 附件先送到**设备盘**
+        // 的 `<origin workspace>/.nebflow/attachments/<id>/`（逐块 + 接收端自算摘要，
+        // 整批失败则 nothing is spawned），清单随 task 文本进 delegate-spawn 载荷，
+        // 里面是对端绝对路径；本机路径只作溯源行。
+        executorParam.map(_.trim).filter(_.nonEmpty) match
+          case Some(_) =>
+            IO.pure(
+              Left(
+                ToolError(
+                  s"Delegate: explicit executor selection applies to host-local execution only — " +
+                    s"project '$projectName' executes on device '$deviceName' with THAT device's own executors. " +
+                    "Drop the executor parameter to dispatch to the device. (DELEGATE_EXECUTOR_REMOTE_CONFLICT)"
+                )
               )
             )
-          )
-        else
-          executorParam.map(_.trim).filter(_.nonEmpty) match
-            case Some(_) =>
+          case None =>
+            // 续用腿 × 整会话派设备 = 显式拒（对端设备的 worktree 清单不经本机账）。
+            if reuseTarget.isDefined then
               IO.pure(
                 Left(
                   ToolError(
-                    s"Delegate: explicit executor selection applies to host-local execution only — " +
-                      s"project '$projectName' executes on device '$deviceName' with THAT device's own executors. " +
-                      "Drop the executor parameter to dispatch to the device. (DELEGATE_EXECUTOR_REMOTE_CONFLICT)"
+                    s"Delegate: worktree reuse applies to host-local execution only — project '$projectName' executes on device '$deviceName' and its worktrees live on the device disk. (DELEGATE_WORKTREE_REMOTE)"
                   )
                 )
               )
-            case None =>
-              // 续用腿 × 整会话派设备 = 显式拒（对端设备的 worktree 清单不经本机账）。
-              if reuseTarget.isDefined then
-                IO.pure(
-                  Left(
-                    ToolError(
-                      s"Delegate: worktree reuse applies to host-local execution only — project '$projectName' executes on device '$deviceName' and its worktrees live on the device disk. (DELEGATE_WORKTREE_REMOTE)"
+            else if attachmentPaths.isEmpty then dispatchRemote(remote, task, description, ctx, shortName)
+            else
+              ctx.sharedResources match
+                case None => IO.pure(Left(ToolError("Delegate requires SharedResources")))
+                case Some(resources) =>
+                  // 台账条目先开（附件目录名 = task 号，与回执同号）⇒ 再送达 ⇒ 再派发。
+                  for
+                    rootSid <- callerRootOf(ctx, resources)
+                    taskId <- createLedgerEntry(Some(projectName), description)
+                    staged <- stageAndDeliver(
+                      attachmentPaths,
+                      taskId.getOrElse("dispatch-" + java.util.UUID.randomUUID().toString.take(8)),
+                      Some(RemoteAttachments.Target(peer, workspace))
                     )
-                  )
-                )
-              else dispatchRemote(remote, task, description, ctx, shortName)
+                    result <- staged match
+                      case Left(err) => IO.pure(Left(err))
+                      case Right(plan) =>
+                        dispatchRemote(
+                          remote,
+                          withAttachmentManifest(task, plan),
+                          description,
+                          ctx,
+                          shortName,
+                          taskId = taskId,
+                          rootSid = rootSid,
+                          attachmentLine = attachmentReceiptLine(Right(plan))
+                        )
+                  yield result
     }
   end internalSpawn
 
@@ -809,13 +834,24 @@ Advance: the chain's nodes all run in THIS session's workspace (inside this sess
     description: String,
     ctx: ToolContext,
     /** 面板命名批（2026-10-31）：批次短名随 host 侧 dispatch 记录落盘。 */
-    shortName: Option[String] = None
+    shortName: Option[String] = None,
+    /**
+     * 调用方已开的台账条目（跨设备附件批 2026-11-05：附件目录名 = task 号 ⇒ 开条在送达
+     * 之前；`None` = 开条失败，仍派发）。缺省 = 本方法自己开（无附件腿的旧形态）。
+     */
+    taskId: Option[String] = None,
+    /** 调用者根会话（缺省 = 现查；附件腿已在送达前查好，避免重复读注册表）。 */
+    rootSid: String = "",
+    /** 附件回执行（空串 = 本次不带附件，回执逐字节不变）。 */
+    attachmentLine: String = ""
   ): IO[Either[ToolError, String]] =
     ctx.sharedResources match
       case Some(resources) =>
         for
-          rootSid <- callerRootOf(ctx, resources)
-          taskId <- createLedgerEntry(Some(route.project), description)
+          root <- if rootSid.nonEmpty then IO.pure(rootSid) else callerRootOf(ctx, resources)
+          tid <- taskId match
+            case Some(_) => IO.pure(taskId)
+            case None => createLedgerEntry(Some(route.project), description)
           dispatchAck <- nebflow.core.delegate.DeviceDelegate.dispatch(
             resources = resources,
             peer = route.peer,
@@ -824,16 +860,16 @@ Advance: the chain's nodes all run in THIS session's workspace (inside this sess
             task = task,
             title = description,
             parentSessionId = ctx.sessionId.getOrElse(""),
-            rootSessionId = rootSid,
-            taskId = taskId
+            rootSessionId = root,
+            taskId = tid
           )
           result <- dispatchAck match
             case Left(err) =>
-              taskId.foreach { tid =>
+              tid.foreach { id =>
                 nebflow.core.project.TaskLedgerStore
                   .open()
                   .appendNoteSync(
-                    tid,
+                    id,
                     s"Device dispatch FAILED: $err",
                     from = nebflow.core.project.TaskLedgerHistory.Origins.Nebula,
                     actor = nebflow.core.project.TaskLedgerHistory.Actors.Nebula
@@ -854,7 +890,7 @@ Advance: the chain's nodes all run in THIS session's workspace (inside this sess
                     executor = s"device:${route.deviceName}",
                     cwd = route.workspace,
                     project = Some(route.project),
-                    taskId = taskId,
+                    taskId = tid,
                     parentSessionId = ctx.sessionId.getOrElse(""),
                     title = description,
                     createdAt = System.currentTimeMillis(),
@@ -862,16 +898,96 @@ Advance: the chain's nodes all run in THIS session's workspace (inside this sess
                   )
                 )
               val ack =
-                s"""Delegate task dispatched to device '${route.deviceName}' (project '${route.project}', task ${taskId
+                s"""Delegate task dispatched to device '${route.deviceName}' (project '${route.project}', task ${tid
                     .map(n => s"#$n")
                     .getOrElse("n/a")}, spawnId $spawnId).
 The session runs on that device with its own executors (workspace there: ${route.workspace}); its result will be delivered back to this session when it completes, and artifacts stay on the device (registered as pointers).
-No queueing: if the device goes offline mid-run the result will NOT arrive — re-dispatch after it returns."""
+No queueing: if the device goes offline mid-run the result will NOT arrive — re-dispatch after it returns.""" +
+                  (if attachmentLine.isEmpty then "" else "\n" + attachmentLine)
               IO.pure(Right(ack))
         yield result
       case None => IO.pure(Left(ToolError("Delegate requires SharedResources")))
     end match
   end dispatchRemote
+
+  /**
+   * 附件**落地 + （可选）跨设备送达**的单点（跨设备附件批 2026-11-05）。
+   *
+   * 顺序不可换：先 [[DelegateAttachments.stage]] 落本机稳定副本并逐件校验 sha256（本机腿
+   * 的全部语义原样保留），设备腿再把这批**已校验的字节**送到目标设备并让对端重算摘要
+   * （[[RemoteAttachments.deliver]]）。任一环失败 ⇒ `Left`，调用方**零 spawn**。
+   *
+   * `device = None` ⇒ 本机腿，plan 原样返回（brief 与本回执逐字节不变）。
+   */
+  private def stageAndDeliver(
+    attachmentPaths: List[String],
+    dispatchId: String,
+    device: Option[RemoteAttachments.Target]
+  ): IO[Either[ToolError, DelegateAttachments.Plan]] =
+    DelegateAttachments.stage(attachmentPaths, dispatchId, PathUtil.dataRoot.toNIO).flatMap {
+      case Left(err) => IO.pure(Left(err))
+      case Right(plan) =>
+        device match
+          case None => IO.pure(Right(plan))
+          case Some(target) => RemoteAttachments.deliver(plan, target)
+    }
+
+  /**
+   * 附件设备目标解析（跨设备附件批）：设备名 + **设备盘 workspace** → 送达目标。
+   *
+   * 名册解析复用 [[RemoteExecutor.resolvePeer]]（分层匹配单点，歧义即拒绝）；设备不在线
+   * ⇒ [[RemoteAttachments.CodeOffline]]。设备盘 workspace 缺席/非绝对 ⇒
+   * [[RemoteAttachments.CodeNoDeviceDir]]（无处安放就显式失败，绝不猜一个目录）。
+   */
+  private def remoteAttachmentTarget(
+    deviceName: String,
+    deviceWorkspace: Option[String],
+    ctx: ToolContext
+  ): IO[Either[ToolError, RemoteAttachments.Target]] =
+    deviceWorkspace.map(_.trim).filter(_.nonEmpty) match
+      case None =>
+        IO.pure(
+          Left(
+            ToolError(
+              s"Delegate: project executes on device '$deviceName' but its origin path is empty — there is no device-side " +
+                "workspace to place the attachments in deterministically. Nothing was dispatched. " +
+                s"(${RemoteAttachments.CodeNoDeviceDir})"
+            )
+          )
+        )
+      case Some(ws) if !PathUtil.isAbsolute(ws) =>
+        IO.pure(
+          Left(
+            ToolError(
+              s"Delegate: device '$deviceName' workspace '$ws' is not an absolute path on that device — attachments need a " +
+                s"deterministic device-side directory. Nothing was dispatched. (${RemoteAttachments.CodeNoDeviceDir})"
+            )
+          )
+        )
+      case Some(ws) =>
+        ctx.sharedResources.flatMap(_.neblinkService) match
+          case None =>
+            IO.pure(
+              Left(
+                ToolError(
+                  s"Delegate: attachments must reach device '$deviceName' but NebLink is not configured on this host — no " +
+                    s"device channel exists. Nothing was dispatched. (${RemoteAttachments.CodeOffline})"
+                )
+              )
+            )
+          case Some(neblink) =>
+            neblink.peers.map { peers =>
+              RemoteExecutor.resolvePeer(deviceName, peers) match
+                case Right(peer) => Right(RemoteAttachments.Target(peer, ws))
+                case Left(err) =>
+                  Left(
+                    ToolError(
+                      s"Delegate: attachment delivery needs device '$deviceName', which is not reachable: ${err.message}. " +
+                        s"Nothing was dispatched — wait for the device to come online and re-dispatch. " +
+                        s"(${RemoteAttachments.CodeOffline})"
+                    )
+                  )
+            }
 
   /**
    * 外部执行器腿（#1225 真适配器）：ExternalSessionRunner 一条通路——子进程、
@@ -906,57 +1022,50 @@ No queueing: if the device goes offline mid-run the result will NOT arrive — r
       case Right(WorkspaceResolution.Local(workspace, resolvedProject, sessionDevice, sessionDeviceWorkspace)) =>
         ctx.sharedResources match
           case Some(resources) =>
-            if attachmentPaths.nonEmpty && sessionDevice.isDefined then
-              IO.pure(
-                Left(
-                  ToolError(
-                    "Delegate: attachments cannot be delivered to a device-resident seat — these files live on THIS " +
-                      s"machine's disk and this project executes on device '${sessionDevice.getOrElse("?")}', which cannot read " +
-                      "those paths. Nothing was dispatched. (DELEGATE_ATTACHMENTS_REMOTE)"
-                  )
-                )
+            // 附件 × 设备项目（跨设备附件批 2026-11-05）：外部执行器**是本机进程**
+            // （`ExternalSessionRunner.spawn` 起子进程，workspace = 本机引擎座位），所以
+            // 本机路径对它是可读的 ⇒ 走纯本地腿（清单给本机副本路径），不再沿用上一批
+            // 那句一刀切的拒绝。真跨设备送达只属于内核腿/设备路由腿。
+            for
+              rootSid <- callerRootOf(ctx, resources)
+              taskId <- createLedgerEntry(resolvedProject, description)
+              // 附件稳定副本（外部腿同样落地 + 校验；清单拼进 task 文本末尾——
+              // 外部 runner 只吃一个 prompt 串，没有 brief 装配点）。
+              staged <- stageAndDeliver(
+                attachmentPaths,
+                taskId.getOrElse("dispatch-" + java.util.UUID.randomUUID().toString.take(8)),
+                None
               )
-            else
-              for
-                rootSid <- callerRootOf(ctx, resources)
-                taskId <- createLedgerEntry(resolvedProject, description)
-                // 附件稳定副本（外部腿同样落地 + 校验；清单拼进 task 文本末尾——
-                // 外部 runner 只吃一个 prompt 串，没有 brief 装配点）。
-                staged <- DelegateAttachments.stage(
-                  attachmentPaths,
-                  taskId.getOrElse("dispatch-" + java.util.UUID.randomUUID().toString.take(8)),
-                  PathUtil.dataRoot.toNIO
-                )
-                spawned <- staged match
-                  case Left(err) => IO.pure(Left(err.message))
-                  case Right(attachmentPlan) =>
-                    nebflow.core.executor.ExternalSessionRunner.spawn(
-                      nebflow.core.executor.ExternalSessionRunner.SpawnSpec(
-                        executorId = defn.id,
-                        binPath = binPath,
-                        task = withAttachmentManifest(task, attachmentPlan),
-                        title = description,
-                        workspace = workspace,
-                        project = resolvedProject,
-                        taskId = taskId,
-                        parentSessionId = ctx.sessionId.getOrElse(""),
-                        rootSessionId = rootSid,
-                        parentRef = ctx.agentActorRef,
-                        wsSend = ctx.wsSend,
-                        resources = resources,
-                        // 面板命名批（2026-10-31）：批次短名随外部腿落 Record。
-                        name = shortName,
-                        // 归属修复批（2026-10-30）：设备项目 + 外部执行器 = host 本地进程——
-                        // 跳过本机 git 判定腿（设备仓 worktree 归属设备，外部腿不建）。
-                        deviceProject = sessionDevice.isDefined
-                      )
+              spawned <- staged match
+                case Left(err) => IO.pure(Left(err.message))
+                case Right(attachmentPlan) =>
+                  nebflow.core.executor.ExternalSessionRunner.spawn(
+                    nebflow.core.executor.ExternalSessionRunner.SpawnSpec(
+                      executorId = defn.id,
+                      binPath = binPath,
+                      task = withAttachmentManifest(task, attachmentPlan),
+                      title = description,
+                      workspace = workspace,
+                      project = resolvedProject,
+                      taskId = taskId,
+                      parentSessionId = ctx.sessionId.getOrElse(""),
+                      rootSessionId = rootSid,
+                      parentRef = ctx.agentActorRef,
+                      wsSend = ctx.wsSend,
+                      resources = resources,
+                      // 面板命名批（2026-10-31）：批次短名随外部腿落 Record。
+                      name = shortName,
+                      // 归属修复批（2026-10-30）：设备项目 + 外部执行器 = host 本地进程——
+                      // 跳过本机 git 判定腿（设备仓 worktree 归属设备，外部腿不建）。
+                      deviceProject = sessionDevice.isDefined
                     )
-              yield spawned
-                .map { case (sessionId, ack) =>
-                  ack + attachmentReceiptLine(staged) + DelegateRegistry.continuationLine(sessionId)
-                }
-                .left
-                .map(ToolError(_))
+                  )
+            yield spawned
+              .map { case (sessionId, ack) =>
+                ack + attachmentReceiptLine(staged) + DelegateRegistry.continuationLine(sessionId)
+              }
+              .left
+              .map(ToolError(_))
           case None =>
             IO.pure(Left(ToolError("Delegate requires SharedResources")))
     }
