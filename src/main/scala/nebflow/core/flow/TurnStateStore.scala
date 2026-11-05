@@ -9,7 +9,8 @@ import nebflow.shared.{NebflowLogger, PathUtil}
  * R4 legacy-hygiene batch (2026-10-29): this object used to be the durable
  * crash-recovery marker (`save` / `load` + `TurnState` codec). Audit verdict
  * (report II §3.4-①, mapping table P4): `save` had NO production call site —
- * the restore path in FlowTreeActor read files that nothing ever wrote
+ * the restore path in the (since-deleted) flow-tree actor read files that
+ * nothing ever wrote
  * (fake recovery chain). The whole save/load/restore subtree was removed;
  * only the cleanup primitive survives (deleteSession hygiene — consumed by
  * SessionStore, asserted by DeleteSessionCleanupSpec via the raw file).

@@ -1,92 +1,42 @@
 package nebflow.core.tools
 
-import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.ActorSystem
-import nebflow.actor.AgentRecord
-import nebflow.agent.SharedResources
-import nebflow.core.flow.TeamSessionRegistry
-import nebflow.core.SessionStore
-import nebflow.llm.ModelCandidate
-import nebflow.shared.{PathUtil, ThinkingConfig}
+import nebflow.shared.PathUtil
 
 /**
- * User ruling 2026-08-24: root/outside-team senders mail TEAM names only.
- * The "team/agent" explicit-address escape hatch (the 372/373 direct-to-member
- * bypass that left the Manager blind) is closed at the MailTool layer —
- * "nebflow-project/Frontend" and bare short names are both rejected from a
- * root sender. TEAM names still route to the team Manager; team-internal
- * short names and same-team team/agent routes are untouched.
+ * Mail 地址面 · root / 非团队调用者的分层地址判据（R2 批，2026-09-12 起）。
  *
- * Layer note: the underlying TeamSessionRegistry.resolveSessionId keeps its
- * full semantics (TeamSessionRegistrySpec pins it) — this spec pins the
- * MailTool-level guard that sits ABOVE it.
+ * 团队功能删除批（team-feature-deletion-20261104）阶段 3：作者裁定 Mail 地址面的
+ * 三形态（团队名 / `team/agent` / 裸团队内短名）**硬删、不留特判**。本件原有
+ * 6 条团队面用例随之整段删除：
+ *   - queue/immediate × 「root sender + team/agent 地址被拒」（4 条，判据文案
+ *     `TEAM names only` 已不存在）
+ *   - 「root sender + TEAM name 路由到团队 Manager（lead）」
+ *   - 「team member：裸短名 / 同团队 team/agent 路由不受影响」（2 条）
+ * 删因：**团队地址面已硬删**（不是「跑不过」）。团队名此后落通用
+ * 「不认识的地址」错误（`unresolvableError`），无专门错误码。
+ *
+ * 保留并仍钉住的面：
+ *   1. Nebula 的分层地址：`node:<id|name>` 零挂载作用域 ⇒ CHAIN_NODE_NOT_FOUND；
+ *      自身地址 ⇒ 显式报错；认不出的裸名 ⇒ 显式报错（禁静默兜底）。
+ *   2. `project:<name>` 拆除面：任何调用者显式 MAIL_PROJECT_TRIGGER_UNSUPPORTED。
  */
 class MailToolRootSenderSpec extends FunSuite:
   private val tempRoot: os.Path = os.pwd / "target" / "test-mail-root-sender"
   PathUtil.setDataRoot(tempRoot)
 
-  private def writeTeam(name: String, lead: String): Unit =
-    val dir = tempRoot / "teams" / name
-    os.makeDir.all(dir)
-    os.write.over(
-      dir / "team.json",
-      s"""{"name": "$name", "description": "test team", "lead": "$lead", "members": []}"""
-    )
-
   override def beforeEach(context: BeforeEach): Unit =
     if os.exists(tempRoot) then os.remove.all(tempRoot)
     os.makeDir.all(tempRoot / "teams")
-    TeamSessionRegistry.clear.unsafeRunSync()
-    writeTeam("myteam", lead = "boss")
 
-  // A root sender: sessionId never registered in TeamSessionRegistry.
+  /** 非 Nebula 的普通会话 sender（不认 Nebula 身份 ⇔ 无 agentDef 的 Nebula 名）。 */
   private val rootSid = "root-sender-sid"
 
   private def rootCtx: ToolContext =
     ToolContext(projectRoot = tempRoot.toString, sessionId = Some(rootSid))
-
-  private def teamMemberCtx(workerSid: String): ToolContext =
-    ToolContext(projectRoot = tempRoot.toString, sessionId = Some(workerSid))
-
-  private def assertRejected(res: Either[ToolError, String], what: String): Unit =
-    res match
-      case Left(err) =>
-        assert(err.message.contains("TEAM names only"), s"should cite the routing rule: ${err.message}")
-        assert(
-          !err.message.contains("Or use explicit"),
-          s"must no longer advertise the team/agent escape hatch: ${err.message}"
-        )
-        assert(err.message.contains("team/agent"), s"should mention the blocked form: ${err.message}")
-      case Right(_) => fail(s"$what must be rejected for a root sender")
-
-  // ── root sender + team/agent explicit address: rejected in ALL modes ──
-
-  test("queue: root sender + team/agent address rejected"):
-    val res = MailTool.deliverQueue("myteam/Frontend", "hi", "INFO", Nil, rootCtx, null).unsafeRunSync()
-    assertRejected(res, "queue team/agent")
-
-  test("immediate: root sender + team/agent address rejected"):
-    val res = MailTool
-      .deliverShortNameUnscoped("myteam/Frontend", "hi", None, "INFO", rootCtx, null, rootSid)
-      .unsafeRunSync()
-    assertRejected(res, "immediate team/agent")
-
-  // ── root sender + bare short name: still rejected (b9d427c6 regression) ──
-
-  test("queue: root sender + bare short name still rejected"):
-    val res = MailTool.deliverQueue("Backend", "hi", "INFO", Nil, rootCtx, null).unsafeRunSync()
-    assertRejected(res, "queue short name")
-
-  test("immediate: root sender + bare short name still rejected"):
-    val res = MailTool
-      .deliverShortNameUnscoped("Backend", "hi", None, "INFO", rootCtx, null, rootSid)
-      .unsafeRunSync()
-    assertRejected(res, "immediate short name")
-
-  // ── R2 分层地址面（R-13/R-14/R-15，2026-09-12；project-trigger 拆除批后 Root 面不含项目地址）──
 
   /** Nebula root 身份：判据 = agentDef.name（引擎侧身份，非字符串猜名）。 */
   private def nebulaCtx(system: ActorSystem): ToolContext =
@@ -145,6 +95,8 @@ class MailToolRootSenderSpec extends FunSuite:
         case Left(err) =>
           assert(err.message.contains("not a recognizable target"), s"须是解析失败报错：${err.message}")
           assert(err.message.contains("node:<节点id或名>"), s"错误文案须指明合法地址面：${err.message}")
+          // 阶段 3 后团队口径的文案已整体不存在（团队地址面硬删）——本断言保留为
+          // 「不得回落成 team 路由口径」的护栏。
           assert(!err.message.contains("TEAM names only"), "不得回落成 team 路由口径（禁静默兜底）")
         case Right(v) => fail(s"认不出的地址必须显式报错，got: $v")
     finally system.stopAll.unsafeRunSync()
@@ -191,13 +143,13 @@ class MailToolRootSenderSpec extends FunSuite:
         case Right(v) => fail(s"a delegate mailing project: must be rejected, got: $v")
     finally system.stopAll.unsafeRunSync()
 
-  test("demolished: team sender + project:<name> => explicit refusal (no dispatcher trigger)"):
+  test("demolished: standalone session + project:<name> => explicit refusal (no dispatcher trigger)"):
     val system = ActorSystem(s"mail-r2-team-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val res = MailTool
         .call(
           JsonObject("address" -> Json.fromString("project:p-x"), "message" -> Json.fromString("hi")),
-          rootCtx.copy(actorSystem = Some(system)) // no Nebula agentDef => team-context role
+          rootCtx.copy(actorSystem = Some(system)) // no Nebula agentDef => standalone role
         )
         .unsafeRunSync()
       res match
@@ -207,7 +159,7 @@ class MailToolRootSenderSpec extends FunSuite:
             s"must be the demolition refusal: ${err.message}"
           )
           assert(!err.message.contains("not mounted"), s"the refusal must not depend on mount state: ${err.message}")
-        case Right(v) => fail(s"a team sender mailing project: must be rejected, got: $v")
+        case Right(v) => fail(s"a standalone sender mailing project: must be rejected, got: $v")
     finally system.stopAll.unsafeRunSync()
 
   test("demolished: dispatcher + project:<name> => explicit refusal (no self-trigger)"):
@@ -251,80 +203,5 @@ class MailToolRootSenderSpec extends FunSuite:
           )
         case Right(v) => fail(s"a project address must be refused, got: $v")
     finally system.stopAll.unsafeRunSync()
-
-  // ── root sender + TEAM name: routes to the team Manager ──
-
-  test("queue: root sender + TEAM name routes to the team Manager (lead)"):
-    TeamSessionRegistry.registerSession("myteam", "boss", "boss-sid").unsafeRunSync()
-    val sys = ActorSystem("mail-root-spec")
-    val store = SessionStore(os.temp.dir(), os.temp.dir())
-    val res = MailTool
-      .deliverQueue(
-        "myteam",
-        "hello team",
-        "INFO",
-        Nil,
-        rootCtx.copy(
-          actorSystem = Some(sys),
-          sharedResources = Some(
-            new SharedResources(
-              llm = null,
-              dispatcher = null,
-              sessionStore = store,
-              projectRoot = os.pwd,
-              thinkingConfigRef = Ref.unsafe[IO, ThinkingConfig](ThinkingConfig()),
-              rateLimiter = null,
-              fileChangeTracker = null,
-              contextWindow = 100_000,
-              agentLibrary = null,
-              taskStore = null,
-              historyArchiver = null,
-              fileLockManager = null,
-              sessionModelOverrides = Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty),
-              providerRegistry = null,
-              healthMonitor = null,
-              actorSystem = null,
-              agentRegistry = Ref.unsafe[IO, Map[String, AgentRecord]](Map.empty),
-              voiceMutedRef = Ref.unsafe[IO, Boolean](false)
-            )
-          )
-        ),
-        sys
-      )
-      .unsafeRunSync()
-    // End-to-end routing evidence: the mail landed in the Manager's persisted
-    // queue (dataRoot/sessions/<manager-sid>/mail-queue.json), from the root sender.
-    val qFile = tempRoot / "sessions" / "boss-sid" / "mail-queue.json"
-    assert(os.exists(qFile), s"mail must be queued to the Manager session: $res")
-    val qContent = os.read(qFile)
-    assert(qContent.contains("hello team"), s"queue should carry the message: $qContent")
-    assert(qContent.contains("Nebula"), s"queue from-field should be the root sender: $qContent")
-
-  // ── team-internal paths: untouched (acceptance 4) ──
-
-  test("team member: short name routing unaffected"):
-    TeamSessionRegistry.registerSession("myteam", "worker", "worker-sid").unsafeRunSync()
-    TeamSessionRegistry.registerSession("myteam", "Backend", "backend-sid").unsafeRunSync()
-    val res = MailTool.deliverQueue("Backend", "hi", "INFO", Nil, teamMemberCtx("worker-sid"), null).unsafeRunSync()
-    res match
-      case Left(err) =>
-        assert(err.message.contains("Backend"), s"should route within the team: ${err.message}")
-        assert(
-          !err.message.contains("TEAM names only"),
-          s"team-internal short name must not hit the rule: ${err.message}"
-        )
-      case Right(_) => fail(s"expected queueToSession outcome, got success: $res")
-
-  test("team member: same-team team/agent route unaffected"):
-    TeamSessionRegistry.registerSession("myteam", "worker", "worker-sid").unsafeRunSync()
-    TeamSessionRegistry.registerSession("myteam", "Frontend", "frontend-sid").unsafeRunSync()
-    val res = MailTool
-      .deliverQueue("myteam/Frontend", "hi", "INFO", Nil, teamMemberCtx("worker-sid"), null)
-      .unsafeRunSync()
-    res match
-      case Left(err) =>
-        assert(err.message.contains("Frontend"), s"should route the explicit same-team route: ${err.message}")
-        assert(!err.message.contains("TEAM names only"), s"same-team team/agent must not hit the rule: ${err.message}")
-      case Right(_) => fail(s"expected queueToSession outcome, got success: $res")
 
 end MailToolRootSenderSpec

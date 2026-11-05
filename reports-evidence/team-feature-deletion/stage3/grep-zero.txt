@@ -1,0 +1,26 @@
+$ date
+2026-11-05 10:25:50 +0800
+
+$ git rev-parse --short HEAD   # commit 3 之后、commit 4 之前
+cf0c5336b
+
+$ git grep -c "FlowTreeActor" -- src/main
+  exit=1
+
+$ git grep -c "TeamSessionRegistry" -- src/main
+  exit=1
+
+$ git grep -c "TeamRegistry" -- src/main
+  exit=1
+
+$ git grep -c "MountTeam" -- src/main
+  exit=1
+
+$ git grep -c "MountedFlowStore" -- src src/main src/test
+  exit=1
+
+$ ls /Users/kaiyu/.stand/sessions/*/flows.json | wc -l   # 归档后
+       0
+
+$ ls /Users/kaiyu/.stand/archive/team-feature-deletion-20261104/sessions/*/flows.json | wc -l
+      24

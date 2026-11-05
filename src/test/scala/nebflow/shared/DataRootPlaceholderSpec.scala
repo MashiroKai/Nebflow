@@ -100,9 +100,12 @@ class DataRootPlaceholderSpec extends munit.FunSuite:
       nebflow.core.tools.TaskListTool.description.contains(s"$rendered/tasks.json"),
       "TaskList 必须教存储路径（默认 home 下 = 旧字面 ~/.nebflow/tasks.json）"
     )
+    // 团队功能删除批 team-feature-deletion-20261104 阶段 2：Load 工具的 team 分支
+    // 已摘除，描述里不再教 teams/<name>/team.json —— 改为钉它保留的 flow 定义路径
+    // （同为运行期渲染值，仍是「desc 走 dataRootRenderValue 而非冻结 val」的等价证据）。
     assert(
-      nebflow.core.tools.LoadTool.description.contains(s"$rendered/teams/<name>/team.json"),
-      "Load 必须教 team 定义路径（默认 home 下 = 旧字面 ~/.nebflow/teams/<name>/team.json）"
+      nebflow.core.tools.LoadTool.description.contains(s"$rendered/flows/<name>.json"),
+      "Load 必须教 flow 定义路径（默认 home 下 = 旧字面 ~/.nebflow/flows/<name>.json）"
     )
 
   test("BashTool 危险命令面：数据根本身仍在保护面内（保护面只增不减）"):
