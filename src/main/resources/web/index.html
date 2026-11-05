@@ -44,7 +44,8 @@
   <link rel="icon" type="image/png" sizes="192x192" href="favicon-192.png?v=71a456e2d388b27e">
   <link rel="icon" type="image/png" sizes="512x512" href="favicon-512.png?v=71a456e2d388b27e">
   <link rel="apple-touch-icon" sizes="180x180" href="favicon-180.png?v=71a456e2d388b27e">
-  <link rel="stylesheet" href="vendor/katex.min.css">
+  <!-- KaTeX 样式改为按需注入（rich-render 批 2026-11-05）：首个公式进视口时
+       由 js/mathRender.js 插入 <link data-nf-katex>，23KB 不进开屏关键路径。 -->
   <link rel="stylesheet" href="vendor/highlight-github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="vendor/highlight-github-dark.min.css" media="(prefers-color-scheme: dark)">
   <link rel="stylesheet" href="css/base.css">
@@ -1239,13 +1240,15 @@
        module 脚本同入「按文档序延迟执行」队列——下列脚本仍在 js/main.js 之前执行，
        window 全局契约与执行顺序不变；变化只在不再阻塞 HTML 解析/首帧（10-19 瀑布
        审计根因#4 止损）。qrcode.js 摘出首开路径：非首屏（社交渠道二维码），按需
-       注入见 socialPanel.js ensureVendorQr——typeof 兜底路径原样保留。katex/lottie
-       保留 defer 在册：katex 服务聊天历史数学块渲染、lottie 服务 boot 门控
-       （main.js waitForGlobals），二者按需化会引入首屏回归面，留 dist 打包时代再收。 -->
+       注入见 socialPanel.js ensureVendorQr——typeof 兜底路径原样保留。lottie 保留
+       defer 在册（服务 boot 门控 main.js waitForGlobals，按需化会引入首屏回归面，
+       留 dist 打包时代再收）。katex 已按需化：见 rich-render 批 2026-11-05
+       （js/mathRender.js 首个 .nf-math 才装载），本条台账只剩 lottie。 -->
   <script defer src="vendor/lucide.min.js"></script>
   <script defer src="vendor/lottie.min.js"></script>
   <script defer src="vendor/marked.min.js"></script>
-  <script defer src="vendor/katex.min.js"></script>
+  <!-- KaTeX 运行库改为按需装载（rich-render 批 2026-11-05）：275KB 不再随开屏
+       加载，首个 .nf-math 占位渲染时由 js/mathRender.js 注入 script。 -->
   <script defer src="vendor/highlight.min.js"></script>
   <script type="module" src="js/main.js"></script>
   <!-- 卡窗静态引导看门狗（独立窗口本机加速批 2026-10-29）。诊断失地：模块图
