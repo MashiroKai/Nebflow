@@ -305,16 +305,35 @@ function renderReminderPanel() {
     for (const r of pending) body.appendChild(buildRow(r, false));
   }
 
-  // Create form (always at bottom)
-  if (isCreating) {
+  // Create form：手机页面态 = 底部抽屉（铺满的列表不再被常驻表单占位，作者令
+  // 2026-11-05 17:33）；桌面腿 = 列表尾部流内一行（原样）。
+  if (mobileLayerOn()) {
+    const sheet = ensureMobileChrome(body.parentElement);
+    if (mDrawerBody) mDrawerBody.replaceChildren();
+    if (sheet) {
+      if (isCreating && mDrawerBody) {
+        mDrawerBody.appendChild(buildInlineCreate());
+        sheet.hidden = false;
+      } else {
+        sheet.hidden = true;
+      }
+    }
+  } else if (isCreating) {
     body.appendChild(buildInlineCreate());
   }
 
-  if (typeof lucide !== 'undefined') createIconsIn(body);
+  if (typeof lucide !== 'undefined') {
+    createIconsIn(body);
+    if (mDrawerBody) createIconsIn(mDrawerBody);
+    if (mFab) createIconsIn(mFab);
+  }
 
-  // Focus inline input if creating
+  // Focus inline input if creating：表单在两处宿主之一（手机 = 抽屉体，桌面 = 列表
+  // 尾部），所以按**当前宿主**取输入件（类选择器，不再走 #reminder-* id 直查 ——
+  // 组件契约 R2 计数只许降不许升）。
   if (isCreating) {
-    const input = body.querySelector('#reminder-inline-input');
+    const host = mobileLayerOn() ? mDrawerBody : body;
+    const input = host ? /** @type {HTMLInputElement|null} */ (host.querySelector('.reminder-inline-input')) : null;
     if (input) requestAnimationFrame(() => input.focus());
   }
 }
@@ -926,6 +945,94 @@ function startTodoEdit(r) {
 function cancelInlineCreate() {
   isCreating = false;
   renderList();
+}
+
+/* ── 手机页面态：右下悬浮加号 + 新建抽屉（todo-fullbleed 批 · 作者令 2026-11-05
+      17:33「手机端的这个待办和定时任务，要像 apple 的这个提醒事项一样，铺满整个
+      内容，加号按钮使用我们 canvas 同款的按钮风格放在右下角悬浮」）────────────
+   两个页面共用同一套规范（与 js/todoFace.js 的 buildFab/buildCreateSheet 逐条对齐，
+   类名同一族 `.mf-drawer*` / `.g2-fab`）：
+     · 加号 = `.g2-fab` 单源材质/尺寸/六态（css/glass.css 圆钮级浮件档，与 Canvas
+       工具钮同档 48px）+ `.reminder-fab-add` 只声明落位（右下角）；
+     · 新建表单从「列表尾部常驻一行」改为「点加号弹底部抽屉」，保存后回到铺满列表；
+     · 桌面腿零改动（#reminder-panel 在桌面是 360px 顶栏下拉，入口仍是头 + 钮；
+       本组节点的可见性由 css/mobileLayer.css 的 body.mobile-layer 规则兜底）。 */
+/** 手机交互层在场判定（断点真值 = body.mobile-layer，与全站同一判据）。 */
+function mobileLayerOn() {
+  return document.body.classList.contains('mobile-layer');
+}
+
+/** @type {HTMLElement|null} */
+let mDrawer = null;
+/** @type {HTMLElement|null} */
+let mDrawerBody = null;
+/** @type {HTMLElement|null} */
+let mFab = null;
+
+/** `<i data-lucide>` 图标件（与站内 lucide 装配口径一致；纯建节点，不渲）。 */
+function lucideIconEl(name) {
+  const i = document.createElement('i');
+  i.setAttribute('data-lucide', name);
+  return i;
+}
+
+/** 惰性建「悬浮加号 + 底部抽屉」一组（面板节点在，就只建一次）。
+ *  `panel` 由调用点**以节点传入**（renderReminderPanel 手里已有面板体/其父），
+ *  本函数不再拿 id 反查 —— 组件契约 R2「禁跨面 DOM 直查」的计数只许降不许升。 */
+function ensureMobileChrome(panel) {
+  if (!panel) return null;
+  if (mDrawer && mDrawer.isConnected) return mDrawer;
+
+  const fab = document.createElement('button');
+  fab.type = 'button';
+  fab.className = 'g2-fab reminder-fab-add';
+  fab.title = t('task.sheetTitle');
+  fab.setAttribute('aria-label', t('task.sheetTitle'));
+  fab.appendChild(lucideIconEl('plus'));
+  fab.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (isCreating) saveInlineTask();
+    else startInlineCreate();
+  });
+
+  const sheet = document.createElement('div');
+  sheet.className = 'mf-drawer';
+  sheet.hidden = true;
+  sheet.setAttribute('role', 'dialog');
+  sheet.setAttribute('aria-modal', 'true');
+  sheet.setAttribute('aria-label', t('task.sheetTitle'));
+
+  const scrim = document.createElement('div');
+  scrim.className = 'mf-drawer-scrim';
+  scrim.addEventListener('click', () => cancelInlineCreate());
+
+  const box = document.createElement('div');
+  box.className = 'mf-drawer-box';
+  const head = document.createElement('div');
+  head.className = 'mf-drawer-head';
+  const name = document.createElement('span');
+  name.className = 'mf-drawer-title';
+  name.textContent = t('task.sheetTitle');
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'mf-drawer-cancel-btn';
+  cancel.textContent = t('task.sheetCancel');
+  cancel.addEventListener('click', () => cancelInlineCreate());
+  const done = document.createElement('button');
+  done.type = 'button';
+  done.className = 'mf-drawer-done-btn';
+  done.textContent = t('task.sheetDone');
+  done.addEventListener('click', () => saveInlineTask());
+  head.append(name, cancel, done);
+
+  mDrawerBody = document.createElement('div');
+  mDrawerBody.className = 'mf-drawer-body';
+  box.append(head, mDrawerBody);
+  sheet.append(scrim, box);
+  panel.append(fab, sheet);
+  mDrawer = sheet;
+  mFab = fab;
+  return sheet;
 }
 
 function cancelTodoInlineCreate() {

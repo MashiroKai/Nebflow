@@ -389,6 +389,16 @@ body.mobile-layer {
   --mpad-y: 12px;
   --mgap: 8px;
   --mstack-gap: 12px;
+  /* ── 页面级悬浮加号（todo-fullbleed 批 2026-11-05）────────────────────
+     待办页 / 定时任务页右下角那颗加号的**唯一几何尺**（两页共用，禁第二把）：
+       · 钮径不另立 —— 直接吃 Canvas 圆钮档 `--mtap-lg`（48 = .g2-fab 手机档
+         = --cv-size-circle 的画布族手机腿，见 glass.css 圆钮级浮件档）；
+       · 落位内距 = 4px 栅格 16 档（--ds-space-4）；
+       · 让位带 `--mpage-fab-clearance` = 钮径 + 上下两道内距 —— 列表末尾垫
+         出整条钮带，最后一行的底缘恒在钮上缘之上（不做「压住末行再补 padding」
+         的两把尺）。 */
+  --mpage-fab-inset: var(--ds-space-4);
+  --mpage-fab-clearance: calc(var(--mtap-lg) + var(--mpage-fab-inset) * 2);
   /* 图标 */
   --micon: 22px;
   --micon-sm: 20px;
@@ -5067,3 +5077,250 @@ body.mobile-layer .ds-media-stack__pill {
   min-height: var(--ds-hit-row);
   font-size: var(--mfs-callout);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * 待办页 / 定时任务页「铺满 + Canvas 同款右下悬浮加号 + 新建抽屉」批
+ * todo-fullbleed · 作者令 2026-11-05 17:33（逐字）
+ *   「手机端的这个待办和定时任务，要像 apple 的这个提醒事项一样，铺满整个内容，
+ *     加号按钮使用我们 canvas 同款的按钮风格放在右下角悬浮。」
+ *
+ * 改前实拍（375×812，见 evidence/20261105_todo-fullbleed/before/）：
+ *   · 待办页：`.tfl-card` 是个带圆角/玻璃底的**浮层卡**，跟着内容高度收缩
+ *     ⇒ 列表只有 252px 高，卡片下方 361.5px 是整片空白（列表容器底缘 388.5，
+ *     页面可用底缘 750）；
+ *   · 定时任务页：列表纵向已铺满，但入口是页头那颗 22px 的「+」、右下无悬浮钮、
+ *     左右内距只有 6px（不成安全边距）。
+ *
+ * 本块三件事（两页同一套规范）：
+ *   ① 铺满：页体 → 收编面 → 卡 → 面板 → 列表包裹 → 列表 全链 flex:1 +
+ *      min-height:0，横向只留 --mpad-x 安全边距（16，与全站手机行内距同源），
+ *      纵向吃到页面壳底缘（= Tab 栏上缘，见下方「安全区」条）；
+ *   ② 加号：`.g2-fab`（css/glass.css 圆钮级浮件档 = Canvas 工具钮 / 页面壳返回钮
+ *      / ask 钮的同一基准类）承载材质·尺寸·六态，本块只声明落位；
+ *      尺寸档 = body.mobile-layer .g2-fab 的 48（= --mtap-lg = --cv-size-circle
+ *      的画布族手机腿），热区 48×48 ≥ 44；
+ *   ③ 新建抽屉：`.mf-drawer` 一族（待办页与定时任务页共用同一组类名），
+ *      常驻表单退役 —— 点加号弹出、保存/取消回铺满列表。
+ *
+ * 安全区（Home 指示条）：**不在这里重算**。页面壳已经整条让出
+ *   `.mobile-page { bottom: calc(var(--dock-h) + var(--dock-inset-b) + env(safe-area-inset-bottom)) }`
+ *   （本文件 L783-790 的 dock 块）⇒ 页面可用底缘恒在 Tab 栏胶囊上缘之上，
+ *   加号/抽屉的 bottom 锚在这个底缘，天然不被系统手势压住（同一把尺，不叠第二份）。
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── ① 待办页：整链全高 + 卡片外框退役 ─────────────────────────────────── */
+/* 面板体 = 页体余量的唯一占有者（内滚归 .tfl-list，页体不再出现第二条滚动轴）。 */
+body.mobile-layer .mh-tpanel .tp-bd {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  /* 左右 = 页面安全边距（列表容器左右只差这一档）；底 0 —— 列表自己铺到页底缘，
+     末行让位由 .tfl-list 的 padding-bottom 单点承担。 */
+  padding: 0 var(--mpad-x) 0;
+}
+/* 表头一行（计数 + 筛选）：左右与列表同一安全边距，纵向保持原 4/6 内距 ——
+   它是一行 chrome 不是内容，不放大。 */
+body.mobile-layer .tfl-mobile .tfl-header {
+  padding: var(--ds-space-1) var(--ds-space-1h) var(--ds-space-1);
+}
+/* 「收起」键在手机页面态退场：页面态本来就是展开态，collapse() 在 mobile 腿
+   直接 return（js/todoFace.js 首行守卫）⇒ 这是一颗**零效按钮**；而它的
+   `[hidden]` 又被 `.tfl-icon-btn{display:flex}` 盖掉（改前实拍：表头右侧常驻一个
+   上箭头）。同一行只留筛选一颗。 */
+body.mobile-layer .tfl-mobile .tfl-collapse-btn { display: none; }
+/* 页头「计数行」（.tp-hd）在手机页面态退役：它 + .tfl-header 叠起来是 63px 的
+   两行 chrome，把「铺满」的起点顶到标题栏下 65px 处。计数节点由 todoFace 搬进
+   `.tfl-header-count` 槽（同一颗 DOM 节点，见 js/todoFace.js buildDom 手机腿的
+   moveCountInto(true)）⇒ 手机页面态只有**一行**表头（计数 + 筛选），列表起点
+   紧贴标题栏下沿。 */
+body.mobile-layer .mh-tpanel .tp-hd { display: none; }
+body.mobile-layer .tfl-mount-mobile {
+  display: flex;
+  flex-direction: column;
+  /* .tfl-mount 桌面档是 align-items:center（胶囊居中行）—— 手机腿必须回
+     stretch，否则卡/列表按内容宽收缩（改前实测列表被压成 243 宽）。 */
+  align-items: stretch;
+  justify-content: flex-start;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/* 卡 = 页面本身：圆角 / 玻璃底 / 描边 / 投影 / 裁剪 整条退役（作者「不再有卡片
+   外框把内容缩成一条」）。overflow 必须回 visible —— 抽屉是它的子节点、包含块
+   在页面壳上，留 hidden 会把抽屉裁在卡内。 */
+body.mobile-layer .tfl-mobile {
+  flex: 1 1 auto;
+  min-height: 0;
+  border-radius: 0;
+  background: none;
+  border: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  overflow: visible;
+}
+body.mobile-layer .tfl-mobile .tfl-panel,
+body.mobile-layer .tfl-mobile .tfl-list-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/* 列表包裹层的定位归零（todo-fullbleed）：桌面腿它是加号/撤回条的定位祖先
+   （position:relative），手机腿两件的落位基准必须是**页面壳**——否则加号被
+   再内缩一层安全边距（改前实测：reminder 页 16、tasks 页 32，两页两把尺）。
+   归零后 absolute 沿包含块链上溯到 .mobile-page，与 reminder 页逐值一致。 */
+body.mobile-layer .tfl-mobile .tfl-list-wrap { position: static; }
+body.mobile-layer .tfl-mobile .tfl-undo {
+  bottom: var(--mpage-fab-clearance);
+}
+/* 列表末行让位 = 加号整条钮带（--mpage-fab-clearance，见文件上方 token 块）。
+   max() 里的第二项是**同一语义的画布腿变量**：Canvas 面板会把实测的
+   --canvas-bottom-clearance 写在自己的 pane 上；本页没有该变量 ⇒ 缺省 0，
+   有则自动取大者（两个都取不到时仍等于钮带，零字面量）。 */
+body.mobile-layer .tfl-mobile .tfl-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-bottom: max(var(--mpage-fab-clearance), var(--canvas-bottom-clearance, 0px));
+}
+/* 底部 Add footer 在手机页面态退场：新建入口收敛到右下那颗加号（一条入口，
+   不在页底再摆一条通栏「添加提醒」——它会把满铺的列表顶起 30px+）。 */
+body.mobile-layer .tfl-mobile .tfl-footer { display: none; }
+/* 空态也铺满（作者「不许留一块白板」）：空态件占满列表可视区并居中，列表容器
+   高度照旧 = 页体余量（判据 = 容器 rect，与有无条目无关）。 */
+body.mobile-layer .tfl-mobile .tfl-list-inner:has(> .tfl-empty) { min-height: 100%; }
+body.mobile-layer .tfl-mobile .tfl-empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--mpad-x);
+}
+
+/* ── ② 定时任务页：页头收细 + 列表全高 + 入口收敛 ─────────────────────── */
+body.mobile-layer #mobile-pages .mobile-page-body > #reminder-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  /* 横向安全边距落在**面**上（不是落在滚动体上）：.reminder-panel-body 本身是
+     滚动容器，把内距写在它身上时它的 border-box 仍满宽 ⇒ 容器 rect 左右贴屏、
+     判据「左右只差安全边距」不成立。内距写在外层 ⇒ 列表容器的 rect 就是
+     「页宽 − 2×安全边距」。 */
+  padding: 0 var(--mpad-x);
+}
+body.mobile-layer #reminder-panel .reminder-panel-header {
+  padding: var(--ds-space-2) 0 var(--ds-space-1h);
+}
+body.mobile-layer #reminder-panel .reminder-panel-title {
+  font-size: var(--mfs-callout);
+}
+/* 页头「+」退场（22px 小钮 → 右下 48 悬浮加号；同一条新建路径，不留两个入口）。 */
+body.mobile-layer #reminder-panel .reminder-create-btn { display: none; }
+body.mobile-layer #reminder-panel .reminder-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 0 max(var(--mpage-fab-clearance), var(--canvas-bottom-clearance, 0px));
+}
+/* 空载页脚条（桌面版 2px 呼吸垫，手机页面态零用）⇒ 隐去，列表直抵页底缘。 */
+body.mobile-layer #reminder-panel .reminder-panel-footer { display: none; }
+/* 行内距与待办页同档（容器边 + --ds-space-1h 6）：两页「安全边距 + 行内距」
+   读数逐值一致（改前本行是 --mpad-x 16，叠在容器内距上会读到 32 的两套尺）。 */
+body.mobile-layer #reminder-panel .reminder-row {
+  padding-left: var(--ds-space-1h);
+  padding-right: var(--ds-space-1h);
+}
+
+/* ── ③ 右下悬浮加号：Canvas 同款 + 页面右下落位 ───────────────────────── */
+/* 待办页那颗加号（`.tfl-fab-add`）在手机腿加挂 `.g2-fab`（材质/尺寸/六态全部由
+   css/glass.css 圆钮级浮件档给），本块只补落位：列表包裹层右下角，内距
+   --mpage-fab-inset（16）—— 列表包裹层已铺满页体余量 ⇒ 视觉落点 = 页面右下角，
+   且底缘恒在 Tab 栏胶囊上缘之上一整档（tab 栏交叠实测 0，见批报告）。 */
+body.mobile-layer .tfl-fab-add {
+  right: var(--mpage-fab-inset);
+  bottom: var(--mpage-fab-inset);
+}
+/* 定时任务页那颗（JS 建 `.g2-fab.reminder-fab-add`）。桌面腿不显形：桌面
+   #reminder-panel 是 360px 顶栏下拉，入口仍是页头「+」（本批不动桌面）。 */
+.reminder-fab-add { display: none; }
+body.mobile-layer #reminder-panel .reminder-fab-add {
+  display: inline-flex;
+  position: absolute;
+  right: var(--mpage-fab-inset);
+  bottom: var(--mpage-fab-inset);
+  z-index: 2;
+}
+
+/* ── ④ 新建抽屉（两页共用一族类名：.mf-drawer*）──────────────────────────
+   为什么是底部抽屉：手机端写入口的既有语言（键盘弹起贴底、关闭手势单一、
+   不与列表抢视觉）；浮层/气泡在 375 宽上要么盖掉半屏列表、要么被键盘顶出屏。
+   材质 = **扁平实底**：全站毛玻璃只许唯一的 `.nf-glass`（另一批正在立标准），
+   本组件不出第二套模糊面 —— 底面 --color-bg + 一道 1px 分隔线，零投影零渐变。
+   落位：包含块 = 页面壳（`.mobile-page`，两个宿主在手机腿都是定位静态件）⇒
+   覆盖整页内容区（标题栏下沿 → Tab 栏上缘），列表滚动不会带着抽屉跑。 */
+.mf-drawer {
+  position: absolute;
+  inset: 0;
+  /* > .mobile-page-header 的 20 / 加号 2 / 撤回条 3；< 模态层 300+。 */
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.mf-drawer[hidden] { display: none !important; }
+.mf-drawer-scrim {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--color-bg) 62%, transparent);
+}
+.mf-drawer-box {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-height: 82%;
+  background: var(--color-bg);
+  border-top: 1px solid var(--color-frame-border);
+  border-top-left-radius: var(--ds-radius-card-lg);
+  border-top-right-radius: var(--ds-radius-card-lg);
+  overflow: hidden;
+}
+.mf-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  min-height: var(--ds-hit-row);
+  padding: 0 var(--ds-space-2) 0 var(--mpad-x);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-text) 8%, transparent);
+  flex: none;
+}
+.mf-drawer-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--ds-fs-body);
+  font-weight: 600;
+  color: var(--color-text);
+}
+.mf-drawer-body {
+  padding: var(--ds-space-2) var(--mpad-x) var(--ds-space-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* 抽屉两键：扁平（零投影 / 零渐变 / 零厚度位移 —— scripts/check-flat-buttons.mjs
+   判据），热区 44（--ds-hit-row）。取消 = 中性墨，完成 = 主色字。 */
+.mf-drawer-cancel-btn,
+.mf-drawer-done-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--ds-hit-row);
+  min-height: var(--ds-hit-row);
+  padding: 0 var(--ds-space-2);
+  border: none;
+  background: transparent;
+  border-radius: var(--ds-radius-pill);
+  font-size: var(--ds-fs-body);
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.mf-drawer-cancel-btn { color: color-mix(in srgb, var(--color-text) 55%, transparent); }
+.mf-drawer-done-btn { color: var(--color-primary); font-weight: 600; }
+.mf-drawer-cancel-btn:active,
+.mf-drawer-done-btn:active { opacity: 0.65; }
