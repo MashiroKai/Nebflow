@@ -31,11 +31,18 @@
 
 import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
+import { h } from './dom.js';
 import * as api from './friendsApi.js';
 import { personLabel } from './messages.js';
 import { avatarNodeFor } from './avatarRender.js';
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
 import { mobileSheetBack } from './mobile/popSheet.js';
+import { createToggle, setToggleState } from './toggle.js';
+// 🔴 搜索面板（`js/chatSearch.js`）**不静态引**：它是全仓最重的一张面（chat / card
+// registry / 媒体索引…），且本仓静态环闸要求 Profile 面不得新增静态边 ⇒ 点击时
+// 动态 import（与 `mobile/navController.js` 开搜索页、`messages.js` 开本面同一条纪律）。
+// 复用判据 = 调用的仍是**同一个** `openSearchModal()`（主对话搜索钮 / 手机搜索页
+// 用的同一个导出函数），不是第二套实现。
 
 /** 描述长度上限（与好友备注 REMARK_MAX=64 同档：显示名/介绍不触文件系统）。 */
 export const BIO_MAX = 64;
@@ -84,6 +91,10 @@ async function readFieldValue(field) {
     const list = await api.getFriends();
     const hit = (list.friends || []).find((f) => String(f.userId) === String(current.id));
     if (!hit) return '';
+    // 会话偏好（三点入口批 2026-11-05）：真值 = 好友行的 `muted` / `pinned` 键
+    // （后端 `FriendService.applyFriendPrefs` 单一出口；关闭 = 键为 null）。
+    if (field === 'muted') return hit.muted === true ? 'true' : 'false';
+    if (field === 'pinned') return hit.pinned === true ? 'true' : 'false';
     return field === 'bio' ? (hit.bio || '') : (hit.remark || '');
   }
   const env = await api.getGroups();
@@ -93,7 +104,8 @@ async function readFieldValue(field) {
 }
 
 /**
- * 单字段编辑行：label [+ 缓存提示] + 输入框 + 保存键。
+ * 单字段编辑行（**扁平行**，三点入口批 2026-11-05 重排）：
+ * head = label [+ 缓存提示]，行体 = 输入框 + 保存键（同一行，不套卡片盒）。
  * @param {{
  *   field: string, labelKey: string, value: string, max: number,
  *   placeholderKey: string, hintKey?: string, onSave: (v: string) => Promise<any>,
@@ -111,6 +123,7 @@ function fieldRow(spec) {
   }
   row.appendChild(head);
 
+  const line = el('div', 'pf-field-line');
   const input = document.createElement('input');
   input.className = 'cfg-input pf-input';
   input.type = 'text';
@@ -121,7 +134,6 @@ function fieldRow(spec) {
   input.dataset.pfInput = spec.field;
   bindImeGuard(input);
 
-  const foot = el('div', 'pf-field-foot');
   const save = el('button', 'glass-control pf-save', t('profile.save'));
   save.type = 'button';
   save.dataset.pfSave = spec.field;
@@ -155,9 +167,75 @@ function fieldRow(spec) {
     if (isImeComposing(e, input)) return;
     if (e.key === 'Enter') { e.preventDefault(); commit(); }
   });
-  foot.appendChild(save);
-  row.appendChild(input);
-  row.appendChild(foot);
+  line.appendChild(input);
+  line.appendChild(save);
+  row.appendChild(line);
+  return row;
+}
+
+/**
+ * 导航行（扁平）：label（可带副行）+ 右箭头。行本体是 `<button>`（键盘可达）。
+ * 本批唯一消费点 = 「搜索聊天记录」⇒ 复用主对话的同一张搜索面板。
+ * @param {{ labelKey: string, subKey?: string, onClick: () => void, node?: string }} spec
+ */
+function navRow(spec) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'pf-nav';
+  row.dataset.pfNav = spec.node || '';
+  row.appendChild(el('span', 'pf-nav-label', t(spec.labelKey)));
+  if (spec.subKey) row.appendChild(el('span', 'pf-nav-sub', t(spec.subKey)));
+  const chev = h('span', { class: 'pf-nav-chev' }, h('i', { 'data-lucide': 'chevron-right' }));
+  row.appendChild(chev);
+  row.addEventListener('click', spec.onClick);
+  return row;
+}
+
+/**
+ * 开关行（扁平）：label + 共享开关组件 `nb-toggle`（`js/toggle.js`，禁自画）。
+ *
+ * 写序纪律（与 remark/bio 的回读口径同族）：点击即**乐观翻面**，随后写后端；
+ * 后端是唯一真值 ⇒ 写成功后再回读一次好友行收敛（失败则回滚 + 可见提示，
+ * 不留「界面说开了、其实没存」的假开关）。
+ * @param {{
+ *   field: 'muted'|'pinned', labelKey: string,
+ *   on: boolean, onSave: (v: boolean) => Promise<any>,
+ * }} spec
+ */
+function switchRow(spec) {
+  const row = el('div', 'pf-switch');
+  row.dataset.pfSwitch = spec.field;
+  const label = el('span', 'pf-switch-label', t(spec.labelKey));
+  label.id = `pf-switch-label-${spec.field}`;
+  row.appendChild(label);
+  const holder = el('span', 'pf-switch-ctl');
+  // 共享开关组件的 **DOM 形态**（`toggle.js` 的 createToggle：与 toggleHTML 逐属性
+  // 同形、同一属主模块）——禁本面自画开关，也禁裸 innerHTML（组件契约 R5）。
+  const btn = createToggle({ on: spec.on, label: t(spec.labelKey) });
+  holder.appendChild(btn);
+  btn.dataset.pfToggle = spec.field;
+  btn.setAttribute('aria-labelledby', label.id);
+  btn.addEventListener('click', async () => {
+    const next = !btn.classList.contains('on');
+    setToggleState(btn, next); // 乐观：组件自有翻转（与 bindToggle 同一套视觉态）
+    btn.disabled = true;
+    try {
+      await spec.onSave(next);
+      // 回读收敛：以服务端真值为准（与 remark/bio 的「不做乐观写」同一条纪律）。
+      const truth = await readFieldValue(spec.field);
+      setToggleState(btn, truth === 'true');
+      window.dispatchEvent(new CustomEvent(
+        current && current.kind === 'friend' ? 'fm-friends-changed' : 'fm-groups-changed'
+      ));
+    } catch (err) {
+      setToggleState(btn, !next); // 回滚：写失败绝不留在假态
+      window.__showToast?.(t('messages.networkError'), 'error');
+      console.debug('[profileFace] toggle failed', spec.field, err && err.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  row.appendChild(holder);
   return row;
 }
 
@@ -194,21 +272,28 @@ function renderBody() {
   closeBtn.className = 'pf-close';
   closeBtn.id = 'profile-face-close';
   closeBtn.setAttribute('aria-label', t('profile.close'));
-  closeBtn.innerHTML = '<i data-lucide="x"></i>';
+  closeBtn.appendChild(h('i', { 'data-lucide': 'x' }));
   closeBtn.addEventListener('click', () => closeProfile());
   titleBar.appendChild(closeBtn);
   modal.appendChild(titleBar);
 
+  // 英雄区（三点入口批 2026-11-05 扁平化）：居中列 → **左对齐单行**（头像 + 名字/
+  // 副行），头像档位从无规则的 `fm-avatar-56`（尺寸随源图漂）改为既有令牌档
+  // `fm-avatar-40`（40×40，friends.css 既有规则，零新尺寸字面量）。
   const hero = el('div', 'pf-hero');
   if (current?.kind === 'group') {
-    hero.appendChild(avatarNode({ name: current.conv?.title || '' }, 56));
-    hero.appendChild(el('div', 'pf-hero-name', subjectTitle()));
-    hero.appendChild(el('div', 'pf-hero-sub', t('messages.memberCount', { n: Number(current.conv?.memberCount) || 0 })));
+    hero.appendChild(avatarNode({ name: current.conv?.title || '' }, 40));
+    const idText = el('div', 'pf-hero-id');
+    idText.appendChild(el('div', 'pf-hero-name', subjectTitle()));
+    idText.appendChild(el('div', 'pf-hero-sub', t('messages.memberCount', { n: Number(current.conv?.memberCount) || 0 })));
+    hero.appendChild(idText);
   } else {
     const f = current?.conv || {};
-    hero.appendChild(avatarNode({ name: f.name, neblinkId: f.neblinkId, avatarUrl: f.avatarUrl }, 56));
-    hero.appendChild(el('div', 'pf-hero-name', subjectTitle()));
-    hero.appendChild(el('div', 'pf-hero-sub', f.neblinkId || ''));
+    hero.appendChild(avatarNode({ name: f.name, neblinkId: f.neblinkId, avatarUrl: f.avatarUrl }, 40));
+    const idText = el('div', 'pf-hero-id');
+    idText.appendChild(el('div', 'pf-hero-name', subjectTitle()));
+    idText.appendChild(el('div', 'pf-hero-sub', f.neblinkId || ''));
+    hero.appendChild(idText);
   }
   modal.appendChild(hero);
 
@@ -261,6 +346,40 @@ export async function openFriendProfile(friend) {
     hintKey: 'profile.localCacheHint',
     onSave: (v) => api.setFriendBio(current.id, v),
   }));
+
+  // ── 三点入口批（2026-11-05，作者原话）：「里面的内容除了目前的设置备注和描述，
+  //    还要有搜索聊天记录……然后就是消息免打扰的 toggle，然后就是顶置的 toggle」
+  //    ⇒ 顺序 = 备注 / 描述 / 搜索聊天记录 / 消息免打扰 / 顶置。
+  //
+  //    ① 搜索聊天记录 = **复用**主对话那张搜索面板：调的是 `chatSearch.openSearchModal`
+  //       同一个导出函数（手机搜索页 / 顶栏搜索钮同一条链），零第二套实现。
+  //       开前先收本面（面板是页级浮层，两面叠着会抢焦点/滚动容器）。
+  body.appendChild(navRow({
+    labelKey: 'profile.searchMessages',
+    node: 'search',
+    onClick: () => {
+      closeProfile();
+      void import('./chatSearch.js')
+        .then((m) => m.openSearchModal())
+        .catch((e) => console.debug('[profileFace] open search failed', e && e.message));
+    },
+  }));
+
+  //    ② ③ 两个本地偏好（后端 = `profile-descriptions.json` 的 friendMuted/friendPinned，
+  //      真值经 `GET /api/friends` 的 `muted`/`pinned` 键回读 ⇒ 关掉重进仍在）。
+  body.appendChild(switchRow({
+    field: 'muted',
+    labelKey: 'profile.muteLabel',
+    on: !!fresh.muted,
+    onSave: (v) => api.setFriendMuted(current.id, v),
+  }));
+  body.appendChild(switchRow({
+    field: 'pinned',
+    labelKey: 'profile.pinLabel',
+    on: !!fresh.pinned,
+    onSave: (v) => api.setFriendPinned(current.id, v),
+  }));
+
   body.appendChild(el('p', 'pf-note', t('profile.friendNote')));
 
   return afterMount(ov);

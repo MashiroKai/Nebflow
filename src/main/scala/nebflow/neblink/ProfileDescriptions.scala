@@ -19,6 +19,8 @@ import nebflow.shared.PathUtil
  * | 群   | `description`    | **上游**    | 本地缓存 + 回显  | `groupDescription` 映射 |
  * | 群   | `remark`         | 本仓本地    | 唯一真源         | `groupRemark` 映射  |
  * | 自己 | `bio`            | 本仓本地    | 唯一真源         | `selfBio` 字符串    |
+ * | 好友 | `muted`          | 本仓本地    | 唯一真源         | `friendMuted` 映射（三点入口批 2026-11-05） |
+ * | 好友 | `pinned`         | 本仓本地    | 唯一真源         | `friendPinned` 映射（同上） |
  *
  * 🔴 同步口径（**已知缺口，非缺陷——同族先例 S1 定案**）：四条字段**全部零跨设备同步、
  * 零上游协议变更**（先例逐字：`FriendRemarkStore` 头注「零上游协议变更、零跨设备同步」、
@@ -36,7 +38,11 @@ case class ProfileDescriptions(
   friendBio: Map[String, String] = Map.empty,
   groupRemark: Map[String, String] = Map.empty,
   groupDescription: Map[String, String] = Map.empty,
-  selfBio: String = ""
+  selfBio: String = "",
+  /** 消息免打扰（三点入口批 2026-11-05）。键 = userId，值恒 `true`（关闭 = 删键）。 */
+  friendMuted: Map[String, Boolean] = Map.empty,
+  /** 顶置（同上）。键 = userId，值恒 `true`（取消顶置 = 删键）。 */
+  friendPinned: Map[String, Boolean] = Map.empty
 )
 
 object ProfileDescriptions:
@@ -48,7 +54,9 @@ object ProfileDescriptions:
       "friendBio" -> p.friendBio.asJson,
       "groupRemark" -> p.groupRemark.asJson,
       "groupDescription" -> p.groupDescription.asJson,
-      "selfBio" -> p.selfBio.asJson
+      "selfBio" -> p.selfBio.asJson,
+      "friendMuted" -> p.friendMuted.asJson,
+      "friendPinned" -> p.friendPinned.asJson
     )
   }
 
@@ -63,7 +71,11 @@ object ProfileDescriptions:
       gr <- c.downField("groupRemark").as[Option[Map[String, String]]].map(_.getOrElse(Map.empty))
       gd <- c.downField("groupDescription").as[Option[Map[String, String]]].map(_.getOrElse(Map.empty))
       self <- c.downField("selfBio").as[Option[String]].map(_.getOrElse(""))
-    yield ProfileDescriptions(bio, gr, gd, self)
+      // 加性两段（2026-11-05）：旧文件无这两键 ⇒ 空映射（**不得**整份失败，否则
+      // 升级后用户已有的备注/描述会被静默清空）。
+      muted <- c.downField("friendMuted").as[Option[Map[String, Boolean]]].map(_.getOrElse(Map.empty))
+      pinned <- c.downField("friendPinned").as[Option[Map[String, Boolean]]].map(_.getOrElse(Map.empty))
+    yield ProfileDescriptions(bio, gr, gd, self, muted, pinned)
   }
 
 end ProfileDescriptions

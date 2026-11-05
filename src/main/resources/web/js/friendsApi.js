@@ -663,6 +663,43 @@ export async function setGroupDescription(groupId, description) {
   return { ok: true };
 }
 
+// ── 会话级本地偏好（三点入口批 2026-11-05）：消息免打扰 / 顶置 ──────────────
+//
+// 语义矩阵（与后端 `ProfileDescriptions.friendMuted/friendPinned` 头注一一对应）：
+//   好友 `muted`  = 消息免打扰（该会话不计入未读角标）  | 真源 = 本仓本地
+//   好友 `pinned` = 顶置（消息列表置顶）                | 真源 = 本仓本地
+//
+// 🔴 与 `bio` 的差别：bio 是「上游真源的本仓缓存」，这两个是**纯本地真源**
+// （上游 neblink-server 无该字段、且语义上不外发）⇒ 零跨设备同步，UI 不标
+// 「未同步」。写面形态与四条描述同族：body 单键 + 恒回 `{ok:true}` + 无 502 面
+// （纯本地态）；`false` = 关闭 = 后端删键（回读恒 `null` 或 `true`，前端只判 truthy）。
+
+/** PUT /api/friends/{id}/muted {muted} → 200 {ok:true}（纯本地真源）。 */
+export async function setFriendMuted(friendUserId, muted) {
+  const body = { muted: !!muted };
+  if (!MOCK) return req('PUT', `/api/friends/${encodeURIComponent(friendUserId)}/muted`, body);
+  await delay();
+  const m = mockStore();
+  const f = m.friends.find(x => x.userId === friendUserId);
+  if (!f) throw mockError('not a friend', 403);
+  f.muted = body.muted ? true : null;
+  for (const c of m.conversations) if (c.friend && c.friend.userId === friendUserId) c.friend.muted = f.muted;
+  return { ok: true };
+}
+
+/** PUT /api/friends/{id}/pinned {pinned} → 200 {ok:true}（纯本地真源）。 */
+export async function setFriendPinned(friendUserId, pinned) {
+  const body = { pinned: !!pinned };
+  if (!MOCK) return req('PUT', `/api/friends/${encodeURIComponent(friendUserId)}/pinned`, body);
+  await delay();
+  const m = mockStore();
+  const f = m.friends.find(x => x.userId === friendUserId);
+  if (!f) throw mockError('not a friend', 403);
+  f.pinned = body.pinned ? true : null;
+  for (const c of m.conversations) if (c.friend && c.friend.userId === friendUserId) c.friend.pinned = f.pinned;
+  return { ok: true };
+}
+
 /** PUT /api/profile/self-bio {selfBio} → 200 {ok:true}（纯本地真源）。 */
 export async function setSelfBio(bio) {
   const body = { selfBio: String(bio ?? '') };
