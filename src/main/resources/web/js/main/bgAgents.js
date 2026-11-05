@@ -30,6 +30,7 @@ import {
   freezeKindOf,
   freezeReasonWire,
   showsRecoveryAction,
+  wakeableOf,
   freezeBadgeKey,
   freezeReasonLabelKey,
 } from '../freezeState.js';
@@ -1553,7 +1554,9 @@ function bgTaskRowHtml(id, info, opts = {}) {
       const detail = String(info.frozenDetail || '');
       const hours = Number(info.dormantHours) || 0;
       const tipLines = [];
-      if (!showsRecoveryAction(kind)) {
+      // 冻结状态两套真相批（2026-11-05）：按钮与否只认后端权威块的 `wakeable`
+      // （与唤醒闸同一份读数）；旧后端无块才退回分类表。
+      if (!wakeableOf(info)) {
         // 自动恢复族：说清「在等什么 + 会不会自己好」。
         tipLines.push(t(kind === FREEZE_KIND.window ? 'subagents.freezeWindowTip' : 'subagents.freezeAutoTip'));
         if (why) tipLines.push(t('subagents.frozenReason', { reason: why }));

@@ -105,11 +105,12 @@ object DelegateRevival:
 
   /** standby 记录的**在飞旁证**读数（分型判据的载体；全零 = 纯待命等作者）。 */
   final case class StandbyEvidence(
-      openChainNodes: Int,
-      mergeQueueMember: Boolean,
-      dirtyWorktreePaths: Int,
-      unmergedCommits: Int
+    openChainNodes: Int,
+    mergeQueueMember: Boolean,
+    dirtyWorktreePaths: Int,
+    unmergedCommits: Int
   ):
+
     /** 任一在场 = 有未完成业务（在飞）⇒ 可复活。 */
     def inFlight: Boolean =
       openChainNodes > 0 || mergeQueueMember || dirtyWorktreePaths > 0 || unmergedCommits > 0
@@ -127,7 +128,8 @@ object DelegateRevival:
   private def gitOf(ws: String, args: String*): Option[String] =
     try
       val dir = os.Path(ws)
-      val res = os.proc(Seq("git", "-C", dir.toString) ++ args)
+      val res = os
+        .proc(Seq("git", "-C", dir.toString) ++ args)
         .call(cwd = dir, check = false, mergeErrIntoOut = true)
       if res.exitCode == 0 then Some(res.out.trim()) else None
     catch case _: Throwable => None
@@ -141,9 +143,10 @@ object DelegateRevival:
 
   /** 作用域图非终态节点数（读盘，纯同步；缺图 = 0）。 */
   private def openNodesOf(rec: DelegateRegistry.Record): Int =
-    try nebflow.core.delegate.SessionResumption.openNodeCount(
-      nebflow.core.project.ScopeHandover.scopeDir(scopeBaseOf(rec), rec.id)
-    )
+    try
+      nebflow.core.delegate.SessionResumption.openNodeCount(
+        nebflow.core.project.ScopeHandover.scopeDir(scopeBaseOf(rec), rec.id)
+      )
     catch case _: Throwable => 0
 
   /** worktree 脏路径数（非 repo = 0）。 */
@@ -182,7 +185,9 @@ object DelegateRevival:
       ev
     }.handleErrorWith(e =>
       logger
-        .warn(s"[delegate-revival] standby triage read failed for ${rec.id} (treating as pure standby): ${e.getMessage}")
+        .warn(
+          s"[delegate-revival] standby triage read failed for ${rec.id} (treating as pure standby): ${e.getMessage}"
+        )
         .as(StandbyEvidence(0, false, 0, 0))
     )
 
@@ -196,8 +201,7 @@ object DelegateRevival:
    * （standby 分型见 [[standbyTriage]]：带在飞旁证者在本闸放行）。
    */
   def eligibility(sessionStore: SessionStore, task: SubAgentTask): IO[Option[String]] =
-    if !Defaults.DelegateRevivalEnabled then
-      IO.pure(Some("kill-switch off (nebflow.delegate.revival.enabled=false)"))
+    if !Defaults.DelegateRevivalEnabled then IO.pure(Some("kill-switch off (nebflow.delegate.revival.enabled=false)"))
     else if task.source != "delegate" then
       IO.pure(Some(s"source=${task.source} (only delegate tasks revive; subtasks are cheap to re-dispatch)"))
     else
@@ -229,7 +233,9 @@ object DelegateRevival:
           evidenceIo.flatMap { evidenceOpt =>
             sessionStore.listSessions.map(_.exists(_.id == task.parentSessionId)).map { parentExists =>
               if rec.executor != ExecutorRegistry.DefaultId then
-                Some(s"external executor '${rec.executor}' (boot revival is internal-executor only; use the Mail continuation leg)")
+                Some(
+                  s"external executor '${rec.executor}' (boot revival is internal-executor only; use the Mail continuation leg)"
+                )
               else if rec.cancelRequestedAt.isDefined then
                 // R1 缝隙 C 修（七闸加一道）：取消墓碑在场 = 取消意图持久在案 ⇒
                 // 永不复活——「行仍 running」不再能覆盖用户取消（实证僵尸
@@ -250,9 +256,13 @@ object DelegateRevival:
               else if !seatExists(rec.cwd) then Some(s"seat directory missing: ${rec.cwd}")
               else if !parentExists then Some(s"parent session '${task.parentSessionId}' no longer exists")
               else if !budgetLeft then
-                Some(s"revival budget exhausted (${task.revivalCount.getOrElse(0)}/${Defaults.DelegateRevivalMaxPerTask})")
+                Some(
+                  s"revival budget exhausted (${task.revivalCount.getOrElse(0)}/${Defaults.DelegateRevivalMaxPerTask})"
+                )
               else if frozen.isEmpty && !ageOk then
-                Some(s"orphan older than revival age budget (${Defaults.DelegateRevivalMaxAgeMs}ms) — stale, salvage only")
+                Some(
+                  s"orphan older than revival age budget (${Defaults.DelegateRevivalMaxAgeMs}ms) — stale, salvage only"
+                )
               else if !ageOkFrozen then
                 Some(s"frozen longer than the freeze retention window (${ageBudget}ms) — salvage only")
               else if standbyGate && !evidenceOpt.exists(_.inFlight) then
@@ -276,7 +286,9 @@ object DelegateRevival:
   def revive(deps: Deps, task: SubAgentTask): IO[Either[String, Unit]] =
     reviveImpl(deps, task)
       .handleErrorWith(e =>
-        logger.warn(s"[delegate-revival] revival errored for ${task.taskId}: ${e.getMessage}").as(Left(s"revival error: ${e.getMessage}"))
+        logger
+          .warn(s"[delegate-revival] revival errored for ${task.taskId}: ${e.getMessage}")
+          .as(Left(s"revival error: ${e.getMessage}"))
       )
 
   /**
@@ -300,7 +312,10 @@ object DelegateRevival:
   ): IO[Either[String, Unit]] =
     IO.blocking(DelegateRegistry.find(delegateId)).flatMap {
       case None => IO.pure(Left(s"No delegate instance '$delegateId' on record"))
-      case Some(rec) if rec.frozenSince.isEmpty || !nebflow.core.delegate.DelegateFreeze.isFreezeWire(rec.frozenReason.getOrElse("")) =>
+      case Some(rec)
+          if rec.frozenSince.isEmpty || !nebflow.core.delegate.DelegateFreeze.isFreezeWire(
+            rec.frozenReason.getOrElse("")
+          ) =>
         IO.pure(Left("record is not in the delegate-error frozen state"))
       case Some(rec) if rec.archivedAt.isDefined =>
         IO.pure(Left("record is archived (freeze retention expired) — dispatch a fresh delegate instead"))
@@ -314,11 +329,12 @@ object DelegateRevival:
         }
     }
 
-  /** spawn 链本体（镜像 `BackoffSupervisor.respawn` 的跨进程版；设计 §2.3 ①–⑨）。
-    *
-    * @param instruction 唤醒者指令（运行期唤醒腿传入；boot 复活腿恒空）——拼在唤醒
-    *                    横幅之后成为本窗口的首条指令；空 = 纯「从冻结点继续」。
-    */
+  /**
+   * spawn 链本体（镜像 `BackoffSupervisor.respawn` 的跨进程版；设计 §2.3 ①–⑨）。
+   *
+   * @param instruction 唤醒者指令（运行期唤醒腿传入；boot 复活腿恒空）——拼在唤醒
+   *                    横幅之后成为本窗口的首条指令；空 = 纯「从冻结点继续」。
+   */
   private def reviveImpl(deps: Deps, task: SubAgentTask, instruction: String = ""): IO[Either[String, Unit]] =
     IO.blocking(DelegateRegistry.find(task.taskId)).flatMap {
       case None => IO.pure(Left("no DelegateRegistry record — cannot rebuild the seat"))
@@ -490,7 +506,10 @@ object DelegateRevival:
               nebflow.core.delegate.DelegateFreeze.onWoken(
                 deps.resources,
                 task.taskId,
-                if instruction.trim.isEmpty then "boot-revival" else "frozen-wake"
+                if instruction.trim.isEmpty then "boot-revival" else "frozen-wake",
+                // 冻结状态两套真相批（2026-11-05）：复活腿同样要发状态变更帧——
+                // 会话复活了而面板还挂着「需唤醒」= 本轮报障的同一形态。
+                deps.wsSend
               )
             else IO.unit
           _ <- logger.info(
@@ -500,13 +519,16 @@ object DelegateRevival:
               "supervision chain rebuilt (BackoffSupervisor watching again)"
           )
         yield Right(())
+        end for
     }
 
-  /** 插件 best-effort 重挂：registry 记录的 plugins 集逐名 resolve → MCP 授予 +
-    * builtin 工具并集 → effectiveDef。零分配/全失败 = 原 def（fail-open）。
-    * 会话续命批（2026-11-03）：原位续腿（`nebflow.core.delegate.SessionResumption`）
-    * 同点复用——`private[nebflow]` 跨包单点消费（`spawnBackground`/`resolveRoots`
-    * 同款豁免先例：一个表达式一份拷贝，两份必漂移）。 */
+  /**
+   * 插件 best-effort 重挂：registry 记录的 plugins 集逐名 resolve → MCP 授予 +
+   * builtin 工具并集 → effectiveDef。零分配/全失败 = 原 def（fail-open）。
+   * 会话续命批（2026-11-03）：原位续腿（`nebflow.core.delegate.SessionResumption`）
+   * 同点复用——`private[nebflow]` 跨包单点消费（`spawnBackground`/`resolveRoots`
+   * 同款豁免先例：一个表达式一份拷贝，两份必漂移）。
+   */
   private[nebflow] def regrantPlugins(
     resources: nebflow.core.AgentRuntimePort,
     sessionId: String,
@@ -540,12 +562,21 @@ object DelegateRevival:
                 else baseDef.copy(pluginMcpServers = grant.serverIds, pluginTools = builtinTools)
             }
             .handleErrorWith(e =>
-              logger.warn(s"[delegate-revival] plugin re-grant error for $sessionId (continuing without): ${e.getMessage}").as(baseDef)
+              logger
+                .warn(s"[delegate-revival] plugin re-grant error for $sessionId (continuing without): ${e.getMessage}")
+                .as(baseDef)
             )
         }
 
+    end if
+
+  end regrantPlugins
+
   /** 父会话活引用（Mail 续聊腿同款判读：统一注册表现查——重启后一律视为不 live）。 */
-  private def resolveParentRef(resources: nebflow.core.AgentRuntimePort, parentSessionId: String): IO[Option[ActorRef[AgentCommand]]] =
+  private def resolveParentRef(
+    resources: nebflow.core.AgentRuntimePort,
+    parentSessionId: String
+  ): IO[Option[ActorRef[AgentCommand]]] =
     if parentSessionId.isEmpty then IO.pure(None)
     else resources.agentRegistry.get.map(_.get(parentSessionId).map(_.ref))
 
@@ -559,17 +590,21 @@ object DelegateRevival:
   def reviveAll(deps: Deps, tasks: List[SubAgentTask], salvage: SubAgentTask => IO[Unit]): IO[Ref[IO, List[String]]] =
     Ref.of[IO, List[String]](Nil).flatMap { revivedRef =>
       Semaphore[IO](math.max(1, Defaults.DelegateRevivalConcurrency)).flatMap { sem =>
-        tasks.traverse { t =>
-          (sem.permit.use(_ =>
-            revive(deps, t).flatMap {
-              case Right(()) => revivedRef.update(_ :+ t.taskId)
-              case Left(reason) =>
-                logger.warn(
-                  s"[delegate-revival] revival failed for ${t.taskId}: $reason — falling through to the salvage chain"
-                ) *> salvage(t)
-            }
-          )).start
-        }.flatMap(fibers => fibers.traverse_(_.join.void)) *> IO.pure(revivedRef)
+        tasks
+          .traverse { t =>
+            (sem.permit
+              .use(_ =>
+                revive(deps, t).flatMap {
+                  case Right(()) => revivedRef.update(_ :+ t.taskId)
+                  case Left(reason) =>
+                    logger.warn(
+                      s"[delegate-revival] revival failed for ${t.taskId}: $reason — falling through to the salvage chain"
+                    ) *> salvage(t)
+                }
+              ))
+              .start
+          }
+          .flatMap(fibers => fibers.traverse_(_.join.void)) *> IO.pure(revivedRef)
       }
     }
 
