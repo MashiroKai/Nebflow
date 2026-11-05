@@ -27,7 +27,7 @@
   display: block;
   border-radius: var(--ds-radius-input);
   background: var(--color-surface);
-  padding: var(--ds-space-2) var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-3);
 }
 
 /* Skeleton slot（卡形占位 + 复用脉冲 family, projectPanel.css precedent）。 */

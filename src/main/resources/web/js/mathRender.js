@@ -117,20 +117,24 @@ async function renderMath(el) {
   const display = el.getAttribute('data-math-display') === '1';
   try {
     const katex = await loadKatex();
+    // 失败一律走**抛出**这条腿（throwOnError: true），不在产物里找红字：
+    // KaTeX 0.16.11 的失败面有两条形态 —— ① 结构性解析错 = `<span class="katex-error">`；
+    // ② 未定义的命令（例如未加载宏包时的 \foo）= **红字内联**，不带任何错误类，
+    // 只能靠颜色认（本批首轮实证）。颜色口径随主题/设计令牌变，写死颜色判据既是
+    // 字面量违规（design-tokens 门禁），也会在换主题时失真 —— 所以改判据来源：
+    // throwOnError:true 让两条形态都变成同一个 ParseError，错误判定与配色彻底解耦。
     const html = katex.renderToString(src, {
       displayMode: display,
-      throwOnError: false,
+      throwOnError: true,
       strict: 'ignore',
       // 作者令 2026-11-05 08:53：trust 恒 false（禁 \href/\htmlClass 注入面）。
       trust: false,
     });
-    el.replaceChildren(...htmlToNodes(html));
-    // KaTeX 的失败面有两条形态（实测 0.16.11）：① 未定义的命令 = 红字内联
-    // （`mathcolor="#cc0000"`，**不带** .katex-error 类）；② 结构性解析错 =
-    // `<span class="katex-error">`。两条都算「可见错误态」，都要落状态读数 ——
-    // 只看 .katex-error 会把 ① 误判成成功（本批首轮实证）。
-    const errored = /katex-error|mathcolor="#cc0000"|color:#cc0000/i.test(html);
-    if (errored) {
+    const nodes = htmlToNodes(html);
+    el.replaceChildren(...nodes);
+    // belt：throwOnError 之后产物里理论上不该再有错误节点，出现即按错误态处理
+    // （防 KaTeX 未来版本把某类错误降级成「渲染出错误样式」）。
+    if (el.querySelector('.katex-error')) {
       el.classList.add('nf-math-error');
       el.setAttribute('data-math-error', t('fence.mathFailed'));
       setFenceState(el, MATH_KIND, 'error');
@@ -139,6 +143,7 @@ async function renderMath(el) {
     el.classList.remove('nf-math-error');
     setFenceState(el, MATH_KIND, 'done');
   } catch (e) {
+    // 占位里躺着的就是原始 LaTeX ⇒ 不 replaceChildren，源码保持可见（失败可见）。
     mathError(el, String((e && /** @type {any} */ (e).message) || e));
   }
 }

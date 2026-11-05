@@ -1240,9 +1240,10 @@
        module 脚本同入「按文档序延迟执行」队列——下列脚本仍在 js/main.js 之前执行，
        window 全局契约与执行顺序不变；变化只在不再阻塞 HTML 解析/首帧（10-19 瀑布
        审计根因#4 止损）。qrcode.js 摘出首开路径：非首屏（社交渠道二维码），按需
-       注入见 socialPanel.js ensureVendorQr——typeof 兜底路径原样保留。katex/lottie
-       保留 defer 在册：katex 服务聊天历史数学块渲染、lottie 服务 boot 门控
-       （main.js waitForGlobals），二者按需化会引入首屏回归面，留 dist 打包时代再收。 -->
+       注入见 socialPanel.js ensureVendorQr——typeof 兜底路径原样保留。lottie 保留
+       defer 在册（服务 boot 门控 main.js waitForGlobals，按需化会引入首屏回归面，
+       留 dist 打包时代再收）。katex 已按需化：见 rich-render 批 2026-11-05
+       （js/mathRender.js 首个 .nf-math 才装载），本条台账只剩 lottie。 -->
   <script defer src="vendor/lucide.min.js"></script>
   <script defer src="vendor/lottie.min.js"></script>
   <script defer src="vendor/marked.min.js"></script>

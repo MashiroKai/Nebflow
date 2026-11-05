@@ -195,7 +195,7 @@ async function renderBlock(/** @type {HTMLElement} */ el) {
     // 缓存节点可能已被上一处挂载消费 ⇒ 克隆再挂（replaceChildren 会移动原节点）。
     fenceDone(el, MERMAID_KIND, /** @type {Node} */ (node).cloneNode(true));
     // 墨色归一必须**挂载之后**做：mermaid 把自己的配色写在 svg 内部的 `<style>`
-    // 里，只有 getComputedStyle 才读得到；暗档实测有文本仍是 rgb(0,0,0)（对比度
+    // 里，只有 getComputedStyle 才读得到；暗档实测有文本仍是纯黑（对比度
     // 1.16:1，肉眼不可读），这条 belt 把它换成主题正文墨色（行内 style 压过内部
     // 样式表）。读数落到 data-nf-ink 供机械断言。
     const body = fenceBody(el, MERMAID_KIND.bodyClass);

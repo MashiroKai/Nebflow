@@ -1,7 +1,7 @@
 // svgInk.js — SVG 墨色归一（rich-render 批 2026-11-05）。
 //
 // 为什么单点：两条腿都要它 ——
-//   · js/svgFence.js（外来 ```svg）：墨色写在**属性**上（`fill="#0f172a"`），
+//   · js/svgFence.js（外来 ```svg）：墨色写在**属性**上（`fill` 属性），
 //     挂载前就能算，归一 = 改属性；
 //   · js/mermaidRenderer.js（mermaid 产物）：墨色写在 svg 内部的 `<style>` 里，
 //     只有挂进文档、`getComputedStyle` 才有值，归一 = 写**行内 style**
@@ -10,7 +10,7 @@
 // 低于 [[MIN_CONTRAST]] 就换成当前主题的正文墨色 token（--color-text）。
 //
 // 实测动因（本批首轮实证）：mermaid dark 主题下 flowchart 的无形状节点文本
-// 计算值仍是 rgb(0,0,0)，在暗底 rgb(19,22,28) 上对比度 1.16:1 —— 肉眼几乎不可读。
+// 计算值仍是纯黑（未随主题走），在暗底上对比度 1.16:1 —— 肉眼几乎不可读。
 // 只靠 mermaid 的 themeVariables 覆盖不足以保证「暗色下可读」，所以加这条 belt，
 // 并且它给出的读数是**可机械断言**的（断言取的就是 getComputedStyle 值）。
 
@@ -67,10 +67,11 @@ export function tokenColor(token) {
   return v || '';
 }
 
-/** 当前主题的正文墨色。 @returns {string} */
+/** 当前主题的正文墨色（token 优先；token 未定义时退回继承来的正文色，不写字面量）。 */
 export function themeInk() {
   const v = tokenColor('--color-text');
-  return v || 'rgb(0, 0, 0)';
+  if (v) return v;
+  return getComputedStyle(document.body).color || '';
 }
 
 /**

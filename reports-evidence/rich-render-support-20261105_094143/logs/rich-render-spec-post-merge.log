@@ -1,0 +1,61 @@
+PASS  首屏未请求 katex.min.js（按需装载）
+PASS  首屏未请求 mermaid（按需装载）
+PASS  ① mermaid 围栏产出 svg（state=done）
+PASS  ① svg 非零尺寸（300x342）
+PASS  ① 原 <code> 不再可见（代码块已换图）
+PASS  ① htmlLabels=false：产物里零 foreignObject
+PASS  ① 图落在真实聊天气泡内（非夹具容器）
+PASS  ⑤ 图类型 flowchart 渲染成功（300x342, state=done）
+PASS  ⑤ 图类型 sequenceDiagram 渲染成功（300x218, state=done）
+PASS  ⑤ 图类型 stateDiagram-v2 渲染成功（152x294, state=done）
+PASS  ⑤ 图类型 pie 渲染成功（300x245, state=done）
+PASS  ⑤ 图类型 gantt 渲染成功（300x148, state=done）
+PASS  ⑤ 图类型 xychart-beta 渲染成功（300x214, state=done）
+PASS  ② 语法错误：错误态在场（state=error）
+PASS  ② 语法错误：回退原码可见（不空白）
+PASS  ② 语法错误：可读错误文案（"图表渲染失败"）
+PASS  ② 语法错误：错误态不残留半成品 svg
+PASS  ② 未知类型：错误态在场（state=error）
+PASS  ② 未知类型：回退原码可见（不空白）
+PASS  ② 未知类型：可读错误文案（"图表渲染失败"）
+PASS  ② 未知类型：错误态不残留半成品 svg
+PASS  ⑥ 用户气泡内 mermaid 围栏出图（state=done）
+PASS  ⑥ 用户气泡围栏外仍是纯文本、围栏标记不外泄
+PASS  ⑦ $$块级公式渲染成功（1）
+PASS  ⑦ $行内公式渲染成功（1）
+PASS  ⑦ KaTeX 产物节点在场（2）
+PASS  ⑦ katex 由水合腿按需装载（延迟装上了）
+PASS  ⑦ 非法命令：错误态在场（state=error）
+PASS  ⑦ 非法命令：原文可见（不空白）
+PASS  ⑧⑨ 正例：正常 svg 围栏出图且文字在场（state=done）
+PASS  ⑧① <script> 已被剥离（0 个 script 节点）
+PASS  ⑧① script 未执行（window.__xssScript 缺席）
+PASS  ⑧① 净化后图形仍可见（不是空白）
+PASS  ⑧② 所有 on* 事件属性已剥离（0 处）
+PASS  ⑧② on* 未执行（window.__xssOnclick 缺席）
+PASS  ⑧③ <foreignObject> 整棵子树已剥离
+PASS  ⑧④ 外链 <image> 节点已剥离
+PASS  ⑧⑤ <a href> 去链接、保留文字
+PASS  ⑧⑥ 解析失败 ⇒ 错误态（state=error）
+PASS  ⑧⑥ 解析失败 ⇒ 回退原码可见（不空白）
+PASS  零外网请求（本次全程 296 个请求，外部 0 个）
+PASS  ④ 亮档 svg 全文本最小对比度 18.1:1（墨 rgb(0, 0, 0) / 底 rgb(238, 238, 238) / 文本 "结束" / 20 个文本节点）
+PASS  ④ 暗档生效（prefers-color-scheme: dark）
+PASS  ④ 暗档 svg 全文本最小对比度 18.1:1（墨 rgb(0, 0, 0) / 底 rgb(238, 238, 238) / 文本 "结束" / body 底 rgb(19, 22, 28)）
+PASS  ③ 流式中途零占位零 svg、围栏按代码块显示（[{"placeholders":0,"svg":0,"code":1},{"placeholders":0,"svg":0,"code":1},{"placeholders":0,"svg":0,"code":1}]）
+PASS  ③ 消息完成后出现 1 个占位（随后水合成图）
+PASS  ③ 完成后 svg 恰好 1 个（1，state=done）
+PASS  ③ 库 render 调用恰好 1 次（before=9 after=10）
+PASS  ⑩① 正文段落首行缩进 = token 值（computed 29px / 2em@14.5px / token=2em）
+PASS  ⑩② 列表项内段落零首行缩进（li>p text-indent=0px）
+PASS  ⑩② 引用块内段落零首行缩进（0px）
+PASS  ⑩ 列表每级缩进 ≥ 一档字号（每级 23.2px / 字档 14.5px；token=1.6em）
+PASS  ⑩ 二三级**累计**缩进各自 ≥ 一档字号（一级 348.2px → 二级 371.4px → 三级 394.6px）
+PASS  表格现状：GFM pipe table 在气泡内正常渲染（4 个单元格，表宽 82px / 气泡 150px，内部溢出=false）
+PASS  零未捕获异常（0）
+PASS  ⑨ 375 档亮：图渲染且不溢出（244px / mobile-layer=true）
+PASS  ⑨ 375 档暗：图渲染且不溢出（244px / mobile-layer=true）
+
+shots: /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-mermaid-render/reports-evidence/rich-render-support__20261105014110.__shots
+ALL PASS
+RICH3_EXIT=0
