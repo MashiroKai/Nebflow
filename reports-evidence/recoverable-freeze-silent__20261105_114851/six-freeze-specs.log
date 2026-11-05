@@ -1,50 +1,52 @@
 [sbt-gate] waiting for /Users/kaiyu/.stand/run/sbt.lock (another sbt holds the heavy-work gate; bypass: SBT_GATE=off sbt …)
-[sbt-gate] acquired after 258s
-[sbt-gate] gate acquired after 258s
+[sbt-gate] acquired after 98s
+[sbt-gate] gate acquired after 98s
 [sbt-gate] heap cap -Xmx2600m applied via SBT_OPTS
 [info] welcome to sbt 1.10.10 (Eclipse Adoptium Java 23.0.1)
 [info] loading settings for project delegate-freeze-silent-build from plugins.sbt...
 [info] loading project definition from /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-freeze-silent/project
 [info] loading settings for project root from build.sbt...
 [info] set current project to stand (in build file:/Users/kaiyu/Claude%20code/Stand/.nebflow/worktrees/delegate-freeze-silent/)
-[info] compiling 9 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-freeze-silent/target/scala-3.5.2/classes ...
+[info] compiling 12 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-freeze-silent/target/scala-3.5.2/classes ...
 [info] done compiling
-[info] compiling 30 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-freeze-silent/target/scala-3.5.2/classes ...
+[info] compiling 14 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-freeze-silent/target/scala-3.5.2/classes ...
 [info] done compiling
-[info] compiling 54 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-freeze-silent/target/scala-3.5.2/test-classes ...
+[info] compiling 23 Scala sources to /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-freeze-silent/target/scala-3.5.2/test-classes ...
 [info] done compiling
 [warn] javaOptions will be ignored, fork is set to false
-13:19:21.309 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-1 for crash recovery (maxRestarts=2)
-13:19:21.360 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-1 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
-13:19:21.366 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-1 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-1` or the panel: All providers failed (2 attempts; families: auth): [auth] kimi/k3: 403 no subscription; deepseek: 403 forbidden [session=delegate-fsz-1]
-13:19:21.707 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-wave-1 for crash recovery (maxRestarts=2)
-13:19:21.710 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-wave-1 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
-13:19:21.711 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-wave-1 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-wave-1` or the panel: provider anthropic/claude-x: 529 overloaded — all candidates exhausted [session=delegate-fsz-wave-1]
-13:19:21.962 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-wave-2 for crash recovery (maxRestarts=2)
-13:19:21.966 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-wave-2 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
-13:19:21.967 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-wave-2 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-wave-2` or the panel: provider anthropic/claude-x: 529 overloaded — all candidates exhausted [session=delegate-fsz-wave-2]
-13:19:22.217 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-wave-3 for crash recovery (maxRestarts=2)
-13:19:22.221 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-wave-3 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
-13:19:22.222 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-wave-3 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-wave-3` or the panel: provider anthropic/claude-x: 529 overloaded — all candidates exhausted [session=delegate-fsz-wave-3]
-13:19:22.471 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-wave-4 for crash recovery (maxRestarts=2)
-13:19:22.474 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-wave-4 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
-13:19:22.475 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-wave-4 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-wave-4` or the panel: provider anthropic/claude-x: 529 overloaded — all candidates exhausted [session=delegate-fsz-wave-4]
-13:19:22.727 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-wave-5 for crash recovery (maxRestarts=2)
-13:19:22.739 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-wave-5 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
-13:19:22.743 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-wave-5 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-wave-5` or the panel: provider anthropic/claude-x: 529 overloaded — all candidates exhausted [session=delegate-fsz-wave-5]
-13:19:22.982 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-wave-6 for crash recovery (maxRestarts=2)
-13:19:22.986 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-wave-6 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
-13:19:22.988 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-wave-6 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-wave-6` or the panel: provider anthropic/claude-x: 529 overloaded — all candidates exhausted [session=delegate-fsz-wave-6]
-13:19:23.321 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-def-1 for crash recovery (maxRestarts=2)
-13:19:23.324 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-def-1 frozen (tool-failure, tier=escalate) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
-13:19:23.324 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-def-1 FROZEN (reason=tool-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-def-1` or the panel: tool pipeline crashed: NullPointerException in render step [session=delegate-fsz-def-1]
-13:19:23.575 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-def-2 for crash recovery (maxRestarts=2)
-13:19:23.581 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-def-2 frozen (tool-failure, tier=escalate) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
-13:19:23.582 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-def-2 FROZEN (reason=tool-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-def-2` or the panel: tool pipeline crashed: NullPointerException in render step [session=delegate-fsz-def-2]
-13:19:23.832 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-def-3 for crash recovery (maxRestarts=2)
-13:19:23.837 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-def-3 frozen (tool-failure, tier=escalate) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
-13:19:23.839 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-def-3 FROZEN (reason=tool-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-def-3` or the panel: tool pipeline crashed: NullPointerException in render step [session=delegate-fsz-def-3]
-13:19:24.112 INFO  nebflow.agent.freeze-alert-sweep - [freeze-alert-sweep] ONE aggregated alert for 3 frozen delegate(s) → parent fsz-parent-3 (delegate-fsz-def-1, delegate-fsz-def-2, delegate-fsz-def-3) result=Enqueued(Entry(1,freeze-alert-delegate-fsz-def-1-delegate-fsz-def-2-delegate-fsz-def-3,delegate-freeze-alert,false,1793855964102,freeze-alert-sweep,0,ExternalEvent(delegate,freeze-alert,[freeze-alert] List(Item(delegate-fsz-def-3,fsz-parent-3,freeze silence spec record delegate-fsz-def-3,tool-failure,tool pipeline crashed: NullPointerException in render step [session=delegate-fsz-def-3],Escalate,false,1793855963835,255,/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-freeze-silent,0,false), Item(delegate-fsz-def-2,fsz-parent-3,freeze silence spec record delegate-fsz-def-2,tool-failure,tool pipeline crashed: NullPointerException in render step [session=delegate-fsz-def-2],Escalate,false,1793855963579,511,/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-freeze-silent,0,false), Item(delegate-fsz-def-1,fsz-parent-3,freeze silence spec record delegate-fsz-def-1,tool-failure,tool pipeline crashed: NullPointerException in render step [session=delegate-fsz-def-1],Escalate,false,1793855963323,767,/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-freeze-silent,0,false)).size frozen delegate(s) stopped on a deterministic defect
+13:27:22.984 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-1 for crash recovery (maxRestarts=2)
+13:27:23.106 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-1 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
+13:27:23.114 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-1 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-1` or the panel: All providers failed (2 attempts; families: auth): [auth] kimi/k3: 403 no subscription; deepseek: 403 forbidden [session=delegate-fsz-1]
+13:27:23.459 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-wave-1 for crash recovery (maxRestarts=2)
+13:27:23.468 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-wave-1 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
+13:27:23.468 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-wave-1 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-wave-1` or the panel: provider anthropic/claude-x: 529 overloaded — all candidates exhausted [session=delegate-fsz-wave-1]
+13:27:23.717 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-wave-2 for crash recovery (maxRestarts=2)
+13:27:23.730 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-wave-2 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
+13:27:23.731 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-wave-2 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-wave-2` or the panel: provider anthropic/claude-x: 529 overloaded — all candidates exhausted [session=delegate-fsz-wave-2]
+13:27:23.977 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-wave-3 for crash recovery (maxRestarts=2)
+13:27:23.982 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-wave-3 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
+13:27:23.983 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-wave-3 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-wave-3` or the panel: provider anthropic/claude-x: 529 overloaded — all candidates exhausted [session=delegate-fsz-wave-3]
+13:27:24.235 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-wave-4 for crash recovery (maxRestarts=2)
+13:27:24.240 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-wave-4 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
+13:27:24.241 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-wave-4 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-wave-4` or the panel: provider anthropic/claude-x: 529 overloaded — all candidates exhausted [session=delegate-fsz-wave-4]
+13:27:24.496 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-wave-5 for crash recovery (maxRestarts=2)
+13:27:24.521 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-wave-5 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
+13:27:24.522 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-wave-5 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-wave-5` or the panel: provider anthropic/claude-x: 529 overloaded — all candidates exhausted [session=delegate-fsz-wave-5]
+13:27:24.770 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-wave-6 for crash recovery (maxRestarts=2)
+13:27:24.777 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-wave-6 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
+13:27:24.779 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-wave-6 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-wave-6` or the panel: provider anthropic/claude-x: 529 overloaded — all candidates exhausted [session=delegate-fsz-wave-6]
+13:27:25.185 INFO  nebflow.agent.supervisor - BackoffSupervisor: child delegate-fsz-wave-1 crashed, restarting #1/2 after 407ms backoff
+13:27:25.190 INFO  nebflow.agent.supervisor - BackoffSupervisor: child delegate-fsz-wave-6 crashed, restarting #1/2 after 743ms backoff
+13:27:25.307 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-def-1 for crash recovery (maxRestarts=2)
+13:27:25.310 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-def-1 frozen (tool-failure, tier=escalate) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
+13:27:25.311 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-def-1 FROZEN (reason=tool-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-def-1` or the panel: tool pipeline crashed: NullPointerException in render step [session=delegate-fsz-def-1]
+13:27:25.562 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-def-2 for crash recovery (maxRestarts=2)
+13:27:25.570 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-def-2 frozen (tool-failure, tier=escalate) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
+13:27:25.571 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-def-2 FROZEN (reason=tool-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-def-2` or the panel: tool pipeline crashed: NullPointerException in render step [session=delegate-fsz-def-2]
+13:27:25.819 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-def-3 for crash recovery (maxRestarts=2)
+13:27:25.825 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-def-3 frozen (tool-failure, tier=escalate) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
+13:27:25.827 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-def-3 FROZEN (reason=tool-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-def-3` or the panel: tool pipeline crashed: NullPointerException in render step [session=delegate-fsz-def-3]
+13:27:26.114 INFO  nebflow.agent.freeze-alert-sweep - [freeze-alert-sweep] ONE aggregated alert for 3 frozen delegate(s) → parent fsz-parent-3 (delegate-fsz-def-1, delegate-fsz-def-2, delegate-fsz-def-3) result=Enqueued(Entry(1,freeze-alert-delegate-fsz-def-1-delegate-fsz-def-2-delegate-fsz-def-3,delegate-freeze-alert,false,1793856446097,freeze-alert-sweep,0,ExternalEvent(delegate,freeze-alert,[freeze-alert] List(Item(delegate-fsz-def-3,fsz-parent-3,freeze silence spec record delegate-fsz-def-3,tool-failure,tool pipeline crashed: NullPointerException in render step [session=delegate-fsz-def-3],Escalate,false,1793856445823,252,/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-freeze-silent,0,false), Item(delegate-fsz-def-2,fsz-parent-3,freeze silence spec record delegate-fsz-def-2,tool-failure,tool pipeline crashed: NullPointerException in render step [session=delegate-fsz-def-2],Escalate,false,1793856445568,507,/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-freeze-silent,0,false), Item(delegate-fsz-def-1,fsz-parent-3,freeze silence spec record delegate-fsz-def-1,tool-failure,tool pipeline crashed: NullPointerException in render step [session=delegate-fsz-def-1],Escalate,false,1793856445309,766,/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-freeze-silent,0,false)).size frozen delegate(s) stopped on a deterministic defect
 - escalate `tool-failure` ×3 (delegate-fsz-def-3, delegate-fsz-def-2, delegate-fsz-def-1): tool pipeline crashed: NullPointerException in render step [session=delegate-fsz-def-3]
 
 Wake one: `delegate:delegate-fsz-def-3` / `delegate:delegate-fsz-def-2` / `delegate:delegate-fsz-def-1` — the 唤醒 button on the background-agents panel, or mail the address (it continues in the SAME session; finished work is not redone, and waking never spends the supervisor restart budget).
@@ -61,18 +63,19 @@ Quiet by design: provider-failure freezes no longer mail you anything — the en
   "delegate:delegate-fsz-def-2",
   "delegate:delegate-fsz-def-3"
 ]],Some(freeze-alert-delegate-fsz-def-1-delegate-fsz-def-2-delegate-fsz-def-3),None)))
-13:19:24.203 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-auto-1 for crash recovery (maxRestarts=2)
-13:19:24.206 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-auto-1 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
-13:19:24.206 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-auto-1 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-auto-1` or the panel: provider kimi/k3: 403 no subscription [session=delegate-fsz-auto-1]
-13:19:24.460 WARN  nebflow.llm.health - Provider kimi/k3 marked DOWN: 403 no subscription
-13:19:24.464 INFO  nebflow.llm.health - Provider kimi/k3 recovered (UP)
-13:19:24.472 INFO  nebflow.agent.freeze-alert-sweep - [freeze-alert-sweep] auto-resume #1 for delegate-fsz-auto-1 (reason=llm-failure, frozen 0s, provider serving) — no notification, panel only
-13:19:24.490 INFO  nebflow.core.delegate.freeze - [delegate-freeze] delegate-fsz-auto-1 woken via self-heal (frozen slot cleared, merge lane re-pumped)
-13:19:24.491 INFO  nebflow.agent.freeze-alert-sweep - [freeze-alert-sweep] auto-resume #1 woke delegate-fsz-auto-1 (live)
-13:19:24.570 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-budget-1 for crash recovery (maxRestarts=2)
-13:19:24.572 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-budget-1 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
-13:19:24.573 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-budget-1 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-budget-1` or the panel: deepseek: 余额耗尽 (insufficient balance) [session=delegate-fsz-budget-1]
-13:19:24.830 INFO  nebflow.agent.freeze-alert-sweep - [freeze-alert-sweep] ONE aggregated alert for 1 frozen delegate(s) → parent fsz-parent-5 (delegate-fsz-budget-1) result=Enqueued(Entry(1,freeze-alert-delegate-fsz-budget-1,delegate-freeze-alert,false,1793855964828,freeze-alert-sweep,0,ExternalEvent(delegate,freeze-alert,[freeze-alert] 1 frozen delegate(s) used up their automatic resume budget (2 tries) — the provider is still not serving, so this needs you (top-up / switch model / cancel)
+13:27:26.124 INFO  nebflow.agent.supervisor - BackoffSupervisor: child delegate-fsz-def-3 crashed, restarting #1/2 after 501ms backoff
+13:27:26.242 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-auto-1 for crash recovery (maxRestarts=2)
+13:27:26.249 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-auto-1 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
+13:27:26.250 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-auto-1 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-auto-1` or the panel: provider kimi/k3: 403 no subscription [session=delegate-fsz-auto-1]
+13:27:26.509 WARN  nebflow.llm.health - Provider kimi/k3 marked DOWN: 403 no subscription
+13:27:26.528 INFO  nebflow.llm.health - Provider kimi/k3 recovered (UP)
+13:27:26.539 INFO  nebflow.agent.freeze-alert-sweep - [freeze-alert-sweep] auto-resume #1 for delegate-fsz-auto-1 (reason=llm-failure, frozen 0s, provider serving) — no notification, panel only
+13:27:26.597 INFO  nebflow.core.delegate.freeze - [delegate-freeze] delegate-fsz-auto-1 woken via self-heal (frozen slot cleared, merge lane re-pumped)
+13:27:26.599 INFO  nebflow.agent.freeze-alert-sweep - [freeze-alert-sweep] auto-resume #1 woke delegate-fsz-auto-1 (live)
+13:27:26.797 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fsz-budget-1 for crash recovery (maxRestarts=2)
+13:27:26.801 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fsz-budget-1 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
+13:27:26.802 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fsz-budget-1 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fsz-budget-1` or the panel: deepseek: 余额耗尽 (insufficient balance) [session=delegate-fsz-budget-1]
+13:27:27.065 INFO  nebflow.agent.freeze-alert-sweep - [freeze-alert-sweep] ONE aggregated alert for 1 frozen delegate(s) → parent fsz-parent-5 (delegate-fsz-budget-1) result=Enqueued(Entry(1,freeze-alert-delegate-fsz-budget-1,delegate-freeze-alert,false,1793856447062,freeze-alert-sweep,0,ExternalEvent(delegate,freeze-alert,[freeze-alert] 1 frozen delegate(s) used up their automatic resume budget (2 tries) — the provider is still not serving, so this needs you (top-up / switch model / cancel)
 - silent `llm-failure` ×1 (delegate-fsz-budget-1): deepseek: 余额耗尽 (insufficient balance) [session=delegate-fsz-budget-1]
 
 Wake one: `delegate:delegate-fsz-budget-1` — the 唤醒 button on the background-agents panel, or mail the address (it continues in the SAME session; finished work is not redone, and waking never spends the supervisor restart budget).
@@ -86,224 +89,224 @@ Quiet by design: provider-failure freezes no longer mail you anything — the en
   "delegate:delegate-fsz-budget-1"
 ]],Some(freeze-alert-delegate-fsz-budget-1),None)))
 nebflow.agent.FreezeSilenceSpec:
-  + provider failure freeze: ZERO upward notification (parent mailbox + parent ref), panel says needs-you-but-auto-recoverable, wake entry stays 0.688s
-  + one wave of 6 provider-failure freezes: notification count = 0 and the quiet digest reads 6 1.633s
-  + deterministic-defect freezes produce exactly ONE aggregated alert for the whole wave (and no repeat on the next tick) 0.875s
-  + auto-resume: waits while no provider serves, then resumes the SAME session via UserInput (never RestartAgent) with zero notification 0.371s
-  + auto-resume budget: capped attempts with growing gaps, and only an exhausted budget escalates to ONE alert 0.338s
-  + flow-notify: an infrastructure-fault node failure is never reported upward, a deterministic one still is 0.004s
+  + provider failure freeze: ZERO upward notification (parent mailbox + parent ref), panel says needs-you-but-auto-recoverable, wake entry stays 0.979s
+  + one wave of 6 provider-failure freezes: notification count = 0 and the quiet digest reads 6 1.839s
+  + deterministic-defect freezes produce exactly ONE aggregated alert for the whole wave (and no repeat on the next tick) 0.93s
+  + auto-resume: waits while no provider serves, then resumes the SAME session via UserInput (never RestartAgent) with zero notification 0.484s
+  + auto-resume budget: capped attempts with growing gaps, and only an exhausted budget escalates to ONE alert 0.46s
+  + flow-notify: an infrastructure-fault node failure is never reported upward, a deterministic one still is 0.009s
 nebflow.actor.FreezeDisplaySpec:
-  + 时间表冻结 = 系统等待：不需人、可自动恢复 0.002s
-  + 错误退避族（5 个原因）= 自动恢复中：不需人、无按钮文案 0.0s
-  + 循环检测 L2 = 需人介入：引擎不会自己好 0.001s
-  + 长停的错误族（resumeAt 超过自动恢复时限）⇒ 按需人工呈现，不谎称自动重试 0.0s
-  + 已升级到用户（escalateAt=0 终态）⇒ 无论哪族都需人决策 0.001s
-  + 等待上级决策（escalateAt 未到期）不夺走族的自动性 0.001s
-  + 线值判定：delegate-frozen:* 一律 needsHuman（行面给唤醒入口），provider 故障族额外标可自动恢复 0.001s
-  + 线值判定：错误族线值 → auto，schedule → window，未知/空 → 需人工确认 0.0s
-  + FreezeKind 线值双向稳定（前端 freezeState.js 逐字同值） 0.001s
-  + 线包 frozen 帧带分类三字段（真实命中形态：loop ⇒ needs-human） 0.005s
-  + 线包 frozen 帧：退避族 ⇒ auto-recovering + needsHuman=false 0.0s
-  + 迁移日志正文格式（本次报障那条的逐字样例） 0.002s
-13:19:24.955 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fz-1 for crash recovery (maxRestarts=2)
-13:19:24.957 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fz-1 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
-13:19:24.957 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fz-1 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fz-1` or the panel: provider anthropic/claude-x: 529 overloaded - all candidates exhausted [session=delegate-fz-1]
-13:19:25.782 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fz-quota for crash recovery (maxRestarts=2)
-13:19:25.783 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fz-cancel for crash recovery (maxRestarts=2)
-13:19:25.784 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fz-quota frozen (cancelled-by-quota, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
-13:19:25.785 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fz-quota FROZEN (reason=cancelled-by-quota, childAlive=true) — no failure verdict; wake via `delegate:delegate-fz-quota` or the panel: cancelled by the engine: insufficient_quota: monthly budget exhausted
-13:19:25.900 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching subtask-fz-3 for crash recovery (maxRestarts=2)
+  + 时间表冻结 = 系统等待：不需人、可自动恢复 0.003s
+  + 错误退避族（5 个原因）= 自动恢复中：不需人、无按钮文案 0.002s
+  + 循环检测 L2 = 需人介入：引擎不会自己好 0.002s
+  + 长停的错误族（resumeAt 超过自动恢复时限）⇒ 按需人工呈现，不谎称自动重试 0.001s
+  + 已升级到用户（escalateAt=0 终态）⇒ 无论哪族都需人决策 0.002s
+  + 等待上级决策（escalateAt 未到期）不夺走族的自动性 0.0s
+  + 线值判定：delegate-frozen:* 一律 needsHuman（行面给唤醒入口），provider 故障族额外标可自动恢复 0.004s
+  + 线值判定：错误族线值 → auto，schedule → window，未知/空 → 需人工确认 0.001s
+  + FreezeKind 线值双向稳定（前端 freezeState.js 逐字同值） 0.0s
+  + 线包 frozen 帧带分类三字段（真实命中形态：loop ⇒ needs-human） 0.012s
+  + 线包 frozen 帧：退避族 ⇒ auto-recovering + needsHuman=false 0.001s
+  + 迁移日志正文格式（本次报障那条的逐字样例） 0.009s
+13:27:27.368 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fz-1 for crash recovery (maxRestarts=2)
+13:27:27.371 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fz-1 frozen (llm-failure, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
+13:27:27.371 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fz-1 FROZEN (reason=llm-failure, childAlive=true) — no failure verdict; wake via `delegate:delegate-fz-1` or the panel: provider anthropic/claude-x: 529 overloaded - all candidates exhausted [session=delegate-fz-1]
+13:27:28.184 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fz-quota for crash recovery (maxRestarts=2)
+13:27:28.190 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-fz-cancel for crash recovery (maxRestarts=2)
+13:27:28.194 INFO  nebflow.agent.supervisor - [delegate-freeze] delegate-fz-quota frozen (cancelled-by-quota, tier=silent) — no upward notification by design (provider faults are infrastructure faults, not task failures); the panel badge + panel digest carry it
+13:27:28.196 WARN  nebflow.agent.supervisor - [delegate-freeze] delegate delegate-fz-quota FROZEN (reason=cancelled-by-quota, childAlive=true) — no failure verdict; wake via `delegate:delegate-fz-quota` or the panel: cancelled by the engine: insufficient_quota: monthly budget exhausted
+13:27:28.328 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching subtask-fz-3 for crash recovery (maxRestarts=2)
 nebflow.agent.BackoffSupervisorFreezeSpec:
-  + LLM failure on the delegate track FREEZES instead of failing: registry Frozen + reason wire, task row frozen, parent gets a frozen receipt (never failed), record kept 0.83s
-  + quota-like Cancelled freezes with cancelled-by-quota; an explicit cancel keeps the cancelled terminal verbatim 0.123s
-  + subtask track: Failed keeps the existing failed terminal (zero behavior change for cheap re-dispatchable workers) 0.117s
-13:19:26.156 INFO  nebflow.agent.lifecycle - subagent-nebflow frozen-wake delegate-frozen-wake-1/delegate event=spawn detail=parent=- msgs=2
-13:19:26.162 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-frozen-wake-1 for crash recovery (maxRestarts=2)
-13:19:26.217 INFO  nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-frozen-wake-1' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/wake-seat-same-id15355723643946168001/.nebflow/flow-maps/delegate-frozen-wake-1, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/wake-seat-same-id15355723643946168001, root=self) — one delegate one map
-13:19:26.220 INFO  nebflow.agent.lifecycle - subagent-nebflow frozen-wake delegate-frozen-wake-1/delegate event=start detail=msgs=2
-13:19:26.225 INFO  nebflow.core.delegate.freeze - [delegate-freeze] delegate-frozen-wake-1 woken via frozen-wake (frozen slot cleared, merge lane re-pumped)
-13:19:26.225 INFO  nebflow.agent.delegate-revival - [delegate-revival] revived delegate-frozen-wake-1 (agent=nebflow, revival #1, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/wake-seat-same-id15355723643946168001, transcript=2 msgs, parentLive=false, FROZEN-WAKE reason=delegate-frozen:llm-failure) — supervision chain rebuilt (BackoffSupervisor watching again)
-13:19:26.491 INFO  nebflow.agent.lifecycle - subagent-nebflow frozen-wake delegate-frozen-wake-1/delegate event=turn-complete detail=msgs=3 textLen=18 textStreamed=true thinking=0 model=-
-13:19:26.509 INFO  nebflow.agent.supervisor - BackoffSupervisor: delegate delegate-frozen-wake-1 ended its turn WITHOUT a delegate_report (matrix complete×idle: chainsInFlight=false, emptyTurn=false) — reminder armed, NO terminal verdict, parent NOT notified
+  + LLM failure on the delegate track FREEZES instead of failing: registry Frozen + reason wire, task row frozen, parent gets a frozen receipt (never failed), record kept 0.877s
+  + quota-like Cancelled freezes with cancelled-by-quota; an explicit cancel keeps the cancelled terminal verbatim 0.162s
+  + subtask track: Failed keeps the existing failed terminal (zero behavior change for cheap re-dispatchable workers) 0.135s
+13:27:28.670 INFO  nebflow.agent.lifecycle - subagent-nebflow frozen-wake delegate-frozen-wake-1/delegate event=spawn detail=parent=- msgs=2
+13:27:28.685 INFO  nebflow.agent.supervisor - BackoffSupervisor: watching delegate-frozen-wake-1 for crash recovery (maxRestarts=2)
+13:27:28.813 INFO  nebflow.delegate.flow-hosts - [delegate-flow-host] mounted scope 'delegate-frozen-wake-1' (project=-, map=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/wake-seat-same-id9611597977144681098/.nebflow/flow-maps/delegate-frozen-wake-1, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/wake-seat-same-id9611597977144681098, root=self) — one delegate one map
+13:27:28.821 INFO  nebflow.agent.lifecycle - subagent-nebflow frozen-wake delegate-frozen-wake-1/delegate event=start detail=msgs=2
+13:27:28.835 INFO  nebflow.core.delegate.freeze - [delegate-freeze] delegate-frozen-wake-1 woken via frozen-wake (frozen slot cleared, merge lane re-pumped)
+13:27:28.836 INFO  nebflow.agent.delegate-revival - [delegate-revival] revived delegate-frozen-wake-1 (agent=nebflow, revival #1, seat=/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/wake-seat-same-id9611597977144681098, transcript=2 msgs, parentLive=false, FROZEN-WAKE reason=delegate-frozen:llm-failure) — supervision chain rebuilt (BackoffSupervisor watching again)
+13:27:29.324 INFO  nebflow.agent.lifecycle - subagent-nebflow frozen-wake delegate-frozen-wake-1/delegate event=turn-complete detail=msgs=3 textLen=18 textStreamed=true thinking=0 model=-
+13:27:29.355 INFO  nebflow.agent.supervisor - BackoffSupervisor: delegate delegate-frozen-wake-1 ended its turn WITHOUT a delegate_report (matrix complete×idle: chainsInFlight=false, emptyTurn=false) — reminder armed, NO terminal verdict, parent NOT notified
 nebflow.agent.DelegateFrozenWakeSpec:
-  + MailIdleGate: a Frozen session is deliverable (a frozen delegate has zero in-flight work — the Mail IS the wake carrier) 0.002s
-  + TurnBoundaryDrains: a frozen receipt is NOT a sub-agent result (the parent's barrier slot must not be returned early) 0.001s
-  + visibleExternalEventSource: a frozen receipt renders on its own `delegate-frozen` source (not as a completion report) 0.015s
-  + wakeFrozen refuses records that are not in the delegate-error frozen state (never starts a fresh session silently) 0.076s
-  + wakeFrozen resumes the SAME session id from the persisted transcript: history in place, wake banner injected (finished work is not redone), frozen slot cleared, task row back to running 0.468s
-13:19:26.613 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b3/freeze-b event=spawn detail=parent=- msgs=0
-13:19:26.617 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b3/freeze-b event=start detail=msgs=0
-13:19:26.620 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b3/freeze-b event=freeze-enter detail=resumeAt=1793857740000
-13:19:26.624 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b3/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1773376ms
-13:19:27.298 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b13/freeze-b event=spawn detail=parent=- msgs=0
-13:19:27.299 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b13/freeze-b event=start detail=msgs=0
-13:19:27.337 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b13/freeze-b event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
-13:19:27.995 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b13-exp/freeze-b event=spawn detail=parent=- msgs=0
-13:19:27.996 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b13-exp/freeze-b event=start detail=msgs=0
-13:19:27.998 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b13-exp/freeze-b event=freeze-enter detail=resumeAt=1793857740000
-13:19:27.999 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b13-exp/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1772001ms
-13:19:28.678 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b4evt/freeze-b event=spawn detail=parent=- msgs=0
-13:19:28.681 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b4evt/freeze-b event=external-event detail=source=background-task type=completed
-13:19:28.687 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b4evt/freeze-b event=freeze-enter detail=resumeAt=1793857740000
-13:19:28.687 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b4evt/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1771313ms
-13:19:29.370 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b4tools/freeze-b event=spawn detail=parent=- msgs=0
-13:19:29.371 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b4tools/freeze-b event=start detail=msgs=0
-13:19:29.384 INFO  nebflow.reminders - [time] Current time: 2026-11-05 13:19 +08:00
-13:19:29.503 INFO  nebflow.handlers - Nebula b4tools Tool Read(readme.txt)
-  ("/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/12388201020927424638/readme.txt") OK (7ms)
-13:19:29.507 INFO  nebflow.tools.logger - Tools log retention: pruned files older than 2026-11-02
-13:19:29.520 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b4tools/freeze-b event=freeze-enter detail=resumeAt=1793857740000
-13:19:29.521 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b4tools/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1770479ms
-13:19:30.148 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5/freeze-b event=spawn detail=parent=- msgs=0
-13:19:30.149 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5/freeze-b event=start detail=msgs=0
-13:19:30.254 INFO  nebflow.handlers - Nebula b5 Tool Read(readme.txt)
-  ("/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/12621905916245821192/readme.txt") OK (0ms)
-13:19:30.256 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5/freeze-b event=freeze-enter detail=resumeAt=1793857740000
-13:19:30.256 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1769744ms
-13:19:30.355 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5/freeze-b event=freeze-wake detail=text=WAKE_UP_NOW continue with this
-13:19:30.356 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5/freeze-b event=freeze-state detail=frozen->running kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=user-wake resumeAt=-
-13:19:30.376 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5/freeze-b event=turn-complete detail=msgs=6 textLen=4 textStreamed=true thinking=0 model=-
-13:19:30.825 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=spawn detail=parent=- msgs=0
-13:19:30.826 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=start detail=msgs=0
-13:19:30.827 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=freeze-enter detail=resumeAt=1793857740000
-13:19:30.828 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1769172ms
-13:19:30.927 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=freeze-queue-input detail=textLen=21
-13:19:31.530 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=freeze-resume detail=reason=outside-freeze-segment
-13:19:31.530 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=freeze-state detail=frozen->running kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=window-reopen resumeAt=-
-13:19:31.545 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
-13:19:31.546 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=start detail=msgs=2
-13:19:31.560 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=turn-complete detail=msgs=3 textLen=2 textStreamed=true thinking=0 model=-
-13:19:31.704 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=spawn detail=parent=- msgs=0
-13:19:31.705 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=start detail=msgs=0
-13:19:31.707 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=freeze-enter detail=resumeAt=1793857740000
-13:19:31.707 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1768293ms
-13:19:31.806 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=freeze-wake detail=text=wake once
-13:19:31.806 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=freeze-state detail=frozen->running kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=user-wake resumeAt=-
-13:19:31.817 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=turn-complete detail=msgs=3 textLen=2 textStreamed=true thinking=0 model=-
-13:19:31.909 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=start detail=msgs=4
-13:19:31.912 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=freeze-enter detail=resumeAt=1793857740000
-13:19:31.912 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1768088ms
-13:19:32.832 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6/freeze-b event=spawn detail=parent=- msgs=0
-13:19:32.833 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6/freeze-b event=start detail=msgs=0
-13:19:32.835 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6/freeze-b event=freeze-enter detail=resumeAt=1793857740000
-13:19:32.835 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1767165ms
-13:19:32.935 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6/freeze-b event=freeze-resume detail=reason=outside-freeze-segment
-13:19:32.935 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6/freeze-b event=freeze-state detail=frozen->running kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=window-reopen resumeAt=-
-13:19:32.948 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6/freeze-b event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
-13:19:33.118 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6scan/freeze-b event=spawn detail=parent=- msgs=0
-13:19:33.119 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6scan/freeze-b event=start detail=msgs=0
-13:19:33.121 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6scan/freeze-b event=freeze-enter detail=resumeAt=1793857740000
-13:19:33.121 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6scan/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1766879ms
-13:19:33.625 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6scan/freeze-b event=freeze-resume detail=reason=outside-freeze-segment
-13:19:33.626 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6scan/freeze-b event=freeze-state detail=frozen->running kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=window-reopen resumeAt=-
-13:19:33.633 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6scan/freeze-b event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
-13:19:33.797 INFO  nebflow.agent.lifecycle - Nebula-freeze-i int/freeze-i event=spawn detail=parent=- msgs=0
-13:19:33.798 INFO  nebflow.agent.lifecycle - Nebula-freeze-i int/freeze-i event=start detail=msgs=0
-13:19:33.800 INFO  nebflow.agent.lifecycle - Nebula-freeze-i int/freeze-i event=freeze-enter detail=resumeAt=1793857740000
-13:19:33.801 INFO  nebflow.agent.lifecycle - Nebula-freeze-i int/freeze-i event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1766199ms
-13:19:33.901 INFO  nebflow.agent.lifecycle - Nebula-freeze-i int/freeze-i event=interrupt detail=reason=user-during-frozen
-13:19:33.901 INFO  nebflow.agent.lifecycle - Nebula-freeze-i int/freeze-i event=freeze-state detail=frozen->idle kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=user-interrupt resumeAt=-
-13:19:33.902 INFO  nebflow.agent - Interrupt: no InteractionHub spawned — nothing to clean for session=freeze-int-agent (no hub slot can exist without the hub)
-13:19:34.003 INFO  nebflow.agent.lifecycle - Nebula-freeze-i int/freeze-i event=start detail=msgs=1
-13:19:34.013 INFO  nebflow.agent.lifecycle - Nebula-freeze-i int/freeze-i event=turn-complete detail=msgs=3 textLen=2 textStreamed=true thinking=0 model=-
-13:19:34.173 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b11ask/freeze-b event=spawn detail=parent=- msgs=0
-13:19:34.174 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b11ask/freeze-b event=ask-start detail=q=what next?
-13:19:34.182 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b11ask/freeze-b event=ask-complete detail=q=what next? a=ok
-13:19:34.343 INFO  nebflow.agent.lifecycle - subagent-Nebula plan-like/freeze-b event=spawn detail=parent=- msgs=0
-13:19:34.343 INFO  nebflow.agent.lifecycle - subagent-Nebula plan-like/freeze-b event=start detail=msgs=0
-13:19:34.352 INFO  nebflow.agent.lifecycle - subagent-Nebula plan-like/freeze-b event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
-13:19:34.855 WARN  nebflow.core.processor.stuck - TaskStuckWatcher: root agent frozen-sid still stuck for 1200s — L1 retired: the LLM-halt action was removed (killruling ruling #28, false-positive rate 95.4%); sensor-only tick, upgrading to L2 on the next scan
-13:19:34.934 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er1/freeze-e event=spawn detail=parent=- msgs=0
-13:19:34.935 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er1/freeze-e event=start detail=msgs=0
-13:19:34.947 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er1/freeze-e event=llm-fail detail=err=HTTP 429 rate limit exceeded
-13:19:34.952 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er1/freeze-e event=llm-fail-retry detail=err=HTTP 429 rate limit exceeded retry=1/1 backoff=5129ms
-13:19:40.091 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er1/freeze-e event=llm-fail detail=err=HTTP 429 rate limit exceeded
-13:19:40.093 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er1/freeze-e event=error-freeze detail=reason=llm-transient err=HTTP 429 rate limit exceeded resumeIn=5330ms
-13:19:40.093 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er1/freeze-e event=freeze-state detail=running->frozen kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=error-backoff resumeAt=in5330ms
-13:19:41.059 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=spawn detail=parent=- msgs=0
-13:19:41.059 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=start detail=msgs=0
-13:19:41.067 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=llm-fail detail=err=HTTP 429 rate limit exceeded
-13:19:41.067 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=llm-fail-retry detail=err=HTTP 429 rate limit exceeded retry=1/1 backoff=5163ms
-13:19:46.240 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=llm-fail detail=err=HTTP 429 rate limit exceeded
-13:19:46.241 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=error-freeze detail=reason=llm-transient err=HTTP 429 rate limit exceeded resumeIn=5203ms
-13:19:46.241 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=freeze-state detail=running->frozen kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=error-backoff resumeAt=in5203ms
-13:19:52.812 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=freeze-resume detail=reason=llm-transient backoff-elapsed
-13:19:52.812 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=freeze-state detail=frozen->running kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=backoff-elapsed resumeAt=-
-13:19:52.825 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
-13:19:52.996 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=spawn detail=parent=freeze-er3-parent msgs=0
-13:19:52.997 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=start detail=msgs=0
-13:19:53.013 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=llm-fail detail=err=HTTP 429 rate limit exceeded
-13:19:53.013 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=llm-fail-retry detail=err=HTTP 429 rate limit exceeded retry=1/1 backoff=5023ms
-13:19:58.042 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=llm-fail detail=err=HTTP 429 rate limit exceeded
-13:19:58.042 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=error-freeze detail=reason=llm-transient err=HTTP 429 rate limit exceeded resumeIn=5149ms
-13:19:58.042 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=freeze-state detail=running->frozen kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=error-backoff resumeAt=in5149ms
-13:20:04.548 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=freeze-resume detail=reason=llm-transient backoff-elapsed
-13:20:04.549 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=freeze-state detail=frozen->running kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=backoff-elapsed resumeAt=-
-13:20:04.554 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=llm-fail detail=err=HTTP 429 rate limit exceeded
-13:20:04.555 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=error-freeze detail=reason=llm-transient err=HTTP 429 rate limit exceeded resumeIn=5163ms
-13:20:04.555 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=freeze-state detail=running->frozen kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=error-backoff resumeAt=in5163ms
-13:20:11.151 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=freeze-resume detail=reason=llm-transient backoff-elapsed
-13:20:11.152 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=freeze-state detail=frozen->running kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=backoff-elapsed resumeAt=-
-13:20:11.156 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=llm-fail detail=err=HTTP 429 rate limit exceeded
-13:20:11.156 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=error-freeze detail=reason=llm-transient err=HTTP 429 rate limit exceeded resumeIn=5011ms
-13:20:11.156 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=freeze-state detail=running->frozen kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=error-backoff resumeAt=in5011ms
-13:20:12.545 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er4/freeze-e event=spawn detail=parent=- msgs=0
-13:20:12.547 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er4/freeze-e event=start detail=msgs=0
-13:20:12.560 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er4/freeze-e event=llm-fail detail=err=connection timeout after 30s
-13:20:13.601 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er5/freeze-e event=spawn detail=parent=- msgs=0
-13:20:13.603 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er5/freeze-e event=start detail=msgs=0
-13:20:13.609 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er5/freeze-e event=freeze-enter detail=resumeAt=1793857800000
-13:20:13.612 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er5/freeze-e event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1786390ms
-13:20:13.712 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er5/freeze-e event=freeze-resume detail=reason=outside-freeze-segment
-13:20:13.712 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er5/freeze-e event=freeze-state detail=frozen->running kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=window-reopen resumeAt=-
-13:20:13.730 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er5/freeze-e event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
-13:20:13.954 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=spawn detail=parent=- msgs=0
-13:20:13.956 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=start detail=msgs=0
-13:20:13.981 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=llm-fail detail=err=Connection refused
-13:20:13.985 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=network-wait detail=err=Connection refused round=1 resumeIn=5644ms (waiting for network/provider recovery — exponential backoff, no terminal)
-13:20:13.986 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=error-freeze detail=reason=waiting-network err=Connection refused resumeIn=5644ms
-13:20:13.986 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=freeze-state detail=running->frozen kind=auto-recovering needsHuman=false autoRecoverable=true reason=waiting-network by=error-backoff resumeAt=in5644ms
-13:20:21.369 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=freeze-resume detail=reason=waiting-network backoff-elapsed
-13:20:21.370 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=freeze-state detail=frozen->running kind=auto-recovering needsHuman=false autoRecoverable=true reason=waiting-network by=backoff-elapsed resumeAt=-
-13:20:21.403 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+  + MailIdleGate: a Frozen session is deliverable (a frozen delegate has zero in-flight work — the Mail IS the wake carrier) 0.006s
+  + TurnBoundaryDrains: a frozen receipt is NOT a sub-agent result (the parent's barrier slot must not be returned early) 0.002s
+  + visibleExternalEventSource: a frozen receipt renders on its own `delegate-frozen` source (not as a completion report) 0.023s
+  + wakeFrozen refuses records that are not in the delegate-error frozen state (never starts a fresh session silently) 0.103s
+  + wakeFrozen resumes the SAME session id from the persisted transcript: history in place, wake banner injected (finished work is not redone), frozen slot cleared, task row back to running 0.838s
+13:27:29.576 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b3/freeze-b event=spawn detail=parent=- msgs=0
+13:27:29.586 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b3/freeze-b event=start detail=msgs=0
+13:27:29.595 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b3/freeze-b event=freeze-enter detail=resumeAt=1793858220000
+13:27:29.604 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b3/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1770396ms
+13:27:30.290 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b13/freeze-b event=spawn detail=parent=- msgs=0
+13:27:30.298 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b13/freeze-b event=start detail=msgs=0
+13:27:30.368 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b13/freeze-b event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+13:27:31.037 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b13-exp/freeze-b event=spawn detail=parent=- msgs=0
+13:27:31.040 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b13-exp/freeze-b event=start detail=msgs=0
+13:27:31.043 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b13-exp/freeze-b event=freeze-enter detail=resumeAt=1793858220000
+13:27:31.043 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b13-exp/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1768957ms
+13:27:31.784 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b4evt/freeze-b event=spawn detail=parent=- msgs=0
+13:27:31.788 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b4evt/freeze-b event=external-event detail=source=background-task type=completed
+13:27:31.802 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b4evt/freeze-b event=freeze-enter detail=resumeAt=1793858220000
+13:27:31.802 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b4evt/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1768198ms
+13:27:32.478 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b4tools/freeze-b event=spawn detail=parent=- msgs=0
+13:27:32.480 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b4tools/freeze-b event=start detail=msgs=0
+13:27:32.500 INFO  nebflow.reminders - [time] Current time: 2026-11-05 13:27 +08:00
+13:27:32.643 INFO  nebflow.handlers - Nebula b4tools Tool Read(readme.txt)
+  ("/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/11682088046432164903/readme.txt") OK (13ms)
+13:27:32.653 INFO  nebflow.tools.logger - Tools log retention: pruned files older than 2026-11-02
+13:27:32.681 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b4tools/freeze-b event=freeze-enter detail=resumeAt=1793858220000
+13:27:32.682 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b4tools/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1767318ms
+13:27:33.500 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5/freeze-b event=spawn detail=parent=- msgs=0
+13:27:33.507 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5/freeze-b event=start detail=msgs=0
+13:27:33.733 INFO  nebflow.handlers - Nebula b5 Tool Read(readme.txt)
+  ("/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/12582879065454941034/readme.txt") OK (0ms)
+13:27:33.744 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5/freeze-b event=freeze-enter detail=resumeAt=1793858220000
+13:27:33.752 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1766248ms
+13:27:33.824 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5/freeze-b event=freeze-wake detail=text=WAKE_UP_NOW continue with this
+13:27:33.825 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5/freeze-b event=freeze-state detail=frozen->running kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=user-wake resumeAt=-
+13:27:33.853 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5/freeze-b event=turn-complete detail=msgs=6 textLen=4 textStreamed=true thinking=0 model=-
+13:27:34.400 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=spawn detail=parent=- msgs=0
+13:27:34.405 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=start detail=msgs=0
+13:27:34.414 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=freeze-enter detail=resumeAt=1793858220000
+13:27:34.416 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1765584ms
+13:27:34.508 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=freeze-queue-input detail=textLen=21
+13:27:35.114 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=freeze-resume detail=reason=outside-freeze-segment
+13:27:35.114 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=freeze-state detail=frozen->running kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=window-reopen resumeAt=-
+13:27:35.130 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+13:27:35.132 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=start detail=msgs=2
+13:27:35.148 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5sys/freeze-b event=turn-complete detail=msgs=3 textLen=2 textStreamed=true thinking=0 model=-
+13:27:35.303 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=spawn detail=parent=- msgs=0
+13:27:35.306 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=start detail=msgs=0
+13:27:35.308 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=freeze-enter detail=resumeAt=1793858220000
+13:27:35.308 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1764692ms
+13:27:35.407 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=freeze-wake detail=text=wake once
+13:27:35.407 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=freeze-state detail=frozen->running kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=user-wake resumeAt=-
+13:27:35.419 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=turn-complete detail=msgs=3 textLen=2 textStreamed=true thinking=0 model=-
+13:27:35.511 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=start detail=msgs=4
+13:27:35.521 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=freeze-enter detail=resumeAt=1793858220000
+13:27:35.521 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b5dup/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1764479ms
+13:27:36.438 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6/freeze-b event=spawn detail=parent=- msgs=0
+13:27:36.440 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6/freeze-b event=start detail=msgs=0
+13:27:36.442 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6/freeze-b event=freeze-enter detail=resumeAt=1793858220000
+13:27:36.442 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1763558ms
+13:27:36.540 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6/freeze-b event=freeze-resume detail=reason=outside-freeze-segment
+13:27:36.540 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6/freeze-b event=freeze-state detail=frozen->running kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=window-reopen resumeAt=-
+13:27:36.553 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6/freeze-b event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+13:27:36.728 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6scan/freeze-b event=spawn detail=parent=- msgs=0
+13:27:36.729 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6scan/freeze-b event=start detail=msgs=0
+13:27:36.733 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6scan/freeze-b event=freeze-enter detail=resumeAt=1793858220000
+13:27:36.733 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6scan/freeze-b event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1763267ms
+13:27:37.237 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6scan/freeze-b event=freeze-resume detail=reason=outside-freeze-segment
+13:27:37.237 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6scan/freeze-b event=freeze-state detail=frozen->running kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=window-reopen resumeAt=-
+13:27:37.252 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b6scan/freeze-b event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+13:27:37.472 INFO  nebflow.agent.lifecycle - Nebula-freeze-i int/freeze-i event=spawn detail=parent=- msgs=0
+13:27:37.473 INFO  nebflow.agent.lifecycle - Nebula-freeze-i int/freeze-i event=start detail=msgs=0
+13:27:37.477 INFO  nebflow.agent.lifecycle - Nebula-freeze-i int/freeze-i event=freeze-enter detail=resumeAt=1793858220000
+13:27:37.477 INFO  nebflow.agent.lifecycle - Nebula-freeze-i int/freeze-i event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1762523ms
+13:27:37.578 INFO  nebflow.agent.lifecycle - Nebula-freeze-i int/freeze-i event=interrupt detail=reason=user-during-frozen
+13:27:37.578 INFO  nebflow.agent.lifecycle - Nebula-freeze-i int/freeze-i event=freeze-state detail=frozen->idle kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=user-interrupt resumeAt=-
+13:27:37.582 INFO  nebflow.agent - Interrupt: no InteractionHub spawned — nothing to clean for session=freeze-int-agent (no hub slot can exist without the hub)
+13:27:37.686 INFO  nebflow.agent.lifecycle - Nebula-freeze-i int/freeze-i event=start detail=msgs=1
+13:27:37.711 INFO  nebflow.agent.lifecycle - Nebula-freeze-i int/freeze-i event=turn-complete detail=msgs=3 textLen=2 textStreamed=true thinking=0 model=-
+13:27:38.113 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b11ask/freeze-b event=spawn detail=parent=- msgs=0
+13:27:38.119 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b11ask/freeze-b event=ask-start detail=q=what next?
+13:27:38.151 INFO  nebflow.agent.lifecycle - Nebula-freeze-b b11ask/freeze-b event=ask-complete detail=q=what next? a=ok
+13:27:38.396 INFO  nebflow.agent.lifecycle - subagent-Nebula plan-like/freeze-b event=spawn detail=parent=- msgs=0
+13:27:38.397 INFO  nebflow.agent.lifecycle - subagent-Nebula plan-like/freeze-b event=start detail=msgs=0
+13:27:38.415 INFO  nebflow.agent.lifecycle - subagent-Nebula plan-like/freeze-b event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+13:27:39.024 WARN  nebflow.core.processor.stuck - TaskStuckWatcher: root agent frozen-sid still stuck for 1200s — L1 retired: the LLM-halt action was removed (killruling ruling #28, false-positive rate 95.4%); sensor-only tick, upgrading to L2 on the next scan
+13:27:39.145 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er1/freeze-e event=spawn detail=parent=- msgs=0
+13:27:39.148 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er1/freeze-e event=start detail=msgs=0
+13:27:39.173 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er1/freeze-e event=llm-fail detail=err=HTTP 429 rate limit exceeded
+13:27:39.181 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er1/freeze-e event=llm-fail-retry detail=err=HTTP 429 rate limit exceeded retry=1/1 backoff=5180ms
+13:27:44.375 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er1/freeze-e event=llm-fail detail=err=HTTP 429 rate limit exceeded
+13:27:44.381 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er1/freeze-e event=error-freeze detail=reason=llm-transient err=HTTP 429 rate limit exceeded resumeIn=5371ms
+13:27:44.383 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er1/freeze-e event=freeze-state detail=running->frozen kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=error-backoff resumeAt=in5369ms
+13:27:45.299 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=spawn detail=parent=- msgs=0
+13:27:45.301 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=start detail=msgs=0
+13:27:45.322 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=llm-fail detail=err=HTTP 429 rate limit exceeded
+13:27:45.322 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=llm-fail-retry detail=err=HTTP 429 rate limit exceeded retry=1/1 backoff=5281ms
+13:27:50.624 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=llm-fail detail=err=HTTP 429 rate limit exceeded
+13:27:50.625 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=error-freeze detail=reason=llm-transient err=HTTP 429 rate limit exceeded resumeIn=5316ms
+13:27:50.625 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=freeze-state detail=running->frozen kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=error-backoff resumeAt=in5316ms
+13:27:57.171 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=freeze-resume detail=reason=llm-transient backoff-elapsed
+13:27:57.171 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=freeze-state detail=frozen->running kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=backoff-elapsed resumeAt=-
+13:27:57.191 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er2/freeze-e event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+13:27:57.354 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=spawn detail=parent=freeze-er3-parent msgs=0
+13:27:57.355 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=start detail=msgs=0
+13:27:57.382 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=llm-fail detail=err=HTTP 429 rate limit exceeded
+13:27:57.382 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=llm-fail-retry detail=err=HTTP 429 rate limit exceeded retry=1/1 backoff=5129ms
+13:28:02.515 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=llm-fail detail=err=HTTP 429 rate limit exceeded
+13:28:02.516 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=error-freeze detail=reason=llm-transient err=HTTP 429 rate limit exceeded resumeIn=5059ms
+13:28:02.516 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=freeze-state detail=running->frozen kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=error-backoff resumeAt=in5059ms
+13:28:09.115 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=freeze-resume detail=reason=llm-transient backoff-elapsed
+13:28:09.116 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=freeze-state detail=frozen->running kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=backoff-elapsed resumeAt=-
+13:28:09.127 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=llm-fail detail=err=HTTP 429 rate limit exceeded
+13:28:09.129 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=error-freeze detail=reason=llm-transient err=HTTP 429 rate limit exceeded resumeIn=5492ms
+13:28:09.130 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=freeze-state detail=running->frozen kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=error-backoff resumeAt=in5492ms
+13:28:15.718 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=freeze-resume detail=reason=llm-transient backoff-elapsed
+13:28:15.718 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=freeze-state detail=frozen->running kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=backoff-elapsed resumeAt=-
+13:28:15.725 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=llm-fail detail=err=HTTP 429 rate limit exceeded
+13:28:15.725 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=error-freeze detail=reason=llm-transient err=HTTP 429 rate limit exceeded resumeIn=5452ms
+13:28:15.725 INFO  nebflow.agent.lifecycle - subagent-Backend er3/freeze-e event=freeze-state detail=running->frozen kind=auto-recovering needsHuman=false autoRecoverable=true reason=llm-transient by=error-backoff resumeAt=in5452ms
+13:28:17.225 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er4/freeze-e event=spawn detail=parent=- msgs=0
+13:28:17.226 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er4/freeze-e event=start detail=msgs=0
+13:28:17.242 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er4/freeze-e event=llm-fail detail=err=connection timeout after 30s
+13:28:18.134 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er5/freeze-e event=spawn detail=parent=- msgs=0
+13:28:18.135 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er5/freeze-e event=start detail=msgs=0
+13:28:18.137 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er5/freeze-e event=freeze-enter detail=resumeAt=1793858280000
+13:28:18.137 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er5/freeze-e event=freeze-state detail=running->frozen kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=schedule-gate resumeAt=in1781863ms
+13:28:18.237 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er5/freeze-e event=freeze-resume detail=reason=outside-freeze-segment
+13:28:18.237 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er5/freeze-e event=freeze-state detail=frozen->running kind=waiting-window needsHuman=false autoRecoverable=true reason=schedule by=window-reopen resumeAt=-
+13:28:18.252 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er5/freeze-e event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
+13:28:18.427 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=spawn detail=parent=- msgs=0
+13:28:18.428 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=start detail=msgs=0
+13:28:18.439 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=llm-fail detail=err=Connection refused
+13:28:18.442 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=network-wait detail=err=Connection refused round=1 resumeIn=5469ms (waiting for network/provider recovery — exponential backoff, no terminal)
+13:28:18.443 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=error-freeze detail=reason=waiting-network err=Connection refused resumeIn=5469ms
+13:28:18.444 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=freeze-state detail=running->frozen kind=auto-recovering needsHuman=false autoRecoverable=true reason=waiting-network by=error-backoff resumeAt=in5468ms
+13:28:25.837 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=freeze-resume detail=reason=waiting-network backoff-elapsed
+13:28:25.838 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=freeze-state detail=frozen->running kind=auto-recovering needsHuman=false autoRecoverable=true reason=waiting-network by=backoff-elapsed resumeAt=-
+13:28:25.855 INFO  nebflow.agent.lifecycle - Nebula-freeze-e er7/freeze-e event=turn-complete detail=msgs=1 textLen=2 textStreamed=true thinking=0 model=-
 nebflow.agent.FreezeGateSpec:
-  + B3: freeze segment blocks system-initiated dispatch — zero LLM calls, Frozen status + event 0.678s
-  + B13: skipUntil unexpired → freeze gate passes (LLM called, no Frozen event) 0.688s
-  + B13: skipUntil expired → freeze gate blocks again (next segment freezes normally) 0.694s
-  + B4: idle ExternalEvent dispatch path is gated (frozen, zero calls) 0.684s
-  + B4: ToolsComplete continuation is gated — tool ran, next LLM round frozen 0.794s
-  + B5: user wake injects user message after tool results and dispatches once 0.682s
-  + B5: system input while frozen is queued, not dispatched; drained after resume 0.873s
-  + B5: duplicate wake clientMessageId does not double-inject 1.081s
-  + B6: CheckFreezeGate outside freeze segment resumes the held dispatch + resumed event 0.325s
-  + B6: FreezeScheduler.scan delivers CheckFreezeGate to frozen agents 0.688s
-  + Interrupt during frozen abandons continuation — idle, then user wake works at idle 0.379s
-  + B11: askMode turn is exempt — dispatches inside frozen window 0.17s
-  + B11: freezeExempt agent dispatches inside frozen window 0.171s
-  + B7: TaskStuckWatcher ignores Frozen records (exempt) but acts on Processing (control) 0.41s
-  + ER-1: transient budget exhausted → ErrorFrozen (llm-transient, resumeAt set, zero further LLM calls) 6.132s
-  + ER-2: backoff elapsed + CheckFreezeGate → resumed, dispatch continues from checkpoint 11.927s
-  + ER-3: same-reason consecutive provider-family freezes ≥3 stay QUIET — still Frozen, no escalation, nothing sent to the parent 19.543s
-  + ER-4: Permanent failure does NOT freeze — fatal path (error event, no frozen event) 0.9s
-  + ER-5: Schedule freeze regression — reason defaults to 'schedule', behavior unchanged 0.457s
-  + ER-7: #692 network-unreachable → waiting-network freeze (survives, no terminal), recovery resumes to completion 7.657s
-  + ER-6: escalation target pure function — parent alive → Parent, parent missing → skip, no parent → User 0.005s
-13:20:21.648 WARN  nebflow.core.delegate.freeze - [delegate-freeze] registry park skipped for delegate-freeze-absent: parkFrozen: no registry record for 'delegate-freeze-absent'
-13:20:21.649 WARN  nebflow.subagent-task.store - [task-status-miss] updateStatus missed: parent=p taskId=delegate-freeze-absent status=frozen (no row matched — write was a NO-OP)
-13:20:21.720 INFO  nebflow.core.delegate.freeze - [delegate-freeze] delegate-freeze-wake woken via spec (frozen slot cleared, merge lane re-pumped)
-13:20:21.791 INFO  nebflow.core.delegate.freeze - [delegate-freeze] delegate-freeze-sched woken via spec (frozen slot cleared, merge lane re-pumped)
+  + B3: freeze segment blocks system-initiated dispatch — zero LLM calls, Frozen status + event 0.789s
+  + B13: skipUntil unexpired → freeze gate passes (LLM called, no Frozen event) 0.716s
+  + B13: skipUntil expired → freeze gate blocks again (next segment freezes normally) 0.751s
+  + B4: idle ExternalEvent dispatch path is gated (frozen, zero calls) 0.74s
+  + B4: ToolsComplete continuation is gated — tool ran, next LLM round frozen 0.804s
+  + B5: user wake injects user message after tool results and dispatches once 1.048s
+  + B5: system input while frozen is queued, not dispatched; drained after resume 0.973s
+  + B5: duplicate wake clientMessageId does not double-inject 1.108s
+  + B6: CheckFreezeGate outside freeze segment resumes the held dispatch + resumed event 0.32s
+  + B6: FreezeScheduler.scan delivers CheckFreezeGate to frozen agents 0.698s
+  + Interrupt during frozen abandons continuation — idle, then user wake works at idle 0.447s
+  + B11: askMode turn is exempt — dispatches inside frozen window 0.434s
+  + B11: freezeExempt agent dispatches inside frozen window 0.279s
+  + B7: TaskStuckWatcher ignores Frozen records (exempt) but acts on Processing (control) 0.522s
+  + ER-1: transient budget exhausted → ErrorFrozen (llm-transient, resumeAt set, zero further LLM calls) 6.189s
+  + ER-2: backoff elapsed + CheckFreezeGate → resumed, dispatch continues from checkpoint 12.065s
+  + ER-3: same-reason consecutive provider-family freezes ≥3 stay QUIET — still Frozen, no escalation, nothing sent to the parent 19.749s
+  + ER-4: Permanent failure does NOT freeze — fatal path (error event, no frozen event) 1.018s
+  + ER-5: Schedule freeze regression — reason defaults to 'schedule', behavior unchanged 0.291s
+  + ER-7: #692 network-unreachable → waiting-network freeze (survives, no terminal), recovery resumes to completion 7.61s
+  + ER-6: escalation target pure function — parent alive → Parent, parent missing → skip, no parent → User 0.004s
+13:28:26.226 WARN  nebflow.core.delegate.freeze - [delegate-freeze] registry park skipped for delegate-freeze-absent: parkFrozen: no registry record for 'delegate-freeze-absent'
+13:28:26.227 WARN  nebflow.subagent-task.store - [task-status-miss] updateStatus missed: parent=p taskId=delegate-freeze-absent status=frozen (no row matched — write was a NO-OP)
+13:28:26.305 INFO  nebflow.core.delegate.freeze - [delegate-freeze] delegate-freeze-wake woken via spec (frozen slot cleared, merge lane re-pumped)
+13:28:26.382 INFO  nebflow.core.delegate.freeze - [delegate-freeze] delegate-freeze-sched woken via spec (frozen slot cleared, merge lane re-pumped)
 nebflow.core.delegate.DelegateFreezeSpec:
-  + classify: one case per frozen reason (llm / tool / engine / quota) — the reason is machine-readable, never a fuzzy judgement 0.0s
-  + wireValue/parse/isFreezeWire: the four reasons round-trip; foreign freeze families are never misread 0.002s
-  + reasonForTrigger: supervisor-internal triggers map onto engine-fault / quota (unknown ⇒ None, classify decides) 0.0s
-  + compactDetail: single line, controls stripped, bounded 0.001s
+  + classify: one case per frozen reason (llm / tool / engine / quota) — the reason is machine-readable, never a fuzzy judgement 0.001s
+  + wireValue/parse/isFreezeWire: the four reasons round-trip; foreign freeze families are never misread 0.001s
+  + reasonForTrigger: supervisor-internal triggers map onto engine-fault / quota (unknown ⇒ None, classify decides) 0.001s
+  + compactDetail: single line, controls stripped, bounded 0.002s
   + receiptText: four sections, honestly 'NOT a failure verdict', keeps-what list, and the wake address 0.001s
   + wakeBanner: names the freeze point + reason and forbids redoing finished work 0.001s
-  + park: writes the registry frozen slot + the task row status=frozen (a status the boot salvage sweep never sees) 0.082s
-  + park on an unknown record: fail-soft (no crash, no timestamp) — only real spawns freeze 0.067s
-  + onWoken: clears the frozen slot, resets the registry status to Idle and the task row to running (wake = a new execution window) 0.073s
-  + onWoken leaves foreign freeze families alone (a schedule freeze is not this batch's to thaw) 0.07s
-  + staleDormant: Active → Dormant (panel prompt) → Expired (retention archive); open-ended retention keeps only the prompt 0.004s
-  + defaults: freeze gate on, 24h dormant prompt, 14d retention 0.001s
+  + park: writes the registry frozen slot + the task row status=frozen (a status the boot salvage sweep never sees) 0.17s
+  + park on an unknown record: fail-soft (no crash, no timestamp) — only real spawns freeze 0.084s
+  + onWoken: clears the frozen slot, resets the registry status to Idle and the task row to running (wake = a new execution window) 0.079s
+  + onWoken leaves foreign freeze families alone (a schedule freeze is not this batch's to thaw) 0.076s
+  + staleDormant: Active → Dormant (panel prompt) → Expired (retention archive); open-ended retention keeps only the prompt 0.006s
+  + defaults: freeze gate on, 24h dormant prompt, 14d retention 0.002s
 [info] Passed: Total 59, Failed 0, Errors 0, Passed 59
-[success] Total time: 91 s (0:01:31.0), completed 2026年11月5日 13:20:21
+[success] Total time: 112 s (0:01:52.0), completed 2026年11月5日 13:28:26
