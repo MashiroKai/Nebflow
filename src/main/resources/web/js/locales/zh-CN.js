@@ -889,6 +889,24 @@ export default {
   'subagents.frozenReasonTool': '工具层故障',
   'subagents.frozenReasonEngine': '引擎侧故障',
   'subagents.frozenReasonQuota': '配额耗尽取消',
+  // 冻结态误报批（2026-11-05 · 作者报障「显示已冻结，但我没有冻结它，也没有恢复
+  // 按钮」）：冻结行分两族呈现——**自动恢复族**（时间表出窗 / 退避 / 供应商探测 /
+  // 断点续跑）写「在等什么 + 会自己续跑」，**不给按钮**；**需人介入族**（循环检测 /
+  // 错误冻结 / 已升级到人）才写「已冻结」并给恢复入口。判定单点 = 后端
+  // nebflow.actor.FreezeDisplay（前端 freezeState.js 只做呈现映射）。
+  'subagents.freezeBadge': '已冻结',
+  'subagents.freezeBadgeWithReason': '{word} · {reason}',
+  'subagents.freezeWindow': '等待工作时段',
+  'subagents.freezeAuto': '自动恢复中',
+  'subagents.freezeWindowTip': '工作时段外的自动停靠：到工作时段自行恢复。',
+  'subagents.freezeAutoTip': '引擎在退避重试/等待外部恢复：到期自行续跑，取消任务才终止它。',
+  'subagents.freezeReasonLoop': '循环检测',
+  'subagents.freezeReasonLlmTransient': '模型层故障',
+  'subagents.freezeReasonNetwork': '网络抖动',
+  'subagents.freezeReasonProviderDown': '供应商不可用',
+  'subagents.freezeReasonRestartRecovery': '断点续跑',
+  'subagents.freezeReasonWaitingNetwork': '等待网络恢复',
+  'subagents.freezeReasonSchedule': '工作时段',
   'subagents.status.done': '已完成',
   // 面板树批（2026-10-29 ①）：孤儿行来源角标（父不可见提升顶层的「来自 …」标注）。
   'subagents.fromDelegate': '来自已结束的委托',
@@ -1581,6 +1599,10 @@ export default {
   'chat.other': '其他...',
   'chat.frozenNoTime': '已冻结 · 等待恢复',
   'chat.frozenShort': '已冻结 · {time} 恢复',
+  // 冻结态误报批（2026-11-05）：自动恢复族的页脚词——「已冻结」是需人工措辞，
+  // 退避/时间表等待不是它。
+  'chat.freezeAutoTile': '自动重试中 · {reason}',
+  'chat.freezeWindowTile': '等待工作时段',
   'chat.frozenPlaceholder': '已冻结 · {time} 恢复',
   'chat.frozenPlaceholderNoTime': '已冻结 · 等待恢复',
   'chat.skipFreeze': '跳过本次',
