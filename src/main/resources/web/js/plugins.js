@@ -341,6 +341,10 @@ function pluginsContentEl() {
   if (!content) {
     content = document.createElement('div');
     content.id = 'plugins-content';
+    // 统一安全区（canvas-overlap-fix 批 2026-11-05）：canvas 顶行胶囊是浮层，
+    // 面板正文的首块必须让到 --cv-safe-top（桌面 56 / 手机 72）之下 —— 类本身
+    // 在 split.css「统一布局层」块里定义，本处只挂类，不写任何像素。
+    content.className = 'canvas-safe-top';
     pane.appendChild(content);
   }
   return content;

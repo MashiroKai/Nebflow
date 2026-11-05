@@ -2339,6 +2339,19 @@ function deckRefreshDirty(id) {
 // （scrollTop）原样保留，「回原页面原位置」零额外状态（§5.5 v1 口径）。
 // 来源页签已关 ⇒ 按钮隐藏（teardownTab 钩子 + 每次激活重sync 双保险）。
 // v1 单层来源（_refSource 每次跳转覆写），多级栈 = §9-10 不做。
+//
+// 挂载点（canvas-overlap-fix 批 2026-11-05）：**按层选宿主**——桌面 = #canvas-slide
+// （面板内 absolute，与顶行浮钮同一坐标系）；手机 = .mf-canvas-page（手机层
+// #canvas-panel 恒 display:none，pane 被 re-parent 进 canvas 页 ⇒ 挂在 slide 上的
+// 钮在手机面**根本不渲染**，实测 0×0；本批随重叠修复一并接回手机宿主）。
+/** 当前层下「返回原文档」钮的挂载宿主（桌面 = 面板壳；手机 = canvas 页）。 */
+function refBackHost() {
+  if (document.body.classList.contains('mobile-layer')) {
+    return document.querySelector('.mobile-page[data-page="canvas"] .mf-canvas-page')
+      || document.querySelector('.mf-canvas-page');
+  }
+  return document.getElementById('canvas-slide');
+}
 function syncRefBackButton() {
   const slide = document.getElementById('canvas-slide');
   if (!slide) return;
@@ -2348,8 +2361,10 @@ function syncRefBackButton() {
   let btn = document.getElementById('canvas-refback-btn');
   if (!srcId) {
     if (btn) btn.remove();
+    document.body.classList.remove('has-refback');   // 第二行档让位随之撤销（无钮即无垫）
     return;
   }
+  document.body.classList.add('has-refback');   // 第二行档让位开关（无钮即无垫）
   const btnEl = /** @type {HTMLButtonElement} */ (btn);
   if (!btnEl) {
     const fresh = document.createElement('button');
@@ -2362,10 +2377,13 @@ function syncRefBackButton() {
       const src = cur && cur._refSource ? cur._refSource : null;
       if (src && tabs.has(src)) setActiveTab(src);
     });
-    slide.appendChild(fresh);
+    (refBackHost() || slide).appendChild(fresh);
   }
   const live = /** @type {HTMLButtonElement} */ (document.getElementById('canvas-refback-btn'));
   if (!live) return;
+  // 层切换/手机页重建后宿主会变 —— 每次 sync 校一次挂载点（幂等，不在就搬）。
+  const host = refBackHost();
+  if (host && live.parentElement !== host) host.appendChild(live);
   const srcEntry = tabs.get(srcId);
   const label = t('wiki.backToSource');
   live.textContent = '← ' + label;
@@ -2411,6 +2429,14 @@ function syncDeckBox() {
   const r = deckPanelRect();
   if (!r || !r.width) return;
   deck.areaH = r.height;               // ④②：透视 y 补偿的层高基准（deckProjectYComp）
+  // 顶行浮钮列第二档（canvas-overlap-fix 批 2026-11-05）：面板窄到顶行左侧净档
+  // 装不下一枚可读的「返回原文档」胶囊时，整枚钮落第二行（split.css
+  // `#canvas-panel.is-head-tight .canvas-refback-btn`）。判据只依赖面板实宽，
+  // 故与盒缓存无关、每帧无代价（classList.toggle 同值即空操作，零重排）。
+  // 540 的来处：净档 = (面板宽 − 胶囊实宽)/2 − 60 − 8；胶囊在 588 以下取 220
+  // 地板档 ⇒ 540 处净档 92px、520 处 82px（< 一枚可读胶囊约 100px）。
+  const panelEl = document.getElementById('canvas-panel');
+  if (panelEl) panelEl.classList.toggle('is-head-tight', r.width < 540);
   const same = deckBoxLast && deckBoxLast.l === r.left && deckBoxLast.t === r.top &&
     deckBoxLast.w === r.width && deckBoxLast.h === r.height;
   if (!same) {
