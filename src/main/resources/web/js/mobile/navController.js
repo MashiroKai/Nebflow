@@ -263,8 +263,10 @@ function applyRoll(section, scroller) {
   section.classList.toggle('rolled', st > ROLL_THRESHOLD);
   const body = section.querySelector('.mobile-page-body');
   section.classList.toggle('mpt-pane-scroll', !!scroller && scroller !== body);
-  // 长页名右缘渐隐（标题单元素化批 2026-11-02，省略号退役）：钳宽态才挂
-  // .mtitle-clip 蒙版。进度写盘后同帧读 scrollWidth（样式落定后读布局量会
+  // 长页名溢出标记（端区分批 2026-11-05 09:28 起 `.mtitle-clip` 不再画渐隐蒙版，
+  // 只作「这一页的名字被钳宽了」的**溢出标记类**：截断本体 = 基座档的可见省略号
+  // （css/mobileLayer.css .mobile-page-title）。类本身保留，供标题几何/探针按
+  // 「是否钳宽」分档读数。进度写盘后同帧读 scrollWidth（样式落定后读布局量会
   // 同步重排，无滞后帧），不误伤装得下的页名。
   const title = section.querySelector('.mobile-page-title');
   if (title) title.classList.toggle('mtitle-clip', title.scrollWidth > title.clientWidth + 1);

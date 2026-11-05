@@ -1,0 +1,20 @@
+PASS  H1 body text ≥17px (every enumerated body element)  — 20 elements swept
+FAIL  H2 readable text ≥13px (no visible text node below 13)  — [{"page":"settings","el":"span.mp-group-title","fs":12,"txt":"Jev（插件分配）"},{"page":"settings","el":"div.mp-group-empty","fs":12,"txt":"尚未配置提供方——填写下方表单并保存"},{"page":"settings","el":"span.mp-group-title","fs":12,"txt":"生图"},{"page":"settings","el":"div.mp-group-empty","fs":12,"txt":"尚未配置提供方——填写下方表单并保存"}]
+PASS  H3 touch targets ≥44×44 (hit box incl ::before)  — all interactive elements ok
+PASS  H3b chained footer keys: height ≥44, width ≥24, zero hit-box overlap  — chained keys ok
+PASS  H4a no right-edge alpha fade on text hosts (author ruling 2026-11-05 09:28)  — no horizontal mask on text
+PASS  H4b truncated text hosts use visible ellipsis  — all truncation sites ellipsis
+PASS  H6 gesture .mf-dots has tappable equivalent .mf-cv-close|.mf-cv-stack  — ok
+PASS  H6 gesture .mf-deck has tappable equivalent .mf-deck-x  — ok
+PASS  H5a destructive (plugin uninstall) requires 2nd confirm  — [{"title":"卸载插件","tone":"danger"}]
+PASS  H5a confirm is danger-toned  — [{"title":"卸载插件","tone":"danger"}]
+PASS  H5a zero /remove request fired before confirm  — []
+PASS  H5a2 destructive call site guarded (todo tag delete (swipe gesture): js/todoFace.js)  — 1 call site(s) inside a __showConfirm window
+PASS  H5a2 destructive call site guarded (friend delete: js/contacts.js)  — 1 call site(s) inside a __showConfirm window
+PASS  H5a2 destructive call site guarded (plugin uninstall: js/plugins.js)  — 3 call site(s) inside a __showConfirm window
+PASS  H5a2b destructive gesture wired to the confirm wrapper (this.confirmDeleteTag)  — {"wired":true,"bareLines":[]}
+PASS  H5a3 tab close confirm only guards unsaved-changes discard (plain close exempt)  — 2 confirm line(s): if (!opts.discardDirty && isTabDirty(entry) && typeof window.__showCon | window.__showConfirm(
+PASS  H5b tab close is exempt from confirm (author ruling)  — confirms=0
+PASS  H7 zero pageerror / console.error
+
+1 FAILURE(S)

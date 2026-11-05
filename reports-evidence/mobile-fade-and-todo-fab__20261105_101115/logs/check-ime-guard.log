@@ -1,0 +1,3 @@
+ime-guard PASS: 241 files scanned (js/imeGuard.js = definition site), no composition check outside js/imeGuard.js and the explicit allowlist.
+  allowlisted occurrence: js/input.js:1698,1699  [direct composition binding]  input.addEventListener('compositionstart', () => { view.composing = true; });
+  not counted — comment-only prose (5): js/chatSearch.js:724  [isComposing], js/dropbox.js:464  [isComposing], js/input.js:1836  [isComposing], js/keyRules.js:49  [isComposing], js/todoFace.js:143  [isComposing]

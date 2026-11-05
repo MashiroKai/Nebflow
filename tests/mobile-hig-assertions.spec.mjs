@@ -7,9 +7,13 @@
 //                               面板行主文案），computed font-size 逐件读数。
 //   H2 可读字 ≥13px          —— 全页扫：任何可见文本节点的 font-size < 13 即违规。
 //   H3 热区 ≥44×44           —— 全页扫：可交互件命中盒（本体 ∪ ::before 外扩）
-//                               任一边 < 44 即违规。
-//   H4 长名模糊淡出（禁省略号）—— 全页扫：任何可见元素 computed text-overflow
-//                               为 ellipsis 即违规（铁律 = 用 mask 渐隐，不用「…」）。
+//                               任一边 < 44 即违规。**行内串联键例外**（H3b，
+//                               2026-11-05 09:29 作者令「消息 footer 间距拉的很开」
+//                               后的档位）：纵轴仍 ≥44，横轴 ≥24（WCAG 2.5.8 间距
+//                               例外，键缝 12px ⇒ 中心距 25px），且命中盒零重叠。
+//   H4 文本宿主零右缘渐隐      —— 2026-11-05 09:28 作者令把旧判据「禁省略号」
+//                               反转：① 文本宿主不得挂水平 alpha 渐隐 mask
+//                               （穿边件白名单除外）；② 截断件必须画可见省略号。
 //   H5 破坏性二次确认        —— 触发腿：插件卸载必须落到 __showConfirm（tone=danger）
 //                               且确认前零请求；关标签页（.mf-deck-x / 页签 ✕）
 //                               **豁免**——作者已裁定不算破坏性，点它不得弹确认。
@@ -233,25 +237,78 @@ const SWEEP = () => {
   // H3：可交互件 → 命中盒
   const INT_SEL = 'button, a[href], [role="button"], [role="link"], [role="switch"], [role="tab"], input:not([type="hidden"]), select, textarea, [data-hit]';
   const EXEMPT = ['.ud-cell'];   // 图形件豁免（理由见文件头 EXEMPT_TARGETS）
+  // 行内串联键（2026-11-05 09:29 作者令「消息 footer 间距拉的很开」后的档位）：
+  // 一排横键的**横轴**无法既 ≥44 又保持桌面同款间距（相邻键中心距 ≥44 ⇒ 4 件串联
+  // 至少 176px，永远比桌面宽一倍）。本表内的键按 WCAG 2.5.8「间距例外」取
+  // **横轴 ≥24**（键缝 12px ⇒ 中心距 25px ≥ 24），**纵轴仍 ≥44**，并追加一条
+  // 更硬的不变量：命中盒之间零重叠（这正是当初横向 44px 外扩盘会劫持邻键的根因）。
+  const CHAINED_KEYS = ['.duration-badge .msg-copy', '.duration-badge-time',
+    '.fm-msg-act', '.fm-msg-time'];
   const smallTargets = [];
+  const chainedBad = [];
   for (const el of roots.flatMap((r) => [...r.querySelectorAll(INT_SEL)])) {
     if (!visible(el)) continue;
     if (EXEMPT.some((s) => el.matches(s))) continue;
     const cs = getComputedStyle(el);
     if (cs.pointerEvents === 'none') continue;
     const hit = hitOf(el);
+    if (CHAINED_KEYS.some((s) => el.matches(s))) {
+      if (hit.h < 44 || hit.w < 24) chainedBad.push({ el: ident(el), ...hit });
+      continue;
+    }
     if (hit.w < 44 || hit.h < 44) smallTargets.push({ el: ident(el), ...hit });
   }
+  // 零重叠不变量：同一徽章内任意两枚键的命中盒 x 区间不得相交。
+  for (const badge of roots.flatMap((r) => [...r.querySelectorAll('.duration-badge, .fm-msg-meta')])) {
+    const keys = [...badge.querySelectorAll('.msg-copy, .duration-badge-time, .fm-msg-act, .fm-msg-time')]
+      .filter(visible).map((el) => ({ el: ident(el), b: el.getBoundingClientRect(), hit: hitOf(el) }));
+    for (let i = 1; i < keys.length; i++) {
+      const prev = keys[i - 1];
+      const cur = keys[i];
+      const prevRight = prev.b.left + prev.b.width / 2 + prev.hit.w / 2;
+      const curLeft = cur.b.left + cur.b.width / 2 - cur.hit.w / 2;
+      if (curLeft < prevRight - 0.5) chainedBad.push({ overlap: `${prev.el}→${cur.el}`, gap: +(curLeft - prevRight).toFixed(1) });
+    }
+  }
 
-  // H4：computed text-overflow = ellipsis（禁省略号）
-  const ellipsis = [];
+  // H4（端区分批 2026-11-05 09:28 作者令**反转判据**）：原「computed
+  // text-overflow = ellipsis 即违规（铁律 = 用 mask 渐隐，不用「…」）」已作废
+  // —— 作者逐字：「为什么那个字的右侧有有渐隐的效果，这个不要」。新判据两条：
+  //   ① 任何**文本宿主**不得挂水平方向的 alpha 渐隐 mask（「穿边」件白名单除外：
+  //      顶缘 #g2-edge-fade / 顶部签两侧 .mf-strip* / 滚动穿顶 #scroll-under-glass /
+  //      Ask 列 — 那些是**边缘羽化**，不是「字被截断」）；
+  //   ② 被截断的文本件必须用**可见省略号**（下面 TRUNC_SEL 清单逐个断言）。
+  const textFades = [];
+  const ownText = (el) => [...el.childNodes]
+    .filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join('').trim();
+  const EDGE_FADE_EXEMPT = (el) => !!el.closest(
+    '#g2-edge-fade, .mf-strip, .scroll-under-glass, .ask-col, .option-box .ask-fade');
   for (const root of roots) {
     for (const el of root.querySelectorAll('*')) {
-      const cs = getComputedStyle(el);
-      if (cs.textOverflow !== 'ellipsis') continue;
+      const m = getComputedStyle(el).maskImage || getComputedStyle(el).webkitMaskImage || 'none';
+      if (m === 'none' || m.indexOf('gradient') < 0) continue;
+      const horizontal = /90deg|270deg|to right|to left/.test(m);
+      if (!horizontal) continue;
       if (!visible(el)) continue;
+      if (EDGE_FADE_EXEMPT(el)) continue;
       if (el.closest('[aria-hidden="true"]')) continue;
-      ellipsis.push({ el: ident(el), txt: (el.textContent || '').trim().slice(0, 20) });
+      textFades.push({ el: ident(el), txt: (ownText(el) || el.textContent || '').trim().slice(0, 20), mask: m.slice(0, 60) });
+    }
+  }
+  // 截断件 = 本批从「渐隐」翻回「可见省略号」的清单（mobileLayer.css H4 退役块
+  // 的 11 条 + 卡片头/附件名/页名三件；选择器名与产品侧逐字同源）。
+  const TRUNC_SEL = ['.dock-label', '.mf-me-name', '.mf-me-sub', '.mf-me-field-value',
+    '.mf-hub-row-val', '.tfl-row-badge', '.tfl-row-notes', '.ud-card-label', '.ud-card-value',
+    '.fm-row-name', '.fm-conv-summary', '.settings-identity-username', '.entry-name',
+    '.tp-stats', '.mf-deck-title', '.att-file-name', '.mobile-page-title'];
+  const truncNoEllipsis = [];
+  for (const root of roots) {
+    for (const sel of TRUNC_SEL) {
+      for (const el of root.querySelectorAll(sel)) {
+        if (!visible(el)) continue;
+        const cs = getComputedStyle(el);
+        if (cs.textOverflow !== 'ellipsis') truncNoEllipsis.push({ el: ident(el), sel, to: cs.textOverflow });
+      }
     }
   }
 
@@ -259,7 +316,7 @@ const SWEEP = () => {
     found: true,
     page: sec ? sec.dataset.page : 'chat',
     fsInventory: [...fsInventory.entries()].sort((a, b) => parseFloat(a[0].split('@')[1]) - parseFloat(b[0].split('@')[1])),
-    smallTexts, smallTargets, ellipsis,
+    smallTexts, smallTargets, chainedBad, textFades, truncNoEllipsis,
   };
 };
 
@@ -462,7 +519,7 @@ const SCHEME = process.env.HIG_SCHEME || 'light';
 (async () => {
   const { page, errors } = await boot({ engine: ENGINE, scheme: SCHEME });
   const tag = `${ENGINE}-${SCHEME}`;
-  const dump = { pages: {}, h1: [], h6: [], smallTexts: [], smallTargets: [], ellipsis: [] };
+  const dump = { pages: {}, h1: [], h6: [], smallTexts: [], smallTargets: [], chainedBad: [], textFades: [], truncNoEllipsis: [] };
 
   // 1) chat 根（无页壳）：气泡正文 + 输入区
   await page.waitForTimeout(600);
@@ -472,7 +529,9 @@ const SCHEME = process.env.HIG_SCHEME || 'light';
   dump.h1.push(...chatH1.map((x) => ({ ...x, page: 'chat' })));
   for (const v of chatSweep.smallTexts || []) dump.smallTexts.push({ page: 'chat', ...v });
   for (const v of chatSweep.smallTargets || []) dump.smallTargets.push({ page: 'chat', ...v });
-  for (const v of chatSweep.ellipsis || []) dump.ellipsis.push({ page: 'chat', ...v });
+  for (const v of chatSweep.chainedBad || []) dump.chainedBad.push({ page: 'chat', ...v });
+  for (const v of chatSweep.textFades || []) dump.textFades.push({ page: 'chat', ...v });
+  for (const v of chatSweep.truncNoEllipsis || []) dump.truncNoEllipsis.push({ page: 'chat', ...v });
 
   // 1b) canvas 前置：打开三张卡（含超长标题），让小点带 / 工具钮 / 堆叠面在场
   await page.evaluate(async () => {
@@ -497,7 +556,9 @@ const SCHEME = process.env.HIG_SCHEME || 'light';
     }
     for (const v of sweep.smallTexts || []) dump.smallTexts.push({ page: id, ...v });
     for (const v of sweep.smallTargets || []) dump.smallTargets.push({ page: id, ...v });
-    for (const v of sweep.ellipsis || []) dump.ellipsis.push({ page: id, ...v });
+    for (const v of sweep.chainedBad || []) dump.chainedBad.push({ page: id, ...v });
+    for (const v of sweep.textFades || []) dump.textFades.push({ page: id, ...v });
+    for (const v of sweep.truncNoEllipsis || []) dump.truncNoEllipsis.push({ page: id, ...v });
     if (id === 'canvas') {
       // 手势面本体（.mf-dots）已在阅读面；再点开堆叠面（.mf-cv-stack）让 .mf-deck 在场
       dump.h6.push(...(await page.evaluate(H6_PROBE, { gests: GESTURES, state: 'reading' })));
@@ -518,7 +579,7 @@ const SCHEME = process.env.HIG_SCHEME || 'light';
     writeFileSync(join(OUT, 'hig-probe.json'), JSON.stringify(dump, null, 2) + '\n');
     console.log(JSON.stringify({
       h1: dump.h1, smallTexts: dump.smallTexts, smallTargets: dump.smallTargets,
-      ellipsis: dump.ellipsis, h6: dump.h6, pages: Object.keys(dump.pages),
+      chainedBad: dump.chainedBad, textFades: dump.textFades, truncNoEllipsis: dump.truncNoEllipsis, h6: dump.h6, pages: Object.keys(dump.pages),
     }, null, 2));
   } else {
     // H1 正文 ≥17
@@ -528,12 +589,18 @@ const SCHEME = process.env.HIG_SCHEME || 'light';
     // H2 可读字 ≥13
     ok('H2 readable text ≥13px (no visible text node below 13)', dump.smallTexts.length === 0,
       dump.smallTexts.length ? JSON.stringify(dump.smallTexts.slice(0, 8)) : `${Object.keys(dump.pages).length} pages swept`);
-    // H3 热区 ≥44×44
+    // H3 热区 ≥44×44（行内串联键 = 纵 44 / 横 ≥24 且零重叠，见 CHAINED_KEYS 注）
     ok('H3 touch targets ≥44×44 (hit box incl ::before)', dump.smallTargets.length === 0,
       dump.smallTargets.length ? JSON.stringify(dump.smallTargets.slice(0, 8)) : 'all interactive elements ok');
-    // H4 禁省略号
-    ok('H4 long names fade out (no computed text-overflow:ellipsis)', dump.ellipsis.length === 0,
-      dump.ellipsis.length ? JSON.stringify(dump.ellipsis.slice(0, 8)) : 'no ellipsis element');
+    ok('H3b chained footer keys: height ≥44, width ≥24, zero hit-box overlap', dump.chainedBad.length === 0,
+      dump.chainedBad.length ? JSON.stringify(dump.chainedBad.slice(0, 8)) : 'chained keys ok');
+    // H4（端区分批 2026-11-05 反转）：文本宿主零右缘渐隐
+    ok('H4a no right-edge alpha fade on text hosts (author ruling 2026-11-05 09:28)',
+      dump.textFades.length === 0,
+      dump.textFades.length ? JSON.stringify(dump.textFades.slice(0, 8)) : 'no horizontal mask on text');
+    // H4b 截断件必须画可见省略号（不许静默截断）
+    ok('H4b truncated text hosts use visible ellipsis', dump.truncNoEllipsis.length === 0,
+      dump.truncNoEllipsis.length ? JSON.stringify(dump.truncNoEllipsis.slice(0, 8)) : 'all truncation sites ellipsis');
     // H6 手势等价入口
     for (const g of dump.h6) {
       if (!g.surfacePresent) continue;

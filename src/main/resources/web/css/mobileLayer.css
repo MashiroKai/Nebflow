@@ -895,7 +895,9 @@ body.mobile-layer .mobile-page-title {
   text-align: center;
   color: var(--color-frame-text-bright, var(--color-frame-text));
   overflow: hidden;
-  text-overflow: clip;
+  /* 截断语义 = **可见省略号**（作者令 2026-11-05 09:28 撤掉右缘渐隐后落定；
+     装得下时不画「…」，零视觉差 —— 基座档直接给 ellipsis，不依赖 JS 类）。 */
+  text-overflow: ellipsis;
   white-space: nowrap;
   outline: none;
   /* 全圆角恒在（壳层透明时不可感知）；**文字层透明度恒 1** —— 同一元素始终
@@ -914,9 +916,7 @@ body.mobile-layer .mobile-page-title {
    本类现在只负责「溢出时允许画 …」；装得下的短页名零变化。
    为什么不再用渐隐：页名是「被截断的文本」，渐隐读作「字没写完 / 没渲染完」，
    与真溢出语义相悖（作者两次同型报障：2026-11-04 13:03 列表行、本批页名）。 */
-body.mobile-layer .mobile-page-title.mtitle-clip {
-  text-overflow: ellipsis;
-}
+body.mobile-layer .mobile-page-title.mtitle-clip { text-overflow: ellipsis; }
 /* 胶囊壳层 = **同一元素**的 ::before：玻璃样式包材质单源（--cv-* → glass.css，
    --glass-* 双主题自随），整层 opacity = --mtitle-p —— 背景/描边/阴影/毛玻璃
    从无到有连续显影。z-index −1 落在元素自持 stacking context 内（sticky +
