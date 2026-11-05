@@ -73,7 +73,9 @@ object MergeEnqueue:
         parentSessionId = rec.parentSessionId,
         description = rec.title,
         readyAt = readyAt,
-        channelKind = "internal",
+        // P1 投递身份化：通道类别由「闭包种类」改为「身份投递」（收件身份 = 本会话）。
+        channelKind = "identity",
+        ownerSessionId = rec.id,
         declaredAt = declared.map(_.at),
         declareSource = declared.map(_.source),
         declaredTip = declared.flatMap(_.tip)

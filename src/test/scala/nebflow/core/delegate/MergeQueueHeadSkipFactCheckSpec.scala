@@ -64,7 +64,7 @@ class MergeQueueHeadSkipFactCheckSpec extends CatsEffectSuite:
 
   override def afterEach(context: munit.AfterEach): Unit =
     MergeQueue.reset()
-    MergeQueue.installLivenessProbe(_ => IO.pure(true))
+    nebflow.core.delegate.MergeQueueTestPorts.install()
     MergeQueue.OwnerGonePort.clear()
     MergeQueue.BlockNotifyPort.clear()
 
@@ -98,7 +98,11 @@ class MergeQueueHeadSkipFactCheckSpec extends CatsEffectSuite:
         case _ => IO.pure(this)
 
   private def sink(system: ActorSystem, name: String): IO[ActorRef[AgentCommand]] =
-    system.spawn(new Sink(grants), name)
+    // P1 投递身份化：投递只认收件身份 + 落盘邮箱，spec 直接在端口上收走 brief
+    // （不再探 actor 信箱）；Sink actor 保留仅为既有 ref 形参。
+    system.spawn(new Sink(grants), name).flatTap { child =>
+      deadSup(system, s"$name-sup").map(sup => nebflow.core.delegate.MergeQueueTestPorts.toActor(child, sup))
+    }
 
   private def deadSup(system: ActorSystem, name: String): IO[ActorRef[AgentEvent]] =
     system.spawn(
@@ -134,9 +138,7 @@ class MergeQueueHeadSkipFactCheckSpec extends CatsEffectSuite:
       // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
       declaredAt = Some(1_000L),
       declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
-      channelKind = "internal",
-      internal = None,
-      external = None
+      channelKind = "identity"
     )
 
   /** 健康成员（真 actor leg ⇒ 放行通知可送达）。 */
@@ -164,8 +166,7 @@ class MergeQueueHeadSkipFactCheckSpec extends CatsEffectSuite:
       // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
       declaredAt = Some(1_000L),
       declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
-      channelKind = "internal",
-      internal = Some(MergeQueue.InternalLeg(child, sup))
+      channelKind = "identity",
     )
 
   private def chainRows(action: String): List[ChainStore.Entry] =

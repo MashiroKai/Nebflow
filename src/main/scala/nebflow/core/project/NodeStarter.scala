@@ -949,6 +949,8 @@ private[project] trait NodeStarter:
               lazy val bridge: Behavior[AgentEvent] = new Behavior[AgentEvent]:
                 def receive(ctx: ActorContext[AgentEvent], event: AgentEvent): IO[Behavior[AgentEvent]] =
                   event match
+                    // 刀一等待态计时消息：本桥不接（恒等行为，桥的终态只由真终态驱动）。
+                    case _: AgentEvent.BgWaitCapTick => IO.pure(Behaviors.ignore)
                     case AgentEvent.Completed(_, messages) =>
                       // 完成门（noderpt 批 A 段 2026-09-11 作者裁定；缺省面 T4 批
                       // 2026-11-04 作者令 + 自查件 D2 翻转）——同一闸门两条腿：

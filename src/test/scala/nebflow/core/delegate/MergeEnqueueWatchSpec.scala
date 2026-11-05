@@ -214,7 +214,7 @@ class MergeEnqueueWatchSpec extends CatsEffectSuite:
       assert(entry.isDefined, "the orphaned member is booked")
       assertEquals(entry.map(_.readyAt), Some(lastActivity), "readyAt anchors on lastActivityMs (NOT the scan time — the FIFO rank must reflect when it finished)")
       assertEquals(entry.map(_.state), Some(MergeQueue.State.Waiting), "the watch only pre-books (the grant belongs to the care tick)")
-      assertEquals(entry.map(_.internal.isDefined), Some(true), "the live row's ref+supervisor are attached (the owner can still be notified)")
+      assertEquals(entry.map(_.ownerSession), Some(rec.id), "P1：成员的收件身份 = 属主会话本身（投递走落盘邮箱，不再挂 ref 闭包）")
       val queued = blockNotices.toList.filter(_._1 == MergeEnqueueWatch.NotifyKind)
       assertEquals(queued.size, 1, s"exactly one watch-queued notice, got: ${blockNotices.toList.map(_._1)}")
       assertEquals(MergeEnqueueWatch.NotifyKind, "watch-queued", "the notice kind is pinned (SharedResources framing key)")
@@ -274,7 +274,7 @@ class MergeEnqueueWatchSpec extends CatsEffectSuite:
             parentSessionId = "nebula-root",
             description = "already queued",
             readyAt = 42L,
-            channelKind = "internal",
+            channelKind = "identity",
             // 宣告闸批 2026-11-04：属主宣告在案——授窗前提
             declaredAt = Some(1_000L),
             declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge)

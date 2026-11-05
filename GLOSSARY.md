@@ -219,3 +219,15 @@ lightbox 与 toast。**归类例外**：`socialPanel.js` 的入口按钮在活�
 | 待认领区 | pending-claim area | `machineRoot/pending-claim/<ts>/`：平铺数据在「尚未登录」时迁入的中转位置，登录后认领进账号根；绝不被认作生效根。 | `RootLayout.migrate`（`MigrationReport.pendingClaim`，`src/main/scala/nebflow/core/root/RootLayout.scala`） |
 | owner 账号校验 | owner guard | 「本引擎服务的账号 == 凭据里的 owner」等值判定；不等 ⇒ 拒服务并点名双方 + 建议 `stand logout`（owner-account-mismatch）。 | `OwnerGuard.check`（`src/main/scala/nebflow/core/root/Guards.scala`） |
 | deviceId scope | device id scope | 设备 id 派生的账号域成分：账号档 = `acct|<accountSub>`（非默认机器根再带 `\|iso\|<hash>` 隔离后缀）；平铺/隔离档保持 `default` / `home\|<hash>` 不变。 | `DeviceIdentity.deviceIdScope`（`src/main/scala/nebflow/neblink/NeblinkModel.scala`） |
+
+## 13. 无静默滞留（R13 纪律，2026-11-05 作者令）
+
+> **批次说明（2026-11-05）**：合并队列重构批追加 1。纪律本体在插件
+> `stand-dev/skills/stand-dev/references/backend/actor-fsm.md` 的 **R13**（与 R1–R12 并列）；
+> **本表是定义唯一落点**，其余文档只引用不复制。
+
+| 术语 | English / 代码拼写 | 定义 | 权威落点 |
+|---|---|---|---|
+| **无静默滞留** | silent limbo | **任何状态若能在没有出口的情况下无限期停留、且外界看不见，即为缺陷。** 判据四条：①可见（面板字段/计数器，能读出「为什么停在这里」）②有出口（时间或次数驱动的升级腿，且**升级到人**；只写事件不算）③有主（写得出「现在该谁动」）④静默要留档（设计上就该静默的必须写明裁定出处，无裁定号 = 漏了出口）。 | 纪律本体 `stand-dev/…/references/backend/actor-fsm.md` R13；典型落地 = 合并队列的持窗提醒阶梯（`src/main/scala/nebflow/core/delegate/MergeQueue.scala`） |
+
+^silent-limbo

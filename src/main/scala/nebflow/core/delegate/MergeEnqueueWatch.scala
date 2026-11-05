@@ -157,8 +157,10 @@ object MergeEnqueueWatch:
           )
         )
       case Some(base) =>
-        val leg = live.flatMap(r => r.supervisorRef.map(sup => MergeQueue.InternalLeg(r.ref, sup)))
-        val member = base.copy(internal = leg)
+        // P1 投递身份化：成员只带收件身份（属主会话 = 本 delegate 自身），不再挂
+        // 任何进程内 actor ref 闭包。
+        val member = base.copy(ownerSessionId = rec.id)
+        val channelKind = "identity"
         val reason =
           s"it reported ready-to-merge but no report/terminal leg ever enqueued it — idle for ${c.idleMs / 1000}s, " +
             s"${c.aheadOfBase.getOrElse(0)} commit(s) ahead of the base branch, task row '${c.taskRow.getOrElse("-")}'; " +
@@ -174,7 +176,7 @@ object MergeEnqueueWatch:
             IO(
               logger.warn(
                 s"[merge-enqueue-watch] queued the missing member '${rec.id}' (branch '${base.branch}' → '${base.baseBranch}', " +
-                  s"readyAt=${c.lastActivityMs}, channel=${if leg.isDefined then "internal" else "none"})"
+                  s"readyAt=${c.lastActivityMs}, channel=$channelKind})"
               )
             ) *> IO.blocking(MergeQueue.BlockNotifyPort.deliver(member, NotifyKind, reason))
         }
@@ -293,7 +295,7 @@ object MergeEnqueueWatch:
     MergeEnqueue.membershipOf(rec, c.lastActivityMs) match
       case None => IO.unit // 缺锚：连合并目标都不知道，告警无意义（既有缺锚纪律）
       case Some(base) =>
-        val member = base.copy(internal = live.flatMap(r => r.supervisorRef.map(sup => MergeQueue.InternalLeg(r.ref, sup))))
+        val member = base.copy(ownerSessionId = rec.id)
         val reason =
           s"'${rec.id}' has ${c.aheadOfBase.getOrElse(0)} commit(s) ahead of the base branch and its task row is " +
             s"'${c.taskRow.getOrElse("-")}', but the OWNER NEVER DECLARED it ready-to-merge — the merge queue does NOT " +

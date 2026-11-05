@@ -40,6 +40,8 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
 
   override def beforeEach(context: munit.BeforeEach): Unit =
     MergeQueue.reset()
+    // P1 投递身份化：身份投递端口（生产实现 = 磁盘邮箱；此处 = 记录型，投递恒成功）。
+    nebflow.core.delegate.MergeQueueTestPorts.install()
     nebflow.ForceRemove.removeAll(tempRoot / "chains")
     nebflow.ForceRemove.removeAll(tempRoot / "delegates")
     nebflow.ForceRemove.removeAll(tempRoot / "subagent-tasks")
@@ -171,8 +173,7 @@ class DelegateFinishWorkResultSpec extends CatsEffectSuite:
         // 宣告闸批 2026-11-04：属主宣告在案（`delegate_report(category="merge")`）——授窗前提
         declaredAt = Some(1_000L),
         declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
-        channelKind = "internal",
-        internal = Some(MergeQueue.InternalLeg(child, sup))
+        channelKind = "identity",
       )
     )
 

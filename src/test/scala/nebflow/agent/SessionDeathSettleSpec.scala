@@ -32,6 +32,8 @@ class SessionDeathSettleSpec extends FunSuite:
     tmp = os.temp.dir(prefix = "sds")
     PathUtil.setDataRoot(tmp / "data")
     MergeQueue.reset()
+    // P1 投递身份化：身份投递端口（投递恒成功）——否则队列会在 grant 腿判 owner-gone。
+    nebflow.core.delegate.MergeQueueTestPorts.install()
 
   override def afterEach(context: munit.AfterEach): Unit =
     MergeQueue.reset()
@@ -118,7 +120,6 @@ class SessionDeathSettleSpec extends FunSuite:
         declaredAt = Some(1_000L),
         declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge),
         channelKind = "external",
-        external = Some(MergeQueue.ExternalLeg(_ => IO.pure(Right(()))))
       )
     )
     val report = SubAgentStartupRecovery.sweep(store, sessionStore, None).unsafeRunSync()

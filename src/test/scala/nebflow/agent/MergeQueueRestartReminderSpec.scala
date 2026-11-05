@@ -81,7 +81,7 @@ class MergeQueueRestartReminderSpec extends FunSuite:
       parentSessionId = "nebula-root",
       description = "survivor",
       readyAt = readyAt,
-      channelKind = "internal",
+      channelKind = "identity",
       // 宣告闸批 2026-11-04：属主宣告在案——授窗前提
       declaredAt = Some(1_000L),
       declareSource = Some(nebflow.core.delegate.MergeDeclaration.Source.ReportMerge)
@@ -172,7 +172,8 @@ class MergeQueueRestartReminderSpec extends FunSuite:
         s"rr-life-sup-${scala.util.Random.nextInt(100000)}"
       )
     yield (child, sup)).unsafeRunSync()
-    val m = member("rr-life", repo, readyAt = 1L).copy(internal = Some(MergeQueue.InternalLeg(child, sup)))
+    nebflow.core.delegate.MergeQueueTestPorts.recording(s => records += ((s.brief, None)))
+    val m = member("rr-life", repo, readyAt = 1L).copy(ownerSessionId = "rr-life") // P1：投递只认身份
     MergeQueue.seedMemberForTest(m)
     MergeQueue.pump(m.projectKey) // 放行 = 通知（真 actor 收单）
     Thread.sleep(80)
@@ -202,7 +203,7 @@ class MergeQueueRestartReminderSpec extends FunSuite:
     assertEquals(reloaded.map(_.state), Some("turn-granted"), "the open membership reloads")
     assertEquals(reloaded.flatMap(_.grantedAt), Some(1234L), "grantedAt survives")
     assertEquals(reloaded.flatMap(_.grantedBaseTip), Some("abc123def456"), "the granted base tip survives")
-    assertEquals(reloaded.flatMap(_.internal), None, "channel closures are process-local (never persisted)")
+    assertEquals(reloaded.map(_.ownerSession), Some("rr-p"), "P1：投递身份是持久数据——重启回载后仍是同一个收件会话（可直接投递，这正是本批要的）")
     assertEquals(reloaded.map(_.readyAt), Some(7L), "readyAt (FIFO rank) survives")
   }
 
