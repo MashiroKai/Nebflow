@@ -98,7 +98,11 @@ quality-gate:
 # 但**本地**这条腿没有它 —— 断环的人跑 `make check` 看不到读数，存量环就是这么红着
 # 过夜的（CI 侧实证见批报告）。CI 那条腿照旧，这里补的是本地防回退。
 # 只跑前端门禁：`make frontend-gates`；全量静态检查：`make check`。
-FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets freeze-state
+# api-routes 入列（empty-state-must-not-lie 批 · 件三，2026-11-05）：2026-11-05 事故
+# = 后端把 `GET /api/conversations` 的 case 误删，前端 404 被吞成「暂无会话」，
+# **没有任何断言发现「前端调了但后端没有」**。本闸静态对照两侧（前端 /api 字面量
+# 集合 × 网关路由注册面），前端调了后端没有 ⇒ 红。
+FRONTEND_GATES := design-tokens msgstyle self-explaining circular fixture-secrets api-routes freeze-state
 
 frontend-gates:
 	@command -v node >/dev/null 2>&1 || { echo "node not found — 前端门禁需要 node"; exit 2; }
@@ -110,10 +114,27 @@ frontend-gates:
 	@# `reports-evidence/` 里出现「敏感键名 ∧ 值 ≥32 字符 ∧ 字符集 ≥3 类」的字面量即红
 	@# （占位词豁免）。判据与运行期脱敏词表同族（`nebflow.shared.SecretKeys`）。
 	node scripts/check-fixture-secrets.mjs
+	@# 路由存在性哨兵（empty-state-must-not-lie 批 · 件三）：前端 `/api/` 调用面 ×
+	@# 网关 `*Routes.scala` 注册面静态对照，前端调了但后端没注册 ⇒ 红。
+	node scripts/check-api-routes.mjs
 	@# 冻结态呈现门禁（冻结态误报批 2026-11-05）：可自动恢复的冻结不得写「已冻结」/不得
 	@# 给按钮；需人介入的冻结必须有恢复入口；恢复失败必须可见；迁移日志在场。
 	node scripts/check-freeze-state.mjs
 	@echo "Frontend static gates passed ($(FRONTEND_GATES))."
+
+# ── 路由存在性：运行期腿（empty-state-must-not-lie 批 · 件三②，2026-11-05）──────
+# 静态腿判「源码里注册了没」，运行期腿判「启动后真的答不答」——后者才是事故的
+# 现场判据：今天 `GET /api/conversations` 被误删时前端拿到 404，面板渲染成
+# 「暂无会话」，**没有任何断言**发现「前端在调、实例上没有」。
+# 判据：沙箱实例起来后，逐条打前端调用面的每条路径（清单由
+# `check-api-routes.mjs --emit-paths` 单一真源给出），**任一路径全 method 404 ⇒ 红**。
+# 隔离：数据根 mktemp -d（--home + STAND_HOME + NEBFLOW_HOME 三重注入）、端口 8097，
+# 拒绝 6138/8080/<1024，端口已占用则拒绝复用；结束只 kill 自己 spawn 的进程组。
+# 为什么不塞进 frontend-gates：它需要「先编译再起实例」（分钟级 + 端口），
+# 混进每次编辑都会跑的静态腿里会被绕开；CI 侧作为独立 step 跑（见 .github/workflows/ci.yml）。
+api-routes-live:
+	@command -v node >/dev/null 2>&1 || { echo "node not found — 运行期哨兵需要 node"; exit 2; }
+	node scripts/check-api-routes-live.mjs
 
 # ── 视觉回归基线门禁（tests/visual/，2026-11-01 采纳批）──────────────────────
 # 按**宿主平台键**取基准图目录 tests/visual/baseline/<platform>/（platform 由脚本
