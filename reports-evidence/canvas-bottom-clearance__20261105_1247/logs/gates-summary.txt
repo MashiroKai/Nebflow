@@ -1,5 +1,5 @@
 # 门禁汇总 —— canvas 底部浮钮让位批（delegate/delegate-canvas-bottom-clearance）
-# tip = 3a8d43b8e (Merge branch 'main' into delegate/delegate-canvas-bottom-clearance)
+# tip = 880ef1420 (Merge branch 'main' into delegate/delegate-canvas-bottom-clearance)
 # 运行树 = /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-canvas-bottom-clearance
 
 EXIT=0  check-js-types            checkJs: 0 errors (baseline 0, zero-gate files: 3)
@@ -25,3 +25,8 @@ EXIT=1  visual-baseline --check --max-ratio 0.0005   28 项（改前同数 28）
 # 全部属其它 3 篇文档的存量：term-v2-inventory 18 / term-v2-recon 5 / canvas-ask-legibility 1）；
 # 本批文档 canvas-bottom-button-clearance__20261105_132309.md = 0 条违规（仅 1 条 info 级图外挂提示，
 # 与另外 110 篇同档）。见 logs/wiki-docs-check.log
+
+# 追加（tip 880ef1420，main 的 askDock.js/ask.css 大幅改动后复核）：
+#   spec 15 PASS / 0 FAIL（浮钮带实测已含新 askDock 落位：.ask-fab/.note-fab top=821 h=48，变量仍 72px 独立复算一致）
+#   邻居 canvas-ask-dock: 76 pass / 0 fail  EXIT=0
+#   邻居 canvas-note-panel（playwright）: 2 passed  EXIT=0
