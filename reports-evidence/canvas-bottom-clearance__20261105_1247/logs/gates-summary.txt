@@ -1,5 +1,5 @@
 # 门禁汇总 —— canvas 底部浮钮让位批（delegate/delegate-canvas-bottom-clearance）
-# tip = 01257c2b0 (Merge branch 'main' into delegate/delegate-canvas-bottom-clearance)
+# tip = 1afb16453 (Merge branch 'main' into delegate/delegate-canvas-bottom-clearance)
 # 运行树 = /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-canvas-bottom-clearance
 
 EXIT=0  check-js-types            checkJs: 0 errors (baseline 0, zero-gate files: 3)

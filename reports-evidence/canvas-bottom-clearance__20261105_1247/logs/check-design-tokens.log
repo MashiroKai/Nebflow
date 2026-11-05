@@ -1,4 +1,4 @@
-design-tokens：128 文件 / 2082 处颜色字面量 / 133 个基线条目
+design-tokens：128 文件 / 2080 处颜色字面量 / 133 个基线条目
   ℹ css/glass.css: 语义关键字（不计档外） radius×2(inherit)
   ℹ css/mobileLayer.css: 语义关键字（不计档外） radius×4(inherit)
   ℹ css/split.css: 语义关键字（不计档外） radius×1(inherit)
@@ -55,7 +55,7 @@ design-tokens：128 文件 / 2082 处颜色字面量 / 133 个基线条目
   ↑ css/usage.css: radiusOff 5 → 0（改善，建议下次 --update-baseline 收紧）
   ↑ js/bgAgentPopup.js: color 18 → 9（改善，建议下次 --update-baseline 收紧）
   ↑ js/bgTaskOutputPopup.js: color 15 → 6（改善，建议下次 --update-baseline 收紧）
-  ↑ js/chat.js: color 31 → 27（改善，建议下次 --update-baseline 收紧）
+  ↑ js/chat.js: color 31 → 25（改善，建议下次 --update-baseline 收紧）
   ↑ js/flowAgentPopup.js: color 21 → 5（改善，建议下次 --update-baseline 收紧）
   ↑ js/mobile/sessionHead.js: color 3 → 1（改善，建议下次 --update-baseline 收紧）
   ↑ js/persistence.js: color 27 → 22（改善，建议下次 --update-baseline 收紧）
