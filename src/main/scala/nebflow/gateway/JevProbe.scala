@@ -71,18 +71,53 @@ private[gateway] object JevProbe:
     }
 
   /**
-   * 探活入口（路由用）：keyRef 在位性先判——配置了 keyRef 而 secret 缺席 =
-   * 直接 Failed（「待录入」语义，jev 四修③的腿关判据同源），不发注定 401 的
-   * HTTP 击；keyRef 未配置 = 不期望凭据的形态（token 空直发，laya 本地端点同款）。
+   * 探活路由的 token 解析（jev-imagegen-align-llm 批 2026-11-02 契约 §I-4 方案 A
+   * ——**与 [[nebflow.llm.imagegen.ImageGenProbe.resolveToken]] 同源的三腿模型**）：
+   *
+   *   ① 表单 **`apiKey` 覆写**：设置面已删掉 keyRef UI，用户在卡片上直接填值、
+   *      不必先保存就能点「测试」⇒ 覆写腿最优先（生图面同判据）；
+   *   ② **已存 keyRef** 指向的 secret 现读（旧配置/旧 UI 的腿，逐字保留）；
+   *   ③ **无**（keyRef 未配置）= 不期望凭据的形态 ⇒ 空 token 直发（laya 本地
+   *      端点同款）——`Right("")` 表达之，`call` 对它不加 Authorization 头。
+   *
+   * `Left` = 配置了 keyRef 但 secret 缺席（「待录入」语义，jev 四修③ 的腿关判据
+   * 同源）——消息原样进 ❌ 文案，**只含 keyRef 名，绝不含值**。
+   */
+  def resolveToken(apiKeyOverride: Option[String], storedKeyRef: Option[String]): Either[String, String] =
+    apiKeyOverride.map(_.trim).filter(_.nonEmpty) match
+      case Some(k) => Right(k)
+      case None =>
+        storedKeyRef.filter(_.trim.nonEmpty) match
+          case Some(name) =>
+            secretToken(Some(name)) match
+              case Some(token) => Right(token)
+              case None =>
+                Left(s"keyRef '$name' resolves to no readable secret (expected at <dataRoot>/secrets/$name)")
+          case None => Right("")
+
+  /**
+   * 探活入口（路由用，覆写腿优先）：`apiKey` 覆写 > 已存 keyRef secret > 无。
+   * 三腿解析单点在 [[resolveToken]]；本函数只把解析结果接到 [[call]]。
+   */
+  def callWithToken(
+    provider: String,
+    endpoint: String,
+    model: String,
+    apiKeyOverride: Option[String],
+    storedKeyRef: Option[String]
+  ): Verdict =
+    resolveToken(apiKeyOverride, storedKeyRef) match
+      case Right(token) => call(provider, endpoint, model, token)
+      case Left(err)    => Verdict.Failed(err)
+
+  /**
+   * 探活入口（旧调用形状，行为逐字保留）：keyRef 在位性先判——配置了 keyRef 而
+   * secret 缺席 = 直接 Failed（「待录入」语义，jev 四修③的腿关判据同源），不发
+   * 注定 401 的 HTTP 击；keyRef 未配置 = 不期望凭据的形态（token 空直发，laya
+   * 本地端点同款）。实现收敛到 [[callWithToken]]（无覆写腿），断言与文案不变。
    */
   def callWithKeyRef(provider: String, endpoint: String, model: String, keyRef: Option[String]): Verdict =
-    secretToken(keyRef) match
-      case Some(token) => call(provider, endpoint, model, token)
-      case None =>
-        keyRef.filter(_.trim.nonEmpty) match
-          case Some(name) =>
-            Verdict.Failed(s"keyRef '$name' resolves to no readable secret (expected at <dataRoot>/secrets/$name)")
-          case None => call(provider, endpoint, model, "")
+    callWithToken(provider, endpoint, model, None, keyRef)
 
   /**
    * 一击探活。`provider` ∈ DecisionProvider.AllIds（路由侧已校验）。

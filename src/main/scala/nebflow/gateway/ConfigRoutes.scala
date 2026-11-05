@@ -184,6 +184,18 @@ private[gateway] object ConfigRoutes:
           ConfigService.revealProviderApiKeys.flatMap(Ok(_))
         }
 
+      // GET /api/config/jev —— JeV 设置面状态投影（jev-imagegen-align-llm 批
+      // 2026-11-02 契约 §B.4）：与 GET /api/config/imagegen **逐字段同构**
+      // （ConfigService.jevStatus 单点：配置热读 + keyRef **在位性**，永不回传
+      // key 值）。owner 鉴权与 jev/imagegen 读写同门槛（withAuth），错误处理
+      // 形状与 imagegen 臂一致。
+      // 存在理由：设置面板今日读 `GET /api/config` 的打码串（parsedConfig.jev），
+      // 拿不到「已保存/未配置」所需的 keyConfigured。
+      case req @ GET -> Root / "config" / "jev" =>
+        withAuth(req) {
+          ConfigService.jevStatus.flatMap(Ok(_))
+        }
+
       // PUT /api/config/jev —— JeV 配置定向写（设置页 Jev 区的写通道；键
       // 白名单在 ConfigService.JEV_WRITABLE_KEYS 单点，越界键 400）。
       case req @ PUT -> Root / "config" / "jev" =>

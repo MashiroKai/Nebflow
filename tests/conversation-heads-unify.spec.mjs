@@ -8,7 +8,10 @@
 //      且有背景或描边」的元素；并显式列出实测到的 near-miss 元素读数。
 //   ③ 三种会话身份头视觉属性与主会话一致：头像外径 56、名字胶囊（字号/padding/
 //      圆角/背景 token）、居中偏差 ≤1px。
-//   ④ 滚动后身份头渐隐（滚动前后 opacity 读数对比；--idhead-p 进度）。
+//   ④ 身份头**常显**（🔴 契约变更，依据作者 2026-11-04 20:49 裁定「按你的推荐
+//      走」）：落底 / 中段 / 回顶三个滚动位置上，身份头与名字胶囊都必须可见
+//      （opacity 1、无 visibility 腿），且 `--idhead-p` 零写入（渐隐驱动器已整条
+//      退役）。**改前口径「滚动后必须 opacity<1（= 渐隐存在）」作废** —— 见腿内注释。
 //   ⑤ 旧形态清场：会话页内无「行内小头像 + 名字」旧窗头（`.fm-modal-header > *`
 //      零渲染）、会话页大标题退场、无名态胶囊不渲染。
 //   ⑥ 右上三点菜单入口：好友/群 → 查看资料（件一 profileFace 导出函数）、
@@ -23,7 +26,12 @@ import { join, dirname, extname, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dockTo, settlePage } from './_mobile-dock-nav.mjs';
 
-const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
+// `CONVHEADS_WEB_ROOT` = 反向验红机读口（身份头常显批 2026-11-04）：指向一棵
+// 「把渐隐绑定装回去」的 web 树，腿 ④ 必须红。同族口径见
+// tests/mobile-agent-head-visible.spec.mjs 的 AGENTHEAD_WEB_ROOT。
+const WEB = process.env.CONVHEADS_WEB_ROOT
+  ? normalize(process.env.CONVHEADS_WEB_ROOT)
+  : join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', 'resources', 'web');
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
@@ -182,8 +190,10 @@ async function openFriend(page) {
   await expect(page.locator(CONV_PAGE)).toHaveClass(/live/, { timeout: 10000 });
   await page.waitForSelector(`${CONV_PAGE} .fm-modal .mh-idhead`, { state: 'attached', timeout: 10000 });
   await settlePage(page, 'conversation');
-  // 读数前置：消息流回顶（开窗默认贴底 ⇒ 渐隐进度已满档、身份头 visibility:hidden；
-  // 本条要测的是**静止态**几何，故先把滚动归零再量）。
+  // 读数前置：消息流回顶（开窗默认贴底；本条要测的是**静止态**几何，故先把滚动
+  // 归零再量）。身份头常显批 2026-11-04 起与滚动位无关 —— 归零只为几何读数稳定
+  // （旧口径下这里是「渐隐进度已满档、身份头 visibility:hidden」的规避动作，
+  // 那条腿已随常显契约作废，见腿 ④ 注释）。
   await page.evaluate((sel) => {
     const flow = document.querySelector(`${sel} .fm-flow`);
     if (flow) { flow.scrollTop = 0; flow.dispatchEvent(new Event('scroll')); }
@@ -204,8 +214,10 @@ async function openGroup(page) {
   await expect(page.locator(CONV_PAGE)).toHaveClass(/live/, { timeout: 10000 });
   await page.waitForSelector(`${CONV_PAGE} .fm-modal .mh-idhead`, { state: 'attached', timeout: 10000 });
   await settlePage(page, 'conversation');
-  // 读数前置：消息流回顶（开窗默认贴底 ⇒ 渐隐进度已满档、身份头 visibility:hidden；
-  // 本条要测的是**静止态**几何，故先把滚动归零再量）。
+  // 读数前置：消息流回顶（开窗默认贴底；本条要测的是**静止态**几何，故先把滚动
+  // 归零再量）。身份头常显批 2026-11-04 起与滚动位无关 —— 归零只为几何读数稳定
+  // （旧口径下这里是「渐隐进度已满档、身份头 visibility:hidden」的规避动作，
+  // 那条腿已随常显契约作废，见腿 ④ 注释）。
   await page.evaluate((sel) => {
     const flow = document.querySelector(`${sel} .fm-flow`);
     if (flow) { flow.scrollTop = 0; flow.dispatchEvent(new Event('scroll')); }
@@ -226,8 +238,10 @@ async function openDevice(page) {
   await expect(page.locator(CONV_PAGE)).toHaveClass(/live/, { timeout: 10000 });
   await page.waitForSelector(`${CONV_PAGE} .fm-modal .mh-idhead`, { state: 'attached', timeout: 10000 });
   await settlePage(page, 'conversation');
-  // 读数前置：消息流回顶（开窗默认贴底 ⇒ 渐隐进度已满档、身份头 visibility:hidden；
-  // 本条要测的是**静止态**几何，故先把滚动归零再量）。
+  // 读数前置：消息流回顶（开窗默认贴底；本条要测的是**静止态**几何，故先把滚动
+  // 归零再量）。身份头常显批 2026-11-04 起与滚动位无关 —— 归零只为几何读数稳定
+  // （旧口径下这里是「渐隐进度已满档、身份头 visibility:hidden」的规避动作，
+  // 那条腿已随常显契约作废，见腿 ④ 注释）。
   await page.evaluate((sel) => {
     const flow = document.querySelector(`${sel} .fm-flow`);
     if (flow) { flow.scrollTop = 0; flow.dispatchEvent(new Event('scroll')); }
@@ -562,59 +576,104 @@ test.describe('三种会话页头同构 + 悬浮身份头（375×812）', () => 
     expect(emptyState.display, '无名态：胶囊整枚退出渲染（禁幽灵胶囊）').toBe('none');
     expect(Math.abs(emptyState.avatarCx - emptyState.vw / 2), '无名态：头像仍居中（偏差 ≤1px）').toBeLessThanOrEqual(1);
 
-    // ── ④ 滚动渐隐（好友面，消息流有真滚轴）──
-    const before = await page.evaluate((sel) => {
+    // ── ④ 身份头常显（好友面，消息流有真滚轴）──────────────────────────────
+    // 🔴 **契约变更**（身份头常显批 2026-11-04，依据作者 20:49 裁定「按你的推荐
+    // 走」）：本条原口径 = 「滚动后 opacity<1 且 visibility:hidden（= 渐隐存在）」。
+    // 该口径随作者铁律「腾空间用缩高或上移，**不许让元素消失**」整条作废 ——
+    // 身份头是身份/入口类元素（头像 = profile 面入口、名字胶囊 = 群设置第二热区），
+    // 必须常显。现口径 = **任意滚动位置都可见**（断言方向反转）。
+    // 旧口径为什么在 main 上一直红（= 缺陷没被拦住）：它的前置条件「滚动前
+    // opacity=1」在真机上不可满足 —— 会话一打开消息流就贴底（实测
+    // scrollTop=2137 ⇒ --idhead-p=1 ⇒ opacity=0），旧口径连自己的前置都过不去。
+    // 反向验红机读口：CONVHEADS_WEB_ROOT=<把绑定装回去的树> ⇒ 本腿必红。
+    const headState = () => page.evaluate((sel) => {
       const head = document.querySelector(`${sel} .mh-idhead`);
       const flow = document.querySelector(`${sel} .fm-flow`);
+      const cs = head ? getComputedStyle(head) : null;
+      const namePill = head?.querySelector('.mh-idhead-name');
+      const avatar = head?.querySelector('#agent-avatar-btn, .mh-idhead-avatar > .fm-modal-avatar');
+      const effVisible = (el) => {
+        if (!el) return false;
+        const b = el.getBoundingClientRect();
+        const s = getComputedStyle(el);
+        return b.width > 0 && b.height > 0 && s.display !== 'none'
+          && s.visibility !== 'hidden' && Number(s.opacity) > 0.05;
+      };
       return {
-        opacity: getComputedStyle(head).opacity,
-        p: head.style.getPropertyValue('--idhead-p'),
+        p: head ? head.style.getPropertyValue('--idhead-p') : null,
+        opacity: cs ? cs.opacity : null,
+        visibility: cs ? cs.visibility : null,
+        headVisible: effVisible(head),
+        nameVisible: effVisible(namePill),
+        avatarVisible: effVisible(avatar),
         scrollTop: flow?.scrollTop ?? 0,
+        scrollHeight: flow?.scrollHeight ?? 0,
         scrollable: flow ? flow.scrollHeight > flow.clientHeight + 8 : false,
       };
     }, CONV_PAGE);
-    console.log('[④/滚动前] opacity', before.opacity, '--idhead-p', JSON.stringify(before.p), 'scrollTop', before.scrollTop, '可滚', before.scrollable);
-    expect(before.scrollable, '④ 前置：好友会话消息流可滚（40 条消息）').toBe(true);
-    expect(Number(before.opacity), `④ 滚动前 opacity = 1（读数 ${before.opacity}）`).toBe(1);
+    const scrollFlowTo = async (top) => {
+      await page.evaluate(({ sel, t }) => {
+        const flow = document.querySelector(`${sel} .fm-flow`);
+        flow.scrollTop = t === 'bottom' ? flow.scrollHeight : t;
+        flow.dispatchEvent(new Event('scroll'));
+      }, { sel: CONV_PAGE, t: top });
+      await page.waitForTimeout(160); // rAF 合帧窗口（渐隐若复活必然在此写入 --idhead-p）
+    };
+    const assertAlwaysVisible = (d, label) => {
+      // ① 渐隐驱动器不许复活：`--idhead-p` 零写入（唯一进度源；写入即回归）
+      expect(d.p, `④/${label}：--idhead-p 不许被写入（读数 ${JSON.stringify(d.p)} = 渐隐驱动器复活）`).toBe('');
+      // ② 身份头本体常显（改前此处 opacity 0 + visibility hidden）
+      expect(Number(d.opacity), `④/${label}：身份头 opacity = 1（读数 ${d.opacity}）`).toBe(1);
+      expect(d.visibility, `④/${label}：身份头 visibility 不许 hidden（读数 ${d.visibility}）`).not.toBe('hidden');
+      expect(d.headVisible, `④/${label}：身份头有效不可见`).toBe(true);
+      // ③ 入口类子件同拍可见（头像 = profile 入口 / 名字胶囊 = 群设置热区）
+      expect(d.avatarVisible, `④/${label}：头像槽不可见（入口退场 = 功能损失，不只是视觉）`).toBe(true);
+      expect(d.nameVisible, `④/${label}：名字胶囊不可见`).toBe(true);
+    };
 
-    await page.evaluate((sel) => {
-      const flow = document.querySelector(`${sel} .fm-flow`);
-      flow.scrollTop = 120; // > IDHEAD_FADE_DIST(64) ⇒ 进度满档
-      flow.dispatchEvent(new Event('scroll'));
-    }, CONV_PAGE);
-    await page.waitForTimeout(120); // rAF 合帧
+    // 状态 A：打开即落底（手机端会话常态 —— 就是旧口径下 100% 不可见的那一档）
+    const opened = await headState();
+    console.log('[④/打开即落底] scrollTop', opened.scrollTop, '/', opened.scrollHeight,
+      '--idhead-p', JSON.stringify(opened.p), 'opacity', opened.opacity, 'visibility', opened.visibility,
+      '可见 头/名/头像', opened.headVisible, opened.nameVisible, opened.avatarVisible);
+    expect(opened.scrollable, '④ 前置：好友会话消息流可滚（40 条消息）').toBe(true);
+    assertAlwaysVisible(opened, '打开即落底');
 
-    const after = await page.evaluate((sel) => {
-      const head = document.querySelector(`${sel} .mh-idhead`);
-      const flow = document.querySelector(`${sel} .fm-flow`);
-      const cs = getComputedStyle(head);
-      return {
-        opacity: cs.opacity,
-        visibility: cs.visibility,
-        p: head.style.getPropertyValue('--idhead-p'),
-        scrollTop: flow?.scrollTop ?? 0,
-      };
-    }, CONV_PAGE);
-    console.log('[④/滚动后] opacity', after.opacity, 'visibility', after.visibility, '--idhead-p', JSON.stringify(after.p), 'scrollTop', after.scrollTop);
-    expect(after.scrollTop, '④ 滚动生效（scrollTop > 64 = 渐隐行程满档）').toBeGreaterThan(64);
-    expect(Number(after.p), `④ 渐隐进度 --idhead-p = 1（读数 ${after.p}）`).toBe(1);
-    expect(Number(after.opacity), `④ 滚动后 opacity < 1（读数 ${after.opacity}：1 → ${after.opacity}）`).toBeLessThan(0.01);
-    expect(after.visibility, '④ 全隐后命中面退出（visibility:hidden）').toBe('hidden');
-
-    // 回滚 ⇒ 身份头恢复（反向读数，防「一隐不返」）
-    await page.evaluate((sel) => {
-      const flow = document.querySelector(`${sel} .fm-flow`);
-      flow.scrollTop = 0;
-      flow.dispatchEvent(new Event('scroll'));
-    }, CONV_PAGE);
+    // 显式滚动前先**拆掉进场落底武装窗**（chat/settleBottom.js：开窗后 1200ms 内每帧
+    // 回底，用户一动手即解除）。不拆则下面三次写入会被逐帧拽回底部 —— 读数全是
+    // 「已落底」，中段/回顶两档就成了假标签。这里发一枚真实用户意图事件（touchstart）
+    // 拆窗，正是真机上「作者一划就走」的同一条腿。
+    await page.evaluate(() => {
+      document.dispatchEvent(new Event('touchstart', { bubbles: true }));
+    });
     await page.waitForTimeout(120);
-    const restored = await page.evaluate((sel) => {
-      const head = document.querySelector(`${sel} .mh-idhead`);
-      return { opacity: getComputedStyle(head).opacity, p: head.style.getPropertyValue('--idhead-p') };
-    }, CONV_PAGE);
-    console.log('[④/回滚后] opacity', restored.opacity, '--idhead-p', JSON.stringify(restored.p));
-    expect(Number(restored.p), `④ 回滚后进度归零（读数 ${restored.p}）`).toBe(0);
-    expect(Number(restored.opacity), `④ 回滚后 opacity = 1（读数 ${restored.opacity}）`).toBe(1);
+
+    // 状态 B：显式滚到底（「已滚动到底」= 本批实拍与断言共同覆盖的那一档）
+    await scrollFlowTo('bottom');
+    const bottom = await headState();
+    console.log('[④/滚到底] scrollTop', bottom.scrollTop, '/', bottom.scrollHeight,
+      '--idhead-p', JSON.stringify(bottom.p), 'opacity', bottom.opacity, 'visibility', bottom.visibility,
+      '可见 头/名/头像', bottom.headVisible, bottom.nameVisible, bottom.avatarVisible);
+    expect(bottom.scrollTop, '④ 前置：已滚动到底（scrollTop > 64 = 旧渐隐行程满档区）').toBeGreaterThan(64);
+    assertAlwaysVisible(bottom, '滚到底');
+
+    // 状态 C：中段（落底与回顶之间的中途 —— 旧口径下同样是「已隐」区）
+    await scrollFlowTo(500);
+    const middle = await headState();
+    console.log('[④/中段] scrollTop', middle.scrollTop, '--idhead-p', JSON.stringify(middle.p),
+      'opacity', middle.opacity, 'visibility', middle.visibility,
+      '可见 头/名/头像', middle.headVisible, middle.nameVisible, middle.avatarVisible);
+    expect(Math.abs(middle.scrollTop - 500), `④ 前置：中段写入生效（scrollTop=${middle.scrollTop}；被落底窗拽回 = 档位假标签）`).toBeLessThanOrEqual(8);
+    assertAlwaysVisible(middle, '中段');
+
+    // 状态 D：回顶（旧口径「一隐不返」的反向读数，在常显口径下 = 与 A/B/C 同值）
+    await scrollFlowTo(0);
+    const top = await headState();
+    console.log('[④/回顶] scrollTop', top.scrollTop, '--idhead-p', JSON.stringify(top.p),
+      'opacity', top.opacity, 'visibility', top.visibility,
+      '可见 头/名/头像', top.headVisible, top.nameVisible, top.avatarVisible);
+    expect(top.scrollTop, '④ 前置：回顶写入生效（scrollTop=0）').toBe(0);
+    assertAlwaysVisible(top, '回顶');
 
     // ── ⑤ 旧形态清场：全文档零旧顶栏带节点 + 会话页旧窗头零可见子节点（已在上） ──
     const leftovers = await page.evaluate(() => ({
