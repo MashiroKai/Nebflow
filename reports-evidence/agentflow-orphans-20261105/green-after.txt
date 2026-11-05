@@ -1,0 +1,42 @@
+
+Running 6 tests using 1 worker
+
+[1/6] tests/bg-agentflow-orphans.spec.mjs:245:1 › ① ② ③ 野分组恰好 3 行（depth 0 / 带 data-bg-orphan / 不带归属锚）；2 条有父行仍在树里
+tests/bg-agentflow-orphans.spec.mjs:245:1 › ① ② ③ 野分组恰好 3 行（depth 0 / 带 data-bg-orphan / 不带归属锚）；2 条有父行仍在树里
+[①②③ dump] {"rows":[{"idx":0,"level":"head","depth":"0","orphan":null,"agentflow":null,"entity":"agentflow","sid":"delegate-orphan-a1b2c3d4","name":"野批","origin":"","buttons":1,"padLeft":12},{"idx":1,"level":"child","depth":"1","orphan":null,"agentflow":"delegate-orphan-a1b2c3d4","entity":"","sid":"node-orphan-11112222","name":"节点A","origin":"","buttons":0,"padLeft":16},{"idx":2,"level":"child","depth":"1","orphan":null,"agentflow":"delegate-orphan-a1b2c3d4","entity":"","sid":"node-orphan-33334444","name":"节点B","origin":"","buttons":0,"padLeft":16},{"idx":4,"level":"top","depth":"0","orphan":"1","agentflow":null,"entity":"","sid":"subagent-orphan-55556666","name":"野一","origin":"来自 AgentFlow 节点","buttons":0,"padLeft":12},{"idx":5,"level":"top","depth":"0","orphan":"1","agentflow":null,"entity":"","sid":"node-orphan-88889999","name":"野二","origin":"","buttons":0,"padLeft":12},{"idx":6,"level":"top","depth":"0","orphan":"1","agentflow":null,"entity":"","sid":"dd-orphan-99990000","name":"野三","origin":"来自已结束的委托","buttons":0,"padLeft":12}],"group":{"idx":3,"depth":"0","text":"无父节点","buttons":0,"isRow":false},"listTotal":"6"}
+
+[① ] group={"idx":3,"depth":"0","text":"无父节点","buttons":0,"isRow":false} wildRows=3 sids=["subagent-orphan-55556666","node-orphan-88889999","dd-orphan-99990000"]
+
+[③ ] parented=[{"sid":"node-orphan-11112222","level":"child","depth":"1","agentflow":"delegate-orphan-a1b2c3d4"},{"sid":"node-orphan-33334444","level":"child","depth":"1","agentflow":"delegate-orphan-a1b2c3d4"}]
+
+[2/6] tests/bg-agentflow-orphans.spec.mjs:290:1 › ④ 面板头计数 == 实际渲染行数（野行计入，一行不丢）
+tests/bg-agentflow-orphans.spec.mjs:290:1 › ④ 面板头计数 == 实际渲染行数（野行计入，一行不丢）
+[④] renderedRows=6 headerTotal=6 badge="6" section="智能体 · 6" rowTotal=6
+
+[④ sids] ["delegate-orphan-a1b2c3d4","node-orphan-11112222","node-orphan-33334444","subagent-orphan-55556666","node-orphan-88889999","dd-orphan-99990000"]
+
+[3/6] tests/bg-agentflow-orphans.spec.mjs:318:1 › ⑤ 反向门：野行排在分组头之后（不与正常树混排），既有「来自 …」角标保留
+tests/bg-agentflow-orphans.spec.mjs:318:1 › ⑤ 反向门：野行排在分组头之后（不与正常树混排），既有「来自 …」角标保留
+[⑤ order] groupIdx=3 wild=[["subagent-orphan-55556666",4],["node-orphan-88889999",5],["dd-orphan-99990000",6]] tree=[["delegate-orphan-a1b2c3d4",0],["node-orphan-11112222",1],["node-orphan-33334444",2]]
+
+[⑤ origin] subagent-orphan-55556666 → "来自 AgentFlow 节点"
+
+[4/6] tests/bg-agentflow-orphans.spec.mjs:353:1 › ⑥ 回收规则：野分组内零关闭/回收动作（引擎侧无明确判据 ⇒ 只展示）
+tests/bg-agentflow-orphans.spec.mjs:353:1 › ⑥ 回收规则：野分组内零关闭/回收动作（引擎侧无明确判据 ⇒ 只展示）
+[⑥] groupButtons=0 rowButtons=[["subagent-orphan-55556666",0],["node-orphan-88889999",0],["dd-orphan-99990000",0]]
+
+[⑥ static block] "function bgOrphanGroupHeadHtml(count) { const n = Number(count) || 0; return '<div class=\"bg-orphan-group\" data-bg-orphan-group=\"1\" data-bg-depth=\"0\" role=\"pres"
+
+[5/6] tests/bg-agentflow-orphans.spec.mjs:381:1 › ⑦ 判定式单点（bgOrphanRowKeys 一个函数）且组头文案 = locale 事实词（zh/en 同键）
+tests/bg-agentflow-orphans.spec.mjs:381:1 › ⑦ 判定式单点（bgOrphanRowKeys 一个函数）且组头文案 = locale 事实词（zh/en 同键）
+[⑦ words] {"orphanGroup":"无父节点","locale":"zh-CN"} groupText="无父节点"
+
+[⑦ counts] defs=1 mentions=2
+
+[⑦ anchor writes] 1
+
+[6/6] tests/bg-agentflow-orphans.spec.mjs:416:1 › ⑦ en 组头文案：同一个 locale 键（en 一键，非硬编码）
+tests/bg-agentflow-orphans.spec.mjs:416:1 › ⑦ en 组头文案：同一个 locale 键（en 一键，非硬编码）
+[⑦ en] {"orphanGroup":"No parent","locale":"en"} groupText="No parent"
+
+  6 passed (9.6s)

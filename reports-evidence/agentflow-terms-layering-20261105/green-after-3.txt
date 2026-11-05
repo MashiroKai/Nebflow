@@ -1,0 +1,50 @@
+
+Running 8 tests using 1 worker
+
+[1/8] tests/bg-agentflow-terms.spec.mjs:216:1 › H1 整体行（zh-CN）：data-bg-entity=agentflow 且显示词 = agentflow 词
+tests/bg-agentflow-terms.spec.mjs:216:1 › H1 整体行（zh-CN）：data-bg-entity=agentflow 且显示词 = agentflow 词
+[H1 zh dump] [{"level":"head","bgKey":"delegate-terms-a1b2c3d4","entity":"agentflow","entityText":"AgentFlow","kindText":"dispatcher"},{"level":"child","bgKey":"","entity":"","entityText":"","kindText":"Subagent"},{"level":"child","bgKey":"dispatcher-000bda27","entity":"","entityText":"","kindText":"分发器"},{"level":"child","bgKey":"node-aaaa1111","entity":"","entityText":"","kindText":"节点"},{"level":"child","bgKey":"node-bbbb2222","entity":"","entityText":"","kindText":"节点"},{"level":"child","bgKey":"subagent-4bf18f29","entity":"","entityText":"","kindText":"Subagent"},{"level":"child","bgKey":"subtask-5c6d7e8f","entity":"","entityText":"","kindText":"Delegate"},{"level":"child","bgKey":"dag-9a8b7c6d","entity":"","entityText":"","kindText":"节点"}]
+
+[H1 zh locale] {"agentflow":"AgentFlow","node":"节点","dispatcher":"分发器","locale":"zh-CN"}
+
+[2/8] tests/bg-agentflow-terms.spec.mjs:239:1 › H1 整体行（en）：data-bg-entity=agentflow 且显示词 = agentflow 词
+tests/bg-agentflow-terms.spec.mjs:239:1 › H1 整体行（en）：data-bg-entity=agentflow 且显示词 = agentflow 词
+[H1 en dump] [{"level":"head","entity":"agentflow","entityText":"AgentFlow"},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""},{"level":"child","entity":"","entityText":""}]
+
+[H1 en locale] {"agentflow":"AgentFlow","node":"Node","dispatcher":"Dispatcher","locale":"en"}
+
+[3/8] tests/bg-agentflow-terms.spec.mjs:260:1 › H1b 合成延续组头（live 行已离场）同样是整体行：data-bg-entity=agentflow + agentflow 词
+tests/bg-agentflow-terms.spec.mjs:260:1 › H1b 合成延续组头（live 行已离场）同样是整体行：data-bg-entity=agentflow + agentflow 词
+[H1b dump] [{"level":"head","bgKey":"chain:delegate-terms-a1b2c3d4","entity":"agentflow","entityText":"AgentFlow","agentflow":""},{"level":"child","bgKey":"dispatcher-000bda27","entity":"","entityText":"","agentflow":"delegate-terms-a1b2c3d4"},{"level":"child","bgKey":"node-aaaa1111","entity":"","entityText":"","agentflow":"delegate-terms-a1b2c3d4"}]
+
+[4/8] tests/bg-agentflow-terms.spec.mjs:293:1 › H2 成员行：data-bg-agentflow 全部 == 整体行 key，且成员徽标不含 agentflow/AgentFlow/Flow
+tests/bg-agentflow-terms.spec.mjs:293:1 › H2 成员行：data-bg-agentflow 全部 == 整体行 key，且成员徽标不含 agentflow/AgentFlow/Flow
+[H2 dump] [{"level":"head","bgKey":"delegate-terms-a1b2c3d4","sid":"delegate-terms-a1b2c3d4","agentflow":"","kindText":"dispatcher"},{"level":"child","bgKey":"","sid":"subagent-store-7f8e9d0c","agentflow":"delegate-terms-a1b2c3d4","kindText":"Subagent"},{"level":"child","bgKey":"dispatcher-000bda27","sid":"dispatcher-000bda27","agentflow":"delegate-terms-a1b2c3d4","kindText":"分发器"},{"level":"child","bgKey":"node-aaaa1111","sid":"node-aaaa1111","agentflow":"delegate-terms-a1b2c3d4","kindText":"节点"},{"level":"child","bgKey":"node-bbbb2222","sid":"node-bbbb2222","agentflow":"delegate-terms-a1b2c3d4","kindText":"节点"},{"level":"child","bgKey":"subagent-4bf18f29","sid":"subagent-4bf18f29","agentflow":"delegate-terms-a1b2c3d4","kindText":"Subagent"},{"level":"child","bgKey":"subtask-5c6d7e8f","sid":"subtask-5c6d7e8f","agentflow":"delegate-terms-a1b2c3d4","kindText":"Delegate"},{"level":"child","bgKey":"dag-9a8b7c6d","sid":"dag-9a8b7c6d","agentflow":"delegate-terms-a1b2c3d4","kindText":"节点"}]
+
+[H2 words] {"subagent-store-7f8e9d0c":"Subagent","dispatcher-000bda27":"分发器","node-aaaa1111":"节点","node-bbbb2222":"节点","subagent-4bf18f29":"Subagent","subtask-5c6d7e8f":"Delegate","dag-9a8b7c6d":"节点"}
+
+[5/8] tests/bg-agentflow-terms.spec.mjs:334:1 › H2b flow 结构投影成员行（chain.nodes flow-step）：徽标 = 节点词，不再是 AgentFlow
+tests/bg-agentflow-terms.spec.mjs:334:1 › H2b flow 结构投影成员行（chain.nodes flow-step）：徽标 = 节点词，不再是 AgentFlow
+[H2b dump] [{"level":"head","name":"术语批","agentflow":"","kindText":"dispatcher"},{"level":"child","name":"步骤一","agentflow":"delegate-terms-a1b2c3d4","kindText":"节点"},{"level":"child","name":"步骤二","agentflow":"delegate-terms-a1b2c3d4","kindText":"节点"}]
+
+[6/8] tests/bg-agentflow-terms.spec.mjs:367:1 › H3 反向门：整体行徽标不含 节点 / Node 字样（zh-CN 与 en 双验）
+tests/bg-agentflow-terms.spec.mjs:367:1 › H3 反向门：整体行徽标不含 节点 / Node 字样（zh-CN 与 en 双验）
+[H3 zh-CN] badges=["dispatcher","AgentFlow"]
+
+[H3 en] badges=["dispatcher","AgentFlow"]
+
+[7/8] tests/bg-agentflow-terms.spec.mjs:389:1 › H4 kernel / dispatcher 词在 row.mode 在场时逐字仍在（本批不许抹掉）
+tests/bg-agentflow-terms.spec.mjs:389:1 › H4 kernel / dispatcher 词在 row.mode 在场时逐字仍在（本批不许抹掉）
+[H4 dump] [{"sid":"delegate-terms-kernel-01","level":"head","kindText":"kernel","entityText":"AgentFlow","entity":"agentflow"},{"sid":"delegate-terms-disp-02","level":"head","kindText":"dispatcher","entityText":"AgentFlow","entity":"agentflow"}]
+
+[8/8] tests/bg-agentflow-terms.spec.mjs:424:1 › H5 词源单点：两个显示词只在 bgAgents.js 一处消费，其它 web 模块不硬编码同批词
+tests/bg-agentflow-terms.spec.mjs:424:1 › H5 词源单点：两个显示词只在 bgAgents.js 一处消费，其它 web 模块不硬编码同批词
+[H5 counts] kindAgentflow=1 kindNode=1 kindDispatcher=1
+
+[H5 offenders] []
+
+[H5 locale zh-CN.js] AgentFlow
+
+[H5 locale en.js] AgentFlow
+
+  8 passed (17.7s)
