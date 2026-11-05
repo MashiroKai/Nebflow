@@ -44,24 +44,40 @@ class BaseDriftWatchSpec extends CatsEffectSuite:
     rewritten: Boolean,
     state: Ref[IO, Map[String, BaseDriftWatch.Entry]],
     sent: Ref[IO, List[(String, String)]],
-    clock: Ref[IO, Long]
+    clock: Ref[IO, Long],
+    /**
+     * 唤醒价值判据的两项读数（dispatcher 终态批 2026-11-05）：
+     * 默认 `inFlight = Some(true)` = 「这个 delegate 还在干活」——既有九例的口径
+     * （它们考的是降噪与聚合，不该被新闸静默掉）；新例显式给 `Some(false)` / `None`。
+     */
+    inFlight: Option[Boolean] = Some(true),
+    unmerged: Option[Int] = None,
+    /** C1 三段合并的实参探针（`(ours, theirs)`——钉「比较的是我的分支」）。 */
+    conflictProbe: Option[scala.collection.mutable.ListBuffer[(String, String)]] = None
   ) extends BaseDriftWatch.Port:
     def delegates = delegatesIo
     def liveSessionIds = IO.pure(live)
     def headTip(workspace: String, branch: String): Option[String] = tip
-    def conflictFiles(workspace: String, branch: String, baseTip: String): List[String] = conflicts
+
+    def conflictFiles(workspace: String, branch: String, baseTip: String): List[String] =
+      conflictProbe.foreach(p => p += ((branch, baseTip)))
+      conflicts
     def baseRewritten(workspace: String, oldTip: String, newTip: String): Boolean = rewritten
     def notify(sessionId: String, text: String): IO[Boolean] = sent.update(_ :+ (sessionId, text)).as(true)
+    override def inFlightWork(delegateId: String): IO[Option[Boolean]] = IO.pure(inFlight)
+    override def unmergedCommits(workspace: String, baseBranch: String, branch: String): Option[Int] = unmerged
     override def nowMs = clock.get
     override def loadState = state.get
     override def saveState(s: Map[String, BaseDriftWatch.Entry]) = state.set(s)
+
+  end FakePort
 
   /** 单个在飞 delegate 的夹具（基线 a1，时钟 1000ms，从未通知过）。 */
   private def rig(delegateId: String = "delegate-a") =
     for
       state <- Ref.of[IO, Map[String, BaseDriftWatch.Entry]](
-                 Map(delegateId -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
-               )
+        Map(delegateId -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
+      )
       sent <- Ref.of[IO, List[(String, String)]](Nil)
       clock <- Ref.of[IO, Long](1000L)
     yield (state, sent, clock)
@@ -82,14 +98,14 @@ class BaseDriftWatchSpec extends CatsEffectSuite:
   test("① 默认静默：5 次推进全不与我分支冲突 ⇒ [base-moved] 通知数 = 0（改前 = 5）") {
     for
       state <- Ref.of[IO, Map[String, BaseDriftWatch.Entry]](
-                 Map("delegate-a" -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
-               )
+        Map("delegate-a" -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
+      )
       sent <- Ref.of[IO, List[(String, String)]](Nil)
       clock <- Ref.of[IO, Long](1000L)
       d = rec("delegate-a")
       _ <- (1 to 5).toList.traverse_ { i =>
-             BaseDriftWatch.scan(port(d, Some(s"tip$i"), Nil, false, state, sent, clock))
-           }
+        BaseDriftWatch.scan(port(d, Some(s"tip$i"), Nil, false, state, sent, clock))
+      }
       s <- sent.get
       st <- state.get
     yield
@@ -102,16 +118,16 @@ class BaseDriftWatchSpec extends CatsEffectSuite:
   test("② 可行动才通知 + 聚合：3 次推进里 1 次真冲突 ⇒ 通知数 = 1，文案含 N=3 / M=1 / 冲突文件") {
     for
       state <- Ref.of[IO, Map[String, BaseDriftWatch.Entry]](
-                 Map("delegate-a" -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
-               )
+        Map("delegate-a" -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
+      )
       sent <- Ref.of[IO, List[(String, String)]](Nil)
       clock <- Ref.of[IO, Long](1000L)
       d = rec("delegate-a")
       _ <- BaseDriftWatch.scan(port(d, Some("b2"), Nil, false, state, sent, clock))
       _ <- BaseDriftWatch.scan(port(d, Some("c3"), Nil, false, state, sent, clock))
       _ <- BaseDriftWatch.scan(
-             port(d, Some("d4"), List("src/mine/M.scala", "src/mine/N.scala"), false, state, sent, clock)
-           )
+        port(d, Some("d4"), List("src/mine/M.scala", "src/mine/N.scala"), false, state, sent, clock)
+      )
       s <- sent.get
       st <- state.get
     yield
@@ -128,15 +144,15 @@ class BaseDriftWatchSpec extends CatsEffectSuite:
     val nodeSeat = rec("node-p3").copy(branch = None, baseBranch = None, worktree = None)
     for
       state <- Ref.of[IO, Map[String, BaseDriftWatch.Entry]](
-                 Map("node-p3" -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
-               )
+        Map("node-p3" -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
+      )
       sent <- Ref.of[IO, List[(String, String)]](Nil)
       clock <- Ref.of[IO, Long](1000L)
       _ <- (1 to 3).toList.traverse_ { i =>
-             BaseDriftWatch.scan(
-               port(nodeSeat, Some(s"tip$i"), List("src/mine/M.scala"), false, state, sent, clock, live = Set("node-p3"))
-             )
-           }
+        BaseDriftWatch.scan(
+          port(nodeSeat, Some(s"tip$i"), List("src/mine/M.scala"), false, state, sent, clock, live = Set("node-p3"))
+        )
+      }
       s <- sent.get
     yield assertEquals(s, Nil, "节点不建分支/worktree、不写 DelegateRegistry ⇒ 结构上零命中")
   }
@@ -163,10 +179,10 @@ class BaseDriftWatchSpec extends CatsEffectSuite:
       sent <- Ref.of[IO, List[(String, String)]](Nil)
       clock <- Ref.of[IO, Long](1000L)
       _ <- (1 to 21).toList.traverse_ { i =>
-             BaseDriftWatch.scan(
-               FakePort(IO.pure(fleet), fleet.map(_.id).toSet, Some(s"tip$i"), Nil, false, state, sent, clock)
-             )
-           }
+        BaseDriftWatch.scan(
+          FakePort(IO.pure(fleet), fleet.map(_.id).toSet, Some(s"tip$i"), Nil, false, state, sent, clock)
+        )
+      }
       s <- sent.get
       st <- state.get
     yield
@@ -178,8 +194,8 @@ class BaseDriftWatchSpec extends CatsEffectSuite:
   test("⑥ 聚合窗：窗内连续两次可行动 ⇒ 仍只有 1 条；窗过后再次可行动 ⇒ 第 2 条") {
     for
       state <- Ref.of[IO, Map[String, BaseDriftWatch.Entry]](
-                 Map("delegate-a" -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
-               )
+        Map("delegate-a" -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
+      )
       sent <- Ref.of[IO, List[(String, String)]](Nil)
       clock <- Ref.of[IO, Long](1000L)
       d = rec("delegate-a")
@@ -198,8 +214,8 @@ class BaseDriftWatchSpec extends CatsEffectSuite:
   test("⑦ base 历史被改写（旧 tip 不再是新 tip 祖先）⇒ 即使零冲突也通知") {
     for
       state <- Ref.of[IO, Map[String, BaseDriftWatch.Entry]](
-                 Map("delegate-a" -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
-               )
+        Map("delegate-a" -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
+      )
       sent <- Ref.of[IO, List[(String, String)]](Nil)
       clock <- Ref.of[IO, Long](1000L)
       d = rec("delegate-a")
@@ -213,14 +229,14 @@ class BaseDriftWatchSpec extends CatsEffectSuite:
   test("⑧ 负控：会话不 live ⇒ 零通知但记账推进（唤醒后不补发过期漂移）") {
     for
       state <- Ref.of[IO, Map[String, BaseDriftWatch.Entry]](
-                 Map("delegate-a" -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
-               )
+        Map("delegate-a" -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
+      )
       sent <- Ref.of[IO, List[(String, String)]](Nil)
       clock <- Ref.of[IO, Long](1000L)
       d = rec("delegate-a")
       _ <- BaseDriftWatch.scan(
-             port(d, Some("b2"), List("src/mine/M.scala"), false, state, sent, clock, live = Set.empty)
-           )
+        port(d, Some("b2"), List("src/mine/M.scala"), false, state, sent, clock, live = Set.empty)
+      )
       s <- sent.get
       st <- state.get
     yield
@@ -235,29 +251,30 @@ class BaseDriftWatchSpec extends CatsEffectSuite:
     val cancelled = rec("delegate-c").copy(cancelRequestedAt = Some(1L))
     for
       state <- Ref.of[IO, Map[String, BaseDriftWatch.Entry]](
-                 Map(
-                   "delegate-b" -> BaseDriftWatch.Entry(baselineTip = "old1", lastSeenTip = "old1"),
-                   "delegate-c" -> BaseDriftWatch.Entry(baselineTip = "old2", lastSeenTip = "old2")
-                 )
-               )
+        Map(
+          "delegate-b" -> BaseDriftWatch.Entry(baselineTip = "old1", lastSeenTip = "old1"),
+          "delegate-c" -> BaseDriftWatch.Entry(baselineTip = "old2", lastSeenTip = "old2")
+        )
+      )
       sent <- Ref.of[IO, List[(String, String)]](Nil)
       clock <- Ref.of[IO, Long](1000L)
       out <- BaseDriftWatch.scan(
-               FakePort(
-                 IO.pure(List(archived, cancelled)),
-                 Set("delegate-b", "delegate-c"),
-                 Some("new3"),
-                 List("src/mine/M.scala"),
-                 false,
-                 state,
-                 sent,
-                 clock
-               )
-             )
+        FakePort(
+          IO.pure(List(archived, cancelled)),
+          Set("delegate-b", "delegate-c"),
+          Some("new3"),
+          List("src/mine/M.scala"),
+          false,
+          state,
+          sent,
+          clock
+        )
+      )
       s <- sent.get
     yield
       assertEquals(out, Nil)
       assertEquals(s, Nil)
+    end for
   }
 
   test("⑩ 首见只记基线：无记账 + tip 已前进 ⇒ 不通知（不知道「从哪来」）") {
@@ -266,13 +283,138 @@ class BaseDriftWatchSpec extends CatsEffectSuite:
       sent <- Ref.of[IO, List[(String, String)]](Nil)
       clock <- Ref.of[IO, Long](1000L)
       _ <- BaseDriftWatch.scan(
-             port(rec("delegate-a"), Some("b2"), List("src/mine/M.scala"), false, state, sent, clock)
-           )
+        port(rec("delegate-a"), Some("b2"), List("src/mine/M.scala"), false, state, sent, clock)
+      )
       s <- sent.get
       st <- state.get
     yield
       assertEquals(s, Nil)
       assertEquals(st("delegate-a"), BaseDriftWatch.Entry(baselineTip = "b2", lastSeenTip = "b2"))
+  }
+
+  // ═══ dispatcher 终态批 2026-11-05（作者令：「对**无在飞工作且无相关冲突**的会话
+  // 不再反复投递；不得因为少发通知而漏掉真正需要重跑的 base 移动」）════════════
+  // 新形态：问题不再是「条数多」，而是「一条通知就能把一个已收口的会话重新拽起来跑
+  // 一轮，跑完再收尾再被拽起」——唤醒本身是成本。故补「有没有活可干」这道闸。
+
+  test("⑪ 无在飞工作 + 无未并交付 ⇒ 零唤醒（可行动冲突也不投）：挂账丢弃、记账照走") {
+    for
+      state <- Ref.of[IO, Map[String, BaseDriftWatch.Entry]](
+        Map("delegate-a" -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
+      )
+      sent <- Ref.of[IO, List[(String, String)]](Nil)
+      clock <- Ref.of[IO, Long](1000L)
+      d = rec("delegate-a")
+      out <- BaseDriftWatch.scan(
+        FakePort(
+          IO.pure(List(d)),
+          Set("delegate-a"),
+          Some("b2"),
+          List("src/mine/M.scala"),
+          false,
+          state,
+          sent,
+          clock,
+          inFlight = Some(false),
+          unmerged = Some(0)
+        )
+      )
+      s <- sent.get
+      st <- state.get
+    yield
+      assertEquals(out, Nil, "无活可干 ⇒ 本拍零通知")
+      assertEquals(s, Nil, "已收口会话不得被无关 base-moved 拽起来（改前：每拍一条）")
+      assertEquals(st("delegate-a").moves, 1, "面板计数照数（静默不等于失记）")
+      assertEquals(st("delegate-a").pendingConflicts, 0, "挂账丢弃（唤醒后绝不补发过期漂移）")
+      assertEquals(st("delegate-a").lastNotifyMs, 0L, "未通知 ⇒ 聚合窗的时间锚不动")
+  }
+
+  test("⑫ 有在飞工作 ⇒ 照常通知（不因降噪漏掉真需要重跑的那一次移动）") {
+    for
+      state <- Ref.of[IO, Map[String, BaseDriftWatch.Entry]](
+        Map("delegate-a" -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
+      )
+      sent <- Ref.of[IO, List[(String, String)]](Nil)
+      clock <- Ref.of[IO, Long](1000L)
+      d = rec("delegate-a")
+      _ <- BaseDriftWatch.scan(
+        FakePort(
+          IO.pure(List(d)),
+          Set("delegate-a"),
+          Some("b2"),
+          List("src/mine/M.scala"),
+          false,
+          state,
+          sent,
+          clock,
+          inFlight = Some(true),
+          unmerged = Some(0)
+        )
+      )
+      s <- sent.get
+    yield assertEquals(s.size, 1, "作用域图里还有非终态节点 ⇒ 冲突通知有行动面，必须发")
+  }
+
+  test("⑬ 无在飞节点但分支还有未并交付提交 ⇒ 照常通知（那批提交还要落地）") {
+    for
+      state <- Ref.of[IO, Map[String, BaseDriftWatch.Entry]](
+        Map("delegate-a" -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
+      )
+      sent <- Ref.of[IO, List[(String, String)]](Nil)
+      clock <- Ref.of[IO, Long](1000L)
+      d = rec("delegate-a")
+      _ <- BaseDriftWatch.scan(
+        FakePort(
+          IO.pure(List(d)),
+          Set("delegate-a"),
+          Some("b2"),
+          Nil,
+          true,
+          state,
+          sent,
+          clock,
+          inFlight = Some(false),
+          unmerged = Some(2)
+        )
+      )
+      s <- sent.get
+    yield assertEquals(s.size, 1, "领先 2 个提交待落地 ⇒ 撞上 base 就是真麻烦，必须发")
+  }
+
+  test("⑭ 读面不可用（inFlight = None）⇒ 投递（宁可多发一条，绝不漏掉真需要重跑的那次移动）") {
+    assertEquals(BaseDriftWatch.worthWaking(Some(true), None), true)
+    assertEquals(BaseDriftWatch.worthWaking(None, None), true, "读不出来 ⇒ 保守投递")
+    assertEquals(BaseDriftWatch.worthWaking(Some(false), Some(1)), true)
+    assertEquals(BaseDriftWatch.worthWaking(Some(false), Some(0)), false)
+    assertEquals(BaseDriftWatch.worthWaking(Some(false), None), false, "领先数读不出且无在飞节点 ⇒ 无活可干")
+  }
+
+  test("⑮ C1 三段合并的对象是**我的分支** vs 新 base tip（不是 base 与自己比）") {
+    val probe = scala.collection.mutable.ListBuffer.empty[(String, String)]
+    val d = rec("delegate-a", branch = "delegate/mine-x", base = "main")
+    for
+      state <- Ref.of[IO, Map[String, BaseDriftWatch.Entry]](
+        Map("delegate-a" -> BaseDriftWatch.Entry(baselineTip = "a1", lastSeenTip = "a1"))
+      )
+      sent <- Ref.of[IO, List[(String, String)]](Nil)
+      clock <- Ref.of[IO, Long](1000L)
+      _ <- BaseDriftWatch.scan(
+        FakePort(
+          IO.pure(List(d)),
+          Set("delegate-a"),
+          Some("b2"),
+          List("src/mine/M.scala"),
+          false,
+          state,
+          sent,
+          clock,
+          conflictProbe = Some(probe)
+        )
+      )
+    yield
+      assertEquals(probe.toList, List(("delegate/mine-x", "b2")), s"ours 必须是本 delegate 的分支：$probe")
+      assertEquals(state, state) // 静默断言：probe 本身是本例的判据
+    end for
   }
 
 end BaseDriftWatchSpec
