@@ -1,0 +1,10 @@
+[setup-after] export 61b68fed7 of /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-local-path-resume
+61b68fed7d766726dbe0b553f6ee071acbe821a8
+[setup-after] ws.js sha256（被 A/B 的源文件；after 侧就是它）
+c406876723179559e711f5c6e1742e5de7d4f6c0a1d67f705eacf9640de547c1  /tmp/nearpath-fire/engine-src-after/src/main/resources/web/js/ws.js
+[setup-after] 身份像素臂是否在树里（修复标志，grep 应有命中）
+3
+[setup-after] sbt compile + classpath export（冷启动数分钟）
+classpath written: /tmp/nearpath-fire/classpath-after.txt entries=77 appClasses=/private/tmp/nearpath-fire/engine-src-after/target/scala-3.5.2/classes
+[setup-after] done. engine-classes:
+/tmp/nearpath-fire/engine-src-after/target/scala-3.5.2/classes
