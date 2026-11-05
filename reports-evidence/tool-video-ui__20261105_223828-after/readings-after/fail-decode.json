@@ -1,0 +1,25 @@
+{
+  "decode": {
+    "cover": false,
+    "failed": true,
+    "videoBg": "rgba(0, 0, 0, 0)",
+    "box": {
+      "w": 220,
+      "h": 165
+    }
+  },
+  "ok": {
+    "cover": true,
+    "failed": false,
+    "videoBg": "rgb(23, 25, 31)",
+    "box": {
+      "w": 220,
+      "h": 124
+    }
+  },
+  "stats": {
+    "grabs": 1,
+    "fails": 0,
+    "cacheHits": 0
+  }
+}

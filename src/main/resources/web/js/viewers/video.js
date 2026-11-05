@@ -46,6 +46,7 @@ import { nfViewerUrl } from '../nfFileCache.js';
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
 import { KEYS, provideContextKey } from '../keyContext.js';
+import { attachVideoCover } from '../videoCover.js';
 
 /** 无元数据时的兜底宽高比（只在 loadedmetadata 之前那一拍生效）。 */
 const FALLBACK_AR = 16 / 9;
@@ -348,12 +349,24 @@ async function viewVideo(pane, { absPath, fileName, size, objectUrl }) {
   // 「原生激活」（div 上没有这个语义，等于空格失灵；实测 2026-11-05 首轮红即此）。
   // 键盘全链路不受影响：Tab 落到控件条第一颗（播放）钮，空格/方向键/M 都在
   // 播放器子树内，同样命中；点画面则直接聚焦舞台，三条键全部生效。
+  // 画面盒 = **video 元素自身**（canvas-video-player 批的 contain 法则：元素盒由
+  // min(100cqw, 100cqh × AR) 算出、恒等于画面像素边界，圆角 `--ds-radius-input`
+  // 直接落在它上面 —— 见 split.css）。本批**不引入包裹层**：包裹层会让
+  // `video.parentElement` 不再是可用区舞台，既破坏 canvas-video-stage.spec.mjs 的
+  // 「画面 = contain(可用区) / 可用区即被利用」两条既有读数口径（实测 4 档全红：
+  // 0.427/0.417/0.190/0.427 < 0.6），又对同一批断言引入第二套尺寸算术。
+  // 封面 `<img>` 因此不靠 offset parent，而是用**同一 AR 盒**复刻画面（见 split.css
+  // 的 `.canvas-video-stage .nf-video-cover`：inset:0 + margin:auto + max-*100%）。
   const stage = h('div', {
     class: 'canvas-video-stage',
     tabindex: '-1',
     role: 'group',
     'aria-label': t('canvas.videoControls'),
   }, [video]);
+  // 内容封面（作者令 2026-11-05：「不管是在对话框还是canvas，都应该有一个内容预览
+  // 的一个封面」）：未播放时盖一帧代表帧，播放即让位。抓帧失败/跨域污染/超时一律
+  // 不挂（面回到现状），规则全在 videoCover.js。
+  const cover = attachVideoCover(video, { alt: fileName || '' });
   const controls = buildControls(video);
   const wrap = h('div', { class: 'canvas-video-viewer' }, [stage, controls.root]);
 
@@ -377,6 +390,7 @@ async function viewVideo(pane, { absPath, fileName, size, objectUrl }) {
     }
     if (!pane.isConnected) return; // 页签在错误落定前已关闭
     controls.destroy();
+    if (cover) cover.destroy();
     video.removeEventListener('loadedmetadata', onMeta);
     pane.classList.add('scrollable');
     pane.textContent = '';
@@ -394,6 +408,7 @@ async function viewVideo(pane, { absPath, fileName, size, objectUrl }) {
   // fileViewers.renderFile 统一持有，本查看器只提供 cleanup 本体，别抢那个槽）。
   const cleanup = () => {
     controls.destroy();
+    if (cover) cover.destroy();
     video.removeEventListener('loadedmetadata', onMeta);
     video.removeEventListener('error', onError);
     video.removeAttribute('src');

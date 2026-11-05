@@ -76,6 +76,9 @@ import { rootDisplayName } from './rootName.js';
 // 回落几何中心）。叶子模块（零 import）不成环；只挂叠卡收拢层，平铺/展开行
 // （contain 真实比）与视频脸零感知。
 import { applySmartCrop } from './smartCrop.js';
+// 视频内容封面（video-cover 批 2026-11-05）：视频面在出帧前不许是黑块/灰块。
+// 叶子模块（只 import dom.js）⇒ 零环。
+import { attachVideoCover } from './videoCover.js';
 
 export const POP_SENTINEL = '___POP_JSON___';
 
@@ -408,6 +411,14 @@ function mediaFace(item, interactive, natural) {
       ring.style.display = 'none';
     }
     wrap.append(video, ring, chip, progress);
+    // video-cover 批（2026-11-05）：播放面/叠卡面/展开面**同一处**挂内容封面
+    // （本函数是视频面的唯一出口 ⇒ 三个宿主零第二套实现）。封面插在 video 之后、
+    // ring 之前：DOM 层序即视觉层序（播放键与时长仍在封面上方）。
+    // 懒加载/失败降级/跨域判定全在 videoCover.js；这里只负责「挂」。
+    // UI-G 闸（与本文件 883/896 行的 motionEnabled 同一条口径）：子代理/流程弹窗
+    // = 静态窗，零额外工作 —— 抓帧是一次 seek 解码 + 一条 seek 守卫定时器，属装饰性
+    // 工作，静态窗一律不挂（代价：静态窗的视频面仍是现状面，已在本批报告申报）。
+    if (motionEnabled()) attachVideoCover(video, { alt: item.name || '' });
   } else {
     const img = document.createElement('img');
     img.className = 'pop-img';
