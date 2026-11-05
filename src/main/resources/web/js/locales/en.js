@@ -70,7 +70,10 @@ export default {
   'project.unmountConfirmGo': 'Unload',
   'project.unmountFail': 'Failed to unload "{name}": {detail}',
   'project.unmountedGroup': 'Unloaded',
-  'project.unmountedGroupHint': 'Unloaded from context; local files kept as-is. Reload to restore.',
+  // Author order 2026-11-05 08:26: the group-head explainer line is gone (iron rule 8
+  // "self-explaining": duplicate explanation + behaviour teaching — the "Unloaded" title
+  // already states the state and the Reload button already states the way out). Key
+  // `project.unmountedGroupHint` went orphan with it and is removed entirely.
   'project.unmountedRowTitle': '"{name}" unloaded at {at} (local files kept)',
   'project.remountBtn': 'Reload',
   'project.remounting': 'Reloading…',
