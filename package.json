@@ -5,6 +5,7 @@
   "scripts": {
     "build": "node scripts/build-web.mjs",
     "visual:baseline": "node scripts/visual-baseline.mjs --update",
+    "visual:promote": "node scripts/visual-baseline.mjs --promote --i-reviewed",
     "visual:check": "node scripts/visual-baseline.mjs --check",
     "visual:list": "node scripts/visual-baseline.mjs --list"
   },

@@ -5,9 +5,9 @@
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-2);
-  padding: var(--ds-space-glass-x) 14px var(--ds-space-3);
+  padding: var(--ds-space-block-y) 14px var(--ds-space-3);
   border-top: 1px solid var(--color-border);
-  margin-top: var(--ds-space-glass-x);
+  margin-top: var(--ds-space-stack-gap);
 }
 
 .project-field {
@@ -22,12 +22,12 @@
      different widths and a ragged left edge on the value column reads as
      three unrelated rows instead of one field table. */
   flex: 0 0 76px;
-  font: 500 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 500 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
 }
 
 .project-field-value {
-  font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 400 var(--ds-fs-hint)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
@@ -59,7 +59,7 @@
   border: none;
   background: transparent;
   padding: 0;
-  font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 500 var(--ds-fs-btn)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: rgb(var(--sapphire) / 1);
   cursor: pointer;
   transition: opacity 150ms ease;
@@ -72,7 +72,7 @@
   width: 26px;
   height: 26px;
   border: 1px solid var(--color-border);
-  border-radius: 7px;
+  border-radius: var(--ds-radius-input);
   background: transparent;
   color: var(--color-text-muted);
   display: inline-flex;
@@ -101,7 +101,7 @@
   width: 26px;
   height: 26px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--ds-radius-input);
   background: transparent;
   color: var(--color-text-muted);
   display: inline-flex;
@@ -120,7 +120,7 @@
    深浅主题全走 var(--color-*) token，零裸 hex。 */
 .project-unmounted-group {
   margin: 14px var(--ds-space-half) var(--ds-space-1);
-  padding-top: var(--ds-space-glass-x);
+  padding-top: var(--ds-space-block-y);
   border-top: 1px dashed var(--color-border);
 }
 .project-unm-head {
@@ -132,14 +132,14 @@
 }
 .project-unm-title {
   flex: 0 0 auto;
-  font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 600 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
   letter-spacing: 0.02em;
 }
 .project-unm-row {
   display: flex;
   align-items: center;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   padding: var(--ds-space-2) var(--ds-space-3);
   border-radius: var(--ds-radius-button);
 }
@@ -147,7 +147,7 @@
 .project-unm-name {
   flex: 0 1 auto;
   min-width: 0;
-  font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 500 var(--ds-fs-hint)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -167,8 +167,8 @@
 }
 .project-unm-remount {
   flex: 0 0 auto;
-  padding: var(--ds-space-1) var(--ds-space-glass-x);
-  font: 500 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
+  font: 500 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   cursor: pointer;
 }
 .project-unm-remount:disabled { opacity: 0.55; cursor: default; }
@@ -185,7 +185,7 @@
   align-items: center;
   gap: var(--ds-space-3);
   flex: 0 0 auto;
-  padding: var(--ds-space-glass-x) 14px;
+  padding: var(--ds-space-block-y) 14px;
   border-bottom: 1px solid var(--color-border);
   background: var(--glass-bg);
 }
@@ -200,8 +200,8 @@
   border-radius: var(--ds-radius-input);
   background: transparent;
   color: var(--color-text);
-  font: 500 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  font: 500 var(--ds-fs-btn)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   cursor: pointer;
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
@@ -255,7 +255,7 @@
 }
 
 .project-empty-tag {
-  font: 500 10px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 500 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
   margin-left: var(--ds-space-1h);
   padding: var(--ds-space-half) var(--ds-space-1h);
@@ -509,21 +509,21 @@
   min-width: 0;
   display: flex;
   align-items: flex-start;
-  gap: 5px;
-  font-size: 11.5px;
+  gap: var(--ds-space-1);
+  font-size: var(--ds-fs-hint);
   color: var(--status-word);
 }
-.proj-create-error .st-ic { width: 12px; height: 12px; margin-top: 1px; flex-shrink: 0; }
+.proj-create-error .st-ic { width: 12px; height: 12px; margin-top: var(--ds-space-hair); flex-shrink: 0; }
 .proj-create-count {
   flex: 0 0 auto;
-  font-size: 11.5px;
+  font-size: var(--ds-fs-hint);
   font-variant-numeric: tabular-nums;
   color: var(--color-frame-text-muted);
 }
 /* 超 500 时染色（ui-status-redesign 盘点 #50）：11.5px 红数字退役 → 数字转
    中性、行首 triangle-alert 琥珀图标（projectTab.js 注入，非阻断超量=警示档）。 */
 .proj-create-count.is-over { color: var(--status-word); }
-.proj-create-count.is-over .st-ic { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; }
+.proj-create-count.is-over .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); vertical-align: -1px; }
 .proj-create-hint { flex: 1; min-width: 0; }
 
 /* ── D4 path slot (author ruling 2026-09-24: "use a path picker to choose, rather
@@ -538,14 +538,14 @@
 .proj-create-path-row {
   display: flex;
   align-items: center;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   margin-bottom: 14px;
 }
 .proj-create-pick {
   flex: 0 0 auto;
-  font: 500 12.5px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-hint) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text);
-  padding: 7px 14px;
+  padding: var(--ds-space-2) 14px;
   border-radius: var(--ds-radius-button);
   cursor: pointer;
 }
@@ -578,13 +578,13 @@
 .dev-btn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px var(--ds-space-3);
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-2) var(--ds-space-3);
   border: none;
   border-radius: var(--ds-radius-button);
   background: var(--color-frame-hover);
   color: var(--color-text);
-  font: 500 12.5px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-btn) -apple-system, BlinkMacSystemFont, sans-serif;
   cursor: pointer;
   transition: background 0.12s;
 }
@@ -595,7 +595,7 @@
 .dev-btn .chev { width: 12px; height: 12px; color: var(--color-frame-text-muted); flex: 0 0 auto; }
 .dev-btn[aria-expanded="true"] .chev { transform: rotate(180deg); }
 .dev-note {
-  font-size: 11.5px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-dim);
   min-width: 0;
   overflow: hidden;
@@ -653,12 +653,12 @@
   display: flex;
   align-items: center;
   gap: var(--ds-space-2);
-  padding: 7px var(--ds-space-glass-x);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
   border: none;
   border-radius: var(--ds-radius-chip);
   background: transparent;
   color: var(--color-frame-text);
-  font-size: 12.5px;
+  font-size: var(--ds-fs-hint);
   cursor: pointer;
   text-align: left;
   transition: background 0.12s;
@@ -670,7 +670,7 @@
 .dev-item .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dev-item .sub {
   flex: 0 0 auto;
-  font: 500 10px/1 ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text-muted);
   opacity: 0.8;
 }
@@ -681,17 +681,17 @@
   padding: var(--ds-space-half) var(--ds-space-1h);
   border-radius: var(--ds-radius-chip);
   background: var(--color-frame-hover);
-  font: 600 10px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-frame-text-muted);
 }
 /* 离线行禁选（设计稿 A3）：减淡 + 不可点 + cursor 默认——不给「点了必失败」的按钮。 */
 .dev-item.disabled { opacity: 0.5; cursor: default; }
 .dev-item.disabled:hover { background: transparent; }
 .dev-menu-foot {
-  padding: var(--ds-space-1h) var(--ds-space-glass-x) var(--ds-space-1);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x) var(--ds-space-1);
   border-top: 1px solid var(--glass-border);
   margin-top: var(--ds-space-half);
-  font-size: 10.5px;
+  font-size: var(--ds-fs-meta);
   line-height: 1.45;
   color: var(--color-frame-text-muted);
 }
@@ -701,7 +701,7 @@
   align-items: flex-start;
   gap: var(--ds-space-1h);
   margin: -4px 0 14px;
-  font-size: 11.5px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   color: var(--color-frame-text-muted);
 }
@@ -713,24 +713,24 @@
   align-items: center;
   gap: var(--ds-space-1);
   padding: var(--ds-space-half) var(--ds-space-2);
-  border-radius: 7px;
+  border-radius: var(--ds-radius-input);
   background: rgb(var(--sapphire) / 0.12);
   color: rgb(var(--sapphire));
-  font: 600 11px/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 600 var(--ds-fs-meta)/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
   vertical-align: -3px;
 }
 .path-chip svg { width: 11px; height: 11px; flex: 0 0 auto; }
 /* 远端失败错误行升级（设计稿 §1.3）：码尾注（mono 弱化）+ 行内动作链接。 */
 .proj-create-error .err-code {
-  font: 600 10px/1.4 ui-monospace, SFMono-Regular, monospace;
+  font: 600 var(--ds-fs-meta)/1.4 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text-muted);
 }
-.proj-create-error .err-acts { display: inline-flex; gap: var(--ds-space-glass-x); margin-left: var(--ds-space-2); }
+.proj-create-error .err-acts { display: inline-flex; gap: var(--ds-space-inline-gap); margin-left: var(--ds-space-2); }
 .proj-create-error .err-act {
   border: none;
   background: transparent;
   padding: 0;
-  font: 500 11.5px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-hint) -apple-system, BlinkMacSystemFont, sans-serif;
   color: rgb(var(--sapphire));
   cursor: pointer;
 }
@@ -749,7 +749,7 @@
   width: 14px; height: 14px;
   border-radius: var(--ds-radius-badge);
   background: var(--color-frame-hover);
-  font: 600 9px/1 ui-monospace, SFMono-Regular, monospace;
+  font: 600 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-frame-text-muted);
 }
 .creating-row .step-t { font-size: var(--ds-fs-meta); color: var(--color-frame-text-dim); }
@@ -762,11 +762,11 @@
   display: inline-flex;
   align-items: center;
   gap: var(--ds-space-1);
-  padding: var(--ds-space-half) 7px;
-  border-radius: 7px;
+  padding: var(--ds-space-half) var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
   background: rgb(var(--sapphire) / 0.12);
   color: rgb(var(--sapphire));
-  font: 600 10px/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 600 var(--ds-fs-meta)/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
   flex: 0 0 auto;
   min-width: 0;
 }
@@ -817,7 +817,7 @@
 }
 .project-desc-input {
   width: 100%;
-  font: 400 12px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 400 var(--ds-fs-hint)/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   resize: vertical;
   min-height: 54px;
 }
@@ -827,12 +827,12 @@
   justify-content: flex-end;
   gap: var(--ds-space-2);
 }
-.project-desc-save { font-size: var(--ds-fs-hint); padding: 5px 14px; }
+.project-desc-save { font-size: var(--ds-fs-hint); padding: var(--ds-space-1h) 14px; }
 .project-desc-cancel {
   border: none;
   background: transparent;
-  padding: 5px var(--ds-space-2);
-  font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  font: 500 var(--ds-fs-hint)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
   cursor: pointer;
   transition: color 150ms ease;
@@ -889,7 +889,7 @@
   border-radius: var(--ds-radius-xl);
   background: transparent;
   color: var(--color-text-muted);
-  font: 400 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 400 var(--ds-fs-body)/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   cursor: pointer;
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
@@ -904,7 +904,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: 500 11px/1.5 ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta)/1.5 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text-muted);
 }
 
@@ -937,14 +937,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: 500 10px/1.6 ui-monospace, SFMono-Regular, monospace;
+  font: 500 var(--ds-fs-meta)/1.6 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text-muted);
   opacity: 0.75;
 }
 
 /* ── S11 结构总视图 ─────────────────────────────────────────────── */
 .delegate-structure-head {
-  font: 600 15px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 600 var(--ds-fs-title)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text);
   padding-bottom: var(--ds-space-half);
 }
@@ -952,13 +952,13 @@
   display: flex;
   flex-direction: column;
   gap: var(--ds-space-1h);
-  padding: var(--ds-space-glass-x) var(--ds-space-3);
+  padding: var(--ds-space-block-y) var(--ds-space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--ds-radius-xl);
   background: var(--color-surface);
 }
 .delegate-structure-label {
-  font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 600 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   letter-spacing: 0.02em;
   color: var(--color-text-muted);
 }
@@ -984,7 +984,7 @@
   padding: 0 var(--ds-space-1);
   border-radius: var(--ds-radius-chip);
   background: var(--color-frame-hover);
-  font: 600 10px/1 ui-monospace, SFMono-Regular, monospace;
+  font: 600 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
   color: var(--color-text-muted);
 }
 
@@ -1003,7 +1003,7 @@
 .delegate-chain-meta {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--ds-space-1);
   min-width: 0;
   flex-wrap: wrap;
 }
@@ -1023,8 +1023,8 @@
 .delegate-chain-dot.st-pending { background: var(--color-text-muted, #888); }
 .delegate-chain-steps {
   flex: 0 0 auto;
-  margin-left: 3px;
-  font: 600 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  margin-left: var(--ds-space-1);
+  font: 600 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
 }
 .delegate-card-rank {
@@ -1037,7 +1037,7 @@
   padding: 0 var(--ds-space-1);
   border-radius: var(--ds-radius-chip);
   background: rgb(var(--sapphire) / 0.14);
-  font: 600 10px/1 ui-monospace, SFMono-Regular, monospace;
+  font: 600 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: rgb(var(--sapphire));
 }

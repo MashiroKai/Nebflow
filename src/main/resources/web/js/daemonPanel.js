@@ -60,7 +60,7 @@ const PANEL_CSS = `
   padding: var(--ds-space-3) 14px; border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
 }
-.daemon-config-title { font-size: 14px; font-weight: 600; color: var(--color-text); }
+.daemon-config-title { font-size: var(--ds-fs-subtitle); font-weight: 600; color: var(--color-text); }
 .daemon-config-close {
   background: none; border: 1px solid transparent; cursor: pointer;
   width: 24px; height: 24px; display: flex; align-items: center;
@@ -74,17 +74,17 @@ const PANEL_CSS = `
 }
 .daemon-config-close svg { width: 14px; height: 14px; }
 .daemon-config-body { padding: 14px; overflow-y: auto; flex: 1; }
-.daemon-config-field { display: flex; flex-direction: column; gap: 5px; margin-bottom: var(--ds-space-3); }
+.daemon-config-field { display: flex; flex-direction: column; gap: var(--ds-space-1); margin-bottom: var(--ds-space-3); }
 .daemon-config-label { font-size: var(--ds-fs-hint); font-weight: 500; color: var(--color-text-muted); }
 .daemon-config-input, .daemon-config-select {
-  font: inherit; font-size: var(--ds-fs-body); padding: 7px 9px;
+  font: inherit; font-size: var(--ds-fs-body); padding: var(--ds-space-2) var(--ds-space-2);
   border-radius: var(--ds-radius-input); border: 1px solid var(--color-border);
   background: var(--color-surface); color: var(--color-text);
 }
 .daemon-config-input:focus, .daemon-config-select:focus {
   outline: none; border-color: rgba(91, 127, 191, 0.55);
 }
-.daemon-config-check { display: flex; align-items: center; gap: 7px; font-size: var(--ds-fs-body); color: var(--color-text); }
+.daemon-config-check { display: flex; align-items: center; gap: var(--ds-space-1h); font-size: var(--ds-fs-body); color: var(--color-text); }
 .daemon-config-hint { font-size: var(--ds-fs-meta); color: var(--color-text-muted); }
 .daemon-config-footer {
   display: flex; justify-content: flex-end; gap: var(--ds-space-2);

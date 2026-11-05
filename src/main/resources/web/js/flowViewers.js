@@ -161,7 +161,7 @@ export async function openRules(teamName) {
     body.innerHTML = `
       <div class="flow-def-section">
         <h3>${t('rules.title')}</h3>
-        <p style="font: 400 11px -apple-system; color: var(--color-text-muted); margin: 0 0 var(--ds-space-2);">${t('flowViewers.rulesHint')}</p>
+        <p style="font: 400 var(--ds-fs-meta) -apple-system; color: var(--color-text-muted); margin: 0 0 var(--ds-space-2);">${t('flowViewers.rulesHint')}</p>
         <textarea class="flow-def-edit" id="flow-rules-textarea" style="min-height: 320px; font-family: ui-monospace, SFMono-Regular, monospace;">${esc(data.content || '')}</textarea>
       </div>`;
     const saveBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('flow-rules-save'));
