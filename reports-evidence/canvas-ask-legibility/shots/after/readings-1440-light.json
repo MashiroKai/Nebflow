@@ -7,10 +7,10 @@
     },
     "dock": {
       "x": 1043,
-      "y": 578.625,
+      "y": 557.03125,
       "w": 372,
-      "h": 232.375,
-      "top": 578.625,
+      "h": 253.96875,
+      "top": 557.03125,
       "bottom": 811,
       "left": 1043,
       "right": 1415,
@@ -18,10 +18,10 @@
     },
     "col": {
       "x": 1043,
-      "y": 578.625,
+      "y": 557.03125,
       "w": 372,
-      "h": 168.375,
-      "top": 578.625,
+      "h": 189.96875,
+      "top": 557.03125,
       "bottom": 747,
       "left": 1043,
       "right": 1415,
@@ -29,10 +29,10 @@
     },
     "wrap": {
       "x": 1043,
-      "y": 578.625,
+      "y": 557.03125,
       "w": 372,
-      "h": 168.375,
-      "top": 578.625,
+      "h": 189.96875,
+      "top": 557.03125,
       "bottom": 747,
       "left": 1043,
       "right": 1415,
@@ -50,24 +50,24 @@
       "r": 12
     },
     "lastBub": {
-      "x": 1043.96875,
-      "y": 642.21875,
-      "w": 371.03125,
-      "h": 92.78125,
-      "top": 642.21875,
+      "x": 1043,
+      "y": 620.625,
+      "w": 372,
+      "h": 114.375,
+      "top": 620.625,
       "bottom": 735,
-      "left": 1043.96875,
+      "left": 1043,
       "right": 1415,
       "r": 16
     },
     "aiBub": {
-      "x": 1043.96875,
-      "y": 642.21875,
-      "w": 371.03125,
-      "h": 92.78125,
-      "top": 642.21875,
+      "x": 1043,
+      "y": 620.625,
+      "w": 372,
+      "h": 114.375,
+      "top": 620.625,
       "bottom": 735,
-      "left": 1043.96875,
+      "left": 1043,
       "right": 1415,
       "r": 16
     },
@@ -102,12 +102,14 @@
     ],
     "matBubAi": {
       "bg": "rgb(250, 251, 252)",
-      "bgImage": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(255, 255, 255, 0.45) 50%, rgba(0, 0, 0, 0) 90%), none",
+      "bgImage": "none",
       "border": "rgba(255, 255, 255, 0.35)",
       "blur": "blur(24px) saturate(1.15)",
       "color": "rgb(27, 30, 38)",
       "radius": "16px",
-      "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px"
+      "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px",
+      "refractionBefore": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(255, 255, 255, 0.45) 50%, rgba(0, 0, 0, 0) 90%)",
+      "refractionHeight": "1px"
     },
     "matBubUser": {
       "bg": "rgb(250, 251, 252)",
@@ -116,16 +118,20 @@
       "blur": "blur(24px) saturate(1.15)",
       "color": "rgb(27, 30, 38)",
       "radius": "16px",
-      "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px"
+      "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px",
+      "refractionBefore": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(255, 255, 255, 0.45) 50%, rgba(0, 0, 0, 0) 90%)",
+      "refractionHeight": "1px"
     },
     "matInput": {
       "bg": "rgb(250, 251, 252)",
-      "bgImage": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(255, 255, 255, 0.45) 50%, rgba(0, 0, 0, 0) 90%), none",
+      "bgImage": "none",
       "border": "rgba(91, 127, 191, 0.45)",
       "blur": "blur(24px) saturate(1.15)",
       "color": "rgb(27, 30, 38)",
       "radius": "12px",
-      "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px"
+      "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px",
+      "refractionBefore": "linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(255, 255, 255, 0.45) 50%, rgba(0, 0, 0, 0) 90%)",
+      "refractionHeight": "1px"
     },
     "header": {
       "bg": "rgba(255, 255, 255, 0.55)",
@@ -134,7 +140,9 @@
       "blur": "blur(24px) saturate(1.15)",
       "color": "rgb(27, 30, 38)",
       "radius": "20px",
-      "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset"
+      "shadow": "rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset",
+      "refractionBefore": "none",
+      "refractionHeight": null
     },
     "glassBg": {
       "r": 255,
@@ -176,11 +184,11 @@
       "gripSelectorHits": 0,
       "hit": {
         "x": 1029,
-        "y": 564.625,
+        "y": 543.03125,
         "w": 44,
         "h": 44,
-        "top": 564.625,
-        "bottom": 608.625,
+        "top": 543.03125,
+        "bottom": 587.03125,
         "left": 1029,
         "right": 1073,
         "r": 0

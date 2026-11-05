@@ -63,17 +63,18 @@
    * 值 64px（手机 56px）→ **12px**。理由与选值：
    *   · 64px ≈ 3 行正文（行高 1.6 × 13.5px = 21.6px），衰减区比一行字还高两倍，
    *     视觉上是「半个面板在淡出」；
-   *   · 作者档口「≤ 一个行高 / 8–16px 级别」→ 取 12px = 4px 栅格第 3 档
-   *     （--ds-space-3 的同一刻度），≈ 0.55 行高：衰减在**半个字行之内**结束，
-   *     滚动穿过时读起来是一条硬边而不是一片雾；
+   *   · 作者档口「≤ 一个行高 / 8–16px 级别」→ 取 12px = **4px 栅格第 3 档**，
+   *     直接落 --ds-space-3（不写裸像素：本批起间距/长度一律走 --ds-space-* 档位，
+   *     与作者 2026-11-05 09:40 token 裁定同口径），≈ 0.55 行高：衰减在**半个字行
+   *     之内**结束，滚动穿过时读起来是一条硬边而不是一片雾；
    *   · 下限不再往 8px 落：mask 是抗锯齿渐变，8px 以下在 2× 屏上会看到阶梯；
    *   · 只作用于滚出列顶的那一小条：衰减区在滚动容器之内（padding-top 让开
    *     它），静态首条完整清晰，正文可读区零影响。 */
-  --ask-fade-h: 12px;
+  --ask-fade-h: var(--ds-space-3);   /* 12px = 4px 栅格第 3 档 */
   /* 底缘渐出尾（同一 12px 刻度）：只在**内容滚出列底**时吃掉这一小条 alpha，
    * 与顶缘同一档短渐隐；静态（会话短）时它落在列的 padding-bottom 里，
    * 一条字都不碰（见 .ask-col 的 mask 与 padding 注释）。 */
-  --ask-col-tail: 12px;
+  --ask-col-tail: var(--ds-space-3); /* 12px，与顶缘同档 */
   --z-ask-dock: 24;              /* < 顶行 30（排他 z 序：永不入顶行） */
   --ask-dot-ring: rgba(255, 255, 255, 0.9);  /* 通知点描边圈（暗档翻 #0b0e14） */
   --ask-link: #1d4ed8;           /* cite 徽标链色（亮档） */
@@ -451,9 +452,9 @@ body.mobile-layer .ask-dock {
    * 下界 320 保小屏（SE 667 ⇒ 46vh=307 被抬到 320）；上界 420 保「背后文档仍留
    * 可读区」（390×844 时面板顶距视口顶 = 264.8px ≈ 31%）。 */
   --ask-col-maxh: clamp(320px, 46vh, 420px);
-  /* 短渐隐批 2026-11-05 09:32：56px → 12px（与桌面档同一刻度，同一理由，见
-     :root 里 --ask-fade-h 的令牌注）。手机档不再单独放宽衰减区。 */
-  --ask-fade-h: 12px;
+  /* 短渐隐批 2026-11-05 09:32：56px → 12px（与桌面档同一档位 token，同一理由，
+     见 :root 里 --ask-fade-h 的令牌注）。手机档不再单独放宽衰减区。 */
+  --ask-fade-h: var(--ds-space-3);
   position: fixed;
   right: var(--ask-fab-gap);
   bottom: calc(var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px) + 16px + var(--ask-fab-size) + 10px);

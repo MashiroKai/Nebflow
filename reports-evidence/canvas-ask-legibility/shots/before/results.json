@@ -7,7 +7,7 @@
     "PASS  L0 页面零 pageerror",
     "FAIL  L1a 三面计算背景 α = 1（气泡 / 用户气泡 / 输入条：不再透出底层文档）  — {\"bub\":\"rgba(24, 28, 38, 0.68)\",\"user\":\"color(srgb 0.109804 0.121569 0.152941 / 0.92)\",\"input\":\"rgba(24, 28, 38, 0.68)\"}",
     "FAIL  L1b 不透明底 = --glass-bg 压平在 --color-bg 上的合成值（同色收 α，零新色相）  — {\"composite\":{\"r\":22,\"g\":26,\"b\":35},\"glassBgOpaque\":null,\"glassBg\":{\"r\":24,\"g\":28,\"b\":38,\"a\":0.68},\"paper\":{\"r\":19,\"g\":22,\"b\":28,\"a\":1},\"cvBgOpaque\":null}",
-    "FAIL  L1c 「Header 同款」逐项：blur 参数与 #header 相等 + 描边同 token + 顶缘折射线层在场  — {\"bubBlur\":\"blur(24px) saturate(1.15)\",\"inputBlur\":\"blur(24px) saturate(1.15)\",\"headerBlur\":\"blur(24px) saturate(1.15)\",\"bubBorder\":\"rgba(255, 255, 255, 0.06)\",\"headerBorder\":\"rgba(255, 255, 255, 0.06)\",\"bubImg\":\"none\"}",
+    "FAIL  L1c 「Header 同款」逐项：blur 参数与 #header 相等 + 描边同 token + 顶缘折射线层同 token 在场  — {\"bubBlur\":\"blur(24px) saturate(1.15)\",\"inputBlur\":\"blur(24px) saturate(1.15)\",\"headerBlur\":\"blur(24px) saturate(1.15)\",\"bubBorder\":\"rgba(255, 255, 255, 0.06)\",\"headerBorder\":\"rgba(255, 255, 255, 0.06)\",\"headerRefraction\":\"linear-gradient(90deg, rgba(0, 0, 0, 0) 10%, rgba(91, 127, 1\",\"bubRefraction\":\"none\",\"inputRefractionH\":null}",
     "PASS  L2 正文与其最终合成背景的对比度 ≥ 4.5:1（气泡 + 输入条，WCAG AA）  — {\"bub\":14.13,\"input\":14.13,\"bubBg\":{\"r\":24,\"g\":28,\"b\":38,\"a\":0.68}}",
     "FAIL  L3 面板内部像素与背后内容无关（最坏情况背景探针亮/灭两帧：差分像素 0、最大通道差 ≤2）  — {\"frames\":[{\"px\":34840,\"maxDiff\":237,\"over\":34840},{\"px\":10320,\"maxDiff\":28,\"over\":9611}]}",
     "FAIL  L4a 把手 DOM 零装饰子节点（旧 .ds-resize-grip 三枚 L 形 <i> 退役；DOM 命中数 = 0）  — {\"childCount\":1,\"gripHits\":4}",

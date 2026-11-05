@@ -107,7 +107,9 @@
       "blur": "blur(24px) saturate(1.15)",
       "color": "rgb(232, 234, 237)",
       "radius": "16px",
-      "shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px"
+      "shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px",
+      "refractionBefore": "none",
+      "refractionHeight": null
     },
     "matBubUser": {
       "bg": "color(srgb 0.109804 0.121569 0.152941 / 0.92)",
@@ -116,7 +118,9 @@
       "blur": "blur(24px) saturate(1.15)",
       "color": "rgb(232, 234, 237)",
       "radius": "16px",
-      "shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px"
+      "shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px",
+      "refractionBefore": "none",
+      "refractionHeight": null
     },
     "matInput": {
       "bg": "rgba(24, 28, 38, 0.68)",
@@ -125,7 +129,9 @@
       "blur": "blur(24px) saturate(1.15)",
       "color": "rgb(232, 234, 237)",
       "radius": "12px",
-      "shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px"
+      "shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.2) 0px 2px 8px 0px, rgba(0, 0, 0, 0.35) 0px 8px 24px 0px",
+      "refractionBefore": "none",
+      "refractionHeight": null
     },
     "header": {
       "bg": "rgba(24, 28, 38, 0.68)",
@@ -134,7 +140,9 @@
       "blur": "blur(24px) saturate(1.15)",
       "color": "rgb(232, 234, 237)",
       "radius": "20px",
-      "shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset"
+      "shadow": "rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset",
+      "refractionBefore": "none",
+      "refractionHeight": null
     },
     "glassBg": {
       "r": 24,

@@ -2,9 +2,9 @@
   "phase": "after",
   "ldiffs": [
     {
-      "w": 335,
-      "h": 57,
-      "pixels": 19095,
+      "w": 336,
+      "h": 78,
+      "pixels": 26208,
       "maxDiff": 0,
       "over": 0
     },
