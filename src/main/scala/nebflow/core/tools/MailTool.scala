@@ -1405,7 +1405,10 @@ Delivery — every Mail is immediate (there is no delivery parameter to set):
                           case Right(_) => IO.unit
                         } *>
                       (if frozenWire.isDefined then
-                         nebflow.core.delegate.DelegateFreeze.onWoken(res, id, "mail-live-wake")
+                         // 冻结状态两套真相批（2026-11-05）：Mail 唤醒腿以前清槽不发帧
+                         // ⇒ 面板永远停在「需唤醒」，作者点进去又被闸拒。现在带上
+                         // `ctx.wsSend`，清槽瞬间推 `delegateWoken` 帧。
+                         nebflow.core.delegate.DelegateFreeze.onWoken(res, id, "mail-live-wake", ctx.wsSend)
                        else IO.unit) *>
                       nebflow.core.UsageTracker.record("mail", ctx.sessionId.getOrElse("")) *>
                       IO.pure(
