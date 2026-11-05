@@ -405,7 +405,7 @@ Mandate: at a document's **first occurrence** of an abbreviation, satisfy one of
 Scope — what the validator scans:
 
 - **All-caps tokens of 2–6 letters**: `GCR` `ICRP` `IAEA` `CERN` `NIST` `SCD`
-  `DPC` `MC` `NIEL` `TID` `RBE` `LET` `HZE` `DOSTEL` `PTC` `USTC` … — domain
+  `DPC` `MC` `NIEL` `TID` `RBE` `LET` `HZE` `DOSTEL` `PTC` `ESA` … — domain
   and organisation abbreviations are the main target.
 - **Dotted proper abbreviations**: `E.C.` `U.S.` `R.B.E.` (all-lowercase
   `e.g.` / `i.e.` never match — they are not abbreviations of a name).
