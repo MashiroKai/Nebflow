@@ -22,11 +22,14 @@
 //     position:fixed 的真顶栏（头像 40px 与名字并入顶栏同一行、与左右双钮同轴）；
 //     **会话页头同构批（件二+件三，2026-11-02 15:xx 作者令）把 fixed 顶栏整条
 //     退役**，该层落回**悬浮身份头**：`.g2-chat-head.mh-idhead.mh-agent-head`
-//     （绝对定位、零全宽带、内容从其后穿过、滚动渐隐），与好友/群/设备会话的
-//     `.mh-idhead.mh-sess-head` **共用同一 CSS 块与同一渐隐驱动器**
-//     （mobileLayer.css 文件尾「会话页头同构批」+ sessionHead.js bindIdHeadFade）。
-//     🔴 与 #1365（分支 delegate/delegate-nebflow-accdcd3b）的对接点：同一组件名
-//     .mh-idhead / 同一渐隐驱动器；合流时只保留一份（详见 sessionHead.js 文件头）。
+//     （绝对定位、零全宽带、内容从其后穿过，**身份头常显**），与好友/群/设备会话的
+//     `.mh-idhead.mh-sess-head` **共用同一 CSS 块与同一工厂**
+//     （mobileLayer.css 文件尾「会话页头同构批」+ sessionHead.js
+//     createSessionIdentityHead）。
+//     🔴 身份头的滚动渐隐已**整条退役**：主对话腿在「顶部身份头常显批」
+//     （作者报障 2026-11-04 19:54「手机端的顶部的头像怎么又不显示了」）摘除；
+//     好友/群/设备三族在「身份头常显批」（作者 2026-11-04 20:49 裁定「按你的
+//     推荐走」）同口径摘除。四种会话身份头一律常显，`--idhead-p` 零消费者已删。
 //     节点迁移/清空守望链不变；`--muse-head-top` 变量链仍不存在（无消费方）。//   · dock 收形批（作者令 10-31 22:50 ①③）的「每条 agent 消息泡上方补挂
 //     .g2-msg-meta 身份头」随 Muse 式悬浮头像批**整批退役**（作者令 ①：
 //     「去掉每条消息头部的 agent 头像+名字行」）—— 守望/装饰/摘除链全数
@@ -118,7 +121,7 @@ export function activateChatChrome() {
   if (center && center.children.length) {
     chatHead = document.createElement('div');
     // 会话页头同构批：三种会话窗的 `.mh-idhead.mh-sess-head` 与本节点共享同一
-    // CSS 块（居中头像 + 名字玻璃胶囊 + 滚动渐隐）；`g2-chat-head` 类保留（既有
+    // CSS 块（居中头像 + 名字玻璃胶囊，常显）；`g2-chat-head` 类保留（既有
     // 断言面/chatView 清空守望/桌面归还链都按该类定位）。
     chatHead.className = 'g2-chat-head mh-idhead mh-agent-head';
     // 先建层占位内容流首位，再按原序迁节点（teardown 原序归还 = 结构还原）。
@@ -136,18 +139,15 @@ export function activateChatChrome() {
       }
     });
     headMo.observe(chat, { childList: true });
-    /* 滚动渐隐（会话页头同构批）：滚动源 = #chat 自身（#chat 内有滚轴时优先；
-       页面栈/输入卡挤压等极端态下 #main 内的滚轴不参与 —— 与好友/群/设备面
-       的「取最大 scrollTop」口径同源）。渐隐只改 opacity（rAF 合帧，值不变不写）。
-       🔴 **主对话腿已摘（顶部身份头常显批 2026-11-04，作者报障「跟主 agent 的
-       对话窗口 agent 头像和 agent name 都不显示」）**：本驱动器 11-02 同构批接入
-       后，scrollTop ≥ 64px 会把**整块**（头像 + 名字）推到 opacity 0 并置
-       visibility:hidden —— 而手机端对话进场即落底（任何超过一屏的会话 scrollTop
-       恒 ≫ 64），于是这个身份头在**有内容的会话里 100% 不可见**，且连带
-       `pointer-events:auto` 的头像一起退场 = profile 面板入口不可达（功能损失，
-       不只是视觉）。主对话 = 身份常显面，不再随滚动隐没；好友/群/设备会话
-       （sessionHead.createSessionIdentityHead + 各自的 bindIdHeadFade 调用点）
-       的悬浮身份头口径**零改动** —— 上一批的渐隐设计在那里保留。 */
+    /* 身份头**不接**滚动渐隐（身份头常显批 2026-11-04，作者 20:49 裁定「按你的
+       推荐走」）。历史读数留档：11-02 同构批接入的 bindIdHeadFade 把 scrollTop
+       0→64 映射成 `--idhead-p`，CSS 消费 `opacity: calc(1 - var(--idhead-p))`、
+       p≥1 另置 visibility:hidden —— 手机端对话**进场即落底**（任何超过一屏的
+       会话 scrollTop 恒 ≫ 64），于是整块（头像 + 名字）在**有内容的会话里 100%
+       不可见**，连 `pointer-events:auto` 的头像一起退场 = profile 面板入口不可达。
+       主对话腿先摘（顶部身份头常显批），好友/群/设备三族同批摘除 —— 四种会话
+       现在同一口径：身份头是身份/入口类元素，作者铁律「腾空间用缩高或上移，
+       不许让元素消失」⇒ 常显。驱动器与 --idhead-p 已零消费者（整条删除）。 */
     /* 顶栏建层广播已随机制退役（会话页头同构批）：悬浮身份头不在流内、main.js
        的顶让位不再按它实测（回 bandBottom 单一真值），故无需通知观察器重取。 */
   }
@@ -253,8 +253,8 @@ export function activateChatChrome() {
     avatarSlotMo = null;
     // 消息流身份头随 Muse 式悬浮头像批退役（挂出链已摘，DOM 无此节点）。
     document.querySelectorAll('#agent-avatar-btn .agent-avatar-stand-logo').forEach((n) => n.remove());
-    // 身份头滚动渐隐解绑（会话页头同构批）：#chat 上是同一个监听，拆除必须对称注销。
-    chatHead?.style.removeProperty('--idhead-p');
+    // （身份头滚动渐隐解绑腿已随身份头常显批 2026-11-04 删除：无监听可注销，
+    //   `--idhead-p` 也不再存在 —— 四会话身份头一律常显。）
     // 归位重绘（桌面腿 2026-11-01）：摘除走的是同名类（注入档 + paintSlot 自绘档
     // 一并中招）——归还桌面形态前必须补一次 paintSlot，否则空槽挂到下一个事件。
     try { paintSlot(); } catch { /* 绘制失败不阻断其余归还 */ }

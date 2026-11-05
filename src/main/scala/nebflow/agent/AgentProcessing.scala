@@ -1032,7 +1032,9 @@ private[agent] object AgentProcessing:
                           Some(e.eventType),
                           e.metadata("agentName").flatMap(_.asString),
                           fileChanges = e.metadata("fileChanges"),
-                          sessionProject = state.projectName
+                          sessionProject = state.projectName,
+                          // 外部注入统一通道批（2026-11-05）：外部事件气泡的呈现级去重。
+                          dedup = true
                         )
                       case None => IO.unit
                   )
@@ -1475,7 +1477,9 @@ private[agent] object AgentProcessing:
                     // file-diff → 委托结果行（bug #58 修）：delegate 终态事件 metadata
                     // 携带的改动文件 diff 载荷，随注入行落盘/下发（缺席 = 旧行为逐字）。
                     fileChanges = metadata("fileChanges"),
-                    sessionProject = state.projectName
+                    sessionProject = state.projectName,
+                    // 外部注入统一通道批（2026-11-05）：外部事件气泡的呈现级去重。
+                    dedup = true
                   )
                 case None => IO.unit
               bubbleIO *>

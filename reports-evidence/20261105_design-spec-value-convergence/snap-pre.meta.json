@@ -1,0 +1,77 @@
+{
+  "browser": "chromium-151-151.0.7922.34",
+  "props": [
+    "font-size",
+    "font-family",
+    "font-weight",
+    "line-height",
+    "letter-spacing",
+    "text-transform",
+    "color",
+    "background-color",
+    "background-image",
+    "box-shadow",
+    "opacity",
+    "z-index",
+    "border-top-width",
+    "border-right-width",
+    "border-bottom-width",
+    "border-left-width",
+    "border-top-style",
+    "border-top-color",
+    "border-top-left-radius",
+    "border-top-right-radius",
+    "border-bottom-right-radius",
+    "border-bottom-left-radius",
+    "padding-top",
+    "padding-right",
+    "padding-bottom",
+    "padding-left",
+    "margin-top",
+    "margin-right",
+    "margin-bottom",
+    "margin-left",
+    "row-gap",
+    "column-gap",
+    "display",
+    "position",
+    "top",
+    "right",
+    "bottom",
+    "left",
+    "width",
+    "height",
+    "min-width",
+    "min-height",
+    "max-width",
+    "max-height",
+    "flex-direction",
+    "align-items",
+    "justify-content",
+    "overflow-x",
+    "overflow-y",
+    "transform"
+  ],
+  "viewports": [
+    {
+      "w": 1440,
+      "h": 900,
+      "tag": "1440"
+    },
+    {
+      "w": 375,
+      "h": 812,
+      "tag": "375"
+    }
+  ],
+  "themes": [
+    "dark",
+    "light"
+  ],
+  "scenarios": [
+    "shell",
+    "chat",
+    "settings"
+  ],
+  "webRoot": "/tmp/pre-l1/src/main/resources/web"
+}

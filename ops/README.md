@@ -366,6 +366,56 @@ argv[0] 对 .app 二进制无效——测试基建里踩过的坑）。覆盖：
 `__brand-defaults`，零 JVM）；start 撞**对家品牌实例**占口时 rc=1、报错点名「另一实例」
 （含其默认家/口与共存提示）。引擎侧对账 spec 见 `src/test/scala/nebflow/cli/CliBrandDefaultsSpec.scala` 等。
 
+## 故障恢复批 2026-11-05（`stand-restart.sh` v4.6：重启脚本把实例弄死后没起来）
+
+**事故**：2026-11-04 23:29 作者令热重启，脚本走完 编译预检 / canary / 杀旧实例 / 端口排空，
+**在「起新腿」那一行崩掉**，实例从 23:30 躺到次日 08:17 作者手动拉起（**8h45m**）。
+现场 `~/.stand/logs/restart-detach-20261104-232943-25813.log` 末行：
+`stand-restart.sh: line 834: PORT<乱码>: unbound variable`。
+
+**双重根因**：
+
+1. *直接*：macOS 自带 **bash 3.2.57**（`/bin/bash`，不是 brew 5.x）+ 脚本顶部 `set -u`。
+   `$PORT` 后面紧贴全角「（」时，3.2 把「（」的 UTF-8 首字节并进变量名，去查 `PORT<byte>`，
+   未定义 ⇒ 终止。最小复现（`bash -uc`，不碰实例）：
+   `PORT=6138; echo "x $PORT（日志 y"` ⇒ `PORT<byte>: unbound variable`；改成 `${PORT}` ⇒ 正常。
+2. *结构*（更要紧）：「杀」与「起」之间无兜底，且各终态行都写在杀之前的分支里
+   ⇒ 杀之后任何意外终止都只留一行 unbound，日志里没有「已停未起」的交代。
+
+**修法**（v4.6）：① 全脚本同类（`$VAR` 紧贴非 ASCII 字节）一律 `${VAR}`，可执行代码命中数 0；
+② `LEG_WINDOW` 窗口（旧树进程表验证消亡 → 新腿 spawn 完成）内任何原因的退出都走 EXIT trap →
+`abort_guard` 复用唯一 spawn 点 `start_new_leg` 尝试拉起（幂等：已有 pid/监听者则不起第二个）+
+写 `~/.stand/logs/restart-abort-<ts>.marker`（崩溃行号 / `$?` / 时间 / 实例实测在跑与否）+
+终态行明写「已停未起」。**结论只认实测**（端口探针），不认 spawn 返回码。
+
+**演练**（假 pid / 假端口 / 沙箱 `STAND_HOME`，绝不碰真实例）：
+
+```bash
+bash ops/test/restart-abort-guard.test.sh                    # 仓内权威副本
+bash ops/test/restart-abort-guard.test.sh ~/.stand/bin/stand-restart.sh   # 已部署 live 副本
+# 26 断言全绿；含 T4 回归扫描（同类命中数必须 0）
+```
+
+**T4 扫描面（2026-11-05 小修批扩展）**：T4 不再只扫「被测脚本」一个文件，口径为**全仓 shell
+脚本** —— `git ls-files '*.sh'`（排除 `reports-evidence/` 纯过程证据树）+ 无后缀但首行是
+sh/bash/zsh shebang 的入库脚本（`ops/bin/*`、`tools/*`、`scripts/nebflow-bin/*`），本机实测
+72 个文件。扩展前口径（单文件）命中 0，扩展后**一次就照出 3 处真缺陷**（`scripts/coldstart.sh`
+2 处、`scripts/sandbox-poc/60-qa-container-e2e.sh` 1 处），已同批修为 `${VAR}`；扩展后读数
+= 0 命中（唯一豁免是本测试脚本里的「改前形态」复现样本，靠行内 `T4-EXEMPT(<理由>)` 标注，
+不接受整文件豁免）。同类缺陷已扫清：三处 + 孤儿 live 脚本 `~/.stand/bin/coldstart-8080.sh`
+（5 处，仅 live 侧修复 —— **该脚本无仓内正源，属孤儿脚本**，仓内任何门禁都覆盖不到它）。
+注意 `bash -n` 对这类缺陷恒为 0（语法合法，只在运行期展开时崩），静态扫描是唯一机械拦口。
+
+**同批查清（未改行为）**：Tier-2 外部看门狗 `~/.stand/bin/nebflow-watchdog.sh` 整晚没动作，
+根因是**没有任何调度器在跑它**——`~/Library/LaunchAgents`、`/Library/LaunchAgents`、
+`/Library/LaunchDaemons` 均无对应 plist，`launchctl list | grep -iE "stand|nebflow|watchdog"`
+无该作业，`crontab -l` 为空；其自身日志 `~/.stand/logs/watchdog.log` **最后一条是
+2026-10-05 15:16:50**（Stage1 成功恢复），此后 31 天零写入。不是 `watchdog-paused` 残留在作祟
+（两处旗标均不存在，且 11-04 崩溃日志末行证明 restart 的 EXIT trap 已删除旗标）。
+`~/.stand/logs/watchdog/` 下的 `stuck-detected` 事件属**进程内** TaskStuckWatcher，
+按设计只管「agent 楔死但 HTTP 正常」，与「进程已死」正交，不可能救这次。
+详见 vault 报告 `restart-script-abort-and-watchdog-gap__*.md`。
+
 ## 版本纪律
 
 1. 改动只发生在本目录（commit 进 stand 仓）。

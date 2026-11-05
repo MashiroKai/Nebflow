@@ -22,7 +22,7 @@
 
 .dropbox-close {
   cursor: pointer;
-  font-size: 18px;
+  font-size: var(--ds-fs-display);
   line-height: 1;
   padding: 0 var(--ds-space-1);
   opacity: 0.5;
@@ -78,7 +78,7 @@
   padding: var(--ds-space-4);
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-glass-x);
+  gap: var(--ds-space-inline-gap);
   flex: 1;
 }
 .dropbox-desc-textarea {
@@ -88,7 +88,7 @@
   font-size: var(--ds-fs-body);
   line-height: 1.5;
   font-family: inherit;
-  padding: var(--ds-space-glass-x);
+  padding: var(--ds-space-inset);
   border-radius: var(--ds-radius-input);
   border: 1px solid var(--color-border);
   background: var(--color-bg);
@@ -108,7 +108,7 @@
   display: inline-flex;
   align-items: center;
   padding: var(--ds-space-half) var(--ds-space-2);
-  border-radius: 9999px;
+  border-radius: var(--ds-radius-pill);
   background: var(--glass-etched-bg, rgba(128, 128, 128, 0.08));
   border: 1px solid var(--glass-etched-border, rgba(128, 128, 128, 0.15));
   color: var(--color-frame-text-muted, #888);
@@ -146,13 +146,13 @@
    ⇒ 「暂无消息」。取色只用既有主题 token（亮/暗两主题同源，无新字面量色值）。 */
 .dropbox-flow-status {
   margin: auto;
-  padding: var(--ds-space-1h) var(--ds-space-glass-x);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   font-size: var(--ds-fs-hint);
   line-height: 1.5;
   text-align: center;
   color: var(--color-frame-text-muted, var(--color-text-muted, #888));
   background: var(--glass-etched-bg);
-  border-radius: 9999px;
+  border-radius: var(--ds-radius-pill);
 }
 
 /* Individual message wrapper / text bubble / meta / time
@@ -180,7 +180,7 @@
   cursor: pointer;
   opacity: 0.35;
   color: var(--color-text);
-  padding: 1px;
+  padding: var(--ds-space-hair);
   border-radius: var(--ds-radius-badge);
   transition: opacity 0.15s;
 }
@@ -204,7 +204,7 @@
 .dropbox-file-meta {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--ds-space-hair);
   flex: 1;
   min-width: 0;
 }
@@ -224,7 +224,7 @@
   text-overflow: ellipsis;
 }
 .dropbox-file-badge {
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   flex-shrink: 0;
   width: 20px;
   text-align: center;
@@ -271,7 +271,7 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
-.dropbox-notice .st-ic { width: 13px; height: 13px; margin-top: 1px; flex-shrink: 0; }
+.dropbox-notice .st-ic { width: 13px; height: 13px; margin-top: var(--ds-space-hair); flex-shrink: 0; }
 
 @keyframes pulse {
   0%, 100% { opacity: 0.4; }

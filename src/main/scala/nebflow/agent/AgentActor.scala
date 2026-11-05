@@ -215,13 +215,26 @@ object AgentActor extends AgentCore with AgentSession:
 
   /**
    * ExternalEvent sources whose result-notification payload should render as a
-   * visible injected-user bubble (任务 Q, report §3 🔴). Low-value internal
-   * sources (mail-ask, schedule, filewatch, bridge-already-visible, etc.) stay
-   * hidden — only the high-value result notifications get a bubble.
+   * visible injected-user bubble (任务 Q, report §3 🔴).
    *
-   *   delegate / subtask  → A6/A9 sub-agent completion
-   *   background-task      → B1 background command completion
-   *   eventType=="inject"  → B4 API inject (source is user-controlled)
+   * 外部注入统一通道批（2026-11-05，作者 08:44 报障逐字「所有的外部注入消息应该有
+   * 统一的途径和蓝色气泡通知，我刚刚看到你好多条消息触发你，我都看不到是什么」）：
+   * 判据从**白名单**（delegate / subtask / background-task / inject 四类可见，其余
+   * 「低价值内部源」一律隐藏）翻转为**总函数**（外部事件一律可见，只有**自写行腿**
+   * 例外）。翻转理由：白名单里「低价值」的那批（merge-queue 放行/属主失联、
+   * bg-lifecycle 催办、waiting-dock-care 升级、chain-orphan 回收、team 错误升级）
+   * 恰恰是**会唤醒一个回合**的通知 —— 它们以 `<system-reminder>` 进了 LLM 上下文、
+   * 前端却零气泡 ⇒ 作者只看到「我又被触发了」，看不到触发内容。白名单的存在本身
+   * 就是「新增源默认不可见」的漏点，故改成总函数：新增外部源**默认可见**。
+   *
+   * 唯一的 None 例外 = [[SelfEmittingSources]]（调度器自己落卡广播的两族）：
+   * 它们的事件也会走到本门，若此处再发一条会变成**双泡**（气泡流里同一件事两行）。
+   *
+   *   delegate / subtask        → A6/A9 sub-agent completion
+   *   delegate + eventType=frozen → 冻结回执单独成格 `delegate-frozen`
+   *   background-task           → B1 background command completion（源名 background）
+   *   eventType=="inject"       → B4 API inject (source is user-controlled)
+   *   其余一切 source           → 原样作标签（前端 `INJECTED_SOURCE_LABELS` 逐值登记）
    */
   private[agent] def visibleExternalEventSource(source: String, eventType: String): Option[String] =
     if eventType == "inject" then Some(source)
@@ -230,10 +243,37 @@ object AgentActor extends AgentCore with AgentSession:
     // "delegate" 会让冻结回执长得像一份委托完成报告）。判据与
     // `TurnBoundaryDrains.isFreezeReceipt` 同源同形（source=delegate × type=frozen）。
     else if source == "delegate" && eventType == "frozen" then Some("delegate-frozen")
-    else if source == "delegate" then Some("delegate")
-    else if source == "subtask" then Some("subtask")
     else if source == "background-task" then Some("background")
-    else None
+    else if SelfEmittingSources.contains(source) then None
+    else Some(source)
+
+  /**
+   * **自写行腿**（外部注入统一通道批 2026-11-05）：该 source 的注入气泡行由**事件
+   * 生产方自己**落盘+广播（`ScheduledTaskActor#injectScheduleCard` /
+   * `#injectTodoDigest`，两者走同一 `InjectionChannel.deliver` 但带调度卡载荷与
+   * 自己的呈现源名 `schedule` / `todo`）。
+   *
+   * 判据 = 「本门的标签 ≠ 该腿实际落盘行的 source」⇒ 本门再发一条就是双泡。
+   * 加新条目等于新增一条双泡风险面，因此本集合是**封闭**的（新增自写腿须在此表态）。
+   */
+  private[agent] val SelfEmittingSources: Set[String] =
+    Set("scheduled-task", "todo-surface")
+
+  /**
+   * **呈现级去重源集**（外部注入统一通道批 2026-11-05）：这一族 source 的注入气泡
+   * 按「会话 × 来源 × 事件类型 × 发送方 × 正文」去重（[[InjectionChannel.dedupKey]]），
+   * 窗口内同一条只留一行、状态变化（正文变）才追加。
+   *
+   * 为什么是**闭集**而不是「除 Mail 外全部」：判据 = 「该 source 的正文是**引擎通知**，
+   * 重复投递 ⇒ 纯噪声」。Mail / node / skill / task / dispatch 等族的同文两次可能是
+   * 两次合法投递（同一发送方真的发了两封同文邮件），呈现层吞掉就是丢件。
+   * 判据外的族保持改前行为逐字不变（`dedup` 缺省 false）。
+   *
+   * 覆盖面：`ImmediateInput`/`UserInput` 注入腿（AgentIdle 直投 —— merge-turn 放行
+   * 提示走这里）与 `ExternalEvent` 可见化四站点（那四点恒置 true）。
+   */
+  private[agent] val DedupedNoticeSources: Set[String] =
+    Set("merge-queue", "bg-lifecycle", "waiting-dock-care", "chain-orphan", "team")
 
   /**
    * Build the system-reminder message for one or more external events (sub-agent
@@ -783,23 +823,17 @@ object AgentActor extends AgentCore with AgentSession:
      * 失败）即不落键 ⇒ 旧行字节形态与旧读法逐字不变（intake/header/quote 先例
      * 同款条件编码）。
      */
-    fileChanges: Option[Json] = None
+    fileChanges: Option[Json] = None,
+    /**
+     * **呈现级去重开关**（外部注入统一通道批 2026-11-05）：true = 同一「会话 × 来源 ×
+     * 事件类型 × 发送方 × 正文」在窗口内只投一条（见
+     * [[InjectionChannel.dedupKey]]）。缺省 false = 改前行为逐字不变（Mail / skill /
+     * ask 等族的同文两次是两次合法投递，不得被呈现层吞掉）。只有外部事件可见化
+     * 四站点（AgentIdle / AgentFinishTurn / AgentProcessing ×2）置 true。
+     */
+    dedup: Boolean = false
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
     sessionId.fold(IO.unit) { sid =>
-      val base = Json.obj(
-        "type" -> "user".asJson,
-        "text" -> text.asJson,
-        "injected" -> true.asJson,
-        "source" -> source.asJson,
-        "sessionId" -> sid.asJson
-      )
-      val withEt = eventType.fold(base)(et => base.deepMerge(Json.obj("eventType" -> et.asJson)))
-      val withSender = sender.fold(withEt)(s => withEt.deepMerge(Json.obj("sender" -> s.asJson)))
-      val withTeam = senderTeam.fold(withSender)(t => withSender.deepMerge(Json.obj("senderTeam" -> t.asJson)))
-      val withDelivery = delivery.fold(withTeam)(d => withTeam.deepMerge(Json.obj("delivery" -> d.asJson)))
-      // mailbadge 批（2026-09-13，选项 C）：收件通道判别字段。`source` 段逐字节不动
-      // （D-5 口径：值不改名），本段只加一枚**可选**展示判别键。
-      val withIntake = intake.fold(withDelivery)(i => withDelivery.deepMerge(Json.obj("intake" -> i.asJson)))
       // 气泡四段式统一批（2026-09-15，作者 12:33 令）：**唯一格式化调用点**——
       // `NotificationHeader.header` 是全仓唯一的 header 组装实现（引擎单一来源），
       // 覆盖 `BackendNamedSources` 全部源（含 CHAIN/NODE/MAIL）。产出的 header 同时
@@ -819,19 +853,11 @@ object AgentActor extends AgentCore with AgentSession:
           senderTeam,
           eventType
         )
-      val withHeader =
-        headerOpt.fold(withIntake)(h => withIntake.deepMerge(Json.obj("header" -> h.asJson)))
-      // issue #31 Fix C (2026-08-20): HOLD 分支的完成气泡标注「等待同批任务」——
-      // 把「COMPLETED 但父不动」从 bug 观感变成可理解的等待状态（前端展示
-      // 待 Frontend 消费此字段）。顺修既有 bug：此处原发 withTeam，
-      // withDelivery 被算出后丢弃（delivery 字段从未到达前端）。
-      val withWaiting =
-        if waitingForBatch then withHeader.deepMerge(Json.obj("waitingForBatch" -> true.asJson))
-        else withHeader
-      // file-diff → 委托结果行（bug #58 修）：diff 载荷只在在场时并帧/并行
-      // （缺席即不落键——旧帧/旧行字节形态逐字不变）。
-      val withFileChanges =
-        fileChanges.fold(withWaiting)(fc => withWaiting.deepMerge(Json.obj("fileChanges" -> fc)))
+      // 外部注入统一通道批（2026-11-05）：帧组装本身也**不再是本点的事**——
+      // `InjectionChannel.frame` 逐 keys 复刻本点改前的帧形态（type/text/injected/
+      // source/sessionId + 可选段），本点只保留**本腿特有的**一枚可选键
+      // `waitingForBatch`（issue #31 Fix C，UiMessage.User 无此字段）作为 extra 透传。
+      val extra = if waitingForBatch then JsonObject("waitingForBatch" -> true.asJson) else JsonObject.empty
       // bluebubble 批（2026-09-12）：注入行的落盘**在唯一发射点收口**。
       // 本方法是全仓唯一的 injected user 帧发射点（grep `"injected" -> true` 单命中），
       // 故它也是这条 .ui.json 记录的唯一写者——此前落盘依赖 WS 录制层
@@ -868,12 +894,21 @@ object AgentActor extends AgentCore with AgentSession:
         // （live 与历史恢复逐字同构；缺席 ⇒ 不落键，旧行逐字不变）。
         fileChanges = fileChanges
       )
-      val persist =
-        if text.nonEmpty then
-          resources.sessionStore
-            .appendUiMessages(sid, List(injectedUiRow))
-            .handleErrorWith(e => logger.warn(s"injected user event persist failed: ${e.getMessage}"))
-        else IO.unit
+      // 外部注入统一通道批（2026-11-05）：落盘 + 广播两腿改走**唯一投递入口**
+      // [[InjectionChannel.deliver]]（去重闸 → 落盘 → 广播）。改前本点自带一份手写
+      // 落盘 + 一份手拼帧，调度器另有第三份（ScheduledTaskActor 两条腿）⇒ 三份实现
+      // 各自漂移就是作者报障「外部注入看不到」的结构性来源。生效去重 = 由调用点
+      // 显式表态的 `dedup` 参数（外部事件可见化四站点置 true；Mail/skill 等族保持
+      // 改前逐字行为）。
+      val deliver =
+        InjectionChannel.deliver(
+          resources.sessionStore,
+          wsSend,
+          sid,
+          injectedUiRow,
+          extra = extra,
+          dedup = dedup
+        )
       // 子代理收件（卡08 裁点 2，作者 2026-09-20 07:33 批「建」）：**投递侧增量**。
       // 本点是全仓唯一的 injected user 行写者（上方 bluebubble 批注释）⇒ 11 处
       // `emitInjectedUserEvent` 调用点的镜像扩展**在此单点收口**（逐处复制 11 份
@@ -897,10 +932,7 @@ object AgentActor extends AgentCore with AgentSession:
             .handleErrorWith(e => logger.warn(s"injected inbox mirror failed: ${e.getMessage}"))
             .void
         else IO.unit
-      ctx.forkTurn(
-        persist *> wsSend(withFileChanges)
-          .handleErrorWith(e => logger.warn(s"injected user event failed: ${e.getMessage}")) *> inboxMirror
-      )
+      ctx.forkTurn(deliver *> inboxMirror)
     }
 
   def apply(

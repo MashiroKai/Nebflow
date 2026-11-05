@@ -762,7 +762,7 @@ async function renderProjectsInto(scroll) {
     if (!scroll.querySelector('.project-card')) {
       scroll.dataset.projectsState = 'error';
       scroll.innerHTML = `<div class="team-empty">
-      <div style="font:600 14px -apple-system;color:var(--color-text-muted)">${esc(t('project.loadFail'))}</div>
+      <div style="font:600 var(--ds-fs-subtitle) -apple-system;color:var(--color-text-muted)">${esc(t('project.loadFail'))}</div>
       <div class="hint">${esc(e?.message || '')}</div>
     </div>`;
       // 迟到对账通道 ①：服务/网络恢复后自己把列表补上（不等用户动作、不等 WS）。
@@ -960,7 +960,7 @@ function renderEmptyState(scroll) {
   scroll.dataset.projectsState = 'empty';
   scroll.dataset.projectCount = '0';
   scroll.innerHTML = `<div class="team-empty">
-      <div style="font:600 14px -apple-system;color:var(--color-text-muted)">${esc(t('project.empty'))}</div>
+      <div style="font:600 var(--ds-fs-subtitle) -apple-system;color:var(--color-text-muted)">${esc(t('project.empty'))}</div>
       <div class="hint">${esc(t('project.emptyHint', rootNameParams()))}</div>
       <button class="glass-control team-empty-cta" type="button" data-projects-empty-cta="1"><i data-lucide="message-circle"></i>${esc(t('project.emptyCta', rootNameParams()))}</button>
       <div class="hint team-empty-cta-note">${esc(t('project.emptyCtaHint'))}</div>
@@ -996,7 +996,13 @@ const UNMOUNT_BTN_SVG =
   '<path d="M7.5 13.5 10 11"/><path d="M10.5 16.5 13 14"/>' +
   '<path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"/></svg>';
 
-/** 「已卸载」分组容器（幂等创建：head 文案静态，rows 由 renderUnmountedGroup 管理）。 */
+/** 「已卸载」分组容器（幂等创建：head 文案静态，rows 由 renderUnmountedGroup 管理）。
+ *
+ * 🔴 作者令 2026-11-05 08:26「已卸载的项目不要有这个提示」：head 里的灰字解释句
+ * （`project.unmountedGroupHint`：「项目已从上下文卸载，本地文件原样保留；重新加载
+ * 即可恢复。」/ en 孪生句）已删——按铁律 8「自解释」判据属**重复说明 + 行为教学**：
+ * 标题「已卸载」已表达状态，「重新加载」按钮已表达出路，「本地文件原样保留」是能力
+ * 保证式说明。head 只留状态事实（标题），行里只留事实（名字 + 工作区）与动作（重载钮）。 */
 function ensureUnmountedGroup(scroll) {
   let group = scroll.querySelector('.project-unmounted-group');
   if (!group) {
@@ -1007,10 +1013,7 @@ function ensureUnmountedGroup(scroll) {
     const title = document.createElement('span');
     title.className = 'project-unm-title';
     title.textContent = t('project.unmountedGroup');
-    const hint = document.createElement('span');
-    hint.className = 'project-unm-hint';
-    hint.textContent = t('project.unmountedGroupHint');
-    head.append(title, hint);
+    head.append(title);
     group.appendChild(head);
     scroll.appendChild(group);
   }
